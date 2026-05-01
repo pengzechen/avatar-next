@@ -1,0 +1,44 @@
+{
+    "configurations": [
+        {
+            "name": "x86_64",
+            "includePath": [
+                "${workspaceFolder}/include",
+                "${workspaceFolder}/include/x86_64"
+            ],
+            "defines": [
+                "__x86_64__"
+            ],
+            "compilerPath": "/usr/bin/gcc",
+            "cStandard": "c11",
+            "cppStandard": "c++17",
+            "intelliSenseMode": "linux-gcc-x64"
+        },
+        {
+            "name": "AArch64",
+            "includePath": [
+                "${workspaceFolder}/include",
+                "${workspaceFolder}/include/aarch64"
+            ],
+            "defines": [
+                "__aarch64__"
+            ],
+            "compilerPath": "/home/ajax/SoftWare/compiler/aarch64-linux-musl-cross/bin/aarch64-linux-musl-gcc",
+            "cStandard": "c11"
+        },
+        {
+            "name": "RISC-V64",
+            "includePath": [
+                "${workspaceFolder}/include",
+                "${workspaceFolder}/include/riscv64"
+            ],
+            "defines": [
+                "__riscv",
+                "__riscv_xlen=64"
+            ],
+            "compilerPath": "/home/ajax/SoftWare/compiler/riscv64-linux-musl-cross/bin/riscv64-linux-musl-gcc",
+            "cStandard": "c11"
+        }
+    ],
+    "version": 4
+}
