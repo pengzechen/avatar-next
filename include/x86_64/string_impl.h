@@ -1,6 +1,6 @@
 #ifndef X86_64_STRING_IMPL_H
 #define X86_64_STRING_IMPL_H
-
+#include "types.h"
 /*
  * x86_64 架构的字符串函数优化实现
  * 使用 SSE/AVX 指令集优化

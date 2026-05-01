@@ -6,19 +6,23 @@
 #include "../../boot/common/platform.h"
 #include "mmio.h"
 #include "types.h"
+#include "arch.h"
+#if ARCH_X86_64
+#include "io.h"
+#endif
 
 /*
  * QEMU UART base addresses for different architectures
  */
-#if defined(__aarch64__)
+#if ARCH_AARCH64
     /* QEMU virt (AArch64): UART at 0x09000000 */
     #define UART_BASE    0x09000000
     #define UART_IS_MMIO 1
-#elif defined(__riscv)
+#elif ARCH_RISCV64
     /* QEMU virt (RISC-V): UART at 0x10000000 */
     #define UART_BASE    0x10000000
     #define UART_IS_MMIO 1
-#elif defined(__x86_64__)
+#elif ARCH_X86_64
     /* QEMU PC (x86_64): Use serial port at 0x3F8 (COM1) */
     #define UART_BASE    0x3F8
     #define UART_IS_MMIO 0
@@ -38,28 +42,6 @@
  */
 #define UART_LSR_THRE   (1 << 5)  /* Transmit-hold-register empty */
 #define UART_LSR_TEMT   (1 << 6)  /* Transmitter empty */
-
-/*
- * x86_64 I/O port functions
- * x86_64 uses special instructions for port I/O
- */
-#if defined(__x86_64__)
-
-/* Read byte from I/O port */
-static inline uint8_t inb(uint16_t port)
-{
-    uint8_t value;
-    __asm__ volatile("inb %1, %0" : "=a"(value) : "Nd"(port));
-    return value;
-}
-
-/* Write byte to I/O port */
-static inline void outb(uint16_t port, uint8_t value)
-{
-    __asm__ volatile("outb %0, %1" : : "a"(value), "Nd"(port));
-}
-
-#endif /* __x86_64__ */
 
 /*
  * UART I/O functions
@@ -89,11 +71,11 @@ static inline void uart_wait_tx_ready(void)
 static void qemu_uart_putc(char c)
 {
 #if UART_IS_MMIO
-    #if defined(__aarch64__)
+    #if ARCH_AARCH64
         /* AArch64 uses PL011 UART (32-bit data register) */
         volatile uint32_t *uart_dr = (volatile uint32_t *)UART_BASE;
         *uart_dr = (uint32_t)c;
-    #elif defined(__riscv)
+    #elif ARCH_RISCV64
         /* RISC-V uses 16550 UART (8-bit data register) */
         volatile uint8_t *uart_dr = (volatile uint8_t *)UART_BASE;
         *uart_dr = (uint8_t)c;
@@ -136,27 +118,27 @@ static void qemu_panic(void) __attribute__((noreturn));
 static void qemu_panic(void)
 {
     /* Disable interrupts */
-#if defined(__aarch64__)
+#if ARCH_AARCH64
     __asm__ volatile("msr daifset, #0xF" ::: "memory");
-#elif defined(__riscv)
+#elif ARCH_RISCV64
     /* RISC-V: Disable all interrupts in S-mode */
     __asm__ volatile(
         "csrw sie, zero\n"     /* Disable supervisor interrupt enable */
         "csrw sip, zero\n"     /* Clear supervisor interrupt pending */
         ::: "memory"
     );
-#elif defined(__x86_64__)
+#elif ARCH_X86_64
     __asm__ volatile("cli" ::: "memory");
 #endif
 
     /* Hang */
     while (1) {
-#if defined(__aarch64__)
+#if ARCH_AARCH64
         __asm__ volatile("wfe");
-#elif defined(__riscv)
+#elif ARCH_RISCV64
         /* RISC-V: Use infinite loop with wfi, but also add a memory barrier */
         __asm__ volatile("wfi" ::: "memory");
-#elif defined(__x86_64__)
+#elif ARCH_X86_64
         __asm__ volatile("hlt");
 #endif
     }
@@ -170,47 +152,47 @@ static void qemu_shutdown(void) __attribute__((noreturn));
 
 static void qemu_shutdown(void)
 {
-#if defined(__aarch64__) || defined(__riscv)
-    /*
-     * QEMU virt: write "shutdown" to the QEMU Power Management register.
-     * On the QEMU virt machine this is a syscon-poweroff device at
-     * 0x08000000 (AArch64) / 0x100000 (RISC-V) -- but the portable
-     * way that works on both is the SBI SRST extension (RISC-V) or
-     * the PSCI SYSTEM_OFF call (AArch64).
-     */
-#if defined(__aarch64__)
-    /* PSCI SYSTEM_OFF via HVC (SMCCC 32-bit convention, funcid 0x84000008) */
-    register unsigned long x0 __asm__("x0") = 0x84000008UL;
-    __asm__ volatile("hvc #0" :: "r"(x0) : "memory");
-#elif defined(__riscv)
-    /* SBI SRST extension: sbi_system_reset(SHUTDOWN, GRACEFUL) */
-    register unsigned long a7 __asm__("a7") = 0x53525354UL; /* SBI_EXT_SRST */
-    register unsigned long a6 __asm__("a6") = 0x0UL;        /* SBI_SRST_RESET */
-    register unsigned long a0 __asm__("a0") = 0x0UL;        /* reset_type: shutdown */
-    register unsigned long a1 __asm__("a1") = 0x0UL;        /* reason: no reason */
-    __asm__ volatile("ecall"
-        : "+r"(a0)
-        : "r"(a7), "r"(a6), "r"(a1)
-        : "memory");
-#endif
-#elif defined(__x86_64__)
+#if ARCH_AARCH64 || ARCH_RISCV64
+        /*
+        * QEMU virt: write "shutdown" to the QEMU Power Management register.
+        * On the QEMU virt machine this is a syscon-poweroff device at
+        * 0x08000000 (AArch64) / 0x100000 (RISC-V) -- but the portable
+        * way that works on both is the SBI SRST extension (RISC-V) or
+        * the PSCI SYSTEM_OFF call (AArch64).
+        */
+    #if ARCH_AARCH64
+        /* PSCI SYSTEM_OFF via HVC (SMCCC 32-bit convention, funcid 0x84000008) */
+        register unsigned long x0 __asm__("x0") = 0x84000008UL;
+        __asm__ volatile("hvc #0" :: "r"(x0) : "memory");
+    #elif ARCH_RISCV64
+        /* SBI SRST extension: sbi_system_reset(SHUTDOWN, GRACEFUL) */
+        register unsigned long a7 __asm__("a7") = 0x53525354UL; /* SBI_EXT_SRST */
+        register unsigned long a6 __asm__("a6") = 0x0UL;        /* SBI_SRST_RESET */
+        register unsigned long a0 __asm__("a0") = 0x0UL;        /* reset_type: shutdown */
+        register unsigned long a1 __asm__("a1") = 0x0UL;        /* reason: no reason */
+        __asm__ volatile("ecall"
+            : "+r"(a0)
+            : "r"(a7), "r"(a6), "r"(a1)
+            : "memory");
+    #endif
+#elif ARCH_X86_64
     /*
      * x86_64 QEMU: write 0x2000 to ACPI PM1a control port (0x604)
      * This triggers an ACPI power-off on QEMU Q35/i440fx machines.
+     * PM1a_CNT is a 16-bit register; must be written as a single outw.
      */
-    outb(0x604, 0x00);
-    outb(0x605, 0x20);  /* value 0x2000: SLP_TYP=0, SLP_EN=1 for S5 */
+    outw(0x604, 0x2000);
 #endif
 
     /* Fallback: hang if shutdown did not take effect */
     while (1) {
-#if defined(__aarch64__)
+        #if ARCH_AARCH64
         __asm__ volatile("wfe");
-#elif defined(__riscv)
+        #elif ARCH_RISCV64
         __asm__ volatile("wfi" ::: "memory");
-#elif defined(__x86_64__)
+        #elif ARCH_X86_64
         __asm__ volatile("hlt");
-#endif
+        #endif
     }
     __builtin_unreachable();
 }

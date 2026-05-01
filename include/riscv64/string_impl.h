@@ -1,6 +1,6 @@
 #ifndef RISCV64_STRING_IMPL_H
 #define RISCV64_STRING_IMPL_H
-
+#include "types.h"
 /*
  * RISC-V 64位架构的字符串函数优化实现
  * 使用 RISC-V 向量扩展（V扩展）优化

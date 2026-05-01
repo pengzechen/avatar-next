@@ -244,3 +244,8 @@ void platform_panic(void);
 **版本**: 1.0
 **更新**: 2025-01-02
 **项目**: Avatar OS
+
+
+**规则**：今后所有跨平台 C 代码中的架构判断，一律 `#include "arch.h"` 后使用 `#if ARCH_X86_64` / `#if ARCH_AARCH64` / `#if ARCH_RISCV64`。
+
+已进行更改。

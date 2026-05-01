@@ -5,6 +5,7 @@
 
 #include "../boot/common/boot.h"
 #include "../boot/common/platform.h"
+#include "arch.h"
 #include "klog.h"
 #include "string.h"
 
@@ -22,11 +23,11 @@ void kernel_main(void)
     /* Print welcome message */
     KLOG_INFO("=== Avatar OS Kernel ===");
     KLOG_INFO("Architecture: "
-#if defined(__aarch64__)
+#if ARCH_AARCH64
         "AArch64 (ARM 64-bit)"
-#elif defined(__x86_64__)
+#elif ARCH_X86_64
         "x86_64 (AMD64/Intel 64)"
-#elif defined(__riscv)
+#elif ARCH_RISCV64
         "RISC-V 64-bit"
 #else
         "Unknown"

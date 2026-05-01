@@ -3,24 +3,25 @@
  * 用于验证编译器架构设置
  */
 
+#include "arch.h"
 #include "klog.h"
 
 void test_arch(void)
 {
     KLOG_INFO("=== Architecture Detection ===");
 
-#if defined(__x86_64__)
+#if ARCH_X86_64
     KLOG_INFO("Detected Architecture: x86_64 (AMD64/Intel 64)");
-    KLOG_INFO("__x86_64__ defined");
-#elif defined(__aarch64__)
+    KLOG_INFO("ARCH_X86_64 = 1");
+#elif ARCH_AARCH64
     KLOG_INFO("Detected Architecture: AArch64 (ARM 64-bit)");
-    KLOG_INFO("__aarch64__ defined");
+    KLOG_INFO("ARCH_AARCH64 = 1");
     #ifdef __ARM_ARCH
     KLOG_INFO("ARM Architecture version: %d", __ARM_ARCH);
     #endif
-#elif defined(__riscv)
+#elif ARCH_RISCV64
     KLOG_INFO("Detected Architecture: RISC-V 64-bit");
-    KLOG_INFO("__riscv defined");
+    KLOG_INFO("ARCH_RISCV64 = 1");
     KLOG_INFO("__riscv_xlen: %d (bit width)", __riscv_xlen);
 #else
     KLOG_ERROR("Unknown Architecture!");

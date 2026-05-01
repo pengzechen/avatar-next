@@ -105,7 +105,7 @@ ifeq ($(ARCH),x86_64)
     KERNEL_BIN    := $(BUILD_DIR)/kernel_x86_64.bin
     KERNEL_IMAGE  := $(BUILD_DIR)/kernel_x86_64.img
     QEMU          := qemu-system-x86_64
-    QEMU_FLAGS    := -machine q35 -m 128M -nographic -kernel $(KERNEL_TARGET)
+    QEMU_FLAGS    := -machine q35 -m 1G -nographic -kernel $(KERNEL_BIN)
 else ifeq ($(ARCH),aarch64)
     CC      := aarch64-linux-musl-gcc
     AR      := aarch64-linux-musl-ar

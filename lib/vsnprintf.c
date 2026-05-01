@@ -7,7 +7,6 @@
 #include "spinlock.h"
 #include "string.h"
 
-#define BUFSZ 512
 
 typedef struct pstream {
     char *buffer;
@@ -256,26 +255,4 @@ int my_vsnprintf(char *buf, int size, const char *fmt, va_list va)
     *s.buffer = 0;
     return s.added;
 }
-
-
-// int my_snprintf(char *buf, int size, const char *fmt, ...)
-// {
-//     va_list va;
-//     int r;
-
-//     va_start(va, fmt);
-//     r = my_vsnprintf(buf, size, fmt, va);
-//     va_end(va);
-//     return r;
-// }
-
-// int my_vprintf(const char *fmt, va_list va)
-// {
-//     char buf[BUFSZ];
-//     int r;
-
-//     r = my_vsnprintf(buf, sizeof(buf), fmt, va);
-//     uart_putstr(buf);
-//     return r;
-// }
 

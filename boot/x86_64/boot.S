@@ -8,8 +8,8 @@
  *
  * Memory layout:
  *   Physical base : 0x00200000  (2 MB)
- *   Virtual  base : 0xffff800000200000
- *   Offset        : 0xffff800000000000
+ *   Virtual  base : 0xffff8000_00200000
+ *   Offset        : 0xffff8000_00000000
  *
  * Multiboot flags: bit 1 (memory map) + bit 16 (address fields)
  *   With bit 16 the loader uses our explicit physical load address,

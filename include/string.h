@@ -6,7 +6,7 @@
 
 /* ===== 通用字符串函数实现 (static inline) ===== */
 
-static inline unsigned long
+static inline size_t
 strlen(const char *buf)
 {
     unsigned long len = 0;
