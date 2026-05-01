@@ -70,6 +70,20 @@ strchr(const char *s, int c)
     return (char *) s;
 }
 
+static inline int
+memcmp(const void *s1, const void *s2, size_t n)
+{
+    const unsigned char *a = s1, *b = s2;
+    int                  ret = 0;
+    while (n--) {
+        ret = *a - *b;
+        if (ret)
+            break;
+        ++a, ++b;
+    }
+    return ret;
+}
+
 static inline char *
 strstr(const char *s1, const char *s2)
 {
@@ -95,20 +109,6 @@ memset(void *s, int c, size_t n)
     for (i = 0; i < n; ++i)
         a[i] = c;
     return s;
-}
-
-static inline int
-memcmp(const void *s1, const void *s2, size_t n)
-{
-    const unsigned char *a = s1, *b = s2;
-    int                  ret = 0;
-    while (n--) {
-        ret = *a - *b;
-        if (ret)
-            break;
-        ++a, ++b;
-    }
-    return ret;
 }
 
 static inline void *

@@ -103,7 +103,7 @@ extern int  kprintf(const char *fmt, ...);
 /* ERROR 日志 - 总是显示 */
 #define KLOG_ERROR(fmt, ...) \
     do { \
-        kprintf(KLOG_COLOR_RED LOG_PREFIX "%s:%d: " fmt \
+        kprintf(KLOG_COLOR_RED "[ERROR] " "%s:%d: " fmt \
                KLOG_COLOR_RESET "\n", \
                __FILE__, __LINE__, ##__VA_ARGS__); \
     } while (0)
@@ -112,7 +112,7 @@ extern int  kprintf(const char *fmt, ...);
 #define KLOG_WARN(fmt, ...) \
     do { \
         if (g_log_level >= LOG_LEVEL_WARN) { \
-            kprintf(KLOG_COLOR_YELLOW LOG_PREFIX "%s:%d: " fmt \
+            kprintf(KLOG_COLOR_YELLOW "[WARN] " "%s:%d: " fmt \
                    KLOG_COLOR_RESET "\n", \
                    __FILE__, __LINE__, ##__VA_ARGS__); \
         } \
@@ -122,7 +122,7 @@ extern int  kprintf(const char *fmt, ...);
 #define KLOG_INFO(fmt, ...) \
     do { \
         if (g_log_level >= LOG_LEVEL_INFO) { \
-            kprintf(KLOG_COLOR_GREEN LOG_PREFIX "%s:%d: " fmt \
+            kprintf(KLOG_COLOR_GREEN "[INFO] " "%s:%d: " fmt \
                    KLOG_COLOR_RESET "\n", \
                    __FILE__, __LINE__, ##__VA_ARGS__); \
         } \
@@ -132,7 +132,7 @@ extern int  kprintf(const char *fmt, ...);
 #define KLOG_DEBUG(fmt, ...) \
     do { \
         if (g_log_level >= LOG_LEVEL_DEBUG) { \
-            kprintf(KLOG_COLOR_BLUE LOG_PREFIX "%s:%d: " fmt \
+            kprintf(KLOG_COLOR_BLUE "[DEBUG] " "%s:%d: " fmt \
                    KLOG_COLOR_RESET "\n", \
                    __FILE__, __LINE__, ##__VA_ARGS__); \
         } \
@@ -142,7 +142,7 @@ extern int  kprintf(const char *fmt, ...);
 #define KLOG_TRACE(fmt, ...) \
     do { \
         if (g_log_level >= LOG_LEVEL_TRACE) { \
-            kprintf(LOG_PREFIX "%s:%d: " fmt "\n", \
+            kprintf("[TRACE] " "%s:%d: " fmt "\n", \
                    __FILE__, __LINE__, ##__VA_ARGS__); \
         } \
     } while (0)
@@ -153,7 +153,7 @@ extern int  kprintf(const char *fmt, ...);
 #define KLOG_MODULE_DEBUG(module, fmt, ...) \
     do { \
         if ((g_log_level >= LOG_LEVEL_DEBUG) && log_is_module_enabled(module)) { \
-            kprintf(KLOG_COLOR_BLUE LOG_PREFIX "[MOD] %s:%d: " fmt \
+            kprintf(KLOG_COLOR_BLUE "[DEBUG] [MOD] " "%s:%d: " fmt \
                    KLOG_COLOR_RESET "\n", \
                    __FILE__, __LINE__, ##__VA_ARGS__); \
         } \
@@ -162,7 +162,7 @@ extern int  kprintf(const char *fmt, ...);
 #define KLOG_MODULE_TRACE(module, fmt, ...) \
     do { \
         if ((g_log_level >= LOG_LEVEL_TRACE) && log_is_module_enabled(module)) { \
-            kprintf(LOG_PREFIX "[MOD] %s:%d: " fmt "\n", \
+            kprintf("[TRACE] [MOD] " "%s:%d: " fmt "\n", \
                    __FILE__, __LINE__, ##__VA_ARGS__); \
         } \
     } while (0)
@@ -189,6 +189,25 @@ extern int  kprintf(const char *fmt, ...);
 #define printk kprintf
 
 /* ===== 条件编译优化 ===== */
+
+/* 调试：检查 LOG_LEVEL 的值 */
+#ifdef KLOG_DEBUG_BUILD
+    #if LOG_LEVEL == LOG_LEVEL_NONE
+        #pragma message "LOG_LEVEL is NONE"
+    #elif LOG_LEVEL == LOG_LEVEL_ERROR
+        #pragma message "LOG_LEVEL is ERROR"
+    #elif LOG_LEVEL == LOG_LEVEL_WARN
+        #pragma message "LOG_LEVEL is WARN"
+    #elif LOG_LEVEL == LOG_LEVEL_INFO
+        #pragma message "LOG_LEVEL is INFO"
+    #elif LOG_LEVEL == LOG_LEVEL_DEBUG
+        #pragma message "LOG_LEVEL is DEBUG"
+    #elif LOG_LEVEL == LOG_LEVEL_TRACE
+        #pragma message "LOG_LEVEL is TRACE"
+    #else
+        #pragma message "LOG_LEVEL is unknown"
+    #endif
+#endif
 
 /* 如果日志级别为 NONE，完全禁用日志（减少代码体积） */
 #if defined(LOG_NONE) || (LOG_LEVEL == LOG_LEVEL_NONE)

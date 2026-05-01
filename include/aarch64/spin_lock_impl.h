@@ -66,7 +66,7 @@ spin_lock_irqsave(spinlock_noirq_t *lock)
     uint64_t tmp;
     asm volatile(
         "   mrs %0, daif                  \n"
-        "   str %w0, [%1, #8]             \n"
+        "   str %0, [%1]                  \n"
         "   msr daifset, #2               \n"
         "   mov w2, #1                    \n"
         "1:  ldaxr w3, [%2]               \n"
@@ -75,7 +75,7 @@ spin_lock_irqsave(spinlock_noirq_t *lock)
         "   cbnz w3, 1b                   \n"
         "   dmb ish                       \n"
         : "=&r"(tmp)
-        : "r"(&lock->lock), "r"(&lock->lock)
+        : "r"(&lock->irq_flags), "r"(&lock->lock)
         : "memory", "cc", "w2", "w3");
 }
 
@@ -84,41 +84,42 @@ spin_trylock_irqsave(spinlock_noirq_t *lock)
 {
     uint64_t tmp;
     int     result;
+    uint64_t flags;
     asm volatile(
         "   mrs %0, daif                  \n"
-        "   str %w0, [%2, #8]             \n"
+        "   str %0, [%3]                  \n"
         "   msr daifset, #2               \n"
         "   mov w2, #1                    \n"
-        "   ldaxr w3, [%3]                \n"
+        "   ldaxr w3, [%4]                \n"
         "   cbnz w3, 2f                   \n"
-        "   stlxr w3, w2, [%3]            \n"
+        "   stlxr w3, w2, [%4]            \n"
         "   cbnz w3, 2f                   \n"
         "   dmb ish                       \n"
         "   mov %w1, #0                   \n"
         "   b 3f                          \n"
-        "2:  ldr x2, [%2, #8]             \n"
-        "   msr daif, x2                  \n"
+        "2:  ldr x5, [%3]                 \n"
+        "   msr daif, x5                  \n"
         "   mov %w1, #1                   \n"
         "3:                                \n"
-        : "=&r"(tmp), "=r"(result)
+        : "=&r"(tmp), "=r"(result), "=r"(flags)
         : "r"(&lock->irq_flags), "r"(&lock->lock)
-        : "memory", "cc", "w2", "w3", "x2");
+        : "memory", "cc", "w2", "w3", "x5");
     return result;
 }
 
 static inline void
 spin_unlock_irqrestore(spinlock_noirq_t *lock)
 {
-    uint64_t tmp;
+    uint64_t flags;
     asm volatile(
         "   dmb ish                       \n"
-        "   mov w2, #0                    \n"
-        "   stlr w2, [%1]                 \n"
-        "   ldr %0, [%2]                  \n"
-        "   msr daif, %0                  \n"
-        : "=&r"(tmp)
+        "   mov w1, #0                    \n"
+        "   stlr w1, [%0]                 \n"
+        "   ldr %1, [%2]                  \n"
+        "   msr daif, %1                  \n"
+        : "=&r"(flags)
         : "r"(&lock->lock), "r"(&lock->irq_flags)
-        : "memory", "cc", "w2");
+        : "memory", "cc", "w1");
 }
 
 #endif  // AARCH64_SPIN_LOCK_IMPL_H

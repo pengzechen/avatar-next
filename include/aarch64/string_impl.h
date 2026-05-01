@@ -71,14 +71,10 @@ memcpy_neon(void *dest, const void *src, size_t n)
     return dest;
 }
 
-/* 对于大块数据使用 NEON 优化，小块数据使用通用实现 */
+/* AArch64 使用通用实现（不使用 NEON，因为 -mgeneral-regs-only） */
 static inline void *
 memcpy(void *dest, const void *src, size_t n)
 {
-    /* 阈值：大于 128 字节使用 NEON 优化 */
-    if (n > 128) {
-        return memcpy_neon(dest, src, n);
-    }
     return memcpy_generic(dest, src, n);
 }
 
