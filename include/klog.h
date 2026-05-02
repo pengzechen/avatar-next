@@ -123,7 +123,7 @@ extern int  kprintf(const char *fmt, ...);
     do { \
         if (g_log_level >= LOG_LEVEL_INFO) { \
             kprintf(KLOG_COLOR_GREEN "[INFO] " "%s:%d: " fmt \
-                   KLOG_COLOR_RESET "\n", \
+                   KLOG_COLOR_RESET "", \
                    __FILE__, __LINE__, ##__VA_ARGS__); \
         } \
     } while (0)
@@ -133,7 +133,7 @@ extern int  kprintf(const char *fmt, ...);
     do { \
         if (g_log_level >= LOG_LEVEL_DEBUG) { \
             kprintf(KLOG_COLOR_BLUE "[DEBUG] " "%s:%d: " fmt \
-                   KLOG_COLOR_RESET "\n", \
+                   KLOG_COLOR_RESET "", \
                    __FILE__, __LINE__, ##__VA_ARGS__); \
         } \
     } while (0)

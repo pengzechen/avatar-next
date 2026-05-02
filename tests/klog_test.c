@@ -11,19 +11,19 @@ void
 test_log_levels(void)
 {
     /* ERROR 级别 - 总是显示 */
-    KLOG_ERROR("This is an error message: %s", "test error");
+    KLOG_ERROR("This is an error message: %s\n", "test error");
 
     /* WARN 级别 - LOG>=warn 时显示 */
-    KLOG_WARN("This is a warning message: %s", "test warning");
+    KLOG_WARN("This is a warning message: %s\n", "test warning");
 
     /* INFO 级别 - LOG>=info 时显示 */
-    KLOG_INFO("This is an info message: %s", "test info");
+    KLOG_INFO("This is an info message: %s\n", "test info");
 
     /* DEBUG 级别 - LOG>=debug 时显示 */
-    KLOG_DEBUG("This is a debug message: %s", "test debug");
+    KLOG_DEBUG("This is a debug message: %s\n", "test debug");
 
     /* TRACE 级别 - LOG==trace 时显示 */
-    KLOG_TRACE("This is a trace message: %s", "test trace");
+    KLOG_TRACE("This is a trace message: %s\n", "test trace");
 }
 
 /* 测试模块日志 */
@@ -50,17 +50,17 @@ test_module_logs(void)
 void
 test_dynamic_level(void)
 {
-    KLOG_INFO("Setting log level to DEBUG");
+    KLOG_INFO("Setting log level to DEBUG\n");
     set_log_level(LOG_LEVEL_DEBUG);
 
-    KLOG_DEBUG("This debug message should be visible");
-    KLOG_TRACE("This trace message should NOT be visible");
+    KLOG_DEBUG("This debug message should be visible\n");
+    KLOG_TRACE("This trace message should NOT be visible\n");
 
-    KLOG_INFO("Setting log level to TRACE");
+    KLOG_INFO("Setting log level to TRACE\n");
     set_log_level(LOG_LEVEL_TRACE);
 
-    KLOG_DEBUG("This debug message should be visible");
-    KLOG_TRACE("This trace message should NOW be visible");
+    KLOG_DEBUG("This debug message should be visible\n");
+    KLOG_TRACE("This trace message should NOW be visible\n");
 }
 
 /* 测试带格式的日志 */
@@ -70,9 +70,9 @@ test_formatted_logs(void)
     int value = 42;
     void *ptr = (void *)0xDEADBEEF;
 
-    KLOG_INFO("Value: %d", value);
-    KLOG_INFO("Pointer: %p", ptr);
-    KLOG_ERROR("Failed at %s:%d", __FILE__, __LINE__);
+    KLOG_INFO("Value: %d\n", value);
+    KLOG_INFO("Pointer: %p\n", ptr);
+    KLOG_ERROR("Failed at %s:%d\n", __FILE__, __LINE__);
 
     /* 避免未使用警告 */
     (void)value;
@@ -83,19 +83,19 @@ test_formatted_logs(void)
 void
 run_klog_tests(void)
 {
-    KLOG_INFO("=== Kernel Log System Test ===");
+    KLOG_INFO("=== Kernel Log System Test ===\n");
 
-    KLOG_INFO("\n--- Testing Log Levels ---");
+    KLOG_INFO("\n--- Testing Log Levels ---\n");
     test_log_levels();
 
-    KLOG_INFO("\n--- Testing Module Logs ---");
+    KLOG_INFO("\n--- Testing Module Logs ---\n");
     test_module_logs();
 
-    KLOG_INFO("\n--- Testing Dynamic Level Switching ---");
+    KLOG_INFO("\n--- Testing Dynamic Level Switching ---\n");
     test_dynamic_level();
 
-    KLOG_INFO("\n--- Testing Formatted Logs ---");
+    KLOG_INFO("\n--- Testing Formatted Logs ---\n");
     test_formatted_logs();
 
-    KLOG_INFO("=== Test Complete ===");
+    KLOG_INFO("=== Test Complete ===\n");
 }

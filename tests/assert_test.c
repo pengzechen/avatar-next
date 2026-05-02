@@ -108,7 +108,7 @@ test_arithmetic_assumptions(void)
 void
 run_assert_tests(void)
 {
-    KLOG_INFO("=== Assert System Test ===");
+    KLOG_INFO("=== Assert System Test ===\n");
 
     /* 注意：以下测试会触发 panic！ */
 
@@ -120,5 +120,5 @@ run_assert_tests(void)
     test_pointer_validity();     /* 应该成功 */
     test_arithmetic_assumptions();  /* 应该成功 */
 
-    KLOG_INFO("=== Non-panic tests passed ===");
+    KLOG_INFO("=== Non-panic tests passed ===\n");
 }

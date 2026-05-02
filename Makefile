@@ -61,13 +61,54 @@ DEPS    := $(OBJECTS:.o=.d)
 KLOG_SOURCES := $(LIB_DIR)/klog.c
 VSNPRINTF_SOURCES := $(LIB_DIR)/vsnprintf.c
 STRING_SOURCES := $(LIB_DIR)/string.c
+BITMAP_SOURCES := $(LIB_DIR)/bitmap.c
 KLOG_OBJECT  := $(BUILD_DIR)/klog.o
 VSNPRINTF_OBJECT := $(BUILD_DIR)/vsnprintf.o
 STRING_OBJECT := $(BUILD_DIR)/string.o
+BITMAP_OBJECT := $(BUILD_DIR)/bitmap.o
 
 # 内核源文件
 KERNEL_SOURCES := $(KERNEL_DIR)/main.c
 KERNEL_OBJECTS := $(KERNEL_SOURCES:$(KERNEL_DIR)/%.c=$(BUILD_DIR)/kernel_%.o)
+
+# MMU 和 VM 模块
+VM_C_SOURCES := $(KERNEL_DIR)/mm/pmm.c $(KERNEL_DIR)/mm/pmm_test.c
+VM_C_OBJECTS := $(BUILD_DIR)/kernel_mm_pmm.o $(BUILD_DIR)/kernel_mm_pmm_test.o
+
+# 架构特定的 VM 模块
+ifeq ($(ARCH),aarch64)
+    VM_C_SOURCES += $(KERNEL_DIR)/mm/aarch64/vm_early.c
+    VM_C_OBJECTS += $(BUILD_DIR)/kernel_mm_vm_early.o
+    VM_C_SOURCES += $(KERNEL_DIR)/mm/aarch64/vmm.c
+    VM_C_OBJECTS += $(BUILD_DIR)/kernel_mm_vmm.o
+else ifeq ($(ARCH),riscv64)
+    # RISC-V VM 模块（如果有的话）
+    # VM_C_SOURCES += $(KERNEL_DIR)/mm/riscv64/vm_early.c
+    # VM_C_OBJECTS += $(BUILD_DIR)/kernel_mm_vm_early.o
+else ifeq ($(ARCH),x86_64)
+    # x86_64 VM 模块（如果有的话）
+    # VM_C_SOURCES += $(KERNEL_DIR)/mm/x86_64/vm_early.c
+    # VM_C_OBJECTS += $(BUILD_DIR)/kernel_mm_vm_early.o
+endif
+
+# 架构特定的 MMU 汇编
+ifeq ($(ARCH),aarch64)
+    VM_S_SRC := $(KERNEL_DIR)/mm/aarch64/mmu.S
+    VM_EARLY_C_SRC := $(KERNEL_DIR)/mm/aarch64/vm_early.c
+else ifeq ($(ARCH),riscv64)
+    VM_S_SRC := $(KERNEL_DIR)/mm/riscv64/mmu.S
+    # VM_EARLY_C_SRC := $(KERNEL_DIR)/mm/riscv64/vm_early.c
+else ifeq ($(ARCH),x86_64)
+    VM_S_SRC := $(KERNEL_DIR)/mm/x86_64/mmu.S
+    # VM_EARLY_C_SRC := $(KERNEL_DIR)/mm/x86_64/vm_early.c
+endif
+VM_S_OBJ := $(BUILD_DIR)/kernel_mm_mmu.o
+
+# 如果存在架构特定的 VM 早期初始化代码，添加到编译列表
+ifdef VM_EARLY_C_SRC
+    VM_C_SOURCES += $(VM_EARLY_C_SRC)
+    VM_C_OBJECTS += $(BUILD_DIR)/kernel_mm_vm_early.o
+endif
 
 # task 模块源文件
 TASK_C_SOURCES := $(KERNEL_DIR)/task/task.c $(KERNEL_DIR)/task/sched.c $(KERNEL_DIR)/task/mutex.c
@@ -157,7 +198,7 @@ ifeq ($(ARCH),x86_64)
     KERNEL_BIN    := $(BUILD_DIR)/kernel_x86_64.bin
     KERNEL_IMAGE  := $(BUILD_DIR)/kernel_x86_64.img
     QEMU          := qemu-system-x86_64
-    QEMU_FLAGS    := -machine q35 -m 1G -nographic -kernel $(KERNEL_BIN)
+    QEMU_FLAGS    := -machine q35 -m 2G -nographic -kernel $(KERNEL_BIN)
 else ifeq ($(ARCH),aarch64)
     CC      := aarch64-linux-musl-gcc
     AR      := aarch64-linux-musl-ar
@@ -177,7 +218,7 @@ else ifeq ($(ARCH),aarch64)
     KERNEL_TARGET := $(BUILD_DIR)/kernel_aarch64.elf
     KERNEL_BIN    := $(BUILD_DIR)/kernel_aarch64.bin
     QEMU          := qemu-system-aarch64
-    QEMU_FLAGS    := -cpu cortex-a72 -M virt -m 1G -nographic -kernel $(KERNEL_BIN)
+    QEMU_FLAGS    := -cpu cortex-a72 -M virt -m 2G -nographic -kernel $(KERNEL_BIN)
 else ifeq ($(ARCH),riscv64)
     CC      := riscv64-linux-musl-gcc
     AR      := riscv64-linux-musl-ar
@@ -198,7 +239,7 @@ else ifeq ($(ARCH),riscv64)
     KERNEL_TARGET := $(BUILD_DIR)/kernel_riscv64.elf
     KERNEL_BIN    := $(BUILD_DIR)/kernel_riscv64.bin
     QEMU          := qemu-system-riscv64
-    QEMU_FLAGS    := -M virt -m 1G -nographic -bios default -kernel $(KERNEL_BIN)
+    QEMU_FLAGS    := -M virt -m 2G -nographic -bios default -kernel $(KERNEL_BIN)
 else
     $(error Unsupported architecture: $(ARCH). Use ARCH=x86_64, aarch64 or riscv64)
 endif
@@ -207,6 +248,7 @@ endif
 CFLAGS  += -nostdinc
 CFLAGS  += -Idriver
 CFLAGS  += -Ikernel
+CFLAGS  += -Ikernel/mm
 
 # UART 驱动选择（与架构解耦）
 # 用法：make ARCH=aarch64 UART=dw kernel
@@ -339,8 +381,30 @@ $(BUILD_DIR)/kernel_task_mutex.o: $(KERNEL_DIR)/task/mutex.c | $(BUILD_DIR)
 $(BUILD_DIR)/task_switch.o: $(TASK_S_SRC) | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
+# VM 模块编译规则
+$(BUILD_DIR)/kernel_mm_vm_early.o: $(VM_EARLY_C_SRC) | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/kernel_mm_pmm.o: $(KERNEL_DIR)/mm/pmm.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/kernel_mm_pmm_test.o: $(KERNEL_DIR)/mm/pmm_test.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# 架构特定的 VMM 模块（仅 AArch64）
+ifeq ($(ARCH),aarch64)
+$(BUILD_DIR)/kernel_mm_vmm.o: $(KERNEL_DIR)/mm/aarch64/vmm.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+endif
+
+$(BUILD_DIR)/bitmap.o: $(LIB_DIR)/bitmap.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/kernel_mm_mmu.o: $(VM_S_SRC) | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
 # 链接内核 ELF 文件
-$(KERNEL_TARGET): $(BOOT_OBJECTS) $(KERNEL_OBJECTS) $(TASK_C_OBJECTS) $(TASK_S_OBJ) $(TESTS_OBJECTS) $(PLATFORM_OBJECTS) $(DRIVER_OBJECTS) $(EXCEPTION_OBJECTS) $(KLOG_OBJECT) $(VSNPRINTF_OBJECT) $(STRING_OBJECT) | $(BUILD_DIR)
+$(KERNEL_TARGET): $(BOOT_OBJECTS) $(KERNEL_OBJECTS) $(TASK_C_OBJECTS) $(TASK_S_OBJ) $(VM_C_OBJECTS) $(VM_S_OBJ) $(TESTS_OBJECTS) $(PLATFORM_OBJECTS) $(DRIVER_OBJECTS) $(EXCEPTION_OBJECTS) $(KLOG_OBJECT) $(VSNPRINTF_OBJECT) $(STRING_OBJECT) $(BITMAP_OBJECT) | $(BUILD_DIR)
 	$(CC) $(LDFLAGS) -nostartfiles -nodefaultlibs -T $(BOOT_DIR)/$(ARCH)/link.ld -o $@ $^
 
 # 转换为二进制文件

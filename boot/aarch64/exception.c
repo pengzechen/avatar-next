@@ -29,20 +29,22 @@ void handle_sync_exception(uint64_t *stack_pointer)
     for (int i = 0; i < NUM_REGS; i++)
     {
         uint64_t value = el1_ctx->r[i];
-        KLOG_INFO("General-purpose register: %d, value: %x\n", i, value);
+        kprintf("General-purpose register: 0x%d, value: 0x%llx\n", i, value);
     }
 
     uint64_t elr_el1_value = el1_ctx->elr;
     uint64_t usp_value = el1_ctx->usp;
     uint64_t spsr_value = el1_ctx->spsr;
 
-    KLOG_INFO("usp: %x, elr: %x, spsr: %x\n", usp_value, elr_el1_value, spsr_value);
+    KLOG_INFO("usp: 0x%llx, elr: 0x%llx, spsr: 0x%llx\n", usp_value, elr_el1_value, spsr_value);
 
     /* Skip the faulting instruction to avoid infinite loop */
     /* AArch64 instructions are 4 bytes */
     el1_ctx->elr += 4;
 
-    KLOG_INFO("Exception handled, skipping instruction. New ELR: %x\n", el1_ctx->elr);
+    KLOG_INFO("Exception handled, skipping instruction. New ELR: 0x%llx\n", el1_ctx->elr);
+
+    do_platform_panic();
 }
 
 void handle_irq_exception(uint64_t *stack_pointer)

@@ -156,6 +156,14 @@ void do_platform_panic(void)
 }
 
 /*
+ * Platform panic entry point (for assert.h)
+ */
+void platform_panic(void)
+{
+    do_platform_panic();
+}
+
+/*
  * Platform shutdown wrapper
  */
 void do_platform_shutdown(void)

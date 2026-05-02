@@ -1,0 +1,38 @@
+
+#ifndef VMM_H
+#define VMM_H
+
+#include "types.h"
+
+/* ── VMM API ───────────────────────────────────────────────────── */
+
+/**
+ * kalloc_pages - 分配物理页面并返回虚拟地址
+ * @pages: 页面数
+ *
+ * 返回：虚拟地址，失败返回 NULL
+ */
+void *kalloc_pages(uint32_t pages);
+
+/**
+ * kfree_pages - 释放虚拟地址对应的物理页面
+ * @addr: 虚拟地址
+ * @pages: 页面数
+ */
+void kfree_pages(void *addr, uint32_t pages);
+
+/* ── VMM 测试函数 ───────────────────────────────────────────── */
+
+/**
+ * kmem_test - 运行 VMM 模块的所有测试
+ *
+ * 测试包括：
+ * - 物理内存分配/释放
+ * - 页表查找和创建
+ * - 内存映射
+ * - UVM 分配和释放
+ * - 数据拷贝
+ */
+void kmem_test(void);
+
+#endif

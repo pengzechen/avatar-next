@@ -27,6 +27,9 @@ SECTIONS
     . = 0xffff800000200000;
     _skernel = .;
 
+    /* 导出内核符号供 C 代码使用 */
+    PROVIDE(__kernel_start = .);
+
     /* ---- text ---- */
     .text : ALIGN(4K) {
         _stext = .;
@@ -63,6 +66,11 @@ SECTIONS
         __bss_end = .;
         _ebss = .;       /* multiboot bss_end_addr */
     }
+
+    /*
+     * 内核结束标记（用于内存管理）
+     */
+    __kernel_end = .;
 
     _ekernel = .;
 

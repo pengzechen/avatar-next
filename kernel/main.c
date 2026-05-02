@@ -10,10 +10,12 @@
 #include "string.h"
 #include "task/task.h"
 #include "task/sched.h"
+#include "pmm.h"
 
 #if ARCH_AARCH64
 #include "irq/irq.h"
 #include "timer/timer.h"
+#include "mm/aarch64/vmm.h"
 #elif ARCH_RISCV64
 #include "exception.h"
 #include "timer/timer.h"
@@ -31,6 +33,10 @@ extern void run_mutex_tests(void);
 extern void run_mutex_demo(void);
 extern void run_mutex_stress_test(void);
 extern void run_mutex_comparison_test(void);
+
+#if ARCH_AARCH64
+extern void kmem_test(void);
+#endif
 
 /* ── 演示任务 ─────────────────────────────────────────────── */
 
@@ -98,71 +104,86 @@ void kernel_main(void)
 #endif
     );
 
+    /* ── 初始化物理内存管理器 ───────────────────────────────── */
+    KLOG_INFO("");
+    pmm_initialize();
+
+    /* ── 运行 PMM 测试 ───────────────────────────────────────── */
+    KLOG_INFO("");
+    //run_pmm_tests();
+
 #if ARCH_AARCH64
+    // /* ── 运行 VMM 测试 ───────────────────────────────────────── */
+    // KLOG_INFO("");
+    KLOG_INFO("=== Running VMM Tests ===\n");
+    kmem_test();
+    KLOG_INFO("VMM tests completed\n");
 
     /* Initialize GIC (interrupt controller) */
-    KLOG_INFO("Initializing GICv2 interrupt controller...");
+    KLOG_INFO("Initializing GICv2 interrupt controller...\n");
     irq_init();
-    KLOG_INFO("GICv2 initialized");
+    KLOG_INFO("GICv2 initialized\n");
 
     /* Initialize timer */
-    KLOG_INFO("Initializing timer...");
+    KLOG_INFO("Initializing timer...\n");
     timer_init();
     timer_enable();
-    KLOG_INFO("Timer enabled");
+    KLOG_INFO("Timer enabled\n");
 
 #elif ARCH_RISCV64
 
     /* Initialize exception handler (sets stvec, enables sstatus.SIE) */
-    KLOG_INFO("Initializing exception handler...");
+    KLOG_INFO("Initializing exception handler...\n");
     exception_init();
 
     /* Initialize timer (also registers timer_handler via irq_install) */
-    KLOG_INFO("Initializing timer...");
+    KLOG_INFO("Initializing timer...\n");
     timer_init();
     timer_enable();
-    KLOG_INFO("Timer enabled");
+    KLOG_INFO("Timer enabled\n");
 
 #elif ARCH_X86_64
 
     /* Initialize IDT and LAPIC */
-    KLOG_INFO("Initializing IDT + LAPIC...");
+    KLOG_INFO("Initializing IDT + LAPIC...\n");
     exception_init();
 
     /* Initialize timer (registers handler, calibrates LAPIC frequency) */
-    KLOG_INFO("Initializing timer...");
+    KLOG_INFO("Initializing timer...\n");
     timer_init();
     timer_enable();
-    KLOG_INFO("Timer enabled");
+    KLOG_INFO("Timer enabled\n");
 
 #endif
 
     /* Run all tests */
-    KLOG_INFO("Running tests...");
+    KLOG_INFO("Running tests...\n");
     run_all_tests();
 
     /* All tests completed */
-    KLOG_INFO("All tests completed successfully!");
+    KLOG_INFO("All tests completed successfully!\n");
 
     /* ── 初始化任务子系统 ───────────────────────────────── */
-    KLOG_INFO("Initializing task subsystem...");
+    KLOG_INFO("Initializing task subsystem...\n");
     task_init();
 
     /* 将 sched_tick 注册为 timer tick 回调，启用抢占 */
     timer_set_tick_cb(sched_tick);
-    KLOG_INFO("Preemptive scheduling enabled");
+    KLOG_INFO("Preemptive scheduling enabled\n");
 
-    /* ── 运行 Mutex 测试 ──────────────────────────────────── */
-    KLOG_INFO("");
+    
+    /* Mutex tests */
+    KLOG_INFO("--- Mutex Tests ---\n");
     run_mutex_demo();
-    KLOG_INFO("");
 
+#if 0
     /* 创建演示任务（如果需要） */
-    /* task_create("task_a", demo_task_a, NULL, 1); */
-    /* task_create("task_b", demo_task_b, NULL, 1); */
-    /* task_create("task_c", demo_task_c, NULL, 1); */
+    task_create("task_a", demo_task_a, NULL, 1); 
+    task_create("task_b", demo_task_b, NULL, 1); 
+    task_create("task_c", demo_task_c, NULL, 1); 
+#endif
 
-    KLOG_INFO("Demo tasks created. Entering idle loop...");
+    KLOG_INFO("Demo tasks created. Entering idle loop...\n");
 
 #if ARCH_AARCH64 || ARCH_RISCV64 || ARCH_X86_64
     /* idle 循环：持续 yield，让其他任务运行 */
@@ -179,29 +200,29 @@ void kernel_main(void)
 #endif /* ARCH_AARCH64 || ARCH_RISCV64 || ARCH_X86_64 */
 
     /* Shutdown */
-    KLOG_INFO("Kernel shutting down...");
+    KLOG_INFO("Kernel shutting down...\n");
     do_platform_shutdown();
 }
 
 void run_all_tests(void)
 {
     /* Run architecture test */
-    KLOG_INFO("--- Architecture Detection Test ---");
+    KLOG_INFO("--- Architecture Detection Test ---\n");
     test_arch();
     KLOG_INFO("");
 
     /* Run klog test */
-    KLOG_INFO("--- Kernel Log Test ---");
+    KLOG_INFO("--- Kernel Log Test ---\n");
     run_klog_tests();
     KLOG_INFO("");
 
     /* Run string test */
-    KLOG_INFO("--- String Test ---");
+    KLOG_INFO("--- String Test ---\n");
     test_string_functions();
     KLOG_INFO("");
 
     /* Run assert test */
-    KLOG_INFO("--- Assert Test ---");
+    KLOG_INFO("--- Assert Test ---\n");
     run_assert_tests();
     KLOG_INFO("");
 }
@@ -211,7 +232,7 @@ void run_all_tests(void)
 void
 run_mutex_demo(void)
 {
-    KLOG_INFO("--- Mutex Comparison Test (No Lock vs With Lock) ---");
+    KLOG_INFO("--- Mutex Comparison Test (No Lock vs With Lock) ---\n");
     run_mutex_comparison_test();
     KLOG_INFO("");
 

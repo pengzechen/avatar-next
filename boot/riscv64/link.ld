@@ -13,6 +13,9 @@ SECTIONS
      */
     . = 0x80200000;
 
+    /* 导出内核符号供 C 代码使用 */
+    PROVIDE(__kernel_start = .);
+
     /*
      * Boot code section
      * Must be first for QEMU to find entry point
@@ -50,6 +53,11 @@ SECTIONS
         *(COMMON)
         __bss_end = .;
     }
+
+    /*
+     * 内核结束标记（用于内存管理）
+     */
+    __kernel_end = .;
 
     /*
      * Stack symbols (defined in boot.S .bss section)

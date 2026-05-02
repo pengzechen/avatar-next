@@ -8,21 +8,21 @@
 
 void test_arch(void)
 {
-    KLOG_INFO("=== Architecture Detection ===");
+    KLOG_INFO("=== Architecture Detection ===\n");
 
 #if ARCH_X86_64
-    KLOG_INFO("Detected Architecture: x86_64 (AMD64/Intel 64)");
-    KLOG_INFO("ARCH_X86_64 = 1");
+    KLOG_INFO("Detected Architecture: x86_64 (AMD64/Intel 64)\n");
+    KLOG_INFO("ARCH_X86_64 = 1\n");
 #elif ARCH_AARCH64
-    KLOG_INFO("Detected Architecture: AArch64 (ARM 64-bit)");
-    KLOG_INFO("ARCH_AARCH64 = 1");
+    KLOG_INFO("Detected Architecture: AArch64 (ARM 64-bit)\n");
+    KLOG_INFO("ARCH_AARCH64 = 1\n");
     #ifdef __ARM_ARCH
-    KLOG_INFO("ARM Architecture version: %d", __ARM_ARCH);
+    KLOG_INFO("ARM Architecture version: %d\n", __ARM_ARCH);
     #endif
 #elif ARCH_RISCV64
-    KLOG_INFO("Detected Architecture: RISC-V 64-bit");
-    KLOG_INFO("ARCH_RISCV64 = 1");
-    KLOG_INFO("__riscv_xlen: %d (bit width)", __riscv_xlen);
+    KLOG_INFO("Detected Architecture: RISC-V 64-bit\n");
+    KLOG_INFO("ARCH_RISCV64 = 1\n");
+    KLOG_INFO("__riscv_xlen: %d (bit width)\n", __riscv_xlen);
 #else
     KLOG_ERROR("Unknown Architecture!");
     KLOG_ERROR("Please compile with:");
@@ -31,9 +31,9 @@ void test_arch(void)
     KLOG_ERROR("  RISC-V64:  gcc -D__riscv -march=rv64gc ...");
 #endif
 
-    KLOG_INFO("=== Compiler Information ===");
-    KLOG_INFO("Pointer size: %u bytes", (unsigned int)sizeof(void *));
-    KLOG_INFO("Long size: %u bytes", (unsigned int)sizeof(long));
-    KLOG_INFO("Long long size: %u bytes", (unsigned int)sizeof(long long));
+    KLOG_INFO("=== Compiler Information ===\n");
+    KLOG_INFO("Pointer size: %u bytes\n", (unsigned int)sizeof(void *));
+    KLOG_INFO("Long size: %u bytes\n", (unsigned int)sizeof(long));
+    KLOG_INFO("Long long size: %u bytes\n", (unsigned int)sizeof(long long));
 }
 
