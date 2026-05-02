@@ -119,7 +119,7 @@
 
 typedef struct gic_t
 {
-    uint32_t irq_nr;
+    int32_t irq_nr;
 } gic_t;
 
 typedef enum
@@ -190,7 +190,7 @@ gic_get_ipriority(int32_t vector);
 void gic_set_target(int32_t int_id, uint8_t target);
 int32_t
 gic_get_target(int32_t int_id);
-void gic_set_icfgr(uint32_t int_id, uint8_t cfg);
+void gic_set_icfgr(int32_t int_id, uint8_t cfg);
 
 uint32_t
 gic_make_virtual_hardware_interrupt(uint32_t vector, uint32_t pintvec, int32_t pri, bool grp1);

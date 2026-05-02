@@ -88,6 +88,11 @@ timer_handler(void *frame)
 
     /* LAPIC 必须手动发 EOI */
     lapic_eoi();
+
+    // 调用 tick 回调（调度器 sched_tick）
+    if (g_tick_cb) {
+        g_tick_cb();
+    }
 }
 
 #endif /* __TIMER_X86_64_IMPL_H__ */

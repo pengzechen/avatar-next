@@ -105,6 +105,10 @@ timer_handler(uint64_t *stack_pointer)
     // 调度下一个tick
     timer_schedule_next_tick();
 
+    // 调用 tick 回调（调度器 sched_tick）
+    if (g_tick_cb) {
+        g_tick_cb();
+    }
 }
 
 #endif /* __TIMER_AARCH64_IMPL_H__ */

@@ -1,0 +1,126 @@
+/*
+ * kernel/task/sched.c — 内核轮转调度器
+ *
+ * 设计：
+ *   - 就绪队列（g_run_queue）：list_t，FIFO 顺序
+ *   - idle 任务（g_idle）：队列为空时的回退任务，永不入队
+ *   - sched_schedule() 关中断保护调度决策和上下文切换
+ *
+ * 调度语义（以 sched_schedule 为核心）：
+ *   1. 关中断，保存当前中断标志（flags）
+ *   2. 若当前任务 state == RUNNING 且不是 idle，则将其改为 READY 并入队尾
+ *   3. 从队头取下一任务；队空则选 idle
+ *   4. 若 next == prev，则恢复 RUNNING 状态，开中断，返回（无切换）
+ *   5. 将 next 设为 RUNNING，更新 g_current_task
+ *   6. arch_task_switch() — 切换上下文；此行 "返回" 时已是 prev 再次被调度
+ *   7. arch_irq_restore(flags) — 恢复 prev 进入调度时的中断状态
+ *
+ * 关于中断状态的正确性：
+ *   - 若 prev 是被 timer ISR 抢占：flags = "关中断"；恢复后仍关，
+ *     然后通过 ISR 的 eret/sret/iretq 还原到被中断前（开中断）的状态。
+ *   - 若 prev 是主动 yield：flags = "开中断"；恢复后直接开中断。
+ *   - 新任务（首次运行）：arch_task_switch 跳转到 task_trampoline，
+ *     trampoline 调用 arch_irq_enable() 显式开中断。
+ */
+
+#include "task/sched.h"
+#include "task/switch.h"
+#include "klog.h"
+
+/* ── Scheduler state ─────────────────────────────────────── */
+
+static list_t   g_run_queue;   /* 就绪任务队列（不含 idle）*/
+static task_t  *g_idle;        /* idle 任务，队空时运行    */
+
+/* ── sched_init ──────────────────────────────────────────── */
+
+void
+sched_init(task_t *idle_task)
+{
+    list_init(&g_run_queue);
+    g_idle = idle_task;
+}
+
+/* ── sched_enqueue ───────────────────────────────────────── */
+
+void
+sched_enqueue(task_t *task)
+{
+    list_node_init(&task->run_node);
+    list_insert_last(&g_run_queue, &task->run_node);
+}
+
+/* ── sched_dequeue ───────────────────────────────────────── */
+
+void
+sched_dequeue(task_t *task)
+{
+    if (list_contains(&g_run_queue, &task->run_node)) {
+        list_delete(&g_run_queue, &task->run_node);
+    }
+}
+
+/* ── 内部：选择下一个任务 ─────────────────────────────────── */
+
+static task_t *
+pick_next(void)
+{
+    list_node_t *node = list_delete_first(&g_run_queue);
+    if (node) {
+        return container_of(node, task_t, run_node);
+    }
+    return g_idle; /* 队列为空，回退到 idle */
+}
+
+/* ── sched_schedule ──────────────────────────────────────── */
+
+void
+sched_schedule(void)
+{
+    /* 关中断，保存当前中断标志 */
+    uint64_t flags = arch_irq_save();
+
+    task_t *prev = g_current_task;
+
+    /* 若当前任务仍在运行且不是 idle，则重新入队尾 */
+    if (prev->state == TASK_RUNNING && prev != g_idle) {
+        prev->state = TASK_READY;
+        list_insert_last(&g_run_queue, &prev->run_node);
+    }
+
+    task_t *next = pick_next();
+
+    /* 无需切换（唯一任务或队空只有 idle） */
+    if (next == prev) {
+        prev->state = TASK_RUNNING;
+        arch_irq_restore(flags);
+        return;
+    }
+
+    next->state    = TASK_RUNNING;
+    g_current_task = next;
+
+    /*
+     * 切换上下文。
+     * 对 prev：保存被调用者寄存器 + SP 到 prev->sp，然后跳走。
+     * 当 prev 再次被调度时，arch_task_switch 从这里"返回"。
+     * 此时 flags 在 prev 的栈帧中，中断仍关闭。
+     */
+    arch_task_switch(&prev->sp, next->sp);
+
+    /* prev 被恢复后恢复其中断状态 */
+    arch_irq_restore(flags);
+}
+
+/* ── sched_tick ──────────────────────────────────────────── */
+
+void
+sched_tick(void)
+{
+    /*
+     * 由 timer ISR 调用，此时中断已被 CPU 自动关闭。
+     * sched_schedule 内部会再次 arch_irq_save（幂等），
+     * 并在 arch_task_switch 后 arch_irq_restore 还原状态。
+     */
+    sched_schedule();
+}

@@ -358,7 +358,7 @@ void gic_set_target(int32_t int_id, uint8_t target)
 }
 
 // Set the interrupt configuration (edge/level)
-void gic_set_icfgr(uint32_t int_id, uint8_t cfg)
+void gic_set_icfgr(int32_t int_id, uint8_t cfg)
 {
     if (int_id < 16)
     {

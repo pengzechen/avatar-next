@@ -2,6 +2,28 @@
 #include "klog.h"
 
 // ============================================================
+// 全局变量定义（在架构实现包含之前，使 timer_handler 可见）
+// ============================================================
+volatile uint64_t g_system_ticks    = 0;
+volatile uint64_t g_timer_frequency = 0;
+timer_stats_t     g_timer_stats     = {0};
+
+/* tick 回调（调度器通过 timer_set_tick_cb 注册）*/
+static timer_tick_cb_t g_tick_cb = NULL;
+
+void
+timer_set_tick_cb(timer_tick_cb_t cb)
+{
+    g_tick_cb = cb;
+}
+
+// RISC-V 特定的全局变量
+#if ARCH_RISCV64
+volatile uint64_t g_uptime_seconds = 0;
+volatile uint32_t g_tick_counter   = 0;
+#endif
+
+// ============================================================
 // 包含架构特定实现
 // ============================================================
 #if ARCH_AARCH64
@@ -19,19 +41,6 @@
         })
 #else
     #error "Unsupported architecture"
-#endif
-
-// ============================================================
-// 全局变量定义
-// ============================================================
-volatile uint64_t g_system_ticks    = 0;
-volatile uint64_t g_timer_frequency = 0;
-timer_stats_t     g_timer_stats     = {0};
-
-// RISC-V 特定的全局变量
-#if ARCH_RISCV64
-volatile uint64_t g_uptime_seconds = 0;
-volatile uint32_t g_tick_counter   = 0;
 #endif
 
 // ============================================================

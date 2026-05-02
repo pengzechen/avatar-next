@@ -8,6 +8,8 @@
 #include "arch.h"
 #include "klog.h"
 #include "string.h"
+#include "task/task.h"
+#include "task/sched.h"
 
 #if ARCH_AARCH64
 #include "irq/irq.h"
@@ -25,6 +27,36 @@ extern void test_arch(void);
 extern void run_klog_tests(void);
 extern void test_string_functions(void);
 extern void run_assert_tests(void);
+
+/* ── 演示任务 ─────────────────────────────────────────────── */
+
+static void demo_task_a(void *arg)
+{
+    (void)arg;
+    uint32_t count = 0;
+    while (1) {
+        count++;
+        if (count % 50 == 0) {
+            KLOG_INFO("[task_a] count=%u ticks=%llu",
+                      count, timer_get_system_ticks());
+        }
+        task_yield();
+    }
+}
+
+static void demo_task_b(void *arg)
+{
+    (void)arg;
+    uint32_t count = 0;
+    while (1) {
+        count++;
+        if (count % 50 == 0) {
+            KLOG_INFO("[task_b] count=%u ticks=%llu",
+                      count, timer_get_system_ticks());
+        }
+        task_yield();
+    }
+}
 
 void kernel_main(void)
 {
@@ -91,29 +123,28 @@ void kernel_main(void)
     /* All tests completed */
     KLOG_INFO("All tests completed successfully!");
 
+    /* ── 初始化任务子系统 ───────────────────────────────── */
+    KLOG_INFO("Initializing task subsystem...");
+    task_init();
+
+    /* 将 sched_tick 注册为 timer tick 回调，启用抢占 */
+    timer_set_tick_cb(sched_tick);
+    KLOG_INFO("Preemptive scheduling enabled");
+
+    /* 创建演示任务 */
+    task_create("task_a", demo_task_a, NULL, 1);
+    task_create("task_b", demo_task_b, NULL, 1);
+
+    KLOG_INFO("Demo tasks created. Entering idle loop...");
+
 #if ARCH_AARCH64 || ARCH_RISCV64 || ARCH_X86_64
-    /* Monitor timer interrupts - print every second */
-    KLOG_INFO("Starting timer monitoring (printing every 1 second)...");
-    uint64_t last_report_ticks = 0;
-
-    while(1) {
-        uint64_t current_ticks = timer_get_system_ticks();
-
-        /* 每 100 个 tick（1秒）输出一次 */
-        if (current_ticks - last_report_ticks >= 100) {
-            uint64_t seconds = current_ticks / 100;
-            uint64_t milliseconds = (current_ticks % 100) * 10;
-
-            KLOG_INFO("System ticks: %llu (%llu.%03llu seconds)",
-                      current_ticks, seconds, milliseconds);
-            last_report_ticks = current_ticks;
-        }
-
-        /* 使用等待中断指令降低 CPU 负荷 */
+    /* idle 循环：持续 yield，让其他任务运行 */
+    while (1) {
+        task_yield();
 #if ARCH_AARCH64
         __asm__ volatile("wfe");
 #elif ARCH_X86_64
-        __asm__ volatile("hlt");  /* HLT 待中断唯醒 */
+        __asm__ volatile("hlt");
 #else
         __asm__ volatile("wfi");
 #endif

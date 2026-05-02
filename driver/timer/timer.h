@@ -129,4 +129,23 @@ void timer_reset_stats(void);
  */
 void timer_dump_info(void);
 
+// ============================================================
+// Tick 回调（供调度器注册）
+// ============================================================
+
+/**
+ * timer_tick_cb_t - 每个 timer tick 调用的回调类型
+ */
+typedef void (*timer_tick_cb_t)(void);
+
+/**
+ * timer_set_tick_cb - 注册 tick 回调函数
+ * @cb: 回调函数指针（NULL 表示取消注册）
+ *
+ * 回调在每次 timer ISR 末尾、重新调度下一 tick 之前被调用。
+ * 调用时中断已被 CPU 屏蔽，回调应尽快返回。
+ * 典型用途：sched_tick()
+ */
+void timer_set_tick_cb(timer_tick_cb_t cb);
+
 #endif /* __TIMER_H__ */

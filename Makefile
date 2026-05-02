@@ -69,6 +69,20 @@ STRING_OBJECT := $(BUILD_DIR)/string.o
 KERNEL_SOURCES := $(KERNEL_DIR)/main.c
 KERNEL_OBJECTS := $(KERNEL_SOURCES:$(KERNEL_DIR)/%.c=$(BUILD_DIR)/kernel_%.o)
 
+# task 模块源文件
+TASK_C_SOURCES := $(KERNEL_DIR)/task/task.c $(KERNEL_DIR)/task/sched.c
+TASK_C_OBJECTS := $(BUILD_DIR)/kernel_task_task.o $(BUILD_DIR)/kernel_task_sched.o
+
+# 架构特定的上下文切换汇编
+ifeq ($(ARCH),aarch64)
+    TASK_S_SRC := $(KERNEL_DIR)/task/aarch64/switch.S
+else ifeq ($(ARCH),riscv64)
+    TASK_S_SRC := $(KERNEL_DIR)/task/riscv64/switch.S
+else ifeq ($(ARCH),x86_64)
+    TASK_S_SRC := $(KERNEL_DIR)/task/x86_64/switch.S
+endif
+TASK_S_OBJ := $(BUILD_DIR)/task_switch.o
+
 # 测试源文件
 TESTS_SOURCES := $(wildcard $(TESTS_DIR)/*.c)
 TESTS_OBJECTS := $(TESTS_SOURCES:$(TESTS_DIR)/%.c=$(BUILD_DIR)/tests_%.o)
@@ -192,6 +206,7 @@ endif
 # 通用编译标志
 CFLAGS  += -nostdinc
 CFLAGS  += -Idriver
+CFLAGS  += -Ikernel
 
 # UART 驱动选择（与架构解耦）
 # 用法：make ARCH=aarch64 UART=dw kernel
@@ -311,8 +326,18 @@ $(BUILD_DIR)/drv_%.o: driver/%.c | $(BUILD_DIR)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@
 
+# task 模块编译规则
+$(BUILD_DIR)/kernel_task_task.o: $(KERNEL_DIR)/task/task.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/kernel_task_sched.o: $(KERNEL_DIR)/task/sched.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/task_switch.o: $(TASK_S_SRC) | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
 # 链接内核 ELF 文件
-$(KERNEL_TARGET): $(BOOT_OBJECTS) $(KERNEL_OBJECTS) $(TESTS_OBJECTS) $(PLATFORM_OBJECTS) $(DRIVER_OBJECTS) $(EXCEPTION_OBJECTS) $(KLOG_OBJECT) $(VSNPRINTF_OBJECT) $(STRING_OBJECT) | $(BUILD_DIR)
+$(KERNEL_TARGET): $(BOOT_OBJECTS) $(KERNEL_OBJECTS) $(TASK_C_OBJECTS) $(TASK_S_OBJ) $(TESTS_OBJECTS) $(PLATFORM_OBJECTS) $(DRIVER_OBJECTS) $(EXCEPTION_OBJECTS) $(KLOG_OBJECT) $(VSNPRINTF_OBJECT) $(STRING_OBJECT) | $(BUILD_DIR)
 	$(CC) $(LDFLAGS) -nostartfiles -nodefaultlibs -T $(BOOT_DIR)/$(ARCH)/link.ld -o $@ $^
 
 # 转换为二进制文件
