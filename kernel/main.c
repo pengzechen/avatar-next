@@ -11,6 +11,8 @@
 #include "task/task.h"
 #include "task/sched.h"
 #include "pmm.h"
+#include "../driver/blk/ramblk.h"
+#include "../fs/lwext4_port/fs_init.h"
 
 #if ARCH_AARCH64
 #include "irq/irq.h"
@@ -91,7 +93,7 @@ void kernel_main(void)
     platform_init();
 
     /* Print welcome message */
-    KLOG_INFO("=== Avatar OS Kernel ===");
+    KLOG_INFO("=== Avatar OS Kernel ===\n");
     KLOG_INFO("Architecture: "
 #if ARCH_AARCH64
         "AArch64 (ARM 64-bit)"
@@ -105,11 +107,22 @@ void kernel_main(void)
     );
 
     /* ── 初始化物理内存管理器 ───────────────────────────────── */
-    KLOG_INFO("");
+    KLOG_INFO("\n");
     pmm_initialize();
 
+    /* ── 初始化文件系统 ─────────────────────────────────────────── */
+    KLOG_INFO("\n");
+#if ARCH_RISCV64
+    /* 必须在 fs_init() 之前设置 stvec，否则 ext4_mount 中的任何
+     * CPU 异常都会落到 M-mode (OpenSBI)，导致 hart 被重置 */
+    KLOG_INFO("Initializing exception handler...\n");
+    exception_init();
+#endif
+    ramblk_init();
+    fs_init();
+
     /* ── 运行 PMM 测试 ───────────────────────────────────────── */
-    KLOG_INFO("");
+    KLOG_INFO("\n");
     //run_pmm_tests();
 
 #if ARCH_AARCH64
@@ -131,10 +144,6 @@ void kernel_main(void)
     KLOG_INFO("Timer enabled\n");
 
 #elif ARCH_RISCV64
-
-    /* Initialize exception handler (sets stvec, enables sstatus.SIE) */
-    KLOG_INFO("Initializing exception handler...\n");
-    exception_init();
 
     /* Initialize timer (also registers timer_handler via irq_install) */
     KLOG_INFO("Initializing timer...\n");

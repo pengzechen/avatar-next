@@ -17,6 +17,14 @@ _start:
     csrw sie, zero
     csrw sip, zero
 
+    /* Initialize global pointer (gp-relative addressing optimization).
+     * Must use .option norelax to prevent the assembler itself from
+     * replacing this la with a gp-relative access (circular dependency). */
+    .option push
+    .option norelax
+    la      gp, __global_pointer$
+    .option pop
+
     /* Set stack pointer */
     la      sp, stack_top
 
@@ -56,10 +64,10 @@ bss_clear_done:
 
 .section .bss
 .align 12                          # 按 4KB 对齐（页对齐，为将来的 MMU 做准备）
-/* Stack allocation (16KB) */
+/* Stack allocation (64KB) — lwext4 mount path requires significant stack depth */
 .global stack_bottom
 .global stack_top
 
 stack_bottom:
-    .space 0x4000
+    .space 0x10000
 stack_top:

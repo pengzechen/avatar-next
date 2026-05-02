@@ -6,6 +6,7 @@
 #include "klog.h"
 #include "assert.h"
 #include "mmu.h"
+#include "../../driver/blk/ramblk_cfg.h"   /* RAMBLK_PHYS_BASE / RAMBLK_PHYS_END */
 
 /* ── 物理内存配置 ───────────────────────────────────────────────────── */
 
@@ -223,7 +224,7 @@ static void test_pmm_boundary(void)
  */
 void pmm_initialize(void)
 {
-    KLOG_INFO("=== Initializing Physical Memory Manager ===");
+    KLOG_INFO("=== Initializing Physical Memory Manager ===\n");
 
     /* 初始化 PMM */
     pmm_init(&pmm,
@@ -233,8 +234,13 @@ void pmm_initialize(void)
              sizeof(pmm_bitmap_buffer));
 
     /* 标记内核内存区域为已分配 */
-    KLOG_INFO("Marking kernel memory as allocated...");
+    KLOG_INFO("Marking kernel memory as allocated...\n");
     pmm_mark_kernel_allocated(&pmm);
+
+    /* 预留 rootfs 物理区域，防止 PMM 将其分配出去 */
+    KLOG_INFO("Reserving rootfs region: 0x%llx - 0x%llx\n",
+              (uint64_t)RAMBLK_PHYS_BASE, (uint64_t)RAMBLK_PHYS_END);
+    pmm_mark_allocated(&pmm, RAMBLK_PHYS_BASE, RAMBLK_PHYS_END);
 
     KLOG_INFO("PMM initialization completed\n");
 }

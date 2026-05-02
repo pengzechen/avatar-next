@@ -970,7 +970,7 @@ void kmem_test()
     // KLOG_INFO("\n\n=========copy data to uvm tests: =========\n\n");
     // test_copydata_to_uvm();
 
-    KLOG_INFO("\n\n=========copy uvm to uvm tests: =========\n\n");
+    KLOG_INFO("\n=========copy uvm to uvm tests: =========\n");
     test_memory_copy_uvm_4level();
 
     /* 注释掉 kallocator_test，因为此函数未定义 */

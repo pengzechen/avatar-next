@@ -249,3 +249,20 @@ void platform_panic(void);
 **规则**：今后所有跨平台 C 代码中的架构判断，一律 `#include "arch.h"` 后使用 `#if ARCH_X86_64` / `#if ARCH_AARCH64` / `#if ARCH_RISCV64`。
 
 已进行更改。
+
+
+启动带文件系统内核
+# 1. 编译内核
+make ARCH=x86_64 kernel
+
+# 2. 创建 ext4 rootfs 镜像（需要 Host 安装 e2fsprogs）
+make ARCH=x86_64 rootfs
+
+# 3. 向镜像写入内容（可选）
+sudo mount -o loop build/rootfs.img /mnt/tmp
+sudo mkdir -p /mnt/tmp/etc
+sudo echo "Avatar OS" | sudo tee /mnt/tmp/etc/hostname
+sudo umount /mnt/tmp
+
+# 4. 启动 QEMU（自动用 -device loader 加载镜像到对应物理地址）
+make ARCH=x86_64 run-fs

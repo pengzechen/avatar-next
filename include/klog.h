@@ -104,7 +104,7 @@ extern int  kprintf(const char *fmt, ...);
 #define KLOG_ERROR(fmt, ...) \
     do { \
         kprintf(KLOG_COLOR_RED "[ERROR] " "%s:%d: " fmt \
-               KLOG_COLOR_RESET "\n", \
+               KLOG_COLOR_RESET "", \
                __FILE__, __LINE__, ##__VA_ARGS__); \
     } while (0)
 
@@ -113,7 +113,7 @@ extern int  kprintf(const char *fmt, ...);
     do { \
         if (g_log_level >= LOG_LEVEL_WARN) { \
             kprintf(KLOG_COLOR_YELLOW "[WARN] " "%s:%d: " fmt \
-                   KLOG_COLOR_RESET "\n", \
+                   KLOG_COLOR_RESET "", \
                    __FILE__, __LINE__, ##__VA_ARGS__); \
         } \
     } while (0)

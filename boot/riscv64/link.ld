@@ -43,6 +43,17 @@ SECTIONS
     }
 
     /*
+     * Small data section (RISC-V GP-relative optimization)
+     * __global_pointer$ must be defined 0x800 bytes into .sdata so that
+     * gp-relative accesses can reach ±2KB on both sides.
+     */
+    .sdata : {
+        __global_pointer$ = . + 0x800;
+        *(.srodata.cst16) *(.srodata.cst8) *(.srodata.cst4) *(.srodata.cst2) *(.srodata*)
+        *(.sdata .sdata.* .gnu.linkonce.s.*)
+    }
+
+    /*
      * BSS section (zero-initialized data)
      * We need symbols for boot code to clear it
      * Stack is also defined here in boot.S

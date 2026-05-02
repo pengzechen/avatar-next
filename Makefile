@@ -232,8 +232,11 @@ else ifeq ($(ARCH),riscv64)
     CFLAGS  += $(LOG_DEFINE)
     CFLAGS  += $(ASSERT_DEFINE)
     CFLAGS  += -mcmodel=medany
-    CFLAGS  += -fno-pic  # 明确禁用位置无关代码
+    CFLAGS  += -fno-pic -fno-pie
     CFLAGS  += -ffreestanding -fno-builtin
+    # -no-pie：让链接器输出非 PIE 静态可执行文件，避免生成
+    # R_RISCV_RELATIVE 重定位条目（裸机内核无动态链接器处理它们）
+    LDFLAGS := -no-pie
     TARGET  := $(BUILD_DIR)/spinlock_riscv64.a
     KLOG_TARGET := $(BUILD_DIR)/libklog_riscv64.a
     KERNEL_TARGET := $(BUILD_DIR)/kernel_riscv64.elf
@@ -276,12 +279,56 @@ endif
 CFLAGS  += -MMD -MP
 MKDIR   := mkdir -p
 
+# ─── lwext4 文件系统 ────────────────────────────────────────────────────────
+FS_DIR          := fs
+LWEXT4_DIR      := $(FS_DIR)/lwext4
+LWEXT4_PORT_DIR := $(FS_DIR)/lwext4_port
+LWEXT4_COMPAT   := $(FS_DIR)/compat
+
+# lwext4 库源文件（第三方代码）
+LWEXT4_SRCS     := $(wildcard $(LWEXT4_DIR)/src/*.c)
+LWEXT4_OBJS     := $(patsubst $(LWEXT4_DIR)/src/%.c,$(BUILD_DIR)/lwext4_%.o,$(LWEXT4_SRCS))
+
+# lwext4 移植胶水代码（属于本项目，使用 LWEXT4_CFLAGS）
+LWEXT4_PORT_OBJS := $(BUILD_DIR)/lwext4_port_kmalloc.o \
+                   $(BUILD_DIR)/lwext4_port_libc_stub.o \
+                   $(BUILD_DIR)/drv_blk_ramblk.o \
+                   $(BUILD_DIR)/lwext4_port_fs_init.o
+
+# lwext4 专用编译标志（在通用 CFLAGS 基础上添加）
+LWEXT4_CFLAGS  := $(CFLAGS)
+LWEXT4_CFLAGS  += -I$(LWEXT4_DIR)/include   # lwext4 头文件
+LWEXT4_CFLAGS  += -I$(LWEXT4_PORT_DIR)      # generated/ext4_config.h 所在目录
+LWEXT4_CFLAGS  += -I$(LWEXT4_COMPAT)        # compat 标准库头文件
+LWEXT4_CFLAGS  += -DCONFIG_USE_DEFAULT_CFG=0  # 使用自定义 ext4_config.h
+# 以下定义与 generated/ext4_config.h 保持一致，防止默认值覆盖
+LWEXT4_CFLAGS  += -DCONFIG_HAVE_OWN_ERRNO=1
+LWEXT4_CFLAGS  += -DCONFIG_HAVE_OWN_OFLAGS=1
+LWEXT4_CFLAGS  += -DCONFIG_DEBUG_PRINTF=0
+LWEXT4_CFLAGS  += -DCONFIG_DEBUG_ASSERT=0
+LWEXT4_CFLAGS  += -DCONFIG_HAVE_OWN_ASSERT=1
+LWEXT4_CFLAGS  += -DCONFIG_USE_USER_MALLOC=1
+LWEXT4_CFLAGS  += -w   # 屏蔽第三方代码警告
+
+# ─── Rootfs 配置 ────────────────────────────────────────────────────────────────────
+ROOTFS_IMG       := $(BUILD_DIR)/rootfs.img
+ROOTFS_SIZE_MB   := 32
+
+ifeq ($(ARCH),aarch64)
+    ROOTFS_PHYS_ADDR := 0x60000000
+else ifeq ($(ARCH),riscv64)
+    ROOTFS_PHYS_ADDR := 0x88000000
+else ifeq ($(ARCH),x86_64)
+    ROOTFS_PHYS_ADDR := 0x04000000
+endif
+
 # 目标
-.PHONY: all clean help klog kernel run
+.PHONY: all clean help klog kernel run rootfs run-fs
 
 all: $(TARGET) klog
 
-kernel: kernel_clean $(KERNEL_BIN)
+kernel: | kernel_clean
+kernel: $(KERNEL_BIN)
 
 # 在切换架构时自动清理
 .PHONY: kernel_clean
@@ -289,10 +336,11 @@ kernel_clean:
 	@if [ -f .arch ]; then \
 		if [ "$$(cat .arch)" != "$(ARCH)" ]; then \
 			echo "Switching architecture from $$(cat .arch) to $(ARCH), cleaning..."; \
-			rm -rf $(BUILD_DIR); \
+			rm -rf $(BUILD_DIR) && echo "$(ARCH)" > .arch; \
 		fi \
+	else \
+		echo "$(ARCH)" > .arch; \
 	fi
-	@echo "$(ARCH)" > .arch
 
 klog: $(KLOG_TARGET)
 
@@ -403,8 +451,28 @@ $(BUILD_DIR)/bitmap.o: $(LIB_DIR)/bitmap.c | $(BUILD_DIR)
 $(BUILD_DIR)/kernel_mm_mmu.o: $(VM_S_SRC) | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
+# ─── lwext4 编译规则 ──────────────────────────────────────────────────────────
+# 第三方 lwext4 源文件：使用包含 compat 路径的专用 LWEXT4_CFLAGS
+$(BUILD_DIR)/lwext4_%.o: $(LWEXT4_DIR)/src/%.c | $(BUILD_DIR)
+	$(CC) $(LWEXT4_CFLAGS) -c $< -o $@
+
+# lwext4 移植胶水代码：属于本项目，使用普通 CFLAGS
+$(BUILD_DIR)/lwext4_port_kmalloc.o: $(LWEXT4_PORT_DIR)/kmalloc.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/lwext4_port_libc_stub.o: $(LWEXT4_PORT_DIR)/libc_stub.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# RAM 块设备和 FS 初始化（需要 lwext4 头文件，使用 LWEXT4_CFLAGS）
+$(BUILD_DIR)/drv_blk_ramblk.o: driver/blk/ramblk.c | $(BUILD_DIR)
+	@mkdir -p $(dir $@)
+	$(CC) $(LWEXT4_CFLAGS) -Idriver -c $< -o $@
+
+$(BUILD_DIR)/lwext4_port_fs_init.o: $(LWEXT4_PORT_DIR)/fs_init.c | $(BUILD_DIR)
+	$(CC) $(LWEXT4_CFLAGS) -Ifs/lwext4_port -c $< -o $@
+
 # 链接内核 ELF 文件
-$(KERNEL_TARGET): $(BOOT_OBJECTS) $(KERNEL_OBJECTS) $(TASK_C_OBJECTS) $(TASK_S_OBJ) $(VM_C_OBJECTS) $(VM_S_OBJ) $(TESTS_OBJECTS) $(PLATFORM_OBJECTS) $(DRIVER_OBJECTS) $(EXCEPTION_OBJECTS) $(KLOG_OBJECT) $(VSNPRINTF_OBJECT) $(STRING_OBJECT) $(BITMAP_OBJECT) | $(BUILD_DIR)
+$(KERNEL_TARGET): $(BOOT_OBJECTS) $(KERNEL_OBJECTS) $(TASK_C_OBJECTS) $(TASK_S_OBJ) $(VM_C_OBJECTS) $(VM_S_OBJ) $(TESTS_OBJECTS) $(PLATFORM_OBJECTS) $(DRIVER_OBJECTS) $(EXCEPTION_OBJECTS) $(KLOG_OBJECT) $(VSNPRINTF_OBJECT) $(STRING_OBJECT) $(BITMAP_OBJECT) $(LWEXT4_OBJS) $(LWEXT4_PORT_OBJS) | $(BUILD_DIR)
 	$(CC) $(LDFLAGS) -nostartfiles -nodefaultlibs -T $(BOOT_DIR)/$(ARCH)/link.ld -o $@ $^
 
 # 转换为二进制文件
@@ -420,6 +488,22 @@ $(KERNEL_IMAGE): $(KERNEL_BIN)
 run: kernel
 	@echo "Starting QEMU for $(ARCH)..."
 	$(QEMU) $(QEMU_FLAGS)
+
+# 创建 ext4 rootfs 镜像
+# 依赖：Host 已安装 e2fsprogs（mkfs.ext4）
+$(ROOTFS_IMG): | $(BUILD_DIR)
+	@echo "Creating $(ROOTFS_SIZE_MB)MB ext4 rootfs at $(ROOTFS_IMG)..."
+	dd if=/dev/zero of=$@ bs=1M count=$(ROOTFS_SIZE_MB)
+	mkfs.ext4 -b 1024 -L "avatarfs" $@
+	@echo "Rootfs created: $@"
+
+rootfs: $(ROOTFS_IMG)
+
+# 运行内核 + 加载 rootfs 酷像到 QEMU 客户机内存
+run-fs: kernel rootfs
+	@echo "Starting QEMU for $(ARCH) with rootfs at $(ROOTFS_PHYS_ADDR)..."
+	$(QEMU) $(QEMU_FLAGS) \
+		-device loader,file=$(ROOTFS_IMG),addr=$(ROOTFS_PHYS_ADDR),force-raw=on
 
 clean:
 	rm -rf build/*

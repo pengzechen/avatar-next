@@ -94,7 +94,7 @@ run_klog_tests(void)
     KLOG_INFO("\n--- Testing Dynamic Level Switching ---\n");
     test_dynamic_level();
 
-    KLOG_INFO("\n--- Testing Formatted Logs ---\n");
+    KLOG_INFO("--- Testing Formatted Logs ---\n");
     test_formatted_logs();
 
     KLOG_INFO("=== Test Complete ===\n");
