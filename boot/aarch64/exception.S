@@ -72,6 +72,10 @@
     SAVE_REGS
     mov     x0, sp
     bl      handle_irq_exception
+
+    /* 检查是否需要重调度（IRQ 触发的抢占） */
+    bl      sched_check_and_yield
+
     b       .Lexception_return
 .endm
 
@@ -82,6 +86,7 @@
 .extern invalid_exception
 .extern handle_sync_exception
 .extern handle_irq_exception
+.extern sched_check_and_yield
 
 exception_vector_base:
     // current EL, with SP_EL0

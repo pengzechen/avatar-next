@@ -19,6 +19,7 @@
 .section .text
 .code64
 .extern handle_exception
+.extern sched_check_and_yield
 
 /* ── 宏：无错误码的存根 ─────────────────────────────────────── */
 .macro ISR_NOERR vec
@@ -115,6 +116,9 @@ isr_common_stub:
     /* 传递 trap_frame_t * 作为第一个参数（System V ABI: rdi） */
     movq    %rsp, %rdi
     call    handle_exception
+
+    /* 检查是否需要重调度（IRQ 触发的抢占）──────────────────────── */
+    call    sched_check_and_yield
 
     /* 恢复通用寄存器 */
     popq    %r15

@@ -49,4 +49,14 @@ void sched_schedule(void);
  */
 void sched_tick(void);
 
+/**
+ * sched_check_and_yield - 检查并执行重调度
+ *
+ * 由异常返回路径调用。如果 g_need_resched 标志被设置，
+ * 则清除标志并执行 sched_schedule()。
+ *
+ * 返回：true 表示发生了任务切换，false 表示没有。
+ */
+bool sched_check_and_yield(void);
+
 #endif /* KERNEL_TASK_SCHED_H */

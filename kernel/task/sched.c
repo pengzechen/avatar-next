@@ -31,6 +31,7 @@
 
 static list_t   g_run_queue;   /* 就绪任务队列（不含 idle）*/
 static task_t  *g_idle;        /* idle 任务，队空时运行    */
+static volatile bool g_need_resched = false;  /* 需要重新调度的标志 */
 
 /* ── sched_init ──────────────────────────────────────────── */
 
@@ -100,6 +101,9 @@ sched_schedule(void)
     next->state    = TASK_RUNNING;
     g_current_task = next;
 
+    // KLOG_DEBUG("[sched] switch: prev='%s' (id=%u) -> next='%s' (id=%u)\n",
+    //           prev->name, prev->id, next->name, next->id);
+
     /*
      * 切换上下文。
      * 对 prev：保存被调用者寄存器 + SP 到 prev->sp，然后跳走。
@@ -107,6 +111,8 @@ sched_schedule(void)
      * 此时 flags 在 prev 的栈帧中，中断仍关闭。
      */
     arch_task_switch(&prev->sp, next->sp);
+
+    // KLOG_DEBUG("[sched] returned to prev='%s' (id=%u)\n", prev->name, prev->id);
 
     /* prev 被恢复后恢复其中断状态 */
     arch_irq_restore(flags);
@@ -118,9 +124,27 @@ void
 sched_tick(void)
 {
     /*
-     * 由 timer ISR 调用，此时中断已被 CPU 自动关闭。
-     * sched_schedule 内部会再次 arch_irq_save（幂等），
-     * 并在 arch_task_switch 后 arch_irq_restore 还原状态。
+     * 由 timer ISR 调用。
+     * 只设置需要重调度的标志，实际切换在异常返回前进行。
+     * 这样可以避免在 IRQ 处理程序中直接切换上下文。
      */
-    sched_schedule();
+    g_need_resched = true;
+}
+
+/* ── sched_check_and_yield ─────────────────────────────────── */
+
+/*
+ * 由异常返回路径调用，检查是否需要重新调度。
+ * 如果需要，执行任务切换。
+ * 返回 true 表示发生了切换，false 表示没有。
+ */
+bool
+sched_check_and_yield(void)
+{
+    if (g_need_resched) {
+        g_need_resched = false;
+        sched_schedule();
+        return true;
+    }
+    return false;
 }

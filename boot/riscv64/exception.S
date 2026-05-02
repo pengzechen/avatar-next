@@ -15,6 +15,7 @@
 .align 4                    /* stvec 直接模式要求 4 字节对齐 */
 .global trap_vector
 .extern handle_exception
+.extern sched_check_and_yield
 
 trap_vector:
     /* ── 分配陷阱帧 ─────────────────────────────────────────────── */
@@ -74,6 +75,9 @@ trap_vector:
     /* ── 调用 C 处理函数 ─────────────────────────────────────────── */
     mv    a0, sp            /* 第一个参数：trap_frame_t * */
     call  handle_exception
+
+    /* ── 检查是否需要重调度（IRQ 触发的抢占）─────────────────────── */
+    call  sched_check_and_yield
 
     /* ── 恢复 CSR ───────────────────────────────────────────────── */
     ld    t0, 32*8(sp)

@@ -105,9 +105,13 @@ timer_handler(uint64_t *stack_pointer)
     // 调度下一个tick
     timer_schedule_next_tick();
 
+    // KLOG_DEBUG("[timer_handler] tick %llu, g_tick_cb=%p\n", g_system_ticks, g_tick_cb);
+
     // 调用 tick 回调（调度器 sched_tick）
     if (g_tick_cb) {
         g_tick_cb();
+    } else {
+        KLOG_ERROR("[timer_handler] g_tick_cb is NULL!\n");
     }
 }
 

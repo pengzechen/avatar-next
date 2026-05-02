@@ -40,7 +40,8 @@ static void demo_task_a(void *arg)
             KLOG_INFO("[task_a] count=%u ticks=%llu",
                       count, timer_get_system_ticks());
         }
-        task_yield();
+        for (volatile int i = 0; i < 1000000; i++);  // 模拟工作负载
+        // task_yield();
     }
 }
 
@@ -54,7 +55,23 @@ static void demo_task_b(void *arg)
             KLOG_INFO("[task_b] count=%u ticks=%llu",
                       count, timer_get_system_ticks());
         }
-        task_yield();
+        for (volatile int i = 0; i < 1000000; i++);  // 模拟工作负载
+        // task_yield();
+    }
+}
+
+static void demo_task_c(void *arg)
+{
+    (void)arg;
+    uint32_t count = 0;
+    while (1) {
+        count++;
+        if (count % 50 == 0) {
+            KLOG_INFO("[task_c] count=%u ticks=%llu",
+                      count, timer_get_system_ticks());
+        }
+        for (volatile int i = 0; i < 1000000; i++);  // 模拟工作负载
+        // task_yield();
     }
 }
 
@@ -130,10 +147,11 @@ void kernel_main(void)
     /* 将 sched_tick 注册为 timer tick 回调，启用抢占 */
     timer_set_tick_cb(sched_tick);
     KLOG_INFO("Preemptive scheduling enabled");
-
+    
     /* 创建演示任务 */
     task_create("task_a", demo_task_a, NULL, 1);
     task_create("task_b", demo_task_b, NULL, 1);
+    task_create("task_c", demo_task_c, NULL, 1);
 
     KLOG_INFO("Demo tasks created. Entering idle loop...");
 

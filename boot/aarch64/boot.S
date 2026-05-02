@@ -12,6 +12,7 @@ _start:
      * QEMU virt machine starts at EL1 (Exception Level 1)
      * We're already in 64-bit mode with MMU disabled
      */
+    msr daifset, #2   // 关闭所有中断
 
     /*
      * Set stack pointer
