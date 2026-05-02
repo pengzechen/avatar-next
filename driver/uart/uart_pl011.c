@@ -174,7 +174,7 @@ void pl011_init(void) {
     // Enable UART interrupt in GIC
     // gic_enable_int(UART_IRQ, 0);
     
-    uart_initialized = true;
+    // uart_initialized = true;
     
     logger_info("UART interrupt driver initialized\n");
 }

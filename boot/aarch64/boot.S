@@ -22,6 +22,24 @@ _start:
     mov     sp, x0
 
     /*
+     * Set exception vector base address
+     * VBAR_EL1 = &exception_vector_base
+     */
+    adrp    x0, exception_vector_base
+    add     x0, x0, :lo12:exception_vector_base
+    // ldr x0, =exception_vector_base
+    msr     vbar_el1, x0
+    dsb     sy
+    isb
+
+    /*
+     * Enable IRQ interrupts (clear DAIF.I bit)
+     */
+    msr     daifclr, #2
+    dsb     sy
+    isb   
+
+    /*
      * Clear BSS section
      * BSS contains zero-initialized data
      */

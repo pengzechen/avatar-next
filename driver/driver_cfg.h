@@ -66,6 +66,8 @@
     #define DRIVER_TIMER_AARCH64    1
 #elif ARCH_RISCV64
     #define DRIVER_TIMER_RV         1
+#elif ARCH_X86_64
+    #define DRIVER_TIMER_X86        1
 #endif
 
 /* ============================================================
@@ -116,6 +118,9 @@
     #define TIMER_FREQ_HZ           10000000UL                  /* 10 MHz */
     #define TIMER_TICK_MS           10
     #define TIMER_FREQUENCY_HZ      (1000 / TIMER_TICK_MS)     /* 100 Hz */
+#elif ARCH_X86_64
+    #define TIMER_TICK_MS           10
+    #define TIMER_FREQUENCY_HZ      (1000 / TIMER_TICK_MS)     /* 100 Hz */
 #endif
 
 /* ============================================================
@@ -128,6 +133,7 @@
 #define logger_warn(...)   KLOG_WARN(__VA_ARGS__)
 #define logger_info(...)   KLOG_INFO(__VA_ARGS__)
 #define logger_debug(...)  KLOG_DEBUG(__VA_ARGS__)
+#define logger_gic_debug(...)  KLOG_DEBUG(__VA_ARGS__)
 #define logger_trace(...)  KLOG_TRACE(__VA_ARGS__)
 
 #endif  /* DRIVER_CFG_H */

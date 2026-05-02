@@ -52,4 +52,24 @@
 /* 物理定时器剩余值（只写常用） */
 #define WRITE_CNTP_TVAL_EL0(val)    SYSREG_WRITE("cntp_tval_el0", val)
 
+/* ============================================================
+ * Exception 系统寄存器
+ * ============================================================ */
+
+/* Exception Syndrome Register */
+#define READ_ESR_EL1()              SYSREG_READ("esr_el1")
+#define READ_ESR_EL2()              SYSREG_READ("esr_el2")
+#define READ_ESR_EL3()              SYSREG_READ("esr_el3")
+
+/* Fault Address Register */
+#define READ_FAR_EL1()              SYSREG_READ("far_el1")
+#define READ_FAR_EL2()              SYSREG_READ("far_el2")
+#define READ_FAR_EL3()              SYSREG_READ("far_el3")
+
+/* Hypervisor IPA Fault Address Register */
+#define READ_HPFAR_EL2()            SYSREG_READ("hpfar_el2")
+
+/* Hypervisor Fault Address Register (EL2) */
+#define READ_HYFAR_EL2()            SYSREG_READ("hyfar_el2")
+
 #endif  /* AARCH64_SYSREG_H */

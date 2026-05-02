@@ -80,16 +80,44 @@ PLATFORM_OBJECTS := $(PLATFORM_SOURCES:$(PLATFORM_DIR)/%.c=$(BUILD_DIR)/platform
 # 驱动源文件（按架构选择 UART 驱动）
 ifeq ($(ARCH),aarch64)
     DRIVER_UART_SRC := driver/uart/uart_pl011.c
+    DRIVER_IRQ_SRC := driver/irq/gicv2.c
+    DRIVER_TIMER_SRC := driver/timer/timer.c
 else ifeq ($(ARCH),riscv64)
     DRIVER_UART_SRC := driver/uart/uart_dw.c
+    DRIVER_IRQ_SRC :=
+    DRIVER_TIMER_SRC := driver/timer/timer.c
 else ifeq ($(ARCH),x86_64)
     DRIVER_UART_SRC := driver/uart/uart_x86.c
+    DRIVER_IRQ_SRC :=
+    DRIVER_TIMER_SRC := driver/timer/timer.c
 endif
 DRIVER_OBJECTS := $(patsubst driver/%.c,$(BUILD_DIR)/drv_%.o,$(DRIVER_UART_SRC))
+ifeq ($(ARCH),aarch64)
+    DRIVER_OBJECTS += $(BUILD_DIR)/gicv2.o $(BUILD_DIR)/timer.o
+else ifeq ($(ARCH),riscv64)
+    DRIVER_OBJECTS += $(BUILD_DIR)/timer.o
+else ifeq ($(ARCH),x86_64)
+    DRIVER_OBJECTS += $(BUILD_DIR)/timer.o $(BUILD_DIR)/lapic.o
+endif
 
 # 启动汇编源文件
 BOOT_SOURCES := $(BOOT_DIR)/$(ARCH)/boot.S
 BOOT_OBJECTS := $(BOOT_SOURCES:$(BOOT_DIR)/$(ARCH)/%.S=$(BUILD_DIR)/boot_%.o)
+
+# 异常处理源文件
+ifeq ($(ARCH),aarch64)
+    EXCEPTION_SOURCES := $(BOOT_DIR)/aarch64/exception.S $(BOOT_DIR)/aarch64/exception.c
+    EXCEPTION_OBJECTS := $(BUILD_DIR)/exception_asm.o $(BUILD_DIR)/exception.o
+else ifeq ($(ARCH),riscv64)
+    EXCEPTION_SOURCES := $(BOOT_DIR)/riscv64/exception.S $(BOOT_DIR)/riscv64/exception.c
+    EXCEPTION_OBJECTS := $(BUILD_DIR)/rv_exception_asm.o $(BUILD_DIR)/rv_exception.o
+else ifeq ($(ARCH),x86_64)
+    EXCEPTION_SOURCES := $(BOOT_DIR)/x86_64/exception.S $(BOOT_DIR)/x86_64/exception.c
+    EXCEPTION_OBJECTS := $(BUILD_DIR)/x86_exception_asm.o $(BUILD_DIR)/x86_exception.o
+else
+    EXCEPTION_SOURCES :=
+    EXCEPTION_OBJECTS :=
+endif
 
 # 工具（支持交叉编译）
 ifeq ($(ARCH),x86_64)
@@ -152,7 +180,7 @@ else ifeq ($(ARCH),riscv64)
     CFLAGS  += -fno-pic  # 明确禁用位置无关代码
     CFLAGS  += -ffreestanding -fno-builtin
     TARGET  := $(BUILD_DIR)/spinlock_riscv64.a
-    KLOG_TARGET := $(BUILD_DIR)(BUILD_DIR)/libklog_riscv64.a
+    KLOG_TARGET := $(BUILD_DIR)/libklog_riscv64.a
     KERNEL_TARGET := $(BUILD_DIR)/kernel_riscv64.elf
     KERNEL_BIN    := $(BUILD_DIR)/kernel_riscv64.bin
     QEMU          := qemu-system-riscv64
@@ -246,13 +274,45 @@ $(BUILD_DIR)/platform_%.o: $(PLATFORM_DIR)/%.c | $(BUILD_DIR)
 $(BUILD_DIR)/boot_%.o: $(BOOT_DIR)/$(ARCH)/%.S | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
+# 异常处理编译规则（AArch64）
+$(BUILD_DIR)/exception_asm.o: $(BOOT_DIR)/aarch64/exception.S | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/exception.o: $(BOOT_DIR)/aarch64/exception.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# 异常处理编译规则（RISC-V）
+$(BUILD_DIR)/rv_exception_asm.o: $(BOOT_DIR)/riscv64/exception.S | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/rv_exception.o: $(BOOT_DIR)/riscv64/exception.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# 异常处理编译规则（x86_64）
+$(BUILD_DIR)/x86_exception_asm.o: $(BOOT_DIR)/x86_64/exception.S | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/x86_exception.o: $(BOOT_DIR)/x86_64/exception.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# LAPIC 驱动编译规则（x86_64）
+$(BUILD_DIR)/lapic.o: driver/irq/lapic.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# GIC 和 timer 驱动编译规则（AArch64）
+$(BUILD_DIR)/gicv2.o: driver/irq/gicv2.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/timer.o: driver/timer/timer.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
 # 驱动编译规则
 $(BUILD_DIR)/drv_%.o: driver/%.c | $(BUILD_DIR)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # 链接内核 ELF 文件
-$(KERNEL_TARGET): $(BOOT_OBJECTS) $(KERNEL_OBJECTS) $(TESTS_OBJECTS) $(PLATFORM_OBJECTS) $(DRIVER_OBJECTS) $(KLOG_OBJECT) $(VSNPRINTF_OBJECT) $(STRING_OBJECT) | $(BUILD_DIR)
+$(KERNEL_TARGET): $(BOOT_OBJECTS) $(KERNEL_OBJECTS) $(TESTS_OBJECTS) $(PLATFORM_OBJECTS) $(DRIVER_OBJECTS) $(EXCEPTION_OBJECTS) $(KLOG_OBJECT) $(VSNPRINTF_OBJECT) $(STRING_OBJECT) | $(BUILD_DIR)
 	$(CC) $(LDFLAGS) -nostartfiles -nodefaultlibs -T $(BOOT_DIR)/$(ARCH)/link.ld -o $@ $^
 
 # 转换为二进制文件
