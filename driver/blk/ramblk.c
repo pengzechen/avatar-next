@@ -12,6 +12,7 @@
 #include "blk/ramblk_cfg.h"
 #include "klog.h"
 #include "string.h"   /* memcpy */
+#include "mmu.h"       /* phys_to_virt */
 
 /* ── 内部 I/O 回调 ──────────────────────────────────────────────── */
 
@@ -26,7 +27,7 @@ static int ramblk_bread(struct ext4_blockdev *bdev, void *buf,
                         uint64_t blk_id, uint32_t blk_cnt)
 {
     uint32_t bsize = bdev->bdif->ph_bsize;
-    uint8_t *src   = (uint8_t *)(uintptr_t)RAMBLK_PHYS_BASE
+    uint8_t *src   = (uint8_t *)phys_to_virt(RAMBLK_PHYS_BASE)
                      + blk_id * bsize;
     memcpy(buf, src, (size_t)blk_cnt * bsize);
     return EOK;
@@ -36,7 +37,7 @@ static int ramblk_bwrite(struct ext4_blockdev *bdev, const void *buf,
                          uint64_t blk_id, uint32_t blk_cnt)
 {
     uint32_t bsize = bdev->bdif->ph_bsize;
-    uint8_t *dst   = (uint8_t *)(uintptr_t)RAMBLK_PHYS_BASE
+    uint8_t *dst   = (uint8_t *)phys_to_virt(RAMBLK_PHYS_BASE)
                      + blk_id * bsize;
     memcpy(dst, buf, (size_t)blk_cnt * bsize);
     return EOK;

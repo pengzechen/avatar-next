@@ -275,6 +275,8 @@ arch_init_user_stack(uint8_t *stack_base, uint32_t stack_size,
 
 #elif ARCH_RISCV64
     /* TODO: RISC-V 支持 */
+    (void)user_entry;
+    (void)user_sp;
     sp -= 16;
     sp[0] = (uint64_t)task_trampoline_user;
     for (int i = 1; i < 16; i++)
@@ -282,6 +284,8 @@ arch_init_user_stack(uint8_t *stack_base, uint32_t stack_size,
 
 #elif ARCH_X86_64
     /* TODO: x86_64 支持 */
+    (void)user_entry;
+    (void)user_sp;
     sp -= 10;
     sp[6] = (uint64_t)task_trampoline_user;
     for (int i = 0; i < 6; i++)

@@ -66,3 +66,13 @@ arch_task_switch:
 
     /* ── 返回（跳转到 ra = 下一任务的返回地址）─────────── */
     ret
+
+/*
+ * task_trampoline_user - 用户进程首次调度时的跳转板（RISC-V 64）
+ *
+ * TODO: 实现 RISC-V 用户态跳转
+ * 目前为空存根，防止链接错误
+ */
+.global task_trampoline_user
+task_trampoline_user:
+1:  j       1b          /* 无限循环：尚未实现 */

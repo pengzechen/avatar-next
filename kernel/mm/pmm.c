@@ -217,6 +217,8 @@ void pmm_mark_kernel_allocated(pmm_t *pmm)
      */
     uint64_t start_phys, end_phys;
 
+#if KERNEL_VMA != 0
+    /* 有虚拟地址偏移的架构（AArch64） */
     if (start >= KERNEL_VMA && start < KERNEL_VMA + pmm->total_size) {
         /* 明确是虚拟地址，需要转换 */
         start_phys = virt_to_phys(start);
@@ -237,6 +239,13 @@ void pmm_mark_kernel_allocated(pmm_t *pmm)
         end_phys   = (end >= KERNEL_VMA) ? virt_to_phys(end) : end;
         KLOG_INFO("  physical range: 0x%llx - 0x%llx\n", start_phys, end_phys);
     }
+#else
+    /* 无虚拟地址偏移的架构（RISC-V, x86_64）*/
+    start_phys = start;
+    end_phys = end;
+    KLOG_INFO("PMM: kernel symbols are physical addresses (no VMA offset)\n");
+    KLOG_INFO("  physical range: 0x%llx - 0x%llx\n", start_phys, end_phys);
+#endif
 
     pmm_mark_allocated(pmm, start_phys, end_phys);
 }

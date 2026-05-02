@@ -117,33 +117,47 @@ TASK_C_SOURCES := $(KERNEL_DIR)/task/task.c $(KERNEL_DIR)/task/sched.c $(KERNEL_
 TASK_C_OBJECTS := $(BUILD_DIR)/kernel_task_task.o $(BUILD_DIR)/kernel_task_sched.o $(BUILD_DIR)/kernel_task_mutex.o
 
 # syscall 模块源文件
-SYSCALL_C_SOURCES := $(KERNEL_DIR)/syscall/syscall.c
-SYSCALL_C_OBJECTS := $(BUILD_DIR)/kernel_syscall_syscall.o
-
-# 架构特定的上下文切换汇编
-ifeq ($(ARCH),aarch64)
-    TASK_S_SRC := $(KERNEL_DIR)/task/aarch64/switch.S
-    TASK_USER_TEST_SRC := $(KERNEL_DIR)/task/user_test.S
-    TASK_USER_HELLO_SRC := $(KERNEL_DIR)/task/hello.S
-    TASK_USER_LD := $(KERNEL_DIR)/task/user.ld
-else ifeq ($(ARCH),riscv64)
-    TASK_S_SRC := $(KERNEL_DIR)/task/riscv64/switch.S
-    TASK_USER_TEST_SRC := $(KERNEL_DIR)/task/user_test.S
-    TASK_USER_HELLO_SRC := $(KERNEL_DIR)/task/hello.S
-    TASK_USER_LD := $(KERNEL_DIR)/task/user.ld
-else ifeq ($(ARCH),x86_64)
-    TASK_S_SRC := $(KERNEL_DIR)/task/x86_64/switch.S
-    TASK_USER_TEST_SRC := $(KERNEL_DIR)/task/user_test.S
-    TASK_USER_HELLO_SRC := $(KERNEL_DIR)/task/hello.S
-    TASK_USER_LD := $(KERNEL_DIR)/task/user.ld
-endif
+SYSCALL_C_SOURCES := $(KERNEL_DIR)/syscall/syscall.c $(KERNEL_DIR)/syscall/bin_loader.c
+SYSCALL_C_OBJECTS := $(BUILD_DIR)/kernel_syscall_syscall.o $(BUILD_DIR)/kernel_syscall_bin_loader.o
+SYSCALL_S_SRC := $(LIB_DIR)/syscall.S
+SYSCALL_S_OBJ := $(BUILD_DIR)/syscall_wrapper.o
 TASK_S_OBJ := $(BUILD_DIR)/task_switch.o
+ifeq ($(ARCH),aarch64)
 TASK_USER_TEST_OBJ := $(BUILD_DIR)/user_test.o
 TASK_USER_HELLO_OBJ := $(BUILD_DIR)/hello.o
+else
+TASK_USER_TEST_OBJ :=
+TASK_USER_HELLO_OBJ :=
+endif
 
 # 测试源文件
 TESTS_SOURCES := $(wildcard $(TESTS_DIR)/*.c)
 TESTS_OBJECTS := $(TESTS_SOURCES:$(TESTS_DIR)/%.c=$(BUILD_DIR)/tests_%.o)
+
+# 用户应用程序源文件（按架构子目录组织）
+APPS_DIR := apps/$(ARCH)
+APPS_LD := $(APPS_DIR)/app.ld
+APPS_SOURCES := $(wildcard $(APPS_DIR)/*.S)
+APPS_OBJECTS := $(APPS_SOURCES:$(APPS_DIR)/%.S=$(BUILD_DIR)/apps_%.o)
+APPS_BINS := $(APPS_SOURCES:$(APPS_DIR)/%.S=$(BUILD_DIR)/%.bin)
+
+# 架构特定的上下文切换汇编
+ifeq ($(ARCH),aarch64)
+    TASK_S_SRC := $(KERNEL_DIR)/task/aarch64/switch.S
+    TASK_USER_TEST_SRC := apps/aarch64/user_test.S
+    TASK_USER_HELLO_SRC := apps/aarch64/hello.S
+    TASK_USER_LD := $(KERNEL_DIR)/task/user.ld
+else ifeq ($(ARCH),riscv64)
+    TASK_S_SRC := $(KERNEL_DIR)/task/riscv64/switch.S
+    TASK_USER_TEST_SRC := apps/riscv64/user_test.S
+    TASK_USER_HELLO_SRC := apps/riscv64/hello.S
+    TASK_USER_LD := $(KERNEL_DIR)/task/user.ld
+else ifeq ($(ARCH),x86_64)
+    TASK_S_SRC := $(KERNEL_DIR)/task/x86_64/switch.S
+    TASK_USER_TEST_SRC := apps/x86_64/user_test.S
+    TASK_USER_HELLO_SRC := apps/x86_64/hello.S
+    TASK_USER_LD := $(KERNEL_DIR)/task/user.ld
+endif
 
 # 平台源文件
 PLATFORM_SOURCES := $(PLATFORM_DIR)/qemu/platform.c
@@ -196,6 +210,7 @@ ifeq ($(ARCH),x86_64)
     CC      := /home/ajax/SoftWare/compiler/x86_64-linux-musl-cross/bin/x86_64-linux-musl-gcc
     AR      := /home/ajax/SoftWare/compiler/x86_64-linux-musl-cross/bin/x86_64-linux-musl-ar
     OBJCOPY := /home/ajax/SoftWare/compiler/x86_64-linux-musl-cross/bin/x86_64-linux-musl-objcopy
+    NM      := /home/ajax/SoftWare/compiler/x86_64-linux-musl-cross/bin/x86_64-linux-musl-nm
     CFLAGS  := -Wall -Wextra -O2 -g
     CFLAGS  += -D__x86_64__
     CFLAGS  += -I$(INCLUDE_DIR)
@@ -220,6 +235,7 @@ else ifeq ($(ARCH),aarch64)
     CC      := aarch64-linux-musl-gcc
     AR      := aarch64-linux-musl-ar
     OBJCOPY := aarch64-linux-musl-objcopy
+    NM      := aarch64-linux-musl-nm
     CFLAGS  := -Wall -Wextra -O2 -g
     CFLAGS  += -D__aarch64__
     CFLAGS  += -I$(INCLUDE_DIR)
@@ -240,6 +256,7 @@ else ifeq ($(ARCH),riscv64)
     CC      := riscv64-linux-musl-gcc
     AR      := riscv64-linux-musl-ar
     OBJCOPY := riscv64-linux-musl-objcopy
+    NM      := riscv64-linux-musl-nm
     CFLAGS  := -Wall -Wextra -O2 -g
     CFLAGS  += -march=rv64gc -mabi=lp64
     CFLAGS  += -D__riscv -D__riscv_xlen=64
@@ -450,6 +467,12 @@ $(BUILD_DIR)/task_switch.o: $(TASK_S_SRC) | $(BUILD_DIR)
 $(BUILD_DIR)/kernel_syscall_syscall.o: $(KERNEL_DIR)/syscall/syscall.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
+$(BUILD_DIR)/kernel_syscall_bin_loader.o: $(KERNEL_DIR)/syscall/bin_loader.c | $(BUILD_DIR)
+	$(CC) $(LWEXT4_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/syscall_wrapper.o: $(SYSCALL_S_SRC) | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
 # 用户测试程序编译规则
 $(BUILD_DIR)/user_test.o: $(TASK_USER_TEST_SRC) | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -457,6 +480,17 @@ $(BUILD_DIR)/user_test.o: $(TASK_USER_TEST_SRC) | $(BUILD_DIR)
 # hello 用户程序编译规则
 $(BUILD_DIR)/hello.o: $(TASK_USER_HELLO_SRC) | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
+
+# 用户应用程序编译规则（从文件系统加载）
+$(BUILD_DIR)/apps_%.o: $(APPS_DIR)/%.S | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# 生成应用程序二进制文件
+$(BUILD_DIR)/%.bin: $(BUILD_DIR)/apps_%.o $(APPS_LD) | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -nostdlib -nostartfiles -nodefaultlibs -T $(APPS_LD) -o $@.elf $<
+	$(OBJCOPY) -O binary $@.elf $@
+	@echo "App binary created: $@"
+	@echo "  Entry point: $(shell $(NM) $@.elf 2>/dev/null | grep ' _start')"
 
 # 链接用户程序到用户空间地址
 $(TASK_USER_BIN): $(BUILD_DIR)/user_test.o $(TASK_USER_LD) | $(BUILD_DIR)
@@ -511,7 +545,7 @@ $(BUILD_DIR)/lwext4_port_fs_init.o: $(LWEXT4_PORT_DIR)/fs_init.c | $(BUILD_DIR)
 	$(CC) $(LWEXT4_CFLAGS) -Ifs/lwext4_port -c $< -o $@
 
 # 链接内核 ELF 文件
-$(KERNEL_TARGET): $(BOOT_OBJECTS) $(KERNEL_OBJECTS) $(TASK_C_OBJECTS) $(TASK_S_OBJ) $(TASK_USER_TEST_OBJ) $(TASK_USER_HELLO_OBJ) $(SYSCALL_C_OBJECTS) $(VM_C_OBJECTS) $(VM_S_OBJ) $(TESTS_OBJECTS) $(PLATFORM_OBJECTS) $(DRIVER_OBJECTS) $(EXCEPTION_OBJECTS) $(KLOG_OBJECT) $(VSNPRINTF_OBJECT) $(STRING_OBJECT) $(BITMAP_OBJECT) $(LWEXT4_OBJS) $(LWEXT4_PORT_OBJS) | $(BUILD_DIR)
+$(KERNEL_TARGET): $(BOOT_OBJECTS) $(KERNEL_OBJECTS) $(TASK_C_OBJECTS) $(TASK_S_OBJ) $(TASK_USER_TEST_OBJ) $(TASK_USER_HELLO_OBJ) $(SYSCALL_C_OBJECTS) $(SYSCALL_S_OBJ) $(VM_C_OBJECTS) $(VM_S_OBJ) $(TESTS_OBJECTS) $(PLATFORM_OBJECTS) $(DRIVER_OBJECTS) $(EXCEPTION_OBJECTS) $(KLOG_OBJECT) $(VSNPRINTF_OBJECT) $(STRING_OBJECT) $(BITMAP_OBJECT) $(LWEXT4_OBJS) $(LWEXT4_PORT_OBJS) | $(BUILD_DIR)
 	$(CC) $(LDFLAGS) -nostartfiles -nodefaultlibs -T $(BOOT_DIR)/$(ARCH)/link.ld -o $@ $^
 
 # 转换为二进制文件
@@ -536,7 +570,22 @@ $(ROOTFS_IMG): | $(BUILD_DIR)
 	mkfs.ext4 -b 1024 -L "avatarfs" $@
 	@echo "Rootfs created: $@"
 
-rootfs: $(ROOTFS_IMG)
+rootfs: $(ROOTFS_IMG) $(APPS_BINS)
+	@echo "=================================="
+	@echo "Rootfs and applications built!"
+	@echo "=================================="
+	@echo ""
+	@echo "To install applications to rootfs, run:"
+	@echo ""
+	@echo "  mkdir -p /tmp/avatar_mnt"
+	@echo "  sudo mount -o loop $(ROOTFS_IMG) /tmp/avatar_mnt"
+	@echo "  sudo cp build/test_exec.bin /tmp/avatar_mnt/test_exec"
+	@echo "  sudo chmod +x /tmp/avatar_mnt/test_exec"
+	@echo "  sudo umount /tmp/avatar_mnt"
+	@echo "  rmdir /tmp/avatar_mnt"
+	@echo ""
+	@echo "Then run: make ARCH=$(ARCH) run-fs"
+	@echo ""
 
 # 运行内核 + 加载 rootfs 酷像到 QEMU 客户机内存
 run-fs: kernel rootfs

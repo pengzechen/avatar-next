@@ -13,8 +13,8 @@
 /* x86_64 高半地址空间 */
 #define KERNEL_VMA  0xffff800000000000ULL
 #elif ARCH_RISCV64
-/* RISC-V 高半地址空间（如果使用） */
-#define KERNEL_VMA  0xfffffe0000000000ULL
+/* RISC-V MMU 尚未实现，内核直接运行在物理地址空间，偏移为 0 */
+#define KERNEL_VMA  0ULL
 #else
 #define KERNEL_VMA  0ULL
 #endif

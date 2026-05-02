@@ -7,12 +7,41 @@
 
 #include "types.h"
 
+/* ── 时间相关结构 ───────────────────────────────────────────────── */
+
+/**
+ * struct timeval - 时间值结构
+ * @tv_sec: 秒
+ * @tv_usec: 微秒
+ */
+struct timeval {
+    int64_t tv_sec;     /* 秒 */
+    int64_t tv_usec;    /* 微秒 */
+};
+
 /* ── 系统调用号定义 ──────────────────────────────────────────── */
 
 typedef enum {
-    SYS_WRITE = 0,    /* 写入字符串到 UART */
-    SYS_EXIT  = 1,    /* 退出当前进程 */
-    SYS_YIELD = 2,    /* 让出 CPU */
+    /* 进程管理 */
+    SYS_EXIT  = 0,    /* 退出当前进程 */
+    SYS_YIELD = 1,    /* 让出 CPU */
+    SYS_GETPID = 2,   /* 获取进程 ID */
+    SYS_SLEEP = 3,    /* 睡眠指定毫秒数 */
+    SYS_EXECVE = 4,   /* 执行程序 */
+
+    /* 内存管理 */
+    SYS_BRK   = 10,   /* 设置程序断点 */
+    SYS_SBRK  = 11,   /* 增加程序断点 */
+
+    /* 文件操作 */
+    SYS_WRITE = 20,   /* 写入字符串到 UART */
+    SYS_READ  = 21,   /* 从设备读取 */
+    SYS_OPEN  = 22,   /* 打开文件 */
+    SYS_CLOSE = 23,   /* 关闭文件 */
+
+    /* 时间相关 */
+    SYS_GETTIMEOFDAY = 30,  /* 获取系统时间 */
+
     SYS_MAX          /* 系统调用数量 */
 } syscall_num_t;
 
@@ -39,6 +68,33 @@ void syscall_handler(uint64_t *regs);
 int64_t sys_write(const char *str, uint64_t len);
 
 /**
+ * sys_read - 从输入设备读取
+ * @buf: 缓冲区指针（用户虚拟地址）
+ * @len: 缓冲区大小
+ *
+ * 返回实际读取的字符数
+ */
+int64_t sys_read(char *buf, uint64_t len);
+
+/**
+ * sys_open - 打开文件（暂未实现）
+ * @pathname: 文件路径
+ * @flags: 打开标志
+ * @mode: 权限模式
+ *
+ * 返回文件描述符或 -1
+ */
+int64_t sys_open(const char *pathname, int flags, int mode);
+
+/**
+ * sys_close - 关闭文件（暂未实现）
+ * @fd: 文件描述符
+ *
+ * 返回 0 或 -1
+ */
+int64_t sys_close(int fd);
+
+/**
  * sys_exit - 退出当前用户进程
  * @status: 退出状态码
  */
@@ -50,5 +106,55 @@ void sys_exit(int status) __attribute__((noreturn));
  * 返回 0 表示成功
  */
 int64_t sys_yield(void);
+
+/**
+ * sys_getpid - 获取当前进程 ID
+ *
+ * 返回进程 ID
+ */
+int64_t sys_getpid(void);
+
+/**
+ * sys_sleep - 睡眠指定毫秒数
+ * @ms: 毫秒数
+ *
+ * 返回 0 表示成功
+ */
+int64_t sys_sleep(uint64_t ms);
+
+/**
+ * sys_execve - 执行程序
+ * @pathname: 程序路径
+ * @argv: 参数数组
+ * @envp: 环境变量数组（未使用）
+ *
+ * 返回：成功不返回，失败返回 -1
+ */
+int64_t sys_execve(const char *pathname, char **argv, char **envp);
+
+/**
+ * sys_brk - 设置程序断点
+ * @addr: 新的程序断点地址
+ *
+ * 返回新的程序断点（可能失败）
+ */
+void *sys_brk(void *addr);
+
+/**
+ * sys_sbrk - 增加程序断点
+ * @increment: 增量的字节数
+ *
+ * 返回旧的程序断点
+ */
+void *sys_sbrk(int64_t increment);
+
+/**
+ * sys_gettimeofday - 获取系统时间
+ * @tv: 时间值结构指针
+ * @tz: 时区结构指针（未使用）
+ *
+ * 返回 0 表示成功，-1 表示失败
+ */
+int64_t sys_gettimeofday(struct timeval *tv, void *tz);
 
 #endif /* KERNEL_SYSCALL_SYSCALL_H */

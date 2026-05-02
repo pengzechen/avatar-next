@@ -1,11 +1,16 @@
 /*
- * kernel/task/hello.S - 第二个用户态测试程序
+ * apps/hello.S - 第二个用户态测试程序
  *
  * 与 user_test.S 不同，这个程序：
  *   - 输出不同的消息
  *   - 使用不同的计数逻辑
  *   - 用于测试多进程调度
  */
+
+/* 系统调用号定义 */
+#define SYS_EXIT          0
+#define SYS_YIELD         1
+#define SYS_WRITE        20
 
 .section .text.user
 .global hello_program
@@ -16,7 +21,7 @@ hello_program:
     /* 输出欢迎消息 - 使用 adr 直接计算字符串地址（真正的 PC 相对） */
     adr     x0, msg_welcome
     mov     x1, #35             /* 字符串长度 */
-    mov     x8, #0              /* SYS_WRITE */
+    mov     x8, #SYS_WRITE
     svc     #0                  /* 触发系统调用 */
 
     /* 主循环：输出带计数器的消息 */
@@ -36,18 +41,18 @@ hello_program:
     /* 输出 "[hello] #" */
     adr     x0, msg_hello
     mov     x1, #10             /* "[hello] #" 长度 */
-    mov     x8, #0              /* SYS_WRITE */
+    mov     x8, #SYS_WRITE
     svc     #0
 
     /* 输出换行 */
     adr     x0, msg_newline
     mov     x1, #1
-    mov     x8, #0              /* SYS_WRITE */
+    mov     x8, #SYS_WRITE
     svc     #0
 
     /* 让出 CPU，给其他进程运行 */
     mov     x0, #0
-    mov     x8, #2              /* SYS_YIELD */
+    mov     x8, #SYS_YIELD
     svc     #0
 
     /* 继续循环 */

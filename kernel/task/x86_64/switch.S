@@ -47,3 +47,13 @@ arch_task_switch:
 
     /* ── 返回（从栈顶弹出返回地址并跳转）────────────────── */
     ret
+
+/*
+ * task_trampoline_user - 用户进程首次调度时的跳转板（x86-64）
+ *
+ * TODO: 实现 x86-64 用户态跳转
+ * 目前为空存根，防止链接错误
+ */
+.global task_trampoline_user
+task_trampoline_user:
+1:  jmp     1b          /* 无限循环：尚未实现 */

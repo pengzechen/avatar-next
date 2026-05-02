@@ -688,7 +688,7 @@ void test_find_free_page()
     // 测试：查找第一个空闲页（使用PMM的bitmap）
     uint64_t free_page = bitmap_find_first_free(&g_pmm->bitmap);
     KLOG_INFO("First free page is at index: %lu\n", free_page);
-    assert(free_page != -1);
+    assert(free_page != (uint64_t)-1);
 
     // 确认返回的空闲页是正确的
     assert_bitmap_state(free_page * g_pmm->page_size + g_pmm->start_addr, 0);
@@ -854,6 +854,7 @@ void test_copydata_to_uvm()
 uint64_t
 mock_addr_alloc_page(void *alloc, int32_t count)
 {
+    (void)alloc;
     // Simulate out-of-memory failure
     return (count == 1) ? 0 : pmm_alloc_pages(g_pmm, count); // Fail for single-page allocation
 }

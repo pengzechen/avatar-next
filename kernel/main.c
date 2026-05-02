@@ -13,6 +13,7 @@
 #include "pmm.h"
 #include "../driver/blk/ramblk.h"
 #include "../fs/lwext4_port/fs_init.h"
+#include "syscall/bin_loader.h"
 
 #if ARCH_AARCH64
 #include "irq/irq.h"
@@ -40,13 +41,15 @@ extern void run_mutex_comparison_test(void);
 extern void kmem_test(void);
 #endif
 
-/* 用户测试程序入口 */
+/* 用户测试程序入口（仅 AArch64 嵌入内核） */
+#if ARCH_AARCH64
 extern void user_test_program(void);
 extern void hello_program(void);
+#endif
 
 /* ── 演示任务 ─────────────────────────────────────────────── */
 
-static void demo_task_a(void *arg)
+static void __attribute__((unused)) demo_task_a(void *arg)
 {
     (void)arg;
     uint32_t count = 0;
@@ -61,7 +64,7 @@ static void demo_task_a(void *arg)
     }
 }
 
-static void demo_task_b(void *arg)
+static void __attribute__((unused)) demo_task_b(void *arg)
 {
     (void)arg;
     uint32_t count = 0;
@@ -76,7 +79,7 @@ static void demo_task_b(void *arg)
     }
 }
 
-static void demo_task_c(void *arg)
+static void __attribute__((unused)) demo_task_c(void *arg)
 {
     (void)arg;
     uint32_t count = 0;
@@ -90,6 +93,45 @@ static void demo_task_c(void *arg)
         // task_yield();
     }
 }
+
+#ifdef AVATAR_HAS_FILESYSTEM
+/*
+ * demo_load_from_fs - 从文件系统加载并执行程序
+ *
+ * 这个内核任务会：
+ * 1. 等待文件系统初始化
+ * 2. 从文件系统读取 /test_exec
+ * 3. 创建新的用户进程执行它
+ */
+static void demo_load_from_fs(void *arg)
+{
+    (void)arg;
+
+    /* 等待文件系统初始化 */
+    KLOG_INFO("[fs_loader] Waiting for filesystem...\n");
+    for (int i = 0; i < 100; i++) {
+        task_yield();
+    }
+
+    KLOG_INFO("[fs_loader] Loading /test_exec from filesystem...\n");
+
+    /* 调用 bin_loader_load_from_file
+     * 注意：这是内核调用，使用内核字符串
+     */
+    const char *path = "/test_exec";
+    int rc = bin_loader_load_from_file(path, NULL, NULL);
+
+    if (rc != 0) {
+        KLOG_ERROR("[fs_loader] Failed to load /test_exec: %d\n", rc);
+        KLOG_INFO("[fs_loader] This is expected if test_exec is not installed.\n");
+        KLOG_INFO("[fs_loader] Run: ./install-apps.sh aarch64\n");
+    }
+
+    /* 任务完成 */
+    KLOG_INFO("[fs_loader] Exiting...\n");
+    task_exit();
+}
+#endif
 
 void kernel_main(void)
 {
@@ -214,6 +256,7 @@ void kernel_main(void)
     KLOG_INFO("\n");
     KLOG_INFO("=== Testing Multi-Process Scheduling ===\n");
 
+#if ARCH_AARCH64
     /* 创建第一个用户进程：user_test
      * 参数：
      *   - name: "user_test"
@@ -243,8 +286,23 @@ void kernel_main(void)
     } else {
         KLOG_ERROR("Failed to create process 2!\n");
     }
+#endif /* ARCH_AARCH64 */
 
     KLOG_INFO("\nBoth processes will run in EL0 (user mode)\n");
+
+    /* === 测试从文件系统加载程序 === */
+#ifdef AVATAR_HAS_FILESYSTEM
+    KLOG_INFO("\n");
+    KLOG_INFO("=== Testing Filesystem Program Loading ===\n");
+
+    /* 创建一个内核任务来加载并执行 test_exec */
+    task_t *fs_loader = task_create("fs_loader", demo_load_from_fs, NULL, 5);
+    if (fs_loader) {
+        KLOG_INFO("Created filesystem loader task (id=%u)\n", fs_loader->id);
+    } else {
+        KLOG_ERROR("Failed to create fs_loader task!\n");
+    }
+#endif
 
     KLOG_INFO("\n");
     KLOG_INFO("Demo tasks created. Entering idle loop...\n");
