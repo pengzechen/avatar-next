@@ -4,10 +4,14 @@
             "name": "x86_64",
             "includePath": [
                 "${workspaceFolder}/include",
-                "${workspaceFolder}/include/x86_64"
+                "${workspaceFolder}/include/x86_64",
+                "${workspaceFolder}/driver",
+                "${workspaceFolder}/driver/uart",
+                "${workspaceFolder}/boot/common"
             ],
             "defines": [
-                "__x86_64__"
+                "__x86_64__",
+                "ARCH_X86_64=1"
             ],
             "compilerPath": "/usr/bin/gcc",
             "cStandard": "c11",
@@ -18,26 +22,36 @@
             "name": "AArch64",
             "includePath": [
                 "${workspaceFolder}/include",
-                "${workspaceFolder}/include/aarch64"
+                "${workspaceFolder}/include/aarch64",
+                "${workspaceFolder}/driver",
+                "${workspaceFolder}/driver/uart",
+                "${workspaceFolder}/boot/common"
             ],
             "defines": [
-                "__aarch64__"
+                "__aarch64__",
+                "ARCH_AARCH64=1"
             ],
             "compilerPath": "/home/ajax/SoftWare/compiler/aarch64-linux-musl-cross/bin/aarch64-linux-musl-gcc",
-            "cStandard": "c11"
+            "cStandard": "c11",
+            "intelliSenseMode": "linux-gcc-arm"
         },
         {
             "name": "RISC-V64",
             "includePath": [
                 "${workspaceFolder}/include",
-                "${workspaceFolder}/include/riscv64"
+                "${workspaceFolder}/include/riscv64",
+                "${workspaceFolder}/driver",
+                "${workspaceFolder}/driver/uart",
+                "${workspaceFolder}/boot/common"
             ],
             "defines": [
                 "__riscv",
-                "__riscv_xlen=64"
+                "__riscv_xlen=64",
+                "ARCH_RISCV64=1"
             ],
             "compilerPath": "/home/ajax/SoftWare/compiler/riscv64-linux-musl-cross/bin/riscv64-linux-musl-gcc",
-            "cStandard": "c11"
+            "cStandard": "c11",
+            "intelliSenseMode": "linux-gcc-x64"
         }
     ],
     "version": 4

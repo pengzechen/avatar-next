@@ -4,99 +4,23 @@
  */
 
 #include "../../boot/common/platform.h"
-#include "mmio.h"
 #include "types.h"
 #include "arch.h"
+#include "uart/uart.h"   /* 统一 UART 驱动，根据架构自动选择 */
 #if ARCH_X86_64
-#include "io.h"
+#include "x86_64/io.h"          /* x86 Port I/O: outw 用于 ACPI shutdown */
 #endif
-
-/*
- * QEMU UART base addresses for different architectures
- */
-#if ARCH_AARCH64
-    /* QEMU virt (AArch64): UART at 0x09000000 */
-    #define UART_BASE    0x09000000
-    #define UART_IS_MMIO 1
-#elif ARCH_RISCV64
-    /* QEMU virt (RISC-V): UART at 0x10000000 */
-    #define UART_BASE    0x10000000
-    #define UART_IS_MMIO 1
-#elif ARCH_X86_64
-    /* QEMU PC (x86_64): Use serial port at 0x3F8 (COM1) */
-    #define UART_BASE    0x3F8
-    #define UART_IS_MMIO 0
-#else
-    #error "Unsupported architecture"
-#endif
-
-/*
- * UART registers (8-bit registers)
- */
-#define UART_RBR    0    /* Receive Buffer Register (read) */
-#define UART_THR    0    /* Transmit Holding Register (write) */
-#define UART_LSR    5    /* Line Status Register */
-
-/*
- * Line Status Register bits
- */
-#define UART_LSR_THRE   (1 << 5)  /* Transmit-hold-register empty */
-#define UART_LSR_TEMT   (1 << 6)  /* Transmitter empty */
-
-/*
- * UART I/O functions
- */
-
-/* Check if UART is ready to transmit */
-static inline int uart_tx_ready(void)
-{
-#if UART_IS_MMIO
-    /* AArch64 and RISC-V use memory-mapped I/O */
-    return (mmio_readb((void *)(UART_BASE + UART_LSR)) & UART_LSR_THRE) != 0;
-#else
-    /* x86_64 uses port I/O */
-    return (inb(UART_BASE + UART_LSR) & UART_LSR_THRE) != 0;
-#endif
-}
-
-/* Wait until UART is ready to transmit */
-static inline void uart_wait_tx_ready(void)
-{
-    while (!uart_tx_ready()) {
-        /* Busy wait */
-    }
-}
 
 /* Transmit a single character */
 static void qemu_uart_putc(char c)
 {
-#if UART_IS_MMIO
-    #if ARCH_AARCH64
-        /* AArch64 uses PL011 UART (32-bit data register) */
-        volatile uint32_t *uart_dr = (volatile uint32_t *)UART_BASE;
-        *uart_dr = (uint32_t)c;
-    #elif ARCH_RISCV64
-        /* RISC-V uses 16550 UART (8-bit data register) */
-        volatile uint8_t *uart_dr = (volatile uint8_t *)UART_BASE;
-        *uart_dr = (uint8_t)c;
-    #endif
-#else
-    /* x86_64 uses port I/O */
-    uart_wait_tx_ready();
-    outb(UART_BASE + UART_THR, c);
-#endif
+    uart_putc(c);
 }
 
 /* Transmit a null-terminated string */
 static void qemu_uart_puts(const char *s)
 {
-    while (*s) {
-        if (*s == '\n') {
-            /* Convert LF to CRLF */
-            qemu_uart_putc('\r');
-        }
-        qemu_uart_putc(*s++);
-    }
+    uart_puts(s);
 }
 
 /*
@@ -212,7 +136,7 @@ static struct platform_ops qemu_platform = {
  */
 void platform_init(void)
 {
-    /* UART is initialized by QEMU, no setup needed */
+    uart_init();
 }
 
 /*

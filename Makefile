@@ -77,6 +77,16 @@ TESTS_OBJECTS := $(TESTS_SOURCES:$(TESTS_DIR)/%.c=$(BUILD_DIR)/tests_%.o)
 PLATFORM_SOURCES := $(PLATFORM_DIR)/qemu/platform.c
 PLATFORM_OBJECTS := $(PLATFORM_SOURCES:$(PLATFORM_DIR)/%.c=$(BUILD_DIR)/platform_%.o)
 
+# 驱动源文件（按架构选择 UART 驱动）
+ifeq ($(ARCH),aarch64)
+    DRIVER_UART_SRC := driver/uart/uart_pl011.c
+else ifeq ($(ARCH),riscv64)
+    DRIVER_UART_SRC := driver/uart/uart_dw.c
+else ifeq ($(ARCH),x86_64)
+    DRIVER_UART_SRC := driver/uart/uart_x86.c
+endif
+DRIVER_OBJECTS := $(patsubst driver/%.c,$(BUILD_DIR)/drv_%.o,$(DRIVER_UART_SRC))
+
 # 启动汇编源文件
 BOOT_SOURCES := $(BOOT_DIR)/$(ARCH)/boot.S
 BOOT_OBJECTS := $(BOOT_SOURCES:$(BOOT_DIR)/$(ARCH)/%.S=$(BUILD_DIR)/boot_%.o)
@@ -153,6 +163,31 @@ endif
 
 # 通用编译标志
 CFLAGS  += -nostdinc
+CFLAGS  += -Idriver
+
+# UART 驱动选择（与架构解耦）
+# 用法：make ARCH=aarch64 UART=dw kernel
+# 不指定时由 driver_cfg.h 按架构选默认值
+UART ?=
+ifeq ($(UART),pl011)
+    CFLAGS  += -DDRIVER_UART_PL011=1
+else ifeq ($(UART),dw)
+    CFLAGS  += -DDRIVER_UART_DW=1
+else ifneq ($(UART),)
+    $(error Invalid UART. Use: pl011 or dw)
+endif
+
+# GIC 版本选择（仅 aarch64）
+# 用法：make ARCH=aarch64 GIC=v3 kernel
+GIC ?=
+ifeq ($(GIC),v3)
+    CFLAGS  += -DDRIVER_GIC_V3=1
+else ifeq ($(GIC),v2)
+    CFLAGS  += -DDRIVER_GIC_V2=1
+else ifneq ($(GIC),)
+    $(error Invalid GIC. Use: v2 or v3)
+endif
+
 CFLAGS  += -MMD -MP
 MKDIR   := mkdir -p
 
@@ -211,8 +246,13 @@ $(BUILD_DIR)/platform_%.o: $(PLATFORM_DIR)/%.c | $(BUILD_DIR)
 $(BUILD_DIR)/boot_%.o: $(BOOT_DIR)/$(ARCH)/%.S | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
+# 驱动编译规则
+$(BUILD_DIR)/drv_%.o: driver/%.c | $(BUILD_DIR)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -c $< -o $@
+
 # 链接内核 ELF 文件
-$(KERNEL_TARGET): $(BOOT_OBJECTS) $(KERNEL_OBJECTS) $(TESTS_OBJECTS) $(PLATFORM_OBJECTS) $(KLOG_OBJECT) $(VSNPRINTF_OBJECT) $(STRING_OBJECT) | $(BUILD_DIR)
+$(KERNEL_TARGET): $(BOOT_OBJECTS) $(KERNEL_OBJECTS) $(TESTS_OBJECTS) $(PLATFORM_OBJECTS) $(DRIVER_OBJECTS) $(KLOG_OBJECT) $(VSNPRINTF_OBJECT) $(STRING_OBJECT) | $(BUILD_DIR)
 	$(CC) $(LDFLAGS) -nostartfiles -nodefaultlibs -T $(BOOT_DIR)/$(ARCH)/link.ld -o $@ $^
 
 # 转换为二进制文件
