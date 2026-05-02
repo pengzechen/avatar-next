@@ -115,11 +115,13 @@ uint64_t vm_init(void) {
     /* L1 页表：使用 1GB 块映射 */
     set_block_entry(&kernel_pt1[0], 0x00000000ULL, PTE_DEVICE_MEMORY);  /* 设备内存（0x00000000 - 0x3fffffff） */
     set_block_entry(&kernel_pt1[1], 0x40000000ULL, PTE_NORMAL_MEMORY);  /* 普通内存（0x40000000 - 0x7fffffff） */
+    set_block_entry(&kernel_pt1[2], 0x80000000ULL, PTE_NORMAL_MEMORY);  /* 普通内存（0x80000000 - 0xbfffffff，QEMU -m 2G 的上半部分） */
 
     KLOG_INFO("TTBR1 page table setup:\n");
     KLOG_INFO("  kernel_pt0[0] -> kernel_pt1: 0x%llx\n", kernel_pt0[0]);
     KLOG_INFO("  kernel_pt1[0] (device @ 0x00000000): 0x%llx\n", kernel_pt1[0]);
     KLOG_INFO("  kernel_pt1[1] (normal @ 0x40000000): 0x%llx\n", kernel_pt1[1]);
+    KLOG_INFO("  kernel_pt1[2] (normal @ 0x80000000): 0x%llx\n", kernel_pt1[2]);
 
     /*
      * 验证地址映射：
@@ -163,11 +165,13 @@ uint64_t vm_init(void) {
     /* L1 页表：使用 1GB 块映射，建立恒等映射 */
     set_block_entry(&boot_pt1[0], 0x00000000ULL, PTE_DEVICE_MEMORY);  /* 设备内存（0x00000000 - 0x3fffffff） */
     set_block_entry(&boot_pt1[1], 0x40000000ULL, PTE_NORMAL_MEMORY);  /* 普通内存（0x40000000 - 0x7fffffff） */
+    set_block_entry(&boot_pt1[2], 0x80000000ULL, PTE_NORMAL_MEMORY);  /* 普通内存（0x80000000 - 0xbfffffff，QEMU -m 2G 的上半部分） */
 
     KLOG_INFO("TTBR0 page table setup (identity mapping):\n");
     KLOG_INFO("  boot_pt0[0] -> boot_pt1: 0x%llx\n", boot_pt0[0]);
     KLOG_INFO("  boot_pt1[0] (device @ 0x00000000): 0x%llx\n", boot_pt1[0]);
     KLOG_INFO("  boot_pt1[1] (normal @ 0x40000000): 0x%llx\n", boot_pt1[1]);
+    KLOG_INFO("  boot_pt1[2] (normal @ 0x80000000): 0x%llx\n", boot_pt1[2]);
 
     KLOG_INFO("VM initialized successfully\n");
     KLOG_INFO("TTBR0 page table base: 0x%llx (boot)\n", (uint64_t)boot_pt0);

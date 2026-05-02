@@ -69,8 +69,12 @@ pick_next(void)
 {
     list_node_t *node = list_delete_first(&g_run_queue);
     if (node) {
-        return container_of(node, task_t, run_node);
+        task_t *task = container_of(node, task_t, run_node);
+        KLOG_DEBUG("[sched] pick_next: selected '%s' (id=%u, is_user=%d)\n",
+                  task->name, task->id, task->is_user_process);
+        return task;
     }
+    KLOG_DEBUG("[sched] pick_next: queue empty, returning idle\n");
     return g_idle; /* 队列为空，回退到 idle */
 }
 
@@ -104,16 +108,18 @@ sched_schedule(void)
     g_current_task = next;
     barrier_compiler();  // 确保 g_current_task 在 arch_task_switch 之前完成
 
-    // KLOG_DEBUG("[sched] switch: prev='%s' (id=%u) -> next='%s' (id=%u)\n",
-    //           prev->name, prev->id, next->name, next->id);
+    KLOG_DEBUG("[sched] switch: prev='%s' (id=%u) -> next='%s' (id=%u, is_user=%d)\n",
+              prev->name, prev->id, next->name, next->id, next->is_user_process);
 
     /*
      * 切换上下文。
      * 对 prev：保存被调用者寄存器 + SP 到 prev->sp，然后跳走。
      * 当 prev 再次被调度时，arch_task_switch 从这里"返回"。
      * 此时 flags 在 prev 的栈帧中，中断仍关闭。
+     *
+     * 同时切换页表（如果任务有独立页表）。
      */
-    arch_task_switch(&prev->sp, next->sp);
+    arch_task_switch(&prev->sp, next->sp, &prev->pgd, next->pgd);
 
     // KLOG_DEBUG("[sched] returned to prev='%s' (id=%u)\n", prev->name, prev->id);
 

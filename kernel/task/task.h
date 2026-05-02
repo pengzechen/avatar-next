@@ -39,6 +39,14 @@ typedef struct task {
     void           *arg;                 /* 传给 entry 的参数                     */
     list_node_t     run_node;            /* 就绪队列节点                          */
     list_node_t     wait_node;           /* 等待队列节点（用于 mutex/semaphore）  */
+
+    /* === 用户态支持 === */
+    bool            is_user_process;     /* true=用户进程, false=内核任务          */
+    uint64_t       *pgd;                 /* 页表基址（用户进程的TTBR0）            */
+    uint64_t        user_entry;          /* 用户态入口点（虚拟地址）               */
+    uint64_t        user_sp;             /* 用户栈指针（虚拟地址）                */
+    uint64_t        user_stack_top;      /* 用户栈顶（虚拟地址）                  */
+    uint64_t        user_stack_size;     /* 用户栈大小                            */
 } task_t;
 
 /* ── 全局当前任务指针（在 task.c 中定义） ────────────────── */
@@ -66,6 +74,21 @@ void task_init(void);
  */
 task_t *task_create(const char *name, void (*entry)(void *), void *arg,
                     uint8_t priority);
+
+/**
+ * process_create - 创建用户进程
+ * @name:       进程名称（最长 TASK_NAME_LEN-1 字节）
+ * @user_entry: 用户态入口点（虚拟地址）
+ * @user_sp:    用户栈指针（虚拟地址）
+ * @priority:   优先级（0 = 最高，255 = 最低）
+ *
+ * 成功返回 task_t*，任务池已满时返回 NULL。
+ * 新进程立即加入就绪队列，首次调度时跳转到用户态执行。
+ *
+ * 注意：当前版本使用共享内核页表，后续扩展为独立地址空间。
+ */
+task_t *process_create(const char *name, uint64_t user_entry,
+                       uint64_t user_sp, uint8_t priority);
 
 /**
  * task_yield - 主动让出 CPU

@@ -13,6 +13,13 @@
 // #include "irq.h"
 #include "spinlock.h"
 
+/*
+ * UART 基地址运行时变量
+ * 初始值为物理地址，供 MMU 开启前的早期 boot 使用。
+ * kernel_main() 开始处会更新为 KERNEL_VMA + 0x09000000。
+ */
+volatile uintptr_t g_pl011_base = 0x09000000UL;
+
 // Circular buffer for transmit data
 #define UART_TX_BUFFER_SIZE 1024
 #define UART_RX_BUFFER_SIZE 1024

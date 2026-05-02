@@ -47,6 +47,33 @@ void handle_sync_exception(uint64_t *stack_pointer)
     do_platform_panic();
 }
 
+/* ── 用户态同步异常处理（系统调用、缺页等）────────────────────── */
+
+extern void syscall_handler(uint64_t *regs);
+
+void handle_el0_sync_exception(uint64_t *stack_pointer)
+{
+    trap_frame_t *el1_ctx = (trap_frame_t *)stack_pointer;
+
+    uint64_t esr = READ_ESR_EL1();
+    uint32_t ec = (esr >> 26) & 0x3F;
+
+    /* EC == 0x15: SVC 指令（系统调用） */
+    if (ec == 0x15) {
+        /* 调用系统调用处理函数 */
+        syscall_handler(el1_ctx->r);
+        return;
+    }
+
+    /* 其他异常类型 */
+    KLOG_ERROR("[el0_sync] Unexpected exception: EC=0x%x, ESR=0x%llx\n", ec, esr);
+    KLOG_ERROR("[el0_sync] ELR=0x%llx, SP_EL0=0x%llx, SPSR=0x%llx\n",
+               el1_ctx->elr, el1_ctx->usp, el1_ctx->spsr);
+
+    /* 停机 */
+    do_platform_panic();
+}
+
 void handle_irq_exception(uint64_t *stack_pointer)
 {
     trap_frame_t *el1_ctx = (trap_frame_t *)stack_pointer;

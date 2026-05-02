@@ -16,6 +16,10 @@
 #include "klog.h"
 #include "barrier.h"
 
+#if ARCH_AARCH64
+#include "mm/aarch64/vm_user.h"
+#endif
+
 /* ── 静态任务池 ──────────────────────────────────────────── */
 
 static task_t   g_task_pool[TASK_MAX];
@@ -84,6 +88,17 @@ task_trampoline(void)
     task_exit();
 }
 
+/* ── task_trampoline_user ───────────────────────────────────── */
+
+/*
+ * 用户进程首次被调度时，跳转到这里。
+ *
+ * 注意：这是汇编函数 task_trampoline_user 的 C 存根，
+ * 实际实现 switch.S 中。
+ * 参数通过寄存器传递（x19=entry, x20=sp）。
+ */
+void task_trampoline_user(void);
+
 /* ── task_init ───────────────────────────────────────────── */
 
 void
@@ -123,6 +138,89 @@ task_init(void)
     sched_init(&g_idle_task);
 
     KLOG_INFO("[task] subsystem initialized, idle task id=%u\n", g_idle_task.id);
+}
+
+/* ── process_create ─────────────────────────────────────────── */
+
+/*
+ * process_create - 创建用户进程
+ * @name:       进程名称
+ * @user_entry: 用户态入口点（虚拟地址）
+ * @user_sp:    用户栈指针（虚拟地址）
+ * @priority:   优先级
+ *
+ * 创建独立地址空间的用户进程。
+ */
+task_t *
+process_create(const char *name, uint64_t user_entry, uint64_t user_sp, uint8_t priority)
+{
+    task_t *task = alloc_task_slot();
+    if (!task) {
+        KLOG_ERROR("[task] process_create: no free task slots (max=%u)\n", TASK_MAX);
+        return NULL;
+    }
+
+    task->id       = g_task_id_cnt++;
+    task->state    = TASK_READY;
+    task->priority = priority;
+
+    /* 标记为用户进程 */
+    task->is_user_process = true;
+    task->user_entry      = user_entry;
+    task->user_sp         = user_sp;
+    task->user_stack_top  = user_sp;
+    task->user_stack_size = 0x100000;  /* 1MB 用户栈 */
+
+    /* 创建独立的用户页表 */
+#if ARCH_AARCH64
+    /* 用户代码的虚拟地址（内核地址空间） */
+    uint64_t user_code_vaddr = user_entry;
+    uint64_t user_code_size = 0x4000;       /* 16KB 代码段 */
+
+    task->pgd = (uint64_t *)vm_create_user_process(user_code_vaddr, user_code_size,
+                                                      user_sp, task->user_stack_size);
+    if (task->pgd == NULL) {
+        KLOG_ERROR("[task] Failed to create user page table for '%s'\n", name);
+        free_task_slot(task);
+        return NULL;
+    }
+
+    /* 设置用户入口地址为用户虚拟地址（0x10000） */
+    task->user_entry = 0x10000;
+
+    KLOG_INFO("[task] Created page table for '%s': PGD=0x%llx\n",
+              name, (uint64_t)task->pgd);
+#else
+    /* 其他架构暂时使用共享内核页表 */
+    task->pgd = NULL;
+    task->user_entry = user_entry;
+    KLOG_INFO("[task] Using shared kernel page table for '%s'\n", name);
+#endif
+
+    list_node_init(&task->run_node);
+    list_node_init(&task->wait_node);
+
+    /* 复制任务名称 */
+    uint32_t i = 0;
+    while (name[i] && i < (uint32_t)(TASK_NAME_LEN - 1)) {
+        task->name[i] = name[i];
+        i++;
+    }
+    task->name[i] = '\0';
+
+    /* 使用用户进程专用的栈初始化函数（注意：使用调整后的虚拟地址） */
+    task->sp = arch_init_user_stack(task->stack_base, TASK_STACK_SIZE,
+                                    task->user_entry, user_sp);
+
+    /* 加入就绪队列 */
+    sched_enqueue(task);
+
+    KLOG_INFO("[task] created user process '%s' id=%u prio=%u\n",
+              task->name, task->id, (uint32_t)task->priority);
+    KLOG_INFO("[task]   user_entry=0x%llx, user_sp=0x%llx, pgd=0x%llx\n",
+              user_entry, user_sp, (uint64_t)task->pgd);
+
+    return task;
 }
 
 /* ── task_create ─────────────────────────────────────────── */

@@ -81,6 +81,8 @@ ifeq ($(ARCH),aarch64)
     VM_C_OBJECTS += $(BUILD_DIR)/kernel_mm_vm_early.o
     VM_C_SOURCES += $(KERNEL_DIR)/mm/aarch64/vmm.c
     VM_C_OBJECTS += $(BUILD_DIR)/kernel_mm_vmm.o
+    VM_C_SOURCES += $(KERNEL_DIR)/mm/aarch64/vm_user.c
+    VM_C_OBJECTS += $(BUILD_DIR)/kernel_mm_vm_user.o
 else ifeq ($(ARCH),riscv64)
     # RISC-V VM 模块（如果有的话）
     # VM_C_SOURCES += $(KERNEL_DIR)/mm/riscv64/vm_early.c
@@ -114,15 +116,30 @@ endif
 TASK_C_SOURCES := $(KERNEL_DIR)/task/task.c $(KERNEL_DIR)/task/sched.c $(KERNEL_DIR)/task/mutex.c
 TASK_C_OBJECTS := $(BUILD_DIR)/kernel_task_task.o $(BUILD_DIR)/kernel_task_sched.o $(BUILD_DIR)/kernel_task_mutex.o
 
+# syscall 模块源文件
+SYSCALL_C_SOURCES := $(KERNEL_DIR)/syscall/syscall.c
+SYSCALL_C_OBJECTS := $(BUILD_DIR)/kernel_syscall_syscall.o
+
 # 架构特定的上下文切换汇编
 ifeq ($(ARCH),aarch64)
     TASK_S_SRC := $(KERNEL_DIR)/task/aarch64/switch.S
+    TASK_USER_TEST_SRC := $(KERNEL_DIR)/task/user_test.S
+    TASK_USER_HELLO_SRC := $(KERNEL_DIR)/task/hello.S
+    TASK_USER_LD := $(KERNEL_DIR)/task/user.ld
 else ifeq ($(ARCH),riscv64)
     TASK_S_SRC := $(KERNEL_DIR)/task/riscv64/switch.S
+    TASK_USER_TEST_SRC := $(KERNEL_DIR)/task/user_test.S
+    TASK_USER_HELLO_SRC := $(KERNEL_DIR)/task/hello.S
+    TASK_USER_LD := $(KERNEL_DIR)/task/user.ld
 else ifeq ($(ARCH),x86_64)
     TASK_S_SRC := $(KERNEL_DIR)/task/x86_64/switch.S
+    TASK_USER_TEST_SRC := $(KERNEL_DIR)/task/user_test.S
+    TASK_USER_HELLO_SRC := $(KERNEL_DIR)/task/hello.S
+    TASK_USER_LD := $(KERNEL_DIR)/task/user.ld
 endif
 TASK_S_OBJ := $(BUILD_DIR)/task_switch.o
+TASK_USER_TEST_OBJ := $(BUILD_DIR)/user_test.o
+TASK_USER_HELLO_OBJ := $(BUILD_DIR)/hello.o
 
 # 测试源文件
 TESTS_SOURCES := $(wildcard $(TESTS_DIR)/*.c)
@@ -429,6 +446,25 @@ $(BUILD_DIR)/kernel_task_mutex.o: $(KERNEL_DIR)/task/mutex.c | $(BUILD_DIR)
 $(BUILD_DIR)/task_switch.o: $(TASK_S_SRC) | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
+# syscall 模块编译规则
+$(BUILD_DIR)/kernel_syscall_syscall.o: $(KERNEL_DIR)/syscall/syscall.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# 用户测试程序编译规则
+$(BUILD_DIR)/user_test.o: $(TASK_USER_TEST_SRC) | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# hello 用户程序编译规则
+$(BUILD_DIR)/hello.o: $(TASK_USER_HELLO_SRC) | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# 链接用户程序到用户空间地址
+$(TASK_USER_BIN): $(BUILD_DIR)/user_test.o $(TASK_USER_LD) | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -nostdlib -nostartfiles -nodefaultlibs -T $(TASK_USER_LD) -o $@.elf $<
+	$(OBJCOPY) -O binary $@.elf $@
+	@echo "User program linked at: $(shell aarch64-linux-musl-nm $@.elf | grep user_test_program)"
+	@echo "User data at: $(shell aarch64-linux-musl-nm $@.elf | grep msg_hello)"
+
 # VM 模块编译规则
 $(BUILD_DIR)/kernel_mm_vm_early.o: $(VM_EARLY_C_SRC) | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -442,6 +478,9 @@ $(BUILD_DIR)/kernel_mm_pmm_test.o: $(KERNEL_DIR)/mm/pmm_test.c | $(BUILD_DIR)
 # 架构特定的 VMM 模块（仅 AArch64）
 ifeq ($(ARCH),aarch64)
 $(BUILD_DIR)/kernel_mm_vmm.o: $(KERNEL_DIR)/mm/aarch64/vmm.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/kernel_mm_vm_user.o: $(KERNEL_DIR)/mm/aarch64/vm_user.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 endif
 
@@ -472,7 +511,7 @@ $(BUILD_DIR)/lwext4_port_fs_init.o: $(LWEXT4_PORT_DIR)/fs_init.c | $(BUILD_DIR)
 	$(CC) $(LWEXT4_CFLAGS) -Ifs/lwext4_port -c $< -o $@
 
 # 链接内核 ELF 文件
-$(KERNEL_TARGET): $(BOOT_OBJECTS) $(KERNEL_OBJECTS) $(TASK_C_OBJECTS) $(TASK_S_OBJ) $(VM_C_OBJECTS) $(VM_S_OBJ) $(TESTS_OBJECTS) $(PLATFORM_OBJECTS) $(DRIVER_OBJECTS) $(EXCEPTION_OBJECTS) $(KLOG_OBJECT) $(VSNPRINTF_OBJECT) $(STRING_OBJECT) $(BITMAP_OBJECT) $(LWEXT4_OBJS) $(LWEXT4_PORT_OBJS) | $(BUILD_DIR)
+$(KERNEL_TARGET): $(BOOT_OBJECTS) $(KERNEL_OBJECTS) $(TASK_C_OBJECTS) $(TASK_S_OBJ) $(TASK_USER_TEST_OBJ) $(TASK_USER_HELLO_OBJ) $(SYSCALL_C_OBJECTS) $(VM_C_OBJECTS) $(VM_S_OBJ) $(TESTS_OBJECTS) $(PLATFORM_OBJECTS) $(DRIVER_OBJECTS) $(EXCEPTION_OBJECTS) $(KLOG_OBJECT) $(VSNPRINTF_OBJECT) $(STRING_OBJECT) $(BITMAP_OBJECT) $(LWEXT4_OBJS) $(LWEXT4_PORT_OBJS) | $(BUILD_DIR)
 	$(CC) $(LDFLAGS) -nostartfiles -nodefaultlibs -T $(BOOT_DIR)/$(ARCH)/link.ld -o $@ $^
 
 # 转换为二进制文件

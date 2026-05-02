@@ -63,9 +63,23 @@ _start:
     bl      mmu_init
 
     /*
-     * 重新设置栈指针
-     * 注意：此时使用高地址，但 stack_top 符号还是低地址
-     * 需要重新计算
+     * Trampoline：从 identity-mapped 低地址跳到高虚拟地址
+     *
+     * mmu_init 返回时 LR 里保存的是低地址，ret 后 PC 仍在低地址。
+     * TTBR0 的 identity map 让低地址代码暂时可以继续执行，但必须
+     * 在这里显式跳到高 VMA，否则所有 PC 相对指令（adrp 等）都会
+     * 算出低地址结果。
+     *
+     * ldr x0, =1f 从字面量池加载 label 1f 的链接地址（高地址）
+     * br  x0       跳过去，之后 PC = 0xffff000040080000 + offset
+     */
+    ldr     x0, =1f
+    br      x0
+1:
+    /* ── 以下代码在高虚拟地址（TTBR1 映射）下执行 ────────────── */
+
+    /*
+     * 重新设置栈指针（使用高地址）
      */
     ldr     x0, =stack_top
     mov     sp, x0
@@ -91,7 +105,9 @@ _start:
      * Jump to C code
      * kernel_main() never returns
      */
-    bl      kernel_main
+    adrp x0, kernel_main
+    add  x0, x0, :lo12:kernel_main
+    blr  x0
 
     /*
      * If kernel_main returns (should not happen)

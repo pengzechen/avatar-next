@@ -40,6 +40,10 @@ extern void run_mutex_comparison_test(void);
 extern void kmem_test(void);
 #endif
 
+/* 用户测试程序入口 */
+extern void user_test_program(void);
+extern void hello_program(void);
+
 /* ── 演示任务 ─────────────────────────────────────────────── */
 
 static void demo_task_a(void *arg)
@@ -89,6 +93,16 @@ static void demo_task_c(void *arg)
 
 void kernel_main(void)
 {
+#if ARCH_AARCH64
+    /*
+     * MMU 已开启（boot.S 中完成），现在运行在高虚拟地址。
+     * 将 UART 基地址切换到 TTBR1 覆盖的高虚拟地址，
+     * 使内核在任意 TTBR0（用户页表）下仍可正常输出。
+     */
+    extern volatile uintptr_t g_pl011_base;
+    g_pl011_base = 0x09000000UL + 0xffff000000000000ULL;
+#endif
+
     /* Initialize platform (UART, etc.) */
     platform_init();
 
@@ -165,12 +179,14 @@ void kernel_main(void)
 
 #endif
 
+#if 0
     /* Run all tests */
     KLOG_INFO("Running tests...\n");
     run_all_tests();
 
     /* All tests completed */
     KLOG_INFO("All tests completed successfully!\n");
+#endif
 
     /* ── 初始化任务子系统 ───────────────────────────────── */
     KLOG_INFO("Initializing task subsystem...\n");
@@ -180,23 +196,69 @@ void kernel_main(void)
     timer_set_tick_cb(sched_tick);
     KLOG_INFO("Preemptive scheduling enabled\n");
 
-    
+
+#if 0
     /* Mutex tests */
     KLOG_INFO("--- Mutex Tests ---\n");
     run_mutex_demo();
+#endif
 
 #if 0
     /* 创建演示任务（如果需要） */
-    task_create("task_a", demo_task_a, NULL, 1); 
-    task_create("task_b", demo_task_b, NULL, 1); 
-    task_create("task_c", demo_task_c, NULL, 1); 
+    task_create("task_a", demo_task_a, NULL, 1);
+    task_create("task_b", demo_task_b, NULL, 1);
+    task_create("task_c", demo_task_c, NULL, 1);
 #endif
 
+    /* === 测试用户进程创建 === */
+    KLOG_INFO("\n");
+    KLOG_INFO("=== Testing Multi-Process Scheduling ===\n");
+
+    /* 创建第一个用户进程：user_test
+     * 参数：
+     *   - name: "user_test"
+     *   - user_entry: (uint64_t)user_test_program - 用户程序入口
+     *   - user_sp: 0x70000000 - 用户栈虚拟地址
+     *   - priority: 10
+     */
+    task_t *proc1 = process_create("user_test",
+                                    (uint64_t)user_test_program,
+                                    0x70000000ULL,
+                                    10);
+    if (proc1) {
+        KLOG_INFO("Process 1 (user_test) created successfully!\n");
+    } else {
+        KLOG_ERROR("Failed to create process 1!\n");
+    }
+
+    /* 创建第二个用户进程：hello
+     * 使用不同的栈地址避免冲突
+     */
+#if 0
+    task_t *proc2 = process_create("hello",
+                                    (uint64_t)hello_program,
+                                    0x70100000ULL,
+                                    10);
+    if (proc2) {
+        KLOG_INFO("Process 2 (hello) created successfully!\n");
+    } else {
+        KLOG_ERROR("Failed to create process 2!\n");
+    }
+
+    KLOG_INFO("\nBoth processes will run in EL0 (user mode)\n");
+#endif
+
+    KLOG_INFO("\n");
     KLOG_INFO("Demo tasks created. Entering idle loop...\n");
 
 #if ARCH_AARCH64 || ARCH_RISCV64 || ARCH_X86_64
     /* idle 循环：持续 yield，让其他任务运行 */
+    uint64_t idle_count = 0;
     while (1) {
+        idle_count++;
+        if (idle_count % 100 == 0) {
+            KLOG_DEBUG("[idle] yielding... count=%llu\n", idle_count);
+        }
         task_yield();
 #if ARCH_AARCH64
         __asm__ volatile("wfe");

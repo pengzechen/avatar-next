@@ -67,6 +67,14 @@
     b       .Lexception_return
 .endm
 
+.macro HANDLE_EL0_SYNC
+.p2align 7
+    SAVE_REGS
+    mov     x0, sp
+    bl      handle_el0_sync_exception
+    b       .Lexception_return
+.endm
+
 .macro HANDLE_IRQ
 .p2align 7
     SAVE_REGS
@@ -85,6 +93,7 @@
 
 .extern invalid_exception
 .extern handle_sync_exception
+.extern handle_el0_sync_exception
 .extern handle_irq_exception
 .extern sched_check_and_yield
 
@@ -102,7 +111,7 @@ exception_vector_base:
     INVALID_EXCP 3 1
 
     // lower EL, aarch64
-    HANDLE_SYNC
+    HANDLE_EL0_SYNC      /* 从用户态陷入（系统调用、缺页等） */
     HANDLE_IRQ
     INVALID_EXCP 2 2
     INVALID_EXCP 3 2

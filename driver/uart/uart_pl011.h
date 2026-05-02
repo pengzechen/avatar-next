@@ -5,8 +5,18 @@
 #include "types.h"
 #include "driver_cfg.h"
 
+/*
+ * UART 基地址运行时变量
+ *
+ * MMU 开启前（vm_init 等早期 boot 中的 KLOG）：物理地址 0x09000000
+ * MMU 开启后（kernel_main 开始处更新）：KERNEL_VMA + 0x09000000
+ *
+ * 使用运行时变量而非编译期常量，避免 MMU 开启前访问不存在的高地址。
+ */
+extern volatile uintptr_t g_pl011_base;
+
 // UART PL011 register definitions
-#define UART_BASE_ADDR  0x9000000
+#define UART_BASE_ADDR  g_pl011_base
 
 #define UART_DR         (UART_BASE_ADDR + 0x000)  // Data Register
 #define UART_RSR        (UART_BASE_ADDR + 0x004)  // Receive Status Register

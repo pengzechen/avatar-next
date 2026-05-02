@@ -23,6 +23,7 @@
 #define DRIVER_CFG_H
 
 #include "arch.h"
+#include "mmu.h"   /* KERNEL_VMA: 外设基地址需加偏移，通过 TTBR1 访问 */
 
 /* ============================================================
  * UART 驱动选择
@@ -76,16 +77,16 @@
 
 #if ARCH_AARCH64
 
-    #define GICD_BASE_ADDR      0x08000000UL    /* GIC Distributor      */
-    #define GICC_BASE_ADDR      0x08010000UL    /* GICv2 CPU Interface  */
-    #define GICH_BASE_ADDR      0x08030000UL    /* GIC Hypervisor I/F   */
-    #define GICR_BASE_ADDR      0x080A0000UL    /* GICv3 Redistributor  */
+    #define GICD_BASE_ADDR      (0x08000000UL + KERNEL_VMA)    /* GIC Distributor      */
+    #define GICC_BASE_ADDR      (0x08010000UL + KERNEL_VMA)    /* GICv2 CPU Interface  */
+    #define GICH_BASE_ADDR      (0x08030000UL + KERNEL_VMA)    /* GIC Hypervisor I/F   */
+    #define GICR_BASE_ADDR      (0x080A0000UL + KERNEL_VMA)    /* GICv3 Redistributor  */
 
     /* UART 基地址依选定驱动而异 */
     #if defined(DRIVER_UART_PL011)
-        #define UART_BASE       0x09000000UL    /* PL011                */
+        #define UART_BASE       (0x09000000UL + KERNEL_VMA)    /* PL011                */
     #elif defined(DRIVER_UART_DW)
-        #define UART_BASE       0x09000000UL    /* DW 16550（同地址）   */
+        #define UART_BASE       (0x09000000UL + KERNEL_VMA)    /* DW 16550（同地址）   */
     #endif
 
 #elif ARCH_RISCV64
