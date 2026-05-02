@@ -14,6 +14,7 @@
 #include "task/sched.h"
 #include "task/switch.h"
 #include "klog.h"
+#include "barrier.h"
 
 /* ── 静态任务池 ──────────────────────────────────────────── */
 
@@ -107,6 +108,7 @@ task_init(void)
     g_idle_task.entry      = NULL;
     g_idle_task.arg        = NULL;
     list_node_init(&g_idle_task.run_node);
+    list_node_init(&g_idle_task.wait_node);
 
     /* 手动 strcpy（避免依赖外部库） */
     g_idle_task.name[0] = 'i';
@@ -140,6 +142,7 @@ task_create(const char *name, void (*entry)(void *), void *arg, uint8_t priority
     task->entry    = entry;
     task->arg      = arg;
     list_node_init(&task->run_node);
+    list_node_init(&task->wait_node);
 
     /* 复制任务名称（最多 TASK_NAME_LEN-1 字节） */
     uint32_t i = 0;
@@ -205,5 +208,37 @@ task_exit(void)
 task_t *
 task_current(void)
 {
+    barrier_compiler();  // 编译器屏障，确保每次都重新读取
     return g_current_task;
+}
+
+/* ── task_block ──────────────────────────────────────────── */
+
+void
+task_block(list_t *wait_queue)
+{
+    task_t *cur = task_current();
+
+    /* 设置阻塞状态 */
+    cur->state = TASK_BLOCKED;
+
+    /* 如果提供了等待队列，将任务加入 */
+    if (wait_queue) {
+        list_insert_last(wait_queue, &cur->wait_node);
+    }
+
+    /* 触发调度，切换到其他任务 */
+    sched_schedule();
+}
+
+/* ── task_unblock ────────────────────────────────────────── */
+
+void
+task_unblock(task_t *task)
+{
+    /* 将任务从阻塞状态改为就绪 */
+    task->state = TASK_READY;
+
+    /* 加入就绪队列 */
+    sched_enqueue(task);
 }

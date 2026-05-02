@@ -1,0 +1,387 @@
+Switching architecture from riscv64 to x86_64, cleaning...
+mkdir -p build
+/home/ajax/SoftWare/compiler/x86_64-linux-musl-cross/bin/x86_64-linux-musl-gcc -Wall -Wextra -O2 -g -D__x86_64__ -Iinclude -Iinclude/x86_64 -Iboot/common -DLOG_LEVEL=3 -fno-pie -fno-stack-protector -fno-stack-clash-protection -U_FORTIFY_SOURCE -ffreestanding -fno-builtin -mcmodel=large -mno-mmx -mno-sse -nostdinc -Idriver -Ikernel -MMD -MP -c boot/x86_64/boot.S -o build/boot_boot.o
+/home/ajax/SoftWare/compiler/x86_64-linux-musl-cross/bin/x86_64-linux-musl-gcc -Wall -Wextra -O2 -g -D__x86_64__ -Iinclude -Iinclude/x86_64 -Iboot/common -DLOG_LEVEL=3 -fno-pie -fno-stack-protector -fno-stack-clash-protection -U_FORTIFY_SOURCE -ffreestanding -fno-builtin -mcmodel=large -mno-mmx -mno-sse -nostdinc -Idriver -Ikernel -MMD -MP -c kernel/main.c -o build/kernel_main.o
+/home/ajax/SoftWare/compiler/x86_64-linux-musl-cross/bin/x86_64-linux-musl-gcc -Wall -Wextra -O2 -g -D__x86_64__ -Iinclude -Iinclude/x86_64 -Iboot/common -DLOG_LEVEL=3 -fno-pie -fno-stack-protector -fno-stack-clash-protection -U_FORTIFY_SOURCE -ffreestanding -fno-builtin -mcmodel=large -mno-mmx -mno-sse -nostdinc -Idriver -Ikernel -MMD -MP -c kernel/task/task.c -o build/kernel_task_task.o
+/home/ajax/SoftWare/compiler/x86_64-linux-musl-cross/bin/x86_64-linux-musl-gcc -Wall -Wextra -O2 -g -D__x86_64__ -Iinclude -Iinclude/x86_64 -Iboot/common -DLOG_LEVEL=3 -fno-pie -fno-stack-protector -fno-stack-clash-protection -U_FORTIFY_SOURCE -ffreestanding -fno-builtin -mcmodel=large -mno-mmx -mno-sse -nostdinc -Idriver -Ikernel -MMD -MP -c kernel/task/sched.c -o build/kernel_task_sched.o
+/home/ajax/SoftWare/compiler/x86_64-linux-musl-cross/bin/x86_64-linux-musl-gcc -Wall -Wextra -O2 -g -D__x86_64__ -Iinclude -Iinclude/x86_64 -Iboot/common -DLOG_LEVEL=3 -fno-pie -fno-stack-protector -fno-stack-clash-protection -U_FORTIFY_SOURCE -ffreestanding -fno-builtin -mcmodel=large -mno-mmx -mno-sse -nostdinc -Idriver -Ikernel -MMD -MP -c kernel/task/mutex.c -o build/kernel_task_mutex.o
+/home/ajax/SoftWare/compiler/x86_64-linux-musl-cross/bin/x86_64-linux-musl-gcc -Wall -Wextra -O2 -g -D__x86_64__ -Iinclude -Iinclude/x86_64 -Iboot/common -DLOG_LEVEL=3 -fno-pie -fno-stack-protector -fno-stack-clash-protection -U_FORTIFY_SOURCE -ffreestanding -fno-builtin -mcmodel=large -mno-mmx -mno-sse -nostdinc -Idriver -Ikernel -MMD -MP -c kernel/task/x86_64/switch.S -o build/task_switch.o
+/home/ajax/SoftWare/compiler/x86_64-linux-musl-cross/bin/x86_64-linux-musl-gcc -Wall -Wextra -O2 -g -D__x86_64__ -Iinclude -Iinclude/x86_64 -Iboot/common -DLOG_LEVEL=3 -fno-pie -fno-stack-protector -fno-stack-clash-protection -U_FORTIFY_SOURCE -ffreestanding -fno-builtin -mcmodel=large -mno-mmx -mno-sse -nostdinc -Idriver -Ikernel -MMD -MP -c tests/arch_test.c -o build/tests_arch_test.o
+/home/ajax/SoftWare/compiler/x86_64-linux-musl-cross/bin/x86_64-linux-musl-gcc -Wall -Wextra -O2 -g -D__x86_64__ -Iinclude -Iinclude/x86_64 -Iboot/common -DLOG_LEVEL=3 -fno-pie -fno-stack-protector -fno-stack-clash-protection -U_FORTIFY_SOURCE -ffreestanding -fno-builtin -mcmodel=large -mno-mmx -mno-sse -nostdinc -Idriver -Ikernel -MMD -MP -c tests/assert_test.c -o build/tests_assert_test.o
+/home/ajax/SoftWare/compiler/x86_64-linux-musl-cross/bin/x86_64-linux-musl-gcc -Wall -Wextra -O2 -g -D__x86_64__ -Iinclude -Iinclude/x86_64 -Iboot/common -DLOG_LEVEL=3 -fno-pie -fno-stack-protector -fno-stack-clash-protection -U_FORTIFY_SOURCE -ffreestanding -fno-builtin -mcmodel=large -mno-mmx -mno-sse -nostdinc -Idriver -Ikernel -MMD -MP -c tests/klog_test.c -o build/tests_klog_test.o
+/home/ajax/SoftWare/compiler/x86_64-linux-musl-cross/bin/x86_64-linux-musl-gcc -Wall -Wextra -O2 -g -D__x86_64__ -Iinclude -Iinclude/x86_64 -Iboot/common -DLOG_LEVEL=3 -fno-pie -fno-stack-protector -fno-stack-clash-protection -U_FORTIFY_SOURCE -ffreestanding -fno-builtin -mcmodel=large -mno-mmx -mno-sse -nostdinc -Idriver -Ikernel -MMD -MP -c tests/list_test.c -o build/tests_list_test.o
+/home/ajax/SoftWare/compiler/x86_64-linux-musl-cross/bin/x86_64-linux-musl-gcc -Wall -Wextra -O2 -g -D__x86_64__ -Iinclude -Iinclude/x86_64 -Iboot/common -DLOG_LEVEL=3 -fno-pie -fno-stack-protector -fno-stack-clash-protection -U_FORTIFY_SOURCE -ffreestanding -fno-builtin -mcmodel=large -mno-mmx -mno-sse -nostdinc -Idriver -Ikernel -MMD -MP -c tests/mutex_comparison_test.c -o build/tests_mutex_comparison_test.o
+/home/ajax/SoftWare/compiler/x86_64-linux-musl-cross/bin/x86_64-linux-musl-gcc -Wall -Wextra -O2 -g -D__x86_64__ -Iinclude -Iinclude/x86_64 -Iboot/common -DLOG_LEVEL=3 -fno-pie -fno-stack-protector -fno-stack-clash-protection -U_FORTIFY_SOURCE -ffreestanding -fno-builtin -mcmodel=large -mno-mmx -mno-sse -nostdinc -Idriver -Ikernel -MMD -MP -c tests/mutex_stress_test.c -o build/tests_mutex_stress_test.o
+/home/ajax/SoftWare/compiler/x86_64-linux-musl-cross/bin/x86_64-linux-musl-gcc -Wall -Wextra -O2 -g -D__x86_64__ -Iinclude -Iinclude/x86_64 -Iboot/common -DLOG_LEVEL=3 -fno-pie -fno-stack-protector -fno-stack-clash-protection -U_FORTIFY_SOURCE -ffreestanding -fno-builtin -mcmodel=large -mno-mmx -mno-sse -nostdinc -Idriver -Ikernel -MMD -MP -c tests/mutex_test.c -o build/tests_mutex_test.o
+/home/ajax/SoftWare/compiler/x86_64-linux-musl-cross/bin/x86_64-linux-musl-gcc -Wall -Wextra -O2 -g -D__x86_64__ -Iinclude -Iinclude/x86_64 -Iboot/common -DLOG_LEVEL=3 -fno-pie -fno-stack-protector -fno-stack-clash-protection -U_FORTIFY_SOURCE -ffreestanding -fno-builtin -mcmodel=large -mno-mmx -mno-sse -nostdinc -Idriver -Ikernel -MMD -MP -c tests/spinlock_test.c -o build/tests_spinlock_test.o
+/home/ajax/SoftWare/compiler/x86_64-linux-musl-cross/bin/x86_64-linux-musl-gcc -Wall -Wextra -O2 -g -D__x86_64__ -Iinclude -Iinclude/x86_64 -Iboot/common -DLOG_LEVEL=3 -fno-pie -fno-stack-protector -fno-stack-clash-protection -U_FORTIFY_SOURCE -ffreestanding -fno-builtin -mcmodel=large -mno-mmx -mno-sse -nostdinc -Idriver -Ikernel -MMD -MP -c tests/string_test.c -o build/tests_string_test.o
+/home/ajax/SoftWare/compiler/x86_64-linux-musl-cross/bin/x86_64-linux-musl-gcc -Wall -Wextra -O2 -g -D__x86_64__ -Iinclude -Iinclude/x86_64 -Iboot/common -DLOG_LEVEL=3 -fno-pie -fno-stack-protector -fno-stack-clash-protection -U_FORTIFY_SOURCE -ffreestanding -fno-builtin -mcmodel=large -mno-mmx -mno-sse -nostdinc -Idriver -Ikernel -MMD -MP -c platforms/qemu/platform.c -o build/platform_qemu/platform.o
+/home/ajax/SoftWare/compiler/x86_64-linux-musl-cross/bin/x86_64-linux-musl-gcc -Wall -Wextra -O2 -g -D__x86_64__ -Iinclude -Iinclude/x86_64 -Iboot/common -DLOG_LEVEL=3 -fno-pie -fno-stack-protector -fno-stack-clash-protection -U_FORTIFY_SOURCE -ffreestanding -fno-builtin -mcmodel=large -mno-mmx -mno-sse -nostdinc -Idriver -Ikernel -MMD -MP -c driver/uart/uart_x86.c -o build/drv_uart/uart_x86.o
+/home/ajax/SoftWare/compiler/x86_64-linux-musl-cross/bin/x86_64-linux-musl-gcc -Wall -Wextra -O2 -g -D__x86_64__ -Iinclude -Iinclude/x86_64 -Iboot/common -DLOG_LEVEL=3 -fno-pie -fno-stack-protector -fno-stack-clash-protection -U_FORTIFY_SOURCE -ffreestanding -fno-builtin -mcmodel=large -mno-mmx -mno-sse -nostdinc -Idriver -Ikernel -MMD -MP -c driver/timer/timer.c -o build/timer.o
+/home/ajax/SoftWare/compiler/x86_64-linux-musl-cross/bin/x86_64-linux-musl-gcc -Wall -Wextra -O2 -g -D__x86_64__ -Iinclude -Iinclude/x86_64 -Iboot/common -DLOG_LEVEL=3 -fno-pie -fno-stack-protector -fno-stack-clash-protection -U_FORTIFY_SOURCE -ffreestanding -fno-builtin -mcmodel=large -mno-mmx -mno-sse -nostdinc -Idriver -Ikernel -MMD -MP -c driver/irq/lapic.c -o build/lapic.o
+/home/ajax/SoftWare/compiler/x86_64-linux-musl-cross/bin/x86_64-linux-musl-gcc -Wall -Wextra -O2 -g -D__x86_64__ -Iinclude -Iinclude/x86_64 -Iboot/common -DLOG_LEVEL=3 -fno-pie -fno-stack-protector -fno-stack-clash-protection -U_FORTIFY_SOURCE -ffreestanding -fno-builtin -mcmodel=large -mno-mmx -mno-sse -nostdinc -Idriver -Ikernel -MMD -MP -c boot/x86_64/exception.S -o build/x86_exception_asm.o
+/home/ajax/SoftWare/compiler/x86_64-linux-musl-cross/bin/x86_64-linux-musl-gcc -Wall -Wextra -O2 -g -D__x86_64__ -Iinclude -Iinclude/x86_64 -Iboot/common -DLOG_LEVEL=3 -fno-pie -fno-stack-protector -fno-stack-clash-protection -U_FORTIFY_SOURCE -ffreestanding -fno-builtin -mcmodel=large -mno-mmx -mno-sse -nostdinc -Idriver -Ikernel -MMD -MP -c boot/x86_64/exception.c -o build/x86_exception.o
+/home/ajax/SoftWare/compiler/x86_64-linux-musl-cross/bin/x86_64-linux-musl-gcc -Wall -Wextra -O2 -g -D__x86_64__ -Iinclude -Iinclude/x86_64 -Iboot/common -DLOG_LEVEL=3 -fno-pie -fno-stack-protector -fno-stack-clash-protection -U_FORTIFY_SOURCE -ffreestanding -fno-builtin -mcmodel=large -mno-mmx -mno-sse -nostdinc -Idriver -Ikernel -MMD -MP -c lib/klog.c -o build/klog.o
+/home/ajax/SoftWare/compiler/x86_64-linux-musl-cross/bin/x86_64-linux-musl-gcc -Wall -Wextra -O2 -g -D__x86_64__ -Iinclude -Iinclude/x86_64 -Iboot/common -DLOG_LEVEL=3 -fno-pie -fno-stack-protector -fno-stack-clash-protection -U_FORTIFY_SOURCE -ffreestanding -fno-builtin -mcmodel=large -mno-mmx -mno-sse -nostdinc -Idriver -Ikernel -MMD -MP -c lib/vsnprintf.c -o build/vsnprintf.o
+/home/ajax/SoftWare/compiler/x86_64-linux-musl-cross/bin/x86_64-linux-musl-gcc -Wall -Wextra -O2 -g -D__x86_64__ -Iinclude -Iinclude/x86_64 -Iboot/common -DLOG_LEVEL=3 -fno-pie -fno-stack-protector -fno-stack-clash-protection -U_FORTIFY_SOURCE -ffreestanding -fno-builtin -mcmodel=large -mno-mmx -mno-sse -nostdinc -Idriver -Ikernel -MMD -MP -c lib/string.c -o build/string.o
+/home/ajax/SoftWare/compiler/x86_64-linux-musl-cross/bin/x86_64-linux-musl-gcc -nostdlib -nostartfiles -nodefaultlibs -no-pie -Wl,-z,max-page-size=0x1000 -nostartfiles -nodefaultlibs -T boot/x86_64/link.ld -o build/kernel_x86_64.elf build/boot_boot.o build/kernel_main.o build/kernel_task_task.o build/kernel_task_sched.o build/kernel_task_mutex.o build/task_switch.o build/tests_arch_test.o build/tests_assert_test.o build/tests_klog_test.o build/tests_list_test.o build/tests_mutex_comparison_test.o build/tests_mutex_stress_test.o build/tests_mutex_test.o build/tests_spinlock_test.o build/tests_string_test.o build/platform_qemu/platform.o build/drv_uart/uart_x86.o build/timer.o build/lapic.o build/x86_exception_asm.o build/x86_exception.o build/klog.o build/vsnprintf.o build/string.o
+/home/ajax/SoftWare/compiler/x86_64-linux-musl-cross/bin/x86_64-linux-musl-objcopy -O binary build/kernel_x86_64.elf build/kernel_x86_64.bin
+Starting QEMU for x86_64...
+qemu-system-x86_64 -machine q35 -m 1G -nographic -kernel build/kernel_x86_64.bin
+c[?7l[2J[0mSeaBIOS (version 1.16.3-debian-1.16.3-2)
+
+
+iPXE (https://ipxe.org) 00:02.0 CA00 PCI2.10 PnP PMM+3EFCAB90+3EF0AB90 CA00
+Press Ctrl-B to configure iPXE (PCI 00:02.0)...                                                                               
+
+
+Booting from ROM..[32m[INFO] kernel/main.c:88: === Avatar OS Kernel ===[0m
+[32m[INFO] kernel/main.c:89: Architecture: x86_64 (AMD64/Intel 64)[0m
+[32m[INFO] kernel/main.c:129: Initializing IDT + LAPIC...[0m
+[32m[INFO] boot/x86_64/exception.c:81: IDT loaded: base=0xffff800000233490 limit=4096
+[0m
+[32m[INFO] driver/irq/lapic.c:87: LAPIC init: ID=0x0, ver=0x14
+[0m
+[32m[INFO] boot/x86_64/exception.c:98: x86_64 exception init complete, interrupts enabled
+[0m
+[32m[INFO] kernel/main.c:133: Initializing timer...[0m
+[32m[INFO] driver/timer/timer_x86_64_impl.h:36: Timer initialization (x86_64 LAPIC):
+[0m
+[32m[INFO] driver/timer/timer_x86_64_impl.h:37:   Target frequency: 100 Hz
+[0m
+[32m[INFO] driver/timer/timer_x86_64_impl.h:38:   Tick interval: 10 ms
+[0m
+[32m[INFO] driver/timer/timer.c:57: Timer initialized successfully
+[0m
+[32m[INFO] driver/irq/lapic.c:109: LAPIC timer: 626142 ticks in 10ms (div=16)
+[0m
+[32m[INFO] driver/irq/lapic.c:120: LAPIC timer: 626142 ticks/interrupt @ 100 Hz
+[0m
+[32m[INFO] driver/timer/timer_x86_64_impl.h:51: LAPIC timer started @ 100 Hz
+[0m
+[32m[INFO] kernel/main.c:136: Timer enabled[0m
+[32m[INFO] kernel/main.c:141: Running tests...[0m
+[32m[INFO] kernel/main.c:189: --- Architecture Detection Test ---[0m
+[32m[INFO] tests/arch_test.c:11: === Architecture Detection ===[0m
+[32m[INFO] tests/arch_test.c:14: Detected Architecture: x86_64 (AMD64/Intel 64)[0m
+[32m[INFO] tests/arch_test.c:15: ARCH_X86_64 = 1[0m
+[32m[INFO] tests/arch_test.c:34: === Compiler Information ===[0m
+[32m[INFO] tests/arch_test.c:35: Pointer size: 8 bytes[0m
+[32m[INFO] tests/arch_test.c:36: Long size: 8 bytes[0m
+[32m[INFO] tests/arch_test.c:37: Long long size: 8 bytes[0m
+[32m[INFO] kernel/main.c:191: [0m
+[32m[INFO] kernel/main.c:194: --- Kernel Log Test ---[0m
+[32m[INFO] tests/klog_test.c:86: === Kernel Log System Test ===[0m
+[32m[INFO] tests/klog_test.c:88: 
+--- Testing Log Levels ---[0m
+[31m[ERROR] tests/klog_test.c:14: This is an error message: test error[0m
+[33m[WARN] tests/klog_test.c:17: This is a warning message: test warning[0m
+[32m[INFO] tests/klog_test.c:20: This is an info message: test info[0m
+[32m[INFO] tests/klog_test.c:91: 
+--- Testing Module Logs ---[0m
+[32m[INFO] tests/klog_test.c:94: 
+--- Testing Dynamic Level Switching ---[0m
+[32m[INFO] tests/klog_test.c:53: Setting log level to DEBUG[0m
+[34m[DEBUG] tests/klog_test.c:56: This debug message should be visible[0m
+[32m[INFO] tests/klog_test.c:59: Setting log level to TRACE[0m
+[34m[DEBUG] tests/klog_test.c:62: This debug message should be visible[0m
+[TRACE] tests/klog_test.c:63: This trace message should NOW be visible
+[32m[INFO] tests/klog_test.c:97: 
+--- Testing Formatted Logs ---[0m
+[32m[INFO] tests/klog_test.c:73: Value: 42[0m
+[32m[INFO] tests/klog_test.c:74: Pointer: 0xdeadbeef[0m
+[31m[ERROR] tests/klog_test.c:75: Failed at tests/klog_test.c:75[0m
+[32m[INFO] tests/klog_test.c:100: === Test Complete ===[0m
+[32m[INFO] kernel/main.c:196: [0m
+[32m[INFO] kernel/main.c:199: --- String Test ---[0m
+[32m[INFO] tests/string_test.c:16: Starting string test...[0m
+[32m[INFO] tests/string_test.c:19: Testing strlen...[0m
+[32m[INFO] tests/string_test.c:25: Testing strcpy...[0m
+[32m[INFO] tests/string_test.c:32: Testing strcat...[0m
+[32m[INFO] tests/string_test.c:40: Testing strcmp...[0m
+[32m[INFO] tests/string_test.c:52: Testing memset...[0m
+[32m[INFO] tests/string_test.c:59: Testing memcpy...[0m
+[32m[INFO] tests/string_test.c:67: Testing memcmp...[0m
+[32m[INFO] tests/string_test.c:74: Testing atol...[0m
+[32m[INFO] tests/string_test.c:79: String test complete![0m
+[32m[INFO] kernel/main.c:201: [0m
+[32m[INFO] kernel/main.c:204: --- Assert Test ---[0m
+[32m[INFO] tests/assert_test.c:111: === Assert System Test ===[0m
+[32m[INFO] tests/assert_test.c:123: === Non-panic tests passed ===[0m
+[32m[INFO] kernel/main.c:206: [0m
+[32m[INFO] kernel/main.c:145: All tests completed successfully![0m
+[32m[INFO] kernel/main.c:148: Initializing task subsystem...[0m
+[32m[INFO] kernel/task/task.c:125: [task] subsystem initialized, idle task id=0
+[0m
+[32m[INFO] kernel/main.c:153: Preemptive scheduling enabled[0m
+[32m[INFO] kernel/main.c:156: [0m
+[32m[INFO] kernel/main.c:214: --- Mutex Comparison Test (No Lock vs With Lock) ---[0m
+[32m[INFO] tests/mutex_comparison_test.c:339: === Mutex Comparison Test: No Lock vs With Lock ===
+[0m
+[32m[INFO] tests/mutex_comparison_test.c:340: 
+[0m
+[32m[INFO] tests/mutex_comparison_test.c:221: ╔══════════════════════════════════════════════════════╗
+[0m
+[32m[INFO] tests/mutex_comparison_test.c:222: ║  Phase 1: NO LOCK (Race Condition Demo)            ║
+[0m
+[32m[INFO] tests/mutex_comparison_test.c:223: ╚══════════════════════════════════════════════════════╝
+[0m
+[32m[INFO] tests/mutex_comparison_test.c:231: Initial balance: 1000
+[0m
+[32m[INFO] tests/mutex_comparison_test.c:232: Creating 10 tasks WITHOUT mutex protection...
+[0m
+[32m[INFO] kernel/task/task.c:161: [task] created 'd0' id=1 prio=1 sp=0xffff800000214068
+[0m
+[32m[INFO] kernel/task/task.c:161: [task] created 'd1' id=2 prio=1 sp=0xffff800000216068
+[0m
+[32m[INFO] kernel/task/task.c:161: [task] created 'd2' id=3 prio=1 sp=0xffff800000218068
+[0m
+[32m[INFO] kernel/task/task.c:161: [task] created 'd3' id=4 prio=1 sp=0xffff80000021a068
+[0m
+[32m[INFO] kernel/task/task.c:161: [task] created 'd4' id=5 prio=1 sp=0xffff80000021c068
+[0m
+[32m[INFO] kernel/task/task.c:161: [task] created 'w5' id=6 prio=1 sp=0xffff80000021e068
+[0m
+[32m[INFO] kernel/task/task.c:161: [task] created 'w6' id=7 prio=1 sp=0xffff800000220068
+[0m
+[32m[INFO] kernel/task/task.c:161: [task] created 'w7' id=8 prio=1 sp=0xffff800000222068
+[0m
+[32m[INFO] kernel/task/task.c:161: [task] created 'w8' id=9 prio=1 sp=0xffff800000224068
+[0m
+[32m[INFO] kernel/task/task.c:161: [task] created 'w9' id=10 prio=1 sp=0xffff800000226068
+[0m
+[34m[DEBUG] kernel/task/task.c:79: [task] 'd0' (id=1) starting
+[0m
+[34m[DEBUG] kernel/task/task.c:79: [task] 'd1' (id=2) starting
+[0m
+[34m[DEBUG] kernel/task/task.c:79: [task] 'd2' (id=3) starting
+[0m
+[34m[DEBUG] kernel/task/task.c:79: [task] 'd3' (id=4) starting
+[0m
+[34m[DEBUG] kernel/task/task.c:79: [task] 'd4' (id=5) starting
+[0m
+[34m[DEBUG] kernel/task/task.c:79: [task] 'w5' (id=6) starting
+[0m
+[34m[DEBUG] kernel/task/task.c:79: [task] 'w6' (id=7) starting
+[0m
+[34m[DEBUG] kernel/task/task.c:79: [task] 'w7' (id=8) starting
+[0m
+[34m[DEBUG] kernel/task/task.c:79: [task] 'w8' (id=9) starting
+[0m
+[34m[DEBUG] kernel/task/task.c:79: [task] 'w9' (id=10) starting
+[0m
+[32m[INFO] tests/mutex_comparison_test.c:59: [no-lock] deposit_task_0: completed 200 deposits
+[0m
+[32m[INFO] kernel/task/task.c:180: [task] 'd0' (id=1) exiting
+[0m
+[32m[INFO] tests/mutex_comparison_test.c:59: [no-lock] deposit_task_1: completed 200 deposits
+[0m
+[32m[INFO] kernel/task/task.c:180: [task] 'd1' (id=2) exiting
+[0m
+[32m[INFO] tests/mutex_comparison_test.c:59: [no-lock] deposit_task_2: completed 200 deposits
+[0m
+[32m[INFO] kernel/task/task.c:180: [task] 'd2' (id=3) exiting
+[0m
+[32m[INFO] tests/mutex_comparison_test.c:59: [no-lock] deposit_task_3: completed 200 deposits
+[0m
+[32m[INFO] kernel/task/task.c:180: [task] 'd3' (id=4) exiting
+[0m
+[32m[INFO] tests/mutex_comparison_test.c:59: [no-lock] deposit_task_4: completed 200 deposits
+[0m
+[32m[INFO] kernel/task/task.c:180: [task] 'd4' (id=5) exiting
+[0m
+[32m[INFO] tests/mutex_comparison_test.c:87: [no-lock] withdraw_task_5: completed 200 withdrawals
+[0m
+[32m[INFO] kernel/task/task.c:180: [task] 'w5' (id=6) exiting
+[0m
+[32m[INFO] tests/mutex_comparison_test.c:87: [no-lock] withdraw_task_6: completed 200 withdrawals
+[0m
+[32m[INFO] kernel/task/task.c:180: [task] 'w6' (id=7) exiting
+[0m
+[32m[INFO] tests/mutex_comparison_test.c:87: [no-lock] withdraw_task_7: completed 200 withdrawals
+[0m
+[32m[INFO] kernel/task/task.c:180: [task] 'w7' (id=8) exiting
+[0m
+[32m[INFO] tests/mutex_comparison_test.c:87: [no-lock] withdraw_task_8: completed 200 withdrawals
+[0m
+[32m[INFO] kernel/task/task.c:180: [task] 'w8' (id=9) exiting
+[0m
+[32m[INFO] tests/mutex_comparison_test.c:87: [no-lock] withdraw_task_9: completed 200 withdrawals
+[0m
+[32m[INFO] kernel/task/task.c:180: [task] 'w9' (id=10) exiting
+[0m
+[32m[INFO] tests/mutex_comparison_test.c:161: 
+[0m
+[32m[INFO] tests/mutex_comparison_test.c:162: === NO LOCK (Phase 1) Results ===
+[0m
+[32m[INFO] tests/mutex_comparison_test.c:163: Final balance: 3600
+[0m
+[32m[INFO] tests/mutex_comparison_test.c:164: Total deposits: 1000 (expected 1000)
+[0m
+[32m[INFO] tests/mutex_comparison_test.c:166: Total withdrawals: 990 (expected 1000)
+[0m
+[32m[INFO] tests/mutex_comparison_test.c:168: Errors detected: 0
+[0m
+[32m[INFO] tests/mutex_comparison_test.c:176: Expected balance: 51500
+[0m
+[32m[INFO] tests/mutex_comparison_test.c:177: Difference: -47900
+[0m
+[31m[ERROR] tests/mutex_comparison_test.c:193: ❌ LOST OPERATIONS: Expected 1000 deposits/1000 withdrawals, got 1000/990
+[0m
+[31m[ERROR] tests/mutex_comparison_test.c:201: ❌ LOST UPDATES: Balance off by -47900 (expected 51500, got 3600)
+[0m
+[31m[ERROR] tests/mutex_comparison_test.c:207: ❌ DATA CORRUPTION DETECTED!
+[0m
+[32m[INFO] tests/mutex_comparison_test.c:211: 
+[0m
+[32m[INFO] tests/mutex_comparison_test.c:258: ╔══════════════════════════════════════════════════════╗
+[0m
+[32m[INFO] tests/mutex_comparison_test.c:259: ║  Phase 2: WITH LOCK (Mutex Protected)               ║
+[0m
+[32m[INFO] tests/mutex_comparison_test.c:260: ╚══════════════════════════════════════════════════════╝
+[0m
+[32m[INFO] tests/mutex_comparison_test.c:271: Initial balance: 1000
+[0m
+[32m[INFO] tests/mutex_comparison_test.c:272: Creating 10 tasks WITH mutex protection...
+[0m
+[32m[INFO] kernel/task/task.c:161: [task] created 'D0' id=11 prio=1 sp=0xffff800000214068
+[0m
+[32m[INFO] kernel/task/task.c:161: [task] created 'D1' id=12 prio=1 sp=0xffff800000216068
+[0m
+[32m[INFO] kernel/task/task.c:161: [task] created 'D2' id=13 prio=1 sp=0xffff800000218068
+[0m
+[32m[INFO] kernel/task/task.c:161: [task] created 'D3' id=14 prio=1 sp=0xffff80000021a068
+[0m
+[32m[INFO] kernel/task/task.c:161: [task] created 'D4' id=15 prio=1 sp=0xffff80000021c068
+[0m
+[32m[INFO] kernel/task/task.c:161: [task] created 'W5' id=16 prio=1 sp=0xffff80000021e068
+[0m
+[32m[INFO] kernel/task/task.c:161: [task] created 'W6' id=17 prio=1 sp=0xffff800000220068
+[0m
+[32m[INFO] kernel/task/task.c:161: [task] created 'W7' id=18 prio=1 sp=0xffff800000222068
+[0m
+[32m[INFO] kernel/task/task.c:161: [task] created 'W8' id=19 prio=1 sp=0xffff800000224068
+[0m
+[32m[INFO] kernel/task/task.c:161: [task] created 'W9' id=20 prio=1 sp=0xffff800000226068
+[0m
+[34m[DEBUG] kernel/task/task.c:79: [task] 'D0' (id=11) starting
+[0m
+[34m[DEBUG] kernel/task/task.c:79: [task] 'D1' (id=12) starting
+[0m
+[34m[DEBUG] kernel/task/task.c:79: [task] 'D2' (id=13) starting
+[0m
+[34m[DEBUG] kernel/task/task.c:79: [task] 'D3' (id=14) starting
+[0m
+[34m[DEBUG] kernel/task/task.c:79: [task] 'D4' (id=15) starting
+[0m
+[34m[DEBUG] kernel/task/task.c:79: [task] 'W5' (id=16) starting
+[0m
+[34m[DEBUG] kernel/task/task.c:79: [task] 'W6' (id=17) starting
+[0m
+[34m[DEBUG] kernel/task/task.c:79: [task] 'W7' (id=18) starting
+[0m
+[34m[DEBUG] kernel/task/task.c:79: [task] 'W8' (id=19) starting
+[0m
+[34m[DEBUG] kernel/task/task.c:79: [task] 'W9' (id=20) starting
+[0m
+[32m[INFO] tests/mutex_comparison_test.c:119: [locked] deposit_task_0: completed 200 deposits
+[0m
+[32m[INFO] kernel/task/task.c:180: [task] 'D0' (id=11) exiting
+[0m
+[32m[INFO] tests/mutex_comparison_test.c:119: [locked] deposit_task_1: completed 200 deposits
+[0m
+[32m[INFO] kernel/task/task.c:180: [task] 'D1' (id=12) exiting
+[0m
+[32m[INFO] tests/mutex_comparison_test.c:119: [locked] deposit_task_2: completed 200 deposits
+[0m
+[32m[INFO] kernel/task/task.c:180: [task] 'D2' (id=13) exiting
+[0m
+[32m[INFO] tests/mutex_comparison_test.c:119: [locked] deposit_task_3: completed 200 deposits
+[0m
+[32m[INFO] kernel/task/task.c:180: [task] 'D3' (id=14) exiting
+[0m
+[32m[INFO] tests/mutex_comparison_test.c:119: [locked] deposit_task_4: completed 200 deposits
+[0m
+[32m[INFO] kernel/task/task.c:180: [task] 'D4' (id=15) exiting
+[0m
+[32m[INFO] tests/mutex_comparison_test.c:151: [locked] withdraw_task_5: completed 200 withdrawals
+[0m
+[32m[INFO] kernel/task/task.c:180: [task] 'W5' (id=16) exiting
+[0m
+[32m[INFO] tests/mutex_comparison_test.c:151: [locked] withdraw_task_6: completed 200 withdrawals
+[0m
+[32m[INFO] kernel/task/task.c:180: [task] 'W6' (id=17) exiting
+[0m
+[32m[INFO] tests/mutex_comparison_test.c:151: [locked] withdraw_task_7: completed 200 withdrawals
+[0m
+[32m[INFO] kernel/task/task.c:180: [task] 'W7' (id=18) exiting
+[0m
+[32m[INFO] tests/mutex_comparison_test.c:151: [locked] withdraw_task_8: completed 200 withdrawals
+[0m
+[32m[INFO] kernel/task/task.c:180: [task] 'W8' (id=19) exiting
+[0m
+[32m[INFO] tests/mutex_comparison_test.c:151: [locked] withdraw_task_9: completed 200 withdrawals
+[0m
+[32m[INFO] kernel/task/task.c:180: [task] 'W9' (id=20) exiting
+[0m
+[32m[INFO] tests/mutex_comparison_test.c:161: 
+[0m
+[32m[INFO] tests/mutex_comparison_test.c:162: === WITH LOCK (Phase 2) Results ===
+[0m
+[32m[INFO] tests/mutex_comparison_test.c:163: Final balance: 51000
+[0m
+[32m[INFO] tests/mutex_comparison_test.c:164: Total deposits: 1000 (expected 1000)
+[0m
+[32m[INFO] tests/mutex_comparison_test.c:166: Total withdrawals: 1000 (expected 1000)
+[0m
+[32m[INFO] tests/mutex_comparison_test.c:168: Errors detected: 0
+[0m
+[32m[INFO] tests/mutex_comparison_test.c:176: Expected balance: 51000
+[0m
+[32m[INFO] tests/mutex_comparison_test.c:177: Difference: 0
+[0m
+[32m[INFO] tests/mutex_comparison_test.c:209: ✓ All operations completed correctly
+[0m
+[32m[INFO] tests/mutex_comparison_test.c:211: 
+[0m
+[32m[INFO] kernel/task/task.c:161: [task] created 'summary' id=21 prio=1 sp=0xffff800000214068
+[0m
+[32m[INFO] kernel/main.c:216: [0m
+[32m[INFO] kernel/main.c:158: [0m
+[32m[INFO] kernel/main.c:165: Demo tasks created. Entering idle loop...[0m
+[34m[DEBUG] kernel/task/task.c:79: [task] 'summary' (id=21) starting
+[0m
+[32m[INFO] tests/mutex_comparison_test.c:304: 
+[0m
+[32m[INFO] tests/mutex_comparison_test.c:305: ╔══════════════════════════════════════════════════════╗
+[0m
+[32m[INFO] tests/mutex_comparison_test.c:306: ║           COMPARISON SUMMARY                         ║
+[0m
+[32m[INFO] tests/mutex_comparison_test.c:307: ╚══════════════════════════════════════════════════════╝
+[0m
+[32m[INFO] tests/mutex_comparison_test.c:309: 
+[0m
+[32m[INFO] tests/mutex_comparison_test.c:318: ✓ No errors detected in either phase
+[0m
+[32m[INFO] tests/mutex_comparison_test.c:321: 
+[0m
+[32m[INFO] tests/mutex_comparison_test.c:322: Key Takeaways:
+[0m
+[32m[INFO] tests/mutex_comparison_test.c:323:   1. Without locks: multiple tasks can read-modify-write
+[0m
+[32m[INFO] tests/mutex_comparison_test.c:324:      the same data simultaneously, causing lost updates
+[0m
+[32m[INFO] tests/mutex_comparison_test.c:325:   2. With mutex: only one task can access the data at a time,
+[0m
+[32m[INFO] tests/mutex_comparison_test.c:326:      ensuring atomicity and correctness
+[0m
+[32m[INFO] tests/mutex_comparison_test.c:327:   3. The cost: mutex adds overhead due to blocking/context switch
+[0m
+[32m[INFO] tests/mutex_comparison_test.c:328: 
+[0m
+[32m[INFO] tests/mutex_comparison_test.c:330: [summary] Test complete. Exiting...
+[0m
+[32m[INFO] kernel/task/task.c:180: [task] 'summary' (id=21) exiting
+[0m
+QEMU: Terminated
+

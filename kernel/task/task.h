@@ -38,6 +38,7 @@ typedef struct task {
     void          (*entry)(void *);      /* 任务入口函数                          */
     void           *arg;                 /* 传给 entry 的参数                     */
     list_node_t     run_node;            /* 就绪队列节点                          */
+    list_node_t     wait_node;           /* 等待队列节点（用于 mutex/semaphore）  */
 } task_t;
 
 /* ── 全局当前任务指针（在 task.c 中定义） ────────────────── */
@@ -85,5 +86,23 @@ void task_exit(void) __attribute__((noreturn));
  * task_current - 返回当前正在运行的任务指针
  */
 task_t *task_current(void);
+
+/**
+ * task_block - 阻塞当前任务
+ * @wait_queue: 等待队列（如果为 NULL，则不从队列移除）
+ *
+ * 将当前任务设置为 BLOCKED 状态，并触发调度。
+ * 如果 wait_queue 非 NULL，将任务加入该队列。
+ */
+void task_block(list_t *wait_queue);
+
+/**
+ * task_unblock - 唤醒一个被阻塞的任务
+ * @task: 要唤醒的任务
+ *
+ * 将任务从 BLOCKED 状态改为 READY，并加入就绪队列。
+ * 如果任务在等待队列中，调用者应先将其从等待队列移除。
+ */
+void task_unblock(task_t *task);
 
 #endif /* KERNEL_TASK_TASK_H */

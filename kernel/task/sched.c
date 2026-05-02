@@ -26,6 +26,7 @@
 #include "task/sched.h"
 #include "task/switch.h"
 #include "klog.h"
+#include "barrier.h"
 
 /* ── Scheduler state ─────────────────────────────────────── */
 
@@ -99,7 +100,9 @@ sched_schedule(void)
     }
 
     next->state    = TASK_RUNNING;
+    barrier_compiler();  // 确保 state 在 g_current_task 之前完成
     g_current_task = next;
+    barrier_compiler();  // 确保 g_current_task 在 arch_task_switch 之前完成
 
     // KLOG_DEBUG("[sched] switch: prev='%s' (id=%u) -> next='%s' (id=%u)\n",
     //           prev->name, prev->id, next->name, next->id);

@@ -27,6 +27,10 @@ extern void test_arch(void);
 extern void run_klog_tests(void);
 extern void test_string_functions(void);
 extern void run_assert_tests(void);
+extern void run_mutex_tests(void);
+extern void run_mutex_demo(void);
+extern void run_mutex_stress_test(void);
+extern void run_mutex_comparison_test(void);
 
 /* ── 演示任务 ─────────────────────────────────────────────── */
 
@@ -147,11 +151,16 @@ void kernel_main(void)
     /* 将 sched_tick 注册为 timer tick 回调，启用抢占 */
     timer_set_tick_cb(sched_tick);
     KLOG_INFO("Preemptive scheduling enabled");
-    
-    /* 创建演示任务 */
-    task_create("task_a", demo_task_a, NULL, 1);
-    task_create("task_b", demo_task_b, NULL, 1);
-    task_create("task_c", demo_task_c, NULL, 1);
+
+    /* ── 运行 Mutex 测试 ──────────────────────────────────── */
+    KLOG_INFO("");
+    run_mutex_demo();
+    KLOG_INFO("");
+
+    /* 创建演示任务（如果需要） */
+    /* task_create("task_a", demo_task_a, NULL, 1); */
+    /* task_create("task_b", demo_task_b, NULL, 1); */
+    /* task_create("task_c", demo_task_c, NULL, 1); */
 
     KLOG_INFO("Demo tasks created. Entering idle loop...");
 
@@ -194,6 +203,16 @@ void run_all_tests(void)
     /* Run assert test */
     KLOG_INFO("--- Assert Test ---");
     run_assert_tests();
+    KLOG_INFO("");
+}
+
+/* ── Mutex 演示 ───────────────────────────────────────────── */
+
+void
+run_mutex_demo(void)
+{
+    KLOG_INFO("--- Mutex Comparison Test (No Lock vs With Lock) ---");
+    run_mutex_comparison_test();
     KLOG_INFO("");
 
 #if 0
