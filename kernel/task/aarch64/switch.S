@@ -37,11 +37,10 @@ arch_task_switch:
     mov     x9, sp
     str     x9, [x0]
 
-    /* ── 保存当前页表到 **prev_pgd_ptr（x2，如果非NULL）───────── */
+    /* ── 保存当前页表到 *prev_pgd_ptr（x2，如果非NULL）────────── */
     cbz     x2, 1f
     mrs     x9, ttbr0_el1
-    ldr     x10, [x2]           /* 加载 &prev->pgd */
-    str     x9, [x10]           /* 将 TTBR0_EL1 保存到 prev->pgd */
+    str     x9, [x2]            /* 将 TTBR0_EL1 保存到 prev->pgd */
 1:
 
     /* ── 切换到下一任务的页表（如果 x3 != NULL）────────────────── */

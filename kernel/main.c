@@ -234,19 +234,17 @@ void kernel_main(void)
     /* 创建第二个用户进程：hello
      * 使用不同的栈地址避免冲突
      */
-#if 0
     task_t *proc2 = process_create("hello",
                                     (uint64_t)hello_program,
                                     0x70100000ULL,
                                     10);
     if (proc2) {
-        KLOG_INFO("Process 2 (hello) created successfully!\n");
+        KLOG_INFO("Process 2 (hello) created successfully! id=%u\n", proc2->id);
     } else {
         KLOG_ERROR("Failed to create process 2!\n");
     }
 
     KLOG_INFO("\nBoth processes will run in EL0 (user mode)\n");
-#endif
 
     KLOG_INFO("\n");
     KLOG_INFO("Demo tasks created. Entering idle loop...\n");
