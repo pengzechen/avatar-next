@@ -27,7 +27,7 @@ typedef enum {
 #define TASK_NAME_LEN    16u     /* 任务名最大长度（含 NUL）      */
 #define TASK_MAX         16u     /* 最大并发任务数（不含 idle）   */
 #define TASK_CWD_LEN     128u    /* 当前工作目录最大长度          */
-#define TASK_MAX_FD      16u     /* 每进程最大文件描述符数        */
+#define TASK_MAX_FD      256u    /* 每进程最大文件描述符数        */
 
 /* ── Task Control Block ──────────────────────────────────── */
 typedef struct task {

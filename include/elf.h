@@ -48,7 +48,9 @@
 #define DT_RELAENT 9   /* RELA 条目大小 */
 
 /* AArch64 重定位类型 */
-#define R_AARCH64_RELATIVE 1027  /* 0x403: base + addend */
+#define R_AARCH64_RELATIVE   1027  /* 0x403: base + addend */
+#define R_AARCH64_JUMP_SLOT  1026  /* 0x402: PLT entry */
+#define R_AARCH64_GLOB_DAT   1025  /* 0x401: GOT entry */
 
 /* 64-bit ELF 动态段条目 */
 typedef struct {

@@ -279,6 +279,13 @@ process_create_with_pgd(const char *name, uint64_t user_entry, uint64_t user_sp,
     task->cwd[1] = '\0';
     for (uint32_t j = 0; j < TASK_MAX_FD; j++)
         task->fd_table[j] = -1;
+
+    KLOG_DEBUG("[task] fd_table initialized: pid=%u [0]=%d(u=%u) [3]=%d(u=%u) [255]=%d(u=%u) sizeof=%zu\n",
+              task->id, task->fd_table[0], (unsigned)task->fd_table[0],
+              task->fd_table[3], (unsigned)task->fd_table[3],
+              task->fd_table[255], (unsigned)task->fd_table[255],
+              sizeof(task->fd_table[0]));
+
     task->parent_id  = g_current_task ? g_current_task->id : 0;
     task->exit_status = 0;
     task->is_waiting  = false;

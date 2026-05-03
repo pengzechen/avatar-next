@@ -353,8 +353,19 @@ static int elf_load(uint8_t *file_data, uint64_t file_size, const char *pathname
                 KLOG_INFO("[elf] Found RELA: addr=0x%llx, size=%llu, ent=%llu\n",
                           rela_addr, rela_size, rela_ent);
 
-                /* 计算加载基址（第一个 PT_LOAD 段的虚拟地址） */
-                uint64_t load_bias = (min_vaddr == 0) ? 0 : 0;
+                /* 计算加载基址：
+                 * - ET_EXEC（非 PIE）：load_bias = 0（使用绝对地址）
+                 * - ET_DYN（PIE）：load_bias = 0（如果加载到 min_vaddr）
+                 * 注意：对于静态链接的 PIE，所有地址都是相对于 min_vaddr 的
+                 */
+                uint64_t load_bias = 0;
+                if (ehdr->e_type == ET_DYN && min_vaddr != 0) {
+                    /* PIE 加载到非 0 地址，需要调整 */
+                    load_bias = 0; /* 我们的实现总是加载到指定的虚拟地址 */
+                }
+
+                KLOG_INFO("[elf] ELF type=%u, min_vaddr=0x%llx, load_bias=0x%llx\n",
+                          ehdr->e_type, min_vaddr, load_bias);
 
                 /* 处理每个 RELA 条目 */
                 uint64_t rela_count = rela_size / rela_ent;
@@ -381,9 +392,9 @@ static int elf_load(uint8_t *file_data, uint64_t file_size, const char *pathname
                     elf64_rela_t *rela = (elf64_rela_t *)(file_data + rela_file_offset + r * rela_ent);
                     uint32_t r_type = ELF64_R_TYPE(rela->r_info);
 
-                    /* 只处理 R_AARCH64_RELATIVE */
+                    /* 处理多种重定位类型 */
                     if (r_type == R_AARCH64_RELATIVE) {
-                        /* 获取目标地址的物理页 */
+                        /* RELATIVE: 基址 + addend */
                         uint64_t target_vaddr = rela->r_offset;
                         uint64_t page_vaddr = ALIGN_DOWN(target_vaddr, PAGE_SIZE);
                         uint64_t paddr = memory_get_paddr(pgd, page_vaddr);
@@ -393,16 +404,46 @@ static int elf_load(uint8_t *file_data, uint64_t file_size, const char *pathname
                             continue;
                         }
 
-                        /* 计算重定位后的值：基址 + addend */
                         uint64_t new_value = load_bias + rela->r_addend;
-
-                        /* 写入重定位后的值 */
                         uint64_t offset_in_page = target_vaddr - page_vaddr;
                         uint64_t *target = (uint64_t *)phys_to_virt(paddr + offset_in_page);
-                        *target = new_value;
 
-                        KLOG_TRACE("[elf] Rela[0x%llx]: 0x%llx -> 0x%llx\n",
-                                  rela->r_offset, rela->r_addend, new_value);
+                        KLOG_TRACE("[elf] RELATIVE 0x%llx: 0x%llx -> 0x%llx\n",
+                                  target_vaddr, *target, new_value);
+                        *target = new_value;
+                    } else if (r_type == R_AARCH64_JUMP_SLOT ||
+                               r_type == R_AARCH64_GLOB_DAT) {
+                        /* JUMP_SLOT/GLOB_DAT: 函数地址
+                         * 对于静态链接的 PIE，这些应该指向 load_bias + addend
+                         * 但如果 addend 很小（比如 3），可能是编译器生成的占位符
+                         */
+                        uint64_t target_vaddr = rela->r_offset;
+                        uint64_t page_vaddr = ALIGN_DOWN(target_vaddr, PAGE_SIZE);
+                        uint64_t paddr = memory_get_paddr(pgd, page_vaddr);
+
+                        if (paddr == 0) {
+                            KLOG_ERROR("[elf] Cannot get paddr for 0x%llx\n", target_vaddr);
+                            continue;
+                        }
+
+                        uint64_t new_value = load_bias + rela->r_addend;
+                        uint64_t offset_in_page = target_vaddr - page_vaddr;
+                        uint64_t *target = (uint64_t *)phys_to_virt(paddr + offset_in_page);
+
+                        /* 如果 new_value 太小（< 0x10000），可能是错误的 */
+                        if (new_value < 0x10000) {
+                            KLOG_WARN("[elf] Suspicious %s at 0x%llx: addend=0x%llx, new_value=0x%llx\n",
+                                      r_type == R_AARCH64_JUMP_SLOT ? "JUMP_SLOT" : "GLOB_DAT",
+                                      target_vaddr, rela->r_addend, new_value);
+                        }
+
+                        KLOG_TRACE("[elf] %s 0x%llx: 0x%llx -> 0x%llx\n",
+                                  r_type == R_AARCH64_JUMP_SLOT ? "JUMP_SLOT" : "GLOB_DAT",
+                                  target_vaddr, *target, new_value);
+                        *target = new_value;
+                    } else if (r_type != 0) {
+                        KLOG_WARN("[elf] Unsupported relocation type: %u at offset 0x%llx\n",
+                                  r_type, rela->r_offset);
                     }
                 }
 
@@ -439,6 +480,9 @@ static int elf_load(uint8_t *file_data, uint64_t file_size, const char *pathname
     }
 
     /* 使用已建好的页表创建用户任务（跳过 vm_create_user_process） */
+    task_t *current = task_current();
+    uint32_t saved_parent_id = current->parent_id;
+
     new_task = process_create_with_pgd(pathname, entry_point, user_sp, 10, pgd_phys,
                                        ALIGN_UP(max_vaddr, PAGE_SIZE), 0x30000000ULL);
     if (new_task == NULL) {
@@ -446,8 +490,12 @@ static int elf_load(uint8_t *file_data, uint64_t file_size, const char *pathname
         return -13;
     }
 
-    KLOG_INFO("[elf] Process '%s' created, PID=%u, pgd=0x%llx\n",
-              pathname, new_task->id, pgd_phys);
+    /* 修复父进程关系：新进程应该继承当前进程的父进程
+     * 这样父进程的 wait4 会等待新进程，而不是已退出的当前进程 */
+    new_task->parent_id = saved_parent_id;
+
+    KLOG_INFO("[elf] Process '%s' created, PID=%u, pgd=0x%llx, parent=%u\n",
+              pathname, new_task->id, pgd_phys, new_task->parent_id);
     KLOG_INFO("[elf]   heap_start=0x%llx, mmap_base=0x%llx\n",
               new_task->heap_end, new_task->mmap_next);
 

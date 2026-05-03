@@ -162,16 +162,20 @@ static int fd_pool_alloc(void)
 {
     for (int i = 0; i < FD_POOL_SIZE; i++) {
         if (g_fd_pool[i].type == FDT_FREE) {
+            KLOG_DEBUG("[fd] pool_alloc: allocated slot %d\n", i);
             return i;
         }
     }
+    KLOG_ERROR("[fd] pool_alloc: no free slots (FD_POOL_SIZE=%d)\n", FD_POOL_SIZE);
     return -1;
 }
 
 static void fd_pool_free(int idx)
 {
-    if (idx >= 0 && idx < FD_POOL_SIZE)
+    if (idx >= 0 && idx < FD_POOL_SIZE) {
+        KLOG_DEBUG("[fd] pool_free: freeing slot %d\n", idx);
         g_fd_pool[idx].type = FDT_FREE;
+    }
 }
 
 /* Allocate a new fd number for the current task, backed by pool slot idx */
@@ -179,11 +183,22 @@ static int task_alloc_fd(task_t *task, int pool_idx)
 {
     /* fd 0,1,2 reserved for stdin/stdout/stderr */
     for (int fd = 3; fd < (int)TASK_MAX_FD; fd++) {
-        if (task->fd_table[fd] == -1) {
+        /* 使用 (int8_t)-1 避免类型提升问题 */
+        if (task->fd_table[fd] == (int8_t)-1) {
             task->fd_table[fd] = (int8_t)pool_idx;
+            KLOG_DEBUG("[fd] task_alloc_fd: pid=%u allocated fd=%d for pool_idx=%d\n",
+                      task->id, fd, pool_idx);
             return fd;
         }
     }
+
+    /* 打印 fd_table 的前几个槽位用于调试 */
+    KLOG_ERROR("[fd] task_alloc_fd: pid=%u no free fd (TASK_MAX_FD=%d)\n",
+              task->id, TASK_MAX_FD);
+    KLOG_ERROR("[fd] fd_table dump: [0]=%d [1]=%d [2]=%d [3]=%d [4]=%d [5]=%d\n",
+              task->fd_table[0], task->fd_table[1], task->fd_table[2],
+              task->fd_table[3], task->fd_table[4], task->fd_table[5]);
+
     return -1;
 }
 
@@ -401,7 +416,16 @@ void syscall_handler(trap_frame_t *frame)
     uint64_t  syscall_num = regs[8];
 
     task_t *current = task_current();
-    KLOG_TRACE("[syscall] pid=%u nr=%llu args=[0x%llx, 0x%llx, 0x%llx]\n",
+
+    /* 验证 frame 完整性 */
+    if (frame->elr < 0x1000) {
+        KLOG_ERROR("[syscall] CORRUPTION: pid=%u nr=%llu frame->elr=0x%llx < 0x1000!\n",
+                   current->id, syscall_num, frame->elr);
+        KLOG_ERROR("[syscall] frame=%p, regs=%p, sp=%p\n",
+                   frame, regs, __builtin_frame_address(0));
+    }
+
+    KLOG_DEBUG("[syscall] pid=%u nr=%llu args=[0x%llx, 0x%llx, 0x%llx]\n",
                current->id, syscall_num, regs[0], regs[1], regs[2]);
 
     switch (syscall_num) {
@@ -861,6 +885,8 @@ void syscall_handler(trap_frame_t *frame)
         }
         int idx = me->fd_table[fd];
         fd_obj_t *obj = &g_fd_pool[idx];
+        KLOG_DEBUG("[fd] close: pid=%u fd=%d pool_idx=%d type=%d\n",
+                  me->id, fd, idx, obj->type);
         if (obj->type == FDT_FILE)
             ext4_fclose(&obj->file);
         else if (obj->type == FDT_DIR)
@@ -1097,6 +1123,8 @@ void syscall_handler(trap_frame_t *frame)
     case LINUX_SYS_RT_SIGACTION:
     case LINUX_SYS_RT_SIGPROCMASK:
     case LINUX_SYS_RT_SIGRETURN:
+        KLOG_DEBUG("[syscall] rt_sigprocmask: pid=%u setting retval=0, frame->elr=0x%llx\n",
+                   current->id, frame->elr);
         regs[0] = 0;
         break;
 
@@ -1191,6 +1219,14 @@ void syscall_handler(trap_frame_t *frame)
         regs[0] = (uint64_t)(int64_t)-ENOSYS;
         break;
     }
+
+    /* 系统调用处理完成后验证 frame 完整性 */
+    if (frame->elr < 0x1000) {
+        KLOG_ERROR("[syscall] POST-SYSCALL CORRUPTION: pid=%u nr=%llu frame->elr=0x%llx < 0x1000!\n",
+                   current->id, syscall_num, frame->elr);
+        KLOG_ERROR("[syscall]   frame=%p, regs=%p, retval=0x%llx\n",
+                   frame, regs, regs[0]);
+    }
 }
 
 
@@ -1265,6 +1301,27 @@ int64_t sys_execve(const char *pathname, char **argv, char **envp)
     }
 
     KLOG_INFO("[syscall] execve('%s')\n", pathname);
+
+    /*
+     * execve 应该关闭当前进程的所有非标准文件描述符（fd > 2）。
+     * 注意：这必须在加载新程序之前执行，因为加载后当前进程就不再运行了。
+     */
+    task_t *current = task_current();
+    KLOG_DEBUG("[execve] pid=%u closing all fds > 2\n", current->id);
+    for (int fd = 3; fd < (int)TASK_MAX_FD; fd++) {
+        if (current->fd_table[fd] != -1) {
+            int idx = current->fd_table[fd];
+            fd_obj_t *obj = &g_fd_pool[idx];
+            KLOG_TRACE("[execve] closing fd=%d pool_idx=%d type=%d\n",
+                      fd, idx, obj->type);
+            if (obj->type == FDT_FILE)
+                ext4_fclose(&obj->file);
+            else if (obj->type == FDT_DIR)
+                ext4_dir_close(&obj->dir);
+            fd_pool_free(idx);
+            current->fd_table[fd] = -1;
+        }
+    }
 
     /* 优先尝试 ELF 加载器 */
     int rc = elf_loader_load_from_file(pathname, argv, envp);
