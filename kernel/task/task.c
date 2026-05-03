@@ -274,9 +274,18 @@ process_create_with_pgd(const char *name, uint64_t user_entry, uint64_t user_sp,
     task->user_stack_size = 0x100000;  /* 1MB 用户栈 */
     task->pgd             = (uint64_t *)pgd_phys;
 
-    /* 初始化进程文件系统相关字段 */
-    task->cwd[0] = '/';
-    task->cwd[1] = '\0';
+    /* 初始化进程文件系统相关字段（继承父进程 cwd） */
+    if (g_current_task) {
+        uint32_t c = 0;
+        while (g_current_task->cwd[c] && c < (uint32_t)(TASK_CWD_LEN - 1)) {
+            task->cwd[c] = g_current_task->cwd[c];
+            c++;
+        }
+        task->cwd[c] = '\0';
+    } else {
+        task->cwd[0] = '/';
+        task->cwd[1] = '\0';
+    }
     for (uint32_t j = 0; j < TASK_MAX_FD; j++)
         task->fd_table[j] = -1;
 

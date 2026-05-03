@@ -26,6 +26,9 @@ extern pmm_t   *g_pmm;
 #define LINUX_SYS_DUP3           24
 #define LINUX_SYS_FCNTL          25
 #define LINUX_SYS_IOCTL          29
+#define LINUX_SYS_UNLINKAT       35
+#define LINUX_SYS_RENAMEAT       38
+#define LINUX_SYS_FACCESSAT      48
 #define LINUX_SYS_CHDIR          49
 #define LINUX_SYS_OPENAT         56
 #define LINUX_SYS_CLOSE          57
@@ -131,6 +134,8 @@ struct kernel_pollfd {
 #define ENFILE   23
 #define EMFILE   24
 #define ENOTSUP  95
+#define AT_FDCWD -100
+#define AT_REMOVEDIR 0x200
 
 /* ─────────────────────────────────────────────────────────────────
  * 全局文件描述符对象池
@@ -227,32 +232,117 @@ extern bool     pl011_getchar_nb(char *c);
  * ───────────────────────────────────────────────────────────────── */
 static void resolve_path(const char *cwd, const char *path, char *out, int outlen)
 {
+    char tmp[128];
+
     if (path == NULL || path[0] == '\0') {
         /* 空路径 */
         out[0] = '/';
         out[1] = '\0';
         return;
     }
+
     if (path[0] == '/') {
         /* 绝对路径 */
         int i = 0;
-        while (path[i] && i < outlen - 1) {
-            out[i] = path[i];
+        while (path[i] && i < (int)sizeof(tmp) - 1) {
+            tmp[i] = path[i];
             i++;
         }
-        out[i] = '\0';
+        tmp[i] = '\0';
     } else {
         /* 相对路径：cwd + "/" + path */
-        int clen = 0;
-        while (cwd[clen]) clen++;
         int i = 0;
-        while (cwd[i] && i < outlen - 1) { out[i] = cwd[i]; i++; }
-        if (i > 0 && out[i-1] != '/' && i < outlen - 1)
-            out[i++] = '/';
+        while (cwd[i] && i < (int)sizeof(tmp) - 1) {
+            tmp[i] = cwd[i];
+            i++;
+        }
+        if (i > 0 && tmp[i - 1] != '/' && i < (int)sizeof(tmp) - 1)
+            tmp[i++] = '/';
         int j = 0;
-        while (path[j] && i < outlen - 1) { out[i++] = path[j++]; }
-        out[i] = '\0';
+        while (path[j] && i < (int)sizeof(tmp) - 1) {
+            tmp[i++] = path[j++];
+        }
+        tmp[i] = '\0';
     }
+
+    /* 规范化绝对路径：处理 //、.、.. */
+    {
+        int seg_start[64];
+        int seg_len[64];
+        int seg_count = 0;
+        int i = 0;
+
+        while (tmp[i] != '\0') {
+            while (tmp[i] == '/')
+                i++;
+            if (tmp[i] == '\0')
+                break;
+
+            int start = i;
+            while (tmp[i] != '\0' && tmp[i] != '/')
+                i++;
+            int len = i - start;
+
+            if (len == 1 && tmp[start] == '.') {
+                continue;
+            }
+            if (len == 2 && tmp[start] == '.' && tmp[start + 1] == '.') {
+                if (seg_count > 0)
+                    seg_count--;
+                continue;
+            }
+
+            if (seg_count < (int)(sizeof(seg_start) / sizeof(seg_start[0]))) {
+                seg_start[seg_count] = start;
+                seg_len[seg_count] = len;
+                seg_count++;
+            }
+        }
+
+        int pos = 0;
+        if (outlen <= 0)
+            return;
+
+        out[pos++] = '/';
+        for (int s = 0; s < seg_count && pos < outlen - 1; s++) {
+            for (int k = 0; k < seg_len[s] && pos < outlen - 1; k++) {
+                out[pos++] = tmp[seg_start[s] + k];
+            }
+            if (s != seg_count - 1 && pos < outlen - 1) {
+                out[pos++] = '/';
+            }
+        }
+        out[pos] = '\0';
+    }
+}
+
+/*
+ * 解析 *at 系统调用路径：
+ * - 绝对路径：直接使用
+ * - 相对路径：基于 dirfd 目录或当前 cwd
+ */
+static int resolve_path_at(task_t *task, int dirfd, const char *pathname,
+                           char *abspath, int abspath_len)
+{
+    if (!pathname)
+        return -ENOENT;
+
+    if (pathname[0] == '/') {
+        resolve_path(task->cwd, pathname, abspath, abspath_len);
+        return 0;
+    }
+
+    if (dirfd == AT_FDCWD) {
+        resolve_path(task->cwd, pathname, abspath, abspath_len);
+        return 0;
+    }
+
+    fd_obj_t *base = task_get_fd(task, dirfd);
+    if (!base || base->type != FDT_DIR)
+        return -EBADF;
+
+    resolve_path(base->path, pathname, abspath, abspath_len);
+    return 0;
 }
 
 /* ─────────────────────────────────────────────────────────────────
@@ -536,7 +626,10 @@ void syscall_handler(trap_frame_t *frame)
         child->priority        = parent->priority;
         child->is_user_process = true;
 
-        /* 为子进程分配独立页表并深拷贝父进程地址空间，避免共享栈导致的竞争 */
+        /*
+         * fork 语义：为子进程创建独立地址空间并复制父进程用户页。
+         * 只复制用户地址范围，避免共享用户栈导致返回地址被覆盖。
+         */
         uint64_t child_pgd_phys = pmm_alloc_pages(g_pmm, 1);
         if (child_pgd_phys == 0) {
             KLOG_ERROR("[clone] no memory for child pgd\n");
@@ -545,15 +638,56 @@ void syscall_handler(trap_frame_t *frame)
             break;
         }
         pte_t *child_pgd_virt = (pte_t *)phys_to_virt(child_pgd_phys);
-        memset(child_pgd_virt, 0, PAGE_SIZE);
         pte_t *parent_pgd_virt = (pte_t *)phys_to_virt((uint64_t)parent->pgd);
-        if (memory_copy_uvm_4level(child_pgd_virt, parent_pgd_virt) != 0) {
-            KLOG_ERROR("[clone] memory_copy_uvm failed\n");
-            pmm_free_pages(g_pmm, child_pgd_phys, 1);
+        memset(child_pgd_virt, 0, PAGE_SIZE);
+
+        bool clone_copy_ok = true;
+
+        /* helper: 复制 [start, end) 内已映射页 */
+        #define CLONE_COPY_RANGE(start, end)                                              \
+            do {                                                                           \
+                uint64_t __s = ALIGN_DOWN((start), PAGE_SIZE);                            \
+                uint64_t __e = ALIGN_UP((end), PAGE_SIZE);                                \
+                for (uint64_t va = __s; clone_copy_ok && va < __e; va += PAGE_SIZE) {     \
+                    uint64_t src_pa = memory_get_paddr(parent_pgd_virt, va);              \
+                    if (src_pa == 0)                                                       \
+                        continue;                                                          \
+                    uint64_t dst_pa = pmm_alloc_pages(g_pmm, 1);                          \
+                    if (dst_pa == 0) {                                                     \
+                        clone_copy_ok = false;                                             \
+                        break;                                                             \
+                    }                                                                      \
+                    memcpy(phys_to_virt(dst_pa), phys_to_virt(src_pa), PAGE_SIZE);        \
+                    if (memory_create_map(child_pgd_virt, va, dst_pa, 1, 0) != 0) {       \
+                        pmm_free_pages(g_pmm, dst_pa, 1);                                  \
+                        clone_copy_ok = false;                                             \
+                        break;                                                             \
+                    }                                                                      \
+                }                                                                          \
+            } while (0)
+
+        /* 代码/数据/堆 */
+        CLONE_COPY_RANGE(0x0, parent->heap_end);
+
+        /* mmap 区域（当前实现从 0x30000000 线性向上分配） */
+        if (clone_copy_ok && parent->mmap_next > 0x30000000ULL)
+            CLONE_COPY_RANGE(0x30000000ULL, parent->mmap_next);
+
+        /* 用户栈 */
+        if (clone_copy_ok)
+            CLONE_COPY_RANGE(parent->user_stack_top - parent->user_stack_size,
+                             parent->user_stack_top);
+
+        #undef CLONE_COPY_RANGE
+
+        if (!clone_copy_ok) {
+            KLOG_ERROR("[clone] failed to copy user address space\n");
             g_stack_used[child - g_task_pool] = 0;
+            pmm_free_pages(g_pmm, child_pgd_phys, 1);
             regs[0] = (uint64_t)(int64_t)-ENOMEM;
             break;
         }
+
         child->pgd             = (uint64_t *)child_pgd_phys;
 
         child->user_entry      = parent->user_entry;
@@ -624,9 +758,28 @@ void syscall_handler(trap_frame_t *frame)
         /* wait4(pid, wstatus, options, rusage) */
         int wait_pid  = (int)(int32_t)regs[0];
         int *wstatus  = (int *)regs[1];
-        /* int options = (int)regs[2]; */
+        int options   = (int)regs[2];
+
+        /* Linux: WNOHANG = 1 */
+        const int WNOHANG = 1;
 
         task_t *me = task_current();
+
+        /* 先判断是否存在匹配的子进程（无则立即 ECHILD） */
+        bool has_matching_child = false;
+        for (uint32_t i = 0; i < TASK_MAX; i++) {
+            if (!g_stack_used[i]) continue;
+            task_t *t = &g_task_pool[i];
+            if (t->parent_id != me->id) continue;
+            if (wait_pid > 0 && (int)t->id != wait_pid) continue;
+            has_matching_child = true;
+            break;
+        }
+
+        if (!has_matching_child) {
+            regs[0] = (uint64_t)(int64_t)-ECHILD;
+            break;
+        }
 
         /* Look for an already-dead child */
         task_t *found = NULL;
@@ -656,10 +809,17 @@ void syscall_handler(trap_frame_t *frame)
                 }
             }
         } else {
-            /* No dead child yet — block and wait */
+            /* No dead child yet */
+            if (options & WNOHANG) {
+                regs[0] = 0;
+                break;
+            }
+
+            /* 阻塞等待目标子进程退出 */
             me->is_waiting = true;
             me->wait_pid   = (wait_pid > 0) ? (uint32_t)wait_pid : (uint32_t)-1;
             task_block(NULL);
+
             /* When we wake up, a child has died */
             for (uint32_t i = 0; i < TASK_MAX; i++) {
                 if (!g_stack_used[i]) continue;
@@ -755,8 +915,6 @@ void syscall_handler(trap_frame_t *frame)
             while (n < count) {
                 buf[n] = pl011_getchar();
                 if (buf[n] == '\r') buf[n] = '\n';
-                /* echo */
-                klog_putchar(buf[n]);
                 if (buf[n++] == '\n') break;
             }
             regs[0] = n;
@@ -827,9 +985,97 @@ void syscall_handler(trap_frame_t *frame)
         break;
     }
 
+    case LINUX_SYS_FACCESSAT: {
+        /* faccessat(dirfd, pathname, mode, flags) */
+        int dirfd = (int)regs[0];
+        const char *pathname = (const char *)regs[1];
+        (void)regs[2]; /* mode: 当前无权限模型，存在即允许 */
+        (void)regs[3]; /* flags */
+
+        if (!pathname) {
+            regs[0] = (uint64_t)(int64_t)-EFAULT;
+            break;
+        }
+
+        task_t *me = task_current();
+        char abspath[128];
+        int rpa = resolve_path_at(me, dirfd, pathname, abspath, sizeof(abspath));
+        if (rpa < 0) {
+            regs[0] = (uint64_t)(int64_t)rpa;
+            break;
+        }
+
+        /* 使用 lwext4 原生存在性检查，避免路径类型误判 */
+        int rc = ext4_inode_exist(abspath, EXT4_DE_UNKNOWN);
+        regs[0] = (rc == EOK) ? 0 : (uint64_t)(int64_t)-ENOENT;
+        break;
+    }
+
+    case LINUX_SYS_RENAMEAT: {
+        /* renameat(olddirfd, oldpath, newdirfd, newpath) */
+        int olddirfd = (int)regs[0];
+        const char *oldpath = (const char *)regs[1];
+        int newdirfd = (int)regs[2];
+        const char *newpath = (const char *)regs[3];
+
+        if (!oldpath || !newpath) {
+            regs[0] = (uint64_t)(int64_t)-EFAULT;
+            break;
+        }
+
+        task_t *me = task_current();
+        char oldabs[128];
+        char newabs[128];
+
+        int ro = resolve_path_at(me, olddirfd, oldpath, oldabs, sizeof(oldabs));
+        if (ro < 0) {
+            regs[0] = (uint64_t)(int64_t)ro;
+            break;
+        }
+
+        int rn = resolve_path_at(me, newdirfd, newpath, newabs, sizeof(newabs));
+        if (rn < 0) {
+            regs[0] = (uint64_t)(int64_t)rn;
+            break;
+        }
+
+        int rc = ext4_frename(oldabs, newabs);
+        regs[0] = (rc == EOK) ? 0 : (uint64_t)(int64_t)-ENOENT;
+        break;
+    }
+
+    case LINUX_SYS_UNLINKAT: {
+        /* unlinkat(dirfd, pathname, flags) */
+        int dirfd = (int)regs[0];
+        const char *pathname = (const char *)regs[1];
+        int flags = (int)regs[2];
+
+        if (!pathname) {
+            regs[0] = (uint64_t)(int64_t)-EFAULT;
+            break;
+        }
+
+        task_t *me = task_current();
+        char abspath[128];
+        int rpa = resolve_path_at(me, dirfd, pathname, abspath, sizeof(abspath));
+        if (rpa < 0) {
+            regs[0] = (uint64_t)(int64_t)rpa;
+            break;
+        }
+
+        int rc;
+        if (flags & AT_REMOVEDIR) {
+            rc = ext4_dir_rm(abspath);
+        } else {
+            rc = ext4_fremove(abspath);
+        }
+        regs[0] = (rc == EOK) ? 0 : (uint64_t)(int64_t)-ENOENT;
+        break;
+    }
+
     case LINUX_SYS_OPENAT: {
         /* openat(dirfd, pathname, flags, mode) */
-        /* int dirfd = (int)regs[0]; -- we ignore dirfd, only support abs or cwd-relative */
+        int dirfd = (int)regs[0];
         const char *pathname = (const char *)regs[1];
         int         flags    = (int)regs[2];
         /* int mode = (int)regs[3]; */
@@ -837,7 +1083,11 @@ void syscall_handler(trap_frame_t *frame)
 
         task_t *me = task_current();
         char   abspath[128];
-        resolve_path(me->cwd, pathname, abspath, sizeof(abspath));
+        int rpa = resolve_path_at(me, dirfd, pathname, abspath, sizeof(abspath));
+        if (rpa < 0) {
+            regs[0] = (uint64_t)(int64_t)rpa;
+            break;
+        }
 
         int pool = fd_pool_alloc();
         if (pool < 0) { regs[0] = (uint64_t)(int64_t)-EMFILE; break; }
@@ -1003,12 +1253,12 @@ void syscall_handler(trap_frame_t *frame)
 
     case LINUX_SYS_NEWFSTATAT: {
         /* newfstatat(dirfd, pathname, statbuf, flags) */
+        int dirfd = (int)regs[0];
         const char         *pathname = (const char *)regs[1];
         struct kernel_stat *st       = (struct kernel_stat *)regs[2];
         if (!st) { regs[0] = (uint64_t)(int64_t)-EFAULT; break; }
         if (!pathname || pathname[0] == '\0') {
             /* empty pathname: stat the dirfd itself */
-            int dirfd = (int)regs[0];
             fd_obj_t *obj = task_get_fd(task_current(), dirfd);
             if (!obj) { regs[0] = (uint64_t)(int64_t)-EBADF; break; }
             fill_stat_from_ext4(st, obj->path);
@@ -1017,7 +1267,11 @@ void syscall_handler(trap_frame_t *frame)
         }
         task_t *me = task_current();
         char abspath[128];
-        resolve_path(me->cwd, pathname, abspath, sizeof(abspath));
+        int rpa = resolve_path_at(me, dirfd, pathname, abspath, sizeof(abspath));
+        if (rpa < 0) {
+            regs[0] = (uint64_t)(int64_t)rpa;
+            break;
+        }
         fill_stat_from_ext4(st, abspath);
         regs[0] = 0;
         break;
