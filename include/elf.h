@@ -126,9 +126,9 @@ static inline int elf_check_machine(elf64_ehdr_t *ehdr)
 {
 #if ARCH_AARCH64
     return ehdr->e_machine == EM_AARCH64;
-#elif defined(__x86_64__)
+#elif ARCH_X86_64
     return ehdr->e_machine == 62;  /* EM_X86_64 */
-#elif defined(__riscv) && (__riscv_xlen == 64)
+#elif ARCH_RISCV64
     return ehdr->e_machine == 243; /* EM_RISCV */
 #else
     return 0;

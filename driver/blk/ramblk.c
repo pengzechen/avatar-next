@@ -12,7 +12,7 @@
 #include "blk/ramblk_cfg.h"
 #include "klog.h"
 #include "string.h"   /* memcpy */
-#include "mmu.h"       /* phys_to_virt */
+#include "mm_vm.h"       /* phys_to_virt */
 
 /* ── 内部 I/O 回调 ──────────────────────────────────────────────── */
 

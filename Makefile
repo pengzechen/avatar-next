@@ -72,8 +72,8 @@ KERNEL_SOURCES := $(KERNEL_DIR)/main.c
 KERNEL_OBJECTS := $(KERNEL_SOURCES:$(KERNEL_DIR)/%.c=$(BUILD_DIR)/kernel_%.o)
 
 # MMU 和 VM 模块
-VM_C_SOURCES := $(KERNEL_DIR)/mm/pmm.c $(KERNEL_DIR)/mm/pmm_test.c
-VM_C_OBJECTS := $(BUILD_DIR)/kernel_mm_pmm.o $(BUILD_DIR)/kernel_mm_pmm_test.o
+VM_C_SOURCES := $(KERNEL_DIR)/mm/pmm.c $(KERNEL_DIR)/mm/pmm_test.c $(KERNEL_DIR)/mm/vm_user.c
+VM_C_OBJECTS := $(BUILD_DIR)/kernel_mm_pmm.o $(BUILD_DIR)/kernel_mm_pmm_test.o $(BUILD_DIR)/kernel_mm_vm_user.o
 
 # 架构特定的 VM 模块
 ifeq ($(ARCH),aarch64)
@@ -81,8 +81,6 @@ ifeq ($(ARCH),aarch64)
     VM_C_OBJECTS += $(BUILD_DIR)/kernel_mm_vm_early.o
     VM_C_SOURCES += $(KERNEL_DIR)/mm/aarch64/vmm.c
     VM_C_OBJECTS += $(BUILD_DIR)/kernel_mm_vmm.o
-    VM_C_SOURCES += $(KERNEL_DIR)/mm/aarch64/vm_user.c
-    VM_C_OBJECTS += $(BUILD_DIR)/kernel_mm_vm_user.o
 else ifeq ($(ARCH),riscv64)
     # RISC-V VM 模块（如果有的话）
     # VM_C_SOURCES += $(KERNEL_DIR)/mm/riscv64/vm_early.c
@@ -116,9 +114,13 @@ endif
 TASK_C_SOURCES := $(KERNEL_DIR)/task/task.c $(KERNEL_DIR)/task/sched.c $(KERNEL_DIR)/task/mutex.c
 TASK_C_OBJECTS := $(BUILD_DIR)/kernel_task_task.o $(BUILD_DIR)/kernel_task_sched.o $(BUILD_DIR)/kernel_task_mutex.o
 
+# loader 模块源文件
+LOADER_C_SOURCES := $(KERNEL_DIR)/loader/bin_loader.c $(KERNEL_DIR)/loader/elf_loader.c
+LOADER_C_OBJECTS := $(BUILD_DIR)/kernel_loader_bin_loader.o $(BUILD_DIR)/kernel_loader_elf_loader.o
+
 # syscall 模块源文件
-SYSCALL_C_SOURCES := $(KERNEL_DIR)/syscall/syscall.c $(KERNEL_DIR)/syscall/bin_loader.c $(KERNEL_DIR)/syscall/elf_loader.c
-SYSCALL_C_OBJECTS := $(BUILD_DIR)/kernel_syscall_syscall.o $(BUILD_DIR)/kernel_syscall_bin_loader.o $(BUILD_DIR)/kernel_syscall_elf_loader.o
+SYSCALL_C_SOURCES := $(KERNEL_DIR)/syscall/syscall.c
+SYSCALL_C_OBJECTS := $(BUILD_DIR)/kernel_syscall_syscall.o
 SYSCALL_S_SRC := $(LIB_DIR)/syscall.S
 SYSCALL_S_OBJ := $(BUILD_DIR)/syscall_wrapper.o
 TASK_S_OBJ := $(BUILD_DIR)/task_switch.o
@@ -220,7 +222,7 @@ ifeq ($(ARCH),x86_64)
     OBJCOPY := /home/ajax/SoftWare/compiler/x86_64-linux-musl-cross/bin/x86_64-linux-musl-objcopy
     NM      := /home/ajax/SoftWare/compiler/x86_64-linux-musl-cross/bin/x86_64-linux-musl-nm
     CFLAGS  := -Wall -Wextra -O2 -g
-    CFLAGS  += -D__x86_64__
+	CFLAGS  += -DARCH_X86_64=1
     CFLAGS  += -I$(INCLUDE_DIR)
     CFLAGS  += -I$(INCLUDE_DIR)/x86_64
     CFLAGS  += -I$(BOOT_DIR)/common
@@ -245,7 +247,7 @@ else ifeq ($(ARCH),aarch64)
     OBJCOPY := aarch64-linux-musl-objcopy
     NM      := aarch64-linux-musl-nm
     CFLAGS  := -Wall -Wextra -O2 -g
-    CFLAGS  += -D__aarch64__
+	CFLAGS  += -DARCH_AARCH64=1
     CFLAGS  += -I$(INCLUDE_DIR)
     CFLAGS  += -I$(INCLUDE_DIR)/aarch64
     CFLAGS  += -I$(BOOT_DIR)/common
@@ -267,7 +269,7 @@ else ifeq ($(ARCH),riscv64)
     NM      := riscv64-linux-musl-nm
     CFLAGS  := -Wall -Wextra -O2 -g
     CFLAGS  += -march=rv64gc -mabi=lp64
-    CFLAGS  += -D__riscv -D__riscv_xlen=64
+	CFLAGS  += -DARCH_RISCV64=1
     CFLAGS  += -I$(INCLUDE_DIR)
     CFLAGS  += -I$(INCLUDE_DIR)/riscv64
     CFLAGS  += -I$(BOOT_DIR)/common
@@ -472,14 +474,15 @@ $(BUILD_DIR)/kernel_task_mutex.o: $(KERNEL_DIR)/task/mutex.c | $(BUILD_DIR)
 $(BUILD_DIR)/task_switch.o: $(TASK_S_SRC) | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
+# loader 模块编译规则
+$(BUILD_DIR)/kernel_loader_bin_loader.o: $(KERNEL_DIR)/loader/bin_loader.c | $(BUILD_DIR)
+	$(CC) $(LWEXT4_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/kernel_loader_elf_loader.o: $(KERNEL_DIR)/loader/elf_loader.c | $(BUILD_DIR)
+	$(CC) $(LWEXT4_CFLAGS) -c $< -o $@
+
 # syscall 模块编译规则
 $(BUILD_DIR)/kernel_syscall_syscall.o: $(KERNEL_DIR)/syscall/syscall.c | $(BUILD_DIR)
-	$(CC) $(LWEXT4_CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_syscall_bin_loader.o: $(KERNEL_DIR)/syscall/bin_loader.c | $(BUILD_DIR)
-	$(CC) $(LWEXT4_CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_syscall_elf_loader.o: $(KERNEL_DIR)/syscall/elf_loader.c | $(BUILD_DIR)
 	$(CC) $(LWEXT4_CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/syscall_wrapper.o: $(SYSCALL_S_SRC) | $(BUILD_DIR)
@@ -536,10 +539,10 @@ $(BUILD_DIR)/kernel_mm_pmm_test.o: $(KERNEL_DIR)/mm/pmm_test.c | $(BUILD_DIR)
 ifeq ($(ARCH),aarch64)
 $(BUILD_DIR)/kernel_mm_vmm.o: $(KERNEL_DIR)/mm/aarch64/vmm.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_mm_vm_user.o: $(KERNEL_DIR)/mm/aarch64/vm_user.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
 endif
+
+$(BUILD_DIR)/kernel_mm_vm_user.o: $(KERNEL_DIR)/mm/vm_user.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/bitmap.o: $(LIB_DIR)/bitmap.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -568,7 +571,7 @@ $(BUILD_DIR)/lwext4_port_fs_init.o: $(LWEXT4_PORT_DIR)/fs_init.c | $(BUILD_DIR)
 	$(CC) $(LWEXT4_CFLAGS) -Ifs/lwext4_port -c $< -o $@
 
 # 链接内核 ELF 文件
-$(KERNEL_TARGET): $(BOOT_OBJECTS) $(KERNEL_OBJECTS) $(TASK_C_OBJECTS) $(TASK_S_OBJ) $(TASK_USER_TEST_OBJ) $(TASK_USER_HELLO_OBJ) $(SYSCALL_C_OBJECTS) $(SYSCALL_S_OBJ) $(VM_C_OBJECTS) $(VM_S_OBJ) $(TESTS_OBJECTS) $(PLATFORM_OBJECTS) $(DRIVER_OBJECTS) $(EXCEPTION_OBJECTS) $(KLOG_OBJECT) $(VSNPRINTF_OBJECT) $(STRING_OBJECT) $(BITMAP_OBJECT) $(LWEXT4_OBJS) $(LWEXT4_PORT_OBJS) | $(BUILD_DIR)
+$(KERNEL_TARGET): $(BOOT_OBJECTS) $(KERNEL_OBJECTS) $(TASK_C_OBJECTS) $(TASK_S_OBJ) $(TASK_USER_TEST_OBJ) $(TASK_USER_HELLO_OBJ) $(LOADER_C_OBJECTS) $(SYSCALL_C_OBJECTS) $(SYSCALL_S_OBJ) $(VM_C_OBJECTS) $(VM_S_OBJ) $(TESTS_OBJECTS) $(PLATFORM_OBJECTS) $(DRIVER_OBJECTS) $(EXCEPTION_OBJECTS) $(KLOG_OBJECT) $(VSNPRINTF_OBJECT) $(STRING_OBJECT) $(BITMAP_OBJECT) $(LWEXT4_OBJS) $(LWEXT4_PORT_OBJS) | $(BUILD_DIR)
 	$(CC) $(LDFLAGS) -nostartfiles -nodefaultlibs -T $(BOOT_DIR)/$(ARCH)/link.ld -o $@ $^
 
 # 转换为二进制文件

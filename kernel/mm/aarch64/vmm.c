@@ -3,12 +3,10 @@
 #include "klog.h"
 #include "assert.h"
 #include "pmm.h"
-#include "vmm.h"
-#include "mmu.h"
+#include "mm_vm.h"
+#include "aarch64/mmu.h"
 #include "string.h"
 
-/* 全局 PMM 指针（在 pmm_test.c 中定义） */
-extern pmm_t *g_pmm;
 
 /* 兼容性定义（替换参考项目中的符号） */
 #ifndef HEAP_OFFSET
@@ -160,7 +158,7 @@ find_pte(pte_t *page_dir, // 虚拟地址
 }
 
 int32_t
-memory_create_map(pte_t *page_dir, uint64_t vaddr, uint64_t paddr, int32_t count, uint64_t perm)
+memory_create_map(void *page_dir, uint64_t vaddr, uint64_t paddr, int32_t count, uint64_t perm)
 {
     extern char __kernel_start[];
     extern char __kernel_end[];
@@ -183,7 +181,7 @@ memory_create_map(pte_t *page_dir, uint64_t vaddr, uint64_t paddr, int32_t count
     for (int32_t i = 0; i < count; i++)
     {
         // 获取对应的 PTE
-        pte_t *pte_entry = find_pte(page_dir, vaddr, 1);
+        pte_t *pte_entry = find_pte((pte_t *)page_dir, vaddr, 1);
         if (pte_entry == NULL)
         {
             KLOG_INFO("memory_create_map: Failed to find or allocate PTE for vaddr 0x%llx\n", vaddr);
@@ -255,9 +253,9 @@ current_page_dir() // 返回物理地址
 }
 
 uint64_t
-memory_get_paddr(pte_t *page_dir, uint64_t vaddr) // 返回物理地址
+memory_get_paddr(void *page_dir, uint64_t vaddr) // 返回物理地址
 {
-    pte_t *pte = find_pte(page_dir, vaddr, 0);
+    pte_t *pte = find_pte((pte_t *)page_dir, vaddr, 0);
 
     if (pte == (pte_t *)0)
     {
@@ -268,7 +266,7 @@ memory_get_paddr(pte_t *page_dir, uint64_t vaddr) // 返回物理地址
 }
 
 uint64_t
-memory_alloc_page(pte_t *page_dir, // 虚拟地址
+memory_alloc_page(void *page_dir, // 虚拟地址
                   uint64_t vaddr,
                   uint64_t size,
                   int32_t perm)
@@ -303,9 +301,9 @@ memory_alloc_page(pte_t *page_dir, // 虚拟地址
     return 0;
 }
 
-void memory_free_page(pte_t *page_dir, uint64_t addr)
+void memory_free_page(void *page_dir, uint64_t addr)
 {
-    pte_t *pte = find_pte(page_dir, addr, 0);
+    pte_t *pte = find_pte((pte_t *)page_dir, addr, 0);
 
     pmm_free_pages(g_pmm, (pte->l3_page.pfn << 12), 1); // 释放的是物理地址
 
@@ -547,7 +545,7 @@ void destory_4level(pte_t *page_dir)
 }
 
 // 内核将数据拷贝到指定进程空间下
-void copydata_to_uvm(pte_t *page_dir, uint64_t vaddr, uint64_t paddr, uint64_t size)
+void copydata_to_uvm(void *page_dir, uint64_t vaddr, uint64_t paddr, uint64_t size)
 {
     uint64_t offset = 0;
     while (offset < size)
@@ -555,7 +553,7 @@ void copydata_to_uvm(pte_t *page_dir, uint64_t vaddr, uint64_t paddr, uint64_t s
         uint64_t curr_vaddr = vaddr + offset;
 
         // 获取页表项
-        pte_t *pte = find_pte(page_dir, curr_vaddr, 0);
+        pte_t *pte = find_pte((pte_t *)page_dir, curr_vaddr, 0);
         if (!pte || pte->l3_page.is_valid == 0)
         {
             // 页未映射，直接跳过或报错
@@ -587,11 +585,11 @@ void copydata_to_uvm(pte_t *page_dir, uint64_t vaddr, uint64_t paddr, uint64_t s
 
 // 复制某个进程空间的所有内存到另一个进程空间下
 int32_t
-memory_copy_uvm_4level(pte_t *dst_pgd, pte_t *src_pgd)
+memory_copy_uvm_4level(void *dst_pgd, void *src_pgd)
 {
-    if (!_copy_page_table(src_pgd, dst_pgd, 0))
+    if (!_copy_page_table((pte_t *)src_pgd, (pte_t *)dst_pgd, 0))
     {
-        destroy_uvm_4level(dst_pgd);
+        destroy_uvm_4level((pte_t *)dst_pgd);
         return -1;
     }
 

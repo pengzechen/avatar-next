@@ -23,7 +23,7 @@
 #define DRIVER_CFG_H
 
 #include "arch.h"
-#include "mmu.h"   /* KERNEL_VMA: 外设基地址需加偏移，通过 TTBR1 访问 */
+#include "mm_vm.h"   /* KERNEL_VMA: 外设基地址需加偏移，通过 TTBR1 访问 */
 
 /* ============================================================
  * UART 驱动选择

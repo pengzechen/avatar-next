@@ -16,9 +16,7 @@
 #include "klog.h"
 #include "barrier.h"
 
-#if ARCH_AARCH64
-#include "mm/aarch64/vm_user.h"
-#endif
+#include "vm_user.h"
 
 /* ── 静态任务池 ──────────────────────────────────────────── */
 

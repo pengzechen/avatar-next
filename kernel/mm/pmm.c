@@ -8,7 +8,7 @@
 #include "klog.h"
 #include "assert.h"
 #include "string.h"
-#include "mmu.h"  /* 提供 PAGE_SIZE */
+#include "mm_vm.h"  /* 提供 PAGE_SIZE */
 
 /* ── PMM 初始化 ───────────────────────────────────────────────────── */
 

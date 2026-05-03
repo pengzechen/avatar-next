@@ -1,25 +1,20 @@
 #include "syscall/syscall.h"
-#include "syscall/bin_loader.h"
-#include "syscall/elf_loader.h"
+#include "loader/bin_loader.h"
+#include "loader/elf_loader.h"
 #include "klog.h"
 #include "task/task.h"
 #include "task/sched.h"
 #include "task/switch.h"
-#include "mmu.h"
+#include "mm_vm.h"
 #include "pmm.h"
 #include "string.h"
 #include "arch.h"
 #include "exception.h"
+#include "syscall_abi.h"
+#include "uart/uart.h"
 #include <ext4.h>
 #include <ext4_errno.h>
 
-#if ARCH_AARCH64
-extern int32_t memory_create_map(void *page_dir, uint64_t vaddr, uint64_t paddr,
-                                 int32_t count, uint64_t perm);
-extern uint64_t memory_get_paddr(void *page_dir, uint64_t vaddr);
-extern int32_t  memory_copy_uvm_4level(void *dst_pgd, void *src_pgd);
-extern pmm_t   *g_pmm;
-#endif
 
 /* ── Linux AArch64 标准系统调用号 ───────────────────────────────── */
 #define LINUX_SYS_GETCWD         17
@@ -219,12 +214,6 @@ static fd_obj_t *task_get_fd(task_t *task, int fd)
         return NULL;
     return &g_fd_pool[idx];
 }
-
-/* ─────────────────────────────────────────────────────────────────
- * UART 直接读（轮询硬件 FIFO）
- * ───────────────────────────────────────────────────────────────── */
-extern char     pl011_getchar(void);
-extern bool     pl011_getchar_nb(char *c);
 
 /* ─────────────────────────────────────────────────────────────────
  * 路径规范化辅助：将相对路径拼接到 cwd，返回绝对路径
@@ -502,15 +491,19 @@ void notify_parent_wait_from_task(task_t *child)
  * ───────────────────────────────────────────────────────────────── */
 void syscall_handler(trap_frame_t *frame)
 {
-    uint64_t *regs = frame->r;
-    uint64_t  syscall_num = regs[8];
+    uint64_t regs[9] = {0};
+    for (int i = 0; i < 6; i++) {
+        regs[i] = syscall_abi_arg(frame, i);
+    }
+    uint64_t syscall_num = syscall_abi_nr(frame);
 
     task_t *current = task_current();
+    uint64_t ip = syscall_abi_ip(frame);
 
     /* 验证 frame 完整性 */
-    if (frame->elr < 0x1000) {
+    if (ip < 0x1000) {
         KLOG_ERROR("[syscall] CORRUPTION: pid=%u nr=%llu frame->elr=0x%llx < 0x1000!\n",
-                   current->id, syscall_num, frame->elr);
+                   current->id, syscall_num, ip);
         KLOG_ERROR("[syscall] frame=%p, regs=%p, sp=%p\n",
                    frame, regs, __builtin_frame_address(0));
     }
@@ -637,8 +630,8 @@ void syscall_handler(trap_frame_t *frame)
             regs[0] = (uint64_t)(int64_t)-ENOMEM;
             break;
         }
-        pte_t *child_pgd_virt = (pte_t *)phys_to_virt(child_pgd_phys);
-        pte_t *parent_pgd_virt = (pte_t *)phys_to_virt((uint64_t)parent->pgd);
+        void *child_pgd_virt = phys_to_virt(child_pgd_phys);
+        void *parent_pgd_virt = phys_to_virt((uint64_t)parent->pgd);
         memset(child_pgd_virt, 0, PAGE_SIZE);
 
         bool clone_copy_ok = true;
@@ -649,7 +642,7 @@ void syscall_handler(trap_frame_t *frame)
                 uint64_t __s = ALIGN_DOWN((start), PAGE_SIZE);                            \
                 uint64_t __e = ALIGN_UP((end), PAGE_SIZE);                                \
                 for (uint64_t va = __s; clone_copy_ok && va < __e; va += PAGE_SIZE) {     \
-                    uint64_t src_pa = memory_get_paddr(parent_pgd_virt, va);              \
+                    uint64_t src_pa = mm_vm_get_paddr(parent_pgd_virt, va);               \
                     if (src_pa == 0)                                                       \
                         continue;                                                          \
                     uint64_t dst_pa = pmm_alloc_pages(g_pmm, 1);                          \
@@ -658,7 +651,7 @@ void syscall_handler(trap_frame_t *frame)
                         break;                                                             \
                     }                                                                      \
                     memcpy(phys_to_virt(dst_pa), phys_to_virt(src_pa), PAGE_SIZE);        \
-                    if (memory_create_map(child_pgd_virt, va, dst_pa, 1, 0) != 0) {       \
+                    if (mm_vm_map_pages(child_pgd_virt, va, dst_pa, 1, 0) != 0) {         \
                         pmm_free_pages(g_pmm, dst_pa, 1);                                  \
                         clone_copy_ok = false;                                             \
                         break;                                                             \
@@ -738,7 +731,7 @@ void syscall_handler(trap_frame_t *frame)
         sched_enqueue(child);
 
         KLOG_INFO("[clone] parent=%u child=%u elr=0x%llx usp=0x%llx\n",
-                  parent->id, child->id, frame->elr, frame->usp);
+                  parent->id, child->id, syscall_abi_ip(frame), syscall_abi_user_sp(frame));
 
         /* Parent returns child PID */
         regs[0] = (uint64_t)child->id;
@@ -910,10 +903,10 @@ void syscall_handler(trap_frame_t *frame)
         if (!buf || count == 0) { regs[0] = 0; break; }
 
         if (fd == 0) {
-            /* stdin: 阻塞读 UART */
+            /* stdin: 阻塞读 UART（跨架构统一接口） */
             uint64_t n = 0;
             while (n < count) {
-                buf[n] = pl011_getchar();
+                buf[n] = uart_getc();
                 if (buf[n] == '\r') buf[n] = '\n';
                 if (buf[n++] == '\n') break;
             }
@@ -1378,7 +1371,7 @@ void syscall_handler(trap_frame_t *frame)
     case LINUX_SYS_RT_SIGPROCMASK:
     case LINUX_SYS_RT_SIGRETURN:
         KLOG_DEBUG("[syscall] rt_sigprocmask: pid=%u setting retval=0, frame->elr=0x%llx\n",
-                   current->id, frame->elr);
+                   current->id, syscall_abi_ip(frame));
         regs[0] = 0;
         break;
 
@@ -1474,10 +1467,13 @@ void syscall_handler(trap_frame_t *frame)
         break;
     }
 
+    syscall_abi_set_ret(frame, regs[0]);
+
     /* 系统调用处理完成后验证 frame 完整性 */
-    if (frame->elr < 0x1000) {
+    ip = syscall_abi_ip(frame);
+    if (ip < 0x1000) {
         KLOG_ERROR("[syscall] POST-SYSCALL CORRUPTION: pid=%u nr=%llu frame->elr=0x%llx < 0x1000!\n",
-                   current->id, syscall_num, frame->elr);
+                   current->id, syscall_num, ip);
         KLOG_ERROR("[syscall]   frame=%p, regs=%p, retval=0x%llx\n",
                    frame, regs, regs[0]);
     }
@@ -1611,7 +1607,7 @@ void *sys_brk(void *addr)
     /* 扩展堆：映射新页 */
     uint64_t old_page_end = ALIGN_UP(current_brk, PAGE_SIZE);
     uint64_t new_page_end = ALIGN_UP(new_brk,     PAGE_SIZE);
-    pte_t   *pgd          = (pte_t *)phys_to_virt((uint64_t)current->pgd);
+    void    *pgd          = phys_to_virt((uint64_t)current->pgd);
 
     for (uint64_t va = old_page_end; va < new_page_end; va += PAGE_SIZE) {
         uint64_t pa = pmm_alloc_pages(g_pmm, 1);
@@ -1620,7 +1616,7 @@ void *sys_brk(void *addr)
             return (void *)current_brk; /* 返回旧地址表示失败 */
         }
         memset(phys_to_virt(pa), 0, PAGE_SIZE);
-        if (memory_create_map(pgd, va, pa, 1, 0) != 0) {
+        if (mm_vm_map_pages(pgd, va, pa, 1, 0) != 0) {
             /* Page already mapped (e.g. BSS last page overlap) — skip */
             pmm_free_pages(g_pmm, pa, 1);
             continue;
@@ -1698,7 +1694,7 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, int prot, int flags, int fd, uint
     uint64_t map_addr = (addr != 0) ? ALIGN_DOWN(addr, PAGE_SIZE) : current->mmap_next;
 
 #if ARCH_AARCH64
-    pte_t *pgd = (pte_t *)phys_to_virt((uint64_t)current->pgd);
+    void *pgd = phys_to_virt((uint64_t)current->pgd);
 
     for (uint64_t va = map_addr; va < map_addr + size; va += PAGE_SIZE) {
         uint64_t pa = pmm_alloc_pages(g_pmm, 1);
@@ -1707,7 +1703,7 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, int prot, int flags, int fd, uint
             return MMAP_FAILED;
         }
         memset(phys_to_virt(pa), 0, PAGE_SIZE);
-        if (memory_create_map(pgd, va, pa, 1, 0) != 0) {
+        if (mm_vm_map_pages(pgd, va, pa, 1, 0) != 0) {
             pmm_free_pages(g_pmm, pa, 1);
             return MMAP_FAILED;
         }

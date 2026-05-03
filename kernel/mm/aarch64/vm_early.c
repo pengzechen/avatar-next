@@ -5,7 +5,9 @@
  * 实现 48 位页表，使用 TTBR0/TTBR1 双页表结构
  */
 
+#include "mm_vm.h"
 #include "aarch64/early_vm.h"
+#include "aarch64/mmu.h"
 #include "klog.h"
 #include "string.h"
 

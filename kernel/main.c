@@ -13,19 +13,16 @@
 #include "pmm.h"
 #include "../driver/blk/ramblk.h"
 #include "../fs/lwext4_port/fs_init.h"
-#include "syscall/bin_loader.h"
+#include "loader/elf_loader.h"
+#include "timer/timer.h"
 
 #if ARCH_AARCH64
 #include "irq/irq.h"
-#include "timer/timer.h"
-#include "mm/aarch64/vmm.h"
 #include "aarch64/cpu.h"
 #elif ARCH_RISCV64
 #include "exception.h"
-#include "timer/timer.h"
 #elif ARCH_X86_64
 #include "exception.h"
-#include "timer/timer.h"
 #endif
 
 /* Forward declarations for test functions */
@@ -95,7 +92,7 @@ static void __attribute__((unused)) demo_task_c(void *arg)
     }
 }
 
-#if 1
+
 /*
  * demo_load_busybox - 从文件系统加载并执行 busybox
  */
@@ -125,43 +122,6 @@ static void demo_load_busybox(void *arg)
     task_exit();
 }
 
-/*
- * demo_load_from_fs - 从文件系统加载并执行程序
- *
- * 这个内核任务会：
- * 1. 等待文件系统初始化
- * 2. 从文件系统读取 /test_exec
- * 3. 创建新的用户进程执行它
- */
-static void demo_load_from_fs(void *arg)
-{
-    (void)arg;
-
-    /* 等待文件系统初始化 */
-    KLOG_INFO("[fs_loader] Waiting for filesystem...\n");
-    for (int i = 0; i < 100; i++) {
-        task_yield();
-    }
-
-    KLOG_INFO("[fs_loader] Loading /test_exec from filesystem...\n");
-
-    /* 调用 bin_loader_load_from_file
-     * 注意：这是内核调用，使用内核字符串
-     */
-    const char *path = "/test_exec";
-    int rc = bin_loader_load_from_file(path, NULL, NULL);
-
-    if (rc != 0) {
-        KLOG_ERROR("[fs_loader] Failed to load /test_exec: %d\n", rc);
-        KLOG_INFO("[fs_loader] This is expected if test_exec is not installed.\n");
-        KLOG_INFO("[fs_loader] Run: ./install-apps.sh aarch64\n");
-    }
-
-    /* 任务完成 */
-    KLOG_INFO("[fs_loader] Exiting...\n");
-    task_exit();
-}
-#endif
 
 void kernel_main(void)
 {
@@ -180,17 +140,8 @@ void kernel_main(void)
 
     /* Print welcome message */
     KLOG_INFO("=== Avatar OS Kernel ===\n");
-    KLOG_INFO("Architecture: "
-#if ARCH_AARCH64
-        "AArch64 (ARM 64-bit)"
-#elif ARCH_X86_64
-        "x86_64 (AMD64/Intel 64)"
-#elif ARCH_RISCV64
-        "RISC-V 64-bit"
-#else
-        "Unknown"
-#endif
-    );
+    KLOG_INFO("Architecture: "ARCH_NAME "\n");
+    KLOG_INFO("Build time: " __DATE__ " " __TIME__ "\n");
 
     /* ── 初始化物理内存管理器 ───────────────────────────────── */
     KLOG_INFO("\n");
@@ -276,7 +227,8 @@ void kernel_main(void)
 #if 0
     /* Mutex tests */
     KLOG_INFO("--- Mutex Tests ---\n");
-    run_mutex_demo();
+    run_mutex_comparison_test();
+    KLOG_INFO("");
 #endif
 
 #if 0
@@ -291,62 +243,25 @@ void kernel_main(void)
     KLOG_INFO("=== Testing User Process Creation ===\n");
 
 #if ARCH_AARCH64
-    #if 1
-        /* 创建用户进程：busybox（从文件系统加载 ELF）
-        * busybox 将作为 init 进程直接启动
-        * 这个任务会调用 execve 从文件系统加载 busybox
-        */
-        task_t *proc1 = task_create("busybox_loader", demo_load_busybox, NULL, 5);
-        if (proc1) {
-            KLOG_INFO("Task 1 (busybox_loader) created successfully!\n");
-        } else {
-            KLOG_ERROR("Failed to create task 1!\n");
-        }
-        /* 如果没有文件系统，使用普通的 user_test */
-        // task_t *proc1 = process_create("user_test",
-        //                                 (uint64_t)user_test_program,
-        //                                 0x70000000ULL,
-        //                                 10);
-        // if (proc1) {
-        //     KLOG_INFO("Process 1 (user_test) created successfully!\n");
-        // } else {
-        //     KLOG_ERROR("Failed to create process 1!\n");
-        // }
-    #endif /* AVATAR_HAS_FILESYSTEM */
 
-        // /* 创建第二个用户进程：hello（测试用） */
-        // task_t *proc2 = process_create("hello",
-        //                                 (uint64_t)hello_program,
-        //                                 0x70100000ULL,
-        //                                 10);
-        // if (proc2) {
-        //     KLOG_INFO("Process 2 (hello) created successfully! id=%u\n", proc2->id);
-        // } else {
-        //     KLOG_ERROR("Failed to create process 2!\n");
-        // }
+    /* 创建用户进程：busybox（从文件系统加载 ELF）
+    * busybox 将作为 init 进程直接启动
+    * 这个任务会调用 execve 从文件系统加载 busybox
+    */
+    task_t *proc1 = task_create("busybox_loader", demo_load_busybox, NULL, 5);
+    if (proc1) {
+        KLOG_INFO("Task 1 (busybox_loader) created successfully!\n");
+    } else {
+        KLOG_ERROR("Failed to create task 1!\n");
+    }
+
 #endif /* ARCH_AARCH64 */
 
     KLOG_INFO("\nProcesses will run in EL0 (user mode)\n");
 
-/* === 测试从文件系统加载程序 === */
-#if 0
-    KLOG_INFO("\n");
-    KLOG_INFO("=== Testing Filesystem Program Loading ===\n");
-
-    /* 创建一个内核任务来加载并执行 test_exec */
-    task_t *fs_loader = task_create("fs_loader", demo_load_from_fs, NULL, 5);
-    if (fs_loader) {
-        KLOG_INFO("Created filesystem loader task (id=%u)\n", fs_loader->id);
-    } else {
-        KLOG_ERROR("Failed to create fs_loader task!\n");
-    }
-#endif
-
     KLOG_INFO("\n");
     KLOG_INFO("Demo tasks created. Entering idle loop...\n");
 
-#if ARCH_AARCH64 || ARCH_RISCV64 || ARCH_X86_64
-    /* idle 循环：持续 yield，让其他任务运行 */
     uint64_t idle_count = 0;
     while (1) {
         idle_count++;
@@ -362,7 +277,6 @@ void kernel_main(void)
                 __asm__ volatile("wfi");
         #endif
     }
-#endif /* ARCH_AARCH64 || ARCH_RISCV64 || ARCH_X86_64 */
 
     /* Shutdown */
     KLOG_INFO("Kernel shutting down...\n");
@@ -390,28 +304,4 @@ void run_all_tests(void)
     KLOG_INFO("--- Assert Test ---\n");
     run_assert_tests();
     KLOG_INFO("");
-}
-
-/* ── Mutex 演示 ───────────────────────────────────────────── */
-
-void
-run_mutex_demo(void)
-{
-    KLOG_INFO("--- Mutex Comparison Test (No Lock vs With Lock) ---\n");
-    run_mutex_comparison_test();
-    KLOG_INFO("");
-
-#if 0
-    /* Run exception test (undefined instruction) */
-    KLOG_INFO("--- Exception Test (Undefined Instruction) ---");
-    KLOG_INFO("Attempting to execute an undefined instruction...");
-
-    /* Trigger an undefined instruction exception */
-    /* 0x00000000 is not a valid AArch64 instruction */
-    __asm__ volatile(
-        ".inst 0x00000000\n"  /* Undefined instruction */
-    );
-
-    KLOG_INFO("If you see this, exception handling failed!");
-#endif
 }

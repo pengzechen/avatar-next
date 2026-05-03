@@ -28,7 +28,7 @@
     #define uart_init()     pl011_init()
     #define uart_putc(c)    pl011_putchar(c)
     #define uart_puts(s)    pl011_putstr(s)
-    #define uart_getc()     pl011_getchar(c)
+    #define uart_getc()     pl011_getchar()
 
 /* ============================================================
  * DesignWare 16550（riscv64）
