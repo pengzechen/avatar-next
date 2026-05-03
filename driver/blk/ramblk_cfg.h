@@ -1,38 +1,24 @@
 /*
  * driver/blk/ramblk_cfg.h - RAM 块设备物理内存区域配置
  *
- * 为每个架构规划固定的 rootfs 区域（32MB），
- * 位于内核镜像之后的安全地址，并须在 PMM 中标记为已分配。
- *
- * 内存布局：
- *   AArch64  : RAM 0x40000000, 内核 @0x40080000, DTB @0x48000000
- *              rootfs @0x60000000 (+512MB)，避开 QEMU 放置的 DTB
- *   RISC-V64 : RAM 0x80000000, 内核 @0x80200000, rootfs @0x88000000 (+128MB)
- *   x86_64   : RAM 0x00100000, 内核 @0x00200000, rootfs @0x04000000 (+64MB)
+ * 内存布局来自 include/mem_layout.h（由 config/mem_layout.table 生成）。
+ * RAMBLK 使用与 rootfs 相同的固定物理窗口，并在 PMM 初始化时预留。
  */
 #ifndef __RAMBLK_CFG_H__
 #define __RAMBLK_CFG_H__
 
-#include "arch.h"
+#include "mem_layout.h"
 
-/* ── Rootfs 区域起始物理地址 ──────────────────────────────────── */
-#if ARCH_AARCH64
-    /* 0x60000000 = RAM_BASE(0x40000000) + 512MB
-     * QEMU virt 机器将 DTB 放在 0x48000000 附近，需要跳过该区域 */
-#   define RAMBLK_PHYS_BASE   0x60000000UL
-#elif ARCH_RISCV64
-#   define RAMBLK_PHYS_BASE   0x88000000UL
-#elif ARCH_X86_64
-#   define RAMBLK_PHYS_BASE   0x04000000UL
-#else
-#   error "Unsupported architecture for RAMBLK"
-#endif
+/* ── Rootfs / RAMBLK 物理地址窗口 ─────────────────────────────── */
+#define RAMBLK_PHYS_BASE      MEM_ROOTFS_BASE
+#define RAMBLK_SIZE           MEM_ROOTFS_SIZE
 
 /* ── 区域大小与块参数 ─────────────────────────────────────────── */
-#define RAMBLK_SIZE           (32UL * 1024UL * 1024UL)  /* 32 MB */
 #define RAMBLK_SECTOR_SZ      512u
 #define RAMBLK_SECTOR_CNT     (RAMBLK_SIZE / RAMBLK_SECTOR_SZ)  /* 65536 */
 
-#define RAMBLK_PHYS_END       (RAMBLK_PHYS_BASE + RAMBLK_SIZE)
+/* PMM 标记函数使用闭区间，因此 END 为最后一个字节地址。 */
+#define RAMBLK_PHYS_END_EXCL  (RAMBLK_PHYS_BASE + RAMBLK_SIZE)
+#define RAMBLK_PHYS_END       (RAMBLK_PHYS_END_EXCL - 1UL)
 
 #endif /* __RAMBLK_CFG_H__ */

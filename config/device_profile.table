@@ -1,0 +1,15 @@
+# arch   platform  default  uart   gic   timer    mmio_vma  uart_base     gicd_base      gicc_base      gich_base      gicr_base      plic_base      clint_base     tick_ms  tick_hz  counter_hz   cntp_timer  uart_reg_shift  need_lapic
+#
+# default: 1 means this platform is the default device profile for the arch.
+# mmio_vma: 1 means MMIO raw addresses must add KERNEL_VMA in C side.
+# uart: pl011 | dw | x86
+# gic : v2 | v3 | none
+# timer: aarch64 | rv | x86
+#
+aarch64 qemu      1        pl011  v2    aarch64  1         0x09000000UL  0x08000000UL   0x08010000UL   0x08030000UL   0x080A0000UL   0UL            0UL            10       100      0UL          30          0               0
+riscv64 qemu      1        dw     none  rv       0         0x10000000UL  0UL            0UL            0UL            0UL            0x0C000000UL   0x02000000UL   10       100      10000000UL   0           0               0
+x86_64  qemu      1        x86    none  x86      0         0UL           0UL            0UL            0UL            0UL            0UL            0UL            10       100      0UL          0           0               1
+
+# Future real-board examples (fill real values before enabling):
+# aarch64 rk3588   0        dw     none  aarch64  1         0x........UL  0x........UL   0x........UL   0x........UL   0x........UL   0UL            0UL            10       100      0UL          30          2               0
+# riscv64 sg2002   0        dw     none  rv       0         0x........UL  0UL            0UL            0UL            0UL            0x........UL   0x........UL   10       100      0x........UL   0           0               0

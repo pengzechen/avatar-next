@@ -54,7 +54,7 @@ static void __attribute__((unused)) demo_task_a(void *arg)
     while (1) {
         count++;
         if (count % 50 == 0) {
-            KLOG_INFO("[task_a] count=%u ticks=%llu",
+            KLOG_INFO("[task_a] count=%u ticks=%llu\n",
                       count, timer_get_system_ticks());
         }
         for (volatile int i = 0; i < 1000000; i++);  // 模拟工作负载
@@ -69,7 +69,7 @@ static void __attribute__((unused)) demo_task_b(void *arg)
     while (1) {
         count++;
         if (count % 50 == 0) {
-            KLOG_INFO("[task_b] count=%u ticks=%llu",
+            KLOG_INFO("[task_b] count=%u ticks=%llu\n",
                       count, timer_get_system_ticks());
         }
         for (volatile int i = 0; i < 1000000; i++);  // 模拟工作负载
@@ -84,7 +84,7 @@ static void __attribute__((unused)) demo_task_c(void *arg)
     while (1) {
         count++;
         if (count % 50 == 0) {
-            KLOG_INFO("[task_c] count=%u ticks=%llu",
+            KLOG_INFO("[task_c] count=%u ticks=%llu\n",
                       count, timer_get_system_ticks());
         }
         for (volatile int i = 0; i < 1000000; i++);  // 模拟工作负载
@@ -231,7 +231,7 @@ void kernel_main(void)
     KLOG_INFO("");
 #endif
 
-#if 0
+#ifndef ARCH_AARCH64
     /* 创建演示任务（如果需要） */
     task_create("task_a", demo_task_a, NULL, 1);
     task_create("task_b", demo_task_b, NULL, 1);

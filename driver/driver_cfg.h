@@ -24,6 +24,7 @@
 
 #include "arch.h"
 #include "mm_vm.h"   /* KERNEL_VMA: 外设基地址需加偏移，通过 TTBR1 访问 */
+#include "device_profile.h"
 
 /* ============================================================
  * UART 驱动选择
@@ -32,12 +33,12 @@
  * ============================================================ */
 
 #if !defined(DRIVER_UART_PL011) && !defined(DRIVER_UART_DW) && !defined(DRIVER_UART_X86)
-    /* 无外部覆盖：按架构选择默认驱动 */
-    #if ARCH_AARCH64
+    /* 无外部覆盖：按设备画像选择默认驱动 */
+    #if DEVICE_DEFAULT_UART_PL011
         #define DRIVER_UART_PL011   1
-    #elif ARCH_RISCV64
+    #elif DEVICE_DEFAULT_UART_DW
         #define DRIVER_UART_DW      1
-    #elif ARCH_X86_64
+    #elif DEVICE_DEFAULT_UART_X86
         #define DRIVER_UART_X86     1
     #endif
 #endif
@@ -55,7 +56,11 @@
 
 #if ARCH_AARCH64
     #if !defined(DRIVER_GIC_V2) && !defined(DRIVER_GIC_V3)
-        #define DRIVER_GIC_V2   1
+        #if DEVICE_DEFAULT_GIC_V2
+            #define DRIVER_GIC_V2   1
+        #elif DEVICE_DEFAULT_GIC_V3
+            #define DRIVER_GIC_V3   1
+        #endif
     #endif
 #endif
 
@@ -63,11 +68,11 @@
  * Timer 驱动选择（固定按架构，不可覆盖）
  * ============================================================ */
 
-#if ARCH_AARCH64
+#if DEVICE_DEFAULT_TIMER_AARCH64
     #define DRIVER_TIMER_AARCH64    1
-#elif ARCH_RISCV64
+#elif DEVICE_DEFAULT_TIMER_RV
     #define DRIVER_TIMER_RV         1
-#elif ARCH_X86_64
+#elif DEVICE_DEFAULT_TIMER_X86
     #define DRIVER_TIMER_X86        1
 #endif
 
@@ -75,27 +80,20 @@
  * 硬件基地址（QEMU virt 机器）
  * ============================================================ */
 
-#if ARCH_AARCH64
+#if DEVICE_MMIO_NEEDS_VMA
+    #define DEVICE_MMIO_ADDR(raw)   ((raw) + KERNEL_VMA)
+#else
+    #define DEVICE_MMIO_ADDR(raw)   (raw)
+#endif
 
-    #define GICD_BASE_ADDR      (0x08000000UL + KERNEL_VMA)    /* GIC Distributor      */
-    #define GICC_BASE_ADDR      (0x08010000UL + KERNEL_VMA)    /* GICv2 CPU Interface  */
-    #define GICH_BASE_ADDR      (0x08030000UL + KERNEL_VMA)    /* GIC Hypervisor I/F   */
-    #define GICR_BASE_ADDR      (0x080A0000UL + KERNEL_VMA)    /* GICv3 Redistributor  */
+#define GICD_BASE_ADDR      DEVICE_MMIO_ADDR(DEVICE_GICD_BASE_RAW)
+#define GICC_BASE_ADDR      DEVICE_MMIO_ADDR(DEVICE_GICC_BASE_RAW)
+#define GICH_BASE_ADDR      DEVICE_MMIO_ADDR(DEVICE_GICH_BASE_RAW)
+#define GICR_BASE_ADDR      DEVICE_MMIO_ADDR(DEVICE_GICR_BASE_RAW)
 
-    /* UART 基地址依选定驱动而异 */
-    #if defined(DRIVER_UART_PL011)
-        #define UART_BASE       (0x09000000UL + KERNEL_VMA)    /* PL011                */
-    #elif defined(DRIVER_UART_DW)
-        #define UART_BASE       (0x09000000UL + KERNEL_VMA)    /* DW 16550（同地址）   */
-    #endif
-
-#elif ARCH_RISCV64
-
-    #define UART_BASE           0x10000000UL    /* 16550 / DW UART      */
-    #define PLIC_BASE_ADDR      0x0C000000UL    /* PLIC                 */
-    #define CLINT_BASE_ADDR     0x02000000UL    /* CLINT                */
-
-#endif  /* ARCH_* */
+#define UART_BASE           DEVICE_MMIO_ADDR(DEVICE_UART_BASE_RAW)
+#define PLIC_BASE_ADDR      DEVICE_MMIO_ADDR(DEVICE_PLIC_BASE_RAW)
+#define CLINT_BASE_ADDR     DEVICE_MMIO_ADDR(DEVICE_CLINT_BASE_RAW)
 
 /* ============================================================
  * UART 16550 寄存器宽度（供 dw_uart.h 使用）
@@ -103,7 +101,7 @@
 
 #if defined(DRIVER_UART_DW)
     #ifndef UART_REG_SHIFT
-        #define UART_REG_SHIFT  0   /* QEMU virt：寄存器按字节紧密排列 */
+        #define UART_REG_SHIFT  DEVICE_UART_REG_SHIFT
     #endif
 #endif
 
@@ -111,17 +109,15 @@
  * 定时器配置
  * ============================================================ */
 
-#if ARCH_AARCH64
-    #define TIMER_TICK_MS           10
-    #define TIMER_FREQUENCY_HZ      (1000 / TIMER_TICK_MS)     /* 100 Hz */
-    #define CNTP_TIMER              30                          /* PPI #30 */
-#elif ARCH_RISCV64
-    #define TIMER_FREQ_HZ           10000000UL                  /* 10 MHz */
-    #define TIMER_TICK_MS           10
-    #define TIMER_FREQUENCY_HZ      (1000 / TIMER_TICK_MS)     /* 100 Hz */
-#elif ARCH_X86_64
-    #define TIMER_TICK_MS           10
-    #define TIMER_FREQUENCY_HZ      (1000 / TIMER_TICK_MS)     /* 100 Hz */
+#define TIMER_TICK_MS           DEVICE_TIMER_TICK_MS
+#define TIMER_FREQUENCY_HZ      DEVICE_TIMER_FREQUENCY_HZ
+
+#if DEVICE_TIMER_COUNTER_HZ != 0 && !ARCH_RISCV64 && !defined(TIMER_FREQ_HZ)
+    #define TIMER_FREQ_HZ       DEVICE_TIMER_COUNTER_HZ
+#endif
+
+#if DEVICE_CNTP_TIMER != 0
+    #define CNTP_TIMER          DEVICE_CNTP_TIMER
 #endif
 
 /* ============================================================

@@ -4,27 +4,13 @@
 #include "types.h"
 #include "bitmap.h"
 #include "task/mutex.h"
+#include "mem_layout.h"
 
 
 /* ── 物理内存配置 ───────────────────────────────────────────────────── */
 
-#if ARCH_AARCH64
-/* AArch64 (QEMU virt): 2GB RAM @ 0x4000_0000 */
-#define PMM_RAM_BASE    0x40000000UL
-#define PMM_RAM_SIZE    (2UL * 1024 * 1024 * 1024)  /* 2GB */
-#elif ARCH_RISCV64
-/* RISC-V (QEMU virt): 2GB RAM @ 0x8000_0000 */
-#define PMM_RAM_BASE    0x80000000UL
-#define PMM_RAM_SIZE    (2UL * 1024 * 1024 * 1024)  /* 2GB */
-#elif ARCH_X86_64
-/* x86_64 (QEMU): 2GB RAM @ 0x0 */
-/*
- * 注意：x86_64 上物理内存从 0x0 开始，但低 1MB 是保留的
- * 我们从 0x100000 (1MB) 开始管理内存
- */
-#define PMM_RAM_BASE    0x100000UL  /* 从 1MB 开始 */
-#define PMM_RAM_SIZE    (2UL * 1024 * 1024 * 1024)  /* 2GB */
-#endif
+#define PMM_RAM_BASE    MEM_RAM_BASE
+#define PMM_RAM_SIZE    MEM_RAM_SIZE
 
 /*
  * include/pmm.h - 物理内存管理器

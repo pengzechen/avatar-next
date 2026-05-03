@@ -4,6 +4,9 @@
 # 架构配置
 ARCH ?= aarch64
 
+# 平台配置（为空时按架构使用内存布局表中的默认平台）
+PLATFORM ?=
+
 # 日志级别配置
 LOG ?= info
 
@@ -19,6 +22,38 @@ BOOT_DIR    := boot
 KERNEL_DIR  := kernel
 PLATFORM_DIR := platforms
 TESTS_DIR   := tests
+CONFIG_DIR  := config
+TOOLS_DIR   := tools
+
+# 内存布局（单一真源 -> 自动生成 C 头和 Makefile 片段）
+MEM_LAYOUT_SRC := $(CONFIG_DIR)/mem_layout.table
+MEM_LAYOUT_GEN := $(TOOLS_DIR)/gen_mem_layout.sh
+MEM_LAYOUT_MK  := $(BUILD_DIR)/mem_layout.mk
+MEM_LAYOUT_HDR := $(INCLUDE_DIR)/mem_layout.h
+
+# 设备配置（单一真源 -> 自动生成 C 头和 Makefile 片段）
+DEVICE_PROFILE_SRC := $(CONFIG_DIR)/device_profile.table
+DEVICE_PROFILE_GEN := $(TOOLS_DIR)/gen_device_profile.sh
+DEVICE_PROFILE_MK  := $(BUILD_DIR)/device_profile.mk
+DEVICE_PROFILE_HDR := $(INCLUDE_DIR)/device_profile.h
+
+$(shell mkdir -p $(BUILD_DIR) >/dev/null 2>&1)
+$(shell sh $(MEM_LAYOUT_GEN) $(MEM_LAYOUT_SRC) $(MEM_LAYOUT_MK) $(MEM_LAYOUT_HDR))
+-include $(MEM_LAYOUT_MK)
+
+ifeq ($(strip $(MEM_RAM_BASE)),)
+$(error Failed to resolve memory layout for ARCH=$(ARCH) PLATFORM=$(PLATFORM))
+endif
+
+# 归一化平台名：空 PLATFORM 时回落到该架构默认平台
+PLATFORM := $(MEM_LAYOUT_PLATFORM)
+
+$(shell sh $(DEVICE_PROFILE_GEN) $(DEVICE_PROFILE_SRC) $(DEVICE_PROFILE_MK) $(DEVICE_PROFILE_HDR))
+-include $(DEVICE_PROFILE_MK)
+
+ifeq ($(strip $(DEV_UART_SRC)),)
+$(error Failed to resolve device profile for ARCH=$(ARCH) PLATFORM=$(PLATFORM))
+endif
 
 # 日志级别映射
 ifeq ($(LOG),none)
@@ -169,31 +204,35 @@ else ifeq ($(ARCH),x86_64)
     TASK_USER_LD := $(KERNEL_DIR)/task/user.ld
 endif
 
-# 平台源文件
-PLATFORM_SOURCES := $(PLATFORM_DIR)/qemu/platform.c
+# 平台源文件（按 PLATFORM 选择，可扩展到真机）
+PLATFORM_SOURCES := $(PLATFORM_DIR)/$(PLATFORM)/platform.c
 PLATFORM_OBJECTS := $(PLATFORM_SOURCES:$(PLATFORM_DIR)/%.c=$(BUILD_DIR)/platform_%.o)
 
-# 驱动源文件（按架构选择 UART 驱动）
-ifeq ($(ARCH),aarch64)
-    DRIVER_UART_SRC := driver/uart/uart_pl011.c
-    DRIVER_IRQ_SRC := driver/irq/gicv2.c
-    DRIVER_TIMER_SRC := driver/timer/timer.c
-else ifeq ($(ARCH),riscv64)
-    DRIVER_UART_SRC := driver/uart/uart_dw.c
-    DRIVER_IRQ_SRC :=
-    DRIVER_TIMER_SRC := driver/timer/timer.c
-else ifeq ($(ARCH),x86_64)
-    DRIVER_UART_SRC := driver/uart/uart_x86.c
-    DRIVER_IRQ_SRC :=
-    DRIVER_TIMER_SRC := driver/timer/timer.c
+ifeq ($(wildcard $(PLATFORM_SOURCES)),)
+$(error Missing platform source: $(PLATFORM_SOURCES))
 endif
+
+# 驱动源文件（按 ARCH + PLATFORM 设备画像选择）
+DRIVER_UART_SRC := $(DEV_UART_SRC)
+DRIVER_IRQ_SRC := $(DEV_IRQ_SRC)
+DRIVER_TIMER_SRC := $(DEV_TIMER_SRC)
+
 DRIVER_OBJECTS := $(patsubst driver/%.c,$(BUILD_DIR)/drv_%.o,$(DRIVER_UART_SRC))
-ifeq ($(ARCH),aarch64)
-    DRIVER_OBJECTS += $(BUILD_DIR)/gicv2.o $(BUILD_DIR)/timer.o
-else ifeq ($(ARCH),riscv64)
-    DRIVER_OBJECTS += $(BUILD_DIR)/timer.o
-else ifeq ($(ARCH),x86_64)
-    DRIVER_OBJECTS += $(BUILD_DIR)/timer.o $(BUILD_DIR)/lapic.o
+
+ifneq ($(strip $(DRIVER_IRQ_SRC)),)
+ifeq ($(DRIVER_IRQ_SRC),driver/irq/gicv2.c)
+	DRIVER_OBJECTS += $(BUILD_DIR)/gicv2.o
+else ifeq ($(DRIVER_IRQ_SRC),driver/irq/gicv3.c)
+	DRIVER_OBJECTS += $(BUILD_DIR)/gicv3.o
+endif
+endif
+
+ifneq ($(strip $(DRIVER_TIMER_SRC)),)
+	DRIVER_OBJECTS += $(BUILD_DIR)/timer.o
+endif
+
+ifeq ($(DEV_NEED_LAPIC),1)
+	DRIVER_OBJECTS += $(BUILD_DIR)/lapic.o
 endif
 
 # 启动汇编源文件
@@ -297,28 +336,73 @@ CFLAGS  += -Idriver
 CFLAGS  += -Ikernel
 CFLAGS  += -Ikernel/mm
 CFLAGS  += -DAVATAR_HAS_FILESYSTEM
+CFLAGS  += -DPLATFORM_$(MEM_PLATFORM_DEFINE)=1
 
 # UART 驱动选择（与架构解耦）
-# 用法：make ARCH=aarch64 UART=dw kernel
-# 不指定时由 driver_cfg.h 按架构选默认值
-UART ?=
+# 用法：make ARCH=aarch64 PLATFORM=qemu UART=dw kernel
+# 不指定时使用设备画像默认值（DEV_DEFAULT_UART）
+UART ?= $(DEV_DEFAULT_UART)
 ifeq ($(UART),pl011)
+	DRIVER_UART_SRC := driver/uart/uart_pl011.c
     CFLAGS  += -DDRIVER_UART_PL011=1
 else ifeq ($(UART),dw)
+	DRIVER_UART_SRC := driver/uart/uart_dw.c
     CFLAGS  += -DDRIVER_UART_DW=1
+else ifeq ($(UART),x86)
+	DRIVER_UART_SRC := driver/uart/uart_x86.c
+	CFLAGS  += -DDRIVER_UART_X86=1
 else ifneq ($(UART),)
-    $(error Invalid UART. Use: pl011 or dw)
+	$(error Invalid UART. Use: pl011, dw or x86)
 endif
 
-# GIC 版本选择（仅 aarch64）
-# 用法：make ARCH=aarch64 GIC=v3 kernel
-GIC ?=
+# GIC 版本选择
+# 用法：make ARCH=aarch64 PLATFORM=qemu GIC=v3 kernel
+# 非 GIC 平台建议设为 none；不指定时取设备画像默认值
+GIC ?= $(DEV_DEFAULT_GIC)
 ifeq ($(GIC),v3)
+	DRIVER_IRQ_SRC := driver/irq/gicv3.c
     CFLAGS  += -DDRIVER_GIC_V3=1
 else ifeq ($(GIC),v2)
+	DRIVER_IRQ_SRC := driver/irq/gicv2.c
     CFLAGS  += -DDRIVER_GIC_V2=1
+else ifeq ($(GIC),none)
+	DRIVER_IRQ_SRC :=
 else ifneq ($(GIC),)
-    $(error Invalid GIC. Use: v2 or v3)
+	$(error Invalid GIC. Use: v2, v3 or none)
+endif
+
+ifneq ($(ARCH),aarch64)
+ifneq ($(GIC),none)
+$(error GIC is only valid on aarch64. Use GIC=none for ARCH=$(ARCH))
+endif
+endif
+
+ifneq ($(ARCH),x86_64)
+ifeq ($(UART),x86)
+$(error UART=x86 is only valid on x86_64)
+endif
+endif
+
+ifneq ($(ARCH),aarch64)
+ifeq ($(UART),pl011)
+$(error UART=pl011 is only valid on aarch64)
+endif
+endif
+
+# 覆盖后重新组装驱动对象列表
+DRIVER_OBJECTS := $(patsubst driver/%.c,$(BUILD_DIR)/drv_%.o,$(DRIVER_UART_SRC))
+ifneq ($(strip $(DRIVER_IRQ_SRC)),)
+ifeq ($(DRIVER_IRQ_SRC),driver/irq/gicv2.c)
+	DRIVER_OBJECTS += $(BUILD_DIR)/gicv2.o
+else ifeq ($(DRIVER_IRQ_SRC),driver/irq/gicv3.c)
+	DRIVER_OBJECTS += $(BUILD_DIR)/gicv3.o
+endif
+endif
+ifneq ($(strip $(DRIVER_TIMER_SRC)),)
+	DRIVER_OBJECTS += $(BUILD_DIR)/timer.o
+endif
+ifeq ($(DEV_NEED_LAPIC),1)
+	DRIVER_OBJECTS += $(BUILD_DIR)/lapic.o
 endif
 
 CFLAGS  += -MMD -MP
@@ -357,15 +441,7 @@ LWEXT4_CFLAGS  += -w   # 屏蔽第三方代码警告
 
 # ─── Rootfs 配置 ────────────────────────────────────────────────────────────────────
 ROOTFS_IMG       := $(BUILD_DIR)/rootfs.img
-ROOTFS_SIZE_MB   := 32
-
-ifeq ($(ARCH),aarch64)
-    ROOTFS_PHYS_ADDR := 0x60000000
-else ifeq ($(ARCH),riscv64)
-    ROOTFS_PHYS_ADDR := 0x88000000
-else ifeq ($(ARCH),x86_64)
-    ROOTFS_PHYS_ADDR := 0x04000000
-endif
+# ROOTFS_SIZE_MB / ROOTFS_PHYS_ADDR 来自自动生成的 $(MEM_LAYOUT_MK)
 
 # 目标
 .PHONY: all clean help klog kernel run rootfs run-fs
@@ -451,6 +527,9 @@ $(BUILD_DIR)/lapic.o: driver/irq/lapic.c | $(BUILD_DIR)
 
 # GIC 和 timer 驱动编译规则（AArch64）
 $(BUILD_DIR)/gicv2.o: driver/irq/gicv2.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/gicv3.o: driver/irq/gicv3.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/timer.o: driver/timer/timer.c | $(BUILD_DIR)
@@ -637,12 +716,16 @@ clean:
 help:
 	@echo "Avatar OS Makefile"
 	@echo ""
-	@echo "Usage: make ARCH=<arch> [LOG=<level>] [ASSERT=<mode>] [target]"
+	@echo "Usage: make ARCH=<arch> [PLATFORM=<platform>] [LOG=<level>] [ASSERT=<mode>] [target]"
 	@echo ""
 	@echo "Architectures:"
 	@echo "  ARCH=x86_64    Build for x86_64 (AMD64/Intel 64)"
 	@echo "  ARCH=aarch64   Build for AArch64 (ARM 64-bit)"
 	@echo "  ARCH=riscv64   Build for RISC-V 64-bit"
+	@echo ""
+	@echo "Platforms:"
+	@echo "  PLATFORM=qemu  QEMU virt platform (default for all arch now)"
+	@echo "  (Future real boards can be added in config/mem_layout.table)"
 	@echo ""
 	@echo "Log Levels:"
 	@echo "  LOG=none      Disable all logging (default: info)"
@@ -669,6 +752,7 @@ help:
 	@echo ""
 	@echo "Examples:"
 	@echo "  make ARCH=aarch64"
+	@echo "  make ARCH=aarch64 PLATFORM=qemu"
 	@echo "  make ARCH=aarch64 LOG=debug"
 	@echo "  make ARCH=riscv64 LOG=trace"
 	@echo "  make ARCH=x86_64 ASSERT=off"
