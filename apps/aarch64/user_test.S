@@ -31,7 +31,7 @@ user_test_program:
 
     /* 输出欢迎消息 - 使用 adr 直接计算字符串地址（真正的 PC 相对） */
     adr     x0, msg_hello
-    mov     x1, #52             /* 字符串长度 */
+    mov     x1, #31             /* 字符串长度 */
     mov     x8, #SYS_WRITE      /* SYS_WRITE = 20 */
     svc     #0                  /* 触发系统调用 */
 
@@ -42,7 +42,7 @@ user_test_program:
 
     /* 输出 PID 信息 */
     adr     x0, msg_pid
-    mov     x1, #23
+    mov     x1, #20
     mov     x8, #SYS_WRITE
     svc     #0
 
@@ -62,13 +62,13 @@ user_test_program:
     mov     x8, #SYS_WRITE
     svc     #0
 
-    /* === 测试 execve：从文件系统加载并执行 /test_exec === */
+    /* === 测试 execve：从文件系统加载并执行 /init === */
     adr     x0, msg_exec
-    mov     x1, #30
+    mov     x1, #34
     mov     x8, #SYS_WRITE
     svc     #0
 
-    /* 调用 execve("/test_exec", NULL, NULL) */
+    /* 调用 execve("/init", NULL, NULL) */
     adr     x0, pathname        /* x0 = 程序路径 */
     mov     x1, #0              /* x1 = argv (暂未使用) */
     mov     x2, #0              /* x2 = envp (暂未使用) */
@@ -86,11 +86,11 @@ user_test_program:
 
 /* 字符串数据放在代码之后，确保被拷贝到用户空间 */
 msg_hello:
-    .asciz "[user] Hello from user space!\n[user] Calling execve to load /test_exec...\n"
+    .asciz "[user] Hello from user space!\n"
 msg_pid:
     .asciz "[user] Current PID: "
 msg_exec:
-    .asciz "[user] Executing: execve('/test_exec')\n"
+    .asciz "[user] Executing: execve('/init')\n"
 msg_exec_failed:
     .asciz "[user] ERROR: execve failed!\n"
 msg_newline:
@@ -98,5 +98,5 @@ msg_newline:
 msg_buf:
     .skip   1
 pathname:
-    .asciz "/test_exec"
+    .asciz "/init"
     .align  3

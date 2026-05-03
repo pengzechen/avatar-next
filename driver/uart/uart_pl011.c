@@ -288,3 +288,28 @@ uint32_t pl011_tx_buffer_usage(void) {
     
     return usage;
 }
+
+/*
+ * pl011_getchar - 阻塞式读取一个字符（硬件轮询）
+ *
+ * 优先从中断驱动的 rx_buffer 中取；若 UART 未初始化，
+ * 直接轮询硬件 FIFO（UART_FR_RXFE）。
+ */
+char pl011_getchar(void) {
+    if (uart_initialized) {
+        /* 优先尝试软件缓冲区 */
+        char c;
+        while (!buffer_get(&rx_buffer, &c)) {
+            /* 中断未启用时直接轮询硬件 FIFO */
+            if (!(read32((void *)UART_FR) & UART_FR_RXFE)) {
+                return (char)(read32((void *)UART_DR) & 0xFF);
+            }
+        }
+        return c;
+    } else {
+        /* 未初始化：直接轮询硬件 FIFO */
+        while (read32((void *)UART_FR) & UART_FR_RXFE)
+            ;
+        return (char)(read32((void *)UART_DR) & 0xFF);
+    }
+}

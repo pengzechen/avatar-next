@@ -26,6 +26,8 @@ typedef enum {
 #define TASK_STACK_SIZE  8192u   /* 每个内核任务的栈大小（8 KiB） */
 #define TASK_NAME_LEN    16u     /* 任务名最大长度（含 NUL）      */
 #define TASK_MAX         16u     /* 最大并发任务数（不含 idle）   */
+#define TASK_CWD_LEN     128u    /* 当前工作目录最大长度          */
+#define TASK_MAX_FD      16u     /* 每进程最大文件描述符数        */
 
 /* ── Task Control Block ──────────────────────────────────── */
 typedef struct task {
@@ -47,6 +49,16 @@ typedef struct task {
     uint64_t        user_sp;             /* 用户栈指针（虚拟地址）                */
     uint64_t        user_stack_top;      /* 用户栈顶（虚拟地址）                  */
     uint64_t        user_stack_size;     /* 用户栈大小                            */
+    uint64_t        heap_end;            /* 进程堆当前末尾（brk 系统调用使用）    */
+    uint64_t        mmap_next;           /* 下一个 mmap 分配的起始地址            */
+
+    /* === 进程/文件系统支持 === */
+    char            cwd[TASK_CWD_LEN];  /* 当前工作目录（用户进程）               */
+    int8_t          fd_table[TASK_MAX_FD]; /* FD → g_fd_pool 索引，-1=未打开     */
+    uint32_t        parent_id;           /* 父进程 ID                              */
+    int             exit_status;         /* 退出状态（wait4 使用）                 */
+    bool            is_waiting;          /* 正在 wait4 子进程                      */
+    uint32_t        wait_pid;            /* 等待的子进程 PID（-1=任意）            */
 } task_t;
 
 /* ── 全局当前任务指针（在 task.c 中定义） ────────────────── */
@@ -89,6 +101,22 @@ task_t *task_create(const char *name, void (*entry)(void *), void *arg,
  */
 task_t *process_create(const char *name, uint64_t user_entry,
                        uint64_t user_sp, uint8_t priority);
+
+/**
+ * process_create_with_pgd - 使用已有用户页表创建用户进程
+ * @name:       进程名称（最长 TASK_NAME_LEN-1 字节）
+ * @user_entry: 用户态入口点（用户虚拟地址，直接使用，不做转换）
+ * @user_sp:    用户栈指针（虚拟地址）
+ * @priority:   优先级（0 = 最高，255 = 最低）
+ * @pgd_phys:   已创建好的用户页表物理地址
+ *
+ * 与 process_create 不同，跳过 vm_create_user_process，
+ * 直接使用调用方已准备好的页表。用于 ELF 加载器等自行管理地址空间的场景。
+ */
+task_t *process_create_with_pgd(const char *name, uint64_t user_entry,
+                                uint64_t user_sp, uint8_t priority,
+                                uint64_t pgd_phys,
+                                uint64_t heap_end, uint64_t mmap_next);
 
 /**
  * task_yield - 主动让出 CPU

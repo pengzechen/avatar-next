@@ -117,3 +117,54 @@ task_trampoline_user:
 
     /* 跳转到 arch_switch_to_user（不返回） */
     b       arch_switch_to_user
+
+/*
+ * arch_fork_resume_user - fork 子进程首次进入用户态
+ *
+ * 由 arch_init_fork_child_stack 设置，首次调度时通过 arch_task_switch 的
+ * ret 跳转到此。
+ *   x19 = 指向子进程 trap_frame_t 的内核虚拟地址
+ *
+ * 从 trap_frame_t 完整恢复所有用户寄存器，然后 eret 到用户态。
+ * x0 已经在 arch_init_fork_child_stack 中被置为 0（fork 子进程返回值）。
+ */
+.global arch_fork_resume_user
+arch_fork_resume_user:
+    /* 开启中断 */
+    msr     daifclr, #2
+
+    /* x19 = &trap_frame_t, 布局同 SAVE_REGS/RESTORE_REGS:
+     *   [0*8]=x0, [1*8]=x1, ..., [30*8]=x30,
+     *   [31*8]=usp, [32*8]=elr, [33*8]=spsr
+     */
+    mov     x9, x19               /* x9 = frame pointer (x19会被下面覆盖) */
+
+    /* 恢复 elr_el1, spsr_el1, sp_el0 */
+    ldr     x10, [x9, #32*8]      /* elr */
+    ldr     x11, [x9, #33*8]      /* spsr */
+    ldr     x12, [x9, #31*8]      /* usp */
+    msr     elr_el1,  x10
+    msr     spsr_el1, x11
+    msr     sp_el0,   x12
+
+    /* 恢复 x1-x30 */
+    ldp     x1,  x2,  [x9, #1*8]
+    ldp     x3,  x4,  [x9, #3*8]
+    ldp     x5,  x6,  [x9, #5*8]
+    ldp     x7,  x8,  [x9, #7*8]
+    ldp     x10, x11, [x9, #10*8]
+    ldp     x12, x13, [x9, #12*8]
+    ldp     x14, x15, [x9, #14*8]
+    ldp     x16, x17, [x9, #16*8]
+    ldp     x18, x19, [x9, #18*8]
+    ldp     x20, x21, [x9, #20*8]
+    ldp     x22, x23, [x9, #22*8]
+    ldp     x24, x25, [x9, #24*8]
+    ldp     x26, x27, [x9, #26*8]
+    ldp     x28, x29, [x9, #28*8]
+    ldr     x30,      [x9, #30*8]
+
+    /* 最后恢复 x0 (fork 返回 0，已在 frame 中设好) */
+    ldr     x0, [x9, #0*8]
+
+    eret

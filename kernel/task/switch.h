@@ -298,4 +298,54 @@ arch_init_user_stack(uint8_t *stack_base, uint32_t stack_size,
 /* ── 前向声明：用户进程trampoline（汇编实现）──────────────────── */
 void task_trampoline_user(void);
 
+/* ── 前向声明：fork 子进程 trampoline（汇编实现）────────────── */
+void arch_fork_resume_user(void);
+
+/**
+ * arch_init_fork_child_stack - 为 fork 子进程初始化内核栈
+ * @stack_base:  内核栈底（低地址）
+ * @stack_size:  内核栈大小（字节）
+ * @frame:       父进程的完整 trap_frame_t（含 x0-x30, usp, elr, spsr）
+ *
+ * 子进程首次被调度时，通过 arch_fork_resume_user 进入用户态，
+ * x0=0（fork 子进程返回值）。
+ *
+ * 返回：应写入 task->sp 的初始值。
+ */
+#include "exception.h"
+static inline uintptr_t
+arch_init_fork_child_stack(uint8_t *stack_base, uint32_t stack_size,
+                            trap_frame_t *frame)
+{
+    uint64_t *sp = (uint64_t *)((uintptr_t)(stack_base + stack_size));
+
+#if ARCH_AARCH64
+    /* 先在内核栈顶放一份 trap_frame_t（34 × 8 字节） */
+    sp = (uint64_t *)((uintptr_t)sp - sizeof(trap_frame_t));
+    trap_frame_t *child_frame = (trap_frame_t *)sp;
+    /* 拷贝父进程寄存器 */
+    for (uint32_t i = 0; i < NUM_REGS; i++)
+        child_frame->r[i] = frame->r[i];
+    child_frame->usp  = frame->usp;
+    child_frame->elr  = frame->elr;
+    child_frame->spsr = frame->spsr;
+    /* 子进程 fork 返回 0 */
+    child_frame->r[0] = 0;
+
+    /* 再放 12 个被调用者寄存器，x30(LR)→arch_fork_resume_user */
+    sp -= 12;
+    /* x19 = 指向上面 trap_frame_t 的内核虚拟地址 */
+    sp[0]  = (uint64_t)(uintptr_t)child_frame;  /* x19 = &child_frame */
+    for (int i = 1; i < 11; i++)
+        sp[i] = 0;
+    sp[11] = (uint64_t)arch_fork_resume_user; /* x30 (LR) */
+#else
+    (void)frame;
+    sp -= 12;
+    for (int i = 0; i < 12; i++) sp[i] = 0;
+#endif
+
+    return (uintptr_t)sp;
+}
+
 #endif /* KERNEL_TASK_SWITCH_H */

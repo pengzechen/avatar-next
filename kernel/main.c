@@ -19,6 +19,7 @@
 #include "irq/irq.h"
 #include "timer/timer.h"
 #include "mm/aarch64/vmm.h"
+#include "aarch64/cpu.h"
 #elif ARCH_RISCV64
 #include "exception.h"
 #include "timer/timer.h"
@@ -94,7 +95,36 @@ static void __attribute__((unused)) demo_task_c(void *arg)
     }
 }
 
-#ifdef AVATAR_HAS_FILESYSTEM
+#if 1
+/*
+ * demo_load_busybox - 从文件系统加载并执行 busybox
+ */
+static void demo_load_busybox(void *arg)
+{
+    (void)arg;
+
+    /* 等待文件系统初始化 */
+    KLOG_INFO("[busybox_loader] Waiting for filesystem...\n");
+    for (int i = 0; i < 100; i++) {
+        task_yield();
+    }
+
+    KLOG_INFO("[busybox_loader] Loading /busybox from filesystem...\n");
+
+    /* 调用 ELF 加载器执行 /busybox */
+    const char *path = "/busybox";
+    int rc = elf_loader_load_from_file(path, NULL, NULL);
+
+    if (rc != 0) {
+        KLOG_ERROR("[busybox_loader] Failed to load /busybox: %d\n", rc);
+        KLOG_INFO("[busybox_loader] Run: ./install-apps.sh aarch64\n");
+    }
+
+    /* 任务完成 */
+    KLOG_INFO("[busybox_loader] Exiting...\n");
+    task_exit();
+}
+
 /*
  * demo_load_from_fs - 从文件系统加载并执行程序
  *
@@ -193,6 +223,10 @@ void kernel_main(void)
     irq_init();
     KLOG_INFO("GICv2 initialized\n");
 
+    /* Enable FP/SIMD for EL0 (busybox/musl use NEON instructions) */
+    aarch64_enable_neon();
+    KLOG_INFO("FP/SIMD enabled for EL0 (CPACR_EL1.FPEN=0b11)\n");
+
     /* Initialize timer */
     KLOG_INFO("Initializing timer...\n");
     timer_init();
@@ -254,44 +288,48 @@ void kernel_main(void)
 
     /* === 测试用户进程创建 === */
     KLOG_INFO("\n");
-    KLOG_INFO("=== Testing Multi-Process Scheduling ===\n");
+    KLOG_INFO("=== Testing User Process Creation ===\n");
 
 #if ARCH_AARCH64
-    /* 创建第一个用户进程：user_test
-     * 参数：
-     *   - name: "user_test"
-     *   - user_entry: (uint64_t)user_test_program - 用户程序入口
-     *   - user_sp: 0x70000000 - 用户栈虚拟地址
-     *   - priority: 10
-     */
-    task_t *proc1 = process_create("user_test",
-                                    (uint64_t)user_test_program,
-                                    0x70000000ULL,
-                                    10);
-    if (proc1) {
-        KLOG_INFO("Process 1 (user_test) created successfully!\n");
-    } else {
-        KLOG_ERROR("Failed to create process 1!\n");
-    }
+    #if 1
+        /* 创建用户进程：busybox（从文件系统加载 ELF）
+        * busybox 将作为 init 进程直接启动
+        * 这个任务会调用 execve 从文件系统加载 busybox
+        */
+        task_t *proc1 = task_create("busybox_loader", demo_load_busybox, NULL, 5);
+        if (proc1) {
+            KLOG_INFO("Task 1 (busybox_loader) created successfully!\n");
+        } else {
+            KLOG_ERROR("Failed to create task 1!\n");
+        }
+        /* 如果没有文件系统，使用普通的 user_test */
+        // task_t *proc1 = process_create("user_test",
+        //                                 (uint64_t)user_test_program,
+        //                                 0x70000000ULL,
+        //                                 10);
+        // if (proc1) {
+        //     KLOG_INFO("Process 1 (user_test) created successfully!\n");
+        // } else {
+        //     KLOG_ERROR("Failed to create process 1!\n");
+        // }
+    #endif /* AVATAR_HAS_FILESYSTEM */
 
-    /* 创建第二个用户进程：hello
-     * 使用不同的栈地址避免冲突
-     */
-    task_t *proc2 = process_create("hello",
-                                    (uint64_t)hello_program,
-                                    0x70100000ULL,
-                                    10);
-    if (proc2) {
-        KLOG_INFO("Process 2 (hello) created successfully! id=%u\n", proc2->id);
-    } else {
-        KLOG_ERROR("Failed to create process 2!\n");
-    }
+        // /* 创建第二个用户进程：hello（测试用） */
+        // task_t *proc2 = process_create("hello",
+        //                                 (uint64_t)hello_program,
+        //                                 0x70100000ULL,
+        //                                 10);
+        // if (proc2) {
+        //     KLOG_INFO("Process 2 (hello) created successfully! id=%u\n", proc2->id);
+        // } else {
+        //     KLOG_ERROR("Failed to create process 2!\n");
+        // }
 #endif /* ARCH_AARCH64 */
 
-    KLOG_INFO("\nBoth processes will run in EL0 (user mode)\n");
+    KLOG_INFO("\nProcesses will run in EL0 (user mode)\n");
 
-    /* === 测试从文件系统加载程序 === */
-#ifdef AVATAR_HAS_FILESYSTEM
+/* === 测试从文件系统加载程序 === */
+#if 0
     KLOG_INFO("\n");
     KLOG_INFO("=== Testing Filesystem Program Loading ===\n");
 
@@ -316,13 +354,13 @@ void kernel_main(void)
             KLOG_DEBUG("[idle] yielding... count=%llu\n", idle_count);
         }
         task_yield();
-#if ARCH_AARCH64
-        __asm__ volatile("wfe");
-#elif ARCH_X86_64
-        __asm__ volatile("hlt");
-#else
-        __asm__ volatile("wfi");
-#endif
+        #if ARCH_AARCH64
+                __asm__ volatile("wfe");
+        #elif ARCH_X86_64
+                __asm__ volatile("hlt");
+        #else
+                __asm__ volatile("wfi");
+        #endif
     }
 #endif /* ARCH_AARCH64 || ARCH_RISCV64 || ARCH_X86_64 */
 

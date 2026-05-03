@@ -58,6 +58,8 @@
 
 /* Exception Syndrome Register */
 #define READ_ESR_EL1()              SYSREG_READ("esr_el1")
+#define READ_FAR_EL1()              SYSREG_READ("far_el1")
+#define READ_ELR_EL1()              SYSREG_READ("elr_el1")
 #define READ_ESR_EL2()              SYSREG_READ("esr_el2")
 #define READ_ESR_EL3()              SYSREG_READ("esr_el3")
 

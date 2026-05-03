@@ -70,7 +70,7 @@ pick_next(void)
     list_node_t *node = list_delete_first(&g_run_queue);
     if (node) {
         task_t *task = container_of(node, task_t, run_node);
-        KLOG_DEBUG("[sched] pick_next: selected '%s' (id=%u, is_user=%d)\n",
+        KLOG_TRACE("[sched] pick_next: selected '%s' (id=%u, is_user=%d)\n",
                   task->name, task->id, task->is_user_process);
         return task;
     }

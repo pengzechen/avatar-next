@@ -22,16 +22,16 @@
 
 /* ── 静态任务池 ──────────────────────────────────────────── */
 
-static task_t   g_task_pool[TASK_MAX];
+task_t   g_task_pool[TASK_MAX];
 
 /*
  * 任务栈池：16 字节对齐，确保 AArch64/x86_64 的 SP 对齐要求。
  * 每个栈独立分配，互不重叠。
  */
-static uint8_t  g_task_stacks[TASK_MAX][TASK_STACK_SIZE] __attribute__((aligned(16)));
-static uint8_t  g_stack_used[TASK_MAX];
+uint8_t  g_task_stacks[TASK_MAX][TASK_STACK_SIZE] __attribute__((aligned(16)));
+uint8_t  g_stack_used[TASK_MAX];
 
-static uint32_t g_task_id_cnt = 0;
+uint32_t g_task_id_cnt = 0;
 
 /* ── idle 任务（boot 执行上下文）────────────────────────── */
 static task_t g_idle_task;
@@ -41,9 +41,15 @@ task_t *g_current_task = NULL;
 
 /* ── 内部：分配/释放任务槽 ──────────────────────────────── */
 
+/* 前向声明 */
+static void cleanup_dead_task_slot(void);
+
 static task_t *
 alloc_task_slot(void)
 {
+    /* 先尝试清理已死亡的任务槽（延迟清理策略） */
+    cleanup_dead_task_slot();
+
     for (uint32_t i = 0; i < TASK_MAX; i++) {
         if (!g_stack_used[i]) {
             g_stack_used[i]           = 1;
@@ -52,6 +58,21 @@ alloc_task_slot(void)
         }
     }
     return NULL;
+}
+
+/* ── 内部：清理 DEAD 任务槽 ──────────────────────────────────── */
+static void
+cleanup_dead_task_slot(void)
+{
+    for (uint32_t i = 0; i < TASK_MAX; i++) {
+        if (g_stack_used[i] && g_task_pool[i].state == TASK_DEAD) {
+            KLOG_DEBUG("[task] Cleaning up dead task slot %u (id=%u)\n",
+                      i, g_task_pool[i].id);
+            g_stack_used[i] = 0;
+            g_task_pool[i].stack_base = NULL;
+            return;
+        }
+    }
 }
 
 static void
@@ -223,6 +244,72 @@ process_create(const char *name, uint64_t user_entry, uint64_t user_sp, uint8_t 
     return task;
 }
 
+/* ── process_create_with_pgd ────────────────────────────── */
+
+/*
+ * process_create_with_pgd - 使用调用方已构建好的用户页表创建进程
+ *
+ * 跳过 vm_create_user_process，直接使用 pgd_phys。
+ * 适用于 ELF 加载器：加载器已自行完成段映射和栈映射，
+ * 不需要再做一次拷贝。user_entry 直接作为用户虚拟入口，不做转换。
+ */
+task_t *
+process_create_with_pgd(const char *name, uint64_t user_entry, uint64_t user_sp,
+                         uint8_t priority, uint64_t pgd_phys,
+                         uint64_t heap_end_val, uint64_t mmap_next_val)
+{
+    task_t *task = alloc_task_slot();
+    if (!task) {
+        KLOG_ERROR("[task] process_create_with_pgd: no free task slots\n");
+        return NULL;
+    }
+
+    task->id              = g_task_id_cnt++;
+    task->state           = TASK_READY;
+    task->priority        = priority;
+    task->is_user_process = true;
+    task->user_entry      = user_entry;
+    task->user_sp         = user_sp;
+    task->user_stack_top  = user_sp;
+    task->user_stack_size = 0x100000;  /* 1MB 用户栈 */
+    task->pgd             = (uint64_t *)pgd_phys;
+
+    /* 初始化进程文件系统相关字段 */
+    task->cwd[0] = '/';
+    task->cwd[1] = '\0';
+    for (uint32_t j = 0; j < TASK_MAX_FD; j++)
+        task->fd_table[j] = -1;
+    task->parent_id  = g_current_task ? g_current_task->id : 0;
+    task->exit_status = 0;
+    task->is_waiting  = false;
+    task->wait_pid    = (uint32_t)-1;
+
+    list_node_init(&task->run_node);
+    list_node_init(&task->wait_node);
+
+    uint32_t i = 0;
+    while (name[i] && i < (uint32_t)(TASK_NAME_LEN - 1)) {
+        task->name[i] = name[i];
+        i++;
+    }
+    task->name[i] = '\0';
+
+    /* 在入队之前设置堆和 mmap 地址，避免调度器过早切换到该任务时看到 0 */
+    task->heap_end  = heap_end_val;
+    task->mmap_next = mmap_next_val;
+
+    task->sp = arch_init_user_stack(task->stack_base, TASK_STACK_SIZE,
+                                    task->user_entry, user_sp);
+
+    sched_enqueue(task);
+
+    KLOG_INFO("[task] created user process '%s' id=%u prio=%u (pgd=0x%llx)\n",
+              task->name, task->id, (uint32_t)task->priority, pgd_phys);
+    KLOG_INFO("[task]   user_entry=0x%llx, user_sp=0x%llx\n", user_entry, user_sp);
+
+    return task;
+}
+
 /* ── task_create ─────────────────────────────────────────── */
 
 task_t *
@@ -239,6 +326,16 @@ task_create(const char *name, void (*entry)(void *), void *arg, uint8_t priority
     task->priority = priority;
     task->entry    = entry;
     task->arg      = arg;
+    task->is_user_process = false;
+    task->pgd      = NULL;
+    task->cwd[0]   = '/';
+    task->cwd[1]   = '\0';
+    for (uint32_t j = 0; j < TASK_MAX_FD; j++)
+        task->fd_table[j] = -1;
+    task->parent_id   = 0;
+    task->exit_status = 0;
+    task->is_waiting  = false;
+    task->wait_pid    = (uint32_t)-1;
     list_node_init(&task->run_node);
     list_node_init(&task->wait_node);
 
@@ -279,16 +376,30 @@ task_exit(void)
 
     cur->state = TASK_DEAD;
 
+    /* Notify waiting parent */
+    extern void notify_parent_wait_from_task(task_t *child);
+    notify_parent_wait_from_task(cur);
+
     /*
      * 从就绪队列移除（理论上已不在队列，因为 RUNNING 时会重入队，
      * 但 sched_dequeue 做了安全检查）。
      */
     sched_dequeue(cur);
 
-    /* 释放任务槽（idle 的 stack_base = NULL，不释放） */
-    if (cur->stack_base) {
-        free_task_slot(cur);
-    }
+    /*
+     * 注意：不在这里调用 free_task_slot()！
+     *
+     * 如果在这里释放栈槽（g_stack_used[i] = 0），那么在接下来的
+     * sched_schedule() 执行期间，如果发生中断，新的任务可能会被分配
+     * 到同一个栈槽，导致两个任务使用同一个栈，造成数据损坏。
+     *
+     * 正确的做法是：标记为 DEAD 后，让栈槽保持"已占用"状态。
+     * 当后续创建新任务时，alloc_task_slot() 会调用
+     * cleanup_dead_task_slot() 来清理已死亡的任务槽。
+     *
+     * 这样可以确保在 task_exit() 执行期间和调度切换期间，
+     * 没有其他任务会重用这个栈。
+     */
 
     /*
      * 切换到下一个任务。sched_schedule 检测到 state == DEAD，

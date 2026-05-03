@@ -6,6 +6,7 @@
 #define KERNEL_SYSCALL_SYSCALL_H
 
 #include "types.h"
+#include "exception.h"
 
 /* ── 时间相关结构 ───────────────────────────────────────────────── */
 
@@ -54,7 +55,7 @@ typedef enum {
  * 从 x8 获取系统调用号，分发到具体的处理函数。
  * 返回值写入 x0。
  */
-void syscall_handler(uint64_t *regs);
+void syscall_handler(trap_frame_t *frame);
 
 /* ── 具体系统调用实现 ──────────────────────────────────────────── */
 
@@ -156,5 +157,10 @@ void *sys_sbrk(int64_t increment);
  * 返回 0 表示成功，-1 表示失败
  */
 int64_t sys_gettimeofday(struct timeval *tv, void *tz);
+
+/**
+ * sys_mmap - 匿名内存映射（供 musl malloc 使用）
+ */
+uint64_t sys_mmap(uint64_t addr, uint64_t len, int prot, int flags, int fd, uint64_t offset);
 
 #endif /* KERNEL_SYSCALL_SYSCALL_H */

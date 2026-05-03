@@ -8,7 +8,13 @@
       "Bash(riscv64-linux-musl-objdump -d build/kernel_riscv64.elf)",
       "Bash(readelf -l build/kernel_x86_64.elf)",
       "Bash(readelf -n build/kernel_x86_64.elf)",
-      "Bash(timeout 2 qemu-system-x86_64 -machine pc,accel=tcg -m 1G -nographic -device isa-debug-exit,iobase=0xf4,iosize=0x04 -kernel build/kernel_x86_64.bin)"
+      "Bash(timeout 2 qemu-system-x86_64 -machine pc,accel=tcg -m 1G -nographic -device isa-debug-exit,iobase=0xf4,iosize=0x04 -kernel build/kernel_x86_64.bin)",
+      "Bash(make clean *)",
+      "Bash(make distclean *)",
+      "Bash(make oldconfig *)",
+      "Bash(make defconfig *)",
+      "Read(//tmp/**)",
+      "Bash(aarch64-linux-musl-readelf -h busybox)"
     ]
   }
 }

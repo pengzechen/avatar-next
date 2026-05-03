@@ -117,8 +117,8 @@ TASK_C_SOURCES := $(KERNEL_DIR)/task/task.c $(KERNEL_DIR)/task/sched.c $(KERNEL_
 TASK_C_OBJECTS := $(BUILD_DIR)/kernel_task_task.o $(BUILD_DIR)/kernel_task_sched.o $(BUILD_DIR)/kernel_task_mutex.o
 
 # syscall 模块源文件
-SYSCALL_C_SOURCES := $(KERNEL_DIR)/syscall/syscall.c $(KERNEL_DIR)/syscall/bin_loader.c
-SYSCALL_C_OBJECTS := $(BUILD_DIR)/kernel_syscall_syscall.o $(BUILD_DIR)/kernel_syscall_bin_loader.o
+SYSCALL_C_SOURCES := $(KERNEL_DIR)/syscall/syscall.c $(KERNEL_DIR)/syscall/bin_loader.c $(KERNEL_DIR)/syscall/elf_loader.c
+SYSCALL_C_OBJECTS := $(BUILD_DIR)/kernel_syscall_syscall.o $(BUILD_DIR)/kernel_syscall_bin_loader.o $(BUILD_DIR)/kernel_syscall_elf_loader.o
 SYSCALL_S_SRC := $(LIB_DIR)/syscall.S
 SYSCALL_S_OBJ := $(BUILD_DIR)/syscall_wrapper.o
 TASK_S_OBJ := $(BUILD_DIR)/task_switch.o
@@ -137,9 +137,17 @@ TESTS_OBJECTS := $(TESTS_SOURCES:$(TESTS_DIR)/%.c=$(BUILD_DIR)/tests_%.o)
 # 用户应用程序源文件（按架构子目录组织）
 APPS_DIR := apps/$(ARCH)
 APPS_LD := $(APPS_DIR)/app.ld
-APPS_SOURCES := $(wildcard $(APPS_DIR)/*.S)
+# crt0.S 是 C 程序的启动文件，不单独编译为二进制，需排除
+APPS_SOURCES := $(filter-out $(APPS_DIR)/crt0.S, $(wildcard $(APPS_DIR)/*.S))
 APPS_OBJECTS := $(APPS_SOURCES:$(APPS_DIR)/%.S=$(BUILD_DIR)/apps_%.o)
 APPS_BINS := $(APPS_SOURCES:$(APPS_DIR)/%.S=$(BUILD_DIR)/%.bin)
+
+# C 语言用户程序（每个 foo.c 搭配 crt0.S，链接为 foo.elf 放入 rootfs）
+APPS_C_SOURCES := $(wildcard $(APPS_DIR)/*.c)
+APPS_C_ELFS    := $(APPS_C_SOURCES:$(APPS_DIR)/%.c=$(BUILD_DIR)/%.elf)
+CRT0_SRC := $(APPS_DIR)/crt0.S
+CRT0_OBJ := $(BUILD_DIR)/apps_crt0.o
+SYSCALL_WRAPPER_OBJ := $(BUILD_DIR)/syscall_wrapper.o
 
 # 架构特定的上下文切换汇编
 ifeq ($(ARCH),aarch64)
@@ -286,6 +294,7 @@ CFLAGS  += -nostdinc
 CFLAGS  += -Idriver
 CFLAGS  += -Ikernel
 CFLAGS  += -Ikernel/mm
+CFLAGS  += -DAVATAR_HAS_FILESYSTEM
 
 # UART 驱动选择（与架构解耦）
 # 用法：make ARCH=aarch64 UART=dw kernel
@@ -465,9 +474,12 @@ $(BUILD_DIR)/task_switch.o: $(TASK_S_SRC) | $(BUILD_DIR)
 
 # syscall 模块编译规则
 $(BUILD_DIR)/kernel_syscall_syscall.o: $(KERNEL_DIR)/syscall/syscall.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
+	$(CC) $(LWEXT4_CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/kernel_syscall_bin_loader.o: $(KERNEL_DIR)/syscall/bin_loader.c | $(BUILD_DIR)
+	$(CC) $(LWEXT4_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/kernel_syscall_elf_loader.o: $(KERNEL_DIR)/syscall/elf_loader.c | $(BUILD_DIR)
 	$(CC) $(LWEXT4_CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/syscall_wrapper.o: $(SYSCALL_S_SRC) | $(BUILD_DIR)
@@ -492,7 +504,18 @@ $(BUILD_DIR)/%.bin: $(BUILD_DIR)/apps_%.o $(APPS_LD) | $(BUILD_DIR)
 	@echo "App binary created: $@"
 	@echo "  Entry point: $(shell $(NM) $@.elf 2>/dev/null | grep ' _start')"
 
-# 链接用户程序到用户空间地址
+# crt0 编译规则
+$(CRT0_OBJ): $(CRT0_SRC) | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# C 用户程序编译规则（crt0 + foo.c + syscall_wrapper → foo.elf，放入 rootfs）
+$(BUILD_DIR)/%.elf: $(APPS_DIR)/%.c $(CRT0_OBJ) $(SYSCALL_WRAPPER_OBJ) $(APPS_LD) | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $(BUILD_DIR)/apps_$*.o
+	$(CC) $(CFLAGS) -static -nostdlib -nostartfiles -nodefaultlibs \
+		-T $(APPS_LD) \
+		$(CRT0_OBJ) $(BUILD_DIR)/apps_$*.o $(SYSCALL_WRAPPER_OBJ) \
+		-o $@
+	@echo "C app ELF created: $@"
 $(TASK_USER_BIN): $(BUILD_DIR)/user_test.o $(TASK_USER_LD) | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -nostdlib -nostartfiles -nodefaultlibs -T $(TASK_USER_LD) -o $@.elf $<
 	$(OBJCOPY) -O binary $@.elf $@
@@ -570,21 +593,33 @@ $(ROOTFS_IMG): | $(BUILD_DIR)
 	mkfs.ext4 -b 1024 -L "avatarfs" $@
 	@echo "Rootfs created: $@"
 
-rootfs: $(ROOTFS_IMG) $(APPS_BINS)
+rootfs: $(ROOTFS_IMG) $(APPS_BINS) $(APPS_C_ELFS)
 	@echo "=================================="
 	@echo "Rootfs and applications built!"
 	@echo "=================================="
 	@echo ""
-	@echo "To install applications to rootfs, run:"
+	@echo "Installing applications to rootfs..."
+	@mkdir -p /tmp/avatar_mnt
+	@sudo mount -o loop $(ROOTFS_IMG) /tmp/avatar_mnt
+	@if [ -f apps/busybox-$(ARCH) ]; then \
+		sudo cp apps/busybox-$(ARCH) /tmp/avatar_mnt/busybox; \
+		sudo chmod +x /tmp/avatar_mnt/busybox; \
+		echo "  [busybox installed]"; \
+	fi
+	@if [ -f build/test_exec.bin ]; then \
+		sudo cp build/test_exec.bin /tmp/avatar_mnt/test_exec; \
+		sudo chmod +x /tmp/avatar_mnt/test_exec; \
+		echo "  [test_exec installed]"; \
+	fi
+	@if [ -f build/init.elf ]; then \
+		sudo cp build/init.elf /tmp/avatar_mnt/init; \
+		sudo chmod +x /tmp/avatar_mnt/init; \
+		echo "  [init installed]"; \
+	fi
+	@sudo umount /tmp/avatar_mnt
+	@rmdir /tmp/avatar_mnt
 	@echo ""
-	@echo "  mkdir -p /tmp/avatar_mnt"
-	@echo "  sudo mount -o loop $(ROOTFS_IMG) /tmp/avatar_mnt"
-	@echo "  sudo cp build/test_exec.bin /tmp/avatar_mnt/test_exec"
-	@echo "  sudo chmod +x /tmp/avatar_mnt/test_exec"
-	@echo "  sudo umount /tmp/avatar_mnt"
-	@echo "  rmdir /tmp/avatar_mnt"
-	@echo ""
-	@echo "Then run: make ARCH=$(ARCH) run-fs"
+	@echo "Rootfs ready! Run: make ARCH=$(ARCH) run-fs"
 	@echo ""
 
 # 运行内核 + 加载 rootfs 酷像到 QEMU 客户机内存

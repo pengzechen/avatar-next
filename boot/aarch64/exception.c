@@ -18,55 +18,46 @@ void handle_sync_exception(uint64_t *stack_pointer)
 {
     trap_frame_t *el1_ctx = (trap_frame_t *)stack_pointer;
 
-    int el1_esr = READ_ESR_EL1();
+    uint64_t esr = READ_ESR_EL1();
+    uint64_t far = READ_FAR_EL1();
+    uint32_t ec  = (esr >> 26) & 0x3F;
+    uint32_t dfsc = esr & 0x3F;
 
-    int ec = ((el1_esr >> 26) & 0b111111);
+    KLOG_ERROR("[el1_sync] EL1 exception: EC=0x%x, ESR=0x%llx, FAR=0x%llx\n", ec, esr, far);
+    KLOG_ERROR("[el1_sync] ELR=0x%llx, SP_EL0=0x%llx, SPSR=0x%llx\n",
+               el1_ctx->elr, el1_ctx->usp, el1_ctx->spsr);
+    KLOG_ERROR("[el1_sync] DFSC=0x%x (translation=%d perm=%d)\n",
+               dfsc, (dfsc & 0x3C) == 0x04, (dfsc & 0x3C) == 0x0C);
 
-    KLOG_INFO("el1 esr: %x\n", el1_esr);
-    KLOG_INFO("ec: %x\n", ec);
+    (void)ec;
 
-    KLOG_INFO("This is handle_sync_exception: \n");
-    for (int i = 0; i < NUM_REGS; i++)
-    {
-        uint64_t value = el1_ctx->r[i];
-        kprintf("General-purpose register: 0x%d, value: 0x%llx\n", i, value);
-    }
-
-    uint64_t elr_el1_value = el1_ctx->elr;
-    uint64_t usp_value = el1_ctx->usp;
-    uint64_t spsr_value = el1_ctx->spsr;
-
-    KLOG_INFO("usp: 0x%llx, elr: 0x%llx, spsr: 0x%llx\n", usp_value, elr_el1_value, spsr_value);
-
-    /* Skip the faulting instruction to avoid infinite loop */
-    /* AArch64 instructions are 4 bytes */
-    el1_ctx->elr += 4;
-
-    KLOG_INFO("Exception handled, skipping instruction. New ELR: 0x%llx\n", el1_ctx->elr);
-
-    do_platform_panic();
+    do_platform_shutdown();
 }
 
 /* ── 用户态同步异常处理（系统调用、缺页等）────────────────────── */
 
-extern void syscall_handler(uint64_t *regs);
+extern void syscall_handler(trap_frame_t *frame);
 
 void handle_el0_sync_exception(uint64_t *stack_pointer)
 {
     trap_frame_t *el1_ctx = (trap_frame_t *)stack_pointer;
 
     uint64_t esr = READ_ESR_EL1();
+    uint64_t far = READ_FAR_EL1();
     uint32_t ec = (esr >> 26) & 0x3F;
+    uint32_t dfsc = esr & 0x3F;
 
     /* EC == 0x15: SVC 指令（系统调用） */
     if (ec == 0x15) {
-        /* 调用系统调用处理函数 */
-        syscall_handler(el1_ctx->r);
+        /* 调用系统调用处理函数，传入完整 trap_frame */
+        syscall_handler(el1_ctx);
         return;
     }
 
     /* 其他异常类型 */
-    KLOG_ERROR("[el0_sync] Unexpected exception: EC=0x%x, ESR=0x%llx\n", ec, esr);
+    KLOG_ERROR("[el0_sync] Unexpected exception: EC=0x%x, ESR=0x%llx, FAR=0x%llx\n", ec, esr, far);
+    KLOG_ERROR("[el0_sync] DFSC=0x%x (translation=%d perm=%d)\n",
+               dfsc, (dfsc & 0x3C) == 0x04, (dfsc & 0x3C) == 0x0C);
     KLOG_ERROR("[el0_sync] ELR=0x%llx, SP_EL0=0x%llx, SPSR=0x%llx\n",
                el1_ctx->elr, el1_ctx->usp, el1_ctx->spsr);
 

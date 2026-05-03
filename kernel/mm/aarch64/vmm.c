@@ -175,10 +175,10 @@ memory_create_map(pte_t *page_dir, uint64_t vaddr, uint64_t paddr, int32_t count
     if (end > KERNEL_VMA)
         end -= KERNEL_VMA;
     if ((paddr < start || paddr > end) && (paddr > 0xa000000))
-        KLOG_DEBUG("=>Starting memory_create_map for vaddr 0x%llx, paddr 0x%llx, count %d\n",
-               vaddr,
-               paddr,
-               count);
+        // KLOG_DEBUG("=>Starting memory_create_map for vaddr 0x%llx, paddr 0x%llx, count %d\n",
+        //        vaddr,
+        //        paddr,
+        //        count);
 
     for (int32_t i = 0; i < count; i++)
     {
