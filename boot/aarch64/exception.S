@@ -27,7 +27,13 @@
 .macro RESTORE_REGS
     ldp     x10, x11, [sp, 32 * 8]
     ldp     x30, x9,  [sp, 30 * 8]
-    msr     sp_el0, x9
+
+    /* 检查 SPSR，如果不是返回到 EL0，不恢复 SP_EL0 */
+    and     x12, x11, #0xf       /* 提取 M bits (EL) */
+    cmp     x12, #0              /* EL0t = 0 */
+    b.ne    1f                  /* 如果不是 EL0，跳过 SP_EL0 恢复 */
+    msr     sp_el0, x9           /* 只在返回用户态时恢复 SP_EL0 */
+1:
     msr     elr_el1, x10
     msr     spsr_el1, x11
 

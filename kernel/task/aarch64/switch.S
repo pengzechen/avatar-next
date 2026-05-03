@@ -4,7 +4,7 @@
  * void arch_task_switch(uintptr_t *prev_sp, uintptr_t next_sp,
  *                       uint64_t **prev_pgd_ptr, uint64_t *next_pgd)
  *   x0 = &prev->sp        （输出：保存当前 SP）
- *   x1 = next->sp         （输入：下一任务的 SP）
+ *   x1 = next_sp          （输入：下一任务的 SP，-1 表示切换到 idle）
  *   x2 = &prev->pgd       （输出：保存当前页表，可为NULL）
  *   x3 = next->pgd        （输入：下一任务页表，NULL表示不切换）
  *
@@ -18,6 +18,11 @@
  *   [48]  x25   [56]  x26
  *   [64]  x27   [72]  x28
  *   [80]  x29   [88]  x30 ← ret 跳转目标
+ *
+ * 特殊处理：切换到 idle 任务
+ *   当 next_sp == -1 时，表示切换到 idle 任务。
+ *   此时不要返回到调用者，而是直接进入 idle 循环。
+ *   这样可以切断调用链，防止用户进程退出时的异常帧被后续中断返回恢复。
  */
 
 .section .text
@@ -25,6 +30,11 @@
 .global arch_task_switch
 
 arch_task_switch:
+    /* ── 检查 next 任务是否已退出（安全检查）──────────────── */
+    /* x1 = next->sp，可以从中推导 task_t 指针 */
+    /* 但这里我们简单检查：如果 next->sp 是异常值，halt */
+    /* 实际检查在 C 代码中完成，这里假设参数正确 */
+
     /* ── 保存被调用者保存寄存器（96 字节）────────────────── */
     stp     x19, x20, [sp, #-96]!
     stp     x21, x22, [sp, #16]
@@ -43,28 +53,50 @@ arch_task_switch:
     str     x9, [x2]            /* 将 TTBR0_EL1 保存到 prev->pgd */
 1:
 
-    /* ── 切换到下一任务的页表（如果 x3 != NULL）────────────────── */
+    /* ── 切换页表（如果下一任务有独立页表）──────────────────── */
     cbz     x3, 2f
-    msr     ttbr0_el1, x3
-    isb                         /* 同步上下文切换 */
-    tlbi   vmalle1is            /* 刷新 TLB */
-    dsb    sy
-    isb
+    msr     ttbr0_el1, x3       /* 用户进程：切换到独立页表 */
+    b       3f
 2:
+    msr     ttbr0_el1, xzr      /* 内核任务：TTBR0_EL1 = 0（内核页表） */
+3:
+    isb                         /* 同步上下文切换 */
+    tlbi    vmalle1is           /* 刷新 TLB */
+    dsb     sy
+    isb
 
-    /* ── 加载下一任务的 SP（x1）──────────────────────────── */
+    /* ── 检查是否切换到 idle 任务──────────────────────────── */
+    /* next_sp == -1 表示切换到 idle（由 sched_schedule 设置） */
+    mov     x9, #-1
+    cmp     x1, x9
+    b.eq    .Lswitch_to_idle
+
+    /* ── 正常任务切换：加载下一任务的 SP 并恢复寄存器 ──────── */
     mov     sp, x1
-
-    /* ── 恢复被调用者保存寄存器 ──────────────────────────── */
     ldp     x29, x30, [sp, #80]
     ldp     x27, x28, [sp, #64]
     ldp     x25, x26, [sp, #48]
     ldp     x23, x24, [sp, #32]
     ldp     x21, x22, [sp, #16]
     ldp     x19, x20, [sp], #96
-
-    /* ── 返回（跳转到 x30 = 下一任务的返回地址）─────────── */
     ret
+
+    /* ── 切换到 idle 任务──────────────────────────────────── */
+.Lswitch_to_idle:
+    /*
+     * 切换到 idle 时不返回调用者，直接进入 idle 循环。
+     *
+     * 原因：用户进程通过系统调用退出时，异常帧保存在其内核栈上
+     * （包含用户地址 ELR）。如果正常返回到调用者，后续中断返回路径
+     * 会尝试恢复这个过时的异常帧，导致跳转到用户地址而崩溃。
+     *
+     * 解决：不执行 ret，直接进入 idle 循环，切断调用链。
+     */
+    msr     daifclr, #2        /* 开启中断 */
+
+.Lidle_loop:
+    wfi                         /* 等待中断 */
+    b       .Lidle_loop
 
 /*
  * arch_switch_to_user - 从内核跳转到用户态

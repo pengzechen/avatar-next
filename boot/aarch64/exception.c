@@ -6,6 +6,10 @@
 #include "irq/irq.h"
 #include "klog.h"
 
+/* 前向声明，避免循环依赖 */
+struct task;
+extern struct task *g_current_task;
+
 irq_handler_t g_handler_vec[512] = {0};
 uint64_t print_flag = 0;
 
@@ -62,7 +66,7 @@ void handle_el0_sync_exception(uint64_t *stack_pointer)
                el1_ctx->elr, el1_ctx->usp, el1_ctx->spsr);
 
     /* 停机 */
-    do_platform_panic();
+    do_platform_shutdown();
 }
 
 void handle_irq_exception(uint64_t *stack_pointer)

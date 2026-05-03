@@ -74,7 +74,7 @@ pick_next(void)
                   task->name, task->id, task->is_user_process);
         return task;
     }
-    KLOG_DEBUG("[sched] pick_next: queue empty, returning idle\n");
+    // KLOG_DEBUG("[sched] pick_next: queue empty, returning idle\n");
     return g_idle; /* 队列为空，回退到 idle */
 }
 
@@ -118,8 +118,16 @@ sched_schedule(void)
      * 此时 flags 在 prev 的栈帧中，中断仍关闭。
      *
      * 同时切换页表（如果任务有独立页表）。
+     *
+     * 特殊处理：如果切换到 idle，传递一个特殊标记（next->sp == (uintptr_t)-1）
+     * 让 arch_task_switch 知道不要返回，而是直接进入 idle 循环。
+     * 这样可以切断调用链，防止从用户进程退出时的异常帧被后续中断返回恢复。
      */
-    arch_task_switch(&prev->sp, next->sp, &prev->pgd, next->pgd);
+    uintptr_t switch_sp = next->sp;
+    if (next == g_idle) {
+        switch_sp = (uintptr_t)-1;  /* 特殊标记：切换到 idle */
+    }
+    arch_task_switch(&prev->sp, switch_sp, &prev->pgd, next->pgd);
 
     // KLOG_DEBUG("[sched] returned to prev='%s' (id=%u)\n", prev->name, prev->id);
 
