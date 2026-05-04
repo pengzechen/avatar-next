@@ -39,10 +39,41 @@ extern void run_mutex_comparison_test(void);
 extern void kmem_test(void);
 #endif
 
-/* 用户测试程序入口（仅 AArch64 嵌入内核） */
-#if ARCH_AARCH64
+/* 用户测试程序入口（AArch64 / RISC-V 嵌入内核） */
+#if ARCH_AARCH64 || ARCH_RISCV64
 extern void user_test_program(void);
 extern void hello_program(void);
+#endif
+
+#if ARCH_RISCV64
+/*
+ * demo_user_test_rv - 用嵌入内核的汇编程序直接创建 RISC-V 用户进程
+ * 目的：绕过 ELF loader / 文件系统，单独验证 ecall 通路是否正常工作。
+ */
+static void demo_user_test_rv(void *arg)
+{
+    (void)arg;
+    KLOG_INFO("[rv_test] Creating embedded RISC-V user test process...\n");
+
+    /*
+     * process_create 会：
+     *   1. 调用 vm_create_user_process 把代码复制到用户 VA 0x10000
+     *   2. 把内核 L2[0x100]/[0x102] 嫁接到新 PGD，保证 trap 仍可到达
+     *      stvec (0xffffffc0...)
+     *   3. 用户栈 [0x100000, 0x200000)  SP = 0x200000
+     */
+    task_t *p = process_create("rv_user_test",
+                               (uint64_t)user_test_program,
+                               0x200000,   /* user_sp (stack top) */
+                               5);
+    if (p) {
+        KLOG_INFO("[rv_test] User test process created: id=%u entry=0x10000\n",
+                  p->id);
+    } else {
+        KLOG_ERROR("[rv_test] Failed to create RISC-V user test process!\n");
+    }
+    task_exit();
+}
 #endif
 
 /* ── 演示任务 ─────────────────────────────────────────────── */
@@ -107,6 +138,12 @@ static void demo_load_busybox(void *arg)
     }
 
     KLOG_INFO("[busybox_loader] Loading /busybox from filesystem...\n");
+
+#if ARCH_RISCV64
+    uint64_t satp_val;
+    __asm__ volatile("csrr %0, satp" : "=r"(satp_val));
+    KLOG_INFO("[busybox_loader] satp=0x%llx\n", satp_val);
+#endif
 
     /* 调用 ELF 加载器执行 /busybox */
     const char *path = "/busybox";
@@ -231,7 +268,7 @@ void kernel_main(void)
     KLOG_INFO("");
 #endif
 
-#ifndef ARCH_AARCH64
+#if !defined(ARCH_AARCH64) && !defined(ARCH_RISCV64)
     /* 创建演示任务（如果需要） */
     task_create("task_a", demo_task_a, NULL, 1);
     task_create("task_b", demo_task_b, NULL, 1);
@@ -242,12 +279,28 @@ void kernel_main(void)
     KLOG_INFO("\n");
     KLOG_INFO("=== Testing User Process Creation ===\n");
 
-#if ARCH_AARCH64
+#if ARCH_RISCV64
 
-    /* 创建用户进程：busybox（从文件系统加载 ELF）
-    * busybox 将作为 init 进程直接启动
-    * 这个任务会调用 execve 从文件系统加载 busybox
+    /*
+     * 第一步：创建嵌入式汇编测试进程，验证 ecall 路径正确
+     * 一旦看到 "[rv-user] Hello from RISC-V user!" 出现，
+     * 说明用户模式 → 内核 ecall → sys_write 整条路径正常，
+     * 再开启 busybox（取消下面 busybox_loader 的注释）。
+     */
+    task_t *proc_test = task_create("rv_test", demo_user_test_rv, NULL, 5);
+    if (proc_test) {
+        KLOG_INFO("RISC-V user mode test task created.\n");
+    } else {
+        KLOG_ERROR("Failed to create RISC-V test task!\n");
+    }
+
+    /* 调试完成后改为 busybox：
+    task_t *proc1 = task_create("busybox_loader", demo_load_busybox, NULL, 5);
     */
+
+#elif ARCH_AARCH64
+
+    /* AArch64：继续使用 busybox */
     task_t *proc1 = task_create("busybox_loader", demo_load_busybox, NULL, 5);
     if (proc1) {
         KLOG_INFO("Task 1 (busybox_loader) created successfully!\n");
@@ -255,7 +308,7 @@ void kernel_main(void)
         KLOG_ERROR("Failed to create task 1!\n");
     }
 
-#endif /* ARCH_AARCH64 */
+#endif /* ARCH_RISCV64 / ARCH_AARCH64 */
 
     KLOG_INFO("\nProcesses will run in EL0 (user mode)\n");
 

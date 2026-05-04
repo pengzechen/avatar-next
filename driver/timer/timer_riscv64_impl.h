@@ -6,6 +6,11 @@
 #include "klog.h"
 #include "exception.h"   /* irq_install, CAUSE_SUPERVISOR_TIMER */
 
+/* SBI v0.2+ TIME extension and legacy timer extension IDs */
+#define SBI_EID_TIME            0x54494D45UL
+#define SBI_FID_SET_TIMER       0UL
+#define SBI_LEGACY_SET_TIMER    0UL
+
 // ============================================================
 // RISC-V 定时器相关宏（仅保留 sysreg.h 中没有的）
 // ============================================================
@@ -83,21 +88,34 @@ timer_arch_set_next_interrupt(uint64_t ticks_from_now)
     uint64_t current_time = READ_TIME();
     uint64_t next_time = current_time + ticks_from_now;
 
-    // 使用 SBI 调用设置定时器
-    // SBI call: sbi_set_timer(uint64_t stime_value)
-    // a7 = 0 (EID: Timer Extension)
-    // a6 = 0 (FID: sbi_set_timer)
-    // a0 = stime_value
+    /*
+     * Prefer SBI v0.2+ TIME extension first; if firmware does not support it,
+     * fall back to the legacy timer extension.
+     */
     register uint64_t a0 asm("a0") = next_time;
-    register uint64_t a6 asm("a6") = 0;  // FID: sbi_set_timer
-    register uint64_t a7 asm("a7") = 0;  // EID: Timer Extension
+    register uint64_t a1 asm("a1") = 0;
+    register uint64_t a6 asm("a6") = SBI_FID_SET_TIMER;
+    register uint64_t a7 asm("a7") = SBI_EID_TIME;
 
     asm volatile(
         "ecall"
-        : "+r"(a0)
+        : "+r"(a0), "+r"(a1)
         : "r"(a6), "r"(a7)
         : "memory"
     );
+
+    if ((long)a0 != 0) {
+        /* Legacy SBI: EID=0, arg0=stime_value */
+        register uint64_t l_a0 asm("a0") = next_time;
+        register uint64_t l_a7 asm("a7") = SBI_LEGACY_SET_TIMER;
+
+        asm volatile(
+            "ecall"
+            : "+r"(l_a0)
+            : "r"(l_a7)
+            : "a1", "a2", "a3", "a4", "a5", "a6", "memory"
+        );
+    }
 }
 
 // ============================================================

@@ -110,6 +110,10 @@ sched_schedule(void)
 
     KLOG_DEBUG("[sched] switch: prev='%s' (id=%u) -> next='%s' (id=%u, is_user=%d)\n",
               prev->name, prev->id, next->name, next->id, next->is_user_process);
+    if (next->is_user_process) {
+        KLOG_INFO("[sched] entering user task: '%s' (id=%u) pgd=0x%llx entry_sp=0x%lx\n",
+                  next->name, next->id, (uint64_t)next->pgd, (unsigned long)next->sp);
+    }
 
     /*
      * 切换上下文。
@@ -127,7 +131,21 @@ sched_schedule(void)
     if (next == g_idle) {
         switch_sp = (uintptr_t)-1;  /* 特殊标记：切换到 idle */
     }
+#if ARCH_RISCV64
+    extern uint64_t g_kernel_pgd_phys;
+    uint64_t *next_pgd_for_switch = next->pgd;
+    if (next->is_user_process && !next->user_started) {
+        KLOG_INFO("[sched] first user entry: defer satp switch to arch_switch_to_user (next_pgd=0x%llx)\n",
+                  (uint64_t)next->pgd);
+        next_pgd_for_switch = NULL;
+    } else if (!next->is_user_process && next->pgd == NULL && g_kernel_pgd_phys != 0) {
+        /* 切换到内核任务：恢复内核页表 */
+        next_pgd_for_switch = (uint64_t *)g_kernel_pgd_phys;
+    }
+    arch_task_switch(&prev->sp, switch_sp, &prev->pgd, next_pgd_for_switch);
+#else
     arch_task_switch(&prev->sp, switch_sp, &prev->pgd, next->pgd);
+#endif
 
     // KLOG_DEBUG("[sched] returned to prev='%s' (id=%u)\n", prev->name, prev->id);
 

@@ -34,61 +34,67 @@ static int elf_load_segment(void *pgd, elf64_phdr_t *phdr, uint8_t *file_data)
     uint64_t filesz = phdr->p_filesz;
     uint64_t memsz = phdr->p_memsz;
     uint64_t offset = phdr->p_offset;
-    uint64_t paddr;
+    uint64_t seg_base_paddr;
 
     /* 对齐虚拟地址到页边界 */
     uint64_t vaddr_start = ALIGN_DOWN(vaddr, PAGE_SIZE);
     uint64_t vaddr_end = ALIGN_UP(vaddr + memsz, PAGE_SIZE);
+    uint64_t total_pages = (vaddr_end - vaddr_start) / PAGE_SIZE;
+    uint64_t page_idx = 0;
 
     KLOG_INFO("[elf] Loading segment:\n");
     KLOG_INFO("[elf]   vaddr: 0x%llx - 0x%llx\n", vaddr_start, vaddr_end);
     KLOG_INFO("[elf]   filesz: 0x%llx, memsz: 0x%llx\n", filesz, memsz);
 
-    /* 分配并映射物理页 */
-    for (uint64_t cur_vaddr = vaddr_start; cur_vaddr < vaddr_end; cur_vaddr += PAGE_SIZE) {
-        paddr = pmm_alloc_pages(g_pmm, 1);
-        if (paddr == 0) {
-            KLOG_ERROR("[elf] Failed to allocate page\n");
-            return -1;
-        }
+    /* 计算权限 */
+    uint64_t perm = 0;  /* 默认：用户可读写可执行 */
 
-        /* 计算权限 */
-        uint64_t perm = 0;  /* 默认：用户可读写可执行 */
-
-        /* 映射页表 */
-        if (mm_vm_map_pages(pgd, cur_vaddr, paddr, 1, perm) != 0) {
-            KLOG_ERROR("[elf] Failed to map page at 0x%llx\n", cur_vaddr);
-            pmm_free_pages(g_pmm, paddr, 1);
-            return -2;
-        }
-
-        /* 将整页清零（保证页内填充字节和 BSS 都是 0）*/
-        memset(phys_to_virt(paddr), 0, PAGE_SIZE);
-
-        /* 拷贝文件内容到物理页
-         *
-         * copy_start : 本页内，segment 数据起始偏移（segment 未跨页起始时为 0）
-         * src_file_offset : 本页对应的文件偏移
-         *   - cur_vaddr < vaddr : segment 从本页中部开始，src 从 p_offset 开始
-         *   - cur_vaddr >= vaddr: segment 已覆盖本页起始，src 偏移 = p_offset + (cur_vaddr - vaddr)
-         */
-        uint64_t copy_start = (cur_vaddr < vaddr) ? (vaddr - cur_vaddr) : 0;
-        uint64_t file_remaining = (vaddr + filesz > cur_vaddr) ?
-                                  MIN(vaddr + filesz - cur_vaddr, PAGE_SIZE) : 0;
-
-        if (file_remaining > 0) {
-            uint64_t seg_byte_offset = (cur_vaddr >= vaddr) ? (cur_vaddr - vaddr) : 0;
-            uint8_t *dst = (uint8_t *)phys_to_virt(paddr + copy_start);
-            uint8_t *src = file_data + offset + seg_byte_offset;
-            uint64_t copy_size = file_remaining - copy_start;
-
-            for (uint64_t i = 0; i < copy_size; i++) {
-                dst[i] = src[i];
-            }
-        }
+    /* 先一次性分配整段所需的连续物理页，避免每页分配导致的大量位图扫描 */
+    seg_base_paddr = pmm_alloc_pages(g_pmm, (uint32_t)total_pages);
+    if (seg_base_paddr == 0) {
+        KLOG_ERROR("[elf] Failed to allocate %llu contiguous pages\n", total_pages);
+        return -1;
     }
 
+    /* 一次性映射整段 */
+    if (mm_vm_map_pages(pgd, vaddr_start, seg_base_paddr, (int32_t)total_pages, perm) != 0) {
+        KLOG_ERROR("[elf] Failed to map segment pages at 0x%llx (count=%llu)\n",
+                   vaddr_start, total_pages);
+        pmm_free_pages(g_pmm, seg_base_paddr, (uint32_t)total_pages);
+        return -2;
+    }
+
+    /* 先整段清零，再一次性拷贝文件部分（更稳定也更快） */
+    uint64_t seg_bytes = total_pages * PAGE_SIZE;
+    memset(phys_to_virt(seg_base_paddr), 0, seg_bytes);
+
+    if (filesz > 0) {
+        uint64_t file_off_in_seg = vaddr - vaddr_start;
+        uint8_t *dst = (uint8_t *)phys_to_virt(seg_base_paddr + file_off_in_seg);
+        uint8_t *src = file_data + offset;
+        memcpy(dst, src, filesz);
+    }
+
+    /* 保留进度日志风格 */
+    for (uint64_t cur_vaddr = vaddr_start; cur_vaddr < vaddr_end; cur_vaddr += PAGE_SIZE) {
+        if ((page_idx % 64) == 0) {
+            KLOG_INFO("[elf]   progress: page %llu/%llu vaddr=0x%llx\n",
+                      page_idx, total_pages, cur_vaddr);
+        }
+        page_idx++;
+    }
+
+    KLOG_INFO("[elf] Segment done: %llu pages mapped\n", total_pages);
+
     return 0;
+}
+
+static int elf_load_segment_with_base(void *pgd, elf64_phdr_t *phdr,
+                                      uint8_t *file_data, uint64_t image_base)
+{
+    elf64_phdr_t adj = *phdr;
+    adj.p_vaddr = phdr->p_vaddr + image_base;
+    return elf_load_segment(pgd, &adj, file_data);
 }
 
 /**
@@ -213,6 +219,17 @@ elf_setup_stack(void *pgd, uint64_t stack_top, uint64_t entry,
 
     KLOG_INFO("[elf] Initial stack: sp=0x%llx, argc=%d, argv[0]=%s\n",
               *out_sp, argc, av[0]);
+#if ARCH_RISCV64
+    {
+        uint64_t *stack_words = (uint64_t *)ptr;
+        for (int i = 0; i < 24; i++) {
+            KLOG_INFO("[elf]   stack[%02d] @0x%llx = 0x%llx\n",
+                      i,
+                      (uint64_t)(*out_sp + (uint64_t)i * 8),
+                      stack_words[i]);
+        }
+    }
+#endif
 
 #undef UADDR
 #undef PUSH64
@@ -239,6 +256,7 @@ static int elf_load(uint8_t *file_data, uint64_t file_size, const char *pathname
     uint64_t pgd_phys;
     void *pgd;
     uint64_t entry_point;
+    uint64_t image_base = 0;
     uint64_t min_vaddr = (uint64_t)-1;
     uint64_t max_vaddr = 0;
 
@@ -289,6 +307,22 @@ static int elf_load(uint8_t *file_data, uint64_t file_size, const char *pathname
     phdr = (elf64_phdr_t *)(file_data + ehdr->e_phoff);
 
     /* 创建用户页表 */
+#if ARCH_RISCV64
+    /*
+     * 临时回退策略：RISC-V 先复用当前内核根页表。
+     * 这样可绕开当前首次用户态切换时的 satp/陷阱链路不稳定问题，
+     * 优先验证 BusyBox 用户态执行与 syscall 路径。
+     */
+    uint64_t satp_now;
+    __asm__ volatile("csrr %0, satp" : "=r"(satp_now));
+    pgd_phys = (satp_now & 0x0fffffffffffULL) << 12;
+    pgd = phys_to_virt(pgd_phys);
+    image_base = 0x40000000ULL;
+    KLOG_WARN("[elf] RISC-V using shared kernel root pgd: satp=0x%llx root_pa=0x%llx\n",
+              satp_now, pgd_phys);
+    KLOG_WARN("[elf] RISC-V ET_DYN image base forced to 0x%llx\n", image_base);
+
+#else
     pgd_phys = pmm_alloc_pages(g_pmm, 1);
     if (pgd_phys == 0) {
         KLOG_ERROR("[elf] Failed to allocate PGD\n");
@@ -297,23 +331,48 @@ static int elf_load(uint8_t *file_data, uint64_t file_size, const char *pathname
 
     pgd = phys_to_virt(pgd_phys);
     memset(pgd, 0, PAGE_SIZE);
+#endif
+
+#if ARCH_RISCV64
+    /*
+     * RISC-V: 用户页表必须包含内核高半区映射，否则从 U 态陷入（ecall/中断/异常）
+     * 时 stvec（高地址）不可达，会在陷入路径中失联。
+     *
+     * 当前 mmu_init 根页表使用 L2 1GB 叶子：
+     *   - idx 0x100: KERNEL_VMA + 0x00000000..0x3fffffff (MMIO 高别名)
+     *   - idx 0x102: KERNEL_VMA + 0x80000000..0xbfffffff (RAM 高别名，含内核代码/数据)
+     */
+    uint64_t root_pa = pgd_phys;
+    uint64_t *kernel_l2 = (uint64_t *)phys_to_virt(root_pa);
+    uint64_t *user_l2   = (uint64_t *)pgd;
+
+    user_l2[0x100] = kernel_l2[0x100];
+    user_l2[0x102] = kernel_l2[0x102];
+
+    KLOG_INFO("[elf] RISC-V user pgd seeded: root_pa=0x%llx l2[100]=0x%llx l2[102]=0x%llx\n",
+              root_pa, user_l2[0x100], user_l2[0x102]);
+#endif
+
+    if (image_base != 0) {
+        entry_point += image_base;
+    }
 
     KLOG_INFO("[elf] Loading ELF segments...\n");
 
     /* 加载所有 PT_LOAD 段 */
     for (uint16_t i = 0; i < ehdr->e_phnum; i++) {
         if (phdr[i].p_type == PT_LOAD) {
-            int rc = elf_load_segment(pgd, &phdr[i], file_data);
+            int rc = elf_load_segment_with_base(pgd, &phdr[i], file_data, image_base);
             if (rc < 0) {
                 KLOG_ERROR("[elf] Failed to load segment %u\n", i);
                 return -9;
             }
 
-            if (phdr[i].p_vaddr < min_vaddr) {
-                min_vaddr = phdr[i].p_vaddr;
+            if (phdr[i].p_vaddr + image_base < min_vaddr) {
+                min_vaddr = phdr[i].p_vaddr + image_base;
             }
-            if (phdr[i].p_vaddr + phdr[i].p_memsz > max_vaddr) {
-                max_vaddr = phdr[i].p_vaddr + phdr[i].p_memsz;
+            if (phdr[i].p_vaddr + image_base + phdr[i].p_memsz > max_vaddr) {
+                max_vaddr = phdr[i].p_vaddr + image_base + phdr[i].p_memsz;
             }
         }
     }
@@ -354,16 +413,30 @@ static int elf_load(uint8_t *file_data, uint64_t file_size, const char *pathname
                  * 注意：对于静态链接的 PIE，所有地址都是相对于 min_vaddr 的
                  */
                 uint64_t load_bias = 0;
-                if (ehdr->e_type == ET_DYN && min_vaddr != 0) {
-                    /* PIE 加载到非 0 地址，需要调整 */
-                    load_bias = 0; /* 我们的实现总是加载到指定的虚拟地址 */
+                if (ehdr->e_type == ET_DYN) {
+                    load_bias = image_base;
                 }
 
                 KLOG_INFO("[elf] ELF type=%u, min_vaddr=0x%llx, load_bias=0x%llx\n",
                           ehdr->e_type, min_vaddr, load_bias);
 
+#if ARCH_AARCH64
+                const uint32_t reloc_relative  = R_AARCH64_RELATIVE;
+                const uint32_t reloc_jump_slot = R_AARCH64_JUMP_SLOT;
+                const uint32_t reloc_glob_dat  = R_AARCH64_GLOB_DAT;
+#elif ARCH_RISCV64
+                const uint32_t reloc_relative  = R_RISCV_RELATIVE;
+                const uint32_t reloc_jump_slot = R_RISCV_JUMP_SLOT;
+                const uint32_t reloc_glob_dat  = R_RISCV_GLOB_DAT;
+#else
+                const uint32_t reloc_relative  = 0xffffffffU;
+                const uint32_t reloc_jump_slot = 0xffffffffU;
+                const uint32_t reloc_glob_dat  = 0xffffffffU;
+#endif
+
                 /* 处理每个 RELA 条目 */
                 uint64_t rela_count = rela_size / rela_ent;
+                uint64_t unsupported_count = 0;
                 for (uint64_t r = 0; r < rela_count; r++) {
                     /* RELA 在文件中的偏移 */
                     uint64_t rela_file_offset = 0;
@@ -388,9 +461,9 @@ static int elf_load(uint8_t *file_data, uint64_t file_size, const char *pathname
                     uint32_t r_type = ELF64_R_TYPE(rela->r_info);
 
                     /* 处理多种重定位类型 */
-                    if (r_type == R_AARCH64_RELATIVE) {
+                    if (r_type == reloc_relative) {
                         /* RELATIVE: 基址 + addend */
-                        uint64_t target_vaddr = rela->r_offset;
+                        uint64_t target_vaddr = load_bias + rela->r_offset;
                         uint64_t page_vaddr = ALIGN_DOWN(target_vaddr, PAGE_SIZE);
                         uint64_t paddr = mm_vm_get_paddr(pgd, page_vaddr);
 
@@ -406,13 +479,13 @@ static int elf_load(uint8_t *file_data, uint64_t file_size, const char *pathname
                         KLOG_TRACE("[elf] RELATIVE 0x%llx: 0x%llx -> 0x%llx\n",
                                   target_vaddr, *target, new_value);
                         *target = new_value;
-                    } else if (r_type == R_AARCH64_JUMP_SLOT ||
-                               r_type == R_AARCH64_GLOB_DAT) {
+                    } else if (r_type == reloc_jump_slot ||
+                               r_type == reloc_glob_dat) {
                         /* JUMP_SLOT/GLOB_DAT: 函数地址
                          * 对于静态链接的 PIE，这些应该指向 load_bias + addend
                          * 但如果 addend 很小（比如 3），可能是编译器生成的占位符
                          */
-                        uint64_t target_vaddr = rela->r_offset;
+                        uint64_t target_vaddr = load_bias + rela->r_offset;
                         uint64_t page_vaddr = ALIGN_DOWN(target_vaddr, PAGE_SIZE);
                         uint64_t paddr = mm_vm_get_paddr(pgd, page_vaddr);
 
@@ -428,18 +501,26 @@ static int elf_load(uint8_t *file_data, uint64_t file_size, const char *pathname
                         /* 如果 new_value 太小（< 0x10000），可能是错误的 */
                         if (new_value < 0x10000) {
                             KLOG_WARN("[elf] Suspicious %s at 0x%llx: addend=0x%llx, new_value=0x%llx\n",
-                                      r_type == R_AARCH64_JUMP_SLOT ? "JUMP_SLOT" : "GLOB_DAT",
+                                      r_type == reloc_jump_slot ? "JUMP_SLOT" : "GLOB_DAT",
                                       target_vaddr, rela->r_addend, new_value);
                         }
 
                         KLOG_TRACE("[elf] %s 0x%llx: 0x%llx -> 0x%llx\n",
-                                  r_type == R_AARCH64_JUMP_SLOT ? "JUMP_SLOT" : "GLOB_DAT",
+                                  r_type == reloc_jump_slot ? "JUMP_SLOT" : "GLOB_DAT",
                                   target_vaddr, *target, new_value);
                         *target = new_value;
                     } else if (r_type != 0) {
-                        KLOG_WARN("[elf] Unsupported relocation type: %u at offset 0x%llx\n",
-                                  r_type, rela->r_offset);
+                        if (unsupported_count < 8) {
+                            KLOG_WARN("[elf] Unsupported relocation type: %u at offset 0x%llx\n",
+                                      r_type, rela->r_offset);
+                        }
+                        unsupported_count++;
                     }
+                }
+
+                if (unsupported_count > 8) {
+                    KLOG_WARN("[elf] Unsupported relocations: total=%llu (showing first 8)\n",
+                              unsupported_count);
                 }
 
                 KLOG_INFO("[elf] Processed %llu RELA relocations\n", rela_count);
@@ -448,25 +529,25 @@ static int elf_load(uint8_t *file_data, uint64_t file_size, const char *pathname
         }
     }
 
-    /* 映射用户栈到 ELF 页表中 */
+    /* 映射用户栈到 ELF 页表中（批量分配+批量映射） */
     uint64_t stack_bottom = ALIGN_DOWN(USER_STACK_ADDR - USER_STACK_SIZE, PAGE_SIZE);
-    for (uint64_t vaddr = stack_bottom; vaddr < USER_STACK_ADDR; vaddr += PAGE_SIZE) {
-        uint64_t stack_page = pmm_alloc_pages(g_pmm, 1);
-        if (stack_page == 0) {
-            KLOG_ERROR("[elf] Failed to allocate stack page\n");
-            return -10;
-        }
-        if (mm_vm_map_pages(pgd, vaddr, stack_page, 1, 0) != 0) {
-            KLOG_ERROR("[elf] Failed to map stack page at 0x%llx\n", vaddr);
-            pmm_free_pages(g_pmm, stack_page, 1);
-            return -11;
-        }
+    uint64_t stack_pages = (USER_STACK_ADDR - stack_bottom) / PAGE_SIZE;
+    uint64_t stack_base_paddr = pmm_alloc_pages(g_pmm, (uint32_t)stack_pages);
+    if (stack_base_paddr == 0) {
+        KLOG_ERROR("[elf] Failed to allocate %llu stack pages\n", stack_pages);
+        return -10;
+    }
+    if (mm_vm_map_pages(pgd, stack_bottom, stack_base_paddr, (int32_t)stack_pages, 0) != 0) {
+        KLOG_ERROR("[elf] Failed to map user stack: vaddr=0x%llx pages=%llu\n",
+                   stack_bottom, stack_pages);
+        pmm_free_pages(g_pmm, stack_base_paddr, (uint32_t)stack_pages);
+        return -11;
     }
     KLOG_INFO("[elf] User stack mapped: 0x%llx - 0x%llx\n", stack_bottom, (uint64_t)USER_STACK_ADDR);
 
     /* 在用户栈最高页构建 Linux ABI 初始栈（argc/argv/envp/auxv） */
     /* AT_PHDR: 程序头在用户空间的地址 = 加载基址 0 + ehdr->e_phoff */
-    uint64_t phdr_uaddr = ehdr->e_phoff;  /* for base=0, file_offset == user_vaddr */
+    uint64_t phdr_uaddr = image_base + ehdr->e_phoff;
     uint64_t user_sp = USER_STACK_ADDR;
     if (elf_setup_stack(pgd, USER_STACK_ADDR, entry_point, argv, envp, &user_sp,
                         phdr_uaddr, ehdr->e_phnum, ehdr->e_phentsize) != 0) {
@@ -478,8 +559,9 @@ static int elf_load(uint8_t *file_data, uint64_t file_size, const char *pathname
     task_t *current = task_current();
     uint32_t saved_parent_id = current->parent_id;
 
+    uint64_t mmap_base = (image_base != 0) ? 0x50000000ULL : 0x30000000ULL;
     new_task = process_create_with_pgd(pathname, entry_point, user_sp, 10, pgd_phys,
-                                       ALIGN_UP(max_vaddr, PAGE_SIZE), 0x30000000ULL);
+                                       ALIGN_UP(max_vaddr, PAGE_SIZE), mmap_base);
     if (new_task == NULL) {
         KLOG_ERROR("[elf] Failed to create task\n");
         return -13;
@@ -556,6 +638,13 @@ int elf_loader_load_from_file(const char *pathname, char **argv, char **envp)
     }
 
     file_data = (uint8_t *)phys_to_virt(file_phys);
+
+#if ARCH_RISCV64
+    uint64_t satp_val;
+    __asm__ volatile("csrr %0, satp" : "=r"(satp_val));
+    KLOG_INFO("[elf_loader] file_phys=0x%llx file_data=0x%llx pages=%u satp=0x%llx\n",
+              file_phys, (uint64_t)file_data, page_count, satp_val);
+#endif
 
     /* 读取文件 */
     rc = ext4_fread(&file, file_data, file_size, &rcnt);

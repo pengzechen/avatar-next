@@ -16,7 +16,11 @@
 #include "klog.h"
 #include "barrier.h"
 
+#include "mm_vm.h"
 #include "vm_user.h"
+#if ARCH_RISCV64
+#include "riscv64/sysreg.h"
+#endif
 
 /* ── 静态任务池 ──────────────────────────────────────────── */
 
@@ -30,6 +34,9 @@ uint8_t  g_task_stacks[TASK_MAX][TASK_STACK_SIZE] __attribute__((aligned(16)));
 uint8_t  g_stack_used[TASK_MAX];
 
 uint32_t g_task_id_cnt = 0;
+
+/* ── 内核页表物理地址（task_init 时从 satp 读取）─────────── */
+uint64_t g_kernel_pgd_phys = 0;
 
 /* ── idle 任务（boot 执行上下文）────────────────────────── */
 static task_t g_idle_task;
@@ -118,6 +125,25 @@ task_trampoline(void)
  */
 void task_trampoline_user(void);
 
+#if ARCH_RISCV64
+void arch_user_entry_debug(uint64_t user_entry, uint64_t user_sp,
+                           uint64_t kernel_sp, uint64_t user_pgd)
+{
+    task_t *cur = task_current();
+    if (cur && cur->is_user_process)
+        cur->user_started = true;
+
+    KLOG_INFO("[user-entry] trampoline: entry=0x%llx usp=0x%llx ksp=0x%llx upgd=0x%llx satp=0x%llx sstatus=0x%llx sie=0x%llx stvec=0x%llx\n",
+              user_entry,
+              user_sp,
+              kernel_sp,
+              user_pgd,
+              CSR_READ(satp),
+              READ_SSTATUS(),
+              READ_SIE(),
+              READ_STVEC());
+}
+#endif
 /* ── task_init ───────────────────────────────────────────── */
 
 void
@@ -153,6 +179,14 @@ task_init(void)
 
     g_current_task = &g_idle_task;
 
+#if ARCH_RISCV64
+    /* 保存内核 SATP 对应的 PGD 物理地址，用于切换回内核任务时恢复 */
+    {
+        uint64_t satp_val = CSR_READ(satp);
+        g_kernel_pgd_phys = (satp_val & 0x00000FFFFFFFFFFFULL) << 12;
+    }
+#endif
+
     /* 初始化调度器，传入 idle 任务 */
     sched_init(&g_idle_task);
 
@@ -185,6 +219,7 @@ process_create(const char *name, uint64_t user_entry, uint64_t user_sp, uint8_t 
 
     /* 标记为用户进程 */
     task->is_user_process = true;
+    task->user_started    = false;
     task->user_entry      = user_entry;
     task->user_sp         = user_sp;
     task->user_stack_top  = user_sp;
@@ -209,6 +244,41 @@ process_create(const char *name, uint64_t user_entry, uint64_t user_sp, uint8_t 
 
     KLOG_INFO("[task] Created page table for '%s': PGD=0x%llx\n",
               name, (uint64_t)task->pgd);
+#elif ARCH_RISCV64
+    {
+        /* 用户代码当前在内核虚拟地址空间；复制 16KB 到用户 VA 0x10000 */
+        uint64_t user_code_vaddr = user_entry;
+        uint64_t user_code_size  = 0x4000;   /* 16KB，足以覆盖代码+字符串 */
+
+        uint64_t pgd_phys = vm_create_user_process(user_code_vaddr, user_code_size,
+                                                   user_sp, task->user_stack_size);
+        if (pgd_phys == 0) {
+            KLOG_ERROR("[task] Failed to create user page table for '%s'\n", name);
+            free_task_slot(task);
+            return NULL;
+        }
+
+        /*
+         * 将内核高地址别名的 L2 条目（[0x100] 和 [0x102]）移植到用户 PGD。
+         * 这样 sret 到用户模式后，发生 trap 时 CPU 仍可通过
+         *   stvec = 0xffffffc0xxxxxxxx → L2[0x102]（1GB giga-page，无 PTE_U）
+         * 到达内核异常向量，而用户无法访问该区域（PTE_U=0）。
+         */
+        uint64_t *new_pgd  = (uint64_t *)phys_to_virt(pgd_phys);
+        uint64_t  satp_val = CSR_READ(satp);
+        /* Sv39 satp: PPN 位于 [43:0]，物理页帧号 */
+        uint64_t  kern_pgd_phys = (satp_val & 0x00000FFFFFFFFFFFULL) << 12;
+        uint64_t *kern_pgd = (uint64_t *)phys_to_virt(kern_pgd_phys);
+
+        new_pgd[0x100] = kern_pgd[0x100];   /* 内核低物理地址别名 */
+        new_pgd[0x102] = kern_pgd[0x102];   /* 内核 RAM 别名（含 stvec 所在页）*/
+
+        task->pgd        = (uint64_t *)pgd_phys;
+        task->user_entry = 0x10000;
+
+        KLOG_INFO("[task] Created RISC-V user PGD=0x%llx for '%s'\n",
+                  pgd_phys, name);
+    }
 #else
     /* 其他架构暂时使用共享内核页表 */
     task->pgd = NULL;
@@ -229,7 +299,8 @@ process_create(const char *name, uint64_t user_entry, uint64_t user_sp, uint8_t 
 
     /* 使用用户进程专用的栈初始化函数（注意：使用调整后的虚拟地址） */
     task->sp = arch_init_user_stack(task->stack_base, TASK_STACK_SIZE,
-                                    task->user_entry, user_sp);
+                                    task->user_entry, user_sp,
+                                    (uint64_t)task->pgd);
 
     /* 加入就绪队列 */
     sched_enqueue(task);
@@ -266,6 +337,7 @@ process_create_with_pgd(const char *name, uint64_t user_entry, uint64_t user_sp,
     task->state           = TASK_READY;
     task->priority        = priority;
     task->is_user_process = true;
+    task->user_started    = false;
     task->user_entry      = user_entry;
     task->user_sp         = user_sp;
     task->user_stack_top  = user_sp;
@@ -313,7 +385,8 @@ process_create_with_pgd(const char *name, uint64_t user_entry, uint64_t user_sp,
     task->mmap_next = mmap_next_val;
 
     task->sp = arch_init_user_stack(task->stack_base, TASK_STACK_SIZE,
-                                    task->user_entry, user_sp);
+                                    task->user_entry, user_sp,
+                                    (uint64_t)task->pgd);
 
     sched_enqueue(task);
 
@@ -341,6 +414,7 @@ task_create(const char *name, void (*entry)(void *), void *arg, uint8_t priority
     task->entry    = entry;
     task->arg      = arg;
     task->is_user_process = false;
+    task->user_started    = false;
     task->pgd      = NULL;
     task->cwd[0]   = '/';
     task->cwd[1]   = '\0';

@@ -52,6 +52,11 @@
 #define R_AARCH64_JUMP_SLOT  1026  /* 0x402: PLT entry */
 #define R_AARCH64_GLOB_DAT   1025  /* 0x401: GOT entry */
 
+/* RISC-V 重定位类型 */
+#define R_RISCV_RELATIVE     3
+#define R_RISCV_JUMP_SLOT    5
+#define R_RISCV_GLOB_DAT     6
+
 /* 64-bit ELF 动态段条目 */
 typedef struct {
     int64_t  d_tag;

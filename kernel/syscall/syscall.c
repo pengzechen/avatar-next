@@ -491,6 +491,7 @@ void notify_parent_wait_from_task(task_t *child)
  * ───────────────────────────────────────────────────────────────── */
 void syscall_handler(trap_frame_t *frame)
 {
+    static uint32_t s_syscall_log_count = 0;
     uint64_t regs[9] = {0};
     for (int i = 0; i < 6; i++) {
         regs[i] = syscall_abi_arg(frame, i);
@@ -510,6 +511,11 @@ void syscall_handler(trap_frame_t *frame)
 
     KLOG_DEBUG("[syscall] pid=%u nr=%llu args=[0x%llx, 0x%llx, 0x%llx]\n",
                current->id, syscall_num, regs[0], regs[1], regs[2]);
+    if (s_syscall_log_count < 32) {
+        KLOG_INFO("[syscall] pid=%u nr=%llu args=[0x%llx,0x%llx,0x%llx]\n",
+                  current->id, syscall_num, regs[0], regs[1], regs[2]);
+        s_syscall_log_count++;
+    }
 
     switch (syscall_num) {
 
@@ -1383,7 +1389,13 @@ void syscall_handler(trap_frame_t *frame)
         copy_string_to_user("avatar",     u->nodename,   sizeof(u->nodename));
         copy_string_to_user("5.15.0",     u->release,    sizeof(u->release));
         copy_string_to_user("#1 SMP",     u->version,    sizeof(u->version));
+#if ARCH_RISCV64
+        copy_string_to_user("riscv64",    u->machine,    sizeof(u->machine));
+#elif ARCH_AARCH64
         copy_string_to_user("aarch64",    u->machine,    sizeof(u->machine));
+#else
+        copy_string_to_user("x86_64",     u->machine,    sizeof(u->machine));
+#endif
         copy_string_to_user("",           u->domainname, sizeof(u->domainname));
         regs[0] = 0;
         break;

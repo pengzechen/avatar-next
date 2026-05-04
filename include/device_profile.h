@@ -34,7 +34,7 @@
 #define DEVICE_UART_REG_SHIFT         0
 #elif ARCH_RISCV64 && PLATFORM_QEMU
 #define DEVICE_PROFILE_VALID          1
-#define DEVICE_MMIO_NEEDS_VMA         0
+#define DEVICE_MMIO_NEEDS_VMA         1
 #define DEVICE_DEFAULT_UART_PL011     0
 #define DEVICE_DEFAULT_UART_DW        1
 #define DEVICE_DEFAULT_UART_X86       0

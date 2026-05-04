@@ -21,6 +21,7 @@
 .section .text
 .align  2
 .global arch_task_switch
+.extern arch_user_entry_debug
 
 arch_task_switch:
     /* ── 分配帧（13 × 8 = 104 字节）─────────────────────── */
@@ -43,6 +44,24 @@ arch_task_switch:
 
     /* ── 保存当前 SP 到 *prev_sp（a0）────────────────────── */
     sd      sp, 0(a0)
+
+    /* ── 保存当前 satp 到 *prev_pgd_ptr（a2，可为 NULL）────── */
+    beqz    a2, 1f
+    csrr    t0, satp
+    li      t1, 0x0fffffffffff  /* SATP.PPN[43:0] */
+    and     t0, t0, t1
+    slli    t0, t0, 12          /* -> 物理地址 */
+    sd      t0, 0(a2)
+1:
+
+    /* ── 切换页表（a3 = next_pgd，物理地址；NULL 表示保持当前页表） */
+    beqz    a3, 3f
+    srli    t0, a3, 12          /* PPN */
+    li      t1, (8 << 60)       /* MODE=8 (Sv39), ASID=0 */
+    or      t0, t0, t1
+    csrw    satp, t0
+    sfence.vma
+3:
 
     /* ── 加载下一任务的 SP（a1）──────────────────────────── */
     mv      sp, a1
@@ -70,9 +89,135 @@ arch_task_switch:
 /*
  * task_trampoline_user - 用户进程首次调度时的跳转板（RISC-V 64）
  *
- * TODO: 实现 RISC-V 用户态跳转
- * 目前为空存根，防止链接错误
+ * 约定（由 arch_init_user_stack 构造）：
+ *   s0 = user_entry
+ *   s1 = user_sp
  */
 .global task_trampoline_user
 task_trampoline_user:
-1:  j       1b          /* 无限循环：尚未实现 */
+    /* 诊断：确认已到达用户态跳转板 */
+    mv      a0, s0
+    mv      a1, s1
+    mv      a2, sp
+    mv      a3, s2
+    call    arch_user_entry_debug
+
+    /* arch_switch_to_user(user_entry, user_sp, kernel_sp) */
+    mv      a0, s0
+    mv      a1, s1
+    mv      a2, sp
+    mv      a3, s2
+    j       arch_switch_to_user
+
+/*
+ * arch_switch_to_user - 从内核跳转到用户态
+ * a0 = user_entry
+ * a1 = user_sp
+ * a2 = kernel_sp（当前内核栈）
+ * a3 = user_pgd_phys（用户页表物理地址，0 表示保持当前 satp）
+ */
+.global arch_switch_to_user
+arch_switch_to_user:
+     /* 首次用户态进入在这里切换 satp，避免在 arch_task_switch 中断映射 */
+     beqz    a3, 9f
+     srli    t0, a3, 12          /* PPN */
+    li      t1, (8 << 60)       /* MODE=8 (Sv39), ASID=0 */
+    or      t0, t0, t1
+    csrw    satp, t0
+    sfence.vma
+9:
+
+    /* 保存内核栈到 sscratch，供下一次用户陷入使用 */
+    csrw    sscratch, a2
+
+    /* 设置返回地址到用户入口 */
+    csrw    sepc, a0
+
+    /* 设置 sstatus：SIE=0, SPP=0 (返回 U 模式)，SPIE=1 */
+    csrr    t0, sstatus
+    li      t1, -259            /* clear bit 8 (SPP) + bit 1 (SIE) */
+    and     t0, t0, t1
+    ori     t0, t0, 0x20        /* SPIE */
+    csrw    sstatus, t0
+
+    /*
+     * 临时探针：返回用户态前先屏蔽 STIE。
+     * 若 BusyBox 能因此越过入口，说明此前是 pending timer 在 sret 后立刻重入。
+     */
+    csrr    t0, sie
+    li      t1, ~0x20
+    and     t0, t0, t1
+    csrw    sie, t0
+
+    /* 用户栈 */
+    mv      sp, a1
+
+    /* 同步 I-cache，确保刚写入的用户代码可执行 */
+    fence.i
+
+    sret
+
+/*
+ * arch_fork_resume_user - 子进程首次调度恢复 trap_frame 并返回用户态
+ * 约定：s0 = trap_frame_t*
+ */
+.global arch_fork_resume_user
+arch_fork_resume_user:
+    mv      t6, s0
+
+    /* trap CSR */
+    ld      t0, (32*8)(t6)      /* sepc */
+    csrw    sepc, t0
+    ld      t1, (35*8)(t6)      /* sstatus */
+    li      t2, -259            /* clear SPP + SIE */
+    and     t1, t1, t2
+    ori     t1, t1, 0x20        /* SPIE */
+    csrw    sstatus, t1
+
+    /* 与首次用户入口保持一致，先屏蔽 STIE，避免返回用户态瞬间被 timer 抢占。 */
+    csrr    t0, sie
+    li      t1, ~0x20
+    and     t0, t0, t1
+    csrw    sie, t0
+
+    /* 保存当前内核栈到 sscratch */
+    mv      t0, sp
+    csrw    sscratch, t0
+
+    /* 恢复通用寄存器（x0 固定为 0） */
+    ld      ra, (1*8)(t6)
+    ld      sp, (2*8)(t6)
+    ld      gp, (3*8)(t6)
+    ld      tp, (4*8)(t6)
+    ld      t0, (5*8)(t6)
+    ld      t1, (6*8)(t6)
+    ld      t2, (7*8)(t6)
+    ld      s0, (8*8)(t6)
+    ld      s1, (9*8)(t6)
+    ld      a0, (10*8)(t6)
+    ld      a1, (11*8)(t6)
+    ld      a2, (12*8)(t6)
+    ld      a3, (13*8)(t6)
+    ld      a4, (14*8)(t6)
+    ld      a5, (15*8)(t6)
+    ld      a6, (16*8)(t6)
+    ld      a7, (17*8)(t6)
+    ld      s2, (18*8)(t6)
+    ld      s3, (19*8)(t6)
+    ld      s4, (20*8)(t6)
+    ld      s5, (21*8)(t6)
+    ld      s6, (22*8)(t6)
+    ld      s7, (23*8)(t6)
+    ld      s8, (24*8)(t6)
+    ld      s9, (25*8)(t6)
+    ld      s10, (26*8)(t6)
+    ld      s11, (27*8)(t6)
+    ld      t3, (28*8)(t6)
+    ld      t4, (29*8)(t6)
+    ld      t5, (30*8)(t6)
+    ld      t6, (31*8)(t6)
+
+    /* 同步 I-cache，避免 fork 后子进程执行陈旧指令 */
+    fence.i
+
+    sret

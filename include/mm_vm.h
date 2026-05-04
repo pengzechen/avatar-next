@@ -11,17 +11,6 @@
 #include "arch.h"
 #include "types.h"
 
-#if ARCH_AARCH64
-#  include "aarch64/mm_vm.h"
-#elif ARCH_RISCV64
-#  include "riscv64/mm_vm.h"
-#elif ARCH_X86_64
-#  include "x86_64/mm_vm.h"
-#else
-#  error "Unsupported architecture for mm_vm"
-#endif
-
-
 /* ── 内核虚拟地址偏移（架构特定） ───────────────────────────────── */
 
 #if ARCH_AARCH64
@@ -31,8 +20,8 @@
 /* x86_64 高半地址空间 */
 #define KERNEL_VMA  0xffff800000000000ULL
 #elif ARCH_RISCV64
-/* RISC-V MMU 尚未实现，内核直接运行在物理地址空间，偏移为 0 */
-#define KERNEL_VMA  0ULL
+/* RISC-V Sv39 高半区内核偏移 */
+#define KERNEL_VMA  0xffffffc000000000ULL
 #else
 #define KERNEL_VMA  0ULL
 #endif
@@ -40,6 +29,16 @@
 /* 虚拟地址转换宏 */
 #define phys_to_virt(pa) ((void *)((uint64_t)(pa) + KERNEL_VMA))
 #define virt_to_phys(va) ((uint64_t)(va) - KERNEL_VMA)
+
+#if ARCH_AARCH64
+#  include "aarch64/mm_vm.h"
+#elif ARCH_RISCV64
+#  include "riscv64/mm_vm.h"
+#elif ARCH_X86_64
+#  include "x86_64/mm_vm.h"
+#else
+#  error "Unsupported architecture for mm_vm"
+#endif
 
 /* 页大小配置 */
 #define PAGE_SIZE       4096

@@ -219,6 +219,26 @@ void pmm_initialize(void)
     KLOG_INFO("Marking kernel memory as allocated...\n");
     pmm_mark_kernel_allocated(&pmm);
 
+#if ARCH_RISCV64
+    /*
+     * QEMU RISC-V 默认 OpenSBI 固件驻留在 RAM 起始低地址（约 0x80000000 起）。
+     * 这段区域在 S-mode 下不可安全作为普通页分配，否则会在 memcpy 等访问时触发异常。
+     * 预留 [0x80000000, 0x801FFFFF]（2MB）覆盖固件与早期保留区。
+     */
+    KLOG_INFO("Reserving OpenSBI/firmware region: 0x%llx - 0x%llx\n",
+              (uint64_t)0x80000000ULL, (uint64_t)0x801FFFFFULL);
+    pmm_mark_allocated(&pmm, 0x80000000ULL, 0x801FFFFFULL);
+
+    /*
+     * 预留 RISC-V 低地址 boot 区（_start/mmu_init/boot 栈/早期页表等）。
+     * 从符号可见该区位于 0x80200000 起，内核高地址镜像从 0x80206000 对应物理开始。
+     * 若不预留，用户进程 PGD 可能被分配到 0x80200000，覆盖早期关键数据。
+     */
+    KLOG_INFO("Reserving RISC-V boot-low region: 0x%llx - 0x%llx\n",
+              (uint64_t)0x80200000ULL, (uint64_t)0x80205FFFULL);
+    pmm_mark_allocated(&pmm, 0x80200000ULL, 0x80205FFFULL);
+#endif
+
     /* 预留 rootfs 物理区域，防止 PMM 将其分配出去 */
     KLOG_INFO("Reserving rootfs region: 0x%llx - 0x%llx\n",
               (uint64_t)RAMBLK_PHYS_BASE, (uint64_t)RAMBLK_PHYS_END);

@@ -37,8 +37,12 @@ void pmm_init(pmm_t *pmm,
     pmm->total_pages = size / PAGE_SIZE;
     pmm->free_pages  = pmm->total_pages;
 
-    /* 初始化位图 */
-    bitmap_init(&pmm->bitmap, bitmap_buffer, bitmap_size);
+    /*
+     * bitmap_init 的 size 单位是 bit，bitmap_size 传入单位是 byte。
+     * 这里必须做 byte -> bit 转换，否则 PMM 只会管理 1/8 的页面。
+     */
+    bitmap_init(&pmm->bitmap, bitmap_buffer, bitmap_size * 8);
+    assert(pmm->bitmap.size >= pmm->total_pages);
 
     /* 初始化互斥锁 */
     mutex_init(&pmm->mutex);

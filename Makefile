@@ -162,6 +162,9 @@ TASK_S_OBJ := $(BUILD_DIR)/task_switch.o
 ifeq ($(ARCH),aarch64)
 TASK_USER_TEST_OBJ := $(BUILD_DIR)/user_test.o
 TASK_USER_HELLO_OBJ := $(BUILD_DIR)/hello.o
+else ifeq ($(ARCH),riscv64)
+TASK_USER_TEST_OBJ := $(BUILD_DIR)/user_test.o
+TASK_USER_HELLO_OBJ := $(BUILD_DIR)/hello.o
 else
 TASK_USER_TEST_OBJ :=
 TASK_USER_HELLO_OBJ :=

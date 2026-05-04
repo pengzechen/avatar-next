@@ -10,16 +10,40 @@
  */
 
 .equ TRAP_FRAME_SIZE, 288
+.equ SSTATUS_SPP,    0x100
 
 .section .text
 .align 4                    /* stvec 直接模式要求 4 字节对齐 */
 .global trap_vector
 .extern handle_exception
 .extern sched_check_and_yield
+.extern __global_pointer$
 
 trap_vector:
-    /* ── 分配陷阱帧 ─────────────────────────────────────────────── */
-    addi  sp,  sp, -TRAP_FRAME_SIZE
+    /*
+     * 先根据 SPP 判断来源模式：
+     *   SPP=0: 从 U 态陷入，切换到 sscratch 保存的内核栈
+     *   SPP=1: 从 S 态陷入，继续使用当前内核栈
+     *
+     * 注意：这里会临时改写 t0/t1，后续会在 trap frame 中保存当前值。
+     */
+    csrr  t0, sstatus
+    andi  t0, t0, SSTATUS_SPP
+    bnez  t0, 1f
+
+    /* U -> S: sp=user_sp, sscratch=kernel_sp */
+    csrr  t0, sscratch       /* t0 = kernel_sp */
+    mv    t1, sp             /* t1 = user_sp   */
+    mv    sp, t0             /* 切换到内核栈   */
+    addi  sp, sp, -TRAP_FRAME_SIZE
+    j     2f
+
+1:
+    /* S -> S: 直接在当前内核栈建帧 */
+    addi  sp, sp, -TRAP_FRAME_SIZE
+    addi  t1, sp, TRAP_FRAME_SIZE
+
+2:
 
     /* ── 保存通用寄存器 x0..x31 ─────────────────────────────────── */
     sd    x0,   0*8(sp)     /* x0 始终为 0，保存供调试使用       */
@@ -56,8 +80,7 @@ trap_vector:
     sd    x31, 31*8(sp)     /* t6                                 */
 
     /* ── 保存进入陷阱前的原始 sp ────────────────────────────────── */
-    addi  t0,  sp, TRAP_FRAME_SIZE
-    sd    t0,  2*8(sp)
+    sd    t1,  2*8(sp)
 
     /* ── 保存 CSR ────────────────────────────────────────────────── */
     csrr  t0, sepc
@@ -72,6 +95,14 @@ trap_vector:
     csrr  t0, sstatus
     sd    t0, 35*8(sp)
 
+    /*
+     * 重要：从 U 态陷入时，x3(gp) 仍是用户态 gp。
+     * C 代码（handle_exception/sched_check_and_yield）依赖内核 gp 访问
+     * 小数据段；若不切回内核 gp，会导致陷阱处理静默异常。
+     */
+    la    t0, __global_pointer$
+    mv    gp, t0
+
     /* ── 调用 C 处理函数 ─────────────────────────────────────────── */
     mv    a0, sp            /* 第一个参数：trap_frame_t * */
     call  handle_exception
@@ -85,6 +116,16 @@ trap_vector:
 
     ld    t0, 35*8(sp)
     csrw  sstatus, t0
+
+    /*
+     * 若将返回 U 态（SPP=0），更新 sscratch = 当前内核栈顶。
+     * 返回 S 态时不修改 sscratch。
+     */
+    andi  t1, t0, SSTATUS_SPP
+    bnez  t1, 3f
+    addi  t1, sp, TRAP_FRAME_SIZE
+    csrw  sscratch, t1
+3:
 
     /* ── 恢复通用寄存器（跳过 x2=sp，最后恢复）─────────────────── */
     ld    x1,   1*8(sp)
@@ -118,6 +159,6 @@ trap_vector:
     ld    x30, 30*8(sp)
     ld    x31, 31*8(sp)
 
-    /* ── 恢复 sp，返回 ──────────────────────────────────────────── */
-    addi  sp, sp, TRAP_FRAME_SIZE
+    /* ── 恢复原始 sp（U/S 态各自原值），返回 ─────────────────────── */
+    ld    x2,   2*8(sp)
     sret
