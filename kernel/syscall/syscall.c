@@ -504,21 +504,7 @@ void syscall_handler(trap_frame_t *frame)
     //                frame->x[10], frame->x[11], frame->x[12]);
     //     KLOG_ERROR("  x17(a7)=0x%llx sepc=0x%llx\n", frame->x[17], frame->sepc);
     // }
-#ifdef ARCH_RISCV64
-    /* 调试：检查 g_pmm 在入口和出口时的值 */
-    extern pmm_t *g_pmm;
-    extern pmm_t pmm;  /* 从 pmm_test.c 定义的全局 pmm 结构体 */
 
-    if ((uintptr_t)g_pmm < 0xffffffc000000000 || g_pmm == NULL) {
-        /* 通过&g_pmm重新读取g_pmm的值（强制从内存加载） */
-        volatile pmm_t **g_pmm_addr = &g_pmm;
-        pmm_t *g_pmm_reread = *g_pmm_addr;
-        KLOG_ERROR("[syscall] FATAL: g_pmm=%p, re-read via &g_pmm=%p\n", 
-                   g_pmm, g_pmm_reread);
-        KLOG_ERROR("[syscall]   &g_pmm=%p, expected value=0xffffffc08028c7d8\n", &g_pmm);
-        g_pmm = &pmm;  /* 强制恢复正确值 */
-    }
-#endif
     uint64_t regs[9] = {0};
     for (int i = 0; i < 6; i++) {
         regs[i] = syscall_abi_arg(frame, i);

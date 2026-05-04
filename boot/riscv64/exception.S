@@ -118,8 +118,15 @@ trap_vector:
      * 重要：从 U 态陷入时，x3(gp) 仍是用户态 gp。
      * C 代码（handle_exception/sched_check_and_yield）依赖内核 gp 访问
      * 小数据段；若不切回内核 gp，会导致陷阱处理静默异常。
+     *
+     * 必须用 .option norelax 禁止 linker relaxation，否则链接器会把
+     * "la t0, __global_pointer$" 优化为 "mv t0, gp"（假设 gp 已正确），
+     * 在 U→S 陷阱路径上 gp 仍是用户态值，导致内核全局变量访问错误。
      */
+    .option push
+    .option norelax
     la    t0, __global_pointer$
+    .option pop
     mv    gp, t0
 
     /* ── 调用 C 处理函数 ─────────────────────────────────────────── */
