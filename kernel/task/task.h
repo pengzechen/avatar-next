@@ -76,6 +76,14 @@ extern task_t *g_current_task;
 void task_init(void);
 
 /**
+ * task_switch_to_idle_stack - 切换到 idle 专用栈
+ *
+ * 必须在 task_init() 返回后、进入 idle 循环前调用。
+ * 防止频繁中断导致 boot 栈溢出。
+ */
+void task_switch_to_idle_stack(void);
+
+/**
  * task_create - 创建内核任务
  * @name:     任务名称（最长 TASK_NAME_LEN-1 字节）
  * @entry:    任务入口函数

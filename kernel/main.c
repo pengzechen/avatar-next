@@ -123,6 +123,82 @@ static void __attribute__((unused)) demo_task_c(void *arg)
     }
 }
 
+/*
+ * short_lived_task - 短生命周期任务，用于测试栈溢出
+ * 目的：不断创建和退出任务，触发栈槽复用，暴露 idle 栈问题
+ */
+static void short_lived_task(void *arg)
+{
+    uint32_t id = (uint32_t)(uintptr_t)arg;
+    KLOG_INFO("[short_task_%u] running and exiting immediately\n", id);
+    
+    /* 在栈上分配较多数据，增加栈使用，加速栈溢出 */
+    volatile char stack_filler[1024];
+    for (int i = 0; i < 1024; i++) {
+        stack_filler[i] = (char)(id + i);
+    }
+    
+    /* 模拟一些工作负载 */
+    for (volatile int i = 0; i < 10000; i++);
+    
+    /* 短暂运行后退出，触发栈槽释放和复用 */
+    task_exit();
+}
+
+/*
+ * stack_overflow_test - 栈溢出测试任务
+ * 创建一批短生命周期任务，触发 idle 栈问题
+ */
+static void stack_overflow_test(void *arg)
+{
+    (void)arg;
+    KLOG_INFO("[stack_test] Creating short-lived tasks to trigger stack reuse...\n");
+    
+    /* 创建 30 个短生命周期任务，快速消耗和复用栈槽 */
+    for (uint32_t i = 0; i < 30; i++) {
+        task_t *t = task_create("short_task", short_lived_task, 
+                                (void*)(uintptr_t)i, 5);
+        if (t) {
+            KLOG_INFO("[stack_test] Created task %u (id=%u)\n", i, t->id);
+        } else {
+            KLOG_ERROR("[stack_test] Failed to create task %u\n", i);
+        }
+        
+        /* 让出 CPU，给短任务运行和退出的机会 */
+        for (int j = 0; j < 10; j++) {
+            task_yield();
+        }
+    }
+    
+    KLOG_INFO("[stack_test] All short tasks created. System should enter idle soon.\n");
+    KLOG_INFO("[stack_test] Waiting for stack overflow to occur (if bug exists)...\n");
+    KLOG_INFO("[stack_test] Bug should trigger within a few seconds of idle...\n");
+    
+    /* 等待一段时间，让系统进入 idle */
+    for (int i = 0; i < 100; i++) {
+        task_yield();
+    }
+    
+    /* 持续创建新任务，覆盖已释放的栈内存 */
+    KLOG_INFO("[stack_test] Phase 2: Creating more tasks to corrupt idle stack...\n");
+    for (uint32_t i = 30; i < 50; i++) {
+        task_t *t = task_create("corrupt_task", short_lived_task, 
+                                (void*)(uintptr_t)i, 5);
+        if (t) {
+            KLOG_INFO("[stack_test] Corruption task %u (id=%u) created\n", i, t->id);
+        }
+        
+        /* 频繁让出，增加调度压力 */
+        for (int j = 0; j < 20; j++) {
+            task_yield();
+        }
+    }
+    
+    KLOG_INFO("[stack_test] Test complete. If no crash, bug may be latent.\n");
+    
+    /* 本任务也退出，让系统完全进入 idle */
+    task_exit();
+}
 
 /*
  * demo_load_busybox - 从文件系统加载并执行 busybox
@@ -256,6 +332,9 @@ void kernel_main(void)
     KLOG_INFO("Initializing task subsystem...\n");
     task_init();
 
+    /* 切换到 idle 专用栈（防止 boot 栈在频繁中断下溢出） */
+    task_switch_to_idle_stack();
+
     /* 将 sched_tick 注册为 timer tick 回调，启用抢占 */
     timer_set_tick_cb(sched_tick);
     KLOG_INFO("Preemptive scheduling enabled\n");
@@ -307,6 +386,16 @@ void kernel_main(void)
     } else {
         KLOG_ERROR("Failed to create task 1!\n");
     }
+    
+    /* 栈溢出测试（用于复现 bug）：
+    KLOG_INFO("Running stack overflow test to expose idle stack bug...\n");
+    task_t *proc1 = task_create("stack_test", stack_overflow_test, NULL, 5);
+    if (proc1) {
+        KLOG_INFO("Stack overflow test task created successfully!\n");
+    } else {
+        KLOG_ERROR("Failed to create stack test task!\n");
+    }
+    */
 
 #endif /* ARCH_RISCV64 / ARCH_AARCH64 */
 

@@ -41,6 +41,9 @@ uint64_t g_kernel_pgd_phys = 0;
 /* ── idle 任务（boot 执行上下文）────────────────────────── */
 static task_t g_idle_task;
 
+/* ── idle 专用栈（防止 boot 栈在频繁中断下溢出）────────────── */
+static uint8_t g_idle_stack[TASK_STACK_SIZE] __attribute__((aligned(16)));
+
 /* ── 当前任务指针（在 task.h 中 extern 声明）────────────── */
 task_t *g_current_task = NULL;
 
@@ -157,14 +160,17 @@ task_init(void)
 
     /*
      * 将当前 boot 执行上下文注册为 idle 任务。
-     * idle 的 sp 字段在首次被 arch_task_switch 抢占时自动填入。
-     * stack_base = NULL 表示使用 boot 栈，不应被 free。
+     * 为防止频繁中断导致 boot 栈溢出，给 idle 分配专用栈。
+     * 
+     * 重要：idle.sp 必须指向实际的栈顶，因为：
+     *   1. 任务退出后切换回 idle 时，arch_task_switch 会加载 idle.sp
+     *   2. 如果 sp=0 或无效值，下次中断会在无效地址保存寄存器，触发 page fault
      */
-    g_idle_task.sp         = 0;
+    g_idle_task.sp         = (uintptr_t)(g_idle_stack + TASK_STACK_SIZE);
     g_idle_task.state      = TASK_RUNNING;
     g_idle_task.id         = g_task_id_cnt++;
     g_idle_task.priority   = 255; /* 最低优先级 */
-    g_idle_task.stack_base = NULL;
+    g_idle_task.stack_base = g_idle_stack;
     g_idle_task.entry      = NULL;
     g_idle_task.arg        = NULL;
     list_node_init(&g_idle_task.run_node);
@@ -190,7 +196,29 @@ task_init(void)
     /* 初始化调度器，传入 idle 任务 */
     sched_init(&g_idle_task);
 
-    KLOG_INFO("[task] subsystem initialized, idle task id=%u\n", g_idle_task.id);
+    KLOG_INFO("[task] subsystem initialized, idle task id=%u stack_base=%p\n",
+              g_idle_task.id, (void *)g_idle_task.stack_base);
+}
+
+/*
+ * task_switch_to_idle_stack - 切换到 idle 专用栈
+ * 
+ * 必须在 task_init() 返回后、进入 idle 循环前调用。
+ * 在 task_init() 内部切换会导致返回地址丢失。
+ */
+void
+task_switch_to_idle_stack(void)
+{
+    uintptr_t new_sp = (uintptr_t)(g_idle_stack + TASK_STACK_SIZE);
+#if ARCH_RISCV64
+    __asm__ volatile("mv sp, %0" :: "r"(new_sp) : "memory");
+#elif ARCH_AARCH64
+    __asm__ volatile("mov sp, %0" :: "r"(new_sp) : "memory");
+#elif ARCH_X86_64
+    __asm__ volatile("mov %0, %%rsp" :: "r"(new_sp) : "memory");
+#endif
+
+    KLOG_INFO("[task] switched to idle stack at 0x%lx\n", (unsigned long)new_sp);
 }
 
 /* ── process_create ─────────────────────────────────────────── */

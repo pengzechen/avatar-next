@@ -122,15 +122,13 @@ sched_schedule(void)
      * 此时 flags 在 prev 的栈帧中，中断仍关闭。
      *
      * 同时切换页表（如果任务有独立页表）。
-     *
-     * 特殊处理：如果切换到 idle，传递一个特殊标记（next->sp == (uintptr_t)-1）
-     * 让 arch_task_switch 知道不要返回，而是直接进入 idle 循环。
-     * 这样可以切断调用链，防止从用户进程退出时的异常帧被后续中断返回恢复。
      */
     uintptr_t switch_sp = next->sp;
-    if (next == g_idle) {
-        switch_sp = (uintptr_t)-1;  /* 特殊标记：切换到 idle */
-    }
+
+    /* 注意：之前 AArch64 使用 sp=-1 标记切换到 idle，但这导致 
+     * .Lswitch_to_idle 没有设置栈指针，造成潜在的栈溢出问题。
+     * 现在所有架构统一：idle 有专用栈，正常返回即可。*/
+
 #if ARCH_RISCV64
     extern uint64_t g_kernel_pgd_phys;
     uint64_t *next_pgd_for_switch = next->pgd;
