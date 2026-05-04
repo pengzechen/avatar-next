@@ -62,6 +62,8 @@ alloc_task_slot(void)
         if (!g_stack_used[i]) {
             g_stack_used[i]           = 1;
             g_task_pool[i].stack_base = g_task_stacks[i];
+            KLOG_INFO("[task] alloc_task_slot: slot=%u base=0x%lx\n",
+                      i, (unsigned long)g_task_stacks[i]);
             return &g_task_pool[i];
         }
     }
@@ -132,6 +134,7 @@ void task_trampoline_user(void);
 void arch_user_entry_debug(uint64_t user_entry, uint64_t user_sp,
                            uint64_t kernel_sp, uint64_t user_pgd)
 {
+    extern pmm_t *g_pmm;
     task_t *cur = task_current();
     if (cur && cur->is_user_process)
         cur->user_started = true;
@@ -145,6 +148,14 @@ void arch_user_entry_debug(uint64_t user_entry, uint64_t user_sp,
               READ_SSTATUS(),
               READ_SIE(),
               READ_STVEC());
+    KLOG_INFO("[user-entry] g_pmm = %p (checking before user mode entry)\n", g_pmm);
+    
+    /* 调试：检查用户页表的内核映射 */
+    if (user_pgd != 0) {
+        uint64_t *user_l1 = (uint64_t *)phys_to_virt(user_pgd);
+        KLOG_INFO("[user-entry] User PGD L1[0x100]=0x%llx L1[0x102]=0x%llx\n",
+                  user_l1[0x100], user_l1[0x102]);
+    }
 }
 #endif
 /* ── task_init ───────────────────────────────────────────── */
@@ -420,7 +431,8 @@ process_create_with_pgd(const char *name, uint64_t user_entry, uint64_t user_sp,
 
     KLOG_INFO("[task] created user process '%s' id=%u prio=%u (pgd=0x%llx)\n",
               task->name, task->id, (uint32_t)task->priority, pgd_phys);
-    KLOG_INFO("[task]   user_entry=0x%llx, user_sp=0x%llx\n", user_entry, user_sp);
+    KLOG_INFO("[task]   user_entry=0x%llx, user_sp=0x%llx, kernel_sp=0x%lx\n", 
+              user_entry, user_sp, (unsigned long)task->sp);
 
     return task;
 }
@@ -543,6 +555,13 @@ void
 task_block(list_t *wait_queue)
 {
     task_t *cur = task_current();
+
+    /* 参数验证：wait_queue 必须是内核地址或 NULL */
+    if (wait_queue && (uintptr_t)wait_queue < 0xffffffc000000000) {
+        KLOG_ERROR("[task_block] FATAL: wait_queue=%p is user address!\n", wait_queue);
+        KLOG_ERROR("[task_block]   task='%s' pid=%u\n", cur->name, cur->id);
+        platform_panic();
+    }
 
     /* 设置阻塞状态 */
     cur->state = TASK_BLOCKED;

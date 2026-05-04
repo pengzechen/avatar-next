@@ -702,7 +702,7 @@ rootfs: $(ROOTFS_IMG) $(APPS_BINS) $(APPS_C_ELFS)
 		echo "  [init installed]"; \
 	fi
 	@sudo umount /tmp/avatar_mnt
-	@rmdir /tmp/avatar_mnt
+	@sudo rmdir /tmp/avatar_mnt 2>/dev/null || true
 	@echo ""
 	@echo "Rootfs ready! Run: make ARCH=$(ARCH) run-fs"
 	@echo ""

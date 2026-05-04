@@ -27,6 +27,7 @@
 #include "task/switch.h"
 #include "klog.h"
 #include "barrier.h"
+#include "string.h"
 
 /* ── Scheduler state ─────────────────────────────────────── */
 
@@ -70,8 +71,8 @@ pick_next(void)
     list_node_t *node = list_delete_first(&g_run_queue);
     if (node) {
         task_t *task = container_of(node, task_t, run_node);
-        KLOG_TRACE("[sched] pick_next: selected '%s' (id=%u, is_user=%d)\n",
-                  task->name, task->id, task->is_user_process);
+        // KLOG_TRACE("[sched] pick_next: selected '%s' (id=%u, is_user=%d)\n",
+        //           task->name, task->id, task->is_user_process);
         return task;
     }
     // KLOG_DEBUG("[sched] pick_next: queue empty, returning idle\n");
@@ -108,12 +109,30 @@ sched_schedule(void)
     g_current_task = next;
     barrier_compiler();  // 确保 g_current_task 在 arch_task_switch 之前完成
 
-    KLOG_DEBUG("[sched] switch: prev='%s' (id=%u) -> next='%s' (id=%u, is_user=%d)\n",
-              prev->name, prev->id, next->name, next->id, next->is_user_process);
-    if (next->is_user_process) {
-        KLOG_INFO("[sched] entering user task: '%s' (id=%u) pgd=0x%llx entry_sp=0x%lx\n",
-                  next->name, next->id, (uint64_t)next->pgd, (unsigned long)next->sp);
+#if ARCH_RISCV64
+    /* RISC-V：切换到任务的页表
+     * - 用户任务：切换到用户页表（已包含内核映射）
+     * - 内核任务：切换回内核页表
+     */
+    if (next->is_user_process && next->pgd != 0) {
+        uint64_t pgd_phys = (uint64_t)next->pgd;
+        uint64_t ppn = pgd_phys >> 12;
+        uint64_t satp = (8ULL << 60) | ppn;  /* MODE=Sv39, ASID=0 */
+        __asm__ volatile("csrw satp, %0" : : "r"(satp));
+        __asm__ volatile("sfence.vma");
+    } else if (next->is_user_process == 0 && prev->is_user_process != 0) {
+        /* 从用户任务切换到内核任务：恢复内核页表 */
+        /* rv_l2_root物理地址 = 0x80205000 */
+        uint64_t kernel_ppn = 0x80205;  /* 内核L1页表的PPN */
+        uint64_t satp = (8ULL << 60) | kernel_ppn;
+        __asm__ volatile("csrw satp, %0" : : "r"(satp));
+        __asm__ volatile("sfence.vma");
     }
+    /* 用户→用户切换，已在上面处理；内核→内核切换，页表不变 */
+#endif
+
+    KLOG_DEBUG("[sched] switch: prev='%s' (id=%u) -> next='%s' (id=%u)\n",
+              prev->name, prev->id, next->name, next->id);
 
     /*
      * 切换上下文。
@@ -133,9 +152,9 @@ sched_schedule(void)
     extern uint64_t g_kernel_pgd_phys;
     uint64_t *next_pgd_for_switch = next->pgd;
     if (next->is_user_process && !next->user_started) {
-        KLOG_INFO("[sched] first user entry: defer satp switch to arch_switch_to_user (next_pgd=0x%llx)\n",
-                  (uint64_t)next->pgd);
+        /* 首次进入用户进程：延迟satp切换到arch_switch_to_user */
         next_pgd_for_switch = NULL;
+
     } else if (!next->is_user_process && next->pgd == NULL && g_kernel_pgd_phys != 0) {
         /* 切换到内核任务：恢复内核页表 */
         next_pgd_for_switch = (uint64_t *)g_kernel_pgd_phys;

@@ -26,16 +26,27 @@ void irq_install(int cause, irq_handler_t h)
 
 /* ── exception_init ─────────────────────────────────────────────── */
 
+/* Debug counters */
+volatile uint64_t g_exception_entry_count = 0;
+volatile uint64_t g_exception_code = 0;
+volatile uint64_t g_exception_sepc = 0;
+
 void exception_init(void)
 {
+    extern volatile uint32_t g_syscall_entry_count;
+    
     /* trap_vector 在 exception.S 中定义（.align 4，直接模式） */
     extern void trap_vector(void);
 
     /* 写入 stvec，bits[1:0] = 00 表示 Direct 模式 */
     WRITE_STVEC((uint64_t)trap_vector);
 
-    /* 使能 sstatus.SIE（全局 S 态中断开关）*/
-    CSR_SET(sstatus, SSTATUS_SIE);
+    /*
+     * 注意：不在此处使能 sstatus.SIE（内核态中断开关）。
+     * 内核态（S-mode）始终保持 SIE=0，防止定时器中断在内核代码中随机触发，
+     * 破坏 t0/t1 等临时寄存器（对齐 AArch64：daifclr 只在 task_trampoline_user 中调用）。
+     * 定时器中断只在用户态（U-mode）生效：sret 通过 SPIE→SIE 自动使能。
+     */
 
     /*
      * 使能 sstatus.SUM（Supervisor User Memory access）。
@@ -44,7 +55,7 @@ void exception_init(void)
      */
     CSR_SET(sstatus, 1UL << 18);   /* bit 18 = SUM */
 
-    KLOG_INFO("RISC-V exception init: stvec=0x%lx, sstatus.SIE+SUM enabled\n",
+    KLOG_INFO("RISC-V exception init: stvec=0x%lx, SUM enabled (SIE kept 0 in kernel)\n",
               (uint64_t)trap_vector);
 }
 
@@ -55,20 +66,17 @@ void handle_exception(void *frame_ptr)
 {
     trap_frame_t *frame = (trap_frame_t *)frame_ptr;
     uint64_t cause     = frame->scause;
-    static uint32_t s_trap_log_count = 0;
-    uint64_t is_interrupt = (cause & SCAUSE_INTERRUPT_BIT) ? 1 : 0;
     uint64_t code = cause & ~SCAUSE_INTERRUPT_BIT;
-    uint64_t from_user = (frame->sstatus & SSTATUS_SPP) ? 0 : 1;
-
-    if (from_user || code == CAUSE_USER_ECALL || s_trap_log_count < 64) {
-        KLOG_INFO("[trap] %s code=%lu from_%s sepc=0x%lx stval=0x%lx\n",
-                  is_interrupt ? "irq" : "exc",
-                  code,
-                  from_user ? "user" : "kernel",
-                  frame->sepc,
-                  frame->stval);
-        if (!from_user && code != CAUSE_USER_ECALL)
-            s_trap_log_count++;
+    
+    /* 更新调试计数器 */
+    g_exception_entry_count++;
+    g_exception_code = code;
+    g_exception_sepc = frame->sepc;
+    
+    /* 调试：打印异常基本信息 */
+    if (!(cause & SCAUSE_INTERRUPT_BIT)) {
+        // KLOG_ERROR("[exception] sync: code=%llu pc=0x%lx stval=0x%lx sstatus=0x%lx\n",
+        //            code, frame->sepc, frame->stval, frame->sstatus);
     }
 
     if (cause & SCAUSE_INTERRUPT_BIT) {
@@ -77,22 +85,24 @@ void handle_exception(void *frame_ptr)
 
         if (irq < MAX_IRQ_CAUSES && interrupt_handlers[irq]) {
             interrupt_handlers[irq](frame_ptr);
-        } else {
-            KLOG_WARN("Unhandled interrupt: scause=0x%lx (irq=%lu)\n",
-                      cause, irq);
         }
     } else {
         /* ── 同步异常路径 ────────────────────────────────────── */
-        if (cause == CAUSE_USER_ECALL) {
+        if (code == CAUSE_USER_ECALL) {
             /* RISC-V ecall: sepc 指向 ecall 本身，需手动前进到下一条 */
             frame->sepc += 4;
             syscall_handler(frame);
             return;
         }
 
-        KLOG_ERROR("Unhandled exception: scause=0x%lx sepc=0x%lx stval=0x%lx\n",
-                   cause, frame->sepc, frame->stval);
-        while (1)
-            __asm__ volatile("wfi");
+        /* 其他异常：打印简单信息后挂起 */
+        if (code == 12 || code == 13 || code == 15) {
+            const char *fault_type = (code == 12) ? "Inst" :
+                                     (code == 13) ? "Load" : "Store";
+            KLOG_ERROR("%s PF: pc=0x%lx va=0x%lx\n",
+                       fault_type, frame->sepc, frame->stval);
+        }
+        
+        do_platform_shutdown();
     }
 }

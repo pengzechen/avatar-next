@@ -23,7 +23,7 @@ typedef enum {
 } task_state_t;
 
 /* ── Configuration ───────────────────────────────────────── */
-#define TASK_STACK_SIZE  8192u   /* 每个内核任务的栈大小（8 KiB） */
+#define TASK_STACK_SIZE  16384u  /* 每个内核任务的栈大小（16 KiB，增加以防止 syscall 栈溢出） */
 #define TASK_NAME_LEN    16u     /* 任务名最大长度（含 NUL）      */
 #define TASK_MAX         16u     /* 最大并发任务数（不含 idle）   */
 #define TASK_CWD_LEN     128u    /* 当前工作目录最大长度          */

@@ -201,6 +201,60 @@ static void stack_overflow_test(void *arg)
 }
 
 /*
+ * demo_load_loop_a - 加载第一个循环测试程序
+ */
+static void demo_load_loop_a(void *arg)
+{
+    (void)arg;
+
+    /* 等待文件系统初始化 */
+    KLOG_INFO("[loop_a_loader] Waiting for filesystem...\n");
+    for (int i = 0; i < 100; i++) {
+        task_yield();
+    }
+
+    KLOG_INFO("[loop_a_loader] Loading /loop_a from filesystem...\n");
+
+    /* 调用 ELF 加载器执行 /loop_a */
+    const char *path = "/loop_a";
+    int rc = elf_loader_load_from_file(path, NULL, NULL);
+
+    if (rc != 0) {
+        KLOG_ERROR("[loop_a_loader] Failed to load /loop_a: %d\n", rc);
+    }
+
+    KLOG_INFO("[loop_a_loader] Exiting...\n");
+    task_exit();
+}
+
+/*
+ * demo_load_loop_b - 加载第二个循环测试程序
+ */
+static void demo_load_loop_b(void *arg)
+{
+    (void)arg;
+
+    /* 等待文件系统初始化 */
+    KLOG_INFO("[loop_b_loader] Waiting for filesystem...\n");
+    for (int i = 0; i < 100; i++) {
+        task_yield();
+    }
+
+    KLOG_INFO("[loop_b_loader] Loading /loop_b from filesystem...\n");
+
+    /* 调用 ELF 加载器执行 /loop_b */
+    const char *path = "/loop_b";
+    int rc = elf_loader_load_from_file(path, NULL, NULL);
+
+    if (rc != 0) {
+        KLOG_ERROR("[loop_b_loader] Failed to load /loop_b: %d\n", rc);
+    }
+
+    KLOG_INFO("[loop_b_loader] Exiting...\n");
+    task_exit();
+}
+
+/*
  * demo_load_busybox - 从文件系统加载并执行 busybox
  */
 static void demo_load_busybox(void *arg)
@@ -360,22 +414,15 @@ void kernel_main(void)
 
 #if ARCH_RISCV64
 
-    /*
-     * 第一步：创建嵌入式汇编测试进程，验证 ecall 路径正确
-     * 一旦看到 "[rv-user] Hello from RISC-V user!" 出现，
-     * 说明用户模式 → 内核 ecall → sys_write 整条路径正常，
-     * 再开启 busybox（取消下面 busybox_loader 的注释）。
-     */
-    task_t *proc_test = task_create("rv_test", demo_user_test_rv, NULL, 5);
-    if (proc_test) {
-        KLOG_INFO("RISC-V user mode test task created.\n");
-    } else {
-        KLOG_ERROR("Failed to create RISC-V test task!\n");
-    }
-
-    /* 调试完成后改为 busybox：
+    /* RISC-V：现在基础设施已验证正常，测试 busybox */
+    KLOG_INFO("Creating busybox loader...\n");
+    
     task_t *proc1 = task_create("busybox_loader", demo_load_busybox, NULL, 5);
-    */
+    if (proc1) {
+        KLOG_INFO("Busybox loader created successfully!\n");
+    } else {
+        KLOG_ERROR("Failed to create busybox loader!\n");
+    }
 
 #elif ARCH_AARCH64
 
@@ -404,11 +451,19 @@ void kernel_main(void)
     KLOG_INFO("\n");
     KLOG_INFO("Demo tasks created. Entering idle loop...\n");
 
+    extern volatile uint32_t g_syscall_entry_count;
+    // extern volatile uint64_t g_exception_entry_count;
+    
     uint64_t idle_count = 0;
+    uint32_t last_syscall_count = 0;
+    
     while (1) {
         idle_count++;
-        if (idle_count % 100 == 0) {
-            KLOG_DEBUG("[idle] yielding... count=%llu\n", idle_count);
+        if (idle_count % 500 == 0) {
+            if (g_syscall_entry_count != last_syscall_count) {
+                KLOG_INFO("[idle] syscalls=%u\n", g_syscall_entry_count);
+                last_syscall_count = g_syscall_entry_count;
+            }
         }
         task_yield();
         #if ARCH_AARCH64

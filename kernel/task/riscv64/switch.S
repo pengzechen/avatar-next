@@ -85,6 +85,9 @@ arch_task_switch:
 
     /* ── 返回（跳转到 ra = 下一任务的返回地址）─────────── */
     ret
+    
+    /* 永远不应该执行到这里 */
+    ebreak
 
 /*
  * task_trampoline_user - 用户进程首次调度时的跳转板（RISC-V 64）
@@ -95,13 +98,8 @@ arch_task_switch:
  */
 .global task_trampoline_user
 task_trampoline_user:
-    /* 诊断：确认已到达用户态跳转板 */
-    mv      a0, s0
-    mv      a1, s1
-    mv      a2, sp
-    mv      a3, s2
-    call    arch_user_entry_debug
-
+    /* 调试标记：如果到达这里会继续执行 */
+    
     /* arch_switch_to_user(user_entry, user_sp, kernel_sp) */
     mv      a0, s0
     mv      a1, s1
@@ -118,6 +116,23 @@ task_trampoline_user:
  */
 .global arch_switch_to_user
 arch_switch_to_user:
+    /* 保存参数到栈上（调试函数会用到） */
+    addi    sp, sp, -32
+    sd      a0, 0(sp)
+    sd      a1, 8(sp)
+    sd      a2, 16(sp)
+    sd      a3, 24(sp)
+    
+    /* 调用调试函数 arch_user_entry_debug(a0, a1, a2, a3) */
+    call    arch_user_entry_debug
+    
+    /* 恢复参数 */
+    ld      a0, 0(sp)
+    ld      a1, 8(sp)
+    ld      a2, 16(sp)
+    ld      a3, 24(sp)
+    addi    sp, sp, 32
+
      /* 首次用户态进入在这里切换 satp，避免在 arch_task_switch 中断映射 */
      beqz    a3, 9f
      srli    t0, a3, 12          /* PPN */
@@ -133,21 +148,14 @@ arch_switch_to_user:
     /* 设置返回地址到用户入口 */
     csrw    sepc, a0
 
-    /* 设置 sstatus：SIE=0, SPP=0 (返回 U 模式)，SPIE=1 */
+    /* 设置 sstatus：SPP=0 (返回 U 模式)，SPIE=1，SIE=0
+     * 对齐 AArch64 设计：内核态 SIE=0，sret 通过 SPIE→SIE 在用户态使能中断。
+     * 不能在 sret 前设 SIE=1，否则定时器可在 S 态窗口触发，破坏 t0/t1。 */
     csrr    t0, sstatus
-    li      t1, -259            /* clear bit 8 (SPP) + bit 1 (SIE) */
+    li      t1, ~0x102          /* 清 SPP (bit 8) 和 SIE (bit 1) */
     and     t0, t0, t1
-    ori     t0, t0, 0x20        /* SPIE */
+    ori     t0, t0, 0x20        /* 仅设 SPIE (bit 5)，sret 后 SIE=SPIE=1 */
     csrw    sstatus, t0
-
-    /*
-     * 临时探针：返回用户态前先屏蔽 STIE。
-     * 若 BusyBox 能因此越过入口，说明此前是 pending timer 在 sret 后立刻重入。
-     */
-    csrr    t0, sie
-    li      t1, ~0x20
-    and     t0, t0, t1
-    csrw    sie, t0
 
     /* 用户栈 */
     mv      sp, a1
@@ -173,12 +181,6 @@ arch_fork_resume_user:
     and     t1, t1, t2
     ori     t1, t1, 0x20        /* SPIE */
     csrw    sstatus, t1
-
-    /* 与首次用户入口保持一致，先屏蔽 STIE，避免返回用户态瞬间被 timer 抢占。 */
-    csrr    t0, sie
-    li      t1, ~0x20
-    and     t0, t0, t1
-    csrw    sie, t0
 
     /* 保存当前内核栈到 sscratch */
     mv      t0, sp

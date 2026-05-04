@@ -87,6 +87,14 @@ uint64_t pmm_alloc_pages(pmm_t *pmm, uint32_t page_count)
         /* 更新空闲页面计数 */
         pmm->free_pages -= page_count;
 
+        /* 调试：检查是否分配了包含 g_pmm 的页面（物理页 0x80230000） */
+        uint64_t end_addr = paddr + page_count * pmm->page_size;
+        if (paddr <= 0x80230000 && end_addr > 0x80230000) {
+            KLOG_ERROR("[PMM] ⚠️  DANGER: Allocated page range 0x%llx-0x%llx includes g_pmm page 0x80230000!\n",
+                       paddr, end_addr);
+            KLOG_ERROR("[PMM]   page_index=%zu, count=%u\n", page_index, page_count);
+        }
+
         // KLOG_DEBUG("PMM: allocated %u pages at 0x%llx (index %zu)\n",
         //            page_count, paddr, page_index);
     } else {

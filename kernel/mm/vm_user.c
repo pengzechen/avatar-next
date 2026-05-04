@@ -28,6 +28,33 @@ vm_create_user_process(uint64_t user_code_vaddr, uint64_t user_code_size,
     memset(phys_to_virt(pgd_phys), 0, PAGE_SIZE);
     void *pgd = phys_to_virt(pgd_phys);
 
+#if ARCH_RISCV64
+    /*
+     * RISC-V: 用户页表必须包含内核高半区映射，否则从 U 态陷入（ecall/中断/异常）
+     * 时 stvec（高地址）不可达，会在陷入路径中失联。
+     *
+     * RISC-V Sv39 虚拟地址布局：
+     *   - 内核空间起始地址 KERNEL_VMA = 0xffffffc000000000
+     *   - VA[38:30] = L1 index = (0xffffffc000000000 >> 30) & 0x1ff = 0x100 = 256
+     *   
+     * 从当前内核根页表复制高半区映射（1GB 大页叶子）：
+     *   - L1[0x100]: KERNEL_VMA + 0x00000000..0x3fffffff (MMIO 高别名)
+     *   - L1[0x102]: KERNEL_VMA + 0x80000000..0xbfffffff (RAM 高别名，含内核代码/数据)
+     */
+    uint64_t satp_now;
+    __asm__ volatile("csrr %0, satp" : "=r"(satp_now));
+    uint64_t kernel_pgd_phys = (satp_now & 0x0fffffffffffULL) << 12;
+    uint64_t *kernel_l1 = (uint64_t *)phys_to_virt(kernel_pgd_phys);
+    uint64_t *user_l1   = (uint64_t *)pgd;
+
+    /* 复制内核高半区L1页表项：L1[0x100]和L1[0x102] */
+    user_l1[0x100] = kernel_l1[0x100];
+    user_l1[0x102] = kernel_l1[0x102];
+
+    KLOG_INFO("[vm_user] RISC-V kernel mappings copied: l1[0x100]=0x%llx l1[0x102]=0x%llx\n",
+              user_l1[0x100], user_l1[0x102]);
+#endif
+
     KLOG_INFO("[vm_user] Creating user process page table:\n");
     KLOG_INFO("[vm_user]   code (kernel): 0x%llx - 0x%llx (size=0x%llx)\n",
               user_code_vaddr, user_code_vaddr + user_code_size, user_code_size);

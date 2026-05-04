@@ -486,36 +486,52 @@ void notify_parent_wait_from_task(task_t *child)
     notify_parent_wait(child);
 }
 
+/* Debug counter - check if we reach syscall_handler */
+volatile uint32_t g_syscall_entry_count = 0;
+
 /* ─────────────────────────────────────────────────────────────────
  * Main syscall dispatcher
  * ───────────────────────────────────────────────────────────────── */
 void syscall_handler(trap_frame_t *frame)
 {
-    static uint32_t s_syscall_log_count = 0;
+    g_syscall_entry_count++;  /* Increment counter */
+    KLOG_DEBUG("[syscall] entry #%u: frame=%p\n", g_syscall_entry_count, frame);
+    
+    /* 调试：打印 trap_frame 原始内容 */
+    // if (g_syscall_entry_count <= 3) {
+    //     KLOG_ERROR("[syscall_handler] frame=%p\n", frame);
+    //     KLOG_ERROR("  x10(a0)=0x%llx x11(a1)=0x%llx x12(a2)=0x%llx\n",
+    //                frame->x[10], frame->x[11], frame->x[12]);
+    //     KLOG_ERROR("  x17(a7)=0x%llx sepc=0x%llx\n", frame->x[17], frame->sepc);
+    // }
+#ifdef ARCH_RISCV64
+    /* 调试：检查 g_pmm 在入口和出口时的值 */
+    extern pmm_t *g_pmm;
+    extern pmm_t pmm;  /* 从 pmm_test.c 定义的全局 pmm 结构体 */
+
+    if ((uintptr_t)g_pmm < 0xffffffc000000000 || g_pmm == NULL) {
+        /* 通过&g_pmm重新读取g_pmm的值（强制从内存加载） */
+        volatile pmm_t **g_pmm_addr = &g_pmm;
+        pmm_t *g_pmm_reread = *g_pmm_addr;
+        KLOG_ERROR("[syscall] FATAL: g_pmm=%p, re-read via &g_pmm=%p\n", 
+                   g_pmm, g_pmm_reread);
+        KLOG_ERROR("[syscall]   &g_pmm=%p, expected value=0xffffffc08028c7d8\n", &g_pmm);
+        g_pmm = &pmm;  /* 强制恢复正确值 */
+    }
+#endif
     uint64_t regs[9] = {0};
     for (int i = 0; i < 6; i++) {
         regs[i] = syscall_abi_arg(frame, i);
     }
     uint64_t syscall_num = syscall_abi_nr(frame);
 
+    /* 调试：记录系统调用号 */
+    if (g_syscall_entry_count <= 10) {
+        // KLOG_ERROR("[syscall] #%u: nr=%llu a0=0x%llx a1=0x%llx a2=0x%llx\n",
+        //            g_syscall_entry_count, syscall_num, regs[0], regs[1], regs[2]);
+    }
+
     task_t *current = task_current();
-    uint64_t ip = syscall_abi_ip(frame);
-
-    /* 验证 frame 完整性 */
-    if (ip < 0x1000) {
-        KLOG_ERROR("[syscall] CORRUPTION: pid=%u nr=%llu frame->elr=0x%llx < 0x1000!\n",
-                   current->id, syscall_num, ip);
-        KLOG_ERROR("[syscall] frame=%p, regs=%p, sp=%p\n",
-                   frame, regs, __builtin_frame_address(0));
-    }
-
-    KLOG_DEBUG("[syscall] pid=%u nr=%llu args=[0x%llx, 0x%llx, 0x%llx]\n",
-               current->id, syscall_num, regs[0], regs[1], regs[2]);
-    if (s_syscall_log_count < 32) {
-        KLOG_INFO("[syscall] pid=%u nr=%llu args=[0x%llx,0x%llx,0x%llx]\n",
-                  current->id, syscall_num, regs[0], regs[1], regs[2]);
-        s_syscall_log_count++;
-    }
 
     switch (syscall_num) {
 
@@ -1479,15 +1495,17 @@ void syscall_handler(trap_frame_t *frame)
         break;
     }
 
+    /* 调试：在设置返回值前检查 g_pmm */
+    if (g_syscall_entry_count <= 3) {
+        // KLOG_ERROR("[syscall] Before set_ret: g_pmm=%p regs[0]=0x%llx\n", g_pmm, regs[0]);
+    }
+    
     syscall_abi_set_ret(frame, regs[0]);
-
-    /* 系统调用处理完成后验证 frame 完整性 */
-    ip = syscall_abi_ip(frame);
-    if (ip < 0x1000) {
-        KLOG_ERROR("[syscall] POST-SYSCALL CORRUPTION: pid=%u nr=%llu frame->elr=0x%llx < 0x1000!\n",
-                   current->id, syscall_num, ip);
-        KLOG_ERROR("[syscall]   frame=%p, regs=%p, retval=0x%llx\n",
-                   frame, regs, regs[0]);
+    
+    /* 调试：在设置返回值后检查 g_pmm */
+    if (g_syscall_entry_count <= 3) {
+        // KLOG_ERROR("[syscall] After set_ret: g_pmm=%p frame->x[10]=0x%llx\n", 
+        //            g_pmm, frame->x[10]);
     }
 }
 
@@ -1615,14 +1633,15 @@ void *sys_brk(void *addr)
         return (void *)new_brk;
     }
 
-#if ARCH_AARCH64
+#if ARCH_AARCH64 || ARCH_RISCV64
     /* 扩展堆：映射新页 */
+    extern pmm_t pmm;  /* 直接使用结构体，绕过 g_pmm 指针 */
     uint64_t old_page_end = ALIGN_UP(current_brk, PAGE_SIZE);
     uint64_t new_page_end = ALIGN_UP(new_brk,     PAGE_SIZE);
     void    *pgd          = phys_to_virt((uint64_t)current->pgd);
 
     for (uint64_t va = old_page_end; va < new_page_end; va += PAGE_SIZE) {
-        uint64_t pa = pmm_alloc_pages(g_pmm, 1);
+        uint64_t pa = pmm_alloc_pages(&pmm, 1);
         if (pa == 0) {
             KLOG_ERROR("[brk] Out of memory at va=0x%llx\n", va);
             return (void *)current_brk; /* 返回旧地址表示失败 */
@@ -1630,7 +1649,7 @@ void *sys_brk(void *addr)
         memset(phys_to_virt(pa), 0, PAGE_SIZE);
         if (mm_vm_map_pages(pgd, va, pa, 1, 0) != 0) {
             /* Page already mapped (e.g. BSS last page overlap) — skip */
-            pmm_free_pages(g_pmm, pa, 1);
+            pmm_free_pages(&pmm, pa, 1);
             continue;
         }
     }
@@ -1705,18 +1724,19 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, int prot, int flags, int fd, uint
     uint64_t size     = ALIGN_UP(len, PAGE_SIZE);
     uint64_t map_addr = (addr != 0) ? ALIGN_DOWN(addr, PAGE_SIZE) : current->mmap_next;
 
-#if ARCH_AARCH64
+#if ARCH_AARCH64 || ARCH_RISCV64
+    extern pmm_t pmm;  /* 直接使用结构体 */
     void *pgd = phys_to_virt((uint64_t)current->pgd);
 
     for (uint64_t va = map_addr; va < map_addr + size; va += PAGE_SIZE) {
-        uint64_t pa = pmm_alloc_pages(g_pmm, 1);
+        uint64_t pa = pmm_alloc_pages(&pmm, 1);
         if (pa == 0) {
             KLOG_ERROR("[mmap] Out of memory at va=0x%llx\n", va);
             return MMAP_FAILED;
         }
         memset(phys_to_virt(pa), 0, PAGE_SIZE);
         if (mm_vm_map_pages(pgd, va, pa, 1, 0) != 0) {
-            pmm_free_pages(g_pmm, pa, 1);
+            pmm_free_pages(&pmm, pa, 1);
             return MMAP_FAILED;
         }
     }

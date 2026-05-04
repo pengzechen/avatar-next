@@ -8,6 +8,7 @@
 #include "loader/bin_loader.h"
 #include "klog.h"
 #include "task/task.h"
+#include "task/switch.h"
 #include "pmm.h"
 #include "mm_vm.h"
 #include "string.h"
@@ -307,22 +308,6 @@ static int elf_load(uint8_t *file_data, uint64_t file_size, const char *pathname
     phdr = (elf64_phdr_t *)(file_data + ehdr->e_phoff);
 
     /* 创建用户页表 */
-#if ARCH_RISCV64
-    /*
-     * 临时回退策略：RISC-V 先复用当前内核根页表。
-     * 这样可绕开当前首次用户态切换时的 satp/陷阱链路不稳定问题，
-     * 优先验证 BusyBox 用户态执行与 syscall 路径。
-     */
-    uint64_t satp_now;
-    __asm__ volatile("csrr %0, satp" : "=r"(satp_now));
-    pgd_phys = (satp_now & 0x0fffffffffffULL) << 12;
-    pgd = phys_to_virt(pgd_phys);
-    image_base = 0x40000000ULL;
-    KLOG_WARN("[elf] RISC-V using shared kernel root pgd: satp=0x%llx root_pa=0x%llx\n",
-              satp_now, pgd_phys);
-    KLOG_WARN("[elf] RISC-V ET_DYN image base forced to 0x%llx\n", image_base);
-
-#else
     pgd_phys = pmm_alloc_pages(g_pmm, 1);
     if (pgd_phys == 0) {
         KLOG_ERROR("[elf] Failed to allocate PGD\n");
@@ -331,27 +316,62 @@ static int elf_load(uint8_t *file_data, uint64_t file_size, const char *pathname
 
     pgd = phys_to_virt(pgd_phys);
     memset(pgd, 0, PAGE_SIZE);
-#endif
 
 #if ARCH_RISCV64
     /*
      * RISC-V: 用户页表必须包含内核高半区映射，否则从 U 态陷入（ecall/中断/异常）
      * 时 stvec（高地址）不可达，会在陷入路径中失联。
      *
-     * 当前 mmu_init 根页表使用 L2 1GB 叶子：
-     *   - idx 0x100: KERNEL_VMA + 0x00000000..0x3fffffff (MMIO 高别名)
-     *   - idx 0x102: KERNEL_VMA + 0x80000000..0xbfffffff (RAM 高别名，含内核代码/数据)
+     * RISC-V Sv39 虚拟地址布局：
+     *   - 内核空间起始地址 KERNEL_VMA = 0xffffffc000000000
+     *   - VA[38:30] = L1 index = (0xffffffc000000000 >> 30) & 0x1ff = 0x100 = 256
+     *   
+     * 从当前内核根页表复制高半区映射（1GB 大页叶子）：
+     *   - L1[0x100]: KERNEL_VMA + 0x00000000..0x3fffffff (MMIO 高别名)
+     *   - L1[0x102]: KERNEL_VMA + 0x80000000..0xbfffffff (RAM 高别名，含内核代码/数据)
      */
-    uint64_t root_pa = pgd_phys;
-    uint64_t *kernel_l2 = (uint64_t *)phys_to_virt(root_pa);
-    uint64_t *user_l2   = (uint64_t *)pgd;
+    uint64_t satp_now;
+    __asm__ volatile("csrr %0, satp" : "=r"(satp_now));
+    uint64_t kernel_pgd_phys = (satp_now & 0x0fffffffffffULL) << 12;
+    uint64_t *kernel_l1 = (uint64_t *)phys_to_virt(kernel_pgd_phys);
+    uint64_t *user_l1   = (uint64_t *)pgd;
 
-    user_l2[0x100] = kernel_l2[0x100];
-    user_l2[0x102] = kernel_l2[0x102];
+    /* 复制内核高半区L1页表项：L1[0x100]和L1[0x102] */
+    user_l1[0x100] = kernel_l1[0x100];
+    user_l1[0x102] = kernel_l1[0x102];
 
-    KLOG_INFO("[elf] RISC-V user pgd seeded: root_pa=0x%llx l2[100]=0x%llx l2[102]=0x%llx\n",
-              root_pa, user_l2[0x100], user_l2[0x102]);
+    KLOG_INFO("[elf] RISC-V user pgd created: user_pa=0x%llx kernel_pa=0x%llx\n",
+              pgd_phys, kernel_pgd_phys);
+    KLOG_INFO("[elf] RISC-V kernel mappings copied: l1[0x100]=0x%llx l1[0x102]=0x%llx\n",
+              user_l1[0x100], user_l1[0x102]);
+    
+    /* 验证L1[0x102]是否为叶子页表项（R/W/X至少一个为1） */
+    uint64_t pte_102 = kernel_l1[0x102];
+    int is_leaf = (pte_102 & 0xE) != 0;  /* R(bit1)|W(bit2)|X(bit3) */
+    KLOG_INFO("[elf] Kernel L1[0x102] flags: V=%llu R=%llu W=%llu X=%llu U=%llu => %s\n",
+              (pte_102 >> 0) & 1, (pte_102 >> 1) & 1, (pte_102 >> 2) & 1,
+              (pte_102 >> 3) & 1, (pte_102 >> 4) & 1,
+              is_leaf ? "LEAF (1GB page)" : "NON-LEAF (points to L2 table)");
+    
+    /* 调试：检查关键全局变量是否在映射范围内 */
+    extern pmm_t *g_pmm;
+    extern pmm_t pmm;
+    KLOG_INFO("[elf] Checking globals: &g_pmm=%p &pmm=%p\n", &g_pmm, &pmm);
+    uint64_t g_pmm_va = (uint64_t)&g_pmm;
+    uint64_t pmm_va = (uint64_t)&pmm;
+    KLOG_INFO("[elf]   g_pmm in L1[%llu], pmm in L1[%llu]\n",
+              (g_pmm_va >> 30) & 0x1ff, (pmm_va >> 30) & 0x1ff);
+    
+    /* 调试：检查用户栈对应的 L1 表项是否为0 */
+    KLOG_INFO("[elf] After pgd init: User L1[0]=0x%llx L1[1]=0x%llx L1[2]=0x%llx\n",
+              user_l1[0], user_l1[1], user_l1[2]);
 #endif
+
+    /* ET_DYN 使用 PIE 基址 0x10000 */
+    if (ehdr->e_type == ET_DYN) {
+        image_base = 0x10000ULL;
+        KLOG_INFO("[elf] ET_DYN image base: 0x%llx\n", image_base);
+    }
 
     if (image_base != 0) {
         entry_point += image_base;
@@ -537,6 +557,22 @@ static int elf_load(uint8_t *file_data, uint64_t file_size, const char *pathname
         KLOG_ERROR("[elf] Failed to allocate %llu stack pages\n", stack_pages);
         return -10;
     }
+    
+    KLOG_INFO("[elf] Stack pages allocated: phys=0x%llx - 0x%llx (%llu pages)\n",
+              stack_base_paddr, stack_base_paddr + stack_pages * PAGE_SIZE, stack_pages);
+    
+    /* 检查是否分配到了包含 g_pmm 的物理页 */
+    {
+        extern pmm_t *g_pmm;
+        uint64_t g_pmm_check_va = (uint64_t)&g_pmm;
+        uint64_t g_pmm_check_pa = g_pmm_check_va - KERNEL_VMA;
+        if (g_pmm_check_pa >= stack_base_paddr && g_pmm_check_pa < stack_base_paddr + stack_pages * PAGE_SIZE) {
+            KLOG_ERROR("[elf] ⚠️  CRITICAL BUG: Stack uses physical page containing g_pmm!\n");
+            KLOG_ERROR("[elf]   g_pmm PA=0x%llx is within stack range [0x%llx, 0x%llx)\n",
+                       g_pmm_check_pa, stack_base_paddr, stack_base_paddr + stack_pages * PAGE_SIZE);
+        }
+    }
+    
     if (mm_vm_map_pages(pgd, stack_bottom, stack_base_paddr, (int32_t)stack_pages, 0) != 0) {
         KLOG_ERROR("[elf] Failed to map user stack: vaddr=0x%llx pages=%llu\n",
                    stack_bottom, stack_pages);
@@ -544,6 +580,46 @@ static int elf_load(uint8_t *file_data, uint64_t file_size, const char *pathname
         return -11;
     }
     KLOG_INFO("[elf] User stack mapped: 0x%llx - 0x%llx\n", stack_bottom, (uint64_t)USER_STACK_ADDR);
+
+#if ARCH_RISCV64
+    /* 调试：检查栈映射后 L1[1] 是否被正确设置 */
+    {
+        uint64_t *user_l1 = (uint64_t *)pgd;
+        KLOG_INFO("[elf] After stack mapping: L1[1]=0x%llx\n", user_l1[1]);
+        if (user_l1[1] != 0) {
+            /* L1[1] 应该指向一个中间页表，解析PTE */
+            uint64_t l1_ppn = (user_l1[1] >> 10) & 0xfffffffffff;
+            uint64_t l1_next_table_pa = l1_ppn << 12;
+            KLOG_INFO("[elf]   L1[1] points to next-level table at phys=0x%llx\n", l1_next_table_pa);
+            
+            /* 检查这个物理地址是否恰好是包含 g_pmm 的页 */
+            extern pmm_t *g_pmm;
+            extern pmm_t pmm;
+            uint64_t g_pmm_va = (uint64_t)&g_pmm;
+            uint64_t g_pmm_pa = g_pmm_va - KERNEL_VMA;
+            uint64_t g_pmm_page = g_pmm_pa & ~0xfff;
+            KLOG_INFO("[elf]   g_pmm variable at VA=0x%llx PA=0x%llx (page=0x%llx)\n",
+                      g_pmm_va, g_pmm_pa, g_pmm_page);
+            if (l1_next_table_pa == g_pmm_page) {
+                KLOG_ERROR("[elf] ⚠️  BUG: L1[1] points to page containing g_pmm!\n");
+            }
+            
+            /* 验证栈虚拟地址的实际物理映射 */
+            uint64_t test_vaddr = 0x6ffff000;  /* 栈最后一页 */
+            uint64_t mapped_paddr = mm_vm_get_paddr(pgd, test_vaddr);
+            uint64_t expected_paddr = stack_base_paddr + (test_vaddr - stack_bottom);
+            KLOG_INFO("[elf] Stack VA 0x%llx -> PA 0x%llx (expected 0x%llx)\n",
+                      test_vaddr, mapped_paddr, expected_paddr);
+            if (mapped_paddr != expected_paddr) {
+                KLOG_ERROR("[elf] ⚠️  BUG: Stack mapping incorrect!\n");
+            }
+            if ((mapped_paddr & ~0xfff) == g_pmm_page) {
+                KLOG_ERROR("[elf] ⚠️  CRITICAL: Stack page maps to g_pmm page!\n");
+            }
+        }
+    }
+#endif
+
 
     /* 在用户栈最高页构建 Linux ABI 初始栈（argc/argv/envp/auxv） */
     /* AT_PHDR: 程序头在用户空间的地址 = 加载基址 0 + ehdr->e_phoff */

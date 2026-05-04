@@ -18,41 +18,55 @@
 .extern handle_exception
 .extern sched_check_and_yield
 .extern __global_pointer$
+.extern g_current_user_satp
 
 trap_vector:
     /*
-     * 先根据 SPP 判断来源模式：
-     *   SPP=0: 从 U 态陷入，切换到 sscratch 保存的内核栈
-     *   SPP=1: 从 S 态陷入，继续使用当前内核栈
+     * 使用 sscratch=0 约定判断来源模式（与 Linux RISC-V 内核一致）：
+     *   sscratch=0   : 从 S 态（内核）陷入
+     *   sscratch≠0   : 从 U 态（用户）陷入，值为内核栈指针
      *
-     * 注意：这里会临时改写 t0/t1，后续会在 trap frame 中保存当前值。
+     * 原子交换 t0 ↔ sscratch：
+     *   进入后: t0 = 旧 sscratch, sscratch = 旧 t0
+     *
+     * 这样在任何分支保存 x5(t0) 之前，t0 和 t1 都不会被污染，
+     * 修复了旧代码 S→S 路径中 csrr t0,sstatus/andi 覆盖 t0 的问题。
      */
-    csrr  t0, sstatus
-    andi  t0, t0, SSTATUS_SPP
-    bnez  t0, 1f
+    csrrw  t0, sscratch, t0
+    bnez   t0, .Lfrom_user
 
-    /* U -> S: sp=user_sp, sscratch=kernel_sp */
-    csrr  t0, sscratch       /* t0 = kernel_sp */
-    mv    t1, sp             /* t1 = user_sp   */
-    mv    sp, t0             /* 切换到内核栈   */
-    addi  sp, sp, -TRAP_FRAME_SIZE
-    j     2f
+.Lfrom_kernel:
+    /* S → S: t0=0（旧 sscratch），sscratch=原始 t0
+     * 恢复原始 t0，同时将 sscratch 清零（维持"内核态=0"约定） */
+    csrrw  t0, sscratch, x0      /* t0=原始t0, sscratch=0 */
+    addi   sp, sp, -TRAP_FRAME_SIZE
+    sd     x5,  5*8(sp)          /* 原始 t0（正确！） */
+    sd     x6,  6*8(sp)          /* 原始 t1（未被修改，正确！） */
+    addi   t1, sp, TRAP_FRAME_SIZE
+    sd     t1,  2*8(sp)          /* 原始 sp */
+    j      .Lsave_rest
 
-1:
-    /* S -> S: 直接在当前内核栈建帧 */
-    addi  sp, sp, -TRAP_FRAME_SIZE
-    addi  t1, sp, TRAP_FRAME_SIZE
+.Lfrom_user:
+    /* U → S: t0=kernel_sp（旧 sscratch），sscratch=原始 t0
+     * 切换到内核栈，再取回用户的原始 t0 */
+    mv     t1, sp                /* t1 = user_sp */
+    mv     sp, t0                /* sp = kernel_sp */
+    addi   sp, sp, -TRAP_FRAME_SIZE
+    csrrw  t0, sscratch, x0      /* t0=用户原始t0, sscratch=0 */
+    sd     x5,  5*8(sp)          /* 用户原始 t0（正确！） */
+    sd     x6,  6*8(sp)          /* 用户原始 t1（未被修改，正确！） */
+    sd     t1,  2*8(sp)          /* user_sp */
 
-2:
+.Lsave_rest:
 
     /* ── 保存通用寄存器 x0..x31 ─────────────────────────────────── */
     sd    x0,   0*8(sp)     /* x0 始终为 0，保存供调试使用       */
     sd    x1,   1*8(sp)     /* ra                                 */
-    /* x2(sp) 稍后保存原始值                                        */
+    /* x2(sp) 已在分支路径保存原始值，此处跳过                      */
     sd    x3,   3*8(sp)     /* gp                                 */
     sd    x4,   4*8(sp)     /* tp                                 */
-    sd    x5,   5*8(sp)     /* t0                                 */
-    sd    x6,   6*8(sp)     /* t1                                 */
+    /* x5(t0) 已在分支路径正确保存，此处跳过                        */
+    /* x6(t1) 已在分支路径正确保存，此处跳过                        */
     sd    x7,   7*8(sp)     /* t2                                 */
     sd    x8,   8*8(sp)     /* s0/fp                              */
     sd    x9,   9*8(sp)     /* s1                                 */
@@ -79,9 +93,6 @@ trap_vector:
     sd    x30, 30*8(sp)     /* t5                                 */
     sd    x31, 31*8(sp)     /* t6                                 */
 
-    /* ── 保存进入陷阱前的原始 sp ────────────────────────────────── */
-    sd    t1,  2*8(sp)
-
     /* ── 保存 CSR ────────────────────────────────────────────────── */
     csrr  t0, sepc
     sd    t0, 32*8(sp)
@@ -94,6 +105,14 @@ trap_vector:
 
     csrr  t0, sstatus
     sd    t0, 35*8(sp)
+
+    /*
+     * 简化方案：不在exception入口切换页表！
+     * 原因：1. 用户页表已完整复制内核映射（L1[0x100], L1[0x102]）
+     *       2. 内核可在用户页表下安全运行
+     *       3. syscall可同时访问内核和用户空间
+     *       4. 避免页表切换的复杂性和性能开销
+     */
 
     /*
      * 重要：从 U 态陷入时，x3(gp) 仍是用户态 gp。
@@ -118,14 +137,22 @@ trap_vector:
     csrw  sstatus, t0
 
     /*
-     * 若将返回 U 态（SPP=0），更新 sscratch = 当前内核栈顶。
-     * 返回 S 态时不修改 sscratch。
+     * 根据返回目的地更新 sscratch：
+     *   返回 U 态（SPP=0）: sscratch = 内核栈顶（下次 U→S 陷阱使用）
+     *   返回 S 态（SPP=1）: sscratch = 0（维持"内核态=0"约定）
+     * 
+     * 注意：不再切换页表，内核始终在用户页表下运行（用户页表已包含内核映射）
      */
     andi  t1, t0, SSTATUS_SPP
     bnez  t1, 3f
+    /* 返回 U 态：设置 sscratch = kernel_sp */
     addi  t1, sp, TRAP_FRAME_SIZE
     csrw  sscratch, t1
+    j     4f
 3:
+    /* 返回 S 态：sscratch 清零 */
+    csrw  sscratch, x0
+4:
 
     /* ── 恢复通用寄存器（跳过 x2=sp，最后恢复）─────────────────── */
     ld    x1,   1*8(sp)

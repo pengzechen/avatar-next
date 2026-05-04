@@ -27,6 +27,13 @@ mutex_lock(mutex_t *mutex)
 {
     task_t *cur = task_current();
 
+    /* 参数验证：mutex 必须是内核地址 */
+    // if ((uintptr_t)mutex < 0xffffffc000000000) {
+    //     KLOG_ERROR("[mutex_lock] FATAL: mutex=%p is user address!\n", mutex);
+    //     KLOG_ERROR("[mutex_lock]   task='%s' pid=%u\n", cur->name, cur->id);
+    //     platform_panic();
+    // }
+
     /* 关中断，保护临界区 */
     uint64_t flags = arch_irq_save();
 

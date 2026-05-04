@@ -51,6 +51,9 @@ typedef void (*irq_handler_t)(void *);   /* frame 实际是 trap_frame_t * */
 #define CAUSE_STORE_FAULT          7u
 #define CAUSE_USER_ECALL           8u
 #define CAUSE_SUPERVISOR_ECALL     9u
+#define CAUSE_INSN_PAGE_FAULT      12u
+#define CAUSE_LOAD_PAGE_FAULT      13u
+#define CAUSE_STORE_PAGE_FAULT     15u
 
 /* ── sstatus 相关位 ──────────────────────────────────────────────── */
 
