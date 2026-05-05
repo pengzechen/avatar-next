@@ -36,6 +36,13 @@
 .extern g_current_task
 .extern g_x86_tss_rsp0
 
+.section .bss
+.align 8
+syscall_user_rsp_tmp:
+    .quad 0
+
+.section .text
+
 syscall_entry:
     /*
      * 1. 保存用户上下文
@@ -45,8 +52,8 @@ syscall_entry:
     /* 切换到内核栈（使用当前任务的内核栈） */
     swapgs                          /* GS ← 内核 GS */
     
-    /* 暂存用户 RSP 到 R15（临时寄存器） */
-    movq    %rsp, %r15              /* R15 = 用户 RSP（临时保存） */
+    /* 暂存用户 RSP 到内存，避免破坏用户 r15 */
+    movq    %rsp, syscall_user_rsp_tmp(%rip)
     
     /* 使用调度器维护的 TSS.RSP0（每任务独立内核栈顶） */
     movq    g_x86_tss_rsp0(%rip), %rsp
@@ -57,7 +64,7 @@ syscall_entry:
     
     /* 保存用户段和栈指针（SYSRET 需要） */
     pushq   $0x23                   /* SS: 用户数据段 (GDT[4] + RPL=3) */
-    pushq   %r15                    /* RSP: 用户栈指针 */
+    pushq   syscall_user_rsp_tmp(%rip) /* RSP: 用户栈指针 */
     pushq   %r11                    /* RFLAGS: 保存的用户标志 */
     pushq   $0x2B                   /* CS: 用户代码段 (GDT[5] + RPL=3) */
     pushq   %rcx                    /* RIP: 返回地址 */
@@ -117,11 +124,8 @@ syscall_entry:
     popq    %rcx                    /* RCX ← 用户 RIP */
     addq    $8, %rsp                /* 跳过 CS（SYSRET 自动设置） */
     popq    %r11                    /* R11 ← 用户 RFLAGS */
-    popq    %r15                    /* R15 ← 用户栈指针（临时） */
-    addq    $8, %rsp                /* 跳过 SS（SYSRET 自动设置） */
-    
-    /* 恢复用户栈指针（从 R15）*/
-    movq    %r15, %rsp
+    /* 用户 RSP 在栈顶，直接装载到 RSP；SS 由 SYSRET 自动设置 */
+    movq    (%rsp), %rsp
     
     /* 恢复用户 GS */
     swapgs

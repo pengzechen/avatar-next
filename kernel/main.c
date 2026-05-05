@@ -276,9 +276,12 @@ static void demo_load_busybox(void *arg)
     KLOG_INFO("[busybox_loader] satp=0x%llx\n", satp_val);
 #endif
 
+    /* 以 busybox 的 sh applet 进入交互 shell */
+    char *bb_argv[] = { "sh", "-i", NULL };
+
     /* 调用 ELF 加载器执行 /busybox */
     const char *path = "/busybox";
-    int rc = elf_loader_load_from_file(path, NULL, NULL);
+    int rc = elf_loader_load_from_file(path, bb_argv, NULL);
 
     if (rc != 0) {
         KLOG_ERROR("[busybox_loader] Failed to load /busybox: %d\n", rc);

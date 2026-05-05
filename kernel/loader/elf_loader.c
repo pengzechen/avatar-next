@@ -480,6 +480,10 @@ static int elf_load(uint8_t *file_data, uint64_t file_size, const char *pathname
                 const uint32_t reloc_relative  = R_AARCH64_RELATIVE;
                 const uint32_t reloc_jump_slot = R_AARCH64_JUMP_SLOT;
                 const uint32_t reloc_glob_dat  = R_AARCH64_GLOB_DAT;
+#elif ARCH_X86_64
+                const uint32_t reloc_relative  = R_X86_64_RELATIVE;
+                const uint32_t reloc_jump_slot = R_X86_64_JUMP_SLOT;
+                const uint32_t reloc_glob_dat  = R_X86_64_GLOB_DAT;
 #elif ARCH_RISCV64
                 const uint32_t reloc_relative  = R_RISCV_RELATIVE;
                 const uint32_t reloc_jump_slot = R_RISCV_JUMP_SLOT;
@@ -596,6 +600,9 @@ static int elf_load(uint8_t *file_data, uint64_t file_size, const char *pathname
     
     KLOG_INFO("[elf] Stack pages allocated: phys=0x%llx - 0x%llx (%llu pages)\n",
               stack_base_paddr, stack_base_paddr + stack_pages * PAGE_SIZE, stack_pages);
+
+    /* Linux 语义下新映射匿名页应为零页。先清零整段用户栈物理页。 */
+    memset(phys_to_virt(stack_base_paddr), 0, stack_pages * PAGE_SIZE);
     
     /* 检查是否分配到了包含 g_pmm 的物理页 */
     {
@@ -735,9 +742,6 @@ int elf_loader_load_from_file(const char *pathname, char **argv, char **envp)
     uint64_t file_size;
     char path_buf[256];
     uint32_t page_count;
-
-    (void)argv;
-    (void)envp;
 
     /* 复制路径名 */
     uint64_t i = 0;

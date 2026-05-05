@@ -87,6 +87,7 @@
 
 #define X86_SYS_ARCH_PRCTL       0x7FFFFFFDULL
 #define X86_SYS_RSEQ             0x7FFFFFFCULL
+#define X86_SYS_POLL             0x7FFFFFFBULL
 
 #if ARCH_X86_64
 #define X86_MSR_IA32_FS_BASE     0xC0000100U
@@ -125,6 +126,16 @@ struct kernel_winsize {
     uint16_t ws_ypixel;
 };
 
+/* Linux termios (TCGETS/TCSETS) minimal ABI view */
+struct kernel_termios {
+    uint32_t c_iflag;
+    uint32_t c_oflag;
+    uint32_t c_cflag;
+    uint32_t c_lflag;
+    uint8_t  c_line;
+    uint8_t  c_cc[19];
+};
+
 struct kernel_pollfd {
     int   fd;
     short events;
@@ -133,10 +144,12 @@ struct kernel_pollfd {
 
 #define MAP_ANONYMOUS  0x20
 #define MAP_PRIVATE    0x02
+#define MAP_FIXED      0x10
 #define MMAP_FAILED    ((uint64_t)(int64_t)-1)
 
 /* POSIX errno values */
 #define ENOSYS   38
+#define ESRCH     3
 #define EBADF     9
 #define EIO       5
 #define EINVAL   22
@@ -149,6 +162,7 @@ struct kernel_pollfd {
 #define EISDIR   21
 #define ENFILE   23
 #define EMFILE   24
+#define ENOTTY   25
 #define ENOTSUP  95
 #define AT_FDCWD -100
 #define AT_REMOVEDIR 0x200
@@ -356,8 +370,32 @@ static int resolve_path_at(task_t *task, int dirfd, const char *pathname,
 }
 
 /* ─────────────────────────────────────────────────────────────────
- * struct stat / dirent definitions (Linux AArch64 ABI)
+ * struct stat / dirent definitions
  * ───────────────────────────────────────────────────────────────── */
+#if ARCH_X86_64
+/* Linux x86_64 ABI: sizeof(struct stat) = 144 */
+struct kernel_stat {
+    uint64_t st_dev;
+    uint64_t st_ino;
+    uint64_t st_nlink;
+    uint32_t st_mode;
+    uint32_t st_uid;
+    uint32_t st_gid;
+    uint32_t __pad0;
+    uint64_t st_rdev;
+    int64_t  st_size;
+    int64_t  st_blksize;
+    int64_t  st_blocks;
+    int64_t  st_atime_sec;
+    uint64_t st_atime_nsec;
+    int64_t  st_mtime_sec;
+    uint64_t st_mtime_nsec;
+    int64_t  st_ctime_sec;
+    uint64_t st_ctime_nsec;
+    int64_t  __unused[3];
+};
+#else
+/* Linux AArch64/RISC-V64 ABI */
 struct kernel_stat {
     uint64_t st_dev;
     uint64_t st_ino;
@@ -379,6 +417,7 @@ struct kernel_stat {
     uint64_t st_ctime_nsec;
     uint32_t _unused[2];
 };
+#endif
 
 struct kernel_dirent64 {
     uint64_t d_ino;
@@ -539,6 +578,7 @@ static void x86_translate_syscall(uint64_t *nr, uint64_t regs[9])
         regs[3] = 0; regs[2] = regs[1]; regs[1] = regs[0];
         regs[0] = (uint64_t)(int64_t)AT_FDCWD;
         *nr = LINUX_SYS_NEWFSTATAT; break;
+    case 7:   *nr = X86_SYS_POLL;          break; /* poll */
     case 8:   *nr = LINUX_SYS_LSEEK;       break; /* lseek */
     case 9:   *nr = LINUX_SYS_MMAP;        break; /* mmap */
     case 10:  *nr = LINUX_SYS_MPROTECT;    break; /* mprotect */
@@ -604,7 +644,7 @@ static void x86_translate_syscall(uint64_t *nr, uint64_t regs[9])
     case 116: *nr = LINUX_SYS_SETGROUPS;   break; /* setgroups */
     case 121: *nr = LINUX_SYS_GETPGID;     break; /* getpgid */
     case 124: *nr = LINUX_SYS_GETSID;      break; /* getsid */
-    case 131: *nr = LINUX_SYS_TGKILL;      break; /* tgkill */
+    case 131: *nr = 0x7FFFFFFEULL;         break; /* sigaltstack → stub 0 */
     case 157: *nr = LINUX_SYS_PRCTL;       break; /* prctl */
     case 158: *nr = X86_SYS_ARCH_PRCTL;    break; /* arch_prctl */
     case 160: *nr = LINUX_SYS_SETRLIMIT;   break; /* setrlimit */
@@ -614,6 +654,7 @@ static void x86_translate_syscall(uint64_t *nr, uint64_t regs[9])
     case 218: *nr = LINUX_SYS_SET_TID_ADDR; break; /* set_tid_address */
     case 228: *nr = LINUX_SYS_CLOCK_GETTIME; break; /* clock_gettime */
     case 231: *nr = LINUX_SYS_EXIT_GROUP;  break; /* exit_group */
+    case 234: *nr = LINUX_SYS_TGKILL;      break; /* tgkill */
     case 247: *nr = LINUX_SYS_WAITID;      break; /* waitid */
     case 257: *nr = LINUX_SYS_OPENAT;      break; /* openat */
     case 258: *nr = 0x7FFFFFFEULL; break;      /* mkdirat → stub 0 */
@@ -644,6 +685,7 @@ void syscall_handler(trap_frame_t *frame)
 {
     g_syscall_entry_count++;  /* Increment counter */
     uint64_t syscall_num = syscall_abi_nr(frame);
+    uint64_t raw_syscall_num = syscall_num;
     KLOG_DEBUG("[syscall] number: %d, entry #%u: frame=%p\n", syscall_num, g_syscall_entry_count, frame);
 
     /* 调试：打印 trap_frame 原始内容 */
@@ -665,10 +707,20 @@ void syscall_handler(trap_frame_t *frame)
     x86_translate_syscall(&syscall_num, regs);
     /* 0x7FFFFFFEULL 是 stub 标记：直接返回 0 */
     if (syscall_num == 0x7FFFFFFEULL) {
+        if (g_syscall_entry_count <= 16) {
+            KLOG_DEBUG("[syscall:x86] raw=%llu -> stub0 args=[0x%llx,0x%llx,0x%llx,0x%llx,0x%llx,0x%llx]\n",
+                       raw_syscall_num, regs[0], regs[1], regs[2], regs[3], regs[4], regs[5]);
+        }
         syscall_abi_set_ret(frame, 0);
         return;
     }
 #endif
+
+    if (g_syscall_entry_count <= 16) {
+        KLOG_DEBUG("[syscall] dispatch raw=%llu mapped=%llu args=[0x%llx,0x%llx,0x%llx,0x%llx,0x%llx,0x%llx]\n",
+                   raw_syscall_num, syscall_num,
+                   regs[0], regs[1], regs[2], regs[3], regs[4], regs[5]);
+    }
 
     /* 调试：记录系统调用号 */
     if (g_syscall_entry_count <= 10) {
@@ -1082,10 +1134,48 @@ void syscall_handler(trap_frame_t *frame)
         regs[0] = (uint64_t)(int64_t)-ENOSYS;
         break;
 
-    case LINUX_SYS_KILL:
-    case LINUX_SYS_TGKILL:
-        regs[0] = 0; /* stub */
+    case LINUX_SYS_KILL: {
+        int pid = (int)(int32_t)regs[0];
+        int sig = (int)regs[1];
+        task_t *me = task_current();
+
+        /* 最小实现：仅支持向当前进程发送信号 */
+        if (pid > 0 && (uint32_t)pid != me->id) {
+            regs[0] = (uint64_t)(int64_t)-ESRCH;
+            break;
+        }
+
+        if (sig == 0) {
+            regs[0] = 0; /* existence check */
+            break;
+        }
+
+        /* 终止当前进程：与 Linux 习惯一致，返回 128+signal */
+        sys_exit(128 + sig);
         break;
+    }
+
+    case LINUX_SYS_TGKILL: {
+        int tgid = (int)(int32_t)regs[0];
+        int tid  = (int)(int32_t)regs[1];
+        int sig  = (int)regs[2];
+        task_t *me = task_current();
+
+        /* 最小实现：仅支持 tgkill(self_tgid, self_tid, sig) */
+        if ((uint32_t)tid != me->id ||
+            (tgid > 0 && (uint32_t)tgid != me->id)) {
+            regs[0] = (uint64_t)(int64_t)-ESRCH;
+            break;
+        }
+
+        if (sig == 0) {
+            regs[0] = 0;
+            break;
+        }
+
+        sys_exit(128 + sig);
+        break;
+    }
 
     case LINUX_SYS_SCHED_YIELD:
         task_yield();
@@ -1485,7 +1575,8 @@ void syscall_handler(trap_frame_t *frame)
         if (!buf || size == 0) { regs[0] = (uint64_t)(int64_t)-EINVAL; break; }
         task_t *me = task_current();
         int n = copy_string_to_user(me->cwd, buf, (int)size);
-        regs[0] = (n >= 0) ? (uint64_t)buf : (uint64_t)(int64_t)-ERANGE;
+        /* Linux syscall ABI: getcwd 返回写入长度（包含 '\0'） */
+        regs[0] = (n >= 0) ? (uint64_t)(n + 1) : (uint64_t)(int64_t)-ERANGE;
         break;
     }
 
@@ -1519,12 +1610,26 @@ void syscall_handler(trap_frame_t *frame)
         uint64_t request = regs[1];
         void *argp       = (void *)regs[2];
         (void)ioctl_fd;
-        if (request == TIOCGWINSZ && argp) {
+        if (request == TCGETS && argp) {
+            struct kernel_termios *t = (struct kernel_termios *)argp;
+            memset(t, 0, sizeof(*t));
+            /* Canonical tty defaults, enough for busybox ash startup */
+            t->c_iflag = 0x00000500U; /* ICRNL | IXON */
+            t->c_oflag = 0x00000005U; /* OPOST | ONLCR */
+            t->c_cflag = 0x000000BFU; /* B38400 | CS8 | CREAD */
+            t->c_lflag = 0x00008A3BU; /* ISIG | ICANON | ECHO* | IEXTEN */
+            t->c_cc[4] = 4;   /* VEOF  = ^D */
+            t->c_cc[5] = 0;   /* VTIME */
+            t->c_cc[6] = 1;   /* VMIN  */
+            regs[0] = 0;
+        } else if (request == TIOCGWINSZ && argp) {
             struct kernel_winsize *ws = (struct kernel_winsize *)argp;
             ws->ws_row    = 24;
             ws->ws_col    = 80;
             ws->ws_xpixel = 0;
             ws->ws_ypixel = 0;
+            regs[0] = 0;
+        } else if ((request == TCSETS || request == TCSETSW || request == TCSETSF) && argp) {
             regs[0] = 0;
         } else if (request == TIOCGPGRP && argp) {
             *(int *)argp = (int)task_current()->id;
@@ -1532,15 +1637,19 @@ void syscall_handler(trap_frame_t *frame)
         } else if (request == TIOCSPGRP || request == TIOCSWINSZ) {
             regs[0] = 0;
         } else {
-            /* TCGETS/TCSETS/other: success with zeroed output */
-            regs[0] = 0;
+            regs[0] = (uint64_t)(int64_t)-ENOTTY;
         }
         break;
     }
 
+    case X86_SYS_POLL:
     case LINUX_SYS_PPOLL:
     case LINUX_SYS_PSELECT6: {
-        /* ppoll(fds, nfds, timeout, sigmask, sigsetsize) */
+        /*
+         * poll(fds, nfds, timeout_ms)
+         * ppoll(fds, nfds, timeout, sigmask, sigsetsize)
+         * pselect6(...) 目前统一走最小 readiness 语义。
+         */
         struct kernel_pollfd *pfds = (struct kernel_pollfd *)regs[0];
         uint64_t nfds = regs[1];
         /* If timeout pointer is NULL or timeout is non-zero, we do a
@@ -1611,8 +1720,12 @@ void syscall_handler(trap_frame_t *frame)
     case LINUX_SYS_PRLIMIT64: {
         /* Return unlimited for most resources */
         if (syscall_num == LINUX_SYS_GETRLIMIT || syscall_num == LINUX_SYS_PRLIMIT64) {
+            /*
+             * getrlimit(resource, rlim):                 rlim 在 arg1
+             * prlimit64(pid, resource, new, old):        old  在 arg3
+             */
             struct kernel_rlimit *rl = (struct kernel_rlimit *)regs[
-                (syscall_num == LINUX_SYS_PRLIMIT64) ? 2 : 1];
+                (syscall_num == LINUX_SYS_PRLIMIT64) ? 3 : 1];
             if (rl) {
                 rl->rlim_cur = (uint64_t)-1;
                 rl->rlim_max = (uint64_t)-1;
@@ -1634,8 +1747,12 @@ void syscall_handler(trap_frame_t *frame)
     case LINUX_SYS_PRCTL:
     case LINUX_SYS_SET_ROBUST_LIST:
     case LINUX_SYS_MPROTECT:
-    case LINUX_SYS_MUNMAP:
         regs[0] = 0;
+        break;
+
+    case LINUX_SYS_MUNMAP:
+        /* 不能再“假成功”，否则用户态分配器会在错误前提下继续并破坏堆元数据 */
+        regs[0] = (uint64_t)(int64_t)-ENOSYS;
         break;
 
     case LINUX_SYS_SOCKET:
@@ -1668,6 +1785,10 @@ void syscall_handler(trap_frame_t *frame)
         KLOG_ERROR("[syscall] Unknown syscall: %llu\n", syscall_num);
         regs[0] = (uint64_t)(int64_t)-ENOSYS;
         break;
+    }
+
+    if (g_syscall_entry_count <= 16) {
+        KLOG_DEBUG("[syscall] return mapped=%llu ret=0x%llx\n", syscall_num, regs[0]);
     }
 
     /* 调试：在设置返回值前检查 g_pmm */
@@ -1805,9 +1926,17 @@ void *sys_brk(void *addr)
     }
 
     uint64_t current_brk = current->heap_end;
+    uint64_t req_brk = (uint64_t)addr;
+
+    if (g_syscall_entry_count <= 16) {
+        KLOG_DEBUG("[brk] req=0x%llx current=0x%llx\n", req_brk, current_brk);
+    }
 
     /* brk(0)：查询当前堆末尾 */
     if ((uint64_t)addr == 0) {
+        if (g_syscall_entry_count <= 16) {
+            KLOG_DEBUG("[brk] query -> 0x%llx\n", current_brk);
+        }
         return (void *)current_brk;
     }
 
@@ -1816,6 +1945,9 @@ void *sys_brk(void *addr)
     /* 缩小或不变：直接更新 */
     if (new_brk <= current_brk) {
         current->heap_end = new_brk;
+        if (g_syscall_entry_count <= 16) {
+            KLOG_DEBUG("[brk] shrink/no-grow -> 0x%llx\n", new_brk);
+        }
         return (void *)new_brk;
     }
 
@@ -1862,6 +1994,9 @@ void *sys_brk(void *addr)
 #endif
 
     current->heap_end = new_brk;
+    if (g_syscall_entry_count <= 16) {
+        KLOG_DEBUG("[brk] grow success -> 0x%llx\n", new_brk);
+    }
     return (void *)new_brk;
 }
 
@@ -1927,14 +2062,54 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, int prot, int flags, int fd, uint
         return MMAP_FAILED;
     }
 
-    uint64_t size     = ALIGN_UP(len, PAGE_SIZE);
-    uint64_t map_addr = (addr != 0) ? ALIGN_DOWN(addr, PAGE_SIZE) : current->mmap_next;
+    if (len == 0) {
+        return (uint64_t)(int64_t)-EINVAL;
+    }
+
+    uint64_t page_off = 0;
+    uint64_t map_addr;
+    uint64_t size;
+
+    /*
+     * Linux 语义要点：
+     * 1) MAP_FIXED 时 addr 必须页对齐；
+     * 2) 非 MAP_FIXED 的 hint 允许非对齐，但映射长度需要覆盖 page_off + len。
+     *
+     * 当前内核为避免 hint 带来碎片与覆盖风险：
+     * - MAP_FIXED: 按用户指定地址映射；
+     * - 非 MAP_FIXED: 忽略 hint，统一从 mmap_next 线性分配。
+     */
+    if ((flags & MAP_FIXED) != 0) {
+        if ((addr & (PAGE_SIZE - 1)) != 0) {
+            return (uint64_t)(int64_t)-EINVAL;
+        }
+        map_addr = addr;
+        page_off = 0;
+    } else {
+        map_addr = ALIGN_UP(current->mmap_next, PAGE_SIZE);
+        page_off = 0;
+    }
+
+    /* Linux 语义：映射长度按页对齐，不额外扩大。 */
+    size = ALIGN_UP(len + page_off, PAGE_SIZE);
+
+    KLOG_DEBUG("[mmap] req: addr=0x%llx len=0x%llx flags=0x%x fd=%d off=0x%llx -> base=0x%llx size=0x%llx\n",
+               addr, len, flags, fd, offset, map_addr, size);
 
 #if ARCH_AARCH64 || ARCH_RISCV64
     extern pmm_t pmm;  /* 直接使用结构体 */
     void *pgd = phys_to_virt((uint64_t)current->pgd);
 
     for (uint64_t va = map_addr; va < map_addr + size; va += PAGE_SIZE) {
+        if ((flags & MAP_FIXED) != 0) {
+            uint64_t old_pa = mm_vm_get_paddr(pgd, va);
+            if (old_pa != 0) {
+                /* MAP_FIXED 允许覆盖已有映射。最小实现：复用并清零。 */
+                memset(phys_to_virt(old_pa), 0, PAGE_SIZE);
+                continue;
+            }
+        }
+
         uint64_t pa = pmm_alloc_pages(&pmm, 1);
         if (pa == 0) {
             KLOG_ERROR("[mmap] Out of memory at va=0x%llx\n", va);
@@ -1942,6 +2117,7 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, int prot, int flags, int fd, uint
         }
         memset(phys_to_virt(pa), 0, PAGE_SIZE);
         if (mm_vm_map_pages(pgd, va, pa, 1, 0) != 0) {
+            KLOG_WARN("[mmap] map failed: va=0x%llx flags=0x%x\n", va, flags);
             pmm_free_pages(&pmm, pa, 1);
             return MMAP_FAILED;
         }
@@ -1951,6 +2127,15 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, int prot, int flags, int fd, uint
         void *pgd = phys_to_virt((uint64_t)current->pgd);
 
         for (uint64_t va = map_addr; va < map_addr + size; va += PAGE_SIZE) {
+            if ((flags & MAP_FIXED) != 0) {
+                uint64_t old_pa = mm_vm_get_paddr(pgd, va);
+                if (old_pa != 0) {
+                    /* MAP_FIXED 允许覆盖已有映射。最小实现：复用并清零。 */
+                    memset(phys_to_virt(old_pa), 0, PAGE_SIZE);
+                    continue;
+                }
+            }
+
             uint64_t pa = pmm_alloc_pages(g_pmm, 1);
             if (pa == 0) {
                 KLOG_ERROR("[mmap] Out of memory at va=0x%llx\n", va);
@@ -1958,6 +2143,7 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, int prot, int flags, int fd, uint
             }
             memset(phys_to_virt(pa), 0, PAGE_SIZE);
             if (mm_vm_map_pages(pgd, va, pa, 1, 0) != 0) {
+                KLOG_WARN("[mmap] map failed: va=0x%llx flags=0x%x\n", va, flags);
                 pmm_free_pages(g_pmm, pa, 1);
                 return MMAP_FAILED;
             }
@@ -1965,12 +2151,12 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, int prot, int flags, int fd, uint
     }
 #endif
 
-    if (addr == 0) {
+    if ((flags & MAP_FIXED) == 0) {
         current->mmap_next = map_addr + size;
     }
 
     KLOG_DEBUG("[mmap] 0x%llx - 0x%llx (len=0x%llx)\n", map_addr, map_addr + size, len);
-    return map_addr;
+    return map_addr + page_off;
 }
 
 int64_t sys_gettimeofday(struct timeval *tv, void *tz)

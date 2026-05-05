@@ -57,6 +57,11 @@
 #define R_RISCV_JUMP_SLOT    5
 #define R_RISCV_GLOB_DAT     6
 
+/* x86_64 重定位类型 */
+#define R_X86_64_GLOB_DAT    6
+#define R_X86_64_JUMP_SLOT   7
+#define R_X86_64_RELATIVE    8
+
 /* 64-bit ELF 动态段条目 */
 typedef struct {
     int64_t  d_tag;
