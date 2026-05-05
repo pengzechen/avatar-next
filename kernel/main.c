@@ -433,16 +433,6 @@ void kernel_main(void)
         KLOG_ERROR("Failed to create task 1!\n");
     }
     
-    /* 栈溢出测试（用于复现 bug）：
-    KLOG_INFO("Running stack overflow test to expose idle stack bug...\n");
-    task_t *proc1 = task_create("stack_test", stack_overflow_test, NULL, 5);
-    if (proc1) {
-        KLOG_INFO("Stack overflow test task created successfully!\n");
-    } else {
-        KLOG_ERROR("Failed to create stack test task!\n");
-    }
-    */
-
 #elif ARCH_X86_64
 
     /* x86_64：创建两个 Ring 3 测试程序 */
