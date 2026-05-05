@@ -7,6 +7,9 @@
 # 示例: ./install-apps.sh aarch64
 
 ARCH=${1:-aarch64}
+case "$ARCH" in
+    ARCH=*) ARCH="${ARCH#ARCH=}" ;;
+esac
 ROOTFS_IMG="build/rootfs.img"
 MOUNT_POINT="/tmp/avatar_mnt"
 
@@ -35,10 +38,36 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-# 复制应用程序（安装 build/ 下所有 .bin 文件）
+# 复制应用程序（优先安装 ELF，其次才是裸 .bin）
 echo ""
 echo "Installing applications:"
 INSTALLED=0
+
+# 1) 安装由 .S 生成的 ELF（如 build/hello.bin.elf -> /hello）
+for ELF in build/*.bin.elf; do
+    [ -f "$ELF" ] || continue
+    APP_NAME=$(basename "$ELF" .bin.elf)
+    echo "  - $APP_NAME  ($ELF)"
+    sudo cp "$ELF" "$MOUNT_POINT/$APP_NAME"
+    sudo chmod +x "$MOUNT_POINT/$APP_NAME"
+    INSTALLED=$((INSTALLED + 1))
+done
+
+# 2) 安装 C 用户程序 ELF（如 build/init.elf -> /init）
+for ELF in build/*.elf; do
+    [ -f "$ELF" ] || continue
+    case "$ELF" in
+        *.bin.elf) continue ;;
+    esac
+    APP_NAME=$(basename "$ELF" .elf)
+    echo "  - $APP_NAME  ($ELF)"
+    sudo cp "$ELF" "$MOUNT_POINT/$APP_NAME"
+    sudo chmod +x "$MOUNT_POINT/$APP_NAME"
+    INSTALLED=$((INSTALLED + 1))
+done
+
+# 3) 兜底：仅当没有 ELF 可安装时，才安装裸 .bin
+if [ "$INSTALLED" -eq 0 ]; then
 for BIN in build/*.bin; do
     [ -f "$BIN" ] || continue
     # 去掉 build/ 前缀和 .bin 后缀作为目标文件名
@@ -48,8 +77,9 @@ for BIN in build/*.bin; do
     sudo chmod +x "$MOUNT_POINT/$APP_NAME"
     INSTALLED=$((INSTALLED + 1))
 done
+fi
 if [ "$INSTALLED" -eq 0 ]; then
-    echo "  Warning: No .bin files found in build/"
+    echo "  Warning: No app artifacts found in build/"
     echo "  Please run: make ARCH=$ARCH rootfs"
 fi
 

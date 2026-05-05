@@ -66,18 +66,18 @@ arch_task_switch:
 .global task_trampoline_user
 task_trampoline_user:
     /* DEBUG: 输出 'T' 到 COM1 (0x3F8)，证明到达这里 */
-    movb    $'T', %al
-    movw    $0x3F8, %dx
-    outb    %al, %dx
+    // movb    $'T', %al
+    // movw    $0x3F8, %dx
+    // outb    %al, %dx
     
     /* 从栈获取用户入口和栈指针（arch_task_switch 压入） */
     popq    %rdi                /* user_entry（用户入口点）*/
     popq    %rsi                /* user_sp（用户栈指针）*/
     
     /* DEBUG: 输出 'R' 表示准备执行 IRETQ */
-    movb    $'R', %al
-    movw    $0x3F8, %dx
-    outb    %al, %dx
+    // movb    $'R', %al
+    // movw    $0x3F8, %dx
+    // outb    %al, %dx
     
     /* 保存用户入口和栈到非易失寄存器（便于调试） */
     movq    %rdi, %r12          /* user_entry */
@@ -95,16 +95,16 @@ task_trampoline_user:
     jz      .Lpml4_missing
     
     /* 输出 'P' - PML4[0] 存在 */
-    movb    $'P', %al
-    movw    $0x3F8, %dx
-    outb    %al, %dx
+    // movb    $'P', %al
+    // movw    $0x3F8, %dx
+    // outb    %al, %dx
     jmp     .Lpml4_ok
     
 .Lpml4_missing:
     /* PML4[0] 不存在！输出 'X' 并挂起 */
-    movb    $'X', %al
-    movw    $0x3F8, %dx
-    outb    %al, %dx
+    // movb    $'X', %al
+    // movw    $0x3F8, %dx
+    // outb    %al, %dx
     cli
 1:  hlt
     jmp     1b
@@ -115,18 +115,19 @@ task_trampoline_user:
     movq    (%rbx), %rax        /* 尝试读取前 8 字节 */
     
     /* 如果读取成功，输出 'C' (Code accessible) */
-    movb    $'C', %al
-    movw    $0x3F8, %dx
-    outb    %al, %dx
+    // movb    $'C', %al
+    // movw    $0x3F8, %dx
+    // outb    %al, %dx
     
-    /* 验证用户栈可访问（读取栈顶附近）*/
-    movq    $0x1fffe8, %rbx     /* 用户栈顶 - 8 */
+    /* 验证用户栈可访问（读取实际 user_sp 附近）*/
+    movq    %r13, %rbx          /* user_sp */
+    subq    $8, %rbx            /* user_sp - 8 */
     movq    (%rbx), %rax        /* 尝试读取 */
     
     /* 如果读取成功，输出 'S' (Stack accessible) */
-    movb    $'S', %al
-    movw    $0x3F8, %dx
-    outb    %al, %dx
+    // movb    $'S', %al
+    // movw    $0x3F8, %dx
+    // outb    %al, %dx
     
     /* 准备 iretq 栈帧（从高到低：SS, RSP, RFLAGS, CS, RIP）*/
     pushq   $0x23               /* SS: 用户数据段（0x20 + RPL=3）*/
@@ -140,22 +141,37 @@ task_trampoline_user:
     pushq   %r12                /* RIP: 用户入口点 */
     
     /* DEBUG: 输出栈帧内容前 5 个 QWORD */
-    movq    %rsp, %rbx
-    movb    $'F', %al           /* 'F' = Frame dump */
-    movw    $0x3F8, %dx
-    outb    %al, %dx
+    // movq    %rsp, %rbx
+    // movb    $'F', %al           /* 'F' = Frame dump */
+    // movw    $0x3F8, %dx
+    // outb    %al, %dx
     
     /* 输出 RIP (栈顶) */
-    movq    (%rbx), %rax
-    movb    $':', %al
-    outb    %al, %dx
+    // movq    (%rbx), %rax
+    // movb    $':', %al
+    // outb    %al, %dx
     
     /* DEBUG: 输出 'Q' 表示即将执行 IRETQ */
-    movb    $'Q', %al
-    movw    $0x3F8, %dx
-    outb    %al, %dx
+    // movb    $'Q', %al
+    // movw    $0x3F8, %dx
+    // outb    %al, %dx
     
-    /* 调试阶段保留寄存器现场，便于定位 iretq/用户态异常 */
+    /* 清空所有通用寄存器（防止信息泄露）*/
+    xorq    %rax, %rax
+    xorq    %rbx, %rbx
+    xorq    %rcx, %rcx
+    xorq    %rdx, %rdx
+    xorq    %rsi, %rsi
+    xorq    %rdi, %rdi
+    xorq    %rbp, %rbp
+    xorq    %r8,  %r8
+    xorq    %r9,  %r9
+    xorq    %r10, %r10
+    xorq    %r11, %r11
+    xorq    %r12, %r12
+    xorq    %r13, %r13
+    xorq    %r14, %r14
+    xorq    %r15, %r15
     
     /* 跳转到用户态（Ring 3）*/
     iretq

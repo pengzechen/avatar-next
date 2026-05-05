@@ -29,6 +29,10 @@
 .section .text.user
 .global user_test_program
 
+#if APP_ELF
+.global _start
+_start:
+#endif
 user_test_program:
     /* === 用户程序入口（Ring 3） === */
     

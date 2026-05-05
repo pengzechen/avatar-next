@@ -495,8 +495,8 @@ volatile uint32_t g_syscall_entry_count = 0;
 void syscall_handler(trap_frame_t *frame)
 {
     g_syscall_entry_count++;  /* Increment counter */
-    KLOG_DEBUG("[syscall] entry #%u: frame=%p\n", g_syscall_entry_count, frame);
-    
+    // KLOG_DEBUG("[syscall] entry #%u: frame=%p\n", g_syscall_entry_count, frame);
+
     /* 调试：打印 trap_frame 原始内容 */
     // if (g_syscall_entry_count <= 3) {
     //     KLOG_ERROR("[syscall_handler] frame=%p\n", frame);
@@ -1566,7 +1566,7 @@ int64_t sys_execve(const char *pathname, char **argv, char **envp)
         return -1;
     }
 
-    KLOG_INFO("[syscall] execve('%s')\n", pathname);
+    KLOG_INFO("[syscall] execve called\n");
 
     /*
      * execve 应该关闭当前进程的所有非标准文件描述符（fd > 2）。
@@ -1575,22 +1575,33 @@ int64_t sys_execve(const char *pathname, char **argv, char **envp)
     task_t *current = task_current();
     KLOG_DEBUG("[execve] pid=%u closing all fds > 2\n", current->id);
     for (int fd = 3; fd < (int)TASK_MAX_FD; fd++) {
-        if (current->fd_table[fd] != -1) {
-            int idx = current->fd_table[fd];
-            fd_obj_t *obj = &g_fd_pool[idx];
-            KLOG_TRACE("[execve] closing fd=%d pool_idx=%d type=%d\n",
-                      fd, idx, obj->type);
-            if (obj->type == FDT_FILE)
-                ext4_fclose(&obj->file);
-            else if (obj->type == FDT_DIR)
-                ext4_dir_close(&obj->dir);
-            fd_pool_free(idx);
-            current->fd_table[fd] = -1;
+        int idx = (int)current->fd_table[fd];
+        if (idx < 0 || idx >= FD_POOL_SIZE) {
+            current->fd_table[fd] = (int8_t)-1;
+            continue;
         }
+
+        fd_obj_t *obj = &g_fd_pool[idx];
+        if (obj->type == FDT_FREE) {
+            current->fd_table[fd] = (int8_t)-1;
+            continue;
+        }
+
+        KLOG_TRACE("[execve] closing fd=%d pool_idx=%d type=%d\n",
+                  fd, idx, obj->type);
+        if (obj->type == FDT_FILE)
+            ext4_fclose(&obj->file);
+        else if (obj->type == FDT_DIR)
+            ext4_dir_close(&obj->dir);
+        fd_pool_free(idx);
+        current->fd_table[fd] = (int8_t)-1;
     }
 
-    /* 优先尝试 ELF 加载器 */
-    int rc = elf_loader_load_from_file(pathname, argv, envp);
+    /* 优先尝试 ELF 加载器
+     * TODO: 暂时传递 NULL argv/envp，使用默认值
+     * 需要实现安全的用户空间参数复制机制
+     */
+    int rc = elf_loader_load_from_file(pathname, NULL, NULL);
 
     /* 如果成功，不应该到达这里 */
     return rc;

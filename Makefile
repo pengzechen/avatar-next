@@ -162,15 +162,19 @@ TASK_S_OBJ := $(BUILD_DIR)/task_switch.o
 ifeq ($(ARCH),aarch64)
 TASK_USER_TEST_OBJ := $(BUILD_DIR)/user_test.o
 TASK_USER_HELLO_OBJ := $(BUILD_DIR)/hello.o
+TASK_USER_TESTEXECVE_OBJ :=
 else ifeq ($(ARCH),riscv64)
 TASK_USER_TEST_OBJ := $(BUILD_DIR)/user_test.o
 TASK_USER_HELLO_OBJ := $(BUILD_DIR)/hello.o
+TASK_USER_TESTEXECVE_OBJ :=
 else ifeq ($(ARCH),x86_64)
 TASK_USER_TEST_OBJ := $(BUILD_DIR)/user_test.o
 TASK_USER_HELLO_OBJ := $(BUILD_DIR)/hello.o
+TASK_USER_TESTEXECVE_OBJ := $(BUILD_DIR)/test_execve.o
 else
 TASK_USER_TEST_OBJ :=
 TASK_USER_HELLO_OBJ :=
+TASK_USER_TESTEXECVE_OBJ :=
 endif
 
 # 测试源文件
@@ -587,9 +591,15 @@ $(BUILD_DIR)/user_test.o: $(TASK_USER_TEST_SRC) | $(BUILD_DIR)
 $(BUILD_DIR)/hello.o: $(TASK_USER_HELLO_SRC) | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
+# test_execve 用户程序编译规则（x86_64 only）
+ifeq ($(ARCH),x86_64)
+$(BUILD_DIR)/test_execve.o: apps/x86_64/test_execve.S | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+endif
+
 # 用户应用程序编译规则（从文件系统加载）
 $(BUILD_DIR)/apps_%.o: $(APPS_DIR)/%.S | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
+	$(CC) $(CFLAGS) -DAPP_ELF=1 -c $< -o $@
 
 # 生成应用程序二进制文件
 $(BUILD_DIR)/%.bin: $(BUILD_DIR)/apps_%.o $(APPS_LD) | $(BUILD_DIR)
@@ -662,7 +672,7 @@ $(BUILD_DIR)/lwext4_port_fs_init.o: $(LWEXT4_PORT_DIR)/fs_init.c | $(BUILD_DIR)
 	$(CC) $(LWEXT4_CFLAGS) -Ifs/lwext4_port -c $< -o $@
 
 # 链接内核 ELF 文件
-$(KERNEL_TARGET): $(BOOT_OBJECTS) $(KERNEL_OBJECTS) $(TASK_C_OBJECTS) $(TASK_S_OBJ) $(TASK_USER_TEST_OBJ) $(TASK_USER_HELLO_OBJ) $(LOADER_C_OBJECTS) $(SYSCALL_C_OBJECTS) $(SYSCALL_S_OBJ) $(VM_C_OBJECTS) $(VM_S_OBJ) $(TESTS_OBJECTS) $(PLATFORM_OBJECTS) $(DRIVER_OBJECTS) $(EXCEPTION_OBJECTS) $(KLOG_OBJECT) $(VSNPRINTF_OBJECT) $(STRING_OBJECT) $(BITMAP_OBJECT) $(LWEXT4_OBJS) $(LWEXT4_PORT_OBJS) | $(BUILD_DIR)
+$(KERNEL_TARGET): $(BOOT_OBJECTS) $(KERNEL_OBJECTS) $(TASK_C_OBJECTS) $(TASK_S_OBJ) $(TASK_USER_TEST_OBJ) $(TASK_USER_HELLO_OBJ) $(TASK_USER_TESTEXECVE_OBJ) $(LOADER_C_OBJECTS) $(SYSCALL_C_OBJECTS) $(SYSCALL_S_OBJ) $(VM_C_OBJECTS) $(VM_S_OBJ) $(TESTS_OBJECTS) $(PLATFORM_OBJECTS) $(DRIVER_OBJECTS) $(EXCEPTION_OBJECTS) $(KLOG_OBJECT) $(VSNPRINTF_OBJECT) $(STRING_OBJECT) $(BITMAP_OBJECT) $(LWEXT4_OBJS) $(LWEXT4_PORT_OBJS) | $(BUILD_DIR)
 	$(CC) $(LDFLAGS) -nostartfiles -nodefaultlibs -T $(BOOT_DIR)/$(ARCH)/link.ld -o $@ $^
 
 # 转换为二进制文件

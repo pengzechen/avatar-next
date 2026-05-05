@@ -12,6 +12,9 @@
 #include "pmm.h"
 #include "mm_vm.h"
 #include "string.h"
+#if ARCH_X86_64
+#include "x86_64/mmu.h"
+#endif
 #include <ext4.h>
 #include <ext4_types.h>
 
@@ -126,6 +129,7 @@ static int elf_load_segment_with_base(void *pgd, elf64_phdr_t *phdr,
  */
 static int
 elf_setup_stack(void *pgd, uint64_t stack_top, uint64_t entry,
+                const char *pathname,
                 char **argv, char **envp, uint64_t *out_sp,
                 uint64_t phdr_uaddr, uint16_t phnum, uint16_t phent)
 {
@@ -145,10 +149,13 @@ elf_setup_stack(void *pgd, uint64_t stack_top, uint64_t entry,
 #define UADDR(p)  (top_page_uvaddr + (uint64_t)((p) - page))
 
     /* ── 默认 argv/envp（调用方未提供时使用）──────────────── */
-    static const char *default_argv[] = { "/busybox", "sh", NULL };
+    const char *default_arg0 = pathname ? pathname : "/init";
+    const char *default_argv[] = { NULL, NULL };
     static const char *default_envp[] = {
         "PATH=/bin:/usr/bin:/", "HOME=/", "TERM=vt100", NULL
     };
+
+    default_argv[0] = default_arg0;
 
     const char **av = (const char **)( argv ? (void *)argv : (void *)default_argv );
     const char **ev = (const char **)( envp ? (void *)envp : (void *)default_envp );
@@ -316,6 +323,23 @@ static int elf_load(uint8_t *file_data, uint64_t file_size, const char *pathname
 
     pgd = phys_to_virt(pgd_phys);
     memset(pgd, 0, PAGE_SIZE);
+
+#if ARCH_X86_64
+    /* x86_64: 用户页表必须包含内核高半区映射，否则切换 CR3 后内核不可达 */
+    {
+        uint64_t kernel_cr3 = read_cr3();
+        uint64_t kernel_pml4_phys = kernel_cr3 & 0x000FFFFFFFFFF000ULL;
+        uint64_t *kernel_pml4 = (uint64_t *)phys_to_virt(kernel_pml4_phys);
+        uint64_t *user_pml4 = (uint64_t *)pgd;
+
+        for (int i = 256; i < 512; i++) {
+            user_pml4[i] = kernel_pml4[i];
+        }
+
+        KLOG_INFO("[elf] x86_64 copied kernel PML4[256-511] to user PGD=0x%llx\n",
+                  pgd_phys);
+    }
+#endif
 
 #if ARCH_RISCV64
     /*
@@ -625,7 +649,8 @@ static int elf_load(uint8_t *file_data, uint64_t file_size, const char *pathname
     /* AT_PHDR: 程序头在用户空间的地址 = 加载基址 0 + ehdr->e_phoff */
     uint64_t phdr_uaddr = image_base + ehdr->e_phoff;
     uint64_t user_sp = USER_STACK_ADDR;
-    if (elf_setup_stack(pgd, USER_STACK_ADDR, entry_point, argv, envp, &user_sp,
+    if (elf_setup_stack(pgd, USER_STACK_ADDR, entry_point, pathname,
+                        argv, envp, &user_sp,
                         phdr_uaddr, ehdr->e_phnum, ehdr->e_phentsize) != 0) {
         KLOG_ERROR("[elf] Failed to setup initial stack\n");
         return -12;

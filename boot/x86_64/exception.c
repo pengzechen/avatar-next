@@ -14,6 +14,7 @@
 #include "x86_64/io.h"      /* outb — 用于屏蔽 8259A PIC */
 #include "task/task.h"
 #include "task/sched.h"
+#include "mm_vm.h"
 
 /* ── IDT 表 ─────────────────────────────────────────────────── */
 
@@ -173,6 +174,33 @@ void handle_exception(void *frame_ptr)
                        cur ? cur->id : 0,
                        frame->rip,
                        frame->error_code);
+
+            if (vec == 14) {
+                uint64_t cr2;
+                __asm__ volatile("mov %%cr2, %0" : "=r"(cr2));
+                KLOG_ERROR("  User PF CR2=0x%llx, bits: P=%d W=%d U=%d R=%d I=%d\n",
+                           cr2,
+                           (int)(frame->error_code & 1),
+                           (int)((frame->error_code >> 1) & 1),
+                           (int)((frame->error_code >> 2) & 1),
+                           (int)((frame->error_code >> 3) & 1),
+                           (int)((frame->error_code >> 4) & 1));
+
+                KLOG_ERROR("  User regs: RAX=0x%llx RBX=0x%llx RCX=0x%llx RDX=0x%llx\n",
+                           frame->rax, frame->rbx, frame->rcx, frame->rdx);
+                KLOG_ERROR("             RSI=0x%llx RDI=0x%llx RBP=0x%llx RSP=0x%llx\n",
+                           frame->rsi, frame->rdi, frame->rbp, frame->rsp);
+
+                if (cur && cur->pgd) {
+                    uint64_t rip_page = frame->rip & ~0xfffULL;
+                    uint64_t rip_pa = mm_vm_get_paddr((void *)phys_to_virt((uint64_t)cur->pgd), rip_page);
+                    if (rip_pa) {
+                        uint8_t *p = (uint8_t *)phys_to_virt(rip_pa + (frame->rip & 0xfffULL));
+                        KLOG_ERROR("  RIP bytes: %02x %02x %02x %02x %02x %02x %02x %02x\n",
+                                   p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7]);
+                    }
+                }
+            }
 
             /*
              * 关键：不要在异常 C 处理函数内直接 task_exit()/sched_schedule()。

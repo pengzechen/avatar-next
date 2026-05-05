@@ -16,10 +16,15 @@
 #define SYS_EXIT          0
 #define SYS_YIELD         1
 #define SYS_WRITE        20
+#define HELLO_USE_YIELD   0
 
 .section .text.user
 .global hello_program
 
+#if APP_ELF
+.global _start
+_start:
+#endif
 hello_program:
     /* === 用户程序入口（Ring 3） === */
 
@@ -48,9 +53,11 @@ delay:
     movq    $SYS_WRITE, %rax
     syscall
 
-    /* 让出 CPU（测试调度） */
+    /* 让出 CPU（测试调度，可开关） */
+#if HELLO_USE_YIELD
     movq    $SYS_YIELD, %rax
     syscall
+#endif
 
     /* 继续循环 */
     jmp     loop
