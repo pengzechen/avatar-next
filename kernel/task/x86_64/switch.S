@@ -110,25 +110,6 @@ task_trampoline_user:
     jmp     1b
     
 .Lpml4_ok:
-    /* 验证用户代码可访问（在内核态读取用户虚拟地址 0x10000）*/
-    movq    $0x10000, %rbx      /* 用户代码地址 */
-    movq    (%rbx), %rax        /* 尝试读取前 8 字节 */
-    
-    /* 如果读取成功，输出 'C' (Code accessible) */
-    // movb    $'C', %al
-    // movw    $0x3F8, %dx
-    // outb    %al, %dx
-    
-    /* 验证用户栈可访问（读取实际 user_sp 附近）*/
-    movq    %r13, %rbx          /* user_sp */
-    subq    $8, %rbx            /* user_sp - 8 */
-    movq    (%rbx), %rax        /* 尝试读取 */
-    
-    /* 如果读取成功，输出 'S' (Stack accessible) */
-    // movb    $'S', %al
-    // movw    $0x3F8, %dx
-    // outb    %al, %dx
-    
     /* 准备 iretq 栈帧（从高到低：SS, RSP, RFLAGS, CS, RIP）*/
     pushq   $0x23               /* SS: 用户数据段（0x20 + RPL=3）*/
     pushq   %r13                /* RSP: 用户栈指针 */

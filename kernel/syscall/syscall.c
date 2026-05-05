@@ -85,6 +85,27 @@
 #define LINUX_SYS_PRLIMIT64      261
 #define LINUX_SYS_GETRANDOM      278
 
+#define X86_SYS_ARCH_PRCTL       0x7FFFFFFDULL
+#define X86_SYS_RSEQ             0x7FFFFFFCULL
+
+#if ARCH_X86_64
+#define X86_MSR_IA32_FS_BASE     0xC0000100U
+#define X86_ARCH_SET_FS          0x1002UL
+#define X86_ARCH_GET_FS          0x1003UL
+
+static inline void x86_write_msr(uint32_t msr, uint64_t value)
+{
+    uint32_t lo = (uint32_t)(value & 0xFFFFFFFFU);
+    uint32_t hi = (uint32_t)(value >> 32);
+    __asm__ volatile("wrmsr" :: "c"(msr), "a"(lo), "d"(hi));
+}
+
+static inline void x86_write_fs_base(uint64_t fs_base)
+{
+    x86_write_msr(X86_MSR_IA32_FS_BASE, fs_base);
+}
+#endif
+
 /* ioctl request codes */
 #define TCGETS           0x5401
 #define TCSETS           0x5402
@@ -489,13 +510,141 @@ void notify_parent_wait_from_task(task_t *child)
 /* Debug counter - check if we reach syscall_handler */
 volatile uint32_t g_syscall_entry_count = 0;
 
+#if ARCH_X86_64
+/* ─────────────────────────────────────────────────────────────────
+ * Linux x86_64 → 内部统一系统调用号翻译
+ *
+ * busybox-x86_64 使用 Linux x86_64 syscall 号，而下面的 switch 分支
+ * 使用 AArch64/RISC-V 的通用 Linux syscall 号（两者已在 AARCH64/RISC-V
+ * 上共享）。这个翻译层把 x86_64 号映射到对应分支，同时对参数布局不同
+ * 的 syscall（open/stat/access/readlink 等）原地调整 regs[]。
+ * ───────────────────────────────────────────────────────────────── */
+static void x86_translate_syscall(uint64_t *nr, uint64_t regs[9])
+{
+    switch (*nr) {
+    /* ── 基础 I/O ── */
+    case 0:   *nr = LINUX_SYS_READ;  break;   /* read */
+    case 1:   *nr = LINUX_SYS_WRITE; break;   /* write */
+    case 2:   /* open(path,flags,mode) → openat(AT_FDCWD,path,flags,mode) */
+        regs[3] = regs[2]; regs[2] = regs[1]; regs[1] = regs[0];
+        regs[0] = (uint64_t)(int64_t)AT_FDCWD;
+        *nr = LINUX_SYS_OPENAT; break;
+    case 3:   *nr = LINUX_SYS_CLOSE; break;   /* close */
+    case 4:   /* stat(path,buf) → newfstatat(AT_FDCWD,path,buf,0) */
+        regs[3] = 0; regs[2] = regs[1]; regs[1] = regs[0];
+        regs[0] = (uint64_t)(int64_t)AT_FDCWD;
+        *nr = LINUX_SYS_NEWFSTATAT; break;
+    case 5:   *nr = LINUX_SYS_FSTAT; break;   /* fstat */
+    case 6:   /* lstat(path,buf) → newfstatat(AT_FDCWD,path,buf,0) */
+        regs[3] = 0; regs[2] = regs[1]; regs[1] = regs[0];
+        regs[0] = (uint64_t)(int64_t)AT_FDCWD;
+        *nr = LINUX_SYS_NEWFSTATAT; break;
+    case 8:   *nr = LINUX_SYS_LSEEK;       break; /* lseek */
+    case 9:   *nr = LINUX_SYS_MMAP;        break; /* mmap */
+    case 10:  *nr = LINUX_SYS_MPROTECT;    break; /* mprotect */
+    case 11:  *nr = LINUX_SYS_MUNMAP;      break; /* munmap */
+    case 12:  *nr = LINUX_SYS_BRK;         break; /* brk */
+    case 13:  *nr = LINUX_SYS_RT_SIGACTION;  break; /* rt_sigaction */
+    case 14:  *nr = LINUX_SYS_RT_SIGPROCMASK; break; /* rt_sigprocmask */
+    case 15:  *nr = LINUX_SYS_RT_SIGRETURN;  break; /* rt_sigreturn */
+    case 16:  *nr = LINUX_SYS_IOCTL;       break; /* ioctl */
+    case 17:  *nr = LINUX_SYS_READ;        break; /* pread64 → read(stub) */
+    case 20:  *nr = LINUX_SYS_WRITEV;      break; /* writev */
+    case 21:  /* access(path,mode) → faccessat(AT_FDCWD,path,mode,0) */
+        regs[3] = 0; regs[2] = regs[1]; regs[1] = regs[0];
+        regs[0] = (uint64_t)(int64_t)AT_FDCWD;
+        *nr = LINUX_SYS_FACCESSAT; break;
+    case 22:  *nr = LINUX_SYS_PIPE2;       break; /* pipe → pipe2(flags=0) */
+    case 24:  *nr = LINUX_SYS_SCHED_YIELD; break; /* sched_yield */
+    case 32:  /* dup(oldfd): x86_64. 不直接支持，返回 ENOSYS */
+        /* busybox sh 很少用裸 dup()，ENOSYS 不影响启动 */
+        break; /* *nr stays 32, hits default: → ENOSYS */
+    case 33:  /* dup2(oldfd,newfd) → dup3(oldfd,newfd,0) */
+        regs[2] = 0;
+        *nr = LINUX_SYS_DUP3; break;
+    case 35:  *nr = LINUX_SYS_NANOSLEEP;   break; /* nanosleep */
+    case 39:  *nr = LINUX_SYS_GETPID;      break; /* getpid */
+    case 41:  *nr = LINUX_SYS_SOCKET;      break; /* socket */
+    case 56:  *nr = LINUX_SYS_CLONE;       break; /* clone */
+    case 57:  *nr = LINUX_SYS_CLONE;       break; /* fork → clone */
+    case 58:  *nr = LINUX_SYS_CLONE;       break; /* vfork → clone */
+    case 59:  *nr = LINUX_SYS_EXECVE;      break; /* execve */
+    case 60:  *nr = LINUX_SYS_EXIT;        break; /* exit */
+    case 61:  *nr = LINUX_SYS_WAIT4;       break; /* wait4 */
+    case 62:  *nr = LINUX_SYS_KILL;        break; /* kill */
+    case 63:  *nr = LINUX_SYS_UNAME;       break; /* uname */
+    case 72:  *nr = LINUX_SYS_FCNTL;       break; /* fcntl */
+    case 74:  *nr = LINUX_SYS_FSYNC;       break; /* fsync */
+    case 75:  *nr = LINUX_SYS_FDATASYNC;   break; /* fdatasync */
+    case 79:  *nr = LINUX_SYS_GETCWD;      break; /* getcwd */
+    case 80:  *nr = LINUX_SYS_CHDIR;       break; /* chdir */
+    case 82:  *nr = 0x7FFFFFFEULL; break;      /* fchmod → stub 0 */
+    case 83:  *nr = 0x7FFFFFFEULL; break;      /* fchown → stub 0 */
+    case 89:  /* readlink(path,buf,bufsiz) → readlinkat(AT_FDCWD,path,buf,bufsiz) */
+        regs[3] = regs[2]; regs[2] = regs[1]; regs[1] = regs[0];
+        regs[0] = (uint64_t)(int64_t)AT_FDCWD;
+        *nr = LINUX_SYS_READLINKAT; break;
+    case 95:  *nr = LINUX_SYS_UMASK;       break; /* umask */
+    case 97:  *nr = LINUX_SYS_GETRLIMIT;   break; /* getrlimit */
+    case 98:  *nr = LINUX_SYS_GETRUSAGE;   break; /* getrusage */
+    case 99:  *nr = 0x7FFFFFFEULL; break;      /* sysinfo → stub 0 */
+    case 100: *nr = 0x7FFFFFFEULL; break;      /* times → stub 0 */
+    case 102: *nr = LINUX_SYS_GETUID;      break; /* getuid */
+    case 104: *nr = LINUX_SYS_GETGID;      break; /* getgid */
+    case 105: *nr = LINUX_SYS_SETUID;      break; /* setuid */
+    case 106: *nr = LINUX_SYS_SETGID;      break; /* setgid */
+    case 107: *nr = LINUX_SYS_GETEUID;     break; /* geteuid */
+    case 108: *nr = LINUX_SYS_GETEGID;     break; /* getegid */
+    case 109: *nr = LINUX_SYS_SETPGID;     break; /* setpgid */
+    case 110: *nr = LINUX_SYS_GETPPID;     break; /* getppid */
+    case 111: /* getpgrp() → getpgid(0) */
+        regs[0] = 0; *nr = LINUX_SYS_GETPGID; break;
+    case 112: *nr = LINUX_SYS_SETSID;      break; /* setsid */
+    case 115: *nr = LINUX_SYS_GETGROUPS;   break; /* getgroups */
+    case 116: *nr = LINUX_SYS_SETGROUPS;   break; /* setgroups */
+    case 121: *nr = LINUX_SYS_GETPGID;     break; /* getpgid */
+    case 124: *nr = LINUX_SYS_GETSID;      break; /* getsid */
+    case 131: *nr = LINUX_SYS_TGKILL;      break; /* tgkill */
+    case 157: *nr = LINUX_SYS_PRCTL;       break; /* prctl */
+    case 158: *nr = X86_SYS_ARCH_PRCTL;    break; /* arch_prctl */
+    case 160: *nr = LINUX_SYS_SETRLIMIT;   break; /* setrlimit */
+    case 165: *nr = LINUX_SYS_GETRUSAGE;   break; /* getrusage(again) */
+    case 186: *nr = LINUX_SYS_GETTID;      break; /* gettid */
+    case 217: *nr = LINUX_SYS_GETDENTS64;  break; /* getdents64 */
+    case 218: *nr = LINUX_SYS_SET_TID_ADDR; break; /* set_tid_address */
+    case 228: *nr = LINUX_SYS_CLOCK_GETTIME; break; /* clock_gettime */
+    case 231: *nr = LINUX_SYS_EXIT_GROUP;  break; /* exit_group */
+    case 247: *nr = LINUX_SYS_WAITID;      break; /* waitid */
+    case 257: *nr = LINUX_SYS_OPENAT;      break; /* openat */
+    case 258: *nr = 0x7FFFFFFEULL; break;      /* mkdirat → stub 0 */
+    case 262: *nr = LINUX_SYS_NEWFSTATAT;  break; /* newfstatat */
+    case 263: *nr = LINUX_SYS_UNLINKAT;    break; /* unlinkat */
+    case 264: *nr = LINUX_SYS_RENAMEAT;    break; /* renameat */
+    case 267: *nr = LINUX_SYS_READLINKAT;  break; /* readlinkat */
+    case 268: *nr = 0x7FFFFFFEULL; break;      /* fchmodat → stub 0 */
+    case 269: *nr = LINUX_SYS_FACCESSAT;   break; /* faccessat */
+    case 270: *nr = LINUX_SYS_PSELECT6;    break; /* pselect6 */
+    case 271: *nr = LINUX_SYS_PPOLL;       break; /* ppoll */
+    case 273: *nr = LINUX_SYS_SET_ROBUST_LIST; break; /* set_robust_list */
+    case 292: *nr = LINUX_SYS_DUP3;        break; /* dup3 */
+    case 293: *nr = LINUX_SYS_PIPE2;       break; /* pipe2 */
+    case 302: *nr = LINUX_SYS_PRLIMIT64;   break; /* prlimit64 */
+    case 318: *nr = LINUX_SYS_GETRANDOM;   break; /* getrandom */
+    case 334: *nr = X86_SYS_RSEQ;          break; /* rseq */
+    /* 其他：保持原号（会落到 default: 返回 ENOSYS） */
+    default: break;
+    }
+}
+#endif /* ARCH_X86_64 */
+
 /* ─────────────────────────────────────────────────────────────────
  * Main syscall dispatcher
  * ───────────────────────────────────────────────────────────────── */
 void syscall_handler(trap_frame_t *frame)
 {
     g_syscall_entry_count++;  /* Increment counter */
-    // KLOG_DEBUG("[syscall] entry #%u: frame=%p\n", g_syscall_entry_count, frame);
+    uint64_t syscall_num = syscall_abi_nr(frame);
+    KLOG_DEBUG("[syscall] number: %d, entry #%u: frame=%p\n", syscall_num, g_syscall_entry_count, frame);
 
     /* 调试：打印 trap_frame 原始内容 */
     // if (g_syscall_entry_count <= 3) {
@@ -509,7 +658,17 @@ void syscall_handler(trap_frame_t *frame)
     for (int i = 0; i < 6; i++) {
         regs[i] = syscall_abi_arg(frame, i);
     }
-    uint64_t syscall_num = syscall_abi_nr(frame);
+    // uint64_t syscall_num = syscall_abi_nr(frame);
+
+#if ARCH_X86_64
+    /* 将 Linux x86_64 syscall 号翻译为下方 switch 使用的内部编号 */
+    x86_translate_syscall(&syscall_num, regs);
+    /* 0x7FFFFFFEULL 是 stub 标记：直接返回 0 */
+    if (syscall_num == 0x7FFFFFFEULL) {
+        syscall_abi_set_ret(frame, 0);
+        return;
+    }
+#endif
 
     /* 调试：记录系统调用号 */
     if (g_syscall_entry_count <= 10) {
@@ -697,6 +856,7 @@ void syscall_handler(trap_frame_t *frame)
         child->user_stack_size = parent->user_stack_size;
         child->heap_end        = parent->heap_end;
         child->mmap_next       = parent->mmap_next;
+        child->fs_base         = parent->fs_base;
         child->parent_id       = parent->id;
         child->exit_status     = 0;
         child->is_waiting      = false;
@@ -891,6 +1051,35 @@ void syscall_handler(trap_frame_t *frame)
 
     case LINUX_SYS_SETGROUPS:
         regs[0] = 0;
+        break;
+
+    case X86_SYS_ARCH_PRCTL: {
+#if ARCH_X86_64
+        uint64_t code = regs[0];
+        uint64_t addr = regs[1];
+
+        if (code == X86_ARCH_SET_FS) {
+            current->fs_base = addr;
+            x86_write_fs_base(addr);
+            regs[0] = 0;
+        } else if (code == X86_ARCH_GET_FS) {
+            if (addr == 0) {
+                regs[0] = (uint64_t)(int64_t)-EFAULT;
+            } else {
+                *(uint64_t *)addr = current->fs_base;
+                regs[0] = 0;
+            }
+        } else {
+            regs[0] = (uint64_t)(int64_t)-EINVAL;
+        }
+#else
+        regs[0] = (uint64_t)(int64_t)-ENOSYS;
+#endif
+        break;
+    }
+
+    case X86_SYS_RSEQ:
+        regs[0] = (uint64_t)(int64_t)-ENOSYS;
         break;
 
     case LINUX_SYS_KILL:
@@ -1650,6 +1839,26 @@ void *sys_brk(void *addr)
             continue;
         }
     }
+#elif ARCH_X86_64
+    /* x86_64：扩展堆，使用 g_pmm */
+    {
+        uint64_t old_page_end = ALIGN_UP(current_brk, PAGE_SIZE);
+        uint64_t new_page_end = ALIGN_UP(new_brk,     PAGE_SIZE);
+        void    *pgd          = phys_to_virt((uint64_t)current->pgd);
+
+        for (uint64_t va = old_page_end; va < new_page_end; va += PAGE_SIZE) {
+            uint64_t pa = pmm_alloc_pages(g_pmm, 1);
+            if (pa == 0) {
+                KLOG_ERROR("[brk] Out of memory at va=0x%llx\n", va);
+                return (void *)current_brk;
+            }
+            memset(phys_to_virt(pa), 0, PAGE_SIZE);
+            if (mm_vm_map_pages(pgd, va, pa, 1, 0) != 0) {
+                pmm_free_pages(g_pmm, pa, 1);
+                continue; /* 已映射：跳过 */
+            }
+        }
+    }
 #endif
 
     current->heap_end = new_brk;
@@ -1735,6 +1944,23 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, int prot, int flags, int fd, uint
         if (mm_vm_map_pages(pgd, va, pa, 1, 0) != 0) {
             pmm_free_pages(&pmm, pa, 1);
             return MMAP_FAILED;
+        }
+    }
+#elif ARCH_X86_64
+    {
+        void *pgd = phys_to_virt((uint64_t)current->pgd);
+
+        for (uint64_t va = map_addr; va < map_addr + size; va += PAGE_SIZE) {
+            uint64_t pa = pmm_alloc_pages(g_pmm, 1);
+            if (pa == 0) {
+                KLOG_ERROR("[mmap] Out of memory at va=0x%llx\n", va);
+                return MMAP_FAILED;
+            }
+            memset(phys_to_virt(pa), 0, PAGE_SIZE);
+            if (mm_vm_map_pages(pgd, va, pa, 1, 0) != 0) {
+                pmm_free_pages(g_pmm, pa, 1);
+                return MMAP_FAILED;
+            }
         }
     }
 #endif

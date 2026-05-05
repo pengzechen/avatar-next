@@ -436,42 +436,15 @@ void kernel_main(void)
     
 #elif ARCH_X86_64
 
-    /* x86_64：创建 Ring 3 测试程序，包括 execve 测试 */
-    KLOG_INFO("Creating x86_64 Ring 3 test processes...\n");
+    /* x86_64：从文件系统加载并执行 busybox */
+    KLOG_INFO("Creating busybox loader for x86_64...\n");
 
-    /* 测试 execve 系统调用 */
-    task_t *proc_execve = process_create("x86_test_execve",
-                                         (uint64_t)test_execve_program,
-                                         0x1ffff0,   /* 用户栈顶（16字节对齐，在映射范围内）*/
-                                         5);
-    if (proc_execve) {
-        KLOG_INFO("Execve test process created: id=%u\n", proc_execve->id);
-    } else {
-        KLOG_ERROR("Failed to create execve test process!\n");
-    }
-
-    /* 原有的测试程序（注释掉，专注于 execve 测试） */
-    /*
-    task_t *proc1 = process_create("x86_user_test",
-                                   (uint64_t)user_test_program,
-                                   0x1ffff0,
-                                   5);
+    task_t *proc1 = task_create("busybox_loader", demo_load_busybox, NULL, 5);
     if (proc1) {
-        KLOG_INFO("User test process created: id=%u\n", proc1->id);
+        KLOG_INFO("Busybox loader created successfully!\n");
     } else {
-        KLOG_ERROR("Failed to create user test process!\n");
+        KLOG_ERROR("Failed to create busybox loader!\n");
     }
-
-    task_t *proc2 = process_create("x86_hello",
-                                   (uint64_t)hello_program,
-                                   0x1ffff0,
-                                   5);
-    if (proc2) {
-        KLOG_INFO("Hello process created: id=%u\n", proc2->id);
-    } else {
-        KLOG_ERROR("Failed to create hello process!\n");
-    }
-    */
 
 #endif /* ARCH_RISCV64 / ARCH_AARCH64 / ARCH_X86_64 */
 

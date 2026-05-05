@@ -52,6 +52,7 @@ typedef struct task {
     uint64_t        user_stack_size;     /* 用户栈大小                            */
     uint64_t        heap_end;            /* 进程堆当前末尾（brk 系统调用使用）    */
     uint64_t        mmap_next;           /* 下一个 mmap 分配的起始地址            */
+    uint64_t        fs_base;             /* x86_64 TLS: IA32_FS_BASE              */
 
     /* === 进程/文件系统支持 === */
     char            cwd[TASK_CWD_LEN];  /* 当前工作目录（用户进程）               */

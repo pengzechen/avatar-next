@@ -190,6 +190,16 @@ elf_setup_stack(void *pgd, uint64_t stack_top, uint64_t entry,
         av_uaddr[i] = UADDR(ptr);
     }
 
+    /* 为 auxv::AT_RANDOM 预留 16 字节随机区（glibc/musl 启动必需） */
+    ptr -= 16;
+    {
+        uint64_t seed0 = 0x6d5a56da5a6d1234ULL ^ entry;
+        uint64_t seed1 = 0xa55aa55a33cc77eeULL ^ stack_top;
+        *(uint64_t *)(ptr + 0) = seed0;
+        *(uint64_t *)(ptr + 8) = seed1;
+    }
+    uint64_t at_random_uaddr = UADDR(ptr);
+
     /* ── 8 字节对齐 ─────────────────────────────────────────── */
     ptr = (uint8_t *)((uint64_t)ptr & ~7ULL);
 
@@ -197,6 +207,8 @@ elf_setup_stack(void *pgd, uint64_t stack_top, uint64_t entry,
 #define PUSH64(v) do { ptr -= 8; *(uint64_t *)ptr = (uint64_t)(v); } while(0)
     PUSH64(0);       /* AT_NULL value */
     PUSH64(0);       /* AT_NULL type  */
+    PUSH64(at_random_uaddr); /* AT_RANDOM value */
+    PUSH64(25);      /* AT_RANDOM type */
     PUSH64(4096);    /* AT_PAGESZ value */
     PUSH64(6);       /* AT_PAGESZ type  */
     PUSH64(entry);   /* AT_ENTRY value */
@@ -646,8 +658,36 @@ static int elf_load(uint8_t *file_data, uint64_t file_size, const char *pathname
 
 
     /* 在用户栈最高页构建 Linux ABI 初始栈（argc/argv/envp/auxv） */
-    /* AT_PHDR: 程序头在用户空间的地址 = 加载基址 0 + ehdr->e_phoff */
-    uint64_t phdr_uaddr = image_base + ehdr->e_phoff;
+    /* AT_PHDR：程序头的用户空间虚拟地址
+     *   ET_DYN (PIE)：image_base + e_phoff（image_base=0x10000）
+     *   ET_EXEC（非PIE）：从 PT_PHDR 段取 p_vaddr；若无则用第一个 PT_LOAD
+     *     的 p_vaddr + e_phoff
+     */
+    uint64_t phdr_uaddr;
+    if (ehdr->e_type == ET_DYN) {
+        phdr_uaddr = image_base + ehdr->e_phoff;
+    } else {
+        /* 优先查找 PT_PHDR 段 */
+        phdr_uaddr = 0;
+        for (uint16_t i = 0; i < ehdr->e_phnum; i++) {
+            if (phdr[i].p_type == 6 /* PT_PHDR */) {
+                phdr_uaddr = phdr[i].p_vaddr;
+                break;
+            }
+        }
+        /* 没有 PT_PHDR：找第一个 PT_LOAD，加上文件内偏移 */
+        if (phdr_uaddr == 0) {
+            for (uint16_t i = 0; i < ehdr->e_phnum; i++) {
+                if (phdr[i].p_type == 1 /* PT_LOAD */ && phdr[i].p_offset == 0) {
+                    phdr_uaddr = phdr[i].p_vaddr + ehdr->e_phoff;
+                    break;
+                }
+            }
+        }
+        /* 最后保底（不应走到这里） */
+        if (phdr_uaddr == 0)
+            phdr_uaddr = image_base + ehdr->e_phoff;
+    }
     uint64_t user_sp = USER_STACK_ADDR;
     if (elf_setup_stack(pgd, USER_STACK_ADDR, entry_point, pathname,
                         argv, envp, &user_sp,

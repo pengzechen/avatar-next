@@ -26,9 +26,15 @@
 
 /* CR0 / CR4 / EFER bits */
 .set CR0_PE,        (1 << 0)
+.set CR0_MP,        (1 << 1)
+.set CR0_EM,        (1 << 2)
+.set CR0_TS,        (1 << 3)
+.set CR0_NE,        (1 << 5)
 .set CR0_PG,        (1 << 31)
 .set CR4_PAE,       (1 << 5)
 .set CR4_PGE,       (1 << 7)
+.set CR4_OSFXSR,    (1 << 9)
+.set CR4_OSXMMEXCPT,(1 << 10)
 .set EFER_MSR,      0xC0000080
 .set EFER_SCE,      (1 << 0)
 .set EFER_LME,      (1 << 8)
@@ -90,8 +96,8 @@ boot32_entry:
     mov     %ax,   %fs
     mov     %ax,   %gs
 
-    /* Enable PAE and PGE in CR4 */
-    mov     $(CR4_PAE | CR4_PGE), %eax
+    /* Enable PAE/PGE and SSE OS support in CR4 */
+    mov     $(CR4_PAE | CR4_PGE | CR4_OSFXSR | CR4_OSXMMEXCPT), %eax
     mov     %eax, %cr4
 
     /* Load page-table root (physical address into CR3) */
@@ -104,9 +110,10 @@ boot32_entry:
     or      $(EFER_SCE | EFER_LME | EFER_NXE), %eax
     wrmsr
 
-    /* Enable protected mode + paging in CR0 */
+    /* Enable protected mode + paging, and configure x87/SSE in CR0 */
     mov     %cr0, %eax
-    or      $(CR0_PE | CR0_PG), %eax
+    or      $(CR0_PE | CR0_PG | CR0_MP | CR0_NE), %eax
+    and     $~(CR0_EM | CR0_TS), %eax
     mov     %eax, %cr0
 
     /* Far jump into 64-bit code segment (GDT selector 0x10) */

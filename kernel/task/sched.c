@@ -32,6 +32,20 @@
 #if ARCH_X86_64
 #include "mmu.h"
 #include "../../boot/x86_64/tss.h"
+
+#define X86_MSR_IA32_FS_BASE 0xC0000100U
+
+static inline void x86_write_msr(uint32_t msr, uint64_t value)
+{
+    uint32_t lo = (uint32_t)(value & 0xFFFFFFFFU);
+    uint32_t hi = (uint32_t)(value >> 32);
+    __asm__ volatile("wrmsr" :: "c"(msr), "a"(lo), "d"(hi));
+}
+
+static inline void x86_write_fs_base(uint64_t fs_base)
+{
+    x86_write_msr(X86_MSR_IA32_FS_BASE, fs_base);
+}
 #endif
 
 /* ── Scheduler state ─────────────────────────────────────── */
@@ -171,6 +185,10 @@ sched_schedule(void)
         /* 任务的内核栈顶 = 栈基址 + 栈大小 */
         uint64_t kernel_stack_top = (uint64_t)next->stack_base + TASK_STACK_SIZE;
         x86_tss_set_rsp0(kernel_stack_top);
+
+        /* 恢复该用户任务的 TLS 基址（fs:offset） */
+        x86_write_fs_base(next->fs_base);
+
         KLOG_INFO("[sched] Updated TSS.RSP0 to 0x%llx for task '%s'\n",
                   kernel_stack_top, next->name);
     } else if (next->is_user_process == 0 && prev->is_user_process != 0) {

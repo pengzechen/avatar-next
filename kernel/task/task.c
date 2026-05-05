@@ -184,6 +184,7 @@ task_init(void)
     g_idle_task.stack_base = g_idle_stack;
     g_idle_task.entry      = NULL;
     g_idle_task.arg        = NULL;
+    g_idle_task.fs_base    = 0;
     list_node_init(&g_idle_task.run_node);
     list_node_init(&g_idle_task.wait_node);
 
@@ -277,6 +278,7 @@ process_create(const char *name, uint64_t user_entry, uint64_t user_sp, uint8_t 
     task->user_sp         = user_sp;
     task->user_stack_top  = user_sp;
     task->user_stack_size = 0x100000;  /* 1MB 用户栈 */
+    task->fs_base         = 0;
 
     /* 创建独立的用户页表 */
 #if ARCH_AARCH64
@@ -464,6 +466,7 @@ process_create_with_pgd(const char *name, uint64_t user_entry, uint64_t user_sp,
     task->user_stack_top  = user_sp;
     task->user_stack_size = 0x100000;  /* 1MB 用户栈 */
     task->pgd             = (uint64_t *)pgd_phys;
+    task->fs_base         = 0;
 
     /* 初始化进程文件系统相关字段（继承父进程 cwd） */
     if (g_current_task) {
@@ -538,6 +541,7 @@ task_create(const char *name, void (*entry)(void *), void *arg, uint8_t priority
     task->is_user_process = false;
     task->user_started    = false;
     task->pgd      = NULL;
+    task->fs_base  = 0;
     task->cwd[0]   = '/';
     task->cwd[1]   = '\0';
     for (uint32_t j = 0; j < TASK_MAX_FD; j++)
