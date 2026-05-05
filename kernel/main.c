@@ -39,8 +39,8 @@ extern void run_mutex_comparison_test(void);
 extern void kmem_test(void);
 #endif
 
-/* 用户测试程序入口（AArch64 / RISC-V 嵌入内核） */
-#if ARCH_AARCH64 || ARCH_RISCV64
+/* 用户测试程序入口（AArch64 / RISC-V / x86_64 嵌入内核） */
+#if ARCH_AARCH64 || ARCH_RISCV64 || ARCH_X86_64
 extern void user_test_program(void);
 extern void hello_program(void);
 #endif
@@ -364,6 +364,10 @@ void kernel_main(void)
     /* Initialize IDT and LAPIC */
     KLOG_INFO("Initializing IDT + LAPIC...\n");
     exception_init();
+    
+    /* Initialize TSS (Task State Segment for privilege switching) */
+    extern void x86_tss_init(void);
+    x86_tss_init();
 
     /* Initialize timer (registers handler, calibrates LAPIC frequency) */
     KLOG_INFO("Initializing timer...\n");
@@ -389,11 +393,6 @@ void kernel_main(void)
     /* 切换到 idle 专用栈（防止 boot 栈在频繁中断下溢出） */
     task_switch_to_idle_stack();
 
-    /* 将 sched_tick 注册为 timer tick 回调，启用抢占 */
-    timer_set_tick_cb(sched_tick);
-    KLOG_INFO("Preemptive scheduling enabled\n");
-
-
 #if 0
     /* Mutex tests */
     KLOG_INFO("--- Mutex Tests ---\n");
@@ -401,8 +400,8 @@ void kernel_main(void)
     KLOG_INFO("");
 #endif
 
-#if !defined(ARCH_AARCH64) && !defined(ARCH_RISCV64)
-    /* 创建演示任务（如果需要） */
+#if !defined(ARCH_AARCH64) && !defined(ARCH_RISCV64) && !defined(ARCH_X86_64)
+    /* 创建演示任务（仅用于没有用户进程支持的架构） */
     task_create("task_a", demo_task_a, NULL, 1);
     task_create("task_b", demo_task_b, NULL, 1);
     task_create("task_c", demo_task_c, NULL, 1);
@@ -444,9 +443,41 @@ void kernel_main(void)
     }
     */
 
-#endif /* ARCH_RISCV64 / ARCH_AARCH64 */
+#elif ARCH_X86_64
 
-    KLOG_INFO("\nProcesses will run in EL0 (user mode)\n");
+    /* x86_64：创建两个 Ring 3 测试程序 */
+    KLOG_INFO("Creating x86_64 Ring 3 test processes...\n");
+    
+    task_t *proc1 = process_create("x86_user_test", 
+                                   (uint64_t)user_test_program,
+                                   0x1ffff0,   /* 用户栈顶（16字节对齐，在映射范围内）*/
+                                   5);
+    if (proc1) {
+        KLOG_INFO("User test process created: id=%u\n", proc1->id);
+    } else {
+        KLOG_ERROR("Failed to create user test process!\n");
+    }
+    
+    task_t *proc2 = process_create("x86_hello",
+                                   (uint64_t)hello_program,
+                                   0x1ffff0,   /* 用户栈顶（16字节对齐，在映射范围内）*/
+                                   5);
+    if (proc2) {
+        KLOG_INFO("Hello process created: id=%u\n", proc2->id);
+    } else {
+        KLOG_ERROR("Failed to create hello process!\n");
+    }
+
+#endif /* ARCH_RISCV64 / ARCH_AARCH64 / ARCH_X86_64 */
+
+    /*
+     * 在内核初始化/创建用户进程完成后再启用抢占。
+     * 避免 main 仍在内核路径时被 tick 打断，导致后续创建流程（如第二个进程）饿死。
+     */
+    timer_set_tick_cb(sched_tick);
+    KLOG_INFO("Preemptive scheduling enabled\n");
+
+    KLOG_INFO("\nProcesses will run in Ring 3 (user mode)\n");
 
     KLOG_INFO("\n");
     KLOG_INFO("Demo tasks created. Entering idle loop...\n");

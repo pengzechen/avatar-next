@@ -29,6 +29,11 @@
 #include "barrier.h"
 #include "string.h"
 
+#if ARCH_X86_64
+#include "mmu.h"
+#include "../../boot/x86_64/tss.h"
+#endif
+
 /* ── Scheduler state ─────────────────────────────────────── */
 
 static list_t   g_run_queue;   /* 就绪任务队列（不含 idle）*/
@@ -129,10 +134,60 @@ sched_schedule(void)
         __asm__ volatile("sfence.vma");
     }
     /* 用户→用户切换，已在上面处理；内核→内核切换，页表不变 */
+#elif ARCH_X86_64
+    /* x86_64：通过 CR3 切换页表
+     * - 用户任务：切换到用户页表（已包含内核高半区映射）
+     * - 内核任务：切换回内核页表
+     */
+    static uint64_t g_kernel_cr3 = 0;
+    
+    /* 首次调度时保存内核 CR3 */
+    if (g_kernel_cr3 == 0) {
+        g_kernel_cr3 = read_cr3();
+    }
+    
+    if (next->is_user_process && next->pgd != 0) {
+        /* 切换到用户页表 */
+        uint64_t pgd_phys = (uint64_t)next->pgd;
+        KLOG_INFO("[sched] switching CR3 to user PGD=0x%llx for '%s'\n", 
+                   pgd_phys, next->name);
+        write_cr3(pgd_phys);
+        
+        /* 验证 CR3 切换 */
+        uint64_t cr3_after = read_cr3();
+        KLOG_INFO("[sched] CR3 after switch = 0x%llx (expected 0x%llx)\n",
+                  cr3_after, pgd_phys);
+        
+        if ((cr3_after & 0xFFFFFFFFF000ULL) != pgd_phys) {
+            KLOG_ERROR("[sched] CR3 switch FAILED!\n");
+        } else {
+            KLOG_INFO("[sched] CR3 switched successfully, testing memory access...\n");
+            /* 测试内核代码是否可访问（读取当前指令） */
+            volatile uint64_t test = *(volatile uint64_t *)&sched_schedule;
+            KLOG_INFO("[sched] Memory access test passed, code accessible: 0x%llx\n", test);
+        }
+        
+        /* 更新 TSS.RSP0 为当前任务的内核栈顶 */
+        /* 任务的内核栈顶 = 栈基址 + 栈大小 */
+        uint64_t kernel_stack_top = (uint64_t)next->stack_base + TASK_STACK_SIZE;
+        x86_tss_set_rsp0(kernel_stack_top);
+        KLOG_INFO("[sched] Updated TSS.RSP0 to 0x%llx for task '%s'\n",
+                  kernel_stack_top, next->name);
+    } else if (next->is_user_process == 0 && prev->is_user_process != 0) {
+        /* 从用户任务切换到内核任务：恢复内核页表 */
+        KLOG_INFO("[sched] restoring kernel CR3=0x%llx\n", g_kernel_cr3);
+        write_cr3(g_kernel_cr3);
+    }
+    /* 用户→用户切换，已在上面处理；内核→内核切换，页表不变 */
 #endif
 
     KLOG_DEBUG("[sched] switch: prev='%s' (id=%u) -> next='%s' (id=%u)\n",
               prev->name, prev->id, next->name, next->id);
+
+    if (next->is_user_process) {
+        KLOG_INFO("[sched] next='%s': entry=0x%llx sp=0x%llx kernel_sp=0x%llx\n",
+                   next->name, next->user_entry, next->user_sp, next->sp);
+    }
 
     /*
      * 切换上下文。
@@ -193,6 +248,15 @@ sched_tick(void)
 bool
 sched_check_and_yield(void)
 {
+    /*
+     * 仅在用户进程上下文触发 tick 抢占：
+     * - 内核初始化/内核任务路径保持非抢占，避免破坏临界流程
+     * - 用户态仍可被时钟中断抢占，实现时间片轮转
+     */
+    if (!g_current_task || !g_current_task->is_user_process) {
+        return false;
+    }
+
     if (g_need_resched) {
         g_need_resched = false;
         sched_schedule();

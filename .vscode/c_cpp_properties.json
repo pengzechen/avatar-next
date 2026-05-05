@@ -9,7 +9,8 @@
                 "${workspaceFolder}/driver/uart",
                 "${workspaceFolder}/boot/common",
                 "${workspaceFolder}/kernel",
-                "${workspaceFolder}/fs/lwext4/include"
+                "${workspaceFolder}/fs/lwext4/include",
+                "${workspaceFolder}/fs/lwext4_port"
             ],
             "defines": [
                 "__x86_64__",

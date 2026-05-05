@@ -30,6 +30,11 @@
 #define phys_to_virt(pa) ((void *)((uint64_t)(pa) + KERNEL_VMA))
 #define virt_to_phys(va) ((uint64_t)(va) - KERNEL_VMA)
 
+/* 页大小配置（必须在架构特定头文件之前定义） */
+#define PAGE_SIZE       4096
+#define PAGE_SHIFT      12
+#define PAGE_MASK       (~(PAGE_SIZE - 1))
+
 #if ARCH_AARCH64
 #  include "aarch64/mm_vm.h"
 #elif ARCH_RISCV64
@@ -39,10 +44,6 @@
 #else
 #  error "Unsupported architecture for mm_vm"
 #endif
-
-/* 页大小配置 */
-#define PAGE_SIZE       4096
-#define PAGE_SHIFT      12
 
 
 #endif /* MM_VM_H */

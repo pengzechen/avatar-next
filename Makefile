@@ -165,6 +165,9 @@ TASK_USER_HELLO_OBJ := $(BUILD_DIR)/hello.o
 else ifeq ($(ARCH),riscv64)
 TASK_USER_TEST_OBJ := $(BUILD_DIR)/user_test.o
 TASK_USER_HELLO_OBJ := $(BUILD_DIR)/hello.o
+else ifeq ($(ARCH),x86_64)
+TASK_USER_TEST_OBJ := $(BUILD_DIR)/user_test.o
+TASK_USER_HELLO_OBJ := $(BUILD_DIR)/hello.o
 else
 TASK_USER_TEST_OBJ :=
 TASK_USER_HELLO_OBJ :=
@@ -250,8 +253,8 @@ else ifeq ($(ARCH),riscv64)
     EXCEPTION_SOURCES := $(BOOT_DIR)/riscv64/exception.S $(BOOT_DIR)/riscv64/exception.c
     EXCEPTION_OBJECTS := $(BUILD_DIR)/rv_exception_asm.o $(BUILD_DIR)/rv_exception.o
 else ifeq ($(ARCH),x86_64)
-    EXCEPTION_SOURCES := $(BOOT_DIR)/x86_64/exception.S $(BOOT_DIR)/x86_64/exception.c
-    EXCEPTION_OBJECTS := $(BUILD_DIR)/x86_exception_asm.o $(BUILD_DIR)/x86_exception.o
+    EXCEPTION_SOURCES := $(BOOT_DIR)/x86_64/exception.S $(BOOT_DIR)/x86_64/exception.c $(BOOT_DIR)/x86_64/syscall_wrapper.S $(BOOT_DIR)/x86_64/tss.c
+    EXCEPTION_OBJECTS := $(BUILD_DIR)/x86_exception_asm.o $(BUILD_DIR)/x86_exception.o $(BUILD_DIR)/kernel_syscall_entry.o $(BUILD_DIR)/x86_tss.o
 else
     EXCEPTION_SOURCES :=
     EXCEPTION_OBJECTS :=
@@ -522,6 +525,12 @@ $(BUILD_DIR)/x86_exception_asm.o: $(BOOT_DIR)/x86_64/exception.S | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/x86_exception.o: $(BOOT_DIR)/x86_64/exception.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/kernel_syscall_entry.o: $(BOOT_DIR)/x86_64/syscall_wrapper.S | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/x86_tss.o: $(BOOT_DIR)/x86_64/tss.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # LAPIC 驱动编译规则（x86_64）

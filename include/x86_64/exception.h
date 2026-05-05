@@ -36,11 +36,15 @@
  *   [ISR 存根压栈]            r15..r8, rbp, rdi, rsi, rdx, rcx, rbx, rax
  */
 typedef struct {
-    /* ISR 存根保存的通用寄存器（push 顺序：rax 最后） */
-    uint64_t rax, rbx, rcx, rdx;
-    uint64_t rsi, rdi, rbp;
-    uint64_t r8,  r9,  r10, r11;
-    uint64_t r12, r13, r14, r15;
+    /*
+     * ISR/syscall 汇编实际压栈顺序：
+     *   push rax, rbx, rcx, rdx, rsi, rdi, rbp, r8, r9, r10, r11, r12, r13, r14, r15
+     * 栈向低地址增长，因此 trap_frame_t* 指向最低地址时，布局为 r15..rax。
+     */
+    uint64_t r15, r14, r13, r12;
+    uint64_t r11, r10, r9,  r8;
+    uint64_t rbp, rdi, rsi, rdx;
+    uint64_t rcx, rbx, rax;
     /* ISR 存根填充的辅助字段 */
     uint64_t vector;      /* 中断向量号                     */
     uint64_t error_code;  /* 错误码（无则为 0）              */

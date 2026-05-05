@@ -30,6 +30,7 @@
 .set CR4_PAE,       (1 << 5)
 .set CR4_PGE,       (1 << 7)
 .set EFER_MSR,      0xC0000080
+.set EFER_SCE,      (1 << 0)
 .set EFER_LME,      (1 << 8)
 .set EFER_NXE,      (1 << 11)
 
@@ -97,10 +98,10 @@ boot32_entry:
     movl    $(boot_pml4 - PHYS_OFFSET), %eax
     mov     %eax, %cr3
 
-    /* Enable long mode (LME) and NX (NXE) in IA32_EFER */
+    /* Enable SYSCALL (SCE), long mode (LME) and NX (NXE) in IA32_EFER */
     mov     $EFER_MSR, %ecx
     rdmsr
-    or      $(EFER_LME | EFER_NXE), %eax
+    or      $(EFER_SCE | EFER_LME | EFER_NXE), %eax
     wrmsr
 
     /* Enable protected mode + paging in CR0 */
@@ -132,6 +133,13 @@ boot64_entry:
     jmp     *%rax
 
 boot64_virt:
+    /*
+     * 关键：切到高半区后，重新加载 GDTR 为高半区虚拟地址。
+     * 否则 GDTR 仍可能指向低地址（boot32 阶段的物理基址），
+     * 当用户 CR3 不再保留低半区映射时，iretq/异常取段描述符会触发故障。
+     */
+    lgdt    boot_gdt_desc64(%rip)
+
     /* Set up stack at virtual address */
     movabs  $boot_stack_top, %rsp
 
@@ -155,21 +163,37 @@ boot64_virt:
  * Temporary GDT
  *   0x00 – null
  *   0x08 – 32-bit code (for completeness)
- *   0x10 – 64-bit code  (L=1, used by far-jump)
- *   0x18 – 32/64 data
+ *   0x10 – 64-bit code  (L=1, used by far-jump) [DPL=0, kernel]
+ *   0x18 – 32/64 data   [DPL=0, kernel]
+ *   0x20 – 64-bit data  [DPL=3, user]
+ *   0x28 – 64-bit code  [DPL=3, user]
+ * 
+ * 用户段描述符（RPL=3）:
+ *   代码段: L=1, DPL=3, P=1, S=1, Type=1010b (Execute/Read)
+ *   数据段: L=0, DPL=3, P=1, S=1, Type=0010b (Read/Write)
  * ---------------------------------------------------------- */
 .align 16
 boot_gdt:
     .quad   0x0000000000000000   /* 0x00: null                              */
     .quad   0x00cf9b000000ffff   /* 0x08: code32  base=0 limit=4G DPL=0     */
-    .quad   0x00af9b000000ffff   /* 0x10: code64  L=1   limit=4G DPL=0     */
+    .quad   0x00af9b000000ffff   /* 0x10: code64  L=1   limit=4G DPL=0      */
     .quad   0x00cf93000000ffff   /* 0x18: data    base=0 limit=4G DPL=0     */
+    .quad   0x00cff3000000ffff   /* 0x20: data    base=0 limit=4G DPL=3     */
+    .quad   0x00affb000000ffff   /* 0x28: code64  L=1   limit=4G DPL=3      */
+    .quad   0x0000000000000000   /* 0x30: TSS low (运行时填充)              */
+    .quad   0x0000000000000000   /* 0x38: TSS high (运行时填充)             */
 boot_gdt_end:
 
 .align 4
 boot_gdt_desc:
     .word   boot_gdt_end - boot_gdt - 1   /* limit                          */
     .long   boot_gdt - PHYS_OFFSET        /* base  (32-bit physical address) */
+
+/* 64-bit GDTR 描述符：base 使用高半区虚拟地址 */
+.align 8
+boot_gdt_desc64:
+    .word   boot_gdt_end - boot_gdt - 1
+    .quad   boot_gdt
 
 /* ----------------------------------------------------------
  * Temporary page tables  (embedded in .text.boot so they

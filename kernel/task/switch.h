@@ -290,14 +290,35 @@ arch_init_user_stack(uint8_t *stack_base, uint32_t stack_size,
         sp[i] = 0;
 
 #elif ARCH_X86_64
-    /* TODO: x86_64 支持 */
-    (void)user_entry;
-    (void)user_sp;
-    (void)user_pgd;
-    sp -= 10;
-    sp[6] = (uint64_t)task_trampoline_user;
-    for (int i = 0; i < 6; i++)
-        sp[i] = 0;
+    /*
+     * x86_64 栈布局（arch_task_switch 恢复时）：
+     * 
+     * [高地址]
+     *   user_sp         <- 会被 task_trampoline_user popq 到 rsi
+     *   user_entry      <- 会被 task_trampoline_user popq 到 rdi
+     *   返回地址 (LR)   <- 会被 ret 弹出，跳转到 task_trampoline_user
+     *   r15
+     *   r14
+     *   r13
+     *   r12
+     *   rbp
+     *   rbx             <- sp 指向这里
+     * [低地址]
+     * 
+     * 保存6个被调用者寄存器 + 返回地址 + 2个参数 = 9 个 uint64_t
+     */
+    sp -= 9;
+    sp[0] = 0;                               /* rbx */
+    sp[1] = 0;                               /* rbp */
+    sp[2] = 0;                               /* r12 */
+    sp[3] = 0;                               /* r13 */
+    sp[4] = 0;                               /* r14 */
+    sp[5] = 0;                               /* r15 */
+    sp[6] = (uint64_t)task_trampoline_user;  /* 返回地址 (LR) */
+    sp[7] = user_entry;                      /* 用户入口 */
+    sp[8] = user_sp;                         /* 用户栈 */
+    
+    (void)user_pgd;  /* x86_64 页表通过 task->pgd 在调度时切换 CR3 */
 #endif
 
     return (uintptr_t)sp;

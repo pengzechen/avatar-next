@@ -216,17 +216,31 @@ task_init(void)
  * 
  * 必须在 task_init() 返回后、进入 idle 循环前调用。
  * 在 task_init() 内部切换会导致返回地址丢失。
+ *
+ * x86_64 特殊处理：需要保存返回地址和帧指针，然后在新栈上恢复，
+ * 否则函数返回时会出现 General Protection Fault。
  */
 void
 task_switch_to_idle_stack(void)
 {
     uintptr_t new_sp = (uintptr_t)(g_idle_stack + TASK_STACK_SIZE);
-#if ARCH_RISCV64
+#if ARCH_X86_64
+    /* x86_64: 保存返回地址和 RBP，切换栈，在新栈上恢复它们 */
+    __asm__ volatile(
+        "pop    %%rax\n\t"          /* 弹出返回地址到 rax */
+        "mov    %%rbp, %%rcx\n\t"   /* 保存旧的 rbp 到 rcx */
+        "mov    %0, %%rsp\n\t"      /* 切换到新栈 */
+        "push   %%rcx\n\t"          /* 将旧 rbp 压入新栈 */
+        "mov    %%rsp, %%rbp\n\t"   /* 设置新的 rbp */
+        "push   %%rax\n\t"          /* 将返回地址压入新栈 */
+        :
+        : "r"(new_sp)
+        : "rax", "rcx", "memory"
+    );
+#elif ARCH_RISCV64
     __asm__ volatile("mv sp, %0" :: "r"(new_sp) : "memory");
 #elif ARCH_AARCH64
     __asm__ volatile("mov sp, %0" :: "r"(new_sp) : "memory");
-#elif ARCH_X86_64
-    __asm__ volatile("mov %0, %%rsp" :: "r"(new_sp) : "memory");
 #endif
 
     KLOG_INFO("[task] switched to idle stack at 0x%lx\n", (unsigned long)new_sp);
@@ -318,6 +332,74 @@ process_create(const char *name, uint64_t user_entry, uint64_t user_sp, uint8_t 
         KLOG_INFO("[task] Created RISC-V user PGD=0x%llx for '%s'\n",
                   pgd_phys, name);
     }
+#elif ARCH_X86_64
+    {
+        /* x86_64: 用户代码当前在内核虚拟地址空间；复制到用户 VA 0x10000 */
+        uint64_t user_code_vaddr = user_entry;
+        uint64_t user_code_size  = 0x2000;   /* 8KB，覆盖代码+字符串数据 */
+
+        uint64_t pgd_phys = vm_create_user_process(user_code_vaddr, user_code_size,
+                                                   user_sp, task->user_stack_size);
+        if (pgd_phys == 0) {
+            KLOG_ERROR("[task] Failed to create user page table for '%s'\n", name);
+            free_task_slot(task);
+            return NULL;
+        }
+
+        /*
+         * x86_64: 用户页表需要包含内核映射，否则从用户态触发 SYSCALL/中断时，
+         * 内核代码和数据不可访问。
+         * 
+         * 方案：复制当前内核 PML4 的高半区映射（PML4[256-511]）到用户 PML4。
+         * 内核虚拟地址起始于 0xffff800000000000，对应 PML4[256]。
+         */
+        uint64_t cr3_now = read_cr3();
+        uint64_t kernel_pml4_phys = cr3_now & 0x000FFFFFFFFFF000ULL;
+        uint64_t *kernel_pml4 = (uint64_t *)phys_to_virt(kernel_pml4_phys);
+        uint64_t *user_pml4   = (uint64_t *)phys_to_virt(pgd_phys);
+
+        KLOG_INFO("[task] Kernel CR3=0x%llx, PML4_phys=0x%llx\n", 
+                  cr3_now, kernel_pml4_phys);
+
+        /* 打印内核 PML4 中非零表项 */
+        int valid_entries = 0;
+        for (int i = 0; i < 512; i++) {
+            if (kernel_pml4[i] != 0) {
+                KLOG_INFO("[task]   kernel PML4[%d] = 0x%llx\n", i, kernel_pml4[i]);
+                valid_entries++;
+                if (valid_entries >= 10) {
+                    KLOG_INFO("[task]   ... (showing first 10 entries)\n");
+                    break;
+                }
+            }
+        }
+
+        /* 
+         * 只复制内核高半区映射 PML4[256-511]：
+         * - 用户空间（0x0 - 0x7fffffffffff）使用独立的页表结构
+         * - 内核空间（0xffff800000000000+）需要在用户页表中可见（用于系统调用/中断）
+         * 
+         * 不复制 PML4[0-255]，避免继承内核的 1GB 大页直接映射（权限不匹配）
+         */
+        for (int i = 256; i < 512; i++) {
+            user_pml4[i] = kernel_pml4[i];
+        }
+        
+        KLOG_INFO("[task] Copied kernel high-half PML4[256-511] to user PGD\n");
+        
+        /* 验证 PML4[0] 是否存在（应该由 vm_create_user_process 创建） */
+        if (user_pml4[0] != 0) {
+            KLOG_INFO("[task]   user PML4[0] = 0x%llx (user space mapping present)\n", user_pml4[0]);
+        } else {
+            KLOG_ERROR("[task]   ERROR: user PML4[0] is 0 (user code at 0x10000 will not be accessible!)\n");
+        }
+
+        task->pgd        = (uint64_t *)pgd_phys;
+        task->user_entry = 0x10000;
+
+        KLOG_INFO("[task] Created x86_64 user PGD=0x%llx for '%s'\n",
+                  pgd_phys, name);
+    }
 #else
     /* 其他架构暂时使用共享内核页表 */
     task->pgd = NULL;
@@ -346,8 +428,8 @@ process_create(const char *name, uint64_t user_entry, uint64_t user_sp, uint8_t 
 
     KLOG_INFO("[task] created user process '%s' id=%u prio=%u\n",
               task->name, task->id, (uint32_t)task->priority);
-    KLOG_INFO("[task]   user_entry=0x%llx, user_sp=0x%llx, pgd=0x%llx\n",
-              user_entry, user_sp, (uint64_t)task->pgd);
+    KLOG_INFO("[task]   user_entry=0x%llx (adjusted), user_sp=0x%llx, pgd=0x%llx\n",
+              task->user_entry, user_sp, (uint64_t)task->pgd);
 
     return task;
 }

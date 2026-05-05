@@ -107,6 +107,15 @@ vm_create_user_process(uint64_t user_code_vaddr, uint64_t user_code_size,
         KLOG_INFO("[vm_user] Copying user code: kern_paddr=0x%llx -> user_vaddr=0x10000\n",
                   src_paddr);
         mm_vm_copy_to_uva(pgd, 0x10000ULL, src_paddr, user_code_size);
+        
+        /* 验证：读取前 16 字节 */
+        uint64_t test_pa = mm_vm_get_paddr(pgd, 0x10000);
+        if (test_pa != 0) {
+            uint8_t *code = (uint8_t *)phys_to_virt(test_pa);
+            KLOG_INFO("[vm_user] User code at 0x10000 (PA=0x%llx): %02x %02x %02x %02x %02x %02x %02x %02x\n",
+                      test_pa, code[0], code[1], code[2], code[3], 
+                      code[4], code[5], code[6], code[7]);
+        }
     }
 
     KLOG_INFO("[vm_user] User process page table created: PGD=0x%llx\n", pgd_phys);
