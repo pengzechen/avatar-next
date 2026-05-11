@@ -96,11 +96,23 @@ void handle_exception(void *frame_ptr)
         }
 
         /* 其他异常：打印简单信息后挂起 */
-        if (code == 12 || code == 13 || code == 15) {
+        if (code == 12 || code == 13 || code == 15 ||
+            code == 20 || code == 21 || code == 23) {
             const char *fault_type = (code == 12) ? "Inst" :
-                                     (code == 13) ? "Load" : "Store";
-            KLOG_ERROR("%s PF: pc=0x%lx va=0x%lx\n",
-                       fault_type, frame->sepc, frame->stval);
+                                     (code == 13) ? "Load" :
+                                     (code == 15) ? "Store" :
+                                     (code == 20) ? "Inst-G" :
+                                     (code == 21) ? "Load-G" : "Store-G";
+            uint64_t hstatus_val = CSR_READ(hstatus);
+            uint64_t sstatus_val = frame->sstatus;
+            uint64_t satp_val    = CSR_READ(satp);
+            KLOG_ERROR("%s PF: pc=0x%lx va=0x%lx sstatus=0x%lx(SPP=%u) hstatus=0x%lx(SPV=%u SPVP=%u) satp=0x%lx(PPN=0x%lx)\n",
+                       fault_type, frame->sepc, frame->stval,
+                       sstatus_val, (unsigned)((sstatus_val >> 8) & 1),
+                       hstatus_val,
+                       (unsigned)((hstatus_val >> 7) & 1),
+                       (unsigned)((hstatus_val >> 8) & 1),
+                       satp_val, satp_val & 0xfffffffffffULL);
         }
         
         do_platform_shutdown();

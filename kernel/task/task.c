@@ -155,6 +155,20 @@ void arch_user_entry_debug(uint64_t user_entry, uint64_t user_sp,
         uint64_t *user_l1 = (uint64_t *)phys_to_virt(user_pgd);
         KLOG_INFO("[user-entry] User PGD L1[0x100]=0x%llx L1[0x102]=0x%llx\n",
                   user_l1[0x100], user_l1[0x102]);
+        KLOG_INFO("[user-entry] User PGD L1[0]=0x%llx (for VA 0x10000)\n",
+                  user_l1[0]);
+        if (user_l1[0] != 0 && (user_l1[0] & 1) != 0) {
+            uint64_t l0_pa = ((user_l1[0] >> 10) & 0xfffffffffffULL) << 12;
+            uint64_t *l0 = (uint64_t *)phys_to_virt(l0_pa);
+            KLOG_INFO("[user-entry] L1[0] -> L0 @ PA=0x%llx, L0[0]=0x%llx\n",
+                      l0_pa, l0[0]);
+            if (l0[0] != 0 && (l0[0] & 1) != 0) {
+                uint64_t l_1_pa = ((l0[0] >> 10) & 0xfffffffffffULL) << 12;
+                uint64_t *l_1 = (uint64_t *)phys_to_virt(l_1_pa);
+                KLOG_INFO("[user-entry] L0[0] -> Leaf-L @ PA=0x%llx, L[16]=0x%llx (VA 0x10000 PTE)\n",
+                          l_1_pa, l_1[16]);
+            }
+        }
     }
 }
 #endif

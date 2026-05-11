@@ -232,7 +232,15 @@ sched_schedule(void)
         /* 切换到内核任务：恢复内核页表 */
         next_pgd_for_switch = (uint64_t *)g_kernel_pgd_phys;
     }
-    arch_task_switch(&prev->sp, switch_sp, &prev->pgd, next_pgd_for_switch);
+    /*
+     * RISC-V 用户进程：pgd 是创建时固定的物理地址，不需要由 arch_task_switch
+     * 动态保存。若传 &prev->pgd，当用户进程在 arch_switch_to_user 切换 satp
+     * 之前被抢占（satp 仍为内核页表）时，prev->pgd 会被覆写为内核页表地址，
+     * 导致下次调度回来时以错误的 satp 进入 U-mode → VA 0x10000 不在内核页表 → Inst PF。
+     * 因此对用户进程传 NULL（跳过 satp 保存），保持 pgd 不变。
+     */
+    uint64_t **prev_pgd_save = prev->is_user_process ? NULL : &prev->pgd;
+    arch_task_switch(&prev->sp, switch_sp, prev_pgd_save, next_pgd_for_switch);
 #else
     arch_task_switch(&prev->sp, switch_sp, &prev->pgd, next->pgd);
 #endif

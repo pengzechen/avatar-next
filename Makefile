@@ -143,6 +143,16 @@ else ifeq ($(ARCH),x86_64)
     VMM_S_OBJECTS := $(BUILD_DIR)/kernel_vmm_x86_vmx_run.o
     # x86_64 guest test program (linked into kernel binary)
     GUEST_TEST_OBJ := $(BUILD_DIR)/apps_x86_guest_test.o
+else ifeq ($(ARCH),riscv64)
+    # RISC-V H-extension VMM subsystem
+    VMM_C_SOURCES := $(KERNEL_DIR)/vmm/vmm.c \
+                     $(KERNEL_DIR)/vmm/riscv64/hext_run.c
+    VMM_C_OBJECTS := $(BUILD_DIR)/kernel_vmm_vmm.o \
+                     $(BUILD_DIR)/kernel_vmm_riscv_hext_run.o
+    VMM_S_SOURCES := $(KERNEL_DIR)/vmm/riscv64/hext_vcpu.S
+    VMM_S_OBJECTS := $(BUILD_DIR)/kernel_vmm_riscv_hext_vcpu.o
+    # RISC-V VS-mode guest test program (linked into kernel binary)
+    GUEST_TEST_OBJ := $(BUILD_DIR)/apps_riscv_guest_test.o
 else
     VMM_C_SOURCES :=
     VMM_C_OBJECTS :=
@@ -748,6 +758,23 @@ $(BUILD_DIR)/kernel_vmm_x86_vmx_run.o: $(KERNEL_DIR)/vmm/x86_64/vmx_run.S | $(BU
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/apps_x86_guest_test.o: apps/x86_64/guest_test.S | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+endif
+
+ifeq ($(ARCH),riscv64)
+$(BUILD_DIR)/kernel_vmm_vmm.o: $(KERNEL_DIR)/vmm/vmm.c | $(BUILD_DIR)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -Ikernel -Ikernel/vmm -c $< -o $@
+
+$(BUILD_DIR)/kernel_vmm_riscv_hext_run.o: $(KERNEL_DIR)/vmm/riscv64/hext_run.c | $(BUILD_DIR)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -Ikernel -Ikernel/vmm -c $< -o $@
+
+$(BUILD_DIR)/kernel_vmm_riscv_hext_vcpu.o: $(KERNEL_DIR)/vmm/riscv64/hext_vcpu.S | $(BUILD_DIR)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/apps_riscv_guest_test.o: apps/riscv64/guest_test.S | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 endif
 

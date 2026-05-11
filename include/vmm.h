@@ -123,6 +123,65 @@ typedef struct vcpu {
     struct vm *vm;
 } vcpu_t;
 
+#elif ARCH_RISCV64
+/*
+ * RISC-V H-extension 软件 VMCS
+ *
+ * vcpu_t 前部固定偏移（与 hext_vcpu.S VCPU_RV_* 宏完全一致）：
+ *
+ *   Offset   0 : r[0..31]      = 32 × 8 = 256 B   (x0-x31 guest GPRs)
+ *   Offset 256 : vsepc          = 8 B               (guest PC = vsepc)
+ *   Offset 264 : vsstatus       = 8 B               (guest sstatus)
+ *   Offset 272 : vstvec         = 8 B               (guest trap vector)
+ *   Offset 280 : vsscratch      = 8 B               (guest sscratch)
+ *   Offset 288 : vsatp          = 8 B               (guest page table)
+ *   Offset 296 : vsie           = 8 B               (guest int enable)
+ *   Offset 304 : scause_save    = 8 B               (陷入原因，HS侧保存)
+ *   Offset 312 : stval_save     = 8 B               (陷入附加值)
+ *   Offset 320 : htval_save     = 8 B               (Stage-2 guest PA)
+ *   Offset 328 : host_ctx[15]   = 15 × 8 = 120 B   (ra,s0-s11,sp,orig_stvec)
+ *
+ * host_ctx 布局（与 hext_vcpu.S 对齐）：
+ *   [0]  ra   [1]  s0   [2]  s1   [3]  s2   [4]  s3
+ *   [5]  s4   [6]  s5   [7]  s6   [8]  s7   [9]  s8
+ *   [10] s9   [11] s10  [12] s11  [13] sp   [14] orig_stvec
+ */
+
+/* ── asm 可见的固定偏移 ──────────────────────────────────────── */
+#define VCPU_RV_R0         0            /* x0-x31, 32×8 bytes        */
+#define VCPU_RV_VSEPC      256          /* 32*8                      */
+#define VCPU_RV_VSSTATUS   264
+#define VCPU_RV_VSTVEC     272
+#define VCPU_RV_VSSCRATCH  280
+#define VCPU_RV_VSATP      288
+#define VCPU_RV_VSIE       296
+#define VCPU_RV_SCAUSE     304
+#define VCPU_RV_STVAL      312
+#define VCPU_RV_HTVAL      320
+#define VCPU_RV_HOSTCTX    328          /* host_ctx[15] = 120 B      */
+#define VCPU_RV_HOSTSTVEC  (328 + 14*8) /* = 440: 原主 stvec (host_ctx[14]) */
+
+typedef struct vcpu {
+    /* ── asm-accessible（勿改动顺序）────────────────────── */
+    uint64_t r[32];         /* x0-x31 guest GPRs    offset=0     */
+    uint64_t vsepc;         /* guest PC             offset=256   */
+    uint64_t vsstatus;      /* guest sstatus        offset=264   */
+    uint64_t vstvec;        /* guest trap vector    offset=272   */
+    uint64_t vsscratch;     /* guest sscratch       offset=280   */
+    uint64_t vsatp;         /* guest page table     offset=288   */
+    uint64_t vsie;          /* guest int enable     offset=296   */
+    uint64_t scause_save;   /* 陷入原因              offset=304   */
+    uint64_t stval_save;    /* 陷入附加值            offset=312   */
+    uint64_t htval_save;    /* Stage-2 guest PA     offset=320   */
+    uint64_t host_ctx[15];  /* ra,s0-s11,sp,orig_stvec offset=328
+                             * [0]=ra [1-12]=s0-s11 [13]=sp [14]=orig_stvec */
+
+    /* ── C-only 字段 ──────────────────────────────────── */
+    int      vcpu_id;
+    int      launched;
+    struct vm *vm;
+} vcpu_t;
+
 #else
 /* 其他架构：空壳，只有公共字段 */
 typedef struct vcpu {

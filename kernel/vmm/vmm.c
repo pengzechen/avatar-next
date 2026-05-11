@@ -50,6 +50,11 @@ static int aarch64_vm_init(vm_t *vm)
 extern int vmx_vm_init(vm_t *vm);
 #endif
 
+#if ARCH_RISCV64
+/* RISC-V H-extension VM 初始化在 hext_run.c 中完成 */
+extern int hext_vm_init(vm_t *vm);
+#endif
+
 /* ── 公开 API ─────────────────────────────────────────────── */
 
 int vm_create(vm_t *vm)
@@ -58,6 +63,8 @@ int vm_create(vm_t *vm)
     return aarch64_vm_init(vm);
 #elif ARCH_X86_64
     return vmx_vm_init(vm);
+#elif ARCH_RISCV64
+    return hext_vm_init(vm);
 #else
     (void)vm;
     KLOG_WARN("[vmm] vm_create: VMM not supported on this arch\n");
@@ -120,7 +127,7 @@ static void vcpu_task_fn(void *arg)
 
     KLOG_INFO("[vmm] vcpu%d task started\n", vcpu->vcpu_id);
 
-#if ARCH_AARCH64 || ARCH_X86_64
+#if ARCH_AARCH64 || ARCH_X86_64 || ARCH_RISCV64
     int rc = vmm_run_vcpu(vcpu);
     if (rc == 0)
         KLOG_INFO("[vmm] vcpu%d exited normally\n", vcpu->vcpu_id);

@@ -157,6 +157,19 @@ arch_switch_to_user:
     ori     t0, t0, 0x20        /* 仅设 SPIE (bit 5)，sret 后 SIE=SPIE=1 */
     csrw    sstatus, t0
 
+    /* 清除 hstatus.SPV (bit 7) + hstatus.SPVP (bit 8)
+     *
+     * 若 VMM guest 陷入后立刻调度到该用户进程，hstatus.SPV 可能仍为 1
+     * （硬件在 VS-mode 陷阱时设置，hext_trap_vector 不负责恢复）。
+     * 若 sret 时 hstatus.SPV=1 + sstatus.SPP=0，CPU 会进入 VU-mode 而非
+     * U-mode，导致用 vsatp（kernel satp）翻译用户 VA 0x10000 → 未映射 → Inst PF。
+     * 此处强制清零，确保 sret 总是进入普通 U-mode。
+     */
+    csrr    t0, hstatus
+    li      t1, ~0x180          /* 清 SPV (bit 7) 和 SPVP (bit 8) */
+    and     t0, t0, t1
+    csrw    hstatus, t0
+
     /* 用户栈 */
     mv      sp, a1
 
@@ -181,6 +194,12 @@ arch_fork_resume_user:
     and     t1, t1, t2
     ori     t1, t1, 0x20        /* SPIE */
     csrw    sstatus, t1
+
+    /* 清除 hstatus.SPV + SPVP，确保 sret 进入 U-mode 而非 VU-mode */
+    csrr    t0, hstatus
+    li      t1, ~0x180
+    and     t0, t0, t1
+    csrw    hstatus, t0
 
     /* 保存当前内核栈到 sscratch */
     mv      t0, sp

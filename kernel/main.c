@@ -24,6 +24,7 @@
 #include "mm_vm.h"
 #elif ARCH_RISCV64
 #include "exception.h"
+#include "vmm.h"
 #elif ARCH_X86_64
 #include "exception.h"
 #include "vmm.h"
@@ -94,33 +95,23 @@ static void x86_host_loop(void *arg)
 #endif
 
 #if ARCH_RISCV64
-/*
- * demo_user_test_rv - 用嵌入内核的汇编程序直接创建 RISC-V 用户进程
- * 目的：绕过 ELF loader / 文件系统，单独验证 ecall 通路是否正常工作。
- */
-static void demo_user_test_rv(void *arg)
+/* RISC-V H-extension VMM 静态 VM 实例 */
+static vm_t g_rv_vm;
+
+extern void rv_guest_test_entry(void);  /* apps/riscv64/guest_test.S */
+extern int  hext_vcpu_setup(vcpu_t *vcpu, void (*entry)(void));
+
+/* Thread 1: HS-mode 内核监控线程（等价 AArch64 el2_loop）*/
+static void rv_host_loop(void *arg)
 {
     (void)arg;
-    KLOG_INFO("[rv_test] Creating embedded RISC-V user test process...\n");
-
-    /*
-     * process_create 会：
-     *   1. 调用 vm_create_user_process 把代码复制到用户 VA 0x10000
-     *   2. 把内核 L2[0x100]/[0x102] 嫁接到新 PGD，保证 trap 仍可到达
-     *      stvec (0xffffffc0...)
-     *   3. 用户栈 [0x100000, 0x200000)  SP = 0x200000
-     */
-    task_t *p = process_create("rv_user_test",
-                               (uint64_t)user_test_program,
-                               0x200000,   /* user_sp (stack top) */
-                               5);
-    if (p) {
-        KLOG_INFO("[rv_test] User test process created: id=%u entry=0x10000\n",
-                  p->id);
-    } else {
-        KLOG_ERROR("[rv_test] Failed to create RISC-V user test process!\n");
+    uint32_t n = 0;
+    while (1) {
+        n++;
+        if (n % 20 == 0)
+            KLOG_INFO("[rv_host] tick=%u (HS-mode)\n", n);
+        task_yield();
     }
-    task_exit();
 }
 #endif
 
@@ -464,15 +455,52 @@ void kernel_main(void)
 
 #if ARCH_RISCV64
 
-    /* RISC-V：现在基础设施已验证正常，测试 busybox */
-    KLOG_INFO("Creating busybox loader...\n");
-    
-    task_t *proc1 = task_create("busybox_loader", demo_load_busybox, NULL, 5);
-    if (proc1) {
-        KLOG_INFO("Busybox loader created successfully!\n");
+    /* ── RISC-V H-ext VMM 3 线程测试 ─────────────────────────────────
+     * Thread 1: rv_host_loop  — HS-mode 内核监控循环
+     * Thread 2: vcpu0          — VS-mode guest（WFI + ecall 循环）
+     * Thread 3: u_loop         — 普通用户进程（U-mode）
+     * ─────────────────────────────────────────────────────────────── */
+    KLOG_INFO("\n=== Avatar OS: RISC-V H-ext VMM Test ===\n");
+
+    /* Thread 1: HS-mode kernel loop */
+    task_t *rv_host_task = task_create("rv_host", rv_host_loop, NULL, 5);
+    if (rv_host_task)
+        KLOG_INFO("Thread 1 [HS-mode]:   id=%u\n", rv_host_task->id);
+    else
+        KLOG_ERROR("Failed to create rv_host_loop thread!\n");
+
+    /* Thread 2: VS-mode guest vCPU — TEMPORARILY DISABLED for debug */
+#if 1
+    g_rv_vm.cfg.mem_base  = 0;
+    g_rv_vm.cfg.mem_size  = 0;   /* 无 hgatp，guest 共享 host 地址空间 */
+    g_rv_vm.cfg.nr_vcpus  = 1;
+    if (vm_create(&g_rv_vm) == 0) {
+        vcpu_t *vcpu = &g_rv_vm.vcpus[0];
+        if (hext_vcpu_setup(vcpu, rv_guest_test_entry) == 0) {
+            task_t *vcpu_task = vcpu_task_create(vcpu, 5);
+            if (vcpu_task)
+                KLOG_INFO("Thread 2 [VS-mode]:   id=%u entry=%p\n",
+                          vcpu_task->id, (void *)rv_guest_test_entry);
+            else
+                KLOG_ERROR("Failed to create vCPU task!\n");
+        } else {
+            KLOG_ERROR("hext_vcpu_setup failed!\n");
+        }
     } else {
-        KLOG_ERROR("Failed to create busybox loader!\n");
+        KLOG_ERROR("vm_create (H-ext) failed!\n");
     }
+#endif
+
+    /* Thread 3: 普通用户进程（U-mode） */
+    task_t *u_task_rv = process_create("u_loop",
+                                       (uint64_t)user_test_program,
+                                       0x200000,
+                                       5);
+    if (u_task_rv)
+        KLOG_INFO("Thread 3 [U-mode]:    id=%u entry=%p\n",
+                  u_task_rv->id, (void *)user_test_program);
+    else
+        KLOG_ERROR("Failed to create user loop thread!\n");
 
 #elif ARCH_AARCH64
 
