@@ -19,6 +19,9 @@
 #if ARCH_AARCH64
 #include "irq/irq.h"
 #include "aarch64/cpu.h"
+#include "vmm.h"
+#include "aarch64/stage2.h"
+#include "mm_vm.h"
 #elif ARCH_RISCV64
 #include "exception.h"
 #elif ARCH_X86_64
@@ -44,6 +47,27 @@ extern void kmem_test(void);
 extern void user_test_program(void);
 extern void hello_program(void);
 extern void test_execve_program(void);
+#endif
+
+#if ARCH_AARCH64
+extern void guest_test_entry(void);   /* apps/aarch64/guest_test.S */
+extern void el0_loop_program(void);   /* apps/aarch64/el0_loop.S */
+
+/* Phase 2: VMM 测试用静态 VM 实例 */
+static vm_t g_test_vm;
+
+/* EL2 内核无限循环线程（运行在 EL2 host 态）*/
+static void el2_loop_thread(void *arg)
+{
+    (void)arg;
+    uint32_t n = 0;
+    while (1) {
+        n++;
+        if (n % 20 == 0)
+            KLOG_INFO("[el2_loop] tick=%u (EL2 kernel)\n", n);
+        task_yield();
+    }
+}
 #endif
 
 #if ARCH_RISCV64
@@ -429,14 +453,48 @@ void kernel_main(void)
 
 #elif ARCH_AARCH64
 
-    /* AArch64：继续使用 busybox */
-    task_t *proc1 = task_create("busybox_loader", demo_load_busybox, NULL, 5);
-    if (proc1) {
-        KLOG_INFO("Task 1 (busybox_loader) created successfully!\n");
+    /* ── Thread 1: EL2 内核线程（无限循环） ── */
+    task_t *el2_task = task_create("el2_loop", el2_loop_thread, NULL, 5);
+    if (el2_task)
+        KLOG_INFO("Thread 1 [EL2 kernel]: id=%u\n", el2_task->id);
+    else
+        KLOG_ERROR("Failed to create EL2 loop thread!\n");
+
+    /* ── Thread 2: vCPU guest 线程（EL1 guest 无限循环） ── */
+    KLOG_INFO("guest_test_entry phys=0x%llx\n",
+              (uint64_t)virt_to_phys(guest_test_entry));
+
+    g_test_vm.cfg.mem_base = GUEST_RAM_BASE;
+    g_test_vm.cfg.mem_size = GUEST_RAM_SIZE;
+    g_test_vm.cfg.nr_vcpus = 1;
+
+    if (vm_create(&g_test_vm) == 0) {
+        vcpu_t *vcpu = &g_test_vm.vcpus[0];
+        vcpu->elr    = virt_to_phys(guest_test_entry);
+        vcpu->spsr   = 0x5ULL | (0xFULL << 6);   /* EL1h, DAIF masked */
+        vcpu->sp_el1 = GUEST_RAM_BASE + GUEST_RAM_SIZE - 0x1000;
+
+        task_t *vt = vcpu_task_create(vcpu, 5);
+        if (vt)
+            KLOG_INFO("Thread 2 [EL1 guest/vcpu]: id=%u entry=0x%llx\n",
+                      vt->id, vcpu->elr);
+        else
+            KLOG_ERROR("vcpu_task_create failed!\n");
     } else {
-        KLOG_ERROR("Failed to create task 1!\n");
+        KLOG_ERROR("vm_create failed!\n");
     }
-    
+
+    /* ── Thread 3: EL0 用户线程（无限 svc yield 循环） ── */
+    task_t *el0_task = process_create("el0_loop",
+                                      (uint64_t)el0_loop_program,
+                                      0x200000,
+                                      5);
+    if (el0_task)
+        KLOG_INFO("Thread 3 [EL0 user]:   id=%u entry=0x%llx\n",
+                  el0_task->id, (uint64_t)el0_loop_program);
+    else
+        KLOG_ERROR("Failed to create EL0 user thread!\n");
+
 #elif ARCH_X86_64
 
     /* x86_64：从文件系统加载并执行 busybox */

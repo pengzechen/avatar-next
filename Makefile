@@ -116,11 +116,38 @@ ifeq ($(ARCH),aarch64)
     VM_C_OBJECTS += $(BUILD_DIR)/kernel_mm_vm_early.o
     VM_C_SOURCES += $(KERNEL_DIR)/mm/aarch64/vmm.c
     VM_C_OBJECTS += $(BUILD_DIR)/kernel_mm_vmm.o
-else ifeq ($(ARCH),riscv64)
+    # Stage-2 MMU
+    VM_C_SOURCES += $(KERNEL_DIR)/mm/aarch64/stage2.c
+    VM_C_OBJECTS += $(BUILD_DIR)/kernel_mm_stage2.o
+    # VMM subsystem
+    VMM_C_SOURCES := $(KERNEL_DIR)/vmm/vmm.c \
+                     $(KERNEL_DIR)/vmm/aarch64/el2_run.c
+    VMM_C_OBJECTS := $(BUILD_DIR)/kernel_vmm_vmm.o \
+                     $(BUILD_DIR)/kernel_vmm_el2_run.o
+    VMM_S_SOURCES := $(KERNEL_DIR)/vmm/aarch64/el2_vmcs.S \
+                     $(KERNEL_DIR)/vmm/aarch64/vcpu_ctx.S \
+                     $(KERNEL_DIR)/vmm/aarch64/guest_vec.S
+    VMM_S_OBJECTS := $(BUILD_DIR)/kernel_vmm_el2_vmcs.o \
+                     $(BUILD_DIR)/kernel_vmm_vcpu_ctx.o \
+                     $(BUILD_DIR)/kernel_vmm_guest_vec.o
+    # guest_test.S: embedded guest program (linked into kernel binary)
+    GUEST_TEST_OBJ := $(BUILD_DIR)/apps_guest_test.o \
+                      $(BUILD_DIR)/apps_el0_loop.o
+else
+    VMM_C_SOURCES :=
+    VMM_C_OBJECTS :=
+    VMM_S_SOURCES :=
+    VMM_S_OBJECTS :=
+    GUEST_TEST_OBJ :=
+endif
+
+ifeq ($(ARCH),riscv64)
     # RISC-V VM 模块（如果有的话）
     # VM_C_SOURCES += $(KERNEL_DIR)/mm/riscv64/vm_early.c
     # VM_C_OBJECTS += $(BUILD_DIR)/kernel_mm_vm_early.o
-else ifeq ($(ARCH),x86_64)
+endif
+
+ifeq ($(ARCH),x86_64)
     # x86_64 VM 模块（如果有的话）
     # VM_C_SOURCES += $(KERNEL_DIR)/mm/x86_64/vm_early.c
     # VM_C_OBJECTS += $(BUILD_DIR)/kernel_mm_vm_early.o
@@ -671,8 +698,40 @@ $(BUILD_DIR)/drv_blk_ramblk.o: driver/blk/ramblk.c | $(BUILD_DIR)
 $(BUILD_DIR)/lwext4_port_fs_init.o: $(LWEXT4_PORT_DIR)/fs_init.c | $(BUILD_DIR)
 	$(CC) $(LWEXT4_CFLAGS) -Ifs/lwext4_port -c $< -o $@
 
+# VMM 模块编译规则（仅 AArch64）
+ifeq ($(ARCH),aarch64)
+$(BUILD_DIR)/kernel_mm_stage2.o: $(KERNEL_DIR)/mm/aarch64/stage2.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/kernel_vmm_vmm.o: $(KERNEL_DIR)/vmm/vmm.c | $(BUILD_DIR)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -Ikernel -Ikernel/vmm -c $< -o $@
+
+$(BUILD_DIR)/kernel_vmm_el2_run.o: $(KERNEL_DIR)/vmm/aarch64/el2_run.c | $(BUILD_DIR)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -Ikernel -Ikernel/vmm -c $< -o $@
+
+$(BUILD_DIR)/kernel_vmm_el2_vmcs.o: $(KERNEL_DIR)/vmm/aarch64/el2_vmcs.S | $(BUILD_DIR)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/kernel_vmm_vcpu_ctx.o: $(KERNEL_DIR)/vmm/aarch64/vcpu_ctx.S | $(BUILD_DIR)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/kernel_vmm_guest_vec.o: $(KERNEL_DIR)/vmm/aarch64/guest_vec.S | $(BUILD_DIR)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/apps_guest_test.o: apps/aarch64/guest_test.S | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/apps_el0_loop.o: apps/aarch64/el0_loop.S | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+endif
+
 # 链接内核 ELF 文件
-$(KERNEL_TARGET): $(BOOT_OBJECTS) $(KERNEL_OBJECTS) $(TASK_C_OBJECTS) $(TASK_S_OBJ) $(TASK_USER_TEST_OBJ) $(TASK_USER_HELLO_OBJ) $(TASK_USER_TESTEXECVE_OBJ) $(LOADER_C_OBJECTS) $(SYSCALL_C_OBJECTS) $(SYSCALL_S_OBJ) $(VM_C_OBJECTS) $(VM_S_OBJ) $(TESTS_OBJECTS) $(PLATFORM_OBJECTS) $(DRIVER_OBJECTS) $(EXCEPTION_OBJECTS) $(KLOG_OBJECT) $(VSNPRINTF_OBJECT) $(STRING_OBJECT) $(BITMAP_OBJECT) $(LWEXT4_OBJS) $(LWEXT4_PORT_OBJS) | $(BUILD_DIR)
+$(KERNEL_TARGET): $(BOOT_OBJECTS) $(KERNEL_OBJECTS) $(TASK_C_OBJECTS) $(TASK_S_OBJ) $(TASK_USER_TEST_OBJ) $(TASK_USER_HELLO_OBJ) $(TASK_USER_TESTEXECVE_OBJ) $(LOADER_C_OBJECTS) $(SYSCALL_C_OBJECTS) $(SYSCALL_S_OBJ) $(VM_C_OBJECTS) $(VM_S_OBJ) $(VMM_C_OBJECTS) $(VMM_S_OBJECTS) $(GUEST_TEST_OBJ) $(TESTS_OBJECTS) $(PLATFORM_OBJECTS) $(DRIVER_OBJECTS) $(EXCEPTION_OBJECTS) $(KLOG_OBJECT) $(VSNPRINTF_OBJECT) $(STRING_OBJECT) $(BITMAP_OBJECT) $(LWEXT4_OBJS) $(LWEXT4_PORT_OBJS) | $(BUILD_DIR)
 	$(CC) $(LDFLAGS) -nostartfiles -nodefaultlibs -T $(BOOT_DIR)/$(ARCH)/link.ld -o $@ $^
 
 # 转换为二进制文件
