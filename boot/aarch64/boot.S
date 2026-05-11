@@ -13,9 +13,70 @@
 
 _start:
     /*
-     * QEMU virt machine starts at EL1 (Exception Level 1)
-     * We're already in 64-bit mode with MMU disabled
+     * ── EL2/VHE 初始化 ────────────────────────────────────────
+     *
+     * QEMU -machine virt,virtualization=on 从 EL2 进入。
+     * 启用 VHE（Virtualization Host Extensions），让内核在 EL2 运行：
+     *
+     *   HCR_EL2.E2H  (bit 34) = 1  → 启用 VHE；EL1 寄存器名自动
+     *                                 别名为对应 EL2 寄存器，现有代码
+     *                                 零修改透明兼容。
+     *   HCR_EL2.RW   (bit 31) = 1  → Guest EL1 为 AArch64
+     *   HCR_EL2.TGE  (bit 27) = 1  → EL0 异常直接陷入 EL2
+     *                                 （syscall/IRQ 路由不变）
+     *
+     * VHE 寄存器别名（硬件透明，无需修改现有汇编/C）：
+     *   msr vbar_el1  → VBAR_EL2    msr elr_el1   → ELR_EL2
+     *   msr spsr_el1  → SPSR_EL2    msr ttbr0_el1 → TTBR0_EL2
+     *   msr ttbr1_el1 → TTBR1_EL2   msr tcr_el1   → TCR_EL2
+     *   msr mair_el1  → MAIR_EL2    msr sctlr_el1 → SCTLR_EL2
+     *   mrs esr_el1   → ESR_EL2     mrs far_el1   → FAR_EL2
      */
+    mrs     x0, CurrentEL
+    lsr     x0, x0, #2              /* x0 = 当前 EL（数字 1 或 2）  */
+    cmp     x0, #2
+    b.ne    .Lskip_el2_init         /* EL1 fallback（不支持 VHE 时跳过）*/
+
+    /* HCR_EL2: E2H(34) | RW(31) | TGE(27) */
+    mov     x1, xzr
+    orr     x1, x1, #(1 << 34)     /* E2H  */
+    orr     x1, x1, #(1 << 31)     /* RW   */
+    orr     x1, x1, #(1 << 27)     /* TGE  */
+    msr     hcr_el2, x1
+    isb
+
+    /*
+     * 允许 FP/NEON：清除 CPTR_EL2.TFP（bit 10）。
+     * 默认值 TFP=1 会把 FP 指令陷入 EL2，导致 kernel panic。
+     */
+    mrs     x1, cptr_el2
+    bic     x1, x1, #(1 << 10)
+    msr     cptr_el2, x1
+
+    /*
+     * 开放 EL0/EL1 定时器访问（CNTHCTL_EL2）：
+     *   bit 0 EL0PCTEN  = 1  不陷入 EL0 的 CNTPCT 读取
+     *   bit 1 EL0VCTEN  = 1  不陷入 EL0 的 CNTVCT 读取
+     *   bit 10 EL1PTEN  = 1  不陷入 EL1 物理定时器访问
+     */
+    mov     x1, #(1 | (1 << 1) | (1 << 10))
+    msr     cnthctl_el2, x1
+    isb
+
+    /*
+     * 清除 PSTATE.PAN（Privileged Access Never，ARMv8.1 FEAT_PAN）。
+     * cortex-a76 支持 PAN；若不清除，EL2 内核访问 EL0 可访问的页会
+     * 触发 EC=0x25 permission fault（Data Abort from current EL）。
+     * 同时在 mmu.S 中将 SCTLR_EL1.SPAN=1，防止陷入 EL2 时 PAN 被
+     * 自动重新置位。
+     */
+.arch_extension pan
+    msr     pan, #0
+    isb
+
+.Lskip_el2_init:
+    /* ── 以下与原 EL1 启动路径完全一致（VHE 别名透明）──────── */
+
     msr daifset, #2   // 关闭所有中断
 
     /*

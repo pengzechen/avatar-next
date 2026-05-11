@@ -85,9 +85,13 @@ static void qemu_shutdown(void)
         * the PSCI SYSTEM_OFF call (AArch64).
         */
     #if ARCH_AARCH64
-        /* PSCI SYSTEM_OFF via HVC (SMCCC 32-bit convention, funcid 0x84000008) */
+        /*
+         * VHE 模式下内核运行在 EL2，无法用 HVC 向上调用固件（HVC 从 EL2
+         * 执行会触发 EC=0x16 回绕到自身异常向量）。
+         * 改用 SMC 走 EL3 PSCI：SMCCC 32-bit PSCI SYSTEM_OFF = 0x84000008。
+         */
         register unsigned long x0 __asm__("x0") = 0x84000008UL;
-        __asm__ volatile("hvc #0" :: "r"(x0) : "memory");
+        __asm__ volatile("smc #0" :: "r"(x0) : "memory");
     #elif ARCH_RISCV64
         /* SBI SRST extension: sbi_system_reset(SHUTDOWN, GRACEFUL) */
         register unsigned long a7 __asm__("a7") = 0x53525354UL; /* SBI_EXT_SRST */

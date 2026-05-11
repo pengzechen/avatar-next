@@ -310,7 +310,7 @@ else ifeq ($(ARCH),aarch64)
     KERNEL_TARGET := $(BUILD_DIR)/kernel_aarch64.elf
     KERNEL_BIN    := $(BUILD_DIR)/kernel_aarch64.bin
     QEMU          := qemu-system-aarch64
-    QEMU_FLAGS    := -cpu cortex-a72 -M virt -m 2G -nographic -kernel $(KERNEL_BIN)
+    QEMU_FLAGS    := -cpu cortex-a76 -M virt,virtualization=on -m 2G -nographic -kernel $(KERNEL_BIN)
 else ifeq ($(ARCH),riscv64)
     CC      := riscv64-linux-musl-gcc
     AR      := riscv64-linux-musl-ar

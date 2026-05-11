@@ -29,6 +29,7 @@ mmu_init:
     /* 再启用 MMU */
     mrs x2, sctlr_el1
     orr x2, x2, #(1 << 0)      /* SCTLR_EL1.M - MMU 使能 */
+    orr x2, x2, #(1 << 23)     /* SCTLR_EL1.SPAN=1 - 陷入 EL2 时不自动设置 PAN */
     msr sctlr_el1, x2
 
     /* 内存屏障 */
