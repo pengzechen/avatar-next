@@ -111,46 +111,25 @@ static int vmm_exit_handler(vcpu_t *vcpu)
     }
 }
 
-/* ── VMM 主循环 ─────────────────────────────────────────────── */
-/*
- * vmm_run_vcpu — vCPU 执行主循环（对标 x86 vmx_run）
- *
- * 首先恢复 guest EL1 系统寄存器，然后反复 el2_enter_guest / 处理 exit。
- * 返回 0：guest 正常退出；返回 -1：发生未处理的 exit。
- */
-int vmm_run_vcpu(vcpu_t *vcpu)
+/* ── AArch64 VMM 架构钩子实现 ───────────────────────────────── */
+
+void vmm_arch_restore_guest_ctx(vcpu_t *vcpu)
 {
-    KLOG_INFO("[VMM] Starting vcpu%d entry=0x%llx sp_el1=0x%llx\n",
-              vcpu->vcpu_id, vcpu->elr, vcpu->sp_el1);
-
-    /* 恢复 guest EL1 系统寄存器（首次 = zeroed, 恢复后 = guest 上次状态）*/
     restore_sysregs_el12(vcpu->sysregs);
+}
 
-    while (1) {
-        /* 进入 guest（el2_trap_exit 后 ret 返回此处）*/
-        el2_enter_guest(vcpu);
-        vcpu->launched = 1;
+int vmm_arch_enter_guest(vcpu_t *vcpu)
+{
+    el2_enter_guest(vcpu);
+    return 1;   /* el2_enter_guest 总是成功返回（否则直接崩溃）*/
+}
 
-        int ret = vmm_exit_handler(vcpu);
+int vmm_arch_exit_handler(vcpu_t *vcpu)
+{
+    return vmm_exit_handler(vcpu);
+}
 
-        switch (ret) {
-        case EL2_RESUME:
-            continue;
-        case EL2_VMEXIT:
-            KLOG_INFO("[VMM] vcpu%d: guest exited normally\n", vcpu->vcpu_id);
-            save_sysregs_el12(vcpu->sysregs);
-            return 0;
-        case EL2_VMABORT:
-            KLOG_WARN("[VMM] vcpu%d: guest aborted\n", vcpu->vcpu_id);
-            save_sysregs_el12(vcpu->sysregs);
-            return 0;
-        case EL2_VMSKIP:
-            continue;
-        case EL2_EXIT:
-        default:
-            KLOG_ERROR("[VMM] vcpu%d: unhandled exit, stopping VMM\n",
-                       vcpu->vcpu_id);
-            return -1;
-        }
-    }
+void vmm_arch_save_guest_ctx(vcpu_t *vcpu)
+{
+    save_sysregs_el12(vcpu->sysregs);
 }

@@ -26,6 +26,7 @@
 #include "exception.h"
 #elif ARCH_X86_64
 #include "exception.h"
+#include "vmm.h"
 #endif
 
 /* Forward declarations for test functions */
@@ -65,6 +66,28 @@ static void el2_loop_thread(void *arg)
         n++;
         if (n % 20 == 0)
             KLOG_INFO("[el2_loop] tick=%u (EL2 kernel)\n", n);
+        task_yield();
+    }
+}
+#endif
+
+#if ARCH_X86_64
+extern void x86_guest_test_entry(void); /* apps/x86_64/guest_test.S */
+extern void user_test_program(void);    /* apps/x86_64/user_test.S  */
+extern int  vmx_vcpu_setup(vcpu_t *vcpu, void (*entry)(void));
+
+/* x86 VMM 测试用静态 VM 实例 */
+static vm_t g_x86_vm;
+
+/* x86 host 内核无限循环线程（VMX root mode）*/
+static void x86_host_loop(void *arg)
+{
+    (void)arg;
+    uint32_t n = 0;
+    while (1) {
+        n++;
+        if (n % 20 == 0)
+            KLOG_INFO("[x86_host] tick=%u (VMX root)\n", n);
         task_yield();
     }
 }
@@ -497,15 +520,50 @@ void kernel_main(void)
 
 #elif ARCH_X86_64
 
-    /* x86_64：从文件系统加载并执行 busybox */
-    KLOG_INFO("Creating busybox loader for x86_64...\n");
+    /* ── x86_64 VMX VMM 3 线程测试 ──────────────────────────────────
+     * Thread 1: x86_host_loop — VMX root 内核无限循环
+     * Thread 2: vcpu0          — VMX non-root guest (HLT + VMCALL)
+     * Thread 3: u_loop         — 普通用户进程
+     * ─────────────────────────────────────────────────────────────── */
+    KLOG_INFO("\n=== Avatar OS: x86_64 VMX VMM Test ===\n");
 
-    task_t *proc1 = task_create("busybox_loader", demo_load_busybox, NULL, 5);
-    if (proc1) {
-        KLOG_INFO("Busybox loader created successfully!\n");
+    /* Thread 1: VMX root kernel loop */
+    task_t *host_task = task_create("x86_host", x86_host_loop, NULL, 5);
+    if (host_task)
+        KLOG_INFO("Thread 1 [VMX root]:  id=%u\n", host_task->id);
+    else
+        KLOG_ERROR("Failed to create x86_host_loop thread!\n");
+
+    /* Thread 2: VMX non-root guest vCPU */
+    g_x86_vm.cfg.mem_base  = 0;
+    g_x86_vm.cfg.mem_size  = 0;  /* no EPT, guest shares host CR3 */
+    g_x86_vm.cfg.nr_vcpus  = 1;
+    if (vm_create(&g_x86_vm) == 0) {
+        vcpu_t *vcpu = &g_x86_vm.vcpus[0];
+        if (vmx_vcpu_setup(vcpu, x86_guest_test_entry) == 0) {
+            task_t *vcpu_task = vcpu_task_create(vcpu, 5);
+            if (vcpu_task)
+                KLOG_INFO("Thread 2 [VMX guest]: id=%u entry=%p\n",
+                          vcpu_task->id, (void *)x86_guest_test_entry);
+            else
+                KLOG_ERROR("Failed to create vCPU task!\n");
+        } else {
+            KLOG_ERROR("vmx_vcpu_setup failed!\n");
+        }
     } else {
-        KLOG_ERROR("Failed to create busybox loader!\n");
+        KLOG_ERROR("vm_create (VMX) failed!\n");
     }
+
+    /* Thread 3: 普通用户进程（等同 AArch64 el0_loop）*/
+    task_t *u_task = process_create("u_loop",
+                                    (uint64_t)user_test_program,
+                                    0x200000,
+                                    5);
+    if (u_task)
+        KLOG_INFO("Thread 3 [user]:      id=%u entry=%p\n",
+                  u_task->id, (void *)user_test_program);
+    else
+        KLOG_ERROR("Failed to create user loop thread!\n");
 
 #endif /* ARCH_RISCV64 / ARCH_AARCH64 / ARCH_X86_64 */
 

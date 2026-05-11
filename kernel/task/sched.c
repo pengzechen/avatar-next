@@ -163,22 +163,22 @@ sched_schedule(void)
     if (next->is_user_process && next->pgd != 0) {
         /* 切换到用户页表 */
         uint64_t pgd_phys = (uint64_t)next->pgd;
-        KLOG_INFO("[sched] switching CR3 to user PGD=0x%llx for '%s'\n", 
-                   pgd_phys, next->name);
+        // KLOG_INFO("[sched] switching CR3 to user PGD=0x%llx for '%s'\n", 
+        //            pgd_phys, next->name);
         write_cr3(pgd_phys);
         
         /* 验证 CR3 切换 */
         uint64_t cr3_after = read_cr3();
-        KLOG_INFO("[sched] CR3 after switch = 0x%llx (expected 0x%llx)\n",
-                  cr3_after, pgd_phys);
+        // KLOG_INFO("[sched] CR3 after switch = 0x%llx (expected 0x%llx)\n",
+        //           cr3_after, pgd_phys);
         
         if ((cr3_after & 0xFFFFFFFFF000ULL) != pgd_phys) {
             KLOG_ERROR("[sched] CR3 switch FAILED!\n");
         } else {
-            KLOG_INFO("[sched] CR3 switched successfully, testing memory access...\n");
+            // KLOG_INFO("[sched] CR3 switched successfully, testing memory access...\n");
             /* 测试内核代码是否可访问（读取当前指令） */
             volatile uint64_t test = *(volatile uint64_t *)&sched_schedule;
-            KLOG_INFO("[sched] Memory access test passed, code accessible: 0x%llx\n", test);
+            // KLOG_INFO("[sched] Memory access test passed, code accessible: 0x%llx\n", test);
         }
         
         /* 更新 TSS.RSP0 为当前任务的内核栈顶 */
@@ -189,11 +189,11 @@ sched_schedule(void)
         /* 恢复该用户任务的 TLS 基址（fs:offset） */
         x86_write_fs_base(next->fs_base);
 
-        KLOG_INFO("[sched] Updated TSS.RSP0 to 0x%llx for task '%s'\n",
+        KLOG_DEBUG("[sched] Updated TSS.RSP0 to 0x%llx for task '%s'\n",
                   kernel_stack_top, next->name);
     } else if (next->is_user_process == 0 && prev->is_user_process != 0) {
         /* 从用户任务切换到内核任务：恢复内核页表 */
-        KLOG_INFO("[sched] restoring kernel CR3=0x%llx\n", g_kernel_cr3);
+        KLOG_DEBUG("[sched] restoring kernel CR3=0x%llx\n", g_kernel_cr3);
         write_cr3(g_kernel_cr3);
     }
     /* 用户→用户切换，已在上面处理；内核→内核切换，页表不变 */
@@ -203,7 +203,7 @@ sched_schedule(void)
               prev->name, prev->id, next->name, next->id);
 
     if (next->is_user_process) {
-        KLOG_INFO("[sched] next='%s': entry=0x%llx sp=0x%llx kernel_sp=0x%llx\n",
+        KLOG_DEBUG("[sched] next='%s': entry=0x%llx sp=0x%llx kernel_sp=0x%llx\n",
                    next->name, next->user_entry, next->user_sp, next->sp);
     }
 

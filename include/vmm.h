@@ -48,9 +48,11 @@
 
 /* ── vCPU 控制块 ─────────────────────────────────────────────
  *
- * 前 VCPU_SYSREGS + VCPU_SYSREGS_SIZE 字节由汇编直接寻址，
- * 其余字段仅供 C 代码访问。
+ * 架构特定：AArch64 与 x86_64 使用不同的字段布局。
+ * vmm_run_vcpu 只访问公共字段 vcpu_id / launched / vm。
  * ─────────────────────────────────────────────────────────── */
+#if ARCH_AARCH64
+/* 前 VCPU_SYSREGS + VCPU_SYSREGS_SIZE 字节由汇编直接寻址，勿调整顺序 */
 typedef struct vcpu {
     /* ── asm-accessible（勿改动顺序）────────────────────── */
     uint64_t r[31];                    /* x0-x30 guest GPRs    offset=0   */
@@ -66,6 +68,70 @@ typedef struct vcpu {
     uint64_t page_table_base;          /* VTTBR_EL2 (VMID:PGD)           */
     struct vm *vm;                     /* 所属 VM 反向指针                */
 } vcpu_t;
+
+#elif ARCH_X86_64
+/*
+ * x86_64 guest GPR 保存区（与 vmx_run.S VCPU_X86_* 偏移一致）
+ *   rax +0x00  rbx +0x08  rcx +0x10  rdx +0x18
+ *   rbp +0x20  rsi +0x28  rdi +0x30
+ *   r8  +0x38  r9  +0x40  r10 +0x48  r11 +0x50
+ *   r12 +0x58  r13 +0x60  r14 +0x68  r15 +0x70
+ *   rflags +0x78
+ */
+typedef struct {
+    uint64_t rax;    /* +0x00 */
+    uint64_t rbx;    /* +0x08 */
+    uint64_t rcx;    /* +0x10 */
+    uint64_t rdx;    /* +0x18 */
+    uint64_t rbp;    /* +0x20 */
+    uint64_t rsi;    /* +0x28 */
+    uint64_t rdi;    /* +0x30 */
+    uint64_t r8;     /* +0x38 */
+    uint64_t r9;     /* +0x40 */
+    uint64_t r10;    /* +0x48 */
+    uint64_t r11;    /* +0x50 */
+    uint64_t r12;    /* +0x58 */
+    uint64_t r13;    /* +0x60 */
+    uint64_t r14;    /* +0x68 */
+    uint64_t r15;    /* +0x70 */
+    uint64_t rflags; /* +0x78 (from VMCS GUEST_RFLAGS on exit) */
+} x86_guest_regs_t;
+
+/* vmx_run.S 中使用的 vcpu->regs 字段偏移（vcpu_t 起始处）*/
+#define VCPU_X86_RAX    0x00
+#define VCPU_X86_RBX    0x08
+#define VCPU_X86_RCX    0x10
+#define VCPU_X86_RDX    0x18
+#define VCPU_X86_RBP    0x20
+#define VCPU_X86_RSI    0x28
+#define VCPU_X86_RDI    0x30
+#define VCPU_X86_R8     0x38
+#define VCPU_X86_R9     0x40
+#define VCPU_X86_R10    0x48
+#define VCPU_X86_R11    0x50
+#define VCPU_X86_R12    0x58
+#define VCPU_X86_R13    0x60
+#define VCPU_X86_R14    0x68
+#define VCPU_X86_R15    0x70
+
+typedef struct vcpu {
+    x86_guest_regs_t regs;  /* guest GPRs, offset=0, 与 vmx_run.S 对齐  */
+    /* ── C-only 字段 ──────────────────────────────────── */
+    int      vcpu_id;
+    int      launched;
+    uint64_t page_table_base;   /* 将来用于 EPT/guest CR3               */
+    struct vm *vm;
+} vcpu_t;
+
+#else
+/* 其他架构：空壳，只有公共字段 */
+typedef struct vcpu {
+    int      vcpu_id;
+    int      launched;
+    uint64_t page_table_base;
+    struct vm *vm;
+} vcpu_t;
+#endif /* ARCH_* */
 
 /* ── VM 配置 ─────────────────────────────────────────────────── */
 typedef struct vm_cfg {
@@ -111,6 +177,27 @@ void restore_sysregs_el12(void *buf);
 void set_stage2_pgd(uint64_t pgd_phys, uint32_t vmid);
 
 #endif /* ARCH_AARCH64 */
+
+/* ── 架构钩子（每个架构各自实现）────────────────────────────── */
+/*
+ * 由 vmm_run_vcpu（vmm.c）调用；每个架构在 arch/vmx.c 或 el2_run.c 中提供实现。
+ *
+ *   vmm_arch_restore_guest_ctx — 进入 guest 循环前恢复架构相关上下文
+ *   vmm_arch_enter_guest       — 执行一次 guest 入口（eret/vmlaunch/vmresume）
+ *                                返回 1 成功，0 入口失败
+ *   vmm_arch_exit_handler      — 处理一次 VM exit，返回 EL2_* / VMX_* 状态码
+ *   vmm_arch_save_guest_ctx    — guest 退出后保存架构相关上下文
+ */
+void vmm_arch_restore_guest_ctx(vcpu_t *vcpu);
+int  vmm_arch_enter_guest(vcpu_t *vcpu);   /* 1=success, 0=entry-failed */
+int  vmm_arch_exit_handler(vcpu_t *vcpu);
+void vmm_arch_save_guest_ctx(vcpu_t *vcpu);
+
+/*
+ * vmm_run_vcpu — 架构无关 vCPU 执行主循环（实现在 vmm.c）
+ * 返回 0：guest 正常退出；返回 -1：未处理的 exit。
+ */
+int vmm_run_vcpu(vcpu_t *vcpu);
 
 /* ── VM 管理 API ─────────────────────────────────────────────── */
 

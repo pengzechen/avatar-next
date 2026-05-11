@@ -12,19 +12,11 @@
  *   - 返回值: RAX
  */
 
-/* 系统调用号定义（与 kernel/syscall/syscall.h 一致） */
-#define SYS_EXIT          0
-#define SYS_YIELD         1
-#define SYS_GETPID        2
-#define SYS_SLEEP         3
-#define SYS_EXECVE        4
-#define SYS_BRK          10
-#define SYS_SBRK         11
-#define SYS_WRITE        20
-#define SYS_READ         21
-#define SYS_OPEN         22
-#define SYS_CLOSE        23
-#define SYS_GETTIMEOFDAY 30
+/* Linux x86_64 系统调用号（与内核 x86_translate_syscall 映射一致） */
+#define SYS_WRITE        1   /* write(fd, buf, count) → fd=1 for stdout */
+#define SYS_GETPID       39  /* getpid() */
+#define SYS_YIELD        24  /* sched_yield() */
+#define SYS_EXIT         60  /* exit(code) */
 
 .section .text.user
 .global user_test_program
@@ -40,35 +32,39 @@ user_test_program:
     /* 由于 Ring 3 无法直接 OUT，我们只能通过系统调用来输出 */
 
     /* 输出欢迎消息 */
-    leaq    msg_hello(%rip), %rdi   /* arg0 = 字符串地址 */
-    movq    $31, %rsi               /* arg1 = 长度 */
-    movq    $SYS_WRITE, %rax        /* syscall nr = 20 */
+    /* write(1, msg_hello, 31) */
+    movq    $1, %rdi                /* fd = 1 (stdout) */
+    leaq    msg_hello(%rip), %rsi   /* buf */
+    movq    $31, %rdx               /* count */
+    movq    $SYS_WRITE, %rax
     syscall                         /* 触发 Ring 3 → Ring 0 */
 
     /* 测试 getpid 系统调用 */
-    movq    $SYS_GETPID, %rax       /* syscall nr = 2 */
+    movq    $SYS_GETPID, %rax
     syscall
     movq    %rax, %r12              /* 保存 PID 到 R12 */
 
-    /* 输出 PID 信息 */
-    leaq    msg_pid(%rip), %rdi
-    movq    $20, %rsi
+    /* 输出 PID 信息：write(1, msg_pid, 20) */
+    movq    $1, %rdi
+    leaq    msg_pid(%rip), %rsi
+    movq    $20, %rdx
     movq    $SYS_WRITE, %rax
     syscall
 
-    /* 输出 PID 数字（简单转换为 ASCII） */
+    /* 输出 PID 数字（简单转换为 ASCII）*/
     movq    %r12, %rax
     addq    $'0', %rax
-    leaq    msg_buf(%rip), %rdi
-    movb    %al, (%rdi)
-    leaq    msg_buf(%rip), %rdi
-    movq    $1, %rsi
+    leaq    msg_buf(%rip), %rsi
+    movb    %al, (%rsi)
+    movq    $1, %rdi
+    movq    $1, %rdx
     movq    $SYS_WRITE, %rax
     syscall
 
-    /* 输出换行 */
-    leaq    msg_newline(%rip), %rdi
-    movq    $1, %rsi
+    /* 输出换行：write(1, msg_newline, 1) */
+    movq    $1, %rdi
+    leaq    msg_newline(%rip), %rsi
+    movq    $1, %rdx
     movq    $SYS_WRITE, %rax
     syscall
 
@@ -85,9 +81,10 @@ delay:
     /* 增加计数器 */
     incq    %r13
 
-    /* 输出 "[user_test] #" */
-    leaq    msg_loop(%rip), %rdi
-    movq    $14, %rsi               /* "[user_test] #\n" = 14 字节 */
+    /* 输出 "[user_test] #\n"：write(1, msg_loop, 14) */
+    movq    $1, %rdi
+    leaq    msg_loop(%rip), %rsi
+    movq    $14, %rdx
     movq    $SYS_WRITE, %rax
     syscall
 
@@ -103,7 +100,7 @@ exit:
     movq    $SYS_EXIT, %rax
     xorq    %rdi, %rdi              /* exit code = 0 */
     syscall
-    
+
     /* 死循环（以防万一） */
 1:  jmp     1b
 
