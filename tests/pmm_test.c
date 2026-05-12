@@ -18,31 +18,31 @@
  */
 static void test_pmm_basic(void)
 {
-    KLOG_INFO("=== PMM Basic Allocation Test ===");
+    KLOG_INFO("=== PMM Basic Allocation Test ===\n");
 
     /* 测试单页分配 */
     uint64_t page1 = pmm_alloc_pages(g_pmm, 1);
-    KLOG_INFO("Allocated 1 page at: 0x%llx", page1);
+    KLOG_INFO("Allocated 1 page at: 0x%llx\n", page1);
     assert(page1 != 0);
     assert(page1 >= PMM_RAM_BASE);
 
     /* 测试多页分配 */
     uint64_t pages = pmm_alloc_pages(g_pmm, 10);
-    KLOG_INFO("Allocated 10 pages at: 0x%llx", pages);
+    KLOG_INFO("Allocated 10 pages at: 0x%llx\n", pages);
     assert(pages != 0);
     assert(pages >= PMM_RAM_BASE);
 
     /* 测试页面释放 */
     pmm_free_pages(g_pmm, page1, 1);
-    KLOG_INFO("Freed 1 page at: 0x%llx", page1);
+    KLOG_INFO("Freed 1 page at: 0x%llx\n", page1);
 
     pmm_free_pages(g_pmm, pages, 10);
-    KLOG_INFO("Freed 10 pages at: 0x%llx", pages);
+    KLOG_INFO("Freed 10 pages at: 0x%llx\n", pages);
 
     /* 验证页面计数 */
     uint64_t free_pages = pmm_get_free_pages(g_pmm);
     uint64_t total_pages = pmm_get_total_pages(g_pmm);
-    KLOG_INFO("Free pages: %llu / %llu", free_pages, total_pages);
+    KLOG_INFO("Free pages: %llu / %llu\n", free_pages, total_pages);
 
     KLOG_INFO("✓ Basic allocation test passed\n");
 }
@@ -52,29 +52,29 @@ static void test_pmm_basic(void)
  */
 static void test_pmm_large_allocation(void)
 {
-    KLOG_INFO("=== PMM Large Allocation Test ===");
+    KLOG_INFO("=== PMM Large Allocation Test ===\n");
 
     /* 分配 1000 页（约 4MB） */
     uint64_t large_block = pmm_alloc_pages(g_pmm, 1000);
-    KLOG_INFO("Allocated 1000 pages (~4MB) at: 0x%llx", large_block);
+    KLOG_INFO("Allocated 1000 pages (~4MB) at: 0x%llx\n", large_block);
     assert(large_block != 0);
 
     /* 分配 10000 页（约 40MB） */
     uint64_t huge_block = pmm_alloc_pages(g_pmm, 10000);
-    KLOG_INFO("Allocated 10000 pages (~40MB) at: 0x%llx", huge_block);
+    KLOG_INFO("Allocated 10000 pages (~40MB) at: 0x%llx\n", huge_block);
     assert(huge_block != 0);
 
     /* 释放 */
     pmm_free_pages(g_pmm, large_block, 1000);
-    KLOG_INFO("Freed 1000 pages");
+    KLOG_INFO("Freed 1000 pages\n");
 
     pmm_free_pages(g_pmm, huge_block, 10000);
-    KLOG_INFO("Freed 10000 pages");
+    KLOG_INFO("Freed 10000 pages\n");
 
     /* 验证页面计数恢复 */
     uint64_t free_pages = pmm_get_free_pages(g_pmm);
     uint64_t total_pages = pmm_get_total_pages(g_pmm);
-    KLOG_INFO("Free pages: %llu / %llu", free_pages, total_pages);
+    KLOG_INFO("Free pages: %llu / %llu\n", free_pages, total_pages);
 
     KLOG_INFO("✓ Large allocation test passed\n");
 }
@@ -84,26 +84,26 @@ static void test_pmm_large_allocation(void)
  */
 static void test_pmm_fragmentation(void)
 {
-    KLOG_INFO("=== PMM Fragmentation Test ===");
+    KLOG_INFO("=== PMM Fragmentation Test ===\n");
 
     uint64_t pages[10];
 
     /* 分配多个小块 */
     for (int i = 0; i < 10; i++) {
         pages[i] = pmm_alloc_pages(g_pmm, 100);
-        KLOG_INFO("Allocated block %d: 0x%llx", i, pages[i]);
+        KLOG_INFO("Allocated block %d: 0x%llx\n", i, pages[i]);
         assert(pages[i] != 0);
     }
 
     /* 释放部分块 */
     for (int i = 0; i < 5; i++) {
         pmm_free_pages(g_pmm, pages[i], 100);
-        KLOG_INFO("Freed block %d", i);
+        KLOG_INFO("Freed block %d\n", i);
     }
 
     /* 尝试分配大块（应该能成功，因为有连续空间） */
     uint64_t large = pmm_alloc_pages(g_pmm, 500);
-    KLOG_INFO("Allocated 500 pages after fragmentation: 0x%llx", large);
+    KLOG_INFO("Allocated 500 pages after fragmentation: 0x%llx\n", large);
     assert(large != 0);
 
     /* 清理 */
@@ -120,7 +120,7 @@ static void test_pmm_fragmentation(void)
  */
 static void test_pmm_stress(void)
 {
-    KLOG_INFO("=== PMM Stress Test ===");
+    KLOG_INFO("=== PMM Stress Test ===\n");
 
     uint64_t total_allocated = 0;
     uint64_t iterations = 0;
@@ -140,14 +140,14 @@ static void test_pmm_stress(void)
 
         /* 每 100 次迭代释放一些内存 */
         if (iterations % 100 == 0) {
-            KLOG_INFO("Iteration %llu: allocated %llu pages total",
+            KLOG_INFO("Iteration %llu: allocated %llu pages total\n",
                       iterations, total_allocated);
         }
     }
 
-    KLOG_INFO("Stress test completed:");
-    KLOG_INFO("  Iterations: %llu", iterations);
-    KLOG_INFO("  Total allocated: %llu pages (~%llu MB)",
+    KLOG_INFO("Stress test completed:\n");
+    KLOG_INFO("  Iterations: %llu\n", iterations);
+    KLOG_INFO("  Total allocated: %llu pages (~%llu MB)\n",
               total_allocated,
               (total_allocated * PMM_PAGE_SIZE) / (1024 * 1024));
 
@@ -161,11 +161,11 @@ static void test_pmm_stress(void)
  */
 static void test_pmm_boundary(void)
 {
-    KLOG_INFO("=== PMM Boundary Test ===");
+    KLOG_INFO("=== PMM Boundary Test ===\n");
 
     /* 测试对齐 */
     uint64_t page1 = pmm_alloc_pages(g_pmm, 1);
-    KLOG_INFO("Allocated page at: 0x%llx", page1);
+    KLOG_INFO("Allocated page at: 0x%llx\n", page1);
     assert(page1 % PMM_PAGE_SIZE == 0);  /* 应该页对齐 */
 
     /* 测试地址范围 */
@@ -175,7 +175,7 @@ static void test_pmm_boundary(void)
     pmm_free_pages(g_pmm, page1, 1);
 
     /* 测试无效释放（应该被优雅处理） */
-    KLOG_INFO("Testing invalid free (expecting error message)...");
+    KLOG_INFO("Testing invalid free (expecting error message)...\n");
     pmm_free_pages(g_pmm, 0x0, 1);  /* 无效地址 */
     pmm_free_pages(g_pmm, 0xFFFFFFFFULL, 1);  /* 超出范围 */
 
@@ -191,7 +191,7 @@ static void test_pmm_boundary(void)
  */
 void run_pmm_tests(void)
 {
-    KLOG_INFO("=== Running PMM Tests ===\n");
+    KLOG_WARN("=== Running PMM Tests ===\n");
 
     test_pmm_basic();
     test_pmm_large_allocation();
