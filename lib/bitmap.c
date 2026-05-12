@@ -30,7 +30,11 @@ size_t bitmap_find_first_free(const bitmap_t *bitmap)
  */
 size_t bitmap_find_contiguous_free(const bitmap_t *bitmap, size_t count)
 {
-    for (size_t i = 0; i <= bitmap->size - count; i++) {
+    if (count == 0 || count > bitmap->size) {
+        return (size_t)-1;
+    }
+
+    for (size_t i = 0; i + count <= bitmap->size; i++) {
         size_t j;
         for (j = 0; j < count; j++) {
             if (bitmap_test(bitmap, i + j)) {

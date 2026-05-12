@@ -9,6 +9,17 @@
 #include "assert.h"
 #include "string.h"
 #include "mm_vm.h"  /* 提供 PAGE_SIZE */
+#include "pmm_reserve.h"
+#include "../../driver/blk/ramblk_cfg.h" /* RAMBLK_PHYS_BASE / RAMBLK_PHYS_END */
+
+/* 计算全局 PMM 位图大小（字节） */
+#define PMM_TOTAL_PAGES (PMM_RAM_SIZE / PAGE_SIZE)
+#define PMM_BITMAP_SIZE ((PMM_TOTAL_PAGES + 7) / 8)
+
+/* 全局 PMM 状态 */
+static uint8_t g_pmm_bitmap_buffer[PMM_BITMAP_SIZE];
+pmm_t pmm;
+pmm_t *g_pmm = &pmm;
 
 /* ── PMM 初始化 ───────────────────────────────────────────────────── */
 
@@ -87,14 +98,6 @@ uint64_t pmm_alloc_pages(pmm_t *pmm, uint32_t page_count)
         /* 更新空闲页面计数 */
         pmm->free_pages -= page_count;
 
-        /* 调试：检查是否分配了包含 g_pmm 的页面（物理页 0x80230000） */
-        uint64_t end_addr = paddr + page_count * pmm->page_size;
-        if (paddr <= 0x80230000 && end_addr > 0x80230000) {
-            KLOG_ERROR("[PMM] ⚠️  DANGER: Allocated page range 0x%llx-0x%llx includes g_pmm page 0x80230000!\n",
-                       paddr, end_addr);
-            KLOG_ERROR("[PMM]   page_index=%zu, count=%u\n", page_index, page_count);
-        }
-
         // KLOG_DEBUG("PMM: allocated %u pages at 0x%llx (index %zu)\n",
         //            page_count, paddr, page_index);
     } else {
@@ -119,6 +122,11 @@ void pmm_free_pages(pmm_t *pmm, uint64_t paddr, uint32_t page_count)
     assert(pmm != NULL);
     assert(page_count > 0);
 
+    if ((paddr & (pmm->page_size - 1)) != 0) {
+        KLOG_ERROR("PMM: free address is not page-aligned: 0x%llx\n", paddr);
+        return;
+    }
+
     /* 检查地址范围 */
     if (paddr < pmm->start_addr || paddr >= pmm->start_addr + pmm->total_size) {
         KLOG_ERROR("PMM: invalid free address: 0x%llx\n", paddr);
@@ -132,11 +140,23 @@ void pmm_free_pages(pmm_t *pmm, uint64_t paddr, uint32_t page_count)
 
     /* 检查范围 */
     if (page_index + page_count <= pmm->total_pages) {
-        /* 清除位图标记 */
-        bitmap_clear_range(&pmm->bitmap, page_index, page_count);
+        uint64_t freed = 0;
 
-        /* 更新空闲页面计数 */
-        pmm->free_pages += page_count;
+        /* 仅在 bit 为 1 时清除并更新计数，防止 double free 污染统计 */
+        for (uint64_t i = 0; i < page_count; i++) {
+            uint64_t idx = page_index + i;
+            if (bitmap_test(&pmm->bitmap, idx)) {
+                bitmap_clear(&pmm->bitmap, idx);
+                freed++;
+            }
+        }
+
+        pmm->free_pages += freed;
+
+        if (freed != page_count) {
+            KLOG_WARN("PMM: partial free detected: requested=%u, actually_freed=%llu, paddr=0x%llx\n",
+                      page_count, freed, paddr);
+        }
 
         // KLOG_DEBUG("PMM: freed %u pages at 0x%llx (index %llu)\n",
         //            page_count, paddr, page_index);
@@ -174,7 +194,7 @@ void pmm_mark_allocated(pmm_t *pmm, uint64_t start_addr, uint64_t end_addr)
     /* 计算页面范围 */
     uint64_t start_page = (start_addr - pmm->start_addr) / pmm->page_size;
     uint64_t end_page   = (end_addr - pmm->start_addr) / pmm->page_size;
-    uint64_t free_before, free_after;
+    uint64_t free_before, free_after, newly_marked = 0;
 
     KLOG_INFO("PMM: marking range 0x%llx - 0x%llx as allocated\n", start_addr, end_addr);
     KLOG_INFO("  page indices: %llu - %llu (total: %llu pages)\n",
@@ -184,17 +204,21 @@ void pmm_mark_allocated(pmm_t *pmm, uint64_t start_addr, uint64_t end_addr)
     mutex_lock(&pmm->mutex);
     free_before = pmm->free_pages;
 
-    /* 遍历所有页，并在 bitmap 中标记为已分配 */
+    /* 遍历所有页，仅在 0->1 转换时更新 free_pages，保持计数与位图一致 */
     for (uint64_t i = start_page; i <= end_page; i++) {
-        bitmap_set(&pmm->bitmap, i);
-        pmm->free_pages--;
+        if (!bitmap_test(&pmm->bitmap, i)) {
+            bitmap_set(&pmm->bitmap, i);
+            pmm->free_pages--;
+            newly_marked++;
+        }
     }
 
     free_after = pmm->free_pages;
     mutex_unlock(&pmm->mutex);
 
     /* 在锁外输出日志 */
-    KLOG_INFO("  free_pages before: %llu, after: %llu\n", free_before, free_after);
+    KLOG_INFO("  newly_marked: %llu pages, free_pages before: %llu, after: %llu\n",
+              newly_marked, free_before, free_after);
 }
 
 /*
@@ -229,35 +253,102 @@ void pmm_mark_kernel_allocated(pmm_t *pmm)
      */
     uint64_t start_phys, end_phys;
 
-#if KERNEL_VMA != 0
-    /* 有虚拟地址偏移的架构（AArch64） */
-    if (start >= KERNEL_VMA && start < KERNEL_VMA + pmm->total_size) {
-        /* 明确是虚拟地址，需要转换 */
-        start_phys = virt_to_phys(start);
-        end_phys   = virt_to_phys(end);
-        KLOG_INFO("PMM: kernel is in virtual address space (converting to physical)\n");
-        KLOG_INFO("  virtual range: 0x%llx - 0x%llx\n", start, end);
-        KLOG_INFO("  physical range: 0x%llx - 0x%llx\n", start_phys, end_phys);
+    if (start >= KERNEL_VMA) {
+        uint64_t cand_start = virt_to_phys(start);
+        uint64_t cand_end = virt_to_phys(end);
+        if (cand_start >= pmm->start_addr && cand_end <= pmm->start_addr + pmm->total_size) {
+            start_phys = cand_start;
+            end_phys = cand_end;
+            KLOG_WARN("PMM: kernel symbols are high-half virtual addresses\n");
+            KLOG_INFO("  virtual range: 0x%llx - 0x%llx\n", start, end);
+            KLOG_INFO("  physical range: 0x%llx - 0x%llx\n", start_phys, end_phys);
+        } else {
+            KLOG_WARN("PMM: virtual->physical conversion out of PMM range, fallback to raw values\n");
+            start_phys = start;
+            end_phys = end;
+            KLOG_INFO("  fallback range: 0x%llx - 0x%llx\n", start_phys, end_phys);
+        }
     } else if (start >= pmm->start_addr && start < pmm->start_addr + pmm->total_size) {
         /* 地址在 PMM 物理内存范围内，认为已经是物理地址 */
         start_phys = start;
         end_phys   = end;
-        KLOG_INFO("PMM: kernel symbols are already physical addresses\n");
+        KLOG_WARN("PMM: kernel symbols are already physical addresses\n");
         KLOG_INFO("  physical range: 0x%llx - 0x%llx\n", start_phys, end_phys);
     } else {
-        /* 异常情况，尝试转换 */
-        KLOG_WARN("PMM: unusual kernel address range, attempting conversion\n");
-        start_phys = (start >= KERNEL_VMA) ? virt_to_phys(start) : start;
-        end_phys   = (end >= KERNEL_VMA) ? virt_to_phys(end) : end;
-        KLOG_INFO("  physical range: 0x%llx - 0x%llx\n", start_phys, end_phys);
+        /* 异常情况，按原值处理并记录日志 */
+        KLOG_WARN("PMM: unusual kernel symbol range, using raw addresses\n");
+        start_phys = start;
+        end_phys   = end;
+        KLOG_INFO("  raw range: 0x%llx - 0x%llx\n", start_phys, end_phys);
     }
-#else
-    /* 无虚拟地址偏移的架构（RISC-V, x86_64）*/
-    start_phys = start;
-    end_phys = end;
-    KLOG_INFO("PMM: kernel symbols are physical addresses (no VMA offset)\n");
-    KLOG_INFO("  physical range: 0x%llx - 0x%llx\n", start_phys, end_phys);
-#endif
+
 
     pmm_mark_allocated(pmm, start_phys, end_phys);
+}
+
+/*
+ * pmm_initialize - 初始化物理内存管理器
+ *
+ * 必须在 kernel_main 中早期调用，在任何内存分配之前。
+ */
+void pmm_initialize(void)
+{
+    KLOG_INFO("=== Initializing Physical Memory Manager ===\n");
+
+    /* 初始化 PMM */
+    pmm_init(g_pmm,
+             PMM_RAM_BASE,
+             PMM_RAM_SIZE,
+             g_pmm_bitmap_buffer,
+             sizeof(g_pmm_bitmap_buffer));
+
+    /* 标记内核内存区域为已分配 */
+    KLOG_INFO("Marking kernel memory as allocated...\n");
+    pmm_mark_kernel_allocated(g_pmm);
+
+#if PMM_EXTRA_RESV0_ENABLE
+    KLOG_INFO("Reserving PMM extra region(%s): 0x%llx - 0x%llx\n",
+              PMM_EXTRA_RESV0_TAG,
+              (uint64_t)PMM_EXTRA_RESV0_START,
+              (uint64_t)PMM_EXTRA_RESV0_END);
+    pmm_mark_allocated(g_pmm,
+                       (uint64_t)PMM_EXTRA_RESV0_START,
+                       (uint64_t)PMM_EXTRA_RESV0_END);
+#endif
+
+#if PMM_EXTRA_RESV1_ENABLE
+    KLOG_INFO("Reserving PMM extra region(%s): 0x%llx - 0x%llx\n",
+              PMM_EXTRA_RESV1_TAG,
+              (uint64_t)PMM_EXTRA_RESV1_START,
+              (uint64_t)PMM_EXTRA_RESV1_END);
+    pmm_mark_allocated(g_pmm,
+                       (uint64_t)PMM_EXTRA_RESV1_START,
+                       (uint64_t)PMM_EXTRA_RESV1_END);
+#endif
+
+    /* 预留 rootfs 物理区域，防止 PMM 将其分配出去 */
+    KLOG_INFO("Reserving rootfs region: 0x%llx - 0x%llx\n",
+              (uint64_t)RAMBLK_PHYS_BASE, (uint64_t)RAMBLK_PHYS_END);
+    pmm_mark_allocated(g_pmm, RAMBLK_PHYS_BASE, RAMBLK_PHYS_END);
+
+    KLOG_INFO("PMM initialization completed\n");
+    KLOG_INFO("  g_pmm = %p\n", g_pmm);
+
+#if ARCH_RISCV64
+    /* 调试：检查内核页表的 L1[0x102] 是否是叶子项 */
+    uint64_t satp;
+    __asm__ volatile("csrr %0, satp" : "=r"(satp));
+    uint64_t kernel_pgd_phys = (satp & 0x0fffffffffffULL) << 12;
+    uint64_t *kernel_l1 = (uint64_t *)phys_to_virt(kernel_pgd_phys);
+    uint64_t l1_102 = kernel_l1[0x102];
+
+    KLOG_INFO("[pmm_init] Kernel L1[0x102] = 0x%llx\n", l1_102);
+    KLOG_INFO("[pmm_init]   V=%llu R=%llu W=%llu X=%llu (bits 0,1,2,3)\n",
+              l1_102 & 1, (l1_102 >> 1) & 1, (l1_102 >> 2) & 1, (l1_102 >> 3) & 1);
+    if ((l1_102 & 0xF) == 0x1) {
+        KLOG_ERROR("[pmm_init] WARNING: L1[0x102] is NOT a leaf (R=W=X=0)!\n");
+    } else if ((l1_102 & 0xF) == 0xF || (l1_102 & 0xE) != 0) {
+        KLOG_INFO("[pmm_init] L1[0x102] is a leaf page (R/W/X set)\n");
+    }
+#endif
 }

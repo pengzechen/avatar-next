@@ -45,6 +45,23 @@
 - 设备默认选择与 MMIO 地址：`driver/driver_cfg.h`
 - 驱动源码选择：`Makefile` 中 `DEV_UART_SRC/DEV_IRQ_SRC/DEV_TIMER_SRC`
 
+### 2.3 PMM 额外保留区配置（单一真源）
+
+- 源表：`config/pmm_reserve.table`
+- 生成脚本：`tools/gen_pmm_reserve.sh`
+- 生成文件：
+  - `include/pmm_reserve.h`（C 侧）
+
+PMM 使用点：
+
+- `kernel/mm/pmm.c` 在 `pmm_initialize()` 中读取 `PMM_EXTRA_RESV*` 宏并调用 `pmm_mark_allocated()`
+
+当前默认策略（qemu）：
+
+- riscv64：保留 OpenSBI 区和 boot-low 区
+- x86_64：保留 `0x00100000 - 0x001FFFFF`（1MB~2MB，内核在 2MB 物理地址加载，避免覆盖低端引导区）
+- aarch64：无额外保留区（仅内核区 + rootfs 区）
+
 ## 3. Makefile 选择逻辑
 
 ### 3.1 入口参数
@@ -93,8 +110,9 @@ QEMU 的 `-device loader,addr=...` 不接受 C 字面量后缀（如 `UL`）。
 
 1. 在 `config/mem_layout.table` 增加内存布局行
 2. 在 `config/device_profile.table` 增加设备画像行
-3. 新增平台目录与入口文件：`platforms/rk3588/platform.c`
-4. 编译验证：
+3. 在 `config/pmm_reserve.table` 增加 PMM 额外保留区行
+4. 新增平台目录与入口文件：`platforms/rk3588/platform.c`
+5. 编译验证：
 
 ```bash
 make ARCH=aarch64 PLATFORM=rk3588 kernel

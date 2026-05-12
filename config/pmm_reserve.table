@@ -1,0 +1,8 @@
+# arch     platform  r0_tag         r0_start        r0_end          r1_tag     r1_start        r1_end
+#
+# 每个保留区均为闭区间 [start, end]。
+# 无保留区使用: none - -
+#
+aarch64    qemu      none           -               -               none       -               -
+riscv64    qemu      opensbi        0x80000000ULL   0x801FFFFFULL   boot_low   0x80200000ULL   0x80205FFFULL
+x86_64     qemu      lowmem_1m_2m   0x00100000ULL   0x001FFFFFULL   none       -               -

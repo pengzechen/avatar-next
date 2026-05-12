@@ -37,6 +37,11 @@ DEVICE_PROFILE_GEN := $(TOOLS_DIR)/gen_device_profile.sh
 DEVICE_PROFILE_MK  := $(BUILD_DIR)/device_profile.mk
 DEVICE_PROFILE_HDR := $(INCLUDE_DIR)/device_profile.h
 
+# PMM 额外保留区（单一真源 -> 自动生成 C 头）
+PMM_RESERVE_SRC := $(CONFIG_DIR)/pmm_reserve.table
+PMM_RESERVE_GEN := $(TOOLS_DIR)/gen_pmm_reserve.sh
+PMM_RESERVE_HDR := $(INCLUDE_DIR)/pmm_reserve.h
+
 $(shell mkdir -p $(BUILD_DIR) >/dev/null 2>&1)
 $(shell sh $(MEM_LAYOUT_GEN) $(MEM_LAYOUT_SRC) $(MEM_LAYOUT_MK) $(MEM_LAYOUT_HDR))
 -include $(MEM_LAYOUT_MK)
@@ -50,6 +55,8 @@ PLATFORM := $(MEM_LAYOUT_PLATFORM)
 
 $(shell sh $(DEVICE_PROFILE_GEN) $(DEVICE_PROFILE_SRC) $(DEVICE_PROFILE_MK) $(DEVICE_PROFILE_HDR))
 -include $(DEVICE_PROFILE_MK)
+
+$(shell sh $(PMM_RESERVE_GEN) $(PMM_RESERVE_SRC) $(PMM_RESERVE_HDR))
 
 ifeq ($(strip $(DEV_UART_SRC)),)
 $(error Failed to resolve device profile for ARCH=$(ARCH) PLATFORM=$(PLATFORM))
@@ -107,7 +114,7 @@ KERNEL_SOURCES := $(KERNEL_DIR)/main.c
 KERNEL_OBJECTS := $(KERNEL_SOURCES:$(KERNEL_DIR)/%.c=$(BUILD_DIR)/kernel_%.o)
 
 # MMU 和 VM 模块
-VM_C_SOURCES := $(KERNEL_DIR)/mm/pmm.c $(KERNEL_DIR)/mm/pmm_test.c $(KERNEL_DIR)/mm/vm_user.c
+VM_C_SOURCES := $(KERNEL_DIR)/mm/pmm.c $(TESTS_DIR)/pmm_test.c $(KERNEL_DIR)/mm/vm_user.c
 VM_C_OBJECTS := $(BUILD_DIR)/kernel_mm_pmm.o $(BUILD_DIR)/kernel_mm_pmm_test.o $(BUILD_DIR)/kernel_mm_vm_user.o
 
 # 架构特定的 VM 模块
@@ -219,7 +226,7 @@ TASK_USER_TESTEXECVE_OBJ :=
 endif
 
 # 测试源文件
-TESTS_SOURCES := $(wildcard $(TESTS_DIR)/*.c)
+TESTS_SOURCES := $(filter-out $(TESTS_DIR)/pmm_test.c,$(wildcard $(TESTS_DIR)/*.c))
 TESTS_OBJECTS := $(TESTS_SOURCES:$(TESTS_DIR)/%.c=$(BUILD_DIR)/tests_%.o)
 
 # 用户应用程序源文件（按架构子目录组织）
@@ -674,7 +681,7 @@ $(BUILD_DIR)/kernel_mm_vm_early.o: $(VM_EARLY_C_SRC) | $(BUILD_DIR)
 $(BUILD_DIR)/kernel_mm_pmm.o: $(KERNEL_DIR)/mm/pmm.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/kernel_mm_pmm_test.o: $(KERNEL_DIR)/mm/pmm_test.c | $(BUILD_DIR)
+$(BUILD_DIR)/kernel_mm_pmm_test.o: $(TESTS_DIR)/pmm_test.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # 架构特定的 VMM 模块（仅 AArch64）
