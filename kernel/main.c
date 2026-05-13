@@ -10,6 +10,7 @@
 #include "string.h"
 #include "task/task.h"
 #include "task/sched.h"
+#include "task/cpu.h"
 #include "pmm.h"
 #include "../driver/blk/ramblk.h"
 #include "../fs/lwext4_port/fs_init.h"
@@ -40,23 +41,12 @@ extern void test_execve_program(void);
 
 #if ARCH_AARCH64
 extern void guest_test_entry(void);   /* apps/aarch64/guest_test.S */
-extern void el0_loop_program(void);   /* apps/aarch64/el0_loop.S */
+extern int  el2_vcpu_setup(vcpu_t *vcpu, void (*entry)(void));
 
-/* Phase 2: VMM 测试用静态 VM 实例 */
+/* 每个物理核一个 vCPU，SMP=N 时最多 N 个 */
 static vm_t g_test_vm;
 
-/* EL2 内核无限循环线程（运行在 EL2 host 态）*/
-static void el2_loop_thread(void *arg)
-{
-    (void)arg;
-    uint32_t n = 0;
-    while (1) {
-        n++;
-        if (n % 20 == 0)
-            KLOG_INFO("[el2_loop] tick=%u (EL2 kernel)\n", n);
-        task_yield();
-    }
-}
+/* smp_loop_thread / el0_loop 已删除，改为 per-CPU VCPU 任务 */
 #endif
 
 #if ARCH_X86_64
@@ -238,6 +228,53 @@ void kernel_main(void)
 
     /* ── 初始化任务子系统 ───────────────────────────────── */
     KLOG_INFO("Initializing task subsystem...\n");
+    
+    /* ── 初始化 CPU0 的 per-CPU 数据 ──────────────────────── */
+#if ARCH_AARCH64 || ARCH_RISCV64 || ARCH_X86_64
+    KLOG_INFO("Initializing CPU0 per-CPU data...\n");
+    
+    /* 初始化 g_cpus[0] 的基本字段 */
+    extern uint32_t g_num_cpus;
+    extern cpu_t g_cpus[8];
+    
+    memset(&g_cpus[0], 0, sizeof(cpu_t));
+    g_cpus[0].cpu_id = 0;
+    g_cpus[0].mpidr = 0;
+    list_init(&g_cpus[0].run_queue);
+    g_cpus[0].current_task = NULL;
+    g_cpus[0].idle_task = NULL;
+    g_cpus[0].need_resched = false;
+    
+    KLOG_DEBUG("[main] Initialized g_cpus[0] structure\n");
+    
+    /* 设置 CPU0 的 TPIDR_EL1 / TP / FS_BASE，指向 &g_cpus[0]
+     * 这样 get_current_cpu_id() 和 cpu_current() 才能工作 */
+#if ARCH_AARCH64
+    __asm__ volatile("msr tpidr_el1, %0" :: "r"(&g_cpus[0]));
+    __asm__ volatile("isb");
+#elif ARCH_RISCV64
+    __asm__ volatile("mv tp, %0" :: "r"(&g_cpus[0]));
+#elif ARCH_X86_64
+    {
+        uint32_t lo = (uint32_t)((uint64_t)&g_cpus[0] & 0xFFFFFFFFU);
+        uint32_t hi = (uint32_t)(((uint64_t)&g_cpus[0] >> 32) & 0xFFFFFFFFU);
+        __asm__ volatile("wrmsr" :: "c"(0xC0000100U), "a"(lo), "d"(hi));
+    }
+#endif
+    
+    KLOG_DEBUG("[main] Set CPU0 thread pointer register\n");
+    
+    /* 启动其他 CPU 核心 */
+    KLOG_INFO("\n");
+    KLOG_INFO("Starting secondary CPUs...\n");
+    cpu_bring_up_all();
+    
+    /* 给其他 CPU 一些时间来启动并完成初始化 */
+    for (volatile int i = 0; i < 10000000; i++);
+    
+    KLOG_INFO("CPU initialization complete (num_cpus=%u)\n", g_num_cpus);
+#endif
+
     task_init();
 
     /* 切换到 idle 专用栈（防止 boot 栈在频繁中断下溢出） */
@@ -299,47 +336,47 @@ void kernel_main(void)
 
 #elif ARCH_AARCH64
 
-    /* ── Thread 1: EL2 内核线程（无限循环） ── */
-    task_t *el2_task = task_create("el2_loop", el2_loop_thread, NULL, 5);
-    if (el2_task)
-        KLOG_INFO("Thread 1 [EL2 kernel]: id=%u\n", el2_task->id);
-    else
-        KLOG_ERROR("Failed to create EL2 loop thread!\n");
+    /*
+     * SMP VCPU 测试：每个物理 CPU 核创建一个 vCPU 任务。
+     * vCPU 运行 guest_test_entry（WFI + HVC 循环），
+     * 由时钟抢占驱动切换（vcpu 任务主动 yield 让出 CPU）。
+     */
+    KLOG_INFO("\n=== Avatar OS: SMP VCPU test (%u cores) ===\n", g_num_cpus);
 
-    /* ── Thread 2: vCPU guest 线程（EL1 guest 无限循环） ── */
-    KLOG_INFO("guest_test_entry phys=0x%llx\n",
-              (uint64_t)virt_to_phys(guest_test_entry));
-
-    g_test_vm.cfg.mem_base = GUEST_RAM_BASE;
-    g_test_vm.cfg.mem_size = GUEST_RAM_SIZE;
-    g_test_vm.cfg.nr_vcpus = 1;
-
-    if (vm_create(&g_test_vm) == 0) {
-        vcpu_t *vcpu = &g_test_vm.vcpus[0];
-        vcpu->elr    = virt_to_phys(guest_test_entry);
-        vcpu->spsr   = 0x5ULL | (0xFULL << 6);   /* EL1h, DAIF masked */
-        vcpu->sp_el1 = GUEST_RAM_BASE + GUEST_RAM_SIZE - 0x1000;
-
-        task_t *vt = vcpu_task_create(vcpu, 5);
-        if (vt)
-            KLOG_INFO("Thread 2 [EL1 guest/vcpu]: id=%u entry=0x%llx\n",
-                      vt->id, vcpu->elr);
-        else
-            KLOG_ERROR("vcpu_task_create failed!\n");
+    /*
+     * mem_base/mem_size：Stage-2 identity map 的物理 RAM 范围。
+     * 必须覆盖 guest 代码（guest_test_entry PA）和栈（g_guest_stacks PA）。
+     * GUEST_RAM_BASE=0x40000000, GUEST_RAM_SIZE=128MB（定义于 aarch64/stage2.h）。
+     */
+    g_test_vm.cfg.mem_base  = GUEST_RAM_BASE;
+    g_test_vm.cfg.mem_size  = GUEST_RAM_SIZE;
+    g_test_vm.cfg.nr_vcpus  = (int)g_num_cpus;
+    if (vm_create(&g_test_vm) != 0) {
+        KLOG_ERROR("[main] vm_create failed\n");
     } else {
-        KLOG_ERROR("vm_create failed!\n");
-    }
+        for (uint32_t c = 0; c < g_num_cpus; c++) {
+            vcpu_t *vcpu = &g_test_vm.vcpus[c];
 
-    /* ── Thread 3: EL0 用户线程（无限 svc yield 循环） ── */
-    task_t *el0_task = process_create("el0_loop",
-                                      (uint64_t)el0_loop_program,
-                                      0x200000,
-                                      5);
-    if (el0_task)
-        KLOG_INFO("Thread 3 [EL0 user]:   id=%u entry=0x%llx\n",
-                  el0_task->id, (uint64_t)el0_loop_program);
-    else
-        KLOG_ERROR("Failed to create EL0 user thread!\n");
+            if (el2_vcpu_setup(vcpu, guest_test_entry) != 0) {
+                KLOG_ERROR("[main] el2_vcpu_setup failed for vcpu%u\n", c);
+                continue;
+            }
+
+            struct task *t = vcpu_task_create(vcpu, 5);
+            if (!t) {
+                KLOG_ERROR("[main] vcpu_task_create failed for vcpu%u\n", c);
+                continue;
+            }
+
+            /* vcpu_task_create 默认入队 CPU0；迁移到对应物理核 */
+            if (c != 0) {
+                sched_dequeue(t);
+                t->cpu_affinity = c;
+                sched_enqueue_on_cpu(t, c);
+            }
+            KLOG_INFO("  vcpu%u task id=%u -> cpu%u\n", c, t->id, c);
+        }
+    }
 
 #elif ARCH_X86_64
 

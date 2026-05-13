@@ -37,20 +37,6 @@
 .arch armv8.2-a
 
 /* ─────────────────────────────────────────────────────────────────────
- * 全局数据
- * ───────────────────────────────────────────────────────────────────── */
-.section .bss
-.align 3
-
-/*
- * g_host_vbar — 进入 guest 前保存的 host VBAR_EL2
- * el2_trap_exit 用此地址恢复 host 向量表。
- */
-.global g_host_vbar
-g_host_vbar:
-    .space 8
-
-/* ─────────────────────────────────────────────────────────────────────
  * el2_enter_guest — 进入 EL1 guest（VHE 版）
  *
  * 签名：void el2_enter_guest(vcpu_t *vcpu)
@@ -96,13 +82,12 @@ el2_enter_guest:
     isb
 
     /*
-     * 4. 保存 host VBAR_EL2（在 VHE 下通过 vbar_el1 读取）
-     *    之后安装 guest_vec_table，el2_trap_exit 退出时从 g_host_vbar 恢复。
+     * 4. 保存 host VBAR_EL2 到 vcpu->host_vbar（偏移 VCPU_HOST_VBAR=528）
+     *    SMP 下每个 vCPU 独立保存，el2_trap_exit 通过 tpidr_el2 取 vcpu 读取，
+     *    避免全局 g_host_vbar 的 SMP 竞争问题。
      */
     mrs  x2, vbar_el1
-    adrp x3, g_host_vbar
-    add  x3, x3, :lo12:g_host_vbar
-    str  x2, [x3]
+    str  x2, [x0, #528]         /* vcpu->host_vbar */
 
     /*
      * 5. 修改 HCR_EL2 进入 guest 模式（VHE 核心差异）：
@@ -228,9 +213,7 @@ el2_trap_exit:
     isb
 
     /* 恢复 host VBAR_EL2（通过 vbar_el1 VHE 别名写入 VBAR_EL2）*/
-    adrp x1, g_host_vbar
-    add  x1, x1, :lo12:g_host_vbar
-    ldr  x1, [x1]
+    ldr  x1, [x0, #528]         /* vcpu->host_vbar */
     msr  vbar_el1, x1
     isb
 

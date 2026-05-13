@@ -75,17 +75,12 @@ void handle_irq_exception(uint64_t *stack_pointer)
 
     (void)el1_ctx;  // Suppress unused parameter warning
 
-    // KLOG_INFO("IRQ exception occurred\n");
-
     /* Read IAR to acknowledge the interrupt */
     int iar = irq_ack();
     int vector = iar & 0x3FF;  /* Extract IRQ number */
 
-    // KLOG_INFO("IRQ vector: %d, handler: %p\n", vector, g_handler_vec[vector]);
-
     /* Call the handler if registered */
     if (vector < 512 && g_handler_vec[vector] != 0) {
-        // KLOG_INFO("Calling handler for IRQ %d\n", vector);
         g_handler_vec[vector](stack_pointer);
     } else {
         KLOG_WARN("No handler for IRQ %d\n", vector);

@@ -29,13 +29,26 @@ static int aarch64_vm_init(vm_t *vm)
     /* 初始化 Stage-2 页表（identity map）*/
     stage2_init(vm->cfg.mem_base, vm->cfg.mem_size);
 
+    /*
+     * VTTBR_EL2 和 VTCR_EL2 都是 per-CPU 寄存器，stage2_init 只在 cpu0 上设置。
+     * 读回并保存：VTTBR 存入每个 vcpu->page_table_base，VTCR 存入 vm->vtcr。
+     * vmm_arch_enter_guest 每次进 guest 前必须写入当前 CPU 的这两个寄存器。
+     * （VTCR 未设置时默认 T0SZ=0，需要 L0 页表，导致 IFSC=0x04 fault）
+     */
+    uint64_t vttbr;
+    __asm__ volatile("mrs %0, vttbr_el2" : "=r"(vttbr));
+    uint64_t vtcr;
+    __asm__ volatile("mrs %0, vtcr_el2"  : "=r"(vtcr));
+    vm->vtcr = vtcr;
+
     /* 初始化每个 vCPU 的状态 */
     for (i = 0; i < nr; i++) {
         vcpu_t *vcpu = &vm->vcpus[i];
         memset(vcpu, 0, sizeof(*vcpu));
-        vcpu->vcpu_id  = i;
-        vcpu->launched = 0;
-        vcpu->vm       = vm;
+        vcpu->vcpu_id         = i;
+        vcpu->launched        = 0;
+        vcpu->vm              = vm;
+        vcpu->page_table_base = vttbr;  /* 每个 vCPU 共享同一个 Stage-2 页表 */
     }
     vm->nr_vcpus = nr;
 

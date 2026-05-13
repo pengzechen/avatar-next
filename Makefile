@@ -13,6 +13,14 @@ LOG ?= info
 # 断言配置
 ASSERT ?= panic
 
+# QEMU vCPU 数量（用于 run / run-fs）
+SMP ?= 1
+
+# 约束 SMP 取值范围，避免误配置
+ifeq ($(filter $(SMP),1 2 3 4 5 6 7 8),)
+$(error Invalid SMP value '$(SMP)'. Use SMP=1..8)
+endif
+
 # 目录设置
 SRC_DIR     := examples
 LIB_DIR     := lib
@@ -194,8 +202,8 @@ ifdef VM_EARLY_C_SRC
 endif
 
 # task 模块源文件
-TASK_C_SOURCES := $(KERNEL_DIR)/task/task.c $(KERNEL_DIR)/task/sched.c $(KERNEL_DIR)/task/mutex.c
-TASK_C_OBJECTS := $(BUILD_DIR)/kernel_task_task.o $(BUILD_DIR)/kernel_task_sched.o $(BUILD_DIR)/kernel_task_mutex.o
+TASK_C_SOURCES := $(KERNEL_DIR)/task/task.c $(KERNEL_DIR)/task/sched.c $(KERNEL_DIR)/task/mutex.c $(KERNEL_DIR)/task/cpu.c
+TASK_C_OBJECTS := $(BUILD_DIR)/kernel_task_task.o $(BUILD_DIR)/kernel_task_sched.o $(BUILD_DIR)/kernel_task_mutex.o $(BUILD_DIR)/kernel_task_cpu.o
 
 # loader 模块源文件
 LOADER_C_SOURCES := $(KERNEL_DIR)/loader/bin_loader.c $(KERNEL_DIR)/loader/elf_loader.c
@@ -337,7 +345,7 @@ ifeq ($(ARCH),x86_64)
     KERNEL_BIN    := $(BUILD_DIR)/kernel_x86_64.bin
     KERNEL_IMAGE  := $(BUILD_DIR)/kernel_x86_64.img
     QEMU          := qemu-system-x86_64
-    QEMU_FLAGS    := -machine q35 -enable-kvm -cpu host -m 2G -nographic -kernel $(KERNEL_BIN)
+	QEMU_FLAGS    := -machine q35 -enable-kvm -cpu host -smp $(SMP) -m 2G -nographic -kernel $(KERNEL_BIN)
 else ifeq ($(ARCH),aarch64)
     CC      := aarch64-linux-musl-gcc
     AR      := aarch64-linux-musl-ar
@@ -358,7 +366,7 @@ else ifeq ($(ARCH),aarch64)
     KERNEL_TARGET := $(BUILD_DIR)/kernel_aarch64.elf
     KERNEL_BIN    := $(BUILD_DIR)/kernel_aarch64.bin
     QEMU          := qemu-system-aarch64
-    QEMU_FLAGS    := -cpu cortex-a76 -M virt,virtualization=on -m 2G -nographic -kernel $(KERNEL_BIN)
+	QEMU_FLAGS    := -cpu cortex-a76 -M virt,virtualization=on -smp $(SMP) -m 2G -nographic -kernel $(KERNEL_BIN)
 else ifeq ($(ARCH),riscv64)
     CC      := riscv64-linux-musl-gcc
     AR      := riscv64-linux-musl-ar
@@ -383,7 +391,7 @@ else ifeq ($(ARCH),riscv64)
     KERNEL_TARGET := $(BUILD_DIR)/kernel_riscv64.elf
     KERNEL_BIN    := $(BUILD_DIR)/kernel_riscv64.bin
     QEMU          := qemu-system-riscv64
-    QEMU_FLAGS    := -M virt -m 2G -nographic -bios default -kernel $(KERNEL_BIN)
+	QEMU_FLAGS    := -M virt -smp $(SMP) -m 2G -nographic -bios default -kernel $(KERNEL_BIN)
 else
     $(error Unsupported architecture: $(ARCH). Use ARCH=x86_64, aarch64 or riscv64)
 endif
@@ -394,6 +402,7 @@ CFLAGS  += -Idriver
 CFLAGS  += -Ikernel
 CFLAGS  += -Ikernel/mm
 CFLAGS  += -DAVATAR_HAS_FILESYSTEM
+CFLAGS  += -DCONFIG_SMP_CPUS=$(SMP)
 CFLAGS  += -DPLATFORM_$(MEM_PLATFORM_DEFINE)=1
 
 # UART 驱动选择（与架构解耦）
@@ -614,6 +623,8 @@ $(BUILD_DIR)/kernel_task_sched.o: $(KERNEL_DIR)/task/sched.c | $(BUILD_DIR)
 $(BUILD_DIR)/kernel_task_mutex.o: $(KERNEL_DIR)/task/mutex.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
+$(BUILD_DIR)/kernel_task_cpu.o: $(KERNEL_DIR)/task/cpu.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
 $(BUILD_DIR)/task_switch.o: $(TASK_S_SRC) | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
@@ -800,7 +811,7 @@ $(KERNEL_IMAGE): $(KERNEL_BIN)
 
 # 运行内核
 run: kernel
-	@echo "Starting QEMU for $(ARCH)..."
+	@echo "Starting QEMU for $(ARCH) (SMP=$(SMP))..."
 	$(QEMU) $(QEMU_FLAGS)
 
 # 创建 ext4 rootfs 镜像
@@ -842,7 +853,7 @@ rootfs: $(ROOTFS_IMG) $(APPS_BINS) $(APPS_C_ELFS)
 
 # 运行内核 + 加载 rootfs 酷像到 QEMU 客户机内存
 run-fs: kernel rootfs
-	@echo "Starting QEMU for $(ARCH) with rootfs at $(ROOTFS_PHYS_ADDR)..."
+	@echo "Starting QEMU for $(ARCH) (SMP=$(SMP)) with rootfs at $(ROOTFS_PHYS_ADDR)..."
 	$(QEMU) $(QEMU_FLAGS) \
 		-device loader,file=$(ROOTFS_IMG),addr=$(ROOTFS_PHYS_ADDR),force-raw=on
 
@@ -852,7 +863,7 @@ clean:
 help:
 	@echo "Avatar OS Makefile"
 	@echo ""
-	@echo "Usage: make ARCH=<arch> [PLATFORM=<platform>] [LOG=<level>] [ASSERT=<mode>] [target]"
+	@echo "Usage: make ARCH=<arch> [PLATFORM=<platform>] [LOG=<level>] [ASSERT=<mode>] [SMP=<n>] [target]"
 	@echo ""
 	@echo "Architectures:"
 	@echo "  ARCH=x86_64    Build for x86_64 (AMD64/Intel 64)"
@@ -875,6 +886,9 @@ help:
 	@echo "  ASSERT=panic  Enable assertions, panic on failure (default)"
 	@echo "  ASSERT=off    Disable all assertions (release mode)"
 	@echo ""
+	@echo "SMP:"
+	@echo "  SMP=1..8      QEMU virtual CPU count for run/run-fs (default: 1)"
+	@echo ""
 	@echo "Cross-compiler:"
 	@echo "  CC=<compiler>  Specify compiler (x86_64: gcc, aarch64: aarch64-linux-musl-gcc, riscv64: riscv64-linux-musl-gcc)"
 	@echo ""
@@ -894,6 +908,7 @@ help:
 	@echo "  make ARCH=x86_64 ASSERT=off"
 	@echo "  make ARCH=aarch64 kernel"
 	@echo "  make ARCH=aarch64 run"
+	@echo "  make ARCH=aarch64 PLATFORM=qemu run-fs SMP=4"
 	@echo "  make ARCH=aarch64 LOG=debug ASSERT=panic"
 	@echo "  make ARCH=riscv64 clean"
 

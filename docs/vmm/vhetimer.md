@@ -1,0 +1,1 @@
+在 VHE 模式（EL2，E2H=1）下，msr cntp_tval_el0 通过 alias 实际写入 CNTHP_TVAL_EL2（EL2 Physical Timer），该 timer 触发 PPI 26，而不是 NS EL1 Physical Timer 的 PPI 30。之前 IRQ 30 在 GIC 里被 enable 但从不触发，IRQ 26 触发但没有被 enable 也没有 handler，导致进入 EL0 后完全静默。

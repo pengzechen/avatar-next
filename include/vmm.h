@@ -28,6 +28,7 @@
 #define VCPU_SPSR       264         /* 31*8 + 16                         */
 #define VCPU_HOSTCTX    272         /* 31*8 + 24                         */
 #define VCPU_SYSREGS    376         /* 31*8 + 24 + 13*8                  */
+#define VCPU_HOST_VBAR  528         /* C-only 区域：host VBAR 保存槽     */
 
 /* sysregs 缓冲区：保存 guest EL1 系统寄存器，128 B 足够覆盖 Phase 2 用到的子集 */
 #define VCPU_SYSREGS_SIZE  128
@@ -67,6 +68,8 @@ typedef struct vcpu {
     int      launched;                 /* 已进入 guest 至少一次？         */
     uint64_t page_table_base;          /* VTTBR_EL2 (VMID:PGD)           */
     struct vm *vm;                     /* 所属 VM 反向指针                */
+    uint64_t host_vbar;                /* host VBAR_EL2 per-vCPU 保存槽  */
+                                       /* offset=528，VCPU_HOST_VBAR      */
 } vcpu_t;
 
 #elif ARCH_X86_64
@@ -204,6 +207,9 @@ typedef struct vm {
     vm_cfg_t cfg;
     vcpu_t   vcpus[MAX_VCPUS];  /* 静态嵌入，不动态分配 */
     int      nr_vcpus;
+#if ARCH_AARCH64
+    uint64_t vtcr;              /* VTCR_EL2 per-VM 保存（stage2_init 后读取）*/
+#endif
 } vm_t;
 
 /* ── AArch64 专用汇编接口（仅 aarch64 编译时可见）──────────── */

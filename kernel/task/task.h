@@ -41,6 +41,9 @@ typedef struct task {
     void           *arg;                 /* 传给 entry 的参数                     */
     list_node_t     run_node;            /* 就绪队列节点                          */
     list_node_t     wait_node;           /* 等待队列节点（用于 mutex/semaphore）  */
+    
+    /* === SMP 支持 === */
+    uint32_t        cpu_affinity;        /* 绑定的 CPU 编号（0~N-1）              */
 
     /* === 用户态支持 === */
     bool            is_user_process;     /* true=用户进程, false=内核任务          */

@@ -157,6 +157,7 @@ disable_interrupts(void)
 }
 
 void gic_init();
+void gic_init_secondary(void);
 void gicc_init();
 void gicc_el2_init();
 void gic_virtual_init(void);

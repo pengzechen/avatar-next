@@ -1,15 +1,30 @@
 /*
  * AArch64 boot code for QEMU virt machine
  * Entry point: _start at 0x40000000
+ *
+ * 支持多核启动：
+ * - CPU0: 执行完整启动流程，调用 kernel_main
+ * - CPU1-3: 通过 PSCI CPU_ON 启动，执行 secondary_cpu_start
  */
 
 .section .text
 .global _start
+.global secondary_cpu_start
 .type _start, @function
+.type secondary_cpu_start, @function
 
 .extern vm_init
 .extern mmu_init
 .extern kernel_main
+.extern cpu_init
+.extern cpu_bring_up_all
+.extern cpu_secondary_bootstrap
+.extern g_cpus
+.extern sched_schedule
+.extern gic_init_secondary
+.extern timer_init_secondary
+.extern vm_get_kernel_pgtable
+.extern exception_vector_base
 
 _start:
     /*
@@ -111,6 +126,15 @@ _start:
     bl      vm_init
 
     /*
+     * 为 CPU0 初始化 TPIDR_EL1，指向 g_cpus[0]
+     * 这需要在 MMU 启用后进行，因为 g_cpus 的虚拟地址需要有效。
+     * 但由于我们使用 identity mapping，这里可以直接设置物理地址。
+     * 暂时存储在 x20（被调用者保存寄存器）
+     */
+    adrp    x20, g_cpus
+    add     x20, x20, :lo12:g_cpus
+
+    /*
      * 启用 MMU
      * x0 = TTBR0（用户空间页表，暂时为 0）
      * x1 = TTBR1（内核空间页表）
@@ -146,6 +170,18 @@ _start:
     mov     sp, x0
 
     /*
+     * 为 CPU0 设置 TPIDR_EL1，指向 g_cpus[0]
+     * 之前保存在 x20 中的 g_cpus 物理地址现在需要转换为虚拟地址。
+     * 由于整个内核映射到 0xffff000000000000，而物理地址在 0-2GB，
+     * 虚拟地址 = 0xffff000000000000 + 物理地址
+     * 但更简单的做法是直接 adrp/add 高地址的 g_cpus
+     */
+    adrp    x0, g_cpus
+    add     x0, x0, :lo12:g_cpus
+    msr     tpidr_el1, x0           /* CPU0: TPIDR_EL1 = &g_cpus[0] */
+    isb
+
+    /*
      * Set exception vector base address
      * VBAR_EL1 = &exception_vector_base
      */
@@ -155,12 +191,6 @@ _start:
     dsb     sy
     isb
 
-    /*
-     * Enable IRQ interrupts (clear DAIF.I bit)
-     */
-    msr     daifclr, #2
-    dsb     sy
-    isb
 
     /*
      * Jump to C code
@@ -179,6 +209,122 @@ hang:
     b       hang
 
 .size _start, . - _start
+
+/*
+ * ── 二级启动代码（CPU1-3 入口） ───────────────────────────────
+ *
+ * 当通过 PSCI CPU_ON 启动新 CPU 时，CPU 从这里开始执行。
+ * 此时 MMU 已经启用（kernel_main 已配置好），但该 CPU 的
+ * TPIDR_EL1 还未设置。
+ */
+secondary_cpu_start:
+    /*
+     * 获取当前 CPU 的 ID
+     * 从 PSCI CPU_ON 调用时，PSCI 将 x3 设置为传递的 context 值。
+     * 在 cpu_bring_up_all 中，我们传递了 CPU ID。
+     * 但这里没有直接的寄存器保存，所以需要从 MPIDR_EL1 解析。
+     */
+    mrs     x20, mpidr_el1
+    and     x19, x20, #0xFF           /* x19 = cpu_id (Aff0) */
+
+    /*
+     * 次级核 EL2/VHE 初始化（与主核一致）
+     */
+    mov     x1, xzr
+    orr     x1, x1, #(1 << 34)        /* E2H */
+    orr     x1, x1, #(1 << 31)        /* RW  */
+    orr     x1, x1, #(1 << 27)        /* TGE */
+    msr     hcr_el2, x1
+    isb
+
+    mrs     x1, cptr_el2
+    bic     x1, x1, #(1 << 10)
+    msr     cptr_el2, x1
+
+    mov     x1, #(1 | (1 << 1) | (1 << 10))
+    msr     cnthctl_el2, x1
+    isb
+
+.arch_extension pan
+    msr     pan, #0
+    isb
+
+    msr     daifset, #2
+
+    /*
+     * 次级核启用 MMU（复用主核已建立的内核页表）
+     */
+    bl      vm_get_kernel_pgtable
+    mov     x1, x0
+    bl      mmu_init
+
+    /* 跳到高虚拟地址继续执行 */
+    ldr     x0, =secondary_cpu_high
+    br      x0
+
+secondary_cpu_high:
+
+    /*
+     * 设置该 CPU 的栈指针
+     * 每个 CPU 需要自己的栈
+     */
+    adrp    x1, secondary_boot_stacks
+    add     x1, x1, :lo12:secondary_boot_stacks
+    mov     x2, #4096
+    mul     x3, x19, x2
+    add     x1, x1, x3
+    add     x1, x1, x2
+    mov     sp, x1
+
+    /* 安装本核异常向量（VHE 下 vbar_el1 别名到 VBAR_EL2） */
+    adrp    x0, exception_vector_base
+    add     x0, x0, :lo12:exception_vector_base
+    msr     vbar_el1, x0
+    dsb     sy
+    isb
+
+    /*
+     * 调用 cpu_init() 初始化该 CPU 的就绪队列等
+     */
+    mov     x0, x19                 /* arg0 = cpu_id */
+    mov     x1, x20                 /* arg1 = mpidr */
+    bl      cpu_secondary_bootstrap
+
+    /* 次级核本地中断控制器和定时器初始化 */
+    bl      gic_init_secondary
+    bl      timer_init_secondary
+
+    /*
+     * 开启中断
+     */
+    msr     daifclr, #2
+    isb
+
+    /*
+     * 调用调度器进入主循环
+     * 由于每个 CPU 有自己的 per-cpu 就绪队列，调度器会
+     * 从该队列中选择任务运行。
+     */
+secondary_sched_loop:
+    adrp    x0, sched_schedule
+    add     x0, x0, :lo12:sched_schedule
+    blr     x0
+    wfe
+    b       secondary_sched_loop
+
+    /*
+     * 不应该到达这里；如果返回，则无限循环
+     */
+secondary_hang:
+    wfe
+    b       secondary_hang
+
+.size secondary_cpu_start, . - secondary_cpu_start
+
+.section .bss
+.align 12
+secondary_boot_stacks:
+    .skip (8 * 4096)
 
 /*
  * Stack symbols are defined in linker script

@@ -12,30 +12,7 @@
 .global el0_loop_program
 .type el0_loop_program, @function
 el0_loop_program:
-    mov  x19, #0            /* 循环计数器 */
-
+    /* 纯自旋，不调用任何 syscall。
+     * 内核调度器在时钟抢占时打印切换日志。 */
 .Lloop:
-    /* SYS_YIELD: 让出 CPU */
-    mov  x8, #SYS_YIELD
-    svc  #0
-
-    add  x19, x19, #1
-
-    /* 每 50 次打印一条消息 */
-    mov  x0, #50
-    udiv x1, x19, x0
-    mul  x1, x1, x0
-    cmp  x1, x19
-    bne  .Lloop
-
-    /* SYS_WRITE: 输出计数消息 */
-    adr  x0, msg_loop
-    mov  x1, #22
-    mov  x8, #SYS_WRITE
-    svc  #0
-
     b    .Lloop
-
-msg_loop:
-    .asciz "[el0] loop tick (EL0)\n"
-    .align 2

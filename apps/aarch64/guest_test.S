@@ -18,8 +18,15 @@ guest_test_entry:
 .Lloop:
     /* ── 模拟 guest EL1 工作 ──────────────────────────── */
 
+    /*
+     * isb：强制 QEMU TCG 在此处终止 Translation Block，
+     * 使 QEMU 在翻译 wfi 前重新读取 HCR_EL2.TWI 状态。
+     * 若没有 isb，热 TB 会跳过 TWI 检查导致 wfi 变成 NOP。
+     */
+    isb
     /* WFI：触发 TWI 陷入（EC=0x01），VMM advance PC 后 resume */
     wfi
+    isb
 
     /* HVC_PRINT：通知 VMM 打印当前迭代次数 */
     mov  x0, #1                 /* HVC_PRINT */

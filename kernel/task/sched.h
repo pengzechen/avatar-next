@@ -21,10 +21,17 @@
 void sched_init(task_t *idle_task);
 
 /**
- * sched_enqueue - 将任务加入就绪队列尾部
+ * sched_enqueue - 将任务加入当前 CPU 的就绪队列尾部
  * @task: 状态必须为 TASK_READY
  */
 void sched_enqueue(task_t *task);
+
+/**
+ * sched_enqueue_on_cpu - 将任务加入指定 CPU 的就绪队列尾部
+ * @task: 状态必须为 TASK_READY
+ * @cpu_id: 目标 CPU 编号（0~N-1）
+ */
+void sched_enqueue_on_cpu(task_t *task, uint32_t cpu_id);
 
 /**
  * sched_dequeue - 将任务从就绪队列中移除

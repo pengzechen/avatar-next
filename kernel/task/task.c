@@ -13,6 +13,7 @@
 #include "task/task.h"
 #include "task/sched.h"
 #include "task/switch.h"
+#include "task/cpu.h"
 #include "klog.h"
 #include "barrier.h"
 
@@ -293,6 +294,7 @@ process_create(const char *name, uint64_t user_entry, uint64_t user_sp, uint8_t 
     task->user_stack_top  = user_sp;
     task->user_stack_size = 0x100000;  /* 1MB 用户栈 */
     task->fs_base         = 0;
+    task->cpu_affinity    = get_current_cpu_id();  /* 新任务继承当前 CPU */
 
     /* 创建独立的用户页表 */
 #if ARCH_AARCH64
@@ -481,6 +483,7 @@ process_create_with_pgd(const char *name, uint64_t user_entry, uint64_t user_sp,
     task->user_stack_size = 0x100000;  /* 1MB 用户栈 */
     task->pgd             = (uint64_t *)pgd_phys;
     task->fs_base         = 0;
+    task->cpu_affinity    = get_current_cpu_id();  /* 新任务继承当前 CPU */
 
     /* 初始化进程文件系统相关字段（继承父进程 cwd） */
     if (g_current_task) {
@@ -556,6 +559,7 @@ task_create(const char *name, void (*entry)(void *), void *arg, uint8_t priority
     task->user_started    = false;
     task->pgd      = NULL;
     task->fs_base  = 0;
+    task->cpu_affinity = get_current_cpu_id();  /* 新任务继承当前 CPU */
     task->cwd[0]   = '/';
     task->cwd[1]   = '\0';
     for (uint32_t j = 0; j < TASK_MAX_FD; j++)
@@ -645,7 +649,14 @@ task_exit(void)
 task_t *
 task_current(void)
 {
-    barrier_compiler();  // 编译器屏障，确保每次都重新读取
+    barrier_compiler();  /* 编译器屏障，确保每次都重新读取 */
+
+    cpu_t *cpu = cpu_current();
+    if (cpu && cpu->current_task) {
+        return cpu->current_task;
+    }
+
+    /* 早期引导或异常情况下回退到旧全局指针 */
     return g_current_task;
 }
 

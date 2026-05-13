@@ -25,6 +25,7 @@
 
 #include "task/sched.h"
 #include "task/switch.h"
+#include "task/cpu.h"
 #include "klog.h"
 #include "barrier.h"
 #include "string.h"
@@ -50,17 +51,20 @@ static inline void x86_write_fs_base(uint64_t fs_base)
 
 /* ── Scheduler state ─────────────────────────────────────── */
 
-static list_t   g_run_queue;   /* 就绪任务队列（不含 idle）*/
-static task_t  *g_idle;        /* idle 任务，队空时运行    */
-static volatile bool g_need_resched = false;  /* 需要重新调度的标志 */
+/* 已迁移为 per-cpu，见 kernel/task/cpu.h 的 cpu_t 结构 */
 
-/* ── sched_init ──────────────────────────────────────────── */
+/* ── sched_init ──────────────────────────────────────────– */
 
 void
 sched_init(task_t *idle_task)
 {
-    list_init(&g_run_queue);
-    g_idle = idle_task;
+    /* 现在由 cpu_init() 负责初始化每个 CPU 的队列 */
+    cpu_t *cpu = cpu_current();
+    list_init(&cpu->run_queue);
+    cpu->idle_task = idle_task;
+    cpu->current_task = idle_task;
+    /* 兼容仍使用全局指针的旧代码路径 */
+    g_current_task = idle_task;
 }
 
 /* ── sched_enqueue ───────────────────────────────────────── */
@@ -68,8 +72,24 @@ sched_init(task_t *idle_task)
 void
 sched_enqueue(task_t *task)
 {
+    /* 加入当前 CPU 的就绪队列 */
+    sched_enqueue_on_cpu(task, get_current_cpu_id());
+}
+
+/* ── sched_enqueue_on_cpu ────────────────────────────────── */
+
+void
+sched_enqueue_on_cpu(task_t *task, uint32_t cpu_id)
+{
+    if (cpu_id >= g_num_cpus) {
+        KLOG_ERROR("[sched] invalid cpu_id=%u (num_cpus=%u)\n", 
+                   cpu_id, g_num_cpus);
+        return;
+    }
+    
+    cpu_t *cpu = &g_cpus[cpu_id];
     list_node_init(&task->run_node);
-    list_insert_last(&g_run_queue, &task->run_node);
+    list_insert_last(&cpu->run_queue, &task->run_node);
 }
 
 /* ── sched_dequeue ───────────────────────────────────────── */
@@ -77,8 +97,10 @@ sched_enqueue(task_t *task)
 void
 sched_dequeue(task_t *task)
 {
-    if (list_contains(&g_run_queue, &task->run_node)) {
-        list_delete(&g_run_queue, &task->run_node);
+    /* 从任意 CPU 队列中移除（在 mutex_unlock 时使用） */
+    cpu_t *cpu = &g_cpus[task->cpu_affinity];
+    if (list_contains(&cpu->run_queue, &task->run_node)) {
+        list_delete(&cpu->run_queue, &task->run_node);
     }
 }
 
@@ -87,15 +109,13 @@ sched_dequeue(task_t *task)
 static task_t *
 pick_next(void)
 {
-    list_node_t *node = list_delete_first(&g_run_queue);
+    cpu_t *cpu = cpu_current();
+    list_node_t *node = list_delete_first(&cpu->run_queue);
     if (node) {
         task_t *task = container_of(node, task_t, run_node);
-        // KLOG_TRACE("[sched] pick_next: selected '%s' (id=%u, is_user=%d)\n",
-        //           task->name, task->id, task->is_user_process);
         return task;
     }
-    // KLOG_DEBUG("[sched] pick_next: queue empty, returning idle\n");
-    return g_idle; /* 队列为空，回退到 idle */
+    return cpu->idle_task;  /* 队列为空，回退到 idle */
 }
 
 /* ── sched_schedule ──────────────────────────────────────── */
@@ -105,13 +125,14 @@ sched_schedule(void)
 {
     /* 关中断，保存当前中断标志 */
     uint64_t flags = arch_irq_save();
-
-    task_t *prev = g_current_task;
+    
+    cpu_t *cpu = cpu_current();
+    task_t *prev = cpu->current_task;
 
     /* 若当前任务仍在运行且不是 idle，则重新入队尾 */
-    if (prev->state == TASK_RUNNING && prev != g_idle) {
+    if (prev->state == TASK_RUNNING && prev != cpu->idle_task) {
         prev->state = TASK_READY;
-        list_insert_last(&g_run_queue, &prev->run_node);
+        list_insert_last(&cpu->run_queue, &prev->run_node);
     }
 
     task_t *next = pick_next();
@@ -125,6 +146,8 @@ sched_schedule(void)
 
     next->state    = TASK_RUNNING;
     barrier_compiler();  // 确保 state 在 g_current_task 之前完成
+    cpu->current_task = next;
+    /* 兼容仍使用全局指针的旧代码路径（CPU0 主路径） */
     g_current_task = next;
     barrier_compiler();  // 确保 g_current_task 在 arch_task_switch 之前完成
 
@@ -163,22 +186,13 @@ sched_schedule(void)
     if (next->is_user_process && next->pgd != 0) {
         /* 切换到用户页表 */
         uint64_t pgd_phys = (uint64_t)next->pgd;
-        // KLOG_INFO("[sched] switching CR3 to user PGD=0x%llx for '%s'\n", 
-        //            pgd_phys, next->name);
         write_cr3(pgd_phys);
         
         /* 验证 CR3 切换 */
         uint64_t cr3_after = read_cr3();
-        // KLOG_INFO("[sched] CR3 after switch = 0x%llx (expected 0x%llx)\n",
-        //           cr3_after, pgd_phys);
         
         if ((cr3_after & 0xFFFFFFFFF000ULL) != pgd_phys) {
             KLOG_ERROR("[sched] CR3 switch FAILED!\n");
-        } else {
-            // KLOG_INFO("[sched] CR3 switched successfully, testing memory access...\n");
-            /* 测试内核代码是否可访问（读取当前指令） */
-            volatile uint64_t test = *(volatile uint64_t *)&sched_schedule;
-            // KLOG_INFO("[sched] Memory access test passed, code accessible: 0x%llx\n", test);
         }
         
         /* 更新 TSS.RSP0 为当前任务的内核栈顶 */
@@ -199,8 +213,15 @@ sched_schedule(void)
     /* 用户→用户切换，已在上面处理；内核→内核切换，页表不变 */
 #endif
 
-    KLOG_DEBUG("[sched] switch: prev='%s' (id=%u) -> next='%s' (id=%u)\n",
-              prev->name, prev->id, next->name, next->id);
+    KLOG_DEBUG("[sched] switch: prev='%s' (id=%u, cpu=%u) -> next='%s' (id=%u, cpu=%u)\n",
+              prev->name, prev->id, prev->cpu_affinity, 
+              next->name, next->id, next->cpu_affinity);
+
+    /* 仅在两端都不是 idle 时打印，避免刷屏 */
+    if (prev != cpu->idle_task && next != cpu->idle_task) {
+        KLOG_INFO("[sched/c%u] preempt: '%s' -> '%s'\n",
+                  cpu->cpu_id, prev->name, next->name);
+    }
 
     if (next->is_user_process) {
         KLOG_DEBUG("[sched] next='%s': entry=0x%llx sp=0x%llx kernel_sp=0x%llx\n",
@@ -212,46 +233,33 @@ sched_schedule(void)
      * 对 prev：保存被调用者寄存器 + SP 到 prev->sp，然后跳走。
      * 当 prev 再次被调度时，arch_task_switch 从这里"返回"。
      * 此时 flags 在 prev 的栈帧中，中断仍关闭。
-     *
-     * 同时切换页表（如果任务有独立页表）。
      */
     uintptr_t switch_sp = next->sp;
 
-    /* 注意：之前 AArch64 使用 sp=-1 标记切换到 idle，但这导致 
-     * .Lswitch_to_idle 没有设置栈指针，造成潜在的栈溢出问题。
-     * 现在所有架构统一：idle 有专用栈，正常返回即可。*/
-
 #if ARCH_RISCV64
-    extern uint64_t g_kernel_pgd_phys;
     uint64_t *next_pgd_for_switch = next->pgd;
     if (next->is_user_process && !next->user_started) {
         /* 首次进入用户进程：延迟satp切换到arch_switch_to_user */
         next_pgd_for_switch = NULL;
 
-    } else if (!next->is_user_process && next->pgd == NULL && g_kernel_pgd_phys != 0) {
-        /* 切换到内核任务：恢复内核页表 */
-        next_pgd_for_switch = (uint64_t *)g_kernel_pgd_phys;
+    } else if (!next->is_user_process && next->pgd == NULL) {
+        extern uint64_t g_kernel_pgd_phys;
+        if (g_kernel_pgd_phys != 0) {
+            /* 切换到内核任务：恢复内核页表 */
+            next_pgd_for_switch = (uint64_t *)g_kernel_pgd_phys;
+        }
     }
-    /*
-     * RISC-V 用户进程：pgd 是创建时固定的物理地址，不需要由 arch_task_switch
-     * 动态保存。若传 &prev->pgd，当用户进程在 arch_switch_to_user 切换 satp
-     * 之前被抢占（satp 仍为内核页表）时，prev->pgd 会被覆写为内核页表地址，
-     * 导致下次调度回来时以错误的 satp 进入 U-mode → VA 0x10000 不在内核页表 → Inst PF。
-     * 因此对用户进程传 NULL（跳过 satp 保存），保持 pgd 不变。
-     */
     uint64_t **prev_pgd_save = prev->is_user_process ? NULL : &prev->pgd;
     arch_task_switch(&prev->sp, switch_sp, prev_pgd_save, next_pgd_for_switch);
 #else
     arch_task_switch(&prev->sp, switch_sp, &prev->pgd, next->pgd);
 #endif
 
-    // KLOG_DEBUG("[sched] returned to prev='%s' (id=%u)\n", prev->name, prev->id);
-
     /* prev 被恢复后恢复其中断状态 */
     arch_irq_restore(flags);
 }
 
-/* ── sched_tick ──────────────────────────────────────────── */
+/* ── sched_tick ──────────────────────────────────────────– */
 
 void
 sched_tick(void)
@@ -259,34 +267,29 @@ sched_tick(void)
     /*
      * 由 timer ISR 调用。
      * 只设置需要重调度的标志，实际切换在异常返回前进行。
-     * 这样可以避免在 IRQ 处理程序中直接切换上下文。
      */
-    g_need_resched = true;
+    cpu_t *cpu = cpu_current();
+    cpu->need_resched = true;
 }
 
-/* ── sched_check_and_yield ─────────────────────────────────── */
+/* ── sched_check_and_yield ─────────────────────────────────– */
 
-/*
- * 由异常返回路径调用，检查是否需要重新调度。
- * 如果需要，执行任务切换。
- * 返回 true 表示发生了切换，false 表示没有。
- */
 bool
 sched_check_and_yield(void)
 {
     /*
-     * 仅在用户进程上下文触发 tick 抢占：
-     * - 内核初始化/内核任务路径保持非抢占，避免破坏临界流程
-     * - 用户态仍可被时钟中断抢占，实现时间片轮转
+     * 仅在用户进程上下文触发 tick 抢占
      */
-    if (!g_current_task || !g_current_task->is_user_process) {
+    cpu_t *cpu = cpu_current();
+    if (!cpu->current_task || !cpu->current_task->is_user_process) {
         return false;
     }
 
-    if (g_need_resched) {
-        g_need_resched = false;
+    if (cpu->need_resched) {
+        cpu->need_resched = false;
         sched_schedule();
         return true;
     }
     return false;
 }
+

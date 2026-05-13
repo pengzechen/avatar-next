@@ -46,6 +46,13 @@ void timer_init(void);
 void timer_enable(void);
 
 /**
+ * 次级核定时器最小初始化（SMP bring-up）
+ * - 不重复安装全局 IRQ handler
+ * - 只配置本核本地 timer 寄存器
+ */
+void timer_init_secondary(void);
+
+/**
  * 禁用定时器中断
  */
 void timer_disable(void);

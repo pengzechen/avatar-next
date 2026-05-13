@@ -18,6 +18,9 @@ log_level_t g_log_level __attribute__((weak)) = LOG_LEVEL;
 /* 全局模块日志掩码（默认启用所有模块） */
 uint64_t g_log_module_mask __attribute__((weak)) = 0xFFFFFFFFFFFFFFFFULL;
 
+/* SMP 日志序列化锁：保证多核并发输出不交叉 */
+static spinlock_noirq_t g_klog_lock = SPINLOCK_NOIRQ_INIT;
+
 /* 外部依赖：UART 输出函数（需要在 platform 中实现） */
 extern void uart_putchar(char c);
 extern void uart_putstr(const char *str);
@@ -63,7 +66,7 @@ kvprintf(const char *fmt, va_list va)
 }
 
 /**
- * kprintf - 格式化输出到内核日志
+ * kprintf - 格式化输出到内核日志（SMP 安全：持锁期间屏蔽本核中断）
  */
 int
 kprintf(const char *fmt, ...)
@@ -71,9 +74,11 @@ kprintf(const char *fmt, ...)
     va_list va;
     int     r;
 
+    spin_lock_irqsave(&g_klog_lock);
     va_start(va, fmt);
     r = kvprintf(fmt, va);
     va_end(va);
+    spin_unlock_irqrestore(&g_klog_lock);
 
     return r;
 }

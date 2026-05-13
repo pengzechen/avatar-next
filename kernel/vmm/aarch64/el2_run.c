@@ -12,9 +12,57 @@
 
 #include "vmm.h"
 #include "klog.h"
+#include "string.h"
+#include "mm_vm.h"
 #include "aarch64/stage2.h"
 #include "aarch64/sysreg.h"
 #include "task/task.h"
+
+/* ── guest 专用栈（每个 vCPU 独立）─────────────────────────── */
+#define GUEST_STACK_SIZE  4096
+static uint8_t g_guest_stacks[MAX_VCPUS][GUEST_STACK_SIZE]
+    __attribute__((aligned(16)));
+
+/*
+ * el2_vcpu_setup — 初始化 AArch64 vCPU 软件 VMCS
+ *
+ * 设置 guest 初始状态，使得首次 el2_enter_guest 后：
+ *   - guest PC = entry（guest EL1 入口）
+ *   - guest PSTATE = EL1h, AArch64, IRQ/FIQ/SError 开
+ *   - guest SP_EL1 = 每个 vcpu 独立的 4KB 栈顶
+ *   - guest GPRs = 全 0
+ */
+int el2_vcpu_setup(vcpu_t *vcpu, void (*entry)(void))
+{
+    memset(vcpu->r, 0, sizeof(vcpu->r));
+
+    /*
+     * guest 入口地址：必须用物理地址。
+     * Stage-2 以 IPA→PA identity map，EL1 MMU off 时 VA 直接作为 IPA，
+     * 内核 VA (0xffff...) 超出 Stage-2 IPA 范围（T0SZ=32, 4GB），
+     * 必须转换为 PA 才能被 Stage-2 正确映射。
+     */
+    vcpu->elr  = virt_to_phys((uint64_t)entry);
+
+    /*
+     * SPSR_EL2 for guest EL1h (AArch64):
+     *   M[3:0] = 0b0101 = EL1h
+     *   F=0, I=0, A=0, D=0  (IRQ/FIQ/SError/Debug 不屏蔽)
+     * = 0x3C5: 保留所有中断使能，EL1h 模式
+     * 注意：D bit(9)=1 防止首次进入时 debug exception，其余=0
+     */
+    vcpu->spsr = 0x3C5ULL;
+
+    /* guest SP_EL1：每个 vcpu 独立的 4KB 栈 */
+    uint32_t id = (uint32_t)vcpu->vcpu_id;
+    if (id >= MAX_VCPUS) id = 0;
+    /* SP_EL1 同样需要物理地址（EL1 MMU off 时直接用作 IPA）*/
+    vcpu->sp_el1 = virt_to_phys((uint64_t)(g_guest_stacks[id] + GUEST_STACK_SIZE));
+
+    KLOG_INFO("[VMM] el2_vcpu_setup: vcpu%d entry=0x%llx sp_el1=0x%llx spsr=0x%llx\n",
+              vcpu->vcpu_id, vcpu->elr, vcpu->sp_el1, vcpu->spsr);
+    return 0;
+}
 
 /* ── 读取 ESR / ELR / FAR / HPFAR ────────────────────────── */
 static inline uint64_t read_esr_el2(void)   { return READ_ESR_EL2(); }
@@ -115,12 +163,42 @@ static int vmm_exit_handler(vcpu_t *vcpu)
 
 void vmm_arch_restore_guest_ctx(vcpu_t *vcpu)
 {
+    /*
+     * tpidr_el1 在 VHE 下是 host per-CPU 指针，与真实 EL1 寄存器共享，
+     * 没有 _el12 别名。restore_sysregs_el12 会将 vcpu->sysregs 里的 0
+     * 写入 TPIDR_EL1，导致 cpu_current() 返回 NULL 。
+     * 必须在调用前后保存/恢复 host 的实际值。
+     */
+    uint64_t host_tpidr;
+    __asm__ volatile("mrs %0, tpidr_el1" : "=r"(host_tpidr));
     restore_sysregs_el12(vcpu->sysregs);
+    __asm__ volatile("msr tpidr_el1, %0\nisb" :: "r"(host_tpidr) : "memory");
 }
 
 int vmm_arch_enter_guest(vcpu_t *vcpu)
 {
+    /*
+     * VTCR_EL2 和 VTTBR_EL2 都是 per-CPU 寄存器。
+     * stage2_init 只在 cpu0 上写了它们，次级核必须在进 guest 前重新写入：
+     *   - VTCR 控制 Stage-2 翻译粒度（T0SZ/SL0 等），若为 0 则 T0SZ=0，
+     *     需要 L0 页表，而我们只有 4-entry L1，立即 IFSC=0x04 fault。
+     *   - VTTBR 指向根页表物理地址，为 0 时同样 fault。
+     */
+    __asm__ volatile(
+        "msr vtcr_el2,  %0\n"
+        "msr vttbr_el2, %1\n"
+        "isb\n"
+        :: "r"(vcpu->vm->vtcr), "r"(vcpu->page_table_base) : "memory"
+    );
+
+    /*
+     * guest 运行期间可能修改 TPIDR_EL1（host/guest 共享该寄存器），
+     * el2_trap_exit 不会自动恢复。必须在返回后恢复 host 値。
+     */
+    uint64_t host_tpidr;
+    __asm__ volatile("mrs %0, tpidr_el1" : "=r"(host_tpidr));
     el2_enter_guest(vcpu);
+    __asm__ volatile("msr tpidr_el1, %0\nisb" :: "r"(host_tpidr) : "memory");
     return 1;   /* el2_enter_guest 总是成功返回（否则直接崩溃）*/
 }
 

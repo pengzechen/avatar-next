@@ -73,6 +73,12 @@ void gic_init(void)
     logger_info("GIC: Initialization completed successfully\n");
 }
 
+/* 次级核只需要初始化本地 CPU interface（不重复初始化 distributor） */
+void gic_init_secondary(void)
+{
+    gicc_el2_init();
+}
+
 // gicd g0, g1  gicc,  gich enable。 smp启动首核执行
 void gic_virtual_init(void)
 {
@@ -93,9 +99,9 @@ void gic_virtual_init(void)
 
     gicc_el2_init();
 
-    logger_gic_debug("GIC: Disabling all private IRQs\n");
-    for (int32_t i = 0; i < GIC_NR_PRIVATE_IRQS; i++)
-        gic_enable_int(i, 0);
+    // logger_gic_debug("GIC: Disabling all private IRQs\n");
+    // for (int32_t i = 0; i < GIC_NR_PRIVATE_IRQS; i++)
+    //     gic_enable_int(i, 0);
 
     gic_test_init();
 
