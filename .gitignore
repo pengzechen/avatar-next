@@ -3,4 +3,5 @@
 .arch
 /apps/aarch64/rootfs
 /apps/riscv64/rootfs
-/apps/x86_64/rootfsimgs/*.img
+/apps/x86_64/rootfs
+/imgs/*.img
