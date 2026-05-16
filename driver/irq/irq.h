@@ -27,7 +27,8 @@
 
     #include "irq/gicv2.h"
 
-    #define irq_init()              gic_init()
+    #define irq_init()              gic_virtual_init()
+    #define irq_init_secondary()    gic_init_secondary()
     #define irq_enable_irq(n)       gic_enable_int((int32_t)(n), 1)
     #define irq_disable_irq(n)      gic_enable_int((int32_t)(n), 0)
 

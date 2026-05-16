@@ -30,7 +30,7 @@
 #define DEVICE_TIMER_TICK_MS          10
 #define DEVICE_TIMER_FREQUENCY_HZ     100
 #define DEVICE_TIMER_COUNTER_HZ       0UL
-#define DEVICE_CNTP_TIMER             30
+#define DEVICE_CNTP_TIMER             26
 #define DEVICE_UART_REG_SHIFT         0
 #elif ARCH_RISCV64 && PLATFORM_QEMU
 #define DEVICE_PROFILE_VALID          1

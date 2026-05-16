@@ -5,13 +5,13 @@
 #
 # NOTE:
 # - x86_64 uses RAM base 1MB, so RAM size is 2GB-1MB (0x7FF00000) to stay within -m 2G.
-# - rootfs_size is currently fixed at 32MB for all platforms.
+# - rootfs_size is currently fixed at 128MB for all platforms.
 #
-aarch64    qemu      1        0x40000000UL  0x80000000UL   0x60000000UL   0x02000000UL
-riscv64    qemu      1        0x80000000UL  0x80000000UL   0x88000000UL   0x02000000UL
-x86_64     qemu      1        0x00100000UL  0x7FF00000UL   0x04000000UL   0x02000000UL
+aarch64    qemu      1        0x40000000UL  0x80000000UL   0x60000000UL   0x08000000UL
+riscv64    qemu      1        0x80000000UL  0x80000000UL   0x88000000UL   0x08000000UL
+x86_64     qemu      1        0x00100000UL  0x7FF00000UL   0x04000000UL   0x08000000UL
 
 # Future real-board examples (fill real values before enabling):
-# aarch64  rk3588    0        0x........UL  0x........UL   0x........UL   0x02000000UL
-# riscv64  sg2002    0        0x........UL  0x........UL   0x........UL   0x02000000UL
-# x86_64   pc_real   0        0x........UL  0x........UL   0x........UL   0x02000000UL
+# aarch64  rk3588    0        0x........UL  0x........UL   0x........UL   0x08000000UL
+# riscv64  sg2002    0        0x........UL  0x........UL   0x........UL   0x08000000UL
+# x86_64   pc_real   0        0x........UL  0x........UL   0x........UL   0x08000000UL

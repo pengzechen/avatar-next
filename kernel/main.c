@@ -240,10 +240,6 @@ void kernel_main(void)
     KLOG_INFO("Initializing task subsystem...\n");
     task_init();
 
-    /* 切换到 idle 专用栈（防止 boot 栈在频繁中断下溢出） */
-    task_switch_to_idle_stack();
-
-
     /* === 测试用户进程创建 === */
     KLOG_INFO("\n");
     KLOG_INFO("=== Testing User Process Creation ===\n");
@@ -396,21 +392,13 @@ void kernel_main(void)
      */
     timer_set_tick_cb(sched_tick);
     KLOG_INFO("Preemptive scheduling enabled\n");
-
     KLOG_INFO("\n");
 
-    extern volatile uint32_t g_syscall_entry_count;
-    uint64_t idle_count = 0;
-    uint32_t last_syscall_count = 0;
+    /* 切换到 idle 专用栈（防止 boot 栈在频繁中断下溢出） */
+    task_switch_to_idle_stack();
     
     while (1) {
-        idle_count++;
-        if (idle_count % 500 == 0) {
-            if (g_syscall_entry_count != last_syscall_count) {
-                KLOG_INFO("[idle] syscalls=%u\n", g_syscall_entry_count);
-                last_syscall_count = g_syscall_entry_count;
-            }
-        }
+
         task_yield();
         #if ARCH_AARCH64
                 __asm__ volatile("wfe");
