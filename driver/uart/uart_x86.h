@@ -35,5 +35,6 @@ void uart_x86_putchar(char c);
 void uart_x86_putstr(const char *s);
 char uart_x86_getchar(void);
 bool uart_x86_getchar_nb(char *c);
+bool uart_x86_rx_available(void);
 
 #endif /* DRIVER_UART_X86_H */

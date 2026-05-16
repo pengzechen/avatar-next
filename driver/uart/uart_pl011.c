@@ -265,14 +265,13 @@ bool pl011_getchar_nb(char *c) {
 
 // Check if RX data is available
 bool pl011_rx_available(void) {
-    if (!uart_initialized) {
-        return false;
-    }
-    
+    if (!uart_initialized)
+        /* early 模式：直接查硬件 FR.RXFE 位（中断未启用） */
+        return !uart_rx_fifo_empty();
+
     spin_lock(&rx_buffer.lock);
     bool available = !buffer_is_empty(&rx_buffer);
     spin_unlock(&rx_buffer.lock);
-    
     return available;
 }
 

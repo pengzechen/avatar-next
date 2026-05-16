@@ -79,3 +79,12 @@ uart_x86_getchar_nb(char *c)
     *c = (char)inb(UART_X86_RBR);
     return true;
 }
+
+/*
+ * uart_x86_rx_available — 检查是否有可读数据（不消费）
+ */
+bool
+uart_x86_rx_available(void)
+{
+    return (inb(UART_X86_LSR) & UART16550_LSR_DR) != 0;
+}

@@ -402,7 +402,8 @@ bool
 dw_uart_rx_available(void)
 {
     if (!dw_uart_initialized)
-        return false;
+        /* early 模式：直接查 LSR 硬件寄存器（中断未启用，数据不经缓冲区） */
+        return dw_uart_rx_ready();
     spin_lock_irqsave(&rx_buffer.lock);
     bool available = !buffer_is_empty(&rx_buffer);
     spin_unlock_irqrestore(&rx_buffer.lock);
