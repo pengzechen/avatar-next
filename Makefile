@@ -194,12 +194,12 @@ ifdef VM_EARLY_C_SRC
 endif
 
 # task 模块源文件
-TASK_C_SOURCES := $(KERNEL_DIR)/task/task.c $(KERNEL_DIR)/task/sched.c $(KERNEL_DIR)/task/mutex.c
-TASK_C_OBJECTS := $(BUILD_DIR)/kernel_task_task.o $(BUILD_DIR)/kernel_task_sched.o $(BUILD_DIR)/kernel_task_mutex.o
+TASK_C_SOURCES := $(KERNEL_DIR)/task/task.c $(KERNEL_DIR)/task/sched.c $(KERNEL_DIR)/task/mutex.c $(KERNEL_DIR)/task/exec.c
+TASK_C_OBJECTS := $(BUILD_DIR)/kernel_task_task.o $(BUILD_DIR)/kernel_task_sched.o $(BUILD_DIR)/kernel_task_mutex.o $(BUILD_DIR)/kernel_task_exec.o
 
 # loader 模块源文件
-LOADER_C_SOURCES := $(KERNEL_DIR)/loader/bin_loader.c $(KERNEL_DIR)/loader/elf_loader.c
-LOADER_C_OBJECTS := $(BUILD_DIR)/kernel_loader_bin_loader.o $(BUILD_DIR)/kernel_loader_elf_loader.o
+LOADER_C_SOURCES := $(KERNEL_DIR)/loader/bin_loader.c $(KERNEL_DIR)/loader/elf_loader.c $(KERNEL_DIR)/loader/elf_image.c
+LOADER_C_OBJECTS := $(BUILD_DIR)/kernel_loader_bin_loader.o $(BUILD_DIR)/kernel_loader_elf_loader.o $(BUILD_DIR)/kernel_loader_elf_image.o
 
 # syscall 模块源文件
 SYSCALL_C_SOURCES := $(KERNEL_DIR)/syscall/syscall.c
@@ -614,6 +614,9 @@ $(BUILD_DIR)/kernel_task_sched.o: $(KERNEL_DIR)/task/sched.c | $(BUILD_DIR)
 $(BUILD_DIR)/kernel_task_mutex.o: $(KERNEL_DIR)/task/mutex.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
+$(BUILD_DIR)/kernel_task_exec.o: $(KERNEL_DIR)/task/exec.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
 $(BUILD_DIR)/task_switch.o: $(TASK_S_SRC) | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
@@ -623,6 +626,9 @@ $(BUILD_DIR)/kernel_loader_bin_loader.o: $(KERNEL_DIR)/loader/bin_loader.c | $(B
 
 $(BUILD_DIR)/kernel_loader_elf_loader.o: $(KERNEL_DIR)/loader/elf_loader.c | $(BUILD_DIR)
 	$(CC) $(LWEXT4_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/kernel_loader_elf_image.o: $(KERNEL_DIR)/loader/elf_image.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
 
 # syscall 模块编译规则
 $(BUILD_DIR)/kernel_syscall_syscall.o: $(KERNEL_DIR)/syscall/syscall.c | $(BUILD_DIR)
