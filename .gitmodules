@@ -1,0 +1,3 @@
+[submodule "fs/lwext4"]
+	path = fs/lwext4
+	url = https://github.com/gkostka/lwext4.git
