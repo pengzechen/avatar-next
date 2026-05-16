@@ -11,20 +11,27 @@
 #include "klog.h"
 #include "fs_init.h"
 
-/* 声明 ramblk.c 中定义的符号（避免包含带 lwext4 类型的 ramblk.h） */
+/* 声明 blk 驱动中定义的符号（避免包含带 lwext4 类型的头文件） */
 struct ext4_blockdev;
+#if DRIVER_SDBLK_SG2002
+extern struct ext4_blockdev *sdblk_get_bdev(void);
+#define fs_get_bdev()  sdblk_get_bdev()
+#define BDEV_NAME      "sdblk0"
+#else
 extern struct ext4_blockdev *ramblk_get_bdev(void);
+#define fs_get_bdev()  ramblk_get_bdev()
+#define BDEV_NAME      "ramblk0"
+#endif
 
 /* 挂载点名称 */
 #define ROOTFS_MP   "/"
-#define BDEV_NAME   "ramblk0"
 
 int fs_init(void)
 {
     int rc;
 
-    KLOG_INFO("[fs] Registering RAM block device '%s'...\n", BDEV_NAME);
-    rc = ext4_device_register(ramblk_get_bdev(), BDEV_NAME);
+    KLOG_INFO("[fs] Registering block device '%s'...\n", BDEV_NAME);
+    rc = ext4_device_register(fs_get_bdev(), BDEV_NAME);
     if (rc != EOK) {
         KLOG_ERROR("[fs] ext4_device_register failed: %d\n", rc);
         return -rc;

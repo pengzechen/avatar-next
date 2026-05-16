@@ -679,9 +679,9 @@ $(BUILD_DIR)/drv_tpu_%.o: driver/tpu/%.c | $(BUILD_DIR)
 $(BUILD_DIR)/drv_ion_%.o: driver/ion/%.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -Idriver/ion -Ikernel/mm -c $< -o $@
 
-# SD 块设备（需要 -Iplatforms/$(PLATFORM) 找到 sdblk_cfg.h，已含于 CFLAGS）
+# SD 块设备（包含 lwext4 接口，使用 LWEXT4_CFLAGS）
 $(BUILD_DIR)/drv_blk_sdblk.o: driver/blk/sdblk.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -Idriver -c $< -o $@
+	$(CC) $(LWEXT4_CFLAGS) -Idriver -c $< -o $@
 
 # PseudoFS（虚拟文件系统 /dev /proc /sys）— 始终构建
 PSEUDOFS_OBJS := $(BUILD_DIR)/pseudofs_pseudofs.o

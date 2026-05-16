@@ -60,4 +60,8 @@ int sdblk_write_block(uint32_t block_id, const void *buf);
 uint64_t sdblk_capacity_bytes(void);
 uint64_t sdblk_capacity_blocks(void);
 
+/* ── lwext4 块设备接口 ───────────────────────────────────────── */
+struct ext4_blockdev;
+struct ext4_blockdev *sdblk_get_bdev(void);
+
 #endif /* DRIVER_SDBLK_H */

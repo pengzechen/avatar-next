@@ -522,3 +522,61 @@ uint64_t sdblk_capacity_blocks(void)
 {
     return g_sdblk.initialized ? g_sdblk.capacity / SDBLK_BLOCK_SIZE : 0ULL;
 }
+
+/* ════════════════════════════════════════════════════════════════
+ * lwext4 块设备接口
+ * ════════════════════════════════════════════════════════════════ */
+#include <ext4_blockdev.h>
+#include <ext4_errno.h>
+
+static int sdblk_bdev_open(struct ext4_blockdev *bdev)
+{
+    int r = sdblk_init();
+    if (r != SDBLK_OK)
+        return (r == SDBLK_NOCARD) ? ENODEV : EIO;
+    bdev->bdif->ph_bcnt = sdblk_capacity_blocks();
+    bdev->part_size     = sdblk_capacity_bytes();
+    return EOK;
+}
+
+static int sdblk_bdev_bread(struct ext4_blockdev *bdev, void *buf,
+                            uint64_t blk_id, uint32_t blk_cnt)
+{
+    (void)bdev;
+    return sdblk_read_blocks((uint32_t)blk_id, buf, blk_cnt) == SDBLK_OK
+           ? EOK : EIO;
+}
+
+static int sdblk_bdev_bwrite(struct ext4_blockdev *bdev, const void *buf,
+                             uint64_t blk_id, uint32_t blk_cnt)
+{
+    (void)bdev;
+    const uint8_t *p = (const uint8_t *)buf;
+    for (uint32_t i = 0; i < blk_cnt; i++, p += SDBLK_BLOCK_SIZE)
+        if (sdblk_write_block((uint32_t)(blk_id + i), p) != SDBLK_OK)
+            return EIO;
+    return EOK;
+}
+
+static int sdblk_bdev_close(struct ext4_blockdev *bdev)
+{
+    (void)bdev;
+    return EOK;
+}
+
+EXT4_BLOCKDEV_STATIC_INSTANCE(
+    g_sdblk_bdev,
+    SDBLK_BLOCK_SIZE,
+    0,               /* ph_bcnt 在 sdblk_bdev_open() 中由 sdblk_capacity_blocks() 填充 */
+    sdblk_bdev_open,
+    sdblk_bdev_bread,
+    sdblk_bdev_bwrite,
+    sdblk_bdev_close,
+    NULL,   /* lock   */
+    NULL    /* unlock */
+);
+
+struct ext4_blockdev *sdblk_get_bdev(void)
+{
+    return &g_sdblk_bdev;
+}
