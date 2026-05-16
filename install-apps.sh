@@ -92,15 +92,6 @@ if [ -f "$BUSYBOX_SRC" ]; then
     sudo chmod +x "$MOUNT_POINT/busybox"
     INSTALLED=$((INSTALLED + 1))
     echo "  [busybox installed successfully]"
-
-    # 创建常用 busybox applet 链接（作为独立文件复制），以支持 PATH 查找
-    echo "  Installing busybox applets to /bin:"
-    sudo mkdir -p "$MOUNT_POINT/bin"
-    for APPLET in sh ls cat echo pwd mkdir rm cp mv grep find; do
-        sudo cp "$BUSYBOX_SRC" "$MOUNT_POINT/bin/$APPLET"
-        sudo chmod +x "$MOUNT_POINT/bin/$APPLET"
-    done
-    echo "  [applets installed in /bin]"
 else
     echo "  Warning: busybox not found at $BUSYBOX_SRC"
     echo "  To build busybox, see: apps/busybox-1.37.0/"

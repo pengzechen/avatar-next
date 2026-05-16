@@ -159,3 +159,47 @@ task_trampoline_user:
     
     /* 不会到达这里 */
     ud2
+
+/*
+ * arch_fork_resume_user - fork 子进程首次进入用户态（x86_64）
+ *
+ * 由 arch_task_switch 的 ret 跳转到此处。
+ * 约定：rbx = trap_frame_t*（arch_init_fork_child_stack 中设置）
+ *
+ * trap_frame_t 偏移（见 include/x86_64/exception.h）:
+ *   r15=0x00  r14=0x08  r13=0x10  r12=0x18
+ *   r11=0x20  r10=0x28  r9=0x30   r8=0x38
+ *   rbp=0x40  rdi=0x48  rsi=0x50  rdx=0x58
+ *   rcx=0x60  rbx=0x68  rax=0x70
+ *   vector=0x78  error_code=0x80
+ *   rip=0x88  cs=0x90  rflags=0x98  rsp=0xa0  ss=0xa8
+ */
+.global arch_fork_resume_user
+arch_fork_resume_user:
+    /* 从 trap_frame 构建 iretq 栈帧 */
+    pushq   0xa8(%rbx)          /* SS */
+    pushq   0xa0(%rbx)          /* RSP（用户栈指针）*/
+    pushq   0x98(%rbx)          /* RFLAGS */
+    pushq   0x90(%rbx)          /* CS */
+    pushq   0x88(%rbx)          /* RIP（用户返回地址）*/
+
+    /* 恢复通用寄存器（最后恢复 rbx 因为它是帧指针）*/
+    movq    0x00(%rbx), %r15
+    movq    0x08(%rbx), %r14
+    movq    0x10(%rbx), %r13
+    movq    0x18(%rbx), %r12
+    movq    0x20(%rbx), %r11
+    movq    0x28(%rbx), %r10
+    movq    0x30(%rbx), %r9
+    movq    0x38(%rbx), %r8
+    movq    0x40(%rbx), %rbp
+    movq    0x48(%rbx), %rdi
+    movq    0x50(%rbx), %rsi
+    movq    0x58(%rbx), %rdx
+    movq    0x60(%rbx), %rcx
+    /* fork 子进程 rax = 0 */
+    xorq    %rax, %rax
+    movq    0x68(%rbx), %rbx    /* 最后恢复 rbx */
+
+    iretq
+    ud2

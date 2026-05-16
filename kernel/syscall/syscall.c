@@ -853,6 +853,35 @@ void syscall_handler(trap_frame_t *frame)
         void *parent_pgd_virt = phys_to_virt((uint64_t)parent->pgd);
         memset(child_pgd_virt, 0, PAGE_SIZE);
 
+#if ARCH_X86_64
+        /*
+         * x86_64: 子进程页表必须包含内核高半区映射（PML4[256..511]），
+         * 否则调度器 write_cr3(child_pgd) 后内核代码立即不可达 → 三重错误 → 重启。
+         * 从父进程页表复制（父进程已在 elf_loader 中正确复制）。
+         */
+        {
+            uint64_t *child_pml4  = (uint64_t *)child_pgd_virt;
+            uint64_t *parent_pml4 = (uint64_t *)parent_pgd_virt;
+            for (int i = 256; i < 512; i++)
+                child_pml4[i] = parent_pml4[i];
+        }
+#endif
+
+#if ARCH_RISCV64
+        /*
+         * RISC-V: 子进程页表必须包含内核高半区映射，否则
+         * sched_schedule 切换 satp 到子进程页表后，内核代码
+         * 立即无法访问，导致指令页错误 → 系统挂起。
+         * 从父进程页表复制 L1[0x100] 和 L1[0x102]（内核高半区 1GB 大页叶子）。
+         */
+        {
+            uint64_t *child_l1  = (uint64_t *)child_pgd_virt;
+            uint64_t *parent_l1 = (uint64_t *)parent_pgd_virt;
+            child_l1[0x100] = parent_l1[0x100];
+            child_l1[0x102] = parent_l1[0x102];
+        }
+#endif
+
         bool clone_copy_ok = true;
 
         /* helper: 复制 [start, end) 内已映射页 */
@@ -1190,9 +1219,13 @@ void syscall_handler(trap_frame_t *frame)
         if (!buf || count == 0) { regs[0] = 0; break; }
 
         if (fd == 0) {
-            /* stdin: 阻塞读 UART（跨架构统一接口） */
+            /* stdin: yield-poll 读 UART，避免 spin 独占 CPU 阻塞子进程
+             * 每次循环先用非阻塞 uart_rx_ready() 检查；无数据则 task_yield()
+             * 让调度器切换到其他就绪任务（如子进程），再回来轮询。 */
             uint64_t n = 0;
             while (n < count) {
+                while (!uart_rx_ready())
+                    task_yield();
                 buf[n] = uart_getc();
                 if (buf[n] == '\r') buf[n] = '\n';
                 if (buf[n++] == '\n') break;

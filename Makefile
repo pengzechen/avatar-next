@@ -823,6 +823,12 @@ rootfs: $(ROOTFS_IMG) $(APPS_BINS) $(APPS_C_ELFS)
 		sudo cp apps/busybox-$(ARCH) /tmp/avatar_mnt/busybox; \
 		sudo chmod +x /tmp/avatar_mnt/busybox; \
 		echo "  [busybox installed]"; \
+		sudo mkdir -p /tmp/avatar_mnt/bin; \
+		for applet in sh ls cat echo pwd mkdir rm cp mv grep find ps kill; do \
+			sudo cp apps/busybox-$(ARCH) /tmp/avatar_mnt/bin/$$applet; \
+			sudo chmod +x /tmp/avatar_mnt/bin/$$applet; \
+		done; \
+		echo "  [busybox applets installed in /bin]"; \
 	fi
 	@if [ -f build/test_exec.bin ]; then \
 		sudo cp build/test_exec.bin /tmp/avatar_mnt/test_exec; \

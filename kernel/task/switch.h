@@ -390,9 +390,26 @@ arch_init_fork_child_stack(uint8_t *stack_base, uint32_t stack_size,
     for (int i = 2; i < 13; i++)
         sp[i] = 0;
 #else
-    (void)frame;
-    sp -= 12;
-    for (int i = 0; i < 12; i++) sp[i] = 0;
+    /* x86_64: 在内核栈上放 trap_frame，再放 arch_task_switch 的被调用者寄存器帧 */
+    sp = (uint64_t *)((uintptr_t)sp - sizeof(trap_frame_t));
+    trap_frame_t *child_frame = (trap_frame_t *)sp;
+    *child_frame = *frame;
+    child_frame->rax = 0;   /* fork 子进程返回 0 */
+
+    /*
+     * arch_task_switch 保存/恢复顺序（低地址→高地址）：
+     *   [sp+0] r15  [sp+8] r14  [sp+16] r13  [sp+24] r12
+     *   [sp+32] rbp [sp+40] rbx [sp+48] 返回地址
+     * rbx 恢复后值为 &child_frame，ret 后跳 arch_fork_resume_user。
+     */
+    sp -= 7;
+    sp[0] = 0;                                       /* r15 */
+    sp[1] = 0;                                       /* r14 */
+    sp[2] = 0;                                       /* r13 */
+    sp[3] = 0;                                       /* r12 */
+    sp[4] = 0;                                       /* rbp */
+    sp[5] = (uint64_t)(uintptr_t)child_frame;        /* rbx = frame 指针 */
+    sp[6] = (uint64_t)arch_fork_resume_user;         /* 返回地址 */
 #endif
 
     return (uintptr_t)sp;
