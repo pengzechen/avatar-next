@@ -671,6 +671,12 @@ $(BUILD_DIR)/drv_tpu_%.o: driver/tpu/%.c | $(BUILD_DIR)
 $(BUILD_DIR)/drv_ion_%.o: driver/ion/%.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -Idriver/ion -Ikernel/mm -c $< -o $@
 
+# PseudoFS（虚拟文件系统 /dev /proc /sys）— 始终构建
+PSEUDOFS_OBJS := $(BUILD_DIR)/pseudofs_pseudofs.o
+
+$(BUILD_DIR)/pseudofs_pseudofs.o: fs/pseudofs/pseudofs.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -Idriver -Ikernel -Ikernel/mm -c $< -o $@
+
 # 驱动编译规则
 $(BUILD_DIR)/drv_%.o: driver/%.c | $(BUILD_DIR)
 	@mkdir -p $(dir $@)
@@ -897,7 +903,7 @@ $(BUILD_DIR)/apps_riscv_guest_test.o: apps/riscv64/guest_test.S | $(BUILD_DIR)
 endif
 
 # 链接内核 ELF 文件
-$(KERNEL_TARGET): $(BOOT_OBJECTS) $(KERNEL_OBJECTS) $(TASK_C_OBJECTS) $(TASK_S_OBJ) $(TASK_USER_TEST_OBJ) $(TASK_USER_HELLO_OBJ) $(TASK_USER_TESTEXECVE_OBJ) $(LOADER_C_OBJECTS) $(SYSCALL_C_OBJECTS) $(SYSCALL_S_OBJ) $(VM_C_OBJECTS) $(VM_S_OBJ) $(VMM_C_OBJECTS) $(VMM_S_OBJECTS) $(GUEST_TEST_OBJ) $(TESTS_OBJECTS) $(PLATFORM_OBJECTS) $(DRIVER_OBJECTS) $(EXCEPTION_OBJECTS) $(KLOG_OBJECT) $(VSNPRINTF_OBJECT) $(STRING_OBJECT) $(BITMAP_OBJECT) $(PLATFORM_CFG_OBJECT) $(LWEXT4_OBJS) $(LWEXT4_PORT_OBJS) $(LUA_OBJECTS) | $(BUILD_DIR)
+$(KERNEL_TARGET): $(BOOT_OBJECTS) $(KERNEL_OBJECTS) $(TASK_C_OBJECTS) $(TASK_S_OBJ) $(TASK_USER_TEST_OBJ) $(TASK_USER_HELLO_OBJ) $(TASK_USER_TESTEXECVE_OBJ) $(LOADER_C_OBJECTS) $(SYSCALL_C_OBJECTS) $(SYSCALL_S_OBJ) $(VM_C_OBJECTS) $(VM_S_OBJ) $(VMM_C_OBJECTS) $(VMM_S_OBJECTS) $(GUEST_TEST_OBJ) $(TESTS_OBJECTS) $(PLATFORM_OBJECTS) $(DRIVER_OBJECTS) $(EXCEPTION_OBJECTS) $(KLOG_OBJECT) $(VSNPRINTF_OBJECT) $(STRING_OBJECT) $(BITMAP_OBJECT) $(PLATFORM_CFG_OBJECT) $(LWEXT4_OBJS) $(LWEXT4_PORT_OBJS) $(LUA_OBJECTS) $(PSEUDOFS_OBJS) | $(BUILD_DIR)
 	$(CC) $(LDFLAGS) -nostartfiles -nodefaultlibs -T $(BOOT_DIR)/$(ARCH)/link.ld -o $@ $^
 
 # 转换为二进制文件
@@ -921,6 +927,9 @@ $(ROOTFS_IMG): $(APPS_BINS) $(APPS_C_ELFS) | $(BUILD_DIR)
 	@echo "=== Building rootfs for $(ARCH): $(ROOTFS_IMG) ==="
 	@rm -rf $(ROOTFS_STAGE)
 	@mkdir -p $(ROOTFS_STAGE)/bin
+	@# 虚拟文件系统挂载点（pseudofs 在内核侧拦截，ext4 只需目录项存在）
+	@mkdir -p $(ROOTFS_STAGE)/dev $(ROOTFS_STAGE)/proc $(ROOTFS_STAGE)/sys
+	@mkdir -p $(ROOTFS_STAGE)/root $(ROOTFS_STAGE)/tmp $(ROOTFS_STAGE)/etc
 	@# 安装 busybox
 	@if [ -f apps/busybox-$(ARCH) ]; then \
 		cp apps/busybox-$(ARCH) $(ROOTFS_STAGE)/busybox; \

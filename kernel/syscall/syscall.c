@@ -1,3 +1,5 @@
+#include "kernel_stat.h"
+#include "pseudofs.h"
 #include "syscall/syscall.h"
 #include "loader/bin_loader.h"
 #include "loader/elf_loader.h"
@@ -41,6 +43,7 @@
 #define LINUX_SYS_NEWFSTATAT     79
 #define LINUX_SYS_FSTAT          80
 #define LINUX_SYS_FSYNC          82
+#define LINUX_SYS_SENDFILE       71   /* AArch64/RISC-V sendfile64 */
 #define LINUX_SYS_FDATASYNC      83
 #define LINUX_SYS_EXIT           93
 #define LINUX_SYS_EXIT_GROUP     94
@@ -182,6 +185,7 @@ typedef enum {
     FDT_FREE = 0,
     FDT_FILE,
     FDT_DIR,
+    FDT_PSEUDO,   /* 虚拟文件系统节点（pseudofs） */
 } fd_type_t;
 
 typedef struct {
@@ -191,6 +195,10 @@ typedef struct {
     union {
         ext4_file file;
         ext4_dir  dir;
+        struct {
+            int32_t  node_id;  /* pseudo_node 索引 */
+            uint64_t off;      /* 当前读取偏移     */
+        } pseudo;
     };
 } fd_obj_t;
 
@@ -366,70 +374,15 @@ static int resolve_path_at(task_t *task, int dirfd, const char *pathname,
     }
 
     fd_obj_t *base = task_get_fd(task, dirfd);
-    if (!base || base->type != FDT_DIR)
+    /* FDT_DIR 和 FDT_PSEUDO 目录都可以作为 base */
+    if (!base || (base->type != FDT_DIR && base->type != FDT_PSEUDO))
         return -EBADF;
 
     resolve_path(base->path, pathname, abspath, abspath_len);
     return 0;
 }
 
-/* ─────────────────────────────────────────────────────────────────
- * struct stat / dirent definitions
- * ───────────────────────────────────────────────────────────────── */
-#if ARCH_X86_64
-/* Linux x86_64 ABI: sizeof(struct stat) = 144 */
-struct kernel_stat {
-    uint64_t st_dev;
-    uint64_t st_ino;
-    uint64_t st_nlink;
-    uint32_t st_mode;
-    uint32_t st_uid;
-    uint32_t st_gid;
-    uint32_t __pad0;
-    uint64_t st_rdev;
-    int64_t  st_size;
-    int64_t  st_blksize;
-    int64_t  st_blocks;
-    int64_t  st_atime_sec;
-    uint64_t st_atime_nsec;
-    int64_t  st_mtime_sec;
-    uint64_t st_mtime_nsec;
-    int64_t  st_ctime_sec;
-    uint64_t st_ctime_nsec;
-    int64_t  __unused[3];
-};
-#else
-/* Linux AArch64/RISC-V64 ABI */
-struct kernel_stat {
-    uint64_t st_dev;
-    uint64_t st_ino;
-    uint32_t st_mode;
-    uint32_t st_nlink;
-    uint32_t st_uid;
-    uint32_t st_gid;
-    uint64_t st_rdev;
-    uint64_t _pad1;
-    int64_t  st_size;
-    int32_t  st_blksize;
-    int32_t  _pad2;
-    int64_t  st_blocks;
-    int64_t  st_atime_sec;
-    uint64_t st_atime_nsec;
-    int64_t  st_mtime_sec;
-    uint64_t st_mtime_nsec;
-    int64_t  st_ctime_sec;
-    uint64_t st_ctime_nsec;
-    uint32_t _unused[2];
-};
-#endif
-
-struct kernel_dirent64 {
-    uint64_t d_ino;
-    int64_t  d_off;
-    uint16_t d_reclen;
-    uint8_t  d_type;
-    char     d_name[1]; /* variable length */
-};
+/* struct kernel_stat / kernel_dirent64 来自 include/kernel_stat.h */
 
 struct kernel_utsname {
     char sysname[65];
@@ -608,6 +561,8 @@ static void x86_translate_syscall(uint64_t *nr, uint64_t regs[9])
         *nr = LINUX_SYS_DUP3; break;
     case 35:  *nr = LINUX_SYS_NANOSLEEP;   break; /* nanosleep */
     case 39:  *nr = LINUX_SYS_GETPID;      break; /* getpid */
+    case 40:  *nr = LINUX_SYS_SENDFILE;    break; /* sendfile / sendfile64 (x86_64) */
+    case 187: *nr = LINUX_SYS_SENDFILE;    break; /* sendfile64 (x86_64 compat) */
     case 41:  *nr = LINUX_SYS_SOCKET;      break; /* socket */
     case 56:  *nr = LINUX_SYS_CLONE;       break; /* clone */
     case 57:  *nr = LINUX_SYS_CLONE;       break; /* fork → clone */
@@ -1232,13 +1187,18 @@ void syscall_handler(trap_frame_t *frame)
             regs[0] = n;
         } else {
             fd_obj_t *obj = task_get_fd(task_current(), fd);
-            if (!obj || obj->type != FDT_FILE) {
+            if (!obj) { regs[0] = (uint64_t)(int64_t)-EBADF; break; }
+            if (obj->type == FDT_PSEUDO) {
+                int rc = pseudo_read(obj->pseudo.node_id, &obj->pseudo.off,
+                                     buf, (size_t)count);
+                regs[0] = rc >= 0 ? (uint64_t)rc : (uint64_t)(int64_t)rc;
+            } else if (obj->type == FDT_FILE) {
+                size_t rcnt = 0;
+                int rc = ext4_fread(&obj->file, buf, (size_t)count, &rcnt);
+                regs[0] = (rc == EOK) ? (uint64_t)rcnt : (uint64_t)(int64_t)-EIO;
+            } else {
                 regs[0] = (uint64_t)(int64_t)-EBADF;
-                break;
             }
-            size_t rcnt = 0;
-            int rc = ext4_fread(&obj->file, buf, (size_t)count, &rcnt);
-            regs[0] = (rc == EOK) ? (uint64_t)rcnt : (uint64_t)(int64_t)-EIO;
         }
         break;
     }
@@ -1252,13 +1212,17 @@ void syscall_handler(trap_frame_t *frame)
             regs[0] = sys_write(buf, count);
         } else {
             fd_obj_t *obj = task_get_fd(task_current(), fd);
-            if (!obj || obj->type != FDT_FILE) {
+            if (!obj) { regs[0] = (uint64_t)(int64_t)-EBADF; break; }
+            if (obj->type == FDT_PSEUDO) {
+                int rc = pseudo_write(obj->pseudo.node_id, buf, (size_t)count);
+                regs[0] = rc >= 0 ? (uint64_t)rc : (uint64_t)(int64_t)rc;
+            } else if (obj->type == FDT_FILE) {
+                size_t wcnt = 0;
+                int rc = ext4_fwrite(&obj->file, buf, (size_t)count, &wcnt);
+                regs[0] = (rc == EOK) ? (uint64_t)wcnt : (uint64_t)(int64_t)-EIO;
+            } else {
                 regs[0] = (uint64_t)(int64_t)-EBADF;
-                break;
             }
-            size_t wcnt = 0;
-            int rc = ext4_fwrite(&obj->file, buf, (size_t)count, &wcnt);
-            regs[0] = (rc == EOK) ? (uint64_t)wcnt : (uint64_t)(int64_t)-EIO;
         }
         break;
     }
@@ -1285,15 +1249,22 @@ void syscall_handler(trap_frame_t *frame)
         int64_t offset = (int64_t)regs[1];
         int     whence = (int)regs[2];
         fd_obj_t *obj = task_get_fd(task_current(), fd);
-        if (!obj || obj->type != FDT_FILE) {
+        if (!obj) { regs[0] = (uint64_t)(int64_t)-EBADF; break; }
+        if (obj->type == FDT_PSEUDO) {
+            /* 0=SEEK_SET, 1=SEEK_CUR, 2=SEEK_END */
+            if      (whence == 0) obj->pseudo.off = (uint64_t)offset;
+            else if (whence == 1) obj->pseudo.off = (uint64_t)((int64_t)obj->pseudo.off + offset);
+            else                  obj->pseudo.off = 0; /* SEEK_END on virtual = reset */
+            regs[0] = obj->pseudo.off;
+        } else if (obj->type == FDT_FILE) {
+            int rc = ext4_fseek(&obj->file, offset, (uint32_t)whence);
+            if (rc == EOK)
+                regs[0] = (uint64_t)ext4_ftell(&obj->file);
+            else
+                regs[0] = (uint64_t)(int64_t)-EINVAL;
+        } else {
             regs[0] = (uint64_t)(int64_t)-EBADF;
-            break;
         }
-        int rc = ext4_fseek(&obj->file, offset, (uint32_t)whence);
-        if (rc == EOK)
-            regs[0] = (uint64_t)ext4_ftell(&obj->file);
-        else
-            regs[0] = (uint64_t)(int64_t)-EINVAL;
         break;
     }
 
@@ -1316,6 +1287,10 @@ void syscall_handler(trap_frame_t *frame)
             regs[0] = (uint64_t)(int64_t)rpa;
             break;
         }
+
+        /* 优先查 pseudofs */
+        struct kernel_stat _tmpst;
+        if (pseudo_stat_path(abspath, &_tmpst) == 0) { regs[0] = 0; break; }
 
         /* 使用 lwext4 原生存在性检查，避免路径类型误判 */
         int rc = ext4_inode_exist(abspath, EXT4_DE_UNKNOWN);
@@ -1406,6 +1381,22 @@ void syscall_handler(trap_frame_t *frame)
 
         fd_obj_t *obj = &g_fd_pool[pool];
 
+        /* ── 优先匹配虚拟文件系统 ─────────────────────────────── */
+        int pnid = pseudo_open(abspath);
+        if (pnid >= 0) {
+            obj->type           = FDT_PSEUDO;
+            obj->flags          = flags;
+            obj->pseudo.node_id = pnid;
+            obj->pseudo.off     = 0;
+            int k = 0;
+            while (abspath[k] && k < 127) { obj->path[k] = abspath[k]; k++; }
+            obj->path[k] = '\0';
+            int fd = task_alloc_fd(me, pool);
+            if (fd < 0) { fd_pool_free(pool); regs[0] = (uint64_t)(int64_t)-EMFILE; break; }
+            regs[0] = (uint64_t)fd;
+            break;
+        }
+
         /* Try as file first */
         int rc = ext4_fopen2(&obj->file, abspath, flags);
         if (rc == EOK) {
@@ -1453,6 +1444,7 @@ void syscall_handler(trap_frame_t *frame)
             ext4_fclose(&obj->file);
         else if (obj->type == FDT_DIR)
             ext4_dir_close(&obj->dir);
+        /* FDT_PSEUDO: 无需额外清理 */
         fd_pool_free(idx);
         me->fd_table[fd] = -1;
         regs[0] = 0;
@@ -1506,7 +1498,17 @@ void syscall_handler(trap_frame_t *frame)
         if (!buf || count < 32) { regs[0] = (uint64_t)(int64_t)-EINVAL; break; }
 
         fd_obj_t *obj = task_get_fd(task_current(), fd);
-        if (!obj || obj->type != FDT_DIR) {
+        if (!obj) { regs[0] = (uint64_t)(int64_t)-ENOTDIR; break; }
+
+        /* pseudofs 目录优先 */
+        if (obj->type == FDT_PSEUDO) {
+            int rc = pseudo_getdents(obj->pseudo.node_id, &obj->pseudo.off,
+                                     buf, (size_t)count);
+            regs[0] = rc >= 0 ? (uint64_t)rc : (uint64_t)(int64_t)rc;
+            break;
+        }
+
+        if (obj->type != FDT_DIR) {
             regs[0] = (uint64_t)(int64_t)-ENOTDIR;
             break;
         }
@@ -1558,7 +1560,11 @@ void syscall_handler(trap_frame_t *frame)
         }
         fd_obj_t *obj = task_get_fd(task_current(), fd);
         if (!obj) { regs[0] = (uint64_t)(int64_t)-EBADF; break; }
-        fill_stat_from_ext4(st, obj->path);
+        if (obj->type == FDT_PSEUDO) {
+            pseudo_fill_stat(obj->pseudo.node_id, st);
+        } else {
+            fill_stat_from_ext4(st, obj->path);
+        }
         regs[0] = 0;
         break;
     }
@@ -1573,7 +1579,11 @@ void syscall_handler(trap_frame_t *frame)
             /* empty pathname: stat the dirfd itself */
             fd_obj_t *obj = task_get_fd(task_current(), dirfd);
             if (!obj) { regs[0] = (uint64_t)(int64_t)-EBADF; break; }
-            fill_stat_from_ext4(st, obj->path);
+            if (obj->type == FDT_PSEUDO) {
+                pseudo_fill_stat(obj->pseudo.node_id, st);
+            } else {
+                fill_stat_from_ext4(st, obj->path);
+            }
             regs[0] = 0;
             break;
         }
@@ -1584,14 +1594,24 @@ void syscall_handler(trap_frame_t *frame)
             regs[0] = (uint64_t)(int64_t)rpa;
             break;
         }
+        /* 优先查 pseudofs */
+        if (pseudo_stat_path(abspath, st) == 0) { regs[0] = 0; break; }
         fill_stat_from_ext4(st, abspath);
         regs[0] = 0;
         break;
     }
 
     case LINUX_SYS_READLINKAT: {
-        /* readlinkat: we don't have symlinks, return ENOENT */
-        regs[0] = (uint64_t)(int64_t)-ENOENT;
+        int dirfd = (int)regs[0];
+        const char *pathname = (const char *)regs[1];
+        char       *lbuf     = (char *)regs[2];
+        uint64_t    lbufsz   = regs[3];
+        if (!pathname || !lbuf) { regs[0] = (uint64_t)(int64_t)-EFAULT; break; }
+        task_t *me = task_current();
+        char abspath[128];
+        resolve_path_at(me, dirfd, pathname, abspath, sizeof(abspath));
+        int rc = pseudo_readlink(abspath, lbuf, (size_t)lbufsz);
+        regs[0] = rc >= 0 ? (uint64_t)rc : (uint64_t)(int64_t)-ENOENT;
         break;
     }
 
@@ -1599,6 +1619,67 @@ void syscall_handler(trap_frame_t *frame)
     case LINUX_SYS_FDATASYNC:
         regs[0] = 0;
         break;
+
+    case LINUX_SYS_SENDFILE: {
+        /* sendfile64(out_fd, in_fd, offset_ptr, count)
+         * offset_ptr: if non-NULL, use as in-file offset (not advancing in_fd pos).
+         * Simple impl: loop read from in_fd → write to out_fd. */
+        int      out_fd = (int)regs[0];
+        int      in_fd  = (int)regs[1];
+        uint64_t *poff  = (uint64_t *)regs[2];   /* may be NULL */
+        size_t   count  = (size_t)regs[3];
+        task_t  *me     = task_current();
+
+        fd_obj_t *in_obj  = (in_fd  >= 3) ? task_get_fd(me, in_fd)  : NULL;
+        fd_obj_t *out_obj = (out_fd >= 3) ? task_get_fd(me, out_fd) : NULL;
+        if (in_fd >= 3 && !in_obj) { regs[0] = (uint64_t)(int64_t)-EBADF; break; }
+
+        /* If caller supplies explicit offset, override in_obj's internal offset */
+        uint64_t saved_off = 0;
+        if (poff && in_obj && in_obj->type == FDT_PSEUDO) {
+            saved_off = in_obj->pseudo.off;
+            in_obj->pseudo.off = *poff;
+        }
+
+        char   sbuf[1024];
+        size_t total = 0;
+        while (total < count) {
+            size_t want = count - total;
+            if (want > sizeof(sbuf)) want = sizeof(sbuf);
+
+            /* ── read from in_fd ──────────────────────────────── */
+            int nr = 0;
+            if (in_obj && in_obj->type == FDT_PSEUDO) {
+                nr = pseudo_read(in_obj->pseudo.node_id,
+                                 &in_obj->pseudo.off, sbuf, want);
+            } else if (in_obj && in_obj->type == FDT_FILE) {
+                size_t rcnt = 0;
+                int rc = ext4_fread(&in_obj->file, sbuf, want, &rcnt);
+                nr = (rc == EOK) ? (int)rcnt : -(int)EIO;
+            }
+            if (nr <= 0) break;
+
+            /* ── write to out_fd ──────────────────────────────── */
+            if (out_fd == 0 || out_fd == 1 || out_fd == 2) {
+                for (int i = 0; i < nr; i++) uart_putc(sbuf[i]);
+            } else if (out_obj && out_obj->type == FDT_PSEUDO) {
+                pseudo_write(out_obj->pseudo.node_id, sbuf, (size_t)nr);
+            } else if (out_obj && out_obj->type == FDT_FILE) {
+                size_t wcnt = 0;
+                ext4_fwrite(&out_obj->file, sbuf, (size_t)nr, &wcnt);
+            }
+            total += (size_t)nr;
+        }
+
+        /* Restore / update caller offset */
+        if (poff && in_obj && in_obj->type == FDT_PSEUDO) {
+            *poff = in_obj->pseudo.off;   /* expose advanced position */
+            in_obj->pseudo.off = saved_off; /* sendfile with poff ≠ NULL does NOT advance fd pos */
+        }
+
+        regs[0] = (uint64_t)total;
+        break;
+    }
 
     /* --- 目录操作 --- */
     case LINUX_SYS_GETCWD: {
@@ -1618,6 +1699,15 @@ void syscall_handler(trap_frame_t *frame)
         task_t *me = task_current();
         char abspath[128];
         resolve_path(me->cwd, path, abspath, sizeof(abspath));
+        /* 优先查 pseudofs 目录 */
+        struct kernel_stat tmpst;
+        if (pseudo_stat_path(abspath, &tmpst) == 0) {
+            int k = 0;
+            while (abspath[k] && k < (int)TASK_CWD_LEN - 1) { me->cwd[k] = abspath[k]; k++; }
+            me->cwd[k] = '\0';
+            regs[0] = 0;
+            break;
+        }
         /* Verify it exists as a directory */
         ext4_dir d;
         if (ext4_dir_open(&d, abspath) != EOK) {
@@ -1638,9 +1728,26 @@ void syscall_handler(trap_frame_t *frame)
 
     /* --- ioctl --- */
     case LINUX_SYS_IOCTL: {
-        int   ioctl_fd  = (int)regs[0];
-        uint64_t request = regs[1];
-        void *argp       = (void *)regs[2];
+        int      ioctl_fd = (int)regs[0];
+        uint64_t request  = regs[1];
+        void    *argp     = (void *)regs[2];
+
+        /* ── 优先分发给 pseudofs 设备节点 ──────────────────── */
+        if (ioctl_fd >= 3) {
+            fd_obj_t *ioctl_obj = task_get_fd(task_current(), ioctl_fd);
+            if (ioctl_obj && ioctl_obj->type == FDT_PSEUDO) {
+                int rc = pseudo_ioctl(ioctl_obj->pseudo.node_id, request, argp);
+                if (rc >= 0) {
+                    regs[0] = 0;
+                    break;
+                }
+                /* -ENOSYS: 该节点不处理此 ioctl，对终端 ioctl 继续走 tty 默认处理 */
+                if (rc != -38 /* ENOSYS */) {
+                    regs[0] = (uint64_t)(int64_t)rc;
+                    break;
+                }
+            }
+        }
         (void)ioctl_fd;
         if (request == TCGETS && argp) {
             struct kernel_termios *t = (struct kernel_termios *)argp;
@@ -1915,6 +2022,14 @@ int64_t sys_execve(const char *pathname, char **argv, char **envp)
      * 注意：这必须在加载新程序之前执行，因为加载后当前进程就不再运行了。
      */
     task_t *current = task_current();
+    /* 记录可执行文件路径（/proc/self/exe 使用）*/
+    {
+        int k = 0;
+        while (pathname[k] && k < (int)TASK_EXE_LEN - 1) {
+            current->exe_path[k] = pathname[k]; k++;
+        }
+        current->exe_path[k] = '\0';
+    }
     KLOG_DEBUG("[execve] pid=%u closing all fds > 2\n", current->id);
     for (int fd = 3; fd < (int)TASK_MAX_FD; fd++) {
         int idx = (int)current->fd_table[fd];
@@ -1935,15 +2050,34 @@ int64_t sys_execve(const char *pathname, char **argv, char **envp)
             ext4_fclose(&obj->file);
         else if (obj->type == FDT_DIR)
             ext4_dir_close(&obj->dir);
+        /* FDT_PSEUDO: 无需额外清理 */
         fd_pool_free(idx);
         current->fd_table[fd] = (int8_t)-1;
     }
 
-    /* 优先尝试 ELF 加载器
-     * TODO: 暂时传递 NULL argv/envp，使用默认值
-     * 需要实现安全的用户空间参数复制机制
-     */
-    int rc = elf_loader_load_from_file(pathname, NULL, NULL);
+    /* 从 userspace 复制 argv 到内核栈，再传给 elf loader。
+     * 此时旧进程页表仍有效，可以直接读 userspace 指针。 */
+#define EXEC_MAX_ARGC   32
+#define EXEC_MAX_ARGLEN 128
+    char  arg_store[EXEC_MAX_ARGC][EXEC_MAX_ARGLEN];
+    char *argv_ptrs[EXEC_MAX_ARGC + 1];
+    char **kern_argv = NULL;
+
+    if (argv) {
+        char **uav = argv;   /* userspace char** — readable before exec */
+        int n = 0;
+        while (n < EXEC_MAX_ARGC) {
+            char *uarg = uav[n];     /* read one pointer from userspace */
+            if (!uarg) break;
+            copy_string_from_user(uarg, arg_store[n], EXEC_MAX_ARGLEN);
+            argv_ptrs[n] = arg_store[n];
+            n++;
+        }
+        argv_ptrs[n] = NULL;
+        kern_argv = argv_ptrs;
+    }
+
+    int rc = elf_loader_load_from_file(pathname, kern_argv, NULL);
 
     /* 如果成功，不应该到达这里 */
     return rc;

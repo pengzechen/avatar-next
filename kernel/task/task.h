@@ -27,6 +27,7 @@ typedef enum {
 #define TASK_NAME_LEN    16u     /* 任务名最大长度（含 NUL）      */
 #define TASK_MAX         16u     /* 最大并发任务数（不含 idle）   */
 #define TASK_CWD_LEN     128u    /* 当前工作目录最大长度          */
+#define TASK_EXE_LEN     128u    /* 可执行文件路径最大长度        */
 #define TASK_MAX_FD      256u    /* 每进程最大文件描述符数        */
 
 /* ── Task Control Block ──────────────────────────────────── */
@@ -56,6 +57,7 @@ typedef struct task {
 
     /* === 进程/文件系统支持 === */
     char            cwd[TASK_CWD_LEN];  /* 当前工作目录（用户进程）               */
+    char            exe_path[TASK_EXE_LEN]; /* 可执行文件路径（/proc/self/exe）   */
     int8_t          fd_table[TASK_MAX_FD]; /* FD → g_fd_pool 索引，-1=未打开     */
     uint32_t        parent_id;           /* 父进程 ID                              */
     int             exit_status;         /* 退出状态（wait4 使用）                 */
