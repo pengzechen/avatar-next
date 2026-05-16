@@ -1,9 +1,12 @@
-#include "driver_cfg.h"
+#include "platform_cfg.h"
 #include "uart/uart_dw.h"
 #include "types.h"
 #include "mmio.h"
 #include "spinlock.h"
 #include "klog.h"
+
+/* DW UART 模块内基地址（dw_uart_early_init() 从 platform_get_mmio 填充） */
+uintptr_t dw_uart_base = 0x10000000UL; /* QEMU RISC-V default; overridden by platform_get_mmio() in uart_init() */
 
 // #include "irq.h"
 /* WFI：在等待中断时让出 CPU，若架构未定义则用 nop 代替 */
@@ -181,6 +184,8 @@ dw_uart_wait_idle(void)
 void
 dw_uart_early_init(void)
 {
+    dw_uart_base = platform_get_mmio("uart", "base");
+
     /*
      * OpenSBI (或 QEMU) 已经完成波特率和帧格式的配置，
      * 这里只需：

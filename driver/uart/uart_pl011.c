@@ -9,7 +9,6 @@
 #include "types.h"
 #include "mmio.h"
 #include "klog.h"
-#include "driver_cfg.h"
 // #include "irq.h"
 #include "spinlock.h"
 
@@ -147,6 +146,9 @@ void pl011_init(void) {
     if (uart_initialized) {
         return;
     }
+
+    /* MMU 已开启后用 platform_get_mmio 更新为正确的虚拟地址 */
+    g_pl011_base = platform_get_mmio("uart", "base");
     
     // Initialize buffers
     spinlock_init(&tx_buffer.lock);

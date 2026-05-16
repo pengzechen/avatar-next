@@ -2,6 +2,11 @@
 #include "mmio.h"
 #include "gicv2.h"
 
+/* GICv2 模块内基地址 */
+uintptr_t gicv2_gicd_base = 0;
+uintptr_t gicv2_gicc_base = 0;
+uintptr_t gicv2_gich_base = 0;
+
 struct gic_t _gicv2;
 
 void gic_test_init(void)
@@ -53,6 +58,10 @@ void gicc_el2_init()
 // gicd g0, g1  gicc enable。smp启动首核执行
 void gic_init(void)
 {
+    gicv2_gicd_base = platform_get_mmio("irq", "gicd");
+    gicv2_gicc_base = platform_get_mmio("irq", "gicc");
+    gicv2_gich_base = platform_get_mmio("irq", "gich");
+
     logger_info("GIC: Initializing GIC distributor and CPU interface\n");
 
     _gicv2.irq_nr = GICD_TYPER_IRQS(read32((void *)GICD_TYPER));

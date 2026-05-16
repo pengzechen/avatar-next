@@ -6,6 +6,7 @@
 #include "../../boot/common/platform.h"
 #include "types.h"
 #include "arch.h"
+#include "platform_cfg.h"  /* platform_conf_scan */
 #include "uart/uart.h"   /* 统一 UART 驱动，根据架构自动选择 */
 #if ARCH_X86_64
 #include "x86_64/io.h"          /* x86 Port I/O: outw 用于 ACPI shutdown */
@@ -140,6 +141,7 @@ static struct platform_ops qemu_platform = {
  */
 void platform_init(void)
 {
+    platform_conf_scan();    /* 从内嵌 Lua 提取内存布局和 PMM 保留区 */
     uart_init();
 }
 

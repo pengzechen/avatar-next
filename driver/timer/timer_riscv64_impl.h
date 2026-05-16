@@ -16,8 +16,7 @@
 // ============================================================
 #define READ_TIME()         CSR_READ(time)   /* sysreg.h 中同名，内容相同 */
 
-// 定时器频率配置 (QEMU RISC-V virt 机器通常是 10MHz)
-#define TIMER_FREQ_HZ 10000000UL  // 10MHz
+/* TIMER_FREQ_HZ 由 platform_cfg.h 提供（= g_timer_counter_hz，从 Lua 扫描）*/
 
 // ============================================================
 // RISC-V 特定的全局变量

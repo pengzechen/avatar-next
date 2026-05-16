@@ -37,7 +37,7 @@ ifeq ($(_HAVE_PLATFORM_LUA),)
 $(error No platform.lua found for PLATFORM=$(PLATFORM). Expected: $(_PLATFORM_LUA))
 endif
 
-override ARCH := $(shell sed -n 's/.*ARCH[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' $(_PLATFORM_LUA) | head -1)
+override ARCH := $(shell sed -n 's/^[[:space:]]*arch[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' $(_PLATFORM_LUA) | head -1)
 
 PLATFORM_MK  := $(BUILD_DIR)/platform.mk
 PLATFORM_HDR := $(INCLUDE_DIR)/platform.h
@@ -91,10 +91,12 @@ KLOG_SOURCES := $(LIB_DIR)/klog.c
 VSNPRINTF_SOURCES := $(LIB_DIR)/vsnprintf.c
 STRING_SOURCES := $(LIB_DIR)/string.c
 BITMAP_SOURCES := $(LIB_DIR)/bitmap.c
-KLOG_OBJECT  := $(BUILD_DIR)/klog.o
-VSNPRINTF_OBJECT := $(BUILD_DIR)/vsnprintf.o
-STRING_OBJECT := $(BUILD_DIR)/string.o
-BITMAP_OBJECT := $(BUILD_DIR)/bitmap.o
+PLATFORM_CFG_SOURCES := $(LIB_DIR)/platform_cfg.c
+KLOG_OBJECT         := $(BUILD_DIR)/klog.o
+VSNPRINTF_OBJECT    := $(BUILD_DIR)/vsnprintf.o
+STRING_OBJECT       := $(BUILD_DIR)/string.o
+BITMAP_OBJECT       := $(BUILD_DIR)/bitmap.o
+PLATFORM_CFG_OBJECT := $(BUILD_DIR)/platform_cfg.o
 
 # 内核源文件
 KERNEL_SOURCES := $(KERNEL_DIR)/main.c
@@ -726,6 +728,9 @@ $(BUILD_DIR)/kernel_mm_vm_user.o: $(KERNEL_DIR)/mm/vm_user.c | $(BUILD_DIR)
 $(BUILD_DIR)/bitmap.o: $(LIB_DIR)/bitmap.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
+$(BUILD_DIR)/platform_cfg.o: $(LIB_DIR)/platform_cfg.c | $(BUILD_DIR)
+	$(CC) $(LUA_CFLAGS) -c $< -o $@
+
 $(BUILD_DIR)/kernel_mm_mmu.o: $(VM_S_SRC) | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
@@ -846,7 +851,7 @@ $(BUILD_DIR)/apps_riscv_guest_test.o: apps/riscv64/guest_test.S | $(BUILD_DIR)
 endif
 
 # 链接内核 ELF 文件
-$(KERNEL_TARGET): $(BOOT_OBJECTS) $(KERNEL_OBJECTS) $(TASK_C_OBJECTS) $(TASK_S_OBJ) $(TASK_USER_TEST_OBJ) $(TASK_USER_HELLO_OBJ) $(TASK_USER_TESTEXECVE_OBJ) $(LOADER_C_OBJECTS) $(SYSCALL_C_OBJECTS) $(SYSCALL_S_OBJ) $(VM_C_OBJECTS) $(VM_S_OBJ) $(VMM_C_OBJECTS) $(VMM_S_OBJECTS) $(GUEST_TEST_OBJ) $(TESTS_OBJECTS) $(PLATFORM_OBJECTS) $(DRIVER_OBJECTS) $(EXCEPTION_OBJECTS) $(KLOG_OBJECT) $(VSNPRINTF_OBJECT) $(STRING_OBJECT) $(BITMAP_OBJECT) $(LWEXT4_OBJS) $(LWEXT4_PORT_OBJS) $(LUA_OBJECTS) | $(BUILD_DIR)
+$(KERNEL_TARGET): $(BOOT_OBJECTS) $(KERNEL_OBJECTS) $(TASK_C_OBJECTS) $(TASK_S_OBJ) $(TASK_USER_TEST_OBJ) $(TASK_USER_HELLO_OBJ) $(TASK_USER_TESTEXECVE_OBJ) $(LOADER_C_OBJECTS) $(SYSCALL_C_OBJECTS) $(SYSCALL_S_OBJ) $(VM_C_OBJECTS) $(VM_S_OBJ) $(VMM_C_OBJECTS) $(VMM_S_OBJECTS) $(GUEST_TEST_OBJ) $(TESTS_OBJECTS) $(PLATFORM_OBJECTS) $(DRIVER_OBJECTS) $(EXCEPTION_OBJECTS) $(KLOG_OBJECT) $(VSNPRINTF_OBJECT) $(STRING_OBJECT) $(BITMAP_OBJECT) $(PLATFORM_CFG_OBJECT) $(LWEXT4_OBJS) $(LWEXT4_PORT_OBJS) $(LUA_OBJECTS) | $(BUILD_DIR)
 	$(CC) $(LDFLAGS) -nostartfiles -nodefaultlibs -T $(BOOT_DIR)/$(ARCH)/link.ld -o $@ $^
 
 # 转换为二进制文件

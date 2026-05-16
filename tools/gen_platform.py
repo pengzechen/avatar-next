@@ -12,28 +12,117 @@ import os
 import re
 
 
-# ─── 解析 platform.lua 的 BUILD_CONFIG 表 ───────────────────────────────────────────
+# ─── 解析嵌套 platform.lua ───────────────────────────────────────────────────
 
-def parse_lua_conf(path):
+def _extract_block(text, key):
+    """找到 key = { ... }（平衡括号）并返回大括号内的内容字符串。"""
+    m = re.search(rf'\b{re.escape(key)}\s*=\s*\{{', text)
+    if not m:
+        return ''
+    start = m.end()
+    depth = 1
+    pos = start
+    while pos < len(text) and depth > 0:
+        c = text[pos]
+        if c == '{':
+            depth += 1
+        elif c == '}':
+            depth -= 1
+        pos += 1
+    return text[start:pos - 1] if depth == 0 else ''
+
+
+def _find_str(text, key):
+    m = re.search(rf'\b{re.escape(key)}\s*=\s*"([^"]*)"', text)
+    return m.group(1) if m else ''
+
+
+def _find_num(text, key, default='0'):
+    m = re.search(rf'\b{re.escape(key)}\s*=\s*(0x[0-9a-fA-F]+|[0-9]+)', text)
+    return m.group(1) if m else default
+
+
+def _find_bool(text, key):
+    m = re.search(rf'\b{re.escape(key)}\s*=\s*(true|false)', text)
+    return '1' if (m and m.group(1) == 'true') else '0'
+
+
+def parse_lua_platform(path):
     """
-    读取 platform.lua 中的 BUILD_CONFIG = { KEY = "value", ... } 表。
-    返回 {KEY: value_string} 字典，与原 parse_conf 返回格式相同。
+    解析嵌套 platform.lua 格式，返回与所有 write_* 函数兼容的 conf 字典。
+
+    platform.lua 结构:
+        local platform = {
+            arch = "aarch64",
+            name = "QEMU",
+            memory  = { ram = {base,size}, rootfs = {base,size,mb}, reserves = {...} },
+            mmio_vma = true/false,
+            lapic    = true/false,
+            uart  = { driver, base, reg_shift },
+            irq   = { driver, gicd, gicc, gich, gicr, plic, clint },
+            timer = { driver, tick_ms, freq_hz, cntp, counter_hz },
+        }
+    reserves 条目格式: { name="...", start=0x..., stop=0x... }
     """
+    with open(path, encoding='utf-8') as f:
+        text = f.read()
     conf = {}
-    in_config = False
-    with open(path) as f:
-        for line in f:
-            stripped = line.strip()
-            if re.match(r'local\s+BUILD_CONFIG\s*=\s*\{', stripped):
-                in_config = True
-                continue
-            if not in_config:
-                continue
-            if stripped.startswith('}'):
-                break
-            m2 = re.match(r'(\w+)\s*=\s*"([^"]*)",?', stripped)
-            if m2:
-                conf[m2.group(1)] = m2.group(2)
+
+    # 顶层字段
+    conf['ARCH']         = _find_str(text, 'arch')
+    conf['MEM_PLATFORM'] = _find_str(text, 'name').upper() or 'QEMU'
+
+    # memory 块
+    mem = _extract_block(text, 'memory')
+    ram    = _extract_block(mem, 'ram')
+    rootfs = _extract_block(mem, 'rootfs')
+    conf['MEM_RAM_BASE']    = _find_num(ram,    'base', '0x40000000')
+    conf['MEM_RAM_SIZE']    = _find_num(ram,    'size', '0x80000000')
+    conf['MEM_ROOTFS_BASE'] = _find_num(rootfs, 'base', '0x60000000')
+    conf['MEM_ROOTFS_SIZE'] = _find_num(rootfs, 'size', '0x08000000')
+    conf['ROOTFS_SIZE_MB']  = _find_num(rootfs, 'mb',   '128')
+
+    # PMM reserves: { name="...", start=0x..., stop=0x... }
+    resv_block = _extract_block(mem, 'reserves')
+    resv_re = re.compile(
+        r'\{\s*name\s*=\s*"([^"]*)"\s*,\s*start\s*=\s*(0x[0-9a-fA-F]+|[0-9]+)'
+        r'\s*,\s*stop\s*=\s*(0x[0-9a-fA-F]+|[0-9]+)\s*\}'
+    )
+    for i, rm in enumerate(resv_re.finditer(resv_block)):
+        if i >= 4:
+            break
+        conf[f'PMM_RESV_{i}_NAME']  = rm.group(1)
+        conf[f'PMM_RESV_{i}_START'] = rm.group(2)
+        conf[f'PMM_RESV_{i}_END']   = rm.group(3)
+
+    # mmio_vma / lapic
+    conf['DEV_MMIO_NEEDS_VMA'] = _find_bool(text, 'mmio_vma')
+    conf['DEV_NEED_LAPIC']     = _find_bool(text, 'lapic')
+
+    # uart 块
+    uart = _extract_block(text, 'uart')
+    conf['DEV_UART_TYPE']      = _find_str(uart, 'driver')
+    conf['DEV_UART_BASE']      = _find_num(uart, 'base', '0')
+    conf['DEV_UART_REG_SHIFT'] = _find_num(uart, 'reg_shift', '0')
+
+    # irq 块
+    irq = _extract_block(text, 'irq')
+    conf['DEV_IRQ_TYPE']   = _find_str(irq, 'driver') or 'none'
+    conf['DEV_GICD_BASE']  = _find_num(irq, 'gicd',  '0')
+    conf['DEV_GICC_BASE']  = _find_num(irq, 'gicc',  '0')
+    conf['DEV_GICH_BASE']  = _find_num(irq, 'gich',  '0')
+    conf['DEV_GICR_BASE']  = _find_num(irq, 'gicr',  '0')
+    conf['DEV_PLIC_BASE']  = _find_num(irq, 'plic',  '0')
+    conf['DEV_CLINT_BASE'] = _find_num(irq, 'clint', '0')
+
+    # timer 块
+    timer = _extract_block(text, 'timer')
+    conf['DEV_TIMER_TYPE']         = _find_str(timer, 'driver')
+    conf['DEV_TIMER_TICK_MS']      = _find_num(timer, 'tick_ms',    '10')
+    conf['DEV_TIMER_FREQUENCY_HZ'] = _find_num(timer, 'freq_hz',    '100')
+    conf['DEV_CNTP_TIMER']         = _find_num(timer, 'cntp',       '0')
+    conf['DEV_TIMER_COUNTER_HZ']   = _find_num(timer, 'counter_hz', '0')
+
     return conf
 
 
@@ -276,13 +365,14 @@ def main():
     os.makedirs(build_dir, exist_ok=True)
     os.makedirs(include_dir, exist_ok=True)
 
-    conf = parse_lua_conf(lua_path)
+    conf = parse_lua_platform(lua_path)
 
     write_platform_mk(conf, mk_path)
-    write_mem_layout_h(conf,   os.path.join(include_dir, 'mem_layout.h'))
-    write_device_profile_h(conf, os.path.join(include_dir, 'device_profile.h'))
-    write_pmm_reserve_h(conf,  os.path.join(include_dir, 'pmm_reserve.h'))
-    write_platform_h(platform_h)
+    # 以下 4 个头文件已由运行时 platform_cfg.h / platform_cfg.c 取代，不再生成：
+    #   write_mem_layout_h(conf,   os.path.join(include_dir, 'mem_layout.h'))
+    #   write_device_profile_h(conf, os.path.join(include_dir, 'device_profile.h'))
+    #   write_pmm_reserve_h(conf,  os.path.join(include_dir, 'pmm_reserve.h'))
+    #   write_platform_h(platform_h)
     write_lua_blob_c(lua_path, build_dir)
 
 

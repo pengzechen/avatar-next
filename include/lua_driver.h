@@ -47,4 +47,13 @@ void lua_platform_close(lua_State *L);
  */
 int lua_selftest(lua_State *L);
 
+/**
+ * platform_lua_state() — Return the Lua VM opened during platform_conf_scan().
+ *
+ * Returns the single shared lua_State created when platform_conf_scan() ran
+ * lua_platform_open().  Use this instead of calling lua_platform_open() again.
+ * Returns NULL if platform_conf_scan() has not been called yet or failed.
+ */
+lua_State *platform_lua_state(void);
+
 #endif /* LUA_DRIVER_H */

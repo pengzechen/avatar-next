@@ -14,7 +14,12 @@
 #define __GIC_H__
 
 #include "types.h"
-#include "driver_cfg.h"
+#include "platform_cfg.h"
+
+/* GICv2 模块内基地址（由 gic_init() 从 platform_get_mmio 填充） */
+extern uintptr_t gicv2_gicd_base;
+extern uintptr_t gicv2_gicc_base;
+extern uintptr_t gicv2_gich_base;
 
 #define GIC_NR_PRIVATE_IRQS 32
 #define GIC_FIRST_SPI GIC_NR_PRIVATE_IRQS
@@ -24,39 +29,39 @@
 #define PPI_ID_MAX 32
 
 /* Distributor registers */
-#define GICD_CTLR (GICD_BASE_ADDR + 0x000)  // rw
-#define GICD_TYPER (GICD_BASE_ADDR + 0x004) // ro
-#define GICD_IIDR (GICD_BASE_ADDR + 0x008)  // ro
+#define GICD_CTLR (gicv2_gicd_base + 0x000)  // rw
+#define GICD_TYPER (gicv2_gicd_base + 0x004) // ro
+#define GICD_IIDR (gicv2_gicd_base + 0x008)  // ro
 
-#define GICD_IGROUPR(x) (GICD_BASE_ADDR + (0x080 + 0x004 * (x)))
+#define GICD_IGROUPR(x) (gicv2_gicd_base + (0x080 + 0x004 * (x)))
 
-#define GICD_ISENABLER(x) (GICD_BASE_ADDR + (0x100 + 0x004 * (x))) // enable
-#define GICD_ICENABLER(x) (GICD_BASE_ADDR + (0x180 + 0x004 * (x))) // disable
+#define GICD_ISENABLER(x) (gicv2_gicd_base + (0x100 + 0x004 * (x))) // enable
+#define GICD_ICENABLER(x) (gicv2_gicd_base + (0x180 + 0x004 * (x))) // disable
 
-#define GICD_ISPENDER(x) (GICD_BASE_ADDR + (0x200 + 0x004 * (x)))
-#define GICD_ICPENDER(x) (GICD_BASE_ADDR + (0x280 + 0x004 * (x)))
+#define GICD_ISPENDER(x) (gicv2_gicd_base + (0x200 + 0x004 * (x)))
+#define GICD_ICPENDER(x) (gicv2_gicd_base + (0x280 + 0x004 * (x)))
 
-#define GICD_ISACTIVER(x) (GICD_BASE_ADDR + (0x300 + 0x004 * (x)))
-#define GICD_ICACTIVER(x) (GICD_BASE_ADDR + (0x380 + 0x004 * (x)))
+#define GICD_ISACTIVER(x) (gicv2_gicd_base + (0x300 + 0x004 * (x)))
+#define GICD_ICACTIVER(x) (gicv2_gicd_base + (0x380 + 0x004 * (x)))
 
-#define GICD_IPRIORITYR(x) (GICD_BASE_ADDR + (0x400 + 0x004 * (x)))
-#define GICD_ITARGETSR(x) (GICD_BASE_ADDR + (0x800 + 0x004 * (x)))
+#define GICD_IPRIORITYR(x) (gicv2_gicd_base + (0x400 + 0x004 * (x)))
+#define GICD_ITARGETSR(x) (gicv2_gicd_base + (0x800 + 0x004 * (x)))
 #define GICD_ICFGR(x) \
-    (GICD_BASE_ADDR + \
+    (gicv2_gicd_base + \
      (0xc00 + 0x004 * (x))) // 00	边沿触发（Edge-triggered） 10	电平触发（Level-triggered）
 
-#define GICD_SGIR (GICD_BASE_ADDR + 0xf00)
+#define GICD_SGIR (gicv2_gicd_base + 0xf00)
 
 // ro 查看当前 CPU 的中断 pending 状态。 通常用于调试，实际系统里使用 GICC 的 IAR（Interrupt Acknowledge Register）来拿中断号更常见。
-#define GICD_PPISR (GICD_BASE_ADDR + 0xd00)
+#define GICD_PPISR (gicv2_gicd_base + 0xd00)
 // ro 查看中断的 Pending 状态，主要是 SGI 和 PPI（中断号 0–31）部分。
-#define GICD_SPISR(x) (GICD_BASE_ADDR + (0xd04 + 0x004 * (x)))
+#define GICD_SPISR(x) (gicv2_gicd_base + (0xd04 + 0x004 * (x)))
 
 // SGI 挂起寄存器 GICD_SPENDSGIR 和 GICD_CPENDSGIR 每个 SGI 用8个位，每个位对应一个 CPU。
-#define GICD_CPENDSGIR(x) (GICD_BASE_ADDR + (0xf10 + 0x004 * (x)))
-#define GICD_SPENDSGIR(x) (GICD_BASE_ADDR + (0xf20 + 0x004 * (x)))
+#define GICD_CPENDSGIR(x) (gicv2_gicd_base + (0xf10 + 0x004 * (x)))
+#define GICD_SPENDSGIR(x) (gicv2_gicd_base + (0xf20 + 0x004 * (x)))
 
-#define GICD_NSACR(x) (GICD_BASE_ADDR + (0xe00 + 0x004 * (x)))
+#define GICD_NSACR(x) (gicv2_gicd_base + (0xe00 + 0x004 * (x)))
 
 #define GICD_TYPER_IRQS(typer) ((((typer) & 0x1f) + 1) * 32)
 #define GICD_TYPER_CPU_NUM(typer) ((((typer) >> 5) & 0b111) + 1)
@@ -65,35 +70,35 @@
 #define GICD_INT_DEF_PRI_X4 0xa0a0a0a0
 
 /* CPU interface registers */
-#define GICC_CTLR (GICC_BASE_ADDR + 0x0000)
-#define GICC_PMR (GICC_BASE_ADDR + 0x0004)
-#define GICC_BPR (GICC_BASE_ADDR + 0x0008)
-#define GICC_IAR (GICC_BASE_ADDR + 0x000c)
-#define GICC_EOIR (GICC_BASE_ADDR + 0x0010)
-#define GICC_RPR (GICC_BASE_ADDR + 0x0014)
-#define GICC_HPPIR (GICC_BASE_ADDR + 0x0018)
-#define GICC_ABPR (GICC_BASE_ADDR + 0x001c)
-#define GICC_AIAR (GICC_BASE_ADDR + 0x0020)
-#define GICC_AEOIR (GICC_BASE_ADDR + 0x0024)
-#define GICC_AHPPIR (GICC_BASE_ADDR + 0x0028)
-#define GICC_APR(x) (GICC_BASE_ADDR + (0x00d0 + 0x0004 * (x)))
-#define GICC_NSAPR(x) (GICC_BASE_ADDR + (0x00e0 + 0x0004 * (x)))
-#define GICC_IIDR (GICC_BASE_ADDR + 0x00fc)
-#define GICC_DIR (GICC_BASE_ADDR + 0x1000)
+#define GICC_CTLR (gicv2_gicc_base + 0x0000)
+#define GICC_PMR (gicv2_gicc_base + 0x0004)
+#define GICC_BPR (gicv2_gicc_base + 0x0008)
+#define GICC_IAR (gicv2_gicc_base + 0x000c)
+#define GICC_EOIR (gicv2_gicc_base + 0x0010)
+#define GICC_RPR (gicv2_gicc_base + 0x0014)
+#define GICC_HPPIR (gicv2_gicc_base + 0x0018)
+#define GICC_ABPR (gicv2_gicc_base + 0x001c)
+#define GICC_AIAR (gicv2_gicc_base + 0x0020)
+#define GICC_AEOIR (gicv2_gicc_base + 0x0024)
+#define GICC_AHPPIR (gicv2_gicc_base + 0x0028)
+#define GICC_APR(x) (gicv2_gicc_base + (0x00d0 + 0x0004 * (x)))
+#define GICC_NSAPR(x) (gicv2_gicc_base + (0x00e0 + 0x0004 * (x)))
+#define GICC_IIDR (gicv2_gicc_base + 0x00fc)
+#define GICC_DIR (gicv2_gicc_base + 0x1000)
 
 #define GICC_INT_PRI_THRESHOLD 0xf0
 #define GICC_INT_SPURIOUS 0x3ff
 
-#define GICH_HCR (GICH_BASE_ADDR + 0x0000)
-#define GICH_VTR (GICH_BASE_ADDR + 0x0004)
-#define GICH_VMCR (GICH_BASE_ADDR + 0x0008)
-#define GICH_MISR (GICH_BASE_ADDR + 0x0010)
-#define GICH_EISR0 (GICH_BASE_ADDR + 0x0020)
-#define GICH_EISR1 (GICH_BASE_ADDR + 0x0024)
-#define GICH_ELSR0 (GICH_BASE_ADDR + 0x0030)
-#define GICH_ELSR1 (GICH_BASE_ADDR + 0x0034)
-#define GICH_APR (GICH_BASE_ADDR + 0x00f0)
-#define GICH_LR(x) (GICH_BASE_ADDR + 0x0100 + 0x4 * (x))
+#define GICH_HCR (gicv2_gich_base + 0x0000)
+#define GICH_VTR (gicv2_gich_base + 0x0004)
+#define GICH_VMCR (gicv2_gich_base + 0x0008)
+#define GICH_MISR (gicv2_gich_base + 0x0010)
+#define GICH_EISR0 (gicv2_gich_base + 0x0020)
+#define GICH_EISR1 (gicv2_gich_base + 0x0024)
+#define GICH_ELSR0 (gicv2_gich_base + 0x0030)
+#define GICH_ELSR1 (gicv2_gich_base + 0x0034)
+#define GICH_APR (gicv2_gich_base + 0x00f0)
+#define GICH_LR(x) (gicv2_gich_base + 0x0100 + 0x4 * (x))
 #define GICH_LR_NUM 4
 #define GICH_LR_PID_SHIFT 10
 

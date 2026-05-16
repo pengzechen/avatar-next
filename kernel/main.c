@@ -85,8 +85,6 @@ void kernel_main(void)
      * 将 UART 基地址切换到 TTBR1 覆盖的高虚拟地址，
      * 使内核在任意 TTBR0（用户页表）下仍可正常输出。
      */
-    extern volatile uintptr_t g_pl011_base;
-    g_pl011_base = 0x09000000UL + 0xffff000000000000ULL;
     /* Must enable FP/NEON before any FP code runs (including Lua VM) */
     aarch64_enable_neon();
 #endif
@@ -139,10 +137,8 @@ void kernel_main(void)
 
     KLOG_WARN("=== Running Lua scripts ===\n");
     /* ── Lua platform initialization (runs platform.lua phases) ──────── */
-    extern const char g_platform_lua_src[];
-    extern const unsigned int g_platform_lua_src_len;
-    lua_State *lua_L = lua_platform_open(g_platform_lua_src,
-                                          g_platform_lua_src_len);
+    /* Reuse the Lua VM that was opened during platform_conf_scan(). */
+    lua_State *lua_L = platform_lua_state();
     if (lua_L) {
         lua_selftest(lua_L);
         lua_run_phase(lua_L, "earlycon");  /* 早期控制台           */

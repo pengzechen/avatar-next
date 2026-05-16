@@ -2,18 +2,19 @@
 #define __T_DW_UART_H__
 
 #include "types.h"
-#include "driver_cfg.h"
+#include "platform_cfg.h"
 #include "uart_16550.h"   /* 共享 16550 寄存器偏移与位定义 */
 
 /*
- * DesignWare UART 基地址来自 driver_cfg.h（ARCH_RISCV64 → 0x10000000）
+ * DesignWare UART 基地址（由 dw_uart_early_init() 从 platform_get_mmio 填充）
  *
  * QEMU virt 机器的 ns16550 UART 使用字节寻址（reg-shift=0），
  * 寄存器偏移与标准 16550 PIO 布局相同：0,1,2,3,4,5,6,7。
  * 必须使用 read8/write8（8-bit 访问），32-bit 访问会访问到错误寄存器。
  */
 
-#define DW_UART_BASE    (UART_BASE)
+extern uintptr_t dw_uart_base;
+#define DW_UART_BASE    (dw_uart_base)
 
 /* 绝对地址（字节偏移，reg-shift=0） */
 #define DW_UART_RBR  (DW_UART_BASE + UART16550_PIO_RBR)   /* Receive Buffer   */

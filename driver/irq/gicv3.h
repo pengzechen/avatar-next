@@ -2,20 +2,24 @@
 #define __GICV3_H__
 
 #include "types.h"
-#include "driver_cfg.h"
+#include "platform_cfg.h"
+
+/* GICv3 模块内基地址（由 gicv3_init() 从 platform_get_mmio 填充） */
+extern uintptr_t gicv3_gicd_base;
+extern uintptr_t gicv3_gicr_base;
 
 // GICv3 Distributor base
-#define GICD_CTLR (GICD_BASE_ADDR + 0x0000)
-#define GICD_TYPER (GICD_BASE_ADDR + 0x0004)
-#define GICD_IIDR (GICD_BASE_ADDR + 0x0008)
+#define GICD_CTLR (gicv3_gicd_base + 0x0000)
+#define GICD_TYPER (gicv3_gicd_base + 0x0004)
+#define GICD_IIDR (gicv3_gicd_base + 0x0008)
 
-#define GICD_IGROUPR (GICD_BASE_ADDR + 0x80)
-#define GICD_ISENABLERn(n) (GICD_BASE_ADDR + 0x100 + (n) * 4)
-#define GICD_ICENABLERn(n) (GICD_BASE_ADDR + 0x180 + (n) * 4)
+#define GICD_IGROUPR (gicv3_gicd_base + 0x80)
+#define GICD_ISENABLERn(n) (gicv3_gicd_base + 0x100 + (n) * 4)
+#define GICD_ICENABLERn(n) (gicv3_gicd_base + 0x180 + (n) * 4)
 
-#define GICD_IPRIORITYR(n) (GICD_BASE_ADDR + 0x400 + 4 * (n))
-#define GICD_ITARGETSR(n) (GICD_BASE_ADDR + 0x800 + 4 * (n))
-#define GICD_ICFGR(n) (GICD_BASE_ADDR + 0xc00 + 4 * (n))
+#define GICD_IPRIORITYR(n) (gicv3_gicd_base + 0x400 + 4 * (n))
+#define GICD_ITARGETSR(n) (gicv3_gicd_base + 0x800 + 4 * (n))
+#define GICD_ICFGR(n) (gicv3_gicd_base + 0xc00 + 4 * (n))
 
 // GICD bits
 #define GICD_CTLR_ENNS_BIT (1u << 1)
@@ -23,10 +27,10 @@
 #define GICD_CTLR_ARE_NS_BIT (1u << 4) // 开启 ARE_NS 之后，GICD 只负责 SPI，
 
 // GICv3 Redistributor base (需根据平台定义)
-#define GICR_CTLR (GICR_BASE_ADDR + 0x0000)
-#define GICR_WAKER (GICR_BASE_ADDR + 0x0014)
-#define GICR_IPRIORITYR(n) (GICR_BASE_ADDR + 0x0400 + 4 * (n))
-#define GICR_SGI_BASE(cpu) (GICR_BASE_ADDR + 0x20000 * (cpu))
+#define GICR_CTLR (gicv3_gicr_base + 0x0000)
+#define GICR_WAKER (gicv3_gicr_base + 0x0014)
+#define GICR_IPRIORITYR(n) (gicv3_gicr_base + 0x0400 + 4 * (n))
+#define GICR_SGI_BASE(cpu) (gicv3_gicr_base + 0x20000 * (cpu))
 #define GICR_ISENABLER0(cpu) (GICR_SGI_BASE(cpu) + 0x10000 + 0x100)
 #define GICR_ICENABLER0(cpu) (GICR_SGI_BASE(cpu) + 0x10000 + 0x180)
 

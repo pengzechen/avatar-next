@@ -9,15 +9,10 @@
 #include "assert.h"
 #include "string.h"
 #include "mm_vm.h"  /* 提供 PAGE_SIZE */
-#include "pmm_reserve.h"
 #include "../../driver/blk/ramblk_cfg.h" /* RAMBLK_PHYS_BASE / RAMBLK_PHYS_END */
 
-/* 计算全局 PMM 位图大小（字节） */
-#define PMM_TOTAL_PAGES (PMM_RAM_SIZE / PAGE_SIZE)
-#define PMM_BITMAP_SIZE ((PMM_TOTAL_PAGES + 7) / 8)
-
-/* 全局 PMM 状态 */
-static uint8_t g_pmm_bitmap_buffer[PMM_BITMAP_SIZE];
+/* 全局 PMM 状态 — 位图缓冲区使用编译期最大值（PMM_BITMAP_MAX_BYTES = 128KB = 4GB/4KB/8bit）*/
+static uint8_t g_pmm_bitmap_buffer[PMM_BITMAP_MAX_BYTES];
 pmm_t pmm;
 pmm_t *g_pmm = &pmm;
 
@@ -306,25 +301,16 @@ void pmm_initialize(void)
     KLOG_INFO("Marking kernel memory as allocated...\n");
     pmm_mark_kernel_allocated(g_pmm);
 
-#if PMM_EXTRA_RESV0_ENABLE
-    KLOG_INFO("Reserving PMM extra region(%s): 0x%llx - 0x%llx\n",
-              PMM_EXTRA_RESV0_TAG,
-              (uint64_t)PMM_EXTRA_RESV0_START,
-              (uint64_t)PMM_EXTRA_RESV0_END);
-    pmm_mark_allocated(g_pmm,
-                       (uint64_t)PMM_EXTRA_RESV0_START,
-                       (uint64_t)PMM_EXTRA_RESV0_END);
-#endif
-
-#if PMM_EXTRA_RESV1_ENABLE
-    KLOG_INFO("Reserving PMM extra region(%s): 0x%llx - 0x%llx\n",
-              PMM_EXTRA_RESV1_TAG,
-              (uint64_t)PMM_EXTRA_RESV1_START,
-              (uint64_t)PMM_EXTRA_RESV1_END);
-    pmm_mark_allocated(g_pmm,
-                       (uint64_t)PMM_EXTRA_RESV1_START,
-                       (uint64_t)PMM_EXTRA_RESV1_END);
-#endif
+    /* 运行时保留区（由 platform_conf_scan() 从 Lua 读取） */
+    for (int i = 0; i < g_pmm_resv_count; i++) {
+        KLOG_INFO("Reserving PMM extra region(%s): 0x%llx - 0x%llx\n",
+                  g_pmm_reserves[i].tag,
+                  (uint64_t)g_pmm_reserves[i].start,
+                  (uint64_t)g_pmm_reserves[i].end);
+        pmm_mark_allocated(g_pmm,
+                           (uint64_t)g_pmm_reserves[i].start,
+                           (uint64_t)g_pmm_reserves[i].end);
+    }
 
     /* 预留 rootfs 物理区域，防止 PMM 将其分配出去 */
     KLOG_INFO("Reserving rootfs region: 0x%llx - 0x%llx\n",

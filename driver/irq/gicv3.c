@@ -1,6 +1,10 @@
 
 #include "gicv3.h"
 
+/* GICv3 模块内基地址 */
+uintptr_t gicv3_gicd_base = 0;
+uintptr_t gicv3_gicr_base = 0;
+
 struct gicv3_t _gicv3;
 
 // 支持 GICv3 系统寄存器访问
@@ -54,6 +58,9 @@ read_sysreg(const char *reg)
 
 void gicv3_init(void)
 {
+    gicv3_gicd_base = platform_get_mmio("irq", "gicd");
+    gicv3_gicr_base = platform_get_mmio("irq", "gicr");
+
     logger_info("GICv3: Initializing...\n");
 
     // ---- Distributor ----

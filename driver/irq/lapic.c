@@ -13,7 +13,7 @@
 #include "lapic.h"
 #include "x86_64/io.h"
 #include "klog.h"
-#include "driver_cfg.h"   /* TIMER_FREQUENCY_HZ */
+#include "../timer/timer.h"  /* TIMER_FREQUENCY_HZ = g_timer_cfg_freq_hz */
 
 /* ── LAPIC 虚拟基址 ─────────────────────────────────────────────
  * boot.S 建立了 identity + high-half 两份映射（1GB huge page），

@@ -54,7 +54,7 @@ static int ramblk_close(struct ext4_blockdev *bdev)
 EXT4_BLOCKDEV_STATIC_INSTANCE(
     g_ramblk,
     RAMBLK_SECTOR_SZ,
-    RAMBLK_SECTOR_CNT,
+    0,                  /* ph_bcnt 在 ramblk_init() 中从运行时全局变量赋值 */
     ramblk_open,
     ramblk_bread,
     ramblk_bwrite,
@@ -72,9 +72,14 @@ struct ext4_blockdev *ramblk_get_bdev(void)
 
 void ramblk_init(void)
 {
+    /* 从运行时全局变量设置扇区数和分区大小（platform_conf_scan() 已填充）*/
+    uint64_t sector_cnt = RAMBLK_SIZE / RAMBLK_SECTOR_SZ;
+    g_ramblk.bdif->ph_bcnt = sector_cnt;
+    g_ramblk.part_size     = RAMBLK_SIZE;
+
     KLOG_INFO("[ramblk] RAM block device:\n");
     KLOG_INFO("[ramblk]   phys base = 0x%llx\n", (uint64_t)RAMBLK_PHYS_BASE);
     KLOG_INFO("[ramblk]   size      = %llu MB\n", (uint64_t)(RAMBLK_SIZE >> 20));
     KLOG_INFO("[ramblk]   sectors   = %llu x %u bytes\n",
-              (uint64_t)RAMBLK_SECTOR_CNT, RAMBLK_SECTOR_SZ);
+              sector_cnt, RAMBLK_SECTOR_SZ);
 }

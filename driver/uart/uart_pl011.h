@@ -3,7 +3,7 @@
 #define __T_UART_PL011_H__
 
 #include "types.h"
-#include "driver_cfg.h"
+#include "platform_cfg.h"
 
 /*
  * UART 基地址运行时变量

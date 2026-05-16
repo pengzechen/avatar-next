@@ -16,7 +16,7 @@
 #ifndef DRIVER_UART_H
 #define DRIVER_UART_H
 
-#include "driver_cfg.h"
+#include "platform_cfg.h"
 
 /* ============================================================
  * PL011（aarch64）

@@ -1,33 +1,46 @@
 -- platform.lua — qemu-virt-aarch64
--- [[ BUILD_CONFIG: 由 gen_platform.py 在编译期解析，生成 platform.mk / platform.h ]]
-local BUILD_CONFIG = {
-    ARCH                   = "aarch64",
-    MEM_RAM_BASE           = "0x40000000",
-    MEM_RAM_SIZE           = "0x80000000",
-    MEM_ROOTFS_BASE        = "0x60000000",
-    MEM_ROOTFS_SIZE        = "0x08000000",
-    ROOTFS_SIZE_MB         = "128",
-    MEM_PLATFORM           = "QEMU",
+--
+-- 全局配置表。
+--   编译期: gen_platform.py 解析 platform 表生成 platform.mk
+--   早期引导: C 通过扫描嵌入字节数组获取内存布局
+--   运行期:   Lua VM 进入各阶段回调，驱动初始化使用 platform.xxx 字段
 
-    DEV_UART_TYPE          = "pl011",
-    DEV_IRQ_TYPE           = "gicv2",
-    DEV_TIMER_TYPE         = "aarch64",
+platform = {
+    arch = "aarch64",
+    name = "QEMU",
 
-    DEV_UART_BASE          = "0x09000000",
-    DEV_GICD_BASE          = "0x08000000",
-    DEV_GICC_BASE          = "0x08010000",
-    DEV_GICH_BASE          = "0x08030000",
-    DEV_GICR_BASE          = "0x080A0000",
-    DEV_PLIC_BASE          = "0",
-    DEV_CLINT_BASE         = "0",
+    memory = {
+        ram    = { base = 0x40000000, size = 0x80000000 },
+        rootfs = { base = 0x60000000, size = 0x08000000, mb = 128 },
+        reserves = {},
+    },
 
-    DEV_MMIO_NEEDS_VMA     = "1",
-    DEV_NEED_LAPIC         = "0",
-    DEV_CNTP_TIMER         = "26",
-    DEV_UART_REG_SHIFT     = "0",
-    DEV_TIMER_TICK_MS      = "10",
-    DEV_TIMER_FREQUENCY_HZ = "100",
-    DEV_TIMER_COUNTER_HZ   = "0",
+    mmio_vma = true,
+    lapic    = false,
+
+    uart = {
+        driver    = "pl011",
+        base      = 0x09000000,
+        reg_shift = 0,
+    },
+
+    irq = {
+        driver = "gicv2",
+        gicd   = 0x08000000,
+        gicc   = 0x08010000,
+        gich   = 0x08030000,
+        gicr   = 0x080A0000,
+        plic   = 0,
+        clint  = 0,
+    },
+
+    timer = {
+        driver     = "aarch64",
+        tick_ms    = 10,
+        freq_hz    = 100,
+        cntp       = 26,
+        counter_hz = 0,
+    },
 }
 
 -- 阶段顺序: earlycon → irqcore → drivers → fs → late
@@ -39,10 +52,9 @@ register_device("gic", {
     end,
 })
 
--- UART / 串口（pl011 驱动已在 earlycon 阶段由 C 代码完成，此处可选重新配置）
+-- UART（pl011 已在 C platform_init 中初始化，Lua 阶段无需重复）
 register_device("uart0", {
     drivers = function(self)
-        -- pl011 已在 C platform_init 中初始化，Lua 阶段无需重复
     end,
 })
 

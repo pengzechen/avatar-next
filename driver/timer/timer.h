@@ -2,7 +2,7 @@
 #define __TIMER_H__
 
 #include "types.h"
-#include "driver_cfg.h"
+#include "platform_cfg.h"
 #include "arch.h"
 
 // ============================================================
@@ -21,6 +21,18 @@ typedef struct {
 extern volatile uint64_t g_system_ticks;     // 系统tick计数
 extern volatile uint64_t g_timer_frequency;  // 定时器频率
 extern timer_stats_t     g_timer_stats;      // 统计信息
+
+/* 定时器配置（由 timer_init() 从 platform_get_uint/uintptr 填充） */
+extern unsigned  g_timer_cfg_freq_hz;    /* 中断目标频率 (Hz) */
+extern unsigned  g_timer_cfg_tick_ms;    /* 中断目标周期 (ms) */
+extern uintptr_t g_timer_cfg_counter_hz; /* 硬件计数器频率 (Hz) */
+extern unsigned  g_timer_cfg_cntp;       /* CNTP IRQ 号 */
+
+/* 定时器兼容宏（供架构实现头文件使用） */
+#define TIMER_FREQUENCY_HZ  g_timer_cfg_freq_hz
+#define TIMER_TICK_MS       g_timer_cfg_tick_ms
+#define TIMER_FREQ_HZ       g_timer_cfg_counter_hz
+#define CNTP_TIMER          g_timer_cfg_cntp
 
 // ============================================================
 // 架构特定操作（内部使用）

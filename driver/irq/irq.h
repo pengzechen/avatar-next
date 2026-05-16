@@ -17,7 +17,7 @@
 #ifndef DRIVER_IRQ_H
 #define DRIVER_IRQ_H
 
-#include "driver_cfg.h"
+#include "platform_cfg.h"
 #include "types.h"
 
 /* ============================================================

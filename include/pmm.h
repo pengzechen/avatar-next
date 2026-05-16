@@ -4,13 +4,17 @@
 #include "types.h"
 #include "bitmap.h"
 #include "task/mutex.h"
-#include "mem_layout.h"
+#include "platform_cfg.h"
 
 
 /* ── 物理内存配置 ───────────────────────────────────────────────────── */
 
-#define PMM_RAM_BASE    MEM_RAM_BASE
-#define PMM_RAM_SIZE    MEM_RAM_SIZE
+/* 运行时变量别名（从 platform_conf_scan() 提取，在 pmm_initialize() 前有效） */
+#define PMM_RAM_BASE    g_mem_ram_base
+#define PMM_RAM_SIZE    g_mem_ram_size
+
+/* 位图静态缓冲区的最大字节数：支持最多 4GB RAM @ 4KB 页 */
+#define PMM_BITMAP_MAX_BYTES  131072U
 
 /*
  * include/pmm.h - 物理内存管理器
