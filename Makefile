@@ -498,7 +498,9 @@ LWEXT4_CFLAGS  += -DCONFIG_USE_USER_MALLOC=1
 LWEXT4_CFLAGS  += -w   # 屏蔽第三方代码警告
 
 # ─── Rootfs 配置 ────────────────────────────────────────────────────────────────────
-ROOTFS_IMG       := $(BUILD_DIR)/rootfs.img
+# 每个架构独立一个镜像，切换架构无需 make clean
+ROOTFS_IMG       := $(BUILD_DIR)/rootfs-$(ARCH).img
+ROOTFS_STAGE     := $(BUILD_DIR)/rootfs-stage-$(ARCH)
 # ROOTFS_SIZE_MB / ROOTFS_PHYS_ADDR 来自自动生成的 $(MEM_LAYOUT_MK)
 
 # 目标
@@ -809,51 +811,62 @@ run: kernel
 	@echo "Starting QEMU for $(ARCH)..."
 	$(QEMU) $(QEMU_FLAGS)
 
-# 创建 ext4 rootfs 镜像
-# 依赖：Host 已安装 e2fsprogs（mkfs.ext4）
-$(ROOTFS_IMG): | $(BUILD_DIR)
-	@echo "Creating $(ROOTFS_SIZE_MB)MB ext4 rootfs at $(ROOTFS_IMG)..."
-	dd if=/dev/zero of=$@ bs=1M count=$(ROOTFS_SIZE_MB)
-	mkfs.ext4 -b 1024 -L "avatarfs" $@
-	@echo "Rootfs created: $@"
-
-rootfs: $(ROOTFS_IMG) $(APPS_BINS) $(APPS_C_ELFS)
-	@echo "=================================="
-	@echo "Rootfs and applications built!"
-	@echo "=================================="
-	@echo ""
-	@echo "Installing applications to rootfs..."
-	@mkdir -p /tmp/avatar_mnt
-	@sudo mount -o loop $(ROOTFS_IMG) /tmp/avatar_mnt
+# 创建 ext4 rootfs 镜像（无需 sudo）
+# 依赖：Host 已安装 e2fsprogs（mkfs.ext4 >= 1.43 支持 -d 选项）
+# 每次 apps 变动时自动重建；切换架构直接使用各自的镜像文件，无需 make clean
+$(ROOTFS_IMG): $(APPS_BINS) $(APPS_C_ELFS) | $(BUILD_DIR)
+	@echo "=== Building rootfs for $(ARCH): $(ROOTFS_IMG) ==="
+	@rm -rf $(ROOTFS_STAGE)
+	@mkdir -p $(ROOTFS_STAGE)/bin
+	@# 安装 busybox
 	@if [ -f apps/busybox-$(ARCH) ]; then \
-		sudo cp apps/busybox-$(ARCH) /tmp/avatar_mnt/busybox; \
-		sudo chmod +x /tmp/avatar_mnt/busybox; \
-		echo "  [busybox installed]"; \
-		sudo mkdir -p /tmp/avatar_mnt/bin; \
+		cp apps/busybox-$(ARCH) $(ROOTFS_STAGE)/busybox; \
+		chmod +x $(ROOTFS_STAGE)/busybox; \
 		for applet in sh ls cat echo pwd mkdir rm cp mv grep find ps kill; do \
-			sudo cp apps/busybox-$(ARCH) /tmp/avatar_mnt/bin/$$applet; \
-			sudo chmod +x /tmp/avatar_mnt/bin/$$applet; \
+			cp apps/busybox-$(ARCH) $(ROOTFS_STAGE)/bin/$$applet; \
+			chmod +x $(ROOTFS_STAGE)/bin/$$applet; \
 		done; \
-		echo "  [busybox applets installed in /bin]"; \
+		echo "  [busybox + applets installed]"; \
 	fi
-	@if [ -f build/test_exec.bin ]; then \
-		sudo cp build/test_exec.bin /tmp/avatar_mnt/test_exec; \
-		sudo chmod +x /tmp/avatar_mnt/test_exec; \
-		echo "  [test_exec installed]"; \
+	@# 安装所有 .bin.elf 优先于裸 .bin
+	@installed=0; \
+	for elf in $(BUILD_DIR)/*.bin.elf; do \
+		[ -f "$$elf" ] || continue; \
+		name=$$(basename "$$elf" .bin.elf); \
+		cp "$$elf" "$(ROOTFS_STAGE)/$$name"; \
+		chmod +x "$(ROOTFS_STAGE)/$$name"; \
+		echo "  [$$name installed (bin.elf)]"; \
+		installed=$$((installed+1)); \
+	done; \
+	for elf in $(BUILD_DIR)/*.elf; do \
+		[ -f "$$elf" ] || continue; \
+		case "$$elf" in *.bin.elf) continue ;; esac; \
+		name=$$(basename "$$elf" .elf); \
+		cp "$$elf" "$(ROOTFS_STAGE)/$$name"; \
+		chmod +x "$(ROOTFS_STAGE)/$$name"; \
+		echo "  [$$name installed (elf)]"; \
+		installed=$$((installed+1)); \
+	done; \
+	if [ "$$installed" -eq 0 ]; then \
+		for bin in $(BUILD_DIR)/*.bin; do \
+			[ -f "$$bin" ] || continue; \
+			name=$$(basename "$$bin" .bin); \
+			cp "$$bin" "$(ROOTFS_STAGE)/$$name"; \
+			chmod +x "$(ROOTFS_STAGE)/$$name"; \
+			echo "  [$$name installed (bin)]"; \
+		done; \
 	fi
-	@if [ -f build/init.elf ]; then \
-		sudo cp build/init.elf /tmp/avatar_mnt/init; \
-		sudo chmod +x /tmp/avatar_mnt/init; \
-		echo "  [init installed]"; \
-	fi
-	@sudo umount /tmp/avatar_mnt
-	@sudo rmdir /tmp/avatar_mnt 2>/dev/null || true
-	@echo ""
-	@echo "Rootfs ready! Run: make ARCH=$(ARCH) run-fs"
-	@echo ""
+	@# 用 staging 目录直接构建 ext4 镜像，无需挂载
+	dd if=/dev/zero of=$@ bs=1M count=$(ROOTFS_SIZE_MB) status=none
+	mkfs.ext4 -q -b 1024 -L "avatarfs" -d $(ROOTFS_STAGE) $@
+	@rm -rf $(ROOTFS_STAGE)
+	@echo "Rootfs ready: $@"
 
-# 运行内核 + 加载 rootfs 酷像到 QEMU 客户机内存
-run-fs: kernel rootfs
+rootfs: $(ROOTFS_IMG)
+	@echo "Rootfs up to date: $(ROOTFS_IMG)"
+
+# 运行内核 + 加载 rootfs 镜像到 QEMU 客户机内存
+run-fs: kernel $(ROOTFS_IMG)
 	@echo "Starting QEMU for $(ARCH) with rootfs at $(ROOTFS_PHYS_ADDR)..."
 	$(QEMU) $(QEMU_FLAGS) \
 		-device loader,file=$(ROOTFS_IMG),addr=$(ROOTFS_PHYS_ADDR),force-raw=on

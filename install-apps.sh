@@ -1,119 +1,119 @@
 #!/bin/bash
 #
-# install-apps.sh - 安装应用程序到 rootfs
+# install-apps.sh - 构建 rootfs 镜像并安装应用程序（无需 sudo）
 #
-# 用法: ./install-apps.sh [架构]
+# 用法: ./install-apps.sh [ARCH=]<架构>
 #
-# 示例: ./install-apps.sh aarch64
+# 示例:
+#   ./install-apps.sh aarch64
+#   ./install-apps.sh ARCH=riscv64
+#
+# 原理：使用 mkfs.ext4 -d <staging_dir> 直接从目录树构建 ext4 镜像，
+#       完全不需要 sudo / loop mount。
+#       需要 e2fsprogs >= 1.43（提供 mkfs.ext4 -d 选项）。
+
+set -e
 
 ARCH=${1:-aarch64}
 case "$ARCH" in
     ARCH=*) ARCH="${ARCH#ARCH=}" ;;
 esac
-ROOTFS_IMG="build/rootfs.img"
-MOUNT_POINT="/tmp/avatar_mnt"
+
+BUILD_DIR="build"
+ROOTFS_IMG="${BUILD_DIR}/rootfs-${ARCH}.img"
+STAGE_DIR="${BUILD_DIR}/rootfs-stage-${ARCH}"
+
+# 从 mem_layout.mk 读取镜像大小（优先），否则默认 32 MB
+ROOTFS_SIZE_MB=32
+if [ -f "${BUILD_DIR}/mem_layout.mk" ]; then
+    _sz=$(grep 'ROOTFS_SIZE_MB' "${BUILD_DIR}/mem_layout.mk" | head -1 | sed 's/.*= *//')
+    [ -n "$_sz" ] && ROOTFS_SIZE_MB=$_sz
+fi
 
 echo "=================================="
-echo "Installing applications to rootfs"
+echo " Building rootfs for $ARCH"
+echo " Image : $ROOTFS_IMG  (${ROOTFS_SIZE_MB} MB)"
 echo "=================================="
 echo ""
 
-# 检查 rootfs 是否存在
-if [ ! -f "$ROOTFS_IMG" ]; then
-    echo "Error: $ROOTFS_IMG not found!"
-    echo "Please run: make ARCH=$ARCH rootfs"
+# ── 检查 mkfs.ext4 是否支持 -d ─────────────────────────────────────
+if ! mkfs.ext4 --help 2>&1 | grep -q -- '-d '; then
+    echo "ERROR: mkfs.ext4 does not support -d option."
+    echo "       Please upgrade e2fsprogs to >= 1.43."
     exit 1
 fi
 
-# 创建挂载点
-echo "Creating mount point: $MOUNT_POINT"
-mkdir -p "$MOUNT_POINT"
+# ── 创建 staging 目录 ───────────────────────────────────────────────
+rm -rf "$STAGE_DIR"
+mkdir -p "$STAGE_DIR/bin"
 
-# 挂载 rootfs
-echo "Mounting $ROOTFS_IMG to $MOUNT_POINT"
-sudo mount -o loop "$ROOTFS_IMG" "$MOUNT_POINT"
-if [ $? -ne 0 ]; then
-    echo "Error: Failed to mount $ROOTFS_IMG"
-    rmdir "$MOUNT_POINT"
-    exit 1
-fi
-
-# 复制应用程序（优先安装 ELF，其次才是裸 .bin）
-echo ""
-echo "Installing applications:"
 INSTALLED=0
 
-# 1) 安装由 .S 生成的 ELF（如 build/hello.bin.elf -> /hello）
-for ELF in build/*.bin.elf; do
-    [ -f "$ELF" ] || continue
-    APP_NAME=$(basename "$ELF" .bin.elf)
-    echo "  - $APP_NAME  ($ELF)"
-    sudo cp "$ELF" "$MOUNT_POINT/$APP_NAME"
-    sudo chmod +x "$MOUNT_POINT/$APP_NAME"
-    INSTALLED=$((INSTALLED + 1))
-done
-
-# 2) 安装 C 用户程序 ELF（如 build/init.elf -> /init）
-for ELF in build/*.elf; do
-    [ -f "$ELF" ] || continue
-    case "$ELF" in
-        *.bin.elf) continue ;;
-    esac
-    APP_NAME=$(basename "$ELF" .elf)
-    echo "  - $APP_NAME  ($ELF)"
-    sudo cp "$ELF" "$MOUNT_POINT/$APP_NAME"
-    sudo chmod +x "$MOUNT_POINT/$APP_NAME"
-    INSTALLED=$((INSTALLED + 1))
-done
-
-# 3) 兜底：仅当没有 ELF 可安装时，才安装裸 .bin
-if [ "$INSTALLED" -eq 0 ]; then
-for BIN in build/*.bin; do
-    [ -f "$BIN" ] || continue
-    # 去掉 build/ 前缀和 .bin 后缀作为目标文件名
-    APP_NAME=$(basename "$BIN" .bin)
-    echo "  - $APP_NAME  ($BIN)"
-    sudo cp "$BIN" "$MOUNT_POINT/$APP_NAME"
-    sudo chmod +x "$MOUNT_POINT/$APP_NAME"
-    INSTALLED=$((INSTALLED + 1))
-done
-fi
-if [ "$INSTALLED" -eq 0 ]; then
-    echo "  Warning: No app artifacts found in build/"
-    echo "  Please run: make ARCH=$ARCH rootfs"
-fi
-
-# 安装 busybox（如果存在）
-echo ""
-BUSYBOX_SRC="apps/busybox-$ARCH"
+# ── 安装 busybox ────────────────────────────────────────────────────
+BUSYBOX_SRC="apps/busybox-${ARCH}"
 if [ -f "$BUSYBOX_SRC" ]; then
-    echo "  - busybox  ($BUSYBOX_SRC)"
-    sudo cp "$BUSYBOX_SRC" "$MOUNT_POINT/busybox"
-    sudo chmod +x "$MOUNT_POINT/busybox"
+    cp "$BUSYBOX_SRC" "$STAGE_DIR/busybox"
+    chmod +x "$STAGE_DIR/busybox"
+    for applet in sh ls cat echo pwd mkdir rm cp mv grep find ps kill; do
+        cp "$BUSYBOX_SRC" "$STAGE_DIR/bin/$applet"
+        chmod +x "$STAGE_DIR/bin/$applet"
+    done
+    echo "  [busybox + applets installed]"
     INSTALLED=$((INSTALLED + 1))
-    echo "  [busybox installed successfully]"
 else
     echo "  Warning: busybox not found at $BUSYBOX_SRC"
-    echo "  To build busybox, see: apps/busybox-1.37.0/"
 fi
 
-# 列出安装的文件
-echo ""
-echo "Files in rootfs:"
-sudo ls -la "$MOUNT_POINT"
+# ── 安装 ELF（.bin.elf 优先，然后普通 .elf，兜底裸 .bin）────────────
+for ELF in "${BUILD_DIR}"/*.bin.elf; do
+    [ -f "$ELF" ] || continue
+    NAME=$(basename "$ELF" .bin.elf)
+    cp "$ELF" "$STAGE_DIR/$NAME"
+    chmod +x "$STAGE_DIR/$NAME"
+    echo "  - $NAME  ($ELF)"
+    INSTALLED=$((INSTALLED + 1))
+done
 
-# 卸载
-echo ""
-echo "Unmounting $MOUNT_POINT"
-sudo umount "$MOUNT_POINT"
+for ELF in "${BUILD_DIR}"/*.elf; do
+    [ -f "$ELF" ] || continue
+    case "$ELF" in *.bin.elf) continue ;; esac
+    NAME=$(basename "$ELF" .elf)
+    cp "$ELF" "$STAGE_DIR/$NAME"
+    chmod +x "$STAGE_DIR/$NAME"
+    echo "  - $NAME  ($ELF)"
+    INSTALLED=$((INSTALLED + 1))
+done
 
-# 清理
-rmdir "$MOUNT_POINT"
+if [ "$INSTALLED" -le 1 ]; then   # 只装了 busybox，还没有用户 ELF
+    for BIN in "${BUILD_DIR}"/*.bin; do
+        [ -f "$BIN" ] || continue
+        NAME=$(basename "$BIN" .bin)
+        cp "$BIN" "$STAGE_DIR/$NAME"
+        chmod +x "$STAGE_DIR/$NAME"
+        echo "  - $NAME  ($BIN)"
+        INSTALLED=$((INSTALLED + 1))
+    done
+fi
+
+if [ "$INSTALLED" -eq 0 ]; then
+    echo "  Warning: No app artifacts found in build/"
+    echo "  Please run: make ARCH=$ARCH  first"
+fi
+
+# ── 构建 ext4 镜像（无需 mount / sudo）─────────────────────────────
+echo ""
+echo "Building ext4 image from staging dir..."
+dd if=/dev/zero of="$ROOTFS_IMG" bs=1M count="$ROOTFS_SIZE_MB" status=none
+mkfs.ext4 -q -b 1024 -L "avatarfs" -d "$STAGE_DIR" "$ROOTFS_IMG"
+
+# ── 清理 staging ────────────────────────────────────────────────────
+rm -rf "$STAGE_DIR"
 
 echo ""
 echo "=================================="
-echo "Installation complete!"
+echo " Installation complete!"
+echo " $ROOTFS_IMG"
 echo "=================================="
 echo ""
-echo "Now run: make ARCH=$ARCH run-fs"
+echo "Now run: make ARCH=$ARCH PLATFORM=qemu run-fs"
 echo ""

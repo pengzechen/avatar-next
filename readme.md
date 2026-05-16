@@ -15,6 +15,7 @@
 - **🔒 内存安全**：集成内存屏障的同步和 I/O 操作
 - **📦 用户态支持**：支持运行 busybox 及用户程序
 - **🗂️ 文件系统**：支持 ext4 rootfs 镜像
+- **🖥️ 虚拟化（vCPU）**：RISC-V H 扩展 Hypervisor，支持 vCPU 创建、运行与陷入处理
 
 ## 🚀 快速开始
 
@@ -49,12 +50,15 @@ sudo apt install gcc-riscv64-linux-gnu make qemu-system-misc
 # 解压并添加到 PATH
 ```
 
+> **注意**：rootfs 构建使用 `mkfs.ext4 -d`，需要 e2fsprogs ≥ 1.43（2016 年后的主流发行版均满足），
+> **无需 sudo**，无需 loop mount。
+
 ### 编译和运行
 
 #### RISC-V 64
 ```bash
-# 编译内核 + 创建 rootfs + 安装应用
-make clean && make ARCH=riscv64 rootfs && ./install-apps.sh ARCH=riscv64
+# 首次：编译内核 + 创建 rootfs（仅需一次，镜像保存为 build/rootfs-riscv64.img）
+make ARCH=riscv64 rootfs
 
 # 启动 QEMU
 make ARCH=riscv64 PLATFORM=qemu run-fs LOG=info -j4
@@ -62,8 +66,8 @@ make ARCH=riscv64 PLATFORM=qemu run-fs LOG=info -j4
 
 #### AArch64
 ```bash
-# 编译内核 + 创建 rootfs + 安装应用
-make clean && make ARCH=aarch64 rootfs && ./install-apps.sh ARCH=aarch64
+# 首次：编译内核 + 创建 rootfs（镜像保存为 build/rootfs-aarch64.img）
+make ARCH=aarch64 rootfs
 
 # 启动 QEMU
 make ARCH=aarch64 PLATFORM=qemu run-fs LOG=info -j4
@@ -71,12 +75,22 @@ make ARCH=aarch64 PLATFORM=qemu run-fs LOG=info -j4
 
 #### x86_64
 ```bash
-# 编译内核 + 创建 rootfs + 安装应用
-make clean && make ARCH=x86_64 rootfs && ./install-apps.sh ARCH=x86_64
+# 首次：编译内核 + 创建 rootfs（镜像保存为 build/rootfs-x86_64.img）
+make ARCH=x86_64 rootfs
 
 # 启动 QEMU
 make ARCH=x86_64 PLATFORM=qemu run-fs LOG=info -j4
 ```
+
+> 每个架构的 rootfs 镜像独立存储，**切换架构无需 `make clean`**。  
+> 仅当用户程序（`apps/`）发生变化时，Make 才会自动重建对应镜像。  
+> 如需手动重建 rootfs（例如替换 busybox），可单独运行：
+> ```bash
+> # 方式一：通过 make（推荐）
+> make ARCH=riscv64 rootfs
+> # 方式二：通过脚本（需先 make ARCH=riscv64 编译内核和 apps）
+> ./install-apps.sh riscv64
+> ```
 
 ### 其他构建选项
 
@@ -196,6 +210,7 @@ avatar/
 - ✅ **中断处理** - 异常和中断支持
 - ✅ **设备驱动** - UART、定时器、中断控制器
 - ✅ **文件系统** - ext4 支持（lwext4）
+- ✅ **虚拟化** - vCPU（RISC-V H 扩展 Hypervisor）：vCPU 创建、运行、陷入分发
 
 ### 设计原则
 
@@ -345,5 +360,5 @@ MIT License
 ---
 
 **版本**: 1.0  
-**更新**: 2026-05-05  
+**更新**: 2026-05-16  
 **项目**: Avatar OS
