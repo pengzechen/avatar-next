@@ -1,5 +1,7 @@
 
 #include "gicv3.h"
+#include "mmio.h"
+#include "klog.h"
 
 /* GICv3 模块内基地址 */
 uintptr_t gicv3_gicd_base = 0;
@@ -183,4 +185,34 @@ gicv3_iar_irqnr(uint32_t iar)
 void gicv3_write_eoir(uint32_t irqstat)
 {
     write_sysreg(ICC_EOIR1_EL1, irqstat);
+}
+
+/*
+ * GICv2 compatibility shims ─────────────────────────────────────────────────
+ * timer_aarch64_impl.h 和 exception.c 通过 extern 声明直接调用这两个函数。
+ * GICv3 中提供兼容实现，避免链接错误。
+ */
+
+/**
+ * gic_set_ipriority - 设置中断优先级（GICv2 兼容接口）
+ * 在 GICv3 中，优先级寄存器居址布局与 GICv2 相同。
+ */
+void gic_set_ipriority(uint32_t int_id, uint32_t priority)
+{
+    uint32_t reg   = int_id / 4;
+    uint32_t shift = (int_id % 4) * 8;
+    uint32_t val   = read32((void *)(uint64_t)GICD_IPRIORITYR(reg));
+    val &= ~(0xFFu << shift);
+    val |= (priority & 0xFFu) << shift;
+    write32(val, (void *)(uint64_t)GICD_IPRIORITYR(reg));
+}
+
+/**
+ * gic_write_dir - 撤销激活中断（GICv2 兼容接口）
+ * GICv3 下 ICC_CTLR_EL1.EOImode=0：EOIR 写入同时完成 priority-drop + deactivate，
+ * 无需额外撤销流程，此函数为空操作。
+ */
+void gic_write_dir(uint32_t irqstat)
+{
+    (void)irqstat;  /* EOImode=0: 取消已在 irq_eoi() 写 ICC_EOIR1_EL1 时完成 */
 }

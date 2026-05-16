@@ -14,22 +14,50 @@
  */
 
 extern uintptr_t dw_uart_base;
+/* reg_shift: 0 = 字节寻址 (QEMU ns16550)；2 = 4字节 MMIO (SG2002 DW-APB) */
+extern uint8_t   dw_uart_reg_shift;
+
 #define DW_UART_BASE    (dw_uart_base)
 
-/* 绝对地址（字节偏移，reg-shift=0） */
-#define DW_UART_RBR  (DW_UART_BASE + UART16550_PIO_RBR)   /* Receive Buffer   */
-#define DW_UART_THR  (DW_UART_BASE + UART16550_PIO_THR)   /* Transmit Holding */
-#define DW_UART_IER  (DW_UART_BASE + UART16550_PIO_IER)   /* Interrupt Enable */
-#define DW_UART_IIR  (DW_UART_BASE + UART16550_PIO_IIR)   /* Interrupt ID     */
-#define DW_UART_FCR  (DW_UART_BASE + UART16550_PIO_FCR)   /* FIFO Control     */
-#define DW_UART_LCR  (DW_UART_BASE + UART16550_PIO_LCR)   /* Line Control     */
-#define DW_UART_MCR  (DW_UART_BASE + UART16550_PIO_MCR)   /* Modem Control    */
-#define DW_UART_LSR  (DW_UART_BASE + UART16550_PIO_LSR)   /* Line Status      */
-#define DW_UART_MSR  (DW_UART_BASE + UART16550_PIO_MSR)   /* Modem Status     */
-#define DW_UART_SCR  (DW_UART_BASE + 7U)                  /* Scratch          */
-#define DW_UART_DLL  (DW_UART_BASE + UART16550_PIO_DLL)   /* Divisor Low (DLAB=1)  */
-#define DW_UART_DLM  (DW_UART_BASE + UART16550_PIO_DLM)   /* Divisor High (DLAB=1) */
-/* DesignWare USR 寄存器在字节布局中不可靠（QEMU 无此寄存器），不再使用 */
+/*
+ * _DW_REG(n): 寄存器绝对地址 = base + (reg_index << reg_shift)
+ *   reg_shift=0: offset 0,1,2,3,4,5,6,7     (PIO 字节偏移)
+ *   reg_shift=2: offset 0,4,8,12,16,20,24,28 (MMIO 4字节偏移)
+ */
+#define _DW_REG(n)   (DW_UART_BASE + ((uintptr_t)(n) << dw_uart_reg_shift))
+
+#define DW_UART_RBR  _DW_REG(0)   /* Receive Buffer   */
+#define DW_UART_THR  _DW_REG(0)   /* Transmit Holding */
+#define DW_UART_IER  _DW_REG(1)   /* Interrupt Enable */
+#define DW_UART_IIR  _DW_REG(2)   /* Interrupt ID     */
+#define DW_UART_FCR  _DW_REG(2)   /* FIFO Control     */
+#define DW_UART_LCR  _DW_REG(3)   /* Line Control     */
+#define DW_UART_MCR  _DW_REG(4)   /* Modem Control    */
+#define DW_UART_LSR  _DW_REG(5)   /* Line Status      */
+#define DW_UART_MSR  _DW_REG(6)   /* Modem Status     */
+#define DW_UART_SCR  _DW_REG(7)   /* Scratch          */
+#define DW_UART_DLL  _DW_REG(0)   /* Divisor Low  (DLAB=1) */
+#define DW_UART_DLM  _DW_REG(1)   /* Divisor High (DLAB=1) */
+
+/*
+ * dw_reg_r8 / dw_reg_w8 — 寄存器读写辅助（自动适配 reg_shift）
+ *   reg_shift=0 → read8/write8（8-bit）
+ *   reg_shift=2 → read32/write32（32-bit，有效数据在低 8 位）
+ */
+#include "mmio.h"
+static inline uint8_t dw_reg_r8(uintptr_t abs_addr)
+{
+    if (dw_uart_reg_shift == 2)
+        return (uint8_t)read32((void *)abs_addr);
+    return read8((void *)abs_addr);
+}
+static inline void dw_reg_w8(uint8_t val, uintptr_t abs_addr)
+{
+    if (dw_uart_reg_shift == 2)
+        write32((uint32_t)val, (void *)abs_addr);
+    else
+        write8(val, (void *)abs_addr);
+}
 
 /* LSR 位 — 别名自 uart_16550.h */
 #define DW_UART_LSR_DR    UART16550_LSR_DR

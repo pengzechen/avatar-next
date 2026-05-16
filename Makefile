@@ -436,6 +436,28 @@ $(error UART=pl011 is only valid on aarch64)
 endif
 endif
 
+# NPU 驱动选择
+# 用法：make PLATFORM=rk3588-aarch64 NPU=rknpu kernel
+NPU ?= none
+ifeq ($(NPU),rknpu)
+    DRIVER_NPU_SRCS := driver/npu/rknpu.c driver/npu/rkpm.c
+    CFLAGS          += -DDRIVER_NPU_RKNPU=1
+    DRIVER_NPU_OBJS := $(BUILD_DIR)/drv_npu_rknpu.o $(BUILD_DIR)/drv_npu_rkpm.o
+else
+    DRIVER_NPU_SRCS :=
+    DRIVER_NPU_OBJS :=
+endif
+
+TPU ?= none
+ifeq ($(TPU),cvitpu)
+    DRIVER_TPU_SRCS := driver/tpu/cvi_tpu.c
+    CFLAGS          += -DDRIVER_TPU_CVITPU=1
+    DRIVER_TPU_OBJS := $(BUILD_DIR)/drv_tpu_cvi_tpu.o
+else
+    DRIVER_TPU_SRCS :=
+    DRIVER_TPU_OBJS :=
+endif
+
 # 覆盖后重新组装驱动对象列表
 DRIVER_OBJECTS := $(patsubst driver/%.c,$(BUILD_DIR)/drv_%.o,$(DRIVER_UART_SRC))
 ifneq ($(strip $(DRIVER_IRQ_SRC)),)
@@ -450,6 +472,20 @@ ifneq ($(strip $(DRIVER_TIMER_SRC)),)
 endif
 ifeq ($(DEV_NEED_LAPIC),1)
 	DRIVER_OBJECTS += $(BUILD_DIR)/lapic.o
+endif
+ifneq ($(strip $(DRIVER_NPU_OBJS)),)
+	DRIVER_OBJECTS += $(DRIVER_NPU_OBJS)
+endif
+ifneq ($(strip $(DRIVER_TPU_OBJS)),)
+	DRIVER_OBJECTS += $(DRIVER_TPU_OBJS)
+endif
+
+# Ion 内存分配器（当 TPU=cvitpu 时自动启用；也可独立启用 ION=1）
+ION ?= $(if $(filter cvitpu,$(TPU)),1,0)
+ifeq ($(ION),1)
+    CFLAGS           += -DDRIVER_ION=1
+    DRIVER_ION_OBJS  := $(BUILD_DIR)/drv_ion_ion.o
+    DRIVER_OBJECTS   += $(DRIVER_ION_OBJS)
 endif
 
 CFLAGS  += -MMD -MP
@@ -624,6 +660,16 @@ $(BUILD_DIR)/gicv3.o: driver/irq/gicv3.c | $(BUILD_DIR)
 
 $(BUILD_DIR)/timer.o: driver/timer/timer.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
+
+# NPU 驱动编译规则
+$(BUILD_DIR)/drv_npu_%.o: driver/npu/%.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/drv_tpu_%.o: driver/tpu/%.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -Idriver/tpu -c $< -o $@
+
+$(BUILD_DIR)/drv_ion_%.o: driver/ion/%.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -Idriver/ion -Ikernel/mm -c $< -o $@
 
 # 驱动编译规则
 $(BUILD_DIR)/drv_%.o: driver/%.c | $(BUILD_DIR)

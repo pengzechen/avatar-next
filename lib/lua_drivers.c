@@ -91,6 +91,172 @@ int luaopen_dw_uart(lua_State *L)
 #endif /* DRIVER_UART_DW */
 
 
+/* ── GICv3 bindings ─────────────────────────────────────────────────────── */
+#if DRIVER_GIC_V3
+#include "irq/gicv3.h"
+
+static int lua_gicv3_init(lua_State *L)
+{
+    gicv3_init();
+    return 0;
+}
+
+static int lua_gicv3_enable_int(lua_State *L)
+{
+    int id     = (int)luaL_checkinteger(L, 1);
+    bool en    = lua_toboolean(L, 2);
+    gicv3_enable_int(id, en);
+    return 0;
+}
+
+static const luaL_Reg lua_drv_gicv3[] = {
+    { "init",       lua_gicv3_init       },
+    { "enable_int", lua_gicv3_enable_int },
+    { NULL,         NULL                 }
+};
+
+int luaopen_gicv3(lua_State *L)
+{
+    luaL_newlib(L, lua_drv_gicv3);
+    return 1;
+}
+#endif /* DRIVER_GIC_V3 */
+
+
+/* ── RKNPU bindings ──────────────────────────────────────────────────────── */
+#if DRIVER_NPU_RKNPU
+#include "npu/rknpu.h"
+
+static int lua_rknpu_init(lua_State *L)
+{
+    rknpu_init();
+    return 0;
+}
+
+static int lua_rknpu_validate_version(lua_State *L)
+{
+    bool ok = rknpu_validate_version();
+    lua_pushboolean(L, ok);
+    return 1;
+}
+
+static const luaL_Reg lua_drv_rknpu[] = {
+    { "init",             lua_rknpu_init             },
+    { "validate_version", lua_rknpu_validate_version },
+    { NULL,               NULL                       }
+};
+
+int luaopen_rknpu(lua_State *L)
+{
+    luaL_newlib(L, lua_drv_rknpu);
+    return 1;
+}
+#endif /* DRIVER_NPU_RKNPU */
+
+#if DRIVER_TPU_CVITPU
+#include "tpu/cvi_tpu.h"
+
+static int lua_cvi_tpu_init(lua_State *L)
+{
+    cvi_tpu_init();
+    return 0;
+}
+
+static int lua_cvi_tpu_run_dmabuf(lua_State *L)
+{
+    void    *v = lua_touserdata(L, 1);
+    uint64_t p = (uint64_t)luaL_checkinteger(L, 2);
+    lua_pushinteger(L, cvi_tpu_run_dmabuf(v, p));
+    return 1;
+}
+
+static int lua_cvi_tpu_is_ready(lua_State *L)
+{
+    lua_pushboolean(L, cvi_tpu_is_ready() ? 1 : 0);
+    return 1;
+}
+
+static const luaL_Reg lua_drv_cvi_tpu[] = {
+    { "init",         lua_cvi_tpu_init         },
+    { "run_dmabuf",   lua_cvi_tpu_run_dmabuf   },
+    { "is_ready",     lua_cvi_tpu_is_ready     },
+    { NULL,           NULL                     }
+};
+
+int luaopen_cvi_tpu(lua_State *L)
+{
+    luaL_newlib(L, lua_drv_cvi_tpu);
+    return 1;
+}
+#endif /* DRIVER_TPU_CVITPU */
+
+#if DRIVER_ION
+#include "ion/ion.h"
+
+/*
+ * ion.alloc(size) → handle, vaddr_lightuserdata, paddr_integer
+ * 失败返回 nil
+ */
+static int lua_ion_alloc(lua_State *L)
+{
+    size_t size = (size_t)luaL_checkinteger(L, 1);
+    void          *va  = NULL;
+    uint64_t       pa  = 0;
+    ion_handle_t   h   = ION_HANDLE_INVALID;
+
+    if (ion_alloc(size, &va, &pa, &h) != 0) {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_pushinteger(L, (lua_Integer)h);
+    lua_pushlightuserdata(L, va);
+    lua_pushinteger(L, (lua_Integer)pa);
+    return 3;
+}
+
+/* ion.free(handle) → bool */
+static int lua_ion_free(lua_State *L)
+{
+    ion_handle_t h = (ion_handle_t)luaL_checkinteger(L, 1);
+    lua_pushboolean(L, ion_free(h) == 0 ? 1 : 0);
+    return 1;
+}
+
+/* ion.get(handle) → vaddr_lightuserdata, paddr_integer (or nil on error) */
+static int lua_ion_get(lua_State *L)
+{
+    ion_handle_t h  = (ion_handle_t)luaL_checkinteger(L, 1);
+    void        *va = NULL;
+    uint64_t     pa = 0;
+    if (ion_get_buf(h, &va, &pa) != 0) {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_pushlightuserdata(L, va);
+    lua_pushinteger(L, (lua_Integer)pa);
+    return 2;
+}
+
+/* ion.size(handle) → integer */
+static int lua_ion_size(lua_State *L)
+{
+    ion_handle_t h = (ion_handle_t)luaL_checkinteger(L, 1);
+    lua_pushinteger(L, (lua_Integer)ion_get_size(h));
+    return 1;
+}
+
+static const luaL_Reg lua_drv_ion[] = {
+    { "alloc", lua_ion_alloc },
+    { "free",  lua_ion_free  },
+    { "get",   lua_ion_get   },
+    { "size",  lua_ion_size  },
+    { NULL,    NULL          }
+};
+
+int luaopen_ion(lua_State *L) { luaL_newlib(L, lua_drv_ion); return 1; }
+#endif /* DRIVER_ION */
+
+
 /* ── Timer bindings (always present) ────────────────────────────────────── */
 #include "timer/timer.h"
 
@@ -133,6 +299,9 @@ void lua_register_all_drivers(lua_State *L)
 #if DRIVER_GIC_V2
     luaL_requiref(L, "gicv2",    luaopen_gicv2,    1); lua_pop(L, 1);
 #endif
+#if DRIVER_GIC_V3
+    luaL_requiref(L, "gicv3",    luaopen_gicv3,    1); lua_pop(L, 1);
+#endif
 #if DRIVER_UART_PL011
     luaL_requiref(L, "pl011",    luaopen_pl011,    1); lua_pop(L, 1);
 #endif
@@ -140,4 +309,13 @@ void lua_register_all_drivers(lua_State *L)
     luaL_requiref(L, "dw_uart",  luaopen_dw_uart,  1); lua_pop(L, 1);
 #endif
     luaL_requiref(L, "timer",    luaopen_timer,    1); lua_pop(L, 1);
+#if DRIVER_NPU_RKNPU
+    luaL_requiref(L, "rknpu",    luaopen_rknpu,    1); lua_pop(L, 1);
+#endif
+#if DRIVER_TPU_CVITPU
+    luaL_requiref(L, "cvi_tpu", luaopen_cvi_tpu, 1); lua_pop(L, 1);
+#endif
+#if DRIVER_ION
+    luaL_requiref(L, "ion",     luaopen_ion,     1); lua_pop(L, 1);
+#endif
 }

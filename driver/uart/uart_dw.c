@@ -7,6 +7,7 @@
 
 /* DW UART 模块内基地址（dw_uart_early_init() 从 platform_get_mmio 填充） */
 uintptr_t dw_uart_base = 0x10000000UL; /* QEMU RISC-V default; overridden by platform_get_mmio() in uart_init() */
+uint8_t   dw_uart_reg_shift = 0; /* 0=字节寻址(QEMU); 2=4字节MMIO(SG2002)；dw_uart_early_init 从 platform 读取 */
 
 // #include "irq.h"
 /* WFI：在等待中断时让出 CPU，若架构未定义则用 nop 代替 */
@@ -69,46 +70,46 @@ buffer_get(dw_uart_buffer_t *buf, char *c)
 static bool __attribute__((unused)) 
 dw_uart_tx_ready(void)
 {
-    return (read8((void *) DW_UART_LSR) & DW_UART_LSR_THRE) != 0;
+    return (dw_reg_r8(DW_UART_LSR) & DW_UART_LSR_THRE) != 0;
 }
 
 /// DW_UART_RBR 中的数据可读了，硬件给他置位
 static bool
 dw_uart_rx_ready(void)
 {
-    return (read8((void *) DW_UART_LSR) & DW_UART_LSR_DR) != 0;
+    return (dw_reg_r8(DW_UART_LSR) & DW_UART_LSR_DR) != 0;
 }
 
 // 启用发送中断， 我有数据可以发送了
 static void
 dw_uart_enable_tx_interrupt(void)
 {
-    uint8_t ier = read8((void *) DW_UART_IER);
+    uint8_t ier = dw_reg_r8(DW_UART_IER);
     if (!(ier & DW_UART_IER_THRI)) {
         // 只在真正需要启用时才打印（避免重复启用的噪音）
         // logger_info("[UART_DEBUG] Enable TX interrupt, buffer=%u\n", tx_buffer.count);
     }
     ier |= DW_UART_IER_THRI;
-    write8(ier, (void *) DW_UART_IER);
+    dw_reg_w8(ier, DW_UART_IER);
 }
 
 // 禁用发送中断， 我已经没有数据可以发送了
 static void
 dw_uart_disable_tx_interrupt(void)
 {
-    uint8_t ier = read8((void *) DW_UART_IER);
+    uint8_t ier = dw_reg_r8(DW_UART_IER);
     // logger_info("[UART_DEBUG] Disable TX interrupt, buffer=%u\n", tx_buffer.count);
     ier &= ~DW_UART_IER_THRI;
-    write8(ier, (void *) DW_UART_IER);
+    dw_reg_w8(ier, DW_UART_IER);
 }
 
 // 启用接收中断， 我准备好接收数据了
 static void
 dw_uart_enable_rx_interrupt(void)
 {
-    uint8_t ier = read8((void *) DW_UART_IER);
+    uint8_t ier = dw_reg_r8(DW_UART_IER);
     ier |= DW_UART_IER_RDI;
-    write8(ier, (void *) DW_UART_IER);
+    dw_reg_w8(ier, DW_UART_IER);
 }
 
 void
@@ -117,14 +118,14 @@ dw_uart_interrupt_handler(uint64_t *stack_pointer)
     (void)stack_pointer;
     // logger_info("Uart handler invoke...\n");
 
-    uint32_t iir   = read8((void *) DW_UART_IIR) & 0xF;
+    uint32_t iir   = dw_reg_r8(DW_UART_IIR) & 0xF;
     last_iir_value = iir;  // 记录IIR值用于调试
 
     if (iir == 0x4 || iir == 0xC) {  // RX 中断
         rx_irq_count++;              // 调试计数
         spin_lock_irqsave(&rx_buffer.lock);
         while (dw_uart_rx_ready()) {
-            char c = (char) read8((void *) DW_UART_RBR);
+            char c = (char) dw_reg_r8(DW_UART_RBR);
             // ❌ 不要在中断中打印！会导致死锁和重复输出
             // logger_info("got key: %c\n", c);
             buffer_put(&rx_buffer, c);
@@ -142,7 +143,7 @@ dw_uart_interrupt_handler(uint64_t *stack_pointer)
         while (sent < MAX_BATCH && !buffer_is_empty(&tx_buffer)) {
             char c;
             if (buffer_get(&tx_buffer, &c)) {
-                write8((uint8_t) c, (void *) DW_UART_THR);
+                dw_reg_w8((uint8_t) c, DW_UART_THR);
                 sent++;
                 tx_sent_total++;  // 记录总共发送的字节数
             }
@@ -174,7 +175,7 @@ static void
 dw_uart_wait_idle(void)
 {
     for (int timeout = 100000; timeout > 0; timeout--) {
-        if (read8((void *) DW_UART_LSR) & DW_UART_LSR_TEMT)
+        if (dw_reg_r8(DW_UART_LSR) & DW_UART_LSR_TEMT)
             return;
         asm volatile("nop");
     }
@@ -184,6 +185,7 @@ dw_uart_wait_idle(void)
 void
 dw_uart_early_init(void)
 {
+    dw_uart_reg_shift = (uint8_t)platform_get_uintptr("uart", "reg_shift");
     dw_uart_base = platform_get_mmio("uart", "base");
 
     /*
@@ -198,11 +200,11 @@ dw_uart_early_init(void)
     dw_uart_wait_idle();
 
     // 关闭所有中断
-    write8(0, (void *) DW_UART_IER);
+    dw_reg_w8(0, DW_UART_IER);
 
-    // 使能 FIFO 并清空收发队列
-    write8(DW_UART_FCR_ENABLE_FIFO | DW_UART_FCR_CLEAR_RCVR | DW_UART_FCR_CLEAR_XMIT,
-            (void *) DW_UART_FCR);
+    // 使能 FIFO 并清空收发缓冲
+    dw_reg_w8(DW_UART_FCR_ENABLE_FIFO | DW_UART_FCR_CLEAR_RCVR | DW_UART_FCR_CLEAR_XMIT,
+              DW_UART_FCR);
 }
 
 void
@@ -221,11 +223,11 @@ dw_uart_init(void)
     dw_uart_wait_idle();
 
     // 关闭所有中断
-    write8(0, (void *) DW_UART_IER);
+    dw_reg_w8(0, DW_UART_IER);
 
     // 使能 FIFO 并清空收发队列（不改波特率，OpenSBI 已配好）
-    write8(DW_UART_FCR_ENABLE_FIFO | DW_UART_FCR_CLEAR_RCVR | DW_UART_FCR_CLEAR_XMIT,
-            (void *) DW_UART_FCR);
+    dw_reg_w8(DW_UART_FCR_ENABLE_FIFO | DW_UART_FCR_CLEAR_RCVR | DW_UART_FCR_CLEAR_XMIT,
+              DW_UART_FCR);
 
     // TODO: 安装中断处理
     // irq_install(DW_UART_IRQ, dw_uart_interrupt_handler);
@@ -303,15 +305,15 @@ dw_uart_putchar(char c)
     if (!dw_uart_initialized) {
         // 如果是 '\n'，先发送 '\r'
         if (c == '\n') {
-            while (!(read8((void *) DW_UART_LSR) & DW_UART_LSR_THRE))
+            while (!(dw_reg_r8(DW_UART_LSR) & DW_UART_LSR_THRE))
                 asm volatile("nop");
-            write8('\r', (void *) DW_UART_THR);
+            dw_reg_w8('\r', DW_UART_THR);
         }
 
         // 等待并发送字符
-        while (!(read8((void *) DW_UART_LSR) & DW_UART_LSR_THRE))
+        while (!(dw_reg_r8(DW_UART_LSR) & DW_UART_LSR_THRE))
             asm volatile("nop");
-        write8((uint8_t)c, (void *) DW_UART_THR);
+        dw_reg_w8((uint8_t)c, DW_UART_THR);
         return;
     }
     
@@ -350,11 +352,11 @@ dw_uart_getchar(void)
 
     // 否则直接轮询硬件（early init 模式或未初始化）
     // 等待数据可用
-    while (!(read8((void *) DW_UART_LSR) & DW_UART_LSR_DR)) {
+    while (!(dw_reg_r8(DW_UART_LSR) & DW_UART_LSR_DR)) {
         asm volatile("nop");
     }
 
-    return (char) read8((void *) DW_UART_RBR);
+    return (char) dw_reg_r8(DW_UART_RBR);
 }
 
 void
@@ -394,7 +396,7 @@ dw_uart_flush(void)
     // 第二阶段：等待硬件发送完成（THR 和 TSR 都为空）
     // TEMT (Transmitter Empty) 位表示发送器完全空闲
     for (int timeout = 10000; timeout > 0; timeout--) {
-        uint32_t lsr = read32((void *) DW_UART_LSR);
+        uint32_t lsr = dw_reg_r8(DW_UART_LSR);
         if (lsr & DW_UART_LSR_TEMT)
             break;
             

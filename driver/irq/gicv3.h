@@ -57,9 +57,11 @@ bool gicv3_is_int_enabled(int int_id);
 void gicv3_set_int_trigger(uint32_t int_id, int edge);
 void gicv3_set_int_target(uint32_t int_id, uint8_t target_cpu_mask);
 void gicv3_write_eoir(uint32_t irqstat);
-uint32_t
-gicv3_read_iar(void);
-uint32_t
-gicv3_iar_irqnr(uint32_t iar);
+uint32_t gicv3_read_iar(void);
+uint32_t gicv3_iar_irqnr(uint32_t iar);
+
+/* GICv2 compatibility shims (called via extern from timer/exception code) */
+void gic_set_ipriority(uint32_t int_id, uint32_t priority);
+void gic_write_dir(uint32_t irqstat);
 
 #endif // __GICV3_H__
