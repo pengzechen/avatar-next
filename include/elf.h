@@ -53,11 +53,13 @@
 #define R_AARCH64_GLOB_DAT   1025  /* 0x401: GOT entry */
 
 /* RISC-V 重定位类型 */
+#define R_RISCV_64           2  /* 64-bit 绝对地址，sym=0 时等价于 RELATIVE */
 #define R_RISCV_RELATIVE     3
 #define R_RISCV_JUMP_SLOT    5
 #define R_RISCV_GLOB_DAT     6
 
 /* x86_64 重定位类型 */
+#define R_X86_64_COPY        5  /* 从共享库复制符号，需符号解析，由 ld.so 处理 */
 #define R_X86_64_GLOB_DAT    6
 #define R_X86_64_JUMP_SLOT   7
 #define R_X86_64_RELATIVE    8
@@ -79,6 +81,7 @@ typedef struct {
 } elf64_rela_t;
 
 #define ELF64_R_TYPE(info)  ((uint32_t)(info))
+#define ELF64_R_SYM(info)   ((uint32_t)((info) >> 32))
 
 /* 64-bit ELF 头 */
 typedef struct {

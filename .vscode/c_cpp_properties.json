@@ -32,7 +32,8 @@
                 "${workspaceFolder}/boot/common",
                 "${workspaceFolder}/kernel",
                 "${workspaceFolder}/fs/lwext4/include",
-                "${workspaceFolder}/fs/lwext4_port"
+                "${workspaceFolder}/fs/lwext4_port",
+                "${workspaceFolder}/lib/lua54/src"
             ],
             "defines": [
                 "__aarch64__",

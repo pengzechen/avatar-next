@@ -30,6 +30,10 @@
 #define USER_MMAP_BASE_PIE  0x50000000ULL   /* ET_DYN / flat binary */
 #define USER_MMAP_BASE_EXEC 0x30000000ULL   /* ET_EXEC */
 
+/* 动态链接器（ld-musl 等 interpreter）加载基址
+ * 位于 PIE 代码区 (0x10000) 和 mmap 区 (0x50000000) 之间，留有足够空间 */
+#define USER_INTERP_BASE    0x40000000ULL
+
 /* bin_loader 创建进程时的默认优先级 */
 #define USER_PROCESS_PRIO   10u
 

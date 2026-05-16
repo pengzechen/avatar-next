@@ -1,3 +1,6 @@
 /build
 /ref
 .arch
+/apps/aarch64/rootfs
+/apps/riscv64/rootfs
+/apps/x86_64/rootfs

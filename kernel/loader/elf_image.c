@@ -88,8 +88,12 @@ elf_load_segment_with_base(void *pgd, elf64_phdr_t *phdr,
 
 /* ── ELF 镜像加载 ────────────────────────────────────────────────── */
 
-int
-elf_image_load(uint8_t *file_data, uint64_t file_size, void *pgd, elf_image_info_t *out)
+/*
+ * 内部实现。force_base=0 → 自动选择基址；force_base≠0 → 强制使用（用于 interpreter）。
+ */
+static int
+elf_image_load_impl(uint8_t *file_data, uint64_t file_size, void *pgd,
+                    uint64_t force_base, elf_image_info_t *out)
 {
     elf64_ehdr_t *ehdr;
     elf64_phdr_t *phdr;
@@ -142,14 +146,33 @@ elf_image_load(uint8_t *file_data, uint64_t file_size, void *pgd, elf_image_info
 
     phdr = (elf64_phdr_t *)(file_data + ehdr->e_phoff);
 
-    /* ET_DYN 使用 PIE 基址 USER_CODE_BASE */
-    if (ehdr->e_type == ET_DYN) {
+    /* ET_DYN 使用 PIE 基址 USER_CODE_BASE，或调用方指定的 force_base（interpreter 用）*/
+    if (force_base != 0) {
+        image_base = force_base;
+        KLOG_INFO("[elf] force_base: 0x%llx\n", image_base);
+    } else if (ehdr->e_type == ET_DYN) {
         image_base = USER_CODE_BASE;
         KLOG_INFO("[elf] ET_DYN image base: 0x%llx\n", image_base);
     }
 
     if (image_base != 0)
         entry_point += image_base;
+
+    /* 扫描 PT_INTERP（仅主程序；加载 interpreter 时不递归） */
+    memset(out->interp_path, 0, sizeof(out->interp_path));
+    if (force_base == 0) {
+        for (uint16_t i = 0; i < ehdr->e_phnum; i++) {
+            if (phdr[i].p_type == PT_INTERP) {
+                uint64_t plen = phdr[i].p_filesz;
+                if (plen >= (uint64_t)sizeof(out->interp_path))
+                    plen = (uint64_t)(sizeof(out->interp_path) - 1);
+                memcpy(out->interp_path, file_data + phdr[i].p_offset, plen);
+                out->interp_path[plen] = '\0';
+                KLOG_INFO("[elf] PT_INTERP: %s\n", out->interp_path);
+                break;
+            }
+        }
+    }
 
     KLOG_INFO("[elf] Loading ELF segments...\n");
 
@@ -205,18 +228,26 @@ elf_image_load(uint8_t *file_data, uint64_t file_size, void *pgd, elf_image_info
                 const uint32_t reloc_relative  = R_AARCH64_RELATIVE;
                 const uint32_t reloc_jump_slot = R_AARCH64_JUMP_SLOT;
                 const uint32_t reloc_glob_dat  = R_AARCH64_GLOB_DAT;
+                const uint32_t reloc_abs64     = 0xffffffffU;
+                const uint32_t reloc_copy      = 0xffffffffU;
 #elif ARCH_X86_64
                 const uint32_t reloc_relative  = R_X86_64_RELATIVE;
                 const uint32_t reloc_jump_slot = R_X86_64_JUMP_SLOT;
                 const uint32_t reloc_glob_dat  = R_X86_64_GLOB_DAT;
+                const uint32_t reloc_abs64     = 0xffffffffU;
+                const uint32_t reloc_copy      = R_X86_64_COPY;
 #elif ARCH_RISCV64
                 const uint32_t reloc_relative  = R_RISCV_RELATIVE;
                 const uint32_t reloc_jump_slot = R_RISCV_JUMP_SLOT;
                 const uint32_t reloc_glob_dat  = R_RISCV_GLOB_DAT;
+                const uint32_t reloc_abs64     = R_RISCV_64;
+                const uint32_t reloc_copy      = 0xffffffffU;
 #else
                 const uint32_t reloc_relative  = 0xffffffffU;
                 const uint32_t reloc_jump_slot = 0xffffffffU;
                 const uint32_t reloc_glob_dat  = 0xffffffffU;
+                const uint32_t reloc_abs64     = 0xffffffffU;
+                const uint32_t reloc_copy      = 0xffffffffU;
 #endif
 
                 uint64_t rela_count = rela_size / rela_ent;
@@ -284,6 +315,30 @@ elf_image_load(uint8_t *file_data, uint64_t file_size, void *pgd, elf_image_info
                                    r_type == reloc_jump_slot ? "JUMP_SLOT" : "GLOB_DAT",
                                    target_vaddr, *target, new_value);
                         *target = new_value;
+                    } else if (r_type == reloc_abs64) {
+                        /* R_RISCV_64: sym=0 时 *loc = load_bias + addend（同 RELATIVE）
+                         * sym!=0 需要符号解析，交由 ld.so 完成，内核静默跳过   */
+                        if (ELF64_R_SYM(rela->r_info) == 0) {
+                            uint64_t target_vaddr   = load_bias + rela->r_offset;
+                            uint64_t page_vaddr     = ALIGN_DOWN(target_vaddr, PAGE_SIZE);
+                            uint64_t paddr          = mm_vm_get_paddr(pgd, page_vaddr);
+                            if (paddr == 0) {
+                                KLOG_ERROR("[elf] R_RISCV_64: no paddr for 0x%llx\n",
+                                           target_vaddr);
+                                continue;
+                            }
+                            uint64_t new_value      = load_bias + rela->r_addend;
+                            uint64_t offset_in_page = target_vaddr - page_vaddr;
+                            uint64_t *target        = (uint64_t *)phys_to_virt(
+                                                          paddr + offset_in_page);
+                            KLOG_TRACE("[elf] R_RISCV_64 0x%llx -> 0x%llx\n",
+                                       target_vaddr, new_value);
+                            *target = new_value;
+                        }
+                        /* sym!=0: 静默跳过，ld.so 负责处理 */
+                    } else if (r_type == reloc_copy) {
+                        /* R_X86_64_COPY: 需要符号解析后从共享库复制数据
+                         * 交由 ld.so 完成，内核静默跳过               */
                     } else if (r_type != 0) {
                         if (unsupported_count < 8) {
                             KLOG_WARN("[elf] Unsupported relocation type: %u at offset 0x%llx\n",
@@ -334,8 +389,24 @@ elf_image_load(uint8_t *file_data, uint64_t file_size, void *pgd, elf_image_info
     out->min_vaddr   = min_vaddr;
     out->max_vaddr   = max_vaddr;
     out->phdr_uaddr  = phdr_uaddr;
+    out->image_base  = image_base;
     out->phnum       = ehdr->e_phnum;
     out->phent       = ehdr->e_phentsize;
 
     return 0;
+}
+
+/* ── 公开接口 ───────────────────────────────────────────────────── */
+
+int
+elf_image_load(uint8_t *file_data, uint64_t file_size, void *pgd, elf_image_info_t *out)
+{
+    return elf_image_load_impl(file_data, file_size, pgd, 0, out);
+}
+
+int
+elf_image_load_at(uint8_t *file_data, uint64_t file_size,
+                  void *pgd, uint64_t force_base, elf_image_info_t *out)
+{
+    return elf_image_load_impl(file_data, file_size, pgd, force_base, out);
 }

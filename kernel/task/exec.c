@@ -61,7 +61,8 @@ static int
 elf_setup_stack(void *pgd, uint64_t stack_top, uint64_t entry,
                 const char *pathname,
                 char **argv, char **envp, uint64_t *out_sp,
-                uint64_t phdr_uaddr, uint16_t phnum, uint16_t phent)
+                uint64_t phdr_uaddr, uint16_t phnum, uint16_t phent,
+                uint64_t at_base)
 {
     uint64_t top_page_uvaddr = stack_top - PAGE_SIZE;  /* 0x6ffff000 */
     uint64_t top_page_paddr  = mm_vm_get_paddr(pgd, top_page_uvaddr);
@@ -132,6 +133,10 @@ elf_setup_stack(void *pgd, uint64_t stack_top, uint64_t entry,
     PUSH64(6);       /* AT_PAGESZ */
     PUSH64(entry);
     PUSH64(9);       /* AT_ENTRY */
+    if (at_base) {
+        PUSH64(at_base);
+        PUSH64(7);   /* AT_BASE: interpreter 加载基址（静态连接时为 0） */
+    }
     if (phdr_uaddr) {
         PUSH64(phnum);
         PUSH64(5);   /* AT_PHNUM */
@@ -176,7 +181,9 @@ elf_setup_stack(void *pgd, uint64_t stack_top, uint64_t entry,
 /* ── execve 主逻辑 ───────────────────────────────────────────────── */
 
 int
-task_execve(const char *pathname, uint8_t *file_data, uint64_t file_size,
+task_execve(const char *pathname,
+            uint8_t *file_data, uint64_t file_size,
+            uint8_t *interp_data, uint64_t interp_size,
             char **argv, char **envp)
 {
     elf_image_info_t info;
@@ -215,11 +222,28 @@ task_execve(const char *pathname, uint8_t *file_data, uint64_t file_size,
 #endif
     /* AArch64: TTBR0/TTBR1 硬件分割，无需复制内核映射 */
 
-    /* 3. 加载 ELF 段 + RELA 重定位 */
+    /* 3. 加载主程序 ELF 段 + RELA 重定位 */
     rc = elf_image_load(file_data, file_size, pgd, &info);
     if (rc < 0) {
         KLOG_ERROR("[exec] elf_image_load failed: %d\n", rc);
         return rc;
+    }
+
+    /* 3b. 加载动态连接器（如果有）——加载到同一 PGD 的独立地址区 */
+    uint64_t exec_entry = info.entry_point;  /* 静态连接时：直接跳入主程序 */
+    uint64_t at_base    = 0;
+    if (interp_data && interp_size > 0) {
+        elf_image_info_t interp_info;
+        rc = elf_image_load_at(interp_data, interp_size, pgd,
+                               USER_INTERP_BASE, &interp_info);
+        if (rc < 0) {
+            KLOG_ERROR("[exec] Failed to load interpreter: %d\n", rc);
+            return rc;
+        }
+        exec_entry = interp_info.entry_point;   /* 动态连接：跳入 ld-musl */
+        at_base    = interp_info.min_vaddr;     /* AT_BASE = interpreter 实际加载基址 */
+        KLOG_INFO("[exec] Interpreter loaded: entry=0x%llx base=0x%llx\n",
+                  exec_entry, at_base);
     }
 
     /* 4. 分配并映射用户栈 */
@@ -296,7 +320,8 @@ task_execve(const char *pathname, uint8_t *file_data, uint64_t file_size,
     uint64_t user_sp = USER_STACK_TOP;
     if (elf_setup_stack(pgd, USER_STACK_TOP, info.entry_point, pathname,
                         argv, envp, &user_sp,
-                        info.phdr_uaddr, info.phnum, info.phent) != 0) {
+                        info.phdr_uaddr, info.phnum, info.phent,
+                        at_base) != 0) {
         KLOG_ERROR("[exec] Failed to setup initial stack\n");
         return -4;
     }
@@ -307,7 +332,7 @@ task_execve(const char *pathname, uint8_t *file_data, uint64_t file_size,
                                                               : USER_MMAP_BASE_EXEC;
 
     task_t *new_task = process_create_with_pgd(
-        pathname, info.entry_point, user_sp, 10, pgd_phys,
+        pathname, exec_entry, user_sp, 10, pgd_phys,
         ALIGN_UP(info.max_vaddr, PAGE_SIZE), mmap_base);
 
     if (new_task == NULL) {
