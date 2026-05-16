@@ -705,7 +705,6 @@ static int elf_load(uint8_t *file_data, uint64_t file_size, const char *pathname
 
     /* 使用已建好的页表创建用户任务（跳过 vm_create_user_process） */
     task_t *current = task_current();
-    uint32_t saved_parent_id = current->parent_id;
 
     uint64_t mmap_base = (image_base != 0) ? 0x50000000ULL : 0x30000000ULL;
     new_task = process_create_with_pgd(pathname, entry_point, user_sp, 10, pgd_phys,
@@ -714,17 +713,37 @@ static int elf_load(uint8_t *file_data, uint64_t file_size, const char *pathname
         KLOG_ERROR("[elf] Failed to create task\n");
         return -13;
     }
-
-    /* 修复父进程关系：新进程应该继承当前进程的父进程
-     * 这样父进程的 wait4 会等待新进程，而不是已退出的当前进程 */
-    new_task->parent_id = saved_parent_id;
+    /* new_task->parent_id 已被 process_create_with_pgd 设为 current->id，
+     * 保持不变：让新进程成为当前进程的子进程，而非"祖父"进程的子进程。
+     * 当前进程（execve 调用者）阻塞等待新进程退出后，再以相同退出码退出，
+     * 这样祖父进程（ash）的 wait4 才能在 ls 真正完成后才返回。 */
+    uint32_t new_task_id = new_task->id;
 
     KLOG_INFO("[elf] Process '%s' created, PID=%u, pgd=0x%llx, parent=%u\n",
               pathname, new_task->id, pgd_phys, new_task->parent_id);
     KLOG_INFO("[elf]   heap_start=0x%llx, mmap_base=0x%llx\n",
               new_task->heap_end, new_task->mmap_next);
 
-    /* 退出当前进程 */
+    /* 阻塞当前进程，等待 execve 出的新进程退出 */
+    current->is_waiting = true;
+    current->wait_pid   = new_task_id;
+    task_block(NULL);
+
+    /* 新进程已退出，获取其退出状态并释放槽位，然后以相同状态退出 */
+    {
+        extern task_t  g_task_pool[];
+        extern uint8_t g_stack_used[];
+        for (uint32_t i = 0; i < TASK_MAX; i++) {
+            if (!g_stack_used[i]) continue;
+            if (g_task_pool[i].id == new_task_id) {
+                current->exit_status = g_task_pool[i].exit_status;
+                g_stack_used[i] = 0;
+                g_task_pool[i].stack_base = NULL;
+                break;
+            }
+        }
+    }
+
     task_exit();
 
     return 0;
