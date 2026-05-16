@@ -257,6 +257,67 @@ int luaopen_ion(lua_State *L) { luaL_newlib(L, lua_drv_ion); return 1; }
 #endif /* DRIVER_ION */
 
 
+/* ── sdblk bindings ─────────────────────────────────────────────────────── */
+#if DRIVER_SDBLK_SG2002
+#include "blk/sdblk.h"
+
+/* sdblk.init() → int (0=ok, -2=nocard, -1=err) */
+static int lua_sdblk_init(lua_State *L)
+{
+    lua_pushinteger(L, sdblk_init());
+    return 1;
+}
+
+/* sdblk.read_blocks(block_id, buf_userdata, count) → int */
+static int lua_sdblk_read_blocks(lua_State *L)
+{
+    uint32_t block_id = (uint32_t)luaL_checkinteger(L, 1);
+    void    *buf      = lua_touserdata(L, 2);
+    size_t   count    = (size_t)luaL_checkinteger(L, 3);
+    lua_pushinteger(L, sdblk_read_blocks(block_id, buf, count));
+    return 1;
+}
+
+/* sdblk.write_block(block_id, buf_userdata) → int */
+static int lua_sdblk_write_block(lua_State *L)
+{
+    uint32_t    block_id = (uint32_t)luaL_checkinteger(L, 1);
+    const void *buf      = lua_touserdata(L, 2);
+    lua_pushinteger(L, sdblk_write_block(block_id, buf));
+    return 1;
+}
+
+/* sdblk.capacity_bytes() → integer */
+static int lua_sdblk_capacity_bytes(lua_State *L)
+{
+    lua_pushinteger(L, (lua_Integer)sdblk_capacity_bytes());
+    return 1;
+}
+
+/* sdblk.capacity_blocks() → integer */
+static int lua_sdblk_capacity_blocks(lua_State *L)
+{
+    lua_pushinteger(L, (lua_Integer)sdblk_capacity_blocks());
+    return 1;
+}
+
+static const luaL_Reg lua_drv_sdblk[] = {
+    { "init",            lua_sdblk_init            },
+    { "read_blocks",     lua_sdblk_read_blocks     },
+    { "write_block",     lua_sdblk_write_block     },
+    { "capacity_bytes",  lua_sdblk_capacity_bytes  },
+    { "capacity_blocks", lua_sdblk_capacity_blocks },
+    { NULL,              NULL                      }
+};
+
+int luaopen_sdblk(lua_State *L)
+{
+    luaL_newlib(L, lua_drv_sdblk);
+    return 1;
+}
+#endif /* DRIVER_SDBLK_SG2002 */
+
+
 /* ── Timer bindings (always present) ────────────────────────────────────── */
 #include "timer/timer.h"
 
@@ -317,5 +378,8 @@ void lua_register_all_drivers(lua_State *L)
 #endif
 #if DRIVER_ION
     luaL_requiref(L, "ion",     luaopen_ion,     1); lua_pop(L, 1);
+#endif
+#if DRIVER_SDBLK_SG2002
+    luaL_requiref(L, "sdblk",  luaopen_sdblk,  1); lua_pop(L, 1);
 #endif
 }

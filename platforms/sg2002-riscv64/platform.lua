@@ -53,6 +53,12 @@ platform = {
         tiu_base  = 0x0C101000,  -- TIU sub-block, offset 0x1000 within TDMA MMIO
         tdma_irq  = 73,
     },
+
+    sdmmc = {
+        sd_base            = 0x04310000,   -- SDIO0 SDHCI 控制器基址
+        top_base           = 0x03000000,   -- TOP 系统控制模块基址
+        top_off_pwrsw_ctrl = 0x1F4,        -- sd_pwrsw_ctrl 寄存器偏移
+    },
 }
 
 -- 阶段顺序: earlycon → irqcore → drivers → fs → late
@@ -72,5 +78,14 @@ register_device("timer0", {
 register_device("tpu0", {
     drivers = function(self)
         cvi_tpu.init()
+    end,
+})
+
+register_device("sdmmc0", {
+    -- SOPHGO SG2002 SDIO0 控制器（SDHCI，PIO 模式）
+    -- 硬件地址见上方 platform.sdmmc 表
+    -- 编译启用：make PLATFORM=sg2002-riscv64 SDMMC=sg2002 kernel
+    drivers = function(self)
+        sdblk.init()
     end,
 })

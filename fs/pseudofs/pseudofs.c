@@ -16,6 +16,7 @@
 #include "pmm.h"
 #include "uart/uart.h"
 #include "task/task.h"
+#include "cache.h"
 
 #if DRIVER_ION
 #  include "ion/ion.h"
@@ -306,6 +307,30 @@ static int ion_dev_ioctl(int nid, uint64_t req, void *argp)
         r->size = (uint64_t)ion_get_size((ion_handle_t)r->handle);
         return 0;
     }
+    if (req == ION_IOC_IMPORT) {
+        struct ion_fd_data *r = (struct ion_fd_data *)argp;
+        if (!r) return -PFS_EINVAL;
+        /* Avatar OS: fd 与 ion handle 使用相同编号 */
+        r->handle = (uint32_t)r->fd;
+        return 0;
+    }
+    if (req == ION_IOC_HEAP_QUERY) {
+        struct ion_heap_query *q = (struct ion_heap_query *)argp;
+        if (!q) return -PFS_EINVAL;
+        static const struct ion_heap_data heaps[3] = {
+            { "System",      0, 0, 0, 0, 0 },
+            { "DmaCoherent", 1, 1, 0, 0, 0 },
+            { "Carveout",    2, 2, 0, 0, 0 },
+        };
+        uint32_t n = (q->cnt < 3) ? q->cnt : 3;
+        if (q->heaps && n > 0) {
+            struct ion_heap_data *dst =
+                (struct ion_heap_data *)(uintptr_t)q->heaps;
+            for (uint32_t i = 0; i < n; i++) dst[i] = heaps[i];
+        }
+        q->cnt = 3;
+        return 0;
+    }
     return -PFS_ENOSYS;
 #else
     (void)req; (void)argp;
@@ -317,19 +342,60 @@ static int tpu_dev_ioctl(int nid, uint64_t req, void *argp)
 {
     (void)nid;
 #if DRIVER_TPU_CVITPU
-    if (req == TPU_IOC_RUN) {
-        struct tpu_run_req *r = (struct tpu_run_req *)argp;
+    if (req == CVITPU_SUBMIT_DMABUF) {
+        struct cvitpu_submit_dma_arg *r = (struct cvitpu_submit_dma_arg *)argp;
         if (!r) return -PFS_EINVAL;
-        KLOG_DEBUG("[pseudofs] /dev/tpu run dmabuf_paddr=0x%llx\n",
-                   (unsigned long long)r->dmabuf_paddr);
-        return cvi_tpu_run_dmabuf(NULL, r->dmabuf_paddr);
+        void *va; uint64_t pa;
+        if (ion_get_buf((ion_handle_t)r->fd, &va, &pa) != 0)
+            return -PFS_EINVAL;
+        KLOG_DEBUG("[pseudofs] cvi-tpu0 submit fd=%d pa=0x%llx\n",
+                   r->fd, (unsigned long long)pa);
+        return cvi_tpu_run_dmabuf(va, pa);
     }
-    if (req == TPU_IOC_READY) {
-        int *out = (int *)argp;
-        if (!out) return -PFS_EINVAL;
-        *out = cvi_tpu_is_ready() ? 1 : 0;
+    if (req == CVITPU_WAIT_DMABUF) {
+        /* 同步驱动：submit 完成时任务已结束 */
+        struct cvitpu_wait_dma_arg *r = (struct cvitpu_wait_dma_arg *)argp;
+        if (!r) return -PFS_EINVAL;
+        r->ret = 0;
         return 0;
     }
+    if (req == CVITPU_DMABUF_FLUSH) {
+        struct cvitpu_cache_op_arg *r = (struct cvitpu_cache_op_arg *)argp;
+        if (!r) return -PFS_EINVAL;
+        /* DMA 区域 identity-mapped：物理地址即虚拟地址 */
+        clean_and_invalidate_dcache_range(
+            (const void *)(uintptr_t)r->paddr, (size_t)r->size);
+        return 0;
+    }
+    if (req == CVITPU_DMABUF_INVLD) {
+        struct cvitpu_cache_op_arg *r = (struct cvitpu_cache_op_arg *)argp;
+        if (!r) return -PFS_EINVAL;
+        invalidate_dcache_range(
+            (const void *)(uintptr_t)r->paddr, (size_t)r->size);
+        return 0;
+    }
+    if (req == CVITPU_DMABUF_FLUSH_FD) {
+        if (!argp) return -PFS_EINVAL;
+        int32_t fd = *(int32_t *)argp;
+        void *va; uint64_t pa;
+        if (ion_get_buf((ion_handle_t)fd, &va, &pa) != 0) return -PFS_EINVAL;
+        size_t sz = ion_get_size((ion_handle_t)fd);
+        clean_and_invalidate_dcache_range(va, sz);
+        return 0;
+    }
+    if (req == CVITPU_DMABUF_INVLD_FD) {
+        if (!argp) return -PFS_EINVAL;
+        int32_t fd = *(int32_t *)argp;
+        void *va; uint64_t pa;
+        if (ion_get_buf((ion_handle_t)fd, &va, &pa) != 0) return -PFS_EINVAL;
+        size_t sz = ion_get_size((ion_handle_t)fd);
+        invalidate_dcache_range(va, sz);
+        return 0;
+    }
+    if (req == CVITPU_PIO_MODE)    return 0;
+    if (req == CVITPU_LOAD_TEE  ||
+        req == CVITPU_SUBMIT_TEE ||
+        req == CVITPU_UNLOAD_TEE)  return -PFS_ENOSYS;
     return -PFS_ENOSYS;
 #else
     (void)req; (void)argp;
@@ -383,10 +449,10 @@ static const pseudo_node_t g_nodes[] = {
     { "/dev/console",      PSEUDO_CHR, MODE_CHRW, (5U<<8)|1U,    tty_read,    tty_write,   NULL           },
     { "/dev/urandom",      PSEUDO_CHR, MODE_CHRW, (1U<<8)|9U,    rand_read,   null_write,  NULL           },
     { "/dev/random",       PSEUDO_CHR, MODE_CHRW, (1U<<8)|8U,    rand_read,   null_write,  NULL           },
-    /* 加速器设备（misc major=10） */
-    { "/dev/tpu",          PSEUDO_CHR, MODE_CHRW, (10U<<8)|240U, NULL,         null_write,  tpu_dev_ioctl },
-    { "/dev/ion",          PSEUDO_CHR, MODE_CHRW, (10U<<8)|241U, NULL,         null_write,  ion_dev_ioctl },
-    { "/dev/npu",          PSEUDO_CHR, MODE_CHRW, (10U<<8)|242U, NULL,         null_write,  npu_dev_ioctl },
+    /* 加速器设备 */
+    { "/dev/cvi-tpu0",     PSEUDO_CHR, MODE_CHRW, (240U<<8)|0U,   NULL,         null_write,  tpu_dev_ioctl },
+    { "/dev/ion",          PSEUDO_CHR, MODE_CHRW, (10U <<8)|56U,  NULL,         null_write,  ion_dev_ioctl },
+    { "/dev/npu",          PSEUDO_CHR, MODE_CHRW, (10U <<8)|242U, NULL,         null_write,  npu_dev_ioctl },
 
     /* ── /proc 条目 ────────────────────────────────────── */
     { "/proc/self/exe",    PSEUDO_LNK, MODE_LNK,  0,              NULL,         NULL,        NULL          },

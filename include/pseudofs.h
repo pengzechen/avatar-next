@@ -10,8 +10,8 @@
  *   /dev/tty     — UART 读写
  *   /dev/console — 同 tty
  *   /dev/urandom — 伪随机字节流（LFSR）
- *   /dev/tpu     — CVI TPU 驱动（ioctl 接口）
- *   /dev/ion     — ION DMA 分配器（ioctl 接口）
+ *   /dev/cvi-tpu0 — CVI TPU 驱动（ioctl 接口，SOPHGO CVITPU SDK ABI）
+ *   /dev/ion      — ION DMA 分配器（ioctl 接口）
  *   /dev/npu     — NPU stub（保留）
  *
  * proc 条目：
@@ -38,6 +38,7 @@
      (uint32_t)(nr)          | ((uint32_t)(sz) << 16))
 #define _IOC_WRITE  1U
 #define _IOC_READ   2U
+#define _IO(t, nr)       _IOC(0,                       (t), (nr), 0)
 #define _IOW(t, nr, T)   _IOC(_IOC_WRITE,            (t), (nr), sizeof(T))
 #define _IOR(t, nr, T)   _IOC(_IOC_READ,              (t), (nr), sizeof(T))
 #define _IOWR(t, nr, T)  _IOC(_IOC_READ|_IOC_WRITE,   (t), (nr), sizeof(T))
@@ -68,13 +69,54 @@ struct ion_size_req {
 #define ION_IOC_GET     _IOWR('I', 2, struct ion_get_req)
 #define ION_IOC_SIZE    _IOWR('I', 3, struct ion_size_req)
 
-/* ── /dev/tpu ioctl 结构体 & 请求码 ──────────────────────────── */
-struct tpu_run_req {
-    uint64_t dmabuf_paddr;  /* DmaHeader 的物理地址             */
+/* Android ION ABI 标准命令（nr=5 IMPORT, nr=8 HEAP_QUERY） */
+struct ion_fd_data {
+    int32_t  fd;          /* [in]  ion buffer fd（= ion handle）  */
+    uint32_t handle;      /* [out] ion 句柄                       */
+};
+struct ion_heap_data {
+    char     name[32];    /* 堆名称                               */
+    uint32_t type;        /* 0=System 1=DmaCoherent 2=Carveout    */
+    uint32_t heap_id;     /* 堆 ID                                */
+    uint32_t reserved0;
+    uint32_t reserved1;
+    uint32_t reserved2;
+};
+struct ion_heap_query {
+    uint32_t cnt;         /* [in/out] 堆数量                      */
+    uint32_t reserved0;
+    uint64_t heaps;       /* [in]  ion_heap_data 数组用户空间指针 */
+    uint32_t reserved1;
+    uint32_t reserved2;
 };
 
-#define TPU_IOC_RUN     _IOW ('T', 0, struct tpu_run_req)
-#define TPU_IOC_READY   _IOR ('T', 1, int)
+#define ION_IOC_IMPORT     _IOWR('I', 5, struct ion_fd_data)
+#define ION_IOC_HEAP_QUERY _IOWR('I', 8, struct ion_heap_query)
+
+/* ── /dev/cvi-tpu0 ioctl（SOPHGO CVITPU SDK ABI） ───────────── */
+struct cvitpu_submit_dma_arg {
+    int32_t  fd;        /* [in]  Ion buffer fd（= ion handle） */
+    uint32_t seq_no;    /* [in]  序列号（同步驱动中忽略）      */
+};
+struct cvitpu_wait_dma_arg {
+    uint32_t seq_no;    /* [in]  序列号                        */
+    int32_t  ret;       /* [out] 结果（同步时恒为 0）          */
+};
+struct cvitpu_cache_op_arg {
+    uint64_t paddr;     /* 物理地址                            */
+    uint64_t size;      /* 字节数                              */
+};
+
+#define CVITPU_SUBMIT_DMABUF   _IOW ('T',  1, struct cvitpu_submit_dma_arg)
+#define CVITPU_WAIT_DMABUF     _IOWR('T',  2, struct cvitpu_wait_dma_arg)
+#define CVITPU_LOAD_TEE        _IOW ('T',  3, uint64_t)
+#define CVITPU_SUBMIT_TEE      _IOW ('T',  4, uint64_t)
+#define CVITPU_UNLOAD_TEE      _IOW ('T',  5, uint64_t)
+#define CVITPU_PIO_MODE        _IO  ('T',  6)
+#define CVITPU_DMABUF_FLUSH    _IOW ('T',  7, struct cvitpu_cache_op_arg)
+#define CVITPU_DMABUF_INVLD    _IOW ('T',  8, struct cvitpu_cache_op_arg)
+#define CVITPU_DMABUF_FLUSH_FD _IOW ('T',  9, int32_t)
+#define CVITPU_DMABUF_INVLD_FD _IOW ('T', 10, int32_t)
 
 /* ── /dev/npu ioctl（保留，暂无实现） ────────────────────────── */
 /* 未来在此定义 NPU_IOC_* */

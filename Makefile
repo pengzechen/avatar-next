@@ -488,6 +488,14 @@ ifeq ($(ION),1)
     DRIVER_OBJECTS   += $(DRIVER_ION_OBJS)
 endif
 
+# SDMMC 块设备驱动（用法：make PLATFORM=sg2002-riscv64 SDMMC=sg2002 kernel）
+# 平台硬件地址由 platforms/<platform>/platform.lua 的 sdmmc 表提供
+SDMMC ?= none
+ifeq ($(SDMMC),sg2002)
+    CFLAGS              += -DDRIVER_SDBLK_SG2002=1
+    DRIVER_OBJECTS      += $(BUILD_DIR)/drv_blk_sdblk.o
+endif
+
 CFLAGS  += -MMD -MP
 MKDIR   := mkdir -p
 
@@ -670,6 +678,10 @@ $(BUILD_DIR)/drv_tpu_%.o: driver/tpu/%.c | $(BUILD_DIR)
 
 $(BUILD_DIR)/drv_ion_%.o: driver/ion/%.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -Idriver/ion -Ikernel/mm -c $< -o $@
+
+# SD 块设备（需要 -Iplatforms/$(PLATFORM) 找到 sdblk_cfg.h，已含于 CFLAGS）
+$(BUILD_DIR)/drv_blk_sdblk.o: driver/blk/sdblk.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -Idriver -c $< -o $@
 
 # PseudoFS（虚拟文件系统 /dev /proc /sys）— 始终构建
 PSEUDOFS_OBJS := $(BUILD_DIR)/pseudofs_pseudofs.o
