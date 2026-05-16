@@ -74,12 +74,12 @@ SECTIONS
 
     /*
      * Stack allocation
-     * 16KB stack, grows downward
+     * 32KB stack, grows downward (enlarged for Lua VM call frames)
      */
     . = ALIGN(16);
-    . = . + 0x4000;  /* 16KB */
+    . = . + 0x8000;  /* 32KB */
     stack_top = .;
-    stack_bottom = . - 0x4000;
+    stack_bottom = . - 0x8000;
 
     /*
      * Discard unwind tables and debug info

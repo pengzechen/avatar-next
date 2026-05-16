@@ -25,3 +25,28 @@ void *memset(void *s, int c, size_t n)
         a[i] = (char)c;
     return s;
 }
+
+void *memcpy(void *dst, const void *src, size_t n)
+{
+    char       *d = dst;
+    const char *s = src;
+    size_t      i;
+    for (i = 0; i < n; ++i)
+        d[i] = s[i];
+    return dst;
+}
+
+void *memmove(void *dst, const void *src, size_t n)
+{
+    char       *d = dst;
+    const char *s = src;
+    size_t      i;
+    if (d < s || d >= s + n) {
+        for (i = 0; i < n; ++i)
+            d[i] = s[i];
+    } else {
+        for (i = n; i > 0; --i)
+            d[i - 1] = s[i - 1];
+    }
+    return dst;
+}

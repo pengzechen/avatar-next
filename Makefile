@@ -1,11 +1,13 @@
 # Makefile for spinlock library
 # Usage: make ARCH=x86_64|aarch64|riscv64 [LOG=none|error|warn|info|debug|trace] [ASSERT=panic|off] [target]
 
-# 架构配置
+# 架构配置（旧式兼容保留；新式用 PLATFORM=qemu-virt-<arch> 自动推导）
 ARCH ?= aarch64
 
-# 平台配置（为空时按架构使用内存布局表中的默认平台）
-PLATFORM ?=
+# 平台配置
+# 新式 (推荐): PLATFORM=qemu-virt-aarch64  — 平台决定架构，无需指定 ARCH
+# 旧式 (兼容): ARCH=aarch64 PLATFORM=qemu  — 沿用旧的三表配置系统
+PLATFORM ?= qemu-virt-$(ARCH)
 
 # 日志级别配置
 LOG ?= info
@@ -22,44 +24,29 @@ BOOT_DIR    := boot
 KERNEL_DIR  := kernel
 PLATFORM_DIR := platforms
 TESTS_DIR   := tests
-CONFIG_DIR  := config
 TOOLS_DIR   := tools
 
-# 内存布局（单一真源 -> 自动生成 C 头和 Makefile 片段）
-MEM_LAYOUT_SRC := $(CONFIG_DIR)/mem_layout.table
-MEM_LAYOUT_GEN := $(TOOLS_DIR)/gen_mem_layout.sh
-MEM_LAYOUT_MK  := $(BUILD_DIR)/mem_layout.mk
-MEM_LAYOUT_HDR := $(INCLUDE_DIR)/mem_layout.h
+# ─── 配置生成系统 ────────────────────────────────────────────────────────────────
+# 平台配置全部在 platforms/$(PLATFORM)/platform.lua 的 BUILD_CONFIG 表中。
+# gen_platform.py 解析该文件，生成 platform.mk / platform.h / pmm_reserve.h。
 
-# 设备配置（单一真源 -> 自动生成 C 头和 Makefile 片段）
-DEVICE_PROFILE_SRC := $(CONFIG_DIR)/device_profile.table
-DEVICE_PROFILE_GEN := $(TOOLS_DIR)/gen_device_profile.sh
-DEVICE_PROFILE_MK  := $(BUILD_DIR)/device_profile.mk
-DEVICE_PROFILE_HDR := $(INCLUDE_DIR)/device_profile.h
+_PLATFORM_LUA     := $(PLATFORM_DIR)/$(PLATFORM)/platform.lua
+_HAVE_PLATFORM_LUA := $(wildcard $(_PLATFORM_LUA))
 
-# PMM 额外保留区（单一真源 -> 自动生成 C 头）
-PMM_RESERVE_SRC := $(CONFIG_DIR)/pmm_reserve.table
-PMM_RESERVE_GEN := $(TOOLS_DIR)/gen_pmm_reserve.sh
-PMM_RESERVE_HDR := $(INCLUDE_DIR)/pmm_reserve.h
-
-$(shell mkdir -p $(BUILD_DIR) >/dev/null 2>&1)
-$(shell sh $(MEM_LAYOUT_GEN) $(MEM_LAYOUT_SRC) $(MEM_LAYOUT_MK) $(MEM_LAYOUT_HDR))
--include $(MEM_LAYOUT_MK)
-
-ifeq ($(strip $(MEM_RAM_BASE)),)
-$(error Failed to resolve memory layout for ARCH=$(ARCH) PLATFORM=$(PLATFORM))
+ifeq ($(_HAVE_PLATFORM_LUA),)
+$(error No platform.lua found for PLATFORM=$(PLATFORM). Expected: $(_PLATFORM_LUA))
 endif
 
-# 归一化平台名：空 PLATFORM 时回落到该架构默认平台
-PLATFORM := $(MEM_LAYOUT_PLATFORM)
+override ARCH := $(shell sed -n 's/.*ARCH[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' $(_PLATFORM_LUA) | head -1)
 
-$(shell sh $(DEVICE_PROFILE_GEN) $(DEVICE_PROFILE_SRC) $(DEVICE_PROFILE_MK) $(DEVICE_PROFILE_HDR))
--include $(DEVICE_PROFILE_MK)
+PLATFORM_MK  := $(BUILD_DIR)/platform.mk
+PLATFORM_HDR := $(INCLUDE_DIR)/platform.h
 
-$(shell sh $(PMM_RESERVE_GEN) $(PMM_RESERVE_SRC) $(PMM_RESERVE_HDR))
+$(shell python3 $(TOOLS_DIR)/gen_platform.py $(_PLATFORM_LUA) $(PLATFORM_MK) $(PLATFORM_HDR) $(INCLUDE_DIR))
+-include $(PLATFORM_MK)
 
-ifeq ($(strip $(DEV_UART_SRC)),)
-$(error Failed to resolve device profile for ARCH=$(ARCH) PLATFORM=$(PLATFORM))
+ifeq ($(strip $(MEM_RAM_BASE)),)
+$(error Failed to generate platform config from $(_PLATFORM_LUA))
 endif
 
 # 日志级别映射
@@ -497,6 +484,41 @@ LWEXT4_CFLAGS  += -DCONFIG_HAVE_OWN_ASSERT=1
 LWEXT4_CFLAGS  += -DCONFIG_USE_USER_MALLOC=1
 LWEXT4_CFLAGS  += -w   # 屏蔽第三方代码警告
 
+# ─── Lua 5.4 构建配置 ────────────────────────────────────────────────────────
+LUA_DIR      := $(LIB_DIR)/lua54
+LUA_SRC_DIR  := $(LUA_DIR)/src
+LUA_COMPAT   := $(LUA_DIR)/compat
+
+# Lua VM 核心模块（不含 linit.c / lmathlib — 后者依赖 libc 数学函数）
+LUA_CORE_SRCS := lapi lcode lctype ldebug ldo ldump lfunc lgc llex lmem \
+                 lobject lopcodes lparser lstate lstring ltable ltm \
+                 lundump lvm lzio lauxlib lbaselib ltablib lstrlib
+
+LUA_CORE_OBJS := $(patsubst %,$(BUILD_DIR)/lua54_%.o,$(LUA_CORE_SRCS))
+
+# LUA_CFLAGS: compat 头文件先于 include/，FP 限制解除
+LUA_CFLAGS := -I$(LUA_COMPAT) -I$(LUA_SRC_DIR) \
+              $(filter-out -mgeneral-regs-only,$(CFLAGS))
+ifeq ($(ARCH),x86_64)
+LUA_CFLAGS := $(filter-out -mno-mmx -mno-sse,$(LUA_CFLAGS))
+LUA_CFLAGS += -msse2
+endif
+LUA_CFLAGS += -Os -w -DLUA_C89_NUMBERS=1
+
+# setjmp 汇编（使用标准 CFLAGS）
+SETJMP_OBJ := $(BUILD_DIR)/setjmp_$(ARCH).o
+
+# Lua 胶水代码（使用 LUA_CFLAGS）
+LUA_GLUE_OBJS := $(BUILD_DIR)/lua_platform.o \
+                 $(BUILD_DIR)/lua_drivers.o \
+                 $(BUILD_DIR)/lua_math_impl.o \
+                 $(BUILD_DIR)/lua_kernel_init.o
+
+# 嵌入式 platform.lua 字节数组（由 gen_platform.py 生成，使用标准 CFLAGS）
+LUA_BLOB_OBJ := $(BUILD_DIR)/platform_lua_blob.o
+
+LUA_OBJECTS := $(LUA_CORE_OBJS) $(LUA_GLUE_OBJS) $(LUA_BLOB_OBJ) $(SETJMP_OBJ)
+
 # ─── Rootfs 配置 ────────────────────────────────────────────────────────────────────
 # 每个架构独立一个镜像，切换架构无需 make clean
 ROOTFS_IMG       := $(BUILD_DIR)/rootfs-$(ARCH).img
@@ -727,6 +749,36 @@ $(BUILD_DIR)/drv_blk_ramblk.o: driver/blk/ramblk.c | $(BUILD_DIR)
 $(BUILD_DIR)/lwext4_port_fs_init.o: $(LWEXT4_PORT_DIR)/fs_init.c | $(BUILD_DIR)
 	$(CC) $(LWEXT4_CFLAGS) -Ifs/lwext4_port -c $< -o $@
 
+# ─── Lua 5.4 编译规则 ───────────────────────────────────────────────────────
+# Lua VM 核心源文件：使用 LUA_CFLAGS（FP 开启，compat 头文件路径前置）
+$(BUILD_DIR)/lua54_%.o: $(LUA_SRC_DIR)/%.c | $(BUILD_DIR)
+	$(CC) $(LUA_CFLAGS) -c $< -o $@
+
+# setjmp 汇编（每架构一个）
+$(SETJMP_OBJ): $(LIB_DIR)/setjmp/setjmp_$(ARCH).S | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# Lua 平台胶水代码（LUA_CFLAGS + lua.h 路径）
+$(BUILD_DIR)/lua_platform.o: $(LIB_DIR)/lua_platform.c | $(BUILD_DIR)
+	$(CC) $(LUA_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/lua_drivers.o: $(LIB_DIR)/lua_drivers.c | $(BUILD_DIR)
+	$(CC) $(LUA_CFLAGS) -Idriver -c $< -o $@
+
+$(BUILD_DIR)/lua_math_impl.o: $(LUA_COMPAT)/lua_math_impl.c | $(BUILD_DIR)
+	$(CC) $(LUA_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/lua_kernel_init.o: $(LUA_DIR)/lua_kernel_init.c | $(BUILD_DIR)
+	$(CC) $(LUA_CFLAGS) -c $< -o $@
+
+# 嵌入式 platform.lua —— 由 gen_platform.py 生成到 build/ 目录
+# This rule re-runs gen_platform.py after any arch-switch clean wipes build/
+$(BUILD_DIR)/platform_lua_blob.c: $(_PLATFORM_LUA) $(TOOLS_DIR)/gen_platform.py | $(BUILD_DIR)
+	python3 $(TOOLS_DIR)/gen_platform.py $(_PLATFORM_LUA) $(PLATFORM_MK) $(PLATFORM_HDR) $(INCLUDE_DIR)
+
+$(BUILD_DIR)/platform_lua_blob.o: $(BUILD_DIR)/platform_lua_blob.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
 # VMM 模块编译规则（仅 AArch64）
 ifeq ($(ARCH),aarch64)
 $(BUILD_DIR)/kernel_mm_stage2.o: $(KERNEL_DIR)/mm/aarch64/stage2.c | $(BUILD_DIR)
@@ -794,7 +846,7 @@ $(BUILD_DIR)/apps_riscv_guest_test.o: apps/riscv64/guest_test.S | $(BUILD_DIR)
 endif
 
 # 链接内核 ELF 文件
-$(KERNEL_TARGET): $(BOOT_OBJECTS) $(KERNEL_OBJECTS) $(TASK_C_OBJECTS) $(TASK_S_OBJ) $(TASK_USER_TEST_OBJ) $(TASK_USER_HELLO_OBJ) $(TASK_USER_TESTEXECVE_OBJ) $(LOADER_C_OBJECTS) $(SYSCALL_C_OBJECTS) $(SYSCALL_S_OBJ) $(VM_C_OBJECTS) $(VM_S_OBJ) $(VMM_C_OBJECTS) $(VMM_S_OBJECTS) $(GUEST_TEST_OBJ) $(TESTS_OBJECTS) $(PLATFORM_OBJECTS) $(DRIVER_OBJECTS) $(EXCEPTION_OBJECTS) $(KLOG_OBJECT) $(VSNPRINTF_OBJECT) $(STRING_OBJECT) $(BITMAP_OBJECT) $(LWEXT4_OBJS) $(LWEXT4_PORT_OBJS) | $(BUILD_DIR)
+$(KERNEL_TARGET): $(BOOT_OBJECTS) $(KERNEL_OBJECTS) $(TASK_C_OBJECTS) $(TASK_S_OBJ) $(TASK_USER_TEST_OBJ) $(TASK_USER_HELLO_OBJ) $(TASK_USER_TESTEXECVE_OBJ) $(LOADER_C_OBJECTS) $(SYSCALL_C_OBJECTS) $(SYSCALL_S_OBJ) $(VM_C_OBJECTS) $(VM_S_OBJ) $(VMM_C_OBJECTS) $(VMM_S_OBJECTS) $(GUEST_TEST_OBJ) $(TESTS_OBJECTS) $(PLATFORM_OBJECTS) $(DRIVER_OBJECTS) $(EXCEPTION_OBJECTS) $(KLOG_OBJECT) $(VSNPRINTF_OBJECT) $(STRING_OBJECT) $(BITMAP_OBJECT) $(LWEXT4_OBJS) $(LWEXT4_PORT_OBJS) $(LUA_OBJECTS) | $(BUILD_DIR)
 	$(CC) $(LDFLAGS) -nostartfiles -nodefaultlibs -T $(BOOT_DIR)/$(ARCH)/link.ld -o $@ $^
 
 # 转换为二进制文件
@@ -886,7 +938,7 @@ help:
 	@echo ""
 	@echo "Platforms:"
 	@echo "  PLATFORM=qemu  QEMU virt platform (default for all arch now)"
-	@echo "  (Future real boards can be added in config/mem_layout.table)"
+	@echo "  (Future real boards: add platforms/<name>/platform.lua)"
 	@echo ""
 	@echo "Log Levels:"
 	@echo "  LOG=none      Disable all logging (default: info)"

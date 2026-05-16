@@ -15,6 +15,7 @@
 #include "../fs/lwext4_port/fs_init.h"
 #include "loader/elf_loader.h"
 #include "timer/timer.h"
+#include "lua_driver.h"
 
 #if ARCH_AARCH64
 #include "irq/irq.h"
@@ -86,6 +87,8 @@ void kernel_main(void)
      */
     extern volatile uintptr_t g_pl011_base;
     g_pl011_base = 0x09000000UL + 0xffff000000000000ULL;
+    /* Must enable FP/NEON before any FP code runs (including Lua VM) */
+    aarch64_enable_neon();
 #endif
 
     /* Initialize platform (UART, etc.) */
@@ -122,52 +125,31 @@ void kernel_main(void)
 #endif
 
 #if ARCH_AARCH64
-    // /* ── 运行 VMM 测试 ───────────────────────────────────────── */
-    // KLOG_INFO("");
     KLOG_INFO("=== Running VMM Tests ===\n");
     kmem_test();
     KLOG_INFO("VMM tests completed\n");
-
-    /* Initialize GIC (interrupt controller) */
-    KLOG_INFO("Initializing GICv2 interrupt controller...\n");
-    irq_init();
-    KLOG_INFO("GICv2 initialized\n");
-
-    /* Enable FP/SIMD for EL0 (busybox/musl use NEON instructions) */
-    aarch64_enable_neon();
-    KLOG_INFO("FP/SIMD enabled for EL0 (CPACR_EL1.FPEN=0b11)\n");
-
-    /* Initialize timer */
-    KLOG_INFO("Initializing timer...\n");
-    timer_init();
-    timer_enable();
-    KLOG_INFO("Timer enabled\n");
-
-#elif ARCH_RISCV64
-
-    /* Initialize timer (also registers timer_handler via irq_install) */
-    KLOG_INFO("Initializing timer...\n");
-    timer_init();
-    timer_enable();
-    KLOG_INFO("Timer enabled\n");
-
 #elif ARCH_X86_64
-
     /* Initialize IDT and LAPIC */
     KLOG_INFO("Initializing IDT + LAPIC...\n");
     exception_init();
-    
     /* Initialize TSS (Task State Segment for privilege switching) */
     extern void x86_tss_init(void);
     x86_tss_init();
-
-    /* Initialize timer (registers handler, calibrates LAPIC frequency) */
-    KLOG_INFO("Initializing timer...\n");
-    timer_init();
-    timer_enable();
-    KLOG_INFO("Timer enabled\n");
-
 #endif
+
+    KLOG_WARN("=== Running Lua scripts ===\n");
+    /* ── Lua platform initialization (runs platform.lua phases) ──────── */
+    extern const char g_platform_lua_src[];
+    extern const unsigned int g_platform_lua_src_len;
+    lua_State *lua_L = lua_platform_open(g_platform_lua_src,
+                                          g_platform_lua_src_len);
+    if (lua_L) {
+        lua_selftest(lua_L);
+        lua_run_phase(lua_L, "earlycon");  /* 早期控制台           */
+        lua_run_phase(lua_L, "irqcore");   /* GICv2 (AArch64)     */
+        lua_run_phase(lua_L, "drivers");   /* timer init + enable  */
+    }
+    KLOG_INFO("Lua platform phases (earlycon/irqcore/drivers) complete\n");
 
 
     /* ── 初始化任务子系统 ───────────────────────────────── */
@@ -183,6 +165,14 @@ void kernel_main(void)
         KLOG_INFO("busybox loader task created: id=%u\n", bb_task->id);
     else
         KLOG_ERROR("Failed to create busybox loader task!\n");
+
+    /* Run remaining Lua platform phases then close the VM */
+    if (lua_L) {
+        lua_run_phase(lua_L, "fs");
+        lua_run_phase(lua_L, "late");
+        lua_platform_close(lua_L);
+        lua_L = NULL;
+    }
 
     /*
      * 在内核初始化/创建用户进程完成后再启用抢占。
