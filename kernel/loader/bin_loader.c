@@ -8,13 +8,11 @@
 #include "task/task.h"
 #include "pmm.h"
 #include "mm_vm.h"
+#include "user_layout.h"
 #include <ext4.h>
 #include <ext4_types.h>
 
 
-/* 用户程序加载地址 */
-#define USER_STACK_ADDR      0x70000000ULL /* 用户栈顶虚拟地址（与 main.c 一致） */
-#define USER_STACK_SIZE      0x100000     /* 1MB 栈空间 */
 #define MAX_FILE_SIZE        (1024 * 1024) /* 最大程序大小 1MB */
 
 /**
@@ -102,8 +100,8 @@ int bin_loader_load_from_file(const char *pathname, char **argv, char **envp)
      * vm_create_user_process 会从该地址拷贝代码到新的用户页表中。
      * 进程实际入口固定为用户虚拟地址 0x10000。
      */
-    new_task = process_create(path_buf, (uint64_t)code_buffer,
-                              USER_STACK_ADDR, 10);
+    new_task = process_create(path_buf, (uint64_t)code_buffer, file_size,
+                              USER_STACK_TOP, USER_PROCESS_PRIO);
     if (new_task == NULL) {
         KLOG_ERROR("[loader] Failed to create process for '%s'\n", path_buf);
         pmm_free_pages(g_pmm, code_phys, page_count);

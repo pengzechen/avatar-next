@@ -109,7 +109,7 @@ task_t *task_create(const char *name, void (*entry)(void *), void *arg,
  *
  * 注意：当前版本使用共享内核页表，后续扩展为独立地址空间。
  */
-task_t *process_create(const char *name, uint64_t user_entry,
+task_t *process_create(const char *name, uint64_t user_entry, uint64_t user_code_size,
                        uint64_t user_sp, uint8_t priority);
 
 /**

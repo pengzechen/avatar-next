@@ -145,6 +145,7 @@ void run_vmm_test(void)
     /* Thread 3: EL0 user process */
     task_t *el0_task = process_create("el0_loop",
                                       (uint64_t)el0_loop_program,
+                                      0x4000,  /* 16KB，覆盖 el0_loop_program 代码 */
                                       0x200000,
                                       5);
     if (el0_task)
@@ -193,6 +194,7 @@ void run_vmm_test(void)
     /* Thread 3: U-mode user process */
     task_t *u_task_rv = process_create("u_loop",
                                        (uint64_t)user_test_program,
+                                       0x4000,  /* 16KB，覆盖 user_test_program 代码 */
                                        0x200000,
                                        5);
     if (u_task_rv)
@@ -239,6 +241,7 @@ void run_vmm_test(void)
     /* Thread 3: Ring3 user process */
     task_t *u_task = process_create("u_loop",
                                     (uint64_t)user_test_program,
+                                    0x4000,  /* 16KB，覆盖 user_test_program 代码 */
                                     0x200000,
                                     5);
     if (u_task)

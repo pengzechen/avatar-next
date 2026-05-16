@@ -26,17 +26,19 @@
 #include "riscv64/satp_utils.h"
 #endif
 
+#include "user_layout.h"
+
 extern pmm_t *g_pmm;
 
-#define USER_STACK_ADDR   0x70000000ULL
-#define USER_STACK_SIZE   0x100000     /* 1 MB */
+/* USER_STACK_TOP / USER_STACK_SIZE / USER_MMAP_BASE_PIE / USER_MMAP_BASE_EXEC
+ * 均来自 include/user_layout.h */
 
 /* ── Linux ABI 初始栈构建 ─────────────────────────────────────── */
 
 /**
  * elf_setup_stack - 在用户栈最高页写入 Linux ABI 初始栈
  * @pgd:       用户页表（内核虚拟地址）
- * @stack_top: 用户栈顶（USER_STACK_ADDR）
+ * @stack_top: 用户栈顶（USER_STACK_TOP）
  * @entry:     ELF 入口点
  * @pathname:  程序路径名
  * @argv:      来自 execve 的 argv（可为 NULL）
@@ -221,8 +223,8 @@ task_execve(const char *pathname, uint8_t *file_data, uint64_t file_size,
     }
 
     /* 4. 分配并映射用户栈 */
-    uint64_t stack_bottom = ALIGN_DOWN(USER_STACK_ADDR - USER_STACK_SIZE, PAGE_SIZE);
-    uint64_t stack_pages  = (USER_STACK_ADDR - stack_bottom) / PAGE_SIZE;
+    uint64_t stack_bottom = ALIGN_DOWN(USER_STACK_TOP - USER_STACK_SIZE, PAGE_SIZE);
+    uint64_t stack_pages  = (USER_STACK_TOP - stack_bottom) / PAGE_SIZE;
     uint64_t stack_base_paddr = pmm_alloc_pages(g_pmm, (uint32_t)stack_pages);
     if (stack_base_paddr == 0) {
         KLOG_ERROR("[exec] Failed to allocate %llu stack pages\n", stack_pages);
@@ -254,7 +256,7 @@ task_execve(const char *pathname, uint8_t *file_data, uint64_t file_size,
         return -3;
     }
     KLOG_INFO("[exec] User stack mapped: 0x%llx - 0x%llx\n",
-              stack_bottom, (uint64_t)USER_STACK_ADDR);
+              stack_bottom, (uint64_t)USER_STACK_TOP);
 
 #if ARCH_RISCV64
     /* 调试：检查栈映射后 L1[1] 是否被正确设置 */
@@ -291,8 +293,8 @@ task_execve(const char *pathname, uint8_t *file_data, uint64_t file_size,
 #endif
 
     /* 5. 构建 Linux ABI 初始栈 */
-    uint64_t user_sp = USER_STACK_ADDR;
-    if (elf_setup_stack(pgd, USER_STACK_ADDR, info.entry_point, pathname,
+    uint64_t user_sp = USER_STACK_TOP;
+    if (elf_setup_stack(pgd, USER_STACK_TOP, info.entry_point, pathname,
                         argv, envp, &user_sp,
                         info.phdr_uaddr, info.phnum, info.phent) != 0) {
         KLOG_ERROR("[exec] Failed to setup initial stack\n");
@@ -301,7 +303,8 @@ task_execve(const char *pathname, uint8_t *file_data, uint64_t file_size,
 
     /* 6. 创建用户进程 */
     task_t *current  = task_current();
-    uint64_t mmap_base = (info.min_vaddr == 0x10000ULL) ? 0x50000000ULL : 0x30000000ULL;
+    uint64_t mmap_base = (info.min_vaddr == USER_CODE_BASE) ? USER_MMAP_BASE_PIE
+                                                              : USER_MMAP_BASE_EXEC;
 
     task_t *new_task = process_create_with_pgd(
         pathname, info.entry_point, user_sp, 10, pgd_phys,

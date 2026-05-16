@@ -18,6 +18,7 @@
 
 #include "mm_vm.h"
 #include "vm_user.h"
+#include "user_layout.h"
 #if ARCH_RISCV64
 #include "riscv64/sysreg.h"
 #include "riscv64/satp_utils.h"
@@ -274,7 +275,8 @@ task_switch_to_idle_stack(void)
  * 创建独立地址空间的用户进程。
  */
 task_t *
-process_create(const char *name, uint64_t user_entry, uint64_t user_sp, uint8_t priority)
+process_create(const char *name, uint64_t user_entry, uint64_t user_code_size,
+               uint64_t user_sp, uint8_t priority)
 {
     task_t *task = alloc_task_slot();
     if (!task) {
@@ -292,16 +294,12 @@ process_create(const char *name, uint64_t user_entry, uint64_t user_sp, uint8_t 
     task->user_entry      = user_entry;
     task->user_sp         = user_sp;
     task->user_stack_top  = user_sp;
-    task->user_stack_size = 0x100000;  /* 1MB 用户栈 */
+    task->user_stack_size = USER_STACK_SIZE;
     task->fs_base         = 0;
 
     /* 创建独立的用户页表 */
 #if ARCH_AARCH64
-    /* 用户代码的虚拟地址（内核地址空间） */
-    uint64_t user_code_vaddr = user_entry;
-    uint64_t user_code_size = 0x4000;       /* 16KB 代码段 */
-
-    task->pgd = (uint64_t *)vm_create_user_process(user_code_vaddr, user_code_size,
+    task->pgd = (uint64_t *)vm_create_user_process(user_entry, user_code_size,
                                                       user_sp, task->user_stack_size);
     if (task->pgd == NULL) {
         KLOG_ERROR("[task] Failed to create user page table for '%s'\n", name);
@@ -309,18 +307,14 @@ process_create(const char *name, uint64_t user_entry, uint64_t user_sp, uint8_t 
         return NULL;
     }
 
-    /* 设置用户入口地址为用户虚拟地址（0x10000） */
-    task->user_entry = 0x10000;
+    /* 设置用户入口地址为用户虚拟地址（USER_CODE_BASE） */
+    task->user_entry = USER_CODE_BASE;
 
     KLOG_INFO("[task] Created page table for '%s': PGD=0x%llx\n",
               name, (uint64_t)task->pgd);
 #elif ARCH_RISCV64
     {
-        /* 用户代码当前在内核虚拟地址空间；复制 16KB 到用户 VA 0x10000 */
-        uint64_t user_code_vaddr = user_entry;
-        uint64_t user_code_size  = 0x4000;   /* 16KB，足以覆盖代码+字符串 */
-
-        uint64_t pgd_phys = vm_create_user_process(user_code_vaddr, user_code_size,
+        uint64_t pgd_phys = vm_create_user_process(user_entry, user_code_size,
                                                    user_sp, task->user_stack_size);
         if (pgd_phys == 0) {
             KLOG_ERROR("[task] Failed to create user page table for '%s'\n", name);
@@ -339,14 +333,14 @@ process_create(const char *name, uint64_t user_entry, uint64_t user_sp, uint8_t 
         riscv64_copy_kernel_mappings(new_pgd, kern_pgd);
 
         task->pgd        = (uint64_t *)pgd_phys;
-        task->user_entry = 0x10000;
+        task->user_entry = USER_CODE_BASE;
 
         KLOG_INFO("[task] Created RISC-V user PGD=0x%llx for '%s'\n",
                   pgd_phys, name);
     }
 #elif ARCH_X86_64
     {
-        uint64_t pgd_phys = vm_create_user_process(user_entry, 0x2000,
+        uint64_t pgd_phys = vm_create_user_process(user_entry, user_code_size,
                                                    user_sp, task->user_stack_size);
         if (pgd_phys == 0) {
             KLOG_ERROR("[task] Failed to create user page table for '%s'\n", name);
@@ -364,7 +358,7 @@ process_create(const char *name, uint64_t user_entry, uint64_t user_sp, uint8_t 
         x86_copy_kernel_mappings(user_pml4, kernel_pml4);
 
         task->pgd        = (uint64_t *)pgd_phys;
-        task->user_entry = 0x10000;
+        task->user_entry = USER_CODE_BASE;
 
         KLOG_INFO("[task] Created x86_64 user PGD=0x%llx for '%s'\n",
                   pgd_phys, name);
@@ -431,7 +425,7 @@ process_create_with_pgd(const char *name, uint64_t user_entry, uint64_t user_sp,
     task->user_entry      = user_entry;
     task->user_sp         = user_sp;
     task->user_stack_top  = user_sp;
-    task->user_stack_size = 0x100000;  /* 1MB 用户栈 */
+    task->user_stack_size = USER_STACK_SIZE;
     task->pgd             = (uint64_t *)pgd_phys;
     task->fs_base         = 0;
 

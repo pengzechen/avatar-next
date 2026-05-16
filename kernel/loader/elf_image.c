@@ -13,6 +13,7 @@
 #include "string.h"
 #include "arch.h"
 #include "loader/elf_image.h"
+#include "user_layout.h"
 
 extern pmm_t *g_pmm;
 
@@ -141,9 +142,9 @@ elf_image_load(uint8_t *file_data, uint64_t file_size, void *pgd, elf_image_info
 
     phdr = (elf64_phdr_t *)(file_data + ehdr->e_phoff);
 
-    /* ET_DYN 使用 PIE 基址 0x10000 */
+    /* ET_DYN 使用 PIE 基址 USER_CODE_BASE */
     if (ehdr->e_type == ET_DYN) {
-        image_base = 0x10000ULL;
+        image_base = USER_CODE_BASE;
         KLOG_INFO("[elf] ET_DYN image base: 0x%llx\n", image_base);
     }
 

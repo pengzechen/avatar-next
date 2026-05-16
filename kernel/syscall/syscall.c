@@ -3,6 +3,7 @@
 #include "loader/elf_loader.h"
 #include "klog.h"
 #include "task/task.h"
+#include "user_layout.h"
 #include "task/sched.h"
 #include "task/switch.h"
 #include "mm_vm.h"
@@ -908,9 +909,9 @@ void syscall_handler(trap_frame_t *frame)
         /* 代码/数据/堆 */
         CLONE_COPY_RANGE(0x0, parent->heap_end);
 
-        /* mmap 区域（当前实现从 0x30000000 线性向上分配） */
-        if (clone_copy_ok && parent->mmap_next > 0x30000000ULL)
-            CLONE_COPY_RANGE(0x30000000ULL, parent->mmap_next);
+        /* mmap 区域（从 USER_MMAP_BASE_EXEC 线性向上分配） */
+        if (clone_copy_ok && parent->mmap_next > USER_MMAP_BASE_EXEC)
+            CLONE_COPY_RANGE(USER_MMAP_BASE_EXEC, parent->mmap_next);
 
         /* 用户栈 */
         if (clone_copy_ok)

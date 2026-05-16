@@ -12,6 +12,7 @@
 #include "string.h"
 #include "mm_vm.h"
 #include "vm_user.h"
+#include "user_layout.h"
 #if ARCH_RISCV64
 #include "riscv64/satp_utils.h"
 #endif
@@ -59,8 +60,8 @@ vm_create_user_process(uint64_t user_code_vaddr, uint64_t user_code_size,
               user_stack_top - user_stack_size, user_stack_top, user_stack_size);
 
     /* ── 映射用户代码段 ─────────────────────────────────────────── */
-    uint64_t code_vaddr = ALIGN_UP(0x10000ULL, PAGE_SIZE);
-    uint64_t code_end   = ALIGN_UP(0x10000ULL + user_code_size, PAGE_SIZE);
+    uint64_t code_vaddr = ALIGN_UP(USER_CODE_BASE, PAGE_SIZE);
+    uint64_t code_end   = ALIGN_UP(USER_CODE_BASE + user_code_size, PAGE_SIZE);
 
     KLOG_INFO("[vm_user] Mapping user code: vaddr=0x%llx - 0x%llx\n",
               code_vaddr, code_end);
@@ -103,13 +104,14 @@ vm_create_user_process(uint64_t user_code_vaddr, uint64_t user_code_size,
         uint64_t src_paddr = virt_to_phys(user_code_vaddr);
         KLOG_INFO("[vm_user] Copying user code: kern_paddr=0x%llx -> user_vaddr=0x10000\n",
                   src_paddr);
-        mm_vm_copy_to_uva(pgd, 0x10000ULL, src_paddr, user_code_size);
-        
+        mm_vm_copy_to_uva(pgd, USER_CODE_BASE, src_paddr, user_code_size);
+
         /* 验证：读取前 16 字节 */
-        uint64_t test_pa = mm_vm_get_paddr(pgd, 0x10000);
+        uint64_t test_pa = mm_vm_get_paddr(pgd, USER_CODE_BASE);
         if (test_pa != 0) {
             uint8_t *code = (uint8_t *)phys_to_virt(test_pa);
-            KLOG_INFO("[vm_user] User code at 0x10000 (PA=0x%llx): %02x %02x %02x %02x %02x %02x %02x %02x\n",
+            KLOG_INFO("[vm_user] User code at 0x%llx (PA=0x%llx): %02x %02x %02x %02x %02x %02x %02x %02x\n",
+                      USER_CODE_BASE,
                       test_pa, code[0], code[1], code[2], code[3], 
                       code[4], code[5], code[6], code[7]);
         }
