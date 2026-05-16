@@ -15,6 +15,9 @@
 #if ARCH_X86_64
 #include "x86_64/mmu.h"
 #endif
+#if ARCH_RISCV64
+#include "riscv64/satp_utils.h"
+#endif
 #include <ext4.h>
 #include <ext4_types.h>
 
@@ -339,17 +342,11 @@ static int elf_load(uint8_t *file_data, uint64_t file_size, const char *pathname
 #if ARCH_X86_64
     /* x86_64: 用户页表必须包含内核高半区映射，否则切换 CR3 后内核不可达 */
     {
-        uint64_t kernel_cr3 = read_cr3();
-        uint64_t kernel_pml4_phys = kernel_cr3 & 0x000FFFFFFFFFF000ULL;
-        uint64_t *kernel_pml4 = (uint64_t *)phys_to_virt(kernel_pml4_phys);
-        uint64_t *user_pml4 = (uint64_t *)pgd;
-
-        for (int i = 256; i < 512; i++) {
-            user_pml4[i] = kernel_pml4[i];
-        }
-
-        KLOG_INFO("[elf] x86_64 copied kernel PML4[256-511] to user PGD=0x%llx\n",
-                  pgd_phys);
+        extern uint64_t g_kernel_pgd_phys;
+        uint64_t *kernel_pml4 = (uint64_t *)phys_to_virt(g_kernel_pgd_phys);
+        x86_copy_kernel_mappings((uint64_t *)pgd, kernel_pml4);
+        KLOG_INFO("[elf] x86_64 copied kernel PML4[%u..%u] to user PGD=0x%llx\n",
+                  X86_PML4_KERNEL_START, X86_PML4_ENTRIES - 1U, pgd_phys);
     }
 #endif
 
@@ -366,41 +363,12 @@ static int elf_load(uint8_t *file_data, uint64_t file_size, const char *pathname
      *   - L1[0x100]: KERNEL_VMA + 0x00000000..0x3fffffff (MMIO 高别名)
      *   - L1[0x102]: KERNEL_VMA + 0x80000000..0xbfffffff (RAM 高别名，含内核代码/数据)
      */
-    uint64_t satp_now;
-    __asm__ volatile("csrr %0, satp" : "=r"(satp_now));
-    uint64_t kernel_pgd_phys = (satp_now & 0x0fffffffffffULL) << 12;
-    uint64_t *kernel_l1 = (uint64_t *)phys_to_virt(kernel_pgd_phys);
+    uint64_t *kernel_l1 = (uint64_t *)phys_to_virt(satp_read_pgd_phys());
     uint64_t *user_l1   = (uint64_t *)pgd;
-
-    /* 复制内核高半区L1页表项：L1[0x100]和L1[0x102] */
-    user_l1[0x100] = kernel_l1[0x100];
-    user_l1[0x102] = kernel_l1[0x102];
-
-    KLOG_INFO("[elf] RISC-V user pgd created: user_pa=0x%llx kernel_pa=0x%llx\n",
-              pgd_phys, kernel_pgd_phys);
-    KLOG_INFO("[elf] RISC-V kernel mappings copied: l1[0x100]=0x%llx l1[0x102]=0x%llx\n",
-              user_l1[0x100], user_l1[0x102]);
-    
-    /* 验证L1[0x102]是否为叶子页表项（R/W/X至少一个为1） */
-    uint64_t pte_102 = kernel_l1[0x102];
-    int is_leaf = (pte_102 & 0xE) != 0;  /* R(bit1)|W(bit2)|X(bit3) */
-    KLOG_INFO("[elf] Kernel L1[0x102] flags: V=%llu R=%llu W=%llu X=%llu U=%llu => %s\n",
-              (pte_102 >> 0) & 1, (pte_102 >> 1) & 1, (pte_102 >> 2) & 1,
-              (pte_102 >> 3) & 1, (pte_102 >> 4) & 1,
-              is_leaf ? "LEAF (1GB page)" : "NON-LEAF (points to L2 table)");
-    
-    /* 调试：检查关键全局变量是否在映射范围内 */
-    extern pmm_t *g_pmm;
-    extern pmm_t pmm;
-    KLOG_INFO("[elf] Checking globals: &g_pmm=%p &pmm=%p\n", &g_pmm, &pmm);
-    uint64_t g_pmm_va = (uint64_t)&g_pmm;
-    uint64_t pmm_va = (uint64_t)&pmm;
-    KLOG_INFO("[elf]   g_pmm in L1[%llu], pmm in L1[%llu]\n",
-              (g_pmm_va >> 30) & 0x1ff, (pmm_va >> 30) & 0x1ff);
-    
-    /* 调试：检查用户栈对应的 L1 表项是否为0 */
-    KLOG_INFO("[elf] After pgd init: User L1[0]=0x%llx L1[1]=0x%llx L1[2]=0x%llx\n",
-              user_l1[0], user_l1[1], user_l1[2]);
+    riscv64_copy_kernel_mappings(user_l1, kernel_l1);
+    KLOG_INFO("[elf] RISC-V kernel mappings: l1[0x%x]=0x%llx l1[0x%x]=0x%llx\n",
+              RISCV64_KERNEL_L1_MMIO_IDX, user_l1[RISCV64_KERNEL_L1_MMIO_IDX],
+              RISCV64_KERNEL_L1_RAM_IDX,  user_l1[RISCV64_KERNEL_L1_RAM_IDX]);
 #endif
 
     /* ET_DYN 使用 PIE 基址 0x10000 */
@@ -803,12 +771,8 @@ int elf_loader_load_from_file(const char *pathname, char **argv, char **envp)
 
     file_data = (uint8_t *)phys_to_virt(file_phys);
 
-#if ARCH_RISCV64
-    uint64_t satp_val;
-    __asm__ volatile("csrr %0, satp" : "=r"(satp_val));
-    KLOG_INFO("[elf_loader] file_phys=0x%llx file_data=0x%llx pages=%u satp=0x%llx\n",
-              file_phys, (uint64_t)file_data, page_count, satp_val);
-#endif
+    KLOG_INFO("[elf_loader] file_phys=0x%llx file_data=0x%llx pages=%u\n",
+              file_phys, (uint64_t)file_data, page_count);
 
     /* 读取文件 */
     rc = ext4_fread(&file, file_data, file_size, &rcnt);

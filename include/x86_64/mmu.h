@@ -217,6 +217,31 @@ static inline void flush_tlb_single(uint64_t vaddr)
 /* 检查是否页对齐 */
 #define IS_PAGE_ALIGNED(addr)  (((uint64_t)(addr) & ~PAGE_MASK) == 0)
 
+/* ── 内核高半区 PML4 范围 ───────────────────────────────────────── */
+
+/*
+ * 内核高半区 PML4 起始索引，由 KERNEL_VMA_OFFSET 严格派生：
+ *   KERNEL_VMA_OFFSET = 0xffff800000000000
+ *   PML4_idx = (KERNEL_VMA_OFFSET >> 39) & 0x1ff = 0x100 = 256
+ *
+ * 用户页表必须包含 PML4[X86_PML4_KERNEL_START..511] 的内核映射，
+ * 否则 SYSCALL / 中断时内核高半区不可达 → 三重错误 → 重启。
+ */
+#define X86_PML4_KERNEL_START  256U      /* (KERNEL_VMA_OFFSET >> 39) & 0x1ff */
+#define X86_PML4_ENTRIES       512U
+
+/**
+ * x86_copy_kernel_mappings - 将内核高半区 PML4[256..511] 复制到用户页表
+ * @user_pml4:   目标用户 PML4（内核虚拟地址，uint64_t[512]）
+ * @kernel_pml4: 源内核 PML4（内核虚拟地址，uint64_t[512]）
+ */
+static inline void x86_copy_kernel_mappings(uint64_t *user_pml4,
+                                            const uint64_t *kernel_pml4)
+{
+    for (unsigned int i = X86_PML4_KERNEL_START; i < X86_PML4_ENTRIES; i++)
+        user_pml4[i] = kernel_pml4[i];
+}
+
 /* ── 函数声明 ───────────────────────────────────────────────────── */
 
 /* MMU 初始化（在 mmu.S 中实现） */

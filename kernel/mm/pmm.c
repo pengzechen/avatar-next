@@ -333,22 +333,4 @@ void pmm_initialize(void)
 
     KLOG_INFO("PMM initialization completed\n");
     KLOG_INFO("  g_pmm = %p\n", g_pmm);
-
-#if ARCH_RISCV64
-    /* 调试：检查内核页表的 L1[0x102] 是否是叶子项 */
-    uint64_t satp;
-    __asm__ volatile("csrr %0, satp" : "=r"(satp));
-    uint64_t kernel_pgd_phys = (satp & 0x0fffffffffffULL) << 12;
-    uint64_t *kernel_l1 = (uint64_t *)phys_to_virt(kernel_pgd_phys);
-    uint64_t l1_102 = kernel_l1[0x102];
-
-    KLOG_INFO("[pmm_init] Kernel L1[0x102] = 0x%llx\n", l1_102);
-    KLOG_INFO("[pmm_init]   V=%llu R=%llu W=%llu X=%llu (bits 0,1,2,3)\n",
-              l1_102 & 1, (l1_102 >> 1) & 1, (l1_102 >> 2) & 1, (l1_102 >> 3) & 1);
-    if ((l1_102 & 0xF) == 0x1) {
-        KLOG_ERROR("[pmm_init] WARNING: L1[0x102] is NOT a leaf (R=W=X=0)!\n");
-    } else if ((l1_102 & 0xF) == 0xF || (l1_102 & 0xE) != 0) {
-        KLOG_INFO("[pmm_init] L1[0x102] is a leaf page (R/W/X set)\n");
-    }
-#endif
 }

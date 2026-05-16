@@ -14,6 +14,9 @@
 #include "uart/uart.h"
 #include <ext4.h>
 #include <ext4_errno.h>
+#if ARCH_RISCV64
+#include "riscv64/satp_utils.h"
+#endif
 
 
 /* ── Linux AArch64 标准系统调用号 ───────────────────────────────── */
@@ -855,16 +858,12 @@ void syscall_handler(trap_frame_t *frame)
 
 #if ARCH_X86_64
         /*
-         * x86_64: 子进程页表必须包含内核高半区映射（PML4[256..511]），
-         * 否则调度器 write_cr3(child_pgd) 后内核代码立即不可达 → 三重错误 → 重启。
-         * 从父进程页表复制（父进程已在 elf_loader 中正确复制）。
+         * x86_64: 子进程 PML4 必须包含内核高半区映射（PML4[256..511]），
+         * 否则调度器 write_cr3(child_pgd) 后内核代码立即不可达。
+         * 从父进程页表复制（父进程已在 elf_loader 中正确继承）。
          */
-        {
-            uint64_t *child_pml4  = (uint64_t *)child_pgd_virt;
-            uint64_t *parent_pml4 = (uint64_t *)parent_pgd_virt;
-            for (int i = 256; i < 512; i++)
-                child_pml4[i] = parent_pml4[i];
-        }
+        x86_copy_kernel_mappings((uint64_t *)child_pgd_virt,
+                                 (uint64_t *)parent_pgd_virt);
 #endif
 
 #if ARCH_RISCV64
@@ -876,9 +875,8 @@ void syscall_handler(trap_frame_t *frame)
          */
         {
             uint64_t *child_l1  = (uint64_t *)child_pgd_virt;
-            uint64_t *parent_l1 = (uint64_t *)parent_pgd_virt;
-            child_l1[0x100] = parent_l1[0x100];
-            child_l1[0x102] = parent_l1[0x102];
+            uint64_t *kernel_l1 = (uint64_t *)phys_to_virt(satp_read_pgd_phys());
+            riscv64_copy_kernel_mappings(child_l1, kernel_l1);
         }
 #endif
 

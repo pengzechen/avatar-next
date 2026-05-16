@@ -20,6 +20,7 @@
 #include "vm_user.h"
 #if ARCH_RISCV64
 #include "riscv64/sysreg.h"
+#include "riscv64/satp_utils.h"
 #endif
 
 /* ── 静态任务池 ──────────────────────────────────────────── */
@@ -35,7 +36,7 @@ uint8_t  g_stack_used[TASK_MAX];
 
 uint32_t g_task_id_cnt = 0;
 
-/* ── 内核页表物理地址（task_init 时从 satp 读取）─────────── */
+/* ── 内核页表物理地址（task_init 时读取，RISC-V satp / x86_64 CR3 均使用）── */
 uint64_t g_kernel_pgd_phys = 0;
 
 /* ── idle 任务（boot 执行上下文）────────────────────────── */
@@ -213,10 +214,10 @@ task_init(void)
 
 #if ARCH_RISCV64
     /* 保存内核 SATP 对应的 PGD 物理地址，用于切换回内核任务时恢复 */
-    {
-        uint64_t satp_val = CSR_READ(satp);
-        g_kernel_pgd_phys = (satp_val & 0x00000FFFFFFFFFFFULL) << 12;
-    }
+    g_kernel_pgd_phys = satp_read_pgd_phys();
+#elif ARCH_X86_64
+    /* 保存内核 PML4 物理地址，用于切换回内核任务时恢复 */
+    g_kernel_pgd_phys = read_cr3() & PTE_ADDR_MASK;
 #endif
 
     /* 初始化调度器，传入 idle 任务 */
@@ -334,13 +335,8 @@ process_create(const char *name, uint64_t user_entry, uint64_t user_sp, uint8_t 
          * 到达内核异常向量，而用户无法访问该区域（PTE_U=0）。
          */
         uint64_t *new_pgd  = (uint64_t *)phys_to_virt(pgd_phys);
-        uint64_t  satp_val = CSR_READ(satp);
-        /* Sv39 satp: PPN 位于 [43:0]，物理页帧号 */
-        uint64_t  kern_pgd_phys = (satp_val & 0x00000FFFFFFFFFFFULL) << 12;
-        uint64_t *kern_pgd = (uint64_t *)phys_to_virt(kern_pgd_phys);
-
-        new_pgd[0x100] = kern_pgd[0x100];   /* 内核低物理地址别名 */
-        new_pgd[0x102] = kern_pgd[0x102];   /* 内核 RAM 别名（含 stvec 所在页）*/
+        uint64_t *kern_pgd = (uint64_t *)phys_to_virt(g_kernel_pgd_phys);
+        riscv64_copy_kernel_mappings(new_pgd, kern_pgd);
 
         task->pgd        = (uint64_t *)pgd_phys;
         task->user_entry = 0x10000;
@@ -350,11 +346,7 @@ process_create(const char *name, uint64_t user_entry, uint64_t user_sp, uint8_t 
     }
 #elif ARCH_X86_64
     {
-        /* x86_64: 用户代码当前在内核虚拟地址空间；复制到用户 VA 0x10000 */
-        uint64_t user_code_vaddr = user_entry;
-        uint64_t user_code_size  = 0x2000;   /* 8KB，覆盖代码+字符串数据 */
-
-        uint64_t pgd_phys = vm_create_user_process(user_code_vaddr, user_code_size,
+        uint64_t pgd_phys = vm_create_user_process(user_entry, 0x2000,
                                                    user_sp, task->user_stack_size);
         if (pgd_phys == 0) {
             KLOG_ERROR("[task] Failed to create user page table for '%s'\n", name);
@@ -363,52 +355,13 @@ process_create(const char *name, uint64_t user_entry, uint64_t user_sp, uint8_t 
         }
 
         /*
-         * x86_64: 用户页表需要包含内核映射，否则从用户态触发 SYSCALL/中断时，
-         * 内核代码和数据不可访问。
-         * 
-         * 方案：复制当前内核 PML4 的高半区映射（PML4[256-511]）到用户 PML4。
-         * 内核虚拟地址起始于 0xffff800000000000，对应 PML4[256]。
+         * 将内核高半区 PML4[256..511] 复制到用户页表。
+         * 用户态触发 SYSCALL/中断时 CPU 沿内核虚拟地址跳转，
+         * 若用户 PML4 中无对应映射则立即触发三重错误。
          */
-        uint64_t cr3_now = read_cr3();
-        uint64_t kernel_pml4_phys = cr3_now & 0x000FFFFFFFFFF000ULL;
-        uint64_t *kernel_pml4 = (uint64_t *)phys_to_virt(kernel_pml4_phys);
+        uint64_t *kernel_pml4 = (uint64_t *)phys_to_virt(g_kernel_pgd_phys);
         uint64_t *user_pml4   = (uint64_t *)phys_to_virt(pgd_phys);
-
-        KLOG_INFO("[task] Kernel CR3=0x%llx, PML4_phys=0x%llx\n", 
-                  cr3_now, kernel_pml4_phys);
-
-        /* 打印内核 PML4 中非零表项 */
-        int valid_entries = 0;
-        for (int i = 0; i < 512; i++) {
-            if (kernel_pml4[i] != 0) {
-                KLOG_INFO("[task]   kernel PML4[%d] = 0x%llx\n", i, kernel_pml4[i]);
-                valid_entries++;
-                if (valid_entries >= 10) {
-                    KLOG_INFO("[task]   ... (showing first 10 entries)\n");
-                    break;
-                }
-            }
-        }
-
-        /* 
-         * 只复制内核高半区映射 PML4[256-511]：
-         * - 用户空间（0x0 - 0x7fffffffffff）使用独立的页表结构
-         * - 内核空间（0xffff800000000000+）需要在用户页表中可见（用于系统调用/中断）
-         * 
-         * 不复制 PML4[0-255]，避免继承内核的 1GB 大页直接映射（权限不匹配）
-         */
-        for (int i = 256; i < 512; i++) {
-            user_pml4[i] = kernel_pml4[i];
-        }
-        
-        KLOG_INFO("[task] Copied kernel high-half PML4[256-511] to user PGD\n");
-        
-        /* 验证 PML4[0] 是否存在（应该由 vm_create_user_process 创建） */
-        if (user_pml4[0] != 0) {
-            KLOG_INFO("[task]   user PML4[0] = 0x%llx (user space mapping present)\n", user_pml4[0]);
-        } else {
-            KLOG_ERROR("[task]   ERROR: user PML4[0] is 0 (user code at 0x10000 will not be accessible!)\n");
-        }
+        x86_copy_kernel_mappings(user_pml4, kernel_pml4);
 
         task->pgd        = (uint64_t *)pgd_phys;
         task->user_entry = 0x10000;

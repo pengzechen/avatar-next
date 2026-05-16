@@ -12,6 +12,9 @@
 #include "string.h"
 #include "mm_vm.h"
 #include "vm_user.h"
+#if ARCH_RISCV64
+#include "riscv64/satp_utils.h"
+#endif
 
 /* ── 创建用户进程页表 ──────────────────────────────────────────── */
 
@@ -41,18 +44,12 @@ vm_create_user_process(uint64_t user_code_vaddr, uint64_t user_code_size,
      *   - L1[0x100]: KERNEL_VMA + 0x00000000..0x3fffffff (MMIO 高别名)
      *   - L1[0x102]: KERNEL_VMA + 0x80000000..0xbfffffff (RAM 高别名，含内核代码/数据)
      */
-    uint64_t satp_now;
-    __asm__ volatile("csrr %0, satp" : "=r"(satp_now));
-    uint64_t kernel_pgd_phys = (satp_now & 0x0fffffffffffULL) << 12;
-    uint64_t *kernel_l1 = (uint64_t *)phys_to_virt(kernel_pgd_phys);
+    uint64_t *kernel_l1 = (uint64_t *)phys_to_virt(satp_read_pgd_phys());
     uint64_t *user_l1   = (uint64_t *)pgd;
-
-    /* 复制内核高半区L1页表项：L1[0x100]和L1[0x102] */
-    user_l1[0x100] = kernel_l1[0x100];
-    user_l1[0x102] = kernel_l1[0x102];
-
-    KLOG_INFO("[vm_user] RISC-V kernel mappings copied: l1[0x100]=0x%llx l1[0x102]=0x%llx\n",
-              user_l1[0x100], user_l1[0x102]);
+    riscv64_copy_kernel_mappings(user_l1, kernel_l1);
+    KLOG_INFO("[vm_user] RISC-V kernel mappings: l1[0x%x]=0x%llx l1[0x%x]=0x%llx\n",
+              RISCV64_KERNEL_L1_MMIO_IDX, user_l1[RISCV64_KERNEL_L1_MMIO_IDX],
+              RISCV64_KERNEL_L1_RAM_IDX,  user_l1[RISCV64_KERNEL_L1_RAM_IDX]);
 #endif
 
     KLOG_INFO("[vm_user] Creating user process page table:\n");
