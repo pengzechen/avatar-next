@@ -88,6 +88,32 @@ static inline int uart_ringbuf_pop(char *out) {
     g_uart_rb_tail = (g_uart_rb_tail + 1u) % UART_RINGBUF_SIZE;
     return 1;
 }
+static inline int uart_ringbuf_empty(void) {
+    return g_uart_rb_tail == g_uart_rb_head;
+}
+
+/* Linux termios (TCGETS/TCSETS) minimal ABI view */
+struct kernel_termios {
+    uint32_t c_iflag;
+    uint32_t c_oflag;
+    uint32_t c_cflag;
+    uint32_t c_lflag;
+    uint8_t  c_line;
+    uint8_t  c_cc[19];
+};
+
+/* ── 终端状态（持久化，TCGETS/TCSETS 读写）────────────────────────
+ * c_lflag 关键位: ISIG=0x0001, ICANON=0x0002, ECHO=0x0008
+ * c_iflag 关键位: ICRNL=0x0100
+ * ─────────────────────────────────────────────────────────────── */
+static struct kernel_termios g_termios = {
+    .c_iflag = 0x00000500U, /* ICRNL | IXON */
+    .c_oflag = 0x00000005U, /* OPOST | ONLCR */
+    .c_cflag = 0x000000BFU, /* B38400 | CS8 | CREAD */
+    .c_lflag = 0x00008A3BU, /* ISIG | ICANON | ECHO* | IEXTEN */
+    .c_line  = 0,
+    .c_cc    = {0,0,0,0, 4/*VEOF=^D*/, 0/*VTIME*/, 1/*VMIN*/, 0,0,0,0,0,0,0,0,0,0,0,0},
+};
 
 /* ── signal_check_uart ───────────────────────────────────────────
  * 排空 UART FIFO：普通字符入环形缓冲区，Ctrl+C 发 SIGINT。
@@ -96,17 +122,28 @@ static inline int uart_ringbuf_pop(char *out) {
 void signal_check_uart(void) {
     while (uart_rx_ready()) {
         char c = uart_getc();
-        if (c == '\x03') {
-            /* Ctrl+C → 向前台进程组发 SIGINT */
+        if (c == '\x03' && (g_termios.c_lflag & 0x0001u)) {
+            /* Ctrl+C + ISIG → 向前台进程组发 SIGINT */
             uint32_t fg = g_fg_pgid;
             if (fg == 0 && g_current_task)
                 fg = g_current_task->pgid;
             if (fg) task_send_signal_to_pgid(fg, SIGINT);
         } else {
+            /* ISIG 关闭时（如 vi raw 模式），Ctrl+C 作为普通字符送入缓冲区 */
             uart_ringbuf_push(c);
         }
     }
 }
+
+/* ── tty 辅助接口（pseudofs/tty_read 调用）──────────────────
+ * 非 static，让 fs/pseudofs/pseudofs.c 可以 extern 引用。
+ * ─────────────────────────────────────────────────────────────── */
+/* 当前是否 raw 模式（ICANON=0） */
+int termios_is_raw(void)   { return !(g_termios.c_lflag & 0x0002u); }
+/* 是否开启 ICRNL（\r转\n） */
+int termios_do_icrnl(void) { return  (g_termios.c_iflag & 0x0100u); }
+/* 排空 UART FIFO 到 ring buffer，非阻塞弹出一字符。成功返回 1，缓冲区空返回 0 */
+int tty_getchar_nb(char *c) { signal_check_uart(); return uart_ringbuf_pop(c); }
 
 /* ── 内核侧 sigaction 布局（与 musl/glibc 用户空间对齐）─────────── */
 struct kernel_sigaction {
@@ -309,6 +346,7 @@ deliver_pending_signals(task_t *t, trap_frame_t *frame)
 #define X86_SYS_ARCH_PRCTL       0x7FFFFFFDULL
 #define X86_SYS_RSEQ             0x7FFFFFFCULL
 #define X86_SYS_POLL             0x7FFFFFFBULL
+#define X86_SYS_SELECT           0x7FFFFFFAULL
 
 #if ARCH_X86_64
 #define X86_MSR_IA32_FS_BASE     0xC0000100U
@@ -345,16 +383,6 @@ struct kernel_winsize {
     uint16_t ws_col;
     uint16_t ws_xpixel;
     uint16_t ws_ypixel;
-};
-
-/* Linux termios (TCGETS/TCSETS) minimal ABI view */
-struct kernel_termios {
-    uint32_t c_iflag;
-    uint32_t c_oflag;
-    uint32_t c_cflag;
-    uint32_t c_lflag;
-    uint8_t  c_line;
-    uint8_t  c_cc[19];
 };
 
 struct kernel_pollfd {
@@ -602,7 +630,49 @@ static int resolve_path_at(task_t *task, int dirfd, const char *pathname,
     return 0;
 }
 
-/* struct kernel_stat / kernel_dirent64 来自 include/kernel_stat.h */
+/*
+ * follow_symlinks - 跟随符号链接，最多 8 层。
+ * 将 out 缓冲区中的路径替换为最终目标路径（非符号链接）。
+ * 若路径不是符号链接，out 保持不变。
+ */
+static void follow_symlinks(char *out, size_t outsz)
+{
+    char cur[128];
+    int n = 0;
+    while (out[n] && n < 127) { cur[n] = out[n]; n++; }
+    cur[n] = '\0';
+
+    for (int depth = 0; depth < 8; depth++) {
+        char target[128];
+        size_t rcnt = 0;
+        if (ext4_readlink(cur, target, sizeof(target) - 1, &rcnt) != EOK)
+            break; /* 不是符号链接或读取失败，停止 */
+        target[rcnt] = '\0';
+
+        if (target[0] == '/') {
+            /* 绝对符号链接 */
+            n = 0;
+            while (target[n] && n < 127) { cur[n] = target[n]; n++; }
+            cur[n] = '\0';
+        } else {
+            /* 相对符号链接：相对于 cur 的父目录解析 */
+            int slash = 0;
+            for (int i = 0; cur[i]; i++)
+                if (cur[i] == '/') slash = i;
+            /* parent = cur[0..slash] （含断斑 '/'） */
+            char parent[128];
+            int k;
+            for (k = 0; k <= slash && k < 126; k++)
+                parent[k] = cur[k];
+            parent[k] = '\0';
+            resolve_path(parent, target, cur, sizeof(cur));
+        }
+    }
+
+    n = 0;
+    while (cur[n] && n < (int)outsz - 1) { out[n] = cur[n]; n++; }
+    out[n] = '\0';
+}
 
 struct kernel_utsname {
     char sysname[65];
@@ -772,6 +842,7 @@ static void x86_translate_syscall(uint64_t *nr, uint64_t regs[9])
         regs[0] = (uint64_t)(int64_t)AT_FDCWD;
         *nr = LINUX_SYS_FACCESSAT; break;
     case 22:  *nr = LINUX_SYS_PIPE2;       break; /* pipe → pipe2(flags=0) */
+    case 23:  *nr = X86_SYS_SELECT;        break; /* select(nfds,r,w,e,timeval*) */
     case 24:  *nr = LINUX_SYS_SCHED_YIELD; break; /* sched_yield */
     case 32:  /* dup(oldfd): x86_64. 不直接支持，返回 ENOSYS */
         /* busybox sh 很少用裸 dup()，ENOSYS 不影响启动 */
@@ -1544,6 +1615,8 @@ void syscall_handler(trap_frame_t *frame)
         } else if (fd == 0) {
             /* stdin 未重定向：通过 UART 环形缓冲区读取
              * signal_check_uart() 将字符推入缓冲区，ctrl-c 发 SIGINT */
+            int raw    = !(g_termios.c_lflag & 0x0002u); /* !ICANON */
+            int do_cr  =  (g_termios.c_iflag & 0x0100u); /* ICRNL */
             uint64_t n = 0;
             int eintr  = 0;
             while (n < count) {
@@ -1556,9 +1629,10 @@ void syscall_handler(trap_frame_t *frame)
                 }
                 char c;
                 if (uart_ringbuf_pop(&c)) {
-                    if (c == '\r') c = '\n';
+                    if (do_cr && c == '\r') c = '\n';
                     buf[n++] = c;
-                    if (c == '\n') break;
+                    if (raw) break;           /* raw 模式：每次返回一个字符 */
+                    if (c == '\n') break;     /* canonical 模式：换行截止 */
                 } else {
                     task_yield();
                 }
@@ -1671,6 +1745,7 @@ void syscall_handler(trap_frame_t *frame)
             regs[0] = (uint64_t)(int64_t)rpa;
             break;
         }
+        follow_symlinks(abspath, sizeof(abspath));
 
         /* 优先查 pseudofs */
         struct kernel_stat _tmpst;
@@ -1759,6 +1834,8 @@ void syscall_handler(trap_frame_t *frame)
             regs[0] = (uint64_t)(int64_t)rpa;
             break;
         }
+        /* 跟随符号链接（如 /bin/ls -> busybox） */
+        follow_symlinks(abspath, sizeof(abspath));
 
         int pool = fd_pool_alloc();
         if (pool < 0) { regs[0] = (uint64_t)(int64_t)-EMFILE; break; }
@@ -1998,6 +2075,9 @@ void syscall_handler(trap_frame_t *frame)
         }
         /* 优先查 pseudofs */
         if (pseudo_stat_path(abspath, st) == 0) { regs[0] = 0; break; }
+        /* 跨符号链接（不应用于 AT_SYMLINK_NOFOLLOW / lstat） */
+        if (!(regs[3] & 0x100))
+            follow_symlinks(abspath, sizeof(abspath));
         fill_stat_from_ext4(st, abspath);
         regs[0] = 0;
         break;
@@ -2152,16 +2232,7 @@ void syscall_handler(trap_frame_t *frame)
         }
         (void)ioctl_fd;
         if (request == TCGETS && argp) {
-            struct kernel_termios *t = (struct kernel_termios *)argp;
-            memset(t, 0, sizeof(*t));
-            /* Canonical tty defaults, enough for busybox ash startup */
-            t->c_iflag = 0x00000500U; /* ICRNL | IXON */
-            t->c_oflag = 0x00000005U; /* OPOST | ONLCR */
-            t->c_cflag = 0x000000BFU; /* B38400 | CS8 | CREAD */
-            t->c_lflag = 0x00008A3BU; /* ISIG | ICANON | ECHO* | IEXTEN */
-            t->c_cc[4] = 4;   /* VEOF  = ^D */
-            t->c_cc[5] = 0;   /* VTIME */
-            t->c_cc[6] = 1;   /* VMIN  */
+            *(struct kernel_termios *)argp = g_termios;
             regs[0] = 0;
         } else if (request == TIOCGWINSZ && argp) {
             struct kernel_winsize *ws = (struct kernel_winsize *)argp;
@@ -2171,6 +2242,7 @@ void syscall_handler(trap_frame_t *frame)
             ws->ws_ypixel = 0;
             regs[0] = 0;
         } else if ((request == TCSETS || request == TCSETSW || request == TCSETSF) && argp) {
+            g_termios = *(struct kernel_termios *)argp;
             regs[0] = 0;
         } else if (request == TIOCGPGRP && argp) {
             /* 若前台组未设置，返回当前进程的 pgid，避免 ash 误判自己是后台进程 */
@@ -2188,32 +2260,137 @@ void syscall_handler(trap_frame_t *frame)
     }
 
     case X86_SYS_POLL:
-    case LINUX_SYS_PPOLL:
-    case LINUX_SYS_PSELECT6: {
+    case LINUX_SYS_PPOLL: {
         /*
-         * poll(fds, nfds, timeout_ms)
-         * ppoll(fds, nfds, timeout, sigmask, sigsetsize)
-         * pselect6(...) 目前统一走最小 readiness 语义。
+         * poll(pollfd*, nfds, timeout_ms)            —— X86_SYS_POLL
+         * ppoll(pollfd*, nfds, timespec*, sigmask, sz) —— LINUX_SYS_PPOLL
+         *
+         * 语义：fd==0 读就绪仅当 UART ring buffer 非空；
+         *       fd>=3 一律报告可读可写（管道/文件不阻塞）。
+         *       负 timeout = 阐塞等待；timeout==0 = 立即返回。
          */
         struct kernel_pollfd *pfds = (struct kernel_pollfd *)regs[0];
         uint64_t nfds = regs[1];
-        /* If timeout pointer is NULL or timeout is non-zero, we do a
-         * minimal: mark stdin (fd=0) as POLLIN if present, return count */
+        int64_t  timeout_ms;
+        if (syscall_num == X86_SYS_POLL) {
+            timeout_ms = (int64_t)regs[2];
+        } else {
+            struct kernel_timespec *ts = (struct kernel_timespec *)regs[2];
+            if (!ts)            timeout_ms = -1;
+            else if (ts->tv_sec == 0 && ts->tv_nsec == 0) timeout_ms = 0;
+            else                timeout_ms = ts->tv_sec * 1000 + ts->tv_nsec / 1000000;
+        }
+
+        uint64_t deadline_ns = 0;
+        if (timeout_ms > 0)
+            deadline_ns = kernel_get_ns() + (uint64_t)timeout_ms * 1000000ULL;
+
         int ready = 0;
-        if (pfds && nfds > 0) {
-            for (uint64_t pi = 0; pi < nfds; pi++) {
-                pfds[pi].revents = 0;
-                if (pfds[pi].fd == 0) {
-                    /* Pretend stdin always has data ready (non-blocking shell) */
-                    pfds[pi].revents = pfds[pi].events & 0x01; /* POLLIN=1 */
-                    if (pfds[pi].revents) ready++;
-                } else if (pfds[pi].fd >= 0) {
-                    pfds[pi].revents = pfds[pi].events & 0x01;
+        for (;;) {
+            signal_check_uart();
+            if (current && (current->pending_sigs & ~current->blocked_sigs)) {
+                regs[0] = (uint64_t)(int64_t)-EINTR;
+                goto poll_done;
+            }
+            ready = 0;
+            int has_stdin = !uart_ringbuf_empty();
+            if (pfds && nfds > 0) {
+                for (uint64_t pi = 0; pi < nfds; pi++) {
+                    pfds[pi].revents = 0;
+                    short ev = pfds[pi].events;
+                    if (pfds[pi].fd < 0) continue;
+                    if (pfds[pi].fd == 0) {
+                        if (has_stdin) pfds[pi].revents = ev & 0x01; /* POLLIN */
+                    } else {
+                        /* 其他 fd ：读写始终就绪 */
+                        pfds[pi].revents = ev & 0x05; /* POLLIN|POLLOUT */
+                    }
                     if (pfds[pi].revents) ready++;
                 }
             }
+            if (ready > 0 || timeout_ms == 0) { regs[0] = (uint64_t)ready; goto poll_done; }
+            if (timeout_ms > 0 && kernel_get_ns() >= deadline_ns) {
+                regs[0] = 0; goto poll_done;
+            }
+            task_yield();
         }
-        regs[0] = (uint64_t)ready;
+poll_done:
+        break;
+    }
+
+    case X86_SYS_SELECT:
+    case LINUX_SYS_PSELECT6: {
+        /*
+         * select(nfds, rfds, wfds, efds, timeval*)             —— X86_SYS_SELECT
+         * pselect6(nfds, rfds, wfds, efds, timespec*, sigmask) —— LINUX_SYS_PSELECT6
+         *
+         * fd_set 是 bitmap，每位 1 个 fd。设 stdin(fd=0) 仅在 UART 非空时可读，
+         * 其他 fd 始终可读/可写。支持阐塞、超时与信号中断。
+         */
+        int            nfds      = (int)regs[0];
+        unsigned long *rfds      = (unsigned long *)regs[1];
+        unsigned long *wfds      = (unsigned long *)regs[2];
+        unsigned long *efds      = (unsigned long *)regs[3];
+        int64_t        timeout_ms;
+        if (syscall_num == X86_SYS_SELECT) {
+            /* select 用 struct timeval { long tv_sec; long tv_usec; } */
+            struct { int64_t tv_sec; int64_t tv_usec; } *tv = (void *)regs[4];
+            if (!tv)          timeout_ms = -1;
+            else if (tv->tv_sec == 0 && tv->tv_usec == 0) timeout_ms = 0;
+            else              timeout_ms = tv->tv_sec * 1000 + tv->tv_usec / 1000;
+        } else {
+            struct kernel_timespec *ts = (struct kernel_timespec *)regs[4];
+            if (!ts)          timeout_ms = -1;
+            else if (ts->tv_sec == 0 && ts->tv_nsec == 0) timeout_ms = 0;
+            else              timeout_ms = ts->tv_sec * 1000 + ts->tv_nsec / 1000000;
+        }
+        if (nfds < 0) nfds = 0;
+        if (nfds > 1024) nfds = 1024;
+        int nwords = (nfds + 63) / 64;
+
+        /* 备份原始 fd_set，回圈重复使用 */
+        unsigned long r_in[16] = {0}, w_in[16] = {0}, e_in[16] = {0};
+        if (rfds) for (int i = 0; i < nwords; i++) r_in[i] = rfds[i];
+        if (wfds) for (int i = 0; i < nwords; i++) w_in[i] = wfds[i];
+        if (efds) for (int i = 0; i < nwords; i++) e_in[i] = efds[i];
+
+        uint64_t deadline_ns = 0;
+        if (timeout_ms > 0)
+            deadline_ns = kernel_get_ns() + (uint64_t)timeout_ms * 1000000ULL;
+
+        int ready = 0;
+        for (;;) {
+            signal_check_uart();
+            if (current && (current->pending_sigs & ~current->blocked_sigs)) {
+                regs[0] = (uint64_t)(int64_t)-EINTR;
+                goto select_done;
+            }
+            ready = 0;
+            int has_stdin = !uart_ringbuf_empty();
+            /* 清零输出位图，再根据 readiness 设置 */
+            if (rfds) for (int i = 0; i < nwords; i++) rfds[i] = 0;
+            if (wfds) for (int i = 0; i < nwords; i++) wfds[i] = 0;
+            if (efds) for (int i = 0; i < nwords; i++) efds[i] = 0;
+            for (int fd = 0; fd < nfds; fd++) {
+                int w = fd >> 6, b = fd & 63;
+                unsigned long mask = 1UL << b;
+                if (r_in[w] & mask) {
+                    int rdy = (fd == 0) ? has_stdin : 1;
+                    if (rdy) { if (rfds) rfds[w] |= mask; ready++; }
+                }
+                if (w_in[w] & mask) {
+                    if (wfds) wfds[w] |= mask; ready++; /* writers always ready */
+                }
+                /* exceptfds: 永不报异常 */
+                (void)e_in; (void)efds;
+            }
+            if (ready > 0 || timeout_ms == 0) { regs[0] = (uint64_t)ready; goto select_done; }
+            if (timeout_ms > 0 && kernel_get_ns() >= deadline_ns) {
+                regs[0] = 0; goto select_done;
+            }
+            task_yield();
+        }
+select_done:
         break;
     }
 

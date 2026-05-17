@@ -113,15 +113,26 @@ static int zero_read(int nid, uint64_t off, void *buf, size_t len)
 }
 
 /* /dev/tty, /dev/console */
+extern int tty_getchar_nb(char *c);  /* syscall.c: drain UART + pop ring buf */
+extern int termios_is_raw(void);     /* syscall.c: g_termios ICANON check */
+extern int termios_do_icrnl(void);   /* syscall.c: g_termios ICRNL check */
+
 static int tty_read(int nid, uint64_t off, void *buf, size_t len)
 {
     (void)nid; (void)off;
+    int raw   = termios_is_raw();
+    int do_cr = termios_do_icrnl();
     char  *dst = (char *)buf;
     size_t n   = 0;
     while (n < len) {
-        dst[n] = uart_getc();
-        if (dst[n] == '\r') dst[n] = '\n';
-        if (dst[n++] == '\n') break;
+        char c;
+        if (tty_getchar_nb(&c)) {
+            if (do_cr && c == '\r') c = '\n';
+            dst[n++] = c;
+            if (raw || c == '\n') break; /* raw: 单字符; canonical: 换行截止 */
+        } else {
+            task_yield();
+        }
     }
     return (int)n;
 }

@@ -54,7 +54,7 @@ BUSYBOX_SRC="apps/busybox-${ARCH}"
 if [ -f "$BUSYBOX_SRC" ]; then
     cp "$BUSYBOX_SRC" "$STAGE_DIR/busybox"
     chmod +x "$STAGE_DIR/busybox"
-    for applet in sh ls cat echo pwd mkdir rm cp mv grep find ps kill; do
+    for applet in sh ls cat echo pwd mkdir rm cp mv grep find ps kill vi more less head tail wc sleep date stty clear; do
         cp "$BUSYBOX_SRC" "$STAGE_DIR/bin/$applet"
         chmod +x "$STAGE_DIR/bin/$applet"
     done
