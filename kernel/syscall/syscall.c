@@ -2007,6 +2007,15 @@ void syscall_handler(trap_frame_t *frame)
         break;
     }
 
+    /* membarrier (283 on riscv64/aarch64, 324 on x86_64):
+     * musl calls MEMBARRIER_CMD_REGISTER_PRIVATE_EXPEDITED at pthread_create.
+     * We run on a simple uniprocessor kernel with coherent shared memory,
+     * so just acknowledge without doing anything. */
+    case 283:   /* riscv64 / aarch64 __NR_membarrier */
+    case 324:   /* x86_64  __NR_membarrier */
+        regs[0] = 0;
+        break;
+
     default:
         KLOG_ERROR("[syscall] Unknown syscall: %llu\n", syscall_num);
         regs[0] = (uint64_t)(int64_t)-ENOSYS;
