@@ -18,6 +18,7 @@ mutex_init(mutex_t *mutex)
     mutex->locked = false;
     list_init(&mutex->wait_queue);
     mutex->holder = NULL;
+    mutex->count  = 0;
 }
 
 /* ── mutex_lock ──────────────────────────────────────────── */
@@ -37,22 +38,18 @@ mutex_lock(mutex_t *mutex)
     /* 关中断，保护临界区 */
     uint64_t flags = arch_irq_save();
 
+    /* 可重入：同一任务再次加锁，直接递增计数 */
+    if (mutex->holder == cur) {
+        mutex->count++;
+        arch_irq_restore(flags);
+        return;
+    }
+
     /* 如果锁已被持有，进入等待队列 */
     while (mutex->locked) {
         barrier_compiler();  // 防止编译器重排，确保每次都重新读取 mutex->locked
 
-        /* 检测死锁：同一任务重复获取 */
-        if (mutex->holder == cur) {
-            KLOG_ERROR("[mutex] DEADLOCK: task '%s' (id=%u) trying to re-acquire mutex!\n",
-                      cur->name, cur->id);
-            arch_irq_restore(flags);
-            /* 死锁，死循环 */
-            while (1) {
-                task_yield();
-            }
-        }
-
-        /* 加入等待队列并阻塞 */
+        /* 等待队列中的任务不是持有者，正常排队等待 */
         KLOG_DEBUG("[mutex] task '%s' (id=%u) waiting for mutex\n",
                   cur->name, cur->id);
 
@@ -67,8 +64,9 @@ mutex_lock(mutex_t *mutex)
 
     /* 获取锁 */
     mutex->locked = true;
-    barrier_compiler();  // 编译器屏障，确保操作顺序
+    barrier_compiler();
     mutex->holder = cur;
+    mutex->count  = 1;  /* 首次持有，计数为 1 */
 
     arch_irq_restore(flags);
 
@@ -94,6 +92,12 @@ mutex_unlock(mutex_t *mutex)
         return;
     }
 
+    /* 可重入：计数仍大于 1，只递减，不真正释放 */
+    if (--mutex->count > 0) {
+        arch_irq_restore(flags);
+        return;
+    }
+
     // KLOG_DEBUG("[mutex] task '%s' (id=%u) releasing mutex\n",
     //           cur->name, cur->id);
 
@@ -107,9 +111,9 @@ mutex_unlock(mutex_t *mutex)
                   waiter->name, waiter->id);
     }
 
-    /* 释放锁（现在可以安全释放了，wait_queue 已操作完毕） */
+    /* 释放锁 */
     mutex->holder = NULL;
-    barrier_compiler();  // 编译器屏障，确保操作顺序
+    barrier_compiler();
     mutex->locked = false;
 
     /* 恢复中断 */
@@ -136,10 +140,15 @@ mutex_trylock(mutex_t *mutex)
     if (!mutex->locked) {
         mutex->locked = true;
         mutex->holder = cur;
+        mutex->count  = 1;
         success = true;
 
         KLOG_DEBUG("[mutex] task '%s' (id=%u) trylock succeeded\n",
                   cur->name, cur->id);
+    } else if (mutex->holder == cur) {
+        /* 可重入：已是持有者，递增计数 */
+        mutex->count++;
+        success = true;
     } else {
         success = false;
 

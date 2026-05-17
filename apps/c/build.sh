@@ -1,6 +1,7 @@
 #!/bin/bash
 # apps/c/build.sh
-# 将 pthread_test.c 交叉编译为三个架构并打包进 imgs/*.img
+# 将 apps/c/pthread/test.c 和 apps/c/mutex/test.c 交叉编译为三个架构
+# 并打包进 imgs/*.img
 #
 # 用法:  cd avatar && bash apps/c/build.sh
 #        或者加 -v 显示详细编译命令
@@ -9,7 +10,6 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
-SRC="$SCRIPT_DIR/pthread_test.c"
 COMPILER_BASE="$HOME/SoftWare/compiler"
 
 VERBOSE=0
@@ -19,20 +19,23 @@ info()  { printf '\033[1;34m[info]\033[0m  %s\n' "$*"; }
 ok()    { printf '\033[1;32m[ ok ]\033[0m  %s\n' "$*"; }
 err()   { printf '\033[1;31m[err ]\033[0m  %s\n' "$*" >&2; }
 
-# ── 编译单个架构 ──────────────────────────────────────────────────────
-build_arch() {
+# ── 编译单个程序到指定架构 ────────────────────────────────────────────
+#   build_prog <arch> <cc_prefix> <ld_interp> <src_file> <bin_name>
+build_prog() {
     local arch="$1"
     local cc_prefix="$2"
     local ld_interp="$3"
+    local src="$4"
+    local bin_name="$5"
 
     local sysroot="$COMPILER_BASE/${cc_prefix}-cross/${cc_prefix}"
     local cc="${cc_prefix}-gcc"
-    local out_bin="$SCRIPT_DIR/pthread_test-${arch}"
     local staging="$ROOT_DIR/apps/${arch}/rootfs"
+    local bin_dir="$staging/bin"
+    local out_bin="$SCRIPT_DIR/${bin_name}-${arch}"
 
-    info "[$arch] 编译 pthread_test ..."
+    info "[$arch] 编译 $bin_name ..."
 
-    # 检查编译器
     if ! command -v "$cc" &>/dev/null; then
         err "[$arch] 找不到编译器 $cc，跳过"
         return 1
@@ -49,25 +52,18 @@ build_arch() {
     )
 
     if [[ $VERBOSE -eq 1 ]]; then
-        echo "  $cc ${cflags[*]} $SRC -o $out_bin"
+        echo "  $cc ${cflags[*]} $src -o $out_bin"
     fi
 
-    if ! "$cc" "${cflags[@]}" "$SRC" -o "$out_bin"; then
-        err "[$arch] 编译失败"
+    if ! "$cc" "${cflags[@]}" "$src" -o "$out_bin"; then
+        err "[$arch] $bin_name 编译失败"
         return 1
     fi
 
-    # 验证动态解释器路径
-    local interp
-    interp=$(readelf -l "$out_bin" 2>/dev/null | awk '/Requesting program interpreter/{print $NF}' | tr -d ']')
-    info "[$arch] 解释器: $interp"
-
-    # 安装到 staging rootfs
-    local bin_dir="$staging/bin"
     mkdir -p "$bin_dir"
-    cp "$out_bin" "$bin_dir/pthread_test"
-    chmod 755 "$bin_dir/pthread_test"
-    ok "[$arch] 已安装 → $bin_dir/pthread_test"
+    cp "$out_bin" "$bin_dir/$bin_name"
+    chmod 755 "$bin_dir/$bin_name"
+    ok "[$arch] 已安装 → $bin_dir/$bin_name"
 }
 
 # ── 重建 ext4 镜像 ────────────────────────────────────────────────────
@@ -83,26 +79,20 @@ rebuild_img() {
         return 1
     fi
 
-    # 创建 64 MB 空白镜像
     dd if=/dev/zero of="$img" bs=1M count=64 status=none
-
-    # 从 staging 目录构建 ext4
-    # -b 1024: 1K block size（与原镜像一致）
-    # -L avatarfs: 卷标
     mkfs.ext4 -q -b 1024 -L "avatarfs" -d "$staging" "$img" 2>/dev/null
     ok "[$arch] 镜像重建完成: $img ($(du -h "$img" | cut -f1))"
 }
 
 # ── 主流程 ───────────────────────────────────────────────────────────
 main() {
-    info "源文件: $SRC"
-    info "输出目录: $SCRIPT_DIR"
+    info "apps/c/pthread/test.c  → /bin/pthread_test"
+    info "apps/c/mutex/test.c    → /bin/mutex_test"
     echo
 
     local ok_count=0
     local fail_count=0
 
-    # arch  cc_prefix              ld_interp
     declare -A LD_INTERP=(
         [aarch64]="ld-musl-aarch64.so.1"
         [riscv64]="ld-musl-riscv64.so.1"
@@ -116,14 +106,16 @@ main() {
 
     for arch in aarch64 riscv64 x86_64; do
         echo "──────────────────────────────────────────"
-        if build_arch "$arch" "${CC_PREFIX[$arch]}" "${LD_INTERP[$arch]}"; then
-            ((ok_count++)) || true
-        else
-            ((fail_count++)) || true
-            continue
-        fi
-        if rebuild_img "$arch"; then
-            : # success
+        local arch_ok=1
+
+        build_prog "$arch" "${CC_PREFIX[$arch]}" "${LD_INTERP[$arch]}" \
+            "$SCRIPT_DIR/pthread/test.c" "pthread_test" || arch_ok=0
+
+        build_prog "$arch" "${CC_PREFIX[$arch]}" "${LD_INTERP[$arch]}" \
+            "$SCRIPT_DIR/mutex/test.c" "mutex_test" || arch_ok=0
+
+        if [[ $arch_ok -eq 1 ]]; then
+            rebuild_img "$arch" && ((ok_count++)) || true
         else
             ((fail_count++)) || true
         fi
@@ -140,3 +132,4 @@ main() {
 }
 
 main "$@"
+

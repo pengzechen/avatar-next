@@ -7,7 +7,7 @@
  * 实现：
  *  - 基于任务阻塞的睡眠锁
  *  - FIFO 等待队列（先等待先获取）
- *  - 不可重入（同一任务重复获取会死锁）
+ *  - 可重入（同一任务重复获取递增计数，对应次数 unlock 才真正释放）
  *  - 支持超时（可选）
  */
 
@@ -22,7 +22,8 @@ typedef struct task task_t;
 typedef struct mutex {
     volatile bool    locked;      /* 锁状态：true = 已锁定          */
     list_t           wait_queue;  /* 等待队列（FIFO）               */
-    task_t          *holder;      /* 当前持有锁的任务（用于调试）   */
+    task_t          *holder;      /* 当前持有锁的任务               */
+    uint32_t         count;       /* 重入计数（1 = 首次持有）        */
 } mutex_t;
 
 /* ── Mutex API ───────────────────────────────────────────── */
@@ -42,7 +43,7 @@ void mutex_init(mutex_t *mutex);
  * 如果锁已被其他任务持有，当前任务会进入睡眠等待。
  * 当锁可用时，任务被唤醒并获取锁。
  *
- * 注意：不可重入，同一任务重复获取会死锁。
+ * 可重入：同一任务重复调用会递增内部计数，需对应次数 unlock 才真正释放。
  */
 void mutex_lock(mutex_t *mutex);
 

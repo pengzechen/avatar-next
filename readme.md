@@ -104,6 +104,9 @@ make ARCH=riscv64 test-pthread LOG=warn    # QEMU 启动后执行 /bin/pthread_t
 make ARCH=aarch64 test-pthread LOG=warn
 make ARCH=x86_64  test-pthread LOG=warn
 
+# mutex 测试（用户态 futex 自实现 umutex_t + rmutex_t）
+make ARCH=riscv64 test-mutex LOG=warn      # QEMU 启动后执行 /bin/mutex_test
+
 # VMM 三线程上下文切换测试（无需 rootfs）
 make ARCH=aarch64 test-vmm LOG=info
 make ARCH=riscv64 test-vmm LOG=info

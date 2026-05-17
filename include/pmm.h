@@ -3,7 +3,7 @@
 
 #include "types.h"
 #include "bitmap.h"
-#include "task/mutex.h"
+#include "spinlock.h"
 #include "platform_cfg.h"
 
 
@@ -25,7 +25,7 @@
 /* ── 物理内存管理器结构 ───────────────────────────────────────────── */
 
 typedef struct {
-    mutex_t  mutex;        /* 互斥锁                      */
+    spinlock_t lock;       /* 自旋锁（任务初始化前可用）  */
     bitmap_t bitmap;       /* 页面分配位图                */
     uint64_t start_addr;   /* 物理内存起始地址            */
     uint64_t total_size;   /* 总内存大小                  */

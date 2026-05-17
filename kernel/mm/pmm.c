@@ -50,8 +50,8 @@ void pmm_init(pmm_t *pmm,
     bitmap_init(&pmm->bitmap, bitmap_buffer, bitmap_size * 8);
     assert(pmm->bitmap.size >= pmm->total_pages);
 
-    /* 初始化互斥锁 */
-    mutex_init(&pmm->mutex);
+    /* 初始化自旋锁 */
+    spinlock_init(&pmm->lock);
 
     KLOG_INFO("PMM initialized:\n");
     KLOG_INFO("  start_addr  = 0x%llx\n", start_addr);
@@ -79,7 +79,7 @@ uint64_t pmm_alloc_pages(pmm_t *pmm, uint32_t page_count)
 
     uint64_t paddr = 0;
 
-    mutex_lock(&pmm->mutex);
+    spin_lock(&pmm->lock);
 
     /* 查找连续的空闲页面 */
     size_t page_index = bitmap_find_contiguous_free(&pmm->bitmap, page_count);
@@ -99,7 +99,7 @@ uint64_t pmm_alloc_pages(pmm_t *pmm, uint32_t page_count)
         KLOG_ERROR("PMM: failed to allocate %u pages\n", page_count);
     }
 
-    mutex_unlock(&pmm->mutex);
+    spin_unlock(&pmm->lock);
 
     return paddr;
 }
@@ -128,7 +128,7 @@ void pmm_free_pages(pmm_t *pmm, uint64_t paddr, uint32_t page_count)
         return;
     }
 
-    mutex_lock(&pmm->mutex);
+    spin_lock(&pmm->lock);
 
     /* 计算页面索引 */
     uint64_t page_index = (paddr - pmm->start_addr) / pmm->page_size;
@@ -160,7 +160,7 @@ void pmm_free_pages(pmm_t *pmm, uint64_t paddr, uint32_t page_count)
                    paddr, page_count);
     }
 
-    mutex_unlock(&pmm->mutex);
+    spin_unlock(&pmm->lock);
 }
 
 /* ── 内存标记 ───────────────────────────────────────────────────── */
@@ -196,7 +196,7 @@ void pmm_mark_allocated(pmm_t *pmm, uint64_t start_addr, uint64_t end_addr)
               start_page, end_page, end_page - start_page + 1);
 
     /* 先锁定，读取 free_pages */
-    mutex_lock(&pmm->mutex);
+    spin_lock(&pmm->lock);
     free_before = pmm->free_pages;
 
     /* 遍历所有页，仅在 0->1 转换时更新 free_pages，保持计数与位图一致 */
@@ -209,7 +209,7 @@ void pmm_mark_allocated(pmm_t *pmm, uint64_t start_addr, uint64_t end_addr)
     }
 
     free_after = pmm->free_pages;
-    mutex_unlock(&pmm->mutex);
+    spin_unlock(&pmm->lock);
 
     /* 在锁外输出日志 */
     KLOG_INFO("  newly_marked: %llu pages, free_pages before: %llu, after: %llu\n",

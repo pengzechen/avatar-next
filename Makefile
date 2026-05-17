@@ -593,7 +593,7 @@ ROOTFS_STAGE     := $(BUILD_DIR)/rootfs-stage-$(ARCH)
 # ROOTFS_SIZE_MB / ROOTFS_PHYS_ADDR 来自自动生成的 $(MEM_LAYOUT_MK)
 
 # 目标
-.PHONY: all clean help klog kernel run rootfs run-fs test-pthread test-vmm
+.PHONY: all clean help klog kernel run rootfs run-fs test-pthread test-mutex test-vmm
 
 all: $(TARGET) klog
 
@@ -1034,6 +1034,22 @@ test-pthread: kernel
 	$(QEMU) $(QEMU_FLAGS) \
 		-device loader,file=$(ROOTFS_IMG),addr=$(ROOTFS_PHYS_ADDR),force-raw=on
 
+# test-mutex: 一键跑 mutex_test（使用同一动态链接 rootfs）
+#   用法: make ARCH=riscv64 test-mutex LOG=warn
+#
+test-mutex: kernel
+	@if [ ! -f imgs/rootfs-$(ARCH).img ]; then \
+		echo "ERROR: imgs/rootfs-$(ARCH).img not found."; \
+		echo "Run: bash apps/c/build.sh"; \
+		exit 1; \
+	fi
+	@echo "Copying imgs/rootfs-$(ARCH).img → $(ROOTFS_IMG)"
+	@cp imgs/rootfs-$(ARCH).img $(ROOTFS_IMG)
+	@echo "Starting QEMU for $(ARCH) with mutex_test rootfs..."
+	@echo "In QEMU shell: /bin/mutex_test"
+	$(QEMU) $(QEMU_FLAGS) \
+		-device loader,file=$(ROOTFS_IMG),addr=$(ROOTFS_PHYS_ADDR),force-raw=on
+
 # test-vmm: 编译 VMM_TEST=1 内核并运行三线程切换测试（不需要 rootfs）
 #   用法: make ARCH=aarch64 test-vmm LOG=info
 #
@@ -1081,6 +1097,7 @@ help:
 	@echo "  run           Build and run kernel in QEMU (no rootfs)"
 	@echo "  run-fs        Build and run kernel with rootfs (busybox shell)"
 	@echo "  test-pthread  Copy dynamic rootfs from imgs/ and run pthread_test"
+	@echo "  test-mutex    Copy dynamic rootfs from imgs/ and run mutex_test (futex-based)"
 	@echo "  test-vmm      Build with VMM_TEST=1 and run VMM 3-thread switch test"
 	@echo "  clean         Remove build artifacts"
 	@echo "  help          Show this help message"

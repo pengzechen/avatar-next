@@ -14,6 +14,9 @@ make ARCH=aarch64 run-fs LOG=warn
 bash apps/c/build.sh                     # 首次：编译动态链接 rootfs（三架构）
 make ARCH=riscv64 test-pthread LOG=warn  # QEMU 启动后运行 /bin/pthread_test
 
+# mutex 测试（用户态 futex 自实现 mutex，含可重入 rmutex）
+make ARCH=riscv64 test-mutex LOG=warn    # QEMU 启动后运行 /bin/mutex_test
+
 # VMM 三线程上下文切换测试
 make ARCH=aarch64 test-vmm LOG=info
 
@@ -258,7 +261,8 @@ bin_loader_load_from_file("/test_exec", NULL, NULL);
 
 | 程序 | 源文件 | 测试内容 |
 |------|--------|----------|
-| `pthread_test` | `apps/c/pthread_test.c` | pthread mutex、条件变量、无锁竞争演示 |
+| `pthread_test` | `apps/c/pthread/test.c` | pthread mutex、条件变量、无锁竞争演示 |
+| `mutex_test` | `apps/c/mutex/test.c` | futex 自实现 `umutex_t`（不可重入）+ `rmutex_t`（可重入）|
 | `busybox` | 预编译 `apps/busybox-<arch>` | 交互 shell、文件系统操作 |
 
 **编译流程（一次性）**：
@@ -277,26 +281,26 @@ QEMU 启动后在 busybox shell 执行：
 
 ```sh
 /bin/pthread_test
+/bin/mutex_test
 ```
 
 **如何添加新 C 用户程序**：
 
-1. 在 `apps/c/` 下添加 `foo.c`（使用标准 `pthread.h`、`unistd.h` 等 musl 头文件）
-2. 在 `apps/c/build.sh` 里按现有模式添加编译命令：
+1. 在 `apps/c/<name>/` 下创建 `test.c`（使用标准 musl 头文件）
+2. 在 `apps/c/build.sh` 的 `main()` 中添加 `build_prog` 调用：
 
 ```bash
-# apps/c/build.sh 中添加（以 aarch64 为例）
-aarch64-linux-musl-gcc -O1 -pthread \
-    -Wl,-dynamic-linker,"/lib/ld-musl-aarch64.so.1" \
-    apps/c/foo.c -o apps/aarch64/rootfs/bin/foo
+# apps/c/build.sh main() 中添加
+build_prog "$arch" "${CC_PREFIX[$arch]}" "${LD_INTERP[$arch]}" \
+    "$SCRIPT_DIR/foo/test.c" "foo_test" || arch_ok=0
 ```
 
-3. 重新运行 `bash apps/c/build.sh` 重建 `imgs/rootfs-<arch>.img`
-4. `make ARCH=aarch64 test-pthread` 后在 shell 中运行 `/bin/foo`
+3. 重新运行 `bash apps/c/build.sh` 重建三架构 `imgs/rootfs-<arch>.img`
+4. `make ARCH=aarch64 test-pthread` 后在 shell 中运行 `/bin/foo_test`
 
 ---
 
-## 四、用户态 pthread 测试（`apps/c/pthread_test.c`）详解
+## 四、用户态 pthread 测试（`apps/c/pthread/test.c`）详解
 
 pthread_test 包含 6 个测试（Test 0–5），覆盖从竞争态演示到完整多线程同步：
 
@@ -323,6 +327,43 @@ ALL TESTS PASSED
 ```
 
 ---
+
+## 四-B、用户态 mutex 测试（`apps/c/mutex/test.c`）详解
+
+展示如何用内核的 `futex` syscall 从零实现 mutex，这正是 `pthread_mutex` 的底层机制。
+
+### umutex_t — 不可重入 futex mutex
+
+三态状态机：
+
+| `state` | 含义 |
+|---------|------|
+| 0 | 未锁定 |
+| 1 | 已锁定，无等待者（fast path）|
+| 2 | 已锁定，有等待者（需要 wake）|
+
+- **lock**：CAS(0→1) 快速路径；失败则 CAS(→2) 后 `FUTEX_WAIT(2)` 睡眠
+- **unlock**：`fetch_sub(1)` → 若原值为 1 说明无等待者直接返回；否则 `store(0)` + `FUTEX_WAKE(1)`
+
+### rmutex_t — 可重入（递归）mutex
+
+在 `umutex_t` 基础上增加 `owner`（`pthread_self()` 转 `size_t`）和 `count` 字段：
+
+- **lock**：`owner == self` 则 `count++` 直接返回；否则获取底层 `umutex_t`，设 `owner = self`，`count = 1`
+- **unlock**：`--count > 0` 则直接返回；否则清零 `owner` 后释放底层锁
+
+### 测试项
+
+| 测试 | 内容 | 验证点 |
+|------|------|--------|
+| Test 0 | 无锁竞争演示 | 同 pthread_test，证明竞争真实发生 |
+| Test 1 | umutex 基础单线程 lock/unlock/trylock | 状态值正确 |
+| Test 2 | umutex 多线程计数器（4线程 × 20000 次）| `actual == expected` |
+| Test 3 | rmutex 单线程递归加锁 3 次，解锁 3 次 | count 变化 + 锁状态正确 |
+| Test 4 | rmutex 多线程 + 递归深度 2 | `actual == expected` |
+| Test 5 | umutex trylock 竞争：acquired + failed == total | 计数完整性 |
+
+
 
 ## 五、VMM 三线程上下文切换测试（`tests/vmm_test.c`）详解
 
