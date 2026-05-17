@@ -1,0 +1,8 @@
+[toolchain]
+channel = "nightly"
+targets = [
+    "riscv64gc-unknown-none-elf",
+    "aarch64-unknown-none-softfloat",
+    "x86_64-unknown-none",
+]
+components = ["rust-src", "llvm-tools-preview"]

@@ -123,6 +123,23 @@ def parse_lua_platform(path):
     conf['DEV_CNTP_TIMER']         = _find_num(timer, 'cntp',       '0')
     conf['DEV_TIMER_COUNTER_HZ']   = _find_num(timer, 'counter_hz', '0')
 
+    # eth 块
+    eth = _extract_block(text, 'eth')
+    conf['DEV_ETH_TYPE'] = _find_str(eth, 'driver')
+    conf['DEV_ETH_BASE'] = _find_num(eth, 'base', '0')
+
+    # tpu 块
+    tpu = _extract_block(text, 'tpu')
+    conf['DEV_TPU_TYPE'] = _find_str(tpu, 'driver')
+
+    # sdmmc 块
+    sdmmc = _extract_block(text, 'sdmmc')
+    conf['DEV_SDMMC_TYPE'] = _find_str(sdmmc, 'driver')
+
+    # npu 块
+    npu = _extract_block(text, 'npu')
+    conf['DEV_NPU_TYPE'] = _find_str(npu, 'driver')
+
     return conf
 
 
@@ -192,6 +209,11 @@ def write_platform_mk(conf, path):
         f.write(f"DEV_DEFAULT_UART    := {uart_type}\n")
         f.write(f"DEV_DEFAULT_GIC     := {gic_def}\n")
         f.write(f"DEV_NEED_LAPIC      := {need_lapic}\n")
+        f.write(f"DEV_ETH_TYPE        := {conf.get('DEV_ETH_TYPE', '')}\n")
+        f.write(f"DEV_ETH_BASE        := {conf.get('DEV_ETH_BASE', '0')}\n")
+        f.write(f"DEV_TPU_TYPE        := {conf.get('DEV_TPU_TYPE', '')}\n")
+        f.write(f"DEV_SDMMC_TYPE      := {conf.get('DEV_SDMMC_TYPE', '')}\n")
+        f.write(f"DEV_NPU_TYPE        := {conf.get('DEV_NPU_TYPE', '')}\n")
 
 
 # ─── 生成 include/mem_layout.h ───────────────────────────────────────────────

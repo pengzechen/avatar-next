@@ -1,0 +1,10 @@
+[workspace]
+members = [
+    "kernel_support",
+    "avatar_eth",
+]
+resolver = "2"
+
+[workspace.dependencies]
+log = { version = "0.4", default-features = false }
+tock-registers = "0.9"

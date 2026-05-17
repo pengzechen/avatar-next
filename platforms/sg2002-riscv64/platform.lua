@@ -49,12 +49,19 @@ platform = {
     },
 
     tpu = {
+        driver    = "cvitpu",
         tdma_base = 0x0C100000,
         tiu_base  = 0x0C101000,  -- TIU sub-block, offset 0x1000 within TDMA MMIO
         tdma_irq  = 73,
     },
 
+    eth = {
+        driver = "cvitek",       -- DWMAC 3.70a + internal EPHY
+        base   = 0x04070000,
+    },
+
     sdmmc = {
+        driver             = "sg2002",
         sd_base            = 0x04310000,   -- SDIO0 SDHCI 控制器基址
         top_base           = 0x03000000,   -- TOP 系统控制模块基址
         top_off_pwrsw_ctrl = 0x1F4,        -- sd_pwrsw_ctrl 寄存器偏移

@@ -438,7 +438,7 @@ endif
 
 # NPU 驱动选择
 # 用法：make PLATFORM=rk3588-aarch64 NPU=rknpu kernel
-NPU ?= none
+NPU ?= $(DEV_NPU_TYPE)
 ifeq ($(NPU),rknpu)
     DRIVER_NPU_SRCS := driver/npu/rknpu.c driver/npu/rkpm.c
     CFLAGS          += -DDRIVER_NPU_RKNPU=1
@@ -448,7 +448,7 @@ else
     DRIVER_NPU_OBJS :=
 endif
 
-TPU ?= none
+TPU ?= $(DEV_TPU_TYPE)
 ifeq ($(TPU),cvitpu)
     DRIVER_TPU_SRCS := driver/tpu/cvi_tpu.c
     CFLAGS          += -DDRIVER_TPU_CVITPU=1
@@ -456,6 +456,20 @@ ifeq ($(TPU),cvitpu)
 else
     DRIVER_TPU_SRCS :=
     DRIVER_TPU_OBJS :=
+endif
+
+# 以太网驱动（由 platform.lua 的 eth.driver 自动推导；也可命令行覆盖：ETH=none / ETH=cvitek）
+ETH ?= $(DEV_ETH_TYPE)
+ifeq ($(ETH),cvitek)
+    ifneq ($(ARCH),riscv64)
+        $(error ETH=cvitek 目前仅支持 ARCH=riscv64)
+    endif
+    CFLAGS          += -DDRIVER_ETH_CVITEK=1
+    DRIVER_ETH_OBJS := $(BUILD_DIR)/rust_glue.o $(BUILD_DIR)/libavatar_eth.a
+    _RUST_TARGET    := riscv64gc-unknown-none-elf
+    _RUST_DIR       := rust
+else
+    DRIVER_ETH_OBJS :=
 endif
 
 # 覆盖后重新组装驱动对象列表
@@ -479,6 +493,9 @@ endif
 ifneq ($(strip $(DRIVER_TPU_OBJS)),)
 	DRIVER_OBJECTS += $(DRIVER_TPU_OBJS)
 endif
+ifneq ($(strip $(DRIVER_ETH_OBJS)),)
+	DRIVER_OBJECTS += $(DRIVER_ETH_OBJS)
+endif
 
 # Ion 内存分配器（当 TPU=cvitpu 时自动启用；也可独立启用 ION=1）
 ION ?= $(if $(filter cvitpu,$(TPU)),1,0)
@@ -488,9 +505,8 @@ ifeq ($(ION),1)
     DRIVER_OBJECTS   += $(DRIVER_ION_OBJS)
 endif
 
-# SDMMC 块设备驱动（用法：make PLATFORM=sg2002-riscv64 SDMMC=sg2002 kernel）
-# 平台硬件地址由 platforms/<platform>/platform.lua 的 sdmmc 表提供
-SDMMC ?= none
+# SDMMC 块设备驱动（由 platform.lua 的 sdmmc.driver 自动推导；也可命令行覆盖）
+SDMMC ?= $(DEV_SDMMC_TYPE)
 ifeq ($(SDMMC),sg2002)
     CFLAGS              += -DDRIVER_SDBLK_SG2002=1
     DRIVER_OBJECTS      += $(BUILD_DIR)/drv_blk_sdblk.o
@@ -815,6 +831,15 @@ $(BUILD_DIR)/bitmap.o: $(LIB_DIR)/bitmap.c | $(BUILD_DIR)
 
 $(BUILD_DIR)/platform_cfg.o: $(LIB_DIR)/platform_cfg.c | $(BUILD_DIR)
 	$(CC) $(LUA_CFLAGS) -c $< -o $@
+
+# Rust FFI 胶水层（kernel_alloc/kernel_free 包装器，仅 ETH=cvitek 时编译）
+$(BUILD_DIR)/rust_glue.o: $(LIB_DIR)/rust_glue.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# Rust 静态库（仅 ETH=cvitek 时构建）
+$(BUILD_DIR)/libavatar_eth.a: | $(BUILD_DIR)
+	cd $(_RUST_DIR) && cargo build --release --target $(_RUST_TARGET)
+	cp $(_RUST_DIR)/target/$(_RUST_TARGET)/release/libavatar_eth.a $@
 
 $(BUILD_DIR)/kernel_mm_mmu.o: $(VM_S_SRC) | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@

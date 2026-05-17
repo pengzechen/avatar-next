@@ -49,6 +49,7 @@ platform = {
 
     -- NPU 扩展字段（由 rknpu 驱动通过 platform_get_uintptr 读取）
     npu = {
+        driver = "rknpu",
         base0 = 0xFDAB0000,
         base1 = 0xFDAC0000,
         base2 = 0xFDAD0000,
