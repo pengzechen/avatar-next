@@ -1189,8 +1189,29 @@ void syscall_handler(trap_frame_t *frame)
                 }
                 child->cwd[k] = '\0';
             }
-            for (uint32_t k = 0; k < TASK_MAX_FD; k++)
-                child->fd_table[k] = parent->fd_table[k];
+            /* 深拷贝 fd_table：fork 子进程获得独立的 pool slot，
+             * 避免一方 close 破坏另一方的 fd_obj。
+             * 线程路径（CLONE_VM）共享地址空间，fd 共享是正确的。 */
+            for (uint32_t k = 0; k < TASK_MAX_FD; k++) {
+                int pidx = (int)(int8_t)parent->fd_table[k];
+                if (pidx < 0 || pidx >= FD_POOL_SIZE) {
+                    child->fd_table[k] = -1;
+                    continue;
+                }
+                fd_obj_t *src = &g_fd_pool[pidx];
+                if (src->type == FDT_FREE) {
+                    child->fd_table[k] = -1;
+                    continue;
+                }
+                int new_idx = fd_pool_alloc();
+                if (new_idx < 0) {
+                    KLOG_ERROR("[clone/fork] fd pool full, fd=%u dropped\n", k);
+                    child->fd_table[k] = -1;
+                    continue;
+                }
+                g_fd_pool[new_idx] = *src;   /* 整个 fd_obj 结构体深拷贝 */
+                child->fd_table[k] = (int8_t)new_idx;
+            }
             {
                 int k = 0;
                 while (parent->name[k] && k < (int)TASK_NAME_LEN - 1) {
@@ -1482,8 +1503,10 @@ void syscall_handler(trap_frame_t *frame)
         if (sig == 0) { regs[0] = 0; break; }
 
         task_t *tgt = task_find_by_id((uint32_t)tid);
+        /* tgkill 的 tgid 是线程组 leader 的 PID，不是 pgid。
+         * 单线程进程: tgid == tid；线程: tgid == parent_id（leader）。 */
         if (!tgt ||
-            (tgid > 0 && tgt->pgid != (uint32_t)tgid && (uint32_t)tgid != tgt->id)) {
+            (tgid > 0 && (uint32_t)tgid != tgt->id && (uint32_t)tgid != tgt->parent_id)) {
             regs[0] = (uint64_t)(int64_t)-ESRCH;
             break;
         }
@@ -1579,10 +1602,24 @@ void syscall_handler(trap_frame_t *frame)
         struct kernel_iovec *iov = (struct kernel_iovec *)regs[1];
         int iovcnt = (int)regs[2];
         if (!iov || iovcnt <= 0) { regs[0] = 0; break; }
+        fd_obj_t *wv_obj = task_get_fd(task_current(), fd);
+        if (!wv_obj && fd != 0 && fd != 1 && fd != 2) {
+            regs[0] = (uint64_t)(int64_t)-EBADF;
+            break;
+        }
         uint64_t total = 0;
         for (int i = 0; i < iovcnt; i++) {
             if (!iov[i].iov_base || iov[i].iov_len == 0) continue;
-            if (fd == 1 || fd == 2 || fd == 0) {
+            if (wv_obj) {
+                if (wv_obj->type == FDT_PSEUDO) {
+                    pseudo_write(wv_obj->pseudo.node_id,
+                                 iov[i].iov_base, iov[i].iov_len);
+                } else if (wv_obj->type == FDT_FILE) {
+                    size_t wcnt = 0;
+                    ext4_fwrite(&wv_obj->file, iov[i].iov_base,
+                                iov[i].iov_len, &wcnt);
+                }
+            } else {
                 sys_write((const char *)iov[i].iov_base, iov[i].iov_len);
             }
             total += iov[i].iov_len;
@@ -1777,10 +1814,15 @@ void syscall_handler(trap_frame_t *frame)
 
     case LINUX_SYS_CLOSE: {
         int fd = (int)regs[0];
-        if (fd == 0 || fd == 1 || fd == 2) { regs[0] = 0; break; }
         task_t *me = task_current();
-        if (fd < 0 || fd >= (int)TASK_MAX_FD || me->fd_table[fd] == -1) {
+        if (fd < 0 || fd >= (int)TASK_MAX_FD) {
             regs[0] = (uint64_t)(int64_t)-EBADF;
+            break;
+        }
+        /* fd 0/1/2 默认是 UART（fd_table == -1），此时 close 直接成功。
+         * 若已被 dup3 重定向（fd_table >= 0），必须释放 pool slot。 */
+        if (me->fd_table[fd] == -1) {
+            regs[0] = 0;
             break;
         }
         int idx = me->fd_table[fd];
@@ -2336,9 +2378,17 @@ void syscall_handler(trap_frame_t *frame)
         char *buf = (char *)regs[0];
         uint64_t len = regs[1];
         if (buf) {
-            /* Minimal pseudo-random fill */
-            for (uint64_t i = 0; i < len; i++)
-                buf[i] = (char)(i ^ 0xA5);
+            /* LCG 伪随机，以启动时间戳为种子。不是密码学安全的，
+             * 但每次调用输出不同序列，满足 musl stack canary 等基本需求。 */
+            static uint64_t s_prng_state = 0;
+            if (s_prng_state == 0)
+                s_prng_state = kernel_get_ns() ^ 0x9e3779b97f4a7c15ULL;
+            for (uint64_t i = 0; i < len; i++) {
+                /* Knuth multiplicative LCG */
+                s_prng_state = s_prng_state * 6364136223846793005ULL
+                             + 1442695040888963407ULL;
+                buf[i] = (char)(s_prng_state >> 56);
+            }
         }
         regs[0] = len;
         break;
@@ -2501,6 +2551,22 @@ void sys_exit(int status)
     if (current->ctid_ptr) {
         *(volatile uint32_t *)current->ctid_ptr = 0;
         futex_do_wake(current->ctid_ptr, 0x7fffffff);
+    }
+
+    /* 关闭所有打开的文件描述符，释放 fd pool slot，防止泄漏 */
+    for (int _fd = 0; _fd < (int)TASK_MAX_FD; _fd++) {
+        int _idx = (int)(int8_t)current->fd_table[_fd];
+        if (_idx < 0 || _idx >= FD_POOL_SIZE) {
+            current->fd_table[_fd] = -1;
+            continue;
+        }
+        fd_obj_t *_obj = &g_fd_pool[_idx];
+        if (_obj->type == FDT_FILE)
+            ext4_fclose(&_obj->file);
+        else if (_obj->type == FDT_DIR)
+            ext4_dir_close(&_obj->dir);
+        fd_pool_free(_idx);
+        current->fd_table[_fd] = -1;
     }
 
     /* 在退出前计算 utime： wall_time − stime */
