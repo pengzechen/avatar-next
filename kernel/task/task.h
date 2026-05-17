@@ -14,6 +14,43 @@
 #include "types.h"
 #include "list.h"
 
+/* ── 信号常量 ────────────────────────────────────────────── */
+#define NSIG     32
+#define SIG_DFL  0ULL   /* 默认动作（终止） */
+#define SIG_IGN  1ULL   /* 忽略 */
+
+#define SIGHUP    1
+#define SIGINT    2
+#define SIGQUIT   3
+#define SIGILL    4
+#define SIGTRAP   5
+#define SIGABRT   6
+#define SIGBUS    7
+#define SIGFPE    8
+#define SIGKILL   9
+#define SIGUSR1  10
+#define SIGSEGV  11
+#define SIGUSR2  12
+#define SIGPIPE  13
+#define SIGALRM  14
+#define SIGTERM  15
+#define SIGCHLD  17
+#define SIGCONT  18
+#define SIGSTOP  19
+#define SIGTSTP  20
+#define SIGTTIN  21
+#define SIGTTOU  22
+#define SIGURG   23
+#define SIGWINCH 28
+
+/* ── 信号动作结构 ────────────────────────────────────────── */
+typedef struct {
+    uint64_t sa_handler;    /* SIG_DFL / SIG_IGN / 用户 handler 地址 */
+    uint64_t sa_flags;      /* SA_RESTORER 等标志                     */
+    uint64_t sa_restorer;   /* rt_sigreturn 蹦床地址                  */
+    uint64_t sa_mask;       /* handler 执行期间额外屏蔽的信号         */
+} sig_action_t;
+
 /* ── Task states ─────────────────────────────────────────── */
 typedef enum {
     TASK_READY   = 0,   /* 在就绪队列中，等待调度               */
@@ -71,10 +108,20 @@ typedef struct task {
     uint64_t        stime_ns;            /* 内核态 CPU 时间（纳秒），syscall 路径累积  */
     uint64_t        sc_entry_ns;         /* 当前 syscall 入口时间戳（0=不在 syscall）  */
     uint64_t        create_ns;           /* 进程创建时间戳（用于 utime = wall−stime）  */
+
+    /* === 信号系统 === */
+    uint64_t        pending_sigs;        /* 待投递信号位图，bit(N-1) = 信号 N           */
+    uint64_t        blocked_sigs;        /* 被阻塞信号位图（sigprocmask）               */
+    uint64_t        sig_saved_blocked;   /* signal 投递前保存的 blocked_sigs            */
+    uint32_t        pgid;                /* 进程组 ID                                   */
+    uint64_t        sig_frame_sp;        /* sigframe 在用户栈上的起始地址（rt_sigreturn）*/
+    sig_action_t    sig_actions[NSIG];   /* 每信号的 action（下标 0 对应信号 1）        */
 } task_t;
 
 /* ── 全局当前任务指针（在 task.c 中定义） ────────────────── */
 extern task_t *g_current_task;
+/* 前台进程组 ID（0 = 无前台进程）*/
+extern volatile uint32_t g_fg_pgid;
 
 /* ── Public API ──────────────────────────────────────────── */
 
@@ -175,5 +222,33 @@ void task_block(list_t *wait_queue);
  * 如果任务在等待队列中，调用者应先将其从等待队列移除。
  */
 void task_unblock(task_t *task);
+
+/**
+ * task_find_by_id - 按 ID 查找非 DEAD 任务
+ * @id: 任务 ID
+ * 返回 task_t* 或 NULL
+ */
+task_t *task_find_by_id(uint32_t id);
+
+/**
+ * task_send_signal - 向任务投递信号（可在中断上下文调用）
+ * @t: 目标任务（NULL 则忽略）
+ * @sig: 信号号 (1..NSIG)
+ */
+void task_send_signal(task_t *t, int sig);
+
+/**
+ * task_send_signal_to_pgid - 向进程组内所有用户态任务投递信号
+ * @pgid: 进程组 ID（0 无效）
+ * @sig:  信号号
+ */
+void task_send_signal_to_pgid(uint32_t pgid, int sig);
+
+/**
+ * signal_check_uart - 扫描 UART 输入，
+ * 将普通字符存入环形缓冲区，Ctrl+C 发 SIGINT 给前台进程组。
+ * 可在中断和任务上下文中调用。
+ */
+void signal_check_uart(void);
 
 #endif /* KERNEL_TASK_TASK_H */

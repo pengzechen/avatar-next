@@ -495,6 +495,19 @@ process_create_with_pgd(const char *name, uint64_t user_entry, uint64_t user_sp,
     task->sc_entry_ns = 0;
     task->create_ns   = task_get_ns();
 
+    /* === 信号字段初始化 === */
+    task->pending_sigs      = 0;
+    task->blocked_sigs      = 0;
+    task->sig_saved_blocked = 0;
+    task->pgid              = task->id;   /* 默认：自成一组 */
+    task->sig_frame_sp      = 0;
+    for (int _si = 0; _si < NSIG; _si++) {
+        task->sig_actions[_si].sa_handler  = SIG_DFL;
+        task->sig_actions[_si].sa_flags    = 0;
+        task->sig_actions[_si].sa_restorer = 0;
+        task->sig_actions[_si].sa_mask     = 0;
+    }
+
     list_node_init(&task->run_node);
     list_node_init(&task->wait_node);
 
@@ -684,4 +697,42 @@ task_unblock(task_t *task)
 
     /* 加入就绪队列 */
     sched_enqueue(task);
+}
+
+/* ── 前台进程组（全局）────────────────────────────────────── */
+volatile uint32_t g_fg_pgid = 0;
+
+/* ── task_find_by_id ─────────────────────────────────────── */
+task_t *
+task_find_by_id(uint32_t id)
+{
+    for (uint32_t i = 0; i < TASK_MAX; i++) {
+        if (g_stack_used[i] &&
+            g_task_pool[i].id    == id &&
+            g_task_pool[i].state != TASK_DEAD)
+            return &g_task_pool[i];
+    }
+    return NULL;
+}
+
+/* ── task_send_signal ────────────────────────────────────── */
+void
+task_send_signal(task_t *t, int sig)
+{
+    if (!t || sig < 1 || sig > NSIG) return;
+    t->pending_sigs |= (1ULL << (sig - 1));
+}
+
+/* ── task_send_signal_to_pgid ────────────────────────────── */
+void
+task_send_signal_to_pgid(uint32_t pgid, int sig)
+{
+    if (!pgid) return;
+    for (uint32_t i = 0; i < TASK_MAX; i++) {
+        if (g_stack_used[i] &&
+            g_task_pool[i].pgid  == pgid &&
+            g_task_pool[i].state != TASK_DEAD &&
+            g_task_pool[i].is_user_process)
+            task_send_signal(&g_task_pool[i], sig);
+    }
 }

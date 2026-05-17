@@ -374,6 +374,10 @@ task_execve(const char *pathname,
         return -5;
     }
 
+    /* exec 新进程继承调用者的进程组 ID 和信号掩码（POSIX） */
+    new_task->pgid         = current->pgid;
+    new_task->blocked_sigs = current->blocked_sigs;
+
     uint32_t new_task_id = new_task->id;
     KLOG_INFO("[exec] Process '%s' created, PID=%u, pgd=0x%llx, parent=%u\n",
               pathname, new_task->id, pgd_phys, new_task->parent_id);

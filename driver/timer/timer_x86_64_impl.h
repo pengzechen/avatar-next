@@ -65,12 +65,18 @@ timer_arch_set_next_interrupt(uint64_t ticks_from_now)
     (void)ticks_from_now;
 }
 
+/* 扫描 UART，向前台进程组发 SIGINT（来自 syscall.c） */
+extern void signal_check_uart(void);
+
 /* ── 定时器中断处理函数 ──────────────────────────────────────── */
 
 void
 timer_handler(void *frame)
 {
     (void)frame;
+
+    /* 每个 tick 排空 UART 输入，确保 Ctrl+C 能及时被检测 */
+    signal_check_uart();
 
     g_system_ticks++;
     g_x86_tick_counter++;
