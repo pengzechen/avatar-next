@@ -92,6 +92,27 @@ make ARCH=x86_64 PLATFORM=qemu run-fs LOG=info -j4
 > ./install-apps.sh riscv64
 > ```
 
+### 一键测试
+
+详细测试体系（apps/ 汇编加载方式、如何添加测试等）见 [tests.md](tests.md)，以下为命令速查：
+
+```bash
+# pthread 测试（动态链接 musl，含锁/无锁竞争对比）
+# 前置：运行 bash apps/c/build.sh 生成 imgs/rootfs-<arch>.img
+bash apps/c/build.sh
+make ARCH=riscv64 test-pthread LOG=warn    # QEMU 启动后执行 /bin/pthread_test
+make ARCH=aarch64 test-pthread LOG=warn
+make ARCH=x86_64  test-pthread LOG=warn
+
+# VMM 三线程上下文切换测试（无需 rootfs）
+make ARCH=aarch64 test-vmm LOG=info
+make ARCH=riscv64 test-vmm LOG=info
+make ARCH=x86_64  test-vmm LOG=info
+```
+
+> `test-pthread` 自动将 `imgs/rootfs-$(ARCH).img` 复制到 `build/`，无需手动操作。  
+> `test-vmm` 自动以 `VMM_TEST=1` 编译，切换回普通模式时 `main.c` 会自动重新编译。
+
 ### 其他构建选项
 
 ```bash
@@ -204,13 +225,41 @@ avatar/
 
 #### 内核功能
 - ✅ **任务管理** - 进程/线程创建、切换、退出
+- ✅ **同步原语** - pthread mutex（futex 实现）、spinlock IRQ 变体
 - ✅ **内存管理** - 页表、虚拟内存、堆分配
-- ✅ **系统调用** - syscall 接口实现
-- ✅ **程序加载** - ELF 加载器
+- ✅ **系统调用** - syscall 接口实现（含 pthread/futex/membarrier）
+- ✅ **程序加载** - ELF 加载器，支持动态链接 musl 用户程序
 - ✅ **中断处理** - 异常和中断支持
 - ✅ **设备驱动** - UART、定时器、中断控制器
 - ✅ **文件系统** - ext4 支持（lwext4）
 - ✅ **虚拟化** - vCPU（RISC-V H 扩展 Hypervisor）：vCPU 创建、运行、陷入分发
+
+### 内核启动模式
+
+`kernel/main.c` 末尾通过条件编译选择启动模式，**共用一套 idle 尾部代码**（无重复）：
+
+```c
+#if defined(RUN_VMM_TEST)
+    run_vmm_test();          // VMM 三线程切换测试
+#elif defined(RUN_XXX_TEST)
+    run_xxx_test();          // 未来新测试加在这里
+#else
+    task_create("busybox", demo_load_busybox, ...);  // 默认：busybox shell
+#endif
+
+// 所有模式共用：启用抢占 → 切换 idle 栈 → 进入 wfe/wfi/hlt 循环
+timer_set_tick_cb(sched_tick);
+task_switch_to_idle_stack();
+while (1) { task_yield(); /* wfe/hlt/wfi */ }
+```
+
+对应 Makefile 变体（切换时自动强制重新编译 `kernel/main.c`）：
+
+| 命令 | 启动模式 |
+|------|----------|
+| `make ARCH=xxx run-fs` | busybox shell（默认）|
+| `make ARCH=xxx test-pthread` | busybox shell + pthread_test rootfs |
+| `make ARCH=xxx test-vmm` | VMM 三线程切换测试 |
 
 ### 设计原则
 
@@ -318,6 +367,14 @@ ARCH=riscv64      # RISC-V 64 架构
 PLATFORM=qemu     # QEMU 平台（默认）
 ```
 
+### 构建变体
+```bash
+VMM_TEST=1    # 编译 VMM 三线程切换测试（跳过 busybox）
+              # 推荐使用 make ARCH=xxx test-vmm（自动传入此标志）
+```
+
+> **说明**：切换 `VMM_TEST` 时，Makefile 会自动检测并强制重新编译 `kernel/main.c`，无需手动 `make clean`。
+
 ## 🛠️ 开发环境
 
 ### 推荐工具
@@ -359,6 +416,6 @@ MIT License
 
 ---
 
-**版本**: 1.0  
-**更新**: 2026-05-16  
+**版本**: 1.1  
+**更新**: 2026-05-17  
 **项目**: Avatar OS

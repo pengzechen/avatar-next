@@ -497,6 +497,27 @@ ifeq ($(SDMMC),sg2002)
 endif
 
 CFLAGS  += -MMD -MP
+
+# ── 构建变体（影响条件编译的标志）─────────────────────────────────────────────
+# VMM_TEST=1：编译 RUN_VMM_TEST，跳过 busybox，运行三线程切换测试
+# 新增测试时仿照此模式，同时在 _BUILD_VARIANT 里加一个唯一标识。
+VMM_TEST ?= 0
+ifeq ($(VMM_TEST),1)
+    CFLAGS += -DRUN_VMM_TEST=1
+    _BUILD_VARIANT := vmm_test
+else
+    _BUILD_VARIANT := normal
+endif
+
+# 当变体改变时自动清除 kernel/main.o，防止复用缓存了错误条件编译的对象文件。
+_VARIANT_FILE := $(BUILD_DIR)/.build_variant
+_VARIANT_CHECK := $(shell \
+    mkdir -p $(BUILD_DIR) 2>/dev/null; \
+    if [ "$$(cat $(_VARIANT_FILE) 2>/dev/null)" != "$(_BUILD_VARIANT)" ]; then \
+        rm -f $(BUILD_DIR)/kernel_main.o; \
+        printf '%s' '$(_BUILD_VARIANT)' > $(_VARIANT_FILE); \
+    fi)
+
 MKDIR   := mkdir -p
 
 # ─── lwext4 文件系统 ────────────────────────────────────────────────────────
@@ -572,7 +593,7 @@ ROOTFS_STAGE     := $(BUILD_DIR)/rootfs-stage-$(ARCH)
 # ROOTFS_SIZE_MB / ROOTFS_PHYS_ADDR 来自自动生成的 $(MEM_LAYOUT_MK)
 
 # 目标
-.PHONY: all clean help klog kernel run rootfs run-fs
+.PHONY: all clean help klog kernel run rootfs run-fs test-pthread test-vmm
 
 all: $(TARGET) klog
 
@@ -995,6 +1016,32 @@ run-fs: kernel $(ROOTFS_IMG)
 	$(QEMU) $(QEMU_FLAGS) \
 		-device loader,file=$(ROOTFS_IMG),addr=$(ROOTFS_PHYS_ADDR),force-raw=on
 
+# ── 便捷测试目标 ─────────────────────────────────────────────────────
+#
+# test-pthread: 一键跑 pthread_test（使用动态链接 rootfs，无需手动 cp）
+#   用法: make ARCH=riscv64 test-pthread LOG=warn
+#
+test-pthread: kernel
+	@if [ ! -f imgs/rootfs-$(ARCH).img ]; then \
+		echo "ERROR: imgs/rootfs-$(ARCH).img not found."; \
+		echo "Run: bash apps/c/build.sh"; \
+		exit 1; \
+	fi
+	@echo "Copying imgs/rootfs-$(ARCH).img → $(ROOTFS_IMG)"
+	@cp imgs/rootfs-$(ARCH).img $(ROOTFS_IMG)
+	@echo "Starting QEMU for $(ARCH) with pthread_test rootfs..."
+	@echo "In QEMU shell: /bin/pthread_test"
+	$(QEMU) $(QEMU_FLAGS) \
+		-device loader,file=$(ROOTFS_IMG),addr=$(ROOTFS_PHYS_ADDR),force-raw=on
+
+# test-vmm: 编译 VMM_TEST=1 内核并运行三线程切换测试（不需要 rootfs）
+#   用法: make ARCH=aarch64 test-vmm LOG=info
+#
+test-vmm:
+	$(MAKE) ARCH=$(ARCH) LOG=$(LOG) ASSERT=$(ASSERT) VMM_TEST=1 kernel
+	@echo "Starting QEMU for $(ARCH) — VMM 3-thread context switch test..."
+	$(QEMU) $(QEMU_FLAGS)
+
 clean:
 	rm -rf build/*
 
@@ -1031,7 +1078,10 @@ help:
 	@echo "  all           Build static libraries (default)"
 	@echo "  klog          Build klog library only"
 	@echo "  kernel        Build kernel image"
-	@echo "  run           Build and run kernel in QEMU"
+	@echo "  run           Build and run kernel in QEMU (no rootfs)"
+	@echo "  run-fs        Build and run kernel with rootfs (busybox shell)"
+	@echo "  test-pthread  Copy dynamic rootfs from imgs/ and run pthread_test"
+	@echo "  test-vmm      Build with VMM_TEST=1 and run VMM 3-thread switch test"
 	@echo "  clean         Remove build artifacts"
 	@echo "  help          Show this help message"
 	@echo ""
@@ -1045,6 +1095,8 @@ help:
 	@echo "  make ARCH=aarch64 run"
 	@echo "  make ARCH=aarch64 LOG=debug ASSERT=panic"
 	@echo "  make ARCH=riscv64 clean"
+	@echo "  make ARCH=riscv64 test-pthread LOG=warn    # pthread_test 一键测试"
+	@echo "  make ARCH=aarch64 test-vmm   LOG=info     # VMM 三线程切换测试"
 
 # 包含依赖文件
 -include $(DEPS)

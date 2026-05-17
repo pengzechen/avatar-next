@@ -31,6 +31,8 @@
 #include "vmm.h"
 #endif
 
+extern void run_vmm_test(void);  /* tests/vmm_test.c */
+
 
 /*
  * demo_load_busybox - 从文件系统加载并执行 busybox
@@ -147,21 +149,6 @@ void kernel_main(void)
     }
     KLOG_INFO("Lua platform phases (earlycon/irqcore/drivers) complete\n");
 
-
-    /* ── 初始化任务子系统 ───────────────────────────────── */
-    KLOG_INFO("Initializing task subsystem...\n");
-    task_init();
-
-    /* === 启动 busybox 交互 shell === */
-    KLOG_INFO("\n");
-    KLOG_INFO("=== Launching busybox shell ===\n");
-
-    task_t *bb_task = task_create("busybox", demo_load_busybox, NULL, 5);
-    if (bb_task)
-        KLOG_INFO("busybox loader task created: id=%u\n", bb_task->id);
-    else
-        KLOG_ERROR("Failed to create busybox loader task!\n");
-
     /* Run remaining Lua platform phases then close the VM */
     if (lua_L) {
         lua_run_phase(lua_L, "fs");
@@ -170,31 +157,45 @@ void kernel_main(void)
         lua_L = NULL;
     }
 
-    /*
-     * 在内核初始化/创建用户进程完成后再启用抢占。
-     * 避免 main 仍在内核路径时被 tick 打断，导致后续创建流程（如第二个进程）饿死。
-     */
+
+    /* ── 初始化任务子系统 ───────────────────────────────── */
+    KLOG_INFO("Initializing task subsystem...\n");
+    task_init();
+
+    /* ── 选择启动模式 ────────────────────────────────────
+     *   默认 (run-fs):           启动 busybox 交互 shell
+     *   VMM_TEST=1:              VMM 三线程上下文切换测试
+     *   （新测试：在此处添加 #elif defined(RUN_XXX_TEST)）
+     * ──────────────────────────────────────────────────── */
+#if defined(RUN_VMM_TEST)
+    KLOG_INFO("=== VMM_TEST mode: 3-thread context switch test ===\n");
+    run_vmm_test();
+#else
+    /* 默认：启动 busybox 交互 shell */
+    KLOG_INFO("\n=== Launching busybox shell ===\n");
+    task_t *bb_task = task_create("busybox", demo_load_busybox, NULL, 5);
+    if (bb_task)
+        KLOG_INFO("busybox loader task created: id=%u\n", bb_task->id);
+    else
+        KLOG_ERROR("Failed to create busybox loader task!\n");
+#endif
+
+    /* ── 启用抢占，进入 idle 循环（所有模式共用）─────────
+     * 在所有任务创建完成后启用，避免 tick 打断内核初始化路径。
+     * 切换到 idle 专用栈（防止 boot 栈在频繁中断下溢出）。
+     * ──────────────────────────────────────────────────── */
     timer_set_tick_cb(sched_tick);
     KLOG_INFO("Preemptive scheduling enabled\n");
-    KLOG_INFO("\n");
-
-    /* 切换到 idle 专用栈（防止 boot 栈在频繁中断下溢出） */
     task_switch_to_idle_stack();
-    
     while (1) {
-
         task_yield();
-        #if ARCH_AARCH64
-                __asm__ volatile("wfe");
-        #elif ARCH_X86_64
-                __asm__ volatile("hlt");
-        #else
-                __asm__ volatile("wfi");
-        #endif
+#if ARCH_AARCH64
+        __asm__ volatile("wfe");
+#elif ARCH_X86_64
+        __asm__ volatile("hlt");
+#else
+        __asm__ volatile("wfi");
+#endif
     }
-
-    /* Shutdown */
-    KLOG_INFO("Kernel shutting down...\n");
-    do_platform_shutdown();
 }
 
