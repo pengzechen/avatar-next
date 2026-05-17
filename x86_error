@@ -1,0 +1,244 @@
+[INFO] kernel/loader/elf_loader.c:105: [elf_loader] Loading: /bin/pthread_test
+[INFO] kernel/loader/elf_loader.c:112: [elf_loader] Resolved '/bin/pthread_test' -> '/bin/pthread_test'
+[INFO] kernel/loader/elf_loader.c:149: [elf_loader] file_phys=0xb7d000 file_data=0xffff800000b7d000 pages=6
+[INFO] kernel/loader/elf_loader.c:163: [elf_loader] File loaded: 22896 bytes
+[INFO] kernel/loader/elf_loader.c:181: [elf_loader] PT_INTERP: /lib/ld-musl-x86_64.so.1
+[INFO] kernel/loader/elf_loader.c:208: [elf_loader] Interpreter loaded: 750584 bytes
+[INFO] kernel/task/exec.c:209: [exec] x86_64 copied kernel PML4[256..511] to user PGD=0xc3b000
+[INFO] kernel/loader/elf_image.c:137: [elf] Valid ELF: entry=0x930, phnum=10
+[INFO] kernel/loader/elf_image.c:155: [elf] ET_DYN image base: 0x10000
+[INFO] kernel/loader/elf_image.c:171: [elf] PT_INTERP: /lib/ld-musl-x86_64.so.1
+[INFO] kernel/loader/elf_image.c:177: [elf] Loading ELF segments...
+[INFO] kernel/loader/elf_image.c:39: [elf] Loading segment:
+[INFO] kernel/loader/elf_image.c:40: [elf]   vaddr: 0x10000 - 0x12000
+[INFO] kernel/loader/elf_image.c:41: [elf]   filesz: 0x1580, memsz: 0x1580
+[INFO] kernel/loader/elf_image.c:70: [elf]   progress: page 0/2 vaddr=0x10000
+[INFO] kernel/loader/elf_image.c:76: [elf] Segment done: 2 pages mapped
+[INFO] kernel/loader/elf_image.c:39: [elf] Loading segment:
+[INFO] kernel/loader/elf_image.c:40: [elf]   vaddr: 0x211000 - 0x213000
+[INFO] kernel/loader/elf_image.c:41: [elf]   filesz: 0x280, memsz: 0x410
+[INFO] kernel/loader/elf_image.c:70: [elf]   progress: page 0/2 vaddr=0x211000
+[INFO] kernel/loader/elf_image.c:76: [elf] Segment done: 2 pages mapped
+[INFO] kernel/loader/elf_image.c:195: [elf] ELF loaded: vaddr 0x10000 - 0x212208
+[INFO] kernel/loader/elf_image.c:196: [elf] Entry point: 0x10930
+[INFO] kernel/loader/elf_image.c:199: [elf] Processing RELA relocations...
+[INFO] kernel/loader/elf_image.c:219: [elf] Found RELA: addr=0x680, size=192, ent=24
+[INFO] kernel/loader/elf_image.c:224: [elf] ELF type=3, min_vaddr=0x10000, load_bias=0x10000
+[INFO] kernel/loader/elf_image.c:356: [elf] Processed 8 RELA relocations
+[INFO] kernel/loader/elf_image.c:137: [elf] Valid ELF: entry=0x59de2, phnum=8
+[INFO] kernel/loader/elf_image.c:152: [elf] force_base: 0x40000000
+[INFO] kernel/loader/elf_image.c:177: [elf] Loading ELF segments...
+[INFO] kernel/loader/elf_image.c:39: [elf] Loading segment:
+[INFO] kernel/loader/elf_image.c:40: [elf]   vaddr: 0x40000000 - 0x40093000
+[INFO] kernel/loader/elf_image.c:41: [elf]   filesz: 0x92c38, memsz: 0x92c38
+[INFO] kernel/loader/elf_image.c:70: [elf]   progress: page 0/147 vaddr=0x40000000
+[INFO] kernel/loader/elf_image.c:70: [elf]   progress: page 64/147 vaddr=0x40040000
+[INFO] kernel/loader/elf_image.c:70: [elf]   progress: page 128/147 vaddr=0x40080000
+[INFO] kernel/loader/elf_image.c:76: [elf] Segment done: 147 pages mapped
+[INFO] kernel/loader/elf_image.c:39: [elf] Loading segment:
+[INFO] kernel/loader/elf_image.c:40: [elf]   vaddr: 0x40293000 - 0x40298000
+[INFO] kernel/loader/elf_image.c:41: [elf]   filesz: 0x934, memsz: 0x3580
+[INFO] kernel/loader/elf_image.c:70: [elf]   progress: page 0/5 vaddr=0x40293000
+[INFO] kernel/loader/elf_image.c:76: [elf] Segment done: 5 pages mapped
+[INFO] kernel/loader/elf_image.c:195: [elf] ELF loaded: vaddr 0x40000000 - 0x40297100
+[INFO] kernel/loader/elf_image.c:196: [elf] Entry point: 0x40059de2
+[INFO] kernel/loader/elf_image.c:199: [elf] Processing RELA relocations...
+[INFO] kernel/loader/elf_image.c:219: [elf] Found RELA: addr=0x13cb0, size=2232, ent=24
+[INFO] kernel/loader/elf_image.c:224: [elf] ELF type=3, min_vaddr=0x40000000, load_bias=0x40000000
+[INFO] kernel/loader/elf_image.c:356: [elf] Processed 93 RELA relocations
+[INFO] kernel/task/exec.c:245: [exec] Interpreter loaded: entry=0x40059de2 base=0x40000000
+[INFO] kernel/task/exec.c:258: [exec] Stack pages allocated: phys=0xcdf000 - 0xddf000 (256 pages)
+[INFO] kernel/task/exec.c:282: [exec] User stack mapped: 0x6ff00000 - 0x70000000
+[INFO] kernel/task/exec.c:161: [elf] Initial stack: sp=0x6ffffef8, argc=1, argv[0]=./bin/pthread_test
+[INFO] kernel/task/task.c:67: [task] alloc_task_slot: slot=3 base=0xffff80000027b060
+[DEBUG] kernel/task/task.c:449: [task] fd_table initialized: pid=4 [0]=-1(u=4294967295) [3]=-1(u=4294967295) [251
+[INFO] kernel/task/task.c:480: [task] created user process '/bin/pthread_te' id=4 prio=10 (pgd=0xc3b000)
+[INFO] kernel/task/task.c:482: [task]   user_entry=0x40059de2, user_sp=0x6ffffef8, kernel_sp=0xffff80000027f018
+[INFO] kernel/task/exec.c:344: [exec] Process '/bin/pthread_test' created, PID=4, pgd=0xc3b000, parent=3
+[INFO] kernel/task/exec.c:346: [exec]   heap_start=0x213000, mmap_base=0x50000000
+[DEBUG] kernel/task/sched.c:170: [sched] CR3→0xc3b000 TSS.RSP0=0xffff80000027f060 task='/bin/pthread_te'
+[DEBUG] kernel/task/sched.c:180: [sched] switch: prev='/busybox' (id=3) -> next='/bin/pthread_te' (id=4)
+[DEBUG] kernel/task/sched.c:184: [sched] next='/bin/pthread_te': entry=0x40059de2 sp=0x6ffffef8 kernel_sp=0xffff8
+[DEBUG] kernel/syscall/syscall.c:675: [syscall] number: 158, entry #141: frame=0xffff80000027efb0
+[DEBUG] kernel/syscall/syscall.c:675: [syscall] number: 218, entry #142: frame=0xffff80000027efb0
+[DEBUG] kernel/syscall/syscall.c:675: [syscall] number: 12, entry #143: frame=0xffff80000027efb0
+[DEBUG] kernel/syscall/syscall.c:675: [syscall] number: 12, entry #144: frame=0xffff80000027efb0
+[DEBUG] kernel/syscall/syscall.c:675: [syscall] number: 9, entry #145: frame=0xffff80000027efb0
+[DEBUG] kernel/syscall/syscall.c:2490: [mmap] req: addr=0x213000 len=0x1000 flags=0x32 fd=-1 off=0x0 -> base=0x20
+[DEBUG] kernel/syscall/syscall.c:2552: [mmap] 0x213000 - 0x214000 (len=0x1000)
+[DEBUG] kernel/syscall/syscall.c:675: [syscall] number: 10, entry #146: frame=0xffff80000027efb0
+[DEBUG] kernel/syscall/syscall.c:675: [syscall] number: 10, entry #147: frame=0xffff80000027efb0
+[DEBUG] kernel/syscall/syscall.c:675: [syscall] number: 16, entry #148: frame=0xffff80000027efb0
+[DEBUG] kernel/syscall/syscall.c:675: [syscall] number: 20, entry #149: frame=0xffff80000027efb0
+=== Avatar OS pthread test ===
+[DEBUG] kernel/syscall/syscall.c:675: [syscall] number: 20, entry #150: frame=0xffff80000027efb0
+
+[DEBUG] kernel/syscall/syscall.c:675: [syscall] number: 20, entry #151: frame=0xffff80000027efb0
+[Test 1] Basic create/join
+[DEBUG] kernel/syscall/syscall.c:675: [syscall] number: 14, entry #152: frame=0xffff80000027efb0
+[DEBUG] kernel/syscall/syscall.c:1895: [syscall] rt_sigprocmask: pid=4 setting retval=0, frame->elr=0x4005447f
+[DEBUG] kernel/syscall/syscall.c:675: [syscall] number: 324, entry #153: frame=0xffff80000027efb0
+[ERROR] kernel/syscall/syscall.c:2001: [syscall] Unknown syscall: 324
+[DEBUG] kernel/syscall/syscall.c:675: [syscall] number: 9, entry #154: frame=0xffff80000027efb0
+[DEBUG] kernel/syscall/syscall.c:2490: [mmap] req: addr=0x0 len=0x23000 flags=0x22 fd=-1 off=0x0 -> base=0x500000
+[DEBUG] kernel/syscall/syscall.c:2552: [mmap] 0x50000000 - 0x50023000 (len=0x23000)
+[DEBUG] kernel/syscall/syscall.c:675: [syscall] number: 10, entry #155: frame=0xffff80000027efb0
+[DEBUG] kernel/syscall/syscall.c:675: [syscall] number: 14, entry #156: frame=0xffff80000027efb0
+[DEBUG] kernel/syscall/syscall.c:1895: [syscall] rt_sigprocmask: pid=4 setting retval=0, frame->elr=0x40048dcd
+[DEBUG] kernel/syscall/syscall.c:675: [syscall] number: 56, entry #157: frame=0xffff80000027efb0
+[INFO] kernel/syscall/syscall.c:887: [clone/thread] parent=4 child=5 tls=0x50022b38 usp=0x50022af8
+[DEBUG] kernel/syscall/syscall.c:675: [syscall] number: 14, entry #158: frame=0xffff80000027efb0
+[DEBUG] kernel/syscall/syscall.c:1895: [syscall] rt_sigprocmask: pid=4 setting retval=0, frame->elr=0x40048de5
+[DEBUG] kernel/task/sched.c:170: [sched] CR3→0xc3b000 TSS.RSP0=0xffff800000283060 task='/bin/pthread_te'
+[DEBUG] kernel/task/sched.c:180: [sched] switch: prev='/bin/pthread_te' (id=4) -> next='/bin/pthread_te' (id=5)
+[DEBUG] kernel/task/sched.c:184: [sched] next='/bin/pthread_te': entry=0x40059de2 sp=0x50022af8 kernel_sp=0xffff8
+[DEBUG] kernel/task/sched.c:170: [sched] CR3→0xc3b000 TSS.RSP0=0xffff80000027f060 task='/bin/pthread_te'
+[DEBUG] kernel/task/sched.c:180: [sched] switch: prev='/bin/pthread_te' (id=5) -> next='/bin/pthread_te' (id=4)
+[DEBUG] kernel/task/sched.c:184: [sched] next='/bin/pthread_te': entry=0x40059de2 sp=0x6ffffef8 kernel_sp=0xffff8
+[DEBUG] kernel/task/sched.c:170: [sched] CR3→0xc3b000 TSS.RSP0=0xffff800000283060 task='/bin/pthread_te'
+[DEBUG] kernel/task/sched.c:180: [sched] switch: prev='/bin/pthread_te' (id=4) -> next='/bin/pthread_te' (id=5)
+[DEBUG] kernel/task/sched.c:184: [sched] next='/bin/pthread_te': entry=0x40059de2 sp=0x50022af8 kernel_sp=0xffff8
+[DEBUG] kernel/task/sched.c:170: [sched] CR3→0xc3b000 TSS.RSP0=0xffff80000027f060 task='/bin/pthread_te'
+[DEBUG] kernel/task/sched.c:180: [sched] switch: prev='/bin/pthread_te' (id=5) -> next='/bin/pthread_te' (id=4)
+[DEBUG] kernel/task/sched.c:184: [sched] next='/bin/pthread_te': entry=0x40059de2 sp=0x6ffffef8 kernel_sp=0xffff8
+[DEBUG] kernel/task/sched.c:170: [sched] CR3→0xc3b000 TSS.RSP0=0xffff800000283060 task='/bin/pthread_te'
+[DEBUG] kernel/task/sched.c:180: [sched] switch: prev='/bin/pthread_te' (id=4) -> next='/bin/pthread_te' (id=5)
+[DEBUG] kernel/task/sched.c:184: [sched] next='/bin/pthread_te': entry=0x40059de2 sp=0x50022af8 kernel_sp=0xffff8
+[DEBUG] kernel/task/sched.c:170: [sched] CR3→0xc3b000 TSS.RSP0=0xffff80000027f060 task='/bin/pthread_te'
+[DEBUG] kernel/task/sched.c:180: [sched] switch: prev='/bin/pthread_te' (id=5) -> next='/bin/pthread_te' (id=4)
+[DEBUG] kernel/task/sched.c:184: [sched] next='/bin/pthread_te': entry=0x40059de2 sp=0x6ffffef8 kernel_sp=0xffff8
+[DEBUG] kernel/task/sched.c:170: [sched] CR3→0xc3b000 TSS.RSP0=0xffff800000283060 task='/bin/pthread_te'
+[DEBUG] kernel/task/sched.c:180: [sched] switch: prev='/bin/pthread_te' (id=4) -> next='/bin/pthread_te' (id=5)
+[DEBUG] kernel/task/sched.c:184: [sched] next='/bin/pthread_te': entry=0x40059de2 sp=0x50022af8 kernel_sp=0xffff8
+[DEBUG] kernel/task/sched.c:170: [sched] CR3→0xc3b000 TSS.RSP0=0xffff80000027f060 task='/bin/pthread_te'
+[DEBUG] kernel/task/sched.c:180: [sched] switch: prev='/bin/pthread_te' (id=5) -> next='/bin/pthread_te' (id=4)
+[DEBUG] kernel/task/sched.c:184: [sched] next='/bin/pthread_te': entry=0x40059de2 sp=0x6ffffef8 kernel_sp=0xffff8
+[DEBUG] kernel/task/sched.c:170: [sched] CR3→0xc3b000 TSS.RSP0=0xffff800000283060 task='/bin/pthread_te'
+[DEBUG] kernel/task/sched.c:180: [sched] switch: prev='/bin/pthread_te' (id=4) -> next='/bin/pthread_te' (id=5)
+[DEBUG] kernel/task/sched.c:184: [sched] next='/bin/pthread_te': entry=0x40059de2 sp=0x50022af8 kernel_sp=0xffff8
+[DEBUG] kernel/task/sched.c:170: [sched] CR3→0xc3b000 TSS.RSP0=0xffff80000027f060 task='/bin/pthread_te'
+[DEBUG] kernel/task/sched.c:180: [sched] switch: prev='/bin/pthread_te' (id=5) -> next='/bin/pthread_te' (id=4)
+[DEBUG] kernel/task/sched.c:184: [sched] next='/bin/pthread_te': entry=0x40059de2 sp=0x6ffffef8 kernel_sp=0xffff8
+[DEBUG] kernel/task/sched.c:170: [sched] CR3→0xc3b000 TSS.RSP0=0xffff800000283060 task='/bin/pthread_te'
+[DEBUG] kernel/task/sched.c:180: [sched] switch: prev='/bin/pthread_te' (id=4) -> next='/bin/pthread_te' (id=5)
+[DEBUG] kernel/task/sched.c:184: [sched] next='/bin/pthread_te': entry=0x40059de2 sp=0x50022af8 kernel_sp=0xffff8
+[DEBUG] kernel/task/sched.c:170: [sched] CR3→0xc3b000 TSS.RSP0=0xffff80000027f060 task='/bin/pthread_te'
+[DEBUG] kernel/task/sched.c:180: [sched] switch: prev='/bin/pthread_te' (id=5) -> next='/bin/pthread_te' (id=4)
+[DEBUG] kernel/task/sched.c:184: [sched] next='/bin/pthread_te': entry=0x40059de2 sp=0x6ffffef8 kernel_sp=0xffff8
+[DEBUG] kernel/task/sched.c:170: [sched] CR3→0xc3b000 TSS.RSP0=0xffff800000283060 task='/bin/pthread_te'
+[DEBUG] kernel/task/sched.c:180: [sched] switch: prev='/bin/pthread_te' (id=4) -> next='/bin/pthread_te' (id=5)
+[DEBUG] kernel/task/sched.c:184: [sched] next='/bin/pthread_te': entry=0x40059de2 sp=0x50022af8 kernel_sp=0xffff8
+[DEBUG] kernel/task/sched.c:170: [sched] CR3→0xc3b000 TSS.RSP0=0xffff80000027f060 task='/bin/pthread_te'
+[DEBUG] kernel/task/sched.c:180: [sched] switch: prev='/bin/pthread_te' (id=5) -> next='/bin/pthread_te' (id=4)
+[DEBUG] kernel/task/sched.c:184: [sched] next='/bin/pthread_te': entry=0x40059de2 sp=0x6ffffef8 kernel_sp=0xffff8
+[DEBUG] kernel/task/sched.c:170: [sched] CR3→0xc3b000 TSS.RSP0=0xffff800000283060 task='/bin/pthread_te'
+[DEBUG] kernel/task/sched.c:180: [sched] switch: prev='/bin/pthread_te' (id=4) -> next='/bin/pthread_te' (id=5)
+[DEBUG] kernel/task/sched.c:184: [sched] next='/bin/pthread_te': entry=0x40059de2 sp=0x50022af8 kernel_sp=0xffff8
+[DEBUG] kernel/task/sched.c:170: [sched] CR3→0xc3b000 TSS.RSP0=0xffff80000027f060 task='/bin/pthread_te'
+[DEBUG] kernel/task/sched.c:180: [sched] switch: prev='/bin/pthread_te' (id=5) -> next='/bin/pthread_te' (id=4)
+[DEBUG] kernel/task/sched.c:184: [sched] next='/bin/pthread_te': entry=0x40059de2 sp=0x6ffffef8 kernel_sp=0xffff8
+[DEBUG] kernel/task/sched.c:170: [sched] CR3→0xc3b000 TSS.RSP0=0xffff800000283060 task='/bin/pthread_te'
+[DEBUG] kernel/task/sched.c:180: [sched] switch: prev='/bin/pthread_te' (id=4) -> next='/bin/pthread_te' (id=5)
+[DEBUG] kernel/task/sched.c:184: [sched] next='/bin/pthread_te': entry=0x40059de2 sp=0x50022af8 kernel_sp=0xffff8
+[DEBUG] kernel/task/sched.c:170: [sched] CR3→0xc3b000 TSS.RSP0=0xffff80000027f060 task='/bin/pthread_te'
+[DEBUG] kernel/task/sched.c:180: [sched] switch: prev='/bin/pthread_te' (id=5) -> next='/bin/pthread_te' (id=4)
+[DEBUG] kernel/task/sched.c:184: [sched] next='/bin/pthread_te': entry=0x40059de2 sp=0x6ffffef8 kernel_sp=0xffff8
+[DEBUG] kernel/task/sched.c:170: [sched] CR3→0xc3b000 TSS.RSP0=0xffff800000283060 task='/bin/pthread_te'
+[DEBUG] kernel/task/sched.c:180: [sched] switch: prev='/bin/pthread_te' (id=4) -> next='/bin/pthread_te' (id=5)
+[DEBUG] kernel/task/sched.c:184: [sched] next='/bin/pthread_te': entry=0x40059de2 sp=0x50022af8 kernel_sp=0xffff8
+[DEBUG] kernel/task/sched.c:170: [sched] CR3→0xc3b000 TSS.RSP0=0xffff80000027f060 task='/bin/pthread_te'
+[DEBUG] kernel/task/sched.c:180: [sched] switch: prev='/bin/pthread_te' (id=5) -> next='/bin/pthread_te' (id=4)
+[DEBUG] kernel/task/sched.c:184: [sched] next='/bin/pthread_te': entry=0x40059de2 sp=0x6ffffef8 kernel_sp=0xffff8
+[DEBUG] kernel/task/sched.c:170: [sched] CR3→0xc3b000 TSS.RSP0=0xffff800000283060 task='/bin/pthread_te'
+[DEBUG] kernel/task/sched.c:180: [sched] switch: prev='/bin/pthread_te' (id=4) -> next='/bin/pthread_te' (id=5)
+[DEBUG] kernel/task/sched.c:184: [sched] next='/bin/pthread_te': entry=0x40059de2 sp=0x50022af8 kernel_sp=0xffff8
+[DEBUG] kernel/task/sched.c:170: [sched] CR3→0xc3b000 TSS.RSP0=0xffff80000027f060 task='/bin/pthread_te'
+[DEBUG] kernel/task/sched.c:180: [sched] switch: prev='/bin/pthread_te' (id=5) -> next='/bin/pthread_te' (id=4)
+[DEBUG] kernel/task/sched.c:184: [sched] next='/bin/pthread_te': entry=0x40059de2 sp=0x6ffffef8 kernel_sp=0xffff8
+[DEBUG] kernel/task/sched.c:170: [sched] CR3→0xc3b000 TSS.RSP0=0xffff800000283060 task='/bin/pthread_te'
+[DEBUG] kernel/task/sched.c:180: [sched] switch: prev='/bin/pthread_te' (id=4) -> next='/bin/pthread_te' (id=5)
+[DEBUG] kernel/task/sched.c:184: [sched] next='/bin/pthread_te': entry=0x40059de2 sp=0x50022af8 kernel_sp=0xffff8
+[DEBUG] kernel/task/sched.c:170: [sched] CR3→0xc3b000 TSS.RSP0=0xffff80000027f060 task='/bin/pthread_te'
+[DEBUG] kernel/task/sched.c:180: [sched] switch: prev='/bin/pthread_te' (id=5) -> next='/bin/pthread_te' (id=4)
+[DEBUG] kernel/task/sched.c:184: [sched] next='/bin/pthread_te': entry=0x40059de2 sp=0x6ffffef8 kernel_sp=0xffff8
+[DEBUG] kernel/task/sched.c:170: [sched] CR3→0xc3b000 TSS.RSP0=0xffff800000283060 task='/bin/pthread_te'
+[DEBUG] kernel/task/sched.c:180: [sched] switch: prev='/bin/pthread_te' (id=4) -> next='/bin/pthread_te' (id=5)
+[DEBUG] kernel/task/sched.c:184: [sched] next='/bin/pthread_te': entry=0x40059de2 sp=0x50022af8 kernel_sp=0xffff8
+[DEBUG] kernel/task/sched.c:170: [sched] CR3→0xc3b000 TSS.RSP0=0xffff80000027f060 task='/bin/pthread_te'
+[DEBUG] kernel/task/sched.c:180: [sched] switch: prev='/bin/pthread_te' (id=5) -> next='/bin/pthread_te' (id=4)
+[DEBUG] kernel/task/sched.c:184: [sched] next='/bin/pthread_te': entry=0x40059de2 sp=0x6ffffef8 kernel_sp=0xffff8
+[DEBUG] kernel/task/sched.c:170: [sched] CR3→0xc3b000 TSS.RSP0=0xffff800000283060 task='/bin/pthread_te'
+[DEBUG] kernel/task/sched.c:180: [sched] switch: prev='/bin/pthread_te' (id=4) -> next='/bin/pthread_te' (id=5)
+[DEBUG] kernel/task/sched.c:184: [sched] next='/bin/pthread_te': entry=0x40059de2 sp=0x50022af8 kernel_sp=0xffff8
+[DEBUG] kernel/task/sched.c:170: [sched] CR3→0xc3b000 TSS.RSP0=0xffff80000027f060 task='/bin/pthread_te'
+[DEBUG] kernel/task/sched.c:180: [sched] switch: prev='/bin/pthread_te' (id=5) -> next='/bin/pthread_te' (id=4)
+[DEBUG] kernel/task/sched.c:184: [sched] next='/bin/pthread_te': entry=0x40059de2 sp=0x6ffffef8 kernel_sp=0xffff8
+[DEBUG] kernel/task/sched.c:170: [sched] CR3→0xc3b000 TSS.RSP0=0xffff800000283060 task='/bin/pthread_te'
+[DEBUG] kernel/task/sched.c:180: [sched] switch: prev='/bin/pthread_te' (id=4) -> next='/bin/pthread_te' (id=5)
+[DEBUG] kernel/task/sched.c:184: [sched] next='/bin/pthread_te': entry=0x40059de2 sp=0x50022af8 kernel_sp=0xffff8
+[DEBUG] kernel/task/sched.c:170: [sched] CR3→0xc3b000 TSS.RSP0=0xffff80000027f060 task='/bin/pthread_te'
+[DEBUG] kernel/task/sched.c:180: [sched] switch: prev='/bin/pthread_te' (id=5) -> next='/bin/pthread_te' (id=4)
+[DEBUG] kernel/task/sched.c:184: [sched] next='/bin/pthread_te': entry=0x40059de2 sp=0x6ffffef8 kernel_sp=0xffff8
+[DEBUG] kernel/task/sched.c:170: [sched] CR3→0xc3b000 TSS.RSP0=0xffff800000283060 task='/bin/pthread_te'
+[DEBUG] kernel/task/sched.c:180: [sched] switch: prev='/bin/pthread_te' (id=4) -> next='/bin/pthread_te' (id=5)
+[DEBUG] kernel/task/sched.c:184: [sched] next='/bin/pthread_te': entry=0x40059de2 sp=0x50022af8 kernel_sp=0xffff8
+[DEBUG] kernel/task/sched.c:170: [sched] CR3→0xc3b000 TSS.RSP0=0xffff80000027f060 task='/bin/pthread_te'
+[DEBUG] kernel/task/sched.c:180: [sched] switch: prev='/bin/pthread_te' (id=5) -> next='/bin/pthread_te' (id=4)
+[DEBUG] kernel/task/sched.c:184: [sched] next='/bin/pthread_te': entry=0x40059de2 sp=0x6ffffef8 kernel_sp=0xffff8
+[DEBUG] kernel/task/sched.c:170: [sched] CR3→0xc3b000 TSS.RSP0=0xffff800000283060 task='/bin/pthread_te'
+[DEBUG] kernel/task/sched.c:180: [sched] switch: prev='/bin/pthread_te' (id=4) -> next='/bin/pthread_te' (id=5)
+[DEBUG] kernel/task/sched.c:184: [sched] next='/bin/pthread_te': entry=0x40059de2 sp=0x50022af8 kernel_sp=0xffff8
+[DEBUG] kernel/task/sched.c:170: [sched] CR3→0xc3b000 TSS.RSP0=0xffff80000027f060 task='/bin/pthread_te'
+[DEBUG] kernel/task/sched.c:180: [sched] switch: prev='/bin/pthread_te' (id=5) -> next='/bin/pthread_te' (id=4)
+[DEBUG] kernel/task/sched.c:184: [sched] next='/bin/pthread_te': entry=0x40059de2 sp=0x6ffffef8 kernel_sp=0xffff8
+[DEBUG] kernel/task/sched.c:170: [sched] CR3→0xc3b000 TSS.RSP0=0xffff800000283060 task='/bin/pthread_te'
+[DEBUG] kernel/task/sched.c:180: [sched] switch: prev='/bin/pthread_te' (id=4) -> next='/bin/pthread_te' (id=5)
+[DEBUG] kernel/task/sched.c:184: [sched] next='/bin/pthread_te': entry=0x40059de2 sp=0x50022af8 kernel_sp=0xffff8
+[DEBUG] kernel/task/sched.c:170: [sched] CR3→0xc3b000 TSS.RSP0=0xffff80000027f060 task='/bin/pthread_te'
+[DEBUG] kernel/task/sched.c:180: [sched] switch: prev='/bin/pthread_te' (id=5) -> next='/bin/pthread_te' (id=4)
+[DEBUG] kernel/task/sched.c:184: [sched] next='/bin/pthread_te': entry=0x40059de2 sp=0x6ffffef8 kernel_sp=0xffff8
+[DEBUG] kernel/task/sched.c:170: [sched] CR3→0xc3b000 TSS.RSP0=0xffff800000283060 task='/bin/pthread_te'
+[DEBUG] kernel/task/sched.c:180: [sched] switch: prev='/bin/pthread_te' (id=4) -> next='/bin/pthread_te' (id=5)
+[DEBUG] kernel/task/sched.c:184: [sched] next='/bin/pthread_te': entry=0x40059de2 sp=0x50022af8 kernel_sp=0xffff8
+[DEBUG] kernel/task/sched.c:170: [sched] CR3→0xc3b000 TSS.RSP0=0xffff80000027f060 task='/bin/pthread_te'
+[DEBUG] kernel/task/sched.c:180: [sched] switch: prev='/bin/pthread_te' (id=5) -> next='/bin/pthread_te' (id=4)
+[DEBUG] kernel/task/sched.c:184: [sched] next='/bin/pthread_te': entry=0x40059de2 sp=0x6ffffef8 kernel_sp=0xffff8
+[DEBUG] kernel/task/sched.c:170: [sched] CR3→0xc3b000 TSS.RSP0=0xffff800000283060 task='/bin/pthread_te'
+[DEBUG] kernel/task/sched.c:180: [sched] switch: prev='/bin/pthread_te' (id=4) -> next='/bin/pthread_te' (id=5)
+[DEBUG] kernel/task/sched.c:184: [sched] next='/bin/pthread_te': entry=0x40059de2 sp=0x50022af8 kernel_sp=0xffff8
+[DEBUG] kernel/task/sched.c:170: [sched] CR3→0xc3b000 TSS.RSP0=0xffff80000027f060 task='/bin/pthread_te'
+[DEBUG] kernel/task/sched.c:180: [sched] switch: prev='/bin/pthread_te' (id=5) -> next='/bin/pthread_te' (id=4)
+[DEBUG] kernel/task/sched.c:184: [sched] next='/bin/pthread_te': entry=0x40059de2 sp=0x6ffffef8 kernel_sp=0xffff8
+[DEBUG] kernel/task/sched.c:170: [sched] CR3→0xc3b000 TSS.RSP0=0xffff800000283060 task='/bin/pthread_te'
+[DEBUG] kernel/task/sched.c:180: [sched] switch: prev='/bin/pthread_te' (id=4) -> next='/bin/pthread_te' (id=5)
+[DEBUG] kernel/task/sched.c:184: [sched] next='/bin/pthread_te': entry=0x40059de2 sp=0x50022af8 kernel_sp=0xffff8
+[DEBUG] kernel/task/sched.c:170: [sched] CR3→0xc3b000 TSS.RSP0=0xffff80000027f060 task='/bin/pthread_te'
+[DEBUG] kernel/task/sched.c:180: [sched] switch: prev='/bin/pthread_te' (id=5) -> next='/bin/pthread_te' (id=4)
+[DEBUG] kernel/task/sched.c:184: [sched] next='/bin/pthread_te': entry=0x40059de2 sp=0x6ffffef8 kernel_sp=0xffff8
+[DEBUG] kernel/task/sched.c:170: [sched] CR3→0xc3b000 TSS.RSP0=0xffff800000283060 task='/bin/pthread_te'
+[DEBUG] kernel/task/sched.c:180: [sched] switch: prev='/bin/pthread_te' (id=4) -> next='/bin/pthread_te' (id=5)
+[DEBUG] kernel/task/sched.c:184: [sched] next='/bin/pthread_te': entry=0x40059de2 sp=0x50022af8 kernel_sp=0xffff8
+[DEBUG] kernel/task/sched.c:170: [sched] CR3→0xc3b000 TSS.RSP0=0xffff80000027f060 task='/bin/pthread_te'
+[DEBUG] kernel/task/sched.c:180: [sched] switch: prev='/bin/pthread_te' (id=5) -> next='/bin/pthread_te' (id=4)
+[DEBUG] kernel/task/sched.c:184: [sched] next='/bin/pthread_te': entry=0x40059de2 sp=0x6ffffef8 kernel_sp=0xffff8
+[DEBUG] kernel/task/sched.c:170: [sched] CR3→0xc3b000 TSS.RSP0=0xffff800000283060 task='/bin/pthread_te'
+[DEBUG] kernel/task/sched.c:180: [sched] switch: prev='/bin/pthread_te' (id=4) -> next='/bin/pthread_te' (id=5)
+[DEBUG] kernel/task/sched.c:184: [sched] next='/bin/pthread_te': entry=0x40059de2 sp=0x50022af8 kernel_sp=0xffff8
+[DEBUG] kernel/task/sched.c:170: [sched] CR3→0xc3b000 TSS.RSP0=0xffff80000027f060 task='/bin/pthread_te'
+[DEBUG] kernel/task/sched.c:180: [sched] switch: prev='/bin/pthread_te' (id=5) -> next='/bin/pthread_te' (id=4)
+[DEBUG] kernel/task/sched.c:184: [sched] next='/bin/pthread_te': entry=0x40059de2 sp=0x6ffffef8 kernel_sp=0xffff8
+[DEBUG] kernel/task/sched.c:170: [sched] CR3→0xc3b000 TSS.RSP0=0xffff800000283060 task='/bin/pthread_te'
+[DEBUG] kernel/task/sched.c:180: [sched] switch: prev='/bin/pthread_te' (id=4) -> next='/bin/pthread_te' (id=5)
+[DEBUG] kernel/task/sched.c:184: [sched] next='/bin/pthread_te': entry=0x40059de2 sp=0x50022af8 kernel_sp=0xffff8
+[DEBUG] kernel/task/sched.c:170: [sched] CR3→0xc3b000 TSS.RSP0=0xffff80000027f060 task='/bin/pthread_te'
+[DEBUG] kernel/task/sched.c:180: [sched] switch: prev='/bin/pthread_te' (id=5) -> next='/bin/pthread_te' (id=4)
+[DEBUG] kernel/task/sched.c:184: [sched] next='/bin/pthread_te': entry=0x40059de2 sp=0x6ffffef8 kernel_sp=0xffff8
+[DEBUG] kernel/task/sched.c:170: [sched] CR3→0xc3b000 TSS.RSP0=0xffff800000283060 task='/bin/pthread_te'
+[DEBUG] kernel/task/sched.c:180: [sched] switch: prev='/bin/pthread_te' (id=4) -> next='/bin/pthread_te' (id=5)
+[DEBUG] kernel/task/sched.c:184: [sched] next='/bin/pthread_te': entry=0x40059de2 sp=0x50022af8 kernel_sp=0xffff8
+[DEBUG] kernel/task/sched.c:170: [sched] CR3→0xc3b000 TSS.RSP0=0xffff80000027f060 task='/bin/pthread_te'
+[DEBUG] kernel/task/sched.c:180: [sched] switch: prev='/bin/pthread_te' (id=5) -> next='/bin/pthread_te' (id=4)
+[DEBUG] kernel/task/sched.c:184: [sched] next='/bin/pthread_te': entry=0x40059de2 sp=0x6ffffef8 kernel_sp=0xffff8
+[DEBUG] kernel/task/sched.c:170: [sched] CR3→0xc3b000 TSS.RSP0=0xffff800000283060 task='/bin/pthread_te'
+[DEBUG] kernel/task/sched.c:180: [sched] switch: prev='/bin/pthread_te' (id=4) -> next='/bin/pthread_te' (id=5)
+[DEBUG] kernel/task/sched.c:184: [sched] next='/bin/pthread_te': entry=0x40059de2 sp=0x50022af8 kernel_sp=0xffff8

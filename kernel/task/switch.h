@@ -331,39 +331,43 @@ void task_trampoline_user(void);
 void arch_fork_resume_user(void);
 
 /**
- * arch_init_fork_child_stack - 为 fork 子进程初始化内核栈
- * @stack_base:  内核栈底（低地址）
- * @stack_size:  内核栈大小（字节）
- * @frame:       父进程的完整 trap_frame_t（含 x0-x30, usp, elr, spsr）
+ * arch_init_fork_child_stack - 为 fork/线程子进程初始化内核栈
+ * @stack_base:      内核栈底（低地址）
+ * @stack_size:      内核栈大小（字节）
+ * @frame:           父进程的完整 trap_frame_t
+ * @child_stack:     子进程/线程的用户栈指针（0 = 继承父进程）
+ * @tls:             线程本地存储指针（0 = 继承父进程）
  *
- * 子进程首次被调度时，通过 arch_fork_resume_user 进入用户态，
- * x0=0（fork 子进程返回值）。
+ * fork：child_stack=0, tls=0
+ * 线程（CLONE_VM+CLONE_SETTLS）：child_stack=新栈, tls=TLS指针
  *
  * 返回：应写入 task->sp 的初始值。
  */
 #include "exception.h"
 static inline uintptr_t
 arch_init_fork_child_stack(uint8_t *stack_base, uint32_t stack_size,
-                            trap_frame_t *frame)
+                            trap_frame_t *frame,
+                            uint64_t child_stack,
+                            uint64_t tls)
 {
     uint64_t *sp = (uint64_t *)((uintptr_t)(stack_base + stack_size));
 
 #if ARCH_AARCH64
-    /* 先在内核栈顶放一份 trap_frame_t（34 × 8 字节） */
+    /* 先在内核栈顶放一份 trap_frame_t */
     sp = (uint64_t *)((uintptr_t)sp - sizeof(trap_frame_t));
     trap_frame_t *child_frame = (trap_frame_t *)sp;
     /* 拷贝父进程寄存器 */
     for (uint32_t i = 0; i < NUM_REGS; i++)
         child_frame->r[i] = frame->r[i];
-    child_frame->usp  = frame->usp;
-    child_frame->elr  = frame->elr;
-    child_frame->spsr = frame->spsr;
-    /* 子进程 fork 返回 0 */
+    child_frame->usp      = child_stack ? child_stack : frame->usp;
+    child_frame->elr      = frame->elr;
+    child_frame->spsr     = frame->spsr;
+    child_frame->tpidr_el0 = tls ? tls : frame->tpidr_el0;
+    /* 子进程 fork/线程 返回 0 */
     child_frame->r[0] = 0;
 
     /* 再放 12 个被调用者寄存器，x30(LR)→arch_fork_resume_user */
     sp -= 12;
-    /* x19 = 指向上面 trap_frame_t 的内核虚拟地址 */
     sp[0]  = (uint64_t)(uintptr_t)child_frame;  /* x19 = &child_frame */
     for (int i = 1; i < 11; i++)
         sp[i] = 0;
@@ -375,13 +379,18 @@ arch_init_fork_child_stack(uint8_t *stack_base, uint32_t stack_size,
 
     for (uint32_t i = 0; i < 32; i++)
         child_frame->x[i] = frame->x[i];
-    child_frame->sepc = frame->sepc;
-    child_frame->scause = frame->scause;
-    child_frame->stval = frame->stval;
+    child_frame->sepc    = frame->sepc;
+    child_frame->scause  = frame->scause;
+    child_frame->stval   = frame->stval;
     child_frame->sstatus = frame->sstatus;
 
-    /* fork 子进程返回值 = 0 (a0/x10) */
+    /* fork/线程返回值 = 0 (a0/x10) */
     child_frame->x[10] = 0;
+    /* 覆盖用户栈 / TLS (tp = x4) */
+    if (child_stack)
+        child_frame->x[2] = child_stack;  /* sp */
+    if (tls)
+        child_frame->x[4] = tls;          /* tp */
 
     /* 再放 13 个被调用者寄存器，ra->arch_fork_resume_user，s0->child_frame */
     sp -= 13;
@@ -394,7 +403,10 @@ arch_init_fork_child_stack(uint8_t *stack_base, uint32_t stack_size,
     sp = (uint64_t *)((uintptr_t)sp - sizeof(trap_frame_t));
     trap_frame_t *child_frame = (trap_frame_t *)sp;
     *child_frame = *frame;
-    child_frame->rax = 0;   /* fork 子进程返回 0 */
+    child_frame->rax = 0;   /* fork/线程子进程返回 0 */
+    if (child_stack)
+        child_frame->rsp = child_stack;  /* 覆盖用户栈 */
+    /* x86_64 TLS (fs_base) 在 clone 调用者处通过 task->fs_base 设置 */
 
     /*
      * arch_task_switch 保存/恢复顺序（低地址→高地址）：

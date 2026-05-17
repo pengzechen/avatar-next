@@ -199,4 +199,8 @@ arch_fork_resume_user:
     /* 最后恢复 x0 (fork 返回 0，已在 frame 中设好) */
     ldr     x0, [x9, #0*8]
 
+    /* 恢复 tpidr_el0 (线程 TLS 指针, 不用 x9 因为 x9 已用于 frame ptr) */
+    ldr     x10, [x9, #34*8]
+    msr     tpidr_el0, x10
+
     eret

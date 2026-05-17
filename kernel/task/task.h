@@ -25,7 +25,7 @@ typedef enum {
 /* ── Configuration ───────────────────────────────────────── */
 #define TASK_STACK_SIZE  16384u  /* 每个内核任务的栈大小（16 KiB，增加以防止 syscall 栈溢出） */
 #define TASK_NAME_LEN    16u     /* 任务名最大长度（含 NUL）      */
-#define TASK_MAX         16u     /* 最大并发任务数（不含 idle）   */
+#define TASK_MAX         64u     /* 最大并发任务数（不含 idle）   */
 #define TASK_CWD_LEN     128u    /* 当前工作目录最大长度          */
 #define TASK_EXE_LEN     128u    /* 可执行文件路径最大长度        */
 #define TASK_MAX_FD      256u    /* 每进程最大文件描述符数        */
@@ -46,6 +46,7 @@ typedef struct task {
     /* === 用户态支持 === */
     bool            is_user_process;     /* true=用户进程, false=内核任务          */
     bool            user_started;        /* true=已至少进入过一次用户态            */
+    bool            is_thread;           /* true=线程(共享页表), false=独立进程 */
     uint64_t       *pgd;                 /* 页表基址（用户进程的TTBR0）            */
     uint64_t        user_entry;          /* 用户态入口点（虚拟地址）               */
     uint64_t        user_sp;             /* 用户栈指针（虚拟地址）                */
@@ -54,6 +55,7 @@ typedef struct task {
     uint64_t        heap_end;            /* 进程堆当前末尾（brk 系统调用使用）    */
     uint64_t        mmap_next;           /* 下一个 mmap 分配的起始地址            */
     uint64_t        fs_base;             /* x86_64 TLS: IA32_FS_BASE              */
+    uint64_t        ctid_ptr;            /* CLONE_CHILD_CLEARTID 地址 (0=无)       */
 
     /* === 进程/文件系统支持 === */
     char            cwd[TASK_CWD_LEN];  /* 当前工作目录（用户进程）               */

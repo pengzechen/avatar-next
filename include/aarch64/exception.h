@@ -17,6 +17,7 @@ typedef struct {
     uint64_t usp;         /* EL0/EL1 user/guest stack       */
     uint64_t elr;         /* Exception Link Register        */
     uint64_t spsr;        /* Saved Process Status Register  */
+    uint64_t tpidr_el0;   /* 用户态线程指针寄存器 (TLS)    */
 } trap_frame_t;
 
 typedef trap_frame_t cpu_ctx_t;

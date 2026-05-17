@@ -86,11 +86,28 @@
 #define LINUX_SYS_EXECVE         221
 #define LINUX_SYS_MMAP           222
 #define LINUX_SYS_MPROTECT       226
+#define LINUX_SYS_FUTEX           98
 #define LINUX_SYS_PSELECT6        72
 #define LINUX_SYS_PPOLL           73
 #define LINUX_SYS_WAIT4          260
 #define LINUX_SYS_PRLIMIT64      261
 #define LINUX_SYS_GETRANDOM      278
+
+/* CLONE flags (来自 Linux <sched.h>) */
+#define CLONE_VM             0x00000100UL
+#define CLONE_FS             0x00000200UL
+#define CLONE_FILES          0x00000400UL
+#define CLONE_SIGHAND        0x00000800UL
+#define CLONE_THREAD         0x00010000UL
+#define CLONE_SETTLS         0x00080000UL
+#define CLONE_PARENT_SETTID  0x00100000UL
+#define CLONE_CHILD_CLEARTID 0x00200000UL
+
+/* futex 操作码 */
+#define FUTEX_WAIT           0
+#define FUTEX_WAKE           1
+#define FUTEX_PRIVATE_FLAG   128
+#define FUTEX_CLOCK_REALTIME 256
 
 #define X86_SYS_ARCH_PRCTL       0x7FFFFFFDULL
 #define X86_SYS_RSEQ             0x7FFFFFFCULL
@@ -162,6 +179,7 @@ struct kernel_pollfd {
 #define EINVAL   22
 #define ENOENT    2
 #define ENOMEM   12
+#define EAGAIN   11
 #define EFAULT   14
 #define ERANGE   34
 #define ECHILD   10
@@ -173,6 +191,10 @@ struct kernel_pollfd {
 #define ENOTSUP  95
 #define AT_FDCWD -100
 #define AT_REMOVEDIR 0x200
+
+/* futex 前向声明（实现在文件后半部分） */
+static int futex_do_wake(uintptr_t uaddr, int count);
+static int sys_futex_wait(uint32_t *uaddr, uint32_t val);
 
 /* ─────────────────────────────────────────────────────────────────
  * 全局文件描述符对象池
@@ -564,7 +586,11 @@ static void x86_translate_syscall(uint64_t *nr, uint64_t regs[9])
     case 40:  *nr = LINUX_SYS_SENDFILE;    break; /* sendfile / sendfile64 (x86_64) */
     case 187: *nr = LINUX_SYS_SENDFILE;    break; /* sendfile64 (x86_64 compat) */
     case 41:  *nr = LINUX_SYS_SOCKET;      break; /* socket */
-    case 56:  *nr = LINUX_SYS_CLONE;       break; /* clone */
+    case 56:  /* clone: x86_64 ABI 顺序 flags,stack,ptid,ctid,tls
+                        内部 ABI 顺序 flags,stack,ptid,tls,ctid
+                        需要交换 arg3↔arg4 */
+        { uint64_t tmp = regs[3]; regs[3] = regs[4]; regs[4] = tmp; }
+        *nr = LINUX_SYS_CLONE; break;
     case 57:  *nr = LINUX_SYS_CLONE;       break; /* fork → clone */
     case 58:  *nr = LINUX_SYS_CLONE;       break; /* vfork → clone */
     case 59:  *nr = LINUX_SYS_EXECVE;      break; /* execve */
@@ -609,6 +635,7 @@ static void x86_translate_syscall(uint64_t *nr, uint64_t regs[9])
     case 160: *nr = LINUX_SYS_SETRLIMIT;   break; /* setrlimit */
     case 165: *nr = LINUX_SYS_GETRUSAGE;   break; /* getrusage(again) */
     case 186: *nr = LINUX_SYS_GETTID;      break; /* gettid */
+    case 202: *nr = LINUX_SYS_FUTEX;        break; /* futex */
     case 217: *nr = LINUX_SYS_GETDENTS64;  break; /* getdents64 */
     case 218: *nr = LINUX_SYS_SET_TID_ADDR; break; /* set_tid_address */
     case 228: *nr = LINUX_SYS_CLOCK_GETTIME; break; /* clock_gettime */
@@ -751,23 +778,25 @@ void syscall_handler(trap_frame_t *frame)
         break;
 
     case LINUX_SYS_CLONE: {
-        /* clone(flags, stack, parent_tid, tls, child_tid) */
-        uint64_t flags = regs[0];
-        /* uint64_t child_stack = regs[1]; -- mostly 0 for fork */
-        (void)flags;
+        /*
+         * clone(flags, child_stack, parent_tidptr, tls, child_tidptr)
+         * pthread_create 调用：flags=CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|
+         *                             CLONE_THREAD|CLONE_SETTLS|CLONE_PARENT_SETTID|CLONE_CHILD_CLEARTID
+         * fork 调用：flags=SIGCHLD（无 CLONE_VM）
+         */
+        uint64_t flags       = regs[0];
+        uint64_t child_stack = regs[1];    /* 线程专用新栈 */
+        uint32_t *parent_tidptr = (uint32_t *)regs[2];
+        uint64_t tls         = regs[3];    /* CLONE_SETTLS: 新线程 TLS 指针 */
+        uint32_t *child_tidptr  = (uint32_t *)regs[4];  /* CLONE_CHILD_CLEARTID */
 
-        /* Allocate child task slot */
-        /* We implement vfork-like clone: child shares page table,
-           parent blocks until child exits or execs */
         task_t *parent = task_current();
 
-        /* Allocate a new task */
+        /* 分配子任务槽 */
         extern uint8_t g_task_stacks[TASK_MAX][TASK_STACK_SIZE];
         task_t *child = NULL;
-
-        /* Inline alloc from pool */
         {
-            /* cleanup dead first */
+            /* 先回收已死亡的槽 */
             for (uint32_t i = 0; i < TASK_MAX; i++) {
                 if (g_stack_used[i] && g_task_pool[i].state == TASK_DEAD) {
                     g_stack_used[i] = 0;
@@ -796,147 +825,178 @@ void syscall_handler(trap_frame_t *frame)
         child->state           = TASK_READY;
         child->priority        = parent->priority;
         child->is_user_process = true;
-
-        /*
-         * fork 语义：为子进程创建独立地址空间并复制父进程用户页。
-         * 只复制用户地址范围，避免共享用户栈导致返回地址被覆盖。
-         */
-        uint64_t child_pgd_phys = pmm_alloc_pages(g_pmm, 1);
-        if (child_pgd_phys == 0) {
-            KLOG_ERROR("[clone] no memory for child pgd\n");
-            g_stack_used[child - g_task_pool] = 0;
-            regs[0] = (uint64_t)(int64_t)-ENOMEM;
-            break;
-        }
-        void *child_pgd_virt = phys_to_virt(child_pgd_phys);
-        void *parent_pgd_virt = phys_to_virt((uint64_t)parent->pgd);
-        memset(child_pgd_virt, 0, PAGE_SIZE);
-
-#if ARCH_X86_64
-        /*
-         * x86_64: 子进程 PML4 必须包含内核高半区映射（PML4[256..511]），
-         * 否则调度器 write_cr3(child_pgd) 后内核代码立即不可达。
-         * 从父进程页表复制（父进程已在 elf_loader 中正确继承）。
-         */
-        x86_copy_kernel_mappings((uint64_t *)child_pgd_virt,
-                                 (uint64_t *)parent_pgd_virt);
-#endif
-
-#if ARCH_RISCV64
-        /*
-         * RISC-V: 子进程页表必须包含内核高半区映射，否则
-         * sched_schedule 切换 satp 到子进程页表后，内核代码
-         * 立即无法访问，导致指令页错误 → 系统挂起。
-         * 从父进程页表复制 L1[0x100] 和 L1[0x102]（内核高半区 1GB 大页叶子）。
-         */
-        {
-            uint64_t *child_l1  = (uint64_t *)child_pgd_virt;
-            uint64_t *kernel_l1 = (uint64_t *)phys_to_virt(satp_read_pgd_phys());
-            riscv64_copy_kernel_mappings(child_l1, kernel_l1);
-        }
-#endif
-
-        bool clone_copy_ok = true;
-
-        /* helper: 复制 [start, end) 内已映射页 */
-        #define CLONE_COPY_RANGE(start, end)                                              \
-            do {                                                                           \
-                uint64_t __s = ALIGN_DOWN((start), PAGE_SIZE);                            \
-                uint64_t __e = ALIGN_UP((end), PAGE_SIZE);                                \
-                for (uint64_t va = __s; clone_copy_ok && va < __e; va += PAGE_SIZE) {     \
-                    uint64_t src_pa = mm_vm_get_paddr(parent_pgd_virt, va);               \
-                    if (src_pa == 0)                                                       \
-                        continue;                                                          \
-                    uint64_t dst_pa = pmm_alloc_pages(g_pmm, 1);                          \
-                    if (dst_pa == 0) {                                                     \
-                        clone_copy_ok = false;                                             \
-                        break;                                                             \
-                    }                                                                      \
-                    memcpy(phys_to_virt(dst_pa), phys_to_virt(src_pa), PAGE_SIZE);        \
-                    if (mm_vm_map_pages(child_pgd_virt, va, dst_pa, 1, 0) != 0) {         \
-                        pmm_free_pages(g_pmm, dst_pa, 1);                                  \
-                        clone_copy_ok = false;                                             \
-                        break;                                                             \
-                    }                                                                      \
-                }                                                                          \
-            } while (0)
-
-        /* 代码/数据/堆 */
-        CLONE_COPY_RANGE(0x0, parent->heap_end);
-
-        /* mmap 区域（从 USER_MMAP_BASE_EXEC 线性向上分配） */
-        if (clone_copy_ok && parent->mmap_next > USER_MMAP_BASE_EXEC)
-            CLONE_COPY_RANGE(USER_MMAP_BASE_EXEC, parent->mmap_next);
-
-        /* 用户栈 */
-        if (clone_copy_ok)
-            CLONE_COPY_RANGE(parent->user_stack_top - parent->user_stack_size,
-                             parent->user_stack_top);
-
-        #undef CLONE_COPY_RANGE
-
-        if (!clone_copy_ok) {
-            KLOG_ERROR("[clone] failed to copy user address space\n");
-            g_stack_used[child - g_task_pool] = 0;
-            pmm_free_pages(g_pmm, child_pgd_phys, 1);
-            regs[0] = (uint64_t)(int64_t)-ENOMEM;
-            break;
-        }
-
-        child->pgd             = (uint64_t *)child_pgd_phys;
-
-        child->user_entry      = parent->user_entry;
-        child->user_sp         = parent->user_sp;
-        child->user_stack_top  = parent->user_stack_top;
-        child->user_stack_size = parent->user_stack_size;
-        child->heap_end        = parent->heap_end;
-        child->mmap_next       = parent->mmap_next;
-        child->fs_base         = parent->fs_base;
-        child->parent_id       = parent->id;
+        child->user_started    = true;   /* 已有 trap frame，直接通过 arch_fork_resume_user 入用户态 */
         child->exit_status     = 0;
         child->is_waiting      = false;
         child->wait_pid        = (uint32_t)-1;
+        child->ctid_ptr        = 0;
+        child->is_thread       = false;
 
-        /* Copy cwd */
-        {
-            int k = 0;
-            while (parent->cwd[k] && k < (int)TASK_CWD_LEN - 1) {
-                child->cwd[k] = parent->cwd[k];
-                k++;
+        if (flags & CLONE_VM) {
+            /* ────────────────────────────────────────────────────────────
+             * 线程路径：共享父进程地址空间（不拷贝页表）。
+             * pthread_create 走此路径。
+             * ─────────────────────────────────────────────────────────── */
+            child->is_thread       = true;
+            child->pgd             = parent->pgd;   /* 直接共享物理页表基址 */
+            child->user_entry      = parent->user_entry;
+            child->user_sp         = child_stack;
+            child->user_stack_top  = child_stack;
+            child->user_stack_size = parent->user_stack_size;
+            child->heap_end        = parent->heap_end;
+            child->mmap_next       = parent->mmap_next;
+            child->fs_base         = (flags & CLONE_SETTLS) ? tls : parent->fs_base;
+            child->parent_id       = parent->id;
+
+            /* CLONE_PARENT_SETTID: 把子线程 tid 写到父进程用户内存 */
+            if ((flags & CLONE_PARENT_SETTID) && parent_tidptr)
+                *parent_tidptr = child->id;
+
+            /* CLONE_CHILD_CLEARTID: 线程退出时清零并 futex_wake */
+            if ((flags & CLONE_CHILD_CLEARTID) && child_tidptr)
+                child->ctid_ptr = (uint64_t)child_tidptr;
+
+            /* 复制 cwd / fd_table / 任务名 */
+            {
+                int k = 0;
+                while (parent->cwd[k] && k < (int)TASK_CWD_LEN - 1) {
+                    child->cwd[k] = parent->cwd[k]; k++;
+                }
+                child->cwd[k] = '\0';
             }
-            child->cwd[k] = '\0';
+            for (uint32_t k = 0; k < TASK_MAX_FD; k++)
+                child->fd_table[k] = parent->fd_table[k];
+            {
+                int k = 0;
+                while (parent->name[k] && k < (int)TASK_NAME_LEN - 1) {
+                    child->name[k] = parent->name[k]; k++;
+                }
+                child->name[k] = '\0';
+            }
+
+            list_node_init(&child->run_node);
+            list_node_init(&child->wait_node);
+
+            /* 设置子线程内核栈：child_stack=新用户栈, tls=新TLS */
+            child->sp = arch_init_fork_child_stack(
+                child->stack_base, TASK_STACK_SIZE,
+                frame, child_stack,
+                (flags & CLONE_SETTLS) ? tls : 0
+            );
+
+            KLOG_INFO("[clone/thread] parent=%u child=%u tls=0x%llx usp=0x%llx\n",
+                      parent->id, child->id, tls, child_stack);
+
+        } else {
+            /* ────────────────────────────────────────────────────────────
+             * fork 路径：为子进程创建独立地址空间并复制父进程用户页。
+             * ─────────────────────────────────────────────────────────── */
+            uint64_t child_pgd_phys = pmm_alloc_pages(g_pmm, 1);
+            if (child_pgd_phys == 0) {
+                KLOG_ERROR("[clone] no memory for child pgd\n");
+                g_stack_used[child - g_task_pool] = 0;
+                regs[0] = (uint64_t)(int64_t)-ENOMEM;
+                break;
+            }
+            void *child_pgd_virt  = phys_to_virt(child_pgd_phys);
+            void *parent_pgd_virt = phys_to_virt((uint64_t)parent->pgd);
+            memset(child_pgd_virt, 0, PAGE_SIZE);
+
+#if ARCH_X86_64
+            x86_copy_kernel_mappings((uint64_t *)child_pgd_virt,
+                                     (uint64_t *)parent_pgd_virt);
+#endif
+#if ARCH_RISCV64
+            {
+                uint64_t *child_l1  = (uint64_t *)child_pgd_virt;
+                uint64_t *kernel_l1 = (uint64_t *)phys_to_virt(satp_read_pgd_phys());
+                riscv64_copy_kernel_mappings(child_l1, kernel_l1);
+            }
+#endif
+
+            bool clone_copy_ok = true;
+
+            #define CLONE_COPY_RANGE(start, end)                                              \
+                do {                                                                           \
+                    uint64_t __s = ALIGN_DOWN((start), PAGE_SIZE);                            \
+                    uint64_t __e = ALIGN_UP((end), PAGE_SIZE);                                \
+                    for (uint64_t va = __s; clone_copy_ok && va < __e; va += PAGE_SIZE) {     \
+                        uint64_t src_pa = mm_vm_get_paddr(parent_pgd_virt, va);               \
+                        if (src_pa == 0)                                                       \
+                            continue;                                                          \
+                        uint64_t dst_pa = pmm_alloc_pages(g_pmm, 1);                          \
+                        if (dst_pa == 0) {                                                     \
+                            clone_copy_ok = false;                                             \
+                            break;                                                             \
+                        }                                                                      \
+                        memcpy(phys_to_virt(dst_pa), phys_to_virt(src_pa), PAGE_SIZE);        \
+                        if (mm_vm_map_pages(child_pgd_virt, va, dst_pa, 1, 0) != 0) {         \
+                            pmm_free_pages(g_pmm, dst_pa, 1);                                  \
+                            clone_copy_ok = false;                                             \
+                            break;                                                             \
+                        }                                                                      \
+                    }                                                                          \
+                } while (0)
+
+            CLONE_COPY_RANGE(0x0, parent->heap_end);
+            if (clone_copy_ok && parent->mmap_next > USER_MMAP_BASE_EXEC)
+                CLONE_COPY_RANGE(USER_MMAP_BASE_EXEC, parent->mmap_next);
+            if (clone_copy_ok)
+                CLONE_COPY_RANGE(parent->user_stack_top - parent->user_stack_size,
+                                 parent->user_stack_top);
+            #undef CLONE_COPY_RANGE
+
+            if (!clone_copy_ok) {
+                KLOG_ERROR("[clone] failed to copy user address space\n");
+                g_stack_used[child - g_task_pool] = 0;
+                pmm_free_pages(g_pmm, child_pgd_phys, 1);
+                regs[0] = (uint64_t)(int64_t)-ENOMEM;
+                break;
+            }
+
+            child->pgd             = (uint64_t *)child_pgd_phys;
+            child->user_entry      = parent->user_entry;
+            child->user_sp         = parent->user_sp;
+            child->user_stack_top  = parent->user_stack_top;
+            child->user_stack_size = parent->user_stack_size;
+            child->heap_end        = parent->heap_end;
+            child->mmap_next       = parent->mmap_next;
+            child->fs_base         = parent->fs_base;
+            child->parent_id       = parent->id;
+
+            {
+                int k = 0;
+                while (parent->cwd[k] && k < (int)TASK_CWD_LEN - 1) {
+                    child->cwd[k] = parent->cwd[k]; k++;
+                }
+                child->cwd[k] = '\0';
+            }
+            for (uint32_t k = 0; k < TASK_MAX_FD; k++)
+                child->fd_table[k] = parent->fd_table[k];
+            {
+                int k = 0;
+                while (parent->name[k] && k < (int)TASK_NAME_LEN - 1) {
+                    child->name[k] = parent->name[k]; k++;
+                }
+                child->name[k] = '\0';
+            }
+
+            list_node_init(&child->run_node);
+            list_node_init(&child->wait_node);
+
+            child->sp = arch_init_fork_child_stack(
+                child->stack_base, TASK_STACK_SIZE,
+                frame, 0, 0   /* fork：不覆盖 child_stack 和 tls */
+            );
+
+            KLOG_INFO("[clone/fork] parent=%u child=%u elr=0x%llx usp=0x%llx\n",
+                      parent->id, child->id, syscall_abi_ip(frame), syscall_abi_user_sp(frame));
         }
 
-        /* Copy fd_table */
-        for (uint32_t k = 0; k < TASK_MAX_FD; k++)
-            child->fd_table[k] = parent->fd_table[k];
-
-        /* Task name */
-        {
-            int k = 0;
-            while (parent->name[k] && k < (int)TASK_NAME_LEN - 1) {
-                child->name[k] = parent->name[k];
-                k++;
-            }
-            child->name[k] = '\0';
-        }
-
-        list_node_init(&child->run_node);
-        list_node_init(&child->wait_node);
-
-        /* Set up child kernel stack to return 0 to user */
-        child->sp = arch_init_fork_child_stack(
-            child->stack_base, TASK_STACK_SIZE,
-            frame   /* full trap_frame: all user regs */
-        );
-
-        /* Enqueue child */
+        /* 加入就绪队列 */
         sched_enqueue(child);
 
-        KLOG_INFO("[clone] parent=%u child=%u elr=0x%llx usp=0x%llx\n",
-                  parent->id, child->id, syscall_abi_ip(frame), syscall_abi_user_sp(frame));
-
-        /* Parent returns child PID */
+        /* 父进程返回子进程 PID */
         regs[0] = (uint64_t)child->id;
         break;
     }
@@ -1046,9 +1106,26 @@ void syscall_handler(trap_frame_t *frame)
     }
 
     case LINUX_SYS_SET_TID_ADDR:
+        /* musl 线程初始化时设置线程 'clear-child-tid' 地址 */
+        task_current()->ctid_ptr = regs[0];
+        /* fall through */
     case LINUX_SYS_GETTID:
         regs[0] = (uint64_t)task_current()->id;
         break;
+
+    case LINUX_SYS_FUTEX: {
+        uint32_t *uaddr = (uint32_t *)regs[0];
+        int op  = (int)regs[1] & ~(FUTEX_PRIVATE_FLAG | FUTEX_CLOCK_REALTIME);
+        uint32_t val  = (uint32_t)regs[2];
+        int count = (int)(uint32_t)regs[3];  /* WAKE 时使用 */
+        if (op == FUTEX_WAIT)
+            regs[0] = (uint64_t)(int64_t)sys_futex_wait(uaddr, val);
+        else if (op == FUTEX_WAKE)
+            regs[0] = (uint64_t)(int64_t)futex_do_wake((uintptr_t)uaddr, count);
+        else
+            regs[0] = (uint64_t)(int64_t)-ENOSYS;
+        break;
+    }
 
     case LINUX_SYS_GETPID:
         regs[0] = (uint64_t)task_current()->id;
@@ -1947,6 +2024,79 @@ void syscall_handler(trap_frame_t *frame)
 
 /* ── 具体系统调用实现 ──────────────────────────────────────────── */
 
+/* ── futex 简易实现 ─────────────────────────────────────────── */
+
+#define FUTEX_TABLE_SIZE 64
+
+static struct {
+    uintptr_t uaddr;    /* 用户虚拟地址 (0 = 空闲) */
+    task_t   *waiter;   /* 等待该地址的任务 */
+} g_futex_table[FUTEX_TABLE_SIZE];
+
+/*
+ * futex_do_wake - 唤醒等待在 uaddr 上的最多 count 个任务
+ * 返回实际唤醒数量。
+ */
+static int
+futex_do_wake(uintptr_t uaddr, int count)
+{
+    int woken = 0;
+    uint64_t flags = arch_irq_save();
+    for (int i = 0; i < FUTEX_TABLE_SIZE && woken < count; i++) {
+        if (g_futex_table[i].uaddr == uaddr && g_futex_table[i].waiter != NULL) {
+            task_t *t = g_futex_table[i].waiter;
+            g_futex_table[i].uaddr  = 0;
+            g_futex_table[i].waiter = NULL;
+            t->state = TASK_READY;
+            sched_enqueue(t);
+            woken++;
+        }
+    }
+    arch_irq_restore(flags);
+    return woken;
+}
+
+/*
+ * sys_futex_wait - 如果 *uaddr == val，将当前任务阻塞直到被唤醒。
+ * 返回 0 = 成功；-EAGAIN = 值已不匹配；-ENOMEM = 等待表已满。
+ */
+static int
+sys_futex_wait(uint32_t *uaddr, uint32_t val)
+{
+    uint64_t flags = arch_irq_save();
+
+    /* 原子检查：若 *uaddr != val，立即返回 EAGAIN */
+    if (*(volatile uint32_t *)uaddr != val) {
+        arch_irq_restore(flags);
+        return -EAGAIN;
+    }
+
+    /* 找空闲槽 */
+    int slot = -1;
+    for (int i = 0; i < FUTEX_TABLE_SIZE; i++) {
+        if (g_futex_table[i].waiter == NULL) {
+            slot = i;
+            break;
+        }
+    }
+    if (slot < 0) {
+        arch_irq_restore(flags);
+        return -ENOMEM;
+    }
+
+    task_t *cur = task_current();
+    g_futex_table[slot].uaddr  = (uintptr_t)uaddr;
+    g_futex_table[slot].waiter = cur;
+    cur->state = TASK_BLOCKED;
+
+    arch_irq_restore(flags);
+
+    /* 让出 CPU；被 futex_do_wake 设回 TASK_READY 后继续 */
+    sched_schedule();
+    return 0;
+}
+
+
 int64_t sys_write(const char *str, uint64_t len)
 {
     if (str == NULL) {
@@ -1968,6 +2118,12 @@ void sys_exit(int status)
 
     KLOG_INFO("[syscall] process '%s' (id=%u) exiting with status %d\n",
               current->name, current->id, status);
+
+    /* CLONE_CHILD_CLEARTID: 清零 tid 并唤醒 pthread_join 等待者 */
+    if (current->ctid_ptr) {
+        *(volatile uint32_t *)current->ctid_ptr = 0;
+        futex_do_wake(current->ctid_ptr, 0x7fffffff);
+    }
 
     /* 调用 task_exit 退出当前进程 */
     task_exit();
@@ -2077,7 +2233,11 @@ int64_t sys_execve(const char *pathname, char **argv, char **envp)
         kern_argv = argv_ptrs;
     }
 
-    int rc = elf_loader_load_from_file(pathname, kern_argv, NULL);
+    /* 将相对路径转为绝对路径（lwext4 不支持 "./" 前缀）*/
+    char abs_path[256];
+    resolve_path(current->cwd, pathname, abs_path, (int)sizeof(abs_path));
+
+    int rc = elf_loader_load_from_file(abs_path, kern_argv, NULL);
 
     /* 如果成功，不应该到达这里 */
     return rc;

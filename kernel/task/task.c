@@ -291,11 +291,13 @@ process_create(const char *name, uint64_t user_entry, uint64_t user_code_size,
     /* 标记为用户进程 */
     task->is_user_process = true;
     task->user_started    = false;
+    task->is_thread       = false;
     task->user_entry      = user_entry;
     task->user_sp         = user_sp;
     task->user_stack_top  = user_sp;
     task->user_stack_size = USER_STACK_SIZE;
     task->fs_base         = 0;
+    task->ctid_ptr        = 0;
 
     /* 创建独立的用户页表 */
 #if ARCH_AARCH64
@@ -501,8 +503,10 @@ task_create(const char *name, void (*entry)(void *), void *arg, uint8_t priority
     task->arg      = arg;
     task->is_user_process = false;
     task->user_started    = false;
+    task->is_thread       = false;
     task->pgd      = NULL;
     task->fs_base  = 0;
+    task->ctid_ptr = 0;
     task->cwd[0]   = '/';
     task->cwd[1]   = '\0';
     for (uint32_t j = 0; j < TASK_MAX_FD; j++)

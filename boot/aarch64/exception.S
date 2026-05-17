@@ -1,6 +1,6 @@
 
 .macro SAVE_REGS
-    sub     sp, sp, 34 * 8
+    sub     sp, sp, 35 * 8
     stp     x0, x1,   [sp, 2 * 0]
     stp     x2, x3,   [sp, 2 * 8]
     stp     x4, x5,   [sp, 4 * 8]
@@ -22,17 +22,21 @@
     mrs     x11, spsr_el1
     stp     x30, x9,  [sp, 30 * 8]
     stp     x10, x11, [sp, 32 * 8]
+    mrs     x9, tpidr_el0            /* 用户态 TLS 线程指针 */
+    str     x9, [sp, #34 * 8]
 .endm
 
 .macro RESTORE_REGS
     ldp     x10, x11, [sp, 32 * 8]
     ldp     x30, x9,  [sp, 30 * 8]
 
-    /* 检查 SPSR，如果不是返回到 EL0，不恢复 SP_EL0 */
+    /* 检查 SPSR，如果不是返回到 EL0，不恢复 SP_EL0 / tpidr_el0 */
     and     x12, x11, #0xf       /* 提取 M bits (EL) */
     cmp     x12, #0              /* EL0t = 0 */
     b.ne    1f                  /* 如果不是 EL0，跳过 SP_EL0 恢复 */
     msr     sp_el0, x9           /* 只在返回用户态时恢复 SP_EL0 */
+    ldr     x9, [sp, #34 * 8]    /* 只在返回用户态时恢复 tpidr_el0 */
+    msr     tpidr_el0, x9
 1:
     msr     elr_el1, x10
     msr     spsr_el1, x11
@@ -52,7 +56,7 @@
     ldp     x4, x5,   [sp, 4 * 8]
     ldp     x2, x3,   [sp, 2 * 8]
     ldp     x0, x1,   [sp, 0 * 8]
-    add     sp, sp, 34 * 8
+    add     sp, sp, 35 * 8
 .endm
 
 .macro INVALID_EXCP, kind, source
