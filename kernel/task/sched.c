@@ -251,14 +251,14 @@ sched_tick(void)
 bool
 sched_check_and_yield(void)
 {
-    /*
-     * 仅在用户进程上下文触发 tick 抢占：
-     * - 内核初始化/内核任务路径保持非抢占，避免破坏临界流程
-     * - 用户态仍可被时钟中断抢占，实现时间片轮转
-     */
-    if (!g_current_task || !g_current_task->is_user_process) {
+    if (!g_current_task) {
         return false;
     }
+    /*
+     * 注意：不再限制仅用户进程可被抢占。idle 任务（is_user_process=false）
+     * 也需要被 timer 抢占，以便在就绪队列中出现任务时立即切换。
+     * 若 pick_next() 返回 idle 自身，sched_schedule() 会跳过切换。
+     */
 
     if (g_need_resched) {
         g_need_resched = false;

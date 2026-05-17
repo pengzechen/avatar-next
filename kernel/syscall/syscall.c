@@ -591,8 +591,17 @@ static void x86_translate_syscall(uint64_t *nr, uint64_t regs[9])
                         需要交换 arg3↔arg4 */
         { uint64_t tmp = regs[3]; regs[3] = regs[4]; regs[4] = tmp; }
         *nr = LINUX_SYS_CLONE; break;
-    case 57:  *nr = LINUX_SYS_CLONE;       break; /* fork → clone */
-    case 58:  *nr = LINUX_SYS_CLONE;       break; /* vfork → clone */
+    case 57:  /* fork(): musl 直接 syscall，不传参数 → rdi/rsi/... 是垃圾。
+                        必须显式构造 flags=SIGCHLD (17)，其余清零。 */
+        regs[0] = 17; /* SIGCHLD */
+        regs[1] = 0; regs[2] = 0; regs[3] = 0; regs[4] = 0; regs[5] = 0;
+        *nr = LINUX_SYS_CLONE; break;
+    case 58:  /* vfork(): 同理，构造 CLONE_VM|CLONE_VFORK|SIGCHLD。
+                        但当前内核把 CLONE_VM 当线程走，会出错。
+                        为兼容 busybox sh 的 fork+exec，这里退化为普通 fork。 */
+        regs[0] = 17; /* SIGCHLD: 走 fork 路径（拷贝地址空间） */
+        regs[1] = 0; regs[2] = 0; regs[3] = 0; regs[4] = 0; regs[5] = 0;
+        *nr = LINUX_SYS_CLONE; break;
     case 59:  *nr = LINUX_SYS_EXECVE;      break; /* execve */
     case 60:  *nr = LINUX_SYS_EXIT;        break; /* exit */
     case 61:  *nr = LINUX_SYS_WAIT4;       break; /* wait4 */
@@ -884,8 +893,8 @@ void syscall_handler(trap_frame_t *frame)
                 (flags & CLONE_SETTLS) ? tls : 0
             );
 
-            KLOG_INFO("[clone/thread] parent=%u child=%u tls=0x%llx usp=0x%llx\n",
-                      parent->id, child->id, tls, child_stack);
+            KLOG_INFO("[clone/thread] parent=%u child=%u flags=0x%llx tls=0x%llx usp=0x%llx ctid=%p\n",
+                      parent->id, child->id, flags, tls, child_stack, child_tidptr);
 
         } else {
             /* ────────────────────────────────────────────────────────────
@@ -1117,11 +1126,12 @@ void syscall_handler(trap_frame_t *frame)
         uint32_t *uaddr = (uint32_t *)regs[0];
         int op  = (int)regs[1] & ~(FUTEX_PRIVATE_FLAG | FUTEX_CLOCK_REALTIME);
         uint32_t val  = (uint32_t)regs[2];
-        int count = (int)(uint32_t)regs[3];  /* WAKE 时使用 */
+        /* FUTEX_WAKE: val (regs[2]) 是唤醒数量；regs[3] 是 timeout（对 WAIT 有效），
+         * 不能用 regs[3]，否则 count=0（NULL timeout），导致永远唤醒 0 个等待者。 */
         if (op == FUTEX_WAIT)
             regs[0] = (uint64_t)(int64_t)sys_futex_wait(uaddr, val);
         else if (op == FUTEX_WAKE)
-            regs[0] = (uint64_t)(int64_t)futex_do_wake((uintptr_t)uaddr, count);
+            regs[0] = (uint64_t)(int64_t)futex_do_wake((uintptr_t)uaddr, (int)val);
         else
             regs[0] = (uint64_t)(int64_t)-ENOSYS;
         break;

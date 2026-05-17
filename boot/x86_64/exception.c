@@ -175,6 +175,27 @@ void handle_exception(void *frame_ptr)
                        frame->rip,
                        frame->error_code);
 
+            /* 对所有用户异常打印寄存器 */
+            KLOG_ERROR("  RAX=0x%llx RBX=0x%llx RCX=0x%llx RDX=0x%llx\n",
+                       frame->rax, frame->rbx, frame->rcx, frame->rdx);
+            KLOG_ERROR("  RSI=0x%llx RDI=0x%llx RBP=0x%llx RSP=0x%llx\n",
+                       frame->rsi, frame->rdi, frame->rbp, frame->rsp);
+            KLOG_ERROR("  R8=0x%llx R9=0x%llx R10=0x%llx R11=0x%llx\n",
+                       frame->r8, frame->r9, frame->r10, frame->r11);
+            KLOG_ERROR("  RFLAGS=0x%llx CS=0x%llx SS=0x%llx\n",
+                       frame->rflags, frame->cs, frame->ss);
+
+            /* 打印 RIP 处的指令字节（用于所有异常） */
+            if (cur && cur->pgd) {
+                uint64_t rip_page = frame->rip & ~0xfffULL;
+                uint64_t rip_pa = mm_vm_get_paddr((void *)phys_to_virt((uint64_t)cur->pgd), rip_page);
+                if (rip_pa) {
+                    uint8_t *p = (uint8_t *)phys_to_virt(rip_pa + (frame->rip & 0xfffULL));
+                    KLOG_ERROR("  RIP bytes: %02x %02x %02x %02x %02x %02x %02x %02x\n",
+                               p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7]);
+                }
+            }
+
             if (vec == 14) {
                 uint64_t cr2;
                 __asm__ volatile("mov %%cr2, %0" : "=r"(cr2));
@@ -191,15 +212,6 @@ void handle_exception(void *frame_ptr)
                 KLOG_ERROR("             RSI=0x%llx RDI=0x%llx RBP=0x%llx RSP=0x%llx\n",
                            frame->rsi, frame->rdi, frame->rbp, frame->rsp);
 
-                if (cur && cur->pgd) {
-                    uint64_t rip_page = frame->rip & ~0xfffULL;
-                    uint64_t rip_pa = mm_vm_get_paddr((void *)phys_to_virt((uint64_t)cur->pgd), rip_page);
-                    if (rip_pa) {
-                        uint8_t *p = (uint8_t *)phys_to_virt(rip_pa + (frame->rip & 0xfffULL));
-                        KLOG_ERROR("  RIP bytes: %02x %02x %02x %02x %02x %02x %02x %02x\n",
-                                   p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7]);
-                    }
-                }
             }
 
             /*
