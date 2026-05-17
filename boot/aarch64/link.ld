@@ -68,18 +68,21 @@ SECTIONS
     }
 
     /*
-     * 内核结束标记（用于内存管理）
-     */
-    __kernel_end = .;
-
-    /*
      * Stack allocation
      * 32KB stack, grows downward (enlarged for Lua VM call frames)
+     *
+     * 注意：stack 必须在 __kernel_end 之前，否则 PMM 把这段当作可用物理内存，
+     * ELF loader/分配器会覆写 BSP 的 boot 栈，导致 idle/boot 任务上下文被踩。
      */
     . = ALIGN(16);
     . = . + 0x8000;  /* 32KB */
     stack_top = .;
     stack_bottom = . - 0x8000;
+
+    /*
+     * 内核结束标记（用于内存管理：[__kernel_start, __kernel_end] 区间被 PMM 保留）
+     */
+    __kernel_end = .;
 
     /*
      * Discard unwind tables and debug info

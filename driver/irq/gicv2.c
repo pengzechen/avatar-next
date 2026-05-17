@@ -93,6 +93,19 @@ void gic_virtual_init(void)
 {
     logger_info("GIC: Initializing GIC for virtualization\n");
 
+    /* 关键：必须先从平台拿 MMIO base，否则后续所有寄存器宏都解析成
+     * (0 + offset)，写入物理地址 0（QEMU virt 那里是 RAM/device，
+     * 静默丢弃），中断永远不会送达。
+     * gic_init() 已经做了这件事；EL2/VHE 路径走 gic_virtual_init，
+     * 之前漏写导致 timer IRQ 从未投递。 */
+    gicv2_gicd_base = platform_get_mmio("irq", "gicd");
+    gicv2_gicc_base = platform_get_mmio("irq", "gicc");
+    gicv2_gich_base = platform_get_mmio("irq", "gich");
+    logger_info("GIC: base addrs: gicd=0x%llx gicc=0x%llx gich=0x%llx\n",
+                (unsigned long long)gicv2_gicd_base,
+                (unsigned long long)gicv2_gicc_base,
+                (unsigned long long)gicv2_gich_base);
+
     // 获得 gicd irq numbers
     _gicv2.irq_nr = GICD_TYPER_IRQS(read32((void *)GICD_TYPER));
     if (_gicv2.irq_nr > 1020)

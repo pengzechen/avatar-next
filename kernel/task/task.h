@@ -80,6 +80,12 @@ typedef struct task {
     list_node_t     run_node;            /* 就绪队列节点                          */
     list_node_t     wait_node;           /* 等待队列节点（用于 mutex/semaphore）  */
 
+    /* === SMP 支持（Phase 0：仅占位，调度器在 Phase 1 开始读取） === */
+    uint32_t        cpu_affinity;        /* 绑定的逻辑 CPU 编号。0..N-1 为硬亲和性；
+                                          * CPU_AFFINITY_ANY 代表“任一”，
+                                          * 由 sched_enqueue 以 round-robin
+                                          * 选一个物理核。 */
+
     /* === 用户态支持 === */
     bool            is_user_process;     /* true=用户进程, false=内核任务          */
     bool            user_started;        /* true=已至少进入过一次用户态            */
@@ -123,6 +129,23 @@ extern task_t *g_current_task;
 /* 前台进程组 ID（0 = 无前台进程）*/
 extern volatile uint32_t g_fg_pgid;
 
+/* ── SMP 调度亲和性 ──────────────────────────────────────────── */
+/* "任一核"哨兵值； sched_enqueue 看到后会用 round-robin 选目标。 */
+#define CPU_AFFINITY_ANY  ((uint32_t)-1)
+
+/**
+ * task_set_cpu_affinity - 将任务迁移到指定逻辑 CPU
+ * @task:    目标任务（仅允许在任务还未开始运行、还在某核
+ *           run_queue 的状态下调用；如从 task_create 返回后、
+ *           任务首次被 schedule 之前）
+ * @cpu_id:  目标逻辑 CPU（0..g_num_cpus-1）或 CPU_AFFINITY_ANY
+ *
+ * 原子地从当前所在核 rq 中取出（若仍在队）并重新入队到目标核。
+ * VCPU 任务请绑 cpu_id=0：per-CPU 虚拟化状态（GICH list regs / vtimer /
+ * VMCS）尚未跨核迁移。
+ */
+void task_set_cpu_affinity(task_t *task, uint32_t cpu_id);
+
 /* ── Public API ──────────────────────────────────────────── */
 
 /**
@@ -134,12 +157,15 @@ extern volatile uint32_t g_fg_pgid;
 void task_init(void);
 
 /**
- * task_switch_to_idle_stack - 切换到 idle 专用栈
+ * task_switch_to_idle_stack - 切换到 idle 专用栈并进入 idle 循环
  *
- * 必须在 task_init() 返回后、进入 idle 循环前调用。
+ * 必须在 task_init() 返回后调用。切换栈后**永不返回**，直接进入
+ * idle 主循环（task_yield + wfi/wfe/hlt）。
+ * 这样可以避免切栈后走 C 函数 epilogue 时从未初始化的新栈读 LR/RBP
+ * 导致跳到 0（ELR=0 异常）。
  * 防止频繁中断导致 boot 栈溢出。
  */
-void task_switch_to_idle_stack(void);
+void task_switch_to_idle_stack(void) __attribute__((noreturn));
 
 /**
  * task_create - 创建内核任务

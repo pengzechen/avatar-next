@@ -25,9 +25,11 @@
 
 #include "task/sched.h"
 #include "task/switch.h"
+#include "task/cpu.h"
 #include "klog.h"
 #include "barrier.h"
 #include "string.h"
+#include "spinlock.h"
 #if ARCH_RISCV64
 #include "riscv64/satp_utils.h"
 extern uint64_t g_kernel_pgd_phys;
@@ -53,28 +55,56 @@ static inline void x86_write_fs_base(uint64_t fs_base)
 }
 #endif
 
-/* ── Scheduler state ─────────────────────────────────────── */
-
-static list_t   g_run_queue;   /* 就绪任务队列（不含 idle）*/
-static task_t  *g_idle;        /* idle 任务，队空时运行    */
-static volatile bool g_need_resched = false;  /* 需要重新调度的标志 */
+/* ── Scheduler state ─────────────────────────────────────── *
+ *
+ * Phase 1: 调度状态全部迁入 cpu_t，本文件不再持有全局变量。
+ *   - run_queue / idle_task / need_resched 都从 cpu_current() 读取
+ *   - g_current_task 暂保留为 CPU0 的镜像（Phase 3 移除）
+ *
+ * 单核场景 cpu_current() 始终返回 &g_cpus[0]，行为与旧版本完全一致。
+ * 多核场景每个 CPU 独立持有自己的就绪队列；跨核入队需要持有目标核
+ *   的 rq_lock（Phase 2/4 启用，本阶段单核暂不加锁，因为关中断已经
+ *   足够互斥本核 ISR）。
+ */
 
 /* ── sched_init ──────────────────────────────────────────── */
 
 void
 sched_init(task_t *idle_task)
 {
-    list_init(&g_run_queue);
-    g_idle = idle_task;
+    /* run_queue 已由 cpu_init_bsp() 初始化为空链表，这里只装 idle。*/
+    cpu_t *c = cpu_current();
+    c->idle_task    = idle_task;
+    c->current_task = idle_task;   /* 与 g_current_task 同步 */
 }
 
 /* ── sched_enqueue ───────────────────────────────────────── */
 
+/* Phase 4a SMP 分发计数器：atomic round-robin。 */
+static uint32_t g_rr_counter;
+
 void
 sched_enqueue(task_t *task)
 {
+    uint32_t n = g_num_cpus ? g_num_cpus : 1U;
+    uint32_t target;
+    if (task->cpu_affinity == CPU_AFFINITY_ANY) {
+        target = __atomic_fetch_add(&g_rr_counter, 1U, __ATOMIC_RELAXED) % n;
+        task->cpu_affinity = target;
+    } else if (task->cpu_affinity >= n) {
+        target = 0U;
+        task->cpu_affinity = target;
+    } else {
+        target = task->cpu_affinity;
+    }
+
+    cpu_t *tc = &g_cpus[target];
     list_node_init(&task->run_node);
-    list_insert_last(&g_run_queue, &task->run_node);
+
+    /* 跨核入队：持目标核 rq_lock（spin_lock_irqsave 内部关本核 IRQ）。 */
+    spin_lock_irqsave(&tc->rq_lock);
+    list_insert_last(&tc->run_queue, &task->run_node);
+    spin_unlock_irqrestore(&tc->rq_lock);
 }
 
 /* ── sched_dequeue ───────────────────────────────────────── */
@@ -82,25 +112,42 @@ sched_enqueue(task_t *task)
 void
 sched_dequeue(task_t *task)
 {
-    if (list_contains(&g_run_queue, &task->run_node)) {
-        list_delete(&g_run_queue, &task->run_node);
+    /* 任务以其 cpu_affinity 为准处于某核 rq。先查 affinity 对应核，
+     * 找不到再退一步遍历所有核（防 affinity 字段与实际不一致）。 */
+    uint32_t n = g_num_cpus ? g_num_cpus : 1U;
+    if (task->cpu_affinity < n) {
+        cpu_t *tc = &g_cpus[task->cpu_affinity];
+        spin_lock_irqsave(&tc->rq_lock);
+        if (list_contains(&tc->run_queue, &task->run_node)) {
+            list_delete(&tc->run_queue, &task->run_node);
+            spin_unlock_irqrestore(&tc->rq_lock);
+            return;
+        }
+        spin_unlock_irqrestore(&tc->rq_lock);
+    }
+    for (uint32_t i = 0; i < n; i++) {
+        cpu_t *tc = &g_cpus[i];
+        spin_lock_irqsave(&tc->rq_lock);
+        if (list_contains(&tc->run_queue, &task->run_node)) {
+            list_delete(&tc->run_queue, &task->run_node);
+            spin_unlock_irqrestore(&tc->rq_lock);
+            return;
+        }
+        spin_unlock_irqrestore(&tc->rq_lock);
     }
 }
 
 /* ── 内部：选择下一个任务 ─────────────────────────────────── */
 
 static task_t *
-pick_next(void)
+pick_next(cpu_t *c)
 {
-    list_node_t *node = list_delete_first(&g_run_queue);
+    list_node_t *node = list_delete_first(&c->run_queue);
     if (node) {
         task_t *task = container_of(node, task_t, run_node);
-        // KLOG_TRACE("[sched] pick_next: selected '%s' (id=%u, is_user=%d)\n",
-        //           task->name, task->id, task->is_user_process);
         return task;
     }
-    // KLOG_DEBUG("[sched] pick_next: queue empty, returning idle\n");
-    return g_idle; /* 队列为空，回退到 idle */
+    return c->idle_task; /* 队列为空，回退到本核 idle */
 }
 
 /* ── sched_schedule ──────────────────────────────────────── */
@@ -111,15 +158,29 @@ sched_schedule(void)
     /* 关中断，保存当前中断标志 */
     uint64_t flags = arch_irq_save();
 
-    task_t *prev = g_current_task;
+    /* 缓存本核指针：irq_save 之后 cpu 不会变，避免重复读 per-CPU 寄存器。 */
+    cpu_t *c = cpu_current();
+
+    /*
+     * Phase 3：prev 一律从 per-CPU 的 c->current_task 取，**不**再用
+     * g_current_task —— 后者只是 CPU0 的镜像，AP 上读它会拿到别人的任务。
+     */
+    task_t *prev = c->current_task;
+
+    /* 持本核 rq_lock 期间操作 run_queue。外层已 arch_irq_save 关本核 IRQ，
+     * 这里用 raw spin_lock 避免 spin_unlock_irqrestore 过早开 IRQ。
+     * 跨核 sched_enqueue 持的是同一把锁，所以 list 操作原子。 */
+    spin_lock((spinlock_t *)&c->rq_lock);
 
     /* 若当前任务仍在运行且不是 idle，则重新入队尾 */
-    if (prev->state == TASK_RUNNING && prev != g_idle) {
+    if (prev->state == TASK_RUNNING && prev != c->idle_task) {
         prev->state = TASK_READY;
-        list_insert_last(&g_run_queue, &prev->run_node);
+        list_insert_last(&c->run_queue, &prev->run_node);
     }
 
-    task_t *next = pick_next();
+    task_t *next = pick_next(c);
+
+    spin_unlock((spinlock_t *)&c->rq_lock);
 
     /* 无需切换（唯一任务或队空只有 idle） */
     if (next == prev) {
@@ -128,10 +189,17 @@ sched_schedule(void)
         return;
     }
 
-    next->state    = TASK_RUNNING;
-    barrier_compiler();  // 确保 state 在 g_current_task 之前完成
-    g_current_task = next;
-    barrier_compiler();  // 确保 g_current_task 在 arch_task_switch 之前完成
+    next->state     = TASK_RUNNING;
+    barrier_compiler();  // 确保 state 在 current_task 之前完成
+    c->current_task = next;             /* Phase 1：per-CPU 主存储 */
+    /*
+     * Phase 3：g_current_task 镜像仅在 CPU0 维护。AP 不写，避免污染 BSP
+     * 路径（fork/exec/tty 还在读 g_current_task，AP 上无业务执行这些）。
+     */
+    if (c->cpu_id == 0) {
+        g_current_task = next;
+    }
+    barrier_compiler();  // 确保 current_task 在 arch_task_switch 之前完成
 
 #if ARCH_RISCV64
     /* RISC-V：切换到任务的页表
@@ -237,8 +305,10 @@ sched_tick(void)
      * 由 timer ISR 调用。
      * 只设置需要重调度的标志，实际切换在异常返回前进行。
      * 这样可以避免在 IRQ 处理程序中直接切换上下文。
+     *
+     * Phase 1：标志已是 per-CPU，每核独立计数。
      */
-    g_need_resched = true;
+    cpu_current()->need_resched = true;
 }
 
 /* ── sched_check_and_yield ─────────────────────────────────── */
@@ -251,7 +321,8 @@ sched_tick(void)
 bool
 sched_check_and_yield(void)
 {
-    if (!g_current_task) {
+    cpu_t *c = cpu_current();
+    if (!c->current_task) {
         return false;
     }
     /*
@@ -260,8 +331,8 @@ sched_check_and_yield(void)
      * 若 pick_next() 返回 idle 自身，sched_schedule() 会跳过切换。
      */
 
-    if (g_need_resched) {
-        g_need_resched = false;
+    if (c->need_resched) {
+        c->need_resched = false;
         sched_schedule();
         return true;
     }

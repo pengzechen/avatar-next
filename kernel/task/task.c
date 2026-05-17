@@ -13,6 +13,7 @@
 #include "task/task.h"
 #include "task/sched.h"
 #include "task/switch.h"
+#include "task/cpu.h"
 #include "klog.h"
 #include "barrier.h"
 
@@ -98,6 +99,9 @@ alloc_task_slot(void)
         if (!g_stack_used[i]) {
             g_stack_used[i]           = 1;
             g_task_pool[i].stack_base = g_task_stacks[i];
+            /* 默认 affinity = ANY：让 sched_enqueue round-robin 分发到所有核。
+             * 调用方（如 vcpu_task_create）可在 enqueue 前覆盖。 */
+            g_task_pool[i].cpu_affinity = CPU_AFFINITY_ANY;
             KLOG_INFO("[task] alloc_task_slot: slot=%u base=0x%lx\n",
                       i, (unsigned long)g_task_stacks[i]);
             return &g_task_pool[i];
@@ -219,14 +223,7 @@ task_init(void)
         g_stack_used[i]      = 0;
     }
 
-    /*
-     * 将当前 boot 执行上下文注册为 idle 任务。
-     * 为防止频繁中断导致 boot 栈溢出，给 idle 分配专用栈。
-     * 
-     * 重要：idle.sp 必须指向实际的栈顶，因为：
-     *   1. 任务退出后切换回 idle 时，arch_task_switch 会加载 idle.sp
-     *   2. 如果 sp=0 或无效值，下次中断会在无效地址保存寄存器，触发 page fault
-     */
+    /* 初始化 idle 任务（boot 上下文，使用 idle 专栈） */
     g_idle_task.sp         = (uintptr_t)(g_idle_stack + TASK_STACK_SIZE);
     g_idle_task.state      = TASK_RUNNING;
     g_idle_task.id         = g_task_id_cnt++;
@@ -264,7 +261,7 @@ task_init(void)
 
 /*
  * task_switch_to_idle_stack - 切换到 idle 专用栈
- * 
+ *
  * 必须在 task_init() 返回后、进入 idle 循环前调用。
  * 在 task_init() 内部切换会导致返回地址丢失。
  *
@@ -275,26 +272,74 @@ void
 task_switch_to_idle_stack(void)
 {
     uintptr_t new_sp = (uintptr_t)(g_idle_stack + TASK_STACK_SIZE);
+    KLOG_INFO("[task] switching to idle stack at 0x%lx\n", (unsigned long)new_sp);
+
+    /* 切到 idle 栈后**永不返回**：直接在 inline asm 里跳到 idle 主循环，
+     * 跳过编译器生成的 epilogue（否则会从未初始化的新栈读 LR/RBP 导
+     * 致跳到 0）。 */
 #if ARCH_X86_64
-    /* x86_64: 保存返回地址和 RBP，切换栈，在新栈上恢复它们 */
     __asm__ volatile(
-        "pop    %%rax\n\t"          /* 弹出返回地址到 rax */
-        "mov    %%rbp, %%rcx\n\t"   /* 保存旧的 rbp 到 rcx */
-        "mov    %0, %%rsp\n\t"      /* 切换到新栈 */
-        "push   %%rcx\n\t"          /* 将旧 rbp 压入新栈 */
-        "mov    %%rsp, %%rbp\n\t"   /* 设置新的 rbp */
-        "push   %%rax\n\t"          /* 将返回地址压入新栈 */
-        :
-        : "r"(new_sp)
-        : "rax", "rcx", "memory"
+        "mov %0, %%rsp\n\t"         /* 切换到新栈 */
+        "xor %%rbp, %%rbp\n\t"      /* 清零 RBP，标记栈帧链结束 */
+        "jmp task_idle_loop\n\t"    /* 跳到 idle 主循环（不返回） */
+        :: "r"(new_sp) : "memory"
     );
 #elif ARCH_RISCV64
-    __asm__ volatile("mv sp, %0" :: "r"(new_sp) : "memory");
+    __asm__ volatile(
+        "mv sp, %0\n\t"
+        "mv fp, zero\n\t"
+        "j  task_idle_loop\n\t"
+        :: "r"(new_sp) : "memory"
+    );
 #elif ARCH_AARCH64
-    __asm__ volatile("mov sp, %0" :: "r"(new_sp) : "memory");
+    __asm__ volatile(
+        "mov sp, %0\n\t"
+        "mov x29, xzr\n\t"          /* 清零 FP */
+        "b   task_idle_loop\n\t"
+        :: "r"(new_sp) : "memory"
+    );
 #endif
+    __builtin_unreachable();
+}
 
-    KLOG_INFO("[task] switched to idle stack at 0x%lx\n", (unsigned long)new_sp);
+/*
+ * task_idle_loop - idle 主循环
+ *
+ * 由 task_switch_to_idle_stack 在切栈后直接跳入，永不返回。
+ * 启用中断后循环执行 task_yield + 体系结构等待指令。
+ */
+__attribute__((noreturn)) void
+task_idle_loop(void)
+{
+    arch_irq_enable();
+    for (;;) {
+        task_yield();
+#if ARCH_AARCH64
+        __asm__ volatile("wfi");
+#elif ARCH_X86_64
+        __asm__ volatile("hlt");
+#elif ARCH_RISCV64
+        __asm__ volatile("wfi");
+#endif
+    }
+}
+
+/* ── task_set_cpu_affinity ───────────────────────────────────
+ * 把 task 移到指定 cpu 的运行队列。供 vcpu/EL2 等不能跨核迁移的
+ * 任务在 enqueue 后立即重新绑定。
+ *
+ * 假设：task 当前已经被 sched_enqueue 过（在某个核的 rq 中）。
+ * 若尚未入队（READY 之前），可直接设置 cpu_affinity 字段后再 enqueue。
+ */
+void
+task_set_cpu_affinity(task_t *task, uint32_t cpu_id)
+{
+    if (!task) {
+        return;
+    }
+    sched_dequeue(task);
+    task->cpu_affinity = cpu_id;
+    sched_enqueue(task);
 }
 
 /* ── process_create ─────────────────────────────────────────── */
@@ -421,6 +466,10 @@ process_create(const char *name, uint64_t user_entry, uint64_t user_code_size,
     task->sp = arch_init_user_stack(task->stack_base, TASK_STACK_SIZE,
                                     task->user_entry, user_sp,
                                     (uint64_t)task->pgd);
+
+    // /* EL0 用户进程暂时固定 BSP：跨核运行需要每核独立 TTBR0 切换，
+    //  * 等 vm_user 支持多核后再改为 CPU_AFFINITY_ANY。 */
+    // task->cpu_affinity = 0;
 
     /* 加入就绪队列 */
     sched_enqueue(task);
@@ -647,8 +696,12 @@ task_exit(void)
 task_t *
 task_current(void)
 {
-    barrier_compiler();  // 编译器屏障，确保每次都重新读取
-    return g_current_task;
+    /*
+     * Phase 3：从 per-CPU 控制块读取，AP 上才能拿到正确的任务。
+     * cpu_current() 内部已有 NULL 回退到 g_cpus[0]，因此在 cpu_init_bsp
+     * 之前的极早期路径也是安全的（会返回 g_cpus[0].current_task = NULL）。
+     */
+    return cpu_current()->current_task;
 }
 
 /* ── task_block ──────────────────────────────────────────── */

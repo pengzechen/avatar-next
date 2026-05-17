@@ -148,9 +148,14 @@ struct task *vcpu_task_create(vcpu_t *vcpu, uint8_t priority)
     name[5] = '\0';
 
     struct task *t = task_create(name, vcpu_task_fn, vcpu, priority);
-    if (t)
-        KLOG_INFO("[vmm] vcpu%d task created (id=%u)\n", vcpu->vcpu_id, t->id);
-    else
+    if (t) {
+        /* vcpu 状态（VMCS / VHE 寄存器 / SBI HSM 等）尚未支持跨核迁移。
+         * 暂时全部钉到 BSP，待后续实现 vcpu 跨核迁移再放开。 */
+        task_set_cpu_affinity(t, 0);
+        KLOG_INFO("[vmm] vcpu%d task created (id=%u) pinned to cpu0\n",
+                  vcpu->vcpu_id, t->id);
+    } else {
         KLOG_ERROR("[vmm] failed to create vcpu%d task\n", vcpu->vcpu_id);
+    }
     return t;
 }

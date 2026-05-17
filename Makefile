@@ -17,6 +17,13 @@ LOG ?= info
 # 断言配置
 ASSERT ?= panic
 
+# QEMU vCPU 数量（用于 run / run-fs / test-*）
+# Phase 0：仅传给 QEMU，内核当前仍按单核运行（cpu_bring_up_all 是 stub）。
+SMP ?= 1
+ifeq ($(filter $(SMP),1 2 3 4 5 6 7 8),)
+$(error Invalid SMP value '$(SMP)'. Use SMP=1..8)
+endif
+
 # 目录设置
 SRC_DIR     := examples
 LIB_DIR     := lib
@@ -186,8 +193,8 @@ ifdef VM_EARLY_C_SRC
 endif
 
 # task 模块源文件
-TASK_C_SOURCES := $(KERNEL_DIR)/task/task.c $(KERNEL_DIR)/task/sched.c $(KERNEL_DIR)/task/mutex.c $(KERNEL_DIR)/task/exec.c
-TASK_C_OBJECTS := $(BUILD_DIR)/kernel_task_task.o $(BUILD_DIR)/kernel_task_sched.o $(BUILD_DIR)/kernel_task_mutex.o $(BUILD_DIR)/kernel_task_exec.o
+TASK_C_SOURCES := $(KERNEL_DIR)/task/task.c $(KERNEL_DIR)/task/sched.c $(KERNEL_DIR)/task/mutex.c $(KERNEL_DIR)/task/exec.c $(KERNEL_DIR)/task/cpu.c $(KERNEL_DIR)/task/smp_thread_test.c
+TASK_C_OBJECTS := $(BUILD_DIR)/kernel_task_task.o $(BUILD_DIR)/kernel_task_sched.o $(BUILD_DIR)/kernel_task_mutex.o $(BUILD_DIR)/kernel_task_exec.o $(BUILD_DIR)/kernel_task_cpu.o $(BUILD_DIR)/kernel_task_smp_thread_test.o
 
 # loader 模块源文件
 LOADER_C_SOURCES := $(KERNEL_DIR)/loader/bin_loader.c $(KERNEL_DIR)/loader/elf_loader.c $(KERNEL_DIR)/loader/elf_image.c
@@ -348,7 +355,7 @@ ifeq ($(ARCH),x86_64)
     KERNEL_BIN    := $(BUILD_DIR)/kernel_x86_64.bin
     KERNEL_IMAGE  := $(BUILD_DIR)/kernel_x86_64.img
     QEMU          := qemu-system-x86_64
-    QEMU_FLAGS    := -machine q35 -enable-kvm -cpu host -m 2G -nographic -kernel $(KERNEL_BIN)
+    QEMU_FLAGS    := -machine q35 -enable-kvm -cpu host -smp $(SMP) -m 2G -nographic -kernel $(KERNEL_BIN)
 else ifeq ($(ARCH),aarch64)
     CC      := aarch64-linux-musl-gcc
     AR      := aarch64-linux-musl-ar
@@ -363,13 +370,14 @@ else ifeq ($(ARCH),aarch64)
     CFLAGS  += $(ASSERT_DEFINE)
     CFLAGS  += -fno-pie
     CFLAGS  += -mgeneral-regs-only  # 只使用通用寄存器，禁用 SIMD/FP
+    CFLAGS  += -mno-outline-atomics  # freestanding：禁止 GCC outline atomics 调用 libgcc 帮助函数
     CFLAGS  += -ffreestanding -fno-builtin  # 禁用内置函数和标准库
     TARGET  := $(BUILD_DIR)/spinlock_aarch64.a
     KLOG_TARGET := $(BUILD_DIR)/libklog_aarch64.a
     KERNEL_TARGET := $(BUILD_DIR)/kernel_aarch64.elf
     KERNEL_BIN    := $(BUILD_DIR)/kernel_aarch64.bin
     QEMU          := qemu-system-aarch64
-    QEMU_FLAGS    := -cpu cortex-a76 -M virt,virtualization=on -m 2G -nographic -kernel $(KERNEL_BIN)
+    QEMU_FLAGS    := -cpu cortex-a76 -M virt,virtualization=on -smp $(SMP) -m 2G -nographic -kernel $(KERNEL_BIN)
 else ifeq ($(ARCH),riscv64)
     CC      := riscv64-linux-musl-gcc
     AR      := riscv64-linux-musl-ar
@@ -394,7 +402,7 @@ else ifeq ($(ARCH),riscv64)
     KERNEL_TARGET := $(BUILD_DIR)/kernel_riscv64.elf
     KERNEL_BIN    := $(BUILD_DIR)/kernel_riscv64.bin
     QEMU          := qemu-system-riscv64
-    QEMU_FLAGS    := -M virt -m 2G -nographic -bios default -kernel $(KERNEL_BIN)
+    QEMU_FLAGS    := -M virt -smp $(SMP) -m 2G -nographic -bios default -kernel $(KERNEL_BIN)
 else
     $(error Unsupported architecture: $(ARCH). Use ARCH=x86_64, aarch64 or riscv64)
 endif
@@ -405,6 +413,7 @@ CFLAGS  += -Idriver
 CFLAGS  += -Ikernel
 CFLAGS  += -Ikernel/mm
 CFLAGS  += -DAVATAR_HAS_FILESYSTEM
+CFLAGS  += -DCONFIG_SMP_CPUS=$(SMP)
 CFLAGS  += -DPLATFORM_$(MEM_PLATFORM_DEFINE)=1
 
 # ─── §6  驱动选择 ────────────────────────────────────────────────────────────────
@@ -770,6 +779,12 @@ $(BUILD_DIR)/kernel_task_sched.o: $(KERNEL_DIR)/task/sched.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/kernel_task_mutex.o: $(KERNEL_DIR)/task/mutex.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/kernel_task_cpu.o: $(KERNEL_DIR)/task/cpu.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/kernel_task_smp_thread_test.o: $(KERNEL_DIR)/task/smp_thread_test.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/kernel_task_exec.o: $(KERNEL_DIR)/task/exec.c | $(BUILD_DIR)

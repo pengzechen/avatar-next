@@ -87,6 +87,12 @@ extern void klog_flush(void);
 extern int  kvprintf(const char *fmt, va_list va);
 extern int  kprintf(const char *fmt, ...);
 
+/*
+ * 当前逻辑 CPU 号；由 kernel/task/cpu.c 实现（weak 默认返回 0，便于
+ * 单元测试 / 早期 boot 在 BSP 未注册 TPIDR_EL1 前也能调用 klog）。
+ */
+extern uint32_t klog_cpu_id(void);
+
 /* 彩色日志输出 */
 #define KLOG_COLOR_NONE   ""
 #define KLOG_COLOR_RED    "\x1b[31m"
@@ -103,18 +109,18 @@ extern int  kprintf(const char *fmt, ...);
 /* ERROR 日志 - 总是显示 */
 #define KLOG_ERROR(fmt, ...) \
     do { \
-        kprintf(KLOG_COLOR_RED "[ERROR] " "%s:%d: " fmt \
+        kprintf(KLOG_COLOR_RED "[ERROR][C%u] " "%s:%d: " fmt \
                KLOG_COLOR_RESET "", \
-               __FILE__, __LINE__, ##__VA_ARGS__); \
+               klog_cpu_id(), __FILE__, __LINE__, ##__VA_ARGS__); \
     } while (0)
 
 /* WARN 日志 - 在 WARN 级别及以上显示 */
 #define KLOG_WARN(fmt, ...) \
     do { \
         if (g_log_level >= LOG_LEVEL_WARN) { \
-            kprintf(KLOG_COLOR_YELLOW "[WARN] " "%s:%d: " fmt \
+            kprintf(KLOG_COLOR_YELLOW "[WARN][C%u] " "%s:%d: " fmt \
                    KLOG_COLOR_RESET "", \
-                   __FILE__, __LINE__, ##__VA_ARGS__); \
+                   klog_cpu_id(), __FILE__, __LINE__, ##__VA_ARGS__); \
         } \
     } while (0)
 
@@ -122,9 +128,9 @@ extern int  kprintf(const char *fmt, ...);
 #define KLOG_INFO(fmt, ...) \
     do { \
         if (g_log_level >= LOG_LEVEL_INFO) { \
-            kprintf(KLOG_COLOR_GREEN "[INFO] " "%s:%d: " fmt \
+            kprintf(KLOG_COLOR_GREEN "[INFO][C%u] " "%s:%d: " fmt \
                    KLOG_COLOR_RESET "", \
-                   __FILE__, __LINE__, ##__VA_ARGS__); \
+                   klog_cpu_id(), __FILE__, __LINE__, ##__VA_ARGS__); \
         } \
     } while (0)
 
@@ -132,9 +138,9 @@ extern int  kprintf(const char *fmt, ...);
 #define KLOG_DEBUG(fmt, ...) \
     do { \
         if (g_log_level >= LOG_LEVEL_DEBUG) { \
-            kprintf(KLOG_COLOR_BLUE "[DEBUG] " "%s:%d: " fmt \
+            kprintf(KLOG_COLOR_BLUE "[DEBUG][C%u] " "%s:%d: " fmt \
                    KLOG_COLOR_RESET "", \
-                   __FILE__, __LINE__, ##__VA_ARGS__); \
+                   klog_cpu_id(), __FILE__, __LINE__, ##__VA_ARGS__); \
         } \
     } while (0)
 
@@ -142,8 +148,8 @@ extern int  kprintf(const char *fmt, ...);
 #define KLOG_TRACE(fmt, ...) \
     do { \
         if (g_log_level >= LOG_LEVEL_TRACE) { \
-            kprintf("[TRACE] " "%s:%d: " fmt "\n", \
-                   __FILE__, __LINE__, ##__VA_ARGS__); \
+            kprintf("[TRACE][C%u] " "%s:%d: " fmt "\n", \
+                   klog_cpu_id(), __FILE__, __LINE__, ##__VA_ARGS__); \
         } \
     } while (0)
 
@@ -153,17 +159,17 @@ extern int  kprintf(const char *fmt, ...);
 #define KLOG_MODULE_DEBUG(module, fmt, ...) \
     do { \
         if ((g_log_level >= LOG_LEVEL_DEBUG) && log_is_module_enabled(module)) { \
-            kprintf(KLOG_COLOR_BLUE "[DEBUG] [MOD] " "%s:%d: " fmt \
+            kprintf(KLOG_COLOR_BLUE "[DEBUG][C%u] [MOD] " "%s:%d: " fmt \
                    KLOG_COLOR_RESET "\n", \
-                   __FILE__, __LINE__, ##__VA_ARGS__); \
+                   klog_cpu_id(), __FILE__, __LINE__, ##__VA_ARGS__); \
         } \
     } while (0)
 
 #define KLOG_MODULE_TRACE(module, fmt, ...) \
     do { \
         if ((g_log_level >= LOG_LEVEL_TRACE) && log_is_module_enabled(module)) { \
-            kprintf("[TRACE] [MOD] " "%s:%d: " fmt "\n", \
-                   __FILE__, __LINE__, ##__VA_ARGS__); \
+            kprintf("[TRACE][C%u] [MOD] " "%s:%d: " fmt "\n", \
+                   klog_cpu_id(), __FILE__, __LINE__, ##__VA_ARGS__); \
         } \
     } while (0)
 

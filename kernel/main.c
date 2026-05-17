@@ -10,12 +10,15 @@
 #include "string.h"
 #include "task/task.h"
 #include "task/sched.h"
+#include "task/cpu.h"
 #include "pmm.h"
 #include "../driver/blk/ramblk.h"
 #include "../fs/lwext4_port/fs_init.h"
 #include "loader/elf_loader.h"
 #include "timer/timer.h"
 #include "lua_driver.h"
+#include "task/switch.h"     /* arch_irq_enable */
+
 
 #if ARCH_AARCH64
 #include "irq/irq.h"
@@ -160,6 +163,7 @@ void kernel_main(void)
 
     /* ── 初始化任务子系统 ───────────────────────────────── */
     KLOG_INFO("Initializing task subsystem...\n");
+    cpu_init_bsp();          /* Phase 0：安装 BSP per-CPU 指针 */
     task_init();
 
     /* ── 选择启动模式 ────────────────────────────────────
@@ -180,22 +184,33 @@ void kernel_main(void)
         KLOG_ERROR("Failed to create busybox loader task!\n");
 #endif
 
+    /*
+     * Phase 3：在 task_init 之后、timer_set_tick_cb 之前拉起 AP。
+     * 此时 BSP 的 idle/任务池已就绪；AP 上 timer 中断会触发，但
+     * g_tick_cb 仍为 NULL，所以暂不驱动调度。一旦下面
+     * timer_set_tick_cb(sched_tick) 写入回调，BSP 和 AP 同时开始
+     * 抢占式调度。
+     */
+    cpu_bring_up_all();
+
     /* ── 启用抢占，进入 idle 循环（所有模式共用）─────────
      * 在所有任务创建完成后启用，避免 tick 打断内核初始化路径。
      * 切换到 idle 专用栈（防止 boot 栈在频繁中断下溢出）。
      * ──────────────────────────────────────────────────── */
     timer_set_tick_cb(sched_tick);
     KLOG_INFO("Preemptive scheduling enabled\n");
+
+    /* SMP 健康检查：抢占启用后立刻验证所有核 timer 都在 tick。
+     * 单核时此函数直接 return，不影响 SMP=1 默认路径。 */
+    // cpu_smp_timer_test(3, 500);
+
+    /* Phase 4a：多核线程分发自检。SMP=1 时也会跑（验证 round-robin
+     * 自身不破坏单核）。失败仅 KLOG_ERROR，不 panic，避免影响后续
+     * busybox / vmm 测试。 */
+    // extern void smp_thread_test_run(uint32_t, uint32_t, uint32_t);
+    // smp_thread_test_run(4, 200, 800);
+
+    /* 切到 idle 栈并进入 idle 主循环（永不返回）。 */
     task_switch_to_idle_stack();
-    while (1) {
-        task_yield();
-#if ARCH_AARCH64
-        __asm__ volatile("wfe");
-#elif ARCH_X86_64
-        __asm__ volatile("hlt");
-#else
-        __asm__ volatile("wfi");
-#endif
-    }
 }
 
