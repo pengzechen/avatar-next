@@ -65,6 +65,12 @@ typedef struct task {
     int             exit_status;         /* 退出状态（wait4 使用）                 */
     bool            is_waiting;          /* 正在 wait4 子进程                      */
     uint32_t        wait_pid;            /* 等待的子进程 PID（-1=任意）            */
+
+    /* === CPU 时间统计 === */
+    uint64_t        utime_ns;            /* 用户态 CPU 时间（纳秒），task_exit 前计算  */
+    uint64_t        stime_ns;            /* 内核态 CPU 时间（纳秒），syscall 路径累积  */
+    uint64_t        sc_entry_ns;         /* 当前 syscall 入口时间戳（0=不在 syscall）  */
+    uint64_t        create_ns;           /* 进程创建时间戳（用于 utime = wall−stime）  */
 } task_t;
 
 /* ── 全局当前任务指针（在 task.c 中定义） ────────────────── */

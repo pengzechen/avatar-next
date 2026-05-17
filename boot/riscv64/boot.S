@@ -11,9 +11,9 @@
 _start:
 
     /* Test: write to UART to indicate boot success */
-    li      t0, 0x10000000  /* UART base */
-    li      t1, 0x41  /* 'A' */
-    sb      t1, 0(t0)
+    // li      t0, 0x10000000  /* UART base */
+    // li      t1, 0x41  /* 'A' */
+    // sb      t1, 0(t0)
 
     /* Note: Running in S-mode (managed by OpenSBI), no need to disable interrupts */
     csrw sie, zero
@@ -21,11 +21,6 @@ _start:
 
     /* MMU 前使用低地址引导栈 */
     la      sp, boot_stack_top
-
-    /* Test: write to UART to indicate boot success */
-    li      t0, 0x10000000  /* UART base */
-    li      t1, 0x42  /* 'B' */
-    sb      t1, 0(t0)
 
     /* 启用 MMU（建立低地址恒等映射 + 高地址内核映射） */
     call    mmu_init

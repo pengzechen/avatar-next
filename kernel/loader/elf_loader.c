@@ -118,8 +118,8 @@ int elf_loader_load_from_file(const char *pathname, char **argv, char **envp)
     /* 打开文件 */
     rc = ext4_fopen(&file, resolved, "r");
     if (rc != EOK) {
-        KLOG_ERROR("[elf_loader] Failed to open '%s': %d\n", resolved, rc);
-        return -1;
+        KLOG_WARN("[elf_loader] Failed to open '%s': %d\n", resolved, rc);
+        return -rc; /* lwext4 errno == Linux errno (ENOENT=2, etc.) */
     }
 
     /* 获取文件大小 */
@@ -130,7 +130,7 @@ int elf_loader_load_from_file(const char *pathname, char **argv, char **envp)
     if (fsize == 0 || fsize > MAX_FILE_SIZE) {
         KLOG_ERROR("[elf_loader] Invalid file size: %zu\n", fsize);
         ext4_fclose(&file);
-        return -2;
+        return -8; /* -ENOEXEC */
     }
 
     file_size = (uint64_t)fsize;
@@ -141,7 +141,7 @@ int elf_loader_load_from_file(const char *pathname, char **argv, char **envp)
     if (file_phys == 0) {
         KLOG_ERROR("[elf_loader] Memory allocation failed\n");
         ext4_fclose(&file);
-        return -3;
+        return -12; /* -ENOMEM */
     }
 
     file_data = (uint8_t *)phys_to_virt(file_phys);
@@ -155,7 +155,7 @@ int elf_loader_load_from_file(const char *pathname, char **argv, char **envp)
         KLOG_ERROR("[elf_loader] Read failed: rc=%d\n", rc);
         pmm_free_pages(g_pmm, file_phys, page_count);
         ext4_fclose(&file);
-        return -4;
+        return -5; /* -EIO */
     }
 
     ext4_fclose(&file);

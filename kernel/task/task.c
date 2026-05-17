@@ -16,6 +16,40 @@
 #include "klog.h"
 #include "barrier.h"
 
+/* 内联获取系统时间（ns），用于 CPU 时间计账 */
+extern volatile uint64_t g_system_ticks;
+extern uintptr_t         g_timer_cfg_counter_hz;
+extern unsigned          g_timer_cfg_tick_ms;
+#if ARCH_X86_64
+extern volatile uint64_t g_tsc_freq_hz;
+#endif
+static inline uint64_t task_get_ns(void)
+{
+#if ARCH_RISCV64
+    uint64_t ticks;
+    __asm__ volatile("rdtime %0" : "=r"(ticks));
+    uintptr_t freq = g_timer_cfg_counter_hz;
+    if (!freq) freq = 10000000UL;
+    return (ticks / freq) * 1000000000ULL + (ticks % freq) * 1000000000ULL / freq;
+#elif ARCH_AARCH64
+    uint64_t ticks;
+    __asm__ volatile("mrs %0, cntpct_el0" : "=r"(ticks));
+    uintptr_t freq = g_timer_cfg_counter_hz;
+    if (!freq) freq = 62500000UL;
+    return (ticks / freq) * 1000000000ULL + (ticks % freq) * 1000000000ULL / freq;
+#else
+    uint32_t lo, hi;
+    __asm__ volatile("rdtsc" : "=a"(lo), "=d"(hi));
+    uint64_t ticks = ((uint64_t)hi << 32) | (uint64_t)lo;
+    uint64_t freq  = g_tsc_freq_hz;
+    if (!freq) {
+        uint64_t tick_ms = g_timer_cfg_tick_ms ? g_timer_cfg_tick_ms : 10ULL;
+        return g_system_ticks * tick_ms * 1000000ULL;
+    }
+    return (ticks / freq) * 1000000000ULL + (ticks % freq) * 1000000000ULL / freq;
+#endif
+}
+
 #include "mm_vm.h"
 #include "vm_user.h"
 #include "user_layout.h"
@@ -456,6 +490,10 @@ process_create_with_pgd(const char *name, uint64_t user_entry, uint64_t user_sp,
     task->exit_status = 0;
     task->is_waiting  = false;
     task->wait_pid    = (uint32_t)-1;
+    task->utime_ns    = 0;
+    task->stime_ns    = 0;
+    task->sc_entry_ns = 0;
+    task->create_ns   = task_get_ns();
 
     list_node_init(&task->run_node);
     list_node_init(&task->wait_node);
@@ -614,6 +652,12 @@ task_block(list_t *wait_queue)
         platform_panic();
     }
 
+    /* 暂停 syscall stime 计时（阻塞期间不计入 stime） */
+    if (cur->is_user_process && cur->sc_entry_ns != 0) {
+        cur->stime_ns += task_get_ns() - cur->sc_entry_ns;
+        cur->sc_entry_ns = 0;
+    }
+
     /* 设置阻塞状态 */
     cur->state = TASK_BLOCKED;
 
@@ -624,6 +668,10 @@ task_block(list_t *wait_queue)
 
     /* 触发调度，切换到其他任务 */
     sched_schedule();
+
+    /* 恢复 stime 计时（从被唤醒时刻起重新开始） */
+    if (cur->is_user_process)
+        cur->sc_entry_ns = task_get_ns();
 }
 
 /* ── task_unblock ────────────────────────────────────────── */

@@ -65,6 +65,11 @@ void lapic_init(void);
 void lapic_timer_init(uint8_t vector);
 
 /**
+ * g_tsc_freq_hz — TSC 频率（Hz），由 lapic_timer_init 在 PIT 校准时测量
+ */
+extern volatile uint64_t g_tsc_freq_hz;
+
+/**
  * lapic_eoi — 发送 EOI 信号（每次中断处理完必须调用）
  */
 void lapic_eoi(void);

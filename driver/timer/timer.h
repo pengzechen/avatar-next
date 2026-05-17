@@ -167,4 +167,32 @@ typedef void (*timer_tick_cb_t)(void);
  */
 void timer_set_tick_cb(timer_tick_cb_t cb);
 
+/**
+ * timer_get_ns - 获取当前单调时间（纳秒）
+ *
+ * 使用硬件计数器（RISC-V rdtime / AArch64 cntpct_el0 / x86_64 软tick）。
+ * 可在中断、syscall 内核路径等任意上下文中安全调用。
+ */
+static inline uint64_t timer_get_ns(void)
+{
+#if ARCH_RISCV64
+    uint64_t ticks;
+    __asm__ volatile("rdtime %0" : "=r"(ticks));
+    uintptr_t freq = g_timer_cfg_counter_hz;
+    if (!freq) freq = 10000000UL;
+    return (ticks / freq) * 1000000000ULL
+         + (ticks % freq) * 1000000000ULL / freq;
+#elif ARCH_AARCH64
+    uint64_t ticks;
+    __asm__ volatile("mrs %0, cntpct_el0" : "=r"(ticks));
+    uintptr_t freq = g_timer_cfg_counter_hz;
+    if (!freq) freq = 62500000UL;
+    return (ticks / freq) * 1000000000ULL
+         + (ticks % freq) * 1000000000ULL / freq;
+#else
+    uint64_t tick_ms = g_timer_cfg_tick_ms ? g_timer_cfg_tick_ms : 10ULL;
+    return g_system_ticks * tick_ms * 1000000ULL;
+#endif
+}
+
 #endif /* __TIMER_H__ */

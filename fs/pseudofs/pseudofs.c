@@ -18,6 +18,14 @@
 #include "task/task.h"
 #include "cache.h"
 
+/* ── 外部任务池（来自 kernel/task/task.c） ──────────────────────── */
+extern task_t   g_task_pool[TASK_MAX];
+extern uint8_t  g_stack_used[TASK_MAX];
+
+/* 动态 PID 节点 ID 空间（不与静态 g_nodes[] 索引冲突） */
+#define DYNC_PID_DIR_BASE   2000   /* /proc/<pid>        → nid = 2000+pid */
+#define DYNC_PID_STAT_BASE  3000   /* /proc/<pid>/status → nid = 3000+pid */
+
 #if DRIVER_ION
 #  include "ion/ion.h"
 #endif
@@ -143,20 +151,96 @@ static int maps_read(int nid, uint64_t off, void *buf, size_t len)
     return 0;
 }
 
-/* /proc/self/status */
-static int status_read(int nid, uint64_t off, void *buf, size_t len)
+/* ── 动态 /proc/<pid>/status 生成器 ─────────────────────────── */
+
+/* 根据 PID 在任务池中查找活跃任务 */
+static task_t *pfs_find_task(uint32_t pid)
 {
-    (void)nid;
-    static const char content[] =
-        "Name:\tkernel\nState:\tR (running)\n"
-        "Pid:\t1\nPPid:\t0\n"
-        "VmRSS:\t4096 kB\nThreads:\t1\n";
-    size_t total = sizeof(content) - 1;
+    for (uint32_t i = 0; i < TASK_MAX; i++) {
+        if (g_stack_used[i] &&
+            g_task_pool[i].state != TASK_DEAD &&
+            g_task_pool[i].id == pid)
+            return &g_task_pool[i];
+    }
+    return NULL;
+}
+
+/* 生成单个任务的 status 文本，写入 tmp[0..bufsz)，返回写入字节数 */
+static size_t fmt_task_status(char *tmp, size_t bufsz, task_t *t)
+{
+    size_t pos = 0;
+    char   nbuf[24];
+
+    /* State 字符 */
+    char state_c;
+    const char *state_s;
+    switch (t->state) {
+        case TASK_RUNNING: state_c = 'R'; state_s = "running";  break;
+        case TASK_READY:   state_c = 'R'; state_s = "running";  break;
+        case TASK_BLOCKED: state_c = 'S'; state_s = "sleeping"; break;
+        case TASK_DEAD:    state_c = 'Z'; state_s = "zombie";   break;
+        default:           state_c = 'S'; state_s = "sleeping"; break;
+    }
+
+    pos += (size_t)pfs_puts(tmp, pos, bufsz, "Name:\t");
+    pos += (size_t)pfs_puts(tmp, pos, bufsz, t->name);
+    pos += (size_t)pfs_puts(tmp, pos, bufsz, "\nState:\t");
+    { char sc[2] = {state_c, '\0'};
+      pos += (size_t)pfs_puts(tmp, pos, bufsz, sc); }
+    pos += (size_t)pfs_puts(tmp, pos, bufsz, " (");
+    pos += (size_t)pfs_puts(tmp, pos, bufsz, state_s);
+    pos += (size_t)pfs_puts(tmp, pos, bufsz, ")\nPid:\t");
+    u64_to_dec(nbuf, t->id);
+    pos += (size_t)pfs_puts(tmp, pos, bufsz, nbuf);
+    pos += (size_t)pfs_puts(tmp, pos, bufsz, "\nPPid:\t");
+    u64_to_dec(nbuf, t->parent_id);
+    pos += (size_t)pfs_puts(tmp, pos, bufsz, nbuf);
+
+    /* 内存估算 */
+    uint64_t vm_stk_kb  = TASK_STACK_SIZE / 1024u;
+    uint64_t vm_size_kb = vm_stk_kb;
+    if (t->is_user_process) {
+        if (t->user_stack_size > 0)
+            vm_size_kb += t->user_stack_size / 1024u;
+        if (t->heap_end > t->user_entry)
+            vm_size_kb += (t->heap_end - t->user_entry) / 1024u;
+    }
+
+    pos += (size_t)pfs_puts(tmp, pos, bufsz, "\nVmSize:\t");
+    u64_to_dec(nbuf, vm_size_kb);
+    pos += (size_t)pfs_puts(tmp, pos, bufsz, nbuf);
+    pos += (size_t)pfs_puts(tmp, pos, bufsz, " kB\nVmRSS:\t");
+    pos += (size_t)pfs_puts(tmp, pos, bufsz, nbuf);   /* RSS ≈ VmSize */
+    pos += (size_t)pfs_puts(tmp, pos, bufsz, " kB\nVmStk:\t");
+    u64_to_dec(nbuf, vm_stk_kb);
+    pos += (size_t)pfs_puts(tmp, pos, bufsz, nbuf);
+    pos += (size_t)pfs_puts(tmp, pos, bufsz, " kB\nThreads:\t1\n");
+
+    return pos;
+}
+
+/* 读取 /proc/<pid>/status（也供 /proc/self/status 调用） */
+static int pid_status_read(uint32_t pid, uint64_t off, void *buf, size_t len)
+{
+    task_t *t = pfs_find_task(pid);
+    if (!t) return 0;
+
+    char   tmp[640];
+    size_t total = fmt_task_status(tmp, sizeof(tmp), t);
     if ((size_t)off >= total) return 0;
     size_t avail = total - (size_t)off;
     size_t copy  = avail < len ? avail : len;
-    memcpy(buf, content + off, copy);
+    memcpy(buf, tmp + off, copy);
     return (int)copy;
+}
+
+/* /proc/self/status — 使用当前任务的真实信息 */
+static int status_read(int nid, uint64_t off, void *buf, size_t len)
+{
+    (void)nid;
+    task_t *t = task_current();
+    if (!t) return 0;
+    return pid_status_read(t->id, off, buf, len);
 }
 
 /* /proc/version */
@@ -488,18 +572,57 @@ static const char *node_name(const pseudo_node_t *n)
 
 /* ── 公共 API ─────────────────────────────────────────────────── */
 
+/* 从 "/proc/<N>" 或 "/proc/<N>/..." 解析数字 PID，成功返回 true */
+static bool pfs_parse_proc_pid(const char *path, uint32_t *pid_out,
+                               const char **rest_out)
+{
+    if (pfs_strncmp(path, "/proc/", 6) != 0) return false;
+    const char *p = path + 6;
+    /* 跳过 "self" */
+    if (pfs_strncmp(p, "self", 4) == 0) return false;
+    uint32_t pid = 0;
+    bool has = false;
+    while (*p >= '0' && *p <= '9') { pid = pid * 10u + (uint32_t)(*p - '0'); p++; has = true; }
+    if (!has) return false;
+    *pid_out  = pid;
+    *rest_out = p;   /* '\0' 表示目录本身，"/status" 等表示子文件 */
+    return true;
+}
+
 int pseudo_open(const char *abspath)
 {
     if (!abspath) return -1;
     /* /proc/self/fd/<N> 归并到 /proc/self/fd 目录节点 */
     if (pfs_strncmp(abspath, "/proc/self/fd/", 14) == 0)
         return find_node("/proc/self/fd");
+
+    /* /proc/<pid>  或  /proc/<pid>/status */
+    uint32_t pid; const char *rest;
+    if (pfs_parse_proc_pid(abspath, &pid, &rest)) {
+        if (*rest == '\0')                            /* /proc/<pid> */
+            return (int)(DYNC_PID_DIR_BASE  + pid);
+        if (pfs_strcmp(rest, "/status") == 0)         /* /proc/<pid>/status */
+            return (int)(DYNC_PID_STAT_BASE + pid);
+    }
+
     return find_node(abspath);
 }
 
 int pseudo_read(int nid, uint64_t *off, void *buf, size_t len)
 {
-    if (nid < 0 || nid >= NODE_COUNT || !buf || !off) return -PFS_EINVAL;
+    if (!buf || !off) return -PFS_EINVAL;
+
+    /* 动态 /proc/<pid>/status */
+    if (nid >= DYNC_PID_STAT_BASE) {
+        uint32_t pid = (uint32_t)(nid - DYNC_PID_STAT_BASE);
+        int rc = pid_status_read(pid, *off, buf, len);
+        if (rc > 0) *off += (uint64_t)rc;
+        return rc;
+    }
+    /* 动态 /proc/<pid> 目录：无内容可读 */
+    if (nid >= DYNC_PID_DIR_BASE) return 0;
+
+    if (nid < 0 || nid >= NODE_COUNT) return -PFS_EINVAL;
     const pseudo_node_t *n = &g_nodes[nid];
     if (!n->read_fn) return 0;  /* 空文件 */
     int rc = n->read_fn(nid, *off, buf, len);
@@ -531,6 +654,28 @@ int pseudo_stat_path(const char *abspath, struct kernel_stat *st)
         int nid = find_node("/proc/self/fd");
         if (nid >= 0) { pseudo_fill_stat(nid, st); return 0; }
     }
+
+    /* /proc/<pid>  或  /proc/<pid>/status */
+    uint32_t pid; const char *rest;
+    if (pfs_parse_proc_pid(abspath, &pid, &rest)) {
+        memset(st, 0, sizeof(*st));
+        st->st_dev     = 5;
+        st->st_nlink   = 1;
+        st->st_blksize = 4096;
+        if (*rest == '\0') {                          /* 目录 */
+            st->st_ino  = (uint64_t)(DYNC_PID_DIR_BASE  + pid);
+            st->st_mode = MODE_DIR;
+            st->st_size = 4096;
+        } else if (pfs_strcmp(rest, "/status") == 0) { /* 文件 */
+            st->st_ino  = (uint64_t)(DYNC_PID_STAT_BASE + pid);
+            st->st_mode = MODE_REG;
+            st->st_size = 512;
+        } else {
+            return -PFS_ENOENT;
+        }
+        return 0;
+    }
+
     int nid = find_node(abspath);
     if (nid < 0) return -PFS_ENOENT;
     pseudo_fill_stat(nid, st);
@@ -591,16 +736,52 @@ int pseudo_readlink(const char *abspath, char *buf, size_t bufsz)
     return -PFS_EINVAL;
 }
 
+/* 往 buf 写一条 dirent64，成功返回 reclen，空间不足返回 0 */
+static size_t emit_dirent(void *buf, size_t written, size_t bufsz,
+                          uint64_t ino, uint64_t seq,
+                          uint8_t dtype, const char *name)
+{
+    size_t namelen = pfs_strlen(name);
+    uint16_t reclen = (uint16_t)(19u + namelen + 1u);
+    reclen = (reclen + 7u) & ~7u;
+    if (written + reclen > bufsz) return 0;
+    struct kernel_dirent64 *kd =
+        (struct kernel_dirent64 *)((char *)buf + written);
+    kd->d_ino    = ino;
+    kd->d_off    = (int64_t)(seq + 1u);
+    kd->d_reclen = reclen;
+    kd->d_type   = dtype;
+    memcpy(kd->d_name, name, namelen + 1);
+    return reclen;
+}
+
 int pseudo_getdents(int nid, uint64_t *off, void *buf, size_t bufsz)
 {
-    if (nid < 0 || nid >= NODE_COUNT || !buf || !bufsz || !off)
-        return -PFS_EINVAL;
-    if (g_nodes[nid].type != PSEUDO_DIR)
-        return -PFS_EINVAL;
+    if (!buf || !bufsz || !off) return -PFS_EINVAL;
+
+    /* ── 动态 /proc/<pid> 目录：只有 "status" 一个子项 ────────── */
+    if (nid >= (int)DYNC_PID_DIR_BASE && nid < (int)DYNC_PID_STAT_BASE) {
+        uint32_t pid = (uint32_t)(nid - DYNC_PID_DIR_BASE);
+        size_t written = 0;
+        uint64_t idx   = 0;
+        if (idx >= *off) {
+            size_t r = emit_dirent(buf, written, bufsz,
+                                   (uint64_t)(DYNC_PID_STAT_BASE + pid),
+                                   idx, 8 /* REG */, "status");
+            if (r == 0) return (int)written;
+            written += r;
+            (*off)++;
+        }
+        return (int)written;
+    }
+
+    if (nid < 0 || nid >= NODE_COUNT) return -PFS_EINVAL;
+    if (g_nodes[nid].type != PSEUDO_DIR) return -PFS_EINVAL;
 
     const char *dir_path = g_nodes[nid].path;
     size_t      dir_len  = pfs_strlen(dir_path);
     bool        is_root  = (dir_len == 1 && dir_path[0] == '/');
+    bool        is_proc  = (pfs_strcmp(dir_path, "/proc") == 0);
 
     size_t   written = 0;
     uint64_t idx     = 0;   /* 全局条目序号，用于定位 *off */
@@ -633,32 +814,44 @@ int pseudo_getdents(int nid, uint64_t *off, void *buf, size_t bufsz)
             if (!direct) continue;
         }
 
-        /* 跳过已经返回过的条目 */
         if (idx < *off) { idx++; continue; }
 
-        /* 构建 dirent */
-        const char *name    = node_name(child);
-        size_t      namelen = pfs_strlen(name);
-        uint16_t    reclen  = (uint16_t)(19u + namelen + 1u);
-        reclen = (reclen + 7u) & ~7u;
-        if (written + reclen > bufsz) break;
-
-        struct kernel_dirent64 *kd =
-            (struct kernel_dirent64 *)((char *)buf + written);
-        kd->d_ino    = (uint64_t)(unsigned)i + 1U;
-        kd->d_off    = (int64_t)(idx + 1U);
-        kd->d_reclen = reclen;
+        uint8_t dtype;
         switch (child->type) {
-            case PSEUDO_DIR: kd->d_type = 4;  break;
-            case PSEUDO_REG: kd->d_type = 8;  break;
-            case PSEUDO_CHR: kd->d_type = 2;  break;
-            case PSEUDO_LNK: kd->d_type = 10; break;
-            default:         kd->d_type = 0;  break;
+            case PSEUDO_DIR: dtype = 4;  break;
+            case PSEUDO_REG: dtype = 8;  break;
+            case PSEUDO_CHR: dtype = 2;  break;
+            case PSEUDO_LNK: dtype = 10; break;
+            default:         dtype = 0;  break;
         }
-        memcpy(kd->d_name, name, namelen + 1);
-        written += reclen;
+        size_t r = emit_dirent(buf, written, bufsz,
+                               (uint64_t)(unsigned)i + 1u, idx, dtype,
+                               node_name(child));
+        if (r == 0) break;
+        written += r;
         idx++;
         (*off)++;
+    }
+
+    /* ── /proc 额外枚举活跃进程 PID 目录 ──────────────────────── */
+    if (is_proc) {
+        for (uint32_t i = 0; i < TASK_MAX; i++) {
+            if (!g_stack_used[i] || g_task_pool[i].state == TASK_DEAD)
+                continue;
+
+            if (idx < *off) { idx++; continue; }
+
+            uint32_t pid = g_task_pool[i].id;
+            char     pidbuf[12];
+            u64_to_dec(pidbuf, (uint64_t)pid);
+            size_t r = emit_dirent(buf, written, bufsz,
+                                   (uint64_t)(DYNC_PID_DIR_BASE + pid),
+                                   idx, 4 /* DIR */, pidbuf);
+            if (r == 0) break;
+            written += r;
+            idx++;
+            (*off)++;
+        }
     }
 
     return (int)written;

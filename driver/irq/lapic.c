@@ -42,6 +42,18 @@ static inline void lapic_write(uint32_t reg, uint32_t val)
  * Channel 2 one-shot 模式：写入 reload 值后倒计数，OUT 从高变低时停止。
  */
 
+static void pit_calibrate_delay(void);
+
+/* TSC 频率（Hz），由 lapic_timer_init 在 PIT 校准时同步测量 */
+volatile uint64_t g_tsc_freq_hz = 0;
+
+static inline uint64_t _lapic_rdtsc(void)
+{
+    uint32_t lo, hi;
+    __asm__ volatile("rdtsc" : "=a"(lo), "=d"(hi));
+    return ((uint64_t)hi << 32) | (uint64_t)lo;
+}
+
 /* 等待约 10ms（PIT 11932 tick ≈ 10ms at 1.193182 MHz）*/
 #define PIT_CAL_TICKS  11932u
 
@@ -102,7 +114,13 @@ void lapic_timer_init(uint8_t vector)
     /* ── 校准：测量 10ms 内 LAPIC 计数器减少了多少 ── */
     lapic_write(LAPIC_REG_TIMER_ICR, 0xFFFFFFFFu);  /* 设置最大初始值开始倒计数 */
 
+    uint64_t tsc_before = _lapic_rdtsc();
     pit_calibrate_delay();   /* 等待约 10ms */
+    uint64_t tsc_after  = _lapic_rdtsc();
+
+    /* TSC 频率：10ms 内的 TSC tick 数 × 100 = 每秒 tick 数 */
+    g_tsc_freq_hz = (tsc_after - tsc_before) * 100ULL;
+    KLOG_INFO("TSC frequency: %llu MHz\n", g_tsc_freq_hz / 1000000ULL);
 
     uint32_t ticks_in_10ms = 0xFFFFFFFFu - lapic_read(LAPIC_REG_TIMER_CCR);
 

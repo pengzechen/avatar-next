@@ -1,6 +1,8 @@
-# Makefile for spinlock library
-# Usage: make ARCH=x86_64|aarch64|riscv64 [LOG=none|error|warn|info|debug|trace] [ASSERT=panic|off] [target]
+# Avatar OS — 顶层 Makefile
+# 用法: make PLATFORM=<platform> [LOG=none|error|warn|info|debug|trace] [ASSERT=panic|off] [target]
+# 快速参考: make help
 
+# ─── §1  基本参数 ─────────────────────────────────────────────────────────────
 # 架构配置（旧式兼容保留；新式用 PLATFORM=qemu-virt-<arch> 自动推导）
 ARCH ?= aarch64
 
@@ -26,7 +28,7 @@ PLATFORM_DIR := platforms
 TESTS_DIR   := tests
 TOOLS_DIR   := tools
 
-# ─── 配置生成系统 ────────────────────────────────────────────────────────────────
+# ─── §2  平台配置生成 ────────────────────────────────────────────────────────────
 # 平台配置全部在 platforms/$(PLATFORM)/platform.lua 的 BUILD_CONFIG 表中。
 # gen_platform.py 解析该文件，生成 platform.mk / platform.h / pmm_reserve.h。
 
@@ -49,7 +51,7 @@ ifeq ($(strip $(MEM_RAM_BASE)),)
 $(error Failed to generate platform config from $(_PLATFORM_LUA))
 endif
 
-# 日志级别映射
+# ─── §3  日志与断言标志 ──────────────────────────────────────────────────────────
 ifeq ($(LOG),none)
     LOG_LEVEL := 0
     LOG_DEFINE := -DLOG_LEVEL=0 -DLOG_NONE
@@ -81,7 +83,8 @@ else
     $(error Invalid ASSERT setting. Use: panic or off)
 endif
 
-# 源文件
+# ─── §4  源文件与目标文件变量 ────────────────────────────────────────────────────
+# 遗留示例源文件（lib/examples/*.c）
 SOURCES := $(wildcard $(SRC_DIR)/*.c)
 OBJECTS := $(SOURCES:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
 DEPS    := $(OBJECTS:.o=.d)
@@ -102,7 +105,7 @@ PLATFORM_CFG_OBJECT := $(BUILD_DIR)/platform_cfg.o
 KERNEL_SOURCES := $(KERNEL_DIR)/main.c
 KERNEL_OBJECTS := $(KERNEL_SOURCES:$(KERNEL_DIR)/%.c=$(BUILD_DIR)/kernel_%.o)
 
-# MMU 和 VM 模块
+# ── §4a  架构特定模块（VMM / 异常 / 上下文切换 / 用户程序）─────────────────────
 VM_C_SOURCES := $(KERNEL_DIR)/mm/pmm.c $(TESTS_DIR)/pmm_test.c $(KERNEL_DIR)/mm/vm_user.c
 VM_C_OBJECTS := $(BUILD_DIR)/kernel_mm_pmm.o $(BUILD_DIR)/kernel_mm_pmm_test.o $(BUILD_DIR)/kernel_mm_vm_user.o
 
@@ -251,7 +254,7 @@ else ifeq ($(ARCH),x86_64)
     TASK_USER_LD := $(KERNEL_DIR)/task/user.ld
 endif
 
-# 平台源文件（按 PLATFORM 选择，可扩展到真机）
+# ── §4b  平台 / 驱动基础源文件 ──────────────────────────────────────────────────
 PLATFORM_SOURCES := $(PLATFORM_DIR)/$(PLATFORM)/platform.c
 PLATFORM_OBJECTS := $(PLATFORM_SOURCES:$(PLATFORM_DIR)/%.c=$(BUILD_DIR)/platform_%.o)
 
@@ -259,28 +262,11 @@ ifeq ($(wildcard $(PLATFORM_SOURCES)),)
 $(error Missing platform source: $(PLATFORM_SOURCES))
 endif
 
-# 驱动源文件（按 ARCH + PLATFORM 设备画像选择）
-DRIVER_UART_SRC := $(DEV_UART_SRC)
-DRIVER_IRQ_SRC := $(DEV_IRQ_SRC)
+# 驱动基础源文件（来自 platform.mk，后续由 §6 选择块覆盖/追加）
+DRIVER_UART_SRC  := $(DEV_UART_SRC)
+DRIVER_IRQ_SRC   := $(DEV_IRQ_SRC)
 DRIVER_TIMER_SRC := $(DEV_TIMER_SRC)
-
-DRIVER_OBJECTS := $(patsubst driver/%.c,$(BUILD_DIR)/drv_%.o,$(DRIVER_UART_SRC))
-
-ifneq ($(strip $(DRIVER_IRQ_SRC)),)
-ifeq ($(DRIVER_IRQ_SRC),driver/irq/gicv2.c)
-	DRIVER_OBJECTS += $(BUILD_DIR)/gicv2.o
-else ifeq ($(DRIVER_IRQ_SRC),driver/irq/gicv3.c)
-	DRIVER_OBJECTS += $(BUILD_DIR)/gicv3.o
-endif
-endif
-
-ifneq ($(strip $(DRIVER_TIMER_SRC)),)
-	DRIVER_OBJECTS += $(BUILD_DIR)/timer.o
-endif
-
-ifeq ($(DEV_NEED_LAPIC),1)
-	DRIVER_OBJECTS += $(BUILD_DIR)/lapic.o
-endif
+# 注意：DRIVER_OBJECTS 在 §6 驱动选择块之后统一组装
 
 # 启动汇编源文件
 BOOT_SOURCES := $(BOOT_DIR)/$(ARCH)/boot.S
@@ -301,7 +287,7 @@ else
     EXCEPTION_OBJECTS :=
 endif
 
-# 工具（支持交叉编译）
+# ─── §5  工具链与编译标志（按架构）─────────────────────────────────────────────
 ifeq ($(ARCH),x86_64)
     CC      := /home/ajax/SoftWare/compiler/x86_64-linux-musl-cross/bin/x86_64-linux-musl-gcc
     AR      := /home/ajax/SoftWare/compiler/x86_64-linux-musl-cross/bin/x86_64-linux-musl-ar
@@ -377,7 +363,7 @@ else
     $(error Unsupported architecture: $(ARCH). Use ARCH=x86_64, aarch64 or riscv64)
 endif
 
-# 通用编译标志
+# ── §5a  通用编译标志（所有架构共享，追加在架构特定 CFLAGS 之后）────────────────
 CFLAGS  += -nostdinc
 CFLAGS  += -Idriver
 CFLAGS  += -Ikernel
@@ -385,9 +371,11 @@ CFLAGS  += -Ikernel/mm
 CFLAGS  += -DAVATAR_HAS_FILESYSTEM
 CFLAGS  += -DPLATFORM_$(MEM_PLATFORM_DEFINE)=1
 
-# UART 驱动选择（与架构解耦）
-# 用法：make ARCH=aarch64 PLATFORM=qemu UART=dw kernel
-# 不指定时使用设备画像默认值（DEV_DEFAULT_UART）
+# ─── §6  驱动选择 ────────────────────────────────────────────────────────────────
+# 所有驱动默认值来自 platform.lua → gen_platform.py → platform.mk。
+# 可在命令行覆盖，例如：make PLATFORM=sg2002-riscv64 ETH=none kernel
+
+# ── §6a  基础设备驱动（UART / GIC / 定时器）──────────────────────────────────
 UART ?= $(DEV_DEFAULT_UART)
 ifeq ($(UART),pl011)
 	DRIVER_UART_SRC := driver/uart/uart_pl011.c
@@ -436,6 +424,7 @@ $(error UART=pl011 is only valid on aarch64)
 endif
 endif
 
+# ── §6b  加速器驱动（NPU / TPU）───────────────────────────────────────────────
 # NPU 驱动选择
 # 用法：make PLATFORM=rk3588-aarch64 NPU=rknpu kernel
 NPU ?= $(DEV_NPU_TYPE)
@@ -458,6 +447,7 @@ else
     DRIVER_TPU_OBJS :=
 endif
 
+# ── §6c  网络驱动（ETH）─────────────────────────────────────────────────────────
 # 以太网驱动（由 platform.lua 的 eth.driver 自动推导；也可命令行覆盖：ETH=none / ETH=cvitek）
 ETH ?= $(DEV_ETH_TYPE)
 ifeq ($(ETH),cvitek)
@@ -472,7 +462,8 @@ else
     DRIVER_ETH_OBJS :=
 endif
 
-# 覆盖后重新组装驱动对象列表
+# ── §6d  DRIVER_OBJECTS 最终组装 ────────────────────────────────────────────────
+# 在所有驱动选择块执行完毕后，统一从各驱动变量中收集目标文件。
 DRIVER_OBJECTS := $(patsubst driver/%.c,$(BUILD_DIR)/drv_%.o,$(DRIVER_UART_SRC))
 ifneq ($(strip $(DRIVER_IRQ_SRC)),)
 ifeq ($(DRIVER_IRQ_SRC),driver/irq/gicv2.c)
@@ -497,6 +488,7 @@ ifneq ($(strip $(DRIVER_ETH_OBJS)),)
 	DRIVER_OBJECTS += $(DRIVER_ETH_OBJS)
 endif
 
+# ── §6e  辅助驱动（ION / SDMMC）────────────────────────────────────────────────
 # Ion 内存分配器（当 TPU=cvitpu 时自动启用；也可独立启用 ION=1）
 ION ?= $(if $(filter cvitpu,$(TPU)),1,0)
 ifeq ($(ION),1)
@@ -514,7 +506,7 @@ endif
 
 CFLAGS  += -MMD -MP
 
-# ── 构建变体（影响条件编译的标志）─────────────────────────────────────────────
+# ─── §7  构建变体 ─────────────────────────────────────────────────────────────
 # VMM_TEST=1：编译 RUN_VMM_TEST，跳过 busybox，运行三线程切换测试
 # 新增测试时仿照此模式，同时在 _BUILD_VARIANT 里加一个唯一标识。
 VMM_TEST ?= 0
@@ -536,7 +528,7 @@ _VARIANT_CHECK := $(shell \
 
 MKDIR   := mkdir -p
 
-# ─── lwext4 文件系统 ────────────────────────────────────────────────────────
+# ─── §8  第三方库：lwext4 文件系统 ──────────────────────────────────────────────
 FS_DIR          := fs
 LWEXT4_DIR      := $(FS_DIR)/lwext4
 LWEXT4_PORT_DIR := $(FS_DIR)/lwext4_port
@@ -567,7 +559,7 @@ LWEXT4_CFLAGS  += -DCONFIG_HAVE_OWN_ASSERT=1
 LWEXT4_CFLAGS  += -DCONFIG_USE_USER_MALLOC=1
 LWEXT4_CFLAGS  += -w   # 屏蔽第三方代码警告
 
-# ─── Lua 5.4 构建配置 ────────────────────────────────────────────────────────
+# ─── §9  第三方库：Lua 5.4 ──────────────────────────────────────────────────────
 LUA_DIR      := $(LIB_DIR)/lua54
 LUA_SRC_DIR  := $(LUA_DIR)/src
 LUA_COMPAT   := $(LUA_DIR)/compat
@@ -602,13 +594,13 @@ LUA_BLOB_OBJ := $(BUILD_DIR)/platform_lua_blob.o
 
 LUA_OBJECTS := $(LUA_CORE_OBJS) $(LUA_GLUE_OBJS) $(LUA_BLOB_OBJ) $(SETJMP_OBJ)
 
-# ─── Rootfs 配置 ────────────────────────────────────────────────────────────────────
+# ─── §10  Rootfs 配置 ────────────────────────────────────────────────────────────
 # 每个架构独立一个镜像，切换架构无需 make clean
 ROOTFS_IMG       := $(BUILD_DIR)/rootfs-$(ARCH).img
 ROOTFS_STAGE     := $(BUILD_DIR)/rootfs-stage-$(ARCH)
 # ROOTFS_SIZE_MB / ROOTFS_PHYS_ADDR 来自自动生成的 $(MEM_LAYOUT_MK)
 
-# 目标
+# ─── §11  顶层目标声明 ───────────────────────────────────────────────────────────
 .PHONY: all clean help klog kernel run rootfs run-fs test-pthread test-mutex test-vmm
 
 all: $(TARGET) klog
@@ -639,6 +631,9 @@ $(TARGET): $(OBJECTS) | $(BUILD_DIR)
 $(KLOG_TARGET): $(KLOG_OBJECT) | $(BUILD_DIR)
 	$(AR) rcs $@ $^
 
+# ─── §12  构建规则 ───────────────────────────────────────────────────────────────
+
+# ── §12a  库与通用规则 ───────────────────────────────────────────────────────
 $(BUILD_DIR)/klog.o: $(LIB_DIR)/klog.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
@@ -651,7 +646,7 @@ $(BUILD_DIR)/string.o: $(LIB_DIR)/string.c | $(BUILD_DIR)
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-# 内核编译规则
+# ── §12b  内核 / 任务 / 加载器 / 系统调用规则 ──────────────────────────────────
 $(BUILD_DIR)/kernel_%.o: $(KERNEL_DIR)/%.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
@@ -665,7 +660,7 @@ $(BUILD_DIR)/platform_%.o: $(PLATFORM_DIR)/%.c | $(BUILD_DIR)
 $(BUILD_DIR)/boot_%.o: $(BOOT_DIR)/$(ARCH)/%.S | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-# 异常处理编译规则（AArch64）
+# ── §12c  启动 / 异常 / 驱动规则 ────────────────────────────────────────────────
 $(BUILD_DIR)/exception_asm.o: $(BOOT_DIR)/aarch64/exception.S | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
@@ -807,7 +802,7 @@ $(TASK_USER_BIN): $(BUILD_DIR)/user_test.o $(TASK_USER_LD) | $(BUILD_DIR)
 	@echo "User program linked at: $(shell aarch64-linux-musl-nm $@.elf | grep user_test_program)"
 	@echo "User data at: $(shell aarch64-linux-musl-nm $@.elf | grep msg_hello)"
 
-# VM 模块编译规则
+# ── §12d  VM / VMM / 架构特定规则 ───────────────────────────────────────────────
 $(BUILD_DIR)/kernel_mm_vm_early.o: $(VM_EARLY_C_SRC) | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
@@ -844,7 +839,7 @@ $(BUILD_DIR)/libavatar_eth.a: | $(BUILD_DIR)
 $(BUILD_DIR)/kernel_mm_mmu.o: $(VM_S_SRC) | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-# ─── lwext4 编译规则 ──────────────────────────────────────────────────────────
+# ── §12e  第三方库编译规则（lwext4 / Lua）────────────────────────────────────────
 # 第三方 lwext4 源文件：使用包含 compat 路径的专用 LWEXT4_CFLAGS
 $(BUILD_DIR)/lwext4_%.o: $(LWEXT4_DIR)/src/%.c | $(BUILD_DIR)
 	$(CC) $(LWEXT4_CFLAGS) -c $< -o $@
@@ -864,7 +859,7 @@ $(BUILD_DIR)/drv_blk_ramblk.o: driver/blk/ramblk.c | $(BUILD_DIR)
 $(BUILD_DIR)/lwext4_port_fs_init.o: $(LWEXT4_PORT_DIR)/fs_init.c | $(BUILD_DIR)
 	$(CC) $(LWEXT4_CFLAGS) -Ifs/lwext4_port -c $< -o $@
 
-# ─── Lua 5.4 编译规则 ───────────────────────────────────────────────────────
+# ── §12f  Lua 5.4 编译规则 ──────────────────────────────────────────────────────
 # Lua VM 核心源文件：使用 LUA_CFLAGS（FP 开启，compat 头文件路径前置）
 $(BUILD_DIR)/lua54_%.o: $(LUA_SRC_DIR)/%.c | $(BUILD_DIR)
 	$(CC) $(LUA_CFLAGS) -c $< -o $@
@@ -960,7 +955,7 @@ $(BUILD_DIR)/apps_riscv_guest_test.o: apps/riscv64/guest_test.S | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 endif
 
-# 链接内核 ELF 文件
+# ── §12g  链接 ────────────────────────────────────────────────────────────────────
 $(KERNEL_TARGET): $(BOOT_OBJECTS) $(KERNEL_OBJECTS) $(TASK_C_OBJECTS) $(TASK_S_OBJ) $(TASK_USER_TEST_OBJ) $(TASK_USER_HELLO_OBJ) $(TASK_USER_TESTEXECVE_OBJ) $(LOADER_C_OBJECTS) $(SYSCALL_C_OBJECTS) $(SYSCALL_S_OBJ) $(VM_C_OBJECTS) $(VM_S_OBJ) $(VMM_C_OBJECTS) $(VMM_S_OBJECTS) $(GUEST_TEST_OBJ) $(TESTS_OBJECTS) $(PLATFORM_OBJECTS) $(DRIVER_OBJECTS) $(EXCEPTION_OBJECTS) $(KLOG_OBJECT) $(VSNPRINTF_OBJECT) $(STRING_OBJECT) $(BITMAP_OBJECT) $(PLATFORM_CFG_OBJECT) $(LWEXT4_OBJS) $(LWEXT4_PORT_OBJS) $(LUA_OBJECTS) $(PSEUDOFS_OBJS) | $(BUILD_DIR)
 	$(CC) $(LDFLAGS) -nostartfiles -nodefaultlibs -T $(BOOT_DIR)/$(ARCH)/link.ld -o $@ $^
 
@@ -973,7 +968,7 @@ $(KERNEL_IMAGE): $(KERNEL_BIN)
 	dd if=/dev/zero of=$@ bs=1024 count=1440
 	dd if=$< of=$@ bs=512 conv=notrunc
 
-# 运行内核
+# ─── §13  运行 / 测试目标 ────────────────────────────────────────────────────────
 run: kernel
 	@echo "Starting QEMU for $(ARCH)..."
 	$(QEMU) $(QEMU_FLAGS)
@@ -992,7 +987,7 @@ $(ROOTFS_IMG): $(APPS_BINS) $(APPS_C_ELFS) | $(BUILD_DIR)
 	@if [ -f apps/busybox-$(ARCH) ]; then \
 		cp apps/busybox-$(ARCH) $(ROOTFS_STAGE)/busybox; \
 		chmod +x $(ROOTFS_STAGE)/busybox; \
-		for applet in sh ls cat echo pwd mkdir rm cp mv grep find ps kill; do \
+		for applet in sh ls cat echo pwd mkdir rm cp mv grep find ps kill dd time; do \
 			cp apps/busybox-$(ARCH) $(ROOTFS_STAGE)/bin/$$applet; \
 			chmod +x $(ROOTFS_STAGE)/bin/$$applet; \
 		done; \
@@ -1083,6 +1078,7 @@ test-vmm:
 	@echo "Starting QEMU for $(ARCH) — VMM 3-thread context switch test..."
 	$(QEMU) $(QEMU_FLAGS)
 
+# ─── §14  清理 / 帮助 ────────────────────────────────────────────────────────────
 clean:
 	rm -rf build/*
 
@@ -1142,3 +1138,25 @@ help:
 
 # 包含依赖文件
 -include $(DEPS)
+
+
+
+# 节	内容
+# §1	基本参数（ARCH / PLATFORM / LOG / ASSERT / 目录）
+# §2	平台配置生成（gen_platform.py）
+# §3	日志与断言标志
+# §4	源文件与目标文件变量
+# §4a	架构特定模块（VMM / 异常 / 切换 / 用户程序）
+# §4b	平台 / 驱动基础源文件
+# §5	工具链与编译标志
+# §5a	通用编译标志
+# §6	驱动选择
+# §6a-e	UART/GIC → NPU/TPU → ETH → 组装 → ION/SDMMC
+# §7	构建变体（VMM_TEST）
+# §8	第三方库：lwext4
+# §9	第三方库：Lua 5.4
+# §10	Rootfs 配置
+# §11	顶层目标声明
+# §12	构建规则（a~g 子节）
+# §13	运行 / 测试目标
+# §14	清理 / 帮助

@@ -21,6 +21,49 @@
 #include "riscv64/satp_utils.h"
 #endif
 
+/* ─── 硬件单调时钟辅助（arch 无关接口） ───────────────────────────
+ * 返回内核启动以来经过的纳秒数。
+ * 精度：RISC-V/AArch64 使用硬件计数器（纳秒级），x86_64 使用
+ * 软件 tick 计数器（TIMER_TICK_MS 毫秒级）。
+ * ─────────────────────────────────────────────────────────────── */
+extern volatile uint64_t g_system_ticks;
+extern uintptr_t         g_timer_cfg_counter_hz;
+extern unsigned          g_timer_cfg_tick_ms;
+#if ARCH_X86_64
+extern volatile uint64_t g_tsc_freq_hz;
+#endif
+
+static inline uint64_t kernel_get_ns(void)
+{
+#if ARCH_RISCV64
+    uint64_t ticks;
+    __asm__ volatile("rdtime %0" : "=r"(ticks));
+    uintptr_t freq = g_timer_cfg_counter_hz;
+    if (!freq) freq = 10000000UL;   /* QEMU virt 默认 10 MHz */
+    return (ticks / freq) * 1000000000ULL
+         + (ticks % freq) * 1000000000ULL / freq;
+#elif ARCH_AARCH64
+    uint64_t ticks;
+    __asm__ volatile("mrs %0, cntpct_el0" : "=r"(ticks));
+    uintptr_t freq = g_timer_cfg_counter_hz;
+    if (!freq) freq = 62500000UL;   /* AArch64 常见默认值 */
+    return (ticks / freq) * 1000000000ULL
+         + (ticks % freq) * 1000000000ULL / freq;
+#else
+    /* x86_64：使用 RDTSC（纳秒精度） */
+    uint32_t lo, hi;
+    __asm__ volatile("rdtsc" : "=a"(lo), "=d"(hi));
+    uint64_t ticks = ((uint64_t)hi << 32) | (uint64_t)lo;
+    uint64_t freq  = g_tsc_freq_hz;
+    if (!freq) {
+        /* TSC 未校准（timer_init 尚未完成），退回 tick 计数 */
+        uint64_t tick_ms = g_timer_cfg_tick_ms ? g_timer_cfg_tick_ms : 10ULL;
+        return g_system_ticks * tick_ms * 1000000ULL;
+    }
+    return (ticks / freq) * 1000000000ULL
+         + (ticks % freq) * 1000000000ULL / freq;
+#endif
+}
 
 /* ── Linux AArch64 标准系统调用号 ───────────────────────────────── */
 #define LINUX_SYS_GETCWD         17
@@ -725,6 +768,10 @@ void syscall_handler(trap_frame_t *frame)
 
     task_t *current = task_current();
 
+    /* 开始 syscall stime 计时 */
+    if (current && current->is_user_process)
+        current->sc_entry_ns = kernel_get_ns();
+
     switch (syscall_num) {
 
     /* ── 自定义系统调用（向后兼容）────────────────────────── */
@@ -840,6 +887,10 @@ void syscall_handler(trap_frame_t *frame)
         child->wait_pid        = (uint32_t)-1;
         child->ctid_ptr        = 0;
         child->is_thread       = false;
+        child->utime_ns        = 0;
+        child->stime_ns        = 0;
+        child->sc_entry_ns     = 0;
+        child->create_ns       = 0;   /* 在 sched_enqueue 之前设置，避免把页复制时间计入 wall */
 
         if (flags & CLONE_VM) {
             /* ────────────────────────────────────────────────────────────
@@ -1002,7 +1053,8 @@ void syscall_handler(trap_frame_t *frame)
                       parent->id, child->id, syscall_abi_ip(frame), syscall_abi_user_sp(frame));
         }
 
-        /* 加入就绪队列 */
+        /* 加入就绪队列：在入队前设置 create_ns，确保 wall time 从此刻起算 */
+        child->create_ns = kernel_get_ns();
         sched_enqueue(child);
 
         /* 父进程返回子进程 PID */
@@ -1064,6 +1116,14 @@ void syscall_handler(trap_frame_t *frame)
         if (found) {
             if (wstatus)
                 *wstatus = (found->exit_status & 0xFF) << 8;
+            if (regs[3]) {
+                memset((void *)regs[3], 0, 144);
+                uint64_t *ru = (uint64_t *)regs[3];
+                ru[0] = found->utime_ns / 1000000000ULL;               /* ru_utime.tv_sec  */
+                ru[1] = (found->utime_ns % 1000000000ULL) / 1000ULL;   /* ru_utime.tv_usec */
+                ru[2] = found->stime_ns / 1000000000ULL;               /* ru_stime.tv_sec  */
+                ru[3] = (found->stime_ns % 1000000000ULL) / 1000ULL;   /* ru_stime.tv_usec */
+            }
             regs[0] = (uint64_t)found->id;
             /* Mark slot truly free */
             for (uint32_t i = 0; i < TASK_MAX; i++) {
@@ -1099,6 +1159,14 @@ void syscall_handler(trap_frame_t *frame)
             if (found) {
                 if (wstatus)
                     *wstatus = (found->exit_status & 0xFF) << 8;
+                if (regs[3]) {
+                    memset((void *)regs[3], 0, 144);
+                    uint64_t *ru = (uint64_t *)regs[3];
+                    ru[0] = found->utime_ns / 1000000000ULL;               /* ru_utime.tv_sec  */
+                    ru[1] = (found->utime_ns % 1000000000ULL) / 1000ULL;   /* ru_utime.tv_usec */
+                    ru[2] = found->stime_ns / 1000000000ULL;               /* ru_stime.tv_sec  */
+                    ru[3] = (found->stime_ns % 1000000000ULL) / 1000ULL;   /* ru_stime.tv_usec */
+                }
                 regs[0] = (uint64_t)found->id;
                 for (uint32_t i = 0; i < TASK_MAX; i++) {
                     if (&g_task_pool[i] == found) {
@@ -1259,22 +1327,9 @@ void syscall_handler(trap_frame_t *frame)
         uint64_t count = regs[2];
         if (!buf || count == 0) { regs[0] = 0; break; }
 
-        if (fd == 0) {
-            /* stdin: yield-poll 读 UART，避免 spin 独占 CPU 阻塞子进程
-             * 每次循环先用非阻塞 uart_rx_ready() 检查；无数据则 task_yield()
-             * 让调度器切换到其他就绪任务（如子进程），再回来轮询。 */
-            uint64_t n = 0;
-            while (n < count) {
-                while (!uart_rx_ready())
-                    task_yield();
-                buf[n] = uart_getc();
-                if (buf[n] == '\r') buf[n] = '\n';
-                if (buf[n++] == '\n') break;
-            }
-            regs[0] = n;
-        } else {
-            fd_obj_t *obj = task_get_fd(task_current(), fd);
-            if (!obj) { regs[0] = (uint64_t)(int64_t)-EBADF; break; }
+        /* 先查 fd_obj_t：fd 可能被 dup2/dup3 重定向（如 dd 把 /dev/zero 重定到 fd=0） */
+        fd_obj_t *obj = task_get_fd(task_current(), fd);
+        if (obj) {
             if (obj->type == FDT_PSEUDO) {
                 int rc = pseudo_read(obj->pseudo.node_id, &obj->pseudo.off,
                                      buf, (size_t)count);
@@ -1286,6 +1341,19 @@ void syscall_handler(trap_frame_t *frame)
             } else {
                 regs[0] = (uint64_t)(int64_t)-EBADF;
             }
+        } else if (fd == 0) {
+            /* stdin 未重定向：yield-poll 读 UART */
+            uint64_t n = 0;
+            while (n < count) {
+                while (!uart_rx_ready())
+                    task_yield();
+                buf[n] = uart_getc();
+                if (buf[n] == '\r') buf[n] = '\n';
+                if (buf[n++] == '\n') break;
+            }
+            regs[0] = n;
+        } else {
+            regs[0] = (uint64_t)(int64_t)-EBADF;
         }
         break;
     }
@@ -1295,21 +1363,24 @@ void syscall_handler(trap_frame_t *frame)
         const char  *buf   = (const char *)regs[1];
         uint64_t     count = regs[2];
         if (!buf) { regs[0] = 0; break; }
-        if (fd == 1 || fd == 2) {
-            regs[0] = sys_write(buf, count);
-        } else {
-            fd_obj_t *obj = task_get_fd(task_current(), fd);
-            if (!obj) { regs[0] = (uint64_t)(int64_t)-EBADF; break; }
-            if (obj->type == FDT_PSEUDO) {
-                int rc = pseudo_write(obj->pseudo.node_id, buf, (size_t)count);
+        /* 先查 fd_obj_t：fd=1/2 可能被 dup2/dup3 重定向（如 dd 把 /dev/null 重定到 fd=1） */
+        fd_obj_t *wobj = task_get_fd(task_current(), fd);
+        if (wobj) {
+            if (wobj->type == FDT_PSEUDO) {
+                int rc = pseudo_write(wobj->pseudo.node_id, buf, (size_t)count);
                 regs[0] = rc >= 0 ? (uint64_t)rc : (uint64_t)(int64_t)rc;
-            } else if (obj->type == FDT_FILE) {
+            } else if (wobj->type == FDT_FILE) {
                 size_t wcnt = 0;
-                int rc = ext4_fwrite(&obj->file, buf, (size_t)count, &wcnt);
+                int rc = ext4_fwrite(&wobj->file, buf, (size_t)count, &wcnt);
                 regs[0] = (rc == EOK) ? (uint64_t)wcnt : (uint64_t)(int64_t)-EIO;
             } else {
                 regs[0] = (uint64_t)(int64_t)-EBADF;
             }
+        } else if (fd == 1 || fd == 2) {
+            /* stdout/stderr 未重定向：走 UART */
+            regs[0] = sys_write(buf, count);
+        } else {
+            regs[0] = (uint64_t)(int64_t)-EBADF;
         }
         break;
     }
@@ -1542,11 +1613,15 @@ void syscall_handler(trap_frame_t *frame)
         int oldfd = (int)regs[0];
         int newfd = (int)regs[1];
         task_t *me = task_current();
-        /* Simple: just alias newfd → same pool entry as oldfd */
         if (oldfd == newfd) { regs[0] = newfd; break; }
         if (oldfd < 0 || oldfd >= (int)TASK_MAX_FD) { regs[0] = (uint64_t)(int64_t)-EBADF; break; }
         if (newfd < 0 || newfd >= (int)TASK_MAX_FD) { regs[0] = (uint64_t)(int64_t)-EBADF; break; }
-        /* Close newfd if open */
+
+        /* 获取源 fd_obj（oldfd>2 才在 pool 里；0/1/2 是 UART special） */
+        fd_obj_t *src = (oldfd > 2) ? task_get_fd(me, oldfd) : NULL;
+        if (oldfd > 2 && !src) { regs[0] = (uint64_t)(int64_t)-EBADF; break; }
+
+        /* 关闭 newfd（若已打开） */
         if (me->fd_table[newfd] != -1) {
             int idx = me->fd_table[newfd];
             fd_obj_t *o = &g_fd_pool[idx];
@@ -1555,14 +1630,23 @@ void syscall_handler(trap_frame_t *frame)
             fd_pool_free(idx);
             me->fd_table[newfd] = -1;
         }
-        /* For stdin/stdout/stderr source */
-        if (oldfd <= 2) {
-            me->fd_table[newfd] = -1;  /* keep as special */
-            regs[0] = newfd;
+
+        if (!src) {
+            /* oldfd 是 UART special (0/1/2)，newfd 同样保持 special */
+            me->fd_table[newfd] = -1;
         } else {
-            me->fd_table[newfd] = me->fd_table[oldfd];
-            regs[0] = newfd;
+            /*
+             * 深拷贝：为 newfd 分配独立 pool slot 并复制 fd_obj。
+             * 这样 close(oldfd) 不会使 newfd 失效（各自拥有独立槽位）。
+             * 对 FDT_PSEUDO（/dev/zero、/dev/null 等）完全正确；
+             * 对 FDT_FILE 是独立文件句柄（seek 位置独立），满足 dd 等用例。
+             */
+            int new_idx = fd_pool_alloc();
+            if (new_idx < 0) { regs[0] = (uint64_t)(int64_t)-EMFILE; break; }
+            g_fd_pool[new_idx] = *src;   /* 整个 fd_obj 结构体复制 */
+            me->fd_table[newfd] = new_idx;
         }
+        regs[0] = newfd;
         break;
     }
 
@@ -1929,7 +2013,11 @@ void syscall_handler(trap_frame_t *frame)
 
     case LINUX_SYS_CLOCK_GETTIME: {
         struct kernel_timespec *ts = (struct kernel_timespec *)regs[1];
-        if (ts) { ts->tv_sec = 0; ts->tv_nsec = 0; }
+        if (ts) {
+            uint64_t ns  = kernel_get_ns();
+            ts->tv_sec   = (int64_t)(ns / 1000000000ULL);
+            ts->tv_nsec  = (int64_t)(ns % 1000000000ULL);
+        }
         regs[0] = 0;
         break;
     }
@@ -1962,7 +2050,16 @@ void syscall_handler(trap_frame_t *frame)
     }
 
     case LINUX_SYS_GETRUSAGE:
-        if (regs[1]) memset((void *)regs[1], 0, 144);
+        if (regs[1]) {
+            memset((void *)regs[1], 0, 144);
+            if (current && current->is_user_process) {
+                uint64_t *ru = (uint64_t *)regs[1];
+                ru[0] = current->utime_ns / 1000000000ULL;
+                ru[1] = (current->utime_ns % 1000000000ULL) / 1000ULL;
+                ru[2] = current->stime_ns / 1000000000ULL;
+                ru[3] = (current->stime_ns % 1000000000ULL) / 1000ULL;
+            }
+        }
         regs[0] = 0;
         break;
 
@@ -2030,7 +2127,13 @@ void syscall_handler(trap_frame_t *frame)
     if (g_syscall_entry_count <= 3) {
         // KLOG_ERROR("[syscall] Before set_ret: g_pmm=%p regs[0]=0x%llx\n", g_pmm, regs[0]);
     }
-    
+
+    /* 结束 syscall stime 计时（EXIT 类 syscall 不会到达这里） */
+    if (current && current->is_user_process && current->sc_entry_ns != 0) {
+        current->stime_ns += kernel_get_ns() - current->sc_entry_ns;
+        current->sc_entry_ns = 0;
+    }
+
     syscall_abi_set_ret(frame, regs[0]);
     
     /* 调试：在设置返回值后检查 g_pmm */
@@ -2142,6 +2245,19 @@ void sys_exit(int status)
     if (current->ctid_ptr) {
         *(volatile uint32_t *)current->ctid_ptr = 0;
         futex_do_wake(current->ctid_ptr, 0x7fffffff);
+    }
+
+    /* 在退出前计算 utime： wall_time − stime */
+    if (current->is_user_process) {
+        uint64_t _now = kernel_get_ns();
+        if (current->sc_entry_ns != 0) {
+            current->stime_ns += _now - current->sc_entry_ns;
+            current->sc_entry_ns = 0;
+        }
+        if (current->create_ns != 0) {
+            uint64_t _wall = _now - current->create_ns;
+            current->utime_ns = (_wall > current->stime_ns) ? _wall - current->stime_ns : 0;
+        }
     }
 
     /* 调用 task_exit 退出当前进程 */
@@ -2575,16 +2691,9 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, int prot, int flags, int fd, uint
 int64_t sys_gettimeofday(struct timeval *tv, void *tz)
 {
     (void)tz;
-    /* 简单实现：返回固定时间
-     * TODO: 实现真正的时钟驱动
-     */
-    if (tv == NULL) {
-        return -1;
-    }
-
-    /* 暂时返回一个固定的时间值 */
-    tv->tv_sec = 1000;
-    tv->tv_usec = 0;
-
+    if (!tv) return -1;
+    uint64_t ns   = kernel_get_ns();
+    tv->tv_sec    = (long)(ns / 1000000000ULL);
+    tv->tv_usec   = (long)((ns % 1000000000ULL) / 1000ULL);
     return 0;
 }
