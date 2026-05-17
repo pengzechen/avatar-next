@@ -1,6 +1,8 @@
 #include "kernel_stat.h"
 #include "pseudofs.h"
 #include "syscall/syscall.h"
+#include "syscall/syscall_internal.h"
+#include "syscall/core/futex.h"
 #include "loader/bin_loader.h"
 #include "loader/elf_loader.h"
 #include "klog.h"
@@ -21,750 +23,7 @@
 #include "riscv64/satp_utils.h"
 #endif
 
-/* ─── 硬件单调时钟辅助（arch 无关接口） ───────────────────────────
- * 返回内核启动以来经过的纳秒数。
- * 精度：RISC-V/AArch64 使用硬件计数器（纳秒级），x86_64 使用
- * 软件 tick 计数器（TIMER_TICK_MS 毫秒级）。
- * ─────────────────────────────────────────────────────────────── */
-extern volatile uint64_t g_system_ticks;
-extern uintptr_t         g_timer_cfg_counter_hz;
-extern unsigned          g_timer_cfg_tick_ms;
-#if ARCH_X86_64
-extern volatile uint64_t g_tsc_freq_hz;
-#endif
-
-static inline uint64_t kernel_get_ns(void)
-{
-#if ARCH_RISCV64
-    uint64_t ticks;
-    __asm__ volatile("rdtime %0" : "=r"(ticks));
-    uintptr_t freq = g_timer_cfg_counter_hz;
-    if (!freq) freq = 10000000UL;   /* QEMU virt 默认 10 MHz */
-    return (ticks / freq) * 1000000000ULL
-         + (ticks % freq) * 1000000000ULL / freq;
-#elif ARCH_AARCH64
-    uint64_t ticks;
-    __asm__ volatile("mrs %0, cntpct_el0" : "=r"(ticks));
-    uintptr_t freq = g_timer_cfg_counter_hz;
-    if (!freq) freq = 62500000UL;   /* AArch64 常见默认值 */
-    return (ticks / freq) * 1000000000ULL
-         + (ticks % freq) * 1000000000ULL / freq;
-#else
-    /* x86_64：使用 RDTSC（纳秒精度） */
-    uint32_t lo, hi;
-    __asm__ volatile("rdtsc" : "=a"(lo), "=d"(hi));
-    uint64_t ticks = ((uint64_t)hi << 32) | (uint64_t)lo;
-    uint64_t freq  = g_tsc_freq_hz;
-    if (!freq) {
-        /* TSC 未校准（timer_init 尚未完成），退回 tick 计数 */
-        uint64_t tick_ms = g_timer_cfg_tick_ms ? g_timer_cfg_tick_ms : 10ULL;
-        return g_system_ticks * tick_ms * 1000000ULL;
-    }
-    return (ticks / freq) * 1000000000ULL
-         + (ticks % freq) * 1000000000ULL / freq;
-#endif
-}
-
-/* ── UART 环形输入缓冲区（定时器中断 → stdin 读取路径）─────────────
- * 定时器 ISR 调用 signal_check_uart()，将 UART 字符推入此缓冲区；
- * stdin read() 从此缓冲区取字符，避免字符丢失。
- * Ctrl+C (0x03) 不入缓冲区——直接向前台进程组发 SIGINT。
- * ─────────────────────────────────────────────────────────────── */
-#define UART_RINGBUF_SIZE  64u
-static volatile uint8_t  g_uart_rb[UART_RINGBUF_SIZE];
-static volatile uint32_t g_uart_rb_head = 0;   /* 写指针 */
-static volatile uint32_t g_uart_rb_tail = 0;   /* 读指针 */
-
-static inline void uart_ringbuf_push(char c) {
-    uint32_t next = (g_uart_rb_head + 1u) % UART_RINGBUF_SIZE;
-    if (next != g_uart_rb_tail) {
-        g_uart_rb[g_uart_rb_head] = (uint8_t)c;
-        g_uart_rb_head = next;
-    }
-}
-static inline int uart_ringbuf_pop(char *out) {
-    if (g_uart_rb_tail == g_uart_rb_head) return 0;
-    *out = (char)g_uart_rb[g_uart_rb_tail];
-    g_uart_rb_tail = (g_uart_rb_tail + 1u) % UART_RINGBUF_SIZE;
-    return 1;
-}
-static inline int uart_ringbuf_empty(void) {
-    return g_uart_rb_tail == g_uart_rb_head;
-}
-
-/* Linux termios (TCGETS/TCSETS) minimal ABI view */
-struct kernel_termios {
-    uint32_t c_iflag;
-    uint32_t c_oflag;
-    uint32_t c_cflag;
-    uint32_t c_lflag;
-    uint8_t  c_line;
-    uint8_t  c_cc[19];
-};
-
-/* ── 终端状态（持久化，TCGETS/TCSETS 读写）────────────────────────
- * c_lflag 关键位: ISIG=0x0001, ICANON=0x0002, ECHO=0x0008
- * c_iflag 关键位: ICRNL=0x0100
- * ─────────────────────────────────────────────────────────────── */
-static struct kernel_termios g_termios = {
-    .c_iflag = 0x00000500U, /* ICRNL | IXON */
-    .c_oflag = 0x00000005U, /* OPOST | ONLCR */
-    .c_cflag = 0x000000BFU, /* B38400 | CS8 | CREAD */
-    .c_lflag = 0x00008A3BU, /* ISIG | ICANON | ECHO* | IEXTEN */
-    .c_line  = 0,
-    .c_cc    = {0,0,0,0, 4/*VEOF=^D*/, 0/*VTIME*/, 1/*VMIN*/, 0,0,0,0,0,0,0,0,0,0,0,0},
-};
-
-/* ── signal_check_uart ───────────────────────────────────────────
- * 排空 UART FIFO：普通字符入环形缓冲区，Ctrl+C 发 SIGINT。
- * 可在中断上下文（定时器）和任务上下文（syscall read）中调用。
- * ─────────────────────────────────────────────────────────────── */
-void signal_check_uart(void) {
-    while (uart_rx_ready()) {
-        char c = uart_getc();
-        if (c == '\x03' && (g_termios.c_lflag & 0x0001u)) {
-            /* Ctrl+C + ISIG → 向前台进程组发 SIGINT */
-            uint32_t fg = g_fg_pgid;
-            if (fg == 0 && g_current_task)
-                fg = g_current_task->pgid;
-            if (fg) task_send_signal_to_pgid(fg, SIGINT);
-        } else {
-            /* ISIG 关闭时（如 vi raw 模式），Ctrl+C 作为普通字符送入缓冲区 */
-            uart_ringbuf_push(c);
-        }
-    }
-}
-
-/* ── tty 辅助接口（pseudofs/tty_read 调用）──────────────────
- * 非 static，让 fs/pseudofs/pseudofs.c 可以 extern 引用。
- * ─────────────────────────────────────────────────────────────── */
-/* 当前是否 raw 模式（ICANON=0） */
-int termios_is_raw(void)   { return !(g_termios.c_lflag & 0x0002u); }
-/* 是否开启 ICRNL（\r转\n） */
-int termios_do_icrnl(void) { return  (g_termios.c_iflag & 0x0100u); }
-/* 排空 UART FIFO 到 ring buffer，非阻塞弹出一字符。成功返回 1，缓冲区空返回 0 */
-int tty_getchar_nb(char *c) { signal_check_uart(); return uart_ringbuf_pop(c); }
-
-/* ── 内核侧 sigaction 布局（与 musl/glibc 用户空间对齐）─────────── */
-struct kernel_sigaction {
-    uint64_t sa_handler;    /* SIG_DFL(0) / SIG_IGN(1) / 用户 handler 地址 */
-    uint64_t sa_flags;      /* SA_RESTORER 等标志 */
-    uint64_t sa_restorer;   /* rt_sigreturn 蹦床（SA_RESTORER 置位时有效）*/
-    uint64_t sa_mask;       /* handler 执行期间额外屏蔽的信号位图            */
-};
-
-/* ── SIG_BLOCK / SIG_UNBLOCK / SIG_SETMASK ──────────────────── */
-#define SIG_BLOCK    0
-#define SIG_UNBLOCK  1
-#define SIG_SETMASK  2
-
-/* 向前声明（在 syscall_handler 之前定义） */
-void sys_exit(int status) __attribute__((noreturn));
-static void deliver_pending_signals(task_t *t, trap_frame_t *frame);
-
-/* ── deliver_pending_signals ────────────────────────────────────
- * 在 syscall 即将返回用户态前调用（且 syscall_abi_set_ret 已执行）。
- * 选取最低编号的待投递信号，执行 SIG_DFL / SIG_IGN / 用户 handler。
- * 用户 handler 通过在用户栈上构建 sigframe 实现。
- * ─────────────────────────────────────────────────────────────── */
-static void
-deliver_pending_signals(task_t *t, trap_frame_t *frame)
-{
-    uint64_t unblocked = t->pending_sigs & ~t->blocked_sigs;
-    if (!unblocked) return;
-
-    /* 取最低编号的待投递信号 */
-    int sig = 0;
-    for (int i = 0; i < NSIG; i++) {
-        if (unblocked & (1ULL << i)) { sig = i + 1; break; }
-    }
-    if (!sig) return;
-
-    /* 清除待投递位 */
-    t->pending_sigs &= ~(1ULL << (sig - 1));
-
-    uint64_t sa_handler  = t->sig_actions[sig - 1].sa_handler;
-    uint64_t sa_restorer = t->sig_actions[sig - 1].sa_restorer;
-    uint64_t sa_mask     = t->sig_actions[sig - 1].sa_mask;
-
-    if (sa_handler == SIG_IGN) return;   /* 忽略 */
-
-    if (sa_handler == SIG_DFL) {
-        /* 默认动作：SIGCHLD/SIGCONT/SIGURG/SIGWINCH/SIGTTIN/SIGTTOU/SIGTSTP → 忽略；其余 → 终止 */
-        switch (sig) {
-        case SIGCHLD: case SIGCONT: case SIGURG: case SIGWINCH:
-        case SIGTTIN: case SIGTTOU: case SIGTSTP: return;
-        default:
-            KLOG_INFO("[signal] pid=%u: SIG_DFL sig=%d → exit(%d)\n",
-                      t->id, sig, 128 + sig);
-            sys_exit(128 + sig);
-            return; /* unreachable */
-        }
-    }
-
-    /* 用户自定义 handler — 需要 restorer */
-    if (sa_restorer == 0) {
-        KLOG_WARN("[signal] pid=%u: sig=%d has handler but no restorer, forcing exit\n",
-                  t->id, sig);
-        sys_exit(128 + sig);
-        return;
-    }
-
-    /* 在 handler 执行期间屏蔽本信号（+ sa_mask） */
-    t->sig_saved_blocked = t->blocked_sigs;
-    t->blocked_sigs |= (1ULL << (sig - 1)) | (sa_mask & ~((1ULL<<(SIGKILL-1))|(1ULL<<(SIGSTOP-1))));
-
-    /* 在用户栈上压入当前 trap_frame（已含 syscall 返回值），建立 sigframe */
-#if ARCH_X86_64
-    {
-        uint64_t usp = frame->rsp & ~15ULL;          /* 16 字节对齐 */
-        usp -= sizeof(trap_frame_t);
-        memcpy((void *)usp, frame, sizeof(trap_frame_t));
-        t->sig_frame_sp = usp;
-        usp -= 8;
-        *(uint64_t *)usp = sa_restorer;              /* 返回地址 = restorer */
-        frame->rsp = usp;
-        frame->rip = sa_handler;
-        frame->rdi = (uint64_t)(uint32_t)sig;        /* 第一个参数 */
-        frame->rflags &= ~(1ULL << 10);              /* 清 DF */
-    }
-#elif ARCH_AARCH64
-    {
-        uint64_t usp = frame->usp & ~15ULL;
-        usp -= sizeof(trap_frame_t);
-        memcpy((void *)usp, frame, sizeof(trap_frame_t));
-        t->sig_frame_sp = usp;
-        frame->usp    = usp;
-        frame->r[0]   = (uint64_t)(uint32_t)sig;    /* x0 = signum */
-        frame->r[30]  = sa_restorer;                /* lr  = restorer */
-        frame->elr    = sa_handler;
-    }
-#elif ARCH_RISCV64
-    {
-        uint64_t usp = frame->x[2] & ~15ULL;
-        usp -= sizeof(trap_frame_t);
-        memcpy((void *)usp, frame, sizeof(trap_frame_t));
-        t->sig_frame_sp = usp;
-        frame->x[2]  = usp;                         /* sp */
-        frame->x[10] = (uint64_t)(uint32_t)sig;     /* a0 = signum */
-        frame->x[1]  = sa_restorer;                 /* ra = restorer */
-        frame->sepc  = sa_handler;
-    }
-#endif
-
-    KLOG_DEBUG("[signal] pid=%u: deliver sig=%d handler=0x%llx restorer=0x%llx\n",
-              t->id, sig, sa_handler, sa_restorer);
-}
-
-/* ── Linux AArch64 标准系统调用号 ───────────────────────────────── */
-#define LINUX_SYS_GETCWD         17
-#define LINUX_SYS_DUP3           24
-#define LINUX_SYS_FCNTL          25
-#define LINUX_SYS_IOCTL          29
-#define LINUX_SYS_UNLINKAT       35
-#define LINUX_SYS_RENAMEAT       38
-#define LINUX_SYS_FACCESSAT      48
-#define LINUX_SYS_CHDIR          49
-#define LINUX_SYS_OPENAT         56
-#define LINUX_SYS_CLOSE          57
-#define LINUX_SYS_PIPE2          59
-#define LINUX_SYS_GETDENTS64     61
-#define LINUX_SYS_LSEEK          62
-#define LINUX_SYS_READ           63
-#define LINUX_SYS_WRITE          64
-#define LINUX_SYS_WRITEV         66
-#define LINUX_SYS_READLINKAT     78
-#define LINUX_SYS_NEWFSTATAT     79
-#define LINUX_SYS_FSTAT          80
-#define LINUX_SYS_FSYNC          82
-#define LINUX_SYS_SENDFILE       71   /* AArch64/RISC-V sendfile64 */
-#define LINUX_SYS_FDATASYNC      83
-#define LINUX_SYS_EXIT           93
-#define LINUX_SYS_EXIT_GROUP     94
-#define LINUX_SYS_WAITID         95
-#define LINUX_SYS_SET_TID_ADDR   96
-#define LINUX_SYS_SET_ROBUST_LIST 99
-#define LINUX_SYS_NANOSLEEP      101
-#define LINUX_SYS_CLOCK_GETTIME  113
-#define LINUX_SYS_SCHED_YIELD    124
-#define LINUX_SYS_KILL           129
-#define LINUX_SYS_TGKILL         131
-#define LINUX_SYS_RT_SIGACTION   134
-#define LINUX_SYS_RT_SIGPROCMASK 135
-#define LINUX_SYS_RT_SIGRETURN   139
-#define LINUX_SYS_SETGID         144
-#define LINUX_SYS_SETUID         146
-#define LINUX_SYS_SETPGID        154
-#define LINUX_SYS_GETPGID        155
-#define LINUX_SYS_GETSID         156
-#define LINUX_SYS_SETSID         157
-#define LINUX_SYS_GETGROUPS      158
-#define LINUX_SYS_SETGROUPS      159
-#define LINUX_SYS_UNAME          160
-#define LINUX_SYS_GETRLIMIT      163
-#define LINUX_SYS_SETRLIMIT      164
-#define LINUX_SYS_GETRUSAGE      165
-#define LINUX_SYS_UMASK          166
-#define LINUX_SYS_PRCTL          167
-#define LINUX_SYS_GETPID         172
-#define LINUX_SYS_GETPPID        173
-#define LINUX_SYS_GETUID         174
-#define LINUX_SYS_GETEUID        175
-#define LINUX_SYS_GETGID         176
-#define LINUX_SYS_GETEGID        177
-#define LINUX_SYS_GETTID         178
-#define LINUX_SYS_SOCKET         198
-#define LINUX_SYS_BRK            214
-#define LINUX_SYS_MUNMAP         215
-#define LINUX_SYS_CLONE          220
-#define LINUX_SYS_EXECVE         221
-#define LINUX_SYS_MMAP           222
-#define LINUX_SYS_MPROTECT       226
-#define LINUX_SYS_FUTEX           98
-#define LINUX_SYS_PSELECT6        72
-#define LINUX_SYS_PPOLL           73
-#define LINUX_SYS_WAIT4          260
-#define LINUX_SYS_PRLIMIT64      261
-#define LINUX_SYS_GETRANDOM      278
-
-/* CLONE flags (来自 Linux <sched.h>) */
-#define CLONE_VM             0x00000100UL
-#define CLONE_FS             0x00000200UL
-#define CLONE_FILES          0x00000400UL
-#define CLONE_SIGHAND        0x00000800UL
-#define CLONE_THREAD         0x00010000UL
-#define CLONE_SETTLS         0x00080000UL
-#define CLONE_PARENT_SETTID  0x00100000UL
-#define CLONE_CHILD_CLEARTID 0x00200000UL
-
-/* futex 操作码 */
-#define FUTEX_WAIT           0
-#define FUTEX_WAKE           1
-#define FUTEX_PRIVATE_FLAG   128
-#define FUTEX_CLOCK_REALTIME 256
-
-#define X86_SYS_ARCH_PRCTL       0x7FFFFFFDULL
-#define X86_SYS_RSEQ             0x7FFFFFFCULL
-#define X86_SYS_POLL             0x7FFFFFFBULL
-#define X86_SYS_SELECT           0x7FFFFFFAULL
-
-#if ARCH_X86_64
-#define X86_MSR_IA32_FS_BASE     0xC0000100U
-#define X86_ARCH_SET_FS          0x1002UL
-#define X86_ARCH_GET_FS          0x1003UL
-
-static inline void x86_write_msr(uint32_t msr, uint64_t value)
-{
-    uint32_t lo = (uint32_t)(value & 0xFFFFFFFFU);
-    uint32_t hi = (uint32_t)(value >> 32);
-    __asm__ volatile("wrmsr" :: "c"(msr), "a"(lo), "d"(hi));
-}
-
-static inline void x86_write_fs_base(uint64_t fs_base)
-{
-    x86_write_msr(X86_MSR_IA32_FS_BASE, fs_base);
-}
-#endif
-
-/* ioctl request codes */
-#define TCGETS           0x5401
-#define TCSETS           0x5402
-#define TCSETSW          0x5403
-#define TCSETSF          0x5404
-#define TIOCGWINSZ       0x5413
-#define TIOCSWINSZ       0x5414
-#define TIOCGPGRP        0x540f
-#define TIOCSPGRP        0x5410
-#define TIOCGPTN         0x80045430
-#define TIOCSPTLCK       0x40045431
-
-struct kernel_winsize {
-    uint16_t ws_row;
-    uint16_t ws_col;
-    uint16_t ws_xpixel;
-    uint16_t ws_ypixel;
-};
-
-struct kernel_pollfd {
-    int   fd;
-    short events;
-    short revents;
-};
-
-#define MAP_ANONYMOUS  0x20
-#define MAP_PRIVATE    0x02
-#define MAP_FIXED      0x10
-#define MMAP_FAILED    ((uint64_t)(int64_t)-1)
-
-/* POSIX errno values */
-#define ENOSYS   38
-#define ESRCH     3
-#define EBADF     9
-#define EIO       5
-#define EINVAL   22
-#define ENOENT    2
-#define ENOMEM   12
-#define EAGAIN   11
-#define EINTR     4
-#define EFAULT   14
-#define ERANGE   34
-#define ECHILD   10
-#define ENOTDIR  20
-#define EISDIR   21
-#define ENFILE   23
-#define EMFILE   24
-#define ENOTTY   25
-#define ENOTSUP  95
-#define AT_FDCWD -100
-#define AT_REMOVEDIR 0x200
-
-/* futex 前向声明（实现在文件后半部分） */
-static int futex_do_wake(uintptr_t uaddr, int count);
-static int sys_futex_wait(uint32_t *uaddr, uint32_t val);
-
-/* ─────────────────────────────────────────────────────────────────
- * 全局文件描述符对象池
- * fd_table[i] in task_t holds an index into this pool (-1 = not open).
- * FD 0/1/2 (stdin/stdout/stderr) are handled specially (UART).
- * ───────────────────────────────────────────────────────────────── */
-#define FD_POOL_SIZE  64
-
-typedef enum {
-    FDT_FREE = 0,
-    FDT_FILE,
-    FDT_DIR,
-    FDT_PSEUDO,   /* 虚拟文件系统节点（pseudofs） */
-} fd_type_t;
-
-typedef struct {
-    fd_type_t  type;
-    int        flags;
-    char       path[128];   /* for fstat / readlink */
-    union {
-        ext4_file file;
-        ext4_dir  dir;
-        struct {
-            int32_t  node_id;  /* pseudo_node 索引 */
-            uint64_t off;      /* 当前读取偏移     */
-        } pseudo;
-    };
-} fd_obj_t;
-
-static fd_obj_t g_fd_pool[FD_POOL_SIZE];
-
-/* Alloc/free a pool slot */
-static int fd_pool_alloc(void)
-{
-    for (int i = 0; i < FD_POOL_SIZE; i++) {
-        if (g_fd_pool[i].type == FDT_FREE) {
-            KLOG_DEBUG("[fd] pool_alloc: allocated slot %d\n", i);
-            return i;
-        }
-    }
-    KLOG_ERROR("[fd] pool_alloc: no free slots (FD_POOL_SIZE=%d)\n", FD_POOL_SIZE);
-    return -1;
-}
-
-static void fd_pool_free(int idx)
-{
-    if (idx >= 0 && idx < FD_POOL_SIZE) {
-        KLOG_DEBUG("[fd] pool_free: freeing slot %d\n", idx);
-        g_fd_pool[idx].type = FDT_FREE;
-    }
-}
-
-/* Allocate a new fd number for the current task, backed by pool slot idx */
-static int task_alloc_fd(task_t *task, int pool_idx)
-{
-    /* fd 0,1,2 reserved for stdin/stdout/stderr */
-    for (int fd = 3; fd < (int)TASK_MAX_FD; fd++) {
-        /* 使用 (int8_t)-1 避免类型提升问题 */
-        if (task->fd_table[fd] == (int8_t)-1) {
-            task->fd_table[fd] = (int8_t)pool_idx;
-            KLOG_DEBUG("[fd] task_alloc_fd: pid=%u allocated fd=%d for pool_idx=%d\n",
-                      task->id, fd, pool_idx);
-            return fd;
-        }
-    }
-
-    /* 打印 fd_table 的前几个槽位用于调试 */
-    KLOG_ERROR("[fd] task_alloc_fd: pid=%u no free fd (TASK_MAX_FD=%d)\n",
-              task->id, TASK_MAX_FD);
-    KLOG_ERROR("[fd] fd_table dump: [0]=%d [1]=%d [2]=%d [3]=%d [4]=%d [5]=%d\n",
-              task->fd_table[0], task->fd_table[1], task->fd_table[2],
-              task->fd_table[3], task->fd_table[4], task->fd_table[5]);
-
-    return -1;
-}
-
-/* Get pool object for an fd (-1 on error) */
-static fd_obj_t *task_get_fd(task_t *task, int fd)
-{
-    if (fd < 0 || fd >= (int)TASK_MAX_FD)
-        return NULL;
-    int idx = task->fd_table[fd];
-    if (idx < 0 || idx >= FD_POOL_SIZE)
-        return NULL;
-    if (g_fd_pool[idx].type == FDT_FREE)
-        return NULL;
-    return &g_fd_pool[idx];
-}
-
-/* ─────────────────────────────────────────────────────────────────
- * 路径规范化辅助：将相对路径拼接到 cwd，返回绝对路径
- * 输出写入 out（最大 128 字节，含 NUL）。
- * ───────────────────────────────────────────────────────────────── */
-static void resolve_path(const char *cwd, const char *path, char *out, int outlen)
-{
-    char tmp[128];
-
-    if (path == NULL || path[0] == '\0') {
-        /* 空路径 */
-        out[0] = '/';
-        out[1] = '\0';
-        return;
-    }
-
-    if (path[0] == '/') {
-        /* 绝对路径 */
-        int i = 0;
-        while (path[i] && i < (int)sizeof(tmp) - 1) {
-            tmp[i] = path[i];
-            i++;
-        }
-        tmp[i] = '\0';
-    } else {
-        /* 相对路径：cwd + "/" + path */
-        int i = 0;
-        while (cwd[i] && i < (int)sizeof(tmp) - 1) {
-            tmp[i] = cwd[i];
-            i++;
-        }
-        if (i > 0 && tmp[i - 1] != '/' && i < (int)sizeof(tmp) - 1)
-            tmp[i++] = '/';
-        int j = 0;
-        while (path[j] && i < (int)sizeof(tmp) - 1) {
-            tmp[i++] = path[j++];
-        }
-        tmp[i] = '\0';
-    }
-
-    /* 规范化绝对路径：处理 //、.、.. */
-    {
-        int seg_start[64];
-        int seg_len[64];
-        int seg_count = 0;
-        int i = 0;
-
-        while (tmp[i] != '\0') {
-            while (tmp[i] == '/')
-                i++;
-            if (tmp[i] == '\0')
-                break;
-
-            int start = i;
-            while (tmp[i] != '\0' && tmp[i] != '/')
-                i++;
-            int len = i - start;
-
-            if (len == 1 && tmp[start] == '.') {
-                continue;
-            }
-            if (len == 2 && tmp[start] == '.' && tmp[start + 1] == '.') {
-                if (seg_count > 0)
-                    seg_count--;
-                continue;
-            }
-
-            if (seg_count < (int)(sizeof(seg_start) / sizeof(seg_start[0]))) {
-                seg_start[seg_count] = start;
-                seg_len[seg_count] = len;
-                seg_count++;
-            }
-        }
-
-        int pos = 0;
-        if (outlen <= 0)
-            return;
-
-        out[pos++] = '/';
-        for (int s = 0; s < seg_count && pos < outlen - 1; s++) {
-            for (int k = 0; k < seg_len[s] && pos < outlen - 1; k++) {
-                out[pos++] = tmp[seg_start[s] + k];
-            }
-            if (s != seg_count - 1 && pos < outlen - 1) {
-                out[pos++] = '/';
-            }
-        }
-        out[pos] = '\0';
-    }
-}
-
-/*
- * 解析 *at 系统调用路径：
- * - 绝对路径：直接使用
- * - 相对路径：基于 dirfd 目录或当前 cwd
- */
-static int resolve_path_at(task_t *task, int dirfd, const char *pathname,
-                           char *abspath, int abspath_len)
-{
-    if (!pathname)
-        return -ENOENT;
-
-    if (pathname[0] == '/') {
-        resolve_path(task->cwd, pathname, abspath, abspath_len);
-        return 0;
-    }
-
-    if (dirfd == AT_FDCWD) {
-        resolve_path(task->cwd, pathname, abspath, abspath_len);
-        return 0;
-    }
-
-    fd_obj_t *base = task_get_fd(task, dirfd);
-    /* FDT_DIR 和 FDT_PSEUDO 目录都可以作为 base */
-    if (!base || (base->type != FDT_DIR && base->type != FDT_PSEUDO))
-        return -EBADF;
-
-    resolve_path(base->path, pathname, abspath, abspath_len);
-    return 0;
-}
-
-/*
- * follow_symlinks - 跟随符号链接，最多 8 层。
- * 将 out 缓冲区中的路径替换为最终目标路径（非符号链接）。
- * 若路径不是符号链接，out 保持不变。
- */
-static void follow_symlinks(char *out, size_t outsz)
-{
-    char cur[128];
-    int n = 0;
-    while (out[n] && n < 127) { cur[n] = out[n]; n++; }
-    cur[n] = '\0';
-
-    for (int depth = 0; depth < 8; depth++) {
-        char target[128];
-        size_t rcnt = 0;
-        if (ext4_readlink(cur, target, sizeof(target) - 1, &rcnt) != EOK)
-            break; /* 不是符号链接或读取失败，停止 */
-        target[rcnt] = '\0';
-
-        if (target[0] == '/') {
-            /* 绝对符号链接 */
-            n = 0;
-            while (target[n] && n < 127) { cur[n] = target[n]; n++; }
-            cur[n] = '\0';
-        } else {
-            /* 相对符号链接：相对于 cur 的父目录解析 */
-            int slash = 0;
-            for (int i = 0; cur[i]; i++)
-                if (cur[i] == '/') slash = i;
-            /* parent = cur[0..slash] （含断斑 '/'） */
-            char parent[128];
-            int k;
-            for (k = 0; k <= slash && k < 126; k++)
-                parent[k] = cur[k];
-            parent[k] = '\0';
-            resolve_path(parent, target, cur, sizeof(cur));
-        }
-    }
-
-    n = 0;
-    while (cur[n] && n < (int)outsz - 1) { out[n] = cur[n]; n++; }
-    out[n] = '\0';
-}
-
-struct kernel_utsname {
-    char sysname[65];
-    char nodename[65];
-    char release[65];
-    char version[65];
-    char machine[65];
-    char domainname[65];
-};
-
-struct kernel_iovec {
-    uint64_t iov_base;
-    uint64_t iov_len;
-};
-
-struct kernel_timespec {
-    int64_t tv_sec;
-    int64_t tv_nsec;
-};
-
-struct kernel_rlimit {
-    uint64_t rlim_cur;
-    uint64_t rlim_max;
-};
-
-/* ─────────────────────────────────────────────────────────────────
- * Helper: copy NULL-terminated string from user space into kernel buf
- * ───────────────────────────────────────────────────────────────── */
-static int copy_string_from_user(const char *ustr, char *kbuf, int maxlen)
-{
-    if (!ustr) return -1;
-    int i = 0;
-    while (i < maxlen - 1) {
-        kbuf[i] = ustr[i];
-        if (ustr[i] == '\0') return i;
-        i++;
-    }
-    kbuf[i] = '\0';
-    return i;
-}
-
-/* ─────────────────────────────────────────────────────────────────
- * Helper: copy kernel string to user buf
- * ───────────────────────────────────────────────────────────────── */
-static int copy_string_to_user(const char *kstr, char *ubuf, int maxlen)
-{
-    if (!ubuf) return -1;
-    int i = 0;
-    while (i < maxlen - 1 && kstr[i]) {
-        ubuf[i] = kstr[i];
-        i++;
-    }
-    ubuf[i] = '\0';
-    return i;
-}
-
-/* ─────────────────────────────────────────────────────────────────
- * Helper: fill kernel_stat from ext4 inode info
- * ───────────────────────────────────────────────────────────────── */
-static void fill_stat_from_ext4(struct kernel_stat *st, const char *path)
-{
-    memset(st, 0, sizeof(*st));
-    st->st_dev     = 1;
-    st->st_nlink   = 1;
-    st->st_blksize = 4096;
-
-    uint32_t mode = 0;
-    ext4_mode_get(path, &mode);
-
-    /* Try to get file size via ext4_fopen */
-    ext4_file f;
-    if (ext4_fopen2(&f, path, 0 /* O_RDONLY */) == EOK) {
-        st->st_size   = (int64_t)ext4_fsize(&f);
-        st->st_blocks = (st->st_size + 511) / 512;
-        uint32_t ino  = 0;
-        ext4_raw_inode_fill(path, &ino, NULL);
-        st->st_ino  = ino;
-        ext4_fclose(&f);
-        /* regular file */
-        st->st_mode = 0100755;  /* -rwxr-xr-x */
-    } else {
-        /* maybe directory */
-        ext4_dir d;
-        if (ext4_dir_open(&d, path) == EOK) {
-            st->st_mode = 0040755;   /* drwxr-xr-x */
-            ext4_dir_close(&d);
-        } else {
-            st->st_mode = 0100644;
-        }
-    }
-    (void)mode;
-}
+#include "syscall/fs/fd_pool.h"
 
 /* ─────────────────────────────────────────────────────────────────
  * Unblock parent waiting for a specific child (or any child)
@@ -793,7 +52,7 @@ void notify_parent_wait_from_task(task_t *child)
     notify_parent_wait(child);
 }
 
-/* Debug counter - check if we reach syscall_handler */
+/* syscall entry counter（brk.c 等的调试日志会引用） */
 volatile uint32_t g_syscall_entry_count = 0;
 
 #if ARCH_X86_64
@@ -947,24 +206,15 @@ static void x86_translate_syscall(uint64_t *nr, uint64_t regs[9])
  * ───────────────────────────────────────────────────────────────── */
 void syscall_handler(trap_frame_t *frame)
 {
-    g_syscall_entry_count++;  /* Increment counter */
+    g_syscall_entry_count++;
     uint64_t syscall_num = syscall_abi_nr(frame);
     uint64_t raw_syscall_num = syscall_num;
     KLOG_DEBUG("[syscall] number: %d, entry #%u: frame=%p\n", syscall_num, g_syscall_entry_count, frame);
-
-    /* 调试：打印 trap_frame 原始内容 */
-    // if (g_syscall_entry_count <= 3) {
-    //     KLOG_ERROR("[syscall_handler] frame=%p\n", frame);
-    //     KLOG_ERROR("  x10(a0)=0x%llx x11(a1)=0x%llx x12(a2)=0x%llx\n",
-    //                frame->x[10], frame->x[11], frame->x[12]);
-    //     KLOG_ERROR("  x17(a7)=0x%llx sepc=0x%llx\n", frame->x[17], frame->sepc);
-    // }
 
     uint64_t regs[9] = {0};
     for (int i = 0; i < 6; i++) {
         regs[i] = syscall_abi_arg(frame, i);
     }
-    // uint64_t syscall_num = syscall_abi_nr(frame);
 
 #if ARCH_X86_64
     /* 将 Linux x86_64 syscall 号翻译为下方 switch 使用的内部编号 */
@@ -984,12 +234,6 @@ void syscall_handler(trap_frame_t *frame)
         KLOG_DEBUG("[syscall] dispatch raw=%llu mapped=%llu args=[0x%llx,0x%llx,0x%llx,0x%llx,0x%llx,0x%llx]\n",
                    raw_syscall_num, syscall_num,
                    regs[0], regs[1], regs[2], regs[3], regs[4], regs[5]);
-    }
-
-    /* 调试：记录系统调用号 */
-    if (g_syscall_entry_count <= 10) {
-        // KLOG_ERROR("[syscall] #%u: nr=%llu a0=0x%llx a1=0x%llx a2=0x%llx\n",
-        //            g_syscall_entry_count, syscall_num, regs[0], regs[1], regs[2]);
     }
 
     task_t *current = task_current();
@@ -1059,481 +303,48 @@ void syscall_handler(trap_frame_t *frame)
     /* --- 进程管理 --- */
     case LINUX_SYS_EXIT:
     case LINUX_SYS_EXIT_GROUP:
-        sys_exit((int)regs[0]);
+        exit_handler(regs);
         break;
 
-    case LINUX_SYS_CLONE: {
-        /*
-         * clone(flags, child_stack, parent_tidptr, tls, child_tidptr)
-         * pthread_create 调用：flags=CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|
-         *                             CLONE_THREAD|CLONE_SETTLS|CLONE_PARENT_SETTID|CLONE_CHILD_CLEARTID
-         * fork 调用：flags=SIGCHLD（无 CLONE_VM）
-         */
-        uint64_t flags       = regs[0];
-        uint64_t child_stack = regs[1];    /* 线程专用新栈 */
-        uint32_t *parent_tidptr = (uint32_t *)regs[2];
-        uint64_t tls         = regs[3];    /* CLONE_SETTLS: 新线程 TLS 指针 */
-        uint32_t *child_tidptr  = (uint32_t *)regs[4];  /* CLONE_CHILD_CLEARTID */
-
-        task_t *parent = task_current();
-
-        /* 分配子任务槽 */
-        extern uint8_t g_task_stacks[TASK_MAX][TASK_STACK_SIZE];
-        task_t *child = NULL;
-        {
-            /* 先回收已死亡的槽 */
-            for (uint32_t i = 0; i < TASK_MAX; i++) {
-                if (g_stack_used[i] && g_task_pool[i].state == TASK_DEAD) {
-                    g_stack_used[i] = 0;
-                    g_task_pool[i].stack_base = NULL;
-                    break;
-                }
-            }
-            for (uint32_t i = 0; i < TASK_MAX; i++) {
-                if (!g_stack_used[i]) {
-                    g_stack_used[i] = 1;
-                    g_task_pool[i].stack_base = g_task_stacks[i];
-                    child = &g_task_pool[i];
-                    break;
-                }
-            }
-        }
-
-        if (!child) {
-            KLOG_ERROR("[clone] no free task slots\n");
-            regs[0] = (uint64_t)(int64_t)-ENOMEM;
-            break;
-        }
-
-        extern uint32_t g_task_id_cnt;
-        child->id              = g_task_id_cnt++;
-        child->state           = TASK_READY;
-        child->priority        = parent->priority;
-        child->is_user_process = true;
-        child->user_started    = true;   /* 已有 trap frame，直接通过 arch_fork_resume_user 入用户态 */
-        child->exit_status     = 0;
-        child->is_waiting      = false;
-        child->wait_pid        = (uint32_t)-1;
-        child->ctid_ptr        = 0;
-        child->is_thread       = false;
-        child->utime_ns        = 0;
-        child->stime_ns        = 0;
-        child->sc_entry_ns     = 0;
-        child->create_ns       = 0;   /* 在 sched_enqueue 之前设置，避免把页复制时间计入 wall */
-
-        if (flags & CLONE_VM) {
-            /* ────────────────────────────────────────────────────────────
-             * 线程路径：共享父进程地址空间（不拷贝页表）。
-             * pthread_create 走此路径。
-             * ─────────────────────────────────────────────────────────── */
-            child->is_thread       = true;
-            child->pgd             = parent->pgd;   /* 直接共享物理页表基址 */
-            child->user_entry      = parent->user_entry;
-            child->user_sp         = child_stack;
-            child->user_stack_top  = child_stack;
-            child->user_stack_size = parent->user_stack_size;
-            child->heap_end        = parent->heap_end;
-            child->mmap_next       = parent->mmap_next;
-            child->fs_base         = (flags & CLONE_SETTLS) ? tls : parent->fs_base;
-            child->parent_id       = parent->id;
-
-            /* CLONE_PARENT_SETTID: 把子线程 tid 写到父进程用户内存 */
-            if ((flags & CLONE_PARENT_SETTID) && parent_tidptr)
-                *parent_tidptr = child->id;
-
-            /* CLONE_CHILD_CLEARTID: 线程退出时清零并 futex_wake */
-            if ((flags & CLONE_CHILD_CLEARTID) && child_tidptr)
-                child->ctid_ptr = (uint64_t)child_tidptr;
-
-            /* 复制 cwd / fd_table / 任务名 */
-            {
-                int k = 0;
-                while (parent->cwd[k] && k < (int)TASK_CWD_LEN - 1) {
-                    child->cwd[k] = parent->cwd[k]; k++;
-                }
-                child->cwd[k] = '\0';
-            }
-            for (uint32_t k = 0; k < TASK_MAX_FD; k++)
-                child->fd_table[k] = parent->fd_table[k];
-            {
-                int k = 0;
-                while (parent->name[k] && k < (int)TASK_NAME_LEN - 1) {
-                    child->name[k] = parent->name[k]; k++;
-                }
-                child->name[k] = '\0';
-            }
-
-            list_node_init(&child->run_node);
-            list_node_init(&child->wait_node);
-
-            /* 设置子线程内核栈：child_stack=新用户栈, tls=新TLS */
-            child->sp = arch_init_fork_child_stack(
-                child->stack_base, TASK_STACK_SIZE,
-                frame, child_stack,
-                (flags & CLONE_SETTLS) ? tls : 0
-            );
-
-            KLOG_INFO("[clone/thread] parent=%u child=%u flags=0x%llx tls=0x%llx usp=0x%llx ctid=%p\n",
-                      parent->id, child->id, flags, tls, child_stack, child_tidptr);
-
-        } else {
-            /* ────────────────────────────────────────────────────────────
-             * fork 路径：为子进程创建独立地址空间并复制父进程用户页。
-             * ─────────────────────────────────────────────────────────── */
-            uint64_t child_pgd_phys = pmm_alloc_pages(g_pmm, 1);
-            if (child_pgd_phys == 0) {
-                KLOG_ERROR("[clone] no memory for child pgd\n");
-                g_stack_used[child - g_task_pool] = 0;
-                regs[0] = (uint64_t)(int64_t)-ENOMEM;
-                break;
-            }
-            void *child_pgd_virt  = phys_to_virt(child_pgd_phys);
-            void *parent_pgd_virt = phys_to_virt((uint64_t)parent->pgd);
-            memset(child_pgd_virt, 0, PAGE_SIZE);
-
-#if ARCH_X86_64
-            x86_copy_kernel_mappings((uint64_t *)child_pgd_virt,
-                                     (uint64_t *)parent_pgd_virt);
-#endif
-#if ARCH_RISCV64
-            {
-                uint64_t *child_l1  = (uint64_t *)child_pgd_virt;
-                uint64_t *kernel_l1 = (uint64_t *)phys_to_virt(satp_read_pgd_phys());
-                riscv64_copy_kernel_mappings(child_l1, kernel_l1);
-            }
-#endif
-
-            bool clone_copy_ok = true;
-
-            #define CLONE_COPY_RANGE(start, end)                                              \
-                do {                                                                           \
-                    uint64_t __s = ALIGN_DOWN((start), PAGE_SIZE);                            \
-                    uint64_t __e = ALIGN_UP((end), PAGE_SIZE);                                \
-                    for (uint64_t va = __s; clone_copy_ok && va < __e; va += PAGE_SIZE) {     \
-                        uint64_t src_pa = mm_vm_get_paddr(parent_pgd_virt, va);               \
-                        if (src_pa == 0)                                                       \
-                            continue;                                                          \
-                        uint64_t dst_pa = pmm_alloc_pages(g_pmm, 1);                          \
-                        if (dst_pa == 0) {                                                     \
-                            clone_copy_ok = false;                                             \
-                            break;                                                             \
-                        }                                                                      \
-                        memcpy(phys_to_virt(dst_pa), phys_to_virt(src_pa), PAGE_SIZE);        \
-                        if (mm_vm_map_pages(child_pgd_virt, va, dst_pa, 1, 0) != 0) {         \
-                            pmm_free_pages(g_pmm, dst_pa, 1);                                  \
-                            clone_copy_ok = false;                                             \
-                            break;                                                             \
-                        }                                                                      \
-                    }                                                                          \
-                } while (0)
-
-            CLONE_COPY_RANGE(0x0, parent->heap_end);
-            if (clone_copy_ok && parent->mmap_next > USER_MMAP_BASE_EXEC)
-                CLONE_COPY_RANGE(USER_MMAP_BASE_EXEC, parent->mmap_next);
-            if (clone_copy_ok)
-                CLONE_COPY_RANGE(parent->user_stack_top - parent->user_stack_size,
-                                 parent->user_stack_top);
-            #undef CLONE_COPY_RANGE
-
-            if (!clone_copy_ok) {
-                KLOG_ERROR("[clone] failed to copy user address space\n");
-                g_stack_used[child - g_task_pool] = 0;
-                pmm_free_pages(g_pmm, child_pgd_phys, 1);
-                regs[0] = (uint64_t)(int64_t)-ENOMEM;
-                break;
-            }
-
-            child->pgd             = (uint64_t *)child_pgd_phys;
-            child->user_entry      = parent->user_entry;
-            child->user_sp         = parent->user_sp;
-            child->user_stack_top  = parent->user_stack_top;
-            child->user_stack_size = parent->user_stack_size;
-            child->heap_end        = parent->heap_end;
-            child->mmap_next       = parent->mmap_next;
-            child->fs_base         = parent->fs_base;
-            child->parent_id       = parent->id;
-
-            {
-                int k = 0;
-                while (parent->cwd[k] && k < (int)TASK_CWD_LEN - 1) {
-                    child->cwd[k] = parent->cwd[k]; k++;
-                }
-                child->cwd[k] = '\0';
-            }
-            /* 深拷贝 fd_table：fork 子进程获得独立的 pool slot，
-             * 避免一方 close 破坏另一方的 fd_obj。
-             * 线程路径（CLONE_VM）共享地址空间，fd 共享是正确的。 */
-            for (uint32_t k = 0; k < TASK_MAX_FD; k++) {
-                int pidx = (int)(int8_t)parent->fd_table[k];
-                if (pidx < 0 || pidx >= FD_POOL_SIZE) {
-                    child->fd_table[k] = -1;
-                    continue;
-                }
-                fd_obj_t *src = &g_fd_pool[pidx];
-                if (src->type == FDT_FREE) {
-                    child->fd_table[k] = -1;
-                    continue;
-                }
-                int new_idx = fd_pool_alloc();
-                if (new_idx < 0) {
-                    KLOG_ERROR("[clone/fork] fd pool full, fd=%u dropped\n", k);
-                    child->fd_table[k] = -1;
-                    continue;
-                }
-                g_fd_pool[new_idx] = *src;   /* 整个 fd_obj 结构体深拷贝 */
-                child->fd_table[k] = (int8_t)new_idx;
-            }
-            {
-                int k = 0;
-                while (parent->name[k] && k < (int)TASK_NAME_LEN - 1) {
-                    child->name[k] = parent->name[k]; k++;
-                }
-                child->name[k] = '\0';
-            }
-
-            list_node_init(&child->run_node);
-            list_node_init(&child->wait_node);
-
-            child->sp = arch_init_fork_child_stack(
-                child->stack_base, TASK_STACK_SIZE,
-                frame, 0, 0   /* fork：不覆盖 child_stack 和 tls */
-            );
-
-            KLOG_INFO("[clone/fork] parent=%u child=%u elr=0x%llx usp=0x%llx\n",
-                      parent->id, child->id, syscall_abi_ip(frame), syscall_abi_user_sp(frame));
-        }
-
-        /* 加入就绪队列：在入队前设置 create_ns，确保 wall time 从此刻起算 */
-        /* 信号继承：子进程继承父进程的信号掩码和 handler，pending 清零 */
-        child->pending_sigs      = 0;
-        child->sig_frame_sp      = 0;
-        child->sig_saved_blocked = 0;
-        child->blocked_sigs      = parent->blocked_sigs;
-        child->pgid              = parent->pgid;
-        for (int _si = 0; _si < NSIG; _si++)
-            child->sig_actions[_si] = parent->sig_actions[_si];
-
-        child->create_ns = kernel_get_ns();
-        sched_enqueue(child);
-
-        /* 父进程返回子进程 PID */
-        regs[0] = (uint64_t)child->id;
+    case LINUX_SYS_CLONE:
+        clone_handler(regs, task_current(), frame);
         break;
-    }
 
-    case LINUX_SYS_EXECVE: {
-        const char *pathname = (const char *)regs[0];
-        char **argv = (char **)regs[1];
-        char **envp = (char **)regs[2];
-        regs[0] = sys_execve(pathname, argv, envp);
+    case LINUX_SYS_EXECVE:
+        execve_handler(regs);
         break;
-    }
 
     case LINUX_SYS_WAIT4:
-    case LINUX_SYS_WAITID: {
-        /* wait4(pid, wstatus, options, rusage) */
-        int wait_pid  = (int)(int32_t)regs[0];
-        int *wstatus  = (int *)regs[1];
-        int options   = (int)regs[2];
-
-        /* Linux: WNOHANG = 1 */
-        const int WNOHANG = 1;
-
-        task_t *me = task_current();
-
-        /* 先判断是否存在匹配的子进程（无则立即 ECHILD） */
-        bool has_matching_child = false;
-        for (uint32_t i = 0; i < TASK_MAX; i++) {
-            if (!g_stack_used[i]) continue;
-            task_t *t = &g_task_pool[i];
-            if (t->parent_id != me->id) continue;
-            if (wait_pid > 0 && (int)t->id != wait_pid) continue;
-            has_matching_child = true;
-            break;
-        }
-
-        if (!has_matching_child) {
-            regs[0] = (uint64_t)(int64_t)-ECHILD;
-            break;
-        }
-
-        /* Look for an already-dead child */
-        task_t *found = NULL;
-        {
-            for (uint32_t i = 0; i < TASK_MAX; i++) {
-                if (!g_stack_used[i]) continue;
-                task_t *t = &g_task_pool[i];
-                if (t->parent_id != me->id) continue;
-                if (wait_pid > 0 && (int)t->id != wait_pid) continue;
-                if (t->state == TASK_DEAD) {
-                    found = t;
-                    break;
-                }
-            }
-        }
-
-        if (found) {
-            if (wstatus)
-                *wstatus = (found->exit_status & 0xFF) << 8;
-            if (regs[3]) {
-                memset((void *)regs[3], 0, 144);
-                uint64_t *ru = (uint64_t *)regs[3];
-                ru[0] = found->utime_ns / 1000000000ULL;               /* ru_utime.tv_sec  */
-                ru[1] = (found->utime_ns % 1000000000ULL) / 1000ULL;   /* ru_utime.tv_usec */
-                ru[2] = found->stime_ns / 1000000000ULL;               /* ru_stime.tv_sec  */
-                ru[3] = (found->stime_ns % 1000000000ULL) / 1000ULL;   /* ru_stime.tv_usec */
-            }
-            regs[0] = (uint64_t)found->id;
-            /* Mark slot truly free */
-            for (uint32_t i = 0; i < TASK_MAX; i++) {
-                if (&g_task_pool[i] == found) {
-                    g_stack_used[i]         = 0;
-                    g_task_pool[i].stack_base = NULL;
-                    break;
-                }
-            }
-        } else {
-            /* No dead child yet */
-            if (options & WNOHANG) {
-                regs[0] = 0;
-                break;
-            }
-
-            /* 阻塞等待目标子进程退出 */
-            me->is_waiting = true;
-            me->wait_pid   = (wait_pid > 0) ? (uint32_t)wait_pid : (uint32_t)-1;
-            task_block(NULL);
-
-            /* When we wake up, a child has died */
-            for (uint32_t i = 0; i < TASK_MAX; i++) {
-                if (!g_stack_used[i]) continue;
-                task_t *t = &g_task_pool[i];
-                if (t->parent_id != me->id) continue;
-                if (wait_pid > 0 && (int)t->id != wait_pid) continue;
-                if (t->state == TASK_DEAD) {
-                    found = t;
-                    break;
-                }
-            }
-            if (found) {
-                if (wstatus)
-                    *wstatus = (found->exit_status & 0xFF) << 8;
-                if (regs[3]) {
-                    memset((void *)regs[3], 0, 144);
-                    uint64_t *ru = (uint64_t *)regs[3];
-                    ru[0] = found->utime_ns / 1000000000ULL;               /* ru_utime.tv_sec  */
-                    ru[1] = (found->utime_ns % 1000000000ULL) / 1000ULL;   /* ru_utime.tv_usec */
-                    ru[2] = found->stime_ns / 1000000000ULL;               /* ru_stime.tv_sec  */
-                    ru[3] = (found->stime_ns % 1000000000ULL) / 1000ULL;   /* ru_stime.tv_usec */
-                }
-                regs[0] = (uint64_t)found->id;
-                for (uint32_t i = 0; i < TASK_MAX; i++) {
-                    if (&g_task_pool[i] == found) {
-                        g_stack_used[i] = 0;
-                        g_task_pool[i].stack_base = NULL;
-                        break;
-                    }
-                }
-            } else {
-                regs[0] = (uint64_t)(int64_t)-ECHILD;
-            }
-        }
+    case LINUX_SYS_WAITID:
+        wait_handler(regs, task_current());
         break;
-    }
 
     case LINUX_SYS_SET_TID_ADDR:
-        /* musl 线程初始化时设置线程 'clear-child-tid' 地址 */
-        task_current()->ctid_ptr = regs[0];
-        /* fall through */
     case LINUX_SYS_GETTID:
-        regs[0] = (uint64_t)task_current()->id;
-        break;
-
-    case LINUX_SYS_FUTEX: {
-        uint32_t *uaddr = (uint32_t *)regs[0];
-        int op  = (int)regs[1] & ~(FUTEX_PRIVATE_FLAG | FUTEX_CLOCK_REALTIME);
-        uint32_t val  = (uint32_t)regs[2];
-        /* FUTEX_WAKE: val (regs[2]) 是唤醒数量；regs[3] 是 timeout（对 WAIT 有效），
-         * 不能用 regs[3]，否则 count=0（NULL timeout），导致永远唤醒 0 个等待者。 */
-        if (op == FUTEX_WAIT)
-            regs[0] = (uint64_t)(int64_t)sys_futex_wait(uaddr, val);
-        else if (op == FUTEX_WAKE)
-            regs[0] = (uint64_t)(int64_t)futex_do_wake((uintptr_t)uaddr, (int)val);
-        else
-            regs[0] = (uint64_t)(int64_t)-ENOSYS;
-        break;
-    }
-
     case LINUX_SYS_GETPID:
-        regs[0] = (uint64_t)task_current()->id;
-        break;
-
     case LINUX_SYS_GETPPID:
-        regs[0] = (uint64_t)task_current()->parent_id;
-        break;
-
     case LINUX_SYS_GETUID:
     case LINUX_SYS_GETEUID:
     case LINUX_SYS_GETGID:
     case LINUX_SYS_GETEGID:
-        regs[0] = 0; /* root */
-        break;
-
     case LINUX_SYS_SETUID:
     case LINUX_SYS_SETGID:
-        regs[0] = 0;
-        break;
-
-    case LINUX_SYS_SETPGID: {
-        int pid  = (int)(int32_t)regs[0];
-        int pgid = (int)(int32_t)regs[1];
-        task_t *tgt = (pid == 0) ? current : task_find_by_id((uint32_t)pid);
-        if (!tgt) { regs[0] = (uint64_t)(int64_t)-ESRCH; break; }
-        tgt->pgid = (uint32_t)(pgid ? pgid : (pid ? pid : current->id));
-        regs[0] = 0;
-        break;
-    }
-
-    case LINUX_SYS_GETPGID: {
-        int pid = (int)(int32_t)regs[0];
-        task_t *tgt = (pid == 0) ? current : task_find_by_id((uint32_t)pid);
-        regs[0] = tgt ? (uint64_t)tgt->pgid : (uint64_t)(int64_t)-ESRCH;
-        break;
-    }
-
+    case LINUX_SYS_SETPGID:
+    case LINUX_SYS_GETPGID:
     case LINUX_SYS_GETSID:
     case LINUX_SYS_SETSID:
-        /* 简化：以 pgid 代替 sid */
-        regs[0] = (uint64_t)current->pgid;
-        break;
-
     case LINUX_SYS_GETGROUPS:
-        regs[0] = 0;
+    case LINUX_SYS_SETGROUPS:
+        proc_ids_handler(syscall_num, regs, current);
         break;
 
-    case LINUX_SYS_SETGROUPS:
-        regs[0] = 0;
+    case LINUX_SYS_FUTEX:
+        futex_handler(regs);
         break;
 
     case X86_SYS_ARCH_PRCTL: {
 #if ARCH_X86_64
-        uint64_t code = regs[0];
-        uint64_t addr = regs[1];
-
-        if (code == X86_ARCH_SET_FS) {
-            current->fs_base = addr;
-            x86_write_fs_base(addr);
-            regs[0] = 0;
-        } else if (code == X86_ARCH_GET_FS) {
-            if (addr == 0) {
-                regs[0] = (uint64_t)(int64_t)-EFAULT;
-            } else {
-                *(uint64_t *)addr = current->fs_base;
-                regs[0] = 0;
-            }
-        } else {
-            regs[0] = (uint64_t)(int64_t)-EINVAL;
-        }
+        arch_prctl_handler(regs, current);
 #else
         regs[0] = (uint64_t)(int64_t)-ENOSYS;
 #endif
@@ -1544,921 +355,128 @@ void syscall_handler(trap_frame_t *frame)
         regs[0] = (uint64_t)(int64_t)-ENOSYS;
         break;
 
-    case LINUX_SYS_KILL: {
-        int pid = (int)(int32_t)regs[0];
-        int sig = (int)regs[1];
-
-        if (sig == 0) { regs[0] = 0; break; }
-
-        if (pid > 0) {
-            task_t *tgt = task_find_by_id((uint32_t)pid);
-            if (!tgt) { regs[0] = (uint64_t)(int64_t)-ESRCH; break; }
-            task_send_signal(tgt, sig);
-        } else if (pid == 0) {
-            task_send_signal_to_pgid(current->pgid, sig);
-        } else if (pid == -1) {
-            /* 向所有用户进程广播（简化实现：向 current 的 pgid） */
-            task_send_signal_to_pgid(current->pgid, sig);
-        } else {
-            task_send_signal_to_pgid((uint32_t)(-pid), sig);
-        }
-        regs[0] = 0;
+    case LINUX_SYS_KILL:
+        kill_handler(regs, current);
         break;
-    }
 
-    case LINUX_SYS_TGKILL: {
-        int tgid = (int)(int32_t)regs[0];
-        int tid  = (int)(int32_t)regs[1];
-        int sig  = (int)regs[2];
-
-        if (sig == 0) { regs[0] = 0; break; }
-
-        task_t *tgt = task_find_by_id((uint32_t)tid);
-        /* tgkill 的 tgid 是线程组 leader 的 PID，不是 pgid。
-         * 单线程进程: tgid == tid；线程: tgid == parent_id（leader）。 */
-        if (!tgt ||
-            (tgid > 0 && (uint32_t)tgid != tgt->id && (uint32_t)tgid != tgt->parent_id)) {
-            regs[0] = (uint64_t)(int64_t)-ESRCH;
-            break;
-        }
-        task_send_signal(tgt, sig);
-        regs[0] = 0;
+    case LINUX_SYS_TGKILL:
+        tgkill_handler(regs);
         break;
-    }
 
     case LINUX_SYS_SCHED_YIELD:
-        task_yield();
-        regs[0] = 0;
+        sched_yield_handler(regs);
         break;
 
     /* --- 文件描述符 --- */
-    case LINUX_SYS_READ: {
-        int      fd    = (int)regs[0];
-        char    *buf   = (char *)regs[1];
-        uint64_t count = regs[2];
-        if (!buf || count == 0) { regs[0] = 0; break; }
-
-        /* 先查 fd_obj_t：fd 可能被 dup2/dup3 重定向（如 dd 把 /dev/zero 重定到 fd=0） */
-        fd_obj_t *obj = task_get_fd(task_current(), fd);
-        if (obj) {
-            if (obj->type == FDT_PSEUDO) {
-                int rc = pseudo_read(obj->pseudo.node_id, &obj->pseudo.off,
-                                     buf, (size_t)count);
-                regs[0] = rc >= 0 ? (uint64_t)rc : (uint64_t)(int64_t)rc;
-            } else if (obj->type == FDT_FILE) {
-                size_t rcnt = 0;
-                int rc = ext4_fread(&obj->file, buf, (size_t)count, &rcnt);
-                regs[0] = (rc == EOK) ? (uint64_t)rcnt : (uint64_t)(int64_t)-EIO;
-            } else {
-                regs[0] = (uint64_t)(int64_t)-EBADF;
-            }
-        } else if (fd == 0) {
-            /* stdin 未重定向：通过 UART 环形缓冲区读取
-             * signal_check_uart() 将字符推入缓冲区，ctrl-c 发 SIGINT */
-            int raw    = !(g_termios.c_lflag & 0x0002u); /* !ICANON */
-            int do_cr  =  (g_termios.c_iflag & 0x0100u); /* ICRNL */
-            uint64_t n = 0;
-            int eintr  = 0;
-            while (n < count) {
-                /* 排空 UART（也处理 ctrl-c） */
-                signal_check_uart();
-                /* 若信号已到，立即返回 EINTR */
-                if (current->pending_sigs & ~current->blocked_sigs) {
-                    eintr = 1;
-                    break;
-                }
-                char c;
-                if (uart_ringbuf_pop(&c)) {
-                    if (do_cr && c == '\r') c = '\n';
-                    buf[n++] = c;
-                    if (raw) break;           /* raw 模式：每次返回一个字符 */
-                    if (c == '\n') break;     /* canonical 模式：换行截止 */
-                } else {
-                    task_yield();
-                }
-            }
-            regs[0] = eintr ? (uint64_t)(int64_t)-EINTR : n;
-        } else {
-            regs[0] = (uint64_t)(int64_t)-EBADF;
-        }
+    case LINUX_SYS_READ:
+        read_handler(regs, current);
         break;
-    }
 
-    case LINUX_SYS_WRITE: {
-        int          fd    = (int)regs[0];
-        const char  *buf   = (const char *)regs[1];
-        uint64_t     count = regs[2];
-        if (!buf) { regs[0] = 0; break; }
-        /* 先查 fd_obj_t：fd=1/2 可能被 dup2/dup3 重定向（如 dd 把 /dev/null 重定到 fd=1） */
-        fd_obj_t *wobj = task_get_fd(task_current(), fd);
-        if (wobj) {
-            if (wobj->type == FDT_PSEUDO) {
-                int rc = pseudo_write(wobj->pseudo.node_id, buf, (size_t)count);
-                regs[0] = rc >= 0 ? (uint64_t)rc : (uint64_t)(int64_t)rc;
-            } else if (wobj->type == FDT_FILE) {
-                size_t wcnt = 0;
-                int rc = ext4_fwrite(&wobj->file, buf, (size_t)count, &wcnt);
-                regs[0] = (rc == EOK) ? (uint64_t)wcnt : (uint64_t)(int64_t)-EIO;
-            } else {
-                regs[0] = (uint64_t)(int64_t)-EBADF;
-            }
-        } else if (fd == 1 || fd == 2) {
-            /* stdout/stderr 未重定向：走 UART */
-            regs[0] = sys_write(buf, count);
-        } else {
-            regs[0] = (uint64_t)(int64_t)-EBADF;
-        }
+    case LINUX_SYS_WRITE:
+        write_handler(regs, current);
         break;
-    }
 
-    case LINUX_SYS_WRITEV: {
-        int fd = (int)regs[0];
-        struct kernel_iovec *iov = (struct kernel_iovec *)regs[1];
-        int iovcnt = (int)regs[2];
-        if (!iov || iovcnt <= 0) { regs[0] = 0; break; }
-        fd_obj_t *wv_obj = task_get_fd(task_current(), fd);
-        if (!wv_obj && fd != 0 && fd != 1 && fd != 2) {
-            regs[0] = (uint64_t)(int64_t)-EBADF;
-            break;
-        }
-        uint64_t total = 0;
-        for (int i = 0; i < iovcnt; i++) {
-            if (!iov[i].iov_base || iov[i].iov_len == 0) continue;
-            if (wv_obj) {
-                if (wv_obj->type == FDT_PSEUDO) {
-                    pseudo_write(wv_obj->pseudo.node_id,
-                                 iov[i].iov_base, iov[i].iov_len);
-                } else if (wv_obj->type == FDT_FILE) {
-                    size_t wcnt = 0;
-                    ext4_fwrite(&wv_obj->file, iov[i].iov_base,
-                                iov[i].iov_len, &wcnt);
-                }
-            } else {
-                sys_write((const char *)iov[i].iov_base, iov[i].iov_len);
-            }
-            total += iov[i].iov_len;
-        }
-        regs[0] = total;
+    case LINUX_SYS_WRITEV:
+        writev_handler(regs, current);
         break;
-    }
 
-    case LINUX_SYS_LSEEK: {
-        int     fd     = (int)regs[0];
-        int64_t offset = (int64_t)regs[1];
-        int     whence = (int)regs[2];
-        fd_obj_t *obj = task_get_fd(task_current(), fd);
-        if (!obj) { regs[0] = (uint64_t)(int64_t)-EBADF; break; }
-        if (obj->type == FDT_PSEUDO) {
-            /* 0=SEEK_SET, 1=SEEK_CUR, 2=SEEK_END */
-            if      (whence == 0) obj->pseudo.off = (uint64_t)offset;
-            else if (whence == 1) obj->pseudo.off = (uint64_t)((int64_t)obj->pseudo.off + offset);
-            else                  obj->pseudo.off = 0; /* SEEK_END on virtual = reset */
-            regs[0] = obj->pseudo.off;
-        } else if (obj->type == FDT_FILE) {
-            int rc = ext4_fseek(&obj->file, offset, (uint32_t)whence);
-            if (rc == EOK)
-                regs[0] = (uint64_t)ext4_ftell(&obj->file);
-            else
-                regs[0] = (uint64_t)(int64_t)-EINVAL;
-        } else {
-            regs[0] = (uint64_t)(int64_t)-EBADF;
-        }
+    case LINUX_SYS_LSEEK:
+        lseek_handler(regs, current);
         break;
-    }
 
-    case LINUX_SYS_FACCESSAT: {
-        /* faccessat(dirfd, pathname, mode, flags) */
-        int dirfd = (int)regs[0];
-        const char *pathname = (const char *)regs[1];
-        (void)regs[2]; /* mode: 当前无权限模型，存在即允许 */
-        (void)regs[3]; /* flags */
-
-        if (!pathname) {
-            regs[0] = (uint64_t)(int64_t)-EFAULT;
-            break;
-        }
-
-        task_t *me = task_current();
-        char abspath[128];
-        int rpa = resolve_path_at(me, dirfd, pathname, abspath, sizeof(abspath));
-        if (rpa < 0) {
-            regs[0] = (uint64_t)(int64_t)rpa;
-            break;
-        }
-        follow_symlinks(abspath, sizeof(abspath));
-
-        /* 优先查 pseudofs */
-        struct kernel_stat _tmpst;
-        if (pseudo_stat_path(abspath, &_tmpst) == 0) { regs[0] = 0; break; }
-
-        /* 使用 lwext4 原生存在性检查，避免路径类型误判 */
-        int rc = ext4_inode_exist(abspath, EXT4_DE_UNKNOWN);
-        regs[0] = (rc == EOK) ? 0 : (uint64_t)(int64_t)-ENOENT;
+    case LINUX_SYS_FACCESSAT:
+        faccessat_handler(regs, current);
         break;
-    }
 
-    case LINUX_SYS_RENAMEAT: {
-        /* renameat(olddirfd, oldpath, newdirfd, newpath) */
-        int olddirfd = (int)regs[0];
-        const char *oldpath = (const char *)regs[1];
-        int newdirfd = (int)regs[2];
-        const char *newpath = (const char *)regs[3];
-
-        if (!oldpath || !newpath) {
-            regs[0] = (uint64_t)(int64_t)-EFAULT;
-            break;
-        }
-
-        task_t *me = task_current();
-        char oldabs[128];
-        char newabs[128];
-
-        int ro = resolve_path_at(me, olddirfd, oldpath, oldabs, sizeof(oldabs));
-        if (ro < 0) {
-            regs[0] = (uint64_t)(int64_t)ro;
-            break;
-        }
-
-        int rn = resolve_path_at(me, newdirfd, newpath, newabs, sizeof(newabs));
-        if (rn < 0) {
-            regs[0] = (uint64_t)(int64_t)rn;
-            break;
-        }
-
-        int rc = ext4_frename(oldabs, newabs);
-        regs[0] = (rc == EOK) ? 0 : (uint64_t)(int64_t)-ENOENT;
+    case LINUX_SYS_RENAMEAT:
+        renameat_handler(regs, current);
         break;
-    }
 
-    case LINUX_SYS_UNLINKAT: {
-        /* unlinkat(dirfd, pathname, flags) */
-        int dirfd = (int)regs[0];
-        const char *pathname = (const char *)regs[1];
-        int flags = (int)regs[2];
-
-        if (!pathname) {
-            regs[0] = (uint64_t)(int64_t)-EFAULT;
-            break;
-        }
-
-        task_t *me = task_current();
-        char abspath[128];
-        int rpa = resolve_path_at(me, dirfd, pathname, abspath, sizeof(abspath));
-        if (rpa < 0) {
-            regs[0] = (uint64_t)(int64_t)rpa;
-            break;
-        }
-
-        int rc;
-        if (flags & AT_REMOVEDIR) {
-            rc = ext4_dir_rm(abspath);
-        } else {
-            rc = ext4_fremove(abspath);
-        }
-        regs[0] = (rc == EOK) ? 0 : (uint64_t)(int64_t)-ENOENT;
+    case LINUX_SYS_UNLINKAT:
+        unlinkat_handler(regs, current);
         break;
-    }
 
-    case LINUX_SYS_OPENAT: {
-        /* openat(dirfd, pathname, flags, mode) */
-        int dirfd = (int)regs[0];
-        const char *pathname = (const char *)regs[1];
-        int         flags    = (int)regs[2];
-        /* int mode = (int)regs[3]; */
-        if (!pathname) { regs[0] = (uint64_t)(int64_t)-ENOENT; break; }
-
-        task_t *me = task_current();
-        char   abspath[128];
-        int rpa = resolve_path_at(me, dirfd, pathname, abspath, sizeof(abspath));
-        if (rpa < 0) {
-            regs[0] = (uint64_t)(int64_t)rpa;
-            break;
-        }
-        /* 跟随符号链接（如 /bin/ls -> busybox） */
-        follow_symlinks(abspath, sizeof(abspath));
-
-        int pool = fd_pool_alloc();
-        if (pool < 0) { regs[0] = (uint64_t)(int64_t)-EMFILE; break; }
-
-        fd_obj_t *obj = &g_fd_pool[pool];
-
-        /* ── 优先匹配虚拟文件系统 ─────────────────────────────── */
-        int pnid = pseudo_open(abspath);
-        if (pnid >= 0) {
-            obj->type           = FDT_PSEUDO;
-            obj->flags          = flags;
-            obj->pseudo.node_id = pnid;
-            obj->pseudo.off     = 0;
-            int k = 0;
-            while (abspath[k] && k < 127) { obj->path[k] = abspath[k]; k++; }
-            obj->path[k] = '\0';
-            int fd = task_alloc_fd(me, pool);
-            if (fd < 0) { fd_pool_free(pool); regs[0] = (uint64_t)(int64_t)-EMFILE; break; }
-            regs[0] = (uint64_t)fd;
-            break;
-        }
-
-        /* Try as file first */
-        int rc = ext4_fopen2(&obj->file, abspath, flags);
-        if (rc == EOK) {
-            obj->type  = FDT_FILE;
-            obj->flags = flags;
-            int k = 0;
-            while (abspath[k] && k < 127) { obj->path[k] = abspath[k]; k++; }
-            obj->path[k] = '\0';
-            int fd = task_alloc_fd(me, pool);
-            if (fd < 0) { ext4_fclose(&obj->file); fd_pool_free(pool); regs[0] = (uint64_t)(int64_t)-EMFILE; break; }
-            regs[0] = (uint64_t)fd;
-        } else {
-            /* Try as directory */
-            rc = ext4_dir_open(&obj->dir, abspath);
-            if (rc == EOK) {
-                obj->type  = FDT_DIR;
-                obj->flags = flags;
-                int k = 0;
-                while (abspath[k] && k < 127) { obj->path[k] = abspath[k]; k++; }
-                obj->path[k] = '\0';
-                int fd = task_alloc_fd(me, pool);
-                if (fd < 0) { ext4_dir_close(&obj->dir); fd_pool_free(pool); regs[0] = (uint64_t)(int64_t)-EMFILE; break; }
-                regs[0] = (uint64_t)fd;
-            } else {
-                fd_pool_free(pool);
-                regs[0] = (uint64_t)(int64_t)-ENOENT;
-            }
-        }
+    case LINUX_SYS_OPENAT:
+        openat_handler(regs, current);
         break;
-    }
 
-    case LINUX_SYS_CLOSE: {
-        int fd = (int)regs[0];
-        task_t *me = task_current();
-        if (fd < 0 || fd >= (int)TASK_MAX_FD) {
-            regs[0] = (uint64_t)(int64_t)-EBADF;
-            break;
-        }
-        /* fd 0/1/2 默认是 UART（fd_table == -1），此时 close 直接成功。
-         * 若已被 dup3 重定向（fd_table >= 0），必须释放 pool slot。 */
-        if (me->fd_table[fd] == -1) {
-            regs[0] = 0;
-            break;
-        }
-        int idx = me->fd_table[fd];
-        fd_obj_t *obj = &g_fd_pool[idx];
-        KLOG_DEBUG("[fd] close: pid=%u fd=%d pool_idx=%d type=%d\n",
-                  me->id, fd, idx, obj->type);
-        if (obj->type == FDT_FILE)
-            ext4_fclose(&obj->file);
-        else if (obj->type == FDT_DIR)
-            ext4_dir_close(&obj->dir);
-        /* FDT_PSEUDO: 无需额外清理 */
-        fd_pool_free(idx);
-        me->fd_table[fd] = -1;
-        regs[0] = 0;
+    case LINUX_SYS_CLOSE:
+        close_handler(regs, current);
         break;
-    }
 
-    case LINUX_SYS_DUP3: {
-        int oldfd = (int)regs[0];
-        int newfd = (int)regs[1];
-        task_t *me = task_current();
-        if (oldfd == newfd) { regs[0] = newfd; break; }
-        if (oldfd < 0 || oldfd >= (int)TASK_MAX_FD) { regs[0] = (uint64_t)(int64_t)-EBADF; break; }
-        if (newfd < 0 || newfd >= (int)TASK_MAX_FD) { regs[0] = (uint64_t)(int64_t)-EBADF; break; }
-
-        /* 获取源 fd_obj（oldfd>2 才在 pool 里；0/1/2 是 UART special） */
-        fd_obj_t *src = (oldfd > 2) ? task_get_fd(me, oldfd) : NULL;
-        if (oldfd > 2 && !src) { regs[0] = (uint64_t)(int64_t)-EBADF; break; }
-
-        /* 关闭 newfd（若已打开） */
-        if (me->fd_table[newfd] != -1) {
-            int idx = me->fd_table[newfd];
-            fd_obj_t *o = &g_fd_pool[idx];
-            if (o->type == FDT_FILE) ext4_fclose(&o->file);
-            else if (o->type == FDT_DIR) ext4_dir_close(&o->dir);
-            fd_pool_free(idx);
-            me->fd_table[newfd] = -1;
-        }
-
-        if (!src) {
-            /* oldfd 是 UART special (0/1/2)，newfd 同样保持 special */
-            me->fd_table[newfd] = -1;
-        } else {
-            /*
-             * 深拷贝：为 newfd 分配独立 pool slot 并复制 fd_obj。
-             * 这样 close(oldfd) 不会使 newfd 失效（各自拥有独立槽位）。
-             * 对 FDT_PSEUDO（/dev/zero、/dev/null 等）完全正确；
-             * 对 FDT_FILE 是独立文件句柄（seek 位置独立），满足 dd 等用例。
-             */
-            int new_idx = fd_pool_alloc();
-            if (new_idx < 0) { regs[0] = (uint64_t)(int64_t)-EMFILE; break; }
-            g_fd_pool[new_idx] = *src;   /* 整个 fd_obj 结构体复制 */
-            me->fd_table[newfd] = new_idx;
-        }
-        regs[0] = newfd;
+    case LINUX_SYS_DUP3:
+        dup3_handler(regs, current);
         break;
-    }
 
-    case LINUX_SYS_FCNTL: {
-        /* Return 0 for most ops */
-        regs[0] = 0;
+    case LINUX_SYS_FCNTL:
+        fcntl_handler(regs);
         break;
-    }
 
-    case LINUX_SYS_PIPE2: {
-        /* Stub: return -ENOSYS for now (ash uses pipes for pipelines) */
-        regs[0] = (uint64_t)(int64_t)-ENOSYS;
+    case LINUX_SYS_PIPE2:
+        pipe2_handler(regs);
         break;
-    }
 
-    case LINUX_SYS_GETDENTS64: {
-        int fd   = (int)regs[0];
-        char *buf = (char *)regs[1];
-        uint64_t count = regs[2];
-        if (!buf || count < 32) { regs[0] = (uint64_t)(int64_t)-EINVAL; break; }
-
-        fd_obj_t *obj = task_get_fd(task_current(), fd);
-        if (!obj) { regs[0] = (uint64_t)(int64_t)-ENOTDIR; break; }
-
-        /* pseudofs 目录优先 */
-        if (obj->type == FDT_PSEUDO) {
-            int rc = pseudo_getdents(obj->pseudo.node_id, &obj->pseudo.off,
-                                     buf, (size_t)count);
-            regs[0] = rc >= 0 ? (uint64_t)rc : (uint64_t)(int64_t)rc;
-            break;
-        }
-
-        if (obj->type != FDT_DIR) {
-            regs[0] = (uint64_t)(int64_t)-ENOTDIR;
-            break;
-        }
-
-        uint64_t written = 0;
-        while (written + 32 < count) {
-            const ext4_direntry *de = ext4_dir_entry_next(&obj->dir);
-            if (!de) break;
-
-            uint8_t namelen = de->name_length;
-            /* reclen: must be 8-byte aligned */
-            uint16_t reclen = (uint16_t)(19 + namelen + 1);
-            reclen = (reclen + 7) & ~7;
-            if (written + reclen > count) break;
-
-            struct kernel_dirent64 *kd = (struct kernel_dirent64 *)(buf + written);
-            kd->d_ino    = de->inode;
-            kd->d_off    = (int64_t)(written + reclen);
-            kd->d_reclen = reclen;
-            /* Map ext4 inode_type to d_type */
-            switch (de->inode_type) {
-                case EXT4_DE_REG_FILE: kd->d_type = 8; break;
-                case EXT4_DE_DIR:      kd->d_type = 4; break;
-                case EXT4_DE_SYMLINK:  kd->d_type = 10; break;
-                default:               kd->d_type = 0; break;
-            }
-            /* copy name */
-            for (uint8_t k = 0; k < namelen; k++)
-                kd->d_name[k] = (char)de->name[k];
-            kd->d_name[namelen] = '\0';
-            written += reclen;
-        }
-        regs[0] = written;
+    case LINUX_SYS_GETDENTS64:
+        getdents64_handler(regs, current);
         break;
-    }
 
-    case LINUX_SYS_FSTAT: {
-        int fd = (int)regs[0];
-        struct kernel_stat *st = (struct kernel_stat *)regs[1];
-        if (!st) { regs[0] = (uint64_t)(int64_t)-EFAULT; break; }
-
-        if (fd == 0 || fd == 1 || fd == 2) {
-            /* stdin/stdout/stderr: return char device stat */
-            memset(st, 0, sizeof(*st));
-            st->st_mode = 0020666;  /* character device */
-            st->st_rdev = (5 << 8) | (fd == 0 ? 0 : 1); /* /dev/tty */
-            regs[0] = 0;
-            break;
-        }
-        fd_obj_t *obj = task_get_fd(task_current(), fd);
-        if (!obj) { regs[0] = (uint64_t)(int64_t)-EBADF; break; }
-        if (obj->type == FDT_PSEUDO) {
-            pseudo_fill_stat(obj->pseudo.node_id, st);
-        } else {
-            fill_stat_from_ext4(st, obj->path);
-        }
-        regs[0] = 0;
+    case LINUX_SYS_FSTAT:
+        fstat_handler(regs, current);
         break;
-    }
 
-    case LINUX_SYS_NEWFSTATAT: {
-        /* newfstatat(dirfd, pathname, statbuf, flags) */
-        int dirfd = (int)regs[0];
-        const char         *pathname = (const char *)regs[1];
-        struct kernel_stat *st       = (struct kernel_stat *)regs[2];
-        if (!st) { regs[0] = (uint64_t)(int64_t)-EFAULT; break; }
-        if (!pathname || pathname[0] == '\0') {
-            /* empty pathname: stat the dirfd itself */
-            fd_obj_t *obj = task_get_fd(task_current(), dirfd);
-            if (!obj) { regs[0] = (uint64_t)(int64_t)-EBADF; break; }
-            if (obj->type == FDT_PSEUDO) {
-                pseudo_fill_stat(obj->pseudo.node_id, st);
-            } else {
-                fill_stat_from_ext4(st, obj->path);
-            }
-            regs[0] = 0;
-            break;
-        }
-        task_t *me = task_current();
-        char abspath[128];
-        int rpa = resolve_path_at(me, dirfd, pathname, abspath, sizeof(abspath));
-        if (rpa < 0) {
-            regs[0] = (uint64_t)(int64_t)rpa;
-            break;
-        }
-        /* 优先查 pseudofs */
-        if (pseudo_stat_path(abspath, st) == 0) { regs[0] = 0; break; }
-        /* 跨符号链接（不应用于 AT_SYMLINK_NOFOLLOW / lstat） */
-        if (!(regs[3] & 0x100))
-            follow_symlinks(abspath, sizeof(abspath));
-        fill_stat_from_ext4(st, abspath);
-        regs[0] = 0;
+    case LINUX_SYS_NEWFSTATAT:
+        newfstatat_handler(regs, current);
         break;
-    }
 
-    case LINUX_SYS_READLINKAT: {
-        int dirfd = (int)regs[0];
-        const char *pathname = (const char *)regs[1];
-        char       *lbuf     = (char *)regs[2];
-        uint64_t    lbufsz   = regs[3];
-        if (!pathname || !lbuf) { regs[0] = (uint64_t)(int64_t)-EFAULT; break; }
-        task_t *me = task_current();
-        char abspath[128];
-        resolve_path_at(me, dirfd, pathname, abspath, sizeof(abspath));
-        int rc = pseudo_readlink(abspath, lbuf, (size_t)lbufsz);
-        regs[0] = rc >= 0 ? (uint64_t)rc : (uint64_t)(int64_t)-ENOENT;
+    case LINUX_SYS_READLINKAT:
+        readlinkat_handler(regs, current);
         break;
-    }
 
     case LINUX_SYS_FSYNC:
     case LINUX_SYS_FDATASYNC:
         regs[0] = 0;
         break;
 
-    case LINUX_SYS_SENDFILE: {
-        /* sendfile64(out_fd, in_fd, offset_ptr, count)
-         * offset_ptr: if non-NULL, use as in-file offset (not advancing in_fd pos).
-         * Simple impl: loop read from in_fd → write to out_fd. */
-        int      out_fd = (int)regs[0];
-        int      in_fd  = (int)regs[1];
-        uint64_t *poff  = (uint64_t *)regs[2];   /* may be NULL */
-        size_t   count  = (size_t)regs[3];
-        task_t  *me     = task_current();
-
-        fd_obj_t *in_obj  = (in_fd  >= 3) ? task_get_fd(me, in_fd)  : NULL;
-        fd_obj_t *out_obj = (out_fd >= 3) ? task_get_fd(me, out_fd) : NULL;
-        if (in_fd >= 3 && !in_obj) { regs[0] = (uint64_t)(int64_t)-EBADF; break; }
-
-        /* If caller supplies explicit offset, override in_obj's internal offset */
-        uint64_t saved_off = 0;
-        if (poff && in_obj && in_obj->type == FDT_PSEUDO) {
-            saved_off = in_obj->pseudo.off;
-            in_obj->pseudo.off = *poff;
-        }
-
-        char   sbuf[1024];
-        size_t total = 0;
-        while (total < count) {
-            size_t want = count - total;
-            if (want > sizeof(sbuf)) want = sizeof(sbuf);
-
-            /* ── read from in_fd ──────────────────────────────── */
-            int nr = 0;
-            if (in_obj && in_obj->type == FDT_PSEUDO) {
-                nr = pseudo_read(in_obj->pseudo.node_id,
-                                 &in_obj->pseudo.off, sbuf, want);
-            } else if (in_obj && in_obj->type == FDT_FILE) {
-                size_t rcnt = 0;
-                int rc = ext4_fread(&in_obj->file, sbuf, want, &rcnt);
-                nr = (rc == EOK) ? (int)rcnt : -(int)EIO;
-            }
-            if (nr <= 0) break;
-
-            /* ── write to out_fd ──────────────────────────────── */
-            if (out_fd == 0 || out_fd == 1 || out_fd == 2) {
-                for (int i = 0; i < nr; i++) uart_putc(sbuf[i]);
-            } else if (out_obj && out_obj->type == FDT_PSEUDO) {
-                pseudo_write(out_obj->pseudo.node_id, sbuf, (size_t)nr);
-            } else if (out_obj && out_obj->type == FDT_FILE) {
-                size_t wcnt = 0;
-                ext4_fwrite(&out_obj->file, sbuf, (size_t)nr, &wcnt);
-            }
-            total += (size_t)nr;
-        }
-
-        /* Restore / update caller offset */
-        if (poff && in_obj && in_obj->type == FDT_PSEUDO) {
-            *poff = in_obj->pseudo.off;   /* expose advanced position */
-            in_obj->pseudo.off = saved_off; /* sendfile with poff ≠ NULL does NOT advance fd pos */
-        }
-
-        regs[0] = (uint64_t)total;
+    case LINUX_SYS_SENDFILE:
+        sendfile_handler(regs, current);
         break;
-    }
 
     /* --- 目录操作 --- */
-    case LINUX_SYS_GETCWD: {
-        char    *buf   = (char *)regs[0];
-        uint64_t size  = regs[1];
-        if (!buf || size == 0) { regs[0] = (uint64_t)(int64_t)-EINVAL; break; }
-        task_t *me = task_current();
-        int n = copy_string_to_user(me->cwd, buf, (int)size);
-        /* Linux syscall ABI: getcwd 返回写入长度（包含 '\0'） */
-        regs[0] = (n >= 0) ? (uint64_t)(n + 1) : (uint64_t)(int64_t)-ERANGE;
+    case LINUX_SYS_GETCWD:
+        getcwd_handler(regs, current);
         break;
-    }
 
-    case LINUX_SYS_CHDIR: {
-        const char *path = (const char *)regs[0];
-        if (!path) { regs[0] = (uint64_t)(int64_t)-ENOENT; break; }
-        task_t *me = task_current();
-        char abspath[128];
-        resolve_path(me->cwd, path, abspath, sizeof(abspath));
-        /* 优先查 pseudofs 目录 */
-        struct kernel_stat tmpst;
-        if (pseudo_stat_path(abspath, &tmpst) == 0) {
-            int k = 0;
-            while (abspath[k] && k < (int)TASK_CWD_LEN - 1) { me->cwd[k] = abspath[k]; k++; }
-            me->cwd[k] = '\0';
-            regs[0] = 0;
-            break;
-        }
-        /* Verify it exists as a directory */
-        ext4_dir d;
-        if (ext4_dir_open(&d, abspath) != EOK) {
-            regs[0] = (uint64_t)(int64_t)-ENOENT;
-            break;
-        }
-        ext4_dir_close(&d);
-        /* Update cwd */
-        int k = 0;
-        while (abspath[k] && k < (int)TASK_CWD_LEN - 1) {
-            me->cwd[k] = abspath[k];
-            k++;
-        }
-        me->cwd[k] = '\0';
-        regs[0] = 0;
+    case LINUX_SYS_CHDIR:
+        chdir_handler(regs, current);
         break;
-    }
 
     /* --- ioctl --- */
-    case LINUX_SYS_IOCTL: {
-        int      ioctl_fd = (int)regs[0];
-        uint64_t request  = regs[1];
-        void    *argp     = (void *)regs[2];
-
-        /* ── 优先分发给 pseudofs 设备节点 ──────────────────── */
-        if (ioctl_fd >= 3) {
-            fd_obj_t *ioctl_obj = task_get_fd(task_current(), ioctl_fd);
-            if (ioctl_obj && ioctl_obj->type == FDT_PSEUDO) {
-                int rc = pseudo_ioctl(ioctl_obj->pseudo.node_id, request, argp);
-                if (rc >= 0) {
-                    regs[0] = 0;
-                    break;
-                }
-                /* -ENOSYS: 该节点不处理此 ioctl，对终端 ioctl 继续走 tty 默认处理 */
-                if (rc != -38 /* ENOSYS */) {
-                    regs[0] = (uint64_t)(int64_t)rc;
-                    break;
-                }
-            }
-        }
-        (void)ioctl_fd;
-        if (request == TCGETS && argp) {
-            *(struct kernel_termios *)argp = g_termios;
-            regs[0] = 0;
-        } else if (request == TIOCGWINSZ && argp) {
-            struct kernel_winsize *ws = (struct kernel_winsize *)argp;
-            ws->ws_row    = 24;
-            ws->ws_col    = 80;
-            ws->ws_xpixel = 0;
-            ws->ws_ypixel = 0;
-            regs[0] = 0;
-        } else if ((request == TCSETS || request == TCSETSW || request == TCSETSF) && argp) {
-            g_termios = *(struct kernel_termios *)argp;
-            regs[0] = 0;
-        } else if (request == TIOCGPGRP && argp) {
-            /* 若前台组未设置，返回当前进程的 pgid，避免 ash 误判自己是后台进程 */
-            *(int *)argp = (int)(g_fg_pgid ? g_fg_pgid : current->pgid);
-            regs[0] = 0;
-        } else if (request == TIOCSPGRP && argp) {
-            g_fg_pgid = (uint32_t)*(int *)argp;
-            regs[0] = 0;
-        } else if (request == TIOCSWINSZ) {
-            regs[0] = 0;
-        } else {
-            regs[0] = (uint64_t)(int64_t)-ENOTTY;
-        }
+    case LINUX_SYS_IOCTL:
+        ioctl_handler(regs, current);
         break;
-    }
 
     case X86_SYS_POLL:
-    case LINUX_SYS_PPOLL: {
-        /*
-         * poll(pollfd*, nfds, timeout_ms)            —— X86_SYS_POLL
-         * ppoll(pollfd*, nfds, timespec*, sigmask, sz) —— LINUX_SYS_PPOLL
-         *
-         * 语义：fd==0 读就绪仅当 UART ring buffer 非空；
-         *       fd>=3 一律报告可读可写（管道/文件不阻塞）。
-         *       负 timeout = 阐塞等待；timeout==0 = 立即返回。
-         */
-        struct kernel_pollfd *pfds = (struct kernel_pollfd *)regs[0];
-        uint64_t nfds = regs[1];
-        int64_t  timeout_ms;
-        if (syscall_num == X86_SYS_POLL) {
-            timeout_ms = (int64_t)regs[2];
-        } else {
-            struct kernel_timespec *ts = (struct kernel_timespec *)regs[2];
-            if (!ts)            timeout_ms = -1;
-            else if (ts->tv_sec == 0 && ts->tv_nsec == 0) timeout_ms = 0;
-            else                timeout_ms = ts->tv_sec * 1000 + ts->tv_nsec / 1000000;
-        }
-
-        uint64_t deadline_ns = 0;
-        if (timeout_ms > 0)
-            deadline_ns = kernel_get_ns() + (uint64_t)timeout_ms * 1000000ULL;
-
-        int ready = 0;
-        for (;;) {
-            signal_check_uart();
-            if (current && (current->pending_sigs & ~current->blocked_sigs)) {
-                regs[0] = (uint64_t)(int64_t)-EINTR;
-                goto poll_done;
-            }
-            ready = 0;
-            int has_stdin = !uart_ringbuf_empty();
-            if (pfds && nfds > 0) {
-                for (uint64_t pi = 0; pi < nfds; pi++) {
-                    pfds[pi].revents = 0;
-                    short ev = pfds[pi].events;
-                    if (pfds[pi].fd < 0) continue;
-                    if (pfds[pi].fd == 0) {
-                        if (has_stdin) pfds[pi].revents = ev & 0x01; /* POLLIN */
-                    } else {
-                        /* 其他 fd ：读写始终就绪 */
-                        pfds[pi].revents = ev & 0x05; /* POLLIN|POLLOUT */
-                    }
-                    if (pfds[pi].revents) ready++;
-                }
-            }
-            if (ready > 0 || timeout_ms == 0) { regs[0] = (uint64_t)ready; goto poll_done; }
-            if (timeout_ms > 0 && kernel_get_ns() >= deadline_ns) {
-                regs[0] = 0; goto poll_done;
-            }
-            task_yield();
-        }
-poll_done:
+    case LINUX_SYS_PPOLL:
+        poll_handler(regs, syscall_num, current);
         break;
-    }
 
     case X86_SYS_SELECT:
-    case LINUX_SYS_PSELECT6: {
-        /*
-         * select(nfds, rfds, wfds, efds, timeval*)             —— X86_SYS_SELECT
-         * pselect6(nfds, rfds, wfds, efds, timespec*, sigmask) —— LINUX_SYS_PSELECT6
-         *
-         * fd_set 是 bitmap，每位 1 个 fd。设 stdin(fd=0) 仅在 UART 非空时可读，
-         * 其他 fd 始终可读/可写。支持阐塞、超时与信号中断。
-         */
-        int            nfds      = (int)regs[0];
-        unsigned long *rfds      = (unsigned long *)regs[1];
-        unsigned long *wfds      = (unsigned long *)regs[2];
-        unsigned long *efds      = (unsigned long *)regs[3];
-        int64_t        timeout_ms;
-        if (syscall_num == X86_SYS_SELECT) {
-            /* select 用 struct timeval { long tv_sec; long tv_usec; } */
-            struct { int64_t tv_sec; int64_t tv_usec; } *tv = (void *)regs[4];
-            if (!tv)          timeout_ms = -1;
-            else if (tv->tv_sec == 0 && tv->tv_usec == 0) timeout_ms = 0;
-            else              timeout_ms = tv->tv_sec * 1000 + tv->tv_usec / 1000;
-        } else {
-            struct kernel_timespec *ts = (struct kernel_timespec *)regs[4];
-            if (!ts)          timeout_ms = -1;
-            else if (ts->tv_sec == 0 && ts->tv_nsec == 0) timeout_ms = 0;
-            else              timeout_ms = ts->tv_sec * 1000 + ts->tv_nsec / 1000000;
-        }
-        if (nfds < 0) nfds = 0;
-        if (nfds > 1024) nfds = 1024;
-        int nwords = (nfds + 63) / 64;
-
-        /* 备份原始 fd_set，回圈重复使用 */
-        unsigned long r_in[16] = {0}, w_in[16] = {0}, e_in[16] = {0};
-        if (rfds) for (int i = 0; i < nwords; i++) r_in[i] = rfds[i];
-        if (wfds) for (int i = 0; i < nwords; i++) w_in[i] = wfds[i];
-        if (efds) for (int i = 0; i < nwords; i++) e_in[i] = efds[i];
-
-        uint64_t deadline_ns = 0;
-        if (timeout_ms > 0)
-            deadline_ns = kernel_get_ns() + (uint64_t)timeout_ms * 1000000ULL;
-
-        int ready = 0;
-        for (;;) {
-            signal_check_uart();
-            if (current && (current->pending_sigs & ~current->blocked_sigs)) {
-                regs[0] = (uint64_t)(int64_t)-EINTR;
-                goto select_done;
-            }
-            ready = 0;
-            int has_stdin = !uart_ringbuf_empty();
-            /* 清零输出位图，再根据 readiness 设置 */
-            if (rfds) for (int i = 0; i < nwords; i++) rfds[i] = 0;
-            if (wfds) for (int i = 0; i < nwords; i++) wfds[i] = 0;
-            if (efds) for (int i = 0; i < nwords; i++) efds[i] = 0;
-            for (int fd = 0; fd < nfds; fd++) {
-                int w = fd >> 6, b = fd & 63;
-                unsigned long mask = 1UL << b;
-                if (r_in[w] & mask) {
-                    int rdy = (fd == 0) ? has_stdin : 1;
-                    if (rdy) { if (rfds) rfds[w] |= mask; ready++; }
-                }
-                if (w_in[w] & mask) {
-                    if (wfds) wfds[w] |= mask; ready++; /* writers always ready */
-                }
-                /* exceptfds: 永不报异常 */
-                (void)e_in; (void)efds;
-            }
-            if (ready > 0 || timeout_ms == 0) { regs[0] = (uint64_t)ready; goto select_done; }
-            if (timeout_ms > 0 && kernel_get_ns() >= deadline_ns) {
-                regs[0] = 0; goto select_done;
-            }
-            task_yield();
-        }
-select_done:
+    case LINUX_SYS_PSELECT6:
+        select_handler(regs, syscall_num, current);
         break;
-    }
 
-    /* --- 信号系统 --- */
-    case LINUX_SYS_RT_SIGACTION: {
-        int sig = (int)regs[0];
-        const struct kernel_sigaction *act = (const struct kernel_sigaction *)regs[1];
-        struct kernel_sigaction       *old = (struct kernel_sigaction *)regs[2];
-
-        if (sig < 1 || sig > NSIG || sig == SIGKILL || sig == SIGSTOP) {
-            regs[0] = (uint64_t)(int64_t)-EINVAL;
-            break;
-        }
-        if (old) {
-            old->sa_handler  = current->sig_actions[sig-1].sa_handler;
-            old->sa_flags    = current->sig_actions[sig-1].sa_flags;
-            old->sa_restorer = current->sig_actions[sig-1].sa_restorer;
-            old->sa_mask     = current->sig_actions[sig-1].sa_mask;
-        }
-        if (act) {
-            current->sig_actions[sig-1].sa_handler  = act->sa_handler;
-            current->sig_actions[sig-1].sa_flags    = act->sa_flags;
-            current->sig_actions[sig-1].sa_restorer = act->sa_restorer;
-            current->sig_actions[sig-1].sa_mask     = act->sa_mask;
-        }
-        regs[0] = 0;
+    /* --- 信号系统（实现位于 kernel/syscall/signal.c）--- */
+    case LINUX_SYS_RT_SIGACTION:
+        sigaction_handler(regs, current);
         break;
-    }
 
-    case LINUX_SYS_RT_SIGPROCMASK: {
-        int            how    = (int)regs[0];
-        const uint64_t *nset  = (const uint64_t *)regs[1];
-        uint64_t       *oset  = (uint64_t *)regs[2];
-
-        if (oset) *oset = current->blocked_sigs;
-        if (nset) {
-            /* SIGKILL / SIGSTOP 不可屏蔽 */
-            uint64_t m = *nset & ~((1ULL<<(SIGKILL-1))|(1ULL<<(SIGSTOP-1)));
-            if      (how == SIG_BLOCK)   current->blocked_sigs |= m;
-            else if (how == SIG_UNBLOCK) current->blocked_sigs &= ~m;
-            else if (how == SIG_SETMASK) current->blocked_sigs  = m;
-            else { regs[0] = (uint64_t)(int64_t)-EINVAL; break; }
-        }
-        regs[0] = 0;
+    case LINUX_SYS_RT_SIGPROCMASK:
+        sigprocmask_handler(regs, current);
         break;
-    }
 
-    case LINUX_SYS_RT_SIGRETURN: {
-        /* 从信号 handler 返回：恢复进入 handler 前的 trap_frame */
-        if (current->sig_frame_sp) {
-            trap_frame_t *saved = (trap_frame_t *)current->sig_frame_sp;
-            memcpy(frame, saved, sizeof(trap_frame_t));
-            current->sig_frame_sp = 0;
-            /* 恢复信号投递前的 blocked_sigs */
-            current->blocked_sigs = current->sig_saved_blocked;
-            /* 让 syscall_abi_set_ret 写入已恢复帧中的正确寄存器值（幂等）*/
-#if ARCH_X86_64
-            regs[0] = frame->rax;
-#elif ARCH_AARCH64
-            regs[0] = frame->r[0];
-#elif ARCH_RISCV64
-            regs[0] = frame->x[10];
-#endif
-        } else {
-            regs[0] = 0;
-        }
+    case LINUX_SYS_RT_SIGRETURN:
+        sigreturn_handler(regs, current, frame);
         break;
-    }
 
     /* --- 系统信息 --- */
     case LINUX_SYS_UNAME: {
@@ -2491,12 +509,9 @@ select_done:
         break;
     }
 
-    case LINUX_SYS_NANOSLEEP: {
-        /* Just yield once */
-        task_yield();
-        regs[0] = 0;
+    case LINUX_SYS_NANOSLEEP:
+        nanosleep_handler(regs);
         break;
-    }
 
     case LINUX_SYS_GETRLIMIT:
     case LINUX_SYS_SETRLIMIT:
@@ -2551,25 +566,9 @@ select_done:
         regs[0] = (uint64_t)(int64_t)-ENOSYS;
         break;
 
-    case LINUX_SYS_GETRANDOM: {
-        char *buf = (char *)regs[0];
-        uint64_t len = regs[1];
-        if (buf) {
-            /* LCG 伪随机，以启动时间戳为种子。不是密码学安全的，
-             * 但每次调用输出不同序列，满足 musl stack canary 等基本需求。 */
-            static uint64_t s_prng_state = 0;
-            if (s_prng_state == 0)
-                s_prng_state = kernel_get_ns() ^ 0x9e3779b97f4a7c15ULL;
-            for (uint64_t i = 0; i < len; i++) {
-                /* Knuth multiplicative LCG */
-                s_prng_state = s_prng_state * 6364136223846793005ULL
-                             + 1442695040888963407ULL;
-                buf[i] = (char)(s_prng_state >> 56);
-            }
-        }
-        regs[0] = len;
+    case LINUX_SYS_GETRANDOM:
+        getrandom_handler(regs);
         break;
-    }
 
     case LINUX_SYS_BRK:
         regs[0] = (uint64_t)sys_brk((void *)regs[0]);
@@ -2600,11 +599,6 @@ select_done:
         KLOG_DEBUG("[syscall] return mapped=%llu ret=0x%llx\n", syscall_num, regs[0]);
     }
 
-    /* 调试：在设置返回值前检查 g_pmm */
-    if (g_syscall_entry_count <= 3) {
-        // KLOG_ERROR("[syscall] Before set_ret: g_pmm=%p regs[0]=0x%llx\n", g_pmm, regs[0]);
-    }
-
     /* 结束 syscall stime 计时（EXIT 类 syscall 不会到达这里） */
     if (current && current->is_user_process && current->sc_entry_ns != 0) {
         current->stime_ns += kernel_get_ns() - current->sc_entry_ns;
@@ -2618,89 +612,10 @@ select_done:
      * 这样 sigframe 里保存的帧已含有正确的 syscall 返回值。 */
     if (current && current->is_user_process)
         deliver_pending_signals(current, frame);
-
-    /* 调试：在设置返回值后检查 g_pmm */
-    if (g_syscall_entry_count <= 3) {
-        // KLOG_ERROR("[syscall] After set_ret: g_pmm=%p frame->x[10]=0x%llx\n", 
-        //            g_pmm, frame->x[10]);
-    }
 }
 
 
 /* ── 具体系统调用实现 ──────────────────────────────────────────── */
-
-/* ── futex 简易实现 ─────────────────────────────────────────── */
-
-#define FUTEX_TABLE_SIZE 64
-
-static struct {
-    uintptr_t uaddr;    /* 用户虚拟地址 (0 = 空闲) */
-    task_t   *waiter;   /* 等待该地址的任务 */
-} g_futex_table[FUTEX_TABLE_SIZE];
-
-/*
- * futex_do_wake - 唤醒等待在 uaddr 上的最多 count 个任务
- * 返回实际唤醒数量。
- */
-static int
-futex_do_wake(uintptr_t uaddr, int count)
-{
-    int woken = 0;
-    uint64_t flags = arch_irq_save();
-    for (int i = 0; i < FUTEX_TABLE_SIZE && woken < count; i++) {
-        if (g_futex_table[i].uaddr == uaddr && g_futex_table[i].waiter != NULL) {
-            task_t *t = g_futex_table[i].waiter;
-            g_futex_table[i].uaddr  = 0;
-            g_futex_table[i].waiter = NULL;
-            t->state = TASK_READY;
-            sched_enqueue(t);
-            woken++;
-        }
-    }
-    arch_irq_restore(flags);
-    return woken;
-}
-
-/*
- * sys_futex_wait - 如果 *uaddr == val，将当前任务阻塞直到被唤醒。
- * 返回 0 = 成功；-EAGAIN = 值已不匹配；-ENOMEM = 等待表已满。
- */
-static int
-sys_futex_wait(uint32_t *uaddr, uint32_t val)
-{
-    uint64_t flags = arch_irq_save();
-
-    /* 原子检查：若 *uaddr != val，立即返回 EAGAIN */
-    if (*(volatile uint32_t *)uaddr != val) {
-        arch_irq_restore(flags);
-        return -EAGAIN;
-    }
-
-    /* 找空闲槽 */
-    int slot = -1;
-    for (int i = 0; i < FUTEX_TABLE_SIZE; i++) {
-        if (g_futex_table[i].waiter == NULL) {
-            slot = i;
-            break;
-        }
-    }
-    if (slot < 0) {
-        arch_irq_restore(flags);
-        return -ENOMEM;
-    }
-
-    task_t *cur = task_current();
-    g_futex_table[slot].uaddr  = (uintptr_t)uaddr;
-    g_futex_table[slot].waiter = cur;
-    cur->state = TASK_BLOCKED;
-
-    arch_irq_restore(flags);
-
-    /* 让出 CPU；被 futex_do_wake 设回 TASK_READY 后继续 */
-    sched_schedule();
-    return 0;
-}
-
 
 int64_t sys_write(const char *str, uint64_t len)
 {
@@ -2708,63 +623,12 @@ int64_t sys_write(const char *str, uint64_t len)
         return -1;
     }
 
-    /* 简单实现：直接输出到 UART */
-    /* 注意：这里没有验证用户指针，后续需要改进 */
+    /* 简单实现：直接输出到 UART（未验证用户指针，后续改进） */
     for (uint64_t i = 0; i < len; i++) {
         klog_putchar(str[i]);
     }
 
     return (int64_t)len;
-}
-
-void sys_exit(int status)
-{
-    task_t *current = task_current();
-
-    KLOG_INFO("[syscall] process '%s' (id=%u) exiting with status %d\n",
-              current->name, current->id, status);
-
-    /* CLONE_CHILD_CLEARTID: 清零 tid 并唤醒 pthread_join 等待者 */
-    if (current->ctid_ptr) {
-        *(volatile uint32_t *)current->ctid_ptr = 0;
-        futex_do_wake(current->ctid_ptr, 0x7fffffff);
-    }
-
-    /* 关闭所有打开的文件描述符，释放 fd pool slot，防止泄漏 */
-    for (int _fd = 0; _fd < (int)TASK_MAX_FD; _fd++) {
-        int _idx = (int)(int8_t)current->fd_table[_fd];
-        if (_idx < 0 || _idx >= FD_POOL_SIZE) {
-            current->fd_table[_fd] = -1;
-            continue;
-        }
-        fd_obj_t *_obj = &g_fd_pool[_idx];
-        if (_obj->type == FDT_FILE)
-            ext4_fclose(&_obj->file);
-        else if (_obj->type == FDT_DIR)
-            ext4_dir_close(&_obj->dir);
-        fd_pool_free(_idx);
-        current->fd_table[_fd] = -1;
-    }
-
-    /* 在退出前计算 utime： wall_time − stime */
-    if (current->is_user_process) {
-        uint64_t _now = kernel_get_ns();
-        if (current->sc_entry_ns != 0) {
-            current->stime_ns += _now - current->sc_entry_ns;
-            current->sc_entry_ns = 0;
-        }
-        if (current->create_ns != 0) {
-            uint64_t _wall = _now - current->create_ns;
-            current->utime_ns = (_wall > current->stime_ns) ? _wall - current->stime_ns : 0;
-        }
-    }
-
-    /* 调用 task_exit 退出当前进程 */
-    task_exit();
-
-    /* 不应该到达这里 */
-    while (1)
-        ;
 }
 
 int64_t sys_yield(void)
@@ -2781,201 +645,17 @@ int64_t sys_getpid(void)
 
 int64_t sys_sleep(uint64_t ms)
 {
-    /* 简单实现：使用忙等待
-     * TODO: 改进为基于定时器的睡眠，让出 CPU
-     */
-    if (ms == 0) {
+    /* 简单忙等待实现：TODO 改为基于定时器的睡眠并让出 CPU */
+    if (ms == 0)
         return 0;
-    }
 
-    /* 暂时使用简单的忙等待循环
-     * 假设 CPU 运行在约 1-2 GHz，每次循环约几个纳秒
-     */
+    /* 假设 CPU ~1-2 GHz，每次循环约几个纳秒 */
     volatile uint64_t count = ms * 100000;
     while (count--) {
         __asm__ volatile("nop");
     }
 
     return 0;
-}
-
-int64_t sys_execve(const char *pathname, char **argv, char **envp)
-{
-    if (pathname == NULL) {
-        return -1;
-    }
-
-    KLOG_INFO("[syscall] execve called\n");
-
-    /*
-     * execve 应该关闭当前进程的所有非标准文件描述符（fd > 2）。
-     * 注意：这必须在加载新程序之前执行，因为加载后当前进程就不再运行了。
-     */
-    task_t *current = task_current();
-    /* 记录可执行文件路径（/proc/self/exe 使用）*/
-    {
-        int k = 0;
-        while (pathname[k] && k < (int)TASK_EXE_LEN - 1) {
-            current->exe_path[k] = pathname[k]; k++;
-        }
-        current->exe_path[k] = '\0';
-    }
-    KLOG_DEBUG("[execve] pid=%u closing all fds > 2\n", current->id);
-    for (int fd = 3; fd < (int)TASK_MAX_FD; fd++) {
-        int idx = (int)current->fd_table[fd];
-        if (idx < 0 || idx >= FD_POOL_SIZE) {
-            current->fd_table[fd] = (int8_t)-1;
-            continue;
-        }
-
-        fd_obj_t *obj = &g_fd_pool[idx];
-        if (obj->type == FDT_FREE) {
-            current->fd_table[fd] = (int8_t)-1;
-            continue;
-        }
-
-        KLOG_TRACE("[execve] closing fd=%d pool_idx=%d type=%d\n",
-                  fd, idx, obj->type);
-        if (obj->type == FDT_FILE)
-            ext4_fclose(&obj->file);
-        else if (obj->type == FDT_DIR)
-            ext4_dir_close(&obj->dir);
-        /* FDT_PSEUDO: 无需额外清理 */
-        fd_pool_free(idx);
-        current->fd_table[fd] = (int8_t)-1;
-    }
-
-    /* 从 userspace 复制 argv 到内核栈，再传给 elf loader。
-     * 此时旧进程页表仍有效，可以直接读 userspace 指针。 */
-#define EXEC_MAX_ARGC   32
-#define EXEC_MAX_ARGLEN 128
-    char  arg_store[EXEC_MAX_ARGC][EXEC_MAX_ARGLEN];
-    char *argv_ptrs[EXEC_MAX_ARGC + 1];
-    char **kern_argv = NULL;
-
-    if (argv) {
-        char **uav = argv;   /* userspace char** — readable before exec */
-        int n = 0;
-        while (n < EXEC_MAX_ARGC) {
-            char *uarg = uav[n];     /* read one pointer from userspace */
-            if (!uarg) break;
-            copy_string_from_user(uarg, arg_store[n], EXEC_MAX_ARGLEN);
-            argv_ptrs[n] = arg_store[n];
-            n++;
-        }
-        argv_ptrs[n] = NULL;
-        kern_argv = argv_ptrs;
-    }
-
-    /* 将相对路径转为绝对路径（lwext4 不支持 "./" 前缀）*/
-    char abs_path[256];
-    resolve_path(current->cwd, pathname, abs_path, (int)sizeof(abs_path));
-
-    int rc = elf_loader_load_from_file(abs_path, kern_argv, NULL);
-
-    /* 如果成功，不应该到达这里 */
-    return rc;
-}
-
-void *sys_brk(void *addr)
-{
-    task_t  *current = task_current();
-
-    if (!current->is_user_process) {
-        return (void *)(uint64_t)(int64_t)-12; /* ENOMEM */
-    }
-
-    uint64_t current_brk = current->heap_end;
-    uint64_t req_brk = (uint64_t)addr;
-
-    if (g_syscall_entry_count <= 16) {
-        KLOG_DEBUG("[brk] req=0x%llx current=0x%llx\n", req_brk, current_brk);
-    }
-
-    /* brk(0)：查询当前堆末尾 */
-    if ((uint64_t)addr == 0) {
-        if (g_syscall_entry_count <= 16) {
-            KLOG_DEBUG("[brk] query -> 0x%llx\n", current_brk);
-        }
-        return (void *)current_brk;
-    }
-
-    uint64_t new_brk = (uint64_t)addr;
-
-    /* 缩小或不变：直接更新 */
-    if (new_brk <= current_brk) {
-        current->heap_end = new_brk;
-        if (g_syscall_entry_count <= 16) {
-            KLOG_DEBUG("[brk] shrink/no-grow -> 0x%llx\n", new_brk);
-        }
-        return (void *)new_brk;
-    }
-
-#if ARCH_AARCH64 || ARCH_RISCV64
-    /* 扩展堆：映射新页 */
-    extern pmm_t pmm;  /* 直接使用结构体，绕过 g_pmm 指针 */
-    uint64_t old_page_end = ALIGN_UP(current_brk, PAGE_SIZE);
-    uint64_t new_page_end = ALIGN_UP(new_brk,     PAGE_SIZE);
-    void    *pgd          = phys_to_virt((uint64_t)current->pgd);
-
-    for (uint64_t va = old_page_end; va < new_page_end; va += PAGE_SIZE) {
-        uint64_t pa = pmm_alloc_pages(&pmm, 1);
-        if (pa == 0) {
-            KLOG_ERROR("[brk] Out of memory at va=0x%llx\n", va);
-            return (void *)current_brk; /* 返回旧地址表示失败 */
-        }
-        memset(phys_to_virt(pa), 0, PAGE_SIZE);
-        if (mm_vm_map_pages(pgd, va, pa, 1, 0) != 0) {
-            /* Page already mapped (e.g. BSS last page overlap) — skip */
-            pmm_free_pages(&pmm, pa, 1);
-            continue;
-        }
-    }
-#elif ARCH_X86_64
-    /* x86_64：扩展堆，使用 g_pmm */
-    {
-        uint64_t old_page_end = ALIGN_UP(current_brk, PAGE_SIZE);
-        uint64_t new_page_end = ALIGN_UP(new_brk,     PAGE_SIZE);
-        void    *pgd          = phys_to_virt((uint64_t)current->pgd);
-
-        for (uint64_t va = old_page_end; va < new_page_end; va += PAGE_SIZE) {
-            uint64_t pa = pmm_alloc_pages(g_pmm, 1);
-            if (pa == 0) {
-                KLOG_ERROR("[brk] Out of memory at va=0x%llx\n", va);
-                return (void *)current_brk;
-            }
-            memset(phys_to_virt(pa), 0, PAGE_SIZE);
-            if (mm_vm_map_pages(pgd, va, pa, 1, 0) != 0) {
-                pmm_free_pages(g_pmm, pa, 1);
-                continue; /* 已映射：跳过 */
-            }
-        }
-    }
-#endif
-
-    current->heap_end = new_brk;
-    if (g_syscall_entry_count <= 16) {
-        KLOG_DEBUG("[brk] grow success -> 0x%llx\n", new_brk);
-    }
-    return (void *)new_brk;
-}
-
-void *sys_sbrk(int64_t increment)
-{
-    /* 简单实现：维护一个简单的堆指针
-     * TODO: 实现真正的堆管理器
-     */
-    static uint64_t heap_end = 0x50000000;
-    void *old_brk = (void *)heap_end;
-
-    if (increment == 0) {
-        return old_brk;
-    }
-
-    heap_end += increment;
-
-    KLOG_DEBUG("[syscall] sbrk(%lld) = 0x%llx\n", increment, old_brk);
-    return old_brk;
 }
 
 int64_t sys_read(char *buf, uint64_t len)
@@ -2990,196 +670,14 @@ int64_t sys_open(const char *pathname, int flags, int mode)
 {
     (void)flags;
     (void)mode;
-    /* 暂未实现文件系统 */
     KLOG_WARN("[syscall] open('%s') not implemented\n", pathname);
     return -1;
 }
 
 int64_t sys_close(int fd)
 {
-    /* 暂未实现文件系统 */
     KLOG_WARN("[syscall] close(%d) not implemented\n", fd);
     return -1;
-}
-
-uint64_t sys_mmap(uint64_t addr, uint64_t len, int prot, int flags, int fd, uint64_t offset)
-{
-    (void)prot;
-
-    task_t *current = task_current();
-    if (!current->is_user_process) {
-        return MMAP_FAILED;
-    }
-
-    /* ── 文件映射（ld.so 用于映射 .so 段）───────────────────── */
-    if (!(flags & MAP_ANONYMOUS)) {
-        if (fd < 0 || fd >= (int)TASK_MAX_FD) {
-            KLOG_WARN("[mmap] file-backed: bad fd=%d\n", fd);
-            return MMAP_FAILED;
-        }
-        int8_t fidx = current->fd_table[fd];
-        if (fidx < 0 || (int)fidx >= FD_POOL_SIZE) {
-            KLOG_WARN("[mmap] file-backed: fd %d not open\n", fd);
-            return MMAP_FAILED;
-        }
-        fd_obj_t *fobj = &g_fd_pool[(uint8_t)fidx];
-        if (fobj->type != FDT_FILE) {
-            KLOG_WARN("[mmap] file-backed: fd %d not a regular file\n", fd);
-            return MMAP_FAILED;
-        }
-        if (len == 0) return (uint64_t)(int64_t)-EINVAL;
-
-        uint64_t map_addr;
-        if ((flags & MAP_FIXED) != 0) {
-            if (addr & (PAGE_SIZE - 1)) return (uint64_t)(int64_t)-EINVAL;
-            map_addr = addr;
-        } else {
-            map_addr = ALIGN_UP(current->mmap_next, PAGE_SIZE);
-        }
-        uint64_t map_size = ALIGN_UP(len, PAGE_SIZE);
-
-        void *pgd = phys_to_virt((uint64_t)current->pgd);
-
-        for (uint64_t page_off = 0; page_off < map_size; page_off += PAGE_SIZE) {
-            uint64_t va = map_addr + page_off;
-            uint64_t pa;
-
-            if ((flags & MAP_FIXED) != 0) {
-                pa = mm_vm_get_paddr(pgd, va);
-                if (pa == 0) {
-                    pa = pmm_alloc_pages(g_pmm, 1);
-                    if (pa == 0) return MMAP_FAILED;
-                    if (mm_vm_map_pages(pgd, va, pa, 1, 0) != 0) {
-                        pmm_free_pages(g_pmm, pa, 1);
-                        return MMAP_FAILED;
-                    }
-                }
-            } else {
-                pa = pmm_alloc_pages(g_pmm, 1);
-                if (pa == 0) return MMAP_FAILED;
-                if (mm_vm_map_pages(pgd, va, pa, 1, 0) != 0) {
-                    pmm_free_pages(g_pmm, pa, 1);
-                    return MMAP_FAILED;
-                }
-            }
-
-            memset(phys_to_virt(pa), 0, PAGE_SIZE);
-
-            /* 从文件读取对应区间的数据，剩余已由 memset 清零 */
-            uint64_t file_off = offset + page_off;
-            uint64_t to_read  = PAGE_SIZE;
-            if (page_off + PAGE_SIZE > len)
-                to_read = len - page_off;
-            if (to_read > 0) {
-                ext4_fseek(&fobj->file, (int64_t)file_off, SEEK_SET);
-                size_t got = 0;
-                ext4_fread(&fobj->file, phys_to_virt(pa), to_read, &got);
-            }
-        }
-
-        if ((flags & MAP_FIXED) == 0)
-            current->mmap_next = map_addr + map_size;
-
-        KLOG_DEBUG("[mmap] file 0x%llx-0x%llx fd=%d off=0x%llx\n",
-                   map_addr, map_addr + map_size, fd, offset);
-        return map_addr;
-    }
-
-    if (len == 0) {
-        return (uint64_t)(int64_t)-EINVAL;
-    }
-
-    uint64_t page_off = 0;
-    uint64_t map_addr;
-    uint64_t size;
-
-    /*
-     * Linux 语义要点：
-     * 1) MAP_FIXED 时 addr 必须页对齐；
-     * 2) 非 MAP_FIXED 的 hint 允许非对齐，但映射长度需要覆盖 page_off + len。
-     *
-     * 当前内核为避免 hint 带来碎片与覆盖风险：
-     * - MAP_FIXED: 按用户指定地址映射；
-     * - 非 MAP_FIXED: 忽略 hint，统一从 mmap_next 线性分配。
-     */
-    if ((flags & MAP_FIXED) != 0) {
-        if ((addr & (PAGE_SIZE - 1)) != 0) {
-            return (uint64_t)(int64_t)-EINVAL;
-        }
-        map_addr = addr;
-        page_off = 0;
-    } else {
-        map_addr = ALIGN_UP(current->mmap_next, PAGE_SIZE);
-        page_off = 0;
-    }
-
-    /* Linux 语义：映射长度按页对齐，不额外扩大。 */
-    size = ALIGN_UP(len + page_off, PAGE_SIZE);
-
-    KLOG_DEBUG("[mmap] req: addr=0x%llx len=0x%llx flags=0x%x fd=%d off=0x%llx -> base=0x%llx size=0x%llx\n",
-               addr, len, flags, fd, offset, map_addr, size);
-
-#if ARCH_AARCH64 || ARCH_RISCV64
-    extern pmm_t pmm;  /* 直接使用结构体 */
-    void *pgd = phys_to_virt((uint64_t)current->pgd);
-
-    for (uint64_t va = map_addr; va < map_addr + size; va += PAGE_SIZE) {
-        if ((flags & MAP_FIXED) != 0) {
-            uint64_t old_pa = mm_vm_get_paddr(pgd, va);
-            if (old_pa != 0) {
-                /* MAP_FIXED 允许覆盖已有映射。最小实现：复用并清零。 */
-                memset(phys_to_virt(old_pa), 0, PAGE_SIZE);
-                continue;
-            }
-        }
-
-        uint64_t pa = pmm_alloc_pages(&pmm, 1);
-        if (pa == 0) {
-            KLOG_ERROR("[mmap] Out of memory at va=0x%llx\n", va);
-            return MMAP_FAILED;
-        }
-        memset(phys_to_virt(pa), 0, PAGE_SIZE);
-        if (mm_vm_map_pages(pgd, va, pa, 1, 0) != 0) {
-            KLOG_WARN("[mmap] map failed: va=0x%llx flags=0x%x\n", va, flags);
-            pmm_free_pages(&pmm, pa, 1);
-            return MMAP_FAILED;
-        }
-    }
-#elif ARCH_X86_64
-    {
-        void *pgd = phys_to_virt((uint64_t)current->pgd);
-
-        for (uint64_t va = map_addr; va < map_addr + size; va += PAGE_SIZE) {
-            if ((flags & MAP_FIXED) != 0) {
-                uint64_t old_pa = mm_vm_get_paddr(pgd, va);
-                if (old_pa != 0) {
-                    /* MAP_FIXED 允许覆盖已有映射。最小实现：复用并清零。 */
-                    memset(phys_to_virt(old_pa), 0, PAGE_SIZE);
-                    continue;
-                }
-            }
-
-            uint64_t pa = pmm_alloc_pages(g_pmm, 1);
-            if (pa == 0) {
-                KLOG_ERROR("[mmap] Out of memory at va=0x%llx\n", va);
-                return MMAP_FAILED;
-            }
-            memset(phys_to_virt(pa), 0, PAGE_SIZE);
-            if (mm_vm_map_pages(pgd, va, pa, 1, 0) != 0) {
-                KLOG_WARN("[mmap] map failed: va=0x%llx flags=0x%x\n", va, flags);
-                pmm_free_pages(g_pmm, pa, 1);
-                return MMAP_FAILED;
-            }
-        }
-    }
-#endif
-
-    if ((flags & MAP_FIXED) == 0) {
-        current->mmap_next = map_addr + size;
-    }
-
-    KLOG_DEBUG("[mmap] 0x%llx - 0x%llx (len=0x%llx)\n", map_addr, map_addr + size, len);
-    return map_addr + page_off;
 }
 
 int64_t sys_gettimeofday(struct timeval *tv, void *tz)

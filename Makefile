@@ -194,8 +194,44 @@ LOADER_C_SOURCES := $(KERNEL_DIR)/loader/bin_loader.c $(KERNEL_DIR)/loader/elf_l
 LOADER_C_OBJECTS := $(BUILD_DIR)/kernel_loader_bin_loader.o $(BUILD_DIR)/kernel_loader_elf_loader.o $(BUILD_DIR)/kernel_loader_elf_image.o
 
 # syscall 模块源文件
-SYSCALL_C_SOURCES := $(KERNEL_DIR)/syscall/syscall.c
-SYSCALL_C_OBJECTS := $(BUILD_DIR)/kernel_syscall_syscall.o
+SYSCALL_C_SOURCES := $(KERNEL_DIR)/syscall/syscall.c \
+                     $(KERNEL_DIR)/syscall/core/futex.c \
+                     $(KERNEL_DIR)/syscall/core/proc_lifecycle.c \
+                     $(KERNEL_DIR)/syscall/core/proc_ids.c \
+                     $(KERNEL_DIR)/syscall/core/sched.c \
+                     $(KERNEL_DIR)/syscall/core/signal.c \
+                     $(KERNEL_DIR)/syscall/fs/fd_pool.c \
+                     $(KERNEL_DIR)/syscall/fs/path.c \
+                     $(KERNEL_DIR)/syscall/fs/tty.c \
+                     $(KERNEL_DIR)/syscall/fs/file_io.c \
+                     $(KERNEL_DIR)/syscall/fs/file_ops.c \
+                     $(KERNEL_DIR)/syscall/fs/file_stat.c \
+                     $(KERNEL_DIR)/syscall/fs/dir.c \
+                     $(KERNEL_DIR)/syscall/fs/ioctl.c \
+                     $(KERNEL_DIR)/syscall/io/poll.c \
+                     $(KERNEL_DIR)/syscall/io/select.c \
+                     $(KERNEL_DIR)/syscall/mm/brk.c \
+                     $(KERNEL_DIR)/syscall/mm/mmap.c \
+                     $(KERNEL_DIR)/syscall/mm/pmap_compat.c
+SYSCALL_C_OBJECTS := $(BUILD_DIR)/kernel_syscall_syscall.o \
+                     $(BUILD_DIR)/kernel_syscall_core_futex.o \
+                     $(BUILD_DIR)/kernel_syscall_core_proc_lifecycle.o \
+                     $(BUILD_DIR)/kernel_syscall_core_proc_ids.o \
+                     $(BUILD_DIR)/kernel_syscall_core_sched.o \
+                     $(BUILD_DIR)/kernel_syscall_core_signal.o \
+                     $(BUILD_DIR)/kernel_syscall_fs_fd_pool.o \
+                     $(BUILD_DIR)/kernel_syscall_fs_path.o \
+                     $(BUILD_DIR)/kernel_syscall_fs_tty.o \
+                     $(BUILD_DIR)/kernel_syscall_fs_file_io.o \
+                     $(BUILD_DIR)/kernel_syscall_fs_file_ops.o \
+                     $(BUILD_DIR)/kernel_syscall_fs_file_stat.o \
+                     $(BUILD_DIR)/kernel_syscall_fs_dir.o \
+                     $(BUILD_DIR)/kernel_syscall_fs_ioctl.o \
+                     $(BUILD_DIR)/kernel_syscall_io_poll.o \
+                     $(BUILD_DIR)/kernel_syscall_io_select.o \
+                     $(BUILD_DIR)/kernel_syscall_mm_brk.o \
+                     $(BUILD_DIR)/kernel_syscall_mm_mmap.o \
+                     $(BUILD_DIR)/kernel_syscall_mm_pmap_compat.o
 SYSCALL_S_SRC := $(LIB_DIR)/syscall.S
 SYSCALL_S_OBJ := $(BUILD_DIR)/syscall_wrapper.o
 TASK_S_OBJ := $(BUILD_DIR)/task_switch.o
@@ -755,6 +791,60 @@ $(BUILD_DIR)/kernel_loader_elf_image.o: $(KERNEL_DIR)/loader/elf_image.c | $(BUI
 # syscall 模块编译规则
 $(BUILD_DIR)/kernel_syscall_syscall.o: $(KERNEL_DIR)/syscall/syscall.c | $(BUILD_DIR)
 	$(CC) $(LWEXT4_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/kernel_syscall_core_futex.o: $(KERNEL_DIR)/syscall/core/futex.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/kernel_syscall_core_proc_lifecycle.o: $(KERNEL_DIR)/syscall/core/proc_lifecycle.c | $(BUILD_DIR)
+	$(CC) $(LWEXT4_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/kernel_syscall_core_proc_ids.o: $(KERNEL_DIR)/syscall/core/proc_ids.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/kernel_syscall_core_sched.o: $(KERNEL_DIR)/syscall/core/sched.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/kernel_syscall_core_signal.o: $(KERNEL_DIR)/syscall/core/signal.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/kernel_syscall_fs_fd_pool.o: $(KERNEL_DIR)/syscall/fs/fd_pool.c | $(BUILD_DIR)
+	$(CC) $(LWEXT4_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/kernel_syscall_fs_path.o: $(KERNEL_DIR)/syscall/fs/path.c | $(BUILD_DIR)
+	$(CC) $(LWEXT4_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/kernel_syscall_fs_tty.o: $(KERNEL_DIR)/syscall/fs/tty.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/kernel_syscall_fs_file_io.o: $(KERNEL_DIR)/syscall/fs/file_io.c | $(BUILD_DIR)
+	$(CC) $(LWEXT4_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/kernel_syscall_fs_file_ops.o: $(KERNEL_DIR)/syscall/fs/file_ops.c | $(BUILD_DIR)
+	$(CC) $(LWEXT4_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/kernel_syscall_fs_file_stat.o: $(KERNEL_DIR)/syscall/fs/file_stat.c | $(BUILD_DIR)
+	$(CC) $(LWEXT4_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/kernel_syscall_fs_dir.o: $(KERNEL_DIR)/syscall/fs/dir.c | $(BUILD_DIR)
+	$(CC) $(LWEXT4_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/kernel_syscall_fs_ioctl.o: $(KERNEL_DIR)/syscall/fs/ioctl.c | $(BUILD_DIR)
+	$(CC) $(LWEXT4_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/kernel_syscall_io_poll.o: $(KERNEL_DIR)/syscall/io/poll.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/kernel_syscall_io_select.o: $(KERNEL_DIR)/syscall/io/select.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/kernel_syscall_mm_brk.o: $(KERNEL_DIR)/syscall/mm/brk.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/kernel_syscall_mm_mmap.o: $(KERNEL_DIR)/syscall/mm/mmap.c | $(BUILD_DIR)
+	$(CC) $(LWEXT4_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/kernel_syscall_mm_pmap_compat.o: $(KERNEL_DIR)/syscall/mm/pmap_compat.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/syscall_wrapper.o: $(SYSCALL_S_SRC) | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@

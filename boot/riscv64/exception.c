@@ -33,8 +33,6 @@ volatile uint64_t g_exception_sepc = 0;
 
 void exception_init(void)
 {
-    extern volatile uint32_t g_syscall_entry_count;
-    
     /* trap_vector 在 exception.S 中定义（.align 4，直接模式） */
     extern void trap_vector(void);
 
