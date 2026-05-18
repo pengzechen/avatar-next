@@ -23,6 +23,7 @@
 #include "mm_vm.h"          /* KERNEL_VMA / virt_to_phys */
 #include "barrier.h"
 #include "aarch64/cpu.h"    /* aarch64_enable_neon (per-core CPACR_EL1.FPEN) */
+#include "irq/irq.h"        /* irq_init_secondary() */
 #endif
 
 /* ── 全局 CPU 池 ────────────────────────────────────────── */
@@ -94,7 +95,8 @@ static task_t g_secondary_idle[AVATAR_MAX_CPUS - 1];
 extern void gic_init_secondary(void);
 
 /* PSCI 0.2+ 功能号：SMC64 CPU_ON */
-#define PSCI_CPU_ON_AARCH64    0xC4000003UL
+#define PSCI_CPU_ON_AARCH64        0xC4000003UL
+#define PSCI_AFFINITY_INFO_AARCH64 0xC4000004UL
 
 static int64_t
 psci_cpu_on(uint64_t mpidr, uint64_t entry_phys, uint64_t context_id)
@@ -107,6 +109,27 @@ psci_cpu_on(uint64_t mpidr, uint64_t entry_phys, uint64_t context_id)
     __asm__ volatile("smc #0"
                      : "+r"(x0)
                      : "r"(x1), "r"(x2), "r"(x3)
+                     : "memory");
+    return (int64_t)x0;
+}
+
+/*
+ * PSCI_AFFINITY_INFO 查询指定核状态：
+ *   0 = ON
+ *   1 = OFF
+ *   2 = ON_PENDING
+ *   <0 = error (例如 -2 INVALID_PARAMS 表示 ATF 不认该 mpidr)
+ */
+static int64_t
+psci_affinity_info(uint64_t mpidr)
+{
+    register uint64_t x0 __asm__("x0") = PSCI_AFFINITY_INFO_AARCH64;
+    register uint64_t x1 __asm__("x1") = mpidr;
+    register uint64_t x2 __asm__("x2") = 0; /* lowest_affinity_level = 0 */
+
+    __asm__ volatile("smc #0"
+                     : "+r"(x0)
+                     : "r"(x1), "r"(x2)
                      : "memory");
     return (int64_t)x0;
 }
@@ -185,7 +208,8 @@ cpu_secondary_bootstrap(uint32_t cpu_id)
     c->hw_id = arch_cpu_hw_id();
 
     /* GIC CPU interface（PMR / CTLR / GICH 等，per-core 寄存器） */
-    gic_init_secondary();
+    irq_init_secondary();
+    // KLOG_WARN(">>>>");
 
     /*
      * Phase 3.1/3.2：必须在开中断之前装好 current_task，否则首个
@@ -234,7 +258,12 @@ cpu_bring_up_all(void)
         cpu_t *c = &g_cpus[i];
         memset(c, 0, sizeof(*c));
         c->cpu_id = i;
+#if defined(PLATFORM_RK3588)
+        /* RK3588: Aff0 恒为 0，各核用 Aff1 区分，MPIDR = cpu_idx << 8 */
+        c->hw_id  = (uint64_t)i << 8;
+#else
         c->hw_id  = i;             /* QEMU virt: MPIDR.Aff0 = CPU 序号 */
+#endif
         c->online = false;
         list_init(&c->run_queue);
         spinlock_irq_init(&c->rq_lock);
@@ -244,6 +273,8 @@ cpu_bring_up_all(void)
 
         int64_t ret = psci_cpu_on(/*mpidr=*/c->hw_id, entry_phys,
                                   /*context_id=*/i);
+        KLOG_INFO("[cpu] PSCI CPU_ON cpu=%u ret=%lld\n",
+                  i, (long long)ret);
         if (ret != 0) {
             KLOG_ERROR("[cpu] PSCI CPU_ON cpu=%u failed: ret=%lld\n",
                        i, (long long)ret);
@@ -255,7 +286,10 @@ cpu_bring_up_all(void)
         while (!c->online) {
             __asm__ volatile("yield");
             if (++spin > 100000000ULL) {
-                KLOG_ERROR("[cpu] timeout waiting for cpu%u online\n", i);
+                int64_t aff = psci_affinity_info(c->hw_id);
+                KLOG_ERROR("[cpu] timeout waiting for cpu%u online, "
+                           "PSCI_AFFINITY_INFO=%lld (0=ON,1=OFF,2=PENDING)\n",
+                           i, (long long)aff);
                 break;
             }
         }
@@ -320,6 +354,14 @@ cpu_smp_timer_test(uint32_t rounds, uint32_t ms_per_round)
 {
     /* 即使单核也跑诊断：先确认 BSP 自己的 timer 是否在 tick。 */
 
+    /*
+     * 该函数在 task_switch_to_idle_stack() 之前被调用，此时 DAIF.I=1（IRQ 关）。
+     * 不先开 IRQ，BSP 就永远收不到 timer 中断，local_ticks 一定为 0。
+     */
+#if ARCH_AARCH64
+    arch_irq_enable();
+#endif
+
 #if ARCH_AARCH64
     {
         uint64_t daif = dbg_read_daif();
@@ -331,6 +373,7 @@ cpu_smp_timer_test(uint32_t rounds, uint32_t ms_per_round)
                   (unsigned long long)pct);
 
         /* GIC 寄存器 dump：定位 IRQ 卡在哪一层 */
+#if DRIVER_GIC_V2
         extern uintptr_t gicv2_gicd_base;
         extern uintptr_t gicv2_gicc_base;
         uintptr_t gicd_b = gicv2_gicd_base;
@@ -349,6 +392,32 @@ cpu_smp_timer_test(uint32_t rounds, uint32_t ms_per_round)
                   gicd_ctlr, gicd_isen0, gicd_ispend, gicd_pri26);
         KLOG_INFO("[smp-test] GICC CTLR=0x%x PMR=0x%x HPPIR=0x%x RPR=0x%x\n",
                   gicc_ctlr, gicc_pmr, gicc_hppir, gicc_rpr);
+#elif DRIVER_GIC_V3
+        extern uintptr_t gicv3_gicd_base;
+        extern uintptr_t gicv3_gicr_base;
+        KLOG_INFO("[smp-test] GIC base: gicd=0x%llx gicr=0x%llx (GICv3)\n",
+                  (unsigned long long)gicv3_gicd_base,
+                  (unsigned long long)gicv3_gicr_base);
+        uint32_t gicd_ctlr  = *(volatile uint32_t *)(gicv3_gicd_base + 0x000);
+        uint32_t gicd_isen0 = *(volatile uint32_t *)(gicv3_gicd_base + 0x100);
+        KLOG_INFO("[smp-test] GICD CTLR=0x%x ISENABLER0=0x%x\n",
+                  gicd_ctlr, gicd_isen0);
+        /* PPI 实际开关 / 组配置 / 优先级在 GICR SGI frame，不在 GICD */
+        uintptr_t sgi = gicv3_gicr_base + 0x10000ULL;
+        uint32_t r_isen0 = *(volatile uint32_t *)(sgi + 0x100);
+        uint32_t r_grp0  = *(volatile uint32_t *)(sgi + 0x080);
+        uint32_t r_pri_ppi26 = *(volatile uint32_t *)(sgi + 0x400 + (26/4)*4);
+        uint64_t icc_pmr, icc_igrpen1, icc_ctlr;
+        __asm__ volatile("mrs %0, S3_0_C4_C6_0"  : "=r"(icc_pmr));      /* ICC_PMR_EL1 */
+        __asm__ volatile("mrs %0, S3_0_C12_C12_7": "=r"(icc_igrpen1));  /* ICC_IGRPEN1_EL1 */
+        __asm__ volatile("mrs %0, S3_0_C12_C12_4": "=r"(icc_ctlr));     /* ICC_CTLR_EL1 */
+        KLOG_INFO("[smp-test] GICR SGI ISENABLER0=0x%x IGROUPR0=0x%x IPRI[26..29]=0x%x\n",
+                  r_isen0, r_grp0, r_pri_ppi26);
+        KLOG_INFO("[smp-test] ICC PMR=0x%llx IGRPEN1=0x%llx CTLR=0x%llx\n",
+                  (unsigned long long)icc_pmr,
+                  (unsigned long long)icc_igrpen1,
+                  (unsigned long long)icc_ctlr);
+#endif
     }
 #endif
 

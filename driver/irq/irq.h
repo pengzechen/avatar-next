@@ -56,6 +56,7 @@
     #include "irq/gicv3.h"
 
     #define irq_init()              gicv3_init()
+    #define irq_init_secondary()    gicv3_init_secondary()
     #define irq_enable_irq(n)       gicv3_enable_int((int)(n), true)
     #define irq_disable_irq(n)      gicv3_enable_int((int)(n), false)
 

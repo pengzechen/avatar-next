@@ -172,11 +172,8 @@ memory_create_map(void *page_dir, uint64_t vaddr, uint64_t paddr, int32_t count,
         start -= KERNEL_VMA;
     if (end > KERNEL_VMA)
         end -= KERNEL_VMA;
-    if ((paddr < start || paddr > end) && (paddr > 0xa000000))
-        // KLOG_DEBUG("=>Starting memory_create_map for vaddr 0x%llx, paddr 0x%llx, count %d\n",
-        //        vaddr,
-        //        paddr,
-        //        count);
+    // KLOG_DEBUG("=>Starting memory_create_map for vaddr 0x%llx, paddr 0x%llx, count %d\n",
+    //        vaddr, paddr, count);
 
     for (int32_t i = 0; i < count; i++)
     {
@@ -972,7 +969,4 @@ void kmem_test()
     KLOG_INFO("\n=========copy uvm to uvm tests: =========\n");
     test_memory_copy_uvm_4level();
 
-    /* 注释掉 kallocator_test，因为此函数未定义 */
-    /* KLOG_INFO("\n\n=========kernel allocator tests: =========\n\n");
-    kallocator_test(); */
 }

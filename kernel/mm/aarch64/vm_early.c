@@ -88,6 +88,19 @@ uint64_t vm_get_boot_pgtable(void) {
  * 返回：0 表示成功，负值表示失败
  */
 uint64_t vm_init(void) {
+#ifdef PLATFORM_RK3588
+    /*
+     * platform_conf_scan() 在 kernel_main 中才运行，现在 dw_uart_base / reg_shift
+     * 仍是编译期默认值（RISC-V QEMU：base=0x10000000, reg_shift=0）。
+     * 在此直接覆写为 RK3588 物理值，使后续 KLOG_INFO 能在 MMU 启用前写到真实串口：
+     *   reg_shift=2 → 寄存器步长 4 字节（LSR = base + 0x14 = 0xFEB50014）
+     *   reg_shift=0 会导致 LSR 地址=0xFEB50005（错！THRE 永远读不到 → 死循环）
+     */
+    extern uintptr_t dw_uart_base;
+    extern uint8_t   dw_uart_reg_shift;
+    dw_uart_base      = 0xFEB50000UL;
+    dw_uart_reg_shift = 2;
+#endif
     KLOG_INFO("Initializing VM...\n");
 
     /* 清空所有页表 */
@@ -114,70 +127,48 @@ uint64_t vm_init(void) {
     /* L0 页表：entry[0] 指向 L1 页表 */
     set_table_entry(&kernel_pt0[0], kernel_pt1);
 
-    /* L1 页表：使用 1GB 块映射 */
+    /*
+     * L1 页表：1GB 块映射，内容由平台决定
+     *
+     * QEMU virt:
+     *   [0] 0x00000000-0x3FFFFFFF  设备内存 (UART@0x09000000, GIC@0x08000000)
+     *   [1] 0x40000000-0x7FFFFFFF  普通内存 (QEMU RAM，内核在此)
+     *   [2] 0x80000000-0xBFFFFFFF  普通内存 (QEMU 2GB 扩展)
+     *
+     * RK3588:
+     *   [0] 0x00000000-0x3FFFFFFF  普通内存 (RAM，内核在 0x400000)
+     *   [3] 0xC0000000-0xFFFFFFFF  设备内存 (UART@0xFEB50000, GIC@0xFE600000)
+     */
+#ifdef PLATFORM_RK3588
+    set_block_entry(&kernel_pt1[0], 0x00000000ULL, PTE_NORMAL_MEMORY);  /* RAM Bank0 0x00000000-0x3FFFFFFF */
+    set_block_entry(&kernel_pt1[1], 0x40000000ULL, PTE_NORMAL_MEMORY);  /* RAM Bank1 0x40000000-0x7FFFFFFF */
+    set_block_entry(&kernel_pt1[2], 0x80000000ULL, PTE_NORMAL_MEMORY);  /* RAM Bank2 0x80000000-0xBFFFFFFF */
+    set_block_entry(&kernel_pt1[3], 0xC0000000ULL, PTE_DEVICE_MEMORY);  /* MMIO      0xC0000000-0xFFFFFFFF */
+#else
     set_block_entry(&kernel_pt1[0], 0x00000000ULL, PTE_DEVICE_MEMORY);  /* 设备内存（0x00000000 - 0x3fffffff） */
     set_block_entry(&kernel_pt1[1], 0x40000000ULL, PTE_NORMAL_MEMORY);  /* 普通内存（0x40000000 - 0x7fffffff） */
-    set_block_entry(&kernel_pt1[2], 0x80000000ULL, PTE_NORMAL_MEMORY);  /* 普通内存（0x80000000 - 0xbfffffff，QEMU -m 2G 的上半部分） */
-
-    KLOG_INFO("TTBR1 page table setup:\n");
-    KLOG_INFO("  kernel_pt0[0] -> kernel_pt1: 0x%llx\n", kernel_pt0[0]);
-    KLOG_INFO("  kernel_pt1[0] (device @ 0x00000000): 0x%llx\n", kernel_pt1[0]);
-    KLOG_INFO("  kernel_pt1[1] (normal @ 0x40000000): 0x%llx\n", kernel_pt1[1]);
-    KLOG_INFO("  kernel_pt1[2] (normal @ 0x80000000): 0x%llx\n", kernel_pt1[2]);
+    set_block_entry(&kernel_pt1[2], 0x80000000ULL, PTE_NORMAL_MEMORY);  /* 普通内存（0x80000000 - 0xbfffffff） */
+#endif
 
     /*
-     * 验证地址映射：
-     * - 内核代码 @ 0x40080000：
-     *   - PUD 索引：(0x40080000 >> 30) & 0x1ff = 1
-     *   - 查 kernel_pt1[1] -> 0x40000000
-     *   - 最终物理地址：0x40000000 + 0x80000 = 0x40080000 ✓
-     *
-     * - UART @ 0x09000000：
-     *   - PUD 索引：(0x09000000 >> 30) & 0x1ff = 0
-     *   - 查 kernel_pt1[0] -> 0x00000000
-     *   - 最终物理地址：0x00000000 + 0x09000000 = 0x09000000 ✓
-     */
-    KLOG_INFO("Address mapping verification:\n");
-    KLOG_INFO("  Kernel code @ 0x40080000 -> PUD[1] -> 0x%llx\n",
-              0x40000000ULL + (0x40080000ULL & 0x3fffffff));
-    KLOG_INFO("  UART @ 0x09000000 -> PUD[0] -> 0x%llx\n",
-              0x00000000ULL + (0x09000000ULL & 0x3fffffff));
-
-    /*
-     * 检查 UART 地址映射
-     * UART 基地址：0x09000000
-     * 虚拟地址：0xffff000000000000 + 0x09000000 = 0xffff0000000900000
-     */
-    KLOG_INFO("UART address check:\n");
-    KLOG_INFO("  Physical: 0x09000000\n");
-    KLOG_INFO("  Virtual: 0x%llx\n", KERNEL_VMA + 0x09000000ULL);
-
-    /*
-     * 设置 TTBR0 页表（低地址空间，用于开启MMU后的恒等映射）
-     *
-     * TTBR0 覆盖的虚拟地址范围：[0x0000000000000000, 0x0000ffffffffffff]
-     *
-     * 映射规则：
-     * - 访问虚拟地址 0x00000000xxxxxx（低地址）
-     * - 直接映射到物理地址 0x00000000xxxxxx（恒等映射）
-     * - 这样开启MMU后，低地址代码可以继续运行
+     * 设置 TTBR0 页表（低地址空间，恒等映射，MMU 开启后低地址代码继续可用）
      */
     set_table_entry(&boot_pt0[0], boot_pt1);
 
-    /* L1 页表：使用 1GB 块映射，建立恒等映射 */
+#ifdef PLATFORM_RK3588
+    set_block_entry(&boot_pt1[0], 0x00000000ULL, PTE_NORMAL_MEMORY);  /* RAM Bank0 0x00000000-0x3FFFFFFF */
+    set_block_entry(&boot_pt1[1], 0x40000000ULL, PTE_NORMAL_MEMORY);  /* RAM Bank1 0x40000000-0x7FFFFFFF */
+    set_block_entry(&boot_pt1[2], 0x80000000ULL, PTE_NORMAL_MEMORY);  /* RAM Bank2 0x80000000-0xBFFFFFFF */
+    set_block_entry(&boot_pt1[3], 0xC0000000ULL, PTE_DEVICE_MEMORY);  /* MMIO      0xC0000000-0xFFFFFFFF */
+#else
     set_block_entry(&boot_pt1[0], 0x00000000ULL, PTE_DEVICE_MEMORY);  /* 设备内存（0x00000000 - 0x3fffffff） */
     set_block_entry(&boot_pt1[1], 0x40000000ULL, PTE_NORMAL_MEMORY);  /* 普通内存（0x40000000 - 0x7fffffff） */
-    set_block_entry(&boot_pt1[2], 0x80000000ULL, PTE_NORMAL_MEMORY);  /* 普通内存（0x80000000 - 0xbfffffff，QEMU -m 2G 的上半部分） */
+    set_block_entry(&boot_pt1[2], 0x80000000ULL, PTE_NORMAL_MEMORY);  /* 普通内存（0x80000000 - 0xbfffffff） */
+#endif
 
-    KLOG_INFO("TTBR0 page table setup (identity mapping):\n");
-    KLOG_INFO("  boot_pt0[0] -> boot_pt1: 0x%llx\n", boot_pt0[0]);
-    KLOG_INFO("  boot_pt1[0] (device @ 0x00000000): 0x%llx\n", boot_pt1[0]);
-    KLOG_INFO("  boot_pt1[1] (normal @ 0x40000000): 0x%llx\n", boot_pt1[1]);
-    KLOG_INFO("  boot_pt1[2] (normal @ 0x80000000): 0x%llx\n", boot_pt1[2]);
-
-    KLOG_INFO("VM initialized successfully\n");
-    KLOG_INFO("TTBR0 page table base: 0x%llx (boot)\n", (uint64_t)boot_pt0);
-    KLOG_INFO("TTBR1 page table base: 0x%llx (kernel)\n", (uint64_t)kernel_pt0);
+    KLOG_INFO("VM page tables initialized\n");
+    KLOG_INFO("TTBR0 base: 0x%llx  TTBR1 base: 0x%llx\n",
+              (uint64_t)boot_pt0, (uint64_t)kernel_pt0);
 
     return (uint64_t)kernel_pt0;
 }

@@ -146,8 +146,11 @@ void kernel_main(void)
     lua_State *lua_L = platform_lua_state();
     if (lua_L) {
         lua_selftest(lua_L);
+        KLOG_INFO(">>> phase: earlycon\n");
         lua_run_phase(lua_L, "earlycon");  /* 早期控制台           */
-        lua_run_phase(lua_L, "irqcore");   /* GICv2 (AArch64)     */
+        KLOG_INFO(">>> phase: irqcore\n");
+        lua_run_phase(lua_L, "irqcore");   /* GICv3 (AArch64)     */
+        KLOG_INFO(">>> phase: drivers\n");
         lua_run_phase(lua_L, "drivers");   /* timer init + enable  */
     }
     KLOG_INFO("Lua platform phases (earlycon/irqcore/drivers) complete\n");
@@ -174,14 +177,6 @@ void kernel_main(void)
 #if defined(RUN_VMM_TEST)
     KLOG_INFO("=== VMM_TEST mode: 3-thread context switch test ===\n");
     run_vmm_test();
-#else
-    /* 默认：启动 busybox 交互 shell */
-    KLOG_INFO("\n=== Launching busybox shell ===\n");
-    task_t *bb_task = task_create("busybox", demo_load_busybox, NULL, 5);
-    if (bb_task)
-        KLOG_INFO("busybox loader task created: id=%u\n", bb_task->id);
-    else
-        KLOG_ERROR("Failed to create busybox loader task!\n");
 #endif
 
     /*
@@ -201,8 +196,20 @@ void kernel_main(void)
     KLOG_INFO("Preemptive scheduling enabled\n");
 
     /* SMP 健康检查：抢占启用后立刻验证所有核 timer 都在 tick。
-     * 单核时此函数直接 return，不影响 SMP=1 默认路径。 */
-    // cpu_smp_timer_test(3, 500);
+     * 单核时此函数直接 return，不影响 SMP=1 默认路径。
+     * 注意：必须在 busybox 启动之前跑——busybox syscall 会长期占据某核并
+     * 关 IRQ，冲击其 timer tick 计数。 */
+    cpu_smp_timer_test(3, 500);
+
+#if !defined(RUN_VMM_TEST)
+    /* SMP 检查完成，现在才启动 busybox 交互 shell */
+    KLOG_INFO("\n=== Launching busybox shell ===\n");
+    task_t *bb_task = task_create("busybox", demo_load_busybox, NULL, 5);
+    if (bb_task)
+        KLOG_INFO("busybox loader task created: id=%u\n", bb_task->id);
+    else
+        KLOG_ERROR("Failed to create busybox loader task!\n");
+#endif
 
     /* Phase 4a：多核线程分发自检。SMP=1 时也会跑（验证 round-robin
      * 自身不破坏单核）。失败仅 KLOG_ERROR，不 panic，避免影响后续

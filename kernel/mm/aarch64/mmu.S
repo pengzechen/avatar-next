@@ -14,6 +14,23 @@
  */
 .global mmu_init
 mmu_init:
+    /*
+     * 先关闭 MMU（ATF/U-Boot 可能在移交时已经启用 MMU 并使用其自己的页表；
+     * 如果不关掉，下面切换 TTBRx/TCR_EL1 会立即触发取指 translation fault，
+     * VBAR_EL1 此时通常未设，CPU 直接挂死）。此时 PC 处于低物理地址区间，
+     * 关 MMU 后仍可正常取指。注意：只清 M 位，保留 I/C cache 状态不变，
+     * 避免在 BSP 路径上引入 cache-disable 副作用。
+     */
+    mrs     x2, sctlr_el1
+    bic     x2, x2, #(1 << 0)         /* M  - MMU disable */
+    msr     sctlr_el1, x2
+    isb
+
+    /* 切换 TTBR 前先刷 TLB，避免 U-Boot 遗留的 TLB 项干扰 */
+    tlbi    alle2is
+    dsb     sy
+    isb
+
     /* 设置 TTBR0_EL1（用户空间页表） */
     msr ttbr0_el1, x0
 
@@ -26,10 +43,19 @@ mmu_init:
     ldr x0, =(MAIR_VALUE)
     msr mair_el1, x0
 
-    /* 再启用 MMU */
+    /*
+     * 启用 MMU。同时打开 DCache (C) 和 ICache (I)：
+     * 必须在切 SCTLR.M=1 这条指令"之前"DCache 已开，否则 page-table
+     * walker 在 SCTLR.C=0 时把 cacheable 访问降级为 non-cacheable，
+     * 直接读 RAM，看不到 BSP 仍在 DCache 里的页表项（inner-shareable
+     * 一致性只对参与 snoop 的核生效，参与的前提是本核 DCache 已开）。
+     * 在 secondary CPU 上这是 PSCI 拉起后 mmu_init 一直挂死的根因。
+     */
     mrs x2, sctlr_el1
-    orr x2, x2, #(1 << 0)      /* SCTLR_EL1.M - MMU 使能 */
-    orr x2, x2, #(1 << 23)     /* SCTLR_EL1.SPAN=1 - 陷入 EL2 时不自动设置 PAN */
+    orr x2, x2, #(1 << 0)      /* M  - MMU 使能 */
+    orr x2, x2, #(1 << 2)      /* C  - DCache 使能（必须，否则 walker 看不到页表） */
+    orr x2, x2, #(1 << 12)     /* I  - ICache 使能 */
+    orr x2, x2, #(1 << 23)     /* SPAN=1 - 陷入 EL2 时不自动设置 PAN */
     msr sctlr_el1, x2
 
     /* 内存屏障 */

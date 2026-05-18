@@ -32,6 +32,9 @@ _start:
      *   msr mair_el1  → MAIR_EL2    msr sctlr_el1 → SCTLR_EL2
      *   mrs esr_el1   → ESR_EL2     mrs far_el1   → FAR_EL2
      */
+
+    bl  early_uart_init
+
     mrs     x0, CurrentEL
     lsr     x0, x0, #2              /* x0 = 当前 EL（数字 1 或 2）  */
     cmp     x0, #2
@@ -64,12 +67,20 @@ _start:
     isb
 
     /*
-     * 清除 PSTATE.PAN（Privileged Access Never，ARMv8.1 FEAT_PAN）。
-     * cortex-a76 支持 PAN；若不清除，EL2 内核访问 EL0 可访问的页会
-     * 触发 EC=0x25 permission fault（Data Abort from current EL）。
-     * 同时在 mmu.S 中将 SCTLR_EL1.SPAN=1，防止陷入 EL2 时 PAN 被
-     * 自动重新置位。
+     * GICv3 CPU interface 系统寄存器访问使能（ICC_SRE_EL2）：
+     *   bit 0 SRE     = 1  使用系统寄存器接口（非 memory-mapped）
+     *   bit 1 DFB     = 1  禁用 FIQ 旁路
+     *   bit 2 DIB     = 1  禁用 IRQ 旁路
+     *   bit 3 Enable  = 1  允许 EL1 访问 ICC_SRE_EL1
+     * QEMU virt 默认 SRE=1，但 RK3588 等真实硬件复位值不保证，
+     * 必须显式设置，否则 EL1 写 ICC_SRE_EL1 被忽略，GIC CPU
+     * interface 永远不会激活，中断送不到 CPU。
      */
+    mrs     x1, S3_4_C12_C9_5       /* ICC_SRE_EL2 */
+    orr     x1, x1, #0xF
+    msr     S3_4_C12_C9_5, x1
+    isb
+
 .arch_extension pan
     msr     pan, #0
     isb
@@ -87,28 +98,32 @@ _start:
     and x0, x0, #0xFFFFFFFF  // 屏蔽高 32 位
     mov sp, x0               // 设置栈指针
 
-//     /*
-//      * Clear BSS section
-//      * BSS contains zero-initialized data
-//      */
-//     adrp    x0, __bss_start
-//     add     x0, x0, :lo12:__bss_start
-//     adrp    x1, __bss_end
-//     add     x1, x1, :lo12:__bss_end
-//     mov     x2, #0
-// clear_bss:
-//     cmp     x0, x1
-//     b.ge    clear_bss_done
-//     str     x2, [x0], #8
-//     b       clear_bss
-// clear_bss_done:
+    /*
+     * Clear BSS section（在 MMU 启用前必须完成）
+     * BSS 未清零时 dw_uart_initialized/spinlock 等含 DRAM 垃圾值，
+     * 导致 dw_uart_putchar 进入中断路径并在 garbage lock 上死循环。
+     * ADRP 在物理地址模式下计算正确的物理地址（偏移量与 VA 相同）。
+     */
+    adrp    x0, __bss_start
+    add     x0, x0, :lo12:__bss_start
+    adrp    x1, __bss_end
+    add     x1, x1, :lo12:__bss_end
+    mov     x2, #0
+clear_bss:
+    cmp     x0, x1
+    b.ge    clear_bss_done
+    str     x2, [x0], #8
+    b       clear_bss
+clear_bss_done:
 
     /*
      * 初始化虚拟内存管理
      * 建立页表映射（0-1GB 设备内存，1GB-2GB 普通内存）
      * 此时 MMU 未启用，使用物理地址
      */
+    bl  early_uart_init
     bl      vm_init
+    
 
     /*
      * 启用 MMU
@@ -117,11 +132,13 @@ _start:
      *
      * vm_init() 返回后，x1 包含内核页表物理地址
      */
-    bl      vm_get_kernel_pgtable   // 获取内核页表物理地址
-    // vm_get_kernel_pgtable 返回 x0 = 内核页表物理地址
-
-    mov     x1, x0                  // x1 = TTBR1
+    bl      vm_get_boot_pgtable      // x0 = boot_pt0 物理地址（TTBR0 恒等映射）
+    mov     x27, x0                  // 保存到 callee-saved 寄存器
+    bl      vm_get_kernel_pgtable    // x0 = kernel_pt0 物理地址（TTBR1）
+    mov     x1, x0                   // x1 = TTBR1 = kernel_pt0
+    mov     x0, x27                  // x0 = TTBR0 = boot_pt0
     bl      mmu_init
+    bl  early_uart_init
 
     /*
      * Trampoline：从 identity-mapped 低地址跳到高虚拟地址
@@ -138,6 +155,8 @@ _start:
     br      x0
 1:
     /* ── 以下代码在高虚拟地址（TTBR1 映射）下执行 ────────────── */
+
+    bl  early_uart_init
 
     /*
      * 重新设置栈指针（使用高地址）
@@ -223,6 +242,12 @@ _secondary_start:
     msr     cnthctl_el2, x1
     isb
 
+    /* GICv3 CPU interface 使能（ICC_SRE_EL2），同 BSP */
+    mrs     x1, S3_4_C12_C9_5       /* ICC_SRE_EL2 */
+    orr     x1, x1, #0xF
+    msr     S3_4_C12_C9_5, x1
+    isb
+
 .arch_extension pan
     msr     pan, #0
     isb
@@ -255,6 +280,7 @@ _secondary_start:
     bl      vm_get_kernel_pgtable
     mov     x1, x0                   /* x1 = TTBR1 = kernel_pt0 */
     /* x0 已是 kernel_pt0，复用为 TTBR0（低半区恒等映射） */
+
     bl      mmu_init
 
     /*
@@ -284,6 +310,7 @@ _secondary_start:
      * 注意：中断仍处于关闭状态（DAIF.I=1）；由 C 入口在合适时机打开。
      */
     mov     x0, x19
+
     adrp    x1, cpu_secondary_bootstrap
     add     x1, x1, :lo12:cpu_secondary_bootstrap
     blr     x1
@@ -294,6 +321,9 @@ _secondary_start:
     b       .Lsec_hang
 
 .size _secondary_start, . - _secondary_start
+
+early_uart_init:
+    ret
 
 /*
  * ── 次级核启动栈 ─────────────────────────────────────────

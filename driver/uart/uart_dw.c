@@ -245,7 +245,7 @@ dw_uart_init(void)
     //     logger_warn("DW UART IRQ %d is enabled in GICv3\n", DW_UART_IRQ);
     // }
 
-    dw_uart_initialized = true;
+    // dw_uart_initialized = true;
 
     logger_info("DWC UART interrupt driver initialized\n");
 }

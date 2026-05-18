@@ -52,6 +52,7 @@ typedef struct gicv3_t
 extern struct gicv3_t _gicv3;
 
 void gicv3_init(void);
+void gicv3_init_secondary(void);
 void gicv3_enable_int(int vector, bool enable);
 bool gicv3_is_int_enabled(int int_id);
 void gicv3_set_int_trigger(uint32_t int_id, int edge);

@@ -126,10 +126,10 @@ timer_handler(uint64_t *stack_pointer)
     // KLOG_DEBUG("[timer_handler] tick %llu, g_tick_cb=%p\n", g_system_ticks, g_tick_cb);
 
     // 调用 tick 回调（调度器 sched_tick）
+    // 注意SMP 启动期间 secondary timer 可能在 g_tick_cb 被设之前就已触发
+    // 中断。这里 silent skip，避免刷屏 ERROR。
     if (g_tick_cb) {
         g_tick_cb();
-    } else {
-        KLOG_ERROR("[timer_handler] g_tick_cb is NULL!\n");
     }
 }
 

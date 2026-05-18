@@ -46,9 +46,21 @@
 #define TCR_TBI0 (1ULL << 37) /* 低地址空间的地址标签 */
 #define TCR_TBI1 (1ULL << 38) /* 高地址空间的地址标签 */
 
-#define TCR_EL1 (TCR_T0SZ(64 - 48) | TCR_T1SZ(64 - 48) | TCR_TG0(0) | TCR_TG1(2))
+/*
+ * IRGN/ORGN = 1: Inner/Outer cacheable, Write-Back Read-Allocate
+ * SH = 3: Inner Shareable
+ *
+ * 必须设置，否则页表 Walker 做 non-cacheable 读，
+ * 绕过 D-cache 直接读 RAM。若 C 代码写的页表项仍在
+ * dirty cache line 中（U-Boot 开启了 D-cache），Walker
+ * 读到全 0 → Level-0 translation fault。
+ */
+#define TCR_EL1 (TCR_T0SZ(64 - 48) | TCR_T1SZ(64 - 48) | \
+                 TCR_TG0(0) | TCR_TG1(2) | \
+                 TCR_IRGN0(1) | TCR_ORGN0(1) | TCR_SH0(3) | \
+                 TCR_IRGN1(1) | TCR_ORGN1(1) | TCR_SH1(3))
 
 /* el2 的设置可能不同 */
-#define TCR_EL2 (TCR_T0SZ(64 - 48) | TCR_TG0(0))
+#define TCR_EL2 (TCR_T0SZ(64 - 48) | TCR_TG0(0) | TCR_IRGN0(1) | TCR_ORGN0(1) | TCR_SH0(3))
 
 #endif /* __TCR_H__ */

@@ -11,22 +11,28 @@ platform = {
     name = "RK3588",
 
     memory = {
-        -- RK3588 典型 LPDDR4 布局（从 0x0000_0000 开始，低 2MB 为固件）
-        ram    = { base = 0x00200000, size = 0x3FE00000 },   -- 1 GB minus early 2 MB
+        -- RK3588 4GB LPDDR5 布局
+        --   Bank0: 0x0000_0000 - 0x3FFF_FFFF  (1 GB)
+        --   Bank1: 0x4000_0000 - 0x7FFF_FFFF  (1 GB)
+        --   Bank2: 0x8000_0000 - 0xBFFF_FFFF  (1 GB)
+        --   MMIO:  0xC000_0000 - 0xFFFF_FFFF  (1 GB, UART/GIC/PCIe etc.)
+        --   低 2 MB 保留给固件 / U-Boot
+        ram    = { base = 0x00200000, size = 0xBFE00000 },   -- 3 GB minus early 2 MB
         rootfs = { base = 0x10000000, size = 0x08000000, mb = 128 },
         reserves = {
             { name = "kernel", start = 0x00200000, stop = 0x00800000 },
         },
     },
 
-    -- RK3588 裸机运行，MMIO 物理地址直接使用，无需加 VMA 偏移
-    mmio_vma = false,
+    -- RK3588 裸机运行，但任务切换后 ttbr0_el1=0，低半 MMIO 地址失效。
+    -- 必须加 KERNEL_VMA 偏移，使所有驱动通过 TTBR1 高地址访问设备寄存器。
+    mmio_vma = true,
     lapic    = false,
 
     uart = {
         driver    = "dw",
         base      = 0xFEB50000,  -- UART2（调试串口）
-        reg_shift = 0,
+        reg_shift = 2,            -- DW APB UART：寄存器步长 4 字节（索引 << 2）
     },
 
     irq = {
