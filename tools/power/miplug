@@ -1,0 +1,39 @@
+#!/usr/bin/env python3
+"""
+米家智能插座控制脚本
+用法: miplug [on|off|toggle]
+"""
+
+import sys
+
+DEVICE_IP = "192.168.1.52"
+DEVICE_TOKEN = "9e133ad5c0bbcaa0429e0d8dae4e9aad"
+
+
+def set_power(state):
+    """state: True=开, False=关, None=切换"""
+    from miio import Device
+
+    device = Device(DEVICE_IP, DEVICE_TOKEN)
+
+    if state is None:
+        # 获取当前状态并切换
+        props = device.get_properties(["power"])
+        current = props[0] if props else False
+        state = not current
+
+    value = "true" if state else "false"
+    device.raw_command("set_properties",
+        [{"did": "MYDID", "siid": 2, "piid": 1, "value": state}])
+    print(f"已{'开' if state else '关'}")
+
+
+if __name__ == "__main__":
+    cmd = sys.argv[1] if len(sys.argv) > 1 else "toggle"
+
+    if cmd in ["on", "1", "true"]:
+        set_power(True)
+    elif cmd in ["off", "0", "false"]:
+        set_power(False)
+    else:
+        set_power(None)  # toggle

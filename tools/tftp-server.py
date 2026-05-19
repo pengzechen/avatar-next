@@ -13,7 +13,7 @@ U-Boot 端加速（在 U-Boot 命令行执行一次，之后 saveenv 保存）:
 """
 import socket, struct, os, threading, argparse, time, select as _select
 
-DEFAULT_ROOT  = "/srv/tftp"
+DEFAULT_ROOT  = "/home/ajax/Proj/OS/Thread-Process-Lock/avatar/imgs"
 DEFAULT_IFACE = "enx207bd2d4d4e9"
 TFTP_PORT     = 69
 MAX_BLKSIZE   = 1468   # MTU 1500 - IP 20 - UDP 8 - TFTP 4
