@@ -258,6 +258,54 @@ int luaopen_ion(lua_State *L) { luaL_newlib(L, lua_drv_ion); return 1; }
 
 
 /* ── sdblk bindings ─────────────────────────────────────────────────────── */
+/* ── DWC3 USB bindings ──────────────────────────────────────────────────── */
+#if DRIVER_USB_DWC3
+#include "usb/dwc3.h"
+
+static int lua_dwc3_probe(lua_State *L)
+{
+    (void)L;
+    dwc3_probe();
+    return 0;
+}
+
+static int lua_dwc3_host_init(lua_State *L)
+{
+    (void)L;
+    dwc3_host_init();
+    return 0;
+}
+
+static int lua_dwc3_xhci_start(lua_State *L)
+{
+    (void)L;
+    dwc3_xhci_start();
+    return 0;
+}
+
+static int lua_dwc3_hid_enumerate(lua_State *L)
+{
+    (void)L;
+    dwc3_hid_enumerate();
+    return 0;
+}
+
+static const luaL_Reg lua_drv_dwc3[] = {
+    { "probe",         lua_dwc3_probe         },
+    { "host_init",     lua_dwc3_host_init     },
+    { "xhci_start",    lua_dwc3_xhci_start    },
+    { "hid_enumerate", lua_dwc3_hid_enumerate },
+    { NULL,            NULL                   }
+};
+
+int luaopen_dwc3(lua_State *L)
+{
+    luaL_newlib(L, lua_drv_dwc3);
+    return 1;
+}
+#endif /* DRIVER_USB_DWC3 */
+
+
 #if DRIVER_SDBLK_SG2002
 #include "blk/sdblk.h"
 
@@ -372,6 +420,9 @@ void lua_register_all_drivers(lua_State *L)
     luaL_requiref(L, "timer",    luaopen_timer,    1); lua_pop(L, 1);
 #if DRIVER_NPU_RKNPU
     luaL_requiref(L, "rknpu",    luaopen_rknpu,    1); lua_pop(L, 1);
+#endif
+#if DRIVER_USB_DWC3
+    luaL_requiref(L, "dwc3",     luaopen_dwc3,     1); lua_pop(L, 1);
 #endif
 #if DRIVER_TPU_CVITPU
     luaL_requiref(L, "cvi_tpu", luaopen_cvi_tpu, 1); lua_pop(L, 1);

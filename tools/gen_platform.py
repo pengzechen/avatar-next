@@ -140,6 +140,12 @@ def parse_lua_platform(path):
     npu = _extract_block(text, 'npu')
     conf['DEV_NPU_TYPE'] = _find_str(npu, 'driver')
 
+    # usb 块
+    usb = _extract_block(text, 'usb')
+    conf['DEV_USB_TYPE'] = _find_str(usb, 'driver')
+    conf['DEV_USB_BASE0'] = _find_num(usb, 'base0', '0')
+    conf['DEV_USB_BASE1'] = _find_num(usb, 'base1', '0')
+
     return conf
 
 
@@ -214,6 +220,9 @@ def write_platform_mk(conf, path):
         f.write(f"DEV_TPU_TYPE        := {conf.get('DEV_TPU_TYPE', '')}\n")
         f.write(f"DEV_SDMMC_TYPE      := {conf.get('DEV_SDMMC_TYPE', '')}\n")
         f.write(f"DEV_NPU_TYPE        := {conf.get('DEV_NPU_TYPE', '')}\n")
+        f.write(f"DEV_USB_TYPE        := {conf.get('DEV_USB_TYPE', '')}\n")
+        f.write(f"DEV_USB_BASE0       := {conf.get('DEV_USB_BASE0', '0')}\n")
+        f.write(f"DEV_USB_BASE1       := {conf.get('DEV_USB_BASE1', '0')}\n")
 
 
 # ─── 生成 include/mem_layout.h ───────────────────────────────────────────────

@@ -549,6 +549,20 @@ ifeq ($(SDMMC),sg2002)
     DRIVER_OBJECTS      += $(BUILD_DIR)/drv_blk_sdblk.o
 endif
 
+# ── §6f  USB 驱动（DWC3 / xHCI）─────────────────────────────────────────────
+# 用法：make PLATFORM=rk3588-aarch64 USB=dwc3 kernel
+# platform.lua 的 usb.driver=dwc3 自动推导；也可命令行覆盖：USB=none
+USB ?= $(DEV_USB_TYPE)
+ifeq ($(USB),dwc3)
+    DRIVER_USB_SRCS := driver/usb/dwc3.c driver/usb/dwc3_enum.c
+    CFLAGS          += -DDRIVER_USB_DWC3=1
+    DRIVER_USB_OBJS := $(BUILD_DIR)/drv_usb_dwc3.o $(BUILD_DIR)/drv_usb_dwc3_enum.o
+    DRIVER_OBJECTS  += $(DRIVER_USB_OBJS)
+else
+    DRIVER_USB_SRCS :=
+    DRIVER_USB_OBJS :=
+endif
+
 CFLAGS  += -MMD -MP
 
 # ─── §7  构建变体 ─────────────────────────────────────────────────────────────
@@ -755,6 +769,10 @@ $(BUILD_DIR)/drv_tpu_%.o: driver/tpu/%.c | $(BUILD_DIR)
 
 $(BUILD_DIR)/drv_ion_%.o: driver/ion/%.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -Idriver/ion -Ikernel/mm -c $< -o $@
+
+# USB 驱动编译规则
+$(BUILD_DIR)/drv_usb_%.o: driver/usb/%.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
 
 # SD 块设备（包含 lwext4 接口，使用 LWEXT4_CFLAGS）
 $(BUILD_DIR)/drv_blk_sdblk.o: driver/blk/sdblk.c | $(BUILD_DIR)

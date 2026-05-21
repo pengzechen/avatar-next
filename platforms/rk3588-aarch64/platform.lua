@@ -53,6 +53,13 @@ platform = {
         counter_hz = 0,          -- 运行期从 CNTFRQ_EL0 读取
     },
 
+    -- USB3 OTG 控制器（DWC3 + xHCI）
+    usb = {
+        driver = "dwc3",
+        base0  = 0xFC000000,   -- USB3 OTG0 (DWC3)
+        base1  = 0xFC400000,   -- USB3 OTG1 (DWC3)
+    },
+
     -- NPU 扩展字段（由 rknpu 驱动通过 platform_get_uintptr 读取）
     npu = {
         driver = "rknpu",
@@ -91,9 +98,19 @@ register_device("timer0", {
     end,
 })
 
--- RK3588 NPU（三核心，仅初始化 NPU0）
-register_device("npu0", {
+-- USB3 DWC3 控制器（探测版本、切换 Host 模式、xHCI 复位、扫描设备）
+register_device("usb0", {
     drivers = function(self)
-        rknpu.init()
+        dwc3.probe()
+        dwc3.host_init()
+        dwc3.xhci_start()
+        dwc3.hid_enumerate()
     end,
 })
+
+-- RK3588 NPU（三核心，仅初始化 NPU0）
+-- register_device("npu0", {
+--     drivers = function(self)
+--         rknpu.init()
+--     end,
+-- })
