@@ -104,7 +104,9 @@ register_device("usb0", {
         dwc3.probe()
         dwc3.host_init()
         dwc3.xhci_start()
+        print("platform.lua: About to call dwc3.hid_enumerate()")
         dwc3.hid_enumerate()
+        print("platform.lua: dwc3.hid_enumerate() returned")
     end,
 })
 

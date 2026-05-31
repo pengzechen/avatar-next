@@ -14,7 +14,12 @@
       "Bash(make oldconfig *)",
       "Bash(make defconfig *)",
       "Read(//tmp/**)",
-      "Bash(aarch64-linux-musl-readelf -h busybox)"
+      "Bash(aarch64-linux-musl-readelf -h busybox)",
+      "Bash(make PLATFORM=rk3588-aarch64 kernel LOG=debug SMP=8 -j8)",
+      "Bash(pkill cat *)",
+      "Bash(pkill -9 minicom)",
+      "Bash(make PLATFORM=rk3588-aarch64 kernel LOG=info SMP=8 -j8)",
+      "WebFetch(domain:raw.githubusercontent.com)"
     ]
   }
 }

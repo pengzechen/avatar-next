@@ -27,3 +27,26 @@ sudo udevadm trigger
 
 
 minicom -D /dev/ttyUSB0 -b 1500000 
+
+
+	vcc5v0-usbdcin {
+		compatible = "regulator-fixed";
+		regulator-name = "vcc5v0_usbdcin";
+		regulator-always-on;
+		regulator-boot-on;
+		regulator-min-microvolt = <0x4c4b40>;
+		regulator-max-microvolt = <0x4c4b40>;
+		vin-supply = <0x1c0>;
+		phandle = <0x1c1>;
+	};
+
+	vcc5v0-usb {
+		compatible = "regulator-fixed";
+		regulator-name = "vcc5v0_usb";
+		regulator-always-on;
+		regulator-boot-on;
+		regulator-min-microvolt = <0x4c4b40>;
+		regulator-max-microvolt = <0x4c4b40>;
+		vin-supply = <0x1c1>;
+		phandle = <0x1cc>;
+	};

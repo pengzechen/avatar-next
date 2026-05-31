@@ -2,20 +2,39 @@
  *
  * DWC3 (DesignWare USB3) 控制器寄存器定义 — RK3588
  *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * 硬件概述
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
  * DWC3 是一个包含 xHCI 主机控制器的 USB3 DRD（双角色设备）控制器。
+ *
  * 寄存器分布：
  *   0x0000 - 0x7FFF : 标准 xHCI 寄存器（能力 + 操作 + 运行时 + 门铃）
  *   0xC100 - 0xCFFF : DWC3 全局寄存器（厂商扩展）
  *
- * 参考：
- *   - xHCI 规范 v1.2
- *   - DWC_usb3 databook
- *   - Linux drivers/usb/dwc3/core.h
- *   - ref/CrabUSB/usb-host/src/backend/kmod/dwc/
- *
  * RK3588 地址：
  *   USB3 OTG0: 0xFC000000  (USB 3.1 Gen1, 5 Gbps)
  *   USB3 OTG1: 0xFC400000  (USB 3.1 Gen1, 5 Gbps)
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * 参考资料
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * - xHCI 规范 v1.2
+ * - DWC_usb3 databook
+ * - Linux drivers/usb/dwc3/core.h
+ * - ref/CrabUSB/usb-host/src/backend/kmod/dwc/
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * 初始化流程
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * 详见 docs/USB_DWC3_INIT.md
+ *
+ * 1. dwc3_probe()        - 探测控制器，打印硬件信息
+ * 2. dwc3_host_init()    - 切换到 Host 模式，配置 xHCI
+ * 3. dwc3_xhci_start()   - 启动 xHCI，扫描已连接设备
+ * 4. dwc3_hid_enumerate()- 枚举 HID 设备（见 dwc3_enum.c）
  */
 
 #ifndef DWC3_H
@@ -65,6 +84,7 @@
 #define DWC3_GCTL_PRTCAP_OTG    3U
 /* GCTL 控制位 */
 #define DWC3_GCTL_CORESOFTRESET (1U << 11)  /* 软复位（自清零）*/
+#define DWC3_GCTL_SCALEDOWN_MASK (0x3U << 4)
 
 /* GSNPSID: 0xC120 — 版本 ID
  * 格式：[31:16]=0x5533（magic），[15:12]=major，[11:4]=minor（hex），[3:0]=sub（0xa→'a'）
@@ -94,12 +114,19 @@
 
 /* GUCTL: 0xC12C — Global User Control Register */
 #define DWC3_GUCTL              (DWC3_GLOBALS_REGS_START + 0x2CU)
-#define DWC3_GUCTL_USBHSTINAUTORETRYEN (1U << 14) /* 主机模式 IN 自动重试 */
+#define DWC3_GUCTL_USBHSTINAUTORETRYEN  (1U << 14) /* 主机模式 IN 自动重试 */
+#define DWC3_GUCTL_TX_IPGAP_LINECHECK_DIS (1U << 9)  /* RK3588: 禁用 TX IP Gap 行检查（HS枚举必须）*/
+#define DWC3_GUCTL_PARKMODE_DISABLE_SS  (1U << 17) /* RK3588 OTG1 DTS quirk */
+
+/* GUCTL2: 0xC19C — Global User Control Register 2 */
+#define DWC3_GUCTL2             (DWC3_GLOBALS_REGS_START + 0x9CU)
+#define DWC3_GUCTL2_DIS_DEL_PHY_POWER_CHG (1U << 12) /* RK3588: 禁用延迟PHY功耗变化（防SET_ADDRESS挂死）*/
 
 /* GUSB2PHYCFG0: 0xC200 — USB2 PHY 配置（端口0）*/
 #define DWC3_GUSB2PHYCFG0      (DWC3_GLOBALS_REGS_START + 0x100U)
 #define DWC3_GUSB2PHYCFG_SUSPHY (1U << 6)   /* Suspend USB2 PHY */
 #define DWC3_GUSB2PHYCFG_PHYSOFTRST (1U << 31) /* PHY 软复位 */
+#define DWC3_GUSB2PHYCFG_U2_FREECLK_EXISTS (1U << 30) /* RK3588: 清零此位（PHY无自由运行时钟）*/
 /* USBTRDTIM: bits[13:10] — USB 2.0 Turnaround Time（8-bit UTMI=9，16-bit=5）*/
 #define DWC3_GUSB2PHYCFG_USBTRDTIM_MASK  (0xFU << 10)
 #define DWC3_GUSB2PHYCFG_USBTRDTIM(n)    (((n) & 0xFU) << 10)
@@ -118,6 +145,7 @@
 #define XHCI_OP_USBCMD         0x00U
 #define XHCI_OP_USBSTS         0x04U
 #define XHCI_OP_PAGESIZE       0x08U
+#define XHCI_OP_DNCTRL         0x14U  /* Notification Control */
 #define XHCI_OP_CRCR_LO       0x18U  /* Command Ring Control (低 32 位) */
 #define XHCI_OP_CRCR_HI       0x1CU  /* Command Ring Control (高 32 位) */
 #define XHCI_OP_DCBAAP_LO     0x30U  /* Device Context Base Array (低 32) */
@@ -134,12 +162,14 @@
 
 /* USBSTS 位 */
 #define XHCI_USBSTS_HCH        (1U << 0)   /* HCHalted */
+#define XHCI_USBSTS_HSE        (1U << 2)   /* Host System Error */
 #define XHCI_USBSTS_CNR        (1U << 11)  /* Controller Not Ready */
 
 /* CRCR 控制位（写 CRCR 低 32 位时） */
 #define XHCI_CRCR_RCS          (1U << 0)   /* Ring Cycle State */
 #define XHCI_CRCR_CS           (1U << 1)   /* Command Stop */
 #define XHCI_CRCR_CA           (1U << 2)   /* Command Abort */
+#define XHCI_CRCR_CRR          (1U << 3)   /* Command Ring Running (只读) */
 
 /* PORTSC 位/字段 */
 #define XHCI_PORTSC_CCS        (1U << 0)   /* Current Connect Status */
@@ -172,31 +202,61 @@
 /* Link TRB: Toggle Cycle */
 #define XHCI_TRB_LINK_TC       (1U << 1)
 
-/* ── RK3588 硬编码基址（与 platform.lua 的 usb.base0/1 一致）──────────── */
+/* ──────────────────────────────────────────────────────────────────────────────
+ * RK3588 硬编码基址（与 platform.lua 的 usb.base0/1 一致）
+ * ──────────────────────────────────────────────────────────────────────────────*/
 #define RK3588_USB3_OTG0_BASE   0xFC000000UL
 #define RK3588_USB3_OTG1_BASE   0xFC400000UL
 
-/* ── 驱动 API ────────────────────────────────────────────────────────── */
+/* ──────────────────────────────────────────────────────────────────────────────
+ * 驱动 API
+ * ──────────────────────────────────────────────────────────────────────────────
+ *
+ * 这些函数由 platform.lua 在不同阶段调用：
+ *
+ * 1. dwc3_probe()        - 在 drivers 阶段早期调用
+ * 2. dwc3_host_init()    - 在 dwc3_probe() 之后调用
+ * 3. dwc3_xhci_start()   - 在 dwc3_host_init() 之后调用
+ * 4. dwc3_hid_enumerate()- 在 dwc3_xhci_start() 之后调用
+ * ──────────────────────────────────────────────────────────────────────────────*/
 
 /**
  * dwc3_probe - 探测并打印 RK3588 DWC3/xHCI 控制器信息
+ *
+ * 读取 xHCI 能力寄存器和 DWC3 全局寄存器，打印控制器版本和参数。
  */
 void dwc3_probe(void);
 
 /**
- * dwc3_host_init - 将 DWC3 切换到 Host 模式，完成 xHCI 复位，打印端口状态
+ * dwc3_host_init - 将 DWC3 切换到 Host 模式，完成 xHCI 复位
+ *
+ * 操作：
+ * - 配置 PHY（GUSB2PHYCFG0）
+ * - 切换到 Host 模式（GCTL.PRTCAPDIR = Host）
+ * - 配置 RK3588 特定 quirks（GUCTL/GUCTL2）
+ * - 执行 xHCI 控制器复位
+ * - 启动控制器（USBCMD.RS=1）
+ * - 打印端口状态
  */
 void dwc3_host_init(void);
 
 /**
- * dwc3_xhci_start - 配置 xHCI 数据结构并启动控制器（USBCMD.RS=1）
- *                   扫描所有端口，打印已连接设备的速度信息
+ * dwc3_xhci_start - 配置 xHCI 数据结构并启动控制器
  *
  * 在 dwc3_host_init() 完成后调用。
+ *
+ * 操作：
+ * - 上电 USB Host VBUS 5V（GPIO3_B7）
+ * - 初始化 DCBAA、Command Ring、Event Ring、Scratchpad
+ * - 配置 xHCI 寄存器（DCBAAP、CRCR、ERST、MaxSlotsEn）
+ * - 启动控制器（USBCMD.RS=1）
+ * - 扫描所有端口，打印已连接设备的速度信息
  */
 void dwc3_xhci_start(void);
 
-/* ── xHCI 硬件数据结构（dwc3.c 和 dwc3_enum.c 共享）──────────────────── */
+/* ──────────────────────────────────────────────────────────────────────────────
+ * xHCI 硬件数据结构（dwc3.c 和 dwc3_enum.c 共享）
+ * ──────────────────────────────────────────────────────────────────────────────*/
 #define XHCI_CMD_RING_TRBS   16U
 #define XHCI_EVT_RING_TRBS   16U
 #define XHCI_MAX_SCRATCH     32U   /* HCSPARAMS2 MaxScratchpad 上限 */
@@ -210,10 +270,10 @@ typedef struct {
 } xhci_erst_t;
 
 typedef struct {
-    uint64_t    dcbaa[64];
-    xhci_trb_t  cmd_ring[XHCI_CMD_RING_TRBS];
-    xhci_trb_t  evt_ring[XHCI_EVT_RING_TRBS];
-    xhci_erst_t erst[1];
+    uint64_t    dcbaa[65];  /* scratchpad + slot contexts 1..64 */
+    xhci_trb_t  cmd_ring[XHCI_CMD_RING_TRBS] __attribute__((aligned(64)));
+    xhci_trb_t  evt_ring[XHCI_EVT_RING_TRBS] __attribute__((aligned(64)));
+    xhci_erst_t erst[1] __attribute__((aligned(64)));
 } __attribute__((aligned(64))) xhci_hw_t;
 
 /* 共享全局状态（定义在 dwc3.c）*/
@@ -226,8 +286,18 @@ extern uint8_t   g_scratch_pages[2][XHCI_MAX_SCRATCH][4096];
 /**
  * dwc3_hid_enumerate - 枚举已连接的 USB HID 设备并读取 HID boot 报告
  *
- * 在 dwc3_xhci_start() 之后调用。端口扫描 + 端口复位 + Enable/Address Slot
- * + GET_DESCRIPTOR + SET_CONFIGURATION + SET_PROTOCOL + 读取报告数据。
+ * 在 dwc3_xhci_start() 之后调用。
+ *
+ * 枚举流程：
+ * 1. 端口复位
+ * 2. Enable Slot Command
+ * 3. Address Device Command (BSR=1)
+ * 4. GET_DESCRIPTOR(Device)
+ * 5. GET_DESCRIPTOR(Configuration)
+ * 6. SET_CONFIGURATION
+ * 7. SET_PROTOCOL(boot)
+ * 8. Configure Endpoint Command
+ * 9. 轮询 Interrupt IN 传输，读取报告数据
  */
 void dwc3_hid_enumerate(void);
 

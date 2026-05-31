@@ -163,6 +163,8 @@ void kernel_main(void)
         lua_L = NULL;
     }
 
+    while(1);
+
 
     /* ── 初始化任务子系统 ───────────────────────────────── */
     KLOG_INFO("Initializing task subsystem...\n");

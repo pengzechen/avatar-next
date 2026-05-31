@@ -80,14 +80,33 @@ static inline void init_cache(void);
 static inline void
 clean_dcache_range(const void *addr, size_t size)
 {
-    const unsigned char *p      = (const unsigned char *)addr;
+    unsigned char       *p      = (unsigned char *)addr;
     const unsigned char *end    = p + size;
-    size_t                    cacheline_size = get_cache_line_size();
+    size_t                off;
+    size_t                cacheline_size = get_cache_line_size();
 
     sync_caches();  /* 确保之前的所有内存访问完成 */
 
-    for (; p < end; p += cacheline_size)
+    /* 对齐到缓存行边界（类似 invalidate_dcache_range 的处理）*/
+    off = (unsigned long)p % cacheline_size;
+    if (off) {
+        p -= off;
         __clean_dcache_one(p);
+        p += cacheline_size;
+    }
+
+    /* 处理中间完整的缓存行 */
+    for (; p + cacheline_size <= end; p += cacheline_size)
+        __clean_dcache_one(p);
+
+    /* 处理最后一个部分缓存行 */
+    if (p < end) {
+        off = (unsigned long)end % cacheline_size;
+        if (off) {
+            end -= off;
+            __clean_dcache_one(end);
+        }
+    }
 
     sync_caches();  /* 确保 clean 完成 */
 }
