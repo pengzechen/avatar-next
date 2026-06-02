@@ -1009,6 +1009,10 @@ void dwc3_hid_enumerate(void)
 
     KLOG_INFO("dwc3_enum: in=0x%08x out=0x%08x ep0_maxpkt=%u\n",
               ep32(in), ep32(out), ep0_maxpkt);
+    KLOG_INFO("  in_ctx: slot.w[0]=0x%08x slot.w[1]=0x%08x\n",
+              (unsigned)in->slot.w[0], (unsigned)in->slot.w[1]);
+    KLOG_INFO("  in_ctx: ep0.w[1]=0x%08x ep0.w[2]=0x%08x\n",
+              (unsigned)in->ep[0].w[1], (unsigned)in->ep[0].w[2]);
 
     /* ── 步骤 3: Enable Slot（独立门铃）── */
     ring_enq(&cmd_r, 0U, 0U, 0U, 9U << 10);
@@ -1036,35 +1040,52 @@ void dwc3_hid_enumerate(void)
     g_xhci_hw[ctl].dcbaa[slot_id] = (uint64_t)ep32(out);
     clean_dcache_range(g_xhci_hw[ctl].dcbaa, sizeof(g_xhci_hw[ctl].dcbaa));
     dsb();
+    KLOG_INFO("dwc3_enum: DCBAA[%u]=0x%08x (out_ctx phys)\n",
+              (unsigned)slot_id, ep32(out));
 
-    /* ── 步骤 4a: Address Device BSR=1 ──
-     * 先用 BSR=1 建立 xHC 内部 EP0 context（不在总线上发 SET_ADDRESS），
-     * 为后续 BSR=0 或直接 GET_DESCRIPTOR 准备就绪。 */
+    /* ── 步骤 4: Address Device BSR=0（SET_ADDRESS，分配 USB 地址）──
+     * Linux DWC3 对普通设备只用 BSR=0。BSR=1 仅在 Hub 设备迁移时使用。
+     * BSR=0 让 xHC 在 USB 总线上发 SET_ADDRESS，激活 EP0 的 USB 调度器。
+     * 只有完成 BSR=0 后，doorbell DB[slot] DCI=1 才会触发实际 USB 事务。 */
     ring_enq(&cmd_r, ep32(in), 0U, 0U,
-             (11U << 10) | (1U << 9) | ((uint32_t)slot_id << 24));   /* BSR=1 */
+             (11U << 10) | (0U << 9) | ((uint32_t)slot_id << 24));   /* BSR=0 */
     clean_dcache_range(g_xhci_hw[ctl].cmd_ring, sizeof(xhci_trb_t) * XHCI_CMD_RING_TRBS);
     dsb();
+    /* 诊断：打印即将提交的 BSR=0 TRB */
+    {
+        xhci_trb_t *t = &g_xhci_hw[ctl].cmd_ring[1];
+        KLOG_INFO("dwc3_enum: BSR=0 TRB: p0=0x%08x ctrl=0x%08x  in_ctx_phys=0x%08x\n",
+                  (unsigned)t->param_lo, (unsigned)t->control, ep32(in));
+        KLOG_INFO("  PORTSC=0x%08x  USBSTS=0x%08x\n",
+                  (unsigned)op_r32(op_b, XHCI_OP_PORTSC(port)),
+                  (unsigned)op_r32(op_b, XHCI_OP_USBSTS));
+    }
     write32(0U, (void *)db_b);
     dsb();
+    /* CRCR.CRR(bit3)=1 表示 xHC 已接收命令并正在执行 */
+    {
+        uint32_t crcr = op_r32(op_b, XHCI_OP_CRCR_LO);
+        KLOG_INFO("dwc3_enum: after BSR=0 doorbell  CRCR=0x%08x CRR=%u\n",
+                  (unsigned)crcr, (unsigned)((crcr >> 3) & 1U));
+    }
 
     {
         int rc = wait_cmd(&evt, NULL);
-        KLOG_INFO("dwc3_enum: Address Device BSR=1 rc=%d  USBSTS=0x%08x\n",
-                  rc, (unsigned)op_r32(op_b, XHCI_OP_USBSTS));
+        KLOG_INFO("dwc3_enum: Address Device BSR=0 rc=%d  USBSTS=0x%08x  PORTSC=0x%08x\n",
+                  rc, (unsigned)op_r32(op_b, XHCI_OP_USBSTS),
+                  (unsigned)op_r32(op_b, XHCI_OP_PORTSC(port)));
         if (rc != 0) {
-            KLOG_ERROR("dwc3_enum: BSR=1 failed\n");
+            KLOG_ERROR("dwc3_enum: BSR=0 failed (rc=%d)\n", rc);
+            /* 失败时再打一次 CRCR 看 CRR 是否还在 */
+            KLOG_ERROR("  CRCR=0x%08x\n", (unsigned)op_r32(op_b, XHCI_OP_CRCR_LO));
             return;
         }
         invalidate_dcache_range(out, sizeof(out_ctx_t));
-        KLOG_INFO("dwc3_enum: after BSR=1: slot_state=%u  ep0_state=%u  ep0.w[2]=0x%08x\n",
+        KLOG_INFO("dwc3_enum: BSR=0 OK: slot_state=%u  usb_addr=%u  ep0_state=%u\n",
                   (unsigned)((out->slot.w[3] >> 27) & 0x1FU),
-                  (unsigned)(out->ep[0].w[0] & 0x7U),
-                  (unsigned)out->ep[0].w[2]);
+                  (unsigned)(out->slot.w[3] & 0xFFU),
+                  (unsigned)(out->ep[0].w[0] & 0x7U));
     }
-
-    /* 跳过 BSR=0（SET_ADDRESS）：BSR=1 完成后 slot_state=Default，USB 地址=0。
-     * ctrl_in 可以向 addr=0 发送 GET_DESCRIPTOR；单设备枚举无需 SET_ADDRESS。
-     * BSR=0 会等待 ctrl_ring 上的 STATUS TRB，空 ring 导致命令环死锁（NOEXTRDL 也无法解决）。 */
 
     /* 清除 USBSTS 中的 EINT/PCD 残留标志（RW1C），避免影响后续传输事件检测 */
     {
@@ -1073,9 +1094,9 @@ void dwc3_hid_enumerate(void)
             op_w32(op_b, XHCI_OP_USBSTS, sts & 0x18U);
     }
 
-    KLOG_INFO("dwc3_enum: GET_DESCRIPTOR (device at addr 0)...\n");
+    KLOG_INFO("dwc3_enum: GET_DESCRIPTOR...\n");
 
-    /* ── 步骤 4: GET_DESCRIPTOR(Device, 8) → 获取 bMaxPacketSize0 ── */
+    /* ── 步骤 5: GET_DESCRIPTOR(Device, 8) → 获取 bMaxPacketSize0 ── */
     memset(g_enum.desc_buf, 0, sizeof(g_enum.desc_buf));
     int n = ctrl_in(&evt, &ctrl_r, db_b, slot_id,
                     SETUP_GET_DEV_DESC(8), 8U, g_enum.desc_buf, out);
