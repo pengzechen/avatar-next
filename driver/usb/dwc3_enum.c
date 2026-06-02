@@ -434,8 +434,10 @@ static int wait_cmd(evt_t *e, uint8_t *slot_out)
     return -1;
 }
 
-/* 等待传输完成事件（TRB type=32）；返回剩余字节数（>=0）或 <0 表示错误 */
-static int wait_xfer(evt_t *e)
+/* 等待传输完成事件（TRB type=32）
+ * setup_pa: SETUP TRB 物理地址（非零时跳过 SETUP 完成事件，继续等 STATUS）
+ * 返回剩余字节数（>=0）或 <0 表示错误 */
+static int wait_xfer_ex(evt_t *e, uint32_t setup_pa)
 {
     xhci_trb_t ev;
     for (uint32_t tries = 0; tries < 50U; tries++) {
@@ -444,6 +446,16 @@ static int wait_xfer(evt_t *e)
             if (t == 32U) {
                 uint8_t  cc  = (uint8_t)((ev.status >> 24) & 0xFFU);
                 uint32_t rem = ev.status & 0x00FFFFFFU;
+                /* SETUP TRB 的 IOC 完成事件：记录后继续等 STATUS */
+                if (setup_pa && ev.param_lo == setup_pa) {
+                    KLOG_INFO("dwc3_enum: SETUP stage done  CC=%u  rem=%u  (waiting for STATUS)\n",
+                              (unsigned)cc, (unsigned)rem);
+                    if (cc != 1U) {
+                        KLOG_ERROR("  SETUP CC=%u → abort\n", (unsigned)cc);
+                        return -(int)(unsigned)cc;
+                    }
+                    continue;
+                }
                 if (cc == 1U || cc == 13U) /* Success or Short Packet */
                     return (int)rem;
                 KLOG_ERROR("dwc3_enum: xfer CC=%u  ev: p0=0x%08x p1=0x%08x st=0x%08x ctrl=0x%08x\n",
@@ -487,13 +499,14 @@ static inline void ring_db(uintptr_t db_base, uint8_t slot, uint8_t dci)
 static int ctrl_in(evt_t *e, ring_t *cr, uintptr_t db_base,
                    uint8_t slot_id,
                    uint32_t setup_p0, uint32_t setup_p1, uint32_t len,
-                   void *buf)
+                   void *buf, out_ctx_t *out_diag)
 {
     uint32_t buf_phys = ep32(buf);
 
-    /* Setup Stage TRB: type=2, TRT=3(IN data), IDT=1, TRBLen=8 */
-    ring_enq(cr, setup_p0, setup_p1, 8U,
-             (2U << 10) | (1U << 6) | (3U << 16));
+    /* Setup Stage TRB: type=2, TRT=3(IN data), IDT=1, IOC=1, TRBLen=8
+     * IOC 使 SETUP 完成时产生事件，可判断 xHC 是否开始处理 TRB */
+    uint32_t setup_pa = ring_enq(cr, setup_p0, setup_p1, 8U,
+             (2U << 10) | (1U << 5) | (1U << 6) | (3U << 16));
 
     /* Data Stage TRB: type=3, DIR=IN(bit16=1) */
     ring_enq(cr, buf_phys, 0U, len,
@@ -505,108 +518,41 @@ static int ctrl_in(evt_t *e, ring_t *cr, uintptr_t db_base,
 
     dsb();
 
-    /* 关键修复：刷新整个控制环到内存（包括 Link TRB）
-     * ring_enq 只刷新单个 TRB，但 Link TRB 可能在不同的缓存行，
-     * 且 ring_init 之后的 clean_dcache_range 可能因后续操作失效。
-     * 确保 xHC 能看到完整的 TRB 环。 */
+    /* 刷新整个控制环到 DRAM，确保 xHC 看到完整的 TRB 环（含 Link TRB）*/
     clean_dcache_range(cr->ring, sizeof(xhci_trb_t) * cr->cap);
     dsb();
 
-    /* 🔍 调试 1️⃣: 打印 EP0 TRB ring，分析 cycle bit、IOC、LINK TRB */
-    {
-        uint32_t base_idx = cr->enq >= 3U ? cr->enq - 3U : 0U;
-        invalidate_dcache_range(&cr->ring[base_idx], sizeof(xhci_trb_t) * 3U);
-        /* Link TRB 也需要 invalidate，否则读到的是脏缓存 */
-        invalidate_dcache_range(&cr->ring[cr->cap-1U], sizeof(xhci_trb_t));
-        KLOG_INFO("ctrl_in: buf_phys=0x%08x  enq=%u  base_idx=%u  pcs=%u\n",
-                  (unsigned)buf_phys, (unsigned)cr->enq, (unsigned)base_idx, (unsigned)cr->pcs);
-        /* SETUP TRB: type=2, TRT=3, IDT=1 */
-        uint32_t setup_ctrl = cr->ring[base_idx].control;
-        KLOG_INFO("  [TRB0] SETUP  type=%u C=%u  ctrl=0x%08x\n",
-                  (unsigned)((setup_ctrl >> 10) & 0x3FU),
-                  (unsigned)(setup_ctrl & 1U),
-                  (unsigned)setup_ctrl);
-        /* DATA TRB: type=3, DIR=IN */
-        uint32_t data_ctrl = cr->ring[base_idx+1U].control;
-        KLOG_INFO("  [TRB1] DATA   type=%u C=%u DIR=%u  ctrl=0x%08x\n",
-                  (unsigned)((data_ctrl >> 10) & 0x3FU),
-                  (unsigned)(data_ctrl & 1U),
-                  (unsigned)((data_ctrl >> 16) & 1U),
-                  (unsigned)data_ctrl);
-        /* STATUS TRB: type=4, DIR=OUT, IOC=1 */
-        uint32_t status_ctrl = cr->ring[base_idx+2U].control;
-        KLOG_INFO("  [TRB2] STATUS type=%u C=%u DIR=%u IOC=%u  ctrl=0x%08x\n",
-                  (unsigned)((status_ctrl >> 10) & 0x3FU),
-                  (unsigned)(status_ctrl & 1U),
-                  (unsigned)((status_ctrl >> 16) & 1U),
-                  (unsigned)((status_ctrl >> 5) & 1U),
-                  (unsigned)status_ctrl);
-        /* LINK TRB: type=6, TC=1, cycle should be ~pcs */
-        uint32_t link_ctrl = cr->ring[cr->cap-1U].control;
-        uint32_t link_type = (link_ctrl >> 10) & 0x3FU;
-        uint32_t link_c = link_ctrl & 1U;
-        uint32_t link_tc = (link_ctrl >> 1) & 1U;
-        KLOG_INFO("  [TRB%u] LINK   type=%u C=%u TC=%u (expected C=%u when pcs=%u)  ctrl=0x%08x  p0=0x%08x\n",
-                  (unsigned)(cr->cap-1U),
-                  (unsigned)link_type,
-                  (unsigned)link_c,
-                  (unsigned)link_tc,
-                  (unsigned)cr->pcs,  /* Link TRB cycle should == pcs when TC=1 */
-                  (unsigned)cr->pcs,
-                  (unsigned)link_ctrl,
-                  (unsigned)cr->ring[cr->cap-1U].param_lo);
-    }
-
-    /* 🔍 调试 2️⃣: 打印 doorbell 前 EP0 dequeue pointer */
-    invalidate_dcache_range(&g_enum.out_ctx, sizeof(out_ctx_t));
-    uint32_t ep0_w2_before = g_enum.out_ctx.ep[0].w[2];
-    uint32_t ep0_deq_phys = ep0_w2_before & ~1U;
-    uint32_t ep0_dcs = ep0_w2_before & 1U;
-    uint32_t ep0_deq_idx = (ep0_deq_phys - ep32(cr->ring)) / sizeof(xhci_trb_t);
-    KLOG_INFO("ctrl_in: BEFORE db  ep0.w[2]=0x%08x  deq_phys=0x%08x  deq_idx=%u  dcs=%u\n",
-              (unsigned)ep0_w2_before,
-              (unsigned)ep0_deq_phys,
-              (unsigned)ep0_deq_idx,
-              (unsigned)ep0_dcs);
+    /* DMA 方向 device→host：doorbell 前先 invalidate 目标 buf，
+     * 防止 CPU 脏缓存行在 DMA 完成后被回写而覆盖 DMA 数据。*/
+    clean_and_invalidate_dcache_range(buf, len);
+    dsb();
 
     ring_db(db_base, slot_id, 1U);   /* EP0 DCI=1 */
 
-    /* 🔍 调试：doorbell 后立即验证 TRB 在内存中 */
-    {
-        /* 强制 invalidate cache，确保读的是 DRAM */
-        for (uint32_t i = 0; i < 4U; i++) {
-            invalidate_dcache_range(&cr->ring[i], sizeof(xhci_trb_t));
+    /* 诊断：doorbell 后 100ms 轮询 EP0 TR dequeue pointer 变化
+     * 若 xHC 开始取 TRB，out_ctx EP0.w[2] 会推进 */
+    if (out_diag) {
+        invalidate_dcache_range(&out_diag->ep[0], sizeof(ctx_t));
+        uint32_t prev_deq = out_diag->ep[0].w[2];
+        KLOG_INFO("ctrl_in: ep0.w[2] at doorbell = 0x%08x  setup_pa=0x%08x\n",
+                  (unsigned)prev_deq, (unsigned)setup_pa);
+        for (uint32_t pi = 0U; pi < 200U; pi++) {
+            delay_us(500U);
+            invalidate_dcache_range(&out_diag->ep[0], sizeof(ctx_t));
+            uint32_t cur_deq = out_diag->ep[0].w[2];
+            if (cur_deq != prev_deq) {
+                KLOG_INFO("ctrl_in: ep0.w[2] moved 0x%08x→0x%08x (+%ums)\n",
+                          (unsigned)prev_deq, (unsigned)cur_deq,
+                          (unsigned)((pi + 1U) / 2U));
+                prev_deq = cur_deq;
+            }
         }
-        KLOG_INFO("ctrl_in: after db TRB[0] ctrl=0x%08x  TRB[1] ctrl=0x%08x  TRB[2] ctrl=0x%08x\n",
-                  (unsigned)cr->ring[0].control,
-                  (unsigned)cr->ring[1].control,
-                  (unsigned)cr->ring[2].control);
+        KLOG_INFO("ctrl_in: ep0.w[2] after 100ms = 0x%08x\n",
+                  (unsigned)out_diag->ep[0].w[2]);
     }
 
-    /* 🔍 调试 2️⃣: 打印 doorbell 后 EP0 dequeue pointer */
-    invalidate_dcache_range(&g_enum.out_ctx, sizeof(out_ctx_t));
-    uint32_t ep0_w2_after = g_enum.out_ctx.ep[0].w[2];
-    ep0_deq_phys = ep0_w2_after & ~1U;
-    ep0_dcs = ep0_w2_after & 1U;
-    ep0_deq_idx = (ep0_deq_phys - ep32(cr->ring)) / sizeof(xhci_trb_t);
-    KLOG_INFO("ctrl_in: AFTER db   ep0.w[2]=0x%08x  deq_phys=0x%08x  deq_idx=%u  dcs=%u\n",
-              (unsigned)ep0_w2_after,
-              (unsigned)ep0_deq_phys,
-              (unsigned)ep0_deq_idx,
-              (unsigned)ep0_dcs);
-
-    /* 诊断: 打 doorbell 后轮询 ep0.w[2]，每 10ms 一次，持续 200ms */
-    for (uint32_t _pi = 0; _pi < 20U; _pi++) {
-        delay_ms(10U);
-        invalidate_dcache_range(&g_enum.out_ctx, sizeof(out_ctx_t));
-        uint32_t _w2 = g_enum.out_ctx.ep[0].w[2];
-        uint32_t _w0 = g_enum.out_ctx.ep[0].w[0];
-        if (_pi == 0U || _pi == 9U || _pi == 19U)
-            KLOG_INFO("  ep0_poll[%u]: ep0.w[2]=0x%08x  ep_state=%u\n",
-                      (unsigned)_pi, (unsigned)_w2, (unsigned)(_w0 & 7U));
-    }
-
-    int r = wait_xfer(e);
+    int r = wait_xfer_ex(e, setup_pa);
+    /* 传输完成后再次 invalidate，确保 CPU 读到 DMA 写入的最新数据 */
     invalidate_dcache_range(buf, len);
     if (r < 0) return r;
     return (int)len - r;
@@ -627,30 +573,11 @@ static int ctrl_nodata(evt_t *e, ring_t *cr, uintptr_t db_base,
 
     dsb();
 
-    /* 关键修复：刷新整个控制环到内存（包括 Link TRB）*/
     clean_dcache_range(cr->ring, sizeof(xhci_trb_t) * cr->cap);
     dsb();
-
-    /* 打印实际写出的 TRB 内容（使用正确的索引）*/
-    uint32_t base_idx = cr->enq >= 2U ? cr->enq - 2U : 0U;
-    invalidate_dcache_range(&cr->ring[base_idx], sizeof(xhci_trb_t) * 2U);
-    /* Link TRB 也需要 invalidate，否则读到的是脏缓存 */
-    invalidate_dcache_range(&cr->ring[cr->cap-1U], sizeof(xhci_trb_t));
-    KLOG_INFO("ctrl_nodata: slot=%u DB[%u] db=0x%lx\n",
-              (unsigned)slot_id, (unsigned)slot_id,
-              (unsigned long)(db_base + (uintptr_t)slot_id * 4U));
-    KLOG_INFO("  trb[%u] p0=0x%08x p1=0x%08x st=0x%08x ctrl=0x%08x (setup)\n",
-              (unsigned)base_idx, (unsigned)cr->ring[base_idx].param_lo,
-              (unsigned)cr->ring[base_idx].param_hi, (unsigned)cr->ring[base_idx].status,
-              (unsigned)cr->ring[base_idx].control);
-    KLOG_INFO("  trb[%u] p0=0x%08x p1=0x%08x st=0x%08x ctrl=0x%08x (status)\n",
-              (unsigned)(base_idx + 1U), (unsigned)cr->ring[base_idx + 1U].param_lo,
-              (unsigned)cr->ring[base_idx + 1U].param_hi, (unsigned)cr->ring[base_idx + 1U].status,
-              (unsigned)cr->ring[base_idx + 1U].control);
-    KLOG_INFO("  link   ctrl=0x%08x\n", (unsigned)cr->ring[cr->cap-1U].control);
     ring_db(db_base, slot_id, 1U);
 
-    return wait_xfer(e);
+    return wait_xfer_ex(e, 0U);
 }
 
 /* ─── USB Setup 包宏（xHCI TRB param_lo/param_hi 编码）
@@ -844,6 +771,20 @@ void dwc3_hid_enumerate(void)
     KLOG_INFO("dwc3_enum: [OTG%d] port %u\n", ctl, port + 1U);
     KLOG_INFO("  speed=%u starting enumeration\n", port_speed);
     KLOG_INFO("  dboff=0x%08x  db_b=0x%lx\n", (unsigned)dboff, (unsigned long)db_b);
+
+    /* 诊断：打印 DWC3 关键寄存器，验证 Host mode 和 GFLADJ 是否正确 */
+    {
+        uint32_t gsts  = read32((void *)(base + DWC3_GSTS));
+        uint32_t gfladj = read32((void *)(base + DWC3_GFLADJ));
+        uint32_t curmod = gsts & 0x3U;
+        KLOG_INFO("dwc3_enum: DWC3 diag: GSTS=0x%08x CURMOD=%u(%s) GFLADJ=0x%08x\n",
+                  (unsigned)gsts, (unsigned)curmod,
+                  curmod == 0U ? "Device" : curmod == 1U ? "Host" :
+                  curmod == 2U ? "DRD" : "?",
+                  (unsigned)gfladj);
+        if (curmod != 1U)
+            KLOG_ERROR("dwc3_enum: CURMOD != Host!  EP0 传输将沉默\n");
+    }
 
     /* ── Initialize tracking state for each ring ── */
     ring_t cmd_r;
@@ -1054,6 +995,7 @@ void dwc3_hid_enumerate(void)
         case 1U: case 2U: default: ep0_maxpkt = 8U; break;
     }
     in->ep[0].w[0] = 0U;
+    /* DW1: MaxPkt | EP Type=4(Control Bidir) | CErr=3 (bits[2:1] of DW1) */
     in->ep[0].w[1] = ((uint32_t)ep0_maxpkt << 16) | (4U << 3) | (3U << 1);
     in->ep[0].w[2] = ep32(g_enum.ctrl_ring) | 1U;
     in->ep[0].w[3] = 0U;
@@ -1095,49 +1037,34 @@ void dwc3_hid_enumerate(void)
     clean_dcache_range(g_xhci_hw[ctl].dcbaa, sizeof(g_xhci_hw[ctl].dcbaa));
     dsb();
 
-    /* ── 步骤 4: Address Device（BSR=1，独立门铃）──
-     * BSR=1: 只做内部状态建立，不发送 SET_ADDRESS USB 总线事务，设备保持 addr=0。
-     * RK3588 quirk: BSR=0 会导致 SET_ADDRESS 挂死（CRCR.CRR=1 无事件返回）。*/
+    /* ── 步骤 4a: Address Device BSR=1 ──
+     * 先用 BSR=1 建立 xHC 内部 EP0 context（不在总线上发 SET_ADDRESS），
+     * 为后续 BSR=0 或直接 GET_DESCRIPTOR 准备就绪。 */
     ring_enq(&cmd_r, ep32(in), 0U, 0U,
              (11U << 10) | (1U << 9) | ((uint32_t)slot_id << 24));   /* BSR=1 */
     clean_dcache_range(g_xhci_hw[ctl].cmd_ring, sizeof(xhci_trb_t) * XHCI_CMD_RING_TRBS);
     dsb();
-
-    KLOG_INFO("dwc3_enum: Address Device: cmd[1]=0x%08x  enq=%u\n",
-              g_xhci_hw[ctl].cmd_ring[1].control, (unsigned)cmd_r.enq);
-
     write32(0U, (void *)db_b);
     dsb();
 
-    /* 等待 Address Device 完成 */
     {
         int rc = wait_cmd(&evt, NULL);
-        KLOG_INFO("dwc3_enum: Address Device rc=%d  USBSTS=0x%08x\n",
+        KLOG_INFO("dwc3_enum: Address Device BSR=1 rc=%d  USBSTS=0x%08x\n",
                   rc, (unsigned)op_r32(op_b, XHCI_OP_USBSTS));
         if (rc != 0) {
-            invalidate_dcache_range(g_xhci_hw[ctl].cmd_ring, sizeof(xhci_trb_t) * 4);
-            for (uint32_t i = 0; i < 4U; i++)
-                KLOG_ERROR("  cmd[%u] p0=0x%08x ctrl=0x%08x\n", i,
-                           g_xhci_hw[ctl].cmd_ring[i].param_lo,
-                           g_xhci_hw[ctl].cmd_ring[i].control);
-            KLOG_ERROR("  PORTSC=0x%08x  CRCR=0x%08x\n",
-                       op_r32(op_b, XHCI_OP_PORTSC(port)),
-                       op_r32(op_b, XHCI_OP_CRCR_LO));
-            KLOG_ERROR("  ERSTSZ=%u  ERSTBA=0x%08x  ERDP=0x%08x  IMAN=0x%08x\n",
-                       rt_r32(ir0, XHCI_IR_ERSTSZ),
-                       rt_r32(ir0, XHCI_IR_ERSTBA_LO),
-                       rt_r32(ir0, XHCI_IR_ERDP_LO),
-                       rt_r32(ir0, XHCI_IR_IMAN));
-            KLOG_ERROR("dwc3_enum: Address Device BSR=1 failed\n");
+            KLOG_ERROR("dwc3_enum: BSR=1 failed\n");
             return;
         }
         invalidate_dcache_range(out, sizeof(out_ctx_t));
-        KLOG_INFO("dwc3_enum: slot_state=%u  usb_addr=%u  ep0_state=%u\n",
+        KLOG_INFO("dwc3_enum: after BSR=1: slot_state=%u  ep0_state=%u  ep0.w[2]=0x%08x\n",
                   (unsigned)((out->slot.w[3] >> 27) & 0x1FU),
-                  (unsigned)(out->slot.w[3] & 0xFFU),
-                  (unsigned)(out->ep[0].w[0] & 0x7U));
+                  (unsigned)(out->ep[0].w[0] & 0x7U),
+                  (unsigned)out->ep[0].w[2]);
     }
-    delay_ms(5U);
+
+    /* 跳过 BSR=0（SET_ADDRESS）：BSR=1 完成后 slot_state=Default，USB 地址=0。
+     * ctrl_in 可以向 addr=0 发送 GET_DESCRIPTOR；单设备枚举无需 SET_ADDRESS。
+     * BSR=0 会等待 ctrl_ring 上的 STATUS TRB，空 ring 导致命令环死锁（NOEXTRDL 也无法解决）。 */
 
     /* 清除 USBSTS 中的 EINT/PCD 残留标志（RW1C），避免影响后续传输事件检测 */
     {
@@ -1146,12 +1073,12 @@ void dwc3_hid_enumerate(void)
             op_w32(op_b, XHCI_OP_USBSTS, sts & 0x18U);
     }
 
-    KLOG_INFO("dwc3_enum: GET_DESCRIPTOR (device at addr 0, BSR=1)...\n");
+    KLOG_INFO("dwc3_enum: GET_DESCRIPTOR (device at addr 0)...\n");
 
     /* ── 步骤 4: GET_DESCRIPTOR(Device, 8) → 获取 bMaxPacketSize0 ── */
     memset(g_enum.desc_buf, 0, sizeof(g_enum.desc_buf));
     int n = ctrl_in(&evt, &ctrl_r, db_b, slot_id,
-                    SETUP_GET_DEV_DESC(8), 8U, g_enum.desc_buf);
+                    SETUP_GET_DEV_DESC(8), 8U, g_enum.desc_buf, out);
     if (n < 8) {
         KLOG_ERROR("dwc3_enum: GET_DESCRIPTOR(Dev,8) failed n=%d\n", n);
         /* check if HC advanced TR Dequeue Pointer (=TRBs consumed) */
@@ -1190,7 +1117,7 @@ void dwc3_hid_enumerate(void)
         /* Evaluate Context Command: type=13, update EP0 maxpkt */
         ep0_maxpkt = bMaxPkt0;
         in->ctrl.w[1] = 0x2U;   /* A1=EP0 only */
-        in->ep[0].w[1] = ((uint32_t)ep0_maxpkt << 16) | (4U << 3) | 3U;
+        in->ep[0].w[1] = ((uint32_t)ep0_maxpkt << 16) | (4U << 3) | (3U << 1);
         dsb();
         clean_dcache_range(in, sizeof(in_ctx_t));
         ring_enq(&cmd_r, ep32(in), 0U, 0U,
@@ -1206,7 +1133,7 @@ void dwc3_hid_enumerate(void)
     uint16_t dev_vid = 0, dev_pid = 0;
     memset(g_enum.desc_buf, 0, sizeof(g_enum.desc_buf));
     n = ctrl_in(&evt, &ctrl_r, db_b, slot_id,
-                SETUP_GET_DEV_DESC(18), 18U, g_enum.desc_buf);
+                SETUP_GET_DEV_DESC(18), 18U, g_enum.desc_buf, NULL);
     if (n >= 12) {
         dev_vid = (uint16_t)g_enum.desc_buf[8]  | ((uint16_t)g_enum.desc_buf[9]  << 8);
         dev_pid = (uint16_t)g_enum.desc_buf[10] | ((uint16_t)g_enum.desc_buf[11] << 8);
@@ -1217,7 +1144,7 @@ void dwc3_hid_enumerate(void)
     /* ── 步骤 6: GET_DESCRIPTOR(Configuration, 9) → wTotalLength ── */
     memset(g_enum.desc_buf, 0, 9);
     n = ctrl_in(&evt, &ctrl_r, db_b, slot_id,
-                SETUP_GET_CFG_DESC(9), 9U, g_enum.desc_buf);
+                SETUP_GET_CFG_DESC(9), 9U, g_enum.desc_buf, NULL);
     if (n < 9) {
         KLOG_ERROR("dwc3_enum: GET_DESCRIPTOR(Cfg,9) failed n=%d\n", n);
         return;
@@ -1233,7 +1160,7 @@ void dwc3_hid_enumerate(void)
     /* ── 步骤 7: GET_DESCRIPTOR(Configuration, wTotalLength) → 解析端点 ── */
     memset(g_enum.desc_buf, 0, sizeof(g_enum.desc_buf));
     n = ctrl_in(&evt, &ctrl_r, db_b, slot_id,
-                SETUP_GET_CFG_DESC(total_len), (uint32_t)total_len, g_enum.desc_buf);
+                SETUP_GET_CFG_DESC(total_len), (uint32_t)total_len, g_enum.desc_buf, NULL);
     if (n < 9) {
         KLOG_ERROR("dwc3_enum: GET_DESCRIPTOR(Cfg,full) failed n=%d\n", n);
         return;
@@ -1319,7 +1246,7 @@ void dwc3_hid_enumerate(void)
         ring_db(db_b, slot_id, (uint8_t)g_ep_dci);
 
         /* 等待传输完成事件 */
-        int r = wait_xfer(&evt);
+        int r = wait_xfer_ex(&evt, 0U);
         invalidate_dcache_range(buf, HID_BUF_SZ);
         if (r < 0) {
             KLOG_ERROR("dwc3_enum: HID read failed rep=%u r=%d\n", rep, r);

@@ -56,6 +56,7 @@ fn alloc_oom(_layout: Layout) -> ! {
 
 // ─── Panic 处理 ──────────────────────────────────────────────────────────────
 
+#[cfg(not(test))]
 #[panic_handler]
 fn panic(_info: &core::panic::PanicInfo) -> ! {
     unsafe { platform_panic() };

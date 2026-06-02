@@ -289,6 +289,80 @@ static void dwc3_poll_delay(volatile uint32_t n)
     }
 }
 
+/* ── RK3588 USB2 PHY（Innosilicon）初始化 ──────────────────────────────
+ *
+ * 参考：Linux drivers/phy/rockchip/phy-rockchip-inno-usb2.c
+ *       rk3588_usb2phy_tuning() + rockchip_usb2phy_power_on()
+ *
+ * OTG0 (FC000000): u2phy0, usb2phy0_grf @ 0xFD5D0000, type=OTG  (reg=0x0000)
+ * OTG1 (FC400000): u2phy2, usb2phy2_grf @ 0xFD5D8000, type=HOST (reg=0x8000)
+ *
+ * HOST 类型寄存器布局（reg=0x8000）：
+ *   GRF+0x0008 bit13: SIDDQ   — 0=模拟块上电  1=隔离（默认）
+ *   GRF+0x000c [4:0]: suspend config (0x14 = xcvrsel=HS, term=FS, opmode=non-drive)
+ *   GRF+0x0004 [11:8]: HS DC 电压 +5.89% (0x09)
+ *   GRF+0x0008 [4:3]: 预加重 2× (0b10)
+ *   GRF+0x0008 bit2:  phy_sus — 0=PHY 活跃  1=挂起（默认）
+ *
+ * 所有 GRF 写入使用 Rockchip 写掩码格式：
+ *   bits[31:16] = 写使能掩码，bits[15:0] = 数据
+ *
+ * CRU reset: SRST_OTGPHY_U2_0 = 623 → SOFTRST38 bit15 @ CRU+0x0498
+ *
+ * 不做此初始化的后果：
+ *   - PHY 保持 Device 模式 D+ pullup → PORTSC.CCS=1（假连接）
+ *   - xHC 发不出 SETUP token → EP0 dequeue pointer 永远不动
+ * ────────────────────────────────────────────────────────────────────── */
+static void rk3588_usb2phy_init_host(int id)
+{
+    uintptr_t grf, cru;
+    if (id == 0) {
+        grf = (uintptr_t)phys_to_virt(RK3588_USB2PHY0_GRF_PHYS);
+    } else {
+        grf = (uintptr_t)phys_to_virt(RK3588_USB2PHY2_GRF_PHYS);
+    }
+    cru = (uintptr_t)phys_to_virt(RK3588_CRU_BASE_PHYS);
+
+    /* 1. SIDDQ 去断言：bit13=0 → 打开模拟块（mask=0x2000, val=0）*/
+    write32(0x20000000U, (void *)(grf + USB2PHY_GRF_CON2));
+
+    /* 2. PHY 复位（CRU SOFTRST38 bit15 = SRST_OTGPHY_U2_0）
+     *    Rockchip 写掩码格式：(mask<<16)|data */
+    uint32_t rst_mask = (1U << (RK3588_SRST_OTGPHY_U2_0_BIT + 16U));
+    uint32_t rst_set  = rst_mask | (1U << RK3588_SRST_OTGPHY_U2_0_BIT);
+    uint32_t rst_clr  = rst_mask;
+    /* RK3588_SOFTRST38_OFF = 0x0498 已经包含 SOFTRST 基址 0x0400，
+     * 不要再加 RK3588_CRU_SOFTRST_OFF，否则写到错误地址 0x0898 */
+    write32(rst_set, (void *)(cru + RK3588_SOFTRST38_OFF));
+    dwc3_poll_delay(1000U);   /* ~10μs */
+    write32(rst_clr, (void *)(cru + RK3588_SOFTRST38_OFF));
+    dwc3_poll_delay(10000U);  /* ~100μs */
+
+    /* 3. Suspend config：bits[4:0] = 0x14（GENMASK(20,16)|0x14）*/
+    write32(0x001F0014U, (void *)(grf + USB2PHY_GRF_CON3));
+
+    /* 4. HS DC 电压 +5.89%：bits[11:8] = 0x09（GENMASK(27,24)|0x0900）*/
+    write32(0x0F000900U, (void *)(grf + USB2PHY_GRF_CON1));
+
+    /* 5. TX 预加重 2×：bits[4:3] = 0b10（GENMASK(20,19)|0x0010）*/
+    write32(0x00180010U, (void *)(grf + USB2PHY_GRF_CON2));
+
+    /* 6. 等待 UTMI 时钟稳定（~1.5ms）*/
+    dwc3_poll_delay(150000U);
+
+    /* 7. phy_sus=0：bit2=0 → PHY 退出挂起，进入活跃状态（mask=0x0004, val=0）*/
+    write32(0x00040000U, (void *)(grf + USB2PHY_GRF_CON2));
+
+    /* 8. 再等 500μs 确保 PHY 稳定 */
+    dwc3_poll_delay(50000U);
+
+    KLOG_INFO("dwc3: [OTG%d] USB2 PHY init done"
+              "  GRF+0x08=0x%08x GRF+0x0c=0x%08x\n",
+              id,
+              (unsigned)read32((void *)(grf + USB2PHY_GRF_CON2)),
+              (unsigned)read32((void *)(grf + USB2PHY_GRF_CON3)));
+}
+
 /* ── xHCI 读写（相对于 operational base = dwc3_base + CAPLENGTH）──────── */
 
 static inline uint32_t xhci_op_read(uintptr_t op_base, uint32_t off)
@@ -363,27 +437,106 @@ static int dwc3_host_init_one(uintptr_t base, int id)
     pipectl &= ~DWC3_GUSB3PIPECTL_SUSPEN;
     write32(pipectl, (void *)(base + DWC3_GUSB3PIPECTL0));
 
-    /* 3. RK3588 的 USB2 PHY 通常已由 BootROM/U-Boot 初始化。
-     * CoreSoftReset 会扰动 DWC3↔PHY 时序；端口 reset 仍能完成，但
-     * BSR=0 Address Device 可能卡在 SET_ADDRESS 总线事务中不返回事件。
-     * 因此这里只清掉测试缩放位并保留 PHY/PLL 状态。*/
-    uint32_t gctl = dwc3_read32(base, DWC3_GCTL);
-    gctl &= ~DWC3_GCTL_CORESOFTRESET;
-    gctl &= ~DWC3_GCTL_SCALEDOWN_MASK;
-    write32(gctl, (void *)(base + DWC3_GCTL));
-    uint32_t gsts = dwc3_read32(base, DWC3_GSTS);
-    dwc3_poll_delay(1000000U);
+    /* 3. DWC3 Core Soft Reset (GCTL.CORESOFTRESET)
+     * Linux dwc3_core_init() 在切换到 Host mode 之前做 core soft reset，
+     * 清除 BootROM 遗留的 Device mode 内部状态机。不做此复位，BSR=0 SET_ADDRESS
+     * 因 Device 模式调度器干扰会永久卡死（command ring 无事件返回）。
+     *
+     * 关键细节：CORESOFTRESET 是 self-clearing bit，需要 PHY 发出 ACK 才能清零。
+     * 若 PHY 处于 Device-connected 状态，无法 ACK → CORESOFTRESET 永远不清零。
+     * 修复：先断言 PHYSOFTRST（USB2 PHY 软复位），PHY 进入复位状态后可以 ACK，
+     *        再断言 CORESOFTRESET。PHY 释放复位后 ACK DWC3，CORESOFTRESET 自清。
+     *
+     * Linux 通过 phy_reset() 完成 PHY 复位，我们直接操作 GUSB2PHYCFG0.PHYSOFTRST。
+     * 注意：PHYSOFTRST 不会影响 USBTRDTIM 等字段（CORESOFTRESET 也保留 PHY cfg 寄存器）。
+     */
 
-    KLOG_INFO("dwc3: [OTG%d] core soft reset skipped  GCTL=0x%08x  GSTS=0x%08x\n",
+    /* 3a. 断言 USB2 PHY 软复位 */
+    phycfg = dwc3_read32(base, DWC3_GUSB2PHYCFG0);
+    phycfg |= DWC3_GUSB2PHYCFG_PHYSOFTRST;
+    write32(phycfg, (void *)(base + DWC3_GUSB2PHYCFG0));
+
+    /* 3b. 断言 DWC3 core soft reset */
+    uint32_t gctl = dwc3_read32(base, DWC3_GCTL);
+    gctl &= ~DWC3_GCTL_SCALEDOWN_MASK;
+    gctl |= DWC3_GCTL_CORESOFTRESET;
+    write32(gctl, (void *)(base + DWC3_GCTL));
+
+    /* 等待复位信号传播 */
+    dwc3_poll_delay(1000000U);  /* ~5ms */
+
+    /* 3c. 释放 USB2 PHY 复位，PHY 开始重新初始化并向 DWC3 发送 ACK */
+    phycfg = dwc3_read32(base, DWC3_GUSB2PHYCFG0);
+    phycfg &= ~DWC3_GUSB2PHYCFG_PHYSOFTRST;
+    write32(phycfg, (void *)(base + DWC3_GUSB2PHYCFG0));
+
+    /* 3d. 等待 CORESOFTRESET 自清零（PHY ACK 后自动清零）*/
+    {
+        uint32_t w = 5000000U;
+        while (w--) {
+            gctl = dwc3_read32(base, DWC3_GCTL);
+            if (!(gctl & DWC3_GCTL_CORESOFTRESET))
+                break;
+            dwc3_poll_delay(10);
+        }
+        if (gctl & DWC3_GCTL_CORESOFTRESET)
+            KLOG_WARN("dwc3: [OTG%d] CORESOFTRESET timeout, forcing clear\n", id);
+    }
+
+    /* 3e. 若超时未自清零则强制清除，防止 xHCI 寄存器全为 0 */
+    gctl = dwc3_read32(base, DWC3_GCTL);
+    if (gctl & DWC3_GCTL_CORESOFTRESET) {
+        gctl &= ~DWC3_GCTL_CORESOFTRESET;
+        write32(gctl, (void *)(base + DWC3_GCTL));
+        dwc3_poll_delay(500000U);
+    }
+
+    /* PHY 稳定时间 */
+    dwc3_poll_delay(2000000U);
+
+    /* 重新配置 PHY：PHYSOFTRST 后 USBTRDTIM 等可能被复位 */
+    phycfg = dwc3_read32(base, DWC3_GUSB2PHYCFG0);
+    phycfg &= ~DWC3_GUSB2PHYCFG_SUSPHY;
+    phycfg &= ~DWC3_GUSB2PHYCFG_USBTRDTIM_MASK;
+    phycfg |=  DWC3_GUSB2PHYCFG_USBTRDTIM(9U);
+    write32(phycfg, (void *)(base + DWC3_GUSB2PHYCFG0));
+
+    uint32_t gsts = dwc3_read32(base, DWC3_GSTS);
+    KLOG_INFO("dwc3: [OTG%d] core soft reset done  GCTL=0x%08x  GSTS=0x%08x\n",
               id, (unsigned)dwc3_read32(base, DWC3_GCTL), (unsigned)gsts);
 
-    /* 4. 切换到 Host 模式（PRTCAPDIR = 01） */
+    /* 4. 停止 Device 模式控制器，再切换到 Host 模式
+     *
+     * 问题：DWC3 从 BootROM 以 Device mode 启动，DCTL.RUN_STOP=1（Device 运行中）。
+     * 即使切换 PRTCAPDIR=Host，Device 状态机仍在运行并消费 USB 总线事务，
+     * 导致 BSR=0 SET_ADDRESS 命令的 STATUS ZLP 被 Device 侧吞掉，Host 永远挂死。
+     *
+     * 修复：切换 PRTCAPDIR 之前先写 DCTL.RUN_STOP=0 停止 Device 控制器。
+     * Linux 通过 CORESOFTRESET 来清除 Device 状态机（需要 PHY 初始化框架支持）。
+     * 我们的 bare-metal 环境 PHY 未完全初始化，CORESOFTRESET 无法自清零，
+     * 因此直接操作 DCTL 停止 Device 控制器作为等效替代。
+     */
+    {
+        uint32_t dctl = dwc3_read32(base, DWC3_DCTL);
+        KLOG_INFO("dwc3: [OTG%d] DCTL before stop: 0x%08x (RUN_STOP=%u)\n",
+                  id, (unsigned)dctl, (unsigned)((dctl >> 31) & 1U));
+        if (dctl & DWC3_DCTL_RUN_STOP) {
+            dctl &= ~DWC3_DCTL_RUN_STOP;
+            write32(dctl, (void *)(base + DWC3_DCTL));
+            /* 等待 Device 控制器停止（DSTS.DEVCTRLHLT = 1）*/
+            dwc3_poll_delay(5000000U);  /* ~5ms */
+            dctl = dwc3_read32(base, DWC3_DCTL);
+            KLOG_INFO("dwc3: [OTG%d] DCTL after stop: 0x%08x\n", id, (unsigned)dctl);
+        }
+    }
+
+    /* 切换到 Host 模式（PRTCAPDIR = 01） */
     gctl = dwc3_read32(base, DWC3_GCTL);
     gctl &= ~DWC3_GCTL_PRTCAP_MASK;
     gctl |= (DWC3_GCTL_PRTCAP_HOST << DWC3_GCTL_PRTCAP_SHIFT);
     write32(gctl, (void *)(base + DWC3_GCTL));
 
-    dwc3_poll_delay(200000U);
+    dwc3_poll_delay(500000U);  /* ~0.5ms, 让 Host/Device 状态机切换完成 */
 
     gctl = dwc3_read32(base, DWC3_GCTL);
     KLOG_INFO("dwc3: [OTG%d] GCTL after host mode set: 0x%08x  mode=%s\n",
@@ -391,11 +544,32 @@ static int dwc3_host_init_one(uintptr_t base, int id)
               (DWC3_GCTL_PRTCAPDIR(gctl) == DWC3_GCTL_PRTCAP_HOST) ?
               "Host" : "?");
 
-    /* 4b. DWC3 v3.00a host 模式必要配置 GUCTL */
+    /* 诊断：立即打印 GSTS（尚未 PHY init，CURMOD 可能还是 Device）*/
+    KLOG_INFO("dwc3: [OTG%d] GSTS early=0x%08x CURMOD(early)=%u\n",
+              id, (unsigned)dwc3_read32(base, DWC3_GSTS),
+              (unsigned)(dwc3_read32(base, DWC3_GSTS) & 0x3U));
+
+    /* 4b. DWC3 GUCTL1 (0xC11C) RK3588 quirks
+     * TX_IPGAP_LINECHECK_DIS: HS 枚举必须，否则 SET_ADDRESS 在总线上失败（BSR=0 挂死）
+     * PARKMODE_DISABLE_SS: SS Park Mode 禁用
+     * PARKMODE_DISABLE_HS: HS Park Mode 禁用（OTG1 专用，Linux DTS parkmode-disable-hs-quirk）
+     *
+     * 注意：这些 bit 在 Linux kernel 里是 GUCTL1 (0xC11C) 的 bit，
+     * 不是 GUCTL (0xC12C)！写错寄存器会导致 HS 枚举失败。
+     */
+    uint32_t guctl1 = dwc3_read32(base, DWC3_GUCTL1);
+    guctl1 |= DWC3_GUCTL1_TX_IPGAP_LINECHECK_DIS;
+    guctl1 |= DWC3_GUCTL1_PARKMODE_DISABLE_SS;
+    if (id == 1)
+        guctl1 |= DWC3_GUCTL1_PARKMODE_DISABLE_HS;  /* OTG1 only */
+    write32(guctl1, (void *)(base + DWC3_GUCTL1));
+    KLOG_INFO("dwc3: [OTG%d] GUCTL1=0x%08x\n", id,
+              (unsigned)dwc3_read32(base, DWC3_GUCTL1));
+
+    /* 4c. DWC3 GUCTL (0xC12C): Host IN 自动重试 + NOEXTRDL pre-fetch quirk */
     uint32_t guctl = dwc3_read32(base, DWC3_GUCTL);
-    guctl |= DWC3_GUCTL_USBHSTINAUTORETRYEN;  /* Host IN 自动重试 */
-    guctl |= DWC3_GUCTL_TX_IPGAP_LINECHECK_DIS;  /* RK3588: 禁用 TX IP Gap 行检查 */
-    guctl |= DWC3_GUCTL_PARKMODE_DISABLE_SS;  /* RK3588 OTG1 DTS quirk */
+    guctl |= DWC3_GUCTL_USBHSTINAUTORETRYEN;
+    guctl |= DWC3_GUCTL_NOEXTRDL;  /* v3.00a: 禁止 TRB 预读缓存，防 BSR=0 cmd timeout */
     write32(guctl, (void *)(base + DWC3_GUCTL));
     KLOG_INFO("dwc3: [OTG%d] GUCTL=0x%08x\n", id,
               (unsigned)dwc3_read32(base, DWC3_GUCTL));
@@ -407,7 +581,52 @@ static int dwc3_host_init_one(uintptr_t base, int id)
     KLOG_INFO("dwc3: [OTG%d] GUCTL2=0x%08x\n", id,
               (unsigned)dwc3_read32(base, DWC3_GUCTL2));
 
-    /* 4d. 重新启用 SUSPHY（根据 Linux dwc3_enable_susphy，模式切换后应该启用）
+    /* 4d. GFLADJ (0xC630): RK3588 gfladj-refclk-240mhz-quirk
+     * 24 MHz 参考时钟 → DECR = (240/24) - 1 = 9
+     * 不设置此寄存器时 microframe 定时器不运行，xHC 无法调度任何 EP0 传输，
+     * doorbell 有效但 TR dequeue pointer 永远不动（无 microframe 窗口）。 */
+    {
+        uint32_t gfladj = dwc3_read32(base, DWC3_GFLADJ);
+        gfladj &= ~DWC3_GFLADJ_REFCLK_240MHZDECR_MASK;
+        gfladj |= (9U << DWC3_GFLADJ_REFCLK_240MHZDECR_SHIFT);
+        gfladj &= ~DWC3_GFLADJ_30MHZ_MASK;
+        gfladj |=  DWC3_GFLADJ_30MHZ_SDBND_SEL;
+        write32(gfladj, (void *)(base + DWC3_GFLADJ));
+        KLOG_INFO("dwc3: [OTG%d] GFLADJ=0x%08x\n", id,
+                  (unsigned)dwc3_read32(base, DWC3_GFLADJ));
+    }
+
+    /* 4e. Innosilicon USB2 PHY 初始化（RK3588 特定）
+     * phy_sus 1→0 跳变触发 DWC3 USB2 MAC 切换 CURMOD：
+     *   - CRU PHY 复位 → PHY 退出复位 → phy_sus=1（默认）→ 写 phy_sus=0
+     *   - PHY 送出 clock/ready 信号 → DWC3 USB2 MAC 检测到 → CURMOD 从 Device(0) 变 Host(1)
+     * 必须在 GCTS.CURMOD 检查之前完成。 */
+    rk3588_usb2phy_init_host(id);
+
+    /* 4e2. 等待 GSTS.CURMOD 切换到 Host（01）
+     * 必须在 PHY init 之后检查，因为 CURMOD 切换由 phy_sus 1→0 触发。
+     * 若在 PHY init 之前检查（如旧代码），CURMOD 仍为 Device(0)，
+     * 导致 xHCI 命令正常工作但 USB 总线 EP0 传输完全沉默。 */
+    {
+        uint32_t gsts_val = 0;
+        uint32_t curmod   = 0;
+        for (uint32_t w = 0; w < 500000U; w++) {
+            gsts_val = dwc3_read32(base, DWC3_GSTS);
+            curmod   = gsts_val & 0x3U;
+            if (curmod == 1U) break;
+            dwc3_poll_delay(100U);
+        }
+        KLOG_INFO("dwc3: [OTG%d] GSTS=0x%08x  CURMOD=%u (%s)\n",
+                  id, (unsigned)gsts_val, (unsigned)curmod,
+                  curmod == 1U ? "Host" :
+                  curmod == 0U ? "Device" :
+                  curmod == 2U ? "DRD" : "?");
+        if (curmod != 1U)
+            KLOG_WARN("dwc3: [OTG%d] CURMOD != Host！EP0 传输将沉默。"
+                      "  PHY reset 未能切换 USB2 MAC 模式\n", id);
+    }
+
+    /* 4f. 重新启用 SUSPHY（根据 Linux dwc3_enable_susphy，模式切换后应该启用）
      * DWC3 databook: SUSPHY 应该在 PHY 初始化完成后设置以节省功耗 */
     phycfg = dwc3_read32(base, DWC3_GUSB2PHYCFG0);
     phycfg |= DWC3_GUSB2PHYCFG_SUSPHY;

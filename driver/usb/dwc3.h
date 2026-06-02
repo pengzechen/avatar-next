@@ -112,15 +112,76 @@
 #define DWC3_GSTS_HOST_IP       (1U << 3)
 #define DWC3_GSTS_CSRTIMEOUT    (1U << 5)
 
+/* GUCTL1: 0xC11C — Global User Control Register 1
+ * 注意：GUCTL1 在地址上早于 GUCTL（0xC12C），命名顺序与地址顺序相反。
+ * Linux kernel drivers/usb/dwc3/core.h: #define DWC3_GUCTL1 0xc11c
+ */
+#define DWC3_GUCTL1             (DWC3_GLOBALS_REGS_START + 0x1CU)
+#define DWC3_GUCTL1_TX_IPGAP_LINECHECK_DIS (1U << 28) /* RK3588: 禁用 TX IP Gap 行检查（HS枚举必须）*/
+#define DWC3_GUCTL1_PARKMODE_DISABLE_SS    (1U << 17) /* SuperSpeed Park Mode 禁用 */
+#define DWC3_GUCTL1_PARKMODE_DISABLE_HS    (1U << 16) /* HighSpeed Park Mode 禁用（OTG1 必须）*/
+
+/* DCTL: 0xC704 — Device Control Register
+ * 在切换到 Host mode 前必须停止 Device 控制器，否则 Device 状态机持续运行
+ * 会干扰 Host mode 的 USB 总线事务（BSR=0 SET_ADDRESS 永远收不到 STATUS ZLP）。
+ */
+#define DWC3_DCTL               (DWC3_GLOBALS_REGS_START + 0x604U)  /* 0xC704 */
+#define DWC3_DCTL_RUN_STOP      (1U << 31)   /* 1=Device running, 0=Device stopped */
+#define DWC3_DCTL_CSFTRST       (1U << 30)   /* Device soft reset */
+#define DWC3_DCTL_LGSF          (1U << 14)   /* LPM capable (noop for us) */
+
 /* GUCTL: 0xC12C — Global User Control Register */
 #define DWC3_GUCTL              (DWC3_GLOBALS_REGS_START + 0x2CU)
 #define DWC3_GUCTL_USBHSTINAUTORETRYEN  (1U << 14) /* 主机模式 IN 自动重试 */
-#define DWC3_GUCTL_TX_IPGAP_LINECHECK_DIS (1U << 9)  /* RK3588: 禁用 TX IP Gap 行检查（HS枚举必须）*/
-#define DWC3_GUCTL_PARKMODE_DISABLE_SS  (1U << 17) /* RK3588 OTG1 DTS quirk */
+/* NOEXTRDL (bit9): 禁止 xHC 预读 TRB（v3.00a pre-fetch cache quirk）
+ * 不设置时 xHC 在 Address Device BSR=1 完成后缓存空 ctrl_ring 状态，
+ * BSR=0 发 SET_ADDRESS 时永远等待 doorbell，后续命令全部超时。 */
+#define DWC3_GUCTL_NOEXTRDL             (1U << 9)
 
 /* GUCTL2: 0xC19C — Global User Control Register 2 */
 #define DWC3_GUCTL2             (DWC3_GLOBALS_REGS_START + 0x9CU)
 #define DWC3_GUCTL2_DIS_DEL_PHY_POWER_CHG (1U << 12) /* RK3588: 禁用延迟PHY功耗变化（防SET_ADDRESS挂死）*/
+
+/* GFLADJ: 0xC630 — Global Frame Length Adjustment Register
+ * RK3588 quirk: snps,gfladj-refclk-240mhz-quirk
+ * 参考时钟 24 MHz → DECR = (240/24) - 1 = 9
+ * 若不设置，microframe 定时器不运行，xHC 无法调度任何 EP0/EP1 传输。*/
+#define DWC3_GFLADJ             (DWC3_GLOBALS_REGS_START + 0x530U)  /* 0xC630 */
+#define DWC3_GFLADJ_REFCLK_240MHZDECR_SHIFT  24U
+#define DWC3_GFLADJ_REFCLK_240MHZDECR_MASK   (0x3FU << 24U)
+#define DWC3_GFLADJ_REFCLK_240MHZDECR_PLS1   (1U << 23U)  /* 余数补偿（24MHz 整除不需要）*/
+#define DWC3_GFLADJ_30MHZ_SDBND_SEL          (1U << 7U)   /* SOF sync boundary 由硬件决定 */
+#define DWC3_GFLADJ_30MHZ_MASK               0x3FU
+
+/* ── RK3588 USB2 PHY GRF 寄存器（phy-rockchip-inno-usb2.c quirk）────────
+ *
+ * Rockchip GRF 写格式：32 位写，高 16 位是写掩码，低 16 位是数据。
+ *   写 value：(mask << 16) | data
+ *   设置 bit N：(1<<N)<<16 | (1<<N)
+ *   清除 bit N：(1<<N)<<16 | 0
+ *
+ * OTG0 (FC000000): u2phy0, PHY GRF @ 0xFD5D0000, type=OTG, reg=0x0000
+ * OTG1 (FC400000): u2phy2, PHY GRF @ 0xFD5D8000, type=HOST, reg=0x8000
+ */
+#define RK3588_USB2PHY0_GRF_PHYS   0xFD5D0000UL  /* OTG0 USB2 PHY */
+#define RK3588_USB2PHY2_GRF_PHYS   0xFD5D8000UL  /* OTG1 USB2 PHY */
+
+/* GRF 内部偏移（相对于各自的 PHY GRF 基址）*/
+#define USB2PHY_GRF_CON1           0x0004U  /* DC 电压调节 bits[11:8] */
+#define USB2PHY_GRF_CON2           0x0008U  /* SIDDQ(bit13), pre-emph(bits[4:3]), phy_sus(bit2) */
+#define USB2PHY_GRF_CON3           0x000CU  /* suspend config bits[4:0] */
+
+/* HOST 类型 (reg=0x8000)：phy_sus = {0x0008, 2, 2, 0, 1} */
+/* OTG  类型 (reg=0x0000)：phy_sus = {0x000c, 11, 11, 0, 1} */
+
+/* CRU 基址（Clock/Reset Unit）*/
+#define RK3588_CRU_BASE_PHYS       0xFD7C0000UL
+#define RK3588_CRU_SOFTRST_OFF     0x0400U    /* SOFTRST_CON00 offset */
+
+/* SRST_OTGPHY_U2_0 = 623 → SOFTRST38 (offset 0x0498) bit 15
+ * 用于复位 OTG1 的 USB2 PHY（u2phy2） */
+#define RK3588_SOFTRST38_OFF       0x0498U    /* CRU_SOFTRST_CON38 = CRU+0x0498 */
+#define RK3588_SRST_OTGPHY_U2_0_BIT 15U       /* bit 15 = SRST_OTGPHY_U2_0 */
 
 /* GUSB2PHYCFG0: 0xC200 — USB2 PHY 配置（端口0）*/
 #define DWC3_GUSB2PHYCFG0      (DWC3_GLOBALS_REGS_START + 0x100U)
