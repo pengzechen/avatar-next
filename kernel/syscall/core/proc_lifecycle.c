@@ -46,8 +46,8 @@ void sys_exit(int status)
 {
     task_t *current = task_current();
 
-    KLOG_INFO("[syscall] process '%s' (id=%u) exiting with status %d\n",
-              current->name, current->id, status);
+    KLOG_DEBUG("[syscall] process '%s' (id=%u) exiting with status %d\n",
+               current->name, current->id, status);
 
     /* CLONE_CHILD_CLEARTID: 清零 tid 并唤醒 pthread_join 等待者 */
     if (current->ctid_ptr) {
@@ -105,7 +105,7 @@ int64_t sys_execve(const char *pathname, char **argv, char **envp)
     if (pathname == NULL)
         return -1;
 
-    KLOG_INFO("[syscall] execve called\n");
+    KLOG_DEBUG("[syscall] execve called\n");
 
     task_t *current = task_current();
     /* 记录可执行文件路径（/proc/self/exe 使用） */
@@ -195,8 +195,7 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
         /* 先回收已死亡的槽 */
         for (uint32_t i = 0; i < TASK_MAX; i++) {
             if (g_stack_used[i] && g_task_pool[i].state == TASK_DEAD) {
-                g_stack_used[i] = 0;
-                g_task_pool[i].stack_base = NULL;
+                task_reap_dead(&g_task_pool[i]);
                 break;
             }
         }
@@ -275,8 +274,8 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
             (flags & CLONE_SETTLS) ? tls : 0
         );
 
-        KLOG_INFO("[clone/thread] parent=%u child=%u flags=0x%llx tls=0x%llx usp=0x%llx ctid=%p\n",
-                  parent->id, child->id, flags, tls, child_stack, child_tidptr);
+        KLOG_DEBUG("[clone/thread] parent=%u child=%u flags=0x%llx tls=0x%llx usp=0x%llx ctid=%p\n",
+               parent->id, child->id, flags, tls, child_stack, child_tidptr);
 
     } else {
         /* ── fork 路径 ── */
@@ -397,8 +396,8 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
             frame, 0, 0
         );
 
-        KLOG_INFO("[clone/fork] parent=%u child=%u elr=0x%llx usp=0x%llx\n",
-                  parent->id, child->id, syscall_abi_ip(frame), syscall_abi_user_sp(frame));
+        KLOG_DEBUG("[clone/fork] parent=%u child=%u elr=0x%llx usp=0x%llx\n",
+               parent->id, child->id, syscall_abi_ip(frame), syscall_abi_user_sp(frame));
     }
 
     /* 信号继承 */
@@ -466,13 +465,7 @@ void wait_handler(uint64_t regs[6], task_t *me)
             ru[3] = (found->stime_ns % 1000000000ULL) / 1000ULL;
         }
         regs[0] = (uint64_t)found->id;
-        for (uint32_t i = 0; i < TASK_MAX; i++) {
-            if (&g_task_pool[i] == found) {
-                g_stack_used[i]           = 0;
-                g_task_pool[i].stack_base = NULL;
-                break;
-            }
-        }
+        task_reap_dead(found);
         return;
     }
 
@@ -506,13 +499,7 @@ void wait_handler(uint64_t regs[6], task_t *me)
             ru[3] = (found->stime_ns % 1000000000ULL) / 1000ULL;
         }
         regs[0] = (uint64_t)found->id;
-        for (uint32_t i = 0; i < TASK_MAX; i++) {
-            if (&g_task_pool[i] == found) {
-                g_stack_used[i]           = 0;
-                g_task_pool[i].stack_base = NULL;
-                break;
-            }
-        }
+        task_reap_dead(found);
     } else {
         regs[0] = (uint64_t)(int64_t)-ECHILD;
     }

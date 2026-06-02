@@ -550,8 +550,7 @@ void syscall_handler(trap_frame_t *frame)
         break;
 
     case LINUX_SYS_MUNMAP:
-        /* stub: 不释放物理页但不崩溃，允许 ld.so 运行 */
-        regs[0] = 0;
+        regs[0] = sys_munmap(regs[0], regs[1]);
         break;
 
     case LINUX_SYS_SOCKET:

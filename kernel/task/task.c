@@ -115,12 +115,33 @@ cleanup_dead_task_slot(void)
 {
     for (uint32_t i = 0; i < TASK_MAX; i++) {
         if (g_stack_used[i] && g_task_pool[i].state == TASK_DEAD) {
-            KLOG_DEBUG("[task] Cleaning up dead task slot %u (id=%u)\n",
-                      i, g_task_pool[i].id);
-            g_stack_used[i] = 0;
-            g_task_pool[i].stack_base = NULL;
+            task_reap_dead(&g_task_pool[i]);
             return;
         }
+    }
+}
+
+void
+task_reap_dead(task_t *task)
+{
+    if (!task || task->state != TASK_DEAD)
+        return;
+
+    for (uint32_t i = 0; i < TASK_MAX; i++) {
+        if (&g_task_pool[i] != task)
+            continue;
+
+        KLOG_DEBUG("[task] Reaping dead task slot %u (id=%u, pgd=0x%llx)\n",
+                   i, task->id, (uint64_t)task->pgd);
+
+        if (task->is_user_process && !task->is_thread && task->pgd != NULL) {
+            vm_destroy_user_process((uint64_t)task->pgd);
+            task->pgd = NULL;
+        }
+
+        g_stack_used[i] = 0;
+        task->stack_base = NULL;
+        return;
     }
 }
 
@@ -614,7 +635,7 @@ void
 task_exit(void)
 {
     task_t *cur = task_current();
-    KLOG_INFO("[task] '%s' (id=%u) exiting\n", cur->name, cur->id);
+    KLOG_DEBUG("[task] '%s' (id=%u) exiting\n", cur->name, cur->id);
 
     cur->state = TASK_DEAD;
 

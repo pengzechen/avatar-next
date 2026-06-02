@@ -13,7 +13,21 @@
 #include "pmm.h"
 #include "string.h"
 #include "arch.h"
+#include "vm_user.h"
 #include <ext4.h>
+
+uint64_t sys_munmap(uint64_t addr, uint64_t len)
+{
+    task_t *current = task_current();
+    if (!current || !current->is_user_process || current->pgd == NULL)
+        return (uint64_t)(int64_t)-EINVAL;
+    if (len == 0 || (addr & (PAGE_SIZE - 1)) != 0)
+        return (uint64_t)(int64_t)-EINVAL;
+
+    uint64_t size = ALIGN_UP(len, PAGE_SIZE);
+    vm_unmap_user_range((uint64_t)current->pgd, addr, size);
+    return 0;
+}
 
 uint64_t sys_mmap(uint64_t addr, uint64_t len, int prot, int flags, int fd, uint64_t offset)
 {

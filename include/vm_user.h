@@ -25,4 +25,14 @@ uint64_t vm_create_user_process(uint64_t user_code_start, uint64_t user_code_siz
  */
 void vm_destroy_user_process(uint64_t pgd_phys);
 
+/**
+ * vm_unmap_user_range - 解除用户虚拟地址范围映射并释放 leaf 物理页
+ * @pgd_phys: 页表基址（物理地址）
+ * @vaddr: 用户虚拟地址起始
+ * @size: 解除映射的字节数
+ *
+ * 返回实际释放的 4KB 页数量。中间页表页保留，随进程销毁时统一释放。
+ */
+uint64_t vm_unmap_user_range(uint64_t pgd_phys, uint64_t vaddr, uint64_t size);
+
 #endif /* VM_USER_H */

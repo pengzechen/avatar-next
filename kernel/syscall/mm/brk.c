@@ -15,6 +15,7 @@
 #include "pmm.h"
 #include "string.h"
 #include "arch.h"
+#include "vm_user.h"
 
 void *sys_brk(void *addr)
 {
@@ -41,8 +42,14 @@ void *sys_brk(void *addr)
 
     uint64_t new_brk = (uint64_t)addr;
 
-    /* 缩小或不变：直接更新 */
+    /* 缩小或不变：释放高水位以上页后更新 */
     if (new_brk <= current_brk) {
+        uint64_t old_page_end = ALIGN_UP(current_brk, PAGE_SIZE);
+        uint64_t new_page_end = ALIGN_UP(new_brk,     PAGE_SIZE);
+        if (new_page_end < old_page_end)
+            vm_unmap_user_range((uint64_t)current->pgd,
+                                new_page_end,
+                                old_page_end - new_page_end);
         current->heap_end = new_brk;
         if (g_syscall_entry_count <= 16) {
             KLOG_DEBUG("[brk] shrink/no-grow -> 0x%llx\n", new_brk);

@@ -143,7 +143,7 @@ undefined reference to `ion_get_buf'
 - `tools/gen_platform.py` 对 `build/platform.mk` 和 `build/platform_lua_blob.c` 使用“内容变化才写”。
 - Makefile 将 `build/platform.mk` 和当前 `platform.lua` 作为平台敏感对象的普通依赖。
 
-平台敏感对象包括内核、启动/异常、驱动、Lua glue、pseudofs、platform cfg 等使用 `CFLAGS` / `LUA_CFLAGS` 的对象。
+平台敏感对象包括内核、启动/异常、驱动、lwext4、Lua core/glue、pseudofs、platform cfg 等使用 `CFLAGS` / `LUA_CFLAGS` / `LWEXT4_CFLAGS` 的对象。
 
 ### 5.3 排查方法
 

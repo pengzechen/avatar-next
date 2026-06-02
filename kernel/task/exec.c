@@ -54,6 +54,15 @@ static inline uint64_t exec_get_ns(void)
 #endif
 }
 
+    static void exec_free_loader_buffer(const void *data, uint64_t size)
+    {
+        if (!data || size == 0)
+            return;
+
+        uint32_t pages = (uint32_t)(ALIGN_UP(size, PAGE_SIZE) / PAGE_SIZE);
+        pmm_free_pages(g_pmm, virt_to_phys((uint64_t)data), pages);
+    }
+
 #if ARCH_X86_64
 #include "x86_64/mmu.h"
 #endif
@@ -325,6 +334,10 @@ task_execve(const char *pathname,
     current->is_waiting = true;
     current->wait_pid   = new_task_id;
     arch_irq_restore(exec_irq_flags);
+
+    exec_free_loader_buffer(interp_data, interp_size);
+    exec_free_loader_buffer(file_data, file_size);
+
     task_block(NULL);
 
     /* 8. 新进程已退出：获取退出状态并释放槽位，然后以相同状态退出 */
@@ -336,8 +349,7 @@ task_execve(const char *pathname,
             if (g_task_pool[i].id == new_task_id) {
                 current->exit_status = g_task_pool[i].exit_status;
                 current->stime_ns   += g_task_pool[i].stime_ns;  /* 继承子进程内核时间 */
-                g_stack_used[i] = 0;
-                g_task_pool[i].stack_base = NULL;
+                task_reap_dead(&g_task_pool[i]);
                 break;
             }
         }

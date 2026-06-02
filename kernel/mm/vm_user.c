@@ -16,6 +16,58 @@
 #if ARCH_RISCV64
 #include "riscv64/satp_utils.h"
 #endif
+#if ARCH_X86_64
+#include "x86_64/mmu.h"
+#endif
+
+#if ARCH_AARCH64
+extern void destroy_uvm_4level(void *page_dir);
+#endif
+
+#if ARCH_RISCV64
+static void rv_destroy_table(uint64_t *table, int level, bool free_leaf_pages)
+{
+    for (uint32_t i = 0; i < 512U; i++) {
+        uint64_t pte = table[i];
+        if ((pte & RV_PTE_V) == 0)
+            continue;
+
+        if (rv_pte_is_leaf(pte)) {
+            if (free_leaf_pages)
+                pmm_free_pages(g_pmm, rv_pte_to_pa(pte), 1);
+            table[i] = 0;
+            continue;
+        }
+
+        uint64_t child_pa = rv_pte_to_pa(pte);
+        rv_destroy_table((uint64_t *)phys_to_virt(child_pa), level - 1, true);
+        pmm_free_pages(g_pmm, child_pa, 1);
+        table[i] = 0;
+    }
+}
+#endif
+
+#if ARCH_X86_64
+static void x86_destroy_table(uint64_t *table, int level)
+{
+    for (uint32_t i = 0; i < 512U; i++) {
+        uint64_t pte = table[i];
+        if ((pte & PTE_PRESENT) == 0)
+            continue;
+
+        if (level == 1 || (level > 1 && (pte & PTE_HUGE))) {
+            pmm_free_pages(g_pmm, x86_pte_to_pa(pte), 1);
+            table[i] = 0;
+            continue;
+        }
+
+        uint64_t child_pa = x86_pte_to_pa(pte);
+        x86_destroy_table((uint64_t *)phys_to_virt(child_pa), level - 1);
+        pmm_free_pages(g_pmm, child_pa, 1);
+        table[i] = 0;
+    }
+}
+#endif
 
 /* ── 创建用户进程页表 ──────────────────────────────────────────── */
 
@@ -135,7 +187,93 @@ vm_destroy_user_process(uint64_t pgd_phys)
     if (pgd_phys == 0)
         return;
     KLOG_DEBUG("[vm_user] Destroying user process page table: PGD=0x%llx\n", pgd_phys);
-    /* TODO: 递归释放所有页表和映射的物理页 */
+
+#if ARCH_AARCH64
+    destroy_uvm_4level(phys_to_virt(pgd_phys));
+    return;
+#elif ARCH_RISCV64
+    uint64_t *root = (uint64_t *)phys_to_virt(pgd_phys);
+
+    /* 只释放用户半区。高半区 L1[0x100..] 是从内核页表复制的共享映射。 */
+    for (uint32_t i = 0; i < RISCV64_KERNEL_L1_MMIO0_IDX; i++) {
+        uint64_t pte = root[i];
+        if ((pte & RV_PTE_V) == 0)
+            continue;
+        if (rv_pte_is_leaf(pte)) {
+            pmm_free_pages(g_pmm, rv_pte_to_pa(pte), 1);
+            root[i] = 0;
+            continue;
+        }
+        uint64_t child_pa = rv_pte_to_pa(pte);
+        rv_destroy_table((uint64_t *)phys_to_virt(child_pa), 1, true);
+        pmm_free_pages(g_pmm, child_pa, 1);
+        root[i] = 0;
+    }
+#elif ARCH_X86_64
+    uint64_t *pml4 = (uint64_t *)phys_to_virt(pgd_phys);
+    for (uint32_t i = 0; i < X86_PML4_KERNEL_START; i++) {
+        uint64_t pte = pml4[i];
+        if ((pte & PTE_PRESENT) == 0)
+            continue;
+        uint64_t child_pa = x86_pte_to_pa(pte);
+        x86_destroy_table((uint64_t *)phys_to_virt(child_pa), 3);
+        pmm_free_pages(g_pmm, child_pa, 1);
+        pml4[i] = 0;
+    }
+#endif
+
     pmm_free_pages(g_pmm, pgd_phys, 1);
+}
+
+uint64_t
+vm_unmap_user_range(uint64_t pgd_phys, uint64_t vaddr, uint64_t size)
+{
+    if (pgd_phys == 0 || size == 0)
+        return 0;
+
+    uint64_t start = ALIGN_DOWN(vaddr, PAGE_SIZE);
+    uint64_t end   = ALIGN_UP(vaddr + size, PAGE_SIZE);
+    if (end < start)
+        return 0;
+
+    uint64_t freed = 0;
+    void *pgd = phys_to_virt(pgd_phys);
+
+    for (uint64_t va = start; va < end; va += PAGE_SIZE) {
+#if ARCH_AARCH64
+        if (mm_vm_get_paddr(pgd, va) != 0) {
+            memory_free_page(pgd, va);
+            freed++;
+        }
+#elif ARCH_RISCV64
+        uint64_t *pte = rv_walk_l0_pte(pgd, va, false);
+        if (pte && ((*pte & RV_PTE_V) != 0) && rv_pte_is_leaf(*pte)) {
+            pmm_free_pages(g_pmm, rv_pte_to_pa(*pte), 1);
+            *pte = 0;
+            freed++;
+        }
+#elif ARCH_X86_64
+        uint64_t *pte = x86_walk_pt(pgd, va, false);
+        if (pte && ((*pte & PTE_PRESENT) != 0)) {
+            pmm_free_pages(g_pmm, x86_pte_to_pa(*pte), 1);
+            *pte = 0;
+            flush_tlb_single(va);
+            freed++;
+        }
+#else
+        (void)va;
+#endif
+    }
+
+#if ARCH_RISCV64
+    __asm__ volatile("sfence.vma" ::: "memory");
+#elif ARCH_AARCH64
+    __asm__ volatile("dsb ishst\n"
+                     "tlbi vmalle1is\n"
+                     "dsb ish\n"
+                     "isb" ::: "memory");
+#endif
+
+    return freed;
 }
 

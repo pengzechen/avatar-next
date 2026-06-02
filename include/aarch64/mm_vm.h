@@ -7,6 +7,7 @@
 extern int32_t memory_create_map(void *page_dir, uint64_t vaddr, uint64_t paddr,
                                  int32_t count, uint64_t perm);
 extern uint64_t memory_get_paddr(void *page_dir, uint64_t vaddr);
+extern void memory_free_page(void *page_dir, uint64_t addr);
 
 extern int32_t memory_copy_uvm_4level(void *dst_pgd, void *src_pgd);
 

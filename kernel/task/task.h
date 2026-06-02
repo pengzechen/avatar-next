@@ -227,6 +227,14 @@ void task_yield(void);
 void task_exit(void) __attribute__((noreturn));
 
 /**
+ * task_reap_dead - 回收已退出任务的延迟释放资源
+ * @task: state 必须为 TASK_DEAD 的任务
+ *
+ * 只能在该任务已经离开 CPU 后调用。会释放独立用户页表/用户物理页和静态任务槽。
+ */
+void task_reap_dead(task_t *task);
+
+/**
  * task_current - 返回当前正在运行的任务指针
  */
 task_t *task_current(void);

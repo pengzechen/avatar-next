@@ -162,5 +162,6 @@ int64_t sys_gettimeofday(struct timeval *tv, void *tz);
  * sys_mmap - 匿名内存映射（供 musl malloc 使用）
  */
 uint64_t sys_mmap(uint64_t addr, uint64_t len, int prot, int flags, int fd, uint64_t offset);
+uint64_t sys_munmap(uint64_t addr, uint64_t len);
 
 #endif /* KERNEL_SYSCALL_SYSCALL_H */
