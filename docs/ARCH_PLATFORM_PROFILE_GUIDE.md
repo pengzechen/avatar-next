@@ -104,7 +104,62 @@ QEMU 的 `-device loader,addr=...` 不接受 C 字面量后缀（如 `UL`）。
 - C 头文件可保留 `UL`（类型安全）
 - Makefile 里用于 QEMU 参数的是纯数字（兼容 QEMU）
 
-## 5. 新增真机平台的方法
+## 5. 平台切换后的旧对象坑
+
+### 5.1 问题
+
+同一架构内从一个平台切到另一个平台时，只靠 `.arch` 文件不够。例如先编译：
+
+```bash
+make PLATFORM=sg2002-riscv64 ETH=none build/kernel_riscv64.bin LOG=info -j4
+```
+
+再编译默认 QEMU：
+
+```bash
+make ARCH=riscv64 build/kernel_riscv64.bin LOG=info -j4
+```
+
+如果 `lua_drivers.o`、`pseudofs_pseudofs.o` 等对象没有因平台宏变化而重编，它们可能仍带着 SG2002 的 `DRIVER_ION=1` / `DRIVER_TPU_CVITPU=1` 条件编译结果。QEMU 平台不会链接 ION/TPU 实现，于是链接阶段出现：
+
+```text
+undefined reference to `cvi_tpu_is_ready'
+undefined reference to `cvi_tpu_run_dmabuf'
+undefined reference to `ion_alloc'
+undefined reference to `ion_get_buf'
+```
+
+这不是调用侧缺 `#if DRIVER_*` 保护，而是旧对象缓存了上一平台的宏。
+
+### 5.2 修复原则
+
+平台生成文件必须满足两个条件：
+
+- 内容不变时不刷新 mtime，否则每次 `make` 都会触发平台相关对象重编。
+- 内容变化时，所有依赖平台宏的对象必须重编。
+
+当前实现：
+
+- `tools/gen_platform.py` 对 `build/platform.mk` 和 `build/platform_lua_blob.c` 使用“内容变化才写”。
+- Makefile 将 `build/platform.mk` 和当前 `platform.lua` 作为平台敏感对象的普通依赖。
+
+平台敏感对象包括内核、启动/异常、驱动、Lua glue、pseudofs、platform cfg 等使用 `CFLAGS` / `LUA_CFLAGS` 的对象。
+
+### 5.3 排查方法
+
+确认当前平台配置：
+
+```bash
+grep -E '^(MEM_PLATFORM_DEFINE|DEV_TPU_TYPE|DEV_MMIO_NEEDS_VMA|DEV_UART_BASE_RAW|DEV_UART_REG_SHIFT)' build/platform.mk
+```
+
+确认 QEMU RISC-V 不再链接 SG2002 的 ION/TPU 对象：
+
+```bash
+make ARCH=riscv64 build/kernel_riscv64.bin LOG=info -j4
+```
+
+## 6. 新增真机平台的方法
 
 以新增 `aarch64 + rk3588` 为例：
 
@@ -120,7 +175,7 @@ make ARCH=aarch64 PLATFORM=rk3588 kernel
 
 如需运行目标（非 QEMU）可新增对应 run 逻辑或独立脚本。
 
-## 6. 常用命令
+## 7. 常用命令
 
 ```bash
 # 默认平台（由表中 default=1 决定）
@@ -136,11 +191,12 @@ make ARCH=aarch64 PLATFORM=qemu UART=dw GIC=v3 kernel
 make ARCH=aarch64 PLATFORM=qemu run-fs
 ```
 
-## 7. 维护建议
+## 8. 维护建议
 
 - 配置只改 table，不直接改生成文件
 - 将 `include/*.h` 与 `build/*.mk` 视为生成产物
 - 新平台接入时，优先补齐 table，再补平台代码
+- 新增平台宏或设备开关时，确认受影响对象依赖 `build/platform.mk`
 - 每次改 table 后，至少做三架构编译回归
 
 ---

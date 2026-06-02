@@ -772,6 +772,20 @@ $(BUILD_DIR)/drv_blk_sdblk.o: driver/blk/sdblk.c | $(BUILD_DIR)
 # PseudoFS（虚拟文件系统 /dev /proc /sys）— 始终构建
 PSEUDOFS_OBJS := $(BUILD_DIR)/pseudofs_pseudofs.o
 
+# Most kernel objects are compiled with platform-derived CFLAGS
+# (PLATFORM_*, DRIVER_*, DEVICE_*, memory layout).  The generator writes these
+# files only when contents change, so this catches real platform switches
+# without forcing recompilation on every make invocation.
+PLATFORM_CONFIG_DEPS := $(PLATFORM_MK) $(_PLATFORM_LUA)
+$(BOOT_OBJECTS) $(KERNEL_OBJECTS) $(TASK_C_OBJECTS) $(TASK_S_OBJ) \
+$(TASK_USER_TEST_OBJ) $(TASK_USER_HELLO_OBJ) $(TASK_USER_TESTEXECVE_OBJ) \
+$(LOADER_C_OBJECTS) $(SYSCALL_C_OBJECTS) $(SYSCALL_S_OBJ) \
+$(VM_C_OBJECTS) $(VM_S_OBJ) $(VMM_C_OBJECTS) $(VMM_S_OBJECTS) \
+$(GUEST_TEST_OBJ) $(TESTS_OBJECTS) $(PLATFORM_OBJECTS) $(DRIVER_OBJECTS) \
+$(EXCEPTION_OBJECTS) $(KLOG_OBJECT) $(VSNPRINTF_OBJECT) $(STRING_OBJECT) \
+$(BITMAP_OBJECT) $(PLATFORM_CFG_OBJECT) $(LWEXT4_PORT_OBJS) \
+$(LUA_GLUE_OBJS) $(LUA_BLOB_OBJ) $(SETJMP_OBJ) $(PSEUDOFS_OBJS): $(PLATFORM_CONFIG_DEPS)
+
 $(BUILD_DIR)/pseudofs_pseudofs.o: fs/pseudofs/pseudofs.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -Idriver -Ikernel -Ikernel/mm -c $< -o $@
 

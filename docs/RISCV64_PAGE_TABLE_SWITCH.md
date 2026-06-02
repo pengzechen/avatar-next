@@ -46,58 +46,47 @@ Avatar OS 使用 3 层页表：
 
 ### 2.1 代码实现
 
-**位置**: `kernel/task/sched.c:117-136`
+**位置**: `kernel/task/sched.c` + `kernel/task/riscv64/switch.S`
+
+当前 RISC-V 实现不在 `sched_schedule()` 的 C 层提前写 `satp`。调度器只计算传给架构切换层的 `next_pgd_for_switch` / `prev_pgd_save`，真正的 satp 切换由汇编侧完成。
 
 ```c
 void sched_schedule(void)
 {
     uint64_t flags = arch_irq_save();
     task_t *prev = g_current_task;
-    
+
     // ... 选择下一个任务 ...
     task_t *next = pick_next();
-    
+
     if (next == prev) {
         prev->state = TASK_RUNNING;
         arch_irq_restore(flags);
         return;
     }
-    
+
     next->state = TASK_RUNNING;
     g_current_task = next;
-    
-#if ARCH_RISCV64
-    /* RISC-V：切换到任务的页表 */
-    if (next->is_user_process && next->pgd != 0) {
-        /* 切换到用户页表 */
-        uint64_t pgd_phys = (uint64_t)next->pgd;
-        uint64_t ppn = pgd_phys >> 12;
-        uint64_t satp = (8ULL << 60) | ppn;
-        __asm__ volatile("csrw satp, %0" : : "r"(satp));
-        __asm__ volatile("sfence.vma");
-    } else if (next->is_user_process == 0 && prev->is_user_process != 0) {
-        /* 从用户任务切换到内核任务：恢复内核页表 */
-        uint64_t kernel_ppn = 0x80205;
-        uint64_t satp = (8ULL << 60) | kernel_ppn;
-        __asm__ volatile("csrw satp, %0" : : "r"(satp));
-        __asm__ volatile("sfence.vma");
-    }
-#endif
-    
-    /* 切换上下文（保存/恢复寄存器） */
-    arch_task_switch(&prev->sp, next->sp, /* pgd */);
-    
+
+    uint64_t *prev_pgd_save = prev->is_user_process ? NULL : &prev->pgd;
+    uint64_t next_pgd_for_switch = next->is_user_process ? (uint64_t)next->pgd : g_kernel_pgd_phys;
+
+    arch_task_switch(&prev->sp, next->sp, prev_pgd_save, next_pgd_for_switch);
+
     arch_irq_restore(flags);
 }
 ```
+
+首次用户态入口是特例：如果用户进程还没有真正 `sret` 过，`arch_task_switch()` 先保持当前内核 satp，随后 `arch_switch_to_user()` 在贴近 `sret` 的位置切到用户 satp。
 
 ### 2.2 切换场景
 
 | 从任务类型 | 到任务类型 | 页表操作 | SATP 值 |
 |-----------|-----------|---------|---------|
-| 用户任务 A | 用户任务 B | 切换到 B 的用户页表 | 0x8000000000<B.PPN> |
-| 用户任务 | 内核任务（idle） | 切换到内核页表 | 0x8000000000080205 |
-| 内核任务 | 用户任务 | 切换到用户页表 | 0x8000000000<PPN> |
+| 用户任务 A | 用户任务 B | `arch_task_switch()` 切换到 B 的用户页表 | 0x8000000000<B.PPN> |
+| 用户任务 | 内核任务（idle） | `arch_task_switch()` 切换到内核页表 | 0x8000000000080205 |
+| 内核任务 | 用户任务（已启动） | `arch_task_switch()` 切换到用户页表 | 0x8000000000<PPN> |
+| 内核任务 | 用户任务（首次进入） | `arch_switch_to_user()` 在 `sret` 前切换 | 0x8000000000<PPN> |
 | 内核任务 | 内核任务 | 不切换 | 保持内核页表 |
 
 ### 2.3 时序图
@@ -113,14 +102,16 @@ T1: 进入 exception.S（satp 仍 = A.pgd，当前实现不切换）
 T2: 选择下一个任务 B
     |
     v [检测到 A != B]
-T3: 切换页表（csrw satp = B.pgd）
+T3: C 调度层只准备 next_pgd_for_switch，不写 satp
     |
-    v [sfence.vma]
-T4: 切换上下文（arch_task_switch）
+    v [arch_task_switch]
+T4: 汇编切换页表（csrw satp = B.pgd + sfence.vma）并切换上下文
     |
     v [返回到 B 的执行点]
 T5: 用户任务 B 运行（satp = B.pgd）
 ```
+
+坑点：不要把 x86_64 的 CR3 切换时机照搬到 RISC-V C 调度层。RISC-V 首次用户入口、`sscratch` 约定、trap 在用户 satp 下运行这几个条件叠在一起时，提前切 satp 很容易破坏内核栈和任务状态访问。
 
 ---
 
