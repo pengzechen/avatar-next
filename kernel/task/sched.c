@@ -88,7 +88,10 @@ sched_enqueue(task_t *task)
 {
     uint32_t n = g_num_cpus ? g_num_cpus : 1U;
     uint32_t target;
-    if (task->cpu_affinity == CPU_AFFINITY_ANY) {
+    if (n == 1U) {
+        target = 0U;
+        task->cpu_affinity = 0U;
+    } else if (task->cpu_affinity == CPU_AFFINITY_ANY) {
         target = __atomic_fetch_add(&g_rr_counter, 1U, __ATOMIC_RELAXED) % n;
         task->cpu_affinity = target;
     } else if (task->cpu_affinity >= n) {
@@ -100,6 +103,11 @@ sched_enqueue(task_t *task)
 
     cpu_t *tc = &g_cpus[target];
     list_node_init(&task->run_node);
+
+    if (n == 1U) {
+        list_insert_last(&tc->run_queue, &task->run_node);
+        return;
+    }
 
     /* 跨核入队：持目标核 rq_lock（spin_lock_irqsave 内部关本核 IRQ）。 */
     spin_lock_irqsave(&tc->rq_lock);
@@ -115,6 +123,15 @@ sched_dequeue(task_t *task)
     /* 任务以其 cpu_affinity 为准处于某核 rq。先查 affinity 对应核，
      * 找不到再退一步遍历所有核（防 affinity 字段与实际不一致）。 */
     uint32_t n = g_num_cpus ? g_num_cpus : 1U;
+    if (n == 1U) {
+        cpu_t *tc = &g_cpus[0];
+        uint64_t flags = arch_irq_save();
+        if (list_contains(&tc->run_queue, &task->run_node))
+            list_delete(&tc->run_queue, &task->run_node);
+        arch_irq_restore(flags);
+        return;
+    }
+
     if (task->cpu_affinity < n) {
         cpu_t *tc = &g_cpus[task->cpu_affinity];
         spin_lock_irqsave(&tc->rq_lock);
@@ -170,7 +187,9 @@ sched_schedule(void)
     /* 持本核 rq_lock 期间操作 run_queue。外层已 arch_irq_save 关本核 IRQ，
      * 这里用 raw spin_lock 避免 spin_unlock_irqrestore 过早开 IRQ。
      * 跨核 sched_enqueue 持的是同一把锁，所以 list 操作原子。 */
-    spin_lock((spinlock_t *)&c->rq_lock);
+    bool use_rq_lock = (g_num_cpus > 1U);
+    if (use_rq_lock)
+        spin_lock((spinlock_t *)&c->rq_lock);
 
     /* 若当前任务仍在运行且不是 idle，则重新入队尾 */
     if (prev->state == TASK_RUNNING && prev != c->idle_task) {
@@ -180,7 +199,8 @@ sched_schedule(void)
 
     task_t *next = pick_next(c);
 
-    spin_unlock((spinlock_t *)&c->rq_lock);
+    if (use_rq_lock)
+        spin_unlock((spinlock_t *)&c->rq_lock);
 
     /* 无需切换（唯一任务或队空只有 idle） */
     if (next == prev) {
@@ -201,25 +221,7 @@ sched_schedule(void)
     }
     barrier_compiler();  // 确保 current_task 在 arch_task_switch 之前完成
 
-#if ARCH_RISCV64
-    /* RISC-V：切换到任务的页表
-     * - 用户任务：切换到用户页表（已包含内核映射）
-     * - 内核任务：切换回内核页表
-     */
-    if (next->is_user_process && next->pgd != 0) {
-        uint64_t satp = pgd_phys_to_satp((uint64_t)next->pgd);
-        __asm__ volatile("csrw satp, %0" : : "r"(satp));
-        __asm__ volatile("sfence.vma");
-    } else if (!next->is_user_process && prev->is_user_process) {
-        /* 从用户任务切换到内核任务：恢复内核页表 */
-        if (g_kernel_pgd_phys != 0) {
-            uint64_t satp = pgd_phys_to_satp(g_kernel_pgd_phys);
-            __asm__ volatile("csrw satp, %0" : : "r"(satp));
-            __asm__ volatile("sfence.vma");
-        }
-    }
-    /* 用户→用户切换，已在上面处理；内核→内核切换，页表不变 */
-#elif ARCH_X86_64
+#if ARCH_X86_64
     /* x86_64：通过 CR3 切换页表
      * - 用户任务：切换到用户页表（已包含内核高半区映射）
      * - 内核任务：切换回内核页表
@@ -244,14 +246,6 @@ sched_schedule(void)
     }
     /* 用户→用户切换，已在上面处理；内核→内核切换，页表不变 */
 #endif
-
-    KLOG_DEBUG("[sched] switch: prev='%s' (id=%u) -> next='%s' (id=%u)\n",
-              prev->name, prev->id, next->name, next->id);
-
-    if (next->is_user_process) {
-        KLOG_DEBUG("[sched] next='%s': entry=0x%llx sp=0x%llx kernel_sp=0x%llx\n",
-                   next->name, next->user_entry, next->user_sp, next->sp);
-    }
 
     /*
      * 切换上下文。

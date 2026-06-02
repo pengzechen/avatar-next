@@ -11,34 +11,25 @@
 .extern mmu_init
 .extern kernel_main
 
-_start:
-    /*
-     * ── EL2/VHE 初始化 ────────────────────────────────────────
-     *
-     * QEMU -machine virt,virtualization=on 从 EL2 进入。
-     * 启用 VHE（Virtualization Host Extensions），让内核在 EL2 运行：
-     *
-     *   HCR_EL2.E2H  (bit 34) = 1  → 启用 VHE；EL1 寄存器名自动
-     *                                 别名为对应 EL2 寄存器，现有代码
-     *                                 零修改透明兼容。
-     *   HCR_EL2.RW   (bit 31) = 1  → Guest EL1 为 AArch64
-     *   HCR_EL2.TGE  (bit 27) = 1  → EL0 异常直接陷入 EL2
-     *                                 （syscall/IRQ 路由不变）
-     *
-     * VHE 寄存器别名（硬件透明，无需修改现有汇编/C）：
-     *   msr vbar_el1  → VBAR_EL2    msr elr_el1   → ELR_EL2
-     *   msr spsr_el1  → SPSR_EL2    msr ttbr0_el1 → TTBR0_EL2
-     *   msr ttbr1_el1 → TTBR1_EL2   msr tcr_el1   → TCR_EL2
-     *   msr mair_el1  → MAIR_EL2    msr sctlr_el1 → SCTLR_EL2
-     *   mrs esr_el1   → ESR_EL2     mrs far_el1   → FAR_EL2
-     */
-
-    bl  early_uart_init
-
+/*
+ * ── EL2/VHE 初始化 ───────────────────────────────────────────────
+ *
+ * QEMU -machine virt,virtualization=on 从 EL2 进入；真实硬件也可能由
+ * 固件移交到 EL2。启用 VHE 后，内核仍使用 EL1 寄存器名，硬件自动
+ * 别名到对应 EL2 寄存器：
+ *   msr vbar_el1  → VBAR_EL2    msr elr_el1   → ELR_EL2
+ *   msr spsr_el1  → SPSR_EL2    msr ttbr0_el1 → TTBR0_EL2
+ *   msr ttbr1_el1 → TTBR1_EL2   msr tcr_el1   → TCR_EL2
+ *   msr mair_el1  → MAIR_EL2    msr sctlr_el1 → SCTLR_EL2
+ *   mrs esr_el1   → ESR_EL2     mrs far_el1   → FAR_EL2
+ *
+ * clobber: x0, x1
+ */
+.macro init_el2_vhe
     mrs     x0, CurrentEL
     lsr     x0, x0, #2              /* x0 = 当前 EL（数字 1 或 2）  */
     cmp     x0, #2
-    b.ne    .Lskip_el2_init         /* EL1 fallback（不支持 VHE 时跳过）*/
+    b.ne    1f                      /* EL1 fallback（不支持 VHE 时跳过）*/
 
     /* HCR_EL2: E2H(34) | RW(31) | TGE(27) */
     mov     x1, xzr
@@ -66,26 +57,33 @@ _start:
     msr     cnthctl_el2, x1
     isb
 
+#if defined(DRIVER_GIC_V3)
     /*
      * GICv3 CPU interface 系统寄存器访问使能（ICC_SRE_EL2）：
      *   bit 0 SRE     = 1  使用系统寄存器接口（非 memory-mapped）
      *   bit 1 DFB     = 1  禁用 FIQ 旁路
      *   bit 2 DIB     = 1  禁用 IRQ 旁路
      *   bit 3 Enable  = 1  允许 EL1 访问 ICC_SRE_EL1
-     * QEMU virt 默认 SRE=1，但 RK3588 等真实硬件复位值不保证，
-     * 必须显式设置，否则 EL1 写 ICC_SRE_EL1 被忽略，GIC CPU
-     * interface 永远不会激活，中断送不到 CPU。
+     * RK3588 等真实硬件复位值不保证，必须显式设置，否则
+     * EL1 写 ICC_SRE_EL1 被忽略，GIC CPU interface 永远不会激活。
      */
     mrs     x1, S3_4_C12_C9_5       /* ICC_SRE_EL2 */
     orr     x1, x1, #0xF
     msr     S3_4_C12_C9_5, x1
     isb
+#endif
 
 .arch_extension pan
     msr     pan, #0
     isb
+1:
+.endm
 
-.Lskip_el2_init:
+_start:
+    bl  early_uart_init
+
+    init_el2_vhe
+
     /* ── 以下与原 EL1 启动路径完全一致（VHE 别名透明）──────── */
 
     msr daifset, #2   // 关闭所有中断
@@ -222,37 +220,8 @@ _secondary_start:
     mov     x19, x0                  /* x19 = cpu_id */
 
     /* ── EL2/VHE 初始化（与 _start 完全一致）────────────── */
-    mrs     x0, CurrentEL
-    lsr     x0, x0, #2
-    cmp     x0, #2
-    b.ne    .Lsec_skip_el2_init
+    init_el2_vhe
 
-    mov     x1, xzr
-    orr     x1, x1, #(1 << 34)     /* E2H  */
-    orr     x1, x1, #(1 << 31)     /* RW   */
-    orr     x1, x1, #(1 << 27)     /* TGE  */
-    msr     hcr_el2, x1
-    isb
-
-    mrs     x1, cptr_el2
-    bic     x1, x1, #(1 << 10)     /* clear CPTR_EL2.TFP */
-    msr     cptr_el2, x1
-
-    mov     x1, #(1 | (1 << 1) | (1 << 10))
-    msr     cnthctl_el2, x1
-    isb
-
-    /* GICv3 CPU interface 使能（ICC_SRE_EL2），同 BSP */
-    mrs     x1, S3_4_C12_C9_5       /* ICC_SRE_EL2 */
-    orr     x1, x1, #0xF
-    msr     S3_4_C12_C9_5, x1
-    isb
-
-.arch_extension pan
-    msr     pan, #0
-    isb
-
-.Lsec_skip_el2_init:
     msr     daifset, #2              /* 关中断 */
 
     /*

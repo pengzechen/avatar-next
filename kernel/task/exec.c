@@ -16,6 +16,7 @@
 #include "string.h"
 #include "arch.h"
 #include "task/task.h"
+#include "task/switch.h"
 #include "loader/elf_image.h"
 #include "task/exec.h"
 
@@ -192,20 +193,6 @@ elf_setup_stack(void *pgd, uint64_t stack_top, uint64_t entry,
 
     *out_sp = UADDR(ptr);
 
-    KLOG_INFO("[elf] Initial stack: sp=0x%llx, argc=%d, argv[0]=%s\n",
-              *out_sp, argc, av[0]);
-#if ARCH_RISCV64
-    {
-        uint64_t *stack_words = (uint64_t *)ptr;
-        for (int i = 0; i < 24; i++) {
-            KLOG_INFO("[elf]   stack[%02d] @0x%llx = 0x%llx\n",
-                      i,
-                      (uint64_t)(*out_sp + (uint64_t)i * 8),
-                      stack_words[i]);
-        }
-    }
-#endif
-
 #undef UADDR
 #undef PUSH64
 #undef MAX_ARGS
@@ -240,8 +227,8 @@ task_execve(const char *pathname,
         extern uint64_t g_kernel_pgd_phys;
         uint64_t *kernel_pml4 = (uint64_t *)phys_to_virt(g_kernel_pgd_phys);
         x86_copy_kernel_mappings((uint64_t *)pgd, kernel_pml4);
-        KLOG_INFO("[exec] x86_64 copied kernel PML4[%u..%u] to user PGD=0x%llx\n",
-                  X86_PML4_KERNEL_START, X86_PML4_ENTRIES - 1U, pgd_phys);
+        KLOG_DEBUG("[exec] x86_64 copied kernel PML4[%u..%u] to user PGD=0x%llx\n",
+               X86_PML4_KERNEL_START, X86_PML4_ENTRIES - 1U, pgd_phys);
     }
 #endif
 #if ARCH_RISCV64
@@ -249,9 +236,10 @@ task_execve(const char *pathname,
         uint64_t *kernel_l1 = (uint64_t *)phys_to_virt(satp_read_pgd_phys());
         uint64_t *user_l1   = (uint64_t *)pgd;
         riscv64_copy_kernel_mappings(user_l1, kernel_l1);
-        KLOG_INFO("[exec] RISC-V kernel mappings: l1[0x%x]=0x%llx l1[0x%x]=0x%llx\n",
-                  RISCV64_KERNEL_L1_MMIO_IDX, user_l1[RISCV64_KERNEL_L1_MMIO_IDX],
-                  RISCV64_KERNEL_L1_RAM_IDX,  user_l1[RISCV64_KERNEL_L1_RAM_IDX]);
+          KLOG_DEBUG("[exec] RISC-V kernel mappings: l1[0x%x]=0x%llx l1[0x%x]=0x%llx l1[0x%x]=0x%llx\n",
+                 RISCV64_KERNEL_L1_MMIO0_IDX, user_l1[RISCV64_KERNEL_L1_MMIO0_IDX],
+                 RISCV64_KERNEL_L1_MMIO1_IDX, user_l1[RISCV64_KERNEL_L1_MMIO1_IDX],
+                 RISCV64_KERNEL_L1_RAM_IDX,   user_l1[RISCV64_KERNEL_L1_RAM_IDX]);
     }
 #endif
     /* AArch64: TTBR0/TTBR1 硬件分割，无需复制内核映射 */
@@ -276,8 +264,8 @@ task_execve(const char *pathname,
         }
         exec_entry = interp_info.entry_point;   /* 动态连接：跳入 ld-musl */
         at_base    = interp_info.min_vaddr;     /* AT_BASE = interpreter 实际加载基址 */
-        KLOG_INFO("[exec] Interpreter loaded: entry=0x%llx base=0x%llx\n",
-                  exec_entry, at_base);
+        KLOG_DEBUG("[exec] Interpreter loaded: entry=0x%llx base=0x%llx\n",
+               exec_entry, at_base);
     }
 
     /* 4. 分配并映射用户栈 */
@@ -289,23 +277,7 @@ task_execve(const char *pathname,
         return -2;
     }
 
-    KLOG_INFO("[exec] Stack pages allocated: phys=0x%llx - 0x%llx (%llu pages)\n",
-              stack_base_paddr, stack_base_paddr + stack_pages * PAGE_SIZE, stack_pages);
-
     memset(phys_to_virt(stack_base_paddr), 0, stack_pages * PAGE_SIZE);
-
-    /* 检查是否意外分配到了包含 g_pmm 的物理页 */
-    {
-        uint64_t g_pmm_check_va = (uint64_t)&g_pmm;
-        uint64_t g_pmm_check_pa = g_pmm_check_va - KERNEL_VMA;
-        if (g_pmm_check_pa >= stack_base_paddr &&
-            g_pmm_check_pa < stack_base_paddr + stack_pages * PAGE_SIZE) {
-            KLOG_ERROR("[exec] CRITICAL BUG: Stack uses physical page containing g_pmm!\n");
-            KLOG_ERROR("[exec]   g_pmm PA=0x%llx in stack range [0x%llx, 0x%llx)\n",
-                       g_pmm_check_pa, stack_base_paddr,
-                       stack_base_paddr + stack_pages * PAGE_SIZE);
-        }
-    }
 
     if (mm_vm_map_pages(pgd, stack_bottom, stack_base_paddr, (int32_t)stack_pages, 0) != 0) {
         KLOG_ERROR("[exec] Failed to map user stack: vaddr=0x%llx pages=%llu\n",
@@ -313,42 +285,6 @@ task_execve(const char *pathname,
         pmm_free_pages(g_pmm, stack_base_paddr, (uint32_t)stack_pages);
         return -3;
     }
-    KLOG_INFO("[exec] User stack mapped: 0x%llx - 0x%llx\n",
-              stack_bottom, (uint64_t)USER_STACK_TOP);
-
-#if ARCH_RISCV64
-    /* 调试：检查栈映射后 L1[1] 是否被正确设置 */
-    {
-        uint64_t *user_l1 = (uint64_t *)pgd;
-        KLOG_INFO("[exec] After stack mapping: L1[1]=0x%llx\n", user_l1[1]);
-        if (user_l1[1] != 0) {
-            uint64_t l1_ppn            = (user_l1[1] >> 10) & 0xfffffffffff;
-            uint64_t l1_next_table_pa  = l1_ppn << 12;
-            KLOG_INFO("[exec]   L1[1] points to next-level table at phys=0x%llx\n",
-                      l1_next_table_pa);
-
-            extern pmm_t *g_pmm;
-            extern pmm_t pmm;
-            uint64_t g_pmm_va   = (uint64_t)&g_pmm;
-            uint64_t g_pmm_pa   = g_pmm_va - KERNEL_VMA;
-            uint64_t g_pmm_page = g_pmm_pa & ~0xfff;
-            KLOG_INFO("[exec]   g_pmm variable at VA=0x%llx PA=0x%llx (page=0x%llx)\n",
-                      g_pmm_va, g_pmm_pa, g_pmm_page);
-            if (l1_next_table_pa == g_pmm_page)
-                KLOG_ERROR("[exec] BUG: L1[1] points to page containing g_pmm!\n");
-
-            uint64_t test_vaddr    = 0x6ffff000;
-            uint64_t mapped_paddr  = mm_vm_get_paddr(pgd, test_vaddr);
-            uint64_t expected_paddr = stack_base_paddr + (test_vaddr - stack_bottom);
-            KLOG_INFO("[exec] Stack VA 0x%llx -> PA 0x%llx (expected 0x%llx)\n",
-                      test_vaddr, mapped_paddr, expected_paddr);
-            if (mapped_paddr != expected_paddr)
-                KLOG_ERROR("[exec] BUG: Stack mapping incorrect!\n");
-            if ((mapped_paddr & ~0xfff) == g_pmm_page)
-                KLOG_ERROR("[exec] CRITICAL: Stack page maps to g_pmm page!\n");
-        }
-    }
-#endif
 
     /* 5. 构建 Linux ABI 初始栈 */
     uint64_t user_sp = USER_STACK_TOP;
@@ -365,11 +301,14 @@ task_execve(const char *pathname,
     uint64_t mmap_base = (info.min_vaddr == USER_CODE_BASE) ? USER_MMAP_BASE_PIE
                                                               : USER_MMAP_BASE_EXEC;
 
+    uint64_t exec_irq_flags = arch_irq_save();
+
     task_t *new_task = process_create_with_pgd(
         pathname, exec_entry, user_sp, 10, pgd_phys,
         ALIGN_UP(info.max_vaddr, PAGE_SIZE), mmap_base);
 
     if (new_task == NULL) {
+        arch_irq_restore(exec_irq_flags);
         KLOG_ERROR("[exec] Failed to create task\n");
         return -5;
     }
@@ -379,14 +318,13 @@ task_execve(const char *pathname,
     new_task->blocked_sigs = current->blocked_sigs;
 
     uint32_t new_task_id = new_task->id;
-    KLOG_INFO("[exec] Process '%s' created, PID=%u, pgd=0x%llx, parent=%u\n",
-              pathname, new_task->id, pgd_phys, new_task->parent_id);
-    KLOG_INFO("[exec]   heap_start=0x%llx, mmap_base=0x%llx\n",
-              new_task->heap_end, new_task->mmap_next);
+    KLOG_DEBUG("[exec] Process '%s' created, PID=%u, pgd=0x%llx, parent=%u\n",
+               pathname, new_task->id, pgd_phys, new_task->parent_id);
 
     /* 7. 阻塞当前进程，等待新进程退出 */
     current->is_waiting = true;
     current->wait_pid   = new_task_id;
+    arch_irq_restore(exec_irq_flags);
     task_block(NULL);
 
     /* 8. 新进程已退出：获取退出状态并释放槽位，然后以相同状态退出 */

@@ -2,12 +2,37 @@
 #include "uart/uart_dw.h"
 #include "types.h"
 #include "mmio.h"
+#include "mm_vm.h"
 #include "spinlock.h"
 #include "klog.h"
 
+#ifndef DEVICE_UART_BASE_RAW
+#define DEVICE_UART_BASE_RAW 0x10000000UL
+#endif
+
+#ifndef DEVICE_UART_REG_SHIFT
+#define DEVICE_UART_REG_SHIFT 0
+#endif
+
+#ifndef DEVICE_MMIO_NEEDS_VMA
+#define DEVICE_MMIO_NEEDS_VMA 0
+#endif
+
+#if ARCH_RISCV64 && defined(PLATFORM_SG2002)
+static inline void sg2002_dbg_putc(char c)
+{
+    volatile unsigned char *uart = (volatile unsigned char *)(KERNEL_VMA + DEVICE_UART_BASE_RAW);
+    while (!(uart[0x14] & 0x20))
+        __asm__ volatile("nop");
+    uart[0] = (unsigned char)c;
+}
+#else
+static inline void sg2002_dbg_putc(char c) { (void)c; }
+#endif
+
 /* DW UART 模块内基地址（dw_uart_early_init() 从 platform_get_mmio 填充） */
-uintptr_t dw_uart_base = 0x10000000UL; /* QEMU RISC-V default; overridden by platform_get_mmio() in uart_init() */
-uint8_t   dw_uart_reg_shift = 0; /* 0=字节寻址(QEMU); 2=4字节MMIO(SG2002)；dw_uart_early_init 从 platform 读取 */
+uintptr_t dw_uart_base = DEVICE_UART_BASE_RAW + (DEVICE_MMIO_NEEDS_VMA ? KERNEL_VMA : 0UL);
+uint8_t   dw_uart_reg_shift = DEVICE_UART_REG_SHIFT; /* 0=字节寻址(QEMU); 2=4字节MMIO(SG2002) */
 
 // #include "irq.h"
 /* WFI：在等待中断时让出 CPU，若架构未定义则用 nop 代替 */
@@ -185,8 +210,8 @@ dw_uart_wait_idle(void)
 void
 dw_uart_early_init(void)
 {
-    dw_uart_reg_shift = (uint8_t)platform_get_uintptr("uart", "reg_shift");
-    dw_uart_base = platform_get_mmio("uart", "base");
+    dw_uart_reg_shift = DEVICE_UART_REG_SHIFT;
+    dw_uart_base = DEVICE_UART_BASE_RAW + (DEVICE_MMIO_NEEDS_VMA ? KERNEL_VMA : 0UL);
 
     /*
      * OpenSBI (或 QEMU) 已经完成波特率和帧格式的配置，
@@ -301,6 +326,13 @@ dw_uart_getchar_nb(char *c)
 void
 dw_uart_putchar(char c)
 {
+#if ARCH_RISCV64 && defined(PLATFORM_SG2002)
+    if (c == '\n')
+        sg2002_dbg_putc('\r');
+    sg2002_dbg_putc(c);
+    return;
+#endif
+
     // 如果 UART 尚未初始化，直接写寄存器（阻塞模式）
     if (!dw_uart_initialized) {
         // 如果是 '\n'，先发送 '\r'

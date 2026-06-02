@@ -98,8 +98,6 @@ arch_task_switch:
  */
 .global task_trampoline_user
 task_trampoline_user:
-    /* 调试标记：如果到达这里会继续执行 */
-    
     /* arch_switch_to_user(user_entry, user_sp, kernel_sp) */
     mv      a0, s0
     mv      a1, s1
@@ -142,9 +140,6 @@ arch_switch_to_user:
     sfence.vma
 9:
 
-    /* 保存内核栈到 sscratch，供下一次用户陷入使用 */
-    csrw    sscratch, a2
-
     /* 设置返回地址到用户入口 */
     csrw    sepc, a0
 
@@ -154,7 +149,8 @@ arch_switch_to_user:
     csrr    t0, sstatus
     li      t1, ~0x102          /* 清 SPP (bit 8) 和 SIE (bit 1) */
     and     t0, t0, t1
-    ori     t0, t0, 0x20        /* 仅设 SPIE (bit 5)，sret 后 SIE=SPIE=1 */
+    li      t1, ((1 << 23) | 0x20)  /* 设置平台要求 bit23，同时设 SPIE(bit5) */
+    or      t0, t0, t1
     csrw    sstatus, t0
 
     /* 清除 hstatus.SPV (bit 7) + hstatus.SPVP (bit 8)
@@ -165,16 +161,23 @@ arch_switch_to_user:
      * U-mode，导致用 vsatp（kernel satp）翻译用户 VA 0x10000 → 未映射 → Inst PF。
      * 此处强制清零，确保 sret 总是进入普通 U-mode。
      */
+#if !defined(PLATFORM_SG2002)
     csrr    t0, hstatus
     li      t1, ~0x180          /* 清 SPV (bit 7) 和 SPVP (bit 8) */
     and     t0, t0, t1
     csrw    hstatus, t0
+#endif
 
     /* 用户栈 */
     mv      sp, a1
 
     /* 同步 I-cache，确保刚写入的用户代码可执行 */
     fence.i
+
+    /* 保存内核栈到 sscratch，必须尽量贴近 sret。
+     * 在此之前仍处于 S-mode，若过早设置 sscratch，S 态异常会被
+     * trap_vector 误判成 U 态陷入。 */
+    csrw    sscratch, a2
 
     sret
 
@@ -195,11 +198,14 @@ arch_fork_resume_user:
     ori     t1, t1, 0x20        /* SPIE */
     csrw    sstatus, t1
 
-    /* 清除 hstatus.SPV + SPVP，确保 sret 进入 U-mode 而非 VU-mode */
+    /* 清除 hstatus.SPV + SPVP，确保 sret 进入 U-mode 而非 VU-mode。
+     * SG2002/C906 无 H 扩展，访问 hstatus 会触发非法指令。 */
+#if !defined(PLATFORM_SG2002)
     csrr    t0, hstatus
     li      t1, ~0x180
     and     t0, t0, t1
     csrw    hstatus, t0
+#endif
 
     /* 保存当前内核栈到 sscratch */
     mv      t0, sp

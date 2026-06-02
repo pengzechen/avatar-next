@@ -72,7 +72,7 @@ riscv_irq_save(void)
 {
     uint64_t status;
     asm volatile(
-        "   csrrsi  %0, sstatus, 2           \n" /* read sstatus and set IE bit (disable irq) */
+        "   csrrci  %0, sstatus, 2           \n" /* read sstatus and clear SIE bit */
         : "=r"(status)
         :
         : "memory");

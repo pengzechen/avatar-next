@@ -11,6 +11,7 @@
 #include "klog.h"
 #include "riscv64/sysreg.h"
 #include "syscall/syscall.h"
+#include "platform.h"
 
 /* 中断处理函数表，索引 = scause 低位（去掉 bit63 后的中断编号）*/
 #define MAX_IRQ_CAUSES  16
@@ -93,6 +94,9 @@ void handle_exception(void *frame_ptr)
             return;
         }
 
+        KLOG_ERROR("[exception] sync: code=%llu pc=0x%lx stval=0x%lx sstatus=0x%lx satp=0x%lx\n",
+                   code, frame->sepc, frame->stval, frame->sstatus, CSR_READ(satp));
+
         /* 其他异常：打印简单信息后挂起 */
         if (code == 12 || code == 13 || code == 15 ||
             code == 20 || code == 21 || code == 23) {
@@ -101,9 +105,15 @@ void handle_exception(void *frame_ptr)
                                      (code == 15) ? "Store" :
                                      (code == 20) ? "Inst-G" :
                                      (code == 21) ? "Load-G" : "Store-G";
-            uint64_t hstatus_val = CSR_READ(hstatus);
             uint64_t sstatus_val = frame->sstatus;
             uint64_t satp_val    = CSR_READ(satp);
+#if defined(PLATFORM_SG2002)
+            KLOG_ERROR("%s PF: pc=0x%lx va=0x%lx sstatus=0x%lx(SPP=%u) satp=0x%lx(PPN=0x%lx)\n",
+                       fault_type, frame->sepc, frame->stval,
+                       sstatus_val, (unsigned)((sstatus_val >> 8) & 1),
+                       satp_val, satp_val & 0xfffffffffffULL);
+#else
+            uint64_t hstatus_val = CSR_READ(hstatus);
             KLOG_ERROR("%s PF: pc=0x%lx va=0x%lx sstatus=0x%lx(SPP=%u) hstatus=0x%lx(SPV=%u SPVP=%u) satp=0x%lx(PPN=0x%lx)\n",
                        fault_type, frame->sepc, frame->stval,
                        sstatus_val, (unsigned)((sstatus_val >> 8) & 1),
@@ -111,6 +121,7 @@ void handle_exception(void *frame_ptr)
                        (unsigned)((hstatus_val >> 7) & 1),
                        (unsigned)((hstatus_val >> 8) & 1),
                        satp_val, satp_val & 0xfffffffffffULL);
+#endif
         }
         
         do_platform_shutdown();

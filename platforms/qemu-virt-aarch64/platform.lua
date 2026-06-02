@@ -15,6 +15,11 @@ platform = {
         reserves = {},
     },
 
+    kernel = {
+        -- QEMU -kernel 将 AArch64 image 加载到 0x40080000。
+        link = 0xffff000040080000,
+    },
+
     mmio_vma = true,
     lapic    = false,
 

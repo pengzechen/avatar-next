@@ -136,6 +136,9 @@ timer_handler(void *frame)
     g_system_ticks++;
     g_tick_counter++;
 
+    extern void cpu_bump_local_ticks(void);
+    cpu_bump_local_ticks();
+
     // 更新统计信息
     g_timer_stats.total_interrupts++;
     g_timer_stats.last_interrupt_time = timer_get_uptime_ms();

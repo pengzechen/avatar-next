@@ -18,14 +18,46 @@
 #include "lua.h"
 #include "lauxlib.h"
 
+#if ARCH_RISCV64 && defined(PLATFORM_SG2002)
+static inline void sg2002_dbg_putc(char c)
+{
+    volatile unsigned char *uart = (volatile unsigned char *)0x04140000UL;
+    while (!(uart[0x14] & 0x20))
+        __asm__ volatile("nop");
+    uart[0] = (unsigned char)c;
+}
+#else
+static inline void sg2002_dbg_putc(char c) { (void)c; }
+#endif
+
 /* ── 全局变量定义 ─────────────────────────────────────────────────────── */
 
-uintptr_t g_mem_ram_base    = 0;
-uintptr_t g_mem_ram_size    = 0;
-uintptr_t g_mem_rootfs_base = 0;
-uintptr_t g_mem_rootfs_size = 0;
+#ifndef PLATFORM_MEM_RAM_BASE
+#define PLATFORM_MEM_RAM_BASE 0UL
+#endif
 
-int g_mmio_needs_vma = 0;
+#ifndef PLATFORM_MEM_RAM_SIZE
+#define PLATFORM_MEM_RAM_SIZE 0UL
+#endif
+
+#ifndef PLATFORM_MEM_ROOTFS_BASE
+#define PLATFORM_MEM_ROOTFS_BASE 0UL
+#endif
+
+#ifndef PLATFORM_MEM_ROOTFS_SIZE
+#define PLATFORM_MEM_ROOTFS_SIZE 0UL
+#endif
+
+#ifndef DEVICE_MMIO_NEEDS_VMA
+#define DEVICE_MMIO_NEEDS_VMA 0
+#endif
+
+uintptr_t g_mem_ram_base    = PLATFORM_MEM_RAM_BASE;
+uintptr_t g_mem_ram_size    = PLATFORM_MEM_RAM_SIZE;
+uintptr_t g_mem_rootfs_base = PLATFORM_MEM_ROOTFS_BASE;
+uintptr_t g_mem_rootfs_size = PLATFORM_MEM_ROOTFS_SIZE;
+
+int g_mmio_needs_vma = DEVICE_MMIO_NEEDS_VMA;
 
 pmm_resv_t g_pmm_reserves[PMM_MAX_RESV];
 int        g_pmm_resv_count = 0;

@@ -36,9 +36,9 @@ elf_load_segment(void *pgd, elf64_phdr_t *phdr, uint8_t *file_data)
     uint64_t total_pages = (vaddr_end - vaddr_start) / PAGE_SIZE;
     uint64_t page_idx    = 0;
 
-    KLOG_INFO("[elf] Loading segment:\n");
-    KLOG_INFO("[elf]   vaddr: 0x%llx - 0x%llx\n", vaddr_start, vaddr_end);
-    KLOG_INFO("[elf]   filesz: 0x%llx, memsz: 0x%llx\n", filesz, memsz);
+    KLOG_DEBUG("[elf] Loading segment:\n");
+    KLOG_DEBUG("[elf]   vaddr: 0x%llx - 0x%llx\n", vaddr_start, vaddr_end);
+    KLOG_DEBUG("[elf]   filesz: 0x%llx, memsz: 0x%llx\n", filesz, memsz);
 
     uint64_t perm = 0;  /* 默认：用户可读写可执行 */
 
@@ -67,13 +67,13 @@ elf_load_segment(void *pgd, elf64_phdr_t *phdr, uint8_t *file_data)
 
     for (uint64_t cur_vaddr = vaddr_start; cur_vaddr < vaddr_end; cur_vaddr += PAGE_SIZE) {
         if ((page_idx % 64) == 0) {
-            KLOG_INFO("[elf]   progress: page %llu/%llu vaddr=0x%llx\n",
-                      page_idx, total_pages, cur_vaddr);
+            KLOG_DEBUG("[elf]   progress: page %llu/%llu vaddr=0x%llx\n",
+                       page_idx, total_pages, cur_vaddr);
         }
         page_idx++;
     }
 
-    KLOG_INFO("[elf] Segment done: %llu pages mapped\n", total_pages);
+    KLOG_DEBUG("[elf] Segment done: %llu pages mapped\n", total_pages);
     return 0;
 }
 
@@ -134,8 +134,8 @@ elf_image_load_impl(uint8_t *file_data, uint64_t file_size, void *pgd,
         return -6;
     }
 
-    KLOG_INFO("[elf] Valid ELF: entry=0x%llx, phnum=%u\n",
-              ehdr->e_entry, ehdr->e_phnum);
+    KLOG_DEBUG("[elf] Valid ELF: entry=0x%llx, phnum=%u\n",
+               ehdr->e_entry, ehdr->e_phnum);
 
     entry_point = ehdr->e_entry;
 
@@ -149,10 +149,10 @@ elf_image_load_impl(uint8_t *file_data, uint64_t file_size, void *pgd,
     /* ET_DYN 使用 PIE 基址 USER_CODE_BASE，或调用方指定的 force_base（interpreter 用）*/
     if (force_base != 0) {
         image_base = force_base;
-        KLOG_INFO("[elf] force_base: 0x%llx\n", image_base);
+        KLOG_DEBUG("[elf] force_base: 0x%llx\n", image_base);
     } else if (ehdr->e_type == ET_DYN) {
         image_base = USER_CODE_BASE;
-        KLOG_INFO("[elf] ET_DYN image base: 0x%llx\n", image_base);
+        KLOG_DEBUG("[elf] ET_DYN image base: 0x%llx\n", image_base);
     }
 
     if (image_base != 0)
@@ -168,13 +168,13 @@ elf_image_load_impl(uint8_t *file_data, uint64_t file_size, void *pgd,
                     plen = (uint64_t)(sizeof(out->interp_path) - 1);
                 memcpy(out->interp_path, file_data + phdr[i].p_offset, plen);
                 out->interp_path[plen] = '\0';
-                KLOG_INFO("[elf] PT_INTERP: %s\n", out->interp_path);
+                KLOG_DEBUG("[elf] PT_INTERP: %s\n", out->interp_path);
                 break;
             }
         }
     }
 
-    KLOG_INFO("[elf] Loading ELF segments...\n");
+    KLOG_DEBUG("[elf] Loading ELF segments...\n");
 
     /* 加载所有 PT_LOAD 段 */
     for (uint16_t i = 0; i < ehdr->e_phnum; i++) {
@@ -192,11 +192,11 @@ elf_image_load_impl(uint8_t *file_data, uint64_t file_size, void *pgd,
         }
     }
 
-    KLOG_INFO("[elf] ELF loaded: vaddr 0x%llx - 0x%llx\n", min_vaddr, max_vaddr);
-    KLOG_INFO("[elf] Entry point: 0x%llx\n", entry_point);
+    KLOG_DEBUG("[elf] ELF loaded: vaddr 0x%llx - 0x%llx\n", min_vaddr, max_vaddr);
+    KLOG_DEBUG("[elf] Entry point: 0x%llx\n", entry_point);
 
     /* ── 处理 RELA 重定位（PIE 需要）────────────────────────────── */
-    KLOG_INFO("[elf] Processing RELA relocations...\n");
+    KLOG_DEBUG("[elf] Processing RELA relocations...\n");
     for (uint16_t i = 0; i < ehdr->e_phnum; i++) {
         if (phdr[i].p_type == PT_DYNAMIC) {
             elf64_dyn_t *dyn = (elf64_dyn_t *)(file_data + phdr[i].p_offset);
@@ -216,13 +216,13 @@ elf_image_load_impl(uint8_t *file_data, uint64_t file_size, void *pgd,
             }
 
             if (rela_addr && rela_size && rela_ent) {
-                KLOG_INFO("[elf] Found RELA: addr=0x%llx, size=%llu, ent=%llu\n",
-                          rela_addr, rela_size, rela_ent);
+                KLOG_DEBUG("[elf] Found RELA: addr=0x%llx, size=%llu, ent=%llu\n",
+                           rela_addr, rela_size, rela_ent);
 
                 uint64_t load_bias = (ehdr->e_type == ET_DYN) ? image_base : 0;
 
-                KLOG_INFO("[elf] ELF type=%u, min_vaddr=0x%llx, load_bias=0x%llx\n",
-                          ehdr->e_type, min_vaddr, load_bias);
+                KLOG_DEBUG("[elf] ELF type=%u, min_vaddr=0x%llx, load_bias=0x%llx\n",
+                           ehdr->e_type, min_vaddr, load_bias);
 
 #if ARCH_AARCH64
                 const uint32_t reloc_relative  = R_AARCH64_RELATIVE;
@@ -353,7 +353,7 @@ elf_image_load_impl(uint8_t *file_data, uint64_t file_size, void *pgd,
                               unsupported_count);
                 }
 
-                KLOG_INFO("[elf] Processed %llu RELA relocations\n", rela_count);
+                KLOG_DEBUG("[elf] Processed %llu RELA relocations\n", rela_count);
             }
             break;
         }

@@ -102,14 +102,14 @@ int elf_loader_load_from_file(const char *pathname, char **argv, char **envp)
     }
     path_buf[i] = '\0';
 
-    KLOG_INFO("[elf_loader] Loading: %s\n", path_buf);
+    KLOG_DEBUG("[elf_loader] Loading: %s\n", path_buf);
 
     /* 解析符号链接（busybox applet 等均为 symlink） */
     char resolved[256];
     if (resolve_symlink(path_buf, resolved, sizeof(resolved)) == 0) {
         if (resolved[0] != path_buf[0] ||
             memcmp(resolved, path_buf, sizeof(path_buf)) != 0)
-            KLOG_INFO("[elf_loader] Resolved '%s' -> '%s'\n", path_buf, resolved);
+            KLOG_DEBUG("[elf_loader] Resolved '%s' -> '%s'\n", path_buf, resolved);
     } else {
         KLOG_WARN("[elf_loader] Symlink depth exceeded for '%s'\n", path_buf);
         memcpy(resolved, path_buf, sizeof(resolved));
@@ -146,8 +146,8 @@ int elf_loader_load_from_file(const char *pathname, char **argv, char **envp)
 
     file_data = (uint8_t *)phys_to_virt(file_phys);
 
-    KLOG_INFO("[elf_loader] file_phys=0x%llx file_data=0x%llx pages=%u\n",
-              file_phys, (uint64_t)file_data, page_count);
+    KLOG_DEBUG("[elf_loader] file_phys=0x%llx file_data=0x%llx pages=%u\n",
+               file_phys, (uint64_t)file_data, page_count);
 
     /* 读取文件 */
     rc = ext4_fread(&file, file_data, file_size, &rcnt);
@@ -160,7 +160,7 @@ int elf_loader_load_from_file(const char *pathname, char **argv, char **envp)
 
     ext4_fclose(&file);
 
-    KLOG_INFO("[elf_loader] File loaded: %zu bytes\n", file_size);
+    KLOG_DEBUG("[elf_loader] File loaded: %zu bytes\n", file_size);
 
     /* ── 检查 PT_INTERP（动态连接器路径）───────────────────────────── */
     uint8_t  *interp_data  = NULL;
@@ -178,7 +178,7 @@ int elf_loader_load_from_file(const char *pathname, char **argv, char **envp)
                     if (plen >= sizeof(ipath)) plen = sizeof(ipath) - 1;
                     memcpy(ipath, file_data + phdr[pi].p_offset, plen);
                     ipath[plen] = '\0';
-                    KLOG_INFO("[elf_loader] PT_INTERP: %s\n", ipath);
+                    KLOG_DEBUG("[elf_loader] PT_INTERP: %s\n", ipath);
 
                     /* interpreter 路径也可能是符号链接 */
                     char iresolved[256];
@@ -205,8 +205,8 @@ int elf_loader_load_from_file(const char *pathname, char **argv, char **envp)
                             irc = ext4_fread(&ifile, interp_data, isz, &iread);
                             if (irc == EOK && iread == isz) {
                                 interp_size = (uint64_t)isz;
-                                KLOG_INFO("[elf_loader] Interpreter loaded: %zu bytes\n",
-                                          isz);
+                                KLOG_DEBUG("[elf_loader] Interpreter loaded: %zu bytes\n",
+                                           isz);
                             } else {
                                 KLOG_ERROR("[elf_loader] Interpreter read failed rc=%d\n",
                                            irc);

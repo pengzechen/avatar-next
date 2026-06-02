@@ -48,23 +48,24 @@ vm_create_user_process(uint64_t user_code_vaddr, uint64_t user_code_size,
     uint64_t *kernel_l1 = (uint64_t *)phys_to_virt(satp_read_pgd_phys());
     uint64_t *user_l1   = (uint64_t *)pgd;
     riscv64_copy_kernel_mappings(user_l1, kernel_l1);
-    KLOG_INFO("[vm_user] RISC-V kernel mappings: l1[0x%x]=0x%llx l1[0x%x]=0x%llx\n",
-              RISCV64_KERNEL_L1_MMIO_IDX, user_l1[RISCV64_KERNEL_L1_MMIO_IDX],
-              RISCV64_KERNEL_L1_RAM_IDX,  user_l1[RISCV64_KERNEL_L1_RAM_IDX]);
+    KLOG_DEBUG("[vm_user] RISC-V kernel mappings: l1[0x%x]=0x%llx l1[0x%x]=0x%llx l1[0x%x]=0x%llx\n",
+               RISCV64_KERNEL_L1_MMIO0_IDX, user_l1[RISCV64_KERNEL_L1_MMIO0_IDX],
+               RISCV64_KERNEL_L1_MMIO1_IDX, user_l1[RISCV64_KERNEL_L1_MMIO1_IDX],
+               RISCV64_KERNEL_L1_RAM_IDX,   user_l1[RISCV64_KERNEL_L1_RAM_IDX]);
 #endif
 
-    KLOG_INFO("[vm_user] Creating user process page table:\n");
-    KLOG_INFO("[vm_user]   code (kernel): 0x%llx - 0x%llx (size=0x%llx)\n",
-              user_code_vaddr, user_code_vaddr + user_code_size, user_code_size);
-    KLOG_INFO("[vm_user]   stack: 0x%llx - 0x%llx (size=0x%llx)\n",
-              user_stack_top - user_stack_size, user_stack_top, user_stack_size);
+    KLOG_DEBUG("[vm_user] Creating user process page table:\n");
+    KLOG_DEBUG("[vm_user]   code (kernel): 0x%llx - 0x%llx (size=0x%llx)\n",
+               user_code_vaddr, user_code_vaddr + user_code_size, user_code_size);
+    KLOG_DEBUG("[vm_user]   stack: 0x%llx - 0x%llx (size=0x%llx)\n",
+               user_stack_top - user_stack_size, user_stack_top, user_stack_size);
 
     /* ── 映射用户代码段 ─────────────────────────────────────────── */
     uint64_t code_vaddr = ALIGN_UP(USER_CODE_BASE, PAGE_SIZE);
     uint64_t code_end   = ALIGN_UP(USER_CODE_BASE + user_code_size, PAGE_SIZE);
 
-    KLOG_INFO("[vm_user] Mapping user code: vaddr=0x%llx - 0x%llx\n",
-              code_vaddr, code_end);
+    KLOG_DEBUG("[vm_user] Mapping user code: vaddr=0x%llx - 0x%llx\n",
+               code_vaddr, code_end);
 
     for (uint64_t vaddr = code_vaddr; vaddr < code_end; vaddr += PAGE_SIZE) {
         uint64_t new_paddr = pmm_alloc_pages(g_pmm, 1);
@@ -83,8 +84,8 @@ vm_create_user_process(uint64_t user_code_vaddr, uint64_t user_code_size,
     /* ── 映射用户栈 ─────────────────────────────────────────────── */
     {
         uint64_t stack_bottom = ALIGN_DOWN(user_stack_top - user_stack_size, PAGE_SIZE);
-        KLOG_INFO("[vm_user] Mapping user stack: vaddr=0x%llx - 0x%llx\n",
-                  stack_bottom, user_stack_top);
+        KLOG_DEBUG("[vm_user] Mapping user stack: vaddr=0x%llx - 0x%llx\n",
+               stack_bottom, user_stack_top);
         for (uint64_t vaddr = stack_bottom; vaddr < user_stack_top; vaddr += PAGE_SIZE) {
             uint64_t stack_page = pmm_alloc_pages(g_pmm, 1);
             if (stack_page == 0) {
@@ -102,22 +103,22 @@ vm_create_user_process(uint64_t user_code_vaddr, uint64_t user_code_size,
     /* ── 拷贝用户代码到用户地址空间 ───────────────────────────────── */
     {
         uint64_t src_paddr = virt_to_phys(user_code_vaddr);
-        KLOG_INFO("[vm_user] Copying user code: kern_paddr=0x%llx -> user_vaddr=0x10000\n",
-                  src_paddr);
+        KLOG_DEBUG("[vm_user] Copying user code: kern_paddr=0x%llx -> user_vaddr=0x10000\n",
+               src_paddr);
         mm_vm_copy_to_uva(pgd, USER_CODE_BASE, src_paddr, user_code_size);
 
         /* 验证：读取前 16 字节 */
         uint64_t test_pa = mm_vm_get_paddr(pgd, USER_CODE_BASE);
         if (test_pa != 0) {
             uint8_t *code = (uint8_t *)phys_to_virt(test_pa);
-            KLOG_INFO("[vm_user] User code at 0x%llx (PA=0x%llx): %02x %02x %02x %02x %02x %02x %02x %02x\n",
-                      USER_CODE_BASE,
-                      test_pa, code[0], code[1], code[2], code[3], 
-                      code[4], code[5], code[6], code[7]);
+            KLOG_DEBUG("[vm_user] User code at 0x%llx (PA=0x%llx): %02x %02x %02x %02x %02x %02x %02x %02x\n",
+                       USER_CODE_BASE,
+                       test_pa, code[0], code[1], code[2], code[3],
+                       code[4], code[5], code[6], code[7]);
         }
     }
 
-    KLOG_INFO("[vm_user] User process page table created: PGD=0x%llx\n", pgd_phys);
+    KLOG_DEBUG("[vm_user] User process page table created: PGD=0x%llx\n", pgd_phys);
     return pgd_phys;
 
 error:
@@ -133,7 +134,7 @@ vm_destroy_user_process(uint64_t pgd_phys)
 {
     if (pgd_phys == 0)
         return;
-    KLOG_INFO("[vm_user] Destroying user process page table: PGD=0x%llx\n", pgd_phys);
+    KLOG_DEBUG("[vm_user] Destroying user process page table: PGD=0x%llx\n", pgd_phys);
     /* TODO: 递归释放所有页表和映射的物理页 */
     pmm_free_pages(g_pmm, pgd_phys, 1);
 }

@@ -209,8 +209,6 @@ void syscall_handler(trap_frame_t *frame)
     g_syscall_entry_count++;
     uint64_t syscall_num = syscall_abi_nr(frame);
     uint64_t raw_syscall_num = syscall_num;
-    KLOG_DEBUG("[syscall] number: %d, entry #%u: frame=%p\n", syscall_num, g_syscall_entry_count, frame);
-
     uint64_t regs[9] = {0};
     for (int i = 0; i < 6; i++) {
         regs[i] = syscall_abi_arg(frame, i);
@@ -229,12 +227,6 @@ void syscall_handler(trap_frame_t *frame)
         return;
     }
 #endif
-
-    if (g_syscall_entry_count <= 16) {
-        KLOG_DEBUG("[syscall] dispatch raw=%llu mapped=%llu args=[0x%llx,0x%llx,0x%llx,0x%llx,0x%llx,0x%llx]\n",
-                   raw_syscall_num, syscall_num,
-                   regs[0], regs[1], regs[2], regs[3], regs[4], regs[5]);
-    }
 
     task_t *current = task_current();
 
@@ -593,10 +585,6 @@ void syscall_handler(trap_frame_t *frame)
         KLOG_ERROR("[syscall] Unknown syscall: %llu\n", syscall_num);
         regs[0] = (uint64_t)(int64_t)-ENOSYS;
         break;
-    }
-
-    if (g_syscall_entry_count <= 16) {
-        KLOG_DEBUG("[syscall] return mapped=%llu ret=0x%llx\n", syscall_num, regs[0]);
     }
 
     /* 结束 syscall stime 计时（EXIT 类 syscall 不会到达这里） */

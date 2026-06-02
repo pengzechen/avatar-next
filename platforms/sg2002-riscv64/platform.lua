@@ -14,7 +14,7 @@ platform = {
 
     memory = {
         ram    = { base = 0x80000000, size = 0x10000000 },  -- 256 MB
-        rootfs = { base = 0x88000000, size = 0x04000000, mb = 64 },
+        rootfs = { base = 0x89000000, size = 0x04000000, mb = 64 },
         reserves = {
             { name = "opensbi",  start = 0x80000000, stop = 0x801FFFFF },
             { name = "boot_low", start = 0x80200000, stop = 0x80205FFF },
@@ -61,7 +61,7 @@ platform = {
     },
 
     sdmmc = {
-        driver             = "sg2002",
+        driver             = "none",
         sd_base            = 0x04310000,   -- SDIO0 SDHCI 控制器基址
         top_base           = 0x03000000,   -- TOP 系统控制模块基址
         top_off_pwrsw_ctrl = 0x1F4,        -- sd_pwrsw_ctrl 寄存器偏移
@@ -88,11 +88,13 @@ register_device("tpu0", {
     end,
 })
 
-register_device("sdmmc0", {
-    -- SOPHGO SG2002 SDIO0 控制器（SDHCI，PIO 模式）
-    -- 硬件地址见上方 platform.sdmmc 表
-    -- 编译启用：make PLATFORM=sg2002-riscv64 SDMMC=sg2002 kernel
-    drivers = function(self)
-        sdblk.init()
-    end,
-})
+if sdblk then
+    register_device("sdmmc0", {
+        -- SOPHGO SG2002 SDIO0 控制器（SDHCI，PIO 模式）
+        -- 硬件地址见上方 platform.sdmmc 表
+        -- 编译启用：make PLATFORM=sg2002-riscv64 SDMMC=sg2002 kernel
+        drivers = function(self)
+            sdblk.init()
+        end,
+    })
+end

@@ -156,11 +156,14 @@ trap_vector:
      * 清除 hstatus.SPV(bit7) + SPVP(bit8)，防止 sret 进入 VU-mode。
      * 当 VMM guest（VS-mode）陷入 HS-mode 后调度到用户线程时，
      * hstatus.SPV 由硬件置 1 且未被清零；若不在此处清零，
-     * sret(SPP=0) 会进入 VU-mode → vsatp 无 0x10000 映射 → Inst PF。 */
+     * sret(SPP=0) 会进入 VU-mode → vsatp 无 0x10000 映射 → Inst PF。
+     * SG2002/C906 无 H 扩展，访问 hstatus 会触发非法指令。 */
+#if !defined(PLATFORM_SG2002)
     csrr  t1, hstatus
     li    t2, ~0x180         /* 清 SPV(bit7) + SPVP(bit8) */
     and   t1, t1, t2
     csrw  hstatus, t1
+#endif
     /* 设置 sscratch = kernel_sp */
     addi  t1, sp, TRAP_FRAME_SIZE
     csrw  sscratch, t1

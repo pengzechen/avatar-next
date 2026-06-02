@@ -16,6 +16,7 @@
 #include "task/cpu.h"
 #include "klog.h"
 #include "barrier.h"
+#include "assert.h"
 
 /* 内联获取系统时间（ns），用于 CPU 时间计账 */
 extern volatile uint64_t g_system_ticks;
@@ -102,8 +103,6 @@ alloc_task_slot(void)
             /* 默认 affinity = ANY：让 sched_enqueue round-robin 分发到所有核。
              * 调用方（如 vcpu_task_create）可在 enqueue 前覆盖。 */
             g_task_pool[i].cpu_affinity = CPU_AFFINITY_ANY;
-            KLOG_INFO("[task] alloc_task_slot: slot=%u base=0x%lx\n",
-                      i, (unsigned long)g_task_stacks[i]);
             return &g_task_pool[i];
         }
     }
@@ -174,42 +173,14 @@ void task_trampoline_user(void);
 void arch_user_entry_debug(uint64_t user_entry, uint64_t user_sp,
                            uint64_t kernel_sp, uint64_t user_pgd)
 {
-    extern pmm_t *g_pmm;
+    (void)user_entry;
+    (void)user_sp;
+    (void)kernel_sp;
+    (void)user_pgd;
+
     task_t *cur = task_current();
     if (cur && cur->is_user_process)
         cur->user_started = true;
-
-    KLOG_INFO("[user-entry] trampoline: entry=0x%llx usp=0x%llx ksp=0x%llx upgd=0x%llx satp=0x%llx sstatus=0x%llx sie=0x%llx stvec=0x%llx\n",
-              user_entry,
-              user_sp,
-              kernel_sp,
-              user_pgd,
-              CSR_READ(satp),
-              READ_SSTATUS(),
-              READ_SIE(),
-              READ_STVEC());
-    KLOG_INFO("[user-entry] g_pmm = %p (checking before user mode entry)\n", g_pmm);
-    
-    /* 调试：检查用户页表的内核映射 */
-    if (user_pgd != 0) {
-        uint64_t *user_l1 = (uint64_t *)phys_to_virt(user_pgd);
-        KLOG_INFO("[user-entry] User PGD L1[0x100]=0x%llx L1[0x102]=0x%llx\n",
-                  user_l1[0x100], user_l1[0x102]);
-        KLOG_INFO("[user-entry] User PGD L1[0]=0x%llx (for VA 0x10000)\n",
-                  user_l1[0]);
-        if (user_l1[0] != 0 && (user_l1[0] & 1) != 0) {
-            uint64_t l0_pa = ((user_l1[0] >> 10) & 0xfffffffffffULL) << 12;
-            uint64_t *l0 = (uint64_t *)phys_to_virt(l0_pa);
-            KLOG_INFO("[user-entry] L1[0] -> L0 @ PA=0x%llx, L0[0]=0x%llx\n",
-                      l0_pa, l0[0]);
-            if (l0[0] != 0 && (l0[0] & 1) != 0) {
-                uint64_t l_1_pa = ((l0[0] >> 10) & 0xfffffffffffULL) << 12;
-                uint64_t *l_1 = (uint64_t *)phys_to_virt(l_1_pa);
-                KLOG_INFO("[user-entry] L0[0] -> Leaf-L @ PA=0x%llx, L[16]=0x%llx (VA 0x10000 PTE)\n",
-                          l_1_pa, l_1[16]);
-            }
-        }
-    }
 }
 #endif
 /* ── task_init ───────────────────────────────────────────── */
@@ -391,8 +362,8 @@ process_create(const char *name, uint64_t user_entry, uint64_t user_code_size,
     /* 设置用户入口地址为用户虚拟地址（USER_CODE_BASE） */
     task->user_entry = USER_CODE_BASE;
 
-    KLOG_INFO("[task] Created page table for '%s': PGD=0x%llx\n",
-              name, (uint64_t)task->pgd);
+    KLOG_DEBUG("[task] Created page table for '%s': PGD=0x%llx\n",
+               name, (uint64_t)task->pgd);
 #elif ARCH_RISCV64
     {
         uint64_t pgd_phys = vm_create_user_process(user_entry, user_code_size,
@@ -416,8 +387,8 @@ process_create(const char *name, uint64_t user_entry, uint64_t user_code_size,
         task->pgd        = (uint64_t *)pgd_phys;
         task->user_entry = USER_CODE_BASE;
 
-        KLOG_INFO("[task] Created RISC-V user PGD=0x%llx for '%s'\n",
-                  pgd_phys, name);
+        KLOG_DEBUG("[task] Created RISC-V user PGD=0x%llx for '%s'\n",
+               pgd_phys, name);
     }
 #elif ARCH_X86_64
     {
@@ -441,14 +412,14 @@ process_create(const char *name, uint64_t user_entry, uint64_t user_code_size,
         task->pgd        = (uint64_t *)pgd_phys;
         task->user_entry = USER_CODE_BASE;
 
-        KLOG_INFO("[task] Created x86_64 user PGD=0x%llx for '%s'\n",
-                  pgd_phys, name);
+        KLOG_DEBUG("[task] Created x86_64 user PGD=0x%llx for '%s'\n",
+               pgd_phys, name);
     }
 #else
     /* 其他架构暂时使用共享内核页表 */
     task->pgd = NULL;
     task->user_entry = user_entry;
-    KLOG_INFO("[task] Using shared kernel page table for '%s'\n", name);
+    KLOG_DEBUG("[task] Using shared kernel page table for '%s'\n", name);
 #endif
 
     list_node_init(&task->run_node);
@@ -474,10 +445,10 @@ process_create(const char *name, uint64_t user_entry, uint64_t user_code_size,
     /* 加入就绪队列 */
     sched_enqueue(task);
 
-    KLOG_INFO("[task] created user process '%s' id=%u prio=%u\n",
-              task->name, task->id, (uint32_t)task->priority);
-    KLOG_INFO("[task]   user_entry=0x%llx (adjusted), user_sp=0x%llx, pgd=0x%llx\n",
-              task->user_entry, user_sp, (uint64_t)task->pgd);
+    KLOG_DEBUG("[task] created user process '%s' id=%u prio=%u\n",
+               task->name, task->id, (uint32_t)task->priority);
+    KLOG_DEBUG("[task]   user_entry=0x%llx (adjusted), user_sp=0x%llx, pgd=0x%llx\n",
+               task->user_entry, user_sp, (uint64_t)task->pgd);
 
     return task;
 }
@@ -529,12 +500,6 @@ process_create_with_pgd(const char *name, uint64_t user_entry, uint64_t user_sp,
     for (uint32_t j = 0; j < TASK_MAX_FD; j++)
         task->fd_table[j] = -1;
 
-    KLOG_DEBUG("[task] fd_table initialized: pid=%u [0]=%d(u=%u) [3]=%d(u=%u) [255]=%d(u=%u) sizeof=%zu\n",
-              task->id, task->fd_table[0], (unsigned)task->fd_table[0],
-              task->fd_table[3], (unsigned)task->fd_table[3],
-              task->fd_table[255], (unsigned)task->fd_table[255],
-              sizeof(task->fd_table[0]));
-
     task->parent_id  = g_current_task ? g_current_task->id : 0;
     task->exit_status = 0;
     task->is_waiting  = false;
@@ -577,10 +542,8 @@ process_create_with_pgd(const char *name, uint64_t user_entry, uint64_t user_sp,
 
     sched_enqueue(task);
 
-    KLOG_INFO("[task] created user process '%s' id=%u prio=%u (pgd=0x%llx)\n",
-              task->name, task->id, (uint32_t)task->priority, pgd_phys);
-    KLOG_INFO("[task]   user_entry=0x%llx, user_sp=0x%llx, kernel_sp=0x%lx\n", 
-              user_entry, user_sp, (unsigned long)task->sp);
+    KLOG_DEBUG("[task] created user process '%s' id=%u prio=%u (pgd=0x%llx)\n",
+               task->name, task->id, (uint32_t)task->priority, pgd_phys);
 
     return task;
 }
@@ -632,8 +595,8 @@ task_create(const char *name, void (*entry)(void *), void *arg, uint8_t priority
     /* 加入就绪队列，等待调度 */
     sched_enqueue(task);
 
-    KLOG_INFO("[task] created '%s' id=%u prio=%u sp=0x%lx\n",
-              task->name, task->id, (uint32_t)task->priority, (unsigned long)task->sp);
+    KLOG_DEBUG("[task] created '%s' id=%u prio=%u sp=0x%lx\n",
+               task->name, task->id, (uint32_t)task->priority, (unsigned long)task->sp);
     return task;
 }
 

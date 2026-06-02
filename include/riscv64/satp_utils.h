@@ -29,10 +29,13 @@
  *          = 0x3fffffffc0 & 0x1ff  →  0x100 = 256
  *
  *   L1[0x100] → KERNEL_VMA + 0x00000000..0x3fffffff  (MMIO 高半别名)
+ *   L1[0x101] → KERNEL_VMA + 0x40000000..0x7fffffff  (MMIO 高半别名)
  *   L1[0x102] → KERNEL_VMA + 0x80000000..0xbfffffff  (DRAM 高半别名，含内核代码/数据)
  */
-#define RISCV64_KERNEL_L1_MMIO_IDX  0x100U
-#define RISCV64_KERNEL_L1_RAM_IDX   0x102U
+#define RISCV64_KERNEL_L1_MMIO0_IDX  0x100U
+#define RISCV64_KERNEL_L1_MMIO1_IDX  0x101U
+#define RISCV64_KERNEL_L1_RAM_IDX    0x102U
+#define RISCV64_KERNEL_L1_MMIO_IDX   RISCV64_KERNEL_L1_MMIO0_IDX
 
 /**
  * satp_read_pgd_phys - 读取当前 satp 并返回根页表物理地址
@@ -64,8 +67,9 @@ static inline uint64_t pgd_phys_to_satp(uint64_t pgd_phys)
 static inline void riscv64_copy_kernel_mappings(uint64_t *user_l1,
                                                 const uint64_t *kernel_l1)
 {
-    user_l1[RISCV64_KERNEL_L1_MMIO_IDX] = kernel_l1[RISCV64_KERNEL_L1_MMIO_IDX];
-    user_l1[RISCV64_KERNEL_L1_RAM_IDX]  = kernel_l1[RISCV64_KERNEL_L1_RAM_IDX];
+    user_l1[RISCV64_KERNEL_L1_MMIO0_IDX] = kernel_l1[RISCV64_KERNEL_L1_MMIO0_IDX];
+    user_l1[RISCV64_KERNEL_L1_MMIO1_IDX] = kernel_l1[RISCV64_KERNEL_L1_MMIO1_IDX];
+    user_l1[RISCV64_KERNEL_L1_RAM_IDX]   = kernel_l1[RISCV64_KERNEL_L1_RAM_IDX];
 }
 
 #endif /* RISCV64_SATP_UTILS_H */

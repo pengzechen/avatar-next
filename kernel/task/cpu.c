@@ -358,7 +358,7 @@ cpu_smp_timer_test(uint32_t rounds, uint32_t ms_per_round)
      * 该函数在 task_switch_to_idle_stack() 之前被调用，此时 DAIF.I=1（IRQ 关）。
      * 不先开 IRQ，BSP 就永远收不到 timer 中断，local_ticks 一定为 0。
      */
-#if ARCH_AARCH64
+#if ARCH_AARCH64 || ARCH_RISCV64
     arch_irq_enable();
 #endif
 

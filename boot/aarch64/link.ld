@@ -1,31 +1,29 @@
 /*
- * AArch64 linker script for QEMU virt machine
- * Memory layout: RAM starts at 0x40000000
+ * AArch64 linker script
  *
  * 内核加载和运行策略：
- * - 加载地址（物理）：0x4008_0000
- * - 链接地址（虚拟）：0x4008_0000（临时，启用 MMU 前运行）
- * - 运行地址（虚拟）：KERNEL_VMA + 0x4008_0000（启用 MMU 后）
+ * - 链接地址由平台配置通过 KERNEL_LINK_ADDR 传入
+ *   QEMU virt: 0xffff000040080000（PA 0x40080000）
+ *   RK3588:    0xffff000000400000（PA 0x00400000）
  *
  * 流程：
- * 1. QEMU 将内核加载到物理地址 0x4008_0000
- * 2. 内核在物理地址下运行（链接地址 = 物理地址）
+ * 1. 平台加载器将内核加载到 KERNEL_LINK_ADDR - KERNEL_VMA
+ * 2. 内核在物理地址下运行（boot.S 用低 32 位恢复物理地址）
  * 3. 初始化页表（vm_init）
  * 4. 启用 MMU（mmu_init）
- * 5. 页表映射将 0x4008_0000 映射到 KERNEL_VMA + 0x4008_0000
+ * 5. 页表映射将物理加载地址映射到 KERNEL_LINK_ADDR
  * 6. 继续运行（虚拟地址自动生效）
  */
 
 ENTRY(_start)
 
-
 SECTIONS
 {
     /*
-     * 初始链接地址 = 物理地址
-     * 启用 MMU 后，相同的虚拟地址会自动映射到高地址
+        * 平台相关链接地址，由 Makefile 通过 --defsym 传入。
+        * 默认值保留 QEMU virt 的加载地址，避免裸 ld 调用时没有符号。
      */
-    . = 0xffff000000400000;  
+    . = DEFINED(KERNEL_LINK_ADDR) ? KERNEL_LINK_ADDR : 0xffff000040080000;
 
     /* 导出内核符号供 C 代码使用 */
     PROVIDE(__kernel_start = .);
@@ -63,6 +61,8 @@ SECTIONS
     .bss : {
         __bss_start = .;
         *(.bss*)
+        *(.sbss .sbss.*)
+        *(.scommon)
         *(COMMON)
         __bss_end = .;
     }

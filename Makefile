@@ -376,6 +376,8 @@ else ifeq ($(ARCH),aarch64)
     KLOG_TARGET := $(BUILD_DIR)/libklog_aarch64.a
     KERNEL_TARGET := $(BUILD_DIR)/kernel_aarch64.elf
     KERNEL_BIN    := $(BUILD_DIR)/kernel_aarch64.bin
+    KERNEL_LINK_ADDR ?= 0xffff000040080000
+    LDFLAGS += -Wl,--defsym=KERNEL_LINK_ADDR=$(KERNEL_LINK_ADDR)
     QEMU          := qemu-system-aarch64
     QEMU_FLAGS    := -cpu cortex-a76 -M virt,virtualization=on -smp $(SMP) -m 2G -nographic -kernel $(KERNEL_BIN)
 else ifeq ($(ARCH),riscv64)
@@ -415,6 +417,13 @@ CFLAGS  += -Ikernel/mm
 CFLAGS  += -DAVATAR_HAS_FILESYSTEM
 CFLAGS  += -DCONFIG_SMP_CPUS=$(SMP)
 CFLAGS  += -DPLATFORM_$(MEM_PLATFORM_DEFINE)=1
+CFLAGS  += -DPLATFORM_MEM_RAM_BASE=$(MEM_RAM_BASE)
+CFLAGS  += -DPLATFORM_MEM_RAM_SIZE=$(MEM_RAM_SIZE)
+CFLAGS  += -DPLATFORM_MEM_ROOTFS_BASE=$(MEM_ROOTFS_BASE)
+CFLAGS  += -DPLATFORM_MEM_ROOTFS_SIZE=$(MEM_ROOTFS_SIZE)
+CFLAGS  += -DDEVICE_MMIO_NEEDS_VMA=$(DEV_MMIO_NEEDS_VMA)
+CFLAGS  += -DDEVICE_UART_BASE_RAW=$(DEV_UART_BASE_RAW)
+CFLAGS  += -DDEVICE_UART_REG_SHIFT=$(DEV_UART_REG_SHIFT)
 
 # ─── §6  驱动选择 ────────────────────────────────────────────────────────────────
 # 所有驱动默认值来自 platform.lua → gen_platform.py → platform.mk。

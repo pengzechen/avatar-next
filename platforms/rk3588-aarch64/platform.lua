@@ -24,6 +24,11 @@ platform = {
         },
     },
 
+    kernel = {
+        -- U-Boot: tftp 0x400000 kernel_aarch64.bin; go 0x400000
+        link = 0xffff000000400000,
+    },
+
     -- RK3588 裸机运行，但任务切换后 ttbr0_el1=0，低半 MMIO 地址失效。
     -- 必须加 KERNEL_VMA 偏移，使所有驱动通过 TTBR1 高地址访问设备寄存器。
     mmio_vma = true,

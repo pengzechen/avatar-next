@@ -47,16 +47,24 @@ extern uint8_t   dw_uart_reg_shift;
 #include "mmio.h"
 static inline uint8_t dw_reg_r8(uintptr_t abs_addr)
 {
+#if ARCH_RISCV64 && defined(PLATFORM_SG2002)
+    return read8((void *)abs_addr);
+#else
     if (dw_uart_reg_shift == 2)
         return (uint8_t)read32((void *)abs_addr);
     return read8((void *)abs_addr);
+#endif
 }
 static inline void dw_reg_w8(uint8_t val, uintptr_t abs_addr)
 {
+#if ARCH_RISCV64 && defined(PLATFORM_SG2002)
+    write8(val, (void *)abs_addr);
+#else
     if (dw_uart_reg_shift == 2)
         write32((uint32_t)val, (void *)abs_addr);
     else
         write8(val, (void *)abs_addr);
+#endif
 }
 
 /* LSR 位 — 别名自 uart_16550.h */

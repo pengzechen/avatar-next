@@ -16,6 +16,16 @@
 #define RV_PTE_U           (1ULL << 4)
 #define RV_PTE_A           (1ULL << 6)
 #define RV_PTE_D           (1ULL << 7)
+#define RV_PTE_PPN_MASK    ((1ULL << 44) - 1ULL)
+
+#if defined(PLATFORM_SG2002)
+/* SG2002/CVITEK T-Head PTE memory attribute bits. */
+#define RV_PTE_ATTR_NORMAL   ((7ULL << 60))                 /* CACHE | BUF | SHARE */
+#define RV_PTE_ATTR_IOREMAP  ((1ULL << 63) | (1ULL << 60))  /* SO | SHARE */
+#else
+#define RV_PTE_ATTR_NORMAL   0ULL
+#define RV_PTE_ATTR_IOREMAP  0ULL
+#endif
 
 /* 当前 RISC-V 内核运行在高地址（KERNEL_VMA 偏移），需通过 phys_to_virt 将物理地址转为内核可访问虚拟地址 */
 static inline void *rv_pa_to_kva(uint64_t pa)
@@ -25,7 +35,7 @@ static inline void *rv_pa_to_kva(uint64_t pa)
 
 static inline uint64_t rv_pte_to_pa(uint64_t pte)
 {
-    return ((pte >> 10) << 12);
+    return ((pte >> 10) & RV_PTE_PPN_MASK) << 12;
 }
 
 static inline uint64_t rv_make_table_pte(uint64_t pa)
@@ -82,12 +92,23 @@ static inline uint64_t rv_perm_to_flags(uint64_t perm)
      * perm=2: 设备页（RW, no X）
      */
     if (perm == 1) {
-        return RV_PTE_R | RV_PTE_W | RV_PTE_X | RV_PTE_A | RV_PTE_D;
+        return RV_PTE_R | RV_PTE_W | RV_PTE_X | RV_PTE_A | RV_PTE_D |
+               RV_PTE_ATTR_NORMAL;
     }
     if (perm == 2) {
-        return RV_PTE_R | RV_PTE_W | RV_PTE_A | RV_PTE_D;
+        return RV_PTE_R | RV_PTE_W | RV_PTE_A | RV_PTE_D |
+               RV_PTE_ATTR_IOREMAP;
     }
-    return RV_PTE_R | RV_PTE_W | RV_PTE_X | RV_PTE_U | RV_PTE_A | RV_PTE_D;
+    return RV_PTE_R | RV_PTE_W | RV_PTE_X | RV_PTE_U | RV_PTE_A | RV_PTE_D |
+           RV_PTE_ATTR_NORMAL;
+}
+
+static inline uint64_t mm_vm_get_pte(void *page_dir, uint64_t vaddr)
+{
+    uint64_t *pte = rv_walk_l0_pte(page_dir, vaddr, false);
+    if (pte == NULL)
+        return 0;
+    return *pte;
 }
 
 static inline int32_t mm_vm_map_pages(void *page_dir, uint64_t vaddr,

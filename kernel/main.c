@@ -204,7 +204,9 @@ void kernel_main(void)
 #if !defined(RUN_VMM_TEST)
     /* SMP 检查完成，现在才启动 busybox 交互 shell */
     KLOG_INFO("\n=== Launching busybox shell ===\n");
+    uint64_t bb_irq_flags = arch_irq_save();
     task_t *bb_task = task_create("busybox", demo_load_busybox, NULL, 5);
+    arch_irq_restore(bb_irq_flags);
     if (bb_task)
         KLOG_INFO("busybox loader task created: id=%u\n", bb_task->id);
     else
