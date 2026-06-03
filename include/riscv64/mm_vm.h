@@ -16,6 +16,7 @@
 #define RV_PTE_U           (1ULL << 4)
 #define RV_PTE_A           (1ULL << 6)
 #define RV_PTE_D           (1ULL << 7)
+#define RV_PTE_NOFREE      (1ULL << 8)  /* RSW: leaf maps external memory */
 #define RV_PTE_PPN_MASK    ((1ULL << 44) - 1ULL)
 
 #if defined(PLATFORM_SG2002)

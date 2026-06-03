@@ -207,6 +207,26 @@ kill_handler(uint64_t regs[6], task_t *current)
     regs[0] = 0;
 }
 
+/* ── tkill (Linux 130) ─────────────────────────────────────────
+ * 旧接口：按 tid 向单个任务发送信号。
+ * ────────────────────────────────────────────────────────────── */
+void
+tkill_handler(uint64_t regs[6])
+{
+    int tid = (int)(int32_t)regs[0];
+    int sig = (int)regs[1];
+
+    if (sig == 0) { regs[0] = 0; return; }
+
+    task_t *tgt = task_find_by_id((uint32_t)tid);
+    if (!tgt) {
+        regs[0] = (uint64_t)(int64_t)-ESRCH;
+        return;
+    }
+    task_send_signal(tgt, sig);
+    regs[0] = 0;
+}
+
 /* ── tgkill (Linux 131) ────────────────────────────────────────
  * tgid 是线程组 leader 的 PID（不是 pgid）。
  * 单线程进程: tgid == tid；线程: tgid == parent_id（leader）。

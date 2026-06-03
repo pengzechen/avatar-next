@@ -55,20 +55,22 @@ void sys_exit(int status)
         futex_do_wake(current->ctid_ptr, 0x7fffffff);
     }
 
-    /* 关闭所有打开的文件描述符，释放 fd pool slot，防止泄漏 */
-    for (int _fd = 0; _fd < (int)TASK_MAX_FD; _fd++) {
-        int _idx = (int)(int8_t)current->fd_table[_fd];
-        if (_idx < 0 || _idx >= FD_POOL_SIZE) {
+    /* CLONE_VM/CLONE_FILES threads share fd objects with the process. */
+    if (!current->is_thread) {
+        for (int _fd = 0; _fd < (int)TASK_MAX_FD; _fd++) {
+            int _idx = (int)(int8_t)current->fd_table[_fd];
+            if (_idx < 0 || _idx >= FD_POOL_SIZE) {
+                current->fd_table[_fd] = -1;
+                continue;
+            }
+            fd_obj_t *_obj = &g_fd_pool[_idx];
+            if (_obj->type == FDT_FILE)
+                ext4_fclose(&_obj->file);
+            else if (_obj->type == FDT_DIR)
+                ext4_dir_close(&_obj->dir);
+            fd_pool_free(_idx);
             current->fd_table[_fd] = -1;
-            continue;
         }
-        fd_obj_t *_obj = &g_fd_pool[_idx];
-        if (_obj->type == FDT_FILE)
-            ext4_fclose(&_obj->file);
-        else if (_obj->type == FDT_DIR)
-            ext4_dir_close(&_obj->dir);
-        fd_pool_free(_idx);
-        current->fd_table[_fd] = -1;
     }
 
     /* 在退出前计算 utime： wall_time − stime */

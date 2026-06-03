@@ -38,6 +38,87 @@ extern uint8_t  g_stack_used[TASK_MAX];
 #define PFS_ENOENT   2
 #define PFS_ENOSYS  38
 #define PFS_EIO      5
+#define PFS_EMFILE  24
+
+#if DRIVER_ION
+static int ion_alloc_fd_for_current(ion_handle_t handle)
+{
+    extern int task_alloc_ion_fd(task_t *task, uint32_t handle);
+
+    task_t *current = task_current();
+    if (!current)
+        return -PFS_EINVAL;
+    int fd = task_alloc_ion_fd(current, (uint32_t)handle);
+    return fd >= 0 ? fd : -PFS_EMFILE;
+}
+
+static ion_handle_t ion_handle_from_user_fd(int fd)
+{
+    extern int task_get_ion_handle(task_t *task, int fd, uint32_t *handle);
+
+    task_t *current = task_current();
+    uint32_t handle = 0;
+    if (current && task_get_ion_handle(current, fd, &handle) == 0)
+        return (ion_handle_t)handle;
+    return (ion_handle_t)fd;
+}
+
+static int tpu_cache_fd_op(int32_t fd, int invalidate)
+{
+    void *va;
+    uint64_t pa;
+    ion_handle_t handle = ion_handle_from_user_fd(fd);
+
+    if (ion_get_buf(handle, &va, &pa) != 0)
+        return -PFS_EINVAL;
+
+    size_t sz = ion_get_size(handle);
+    if (invalidate)
+        invalidate_dcache_range(va, sz);
+    else
+        clean_and_invalidate_dcache_range(va, sz);
+
+    KLOG_DEBUG("[pseudofs] cvi-tpu0 cache_%s fd=%d h=%u pa=0x%llx size=0x%llx\n",
+               invalidate ? "invld" : "flush", fd, handle,
+               (unsigned long long)pa, (unsigned long long)sz);
+    return 0;
+}
+
+static int tpu_cache_range_op(const struct cvitpu_legacy_cache_op_arg *op,
+                              int invalidate)
+{
+    if (!op || op->size == 0)
+        return -PFS_EINVAL;
+
+    void *va = (void *)(uintptr_t)op->paddr;
+    uint64_t pa = op->paddr;
+    ion_handle_t handle = ION_HANDLE_INVALID;
+
+    if (op->fd >= 0) {
+        void *base_va;
+        uint64_t base_pa;
+        handle = ion_handle_from_user_fd(op->fd);
+        if (ion_get_buf(handle, &base_va, &base_pa) == 0) {
+            size_t ion_size = ion_get_size(handle);
+            if (op->paddr >= base_pa && op->paddr < base_pa + ion_size) {
+                uint64_t off = op->paddr - base_pa;
+                if (off + op->size <= ion_size)
+                    va = (void *)((uintptr_t)base_va + off);
+            }
+        }
+    }
+
+    if (invalidate)
+        invalidate_dcache_range(va, (size_t)op->size);
+    else
+        clean_and_invalidate_dcache_range(va, (size_t)op->size);
+
+    KLOG_DEBUG("[pseudofs] cvi-tpu0 cache_%s_range fd=%d h=%u pa=0x%llx va=%p size=0x%llx\n",
+               invalidate ? "invld" : "flush", op->fd, handle,
+               (unsigned long long)pa, va, (unsigned long long)op->size);
+    return 0;
+}
+#endif
 
 /* ── 简单字符串工具（不依赖 libc string.h 名称冲突） ─────────── */
 static size_t pfs_strlen(const char *s)
@@ -375,23 +456,52 @@ static int ion_dev_ioctl(int nid, uint64_t req, void *argp)
         if (!r) return -PFS_EINVAL;
         void *va; uint64_t pa; ion_handle_t h;
         if (ion_alloc((size_t)r->size, &va, &pa, &h) != 0) return -PFS_EIO;
-        r->paddr  = pa;
-        r->vaddr  = (uint64_t)(uintptr_t)va;
-        r->handle = (uint32_t)h;
-        KLOG_DEBUG("[pseudofs] /dev/ion alloc size=%llu pa=0x%llx h=%u\n",
-                   (unsigned long long)r->size, (unsigned long long)pa, h);
+        int fd = ion_alloc_fd_for_current(h);
+        if (fd < 0) {
+            ion_free(h);
+            return fd;
+        }
+        r->size  = (uint64_t)ion_get_size(h);
+        r->fd    = fd;
+        r->paddr = pa;
+        KLOG_DEBUG("[pseudofs] /dev/ion alloc size=%llu pa=0x%llx fd=%d h=%u\n",
+                   (unsigned long long)r->size, (unsigned long long)pa, fd, h);
+        return 0;
+    }
+    if (req == ION_IOC_CVI_ALLOC) {
+        struct ion_cvi_alloc_data *r = (struct ion_cvi_alloc_data *)argp;
+        if (!r) return -PFS_EINVAL;
+        void *va; uint64_t pa; ion_handle_t h;
+        if (ion_alloc((size_t)r->size, &va, &pa, &h) != 0) return -PFS_EIO;
+        int fd = ion_alloc_fd_for_current(h);
+        if (fd < 0) {
+            ion_free(h);
+            return fd;
+        }
+        r->size  = (uint64_t)ion_get_size(h);
+        r->fd    = fd;
+        r->paddr = pa;
+        KLOG_DEBUG("[pseudofs] /dev/ion cvi_alloc size=%llu pa=0x%llx fd=%d h=%u heap='%s'\n",
+                   (unsigned long long)r->size, (unsigned long long)pa,
+                   r->fd, h, r->heap_name);
         return 0;
     }
     if (req == ION_IOC_FREE) {
         if (!argp) return -PFS_EINVAL;
         uint32_t h = *(uint32_t *)argp;
+        if (ion_get_size((ion_handle_t)h) == 0)
+            h = (uint32_t)ion_handle_from_user_fd((int)h);
         return ion_free((ion_handle_t)h) == 0 ? 0 : -PFS_EINVAL;
     }
     if (req == ION_IOC_GET) {
         struct ion_get_req *r = (struct ion_get_req *)argp;
         if (!r) return -PFS_EINVAL;
         void *va; uint64_t pa;
-        if (ion_get_buf((ion_handle_t)r->handle, &va, &pa) != 0) return -PFS_EINVAL;
+        ion_handle_t handle = (ion_handle_t)r->handle;
+        if (ion_get_size(handle) == 0)
+            handle = ion_handle_from_user_fd((int)r->handle);
+        if (ion_get_buf(handle, &va, &pa) != 0) return -PFS_EINVAL;
+        r->handle = (uint32_t)handle;
         r->paddr = pa;
         r->vaddr = (uint64_t)(uintptr_t)va;
         return 0;
@@ -399,14 +509,22 @@ static int ion_dev_ioctl(int nid, uint64_t req, void *argp)
     if (req == ION_IOC_SIZE) {
         struct ion_size_req *r = (struct ion_size_req *)argp;
         if (!r) return -PFS_EINVAL;
-        r->size = (uint64_t)ion_get_size((ion_handle_t)r->handle);
+        ion_handle_t handle = (ion_handle_t)r->handle;
+        size_t sz = ion_get_size(handle);
+        if (sz == 0) {
+            handle = ion_handle_from_user_fd((int)r->handle);
+            sz = ion_get_size(handle);
+        }
+        r->handle = (uint32_t)handle;
+        r->size = (uint64_t)sz;
         return 0;
     }
     if (req == ION_IOC_IMPORT) {
         struct ion_fd_data *r = (struct ion_fd_data *)argp;
         if (!r) return -PFS_EINVAL;
-        /* Avatar OS: fd 与 ion handle 使用相同编号 */
-        r->handle = (uint32_t)r->fd;
+        ion_handle_t handle = ion_handle_from_user_fd(r->fd);
+        if (ion_get_size(handle) == 0) return -PFS_EINVAL;
+        r->handle = (uint32_t)handle;
         return 0;
     }
     if (req == ION_IOC_HEAP_QUERY) {
@@ -424,11 +542,17 @@ static int ion_dev_ioctl(int nid, uint64_t req, void *argp)
             for (uint32_t i = 0; i < n; i++) dst[i] = heaps[i];
         }
         q->cnt = 3;
+        KLOG_DEBUG("[pseudofs] /dev/ion heap_query heaps=0x%llx cnt=3\n",
+                   (unsigned long long)q->heaps);
         return 0;
     }
+    KLOG_WARN("[pseudofs] /dev/ion unsupported ioctl req=0x%llx\n",
+              (unsigned long long)req);
     return -PFS_ENOSYS;
 #else
-    (void)req; (void)argp;
+    KLOG_WARN("[pseudofs] /dev/ion ioctl req=0x%llx but DRIVER_ION is disabled\n",
+              (unsigned long long)req);
+    (void)argp;
     return -PFS_ENOSYS;
 #endif
 }
@@ -437,17 +561,18 @@ static int tpu_dev_ioctl(int nid, uint64_t req, void *argp)
 {
     (void)nid;
 #if DRIVER_TPU_CVITPU
-    if (req == CVITPU_SUBMIT_DMABUF) {
+    if (req == CVITPU_SUBMIT_DMABUF || req == CVITPU_LEGACY_SUBMIT_DMABUF) {
         struct cvitpu_submit_dma_arg *r = (struct cvitpu_submit_dma_arg *)argp;
         if (!r) return -PFS_EINVAL;
         void *va; uint64_t pa;
-        if (ion_get_buf((ion_handle_t)r->fd, &va, &pa) != 0)
+        ion_handle_t handle = ion_handle_from_user_fd(r->fd);
+        if (ion_get_buf(handle, &va, &pa) != 0)
             return -PFS_EINVAL;
-        KLOG_DEBUG("[pseudofs] cvi-tpu0 submit fd=%d pa=0x%llx\n",
-                   r->fd, (unsigned long long)pa);
+        KLOG_DEBUG("[pseudofs] cvi-tpu0 submit fd=%d h=%u seq=%u pa=0x%llx\n",
+                   r->fd, handle, r->seq_no, (unsigned long long)pa);
         return cvi_tpu_run_dmabuf(va, pa);
     }
-    if (req == CVITPU_WAIT_DMABUF) {
+    if (req == CVITPU_WAIT_DMABUF || req == CVITPU_LEGACY_WAIT_DMABUF) {
         /* 同步驱动：submit 完成时任务已结束 */
         struct cvitpu_wait_dma_arg *r = (struct cvitpu_wait_dma_arg *)argp;
         if (!r) return -PFS_EINVAL;
@@ -469,23 +594,21 @@ static int tpu_dev_ioctl(int nid, uint64_t req, void *argp)
             (const void *)(uintptr_t)r->paddr, (size_t)r->size);
         return 0;
     }
-    if (req == CVITPU_DMABUF_FLUSH_FD) {
+    if (req == CVITPU_DMABUF_FLUSH_FD || req == CVITPU_LEGACY_DMABUF_FLUSH_FD) {
         if (!argp) return -PFS_EINVAL;
         int32_t fd = *(int32_t *)argp;
-        void *va; uint64_t pa;
-        if (ion_get_buf((ion_handle_t)fd, &va, &pa) != 0) return -PFS_EINVAL;
-        size_t sz = ion_get_size((ion_handle_t)fd);
-        clean_and_invalidate_dcache_range(va, sz);
-        return 0;
+        return tpu_cache_fd_op(fd, 0);
     }
-    if (req == CVITPU_DMABUF_INVLD_FD) {
+    if (req == CVITPU_DMABUF_INVLD_FD || req == CVITPU_LEGACY_DMABUF_INVLD_FD) {
         if (!argp) return -PFS_EINVAL;
         int32_t fd = *(int32_t *)argp;
-        void *va; uint64_t pa;
-        if (ion_get_buf((ion_handle_t)fd, &va, &pa) != 0) return -PFS_EINVAL;
-        size_t sz = ion_get_size((ion_handle_t)fd);
-        invalidate_dcache_range(va, sz);
-        return 0;
+        return tpu_cache_fd_op(fd, 1);
+    }
+    if (req == CVITPU_LEGACY_DMABUF_FLUSH) {
+        return tpu_cache_range_op((const struct cvitpu_legacy_cache_op_arg *)argp, 0);
+    }
+    if (req == CVITPU_LEGACY_DMABUF_INVLD) {
+        return tpu_cache_range_op((const struct cvitpu_legacy_cache_op_arg *)argp, 1);
     }
     if (req == CVITPU_PIO_MODE)    return 0;
     if (req == CVITPU_LOAD_TEE  ||
@@ -654,7 +777,7 @@ int pseudo_ioctl(int nid, uint64_t req, void *argp)
     if (nid < 0 || nid >= NODE_COUNT) return -PFS_EINVAL;
     const pseudo_node_t *n = &g_nodes[nid];
     if (!n->ioctl_fn) return -PFS_ENOSYS;
-    return n->ioctl_fn(nid, req, argp);
+    return n->ioctl_fn(nid, (uint32_t)req, argp);
 }
 
 int pseudo_stat_path(const char *abspath, struct kernel_stat *st)

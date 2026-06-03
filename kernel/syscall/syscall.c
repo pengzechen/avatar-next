@@ -351,6 +351,10 @@ void syscall_handler(trap_frame_t *frame)
         kill_handler(regs, current);
         break;
 
+    case LINUX_SYS_TKILL:
+        tkill_handler(regs);
+        break;
+
     case LINUX_SYS_TGKILL:
         tgkill_handler(regs);
         break;
@@ -362,6 +366,10 @@ void syscall_handler(trap_frame_t *frame)
     /* --- 文件描述符 --- */
     case LINUX_SYS_READ:
         read_handler(regs, current);
+        break;
+
+    case LINUX_SYS_READV:
+        readv_handler(regs, current);
         break;
 
     case LINUX_SYS_WRITE:

@@ -171,8 +171,15 @@ arch_switch_to_user:
     /* 用户栈 */
     mv      sp, a1
 
+    /* Fresh exec entry must not inherit the kernel/previous task TLS pointer. */
+    mv      tp, zero
+
     /* 同步 I-cache，确保刚写入的用户代码可执行 */
     fence.i
+#if defined(PLATFORM_SG2002)
+    .long 0x0100000b         /* ICACHE.IALL */
+    .long 0x01a0000b         /* SYNC.I */
+#endif
 
     /* 保存内核栈到 sscratch，必须尽量贴近 sret。
      * 在此之前仍处于 S-mode，若过早设置 sscratch，S 态异常会被
@@ -246,5 +253,9 @@ arch_fork_resume_user:
 
     /* 同步 I-cache，避免 fork 后子进程执行陈旧指令 */
     fence.i
+#if defined(PLATFORM_SG2002)
+    .long 0x0100000b         /* ICACHE.IALL */
+    .long 0x01a0000b         /* SYNC.I */
+#endif
 
     sret

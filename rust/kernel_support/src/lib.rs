@@ -48,6 +48,7 @@ unsafe impl GlobalAlloc for KernelAllocator {
 #[global_allocator]
 static ALLOCATOR: KernelAllocator = KernelAllocator;
 
+#[cfg(not(test))]
 #[alloc_error_handler]
 fn alloc_oom(_layout: Layout) -> ! {
     unsafe { platform_panic() };
@@ -56,6 +57,7 @@ fn alloc_oom(_layout: Layout) -> ! {
 
 // ─── Panic 处理 ──────────────────────────────────────────────────────────────
 
+#[cfg(not(test))]
 #[panic_handler]
 fn panic(_info: &core::panic::PanicInfo) -> ! {
     unsafe { platform_panic() };

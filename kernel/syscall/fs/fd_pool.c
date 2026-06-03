@@ -69,3 +69,42 @@ fd_obj_t *task_get_fd(task_t *task, int fd)
         return NULL;
     return &g_fd_pool[idx];
 }
+
+int task_alloc_ion_fd(task_t *task, uint32_t handle)
+{
+    if (!task)
+        return -1;
+
+    int pool = fd_pool_alloc();
+    if (pool < 0)
+        return -1;
+
+    fd_obj_t *obj = &g_fd_pool[pool];
+    obj->type       = FDT_ION;
+    obj->flags      = 0;
+    obj->ion.handle = handle;
+
+    const char *path = "/dev/ion_buffer";
+    int k = 0;
+    while (path[k] && k < (int)sizeof(obj->path) - 1) {
+        obj->path[k] = path[k];
+        k++;
+    }
+    obj->path[k] = '\0';
+
+    int fd = task_alloc_fd(task, pool);
+    if (fd < 0) {
+        fd_pool_free(pool);
+        return -1;
+    }
+    return fd;
+}
+
+int task_get_ion_handle(task_t *task, int fd, uint32_t *handle)
+{
+    fd_obj_t *obj = task_get_fd(task, fd);
+    if (!obj || obj->type != FDT_ION || !handle)
+        return -1;
+    *handle = obj->ion.handle;
+    return 0;
+}

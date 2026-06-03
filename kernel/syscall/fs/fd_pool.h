@@ -22,6 +22,7 @@ typedef enum {
     FDT_FILE,
     FDT_DIR,
     FDT_PSEUDO,
+    FDT_ION,
 } fd_type_t;
 
 typedef struct {
@@ -35,6 +36,9 @@ typedef struct {
             int32_t  node_id;
             uint64_t off;
         } pseudo;
+        struct {
+            uint32_t handle;
+        } ion;
     };
 } fd_obj_t;
 
@@ -45,6 +49,8 @@ int  fd_pool_alloc(void);
 void fd_pool_free (int idx);
 
 /* ── 任务级 fd 表操作 ─────────────────────────────────────────── */
+int task_alloc_ion_fd(task_t *task, uint32_t handle);
+int task_get_ion_handle(task_t *task, int fd, uint32_t *handle);
 int        task_alloc_fd(task_t *task, int pool_idx);
 fd_obj_t  *task_get_fd  (task_t *task, int fd);
 

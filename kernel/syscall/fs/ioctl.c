@@ -9,6 +9,7 @@
 #include "syscall/fs/tty.h"
 #include "task/task.h"
 #include "pseudofs.h"
+#include "klog.h"
 
 void ioctl_handler(uint64_t regs[6], task_t *current)
 {
@@ -21,6 +22,9 @@ void ioctl_handler(uint64_t regs[6], task_t *current)
         fd_obj_t *ioctl_obj = task_get_fd(current, ioctl_fd);
         if (ioctl_obj && ioctl_obj->type == FDT_PSEUDO) {
             int rc = pseudo_ioctl(ioctl_obj->pseudo.node_id, request, argp);
+            KLOG_DEBUG("[ioctl] pseudo fd=%d node=%d req=0x%llx rc=%d\n",
+                       ioctl_fd, ioctl_obj->pseudo.node_id,
+                       (unsigned long long)request, rc);
             if (rc >= 0) { regs[0] = 0; return; }
             if (rc != -38 /* ENOSYS */) {
                 regs[0] = (uint64_t)(int64_t)rc;
@@ -51,6 +55,8 @@ void ioctl_handler(uint64_t regs[6], task_t *current)
     } else if (request == TIOCSWINSZ) {
         regs[0] = 0;
     } else {
+        KLOG_DEBUG("[ioctl] unsupported fd=%d req=0x%llx\n",
+                   ioctl_fd, (unsigned long long)request);
         regs[0] = (uint64_t)(int64_t)-ENOTTY;
     }
 }

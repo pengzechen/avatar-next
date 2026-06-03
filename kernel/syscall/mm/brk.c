@@ -17,6 +17,35 @@
 #include "arch.h"
 #include "vm_user.h"
 
+extern task_t g_task_pool[];
+extern uint8_t g_stack_used[];
+
+static uint64_t shared_heap_end(task_t *current)
+{
+    uint64_t heap_end = current->heap_end;
+
+    for (uint32_t i = 0; i < TASK_MAX; i++) {
+        task_t *task = &g_task_pool[i];
+        if (!g_stack_used[i] || !task->is_user_process || task->state == TASK_DEAD)
+            continue;
+        if (task->pgd == current->pgd && task->heap_end > heap_end)
+            heap_end = task->heap_end;
+    }
+
+    return heap_end;
+}
+
+static void sync_shared_heap_end(task_t *current, uint64_t heap_end)
+{
+    for (uint32_t i = 0; i < TASK_MAX; i++) {
+        task_t *task = &g_task_pool[i];
+        if (!g_stack_used[i] || !task->is_user_process || task->state == TASK_DEAD)
+            continue;
+        if (task->pgd == current->pgd)
+            task->heap_end = heap_end;
+    }
+}
+
 void *sys_brk(void *addr)
 {
     task_t  *current = task_current();
@@ -25,7 +54,7 @@ void *sys_brk(void *addr)
         return (void *)(uint64_t)(int64_t)-12; /* ENOMEM */
     }
 
-    uint64_t current_brk = current->heap_end;
+    uint64_t current_brk = shared_heap_end(current);
     uint64_t req_brk = (uint64_t)addr;
 
     if (g_syscall_entry_count <= 16) {
@@ -50,7 +79,7 @@ void *sys_brk(void *addr)
             vm_unmap_user_range((uint64_t)current->pgd,
                                 new_page_end,
                                 old_page_end - new_page_end);
-        current->heap_end = new_brk;
+        sync_shared_heap_end(current, new_brk);
         if (g_syscall_entry_count <= 16) {
             KLOG_DEBUG("[brk] shrink/no-grow -> 0x%llx\n", new_brk);
         }
@@ -59,13 +88,12 @@ void *sys_brk(void *addr)
 
 #if ARCH_AARCH64 || ARCH_RISCV64
     /* 扩展堆：映射新页 */
-    extern pmm_t pmm;  /* 直接使用结构体，绕过 g_pmm 指针 */
     uint64_t old_page_end = ALIGN_UP(current_brk, PAGE_SIZE);
     uint64_t new_page_end = ALIGN_UP(new_brk,     PAGE_SIZE);
     void    *pgd          = phys_to_virt((uint64_t)current->pgd);
 
     for (uint64_t va = old_page_end; va < new_page_end; va += PAGE_SIZE) {
-        uint64_t pa = pmm_alloc_pages(&pmm, 1);
+        uint64_t pa = pmm_alloc_pages(g_pmm, 1);
         if (pa == 0) {
             KLOG_ERROR("[brk] Out of memory at va=0x%llx\n", va);
             return (void *)current_brk; /* 返回旧地址表示失败 */
@@ -73,7 +101,7 @@ void *sys_brk(void *addr)
         memset(phys_to_virt(pa), 0, PAGE_SIZE);
         if (mm_vm_map_pages(pgd, va, pa, 1, 0) != 0) {
             /* Page already mapped (e.g. BSS last page overlap) — skip */
-            pmm_free_pages(&pmm, pa, 1);
+            pmm_free_pages(g_pmm, pa, 1);
             continue;
         }
     }
@@ -99,7 +127,7 @@ void *sys_brk(void *addr)
     }
 #endif
 
-    current->heap_end = new_brk;
+    sync_shared_heap_end(current, new_brk);
     if (g_syscall_entry_count <= 16) {
         KLOG_DEBUG("[brk] grow success -> 0x%llx\n", new_brk);
     }

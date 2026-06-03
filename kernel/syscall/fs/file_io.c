@@ -94,6 +94,54 @@ void write_handler(uint64_t regs[6], task_t *current)
     }
 }
 
+void readv_handler(uint64_t regs[6], task_t *current)
+{
+    int fd = (int)regs[0];
+    struct kernel_iovec *iov = (struct kernel_iovec *)regs[1];
+    int iovcnt = (int)regs[2];
+
+    if (!iov || iovcnt < 0) {
+        regs[0] = (uint64_t)(int64_t)-EINVAL;
+        return;
+    }
+    if (iovcnt == 0) {
+        regs[0] = 0;
+        return;
+    }
+    if (iovcnt > 1024) {
+        regs[0] = (uint64_t)(int64_t)-EINVAL;
+        return;
+    }
+
+    uint64_t total = 0;
+    for (int i = 0; i < iovcnt; i++) {
+        uint64_t base = iov[i].iov_base;
+        uint64_t len = iov[i].iov_len;
+        if (len == 0)
+            continue;
+        if (base == 0) {
+            regs[0] = total ? total : (uint64_t)(int64_t)-EFAULT;
+            return;
+        }
+
+        uint64_t rregs[6] = {0};
+        rregs[0] = (uint64_t)fd;
+        rregs[1] = base;
+        rregs[2] = len;
+        read_handler(rregs, current);
+
+        int64_t ret = (int64_t)rregs[0];
+        if (ret < 0) {
+            regs[0] = total ? total : (uint64_t)ret;
+            return;
+        }
+        total += (uint64_t)ret;
+        if ((uint64_t)ret < len)
+            break;
+    }
+    regs[0] = total;
+}
+
 void writev_handler(uint64_t regs[6], task_t *current)
 {
     int fd = (int)regs[0];

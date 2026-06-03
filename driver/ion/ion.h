@@ -54,6 +54,15 @@ int ion_alloc(size_t size, void **vaddr, uint64_t *paddr, ion_handle_t *handle);
 int ion_free(ion_handle_t handle);
 
 /**
+ * ion_ref — 增加缓冲区引用计数
+ *
+ * @handle: ion_alloc 返回的句柄
+ *
+ * 返回 0 表示成功，-1 表示句柄无效。
+ */
+int ion_ref(ion_handle_t handle);
+
+/**
  * ion_get_buf — 从句柄获取地址信息
  *
  * @handle: 有效的 ion_handle_t

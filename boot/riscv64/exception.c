@@ -112,6 +112,18 @@ void handle_exception(void *frame_ptr)
                        fault_type, frame->sepc, frame->stval,
                        sstatus_val, (unsigned)((sstatus_val >> 8) & 1),
                        satp_val, satp_val & 0xfffffffffffULL);
+            KLOG_ERROR("regs: ra=0x%lx sp=0x%lx gp=0x%lx tp=0x%lx t0=0x%lx t1=0x%lx t2=0x%lx\n",
+                       frame->x[1], frame->x[2], frame->x[3], frame->x[4],
+                       frame->x[5], frame->x[6], frame->x[7]);
+            KLOG_ERROR("regs: a0=0x%lx a1=0x%lx a2=0x%lx a3=0x%lx a4=0x%lx a5=0x%lx a6=0x%lx a7=0x%lx\n",
+                       frame->x[10], frame->x[11], frame->x[12], frame->x[13],
+                       frame->x[14], frame->x[15], frame->x[16], frame->x[17]);
+            KLOG_ERROR("regs: s0=0x%lx s1=0x%lx s2=0x%lx s3=0x%lx s4=0x%lx s5=0x%lx s6=0x%lx s7=0x%lx\n",
+                       frame->x[8], frame->x[9], frame->x[18], frame->x[19],
+                       frame->x[20], frame->x[21], frame->x[22], frame->x[23]);
+            KLOG_ERROR("regs: s8=0x%lx s9=0x%lx s10=0x%lx s11=0x%lx t3=0x%lx t4=0x%lx t5=0x%lx t6=0x%lx\n",
+                       frame->x[24], frame->x[25], frame->x[26], frame->x[27],
+                       frame->x[28], frame->x[29], frame->x[30], frame->x[31]);
 #else
             uint64_t hstatus_val = CSR_READ(hstatus);
             KLOG_ERROR("%s PF: pc=0x%lx va=0x%lx sstatus=0x%lx(SPP=%u) hstatus=0x%lx(SPV=%u SPVP=%u) satp=0x%lx(PPN=0x%lx)\n",

@@ -36,6 +36,7 @@ typedef struct task task_t;
 #define LINUX_SYS_LSEEK           62
 #define LINUX_SYS_READ            63
 #define LINUX_SYS_WRITE           64
+#define LINUX_SYS_READV           65
 #define LINUX_SYS_WRITEV          66
 #define LINUX_SYS_SENDFILE        71   /* AArch64/RISC-V sendfile64 */
 #define LINUX_SYS_PSELECT6        72
@@ -55,6 +56,7 @@ typedef struct task task_t;
 #define LINUX_SYS_CLOCK_GETTIME   113
 #define LINUX_SYS_SCHED_YIELD     124
 #define LINUX_SYS_KILL            129
+#define LINUX_SYS_TKILL           130
 #define LINUX_SYS_TGKILL          131
 #define LINUX_SYS_RT_SIGACTION    134
 #define LINUX_SYS_RT_SIGPROCMASK  135
@@ -302,6 +304,7 @@ void sigaction_handler   (uint64_t regs[6], task_t *current);
 void sigprocmask_handler (uint64_t regs[6], task_t *current);
 void sigreturn_handler   (uint64_t regs[6], task_t *current, trap_frame_t *frame);
 void kill_handler        (uint64_t regs[6], task_t *current);
+void tkill_handler       (uint64_t regs[6]);
 void tgkill_handler      (uint64_t regs[6]);
 
 /* ── core/ 子系统：进程/线程/调度 ─────────────────────────────── */
@@ -328,6 +331,7 @@ int  copy_string_from_user(const char *ustr, char *kbuf, int maxlen);
 /* ── fs/ 子系统：文件 / 目录 / TTY ─────────────────────────────── */
 /* 文件 I/O（fs/file_io.c）*/
 void read_handler    (uint64_t regs[6], task_t *current);
+void readv_handler   (uint64_t regs[6], task_t *current);
 void write_handler   (uint64_t regs[6], task_t *current);
 void writev_handler  (uint64_t regs[6], task_t *current);
 void lseek_handler   (uint64_t regs[6], task_t *current);

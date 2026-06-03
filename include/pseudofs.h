@@ -46,11 +46,12 @@
 
 /* ── /dev/ion ioctl 结构体 & 请求码 ──────────────────────────── */
 struct ion_alloc_req {
-    uint64_t size;      /* [in]  分配字节数                     */
-    uint64_t paddr;     /* [out] 物理地址                       */
-    uint64_t vaddr;     /* [out] 内核虚拟地址                   */
-    uint32_t handle;    /* [out] 句柄（1-based, 0=无效）        */
-    uint32_t _pad;
+    uint64_t size;         /* [in/out] requested/actual allocation size */
+    uint32_t heap_id_mask; /* [in] heap mask, accepted for ABI compat   */
+    uint32_t flags;        /* [in] ION flags, accepted for ABI compat   */
+    int32_t  fd;           /* [out] dmabuf-like fd                      */
+    uint32_t unused;
+    uint64_t paddr;        /* [out] physical address                    */
 };
 struct ion_get_req {
     uint32_t handle;    /* [in]  句柄                           */
@@ -64,10 +65,23 @@ struct ion_size_req {
     uint64_t size;      /* [out] 分配大小（字节）               */
 };
 
+/* CVITEK/SOPHGO runtime 64-byte ION allocation ABI (ioctl 0xc0404900).
+ * This extends ion_alloc_req with a 32-byte buffer name. */
+struct ion_cvi_alloc_data {
+    uint64_t size;      /* [in/out] requested/actual allocation size */
+    uint32_t heap_id_mask;
+    uint32_t flags;
+    int32_t  fd;        /* [out] ion handle, used as dmabuf fd       */
+    uint32_t unused;
+    uint64_t paddr;     /* [out] physical address                    */
+    char     heap_name[32];
+};
+
 #define ION_IOC_ALLOC   _IOWR('I', 0, struct ion_alloc_req)
 #define ION_IOC_FREE    _IOW ('I', 1, uint32_t)
 #define ION_IOC_GET     _IOWR('I', 2, struct ion_get_req)
 #define ION_IOC_SIZE    _IOWR('I', 3, struct ion_size_req)
+#define ION_IOC_CVI_ALLOC _IOWR('I', 0, struct ion_cvi_alloc_data)
 
 /* Android ION ABI 标准命令（nr=5 IMPORT, nr=8 HEAP_QUERY） */
 struct ion_fd_data {
@@ -107,6 +121,12 @@ struct cvitpu_cache_op_arg {
     uint64_t size;      /* 字节数                              */
 };
 
+struct cvitpu_legacy_cache_op_arg {
+    uint64_t paddr;     /* 64-byte aligned physical address     */
+    uint64_t size;      /* 64-byte aligned length               */
+    int32_t  fd;        /* Ion buffer fd                        */
+};
+
 #define CVITPU_SUBMIT_DMABUF   _IOW ('T',  1, struct cvitpu_submit_dma_arg)
 #define CVITPU_WAIT_DMABUF     _IOWR('T',  2, struct cvitpu_wait_dma_arg)
 #define CVITPU_LOAD_TEE        _IOW ('T',  3, uint64_t)
@@ -117,6 +137,14 @@ struct cvitpu_cache_op_arg {
 #define CVITPU_DMABUF_INVLD    _IOW ('T',  8, struct cvitpu_cache_op_arg)
 #define CVITPU_DMABUF_FLUSH_FD _IOW ('T',  9, int32_t)
 #define CVITPU_DMABUF_INVLD_FD _IOW ('T', 10, int32_t)
+
+/* CVITEK runtime on SG2002 also uses legacy 'p' requests. */
+#define CVITPU_LEGACY_SUBMIT_DMABUF   _IOW ('p', 1, uint64_t)
+#define CVITPU_LEGACY_DMABUF_FLUSH_FD _IOW('p', 2, uint64_t)
+#define CVITPU_LEGACY_DMABUF_INVLD_FD _IOW('p', 3, uint64_t)
+#define CVITPU_LEGACY_DMABUF_FLUSH    _IOW('p', 4, uint64_t)
+#define CVITPU_LEGACY_DMABUF_INVLD    _IOW('p', 5, uint64_t)
+#define CVITPU_LEGACY_WAIT_DMABUF     _IOWR('p', 6, uint64_t)
 
 /* ── /dev/npu ioctl（保留，暂无实现） ────────────────────────── */
 /* 未来在此定义 NPU_IOC_* */

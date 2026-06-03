@@ -47,15 +47,15 @@ trap_vector:
     j      .Lsave_rest
 
 .Lfrom_user:
-    /* U → S: t0=kernel_sp（旧 sscratch），sscratch=原始 t0
-     * 切换到内核栈，再取回用户的原始 t0 */
-    mv     t1, sp                /* t1 = user_sp */
-    mv     sp, t0                /* sp = kernel_sp */
-    addi   sp, sp, -TRAP_FRAME_SIZE
-    csrrw  t0, sscratch, x0      /* t0=用户原始t0, sscratch=0 */
-    sd     x5,  5*8(sp)          /* 用户原始 t0（正确！） */
-    sd     x6,  6*8(sp)          /* 用户原始 t1（未被修改，正确！） */
-    sd     t1,  2*8(sp)          /* user_sp */
+    /* U → S: t0=kernel_sp（旧 sscratch），sscratch=原始 t0。
+     * 先用 t0 作为临时 trap_frame 指针保存原始 sp/t1；不能先
+     * mv t1, sp，否则会把用户 t1 污染成 user_sp 并在返回时恢复回去。 */
+    addi   t0, t0, -TRAP_FRAME_SIZE
+    sd     x2,  2*8(t0)          /* user_sp */
+    sd     x6,  6*8(t0)          /* 用户原始 t1 */
+    csrrw  t1, sscratch, x0      /* t1=用户原始 t0, sscratch=0 */
+    sd     t1,  5*8(t0)          /* 用户原始 t0 */
+    mv     sp, t0                /* sp = trap_frame */
 
 .Lsave_rest:
 
@@ -163,6 +163,11 @@ trap_vector:
     li    t2, ~0x180         /* 清 SPV(bit7) + SPVP(bit8) */
     and   t1, t1, t2
     csrw  hstatus, t1
+#endif
+#if defined(PLATFORM_SG2002)
+    /* T-Head C906: make freshly written user mappings visible to I-fetch. */
+    .long 0x0100000b         /* ICACHE.IALL */
+    .long 0x01a0000b         /* SYNC.I */
 #endif
     /* 设置 sscratch = kernel_sp */
     addi  t1, sp, TRAP_FRAME_SIZE

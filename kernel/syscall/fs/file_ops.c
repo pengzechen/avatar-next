@@ -9,6 +9,9 @@
 #include "task/task.h"
 #include "pseudofs.h"
 #include "klog.h"
+#if DRIVER_ION
+#include "ion/ion.h"
+#endif
 #include <ext4.h>
 #include <ext4_errno.h>
 
@@ -98,6 +101,10 @@ void close_handler(uint64_t regs[6], task_t *current)
         ext4_fclose(&obj->file);
     else if (obj->type == FDT_DIR)
         ext4_dir_close(&obj->dir);
+#if DRIVER_ION
+    else if (obj->type == FDT_ION)
+        ion_free((ion_handle_t)obj->ion.handle);
+#endif
     fd_pool_free(idx);
     current->fd_table[fd] = -1;
     regs[0] = 0;
@@ -119,6 +126,9 @@ void dup3_handler(uint64_t regs[6], task_t *current)
         fd_obj_t *o = &g_fd_pool[idx];
         if (o->type == FDT_FILE) ext4_fclose(&o->file);
         else if (o->type == FDT_DIR) ext4_dir_close(&o->dir);
+    #if DRIVER_ION
+        else if (o->type == FDT_ION) ion_free((ion_handle_t)o->ion.handle);
+    #endif
         fd_pool_free(idx);
         current->fd_table[newfd] = -1;
     }
@@ -128,6 +138,13 @@ void dup3_handler(uint64_t regs[6], task_t *current)
     } else {
         int new_idx = fd_pool_alloc();
         if (new_idx < 0) { regs[0] = (uint64_t)(int64_t)-EMFILE; return; }
+#if DRIVER_ION
+        if (src->type == FDT_ION && ion_ref((ion_handle_t)src->ion.handle) != 0) {
+            fd_pool_free(new_idx);
+            regs[0] = (uint64_t)(int64_t)-EBADF;
+            return;
+        }
+#endif
         g_fd_pool[new_idx] = *src;
         current->fd_table[newfd] = new_idx;
     }

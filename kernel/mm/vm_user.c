@@ -33,7 +33,7 @@ static void rv_destroy_table(uint64_t *table, int level, bool free_leaf_pages)
             continue;
 
         if (rv_pte_is_leaf(pte)) {
-            if (free_leaf_pages)
+            if (free_leaf_pages && ((pte & RV_PTE_NOFREE) == 0))
                 pmm_free_pages(g_pmm, rv_pte_to_pa(pte), 1);
             table[i] = 0;
             continue;
@@ -248,7 +248,8 @@ vm_unmap_user_range(uint64_t pgd_phys, uint64_t vaddr, uint64_t size)
 #elif ARCH_RISCV64
         uint64_t *pte = rv_walk_l0_pte(pgd, va, false);
         if (pte && ((*pte & RV_PTE_V) != 0) && rv_pte_is_leaf(*pte)) {
-            pmm_free_pages(g_pmm, rv_pte_to_pa(*pte), 1);
+            if ((*pte & RV_PTE_NOFREE) == 0)
+                pmm_free_pages(g_pmm, rv_pte_to_pa(*pte), 1);
             *pte = 0;
             freed++;
         }

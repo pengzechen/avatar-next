@@ -174,6 +174,8 @@ elf_image_load_impl(uint8_t *file_data, uint64_t file_size, void *pgd,
         }
     }
 
+    int skip_relocations = (force_base != 0 || out->interp_path[0] != '\0');
+
     KLOG_DEBUG("[elf] Loading ELF segments...\n");
 
     /* 加载所有 PT_LOAD 段 */
@@ -195,9 +197,14 @@ elf_image_load_impl(uint8_t *file_data, uint64_t file_size, void *pgd,
     KLOG_DEBUG("[elf] ELF loaded: vaddr 0x%llx - 0x%llx\n", min_vaddr, max_vaddr);
     KLOG_DEBUG("[elf] Entry point: 0x%llx\n", entry_point);
 
-    /* ── 处理 RELA 重定位（PIE 需要）────────────────────────────── */
-    KLOG_DEBUG("[elf] Processing RELA relocations...\n");
-    for (uint16_t i = 0; i < ehdr->e_phnum; i++) {
+    /* ── 处理 RELA 重定位（无解释器的 PIE 需要）──────────────────── */
+    if (skip_relocations) {
+        KLOG_DEBUG("[elf] Skipping RELA relocations for dynamic ELF (interp='%s', force_base=0x%llx)\n",
+                   out->interp_path, force_base);
+    } else {
+        KLOG_DEBUG("[elf] Processing RELA relocations...\n");
+    }
+    for (uint16_t i = 0; !skip_relocations && i < ehdr->e_phnum; i++) {
         if (phdr[i].p_type == PT_DYNAMIC) {
             elf64_dyn_t *dyn = (elf64_dyn_t *)(file_data + phdr[i].p_offset);
             uint64_t dyn_count = phdr[i].p_filesz / sizeof(elf64_dyn_t);
