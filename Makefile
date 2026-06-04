@@ -523,7 +523,7 @@ endif
 USB ?= $(DEV_USB_TYPE)
 ifeq ($(USB),dwc2)
     CFLAGS           += -DDRIVER_USB_DWC2=1
-    DRIVER_USB_OBJS  := $(BUILD_DIR)/drv_usb_dwc2.o $(BUILD_DIR)/drv_usb_usb_core.o
+	DRIVER_USB_OBJS  := $(BUILD_DIR)/drv_usb_dwc2.o $(BUILD_DIR)/drv_usb_usb_core.o $(BUILD_DIR)/drv_usb_uvc.o
 else
     DRIVER_USB_OBJS  :=
 endif

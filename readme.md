@@ -334,6 +334,7 @@ KLOG_MODULE_DEBUG(LOG_MODULE_UART, "UART init");
 - [架构平台配置](docs/ARCH_PLATFORM_PROFILE_GUIDE.md) - 多架构多平台支持
 - [AArch64 NEON](docs/arch/aarch64/NEON_USAGE.md) - NEON 优化
 - [RISC-V64 SG2002 Busybox Bring-up 坑点](docs/RISCV64_SG2002_BUSYBOX_BRINGUP_NOTES.md) - SG2002 页表、trap、UART 和平台切换注意事项
+- [SG2002 USB/UVC Bring-up](docs/SG2002_USB_UVC_BRINGUP.md) - DWC2 Host、UVC 枚举和抓帧路径坑点
 
 ### 开发指南
 - [Busybox 编译](docs/BUILD_BUSYBOX.md) - Busybox 交叉编译指南

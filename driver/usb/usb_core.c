@@ -12,6 +12,8 @@
 
 #include "usb/dwc2_regs.h"
 #include "usb/usb.h"
+#include "usb/uvc.h"
+#include "usb/usb_core_internal.h"
 #include "platform_cfg.h"
 #include "mmio.h"
 #include "mm_vm.h"
@@ -26,8 +28,11 @@
 #define EP0_BUF_ALIGN  256
 #define OFF_EP0        0       /* SETUP 8 字节 + EP0 小数据 */
 #define DMA_OFF_SMALL_IO 256   /* 多包数据 IN 临时区 */
+#define USB_CONFIG_BUF_LEN 4096
+#define USB_VIDEO_DMA_ALIGN 256
 
 static uint8_t g_ep0_buf[1024] __attribute__((aligned(EP0_BUF_ALIGN)));
+static uint8_t g_config_desc_buf[USB_CONFIG_BUF_LEN];
 
 /* 对齐 Rust crate::utils::cache：clean = 写回 CPU 缓存 → DMA 可见
  *                      invalidate = 使失效 → CPU 看到 DMA 新数据 */
@@ -136,6 +141,29 @@ hcchar_bulk(uint32_t dev, uint32_t ep, uint32_t mps,
     return v;
 }
 
+static uint32_t hcchar_isoch(uint32_t dev, uint32_t ep, uint32_t mps,
+                             uint32_t mult, bool dir_in)
+{
+    uint32_t v = mps & HCCHAR_MPS_MASK;
+    v |= (ep & 0xf) << HCCHAR_EPNUM_SHIFT;
+    if (dir_in)
+        v |= HCCHAR_EPDIR;
+    v |= HCCHAR_EPTYPE_ISO;
+    if (mult < 1)
+        mult = 1;
+    if (mult > 3)
+        mult = 3;
+    v |= (mult & HCCHAR_MC_MASK) << HCCHAR_MC_SHIFT;
+    v |= (dev & 0x7f) << HCCHAR_DEVADDR_SHIFT;
+    return v;
+}
+
+static uint32_t next_uframe_oddfrm(void)
+{
+    uint32_t fr = _r32(DWC2_OFF_HFNUM) & 0xffffu;
+    return (fr & 1u) == 0 ? HCCHAR_ODDFRM : 0;
+}
+
 /*
  * HCTSIZ: PID(pktcnt, xfersize)
  *
@@ -158,6 +186,19 @@ static uint32_t normalize_ep0_mps(uint8_t b)
     default:
         return 8;
     }
+}
+
+static inline uint16_t le16_load(const uint8_t *p)
+{
+    return (uint16_t)p[0] | ((uint16_t)p[1] << 8);
+}
+
+static inline uint32_t le32_load(const uint8_t *p)
+{
+    return (uint32_t)p[0]
+         | ((uint32_t)p[1] << 8)
+         | ((uint32_t)p[2] << 16)
+         | ((uint32_t)p[3] << 24);
 }
 
 /* ==========================================================================
@@ -307,8 +348,8 @@ static int ch_xfer(uint32_t ch, uint32_t hcchar, uint32_t hctsiz_val,
  *
  * 对齐 ep0.rs:351 ep0_control_write_no_data()
  */
-static int ep0_control_write_no_data(uint32_t dev, const uint8_t setup[8],
-                                     uint32_t ep0_mps)
+int usb_ep0_control_write_no_data(uint32_t dev, const uint8_t setup[8],
+                                  uint32_t ep0_mps)
 {
     uint32_t hcint = 0;
 
@@ -341,9 +382,8 @@ static int ep0_control_write_no_data(uint32_t dev, const uint8_t setup[8],
  *
  * 对齐 ep0.rs:509 ep0_control_read()
  */
-static int __attribute__((unused))
-ep0_control_read(uint32_t dev, const uint8_t setup[8],
-                            uint32_t ep0_mps, uint8_t *out, uint32_t out_len)
+int usb_ep0_control_read(uint32_t dev, const uint8_t setup[8],
+                         uint32_t ep0_mps, uint8_t *out, uint32_t out_len)
 {
     if (out_len == 0 || out_len > 4096)
         return -1;
@@ -393,6 +433,49 @@ ep0_control_read(uint32_t dev, const uint8_t setup[8],
     return 0;
 }
 
+/* ep0_control_write — SETUP + DATA OUT + STATUS IN */
+int usb_ep0_control_write(uint32_t dev, const uint8_t setup[8],
+                          uint32_t ep0_mps, const uint8_t *data,
+                          uint32_t data_len)
+{
+    if (data_len > 4096)
+        return -1;
+
+    uint32_t hcint = 0;
+
+    memcpy(g_ep0_buf + OFF_EP0, setup, 8);
+    dcache_clean_for_dma(g_ep0_buf + OFF_EP0, 8);
+
+    uint32_t hc = hcchar_control(dev, 0, ep0_mps, false);
+    int rc = ch_xfer(CH_CTL, hc, hctsiz(PID_SETUP, 1, 8), OFF_EP0, &hcint);
+    if (rc != 0)
+        return rc;
+
+    uint32_t left = data_len;
+    uint32_t src = 0;
+    uint32_t toggle = PID_DATA1;
+    while (left > 0) {
+        uint32_t chunk = left < ep0_mps ? left : ep0_mps;
+        uint32_t pkts = (chunk + ep0_mps - 1) / ep0_mps;
+
+        memcpy(g_ep0_buf + DMA_OFF_SMALL_IO, data + src, chunk);
+        dcache_clean_for_dma(g_ep0_buf + DMA_OFF_SMALL_IO, chunk);
+
+        hc = hcchar_control(dev, 0, ep0_mps, false);
+        rc = ch_xfer(CH_CTL, hc, hctsiz(toggle, pkts, chunk),
+                     DMA_OFF_SMALL_IO, &hcint);
+        if (rc != 0)
+            return rc;
+
+        src += chunk;
+        left -= chunk;
+        toggle = (toggle == PID_DATA1) ? PID_DATA0 : PID_DATA1;
+    }
+
+    hc = hcchar_control(dev, 0, ep0_mps, true);
+    return ch_xfer(CH_CTL, hc, hctsiz(PID_DATA1, 1, 0), OFF_EP0, &hcint);
+}
+
 /* ==========================================================================
  * 9. 标准 USB 请求（对齐 ep0.rs:370-478, setup.rs）
  * ========================================================================== */
@@ -410,6 +493,20 @@ static void make_setup_get_descriptor_device(uint16_t w_length, uint8_t out[8])
     out[3] = 0x01;  /* wValue high (DEVICE = 1) */
     out[4] = 0x00;  /* wIndex low */
     out[5] = 0x00;  /* wIndex high */
+    out[6] = (uint8_t)(w_length & 0xff);
+    out[7] = (uint8_t)((w_length >> 8) & 0xff);
+}
+
+static void make_setup_get_descriptor_configuration(uint8_t cfg_index,
+                                                    uint16_t w_length,
+                                                    uint8_t out[8])
+{
+    out[0] = 0x80;       /* Dir IN, Type Standard, Recip Device */
+    out[1] = 6;          /* GET_DESCRIPTOR */
+    out[2] = cfg_index;  /* descriptor index */
+    out[3] = 0x02;       /* CONFIGURATION */
+    out[4] = 0;
+    out[5] = 0;
     out[6] = (uint8_t)(w_length & 0xff);
     out[7] = (uint8_t)((w_length >> 8) & 0xff);
 }
@@ -433,6 +530,18 @@ static void make_setup_set_configuration(uint8_t cfg, uint8_t out[8])
     out[2] = cfg;
     out[3] = 0;
     out[4] = 0;
+    out[5] = 0;
+    out[6] = 0;
+    out[7] = 0;
+}
+
+static void make_setup_set_interface(uint8_t alt, uint8_t interface, uint8_t out[8])
+{
+    out[0] = 0x01;  /* Dir OUT, Type Standard, Recip Interface */
+    out[1] = 0x0b;  /* SET_INTERFACE */
+    out[2] = alt;
+    out[3] = 0;
+    out[4] = interface;
     out[5] = 0;
     out[6] = 0;
     out[7] = 0;
@@ -498,7 +607,7 @@ static int set_usb_address(uint8_t addr, uint32_t ep0_mps)
 {
     uint8_t setup[8];
     make_setup_set_address(addr, setup);
-    return ep0_control_write_no_data(0, setup, ep0_mps);
+    return usb_ep0_control_write_no_data(0, setup, ep0_mps);
 }
 
 /* SET_CONFIGURATION（对齐 ep0.rs:385） */
@@ -506,7 +615,121 @@ static int set_configuration(uint32_t dev, uint8_t cfg, uint32_t ep0_mps)
 {
     uint8_t setup[8];
     make_setup_set_configuration(cfg, setup);
-    return ep0_control_write_no_data(dev, setup, ep0_mps);
+    return usb_ep0_control_write_no_data(dev, setup, ep0_mps);
+}
+
+static int read_configuration_descriptor(uint32_t dev, uint32_t ep0_mps,
+                                         uint8_t cfg_index, uint8_t *buf,
+                                         uint32_t cap, uint32_t *out_total,
+                                         uint8_t *out_cfg_value)
+{
+    uint8_t setup[8];
+    uint8_t hdr[9];
+
+    make_setup_get_descriptor_configuration(cfg_index, 9, setup);
+    int rc = usb_ep0_control_read(dev, setup, ep0_mps, hdr, sizeof(hdr));
+    if (rc != 0) {
+        KLOG_ERROR("[USB] GET_DESCRIPTOR(CONFIG,9) failed: %d\n", rc);
+        return rc;
+    }
+    if (hdr[0] < 9 || hdr[1] != USB_DESC_CONFIGURATION) {
+        KLOG_ERROR("[USB] bad config header: len=%u type=%u\n", hdr[0], hdr[1]);
+        return -1;
+    }
+
+    uint32_t total = le16_load(hdr + 2);
+    if (total < 9 || total > cap) {
+        KLOG_ERROR("[USB] bad config total length: %lu\n", (unsigned long)total);
+        return -1;
+    }
+
+    make_setup_get_descriptor_configuration(cfg_index, (uint16_t)total, setup);
+    rc = usb_ep0_control_read(dev, setup, ep0_mps, buf, total);
+    if (rc != 0) {
+        KLOG_ERROR("[USB] GET_DESCRIPTOR(CONFIG,%lu) failed: %d\n",
+                   (unsigned long)total, rc);
+        return rc;
+    }
+    if (buf[1] != USB_DESC_CONFIGURATION) {
+        KLOG_ERROR("[USB] full config descriptor type mismatch: %u\n", buf[1]);
+        return -1;
+    }
+
+    *out_total = total;
+    *out_cfg_value = buf[5];
+    KLOG_INFO("[USB] Config desc: total=%lu interfaces=%u cfg=%u attr=0x%02x max_power=%u\n",
+              (unsigned long)total, buf[4], buf[5], buf[7], buf[8]);
+    return 0;
+}
+
+int usb_set_interface(uint32_t dev, uint8_t interface, uint8_t alt,
+                      uint32_t ep0_mps)
+{
+    uint8_t setup[8];
+    make_setup_set_interface(alt, interface, setup);
+    return usb_ep0_control_write_no_data(dev, setup, ep0_mps);
+}
+
+int usb_isoch_in_packet(uint32_t dev, uint8_t ep, uint16_t mps_raw,
+                        uint8_t *buf, uint32_t cap, uint32_t *out_actual)
+{
+    if (buf == NULL || out_actual == NULL)
+        return -1;
+    *out_actual = 0;
+
+    uint32_t mps = mps_raw & 0x7ffu;
+    uint32_t mult = ((mps_raw >> 11) & 0x3u) + 1u;
+    if (mps == 0 || mult == 0 || mult > 3)
+        return -1;
+
+    uint32_t xfersize = mps * mult;
+    if (xfersize == 0 || xfersize > cap)
+        return -1;
+
+    uint32_t pid = PID_DATA0;
+    if (mult == 2)
+        pid = PID_DATA1;
+    else if (mult == 3)
+        pid = PID_DATA2;
+
+    if (ch_wait_disabled(CH_BULK) != 0)
+        return -1;
+    ch_halt(CH_BULK);
+
+    uint32_t hc = hcchar_isoch(dev, ep, mps, mult, true);
+    uint32_t tsiz = hctsiz(pid, mult, xfersize);
+    uint32_t dmap = dma_phys(buf);
+
+    _hc_w32(CH_BULK, HC_OFF_SPLT, 0);
+    _hc_w32(CH_BULK, HC_OFF_INT, HCINT_ALL_W1C);
+    _hc_w32(CH_BULK, HC_OFF_TSIZ, tsiz);
+    usb_bus_fence_before_dma();
+    _hc_w32(CH_BULK, HC_OFF_DMA, dmap);
+    usb_bus_fence_before_dma();
+    _hc_w32(CH_BULK, HC_OFF_CHAR, hc | next_uframe_oddfrm() | HCCHAR_CHENA);
+
+    uint32_t hi = 0;
+    if (ch_wait_halted(CH_BULK, &hi) != 0)
+        return -1;
+
+    if (hi & HCINT_STALL)
+        return -2;
+    if (hi & HCINT_AHBERR)
+        return -1;
+    if (hi & (HCINT_FRMOVRN | HCINT_XACTERR | HCINT_BBLERR |
+              HCINT_DATATGLERR | HCINT_NYET | HCINT_NAK))
+        return 0;
+    if (!(hi & HCINT_XFERCOMPL))
+        return 0;
+
+    uint32_t rem = _hc_r32(CH_BULK, HC_OFF_TSIZ) & HCTSIZ_XFERSIZE_MASK;
+    uint32_t actual = xfersize > rem ? xfersize - rem : 0;
+    if (actual > cap)
+        actual = cap;
+    if (actual > 0)
+        dcache_invalidate_after_dma(buf, actual);
+    *out_actual = actual;
+    return 0;
 }
 
 /* ==========================================================================
@@ -525,8 +748,9 @@ static int set_configuration(uint32_t dev, uint8_t cfg, uint32_t ep0_mps)
  *   3. @addr=0 获取 18 字节设备描述符
  *   4. SET_ADDRESS → 新地址
  *   5. usb_post_set_address_delay() ~80ms
- *   6. SET_CONFIGURATION(1)
- *   7. 填充结果
+ *   6. 读取并解析配置描述符
+ *   7. SET_CONFIGURATION(bConfigurationValue)
+ *   8. 填充结果
  */
 int dwc2_usb_enumerate_device(usb_enumerate_result_t *result)
 {
@@ -588,17 +812,10 @@ int dwc2_usb_enumerate_device(usb_enumerate_result_t *result)
     /* 5. 等待地址生效（对齐 ep0.rs:328 usb_post_set_address_delay ~80ms） */
     _spin(20000000);
 
-    /* 6. SET_CONFIGURATION(1)（对齐 ep0.rs:385） */
-    KLOG_INFO("[USB] SET_CONFIGURATION(1)...\n");
-    rc = set_configuration(new_addr, 1, ep0_mps);
-    if (rc != 0) {
-        KLOG_ERROR("[USB] SET_CONFIGURATION failed: %d\n", rc);
-        return rc;
-    }
-
-    /* 7. 填充结果 */
+    /* 6. 填充基础结果，随后用配置描述符补充接口/类信息 */
     result->num_devices       = 1;
-    result->first_msc_addr    = 0;  /* 扫描接口描述符后填充 */
+    result->first_msc_addr    = 0;
+    result->first_uvc_addr    = 0;
     result->devices[0].dev_addr           = (uint8_t)new_addr;
     result->devices[0].port               = 0;
     result->devices[0].speed              = (uint8_t)spd;
@@ -610,9 +827,54 @@ int dwc2_usb_enumerate_device(usb_enumerate_result_t *result)
     result->devices[0].is_msc = false;
     result->devices[0].is_uvc = false;
 
+    uint32_t cfg_total = 0;
+    uint8_t cfg_value = 1;
+    KLOG_INFO("[USB] GET_DESCRIPTOR(CONFIGURATION)...\n");
+    rc = read_configuration_descriptor(new_addr, ep0_mps, 0, g_config_desc_buf,
+                                       sizeof(g_config_desc_buf), &cfg_total,
+                                       &cfg_value);
+    if (rc != 0)
+        return rc;
+
+    if (uvc_parse_config(g_config_desc_buf, cfg_total, &result->devices[0])) {
+        result->first_uvc_addr = (uint8_t)new_addr;
+        result->first_uvc_vid = vid;
+        result->first_uvc_pid = pid;
+    }
+
+    /* 7. SET_CONFIGURATION(bConfigurationValue)（对齐 ep0.rs:385） */
+    KLOG_INFO("[USB] SET_CONFIGURATION(%u)...\n", cfg_value);
+    rc = set_configuration(new_addr, cfg_value, ep0_mps);
+    if (rc != 0) {
+        KLOG_ERROR("[USB] SET_CONFIGURATION failed: %d\n", rc);
+        return rc;
+    }
+
+    if (result->devices[0].is_uvc) {
+        rc = uvc_start_video_stream(new_addr, ep0_mps, &result->devices[0]);
+        if (rc != 0)
+            KLOG_WARN("[USB] UVC stream arm failed: %d\n", rc);
+    }
+
     KLOG_INFO("[USB] === Enumerated: addr=%lu VID=0x%04x PID=0x%04x "
-              "class=%u MPS=%lu SPD=%s ===\n",
+              "class=%u MPS=%lu SPD=%s UVC=%u ===\n",
               (unsigned long)new_addr, vid, pid, dev_class,
-              (unsigned long)ep0_mps, spd_str);
+              (unsigned long)ep0_mps, spd_str,
+              result->devices[0].is_uvc ? 1u : 0u);
     return 0;
+}
+
+int dwc2_usb_capture_first_uvc_frame(const usb_enumerate_result_t *result,
+                                     usb_uvc_frame_t *frame)
+{
+    if (result == NULL || frame == NULL || result->first_uvc_addr == 0)
+        return -1;
+
+    for (uint8_t i = 0; i < result->num_devices && i < USB_MAX_DEVICES; i++) {
+        const usb_device_info_t *dev = &result->devices[i];
+        if (dev->is_uvc && dev->dev_addr == result->first_uvc_addr)
+            return uvc_capture_one_frame(dev->dev_addr, dev, frame);
+    }
+
+    return -1;
 }

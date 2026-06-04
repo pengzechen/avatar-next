@@ -98,6 +98,9 @@ typedef struct {
  * 2. 设备枚举结果
  * ========================================================================== */
 
+#define USB_UVC_MAX_ISOCH_ALTS 8
+#define USB_UVC_FRAME_BUFFER_SIZE (384u * 1024u)
+
 /** 单个 USB 设备信息（拓扑扫描产出） */
 typedef struct {
     uint8_t  dev_addr;        /* 分配的设备地址 (1-127) */
@@ -110,6 +113,25 @@ typedef struct {
     bool     is_msc;          /* Mass Storage Class */
     bool     is_uvc;          /* Video Class */
     bool     is_hub;          /* Hub 类 */
+
+    /* UVC VideoStreaming 选择结果（is_uvc=true 时有效） */
+    uint8_t  uvc_vc_interface;
+    uint8_t  uvc_vs_interface;
+    uint8_t  uvc_alt_setting;
+    uint8_t  uvc_ep_num;
+    uint8_t  uvc_xfer_type;   /* 1=Isoch, 2=Bulk */
+    uint16_t uvc_mps_raw;
+    uint8_t  uvc_format_index;
+    uint8_t  uvc_frame_index;
+    bool     uvc_is_mjpeg;
+    uint16_t uvc_frame_width;
+    uint16_t uvc_frame_height;
+    uint32_t uvc_frame_interval;
+    uint32_t uvc_negotiated_payload_size;
+    uint32_t uvc_negotiated_frame_size;
+    uint8_t  uvc_isoch_alts_count;
+    uint8_t  uvc_isoch_alt_settings[USB_UVC_MAX_ISOCH_ALTS];
+    uint16_t uvc_isoch_mps_raw[USB_UVC_MAX_ISOCH_ALTS];
 } usb_device_info_t;
 
 /** 枚举结果汇总 */
@@ -121,7 +143,19 @@ typedef struct {
     uint8_t           first_msc_addr;   /* 首个 MSC 设备地址，0 表示无 */
     uint16_t          first_msc_vid;
     uint16_t          first_msc_pid;
+    uint8_t           first_uvc_addr;   /* 首个 UVC 设备地址，0 表示无 */
+    uint16_t          first_uvc_vid;
+    uint16_t          first_uvc_pid;
 } usb_enumerate_result_t;
+
+typedef struct {
+    const uint8_t *data;
+    uint32_t length;
+    uint32_t transfers;
+    uint32_t data_packets;
+    uint8_t  fid;
+    bool     is_mjpeg;
+} usb_uvc_frame_t;
 
 /* ==========================================================================
  * 3. API 函数声明
@@ -185,9 +219,18 @@ int dwc2_usb_get_root_speed(void);
  * @return 0=成功, 负值=错误
  *
  * 前置条件：已调用 dwc2_usb_reset_root_port() 并等待足够恢复时间。
- * 执行：获取 8 字节设备描述符 → SET_ADDRESS → 获取完整描述符 → SET_CONFIGURATION。
+ * 执行：获取设备描述符 → SET_ADDRESS → 读取/解析配置描述符 → SET_CONFIGURATION。
  */
 int dwc2_usb_enumerate_device(usb_enumerate_result_t *result);
+
+/**
+ * dwc2_usb_capture_first_uvc_frame — 从枚举结果中的首个 UVC 设备抓取一帧
+ * @result: dwc2_usb_enumerate_device() 填充的枚举结果
+ * @frame: 输出帧元信息；data 指向驱动内部静态缓冲，下次抓帧会覆盖
+ * @return 0=成功, 负值=错误
+ */
+int dwc2_usb_capture_first_uvc_frame(const usb_enumerate_result_t *result,
+                                     usb_uvc_frame_t *frame);
 
 /**
  * dwc2_get_base_virt — 获取当前 DWC2 MMIO 虚拟基址

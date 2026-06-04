@@ -152,6 +152,9 @@ void kernel_main(void)
         lua_run_phase(lua_L, "irqcore");   /* GICv3 (AArch64)     */
         KLOG_INFO(">>> phase: drivers\n");
         lua_run_phase(lua_L, "drivers");   /* timer init + enable  */
+    #if ARCH_RISCV64 && DRIVER_USB_DWC2
+        lua_dwc2_usb_dump_first_uvc_frame_base64();
+    #endif
     }
     KLOG_INFO("Lua platform phases (earlycon/irqcore/drivers) complete\n");
 

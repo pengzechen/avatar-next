@@ -355,7 +355,65 @@ int luaopen_timer(lua_State *L)
 
 /* ── DWC2 USB 主机驱动 bindings ──────────────────────────────────────────── */
 #if DRIVER_USB_DWC2
+#include "klog.h"
 #include "usb/usb.h"
+
+static const char g_base64_table[] =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+static void dump_base64_lines(const uint8_t *data, uint32_t len)
+{
+    char line[77];
+    uint32_t line_len = 0;
+
+    for (uint32_t i = 0; i < len; i += 3) {
+        uint32_t remain = len - i;
+        uint32_t b0 = data[i];
+        uint32_t b1 = remain > 1 ? data[i + 1] : 0;
+        uint32_t b2 = remain > 2 ? data[i + 2] : 0;
+        char out[4];
+
+        out[0] = g_base64_table[(b0 >> 2) & 0x3f];
+        out[1] = g_base64_table[((b0 & 0x03) << 4) | ((b1 >> 4) & 0x0f)];
+        out[2] = remain > 1 ? g_base64_table[((b1 & 0x0f) << 2) | ((b2 >> 6) & 0x03)] : '=';
+        out[3] = remain > 2 ? g_base64_table[b2 & 0x3f] : '=';
+
+        for (uint32_t j = 0; j < sizeof(out); j++) {
+            line[line_len++] = out[j];
+            if (line_len == 76) {
+                line[line_len] = '\0';
+                kprintf("%s\n", line);
+                line_len = 0;
+            }
+        }
+    }
+
+    if (line_len > 0) {
+        line[line_len] = '\0';
+        kprintf("%s\n", line);
+    }
+}
+
+static usb_enumerate_result_t g_dwc2_usb_enum_result;
+
+int lua_dwc2_usb_dump_first_uvc_frame_base64(void)
+{
+    usb_uvc_frame_t frame;
+    int rc = dwc2_usb_capture_first_uvc_frame(&g_dwc2_usb_enum_result, &frame);
+    if (rc != 0) {
+        KLOG_WARN("[USB] UVC base64 dump skipped: capture failed rc=%d\n", rc);
+        return rc;
+    }
+
+    KLOG_INFO("[USB] UVC JPEG base64 dump begin: len=%lu transfers=%lu data_packets=%lu fid=%u\n",
+              (unsigned long)frame.length, (unsigned long)frame.transfers,
+              (unsigned long)frame.data_packets, frame.fid);
+    kprintf("-----BEGIN UVC JPEG BASE64-----\n");
+    dump_base64_lines(frame.data, frame.length);
+    kprintf("-----END UVC JPEG BASE64-----\n");
+    KLOG_INFO("[USB] UVC JPEG base64 dump end\n");
+    return 0;
+}
 
 static int lua_dwc2_usb_init(lua_State *L)
 {
@@ -378,8 +436,10 @@ static int lua_dwc2_usb_init(lua_State *L)
 
     /* 有设备则直接枚举 */
     if (dwc2_usb_device_connected()) {
-        usb_enumerate_result_t r;
-        if (dwc2_usb_enumerate_device(&r) == 0) {
+        if (dwc2_usb_enumerate_device(&g_dwc2_usb_enum_result) == 0) {
+            KLOG_INFO("[USB] Lua binding: enumeration OK devices=%u first_uvc=%u\n",
+                      g_dwc2_usb_enum_result.num_devices,
+                      g_dwc2_usb_enum_result.first_uvc_addr);
             lua_pushboolean(L, 1);
             return 1;
         }
@@ -390,9 +450,30 @@ static int lua_dwc2_usb_init(lua_State *L)
     return 1;
 }
 
+static int lua_dwc2_usb_capture_frame(lua_State *L)
+{
+    usb_uvc_frame_t frame;
+    int rc = dwc2_usb_capture_first_uvc_frame(&g_dwc2_usb_enum_result, &frame);
+    if (rc != 0) {
+        lua_pushboolean(L, 0);
+        lua_pushstring(L, "UVC capture failed");
+        return 2;
+    }
+
+    KLOG_INFO("[USB] Lua binding: UVC frame len=%lu transfers=%lu data_packets=%lu fid=%u\n",
+              (unsigned long)frame.length, (unsigned long)frame.transfers,
+              (unsigned long)frame.data_packets, frame.fid);
+    lua_pushboolean(L, 1);
+    lua_pushinteger(L, (lua_Integer)frame.length);
+    lua_pushinteger(L, (lua_Integer)frame.transfers);
+    lua_pushinteger(L, (lua_Integer)frame.data_packets);
+    return 4;
+}
+
 static const luaL_Reg lua_drv_dwc2_usb[] = {
-    { "init", lua_dwc2_usb_init },
-    { NULL,   NULL               }
+    { "init",          lua_dwc2_usb_init          },
+    { "capture_frame", lua_dwc2_usb_capture_frame },
+    { NULL,            NULL                       }
 };
 
 int luaopen_dwc2_usb(lua_State *L)
