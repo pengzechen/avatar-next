@@ -13,13 +13,36 @@ static size_t g_cache_line_size = 64;  /* RISC-V 标准缓存行 */
 
 /* ===== 底层缓存操作指令 ===== */
 
+static inline void __c906_dcache_cva(const void *addr)
+{
+    __asm__ volatile(".insn i 0x0b, 0, x0, %0, 0x025"
+                     : : "r"(addr) : "memory");
+}
+
+static inline void __c906_dcache_iva(const void *addr)
+{
+    __asm__ volatile(".insn i 0x0b, 0, x0, %0, 0x026"
+                     : : "r"(addr) : "memory");
+}
+
+static inline void __c906_dcache_ciall(void)
+{
+    __asm__ volatile(".long 0x0030000b\n\tfence rw, rw" ::: "memory");
+}
+
 /**
  * __clean_dcache_one - 清理单个缓存行
  * @addr: 地址
  *
- * CBO.clean: 写回缓存行到内存（需要 Zicbom 扩展）
+ * SG2002 的 C906 使用 T-Head 私有 cache 指令；其它 RISC-V 优先使用 Zicbom。
  */
-#ifdef __riscv_zicbom
+#if PLATFORM_SG2002
+static inline void
+__clean_dcache_one(const void *addr)
+{
+    __c906_dcache_cva(addr);
+}
+#elif defined(__riscv_zicbom)
 static inline void
 __clean_dcache_one(const void *addr)
 {
@@ -42,7 +65,13 @@ __clean_dcache_one(const void *addr)
  *
  * CBO.inval: 使缓存行失效（需要 Zicbom 扩展）
  */
-#ifdef __riscv_zicbom
+#if PLATFORM_SG2002
+static inline void
+__invalidate_dcache_one(const void *addr)
+{
+    __c906_dcache_iva(addr);
+}
+#elif defined(__riscv_zicbom)
 static inline void
 __invalidate_dcache_one(const void *addr)
 {
@@ -62,9 +91,16 @@ __invalidate_dcache_one(const void *addr)
  *
  * CBO.flush: 写回并使缓存行失效（需要 Zicbom 扩展）
  */
-#ifdef __riscv_zicbom
+#if PLATFORM_SG2002
 static inline void
-__flush_dcache_one(const void *addr)
+__clean_and_invalidate_dcache_one(const void *addr)
+{
+    __c906_dcache_cva(addr);
+    __c906_dcache_iva(addr);
+}
+#elif defined(__riscv_zicbom)
+static inline void
+__clean_and_invalidate_dcache_one(const void *addr)
 {
     asm volatile("cbo.flush %0" : : "r"(addr) : "memory");
 }
@@ -109,5 +145,30 @@ sync_caches(void)
 {
     barrier_data();
 }
+
+#if PLATFORM_SG2002
+#define ARCH_HAS_CUSTOM_DCACHE_RANGE 1
+
+static inline void clean_dcache_range(const void *addr, size_t size)
+{
+    (void)addr;
+    (void)size;
+    __c906_dcache_ciall();
+}
+
+static inline void invalidate_dcache_range(const void *addr, size_t size)
+{
+    (void)addr;
+    (void)size;
+    __c906_dcache_ciall();
+}
+
+static inline void clean_and_invalidate_dcache_range(const void *addr, size_t size)
+{
+    (void)addr;
+    (void)size;
+    __c906_dcache_ciall();
+}
+#endif
 
 #endif /* RISCV64_CACHE_IMPL_H */

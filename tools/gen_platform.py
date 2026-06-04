@@ -151,6 +151,12 @@ def parse_lua_platform(path):
     sdmmc = _extract_block(text, 'sdmmc')
     conf['DEV_SDMMC_TYPE'] = _find_str(sdmmc, 'driver')
 
+    # usb 块
+    usb = _extract_block(text, 'usb')
+    conf['DEV_USB_TYPE']     = _find_str(usb, 'driver')
+    conf['DEV_USB_BASE']     = _find_num(usb, 'base', '0')
+    conf['DEV_USB_PHY_BASE'] = _find_num(usb, 'phy_base', '0')
+
     # npu 块
     npu = _extract_block(text, 'npu')
     conf['DEV_NPU_TYPE'] = _find_str(npu, 'driver')
@@ -233,6 +239,9 @@ def write_platform_mk(conf, path):
         f"DEV_ETH_TYPE        := {conf.get('DEV_ETH_TYPE', '')}\n",
         f"DEV_ETH_BASE        := {conf.get('DEV_ETH_BASE', '0')}\n",
         f"DEV_TPU_TYPE        := {conf.get('DEV_TPU_TYPE', '')}\n",
+        f"DEV_USB_TYPE        := {conf.get('DEV_USB_TYPE', '')}\n",
+        f"DEV_USB_BASE        := {conf.get('DEV_USB_BASE', '0')}\n",
+        f"DEV_USB_PHY_BASE    := {conf.get('DEV_USB_PHY_BASE', '0')}\n",
         f"DEV_SDMMC_TYPE      := {conf.get('DEV_SDMMC_TYPE', '')}\n",
         f"DEV_NPU_TYPE        := {conf.get('DEV_NPU_TYPE', '')}\n",
     ])

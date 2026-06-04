@@ -60,6 +60,12 @@ platform = {
         base   = 0x04070000,
     },
 
+    usb = {
+        driver   = "dwc2",
+        base     = 0x04340000,
+        phy_base = 0x03006000,  -- CV182x 片内 USB2 PHY (TOP 时钟域)
+    },
+
     sdmmc = {
         driver             = "none",
         sd_base            = 0x04310000,   -- SDIO0 SDHCI 控制器基址
@@ -85,6 +91,12 @@ register_device("timer0", {
 register_device("tpu0", {
     drivers = function(self)
         cvi_tpu.init()
+    end,
+})
+
+register_device("usb0", {
+    drivers = function(self)
+        dwc2_usb.init()
     end,
 })
 

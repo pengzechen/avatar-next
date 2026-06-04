@@ -424,6 +424,8 @@ CFLAGS  += -DPLATFORM_MEM_ROOTFS_SIZE=$(MEM_ROOTFS_SIZE)
 CFLAGS  += -DDEVICE_MMIO_NEEDS_VMA=$(DEV_MMIO_NEEDS_VMA)
 CFLAGS  += -DDEVICE_UART_BASE_RAW=$(DEV_UART_BASE_RAW)
 CFLAGS  += -DDEVICE_UART_REG_SHIFT=$(DEV_UART_REG_SHIFT)
+CFLAGS  += -DDEVICE_USB_BASE_RAW=$(DEV_USB_BASE)
+CFLAGS  += -DDEVICE_USB_PHY_BASE_RAW=$(DEV_USB_PHY_BASE)
 
 # ─── §6  驱动选择 ────────────────────────────────────────────────────────────────
 # 所有驱动默认值来自 platform.lua → gen_platform.py → platform.mk。
@@ -516,7 +518,17 @@ else
     DRIVER_ETH_OBJS :=
 endif
 
-# ── §6d  DRIVER_OBJECTS 最终组装 ────────────────────────────────────────────────
+# ── §6d  USB 驱动（DWC2 主机控制器）───────────────────────────────────
+# 由 platform.lua 的 usb.driver 自动推导；也可命令行覆盖：USB=none / USB=dwc2
+USB ?= $(DEV_USB_TYPE)
+ifeq ($(USB),dwc2)
+    CFLAGS           += -DDRIVER_USB_DWC2=1
+    DRIVER_USB_OBJS  := $(BUILD_DIR)/drv_usb_dwc2.o $(BUILD_DIR)/drv_usb_usb_core.o
+else
+    DRIVER_USB_OBJS  :=
+endif
+
+# ── §6e  DRIVER_OBJECTS 最终组装 ────────────────────────────────────────────────
 # 在所有驱动选择块执行完毕后，统一从各驱动变量中收集目标文件。
 DRIVER_OBJECTS := $(patsubst driver/%.c,$(BUILD_DIR)/drv_%.o,$(DRIVER_UART_SRC))
 ifneq ($(strip $(DRIVER_IRQ_SRC)),)
@@ -540,6 +552,9 @@ ifneq ($(strip $(DRIVER_TPU_OBJS)),)
 endif
 ifneq ($(strip $(DRIVER_ETH_OBJS)),)
 	DRIVER_OBJECTS += $(DRIVER_ETH_OBJS)
+endif
+ifneq ($(strip $(DRIVER_USB_OBJS)),)
+		DRIVER_OBJECTS += $(DRIVER_USB_OBJS)
 endif
 
 # ── §6e  辅助驱动（ION / SDMMC）────────────────────────────────────────────────
@@ -794,6 +809,11 @@ $(BUILD_DIR)/pseudofs_pseudofs.o: fs/pseudofs/pseudofs.c | $(BUILD_DIR)
 $(BUILD_DIR)/drv_%.o: driver/%.c | $(BUILD_DIR)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@
+
+# USB 驱动编译规则
+$(BUILD_DIR)/drv_usb_%.o: driver/usb/%.c | $(BUILD_DIR)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -Idriver/usb -c $< -o $@
 
 # task 模块编译规则
 $(BUILD_DIR)/kernel_task_task.o: $(KERNEL_DIR)/task/task.c | $(BUILD_DIR)

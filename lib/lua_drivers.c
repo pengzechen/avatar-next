@@ -353,6 +353,56 @@ int luaopen_timer(lua_State *L)
 }
 
 
+/* ── DWC2 USB 主机驱动 bindings ──────────────────────────────────────────── */
+#if DRIVER_USB_DWC2
+#include "usb/usb.h"
+
+static int lua_dwc2_usb_init(lua_State *L)
+{
+    (void)L;
+
+    /* 从 platform.lua 获取 MMIO 基址并设置 */
+    uintptr_t usb_base = platform_get_mmio("usb", "base");
+    uintptr_t phy_base = platform_get_mmio("usb", "phy_base");
+
+    dwc2_usb_set_base_virt(usb_base);
+    if (phy_base != 0) {
+        dwc2_usb_set_phy_base_virt(phy_base);
+    }
+
+    if (dwc2_usb_init() != 0) {
+        lua_pushboolean(L, 0);
+        lua_pushstring(L, "DWC2 init failed");
+        return 2;
+    }
+
+    /* 有设备则直接枚举 */
+    if (dwc2_usb_device_connected()) {
+        usb_enumerate_result_t r;
+        if (dwc2_usb_enumerate_device(&r) == 0) {
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+        KLOG_WARN("[USB] Device detected but enumeration failed\n");
+    }
+
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
+static const luaL_Reg lua_drv_dwc2_usb[] = {
+    { "init", lua_dwc2_usb_init },
+    { NULL,   NULL               }
+};
+
+int luaopen_dwc2_usb(lua_State *L)
+{
+    luaL_newlib(L, lua_drv_dwc2_usb);
+    return 1;
+}
+#endif /* DRIVER_USB_DWC2 */
+
+
 /* ── Registration helper called from lua_platform.c ─────────────────────── */
 
 void lua_register_all_drivers(lua_State *L)
@@ -381,5 +431,8 @@ void lua_register_all_drivers(lua_State *L)
 #endif
 #if DRIVER_SDBLK_SG2002
     luaL_requiref(L, "sdblk",  luaopen_sdblk,  1); lua_pop(L, 1);
+#endif
+#if DRIVER_USB_DWC2
+    luaL_requiref(L, "dwc2_usb", luaopen_dwc2_usb, 1); lua_pop(L, 1);
 #endif
 }

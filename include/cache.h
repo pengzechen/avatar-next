@@ -62,17 +62,19 @@ static inline void init_cache(void);
 
 /* ===== 架构特定底层操作 ===== */
 
-#if defined(ARCH_X86_64)
+#if ARCH_X86_64
     #include "x86_64/cache_impl.h"
-#elif defined(ARCH_AARCH64)
+#elif ARCH_AARCH64
     #include "aarch64/cache_impl.h"
-#elif defined(ARCH_RISCV64)
+#elif ARCH_RISCV64
     #include "riscv64/cache_impl.h"
 #else
     #error "Unsupported architecture"
 #endif
 
 /* ===== 通用 Range 操作实现 ===== */
+
+#ifndef ARCH_HAS_CUSTOM_DCACHE_RANGE
 
 /**
  * clean_dcache_range - 清理地址范围的缓存
@@ -142,5 +144,7 @@ clean_and_invalidate_dcache_range(const void *addr, size_t size)
 
     sync_caches();
 }
+
+#endif /* ARCH_HAS_CUSTOM_DCACHE_RANGE */
 
 #endif /* CACHE_H */
