@@ -17,6 +17,9 @@
 #include "uart/uart.h"
 #include "task/task.h"
 #include "cache.h"
+#if DRIVER_USB_DWC2
+#include "usb/uvc_video.h"
+#endif
 
 /* ── 外部任务池（来自 kernel/task/task.c） ──────────────────────── */
 extern task_t   g_task_pool[TASK_MAX];
@@ -628,6 +631,28 @@ static int npu_dev_ioctl(int nid, uint64_t req, void *argp)
     return -PFS_ENOSYS;
 }
 
+static int video0_read(int nid, uint64_t off, void *buf, size_t len)
+{
+    (void)nid; (void)off;
+#if DRIVER_USB_DWC2
+    return uvc_video_read_frame(buf, len);
+#else
+    (void)buf; (void)len;
+    return -PFS_ENOSYS;
+#endif
+}
+
+static int video0_ioctl(int nid, uint64_t req, void *argp)
+{
+    (void)nid;
+#if DRIVER_USB_DWC2
+    return uvc_video_ioctl(req, argp);
+#else
+    (void)req; (void)argp;
+    return -PFS_ENOSYS;
+#endif
+}
+
 /* ── 节点表 ───────────────────────────────────────────────────── */
 
 typedef enum {
@@ -671,6 +696,7 @@ static const pseudo_node_t g_nodes[] = {
     { "/dev/cvi-tpu0",     PSEUDO_CHR, MODE_CHRW, (240U<<8)|0U,   NULL,         null_write,  tpu_dev_ioctl },
     { "/dev/ion",          PSEUDO_CHR, MODE_CHRW, (10U <<8)|56U,  NULL,         null_write,  ion_dev_ioctl },
     { "/dev/npu",          PSEUDO_CHR, MODE_CHRW, (10U <<8)|242U, NULL,         null_write,  npu_dev_ioctl },
+    { "/dev/video0",       PSEUDO_CHR, MODE_CHRW, (81U <<8)|0U,   video0_read,  null_write,  video0_ioctl  },
 
     /* ── /proc 条目 ────────────────────────────────────── */
     { "/proc/self/exe",    PSEUDO_LNK, MODE_LNK,  0,              NULL,         NULL,        NULL          },

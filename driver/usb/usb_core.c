@@ -13,6 +13,7 @@
 #include "usb/dwc2_regs.h"
 #include "usb/usb.h"
 #include "usb/uvc.h"
+#include "usb/uvc_video.h"
 #include "usb/usb_core_internal.h"
 #include "platform_cfg.h"
 #include "mmio.h"
@@ -757,6 +758,7 @@ int dwc2_usb_enumerate_device(usb_enumerate_result_t *result)
     if (result == NULL)
         return -1;
     memset(result, 0, sizeof(*result));
+    uvc_video_clear();
 
     /* 1. 确认设备连接 */
     uint32_t hprt = dwc2_usb_read_hprt0();
@@ -852,7 +854,9 @@ int dwc2_usb_enumerate_device(usb_enumerate_result_t *result)
 
     if (result->devices[0].is_uvc) {
         rc = uvc_start_video_stream(new_addr, ep0_mps, &result->devices[0]);
-        if (rc != 0)
+        if (rc == 0)
+            uvc_video_register_device(new_addr, &result->devices[0]);
+        else
             KLOG_WARN("[USB] UVC stream arm failed: %d\n", rc);
     }
 

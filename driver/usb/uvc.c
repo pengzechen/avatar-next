@@ -549,21 +549,27 @@ static int uvc_process_payload_packet(const uint8_t *pkt, uint32_t len,
     if (header_len < 2 || header_len > len)
         return 0;
 
-    uint8_t info = pkt[1];
-    if (info & 0x40) {
-        KLOG_WARN("[USB] UVC packet ERR bit set: info=0x%02x len=%lu\n",
-                  info, (unsigned long)len);
-        *jpeg_len = 0;
-        state->capturing = false;
-        state->have_last_fid = true;
-        state->last_fid = info & 0x01;
-        return 0;
-    }
-
-    uint8_t fid = info & 0x01;
-    bool eof = (info & 0x02) != 0;
     const uint8_t *payload = pkt + header_len;
     uint32_t payload_len = len - header_len;
+    uint8_t info = pkt[1];
+    uint8_t fid = info & 0x01;
+    bool eof = (info & 0x02) != 0;
+
+    if (info & 0x40) {
+        if (payload_len == 0) {
+            KLOG_DEBUG("[USB] UVC header-only ERR packet ignored: info=0x%02x len=%lu\n",
+                       info, (unsigned long)len);
+        } else {
+            KLOG_WARN("[USB] UVC packet ERR bit set: info=0x%02x len=%lu payload=%lu\n",
+                      info, (unsigned long)len, (unsigned long)payload_len);
+        }
+        *jpeg_len = 0;
+        state->capturing = false;
+        state->saw_data = false;
+        state->have_last_fid = true;
+        state->last_fid = fid;
+        return 0;
+    }
 
     if (!state->capturing) {
         if (!state->have_last_fid) {

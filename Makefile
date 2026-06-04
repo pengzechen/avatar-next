@@ -523,7 +523,7 @@ endif
 USB ?= $(DEV_USB_TYPE)
 ifeq ($(USB),dwc2)
     CFLAGS           += -DDRIVER_USB_DWC2=1
-	DRIVER_USB_OBJS  := $(BUILD_DIR)/drv_usb_dwc2.o $(BUILD_DIR)/drv_usb_usb_core.o $(BUILD_DIR)/drv_usb_uvc.o
+	DRIVER_USB_OBJS  := $(BUILD_DIR)/drv_usb_dwc2.o $(BUILD_DIR)/drv_usb_usb_core.o $(BUILD_DIR)/drv_usb_uvc.o $(BUILD_DIR)/drv_usb_uvc_video.o
 else
     DRIVER_USB_OBJS  :=
 endif
@@ -945,6 +945,7 @@ $(BUILD_DIR)/%.elf: $(APPS_DIR)/%.c $(CRT0_OBJ) $(SYSCALL_WRAPPER_OBJ) $(APPS_LD
 		$(CRT0_OBJ) $(BUILD_DIR)/apps_$*.o $(SYSCALL_WRAPPER_OBJ) \
 		-o $@
 	@echo "C app ELF created: $@"
+
 $(TASK_USER_BIN): $(BUILD_DIR)/user_test.o $(TASK_USER_LD) | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -nostdlib -nostartfiles -nodefaultlibs -T $(TASK_USER_LD) -o $@.elf $<
 	$(OBJCOPY) -O binary $@.elf $@
@@ -1154,7 +1155,7 @@ $(ROOTFS_IMG): $(APPS_BINS) $(APPS_C_ELFS) | $(BUILD_DIR)
 	done; \
 	for elf in $(BUILD_DIR)/*.elf; do \
 		[ -f "$$elf" ] || continue; \
-		case "$$elf" in *.bin.elf) continue ;; esac; \
+		case "$$elf" in *.bin.elf|*/kernel_*.elf) continue ;; esac; \
 		name=$$(basename "$$elf" .elf); \
 		cp "$$elf" "$(ROOTFS_STAGE)/$$name"; \
 		chmod +x "$(ROOTFS_STAGE)/$$name"; \
