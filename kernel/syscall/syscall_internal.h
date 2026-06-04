@@ -1,7 +1,7 @@
 /*
  * syscall_internal.h - 内核 syscall 实现内部共享头
  *
- * 仅供 kernel/syscall/*.c 使用。包含：
+ * 仅供 kernel/syscall 目录下的 C 文件使用。包含：
  *   - Linux/x86 syscall 号常量
  *   - ioctl request 码
  *   - POSIX errno 值

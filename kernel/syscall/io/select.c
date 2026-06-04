@@ -63,7 +63,9 @@ select_handler(uint64_t regs[6], uint64_t syscall_num, task_t *current)
                 if (rdy) { if (rfds) rfds[w] |= mask; ready++; }
             }
             if (w_in[w] & mask) {
-                if (wfds) wfds[w] |= mask; ready++; /* writers always ready */
+                if (wfds)
+                    wfds[w] |= mask;
+                ready++; /* writers always ready */
             }
             /* exceptfds: 永不报异常 */
             (void)e_in; (void)efds;

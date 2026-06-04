@@ -18,7 +18,7 @@ void proc_ids_handler(uint64_t syscall_num, uint64_t regs[6], task_t *current)
     case LINUX_SYS_SET_TID_ADDR:
         /* musl 线程初始化时设置线程 'clear-child-tid' 地址 */
         current->ctid_ptr = regs[0];
-        /* fall through：返回当前 tid */
+        /* fall through */
     case LINUX_SYS_GETTID:
     case LINUX_SYS_GETPID:
         regs[0] = (uint64_t)current->id;
@@ -45,7 +45,12 @@ void proc_ids_handler(uint64_t syscall_num, uint64_t regs[6], task_t *current)
         int pgid = (int)(int32_t)regs[1];
         task_t *tgt = (pid == 0) ? current : task_find_by_id((uint32_t)pid);
         if (!tgt) { regs[0] = (uint64_t)(int64_t)-ESRCH; break; }
-        tgt->pgid = (uint32_t)(pgid ? pgid : (pid ? pid : current->id));
+        if (pgid != 0)
+            tgt->pgid = (uint32_t)pgid;
+        else if (pid != 0)
+            tgt->pgid = (uint32_t)pid;
+        else
+            tgt->pgid = current->id;
         regs[0] = 0;
         break;
     }

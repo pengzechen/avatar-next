@@ -1,7 +1,7 @@
 /*
  * futex.h - 内核 futex 实现接口
  *
- * 仅供 kernel/syscall/*.c 使用。
+ * 仅供 kernel/syscall 目录下的 C 文件使用。
  */
 #ifndef KERNEL_SYSCALL_FUTEX_H
 #define KERNEL_SYSCALL_FUTEX_H

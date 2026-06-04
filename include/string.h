@@ -175,28 +175,48 @@ memcpy_generic(void *dest, const void *src, size_t n)
     uint8_t       *d = (uint8_t *) dest;
     const uint8_t *s = (const uint8_t *) src;
 
+    if (n < sizeof(uint64_t)) {
+        while (i < n) {
+            d[i] = s[i];
+            i++;
+        }
+        return dest;
+    }
+
     /* 逐字节拷贝直到对齐 */
-    while (i < n && ((uint64_t) (d + i) % 2 != 0 || (uint64_t) (s + i) % 2 != 0)) {
+    while (i < n && ((uintptr_t) (d + i) % 2 != 0 || (uintptr_t) (s + i) % 2 != 0)) {
         d[i] = s[i];
         i++;
     }
 
     /* 8 字节拷贝 */
-    while (i + 7 < n && ((uint64_t) (d + i) % 8 == 0) && ((uint64_t) (s + i) % 8 == 0)) {
-        *((uint64_t *) (d + i)) = *((uint64_t *) (s + i));
-        i += 8;
+    while ((n - i) >= sizeof(uint64_t) &&
+           ((uintptr_t) (d + i) % sizeof(uint64_t) == 0) &&
+           ((uintptr_t) (s + i) % sizeof(uint64_t) == 0)) {
+        uint64_t word;
+        __builtin_memcpy(&word, s + i, sizeof(word));
+        __builtin_memcpy(d + i, &word, sizeof(word));
+        i += sizeof(uint64_t);
     }
 
     /* 4 字节拷贝 */
-    while (i + 3 < n && ((uint64_t) (d + i) % 4 == 0) && ((uint64_t) (s + i) % 4 == 0)) {
-        *((uint32_t *) (d + i)) = *((uint32_t *) (s + i));
-        i += 4;
+    while ((n - i) >= sizeof(uint32_t) &&
+           ((uintptr_t) (d + i) % sizeof(uint32_t) == 0) &&
+           ((uintptr_t) (s + i) % sizeof(uint32_t) == 0)) {
+        uint32_t word;
+        __builtin_memcpy(&word, s + i, sizeof(word));
+        __builtin_memcpy(d + i, &word, sizeof(word));
+        i += sizeof(uint32_t);
     }
 
     /* 2 字节拷贝 */
-    while (i + 1 < n && ((uint64_t) (d + i) % 2 == 0) && ((uint64_t) (s + i) % 2 == 0)) {
-        *((uint16_t *) (d + i)) = *((uint16_t *) (s + i));
-        i += 2;
+    while ((n - i) >= sizeof(uint16_t) &&
+           ((uintptr_t) (d + i) % sizeof(uint16_t) == 0) &&
+           ((uintptr_t) (s + i) % sizeof(uint16_t) == 0)) {
+        uint16_t word;
+        __builtin_memcpy(&word, s + i, sizeof(word));
+        __builtin_memcpy(d + i, &word, sizeof(word));
+        i += sizeof(uint16_t);
     }
 
     /* 剩余逐字节拷贝 */
@@ -209,11 +229,11 @@ memcpy_generic(void *dest, const void *src, size_t n)
 }
 
 /* 根据架构选择优化的 memcpy 实现 */
-#if defined(ARCH_X86_64)
+#if ARCH_X86_64
     #include "x86_64/string_impl.h"
-#elif defined(ARCH_AARCH64)
+#elif ARCH_AARCH64
     #include "aarch64/string_impl.h"
-#elif defined(ARCH_RISCV64)
+#elif ARCH_RISCV64
     #include "riscv64/string_impl.h"
 #else
     /* 使用通用实现 */
