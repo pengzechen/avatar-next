@@ -12,6 +12,7 @@
 #include "riscv64/sysreg.h"
 #include "syscall/syscall.h"
 #include "platform.h"
+#include "task/cpu.h"
 
 /* 中断处理函数表，索引 = scause 低位（去掉 bit63 后的中断编号）*/
 #define MAX_IRQ_CAUSES  16
@@ -92,15 +93,18 @@ void handle_exception(void *frame_ptr)
     if (cause & SCAUSE_INTERRUPT_BIT) {
         /* ── 中断路径 ──────────────────────────────────────────── */
         uint64_t irq = cause & ~SCAUSE_INTERRUPT_BIT;
+        cpu_t *cpu = cpu_current();
 
         if (frame->sstatus & SSTATUS_SPP)
             g_rv_irq_from_kernel++;
         else
             g_rv_irq_from_user++;
 
+        cpu->irq_depth++;
         if (irq < MAX_IRQ_CAUSES && interrupt_handlers[irq]) {
             interrupt_handlers[irq](frame_ptr);
         }
+        cpu->irq_depth--;
     } else {
         /* ── 同步异常路径 ────────────────────────────────────── */
         if (code == CAUSE_USER_ECALL) {

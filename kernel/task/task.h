@@ -122,6 +122,9 @@ typedef struct task {
     uint32_t        pgid;                /* 进程组 ID                                   */
     uint64_t        sig_frame_sp;        /* sigframe 在用户栈上的起始地址（rt_sigreturn）*/
     sig_action_t    sig_actions[NSIG];   /* 每信号的 action（下标 0 对应信号 1）        */
+
+    /* === 内核抢占控制 === */
+    uint32_t        preempt_count;       /* >0 时 S-mode timer 不抢占该任务             */
 } task_t;
 
 /* ── 全局当前任务指针（在 task.c 中定义） ────────────────── */

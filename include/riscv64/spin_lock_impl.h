@@ -3,6 +3,7 @@
 
 #include "types.h"
 #include "spinlock.h"
+#include "task/preempt.h"
 
 /*
  * RISC-V 64位架构的spinlock实现
@@ -22,6 +23,7 @@ static inline void
 spin_lock(spinlock_t *lock)
 {
     uint32_t tmp;
+    preempt_disable();
     asm volatile(
         "   li      %0, 1                    \n" /* tmp = 1 */
         "1:  lr.w    t0, (%1)                \n" /* t0 = lock->lock (load-reserved) */
@@ -38,6 +40,7 @@ static inline int
 spin_trylock(spinlock_t *lock)
 {
     uint32_t tmp, result;
+    preempt_disable();
     asm volatile(
         "   li      %0, 1                    \n" /* tmp = 1 */
         "   lr.w    t0, (%2)                 \n" /* t0 = lock->lock */
@@ -52,6 +55,8 @@ spin_trylock(spinlock_t *lock)
         : "=&r"(tmp), "=&r"(result)
         : "r"(&lock->lock)
         : "memory", "t0");
+    if (result != 0)
+        preempt_enable();
     return result;
 }
 
@@ -64,6 +69,7 @@ spin_unlock(spinlock_t *lock)
         :
         : "r"(&lock->lock)
         : "memory");
+    preempt_enable();
 }
 
 /* RISC-V 中断控制函数 */
