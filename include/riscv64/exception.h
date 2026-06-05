@@ -63,7 +63,15 @@ typedef void (*irq_handler_t)(void *);   /* frame 实际是 trap_frame_t * */
 
 /* ── 声明 ────────────────────────────────────────────────────────── */
 
-/* 初始化异常处理：设置 stvec，使能 sstatus.SIE */
+/* 初始化异常处理：设置 stvec，配置异常入口 */
 void exception_init(void);
+
+/* 调度器准备好后显式打开/关闭 S-mode 全局中断。 */
+void riscv_kernel_interrupt_enable(void);
+void riscv_kernel_interrupt_disable(void);
+
+/* 诊断计数：按 trap 前特权级统计 RISC-V IRQ 入口。 */
+extern volatile uint64_t g_rv_irq_from_kernel;
+extern volatile uint64_t g_rv_irq_from_user;
 
 #endif /* RISCV64_EXCEPTION_H */

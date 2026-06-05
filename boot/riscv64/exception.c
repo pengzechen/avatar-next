@@ -2,7 +2,7 @@
  * boot/riscv64/exception.c — RISC-V 64-bit S-mode 异常/中断 C 分发器
  *
  * 提供：
- *   exception_init()   — 设置 stvec，使能 sstatus.SIE
+ *   exception_init()   — 设置 stvec，配置异常入口
  *   irq_install()      — 注册 scause 对应的中断处理函数
  *   handle_exception() — 从 exception.S 调用，分发陷阱
  */
@@ -31,6 +31,18 @@ void irq_install(int cause, irq_handler_t h)
 volatile uint64_t g_exception_entry_count = 0;
 volatile uint64_t g_exception_code = 0;
 volatile uint64_t g_exception_sepc = 0;
+volatile uint64_t g_rv_irq_from_kernel = 0;
+volatile uint64_t g_rv_irq_from_user = 0;
+
+void riscv_kernel_interrupt_enable(void)
+{
+    CSR_SET(sstatus, SSTATUS_SIE);
+}
+
+void riscv_kernel_interrupt_disable(void)
+{
+    CSR_CLEAR(sstatus, SSTATUS_SIE);
+}
 
 void exception_init(void)
 {
@@ -42,9 +54,8 @@ void exception_init(void)
 
     /*
      * 注意：不在此处使能 sstatus.SIE（内核态中断开关）。
-     * 内核态（S-mode）始终保持 SIE=0，防止定时器中断在内核代码中随机触发，
-     * 破坏 t0/t1 等临时寄存器（对齐 AArch64：daifclr 只在 task_trampoline_user 中调用）。
-     * 定时器中断只在用户态（U-mode）生效：sret 通过 SPIE→SIE 自动使能。
+     * trap_vector 已能保存 S->S 的完整现场；这里仍保持 SIE=0，
+     * 由调度器和 timer 初始化完成后的显式开关决定何时允许内核态收中断。
      */
 
     /*
@@ -54,7 +65,7 @@ void exception_init(void)
      */
     CSR_SET(sstatus, 1UL << 18);   /* bit 18 = SUM */
 
-    KLOG_INFO("RISC-V exception init: stvec=0x%lx, SUM enabled (SIE kept 0 in kernel)\n",
+    KLOG_INFO("RISC-V exception init: stvec=0x%lx, SUM enabled (SIE initially 0)\n",
               (uint64_t)trap_vector);
 }
 
@@ -81,6 +92,11 @@ void handle_exception(void *frame_ptr)
     if (cause & SCAUSE_INTERRUPT_BIT) {
         /* ── 中断路径 ──────────────────────────────────────────── */
         uint64_t irq = cause & ~SCAUSE_INTERRUPT_BIT;
+
+        if (frame->sstatus & SSTATUS_SPP)
+            g_rv_irq_from_kernel++;
+        else
+            g_rv_irq_from_user++;
 
         if (irq < MAX_IRQ_CAUSES && interrupt_handlers[irq]) {
             interrupt_handlers[irq](frame_ptr);

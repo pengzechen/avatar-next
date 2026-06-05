@@ -127,10 +127,15 @@ extern void signal_check_uart(void);
 void
 timer_handler(void *frame)
 {
-    (void)frame;  // 抑制未使用参数警告
+    trap_frame_t *tf = (trap_frame_t *)frame;
 
-    /* 每个 tick 排空 UART，确保 Ctrl+C 能及时被检测 */
-    signal_check_uart();
+    /*
+     * S-mode IRQ can arrive at arbitrary kernel instructions. Keep that path
+     * short and avoid signal/TTY work there until kernel preemption and locks
+     * are fully audited. U-mode timer IRQ keeps the old responsive Ctrl+C path.
+     */
+    if (!tf || !(tf->sstatus & SSTATUS_SPP))
+        signal_check_uart();
 
     // 更新系统tick计数
     g_system_ticks++;

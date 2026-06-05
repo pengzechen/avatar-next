@@ -196,6 +196,9 @@ void kernel_main(void)
      * 切换到 idle 专用栈（防止 boot 栈在频繁中断下溢出）。
      * ──────────────────────────────────────────────────── */
     timer_set_tick_cb(sched_tick);
+#if ARCH_RISCV64
+    riscv_kernel_interrupt_enable();
+#endif
     KLOG_INFO("Preemptive scheduling enabled\n");
 
     /* SMP 健康检查：抢占启用后立刻验证所有核 timer 都在 tick。
@@ -225,4 +228,3 @@ void kernel_main(void)
     /* 切到 idle 栈并进入 idle 主循环（永不返回）。 */
     task_switch_to_idle_stack();
 }
-

@@ -32,6 +32,7 @@
 #include "spinlock.h"
 #if ARCH_RISCV64
 #include "riscv64/satp_utils.h"
+#include "riscv64/exception.h"
 extern uint64_t g_kernel_pgd_phys;
 #endif
 
@@ -331,4 +332,23 @@ sched_check_and_yield(void)
         return true;
     }
     return false;
+}
+
+bool
+sched_check_and_yield_from_trap(void *frame_ptr)
+{
+#if ARCH_RISCV64
+    trap_frame_t *frame = (trap_frame_t *)frame_ptr;
+    if (frame && (frame->sstatus & SSTATUS_SPP)) {
+        /*
+         * Stage 1: S-mode can receive IRQs, but arbitrary kernel code is not
+         * preemptible yet. Leave need_resched set for the next user return,
+         * explicit yield, or later preempt-safe point.
+         */
+        return false;
+    }
+#else
+    (void)frame_ptr;
+#endif
+    return sched_check_and_yield();
 }

@@ -16,7 +16,7 @@
 .align 4                    /* stvec 直接模式要求 4 字节对齐 */
 .global trap_vector
 .extern handle_exception
-.extern sched_check_and_yield
+.extern sched_check_and_yield_from_trap
 .extern __global_pointer$
 .extern g_current_user_satp
 
@@ -134,7 +134,8 @@ trap_vector:
     call  handle_exception
 
     /* ── 检查是否需要重调度（IRQ 触发的抢占）─────────────────────── */
-    call  sched_check_and_yield
+    mv    a0, sp            /* 参数：trap_frame_t * */
+    call  sched_check_and_yield_from_trap
 
     /* ── 恢复 CSR ───────────────────────────────────────────────── */
     ld    t0, 32*8(sp)
