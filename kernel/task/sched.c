@@ -30,6 +30,7 @@
 #include "barrier.h"
 #include "string.h"
 #include "spinlock.h"
+#include "assert.h"
 #include "task/preempt.h"
 #if ARCH_RISCV64
 #include "riscv64/satp_utils.h"
@@ -70,6 +71,15 @@ static inline void x86_write_fs_base(uint64_t fs_base)
  */
 
 /* ── sched_init ──────────────────────────────────────────── */
+
+#if ARCH_RISCV64
+volatile uint64_t g_rv_kernel_preempt_from_trap = 0;
+
+static bool rv_preempt_log_sample(uint64_t n)
+{
+    return n <= 4 || (n <= 4096 && (n & (n - 1)) == 0);
+}
+#endif
 
 void
 sched_init(task_t *idle_task)
@@ -174,6 +184,8 @@ pick_next(cpu_t *c)
 void
 sched_schedule(void)
 {
+    assert_always(!in_irq_context());
+
     /* 关中断，保存当前中断标志 */
     uint64_t flags = arch_irq_save();
 
@@ -342,11 +354,20 @@ sched_check_and_yield_from_trap(void *frame_ptr)
     trap_frame_t *frame = (trap_frame_t *)frame_ptr;
     if (frame && (frame->sstatus & SSTATUS_SPP)) {
         cpu_t *c = cpu_current();
-        if (!c->current_task || !c->need_resched || !preemptible())
+        if (!c->current_task || !c->need_resched || !preemptible() ||
+            c->preempt_schedule_depth != 0)
             return false;
 
+        uint64_t n = ++g_rv_kernel_preempt_from_trap;
+        if (rv_preempt_log_sample(n)) {
+            KLOG_INFO("[riscv preempt] S-mode preempt #%llu pc=0x%lx task='%s' id=%u\n",
+                      n, frame->sepc, c->current_task->name, c->current_task->id);
+        }
+
         c->need_resched = false;
+        c->preempt_schedule_depth++;
         sched_schedule();
+        c->preempt_schedule_depth--;
         return true;
     }
 #else

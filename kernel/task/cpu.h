@@ -58,6 +58,7 @@ typedef struct cpu {
     volatile bool       need_resched;  /* 时钟中断置位                     */
     spinlock_noirq_t    rq_lock;       /* 保护 run_queue + current_task    */
     uint32_t            irq_depth;     /* 硬中断嵌套深度（RISC-V 阶段 2） */
+    uint32_t            preempt_schedule_depth; /* 防止 preempt_enable 递归调度 */
 
     /* ── 诊断 / 测试 ─────────────────────────────────────── */
     volatile uint64_t   local_ticks;   /* 本核 timer ISR 累计次数（SMP 验证用） */

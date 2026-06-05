@@ -13,6 +13,7 @@
 #include "syscall/syscall.h"
 #include "platform.h"
 #include "task/cpu.h"
+#include "task/task.h"
 
 /* 中断处理函数表，索引 = scause 低位（去掉 bit63 后的中断编号）*/
 #define MAX_IRQ_CAUSES  16
@@ -34,6 +35,11 @@ volatile uint64_t g_exception_code = 0;
 volatile uint64_t g_exception_sepc = 0;
 volatile uint64_t g_rv_irq_from_kernel = 0;
 volatile uint64_t g_rv_irq_from_user = 0;
+
+static bool rv_irq_log_sample(uint64_t n)
+{
+    return n <= 4 || (n <= 4096 && (n & (n - 1)) == 0);
+}
 
 void riscv_kernel_interrupt_enable(void)
 {
@@ -95,12 +101,20 @@ void handle_exception(void *frame_ptr)
         uint64_t irq = cause & ~SCAUSE_INTERRUPT_BIT;
         cpu_t *cpu = cpu_current();
 
-        if (frame->sstatus & SSTATUS_SPP)
-            g_rv_irq_from_kernel++;
-        else
-            g_rv_irq_from_user++;
-
         cpu->irq_depth++;
+
+        if (frame->sstatus & SSTATUS_SPP) {
+            uint64_t n = ++g_rv_irq_from_kernel;
+            if (rv_irq_log_sample(n)) {
+                KLOG_INFO("[riscv irq] S-mode IRQ #%llu cause=%llu sepc=0x%lx sstatus=0x%lx need_resched=%u preempt=%u\n",
+                          n, irq, frame->sepc, frame->sstatus,
+                          cpu->need_resched ? 1U : 0U,
+                          cpu->current_task ? cpu->current_task->preempt_count : 0U);
+            }
+        } else {
+            g_rv_irq_from_user++;
+        }
+
         if (irq < MAX_IRQ_CAUSES && interrupt_handlers[irq]) {
             interrupt_handlers[irq](frame_ptr);
         }

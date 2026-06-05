@@ -17,6 +17,7 @@
 #include "klog.h"
 #include "barrier.h"
 #include "assert.h"
+#include "task/preempt.h"
 
 /* 内联获取系统时间（ns），用于 CPU 时间计账 */
 extern volatile uint64_t g_system_ticks;
@@ -98,12 +99,14 @@ alloc_task_slot(void)
 
     for (uint32_t i = 0; i < TASK_MAX; i++) {
         if (!g_stack_used[i]) {
-            g_stack_used[i]           = 1;
-            g_task_pool[i].stack_base = g_task_stacks[i];
+            task_t *task = &g_task_pool[i];
+            memset(task, 0, sizeof(*task));
+            g_stack_used[i] = 1;
+            task->stack_base = g_task_stacks[i];
             /* 默认 affinity = ANY：让 sched_enqueue round-robin 分发到所有核。
              * 调用方（如 vcpu_task_create）可在 enqueue 前覆盖。 */
-            g_task_pool[i].cpu_affinity = CPU_AFFINITY_ANY;
-            return &g_task_pool[i];
+            task->cpu_affinity = CPU_AFFINITY_ANY;
+            return task;
         }
     }
     return NULL;
@@ -694,6 +697,7 @@ void
 task_block(list_t *wait_queue)
 {
     task_t *cur = task_current();
+    assert_always(!in_irq_context());
 
     /* 参数验证：wait_queue 必须是内核地址或 NULL */
     if (wait_queue && (uintptr_t)wait_queue < 0xffffffc000000000) {

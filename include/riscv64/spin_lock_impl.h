@@ -107,14 +107,18 @@ static inline int
 spin_trylock_irqsave(spinlock_noirq_t *lock)
 {
     lock->irq_flags = riscv_irq_save();
-    return spin_trylock((spinlock_t *)lock);
+    if (spin_trylock((spinlock_t *)lock) == 0)
+        return 0;
+    riscv_irq_restore(lock->irq_flags);
+    return 1;
 }
 
 static inline void
 spin_unlock_irqrestore(spinlock_noirq_t *lock)
 {
+    uint64_t saved = lock->irq_flags;
     spin_unlock((spinlock_t *)lock);
-    riscv_irq_restore(lock->irq_flags);
+    riscv_irq_restore(saved);
 }
 
 #endif  // RISCV64_SPIN_LOCK_IMPL_H
