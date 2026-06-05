@@ -538,6 +538,9 @@ else ifeq ($(DRIVER_IRQ_SRC),driver/irq/gicv3.c)
 	DRIVER_OBJECTS += $(BUILD_DIR)/gicv3.o
 endif
 endif
+ifeq ($(ARCH),riscv64)
+	DRIVER_OBJECTS += $(BUILD_DIR)/plic.o
+endif
 ifneq ($(strip $(DRIVER_TIMER_SRC)),)
 	DRIVER_OBJECTS += $(BUILD_DIR)/timer.o
 endif
@@ -766,6 +769,9 @@ $(BUILD_DIR)/gicv2.o: driver/irq/gicv2.c | $(BUILD_DIR)
 
 $(BUILD_DIR)/gicv3.o: driver/irq/gicv3.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/plic.o: driver/irq/plic.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -Idriver -c $< -o $@
 
 $(BUILD_DIR)/timer.o: driver/timer/timer.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@

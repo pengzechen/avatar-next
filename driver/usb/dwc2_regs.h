@@ -46,6 +46,7 @@
 #define DWC2_OFF_HCFG     0x400
 #define DWC2_OFF_HFIR     0x404
 #define DWC2_OFF_HFNUM    0x408
+#define DWC2_OFF_HAINT    0x414
 #define DWC2_OFF_HAINTMSK 0x418
 #define DWC2_OFF_HPRT0    0x440
 

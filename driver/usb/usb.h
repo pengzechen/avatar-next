@@ -251,4 +251,10 @@ uint32_t dwc2_usb_read_hprt0(void);
  */
 void dwc2_usb_dump_regs(void);
 
+/* Interrupt-mode debug counters. */
+uint64_t dwc2_usb_irq_count(void);
+uint32_t dwc2_usb_last_irq_gintsts(void);
+uint32_t dwc2_usb_last_irq_haint(void);
+uint32_t dwc2_usb_take_hcint(uint32_t ch);
+
 #endif /* __USB_H__ */

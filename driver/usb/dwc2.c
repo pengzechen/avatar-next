@@ -15,6 +15,10 @@
 #include "mmio.h"
 #include "klog.h"
 #include "mm_vm.h"
+#include "spinlock.h"
+#if ARCH_RISCV64
+#include "irq/plic.h"
+#endif
 
 /* ==========================================================================
  * 1. 模块内全局变量
@@ -23,6 +27,12 @@
 static uintptr_t g_dwc2_base      = 0;
 static uintptr_t g_dwc2_phy_base  = 0;
 static bool      g_dwc2_inited    = false;
+static uint32_t  g_dwc2_irq       = 0;
+static volatile uint64_t g_dwc2_irq_count = 0;
+static volatile uint32_t g_dwc2_last_gintsts = 0;
+static volatile uint32_t g_dwc2_last_haint = 0;
+static volatile uint32_t g_dwc2_hcint_shadow[DWC2_MAX_HOST_CHANNELS];
+static spinlock_noirq_t g_dwc2_hcint_shadow_lock = SPINLOCK_NOIRQ_INIT;
 
 /* 主机通道数量（从 GHWCFG2 读取） */
 static uint32_t  g_num_host_channels = 0;
@@ -64,6 +74,44 @@ static inline void hc_write32(uint32_t ch, uintptr_t reg_off, uint32_t val)
     write32(val, (void *)(g_dwc2_base + DWC2_OFF_HC_BASE + ch * DWC2_OFF_HC_STRIDE + reg_off));
 }
 
+static bool dwc2_irq_log_sample(uint64_t n)
+{
+    return n <= 8 || (n <= 4096 && (n & (n - 1)) == 0);
+}
+
+static void dwc2_usb_irq_handler(uint32_t irq, void *ctx)
+{
+    (void)ctx;
+    uint32_t gintmsk = dwc2_read32(DWC2_OFF_GINTMSK);
+    uint32_t gintsts = dwc2_read32(DWC2_OFF_GINTSTS) & gintmsk;
+    uint32_t haint = 0;
+
+    if (gintsts & GINTSTS_HCHINT) {
+        haint = dwc2_read32(DWC2_OFF_HAINT);
+        for (uint32_t ch = 0; ch < g_num_host_channels && ch < DWC2_MAX_HOST_CHANNELS; ch++) {
+            if (!(haint & (1U << ch)))
+                continue;
+            uint32_t hcint = hc_read32(ch, HC_OFF_INT);
+            g_dwc2_hcint_shadow[ch] |= hcint;
+            if (hcint)
+                hc_write32(ch, HC_OFF_INT, hcint);
+        }
+    }
+
+    uint32_t clear = gintsts & ~GINTSTS_RXFLVL;
+    if (clear)
+        dwc2_write32(DWC2_OFF_GINTSTS, clear);
+
+    uint64_t n = ++g_dwc2_irq_count;
+    g_dwc2_last_gintsts = gintsts;
+    g_dwc2_last_haint = haint;
+    if (dwc2_irq_log_sample(n)) {
+        KLOG_WARN("[DWC2 IRQ] #%llu plic=%u GINTSTS=0x%08x HAINT=0x%08x GINTMSK=0x%08x HC0=0x%08x HC1=0x%08x\n",
+                  n, irq, gintsts, haint, gintmsk,
+                  g_dwc2_hcint_shadow[0], g_dwc2_hcint_shadow[1]);
+    }
+}
+
 /* ==========================================================================
  * 3. 公开 API：基址设置
  * ========================================================================== */
@@ -81,6 +129,33 @@ void dwc2_usb_set_phy_base_virt(uintptr_t phy_base)
 uintptr_t dwc2_get_base_virt(void)
 {
     return g_dwc2_base;
+}
+
+uint64_t dwc2_usb_irq_count(void)
+{
+    return g_dwc2_irq_count;
+}
+
+uint32_t dwc2_usb_last_irq_gintsts(void)
+{
+    return g_dwc2_last_gintsts;
+}
+
+uint32_t dwc2_usb_last_irq_haint(void)
+{
+    return g_dwc2_last_haint;
+}
+
+uint32_t dwc2_usb_take_hcint(uint32_t ch)
+{
+    if (ch >= DWC2_MAX_HOST_CHANNELS)
+        return 0;
+
+    spin_lock_irqsave(&g_dwc2_hcint_shadow_lock);
+    uint32_t hcint = g_dwc2_hcint_shadow[ch];
+    g_dwc2_hcint_shadow[ch] = 0;
+    spin_unlock_irqrestore(&g_dwc2_hcint_shadow_lock);
+    return hcint;
 }
 
 /* ==========================================================================
@@ -518,6 +593,7 @@ int dwc2_usb_init(void)
 
     KLOG_INFO("[DWC2] === USB Host Controller Init ===\n");
     KLOG_INFO("[DWC2] MMIO base: virt=0x%lx\n", (unsigned long)g_dwc2_base);
+    g_dwc2_irq = platform_get_uint("usb", "irq");
 
     /* ── 1. 探测硬件 ─────────────────────────────────── */
     uint32_t ghwcfg1 = dwc2_read32(DWC2_OFF_GHWCFG1);
@@ -659,14 +735,39 @@ int dwc2_usb_init(void)
     KLOG_INFO("[DWC2] [step 7/9] FIFO partition + flush OK\n");
 
     /* ── 8. 中断使能 ──────────────────────────────────── */
-    dwc2_write32(DWC2_OFF_HAINTMSK, (1u << 0) | (1u << 1));
+    /*
+     * Keep the streaming channel (HC1) in pure polling mode for now. UVC
+     * isochronous capture still assembles packets synchronously, and letting
+     * the IRQ path consume HC1 completion bits can disturb frame assembly.
+     */
+    dwc2_write32(DWC2_OFF_HAINTMSK, (1u << 0));
+    uint32_t hcintmsk = HCINT_XFERCOMPL | HCINT_CHHLTD | HCINT_AHBERR |
+                        HCINT_STALL | HCINT_NAK | HCINT_XACTERR |
+                        HCINT_BBLERR | HCINT_FRMOVRN | HCINT_DATATGLERR;
+    hc_write32(0, HC_OFF_INTMSK, hcintmsk);
+    hc_write32(1, HC_OFF_INTMSK, 0);
     uint32_t gintmsk = dwc2_read32(DWC2_OFF_GINTMSK);
     gintmsk |= GINTSTS_HCHINT;
     dwc2_write32(DWC2_OFF_GINTMSK, gintmsk);
     dwc2_write32(DWC2_OFF_GINTSTS, 0xFFFFFFFF);
-    KLOG_INFO("[DWC2] [step 8/9] Channel ints enabled (HC0+HC1)  HAINTMSK=0x%04x  GINTMSK=0x%08x\n",
+    KLOG_INFO("[DWC2] [step 8/9] Channel ints enabled (HC0 IRQ, HC1 polling)  HAINTMSK=0x%04x  HC0MSK=0x%08x HC1MSK=0x%08x GAHBCFG=0x%08x GINTSTS=0x%08x GINTMSK=0x%08x\n",
               dwc2_read32(DWC2_OFF_HAINTMSK) & 0xffff,
+              hc_read32(0, HC_OFF_INTMSK),
+              hc_read32(1, HC_OFF_INTMSK),
+              dwc2_read32(DWC2_OFF_GAHBCFG),
+              dwc2_read32(DWC2_OFF_GINTSTS),
               dwc2_read32(DWC2_OFF_GINTMSK));
+
+#if ARCH_RISCV64
+    if (g_dwc2_irq != 0) {
+        plic_init();
+        plic_install(g_dwc2_irq, dwc2_usb_irq_handler, NULL);
+        plic_enable_irq(g_dwc2_irq, 1);
+        KLOG_INFO("[DWC2] PLIC IRQ registered irq=%u\n", g_dwc2_irq);
+    } else {
+        KLOG_WARN("[DWC2] usb.irq missing; controller IRQ line not enabled\n");
+    }
+#endif
 
     /* ── 9. 上电根端口 ─────────────────────────────────── */
     port_power_on();

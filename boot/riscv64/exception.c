@@ -35,6 +35,7 @@ volatile uint64_t g_exception_code = 0;
 volatile uint64_t g_exception_sepc = 0;
 volatile uint64_t g_rv_irq_from_kernel = 0;
 volatile uint64_t g_rv_irq_from_user = 0;
+static volatile uint64_t g_rv_non_timer_irq_count = 0;
 
 static bool rv_irq_log_sample(uint64_t n)
 {
@@ -102,6 +103,16 @@ void handle_exception(void *frame_ptr)
         cpu_t *cpu = cpu_current();
 
         cpu->irq_depth++;
+
+        if (irq != CAUSE_SUPERVISOR_TIMER) {
+            uint64_t n = ++g_rv_non_timer_irq_count;
+            if (rv_irq_log_sample(n)) {
+                KLOG_WARN("[riscv irq] non-timer IRQ #%llu cause=%llu mode=%c sepc=0x%lx sstatus=0x%lx stval=0x%lx\n",
+                          n, irq,
+                          (frame->sstatus & SSTATUS_SPP) ? 'S' : 'U',
+                          frame->sepc, frame->sstatus, frame->stval);
+            }
+        }
 
         if (frame->sstatus & SSTATUS_SPP) {
             uint64_t n = ++g_rv_irq_from_kernel;

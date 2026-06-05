@@ -64,6 +64,7 @@ platform = {
         driver   = "dwc2",
         base     = 0x04340000,
         phy_base = 0x03006000,  -- CV182x 片内 USB2 PHY (TOP 时钟域)
+        irq      = 30,          -- DTS: interrupts = <0x1e 0x04>
     },
 
     sdmmc = {

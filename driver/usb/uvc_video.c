@@ -11,8 +11,6 @@
 #define UVC_ERR_NOSPC  28
 #define UVC_ERR_NOSYS  38
 #define UVC_ERR_IO      5
-#define UVC_STREAM_IDLE_RESTART_MS 200u
-
 typedef struct {
     bool present;
     bool streaming;
@@ -69,20 +67,22 @@ static int uvc_video_capture(usb_uvc_frame_t *frame)
     if (!g_uvc_video0.present)
         return -UVC_ERR_NODEV;
 
-    uint64_t now = timer_get_uptime_ms();
-    bool stale = !g_uvc_video0.streaming ||
-                 g_uvc_video0.last_capture_ms == 0 ||
-                 now - g_uvc_video0.last_capture_ms >= UVC_STREAM_IDLE_RESTART_MS;
-    if (stale) {
-        int rc = uvc_restart_video_stream(g_uvc_video0.dev_addr,
-                                          g_uvc_video0.dev.b_max_packet_size0,
-                                          &g_uvc_video0.dev);
-        if (rc != 0) {
-            g_uvc_video0.streaming = false;
-            return -UVC_ERR_IO;
-        }
-        g_uvc_video0.streaming = true;
+    /*
+     * The current /dev/video0 read path is synchronous and only drains isoch
+     * packets while a reader is inside uvc_capture_one_frame(). If the device
+     * keeps streaming between separate one-shot reads, frames are dropped and
+     * the next read can start from a stale/error-heavy packet boundary. Re-arm
+     * the alternate setting for every capture until this path grows a real
+     * background IRQ-driven ring buffer.
+     */
+    int restart_rc = uvc_restart_video_stream(g_uvc_video0.dev_addr,
+                                              g_uvc_video0.dev.b_max_packet_size0,
+                                              &g_uvc_video0.dev);
+    if (restart_rc != 0) {
+        g_uvc_video0.streaming = false;
+        return -UVC_ERR_IO;
     }
+    g_uvc_video0.streaming = true;
 
     int rc = uvc_capture_one_frame(g_uvc_video0.dev_addr, &g_uvc_video0.dev, frame);
     if (rc != 0)

@@ -234,7 +234,7 @@ static void ch_halt(uint32_t ch)
 static int ch_wait_halted(uint32_t ch, uint32_t *out_hcint)
 {
     for (uint32_t i = 0; i < 8000000; i++) {
-        uint32_t hi = _hc_r32(ch, HC_OFF_INT);
+        uint32_t hi = _hc_r32(ch, HC_OFF_INT) | dwc2_usb_take_hcint(ch);
         if (hi & HCINT_CHHLTD) {
             _hc_w32(ch, HC_OFF_INT, hi);
             *out_hcint = hi;
@@ -273,6 +273,7 @@ static int ch_xfer(uint32_t ch, uint32_t hcchar, uint32_t hctsiz_val,
 
         _hc_w32(ch, HC_OFF_SPLT, 0);
         _hc_w32(ch, HC_OFF_INT, HCINT_ALL_W1C);
+        (void)dwc2_usb_take_hcint(ch);
         _hc_w32(ch, HC_OFF_TSIZ, hctsiz_val);
         usb_bus_fence_before_dma();
         _hc_w32(ch, HC_OFF_DMA, dmap);
@@ -703,6 +704,8 @@ int usb_isoch_in_packet(uint32_t dev, uint8_t ep, uint16_t mps_raw,
 
     _hc_w32(CH_BULK, HC_OFF_SPLT, 0);
     _hc_w32(CH_BULK, HC_OFF_INT, HCINT_ALL_W1C);
+    _hc_w32(CH_BULK, HC_OFF_INTMSK, 0);
+    (void)dwc2_usb_take_hcint(CH_BULK);
     _hc_w32(CH_BULK, HC_OFF_TSIZ, tsiz);
     usb_bus_fence_before_dma();
     _hc_w32(CH_BULK, HC_OFF_DMA, dmap);
