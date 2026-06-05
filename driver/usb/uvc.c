@@ -514,6 +514,43 @@ int uvc_start_video_stream(uint32_t dev_addr, uint32_t ep0_mps,
     return 0;
 }
 
+int uvc_restart_video_stream(uint32_t dev_addr, uint32_t ep0_mps,
+                             const usb_device_info_t *dev)
+{
+    KLOG_INFO("[USB] UVC stream restart: if=%u alt=0 -> alt=%u\n",
+              dev->uvc_vs_interface, dev->uvc_alt_setting);
+    int rc = usb_set_interface(dev_addr, dev->uvc_vs_interface, 0, ep0_mps);
+    if (rc != 0) {
+        KLOG_WARN("[USB] UVC stream restart: SET_INTERFACE alt=0 failed: %d\n", rc);
+        return rc;
+    }
+
+    rc = usb_set_interface(dev_addr, dev->uvc_vs_interface,
+                           dev->uvc_alt_setting, ep0_mps);
+    if (rc != 0) {
+        KLOG_WARN("[USB] UVC stream restart: SET_INTERFACE alt=%u failed: %d\n",
+                  dev->uvc_alt_setting, rc);
+        return rc;
+    }
+
+    g_uvc_last_eof_fid = 0xff;
+    return 0;
+}
+
+int uvc_stop_video_stream(uint32_t dev_addr, uint32_t ep0_mps,
+                          const usb_device_info_t *dev)
+{
+    KLOG_INFO("[USB] UVC stream stop: if=%u alt=0\n", dev->uvc_vs_interface);
+    int rc = usb_set_interface(dev_addr, dev->uvc_vs_interface, 0, ep0_mps);
+    if (rc != 0) {
+        KLOG_WARN("[USB] UVC stream stop: SET_INTERFACE alt=0 failed: %d\n", rc);
+        return rc;
+    }
+
+    g_uvc_last_eof_fid = 0xff;
+    return 0;
+}
+
 typedef struct {
     bool capturing;
     bool have_last_fid;
@@ -559,10 +596,11 @@ static int uvc_process_payload_packet(const uint8_t *pkt, uint32_t len,
         if (payload_len == 0) {
             KLOG_DEBUG("[USB] UVC header-only ERR packet ignored: info=0x%02x len=%lu\n",
                        info, (unsigned long)len);
-        } else {
-            KLOG_WARN("[USB] UVC packet ERR bit set: info=0x%02x len=%lu payload=%lu\n",
-                      info, (unsigned long)len, (unsigned long)payload_len);
+            return 0;
         }
+
+        KLOG_WARN("[USB] UVC packet ERR bit set: info=0x%02x len=%lu payload=%lu\n",
+                  info, (unsigned long)len, (unsigned long)payload_len);
         *jpeg_len = 0;
         state->capturing = false;
         state->saw_data = false;
@@ -583,11 +621,6 @@ static int uvc_process_payload_packet(const uint8_t *pkt, uint32_t len,
     }
 
     if (fid != state->frame_fid) {
-        if (state->saw_data && uvc_frame_has_eoi(*jpeg_len)) {
-            *done_fid = state->frame_fid;
-            *out_done = true;
-            return 0;
-        }
         *jpeg_len = 0;
         uvc_state_start_capture(state, fid);
     }

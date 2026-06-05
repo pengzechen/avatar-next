@@ -2,6 +2,7 @@
 
 #include "klog.h"
 #include "string.h"
+#include "timer/timer.h"
 #include "uapi/avatar_uvc.h"
 #include "usb/uvc.h"
 
@@ -10,12 +11,15 @@
 #define UVC_ERR_NOSPC  28
 #define UVC_ERR_NOSYS  38
 #define UVC_ERR_IO      5
+#define UVC_STREAM_IDLE_RESTART_MS 200u
 
 typedef struct {
     bool present;
+    bool streaming;
     uint32_t dev_addr;
     usb_device_info_t dev;
     uint32_t sequence;
+    uint64_t last_capture_ms;
 } uvc_video_state_t;
 
 static uvc_video_state_t g_uvc_video0;
@@ -47,6 +51,8 @@ int uvc_video_register_device(uint32_t dev_addr, const usb_device_info_t *dev)
     g_uvc_video0.dev_addr = dev_addr;
     g_uvc_video0.dev = *dev;
     g_uvc_video0.sequence = 0;
+    g_uvc_video0.streaming = true;
+    g_uvc_video0.last_capture_ms = timer_get_uptime_ms();
 
     KLOG_INFO("[UVC] registered /dev/video0: addr=%lu VID=0x%04x PID=0x%04x %ux%u MJPEG ep=%u alt=%u\n",
               (unsigned long)dev_addr,
@@ -63,8 +69,27 @@ static int uvc_video_capture(usb_uvc_frame_t *frame)
     if (!g_uvc_video0.present)
         return -UVC_ERR_NODEV;
 
+    uint64_t now = timer_get_uptime_ms();
+    bool stale = !g_uvc_video0.streaming ||
+                 g_uvc_video0.last_capture_ms == 0 ||
+                 now - g_uvc_video0.last_capture_ms >= UVC_STREAM_IDLE_RESTART_MS;
+    if (stale) {
+        int rc = uvc_restart_video_stream(g_uvc_video0.dev_addr,
+                                          g_uvc_video0.dev.b_max_packet_size0,
+                                          &g_uvc_video0.dev);
+        if (rc != 0) {
+            g_uvc_video0.streaming = false;
+            return -UVC_ERR_IO;
+        }
+        g_uvc_video0.streaming = true;
+    }
+
     int rc = uvc_capture_one_frame(g_uvc_video0.dev_addr, &g_uvc_video0.dev, frame);
-    return rc == 0 ? 0 : -UVC_ERR_IO;
+    if (rc != 0)
+        return -UVC_ERR_IO;
+
+    g_uvc_video0.last_capture_ms = timer_get_uptime_ms();
+    return 0;
 }
 
 int uvc_video_read_frame(void *buf, size_t len)
@@ -156,6 +181,40 @@ static int uvc_video_get_frame(struct avatar_uvc_frame *dst)
     return 0;
 }
 
+static int uvc_video_streamon(void)
+{
+    if (!g_uvc_video0.present)
+        return -UVC_ERR_NODEV;
+
+    int rc = uvc_restart_video_stream(g_uvc_video0.dev_addr,
+                                      g_uvc_video0.dev.b_max_packet_size0,
+                                      &g_uvc_video0.dev);
+    if (rc != 0) {
+        g_uvc_video0.streaming = false;
+        return -UVC_ERR_IO;
+    }
+
+    g_uvc_video0.streaming = true;
+    g_uvc_video0.last_capture_ms = timer_get_uptime_ms();
+    return 0;
+}
+
+static int uvc_video_streamoff(void)
+{
+    if (!g_uvc_video0.present)
+        return -UVC_ERR_NODEV;
+
+    int rc = uvc_stop_video_stream(g_uvc_video0.dev_addr,
+                                   g_uvc_video0.dev.b_max_packet_size0,
+                                   &g_uvc_video0.dev);
+    if (rc != 0)
+        return -UVC_ERR_IO;
+
+    g_uvc_video0.streaming = false;
+    g_uvc_video0.last_capture_ms = 0;
+    return 0;
+}
+
 int uvc_video_ioctl(uint64_t req, void *argp)
 {
     switch ((uint32_t)req) {
@@ -166,8 +225,9 @@ int uvc_video_ioctl(uint64_t req, void *argp)
         case AV_UVC_IOC_GET_FRAME:
             return uvc_video_get_frame((struct avatar_uvc_frame *)argp);
         case AV_UVC_IOC_STREAMON:
+            return uvc_video_streamon();
         case AV_UVC_IOC_STREAMOFF:
-            return g_uvc_video0.present ? 0 : -UVC_ERR_NODEV;
+            return uvc_video_streamoff();
         default:
             return -UVC_ERR_NOSYS;
     }

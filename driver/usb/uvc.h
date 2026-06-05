@@ -8,6 +8,10 @@ bool uvc_parse_config(const uint8_t *cfg, uint32_t total,
                       usb_device_info_t *dev);
 int uvc_start_video_stream(uint32_t dev_addr, uint32_t ep0_mps,
                            usb_device_info_t *dev);
+int uvc_restart_video_stream(uint32_t dev_addr, uint32_t ep0_mps,
+                             const usb_device_info_t *dev);
+int uvc_stop_video_stream(uint32_t dev_addr, uint32_t ep0_mps,
+                          const usb_device_info_t *dev);
 int uvc_capture_one_frame(uint32_t dev_addr, const usb_device_info_t *dev,
                           usb_uvc_frame_t *frame);
 
