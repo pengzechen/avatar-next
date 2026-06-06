@@ -3,7 +3,7 @@
  *
  * 将 RAM 块设备注册到 lwext4，挂载 ext4 分区到 "/"。
  *
- * 编译要求：使用 LWEXT4_CFLAGS（包含 fs/lwext4/include 和 fs/compat）。
+ * 编译要求：使用 LWEXT4_CFLAGS（包含 third_party/lwext4/include 和 lwext4_port/libc_shim）。
  */
 
 #include <ext4.h>

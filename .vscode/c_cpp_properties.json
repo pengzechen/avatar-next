@@ -9,9 +9,10 @@
                 "${workspaceFolder}/driver/uart",
                 "${workspaceFolder}/boot/common",
                 "${workspaceFolder}/kernel",
-                "${workspaceFolder}/fs/lwext4/include",
+                "${workspaceFolder}/third_party/lwext4/include",
                 "${workspaceFolder}/fs/lwext4_port",
-                "${workspaceFolder}/lib/lua54/src"
+                "${workspaceFolder}/third_party/lua54/src",
+                "${workspaceFolder}/lib/lua54_port/libc_shim"
             ],
             "defines": [
                 "__x86_64__",
@@ -31,9 +32,10 @@
                 "${workspaceFolder}/driver/uart",
                 "${workspaceFolder}/boot/common",
                 "${workspaceFolder}/kernel",
-                "${workspaceFolder}/fs/lwext4/include",
+                "${workspaceFolder}/third_party/lwext4/include",
                 "${workspaceFolder}/fs/lwext4_port",
-                "${workspaceFolder}/lib/lua54/src"
+                "${workspaceFolder}/third_party/lua54/src",
+                "${workspaceFolder}/lib/lua54_port/libc_shim"
             ],
             "defines": [
                 "__aarch64__",
@@ -52,7 +54,7 @@
                 "${workspaceFolder}/driver/uart",
                 "${workspaceFolder}/boot/common",
                 "${workspaceFolder}/kernel",
-                "${workspaceFolder}/fs/lwext4/include",
+                "${workspaceFolder}/third_party/lwext4/include",
                 "${workspaceFolder}/fs/lwext4_port",
                 "${workspaceFolder}/third_party/lwip/src/include",
                 "${workspaceFolder}/kernel/net/lwip_port"

@@ -25,15 +25,17 @@ $(error Invalid SMP value '$(SMP)'. Use SMP=1..8)
 endif
 
 # 目录设置
-SRC_DIR     := examples
-LIB_DIR     := lib
-BUILD_DIR   := build
-INCLUDE_DIR := include
-BOOT_DIR    := boot
-KERNEL_DIR  := kernel
-PLATFORM_DIR := platforms
-TESTS_DIR   := tests
-TOOLS_DIR   := tools
+SRC_DIR         := examples
+LIB_DIR         := lib
+BUILD_DIR       := build
+INCLUDE_DIR     := include
+BOOT_DIR        := boot
+KERNEL_DIR      := kernel
+PLATFORM_DIR    := platforms
+TESTS_DIR       := tests
+TOOLS_DIR       := tools
+FS_DIR          := fs
+THIRD_PARTY_DIR := third_party
 
 # ─── §2  平台配置生成 ────────────────────────────────────────────────────────────
 # 平台配置全部在 platforms/$(PLATFORM)/platform.lua 的 BUILD_CONFIG 表中。
@@ -239,8 +241,6 @@ SYSCALL_C_OBJECTS := $(BUILD_DIR)/kernel_syscall_syscall.o \
                      $(BUILD_DIR)/kernel_syscall_mm_brk.o \
                      $(BUILD_DIR)/kernel_syscall_mm_mmap.o \
                      $(BUILD_DIR)/kernel_syscall_mm_pmap_compat.o
-SYSCALL_S_SRC := $(LIB_DIR)/syscall.S
-SYSCALL_S_OBJ := $(BUILD_DIR)/syscall_wrapper.o
 TASK_S_OBJ := $(BUILD_DIR)/task_switch.o
 ifeq ($(ARCH),aarch64)
 TASK_USER_TEST_OBJ := $(BUILD_DIR)/user_test.o
@@ -275,9 +275,6 @@ APPS_BINS := $(APPS_SOURCES:$(APPS_DIR)/%.S=$(BUILD_DIR)/%.bin)
 # C 语言用户程序（每个 foo.c 搭配 crt0.S，链接为 foo.elf 放入 rootfs）
 APPS_C_SOURCES := $(wildcard $(APPS_DIR)/*.c)
 APPS_C_ELFS    := $(APPS_C_SOURCES:$(APPS_DIR)/%.c=$(BUILD_DIR)/%.elf)
-CRT0_SRC := $(APPS_DIR)/crt0.S
-CRT0_OBJ := $(BUILD_DIR)/apps_crt0.o
-SYSCALL_WRAPPER_OBJ := $(BUILD_DIR)/syscall_wrapper.o
 
 # 架构特定的上下文切换汇编
 ifeq ($(ARCH),aarch64)
@@ -610,13 +607,12 @@ _VARIANT_CHECK := $(shell \
 MKDIR   := mkdir -p
 
 # ─── §8  第三方库：lwext4 文件系统 ──────────────────────────────────────────────
-FS_DIR          := fs
-LWEXT4_DIR      := $(FS_DIR)/lwext4
+LWEXT4_DIR      := $(THIRD_PARTY_DIR)/lwext4
 LWEXT4_PORT_DIR := $(FS_DIR)/lwext4_port
-LWEXT4_COMPAT   := $(FS_DIR)/compat
+LWEXT4_LIBC_SHIM := $(LWEXT4_PORT_DIR)/libc_shim
 
-# ─── §7a  内核网络栈：netdev + lwIP ─────────────────────────────────────────────
-LWIP_DIR      := third_party/lwip
+# ─── §8a  内核网络栈：netdev + lwIP ─────────────────────────────────────────────
+LWIP_DIR      := $(THIRD_PARTY_DIR)/lwip
 LWIP_PORT_DIR := $(KERNEL_DIR)/net/lwip_port
 
 NET_OBJS := $(BUILD_DIR)/kernel_net_netdev.o \
@@ -657,7 +653,7 @@ LWIP_CFLAGS := $(CFLAGS)
 LWIP_CFLAGS += -I$(LWIP_DIR)/src/include
 LWIP_CFLAGS += -I$(LWIP_PORT_DIR)
 LWIP_CFLAGS += -I$(LWIP_PORT_DIR)/arch
-LWIP_CFLAGS += -I$(LWEXT4_COMPAT)
+LWIP_CFLAGS += -I$(LWEXT4_LIBC_SHIM)
 LWIP_CFLAGS += -DLWIP_NO_CTYPE_H=1
 LWIP_CFLAGS += -w
 
@@ -675,7 +671,7 @@ LWEXT4_PORT_OBJS := $(BUILD_DIR)/lwext4_port_kmalloc.o \
 LWEXT4_CFLAGS  := $(CFLAGS)
 LWEXT4_CFLAGS  += -I$(LWEXT4_DIR)/include   # lwext4 头文件
 LWEXT4_CFLAGS  += -I$(LWEXT4_PORT_DIR)      # generated/ext4_config.h 所在目录
-LWEXT4_CFLAGS  += -I$(LWEXT4_COMPAT)        # compat 标准库头文件
+LWEXT4_CFLAGS  += -I$(LWEXT4_LIBC_SHIM)     # lwext4 libc shim 头文件
 LWEXT4_CFLAGS  += -DCONFIG_USE_DEFAULT_CFG=0  # 使用自定义 ext4_config.h
 # 以下定义与 generated/ext4_config.h 保持一致，防止默认值覆盖
 LWEXT4_CFLAGS  += -DCONFIG_HAVE_OWN_ERRNO=1
@@ -687,9 +683,10 @@ LWEXT4_CFLAGS  += -DCONFIG_USE_USER_MALLOC=1
 LWEXT4_CFLAGS  += -w   # 屏蔽第三方代码警告
 
 # ─── §9  第三方库：Lua 5.4 ──────────────────────────────────────────────────────
-LUA_DIR      := $(LIB_DIR)/lua54
+LUA_DIR      := $(THIRD_PARTY_DIR)/lua54
 LUA_SRC_DIR  := $(LUA_DIR)/src
-LUA_COMPAT   := $(LUA_DIR)/compat
+LUA_PORT_DIR := $(LIB_DIR)/lua54_port
+LUA_LIBC_SHIM := $(LUA_PORT_DIR)/libc_shim
 
 # Lua VM 核心模块（不含 linit.c / lmathlib — 后者依赖 libc 数学函数）
 LUA_CORE_SRCS := lapi lcode lctype ldebug ldo ldump lfunc lgc llex lmem \
@@ -698,8 +695,8 @@ LUA_CORE_SRCS := lapi lcode lctype ldebug ldo ldump lfunc lgc llex lmem \
 
 LUA_CORE_OBJS := $(patsubst %,$(BUILD_DIR)/lua54_%.o,$(LUA_CORE_SRCS))
 
-# LUA_CFLAGS: compat 头文件先于 include/，FP 限制解除
-LUA_CFLAGS := -I$(LUA_COMPAT) -I$(LUA_SRC_DIR) \
+# LUA_CFLAGS: libc shim 头文件先于 include/，FP 限制解除
+LUA_CFLAGS := -I$(LUA_LIBC_SHIM) -I$(LUA_SRC_DIR) \
               $(filter-out -mgeneral-regs-only,$(CFLAGS))
 ifeq ($(ARCH),x86_64)
 LUA_CFLAGS := $(filter-out -mno-mmx -mno-sse,$(LUA_CFLAGS))
@@ -726,6 +723,7 @@ LUA_OBJECTS := $(LUA_CORE_OBJS) $(LUA_GLUE_OBJS) $(LUA_BLOB_OBJ) $(SETJMP_OBJ)
 ROOTFS_IMG       := $(BUILD_DIR)/rootfs-$(ARCH).img
 ROOTFS_STAGE     := $(BUILD_DIR)/rootfs-stage-$(ARCH)
 # ROOTFS_SIZE_MB / ROOTFS_PHYS_ADDR 来自自动生成的 $(MEM_LAYOUT_MK)
+QEMU_ROOTFS_FLAGS = -device loader,file=$(ROOTFS_IMG),addr=$(ROOTFS_PHYS_ADDR),force-raw=on
 
 # ─── §11  顶层目标声明 ───────────────────────────────────────────────────────────
 .PHONY: all clean help klog kernel run run-net rootfs run-fs test-pthread test-mutex test-vmm
@@ -855,7 +853,7 @@ PSEUDOFS_OBJS := $(BUILD_DIR)/pseudofs_pseudofs.o
 PLATFORM_CONFIG_DEPS := $(PLATFORM_MK) $(_PLATFORM_LUA)
 $(BOOT_OBJECTS) $(KERNEL_OBJECTS) $(NET_OBJS) $(TASK_C_OBJECTS) $(TASK_S_OBJ) \
 $(TASK_USER_TEST_OBJ) $(TASK_USER_HELLO_OBJ) $(TASK_USER_TESTEXECVE_OBJ) \
-$(LOADER_C_OBJECTS) $(SYSCALL_C_OBJECTS) $(SYSCALL_S_OBJ) \
+$(LOADER_C_OBJECTS) $(SYSCALL_C_OBJECTS) \
 $(VM_C_OBJECTS) $(VM_S_OBJ) $(VMM_C_OBJECTS) $(VMM_S_OBJECTS) \
 $(GUEST_TEST_OBJ) $(TESTS_OBJECTS) $(PLATFORM_OBJECTS) $(DRIVER_OBJECTS) \
 $(EXCEPTION_OBJECTS) $(KLOG_OBJECT) $(VSNPRINTF_OBJECT) $(STRING_OBJECT) \
@@ -977,9 +975,6 @@ $(BUILD_DIR)/kernel_syscall_mm_mmap.o: $(KERNEL_DIR)/syscall/mm/mmap.c | $(BUILD
 $(BUILD_DIR)/kernel_syscall_mm_pmap_compat.o: $(KERNEL_DIR)/syscall/mm/pmap_compat.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/syscall_wrapper.o: $(SYSCALL_S_SRC) | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
-
 # 用户测试程序编译规则
 $(BUILD_DIR)/user_test.o: $(TASK_USER_TEST_SRC) | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -1005,16 +1000,12 @@ $(BUILD_DIR)/%.bin: $(BUILD_DIR)/apps_%.o $(APPS_LD) | $(BUILD_DIR)
 	@echo "App binary created: $@"
 	@echo "  Entry point: $(shell $(NM) $@.elf 2>/dev/null | grep ' _start')"
 
-# crt0 编译规则
-$(CRT0_OBJ): $(CRT0_SRC) | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-# C 用户程序编译规则（crt0 + foo.c + syscall_wrapper → foo.elf，放入 rootfs）
-$(BUILD_DIR)/%.elf: $(APPS_DIR)/%.c $(CRT0_OBJ) $(SYSCALL_WRAPPER_OBJ) $(APPS_LD) | $(BUILD_DIR)
+# C 用户程序编译规则（当前各架构目录暂无 .c 应用；保留直接静态链接形式）
+$(BUILD_DIR)/%.elf: $(APPS_DIR)/%.c $(APPS_LD) | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $(BUILD_DIR)/apps_$*.o
 	$(CC) $(CFLAGS) -static -nostdlib -nostartfiles -nodefaultlibs \
 		-T $(APPS_LD) \
-		$(CRT0_OBJ) $(BUILD_DIR)/apps_$*.o $(SYSCALL_WRAPPER_OBJ) \
+		$(BUILD_DIR)/apps_$*.o \
 		-o $@
 	@echo "C app ELF created: $@"
 
@@ -1079,7 +1070,7 @@ $(BUILD_DIR)/drv_blk_ramblk.o: driver/blk/ramblk.c | $(BUILD_DIR)
 	$(CC) $(LWEXT4_CFLAGS) -Idriver -c $< -o $@
 
 $(BUILD_DIR)/lwext4_port_fs_init.o: $(LWEXT4_PORT_DIR)/fs_init.c | $(BUILD_DIR)
-	$(CC) $(LWEXT4_CFLAGS) -Ifs/lwext4_port -c $< -o $@
+	$(CC) $(LWEXT4_CFLAGS) -I$(LWEXT4_PORT_DIR) -c $< -o $@
 
 $(BUILD_DIR)/lwip_core_%.o: $(LWIP_DIR)/src/core/%.c | $(BUILD_DIR)
 	@mkdir -p $(dir $@)
@@ -1103,16 +1094,16 @@ $(SETJMP_OBJ): $(LIB_DIR)/setjmp/setjmp_$(ARCH).S | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # Lua 平台胶水代码（LUA_CFLAGS + lua.h 路径）
-$(BUILD_DIR)/lua_platform.o: $(LIB_DIR)/lua_platform.c | $(BUILD_DIR)
+$(BUILD_DIR)/lua_platform.o: $(LUA_PORT_DIR)/platform.c | $(BUILD_DIR)
 	$(CC) $(LUA_CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/lua_drivers.o: $(LIB_DIR)/lua_drivers.c | $(BUILD_DIR)
+$(BUILD_DIR)/lua_drivers.o: $(LUA_PORT_DIR)/drivers.c | $(BUILD_DIR)
 	$(CC) $(LUA_CFLAGS) -Idriver -c $< -o $@
 
-$(BUILD_DIR)/lua_math_impl.o: $(LUA_COMPAT)/lua_math_impl.c | $(BUILD_DIR)
+$(BUILD_DIR)/lua_math_impl.o: $(LUA_LIBC_SHIM)/lua_math_impl.c | $(BUILD_DIR)
 	$(CC) $(LUA_CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/lua_kernel_init.o: $(LUA_DIR)/lua_kernel_init.c | $(BUILD_DIR)
+$(BUILD_DIR)/lua_kernel_init.o: $(LUA_PORT_DIR)/lua_kernel_init.c | $(BUILD_DIR)
 	$(CC) $(LUA_CFLAGS) -c $< -o $@
 
 # 嵌入式 platform.lua —— 由 gen_platform.py 生成到 build/ 目录
@@ -1190,7 +1181,7 @@ $(BUILD_DIR)/apps_riscv_guest_test.o: apps/riscv64/guest_test.S | $(BUILD_DIR)
 endif
 
 # ── §12g  链接 ────────────────────────────────────────────────────────────────────
-$(KERNEL_TARGET): $(BOOT_OBJECTS) $(KERNEL_OBJECTS) $(NET_OBJS) $(LWIP_OBJS) $(TASK_C_OBJECTS) $(TASK_S_OBJ) $(TASK_USER_TEST_OBJ) $(TASK_USER_HELLO_OBJ) $(TASK_USER_TESTEXECVE_OBJ) $(LOADER_C_OBJECTS) $(SYSCALL_C_OBJECTS) $(SYSCALL_S_OBJ) $(VM_C_OBJECTS) $(VM_S_OBJ) $(VMM_C_OBJECTS) $(VMM_S_OBJECTS) $(GUEST_TEST_OBJ) $(TESTS_OBJECTS) $(PLATFORM_OBJECTS) $(DRIVER_OBJECTS) $(EXCEPTION_OBJECTS) $(KLOG_OBJECT) $(VSNPRINTF_OBJECT) $(STRING_OBJECT) $(BITMAP_OBJECT) $(PLATFORM_CFG_OBJECT) $(LWEXT4_OBJS) $(LWEXT4_PORT_OBJS) $(LUA_OBJECTS) $(PSEUDOFS_OBJS) | $(BUILD_DIR)
+$(KERNEL_TARGET): $(BOOT_OBJECTS) $(KERNEL_OBJECTS) $(NET_OBJS) $(LWIP_OBJS) $(TASK_C_OBJECTS) $(TASK_S_OBJ) $(TASK_USER_TEST_OBJ) $(TASK_USER_HELLO_OBJ) $(TASK_USER_TESTEXECVE_OBJ) $(LOADER_C_OBJECTS) $(SYSCALL_C_OBJECTS) $(VM_C_OBJECTS) $(VM_S_OBJ) $(VMM_C_OBJECTS) $(VMM_S_OBJECTS) $(GUEST_TEST_OBJ) $(TESTS_OBJECTS) $(PLATFORM_OBJECTS) $(DRIVER_OBJECTS) $(EXCEPTION_OBJECTS) $(KLOG_OBJECT) $(VSNPRINTF_OBJECT) $(STRING_OBJECT) $(BITMAP_OBJECT) $(PLATFORM_CFG_OBJECT) $(LWEXT4_OBJS) $(LWEXT4_PORT_OBJS) $(LUA_OBJECTS) $(PSEUDOFS_OBJS) | $(BUILD_DIR)
 	$(CC) $(LDFLAGS) -nostartfiles -nodefaultlibs -T $(BOOT_DIR)/$(ARCH)/link.ld -o $@ $^
 
 # 转换为二进制文件
@@ -1207,14 +1198,14 @@ run: kernel
 	@echo "Starting QEMU for $(ARCH)..."
 	$(QEMU) $(QEMU_FLAGS)
 
-run-net: kernel
+run-net: kernel $(ROOTFS_IMG)
 	@if [ "$(ARCH)" != "riscv64" ]; then \
 		echo "ERROR: run-net currently supports ARCH=riscv64 only."; \
 		exit 1; \
 	fi
-	@echo "Starting QEMU for $(ARCH) with virtio-net..."
+	@echo "Starting QEMU for $(ARCH) with rootfs at $(ROOTFS_PHYS_ADDR) and virtio-net..."
 	@echo "QEMU_NET_FLAGS=$(QEMU_NET_FLAGS)"
-	$(QEMU) $(QEMU_FLAGS) $(QEMU_NET_FLAGS)
+	$(QEMU) $(QEMU_FLAGS) $(QEMU_ROOTFS_FLAGS) $(QEMU_NET_FLAGS)
 
 # 创建 ext4 rootfs 镜像（无需 sudo）
 # 依赖：Host 已安装 e2fsprogs（mkfs.ext4 >= 1.43 支持 -d 选项）
@@ -1276,8 +1267,7 @@ rootfs: $(ROOTFS_IMG)
 # 运行内核 + 加载 rootfs 镜像到 QEMU 客户机内存
 run-fs: kernel $(ROOTFS_IMG)
 	@echo "Starting QEMU for $(ARCH) with rootfs at $(ROOTFS_PHYS_ADDR)..."
-	$(QEMU) $(QEMU_FLAGS) \
-		-device loader,file=$(ROOTFS_IMG),addr=$(ROOTFS_PHYS_ADDR),force-raw=on
+	$(QEMU) $(QEMU_FLAGS) $(QEMU_ROOTFS_FLAGS)
 
 # ── 便捷测试目标 ─────────────────────────────────────────────────────
 #
@@ -1294,8 +1284,7 @@ test-pthread: kernel
 	@cp imgs/rootfs-$(ARCH).img $(ROOTFS_IMG)
 	@echo "Starting QEMU for $(ARCH) with pthread_test rootfs..."
 	@echo "In QEMU shell: /bin/pthread_test"
-	$(QEMU) $(QEMU_FLAGS) \
-		-device loader,file=$(ROOTFS_IMG),addr=$(ROOTFS_PHYS_ADDR),force-raw=on
+	$(QEMU) $(QEMU_FLAGS) $(QEMU_ROOTFS_FLAGS)
 
 # test-mutex: 一键跑 mutex_test（使用同一动态链接 rootfs）
 #   用法: make ARCH=riscv64 test-mutex LOG=warn
@@ -1310,8 +1299,7 @@ test-mutex: kernel
 	@cp imgs/rootfs-$(ARCH).img $(ROOTFS_IMG)
 	@echo "Starting QEMU for $(ARCH) with mutex_test rootfs..."
 	@echo "In QEMU shell: /bin/mutex_test"
-	$(QEMU) $(QEMU_FLAGS) \
-		-device loader,file=$(ROOTFS_IMG),addr=$(ROOTFS_PHYS_ADDR),force-raw=on
+	$(QEMU) $(QEMU_FLAGS) $(QEMU_ROOTFS_FLAGS)
 
 # test-vmm: 编译 VMM_TEST=1 内核并运行三线程切换测试（不需要 rootfs）
 #   用法: make ARCH=aarch64 test-vmm LOG=info
@@ -1359,7 +1347,7 @@ help:
 	@echo "  klog          Build klog library only"
 	@echo "  kernel        Build kernel image"
 	@echo "  run           Build and run kernel in QEMU (no rootfs)"
-	@echo "  run-net       Build and run RISC-V QEMU with virtio-net"
+	@echo "  run-net       Build and run RISC-V QEMU with rootfs and virtio-net"
 	@echo "  run-fs        Build and run kernel with rootfs (busybox shell)"
 	@echo "  test-pthread  Copy dynamic rootfs from imgs/ and run pthread_test"
 	@echo "  test-mutex    Copy dynamic rootfs from imgs/ and run mutex_test (futex-based)"
@@ -1379,6 +1367,8 @@ help:
 	@echo "  make ARCH=riscv64 clean"
 	@echo "  make ARCH=riscv64 test-pthread LOG=warn    # pthread_test 一键测试"
 	@echo "  make ARCH=aarch64 test-vmm   LOG=info     # VMM 三线程切换测试"
+	@echo "  make PLATFORM=qemu-virt-riscv64 run-net"
+	@echo "  make PLATFORM=qemu-virt-riscv64 run-net QEMU_NET_FLAGS='-netdev tap,id=net0,ifname=tap0,script=no,downscript=no -device virtio-net-device,netdev=net0,mac=52:54:00:12:34:56'"
 
 # 包含依赖文件
 -include $(DEPS)

@@ -4,7 +4,7 @@
  * 将固定的物理内存区域（由 QEMU -device loader 预加载 ext4 镜像）
  * 封装为 lwext4 的 ext4_blockdev 接口。
  *
- * 编译要求：使用 LWEXT4_CFLAGS（包含 fs/lwext4/include 和 fs/compat）。
+ * 编译要求：使用 LWEXT4_CFLAGS（包含 third_party/lwext4/include 和 lwext4_port/libc_shim）。
  */
 
 #include <ext4_blockdev.h>

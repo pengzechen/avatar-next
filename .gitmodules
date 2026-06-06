@@ -1,3 +1,6 @@
-[submodule "fs/lwext4"]
-	path = fs/lwext4
+[submodule "third_party/lwext4"]
+	path = third_party/lwext4
 	url = https://github.com/gkostka/lwext4.git
+[submodule "third_party/lwip"]
+	path = third_party/lwip
+	url = https://git.savannah.nongnu.org/git/lwip.git

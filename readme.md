@@ -61,7 +61,7 @@ sudo apt install gcc-riscv64-linux-gnu make qemu-system-misc
 make ARCH=riscv64 rootfs
 
 # 启动 QEMU
-make ARCH=riscv64 PLATFORM=qemu run-fs LOG=info -j4
+make PLATFORM=qemu-virt-riscv64 run-net LOG=info -j4 QEMU_NET_FLAGS="-netdev tap,id=net0,ifname=tap0,script=no,downscript=no -device virtio-net-device,netdev=net0,mac=52:54:00:12:34:56"
 ```
 
 #### AArch64
@@ -70,7 +70,7 @@ make ARCH=riscv64 PLATFORM=qemu run-fs LOG=info -j4
 make ARCH=aarch64 rootfs
 
 # 启动 QEMU
-make ARCH=aarch64 PLATFORM=qemu run-fs LOG=info -j4
+make ARCH=aarch64 run-fs LOG=info -j4
 ```
 
 #### x86_64
@@ -79,7 +79,7 @@ make ARCH=aarch64 PLATFORM=qemu run-fs LOG=info -j4
 make ARCH=x86_64 rootfs
 
 # 启动 QEMU
-make ARCH=x86_64 PLATFORM=qemu run-fs LOG=info -j4
+make ARCH=x86_64 run-fs LOG=info -j4
 ```
 
 > 每个架构的 rootfs 镜像独立存储，**切换架构无需 `make clean`**。  
@@ -184,7 +184,10 @@ avatar/
 │   └── interrupt/       # 中断控制器
 │
 ├── fs/                   # 文件系统
-│   └── lwext4/          # ext4 支持
+│   └── lwext4_port/     # lwext4 移植层与 libc shim
+├── third_party/         # 第三方源码
+│   ├── lwext4/          # ext4 支持
+│   └── lwip/            # TCP/IP 协议栈
 │
 ├── apps/                 # 用户程序
 │   ├── busybox-aarch64  # Busybox (AArch64)

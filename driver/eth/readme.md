@@ -8,9 +8,7 @@
   sudo ip tuntap del dev tap0 mode tap
 
 启动qemu，要多加参数
-    make ARCH=riscv64 PLATFORM=qemu-virt-riscv64 run-net \
-    QEMU_NET_FLAGS="-netdev tap,id=net0,ifname=tap0,script=no,downscript=no -device virtio-net-
-    device,netdev=net0,mac=52:54:00:12:34:56"
+make PLATFORM=qemu-virt-riscv64 run-net LOG=info -j4 QEMU_NET_FLAGS="-netdev tap,id=net0,ifname=tap0,script=no,downscript=no -device virtio-net-device,netdev=net0,mac=52:54:00:12:34:56"
 
 tcpdump:
 sudo tcpdump -i tap0 -e -XX 'ether proto 0x88b5'

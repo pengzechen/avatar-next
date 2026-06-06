@@ -10,19 +10,21 @@
 
 ```
 fs/
-├── compat/                   # 标准库兼容头（-nostdinc 裸机环境）
-│   ├── stdint.h              # → include/types.h
-│   ├── stddef.h              # → include/types.h + __builtin_offsetof
-│   ├── stdbool.h             # → include/types.h
-│   ├── stdarg.h              # → include/arg.h
-│   ├── stdlib.h              # 空存根（malloc 由配置重定向）
-│   └── inttypes.h            # PRIu64/PRId64 等格式化宏
-├── lwext4/                   # 原始 lwext4 源码（不做任何修改）
 └── lwext4_port/              # 裸机移植层（本项目代码）
+    ├── libc_shim/            # lwext4 专用 libc shim（-nostdinc 裸机环境）
+    │   ├── stdint.h          # → include/types.h
+    │   ├── stddef.h          # → include/types.h + __builtin_offsetof
+    │   ├── stdbool.h         # → include/types.h
+    │   ├── stdarg.h          # → include/arg.h
+    │   ├── stdlib.h          # 空存根（malloc 由配置重定向）
+    │   └── inttypes.h        # PRIu64/PRId64 等格式化宏
     ├── generated/
     │   └── ext4_config.h     # 裸机配置文件
     ├── kmalloc.c             # 静态堆内存分配器
     └── libc_stub.c           # 缺失 libc 函数的实现（qsort）
+
+third_party/
+└── lwext4/                   # 原始 lwext4 源码（不做任何修改）
 ```
 
 ---
@@ -63,9 +65,9 @@ fs/
 相关变量（在 Makefile 中定义）：
 
 ```makefile
-LWEXT4_DIR      := fs/lwext4         # lwext4 源码目录
-LWEXT4_PORT_DIR := fs/lwext4_port    # 移植层目录
-LWEXT4_COMPAT   := fs/compat         # 标准库兼容头目录
+LWEXT4_DIR       := third_party/lwext4           # lwext4 源码目录
+LWEXT4_PORT_DIR  := fs/lwext4_port               # 移植层目录
+LWEXT4_LIBC_SHIM := fs/lwext4_port/libc_shim     # lwext4 libc shim 头目录
 
 LWEXT4_OBJS     # 所有 lwext4/src/*.c 的目标文件
 LWEXT4_PORT_OBJS # kmalloc.o + libc_stub.o

@@ -66,7 +66,7 @@ int        g_pmm_resv_count = 0;
 extern const char         g_platform_lua_src[];
 extern const unsigned int g_platform_lua_src_len;
 
-/* lua_platform_open() 在 lua_platform.c（LUA_CFLAGS）中实现 */
+/* lua_platform_open() 在 lib/lua54_port/platform.c（LUA_CFLAGS）中实现 */
 extern lua_State *lua_platform_open(const char *src, unsigned int len);
 
 /* 持久 Lua State（platform_conf_scan 后保持存活，直到主循环结束） */

@@ -99,8 +99,14 @@
 ### 头文件
 `include/unistd.h` - 提供用户空间系统调用的 C 语言声明
 
-### 汇编包装
-`lib/syscall.S` - 提供系统调用的汇编包装函数
+### 汇编接口
+当前用户态汇编程序在 `apps/<arch>/*.S` 中直接按各架构 syscall ABI 发起系统调用：
+
+- AArch64 / RISC-V：系统调用号放入 `x8` / `a7`，使用 `svc #0` / `ecall`
+- x86_64：按 x86_64 `syscall` 约定传参
+
+历史的 `lib/syscall.S` C 包装层已移除；新增 C 用户程序时应在 `apps/<arch>/`
+内提供该架构自己的 crt/syscall shim。
 
 ### 使用示例
 

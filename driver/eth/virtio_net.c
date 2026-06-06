@@ -420,10 +420,21 @@ VirtioNetNic_t *eth_init(uint64_t base)
                magic, version, device, vendor, status, gen);
 
     nic->version = version;
-    if (magic != VIRTIO_MMIO_MAGIC || (version != 1U && version != 2U) ||
-        device != VIRTIO_DEVICE_ID_NET) {
-        KLOG_ERROR("[virtio-net] unsupported device magic=0x%x version=%u device=%u\n",
+    if (magic != VIRTIO_MMIO_MAGIC || (version != 1U && version != 2U)) {
+        KLOG_ERROR("[virtio-net] unsupported transport magic=0x%x version=%u device=%u\n",
                    magic, version, device);
+        return NULL;
+    }
+
+    if (device == 0U) {
+        KLOG_WARN("[virtio-net] no device attached at transport base=0x%llx; use run-net or pass QEMU_NET_FLAGS\n",
+                  (unsigned long long)base);
+        return NULL;
+    }
+
+    if (device != VIRTIO_DEVICE_ID_NET) {
+        KLOG_ERROR("[virtio-net] unsupported device id=%u at transport base=0x%llx\n",
+                   device, (unsigned long long)base);
         return NULL;
     }
 
