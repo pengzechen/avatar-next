@@ -301,6 +301,8 @@ memory_alloc_page(void *page_dir, // 虚拟地址
 void memory_free_page(void *page_dir, uint64_t addr)
 {
     pte_t *pte = find_pte((pte_t *)page_dir, addr, 0);
+    if (!pte || ((pte->pte & PTE_VALID) == 0) || ((pte->pte & PTE_TABLE) == 0))
+        return;
 
     pmm_free_pages(g_pmm, (pte->l3_page.pfn << 12), 1); // 释放的是物理地址
 
@@ -350,72 +352,55 @@ create_uvm(void)
 void _destroy_page_table_vm(pte_t *table, int32_t level)
 {
     extern char __kernel_start[];
-    extern char __kernel_end[];
-
-    // 输出当前正在处理的层级
-    // KLOG_INFO("Destroying page table at level %d\n", level);
 
     if (level >= 4)
         return;
 
-    // 各级页表的最大项数（按实际情况调整）
     static const int32_t max_entries[] = {PAGE_TABLE_MAX_ENTRIES_L0,
                                           PAGE_TABLE_MAX_ENTRIES_L1,
                                           PAGE_TABLE_MAX_ENTRIES_L2,
                                           PAGE_TABLE_MAX_ENTRIES_L3};
     int32_t entry_count = max_entries[level];
 
-    // 遍历当前层级的所有页表项
     for (int32_t i = 0; i < entry_count; i++)
     {
         pte_t *entry = &table[i];
 
-        if (!entry->table.is_valid)
+        if ((entry->pte & PTE_VALID) == 0)
             continue;
-
-        uint64_t next_table_phys = entry->table.next_table_addr << 12;
-        void *next_table = phys_to_virt(next_table_phys);
-
-        // 输出当前页表项的信息
-        // KLOG_INFO("Level %d, Entry %d: is_valid = %d, is_table = %d, Next Table Address = 0x%llx\n",
-        //        level, i, entry->table.is_valid, entry->l3_page.is_table, next_table_phys);
 
         if (level == 3)
         {
-            // PTE 层：释放实际映射的物理页
+            if ((entry->pte & PTE_TABLE) == 0)
+                continue;
+
             uint64_t page_phys = entry->l3_page.pfn << 12;
-            // KLOG_INFO("Level %d, Freeing physical page: 0x%llx\n", level, page_phys);
 
             uint64_t start = (uint64_t)(void *)__kernel_start;
             uint64_t end = (uint64_t)(void *)__heap_flag + 0x900000ULL;
-            // 如果 heap_start 不是页对齐的，将其向上对齐
             end = ALIGN_UP(end, PAGE_SIZE);
-            // 这里start和end计算出来的都是物理地址
 
             if (start > KERNEL_VMA)
                 start -= KERNEL_VMA;
             if (end > KERNEL_VMA)
                 end -= KERNEL_VMA;
 
-            if (page_phys >= start && page_phys <= end)
-                return;
-            if (page_phys >= DEVICE_MEM_START && page_phys <= DEVICE_MEM_END)
-                return;
+            if (!((page_phys >= start && page_phys < end) ||
+                  (page_phys >= DEVICE_MEM_START && page_phys < DEVICE_MEM_END))) {
+                pmm_free_pages(g_pmm, page_phys, 1);
+            }
 
-            pmm_free_pages(g_pmm, page_phys, 1);
-        }
-        else
-        {
-            // 递归释放下一层页表
-            _destroy_page_table_vm((pte_t *)next_table, level + 1);
+            entry->pte = 0;
+            continue;
         }
 
-        // 释放当前这一级的页表页
-        if (entry->l3_page.is_table == 1)
-        {
-            // KLOG_INFO("Level %d, Freeing page table at entry %d: 0x%llx\n", level, i, next_table_phys);
-            pmm_free_pages(g_pmm, next_table_phys, 1);
-        }
+        if ((entry->pte & PTE_TABLE) == 0)
+            continue;
+
+        uint64_t next_table_phys = entry->table.next_table_addr << 12;
+        _destroy_page_table_vm((pte_t *)phys_to_virt(next_table_phys), level + 1);
+        pmm_free_pages(g_pmm, next_table_phys, 1);
+        entry->pte = 0;
     }
 }
 
