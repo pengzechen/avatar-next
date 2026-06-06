@@ -360,8 +360,9 @@ sched_check_and_yield_from_trap(void *frame_ptr)
 
         uint64_t n = ++g_rv_kernel_preempt_from_trap;
         if (rv_preempt_log_sample(n)) {
-            KLOG_INFO("[riscv preempt] S-mode preempt #%llu pc=0x%lx task='%s' id=%u\n",
-                      n, frame->sepc, c->current_task->name, c->current_task->id);
+            // 打开可以确认内核态是否收到中断
+            // KLOG_INFO("[riscv preempt] S-mode preempt #%llu pc=0x%lx task='%s' id=%u\n",
+            //           n, frame->sepc, c->current_task->name, c->current_task->id);
         }
 
         c->need_resched = false;

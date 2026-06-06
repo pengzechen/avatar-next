@@ -117,10 +117,11 @@ void handle_exception(void *frame_ptr)
         if (frame->sstatus & SSTATUS_SPP) {
             uint64_t n = ++g_rv_irq_from_kernel;
             if (rv_irq_log_sample(n)) {
-                KLOG_INFO("[riscv irq] S-mode IRQ #%llu cause=%llu sepc=0x%lx sstatus=0x%lx need_resched=%u preempt=%u\n",
-                          n, irq, frame->sepc, frame->sstatus,
-                          cpu->need_resched ? 1U : 0U,
-                          cpu->current_task ? cpu->current_task->preempt_count : 0U);
+                // 打开可以确认内核态是否收到中断
+                // KLOG_INFO("[riscv irq] S-mode IRQ #%llu cause=%llu sepc=0x%lx sstatus=0x%lx need_resched=%u preempt=%u\n",
+                //           n, irq, frame->sepc, frame->sstatus,
+                //           cpu->need_resched ? 1U : 0U,
+                //           cpu->current_task ? cpu->current_task->preempt_count : 0U);
             }
         } else {
             g_rv_irq_from_user++;

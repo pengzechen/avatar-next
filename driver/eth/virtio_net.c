@@ -666,7 +666,7 @@ void virtio_net_poll_demo_task(void *arg)
         }
 
         uint64_t now = timer_get_uptime_ms();
-        if (now - last_probe_ms >= 5000U) {
+        if (now - last_probe_ms >= 1000U) {
             virtio_net_send_probe(nic);
             last_probe_ms = now;
         }
