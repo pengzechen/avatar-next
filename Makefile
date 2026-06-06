@@ -405,6 +405,7 @@ else ifeq ($(ARCH),riscv64)
     KERNEL_BIN    := $(BUILD_DIR)/kernel_riscv64.bin
     QEMU          := qemu-system-riscv64
     QEMU_FLAGS    := -M virt -smp $(SMP) -m 2G -nographic -bios default -kernel $(KERNEL_BIN)
+    QEMU_NET_FLAGS ?= -netdev user,id=net0 -device virtio-net-device,netdev=net0,mac=52:54:00:12:34:56
 else
     $(error Unsupported architecture: $(ARCH). Use ARCH=x86_64, aarch64 or riscv64)
 endif
@@ -424,6 +425,7 @@ CFLAGS  += -DPLATFORM_MEM_ROOTFS_SIZE=$(MEM_ROOTFS_SIZE)
 CFLAGS  += -DDEVICE_MMIO_NEEDS_VMA=$(DEV_MMIO_NEEDS_VMA)
 CFLAGS  += -DDEVICE_UART_BASE_RAW=$(DEV_UART_BASE_RAW)
 CFLAGS  += -DDEVICE_UART_REG_SHIFT=$(DEV_UART_REG_SHIFT)
+CFLAGS  += -DDEVICE_ETH_BASE_RAW=$(DEV_ETH_BASE)
 CFLAGS  += -DDEVICE_USB_BASE_RAW=$(DEV_USB_BASE)
 CFLAGS  += -DDEVICE_USB_PHY_BASE_RAW=$(DEV_USB_PHY_BASE)
 
@@ -504,7 +506,7 @@ else
 endif
 
 # ── §6c  网络驱动（ETH）─────────────────────────────────────────────────────────
-# 以太网驱动（由 platform.lua 的 eth.driver 自动推导；也可命令行覆盖：ETH=none / ETH=cvitek）
+# 以太网驱动（由 platform.lua 的 eth.driver 自动推导；也可命令行覆盖：ETH=none / ETH=cvitek / ETH=virtio）
 ETH ?= $(DEV_ETH_TYPE)
 ifeq ($(ETH),cvitek)
     ifneq ($(ARCH),riscv64)
@@ -514,6 +516,12 @@ ifeq ($(ETH),cvitek)
     DRIVER_ETH_OBJS := $(BUILD_DIR)/rust_glue.o $(BUILD_DIR)/libavatar_eth.a
     _RUST_TARGET    := riscv64gc-unknown-none-elf
     _RUST_DIR       := rust
+else ifeq ($(ETH),virtio)
+    ifneq ($(ARCH),riscv64)
+        $(error ETH=virtio 目前仅支持 ARCH=riscv64)
+    endif
+    CFLAGS          += -DDRIVER_ETH_VIRTIO=1
+    DRIVER_ETH_OBJS := $(BUILD_DIR)/drv_eth/virtio_net.o
 else
     DRIVER_ETH_OBJS :=
 endif
@@ -673,7 +681,7 @@ ROOTFS_STAGE     := $(BUILD_DIR)/rootfs-stage-$(ARCH)
 # ROOTFS_SIZE_MB / ROOTFS_PHYS_ADDR 来自自动生成的 $(MEM_LAYOUT_MK)
 
 # ─── §11  顶层目标声明 ───────────────────────────────────────────────────────────
-.PHONY: all clean help klog kernel run rootfs run-fs test-pthread test-mutex test-vmm
+.PHONY: all clean help klog kernel run run-net rootfs run-fs test-pthread test-mutex test-vmm
 
 all: $(TARGET) klog
 
@@ -1132,6 +1140,15 @@ run: kernel
 	@echo "Starting QEMU for $(ARCH)..."
 	$(QEMU) $(QEMU_FLAGS)
 
+run-net: kernel
+	@if [ "$(ARCH)" != "riscv64" ]; then \
+		echo "ERROR: run-net currently supports ARCH=riscv64 only."; \
+		exit 1; \
+	fi
+	@echo "Starting QEMU for $(ARCH) with virtio-net..."
+	@echo "QEMU_NET_FLAGS=$(QEMU_NET_FLAGS)"
+	$(QEMU) $(QEMU_FLAGS) $(QEMU_NET_FLAGS)
+
 # 创建 ext4 rootfs 镜像（无需 sudo）
 # 依赖：Host 已安装 e2fsprogs（mkfs.ext4 >= 1.43 支持 -d 选项）
 # 每次 apps 变动时自动重建；切换架构直接使用各自的镜像文件，无需 make clean
@@ -1275,6 +1292,7 @@ help:
 	@echo "  klog          Build klog library only"
 	@echo "  kernel        Build kernel image"
 	@echo "  run           Build and run kernel in QEMU (no rootfs)"
+	@echo "  run-net       Build and run RISC-V QEMU with virtio-net"
 	@echo "  run-fs        Build and run kernel with rootfs (busybox shell)"
 	@echo "  test-pthread  Copy dynamic rootfs from imgs/ and run pthread_test"
 	@echo "  test-mutex    Copy dynamic rootfs from imgs/ and run mutex_test (futex-based)"

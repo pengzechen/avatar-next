@@ -19,6 +19,9 @@
 #include "lua_driver.h"
 #include "task/switch.h"     /* arch_irq_enable */
 
+#if DRIVER_ETH_VIRTIO
+#include "eth/virtio_net.h"
+#endif
 
 #if ARCH_AARCH64
 #include "irq/irq.h"
@@ -172,6 +175,11 @@ void kernel_main(void)
     cpu_init_bsp();          /* Phase 0：安装 BSP per-CPU 指针 */
     task_init();
 
+#if DRIVER_ETH_VIRTIO
+    KLOG_INFO("Initializing virtio ethernet driver...\n");
+    virtio_net_init_from_platform();
+#endif
+
     /* ── 选择启动模式 ────────────────────────────────────
      *   默认 (run-fs):           启动 busybox 交互 shell
      *   VMM_TEST=1:              VMM 三线程上下文切换测试
@@ -208,6 +216,17 @@ void kernel_main(void)
     cpu_smp_timer_test(3, 500);
 
 #if !defined(RUN_VMM_TEST)
+#if DRIVER_ETH_VIRTIO
+    KLOG_INFO("Starting virtio ethernet polling task...\n");
+    uint64_t eth_irq_flags = arch_irq_save();
+    task_t *eth_task = task_create("eth-poll", virtio_net_poll_demo_task, NULL, 20);
+    arch_irq_restore(eth_irq_flags);
+    if (eth_task)
+        KLOG_INFO("virtio ethernet task created: id=%u\n", eth_task->id);
+    else
+        KLOG_ERROR("Failed to create virtio ethernet task!\n");
+#endif
+
     /* SMP 检查完成，现在才启动 busybox 交互 shell */
     KLOG_INFO("\n=== Launching busybox shell ===\n");
     uint64_t bb_irq_flags = arch_irq_save();
