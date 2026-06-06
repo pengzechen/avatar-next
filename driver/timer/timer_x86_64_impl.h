@@ -81,6 +81,9 @@ timer_handler(void *frame)
     g_system_ticks++;
     g_x86_tick_counter++;
 
+    extern void cpu_bump_local_ticks(void);
+    cpu_bump_local_ticks();
+
     g_timer_stats.total_interrupts++;
     g_timer_stats.last_interrupt_time = timer_get_uptime_ms();
 
@@ -102,4 +105,3 @@ timer_handler(void *frame)
 }
 
 #endif /* __TIMER_X86_64_IMPL_H__ */
-
