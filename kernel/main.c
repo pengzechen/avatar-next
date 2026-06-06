@@ -215,14 +215,13 @@ void kernel_main(void)
      * 单核时此函数直接 return，不影响 SMP=1 默认路径。
      * 注意：必须在 busybox 启动之前跑——busybox syscall 会长期占据某核并
      * 关 IRQ，冲击其 timer tick 计数。 */
-    cpu_smp_timer_test(3, 500);
+    cpu_smp_timer_test(3, 100);
 
 #if !defined(RUN_VMM_TEST)
 #if DRIVER_ETH_VIRTIO
     KLOG_INFO("Starting network polling task...\n");
-    uint64_t eth_irq_flags = arch_irq_save();
+    uint64_t startup_task_irq_flags = arch_irq_save();
     task_t *eth_task = task_create("net-poll", net_poll_task, NULL, 20);
-    arch_irq_restore(eth_irq_flags);
     if (eth_task)
         KLOG_INFO("network task created: id=%u\n", eth_task->id);
     else
@@ -231,9 +230,11 @@ void kernel_main(void)
 
     /* SMP 检查完成，现在才启动 busybox 交互 shell */
     KLOG_INFO("\n=== Launching busybox shell ===\n");
-    uint64_t bb_irq_flags = arch_irq_save();
+#if !DRIVER_ETH_VIRTIO
+    uint64_t startup_task_irq_flags = arch_irq_save();
+#endif
     task_t *bb_task = task_create("busybox", demo_load_busybox, NULL, 5);
-    arch_irq_restore(bb_irq_flags);
+    arch_irq_restore(startup_task_irq_flags);
     if (bb_task)
         KLOG_INFO("busybox loader task created: id=%u\n", bb_task->id);
     else

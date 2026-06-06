@@ -117,7 +117,9 @@ sched_enqueue(task_t *task)
     list_node_init(&task->run_node);
 
     if (n == 1U) {
+        uint64_t flags = arch_irq_save();
         list_insert_last(&tc->run_queue, &task->run_node);
+        arch_irq_restore(flags);
         return;
     }
 
