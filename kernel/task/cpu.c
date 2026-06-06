@@ -345,7 +345,7 @@ static inline uint64_t dbg_read_cntp_ctl(void)
 }
 static inline uint64_t dbg_read_cntpct(void)
 {
-    uint64_t v; __asm__ volatile("mrs %0, cntpct_el0" : "=r"(v)); return v;
+    return timer_read_counter();
 }
 #endif
 

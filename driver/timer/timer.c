@@ -39,16 +39,22 @@ volatile uint32_t g_tick_counter   = 0;
     #include "timer_riscv64_impl.h"
 #elif ARCH_X86_64
     #include "timer_x86_64_impl.h"
-    // x86_64 TSC 内联函数
-    #define rdtsc()                                                  \
-        __extension__({                                              \
-            uint64_t val;                                            \
-            __asm__ __volatile__("rdtsc" : "=A"(val));              \
-            val;                                                     \
-        })
 #else
     #error "Unsupported architecture"
 #endif
+
+#if ARCH_X86_64
+extern volatile uint64_t g_tsc_freq_hz;
+#endif
+
+static uint64_t timer_delay_counter_frequency(void)
+{
+#if ARCH_X86_64
+    return g_tsc_freq_hz;
+#else
+    return timer_counter_frequency();
+#endif
+}
 
 // ============================================================
 // 通用接口实现
@@ -122,6 +128,104 @@ timer_schedule_next_tick(void)
 // 时间相关函数
 // ============================================================
 
+uint64_t
+timer_read_counter(void)
+{
+#if ARCH_AARCH64
+    return READ_CNTPCT_EL0();
+#elif ARCH_RISCV64
+    return READ_TIME();
+#elif ARCH_X86_64
+    uint32_t lo, hi;
+    __asm__ volatile("rdtsc" : "=a"(lo), "=d"(hi));
+    return ((uint64_t)hi << 32) | (uint64_t)lo;
+#endif
+}
+
+uint64_t
+timer_counter_frequency(void)
+{
+#if ARCH_X86_64
+    if (g_tsc_freq_hz)
+        return g_tsc_freq_hz;
+    uint64_t tick_ms = g_timer_cfg_tick_ms ? g_timer_cfg_tick_ms : 10ULL;
+    return 1000ULL / tick_ms;
+#else
+    if (g_timer_frequency)
+        return g_timer_frequency;
+    if (g_timer_cfg_counter_hz)
+        return g_timer_cfg_counter_hz;
+#if ARCH_RISCV64
+    return 10000000ULL;
+#elif ARCH_AARCH64
+    return 62500000ULL;
+#endif
+#endif
+}
+
+uint64_t
+timer_counter_to_ns(uint64_t ticks)
+{
+#if ARCH_X86_64
+    if (!g_tsc_freq_hz) {
+        uint64_t tick_ms = g_timer_cfg_tick_ms ? g_timer_cfg_tick_ms : 10ULL;
+        return g_system_ticks * tick_ms * 1000000ULL;
+    }
+#endif
+    uint64_t freq = timer_counter_frequency();
+    if (!freq)
+        return 0;
+    return (ticks / freq) * 1000000000ULL
+         + (ticks % freq) * 1000000000ULL / freq;
+}
+
+void
+timer_spin(uint32_t iterations)
+{
+    for (uint32_t i = 0; i < iterations; i++)
+        asm volatile("nop");
+}
+
+int
+timer_poll_until(timer_poll_predicate_t pred, void *ctx,
+                 uint32_t max_polls, uint32_t relax_iters)
+{
+    if (!pred)
+        return -1;
+
+    for (uint32_t i = 0; i < max_polls; i++) {
+        if (pred(ctx))
+            return 0;
+        timer_spin(relax_iters);
+    }
+
+    return -1;
+}
+
+int
+timer_poll_until_us(timer_poll_predicate_t pred, void *ctx,
+                    uint64_t timeout_us, uint32_t relax_iters)
+{
+    if (!pred)
+        return -1;
+
+    uint64_t freq = timer_counter_frequency();
+    if (!freq)
+        return timer_poll_until(pred, ctx, (uint32_t)timeout_us, relax_iters);
+
+    uint64_t start = timer_read_counter();
+    uint64_t timeout_ticks = (freq / 1000000ULL) * timeout_us
+                           + (freq % 1000000ULL) * timeout_us / 1000000ULL;
+
+    do {
+        if (pred(ctx))
+            return 0;
+        timer_spin(relax_iters);
+    } while ((timer_read_counter() - start) < timeout_ticks);
+
+    return pred(ctx) ? 0 : -1;
+}
+
 // 获取系统tick数
 uint64_t
 timer_get_system_ticks(void)
@@ -147,60 +251,39 @@ timer_get_frequency(void)
 void
 timer_delay_ms(uint32_t ms)
 {
-    #if ARCH_AARCH64
-        uint64_t start_time  = READ_CNTPCT_EL0();
-    #elif ARCH_RISCV64
-        uint64_t start_time  = READ_TIME();
-    #elif ARCH_X86_64
-        uint64_t start_time  = rdtsc();
-    #endif
+    uint64_t freq = timer_delay_counter_frequency();
+    if (!freq) {
+        uint64_t start = timer_get_uptime_ms();
+        while ((timer_get_uptime_ms() - start) < ms)
+            timer_spin(1);
+        return;
+    }
 
-    uint64_t delay_ticks = (g_timer_frequency * ms) / 1000;
+    uint64_t start_time  = timer_read_counter();
+    uint64_t delay_ticks = (freq * ms) / 1000;
     uint64_t target_time = start_time + delay_ticks;
 
-    #if ARCH_AARCH64
-        while (READ_CNTPCT_EL0() < target_time) {
-            asm volatile("nop");
-        }
-    #elif ARCH_RISCV64
-        while (READ_TIME() < target_time) {
-            asm volatile("nop");
-        }
-    #elif ARCH_X86_64
-        while (rdtsc() < target_time) {
-            asm volatile("nop");
-        }
-    #endif
+    while ((int64_t)(timer_read_counter() - target_time) < 0)
+        timer_spin(1);
 }
 
 // 微秒延时（忙等待）
 void
 timer_delay_us(uint32_t us)
 {
-    #if ARCH_AARCH64
-        uint64_t start_time  = READ_CNTPCT_EL0();
-    #elif ARCH_RISCV64
-        uint64_t start_time  = READ_TIME();
-    #elif ARCH_X86_64
-        uint64_t start_time  = rdtsc();
-    #endif
+    uint64_t freq = timer_delay_counter_frequency();
+    if (!freq) {
+        timer_delay_ms((us + 999U) / 1000U);
+        return;
+    }
 
-    uint64_t delay_ticks = (g_timer_frequency * us) / 1000000;
+    uint64_t start_time  = timer_read_counter();
+    uint64_t delay_ticks = (freq / 1000000ULL) * us
+                         + (freq % 1000000ULL) * us / 1000000ULL;
     uint64_t target_time = start_time + delay_ticks;
 
-    #if ARCH_AARCH64
-        while (READ_CNTPCT_EL0() < target_time) {
-            asm volatile("nop");
-        }
-    #elif ARCH_RISCV64
-        while (READ_TIME() < target_time) {
-            asm volatile("nop");
-        }
-    #elif ARCH_X86_64
-        while (rdtsc() < target_time) {
-            asm volatile("nop");
-        }
-    #endif
+    while ((int64_t)(timer_read_counter() - target_time) < 0)
+        timer_spin(1);
 }
 
 // ============================================================

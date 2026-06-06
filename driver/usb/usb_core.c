@@ -85,8 +85,7 @@ static inline uint32_t dma_phys(void *ptr)
 
 static void _spin(uint32_t n)
 {
-    for (uint32_t i = 0; i < n; i++)
-        __asm__ volatile("nop");
+    timer_spin(n);
 }
 
 /* RISC-V: DMA 前执行 fence rw,rw 确保 CPU 写入对控制器可见 */
@@ -306,7 +305,7 @@ static int ch_xfer(uint32_t ch, uint32_t hcchar, uint32_t hctsiz_val,
                 return -1;
             }
             xact_left--;
-            _spin(2000000);  /* ~1ms 退避 */
+            timer_delay_ms(1);
             continue;
         }
         if (hi & HCINT_NAK) {
@@ -321,7 +320,7 @@ static int ch_xfer(uint32_t ch, uint32_t hcchar, uint32_t hctsiz_val,
                 *out_hcint = hi;
                 return -1;
             }
-            _spin(200000);  /* ~1ms 退避 */
+            timer_delay_ms(1);
             continue;
         }
         if (!(hi & HCINT_XFERCOMPL)) {
@@ -815,7 +814,7 @@ int dwc2_usb_enumerate_device(usb_enumerate_result_t *result)
     }
 
     /* 5. 等待地址生效（对齐 ep0.rs:328 usb_post_set_address_delay ~80ms） */
-    _spin(20000000);
+    timer_delay_ms(80);
 
     /* 6. 填充基础结果，随后用配置描述符补充接口/类信息 */
     result->num_devices       = 1;

@@ -209,13 +209,16 @@ static void virtio_status_or(struct virtio_net_nic *nic, uint32_t bits)
     vn_write(nic, VIRTIO_MMIO_STATUS, s | bits);
 }
 
+static bool virtio_status_reset_done(void *ctx)
+{
+    return vn_read((struct virtio_net_nic *)ctx, VIRTIO_MMIO_STATUS) == 0U;
+}
+
 static int virtio_reset(struct virtio_net_nic *nic)
 {
     vn_write(nic, VIRTIO_MMIO_STATUS, 0U);
-    for (uint32_t i = 0; i < 100000U; i++) {
-        if (vn_read(nic, VIRTIO_MMIO_STATUS) == 0U)
-            return 0;
-    }
+    if (timer_poll_until(virtio_status_reset_done, nic, 100000U, 0) == 0)
+        return 0;
     KLOG_ERROR("[virtio-net] reset timeout status=0x%x\n",
                vn_read(nic, VIRTIO_MMIO_STATUS));
     return -1;

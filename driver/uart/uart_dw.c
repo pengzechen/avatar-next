@@ -5,6 +5,7 @@
 #include "mm_vm.h"
 #include "spinlock.h"
 #include "klog.h"
+#include "timer/timer.h"
 
 #ifndef DEVICE_UART_BASE_RAW
 #define DEVICE_UART_BASE_RAW 0x10000000UL
@@ -23,7 +24,7 @@ static inline void sg2002_dbg_putc(char c)
 {
     volatile unsigned char *uart = (volatile unsigned char *)(KERNEL_VMA + DEVICE_UART_BASE_RAW);
     while (!(uart[0x14] & 0x20))
-        __asm__ volatile("nop");
+        timer_spin(1);
     uart[0] = (unsigned char)c;
 }
 #else
@@ -59,6 +60,9 @@ static volatile uint32_t tx_irq_count   = 0;
 static volatile uint32_t rx_irq_count   = 0;
 static volatile uint32_t last_iir_value = 0;  // 记录最后一次IIR值
 static volatile uint32_t tx_sent_total  = 0;  // 总共发送的字节数
+
+static bool dw_uart_lsr_temt_ready(void *ctx);
+static bool dw_uart_lsr_thre_ready(void *ctx);
 
 static bool
 buffer_is_empty(dw_uart_buffer_t *buf)
@@ -103,6 +107,20 @@ static bool
 dw_uart_rx_ready(void)
 {
     return (dw_reg_r8(DW_UART_LSR) & DW_UART_LSR_DR) != 0;
+}
+
+static bool
+dw_uart_lsr_temt_ready(void *ctx)
+{
+    (void)ctx;
+    return (dw_reg_r8(DW_UART_LSR) & DW_UART_LSR_TEMT) != 0;
+}
+
+static bool
+dw_uart_lsr_thre_ready(void *ctx)
+{
+    (void)ctx;
+    return (dw_reg_r8(DW_UART_LSR) & DW_UART_LSR_THRE) != 0;
 }
 
 // 启用发送中断， 我有数据可以发送了
@@ -199,11 +217,8 @@ dw_uart_interrupt_handler(uint64_t *stack_pointer)
 static void
 dw_uart_wait_idle(void)
 {
-    for (int timeout = 100000; timeout > 0; timeout--) {
-        if (dw_reg_r8(DW_UART_LSR) & DW_UART_LSR_TEMT)
-            return;
-        asm volatile("nop");
-    }
+    if (timer_poll_until(dw_uart_lsr_temt_ready, NULL, 100000U, 1) == 0)
+        return;
     // 超时也继续，避免卡死
 }
 
@@ -337,14 +352,14 @@ dw_uart_putchar(char c)
     if (!dw_uart_initialized) {
         // 如果是 '\n'，先发送 '\r'
         if (c == '\n') {
-            while (!(dw_reg_r8(DW_UART_LSR) & DW_UART_LSR_THRE))
-                asm volatile("nop");
+            while (!dw_uart_lsr_thre_ready(NULL))
+                timer_spin(1);
             dw_reg_w8('\r', DW_UART_THR);
         }
 
         // 等待并发送字符
-        while (!(dw_reg_r8(DW_UART_LSR) & DW_UART_LSR_THRE))
-            asm volatile("nop");
+        while (!dw_uart_lsr_thre_ready(NULL))
+            timer_spin(1);
         dw_reg_w8((uint8_t)c, DW_UART_THR);
         return;
     }
@@ -358,8 +373,7 @@ dw_uart_putchar(char c)
         if (dw_uart_putchar_nb(c))
             return;
         // 短暂延迟，让中断有机会发送数据
-        for (int i = 0; i < 100; i++)
-            asm volatile("nop");
+        timer_spin(100);
     }
     
     // 超时仍然失败，丢弃字符
@@ -385,7 +399,7 @@ dw_uart_getchar(void)
     // 否则直接轮询硬件（early init 模式或未初始化）
     // 等待数据可用
     while (!(dw_reg_r8(DW_UART_LSR) & DW_UART_LSR_DR)) {
-        asm volatile("nop");
+        timer_spin(1);
     }
 
     return (char) dw_reg_r8(DW_UART_RBR);
@@ -421,8 +435,7 @@ dw_uart_flush(void)
         if (empty)
             break;
             
-        for (int i = 0; i < 10; i++)
-            asm volatile("nop");
+        timer_spin(10);
     }
     
     // 第二阶段：等待硬件发送完成（THR 和 TSR 都为空）
@@ -432,8 +445,7 @@ dw_uart_flush(void)
         if (lsr & DW_UART_LSR_TEMT)
             break;
             
-        for (int i = 0; i < 10; i++)
-            asm volatile("nop");
+        timer_spin(10);
     }
 }
 

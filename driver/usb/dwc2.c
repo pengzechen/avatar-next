@@ -164,9 +164,7 @@ uint32_t dwc2_usb_take_hcint(uint32_t ch)
 
 static void spin_delay(uint32_t iterations)
 {
-    for (uint32_t i = 0; i < iterations; i++) {
-        __asm__ volatile("nop");
-    }
+    timer_spin(iterations);
 }
 
 /* ==========================================================================
@@ -776,7 +774,7 @@ int dwc2_usb_init(void)
     {
         uint32_t hprt0;
         for (int t = 0; t < 10; t++) {
-            spin_delay(1250000);  /* ~50ms per poll */
+            timer_delay_ms(50);
             hprt0 = dwc2_read32(DWC2_OFF_HPRT0);
             if (hprt0 & HPRT0_CONNSTS)
                 break;
@@ -806,7 +804,7 @@ int dwc2_usb_init(void)
     {
         uint32_t hprt, gint;
         for (int t = 0; t < 40; t++) {
-            spin_delay(1250000);
+            timer_delay_ms(50);
             hprt = dwc2_read32(DWC2_OFF_HPRT0);
             if (hprt & HPRT0_CONNSTS) {
                 KLOG_INFO("[DWC2] CONNSTS=1 after ~%dms "
@@ -852,14 +850,14 @@ int dwc2_usb_reset_root_port(void)
     /* ── 拉 PRTRST ~60ms ────────────────────────────── */
     uint32_t base = hprt0_read_safe() | HPRT0_PWR;
     dwc2_write32(DWC2_OFF_HPRT0, base | HPRT0_RST);
-    spin_delay(15000000);
+    timer_delay_ms(60);
 
     /* ── 解 PRTRST ───────────────────────────────────── */
     base = hprt0_read_safe() | HPRT0_PWR;
     dwc2_write32(DWC2_OFF_HPRT0, base & ~HPRT0_RST);
 
     /* 等 ~80ms 让 PHY chirp 完成 */
-    spin_delay(20000000);
+    timer_delay_ms(80);
 
     hprt = dwc2_read32(DWC2_OFF_HPRT0);
     uint32_t speed = (hprt >> HPRT0_SPD_SHIFT) & HPRT0_SPD_MASK;

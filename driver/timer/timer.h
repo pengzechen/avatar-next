@@ -128,6 +128,56 @@ void timer_delay_ms(uint32_t ms);
  */
 void timer_delay_us(uint32_t us);
 
+/**
+ * timer_read_counter - 读取当前平台单调硬件计数器
+ *
+ * RISC-V: time CSR；AArch64: CNTPCT_EL0；x86_64: TSC。
+ * 该接口只做裸计数读取，不换算单位。
+ */
+uint64_t timer_read_counter(void);
+
+/**
+ * timer_counter_frequency - 当前计时源频率（Hz）
+ */
+uint64_t timer_counter_frequency(void);
+
+/**
+ * timer_counter_to_ns - 将计时源 tick 换算为纳秒
+ */
+uint64_t timer_counter_to_ns(uint64_t ticks);
+
+/**
+ * timer_spin - 短暂忙等待，用于设备寄存器轮询退避
+ *
+ * 这是裸 nop 循环的统一入口。需要真实时间语义时使用
+ * timer_delay_us/timer_delay_ms 或 timer_poll_until*。
+ */
+void timer_spin(uint32_t iterations);
+
+typedef bool (*timer_poll_predicate_t)(void *ctx);
+
+/**
+ * timer_poll_until - 按最大轮询次数等待条件成立
+ * @pred:       条件函数，返回 true 表示等待完成
+ * @ctx:        传给 pred 的上下文
+ * @max_polls:  最大检查次数
+ * @relax_iters: 每次失败后的 timer_spin 退避次数
+ *
+ * 返回 0 表示条件达成，-1 表示超时。
+ */
+int timer_poll_until(timer_poll_predicate_t pred, void *ctx,
+                     uint32_t max_polls, uint32_t relax_iters);
+
+/**
+ * timer_poll_until_us - 按真实时间上限等待条件成立
+ * @timeout_us: 超时时间，单位微秒
+ * @relax_iters: 每次失败后的 timer_spin 退避次数
+ *
+ * 返回 0 表示条件达成，-1 表示超时。
+ */
+int timer_poll_until_us(timer_poll_predicate_t pred, void *ctx,
+                        uint64_t timeout_us, uint32_t relax_iters);
+
 // ============================================================
 // 统计相关函数
 // ============================================================
@@ -175,24 +225,7 @@ void timer_set_tick_cb(timer_tick_cb_t cb);
  */
 static inline uint64_t timer_get_ns(void)
 {
-#if ARCH_RISCV64
-    uint64_t ticks;
-    __asm__ volatile("rdtime %0" : "=r"(ticks));
-    uintptr_t freq = g_timer_cfg_counter_hz;
-    if (!freq) freq = 10000000UL;
-    return (ticks / freq) * 1000000000ULL
-         + (ticks % freq) * 1000000000ULL / freq;
-#elif ARCH_AARCH64
-    uint64_t ticks;
-    __asm__ volatile("mrs %0, cntpct_el0" : "=r"(ticks));
-    uintptr_t freq = g_timer_cfg_counter_hz;
-    if (!freq) freq = 62500000UL;
-    return (ticks / freq) * 1000000000ULL
-         + (ticks % freq) * 1000000000ULL / freq;
-#else
-    uint64_t tick_ms = g_timer_cfg_tick_ms ? g_timer_cfg_tick_ms : 10ULL;
-    return g_system_ticks * tick_ms * 1000000ULL;
-#endif
+    return timer_counter_to_ns(timer_read_counter());
 }
 
 #endif /* __TIMER_H__ */

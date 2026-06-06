@@ -9,6 +9,7 @@
 #include "types.h"
 #include "mmio.h"
 #include "klog.h"
+#include "timer/timer.h"
 // #include "irq.h"
 #include "spinlock.h"
 
@@ -236,9 +237,7 @@ void pl011_putchar(char c) {
             return;
         }
         // Small delay
-        for (int i = 0; i < 100; i++) {
-            asm volatile("nop");
-        }
+        timer_spin(100);
     }
     
     // If still failed, drop the character
@@ -310,7 +309,7 @@ char pl011_getchar(void) {
     } else {
         /* 未初始化：直接轮询硬件 FIFO */
         while (read32((void *)UART_FR) & UART_FR_RXFE)
-            ;
+            timer_spin(1);
         return (char)(read32((void *)UART_DR) & 0xFF);
     }
 }

@@ -19,39 +19,11 @@
 #include "task/switch.h"
 #include "loader/elf_image.h"
 #include "task/exec.h"
+#include "timer/timer.h"
 
-/* 内联获取系统时间（ns），用于 CPU 时间计账 */
-extern volatile uint64_t g_system_ticks;
-extern uintptr_t         g_timer_cfg_counter_hz;
-extern unsigned          g_timer_cfg_tick_ms;
-#if ARCH_X86_64
-extern volatile uint64_t g_tsc_freq_hz;
-#endif
 static inline uint64_t exec_get_ns(void)
 {
-#if ARCH_RISCV64
-    uint64_t ticks;
-    __asm__ volatile("rdtime %0" : "=r"(ticks));
-    uintptr_t freq = g_timer_cfg_counter_hz;
-    if (!freq) freq = 10000000UL;
-    return (ticks / freq) * 1000000000ULL + (ticks % freq) * 1000000000ULL / freq;
-#elif ARCH_AARCH64
-    uint64_t ticks;
-    __asm__ volatile("mrs %0, cntpct_el0" : "=r"(ticks));
-    uintptr_t freq = g_timer_cfg_counter_hz;
-    if (!freq) freq = 62500000UL;
-    return (ticks / freq) * 1000000000ULL + (ticks % freq) * 1000000000ULL / freq;
-#else
-    uint32_t lo, hi;
-    __asm__ volatile("rdtsc" : "=a"(lo), "=d"(hi));
-    uint64_t ticks = ((uint64_t)hi << 32) | (uint64_t)lo;
-    uint64_t freq  = g_tsc_freq_hz;
-    if (!freq) {
-        uint64_t tick_ms = g_timer_cfg_tick_ms ? g_timer_cfg_tick_ms : 10ULL;
-        return g_system_ticks * tick_ms * 1000000ULL;
-    }
-    return (ticks / freq) * 1000000000ULL + (ticks % freq) * 1000000000ULL / freq;
-#endif
+    return timer_get_ns();
 }
 
     static void exec_free_loader_buffer(const void *data, uint64_t size)

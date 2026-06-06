@@ -2,6 +2,7 @@
 #include "gicv3.h"
 #include "mmio.h"
 #include "klog.h"
+#include "timer/timer.h"
 
 /* GICv3 模块内基地址 */
 uintptr_t gicv3_gicd_base = 0;
@@ -85,10 +86,10 @@ void gicv3_init(void)
     val &= ~(1u << 1); // Clear ProcessorSleep
     write32(val, (void *)GICR_WAKER);
     __asm__ volatile("dsb sy" ::: "memory");
-    int waker_to = 1000000;
-    while ((read32((void *)GICR_WAKER) & (1u << 2)) && --waker_to > 0)
-        ;
-    if (waker_to <= 0)
+    uint32_t waker_to = 1000000;
+    while ((read32((void *)GICR_WAKER) & (1u << 2)) && waker_to-- > 0)
+        timer_spin(1);
+    if ((read32((void *)GICR_WAKER) & (1u << 2)) != 0)
         logger_info("GICv3: WARN GICR_WAKER ChildrenAsleep stuck, continuing\n");
 
     /*
@@ -181,10 +182,10 @@ void gicv3_init_secondary(void)
     write32(waker, (void *)(gicr + 0x0014));
     __asm__ volatile("dsb sy" ::: "memory");  /* 确保写入传播到 GIC 设备 */
 
-    int waker_to = 1000000;
-    while ((read32((void *)(gicr + 0x0014)) & (1u << 2)) && --waker_to > 0)
-        ; /* Wait ChildrenAsleep = 0 */
-    if (waker_to <= 0)
+    uint32_t waker_to = 1000000;
+    while ((read32((void *)(gicr + 0x0014)) & (1u << 2)) && waker_to-- > 0)
+        timer_spin(1); /* Wait ChildrenAsleep = 0 */
+    if ((read32((void *)(gicr + 0x0014)) & (1u << 2)) != 0)
         KLOG_WARN("[gicv3] GICR_WAKER ChildrenAsleep timeout (GICR=0x%lx), continuing\n", gicr);
 
     /*

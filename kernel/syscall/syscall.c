@@ -640,16 +640,10 @@ int64_t sys_getpid(void)
 
 int64_t sys_sleep(uint64_t ms)
 {
-    /* 简单忙等待实现：TODO 改为基于定时器的睡眠并让出 CPU */
     if (ms == 0)
         return 0;
 
-    /* 假设 CPU ~1-2 GHz，每次循环约几个纳秒 */
-    volatile uint64_t count = ms * 100000;
-    while (count--) {
-        __asm__ volatile("nop");
-    }
-
+    timer_delay_ms((uint32_t)ms);
     return 0;
 }
 

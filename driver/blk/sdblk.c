@@ -15,6 +15,7 @@
 #include "types.h"
 #include "mmio.h"
 #include "klog.h"
+#include "timer/timer.h"
 
 /* ── SDMMC 寄存器偏移（相对 sd_base） ───────────────────────── */
 #define R_SDMA_SYSADDR   0x00
@@ -152,9 +153,7 @@ static inline void sd_wr_pio(uint32_t off, uint32_t v)
 /* ── 延迟（NOP 循环） ─────────────────────────────────────────── */
 static void sd_delay(volatile uint32_t n)
 {
-    while (n--) {
-        __asm__ volatile("nop");
-    }
+    timer_spin(n);
 }
 
 #define SD_DELAY_SHORT()  sd_delay(0x10U)
