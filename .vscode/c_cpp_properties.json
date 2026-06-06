@@ -53,7 +53,9 @@
                 "${workspaceFolder}/boot/common",
                 "${workspaceFolder}/kernel",
                 "${workspaceFolder}/fs/lwext4/include",
-                "${workspaceFolder}/fs/lwext4_port"
+                "${workspaceFolder}/fs/lwext4_port",
+                "${workspaceFolder}/third_party/lwip/src/include",
+                "${workspaceFolder}/kernel/net/lwip_port"
             ],
             "defines": [
                 "__riscv",

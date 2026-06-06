@@ -4,6 +4,7 @@
 #include "klog.h"
 #include "mmio.h"
 #include "mm_vm.h"
+#include "net/netdev.h"
 #include "pmm.h"
 #include "string.h"
 #include "task/task.h"
@@ -146,6 +147,16 @@ struct virtio_net_nic {
 
 static VirtioNetNic_t *g_eth0;
 static uint64_t g_virtio_net0_pa;
+
+static int virtio_netdev_send(void *ctx, const uint8_t *frame, size_t len)
+{
+    return eth_send((VirtioNetNic_t *)ctx, frame, len);
+}
+
+static int virtio_netdev_recv(void *ctx, uint8_t *frame, size_t maxlen)
+{
+    return eth_recv((VirtioNetNic_t *)ctx, frame, maxlen);
+}
 
 static inline uint32_t vn_read(struct virtio_net_nic *nic, uint32_t off)
 {
@@ -498,6 +509,16 @@ VirtioNetNic_t *eth_init(uint64_t base)
               nic->rxq.avail.idx, nic->txq.avail.idx);
 
     g_eth0 = nic;
+
+    static netdev_t virtio_dev;
+    memset(&virtio_dev, 0, sizeof(virtio_dev));
+    virtio_dev.name = "virtio0";
+    virtio_dev.ctx = nic;
+    virtio_dev.send = virtio_netdev_send;
+    virtio_dev.recv = virtio_netdev_recv;
+    memcpy(virtio_dev.mac, nic->mac, 6);
+    netdev_register(&virtio_dev);
+
     return nic;
 }
 

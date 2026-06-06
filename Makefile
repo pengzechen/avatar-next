@@ -415,6 +415,7 @@ CFLAGS  += -nostdinc
 CFLAGS  += -Idriver
 CFLAGS  += -Ikernel
 CFLAGS  += -Ikernel/mm
+CFLAGS  += -Iinclude/net
 CFLAGS  += -DAVATAR_HAS_FILESYSTEM
 CFLAGS  += -DCONFIG_SMP_CPUS=$(SMP)
 CFLAGS  += -DPLATFORM_$(MEM_PLATFORM_DEFINE)=1
@@ -614,6 +615,52 @@ LWEXT4_DIR      := $(FS_DIR)/lwext4
 LWEXT4_PORT_DIR := $(FS_DIR)/lwext4_port
 LWEXT4_COMPAT   := $(FS_DIR)/compat
 
+# ─── §7a  内核网络栈：netdev + lwIP ─────────────────────────────────────────────
+LWIP_DIR      := third_party/lwip
+LWIP_PORT_DIR := $(KERNEL_DIR)/net/lwip_port
+
+NET_OBJS := $(BUILD_DIR)/kernel_net_netdev.o \
+            $(BUILD_DIR)/kernel_net_net.o \
+            $(BUILD_DIR)/kernel_net_tcp_echo.o \
+            $(BUILD_DIR)/kernel_net_lwip_port_netif_avatar.o \
+            $(BUILD_DIR)/kernel_net_lwip_port_sys_arch.o \
+            $(BUILD_DIR)/kernel_net_lwip_port_libc_compat.o
+
+LWIP_CORE_SRCS := $(LWIP_DIR)/src/core/init.c \
+                  $(LWIP_DIR)/src/core/def.c \
+                  $(LWIP_DIR)/src/core/dns.c \
+                  $(LWIP_DIR)/src/core/inet_chksum.c \
+                  $(LWIP_DIR)/src/core/ip.c \
+                  $(LWIP_DIR)/src/core/mem.c \
+                  $(LWIP_DIR)/src/core/memp.c \
+                  $(LWIP_DIR)/src/core/netif.c \
+                  $(LWIP_DIR)/src/core/pbuf.c \
+                  $(LWIP_DIR)/src/core/raw.c \
+                  $(LWIP_DIR)/src/core/stats.c \
+                  $(LWIP_DIR)/src/core/sys.c \
+                  $(LWIP_DIR)/src/core/tcp.c \
+                  $(LWIP_DIR)/src/core/tcp_in.c \
+                  $(LWIP_DIR)/src/core/tcp_out.c \
+                  $(LWIP_DIR)/src/core/timeouts.c \
+                  $(LWIP_DIR)/src/core/udp.c \
+                  $(LWIP_DIR)/src/core/ipv4/etharp.c \
+                  $(LWIP_DIR)/src/core/ipv4/icmp.c \
+                  $(LWIP_DIR)/src/core/ipv4/ip4.c \
+                  $(LWIP_DIR)/src/core/ipv4/ip4_addr.c \
+                  $(LWIP_DIR)/src/core/ipv4/ip4_frag.c \
+                  $(LWIP_DIR)/src/netif/ethernet.c
+LWIP_OBJS := $(patsubst $(LWIP_DIR)/src/core/%.c,$(BUILD_DIR)/lwip_core_%.o,$(filter $(LWIP_DIR)/src/core/%.c,$(filter-out $(LWIP_DIR)/src/core/ipv4/%,$(LWIP_CORE_SRCS))))
+LWIP_OBJS += $(patsubst $(LWIP_DIR)/src/core/ipv4/%.c,$(BUILD_DIR)/lwip_ipv4_%.o,$(filter $(LWIP_DIR)/src/core/ipv4/%.c,$(LWIP_CORE_SRCS)))
+LWIP_OBJS += $(patsubst $(LWIP_DIR)/src/netif/%.c,$(BUILD_DIR)/lwip_netif_%.o,$(filter $(LWIP_DIR)/src/netif/%.c,$(LWIP_CORE_SRCS)))
+
+LWIP_CFLAGS := $(CFLAGS)
+LWIP_CFLAGS += -I$(LWIP_DIR)/src/include
+LWIP_CFLAGS += -I$(LWIP_PORT_DIR)
+LWIP_CFLAGS += -I$(LWIP_PORT_DIR)/arch
+LWIP_CFLAGS += -I$(LWEXT4_COMPAT)
+LWIP_CFLAGS += -DLWIP_NO_CTYPE_H=1
+LWIP_CFLAGS += -w
+
 # lwext4 库源文件（第三方代码）
 LWEXT4_SRCS     := $(wildcard $(LWEXT4_DIR)/src/*.c)
 LWEXT4_OBJS     := $(patsubst $(LWEXT4_DIR)/src/%.c,$(BUILD_DIR)/lwext4_%.o,$(LWEXT4_SRCS))
@@ -806,7 +853,7 @@ PSEUDOFS_OBJS := $(BUILD_DIR)/pseudofs_pseudofs.o
 # files only when contents change, so this catches real platform switches
 # without forcing recompilation on every make invocation.
 PLATFORM_CONFIG_DEPS := $(PLATFORM_MK) $(_PLATFORM_LUA)
-$(BOOT_OBJECTS) $(KERNEL_OBJECTS) $(TASK_C_OBJECTS) $(TASK_S_OBJ) \
+$(BOOT_OBJECTS) $(KERNEL_OBJECTS) $(NET_OBJS) $(TASK_C_OBJECTS) $(TASK_S_OBJ) \
 $(TASK_USER_TEST_OBJ) $(TASK_USER_HELLO_OBJ) $(TASK_USER_TESTEXECVE_OBJ) \
 $(LOADER_C_OBJECTS) $(SYSCALL_C_OBJECTS) $(SYSCALL_S_OBJ) \
 $(VM_C_OBJECTS) $(VM_S_OBJ) $(VMM_C_OBJECTS) $(VMM_S_OBJECTS) \
@@ -814,10 +861,18 @@ $(GUEST_TEST_OBJ) $(TESTS_OBJECTS) $(PLATFORM_OBJECTS) $(DRIVER_OBJECTS) \
 $(EXCEPTION_OBJECTS) $(KLOG_OBJECT) $(VSNPRINTF_OBJECT) $(STRING_OBJECT) \
 $(BITMAP_OBJECT) $(PLATFORM_CFG_OBJECT) $(LWEXT4_OBJS) $(LWEXT4_PORT_OBJS) \
 $(LUA_CORE_OBJS) $(LUA_GLUE_OBJS) $(LUA_BLOB_OBJ) $(SETJMP_OBJ) \
-$(PSEUDOFS_OBJS): $(PLATFORM_CONFIG_DEPS)
+$(PSEUDOFS_OBJS) $(LWIP_OBJS): $(PLATFORM_CONFIG_DEPS)
 
 $(BUILD_DIR)/pseudofs_pseudofs.o: fs/pseudofs/pseudofs.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -Idriver -Ikernel -Ikernel/mm -c $< -o $@
+
+$(BUILD_DIR)/kernel_net_lwip_port_%.o: $(KERNEL_DIR)/net/lwip_port/%.c | $(BUILD_DIR)
+	@mkdir -p $(dir $@)
+	$(CC) $(LWIP_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/kernel_net_%.o: $(KERNEL_DIR)/net/%.c | $(BUILD_DIR)
+	@mkdir -p $(dir $@)
+	$(CC) $(LWIP_CFLAGS) -c $< -o $@
 
 # 驱动编译规则
 $(BUILD_DIR)/drv_%.o: driver/%.c | $(BUILD_DIR)
@@ -1026,6 +1081,18 @@ $(BUILD_DIR)/drv_blk_ramblk.o: driver/blk/ramblk.c | $(BUILD_DIR)
 $(BUILD_DIR)/lwext4_port_fs_init.o: $(LWEXT4_PORT_DIR)/fs_init.c | $(BUILD_DIR)
 	$(CC) $(LWEXT4_CFLAGS) -Ifs/lwext4_port -c $< -o $@
 
+$(BUILD_DIR)/lwip_core_%.o: $(LWIP_DIR)/src/core/%.c | $(BUILD_DIR)
+	@mkdir -p $(dir $@)
+	$(CC) $(LWIP_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/lwip_ipv4_%.o: $(LWIP_DIR)/src/core/ipv4/%.c | $(BUILD_DIR)
+	@mkdir -p $(dir $@)
+	$(CC) $(LWIP_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/lwip_netif_%.o: $(LWIP_DIR)/src/netif/%.c | $(BUILD_DIR)
+	@mkdir -p $(dir $@)
+	$(CC) $(LWIP_CFLAGS) -c $< -o $@
+
 # ── §12f  Lua 5.4 编译规则 ──────────────────────────────────────────────────────
 # Lua VM 核心源文件：使用 LUA_CFLAGS（FP 开启，compat 头文件路径前置）
 $(BUILD_DIR)/lua54_%.o: $(LUA_SRC_DIR)/%.c | $(BUILD_DIR)
@@ -1123,7 +1190,7 @@ $(BUILD_DIR)/apps_riscv_guest_test.o: apps/riscv64/guest_test.S | $(BUILD_DIR)
 endif
 
 # ── §12g  链接 ────────────────────────────────────────────────────────────────────
-$(KERNEL_TARGET): $(BOOT_OBJECTS) $(KERNEL_OBJECTS) $(TASK_C_OBJECTS) $(TASK_S_OBJ) $(TASK_USER_TEST_OBJ) $(TASK_USER_HELLO_OBJ) $(TASK_USER_TESTEXECVE_OBJ) $(LOADER_C_OBJECTS) $(SYSCALL_C_OBJECTS) $(SYSCALL_S_OBJ) $(VM_C_OBJECTS) $(VM_S_OBJ) $(VMM_C_OBJECTS) $(VMM_S_OBJECTS) $(GUEST_TEST_OBJ) $(TESTS_OBJECTS) $(PLATFORM_OBJECTS) $(DRIVER_OBJECTS) $(EXCEPTION_OBJECTS) $(KLOG_OBJECT) $(VSNPRINTF_OBJECT) $(STRING_OBJECT) $(BITMAP_OBJECT) $(PLATFORM_CFG_OBJECT) $(LWEXT4_OBJS) $(LWEXT4_PORT_OBJS) $(LUA_OBJECTS) $(PSEUDOFS_OBJS) | $(BUILD_DIR)
+$(KERNEL_TARGET): $(BOOT_OBJECTS) $(KERNEL_OBJECTS) $(NET_OBJS) $(LWIP_OBJS) $(TASK_C_OBJECTS) $(TASK_S_OBJ) $(TASK_USER_TEST_OBJ) $(TASK_USER_HELLO_OBJ) $(TASK_USER_TESTEXECVE_OBJ) $(LOADER_C_OBJECTS) $(SYSCALL_C_OBJECTS) $(SYSCALL_S_OBJ) $(VM_C_OBJECTS) $(VM_S_OBJ) $(VMM_C_OBJECTS) $(VMM_S_OBJECTS) $(GUEST_TEST_OBJ) $(TESTS_OBJECTS) $(PLATFORM_OBJECTS) $(DRIVER_OBJECTS) $(EXCEPTION_OBJECTS) $(KLOG_OBJECT) $(VSNPRINTF_OBJECT) $(STRING_OBJECT) $(BITMAP_OBJECT) $(PLATFORM_CFG_OBJECT) $(LWEXT4_OBJS) $(LWEXT4_PORT_OBJS) $(LUA_OBJECTS) $(PSEUDOFS_OBJS) | $(BUILD_DIR)
 	$(CC) $(LDFLAGS) -nostartfiles -nodefaultlibs -T $(BOOT_DIR)/$(ARCH)/link.ld -o $@ $^
 
 # 转换为二进制文件

@@ -18,6 +18,7 @@
 #include "timer/timer.h"
 #include "lua_driver.h"
 #include "task/switch.h"     /* arch_irq_enable */
+#include "net/net.h"
 
 #if DRIVER_ETH_VIRTIO
 #include "eth/virtio_net.h"
@@ -178,6 +179,7 @@ void kernel_main(void)
 #if DRIVER_ETH_VIRTIO
     KLOG_INFO("Initializing virtio ethernet driver...\n");
     virtio_net_init_from_platform();
+    net_init();
 #endif
 
     /* ── 选择启动模式 ────────────────────────────────────
@@ -217,14 +219,14 @@ void kernel_main(void)
 
 #if !defined(RUN_VMM_TEST)
 #if DRIVER_ETH_VIRTIO
-    KLOG_INFO("Starting virtio ethernet polling task...\n");
+    KLOG_INFO("Starting network polling task...\n");
     uint64_t eth_irq_flags = arch_irq_save();
-    task_t *eth_task = task_create("eth-poll", virtio_net_poll_demo_task, NULL, 20);
+    task_t *eth_task = task_create("net-poll", net_poll_task, NULL, 20);
     arch_irq_restore(eth_irq_flags);
     if (eth_task)
-        KLOG_INFO("virtio ethernet task created: id=%u\n", eth_task->id);
+        KLOG_INFO("network task created: id=%u\n", eth_task->id);
     else
-        KLOG_ERROR("Failed to create virtio ethernet task!\n");
+        KLOG_ERROR("Failed to create network task!\n");
 #endif
 
     /* SMP 检查完成，现在才启动 busybox 交互 shell */
