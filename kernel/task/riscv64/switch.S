@@ -5,7 +5,10 @@
  *   a0 = &prev->sp  （输出：保存当前 SP）
  *   a1 = next->sp   （输入：下一任务的 SP）
  *
- * 保存被调用者保存寄存器 ra + s0-s11（13 × 8 = 104 字节），
+ * 保存被调用者保存寄存器 ra + s0-s11（13 × 8 = 104 字节）
+ * + FP callee-saved fs0-fs11 + fcsr（13 × 8 = 104 字节）
+ * 总帧 = 208 字节
+ *
  * 将 SP 写入 *a0，加载 a1 为新 SP，恢复寄存器，ret。
  *
  * 保存帧布局（saved_sp 起，偏移从低到高）：
@@ -16,6 +19,13 @@
  *   [56]  s6    [64]  s7
  *   [72]  s8    [80]  s9
  *   [88]  s10   [96]  s11
+ *   [104] fs0   [112] fs1
+ *   [120] fs2   [128] fs3
+ *   [136] fs4   [144] fs5
+ *   [152] fs6   [160] fs7
+ *   [168] fs8   [176] fs9
+ *   [184] fs10  [192] fs11
+ *   [200] fcsr
  */
 
 .section .text
@@ -24,8 +34,8 @@
 .extern arch_user_entry_debug
 
 arch_task_switch:
-    /* ── 分配帧（13 × 8 = 104 字节）─────────────────────── */
-    addi    sp,  sp,  -104
+    /* ── 分配帧（26 × 8 = 208 字节）─────────────────────── */
+    addi    sp,  sp,  -208
 
     /* ── 保存被调用者保存寄存器 ──────────────────────────── */
     sd      ra,    0(sp)
@@ -41,6 +51,22 @@ arch_task_switch:
     sd      s9,   80(sp)
     sd      s10,  88(sp)
     sd      s11,  96(sp)
+
+    /* ── 保存 FP callee-saved 寄存器 fs0-fs11 + fcsr ────── */
+    fsd     fs0,  104(sp)
+    fsd     fs1,  112(sp)
+    fsd     fs2,  120(sp)
+    fsd     fs3,  128(sp)
+    fsd     fs4,  136(sp)
+    fsd     fs5,  144(sp)
+    fsd     fs6,  152(sp)
+    fsd     fs7,  160(sp)
+    fsd     fs8,  168(sp)
+    fsd     fs9,  176(sp)
+    fsd     fs10, 184(sp)
+    fsd     fs11, 192(sp)
+    frcsr   t0
+    sd      t0,   200(sp)
 
     /* ── 保存当前 SP 到 *prev_sp（a0）────────────────────── */
     sd      sp, 0(a0)
@@ -81,7 +107,23 @@ arch_task_switch:
     ld      s10,  88(sp)
     ld      s11,  96(sp)
 
-    addi    sp,   sp,  104
+    /* ── 恢复 FP callee-saved 寄存器 fs0-fs11 + fcsr ────── */
+    ld      t0,   200(sp)
+    fscsr   t0
+    fld     fs0,  104(sp)
+    fld     fs1,  112(sp)
+    fld     fs2,  120(sp)
+    fld     fs3,  128(sp)
+    fld     fs4,  136(sp)
+    fld     fs5,  144(sp)
+    fld     fs6,  152(sp)
+    fld     fs7,  160(sp)
+    fld     fs8,  168(sp)
+    fld     fs9,  176(sp)
+    fld     fs10, 184(sp)
+    fld     fs11, 192(sp)
+
+    addi    sp,   sp,  208
 
     /* ── 返回（跳转到 ra = 下一任务的返回地址）─────────── */
     ret
@@ -217,6 +259,42 @@ arch_fork_resume_user:
     /* 保存当前内核栈到 sscratch */
     mv      t0, sp
     csrw    sscratch, t0
+
+    /* 恢复 FP 寄存器 f0..f31 + fcsr（从 trap_frame） */
+    ld      t0, (68*8)(t6)
+    fscsr   t0
+    fld     f0,  (36*8)(t6)
+    fld     f1,  (37*8)(t6)
+    fld     f2,  (38*8)(t6)
+    fld     f3,  (39*8)(t6)
+    fld     f4,  (40*8)(t6)
+    fld     f5,  (41*8)(t6)
+    fld     f6,  (42*8)(t6)
+    fld     f7,  (43*8)(t6)
+    fld     f8,  (44*8)(t6)
+    fld     f9,  (45*8)(t6)
+    fld     f10, (46*8)(t6)
+    fld     f11, (47*8)(t6)
+    fld     f12, (48*8)(t6)
+    fld     f13, (49*8)(t6)
+    fld     f14, (50*8)(t6)
+    fld     f15, (51*8)(t6)
+    fld     f16, (52*8)(t6)
+    fld     f17, (53*8)(t6)
+    fld     f18, (54*8)(t6)
+    fld     f19, (55*8)(t6)
+    fld     f20, (56*8)(t6)
+    fld     f21, (57*8)(t6)
+    fld     f22, (58*8)(t6)
+    fld     f23, (59*8)(t6)
+    fld     f24, (60*8)(t6)
+    fld     f25, (61*8)(t6)
+    fld     f26, (62*8)(t6)
+    fld     f27, (63*8)(t6)
+    fld     f28, (64*8)(t6)
+    fld     f29, (65*8)(t6)
+    fld     f30, (66*8)(t6)
+    fld     f31, (67*8)(t6)
 
     /* 恢复通用寄存器（x0 固定为 0） */
     ld      ra, (1*8)(t6)

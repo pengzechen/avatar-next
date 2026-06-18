@@ -19,6 +19,10 @@ _start:
     csrw sie, zero
     csrw sip, zero
 
+    /* Enable FPU: set sstatus.FS = Initial (01) so FP instructions don't trap */
+    li      t0, (1 << 13)
+    csrs    sstatus, t0
+
     /* MMU 前使用低地址引导栈 */
     la      sp, boot_stack_top
 

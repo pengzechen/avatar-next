@@ -383,7 +383,7 @@ else ifeq ($(ARCH),riscv64)
     OBJCOPY := riscv64-linux-musl-objcopy
     NM      := riscv64-linux-musl-nm
     CFLAGS  := -Wall -Wextra -O2 -g
-    CFLAGS  += -march=rv64gc -mabi=lp64
+    CFLAGS  += -march=rv64gc -mabi=lp64d
 	CFLAGS  += -DARCH_RISCV64=1
     CFLAGS  += -I$(INCLUDE_DIR)
     CFLAGS  += -I$(INCLUDE_DIR)/riscv64

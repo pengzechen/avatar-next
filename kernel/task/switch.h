@@ -201,16 +201,18 @@ arch_init_task_stack(uint8_t *stack_base, uint32_t stack_size)
 
 #elif ARCH_RISCV64
     /*
-     * arch_task_switch 保存顺序（sd ra 0(sp) ... sd s11 96(sp)）：
+     * arch_task_switch 保存顺序（sd ra 0(sp) ... sd s11 96(sp), fsd fs0..fs11, fcsr）：
      * saved_sp + 0  = ra    ← ret 目标
      * saved_sp + 8  = s0,  saved_sp + 16 = s1
      * ...
      * saved_sp + 96 = s11
-     * 共 13 × 8 = 104 字节
+     * saved_sp + 104 = fs0 .. saved_sp + 192 = fs11
+     * saved_sp + 200 = fcsr
+     * 共 26 × 8 = 208 字节
      */
-    sp -= 13;
+    sp -= 26;
     sp[0] = (uint64_t)task_trampoline; /* ra */
-    for (int i = 1; i < 13; i++)
+    for (int i = 1; i < 26; i++)
         sp[i] = 0;
 
 #elif ARCH_X86_64
@@ -277,16 +279,16 @@ arch_init_user_stack(uint8_t *stack_base, uint32_t stack_size,
 
 #elif ARCH_RISCV64
     /*
-     * 保存13个被调用者寄存器（104字节）：
-     * [0]=ra [1]=s0 [2]=s1 ... [12]=s11
+     * 保存26个被调用者寄存器（208字节）：
+     * [0]=ra [1]=s0 [2]=s1 ... [12]=s11 [13..24]=fs0..fs11 [25]=fcsr
      * task_trampoline_user 约定：s0=user_entry, s1=user_sp, s2=user_pgd
      */
-    sp -= 13;
+    sp -= 26;
     sp[0] = (uint64_t)task_trampoline_user; /* ra */
     sp[1] = user_entry;                     /* s0 */
     sp[2] = user_sp;                        /* s1 */
     sp[3] = user_pgd;                       /* s2 */
-    for (int i = 4; i < 13; i++)
+    for (int i = 4; i < 26; i++)
         sp[i] = 0;
 
 #elif ARCH_X86_64
@@ -373,7 +375,7 @@ arch_init_fork_child_stack(uint8_t *stack_base, uint32_t stack_size,
         sp[i] = 0;
     sp[11] = (uint64_t)arch_fork_resume_user; /* x30 (LR) */
 #elif ARCH_RISCV64
-    /* RISC-V trap_frame_t: x[0..31], sepc, scause, stval, sstatus */
+    /* RISC-V trap_frame_t: x[0..31], sepc, scause, stval, sstatus, f[0..31], fcsr */
     sp = (uint64_t *)((uintptr_t)sp - sizeof(trap_frame_t));
     trap_frame_t *child_frame = (trap_frame_t *)sp;
 
@@ -383,6 +385,9 @@ arch_init_fork_child_stack(uint8_t *stack_base, uint32_t stack_size,
     child_frame->scause  = frame->scause;
     child_frame->stval   = frame->stval;
     child_frame->sstatus = frame->sstatus;
+    for (uint32_t i = 0; i < 32; i++)
+        child_frame->f[i] = frame->f[i];
+    child_frame->fcsr    = frame->fcsr;
 
     /* fork/线程返回值 = 0 (a0/x10) */
     child_frame->x[10] = 0;
@@ -392,11 +397,11 @@ arch_init_fork_child_stack(uint8_t *stack_base, uint32_t stack_size,
     if (tls)
         child_frame->x[4] = tls;          /* tp */
 
-    /* 再放 13 个被调用者寄存器，ra->arch_fork_resume_user，s0->child_frame */
-    sp -= 13;
+    /* 再放 26 个被调用者寄存器（含 FP），ra->arch_fork_resume_user，s0->child_frame */
+    sp -= 26;
     sp[0] = (uint64_t)arch_fork_resume_user;           /* ra */
     sp[1] = (uint64_t)(uintptr_t)child_frame;          /* s0 = &child_frame */
-    for (int i = 2; i < 13; i++)
+    for (int i = 2; i < 26; i++)
         sp[i] = 0;
 #else
     /* x86_64: 在内核栈上放 trap_frame，再放 arch_task_switch 的被调用者寄存器帧 */

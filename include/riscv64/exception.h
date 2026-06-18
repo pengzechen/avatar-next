@@ -10,14 +10,16 @@
 
 /* ── trap_frame ─────────────────────────────────────────────────── *
  *
- * 布局（36 × 8 = 288 字节）：
+ * 布局（69 × 8 = 552 字节）：
  *   x[0]  .. x[31]   : 通用寄存器 (x0 保存为 0，sp = x[2] 保存原始值)
  *   sepc   @ [32]    : 异常发生时的 PC
  *   scause @ [33]    : 异常/中断原因
  *   stval  @ [34]    : 陷阱附加信息
  *   sstatus@ [35]    : 监管模式状态
+ *   f[0]  .. f[31]   : FP 寄存器 (f0..f31)
+ *   fcsr   @ [68]    : FP 控制/状态寄存器
  */
-#define TRAP_FRAME_SIZE  288   /* 36 * 8 */
+#define TRAP_FRAME_SIZE  552   /* 69 * 8 */
 
 typedef struct {
     uint64_t x[32];      /* x0 .. x31  (x2=sp 保存进入陷阱前的原始值) */
@@ -25,6 +27,8 @@ typedef struct {
     uint64_t scause;     /* Supervisor Cause Register                  */
     uint64_t stval;      /* Supervisor Trap Value                      */
     uint64_t sstatus;    /* Supervisor Status Register                 */
+    uint64_t f[32];      /* f0 .. f31  (FP registers, double-width)    */
+    uint64_t fcsr;       /* FP Control/Status Register                 */
 } trap_frame_t;
 
 /* ── IRQ handler typedef (RISC-V scause-based) ──────────────────── */
