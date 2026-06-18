@@ -65,6 +65,11 @@ platform = {
         base     = 0x04340000,
         phy_base = 0x03006000,  -- CV182x 片内 USB2 PHY (TOP 时钟域)
         irq      = 30,          -- DTS: interrupts = <0x1e 0x04>
+        clkgen   = 0x03002000,  -- 时钟发生器
+        top      = 0x03000000,  -- TOP 系统控制模块
+        fmux     = 0x03001000,  -- 引脚功能复用
+        ioblk    = 0x03001800,  -- IO Block (Active Domain G1)
+        gpio1    = 0x03021000,  -- GPIO1 (GPIOB)
     },
 
     sdmmc = {

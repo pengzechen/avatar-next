@@ -511,6 +511,10 @@ else
     DRIVER_TPU_OBJS :=
 endif
 
+# ── §6b+ Rust 工具链参数（ETH/USB 共用）───────────────────────────────────────
+_RUST_TARGET    := riscv64gc-unknown-none-elf
+_RUST_DIR       := rust
+
 # ── §6c  网络驱动（ETH）─────────────────────────────────────────────────────────
 # 以太网驱动（由 platform.lua 的 eth.driver 自动推导；也可命令行覆盖：ETH=none / ETH=cvitek / ETH=virtio）
 ETH ?= $(DEV_ETH_TYPE)
@@ -537,7 +541,7 @@ endif
 USB ?= $(DEV_USB_TYPE)
 ifeq ($(USB),dwc2)
     CFLAGS           += -DDRIVER_USB_DWC2=1
-	DRIVER_USB_OBJS  := $(BUILD_DIR)/drv_usb_dwc2.o $(BUILD_DIR)/drv_usb_usb_core.o $(BUILD_DIR)/drv_usb_uvc.o $(BUILD_DIR)/drv_usb_uvc_video.o
+    DRIVER_USB_OBJS  := $(BUILD_DIR)/rust_glue.o $(BUILD_DIR)/libavatar_usb.a $(BUILD_DIR)/drv_usb_uvc_video_glue.o
 else
     DRIVER_USB_OBJS  :=
 endif
@@ -886,9 +890,12 @@ $(BUILD_DIR)/drv_%.o: driver/%.c | $(BUILD_DIR)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-# USB 驱动编译规则
-$(BUILD_DIR)/drv_usb_%.o: driver/usb/%.c | $(BUILD_DIR)
-	@mkdir -p $(dir $@)
+# USB 驱动编译规则（Rust staticlib + C glue）
+$(BUILD_DIR)/libavatar_usb.a: | $(BUILD_DIR)
+	cd $(_RUST_DIR) && cargo build --release --target $(_RUST_TARGET)
+	cp $(_RUST_DIR)/target/$(_RUST_TARGET)/release/libavatar_usb.a $@
+
+$(BUILD_DIR)/drv_usb_uvc_video_glue.o: driver/usb/uvc_video_glue.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -Idriver/usb -c $< -o $@
 
 # task 模块编译规则
@@ -1203,7 +1210,7 @@ endif
 
 # ── §12g  链接 ────────────────────────────────────────────────────────────────────
 $(KERNEL_TARGET): $(BOOT_OBJECTS) $(KERNEL_OBJECTS) $(NET_OBJS) $(LWIP_OBJS) $(TASK_C_OBJECTS) $(TASK_S_OBJ) $(TASK_USER_TEST_OBJ) $(TASK_USER_HELLO_OBJ) $(TASK_USER_TESTEXECVE_OBJ) $(LOADER_C_OBJECTS) $(SYSCALL_C_OBJECTS) $(VM_C_OBJECTS) $(VM_S_OBJ) $(VMM_C_OBJECTS) $(VMM_S_OBJECTS) $(GUEST_TEST_OBJ) $(TESTS_OBJECTS) $(PLATFORM_OBJECTS) $(DRIVER_OBJECTS) $(EXCEPTION_OBJECTS) $(KLOG_OBJECT) $(VSNPRINTF_OBJECT) $(STRING_OBJECT) $(BITMAP_OBJECT) $(PLATFORM_CFG_OBJECT) $(LWEXT4_OBJS) $(LWEXT4_PORT_OBJS) $(LUA_OBJECTS) $(PSEUDOFS_OBJS) | $(BUILD_DIR)
-	$(CC) $(LDFLAGS) -nostartfiles -nodefaultlibs -T $(BOOT_DIR)/$(ARCH)/link.ld -o $@ $^
+	$(CC) $(LDFLAGS) -nostartfiles -nodefaultlibs -T $(BOOT_DIR)/$(ARCH)/link.ld -o $@ -Wl,--start-group $^ -Wl,--end-group
 
 # 转换为二进制文件
 $(KERNEL_BIN): $(KERNEL_TARGET)

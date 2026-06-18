@@ -357,7 +357,8 @@ int luaopen_timer(lua_State *L)
 /* ── DWC2 USB 主机驱动 bindings ──────────────────────────────────────────── */
 #if DRIVER_USB_DWC2
 #include "klog.h"
-#include "usb/usb.h"
+#include "usb_api.h"
+#include "usb/uvc_video.h"
 
 static const char g_base64_table[] =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -429,22 +430,33 @@ static int lua_dwc2_usb_init(lua_State *L)
         dwc2_usb_set_phy_base_virt(phy_base);
     }
 
+    /* USB 上电：时钟、PHY 复位/模式切换、VBUS GPIO */
+    {
+        uintptr_t clkgen = platform_get_mmio("usb", "clkgen");
+        uintptr_t top    = platform_get_mmio("usb", "top");
+        uintptr_t fmux   = platform_get_mmio("usb", "fmux");
+        uintptr_t ioblk  = platform_get_mmio("usb", "ioblk");
+        uintptr_t gpio1  = platform_get_mmio("usb", "gpio1");
+
+        if (dwc2_usb_power_up(clkgen, top, fmux, ioblk, gpio1) != 0) {
+            KLOG_WARN("[USB] power_up failed, continuing anyway\n");
+        }
+    }
+
     if (dwc2_usb_init() != 0) {
         lua_pushboolean(L, 0);
         lua_pushstring(L, "DWC2 init failed");
         return 2;
     }
 
-    /* 有设备则直接枚举 */
-    if (dwc2_usb_device_connected()) {
-        if (dwc2_usb_enumerate_device(&g_dwc2_usb_enum_result) == 0) {
-            KLOG_INFO("[USB] Lua binding: enumeration OK devices=%u first_uvc=%u\n",
-                      g_dwc2_usb_enum_result.num_devices,
-                      g_dwc2_usb_enum_result.first_uvc_addr);
-            lua_pushboolean(L, 1);
-            return 1;
-        }
-        KLOG_WARN("[USB] Device detected but enumeration failed\n");
+    /* enumerate_topology_only 内部完成 host_init + 连接检查 + bus reset + 扫描 */
+    if (dwc2_usb_enumerate_device(&g_dwc2_usb_enum_result) == 0) {
+        KLOG_INFO("[USB] Lua binding: enumeration OK devices=%u first_uvc=%u\n",
+                  g_dwc2_usb_enum_result.num_devices,
+                  g_dwc2_usb_enum_result.first_uvc_addr);
+        uvc_video_set_enum_result(&g_dwc2_usb_enum_result);
+    } else {
+        KLOG_WARN("[USB] enumeration failed (no device or error)\n");
     }
 
     lua_pushboolean(L, 1);

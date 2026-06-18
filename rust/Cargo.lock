@@ -12,7 +12,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "avatar_usb"
+version = "0.1.0"
+dependencies = [
+ "cvitek-usb",
+ "kernel_support",
+ "log",
+]
+
+[[package]]
 name = "cvitek-eth"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "tock-registers",
+]
+
+[[package]]
+name = "cvitek-usb"
 version = "0.1.0"
 dependencies = [
  "log",

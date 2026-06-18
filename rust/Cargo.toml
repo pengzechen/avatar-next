@@ -2,6 +2,7 @@
 members = [
     "kernel_support",
     "avatar_eth",
+    "avatar_usb",
 ]
 resolver = "2"
 
