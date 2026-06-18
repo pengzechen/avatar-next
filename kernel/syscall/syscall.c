@@ -584,6 +584,8 @@ void syscall_handler(trap_frame_t *frame)
      * musl calls MEMBARRIER_CMD_REGISTER_PRIVATE_EXPEDITED at pthread_create.
      * We run on a simple uniprocessor kernel with coherent shared memory,
      * so just acknowledge without doing anything. */
+    case 81:    /* riscv64 / aarch64 __NR_sync */
+    case 162:   /* x86_64  __NR_sync */
     case 283:   /* riscv64 / aarch64 __NR_membarrier */
     case 324:   /* x86_64  __NR_membarrier */
         regs[0] = 0;

@@ -257,19 +257,19 @@ static int sd_send_cmd(uint32_t cmdw, uint32_t arg)
 static int sd_pio_read_blocks(uint8_t *buf, size_t count)
 {
     for (size_t b = 0; b < count; b++) {
-        uint32_t sts;
-        while (1) {
-            sts = sd_rd(R_INT_STS);
+        for (uint32_t t = 0; t < 5000000; t++) {
+            uint32_t sts = sd_rd(R_INT_STS);
             if (sts & INT_BUF_RRDY) {
                 sd_wr(R_INT_STS, INT_BUF_RRDY);
-                break;
+                goto rd_ready;
             }
             if (sts & INT_ERR) {
-                sd_wr(R_INT_STS, INT_ERR);
+                sd_wr(R_INT_STS, INT_CLEAR_ALL);
                 return SDBLK_ERR;
             }
-            sd_delay(1);
         }
+        return SDBLK_ERR;
+rd_ready:
         for (size_t i = 0; i < SDBLK_BLOCK_SIZE / 4; i++) {
             uint32_t v = sd_rd_pio(R_BUF_DATA);
             buf[0] = (uint8_t)(v);
@@ -277,39 +277,39 @@ static int sd_pio_read_blocks(uint8_t *buf, size_t count)
             buf[2] = (uint8_t)(v >> 16);
             buf[3] = (uint8_t)(v >> 24);
             buf += 4;
-            sd_delay(1);
         }
     }
     return SDBLK_OK;
 }
 
 /*
- * sd_pio_write_block — PIO 写入单个 512 字节块
- * 等待 BUF_WRDY，然后向 R_BUF_DATA 写入 128 个 32 位字。
+ * sd_pio_write_blocks — PIO 写入 N 个 512 字节块
+ * 每块等待 BUF_WRDY，然后向 R_BUF_DATA 写入 128 个 32 位字。
  */
-static int sd_pio_write_block(const uint8_t *buf)
+static int sd_pio_write_blocks(const uint8_t *buf, size_t count)
 {
-    uint32_t sts;
-    while (1) {
-        sts = sd_rd(R_INT_STS);
-        if (sts & INT_BUF_WRDY) {
-            sd_wr(R_INT_STS, INT_BUF_WRDY);
-            break;
+    for (size_t b = 0; b < count; b++) {
+        for (uint32_t t = 0; t < 5000000; t++) {
+            uint32_t sts = sd_rd(R_INT_STS);
+            if (sts & INT_BUF_WRDY) {
+                sd_wr(R_INT_STS, INT_BUF_WRDY);
+                goto wr_ready;
+            }
+            if (sts & INT_ERR) {
+                sd_wr(R_INT_STS, INT_CLEAR_ALL);
+                return SDBLK_ERR;
+            }
         }
-        if (sts & INT_ERR) {
-            sd_wr(R_INT_STS, INT_ERR);
-            return SDBLK_ERR;
+        return SDBLK_ERR;
+wr_ready:
+        for (size_t i = 0; i < SDBLK_BLOCK_SIZE / 4; i++) {
+            uint32_t v = (uint32_t)buf[0]
+                       | ((uint32_t)buf[1] <<  8)
+                       | ((uint32_t)buf[2] << 16)
+                       | ((uint32_t)buf[3] << 24);
+            sd_wr_pio(R_BUF_DATA, v);
+            buf += 4;
         }
-        sd_delay(1);
-    }
-    for (size_t i = 0; i < SDBLK_BLOCK_SIZE / 4; i++) {
-        uint32_t v = (uint32_t)buf[0]
-                   | ((uint32_t)buf[1] <<  8)
-                   | ((uint32_t)buf[2] << 16)
-                   | ((uint32_t)buf[3] << 24);
-        sd_wr_pio(R_BUF_DATA, v);
-        buf += 4;
-        sd_delay(1);
     }
     return SDBLK_OK;
 }
@@ -455,8 +455,6 @@ int sdblk_init(void)
     }
     sd_set(R_HOST_CTL1, HCTL_DAT_4BIT);
 
-    sd_clr(R_CLK_CTL, CLK_SD_CLK_EN);
-
     g_sdblk.initialized = true;
     KLOG_INFO("[sdblk] init done, rca=0x%08x, cap=%llu MiB\n",
               g_sdblk.rca, (unsigned long long)(g_sdblk.capacity >> 20));
@@ -467,8 +465,6 @@ int sdblk_read_blocks(uint32_t block_id, void *buf, size_t count)
 {
     if (!g_sdblk.initialized || !buf || count == 0)
         return SDBLK_ERR;
-
-    sd_set(R_CLK_CTL, CLK_SD_CLK_EN);
 
     int rc;
     if (count == 1) {
@@ -483,40 +479,41 @@ int sdblk_read_blocks(uint32_t block_id, void *buf, size_t count)
                       | XFER_BLK_CNT_EN | XFER_MULTI_BLK | XFER_AUTOCMD12;
         rc = sd_send_cmd(cmdw, block_id);
     }
-    if (rc != SDBLK_OK) goto out;
+    if (rc != SDBLK_OK) return rc;
 
     rc = sd_pio_read_blocks((uint8_t *)buf, count);
-    if (rc != SDBLK_OK) goto out;
+    if (rc != SDBLK_OK) return rc;
 
     rc = sd_wait_xfer_done();
     sd_wr(R_INT_STS, sd_rd(R_INT_STS));
-
-out:
-    sd_clr(R_CLK_CTL, CLK_SD_CLK_EN);
     return rc;
 }
 
-int sdblk_write_block(uint32_t block_id, const void *buf)
+int sdblk_write_blocks(uint32_t block_id, const void *buf, size_t count)
 {
-    if (!g_sdblk.initialized || !buf)
+    if (!g_sdblk.initialized || !buf || count == 0)
         return SDBLK_ERR;
 
-    sd_set(R_CLK_CTL, CLK_SD_CLK_EN);
+    int rc;
+    if (count == 1) {
+        /* CMD24: WRITE_BLOCK */
+        sd_wr(R_BLK_SIZE_CNT, BLKSZ_CNT(BLKSZ_512, 1));
+        uint32_t cmdw = CMDW_R1(24) | CMD_DATA_PRESENT;
+        rc = sd_send_cmd(cmdw, block_id);
+    } else {
+        /* CMD25: WRITE_MULTIPLE_BLOCK + AutoCMD12 */
+        sd_wr(R_BLK_SIZE_CNT, BLKSZ_CNT(BLKSZ_512, (uint32_t)count));
+        uint32_t cmdw = CMDW_R1(25) | CMD_DATA_PRESENT
+                      | XFER_BLK_CNT_EN | XFER_MULTI_BLK | XFER_AUTOCMD12;
+        rc = sd_send_cmd(cmdw, block_id);
+    }
+    if (rc != SDBLK_OK) return rc;
 
-    /* CMD24: WRITE_BLOCK */
-    sd_wr(R_BLK_SIZE_CNT, BLKSZ_CNT(BLKSZ_512, 1));
-    uint32_t cmdw = CMDW_R1(24) | CMD_DATA_PRESENT; /* XFER_DIR_READ=0 = write */
-    int rc = sd_send_cmd(cmdw, block_id);
-    if (rc != SDBLK_OK) goto out;
-
-    rc = sd_pio_write_block((const uint8_t *)buf);
-    if (rc != SDBLK_OK) goto out;
+    rc = sd_pio_write_blocks((const uint8_t *)buf, count);
+    if (rc != SDBLK_OK) return rc;
 
     rc = sd_wait_xfer_done();
     sd_wr(R_INT_STS, sd_rd(R_INT_STS));
-
-out:
-    sd_clr(R_CLK_CTL, CLK_SD_CLK_EN);
     return rc;
 }
 
@@ -558,11 +555,8 @@ static int sdblk_bdev_bwrite(struct ext4_blockdev *bdev, const void *buf,
                              uint64_t blk_id, uint32_t blk_cnt)
 {
     (void)bdev;
-    const uint8_t *p = (const uint8_t *)buf;
-    for (uint32_t i = 0; i < blk_cnt; i++, p += SDBLK_BLOCK_SIZE)
-        if (sdblk_write_block((uint32_t)(blk_id + i), p) != SDBLK_OK)
-            return EIO;
-    return EOK;
+    return sdblk_write_blocks((uint32_t)blk_id, buf, blk_cnt) == SDBLK_OK
+           ? EOK : EIO;
 }
 
 static int sdblk_bdev_close(struct ext4_blockdev *bdev)

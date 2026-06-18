@@ -46,12 +46,13 @@ int sdblk_init(void);
 int sdblk_read_blocks(uint32_t block_id, void *buf, size_t count);
 
 /**
- * sdblk_write_block — 写入单块（512 字节）
+ * sdblk_write_blocks — 写入连续块
  *
- * @block_id: LBA
- * @buf:      输入数据，必须恰好 SDBLK_BLOCK_SIZE 字节
+ * @block_id: 起始 LBA
+ * @buf:      输入数据，必须 >= count * SDBLK_BLOCK_SIZE 字节
+ * @count:    块数（1 → CMD24；>1 → CMD25 + AutoCMD12）
  */
-int sdblk_write_block(uint32_t block_id, const void *buf);
+int sdblk_write_blocks(uint32_t block_id, const void *buf, size_t count);
 
 /**
  * sdblk_capacity_bytes  — 返回 SD 卡容量（字节），未初始化时返回 0

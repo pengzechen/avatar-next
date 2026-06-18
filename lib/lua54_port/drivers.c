@@ -278,12 +278,13 @@ static int lua_sdblk_read_blocks(lua_State *L)
     return 1;
 }
 
-/* sdblk.write_block(block_id, buf_userdata) → int */
-static int lua_sdblk_write_block(lua_State *L)
+/* sdblk.write_blocks(block_id, buf_userdata, count) → int */
+static int lua_sdblk_write_blocks(lua_State *L)
 {
     uint32_t    block_id = (uint32_t)luaL_checkinteger(L, 1);
     const void *buf      = lua_touserdata(L, 2);
-    lua_pushinteger(L, sdblk_write_block(block_id, buf));
+    size_t      count    = (size_t)luaL_checkinteger(L, 3);
+    lua_pushinteger(L, sdblk_write_blocks(block_id, buf, count));
     return 1;
 }
 
@@ -304,7 +305,7 @@ static int lua_sdblk_capacity_blocks(lua_State *L)
 static const luaL_Reg lua_drv_sdblk[] = {
     { "init",            lua_sdblk_init            },
     { "read_blocks",     lua_sdblk_read_blocks     },
-    { "write_block",     lua_sdblk_write_block     },
+    { "write_blocks",    lua_sdblk_write_blocks    },
     { "capacity_bytes",  lua_sdblk_capacity_bytes  },
     { "capacity_blocks", lua_sdblk_capacity_blocks },
     { NULL,              NULL                      }
