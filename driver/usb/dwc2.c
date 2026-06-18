@@ -88,13 +88,12 @@ static void dwc2_usb_irq_handler(uint32_t irq, void *ctx)
 
     if (gintsts & GINTSTS_HCHINT) {
         haint = dwc2_read32(DWC2_OFF_HAINT);
-        for (uint32_t ch = 0; ch < g_num_host_channels && ch < DWC2_MAX_HOST_CHANNELS; ch++) {
-            if (!(haint & (1U << ch)))
-                continue;
-            uint32_t hcint = hc_read32(ch, HC_OFF_INT);
-            g_dwc2_hcint_shadow[ch] |= hcint;
+        /* Only service CH0 (control) in IRQ — CH1 (isoch) is polled. */
+        if (haint & (1U << 0)) {
+            uint32_t hcint = hc_read32(0, HC_OFF_INT);
+            g_dwc2_hcint_shadow[0] |= hcint;
             if (hcint)
-                hc_write32(ch, HC_OFF_INT, hcint);
+                hc_write32(0, HC_OFF_INT, hcint);
         }
     }
 
@@ -258,23 +257,34 @@ static int force_host_mode(void)
  * 8. CV182x / SG2002 主机路径
  * ========================================================================== */
 
-/* CLKGEN 寄存器（偏移参考 eth nic.rs：REG_CLK_EN_0 = 0x000） */
+/* CLKGEN 寄存器 */
 #define CLKGEN_BASE           0x03002000
-#define REG_CLK_EN_0          0x000
-#define REG_CLK_BYP_0         0x080
+#define REG_CLK_EN_1          0x004   /* CLK_EN_1: USB clock gates */
+#define REG_CLK_EN_2          0x008   /* CLK_EN_2: USB 33MHz gate */
+#define REG_CLK_BYP_0         0x030   /* CLK_BYP_0: bypass control */
 
-/*
- * USB 时钟使能位（参考 cv181x clk 驱动寄存器顺序）：
- *   需要使能 clk_axi4_usb + clk_125m_usb + clk_12m_usb。
- *   bit 位置基于 cvitek U-Boot / Linux 时钟树推测，
- *   若不对则先 dump CLK_EN_0 查看 U-Boot 预设值再调整。
- */
-#define CLKEN0_USB_AXI4       (1u << 23)
-#define CLKEN0_USB_125M       (1u << 24)
-#define CLKEN0_USB_12M        (1u << 25)
-
-/* CLK_BYP_0 USB 相关位：bit17/18 须清 0 让时钟走 fpll（参考 device/mod.rs:31） */
+/* CLK_EN_1 bits 28-31: clk_axi4_usb / clk_apb_usb / clk_125m_usb / clk_33k_usb */
+#define CLKEN1_USB_MASK       (0xFu << 28)
+/* CLK_EN_2 bit 0: clk_12m_usb */
+#define CLKEN2_USB_12M        (1u << 0)
+/* CLK_BYP_0 bit17/18: must be 0 for fpll path */
 #define CLK_BYP0_USB_MASK     ((1u << 17) | (1u << 18))
+
+/* TOP 系统控制 */
+#define TOP_BASE              0x03000000
+#define TOP_USB_PHY_CTRL      0x48    /* USB PHY device/host mode */
+#define TOP_DDR_ADDR_MODE     0xB4    /* eco register */
+#define TOP_USB_CTRSTS        0x3000  /* USB controller reset/status */
+
+/* FMUX / IOBLK / GPIO for VBUS */
+#define FMUX_BASE             0x03001000
+#define FMUX_USB_VBUS_DET     0xFC    /* pinmux for USB_VBUS_DET */
+#define IOBLK_BASE            0x03001800
+#define IOBLK_USB_VBUS_DET    0x020   /* IO block pad control */
+#define GPIO1_BASE            0x03021000
+#define GPIO1_DR              0x000   /* data register */
+#define GPIO1_DDR             0x004   /* data direction register */
+#define GPIO1_VBUS_PIN        6       /* GPIOB[6] drives VBUS */
 
 /* RSTC 寄存器 */
 #define RSTC_BASE             0x03003000
@@ -318,46 +328,162 @@ static inline void rstc_write32(uintptr_t off, uint32_t val)
     write32(val, (void *)pa);
 }
 
-/* 使能 USB 时钟并解除复位（PHY 模拟前端需要时钟才能检测设备连接） */
+static inline uint32_t top_read32(uintptr_t off)
+{
+    uintptr_t pa = TOP_BASE + off;
+#if DEVICE_MMIO_NEEDS_VMA
+    pa += KERNEL_VMA;
+#endif
+    return read32((void *)pa);
+}
+
+static inline void top_write32(uintptr_t off, uint32_t val)
+{
+    uintptr_t pa = TOP_BASE + off;
+#if DEVICE_MMIO_NEEDS_VMA
+    pa += KERNEL_VMA;
+#endif
+    write32(val, (void *)pa);
+}
+
+static inline void fmux_write32(uintptr_t off, uint32_t val)
+{
+    uintptr_t pa = FMUX_BASE + off;
+#if DEVICE_MMIO_NEEDS_VMA
+    pa += KERNEL_VMA;
+#endif
+    write32(val, (void *)pa);
+}
+
+static inline uint32_t ioblk_read32(uintptr_t off)
+{
+    uintptr_t pa = IOBLK_BASE + off;
+#if DEVICE_MMIO_NEEDS_VMA
+    pa += KERNEL_VMA;
+#endif
+    return read32((void *)pa);
+}
+
+static inline void ioblk_write32(uintptr_t off, uint32_t val)
+{
+    uintptr_t pa = IOBLK_BASE + off;
+#if DEVICE_MMIO_NEEDS_VMA
+    pa += KERNEL_VMA;
+#endif
+    write32(val, (void *)pa);
+}
+
+static inline uint32_t gpio1_read32(uintptr_t off)
+{
+    uintptr_t pa = GPIO1_BASE + off;
+#if DEVICE_MMIO_NEEDS_VMA
+    pa += KERNEL_VMA;
+#endif
+    return read32((void *)pa);
+}
+
+static inline void gpio1_write32(uintptr_t off, uint32_t val)
+{
+    uintptr_t pa = GPIO1_BASE + off;
+#if DEVICE_MMIO_NEEDS_VMA
+    pa += KERNEL_VMA;
+#endif
+    write32(val, (void *)pa);
+}
+
+/* 使能 USB 时钟并解除复位 */
 static void cv182x_usb_clock_reset_init(void)
 {
-    uint32_t clk_en0, clk_byp0, rstn0;
+    uint32_t v;
 
-    /* 1. 读取当前 CLKGEN 状态（dump 用） */
-    clk_en0  = clkgen_read32(REG_CLK_EN_0);
-    clk_byp0 = clkgen_read32(REG_CLK_BYP_0);
+    /* 1. CLK_EN_1(+0x004): 使能 USB 四路时钟 bit[31:28] */
+    v = clkgen_read32(REG_CLK_EN_1);
+    KLOG_INFO("[DWC2]   CLKGEN: CLK_EN_1=0x%08x (before)\n", v);
+    clkgen_write32(REG_CLK_EN_1, v | CLKEN1_USB_MASK);
 
-    KLOG_INFO("[DWC2]   CLKGEN: CLK_EN_0=0x%08x  CLK_BYP_0=0x%08x\n",
-              clk_en0, clk_byp0);
+    /* 2. CLK_EN_2(+0x008): 使能 clk_12m_usb bit0 */
+    v = clkgen_read32(REG_CLK_EN_2);
+    KLOG_INFO("[DWC2]   CLKGEN: CLK_EN_2=0x%08x (before)\n", v);
+    clkgen_write32(REG_CLK_EN_2, v | CLKEN2_USB_12M);
 
-    /* 2. 清除 USB 时钟 bypass（bit17/18=0 → 走 fpll） */
-    if (clk_byp0 & CLK_BYP0_USB_MASK) {
-        clkgen_write32(REG_CLK_BYP_0, clk_byp0 & ~CLK_BYP0_USB_MASK);
+    /* 3. CLK_BYP_0(+0x030): 清除 USB bypass bit17/18 → 走 fpll */
+    v = clkgen_read32(REG_CLK_BYP_0);
+    if (v & CLK_BYP0_USB_MASK) {
+        clkgen_write32(REG_CLK_BYP_0, v & ~CLK_BYP0_USB_MASK);
         KLOG_INFO("[DWC2]   CLK_BYP_0: cleared bits 17/18 for USB fpll path\n");
-    }
-
-    /* 3. 使能 USB 三路时钟 */
-    uint32_t want = CLKEN0_USB_AXI4 | CLKEN0_USB_125M | CLKEN0_USB_12M;
-    if ((clk_en0 & want) != want) {
-        clkgen_write32(REG_CLK_EN_0, clk_en0 | want);
-        KLOG_INFO("[DWC2]   CLK_EN_0: set USB clock bits (was 0x%08x -> 0x%08x)\n",
-                  clk_en0, clk_en0 | want);
-    } else {
-        KLOG_INFO("[DWC2]   CLK_EN_0: USB clock bits already set\n");
     }
 
     spin_delay(50000);
 
     /* 4. 解除 USB IP 软复位（SOFT_RSTN_0 bit 11，低有效，写 1 = 解除） */
-    rstn0 = rstc_read32(RSTC_SOFT_RSTN_0);
-    if (!(rstn0 & RSTC_USB_RESET_BIT)) {
-        rstc_write32(RSTC_SOFT_RSTN_0, rstn0 | RSTC_USB_RESET_BIT);
+    v = rstc_read32(RSTC_SOFT_RSTN_0);
+    if (!(v & RSTC_USB_RESET_BIT)) {
+        rstc_write32(RSTC_SOFT_RSTN_0, v | RSTC_USB_RESET_BIT);
         KLOG_INFO("[DWC2]   RSTC: deasserted USB reset (SOFT_RSTN_0 bit11)\n");
     } else {
         KLOG_INFO("[DWC2]   RSTC: USB reset already deasserted\n");
     }
 
     spin_delay(50000);
+    KLOG_INFO("[DWC2]   USB clock & reset init done\n");
+}
+
+/* TOP PHY host bringup: reset toggle + device→host mode switch */
+static void cv182x_usb_top_host_bringup(void)
+{
+    uint32_t v;
+
+    /* Step 1: USB controller reset toggle via TOP+0x3000 bit11 */
+    v = top_read32(TOP_USB_CTRSTS);
+    top_write32(TOP_USB_CTRSTS, v & ~(1u << 11));
+    spin_delay(50000);  /* ~50us */
+    v = top_read32(TOP_USB_CTRSTS);
+    top_write32(TOP_USB_CTRSTS, v | (1u << 11));
+    spin_delay(50000);
+
+    /* Step 2: USB PHY mode: device→host via TOP+0x48 */
+    v = top_read32(TOP_USB_PHY_CTRL);
+    /* First: set bits[7:6]=0b11 and bit0=1 (intermediate state) */
+    v = (v & ~0xC0u) | 0xC0u | 0x01u;
+    top_write32(TOP_USB_PHY_CTRL, v);
+    spin_delay(100000);  /* ~1ms */
+    /* Then: set bits[7:6]=0b01 and bit0=1 (host mode) */
+    v = (v & ~0xC0u) | 0x40u | 0x01u;
+    top_write32(TOP_USB_PHY_CTRL, v);
+    spin_delay(100000);
+
+    /* Step 3: ECO bit in TOP+0xB4 */
+    v = top_read32(TOP_DDR_ADDR_MODE);
+    top_write32(TOP_DDR_ADDR_MODE, v | 0x80u);
+
+    KLOG_INFO("[DWC2]   TOP PHY host bringup done  USB_PHY_CTRL=0x%08x\n",
+              top_read32(TOP_USB_PHY_CTRL));
+}
+
+/* Enable VBUS power: pinmux → IO block → GPIO1 pin6 output high */
+static void cv182x_usb_vbus_enable(void)
+{
+    uint32_t v;
+
+    /* FMUX: set USB_VBUS_DET pin to GPIO mode (value 3 = XGPIOB[6]) */
+    fmux_write32(FMUX_USB_VBUS_DET, 3);
+
+    /* IOBLK: set drive strength bits[7:5] = 0b111 */
+    v = ioblk_read32(IOBLK_USB_VBUS_DET);
+    ioblk_write32(IOBLK_USB_VBUS_DET, v | (7u << 5));
+
+    /* GPIO1: pin6 direction = output */
+    v = gpio1_read32(GPIO1_DDR);
+    gpio1_write32(GPIO1_DDR, v | (1u << GPIO1_VBUS_PIN));
+
+    /* GPIO1: pin6 level = high (VBUS on) */
+    v = gpio1_read32(GPIO1_DR);
+    gpio1_write32(GPIO1_DR, v | (1u << GPIO1_VBUS_PIN));
+
+    /* Wait ~2s for VBUS to stabilize and device to power up */
+    timer_delay_ms(2000);
+    KLOG_INFO("[DWC2]   VBUS GPIO enabled (GPIO1 pin%d high), waited 2s\n",
+              GPIO1_VBUS_PIN);
 }
 
 /* 8a. OTG Host Session Overrides (dr_mode=otg 时必须)
@@ -593,6 +719,13 @@ int dwc2_usb_init(void)
     KLOG_INFO("[DWC2] MMIO base: virt=0x%lx\n", (unsigned long)g_dwc2_base);
     g_dwc2_irq = platform_get_uint("usb", "irq");
 
+    /* ── 0. USB 上电序列（时钟 → PHY → VBUS）必须在 probe 之前 ── */
+    KLOG_INFO("[DWC2] [step 0] USB power-up: clocks + PHY + VBUS...\n");
+    cv182x_usb_clock_reset_init();
+    cv182x_usb_top_host_bringup();
+    cv182x_usb_vbus_enable();
+    KLOG_INFO("[DWC2] [step 0] USB power-up done\n");
+
     /* ── 1. 探测硬件 ─────────────────────────────────── */
     uint32_t ghwcfg1 = dwc2_read32(DWC2_OFF_GHWCFG1);
     uint32_t ghwcfg2 = dwc2_read32(DWC2_OFF_GHWCFG2);
@@ -665,12 +798,7 @@ int dwc2_usb_init(void)
     }
     KLOG_INFO("[DWC2] [step 4/8] Core soft reset (2nd) OK\n");
 
-    /* ── 6. USB 时钟 & 复位 ──────────────────────────── */
-    KLOG_INFO("[DWC2] [step 5/8] USB clock & reset init...\n");
-    cv182x_usb_clock_reset_init();
-    KLOG_INFO("[DWC2] [step 5/8] USB clock & reset init OK\n");
-
-    /* ── 7. CV182x/SG2002 特定配置 ─────────────────────── */
+    /* ── 6. CV182x/SG2002 特定配置 ─────────────────────── */
     KLOG_INFO("[DWC2] [step 6/8] CV182x platform config...\n");
 
     cv182x_init_gotgctl();
@@ -734,9 +862,9 @@ int dwc2_usb_init(void)
 
     /* ── 8. 中断使能 ──────────────────────────────────── */
     /*
-     * Keep the streaming channel (HC1) in pure polling mode for now. UVC
-     * isochronous capture still assembles packets synchronously, and letting
-     * the IRQ path consume HC1 completion bits can disturb frame assembly.
+     * HAINTMSK: only CH0 (control) generates PLIC interrupts.
+     * CH1 (isoch) is polled directly — in buffer DMA mode the hardware
+     * sets CHHLTD regardless of HCINTMSK, so no mask is needed for polling.
      */
     dwc2_write32(DWC2_OFF_HAINTMSK, (1u << 0));
     uint32_t hcintmsk = HCINT_XFERCOMPL | HCINT_CHHLTD | HCINT_AHBERR |

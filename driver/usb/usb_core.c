@@ -136,7 +136,7 @@ hcchar_bulk(uint32_t dev, uint32_t ep, uint32_t mps,
     v |= (ep & 0xf) << HCCHAR_EPNUM_SHIFT;
     if (dir_in)
         v |= HCCHAR_EPDIR;
-    v |= HCCHAR_EPTYPE_BULK;
+    v |= (HCCHAR_EPTYPE_BULK << HCCHAR_EPTYPE_SHIFT);
     v |= (dev & 0x7f) << HCCHAR_DEVADDR_SHIFT;
     return v;
 }
@@ -148,7 +148,7 @@ static uint32_t hcchar_isoch(uint32_t dev, uint32_t ep, uint32_t mps,
     v |= (ep & 0xf) << HCCHAR_EPNUM_SHIFT;
     if (dir_in)
         v |= HCCHAR_EPDIR;
-    v |= HCCHAR_EPTYPE_ISO;
+    v |= (HCCHAR_EPTYPE_ISO << HCCHAR_EPTYPE_SHIFT);
     if (mult < 1)
         mult = 1;
     if (mult > 3)

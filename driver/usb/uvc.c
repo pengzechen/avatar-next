@@ -20,7 +20,7 @@
 #define UVC_PROBE_COMMIT_LEN              34
 
 #define UVC_MAX_ISOCH_ALTS                 8
-#define UVC_RX_WORK_BYTES                  2048
+#define UVC_RX_WORK_BYTES                  4096
 #define UVC_CAPTURE_MAX_UFRAMES            80000u
 
 static uint8_t g_uvc_rx_packet[UVC_RX_WORK_BYTES] __attribute__((aligned(256)));
@@ -397,10 +397,7 @@ static void uvc_reselect_isoch_alt_for_payload(usb_device_info_t *dev,
 
     for (uint8_t i = 0; i < dev->uvc_isoch_alts_count; i++) {
         uint16_t mps_raw = dev->uvc_isoch_mps_raw[i];
-        uint32_t mult = ((mps_raw >> 11) & 0x3) + 1;
-        if (mult > 1)
-            continue;
-        uint32_t total = mps_raw & 0x7ff;
+        uint32_t total = uvc_mps_total(mps_raw);
         if (total >= payload && total < fit_total) {
             have_fit = true;
             fit_alt = dev->uvc_isoch_alt_settings[i];
