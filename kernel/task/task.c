@@ -135,11 +135,23 @@ free_task_slot(task_t *task)
 /* ── task_trampoline ─────────────────────────────────────── */
 
 /*
- * 新任务首次被调度时，arch_task_switch 的 "ret" 跳转到这里。
+ * task_trampoline - 内核线程首次被调度时的落地点
  *
- * 此时我们处于 sched_schedule() 调用链的上下文中
- * （要么是从 timer ISR 调度过来，要么是其他任务 yield 触发）。
- * 中断因 arch_irq_save() 而被关闭，需要在启动任务前重新开启。
+ * 新内核线程的栈帧由 arch_init_task_stack 伪造，x30(LR)=task_trampoline，
+ * 首次被调度时 arch_task_switch 的 "ret" 跳到这里。
+ *
+ * 触发来源：其他任务主动 task_yield()，或 timer 中断返回路径上
+ * sched_check_and_yield() 触发重调度。注意切换**不在** ISR 内进行——
+ * sched_schedule() 开头断言 !in_irq_context()。
+ *
+ * 为何必须在此显式开中断：内核线程全程在 EL1 运行，需开中断以可被
+ * timer 抢占（否则会独占 CPU、饿死其他任务）。而首次运行**不经过**
+ * sched_schedule() 末尾的 arch_irq_restore()——前驱在 arch_irq_save()
+ * 里替它关了中断，却没有人替它开。因此这里必须 arch_irq_enable()。
+ *
+ * 对比：EL0 任务（用户进程）走 task_trampoline_user / arch_fork_resume_user，
+ * 那里**不**显式开中断——中断由 eret 跨入 EL0 时按 SPSR 恢复。区别在于
+ * 本函数的 entry() 在 EL1 运行，而那两者最终下到 EL0。
  */
 void
 task_trampoline(void)
@@ -279,6 +291,9 @@ task_switch_to_idle_stack(void)
 __attribute__((noreturn)) void
 task_idle_loop(void)
 {
+    /* idle 是内核线程，全程在 EL1，开中断（既为可被抢占，也因 wfi
+     * 需中断唤醒）。同 task_trampoline：首次进入不经过 arch_irq_restore，
+     * 故在此显式开。 */
     arch_irq_enable();
     for (;;) {
         task_yield();

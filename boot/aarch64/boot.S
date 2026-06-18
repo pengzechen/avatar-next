@@ -173,7 +173,10 @@ clear_bss_done:
     isb
 
     /*
-     * Enable IRQ interrupts (clear DAIF.I bit)
+     * 此处不开中断（保持 DAIF.I=1）。
+     * kernel_main 作为 boot 上下文运行，最终会变成 idle 内核线程，
+     * 由 task_idle_loop / task_trampoline 在合适时机 arch_irq_enable()。
+     * 在 timer/GIC 初始化完成前开中断没有意义且不安全。
      */
     // msr     daifclr, #2
     // dsb     sy

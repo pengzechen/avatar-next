@@ -94,6 +94,13 @@ avatar/
 
 - **AArch64**: `docs/arch/aarch64/NEON_USAGE.md` - NEON 优化
 
+### 中断与上下文切换
+
+**遇到任何中断 / 抢占 / 上下文切换问题，先读这两篇文档，不要凭空推断。**
+
+- **中断开关策略**: `docs/INTERRUPT_CONTROL_COMPARISON.md` - AArch64/RISC-V 中断开关的核心约定。关键：中断策略按“EL1 里运行的是谁”区分——EL0 任务的内核侧（syscall/异常）关中断，独立内核线程（含 idle）开中断、可被抢占。含 `task_trampoline` vs `task_trampoline_user` 的分野与代码检查清单。
+- **延迟调度机制**: `docs/INTERRUPT_CONTEXT_SWITCH.md` - 为什么不能在 ISR 内切换任务，而是只置 `need_resched`、在异常返回路径（`sched_check_and_yield`）才切换。
+
 **使用方式**: 用 Read tool 读取文档，了解 API 和最佳实践后再实现。
 
 ## 已实现模块

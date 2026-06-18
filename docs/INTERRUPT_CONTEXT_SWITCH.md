@@ -157,29 +157,39 @@ eret / sret / iretq  ← 正确恢复异常状态！
 
 ### 1. 调度器修改（sched.c）
 
-```c
-/* 需要重新调度的标志 */
-static volatile bool g_need_resched = false;
+> 注：下方为最初版本示意。当前实现中 `need_resched` 已是 **per-CPU** 字段
+> （`cpu_current()->need_resched`），不再是全局 `g_need_resched`，以支持 SMP。
+> 逻辑不变：tick 只置标志，切换在异常返回路径执行。
 
-/* Timer tick 回调：只设置标志 */
+```c
+/* Timer tick 回调：只设置本核的重调度标志 */
 void
 sched_tick(void)
 {
-    g_need_resched = true;
+    cpu_current()->need_resched = true;
 }
 
 /* 由异常返回路径调用：检查并执行调度 */
 bool
 sched_check_and_yield(void)
 {
-    if (g_need_resched) {
-        g_need_resched = false;
+    cpu_t *c = cpu_current();
+    if (c->need_resched) {
+        c->need_resched = false;
         sched_schedule();
         return true;
     }
     return false;
 }
 ```
+
+> **与中断开关策略的关系**（详见 `INTERRUPT_CONTROL_COMPARISON.md`）：
+> 这套“延迟调度”机制要求被抢占的实体在被中断时处于**开中断**状态，
+> 中断才能进入并最终在异常返回路径触发切换。因此：
+> - **内核线程**全程开中断（`task_trampoline` / `task_idle_loop` 入口
+>   `arch_irq_enable()`），可被 timer 抢占；
+> - **EL0 任务**在用户态开中断（`SPSR=0x340`），其陷入内核侧的
+>   syscall/异常处理则关中断，不可被抢占。
 
 ### 2. AArch64 异常处理（exception.S）
 

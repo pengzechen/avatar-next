@@ -1,7 +1,7 @@
 # Avatar OS 中断控制机制对比：AArch64 vs RISC-V
 
-**文档版本**: 1.0  
-**日期**: 2026-05-05  
+**文档版本**: 1.1  
+**日期**: 2026-06-18  
 **目的**: 详细对比 AArch64 和 RISC-V 架构在 Avatar OS 内核中的中断控制策略
 
 ---
@@ -9,13 +9,40 @@
 ## 一、核心设计原则
 
 ### 关键约定
-**内核态（S-mode/EL1）中断始终关闭，用户态（U-mode/EL0）中断开启。**
 
-**理由**：
+中断策略按 **“EL1（S-mode）里运行的是谁”** 区分，而不是简单的“内核态一律关中断”：
+
+| 运行实体 | 所在 EL | 中断状态 | 说明 |
+|----------|---------|----------|------|
+| **EL0 任务（用户进程）的用户侧** | EL0 / U-mode | **开** | 用户代码可被 timer 抢占 |
+| **EL0 任务陷入内核侧**（系统调用 / 缺页 / 异常处理） | EL1 / S-mode | **关** | 进入异常时硬件自动关，处理全程保持关 |
+| **内核线程（独立内核任务，如 net-poll / idle）** | EL1 / S-mode | **开** | 全程在 EL1，需可被 timer 抢占，否则会饿死其他任务 |
+
+**一句话**：用户进程“代表它跑内核代码”的那段（syscall/异常）关中断；而**独立的内核线程开中断**。二者都在 EL1，区别在于“EL1 里跑的是某个 EL0 任务的内核侧，还是一个独立内核线程”。
+
+> 历史说明：早期文档（v1.0）写作“内核态（EL1）始终关闭”。这只描述了“EL0 任务陷入内核侧”的情形，**遗漏了独立内核线程需要开中断**这一类。v1.1 起按上表的实体区分重新表述。
+
+**关中断的理由（针对 EL0 任务的内核侧 / 临界区）**：
 1. **寄存器保护**：内核代码使用临时寄存器（t0-t6/x9-x15），中断打断会破坏这些值
 2. **栈安全**：中断嵌套可能导致栈溢出
 3. **原子性**：内核操作（如链表插入、页表切换）需要原子完成
-4. **可预测性**：内核执行路径确定，便于调试和性能分析
+4. **可预测性**：执行路径确定，便于调试和性能分析
+
+**内核线程仍可被抢占的原因**：内核线程长期存在、可能长时间运行，若全程关中断会独占 CPU。它通过异常返回路径上的 `sched_check_and_yield` 被 timer 抢占；其自身的临界区用 `arch_irq_save/restore` 显式保护。
+
+### 两类“首次进入”的分野（AArch64）
+
+新任务的栈帧是伪造的，首次被调度时 `arch_task_switch` 的 `ret` 落到一个 trampoline。落到哪个、是否开中断，正是这套策略的体现：
+
+| Trampoline | 服务对象 | 终点 | 开中断方式 |
+|------------|----------|------|------------|
+| `task_trampoline`（C，task.c） | **内核线程** | `entry()` 在 EL1 运行 | 入口处显式 `arch_irq_enable()`（**必需**） |
+| `task_trampoline_user`（asm，switch.S） | **EL0 任务** | `eret` 下到 EL0 | **不显式开**，由 `arch_switch_to_user` 的 `SPSR=0x340` 经 `eret` 恢复 |
+| `arch_fork_resume_user`（asm，switch.S） | **EL0 任务**（fork 子进程） | `eret` 下到 EL0 | **不显式开**，由 frame 中保存的用户态 `spsr` 经 `eret` 恢复 |
+
+**为什么 `task_trampoline` 必须显式开中断**：新任务首次运行不经过 `sched_schedule()` 末尾的 `arch_irq_restore()`——前驱在 `arch_irq_save()` 里替它关了中断，却没有任何人替它开。内核线程若不在此显式开，将全程关中断、永远无法被 timer 抢占。
+
+**为什么 EL0 任务的 trampoline 不显式开中断**：它运行在 EL1 内核侧（启动 EL0 任务的准备阶段），按约定此时应关中断。中断只应在 `eret` 跨入 EL0 的**同一瞬间**由硬件根据 `SPSR` 打开。若在 `eret` 之前手动 `daifclr`，会在仍处于 EL1 时留下一个 IRQ 窗口——既违反约定，又可能让这段半成品的“进 EL0 路径”被抢占。
 
 ---
 
@@ -46,21 +73,37 @@ void exception_init(void) {
     extern void vectors(void);
     WRITE_VBAR_EL1((uint64_t)vectors);
     
-    // 注意：没有使能 DAIF.I，内核态中断保持关闭
+    // 注意：没有使能 DAIF.I。中断由各路径按需开启：
+    //  - 内核线程：task_trampoline / task_idle_loop 入口处 arch_irq_enable()
+    //  - EL0 任务：arch_switch_to_user 的 SPSR=0x340 经 eret 打开
     KLOG_INFO("AArch64 exception init: vbar_el1=0x%lx\n", 
               (uint64_t)vectors);
 }
 ```
 
-#### task_trampoline_user() - 用户进程首次运行
+#### task_trampoline() - 内核线程首次运行（EL1，需开中断）
+```c
+// kernel/task/task.c
+void task_trampoline(void) {
+    /* 内核线程全程在 EL1 运行，需开中断以可被 timer 抢占。
+     * 首次运行不经过 sched_schedule 末尾的 arch_irq_restore，
+     * 因此必须在此显式开中断（前驱已 arch_irq_save 关中断）。 */
+    arch_irq_enable();
+
+    task_t *cur = task_current();
+    cur->entry(cur->arg);   // 在 EL1 运行，可被抢占
+    task_exit();
+}
+```
+
+#### task_trampoline_user() - EL0 任务首次运行（不在此开中断）
 ```asm
 // kernel/task/aarch64/switch.S
 .global task_trampoline_user
 task_trampoline_user:
-    /* ── 开启中断（仅在此处！）────────────────────────────── */
-    msr     daifclr, #2        // 清除 DAIF.I，使能 IRQ
-
-    /* ── 准备参数并调用 arch_switch_to_user ──────────────── */
+    /* 不在此开中断：仍处于 EL1 内核侧，按约定关中断。
+     * 中断由 arch_switch_to_user 的 SPSR=0x340 经 eret 原子打开，
+     * 避免在 eret 之前于 EL1 留下 IRQ 窗口。 */
     mov     x0, x19          // x0 = user_entry
     mov     x1, x20          // x1 = user_sp
     mov     x2, sp           // x2 = kernel_sp
@@ -83,7 +126,7 @@ arch_switch_to_user:
     msr     spsr_el1, x9
 
     /* ── 跳转到用户态─────────────────────────────────────── */
-    eret                         // 硬件自动恢复 SPSR -> DAIF
+    eret                         // 硬件自动恢复 SPSR -> DAIF（此刻才开中断）
 ```
 
 **SPSR_EL1 = 0x340 解析**:
@@ -366,9 +409,12 @@ _start:
 
 ### AArch64（参考标准）
 - [ ] `exception_init()` 不调用 `msr daifclr, #2`
-- [ ] `task_trampoline_user()` 调用 `msr daifclr, #2`
-- [ ] `arch_switch_to_user()` 设置 `SPSR_EL1 = 0x340`（DAIF.I=0）
-- [ ] 异常向量表硬件自动设置 `DAIF.I=1`
+- [ ] **内核线程**：`task_trampoline()`（C）入口调用 `arch_irq_enable()`（开中断，可被抢占）
+- [ ] **EL0 任务**：`task_trampoline_user()`（asm）**不**包含 `msr daifclr, #2`——中断留给 `eret`
+- [ ] **EL0 任务**：`arch_fork_resume_user()`（asm）**不**包含 `msr daifclr, #2`——中断留给 `eret`
+- [ ] `arch_switch_to_user()` 设置 `SPSR_EL1 = 0x340`（DAIF.I=0），由 `eret` 在跨入 EL0 瞬间开中断
+- [ ] 异常向量表进入时硬件自动设置 `DAIF.I=1`；返回时 `eret` 按栈上 `SPSR` 忠实恢复
+- [ ] `idle` / secondary idle 入口（`task_idle_loop` / `cpu_secondary_bootstrap`）调用 `arch_irq_enable()`
 
 ### RISC-V（需对齐）
 - [ ] `exception_init()` 不调用 `CSR_SET(sstatus, SSTATUS_SIE)`
@@ -403,6 +449,7 @@ _start:
 | 版本 | 日期       | 变更内容                               |
 |------|------------|----------------------------------------|
 | 1.0  | 2026-05-05 | 初始版本，完整对比 AArch64 和 RISC-V   |
+| 1.1  | 2026-06-18 | 修正核心约定：中断策略按“EL1 里运行的实体”区分——EL0 任务的内核侧关中断，独立内核线程开中断（可被抢占）。澄清 `task_trampoline`（内核线程，显式开中断）与 `task_trampoline_user`/`arch_fork_resume_user`（EL0 任务，不显式开、留给 eret）的分野；删除后两者中冗余且有害的 `daifclr`。 |
 
 ---
 
