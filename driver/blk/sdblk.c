@@ -201,12 +201,10 @@ static void sd_reset_config(void)
 
 static int sd_wait_cmd_done(void)
 {
-    uint32_t sts;
-    while (1) {
-        sts = sd_rd(R_INT_STS);
+    for (uint32_t i = 0; i < 1000000; i++) {
+        uint32_t sts = sd_rd(R_INT_STS);
         if (sts & INT_ERR) {
-            sd_wr(R_INT_STS, INT_ERR);
-            KLOG_ERROR("[sdblk] cmd error, int_sts=0x%08x\n", sts);
+            sd_wr(R_INT_STS, INT_CLEAR_ALL);
             return SDBLK_ERR;
         }
         if (sts & INT_CMD_CMPL) {
@@ -215,24 +213,29 @@ static int sd_wait_cmd_done(void)
         }
         sd_delay(1);
     }
+    KLOG_ERROR("[sdblk] cmd timeout (no completion)\n");
+    sd_wr(R_INT_STS, INT_CLEAR_ALL);
+    return SDBLK_ERR;
 }
 
 static int sd_wait_xfer_done(void)
 {
-    uint32_t sts;
-    while (1) {
-        sts = sd_rd(R_INT_STS);
+    for (uint32_t i = 0; i < 5000000; i++) {
+        uint32_t sts = sd_rd(R_INT_STS);
         if (sts & INT_XFER_CMPL) {
             sd_wr(R_INT_STS, INT_XFER_CMPL);
             return SDBLK_OK;
         }
         if (sts & INT_ERR) {
-            sd_wr(R_INT_STS, INT_ERR);
+            sd_wr(R_INT_STS, INT_CLEAR_ALL);
             KLOG_ERROR("[sdblk] xfer error, int_sts=0x%08x\n", sts);
             return SDBLK_ERR;
         }
         sd_delay(1);
     }
+    KLOG_ERROR("[sdblk] xfer timeout\n");
+    sd_wr(R_INT_STS, INT_CLEAR_ALL);
+    return SDBLK_ERR;
 }
 
 static int sd_send_cmd(uint32_t cmdw, uint32_t arg)
@@ -383,25 +386,30 @@ int sdblk_init(void)
     }
     KLOG_DEBUG("[sdblk] card detected, initializing...\n");
 
+    /* 复位配置（与 Rust BSP 一致：关电 → 清复位位 → 开 3.3V → 4bit） */
     sd_reset_config();
+
+    /* 切换到 1.8V（U-Boot 已将物理电压轨切到 1.8V） */
     sd_power(HCTL_VOL_1V8);
+
+    /* 时钟 divider=4（与 Rust BSP 一致） */
     sd_set_clock(4);
 
     /* CMD0: GO_IDLE_STATE */
     sd_send_cmd(CMDW_NONE(0), 0);
 
-    /* CMD8: SEND_IF_COND — 旧卡不支持，忽略错误 */
+    /* CMD8: SEND_IF_COND */
     sd_send_cmd(CMDW_R1(8), 0x1AAU);
 
     /* ACMD41 循环：等待卡初始化完成 */
-    for (int retry = 0; retry < 200; retry++) {
-        sd_send_cmd(CMDW_NONE(55), 0);
+    for (int retry = 0; retry < 1000; retry++) {
+        sd_send_cmd(CMDW_R1(55), 0);
         int rc = sd_send_cmd(CMDW_R3(41),
                              0x40000000U | 0x00300000U | (0x1FFU << 15));
         if (rc == SDBLK_OK && (sd_rd(R_RESP0) >> 31)) {
             break;
         }
-        sd_delay(0x100000U);
+        sd_delay(0x1000000U);
     }
 
     /* CMD2: ALL_SEND_CID */
@@ -410,7 +418,7 @@ int sdblk_init(void)
         return SDBLK_ERR;
     }
 
-    /* CMD3: SEND_RELATIVE_ADDR */
+    /* CMD3: SEND_RELATIVE_ADDR（R6 → Response48Busy 与 Rust BSP 一致） */
     if (sd_send_cmd(CMDW_R1B(3), 0) != SDBLK_OK) {
         KLOG_ERROR("[sdblk] CMD3 failed\n");
         return SDBLK_ERR;
@@ -440,7 +448,7 @@ int sdblk_init(void)
     }
 
     /* ACMD6: SET_BUS_WIDTH = 4 bit */
-    sd_send_cmd(CMDW_NONE(55), g_sdblk.rca);
+    sd_send_cmd(CMDW_R1(55), g_sdblk.rca);
     if (sd_send_cmd(CMDW_R1(6), 2) != SDBLK_OK) {
         KLOG_ERROR("[sdblk] ACMD6 (4-bit) failed\n");
         return SDBLK_ERR;

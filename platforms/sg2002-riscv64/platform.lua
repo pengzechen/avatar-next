@@ -68,7 +68,7 @@ platform = {
     },
 
     sdmmc = {
-        driver             = "none",
+        driver             = "sg2002",
         sd_base            = 0x04310000,   -- SDIO0 SDHCI 控制器基址
         top_base           = 0x03000000,   -- TOP 系统控制模块基址
         top_off_pwrsw_ctrl = 0x1F4,        -- sd_pwrsw_ctrl 寄存器偏移

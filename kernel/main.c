@@ -12,7 +12,9 @@
 #include "task/sched.h"
 #include "task/cpu.h"
 #include "pmm.h"
+#if !DRIVER_SDBLK_SG2002
 #include "../driver/blk/ramblk.h"
+#endif
 #include "../fs/lwext4_port/fs_init.h"
 #include "loader/elf_loader.h"
 #include "timer/timer.h"
@@ -119,7 +121,9 @@ void kernel_main(void)
     KLOG_INFO("Initializing exception handler...\n");
     exception_init();
 #endif
+#if !DRIVER_SDBLK_SG2002
     ramblk_init();
+#endif
     KLOG_INFO("\n");
     KLOG_INFO("Initializing filesystem...\n");
     fs_init();
