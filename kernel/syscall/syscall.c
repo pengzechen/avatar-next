@@ -24,6 +24,7 @@
 #endif
 
 #include "syscall/fs/fd_pool.h"
+#include "syscall/fs/path.h"
 
 /* ─────────────────────────────────────────────────────────────────
  * Unblock parent waiting for a specific child (or any child)

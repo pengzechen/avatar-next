@@ -189,7 +189,8 @@ void fill_stat_from_ext4(struct kernel_stat *st, const char *path)
         st->st_size   = (int64_t)ext4_fsize(&f);
         st->st_blocks = (st->st_size + 511) / 512;
         uint32_t ino  = 0;
-        ext4_raw_inode_fill(path, &ino, NULL);
+        struct ext4_inode raw;
+        ext4_raw_inode_fill(path, &ino, &raw);
         st->st_ino  = ino;
         ext4_fclose(&f);
         st->st_mode = 0100755;

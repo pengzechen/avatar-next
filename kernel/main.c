@@ -39,6 +39,7 @@
 #endif
 
 extern void run_vmm_test(void);  /* tests/vmm_test.c */
+extern void kmem_test(void);      /* kernel/mm/aarch64/vmm.c */
 
 
 /*

@@ -20,7 +20,7 @@ typedef struct strprops  {
     bool alternate;
 } strprops_t __attribute__((aligned(8)));
 
-static char digits[16] = "0123456789abcdef";
+static char digits[16] = {'0','1','2','3','4','5','6','7','8','9','a','b','c','d','e','f'};
 
 static void addchar(pstream_t *p, char c)
 {

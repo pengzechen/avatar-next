@@ -19,6 +19,7 @@
 #include "assert.h"
 #include "task/preempt.h"
 #include "timer/timer.h"
+#include "string.h"
 
 static inline uint64_t task_get_ns(void)
 {

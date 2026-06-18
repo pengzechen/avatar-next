@@ -20,9 +20,12 @@ typedef long long   int64_t;
 
 /* ===== 布尔类型 ===== */
 
+/* C23 makes bool/true/false keywords; only typedef for older standards */
+#if __STDC_VERSION__ < 202311L
 typedef _Bool bool;
 #define true  1
 #define false 0
+#endif
 
 /* ===== 指针相关类型 ===== */
 
