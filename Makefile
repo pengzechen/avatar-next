@@ -511,7 +511,7 @@ ifeq ($(ETH),cvitek)
         $(error ETH=cvitek 目前仅支持 ARCH=riscv64)
     endif
     CFLAGS          += -DDRIVER_ETH_CVITEK=1
-    DRIVER_ETH_OBJS := $(BUILD_DIR)/rust_glue.o $(BUILD_DIR)/libavatar_eth.a
+    DRIVER_ETH_OBJS := $(BUILD_DIR)/drv_eth/cvitek_eth_bridge.o $(BUILD_DIR)/rust_glue.o $(BUILD_DIR)/libavatar_eth.a
     _RUST_TARGET    := riscv64gc-unknown-none-elf
     _RUST_DIR       := rust
 else ifeq ($(ETH),virtio)
@@ -1046,7 +1046,7 @@ $(BUILD_DIR)/rust_glue.o: $(LIB_DIR)/rust_glue.c | $(BUILD_DIR)
 
 # Rust 静态库（仅 ETH=cvitek 时构建）
 $(BUILD_DIR)/libavatar_eth.a: | $(BUILD_DIR)
-	cd $(_RUST_DIR) && cargo build --release --target $(_RUST_TARGET)
+	cd $(_RUST_DIR) && MAKEFLAGS= cargo build --release --target $(_RUST_TARGET)
 	cp $(_RUST_DIR)/target/$(_RUST_TARGET)/release/libavatar_eth.a $@
 
 $(BUILD_DIR)/kernel_mm_mmu.o: $(VM_S_SRC) | $(BUILD_DIR)

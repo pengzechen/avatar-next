@@ -99,6 +99,7 @@ extern uint32_t klog_cpu_id(void);
 #define KLOG_COLOR_GREEN  "\x1b[32m"
 #define KLOG_COLOR_YELLOW "\x1b[33m"
 #define KLOG_COLOR_BLUE   "\x1b[34m"
+#define KLOG_COLOR_GRAY   "\x1b[90m"
 #define KLOG_COLOR_RESET  "\x1b[0m"
 
 /* 不同级别的日志宏 */
@@ -148,7 +149,8 @@ extern uint32_t klog_cpu_id(void);
 #define KLOG_TRACE(fmt, ...) \
     do { \
         if (g_log_level >= LOG_LEVEL_TRACE) { \
-            kprintf("[TRACE][C%u] " "%s:%d: " fmt "\n", \
+            kprintf(KLOG_COLOR_GRAY "[TRACE][C%u] " "%s:%d: " fmt \
+                   KLOG_COLOR_RESET "\n", \
                    klog_cpu_id(), __FILE__, __LINE__, ##__VA_ARGS__); \
         } \
     } while (0)
@@ -168,7 +170,8 @@ extern uint32_t klog_cpu_id(void);
 #define KLOG_MODULE_TRACE(module, fmt, ...) \
     do { \
         if ((g_log_level >= LOG_LEVEL_TRACE) && log_is_module_enabled(module)) { \
-            kprintf("[TRACE][C%u] [MOD] " "%s:%d: " fmt "\n", \
+            kprintf(KLOG_COLOR_GRAY "[TRACE][C%u] [MOD] " "%s:%d: " fmt \
+                   KLOG_COLOR_RESET "\n", \
                    klog_cpu_id(), __FILE__, __LINE__, ##__VA_ARGS__); \
         } \
     } while (0)

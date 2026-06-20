@@ -75,7 +75,21 @@ impl log::Log for KernelLogger {
 
     fn log(&self, record: &log::Record) {
         use core::fmt::Write;
-        let _ = write!(KernelWriter, "[{}] {}\n", record.level(), record.args());
+
+        let (color, tag) = match record.level() {
+            log::Level::Error => ("\x1b[31m", "ERROR"),
+            log::Level::Warn  => ("\x1b[33m", "WARN"),
+            log::Level::Info  => ("\x1b[32m", "INFO"),
+            log::Level::Debug => ("\x1b[34m", "DEBUG"),
+            log::Level::Trace => ("\x1b[90m", "TRACE"),
+        };
+        let file = record.file().unwrap_or("?");
+        let line = record.line().unwrap_or(0);
+        let _ = write!(
+            KernelWriter,
+            "{}[{}] {}:{}: {}\x1b[0m\n",
+            color, tag, file, line, record.args()
+        );
     }
 
     fn flush(&self) {}
