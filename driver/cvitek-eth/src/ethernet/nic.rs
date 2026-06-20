@@ -524,10 +524,10 @@ impl CvitekEthNic {
         self.tx_count = self.tx_count.wrapping_add(1);
         if log::log_enabled!(log::Level::Trace) {
             let n = packet.len().min(20);
-            log::trace!(
-                "cvitek-eth: TX#{} idx={} len={} hdr={:02x?}",
-                self.tx_count, idx, len, &packet[..n]
-            );
+            // log::trace!(
+            //     "cvitek-eth: TX#{} idx={} len={} hdr={:02x?}",
+            //     self.tx_count, idx, len, &packet[..n]
+            // );
         }
 
         self.tx_head = (self.tx_head + 1) % TX_RING_SIZE;
@@ -580,11 +580,11 @@ impl CvitekEthNic {
 
         if log::log_enabled!(log::Level::Trace) {
             let n = frame_len.min(20);
-            log::trace!(
-                "cvitek-eth: RX#{} idx={} len={} hdr={:02x?}",
-                self.rx_count, idx, frame_len,
-                &self.rx_bufs[idx].0[..n]
-            );
+            // log::trace!(
+            //     "cvitek-eth: RX#{} idx={} len={} hdr={:02x?}",
+            //     self.rx_count, idx, frame_len,
+            //     &self.rx_bufs[idx].0[..n]
+            // );
         }
 
         Ok(RxToken { nic: self, slot: idx, len: frame_len })

@@ -14,5 +14,8 @@ int usb_set_interface(uint32_t dev, uint8_t interface, uint8_t alt,
                       uint32_t ep0_mps);
 int usb_isoch_in_packet(uint32_t dev, uint8_t ep, uint16_t mps_raw,
                         uint8_t *buf, uint32_t cap, uint32_t *out_actual);
+int usb_isoch_channel_setup(uint32_t dev, uint8_t ep, uint16_t mps_raw);
+int usb_isoch_in_packet_fast(uint32_t dev, uint8_t ep, uint16_t mps_raw,
+                             uint8_t *buf, uint32_t cap, uint32_t *out_actual);
 
 #endif /* __USB_CORE_INTERNAL_H__ */

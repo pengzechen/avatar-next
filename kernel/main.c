@@ -45,6 +45,49 @@
 extern void run_vmm_test(void);  /* tests/vmm_test.c */
 extern void kmem_test(void);      /* kernel/mm/aarch64/vmm.c */
 
+#if DRIVER_USB_DWC2
+#include "usb/uvc_video.h"
+#include "usb/uvc.h"
+#include "usb/usb.h"
+
+#define UVC_BENCH_BUF_SIZE (512U * 1024U)
+
+static void uvc_bench_task(void *arg)
+{
+    (void)arg;
+    KLOG_INFO("[uvc-bench] starting capture benchmark...\n");
+
+    static uint8_t bench_buf[512 * 1024] __attribute__((aligned(256)));
+    uint32_t ok = 0, fail = 0;
+    uint64_t t0 = timer_get_uptime_ms();
+
+    for (int i = 0; i < 20; i++) {
+        uint64_t ts = timer_get_uptime_ms();
+        int n = uvc_video_read_frame(bench_buf, sizeof(bench_buf));
+        uint64_t dt = timer_get_uptime_ms() - ts;
+        if (n > 0) {
+            ok++;
+            KLOG_INFO("[uvc-bench] frame %u: %d bytes, %llu ms\n",
+                      ok, n, (unsigned long long)dt);
+        } else {
+            fail++;
+            KLOG_WARN("[uvc-bench] frame %u: FAILED rc=%d in %llu ms\n",
+                      ok + fail, n, (unsigned long long)dt);
+        }
+    }
+
+    uint64_t total_ms = timer_get_uptime_ms() - t0;
+    KLOG_INFO("[uvc-bench] done: %u ok, %u fail, %llu ms total",
+              ok, fail, (unsigned long long)total_ms);
+    if (ok > 0 && total_ms > 0)
+        KLOG_INFO(", %llu.%llu fps\n",
+                  (unsigned long long)(ok * 1000 / total_ms),
+                  (unsigned long long)((ok * 10000 / total_ms) % 10));
+    KLOG_INFO("\n");
+    task_exit();
+}
+#endif
+
 
 /*
  * demo_load_busybox - 从文件系统加载并执行 busybox
@@ -237,6 +280,14 @@ void kernel_main(void)
         KLOG_INFO("network task created: id=%u\n", eth_task->id);
     else
         KLOG_ERROR("Failed to create network task!\n");
+#endif
+
+#if DRIVER_USB_DWC2
+    {
+        task_t *bench = task_create("uvc-bench", uvc_bench_task, NULL, 10);
+        if (bench)
+            KLOG_INFO("uvc bench task created: id=%u\n", bench->id);
+    }
 #endif
 
     /* SMP 检查完成，现在才启动 busybox 交互 shell */

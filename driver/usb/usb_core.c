@@ -735,6 +735,78 @@ int usb_isoch_in_packet(uint32_t dev, uint8_t ep, uint16_t mps_raw,
     return 0;
 }
 
+int usb_isoch_channel_setup(uint32_t dev, uint8_t ep, uint16_t mps_raw)
+{
+    (void)dev; (void)ep;
+    uint32_t mps = mps_raw & 0x7ffu;
+    uint32_t mult = ((mps_raw >> 11) & 0x3u) + 1u;
+    if (mps == 0 || mult > 3)
+        return -1;
+
+    if (ch_wait_disabled(CH_BULK) != 0)
+        return -1;
+    ch_halt(CH_BULK);
+
+    _hc_w32(CH_BULK, HC_OFF_SPLT, 0);
+    _hc_w32(CH_BULK, HC_OFF_INTMSK, 0);
+    (void)dwc2_usb_take_hcint(CH_BULK);
+    return 0;
+}
+
+int usb_isoch_in_packet_fast(uint32_t dev, uint8_t ep, uint16_t mps_raw,
+                             uint8_t *buf, uint32_t cap, uint32_t *out_actual)
+{
+    *out_actual = 0;
+
+    uint32_t mps = mps_raw & 0x7ffu;
+    uint32_t mult = ((mps_raw >> 11) & 0x3u) + 1u;
+    uint32_t xfersize = mps * mult;
+    if (xfersize == 0 || xfersize > cap)
+        return -1;
+
+    uint32_t pid = PID_DATA0;
+    if (mult == 2)      pid = PID_DATA1;
+    else if (mult == 3) pid = PID_DATA2;
+
+    uint32_t hc = hcchar_isoch(dev, ep, mps, mult, true);
+    uint32_t tsiz = hctsiz(pid, mult, xfersize);
+    uint32_t dmap = dma_phys(buf);
+
+    _hc_w32(CH_BULK, HC_OFF_INT, HCINT_ALL_W1C);
+    _hc_w32(CH_BULK, HC_OFF_TSIZ, tsiz);
+    usb_bus_fence_before_dma();
+    _hc_w32(CH_BULK, HC_OFF_DMA, dmap);
+    usb_bus_fence_before_dma();
+    _hc_w32(CH_BULK, HC_OFF_CHAR, hc | next_uframe_oddfrm() | HCCHAR_CHENA);
+
+    uint32_t hi = 0;
+    for (uint32_t w = 0; w < 4000000; w++) {
+        hi = _hc_r32(CH_BULK, HC_OFF_INT);
+        if (hi & HCINT_CHHLTD)
+            break;
+    }
+    _hc_w32(CH_BULK, HC_OFF_INT, hi);
+
+    if (hi & HCINT_AHBERR)
+        return -1;
+    if (!(hi & HCINT_CHHLTD))
+        return 0;
+    if (hi & (HCINT_FRMOVRN | HCINT_XACTERR | HCINT_BBLERR |
+              HCINT_DATATGLERR | HCINT_NYET | HCINT_NAK))
+        return 0;
+    if (!(hi & HCINT_XFERCOMPL))
+        return 0;
+
+    uint32_t rem = _hc_r32(CH_BULK, HC_OFF_TSIZ) & HCTSIZ_XFERSIZE_MASK;
+    uint32_t actual = xfersize > rem ? xfersize - rem : 0;
+    if (actual > cap)
+        actual = cap;
+    if (actual > 0)
+        dcache_invalidate_after_dma(buf, actual);
+    *out_actual = actual;
+    return 0;
+}
+
 /* ==========================================================================
  * 10. 公开：根端口枚举（对齐 enumerate.rs + topology.rs）
  * ========================================================================== */

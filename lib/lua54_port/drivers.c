@@ -410,7 +410,7 @@ int lua_dwc2_usb_dump_first_uvc_frame_base64(void)
               (unsigned long)frame.length, (unsigned long)frame.transfers,
               (unsigned long)frame.data_packets, frame.fid);
     kprintf("-----BEGIN UVC JPEG BASE64-----\n");
-    dump_base64_lines(frame.data, frame.length);
+    //dump_base64_lines(frame.data, frame.length);
     kprintf("-----END UVC JPEG BASE64-----\n");
     KLOG_INFO("[USB] UVC JPEG base64 dump end\n");
     return 0;

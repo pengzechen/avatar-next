@@ -12,6 +12,10 @@
 #include "netif/ethernet.h"
 #include "lwip_port/netif_avatar.h"
 
+#if DRIVER_USB_DWC2
+#include "net/webcam_httpd.h"
+#endif
+
 static struct netif g_lwip_netif;
 static int g_net_ready;
 
@@ -40,6 +44,9 @@ void net_init(void)
 
     KLOG_INFO("[net] IPv4 addr=192.168.100.2 mask=255.255.255.0 gw=192.168.100.1\n");
     tcp_echo_init();
+#if DRIVER_USB_DWC2
+    webcam_httpd_init();
+#endif
 }
 
 void net_poll_task(void *arg)

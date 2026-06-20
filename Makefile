@@ -618,6 +618,7 @@ LWIP_PORT_DIR := $(KERNEL_DIR)/net/lwip_port
 NET_OBJS := $(BUILD_DIR)/kernel_net_netdev.o \
             $(BUILD_DIR)/kernel_net_net.o \
             $(BUILD_DIR)/kernel_net_tcp_echo.o \
+            $(BUILD_DIR)/kernel_net_webcam_httpd.o \
             $(BUILD_DIR)/kernel_net_lwip_port_netif_avatar.o \
             $(BUILD_DIR)/kernel_net_lwip_port_sys_arch.o \
             $(BUILD_DIR)/kernel_net_lwip_port_libc_compat.o

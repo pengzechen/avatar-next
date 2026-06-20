@@ -2,6 +2,7 @@
 #include "usb/usb_core_internal.h"
 #include "klog.h"
 #include "string.h"
+#include "timer/timer.h"
 
 #define USB_CLASS_VIDEO                    0x0e
 #define USB_SUBCLASS_VIDEO_CONTROL         0x01
@@ -69,9 +70,9 @@ static void put_le32(uint8_t *p, uint32_t v)
 static int uvc_frame_rank(const uvc_frame_pick_t *p)
 {
     int area = (int)p->width * (int)p->height;
-    if (p->width == 1280 && p->height == 720)
-        return 1000000;
     if (p->width == 640 && p->height == 480)
+        return 1000000;
+    if (p->width == 1280 && p->height == 720)
         return 900000;
     if (p->width == 800 && p->height == 600)
         return 800000;
@@ -363,9 +364,12 @@ static void build_uvc_probe_commit_payload(const usb_device_info_t *dev,
     if (height < 480)
         height = 480;
     uint32_t frame_size = dev->uvc_is_mjpeg ? width * height : width * height * 2;
-    uint32_t payload_size = uvc_mps_total(dev->uvc_mps_raw);
     put_le32(out + 18, frame_size);
-    put_le32(out + 22, payload_size);
+    /* Don't constrain dwMaxPayloadTransferSize in PROBE — let the device
+       pick its preferred JPEG quality.  Actual USB bandwidth is governed
+       by the alt setting selected later; the camera adapts its packet
+       pacing to the alt, regardless of what PROBE promised. */
+    put_le32(out + 22, frame_size);
 }
 
 static void dump_uvc_probe(const char *prefix, const uint8_t *p)
@@ -397,6 +401,9 @@ static void uvc_reselect_isoch_alt_for_payload(usb_device_info_t *dev,
 
     for (uint8_t i = 0; i < dev->uvc_isoch_alts_count; i++) {
         uint16_t mps_raw = dev->uvc_isoch_mps_raw[i];
+        uint32_t mult = ((mps_raw >> 11) & 0x3u) + 1u;
+        if (mult > 1)
+            continue;
         uint32_t total = uvc_mps_total(mps_raw);
         if (total >= payload && total < fit_total) {
             have_fit = true;
@@ -477,14 +484,6 @@ int uvc_start_video_stream(uint32_t dev_addr, uint32_t ep0_mps,
     uint32_t negotiated_frame = le32_load(probe + 18);
     uvc_reselect_isoch_alt_for_payload(dev, negotiated_payload);
 
-    uint32_t alt_payload = uvc_mps_total(dev->uvc_mps_raw);
-    if (alt_payload > 0 && negotiated_payload > alt_payload) {
-        KLOG_INFO("[USB] UVC clamp payload %lu -> %lu for selected alt bandwidth\n",
-                  (unsigned long)negotiated_payload, (unsigned long)alt_payload);
-        negotiated_payload = alt_payload;
-        put_le32(probe + 22, alt_payload);
-    }
-
     make_setup_uvc_set_cur_vs(dev->uvc_vs_interface, UVC_VS_COMMIT_CONTROL,
                               UVC_PROBE_COMMIT_LEN, setup);
     rc = usb_ep0_control_write(dev_addr, setup, ep0_mps, probe,
@@ -514,9 +513,11 @@ int uvc_start_video_stream(uint32_t dev_addr, uint32_t ep0_mps,
 int uvc_restart_video_stream(uint32_t dev_addr, uint32_t ep0_mps,
                              const usb_device_info_t *dev)
 {
-    KLOG_INFO("[USB] UVC stream restart: if=%u alt=0 -> alt=%u\n",
+    uint64_t t0 = timer_get_uptime_ms();
+    KLOG_DEBUG("[USB] UVC stream restart: if=%u alt=0 -> alt=%u\n",
               dev->uvc_vs_interface, dev->uvc_alt_setting);
     int rc = usb_set_interface(dev_addr, dev->uvc_vs_interface, 0, ep0_mps);
+    uint64_t t1 = timer_get_uptime_ms();
     if (rc != 0) {
         KLOG_WARN("[USB] UVC stream restart: SET_INTERFACE alt=0 failed: %d\n", rc);
         return rc;
@@ -524,12 +525,17 @@ int uvc_restart_video_stream(uint32_t dev_addr, uint32_t ep0_mps,
 
     rc = usb_set_interface(dev_addr, dev->uvc_vs_interface,
                            dev->uvc_alt_setting, ep0_mps);
+    uint64_t t2 = timer_get_uptime_ms();
     if (rc != 0) {
         KLOG_WARN("[USB] UVC stream restart: SET_INTERFACE alt=%u failed: %d\n",
                   dev->uvc_alt_setting, rc);
         return rc;
     }
 
+    KLOG_INFO("[USB] UVC restart timing: alt0=%llums alt%u=%llums\n",
+              (unsigned long long)(t1 - t0),
+              dev->uvc_alt_setting,
+              (unsigned long long)(t2 - t1));
     g_uvc_last_eof_fid = 0xff;
     return 0;
 }
@@ -590,20 +596,8 @@ static int uvc_process_payload_packet(const uint8_t *pkt, uint32_t len,
     bool eof = (info & 0x02) != 0;
 
     if (info & 0x40) {
-        if (payload_len == 0) {
-            KLOG_DEBUG("[USB] UVC header-only ERR packet ignored: info=0x%02x len=%lu\n",
-                       info, (unsigned long)len);
+        if (payload_len == 0)
             return 0;
-        }
-
-        KLOG_WARN("[USB] UVC packet ERR bit set: info=0x%02x len=%lu payload=%lu\n",
-                  info, (unsigned long)len, (unsigned long)payload_len);
-        *jpeg_len = 0;
-        state->capturing = false;
-        state->saw_data = false;
-        state->have_last_fid = true;
-        state->last_fid = fid;
-        return 0;
     }
 
     if (!state->capturing) {
@@ -688,7 +682,7 @@ int uvc_capture_one_frame(uint32_t dev_addr, const usb_device_info_t *dev,
     uint32_t data_packets = 0;
     uint8_t done_fid = 0xff;
 
-    KLOG_INFO("[USB] UVC capture: dev=%lu ep=%u mps_raw=0x%04x total=%lu mult=%lu cap=%lu\n",
+    KLOG_DEBUG("[USB] UVC capture: dev=%lu ep=%u mps_raw=0x%04x total=%lu mult=%lu cap=%lu\n",
               (unsigned long)dev_addr, dev->uvc_ep_num, dev->uvc_mps_raw,
               (unsigned long)total, (unsigned long)mult,
               (unsigned long)USB_UVC_FRAME_BUFFER_SIZE);
@@ -734,7 +728,7 @@ int uvc_capture_one_frame(uint32_t dev_addr, const usb_device_info_t *dev,
             frame->data_packets = data_packets;
             frame->fid = done_fid;
             frame->is_mjpeg = true;
-            KLOG_INFO("[USB] UVC frame captured: len=%lu transfers=%lu data_packets=%lu fid=%u soi=%02x%02x eoi=%02x%02x\n",
+            KLOG_DEBUG("[USB] UVC frame captured: len=%lu transfers=%lu data_packets=%lu fid=%u soi=%02x%02x eoi=%02x%02x\n",
                       (unsigned long)jpeg_len, (unsigned long)transfers,
                       (unsigned long)data_packets, done_fid,
                       jpeg_len >= 2 ? g_uvc_frame_buf[0] : 0,

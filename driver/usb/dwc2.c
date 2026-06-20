@@ -860,23 +860,19 @@ int dwc2_usb_init(void)
     KLOG_INFO("[DWC2]   RX FIFO flush OK\n");
     KLOG_INFO("[DWC2] [step 7/9] FIFO partition + flush OK\n");
 
-    /* ── 8. 中断使能 ──────────────────────────────────── */
+    /* ── 8. 中断配置 ───────────────────────────────────── */
     /*
-     * HAINTMSK: only CH0 (control) generates PLIC interrupts.
-     * CH1 (isoch) is polled directly — in buffer DMA mode the hardware
-     * sets CHHLTD regardless of HCINTMSK, so no mask is needed for polling.
+     * All host channels use polling — no HCINT IRQs.
+     * In buffer DMA mode the hardware sets CHHLTD in HCINT regardless
+     * of HCINTMSK, so ch_wait_halted() can poll the register directly.
+     * Enabling CH0 IRQ caused a race: the IRQ handler would read+clear
+     * HCINT (including XFERCOMPL) before ch_wait_halted() could see it.
      */
-    dwc2_write32(DWC2_OFF_HAINTMSK, (1u << 0));
-    uint32_t hcintmsk = HCINT_XFERCOMPL | HCINT_CHHLTD | HCINT_AHBERR |
-                        HCINT_STALL | HCINT_NAK | HCINT_XACTERR |
-                        HCINT_BBLERR | HCINT_FRMOVRN | HCINT_DATATGLERR;
-    hc_write32(0, HC_OFF_INTMSK, hcintmsk);
+    dwc2_write32(DWC2_OFF_HAINTMSK, 0);
+    hc_write32(0, HC_OFF_INTMSK, 0);
     hc_write32(1, HC_OFF_INTMSK, 0);
-    uint32_t gintmsk = dwc2_read32(DWC2_OFF_GINTMSK);
-    gintmsk |= GINTSTS_HCHINT;
-    dwc2_write32(DWC2_OFF_GINTMSK, gintmsk);
     dwc2_write32(DWC2_OFF_GINTSTS, 0xFFFFFFFF);
-    KLOG_INFO("[DWC2] [step 8/9] Channel ints enabled (HC0 IRQ, HC1 polling)  HAINTMSK=0x%04x  HC0MSK=0x%08x HC1MSK=0x%08x GAHBCFG=0x%08x GINTSTS=0x%08x GINTMSK=0x%08x\n",
+    KLOG_INFO("[DWC2] [step 8/9] All channels polling (no IRQ)  HAINTMSK=0x%04x  HC0MSK=0x%08x HC1MSK=0x%08x GAHBCFG=0x%08x GINTSTS=0x%08x GINTMSK=0x%08x\n",
               dwc2_read32(DWC2_OFF_HAINTMSK) & 0xffff,
               hc_read32(0, HC_OFF_INTMSK),
               hc_read32(1, HC_OFF_INTMSK),
