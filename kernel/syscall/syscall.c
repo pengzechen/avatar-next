@@ -115,6 +115,20 @@ static void x86_translate_syscall(uint64_t *nr, uint64_t regs[9])
     case 40:  *nr = LINUX_SYS_SENDFILE;    break; /* sendfile / sendfile64 (x86_64) */
     case 187: *nr = LINUX_SYS_SENDFILE;    break; /* sendfile64 (x86_64 compat) */
     case 41:  *nr = LINUX_SYS_SOCKET;      break; /* socket */
+    case 42:  *nr = LINUX_SYS_CONNECT;     break; /* connect */
+    case 43:  *nr = LINUX_SYS_ACCEPT;      break; /* accept */
+    case 44:  *nr = LINUX_SYS_SENDTO;      break; /* sendto */
+    case 45:  *nr = LINUX_SYS_RECVFROM;    break; /* recvfrom */
+    case 46:  *nr = LINUX_SYS_SENDMSG;     break; /* sendmsg */
+    case 47:  *nr = LINUX_SYS_RECVMSG;     break; /* recvmsg */
+    case 48:  *nr = LINUX_SYS_SHUTDOWN;    break; /* shutdown */
+    case 49:  *nr = LINUX_SYS_BIND;        break; /* bind */
+    case 50:  *nr = LINUX_SYS_LISTEN;      break; /* listen */
+    case 51:  *nr = LINUX_SYS_GETSOCKNAME; break; /* getsockname */
+    case 52:  *nr = LINUX_SYS_GETPEERNAME; break; /* getpeername */
+    case 53:  *nr = LINUX_SYS_SOCKETPAIR;  break; /* socketpair */
+    case 54:  *nr = LINUX_SYS_SETSOCKOPT;  break; /* setsockopt */
+    case 55:  *nr = LINUX_SYS_GETSOCKOPT;  break; /* getsockopt */
     case 56:  /* clone: x86_64 ABI 顺序 flags,stack,ptid,ctid,tls
                         内部 ABI 顺序 flags,stack,ptid,tls,ctid
                         需要交换 arg3↔arg4 */
@@ -183,6 +197,7 @@ static void x86_translate_syscall(uint64_t *nr, uint64_t regs[9])
     case 257: *nr = LINUX_SYS_OPENAT;      break; /* openat */
     case 258: *nr = 0x7FFFFFFEULL; break;      /* mkdirat → stub 0 */
     case 262: *nr = LINUX_SYS_NEWFSTATAT;  break; /* newfstatat */
+    case 260: *nr = 0x7FFFFFFEULL; break;      /* fchownat → stub 0 */
     case 263: *nr = LINUX_SYS_UNLINKAT;    break; /* unlinkat */
     case 264: *nr = LINUX_SYS_RENAMEAT;    break; /* renameat */
     case 267: *nr = LINUX_SYS_READLINKAT;  break; /* readlinkat */
@@ -193,6 +208,7 @@ static void x86_translate_syscall(uint64_t *nr, uint64_t regs[9])
     case 273: *nr = LINUX_SYS_SET_ROBUST_LIST; break; /* set_robust_list */
     case 292: *nr = LINUX_SYS_DUP3;        break; /* dup3 */
     case 293: *nr = LINUX_SYS_PIPE2;       break; /* pipe2 */
+    case 288: *nr = LINUX_SYS_ACCEPT4;    break; /* accept4 */
     case 302: *nr = LINUX_SYS_PRLIMIT64;   break; /* prlimit64 */
     case 318: *nr = LINUX_SYS_GETRANDOM;   break; /* getrandom */
     case 334: *nr = X86_SYS_RSEQ;          break; /* rseq */
@@ -237,6 +253,11 @@ void syscall_handler(trap_frame_t *frame)
     /* 开始 syscall stime 计时 */
     if (current && current->is_user_process)
         current->sc_entry_ns = kernel_get_ns();
+
+    /* Dropbear 调试：pid>=7 所有 syscall 都打 */
+    // if (current && current->id >= 7)
+    //     KLOG_INFO("[dbg] pid=%u sc=%llu a0=0x%llx a1=0x%llx a2=0x%llx\n",
+    //               current->id, syscall_num, regs[0], regs[1], regs[2]);
 
     switch (syscall_num) {
 
@@ -410,11 +431,11 @@ void syscall_handler(trap_frame_t *frame)
         break;
 
     case LINUX_SYS_FCNTL:
-        fcntl_handler(regs);
+        fcntl_handler(regs, current);
         break;
 
     case LINUX_SYS_PIPE2:
-        pipe2_handler(regs);
+        pipe2_handler(regs, current);
         break;
 
     case LINUX_SYS_GETDENTS64:
@@ -563,6 +584,57 @@ void syscall_handler(trap_frame_t *frame)
         break;
 
     case LINUX_SYS_SOCKET:
+        socket_handler(regs, current);
+        break;
+
+    case LINUX_SYS_BIND:
+        bind_handler(regs, current);
+        break;
+
+    case LINUX_SYS_LISTEN:
+        listen_handler(regs, current);
+        break;
+
+    case LINUX_SYS_ACCEPT:
+    case LINUX_SYS_ACCEPT4:
+        accept_handler(regs, current);
+        break;
+
+    case LINUX_SYS_CONNECT:
+        connect_handler(regs, current);
+        break;
+
+    case LINUX_SYS_GETSOCKNAME:
+        getsockname_handler(regs, current);
+        break;
+
+    case LINUX_SYS_GETPEERNAME:
+        getpeername_handler(regs, current);
+        break;
+
+    case LINUX_SYS_SENDTO:
+        sendto_handler(regs, current);
+        break;
+
+    case LINUX_SYS_RECVFROM:
+        recvfrom_handler(regs, current);
+        break;
+
+    case LINUX_SYS_SETSOCKOPT:
+        setsockopt_handler(regs, current);
+        break;
+
+    case LINUX_SYS_GETSOCKOPT:
+        getsockopt_handler(regs, current);
+        break;
+
+    case LINUX_SYS_SHUTDOWN:
+        shutdown_handler(regs, current);
+        break;
+
+    case LINUX_SYS_SENDMSG:
+    case LINUX_SYS_RECVMSG:
+    case LINUX_SYS_SOCKETPAIR:
         regs[0] = (uint64_t)(int64_t)-ENOSYS;
         break;
 
@@ -591,6 +663,17 @@ void syscall_handler(trap_frame_t *frame)
         regs[0] = 0;
         break;
 
+    case 37:    /* riscv64/aarch64 __NR_linkat */
+    case 265:   /* x86_64 __NR_linkat */
+        regs[0] = (uint64_t)(int64_t)-EPERM;
+        break;
+
+    case 53:    /* riscv64/aarch64 __NR_fchmodat */
+    case 54:    /* riscv64/aarch64 __NR_fchownat */
+    case 52:    /* riscv64/aarch64 __NR_fchown */
+        regs[0] = 0;
+        break;
+
     default:
         KLOG_ERROR("[syscall] Unknown syscall: %llu\n", syscall_num);
         regs[0] = (uint64_t)(int64_t)-ENOSYS;
@@ -602,6 +685,13 @@ void syscall_handler(trap_frame_t *frame)
         current->stime_ns += kernel_get_ns() - current->sc_entry_ns;
         current->sc_entry_ns = 0;
     }
+
+    /* Dropbear 调试：打印非热路径结果和失败 */
+    /* Dropbear 调试：pid>=7 所有 syscall 结果 */
+    // if (current && current->id >= 7) {
+    //     int64_t sret = (int64_t)regs[0];
+    //     KLOG_INFO("[dbg] pid=%u sc=%llu => %lld\n", current->id, syscall_num, sret);
+    // }
 
     syscall_abi_set_ret(frame, regs[0]);
 

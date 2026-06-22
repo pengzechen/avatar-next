@@ -6,6 +6,10 @@
  *       负 timeout = 阻塞等待；timeout==0 = 立即返回。
  */
 #include "syscall/syscall_internal.h"
+#include "syscall/fs/fd_pool.h"
+#include "syscall/fs/pipe.h"
+#include "syscall/net/ksocket.h"
+#include "syscall/fs/pty.h"
 #include "task/task.h"
 #include "task/sched.h"
 
@@ -42,10 +46,31 @@ poll_handler(uint64_t regs[6], uint64_t syscall_num, task_t *current)
                 pfds[pi].revents = 0;
                 short ev = pfds[pi].events;
                 if (pfds[pi].fd < 0) continue;
-                if (pfds[pi].fd == 0) {
-                    if (has_stdin) pfds[pi].revents = ev & 0x01; /* POLLIN */
-                } else {
-                    /* 其他 fd：读写始终就绪 */
+
+                fd_obj_t *obj = task_get_fd(current, pfds[pi].fd);
+                if (obj && obj->type == FDT_PIPE) {
+                    int pool_idx = current->fd_table[pfds[pi].fd];
+                    if ((ev & 0x01) && pipe_poll_readable(pool_idx))
+                        pfds[pi].revents |= 0x01;
+                    if ((ev & 0x04) && pipe_poll_writable(pool_idx))
+                        pfds[pi].revents |= 0x04;
+                } else if (obj && obj->type == FDT_SOCKET) {
+                    if ((ev & 0x01) && ksock_poll_readable(obj->sock.sock_idx))
+                        pfds[pi].revents |= 0x01;
+                    if ((ev & 0x04) && ksock_poll_writable(obj->sock.sock_idx))
+                        pfds[pi].revents |= 0x04;
+                } else if (obj && obj->type == FDT_PTY) {
+                    if (ev & 0x01) {
+                        bool rd = obj->pty.is_master ?
+                            pty_poll_readable_master(obj->pty.pty_idx) :
+                            pty_poll_readable_slave(obj->pty.pty_idx);
+                        if (rd) pfds[pi].revents |= 0x01;
+                    }
+                    if ((ev & 0x04) && pty_poll_writable(obj->pty.pty_idx))
+                        pfds[pi].revents |= 0x04;
+                } else if (pfds[pi].fd == 0) {
+                    if (has_stdin) pfds[pi].revents = ev & 0x01;
+                } else if (obj) {
                     pfds[pi].revents = ev & 0x05; /* POLLIN|POLLOUT */
                 }
                 if (pfds[pi].revents) ready++;

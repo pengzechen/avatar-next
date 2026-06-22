@@ -10,6 +10,9 @@
 #include "task/task.h"
 #include "task/sched.h"
 #include "pseudofs.h"
+#include "syscall/fs/pipe.h"
+#include "syscall/net/ksocket.h"
+#include "syscall/fs/pty.h"
 #include "uart/uart.h"
 #include <ext4.h>
 #include <ext4_errno.h>
@@ -23,7 +26,25 @@ void read_handler(uint64_t regs[6], task_t *current)
 
     fd_obj_t *obj = task_get_fd(current, fd);
     if (obj) {
-        if (obj->type == FDT_PSEUDO) {
+        if (obj->type == FDT_PIPE) {
+            int pool_idx = current->fd_table[fd];
+            int rc = pipe_read(pool_idx, buf, (size_t)count);
+            regs[0] = rc >= 0 ? (uint64_t)rc : (uint64_t)(int64_t)rc;
+            return;
+        } else if (obj->type == FDT_SOCKET) {
+            int sf = (obj->flags & 04000) ? KSOCK_MSG_DONTWAIT : 0;
+            int rc = ksock_recv(obj->sock.sock_idx, buf, (size_t)count, sf);
+            regs[0] = rc >= 0 ? (uint64_t)rc : (uint64_t)(int64_t)rc;
+            return;
+        } else if (obj->type == FDT_PTY) {
+            int rc;
+            if (obj->pty.is_master)
+                rc = pty_master_read(obj->pty.pty_idx, buf, (size_t)count);
+            else
+                rc = pty_slave_read(obj->pty.pty_idx, buf, (size_t)count);
+            regs[0] = rc >= 0 ? (uint64_t)rc : (uint64_t)(int64_t)rc;
+            return;
+        } else if (obj->type == FDT_PSEUDO) {
             int rc = pseudo_read(obj->pseudo.node_id, &obj->pseudo.off,
                                  buf, (size_t)count);
             regs[0] = rc >= 0 ? (uint64_t)rc : (uint64_t)(int64_t)rc;
@@ -74,7 +95,25 @@ void write_handler(uint64_t regs[6], task_t *current)
 
     fd_obj_t *wobj = task_get_fd(current, fd);
     if (wobj) {
-        if (wobj->type == FDT_PSEUDO) {
+        if (wobj->type == FDT_PIPE) {
+            int pool_idx = current->fd_table[fd];
+            int rc = pipe_write(pool_idx, buf, (size_t)count);
+            regs[0] = rc >= 0 ? (uint64_t)rc : (uint64_t)(int64_t)rc;
+            return;
+        } else if (wobj->type == FDT_SOCKET) {
+            int sf = (wobj->flags & 04000) ? KSOCK_MSG_DONTWAIT : 0;
+            int rc = ksock_send(wobj->sock.sock_idx, buf, (size_t)count, sf);
+            regs[0] = rc >= 0 ? (uint64_t)rc : (uint64_t)(int64_t)rc;
+            return;
+        } else if (wobj->type == FDT_PTY) {
+            int rc;
+            if (wobj->pty.is_master)
+                rc = pty_master_write(wobj->pty.pty_idx, buf, (size_t)count);
+            else
+                rc = pty_slave_write(wobj->pty.pty_idx, buf, (size_t)count);
+            regs[0] = rc >= 0 ? (uint64_t)rc : (uint64_t)(int64_t)rc;
+            return;
+        } else if (wobj->type == FDT_PSEUDO) {
             int rc = pseudo_write(wobj->pseudo.node_id, buf, (size_t)count);
             regs[0] = rc >= 0 ? (uint64_t)rc : (uint64_t)(int64_t)rc;
         } else if (wobj->type == FDT_FILE) {
@@ -157,19 +196,16 @@ void writev_handler(uint64_t regs[6], task_t *current)
     uint64_t total = 0;
     for (int i = 0; i < iovcnt; i++) {
         if (!iov[i].iov_base || iov[i].iov_len == 0) continue;
-        if (wv_obj) {
-            if (wv_obj->type == FDT_PSEUDO) {
-                pseudo_write(wv_obj->pseudo.node_id,
-                             (const void *)iov[i].iov_base, iov[i].iov_len);
-            } else if (wv_obj->type == FDT_FILE) {
-                size_t wcnt = 0;
-                ext4_fwrite(&wv_obj->file, (const void *)iov[i].iov_base,
-                            iov[i].iov_len, &wcnt);
-            }
-        } else {
-            sys_write((const char *)iov[i].iov_base, iov[i].iov_len);
+        uint64_t wregs[6] = { (uint64_t)fd, iov[i].iov_base, iov[i].iov_len, 0, 0, 0 };
+        write_handler(wregs, current);
+        int64_t ret = (int64_t)wregs[0];
+        if (ret < 0) {
+            regs[0] = total ? total : (uint64_t)ret;
+            return;
         }
-        total += iov[i].iov_len;
+        total += (uint64_t)ret;
+        if ((uint64_t)ret < iov[i].iov_len)
+            break;
     }
     regs[0] = total;
 }

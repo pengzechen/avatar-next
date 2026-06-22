@@ -103,7 +103,8 @@ typedef struct task {
     /* === 进程/文件系统支持 === */
     char            cwd[TASK_CWD_LEN];  /* 当前工作目录（用户进程）               */
     char            exe_path[TASK_EXE_LEN]; /* 可执行文件路径（/proc/self/exe）   */
-    int8_t          fd_table[TASK_MAX_FD]; /* FD → g_fd_pool 索引，-1=未打开     */
+    int16_t         fd_table[TASK_MAX_FD]; /* FD → g_fd_pool 索引，-1=未打开     */
+    uint8_t         fd_cloexec[TASK_MAX_FD / 8]; /* FD_CLOEXEC 位图              */
     uint32_t        parent_id;           /* 父进程 ID                              */
     int             exit_status;         /* 退出状态（wait4 使用）                 */
     bool            is_waiting;          /* 正在 wait4 子进程                      */
@@ -120,6 +121,7 @@ typedef struct task {
     uint64_t        blocked_sigs;        /* 被阻塞信号位图（sigprocmask）               */
     uint64_t        sig_saved_blocked;   /* signal 投递前保存的 blocked_sigs            */
     uint32_t        pgid;                /* 进程组 ID                                   */
+    uint32_t        sid;                 /* 会话 ID (session leader = sid == id)         */
     uint64_t        sig_frame_sp;        /* sigframe 在用户栈上的起始地址（rt_sigreturn）*/
     sig_action_t    sig_actions[NSIG];   /* 每信号的 action（下标 0 对应信号 1）        */
 

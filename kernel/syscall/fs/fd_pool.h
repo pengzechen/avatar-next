@@ -15,7 +15,7 @@
 struct task;
 typedef struct task task_t;
 
-#define FD_POOL_SIZE  64
+#define FD_POOL_SIZE  128
 
 typedef enum {
     FDT_FREE = 0,
@@ -23,6 +23,9 @@ typedef enum {
     FDT_DIR,
     FDT_PSEUDO,
     FDT_ION,
+    FDT_PIPE,
+    FDT_SOCKET,
+    FDT_PTY,
 } fd_type_t;
 
 typedef struct {
@@ -39,6 +42,17 @@ typedef struct {
         struct {
             uint32_t handle;
         } ion;
+        struct {
+            int16_t  pipe_idx;
+            bool     is_write_end;
+        } pipe;
+        struct {
+            int16_t  sock_idx;
+        } sock;
+        struct {
+            int16_t  pty_idx;
+            bool     is_master;
+        } pty;
     };
 } fd_obj_t;
 

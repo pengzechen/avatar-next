@@ -5,6 +5,10 @@
  * 其他 fd 始终可读/可写。支持阻塞、超时与信号中断。
  */
 #include "syscall/syscall_internal.h"
+#include "syscall/fs/fd_pool.h"
+#include "syscall/fs/pipe.h"
+#include "syscall/net/ksocket.h"
+#include "syscall/fs/pty.h"
 #include "task/task.h"
 #include "task/sched.h"
 
@@ -59,13 +63,35 @@ select_handler(uint64_t regs[6], uint64_t syscall_num, task_t *current)
             int w = fd >> 6, b = fd & 63;
             unsigned long mask = 1UL << b;
             if (r_in[w] & mask) {
-                int rdy = (fd == 0) ? has_stdin : 1;
+                int rdy;
+                fd_obj_t *obj = task_get_fd(current, fd);
+                if (obj && obj->type == FDT_PIPE)
+                    rdy = pipe_poll_readable(current->fd_table[fd]);
+                else if (obj && obj->type == FDT_SOCKET)
+                    rdy = ksock_poll_readable(obj->sock.sock_idx);
+                else if (obj && obj->type == FDT_PTY)
+                    rdy = obj->pty.is_master ?
+                        pty_poll_readable_master(obj->pty.pty_idx) :
+                        pty_poll_readable_slave(obj->pty.pty_idx);
+                else if (fd == 0)
+                    rdy = has_stdin;
+                else
+                    rdy = 1;
                 if (rdy) { if (rfds) rfds[w] |= mask; ready++; }
             }
             if (w_in[w] & mask) {
-                if (wfds)
-                    wfds[w] |= mask;
-                ready++; /* writers always ready */
+                int wrdy;
+                fd_obj_t *obj = task_get_fd(current, fd);
+                if (obj && obj->type == FDT_PIPE)
+                    wrdy = pipe_poll_writable(current->fd_table[fd]);
+                else if (obj && obj->type == FDT_SOCKET)
+                    wrdy = ksock_poll_writable(obj->sock.sock_idx);
+                else
+                    wrdy = 1;
+                if (wrdy) {
+                    if (wfds) wfds[w] |= mask;
+                    ready++;
+                }
             }
             /* exceptfds: 永不报异常 */
             (void)e_in; (void)efds;

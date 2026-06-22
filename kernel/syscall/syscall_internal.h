@@ -83,6 +83,21 @@ typedef struct task task_t;
 #define LINUX_SYS_GETEGID         177
 #define LINUX_SYS_GETTID          178
 #define LINUX_SYS_SOCKET          198
+#define LINUX_SYS_SOCKETPAIR      199
+#define LINUX_SYS_BIND            200
+#define LINUX_SYS_LISTEN          201
+#define LINUX_SYS_ACCEPT          202
+#define LINUX_SYS_CONNECT         203
+#define LINUX_SYS_GETSOCKNAME     204
+#define LINUX_SYS_GETPEERNAME     205
+#define LINUX_SYS_SENDTO          206
+#define LINUX_SYS_RECVFROM        207
+#define LINUX_SYS_SETSOCKOPT      208
+#define LINUX_SYS_GETSOCKOPT      209
+#define LINUX_SYS_SHUTDOWN        210
+#define LINUX_SYS_SENDMSG         211
+#define LINUX_SYS_RECVMSG         212
+#define LINUX_SYS_ACCEPT4         242
 #define LINUX_SYS_BRK             214
 #define LINUX_SYS_MUNMAP          215
 #define LINUX_SYS_CLONE           220
@@ -129,6 +144,8 @@ typedef struct task task_t;
 #define TIOCSWINSZ            0x5414
 #define TIOCGPGRP             0x540f
 #define TIOCSPGRP             0x5410
+#define TIOCSCTTY             0x540e
+#define TIOCNOTTY             0x5422
 #define TIOCGPTN              0x80045430
 #define TIOCSPTLCK            0x40045431
 
@@ -157,6 +174,20 @@ typedef struct task task_t;
 #define EMFILE                24
 #define ENOTTY                25
 #define ENOTSUP               95
+#define EAFNOSUPPORT          97
+#define EADDRINUSE            98
+#define EADDRNOTAVAIL         99
+#define ENETUNREACH          101
+#define ECONNABORTED         103
+#define ECONNRESET           104
+#define ENOBUFS              105
+#define EISCONN              106
+#define ENOTCONN             107
+#define ETIMEDOUT            110
+#define ECONNREFUSED         111
+#define EINPROGRESS          115
+#define EALREADY             114
+#define EPIPE                 32
 
 /* ── *at 系列标志 ────────────────────────────────────────────────── */
 #define AT_FDCWD              -100
@@ -311,8 +342,8 @@ void sendfile_handler(uint64_t regs[6], task_t *current);
 void openat_handler(uint64_t regs[6], task_t *current);
 void close_handler (uint64_t regs[6], task_t *current);
 void dup3_handler  (uint64_t regs[6], task_t *current);
-void fcntl_handler (uint64_t regs[6]);
-void pipe2_handler (uint64_t regs[6]);
+void fcntl_handler (uint64_t regs[6], task_t *current);
+void pipe2_handler (uint64_t regs[6], task_t *current);
 
 /* stat / 目录读取（fs/file_stat.c）*/
 void fstat_handler      (uint64_t regs[6], task_t *current);
@@ -329,5 +360,19 @@ void unlinkat_handler(uint64_t regs[6], task_t *current);
 
 /* ioctl（fs/ioctl.c）*/
 void ioctl_handler(uint64_t regs[6], task_t *current);
+
+/* 网络 socket（net/sock_syscall.c）*/
+void socket_handler    (uint64_t regs[6], task_t *current);
+void bind_handler      (uint64_t regs[6], task_t *current);
+void listen_handler    (uint64_t regs[6], task_t *current);
+void accept_handler    (uint64_t regs[6], task_t *current);
+void connect_handler   (uint64_t regs[6], task_t *current);
+void sendto_handler    (uint64_t regs[6], task_t *current);
+void recvfrom_handler  (uint64_t regs[6], task_t *current);
+void setsockopt_handler(uint64_t regs[6], task_t *current);
+void getsockopt_handler(uint64_t regs[6], task_t *current);
+void getpeername_handler(uint64_t regs[6], task_t *current);
+void getsockname_handler(uint64_t regs[6], task_t *current);
+void shutdown_handler  (uint64_t regs[6], task_t *current);
 
 #endif /* KERNEL_SYSCALL_INTERNAL_H */

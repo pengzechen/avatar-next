@@ -23,6 +23,9 @@ static int cvitek_netdev_recv(void *ctx, uint8_t *frame, size_t maxlen)
 void cvitek_eth_init_from_platform(void)
 {
     uint64_t base = (uint64_t)DEVICE_ETH_BASE_RAW;
+#if DEVICE_MMIO_NEEDS_VMA
+    base += KERNEL_VMA;
+#endif
     KLOG_INFO("[cvitek-eth] init base=0x%llx\n", (unsigned long long)base);
 
     g_cvitek_nic = eth_init(base);

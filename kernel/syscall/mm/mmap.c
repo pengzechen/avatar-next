@@ -63,6 +63,17 @@ static int mmap_user_range_ok(uint64_t start, uint64_t size)
     return 1;
 }
 
+static void sync_shared_mmap_next_to(task_t *current, uint64_t val)
+{
+    for (uint32_t i = 0; i < TASK_MAX; i++) {
+        task_t *task = &g_task_pool[i];
+        if (!g_stack_used[i] || !task->is_user_process || task->state == TASK_DEAD)
+            continue;
+        if (task->pgd == current->pgd)
+            task->mmap_next = val;
+    }
+}
+
 uint64_t sys_munmap(uint64_t addr, uint64_t len)
 {
     task_t *current = task_current();
@@ -73,6 +84,23 @@ uint64_t sys_munmap(uint64_t addr, uint64_t len)
 
     uint64_t size = ALIGN_UP(len, PAGE_SIZE);
     vm_unmap_user_range((uint64_t)current->pgd, addr, size);
+
+    uint64_t top  = addr + size;
+    uint64_t next = shared_mmap_next(current);
+    if (top >= next) {
+        void *pgd = phys_to_virt((uint64_t)current->pgd);
+        uint64_t new_next = addr;
+        uint64_t lo = ALIGN_UP(current->heap_end, PAGE_SIZE);
+        int budget = 512;
+        while (new_next > lo && budget-- > 0) {
+            if (mm_vm_get_paddr(pgd, new_next - PAGE_SIZE) != 0)
+                break;
+            new_next -= PAGE_SIZE;
+        }
+        if (new_next < next)
+            sync_shared_mmap_next_to(current, new_next);
+    }
+
     return 0;
 }
 
@@ -87,12 +115,12 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, int prot, int flags, int fd, uint
     if (!(flags & MAP_ANONYMOUS)) {
         if (len == 0) return (uint64_t)(int64_t)-EINVAL;
 
-        int8_t fidx = -1;
+        int16_t fidx = -1;
         fd_obj_t *fobj = NULL;
         if (fd >= 0 && fd < (int)TASK_MAX_FD) {
             fidx = current->fd_table[fd];
             if (fidx >= 0 && (int)fidx < FD_POOL_SIZE)
-                fobj = &g_fd_pool[(uint8_t)fidx];
+                fobj = &g_fd_pool[fidx];
         }
 
         uint64_t map_addr;
@@ -233,6 +261,30 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, int prot, int flags, int fd, uint
     }
 
     size = ALIGN_UP(len + page_off, PAGE_SIZE);
+
+    if (!(flags & MAP_FIXED) && !mmap_user_range_ok(map_addr, size)) {
+        void *pgd = phys_to_virt((uint64_t)current->pgd);
+        uint64_t lo = ALIGN_UP(current->heap_end, PAGE_SIZE);
+        uint64_t hi = USER_STACK_TOP - USER_STACK_SIZE;
+        uint64_t need = size / PAGE_SIZE;
+        uint64_t run = 0;
+        uint64_t cand = 0;
+        for (uint64_t va = lo; va + size <= hi; va += PAGE_SIZE) {
+            if (mm_vm_get_paddr(pgd, va) == 0) {
+                if (run == 0) cand = va;
+                if (++run >= need) {
+                    map_addr = cand;
+                    goto found;
+                }
+            } else {
+                run = 0;
+            }
+        }
+        KLOG_WARN("[mmap] anon gap-search failed: len=0x%llx free_pg=%llu\n",
+                  len, pmm_get_free_pages(g_pmm));
+        return (uint64_t)(int64_t)-ENOMEM;
+found:;
+    }
 
     if (!mmap_user_range_ok(map_addr, size)) {
         KLOG_WARN("[mmap] anon range rejected: req=0x%llx base=0x%llx size=0x%llx flags=0x%x\n",

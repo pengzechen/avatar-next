@@ -33,8 +33,8 @@
 #define PBUF_POOL_BUFSIZE               1536
 
 #define MEMP_NUM_PBUF                   32
-#define MEMP_NUM_TCP_PCB                8
-#define MEMP_NUM_TCP_PCB_LISTEN         4
+#define MEMP_NUM_TCP_PCB                16
+#define MEMP_NUM_TCP_PCB_LISTEN         8
 #define MEMP_NUM_TCP_SEG                32
 #define MEMP_NUM_NETBUF                 0
 #define MEMP_NUM_NETCONN                0

@@ -217,11 +217,15 @@ SYSCALL_C_SOURCES := $(KERNEL_DIR)/syscall/syscall.c \
                      $(KERNEL_DIR)/syscall/fs/file_stat.c \
                      $(KERNEL_DIR)/syscall/fs/dir.c \
                      $(KERNEL_DIR)/syscall/fs/ioctl.c \
+                     $(KERNEL_DIR)/syscall/fs/pipe.c \
+                     $(KERNEL_DIR)/syscall/fs/pty.c \
                      $(KERNEL_DIR)/syscall/io/poll.c \
                      $(KERNEL_DIR)/syscall/io/select.c \
                      $(KERNEL_DIR)/syscall/mm/brk.c \
                      $(KERNEL_DIR)/syscall/mm/mmap.c \
-                     $(KERNEL_DIR)/syscall/mm/pmap_compat.c
+                     $(KERNEL_DIR)/syscall/mm/pmap_compat.c \
+                     $(KERNEL_DIR)/syscall/net/ksocket.c \
+                     $(KERNEL_DIR)/syscall/net/sock_syscall.c
 SYSCALL_C_OBJECTS := $(BUILD_DIR)/kernel_syscall_syscall.o \
                      $(BUILD_DIR)/kernel_syscall_core_futex.o \
                      $(BUILD_DIR)/kernel_syscall_core_proc_lifecycle.o \
@@ -236,11 +240,15 @@ SYSCALL_C_OBJECTS := $(BUILD_DIR)/kernel_syscall_syscall.o \
                      $(BUILD_DIR)/kernel_syscall_fs_file_stat.o \
                      $(BUILD_DIR)/kernel_syscall_fs_dir.o \
                      $(BUILD_DIR)/kernel_syscall_fs_ioctl.o \
+                     $(BUILD_DIR)/kernel_syscall_fs_pipe.o \
+                     $(BUILD_DIR)/kernel_syscall_fs_pty.o \
                      $(BUILD_DIR)/kernel_syscall_io_poll.o \
                      $(BUILD_DIR)/kernel_syscall_io_select.o \
                      $(BUILD_DIR)/kernel_syscall_mm_brk.o \
                      $(BUILD_DIR)/kernel_syscall_mm_mmap.o \
-                     $(BUILD_DIR)/kernel_syscall_mm_pmap_compat.o
+                     $(BUILD_DIR)/kernel_syscall_mm_pmap_compat.o \
+                     $(BUILD_DIR)/kernel_syscall_net_ksocket.o \
+                     $(BUILD_DIR)/kernel_syscall_net_sock_syscall.o
 TASK_S_OBJ := $(BUILD_DIR)/task_switch.o
 ifeq ($(ARCH),aarch64)
 TASK_USER_TEST_OBJ := $(BUILD_DIR)/user_test.o
@@ -961,11 +969,17 @@ $(BUILD_DIR)/kernel_syscall_fs_dir.o: $(KERNEL_DIR)/syscall/fs/dir.c | $(BUILD_D
 $(BUILD_DIR)/kernel_syscall_fs_ioctl.o: $(KERNEL_DIR)/syscall/fs/ioctl.c | $(BUILD_DIR)
 	$(CC) $(LWEXT4_CFLAGS) -c $< -o $@
 
+$(BUILD_DIR)/kernel_syscall_fs_pipe.o: $(KERNEL_DIR)/syscall/fs/pipe.c | $(BUILD_DIR)
+	$(CC) $(LWEXT4_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/kernel_syscall_fs_pty.o: $(KERNEL_DIR)/syscall/fs/pty.c | $(BUILD_DIR)
+	$(CC) $(LWEXT4_CFLAGS) -c $< -o $@
+
 $(BUILD_DIR)/kernel_syscall_io_poll.o: $(KERNEL_DIR)/syscall/io/poll.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
+	$(CC) $(LWEXT4_CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/kernel_syscall_io_select.o: $(KERNEL_DIR)/syscall/io/select.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
+	$(CC) $(LWEXT4_CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/kernel_syscall_mm_brk.o: $(KERNEL_DIR)/syscall/mm/brk.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -975,6 +989,12 @@ $(BUILD_DIR)/kernel_syscall_mm_mmap.o: $(KERNEL_DIR)/syscall/mm/mmap.c | $(BUILD
 
 $(BUILD_DIR)/kernel_syscall_mm_pmap_compat.o: $(KERNEL_DIR)/syscall/mm/pmap_compat.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/kernel_syscall_net_ksocket.o: $(KERNEL_DIR)/syscall/net/ksocket.c | $(BUILD_DIR)
+	$(CC) $(LWIP_CFLAGS) -I$(LWEXT4_DIR)/include -I$(LWEXT4_PORT_DIR) -c $< -o $@
+
+$(BUILD_DIR)/kernel_syscall_net_sock_syscall.o: $(KERNEL_DIR)/syscall/net/sock_syscall.c | $(BUILD_DIR)
+	$(CC) $(LWIP_CFLAGS) -I$(LWEXT4_DIR)/include -I$(LWEXT4_PORT_DIR) -c $< -o $@
 
 # 用户测试程序编译规则
 $(BUILD_DIR)/user_test.o: $(TASK_USER_TEST_SRC) | $(BUILD_DIR)
@@ -1256,6 +1276,20 @@ $(ROOTFS_IMG): $(APPS_BINS) $(APPS_C_ELFS) | $(BUILD_DIR)
 			echo "  [$$name installed (bin)]"; \
 		done; \
 	fi
+	@# 安装 Dropbear SSH 服务器
+	@DROPBEAR_MULTI=third_party/dropbear-2024.86/dropbearmulti; \
+	if [ -f "$$DROPBEAR_MULTI" ]; then \
+		mkdir -p $(ROOTFS_STAGE)/usr/sbin $(ROOTFS_STAGE)/usr/bin $(ROOTFS_STAGE)/etc/dropbear; \
+		riscv64-linux-musl-strip -o $(ROOTFS_STAGE)/usr/sbin/dropbearmulti "$$DROPBEAR_MULTI"; \
+		chmod +x $(ROOTFS_STAGE)/usr/sbin/dropbearmulti; \
+		ln -sf dropbearmulti $(ROOTFS_STAGE)/usr/sbin/dropbear; \
+		ln -sf ../sbin/dropbearmulti $(ROOTFS_STAGE)/usr/bin/dropbearkey; \
+		echo "  [dropbear SSH installed]"; \
+	fi
+	@# /etc/passwd: root 无密码
+	@echo 'root::0:0:root:/root:/bin/sh' > $(ROOTFS_STAGE)/etc/passwd
+	@echo 'root:x:0:' > $(ROOTFS_STAGE)/etc/group
+	@echo "  [/etc/passwd + group created]"
 	@# 用 staging 目录直接构建 ext4 镜像，无需挂载
 	dd if=/dev/zero of=$@ bs=1M count=$(ROOTFS_SIZE_MB) status=none
 	mkfs.ext4 -q -b 1024 -L "avatarfs" -d $(ROOTFS_STAGE) $@

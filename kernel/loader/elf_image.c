@@ -212,6 +212,8 @@ elf_image_load_impl(uint8_t *file_data, uint64_t file_size, void *pgd,
             uint64_t rela_addr = 0;
             uint64_t rela_size = 0;
             uint64_t rela_ent  = 0;
+            uint64_t symtab_addr = 0;
+            uint64_t syment_size = 0;
 
             for (uint64_t j = 0; j < dyn_count; j++) {
                 if (dyn[j].d_tag == DT_RELA)
@@ -220,7 +222,26 @@ elf_image_load_impl(uint8_t *file_data, uint64_t file_size, void *pgd,
                     rela_size = dyn[j].d_un.d_val;
                 else if (dyn[j].d_tag == DT_RELAENT)
                     rela_ent = dyn[j].d_un.d_val;
+                else if (dyn[j].d_tag == DT_SYMTAB)
+                    symtab_addr = dyn[j].d_un.d_ptr;
+                else if (dyn[j].d_tag == DT_SYMENT)
+                    syment_size = dyn[j].d_un.d_val;
             }
+
+            elf64_sym_t *dynsym = NULL;
+            if (symtab_addr) {
+                for (uint16_t s = 0; s < ehdr->e_phnum; s++) {
+                    if (phdr[s].p_type == PT_LOAD &&
+                        symtab_addr >= phdr[s].p_vaddr &&
+                        symtab_addr < phdr[s].p_vaddr + phdr[s].p_filesz) {
+                        dynsym = (elf64_sym_t *)(file_data +
+                            symtab_addr - phdr[s].p_vaddr + phdr[s].p_offset);
+                        break;
+                    }
+                }
+            }
+            if (!syment_size)
+                syment_size = sizeof(elf64_sym_t);
 
             if (rela_addr && rela_size && rela_ent) {
                 KLOG_DEBUG("[elf] Found RELA: addr=0x%llx, size=%llu, ent=%llu\n",
@@ -308,41 +329,42 @@ elf_image_load_impl(uint8_t *file_data, uint64_t file_size, void *pgd,
                             continue;
                         }
 
-                        uint64_t new_value       = load_bias + rela->r_addend;
+                        uint32_t sym_idx = ELF64_R_SYM(rela->r_info);
+                        uint64_t sym_val = 0;
+                        if (sym_idx && dynsym) {
+                            elf64_sym_t *sym = (elf64_sym_t *)((uint8_t *)dynsym + sym_idx * syment_size);
+                            sym_val = sym->st_value;
+                        }
+                        uint64_t new_value       = load_bias + sym_val + rela->r_addend;
                         uint64_t offset_in_page  = target_vaddr - page_vaddr;
                         uint64_t *target         = (uint64_t *)phys_to_virt(paddr + offset_in_page);
-
-                        if (new_value < 0x10000) {
-                            KLOG_WARN("[elf] Suspicious %s at 0x%llx: addend=0x%llx, new_value=0x%llx\n",
-                                      r_type == reloc_jump_slot ? "JUMP_SLOT" : "GLOB_DAT",
-                                      target_vaddr, rela->r_addend, new_value);
-                        }
 
                         KLOG_TRACE("[elf] %s 0x%llx: 0x%llx -> 0x%llx\n",
                                    r_type == reloc_jump_slot ? "JUMP_SLOT" : "GLOB_DAT",
                                    target_vaddr, *target, new_value);
                         *target = new_value;
                     } else if (r_type == reloc_abs64) {
-                        /* R_RISCV_64: sym=0 时 *loc = load_bias + addend（同 RELATIVE）
-                         * sym!=0 需要符号解析，交由 ld.so 完成，内核静默跳过   */
-                        if (ELF64_R_SYM(rela->r_info) == 0) {
-                            uint64_t target_vaddr   = load_bias + rela->r_offset;
-                            uint64_t page_vaddr     = ALIGN_DOWN(target_vaddr, PAGE_SIZE);
-                            uint64_t paddr          = mm_vm_get_paddr(pgd, page_vaddr);
-                            if (paddr == 0) {
-                                KLOG_ERROR("[elf] R_RISCV_64: no paddr for 0x%llx\n",
-                                           target_vaddr);
-                                continue;
-                            }
-                            uint64_t new_value      = load_bias + rela->r_addend;
-                            uint64_t offset_in_page = target_vaddr - page_vaddr;
-                            uint64_t *target        = (uint64_t *)phys_to_virt(
-                                                          paddr + offset_in_page);
-                            KLOG_TRACE("[elf] R_RISCV_64 0x%llx -> 0x%llx\n",
-                                       target_vaddr, new_value);
-                            *target = new_value;
+                        uint64_t target_vaddr   = load_bias + rela->r_offset;
+                        uint64_t page_vaddr     = ALIGN_DOWN(target_vaddr, PAGE_SIZE);
+                        uint64_t paddr          = mm_vm_get_paddr(pgd, page_vaddr);
+                        if (paddr == 0) {
+                            KLOG_ERROR("[elf] abs64: no paddr for 0x%llx\n",
+                                       target_vaddr);
+                            continue;
                         }
-                        /* sym!=0: 静默跳过，ld.so 负责处理 */
+                        uint32_t sym_idx = ELF64_R_SYM(rela->r_info);
+                        uint64_t sym_val = 0;
+                        if (sym_idx && dynsym) {
+                            elf64_sym_t *sym = (elf64_sym_t *)((uint8_t *)dynsym + sym_idx * syment_size);
+                            sym_val = sym->st_value;
+                        }
+                        uint64_t new_value      = load_bias + sym_val + rela->r_addend;
+                        uint64_t offset_in_page = target_vaddr - page_vaddr;
+                        uint64_t *target        = (uint64_t *)phys_to_virt(
+                                                      paddr + offset_in_page);
+                        KLOG_TRACE("[elf] abs64 0x%llx -> 0x%llx (sym=%u val=0x%llx)\n",
+                                   target_vaddr, new_value, sym_idx, sym_val);
+                        *target = new_value;
                     } else if (r_type == reloc_copy) {
                         /* R_X86_64_COPY: 需要符号解析后从共享库复制数据
                          * 交由 ld.so 完成，内核静默跳过               */

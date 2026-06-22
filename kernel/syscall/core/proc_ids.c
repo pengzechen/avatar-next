@@ -62,10 +62,17 @@ void proc_ids_handler(uint64_t syscall_num, uint64_t regs[6], task_t *current)
         break;
     }
 
-    case LINUX_SYS_GETSID:
+    case LINUX_SYS_GETSID: {
+        int pid = (int)(int32_t)regs[0];
+        task_t *tgt = (pid == 0) ? current : task_find_by_id((uint32_t)pid);
+        regs[0] = tgt ? (uint64_t)tgt->sid : (uint64_t)(int64_t)-ESRCH;
+        break;
+    }
+
     case LINUX_SYS_SETSID:
-        /* 简化：以 pgid 代替 sid */
-        regs[0] = (uint64_t)current->pgid;
+        current->sid  = current->id;
+        current->pgid = current->id;
+        regs[0] = (uint64_t)current->id;
         break;
 
     case LINUX_SYS_GETGROUPS:

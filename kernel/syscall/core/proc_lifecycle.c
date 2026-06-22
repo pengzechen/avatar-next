@@ -13,6 +13,9 @@
 #include "syscall/syscall_internal.h"
 #include "syscall/fs/fd_pool.h"
 #include "syscall/core/futex.h"
+#include "syscall/fs/pipe.h"
+#include "syscall/net/ksocket.h"
+#include "syscall/fs/pty.h"
 #include "loader/elf_loader.h"
 #include "task/task.h"
 #include "task/sched.h"
@@ -58,7 +61,7 @@ void sys_exit(int status)
     /* CLONE_VM/CLONE_FILES threads share fd objects with the process. */
     if (!current->is_thread) {
         for (int _fd = 0; _fd < (int)TASK_MAX_FD; _fd++) {
-            int _idx = (int)(int8_t)current->fd_table[_fd];
+            int _idx = (int)current->fd_table[_fd];
             if (_idx < 0 || _idx >= FD_POOL_SIZE) {
                 current->fd_table[_fd] = -1;
                 continue;
@@ -68,6 +71,20 @@ void sys_exit(int status)
                 ext4_fclose(&_obj->file);
             else if (_obj->type == FDT_DIR)
                 ext4_dir_close(&_obj->dir);
+            else if (_obj->type == FDT_PIPE) {
+                if (_obj->pipe.is_write_end)
+                    pipe_close_write(_idx);
+                else
+                    pipe_close_read(_idx);
+            }
+            else if (_obj->type == FDT_SOCKET)
+                ksock_close(_obj->sock.sock_idx);
+            else if (_obj->type == FDT_PTY) {
+                if (_obj->pty.is_master)
+                    pty_close_master(_obj->pty.pty_idx);
+                else
+                    pty_close_slave(_obj->pty.pty_idx);
+            }
             fd_pool_free(_idx);
             current->fd_table[_fd] = -1;
         }
@@ -119,28 +136,9 @@ int64_t sys_execve(const char *pathname, char **argv, char **envp)
         current->exe_path[k] = '\0';
     }
 
-    /* execve 关闭所有 fd > 2 */
-    KLOG_DEBUG("[execve] pid=%u closing all fds > 2\n", current->id);
-    for (int fd = 3; fd < (int)TASK_MAX_FD; fd++) {
-        int idx = (int)current->fd_table[fd];
-        if (idx < 0 || idx >= FD_POOL_SIZE) {
-            current->fd_table[fd] = (int8_t)-1;
-            continue;
-        }
-        fd_obj_t *obj = &g_fd_pool[idx];
-        if (obj->type == FDT_FREE) {
-            current->fd_table[fd] = (int8_t)-1;
-            continue;
-        }
-        KLOG_TRACE("[execve] closing fd=%d pool_idx=%d type=%d\n",
-                  fd, idx, obj->type);
-        if (obj->type == FDT_FILE)
-            ext4_fclose(&obj->file);
-        else if (obj->type == FDT_DIR)
-            ext4_dir_close(&obj->dir);
-        fd_pool_free(idx);
-        current->fd_table[fd] = (int8_t)-1;
-    }
+    /* execve: fd 继承由 task_execve → process_create_with_pgd 处理，
+     * 这里不关闭 fd，让新进程继承连接 socket 等。
+     * CLOEXEC 标记的 fd 在新进程创建后才关闭。 */
 
     /* 从 userspace 复制 argv */
 #define EXEC_MAX_ARGC   32
@@ -259,6 +257,7 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
         }
         for (uint32_t k = 0; k < TASK_MAX_FD; k++)
             child->fd_table[k] = parent->fd_table[k];
+        memcpy(child->fd_cloexec, parent->fd_cloexec, sizeof(parent->fd_cloexec));
         {
             int k = 0;
             while (parent->name[k] && k < (int)TASK_NAME_LEN - 1) {
@@ -363,7 +362,7 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
         }
         /* 深拷贝 fd_table */
         for (uint32_t k = 0; k < TASK_MAX_FD; k++) {
-            int pidx = (int)(int8_t)parent->fd_table[k];
+            int pidx = (int)parent->fd_table[k];
             if (pidx < 0 || pidx >= FD_POOL_SIZE) {
                 child->fd_table[k] = -1;
                 continue;
@@ -380,8 +379,23 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
                 continue;
             }
             g_fd_pool[new_idx] = *src;
-            child->fd_table[k] = (int8_t)new_idx;
+            if (src->type == FDT_SOCKET)
+                ksock_ref(src->sock.sock_idx);
+            else if (src->type == FDT_PIPE) {
+                if (src->pipe.is_write_end)
+                    pipe_ref_write(new_idx);
+                else
+                    pipe_ref_read(new_idx);
+            }
+            else if (src->type == FDT_PTY) {
+                if (src->pty.is_master)
+                    pty_ref_master(src->pty.pty_idx);
+                else
+                    pty_ref_slave(src->pty.pty_idx);
+            }
+            child->fd_table[k] = (int16_t)new_idx;
         }
+        memcpy(child->fd_cloexec, parent->fd_cloexec, sizeof(parent->fd_cloexec));
         {
             int k = 0;
             while (parent->name[k] && k < (int)TASK_NAME_LEN - 1) {
@@ -408,6 +422,7 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
     child->sig_saved_blocked = 0;
     child->blocked_sigs      = parent->blocked_sigs;
     child->pgid              = parent->pgid;
+    child->sid               = parent->sid;
     for (int _si = 0; _si < NSIG; _si++)
         child->sig_actions[_si] = parent->sig_actions[_si];
 

@@ -67,6 +67,56 @@ void newfstatat_handler(uint64_t regs[6], task_t *current)
     regs[0] = 0;
 }
 
+static int proc_self_fd_readlink(task_t *current, int fdnum,
+                                 char *buf, size_t bufsz)
+{
+    fd_obj_t *obj = task_get_fd(current, fdnum);
+    if (!obj) return -ENOENT;
+
+    const char *target = NULL;
+    char tmp[32];
+
+    switch (obj->type) {
+    case FDT_PTY:
+        if (obj->pty.is_master) {
+            target = "/dev/ptmx";
+        } else {
+            int n = obj->pty.pty_idx;
+            tmp[0] = '/'; tmp[1] = 'd'; tmp[2] = 'e'; tmp[3] = 'v';
+            tmp[4] = '/'; tmp[5] = 'p'; tmp[6] = 't'; tmp[7] = 's';
+            tmp[8] = '/';
+            if (n < 10) {
+                tmp[9] = (char)('0' + n); tmp[10] = '\0';
+            } else {
+                tmp[9] = (char)('0' + n / 10);
+                tmp[10] = (char)('0' + n % 10);
+                tmp[11] = '\0';
+            }
+            target = tmp;
+        }
+        break;
+    case FDT_PIPE:
+        target = "pipe:[0]";
+        break;
+    case FDT_SOCKET:
+        target = "socket:[0]";
+        break;
+    case FDT_FILE:
+    case FDT_DIR:
+        if (obj->path[0])
+            target = obj->path;
+        break;
+    default:
+        break;
+    }
+
+    if (!target) return -ENOENT;
+    size_t len = strlen(target);
+    size_t copy = len < bufsz ? len : bufsz;
+    memcpy(buf, target, copy);
+    return (int)copy;
+}
+
 void readlinkat_handler(uint64_t regs[6], task_t *current)
 {
     int dirfd = (int)regs[0];
@@ -76,6 +126,20 @@ void readlinkat_handler(uint64_t regs[6], task_t *current)
     if (!pathname || !lbuf) { regs[0] = (uint64_t)(int64_t)-EFAULT; return; }
     char abspath[128];
     resolve_path_at(current, dirfd, pathname, abspath, sizeof(abspath));
+
+    /* /proc/self/fd/N — resolve from task fd table */
+    if (strncmp(abspath, "/proc/self/fd/", 14) == 0) {
+        const char *p = abspath + 14;
+        int fdnum = 0;
+        while (*p >= '0' && *p <= '9')
+            fdnum = fdnum * 10 + (*p++ - '0');
+        if (*p == '\0') {
+            int rc = proc_self_fd_readlink(current, fdnum, lbuf, (size_t)lbufsz);
+            regs[0] = rc >= 0 ? (uint64_t)rc : (uint64_t)(int64_t)rc;
+            return;
+        }
+    }
+
     int rc = pseudo_readlink(abspath, lbuf, (size_t)lbufsz);
     regs[0] = rc >= 0 ? (uint64_t)rc : (uint64_t)(int64_t)-ENOENT;
 }

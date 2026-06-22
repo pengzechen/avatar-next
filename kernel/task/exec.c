@@ -95,7 +95,7 @@ elf_setup_stack(void *pgd, uint64_t stack_top, uint64_t entry,
     const char *default_arg0 = pathname ? pathname : "/init";
     const char *default_argv[] = { NULL, NULL };
     static const char *default_envp[] = {
-        "PATH=/bin:/usr/bin:/", "HOME=/", "TERM=vt100", NULL
+        "PATH=/bin:/usr/bin:/sbin:/usr/sbin", "HOME=/", "TERM=vt100", NULL
     };
 
     default_argv[0] = default_arg0;
@@ -297,6 +297,10 @@ task_execve(const char *pathname,
     /* exec 新进程继承调用者的进程组 ID 和信号掩码（POSIX） */
     new_task->pgid         = current->pgid;
     new_task->blocked_sigs = current->blocked_sigs;
+
+    /* 继承 fd_table：深拷贝 fd 对象 + 增加引用计数 */
+    extern void fd_table_inherit(task_t *child, task_t *parent);
+    fd_table_inherit(new_task, current);
 
     uint32_t new_task_id = new_task->id;
     KLOG_DEBUG("[exec] Process '%s' created, PID=%u, pgd=0x%llx, parent=%u\n",

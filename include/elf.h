@@ -46,6 +46,8 @@
 #define DT_RELA    7   /* RELA 重定位表地址 */
 #define DT_RELASZ  8   /* RELA 重定位表大小 */
 #define DT_RELAENT 9   /* RELA 条目大小 */
+#define DT_SYMTAB  6   /* 动态符号表地址 */
+#define DT_SYMENT  11  /* 动态符号表条目大小 */
 
 /* AArch64 重定位类型 */
 #define R_AARCH64_RELATIVE   1027  /* 0x403: base + addend */
@@ -79,6 +81,16 @@ typedef struct {
     uint64_t r_info;    /* 符号索引 + 类型 */
     int64_t  r_addend;  /* 加数 */
 } elf64_rela_t;
+
+/* 64-bit ELF 符号表条目 */
+typedef struct {
+    uint32_t st_name;   /* 符号名在字符串表中的偏移 */
+    uint8_t  st_info;   /* 类型和绑定 */
+    uint8_t  st_other;  /* 可见性 */
+    uint16_t st_shndx;  /* 所在节索引 */
+    uint64_t st_value;  /* 符号值（地址） */
+    uint64_t st_size;   /* 符号大小 */
+} elf64_sym_t;
 
 #define ELF64_R_TYPE(info)  ((uint32_t)(info))
 #define ELF64_R_SYM(info)   ((uint32_t)((info) >> 32))

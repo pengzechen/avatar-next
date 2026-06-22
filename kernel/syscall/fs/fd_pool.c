@@ -9,6 +9,9 @@
  * ext4_file / ext4_dir。
  */
 #include "syscall/fs/fd_pool.h"
+#include "syscall/net/ksocket.h"
+#include "syscall/fs/pipe.h"
+#include "syscall/fs/pty.h"
 #include "klog.h"
 #include "task/task.h"
 
@@ -39,9 +42,8 @@ int task_alloc_fd(task_t *task, int pool_idx)
 {
     /* fd 0,1,2 reserved for stdin/stdout/stderr */
     for (int fd = 3; fd < (int)TASK_MAX_FD; fd++) {
-        /* 使用 (int8_t)-1 避免类型提升问题 */
-        if (task->fd_table[fd] == (int8_t)-1) {
-            task->fd_table[fd] = (int8_t)pool_idx;
+        if (task->fd_table[fd] == -1) {
+            task->fd_table[fd] = (int16_t)pool_idx;
             KLOG_DEBUG("[fd] task_alloc_fd: pid=%u allocated fd=%d for pool_idx=%d\n",
                       task->id, fd, pool_idx);
             return fd;
@@ -107,4 +109,46 @@ int task_get_ion_handle(task_t *task, int fd, uint32_t *handle)
         return -1;
     *handle = obj->ion.handle;
     return 0;
+}
+
+void fd_table_inherit(task_t *child, task_t *parent)
+{
+    for (uint32_t fd = 0; fd < TASK_MAX_FD; fd++) {
+        /* execve: FD_CLOEXEC 标记的 fd 不继承 */
+        if ((parent->fd_cloexec[fd / 8] >> (fd % 8)) & 1) {
+            child->fd_table[fd] = -1;
+            continue;
+        }
+        int pidx = (int)parent->fd_table[fd];
+        if (pidx < 0 || pidx >= FD_POOL_SIZE) {
+            child->fd_table[fd] = -1;
+            continue;
+        }
+        fd_obj_t *src = &g_fd_pool[pidx];
+        if (src->type == FDT_FREE) {
+            child->fd_table[fd] = -1;
+            continue;
+        }
+        int new_idx = fd_pool_alloc();
+        if (new_idx < 0) {
+            child->fd_table[fd] = -1;
+            continue;
+        }
+        g_fd_pool[new_idx] = *src;
+        if (src->type == FDT_SOCKET)
+            ksock_ref(src->sock.sock_idx);
+        else if (src->type == FDT_PIPE) {
+            if (src->pipe.is_write_end)
+                pipe_ref_write(new_idx);
+            else
+                pipe_ref_read(new_idx);
+        }
+        else if (src->type == FDT_PTY) {
+            if (src->pty.is_master)
+                pty_ref_master(src->pty.pty_idx);
+            else
+                pty_ref_slave(src->pty.pty_idx);
+        }
+        child->fd_table[fd] = (int16_t)new_idx;
+    }
 }
