@@ -47,8 +47,7 @@ extern void kmem_test(void);      /* kernel/mm/aarch64/vmm.c */
 
 #if DRIVER_USB_DWC2
 #include "usb/uvc_video.h"
-#include "usb/uvc.h"
-#include "usb/usb.h"
+#include "usb_api.h"
 
 #define UVC_BENCH_BUF_SIZE (512U * 1024U)
 
