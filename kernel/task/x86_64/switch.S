@@ -65,78 +65,21 @@ arch_task_switch:
  */
 .global task_trampoline_user
 task_trampoline_user:
-    /* DEBUG: 输出 'T' 到 COM1 (0x3F8)，证明到达这里 */
-    // movb    $'T', %al
-    // movw    $0x3F8, %dx
-    // outb    %al, %dx
-    
     /* 从栈获取用户入口和栈指针（arch_task_switch 压入） */
     popq    %rdi                /* user_entry（用户入口点）*/
     popq    %rsi                /* user_sp（用户栈指针）*/
-    
-    /* DEBUG: 输出 'R' 表示准备执行 IRETQ */
-    // movb    $'R', %al
-    // movw    $0x3F8, %dx
-    // outb    %al, %dx
-    
-    /* 保存用户入口和栈到非易失寄存器（便于调试） */
+
     movq    %rdi, %r12          /* user_entry */
     movq    %rsi, %r13          /* user_sp */
-    
-    /* 验证 CR3 和 PML4[0] */
-    movq    %cr3, %rax
-    andq    $-4096, %rax        /* 提取 PML4 物理地址（清除低 12 位）*/
-    movabsq $0xFFFF800000000000, %rbx
-    addq    %rbx, %rax          /* 转换为虚拟地址 */
-    movq    (%rax), %rdx        /* 读取 PML4[0] */
-    
-    /* 检查 PML4[0] 是否存在（Present bit） */
-    testq   $1, %rdx
-    jz      .Lpml4_missing
-    
-    /* 输出 'P' - PML4[0] 存在 */
-    // movb    $'P', %al
-    // movw    $0x3F8, %dx
-    // outb    %al, %dx
-    jmp     .Lpml4_ok
-    
-.Lpml4_missing:
-    /* PML4[0] 不存在！输出 'X' 并挂起 */
-    // movb    $'X', %al
-    // movw    $0x3F8, %dx
-    // outb    %al, %dx
-    cli
-1:  hlt
-    jmp     1b
-    
-.Lpml4_ok:
+
     /* 准备 iretq 栈帧（从高到低：SS, RSP, RFLAGS, CS, RIP）*/
     pushq   $0x23               /* SS: 用户数据段（0x20 + RPL=3）*/
     pushq   %r13                /* RSP: 用户栈指针 */
-    
-    /* 设置 RFLAGS: 设置 IF=1, IOPL=0, 清除 VM/RF/NT, 其他位清零以确保干净状态 */
-    movq    $0x202, %rax        /* IF=1 (bit 9), Reserved=1 (bit 1) */
-    pushq   %rax                /* RFLAGS */
-    
+    movq    $0x202, %rax        /* RFLAGS: IF=1 (bit 9), Reserved=1 (bit 1) */
+    pushq   %rax
     pushq   $0x2B               /* CS: 用户代码段（0x28 + RPL=3）*/
     pushq   %r12                /* RIP: 用户入口点 */
-    
-    /* DEBUG: 输出栈帧内容前 5 个 QWORD */
-    // movq    %rsp, %rbx
-    // movb    $'F', %al           /* 'F' = Frame dump */
-    // movw    $0x3F8, %dx
-    // outb    %al, %dx
-    
-    /* 输出 RIP (栈顶) */
-    // movq    (%rbx), %rax
-    // movb    $':', %al
-    // outb    %al, %dx
-    
-    /* DEBUG: 输出 'Q' 表示即将执行 IRETQ */
-    // movb    $'Q', %al
-    // movw    $0x3F8, %dx
-    // outb    %al, %dx
-    
+
     /* 清空所有通用寄存器（防止信息泄露）*/
     xorq    %rax, %rax
     xorq    %rbx, %rbx

@@ -195,8 +195,8 @@ ifdef VM_EARLY_C_SRC
 endif
 
 # task 模块源文件
-TASK_C_SOURCES := $(KERNEL_DIR)/task/task.c $(KERNEL_DIR)/task/sched.c $(KERNEL_DIR)/task/mutex.c $(KERNEL_DIR)/task/exec.c $(KERNEL_DIR)/task/cpu.c $(KERNEL_DIR)/task/preempt.c $(KERNEL_DIR)/task/smp_thread_test.c
-TASK_C_OBJECTS := $(BUILD_DIR)/kernel_task_task.o $(BUILD_DIR)/kernel_task_sched.o $(BUILD_DIR)/kernel_task_mutex.o $(BUILD_DIR)/kernel_task_exec.o $(BUILD_DIR)/kernel_task_cpu.o $(BUILD_DIR)/kernel_task_preempt.o $(BUILD_DIR)/kernel_task_smp_thread_test.o
+TASK_C_SOURCES := $(KERNEL_DIR)/task/task.c $(KERNEL_DIR)/task/sched.c $(KERNEL_DIR)/task/mutex.c $(KERNEL_DIR)/task/exec.c $(KERNEL_DIR)/task/cpu.c $(KERNEL_DIR)/task/preempt.c
+TASK_C_OBJECTS := $(BUILD_DIR)/kernel_task_task.o $(BUILD_DIR)/kernel_task_sched.o $(BUILD_DIR)/kernel_task_mutex.o $(BUILD_DIR)/kernel_task_exec.o $(BUILD_DIR)/kernel_task_cpu.o $(BUILD_DIR)/kernel_task_preempt.o
 
 # loader 模块源文件
 LOADER_C_SOURCES := $(KERNEL_DIR)/loader/bin_loader.c $(KERNEL_DIR)/loader/elf_loader.c $(KERNEL_DIR)/loader/elf_image.c
@@ -912,9 +912,6 @@ $(BUILD_DIR)/kernel_task_cpu.o: $(KERNEL_DIR)/task/cpu.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/kernel_task_preempt.o: $(KERNEL_DIR)/task/preempt.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_task_smp_thread_test.o: $(KERNEL_DIR)/task/smp_thread_test.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/kernel_task_exec.o: $(KERNEL_DIR)/task/exec.c | $(BUILD_DIR)
