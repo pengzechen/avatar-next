@@ -3,7 +3,7 @@
  * Provides UART output for QEMU virt machines
  */
 
-#include "../../boot/common/platform.h"
+#include "../../boot/common/platform_ops.h"
 #include "types.h"
 #include "arch.h"
 #include "platform_cfg.h"  /* platform_conf_scan */
@@ -126,53 +126,18 @@ static void qemu_shutdown(void)
     __builtin_unreachable();
 }
 
-/*
- * Platform operations structure
- */
-static struct platform_ops qemu_platform = {
-    .uart_putc = qemu_uart_putc,
-    .uart_puts = qemu_uart_puts,
-    .panic    = qemu_panic,
-    .shutdown = qemu_shutdown,
-};
-
-/*
- * Platform initialization
- */
 void platform_init(void)
 {
     platform_conf_scan();    /* 从内嵌 Lua 提取内存布局和 PMM 保留区 */
     uart_init();
 }
 
-/*
- * Get platform operations
- */
-struct platform_ops *platform_get_ops(void)
-{
-    return &qemu_platform;
-}
-
-/*
- * Platform panic wrapper
- */
-void do_platform_panic(void)
+void platform_panic(void)
 {
     qemu_panic();
 }
 
-/*
- * Platform panic entry point (for assert.h)
- */
-void platform_panic(void)
-{
-    do_platform_panic();
-}
-
-/*
- * Platform shutdown wrapper
- */
-void do_platform_shutdown(void)
+void platform_shutdown(void)
 {
     qemu_shutdown();
 }

@@ -4,7 +4,7 @@
  */
 
 #include "../boot/common/boot.h"
-#include "../boot/common/platform.h"
+#include "../boot/common/platform_ops.h"
 #include "arch.h"
 #include "klog.h"
 #include "string.h"
@@ -177,7 +177,7 @@ void kernel_main(void)
     KLOG_INFO("\n");
 #ifdef RUN_PMM_TESTS
     run_pmm_tests();
-    do_platform_shutdown();  /* PMM 测试完成后关机，避免后续测试干扰 PMM 状态 */
+    platform_shutdown();  /* PMM 测试完成后关机，避免后续测试干扰 PMM 状态 */
 #endif
 
 #if ARCH_AARCH64

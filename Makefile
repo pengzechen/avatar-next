@@ -39,7 +39,7 @@ THIRD_PARTY_DIR := third_party
 
 # ─── §2  平台配置生成 ────────────────────────────────────────────────────────────
 # 平台配置全部在 platforms/$(PLATFORM)/platform.lua 的 BUILD_CONFIG 表中。
-# gen_platform.py 解析该文件，生成 platform.mk / platform.h / pmm_reserve.h。
+# gen_platform.py 解析该文件，生成 platform.mk 和内嵌 platform.lua blob。
 
 _PLATFORM_LUA     := $(PLATFORM_DIR)/$(PLATFORM)/platform.lua
 _HAVE_PLATFORM_LUA := $(wildcard $(_PLATFORM_LUA))
@@ -50,10 +50,16 @@ endif
 
 override ARCH := $(shell sed -n 's/^[[:space:]]*arch[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' $(_PLATFORM_LUA) | head -1)
 
-PLATFORM_MK  := $(BUILD_DIR)/platform.mk
-PLATFORM_HDR := $(INCLUDE_DIR)/platform.h
+# 架构切换必须在 Makefile 解析阶段完成；否则并行构建可能在 kernel_clean
+# 执行前就开始复用旧架构对象，最终链接出 "file in wrong format"。
+$(shell if [ -f .arch ] && [ "$$(cat .arch)" != "$(ARCH)" ]; then \
+            echo "Switching architecture from $$(cat .arch) to $(ARCH), cleaning..." >&2; \
+            rm -rf $(BUILD_DIR); \
+        fi; \
+        echo "$(ARCH)" > .arch)
 
-$(shell python3 $(TOOLS_DIR)/gen_platform.py $(_PLATFORM_LUA) $(PLATFORM_MK) $(PLATFORM_HDR) $(INCLUDE_DIR))
+PLATFORM_MK  := $(BUILD_DIR)/platform.mk
+$(shell python3 $(TOOLS_DIR)/gen_platform.py $(_PLATFORM_LUA) $(PLATFORM_MK) $(INCLUDE_DIR))
 -include $(PLATFORM_MK)
 
 ifeq ($(strip $(MEM_RAM_BASE)),)
@@ -304,6 +310,9 @@ endif
 
 # ── §4b  平台 / 驱动基础源文件 ──────────────────────────────────────────────────
 PLATFORM_SOURCES := $(PLATFORM_DIR)/$(PLATFORM)/platform.c
+ifneq ($(filter qemu-virt-% rk3588-aarch64 sg2002-riscv64,$(PLATFORM)),)
+    PLATFORM_SOURCES += $(PLATFORM_DIR)/qemu/qemu_platform.c
+endif
 PLATFORM_OBJECTS := $(PLATFORM_SOURCES:$(PLATFORM_DIR)/%.c=$(BUILD_DIR)/platform_%.o)
 
 ifeq ($(wildcard $(PLATFORM_SOURCES)),)
@@ -336,11 +345,13 @@ else
 endif
 
 # ─── §5  工具链与编译标志（按架构）─────────────────────────────────────────────
+X86_64_TOOL_PREFIX ?= $(if $(shell command -v x86_64-linux-musl-gcc 2>/dev/null),x86_64-linux-musl-,)
+
 ifeq ($(ARCH),x86_64)
-    CC      := /home/ajax/SoftWare/compiler/x86_64-linux-musl-cross/bin/x86_64-linux-musl-gcc
-    AR      := /home/ajax/SoftWare/compiler/x86_64-linux-musl-cross/bin/x86_64-linux-musl-ar
-    OBJCOPY := /home/ajax/SoftWare/compiler/x86_64-linux-musl-cross/bin/x86_64-linux-musl-objcopy
-    NM      := /home/ajax/SoftWare/compiler/x86_64-linux-musl-cross/bin/x86_64-linux-musl-nm
+    CC      := $(X86_64_TOOL_PREFIX)gcc
+    AR      := $(X86_64_TOOL_PREFIX)ar
+    OBJCOPY := $(X86_64_TOOL_PREFIX)objcopy
+    NM      := $(X86_64_TOOL_PREFIX)nm
     CFLAGS  := -Wall -Wextra -O2 -g
 	CFLAGS  += -DARCH_X86_64=1
     CFLAGS  += -I$(INCLUDE_DIR)
@@ -746,17 +757,9 @@ all: $(TARGET) klog
 kernel: | kernel_clean
 kernel: $(KERNEL_BIN)
 
-# 在切换架构时自动清理
+# 架构切换清理在解析阶段完成；保留空目标兼容 kernel 的 order-only 依赖。
 .PHONY: kernel_clean
 kernel_clean:
-	@if [ -f .arch ]; then \
-		if [ "$$(cat .arch)" != "$(ARCH)" ]; then \
-			echo "Switching architecture from $$(cat .arch) to $(ARCH), cleaning..."; \
-			rm -rf $(BUILD_DIR) && echo "$(ARCH)" > .arch; \
-		fi \
-	else \
-		echo "$(ARCH)" > .arch; \
-	fi
 
 klog: $(KLOG_TARGET)
 
@@ -1134,7 +1137,7 @@ $(BUILD_DIR)/lua_kernel_init.o: $(LUA_PORT_DIR)/lua_kernel_init.c | $(BUILD_DIR)
 # 嵌入式 platform.lua —— 由 gen_platform.py 生成到 build/ 目录
 # This rule re-runs gen_platform.py after any arch-switch clean wipes build/
 $(BUILD_DIR)/platform_lua_blob.c: $(_PLATFORM_LUA) $(TOOLS_DIR)/gen_platform.py | $(BUILD_DIR)
-	python3 $(TOOLS_DIR)/gen_platform.py $(_PLATFORM_LUA) $(PLATFORM_MK) $(PLATFORM_HDR) $(INCLUDE_DIR)
+	python3 $(TOOLS_DIR)/gen_platform.py $(_PLATFORM_LUA) $(PLATFORM_MK) $(INCLUDE_DIR)
 
 $(BUILD_DIR)/platform_lua_blob.o: $(BUILD_DIR)/platform_lua_blob.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@

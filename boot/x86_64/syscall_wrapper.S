@@ -36,10 +36,8 @@
 .extern g_current_task
 .extern g_x86_tss_rsp0
 
-.section .bss
-.align 8
-syscall_user_rsp_tmp:
-    .quad 0
+/* offsetof(cpu_t, scratch_rsp) — must match kernel/task/cpu.h */
+.equ CPU_SCRATCH_RSP, 80
 
 .section .text
 
@@ -52,8 +50,8 @@ syscall_entry:
     /* 切换到内核栈（使用当前任务的内核栈） */
     swapgs                          /* GS ← 内核 GS */
     
-    /* 暂存用户 RSP 到内存，避免破坏用户 r15 */
-    movq    %rsp, syscall_user_rsp_tmp(%rip)
+    /* 暂存用户 RSP 到 per-CPU scratch（swapgs 后 gs = cpu_t*） */
+    movq    %rsp, %gs:CPU_SCRATCH_RSP
     
     /* 使用调度器维护的 TSS.RSP0（每任务独立内核栈顶） */
     movq    g_x86_tss_rsp0(%rip), %rsp
@@ -64,7 +62,7 @@ syscall_entry:
     
     /* 保存用户段和栈指针（SYSRET 需要） */
     pushq   $0x23                   /* SS: 用户数据段 (GDT[4] + RPL=3) */
-    pushq   syscall_user_rsp_tmp(%rip) /* RSP: 用户栈指针 */
+    pushq   %gs:CPU_SCRATCH_RSP      /* RSP: 用户栈指针 */
     pushq   %r11                    /* RFLAGS: 保存的用户标志 */
     pushq   $0x2B                   /* CS: 用户代码段 (GDT[5] + RPL=3) */
     pushq   %rcx                    /* RIP: 返回地址 */

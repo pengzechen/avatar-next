@@ -1,12 +1,14 @@
 /*
  * boot/riscv64/exception.S — RISC-V 64-bit S-mode 陷阱/中断入口
  *
- * trap_frame_t 布局（TRAP_FRAME_SIZE = 288 字节）:
+ * trap_frame_t 布局（TRAP_FRAME_SIZE = 552 字节）:
  *   偏移  0 .. 31*8 : x0..x31  (x2=sp 保存原始值)
  *   偏移 32*8 = 256 : sepc
  *   偏移 33*8 = 264 : scause
  *   偏移 34*8 = 272 : stval
  *   偏移 35*8 = 280 : sstatus
+ *   偏移 36*8 .. 67*8 : f0..f31（FP 寄存器）
+ *   偏移 68*8 = 544 : fcsr
  */
 
 .equ TRAP_FRAME_SIZE, 552

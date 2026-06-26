@@ -70,7 +70,7 @@ run_list_tests();
 run_mutex_tests();
 ```
 
-运行完毕后通常继续正常启动（或调用 `do_platform_shutdown()` 关机）。
+运行完毕后通常继续正常启动（或调用 `platform_shutdown()` 关机）。
 
 ### 添加新内核单元测试
 

@@ -11,7 +11,7 @@
 #include "klog.h"
 #include "riscv64/sysreg.h"
 #include "syscall/syscall.h"
-#include "platform.h"
+#include "platform_ops.h"
 #include "task/cpu.h"
 #include "task/task.h"
 
@@ -144,13 +144,17 @@ void handle_exception(void *frame_ptr)
                    code, frame->sepc, frame->stval, frame->sstatus, CSR_READ(satp));
 
         /* 其他异常：打印简单信息后挂起 */
-        if (code == 12 || code == 13 || code == 15 ||
-            code == 20 || code == 21 || code == 23) {
-            const char *fault_type = (code == 12) ? "Inst" :
-                                     (code == 13) ? "Load" :
-                                     (code == 15) ? "Store" :
-                                     (code == 20) ? "Inst-G" :
-                                     (code == 21) ? "Load-G" : "Store-G";
+        if (code == CAUSE_INSN_PAGE_FAULT  || code == CAUSE_LOAD_PAGE_FAULT  ||
+            code == CAUSE_STORE_PAGE_FAULT ||
+            code == CAUSE_INSN_GUEST_PAGE_FAULT ||
+            code == CAUSE_LOAD_GUEST_PAGE_FAULT ||
+            code == CAUSE_STORE_GUEST_PAGE_FAULT) {
+            const char *fault_type =
+                (code == CAUSE_INSN_PAGE_FAULT)        ? "Inst" :
+                (code == CAUSE_LOAD_PAGE_FAULT)        ? "Load" :
+                (code == CAUSE_STORE_PAGE_FAULT)       ? "Store" :
+                (code == CAUSE_INSN_GUEST_PAGE_FAULT)  ? "Inst-G" :
+                (code == CAUSE_LOAD_GUEST_PAGE_FAULT)  ? "Load-G" : "Store-G";
             uint64_t sstatus_val = frame->sstatus;
             uint64_t satp_val    = CSR_READ(satp);
 #if defined(PLATFORM_SG2002)
@@ -158,18 +162,6 @@ void handle_exception(void *frame_ptr)
                        fault_type, frame->sepc, frame->stval,
                        sstatus_val, (unsigned)((sstatus_val >> 8) & 1),
                        satp_val, satp_val & 0xfffffffffffULL);
-            KLOG_ERROR("regs: ra=0x%lx sp=0x%lx gp=0x%lx tp=0x%lx t0=0x%lx t1=0x%lx t2=0x%lx\n",
-                       frame->x[1], frame->x[2], frame->x[3], frame->x[4],
-                       frame->x[5], frame->x[6], frame->x[7]);
-            KLOG_ERROR("regs: a0=0x%lx a1=0x%lx a2=0x%lx a3=0x%lx a4=0x%lx a5=0x%lx a6=0x%lx a7=0x%lx\n",
-                       frame->x[10], frame->x[11], frame->x[12], frame->x[13],
-                       frame->x[14], frame->x[15], frame->x[16], frame->x[17]);
-            KLOG_ERROR("regs: s0=0x%lx s1=0x%lx s2=0x%lx s3=0x%lx s4=0x%lx s5=0x%lx s6=0x%lx s7=0x%lx\n",
-                       frame->x[8], frame->x[9], frame->x[18], frame->x[19],
-                       frame->x[20], frame->x[21], frame->x[22], frame->x[23]);
-            KLOG_ERROR("regs: s8=0x%lx s9=0x%lx s10=0x%lx s11=0x%lx t3=0x%lx t4=0x%lx t5=0x%lx t6=0x%lx\n",
-                       frame->x[24], frame->x[25], frame->x[26], frame->x[27],
-                       frame->x[28], frame->x[29], frame->x[30], frame->x[31]);
 #else
             uint64_t hstatus_val = CSR_READ(hstatus);
             KLOG_ERROR("%s PF: pc=0x%lx va=0x%lx sstatus=0x%lx(SPP=%u) hstatus=0x%lx(SPV=%u SPVP=%u) satp=0x%lx(PPN=0x%lx)\n",
@@ -180,8 +172,26 @@ void handle_exception(void *frame_ptr)
                        (unsigned)((hstatus_val >> 8) & 1),
                        satp_val, satp_val & 0xfffffffffffULL);
 #endif
+            static const char * const reg_names[] = {
+                "zero","ra","sp","gp","tp","t0","t1","t2",
+                "s0","s1","a0","a1","a2","a3","a4","a5",
+                "a6","a7","s2","s3","s4","s5","s6","s7",
+                "s8","s9","s10","s11","t3","t4","t5","t6",
+            };
+            for (int i = 1; i < 32; i += 4) {
+                int end = i + 4 > 32 ? 32 : i + 4;
+                if (end - i == 4)
+                    KLOG_ERROR("  %s=0x%lx %s=0x%lx %s=0x%lx %s=0x%lx\n",
+                               reg_names[i],   frame->x[i],
+                               reg_names[i+1], frame->x[i+1],
+                               reg_names[i+2], frame->x[i+2],
+                               reg_names[i+3], frame->x[i+3]);
+                else
+                    for (int j = i; j < end; j++)
+                        KLOG_ERROR("  %s=0x%lx\n", reg_names[j], frame->x[j]);
+            }
         }
         
-        do_platform_shutdown();
+        platform_shutdown();
     }
 }

@@ -62,6 +62,9 @@ typedef struct cpu {
 
     /* ── 诊断 / 测试 ─────────────────────────────────────── */
     volatile uint64_t   local_ticks;   /* 本核 timer ISR 累计次数（SMP 验证用） */
+
+    /* x86_64 SYSCALL 路径暂存用户 RSP（per-CPU，通过 gs:offset 访问） */
+    uint64_t            scratch_rsp;
 } cpu_t;
 
 /* ── 全局 CPU 池 ────────────────────────────────────────── */

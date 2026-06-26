@@ -1,2 +1,2 @@
-/* platforms/qemu-virt-riscv64/platform.c — include shared QEMU implementation */
-#include "../qemu/platform.c"
+/* qemu-virt-riscv64 platform marker; implementation lives in platforms/qemu/qemu_platform.c. */
+static const char platform_marker[] __attribute__((unused)) = "qemu-virt-riscv64";

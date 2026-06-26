@@ -951,3 +951,5 @@ third_party/dropbear-2024.86/test/test_concurrent.py
 third_party/dropbear-2024.86/test/test_dropbear.py
 third_party/dropbear-2024.86/test/test_dropbearconvert.py
 third_party/dropbear-2024.86/test/test_svrauth.py
+.clangd
+compile_commands.json

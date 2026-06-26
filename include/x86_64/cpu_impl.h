@@ -4,16 +4,22 @@
 /*
  * x86_64 per-CPU 指针 / 硬件 ID 实现
  *
- * 约定：IA32_GS_BASE (MSR 0xC0000101) 保存当前 cpu_t* 指针。
- * 当前内核还没启用 swapgs，所以始终从 GS_BASE 读取，
- * 用户态引入后再加 swapgs 切换 KERNEL_GS_BASE。
+ * 约定：
+ *   IA32_GS_BASE        (MSR 0xC0000101) — 用户态运行时保存 cpu_t*
+ *   IA32_KERNEL_GS_BASE (MSR 0xC0000102) — 内核态运行时保存 cpu_t*
+ *
+ * syscall_entry 执行 swapgs 后 GS_BASE = cpu_t*（从 KERNEL_GS_BASE 换入），
+ * 可通过 gs:offset 访问 per-CPU 数据。sysretq 前再次 swapgs 换回。
+ *
+ * 内核纯态路径（非 SYSCALL）仍通过 rdmsr(GS_BASE) 读取 cpu_t*。
  */
 
 #include "types.h"
 
 struct cpu;
 
-#define X86_MSR_GS_BASE        0xC0000101U
+#define X86_MSR_GS_BASE         0xC0000101U
+#define X86_MSR_KERNEL_GS_BASE  0xC0000102U
 
 static inline void
 arch_cpu_self_set(struct cpu *self)
@@ -22,6 +28,7 @@ arch_cpu_self_set(struct cpu *self)
     uint32_t lo = (uint32_t)v;
     uint32_t hi = (uint32_t)(v >> 32);
     __asm__ volatile("wrmsr" :: "c"(X86_MSR_GS_BASE), "a"(lo), "d"(hi) : "memory");
+    __asm__ volatile("wrmsr" :: "c"(X86_MSR_KERNEL_GS_BASE), "a"(lo), "d"(hi) : "memory");
 }
 
 static inline struct cpu *

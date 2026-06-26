@@ -3,7 +3,7 @@
  * Entry point: _start at 0x40000000
  */
 
-.section .text
+.section .text.boot
 .global _start
 .type _start, @function
 
@@ -80,32 +80,27 @@
 .endm
 
 _start:
-    bl  early_uart_init
-
     init_el2_vhe
 
     /* ── 以下与原 EL1 启动路径完全一致（VHE 别名透明）──────── */
 
-    msr daifset, #2   // 关闭所有中断
+    msr daifset, #2   // 关闭 IRQ
 
     /*
      * Set stack pointer
      * Stack grows downward, so we set SP to stack_top
      */
-    ldr x0, =stack_top      // 加载 _stack_top 地址
-    and x0, x0, #0xFFFFFFFF  // 屏蔽高 32 位
+    ldr x0, =stack_top_phys  // 加载物理栈顶地址
     mov sp, x0               // 设置栈指针
 
     /*
      * Clear BSS section（在 MMU 启用前必须完成）
      * BSS 未清零时 dw_uart_initialized/spinlock 等含 DRAM 垃圾值，
      * 导致 dw_uart_putchar 进入中断路径并在 garbage lock 上死循环。
-     * ADRP 在物理地址模式下计算正确的物理地址（偏移量与 VA 相同）。
+     * 使用 link.ld 导出的物理别名，避免假设 PA 位于 VA 低 32 位。
      */
-    adrp    x0, __bss_start
-    add     x0, x0, :lo12:__bss_start
-    adrp    x1, __bss_end
-    add     x1, x1, :lo12:__bss_end
+    ldr     x0, =__bss_start_phys
+    ldr     x1, =__bss_end_phys
     mov     x2, #0
 clear_bss:
     cmp     x0, x1
@@ -119,7 +114,6 @@ clear_bss_done:
      * 建立页表映射（0-1GB 设备内存，1GB-2GB 普通内存）
      * 此时 MMU 未启用，使用物理地址
      */
-    bl  early_uart_init
     bl      vm_init
     
 
@@ -136,7 +130,6 @@ clear_bss_done:
     mov     x1, x0                   // x1 = TTBR1 = kernel_pt0
     mov     x0, x27                  // x0 = TTBR0 = boot_pt0
     bl      mmu_init
-    bl  early_uart_init
 
     /*
      * Trampoline：从 identity-mapped 低地址跳到高虚拟地址
@@ -153,8 +146,6 @@ clear_bss_done:
     br      x0
 1:
     /* ── 以下代码在高虚拟地址（TTBR1 映射）下执行 ────────────── */
-
-    bl  early_uart_init
 
     /*
      * 重新设置栈指针（使用高地址）
@@ -230,11 +221,9 @@ _secondary_start:
     /*
      * 设置启动栈：secondary_boot_stacks 是按 4KB 对齐的 BSS 数组，
      * 每核独占 4KB；栈顶 = base + (cpu_id + 1) * 4096
-     * 此时 MMU 未启，链接地址在高 VA，用 & 0xFFFFFFFF 取低 32 位
-     * 还原为物理地址（与 _start 中处理 stack_top 同样的技巧）。
+     * 此时 MMU 未启，使用 link.ld 导出的物理别名。
      */
-    ldr     x0, =secondary_boot_stacks
-    and     x0, x0, #0xFFFFFFFF
+    ldr     x0, =secondary_boot_stacks_phys
     add     x1, x19, #1
     lsl     x1, x1, #12              /* (cpu_id+1) * 4096 */
     add     x0, x0, x1
@@ -294,11 +283,23 @@ _secondary_start:
 
 .size _secondary_start, . - _secondary_start
 
-early_uart_init:
-    ret
+/*
+ * BSP 启动栈（32KB，与 riscv64/x86_64 boot.S 一致放在汇编 .bss 中）
+ *
+ * 注意：link.ld 将整个 .bss 段放在 [__kernel_start, __kernel_end] 区间内，
+ * 因此 PMM 不会把这段当作可用物理内存。
+ */
+.section .bss
+.align 16
+.global stack_bottom
+.global stack_top
+
+stack_bottom:
+    .skip 0x8000              /* 32KB */
+stack_top:
 
 /*
- * ── 次级核启动栈 ─────────────────────────────────────────
+ * 次级核启动栈
  *
  * 每核 4KB，索引 [0..AVATAR_MAX_CPUS-1]；CPU0（BSP）不使用 [0]，
  * 但保留以简化下标计算（用 (cpu_id+1)*4096 取栈顶）。
@@ -306,13 +307,7 @@ early_uart_init:
  *
  * 这里固定按 AVATAR_MAX_CPUS=8 预留；若调高最大核数需同步修改。
  */
-.section .bss
 .align 12
 .global secondary_boot_stacks
 secondary_boot_stacks:
     .skip 4096 * 8
-
-/*
- * Stack symbols are defined in linker script
- * No need to define them here
- */

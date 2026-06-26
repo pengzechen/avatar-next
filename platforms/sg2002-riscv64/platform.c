@@ -1,2 +1,2 @@
-/* platforms/sg2002-riscv64/platform.c — SG2002 平台实现（复用 QEMU 通用层） */
-#include "../qemu/platform.c"
+/* SG2002 reuses the shared platform operations in platforms/qemu/qemu_platform.c. */
+static const char platform_marker[] __attribute__((unused)) = "sg2002-riscv64";

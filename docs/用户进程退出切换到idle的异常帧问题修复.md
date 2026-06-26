@@ -192,7 +192,7 @@ void handle_sync_exception(uint64_t *stack_pointer)
 
     (void)ec;
 
-    do_platform_shutdown();
+    platform_shutdown();
 }
 ```
 
