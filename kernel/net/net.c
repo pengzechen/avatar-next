@@ -12,6 +12,7 @@
 #include "netif/ethernet.h"
 #include "lwip_port/netif_avatar.h"
 
+#include "net/http_server.h"
 #if DRIVER_USB_DWC2
 #include "net/webcam_httpd.h"
 #endif
@@ -46,6 +47,8 @@ void net_init(void)
     tcp_echo_init();
 #if DRIVER_USB_DWC2
     webcam_httpd_init();
+#else
+    http_server_init();
 #endif
 }
 
