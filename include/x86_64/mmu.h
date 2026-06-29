@@ -159,6 +159,27 @@ typedef union {
 #define PTE_IS_USER(pte)     ((pte).bits.user)
 #define PTE_IS_HUGE(pte)     ((pte).bits.huge)
 
+/* ── PTE 工具函数（纯位运算，无外部依赖）──────────────────────── */
+
+static inline uint64_t x86_pte_to_pa(uint64_t pte)
+{
+    return pte & PTE_ADDR_MASK;
+}
+
+static inline uint64_t x86_make_table_pte(uint64_t pa)
+{
+    return (pa & PTE_ADDR_MASK) | PTE_PRESENT | PTE_WRITABLE | PTE_USER;
+}
+
+static inline bool x86_pte_is_leaf(uint64_t pte, int level)
+{
+    if (level > 0 && (pte & PTE_HUGE))
+        return true;
+    if (level == 0)
+        return (pte & PTE_PRESENT) != 0;
+    return false;
+}
+
 /* ── CR3 寄存器操作 ───────────────────────────────────────────────── */
 
 /* 读取 CR3（当前页表基址） */

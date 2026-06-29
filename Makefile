@@ -121,8 +121,8 @@ KERNEL_SOURCES := $(KERNEL_DIR)/main.c
 KERNEL_OBJECTS := $(KERNEL_SOURCES:$(KERNEL_DIR)/%.c=$(BUILD_DIR)/kernel_%.o)
 
 # ── §4a  架构特定模块（VMM / 异常 / 上下文切换 / 用户程序）─────────────────────
-VM_C_SOURCES := $(KERNEL_DIR)/mm/pmm.c $(TESTS_DIR)/pmm_test.c $(KERNEL_DIR)/mm/vm_user.c
-VM_C_OBJECTS := $(BUILD_DIR)/kernel_mm_pmm.o $(BUILD_DIR)/kernel_mm_pmm_test.o $(BUILD_DIR)/kernel_mm_vm_user.o
+VM_C_SOURCES := $(KERNEL_DIR)/mm/pmm.c $(TESTS_DIR)/pmm_test.c $(KERNEL_DIR)/mm/vm_user.c $(KERNEL_DIR)/mm/kmalloc.c
+VM_C_OBJECTS := $(BUILD_DIR)/kernel_mm_pmm.o $(BUILD_DIR)/kernel_mm_pmm_test.o $(BUILD_DIR)/kernel_mm_vm_user.o $(BUILD_DIR)/kernel_mm_kmalloc.o
 
 # 架构特定的 VM 模块
 ifeq ($(ARCH),aarch64)
@@ -148,6 +148,9 @@ ifeq ($(ARCH),aarch64)
     GUEST_TEST_OBJ := $(BUILD_DIR)/apps_guest_test.o \
                       $(BUILD_DIR)/apps_el0_loop.o
 else ifeq ($(ARCH),x86_64)
+    # x86_64 MM subsystem
+    VM_C_SOURCES += $(KERNEL_DIR)/mm/x86_64/vmm.c
+    VM_C_OBJECTS += $(BUILD_DIR)/kernel_mm_x86_vmm.o
     # x86_64 VMM subsystem
     VMM_C_SOURCES := $(KERNEL_DIR)/vmm/vmm.c \
                      $(KERNEL_DIR)/vmm/x86_64/vmx.c
@@ -158,6 +161,9 @@ else ifeq ($(ARCH),x86_64)
     # x86_64 guest test program (linked into kernel binary)
     GUEST_TEST_OBJ := $(BUILD_DIR)/apps_x86_guest_test.o
 else ifeq ($(ARCH),riscv64)
+    # RISC-V MM subsystem
+    VM_C_SOURCES += $(KERNEL_DIR)/mm/riscv64/vmm.c
+    VM_C_OBJECTS += $(BUILD_DIR)/kernel_mm_rv_vmm.o
     # RISC-V H-extension VMM subsystem
     VMM_C_SOURCES := $(KERNEL_DIR)/vmm/vmm.c \
                      $(KERNEL_DIR)/vmm/riscv64/hext_run.c
@@ -1060,7 +1066,20 @@ $(BUILD_DIR)/kernel_mm_vmm.o: $(KERNEL_DIR)/mm/aarch64/vmm.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 endif
 
+ifeq ($(ARCH),riscv64)
+$(BUILD_DIR)/kernel_mm_rv_vmm.o: $(KERNEL_DIR)/mm/riscv64/vmm.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+endif
+
+ifeq ($(ARCH),x86_64)
+$(BUILD_DIR)/kernel_mm_x86_vmm.o: $(KERNEL_DIR)/mm/x86_64/vmm.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+endif
+
 $(BUILD_DIR)/kernel_mm_vm_user.o: $(KERNEL_DIR)/mm/vm_user.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/kernel_mm_kmalloc.o: $(KERNEL_DIR)/mm/kmalloc.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/bitmap.o: $(LIB_DIR)/bitmap.c | $(BUILD_DIR)

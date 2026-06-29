@@ -2,6 +2,7 @@
 
 #include "barrier.h"
 #include "klog.h"
+#include "kmalloc.h"
 #include "mmio.h"
 #include "mm_vm.h"
 #include "net/netdev.h"
@@ -397,19 +398,17 @@ static void virtio_net_reclaim_tx(struct virtio_net_nic *nic)
 VirtioNetNic_t *eth_init(uint64_t base)
 {
     uint32_t nic_pages = (uint32_t)DIV_ROUND_UP(sizeof(struct virtio_net_nic), 4096U);
-    uint64_t nic_pa = pmm_alloc_pages(g_pmm, nic_pages);
-    if (nic_pa == 0U) {
-        KLOG_ERROR("[virtio-net] pmm_alloc_pages(%u) for nic failed\n", nic_pages);
+    struct virtio_net_nic *nic = (struct virtio_net_nic *)kalloc_pages(nic_pages);
+    if (nic == NULL) {
+        KLOG_ERROR("[virtio-net] kalloc_pages(%u) for nic failed\n", nic_pages);
         return NULL;
     }
 
-    struct virtio_net_nic *nic = (struct virtio_net_nic *)phys_to_virt(nic_pa);
-    memset(nic, 0, sizeof(*nic));
-    g_virtio_net0_pa = nic_pa;
+    g_virtio_net0_pa = virt_to_phys(nic);
     nic->base = (uintptr_t)base;
 
     KLOG_INFO("[virtio-net] init begin base=0x%llx nic_va=%p nic_pa=0x%llx pages=%u size=%zu\n",
-              (unsigned long long)base, nic, (unsigned long long)nic_pa,
+              (unsigned long long)base, nic, (unsigned long long)g_virtio_net0_pa,
               nic_pages, sizeof(*nic));
 
     uint32_t magic = vn_read(nic, VIRTIO_MMIO_MAGIC_VALUE);

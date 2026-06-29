@@ -6,7 +6,7 @@
 #include "syscall/syscall.h"
 #include "klog.h"
 #include "task/task.h"
-#include "pmm.h"
+#include "kmalloc.h"
 #include "mm_vm.h"
 #include "user_layout.h"
 #include <ext4.h>
@@ -71,29 +71,25 @@ int bin_loader_load_from_file(const char *pathname, char **argv, char **envp)
     uint32_t page_count = (file_size + 4095) / 4096;
 
     /* 分配内存页面 */
-    uint64_t code_phys = pmm_alloc_pages(g_pmm, page_count);
-    if (code_phys == 0) {
+    code_buffer = (uint8_t *)kalloc_pages(page_count);
+    if (code_buffer == NULL) {
         KLOG_ERROR("[loader] Failed to allocate memory for program\n");
         ext4_fclose(&file);
         return -3;
     }
 
-    /* pmm_alloc_pages 返回物理地址，需转换为内核虚拟地址才能访问 */
-    code_buffer = (uint8_t *)phys_to_virt(code_phys);
-
     /* 读取文件内容 */
     rc = ext4_fread(&file, code_buffer, file_size, &rcnt);
     if (rc != EOK || rcnt != file_size) {
         KLOG_ERROR("[loader] Failed to read file: rc=%d, rcnt=%zu\n", rc, rcnt);
-        pmm_free_pages(g_pmm, code_phys, page_count);
+        kfree_pages(code_buffer, page_count);
         ext4_fclose(&file);
         return -4;
     }
 
     ext4_fclose(&file);
 
-    KLOG_INFO("[loader] Program loaded: phys=0x%llx, virt=0x%llx\n",
-              code_phys, (uint64_t)code_buffer);
+    KLOG_INFO("[loader] Program loaded: virt=0x%llx\n", (uint64_t)code_buffer);
 
     /* 创建用户进程
      * process_create 的 user_entry 参数在 AArch64 下是代码的内核虚拟地址，
@@ -104,7 +100,7 @@ int bin_loader_load_from_file(const char *pathname, char **argv, char **envp)
                               USER_STACK_TOP, USER_PROCESS_PRIO);
     if (new_task == NULL) {
         KLOG_ERROR("[loader] Failed to create process for '%s'\n", path_buf);
-        pmm_free_pages(g_pmm, code_phys, page_count);
+        kfree_pages(code_buffer, page_count);
         return -5;
     }
 

@@ -8,14 +8,12 @@
 #include "loader/bin_loader.h"
 #include "elf.h"
 #include "klog.h"
-#include "pmm.h"
+#include "kmalloc.h"
 #include "mm_vm.h"
 #include "string.h"
 #include "task/exec.h"
 #include <ext4.h>
 #include <ext4_types.h>
-
-extern pmm_t *g_pmm;
 
 #define MAX_FILE_SIZE     (10 * 1024 * 1024) /* 10MB */
 
@@ -137,23 +135,21 @@ int elf_loader_load_from_file(const char *pathname, char **argv, char **envp)
 
     /* 分配内存 */
     page_count = (file_size + 4095) / 4096;
-    uint64_t file_phys = pmm_alloc_pages(g_pmm, page_count);
-    if (file_phys == 0) {
+    file_data = (uint8_t *)kalloc_pages(page_count);
+    if (file_data == NULL) {
         KLOG_ERROR("[elf_loader] Memory allocation failed\n");
         ext4_fclose(&file);
         return -12; /* -ENOMEM */
     }
 
-    file_data = (uint8_t *)phys_to_virt(file_phys);
-
-    KLOG_DEBUG("[elf_loader] file_phys=0x%llx file_data=0x%llx pages=%u\n",
-               file_phys, (uint64_t)file_data, page_count);
+    KLOG_DEBUG("[elf_loader] file_data=0x%llx pages=%u\n",
+               (uint64_t)file_data, page_count);
 
     /* 读取文件 */
     rc = ext4_fread(&file, file_data, file_size, &rcnt);
     if (rc != EOK || rcnt != file_size) {
         KLOG_ERROR("[elf_loader] Read failed: rc=%d\n", rc);
-        pmm_free_pages(g_pmm, file_phys, page_count);
+        kfree_pages(file_data, page_count);
         ext4_fclose(&file);
         return -5; /* -EIO */
     }
@@ -166,7 +162,6 @@ int elf_loader_load_from_file(const char *pathname, char **argv, char **envp)
     uint8_t  *interp_data  = NULL;
     uint64_t  interp_size  = 0;
     uint32_t  interp_pages = 0;
-    uint64_t  interp_phys  = 0;
     {
         if (file_size >= sizeof(elf64_ehdr_t)) {
             elf64_ehdr_t *ehdr = (elf64_ehdr_t *)file_data;
@@ -198,9 +193,8 @@ int elf_loader_load_from_file(const char *pathname, char **argv, char **envp)
 
                     if (isz > 0 && isz <= MAX_FILE_SIZE) {
                         interp_pages = (isz + 4095u) / 4096u;
-                        interp_phys  = pmm_alloc_pages(g_pmm, interp_pages);
-                        if (interp_phys) {
-                            interp_data = (uint8_t *)phys_to_virt(interp_phys);
+                        interp_data  = (uint8_t *)kalloc_pages(interp_pages);
+                        if (interp_data) {
                             size_t iread = 0;
                             irc = ext4_fread(&ifile, interp_data, isz, &iread);
                             if (irc == EOK && iread == isz) {
@@ -210,9 +204,8 @@ int elf_loader_load_from_file(const char *pathname, char **argv, char **envp)
                             } else {
                                 KLOG_ERROR("[elf_loader] Interpreter read failed rc=%d\n",
                                            irc);
-                                pmm_free_pages(g_pmm, interp_phys, interp_pages);
+                                kfree_pages(interp_data, interp_pages);
                                 interp_data  = NULL;
-                                interp_phys  = 0;
                                 interp_pages = 0;
                             }
                         } else {
@@ -232,8 +225,8 @@ int elf_loader_load_from_file(const char *pathname, char **argv, char **envp)
     rc = task_execve(path_buf, file_data, file_size,
                      interp_data, interp_size, argv, envp);
 
-    if (interp_phys)
-        pmm_free_pages(g_pmm, interp_phys, interp_pages);
-    pmm_free_pages(g_pmm, file_phys, page_count);
+    if (interp_data)
+        kfree_pages(interp_data, interp_pages);
+    kfree_pages(file_data, page_count);
     return rc;
 }
