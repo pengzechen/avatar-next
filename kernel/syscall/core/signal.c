@@ -17,6 +17,7 @@
 #include "string.h"
 #include "arch.h"
 #include "exception.h"
+#include "user_layout.h"
 
 /* ── deliver_pending_signals ────────────────────────────────────
  * 在 syscall 即将返回用户态前调用（且 syscall_abi_set_ret 已执行）。
@@ -53,17 +54,10 @@ deliver_pending_signals(task_t *t, trap_frame_t *frame)
         default:
             KLOG_INFO("[signal] pid=%u: SIG_DFL sig=%d → exit(%d)\n",
                       t->id, sig, 128 + sig);
+            t->exit_signal = sig;
             sys_exit(128 + sig);
             return; /* unreachable */
         }
-    }
-
-    /* 用户自定义 handler — 需要 restorer */
-    if (sa_restorer == 0) {
-        KLOG_WARN("[signal] pid=%u: sig=%d has handler but no restorer, forcing exit\n",
-                  t->id, sig);
-        sys_exit(128 + sig);
-        return;
     }
 
     /* 在 handler 执行期间屏蔽本信号（+ sa_mask） */
@@ -73,6 +67,7 @@ deliver_pending_signals(task_t *t, trap_frame_t *frame)
     /* 在用户栈上压入当前 trap_frame（已含 syscall 返回值），建立 sigframe */
 #if ARCH_X86_64
     {
+        sa_restorer = USER_SIGRET_PAGE;
         uint64_t usp = frame->rsp & ~15ULL;          /* 16 字节对齐 */
         usp -= sizeof(trap_frame_t);
         memcpy((void *)usp, frame, sizeof(trap_frame_t));
@@ -87,6 +82,14 @@ deliver_pending_signals(task_t *t, trap_frame_t *frame)
 #elif ARCH_AARCH64
     {
         uint64_t usp = frame->usp & ~15ULL;
+        /* 如果 sa_restorer == 0，在栈上放一个 rt_sigreturn 蹦床 */
+        if (sa_restorer == 0) {
+            usp -= 8;
+            uint32_t *tramp = (uint32_t *)usp;
+            tramp[0] = 0xd2801168u;  /* mov x8, #139 */
+            tramp[1] = 0xd4000001u;  /* svc #0       */
+            sa_restorer = usp;
+        }
         usp -= sizeof(trap_frame_t);
         memcpy((void *)usp, frame, sizeof(trap_frame_t));
         t->sig_frame_sp = usp;
@@ -98,6 +101,14 @@ deliver_pending_signals(task_t *t, trap_frame_t *frame)
 #elif ARCH_RISCV64
     {
         uint64_t usp = frame->x[2] & ~15ULL;
+        /* 如果 sa_restorer == 0，在栈上放一个 rt_sigreturn 蹦床 */
+        if (sa_restorer == 0) {
+            usp -= 8;
+            uint32_t *tramp = (uint32_t *)usp;
+            tramp[0] = 0x08b00893u;  /* li a7, 139   */
+            tramp[1] = 0x00000073u;  /* ecall         */
+            sa_restorer = usp;
+        }
         usp -= sizeof(trap_frame_t);
         memcpy((void *)usp, frame, sizeof(trap_frame_t));
         t->sig_frame_sp = usp;
@@ -118,6 +129,12 @@ void sigaction_handler(uint64_t regs[6], task_t *current)
     int sig = (int)regs[0];
     const struct kernel_sigaction *act = (const struct kernel_sigaction *)regs[1];
     struct kernel_sigaction       *old = (struct kernel_sigaction *)regs[2];
+    size_t sigsetsize = (size_t)regs[3];
+
+    if (sigsetsize != sizeof(uint64_t)) {
+        regs[0] = (uint64_t)(int64_t)-EINVAL;
+        return;
+    }
 
     if (sig < 1 || sig > NSIG || sig == SIGKILL || sig == SIGSTOP) {
         regs[0] = (uint64_t)(int64_t)-EINVAL;
@@ -190,6 +207,11 @@ kill_handler(uint64_t regs[6], task_t *current)
     int pid = (int)(int32_t)regs[0];
     int sig = (int)regs[1];
 
+    if (sig < 0 || sig > NSIG) {
+        regs[0] = (uint64_t)(int64_t)-EINVAL;
+        return;
+    }
+
     if (sig == 0) { regs[0] = 0; return; }
 
     if (pid > 0) {
@@ -197,12 +219,21 @@ kill_handler(uint64_t regs[6], task_t *current)
         if (!tgt) { regs[0] = (uint64_t)(int64_t)-ESRCH; return; }
         task_send_signal(tgt, sig);
     } else if (pid == 0) {
-        task_send_signal_to_pgid(current->pgid, sig);
+        if (!task_send_signal_to_pgid(current->pgid, sig)) {
+            regs[0] = (uint64_t)(int64_t)-ESRCH; return;
+        }
     } else if (pid == -1) {
         /* 简化：向 current 的 pgid 广播 */
-        task_send_signal_to_pgid(current->pgid, sig);
+        if (!task_send_signal_to_pgid(current->pgid, sig)) {
+            regs[0] = (uint64_t)(int64_t)-ESRCH; return;
+        }
     } else {
-        task_send_signal_to_pgid((uint32_t)(-pid), sig);
+        /* pid < -1: send to process group (-pid) */
+        uint32_t pgid = (uint32_t)(-(int64_t)pid);
+        if (pgid == 0 || !task_send_signal_to_pgid(pgid, sig)) {
+            regs[0] = (uint64_t)(int64_t)-ESRCH;
+            return;
+        }
     }
     regs[0] = 0;
 }

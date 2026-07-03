@@ -2,6 +2,7 @@
 #define AARCH64_MM_VM_H
 
 #include "types.h"
+#include "mmu.h"
 
 /* AArch64 现有 VM 实现导出符号 */
 extern int32_t memory_create_map(void *page_dir, uint64_t vaddr, uint64_t paddr,
@@ -10,6 +11,8 @@ extern uint64_t memory_get_paddr(void *page_dir, uint64_t vaddr);
 extern void memory_free_page(void *page_dir, uint64_t addr);
 
 extern int32_t memory_copy_uvm_4level(void *dst_pgd, void *src_pgd);
+extern uint64_t memory_get_pte_raw(void *page_dir, uint64_t vaddr);
+extern void memory_set_pte_nofree(void *page_dir, uint64_t vaddr);
 
 /* copydata_to_uvm: 将 src_paddr 处的数据拷贝到 pgd 对应用户地址空间的 user_vaddr */
 extern void copydata_to_uvm(void *page_dir, uint64_t vaddr, uint64_t paddr, uint64_t size);

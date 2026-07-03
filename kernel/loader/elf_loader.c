@@ -16,6 +16,7 @@
 #include <ext4_types.h>
 
 #define MAX_FILE_SIZE     (10 * 1024 * 1024) /* 10MB */
+#define SHEBANG_MAX_DEPTH 4
 
 /**
  * resolve_symlink - 跟随符号链接，最多 8 层，将最终真实路径写入 out。
@@ -73,16 +74,19 @@ static int resolve_symlink(const char *path, char *out, size_t outsz)
     return -1;
 }
 
+static int load_from_file_depth(const char *pathname, char **argv, char **envp,
+                                int depth);
+
 /**
  * elf_loader_load_from_file - 从文件系统加载并执行 ELF 程序
- * @pathname: 程序路径
- * @argv:     参数数组（可为 NULL）
- * @envp:     环境变量数组（可为 NULL）
- *
- * 读取 ELF 文件到内存，委托 task_execve 完成后续处理。
- * 返回：失败时返回负值；成功时 task_execve 不返回。
  */
 int elf_loader_load_from_file(const char *pathname, char **argv, char **envp)
+{
+    return load_from_file_depth(pathname, argv, envp, 0);
+}
+
+static int load_from_file_depth(const char *pathname, char **argv, char **envp,
+                                int depth)
 {
     ext4_file file;
     int rc;
@@ -157,6 +161,75 @@ int elf_loader_load_from_file(const char *pathname, char **argv, char **envp)
     ext4_fclose(&file);
 
     KLOG_DEBUG("[elf_loader] File loaded: %zu bytes\n", file_size);
+
+    /* ── Shebang (#!) 脚本处理 ─────────────────────────────────────── */
+    if (file_size >= 2 && file_data[0] == '#' && file_data[1] == '!') {
+        if (depth >= SHEBANG_MAX_DEPTH) {
+            kfree_pages(file_data, page_count);
+            KLOG_ERROR("[elf_loader] Shebang recursion too deep for '%s'\n", path_buf);
+            return -8; /* -ENOEXEC */
+        }
+
+        /* 解析 "#!<interpreter> [optional-arg]\n" — 只看前 256 字节 */
+        int hdr_len = (file_size < 255) ? (int)file_size : 255;
+
+        int p = 2;
+        while (p < hdr_len && (file_data[p] == ' ' || file_data[p] == '\t'))
+            p++;
+
+        char interp_path[128];
+        int ip = 0;
+        while (p < hdr_len && file_data[p] != ' ' && file_data[p] != '\t' &&
+               file_data[p] != '\n' && file_data[p] != '\r') {
+            if (ip < (int)sizeof(interp_path) - 1)
+                interp_path[ip++] = (char)file_data[p];
+            p++;
+        }
+        interp_path[ip] = '\0';
+
+        if (ip == 0) {
+            kfree_pages(file_data, page_count);
+            KLOG_ERROR("[elf_loader] Empty shebang interpreter in '%s'\n", path_buf);
+            return -8; /* -ENOEXEC */
+        }
+
+        /* 可选参数（如 "#!/usr/bin/env sh" 中的 "sh"） */
+        while (p < hdr_len && (file_data[p] == ' ' || file_data[p] == '\t'))
+            p++;
+
+        char interp_arg[128];
+        int ia = 0;
+        while (p < hdr_len && file_data[p] != '\n' && file_data[p] != '\r') {
+            if (ia < (int)sizeof(interp_arg) - 1)
+                interp_arg[ia++] = (char)file_data[p];
+            p++;
+        }
+        while (ia > 0 && (interp_arg[ia-1] == ' ' || interp_arg[ia-1] == '\t'))
+            ia--;
+        interp_arg[ia] = '\0';
+
+        kfree_pages(file_data, page_count);
+
+        KLOG_DEBUG("[elf_loader] Shebang: interp='%s' arg='%s' script='%s'\n",
+                   interp_path, interp_arg, path_buf);
+
+        /* 构建新 argv: [interp, interp_arg?, script_path, original_argv[1..], NULL] */
+#define SHEBANG_MAX_ARGC 32
+        char *new_argv[SHEBANG_MAX_ARGC + 1];
+        int na = 0;
+        new_argv[na++] = interp_path;
+        if (ia > 0)
+            new_argv[na++] = interp_arg;
+        new_argv[na++] = path_buf;
+        if (argv) {
+            for (int ai = 1; argv[ai] && na < SHEBANG_MAX_ARGC; ai++)
+                new_argv[na++] = argv[ai];
+        }
+        new_argv[na] = NULL;
+#undef SHEBANG_MAX_ARGC
+
+        return load_from_file_depth(interp_path, new_argv, envp, depth + 1);
+    }
 
     /* ── 检查 PT_INTERP（动态连接器路径）───────────────────────────── */
     uint8_t  *interp_data  = NULL;

@@ -17,6 +17,7 @@
 #include "uart/uart.h"
 #include "task/task.h"
 #include "cache.h"
+#include "timer/timer.h"
 #if DRIVER_USB_DWC2
 #include "usb/uvc_video.h"
 #endif
@@ -28,6 +29,7 @@ extern uint8_t  g_stack_used[TASK_MAX];
 /* 动态 PID 节点 ID 空间（不与静态 g_nodes[] 索引冲突） */
 #define DYNC_PID_DIR_BASE   2000   /* /proc/<pid>        → nid = 2000+pid */
 #define DYNC_PID_STAT_BASE  3000   /* /proc/<pid>/status → nid = 3000+pid */
+#define DYNC_PID_PSTAT_BASE 4000   /* /proc/<pid>/stat   → nid = 4000+pid */
 
 #if DRIVER_ION
 #  include "ion/ion.h"
@@ -336,6 +338,79 @@ static int status_read(int nid, uint64_t off, void *buf, size_t len)
     task_t *t = task_current();
     if (!t) return 0;
     return pid_status_read(t->id, off, buf, len);
+}
+
+/* /proc/self/stat — 单行，52+ 字段空格分隔
+ * clock_gettime01 读 field 14(utime) 和 15(stime)，单位 USER_HZ tick */
+static int stat_read_task(task_t *t, uint64_t off, void *buf, size_t len)
+{
+    if (!t) return 0;
+
+    char   tmp[512];
+    size_t pos = 0;
+    char   nbuf[24];
+
+    /* field 1: pid */
+    u64_to_dec(nbuf, t->id);
+    pos += (size_t)pfs_puts(tmp, pos, sizeof(tmp), nbuf);
+    /* field 2: (comm) */
+    pos += (size_t)pfs_puts(tmp, pos, sizeof(tmp), " (");
+    pos += (size_t)pfs_puts(tmp, pos, sizeof(tmp), t->name);
+    pos += (size_t)pfs_puts(tmp, pos, sizeof(tmp), ")");
+    /* field 3: state */
+    char sc = (t->state == TASK_RUNNING || t->state == TASK_READY) ? 'R' : 'S';
+    tmp[pos++] = ' '; tmp[pos++] = sc;
+    /* field 4: ppid */
+    pos += (size_t)pfs_puts(tmp, pos, sizeof(tmp), " ");
+    u64_to_dec(nbuf, t->parent_id);
+    pos += (size_t)pfs_puts(tmp, pos, sizeof(tmp), nbuf);
+    /* fields 5-13: pgrp session tty_nr tpgid flags minflt cminflt majflt cmajflt */
+    pos += (size_t)pfs_puts(tmp, pos, sizeof(tmp), " 0 0 0 0 0 0 0 0 0");
+    /* field 14: utime (USER_HZ=100 ticks)
+     * utime_ns is only finalized at exit; compute live: wall - stime */
+    uint64_t now = timer_get_ns();
+    uint64_t live_stime = t->stime_ns;
+    if (t->sc_entry_ns != 0)
+        live_stime += now - t->sc_entry_ns;
+    uint64_t wall = (now > t->create_ns) ? now - t->create_ns : 0;
+    uint64_t live_utime = (wall > live_stime) ? wall - live_stime : 0;
+    uint64_t utime_ticks = live_utime / 10000000ULL;
+    pos += (size_t)pfs_puts(tmp, pos, sizeof(tmp), " ");
+    u64_to_dec(nbuf, utime_ticks);
+    pos += (size_t)pfs_puts(tmp, pos, sizeof(tmp), nbuf);
+    /* field 15: stime */
+    uint64_t stime_ticks = live_stime / 10000000ULL;
+    pos += (size_t)pfs_puts(tmp, pos, sizeof(tmp), " ");
+    u64_to_dec(nbuf, stime_ticks);
+    pos += (size_t)pfs_puts(tmp, pos, sizeof(tmp), nbuf);
+    /* fields 16-22: cutime cstime priority nice num_threads itrealvalue starttime */
+    pos += (size_t)pfs_puts(tmp, pos, sizeof(tmp), " 0 0 20 0 1 0 0");
+    /* fields 23-24: vsize rss */
+    pos += (size_t)pfs_puts(tmp, pos, sizeof(tmp), " 0 0");
+    /* fields 25-52: pad with zeros */
+    pos += (size_t)pfs_puts(tmp, pos, sizeof(tmp),
+        " 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0\n");
+
+    if ((size_t)off >= pos) return 0;
+    size_t avail = pos - (size_t)off;
+    size_t copy  = avail < len ? avail : len;
+    memcpy(buf, tmp + off, copy);
+    return (int)copy;
+}
+
+static int stat_read(int nid, uint64_t off, void *buf, size_t len)
+{
+    (void)nid;
+    return stat_read_task(task_current(), off, buf, len);
+}
+
+static int pid_stat_read(uint32_t pid, uint64_t off, void *buf, size_t len)
+{
+    for (uint32_t i = 0; i < TASK_MAX; i++) {
+        if (g_stack_used[i] && g_task_pool[i].id == pid)
+            return stat_read_task(&g_task_pool[i], off, buf, len);
+    }
+    return -PFS_ENOENT;
 }
 
 /* /proc/version */
@@ -672,6 +747,19 @@ typedef struct {
     int (*ioctl_fn)(int nid, uint64_t req, void *argp);
 } pseudo_node_t;
 
+/* /proc/sys/kernel/pid_max */
+static int pid_max_read(int nid, uint64_t off, void *buf, size_t len)
+{
+    (void)nid;
+    const char *s = "4096\n";
+    size_t slen = 5;
+    if ((size_t)off >= slen) return 0;
+    size_t avail = slen - (size_t)off;
+    size_t copy  = avail < len ? avail : len;
+    memcpy(buf, s + off, copy);
+    return (int)copy;
+}
+
 #define MODE_DIR  0040555U  /* drwxr-xr-x */
 #define MODE_REG  0100444U  /* -r--r--r-- */
 #define MODE_CHRW 0020666U  /* crw-rw-rw- */
@@ -683,6 +771,8 @@ static const pseudo_node_t g_nodes[] = {
     { "/proc",             PSEUDO_DIR, MODE_DIR,  0,              NULL,         NULL,       NULL           },
     { "/proc/self",        PSEUDO_DIR, MODE_DIR,  0,              NULL,         NULL,       NULL           },
     { "/proc/self/fd",     PSEUDO_DIR, MODE_DIR,  0,              NULL,         NULL,       NULL           },
+    { "/proc/sys",         PSEUDO_DIR, MODE_DIR,  0,              NULL,         NULL,       NULL           },
+    { "/proc/sys/kernel",  PSEUDO_DIR, MODE_DIR,  0,              NULL,         NULL,       NULL           },
     { "/sys",              PSEUDO_DIR, MODE_DIR,  0,              NULL,         NULL,       NULL           },
 
     /* ── /dev 字符设备 ─────────────────────────────────── */
@@ -701,12 +791,14 @@ static const pseudo_node_t g_nodes[] = {
     /* ── /proc 条目 ────────────────────────────────────── */
     { "/proc/self/exe",    PSEUDO_LNK, MODE_LNK,  0,              NULL,         NULL,        NULL          },
     { "/proc/self/maps",   PSEUDO_REG, MODE_REG,  0,              maps_read,    NULL,        NULL          },
+    { "/proc/self/stat",   PSEUDO_REG, MODE_REG,  0,              stat_read,    NULL,        NULL          },
     { "/proc/self/status", PSEUDO_REG, MODE_REG,  0,              status_read,  NULL,        NULL          },
     { "/proc/version",     PSEUDO_REG, MODE_REG,  0,              version_read, NULL,        NULL          },
     { "/proc/uptime",      PSEUDO_REG, MODE_REG,  0,              uptime_read,  NULL,        NULL          },
     { "/proc/mounts",      PSEUDO_REG, MODE_REG,  0,              mounts_read,  NULL,        NULL          },
     { "/proc/meminfo",     PSEUDO_REG, MODE_REG,  0,              meminfo_read, NULL,        NULL          },
     { "/proc/cpuinfo",     PSEUDO_REG, MODE_REG,  0,              cpuinfo_read, NULL,        NULL          },
+    { "/proc/sys/kernel/pid_max", PSEUDO_REG, MODE_REG, 0,      pid_max_read, NULL,        NULL          },
 };
 
 #define NODE_COUNT  ((int)(sizeof(g_nodes) / sizeof(g_nodes[0])))
@@ -763,6 +855,8 @@ int pseudo_open(const char *abspath)
             return (int)(DYNC_PID_DIR_BASE  + pid);
         if (pfs_strcmp(rest, "/status") == 0)         /* /proc/<pid>/status */
             return (int)(DYNC_PID_STAT_BASE + pid);
+        if (pfs_strcmp(rest, "/stat") == 0)           /* /proc/<pid>/stat */
+            return (int)(DYNC_PID_PSTAT_BASE + pid);
     }
 
     return find_node(abspath);
@@ -771,6 +865,14 @@ int pseudo_open(const char *abspath)
 int pseudo_read(int nid, uint64_t *off, void *buf, size_t len)
 {
     if (!buf || !off) return -PFS_EINVAL;
+
+    /* 动态 /proc/<pid>/stat */
+    if (nid >= DYNC_PID_PSTAT_BASE) {
+        uint32_t pid = (uint32_t)(nid - DYNC_PID_PSTAT_BASE);
+        int rc = pid_stat_read(pid, *off, buf, len);
+        if (rc > 0) *off += (uint64_t)rc;
+        return rc;
+    }
 
     /* 动态 /proc/<pid>/status */
     if (nid >= DYNC_PID_STAT_BASE) {
@@ -828,6 +930,10 @@ int pseudo_stat_path(const char *abspath, struct kernel_stat *st)
             st->st_size = 4096;
         } else if (pfs_strcmp(rest, "/status") == 0) { /* 文件 */
             st->st_ino  = (uint64_t)(DYNC_PID_STAT_BASE + pid);
+            st->st_mode = MODE_REG;
+            st->st_size = 512;
+        } else if (pfs_strcmp(rest, "/stat") == 0) {   /* 文件 */
+            st->st_ino  = (uint64_t)(DYNC_PID_PSTAT_BASE + pid);
             st->st_mode = MODE_REG;
             st->st_size = 512;
         } else {

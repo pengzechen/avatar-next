@@ -16,6 +16,8 @@
 #include "task/sched.h"
 #include "mm_vm.h"
 
+extern void deliver_pending_signals(task_t *t, trap_frame_t *frame);
+
 /* ── IDT 表 ─────────────────────────────────────────────────── */
 
 static idt_entry_t idt[IDT_MAX_ENTRIES] __attribute__((aligned(16)));
@@ -212,6 +214,23 @@ void handle_exception(void *frame_ptr)
                 KLOG_ERROR("             RSI=0x%llx RDI=0x%llx RBP=0x%llx RSP=0x%llx\n",
                            frame->rsi, frame->rdi, frame->rbp, frame->rsp);
 
+            }
+
+            /* 用户态 page fault / GPF / 非法指令 → 投递信号而不是直接杀死 */
+            if (cur && cur->is_user_process) {
+                int sig = 0;
+                if (vec == 14)      sig = SIGSEGV;
+                else if (vec == 13) sig = SIGSEGV;
+                else if (vec == 6)  sig = SIGILL;
+                else if (vec == 0)  sig = SIGFPE;
+                else if (vec == 5)  sig = SIGTRAP;
+
+                if (sig) {
+                    KLOG_WARN("  → delivering signal %d to pid=%u\n", sig, cur->id);
+                    task_send_signal(cur, sig);
+                    deliver_pending_signals(cur, frame);
+                    return;
+                }
             }
 
             /*

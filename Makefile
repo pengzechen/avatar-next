@@ -754,7 +754,7 @@ ROOTFS_STAGE     := $(BUILD_DIR)/rootfs-stage-$(ARCH)
 QEMU_ROOTFS_FLAGS = -device loader,file=$(ROOTFS_IMG),addr=$(ROOTFS_PHYS_ADDR),force-raw=on
 
 # ─── §11  顶层目标声明 ───────────────────────────────────────────────────────────
-.PHONY: all clean help klog kernel run run-net rootfs run-fs test-pthread test-mutex test-vmm
+.PHONY: all clean help klog kernel run run-net rootfs run-fs test-pthread test-mutex test-vmm test-ltp
 
 all: $(TARGET) klog
 
@@ -1310,6 +1310,14 @@ $(ROOTFS_IMG): $(APPS_BINS) $(APPS_C_ELFS) | $(BUILD_DIR)
 		ln -sf ../sbin/dropbearmulti $(ROOTFS_STAGE)/usr/bin/dropbearkey; \
 		echo "  [dropbear SSH installed]"; \
 	fi
+	@# 安装 LTP 测例（如果已编译）
+	@LTP_BIN_DIR=tests/ltp/bin/$(ARCH); \
+	if [ -d "$$LTP_BIN_DIR" ] && [ "$$(ls -1 $$LTP_BIN_DIR/*.sh $$LTP_BIN_DIR/[a-z]* 2>/dev/null | wc -l)" -gt 1 ]; then \
+		mkdir -p $(ROOTFS_STAGE)/ltp; \
+		cp $$LTP_BIN_DIR/* $(ROOTFS_STAGE)/ltp/; \
+		chmod +x $(ROOTFS_STAGE)/ltp/*; \
+		echo "  [LTP testcases installed → /ltp/]"; \
+	fi
 	@# /etc/passwd: root 无密码
 	@echo 'root::0:0:root:/root:/bin/sh' > $(ROOTFS_STAGE)/etc/passwd
 	@echo 'root:x:0:' > $(ROOTFS_STAGE)/etc/group
@@ -1367,6 +1375,20 @@ test-vmm:
 	$(MAKE) ARCH=$(ARCH) LOG=$(LOG) ASSERT=$(ASSERT) VMM_TEST=1 kernel
 	@echo "Starting QEMU for $(ARCH) — VMM 3-thread context switch test..."
 	$(QEMU) $(QEMU_FLAGS)
+
+# test-ltp: 编译 LTP 测例并启动带 rootfs 的 QEMU
+#   前提: bash tests/ltp/build.sh [ARCH]  已编译测例到 tests/ltp/bin/<arch>/
+#   用法: make ARCH=riscv64 test-ltp LOG=warn
+#   在 QEMU shell 中: /ltp/run_ltp.sh
+#
+test-ltp: kernel $(ROOTFS_IMG)
+	@if [ ! -d tests/ltp/bin/$(ARCH) ]; then \
+		echo "ERROR: LTP binaries not found. Run: bash tests/ltp/build.sh $(ARCH)"; \
+		exit 1; \
+	fi
+	@echo "Starting QEMU for $(ARCH) with LTP testcases in rootfs..."
+	@echo "In QEMU shell: /ltp/run_ltp.sh"
+	$(QEMU) $(QEMU_FLAGS) $(QEMU_ROOTFS_FLAGS)
 
 # ─── §14  清理 / 帮助 ────────────────────────────────────────────────────────────
 clean:

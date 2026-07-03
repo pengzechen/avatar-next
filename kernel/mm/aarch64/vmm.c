@@ -224,6 +224,21 @@ memory_get_paddr(void *page_dir, uint64_t vaddr) // 返回物理地址
 }
 
 uint64_t
+memory_get_pte_raw(void *page_dir, uint64_t vaddr)
+{
+    pte_t *pte = find_pte((pte_t *)page_dir, vaddr, 0);
+    if (!pte) return 0;
+    return pte->pte;
+}
+
+void
+memory_set_pte_nofree(void *page_dir, uint64_t vaddr)
+{
+    pte_t *pte = find_pte((pte_t *)page_dir, vaddr, 0);
+    if (pte) pte->pte |= PTE_NOFREE;
+}
+
+uint64_t
 memory_alloc_page(void *page_dir, // 虚拟地址
                   uint64_t vaddr,
                   uint64_t size,
@@ -265,9 +280,10 @@ void memory_free_page(void *page_dir, uint64_t addr)
     if (!pte || ((pte->pte & PTE_VALID) == 0) || ((pte->pte & PTE_TABLE) == 0))
         return;
 
-    pmm_free_pages(g_pmm, (pte->l3_page.pfn << 12), 1); // 释放的是物理地址
+    if ((pte->pte & PTE_NOFREE) == 0)
+        pmm_free_pages(g_pmm, (pte->l3_page.pfn << 12), 1);
 
-    pte->pte = 0; // 操作的是虚拟地址，但是物理内存也变了
+    pte->pte = 0;
 }
 
 pte_t *
@@ -347,7 +363,8 @@ void _destroy_page_table_vm(pte_t *table, int32_t level)
                 end -= KERNEL_VMA;
 
             if (!((page_phys >= start && page_phys < end) ||
-                  (page_phys >= DEVICE_MEM_START && page_phys < DEVICE_MEM_END))) {
+                  (page_phys >= DEVICE_MEM_START && page_phys < DEVICE_MEM_END)) &&
+                !(entry->pte & PTE_NOFREE)) {
                 pmm_free_pages(g_pmm, page_phys, 1);
             }
 
@@ -433,10 +450,11 @@ bool _copy_page_table(pte_t *src_table, pte_t *dst_table, int32_t level)
                 end -= KERNEL_VMA;
 
             if ((src_phys >= start && src_phys <= end) ||
-                (src_phys >= DEVICE_MEM_START && src_phys <= DEVICE_MEM_END))
+                (src_phys >= DEVICE_MEM_START && src_phys <= DEVICE_MEM_END) ||
+                (src_entry->pte & PTE_NOFREE))
             {
-                // 设置目标页表项
-                dst_table[i].pte = (src_phys >> 12 << 12) | (src_entry->pte & 0xFFF);
+                // 共享页或内核/设备页：复制 PTE 本身（共享物理页）
+                dst_table[i].pte = src_entry->pte;
                 continue;
             }
 

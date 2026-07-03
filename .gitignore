@@ -953,3 +953,7 @@ third_party/dropbear-2024.86/test/test_dropbearconvert.py
 third_party/dropbear-2024.86/test/test_svrauth.py
 .clangd
 compile_commands.json
+
+# LTP build artifacts
+third_party/ltp/
+tests/ltp/bin/

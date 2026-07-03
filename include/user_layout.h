@@ -34,6 +34,10 @@
  * 位于 PIE 代码区 (0x10000) 和 mmap 区 (0x50000000) 之间，留有足够空间 */
 #define USER_INTERP_BASE    0x40000000ULL
 
+/* 信号返回蹦床页（1 page, PTE_USER_CODE 可执行）
+ * 用于 x86_64 信号投递：sa_restorer 无效时内核使用此地址 */
+#define USER_SIGRET_PAGE    0x70001000ULL
+
 /* bin_loader 创建进程时的默认优先级 */
 #define USER_PROCESS_PRIO   10u
 

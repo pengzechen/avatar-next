@@ -46,6 +46,7 @@
 #define PTE_SW_BIT1     (1ULL << 9)   /* Available for software */
 #define PTE_SW_BIT2     (1ULL << 10)  /* Available for software */
 #define PTE_SW_BIT3     (1ULL << 11)  /* Available for software */
+#define PTE_NOFREE      PTE_SW_BIT1   /* Shared page: don't free on unmap */
 
 /* NX（No eXecute）标志 - 位 63 */
 #define PTE_NX          (1ULL << 63)  /* Execute Disable (XD/NX) */

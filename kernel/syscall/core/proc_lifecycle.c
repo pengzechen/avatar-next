@@ -36,6 +36,35 @@
 #include "x86_64/mmu.h"
 #endif
 
+/* MAP_SHARED fork helpers: check/set NOFREE PTE bit per architecture */
+#if ARCH_RISCV64
+#define CLONE_CHECK_SHARED(pgd, va, out)  do {                       \
+        uint64_t _pte = mm_vm_get_pte(pgd, va);                     \
+        (out) = ((_pte & RV_PTE_NOFREE) != 0);                      \
+    } while (0)
+#define CLONE_MARK_NOFREE(pgd, va) do {                              \
+        uint64_t *_p = rv_walk_l0_pte(pgd, va, false);              \
+        if (_p) *_p |= RV_PTE_NOFREE;                               \
+    } while (0)
+#elif ARCH_X86_64
+#define CLONE_CHECK_SHARED(pgd, va, out)  do {                       \
+        uint64_t *_p = x86_walk_pt(pgd, va, false);                 \
+        (out) = (_p && (*_p & PTE_NOFREE));                          \
+    } while (0)
+#define CLONE_MARK_NOFREE(pgd, va) do {                              \
+        uint64_t *_p = x86_walk_pt(pgd, va, false);                 \
+        if (_p) *_p |= PTE_NOFREE;                                  \
+    } while (0)
+#elif ARCH_AARCH64
+#define CLONE_CHECK_SHARED(pgd, va, out)  do {                       \
+        uint64_t _raw = memory_get_pte_raw(pgd, va);                \
+        (out) = ((_raw & PTE_NOFREE) != 0);                         \
+    } while (0)
+#define CLONE_MARK_NOFREE(pgd, va) do {                              \
+        memory_set_pte_nofree(pgd, va);                              \
+    } while (0)
+#endif
+
 /* 任务池（定义在 kernel/task/task.c） */
 extern task_t  g_task_pool[TASK_MAX];
 extern uint8_t g_stack_used[TASK_MAX];
@@ -51,6 +80,8 @@ void sys_exit(int status)
 
     KLOG_DEBUG("[syscall] process '%s' (id=%u) exiting with status %d\n",
                current->name, current->id, status);
+
+    current->exit_status = status;
 
     /* CLONE_CHILD_CLEARTID: 清零 tid 并唤醒 pthread_join 等待者 */
     if (current->ctid_ptr) {
@@ -221,6 +252,7 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
     child->is_user_process = true;
     child->user_started    = true;
     child->exit_status     = 0;
+    child->exit_signal     = 0;
     child->is_waiting      = false;
     child->wait_pid        = (uint32_t)-1;
     child->ctid_ptr        = 0;
@@ -313,6 +345,16 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
                     uint64_t src_pa = mm_vm_get_paddr(parent_pgd_virt, va);               \
                     if (src_pa == 0)                                                       \
                         continue;                                                          \
+                    bool is_shared = false;                                                 \
+                    CLONE_CHECK_SHARED(parent_pgd_virt, va, is_shared);                    \
+                    if (is_shared) {                                                        \
+                        if (mm_vm_map_pages(child_pgd_virt, va, src_pa, 1, 0) != 0) {     \
+                            clone_copy_ok = false;                                         \
+                            break;                                                         \
+                        }                                                                  \
+                        CLONE_MARK_NOFREE(child_pgd_virt, va);                             \
+                        continue;                                                          \
+                    }                                                                      \
                     uint64_t dst_pa = pmm_alloc_pages(g_pmm, 1);                          \
                     if (dst_pa == 0) {                                                     \
                         clone_copy_ok = false;                                             \
@@ -345,7 +387,7 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
 
         child->pgd             = (uint64_t *)child_pgd_phys;
         child->user_entry      = parent->user_entry;
-        child->user_sp         = parent->user_sp;
+        child->user_sp         = child_stack ? child_stack : parent->user_sp;
         child->user_stack_top  = parent->user_stack_top;
         child->user_stack_size = parent->user_stack_size;
         child->heap_end        = parent->heap_end;
@@ -409,7 +451,7 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
 
         child->sp = arch_init_fork_child_stack(
             child->stack_base, TASK_STACK_SIZE,
-            frame, 0, 0
+            frame, child_stack, 0
         );
 
         KLOG_DEBUG("[clone/fork] parent=%u child=%u elr=0x%llx usp=0x%llx\n",
@@ -472,7 +514,9 @@ void wait_handler(uint64_t regs[6], task_t *me)
 
     if (found) {
         if (wstatus)
-            *wstatus = (found->exit_status & 0xFF) << 8;
+            *wstatus = found->exit_signal
+                     ? (found->exit_signal & 0x7F)
+                     : (found->exit_status & 0xFF) << 8;
         if (regs[3]) {
             memset((void *)regs[3], 0, 144);
             uint64_t *ru = (uint64_t *)regs[3];
@@ -506,7 +550,9 @@ void wait_handler(uint64_t regs[6], task_t *me)
     }
     if (found) {
         if (wstatus)
-            *wstatus = (found->exit_status & 0xFF) << 8;
+            *wstatus = found->exit_signal
+                     ? (found->exit_signal & 0x7F)
+                     : (found->exit_status & 0xFF) << 8;
         if (regs[3]) {
             memset((void *)regs[3], 0, 144);
             uint64_t *ru = (uint64_t *)regs[3];

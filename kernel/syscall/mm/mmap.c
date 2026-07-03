@@ -230,6 +230,18 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, int prot, int flags, int fd, uint
                 size_t got = 0;
                 ext4_fread(&fobj->file, phys_to_virt(pa), to_read, &got);
             }
+
+            if (flags & MAP_SHARED) {
+#if ARCH_RISCV64
+                uint64_t *pte = rv_walk_l0_pte(pgd, va, false);
+                if (pte) *pte |= RV_PTE_NOFREE;
+#elif ARCH_AARCH64
+                memory_set_pte_nofree(pgd, va);
+#elif ARCH_X86_64
+                uint64_t *pte = x86_walk_pt(pgd, va, false);
+                if (pte) *pte |= PTE_NOFREE;
+#endif
+            }
         }
 
         if ((flags & MAP_FIXED) == 0)
@@ -318,6 +330,15 @@ found:;
             pmm_free_pages(g_pmm, pa, 1);
             return MMAP_FAILED;
         }
+#if ARCH_RISCV64
+        if (flags & MAP_SHARED) {
+            uint64_t *pte = rv_walk_l0_pte(pgd, va, false);
+            if (pte) *pte |= RV_PTE_NOFREE;
+        }
+#elif ARCH_AARCH64
+        if (flags & MAP_SHARED)
+            memory_set_pte_nofree(pgd, va);
+#endif
     }
 #elif ARCH_X86_64
     {
@@ -342,6 +363,10 @@ found:;
                 KLOG_WARN("[mmap] map failed: va=0x%llx flags=0x%x\n", va, flags);
                 pmm_free_pages(g_pmm, pa, 1);
                 return MMAP_FAILED;
+            }
+            if (flags & MAP_SHARED) {
+                uint64_t *pte = x86_walk_pt(pgd, va, false);
+                if (pte) *pte |= PTE_NOFREE;
             }
         }
     }

@@ -1,0 +1,42 @@
+# tests/ltp/testcases.list
+# LTP 测例选择清单 — 每行格式: <syscall_dir>/<binary_name>
+#
+# 覆盖分类:
+#   进程管理: getpid, getppid, exit, fork, wait4, clone
+#   文件 I/O: write, read, close, dup3, pipe, lseek
+#   内存管理: brk, mmap, munmap
+#   信号:     kill, rt_sigaction
+#   系统信息: uname, clock_gettime
+#   调度:     sched_yield
+
+# ── 进程管理 ──
+getpid/getpid02
+getppid/getppid01
+exit/exit02
+fork/fork01
+wait4/wait401
+clone/clone06
+
+# ── 文件 I/O ──
+write/write01
+read/read01
+close/close01
+dup3/dup3_01
+pipe/pipe01
+lseek/lseek01
+
+# ── 内存管理 ──
+brk/brk01
+mmap/mmap01
+munmap/munmap01
+
+# ── 信号 ──
+kill/kill03
+rt_sigaction/rt_sigaction01
+
+# ── 系统信息 ──
+uname/uname01
+clock_gettime/clock_gettime01
+
+# ── 调度 ──
+sched_yield/sched_yield01

@@ -73,17 +73,20 @@ void openat_handler(uint64_t regs[6], task_t *current)
         return;
     }
 
-    int rc = ext4_fopen2(&obj->file, abspath, flags);
-    if (rc == EOK) {
-        obj->type  = FDT_FILE;
-        obj->flags = flags;
-        int k = 0;
-        while (abspath[k] && k < 127) { obj->path[k] = abspath[k]; k++; }
-        obj->path[k] = '\0';
-        int fd = task_alloc_fd(current, pool);
-        if (fd < 0) { ext4_fclose(&obj->file); fd_pool_free(pool); regs[0] = (uint64_t)(int64_t)-EMFILE; return; }
-        regs[0] = (uint64_t)fd;
-        return;
+    int rc;
+    if (!(flags & 0200000)) {
+        rc = ext4_fopen2(&obj->file, abspath, flags);
+        if (rc == EOK) {
+            obj->type  = FDT_FILE;
+            obj->flags = flags;
+            int k = 0;
+            while (abspath[k] && k < 127) { obj->path[k] = abspath[k]; k++; }
+            obj->path[k] = '\0';
+            int fd = task_alloc_fd(current, pool);
+            if (fd < 0) { ext4_fclose(&obj->file); fd_pool_free(pool); regs[0] = (uint64_t)(int64_t)-EMFILE; return; }
+            regs[0] = (uint64_t)fd;
+            return;
+        }
     }
 
     rc = ext4_dir_open(&obj->dir, abspath);
@@ -100,6 +103,14 @@ void openat_handler(uint64_t regs[6], task_t *current)
     }
 
     fd_pool_free(pool);
+    if (flags & 0200000) {
+        ext4_file tmp;
+        if (ext4_fopen2(&tmp, abspath, 0) == EOK) {
+            ext4_fclose(&tmp);
+            regs[0] = (uint64_t)(int64_t)-ENOTDIR;
+            return;
+        }
+    }
     regs[0] = (uint64_t)(int64_t)-ENOENT;
 }
 
@@ -151,7 +162,8 @@ void dup3_handler(uint64_t regs[6], task_t *current)
 {
     int oldfd = (int)regs[0];
     int newfd = (int)regs[1];
-    if (oldfd == newfd) { regs[0] = newfd; return; }
+    int flags = (int)regs[2];
+    if (oldfd == newfd) { regs[0] = (uint64_t)(int64_t)-EINVAL; return; }
     if (oldfd < 0 || oldfd >= (int)TASK_MAX_FD) { regs[0] = (uint64_t)(int64_t)-EBADF; return; }
     if (newfd < 0 || newfd >= (int)TASK_MAX_FD) { regs[0] = (uint64_t)(int64_t)-EBADF; return; }
 
@@ -180,7 +192,11 @@ void dup3_handler(uint64_t regs[6], task_t *current)
     }
 
     if (!src) {
-        current->fd_table[newfd] = -1;
+        int uart_idx = fd_pool_alloc();
+        if (uart_idx < 0) { regs[0] = (uint64_t)(int64_t)-EMFILE; return; }
+        g_fd_pool[uart_idx].type  = FDT_PSEUDO;
+        g_fd_pool[uart_idx].flags = 0;
+        current->fd_table[newfd] = uart_idx;
     } else {
         int new_idx = fd_pool_alloc();
         if (new_idx < 0) { regs[0] = (uint64_t)(int64_t)-EMFILE; return; }
@@ -208,6 +224,10 @@ void dup3_handler(uint64_t regs[6], task_t *current)
         }
         current->fd_table[newfd] = new_idx;
     }
+    if (flags & 0x80000)
+        current->fd_cloexec[newfd / 8] |= (uint8_t)(1u << (newfd % 8));
+    else
+        current->fd_cloexec[newfd / 8] &= (uint8_t)~(1u << (newfd % 8));
     regs[0] = newfd;
 }
 
@@ -236,6 +256,7 @@ void fcntl_handler(uint64_t regs[6], task_t *current)
     #define F_SETFD     2
     #define F_GETFL     3
     #define F_SETFL     4
+    #define F_DUPFD_CLOEXEC 1030
     #define FD_CLOEXEC  1
     #define O_NONBLOCK  04000
     #define O_APPEND    02000
@@ -269,8 +290,9 @@ void fcntl_handler(uint64_t regs[6], task_t *current)
         regs[0] = 0;
         return;
     }
-    case F_DUPFD: {
-        /* F_DUPFD: duplicate fd, allocate >= arg */
+    case F_DUPFD:
+    case F_DUPFD_CLOEXEC: {
+        /* F_DUPFD / F_DUPFD_CLOEXEC: duplicate fd, allocate >= arg */
         int minfd = (int)regs[2];
         if (minfd < 0) minfd = 0;
         if (!obj && fd > 2) {
@@ -308,8 +330,10 @@ void fcntl_handler(uint64_t regs[6], task_t *current)
         for (int nf = minfd < 3 ? 3 : minfd; nf < (int)TASK_MAX_FD; nf++) {
             if (current->fd_table[nf] == -1) {
                 current->fd_table[nf] = (int16_t)new_idx;
-                /* F_DUPFD clears FD_CLOEXEC on new fd */
-                current->fd_cloexec[nf / 8] &= (uint8_t)~(1u << (nf % 8));
+                if (cmd == F_DUPFD_CLOEXEC)
+                    current->fd_cloexec[nf / 8] |= (uint8_t)(1u << (nf % 8));
+                else
+                    current->fd_cloexec[nf / 8] &= (uint8_t)~(1u << (nf % 8));
                 regs[0] = (uint64_t)nf;
                 return;
             }
@@ -325,6 +349,7 @@ void fcntl_handler(uint64_t regs[6], task_t *current)
     }
 
     #undef F_DUPFD
+    #undef F_DUPFD_CLOEXEC
     #undef F_GETFD
     #undef F_SETFD
     #undef F_GETFL

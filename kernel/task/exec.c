@@ -20,6 +20,7 @@
 #include "loader/elf_image.h"
 #include "task/exec.h"
 #include "timer/timer.h"
+#include "user_layout.h"
 
 static inline uint64_t exec_get_ns(void)
 {
@@ -266,6 +267,21 @@ task_execve(const char *pathname,
         pmm_free_pages(g_pmm, stack_base_paddr, (uint32_t)stack_pages);
         return -3;
     }
+
+    /* 4b. 映射信号返回蹦床页（x86_64 用户栈 NX，不能放 trampoline 在栈上） */
+#if ARCH_X86_64
+    {
+        uint64_t sigret_pa = pmm_alloc_pages(g_pmm, 1);
+        if (sigret_pa) {
+            uint8_t *p = (uint8_t *)phys_to_virt(sigret_pa);
+            memset(p, 0xcc, PAGE_SIZE);     /* int3 填充（安全兜底） */
+            /* mov $15, %eax; syscall  — rt_sigreturn on x86_64 */
+            p[0] = 0xb8; p[1] = 0x0f; p[2] = 0x00; p[3] = 0x00; p[4] = 0x00;
+            p[5] = 0x0f; p[6] = 0x05;
+            mm_vm_map_pages(pgd, USER_SIGRET_PAGE, sigret_pa, 1, 0);
+        }
+    }
+#endif
 
     /* 5. 构建 Linux ABI 初始栈 */
     uint64_t user_sp = USER_STACK_TOP;

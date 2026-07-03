@@ -5,10 +5,10 @@
 #include "klog.h"
 #include "platform_ops.h"
 #include "types.h"
+#include "task/task.h"
 
-/* 前向声明，避免循环依赖 */
-struct task;
-extern struct task *g_current_task;
+extern task_t *g_current_task;
+extern void deliver_pending_signals(task_t *t, trap_frame_t *frame);
 
 #define MAX_IRQ_VECTORS 512
 
@@ -55,6 +55,20 @@ void handle_el0_sync_exception(uint64_t *stack_pointer) {
     /* 调用系统调用处理函数，传入完整 trap_frame */
     syscall_handler(el1_ctx);
     return;
+  }
+
+  /* EC == 0x20: Instruction Abort from EL0
+   * EC == 0x24: Data Abort from EL0
+   * → 投递 SIGSEGV 给用户进程 */
+  if (ec == 0x20 || ec == 0x24) {
+    task_t *t = g_current_task;
+    if (t && t->is_user_process) {
+      KLOG_WARN("[el0_sync] user page fault sig=SIGSEGV pid=%u pc=0x%llx va=0x%llx\n",
+                t->id, el1_ctx->elr, far);
+      task_send_signal(t, SIGSEGV);
+      deliver_pending_signals(t, el1_ctx);
+      return;
+    }
   }
 
   /* 其他异常类型 */

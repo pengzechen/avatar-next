@@ -223,11 +223,22 @@ void lseek_handler(uint64_t regs[6], task_t *current)
         else                  obj->pseudo.off = 0;
         regs[0] = obj->pseudo.off;
     } else if (obj->type == FDT_FILE) {
+        if (whence == 2) {
+            int64_t fsize = (int64_t)ext4_fsize(&obj->file);
+            int64_t new_off = fsize + offset;
+            if (new_off < 0) { regs[0] = (uint64_t)(int64_t)-EINVAL; return; }
+            offset = new_off;
+            whence = 0;
+        }
         int rc = ext4_fseek(&obj->file, offset, (uint32_t)whence);
-        if (rc == EOK)
+        if (rc == EOK) {
             regs[0] = (uint64_t)ext4_ftell(&obj->file);
-        else
+        } else if (whence == 0 && offset >= 0) {
+            obj->file.fpos = (uint64_t)offset;
+            regs[0] = (uint64_t)offset;
+        } else {
             regs[0] = (uint64_t)(int64_t)-EINVAL;
+        }
     } else {
         regs[0] = (uint64_t)(int64_t)-EBADF;
     }

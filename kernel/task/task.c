@@ -756,15 +756,19 @@ task_send_signal(task_t *t, int sig)
 }
 
 /* ── task_send_signal_to_pgid ────────────────────────────── */
-void
+int
 task_send_signal_to_pgid(uint32_t pgid, int sig)
 {
-    if (!pgid) return;
+    if (!pgid) return 0;
+    int count = 0;
     for (uint32_t i = 0; i < TASK_MAX; i++) {
         if (g_stack_used[i] &&
             g_task_pool[i].pgid  == pgid &&
             g_task_pool[i].state != TASK_DEAD &&
-            g_task_pool[i].is_user_process)
+            g_task_pool[i].is_user_process) {
             task_send_signal(&g_task_pool[i], sig);
+            count++;
+        }
     }
+    return count;
 }

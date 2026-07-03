@@ -53,7 +53,8 @@ static void x86_destroy_table(uint64_t *table, int level) {
       continue;
 
     if (level == 1 || (level > 1 && (pte & PTE_HUGE))) {
-      pmm_free_pages(g_pmm, x86_pte_to_pa(pte), 1);
+      if ((pte & PTE_NOFREE) == 0)
+        pmm_free_pages(g_pmm, x86_pte_to_pa(pte), 1);
       table[i] = 0;
       continue;
     }
@@ -255,7 +256,8 @@ uint64_t vm_unmap_user_range(uint64_t pgd_phys, uint64_t vaddr, uint64_t size) {
 #elif ARCH_X86_64
     uint64_t *pte = x86_walk_pt(pgd, va, false);
     if (pte && ((*pte & PTE_PRESENT) != 0)) {
-      pmm_free_pages(g_pmm, x86_pte_to_pa(*pte), 1);
+      if ((*pte & PTE_NOFREE) == 0)
+        pmm_free_pages(g_pmm, x86_pte_to_pa(*pte), 1);
       *pte = 0;
       flush_tlb_single(va);
       freed++;

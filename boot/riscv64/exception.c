@@ -11,6 +11,7 @@
 #include "klog.h"
 #include "riscv64/sysreg.h"
 #include "syscall/syscall.h"
+#include "syscall/syscall_internal.h"
 #include "platform_ops.h"
 #include "task/cpu.h"
 #include "task/task.h"
@@ -142,6 +143,21 @@ void handle_exception(void *frame_ptr)
 
         KLOG_ERROR("[exception] sync: code=%llu pc=0x%lx stval=0x%lx sstatus=0x%lx satp=0x%lx\n",
                    code, frame->sepc, frame->stval, frame->sstatus, CSR_READ(satp));
+
+        /* 用户态 page fault → 投递 SIGSEGV 而不是 shutdown */
+        if ((code == CAUSE_INSN_PAGE_FAULT  || code == CAUSE_LOAD_PAGE_FAULT  ||
+             code == CAUSE_STORE_PAGE_FAULT) &&
+            !(frame->sstatus & SSTATUS_SPP))
+        {
+            task_t *t = g_current_task;
+            if (t && t->is_user_process) {
+                KLOG_WARN("[exception] user page fault sig=SIGSEGV pid=%u pc=0x%lx va=0x%lx\n",
+                          t->id, frame->sepc, frame->stval);
+                task_send_signal(t, SIGSEGV);
+                deliver_pending_signals(t, frame);
+                return;
+            }
+        }
 
         /* 其他异常：打印简单信息后挂起 */
         if (code == CAUSE_INSN_PAGE_FAULT  || code == CAUSE_LOAD_PAGE_FAULT  ||

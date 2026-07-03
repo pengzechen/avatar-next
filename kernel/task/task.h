@@ -15,7 +15,7 @@
 #include "list.h"
 
 /* ── 信号常量 ────────────────────────────────────────────── */
-#define NSIG     32
+#define NSIG     64
 #define SIG_DFL  0ULL   /* 默认动作（终止） */
 #define SIG_IGN  1ULL   /* 忽略 */
 
@@ -42,6 +42,8 @@
 #define SIGTTOU  22
 #define SIGURG   23
 #define SIGWINCH 28
+
+#define SA_RESTORER  0x04000000ULL
 
 /* ── 信号动作结构 ────────────────────────────────────────── */
 typedef struct {
@@ -107,6 +109,7 @@ typedef struct task {
     uint8_t         fd_cloexec[TASK_MAX_FD / 8]; /* FD_CLOEXEC 位图              */
     uint32_t        parent_id;           /* 父进程 ID                              */
     int             exit_status;         /* 退出状态（wait4 使用）                 */
+    int             exit_signal;         /* 被信号杀死时的信号号（0=正常退出）     */
     bool            is_waiting;          /* 正在 wait4 子进程                      */
     uint32_t        wait_pid;            /* 等待的子进程 PID（-1=任意）            */
 
@@ -280,8 +283,9 @@ void task_send_signal(task_t *t, int sig);
  * task_send_signal_to_pgid - 向进程组内所有用户态任务投递信号
  * @pgid: 进程组 ID（0 无效）
  * @sig:  信号号
+ * @return: 收到信号的进程数量
  */
-void task_send_signal_to_pgid(uint32_t pgid, int sig);
+int task_send_signal_to_pgid(uint32_t pgid, int sig);
 
 /**
  * signal_check_uart - 扫描 UART 输入，

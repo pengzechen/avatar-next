@@ -104,6 +104,7 @@ static void x86_translate_syscall(uint64_t *nr, uint64_t regs[9])
     case 22:  *nr = LINUX_SYS_PIPE2;       break; /* pipe → pipe2(flags=0) */
     case 23:  *nr = X86_SYS_SELECT;        break; /* select(nfds,r,w,e,timeval*) */
     case 24:  *nr = LINUX_SYS_SCHED_YIELD; break; /* sched_yield */
+    case 26:  *nr = 0x7FFFFFFEULL; break;      /* msync → stub 0 */
     case 32:  /* dup(oldfd): x86_64. 不直接支持，返回 ENOSYS */
         /* busybox sh 很少用裸 dup()，ENOSYS 不影响启动 */
         break; /* *nr stays 32, hits default: → ENOSYS */
@@ -153,10 +154,35 @@ static void x86_translate_syscall(uint64_t *nr, uint64_t regs[9])
     case 72:  *nr = LINUX_SYS_FCNTL;       break; /* fcntl */
     case 74:  *nr = LINUX_SYS_FSYNC;       break; /* fsync */
     case 75:  *nr = LINUX_SYS_FDATASYNC;   break; /* fdatasync */
+    case 77:  *nr = LINUX_SYS_FTRUNCATE;   break; /* ftruncate */
     case 79:  *nr = LINUX_SYS_GETCWD;      break; /* getcwd */
     case 80:  *nr = LINUX_SYS_CHDIR;       break; /* chdir */
-    case 82:  *nr = 0x7FFFFFFEULL; break;      /* fchmod → stub 0 */
-    case 83:  *nr = 0x7FFFFFFEULL; break;      /* fchown → stub 0 */
+    case 82:  /* rename(old,new) → renameat(AT_FDCWD,old,AT_FDCWD,new) */
+        regs[3] = regs[1]; regs[2] = (uint64_t)(int64_t)AT_FDCWD;
+        regs[1] = regs[0]; regs[0] = (uint64_t)(int64_t)AT_FDCWD;
+        *nr = LINUX_SYS_RENAMEAT; break;
+    case 83:  /* mkdir(path,mode) → mkdirat(AT_FDCWD,path,mode) */
+        regs[2] = regs[1]; regs[1] = regs[0];
+        regs[0] = (uint64_t)(int64_t)AT_FDCWD;
+        *nr = LINUX_SYS_MKDIRAT; break;
+    case 84:  /* rmdir(path) → unlinkat(AT_FDCWD,path,AT_REMOVEDIR) */
+        regs[2] = 0x200; regs[1] = regs[0];
+        regs[0] = (uint64_t)(int64_t)AT_FDCWD;
+        *nr = LINUX_SYS_UNLINKAT; break;
+    case 85:  /* creat(path,mode) → openat(AT_FDCWD,path,O_CREAT|O_WRONLY|O_TRUNC,mode) */
+        regs[3] = regs[1]; regs[2] = 0x241; regs[1] = regs[0];
+        regs[0] = (uint64_t)(int64_t)AT_FDCWD;
+        *nr = LINUX_SYS_OPENAT; break;
+    case 86:  /* link(old,new) → stub 0 (not critical) */
+        *nr = 0x7FFFFFFEULL; break;
+    case 87:  /* unlink(path) → unlinkat(AT_FDCWD,path,0) */
+        regs[2] = 0; regs[1] = regs[0];
+        regs[0] = (uint64_t)(int64_t)AT_FDCWD;
+        *nr = LINUX_SYS_UNLINKAT; break;
+    case 90:  *nr = 0x7FFFFFFEULL; break;      /* chmod → stub 0 */
+    case 91:  *nr = 0x7FFFFFFEULL; break;      /* fchmod → stub 0 */
+    case 92:  *nr = 0x7FFFFFFEULL; break;      /* chown → stub 0 */
+    case 93:  *nr = 0x7FFFFFFEULL; break;      /* fchown → stub 0 */
     case 89:  /* readlink(path,buf,bufsiz) → readlinkat(AT_FDCWD,path,buf,bufsiz) */
         regs[3] = regs[2]; regs[2] = regs[1]; regs[1] = regs[0];
         regs[0] = (uint64_t)(int64_t)AT_FDCWD;
@@ -195,7 +221,7 @@ static void x86_translate_syscall(uint64_t *nr, uint64_t regs[9])
     case 234: *nr = LINUX_SYS_TGKILL;      break; /* tgkill */
     case 247: *nr = LINUX_SYS_WAITID;      break; /* waitid */
     case 257: *nr = LINUX_SYS_OPENAT;      break; /* openat */
-    case 258: *nr = 0x7FFFFFFEULL; break;      /* mkdirat → stub 0 */
+    case 258: *nr = LINUX_SYS_MKDIRAT;     break; /* mkdirat */
     case 262: *nr = LINUX_SYS_NEWFSTATAT;  break; /* newfstatat */
     case 260: *nr = 0x7FFFFFFEULL; break;      /* fchownat → stub 0 */
     case 263: *nr = LINUX_SYS_UNLINKAT;    break; /* unlinkat */
@@ -418,6 +444,17 @@ void syscall_handler(trap_frame_t *frame)
         unlinkat_handler(regs, current);
         break;
 
+    case LINUX_SYS_MKDIRAT: {
+        /* mkdirat(dirfd, pathname, mode) — dirfd ignored, always absolute or CWD-relative */
+        const char *upath = (const char *)regs[1];
+        if (!upath) { regs[0] = (uint64_t)(int64_t)-EFAULT; break; }
+        char abs[256];
+        resolve_path(current->cwd, upath, abs, (int)sizeof(abs));
+        int rc = ext4_dir_mk(abs);
+        regs[0] = (rc == EOK) ? 0 : (uint64_t)(int64_t)-rc;
+        break;
+    }
+
     case LINUX_SYS_OPENAT:
         openat_handler(regs, current);
         break;
@@ -458,6 +495,23 @@ void syscall_handler(trap_frame_t *frame)
     case LINUX_SYS_FDATASYNC:
         regs[0] = 0;
         break;
+
+    case LINUX_SYS_FTRUNCATE: {
+        int fd = (int)regs[0];
+        int64_t length = (int64_t)regs[1];
+        if (fd < 3 || fd >= (int)TASK_MAX_FD) {
+            regs[0] = (uint64_t)(int64_t)-EBADF;
+            break;
+        }
+        fd_obj_t *obj = task_get_fd(current, fd);
+        if (!obj || obj->type != FDT_FILE) {
+            regs[0] = (uint64_t)(int64_t)-EBADF;
+            break;
+        }
+        int rc = ext4_ftruncate(&obj->file, (uint64_t)length);
+        regs[0] = (rc == EOK) ? 0 : (uint64_t)(int64_t)-rc;
+        break;
+    }
 
     case LINUX_SYS_SENDFILE:
         sendfile_handler(regs, current);
@@ -673,6 +727,57 @@ void syscall_handler(trap_frame_t *frame)
     case 52:    /* riscv64/aarch64 __NR_fchown */
         regs[0] = 0;
         break;
+
+    case 103:   /* riscv64/aarch64 __NR_setitimer */
+    case 102: { /* riscv64/aarch64 __NR_getitimer */
+        uint64_t *old_value = (uint64_t *)regs[2];
+        if (old_value)
+            memset(old_value, 0, 32);
+        regs[0] = 0;
+        break;
+    }
+
+    case 123:   /* riscv64/aarch64 __NR_sched_setaffinity */
+    case 122: { /* riscv64/aarch64 __NR_sched_getaffinity */
+        if (syscall_num == 122) {
+            uint8_t *mask = (uint8_t *)regs[2];
+            uint64_t len = regs[1];
+            if (mask && len > 0) {
+                memset(mask, 0, len);
+                mask[0] = 1;
+            }
+            regs[0] = len;
+        } else {
+            regs[0] = 0;
+        }
+        break;
+    }
+
+    case 88:    /* riscv64/aarch64 __NR_utimensat */
+    case 227:   /* riscv64/aarch64 __NR_msync */
+        regs[0] = 0;
+        break;
+
+    case 43:    /* riscv64/aarch64 __NR_statfs */
+    case 44:    /* riscv64/aarch64 __NR_fstatfs */
+    case 137:   /* x86_64 __NR_statfs */
+    case 138: { /* x86_64 __NR_fstatfs */
+        uint64_t *buf = (uint64_t *)((regs[0] && (syscall_num == 43 || syscall_num == 137))
+                        ? regs[1] : regs[1]);
+        if (!buf) { regs[0] = (uint64_t)(int64_t)-EFAULT; break; }
+        memset(buf, 0, 120);
+        buf[0] = 0xEF53;       /* f_type = EXT4_SUPER_MAGIC */
+        buf[1] = 4096;         /* f_bsize */
+        buf[2] = 262144;       /* f_blocks (1GB) */
+        buf[3] = 131072;       /* f_bfree */
+        buf[4] = 131072;       /* f_bavail */
+        buf[5] = 65536;        /* f_files */
+        buf[6] = 32768;        /* f_ffree */
+        buf[8] = 255;          /* f_namelen */
+        buf[9] = 4096;         /* f_frsize */
+        regs[0] = 0;
+        break;
+    }
 
     default:
         KLOG_ERROR("[syscall] Unknown syscall: %llu\n", syscall_num);

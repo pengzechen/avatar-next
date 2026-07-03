@@ -25,6 +25,7 @@
 #define PTE_NG      (1ULL << 11)  /* Not Global */
 #define PTE_PXN     (1ULL << 53)  /* Privileged Execute Never */
 #define PTE_UXN     (1ULL << 54)  /* Unprivileged Execute Never */
+#define PTE_NOFREE  (1ULL << 55)  /* SW: shared page, don't free on unmap */
 
 /* 共享性定义 */
 #define PTE_SH  (0b11 << 8)  /* Inner Shareable（SMP 系统） */

@@ -25,8 +25,10 @@ typedef struct task task_t;
 #define LINUX_SYS_DUP3            24
 #define LINUX_SYS_FCNTL           25
 #define LINUX_SYS_IOCTL           29
+#define LINUX_SYS_MKDIRAT         34
 #define LINUX_SYS_UNLINKAT        35
 #define LINUX_SYS_RENAMEAT        38
+#define LINUX_SYS_FTRUNCATE       46
 #define LINUX_SYS_FACCESSAT       48
 #define LINUX_SYS_CHDIR           49
 #define LINUX_SYS_OPENAT          56
@@ -150,6 +152,7 @@ typedef struct task task_t;
 #define TIOCSPTLCK            0x40045431
 
 /* ── mmap 标志 ───────────────────────────────────────────────────── */
+#define MAP_SHARED            0x01
 #define MAP_ANONYMOUS         0x20
 #define MAP_PRIVATE           0x02
 #define MAP_FIXED             0x10
@@ -215,7 +218,8 @@ struct kernel_sigaction {
     uint64_t sa_handler;    /* SIG_DFL(0) / SIG_IGN(1) / 用户 handler 地址 */
     uint64_t sa_flags;      /* SA_RESTORER 等标志 */
     uint64_t sa_restorer;   /* rt_sigreturn 蹦床（SA_RESTORER 置位时有效）*/
-    uint64_t sa_mask;       /* handler 执行期间额外屏蔽的信号位图 */
+    uint64_t sa_mask;       /* handler 执行期间额外屏蔽的信号位图 (8 bytes) */
+    uint8_t  _pad[128 - 8]; /* musl sigset_t 占 128 bytes, 内核只用前 8 */
 };
 
 /* ── TIOCGWINSZ 输出 ─────────────────────────────────────────────── */
