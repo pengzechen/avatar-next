@@ -1,11 +1,7 @@
-/*
- * fs/lwext4_port/libc_shim/inttypes.h - 为 lwext4 提供 inttypes.h 兼容层
- * 定义 PRI* 格式化宏
- */
-#ifndef _COMPAT_INTTYPES_H_
-#define _COMPAT_INTTYPES_H_
+#ifndef _FREESTANDING_INTTYPES_H
+#define _FREESTANDING_INTTYPES_H
 
-#include <types.h>
+#include "types.h"
 
 /* 64-bit */
 #ifndef PRId64
@@ -31,6 +27,9 @@
 #ifndef PRIx32
 #define PRIx32  "x"
 #endif
+#ifndef PRIX32
+#define PRIX32  "X"
+#endif
 
 /* 16-bit */
 #ifndef PRId16
@@ -48,4 +47,4 @@
 #define PRIu8   "hhu"
 #endif
 
-#endif /* _COMPAT_INTTYPES_H_ */
+#endif /* _FREESTANDING_INTTYPES_H */

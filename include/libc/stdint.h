@@ -1,0 +1,20 @@
+#ifndef _FREESTANDING_STDINT_H
+#define _FREESTANDING_STDINT_H
+
+#include "types.h"
+
+typedef int64_t  intmax_t;
+typedef uint64_t uintmax_t;
+
+#define INTMAX_MAX   INT64_MAX
+#define INTMAX_MIN   INT64_MIN
+#define UINTMAX_MAX  UINT64_MAX
+
+#define INTPTR_MIN   (-9223372036854775807L - 1)
+#define INTPTR_MAX   9223372036854775807L
+#define UINTPTR_MAX  18446744073709551615UL
+
+#define PTRDIFF_MIN  INTPTR_MIN
+#define PTRDIFF_MAX  INTPTR_MAX
+
+#endif /* _FREESTANDING_STDINT_H */

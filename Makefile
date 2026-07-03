@@ -114,6 +114,7 @@ KLOG_OBJECT         := $(BUILD_DIR)/klog.o
 VSNPRINTF_OBJECT    := $(BUILD_DIR)/vsnprintf.o
 STRING_OBJECT       := $(BUILD_DIR)/string.o
 BITMAP_OBJECT       := $(BUILD_DIR)/bitmap.o
+LIBC_OBJECT         := $(BUILD_DIR)/libc.o
 PLATFORM_CFG_OBJECT := $(BUILD_DIR)/platform_cfg.o
 
 # 内核源文件
@@ -434,6 +435,7 @@ endif
 
 # ── §5a  通用编译标志（所有架构共享，追加在架构特定 CFLAGS 之后）────────────────
 CFLAGS  += -nostdinc
+CFLAGS  += -I$(INCLUDE_DIR)/libc
 CFLAGS  += -Idriver
 CFLAGS  += -Ikernel
 CFLAGS  += -Ikernel/mm
@@ -638,7 +640,6 @@ MKDIR   := mkdir -p
 # ─── §8  第三方库：lwext4 文件系统 ──────────────────────────────────────────────
 LWEXT4_DIR      := $(THIRD_PARTY_DIR)/lwext4
 LWEXT4_PORT_DIR := $(FS_DIR)/lwext4_port
-LWEXT4_LIBC_SHIM := $(LWEXT4_PORT_DIR)/libc_shim
 
 # ─── §8a  内核网络栈：netdev + lwIP ─────────────────────────────────────────────
 LWIP_DIR      := $(THIRD_PARTY_DIR)/lwip
@@ -650,8 +651,7 @@ NET_OBJS := $(BUILD_DIR)/kernel_net_netdev.o \
             $(BUILD_DIR)/kernel_net_webcam_httpd.o \
             $(BUILD_DIR)/kernel_net_http_server.o \
             $(BUILD_DIR)/kernel_net_lwip_port_netif_avatar.o \
-            $(BUILD_DIR)/kernel_net_lwip_port_sys_arch.o \
-            $(BUILD_DIR)/kernel_net_lwip_port_libc_compat.o
+            $(BUILD_DIR)/kernel_net_lwip_port_sys_arch.o
 
 LWIP_CORE_SRCS := $(LWIP_DIR)/src/core/init.c \
                   $(LWIP_DIR)/src/core/def.c \
@@ -684,7 +684,6 @@ LWIP_CFLAGS := $(CFLAGS)
 LWIP_CFLAGS += -I$(LWIP_DIR)/src/include
 LWIP_CFLAGS += -I$(LWIP_PORT_DIR)
 LWIP_CFLAGS += -I$(LWIP_PORT_DIR)/arch
-LWIP_CFLAGS += -I$(LWEXT4_LIBC_SHIM)
 LWIP_CFLAGS += -DLWIP_NO_CTYPE_H=1
 LWIP_CFLAGS += -w
 
@@ -694,7 +693,6 @@ LWEXT4_OBJS     := $(patsubst $(LWEXT4_DIR)/src/%.c,$(BUILD_DIR)/lwext4_%.o,$(LW
 
 # lwext4 移植胶水代码（属于本项目，使用 LWEXT4_CFLAGS）
 LWEXT4_PORT_OBJS := $(BUILD_DIR)/lwext4_port_kmalloc.o \
-                   $(BUILD_DIR)/lwext4_port_libc_stub.o \
                    $(BUILD_DIR)/drv_blk_ramblk.o \
                    $(BUILD_DIR)/lwext4_port_fs_init.o
 
@@ -702,7 +700,6 @@ LWEXT4_PORT_OBJS := $(BUILD_DIR)/lwext4_port_kmalloc.o \
 LWEXT4_CFLAGS  := $(CFLAGS)
 LWEXT4_CFLAGS  += -I$(LWEXT4_DIR)/include   # lwext4 头文件
 LWEXT4_CFLAGS  += -I$(LWEXT4_PORT_DIR)      # generated/ext4_config.h 所在目录
-LWEXT4_CFLAGS  += -I$(LWEXT4_LIBC_SHIM)     # lwext4 libc shim 头文件
 LWEXT4_CFLAGS  += -DCONFIG_USE_DEFAULT_CFG=0  # 使用自定义 ext4_config.h
 # 以下定义与 generated/ext4_config.h 保持一致，防止默认值覆盖
 LWEXT4_CFLAGS  += -DCONFIG_HAVE_OWN_ERRNO=1
@@ -789,6 +786,9 @@ $(BUILD_DIR)/vsnprintf.o: $(LIB_DIR)/vsnprintf.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/string.o: $(LIB_DIR)/string.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/libc.o: $(LIB_DIR)/libc.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c | $(BUILD_DIR)
@@ -880,7 +880,7 @@ $(LOADER_C_OBJECTS) $(SYSCALL_C_OBJECTS) \
 $(VM_C_OBJECTS) $(VM_S_OBJ) $(VMM_C_OBJECTS) $(VMM_S_OBJECTS) \
 $(GUEST_TEST_OBJ) $(TESTS_OBJECTS) $(PLATFORM_OBJECTS) $(DRIVER_OBJECTS) \
 $(EXCEPTION_OBJECTS) $(KLOG_OBJECT) $(VSNPRINTF_OBJECT) $(STRING_OBJECT) \
-$(BITMAP_OBJECT) $(PLATFORM_CFG_OBJECT) $(LWEXT4_OBJS) $(LWEXT4_PORT_OBJS) \
+$(LIBC_OBJECT) $(BITMAP_OBJECT) $(PLATFORM_CFG_OBJECT) $(LWEXT4_OBJS) $(LWEXT4_PORT_OBJS) \
 $(LUA_CORE_OBJS) $(LUA_GLUE_OBJS) $(LUA_BLOB_OBJ) $(SETJMP_OBJ) \
 $(PSEUDOFS_OBJS) $(LWIP_OBJS): $(PLATFORM_CONFIG_DEPS)
 
@@ -1109,9 +1109,6 @@ $(BUILD_DIR)/lwext4_%.o: $(LWEXT4_DIR)/src/%.c | $(BUILD_DIR)
 $(BUILD_DIR)/lwext4_port_kmalloc.o: $(LWEXT4_PORT_DIR)/kmalloc.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/lwext4_port_libc_stub.o: $(LWEXT4_PORT_DIR)/libc_stub.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
-
 # RAM 块设备和 FS 初始化（需要 lwext4 头文件，使用 LWEXT4_CFLAGS）
 $(BUILD_DIR)/drv_blk_ramblk.o: driver/blk/ramblk.c | $(BUILD_DIR)
 	@mkdir -p $(dir $@)
@@ -1229,7 +1226,7 @@ $(BUILD_DIR)/apps_riscv_guest_test.o: apps/riscv64/guest_test.S | $(BUILD_DIR)
 endif
 
 # ── §12g  链接 ────────────────────────────────────────────────────────────────────
-$(KERNEL_TARGET): $(BOOT_OBJECTS) $(KERNEL_OBJECTS) $(NET_OBJS) $(LWIP_OBJS) $(TASK_C_OBJECTS) $(TASK_S_OBJ) $(TASK_USER_TEST_OBJ) $(TASK_USER_HELLO_OBJ) $(TASK_USER_TESTEXECVE_OBJ) $(LOADER_C_OBJECTS) $(SYSCALL_C_OBJECTS) $(VM_C_OBJECTS) $(VM_S_OBJ) $(VMM_C_OBJECTS) $(VMM_S_OBJECTS) $(GUEST_TEST_OBJ) $(TESTS_OBJECTS) $(PLATFORM_OBJECTS) $(DRIVER_OBJECTS) $(EXCEPTION_OBJECTS) $(KLOG_OBJECT) $(VSNPRINTF_OBJECT) $(STRING_OBJECT) $(BITMAP_OBJECT) $(PLATFORM_CFG_OBJECT) $(LWEXT4_OBJS) $(LWEXT4_PORT_OBJS) $(LUA_OBJECTS) $(PSEUDOFS_OBJS) | $(BUILD_DIR)
+$(KERNEL_TARGET): $(BOOT_OBJECTS) $(KERNEL_OBJECTS) $(NET_OBJS) $(LWIP_OBJS) $(TASK_C_OBJECTS) $(TASK_S_OBJ) $(TASK_USER_TEST_OBJ) $(TASK_USER_HELLO_OBJ) $(TASK_USER_TESTEXECVE_OBJ) $(LOADER_C_OBJECTS) $(SYSCALL_C_OBJECTS) $(VM_C_OBJECTS) $(VM_S_OBJ) $(VMM_C_OBJECTS) $(VMM_S_OBJECTS) $(GUEST_TEST_OBJ) $(TESTS_OBJECTS) $(PLATFORM_OBJECTS) $(DRIVER_OBJECTS) $(EXCEPTION_OBJECTS) $(KLOG_OBJECT) $(VSNPRINTF_OBJECT) $(STRING_OBJECT) $(LIBC_OBJECT) $(BITMAP_OBJECT) $(PLATFORM_CFG_OBJECT) $(LWEXT4_OBJS) $(LWEXT4_PORT_OBJS) $(LUA_OBJECTS) $(PSEUDOFS_OBJS) | $(BUILD_DIR)
 	$(CC) $(LDFLAGS) -nostartfiles -nodefaultlibs -T $(BOOT_DIR)/$(ARCH)/link.ld -o $@ -Wl,--start-group $^ -Wl,--end-group
 
 # 转换为二进制文件
