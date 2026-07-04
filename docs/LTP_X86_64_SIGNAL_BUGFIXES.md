@@ -165,6 +165,65 @@ syscall
 
 ---
 
+## 9. MAP_SHARED 页内存泄漏 — 缺少引用计数 (全架构)
+
+**现象**: 每次运行 LTP 测例后 `/proc/meminfo` 的 MemFree 持续减少且不可恢复：
+- `kill03`: 泄漏 4 kB (1 页) — LTP framework 的 `struct results` 使用 1 个 MAP_SHARED 页
+- `mmap01`: 泄漏 8 kB (2 页) — results + test file 共 2 个 MAP_SHARED 页
+
+反复运行测例可累积消耗所有可用内存。
+
+**根因**: `PTE_NOFREE` 标记用于 MAP_SHARED 页，防止 fork 子进程退出时释放
+父进程仍在使用的共享物理页。但当**所有持有该页的进程都退出**后，没有任何代码
+释放这些物理页——`x86_destroy_table` / `rv_destroy_table` / `_destroy_page_table_vm`
+看到 `PTE_NOFREE` 就直接跳过 `pmm_free_pages`，物理页永久泄漏。
+
+进程生命周期中 NOFREE 页的流转：
+```
+mmap(MAP_SHARED) → 分配物理页 → 标记 PTE_NOFREE
+       ↓
+fork() → 子进程复制 PTE（含 PTE_NOFREE）→ 共享同一物理页
+       ↓
+子进程 exit → destroy 跳过 NOFREE 页 ✓（正确：父进程还在用）
+       ↓
+父进程 exit → destroy 跳过 NOFREE 页 ✗（错误：无人再持有，页泄漏）
+```
+
+**修复**: 新增轻量级共享页引用计数模块 `kernel/mm/shared_page.c`。
+
+核心思路：为每个 PTE_NOFREE 物理页维护引用计数。分配/fork 时 `ref++`，
+进程销毁/munmap 时 `ref--`。refcount 降到 0 时调用 `pmm_free_pages` 真正释放。
+
+实现：
+- 静态表 `shared_page_entry_t g_shared_pages[256]`，每条目含 `{paddr, refcount}`
+- `shared_page_ref(paddr)` — 递增引用计数（首次出现则创建条目，refcount=1）
+- `shared_page_unref(paddr)` — 递减引用计数；归零时释放物理页并清除条目
+
+调用点（7 个文件，三架构对称）：
+
+| 操作 | 文件 | 调用 |
+|------|------|------|
+| mmap MAP_SHARED 分配 | `kernel/syscall/mm/mmap.c` | `shared_page_ref(pa)` ×3 路径 |
+| fork 复制 NOFREE PTE | `kernel/syscall/core/proc_lifecycle.c` | `shared_page_ref(src_pa)` |
+| fork 复制 NOFREE PTE | `kernel/mm/{aarch64,riscv64,x86_64}/vmm.c` | `shared_page_ref(pa)` |
+| 进程销毁/munmap | `kernel/mm/vm_user.c` | `shared_page_unref(pa)` |
+| 进程销毁 (aarch64) | `kernel/mm/aarch64/vmm.c` | `shared_page_unref(pa)` |
+
+**涉及文件**:
+- `kernel/mm/shared_page.h` — 新增：API 声明
+- `kernel/mm/shared_page.c` — 新增：引用计数表实现
+- `kernel/syscall/mm/mmap.c` — MAP_SHARED 分配时调用 `shared_page_ref`
+- `kernel/syscall/core/proc_lifecycle.c` — fork CLONE_COPY_RANGE 中调用 `shared_page_ref`
+- `kernel/mm/aarch64/vmm.c` — fork 复制时 ref，销毁时 unref
+- `kernel/mm/riscv64/vmm.c` — fork 复制时 ref
+- `kernel/mm/x86_64/vmm.c` — fork 复制时 ref
+- `kernel/mm/vm_user.c` — destroy/unmap 中 NOFREE 页调用 `shared_page_unref`
+- `Makefile` — 添加 `shared_page.o` 编译规则
+
+**影响**: 全架构 (AArch64, RISC-V, x86_64)。
+
+---
+
 ## 最终 LTP 结果
 
 | 架构 | PASS | FAIL | BROK | 备注 |

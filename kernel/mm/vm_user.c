@@ -12,6 +12,7 @@
 #include "string.h"
 #include "types.h"
 #include "user_layout.h"
+#include "shared_page.h"
 #if ARCH_RISCV64
 #include "riscv64/satp_utils.h"
 #endif
@@ -31,8 +32,12 @@ static void rv_destroy_table(uint64_t *table, int level, bool free_leaf_pages) {
       continue;
 
     if (rv_pte_is_leaf(pte)) {
-      if (free_leaf_pages && ((pte & RV_PTE_NOFREE) == 0))
-        pmm_free_pages(g_pmm, rv_pte_to_pa(pte), 1);
+      if (free_leaf_pages) {
+        if ((pte & RV_PTE_NOFREE) == 0)
+          pmm_free_pages(g_pmm, rv_pte_to_pa(pte), 1);
+        else
+          shared_page_unref(rv_pte_to_pa(pte));
+      }
       table[i] = 0;
       continue;
     }
@@ -55,6 +60,8 @@ static void x86_destroy_table(uint64_t *table, int level) {
     if (level == 1 || (level > 1 && (pte & PTE_HUGE))) {
       if ((pte & PTE_NOFREE) == 0)
         pmm_free_pages(g_pmm, x86_pte_to_pa(pte), 1);
+      else
+        shared_page_unref(x86_pte_to_pa(pte));
       table[i] = 0;
       continue;
     }
@@ -250,6 +257,8 @@ uint64_t vm_unmap_user_range(uint64_t pgd_phys, uint64_t vaddr, uint64_t size) {
     if (pte && ((*pte & RV_PTE_V) != 0) && rv_pte_is_leaf(*pte)) {
       if ((*pte & RV_PTE_NOFREE) == 0)
         pmm_free_pages(g_pmm, rv_pte_to_pa(*pte), 1);
+      else
+        shared_page_unref(rv_pte_to_pa(*pte));
       *pte = 0;
       freed++;
     }
@@ -258,6 +267,8 @@ uint64_t vm_unmap_user_range(uint64_t pgd_phys, uint64_t vaddr, uint64_t size) {
     if (pte && ((*pte & PTE_PRESENT) != 0)) {
       if ((*pte & PTE_NOFREE) == 0)
         pmm_free_pages(g_pmm, x86_pte_to_pa(*pte), 1);
+      else
+        shared_page_unref(x86_pte_to_pa(*pte));
       *pte = 0;
       flush_tlb_single(va);
       freed++;

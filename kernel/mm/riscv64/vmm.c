@@ -9,6 +9,7 @@
 #include "pmm.h"
 #include "mm_vm.h"
 #include "string.h"
+#include "shared_page.h"
 #include "riscv64/satp_utils.h"
 
 /* ── 页表遍历 ───────────────────────────────────────────────────── */
@@ -120,6 +121,7 @@ rv_copy_pt_recursive(uint64_t *src, uint64_t *dst, int level)
         if (rv_pte_is_leaf(pte)) {
             if (pte & RV_PTE_NOFREE) {
                 dst[i] = pte;
+                shared_page_ref(rv_pte_to_pa(pte));
                 continue;
             }
             uint64_t src_pa = rv_pte_to_pa(pte);

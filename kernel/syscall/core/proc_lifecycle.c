@@ -28,6 +28,7 @@
 #include "arch.h"
 #include "syscall_abi.h"
 #include "list.h"
+#include "shared_page.h"
 #include <ext4.h>
 #if ARCH_RISCV64
 #include "riscv64/satp_utils.h"
@@ -353,6 +354,7 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
                             break;                                                         \
                         }                                                                  \
                         CLONE_MARK_NOFREE(child_pgd_virt, va);                             \
+                        shared_page_ref(src_pa);                                           \
                         continue;                                                          \
                     }                                                                      \
                     uint64_t dst_pa = pmm_alloc_pages(g_pmm, 1);                          \

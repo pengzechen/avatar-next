@@ -6,6 +6,7 @@
 #include "mm_vm.h"
 #include "aarch64/mmu.h"
 #include "string.h"
+#include "shared_page.h"
 
 
 /* 兼容性定义（替换参考项目中的符号） */
@@ -282,6 +283,8 @@ void memory_free_page(void *page_dir, uint64_t addr)
 
     if ((pte->pte & PTE_NOFREE) == 0)
         pmm_free_pages(g_pmm, (pte->l3_page.pfn << 12), 1);
+    else
+        shared_page_unref(pte->l3_page.pfn << 12);
 
     pte->pte = 0;
 }
@@ -363,9 +366,11 @@ void _destroy_page_table_vm(pte_t *table, int32_t level)
                 end -= KERNEL_VMA;
 
             if (!((page_phys >= start && page_phys < end) ||
-                  (page_phys >= DEVICE_MEM_START && page_phys < DEVICE_MEM_END)) &&
-                !(entry->pte & PTE_NOFREE)) {
-                pmm_free_pages(g_pmm, page_phys, 1);
+                  (page_phys >= DEVICE_MEM_START && page_phys < DEVICE_MEM_END))) {
+                if (!(entry->pte & PTE_NOFREE))
+                    pmm_free_pages(g_pmm, page_phys, 1);
+                else
+                    shared_page_unref(page_phys);
             }
 
             entry->pte = 0;
@@ -453,8 +458,9 @@ bool _copy_page_table(pte_t *src_table, pte_t *dst_table, int32_t level)
                 (src_phys >= DEVICE_MEM_START && src_phys <= DEVICE_MEM_END) ||
                 (src_entry->pte & PTE_NOFREE))
             {
-                // 共享页或内核/设备页：复制 PTE 本身（共享物理页）
                 dst_table[i].pte = src_entry->pte;
+                if (src_entry->pte & PTE_NOFREE)
+                    shared_page_ref(src_phys);
                 continue;
             }
 

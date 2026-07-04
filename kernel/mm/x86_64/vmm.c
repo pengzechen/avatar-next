@@ -9,6 +9,7 @@
 #include "pmm.h"
 #include "string.h"
 #include "types.h"
+#include "shared_page.h"
 
 /* ── 页表遍历 ───────────────────────────────────────────────────── */
 
@@ -128,6 +129,7 @@ static int x86_copy_pt_recursive(uint64_t *src, uint64_t *dst, int level) {
     if (level == 1) {
       if (pte & PTE_NOFREE) {
         dst[i] = pte;
+        shared_page_ref(x86_pte_to_pa(pte));
         continue;
       }
       uint64_t src_pa = x86_pte_to_pa(pte);

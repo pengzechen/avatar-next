@@ -122,8 +122,8 @@ KERNEL_SOURCES := $(KERNEL_DIR)/main.c
 KERNEL_OBJECTS := $(KERNEL_SOURCES:$(KERNEL_DIR)/%.c=$(BUILD_DIR)/kernel_%.o)
 
 # ── §4a  架构特定模块（VMM / 异常 / 上下文切换 / 用户程序）─────────────────────
-VM_C_SOURCES := $(KERNEL_DIR)/mm/pmm.c $(TESTS_DIR)/pmm_test.c $(KERNEL_DIR)/mm/vm_user.c $(KERNEL_DIR)/mm/kmalloc.c
-VM_C_OBJECTS := $(BUILD_DIR)/kernel_mm_pmm.o $(BUILD_DIR)/kernel_mm_pmm_test.o $(BUILD_DIR)/kernel_mm_vm_user.o $(BUILD_DIR)/kernel_mm_kmalloc.o
+VM_C_SOURCES := $(KERNEL_DIR)/mm/pmm.c $(TESTS_DIR)/pmm_test.c $(KERNEL_DIR)/mm/vm_user.c $(KERNEL_DIR)/mm/kmalloc.c $(KERNEL_DIR)/mm/shared_page.c
+VM_C_OBJECTS := $(BUILD_DIR)/kernel_mm_pmm.o $(BUILD_DIR)/kernel_mm_pmm_test.o $(BUILD_DIR)/kernel_mm_vm_user.o $(BUILD_DIR)/kernel_mm_kmalloc.o $(BUILD_DIR)/kernel_mm_shared_page.o
 
 # 架构特定的 VM 模块
 ifeq ($(ARCH),aarch64)
@@ -1080,6 +1080,9 @@ $(BUILD_DIR)/kernel_mm_vm_user.o: $(KERNEL_DIR)/mm/vm_user.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/kernel_mm_kmalloc.o: $(KERNEL_DIR)/mm/kmalloc.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/kernel_mm_shared_page.o: $(KERNEL_DIR)/mm/shared_page.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/bitmap.o: $(LIB_DIR)/bitmap.c | $(BUILD_DIR)
