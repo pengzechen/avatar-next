@@ -542,6 +542,7 @@ void wait_handler(uint64_t regs[6], task_t *me)
     me->is_waiting = true;
     me->wait_pid   = (wait_pid > 0) ? (uint32_t)wait_pid : (uint32_t)-1;
     task_block(NULL);
+    me->is_waiting = false;
 
     for (uint32_t i = 0; i < TASK_MAX; i++) {
         if (!g_stack_used[i]) continue;

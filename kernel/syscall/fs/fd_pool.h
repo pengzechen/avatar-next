@@ -10,6 +10,7 @@
 
 #include "types.h"
 #include <ext4.h>
+#include "syscall/io/epoll.h"
 
 /* 前向声明 task_t，避免本头文件强制拉入 task/task.h */
 struct task;
@@ -19,6 +20,7 @@ typedef struct task task_t;
 
 typedef enum {
     FDT_FREE = 0,
+    FDT_ALLOCATED,
     FDT_FILE,
     FDT_DIR,
     FDT_PSEUDO,
@@ -26,6 +28,7 @@ typedef enum {
     FDT_PIPE,
     FDT_SOCKET,
     FDT_PTY,
+    FDT_EPOLL,
 } fd_type_t;
 
 typedef struct {
@@ -53,7 +56,11 @@ typedef struct {
             int16_t  pty_idx;
             bool     is_master;
         } pty;
+        struct {
+            int16_t  ep_idx;
+        } epoll;
     };
+    fd_waitqueue_t wq;
 } fd_obj_t;
 
 extern fd_obj_t g_fd_pool[FD_POOL_SIZE];

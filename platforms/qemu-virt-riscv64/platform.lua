@@ -11,7 +11,7 @@ platform = {
 
     memory = {
         ram    = { base = 0x80000000, size = 0x80000000 },
-        rootfs = { base = 0x88000000, size = 0x08000000, mb = 128 },
+        rootfs = { base = 0x88000000, size = 0x10000000, mb = 256 },
         reserves = {
             { name = "opensbi",  start = 0x80000000, stop = 0x801FFFFF },
             { name = "boot_low", start = 0x80200000, stop = 0x80205FFF },

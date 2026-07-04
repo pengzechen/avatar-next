@@ -7,6 +7,7 @@
  */
 #include "syscall/fs/pipe.h"
 #include "syscall/fs/fd_pool.h"
+#include "syscall/io/epoll.h"
 #include "task/task.h"
 #include "klog.h"
 #include "string.h"
@@ -54,6 +55,8 @@ int pipe_alloc(task_t *task, int fds_out[2])
     memset(p, 0, sizeof(*p));
     p->rd_refcount = 1;
     p->wr_refcount = 1;
+    p->rd_pool_idx = rd_pool;
+    p->wr_pool_idx = wr_pool;
 
     fd_obj_t *rd_obj = &g_fd_pool[rd_pool];
     rd_obj->type = FDT_PIPE;
@@ -122,6 +125,8 @@ int pipe_read(int pool_idx, void *buf, size_t count)
         task_unblock(w);
     }
 
+    fd_notify_waiters(p->wr_pool_idx, EPOLLOUT);
+
     return (int)total;
 }
 
@@ -151,6 +156,8 @@ int pipe_write(int pool_idx, const void *buf, size_t count)
             p->blocked_reader = NULL;
             task_unblock(r);
         }
+
+        fd_notify_waiters(p->rd_pool_idx, EPOLLIN);
 
         if (total < count) {
             if (p->rd_refcount <= 0) {
@@ -192,6 +199,7 @@ void pipe_close_read(int pool_idx)
             p->blocked_writer = NULL;
             task_unblock(w);
         }
+        fd_notify_waiters(p->wr_pool_idx, EPOLLERR);
     }
 }
 
@@ -207,6 +215,7 @@ void pipe_close_write(int pool_idx)
             p->blocked_reader = NULL;
             task_unblock(r);
         }
+        fd_notify_waiters(p->rd_pool_idx, EPOLLHUP);
     }
 }
 

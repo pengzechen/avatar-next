@@ -34,11 +34,11 @@ typedef enum {
     SYS_BRK   = 10,   /* 设置程序断点 */
     SYS_SBRK  = 11,   /* 增加程序断点 */
 
-    /* 文件操作 */
-    SYS_WRITE = 20,   /* 写入字符串到 UART */
-    SYS_READ  = 21,   /* 从设备读取 */
-    SYS_OPEN  = 22,   /* 打开文件 */
-    SYS_CLOSE = 23,   /* 关闭文件 */
+    /* 文件操作 — 使用私有号段避免与 Linux AArch64 号冲突 */
+    SYS_WRITE = 0x4000,   /* 写入字符串到 UART */
+    SYS_READ  = 0x4001,   /* 从设备读取 */
+    SYS_OPEN  = 0x4002,   /* 打开文件 */
+    SYS_CLOSE = 0x4003,   /* 关闭文件 */
 
     /* 时间相关 */
     SYS_GETTIMEOFDAY = 30,  /* 获取系统时间 */

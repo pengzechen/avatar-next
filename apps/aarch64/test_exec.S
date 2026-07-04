@@ -6,7 +6,7 @@
  */
 
 /* 系统调用号定义 */
-#define SYS_WRITE        20
+#define SYS_WRITE   0x4000
 #define SYS_EXIT         0
 
 .section .text

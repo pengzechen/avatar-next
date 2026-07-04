@@ -6,12 +6,23 @@
  */
 #include "syscall/fs/pty.h"
 #include "syscall/fs/fd_pool.h"
+#include "syscall/io/epoll.h"
 #include "syscall/syscall_internal.h"
 #include "task/task.h"
 #include "klog.h"
 #include "string.h"
 
 static pty_pair_t g_ptys[PTY_MAX];
+
+static void pty_notify_epoll(int pty_idx, bool notify_master, uint32_t events)
+{
+    for (int i = 0; i < FD_POOL_SIZE; i++) {
+        fd_obj_t *obj = &g_fd_pool[i];
+        if (obj->type == FDT_PTY && obj->pty.pty_idx == pty_idx &&
+            obj->pty.is_master == notify_master)
+            fd_notify_waiters(i, events);
+    }
+}
 
 static uint32_t ring_read(pty_ring_t *r, void *buf, size_t count)
 {
@@ -145,6 +156,7 @@ int pty_master_read(int pty_idx, void *buf, size_t count)
         p->blocked_slave = NULL;
         task_unblock(t);
     }
+    pty_notify_epoll(pty_idx, false, EPOLLOUT);
     return (int)n;
 }
 
@@ -172,6 +184,7 @@ int pty_master_write(int pty_idx, const void *buf, size_t count)
             p->blocked_slave = NULL;
             task_unblock(t);
         }
+        pty_notify_epoll(pty_idx, false, EPOLLIN);
 
         if (total < count) {
             if (!p->slave_open) return total > 0 ? (int)total : -32;
@@ -201,6 +214,7 @@ int pty_slave_read(int pty_idx, void *buf, size_t count)
         p->blocked_master = NULL;
         task_unblock(t);
     }
+    pty_notify_epoll(pty_idx, true, EPOLLOUT);
     return (int)n;
 }
 
@@ -238,6 +252,7 @@ int pty_slave_write(int pty_idx, const void *buf, size_t count)
             p->blocked_master = NULL;
             task_unblock(t);
         }
+        pty_notify_epoll(pty_idx, true, EPOLLIN);
 
         if (si < count) {
             if (!p->master_open) return si > 0 ? (int)si : -32;
@@ -262,6 +277,7 @@ void pty_close_master(int pty_idx)
             p->blocked_slave = NULL;
             task_unblock(t);
         }
+        pty_notify_epoll(pty_idx, false, EPOLLHUP);
         if (!p->slave_open)
             p->in_use = false;
     }
@@ -292,6 +308,7 @@ void pty_close_slave(int pty_idx)
             p->blocked_master = NULL;
             task_unblock(t);
         }
+        pty_notify_epoll(pty_idx, true, EPOLLHUP);
         if (!p->master_open)
             p->in_use = false;
     }

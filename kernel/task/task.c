@@ -724,10 +724,10 @@ task_block(list_t *wait_queue)
 void
 task_unblock(task_t *task)
 {
-    /* 将任务从阻塞状态改为就绪 */
-    task->state = TASK_READY;
+    if (task->state != TASK_BLOCKED)
+        return;
 
-    /* 加入就绪队列 */
+    task->state = TASK_READY;
     sched_enqueue(task);
 }
 

@@ -214,10 +214,17 @@ static void x86_translate_syscall(uint64_t *nr, uint64_t regs[9])
     case 165: *nr = LINUX_SYS_GETRUSAGE;   break; /* getrusage(again) */
     case 186: *nr = LINUX_SYS_GETTID;      break; /* gettid */
     case 202: *nr = LINUX_SYS_FUTEX;        break; /* futex */
+    case 213: /* epoll_create(size) → epoll_create1(0) */
+        regs[0] = 0;
+        *nr = LINUX_SYS_EPOLL_CREATE1; break;
     case 217: *nr = LINUX_SYS_GETDENTS64;  break; /* getdents64 */
     case 218: *nr = LINUX_SYS_SET_TID_ADDR; break; /* set_tid_address */
     case 228: *nr = LINUX_SYS_CLOCK_GETTIME; break; /* clock_gettime */
     case 231: *nr = LINUX_SYS_EXIT_GROUP;  break; /* exit_group */
+    case 232: /* epoll_wait(epfd,events,max,timeout) → epoll_pwait(sigmask=NULL) */
+        regs[4] = 0; regs[5] = 0;
+        *nr = LINUX_SYS_EPOLL_PWAIT; break;
+    case 233: *nr = LINUX_SYS_EPOLL_CTL;   break; /* epoll_ctl */
     case 234: *nr = LINUX_SYS_TGKILL;      break; /* tgkill */
     case 247: *nr = LINUX_SYS_WAITID;      break; /* waitid */
     case 257: *nr = LINUX_SYS_OPENAT;      break; /* openat */
@@ -235,6 +242,8 @@ static void x86_translate_syscall(uint64_t *nr, uint64_t regs[9])
     case 292: *nr = LINUX_SYS_DUP3;        break; /* dup3 */
     case 293: *nr = LINUX_SYS_PIPE2;       break; /* pipe2 */
     case 288: *nr = LINUX_SYS_ACCEPT4;    break; /* accept4 */
+    case 291: *nr = LINUX_SYS_EPOLL_CREATE1; break; /* epoll_create1 */
+    case 281: *nr = LINUX_SYS_EPOLL_PWAIT;   break; /* epoll_pwait */
     case 302: *nr = LINUX_SYS_PRLIMIT64;   break; /* prlimit64 */
     case 318: *nr = LINUX_SYS_GETRANDOM;   break; /* getrandom */
     case 334: *nr = X86_SYS_RSEQ;          break; /* rseq */
@@ -539,6 +548,19 @@ void syscall_handler(trap_frame_t *frame)
     case X86_SYS_SELECT:
     case LINUX_SYS_PSELECT6:
         select_handler(regs, syscall_num, current);
+        break;
+
+    /* --- epoll --- */
+    case LINUX_SYS_EPOLL_CREATE1:
+        epoll_create1_handler(regs, current);
+        break;
+
+    case LINUX_SYS_EPOLL_CTL:
+        epoll_ctl_handler(regs, current);
+        break;
+
+    case LINUX_SYS_EPOLL_PWAIT:
+        epoll_pwait_handler(regs, current);
         break;
 
     /* --- 信号系统（实现位于 kernel/syscall/signal.c）--- */

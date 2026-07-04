@@ -11,7 +11,7 @@ platform = {
 
     memory = {
         ram    = { base = 0x00100000, size = 0x7FF00000 },
-        rootfs = { base = 0x04000000, size = 0x08000000, mb = 128 },
+        rootfs = { base = 0x04000000, size = 0x10000000, mb = 256 },
         reserves = {
             { name = "lowmem_1m_2m", start = 0x00100000, stop = 0x001FFFFF },
         },

@@ -22,6 +22,7 @@ int fd_pool_alloc(void)
 {
     for (int i = 0; i < FD_POOL_SIZE; i++) {
         if (g_fd_pool[i].type == FDT_FREE) {
+            g_fd_pool[i].type = FDT_ALLOCATED;
             KLOG_DEBUG("[fd] pool_alloc: allocated slot %d\n", i);
             return i;
         }
@@ -34,6 +35,7 @@ void fd_pool_free(int idx)
 {
     if (idx >= 0 && idx < FD_POOL_SIZE) {
         KLOG_DEBUG("[fd] pool_free: freeing slot %d\n", idx);
+        g_fd_pool[idx].wq.waiter_count = 0;
         g_fd_pool[idx].type = FDT_FREE;
     }
 }
@@ -125,7 +127,7 @@ void fd_table_inherit(task_t *child, task_t *parent)
             continue;
         }
         fd_obj_t *src = &g_fd_pool[pidx];
-        if (src->type == FDT_FREE) {
+        if (src->type == FDT_FREE || src->type == FDT_EPOLL) {
             child->fd_table[fd] = -1;
             continue;
         }
@@ -135,6 +137,7 @@ void fd_table_inherit(task_t *child, task_t *parent)
             continue;
         }
         g_fd_pool[new_idx] = *src;
+        g_fd_pool[new_idx].wq.waiter_count = 0;
         if (src->type == FDT_SOCKET)
             ksock_ref(src->sock.sock_idx);
         else if (src->type == FDT_PIPE) {

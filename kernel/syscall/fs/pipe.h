@@ -16,6 +16,8 @@ typedef struct {
     uint32_t count;
     int      rd_refcount;
     int      wr_refcount;
+    int      rd_pool_idx;
+    int      wr_pool_idx;
     struct task *blocked_reader;
     struct task *blocked_writer;
 } pipe_t;

@@ -10,7 +10,7 @@
 /* 系统调用号定义 */
 #define SYS_EXIT          0
 #define SYS_YIELD         1
-#define SYS_WRITE        20
+#define SYS_WRITE   0x4000
 
 .section .text.user
 .global hello_program

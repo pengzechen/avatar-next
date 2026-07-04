@@ -16,10 +16,10 @@
 #define SYS_EXECVE        4
 #define SYS_BRK          10
 #define SYS_SBRK         11
-#define SYS_WRITE        20
-#define SYS_READ         21
-#define SYS_OPEN         22
-#define SYS_CLOSE        23
+#define SYS_WRITE        0x4000
+#define SYS_READ         0x4001
+#define SYS_OPEN         0x4002
+#define SYS_CLOSE        0x4003
 #define SYS_GETTIMEOFDAY 30
 
 /* ── 时间相关结构 ───────────────────────────────────────────────── */

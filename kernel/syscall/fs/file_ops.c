@@ -11,6 +11,7 @@
 #include "klog.h"
 #include "string.h"
 #include "syscall/fs/pipe.h"
+#include "syscall/io/epoll.h"
 #include "syscall/net/ksocket.h"
 #include "syscall/fs/pty.h"
 #if DRIVER_ION
@@ -91,6 +92,14 @@ void openat_handler(uint64_t regs[6], task_t *current)
 
     rc = ext4_dir_open(&obj->dir, abspath);
     if (rc == EOK) {
+        uint32_t mode = 0;
+        if (ext4_mode_get(abspath, &mode) == EOK &&
+            (mode & 0170000) != 0040000) {
+            ext4_dir_close(&obj->dir);
+            fd_pool_free(pool);
+            regs[0] = (uint64_t)(int64_t)-ENOTDIR;
+            return;
+        }
         obj->type  = FDT_DIR;
         obj->flags = flags;
         int k = 0;
@@ -130,6 +139,7 @@ void close_handler(uint64_t regs[6], task_t *current)
     fd_obj_t *obj = &g_fd_pool[idx];
     KLOG_DEBUG("[fd] close: pid=%u fd=%d pool_idx=%d type=%d\n",
               current->id, fd, idx, obj->type);
+    fd_close_notify(idx);
     if (obj->type == FDT_FILE)
         ext4_fclose(&obj->file);
     else if (obj->type == FDT_DIR)
@@ -148,6 +158,9 @@ void close_handler(uint64_t regs[6], task_t *current)
             pty_close_master(obj->pty.pty_idx);
         else
             pty_close_slave(obj->pty.pty_idx);
+    }
+    else if (obj->type == FDT_EPOLL) {
+        epoll_destroy(obj->epoll.ep_idx);
     }
 #if DRIVER_ION
     else if (obj->type == FDT_ION)
@@ -173,6 +186,7 @@ void dup3_handler(uint64_t regs[6], task_t *current)
     if (current->fd_table[newfd] != -1) {
         int idx = current->fd_table[newfd];
         fd_obj_t *o = &g_fd_pool[idx];
+        fd_close_notify(idx);
         if (o->type == FDT_FILE) ext4_fclose(&o->file);
         else if (o->type == FDT_DIR) ext4_dir_close(&o->dir);
         else if (o->type == FDT_SOCKET) ksock_close(o->sock.sock_idx);
@@ -184,6 +198,7 @@ void dup3_handler(uint64_t regs[6], task_t *current)
             if (o->pty.is_master) pty_close_master(o->pty.pty_idx);
             else pty_close_slave(o->pty.pty_idx);
         }
+        else if (o->type == FDT_EPOLL) epoll_destroy(o->epoll.ep_idx);
     #if DRIVER_ION
         else if (o->type == FDT_ION) ion_free((ion_handle_t)o->ion.handle);
     #endif
@@ -208,6 +223,7 @@ void dup3_handler(uint64_t regs[6], task_t *current)
         }
 #endif
         g_fd_pool[new_idx] = *src;
+        g_fd_pool[new_idx].wq.waiter_count = 0;
         if (src->type == FDT_SOCKET)
             ksock_ref(src->sock.sock_idx);
         else if (src->type == FDT_PIPE) {
@@ -317,6 +333,7 @@ void fcntl_handler(uint64_t regs[6], task_t *current)
             return;
         }
         g_fd_pool[new_idx] = *obj;
+        g_fd_pool[new_idx].wq.waiter_count = 0;
         if (obj->type == FDT_SOCKET)
             ksock_ref(obj->sock.sock_idx);
         else if (obj->type == FDT_PIPE) {

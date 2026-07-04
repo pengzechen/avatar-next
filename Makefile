@@ -234,6 +234,7 @@ SYSCALL_C_SOURCES := $(KERNEL_DIR)/syscall/syscall.c \
                      $(KERNEL_DIR)/syscall/fs/pty.c \
                      $(KERNEL_DIR)/syscall/io/poll.c \
                      $(KERNEL_DIR)/syscall/io/select.c \
+                     $(KERNEL_DIR)/syscall/io/epoll.c \
                      $(KERNEL_DIR)/syscall/mm/brk.c \
                      $(KERNEL_DIR)/syscall/mm/mmap.c \
                      $(KERNEL_DIR)/syscall/mm/pmap_compat.c \
@@ -257,6 +258,7 @@ SYSCALL_C_OBJECTS := $(BUILD_DIR)/kernel_syscall_syscall.o \
                      $(BUILD_DIR)/kernel_syscall_fs_pty.o \
                      $(BUILD_DIR)/kernel_syscall_io_poll.o \
                      $(BUILD_DIR)/kernel_syscall_io_select.o \
+                     $(BUILD_DIR)/kernel_syscall_io_epoll.o \
                      $(BUILD_DIR)/kernel_syscall_mm_brk.o \
                      $(BUILD_DIR)/kernel_syscall_mm_mmap.o \
                      $(BUILD_DIR)/kernel_syscall_mm_pmap_compat.o \
@@ -993,6 +995,9 @@ $(BUILD_DIR)/kernel_syscall_io_poll.o: $(KERNEL_DIR)/syscall/io/poll.c | $(BUILD
 	$(CC) $(LWEXT4_CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/kernel_syscall_io_select.o: $(KERNEL_DIR)/syscall/io/select.c | $(BUILD_DIR)
+	$(CC) $(LWEXT4_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/kernel_syscall_io_epoll.o: $(KERNEL_DIR)/syscall/io/epoll.c | $(BUILD_DIR)
 	$(CC) $(LWEXT4_CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/kernel_syscall_mm_brk.o: $(KERNEL_DIR)/syscall/mm/brk.c | $(BUILD_DIR)

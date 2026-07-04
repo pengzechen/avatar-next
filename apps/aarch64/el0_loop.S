@@ -6,7 +6,7 @@
  */
 
 #define SYS_YIELD   1
-#define SYS_WRITE  20
+#define SYS_WRITE   0x4000
 
 .section .text.user
 .global el0_loop_program

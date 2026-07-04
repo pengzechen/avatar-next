@@ -5,7 +5,7 @@
  */
 
 #define SYS_EXIT    0
-#define SYS_WRITE   20
+#define SYS_WRITE   0x4000
 
 .section .text.user
 .global hello_program

@@ -7,6 +7,7 @@
  */
 #include "syscall/net/ksocket.h"
 #include "syscall/fs/fd_pool.h"
+#include "syscall/io/epoll.h"
 #include "task/task.h"
 #include "klog.h"
 #include "string.h"
@@ -91,6 +92,14 @@ static void ksock_unblock(ksock_t *sk)
     }
 }
 
+static void ksock_notify_epoll(int si, uint32_t events)
+{
+    for (int i = 0; i < FD_POOL_SIZE; i++) {
+        if (g_fd_pool[i].type == FDT_SOCKET && g_fd_pool[i].sock.sock_idx == si)
+            fd_notify_waiters(i, events);
+    }
+}
+
 /* ── lwIP TCP callbacks ──────────────────────────────────────── */
 
 static err_t ksock_tcp_recv_cb(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err);
@@ -110,12 +119,14 @@ static err_t ksock_tcp_recv_cb(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, 
         if (p) pbuf_free(p);
         sk->last_err = -5; /* EIO */
         ksock_unblock(sk);
+        ksock_notify_epoll((int)(sk - g_ksocks), EPOLLERR);
         return ERR_OK;
     }
 
     if (!p) {
         sk->recv_eof = true;
         ksock_unblock(sk);
+        ksock_notify_epoll((int)(sk - g_ksocks), EPOLLHUP | EPOLLIN);
         return ERR_OK;
     }
 
@@ -139,6 +150,7 @@ static err_t ksock_tcp_recv_cb(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, 
 
     tcp_recved(tpcb, p->tot_len);
     ksock_unblock(sk);
+    ksock_notify_epoll((int)(sk - g_ksocks), EPOLLIN);
     return ERR_OK;
 }
 
@@ -179,6 +191,7 @@ static err_t ksock_tcp_accept_cb(void *arg, struct tcp_pcb *newpcb, err_t err)
     sk->accept_tail = (sk->accept_tail + 1) % KSOCK_BACKLOG_MAX;
     sk->accept_count++;
     ksock_unblock(sk);
+    ksock_notify_epoll((int)(sk - g_ksocks), EPOLLIN);
     return ERR_OK;
 }
 
@@ -196,6 +209,7 @@ static err_t ksock_tcp_connected_cb(void *arg, struct tcp_pcb *tpcb, err_t err)
         sk->last_err = -111; /* ECONNREFUSED */
     }
     ksock_unblock(sk);
+    ksock_notify_epoll((int)(sk - g_ksocks), err == ERR_OK ? EPOLLOUT : EPOLLERR);
     return ERR_OK;
 }
 
@@ -212,6 +226,7 @@ static void ksock_tcp_err_cb(void *arg, err_t err)
     }
     sk->recv_eof = true;
     ksock_unblock(sk);
+    ksock_notify_epoll((int)(sk - g_ksocks), EPOLLERR | EPOLLHUP);
 }
 
 static err_t ksock_tcp_sent_cb(void *arg, struct tcp_pcb *tpcb, u16_t len)
@@ -219,8 +234,10 @@ static err_t ksock_tcp_sent_cb(void *arg, struct tcp_pcb *tpcb, u16_t len)
     (void)tpcb;
     (void)len;
     ksock_t *sk = (ksock_t *)arg;
-    if (sk)
+    if (sk) {
         ksock_unblock(sk);
+        ksock_notify_epoll((int)(sk - g_ksocks), EPOLLOUT);
+    }
     return ERR_OK;
 }
 
@@ -248,6 +265,7 @@ static void ksock_udp_recv_cb(void *arg, struct udp_pcb *pcb, struct pbuf *p,
     sk->recv_tail = p;
     sk->recv_count++;
     ksock_unblock(sk);
+    ksock_notify_epoll((int)(sk - g_ksocks), EPOLLIN);
 }
 
 /* ── public API ──────────────────────────────────────────────── */

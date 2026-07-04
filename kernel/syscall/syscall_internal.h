@@ -110,6 +110,11 @@ typedef struct task task_t;
 #define LINUX_SYS_PRLIMIT64       261
 #define LINUX_SYS_GETRANDOM       278
 
+/* ── epoll (AArch64 / RISC-V 号) ─────────────────────────────────── */
+#define LINUX_SYS_EPOLL_CREATE1   20
+#define LINUX_SYS_EPOLL_CTL       21
+#define LINUX_SYS_EPOLL_PWAIT     22
+
 /* x86_64 专属或翻译后的伪号（使用顶部空段避免与 Linux 号冲突） */
 #define X86_SYS_ARCH_PRCTL        0x7FFFFFFDULL
 #define X86_SYS_RSEQ              0x7FFFFFFCULL
@@ -294,6 +299,9 @@ void x86_write_fs_base(uint64_t fs_base);
  * ─────────────────────────────────────────────────────────────── */
 void poll_handler     (uint64_t regs[6], uint64_t syscall_num, task_t *current);
 void select_handler   (uint64_t regs[6], uint64_t syscall_num, task_t *current);
+void epoll_create1_handler(uint64_t regs[6], task_t *current);
+void epoll_ctl_handler    (uint64_t regs[6], task_t *current);
+void epoll_pwait_handler  (uint64_t regs[6], task_t *current);
 void getrandom_handler(uint64_t regs[6]);
 #if ARCH_X86_64
 void arch_prctl_handler(uint64_t regs[6], task_t *current);
