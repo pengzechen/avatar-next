@@ -19,7 +19,7 @@
 .section .text
 .code64
 .extern handle_exception
-.extern sched_check_and_yield
+.extern sched_check_and_yield_from_trap
 
 /* ── 宏：无错误码的存根 ─────────────────────────────────────── */
 .macro ISR_NOERR vec
@@ -118,7 +118,8 @@ isr_common_stub:
     call    handle_exception
 
     /* 检查是否需要重调度（IRQ 触发的抢占）──────────────────────── */
-    call    sched_check_and_yield
+    movq    %rsp, %rdi
+    call    sched_check_and_yield_from_trap
 
     /* 恢复通用寄存器 */
     popq    %r15

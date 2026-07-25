@@ -6,8 +6,8 @@
 #include "platform_ops.h"
 #include "types.h"
 #include "task/task.h"
+#include "task/cpu.h"
 
-extern task_t *g_current_task;
 extern void deliver_pending_signals(task_t *t, trap_frame_t *frame);
 
 #define MAX_IRQ_VECTORS 512
@@ -61,7 +61,7 @@ void handle_el0_sync_exception(uint64_t *stack_pointer) {
    * EC == 0x24: Data Abort from EL0
    * → 投递 SIGSEGV 给用户进程 */
   if (ec == 0x20 || ec == 0x24) {
-    task_t *t = g_current_task;
+    task_t *t = task_current();
     if (t && t->is_user_process) {
       KLOG_WARN("[el0_sync] user page fault sig=SIGSEGV pid=%u pc=0x%llx va=0x%llx\n",
                 t->id, el1_ctx->elr, far);
@@ -87,6 +87,9 @@ void handle_el0_sync_exception(uint64_t *stack_pointer) {
 void handle_irq_exception(uint64_t *stack_pointer) {
   trap_frame_t *el1_ctx = (trap_frame_t *)stack_pointer;
   (void)el1_ctx; // Suppress unused parameter warning
+  cpu_t *cpu = cpu_current();
+
+  cpu->irq_depth++;
 
   /* Read IAR to acknowledge the interrupt */
   int iar = irq_ack();
@@ -101,6 +104,8 @@ void handle_irq_exception(uint64_t *stack_pointer) {
   /* End of interrupt */
   irq_eoi(iar);
   gic_write_dir(iar);
+
+  cpu->irq_depth--;
 }
 
 void invalid_exception(uint64_t *stack_pointer, uint64_t kind,

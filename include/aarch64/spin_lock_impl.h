@@ -8,6 +8,8 @@
  *   先用 C 辅助函数保存并关中断，再调用 spin_lock。
  */
 
+#include "task/preempt.h"
+
 /* ── DAIF 保存 / 恢复辅助函数 ─────────────────────────────── */
 
 static inline uint64_t
@@ -31,6 +33,7 @@ static inline void
 spin_lock(spinlock_t *lock)
 {
     uint64_t tmp, one = 1;
+    preempt_disable();
     asm volatile(
         /* 先用普通 ldr 等待锁可用（避免总线锁事务持续占用） */
         "1: ldr    %w0, [%2]          \n"
@@ -49,6 +52,7 @@ static inline int
 spin_trylock(spinlock_t *lock)
 {
     uint64_t tmp, one = 1;
+    preempt_disable();
     asm volatile(
         "   ldaxr  %w0, [%2]          \n"
         "   cbnz   %w0, 1f            \n"
@@ -61,6 +65,8 @@ spin_trylock(spinlock_t *lock)
         : "=&r"(tmp)
         : "r"(one), "r"(&lock->lock)
         : "memory");
+    if (tmp != 0)
+        preempt_enable();
     return (int)tmp;
 }
 
@@ -70,6 +76,7 @@ spin_unlock(spinlock_t *lock)
     /* stlr 已含 release 语义，无需额外 dmb */
     asm volatile(
         "stlr  wzr, [%0]" :: "r"(&lock->lock) : "memory");
+    preempt_enable();
 }
 
 /* ── 带中断保护的 spinlock ────────────────────────────────── */

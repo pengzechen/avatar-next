@@ -47,8 +47,9 @@ void signal_check_uart(void) {
         char c = uart_getc();
         if (c == '\x03' && (g_termios.c_lflag & 0x0001u)) {
             uint32_t fg = g_fg_pgid;
-            if (fg == 0 && g_current_task)
-                fg = g_current_task->pgid;
+            task_t *cur = task_current();
+            if (fg == 0 && cur)
+                fg = cur->pgid;
             if (fg) task_send_signal_to_pgid(fg, SIGINT);
         } else {
             uart_ringbuf_push(c);

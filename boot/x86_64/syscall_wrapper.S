@@ -33,7 +33,6 @@
 .code64
 .global syscall_entry
 .extern syscall_handler
-.extern g_current_task
 .extern g_x86_tss_rsp0
 
 /* offsetof(cpu_t, scratch_rsp) — must match kernel/task/cpu.h */
@@ -135,4 +134,3 @@ syscall_entry:
     
     /* 不会到达这里 */
     ud2
-

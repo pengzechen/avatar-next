@@ -149,7 +149,7 @@ void handle_exception(void *frame_ptr)
              code == CAUSE_STORE_PAGE_FAULT) &&
             !(frame->sstatus & SSTATUS_SPP))
         {
-            task_t *t = g_current_task;
+            task_t *t = task_current();
             if (t && t->is_user_process) {
                 KLOG_WARN("[exception] user page fault sig=SIGSEGV pid=%u pc=0x%lx va=0x%lx\n",
                           t->id, frame->sepc, frame->stval);

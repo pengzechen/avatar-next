@@ -92,7 +92,8 @@
     bl      handle_irq_exception
 
     /* 检查是否需要重调度（IRQ 触发的抢占） */
-    bl      sched_check_and_yield
+    mov     x0, sp
+    bl      sched_check_and_yield_from_trap
 
     b       .Lexception_return
 .endm
@@ -105,7 +106,7 @@
 .extern handle_sync_exception
 .extern handle_el0_sync_exception
 .extern handle_irq_exception
-.extern sched_check_and_yield
+.extern sched_check_and_yield_from_trap
 
 exception_vector_base:
     // current EL, with SP_EL0
@@ -135,4 +136,3 @@ exception_vector_base:
 .Lexception_return:
     RESTORE_REGS
     eret
-

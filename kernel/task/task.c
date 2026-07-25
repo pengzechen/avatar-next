@@ -56,9 +56,6 @@ static task_t g_idle_task;
 /* ── idle 专用栈（防止 boot 栈在频繁中断下溢出）────────────── */
 static uint8_t g_idle_stack[TASK_STACK_SIZE] __attribute__((aligned(16)));
 
-/* ── 当前任务指针（在 task.h 中 extern 声明）────────────── */
-task_t *g_current_task = NULL;
-
 /* ── 内部：分配/释放任务槽 ──────────────────────────────── */
 
 /* 前向声明 */
@@ -221,8 +218,6 @@ task_init(void)
     g_idle_task.name[2] = 'l';
     g_idle_task.name[3] = 'e';
     g_idle_task.name[4] = '\0';
-
-    g_current_task = &g_idle_task;
 
 #if ARCH_RISCV64
     /* 保存内核 SATP 对应的 PGD 物理地址，用于切换回内核任务时恢复 */
@@ -498,10 +493,11 @@ process_create_with_pgd(const char *name, uint64_t user_entry, uint64_t user_sp,
     task->fs_base         = 0;
 
     /* 初始化进程文件系统相关字段（继承父进程 cwd） */
-    if (g_current_task) {
+    task_t *parent = task_current();
+    if (parent) {
         uint32_t c = 0;
-        while (g_current_task->cwd[c] && c < (uint32_t)(TASK_CWD_LEN - 1)) {
-            task->cwd[c] = g_current_task->cwd[c];
+        while (parent->cwd[c] && c < (uint32_t)(TASK_CWD_LEN - 1)) {
+            task->cwd[c] = parent->cwd[c];
             c++;
         }
         task->cwd[c] = '\0';
@@ -513,7 +509,7 @@ process_create_with_pgd(const char *name, uint64_t user_entry, uint64_t user_sp,
         task->fd_table[j] = -1;
     memset(task->fd_cloexec, 0, sizeof(task->fd_cloexec));
 
-    task->parent_id  = g_current_task ? g_current_task->id : 0;
+    task->parent_id  = parent ? parent->id : 0;
     task->exit_status = 0;
     task->is_waiting  = false;
     task->wait_pid    = (uint32_t)-1;

@@ -11,7 +11,7 @@
  *   2. 若当前任务 state == RUNNING 且不是 idle，则将其改为 READY 并入队尾
  *   3. 从队头取下一任务；队空则选 idle
  *   4. 若 next == prev，则恢复 RUNNING 状态，开中断，返回（无切换）
- *   5. 将 next 设为 RUNNING，更新 g_current_task
+ *   5. 将 next 设为 RUNNING，更新本 CPU current_task
  *   6. arch_task_switch() — 切换上下文；此行 "返回" 时已是 prev 再次被调度
  *   7. arch_irq_restore(flags) — 恢复 prev 进入调度时的中断状态
  *
@@ -32,6 +32,9 @@
 #include "spinlock.h"
 #include "assert.h"
 #include "task/preempt.h"
+#if ARCH_AARCH64 || ARCH_X86_64
+#include "exception.h"
+#endif
 #if ARCH_RISCV64
 #include "riscv64/satp_utils.h"
 #include "riscv64/exception.h"
@@ -62,7 +65,7 @@ static inline void x86_write_fs_base(uint64_t fs_base)
  *
  * Phase 1: 调度状态全部迁入 cpu_t，本文件不再持有全局变量。
  *   - run_queue / idle_task / need_resched 都从 cpu_current() 读取
- *   - g_current_task 暂保留为 CPU0 的镜像（Phase 3 移除）
+ *   - current_task 是 per-CPU 状态，不再维护全局镜像
  *
  * 单核场景 cpu_current() 始终返回 &g_cpus[0]，行为与旧版本完全一致。
  * 多核场景每个 CPU 独立持有自己的就绪队列；跨核入队需要持有目标核
@@ -87,7 +90,7 @@ sched_init(task_t *idle_task)
     /* run_queue 已由 cpu_init_bsp() 初始化为空链表，这里只装 idle。*/
     cpu_t *c = cpu_current();
     c->idle_task    = idle_task;
-    c->current_task = idle_task;   /* 与 g_current_task 同步 */
+    c->current_task = idle_task;
 }
 
 /* ── sched_enqueue ───────────────────────────────────────── */
@@ -194,10 +197,7 @@ sched_schedule(void)
     /* 缓存本核指针：irq_save 之后 cpu 不会变，避免重复读 per-CPU 寄存器。 */
     cpu_t *c = cpu_current();
 
-    /*
-     * Phase 3：prev 一律从 per-CPU 的 c->current_task 取，**不**再用
-     * g_current_task —— 后者只是 CPU0 的镜像，AP 上读它会拿到别人的任务。
-     */
+    /* prev 一律从 per-CPU 的 c->current_task 取。 */
     task_t *prev = c->current_task;
 
     /* 持本核 rq_lock 期间操作 run_queue。外层已 arch_irq_save 关本核 IRQ，
@@ -228,13 +228,6 @@ sched_schedule(void)
     next->state     = TASK_RUNNING;
     barrier_compiler();  // 确保 state 在 current_task 之前完成
     c->current_task = next;             /* Phase 1：per-CPU 主存储 */
-    /*
-     * Phase 3：g_current_task 镜像仅在 CPU0 维护。AP 不写，避免污染 BSP
-     * 路径（fork/exec/tty 还在读 g_current_task，AP 上无业务执行这些）。
-     */
-    if (c->cpu_id == 0) {
-        g_current_task = next;
-    }
     barrier_compiler();  // 确保 current_task 在 arch_task_switch 之前完成
 
 #if ARCH_X86_64
@@ -352,7 +345,37 @@ sched_check_and_yield(void)
 bool
 sched_check_and_yield_from_trap(void *frame_ptr)
 {
-#if ARCH_RISCV64
+#if ARCH_AARCH64
+    trap_frame_t *frame = (trap_frame_t *)frame_ptr;
+    if (frame && ((frame->spsr & 0xfUL) != 0)) {
+        cpu_t *c = cpu_current();
+        if (!c->current_task || !c->need_resched || !preemptible() ||
+            c->preempt_schedule_depth != 0)
+            return false;
+
+        c->need_resched = false;
+        c->preempt_schedule_depth++;
+        sched_schedule();
+        c->preempt_schedule_depth--;
+        return true;
+    }
+    return sched_check_and_yield();
+#elif ARCH_X86_64
+    trap_frame_t *frame = (trap_frame_t *)frame_ptr;
+    if (frame && ((frame->cs & 0x3UL) != 0x3UL)) {
+        cpu_t *c = cpu_current();
+        if (!c->current_task || !c->need_resched || !preemptible() ||
+            c->preempt_schedule_depth != 0)
+            return false;
+
+        c->need_resched = false;
+        c->preempt_schedule_depth++;
+        sched_schedule();
+        c->preempt_schedule_depth--;
+        return true;
+    }
+    return sched_check_and_yield();
+#elif ARCH_RISCV64
     trap_frame_t *frame = (trap_frame_t *)frame_ptr;
     if (frame && (frame->sstatus & SSTATUS_SPP)) {
         cpu_t *c = cpu_current();

@@ -7,6 +7,8 @@
  * 使用 mfence 指令进行内存屏障
  */
 
+#include "task/preempt.h"
+
 /* spinlock_t 和 spinlock_noirq_t 定义在 spinlock.h 中 */
 
 /*
@@ -17,6 +19,7 @@ static inline void
 spin_lock(spinlock_t *lock)
 {
     uint64_t val = 1;
+    preempt_disable();
     asm volatile(
         "1:  lock xchg %0, %1    \n" /* 原子交换：val = lock->lock; lock->lock = 1 */
         "   test %0, %0          \n" /* 测试 val 是否为 0 */
@@ -32,6 +35,7 @@ spin_trylock(spinlock_t *lock)
 {
     uint64_t val = 1;
     uint64_t result;
+    preempt_disable();
     asm volatile(
         "   lock xchg %0, %2    \n" /* 尝试获取锁 */
         "   test %0, %0          \n"
@@ -43,6 +47,8 @@ spin_trylock(spinlock_t *lock)
         : "+r"(val), "=r"(result), "+m"(lock->lock)
         :
         : "memory", "cc");
+    if (result != 0)
+        preempt_enable();
     return result;
 }
 
@@ -55,6 +61,7 @@ spin_unlock(spinlock_t *lock)
         :
         : "m"(lock->lock)
         : "memory", "cc");
+    preempt_enable();
 }
 
 /* x86_64 中断控制函数 */
@@ -95,7 +102,10 @@ static inline int
 spin_trylock_irqsave(spinlock_noirq_t *lock)
 {
     lock->irq_flags = x86_64_irq_save();
-    return spin_trylock((spinlock_t *)lock);
+    if (spin_trylock((spinlock_t *)lock) == 0)
+        return 0;
+    x86_64_irq_restore(lock->irq_flags);
+    return 1;
 }
 
 static inline void

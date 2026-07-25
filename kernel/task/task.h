@@ -132,8 +132,6 @@ typedef struct task {
     uint32_t        preempt_count;       /* >0 时 S-mode timer 不抢占该任务             */
 } task_t;
 
-/* ── 全局当前任务指针（在 task.c 中定义） ────────────────── */
-extern task_t *g_current_task;
 /* 前台进程组 ID（0 = 无前台进程）*/
 extern volatile uint32_t g_fg_pgid;
 

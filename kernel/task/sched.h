@@ -63,8 +63,8 @@ bool sched_check_and_yield(void);
  * sched_check_and_yield_from_trap - trap 返回前的调度检查
  * @frame_ptr: 架构 trap_frame_t 指针
  *
- * RISC-V 阶段 1 策略：允许 S-mode 接收中断，但 S-mode trap 返回时
- * 暂不抢占任意内核代码；U-mode trap 返回仍按 need_resched 调度。
+ * AArch64/RISC-V：返回用户态时按 need_resched 调度；返回内核态时
+ * 仅在 preemptible() 为 true 时调度。
  */
 bool sched_check_and_yield_from_trap(void *frame_ptr);
 

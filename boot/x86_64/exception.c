@@ -14,6 +14,7 @@
 #include "x86_64/io.h"      /* outb — 用于屏蔽 8259A PIC */
 #include "task/task.h"
 #include "task/sched.h"
+#include "task/cpu.h"
 #include "mm_vm.h"
 
 extern void deliver_pending_signals(task_t *t, trap_frame_t *frame);
@@ -162,6 +163,10 @@ void handle_exception(void *frame_ptr)
 {
     trap_frame_t *frame = (trap_frame_t *)frame_ptr;
     uint64_t vec = frame->vector;
+    bool is_irq = (vec >= IDT_IRQ_BASE);
+
+    if (is_irq)
+        cpu_current()->irq_depth++;
 
     if (vec < IDT_MAX_ENTRIES && irq_handlers[vec]) {
         irq_handlers[vec](frame_ptr);
@@ -279,4 +284,7 @@ void handle_exception(void *frame_ptr)
             __asm__ volatile("hlt");
     }
     /* 其余未注册中断静默忽略（包括 spurious）*/
+
+    if (is_irq)
+        cpu_current()->irq_depth--;
 }
