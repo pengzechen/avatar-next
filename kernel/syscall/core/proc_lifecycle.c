@@ -234,6 +234,7 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
         for (uint32_t i = 0; i < TASK_MAX; i++) {
             if (!g_stack_used[i]) {
                 g_stack_used[i] = 1;
+                g_task_pool[i].state = TASK_ALLOCATING;
                 g_task_pool[i].stack_base = g_task_stacks[i];
                 child = &g_task_pool[i];
                 break;
@@ -248,7 +249,7 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
     }
 
     child->id              = g_task_id_cnt++;
-    child->state           = TASK_READY;
+    child->state           = TASK_ALLOCATING;
     child->priority        = parent->priority;
     child->is_user_process = true;
     child->user_started    = true;
@@ -257,6 +258,10 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
     child->is_waiting      = false;
     child->wait_pid        = (uint32_t)-1;
     child->ctid_ptr        = 0;
+    child->uid             = parent->uid;
+    child->euid            = parent->euid;
+    child->gid             = parent->gid;
+    child->egid            = parent->egid;
     child->is_thread       = false;
     child->utime_ns        = 0;
     child->stime_ns        = 0;
@@ -471,6 +476,7 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
         child->sig_actions[_si] = parent->sig_actions[_si];
 
     child->create_ns = kernel_get_ns();
+    child->state = TASK_READY;
     sched_enqueue(child);
 
     /* 父进程返回子进程 PID */

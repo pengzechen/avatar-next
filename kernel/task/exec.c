@@ -236,6 +236,7 @@ task_execve(const char *pathname,
     /* 3b. 加载动态连接器（如果有）——加载到同一 PGD 的独立地址区 */
     uint64_t exec_entry = info.entry_point;  /* 静态连接时：直接跳入主程序 */
     uint64_t at_base    = 0;
+    uint64_t loaded_end = info.max_vaddr;
     if (interp_data && interp_size > 0) {
         elf_image_info_t interp_info;
         rc = elf_image_load_at(interp_data, interp_size, pgd,
@@ -246,6 +247,8 @@ task_execve(const char *pathname,
         }
         exec_entry = interp_info.entry_point;   /* 动态连接：跳入 ld-musl */
         at_base    = interp_info.min_vaddr;     /* AT_BASE = interpreter 实际加载基址 */
+        if (interp_info.max_vaddr > loaded_end)
+            loaded_end = interp_info.max_vaddr;
         KLOG_DEBUG("[exec] Interpreter loaded: entry=0x%llx base=0x%llx\n",
                exec_entry, at_base);
     }
@@ -296,7 +299,10 @@ task_execve(const char *pathname,
     /* 6. 创建用户进程 */
     task_t *current  = task_current();
     uint64_t mmap_base = (info.min_vaddr == USER_CODE_BASE) ? USER_MMAP_BASE_PIE
-                                                              : USER_MMAP_BASE_EXEC;
+                                                               : USER_MMAP_BASE_EXEC;
+    uint64_t loaded_end_aligned = ALIGN_UP(loaded_end, PAGE_SIZE);
+    if (loaded_end_aligned > mmap_base)
+        mmap_base = loaded_end_aligned;
 
     uint64_t exec_irq_flags = arch_irq_save();
 
@@ -312,6 +318,11 @@ task_execve(const char *pathname,
 
     /* exec 新进程继承调用者的进程组 ID 和信号掩码（POSIX） */
     new_task->pgid         = current->pgid;
+    new_task->sid          = current->sid;
+    new_task->uid          = current->uid;
+    new_task->euid         = current->euid;
+    new_task->gid          = current->gid;
+    new_task->egid         = current->egid;
     new_task->blocked_sigs = current->blocked_sigs;
 
     /* 继承 fd_table：深拷贝 fd 对象 + 增加引用计数 */

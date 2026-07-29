@@ -29,8 +29,8 @@ int  copy_string_from_user(const char *ustr, char *kbuf, int maxlen);
 /* 内核字符串拷贝到用户缓冲区；返回写入长度（不含 NUL）或 -1 */
 int  copy_string_to_user  (const char *kstr, char *ubuf, int maxlen);
 
-/* 根据路径填充 kernel_stat（regular file / dir 自动区分）*/
+/* 根据路径填充 kernel_stat（regular file / dir 自动区分），返回 0 或 -errno */
 struct kernel_stat;
-void fill_stat_from_ext4(struct kernel_stat *st, const char *path);
+int fill_stat_from_ext4(struct kernel_stat *st, const char *path);
 
 #endif /* KERNEL_SYSCALL_FS_PATH_H */

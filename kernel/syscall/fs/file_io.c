@@ -17,6 +17,47 @@
 #include <ext4.h>
 #include <ext4_errno.h>
 
+#define IOV_MAX_AVATAR 1024
+#define IOV_COPY_MAX   16
+#define USER_PTR_LIMIT 0x80000000ULL
+
+static bool user_range_ok_local(uint64_t ptr, uint64_t len)
+{
+    uint64_t end;
+
+    if (ptr == 0)
+        return false;
+    if (len == 0)
+        return true;
+    end = ptr + len - 1;
+    if (end < ptr)
+        return false;
+    return end < USER_PTR_LIMIT;
+}
+
+static int copy_iov_from_user(struct kernel_iovec *dst,
+                              const struct kernel_iovec *uiov,
+                              int iovcnt)
+{
+    if (!uiov || iovcnt < 0 || iovcnt > IOV_MAX_AVATAR || iovcnt > IOV_COPY_MAX)
+        return -EINVAL;
+    if (iovcnt == 0)
+        return 0;
+    if (!user_range_ok_local((uint64_t)uiov,
+                             (uint64_t)iovcnt * sizeof(*uiov)))
+        return -EFAULT;
+
+    for (int i = 0; i < iovcnt; i++) {
+        dst[i] = uiov[i];
+        if (dst[i].iov_len > (1ULL << 31))
+            return -EINVAL;
+        if (dst[i].iov_len != 0 &&
+            !user_range_ok_local(dst[i].iov_base, dst[i].iov_len))
+            return -EFAULT;
+    }
+    return 0;
+}
+
 void read_handler(uint64_t regs[6], task_t *current)
 {
     int      fd    = (int)regs[0];
@@ -136,18 +177,20 @@ void write_handler(uint64_t regs[6], task_t *current)
 void readv_handler(uint64_t regs[6], task_t *current)
 {
     int fd = (int)regs[0];
-    struct kernel_iovec *iov = (struct kernel_iovec *)regs[1];
+    struct kernel_iovec *uiov = (struct kernel_iovec *)regs[1];
+    struct kernel_iovec iov[IOV_COPY_MAX];
     int iovcnt = (int)regs[2];
+    int rc = copy_iov_from_user(iov, uiov, iovcnt);
 
-    if (!iov || iovcnt < 0) {
-        regs[0] = (uint64_t)(int64_t)-EINVAL;
+    if (rc < 0) {
+        regs[0] = (uint64_t)(int64_t)rc;
         return;
     }
     if (iovcnt == 0) {
         regs[0] = 0;
         return;
     }
-    if (iovcnt > 1024) {
+    if (iovcnt > IOV_MAX_AVATAR) {
         regs[0] = (uint64_t)(int64_t)-EINVAL;
         return;
     }
@@ -184,9 +227,13 @@ void readv_handler(uint64_t regs[6], task_t *current)
 void writev_handler(uint64_t regs[6], task_t *current)
 {
     int fd = (int)regs[0];
-    struct kernel_iovec *iov = (struct kernel_iovec *)regs[1];
+    struct kernel_iovec *uiov = (struct kernel_iovec *)regs[1];
+    struct kernel_iovec iov[IOV_COPY_MAX];
     int iovcnt = (int)regs[2];
-    if (!iov || iovcnt <= 0) { regs[0] = 0; return; }
+    int rc = copy_iov_from_user(iov, uiov, iovcnt);
+
+    if (rc < 0) { regs[0] = (uint64_t)(int64_t)rc; return; }
+    if (iovcnt == 0) { regs[0] = 0; return; }
 
     fd_obj_t *wv_obj = task_get_fd(current, fd);
     if (!wv_obj && fd != 0 && fd != 1 && fd != 2) {

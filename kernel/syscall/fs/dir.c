@@ -8,6 +8,7 @@
 #include "task/task.h"
 #include "pseudofs.h"
 #include "kernel_stat.h"
+#include "string.h"
 #include <ext4.h>
 #include <ext4_errno.h>
 
@@ -15,9 +16,12 @@ void getcwd_handler(uint64_t regs[6], task_t *current)
 {
     char    *buf  = (char *)regs[0];
     uint64_t size = regs[1];
-    if (!buf || size == 0) { regs[0] = (uint64_t)(int64_t)-EINVAL; return; }
+    uint64_t need = strlen(current->cwd) + 1;
+
+    if (size < need) { regs[0] = (uint64_t)(int64_t)-ERANGE; return; }
+    if (!buf) { regs[0] = (uint64_t)(int64_t)-EFAULT; return; }
     int n = copy_string_to_user(current->cwd, buf, (int)size);
-    regs[0] = (n >= 0) ? (uint64_t)(n + 1) : (uint64_t)(int64_t)-ERANGE;
+    regs[0] = (n >= 0) ? (uint64_t)(n + 1) : (uint64_t)(int64_t)-EFAULT;
 }
 
 void chdir_handler(uint64_t regs[6], task_t *current)

@@ -162,16 +162,60 @@ void sigprocmask_handler(uint64_t regs[6], task_t *current)
     const uint64_t *nset = (const uint64_t *)regs[1];
     uint64_t       *oset = (uint64_t *)regs[2];
 
-    if (oset) *oset = current->blocked_sigs;
+    if (oset && copy_to_user_bytes(&current->blocked_sigs, oset,
+                                   sizeof(current->blocked_sigs)) < 0) {
+        regs[0] = (uint64_t)(int64_t)-EFAULT;
+        return;
+    }
     if (nset) {
+        uint64_t set;
+        if (copy_from_user_bytes(nset, &set, sizeof(set)) < 0) {
+            regs[0] = (uint64_t)(int64_t)-EFAULT;
+            return;
+        }
         /* SIGKILL / SIGSTOP 不可屏蔽 */
-        uint64_t m = *nset & ~((1ULL<<(SIGKILL-1))|(1ULL<<(SIGSTOP-1)));
+        uint64_t m = set & ~((1ULL<<(SIGKILL-1))|(1ULL<<(SIGSTOP-1)));
         if      (how == SIG_BLOCK)   current->blocked_sigs |= m;
         else if (how == SIG_UNBLOCK) current->blocked_sigs &= ~m;
         else if (how == SIG_SETMASK) current->blocked_sigs  = m;
         else { regs[0] = (uint64_t)(int64_t)-EINVAL; return; }
     }
     regs[0] = 0;
+}
+
+void sigpending_handler(uint64_t regs[6], task_t *current)
+{
+    uint64_t *uset = (uint64_t *)regs[0];
+    size_t sigsetsize = (size_t)regs[1];
+    uint64_t pending = current->pending_sigs & current->blocked_sigs;
+
+    if (sigsetsize != sizeof(uint64_t)) {
+        regs[0] = (uint64_t)(int64_t)-EINVAL;
+        return;
+    }
+    if (!uset) {
+        regs[0] = (uint64_t)(int64_t)-EFAULT;
+        return;
+    }
+    regs[0] = (copy_to_user_bytes(&pending, uset, sizeof(pending)) >= 0)
+            ? 0
+            : (uint64_t)(int64_t)-EFAULT;
+}
+
+void signal_deliver_from_trap(void *frame_ptr)
+{
+    task_t *current = task_current();
+    if (!current || !current->is_user_process || !frame_ptr)
+        return;
+
+#if ARCH_AARCH64
+    trap_frame_t *frame = (trap_frame_t *)frame_ptr;
+    if ((frame->spsr & 0xfUL) != 0)
+        return;
+    deliver_pending_signals(current, frame);
+#else
+    (void)frame_ptr;
+#endif
 }
 
 /* ── rt_sigreturn ─────────────────────────────────────────────── */

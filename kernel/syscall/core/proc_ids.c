@@ -7,10 +7,28 @@
  *   getpgid / setpgid / getsid / setsid
  *   getgroups / setgroups
  *
- * 当前模型：单用户（uid/gid = 0），sid 简化为 pgid。
+ * 当前模型：root 可任意 setuid/setgid；不做权限检查。
  */
 #include "syscall/syscall_internal.h"
+#include "syscall/syscall.h"
 #include "task/task.h"
+
+extern task_t  g_task_pool[TASK_MAX];
+extern uint8_t g_stack_used[TASK_MAX];
+
+static bool process_group_exists(uint32_t pgid)
+{
+    for (uint32_t i = 0; i < TASK_MAX; i++) {
+        if (!g_stack_used[i])
+            continue;
+        if (g_task_pool[i].state == TASK_DEAD ||
+            g_task_pool[i].state == TASK_ALLOCATING)
+            continue;
+        if (g_task_pool[i].pgid == pgid)
+            return true;
+    }
+    return false;
+}
 
 void proc_ids_handler(uint64_t syscall_num, uint64_t regs[6], task_t *current)
 {
@@ -29,16 +47,36 @@ void proc_ids_handler(uint64_t syscall_num, uint64_t regs[6], task_t *current)
         break;
 
     case LINUX_SYS_GETUID:
-    case LINUX_SYS_GETEUID:
-    case LINUX_SYS_GETGID:
-    case LINUX_SYS_GETEGID:
-        regs[0] = 0;  /* root */
+        regs[0] = current->uid;
         break;
 
-    case LINUX_SYS_SETUID:
-    case LINUX_SYS_SETGID:
+    case LINUX_SYS_GETEUID:
+        regs[0] = current->euid;
+        break;
+
+    case LINUX_SYS_GETGID:
+        regs[0] = current->gid;
+        break;
+
+    case LINUX_SYS_GETEGID:
+        regs[0] = current->egid;
+        break;
+
+    case LINUX_SYS_SETUID: {
+        uint32_t uid = (uint32_t)regs[0];
+        current->uid = uid;
+        current->euid = uid;
         regs[0] = 0;
         break;
+    }
+
+    case LINUX_SYS_SETGID: {
+        uint32_t gid = (uint32_t)regs[0];
+        current->gid = gid;
+        current->egid = gid;
+        regs[0] = 0;
+        break;
+    }
 
     case LINUX_SYS_SETPGID: {
         int pid  = (int)(int32_t)regs[0];
@@ -70,6 +108,10 @@ void proc_ids_handler(uint64_t syscall_num, uint64_t regs[6], task_t *current)
     }
 
     case LINUX_SYS_SETSID:
+        if (process_group_exists(current->id)) {
+            regs[0] = (uint64_t)(int64_t)-EPERM;
+            break;
+        }
         current->sid  = current->id;
         current->pgid = current->id;
         regs[0] = (uint64_t)current->id;

@@ -154,14 +154,14 @@ grep -w 'xxx' /usr/include/asm/unistd_64.h  # 或查 Linux 源码
 
 | 分类 | 测例 | 说明 |
 |------|------|------|
-| 进程 | getpid02, getppid01, exit02, fork01, wait401, clone06 | 进程生命周期 |
-| 文件 | write01, read01, close01, dup3_01, pipe01, lseek01 | 基础文件 I/O |
+| 进程 | getpid02, getppid01, getuid01, getgid01, getpgid01, setsid01, exit02, fork01, wait401, clone06 | 进程生命周期和身份 |
+| 文件 | write01, read01, readv01, writev01, close01, dup3_01, fcntl01, fcntl02, pipe01, lseek01, getcwd01 | 基础文件 I/O 和 cwd/fd 控制 |
 | 内存 | brk01, mmap01, munmap01 | 内存管理 |
-| 信号 | kill03, rt_sigaction01 | 信号投递与处理 |
+| 信号 | kill03, rt_sigaction01, rt_sigprocmask01 | 信号投递、处理和 mask |
 | 系统 | uname01, clock_gettime01 | 系统信息 |
 | 调度 | sched_yield01 | CPU 让出 |
 
-共 20 个测例，覆盖五大类。
+共 35 个测例，覆盖六大类。
 
 ## 推荐下一批测例
 
@@ -169,21 +169,14 @@ grep -w 'xxx' /usr/include/asm/unistd_64.h  # 或查 Linux 源码
 
 ```
 # 文件操作扩展
-readv/readv01
-writev/writev01
+chdir/chdir01      # 需要 mount_device，当前会依赖 fallocate/mount 测试设备路径
 ftruncate/ftruncate01
-fcntl/fcntl01
-getcwd/getcwd01
-chdir/chdir01
 
 # 进程扩展
-getuid/getuid01
-getgid/getgid01
 setpgid/setpgid01
-setsid/setsid01
 
 # 信号扩展
-rt_sigprocmask/rt_sigprocmask01
+rt_sigprocmask/rt_sigprocmask02
 
 # 内存扩展
 mprotect/mprotect01

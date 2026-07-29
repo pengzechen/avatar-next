@@ -55,6 +55,7 @@ typedef struct {
 
 /* ── Task states ─────────────────────────────────────────── */
 typedef enum {
+    TASK_ALLOCATING = -1,  /* 槽位已占用，但 TCB 尚未完成初始化     */
     TASK_READY   = 0,   /* 在就绪队列中，等待调度               */
     TASK_RUNNING = 1,   /* 当前正在 CPU 上运行                  */
     TASK_BLOCKED = 2,   /* 等待事件，不在就绪队列中              */
@@ -108,6 +109,10 @@ typedef struct task {
     int16_t         fd_table[TASK_MAX_FD]; /* FD → g_fd_pool 索引，-1=未打开     */
     uint8_t         fd_cloexec[TASK_MAX_FD / 8]; /* FD_CLOEXEC 位图              */
     uint32_t        parent_id;           /* 父进程 ID                              */
+    uint32_t        uid;                 /* real user ID                           */
+    uint32_t        euid;                /* effective user ID                      */
+    uint32_t        gid;                 /* real group ID                          */
+    uint32_t        egid;                /* effective group ID                     */
     int             exit_status;         /* 退出状态（wait4 使用）                 */
     int             exit_signal;         /* 被信号杀死时的信号号（0=正常退出）     */
     bool            is_waiting;          /* 正在 wait4 子进程                      */

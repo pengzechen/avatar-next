@@ -62,6 +62,7 @@ typedef struct task task_t;
 #define LINUX_SYS_TGKILL          131
 #define LINUX_SYS_RT_SIGACTION    134
 #define LINUX_SYS_RT_SIGPROCMASK  135
+#define LINUX_SYS_RT_SIGPENDING   136
 #define LINUX_SYS_RT_SIGRETURN    139
 #define LINUX_SYS_SETGID          144
 #define LINUX_SYS_SETUID          146
@@ -164,6 +165,7 @@ typedef struct task task_t;
 #define MMAP_FAILED           ((uint64_t)(int64_t)-1)
 
 /* ── POSIX errno 值 ──────────────────────────────────────────────── */
+#define EPERM                  1
 #define ENOSYS                38
 #define ESRCH                  3
 #define EBADF                  9
@@ -313,8 +315,10 @@ void arch_prctl_handler(uint64_t regs[6], task_t *current);
 #include "exception.h"
 
 void deliver_pending_signals(task_t *t, trap_frame_t *frame);
+void signal_deliver_from_trap(void *frame_ptr);
 void sigaction_handler   (uint64_t regs[6], task_t *current);
 void sigprocmask_handler (uint64_t regs[6], task_t *current);
+void sigpending_handler  (uint64_t regs[6], task_t *current);
 void sigreturn_handler   (uint64_t regs[6], task_t *current, trap_frame_t *frame);
 void kill_handler        (uint64_t regs[6], task_t *current);
 void tkill_handler       (uint64_t regs[6]);
@@ -340,6 +344,9 @@ void futex_handler(uint64_t regs[6]);
 /* ── 路径/字符串辅助（fs/path.c，核心模块共享） ────────────────── */
 void resolve_path(const char *cwd, const char *path, char *out, int outlen);
 int  copy_string_from_user(const char *ustr, char *kbuf, int maxlen);
+int  copy_string_to_user  (const char *kstr, char *ubuf, int maxlen);
+int  copy_from_user_bytes (const void *usrc, void *kdst, uint64_t len);
+int  copy_to_user_bytes   (const void *ksrc, void *udst, uint64_t len);
 
 /* ── fs/ 子系统：文件 / 目录 / TTY ─────────────────────────────── */
 /* 文件 I/O（fs/file_io.c）*/

@@ -9,6 +9,25 @@
 #include "kernel_stat.h"
 #include "string.h"
 #include <ext4.h>
+#include <ext4_errno.h>
+
+#define USER_PTR_LIMIT 0x80000000ULL
+
+static bool user_range_ok(const void *ptr, uint64_t len)
+{
+    uintptr_t start = (uintptr_t)ptr;
+    uintptr_t end;
+
+    if (start == 0)
+        return false;
+    if (len == 0)
+        return true;
+
+    end = start + len - 1;
+    if (end < start)
+        return false;
+    return end < USER_PTR_LIMIT;
+}
 
 void resolve_path(const char *cwd, const char *path, char *out, int outlen)
 {
@@ -151,7 +170,7 @@ void follow_symlinks(char *out, size_t outsz)
 
 int copy_string_from_user(const char *ustr, char *kbuf, int maxlen)
 {
-    if (!ustr) return -1;
+    if (!user_range_ok(ustr, (uint64_t)maxlen)) return -1;
     int i = 0;
     while (i < maxlen - 1) {
         kbuf[i] = ustr[i];
@@ -164,7 +183,7 @@ int copy_string_from_user(const char *ustr, char *kbuf, int maxlen)
 
 int copy_string_to_user(const char *kstr, char *ubuf, int maxlen)
 {
-    if (!ubuf) return -1;
+    if (!user_range_ok(ubuf, (uint64_t)maxlen)) return -1;
     int i = 0;
     while (i < maxlen - 1 && kstr[i]) {
         ubuf[i] = kstr[i];
@@ -174,7 +193,23 @@ int copy_string_to_user(const char *kstr, char *ubuf, int maxlen)
     return i;
 }
 
-void fill_stat_from_ext4(struct kernel_stat *st, const char *path)
+int copy_from_user_bytes(const void *usrc, void *kdst, uint64_t len)
+{
+    if (!user_range_ok(usrc, len))
+        return -1;
+    memcpy(kdst, usrc, len);
+    return 0;
+}
+
+int copy_to_user_bytes(const void *ksrc, void *udst, uint64_t len)
+{
+    if (!user_range_ok(udst, len))
+        return -1;
+    memcpy(udst, ksrc, len);
+    return 0;
+}
+
+int fill_stat_from_ext4(struct kernel_stat *st, const char *path)
 {
     memset(st, 0, sizeof(*st));
     st->st_dev     = 1;
@@ -182,26 +217,25 @@ void fill_stat_from_ext4(struct kernel_stat *st, const char *path)
     st->st_blksize = 4096;
 
     uint32_t mode = 0;
-    ext4_mode_get(path, &mode);
+    int rc = ext4_mode_get(path, &mode);
+    if (rc != EOK)
+        return -rc;
+    st->st_mode = mode;
 
-    ext4_file f;
-    if (ext4_fopen2(&f, path, 0 /* O_RDONLY */) == EOK) {
+    uint32_t ino = 0;
+    struct ext4_inode raw;
+    if (ext4_raw_inode_fill(path, &ino, &raw) == EOK)
+        st->st_ino = ino;
+
+    if ((mode & 0170000) == 0100000) {
+        ext4_file f;
+        rc = ext4_fopen2(&f, path, 0 /* O_RDONLY */);
+        if (rc != EOK)
+            return -rc;
         st->st_size   = (int64_t)ext4_fsize(&f);
         st->st_blocks = (st->st_size + 511) / 512;
-        uint32_t ino  = 0;
-        struct ext4_inode raw;
-        ext4_raw_inode_fill(path, &ino, &raw);
-        st->st_ino  = ino;
         ext4_fclose(&f);
-        st->st_mode = 0100755;
-    } else {
-        ext4_dir d;
-        if (ext4_dir_open(&d, path) == EOK) {
-            st->st_mode = 0040755;
-            ext4_dir_close(&d);
-        } else {
-            st->st_mode = 0100644;
-        }
     }
-    (void)mode;
+
+    return 0;
 }

@@ -572,6 +572,10 @@ void syscall_handler(trap_frame_t *frame)
         sigprocmask_handler(regs, current);
         break;
 
+    case LINUX_SYS_RT_SIGPENDING:
+        sigpending_handler(regs, current);
+        break;
+
     case LINUX_SYS_RT_SIGRETURN:
         sigreturn_handler(regs, current, frame);
         break;

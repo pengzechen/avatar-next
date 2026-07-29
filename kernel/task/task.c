@@ -72,6 +72,7 @@ alloc_task_slot(void)
             task_t *task = &g_task_pool[i];
             memset(task, 0, sizeof(*task));
             g_stack_used[i] = 1;
+            task->state = TASK_ALLOCATING;
             task->stack_base = g_task_stacks[i];
             /* 默认 affinity = ANY：让 sched_enqueue round-robin 分发到所有核。
              * 调用方（如 vcpu_task_create）可在 enqueue 前覆盖。 */
@@ -342,7 +343,7 @@ process_create(const char *name, uint64_t user_entry, uint64_t user_code_size,
     }
 
     task->id       = g_task_id_cnt++;
-    task->state    = TASK_READY;
+    task->state    = TASK_ALLOCATING;
     task->priority = priority;
 
     /* 标记为用户进程 */
@@ -449,6 +450,9 @@ process_create(const char *name, uint64_t user_entry, uint64_t user_code_size,
     //  * 等 vm_user 支持多核后再改为 CPU_AFFINITY_ANY。 */
     // task->cpu_affinity = 0;
 
+    /* 初始化完成后才发布为 READY，避免查找/信号路径看到半初始化 TCB。 */
+    task->state = TASK_READY;
+
     /* 加入就绪队列 */
     sched_enqueue(task);
 
@@ -481,7 +485,7 @@ process_create_with_pgd(const char *name, uint64_t user_entry, uint64_t user_sp,
     }
 
     task->id              = g_task_id_cnt++;
-    task->state           = TASK_READY;
+    task->state           = TASK_ALLOCATING;
     task->priority        = priority;
     task->is_user_process = true;
     task->user_started    = false;
@@ -510,6 +514,10 @@ process_create_with_pgd(const char *name, uint64_t user_entry, uint64_t user_sp,
     memset(task->fd_cloexec, 0, sizeof(task->fd_cloexec));
 
     task->parent_id  = parent ? parent->id : 0;
+    task->uid        = parent ? parent->uid : 0;
+    task->euid       = parent ? parent->euid : 0;
+    task->gid        = parent ? parent->gid : 0;
+    task->egid       = parent ? parent->egid : 0;
     task->exit_status = 0;
     task->is_waiting  = false;
     task->wait_pid    = (uint32_t)-1;
@@ -550,6 +558,7 @@ process_create_with_pgd(const char *name, uint64_t user_entry, uint64_t user_sp,
                                     task->user_entry, user_sp,
                                     (uint64_t)task->pgd);
 
+    task->state = TASK_READY;
     sched_enqueue(task);
 
     KLOG_DEBUG("[task] created user process '%s' id=%u prio=%u (pgd=0x%llx)\n",
@@ -570,7 +579,7 @@ task_create(const char *name, void (*entry)(void *), void *arg, uint8_t priority
     }
 
     task->id       = g_task_id_cnt++;
-    task->state    = TASK_READY;
+    task->state    = TASK_ALLOCATING;
     task->priority = priority;
     task->entry    = entry;
     task->arg      = arg;
@@ -586,6 +595,10 @@ task_create(const char *name, void (*entry)(void *), void *arg, uint8_t priority
         task->fd_table[j] = -1;
     memset(task->fd_cloexec, 0, sizeof(task->fd_cloexec));
     task->parent_id   = 0;
+    task->uid         = 0;
+    task->euid        = 0;
+    task->gid         = 0;
+    task->egid        = 0;
     task->exit_status = 0;
     task->is_waiting  = false;
     task->wait_pid    = (uint32_t)-1;
@@ -602,6 +615,9 @@ task_create(const char *name, void (*entry)(void *), void *arg, uint8_t priority
 
     /* 在任务栈上构造初始切换帧，使首次调度跳到 task_trampoline */
     task->sp = arch_init_task_stack(task->stack_base, TASK_STACK_SIZE);
+
+    /* 初始化完成后才发布为 READY，避免查找路径看到半初始化 TCB。 */
+    task->state = TASK_READY;
 
     /* 加入就绪队列，等待调度 */
     sched_enqueue(task);
@@ -737,7 +753,8 @@ task_find_by_id(uint32_t id)
     for (uint32_t i = 0; i < TASK_MAX; i++) {
         if (g_stack_used[i] &&
             g_task_pool[i].id    == id &&
-            g_task_pool[i].state != TASK_DEAD)
+            g_task_pool[i].state != TASK_DEAD &&
+            g_task_pool[i].state != TASK_ALLOCATING)
             return &g_task_pool[i];
     }
     return NULL;
@@ -761,6 +778,7 @@ task_send_signal_to_pgid(uint32_t pgid, int sig)
         if (g_stack_used[i] &&
             g_task_pool[i].pgid  == pgid &&
             g_task_pool[i].state != TASK_DEAD &&
+            g_task_pool[i].state != TASK_ALLOCATING &&
             g_task_pool[i].is_user_process) {
             task_send_signal(&g_task_pool[i], sig);
             count++;

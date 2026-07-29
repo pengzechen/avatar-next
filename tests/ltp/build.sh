@@ -32,6 +32,7 @@ fi
 
 OUT_DIR="$SCRIPT_DIR/bin/$ARCH"
 mkdir -p "$OUT_DIR"
+rm -f "$OUT_DIR"/*
 
 info()  { printf '\033[1;34m[ltp]\033[0m  %s\n' "$*"; }
 ok()    { printf '\033[1;32m[ ok]\033[0m  %s\n' "$*"; }

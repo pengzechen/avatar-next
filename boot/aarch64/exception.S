@@ -97,6 +97,10 @@
     mov     x0, sp
     bl      handle_irq_exception
 
+    /* EL0 can run forever without syscalls; deliver pending signals on IRQ return. */
+    mov     x0, sp
+    bl      signal_deliver_from_trap
+
     /* 检查是否需要重调度（IRQ 触发的抢占） */
     mov     x0, sp
     bl      sched_check_and_yield_from_trap
@@ -113,6 +117,7 @@
 .extern handle_el0_sync_exception
 .extern handle_irq_exception
 .extern sched_check_and_yield_from_trap
+.extern signal_deliver_from_trap
 
 exception_vector_base:
     // current EL, with SP_EL0

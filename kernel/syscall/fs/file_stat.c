@@ -31,7 +31,8 @@ void fstat_handler(uint64_t regs[6], task_t *current)
     if (obj->type == FDT_PSEUDO) {
         pseudo_fill_stat(obj->pseudo.node_id, st);
     } else {
-        fill_stat_from_ext4(st, obj->path);
+        int rc = fill_stat_from_ext4(st, obj->path);
+        if (rc < 0) { regs[0] = (uint64_t)(int64_t)rc; return; }
     }
     regs[0] = 0;
 }
@@ -48,7 +49,8 @@ void newfstatat_handler(uint64_t regs[6], task_t *current)
         if (obj->type == FDT_PSEUDO) {
             pseudo_fill_stat(obj->pseudo.node_id, st);
         } else {
-            fill_stat_from_ext4(st, obj->path);
+            int rc = fill_stat_from_ext4(st, obj->path);
+            if (rc < 0) { regs[0] = (uint64_t)(int64_t)rc; return; }
         }
         regs[0] = 0;
         return;
@@ -63,7 +65,8 @@ void newfstatat_handler(uint64_t regs[6], task_t *current)
     /* AT_SYMLINK_NOFOLLOW = 0x100 */
     if (!(regs[3] & 0x100))
         follow_symlinks(abspath, sizeof(abspath));
-    fill_stat_from_ext4(st, abspath);
+    int rc = fill_stat_from_ext4(st, abspath);
+    if (rc < 0) { regs[0] = (uint64_t)(int64_t)rc; return; }
     regs[0] = 0;
 }
 

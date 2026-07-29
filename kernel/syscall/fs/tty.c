@@ -6,30 +6,42 @@
 #include "syscall/fs/tty.h"
 #include "syscall/syscall_internal.h"
 #include "task/task.h"
+#include "spinlock.h"
 #include "uart/uart.h"
 
 #define UART_RINGBUF_SIZE  64u
 static volatile uint8_t  g_uart_rb[UART_RINGBUF_SIZE];
 static volatile uint32_t g_uart_rb_head = 0;
 static volatile uint32_t g_uart_rb_tail = 0;
+static spinlock_noirq_t g_uart_rb_lock = SPINLOCK_NOIRQ_INIT;
 
 void uart_ringbuf_push(char c) {
+    spin_lock_irqsave(&g_uart_rb_lock);
     uint32_t next = (g_uart_rb_head + 1u) % UART_RINGBUF_SIZE;
     if (next != g_uart_rb_tail) {
         g_uart_rb[g_uart_rb_head] = (uint8_t)c;
         g_uart_rb_head = next;
     }
+    spin_unlock_irqrestore(&g_uart_rb_lock);
 }
 
 int uart_ringbuf_pop(char *out) {
-    if (g_uart_rb_tail == g_uart_rb_head) return 0;
+    spin_lock_irqsave(&g_uart_rb_lock);
+    if (g_uart_rb_tail == g_uart_rb_head) {
+        spin_unlock_irqrestore(&g_uart_rb_lock);
+        return 0;
+    }
     *out = (char)g_uart_rb[g_uart_rb_tail];
     g_uart_rb_tail = (g_uart_rb_tail + 1u) % UART_RINGBUF_SIZE;
+    spin_unlock_irqrestore(&g_uart_rb_lock);
     return 1;
 }
 
 int uart_ringbuf_empty(void) {
-    return g_uart_rb_tail == g_uart_rb_head;
+    spin_lock_irqsave(&g_uart_rb_lock);
+    int empty = (g_uart_rb_tail == g_uart_rb_head);
+    spin_unlock_irqrestore(&g_uart_rb_lock);
+    return empty;
 }
 
 /* 全局 termios 状态 */

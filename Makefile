@@ -752,6 +752,8 @@ LUA_OBJECTS := $(LUA_CORE_OBJS) $(LUA_GLUE_OBJS) $(LUA_BLOB_OBJ) $(SETJMP_OBJ)
 # 每个架构独立一个镜像，切换架构无需 make clean
 ROOTFS_IMG       := $(BUILD_DIR)/rootfs-$(ARCH).img
 ROOTFS_STAGE     := $(BUILD_DIR)/rootfs-stage-$(ARCH)
+LTP_BIN_DIR      := tests/ltp/bin/$(ARCH)
+LTP_BINS         := $(wildcard $(LTP_BIN_DIR)/*)
 # ROOTFS_SIZE_MB / ROOTFS_PHYS_ADDR 来自自动生成的 $(MEM_LAYOUT_MK)
 QEMU_ROOTFS_FLAGS = -device loader,file=$(ROOTFS_IMG),addr=$(ROOTFS_PHYS_ADDR),force-raw=on
 
@@ -1263,7 +1265,7 @@ run-net: kernel $(ROOTFS_IMG)
 # 创建 ext4 rootfs 镜像（无需 sudo）
 # 依赖：Host 已安装 e2fsprogs（mkfs.ext4 >= 1.43 支持 -d 选项）
 # 每次 apps 变动时自动重建；切换架构直接使用各自的镜像文件，无需 make clean
-$(ROOTFS_IMG): $(APPS_BINS) $(APPS_C_ELFS) | $(BUILD_DIR)
+$(ROOTFS_IMG): Makefile $(APPS_BINS) $(APPS_C_ELFS) $(LTP_BINS) | $(BUILD_DIR)
 	@echo "=== Building rootfs for $(ARCH): $(ROOTFS_IMG) ==="
 	@rm -rf $(ROOTFS_STAGE)
 	@mkdir -p $(ROOTFS_STAGE)/bin
@@ -1319,16 +1321,16 @@ $(ROOTFS_IMG): $(APPS_BINS) $(APPS_C_ELFS) | $(BUILD_DIR)
 		echo "  [dropbear SSH installed]"; \
 	fi
 	@# 安装 LTP 测例（如果已编译）
-	@LTP_BIN_DIR=tests/ltp/bin/$(ARCH); \
+	@LTP_BIN_DIR=$(LTP_BIN_DIR); \
 	if [ -d "$$LTP_BIN_DIR" ] && [ "$$(ls -1 $$LTP_BIN_DIR/*.sh $$LTP_BIN_DIR/[a-z]* 2>/dev/null | wc -l)" -gt 1 ]; then \
 		mkdir -p $(ROOTFS_STAGE)/ltp; \
 		cp $$LTP_BIN_DIR/* $(ROOTFS_STAGE)/ltp/; \
 		chmod +x $(ROOTFS_STAGE)/ltp/*; \
 		echo "  [LTP testcases installed → /ltp/]"; \
 	fi
-	@# /etc/passwd: root 无密码
-	@echo 'root::0:0:root:/root:/bin/sh' > $(ROOTFS_STAGE)/etc/passwd
-	@echo 'root:x:0:' > $(ROOTFS_STAGE)/etc/group
+	@# /etc/passwd: root 无密码；nobody 供 LTP getpwnam("nobody") 使用
+	@printf 'root::0:0:root:/root:/bin/sh\nnobody:x:65534:65534:nobody:/tmp:/bin/sh\n' > $(ROOTFS_STAGE)/etc/passwd
+	@printf 'root:x:0:\nnogroup:x:65534:\n' > $(ROOTFS_STAGE)/etc/group
 	@echo "  [/etc/passwd + group created]"
 	@# 用 staging 目录直接构建 ext4 镜像，无需挂载
 	dd if=/dev/zero of=$@ bs=1M count=$(ROOTFS_SIZE_MB) status=none
