@@ -22,6 +22,8 @@ struct kernel_sockaddr_in {
 #define AF_INET    2
 #define SOCK_STREAM 1
 #define SOCK_DGRAM  2
+#define SOCK_NONBLOCK 04000
+#define O_NONBLOCK    04000
 
 static uint16_t ntohs_val(uint16_t x)
 {
@@ -54,7 +56,7 @@ void socket_handler(uint64_t regs[6], task_t *current)
 
     fd_obj_t *obj = &g_fd_pool[pool];
     obj->type = FDT_SOCKET;
-    obj->flags = 0;
+    obj->flags = (type & SOCK_NONBLOCK) ? O_NONBLOCK : 0;
     obj->sock.sock_idx = (int16_t)si;
     obj->path[0] = '\0';
 
@@ -107,13 +109,24 @@ void accept_handler(uint64_t regs[6], task_t *current)
     int fd = (int)regs[0];
     struct kernel_sockaddr_in *addr = (struct kernel_sockaddr_in *)regs[1];
     uint32_t *addrlen = (uint32_t *)regs[2];
+    int accept_flags = (int)regs[3];
 
-    int si = get_sock_idx(current, fd);
-    if (si < 0) { regs[0] = (uint64_t)(int64_t)-EBADF; return; }
+    fd_obj_t *listen_obj = task_get_fd(current, fd);
+    if (!listen_obj || listen_obj->type != FDT_SOCKET) {
+        regs[0] = (uint64_t)(int64_t)-EBADF;
+        return;
+    }
+    int si = listen_obj->sock.sock_idx;
+
+    int kflags = 0;
+    if ((listen_obj->flags & O_NONBLOCK) || (accept_flags & SOCK_NONBLOCK))
+        kflags |= KSOCK_MSG_DONTWAIT;
 
     uint32_t out_addr;
     uint16_t out_port;
-    int new_si = ksock_accept(si, &out_addr, &out_port);
+    int new_si = ksock_accept(si, &out_addr, &out_port, kflags);
+    KLOG_DEBUG("[sock] accept fd=%d listen_flags=0x%x accept_flags=0x%x kflags=0x%x rc=%d\n",
+               fd, listen_obj->flags, accept_flags, kflags, new_si);
     if (new_si < 0) {
         regs[0] = (uint64_t)(int64_t)new_si;
         return;
@@ -129,6 +142,8 @@ void accept_handler(uint64_t regs[6], task_t *current)
     fd_obj_t *obj = &g_fd_pool[pool];
     obj->type = FDT_SOCKET;
     obj->flags = 0;
+    if ((listen_obj->flags & O_NONBLOCK) || (accept_flags & SOCK_NONBLOCK))
+        obj->flags |= O_NONBLOCK;
     obj->sock.sock_idx = (int16_t)new_si;
     obj->path[0] = '\0';
 

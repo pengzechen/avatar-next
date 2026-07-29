@@ -6,7 +6,7 @@
 struct task;
 
 #define KSOCK_MAX         32
-#define KSOCK_BACKLOG_MAX  8
+#define KSOCK_BACKLOG_MAX  32
 #define KSOCK_RECV_QMAX   16
 #define KSOCK_MSG_DONTWAIT 0x40
 
@@ -28,7 +28,7 @@ typedef enum {
 int  ksock_create(int domain, int type, int protocol);
 int  ksock_bind(int si, uint32_t addr, uint16_t port);
 int  ksock_listen(int si, int backlog);
-int  ksock_accept(int si, uint32_t *out_addr, uint16_t *out_port);
+int  ksock_accept(int si, uint32_t *out_addr, uint16_t *out_port, int flags);
 int  ksock_connect(int si, uint32_t addr, uint16_t port);
 int  ksock_send(int si, const void *buf, size_t len, int flags);
 int  ksock_recv(int si, void *buf, size_t len, int flags);

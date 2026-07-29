@@ -6,7 +6,7 @@
 
 当前版本：nginx `1.26.3`
 
-当前状态：可通过 lwIP/virtio-net 提供 HTTP 服务；当前这版主要用于验证 TCP/HTTP 通路，尚未确认 nginx configure 是否真正启用 epoll。
+当前状态：可通过 lwIP/virtio-net 提供 HTTP 服务；当前二进制已编译进 `ngx_epoll_module`，运行时可看到内核 epoll syscall 日志。
 
 ## 下载源码
 
@@ -41,7 +41,7 @@ sizeof(off_t) = 8
 sizeof(time_t) = 8
 ```
 
-如果 configure 后 `objs/ngx_auto_config.h` 中没有这些定义，手动补上：
+如果 configure 后 `objs/ngx_auto_config.h` 中没有这些定义，手动补上。`NGX_HAVE_MAP_ANON` 很关键，否则 `ngx_shm_alloc()` / `ngx_shm_free()` 不会编译进链接目标，最终链接会报 undefined reference。
 
 ```c
 #ifndef NGX_HAVE_LITTLE_ENDIAN
@@ -97,7 +97,46 @@ CC=aarch64-linux-musl-gcc ./configure \
   --without-http_upstream_zone_module \
   --without-mail_pop3_module \
   --without-mail_imap_module \
-  --without-mail_smtp_module
+  --without-mail_smtp_module \
+  --test-build-epoll
+```
+
+`--test-build-epoll` 会让 nginx 把 `src/event/modules/ngx_epoll_module.c` 纳入构建，并在 `objs/ngx_auto_config.h` 中生成 epoll 相关宏。
+
+## epoll 配置修正
+
+交叉编译时不能直接运行 configure 的 epoll 测试程序。`--test-build-epoll` 可以强制加入 epoll 模块，但它也会生成 `NGX_TEST_BUILD_EPOLL`，导致 nginx 在 `ngx_epoll_module.c` 中启用内部测试 stub。这个 stub 会重新定义 `EPOLLET`、`struct epoll_event`、`epoll_ctl()` 等符号，和 musl `<sys/epoll.h>` 冲突。
+
+configure 后编辑 `objs/ngx_auto_config.h`：
+
+保留这些宏：
+
+```c
+#define NGX_HAVE_EPOLL 1
+#define NGX_HAVE_EPOLLRDHUP 1
+#define NGX_HAVE_EPOLLEXCLUSIVE 1
+```
+
+删除这个宏：
+
+```c
+#define NGX_TEST_BUILD_EPOLL 1
+```
+
+同时删除 `NGX_HAVE_EVENTFD`，否则 AArch64 musl 环境下 nginx 会尝试使用旧的 `SYS_eventfd`，而工具链只提供 `SYS_eventfd2`：
+
+```c
+#define NGX_HAVE_EVENTFD 1
+```
+
+最终 `objs/ngx_auto_config.h` 里 epoll 相关状态应为：
+
+```c
+#define NGX_HAVE_EPOLL 1
+#define NGX_HAVE_EPOLLRDHUP 1
+#define NGX_HAVE_EPOLLEXCLUSIVE 1
+/* no NGX_TEST_BUILD_EPOLL */
+/* no NGX_HAVE_EVENTFD */
 ```
 
 编译并复制到项目：
@@ -105,6 +144,19 @@ CC=aarch64-linux-musl-gcc ./configure \
 ```bash
 make -j$(nproc)
 cp objs/nginx /home/ajax/Desktop/Project/Kernel/avatar-next/apps/nginx-aarch64
+```
+
+确认二进制包含 epoll 模块：
+
+```bash
+aarch64-linux-musl-nm apps/nginx-aarch64 | grep 'ngx_epoll_module\|ngx_epoll_process_events'
+```
+
+预期能看到类似符号：
+
+```text
+000000000009aa80 D ngx_epoll_module
+0000000000036c10 t ngx_epoll_process_events
 ```
 
 ## rootfs 集成
@@ -161,6 +213,15 @@ QEMU shell 中启动 nginx：
 /bin/nginx -g 'master_process off;'
 ```
 
+如果要强制 nginx 运行时选择 epoll，可以在 `/etc/nginx/nginx.conf` 的 `events` 块中指定：
+
+```nginx
+events {
+    use epoll;
+    worker_connections 64;
+}
+```
+
 Host 上访问：
 
 ```bash
@@ -173,8 +234,38 @@ curl http://192.168.100.2/
 <html><body><h1>Avatar nginx</h1></body></html>
 ```
 
+## epoll 验证
+
+最直接的验证方式是看内核 epoll syscall 日志。启动 nginx 和发起 HTTP 请求后，应能看到：
+
+```text
+[epoll] create1: pid=... fd=... ep_idx=...
+[epoll] ctl ADD: ep=... fd=... events=0x2001
+[epoll] ctl DEL: ep=... fd=...
+```
+
+这些日志说明 nginx 实际走了 AArch64 Linux epoll syscall：
+
+```text
+20  epoll_create1
+21  epoll_ctl
+22  epoll_pwait
+```
+
+nginx 自身也会在 error log 中记录事件模型。配置 `error_log /tmp/nginx-error.log info;` 后，可在 QEMU shell 中查看：
+
+```sh
+cat /tmp/nginx-error.log
+```
+
+使用 epoll 时应出现类似：
+
+```text
+using the "epoll" event method
+```
+
 ## 已知限制
 
 当前二进制是手工外部构建产物，还没有纳入项目内可复现构建流程。
 
-当前这版 nginx 能提供 HTTP 服务，但 configure 阶段的事件模块探测还需要继续整理。下一步计划构建并验证明确使用 epoll 的 nginx。
+当前 epoll 版仍依赖手工修改 `objs/ngx_auto_config.h`。如果要长期保留，需要把 nginx 下载、patch、configure、post-config 修正和复制二进制整理成项目内脚本。

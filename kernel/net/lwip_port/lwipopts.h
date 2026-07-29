@@ -29,13 +29,13 @@
 #define MEM_ALIGNMENT                   8
 #define MEM_SIZE                        (64 * 1024)
 
-#define PBUF_POOL_SIZE                  32
+#define PBUF_POOL_SIZE                  64
 #define PBUF_POOL_BUFSIZE               1536
 
-#define MEMP_NUM_PBUF                   32
-#define MEMP_NUM_TCP_PCB                16
+#define MEMP_NUM_PBUF                   64
+#define MEMP_NUM_TCP_PCB                32
 #define MEMP_NUM_TCP_PCB_LISTEN         8
-#define MEMP_NUM_TCP_SEG                32
+#define MEMP_NUM_TCP_SEG                64
 #define MEMP_NUM_NETBUF                 0
 #define MEMP_NUM_NETCONN                0
 
@@ -44,6 +44,7 @@
 #define TCP_SND_QUEUELEN                16
 #define TCP_WND                         (4 * TCP_MSS)
 #define TCP_LISTEN_BACKLOG              1
+#define TCP_DEFAULT_LISTEN_BACKLOG      32
 
 #define LWIP_NETIF_STATUS_CALLBACK      1
 #define LWIP_NETIF_LINK_CALLBACK        1

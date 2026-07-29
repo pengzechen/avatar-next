@@ -62,9 +62,9 @@
 
 #define VIRTIO_NET_Q_RX                     0U
 #define VIRTIO_NET_Q_TX                     1U
-#define VIRTIO_NET_QUEUE_SIZE               16U
+#define VIRTIO_NET_QUEUE_SIZE               64U
 #define VIRTIO_NET_RX_BUFS                  VIRTIO_NET_QUEUE_SIZE
-#define VIRTIO_NET_TX_BUFS                  8U
+#define VIRTIO_NET_TX_BUFS                  VIRTIO_NET_QUEUE_SIZE
 
 #define VIRTIO_NET_HDR_LEN                  10U
 #define ETH_FRAME_MAX                       1514U

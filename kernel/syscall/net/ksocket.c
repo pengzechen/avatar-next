@@ -16,6 +16,9 @@
 #include "lwip/udp.h"
 #include "lwip/ip_addr.h"
 
+#define KSOCK_IPPROTO_TCP 6
+#define KSOCK_TCP_NODELAY 1
+
 /* ── socket pool ─────────────────────────────────────────────── */
 
 typedef struct ksock {
@@ -375,12 +378,18 @@ int ksock_listen(int si, int backlog)
     return 0;
 }
 
-int ksock_accept(int si, uint32_t *out_addr, uint16_t *out_port)
+int ksock_accept(int si, uint32_t *out_addr, uint16_t *out_port, int flags)
 {
     ksock_t *sk = ksock_get(si);
     if (!sk || sk->state != KSOCK_LISTENING) return -9;
 
+    int nonblock = (flags & KSOCK_MSG_DONTWAIT);
+
     while (sk->accept_count == 0) {
+        if (nonblock) {
+            KLOG_DEBUG("[ksock] accept would block si=%d flags=0x%x\n", si, flags);
+            return -11; /* EAGAIN */
+        }
         sk->blocked_task = task_current();
         task_block(NULL);
         sk->blocked_task = NULL;
@@ -394,6 +403,11 @@ int ksock_accept(int si, uint32_t *out_addr, uint16_t *out_port)
 
     ksock_t *nsk = ksock_get(new_si);
     if (!nsk) return -9;
+
+#if TCP_LISTEN_BACKLOG
+    if (nsk->tcp_pcb)
+        tcp_backlog_accepted(nsk->tcp_pcb);
+#endif
 
     if (out_addr) *out_addr = nsk->remote_addr;
     if (out_port) *out_port = nsk->remote_port;
@@ -642,7 +656,26 @@ int ksock_shutdown(int si, int how)
 int ksock_setsockopt(int si, int level, int optname,
                      const void *optval, uint32_t optlen)
 {
-    (void)si; (void)level; (void)optname; (void)optval; (void)optlen;
+    ksock_t *sk = ksock_get(si);
+    if (!sk) return -9;
+
+    if (sk->proto == KSOCK_TCP && level == KSOCK_IPPROTO_TCP &&
+        optname == KSOCK_TCP_NODELAY) {
+        if (!optval || optlen < sizeof(int))
+            return -22; /* EINVAL */
+
+        int enabled = *(const int *)optval;
+        if (sk->tcp_pcb) {
+            if (enabled)
+                tcp_nagle_disable(sk->tcp_pcb);
+            else
+                tcp_nagle_enable(sk->tcp_pcb);
+        }
+        KLOG_DEBUG("[ksock] TCP_NODELAY si=%d enabled=%d\n", si, enabled != 0);
+        return 0;
+    }
+
+    (void)level; (void)optname; (void)optval; (void)optlen;
     return 0;
 }
 
