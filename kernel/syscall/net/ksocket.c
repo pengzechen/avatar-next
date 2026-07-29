@@ -329,8 +329,11 @@ int ksock_bind(int si, uint32_t addr, uint16_t port)
 
     if (rc == ERR_USE)
         return -98; /* EADDRINUSE */
-    if (rc != ERR_OK)
+    if (rc != ERR_OK) {
+        KLOG_WARN("[ksock] bind failed si=%d addr=0x%x port=%u rc=%d\n",
+                  si, addr, port, rc);
         return -22; /* EINVAL */
+    }
 
     sk->local_addr = addr;
     sk->local_port = port;
@@ -340,13 +343,30 @@ int ksock_bind(int si, uint32_t addr, uint16_t port)
 
 int ksock_listen(int si, int backlog)
 {
-    (void)backlog;
     ksock_t *sk = ksock_get(si);
     if (!sk || sk->proto != KSOCK_TCP) return -9;
+    if (sk->state == KSOCK_LISTENING)
+        return 0;
 
-    struct tcp_pcb *lpcb = tcp_listen(sk->tcp_pcb);
-    if (!lpcb)
-        return -98; /* EADDRINUSE */
+    if (backlog < 0)
+        return -22; /* EINVAL */
+    if (backlog == 0)
+        backlog = 1;
+    if (backlog > 255)
+        backlog = 255;
+
+    err_t err = ERR_OK;
+    struct tcp_pcb *lpcb = tcp_listen_with_backlog_and_err(
+        sk->tcp_pcb, (u8_t)backlog, &err);
+    if (!lpcb) {
+        KLOG_WARN("[ksock] listen failed si=%d port=%u backlog=%d rc=%d\n",
+                  si, sk->local_port, backlog, err);
+        if (err == ERR_USE)
+            return -98;  /* EADDRINUSE */
+        if (err == ERR_MEM)
+            return -105; /* ENOBUFS */
+        return -22;      /* EINVAL */
+    }
 
     sk->tcp_pcb = lpcb;
     tcp_arg(lpcb, sk);

@@ -21,6 +21,23 @@ void ioctl_handler(uint64_t regs[6], task_t *current)
     /* 查找 fd 对象（任何 fd，包括 0/1/2） */
     fd_obj_t *ioctl_obj = task_get_fd(current, ioctl_fd);
 
+    if (request == FIONBIO) {
+        if (!argp) {
+            regs[0] = (uint64_t)(int64_t)-EFAULT;
+            return;
+        }
+        if (!ioctl_obj) {
+            regs[0] = (uint64_t)(int64_t)-EBADF;
+            return;
+        }
+        if (*(int *)argp)
+            ioctl_obj->flags |= 04000;  /* O_NONBLOCK */
+        else
+            ioctl_obj->flags &= ~04000;
+        regs[0] = 0;
+        return;
+    }
+
     /* PTY 优先派发（fd 0/1/2 也可能是 PTY slave） */
     if (ioctl_obj && ioctl_obj->type == FDT_PTY) {
         int rc = pty_ioctl(ioctl_obj->pty.pty_idx, ioctl_obj->pty.is_master,

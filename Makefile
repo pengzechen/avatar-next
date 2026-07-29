@@ -405,6 +405,7 @@ else ifeq ($(ARCH),aarch64)
     LDFLAGS += -Wl,--defsym=KERNEL_LINK_ADDR=$(KERNEL_LINK_ADDR)
     QEMU          := qemu-system-aarch64
     QEMU_FLAGS    := -cpu cortex-a76 -M virt,virtualization=on -smp $(SMP) -m 2G -nographic -kernel $(KERNEL_BIN)
+    QEMU_NET_FLAGS ?= -netdev user,id=net0 -device virtio-net-device,netdev=net0,mac=52:54:00:12:34:56
 else ifeq ($(ARCH),riscv64)
     CC      := riscv64-linux-musl-gcc
     AR      := riscv64-linux-musl-ar
@@ -548,8 +549,8 @@ ifeq ($(ETH),cvitek)
     _RUST_TARGET    := riscv64gc-unknown-none-elf
     _RUST_DIR       := rust
 else ifeq ($(ETH),virtio)
-    ifneq ($(ARCH),riscv64)
-        $(error ETH=virtio 目前仅支持 ARCH=riscv64)
+    ifeq ($(filter $(ARCH),riscv64 aarch64),)
+        $(error ETH=virtio currently supports ARCH=riscv64 or ARCH=aarch64)
     endif
     CFLAGS          += -DDRIVER_ETH_VIRTIO=1
     DRIVER_ETH_OBJS := $(BUILD_DIR)/drv_eth/virtio_net.o
@@ -621,9 +622,13 @@ CFLAGS  += -MMD -MP
 # VMM_TEST=1：编译 RUN_VMM_TEST，跳过 busybox，运行三线程切换测试
 # 新增测试时仿照此模式，同时在 _BUILD_VARIANT 里加一个唯一标识。
 VMM_TEST ?= 0
+NGINX_TEST ?= 0
 ifeq ($(VMM_TEST),1)
     CFLAGS += -DRUN_VMM_TEST=1
     _BUILD_VARIANT := vmm_test
+else ifeq ($(NGINX_TEST),1)
+    CFLAGS += -DRUN_NGINX_TEST=1
+    _BUILD_VARIANT := nginx_test
 else
     _BUILD_VARIANT := normal
 endif
@@ -754,11 +759,19 @@ ROOTFS_IMG       := $(BUILD_DIR)/rootfs-$(ARCH).img
 ROOTFS_STAGE     := $(BUILD_DIR)/rootfs-stage-$(ARCH)
 LTP_BIN_DIR      := tests/ltp/bin/$(ARCH)
 LTP_BINS         := $(wildcard $(LTP_BIN_DIR)/*)
+ifneq ($(filter $(ARCH),aarch64 riscv64),)
+EPOLL_PERF_CC    := $(ARCH)-linux-musl-gcc
+EPOLL_PERF_BIN   := apps/epoll_perf-$(ARCH)
+else
+EPOLL_PERF_CC    :=
+EPOLL_PERF_BIN   :=
+endif
+NGINX_BIN        := $(wildcard apps/nginx-$(ARCH))
 # ROOTFS_SIZE_MB / ROOTFS_PHYS_ADDR 来自自动生成的 $(MEM_LAYOUT_MK)
 QEMU_ROOTFS_FLAGS = -device loader,file=$(ROOTFS_IMG),addr=$(ROOTFS_PHYS_ADDR),force-raw=on
 
 # ─── §11  顶层目标声明 ───────────────────────────────────────────────────────────
-.PHONY: all clean help klog kernel run run-net rootfs run-fs test-pthread test-mutex test-vmm test-ltp
+.PHONY: all clean help klog kernel run run-net rootfs run-fs test-pthread test-mutex test-vmm test-ltp epoll-perf test-epoll-perf
 
 all: $(TARGET) klog
 
@@ -1051,6 +1064,18 @@ $(BUILD_DIR)/%.elf: $(APPS_DIR)/%.c $(APPS_LD) | $(BUILD_DIR)
 		-o $@
 	@echo "C app ELF created: $@"
 
+ifneq ($(EPOLL_PERF_BIN),)
+epoll-perf: $(EPOLL_PERF_BIN)
+
+$(EPOLL_PERF_BIN): apps/c/epoll_perf.c
+	$(EPOLL_PERF_CC) -O2 -Wall -Wextra -static $< -o $@
+	@echo "epoll perf app created: $@"
+else
+epoll-perf:
+	@echo "epoll_perf is only wired for ARCH=aarch64 or ARCH=riscv64"
+	@exit 1
+endif
+
 $(TASK_USER_BIN): $(BUILD_DIR)/user_test.o $(TASK_USER_LD) | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -nostdlib -nostartfiles -nodefaultlibs -T $(TASK_USER_LD) -o $@.elf $<
 	$(OBJCOPY) -O binary $@.elf $@
@@ -1254,18 +1279,28 @@ run: kernel
 	$(QEMU) $(QEMU_FLAGS)
 
 run-net: kernel $(ROOTFS_IMG)
-	@if [ "$(ARCH)" != "riscv64" ]; then \
-		echo "ERROR: run-net currently supports ARCH=riscv64 only."; \
+	@if [ "$(ARCH)" != "riscv64" ] && [ "$(ARCH)" != "aarch64" ]; then \
+		echo "ERROR: run-net currently supports ARCH=riscv64 or ARCH=aarch64 only."; \
 		exit 1; \
 	fi
 	@echo "Starting QEMU for $(ARCH) with rootfs at $(ROOTFS_PHYS_ADDR) and virtio-net..."
 	@echo "QEMU_NET_FLAGS=$(QEMU_NET_FLAGS)"
 	$(QEMU) $(QEMU_FLAGS) $(QEMU_ROOTFS_FLAGS) $(QEMU_NET_FLAGS)
 
+test-epoll-perf: epoll-perf kernel $(ROOTFS_IMG)
+	@if [ "$(ARCH)" != "riscv64" ] && [ "$(ARCH)" != "aarch64" ]; then \
+		echo "ERROR: test-epoll-perf currently supports ARCH=riscv64 or ARCH=aarch64 only."; \
+		exit 1; \
+	fi
+	@echo "Starting QEMU for $(ARCH) with /bin/epoll_perf and virtio-net..."
+	@echo "In QEMU shell: /bin/epoll_perf 10000 1"
+	@echo "QEMU_NET_FLAGS=$(QEMU_NET_FLAGS)"
+	$(QEMU) $(QEMU_FLAGS) $(QEMU_ROOTFS_FLAGS) $(QEMU_NET_FLAGS)
+
 # 创建 ext4 rootfs 镜像（无需 sudo）
 # 依赖：Host 已安装 e2fsprogs（mkfs.ext4 >= 1.43 支持 -d 选项）
 # 每次 apps 变动时自动重建；切换架构直接使用各自的镜像文件，无需 make clean
-$(ROOTFS_IMG): Makefile $(APPS_BINS) $(APPS_C_ELFS) $(LTP_BINS) | $(BUILD_DIR)
+$(ROOTFS_IMG): Makefile $(APPS_BINS) $(APPS_C_ELFS) $(LTP_BINS) $(EPOLL_PERF_BIN) $(NGINX_BIN) | $(BUILD_DIR)
 	@echo "=== Building rootfs for $(ARCH): $(ROOTFS_IMG) ==="
 	@rm -rf $(ROOTFS_STAGE)
 	@mkdir -p $(ROOTFS_STAGE)/bin
@@ -1309,6 +1344,34 @@ $(ROOTFS_IMG): Makefile $(APPS_BINS) $(APPS_C_ELFS) $(LTP_BINS) | $(BUILD_DIR)
 			chmod +x "$(ROOTFS_STAGE)/$$name"; \
 			echo "  [$$name installed (bin)]"; \
 		done; \
+	fi
+	@# 安装 musl 用户态性能测试程序
+	@if [ -f $(EPOLL_PERF_BIN) ]; then \
+		mkdir -p $(ROOTFS_STAGE)/bin; \
+		cp $(EPOLL_PERF_BIN) $(ROOTFS_STAGE)/bin/epoll_perf; \
+		chmod +x $(ROOTFS_STAGE)/bin/epoll_perf; \
+		echo "  [epoll_perf installed → /bin/epoll_perf]"; \
+	fi
+	@# 安装 nginx（如果存在对应架构的静态 musl 构建）
+	@if [ -f $(NGINX_BIN) ]; then \
+		mkdir -p $(ROOTFS_STAGE)/bin $(ROOTFS_STAGE)/etc/nginx $(ROOTFS_STAGE)/www; \
+		cp $(NGINX_BIN) $(ROOTFS_STAGE)/bin/nginx; \
+		chmod +x $(ROOTFS_STAGE)/bin/nginx; \
+		printf '%s\n' \
+		'worker_processes  1;' \
+		'error_log /tmp/nginx-error.log info;' \
+		'pid /tmp/nginx.pid;' \
+		'events { worker_connections 64; }' \
+		'http {' \
+		'    access_log off;' \
+		'    server {' \
+		'        listen 80;' \
+		'        root /www;' \
+		'        location / { index index.html; }' \
+		'    }' \
+		'}' > $(ROOTFS_STAGE)/etc/nginx/nginx.conf; \
+		printf '%s\n' '<html><body><h1>Avatar nginx</h1></body></html>' > $(ROOTFS_STAGE)/www/index.html; \
+		echo "  [nginx installed → /bin/nginx]"; \
 	fi
 	@# 安装 Dropbear SSH 服务器
 	@DROPBEAR_MULTI=third_party/dropbear-2024.86/dropbearmulti; \

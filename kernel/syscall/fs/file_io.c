@@ -127,6 +127,47 @@ void read_handler(uint64_t regs[6], task_t *current)
     }
 }
 
+void pread64_handler(uint64_t regs[6], task_t *current)
+{
+    int fd = (int)regs[0];
+    char *buf = (char *)regs[1];
+    uint64_t count = regs[2];
+    int64_t offset = (int64_t)regs[3];
+
+    if (!buf || count == 0) {
+        regs[0] = 0;
+        return;
+    }
+    if (offset < 0) {
+        regs[0] = (uint64_t)(int64_t)-EINVAL;
+        return;
+    }
+
+    fd_obj_t *obj = task_get_fd(current, fd);
+    if (!obj) {
+        regs[0] = (uint64_t)(int64_t)-EBADF;
+        return;
+    }
+    if (obj->type != FDT_FILE) {
+        regs[0] = (uint64_t)(int64_t)-ESPIPE;
+        return;
+    }
+
+    int64_t saved = ext4_ftell(&obj->file);
+    if (saved < 0 || ext4_fseek(&obj->file, offset, SEEK_SET) != EOK) {
+        regs[0] = (uint64_t)(int64_t)-EIO;
+        return;
+    }
+
+    size_t rcnt = 0;
+    int rc = ext4_fread(&obj->file, buf, (size_t)count, &rcnt);
+    int seek_rc = ext4_fseek(&obj->file, saved, SEEK_SET);
+    if (rc != EOK || seek_rc != EOK)
+        regs[0] = (uint64_t)(int64_t)-EIO;
+    else
+        regs[0] = (uint64_t)rcnt;
+}
+
 void write_handler(uint64_t regs[6], task_t *current)
 {
     int          fd    = (int)regs[0];
@@ -172,6 +213,47 @@ void write_handler(uint64_t regs[6], task_t *current)
     } else {
         regs[0] = (uint64_t)(int64_t)-EBADF;
     }
+}
+
+void pwrite64_handler(uint64_t regs[6], task_t *current)
+{
+    int fd = (int)regs[0];
+    const char *buf = (const char *)regs[1];
+    uint64_t count = regs[2];
+    int64_t offset = (int64_t)regs[3];
+
+    if (!buf || count == 0) {
+        regs[0] = 0;
+        return;
+    }
+    if (offset < 0) {
+        regs[0] = (uint64_t)(int64_t)-EINVAL;
+        return;
+    }
+
+    fd_obj_t *obj = task_get_fd(current, fd);
+    if (!obj) {
+        regs[0] = (uint64_t)(int64_t)-EBADF;
+        return;
+    }
+    if (obj->type != FDT_FILE) {
+        regs[0] = (uint64_t)(int64_t)-ESPIPE;
+        return;
+    }
+
+    int64_t saved = ext4_ftell(&obj->file);
+    if (saved < 0 || ext4_fseek(&obj->file, offset, SEEK_SET) != EOK) {
+        regs[0] = (uint64_t)(int64_t)-EIO;
+        return;
+    }
+
+    size_t wcnt = 0;
+    int rc = ext4_fwrite(&obj->file, buf, (size_t)count, &wcnt);
+    int seek_rc = ext4_fseek(&obj->file, saved, SEEK_SET);
+    if (rc != EOK || seek_rc != EOK)
+        regs[0] = (uint64_t)(int64_t)-EIO;
+    else
+        regs[0] = (uint64_t)wcnt;
 }
 
 void readv_handler(uint64_t regs[6], task_t *current)

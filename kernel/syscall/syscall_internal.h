@@ -40,6 +40,8 @@ typedef struct task task_t;
 #define LINUX_SYS_WRITE           64
 #define LINUX_SYS_READV           65
 #define LINUX_SYS_WRITEV          66
+#define LINUX_SYS_PREAD64         67
+#define LINUX_SYS_PWRITE64        68
 #define LINUX_SYS_SENDFILE        71   /* AArch64/RISC-V sendfile64 */
 #define LINUX_SYS_PSELECT6        72
 #define LINUX_SYS_PPOLL           73
@@ -85,6 +87,7 @@ typedef struct task task_t;
 #define LINUX_SYS_GETGID          176
 #define LINUX_SYS_GETEGID         177
 #define LINUX_SYS_GETTID          178
+#define LINUX_SYS_SYSINFO         179
 #define LINUX_SYS_SOCKET          198
 #define LINUX_SYS_SOCKETPAIR      199
 #define LINUX_SYS_BIND            200
@@ -154,6 +157,8 @@ typedef struct task task_t;
 #define TIOCSPGRP             0x5410
 #define TIOCSCTTY             0x540e
 #define TIOCNOTTY             0x5422
+#define FIONBIO               0x5421
+#define FIONREAD              0x541b
 #define TIOCGPTN              0x80045430
 #define TIOCSPTLCK            0x40045431
 
@@ -183,6 +188,7 @@ typedef struct task task_t;
 #define ENFILE                23
 #define EMFILE                24
 #define ENOTTY                25
+#define ESPIPE                29
 #define ENOTSUP               95
 #define EAFNOSUPPORT          97
 #define EADDRINUSE            98
@@ -272,6 +278,23 @@ struct kernel_rlimit {
     uint64_t rlim_max;
 };
 
+/* ── sysinfo 输出（Linux 64-bit ABI）──────────────────────────────── */
+struct kernel_sysinfo {
+    int64_t  uptime;
+    uint64_t loads[3];
+    uint64_t totalram;
+    uint64_t freeram;
+    uint64_t sharedram;
+    uint64_t bufferram;
+    uint64_t totalswap;
+    uint64_t freeswap;
+    uint16_t procs;
+    uint16_t pad;
+    uint64_t totalhigh;
+    uint64_t freehigh;
+    uint32_t mem_unit;
+};
+
 /* ═══════════════════════════════════════════════════════════════════
  * 内部共享 helper：跨多个 syscall 子模块使用
  * ═══════════════════════════════════════════════════════════════════ */
@@ -352,8 +375,10 @@ int  copy_to_user_bytes   (const void *ksrc, void *udst, uint64_t len);
 /* 文件 I/O（fs/file_io.c）*/
 void read_handler    (uint64_t regs[6], task_t *current);
 void readv_handler   (uint64_t regs[6], task_t *current);
+void pread64_handler (uint64_t regs[6], task_t *current);
 void write_handler   (uint64_t regs[6], task_t *current);
 void writev_handler  (uint64_t regs[6], task_t *current);
+void pwrite64_handler(uint64_t regs[6], task_t *current);
 void lseek_handler   (uint64_t regs[6], task_t *current);
 void sendfile_handler(uint64_t regs[6], task_t *current);
 

@@ -46,6 +46,11 @@ platform = {
         cntp       = 26,
         counter_hz = 0,
     },
+
+    eth = {
+        driver = "virtio",
+        base   = 0x0a003e00,
+    },
 }
 
 -- 阶段顺序: earlycon → irqcore → drivers → fs → late

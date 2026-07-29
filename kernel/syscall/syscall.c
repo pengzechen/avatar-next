@@ -190,7 +190,7 @@ static void x86_translate_syscall(uint64_t *nr, uint64_t regs[9])
     case 95:  *nr = LINUX_SYS_UMASK;       break; /* umask */
     case 97:  *nr = LINUX_SYS_GETRLIMIT;   break; /* getrlimit */
     case 98:  *nr = LINUX_SYS_GETRUSAGE;   break; /* getrusage */
-    case 99:  *nr = 0x7FFFFFFEULL; break;      /* sysinfo → stub 0 */
+    case 99:  *nr = LINUX_SYS_SYSINFO;  break; /* sysinfo */
     case 100: *nr = 0x7FFFFFFEULL; break;      /* times → stub 0 */
     case 102: *nr = LINUX_SYS_GETUID;      break; /* getuid */
     case 104: *nr = LINUX_SYS_GETGID;      break; /* getgid */
@@ -429,12 +429,20 @@ void syscall_handler(trap_frame_t *frame)
         readv_handler(regs, current);
         break;
 
+    case LINUX_SYS_PREAD64:
+        pread64_handler(regs, current);
+        break;
+
     case LINUX_SYS_WRITE:
         write_handler(regs, current);
         break;
 
     case LINUX_SYS_WRITEV:
         writev_handler(regs, current);
+        break;
+
+    case LINUX_SYS_PWRITE64:
+        pwrite64_handler(regs, current);
         break;
 
     case LINUX_SYS_LSEEK:
@@ -597,6 +605,34 @@ void syscall_handler(trap_frame_t *frame)
 #endif
         copy_string_to_user("",           u->domainname, sizeof(u->domainname));
         regs[0] = 0;
+        break;
+    }
+
+    case LINUX_SYS_SYSINFO: {
+        struct kernel_sysinfo si;
+        uint16_t procs = 0;
+
+        if (!regs[0]) {
+            regs[0] = (uint64_t)(int64_t)-EFAULT;
+            break;
+        }
+
+        memset(&si, 0, sizeof(si));
+        si.uptime = (int64_t)(timer_get_uptime_ms() / 1000ULL);
+        if (g_pmm) {
+            si.totalram = pmm_get_total_pages(g_pmm);
+            si.freeram = pmm_get_free_pages(g_pmm);
+        }
+        si.mem_unit = PAGE_SIZE;
+
+        for (uint32_t i = 0; i < TASK_MAX; i++) {
+            if (g_stack_used[i] && g_task_pool[i].state != TASK_DEAD)
+                procs++;
+        }
+        si.procs = procs;
+
+        regs[0] = (copy_to_user_bytes(&si, (void *)regs[0], sizeof(si)) >= 0)
+                  ? 0 : (uint64_t)(int64_t)-EFAULT;
         break;
     }
 

@@ -47,6 +47,8 @@ void net_init(void)
     tcp_echo_init();
 #if DRIVER_USB_DWC2
     webcam_httpd_init();
+#elif defined(RUN_NGINX_TEST)
+    KLOG_INFO("[http] kernel HTTP server disabled for nginx test\n");
 #else
     http_server_init();
 #endif
