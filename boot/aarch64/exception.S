@@ -80,8 +80,14 @@
 .macro HANDLE_EL0_SYNC
 .p2align 7
     SAVE_REGS
+    /* Trap frame is complete; EL0-owned kernel work can now be preempted. */
+    msr     daifclr, #2
     mov     x0, sp
     bl      handle_el0_sync_exception
+    /* Keep register restore and eret atomic against nested IRQ. */
+    msr     daifset, #2
+    mov     x0, sp
+    bl      sched_check_and_yield_from_trap
     b       .Lexception_return
 .endm
 

@@ -188,8 +188,10 @@ sched_check_and_yield(void)
 > 中断才能进入并最终在异常返回路径触发切换。因此：
 > - **内核线程**全程开中断（`task_trampoline` / `task_idle_loop` 入口
 >   `arch_irq_enable()`），可被 timer 抢占；
-> - **EL0 任务**在用户态开中断（`SPSR=0x340`），其陷入内核侧的
->   syscall/异常处理则关中断，不可被抢占。
+> - **EL0 任务**在用户态开中断（`SPSR=0x340`）；AArch64 下其陷入内核侧的
+>   syscall/异常处理在保存完整 trap frame 后也会开 IRQ，但 timer 只置
+>   `need_resched`，实际任务切换延迟到 syscall 返回边界，避免任意 C 代码点
+>   交错执行 syscall 路径。
 
 ### 2. AArch64 异常处理（exception.S）
 

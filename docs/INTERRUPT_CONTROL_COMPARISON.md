@@ -15,14 +15,14 @@
 | 运行实体 | 所在 EL | 中断状态 | 说明 |
 |----------|---------|----------|------|
 | **EL0 任务（用户进程）的用户侧** | EL0 / U-mode | **开** | 用户代码可被 timer 抢占 |
-| **EL0 任务陷入内核侧**（系统调用 / 缺页 / 异常处理） | EL1 / S-mode | **关** | 进入异常时硬件自动关，处理全程保持关 |
+| **EL0 任务陷入内核侧**（系统调用 / 缺页 / 异常处理） | EL1 / S-mode | **AArch64 开，RISC-V 关** | AArch64 保存完整现场后开 IRQ，但 timer 调度延迟到 syscall 返回边界；RISC-V 仍保持 SIE=0 |
 | **内核线程（独立内核任务，如 net-poll / idle）** | EL1 / S-mode | **开** | 全程在 EL1，需可被 timer 抢占，否则会饿死其他任务 |
 
-**一句话**：用户进程“代表它跑内核代码”的那段（syscall/异常）关中断；而**独立的内核线程开中断**。二者都在 EL1，区别在于“EL1 里跑的是某个 EL0 任务的内核侧，还是一个独立内核线程”。
+**一句话**：AArch64 用户进程“代表它跑内核代码”的那段（syscall/异常）在保存完整 trap frame 后允许 IRQ 进入，但不在任意 syscall C 代码点切换任务；timer 只置 `need_resched`，实际调度延迟到 syscall 返回边界。独立内核线程仍可在 trap 返回路径被抢占。RISC-V 仍维持用户进程内核侧关中断的约定。
 
 > 历史说明：早期文档（v1.0）写作“内核态（EL1）始终关闭”。这只描述了“EL0 任务陷入内核侧”的情形，**遗漏了独立内核线程需要开中断**这一类。v1.1 起按上表的实体区分重新表述。
 
-**关中断的理由（针对 EL0 任务的内核侧 / 临界区）**：
+**仍需关中断的窗口（针对 EL0 任务的内核侧 / 临界区）**：
 1. **寄存器保护**：内核代码使用临时寄存器（t0-t6/x9-x15），中断打断会破坏这些值
 2. **栈安全**：中断嵌套可能导致栈溢出
 3. **原子性**：内核操作（如链表插入、页表切换）需要原子完成
@@ -42,7 +42,7 @@
 
 **为什么 `task_trampoline` 必须显式开中断**：新任务首次运行不经过 `sched_schedule()` 末尾的 `arch_irq_restore()`——前驱在 `arch_irq_save()` 里替它关了中断，却没有任何人替它开。内核线程若不在此显式开，将全程关中断、永远无法被 timer 抢占。
 
-**为什么 EL0 任务的 trampoline 不显式开中断**：它运行在 EL1 内核侧（启动 EL0 任务的准备阶段），按约定此时应关中断。中断只应在 `eret` 跨入 EL0 的**同一瞬间**由硬件根据 `SPSR` 打开。若在 `eret` 之前手动 `daifclr`，会在仍处于 EL1 时留下一个 IRQ 窗口——既违反约定，又可能让这段半成品的“进 EL0 路径”被抢占。
+**为什么 EL0 任务的 trampoline 不显式开中断**：它运行在 EL1 的首次用户态切换准备阶段，尚未有来自 EL0 的完整 trap frame。中断只应在 `eret` 跨入 EL0 的**同一瞬间**由硬件根据 `SPSR` 打开。EL0 后续陷入内核时，会在异常入口保存完整现场后再打开 IRQ。
 
 ---
 
@@ -156,6 +156,25 @@ vectors:
 **硬件行为**：
 - **进入异常时**：`DAIF.I` 自动置 1（关闭 IRQ）
 - **eret 返回时**：`SPSR_EL1[9:6]` → `DAIF[9:6]`（恢复中断状态）
+
+#### EL0 同步异常 - 保存现场后开 IRQ
+```asm
+// boot/aarch64/exception.S
+.macro HANDLE_EL0_SYNC
+    SAVE_REGS
+    msr     daifclr, #2          // 完整 trap frame 已保存，允许 timer IRQ 抢占
+    mov     x0, sp
+    bl      handle_el0_sync_exception
+    msr     daifset, #2          // 保护 RESTORE_REGS 到 eret 的恢复窗口
+    mov     x0, sp
+    bl      sched_check_and_yield_from_trap
+    b       .Lexception_return
+.endm
+```
+
+这只改变 EL0 任务陷入内核后的 C 处理阶段：IRQ 可以嵌套进入，但 `sched_check_and_yield_from_trap()` 会拒绝在“用户进程的 EL1 syscall 栈”上切换任务，避免任意 syscall 代码点产生大面积数据竞争。返回用户态前重新关 IRQ，并在 syscall 返回边界检查一次 `need_resched`，此时才允许切换。
+
+寄存器保存、寄存器恢复和首次进入 EL0 的 trampoline 仍保持 IRQ 关闭，避免半保存或半恢复状态被嵌套中断打断。
 
 ---
 
@@ -410,7 +429,9 @@ _start:
 ### AArch64（参考标准）
 - [ ] `exception_init()` 不调用 `msr daifclr, #2`
 - [ ] **内核线程**：`task_trampoline()`（C）入口调用 `arch_irq_enable()`（开中断，可被抢占）
-- [ ] **EL0 任务**：`task_trampoline_user()`（asm）**不**包含 `msr daifclr, #2`——中断留给 `eret`
+- [ ] **EL0 任务**：`HANDLE_EL0_SYNC` 在 `SAVE_REGS` 后 `msr daifclr, #2`，在返回路径前 `msr daifset, #2`，并在返回边界调用 `sched_check_and_yield_from_trap`
+- [ ] **EL0 任务**：AArch64 `sched_check_and_yield_from_trap` 不在用户进程的 EL1 syscall 栈上切换任务，只延迟到 syscall 返回边界
+- [ ] **EL0 任务**：`task_trampoline_user()`（asm）**不**包含 `msr daifclr, #2`——首次进入用户态的中断留给 `eret`
 - [ ] **EL0 任务**：`arch_fork_resume_user()`（asm）**不**包含 `msr daifclr, #2`——中断留给 `eret`
 - [ ] `arch_switch_to_user()` 设置 `SPSR_EL1 = 0x340`（DAIF.I=0），由 `eret` 在跨入 EL0 瞬间开中断
 - [ ] 异常向量表进入时硬件自动设置 `DAIF.I=1`；返回时 `eret` 按栈上 `SPSR` 忠实恢复

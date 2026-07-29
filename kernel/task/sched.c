@@ -349,6 +349,14 @@ sched_check_and_yield_from_trap(void *frame_ptr)
     trap_frame_t *frame = (trap_frame_t *)frame_ptr;
     if (frame && ((frame->spsr & 0xfUL) != 0)) {
         cpu_t *c = cpu_current();
+        /*
+         * EL0 syscall/page-fault handlers run on the task's kernel stack. With
+         * AArch64 IRQs enabled there, timer IRQs may nest, but switching away
+         * from that nested EL1 frame would interleave arbitrary syscall code
+         * before the syscall reaches a defined preemption boundary.
+         */
+        if (c->current_task && c->current_task->is_user_process)
+            return false;
         if (!c->current_task || !c->need_resched || !preemptible() ||
             c->preempt_schedule_depth != 0)
             return false;
