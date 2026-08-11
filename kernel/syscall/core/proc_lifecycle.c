@@ -262,6 +262,7 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
     child->euid            = parent->euid;
     child->gid             = parent->gid;
     child->egid            = parent->egid;
+    child->ctty_pty_idx    = parent->ctty_pty_idx;
     child->is_thread       = false;
     child->utime_ns        = 0;
     child->stime_ns        = 0;

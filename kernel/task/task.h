@@ -130,6 +130,7 @@ typedef struct task {
     uint64_t        sig_saved_blocked;   /* signal 投递前保存的 blocked_sigs            */
     uint32_t        pgid;                /* 进程组 ID                                   */
     uint32_t        sid;                 /* 会话 ID (session leader = sid == id)         */
+    int16_t         ctty_pty_idx;        /* controlling tty PTY index, -1 if detached    */
     uint64_t        sig_frame_sp;        /* sigframe 在用户栈上的起始地址（rt_sigreturn）*/
     sig_action_t    sig_actions[NSIG];   /* 每信号的 action（下标 0 对应信号 1）        */
 

@@ -79,10 +79,11 @@ void read_handler(uint64_t regs[6], task_t *current)
             return;
         } else if (obj->type == FDT_PTY) {
             int rc;
+            bool nonblock = (obj->flags & 04000) != 0;
             if (obj->pty.is_master)
-                rc = pty_master_read(obj->pty.pty_idx, buf, (size_t)count);
+                rc = pty_master_read(obj->pty.pty_idx, buf, (size_t)count, nonblock);
             else
-                rc = pty_slave_read(obj->pty.pty_idx, buf, (size_t)count);
+                rc = pty_slave_read(obj->pty.pty_idx, buf, (size_t)count, nonblock);
             regs[0] = rc >= 0 ? (uint64_t)rc : (uint64_t)(int64_t)rc;
             return;
         } else if (obj->type == FDT_PSEUDO) {
@@ -189,10 +190,11 @@ void write_handler(uint64_t regs[6], task_t *current)
             return;
         } else if (wobj->type == FDT_PTY) {
             int rc;
+            bool nonblock = (wobj->flags & 04000) != 0;
             if (wobj->pty.is_master)
-                rc = pty_master_write(wobj->pty.pty_idx, buf, (size_t)count);
+                rc = pty_master_write(wobj->pty.pty_idx, buf, (size_t)count, nonblock);
             else
-                rc = pty_slave_write(wobj->pty.pty_idx, buf, (size_t)count);
+                rc = pty_slave_write(wobj->pty.pty_idx, buf, (size_t)count, nonblock);
             regs[0] = rc >= 0 ? (uint64_t)rc : (uint64_t)(int64_t)rc;
             return;
         } else if (wobj->type == FDT_PSEUDO) {

@@ -378,6 +378,10 @@ void syscall_handler(trap_frame_t *frame)
     case LINUX_SYS_GETEGID:
     case LINUX_SYS_SETUID:
     case LINUX_SYS_SETGID:
+    case LINUX_SYS_SETRESUID:
+    case LINUX_SYS_GETRESUID:
+    case LINUX_SYS_SETRESGID:
+    case LINUX_SYS_GETRESGID:
     case LINUX_SYS_SETPGID:
     case LINUX_SYS_GETPGID:
     case LINUX_SYS_GETSID:

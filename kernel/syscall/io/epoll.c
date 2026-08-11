@@ -149,16 +149,15 @@ uint32_t fd_poll(task_t *task, int fd)
     if (fd < 0 || fd >= (int)TASK_MAX_FD)
         return 0;
 
-    if (fd == 0) {
+    fd_obj_t *obj = task_get_fd(task, fd);
+    if (!obj && fd == 0) {
         if (!uart_ringbuf_empty())
             revents |= EPOLLIN;
         revents |= EPOLLOUT;
         return revents;
     }
-    if (fd == 1 || fd == 2)
+    if (!obj && (fd == 1 || fd == 2))
         return EPOLLOUT;
-
-    fd_obj_t *obj = task_get_fd(task, fd);
     if (!obj)
         return 0;
 

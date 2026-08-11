@@ -95,7 +95,7 @@ int pty_alloc_master(task_t *task)
     obj->flags = 0;
     obj->pty.pty_idx = (int16_t)pi;
     obj->pty.is_master = true;
-    obj->path[0] = '\0';
+    memcpy(obj->path, "/dev/ptmx", sizeof("/dev/ptmx"));
 
     int fd = task_alloc_fd(task, pool);
     if (fd < 0) {
@@ -125,7 +125,17 @@ int pty_open_slave(task_t *task, int pty_idx)
     obj->flags = 0;
     obj->pty.pty_idx = (int16_t)pty_idx;
     obj->pty.is_master = false;
-    obj->path[0] = '\0';
+    obj->path[0] = '/'; obj->path[1] = 'd'; obj->path[2] = 'e'; obj->path[3] = 'v';
+    obj->path[4] = '/'; obj->path[5] = 'p'; obj->path[6] = 't'; obj->path[7] = 's';
+    obj->path[8] = '/';
+    if (pty_idx < 10) {
+        obj->path[9] = (char)('0' + pty_idx);
+        obj->path[10] = '\0';
+    } else {
+        obj->path[9] = (char)('0' + pty_idx / 10);
+        obj->path[10] = (char)('0' + pty_idx % 10);
+        obj->path[11] = '\0';
+    }
 
     int fd = task_alloc_fd(task, pool);
     if (fd < 0) {
@@ -138,13 +148,14 @@ int pty_open_slave(task_t *task, int pty_idx)
     return fd;
 }
 
-int pty_master_read(int pty_idx, void *buf, size_t count)
+int pty_master_read(int pty_idx, void *buf, size_t count, bool nonblock)
 {
     if (pty_idx < 0 || pty_idx >= PTY_MAX) return -9;
     pty_pair_t *p = &g_ptys[pty_idx];
 
     while (p->s2m.count == 0) {
         if (!p->slave_open) return 0;
+        if (nonblock) return -EAGAIN;
         p->blocked_master = task_current();
         task_block(NULL);
         p->blocked_master = NULL;
@@ -160,7 +171,7 @@ int pty_master_read(int pty_idx, void *buf, size_t count)
     return (int)n;
 }
 
-int pty_master_write(int pty_idx, const void *buf, size_t count)
+int pty_master_write(int pty_idx, const void *buf, size_t count, bool nonblock)
 {
     if (pty_idx < 0 || pty_idx >= PTY_MAX) return -9;
     pty_pair_t *p = &g_ptys[pty_idx];
@@ -188,6 +199,7 @@ int pty_master_write(int pty_idx, const void *buf, size_t count)
 
         if (total < count) {
             if (!p->slave_open) return total > 0 ? (int)total : -32;
+            if (nonblock) return total > 0 ? (int)total : -EAGAIN;
             p->blocked_master = task_current();
             task_block(NULL);
             p->blocked_master = NULL;
@@ -196,13 +208,14 @@ int pty_master_write(int pty_idx, const void *buf, size_t count)
     return (int)total;
 }
 
-int pty_slave_read(int pty_idx, void *buf, size_t count)
+int pty_slave_read(int pty_idx, void *buf, size_t count, bool nonblock)
 {
     if (pty_idx < 0 || pty_idx >= PTY_MAX) return -9;
     pty_pair_t *p = &g_ptys[pty_idx];
 
     while (p->m2s.count == 0) {
         if (!p->master_open) return 0;
+        if (nonblock) return -EAGAIN;
         p->blocked_slave = task_current();
         task_block(NULL);
         p->blocked_slave = NULL;
@@ -218,7 +231,7 @@ int pty_slave_read(int pty_idx, void *buf, size_t count)
     return (int)n;
 }
 
-int pty_slave_write(int pty_idx, const void *buf, size_t count)
+int pty_slave_write(int pty_idx, const void *buf, size_t count, bool nonblock)
 {
     if (pty_idx < 0 || pty_idx >= PTY_MAX) return -9;
     pty_pair_t *p = &g_ptys[pty_idx];
@@ -256,6 +269,7 @@ int pty_slave_write(int pty_idx, const void *buf, size_t count)
 
         if (si < count) {
             if (!p->master_open) return si > 0 ? (int)si : -32;
+            if (nonblock) return si > 0 ? (int)si : -EAGAIN;
             p->blocked_slave = task_current();
             task_block(NULL);
             p->blocked_slave = NULL;
@@ -382,11 +396,18 @@ int pty_ioctl(int pty_idx, bool is_master, uint32_t req, void *argp)
         return 0;
     case TIOCSCTTY: {
         task_t *cur = task_current();
+        if (cur && !is_master)
+            cur->ctty_pty_idx = (int16_t)pty_idx;
         if (cur && p->fg_pgid == 0)
             p->fg_pgid = cur->pgid;
         return 0;
     }
     case TIOCNOTTY:
+        {
+            task_t *cur = task_current();
+            if (cur)
+                cur->ctty_pty_idx = -1;
+        }
         return 0;
     default:
         return -25; /* ENOTTY */

@@ -4,6 +4,7 @@
  * 从 kernel/syscall/syscall.c 抽出。覆盖：
  *   getpid / getppid / gettid / set_tid_address
  *   getuid / geteuid / getgid / getegid / setuid / setgid
+ *   getresuid / getresgid / setresuid / setresgid
  *   getpgid / setpgid / getsid / setsid
  *   getgroups / setgroups
  *
@@ -78,6 +79,58 @@ void proc_ids_handler(uint64_t syscall_num, uint64_t regs[6], task_t *current)
         break;
     }
 
+    case LINUX_SYS_SETRESUID: {
+        uint32_t ruid = (uint32_t)regs[0];
+        uint32_t euid = (uint32_t)regs[1];
+        if (ruid != (uint32_t)-1)
+            current->uid = ruid;
+        if (euid != (uint32_t)-1)
+            current->euid = euid;
+        regs[0] = 0;
+        break;
+    }
+
+    case LINUX_SYS_GETRESUID: {
+        uint32_t *ruid = (uint32_t *)regs[0];
+        uint32_t *euid = (uint32_t *)regs[1];
+        uint32_t *suid = (uint32_t *)regs[2];
+        if (!ruid || !euid || !suid) {
+            regs[0] = (uint64_t)(int64_t)-EFAULT;
+            break;
+        }
+        *ruid = current->uid;
+        *euid = current->euid;
+        *suid = current->euid;
+        regs[0] = 0;
+        break;
+    }
+
+    case LINUX_SYS_SETRESGID: {
+        uint32_t rgid = (uint32_t)regs[0];
+        uint32_t egid = (uint32_t)regs[1];
+        if (rgid != (uint32_t)-1)
+            current->gid = rgid;
+        if (egid != (uint32_t)-1)
+            current->egid = egid;
+        regs[0] = 0;
+        break;
+    }
+
+    case LINUX_SYS_GETRESGID: {
+        uint32_t *rgid = (uint32_t *)regs[0];
+        uint32_t *egid = (uint32_t *)regs[1];
+        uint32_t *sgid = (uint32_t *)regs[2];
+        if (!rgid || !egid || !sgid) {
+            regs[0] = (uint64_t)(int64_t)-EFAULT;
+            break;
+        }
+        *rgid = current->gid;
+        *egid = current->egid;
+        *sgid = current->egid;
+        regs[0] = 0;
+        break;
+    }
+
     case LINUX_SYS_SETPGID: {
         int pid  = (int)(int32_t)regs[0];
         int pgid = (int)(int32_t)regs[1];
@@ -114,6 +167,7 @@ void proc_ids_handler(uint64_t syscall_num, uint64_t regs[6], task_t *current)
         }
         current->sid  = current->id;
         current->pgid = current->id;
+        current->ctty_pty_idx = -1;
         regs[0] = (uint64_t)current->id;
         break;
 

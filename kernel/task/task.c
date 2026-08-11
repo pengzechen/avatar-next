@@ -532,6 +532,7 @@ process_create_with_pgd(const char *name, uint64_t user_entry, uint64_t user_sp,
     task->sig_saved_blocked = 0;
     task->pgid              = task->id;   /* 默认：自成一组 */
     task->sid               = task->id;   /* 默认：自成会话 */
+    task->ctty_pty_idx      = -1;
     task->sig_frame_sp      = 0;
     for (int _si = 0; _si < NSIG; _si++) {
         task->sig_actions[_si].sa_handler  = SIG_DFL;
@@ -599,6 +600,7 @@ task_create(const char *name, void (*entry)(void *), void *arg, uint8_t priority
     task->euid        = 0;
     task->gid         = 0;
     task->egid        = 0;
+    task->ctty_pty_idx = -1;
     task->exit_status = 0;
     task->is_waiting  = false;
     task->wait_pid    = (uint32_t)-1;

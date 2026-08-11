@@ -1374,10 +1374,15 @@ $(ROOTFS_IMG): Makefile $(APPS_BINS) $(APPS_C_ELFS) $(LTP_BINS) $(EPOLL_PERF_BIN
 		echo "  [nginx installed → /bin/nginx]"; \
 	fi
 	@# 安装 Dropbear SSH 服务器
-	@DROPBEAR_MULTI=third_party/dropbear-2024.86/dropbearmulti; \
+	@DROPBEAR_MULTI=third_party/dropbear-2024.86/dropbearmulti-$(ARCH); \
+	DROPBEAR_STRIP=$(ARCH)-linux-musl-strip; \
+	if [ "$(ARCH)" = "riscv64" ]; then \
+		DROPBEAR_MULTI=third_party/dropbear-2024.86/dropbearmulti; \
+		DROPBEAR_STRIP=riscv64-linux-musl-strip; \
+	fi; \
 	if [ -f "$$DROPBEAR_MULTI" ]; then \
 		mkdir -p $(ROOTFS_STAGE)/usr/sbin $(ROOTFS_STAGE)/usr/bin $(ROOTFS_STAGE)/etc/dropbear; \
-		riscv64-linux-musl-strip -o $(ROOTFS_STAGE)/usr/sbin/dropbearmulti "$$DROPBEAR_MULTI"; \
+		$$DROPBEAR_STRIP -o $(ROOTFS_STAGE)/usr/sbin/dropbearmulti "$$DROPBEAR_MULTI"; \
 		chmod +x $(ROOTFS_STAGE)/usr/sbin/dropbearmulti; \
 		ln -sf dropbearmulti $(ROOTFS_STAGE)/usr/sbin/dropbear; \
 		ln -sf ../sbin/dropbearmulti $(ROOTFS_STAGE)/usr/bin/dropbearkey; \

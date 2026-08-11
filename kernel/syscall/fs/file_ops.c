@@ -36,6 +36,15 @@ void openat_handler(uint64_t regs[6], task_t *current)
     follow_symlinks(abspath, sizeof(abspath));
 
     /* ── PTY: /dev/ptmx 和 /dev/pts/N（不需要 fd pool 预分配）── */
+    if (strcmp(abspath, "/dev/tty") == 0) {
+        if (current->ctty_pty_idx < 0) {
+            regs[0] = (uint64_t)(int64_t)-ENXIO;
+            return;
+        }
+        int fd = pty_open_slave(current, current->ctty_pty_idx);
+        regs[0] = fd >= 0 ? (uint64_t)fd : (uint64_t)(int64_t)fd;
+        return;
+    }
     if (strcmp(abspath, "/dev/ptmx") == 0) {
         int fd = pty_alloc_master(current);
         regs[0] = fd >= 0 ? (uint64_t)fd : (uint64_t)(int64_t)fd;
@@ -257,14 +266,11 @@ void fcntl_handler(uint64_t regs[6], task_t *current)
         return;
     }
 
-    /* fd 0-2 (UART) 没有 pool entry 但合法 */
-    fd_obj_t *obj = NULL;
-    if (fd >= 3) {
-        obj = task_get_fd(current, fd);
-        if (!obj) {
-            regs[0] = (uint64_t)(int64_t)-EBADF;
-            return;
-        }
+    /* fd 0-2 默认是 UART，但也可能已被 dup2() 重定向到 PTY/pipe/socket。 */
+    fd_obj_t *obj = task_get_fd(current, fd);
+    if (!obj && fd >= 3) {
+        regs[0] = (uint64_t)(int64_t)-EBADF;
+        return;
     }
 
     #define F_DUPFD     0
@@ -315,7 +321,7 @@ void fcntl_handler(uint64_t regs[6], task_t *current)
             regs[0] = (uint64_t)(int64_t)-EBADF;
             return;
         }
-        if (fd <= 2) {
+        if (!obj) {
             /* dup UART fd: just pick a free fd >= minfd */
             for (int nf = minfd < 3 ? 3 : minfd; nf < (int)TASK_MAX_FD; nf++) {
                 if (current->fd_table[nf] == -1) {
@@ -342,8 +348,12 @@ void fcntl_handler(uint64_t regs[6], task_t *current)
             else
                 pipe_ref_read(new_idx);
         }
-        else if (obj->type == FDT_PTY && !obj->pty.is_master)
-            pty_ref_slave(obj->pty.pty_idx);
+        else if (obj->type == FDT_PTY) {
+            if (obj->pty.is_master)
+                pty_ref_master(obj->pty.pty_idx);
+            else
+                pty_ref_slave(obj->pty.pty_idx);
+        }
         for (int nf = minfd < 3 ? 3 : minfd; nf < (int)TASK_MAX_FD; nf++) {
             if (current->fd_table[nf] == -1) {
                 current->fd_table[nf] = (int16_t)new_idx;

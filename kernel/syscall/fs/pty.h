@@ -47,10 +47,10 @@ typedef struct {
 
 int  pty_alloc_master(struct task *task);
 int  pty_open_slave(struct task *task, int pty_idx);
-int  pty_master_read(int pty_idx, void *buf, size_t count);
-int  pty_master_write(int pty_idx, const void *buf, size_t count);
-int  pty_slave_read(int pty_idx, void *buf, size_t count);
-int  pty_slave_write(int pty_idx, const void *buf, size_t count);
+int  pty_master_read(int pty_idx, void *buf, size_t count, bool nonblock);
+int  pty_master_write(int pty_idx, const void *buf, size_t count, bool nonblock);
+int  pty_slave_read(int pty_idx, void *buf, size_t count, bool nonblock);
+int  pty_slave_write(int pty_idx, const void *buf, size_t count, bool nonblock);
 void pty_close_master(int pty_idx);
 void pty_close_slave(int pty_idx);
 void pty_ref_slave(int pty_idx);

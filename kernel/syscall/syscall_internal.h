@@ -68,6 +68,10 @@ typedef struct task task_t;
 #define LINUX_SYS_RT_SIGRETURN    139
 #define LINUX_SYS_SETGID          144
 #define LINUX_SYS_SETUID          146
+#define LINUX_SYS_SETRESUID       147
+#define LINUX_SYS_GETRESUID       148
+#define LINUX_SYS_SETRESGID       149
+#define LINUX_SYS_GETRESGID       150
 #define LINUX_SYS_SETPGID         154
 #define LINUX_SYS_GETPGID         155
 #define LINUX_SYS_GETSID          156
@@ -175,6 +179,7 @@ typedef struct task task_t;
 #define ESRCH                  3
 #define EBADF                  9
 #define EIO                    5
+#define ENXIO                  6
 #define EINVAL                22
 #define ENOENT                 2
 #define ENOMEM                12

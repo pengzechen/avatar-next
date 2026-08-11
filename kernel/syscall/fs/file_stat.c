@@ -13,6 +13,17 @@
 #include <ext4.h>
 #include <ext4_errno.h>
 
+static void fill_pty_stat(struct kernel_stat *st, int pty_idx, bool is_master)
+{
+    memset(st, 0, sizeof(*st));
+    st->st_dev = 5;
+    st->st_ino = (uint64_t)(is_master ? 128U : 256U + (uint32_t)pty_idx);
+    st->st_mode = 0020620;  /* S_IFCHR | 0620 */
+    st->st_nlink = 1;
+    st->st_rdev = is_master ? ((uint64_t)5 << 8) | 2 : ((uint64_t)136 << 8) | (uint32_t)pty_idx;
+    st->st_blksize = 4096;
+}
+
 void fstat_handler(uint64_t regs[6], task_t *current)
 {
     int fd = (int)regs[0];
@@ -30,6 +41,8 @@ void fstat_handler(uint64_t regs[6], task_t *current)
     if (!obj) { regs[0] = (uint64_t)(int64_t)-EBADF; return; }
     if (obj->type == FDT_PSEUDO) {
         pseudo_fill_stat(obj->pseudo.node_id, st);
+    } else if (obj->type == FDT_PTY) {
+        fill_pty_stat(st, obj->pty.pty_idx, obj->pty.is_master);
     } else {
         int rc = fill_stat_from_ext4(st, obj->path);
         if (rc < 0) { regs[0] = (uint64_t)(int64_t)rc; return; }
@@ -48,6 +61,8 @@ void newfstatat_handler(uint64_t regs[6], task_t *current)
         if (!obj) { regs[0] = (uint64_t)(int64_t)-EBADF; return; }
         if (obj->type == FDT_PSEUDO) {
             pseudo_fill_stat(obj->pseudo.node_id, st);
+        } else if (obj->type == FDT_PTY) {
+            fill_pty_stat(st, obj->pty.pty_idx, obj->pty.is_master);
         } else {
             int rc = fill_stat_from_ext4(st, obj->path);
             if (rc < 0) { regs[0] = (uint64_t)(int64_t)rc; return; }
@@ -62,6 +77,17 @@ void newfstatat_handler(uint64_t regs[6], task_t *current)
         return;
     }
     if (pseudo_stat_path(abspath, st) == 0) { regs[0] = 0; return; }
+    int pts_idx = pty_match_pts_path(abspath);
+    if (pts_idx >= 0) {
+        fill_pty_stat(st, pts_idx, false);
+        regs[0] = 0;
+        return;
+    }
+    if (strcmp(abspath, "/dev/ptmx") == 0) {
+        fill_pty_stat(st, 0, true);
+        regs[0] = 0;
+        return;
+    }
     /* AT_SYMLINK_NOFOLLOW = 0x100 */
     if (!(regs[3] & 0x100))
         follow_symlinks(abspath, sizeof(abspath));
