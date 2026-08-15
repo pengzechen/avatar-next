@@ -28,6 +28,10 @@
 #include "eth/cvitek_eth_bridge.h"
 #endif
 
+#if DRIVER_WIFI_AIC8800
+#include "wifi/aic8800_bridge.h"
+#endif
+
 #if ARCH_AARCH64
 #include "irq/irq.h"
 #include "aarch64/cpu.h"
@@ -205,9 +209,10 @@ void kernel_main(void)
         lua_run_phase(lua_L, "irqcore");   /* GICv3 (AArch64)     */
         KLOG_INFO(">>> phase: drivers\n");
         lua_run_phase(lua_L, "drivers");   /* timer init + enable  */
-    #if ARCH_RISCV64 && DRIVER_USB_DWC2
-        lua_dwc2_usb_dump_first_uvc_frame_base64();
-    #endif
+    /* USB/UVC capture dump is disabled while no USB device is attached. */
+    /* #if ARCH_RISCV64 && DRIVER_USB_DWC2 */
+    /*     lua_dwc2_usb_dump_first_uvc_frame_base64(); */
+    /* #endif */
     }
     KLOG_INFO("Lua platform phases (earlycon/irqcore/drivers) complete\n");
 
@@ -216,6 +221,7 @@ void kernel_main(void)
         lua_run_phase(lua_L, "fs");
         lua_run_phase(lua_L, "late");
         lua_platform_close(lua_L);
+        platform_conf_close();
         lua_L = NULL;
     }
 
@@ -245,12 +251,48 @@ void kernel_main(void)
     run_vmm_test();
 #endif
 
+#if !defined(RUN_VMM_TEST)
+#if DRIVER_ETH_VIRTIO || DRIVER_ETH_CVITEK
+    KLOG_INFO("Starting network polling task...\n");
+    uint64_t startup_task_irq_flags = arch_irq_save();
+    task_t *eth_task = task_create("net-poll", net_poll_task, NULL, 20);
+    if (eth_task)
+        KLOG_INFO("network task created: id=%u\n", eth_task->id);
+    else
+        KLOG_ERROR("Failed to create network task!\n");
+#endif
+
+    /* USB/UVC benchmark is disabled while no USB device is attached. */
+    /* #if DRIVER_USB_DWC2 */
+    /* { */
+    /*     task_t *bench = task_create("uvc-bench", uvc_bench_task, NULL, 10); */
+    /*     if (bench) */
+    /*         KLOG_INFO("uvc bench task created: id=%u\n", bench->id); */
+    /* } */
+    /* #endif */
+
+    /* SMP 检查完成，现在才启动 busybox 交互 shell */
+    KLOG_INFO("\n=== Launching busybox shell ===\n");
+#if !DRIVER_ETH_VIRTIO && !DRIVER_ETH_CVITEK
+    uint64_t startup_task_irq_flags = arch_irq_save();
+#endif
+    task_t *bb_task = task_create("busybox", demo_load_busybox, NULL, 5);
+    arch_irq_restore(startup_task_irq_flags);
+    if (bb_task)
+        KLOG_INFO("busybox loader task created: id=%u\n", bb_task->id);
+    else
+        KLOG_ERROR("Failed to create busybox loader task!\n");
+
+#if DRIVER_WIFI_AIC8800
+    KLOG_INFO("Starting AIC8800 Wi-Fi init task...\n");
+    aic8800_wifi_start_from_platform();
+#endif
+#endif
+
     /*
-     * Phase 3：在 task_init 之后、timer_set_tick_cb 之前拉起 AP。
-     * 此时 BSP 的 idle/任务池已就绪；AP 上 timer 中断会触发，但
-     * g_tick_cb 仍为 NULL，所以暂不驱动调度。一旦下面
-     * timer_set_tick_cb(sched_tick) 写入回调，BSP 和 AP 同时开始
-     * 抢占式调度。
+     * Phase 3：所有初始任务必须在开启抢占前创建完成。boot/main 执行流
+     * 不是普通 task；一旦 timer 调度启动，后续启动逻辑不应依赖它继续
+     * 运行，否则 busybox / wifi-init 可能互相阻塞导致另一个永远没创建。
      */
     cpu_bring_up_all();
 
@@ -264,43 +306,8 @@ void kernel_main(void)
 #endif
     KLOG_INFO("Preemptive scheduling enabled\n");
 
-    /* SMP 健康检查：抢占启用后立刻验证所有核 timer 都在 tick。
-     * 单核时此函数直接 return，不影响 SMP=1 默认路径。
-     * 注意：必须在 busybox 启动之前跑——busybox syscall 会长期占据某核并
-     * 关 IRQ，冲击其 timer tick 计数。 */
+    /* SMP 健康检查：抢占启用后立刻验证所有核 timer 都在 tick。 */
     cpu_smp_timer_test(3, 100);
-
-#if !defined(RUN_VMM_TEST)
-#if DRIVER_ETH_VIRTIO || DRIVER_ETH_CVITEK
-    KLOG_INFO("Starting network polling task...\n");
-    uint64_t startup_task_irq_flags = arch_irq_save();
-    task_t *eth_task = task_create("net-poll", net_poll_task, NULL, 20);
-    if (eth_task)
-        KLOG_INFO("network task created: id=%u\n", eth_task->id);
-    else
-        KLOG_ERROR("Failed to create network task!\n");
-#endif
-
-#if DRIVER_USB_DWC2
-    {
-        task_t *bench = task_create("uvc-bench", uvc_bench_task, NULL, 10);
-        if (bench)
-            KLOG_INFO("uvc bench task created: id=%u\n", bench->id);
-    }
-#endif
-
-    /* SMP 检查完成，现在才启动 busybox 交互 shell */
-    KLOG_INFO("\n=== Launching busybox shell ===\n");
-#if !DRIVER_ETH_VIRTIO && !DRIVER_ETH_CVITEK
-    uint64_t startup_task_irq_flags = arch_irq_save();
-#endif
-    task_t *bb_task = task_create("busybox", demo_load_busybox, NULL, 5);
-    arch_irq_restore(startup_task_irq_flags);
-    if (bb_task)
-        KLOG_INFO("busybox loader task created: id=%u\n", bb_task->id);
-    else
-        KLOG_ERROR("Failed to create busybox loader task!\n");
-#endif
 
     /* Phase 4a：多核线程分发自检。SMP=1 时也会跑（验证 round-robin
      * 自身不破坏单核）。失败仅 KLOG_ERROR，不 panic，避免影响后续

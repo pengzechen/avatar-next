@@ -1,0 +1,24 @@
+[package]
+name = "ax-crate-interface"
+version = "0.5.8"
+repository = "https://github.com/rcore-os/tgoskits"
+edition.workspace = true
+authors = ["Yuekai Jia <equation618@gmail.com>", "Su Mingxian <aarkegz@gmail.com>"]
+description = "Provides a way to define an interface (trait) in a crate, but can implement or use it in any crate."
+keywords = ["arceos", "api", "macro"]
+categories = ["development-tools::procedural-macro-helpers", "no-std"]
+license = "Apache-2.0"
+
+[dependencies]
+proc-macro2 = { workspace = true }
+quote = { workspace = true }
+syn = { workspace = true, features = ["full", "visit-mut"] }
+
+[features]
+default = []
+# Generate weak symbol functions for trait methods with default implementations.
+# Requires nightly Rust and `#![feature(linkage)]` in the crate that uses this.
+weak_default = []
+
+[lib]
+proc-macro = true

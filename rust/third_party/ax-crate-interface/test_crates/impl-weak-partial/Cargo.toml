@@ -1,0 +1,10 @@
+[package]
+name = "impl-weak-partial"
+version = "0.3.4"
+edition.workspace = true
+publish = false
+license = "Apache-2.0"
+
+[dependencies]
+ax-crate-interface.workspace = true
+define-weak-traits.workspace = true

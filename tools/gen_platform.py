@@ -150,6 +150,22 @@ def parse_lua_platform(path):
     sdmmc = _extract_block(text, 'sdmmc')
     conf['DEV_SDMMC_TYPE'] = _find_str(sdmmc, 'driver')
 
+    # sdio1 / wifi 块
+    sdio1 = _extract_block(text, 'sdio1')
+    conf['DEV_SDIO1_TYPE']        = _find_str(sdio1, 'driver')
+    conf['DEV_SDIO1_BASE']        = _find_num(sdio1, 'base', '0')
+    conf['DEV_SDIO1_IRQ']         = _find_num(sdio1, 'irq', '0')
+    conf['DEV_SDIO1_CRG']         = _find_num(sdio1, 'crg', '0')
+    conf['DEV_SDIO1_SYSCTRL']     = _find_num(sdio1, 'sysctrl', '0')
+    conf['DEV_SDIO1_RTCSYS_CTRL'] = _find_num(sdio1, 'rtcsys_ctrl', '0')
+    conf['DEV_SDIO1_RTCSYS_IO']   = _find_num(sdio1, 'rtcsys_io', '0')
+
+    wifi = _extract_block(text, 'wifi')
+    conf['DEV_WIFI_TYPE'] = _find_str(wifi, 'driver')
+    conf['DEV_WIFI_GPIOE']       = _find_num(wifi, 'gpioe', '0')
+    conf['DEV_WIFI_POWERON_PIN'] = _find_num(wifi, 'poweron_pin', '0')
+    conf['DEV_WIFI_WAKEUP_PIN']  = _find_num(wifi, 'wakeup_pin', '0')
+
     # usb 块
     usb = _extract_block(text, 'usb')
     conf['DEV_USB_TYPE']     = _find_str(usb, 'driver')
@@ -242,6 +258,17 @@ def write_platform_mk(conf, path):
         f"DEV_USB_BASE        := {conf.get('DEV_USB_BASE', '0')}\n",
         f"DEV_USB_PHY_BASE    := {conf.get('DEV_USB_PHY_BASE', '0')}\n",
         f"DEV_SDMMC_TYPE      := {conf.get('DEV_SDMMC_TYPE', '')}\n",
+        f"DEV_SDIO1_TYPE      := {conf.get('DEV_SDIO1_TYPE', '')}\n",
+        f"DEV_SDIO1_BASE      := {conf.get('DEV_SDIO1_BASE', '0')}\n",
+        f"DEV_SDIO1_IRQ       := {conf.get('DEV_SDIO1_IRQ', '0')}\n",
+        f"DEV_SDIO1_CRG       := {conf.get('DEV_SDIO1_CRG', '0')}\n",
+        f"DEV_SDIO1_SYSCTRL   := {conf.get('DEV_SDIO1_SYSCTRL', '0')}\n",
+        f"DEV_SDIO1_RTCSYS_CTRL := {conf.get('DEV_SDIO1_RTCSYS_CTRL', '0')}\n",
+        f"DEV_SDIO1_RTCSYS_IO := {conf.get('DEV_SDIO1_RTCSYS_IO', '0')}\n",
+        f"DEV_WIFI_TYPE       := {conf.get('DEV_WIFI_TYPE', '')}\n",
+        f"DEV_WIFI_GPIOE      := {conf.get('DEV_WIFI_GPIOE', '0')}\n",
+        f"DEV_WIFI_POWERON_PIN := {conf.get('DEV_WIFI_POWERON_PIN', '0')}\n",
+        f"DEV_WIFI_WAKEUP_PIN := {conf.get('DEV_WIFI_WAKEUP_PIN', '0')}\n",
         f"DEV_NPU_TYPE        := {conf.get('DEV_NPU_TYPE', '')}\n",
     ])
     write_if_changed(path, content)

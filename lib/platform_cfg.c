@@ -171,6 +171,11 @@ lua_State *platform_lua_state(void)
     return g_L;
 }
 
+void platform_conf_close(void)
+{
+    g_L = NULL;
+}
+
 /* ── 通用字段查询 ────────────────────────────────────────────────────── */
 
 uintptr_t platform_get_uintptr(const char *block, const char *key)

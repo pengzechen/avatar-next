@@ -456,6 +456,15 @@ CFLAGS  += -DDEVICE_UART_REG_SHIFT=$(DEV_UART_REG_SHIFT)
 CFLAGS  += -DDEVICE_ETH_BASE_RAW=$(DEV_ETH_BASE)
 CFLAGS  += -DDEVICE_USB_BASE_RAW=$(DEV_USB_BASE)
 CFLAGS  += -DDEVICE_USB_PHY_BASE_RAW=$(DEV_USB_PHY_BASE)
+CFLAGS  += -DDEVICE_SDIO1_BASE_RAW=$(DEV_SDIO1_BASE)
+CFLAGS  += -DDEVICE_SDIO1_IRQ=$(DEV_SDIO1_IRQ)
+CFLAGS  += -DDEVICE_SDIO1_CRG_RAW=$(DEV_SDIO1_CRG)
+CFLAGS  += -DDEVICE_SDIO1_SYSCTRL_RAW=$(DEV_SDIO1_SYSCTRL)
+CFLAGS  += -DDEVICE_SDIO1_RTCSYS_CTRL_RAW=$(DEV_SDIO1_RTCSYS_CTRL)
+CFLAGS  += -DDEVICE_SDIO1_RTCSYS_IO_RAW=$(DEV_SDIO1_RTCSYS_IO)
+CFLAGS  += -DDEVICE_WIFI_GPIOE_RAW=$(DEV_WIFI_GPIOE)
+CFLAGS  += -DDEVICE_WIFI_POWERON_PIN=$(DEV_WIFI_POWERON_PIN)
+CFLAGS  += -DDEVICE_WIFI_WAKEUP_PIN=$(DEV_WIFI_WAKEUP_PIN)
 
 # ─── §6  驱动选择 ────────────────────────────────────────────────────────────────
 # 所有驱动默认值来自 platform.lua → gen_platform.py → platform.mk。
@@ -598,6 +607,17 @@ ifneq ($(strip $(DRIVER_ETH_OBJS)),)
 endif
 ifneq ($(strip $(DRIVER_USB_OBJS)),)
 		DRIVER_OBJECTS += $(DRIVER_USB_OBJS)
+endif
+
+# Wi-Fi 驱动（由 platform.lua 的 wifi.driver 自动推导；也可命令行覆盖：WIFI=none / WIFI=aic8800）
+WIFI ?= $(DEV_WIFI_TYPE)
+ifeq ($(WIFI),aic8800)
+    ifneq ($(ARCH),riscv64)
+        $(error WIFI=aic8800 目前仅支持 ARCH=riscv64)
+    endif
+    CFLAGS             += -DDRIVER_WIFI_AIC8800=1
+    DRIVER_WIFI_OBJS   := $(BUILD_DIR)/drv_wifi/aic8800_bridge.o $(BUILD_DIR)/rust_glue.o $(BUILD_DIR)/libavatar_wifi.a
+    DRIVER_OBJECTS     += $(DRIVER_WIFI_OBJS)
 endif
 
 # ── §6e  辅助驱动（ION / SDMMC）────────────────────────────────────────────────
@@ -919,7 +939,7 @@ $(BUILD_DIR)/drv_%.o: driver/%.c | $(BUILD_DIR)
 
 # USB 驱动编译规则（Rust staticlib + C glue）
 $(BUILD_DIR)/libavatar_usb.a: | $(BUILD_DIR)
-	cd $(_RUST_DIR) && cargo build --release --target $(_RUST_TARGET)
+	cd $(_RUST_DIR) && MAKEFLAGS= cargo build --release --target $(_RUST_TARGET) -p avatar_usb
 	cp $(_RUST_DIR)/target/$(_RUST_TARGET)/release/libavatar_usb.a $@
 
 $(BUILD_DIR)/drv_usb_uvc_video_glue.o: driver/usb/uvc_video_glue.c | $(BUILD_DIR)
@@ -1129,8 +1149,15 @@ $(BUILD_DIR)/rust_glue.o: $(LIB_DIR)/rust_glue.c | $(BUILD_DIR)
 
 # Rust 静态库（仅 ETH=cvitek 时构建）
 $(BUILD_DIR)/libavatar_eth.a: | $(BUILD_DIR)
-	cd $(_RUST_DIR) && MAKEFLAGS= cargo build --release --target $(_RUST_TARGET)
+	cd $(_RUST_DIR) && MAKEFLAGS= cargo build --release --target $(_RUST_TARGET) -p avatar_eth
 	cp $(_RUST_DIR)/target/$(_RUST_TARGET)/release/libavatar_eth.a $@
+
+# Rust Wi-Fi 静态库（WIFI=aic8800）
+RUST_WIFI_DEPS := $(shell find $(_RUST_DIR)/avatar_wifi $(_RUST_DIR)/third_party/aic8800 $(_RUST_DIR)/third_party/sdhci-cv1800 $(_RUST_DIR)/third_party/sdio-host -type f \( -name '*.rs' -o -name 'Cargo.toml' -o -name 'build.rs' \) 2>/dev/null)
+
+$(BUILD_DIR)/libavatar_wifi.a: $(RUST_WIFI_DEPS) | $(BUILD_DIR)
+	cd $(_RUST_DIR) && MAKEFLAGS= cargo build --release --target $(_RUST_TARGET) -p avatar_wifi
+	cp $(_RUST_DIR)/target/$(_RUST_TARGET)/release/libavatar_wifi.a $@
 
 $(BUILD_DIR)/kernel_mm_mmu.o: $(VM_S_SRC) | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@

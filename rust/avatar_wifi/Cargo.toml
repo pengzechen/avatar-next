@@ -1,0 +1,15 @@
+[package]
+name = "avatar_wifi"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+kernel_support = { path = "../kernel_support" }
+aic8800 = { path = "../third_party/aic8800" }
+sdhci-cv1800 = { path = "../third_party/sdhci-cv1800" }
+sdio-host = { path = "../third_party/sdio-host" }
+rd-net = { path = "../third_party/rd-net" }
+log = { workspace = true }

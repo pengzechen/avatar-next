@@ -45,6 +45,7 @@ extern int        g_pmm_resv_count;
  * Lua VM 持续存活，供后续 platform_get_* 调用。
  */
 void platform_conf_scan(void);
+void platform_conf_close(void);
 
 /**
  * platform_get_uintptr / platform_get_uint

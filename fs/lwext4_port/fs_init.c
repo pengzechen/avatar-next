@@ -9,7 +9,12 @@
  */
 
 #include <ext4.h>
+#include <ext4_blockdev.h>
 #include <ext4_errno.h>
+#include <ext4_config.h>
+#include <ext4_misc.h>
+#include <ext4_super.h>
+#include <ext4_types.h>
 #include "klog.h"
 #include "fs_init.h"
 
@@ -23,6 +28,34 @@ extern struct ext4_blockdev *sdblk_get_bdev(void);
 #define ROOTFS_MP   "/"
 
 static struct ext4_mbr_bdevs g_mbr_bdevs;
+
+static void fs_log_ext4_features(struct ext4_blockdev *bdev)
+{
+    struct ext4_sblock sb;
+    int rc = ext4_block_init(bdev);
+    if (rc != EOK) {
+        KLOG_ERROR("[fs] ext4_block_init for diagnostics failed: %d\n", rc);
+        return;
+    }
+
+    rc = ext4_sb_read(bdev, &sb);
+    if (rc != EOK) {
+        KLOG_ERROR("[fs] ext4_sb_read for diagnostics failed: %d\n", rc);
+        ext4_block_fini(bdev);
+        return;
+    }
+
+    uint32_t fcom = ext4_get32(&sb, features_compatible);
+    uint32_t fincom = ext4_get32(&sb, features_incompatible);
+    uint32_t fro = ext4_get32(&sb, features_read_only);
+    KLOG_ERROR("[fs] superblock features: compat=0x%08x incompat=0x%08x ro=0x%08x\n",
+               fcom, fincom, fro);
+    KLOG_ERROR("[fs] unsupported features: incompat=0x%08x ro=0x%08x\n",
+               fincom & ~CONFIG_SUPPORTED_FINCOM,
+               fro & ~CONFIG_SUPPORTED_FRO_COM);
+
+    ext4_block_fini(bdev);
+}
 
 int fs_init(void)
 {
@@ -56,6 +89,7 @@ int fs_init(void)
     rc = ext4_mount(BDEV_NAME, ROOTFS_MP, false);
     if (rc != EOK) {
         KLOG_ERROR("[fs] ext4_mount failed: %d\n", rc);
+        fs_log_ext4_features(part);
         ext4_device_unregister(BDEV_NAME);
         return -rc;
     }

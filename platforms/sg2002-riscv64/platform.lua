@@ -78,6 +78,23 @@ platform = {
         top_base           = 0x03000000,   -- TOP 系统控制模块基址
         top_off_pwrsw_ctrl = 0x1F4,        -- sd_pwrsw_ctrl 寄存器偏移
     },
+
+    sdio1 = {
+        driver       = "cv1800",
+        base         = 0x04320000,
+        irq          = 38,
+        crg          = 0x03002000,
+        sysctrl      = 0x03000000,
+        rtcsys_ctrl  = 0x05025000,
+        rtcsys_io    = 0x05027000,
+    },
+
+    wifi = {
+        driver      = "aic8800",
+        gpioe       = 0x05021000,
+        poweron_pin = 2,
+        wakeup_pin  = 6,
+    },
 }
 
 -- 阶段顺序: earlycon → irqcore → drivers → fs → late
@@ -100,11 +117,12 @@ register_device("tpu0", {
     end,
 })
 
-register_device("usb0", {
-    drivers = function(self)
-        dwc2_usb.init()
-    end,
-})
+-- USB/UVC is temporarily disabled for bring-up without a USB device attached.
+-- register_device("usb0", {
+--     drivers = function(self)
+--         dwc2_usb.init()
+--     end,
+-- })
 
 if sdblk then
     register_device("sdmmc0", {
