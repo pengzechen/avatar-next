@@ -5,6 +5,8 @@
 #include "klog.h"
 #include "mm_vm.h"
 #include "mmio.h"
+#include "net/net.h"
+#include "net/netdev.h"
 #include "task/task.h"
 #include "timer/timer.h"
 #include "wifi_api.h"
@@ -39,6 +41,35 @@
 
 #define DW_GPIO_SWPORTA_DR  0x000U
 #define DW_GPIO_SWPORTA_DDR 0x004U
+
+static int aic8800_net_send(void *ctx, const uint8_t *frame, size_t len)
+{
+    (void)ctx;
+    return wifi_net_send(frame, len);
+}
+
+static int aic8800_net_recv(void *ctx, uint8_t *frame, size_t maxlen)
+{
+    (void)ctx;
+    return wifi_net_recv(frame, maxlen);
+}
+
+static void aic8800_register_netdev(void)
+{
+    static netdev_t dev;
+
+    dev.name = "wlan0";
+    dev.ctx = NULL;
+    dev.send = aic8800_net_send;
+    dev.recv = aic8800_net_recv;
+    wifi_net_mac(dev.mac);
+    netdev_register(&dev);
+}
+
+void wifi_net_rx_wake(void)
+{
+    net_poll_once();
+}
 
 int wifi_task_spawn(const char *name, void (*entry)(void *), void *arg, uint8_t priority)
 {
@@ -157,6 +188,8 @@ static void aic8800_wifi_init_task(void *arg)
         KLOG_ERROR("[wifi] SDIO1 probe failed rc=%d\n", rc);
         return;
     }
+
+    aic8800_register_netdev();
 
 #if ARCH_RISCV64
     if (DEVICE_SDIO1_IRQ != 0)

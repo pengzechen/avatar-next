@@ -52,12 +52,19 @@ err_t avatar_netif_init(struct netif *netif)
 
 void avatar_lwip_poll_rx(struct netif *netif)
 {
+    static unsigned rx_count;
     uint8_t frame[NETDEV_FRAME_MAX];
 
     for (;;) {
         int n = netdev_recv(frame, sizeof(frame));
         if (n <= 0)
             break;
+
+        rx_count++;
+        if (rx_count <= 16U || (rx_count % 32U) == 0U) {
+            uint16_t etype = n >= 14 ? ((uint16_t)frame[12] << 8) | frame[13] : 0U;
+            KLOG_INFO("[lwip] rx #%u len=%d etype=0x%04x\n", rx_count, n, etype);
+        }
 
         struct pbuf *p = pbuf_alloc(PBUF_RAW, (u16_t)n, PBUF_POOL);
         if (!p) {

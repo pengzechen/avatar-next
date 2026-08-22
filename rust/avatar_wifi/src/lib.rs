@@ -4,13 +4,17 @@ extern crate alloc;
 extern crate kernel_support;
 
 use alloc::boxed::Box;
-use core::{ffi::c_void, task::{Context, Poll, RawWaker, RawWakerVTable, Waker}};
+use core::{
+    ffi::c_void,
+    sync::atomic::{AtomicUsize, Ordering},
+    task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
+};
 
 use aic8800::{PollFn, SendPollFn, TimedOut, WifiRuntime};
-use rd_net::WifiControl;
-use sdio_host::SdioHost;
+use rd_net::{Interface, WifiControl};
 use sdhci_cv1800::hw_init::{sdio1_hw_init, Sdio1HwConfig};
 use sdhci_cv1800::SdhciDelay;
+use sdio_host::SdioHost;
 
 const AP_SSID: &[u8] = b"PicoClaw-Car";
 const AP_CHANNEL: u8 = 6;
@@ -19,12 +23,17 @@ unsafe extern "C" {
     fn timer_get_uptime_ms() -> u64;
     fn timer_spin(ticks: u32);
     fn task_yield();
+    fn wifi_net_rx_wake();
     fn wifi_task_spawn(
         name: *const u8,
         entry: extern "C" fn(*mut c_void),
         arg: *mut c_void,
         priority: u8,
     ) -> i32;
+}
+
+fn wake_c_net_poll() {
+    unsafe { wifi_net_rx_wake() };
 }
 
 fn ensure_logger() {
@@ -126,6 +135,10 @@ impl SdhciDelay for AvatarWifiRuntime {
 }
 
 static AVATAR_WIFI_RUNTIME: AvatarWifiRuntime = AvatarWifiRuntime;
+static WIFI_DEV_PTR: AtomicUsize = AtomicUsize::new(0);
+static WIFI_NET_RX_COUNT: AtomicUsize = AtomicUsize::new(0);
+static WIFI_NET_TX_COUNT: AtomicUsize = AtomicUsize::new(0);
+static WIFI_NET_RX_EMPTY_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn wifi_runtime_init() -> i32 {
@@ -191,7 +204,11 @@ pub unsafe extern "C" fn wifi_sdio1_probe(
     match host.init() {
         Ok(()) => {
             let (vid, did) = host.vendor_device_id();
-            log::info!("[wifi] SDIO card initialized: vendor=0x{:04x} device=0x{:04x}", vid, did);
+            log::info!(
+                "[wifi] SDIO card initialized: vendor=0x{:04x} device=0x{:04x}",
+                vid,
+                did
+            );
             host.prepare_first_data_xfer();
 
             let mut wifi = match aic8800::probe(host) {
@@ -209,7 +226,10 @@ pub unsafe extern "C" fn wifi_sdio1_probe(
             }
             log::info!("[wifi] SoftAP started, channel {}", AP_CHANNEL);
 
-            let _wifi = Box::leak(Box::new(wifi));
+            wifi.set_rx_wake(wake_c_net_poll);
+
+            let wifi = Box::leak(Box::new(wifi));
+            WIFI_DEV_PTR.store(wifi as *mut _ as usize, Ordering::Release);
             0
         }
         Err(e) => {
@@ -217,4 +237,80 @@ pub unsafe extern "C" fn wifi_sdio1_probe(
             -2
         }
     }
+}
+
+fn with_wifi<R>(f: impl FnOnce(&mut aic8800::fdrv::AicWifiNetDev) -> R) -> Option<R> {
+    let ptr = WIFI_DEV_PTR.load(Ordering::Acquire);
+    if ptr == 0 {
+        return None;
+    }
+    let wifi = unsafe { &mut *(ptr as *mut aic8800::fdrv::AicWifiNetDev) };
+    Some(f(wifi))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn wifi_net_send(frame: *const u8, len: usize) -> i32 {
+    if frame.is_null() || len == 0 {
+        return -1;
+    }
+    let data = unsafe { core::slice::from_raw_parts(frame, len) };
+    let rc = with_wifi(|wifi| match wifi.send_ethernet_frame(data) {
+        Ok(()) => {
+            let n = WIFI_NET_TX_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+            if n <= 8 || n % 32 == 0 {
+                let etype = if len >= 14 {
+                    u16::from_be_bytes([data[12], data[13]])
+                } else {
+                    0
+                };
+                log::info!("[wifi-net] tx #{} len={} etype=0x{:04x}", n, len, etype);
+            }
+            0
+        }
+        Err(_) => -1,
+    });
+    rc.unwrap_or(-1)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn wifi_net_recv(frame: *mut u8, maxlen: usize) -> i32 {
+    if frame.is_null() || maxlen == 0 {
+        return -1;
+    }
+    let rc = with_wifi(|wifi| {
+        let out = unsafe { core::slice::from_raw_parts_mut(frame, maxlen) };
+        match wifi.recv_ethernet_frame(out) {
+            Some(len) => {
+                let n = WIFI_NET_RX_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+                if n <= 16 || n % 32 == 0 {
+                    let etype = if len >= 14 {
+                        u16::from_be_bytes([out[12], out[13]])
+                    } else {
+                        0
+                    };
+                    log::info!("[wifi-net] rx #{} len={} etype=0x{:04x}", n, len, etype);
+                }
+                len as i32
+            }
+            None => {
+                let n = WIFI_NET_RX_EMPTY_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+                if n <= 8 || n.is_power_of_two() {
+                    log::info!("[wifi-net] rx empty #{}", n);
+                }
+                0
+            }
+        }
+    });
+    rc.unwrap_or(-1)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn wifi_net_mac(mac: *mut u8) {
+    if mac.is_null() {
+        return;
+    }
+    let _ = with_wifi(|wifi| {
+        let m = wifi.mac_address();
+        unsafe { core::ptr::copy_nonoverlapping(m.as_ptr(), mac, 6) };
+    });
 }

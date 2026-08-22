@@ -1,6 +1,7 @@
 #include "net/net.h"
 
 #include "klog.h"
+#include "net/dhcp_server.h"
 #include "net/tcp_echo.h"
 #include "task/task.h"
 
@@ -25,10 +26,12 @@ void net_init(void)
     ip4_addr_t ipaddr;
     ip4_addr_t netmask;
     ip4_addr_t gw;
+    ip4_addr_t lease;
 
-    IP4_ADDR(&ipaddr, 192, 168, 100, 2);
+    IP4_ADDR(&ipaddr, 192, 168, 7, 1);
     IP4_ADDR(&netmask, 255, 255, 255, 0);
-    IP4_ADDR(&gw, 192, 168, 100, 1);
+    IP4_ADDR(&gw, 192, 168, 7, 1);
+    IP4_ADDR(&lease, 192, 168, 7, 2);
 
     lwip_init();
 
@@ -43,7 +46,8 @@ void net_init(void)
     netif_set_link_up(&g_lwip_netif);
     g_net_ready = 1;
 
-    KLOG_INFO("[net] IPv4 addr=192.168.100.2 mask=255.255.255.0 gw=192.168.100.1\n");
+    KLOG_INFO("[net] IPv4 addr=192.168.7.1 mask=255.255.255.0 gw=192.168.7.1\n");
+    dhcp_server_init(&ipaddr, &netmask, &lease);
     tcp_echo_init();
 #if DRIVER_USB_DWC2
     webcam_httpd_init();
@@ -54,8 +58,19 @@ void net_init(void)
 #endif
 }
 
+void net_poll_once(void)
+{
+    if (!g_net_ready)
+        return;
+
+    avatar_lwip_poll_rx(&g_lwip_netif);
+    sys_check_timeouts();
+}
+
 void net_poll_task(void *arg)
 {
+    static unsigned poll_count;
+
     (void)arg;
 
     if (!g_net_ready) {
@@ -65,8 +80,10 @@ void net_poll_task(void *arg)
 
     KLOG_INFO("[net] poll task started\n");
     for (;;) {
-        avatar_lwip_poll_rx(&g_lwip_netif);
-        sys_check_timeouts();
+        poll_count++;
+        if (poll_count <= 8U || (poll_count & (poll_count - 1U)) == 0U)
+            KLOG_INFO("[net] poll alive #%u\n", poll_count);
+        net_poll_once();
         task_yield();
     }
 }

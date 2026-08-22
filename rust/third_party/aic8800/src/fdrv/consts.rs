@@ -336,11 +336,12 @@ pub const NXMAC_ACCEPT_BA_BIT: u32 = 1 << 17;
 /// 含 MY_UNICAST/OTHER_MGMT/DATA/MULTICAST/BA 等接收必需位。
 pub const STA_MODE_FILTER_DEFAULT: u32 = 0x1502_868C;
 
-/// AP 模式过滤器：在已验证的 STA filter 基础上，叠加 AP 接客所需的
-/// ProbeReq(8) + AllBeacon(13) + OtherBSSID(4)。直接派生而非手拼，
-/// 确保 Auth 帧依赖的 MY_UNICAST(7)/OTHER_MGMT(15) 一定在位。
-/// = 0x1502A79C。对齐 vendor AP set_filter(FIF_PROBE_REQ|FIF_OTHER_BSS|...)。
-pub const AP_MODE_FILTER_DEFAULT: u32 = STA_MODE_FILTER_DEFAULT
-    | NXMAC_ACCEPT_PROBE_REQ_BIT
-    | NXMAC_ACCEPT_ALL_BEACON_BIT
-    | NXMAC_ACCEPT_OTHER_BSSID_BIT;
+/// AP 模式过滤器：在已验证的 STA filter 基础上，只叠加 AP 接客所需的 ProbeReq(8)，
+/// 并显式关闭 Beacon/AllBeacon/OtherBSSID。STA filter 自带 Beacon 位，若不清掉，
+/// SoftAP 运行时周围 AP 的 beacon 会以 KB 级聚合包持续灌入 RX FIFO，拖慢
+/// Auth/Assoc/ME_STA_ADD 流程，手机侧表现为关联超时或“拒绝连接”。
+pub const AP_MODE_FILTER_DEFAULT: u32 = (STA_MODE_FILTER_DEFAULT
+    & !NXMAC_ACCEPT_BEACON_BIT
+    & !NXMAC_ACCEPT_ALL_BEACON_BIT
+    & !NXMAC_ACCEPT_OTHER_BSSID_BIT)
+    | NXMAC_ACCEPT_PROBE_REQ_BIT;

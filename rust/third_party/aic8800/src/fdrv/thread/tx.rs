@@ -4,7 +4,7 @@ use core::{sync::atomic::Ordering, task::Poll};
 use log;
 
 use crate::{
-    common::{SDIO_TYPE_DATA, crc8_ponl_107},
+    common::{crc8_ponl_107, SDIO_TYPE_DATA},
     fdrv::{
         consts::{
             DATA_FLOW_CTRL_THRESH, MAX_TX_QUEUE_LEN, SDIOWIFI_FUNC_BLOCKSIZE, TAIL_LEN,
@@ -44,12 +44,10 @@ fn pad_cmd_frame(cmd: &mut Vec<u8>) -> usize {
 /// 启动 wifi-tx 线程
 pub fn start(bus: Arc<WifiBus>) {
     log::debug!("[wifi-tx] thread starting");
-    // TX poll kicker 仅 DC/DW 启用:它兜底 PollSet 无 sticky 导致的唤醒丢失,是
-    // DC 双管道 + 控制端口对账场景下的需要。D80/8801 走 upstream/dev 的纯事件
-    // 驱动路径,不启动 kicker,避免额外周期任务干扰已验证的调度。
-    if bus.transport.is_dual_pipe() {
-        start_tx_poll_kicker(bus.clone());
-    }
+    // TX poll kicker 兜底 PollSet 无 sticky 导致的唤醒丢失。AP 模式下 Auth/Assoc
+    // Response 和 ME_STA_ADD 都依赖 TX 及时运行，任何一次丢 wake 都会表现为手机关联
+    // 超时/拒绝连接；只在确有 pending work 时唤醒，空闲时不会额外碰 SDIO。
+    start_tx_poll_kicker(bus.clone());
     crate::runtime::runtime().spawn_poll_task(
         "wifi-tx",
         alloc::boxed::Box::new(move |cx| {
@@ -246,7 +244,14 @@ fn process_data_tx(bus: &WifiBus) -> bool {
             break;
         }
 
-        if bus.cmd.pending_flag.load(Ordering::Acquire) {
+        let next_is_mgmt = bus
+            .tx
+            .queue
+            .lock()
+            .front()
+            .map(|frame| frame.is_mgmt)
+            .unwrap_or(false);
+        if bus.cmd.pending_flag.load(Ordering::Acquire) && !next_is_mgmt {
             break;
         }
 
@@ -511,7 +516,7 @@ fn build_mgmt_frame(
         // hostid [4..8]: Auth(FC=0xb0) 不在需要 CFM 的列表,vendor 填 0
         hd[4..8].copy_from_slice(&0u32.to_le_bytes());
         // eth_dest/eth_src/ethertype 对管理帧无意义，置 0
-        hd[20..22].copy_from_slice(&0u16.to_le_bytes()); // ethertype = 0
+        hd[20..22].copy_from_slice(&0u16.to_le_bytes());
         // ac:DC/DW 实测需把 host 注入的管理帧路由到 VO 硬件队列(=3),ac=0 会落到
         // BK 队列导致 AP 注入的管理帧不被发出。8801/D80 沿用 vendor 的 ac=0(BK),
         // 与 upstream/dev 一致,避免回归。
@@ -547,13 +552,19 @@ fn tx_process(bus: &WifiBus) -> bool {
         );
     }
 
-    // Step 1: CMD 优先发送
+    // Step 1: 管理帧优先发送。AP 关联阶段 Assoc Response 已入队时，不能让随后发起的
+    // ME_SET_CONTROL_PORT_REQ 抢在它前面，否则手机可能在收到关联响应前超时断开。
+    if bus.tx.pktcnt.load(Ordering::Acquire) > 0 && process_data_tx(bus) {
+        did_work = true;
+    }
+
+    // Step 2: CMD 发送
     if process_cmd_tx(bus) {
         did_work = true;
     }
 
-    // Step 2: DATA 批量发送
-    if process_data_tx(bus) {
+    // Step 3: 如果 CMD 发送期间又入队了数据/管理帧，继续处理一轮。
+    if bus.tx.pktcnt.load(Ordering::Acquire) > 0 && process_data_tx(bus) {
         did_work = true;
     }
 

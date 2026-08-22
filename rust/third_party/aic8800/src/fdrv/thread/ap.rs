@@ -143,7 +143,14 @@ fn handle_assoc_req(bus: &Arc<WifiBus>, mpdu: &[u8]) {
         let idx = match send_me_sta_add_req(bus, &sta_mac, &rates, aid, vif_idx, 0) {
             Ok(idx) => idx,
             Err(e) => {
-                log::warn!("[wifi-ap] ME_STA_ADD failed: {:?}", e);
+                log::warn!(
+                    "[wifi-ap] ME_STA_ADD failed: sta={:02x?} vif={} aid={} rates={:02x?}: {:?}",
+                    sta_mac,
+                    vif_idx,
+                    aid,
+                    rates,
+                    e
+                );
                 return;
             }
         };

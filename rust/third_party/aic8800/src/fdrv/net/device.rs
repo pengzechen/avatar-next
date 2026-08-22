@@ -82,6 +82,17 @@ impl AicWifiNetDev {
         self.link_policy = Some(policy);
         self
     }
+
+    pub fn send_ethernet_frame(&mut self, frame: &[u8]) -> Result<(), NetError> {
+        tx::enqueue_data_frame(&self.bus, frame.to_vec()).map_err(|_| NetError::Retry)
+    }
+
+    pub fn recv_ethernet_frame(&mut self, out: &mut [u8]) -> Option<usize> {
+        let frame = self.bus.rx.data_queue.lock().pop_front()?;
+        let len = core::cmp::min(frame.len(), out.len());
+        out[..len].copy_from_slice(&frame[..len]);
+        Some(len)
+    }
 }
 
 impl DriverGeneric for AicWifiNetDev {
