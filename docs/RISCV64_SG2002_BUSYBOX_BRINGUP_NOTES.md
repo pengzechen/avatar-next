@@ -1,19 +1,19 @@
 # RISC-V64 SG2002 Busybox Bring-up 坑点记录
 
-本文记录 SG2002 上用 ramfs/rootfs 启动 busybox 过程中踩到的关键坑点。目标是保留能解释问题根因的事实，避免后续为了“看起来像 QEMU”而破坏真机路径。
+本文记录 SG2002 上启动 busybox 过程中踩到的关键坑点。目标是保留能解释问题根因的事实，避免后续为了“看起来像 QEMU”而破坏真机路径。
 
 ## 1. 平台配置和 rootfs 地址
 
-SG2002 当前使用 ramblk/rootfs 路径，rootfs 物理地址为 `0x89000000`，大小 `0x04000000`。SDMMC 暂时关闭，避免在 busybox bring-up 阶段把问题混到 SD 卡驱动里。
+SG2002 真机固定使用 SD 卡 rootfs，内核构建时会自动启用 `DRIVER_SDBLK_SG2002`，不再支持用 `SDMMC=none` 切回 ramblk 路径。
 
 检查点：
 
 ```bash
-make PLATFORM=sg2002-riscv64 ETH=none build/kernel_riscv64.bin LOG=info -j4
-grep -E '^(MEM_PLATFORM_DEFINE|MEM_ROOTFS_BASE|MEM_ROOTFS_SIZE|DEV_TPU_TYPE|DEV_SDMMC_TYPE)' build/platform.mk
+make PLATFORM=sg2002-riscv64 build/kernel_riscv64.bin LOG=info -j4
+grep -E '^(MEM_PLATFORM_DEFINE|MEM_ROOTFS_BASE|MEM_ROOTFS_SIZE|DEV_TPU_TYPE)' build/platform.mk
 ```
 
-期望看到 SG2002 平台、rootfs base 为 `0x89000000`，SDMMC 为 `none`。
+期望看到 SG2002 平台、rootfs base 为 `0x89000000`。
 
 ## 2. SG2002 PTE 高位属性必须只在 SG2002 启用
 

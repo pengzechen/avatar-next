@@ -18,18 +18,18 @@ Claude 会自动读取这个文件来了解项目上下文。
 
 ```bash
 # 基本编译
-make ARCH=aarch64
-make ARCH=riscv64
-make ARCH=x86_64
+make PLATFORM=qemu-virt-aarch64
+make PLATFORM=qemu-virt-riscv64
+make PLATFORM=qemu-virt-x86_64
 
 # 调试版本（日志+断言）
-make ARCH=aarch64 LOG=debug ASSERT=panic
+make PLATFORM=qemu-virt-aarch64 LOG=debug ASSERT=panic
 
 # 发布版本（零开销）
-make ARCH=aarch64 LOG=none ASSERT=off
+make PLATFORM=qemu-virt-aarch64 LOG=none ASSERT=off
 
 # 清理
-make ARCH=aarch64 clean
+make PLATFORM=qemu-virt-aarch64 clean
 
 # 帮助
 make help
@@ -260,10 +260,10 @@ void platform_panic(void);
 
 启动带文件系统内核
 # 1. 编译内核
-make ARCH=x86_64 kernel
+make PLATFORM=qemu-virt-x86_64 kernel
 
 # 2. 创建 ext4 rootfs 镜像（需要 Host 安装 e2fsprogs）
-make ARCH=x86_64 rootfs
+make PLATFORM=qemu-virt-x86_64 rootfs
 
 # 3. 向镜像写入内容（可选）
 sudo mount -o loop build/rootfs.img /mnt/tmp
@@ -272,4 +272,4 @@ sudo echo "Avatar OS" | sudo tee /mnt/tmp/etc/hostname
 sudo umount /mnt/tmp
 
 # 4. 启动 QEMU（自动用 -device loader 加载镜像到对应物理地址）
-make ARCH=x86_64 run-fs
+make PLATFORM=qemu-virt-x86_64 run-fs

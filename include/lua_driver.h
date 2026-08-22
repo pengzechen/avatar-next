@@ -56,12 +56,4 @@ int lua_selftest(lua_State *L);
  */
 lua_State *platform_lua_state(void);
 
-/**
- * lua_dwc2_usb_dump_first_uvc_frame_base64() — Capture the first UVC frame
- * cached by the DWC2 Lua driver and dump it as base64 to the console.
- *
- * Returns 0 on success, negative on failure or when USB support is disabled.
- */
-int lua_dwc2_usb_dump_first_uvc_frame_base64(void);
-
 #endif /* LUA_DRIVER_H */

@@ -3,9 +3,6 @@
 #include "klog.h"
 #include "string.h"
 #include "arg.h"
-#if DRIVER_USB_DWC2
-#include "usb/uvc_video.h"
-#endif
 #include "timer/timer.h"
 
 #include "lwip/tcp.h"
@@ -44,11 +41,7 @@ static int webcam_grab_frame(void)
         return -5;
     }
 
-#if DRIVER_USB_DWC2
-    int n = uvc_video_read_frame(g_frame_buf, FRAME_BUF_SIZE);
-#else
     int n = -1;
-#endif
     g_last_capture_ms = now;
     if (n > 0) {
         g_cached_len = (uint32_t)n;

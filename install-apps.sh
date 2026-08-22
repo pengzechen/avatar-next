@@ -97,7 +97,7 @@ fi
 
 if [ "$INSTALLED" -eq 0 ]; then
     echo "  Warning: No app artifacts found in build/"
-    echo "  Please run: make ARCH=$ARCH  first"
+    echo "  Please run: make PLATFORM=qemu-virt-$ARCH first"
 fi
 
 # ── 构建 ext4 镜像（无需 mount / sudo）─────────────────────────────
@@ -115,5 +115,5 @@ echo " Installation complete!"
 echo " $ROOTFS_IMG"
 echo "=================================="
 echo ""
-echo "Now run: make ARCH=$ARCH PLATFORM=qemu run-fs"
+echo "Now run: make PLATFORM=qemu-virt-$ARCH run-fs"
 echo ""

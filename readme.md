@@ -58,7 +58,7 @@ sudo apt install gcc-riscv64-linux-gnu make qemu-system-misc
 #### RISC-V 64
 ```bash
 # 首次：编译内核 + 创建 rootfs（仅需一次，镜像保存为 build/rootfs-riscv64.img）
-make ARCH=riscv64 rootfs
+make PLATFORM=qemu-virt-riscv64 rootfs
 
 # 启动 QEMU
 make PLATFORM=qemu-virt-riscv64 run-net LOG=info -j4 QEMU_NET_FLAGS="-netdev tap,id=net0,ifname=tap0,script=no,downscript=no -device virtio-net-device,netdev=net0,mac=52:54:00:12:34:56"
@@ -67,19 +67,19 @@ make PLATFORM=qemu-virt-riscv64 run-net LOG=info -j4 QEMU_NET_FLAGS="-netdev tap
 #### AArch64
 ```bash
 # 首次：编译内核 + 创建 rootfs（镜像保存为 build/rootfs-aarch64.img）
-make ARCH=aarch64 rootfs
+make PLATFORM=qemu-virt-aarch64 rootfs
 
 # 启动 QEMU
-make ARCH=aarch64 run-fs LOG=info -j4
+make PLATFORM=qemu-virt-aarch64 run-fs LOG=info -j4
 ```
 
 #### x86_64
 ```bash
 # 首次：编译内核 + 创建 rootfs（镜像保存为 build/rootfs-x86_64.img）
-make ARCH=x86_64 rootfs
+make PLATFORM=qemu-virt-x86_64 rootfs
 
 # 启动 QEMU
-make ARCH=x86_64 run-fs LOG=info -j4
+make PLATFORM=qemu-virt-x86_64 run-fs LOG=info -j4
 ```
 
 > 每个架构的 rootfs 镜像独立存储，**切换架构无需 `make clean`**。  
@@ -87,8 +87,8 @@ make ARCH=x86_64 run-fs LOG=info -j4
 > 如需手动重建 rootfs（例如替换 busybox），可单独运行：
 > ```bash
 > # 方式一：通过 make（推荐）
-> make ARCH=riscv64 rootfs
-> # 方式二：通过脚本（需先 make ARCH=riscv64 编译内核和 apps）
+> make PLATFORM=qemu-virt-riscv64 rootfs
+> # 方式二：通过脚本（需先 make PLATFORM=qemu-virt-riscv64 编译内核和 apps）
 > ./install-apps.sh riscv64
 > ```
 
@@ -100,17 +100,17 @@ make ARCH=x86_64 run-fs LOG=info -j4
 # pthread 测试（动态链接 musl，含锁/无锁竞争对比）
 # 前置：运行 bash apps/c/build.sh 生成 imgs/rootfs-<arch>.img
 bash apps/c/build.sh
-make ARCH=riscv64 test-pthread LOG=warn    # QEMU 启动后执行 /bin/pthread_test
-make ARCH=aarch64 test-pthread LOG=warn
-make ARCH=x86_64  test-pthread LOG=warn
+make PLATFORM=qemu-virt-riscv64 test-pthread LOG=warn    # QEMU 启动后执行 /bin/pthread_test
+make PLATFORM=qemu-virt-aarch64 test-pthread LOG=warn
+make PLATFORM=qemu-virt-x86_64  test-pthread LOG=warn
 
 # mutex 测试（用户态 futex 自实现 umutex_t + rmutex_t）
-make ARCH=riscv64 test-mutex LOG=warn      # QEMU 启动后执行 /bin/mutex_test
+make PLATFORM=qemu-virt-riscv64 test-mutex LOG=warn      # QEMU 启动后执行 /bin/mutex_test
 
 # VMM 三线程上下文切换测试（无需 rootfs）
-make ARCH=aarch64 test-vmm LOG=info
-make ARCH=riscv64 test-vmm LOG=info
-make ARCH=x86_64  test-vmm LOG=info
+make PLATFORM=qemu-virt-aarch64 test-vmm LOG=info
+make PLATFORM=qemu-virt-riscv64 test-vmm LOG=info
+make PLATFORM=qemu-virt-x86_64  test-vmm LOG=info
 ```
 
 > `test-pthread` 自动将 `imgs/rootfs-$(ARCH).img` 复制到 `build/`，无需手动操作。  
@@ -120,16 +120,16 @@ make ARCH=x86_64  test-vmm LOG=info
 
 ```bash
 # 调试版本（启用日志和断言）
-make ARCH=aarch64 LOG=debug ASSERT=panic
+make PLATFORM=qemu-virt-aarch64 LOG=debug ASSERT=panic
 
 # 发布版本（零开销）
-make ARCH=aarch64 LOG=none ASSERT=off
+make PLATFORM=qemu-virt-aarch64 LOG=none ASSERT=off
 
 # 仅编译内核
-make ARCH=aarch64 kernel
+make PLATFORM=qemu-virt-aarch64 kernel
 
 # 清理构建
-make ARCH=aarch64 clean
+make PLATFORM=qemu-virt-aarch64 clean
 
 # 查看帮助
 make help
@@ -263,9 +263,9 @@ while (1) { task_yield(); /* wfe/hlt/wfi */ }
 
 | 命令 | 启动模式 |
 |------|----------|
-| `make ARCH=xxx run-fs` | busybox shell（默认）|
-| `make ARCH=xxx test-pthread` | busybox shell + pthread_test rootfs |
-| `make ARCH=xxx test-vmm` | VMM 三线程切换测试 |
+| `make PLATFORM=xxx run-fs` | busybox shell（默认）|
+| `make PLATFORM=xxx test-pthread` | busybox shell + pthread_test rootfs |
+| `make PLATFORM=xxx test-vmm` | VMM 三线程切换测试 |
 
 ### 设计原则
 
@@ -337,7 +337,6 @@ KLOG_MODULE_DEBUG(LOG_MODULE_UART, "UART init");
 - [架构平台配置](docs/ARCH_PLATFORM_PROFILE_GUIDE.md) - 多架构多平台支持
 - [AArch64 NEON](docs/arch/aarch64/NEON_USAGE.md) - NEON 优化
 - [RISC-V64 SG2002 Busybox Bring-up 坑点](docs/RISCV64_SG2002_BUSYBOX_BRINGUP_NOTES.md) - SG2002 页表、trap、UART 和平台切换注意事项
-- [SG2002 USB/UVC Bring-up](docs/SG2002_USB_UVC_BRINGUP.md) - DWC2 Host、UVC 枚举和抓帧路径坑点
 
 ### 开发指南
 - [Busybox 编译](docs/BUILD_BUSYBOX.md) - Busybox 交叉编译指南

@@ -24,12 +24,6 @@
 
 #if DRIVER_ETH_VIRTIO
 #include "eth/virtio_net.h"
-#elif DRIVER_ETH_CVITEK
-#include "eth/cvitek_eth_bridge.h"
-#endif
-
-#if DRIVER_WIFI_AIC8800
-#include "wifi/aic8800_bridge.h"
 #endif
 
 #if ARCH_AARCH64
@@ -48,49 +42,6 @@
 
 extern void run_vmm_test(void);  /* tests/vmm_test.c */
 extern void kmem_test(void);      /* kernel/mm/aarch64/vmm.c */
-
-#if DRIVER_USB_DWC2
-#include "usb/uvc_video.h"
-#include "usb_api.h"
-
-#define UVC_BENCH_BUF_SIZE (512U * 1024U)
-
-static void uvc_bench_task(void *arg)
-{
-    (void)arg;
-    KLOG_INFO("[uvc-bench] starting capture benchmark...\n");
-
-    static uint8_t bench_buf[512 * 1024] __attribute__((aligned(256)));
-    uint32_t ok = 0, fail = 0;
-    uint64_t t0 = timer_get_uptime_ms();
-
-    for (int i = 0; i < 20; i++) {
-        uint64_t ts = timer_get_uptime_ms();
-        int n = uvc_video_read_frame(bench_buf, sizeof(bench_buf));
-        uint64_t dt = timer_get_uptime_ms() - ts;
-        if (n > 0) {
-            ok++;
-            KLOG_INFO("[uvc-bench] frame %u: %d bytes, %llu ms\n",
-                      ok, n, (unsigned long long)dt);
-        } else {
-            fail++;
-            KLOG_WARN("[uvc-bench] frame %u: FAILED rc=%d in %llu ms\n",
-                      ok + fail, n, (unsigned long long)dt);
-        }
-    }
-
-    uint64_t total_ms = timer_get_uptime_ms() - t0;
-    KLOG_INFO("[uvc-bench] done: %u ok, %u fail, %llu ms total",
-              ok, fail, (unsigned long long)total_ms);
-    if (ok > 0 && total_ms > 0)
-        KLOG_INFO(", %llu.%llu fps\n",
-                  (unsigned long long)(ok * 1000 / total_ms),
-                  (unsigned long long)((ok * 10000 / total_ms) % 10));
-    KLOG_INFO("\n");
-    task_exit();
-}
-#endif
-
 
 /*
  * demo_load_busybox - 从文件系统加载并执行 busybox
@@ -209,10 +160,6 @@ void kernel_main(void)
         lua_run_phase(lua_L, "irqcore");   /* GICv3 (AArch64)     */
         KLOG_INFO(">>> phase: drivers\n");
         lua_run_phase(lua_L, "drivers");   /* timer init + enable  */
-    /* USB/UVC capture dump is disabled while no USB device is attached. */
-    /* #if ARCH_RISCV64 && DRIVER_USB_DWC2 */
-    /*     lua_dwc2_usb_dump_first_uvc_frame_base64(); */
-    /* #endif */
     }
     KLOG_INFO("Lua platform phases (earlycon/irqcore/drivers) complete\n");
 
@@ -235,10 +182,6 @@ void kernel_main(void)
     KLOG_INFO("Initializing virtio ethernet driver...\n");
     virtio_net_init_from_platform();
     net_init();
-#elif DRIVER_ETH_CVITEK
-    KLOG_INFO("Initializing cvitek ethernet driver...\n");
-    cvitek_eth_init_from_platform();
-    net_init();
 #endif
 
     /* ── 选择启动模式 ────────────────────────────────────
@@ -252,7 +195,7 @@ void kernel_main(void)
 #endif
 
 #if !defined(RUN_VMM_TEST)
-#if DRIVER_ETH_VIRTIO || DRIVER_ETH_CVITEK
+#if DRIVER_ETH_VIRTIO
     KLOG_INFO("Starting network polling task...\n");
     uint64_t startup_task_irq_flags = arch_irq_save();
     task_t *eth_task = task_create("net-poll", net_poll_task, NULL, 20);
@@ -262,18 +205,9 @@ void kernel_main(void)
         KLOG_ERROR("Failed to create network task!\n");
 #endif
 
-    /* USB/UVC benchmark is disabled while no USB device is attached. */
-    /* #if DRIVER_USB_DWC2 */
-    /* { */
-    /*     task_t *bench = task_create("uvc-bench", uvc_bench_task, NULL, 10); */
-    /*     if (bench) */
-    /*         KLOG_INFO("uvc bench task created: id=%u\n", bench->id); */
-    /* } */
-    /* #endif */
-
     /* SMP 检查完成，现在才启动 busybox 交互 shell */
     KLOG_INFO("\n=== Launching busybox shell ===\n");
-#if !DRIVER_ETH_VIRTIO && !DRIVER_ETH_CVITEK
+#if !DRIVER_ETH_VIRTIO
     uint64_t startup_task_irq_flags = arch_irq_save();
 #endif
     task_t *bb_task = task_create("busybox", demo_load_busybox, NULL, 5);
@@ -282,17 +216,12 @@ void kernel_main(void)
         KLOG_INFO("busybox loader task created: id=%u\n", bb_task->id);
     else
         KLOG_ERROR("Failed to create busybox loader task!\n");
-
-#if DRIVER_WIFI_AIC8800
-    KLOG_INFO("Starting AIC8800 Wi-Fi init task...\n");
-    aic8800_wifi_start_from_platform();
-#endif
 #endif
 
     /*
      * Phase 3：所有初始任务必须在开启抢占前创建完成。boot/main 执行流
      * 不是普通 task；一旦 timer 调度启动，后续启动逻辑不应依赖它继续
-     * 运行，否则 busybox / wifi-init 可能互相阻塞导致另一个永远没创建。
+     * 运行，否则后续初始化任务可能互相阻塞。
      */
     cpu_bring_up_all();
 

@@ -18,9 +18,6 @@
 #include "task/task.h"
 #include "cache.h"
 #include "timer/timer.h"
-#if DRIVER_USB_DWC2
-#include "usb/uvc_video.h"
-#endif
 
 /* ── 外部任务池（来自 kernel/task/task.c） ──────────────────────── */
 extern task_t   g_task_pool[TASK_MAX];
@@ -709,23 +706,15 @@ static int npu_dev_ioctl(int nid, uint64_t req, void *argp)
 static int video0_read(int nid, uint64_t off, void *buf, size_t len)
 {
     (void)nid; (void)off;
-#if DRIVER_USB_DWC2
-    return uvc_video_read_frame(buf, len);
-#else
     (void)buf; (void)len;
     return -PFS_ENOSYS;
-#endif
 }
 
 static int video0_ioctl(int nid, uint64_t req, void *argp)
 {
     (void)nid;
-#if DRIVER_USB_DWC2
-    return uvc_video_ioctl(req, argp);
-#else
     (void)req; (void)argp;
     return -PFS_ENOSYS;
-#endif
 }
 
 /* ── 节点表 ───────────────────────────────────────────────────── */

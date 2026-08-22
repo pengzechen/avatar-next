@@ -3,13 +3,15 @@
 # 快速参考: make help
 
 # ─── §1  基本参数 ─────────────────────────────────────────────────────────────
-# 架构配置（旧式兼容保留；新式用 PLATFORM=qemu-virt-<arch> 自动推导）
-ARCH ?= aarch64
-
-# 平台配置
-# 新式 (推荐): PLATFORM=qemu-virt-aarch64  — 平台决定架构，无需指定 ARCH
-# 旧式 (兼容): ARCH=aarch64 PLATFORM=qemu  — 沿用旧的三表配置系统
-PLATFORM ?= qemu-virt-$(ARCH)
+# 平台配置：平台唯一决定架构，正常构建只需要传 PLATFORM=<platform>。
+# 兼容旧命令：如果只传 ARCH=<arch> 而不传 PLATFORM，则映射到 qemu-virt-<arch>。
+ifeq ($(origin PLATFORM), undefined)
+ifeq ($(origin ARCH), command line)
+PLATFORM := qemu-virt-$(ARCH)
+else
+PLATFORM := qemu-virt-aarch64
+endif
+endif
 
 # 日志级别配置
 LOG ?= info
@@ -27,7 +29,9 @@ endif
 # 目录设置
 SRC_DIR         := examples
 LIB_DIR         := lib
-BUILD_DIR       := build
+BUILD_ROOT      := build
+BUILD_DIR       := $(BUILD_ROOT)/$(PLATFORM)
+THIRD_PARTY_BUILD_DIR := $(BUILD_DIR)/third_party
 INCLUDE_DIR     := include
 BOOT_DIR        := boot
 KERNEL_DIR      := kernel
@@ -49,14 +53,9 @@ $(error No platform.lua found for PLATFORM=$(PLATFORM). Expected: $(_PLATFORM_LU
 endif
 
 override ARCH := $(shell sed -n 's/^[[:space:]]*arch[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' $(_PLATFORM_LUA) | head -1)
-
-# 架构切换必须在 Makefile 解析阶段完成；否则并行构建可能在 kernel_clean
-# 执行前就开始复用旧架构对象，最终链接出 "file in wrong format"。
-$(shell if [ -f .arch ] && [ "$$(cat .arch)" != "$(ARCH)" ]; then \
-            echo "Switching architecture from $$(cat .arch) to $(ARCH), cleaning..." >&2; \
-            rm -rf $(BUILD_DIR); \
-        fi; \
-        echo "$(ARCH)" > .arch)
+ifeq ($(strip $(ARCH)),)
+$(error Failed to infer ARCH from $(_PLATFORM_LUA))
+endif
 
 PLATFORM_MK  := $(BUILD_DIR)/platform.mk
 $(shell python3 $(TOOLS_DIR)/gen_platform.py $(_PLATFORM_LUA) $(PLATFORM_MK) $(INCLUDE_DIR))
@@ -454,17 +453,6 @@ CFLAGS  += -DDEVICE_MMIO_NEEDS_VMA=$(DEV_MMIO_NEEDS_VMA)
 CFLAGS  += -DDEVICE_UART_BASE_RAW=$(DEV_UART_BASE_RAW)
 CFLAGS  += -DDEVICE_UART_REG_SHIFT=$(DEV_UART_REG_SHIFT)
 CFLAGS  += -DDEVICE_ETH_BASE_RAW=$(DEV_ETH_BASE)
-CFLAGS  += -DDEVICE_USB_BASE_RAW=$(DEV_USB_BASE)
-CFLAGS  += -DDEVICE_USB_PHY_BASE_RAW=$(DEV_USB_PHY_BASE)
-CFLAGS  += -DDEVICE_SDIO1_BASE_RAW=$(DEV_SDIO1_BASE)
-CFLAGS  += -DDEVICE_SDIO1_IRQ=$(DEV_SDIO1_IRQ)
-CFLAGS  += -DDEVICE_SDIO1_CRG_RAW=$(DEV_SDIO1_CRG)
-CFLAGS  += -DDEVICE_SDIO1_SYSCTRL_RAW=$(DEV_SDIO1_SYSCTRL)
-CFLAGS  += -DDEVICE_SDIO1_RTCSYS_CTRL_RAW=$(DEV_SDIO1_RTCSYS_CTRL)
-CFLAGS  += -DDEVICE_SDIO1_RTCSYS_IO_RAW=$(DEV_SDIO1_RTCSYS_IO)
-CFLAGS  += -DDEVICE_WIFI_GPIOE_RAW=$(DEV_WIFI_GPIOE)
-CFLAGS  += -DDEVICE_WIFI_POWERON_PIN=$(DEV_WIFI_POWERON_PIN)
-CFLAGS  += -DDEVICE_WIFI_WAKEUP_PIN=$(DEV_WIFI_WAKEUP_PIN)
 
 # ─── §6  驱动选择 ────────────────────────────────────────────────────────────────
 # 所有驱动默认值来自 platform.lua → gen_platform.py → platform.mk。
@@ -542,39 +530,21 @@ else
     DRIVER_TPU_OBJS :=
 endif
 
-# ── §6b+ Rust 工具链参数（ETH/USB 共用）───────────────────────────────────────
-_RUST_TARGET    := riscv64gc-unknown-none-elf
-_RUST_DIR       := rust
-
 # ── §6c  网络驱动（ETH）─────────────────────────────────────────────────────────
-# 以太网驱动（由 platform.lua 的 eth.driver 自动推导；也可命令行覆盖：ETH=none / ETH=cvitek / ETH=virtio）
+# 以太网驱动（由 platform.lua 的 eth.driver 自动推导；也可命令行覆盖：ETH=none / ETH=virtio）
 ETH ?= $(DEV_ETH_TYPE)
-ifeq ($(ETH),cvitek)
-    ifneq ($(ARCH),riscv64)
-        $(error ETH=cvitek 目前仅支持 ARCH=riscv64)
-    endif
-    CFLAGS          += -DDRIVER_ETH_CVITEK=1
-    DRIVER_ETH_OBJS := $(BUILD_DIR)/drv_eth/cvitek_eth_bridge.o $(BUILD_DIR)/rust_glue.o $(BUILD_DIR)/libavatar_eth.a
-    _RUST_TARGET    := riscv64gc-unknown-none-elf
-    _RUST_DIR       := rust
-else ifeq ($(ETH),virtio)
+ifeq ($(ETH),virtio)
     ifeq ($(filter $(ARCH),riscv64 aarch64),)
         $(error ETH=virtio currently supports ARCH=riscv64 or ARCH=aarch64)
     endif
     CFLAGS          += -DDRIVER_ETH_VIRTIO=1
     DRIVER_ETH_OBJS := $(BUILD_DIR)/drv_eth/virtio_net.o
-else
+else ifeq ($(ETH),none)
     DRIVER_ETH_OBJS :=
-endif
-
-# ── §6d  USB 驱动（DWC2 主机控制器）───────────────────────────────────
-# 由 platform.lua 的 usb.driver 自动推导；也可命令行覆盖：USB=none / USB=dwc2
-USB ?= $(DEV_USB_TYPE)
-ifeq ($(USB),dwc2)
-    CFLAGS           += -DDRIVER_USB_DWC2=1
-    DRIVER_USB_OBJS  := $(BUILD_DIR)/rust_glue.o $(BUILD_DIR)/libavatar_usb.a $(BUILD_DIR)/drv_usb_uvc_video_glue.o
+else ifeq ($(ETH),)
+    DRIVER_ETH_OBJS :=
 else
-    DRIVER_USB_OBJS  :=
+    $(error Invalid ETH. Use: none or virtio)
 endif
 
 # ── §6e  DRIVER_OBJECTS 最终组装 ────────────────────────────────────────────────
@@ -605,21 +575,6 @@ endif
 ifneq ($(strip $(DRIVER_ETH_OBJS)),)
 	DRIVER_OBJECTS += $(DRIVER_ETH_OBJS)
 endif
-ifneq ($(strip $(DRIVER_USB_OBJS)),)
-		DRIVER_OBJECTS += $(DRIVER_USB_OBJS)
-endif
-
-# Wi-Fi 驱动（由 platform.lua 的 wifi.driver 自动推导；也可命令行覆盖：WIFI=none / WIFI=aic8800）
-WIFI ?= $(DEV_WIFI_TYPE)
-ifeq ($(WIFI),aic8800)
-    ifneq ($(ARCH),riscv64)
-        $(error WIFI=aic8800 目前仅支持 ARCH=riscv64)
-    endif
-    CFLAGS             += -DDRIVER_WIFI_AIC8800=1
-    DRIVER_WIFI_OBJS   := $(BUILD_DIR)/drv_wifi/aic8800_bridge.o $(BUILD_DIR)/rust_glue.o $(BUILD_DIR)/libavatar_wifi.a
-    DRIVER_OBJECTS     += $(DRIVER_WIFI_OBJS)
-endif
-
 # ── §6e  辅助驱动（ION / SDMMC）────────────────────────────────────────────────
 # Ion 内存分配器（当 TPU=cvitpu 时自动启用；也可独立启用 ION=1）
 ION ?= $(if $(filter cvitpu,$(TPU)),1,0)
@@ -629,9 +584,8 @@ ifeq ($(ION),1)
     DRIVER_OBJECTS   += $(DRIVER_ION_OBJS)
 endif
 
-# SDMMC 块设备驱动（由 platform.lua 的 sdmmc.driver 自动推导；也可命令行覆盖）
-SDMMC ?= $(DEV_SDMMC_TYPE)
-ifeq ($(SDMMC),sg2002)
+# SG2002 真机固定从 SD 卡使用 rootfs。
+ifeq ($(PLATFORM),sg2002-riscv64)
     CFLAGS              += -DDRIVER_SDBLK_SG2002=1
     DRIVER_OBJECTS      += $(BUILD_DIR)/drv_blk_sdblk.o
 endif
@@ -704,9 +658,9 @@ LWIP_CORE_SRCS := $(LWIP_DIR)/src/core/init.c \
                   $(LWIP_DIR)/src/core/ipv4/ip4_addr.c \
                   $(LWIP_DIR)/src/core/ipv4/ip4_frag.c \
                   $(LWIP_DIR)/src/netif/ethernet.c
-LWIP_OBJS := $(patsubst $(LWIP_DIR)/src/core/%.c,$(BUILD_DIR)/lwip_core_%.o,$(filter $(LWIP_DIR)/src/core/%.c,$(filter-out $(LWIP_DIR)/src/core/ipv4/%,$(LWIP_CORE_SRCS))))
-LWIP_OBJS += $(patsubst $(LWIP_DIR)/src/core/ipv4/%.c,$(BUILD_DIR)/lwip_ipv4_%.o,$(filter $(LWIP_DIR)/src/core/ipv4/%.c,$(LWIP_CORE_SRCS)))
-LWIP_OBJS += $(patsubst $(LWIP_DIR)/src/netif/%.c,$(BUILD_DIR)/lwip_netif_%.o,$(filter $(LWIP_DIR)/src/netif/%.c,$(LWIP_CORE_SRCS)))
+LWIP_OBJS := $(patsubst $(LWIP_DIR)/src/core/%.c,$(THIRD_PARTY_BUILD_DIR)/lwip_core_%.o,$(filter $(LWIP_DIR)/src/core/%.c,$(filter-out $(LWIP_DIR)/src/core/ipv4/%,$(LWIP_CORE_SRCS))))
+LWIP_OBJS += $(patsubst $(LWIP_DIR)/src/core/ipv4/%.c,$(THIRD_PARTY_BUILD_DIR)/lwip_ipv4_%.o,$(filter $(LWIP_DIR)/src/core/ipv4/%.c,$(LWIP_CORE_SRCS)))
+LWIP_OBJS += $(patsubst $(LWIP_DIR)/src/netif/%.c,$(THIRD_PARTY_BUILD_DIR)/lwip_netif_%.o,$(filter $(LWIP_DIR)/src/netif/%.c,$(LWIP_CORE_SRCS)))
 
 LWIP_CFLAGS := $(CFLAGS)
 LWIP_CFLAGS += -I$(LWIP_DIR)/src/include
@@ -717,7 +671,7 @@ LWIP_CFLAGS += -w
 
 # lwext4 库源文件（第三方代码）
 LWEXT4_SRCS     := $(wildcard $(LWEXT4_DIR)/src/*.c)
-LWEXT4_OBJS     := $(patsubst $(LWEXT4_DIR)/src/%.c,$(BUILD_DIR)/lwext4_%.o,$(LWEXT4_SRCS))
+LWEXT4_OBJS     := $(patsubst $(LWEXT4_DIR)/src/%.c,$(THIRD_PARTY_BUILD_DIR)/lwext4_%.o,$(LWEXT4_SRCS))
 
 # lwext4 移植胶水代码（属于本项目，使用 LWEXT4_CFLAGS）
 LWEXT4_PORT_OBJS := $(BUILD_DIR)/lwext4_port_kmalloc.o \
@@ -749,7 +703,7 @@ LUA_CORE_SRCS := lapi lcode lctype ldebug ldo ldump lfunc lgc llex lmem \
                  lobject lopcodes lparser lstate lstring ltable ltm \
                  lundump lvm lzio lauxlib lbaselib ltablib lstrlib
 
-LUA_CORE_OBJS := $(patsubst %,$(BUILD_DIR)/lua54_%.o,$(LUA_CORE_SRCS))
+LUA_CORE_OBJS := $(patsubst %,$(THIRD_PARTY_BUILD_DIR)/lua54_%.o,$(LUA_CORE_SRCS))
 
 # LUA_CFLAGS: libc shim 头文件先于 include/，FP 限制解除
 LUA_CFLAGS := -I$(LUA_LIBC_SHIM) -I$(LUA_SRC_DIR) \
@@ -775,7 +729,7 @@ LUA_BLOB_OBJ := $(BUILD_DIR)/platform_lua_blob.o
 LUA_OBJECTS := $(LUA_CORE_OBJS) $(LUA_GLUE_OBJS) $(LUA_BLOB_OBJ) $(SETJMP_OBJ)
 
 # ─── §10  Rootfs 配置 ────────────────────────────────────────────────────────────
-# 每个架构独立一个镜像，切换架构无需 make clean
+# 每个平台独立一个 build/<platform>/ 目录，切换平台无需 make clean。
 ROOTFS_IMG       := $(BUILD_DIR)/rootfs-$(ARCH).img
 ROOTFS_STAGE     := $(BUILD_DIR)/rootfs-stage-$(ARCH)
 LTP_BIN_DIR      := tests/ltp/bin/$(ARCH)
@@ -792,14 +746,14 @@ NGINX_BIN        := $(wildcard apps/nginx-$(ARCH))
 QEMU_ROOTFS_FLAGS = -device loader,file=$(ROOTFS_IMG),addr=$(ROOTFS_PHYS_ADDR),force-raw=on
 
 # ─── §11  顶层目标声明 ───────────────────────────────────────────────────────────
-.PHONY: all clean help klog kernel run run-net rootfs run-fs test-pthread test-mutex test-vmm test-ltp epoll-perf test-epoll-perf
+.PHONY: all clean clean-all help klog kernel run run-net rootfs run-fs test-pthread test-mutex test-vmm test-ltp epoll-perf test-epoll-perf
 
 all: $(TARGET) klog
 
 kernel: | kernel_clean
 kernel: $(KERNEL_BIN)
 
-# 架构切换清理在解析阶段完成；保留空目标兼容 kernel 的 order-only 依赖。
+# 平台隔离后不再需要跨架构自动清理；保留空目标兼容 kernel 的 order-only 依赖。
 .PHONY: kernel_clean
 kernel_clean:
 
@@ -937,14 +891,6 @@ $(BUILD_DIR)/kernel_net_%.o: $(KERNEL_DIR)/net/%.c | $(BUILD_DIR)
 $(BUILD_DIR)/drv_%.o: driver/%.c | $(BUILD_DIR)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@
-
-# USB 驱动编译规则（Rust staticlib + C glue）
-$(BUILD_DIR)/libavatar_usb.a: | $(BUILD_DIR)
-	cd $(_RUST_DIR) && MAKEFLAGS= cargo build --release --target $(_RUST_TARGET) -p avatar_usb
-	cp $(_RUST_DIR)/target/$(_RUST_TARGET)/release/libavatar_usb.a $@
-
-$(BUILD_DIR)/drv_usb_uvc_video_glue.o: driver/usb/uvc_video_glue.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -Idriver/usb -c $< -o $@
 
 # task 模块编译规则
 $(BUILD_DIR)/kernel_task_task.o: $(KERNEL_DIR)/task/task.c | $(BUILD_DIR)
@@ -1144,28 +1090,14 @@ $(BUILD_DIR)/bitmap.o: $(LIB_DIR)/bitmap.c | $(BUILD_DIR)
 $(BUILD_DIR)/platform_cfg.o: $(LIB_DIR)/platform_cfg.c | $(BUILD_DIR)
 	$(CC) $(LUA_CFLAGS) -c $< -o $@
 
-# Rust FFI 胶水层（kernel_alloc/kernel_free 包装器，仅 ETH=cvitek 时编译）
-$(BUILD_DIR)/rust_glue.o: $(LIB_DIR)/rust_glue.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-# Rust 静态库（仅 ETH=cvitek 时构建）
-$(BUILD_DIR)/libavatar_eth.a: | $(BUILD_DIR)
-	cd $(_RUST_DIR) && MAKEFLAGS= cargo build --release --target $(_RUST_TARGET) -p avatar_eth
-	cp $(_RUST_DIR)/target/$(_RUST_TARGET)/release/libavatar_eth.a $@
-
-# Rust Wi-Fi 静态库（WIFI=aic8800）
-RUST_WIFI_DEPS := $(shell find $(_RUST_DIR)/avatar_wifi $(_RUST_DIR)/third_party/aic8800 $(_RUST_DIR)/third_party/sdhci-cv1800 $(_RUST_DIR)/third_party/sdio-host -type f \( -name '*.rs' -o -name 'Cargo.toml' -o -name 'build.rs' \) 2>/dev/null)
-
-$(BUILD_DIR)/libavatar_wifi.a: $(RUST_WIFI_DEPS) | $(BUILD_DIR)
-	cd $(_RUST_DIR) && MAKEFLAGS= cargo build --release --target $(_RUST_TARGET) -p avatar_wifi
-	cp $(_RUST_DIR)/target/$(_RUST_TARGET)/release/libavatar_wifi.a $@
-
 $(BUILD_DIR)/kernel_mm_mmu.o: $(VM_S_SRC) | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # ── §12e  第三方库编译规则（lwext4 / Lua）────────────────────────────────────────
 # 第三方 lwext4 源文件：使用包含 compat 路径的专用 LWEXT4_CFLAGS
-$(BUILD_DIR)/lwext4_%.o: $(LWEXT4_DIR)/src/%.c | $(BUILD_DIR)
+
+$(THIRD_PARTY_BUILD_DIR)/lwext4_%.o: $(LWEXT4_DIR)/src/%.c | $(BUILD_DIR)
+	@mkdir -p $(dir $@)
 	$(CC) $(LWEXT4_CFLAGS) -c $< -o $@
 
 # lwext4 移植胶水代码：属于本项目，使用普通 CFLAGS
@@ -1180,21 +1112,22 @@ $(BUILD_DIR)/drv_blk_ramblk.o: driver/blk/ramblk.c | $(BUILD_DIR)
 $(BUILD_DIR)/lwext4_port_fs_init.o: $(LWEXT4_PORT_DIR)/fs_init.c | $(BUILD_DIR)
 	$(CC) $(LWEXT4_CFLAGS) -I$(LWEXT4_PORT_DIR) -c $< -o $@
 
-$(BUILD_DIR)/lwip_core_%.o: $(LWIP_DIR)/src/core/%.c | $(BUILD_DIR)
+$(THIRD_PARTY_BUILD_DIR)/lwip_core_%.o: $(LWIP_DIR)/src/core/%.c | $(BUILD_DIR)
 	@mkdir -p $(dir $@)
 	$(CC) $(LWIP_CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/lwip_ipv4_%.o: $(LWIP_DIR)/src/core/ipv4/%.c | $(BUILD_DIR)
+$(THIRD_PARTY_BUILD_DIR)/lwip_ipv4_%.o: $(LWIP_DIR)/src/core/ipv4/%.c | $(BUILD_DIR)
 	@mkdir -p $(dir $@)
 	$(CC) $(LWIP_CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/lwip_netif_%.o: $(LWIP_DIR)/src/netif/%.c | $(BUILD_DIR)
+$(THIRD_PARTY_BUILD_DIR)/lwip_netif_%.o: $(LWIP_DIR)/src/netif/%.c | $(BUILD_DIR)
 	@mkdir -p $(dir $@)
 	$(CC) $(LWIP_CFLAGS) -c $< -o $@
 
 # ── §12f  Lua 5.4 编译规则 ──────────────────────────────────────────────────────
 # Lua VM 核心源文件：使用 LUA_CFLAGS（FP 开启，compat 头文件路径前置）
-$(BUILD_DIR)/lua54_%.o: $(LUA_SRC_DIR)/%.c | $(BUILD_DIR)
+$(THIRD_PARTY_BUILD_DIR)/lua54_%.o: $(LUA_SRC_DIR)/%.c | $(BUILD_DIR)
+	@mkdir -p $(dir $@)
 	$(CC) $(LUA_CFLAGS) -c $< -o $@
 
 # setjmp 汇编（每架构一个）
@@ -1498,21 +1431,25 @@ test-ltp: kernel $(ROOTFS_IMG)
 
 # ─── §14  清理 / 帮助 ────────────────────────────────────────────────────────────
 clean:
-	rm -rf build/*
+	rm -rf $(BUILD_DIR)
+
+clean-all:
+	rm -rf $(BUILD_ROOT)/*
 
 help:
 	@echo "Avatar OS Makefile"
 	@echo ""
-	@echo "Usage: make ARCH=<arch> [PLATFORM=<platform>] [LOG=<level>] [ASSERT=<mode>] [target]"
-	@echo ""
-	@echo "Architectures:"
-	@echo "  ARCH=x86_64    Build for x86_64 (AMD64/Intel 64)"
-	@echo "  ARCH=aarch64   Build for AArch64 (ARM 64-bit)"
-	@echo "  ARCH=riscv64   Build for RISC-V 64-bit"
+	@echo "Usage: make PLATFORM=<platform> [LOG=<level>] [ASSERT=<mode>] [target]"
 	@echo ""
 	@echo "Platforms:"
-	@echo "  PLATFORM=qemu  QEMU virt platform (default for all arch now)"
-	@echo "  (Future real boards: add platforms/<name>/platform.lua)"
+	@echo "  PLATFORM=qemu-virt-x86_64     QEMU x86_64 platform"
+	@echo "  PLATFORM=qemu-virt-aarch64    QEMU AArch64 platform (default)"
+	@echo "  PLATFORM=qemu-virt-riscv64    QEMU RISC-V 64 platform"
+	@echo "  PLATFORM=sg2002-riscv64       SG2002 real board"
+	@echo "  PLATFORM=rk3588-aarch64       RK3588 real board"
+	@echo ""
+	@echo "Legacy compatibility:"
+	@echo "  ARCH=<arch> without PLATFORM maps to PLATFORM=qemu-virt-<arch>"
 	@echo ""
 	@echo "Log Levels:"
 	@echo "  LOG=none      Disable all logging (default: info)"
@@ -1539,21 +1476,19 @@ help:
 	@echo "  test-pthread  Copy dynamic rootfs from imgs/ and run pthread_test"
 	@echo "  test-mutex    Copy dynamic rootfs from imgs/ and run mutex_test (futex-based)"
 	@echo "  test-vmm      Build with VMM_TEST=1 and run VMM 3-thread switch test"
-	@echo "  clean         Remove build artifacts"
+	@echo "  clean         Remove build artifacts for current PLATFORM"
+	@echo "  clean-all     Remove build artifacts for all platforms"
 	@echo "  help          Show this help message"
 	@echo ""
 	@echo "Examples:"
-	@echo "  make ARCH=aarch64"
-	@echo "  make ARCH=aarch64 PLATFORM=qemu"
-	@echo "  make ARCH=aarch64 LOG=debug"
-	@echo "  make ARCH=riscv64 LOG=trace"
-	@echo "  make ARCH=x86_64 ASSERT=off"
-	@echo "  make ARCH=aarch64 kernel"
-	@echo "  make ARCH=aarch64 run"
-	@echo "  make ARCH=aarch64 LOG=debug ASSERT=panic"
-	@echo "  make ARCH=riscv64 clean"
-	@echo "  make ARCH=riscv64 test-pthread LOG=warn    # pthread_test 一键测试"
-	@echo "  make ARCH=aarch64 test-vmm   LOG=info     # VMM 三线程切换测试"
+	@echo "  make PLATFORM=qemu-virt-aarch64 kernel"
+	@echo "  make PLATFORM=qemu-virt-riscv64 run-fs LOG=trace"
+	@echo "  make PLATFORM=qemu-virt-x86_64 ASSERT=off kernel"
+	@echo "  make PLATFORM=sg2002-riscv64 kernel LOG=info"
+	@echo "  make PLATFORM=qemu-virt-riscv64 clean"
+	@echo "  make PLATFORM=qemu-virt-riscv64 test-pthread LOG=warn    # pthread_test 一键测试"
+	@echo "  make PLATFORM=qemu-virt-aarch64 test-vmm LOG=info        # VMM 三线程切换测试"
+	@echo "  make ARCH=riscv64 kernel                                 # legacy alias for PLATFORM=qemu-virt-riscv64"
 	@echo "  make PLATFORM=qemu-virt-riscv64 run-net"
 	@echo "  make PLATFORM=qemu-virt-riscv64 run-net QEMU_NET_FLAGS='-netdev tap,id=net0,ifname=tap0,script=no,downscript=no -device virtio-net-device,netdev=net0,mac=52:54:00:12:34:56'"
 
@@ -1563,7 +1498,7 @@ help:
 
 
 # 节	内容
-# §1	基本参数（ARCH / PLATFORM / LOG / ASSERT / 目录）
+# §1	基本参数（PLATFORM / ARCH兼容 / LOG / ASSERT / 目录）
 # §2	平台配置生成（gen_platform.py）
 # §3	日志与断言标志
 # §4	源文件与目标文件变量

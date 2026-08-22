@@ -14,9 +14,6 @@
 #include "lwip_port/netif_avatar.h"
 
 #include "net/http_server.h"
-#if DRIVER_USB_DWC2
-#include "net/webcam_httpd.h"
-#endif
 
 static struct netif g_lwip_netif;
 static int g_net_ready;
@@ -49,9 +46,7 @@ void net_init(void)
     KLOG_INFO("[net] IPv4 addr=192.168.7.1 mask=255.255.255.0 gw=192.168.7.1\n");
     dhcp_server_init(&ipaddr, &netmask, &lease);
     tcp_echo_init();
-#if DRIVER_USB_DWC2
-    webcam_httpd_init();
-#elif defined(RUN_NGINX_TEST)
+#if defined(RUN_NGINX_TEST)
     KLOG_INFO("[http] kernel HTTP server disabled for nginx test\n");
 #else
     http_server_init();
