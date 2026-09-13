@@ -150,6 +150,7 @@ psci_affinity_info(uint64_t mpidr)
 
 #endif /* ARCH_AARCH64 */
 
+#if ARCH_AARCH64 || ARCH_RISCV64
 /*
  * setup_secondary_idle_task - 初始化次级核 idle 任务控制块
  *
@@ -188,6 +189,7 @@ setup_secondary_idle_task(cpu_t *c)
     c->idle_task    = idle;
     c->current_task = idle;
 }
+#endif /* ARCH_AARCH64 || ARCH_RISCV64 */
 
 #if ARCH_AARCH64
 

@@ -405,6 +405,7 @@ arch_init_fork_child_stack(uint8_t *stack_base, uint32_t stack_size,
         sp[i] = 0;
 #else
     /* x86_64: 在内核栈上放 trap_frame，再放 arch_task_switch 的被调用者寄存器帧 */
+    (void)tls;
     sp = (uint64_t *)((uintptr_t)sp - sizeof(trap_frame_t));
     trap_frame_t *child_frame = (trap_frame_t *)sp;
     *child_frame = *frame;
