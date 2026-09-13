@@ -197,10 +197,8 @@ static void virtio_write_features(struct virtio_net_nic *nic, uint64_t features)
 static uintptr_t virtio_dma_addr(const void *ptr)
 {
     uintptr_t va = (uintptr_t)ptr;
-#if DEVICE_MMIO_NEEDS_VMA
     if (va >= KERNEL_VMA)
         return va - KERNEL_VMA;
-#endif
     return va;
 }
 
@@ -341,7 +339,7 @@ static int virtio_setup_queue(struct virtio_net_nic *nic, virtio_queue_t *q,
     return 0;
 }
 
-static int virtio_net_refill_rx(struct virtio_net_nic *nic)
+static int virtio_net_refill_rx(struct virtio_net_nic *nic, bool notify)
 {
     int added = 0;
     for (;;) {
@@ -355,7 +353,14 @@ static int virtio_net_refill_rx(struct virtio_net_nic *nic)
         nic->rxq.desc[id].len = sizeof(*buf);
         nic->rxq.desc[id].flags = VRING_DESC_F_WRITE;
         nic->rxq.desc[id].next = 0;
-        virtq_push_avail(nic, &nic->rxq, VIRTIO_NET_Q_RX, (uint16_t)id);
+        uint16_t slot = nic->rxq.avail.idx % nic->rxq.num;
+        nic->rxq.avail.ring[slot] = (uint16_t)id;
+        wmb();
+        nic->rxq.avail.idx++;
+        if (notify) {
+            wmb();
+            vn_write(nic, VIRTIO_MMIO_QUEUE_NOTIFY, VIRTIO_NET_Q_RX);
+        }
         added++;
     }
 
@@ -511,9 +516,11 @@ VirtioNetNic_t *eth_init(uint64_t base)
         return NULL;
     }
 
-    virtio_net_refill_rx(nic);
+    virtio_net_refill_rx(nic, false);
     vn_write(nic, VIRTIO_MMIO_INTERRUPT_ACK, 0xffffffffU);
     virtio_status_or(nic, VIRTIO_STATUS_DRIVER_OK);
+    wmb();
+    vn_write(nic, VIRTIO_MMIO_QUEUE_NOTIFY, VIRTIO_NET_Q_RX);
     nic->ready = 1;
 
     KLOG_INFO("[virtio-net] init done status=0x%x isr=0x%x rx_avail=%u tx_avail=%u\n",
@@ -608,7 +615,7 @@ int eth_recv(VirtioNetNic_t *opaque, uint8_t *buf, size_t maxlen)
                   id, used_len, (unsigned long long)nic->rx_drops);
         if (id < VIRTIO_NET_RX_BUFS)
             virtq_free_desc(&nic->rxq, id);
-        virtio_net_refill_rx(nic);
+        virtio_net_refill_rx(nic, true);
         return -1;
     }
 
@@ -617,7 +624,7 @@ int eth_recv(VirtioNetNic_t *opaque, uint8_t *buf, size_t maxlen)
     size_t copy_len = frame_len < maxlen ? frame_len : maxlen;
     memcpy(buf, rx->frame, copy_len);
     virtq_free_desc(&nic->rxq, id);
-    virtio_net_refill_rx(nic);
+    virtio_net_refill_rx(nic, true);
     nic->rx_packets++;
 
     KLOG_DEBUG("[virtio-net] rx packet id=%u frame_len=%u copy=%zu last_used=%u rx_packets=%llu dst=%02x:%02x:%02x:%02x:%02x:%02x src=%02x:%02x:%02x:%02x:%02x:%02x type=0x%02x%02x\n",

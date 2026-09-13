@@ -381,6 +381,8 @@ ifeq ($(ARCH),x86_64)
     KERNEL_IMAGE  := $(BUILD_DIR)/kernel_x86_64.img
     QEMU          := qemu-system-x86_64
     QEMU_FLAGS    := -machine q35 -enable-kvm -cpu host -smp $(SMP) -m 2G -nographic -kernel $(KERNEL_BIN)
+    QEMU_NET_FLAGS ?= -netdev user,id=net0 -device virtio-net-device,netdev=net0,mac=52:54:00:12:34:56
+    QEMU_RUN_NET_FLAGS ?= -machine microvm -enable-kvm -cpu host -smp $(SMP) -m 2G -nographic -kernel $(KERNEL_BIN)
 else ifeq ($(ARCH),aarch64)
     CC      := aarch64-linux-musl-gcc
     AR      := aarch64-linux-musl-ar
@@ -535,8 +537,8 @@ endif
 # 以太网驱动（由 platform.conf 的 eth.driver 自动推导；也可命令行覆盖：ETH=none / ETH=virtio）
 ETH ?= $(DEV_ETH_TYPE)
 ifeq ($(ETH),virtio)
-    ifeq ($(filter $(ARCH),riscv64 aarch64),)
-        $(error ETH=virtio currently supports ARCH=riscv64 or ARCH=aarch64)
+    ifeq ($(filter $(ARCH),riscv64 aarch64 x86_64),)
+        $(error ETH=virtio currently supports ARCH=riscv64, ARCH=aarch64 or ARCH=x86_64)
     endif
     CFLAGS          += -DDRIVER_ETH_VIRTIO=1
     DRIVER_ETH_OBJS := $(BUILD_DIR)/drv_eth/virtio_net.o
@@ -1179,13 +1181,13 @@ run: kernel
 	$(QEMU) $(QEMU_FLAGS)
 
 run-net: kernel $(ROOTFS_IMG)
-	@if [ "$(ARCH)" != "riscv64" ] && [ "$(ARCH)" != "aarch64" ]; then \
-		echo "ERROR: run-net currently supports ARCH=riscv64 or ARCH=aarch64 only."; \
+	@if [ "$(ARCH)" != "riscv64" ] && [ "$(ARCH)" != "aarch64" ] && [ "$(ARCH)" != "x86_64" ]; then \
+		echo "ERROR: run-net currently supports ARCH=riscv64, ARCH=aarch64 or ARCH=x86_64 only."; \
 		exit 1; \
 	fi
 	@echo "Starting QEMU for $(ARCH) with rootfs at $(ROOTFS_PHYS_ADDR) and virtio-net..."
 	@echo "QEMU_NET_FLAGS=$(QEMU_NET_FLAGS)"
-	$(QEMU) $(QEMU_FLAGS) $(QEMU_ROOTFS_FLAGS) $(QEMU_NET_FLAGS)
+	$(QEMU) $(if $(QEMU_RUN_NET_FLAGS),$(QEMU_RUN_NET_FLAGS),$(QEMU_FLAGS)) $(QEMU_ROOTFS_FLAGS) $(QEMU_NET_FLAGS)
 
 test-epoll-perf: epoll-perf kernel $(ROOTFS_IMG)
 	@if [ "$(ARCH)" != "riscv64" ] && [ "$(ARCH)" != "aarch64" ]; then \
@@ -1410,7 +1412,7 @@ help:
 	@echo "  klog          Build klog library only"
 	@echo "  kernel        Build kernel image"
 	@echo "  run           Build and run kernel in QEMU (no rootfs)"
-	@echo "  run-net       Build and run RISC-V QEMU with rootfs and virtio-net"
+	@echo "  run-net       Build and run QEMU with rootfs and virtio-net"
 	@echo "  run-fs        Build and run kernel with rootfs (busybox shell)"
 	@echo "  test-pthread  Copy dynamic rootfs from imgs/ and run pthread_test"
 	@echo "  test-mutex    Copy dynamic rootfs from imgs/ and run mutex_test (futex-based)"
