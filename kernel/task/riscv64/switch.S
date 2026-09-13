@@ -210,12 +210,6 @@ arch_switch_to_user:
     csrw    hstatus, t0
 #endif
 
-    /* 用户栈 */
-    mv      sp, a1
-
-    /* Fresh exec entry must not inherit the kernel/previous task TLS pointer. */
-    mv      tp, zero
-
     /* 同步 I-cache，确保刚写入的用户代码可执行 */
     fence.i
 #if defined(PLATFORM_SG2002)
@@ -226,7 +220,12 @@ arch_switch_to_user:
     /* 保存内核栈到 sscratch，必须尽量贴近 sret。
      * 在此之前仍处于 S-mode，若过早设置 sscratch，S 态异常会被
      * trap_vector 误判成 U 态陷入。 */
+    sd      tp, -8(a2)
     csrw    sscratch, a2
+
+    /* 用户栈和用户 TLS。必须在保存 kernel tp 之后清 tp。 */
+    mv      sp, a1
+    mv      tp, zero
 
     sret
 
@@ -258,6 +257,7 @@ arch_fork_resume_user:
 
     /* 保存当前内核栈到 sscratch */
     mv      t0, sp
+    sd      tp, -8(t0)
     csrw    sscratch, t0
 
     /* 恢复 FP 寄存器 f0..f31 + fcsr（从 trap_frame） */

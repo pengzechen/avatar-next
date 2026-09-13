@@ -7,7 +7,7 @@
  *          GIC CPU interface 初始化，然后 wfi idle（不参与调度，
  *          调度集成留给 Phase 3+）。
  *
- * riscv64 / x86_64 SMP 拉起在后续 Phase 实现，本文件保留 stub。
+ * x86_64 SMP 拉起在后续 Phase 实现，本文件保留 stub。
  */
 
 #include "task/cpu.h"
@@ -17,13 +17,21 @@
 #include "klog.h"
 #include "string.h"
 #include "arch.h"
+#include "barrier.h"
 #include "timer/timer.h"     /* timer_delay_ms (供 SMP 自检使用，所有架构通用) */
 
 #if ARCH_AARCH64
 #include "mm_vm.h"          /* KERNEL_VMA / virt_to_phys */
-#include "barrier.h"
 #include "aarch64/cpu.h"    /* aarch64_enable_neon (per-core CPACR_EL1.FPEN) */
 #include "irq/irq.h"        /* irq_init_secondary() */
+#endif
+
+#if ARCH_RISCV64
+#include "exception.h"
+#include "mm_vm.h"
+#include "riscv64/sysreg.h"
+extern void trap_vector(void);
+volatile uint64_t riscv64_boot_hartid;
 #endif
 
 /* ── 全局 CPU 池 ────────────────────────────────────────── */
@@ -79,17 +87,23 @@ cpu_init_bsp(void)
 
 /* ── 二级核启动 ─────────────────────────────────────────── */
 
+#if ARCH_AARCH64 || ARCH_RISCV64
+/* 各架构 boot.S 中定义的次级核启动栈，共享供 idle 复用。 */
+extern uint8_t secondary_boot_stacks[];
+#if ARCH_AARCH64
+#define SECONDARY_STACK_SIZE  4096U
+#else
+#define SECONDARY_STACK_SIZE  16384U
+#endif
+
+/* 每个次级核的 idle 任务控制块（CPU0 用 task.c 里的 g_idle_task）。 */
+static task_t g_secondary_idle[AVATAR_MAX_CPUS - 1];
+#endif
+
 #if ARCH_AARCH64
 
 /* boot/aarch64/boot.S 中定义的次级核入口（链接地址在高 VA） */
 extern void _secondary_start(void);
-
-/* boot/aarch64/boot.S 中定义的次级核启动栈：每核 4KB，共享供 idle 复用 */
-extern uint8_t secondary_boot_stacks[];
-#define SECONDARY_STACK_SIZE  4096U
-
-/* 每个次级核的 idle 任务控制块（CPU0 用 task.c 里的 g_idle_task）。 */
-static task_t g_secondary_idle[AVATAR_MAX_CPUS - 1];
 
 /* GIC CPU interface 初始化（每核都要做一次；distributor 由 BSP 初始化） */
 extern void gic_init_secondary(void);
@@ -134,6 +148,8 @@ psci_affinity_info(uint64_t mpidr)
     return (int64_t)x0;
 }
 
+#endif /* ARCH_AARCH64 */
+
 /*
  * setup_secondary_idle_task - 初始化次级核 idle 任务控制块
  *
@@ -172,6 +188,8 @@ setup_secondary_idle_task(cpu_t *c)
     c->idle_task    = idle;
     c->current_task = idle;
 }
+
+#if ARCH_AARCH64
 
 /*
  * cpu_secondary_bootstrap - 次级核 C 入口
@@ -219,8 +237,6 @@ cpu_secondary_bootstrap(uint32_t cpu_id)
 
     /* Phase 3.3：启用本地 timer PPI（CNTP_TVAL/CTL 与 GICD ISENABLER0）。*/
     timer_init_secondary();
-
-    timer_enable();
 
     /* 通知 BSP 本核就绪。wmb 确保前面所有写对其他核可见。 */
     wmb();
@@ -304,12 +320,152 @@ cpu_bring_up_all(void)
               (unsigned)g_num_cpus);
 }
 
-#else  /* !ARCH_AARCH64 */
+#elif ARCH_RISCV64
+
+extern const uint64_t riscv64_hart_release_phys;
+extern volatile uint64_t riscv64_boot_hartid;
+
+#define SBI_SUCCESS      0L
+#define SBI_EID_IPI      0x735049UL
+#define SBI_FID_SEND_IPI 0UL
+#define SBI_EID_HSM      0x48534DUL
+#define SBI_FID_HART_START 0UL
+
+extern const uint64_t riscv64_secondary_start_phys;
+
+static long
+sbi_hart_start(uint64_t hartid, uint64_t start_addr, uint64_t opaque)
+{
+    register uint64_t a0 __asm__("a0") = hartid;
+    register uint64_t a1 __asm__("a1") = start_addr;
+    register uint64_t a2 __asm__("a2") = opaque;
+    register uint64_t a6 __asm__("a6") = SBI_FID_HART_START;
+    register uint64_t a7 __asm__("a7") = SBI_EID_HSM;
+
+    __asm__ volatile("ecall"
+                     : "+r"(a0), "+r"(a1)
+                     : "r"(a2), "r"(a6), "r"(a7)
+                     : "memory");
+    return (long)a0;
+}
+
+static long
+sbi_send_ipi(uint64_t hartid)
+{
+    if (hartid >= 64U)
+        return -1;
+
+    register uint64_t a0 __asm__("a0") = 1ULL << hartid;
+    register uint64_t a1 __asm__("a1") = 0;
+    register uint64_t a6 __asm__("a6") = SBI_FID_SEND_IPI;
+    register uint64_t a7 __asm__("a7") = SBI_EID_IPI;
+
+    __asm__ volatile("ecall"
+                     : "+r"(a0), "+r"(a1)
+                     : "r"(a6), "r"(a7)
+                     : "memory");
+    return (long)a0;
+}
+
+void
+cpu_secondary_bootstrap(uint32_t cpu_id)
+{
+    cpu_t *c = &g_cpus[cpu_id];
+
+    arch_cpu_self_set(c);
+    CSR_SET(sstatus, 1UL << 18);   /* SUM */
+    WRITE_STVEC((uint64_t)trap_vector);
+
+    setup_secondary_idle_task(c);
+    timer_init_secondary();
+
+    wmb();
+    c->online = true;
+
+    arch_irq_enable();
+    for (;;) {
+        sched_check_and_yield();
+        __asm__ volatile("wfi");
+    }
+}
 
 void
 cpu_bring_up_all(void)
 {
-    /* riscv64 / x86_64 SMP 拉起留待后续 Phase 实现。 */
+    if (CONFIG_SMP_CPUS <= 1U)
+        return;
+
+#if defined(PLATFORM_SG2002)
+    KLOG_WARN("[cpu] RISC-V SMP bringup disabled on SG2002 for now\n");
+    return;
+#endif
+
+    KLOG_INFO("[cpu] RISC-V SMP bringup: CONFIG_SMP_CPUS=%u boot_hart=%llu\n",
+              (unsigned)CONFIG_SMP_CPUS,
+              (unsigned long long)riscv64_boot_hartid);
+    volatile uint64_t *hart_release =
+        (volatile uint64_t *)phys_to_virt(riscv64_hart_release_phys);
+    uint64_t entry_phys = riscv64_secondary_start_phys;
+    bool hsm_unavailable = false;
+
+    for (uint32_t i = 1; i < CONFIG_SMP_CPUS && i < AVATAR_MAX_CPUS; i++) {
+        cpu_t *c = &g_cpus[i];
+        uint64_t hartid = i - 1U;
+        if (hartid == riscv64_boot_hartid)
+            hartid = CONFIG_SMP_CPUS - 1U;
+
+        memset(c, 0, sizeof(*c));
+        c->cpu_id = i;
+        c->hw_id = hartid;
+        c->online = false;
+        list_init(&c->run_queue);
+        spinlock_irq_init(&c->rq_lock);
+
+        KLOG_INFO("[cpu] start/release cpu=%u hart=%llu\n",
+                  i, (unsigned long long)c->hw_id);
+
+        hart_release[c->hw_id] = (uint64_t)i + 1ULL;
+        wmb();
+
+        if (!hsm_unavailable) {
+            long ret = sbi_hart_start(c->hw_id, entry_phys, i);
+            KLOG_INFO("[cpu] SBI hart_start cpu=%u ret=%ld\n", i, ret);
+            if (ret != SBI_SUCCESS)
+                hsm_unavailable = true;
+        }
+
+        long ipi_ret = hsm_unavailable ? sbi_send_ipi(c->hw_id) : SBI_SUCCESS;
+        if (hsm_unavailable && ipi_ret != SBI_SUCCESS) {
+            KLOG_WARN("[cpu] SBI send_ipi hart=%llu ret=%ld\n",
+                      (unsigned long long)c->hw_id, ipi_ret);
+        }
+
+        uint64_t spin = 0;
+        while (!c->online) {
+            __asm__ volatile("nop");
+            if (++spin > 100000000ULL) {
+                KLOG_ERROR("[cpu] timeout waiting for cpu%u hart=%llu online\n",
+                           i, (unsigned long long)c->hw_id);
+                break;
+            }
+        }
+        if (c->online) {
+            g_num_cpus++;
+            KLOG_INFO("[cpu] cpu%u online (hart=%llu)\n",
+                      i, (unsigned long long)c->hw_id);
+        }
+    }
+
+    KLOG_WARN("[cpu] RISC-V SMP bringup done: %u CPU(s) online\n",
+              (unsigned)g_num_cpus);
+}
+
+#else  /* !ARCH_AARCH64 && !ARCH_RISCV64 */
+
+void
+cpu_bring_up_all(void)
+{
+    /* x86_64 SMP 拉起留待后续 Phase 实现。 */
     if (CONFIG_SMP_CPUS > 1U) {
         KLOG_WARN("[cpu] CONFIG_SMP_CPUS=%u but SMP bringup not yet "
                   "implemented on this architecture. Running on CPU0 only.\n",
@@ -317,7 +473,7 @@ cpu_bring_up_all(void)
     }
 }
 
-#endif /* ARCH_AARCH64 */
+#endif /* ARCH_AARCH64 / ARCH_RISCV64 */
 
 /* ── SMP 自检：验证所有在线核的 timer ISR 都在动 ──────────
  *

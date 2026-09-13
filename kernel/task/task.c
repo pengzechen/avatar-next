@@ -172,7 +172,7 @@ task_trampoline(void)
  *
  * 注意：这是汇编函数 task_trampoline_user 的 C 存根，
  * 实际实现 switch.S 中。
- * 参数通过寄存器传递（x19=entry, x20=sp）。
+ * 参数通过架构约定的 callee-saved 寄存器传递。
  */
 void task_trampoline_user(void);
 
@@ -445,10 +445,6 @@ process_create(const char *name, uint64_t user_entry, uint64_t user_code_size,
     task->sp = arch_init_user_stack(task->stack_base, TASK_STACK_SIZE,
                                     task->user_entry, user_sp,
                                     (uint64_t)task->pgd);
-
-    // /* EL0 用户进程暂时固定 BSP：跨核运行需要每核独立 TTBR0 切换，
-    //  * 等 vm_user 支持多核后再改为 CPU_AFFINITY_ANY。 */
-    // task->cpu_affinity = 0;
 
     /* 初始化完成后才发布为 READY，避免查找/信号路径看到半初始化 TCB。 */
     task->state = TASK_READY;

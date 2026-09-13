@@ -86,7 +86,7 @@ void handle_exception(void *frame_ptr)
     trap_frame_t *frame = (trap_frame_t *)frame_ptr;
     uint64_t cause     = frame->scause;
     uint64_t code = cause & ~SCAUSE_INTERRUPT_BIT;
-    
+
     /* 更新调试计数器 */
     g_exception_entry_count++;
     g_exception_code = code;

@@ -20,6 +20,10 @@ SECTIONS
         *(.text.boot)
     }
 
+    .data.boot : {
+        *(.data.boot)
+    }
+
     .bss.boot (NOLOAD) : {
         *(.bss.boot)
     }
@@ -81,7 +85,9 @@ SECTIONS
     PROVIDE(__bss_end_phys          = __bss_end          - KERNEL_VMA_OFF);
     PROVIDE(__global_pointer_phys   = __global_pointer$  - KERNEL_VMA_OFF);
     PROVIDE(stack_top_phys          = stack_top          - KERNEL_VMA_OFF);
+    PROVIDE(secondary_boot_stacks_phys = secondary_boot_stacks - KERNEL_VMA_OFF);
     PROVIDE(kernel_main_phys        = kernel_main        - KERNEL_VMA_OFF);
+    PROVIDE(riscv64_boot_hartid_phys = riscv64_boot_hartid - KERNEL_VMA_OFF);
 
     /*
      * Discard unwind tables and debug info

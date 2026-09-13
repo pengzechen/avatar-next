@@ -52,12 +52,19 @@ trap_vector:
     /* U → S: t0=kernel_sp（旧 sscratch），sscratch=原始 t0。
      * 先用 t0 作为临时 trap_frame 指针保存原始 sp/t1；不能先
      * mv t1, sp，否则会把用户 t1 污染成 user_sp 并在返回时恢复回去。 */
+    mv     t2, t0                /* t2 = kernel_sp, with cpu_t* stored at -8 */
     addi   t0, t0, -TRAP_FRAME_SIZE
     sd     x2,  2*8(t0)          /* user_sp */
+    sd     x4,  4*8(t0)          /* user tp; kernel tp is restored below */
     sd     x6,  6*8(t0)          /* 用户原始 t1 */
     csrrw  t1, sscratch, x0      /* t1=用户原始 t0, sscratch=0 */
     sd     t1,  5*8(t0)          /* 用户原始 t0 */
+    ld     x4, -8(t2)            /* tp = per-CPU pointer for kernel C code */
     mv     sp, t0                /* sp = trap_frame */
+    sd     x0,  0*8(sp)
+    sd     x1,  1*8(sp)          /* user ra */
+    sd     x3,  3*8(sp)          /* user gp */
+    j      .Lsave_rest_user
 
 .Lsave_rest:
 
@@ -67,6 +74,7 @@ trap_vector:
     /* x2(sp) 已在分支路径保存原始值，此处跳过                      */
     sd    x3,   3*8(sp)     /* gp                                 */
     sd    x4,   4*8(sp)     /* tp                                 */
+.Lsave_rest_user:
     /* x5(t0) 已在分支路径正确保存，此处跳过                        */
     /* x6(t1) 已在分支路径正确保存，此处跳过                        */
     sd    x7,   7*8(sp)     /* t2                                 */
@@ -95,6 +103,7 @@ trap_vector:
     sd    x30, 30*8(sp)     /* t5                                 */
     sd    x31, 31*8(sp)     /* t6                                 */
 
+.Lsave_csrs:
     /* ── 保存 CSR ────────────────────────────────────────────────── */
     csrr  t0, sepc
     sd    t0, 32*8(sp)
@@ -246,6 +255,7 @@ trap_vector:
 #endif
     /* 设置 sscratch = kernel_sp */
     addi  t1, sp, TRAP_FRAME_SIZE
+    sd    x4, -8(t1)         /* keep kernel tp recoverable during next U→S trap */
     csrw  sscratch, t1
     j     4f
 3:

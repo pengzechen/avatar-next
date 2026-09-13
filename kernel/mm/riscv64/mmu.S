@@ -119,5 +119,6 @@ mmu_disable:
 
 .section .bss.boot
 .align 12
+.global rv_l2_root
 rv_l2_root:
     .space PGSZ
