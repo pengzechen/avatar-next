@@ -24,6 +24,8 @@
 #define LAPIC_REG_TPR           0x080u   /* Task Priority                */
 #define LAPIC_REG_SVR           0x0F0u   /* Spurious Interrupt Vector    */
 #define LAPIC_REG_EOI           0x0B0u   /* End of Interrupt             */
+#define LAPIC_REG_ICR_LOW       0x300u   /* Interrupt Command Register   */
+#define LAPIC_REG_ICR_HIGH      0x310u   /* ICR destination field        */
 #define LAPIC_REG_LVT_TIMER     0x320u   /* LVT Timer                    */
 #define LAPIC_REG_TIMER_ICR     0x380u   /* Timer Initial Count          */
 #define LAPIC_REG_TIMER_CCR     0x390u   /* Timer Current Count          */
@@ -78,5 +80,9 @@ void lapic_eoi(void);
  * lapic_timer_stop — 屏蔽 LAPIC timer 中断
  */
 void lapic_timer_stop(void);
+
+uint32_t lapic_id(void);
+void lapic_send_init(uint32_t apic_id);
+void lapic_send_sipi(uint32_t apic_id, uint8_t vector);
 
 #endif /* LAPIC_H */

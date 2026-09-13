@@ -113,13 +113,18 @@ isr_common_stub:
     pushq   %r14
     pushq   %r15
 
+    /* SysV ABI: RSP must be 16-byte aligned before calling C. */
+    subq    $8, %rsp
+
     /* 传递 trap_frame_t * 作为第一个参数（System V ABI: rdi） */
-    movq    %rsp, %rdi
+    leaq    8(%rsp), %rdi
     call    handle_exception
 
     /* 检查是否需要重调度（IRQ 触发的抢占）──────────────────────── */
-    movq    %rsp, %rdi
+    leaq    8(%rsp), %rdi
     call    sched_check_and_yield_from_trap
+
+    addq    $8, %rsp
 
     /* 恢复通用寄存器 */
     popq    %r15

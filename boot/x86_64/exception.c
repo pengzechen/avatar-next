@@ -36,6 +36,9 @@ extern void *isr_stub_table[];  /* 前 33 个 stub 地址 */
 extern void isr_stub_32(void);   /* LAPIC Timer                    */
 extern void isr_stub_255(void);  /* LAPIC Spurious                 */
 
+static void exception_setup_idt(void);
+static void exception_setup_syscall(void);
+
 /* ── 代码段选择子（来自 boot.S GDT）────────────────────────────
  * boot_gdt: 0x00=null, 0x08=code32, 0x10=code64, 0x18=data
  * 
@@ -100,6 +103,39 @@ void irq_install(int vector, irq_handler_t h)
 
 void exception_init(void)
 {
+    exception_setup_idt();
+
+    KLOG_INFO("IDT loaded: base=0x%lx limit=%u\n",
+              idtr.base, (uint32_t)idtr.limit + 1u);
+
+    exception_setup_syscall();
+
+    /*
+     * 屏蔽 8259A PIC（legacy），我们使用 LAPIC。
+     * 默认情况下 BIOS/QEMU 将 IRQ0 映射到 INT 8（Double Fault 向量），
+     * 如果不屏蔽，sti 后 PIC timer 会触发 #DF。
+     */
+    outb(0x21, 0xFF);   /* master PIC — 屏蔽所有 IRQ */
+    outb(0xA1, 0xFF);   /* slave  PIC — 屏蔽所有 IRQ */
+
+    /* 初始化 LAPIC（软件使能 + SVR）*/
+    lapic_init();
+
+    /* 使能 CPU 中断 */
+    __asm__ volatile("sti");
+
+    KLOG_INFO("x86_64 exception init complete, interrupts enabled\n");
+}
+
+void exception_init_secondary(void)
+{
+    exception_setup_idt();
+    exception_setup_syscall();
+    lapic_init();
+}
+
+static void exception_setup_idt(void)
+{
     /* 安装前 32 个 CPU 异常存根（来自 isr_stub_table）*/
     for (int i = 0; i < 32; i++) {
         void (*stub)(void) = (void (*)(void))isr_stub_table[i];
@@ -117,9 +153,10 @@ void exception_init(void)
     idtr.base  = (uint64_t)&idt[0];
     __asm__ volatile("lidt %0" :: "m"(idtr));
 
-    KLOG_INFO("IDT loaded: base=0x%lx limit=%u\n",
-              idtr.base, (uint32_t)idtr.limit + 1u);
+}
 
+static void exception_setup_syscall(void)
+{
     /*
      * 配置 SYSCALL/SYSRET MSR 寄存器（用户态支持）
      */
@@ -140,21 +177,6 @@ void exception_init(void)
     
     KLOG_INFO("SYSCALL/SYSRET configured: entry=0x%lx\n", (uint64_t)syscall_entry);
 
-    /*
-     * 屏蔽 8259A PIC（legacy），我们使用 LAPIC。
-     * 默认情况下 BIOS/QEMU 将 IRQ0 映射到 INT 8（Double Fault 向量），
-     * 如果不屏蔽，sti 后 PIC timer 会触发 #DF。
-     */
-    outb(0x21, 0xFF);   /* master PIC — 屏蔽所有 IRQ */
-    outb(0xA1, 0xFF);   /* slave  PIC — 屏蔽所有 IRQ */
-
-    /* 初始化 LAPIC（软件使能 + SVR）*/
-    lapic_init();
-
-    /* 使能 CPU 中断 */
-    __asm__ volatile("sti");
-
-    KLOG_INFO("x86_64 exception init complete, interrupts enabled\n");
 }
 
 /* ── handle_exception ───────────────────────────────────────── */

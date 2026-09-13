@@ -95,6 +95,7 @@ typedef struct __attribute__((packed)) {
 
 /* 初始化 IDT，安装默认存根，加载 IDTR，使能中断 */
 void exception_init(void);
+void exception_init_secondary(void);
 
 /* 设置单个 IDT 门（供 exception.c 内部使用） */
 void idt_set_gate(uint8_t vec, void (*handler)(void), uint16_t sel, uint8_t attr);

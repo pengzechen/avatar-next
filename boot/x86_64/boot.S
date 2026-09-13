@@ -39,6 +39,9 @@
 .set EFER_SCE,      (1 << 0)
 .set EFER_LME,      (1 << 8)
 .set EFER_NXE,      (1 << 11)
+.set AP_TRAMP_PHYS,      0x00007000
+.set AP_DATA_CPU_ID,     0x00007f00
+.set AP_DATA_STACK_TOP,  0x00007f08
 
 /* ======================================================
  * Section: .text.boot
@@ -167,6 +170,105 @@ boot64_virt:
     jmp     .Lhang
 
 /* ----------------------------------------------------------
+ * AP trampoline copied to AP_TRAMP_PHYS (0x7000) before SIPI.
+ * SIPI starts APs in real mode at CS:IP = 0x700:0. The code
+ * enters long mode with the BSP page tables, switches to the
+ * per-CPU bootstrap stack, then calls cpu_secondary_bootstrap().
+ * ---------------------------------------------------------- */
+.align 16
+.global x86_ap_trampoline_start
+.global x86_ap_trampoline_end
+x86_ap_trampoline_start:
+.code16
+ap_real_start:
+    cli
+    xorw    %ax, %ax
+    movw    %ax, %ss
+    movw    $0x7000, %sp
+
+    movw    %cs, %ax
+    movw    %ax, %ds
+    lgdtl   ap_gdt_desc - x86_ap_trampoline_start
+
+    movl    %cr0, %eax
+    orl     $CR0_PE, %eax
+    movl    %eax, %cr0
+    ljmpl   $0x08, $(AP_TRAMP_PHYS + ap_pm32 - x86_ap_trampoline_start)
+
+.code32
+ap_pm32:
+    movw    $0x10, %ax
+    movw    %ax, %ds
+    movw    %ax, %es
+    movw    %ax, %ss
+
+    movl    $(CR4_PAE | CR4_PGE | CR4_OSFXSR | CR4_OSXMMEXCPT), %eax
+    movl    %eax, %cr4
+    movl    $(boot_pml4 - PHYS_OFFSET), %eax
+    movl    %eax, %cr3
+
+    movl    $EFER_MSR, %ecx
+    rdmsr
+    orl     $(EFER_SCE | EFER_LME | EFER_NXE), %eax
+    wrmsr
+
+    movl    %cr0, %eax
+    orl     $(CR0_PE | CR0_PG | CR0_MP | CR0_NE), %eax
+    andl    $~(CR0_EM | CR0_TS), %eax
+    movl    %eax, %cr0
+    ljmpl   $0x18, $(AP_TRAMP_PHYS + ap_long64 - x86_ap_trampoline_start)
+
+.code64
+ap_long64:
+    movw    $0x20, %ax
+    movw    %ax, %ss
+    movw    %ax, %ds
+    movw    %ax, %es
+    movw    %ax, %fs
+    movw    %ax, %gs
+
+    lgdt    (boot_gdt_desc64 - PHYS_OFFSET)
+    pushq   $0x10
+    movabs  $ap_long64_reload_cs, %rax
+    pushq   %rax
+    lretq
+
+ap_long64_reload_cs:
+    movw    $0x18, %ax
+    movw    %ax, %ss
+    movw    %ax, %ds
+    movw    %ax, %es
+    xorw    %ax, %ax
+    movw    %ax, %fs
+    movw    %ax, %gs
+    movabs  $AP_DATA_STACK_TOP, %rax
+    movq    (%rax), %rsp
+    xorq    %rbp, %rbp
+    movabs  $AP_DATA_CPU_ID, %rax
+    movl    (%rax), %edi
+    movabs  $cpu_secondary_bootstrap, %rax
+    callq   *%rax
+
+1:
+    hlt
+    jmp     1b
+
+.align 8
+ap_gdt:
+    .quad   0x0000000000000000
+    .quad   0x00cf9b000000ffff   /* 0x08: 32-bit code */
+    .quad   0x00cf93000000ffff   /* 0x10: 32-bit data */
+    .quad   0x00af9b000000ffff   /* 0x18: 64-bit code */
+    .quad   0x00cf93000000ffff   /* 0x20: 64-bit data */
+ap_gdt_end:
+ap_gdt_desc:
+    .word   ap_gdt_end - ap_gdt - 1
+    .long   AP_TRAMP_PHYS + ap_gdt - x86_ap_trampoline_start
+
+x86_ap_trampoline_end:
+.code64
+
+/* ----------------------------------------------------------
  * Temporary GDT
  *   0x00 – null
  *   0x08 – 32-bit code (for completeness)
@@ -187,8 +289,7 @@ boot_gdt:
     .quad   0x00cf93000000ffff   /* 0x18: data    base=0 limit=4G DPL=0     */
     .quad   0x00cff3000000ffff   /* 0x20: data    base=0 limit=4G DPL=3     */
     .quad   0x00affb000000ffff   /* 0x28: code64  L=1   limit=4G DPL=3      */
-    .quad   0x0000000000000000   /* 0x30: TSS low (运行时填充)              */
-    .quad   0x0000000000000000   /* 0x38: TSS high (运行时填充)             */
+    .zero   16 * 8               /* 0x30..0xaf: per-CPU TSS descriptors    */
 boot_gdt_end:
 
 .align 4
@@ -244,3 +345,8 @@ boot_pdpt_high:
 boot_stack_bottom:
     .space  16384               /* 16 KB */
 boot_stack_top:
+
+.align 16
+.global secondary_boot_stacks
+secondary_boot_stacks:
+    .space  8 * 16384

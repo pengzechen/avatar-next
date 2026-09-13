@@ -362,20 +362,8 @@ sched_check_and_yield_from_trap(void *frame_ptr)
     }
     return sched_check_and_yield();
 #elif ARCH_X86_64
-    trap_frame_t *frame = (trap_frame_t *)frame_ptr;
-    if (frame && ((frame->cs & 0x3UL) != 0x3UL)) {
-        cpu_t *c = cpu_current();
-        if (!c->current_task || !c->need_resched || !preemptible() ||
-            c->preempt_schedule_depth != 0)
-            return false;
-
-        c->need_resched = false;
-        c->preempt_schedule_depth++;
-        sched_schedule();
-        c->preempt_schedule_depth--;
-        return true;
-    }
-    return sched_check_and_yield();
+    (void)frame_ptr;
+    return false;
 #elif ARCH_RISCV64
     (void)frame_ptr;
     return false;

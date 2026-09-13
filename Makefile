@@ -370,7 +370,7 @@ ifeq ($(ARCH),x86_64)
     CFLAGS  += $(ASSERT_DEFINE)
     CFLAGS  += -fno-pie -fno-stack-protector -fno-stack-clash-protection -U_FORTIFY_SOURCE
     CFLAGS  += -ffreestanding -fno-builtin
-    CFLAGS  += -mcmodel=large
+    CFLAGS  += -mcmodel=large -mno-red-zone
     CFLAGS  += -mno-mmx -mno-sse
     LDFLAGS := -nostdlib -nostartfiles -nodefaultlibs -no-pie
     LDFLAGS += -Wl,-z,max-page-size=0x1000

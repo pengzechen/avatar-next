@@ -11,6 +11,8 @@
 #include "types.h"
 #include "klog.h"
 #include "string.h"
+#include "task/cpu.h"
+#include "tss.h"
 
 /* ── TSS 结构定义（x86_64 格式）─────────────────────────────────── */
 typedef struct {
@@ -29,7 +31,7 @@ typedef struct {
 static uint8_t g_kernel_stack[16384] __attribute__((aligned(16)));
 
 /* ── 全局 TSS 实例（静态分配）───────────────────────────────────── */
-static tss_t g_tss __attribute__((aligned(16)));
+static tss_t g_tss[AVATAR_MAX_CPUS] __attribute__((aligned(16)));
 
 /* 对外导出的当前 RSP0（供汇编路径读取） */
 uint64_t g_x86_tss_rsp0 = 0;
@@ -45,7 +47,7 @@ tss_set_gdt_entry(uint64_t *gdt, uint64_t base, uint32_t limit)
              ((tss_base & 0xFFFF) << 16)        |  /* Base 15:0 */
              (((tss_base >> 16) & 0xFF) << 32)  |  /* Base 23:16 */
              (0x89ULL << 40)                    |  /* Type=9, P=1, DPL=0 */
-             ((((limit >> 16) & 0xF) | 0) << 48) | /* Limit 19:16, G=0, AVL=0 */
+             (((uint64_t)((limit >> 16) & 0xF)) << 48) | /* Limit 19:16, G=0 */
              (((tss_base >> 24) & 0xFF) << 56);    /* Base 31:24 */
     
     /* 高 8 字节：Base 63:32 + 保留 */
@@ -56,21 +58,36 @@ tss_set_gdt_entry(uint64_t *gdt, uint64_t base, uint32_t limit)
 void
 x86_tss_init(void)
 {
+    x86_tss_init_cpu(0, 0);
+}
+
+void
+x86_tss_init_cpu(uint32_t cpu_id, uint64_t rsp0)
+{
+    if (cpu_id >= AVATAR_MAX_CPUS)
+        cpu_id = 0;
+
+    tss_t *tss = &g_tss[cpu_id];
+
     /* 清零 TSS */
-    memset(&g_tss, 0, sizeof(g_tss));
-    
+    memset(tss, 0, sizeof(*tss));
+
     /* 设置 RSP0（Ring 0 栈顶）*/
-    g_tss.rsp0 = (uint64_t)g_kernel_stack + sizeof(g_kernel_stack);
-    g_x86_tss_rsp0 = g_tss.rsp0;
-    
+    if (rsp0 == 0) {
+        rsp0 = (uint64_t)g_kernel_stack + sizeof(g_kernel_stack);
+    }
+    tss->rsp0 = rsp0;
+    if (cpu_id == 0)
+        g_x86_tss_rsp0 = tss->rsp0;
+
     /* I/O 位图基址设为超出 TSS 末尾（禁用 I/O 权限检查）*/
-    g_tss.iomap_base = sizeof(tss_t);
-    
+    tss->iomap_base = sizeof(tss_t);
+
     KLOG_INFO("TSS setup: g_kernel_stack=0x%llx size=%lu top=0x%llx\n",
               (uint64_t)g_kernel_stack, sizeof(g_kernel_stack), 
               (uint64_t)g_kernel_stack + sizeof(g_kernel_stack));
-    KLOG_INFO("TSS setup: &g_tss=0x%llx g_tss.rsp0=0x%llx\n",
-              (uint64_t)&g_tss, g_tss.rsp0);
+    KLOG_INFO("TSS setup: cpu=%u tss=0x%llx rsp0=0x%llx\n",
+              cpu_id, (uint64_t)tss, tss->rsp0);
     
     /* 获取当前 GDT 基址 */
     struct {
@@ -80,20 +97,28 @@ x86_tss_init(void)
     __asm__ volatile("sgdt %0" : "=m"(gdt_desc));
     uint64_t *gdt = (uint64_t *)gdt_desc.base;
     
-    /* 在 GDT[6:7] 添加 TSS 描述符（16 字节，占两个 slot）*/
-    tss_set_gdt_entry(&gdt[6], (uint64_t)(uintptr_t)&g_tss, sizeof(tss_t) - 1);
-    
-    /* 加载 TR（Task Register）指向 GDT[6]（选择子 0x30）*/
-    __asm__ volatile("ltr %w0" :: "r"((uint16_t)0x30));
-    
-    KLOG_INFO("TSS initialized: base=0x%llx RSP0=0x%llx TR=0x30\n", 
-              (uint64_t)&g_tss, g_tss.rsp0);
+    uint32_t gdt_index = 6 + cpu_id * 2;
+    uint16_t tss_sel = (uint16_t)(0x30 + cpu_id * 0x10);
+
+    /* 在 GDT 中添加本 CPU 的 TSS 描述符（16 字节，占两个 slot）*/
+    tss_set_gdt_entry(&gdt[gdt_index], (uint64_t)(uintptr_t)tss,
+                      sizeof(tss_t) - 1);
+
+    /* 加载 TR（Task Register）指向本 CPU 的 TSS selector */
+    __asm__ volatile("ltr %w0" :: "r"(tss_sel));
+
+    KLOG_INFO("TSS initialized: cpu=%u base=0x%llx RSP0=0x%llx TR=0x%x\n",
+              cpu_id, (uint64_t)tss, tss->rsp0, tss_sel);
 }
 
 /* ── 更新 TSS.RSP0（任务切换时调用）──────────────────────────────── */
 void
 x86_tss_set_rsp0(uint64_t rsp0)
 {
-    g_tss.rsp0 = rsp0;
-    g_x86_tss_rsp0 = rsp0;
+    uint32_t cpu_id = cpu_current()->cpu_id;
+    if (cpu_id >= AVATAR_MAX_CPUS)
+        cpu_id = 0;
+    g_tss[cpu_id].rsp0 = rsp0;
+    if (cpu_id == 0)
+        g_x86_tss_rsp0 = rsp0;
 }

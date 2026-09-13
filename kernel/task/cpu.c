@@ -34,6 +34,12 @@ extern void trap_vector(void);
 volatile uint64_t riscv64_boot_hartid;
 #endif
 
+#if ARCH_X86_64
+#include "exception.h"
+#include "irq/lapic.h"
+extern void x86_tss_init_cpu(uint32_t cpu_id, uint64_t rsp0);
+#endif
+
 /* ── 全局 CPU 池 ────────────────────────────────────────── */
 cpu_t   g_cpus[AVATAR_MAX_CPUS];
 uint32_t g_num_cpus = 1;     /* Phase 0：恒为 1；Phase 2 起会增长 */
@@ -87,7 +93,7 @@ cpu_init_bsp(void)
 
 /* ── 二级核启动 ─────────────────────────────────────────── */
 
-#if ARCH_AARCH64 || ARCH_RISCV64
+#if ARCH_AARCH64 || ARCH_RISCV64 || ARCH_X86_64
 /* 各架构 boot.S 中定义的次级核启动栈，共享供 idle 复用。 */
 extern uint8_t secondary_boot_stacks[];
 #if ARCH_AARCH64
@@ -150,7 +156,7 @@ psci_affinity_info(uint64_t mpidr)
 
 #endif /* ARCH_AARCH64 */
 
-#if ARCH_AARCH64 || ARCH_RISCV64
+#if ARCH_AARCH64 || ARCH_RISCV64 || ARCH_X86_64
 /*
  * setup_secondary_idle_task - 初始化次级核 idle 任务控制块
  *
@@ -189,7 +195,7 @@ setup_secondary_idle_task(cpu_t *c)
     c->idle_task    = idle;
     c->current_task = idle;
 }
-#endif /* ARCH_AARCH64 || ARCH_RISCV64 */
+#endif /* ARCH_AARCH64 || ARCH_RISCV64 || ARCH_X86_64 */
 
 #if ARCH_AARCH64
 
@@ -462,7 +468,104 @@ cpu_bring_up_all(void)
               (unsigned)g_num_cpus);
 }
 
-#else  /* !ARCH_AARCH64 && !ARCH_RISCV64 */
+#elif ARCH_X86_64
+
+#define X86_AP_TRAMP_PHYS       0x00007000UL
+#define X86_AP_TRAMP_VECTOR     (X86_AP_TRAMP_PHYS >> 12)
+#define X86_AP_DATA_CPU_ID      ((volatile uint32_t *)0x00007f00UL)
+#define X86_AP_DATA_STACK_TOP   ((volatile uint64_t *)0x00007f08UL)
+
+extern uint8_t x86_ap_trampoline_start[];
+extern uint8_t x86_ap_trampoline_end[];
+
+void
+cpu_secondary_bootstrap(uint32_t cpu_id)
+{
+    cpu_t *c = &g_cpus[cpu_id];
+
+    arch_cpu_self_set(c);
+    c->hw_id = lapic_id();
+
+    exception_init_secondary();
+    setup_secondary_idle_task(c);
+    x86_tss_init_cpu(cpu_id,
+                     (uint64_t)(uintptr_t)&secondary_boot_stacks[(cpu_id + 1U) * SECONDARY_STACK_SIZE]);
+    timer_init_secondary();
+
+    wmb();
+    c->online = true;
+
+    arch_irq_enable();
+    for (;;) {
+        sched_check_and_yield();
+        __asm__ volatile("hlt");
+    }
+}
+
+void
+cpu_bring_up_all(void)
+{
+    if (CONFIG_SMP_CPUS <= 1U)
+        return;
+
+    uintptr_t tramp_size = (uintptr_t)(x86_ap_trampoline_end - x86_ap_trampoline_start);
+    if (tramp_size > 0x1000U) {
+        KLOG_ERROR("[cpu] x86 AP trampoline too large: %llu bytes\n",
+                   (unsigned long long)tramp_size);
+        return;
+    }
+
+    volatile uint8_t *tramp_dst = (volatile uint8_t *)X86_AP_TRAMP_PHYS;
+    for (uintptr_t j = 0; j < tramp_size; j++)
+        tramp_dst[j] = x86_ap_trampoline_start[j];
+
+    KLOG_INFO("[cpu] x86_64 SMP bringup: CONFIG_SMP_CPUS=%u trampoline=0x%lx size=%llu\n",
+              (unsigned)CONFIG_SMP_CPUS, (unsigned long)X86_AP_TRAMP_PHYS,
+              (unsigned long long)tramp_size);
+
+    for (uint32_t i = 1; i < CONFIG_SMP_CPUS && i < AVATAR_MAX_CPUS; i++) {
+        cpu_t *c = &g_cpus[i];
+        memset(c, 0, sizeof(*c));
+        c->cpu_id = i;
+        c->hw_id = i;
+        c->online = false;
+        list_init(&c->run_queue);
+        spinlock_irq_init(&c->rq_lock);
+
+        *X86_AP_DATA_CPU_ID = i;
+        *X86_AP_DATA_STACK_TOP =
+            (uint64_t)(uintptr_t)&secondary_boot_stacks[(i + 1U) * SECONDARY_STACK_SIZE];
+        wmb();
+
+        KLOG_INFO("[cpu] INIT/SIPI cpu=%u apic_id=%llu\n",
+                  i, (unsigned long long)c->hw_id);
+        lapic_send_init((uint32_t)c->hw_id);
+        timer_delay_ms(10);
+        lapic_send_sipi((uint32_t)c->hw_id, (uint8_t)X86_AP_TRAMP_VECTOR);
+        timer_delay_ms(1);
+        lapic_send_sipi((uint32_t)c->hw_id, (uint8_t)X86_AP_TRAMP_VECTOR);
+
+        uint64_t spin = 0;
+        while (!c->online) {
+            __asm__ volatile("pause");
+            if (++spin > 100000000ULL) {
+                KLOG_ERROR("[cpu] timeout waiting for cpu%u apic_id=%llu online\n",
+                           i, (unsigned long long)c->hw_id);
+                break;
+            }
+        }
+        if (c->online) {
+            g_num_cpus++;
+            KLOG_INFO("[cpu] cpu%u online (apic_id=%llu)\n",
+                      i, (unsigned long long)c->hw_id);
+        }
+    }
+
+    KLOG_WARN("[cpu] x86_64 SMP bringup done: %u CPU(s) online\n",
+              (unsigned)g_num_cpus);
+}
+
+#else  /* !ARCH_AARCH64 && !ARCH_RISCV64 && !ARCH_X86_64 */
 
 void
 cpu_bring_up_all(void)

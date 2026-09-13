@@ -101,6 +101,33 @@ void lapic_init(void)
               lapic_read(LAPIC_REG_VER) & 0xFF);
 }
 
+uint32_t lapic_id(void)
+{
+    return lapic_read(LAPIC_REG_ID) >> 24;
+}
+
+static void lapic_wait_icr_idle(void)
+{
+    while (lapic_read(LAPIC_REG_ICR_LOW) & (1u << 12))
+        ;
+}
+
+void lapic_send_init(uint32_t apic_id)
+{
+    lapic_wait_icr_idle();
+    lapic_write(LAPIC_REG_ICR_HIGH, apic_id << 24);
+    lapic_write(LAPIC_REG_ICR_LOW, 0x00004500u); /* INIT, level assert, physical */
+    lapic_wait_icr_idle();
+}
+
+void lapic_send_sipi(uint32_t apic_id, uint8_t vector)
+{
+    lapic_wait_icr_idle();
+    lapic_write(LAPIC_REG_ICR_HIGH, apic_id << 24);
+    lapic_write(LAPIC_REG_ICR_LOW, 0x00004600u | vector); /* STARTUP IPI */
+    lapic_wait_icr_idle();
+}
+
 /* ── lapic_timer_init ───────────────────────────────────────── */
 
 void lapic_timer_init(uint8_t vector)
