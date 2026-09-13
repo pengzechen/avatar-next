@@ -120,7 +120,7 @@ make PLATFORM=sg2002-riscv64 ETH=none build/kernel_riscv64.bin LOG=info -j4
 make ARCH=riscv64 build/kernel_riscv64.bin LOG=info -j4
 ```
 
-如果 `lua_drivers.o`、`pseudofs_pseudofs.o` 等对象没有因平台宏变化而重编，它们可能仍带着 SG2002 的 `DRIVER_ION=1` / `DRIVER_TPU_CVITPU=1` 条件编译结果。QEMU 平台不会链接 ION/TPU 实现，于是链接阶段出现：
+如果 `pseudofs_pseudofs.o`、驱动对象等没有因平台宏变化而重编，它们可能仍带着 SG2002 的 `DRIVER_ION=1` / `DRIVER_TPU_CVITPU=1` 条件编译结果。QEMU 平台不会链接 ION/TPU 实现，于是链接阶段出现：
 
 ```text
 undefined reference to `cvi_tpu_is_ready'
@@ -140,10 +140,10 @@ undefined reference to `ion_get_buf'
 
 当前实现：
 
-- `tools/gen_platform.py` 对 `build/platform.mk` 和 `build/platform_lua_blob.c` 使用“内容变化才写”。
-- Makefile 将 `build/platform.mk` 和当前 `platform.lua` 作为平台敏感对象的普通依赖。
+- `tools/gen_platform.py` 对 `build/platform.mk` 和 `build/platform_static.c` 使用“内容变化才写”。
+- Makefile 将 `build/platform.mk` 和当前 `platform.conf` 作为平台敏感对象的普通依赖。
 
-平台敏感对象包括内核、启动/异常、驱动、lwext4、Lua core/glue、pseudofs、platform cfg 等使用 `CFLAGS` / `LUA_CFLAGS` / `LWEXT4_CFLAGS` 的对象。
+平台敏感对象包括内核、启动/异常、驱动、lwext4、pseudofs、platform cfg 等使用 `CFLAGS` / `LWEXT4_CFLAGS` 的对象。
 
 ### 5.3 排查方法
 

@@ -128,7 +128,7 @@ static void qemu_shutdown(void)
 
 void platform_init(void)
 {
-    platform_conf_scan();    /* 从内嵌 Lua 提取内存布局和 PMM 保留区 */
+    platform_conf_scan();    /* 从平台配置提取内存布局和 PMM 保留区 */
     uart_init();
 }
 

@@ -18,7 +18,6 @@
 #include "../fs/lwext4_port/fs_init.h"
 #include "loader/elf_loader.h"
 #include "timer/timer.h"
-#include "lua_driver.h"
 #include "task/switch.h"     /* arch_irq_enable */
 #include "net/net.h"
 
@@ -40,8 +39,64 @@
 #include "vmm.h"
 #endif
 
+#if DRIVER_UART_DW
+#include "uart/uart_dw.h"
+#endif
+
+#if DRIVER_GIC_V2
+#include "irq/gicv2.h"
+#endif
+
+#if DRIVER_GIC_V3
+#include "irq/gicv3.h"
+#endif
+
+#if DRIVER_TPU_CVITPU
+#include "tpu/cvi_tpu.h"
+#endif
+
+#if DRIVER_NPU_RKNPU
+#include "npu/rknpu.h"
+#endif
+
+#if DRIVER_SDBLK_SG2002
+#include "blk/sdblk.h"
+#endif
+
 extern void run_vmm_test(void);  /* tests/vmm_test.c */
 extern void kmem_test(void);      /* kernel/mm/aarch64/vmm.c */
+
+static void platform_init_runtime_drivers(void)
+{
+    KLOG_INFO("Initializing platform runtime drivers...\n");
+
+#if DRIVER_UART_DW && (defined(PLATFORM_RK3588) || defined(PLATFORM_SG2002))
+    dw_uart_init();
+#endif
+
+#if DRIVER_GIC_V2
+    gic_virtual_init();
+#endif
+
+#if DRIVER_GIC_V3
+    gicv3_init();
+#endif
+
+    timer_init();
+    timer_enable();
+
+#if DRIVER_TPU_CVITPU
+    cvi_tpu_init();
+#endif
+
+#if DRIVER_SDBLK_SG2002
+    sdblk_init();
+#endif
+
+#if DRIVER_NPU_RKNPU
+    rknpu_init();
+#endif
+}
 
 /*
  * demo_load_busybox - 从文件系统加载并执行 busybox
@@ -96,7 +151,7 @@ void kernel_main(void)
      * 将 UART 基地址切换到 TTBR1 覆盖的高虚拟地址，
      * 使内核在任意 TTBR0（用户页表）下仍可正常输出。
      */
-    /* Must enable FP/NEON before any FP code runs (including Lua VM) */
+    /* Keep NEON enabled for AArch64 code paths that require it. */
     aarch64_enable_neon();
 #endif
 
@@ -148,29 +203,7 @@ void kernel_main(void)
     x86_tss_init();
 #endif
 
-    KLOG_WARN("=== Running Lua scripts ===\n");
-    /* ── Lua platform initialization (runs platform.lua phases) ──────── */
-    /* Reuse the Lua VM that was opened during platform_conf_scan(). */
-    lua_State *lua_L = platform_lua_state();
-    if (lua_L) {
-        lua_selftest(lua_L);
-        KLOG_INFO(">>> phase: earlycon\n");
-        lua_run_phase(lua_L, "earlycon");  /* 早期控制台           */
-        KLOG_INFO(">>> phase: irqcore\n");
-        lua_run_phase(lua_L, "irqcore");   /* GICv3 (AArch64)     */
-        KLOG_INFO(">>> phase: drivers\n");
-        lua_run_phase(lua_L, "drivers");   /* timer init + enable  */
-    }
-    KLOG_INFO("Lua platform phases (earlycon/irqcore/drivers) complete\n");
-
-    /* Run remaining Lua platform phases then close the VM */
-    if (lua_L) {
-        lua_run_phase(lua_L, "fs");
-        lua_run_phase(lua_L, "late");
-        lua_platform_close(lua_L);
-        platform_conf_close();
-        lua_L = NULL;
-    }
+    platform_init_runtime_drivers();
 
 
     /* ── 初始化任务子系统 ───────────────────────────────── */

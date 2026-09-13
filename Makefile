@@ -42,27 +42,27 @@ FS_DIR          := fs
 THIRD_PARTY_DIR := third_party
 
 # ─── §2  平台配置生成 ────────────────────────────────────────────────────────────
-# 平台配置全部在 platforms/$(PLATFORM)/platform.lua 的 BUILD_CONFIG 表中。
-# gen_platform.py 解析该文件，生成 platform.mk 和内嵌 platform.lua blob。
+# 平台配置全部在 platforms/$(PLATFORM)/platform.conf 的 platform 表中。
+# gen_platform.py 解析该文件，生成 platform.mk 和 platform_static.c。
 
-_PLATFORM_LUA     := $(PLATFORM_DIR)/$(PLATFORM)/platform.lua
-_HAVE_PLATFORM_LUA := $(wildcard $(_PLATFORM_LUA))
+_PLATFORM_CONF      := $(PLATFORM_DIR)/$(PLATFORM)/platform.conf
+_HAVE_PLATFORM_CONF := $(wildcard $(_PLATFORM_CONF))
 
-ifeq ($(_HAVE_PLATFORM_LUA),)
-$(error No platform.lua found for PLATFORM=$(PLATFORM). Expected: $(_PLATFORM_LUA))
+ifeq ($(_HAVE_PLATFORM_CONF),)
+$(error No platform.conf found for PLATFORM=$(PLATFORM). Expected: $(_PLATFORM_CONF))
 endif
 
-override ARCH := $(shell sed -n 's/^[[:space:]]*arch[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' $(_PLATFORM_LUA) | head -1)
+override ARCH := $(shell sed -n 's/^[[:space:]]*arch[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' $(_PLATFORM_CONF) | head -1)
 ifeq ($(strip $(ARCH)),)
-$(error Failed to infer ARCH from $(_PLATFORM_LUA))
+$(error Failed to infer ARCH from $(_PLATFORM_CONF))
 endif
 
 PLATFORM_MK  := $(BUILD_DIR)/platform.mk
-$(shell python3 $(TOOLS_DIR)/gen_platform.py $(_PLATFORM_LUA) $(PLATFORM_MK) $(INCLUDE_DIR))
+$(shell python3 $(TOOLS_DIR)/gen_platform.py $(_PLATFORM_CONF) $(PLATFORM_MK) $(INCLUDE_DIR))
 -include $(PLATFORM_MK)
 
 ifeq ($(strip $(MEM_RAM_BASE)),)
-$(error Failed to generate platform config from $(_PLATFORM_LUA))
+$(error Failed to generate platform config from $(_PLATFORM_CONF))
 endif
 
 # ─── §3  日志与断言标志 ──────────────────────────────────────────────────────────
@@ -115,6 +115,7 @@ STRING_OBJECT       := $(BUILD_DIR)/string.o
 BITMAP_OBJECT       := $(BUILD_DIR)/bitmap.o
 LIBC_OBJECT         := $(BUILD_DIR)/libc.o
 PLATFORM_CFG_OBJECT := $(BUILD_DIR)/platform_cfg.o
+PLATFORM_STATIC_OBJECT := $(BUILD_DIR)/platform_static.o
 
 # 内核源文件
 KERNEL_SOURCES := $(KERNEL_DIR)/main.c
@@ -455,7 +456,7 @@ CFLAGS  += -DDEVICE_UART_REG_SHIFT=$(DEV_UART_REG_SHIFT)
 CFLAGS  += -DDEVICE_ETH_BASE_RAW=$(DEV_ETH_BASE)
 
 # ─── §6  驱动选择 ────────────────────────────────────────────────────────────────
-# 所有驱动默认值来自 platform.lua → gen_platform.py → platform.mk。
+# 所有驱动默认值来自 platform.conf → gen_platform.py → platform.mk。
 # 可在命令行覆盖，例如：make PLATFORM=sg2002-riscv64 ETH=none kernel
 
 # ── §6a  基础设备驱动（UART / GIC / 定时器）──────────────────────────────────
@@ -531,7 +532,7 @@ else
 endif
 
 # ── §6c  网络驱动（ETH）─────────────────────────────────────────────────────────
-# 以太网驱动（由 platform.lua 的 eth.driver 自动推导；也可命令行覆盖：ETH=none / ETH=virtio）
+# 以太网驱动（由 platform.conf 的 eth.driver 自动推导；也可命令行覆盖：ETH=none / ETH=virtio）
 ETH ?= $(DEV_ETH_TYPE)
 ifeq ($(ETH),virtio)
     ifeq ($(filter $(ARCH),riscv64 aarch64),)
@@ -692,43 +693,7 @@ LWEXT4_CFLAGS  += -DCONFIG_HAVE_OWN_ASSERT=1
 LWEXT4_CFLAGS  += -DCONFIG_USE_USER_MALLOC=1
 LWEXT4_CFLAGS  += -w   # 屏蔽第三方代码警告
 
-# ─── §9  第三方库：Lua 5.4 ──────────────────────────────────────────────────────
-LUA_DIR      := $(THIRD_PARTY_DIR)/lua54
-LUA_SRC_DIR  := $(LUA_DIR)/src
-LUA_PORT_DIR := $(LIB_DIR)/lua54_port
-LUA_LIBC_SHIM := $(LUA_PORT_DIR)/libc_shim
-
-# Lua VM 核心模块（不含 linit.c / lmathlib — 后者依赖 libc 数学函数）
-LUA_CORE_SRCS := lapi lcode lctype ldebug ldo ldump lfunc lgc llex lmem \
-                 lobject lopcodes lparser lstate lstring ltable ltm \
-                 lundump lvm lzio lauxlib lbaselib ltablib lstrlib
-
-LUA_CORE_OBJS := $(patsubst %,$(THIRD_PARTY_BUILD_DIR)/lua54_%.o,$(LUA_CORE_SRCS))
-
-# LUA_CFLAGS: libc shim 头文件先于 include/，FP 限制解除
-LUA_CFLAGS := -I$(LUA_LIBC_SHIM) -I$(LUA_SRC_DIR) \
-              $(filter-out -mgeneral-regs-only,$(CFLAGS))
-ifeq ($(ARCH),x86_64)
-LUA_CFLAGS := $(filter-out -mno-mmx -mno-sse,$(LUA_CFLAGS))
-LUA_CFLAGS += -msse2
-endif
-LUA_CFLAGS += -Os -w -DLUA_C89_NUMBERS=1
-
-# setjmp 汇编（使用标准 CFLAGS）
-SETJMP_OBJ := $(BUILD_DIR)/setjmp_$(ARCH).o
-
-# Lua 胶水代码（使用 LUA_CFLAGS）
-LUA_GLUE_OBJS := $(BUILD_DIR)/lua_platform.o \
-                 $(BUILD_DIR)/lua_drivers.o \
-                 $(BUILD_DIR)/lua_math_impl.o \
-                 $(BUILD_DIR)/lua_kernel_init.o
-
-# 嵌入式 platform.lua 字节数组（由 gen_platform.py 生成，使用标准 CFLAGS）
-LUA_BLOB_OBJ := $(BUILD_DIR)/platform_lua_blob.o
-
-LUA_OBJECTS := $(LUA_CORE_OBJS) $(LUA_GLUE_OBJS) $(LUA_BLOB_OBJ) $(SETJMP_OBJ)
-
-# ─── §10  Rootfs 配置 ────────────────────────────────────────────────────────────
+# ─── §9  Rootfs 配置 ────────────────────────────────────────────────────────────
 # 每个平台独立一个 build/<platform>/ 目录，切换平台无需 make clean。
 ROOTFS_IMG       := $(BUILD_DIR)/rootfs-$(ARCH).img
 ROOTFS_STAGE     := $(BUILD_DIR)/rootfs-stage-$(ARCH)
@@ -865,15 +830,14 @@ PSEUDOFS_OBJS := $(BUILD_DIR)/pseudofs_pseudofs.o
 # (PLATFORM_*, DRIVER_*, DEVICE_*, memory layout).  The generator writes these
 # files only when contents change, so this catches real platform switches
 # without forcing recompilation on every make invocation.
-PLATFORM_CONFIG_DEPS := $(PLATFORM_MK) $(_PLATFORM_LUA)
+PLATFORM_CONFIG_DEPS := $(PLATFORM_MK) $(_PLATFORM_CONF)
 $(BOOT_OBJECTS) $(KERNEL_OBJECTS) $(NET_OBJS) $(TASK_C_OBJECTS) $(TASK_S_OBJ) \
 $(TASK_USER_TEST_OBJ) $(TASK_USER_HELLO_OBJ) $(TASK_USER_TESTEXECVE_OBJ) \
 $(LOADER_C_OBJECTS) $(SYSCALL_C_OBJECTS) \
 $(VM_C_OBJECTS) $(VM_S_OBJ) $(VMM_C_OBJECTS) $(VMM_S_OBJECTS) \
 $(GUEST_TEST_OBJ) $(TESTS_OBJECTS) $(PLATFORM_OBJECTS) $(DRIVER_OBJECTS) \
 $(EXCEPTION_OBJECTS) $(KLOG_OBJECT) $(VSNPRINTF_OBJECT) $(STRING_OBJECT) \
-$(LIBC_OBJECT) $(BITMAP_OBJECT) $(PLATFORM_CFG_OBJECT) $(LWEXT4_OBJS) $(LWEXT4_PORT_OBJS) \
-$(LUA_CORE_OBJS) $(LUA_GLUE_OBJS) $(LUA_BLOB_OBJ) $(SETJMP_OBJ) \
+$(LIBC_OBJECT) $(BITMAP_OBJECT) $(PLATFORM_CFG_OBJECT) $(PLATFORM_STATIC_OBJECT) $(LWEXT4_OBJS) $(LWEXT4_PORT_OBJS) \
 $(PSEUDOFS_OBJS) $(LWIP_OBJS): $(PLATFORM_CONFIG_DEPS)
 
 $(BUILD_DIR)/pseudofs_pseudofs.o: fs/pseudofs/pseudofs.c | $(BUILD_DIR)
@@ -1088,12 +1052,18 @@ $(BUILD_DIR)/bitmap.o: $(LIB_DIR)/bitmap.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/platform_cfg.o: $(LIB_DIR)/platform_cfg.c | $(BUILD_DIR)
-	$(CC) $(LUA_CFLAGS) -c $< -o $@
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/platform_static.c: $(_PLATFORM_CONF) $(TOOLS_DIR)/gen_platform.py | $(BUILD_DIR)
+	python3 $(TOOLS_DIR)/gen_platform.py $(_PLATFORM_CONF) $(PLATFORM_MK) $(INCLUDE_DIR)
+
+$(BUILD_DIR)/platform_static.o: $(BUILD_DIR)/platform_static.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/kernel_mm_mmu.o: $(VM_S_SRC) | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-# ── §12e  第三方库编译规则（lwext4 / Lua）────────────────────────────────────────
+# ── §12e  第三方库编译规则（lwext4）──────────────────────────────────────────────
 # 第三方 lwext4 源文件：使用包含 compat 路径的专用 LWEXT4_CFLAGS
 
 $(THIRD_PARTY_BUILD_DIR)/lwext4_%.o: $(LWEXT4_DIR)/src/%.c | $(BUILD_DIR)
@@ -1123,37 +1093,6 @@ $(THIRD_PARTY_BUILD_DIR)/lwip_ipv4_%.o: $(LWIP_DIR)/src/core/ipv4/%.c | $(BUILD_
 $(THIRD_PARTY_BUILD_DIR)/lwip_netif_%.o: $(LWIP_DIR)/src/netif/%.c | $(BUILD_DIR)
 	@mkdir -p $(dir $@)
 	$(CC) $(LWIP_CFLAGS) -c $< -o $@
-
-# ── §12f  Lua 5.4 编译规则 ──────────────────────────────────────────────────────
-# Lua VM 核心源文件：使用 LUA_CFLAGS（FP 开启，compat 头文件路径前置）
-$(THIRD_PARTY_BUILD_DIR)/lua54_%.o: $(LUA_SRC_DIR)/%.c | $(BUILD_DIR)
-	@mkdir -p $(dir $@)
-	$(CC) $(LUA_CFLAGS) -c $< -o $@
-
-# setjmp 汇编（每架构一个）
-$(SETJMP_OBJ): $(LIB_DIR)/setjmp/setjmp_$(ARCH).S | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-# Lua 平台胶水代码（LUA_CFLAGS + lua.h 路径）
-$(BUILD_DIR)/lua_platform.o: $(LUA_PORT_DIR)/platform.c | $(BUILD_DIR)
-	$(CC) $(LUA_CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/lua_drivers.o: $(LUA_PORT_DIR)/drivers.c | $(BUILD_DIR)
-	$(CC) $(LUA_CFLAGS) -Idriver -c $< -o $@
-
-$(BUILD_DIR)/lua_math_impl.o: $(LUA_LIBC_SHIM)/lua_math_impl.c | $(BUILD_DIR)
-	$(CC) $(LUA_CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/lua_kernel_init.o: $(LUA_PORT_DIR)/lua_kernel_init.c | $(BUILD_DIR)
-	$(CC) $(LUA_CFLAGS) -c $< -o $@
-
-# 嵌入式 platform.lua —— 由 gen_platform.py 生成到 build/ 目录
-# This rule re-runs gen_platform.py after any arch-switch clean wipes build/
-$(BUILD_DIR)/platform_lua_blob.c: $(_PLATFORM_LUA) $(TOOLS_DIR)/gen_platform.py | $(BUILD_DIR)
-	python3 $(TOOLS_DIR)/gen_platform.py $(_PLATFORM_LUA) $(PLATFORM_MK) $(INCLUDE_DIR)
-
-$(BUILD_DIR)/platform_lua_blob.o: $(BUILD_DIR)/platform_lua_blob.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
 
 # VMM 模块编译规则（仅 AArch64）
 ifeq ($(ARCH),aarch64)
@@ -1222,7 +1161,7 @@ $(BUILD_DIR)/apps_riscv_guest_test.o: apps/riscv64/guest_test.S | $(BUILD_DIR)
 endif
 
 # ── §12g  链接 ────────────────────────────────────────────────────────────────────
-$(KERNEL_TARGET): $(BOOT_OBJECTS) $(KERNEL_OBJECTS) $(NET_OBJS) $(LWIP_OBJS) $(TASK_C_OBJECTS) $(TASK_S_OBJ) $(TASK_USER_TEST_OBJ) $(TASK_USER_HELLO_OBJ) $(TASK_USER_TESTEXECVE_OBJ) $(LOADER_C_OBJECTS) $(SYSCALL_C_OBJECTS) $(VM_C_OBJECTS) $(VM_S_OBJ) $(VMM_C_OBJECTS) $(VMM_S_OBJECTS) $(GUEST_TEST_OBJ) $(TESTS_OBJECTS) $(PLATFORM_OBJECTS) $(DRIVER_OBJECTS) $(EXCEPTION_OBJECTS) $(KLOG_OBJECT) $(VSNPRINTF_OBJECT) $(STRING_OBJECT) $(LIBC_OBJECT) $(BITMAP_OBJECT) $(PLATFORM_CFG_OBJECT) $(LWEXT4_OBJS) $(LWEXT4_PORT_OBJS) $(LUA_OBJECTS) $(PSEUDOFS_OBJS) | $(BUILD_DIR)
+$(KERNEL_TARGET): $(BOOT_OBJECTS) $(KERNEL_OBJECTS) $(NET_OBJS) $(LWIP_OBJS) $(TASK_C_OBJECTS) $(TASK_S_OBJ) $(TASK_USER_TEST_OBJ) $(TASK_USER_HELLO_OBJ) $(TASK_USER_TESTEXECVE_OBJ) $(LOADER_C_OBJECTS) $(SYSCALL_C_OBJECTS) $(VM_C_OBJECTS) $(VM_S_OBJ) $(VMM_C_OBJECTS) $(VMM_S_OBJECTS) $(GUEST_TEST_OBJ) $(TESTS_OBJECTS) $(PLATFORM_OBJECTS) $(DRIVER_OBJECTS) $(EXCEPTION_OBJECTS) $(KLOG_OBJECT) $(VSNPRINTF_OBJECT) $(STRING_OBJECT) $(LIBC_OBJECT) $(BITMAP_OBJECT) $(PLATFORM_CFG_OBJECT) $(PLATFORM_STATIC_OBJECT) $(LWEXT4_OBJS) $(LWEXT4_PORT_OBJS) $(PSEUDOFS_OBJS) | $(BUILD_DIR)
 	$(CC) $(LDFLAGS) -nostartfiles -nodefaultlibs -T $(BOOT_DIR)/$(ARCH)/link.ld -o $@ -Wl,--start-group $^ -Wl,--end-group
 
 # 转换为二进制文件
@@ -1510,9 +1449,8 @@ help:
 # §6a-e	UART/GIC → NPU/TPU → ETH → 组装 → ION/SDMMC
 # §7	构建变体（VMM_TEST）
 # §8	第三方库：lwext4
-# §9	第三方库：Lua 5.4
-# §10	Rootfs 配置
-# §11	顶层目标声明
-# §12	构建规则（a~g 子节）
-# §13	运行 / 测试目标
-# §14	清理 / 帮助
+# §9	Rootfs 配置
+# §10	顶层目标声明
+# §11	构建规则（a~g 子节）
+# §12	运行 / 测试目标
+# §13	清理 / 帮助

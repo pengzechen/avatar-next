@@ -208,7 +208,7 @@ void cvi_tpu_init(void)
     g_tpu.initialized = 0;
 
     if (!g_tpu.tdma_base || !g_tpu.tiu_base) {
-        KLOG_ERROR("cvi_tpu: tpu.tdma_base or tpu.tiu_base not in platform.lua\n");
+        KLOG_ERROR("cvi_tpu: tpu.tdma_base or tpu.tiu_base not in platform config\n");
         return;
     }
 

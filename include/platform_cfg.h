@@ -2,8 +2,7 @@
  * include/platform_cfg.h — 运行时平台配置
  *
  * 替代 device_profile.h / mem_layout.h / pmm_reserve.h / driver_cfg.h。
- * 所有值由 platform_conf_scan() 从内嵌 Lua 源码中提取，在 PMM
- * 初始化之前即可调用（无需堆）。
+ * 所有值由构建期生成的 platform_static.c 提供，在 PMM 初始化之前即可调用。
  *
  * 使用方式：
  *   #include "platform_cfg.h"   (替代 driver_cfg.h / device_profile.h)
@@ -34,22 +33,38 @@ typedef struct {
     uint64_t end;
 } pmm_resv_t;
 
+typedef struct {
+    const char *block;
+    const char *key;
+    uintptr_t   value;
+} platform_kv_t;
+
+typedef struct {
+    const char *tag;
+    uint64_t    start;
+    uint64_t    end;
+} platform_reserve_t;
+
+extern const platform_kv_t      g_platform_static_kv[];
+extern const unsigned           g_platform_static_kv_count;
+extern const platform_reserve_t g_platform_static_reserves[];
+extern const unsigned           g_platform_static_reserve_count;
+
 extern pmm_resv_t g_pmm_reserves[PMM_MAX_RESV];
 extern int        g_pmm_resv_count;
 
 /* ── 初始化函数 ──────────────────────────────────────────────────────── */
 
 /**
- * platform_conf_scan - 启动 Lua VM，执行内嵌 platform.lua，提取内存布局和 PMM 保留区。
- * 在 MMU 初始化之前即可调用（使用 256 KB 静态堆，不需要 PMM）。
- * Lua VM 持续存活，供后续 platform_get_* 调用。
+ * platform_conf_scan - 从静态平台配置提取内存布局和 PMM 保留区。
+ * 在 MMU 初始化之前即可调用，不需要堆。
  */
 void platform_conf_scan(void);
 void platform_conf_close(void);
 
 /**
  * platform_get_uintptr / platform_get_uint
- * 通用字段查询：从 platform.lua 全局表中读取 platform.<block>.<key> 的值。
+ * 通用字段查询：读取构建期生成的 platform.<block>.<key> 值。
  * 需在 platform_conf_scan() 之后调用。
  *
  * 示例：

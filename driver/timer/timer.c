@@ -64,7 +64,7 @@ static uint64_t timer_delay_counter_frequency(void)
 void
 timer_init(void)
 {
-    /* 从 Lua 配置中读取定时器参数 */
+    /* 从平台配置中读取定时器参数 */
     g_timer_cfg_freq_hz    = platform_get_uint("timer", "freq_hz");
     g_timer_cfg_tick_ms    = platform_get_uint("timer", "tick_ms");
     g_timer_cfg_counter_hz = platform_get_uintptr("timer", "counter_hz");

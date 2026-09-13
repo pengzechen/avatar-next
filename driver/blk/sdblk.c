@@ -5,7 +5,7 @@
  *   - 目标平台：SOPHGO SG2002 / CV1811H，SDIO0 控制器
  *   - 与 SDHCI 规范基本兼容
  *
- * 平台硬件地址由 platforms/<platform>/platform.lua 的 sdmmc 表提供，
+ * 平台硬件地址由 platforms/<platform>/platform.conf 的 sdmmc 表提供，
  * 在 sdblk_init() 中通过 platform_get_mmio() 运行时读取。
  */
 
@@ -369,7 +369,7 @@ static uint64_t sd_parse_csd(uint8_t *out_struct,
 int sdblk_init(void)
 {
     g_sdblk.initialized  = false;
-    /* 从 platform.lua 的 platform.sdmmc.* 读取硬件地址 */
+    /* 从 platform.conf 的 platform.sdmmc.* 读取硬件地址 */
     g_sdblk.sd_base       = platform_get_mmio("sdmmc", "sd_base");
     g_sdblk.top_base      = platform_get_mmio("sdmmc", "top_base");
     g_sdblk.top_off_pwrsw = (uint32_t)platform_get_uintptr("sdmmc", "top_off_pwrsw_ctrl");

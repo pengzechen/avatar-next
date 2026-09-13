@@ -16,7 +16,7 @@
 // ============================================================
 #define READ_TIME()         CSR_READ(time)   /* sysreg.h 中同名，内容相同 */
 
-/* TIMER_FREQ_HZ 由 platform_cfg.h 提供（= g_timer_counter_hz，从 Lua 扫描）*/
+/* TIMER_FREQ_HZ 由 platform_cfg.h 提供（= g_timer_counter_hz，从平台配置扫描）*/
 
 // ============================================================
 // RISC-V 特定的全局变量

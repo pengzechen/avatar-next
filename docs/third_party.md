@@ -16,7 +16,6 @@ Current packages:
 
 - `third_party/lwext4` with port code in `fs/lwext4_port`
 - `third_party/lwip` with port code in `kernel/net/lwip_port`
-- `third_party/lua54` with port code in `lib/lua54_port`
 
 ## Libc shim design
 

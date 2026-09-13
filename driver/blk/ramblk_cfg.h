@@ -1,7 +1,7 @@
 /*
  * driver/blk/ramblk_cfg.h - RAM 块设备物理内存区域配置
  *
- * rootfs 地址来自运行时 platform_cfg.h（由 platform_conf_scan() 从 Lua 提取）。
+ * rootfs 地址来自运行时 platform_cfg.h（由 platform_conf_scan() 从平台配置提取）。
  * RAMBLK 使用与 rootfs 相同的固定物理窗口，并在 PMM 初始化时预留。
  */
 #ifndef __RAMBLK_CFG_H__

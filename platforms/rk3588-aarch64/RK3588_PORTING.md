@@ -42,7 +42,7 @@
 make ARCH=aarch64 PLATFORM=rk3588-aarch64 SMP=8 LOG=info kernel
 ```
 
-平台文件：`platforms/rk3588-aarch64/platform.lua`
+平台文件：`platforms/rk3588-aarch64/platform.conf`
 
 内存布局（`kernel/mm/aarch64/vm_early.c`）：
 
@@ -206,7 +206,7 @@ go 0x400000 → _start (EL2/VHE)
   ↓
 BSP: ICC_SRE_EL2 初始化 → vm_init (页表) → mmu_init → 跳高 VA
   ↓
-kernel_main: PMM → FS → Lua → GICv3 → Timer → NPU
+kernel_main: PMM → FS → GICv3 → Timer → NPU
   ↓
 cpu_bring_up_all: PSCI CPU_ON x7 → 每核 _secondary_start → cpu_secondary_bootstrap
   ↓

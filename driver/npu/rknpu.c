@@ -14,7 +14,7 @@
  * 框架集成：
  *   - 通过 platform_get_uintptr("npu", "base0") 获取 MMIO 基地址
  *   - 通过 platform_get_uintptr("npu", "irq0") 获取中断号
- *   - 由 platform.lua 的 register_device("npu0") 在 drivers 阶段调用
+ *   - 由平台 C 初始化序列在 drivers 阶段调用
  */
 
 #include "rknpu.h"

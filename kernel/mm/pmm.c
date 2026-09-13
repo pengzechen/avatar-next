@@ -301,7 +301,7 @@ void pmm_initialize(void)
     KLOG_INFO("Marking kernel memory as allocated...\n");
     pmm_mark_kernel_allocated(g_pmm);
 
-    /* 运行时保留区（由 platform_conf_scan() 从 Lua 读取） */
+    /* 运行时保留区（由 platform_conf_scan() 从静态平台配置读取） */
     for (int i = 0; i < g_pmm_resv_count; i++) {
         KLOG_INFO("Reserving PMM extra region(%s): 0x%llx - 0x%llx\n",
                   g_pmm_reserves[i].tag,

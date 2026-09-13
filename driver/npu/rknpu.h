@@ -14,7 +14,7 @@
 
 #include "types.h"
 
-/* ── 硬件基地址（与 platform.lua 的 npu.base0/1/2 一致）─────────────────── */
+/* ── 硬件基地址（与平台配置的 npu.base0/1/2 一致）──────────────────────── */
 #define RKNPU_NPU0_BASE  0xFDAB0000UL
 #define RKNPU_NPU1_BASE  0xFDAC0000UL
 #define RKNPU_NPU2_BASE  0xFDAD0000UL

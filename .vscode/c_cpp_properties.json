@@ -10,9 +10,7 @@
                 "${workspaceFolder}/boot/common",
                 "${workspaceFolder}/kernel",
                 "${workspaceFolder}/third_party/lwext4/include",
-                "${workspaceFolder}/fs/lwext4_port",
-                "${workspaceFolder}/third_party/lua54/src",
-                "${workspaceFolder}/lib/lua54_port/libc_shim"
+                "${workspaceFolder}/fs/lwext4_port"
             ],
             "defines": [
                 "__x86_64__",
@@ -33,9 +31,7 @@
                 "${workspaceFolder}/boot/common",
                 "${workspaceFolder}/kernel",
                 "${workspaceFolder}/third_party/lwext4/include",
-                "${workspaceFolder}/fs/lwext4_port",
-                "${workspaceFolder}/third_party/lua54/src",
-                "${workspaceFolder}/lib/lua54_port/libc_shim"
+                "${workspaceFolder}/fs/lwext4_port"
             ],
             "defines": [
                 "__aarch64__",
