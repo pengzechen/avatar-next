@@ -180,17 +180,13 @@ void close_handler(uint64_t regs[6], task_t *current)
     regs[0] = 0;
 }
 
-void dup3_handler(uint64_t regs[6], task_t *current)
+static int dup_to_fd(task_t *current, int oldfd, int newfd, int flags)
 {
-    int oldfd = (int)regs[0];
-    int newfd = (int)regs[1];
-    int flags = (int)regs[2];
-    if (oldfd == newfd) { regs[0] = (uint64_t)(int64_t)-EINVAL; return; }
-    if (oldfd < 0 || oldfd >= (int)TASK_MAX_FD) { regs[0] = (uint64_t)(int64_t)-EBADF; return; }
-    if (newfd < 0 || newfd >= (int)TASK_MAX_FD) { regs[0] = (uint64_t)(int64_t)-EBADF; return; }
+    if (oldfd < 0 || oldfd >= (int)TASK_MAX_FD) return -EBADF;
+    if (newfd < 0 || newfd >= (int)TASK_MAX_FD) return -EBADF;
 
     fd_obj_t *src = (oldfd > 2) ? task_get_fd(current, oldfd) : NULL;
-    if (oldfd > 2 && !src) { regs[0] = (uint64_t)(int64_t)-EBADF; return; }
+    if (oldfd > 2 && !src) return -EBADF;
 
     if (current->fd_table[newfd] != -1) {
         int idx = current->fd_table[newfd];
@@ -217,18 +213,17 @@ void dup3_handler(uint64_t regs[6], task_t *current)
 
     if (!src) {
         int uart_idx = fd_pool_alloc();
-        if (uart_idx < 0) { regs[0] = (uint64_t)(int64_t)-EMFILE; return; }
+        if (uart_idx < 0) return -EMFILE;
         g_fd_pool[uart_idx].type  = FDT_PSEUDO;
         g_fd_pool[uart_idx].flags = 0;
         current->fd_table[newfd] = uart_idx;
     } else {
         int new_idx = fd_pool_alloc();
-        if (new_idx < 0) { regs[0] = (uint64_t)(int64_t)-EMFILE; return; }
+        if (new_idx < 0) return -EMFILE;
 #if DRIVER_ION
         if (src->type == FDT_ION && ion_ref((ion_handle_t)src->ion.handle) != 0) {
             fd_pool_free(new_idx);
-            regs[0] = (uint64_t)(int64_t)-EBADF;
-            return;
+            return -EBADF;
         }
 #endif
         g_fd_pool[new_idx] = *src;
@@ -253,7 +248,46 @@ void dup3_handler(uint64_t regs[6], task_t *current)
         current->fd_cloexec[newfd / 8] |= (uint8_t)(1u << (newfd % 8));
     else
         current->fd_cloexec[newfd / 8] &= (uint8_t)~(1u << (newfd % 8));
-    regs[0] = newfd;
+    return newfd;
+}
+
+void dup_handler(uint64_t regs[6], task_t *current)
+{
+    int oldfd = (int)regs[0];
+
+    if (oldfd < 0 || oldfd >= (int)TASK_MAX_FD) {
+        regs[0] = (uint64_t)(int64_t)-EBADF;
+        return;
+    }
+    if (oldfd > 2 && !task_get_fd(current, oldfd)) {
+        regs[0] = (uint64_t)(int64_t)-EBADF;
+        return;
+    }
+
+    for (int newfd = 3; newfd < (int)TASK_MAX_FD; newfd++) {
+        if (current->fd_table[newfd] == -1) {
+            int ret = dup_to_fd(current, oldfd, newfd, 0);
+            regs[0] = ret >= 0 ? (uint64_t)ret : (uint64_t)(int64_t)ret;
+            return;
+        }
+    }
+
+    regs[0] = (uint64_t)(int64_t)-EMFILE;
+}
+
+void dup3_handler(uint64_t regs[6], task_t *current)
+{
+    int oldfd = (int)regs[0];
+    int newfd = (int)regs[1];
+    int flags = (int)regs[2];
+
+    if (oldfd == newfd) {
+        regs[0] = (uint64_t)(int64_t)-EINVAL;
+        return;
+    }
+
+    int ret = dup_to_fd(current, oldfd, newfd, flags);
+    regs[0] = ret >= 0 ? (uint64_t)ret : (uint64_t)(int64_t)ret;
 }
 
 void fcntl_handler(uint64_t regs[6], task_t *current)

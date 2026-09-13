@@ -82,6 +82,15 @@ void renameat_handler(uint64_t regs[6], task_t *current)
     regs[0] = (rc == EOK) ? 0 : (uint64_t)(int64_t)-ENOENT;
 }
 
+void renameat2_handler(uint64_t regs[6], task_t *current)
+{
+    if (regs[4] != 0) {
+        regs[0] = (uint64_t)(int64_t)-EINVAL;
+        return;
+    }
+    renameat_handler(regs, current);
+}
+
 void unlinkat_handler(uint64_t regs[6], task_t *current)
 {
     int dirfd = (int)regs[0];

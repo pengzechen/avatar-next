@@ -22,6 +22,7 @@ typedef struct task task_t;
 
 /* ── Linux AArch64 / RISC-V 标准系统调用号 ──────────────────────── */
 #define LINUX_SYS_GETCWD          17
+#define LINUX_SYS_DUP             23
 #define LINUX_SYS_DUP3            24
 #define LINUX_SYS_FCNTL           25
 #define LINUX_SYS_IOCTL           29
@@ -114,9 +115,12 @@ typedef struct task task_t;
 #define LINUX_SYS_EXECVE          221
 #define LINUX_SYS_MMAP            222
 #define LINUX_SYS_MPROTECT        226
+#define LINUX_SYS_MADVISE         233
 #define LINUX_SYS_WAIT4           260
 #define LINUX_SYS_PRLIMIT64       261
+#define LINUX_SYS_RENAMEAT2       276
 #define LINUX_SYS_GETRANDOM       278
+#define LINUX_SYS_FACCESSAT2      439
 
 /* ── epoll (AArch64 / RISC-V 号) ─────────────────────────────────── */
 #define LINUX_SYS_EPOLL_CREATE1   20
@@ -390,6 +394,7 @@ void sendfile_handler(uint64_t regs[6], task_t *current);
 /* 文件操作（fs/file_ops.c）*/
 void openat_handler(uint64_t regs[6], task_t *current);
 void close_handler (uint64_t regs[6], task_t *current);
+void dup_handler   (uint64_t regs[6], task_t *current);
 void dup3_handler  (uint64_t regs[6], task_t *current);
 void fcntl_handler (uint64_t regs[6], task_t *current);
 void pipe2_handler (uint64_t regs[6], task_t *current);
@@ -405,6 +410,7 @@ void getdents64_handler (uint64_t regs[6], task_t *current);
 void getcwd_handler  (uint64_t regs[6], task_t *current);
 void chdir_handler   (uint64_t regs[6], task_t *current);
 void renameat_handler(uint64_t regs[6], task_t *current);
+void renameat2_handler(uint64_t regs[6], task_t *current);
 void unlinkat_handler(uint64_t regs[6], task_t *current);
 
 /* ioctl（fs/ioctl.c）*/

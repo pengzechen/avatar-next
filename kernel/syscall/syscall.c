@@ -454,11 +454,16 @@ void syscall_handler(trap_frame_t *frame)
         break;
 
     case LINUX_SYS_FACCESSAT:
+    case LINUX_SYS_FACCESSAT2:
         faccessat_handler(regs, current);
         break;
 
     case LINUX_SYS_RENAMEAT:
         renameat_handler(regs, current);
+        break;
+
+    case LINUX_SYS_RENAMEAT2:
+        renameat2_handler(regs, current);
         break;
 
     case LINUX_SYS_UNLINKAT:
@@ -482,6 +487,10 @@ void syscall_handler(trap_frame_t *frame)
 
     case LINUX_SYS_CLOSE:
         close_handler(regs, current);
+        break;
+
+    case LINUX_SYS_DUP:
+        dup_handler(regs, current);
         break;
 
     case LINUX_SYS_DUP3:
@@ -696,6 +705,7 @@ void syscall_handler(trap_frame_t *frame)
     case LINUX_SYS_PRCTL:
     case LINUX_SYS_SET_ROBUST_LIST:
     case LINUX_SYS_MPROTECT:
+    case LINUX_SYS_MADVISE:
         regs[0] = 0;
         break;
 

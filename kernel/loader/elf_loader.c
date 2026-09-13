@@ -15,8 +15,29 @@
 #include <ext4.h>
 #include <ext4_types.h>
 
-#define MAX_FILE_SIZE     (10 * 1024 * 1024) /* 10MB */
+#define MAX_FILE_SIZE     (64 * 1024 * 1024) /* GCC cc1plus is ~57MB */
 #define SHEBANG_MAX_DEPTH 4
+#define ELF_READ_CHUNK    (64 * 1024)
+
+static int read_file_fully(ext4_file *file, uint8_t *buf, uint64_t size)
+{
+    uint64_t off = 0;
+
+    while (off < size) {
+        size_t chunk = (size - off > ELF_READ_CHUNK) ? ELF_READ_CHUNK : (size_t)(size - off);
+        size_t got = 0;
+        int rc = ext4_fread(file, buf + off, chunk, &got);
+
+        if (rc != EOK || got != chunk) {
+            KLOG_ERROR("[elf_loader] Read failed: rc=%d off=%llu want=%zu got=%zu\n",
+                       rc, off, chunk, got);
+            return -EIO;
+        }
+        off += got;
+    }
+
+    return 0;
+}
 
 /**
  * resolve_symlink - 跟随符号链接，最多 8 层，将最终真实路径写入 out。
@@ -150,9 +171,8 @@ static int load_from_file_depth(const char *pathname, char **argv, char **envp,
                (uint64_t)file_data, page_count);
 
     /* 读取文件 */
-    rc = ext4_fread(&file, file_data, file_size, &rcnt);
-    if (rc != EOK || rcnt != file_size) {
-        KLOG_ERROR("[elf_loader] Read failed: rc=%d\n", rc);
+    rc = read_file_fully(&file, file_data, file_size);
+    if (rc < 0) {
         kfree_pages(file_data, page_count);
         ext4_fclose(&file);
         return -5; /* -EIO */
@@ -268,9 +288,8 @@ static int load_from_file_depth(const char *pathname, char **argv, char **envp,
                         interp_pages = (isz + 4095u) / 4096u;
                         interp_data  = (uint8_t *)kalloc_pages(interp_pages);
                         if (interp_data) {
-                            size_t iread = 0;
-                            irc = ext4_fread(&ifile, interp_data, isz, &iread);
-                            if (irc == EOK && iread == isz) {
+                            irc = read_file_fully(&ifile, interp_data, isz);
+                            if (irc == 0) {
                                 interp_size = (uint64_t)isz;
                                 KLOG_DEBUG("[elf_loader] Interpreter loaded: %zu bytes\n",
                                            isz);
