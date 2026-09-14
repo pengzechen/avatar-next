@@ -6,9 +6,9 @@
 #include "syscall/syscall_internal.h"
 #include "syscall/fs/path.h"
 #include "task/task.h"
-#include "pseudofs.h"
 #include "kernel_stat.h"
 #include "string.h"
+#include "vfs.h"
 #include <ext4.h>
 #include <ext4_errno.h>
 
@@ -32,7 +32,7 @@ void chdir_handler(uint64_t regs[6], task_t *current)
     resolve_path(current->cwd, path, abspath, sizeof(abspath));
 
     struct kernel_stat tmpst;
-    if (pseudo_stat_path(abspath, &tmpst) == 0) {
+    if (vfs_stat_path(abspath, &tmpst) == 0) {
         int k = 0;
         while (abspath[k] && k < (int)TASK_CWD_LEN - 1) {
             current->cwd[k] = abspath[k]; k++;

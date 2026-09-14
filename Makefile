@@ -140,11 +140,9 @@ ifeq ($(ARCH),aarch64)
     VMM_C_OBJECTS := $(BUILD_DIR)/kernel_vmm_vmm.o \
                      $(BUILD_DIR)/kernel_vmm_el2_run.o
     VMM_S_SOURCES := $(KERNEL_DIR)/vmm/aarch64/el2_vmcs.S \
-                     $(KERNEL_DIR)/vmm/aarch64/vcpu_ctx.S \
-                     $(KERNEL_DIR)/vmm/aarch64/guest_vec.S
+                     $(KERNEL_DIR)/vmm/aarch64/vcpu_ctx.S
     VMM_S_OBJECTS := $(BUILD_DIR)/kernel_vmm_el2_vmcs.o \
-                     $(BUILD_DIR)/kernel_vmm_vcpu_ctx.o \
-                     $(BUILD_DIR)/kernel_vmm_guest_vec.o
+                     $(BUILD_DIR)/kernel_vmm_vcpu_ctx.o
     # guest_test.S: embedded guest program (linked into kernel binary)
     GUEST_TEST_OBJ := $(BUILD_DIR)/apps_guest_test.o \
                       $(BUILD_DIR)/apps_el0_loop.o
@@ -825,8 +823,15 @@ $(BUILD_DIR)/drv_ion_%.o: driver/ion/%.c | $(BUILD_DIR)
 $(BUILD_DIR)/drv_blk_sdblk.o: driver/blk/sdblk.c | $(BUILD_DIR)
 	$(CC) $(LWEXT4_CFLAGS) -Idriver -c $< -o $@
 
+# kernel fs core — 始终构建
+KERNEL_FS_OBJS := $(BUILD_DIR)/kernel_fs_vfs.o
+
 # PseudoFS（虚拟文件系统 /dev /proc /sys）— 始终构建
-PSEUDOFS_OBJS := $(BUILD_DIR)/pseudofs_pseudofs.o
+PSEUDOFS_OBJS := $(BUILD_DIR)/pseudofs_pseudofs.o \
+                 $(BUILD_DIR)/pseudofs_dev.o \
+                 $(BUILD_DIR)/pseudofs_dir.o \
+                 $(BUILD_DIR)/pseudofs_proc.o \
+                 $(BUILD_DIR)/pseudofs_util.o
 
 # Most kernel objects are compiled with platform-derived CFLAGS
 # (PLATFORM_*, DRIVER_*, DEVICE_*, memory layout).  The generator writes these
@@ -839,10 +844,25 @@ $(LOADER_C_OBJECTS) $(SYSCALL_C_OBJECTS) \
 $(VM_C_OBJECTS) $(VM_S_OBJ) $(VMM_C_OBJECTS) $(VMM_S_OBJECTS) \
 $(GUEST_TEST_OBJ) $(TESTS_OBJECTS) $(PLATFORM_OBJECTS) $(DRIVER_OBJECTS) \
 $(EXCEPTION_OBJECTS) $(KLOG_OBJECT) $(VSNPRINTF_OBJECT) $(STRING_OBJECT) \
-$(LIBC_OBJECT) $(BITMAP_OBJECT) $(PLATFORM_CFG_OBJECT) $(PLATFORM_STATIC_OBJECT) $(LWEXT4_OBJS) $(LWEXT4_PORT_OBJS) \
+$(LIBC_OBJECT) $(BITMAP_OBJECT) $(PLATFORM_CFG_OBJECT) $(PLATFORM_STATIC_OBJECT) $(LWEXT4_OBJS) $(LWEXT4_PORT_OBJS) $(KERNEL_FS_OBJS) \
 $(PSEUDOFS_OBJS) $(LWIP_OBJS): $(PLATFORM_CONFIG_DEPS)
 
-$(BUILD_DIR)/pseudofs_pseudofs.o: fs/pseudofs/pseudofs.c | $(BUILD_DIR)
+$(BUILD_DIR)/kernel_fs_vfs.o: $(KERNEL_DIR)/fs/vfs/vfs.c | $(BUILD_DIR)
+	$(CC) $(LWEXT4_CFLAGS) -Idriver -Ikernel -Ikernel/mm -c $< -o $@
+
+$(BUILD_DIR)/pseudofs_pseudofs.o: $(KERNEL_DIR)/fs/pseudofs/pseudofs.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -Idriver -Ikernel -Ikernel/mm -c $< -o $@
+
+$(BUILD_DIR)/pseudofs_util.o: $(KERNEL_DIR)/fs/pseudofs/util.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -Idriver -Ikernel -Ikernel/mm -c $< -o $@
+
+$(BUILD_DIR)/pseudofs_proc.o: $(KERNEL_DIR)/fs/pseudofs/proc.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -Idriver -Ikernel -Ikernel/mm -c $< -o $@
+
+$(BUILD_DIR)/pseudofs_dir.o: $(KERNEL_DIR)/fs/pseudofs/dir.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -Idriver -Ikernel -Ikernel/mm -c $< -o $@
+
+$(BUILD_DIR)/pseudofs_dev.o: $(KERNEL_DIR)/fs/pseudofs/dev.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -Idriver -Ikernel -Ikernel/mm -c $< -o $@
 
 $(BUILD_DIR)/kernel_net_lwip_port_%.o: $(KERNEL_DIR)/net/lwip_port/%.c | $(BUILD_DIR)
@@ -1117,10 +1137,6 @@ $(BUILD_DIR)/kernel_vmm_vcpu_ctx.o: $(KERNEL_DIR)/vmm/aarch64/vcpu_ctx.S | $(BUI
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/kernel_vmm_guest_vec.o: $(KERNEL_DIR)/vmm/aarch64/guest_vec.S | $(BUILD_DIR)
-	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -c $< -o $@
-
 $(BUILD_DIR)/apps_guest_test.o: apps/aarch64/guest_test.S | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
@@ -1163,7 +1179,7 @@ $(BUILD_DIR)/apps_riscv_guest_test.o: apps/riscv64/guest_test.S | $(BUILD_DIR)
 endif
 
 # ── §12g  链接 ────────────────────────────────────────────────────────────────────
-$(KERNEL_TARGET): $(BOOT_OBJECTS) $(KERNEL_OBJECTS) $(NET_OBJS) $(LWIP_OBJS) $(TASK_C_OBJECTS) $(TASK_S_OBJ) $(TASK_USER_TEST_OBJ) $(TASK_USER_HELLO_OBJ) $(TASK_USER_TESTEXECVE_OBJ) $(LOADER_C_OBJECTS) $(SYSCALL_C_OBJECTS) $(VM_C_OBJECTS) $(VM_S_OBJ) $(VMM_C_OBJECTS) $(VMM_S_OBJECTS) $(GUEST_TEST_OBJ) $(TESTS_OBJECTS) $(PLATFORM_OBJECTS) $(DRIVER_OBJECTS) $(EXCEPTION_OBJECTS) $(KLOG_OBJECT) $(VSNPRINTF_OBJECT) $(STRING_OBJECT) $(LIBC_OBJECT) $(BITMAP_OBJECT) $(PLATFORM_CFG_OBJECT) $(PLATFORM_STATIC_OBJECT) $(LWEXT4_OBJS) $(LWEXT4_PORT_OBJS) $(PSEUDOFS_OBJS) | $(BUILD_DIR)
+$(KERNEL_TARGET): $(BOOT_OBJECTS) $(KERNEL_OBJECTS) $(NET_OBJS) $(LWIP_OBJS) $(TASK_C_OBJECTS) $(TASK_S_OBJ) $(TASK_USER_TEST_OBJ) $(TASK_USER_HELLO_OBJ) $(TASK_USER_TESTEXECVE_OBJ) $(LOADER_C_OBJECTS) $(SYSCALL_C_OBJECTS) $(VM_C_OBJECTS) $(VM_S_OBJ) $(VMM_C_OBJECTS) $(VMM_S_OBJECTS) $(GUEST_TEST_OBJ) $(TESTS_OBJECTS) $(PLATFORM_OBJECTS) $(DRIVER_OBJECTS) $(EXCEPTION_OBJECTS) $(KLOG_OBJECT) $(VSNPRINTF_OBJECT) $(STRING_OBJECT) $(LIBC_OBJECT) $(BITMAP_OBJECT) $(PLATFORM_CFG_OBJECT) $(PLATFORM_STATIC_OBJECT) $(LWEXT4_OBJS) $(LWEXT4_PORT_OBJS) $(KERNEL_FS_OBJS) $(PSEUDOFS_OBJS) | $(BUILD_DIR)
 	$(CC) $(LDFLAGS) -nostartfiles -nodefaultlibs -T $(BOOT_DIR)/$(ARCH)/link.ld -o $@ -Wl,--start-group $^ -Wl,--end-group
 
 # 转换为二进制文件

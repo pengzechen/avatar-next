@@ -5,15 +5,14 @@
  * fd_table[i] in task_t 持有进入本池的索引（-1 = 未打开）。
  * fd 0/1/2（stdin/stdout/stderr）特殊处理（UART），不占用本池槽位。
  *
- * 编译需要 lwext4 头文件搜索路径（LWEXT4_CFLAGS）— fd_obj_t 内嵌
- * ext4_file / ext4_dir。
  */
 #include "syscall/fs/fd_pool.h"
-#include "syscall/net/ksocket.h"
-#include "syscall/fs/pipe.h"
-#include "syscall/fs/pty.h"
 #include "klog.h"
 #include "task/task.h"
+
+#if DRIVER_ION
+#include "ion/ion.h"
+#endif
 
 /* 池数组本体：mm/mmap.c 等其它模块通过 extern 在 fd_pool.h 中可见。 */
 fd_obj_t g_fd_pool[FD_POOL_SIZE];
@@ -23,6 +22,7 @@ int fd_pool_alloc(void)
     for (int i = 0; i < FD_POOL_SIZE; i++) {
         if (g_fd_pool[i].type == FDT_FREE) {
             g_fd_pool[i].type = FDT_ALLOCATED;
+            g_fd_pool[i].vfs_file = NULL;
             KLOG_DEBUG("[fd] pool_alloc: allocated slot %d\n", i);
             return i;
         }
@@ -36,8 +36,61 @@ void fd_pool_free(int idx)
     if (idx >= 0 && idx < FD_POOL_SIZE) {
         KLOG_DEBUG("[fd] pool_free: freeing slot %d\n", idx);
         g_fd_pool[idx].wq.waiter_count = 0;
+        g_fd_pool[idx].vfs_file = NULL;
         g_fd_pool[idx].type = FDT_FREE;
     }
+}
+
+void fd_obj_ref(int idx)
+{
+    if (idx < 0 || idx >= FD_POOL_SIZE)
+        return;
+
+    fd_obj_t *obj = &g_fd_pool[idx];
+    if (obj->type == FDT_FREE)
+        return;
+
+    if (obj->vfs_file)
+        vfs_ref(obj->vfs_file);
+}
+
+void fd_obj_close(int idx)
+{
+    if (idx < 0 || idx >= FD_POOL_SIZE)
+        return;
+
+    fd_obj_t *obj = &g_fd_pool[idx];
+    if (obj->type == FDT_FREE)
+        return;
+
+    if (obj->vfs_file) {
+        vfs_close(obj->vfs_file);
+        obj->vfs_file = NULL;
+    } else if (obj->type == FDT_EPOLL) {
+        epoll_destroy(obj->epoll.ep_idx);
+    }
+#if DRIVER_ION
+    else if (obj->type == FDT_ION) {
+        ion_free((ion_handle_t)obj->ion.handle);
+    }
+#endif
+}
+
+void fd_obj_attach_vfs(int idx, vfs_file_t *file)
+{
+    if (idx < 0 || idx >= FD_POOL_SIZE || !file)
+        return;
+
+    fd_obj_t *obj = &g_fd_pool[idx];
+    obj->vfs_file = file;
+    obj->flags = file->flags;
+    obj->type = FDT_VFS;
+    int k = 0;
+    while (file->path[k] && k < (int)sizeof(obj->path) - 1) {
+        obj->path[k] = file->path[k];
+        k++;
+    }
+    obj->path[k] = '\0';
 }
 
 int task_alloc_fd(task_t *task, int pool_idx)
@@ -138,20 +191,7 @@ void fd_table_inherit(task_t *child, task_t *parent)
         }
         g_fd_pool[new_idx] = *src;
         g_fd_pool[new_idx].wq.waiter_count = 0;
-        if (src->type == FDT_SOCKET)
-            ksock_ref(src->sock.sock_idx);
-        else if (src->type == FDT_PIPE) {
-            if (src->pipe.is_write_end)
-                pipe_ref_write(new_idx);
-            else
-                pipe_ref_read(new_idx);
-        }
-        else if (src->type == FDT_PTY) {
-            if (src->pty.is_master)
-                pty_ref_master(src->pty.pty_idx);
-            else
-                pty_ref_slave(src->pty.pty_idx);
-        }
+        fd_obj_ref(new_idx);
         child->fd_table[fd] = (int16_t)new_idx;
     }
 }

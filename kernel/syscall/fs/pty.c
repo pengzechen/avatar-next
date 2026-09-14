@@ -11,6 +11,7 @@
 #include "task/task.h"
 #include "klog.h"
 #include "string.h"
+#include "vfs.h"
 
 static pty_pair_t g_ptys[PTY_MAX];
 
@@ -18,8 +19,7 @@ static void pty_notify_epoll(int pty_idx, bool notify_master, uint32_t events)
 {
     for (int i = 0; i < FD_POOL_SIZE; i++) {
         fd_obj_t *obj = &g_fd_pool[i];
-        if (obj->type == FDT_PTY && obj->pty.pty_idx == pty_idx &&
-            obj->pty.is_master == notify_master)
+        if (vfs_file_matches_pty(fd_obj_file(obj), pty_idx, notify_master))
             fd_notify_waiters(i, events);
     }
 }
@@ -90,15 +90,17 @@ int pty_alloc_master(task_t *task)
     p->c_oflag = 0x0005; /* OPOST|ONLCR */
     p->c_cflag = 0x00BF; /* CS8|CREAD|HUPCL|B38400 */
 
-    fd_obj_t *obj = &g_fd_pool[pool];
-    obj->type = FDT_PTY;
-    obj->flags = 0;
-    obj->pty.pty_idx = (int16_t)pi;
-    obj->pty.is_master = true;
-    memcpy(obj->path, "/dev/ptmx", sizeof("/dev/ptmx"));
+    vfs_file_t *vf = NULL;
+    if (vfs_create_pty_file(pi, true, 0, "/dev/ptmx", &vf) != 0) {
+        fd_pool_free(pool);
+        p->in_use = false;
+        return -24;
+    }
+    fd_obj_attach_vfs(pool, vf);
 
     int fd = task_alloc_fd(task, pool);
     if (fd < 0) {
+        vfs_discard_unopened(vf);
         fd_pool_free(pool);
         p->in_use = false;
         return -24;
@@ -120,25 +122,28 @@ int pty_open_slave(task_t *task, int pty_idx)
     int pool = fd_pool_alloc();
     if (pool < 0) return -24;
 
-    fd_obj_t *obj = &g_fd_pool[pool];
-    obj->type = FDT_PTY;
-    obj->flags = 0;
-    obj->pty.pty_idx = (int16_t)pty_idx;
-    obj->pty.is_master = false;
-    obj->path[0] = '/'; obj->path[1] = 'd'; obj->path[2] = 'e'; obj->path[3] = 'v';
-    obj->path[4] = '/'; obj->path[5] = 'p'; obj->path[6] = 't'; obj->path[7] = 's';
-    obj->path[8] = '/';
+    char path[32];
+    path[0] = '/'; path[1] = 'd'; path[2] = 'e'; path[3] = 'v';
+    path[4] = '/'; path[5] = 'p'; path[6] = 't'; path[7] = 's';
+    path[8] = '/';
     if (pty_idx < 10) {
-        obj->path[9] = (char)('0' + pty_idx);
-        obj->path[10] = '\0';
+        path[9] = (char)('0' + pty_idx);
+        path[10] = '\0';
     } else {
-        obj->path[9] = (char)('0' + pty_idx / 10);
-        obj->path[10] = (char)('0' + pty_idx % 10);
-        obj->path[11] = '\0';
+        path[9] = (char)('0' + pty_idx / 10);
+        path[10] = (char)('0' + pty_idx % 10);
+        path[11] = '\0';
     }
+    vfs_file_t *vf = NULL;
+    if (vfs_create_pty_file(pty_idx, false, 0, path, &vf) != 0) {
+        fd_pool_free(pool);
+        return -24;
+    }
+    fd_obj_attach_vfs(pool, vf);
 
     int fd = task_alloc_fd(task, pool);
     if (fd < 0) {
+        vfs_discard_unopened(vf);
         fd_pool_free(pool);
         return -24;
     }

@@ -52,8 +52,8 @@ int netdev_recv(uint8_t *frame, size_t maxlen)
     } else if (n == 0) {
         empty_count++;
         if (empty_count <= 8U || (empty_count & (empty_count - 1U)) == 0U) {
-            KLOG_INFO("[netdev] rx empty #%u dev=%s\n",
-                      empty_count, dev->name ? dev->name : "net0");
+            // KLOG_INFO("[netdev] rx empty #%u dev=%s\n",
+                    //   empty_count, dev->name ? dev->name : "net0");
         }
     }
     return n;

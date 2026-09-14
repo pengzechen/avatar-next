@@ -9,14 +9,12 @@
  */
 #include "syscall/io/epoll.h"
 #include "syscall/fs/fd_pool.h"
-#include "syscall/fs/pipe.h"
-#include "syscall/net/ksocket.h"
-#include "syscall/fs/pty.h"
 #include "syscall/syscall_internal.h"
 #include "task/task.h"
 #include "task/sched.h"
 #include "klog.h"
 #include "string.h"
+#include "vfs.h"
 
 /* ── epoll 实例池 ───────────────────────────────────────────────── */
 
@@ -163,53 +161,9 @@ uint32_t fd_poll(task_t *task, int fd)
 
     int pool_idx = task->fd_table[fd];
 
-    switch (obj->type) {
-    case FDT_PIPE:
-        if (!obj->pipe.is_write_end) {
-            if (pipe_poll_readable(pool_idx))
-                revents |= EPOLLIN;
-        }
-        if (obj->pipe.is_write_end || pipe_poll_writable(pool_idx))
-            revents |= EPOLLOUT;
-        if (!obj->pipe.is_write_end && pipe_poll_writable(pool_idx))
-            ; /* read end doesn't report EPOLLOUT */
-        /* re-evaluate: read end reports readable, write end reports writable */
-        revents = 0;
-        if (obj->pipe.is_write_end) {
-            if (pipe_poll_writable(pool_idx))
-                revents |= EPOLLOUT;
-        } else {
-            if (pipe_poll_readable(pool_idx))
-                revents |= EPOLLIN;
-        }
-        break;
-
-    case FDT_SOCKET:
-        if (ksock_poll_readable(obj->sock.sock_idx))
-            revents |= EPOLLIN;
-        if (ksock_poll_writable(obj->sock.sock_idx))
-            revents |= EPOLLOUT;
-        break;
-
-    case FDT_PTY:
-        if (obj->pty.is_master) {
-            if (pty_poll_readable_master(obj->pty.pty_idx))
-                revents |= EPOLLIN;
-        } else {
-            if (pty_poll_readable_slave(obj->pty.pty_idx))
-                revents |= EPOLLIN;
-        }
-        if (pty_poll_writable(obj->pty.pty_idx))
-            revents |= EPOLLOUT;
-        break;
-
-    case FDT_EPOLL:
-        break;
-
-    default:
-        revents = EPOLLIN | EPOLLOUT;
-        break;
-    }
+    if (obj->type == FDT_EPOLL)
+        return 0;
+    revents = vfs_poll(fd_obj_file(obj), pool_idx);
 
     return revents;
 }

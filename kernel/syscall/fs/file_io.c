@@ -9,13 +9,8 @@
 #include "syscall/fs/tty.h"
 #include "task/task.h"
 #include "task/sched.h"
-#include "pseudofs.h"
-#include "syscall/fs/pipe.h"
-#include "syscall/net/ksocket.h"
-#include "syscall/fs/pty.h"
 #include "uart/uart.h"
-#include <ext4.h>
-#include <ext4_errno.h>
+#include "vfs.h"
 
 #define IOV_MAX_AVATAR 1024
 #define IOV_COPY_MAX   16
@@ -67,36 +62,8 @@ void read_handler(uint64_t regs[6], task_t *current)
 
     fd_obj_t *obj = task_get_fd(current, fd);
     if (obj) {
-        if (obj->type == FDT_PIPE) {
-            int pool_idx = current->fd_table[fd];
-            int rc = pipe_read(pool_idx, buf, (size_t)count);
-            regs[0] = rc >= 0 ? (uint64_t)rc : (uint64_t)(int64_t)rc;
-            return;
-        } else if (obj->type == FDT_SOCKET) {
-            int sf = (obj->flags & 04000) ? KSOCK_MSG_DONTWAIT : 0;
-            int rc = ksock_recv(obj->sock.sock_idx, buf, (size_t)count, sf);
-            regs[0] = rc >= 0 ? (uint64_t)rc : (uint64_t)(int64_t)rc;
-            return;
-        } else if (obj->type == FDT_PTY) {
-            int rc;
-            bool nonblock = (obj->flags & 04000) != 0;
-            if (obj->pty.is_master)
-                rc = pty_master_read(obj->pty.pty_idx, buf, (size_t)count, nonblock);
-            else
-                rc = pty_slave_read(obj->pty.pty_idx, buf, (size_t)count, nonblock);
-            regs[0] = rc >= 0 ? (uint64_t)rc : (uint64_t)(int64_t)rc;
-            return;
-        } else if (obj->type == FDT_PSEUDO) {
-            int rc = pseudo_read(obj->pseudo.node_id, &obj->pseudo.off,
-                                 buf, (size_t)count);
-            regs[0] = rc >= 0 ? (uint64_t)rc : (uint64_t)(int64_t)rc;
-        } else if (obj->type == FDT_FILE) {
-            size_t rcnt = 0;
-            int rc = ext4_fread(&obj->file, buf, (size_t)count, &rcnt);
-            regs[0] = (rc == EOK) ? (uint64_t)rcnt : (uint64_t)(int64_t)-EIO;
-        } else {
-            regs[0] = (uint64_t)(int64_t)-EBADF;
-        }
+        int rc = vfs_read(fd_obj_file(obj), buf, (size_t)count);
+        regs[0] = rc >= 0 ? (uint64_t)rc : (uint64_t)(int64_t)rc;
         return;
     }
 
@@ -149,24 +116,13 @@ void pread64_handler(uint64_t regs[6], task_t *current)
         regs[0] = (uint64_t)(int64_t)-EBADF;
         return;
     }
-    if (obj->type != FDT_FILE) {
+    if (!vfs_file_is_regular(fd_obj_file(obj))) {
         regs[0] = (uint64_t)(int64_t)-ESPIPE;
         return;
     }
 
-    int64_t saved = ext4_ftell(&obj->file);
-    if (saved < 0 || ext4_fseek(&obj->file, offset, SEEK_SET) != EOK) {
-        regs[0] = (uint64_t)(int64_t)-EIO;
-        return;
-    }
-
-    size_t rcnt = 0;
-    int rc = ext4_fread(&obj->file, buf, (size_t)count, &rcnt);
-    int seek_rc = ext4_fseek(&obj->file, saved, SEEK_SET);
-    if (rc != EOK || seek_rc != EOK)
-        regs[0] = (uint64_t)(int64_t)-EIO;
-    else
-        regs[0] = (uint64_t)rcnt;
+    int rc = vfs_pread(fd_obj_file(obj), buf, (size_t)count, offset);
+    regs[0] = rc >= 0 ? (uint64_t)rc : (uint64_t)(int64_t)rc;
 }
 
 void write_handler(uint64_t regs[6], task_t *current)
@@ -178,35 +134,8 @@ void write_handler(uint64_t regs[6], task_t *current)
 
     fd_obj_t *wobj = task_get_fd(current, fd);
     if (wobj) {
-        if (wobj->type == FDT_PIPE) {
-            int pool_idx = current->fd_table[fd];
-            int rc = pipe_write(pool_idx, buf, (size_t)count);
-            regs[0] = rc >= 0 ? (uint64_t)rc : (uint64_t)(int64_t)rc;
-            return;
-        } else if (wobj->type == FDT_SOCKET) {
-            int sf = (wobj->flags & 04000) ? KSOCK_MSG_DONTWAIT : 0;
-            int rc = ksock_send(wobj->sock.sock_idx, buf, (size_t)count, sf);
-            regs[0] = rc >= 0 ? (uint64_t)rc : (uint64_t)(int64_t)rc;
-            return;
-        } else if (wobj->type == FDT_PTY) {
-            int rc;
-            bool nonblock = (wobj->flags & 04000) != 0;
-            if (wobj->pty.is_master)
-                rc = pty_master_write(wobj->pty.pty_idx, buf, (size_t)count, nonblock);
-            else
-                rc = pty_slave_write(wobj->pty.pty_idx, buf, (size_t)count, nonblock);
-            regs[0] = rc >= 0 ? (uint64_t)rc : (uint64_t)(int64_t)rc;
-            return;
-        } else if (wobj->type == FDT_PSEUDO) {
-            int rc = pseudo_write(wobj->pseudo.node_id, buf, (size_t)count);
-            regs[0] = rc >= 0 ? (uint64_t)rc : (uint64_t)(int64_t)rc;
-        } else if (wobj->type == FDT_FILE) {
-            size_t wcnt = 0;
-            int rc = ext4_fwrite(&wobj->file, buf, (size_t)count, &wcnt);
-            regs[0] = (rc == EOK) ? (uint64_t)wcnt : (uint64_t)(int64_t)-EIO;
-        } else {
-            regs[0] = (uint64_t)(int64_t)-EBADF;
-        }
+        int rc = vfs_write(fd_obj_file(wobj), buf, (size_t)count);
+        regs[0] = rc >= 0 ? (uint64_t)rc : (uint64_t)(int64_t)rc;
         return;
     }
 
@@ -238,24 +167,13 @@ void pwrite64_handler(uint64_t regs[6], task_t *current)
         regs[0] = (uint64_t)(int64_t)-EBADF;
         return;
     }
-    if (obj->type != FDT_FILE) {
+    if (!vfs_file_is_regular(fd_obj_file(obj))) {
         regs[0] = (uint64_t)(int64_t)-ESPIPE;
         return;
     }
 
-    int64_t saved = ext4_ftell(&obj->file);
-    if (saved < 0 || ext4_fseek(&obj->file, offset, SEEK_SET) != EOK) {
-        regs[0] = (uint64_t)(int64_t)-EIO;
-        return;
-    }
-
-    size_t wcnt = 0;
-    int rc = ext4_fwrite(&obj->file, buf, (size_t)count, &wcnt);
-    int seek_rc = ext4_fseek(&obj->file, saved, SEEK_SET);
-    if (rc != EOK || seek_rc != EOK)
-        regs[0] = (uint64_t)(int64_t)-EIO;
-    else
-        regs[0] = (uint64_t)wcnt;
+    int rc = vfs_pwrite(fd_obj_file(obj), buf, (size_t)count, offset);
+    regs[0] = rc >= 0 ? (uint64_t)rc : (uint64_t)(int64_t)rc;
 }
 
 void readv_handler(uint64_t regs[6], task_t *current)
@@ -348,28 +266,10 @@ void lseek_handler(uint64_t regs[6], task_t *current)
     int     whence = (int)regs[2];
     fd_obj_t *obj = task_get_fd(current, fd);
     if (!obj) { regs[0] = (uint64_t)(int64_t)-EBADF; return; }
-    if (obj->type == FDT_PSEUDO) {
-        if      (whence == 0) obj->pseudo.off = (uint64_t)offset;
-        else if (whence == 1) obj->pseudo.off = (uint64_t)((int64_t)obj->pseudo.off + offset);
-        else                  obj->pseudo.off = 0;
-        regs[0] = obj->pseudo.off;
-    } else if (obj->type == FDT_FILE) {
-        if (whence == 2) {
-            int64_t fsize = (int64_t)ext4_fsize(&obj->file);
-            int64_t new_off = fsize + offset;
-            if (new_off < 0) { regs[0] = (uint64_t)(int64_t)-EINVAL; return; }
-            offset = new_off;
-            whence = 0;
-        }
-        int rc = ext4_fseek(&obj->file, offset, (uint32_t)whence);
-        if (rc == EOK) {
-            regs[0] = (uint64_t)ext4_ftell(&obj->file);
-        } else if (whence == 0 && offset >= 0) {
-            obj->file.fpos = (uint64_t)offset;
-            regs[0] = (uint64_t)offset;
-        } else {
-            regs[0] = (uint64_t)(int64_t)-EINVAL;
-        }
+    if (fd_obj_file(obj)) {
+        uint64_t new_off = 0;
+        int rc = vfs_seek(fd_obj_file(obj), offset, whence, &new_off);
+        regs[0] = rc == 0 ? new_off : (uint64_t)(int64_t)rc;
     } else {
         regs[0] = (uint64_t)(int64_t)-EBADF;
     }
@@ -387,9 +287,9 @@ void sendfile_handler(uint64_t regs[6], task_t *current)
     if (in_fd >= 3 && !in_obj) { regs[0] = (uint64_t)(int64_t)-EBADF; return; }
 
     uint64_t saved_off = 0;
-    if (poff && in_obj && in_obj->type == FDT_PSEUDO) {
-        saved_off = in_obj->pseudo.off;
-        in_obj->pseudo.off = *poff;
+    if (poff && in_obj && fd_obj_file(in_obj)) {
+        saved_off = fd_obj_file(in_obj)->offset;
+        fd_obj_file(in_obj)->offset = *poff;
     }
 
     char   sbuf[1024];
@@ -399,30 +299,22 @@ void sendfile_handler(uint64_t regs[6], task_t *current)
         if (want > sizeof(sbuf)) want = sizeof(sbuf);
 
         int nr = 0;
-        if (in_obj && in_obj->type == FDT_PSEUDO) {
-            nr = pseudo_read(in_obj->pseudo.node_id,
-                             &in_obj->pseudo.off, sbuf, want);
-        } else if (in_obj && in_obj->type == FDT_FILE) {
-            size_t rcnt = 0;
-            int rc = ext4_fread(&in_obj->file, sbuf, want, &rcnt);
-            nr = (rc == EOK) ? (int)rcnt : -(int)EIO;
+        if (in_obj && fd_obj_file(in_obj)) {
+            nr = vfs_read(fd_obj_file(in_obj), sbuf, want);
         }
         if (nr <= 0) break;
 
         if (out_fd == 0 || out_fd == 1 || out_fd == 2) {
             for (int i = 0; i < nr; i++) uart_putc(sbuf[i]);
-        } else if (out_obj && out_obj->type == FDT_PSEUDO) {
-            pseudo_write(out_obj->pseudo.node_id, sbuf, (size_t)nr);
-        } else if (out_obj && out_obj->type == FDT_FILE) {
-            size_t wcnt = 0;
-            ext4_fwrite(&out_obj->file, sbuf, (size_t)nr, &wcnt);
+        } else if (out_obj && fd_obj_file(out_obj)) {
+            vfs_write(fd_obj_file(out_obj), sbuf, (size_t)nr);
         }
         total += (size_t)nr;
     }
 
-    if (poff && in_obj && in_obj->type == FDT_PSEUDO) {
-        *poff = in_obj->pseudo.off;
-        in_obj->pseudo.off = saved_off;
+    if (poff && in_obj && fd_obj_file(in_obj)) {
+        *poff = fd_obj_file(in_obj)->offset;
+        fd_obj_file(in_obj)->offset = saved_off;
     }
 
     regs[0] = (uint64_t)total;

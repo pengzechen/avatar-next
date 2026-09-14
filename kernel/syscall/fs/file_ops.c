@@ -7,13 +7,13 @@
 #include "syscall/fs/fd_pool.h"
 #include "syscall/fs/path.h"
 #include "task/task.h"
-#include "pseudofs.h"
 #include "klog.h"
 #include "string.h"
 #include "syscall/fs/pipe.h"
 #include "syscall/io/epoll.h"
 #include "syscall/net/ksocket.h"
 #include "syscall/fs/pty.h"
+#include "vfs.h"
 #if DRIVER_ION
 #include "ion/ion.h"
 #endif
@@ -62,74 +62,28 @@ void openat_handler(uint64_t regs[6], task_t *current)
         }
     }
 
+    vfs_file_t *vf = NULL;
+    int rc = vfs_open(abspath, flags, 0, &vf);
+    if (rc < 0) { regs[0] = (uint64_t)(int64_t)rc; return; }
+
     int pool = fd_pool_alloc();
-    if (pool < 0) { regs[0] = (uint64_t)(int64_t)-EMFILE; return; }
+    if (pool < 0) {
+        vfs_close(vf);
+        regs[0] = (uint64_t)(int64_t)-EMFILE;
+        return;
+    }
 
     fd_obj_t *obj = &g_fd_pool[pool];
+    fd_obj_attach_vfs(pool, vf);
 
-    /* ── pseudofs 优先 ─────────────────────────────────────── */
-    int pnid = pseudo_open(abspath);
-    if (pnid >= 0) {
-        obj->type           = FDT_PSEUDO;
-        obj->flags          = flags;
-        obj->pseudo.node_id = pnid;
-        obj->pseudo.off     = 0;
-        int k = 0;
-        while (abspath[k] && k < 127) { obj->path[k] = abspath[k]; k++; }
-        obj->path[k] = '\0';
-        int fd = task_alloc_fd(current, pool);
-        if (fd < 0) { fd_pool_free(pool); regs[0] = (uint64_t)(int64_t)-EMFILE; return; }
-        regs[0] = (uint64_t)fd;
+    int fd = task_alloc_fd(current, pool);
+    if (fd < 0) {
+        vfs_close(vf);
+        fd_pool_free(pool);
+        regs[0] = (uint64_t)(int64_t)-EMFILE;
         return;
     }
-
-    int rc;
-    if (!(flags & 0200000)) {
-        rc = ext4_fopen2(&obj->file, abspath, flags);
-        if (rc == EOK) {
-            obj->type  = FDT_FILE;
-            obj->flags = flags;
-            int k = 0;
-            while (abspath[k] && k < 127) { obj->path[k] = abspath[k]; k++; }
-            obj->path[k] = '\0';
-            int fd = task_alloc_fd(current, pool);
-            if (fd < 0) { ext4_fclose(&obj->file); fd_pool_free(pool); regs[0] = (uint64_t)(int64_t)-EMFILE; return; }
-            regs[0] = (uint64_t)fd;
-            return;
-        }
-    }
-
-    rc = ext4_dir_open(&obj->dir, abspath);
-    if (rc == EOK) {
-        uint32_t mode = 0;
-        if (ext4_mode_get(abspath, &mode) == EOK &&
-            (mode & 0170000) != 0040000) {
-            ext4_dir_close(&obj->dir);
-            fd_pool_free(pool);
-            regs[0] = (uint64_t)(int64_t)-ENOTDIR;
-            return;
-        }
-        obj->type  = FDT_DIR;
-        obj->flags = flags;
-        int k = 0;
-        while (abspath[k] && k < 127) { obj->path[k] = abspath[k]; k++; }
-        obj->path[k] = '\0';
-        int fd = task_alloc_fd(current, pool);
-        if (fd < 0) { ext4_dir_close(&obj->dir); fd_pool_free(pool); regs[0] = (uint64_t)(int64_t)-EMFILE; return; }
-        regs[0] = (uint64_t)fd;
-        return;
-    }
-
-    fd_pool_free(pool);
-    if (flags & 0200000) {
-        ext4_file tmp;
-        if (ext4_fopen2(&tmp, abspath, 0) == EOK) {
-            ext4_fclose(&tmp);
-            regs[0] = (uint64_t)(int64_t)-ENOTDIR;
-            return;
-        }
-    }
-    regs[0] = (uint64_t)(int64_t)-ENOENT;
+    regs[0] = (uint64_t)fd;
 }
 
 void close_handler(uint64_t regs[6], task_t *current)
@@ -149,32 +103,7 @@ void close_handler(uint64_t regs[6], task_t *current)
     KLOG_DEBUG("[fd] close: pid=%u fd=%d pool_idx=%d type=%d\n",
               current->id, fd, idx, obj->type);
     fd_close_notify(idx);
-    if (obj->type == FDT_FILE)
-        ext4_fclose(&obj->file);
-    else if (obj->type == FDT_DIR)
-        ext4_dir_close(&obj->dir);
-    else if (obj->type == FDT_PIPE) {
-        if (obj->pipe.is_write_end)
-            pipe_close_write(idx);
-        else
-            pipe_close_read(idx);
-    }
-    else if (obj->type == FDT_SOCKET) {
-        ksock_close(obj->sock.sock_idx);
-    }
-    else if (obj->type == FDT_PTY) {
-        if (obj->pty.is_master)
-            pty_close_master(obj->pty.pty_idx);
-        else
-            pty_close_slave(obj->pty.pty_idx);
-    }
-    else if (obj->type == FDT_EPOLL) {
-        epoll_destroy(obj->epoll.ep_idx);
-    }
-#if DRIVER_ION
-    else if (obj->type == FDT_ION)
-        ion_free((ion_handle_t)obj->ion.handle);
-#endif
+    fd_obj_close(idx);
     fd_pool_free(idx);
     current->fd_table[fd] = -1;
     regs[0] = 0;
@@ -192,21 +121,7 @@ static int dup_to_fd(task_t *current, int oldfd, int newfd, int flags)
         int idx = current->fd_table[newfd];
         fd_obj_t *o = &g_fd_pool[idx];
         fd_close_notify(idx);
-        if (o->type == FDT_FILE) ext4_fclose(&o->file);
-        else if (o->type == FDT_DIR) ext4_dir_close(&o->dir);
-        else if (o->type == FDT_SOCKET) ksock_close(o->sock.sock_idx);
-        else if (o->type == FDT_PIPE) {
-            if (o->pipe.is_write_end) pipe_close_write(idx);
-            else pipe_close_read(idx);
-        }
-        else if (o->type == FDT_PTY) {
-            if (o->pty.is_master) pty_close_master(o->pty.pty_idx);
-            else pty_close_slave(o->pty.pty_idx);
-        }
-        else if (o->type == FDT_EPOLL) epoll_destroy(o->epoll.ep_idx);
-    #if DRIVER_ION
-        else if (o->type == FDT_ION) ion_free((ion_handle_t)o->ion.handle);
-    #endif
+        fd_obj_close(idx);
         fd_pool_free(idx);
         current->fd_table[newfd] = -1;
     }
@@ -214,8 +129,9 @@ static int dup_to_fd(task_t *current, int oldfd, int newfd, int flags)
     if (!src) {
         int uart_idx = fd_pool_alloc();
         if (uart_idx < 0) return -EMFILE;
-        g_fd_pool[uart_idx].type  = FDT_PSEUDO;
+        g_fd_pool[uart_idx].type  = FDT_ALLOCATED;
         g_fd_pool[uart_idx].flags = 0;
+        g_fd_pool[uart_idx].vfs_file = NULL;
         current->fd_table[newfd] = uart_idx;
     } else {
         int new_idx = fd_pool_alloc();
@@ -228,20 +144,7 @@ static int dup_to_fd(task_t *current, int oldfd, int newfd, int flags)
 #endif
         g_fd_pool[new_idx] = *src;
         g_fd_pool[new_idx].wq.waiter_count = 0;
-        if (src->type == FDT_SOCKET)
-            ksock_ref(src->sock.sock_idx);
-        else if (src->type == FDT_PIPE) {
-            if (src->pipe.is_write_end)
-                pipe_ref_write(new_idx);
-            else
-                pipe_ref_read(new_idx);
-        }
-        else if (src->type == FDT_PTY) {
-            if (src->pty.is_master)
-                pty_ref_master(src->pty.pty_idx);
-            else
-                pty_ref_slave(src->pty.pty_idx);
-        }
+        fd_obj_ref(new_idx);
         current->fd_table[newfd] = new_idx;
     }
     if (flags & 0x80000)
@@ -341,8 +244,11 @@ void fcntl_handler(uint64_t regs[6], task_t *current)
     }
     case F_SETFL: {
         int val = (int)regs[2];
-        if (obj)
+        if (obj) {
             obj->flags = (obj->flags & ~SETFL_MASK) | (val & SETFL_MASK);
+            if (obj->vfs_file)
+                obj->vfs_file->flags = obj->flags;
+        }
         regs[0] = 0;
         return;
     }
@@ -374,20 +280,7 @@ void fcntl_handler(uint64_t regs[6], task_t *current)
         }
         g_fd_pool[new_idx] = *obj;
         g_fd_pool[new_idx].wq.waiter_count = 0;
-        if (obj->type == FDT_SOCKET)
-            ksock_ref(obj->sock.sock_idx);
-        else if (obj->type == FDT_PIPE) {
-            if (obj->pipe.is_write_end)
-                pipe_ref_write(new_idx);
-            else
-                pipe_ref_read(new_idx);
-        }
-        else if (obj->type == FDT_PTY) {
-            if (obj->pty.is_master)
-                pty_ref_master(obj->pty.pty_idx);
-            else
-                pty_ref_slave(obj->pty.pty_idx);
-        }
+        fd_obj_ref(new_idx);
         for (int nf = minfd < 3 ? 3 : minfd; nf < (int)TASK_MAX_FD; nf++) {
             if (current->fd_table[nf] == -1) {
                 current->fd_table[nf] = (int16_t)new_idx;

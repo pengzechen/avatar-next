@@ -99,24 +99,7 @@ void sys_exit(int status)
                 continue;
             }
             fd_obj_t *_obj = &g_fd_pool[_idx];
-            if (_obj->type == FDT_FILE)
-                ext4_fclose(&_obj->file);
-            else if (_obj->type == FDT_DIR)
-                ext4_dir_close(&_obj->dir);
-            else if (_obj->type == FDT_PIPE) {
-                if (_obj->pipe.is_write_end)
-                    pipe_close_write(_idx);
-                else
-                    pipe_close_read(_idx);
-            }
-            else if (_obj->type == FDT_SOCKET)
-                ksock_close(_obj->sock.sock_idx);
-            else if (_obj->type == FDT_PTY) {
-                if (_obj->pty.is_master)
-                    pty_close_master(_obj->pty.pty_idx);
-                else
-                    pty_close_slave(_obj->pty.pty_idx);
-            }
+            fd_obj_close(_idx);
             fd_pool_free(_idx);
             current->fd_table[_fd] = -1;
         }
@@ -429,20 +412,8 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
                 continue;
             }
             g_fd_pool[new_idx] = *src;
-            if (src->type == FDT_SOCKET)
-                ksock_ref(src->sock.sock_idx);
-            else if (src->type == FDT_PIPE) {
-                if (src->pipe.is_write_end)
-                    pipe_ref_write(new_idx);
-                else
-                    pipe_ref_read(new_idx);
-            }
-            else if (src->type == FDT_PTY) {
-                if (src->pty.is_master)
-                    pty_ref_master(src->pty.pty_idx);
-                else
-                    pty_ref_slave(src->pty.pty_idx);
-            }
+            g_fd_pool[new_idx].wq.waiter_count = 0;
+            fd_obj_ref(new_idx);
             child->fd_table[k] = (int16_t)new_idx;
         }
         memcpy(child->fd_cloexec, parent->fd_cloexec, sizeof(parent->fd_cloexec));

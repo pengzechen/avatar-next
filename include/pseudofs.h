@@ -153,7 +153,7 @@ struct cvitpu_legacy_cache_op_arg {
 
 /*
  * pseudo_open: 如果 abspath 是虚拟路径返回节点 ID（≥0），否则返回 -1。
- * 调用者收到 ≥0 时应使用 FDT_PSEUDO 类型打开 fd pool 槽。
+ * 调用者收到 ≥0 时应通过 VFS 创建文件对象。
  */
 int pseudo_open(const char *abspath);
 

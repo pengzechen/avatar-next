@@ -11,6 +11,7 @@
 #include "task/task.h"
 #include "klog.h"
 #include "string.h"
+#include "vfs.h"
 
 #include "lwip/tcp.h"
 #include "lwip/udp.h"
@@ -98,7 +99,7 @@ static void ksock_unblock(ksock_t *sk)
 static void ksock_notify_epoll(int si, uint32_t events)
 {
     for (int i = 0; i < FD_POOL_SIZE; i++) {
-        if (g_fd_pool[i].type == FDT_SOCKET && g_fd_pool[i].sock.sock_idx == si)
+        if (vfs_file_matches_socket(fd_obj_file(&g_fd_pool[i]), si))
             fd_notify_waiters(i, events);
     }
 }

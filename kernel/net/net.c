@@ -76,8 +76,8 @@ void net_poll_task(void *arg)
     KLOG_INFO("[net] poll task started\n");
     for (;;) {
         poll_count++;
-        if (poll_count <= 8U || (poll_count & (poll_count - 1U)) == 0U)
-            KLOG_INFO("[net] poll alive #%u\n", poll_count);
+        // if (poll_count <= 8U || (poll_count & (poll_count - 1U)) == 0U)
+            // KLOG_INFO("[net] poll alive #%u\n", poll_count);
         net_poll_once();
         task_yield();
     }

@@ -23,13 +23,11 @@ typedef struct {
 } pipe_t;
 
 int  pipe_alloc(struct task *task, int fds_out[2]);
-int  pipe_read(int pool_idx, void *buf, size_t count);
-int  pipe_write(int pool_idx, const void *buf, size_t count);
-void pipe_ref_read(int pool_idx);
-void pipe_ref_write(int pool_idx);
-void pipe_close_read(int pool_idx);
-void pipe_close_write(int pool_idx);
-bool pipe_poll_readable(int pool_idx);
-bool pipe_poll_writable(int pool_idx);
+int  pipe_read_endpoint(int pipe_idx, void *buf, size_t count);
+int  pipe_write_endpoint(int pipe_idx, const void *buf, size_t count);
+void pipe_ref_endpoint(int pipe_idx, bool is_write_end);
+void pipe_close_endpoint(int pipe_idx, bool is_write_end);
+bool pipe_poll_readable_endpoint(int pipe_idx);
+bool pipe_poll_writable_endpoint(int pipe_idx);
 
 #endif /* KERNEL_SYSCALL_FS_PIPE_H */

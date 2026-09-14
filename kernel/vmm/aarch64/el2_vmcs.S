@@ -37,6 +37,51 @@
 .arch armv8.2-a
 
 /* ─────────────────────────────────────────────────────────────────────
+ * guest_vec_table — Guest trap 向量表
+ *
+ * 当 vCPU 运行时（el2_enter_guest 安装此表到 VBAR_EL2），guest EL1
+ * 发生的所有陷入 / 中断 / 异常均跳转到 el2_trap_exit。
+ *
+ * AArch64 向量表格式：表基地址 2KB 对齐，16 个 entry，每个 128 字节：
+ *   0x000: Current EL, SP_EL0
+ *   0x200: Current EL, SP_ELx
+ *   0x400: Lower EL, AArch64（guest EL1/EL0 → EL2）
+ *   0x600: Lower EL, AArch32（暂不支持）
+ * ───────────────────────────────────────────────────────────────────── */
+.macro GUEST_ENTRY
+    .align 7
+    b  el2_trap_exit
+.endm
+
+.section .text.guest_vec
+.align 11
+.global guest_vec_table
+guest_vec_table:
+    /* 0x000: Current EL + SP_EL0 — Sync / IRQ / FIQ / SError */
+    GUEST_ENTRY
+    GUEST_ENTRY
+    GUEST_ENTRY
+    GUEST_ENTRY
+
+    /* 0x200: Current EL + SP_ELx — Sync / IRQ / FIQ / SError */
+    GUEST_ENTRY
+    GUEST_ENTRY
+    GUEST_ENTRY
+    GUEST_ENTRY
+
+    /* 0x400: Lower EL AArch64 — Sync / IRQ / FIQ / SError */
+    GUEST_ENTRY
+    GUEST_ENTRY
+    GUEST_ENTRY
+    GUEST_ENTRY
+
+    /* 0x600: Lower EL AArch32 — Sync / IRQ / FIQ / SError */
+    GUEST_ENTRY
+    GUEST_ENTRY
+    GUEST_ENTRY
+    GUEST_ENTRY
+
+/* ─────────────────────────────────────────────────────────────────────
  * 全局数据
  * ───────────────────────────────────────────────────────────────────── */
 .section .bss

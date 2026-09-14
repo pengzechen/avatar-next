@@ -2,8 +2,8 @@
  * fs/tty.h - 终端状态 + UART 输入环形缓冲区
  *
  * 包含全局 termios 状态、UART RX ring buffer 与若干 tty 辅助接口。
- * 大部分接口由 fs/file_io.c / fs/ioctl.c / fs/pseudofs/pseudofs.c
- * 与定时器 ISR 共享。
+ * 大部分接口由 kernel/syscall/fs/file_io.c、kernel/syscall/fs/ioctl.c
+ * 和 kernel/fs/pseudofs/pseudofs.c 与定时器 ISR 共享。
  */
 #ifndef KERNEL_SYSCALL_FS_TTY_H
 #define KERNEL_SYSCALL_FS_TTY_H

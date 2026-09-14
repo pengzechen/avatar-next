@@ -1,5 +1,4 @@
 #include "kernel_stat.h"
-#include "pseudofs.h"
 #include "syscall/syscall.h"
 #include "syscall/syscall_internal.h"
 #include "syscall/core/futex.h"
@@ -17,6 +16,7 @@
 #include "exception.h"
 #include "syscall_abi.h"
 #include "uart/uart.h"
+#include "vfs.h"
 #include <ext4.h>
 #include <ext4_errno.h>
 #if ARCH_RISCV64
@@ -534,12 +534,12 @@ void syscall_handler(trap_frame_t *frame)
             break;
         }
         fd_obj_t *obj = task_get_fd(current, fd);
-        if (!obj || obj->type != FDT_FILE) {
+        if (!obj || !vfs_file_is_regular(fd_obj_file(obj))) {
             regs[0] = (uint64_t)(int64_t)-EBADF;
             break;
         }
-        int rc = ext4_ftruncate(&obj->file, (uint64_t)length);
-        regs[0] = (rc == EOK) ? 0 : (uint64_t)(int64_t)-rc;
+        int rc = vfs_truncate(fd_obj_file(obj), (uint64_t)length);
+        regs[0] = (rc == 0) ? 0 : (uint64_t)(int64_t)rc;
         break;
     }
 

@@ -1,8 +1,7 @@
 /*
  * mm/mmap.c - sys_mmap 实现（包含匿名映射与文件映射）
  *
- * 从 kernel/syscall/syscall.c 迁出。文件映射使用 fd_pool 中的
- * ext4_file，所以本文件必须用 $(LWEXT4_CFLAGS) 编译。
+ * 从 kernel/syscall/syscall.c 迁出。文件映射通过 VFS 读取文件内容。
  */
 #include "syscall/syscall.h"
 #include "syscall/syscall_internal.h"
@@ -16,7 +15,7 @@
 #include "vm_user.h"
 #include "user_layout.h"
 #include "shared_page.h"
-#include <ext4.h>
+#include "vfs.h"
 
 #if DRIVER_ION
 #include "ion/ion.h"
@@ -191,7 +190,7 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, int prot, int flags, int fd, uint
             KLOG_WARN("[mmap] file-backed: bad fd=%d\n", fd);
             return MMAP_FAILED;
         }
-        if (!fobj || fobj->type != FDT_FILE) {
+        if (!fobj || !vfs_file_is_regular(fd_obj_file(fobj))) {
             KLOG_WARN("[mmap] file-backed: fd %d not a regular file\n", fd);
             return MMAP_FAILED;
         }
@@ -227,9 +226,7 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, int prot, int flags, int fd, uint
             if (page_off + PAGE_SIZE > len)
                 to_read = len - page_off;
             if (to_read > 0) {
-                ext4_fseek(&fobj->file, (int64_t)file_off, SEEK_SET);
-                size_t got = 0;
-                ext4_fread(&fobj->file, phys_to_virt(pa), to_read, &got);
+                vfs_read_to_phys(fd_obj_file(fobj), file_off, phys_to_virt(pa), to_read);
             }
 
             if (flags & MAP_SHARED) {

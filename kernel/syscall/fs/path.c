@@ -8,6 +8,7 @@
 #include "syscall/syscall_internal.h"
 #include "kernel_stat.h"
 #include "string.h"
+#include "vfs.h"
 #include <ext4.h>
 #include <ext4_errno.h>
 
@@ -125,7 +126,7 @@ int resolve_path_at(task_t *task, int dirfd, const char *pathname,
     }
 
     fd_obj_t *base = task_get_fd(task, dirfd);
-    if (!base || (base->type != FDT_DIR && base->type != FDT_PSEUDO))
+    if (!base || !vfs_file_is_dir(fd_obj_file(base)))
         return -EBADF;
 
     resolve_path(base->path, pathname, abspath, abspath_len);

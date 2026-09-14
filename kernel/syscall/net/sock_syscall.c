@@ -10,6 +10,7 @@
 #include "task/task.h"
 #include "klog.h"
 #include "string.h"
+#include "vfs.h"
 
 /* Linux sockaddr_in layout */
 struct kernel_sockaddr_in {
@@ -54,15 +55,19 @@ void socket_handler(uint64_t regs[6], task_t *current)
         return;
     }
 
-    fd_obj_t *obj = &g_fd_pool[pool];
-    obj->type = FDT_SOCKET;
-    obj->flags = (type & SOCK_NONBLOCK) ? O_NONBLOCK : 0;
-    obj->sock.sock_idx = (int16_t)si;
-    obj->path[0] = '\0';
+    int fd_flags = (type & SOCK_NONBLOCK) ? O_NONBLOCK : 0;
+    vfs_file_t *vf = NULL;
+    if (vfs_create_socket_file(si, fd_flags, &vf) != 0) {
+        ksock_close(si);
+        fd_pool_free(pool);
+        regs[0] = (uint64_t)(int64_t)-EMFILE;
+        return;
+    }
+    fd_obj_attach_vfs(pool, vf);
 
     int fd = task_alloc_fd(current, pool);
     if (fd < 0) {
-        ksock_close(si);
+        vfs_close(vf);
         fd_pool_free(pool);
         regs[0] = (uint64_t)(int64_t)-EMFILE;
         return;
@@ -74,9 +79,9 @@ void socket_handler(uint64_t regs[6], task_t *current)
 static int get_sock_idx(task_t *current, int fd)
 {
     fd_obj_t *obj = task_get_fd(current, fd);
-    if (!obj || obj->type != FDT_SOCKET)
+    if (!obj)
         return -1;
-    return obj->sock.sock_idx;
+    return vfs_socket_index(fd_obj_file(obj));
 }
 
 void bind_handler(uint64_t regs[6], task_t *current)
@@ -112,11 +117,11 @@ void accept_handler(uint64_t regs[6], task_t *current)
     int accept_flags = (int)regs[3];
 
     fd_obj_t *listen_obj = task_get_fd(current, fd);
-    if (!listen_obj || listen_obj->type != FDT_SOCKET) {
+    int si = listen_obj ? vfs_socket_index(fd_obj_file(listen_obj)) : -1;
+    if (si < 0) {
         regs[0] = (uint64_t)(int64_t)-EBADF;
         return;
     }
-    int si = listen_obj->sock.sock_idx;
 
     int kflags = 0;
     if ((listen_obj->flags & O_NONBLOCK) || (accept_flags & SOCK_NONBLOCK))
@@ -139,17 +144,21 @@ void accept_handler(uint64_t regs[6], task_t *current)
         return;
     }
 
-    fd_obj_t *obj = &g_fd_pool[pool];
-    obj->type = FDT_SOCKET;
-    obj->flags = 0;
+    int fd_flags = 0;
     if ((listen_obj->flags & O_NONBLOCK) || (accept_flags & SOCK_NONBLOCK))
-        obj->flags |= O_NONBLOCK;
-    obj->sock.sock_idx = (int16_t)new_si;
-    obj->path[0] = '\0';
+        fd_flags |= O_NONBLOCK;
+    vfs_file_t *vf = NULL;
+    if (vfs_create_socket_file(new_si, fd_flags, &vf) != 0) {
+        ksock_close(new_si);
+        fd_pool_free(pool);
+        regs[0] = (uint64_t)(int64_t)-EMFILE;
+        return;
+    }
+    fd_obj_attach_vfs(pool, vf);
 
     int new_fd = task_alloc_fd(current, pool);
     if (new_fd < 0) {
-        ksock_close(new_si);
+        vfs_close(vf);
         fd_pool_free(pool);
         regs[0] = (uint64_t)(int64_t)-EMFILE;
         return;
