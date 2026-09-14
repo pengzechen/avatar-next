@@ -304,7 +304,6 @@ tkill_handler(uint64_t regs[6])
 
 /* ── tgkill (Linux 131) ────────────────────────────────────────
  * tgid 是线程组 leader 的 PID（不是 pgid）。
- * 单线程进程: tgid == tid；线程: tgid == parent_id（leader）。
  * ────────────────────────────────────────────────────────────── */
 void
 tgkill_handler(uint64_t regs[6])
@@ -316,8 +315,9 @@ tgkill_handler(uint64_t regs[6])
     if (sig == 0) { regs[0] = 0; return; }
 
     task_t *tgt = task_find_by_id((uint32_t)tid);
+    uint32_t tgt_tgid = tgt ? (tgt->tgid ? tgt->tgid : tgt->id) : 0;
     if (!tgt ||
-        (tgid > 0 && (uint32_t)tgid != tgt->id && (uint32_t)tgid != tgt->parent_id)) {
+        (tgid > 0 && (uint32_t)tgid != tgt_tgid)) {
         regs[0] = (uint64_t)(int64_t)-ESRCH;
         return;
     }

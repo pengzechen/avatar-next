@@ -39,8 +39,11 @@ void proc_ids_handler(uint64_t syscall_num, uint64_t regs[6], task_t *current)
         current->ctid_ptr = regs[0];
         /* fall through */
     case LINUX_SYS_GETTID:
-    case LINUX_SYS_GETPID:
         regs[0] = (uint64_t)current->id;
+        break;
+
+    case LINUX_SYS_GETPID:
+        regs[0] = (uint64_t)(current->tgid ? current->tgid : current->id);
         break;
 
     case LINUX_SYS_GETPPID:

@@ -93,6 +93,8 @@ typedef struct task {
     bool            is_user_process;     /* true=用户进程, false=内核任务          */
     bool            user_started;        /* true=已至少进入过一次用户态            */
     bool            is_thread;           /* true=线程(共享页表), false=独立进程 */
+    bool            shares_pgd;          /* true=共享地址空间，不拥有 pgd 释放权 */
+    uint32_t        tgid;                /* thread group id: getpid() 返回该值 */
     uint64_t       *pgd;                 /* 页表基址（用户进程的TTBR0）            */
     uint64_t        user_entry;          /* 用户态入口点（虚拟地址）               */
     uint64_t        user_sp;             /* 用户栈指针（虚拟地址）                */

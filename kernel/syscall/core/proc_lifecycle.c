@@ -130,6 +130,29 @@ void exit_handler(uint64_t regs[6])
     sys_exit((int)regs[0]);
 }
 
+void exit_group_handler(uint64_t regs[6])
+{
+    task_t *current = task_current();
+    uint32_t tgid = current->tgid ? current->tgid : current->id;
+
+    for (uint32_t i = 0; i < TASK_MAX; i++) {
+        task_t *t = &g_task_pool[i];
+        if (!g_stack_used[i] || t == current)
+            continue;
+        if (t->state == TASK_DEAD || t->state == TASK_ALLOCATING)
+            continue;
+        if (!t->is_user_process)
+            continue;
+        if ((t->tgid ? t->tgid : t->id) != tgid)
+            continue;
+        t->exit_status = (int)regs[0];
+        t->state = TASK_DEAD;
+        sched_dequeue(t);
+    }
+
+    sys_exit((int)regs[0]);
+}
+
 /* ───────────────────────────────────────────────────────────────
  *  sys_execve
  * ─────────────────────────────────────────────────────────────── */
@@ -241,20 +264,27 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
     child->is_waiting      = false;
     child->wait_pid        = (uint32_t)-1;
     child->ctid_ptr        = 0;
+    child->tgid            = child->id;
     child->uid             = parent->uid;
     child->euid            = parent->euid;
     child->gid             = parent->gid;
     child->egid            = parent->egid;
     child->ctty_pty_idx    = parent->ctty_pty_idx;
     child->is_thread       = false;
+    child->shares_pgd      = false;
     child->utime_ns        = 0;
     child->stime_ns        = 0;
     child->sc_entry_ns     = 0;
     child->create_ns       = 0;
+    bool is_thread_clone   = (flags & CLONE_THREAD) != 0;
 
     if (flags & CLONE_VM) {
-        /* ── 线程路径 ── */
-        child->is_thread       = true;
+        /* ── 共享地址空间路径：pthread 才是同一 thread group，vfork 仍是子进程。 ── */
+        child->is_thread       = is_thread_clone;
+        child->shares_pgd      = true;
+        child->tgid            = is_thread_clone ?
+                                 (parent->tgid ? parent->tgid : parent->id) :
+                                 child->id;
         child->pgd             = parent->pgd;
         child->user_entry      = parent->user_entry;
         child->user_sp         = child_stack;
@@ -277,9 +307,13 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
             }
             child->cwd[k] = '\0';
         }
-        for (uint32_t k = 0; k < TASK_MAX_FD; k++)
-            child->fd_table[k] = parent->fd_table[k];
-        memcpy(child->fd_cloexec, parent->fd_cloexec, sizeof(parent->fd_cloexec));
+        if (is_thread_clone) {
+            for (uint32_t k = 0; k < TASK_MAX_FD; k++)
+                child->fd_table[k] = parent->fd_table[k];
+            memcpy(child->fd_cloexec, parent->fd_cloexec, sizeof(parent->fd_cloexec));
+        } else {
+            fd_table_inherit(child, parent);
+        }
         {
             int k = 0;
             while (parent->name[k] && k < (int)TASK_NAME_LEN - 1) {
@@ -377,6 +411,8 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
         }
 
         child->pgd             = (uint64_t *)child_pgd_phys;
+        child->shares_pgd      = false;
+        child->tgid            = child->id;
         child->user_entry      = parent->user_entry;
         child->user_sp         = child_stack ? child_stack : parent->user_sp;
         child->user_stack_top  = parent->user_stack_top;
@@ -471,6 +507,7 @@ void wait_handler(uint64_t regs[6], task_t *me)
     for (uint32_t i = 0; i < TASK_MAX; i++) {
         if (!g_stack_used[i]) continue;
         task_t *t = &g_task_pool[i];
+        if (t->is_thread) continue;
         if (t->parent_id != me->id) continue;
         if (wait_pid > 0 && (int)t->id != wait_pid) continue;
         has_matching_child = true;
@@ -487,6 +524,7 @@ void wait_handler(uint64_t regs[6], task_t *me)
     for (uint32_t i = 0; i < TASK_MAX; i++) {
         if (!g_stack_used[i]) continue;
         task_t *t = &g_task_pool[i];
+        if (t->is_thread) continue;
         if (t->parent_id != me->id) continue;
         if (wait_pid > 0 && (int)t->id != wait_pid) continue;
         if (t->state == TASK_DEAD) { found = t; break; }
@@ -525,6 +563,7 @@ void wait_handler(uint64_t regs[6], task_t *me)
     for (uint32_t i = 0; i < TASK_MAX; i++) {
         if (!g_stack_used[i]) continue;
         task_t *t = &g_task_pool[i];
+        if (t->is_thread) continue;
         if (t->parent_id != me->id) continue;
         if (wait_pid > 0 && (int)t->id != wait_pid) continue;
         if (t->state == TASK_DEAD) { found = t; break; }

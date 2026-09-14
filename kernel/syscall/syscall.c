@@ -351,8 +351,11 @@ void syscall_handler(trap_frame_t *frame)
 
     /* --- 进程管理 --- */
     case LINUX_SYS_EXIT:
-    case LINUX_SYS_EXIT_GROUP:
         exit_handler(regs);
+        break;
+
+    case LINUX_SYS_EXIT_GROUP:
+        exit_group_handler(regs);
         break;
 
     case LINUX_SYS_CLONE:

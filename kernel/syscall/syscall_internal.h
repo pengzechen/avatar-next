@@ -359,6 +359,7 @@ void tgkill_handler      (uint64_t regs[6]);
 /* ── core/ 子系统：进程/线程/调度 ─────────────────────────────── */
 /* 进程生命周期（core/proc_lifecycle.c） */
 void exit_handler   (uint64_t regs[6]) __attribute__((noreturn));
+void exit_group_handler(uint64_t regs[6]) __attribute__((noreturn));
 void clone_handler  (uint64_t regs[6], task_t *parent, trap_frame_t *frame);
 void execve_handler (uint64_t regs[6]);
 void wait_handler   (uint64_t regs[6], task_t *me);

@@ -323,6 +323,7 @@ task_execve(const char *pathname,
     new_task->euid         = current->euid;
     new_task->gid          = current->gid;
     new_task->egid         = current->egid;
+    new_task->tgid         = new_task->id;
     new_task->ctty_pty_idx = current->ctty_pty_idx;
     new_task->blocked_sigs = current->blocked_sigs;
 

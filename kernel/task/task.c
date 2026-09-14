@@ -108,7 +108,7 @@ task_reap_dead(task_t *task)
         KLOG_DEBUG("[task] Reaping dead task slot %u (id=%u, pgd=0x%llx)\n",
                    i, task->id, (uint64_t)task->pgd);
 
-        if (task->is_user_process && !task->is_thread && task->pgd != NULL) {
+        if (task->is_user_process && !task->shares_pgd && task->pgd != NULL) {
             vm_destroy_user_process((uint64_t)task->pgd);
             task->pgd = NULL;
         }
@@ -350,6 +350,8 @@ process_create(const char *name, uint64_t user_entry, uint64_t user_code_size,
     task->is_user_process = true;
     task->user_started    = false;
     task->is_thread       = false;
+    task->shares_pgd      = false;
+    task->tgid            = task->id;
     task->user_entry      = user_entry;
     task->user_sp         = user_sp;
     task->user_stack_top  = user_sp;
@@ -485,6 +487,9 @@ process_create_with_pgd(const char *name, uint64_t user_entry, uint64_t user_sp,
     task->priority        = priority;
     task->is_user_process = true;
     task->user_started    = false;
+    task->is_thread       = false;
+    task->shares_pgd      = false;
+    task->tgid            = task->id;
     task->user_entry      = user_entry;
     task->user_sp         = user_sp;
     task->user_stack_top  = user_sp;
@@ -583,6 +588,8 @@ task_create(const char *name, void (*entry)(void *), void *arg, uint8_t priority
     task->is_user_process = false;
     task->user_started    = false;
     task->is_thread       = false;
+    task->shares_pgd      = false;
+    task->tgid            = task->id;
     task->pgd      = NULL;
     task->fs_base  = 0;
     task->ctid_ptr = 0;

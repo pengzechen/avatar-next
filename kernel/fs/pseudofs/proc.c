@@ -54,6 +54,18 @@ static size_t format_status(char *tmp, size_t bufsz, task_t *t)
     char nbuf[24];
     char state_c;
     const char *state_s;
+    uint32_t tgid = t->tgid ? t->tgid : t->id;
+    uint32_t threads = 0;
+
+    for (uint32_t i = 0; i < TASK_MAX; i++) {
+        task_t *it = &g_task_pool[i];
+        if (!pfs_task_alive(i))
+            continue;
+        if (!it->is_user_process)
+            continue;
+        if ((it->tgid ? it->tgid : it->id) == tgid)
+            threads++;
+    }
 
     switch (t->state) {
     case TASK_RUNNING: state_c = 'R'; state_s = "running"; break;
@@ -94,7 +106,10 @@ static size_t format_status(char *tmp, size_t bufsz, task_t *t)
     pos += (size_t)pfs_puts(tmp, pos, bufsz, " kB\nVmStk:\t");
     u64_to_dec(nbuf, vm_stk_kb);
     pos += (size_t)pfs_puts(tmp, pos, bufsz, nbuf);
-    pos += (size_t)pfs_puts(tmp, pos, bufsz, " kB\nThreads:\t1\n");
+    pos += (size_t)pfs_puts(tmp, pos, bufsz, " kB\nThreads:\t");
+    u64_to_dec(nbuf, threads ? threads : 1);
+    pos += (size_t)pfs_puts(tmp, pos, bufsz, nbuf);
+    pos += (size_t)pfs_puts(tmp, pos, bufsz, "\n");
     return pos;
 }
 

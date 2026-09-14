@@ -55,6 +55,7 @@ int task_alloc_ion_fd(task_t *task, uint32_t handle);
 int task_get_ion_handle(task_t *task, int fd, uint32_t *handle);
 int        task_alloc_fd(task_t *task, int pool_idx);
 fd_obj_t  *task_get_fd  (task_t *task, int fd);
+void       fd_table_inherit(task_t *child, task_t *parent);
 
 static inline vfs_file_t *fd_obj_file(fd_obj_t *obj)
 {
