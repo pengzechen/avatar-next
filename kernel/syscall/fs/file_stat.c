@@ -9,9 +9,15 @@
 #include "task/task.h"
 #include "kernel_stat.h"
 #include "string.h"
+#include "klog.h"
 #include "vfs.h"
 #include <ext4.h>
 #include <ext4_errno.h>
+
+static bool trace_heavy_task(task_t *current)
+{
+    return current && current->is_user_process && current->heap_end >= 0x3000000ULL;
+}
 
 void fstat_handler(uint64_t regs[6], task_t *current)
 {
@@ -20,6 +26,12 @@ void fstat_handler(uint64_t regs[6], task_t *current)
     if (!st) { regs[0] = (uint64_t)(int64_t)-EFAULT; return; }
 
     fd_obj_t *obj = task_get_fd(current, fd);
+    if (trace_heavy_task(current)) {
+        KLOG_DEBUG("[vfsstat] pid=%u fstat fd=%d st=0x%llx path=%s kind=%d\n",
+                   current->id, fd, (uint64_t)st,
+                   (obj && fd_obj_file(obj)) ? fd_obj_file(obj)->path : "<none>",
+                   (obj && fd_obj_file(obj)) ? fd_obj_file(obj)->kind : -1);
+    }
     if (fd == 0 || fd == 1 || fd == 2 || (obj && !fd_obj_file(obj))) {
         memset(st, 0, sizeof(*st));
         st->st_mode = 0020666;  /* character device */
@@ -41,6 +53,12 @@ void newfstatat_handler(uint64_t regs[6], task_t *current)
     if (!st) { regs[0] = (uint64_t)(int64_t)-EFAULT; return; }
     if (!pathname || pathname[0] == '\0') {
         fd_obj_t *obj = task_get_fd(current, dirfd);
+        if (trace_heavy_task(current)) {
+            KLOG_DEBUG("[vfsstat] pid=%u newfstatat empty dirfd=%d st=0x%llx path=%s kind=%d\n",
+                       current->id, dirfd, (uint64_t)st,
+                       (obj && fd_obj_file(obj)) ? fd_obj_file(obj)->path : "<none>",
+                       (obj && fd_obj_file(obj)) ? fd_obj_file(obj)->kind : -1);
+        }
         if (!obj) { regs[0] = (uint64_t)(int64_t)-EBADF; return; }
         int rc = vfs_stat_file(fd_obj_file(obj), st);
         if (rc < 0) { regs[0] = (uint64_t)(int64_t)rc; return; }
@@ -50,12 +68,20 @@ void newfstatat_handler(uint64_t regs[6], task_t *current)
     char abspath[128];
     int rpa = resolve_path_at(current, dirfd, pathname, abspath, sizeof(abspath));
     if (rpa < 0) {
+        if (trace_heavy_task(current)) {
+            KLOG_DEBUG("[vfsstat] pid=%u newfstatat path=%s st=0x%llx rc=%d\n",
+                       current->id, pathname, (uint64_t)st, rpa);
+        }
         regs[0] = (uint64_t)(int64_t)rpa;
         return;
     }
     /* AT_SYMLINK_NOFOLLOW = 0x100 */
     if (!(regs[3] & 0x100))
         follow_symlinks(abspath, sizeof(abspath));
+    if (trace_heavy_task(current)) {
+        KLOG_DEBUG("[vfsstat] pid=%u newfstatat path=%s resolved=%s st=0x%llx flags=0x%llx\n",
+                   current->id, pathname, abspath, (uint64_t)st, regs[3]);
+    }
 
     if (vfs_stat_path(abspath, st) == 0) { regs[0] = 0; return; }
     int pts_idx = pty_match_pts_path(abspath);
@@ -104,6 +130,10 @@ void readlinkat_handler(uint64_t regs[6], task_t *current)
     if (!pathname || !lbuf) { regs[0] = (uint64_t)(int64_t)-EFAULT; return; }
     char abspath[128];
     resolve_path_at(current, dirfd, pathname, abspath, sizeof(abspath));
+    if (trace_heavy_task(current)) {
+        KLOG_DEBUG("[vfsstat] pid=%u readlinkat path=%s resolved=%s buf=0x%llx size=0x%llx\n",
+                   current->id, pathname, abspath, (uint64_t)lbuf, lbufsz);
+    }
 
     /* /proc/self/fd/N — resolve from task fd table */
     if (strncmp(abspath, "/proc/self/fd/", 14) == 0) {

@@ -43,6 +43,30 @@ static bool rv_irq_log_sample(uint64_t n)
     return n <= 4 || (n <= 4096 && (n & (n - 1)) == 0);
 }
 
+static void rv_dump_trap_regs(trap_frame_t *frame)
+{
+    static const char * const reg_names[] = {
+        "zero","ra","sp","gp","tp","t0","t1","t2",
+        "s0","s1","a0","a1","a2","a3","a4","a5",
+        "a6","a7","s2","s3","s4","s5","s6","s7",
+        "s8","s9","s10","s11","t3","t4","t5","t6",
+    };
+
+    for (int i = 1; i < 32; i += 4) {
+        int end = i + 4 > 32 ? 32 : i + 4;
+        if (end - i == 4) {
+            KLOG_ERROR("  %s=0x%lx %s=0x%lx %s=0x%lx %s=0x%lx\n",
+                       reg_names[i],   frame->x[i],
+                       reg_names[i+1], frame->x[i+1],
+                       reg_names[i+2], frame->x[i+2],
+                       reg_names[i+3], frame->x[i+3]);
+        } else {
+            for (int j = i; j < end; j++)
+                KLOG_ERROR("  %s=0x%lx\n", reg_names[j], frame->x[j]);
+        }
+    }
+}
+
 void riscv_kernel_interrupt_enable(void)
 {
     CSR_SET(sstatus, SSTATUS_SIE);
@@ -153,6 +177,7 @@ void handle_exception(void *frame_ptr)
             if (t && t->is_user_process) {
                 KLOG_WARN("[exception] user page fault sig=SIGSEGV pid=%u pc=0x%lx va=0x%lx\n",
                           t->id, frame->sepc, frame->stval);
+                rv_dump_trap_regs(frame);
                 task_send_signal(t, SIGSEGV);
                 deliver_pending_signals(t, frame);
                 return;
@@ -188,24 +213,7 @@ void handle_exception(void *frame_ptr)
                        (unsigned)((hstatus_val >> 8) & 1),
                        satp_val, satp_val & 0xfffffffffffULL);
 #endif
-            static const char * const reg_names[] = {
-                "zero","ra","sp","gp","tp","t0","t1","t2",
-                "s0","s1","a0","a1","a2","a3","a4","a5",
-                "a6","a7","s2","s3","s4","s5","s6","s7",
-                "s8","s9","s10","s11","t3","t4","t5","t6",
-            };
-            for (int i = 1; i < 32; i += 4) {
-                int end = i + 4 > 32 ? 32 : i + 4;
-                if (end - i == 4)
-                    KLOG_ERROR("  %s=0x%lx %s=0x%lx %s=0x%lx %s=0x%lx\n",
-                               reg_names[i],   frame->x[i],
-                               reg_names[i+1], frame->x[i+1],
-                               reg_names[i+2], frame->x[i+2],
-                               reg_names[i+3], frame->x[i+3]);
-                else
-                    for (int j = i; j < end; j++)
-                        KLOG_ERROR("  %s=0x%lx\n", reg_names[j], frame->x[j]);
-            }
+            rv_dump_trap_regs(frame);
         }
         
         platform_shutdown();

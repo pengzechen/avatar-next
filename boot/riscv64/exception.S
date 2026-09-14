@@ -50,16 +50,16 @@ trap_vector:
 
 .Lfrom_user:
     /* U → S: t0=kernel_sp（旧 sscratch），sscratch=原始 t0。
-     * 先用 t0 作为临时 trap_frame 指针保存原始 sp/t1；不能先
-     * mv t1, sp，否则会把用户 t1 污染成 user_sp 并在返回时恢复回去。 */
-    mv     t2, t0                /* t2 = kernel_sp, with cpu_t* stored at -8 */
+     * 先用 t0 作为临时 trap_frame 指针保存原始 sp/t1；不能使用 t2
+     * 作为临时寄存器，因为用户 t2/x7 此时尚未保存。 */
     addi   t0, t0, -TRAP_FRAME_SIZE
     sd     x2,  2*8(t0)          /* user_sp */
     sd     x4,  4*8(t0)          /* user tp; kernel tp is restored below */
     sd     x6,  6*8(t0)          /* 用户原始 t1 */
     csrrw  t1, sscratch, x0      /* t1=用户原始 t0, sscratch=0 */
     sd     t1,  5*8(t0)          /* 用户原始 t0 */
-    ld     x4, -8(t2)            /* tp = per-CPU pointer for kernel C code */
+    addi   t1, t0, TRAP_FRAME_SIZE /* t1 = kernel_sp, with cpu_t* stored at -8 */
+    ld     x4, -8(t1)            /* tp = per-CPU pointer for kernel C code */
     mv     sp, t0                /* sp = trap_frame */
     sd     x0,  0*8(sp)
     sd     x1,  1*8(sp)          /* user ra */

@@ -83,10 +83,12 @@ uint64_t sys_munmap(uint64_t addr, uint64_t len)
         return (uint64_t)(int64_t)-EINVAL;
 
     uint64_t size = ALIGN_UP(len, PAGE_SIZE);
-    vm_unmap_user_range((uint64_t)current->pgd, addr, size);
+    uint64_t freed = vm_unmap_user_range((uint64_t)current->pgd, addr, size);
 
     uint64_t top  = addr + size;
     uint64_t next = shared_mmap_next(current);
+    /* KLOG_DEBUG("[munmap] pid=%d addr=0x%llx len=0x%llx size=0x%llx top=0x%llx next=0x%llx freed=%llu\n",
+               current->id, addr, len, size, top, next, freed); */
     if (top >= next) {
         void *pgd = phys_to_virt((uint64_t)current->pgd);
         uint64_t new_next = addr;
@@ -97,8 +99,11 @@ uint64_t sys_munmap(uint64_t addr, uint64_t len)
                 break;
             new_next -= PAGE_SIZE;
         }
-        if (new_next < next)
+        if (new_next < next) {
+            /* KLOG_DEBUG("[munmap] pid=%d shrink mmap_next: 0x%llx -> 0x%llx lo=0x%llx\n",
+                       current->id, next, new_next, lo); */
             sync_shared_mmap_next_to(current, new_next);
+        }
     }
 
     return 0;
@@ -199,6 +204,11 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, int prot, int flags, int fd, uint
             uint64_t va = map_addr + page_off;
             uint64_t pa;
 
+            if ((flags & MAP_FIXED) == 0 && mm_vm_get_paddr(pgd, va) != 0) {
+                KLOG_WARN("[mmap] file non-fixed overlaps existing PTE: pid=%d va=0x%llx base=0x%llx size=0x%llx path=%s flags=0x%x\n",
+                          current->id, va, map_addr, map_size, fobj->path, flags);
+            }
+
             if ((flags & MAP_FIXED) != 0) {
                 pa = mm_vm_get_paddr(pgd, va);
                 if (pa == 0) {
@@ -246,9 +256,9 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, int prot, int flags, int fd, uint
         if ((flags & MAP_FIXED) == 0)
             sync_shared_mmap_next(current, map_addr + map_size);
 
-        KLOG_DEBUG("[mmap] file path=%s req=0x%llx 0x%llx-0x%llx prot=0x%x flags=0x%x fd=%d off=0x%llx\n",
+        /* KLOG_DEBUG("[mmap] file path=%s req=0x%llx 0x%llx-0x%llx prot=0x%x flags=0x%x fd=%d off=0x%llx\n",
                fobj->path, addr, map_addr, map_addr + map_size,
-               prot, flags, fd, offset);
+               prot, flags, fd, offset); */
         return map_addr;
     }
 
@@ -303,13 +313,19 @@ found:;
         return (uint64_t)(int64_t)-ENOMEM;
     }
 
-    KLOG_DEBUG("[mmap] req: addr=0x%llx len=0x%llx flags=0x%x fd=%d off=0x%llx -> base=0x%llx size=0x%llx\n",
-               addr, len, flags, fd, offset, map_addr, size);
+    /* KLOG_DEBUG("[mmap] req: addr=0x%llx len=0x%llx flags=0x%x fd=%d off=0x%llx -> base=0x%llx size=0x%llx\n",
+               addr, len, flags, fd, offset, map_addr, size); */
 
 #if ARCH_AARCH64 || ARCH_RISCV64
     void *pgd = phys_to_virt((uint64_t)current->pgd);
 
     for (uint64_t va = map_addr; va < map_addr + size; va += PAGE_SIZE) {
+        if ((flags & MAP_FIXED) == 0 && mm_vm_get_paddr(pgd, va) != 0) {
+            KLOG_WARN("[mmap] anon non-fixed overlaps existing PTE: pid=%d va=0x%llx base=0x%llx size=0x%llx flags=0x%x next=0x%llx heap=0x%llx\n",
+                      current->id, va, map_addr, size, flags,
+                      shared_mmap_next(current), current->heap_end);
+        }
+
         if ((flags & MAP_FIXED) != 0) {
             uint64_t old_pa = mm_vm_get_paddr(pgd, va);
             if (old_pa != 0) {
@@ -347,6 +363,12 @@ found:;
         void *pgd = phys_to_virt((uint64_t)current->pgd);
 
         for (uint64_t va = map_addr; va < map_addr + size; va += PAGE_SIZE) {
+            if ((flags & MAP_FIXED) == 0 && mm_vm_get_paddr(pgd, va) != 0) {
+                KLOG_WARN("[mmap] anon non-fixed overlaps existing PTE: pid=%d va=0x%llx base=0x%llx size=0x%llx flags=0x%x next=0x%llx heap=0x%llx\n",
+                          current->id, va, map_addr, size, flags,
+                          shared_mmap_next(current), current->heap_end);
+            }
+
             if ((flags & MAP_FIXED) != 0) {
                 uint64_t old_pa = mm_vm_get_paddr(pgd, va);
                 if (old_pa != 0) {
@@ -379,6 +401,6 @@ found:;
         sync_shared_mmap_next(current, map_addr + size);
     }
 
-    KLOG_DEBUG("[mmap] 0x%llx - 0x%llx (len=0x%llx)\n", map_addr, map_addr + size, len);
+    /* KLOG_DEBUG("[mmap] 0x%llx - 0x%llx (len=0x%llx)\n", map_addr, map_addr + size, len); */
     return map_addr + page_off;
 }

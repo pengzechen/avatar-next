@@ -22,9 +22,26 @@
 #include "timer/timer.h"
 #include "user_layout.h"
 
+extern void fd_pool_free(int idx);
+extern void fd_obj_close(int idx);
+
 static inline uint64_t exec_get_ns(void)
 {
     return timer_get_ns();
+}
+
+static void exec_wrapper_close_fds(task_t *task)
+{
+    for (int fd = 0; fd < (int)TASK_MAX_FD; fd++) {
+        int idx = task->fd_table[fd];
+        if (idx < 0) {
+            task->fd_table[fd] = -1;
+            continue;
+        }
+        fd_obj_close(idx);
+        fd_pool_free(idx);
+        task->fd_table[fd] = -1;
+    }
 }
 
     static void exec_free_loader_buffer(const void *data, uint64_t size)
@@ -109,7 +126,7 @@ elf_setup_stack(void *pgd, uint64_t stack_top, uint64_t entry,
     int envc = 0;
     while (ev[envc]) envc++;
 
-#define MAX_ARGS 32
+#define MAX_ARGS 128
     uint64_t av_uaddr[MAX_ARGS];
     uint64_t ev_uaddr[MAX_ARGS];
 
@@ -330,6 +347,7 @@ task_execve(const char *pathname,
     /* 继承 fd_table：深拷贝 fd 对象 + 增加引用计数 */
     extern void fd_table_inherit(task_t *child, task_t *parent);
     fd_table_inherit(new_task, current);
+    exec_wrapper_close_fds(current);
 
     uint32_t new_task_id = new_task->id;
     KLOG_DEBUG("[exec] Process '%s' created, PID=%u, pgd=0x%llx, parent=%u\n",
@@ -338,12 +356,18 @@ task_execve(const char *pathname,
     /* 7. 阻塞当前进程，等待新进程退出 */
     current->is_waiting = true;
     current->wait_pid   = new_task_id;
+    KLOG_DEBUG("[exec] wrapper wait: wrapper=%u child=%u state=%d\n",
+               current->id, new_task_id, current->state);
     arch_irq_restore(exec_irq_flags);
 
     exec_free_loader_buffer(interp_data, interp_size);
     exec_free_loader_buffer(file_data, file_size);
 
     task_block(NULL);
+
+    KLOG_DEBUG("[exec] wrapper resumed: wrapper=%u child=%u waiting=%d wait_pid=%u state=%d\n",
+               current->id, new_task_id, current->is_waiting, current->wait_pid,
+               current->state);
 
     /* 8. 新进程已退出：获取退出状态并释放槽位，然后以相同状态退出 */
     {

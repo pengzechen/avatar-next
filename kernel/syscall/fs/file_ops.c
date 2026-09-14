@@ -20,6 +20,11 @@
 #include <ext4.h>
 #include <ext4_errno.h>
 
+static bool trace_heavy_task(task_t *current)
+{
+    return current && current->is_user_process && current->heap_end >= 0x3000000ULL;
+}
+
 void openat_handler(uint64_t regs[6], task_t *current)
 {
     int dirfd = (int)regs[0];
@@ -30,10 +35,18 @@ void openat_handler(uint64_t regs[6], task_t *current)
     char abspath[128];
     int rpa = resolve_path_at(current, dirfd, pathname, abspath, sizeof(abspath));
     if (rpa < 0) {
+        if (trace_heavy_task(current)) {
+            KLOG_DEBUG("[vfsop] pid=%u openat path=%s flags=0x%x rc=%d\n",
+                       current->id, pathname, flags, rpa);
+        }
         regs[0] = (uint64_t)(int64_t)rpa;
         return;
     }
     follow_symlinks(abspath, sizeof(abspath));
+    if (trace_heavy_task(current)) {
+        KLOG_DEBUG("[vfsop] pid=%u openat path=%s resolved=%s flags=0x%x\n",
+                   current->id, pathname, abspath, flags);
+    }
 
     /* ── PTY: /dev/ptmx 和 /dev/pts/N（不需要 fd pool 预分配）── */
     if (strcmp(abspath, "/dev/tty") == 0) {
@@ -82,6 +95,10 @@ void openat_handler(uint64_t regs[6], task_t *current)
         fd_pool_free(pool);
         regs[0] = (uint64_t)(int64_t)-EMFILE;
         return;
+    }
+    if (trace_heavy_task(current)) {
+        KLOG_DEBUG("[vfsop] pid=%u openat fd=%d pool=%d path=%s kind=%d\n",
+                   current->id, fd, pool, vf->path, vf->kind);
     }
     regs[0] = (uint64_t)fd;
 }

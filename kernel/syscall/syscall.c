@@ -35,16 +35,32 @@ extern uint8_t g_stack_used[TASK_MAX];
 
 static void notify_parent_wait(task_t *child)
 {
+    KLOG_DEBUG("[wait] child exit notify: child=%u parent=%u status=%d signal=%d\n",
+               child->id, child->parent_id, child->exit_status, child->exit_signal);
     for (uint32_t i = 0; i < TASK_MAX; i++) {
         if (!g_stack_used[i]) continue;
         task_t *t = &g_task_pool[i];
         if (!t->is_waiting) continue;
         if (t->id != child->parent_id) continue;
         if (t->wait_pid != (uint32_t)-1 && t->wait_pid != child->id) continue;
+        KLOG_DEBUG("[wait] wake parent: parent=%u wait_pid=%u child=%u state=%d\n",
+                   t->id, t->wait_pid, child->id, t->state);
         t->is_waiting = false;
         task_unblock(t);
         return;
     }
+    for (uint32_t i = 0; i < TASK_MAX; i++) {
+        if (!g_stack_used[i]) continue;
+        task_t *t = &g_task_pool[i];
+        if (t->id == child->parent_id) {
+            KLOG_DEBUG("[wait] parent not waiting: child=%u parent=%u state=%d waiting=%d wait_pid=%u name='%s'\n",
+                       child->id, child->parent_id, t->state, t->is_waiting,
+                       t->wait_pid, t->name);
+            return;
+        }
+    }
+    KLOG_DEBUG("[wait] parent missing: child=%u parent=%u\n",
+               child->id, child->parent_id);
 }
 
 /* Called from task.c's task_exit() to notify waiting parent */
@@ -55,6 +71,53 @@ void notify_parent_wait_from_task(task_t *child)
 
 /* syscall entry counter（brk.c 等的调试日志会引用） */
 volatile uint32_t g_syscall_entry_count = 0;
+
+static bool syscall_trace_heavy_task(task_t *current)
+{
+    return current && current->is_user_process && current->heap_end >= 0x3000000ULL;
+}
+
+static bool syscall_trace_selected(uint64_t nr)
+{
+    switch (nr) {
+    case LINUX_SYS_OPENAT:
+    case LINUX_SYS_CLOSE:
+    case LINUX_SYS_READ:
+    case LINUX_SYS_PREAD64:
+    case LINUX_SYS_READV:
+    case LINUX_SYS_FSTAT:
+    case LINUX_SYS_NEWFSTATAT:
+    case LINUX_SYS_READLINKAT:
+    case LINUX_SYS_GETDENTS64:
+    case LINUX_SYS_IOCTL:
+    case LINUX_SYS_BRK:
+    case LINUX_SYS_WAIT4:
+    case LINUX_SYS_WAITID:
+        return true;
+    default:
+        return false;
+    }
+}
+
+static const char *syscall_trace_name(uint64_t nr)
+{
+    switch (nr) {
+    case LINUX_SYS_OPENAT:     return "openat";
+    case LINUX_SYS_CLOSE:      return "close";
+    case LINUX_SYS_READ:       return "read";
+    case LINUX_SYS_PREAD64:    return "pread64";
+    case LINUX_SYS_READV:      return "readv";
+    case LINUX_SYS_FSTAT:      return "fstat";
+    case LINUX_SYS_NEWFSTATAT: return "newfstatat";
+    case LINUX_SYS_READLINKAT: return "readlinkat";
+    case LINUX_SYS_GETDENTS64: return "getdents64";
+    case LINUX_SYS_IOCTL:      return "ioctl";
+    case LINUX_SYS_BRK:        return "brk";
+    case LINUX_SYS_MMAP:       return "mmap";
+    case LINUX_SYS_MUNMAP:     return "munmap";
+    default:                   return "?";
+    }
+}
 
 #if ARCH_X86_64
 /* ─────────────────────────────────────────────────────────────────
@@ -281,6 +344,14 @@ void syscall_handler(trap_frame_t *frame)
 #endif
 
     task_t *current = task_current();
+    bool trace_sc = syscall_trace_heavy_task(current) && syscall_trace_selected(syscall_num);
+
+    if (trace_sc) {
+        KLOG_DEBUG("[strace] pid=%u %s(%llu) a0=0x%llx a1=0x%llx a2=0x%llx a3=0x%llx a4=0x%llx a5=0x%llx heap=0x%llx mmap_next=0x%llx\n",
+                   current->id, syscall_trace_name(syscall_num), syscall_num,
+                   regs[0], regs[1], regs[2], regs[3], regs[4], regs[5],
+                   current->heap_end, current->mmap_next);
+    }
 
     /* 每次 syscall 入口 poll UART：弥补关中断期间 timer 无法触发的窗口 */
     signal_check_uart();
@@ -837,6 +908,14 @@ void syscall_handler(trap_frame_t *frame)
         regs[0] = 0;
         break;
 
+    case 258:   /* riscv64 __NR_riscv_hwprobe: let libc fall back quietly. */
+        regs[0] = (uint64_t)(int64_t)-ENOSYS;
+        break;
+
+    case 259:   /* riscv64 __NR_riscv_flush_icache */
+        regs[0] = 0;
+        break;
+
     case 43:    /* riscv64/aarch64 __NR_statfs */
     case 44:    /* riscv64/aarch64 __NR_fstatfs */
     case 137:   /* x86_64 __NR_statfs */
@@ -876,6 +955,12 @@ void syscall_handler(trap_frame_t *frame)
     //     int64_t sret = (int64_t)regs[0];
     //     KLOG_INFO("[dbg] pid=%u sc=%llu => %lld\n", current->id, syscall_num, sret);
     // }
+
+    if (trace_sc) {
+        KLOG_DEBUG("[strace] pid=%u %s => 0x%llx (%lld)\n",
+                   current->id, syscall_trace_name(syscall_num),
+                   regs[0], (int64_t)regs[0]);
+    }
 
     syscall_abi_set_ret(frame, regs[0]);
 

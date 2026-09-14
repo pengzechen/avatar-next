@@ -209,14 +209,50 @@ static int ext4_file_read(vfs_file_t *file, void *buf, size_t len)
 {
     size_t rcnt = 0;
     int rc = ext4_fread(&file->u.ext4_file, buf, len, &rcnt);
-    return rc == EOK ? (int)rcnt : -VFS_EIO;
+    if (rc == EOK) {
+        int64_t pos = ext4_ftell(&file->u.ext4_file);
+        if (pos >= 0)
+            file->offset = (uint64_t)pos;
+        return (int)rcnt;
+    }
+    return -VFS_EIO;
 }
 
 static int ext4_file_write(vfs_file_t *file, const void *buf, size_t len)
 {
     size_t wcnt = 0;
+    int64_t pos = ext4_ftell(&file->u.ext4_file);
+    uint64_t size = ext4_fsize(&file->u.ext4_file);
+
+    if (pos > (int64_t)size) {
+        static const uint8_t zeros[64];
+        uint64_t target = (uint64_t)pos;
+        uint64_t gap = target - size;
+
+        if (ext4_fseek(&file->u.ext4_file, (int64_t)size, SEEK_SET_AVATAR) != EOK)
+            return -VFS_EIO;
+
+        while (gap > 0) {
+            size_t chunk = gap > sizeof(zeros) ? sizeof(zeros) : (size_t)gap;
+            size_t zwcnt = 0;
+            int zrc = ext4_fwrite(&file->u.ext4_file, zeros, chunk, &zwcnt);
+            if (zrc != EOK || zwcnt != chunk)
+                return -VFS_EIO;
+            gap -= chunk;
+        }
+
+        if (ext4_fseek(&file->u.ext4_file, (int64_t)target, SEEK_SET_AVATAR) != EOK)
+            return -VFS_EIO;
+    }
+
     int rc = ext4_fwrite(&file->u.ext4_file, buf, len, &wcnt);
-    return rc == EOK ? (int)wcnt : -VFS_EIO;
+    if (rc == EOK) {
+        int64_t new_pos = ext4_ftell(&file->u.ext4_file);
+        if (new_pos >= 0)
+            file->offset = (uint64_t)new_pos;
+        return (int)wcnt;
+    }
+    return -VFS_EIO;
 }
 
 static int ext4_file_seek(vfs_file_t *file, int64_t offset, int whence,
