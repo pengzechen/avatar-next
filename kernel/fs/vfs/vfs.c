@@ -22,6 +22,12 @@
 #define VFS_ENOSYS  38
 #define VFS_ESPIPE  29
 
+#define O_ACCMODE_AVATAR 0000003
+#define O_WRONLY_AVATAR  0000001
+#define O_RDWR_AVATAR    0000002
+#define O_CREAT_AVATAR   0000100
+#define O_TRUNC_AVATAR   0001000
+#define O_APPEND_AVATAR  0002000
 #define O_DIRECTORY_AVATAR 0200000
 #define SEEK_SET_AVATAR 0
 #define SEEK_CUR_AVATAR 1
@@ -120,6 +126,32 @@ static vfs_file_t *vfs_alloc_file(void)
     memset(file, 0, sizeof(*file));
     file->refcnt = 1;
     return file;
+}
+
+static int ext4_open_flags_from_linux(int flags)
+{
+    int ext4_flags = 0;
+
+    switch (flags & O_ACCMODE_AVATAR) {
+    case O_WRONLY_AVATAR:
+        ext4_flags |= O_WRONLY;
+        break;
+    case O_RDWR_AVATAR:
+        ext4_flags |= O_RDWR;
+        break;
+    default:
+        ext4_flags |= O_RDONLY;
+        break;
+    }
+
+    if (flags & O_CREAT_AVATAR)
+        ext4_flags |= O_CREAT;
+    if (flags & O_TRUNC_AVATAR)
+        ext4_flags |= O_TRUNC;
+    if (flags & O_APPEND_AVATAR)
+        ext4_flags |= O_APPEND;
+
+    return ext4_flags;
 }
 
 static int pseudo_file_read(vfs_file_t *file, void *buf, size_t len)
@@ -471,12 +503,13 @@ static int ext4_mount_open(const vfs_mount_t *mnt, const char *path,
 {
     (void)mnt;
     (void)mode;
+    int ext4_flags = ext4_open_flags_from_linux(flags);
 
     if (!(flags & O_DIRECTORY_AVATAR)) {
         vfs_file_t *file = vfs_alloc_file();
         if (!file)
             return -VFS_EMFILE;
-        if (ext4_fopen2(&file->u.ext4_file, path, flags) == EOK) {
+        if (ext4_fopen2(&file->u.ext4_file, path, ext4_flags) == EOK) {
             file->kind = VFS_FILE_EXT4_FILE;
             file->flags = flags;
             file->ops = &ext4_file_ops;

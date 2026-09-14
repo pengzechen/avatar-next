@@ -50,7 +50,7 @@ void ioctl_handler(uint64_t regs[6], task_t *current)
     }
 
     /* 非默认 UART fd 不支持全局终端 ioctl fallback。 */
-    if (ioctl_obj) {
+    if (ioctl_obj && fd_obj_file(ioctl_obj)) {
         regs[0] = (uint64_t)(int64_t)-ENOTTY;
         return;
     }

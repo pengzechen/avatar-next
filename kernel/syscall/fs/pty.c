@@ -116,7 +116,7 @@ int pty_open_slave(task_t *task, int pty_idx)
     pty_pair_t *p = &g_ptys[pty_idx];
     if (!p->in_use || !p->master_open)
         return -2;
-    if (p->locked)
+    if (p->locked && !p->slave_open)
         return -13; /* EACCES */
 
     int pool = fd_pool_alloc();

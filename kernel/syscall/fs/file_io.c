@@ -61,13 +61,13 @@ void read_handler(uint64_t regs[6], task_t *current)
     if (!buf || count == 0) { regs[0] = 0; return; }
 
     fd_obj_t *obj = task_get_fd(current, fd);
-    if (obj) {
+    if (obj && fd_obj_file(obj)) {
         int rc = vfs_read(fd_obj_file(obj), buf, (size_t)count);
         regs[0] = rc >= 0 ? (uint64_t)rc : (uint64_t)(int64_t)rc;
         return;
     }
 
-    if (fd == 0) {
+    if (fd == 0 || (obj && !fd_obj_file(obj))) {
         /* stdin 未重定向：通过 UART 环形缓冲区读取 */
         int raw    = !(g_termios.c_lflag & 0x0002u); /* !ICANON */
         int do_cr  =  (g_termios.c_iflag & 0x0100u); /* ICRNL */
@@ -133,13 +133,13 @@ void write_handler(uint64_t regs[6], task_t *current)
     if (!buf) { regs[0] = 0; return; }
 
     fd_obj_t *wobj = task_get_fd(current, fd);
-    if (wobj) {
+    if (wobj && fd_obj_file(wobj)) {
         int rc = vfs_write(fd_obj_file(wobj), buf, (size_t)count);
         regs[0] = rc >= 0 ? (uint64_t)rc : (uint64_t)(int64_t)rc;
         return;
     }
 
-    if (fd == 1 || fd == 2) {
+    if (fd == 1 || fd == 2 || (wobj && !fd_obj_file(wobj))) {
         regs[0] = sys_write(buf, count);
     } else {
         regs[0] = (uint64_t)(int64_t)-EBADF;

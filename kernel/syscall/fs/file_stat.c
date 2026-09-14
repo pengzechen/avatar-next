@@ -19,14 +19,14 @@ void fstat_handler(uint64_t regs[6], task_t *current)
     struct kernel_stat *st = (struct kernel_stat *)regs[1];
     if (!st) { regs[0] = (uint64_t)(int64_t)-EFAULT; return; }
 
-    if (fd == 0 || fd == 1 || fd == 2) {
+    fd_obj_t *obj = task_get_fd(current, fd);
+    if (fd == 0 || fd == 1 || fd == 2 || (obj && !fd_obj_file(obj))) {
         memset(st, 0, sizeof(*st));
         st->st_mode = 0020666;  /* character device */
         st->st_rdev = (5 << 8) | (fd == 0 ? 0 : 1);
         regs[0] = 0;
         return;
     }
-    fd_obj_t *obj = task_get_fd(current, fd);
     if (!obj) { regs[0] = (uint64_t)(int64_t)-EBADF; return; }
     int rc = vfs_stat_file(fd_obj_file(obj), st);
     if (rc < 0) { regs[0] = (uint64_t)(int64_t)rc; return; }
@@ -53,6 +53,10 @@ void newfstatat_handler(uint64_t regs[6], task_t *current)
         regs[0] = (uint64_t)(int64_t)rpa;
         return;
     }
+    /* AT_SYMLINK_NOFOLLOW = 0x100 */
+    if (!(regs[3] & 0x100))
+        follow_symlinks(abspath, sizeof(abspath));
+
     if (vfs_stat_path(abspath, st) == 0) { regs[0] = 0; return; }
     int pts_idx = pty_match_pts_path(abspath);
     if (pts_idx >= 0) {
@@ -77,9 +81,6 @@ void newfstatat_handler(uint64_t regs[6], task_t *current)
         regs[0] = 0;
         return;
     }
-    /* AT_SYMLINK_NOFOLLOW = 0x100 */
-    if (!(regs[3] & 0x100))
-        follow_symlinks(abspath, sizeof(abspath));
     int rc = fill_stat_from_ext4(st, abspath);
     if (rc < 0) { regs[0] = (uint64_t)(int64_t)rc; return; }
     regs[0] = 0;

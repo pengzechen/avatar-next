@@ -114,7 +114,7 @@ static int dup_to_fd(task_t *current, int oldfd, int newfd, int flags)
     if (oldfd < 0 || oldfd >= (int)TASK_MAX_FD) return -EBADF;
     if (newfd < 0 || newfd >= (int)TASK_MAX_FD) return -EBADF;
 
-    fd_obj_t *src = (oldfd > 2) ? task_get_fd(current, oldfd) : NULL;
+    fd_obj_t *src = task_get_fd(current, oldfd);
     if (oldfd > 2 && !src) return -EBADF;
 
     if (current->fd_table[newfd] != -1) {
@@ -132,6 +132,7 @@ static int dup_to_fd(task_t *current, int oldfd, int newfd, int flags)
         g_fd_pool[uart_idx].type  = FDT_ALLOCATED;
         g_fd_pool[uart_idx].flags = 0;
         g_fd_pool[uart_idx].vfs_file = NULL;
+        g_fd_pool[uart_idx].path[0] = '\0';
         current->fd_table[newfd] = uart_idx;
     } else {
         int new_idx = fd_pool_alloc();
@@ -262,10 +263,23 @@ void fcntl_handler(uint64_t regs[6], task_t *current)
             return;
         }
         if (!obj) {
-            /* dup UART fd: just pick a free fd >= minfd */
+            /* dup UART fd: create a real pool object so dup2(saved, 1) works. */
             for (int nf = minfd < 3 ? 3 : minfd; nf < (int)TASK_MAX_FD; nf++) {
                 if (current->fd_table[nf] == -1) {
-                    current->fd_table[nf] = -1;  /* stays as UART alias */
+                    int uart_idx = fd_pool_alloc();
+                    if (uart_idx < 0) {
+                        regs[0] = (uint64_t)(int64_t)-EMFILE;
+                        return;
+                    }
+                    g_fd_pool[uart_idx].type = FDT_ALLOCATED;
+                    g_fd_pool[uart_idx].flags = 0;
+                    g_fd_pool[uart_idx].vfs_file = NULL;
+                    g_fd_pool[uart_idx].path[0] = '\0';
+                    current->fd_table[nf] = (int16_t)uart_idx;
+                    if (cmd == F_DUPFD_CLOEXEC)
+                        current->fd_cloexec[nf / 8] |= (uint8_t)(1u << (nf % 8));
+                    else
+                        current->fd_cloexec[nf / 8] &= (uint8_t)~(1u << (nf % 8));
                     regs[0] = (uint64_t)nf;
                     return;
                 }
