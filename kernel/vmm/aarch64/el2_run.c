@@ -59,11 +59,86 @@ static int handle_dabt(vcpu_t *vcpu, uint64_t esr)
     return EL2_RESUME;
 }
 
+/* ── 虚拟 PSCI（guest CPU/电源管理）───────────────────────────
+ *
+ * 移植自 x-kernel vdev/aarch64/vpsci.rs。guest 通过 HVC 或 SMC 发起 PSCI 调用，
+ * x0=function ID（0x8400_00xx=32 位调用约定 / 0xC400_00xx=64 位）。
+ * 返回 EL2_RESUME（继续）或 EL2_VMEXIT（SYSTEM_OFF/RESET）。
+ */
+#define PSCI_VERSION_FID    0x84000000ULL
+#define PSCI_CPU_ON_32      0x84000003ULL
+#define PSCI_CPU_ON_64      0xC4000003ULL
+#define PSCI_SYSTEM_OFF     0x84000008ULL
+#define PSCI_SYSTEM_RESET   0x84000009ULL
+#define PSCI_FEATURES_FID   0x8400000AULL
+
+#define PSCI_RET_SUCCESS        0ULL
+#define PSCI_RET_NOT_SUPPORTED  ((uint64_t)-1)
+#define PSCI_RET_INVALID_PARAMS ((uint64_t)-2)
+#define PSCI_RET_ALREADY_ON     ((uint64_t)-4)
+
+static int psci_fid_supported(uint64_t fid)
+{
+    switch (fid) {
+    case PSCI_VERSION_FID: case PSCI_CPU_ON_32: case PSCI_CPU_ON_64:
+    case PSCI_SYSTEM_OFF:  case PSCI_SYSTEM_RESET: case PSCI_FEATURES_FID:
+        return 1;
+    default:
+        return 0;
+    }
+}
+
+/* 返回 EL2_RESUME / EL2_VMEXIT；非 PSCI（前缀不符）时返回 -1 表示未处理 */
+static int handle_psci(vcpu_t *vcpu)
+{
+    uint64_t fid    = vcpu->r[0];
+    uint8_t  prefix = (uint8_t)(fid >> 24);
+
+    if (prefix != 0x84 && prefix != 0xC4)
+        return -1;   /* 非 PSCI 调用 */
+
+    switch (fid) {
+    case PSCI_VERSION_FID:
+        vcpu->r[0] = 0x00000002;   /* PSCI v0.2 */
+        return EL2_RESUME;
+
+    case PSCI_CPU_ON_32:
+    case PSCI_CPU_ON_64:
+        /* 多 vCPU guest 拉起：当前单 vCPU 模型未支持，忠实记录后返回。
+         * TODO(Phase 3): 为 target_cpu 创建第二个 vcpu_task。 */
+        KLOG_WARN("[vpsci] CPU_ON target=0x%llx entry=0x%llx not supported (single vCPU)\n",
+                  (unsigned long long)vcpu->r[1], (unsigned long long)vcpu->r[2]);
+        vcpu->r[0] = PSCI_RET_NOT_SUPPORTED;
+        return EL2_RESUME;
+
+    case PSCI_SYSTEM_OFF:
+    case PSCI_SYSTEM_RESET:
+        KLOG_INFO("[vpsci] guest shutdown fid=0x%llx (vcpu%d)\n",
+                  (unsigned long long)fid, vcpu->vcpu_id);
+        return EL2_VMEXIT;
+
+    case PSCI_FEATURES_FID:
+        vcpu->r[0] = psci_fid_supported(vcpu->r[1])
+                     ? PSCI_RET_SUCCESS : PSCI_RET_NOT_SUPPORTED;
+        return EL2_RESUME;
+
+    default:
+        KLOG_DEBUG("[vpsci] unsupported function 0x%llx\n", (unsigned long long)fid);
+        vcpu->r[0] = PSCI_RET_NOT_SUPPORTED;
+        return EL2_RESUME;
+    }
+}
+
 /* ── HVC 超级调用 ─────────────────────────────────────────── */
 static int handle_hvc(vcpu_t *vcpu, uint64_t esr)
 {
     (void)esr;
     uint64_t no = vcpu->r[0];   /* HVC number from guest x0 */
+
+    /* 先尝试 PSCI（function ID 前缀 0x84/0xC4，与 HVC_PRINT/DONE 不冲突）*/
+    int psci = handle_psci(vcpu);
+    if (psci != -1)
+        return psci;
 
     switch (no) {
     case HVC_PRINT: {
@@ -100,6 +175,20 @@ static int vmm_exit_handler(vcpu_t *vcpu)
     switch (ec) {
     case 0x01:  return handle_wfi(vcpu, esr);   /* WFI/WFE            */
     case 0x16:  return handle_hvc(vcpu, esr);   /* HVC                */
+    case 0x17: {                                /* SMC (PSCI conduit) */
+        /* SMC 陷入时 ELR_EL2 指向 SMC 指令本身，需手动步进；
+         * 而 HVC 陷入时硬件已指向下一条。 */
+        int r = handle_psci(vcpu);
+        if (r == -1) {
+            KLOG_WARN("[VMM] Unhandled SMC fid=0x%llx (vcpu%d)\n",
+                      (unsigned long long)vcpu->r[0], vcpu->vcpu_id);
+            vcpu->r[0] = PSCI_RET_NOT_SUPPORTED;
+            r = EL2_RESUME;
+        }
+        if (r == EL2_RESUME)
+            el2_advance_pc(vcpu, esr);
+        return r;
+    }
     case 0x24:  return handle_dabt(vcpu, esr);  /* Stage-2 Data Abort */
     default:
         KLOG_ERROR("[VMM] Unhandled exit: EC=0x%x ESR=0x%llx ELR=0x%llx SPSR=0x%llx\n",

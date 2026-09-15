@@ -25,6 +25,7 @@
 #include "task/task.h"
 #include "riscv64/hext.h"
 #include "riscv64/sysreg.h"
+#include "riscv64/gstage.h"
 
 /* ── 汇编入口声明 ─────────────────────────────────────────── */
 extern int hext_enter_guest(vcpu_t *vcpu);  /* hext_vcpu.S */
@@ -135,6 +136,25 @@ int hext_vm_init(vm_t *vm)
     }
     vm->nr_vcpus = nr;
 
+    /* 5. G-stage（hgatp Stage-2）内存隔离：仅当 VM 请求了独立 guest RAM
+     *    （cfg.mem_size != 0）时启用。移植自 x-kernel gstage.rs。
+     *
+     *    默认（mem_size==0）保持原「共享 host 地址空间、无 hgatp」路径不变，
+     *    即当前 vmm_test 使用的已验证行为，避免回归。
+     *
+     *    注：hpa_base 暂用 identity（= mem_base）；后续 Phase 引入 guest RAM
+     *    预留（reserve_guest_ram）后改为分配得到的 HPA。 */
+    if (vm->cfg.mem_size != 0) {
+        rv_gstage_init(vm->cfg.mem_base, vm->cfg.mem_size,
+                       vm->cfg.mem_base /* hpa_base = identity */, 1u);
+        rv_gstage_activate();
+        KLOG_INFO("[HEXT] G-stage isolation enabled (mem=0x%llx+0x%llx)\n",
+                  (unsigned long long)vm->cfg.mem_base,
+                  (unsigned long long)vm->cfg.mem_size);
+    } else {
+        KLOG_INFO("[HEXT] G-stage disabled: guest shares host address space\n");
+    }
+
     KLOG_INFO("[HEXT] vm_init: %d vCPU(s) ready\n", nr);
     return 0;
 }
@@ -164,45 +184,123 @@ int vmm_arch_enter_guest(vcpu_t *vcpu)
     return ret;
 }
 
-/* ── WFI 陷阱处理（scause=2: virtual instruction，hstatus.VTW=1）── */
+/* ── WFI 陷阱处理（scause=2/22: virtual instruction，hstatus.VTW=1）──
+ *
+ * 移植自 x-kernel arch/riscv64/mod.rs handle_wfi：若 guest 通过 SBI 设置了
+ * 定时器截止且已到期，直接 resume；否则让出 CPU。avatar 无
+ * interruptible_sleep_until，用 task_yield 近似（定时器中断会周期性唤醒）。
+ */
 static int handle_wfi(vcpu_t *vcpu)
 {
     /* 步进 guest PC 越过 WFI 指令（4 字节）*/
     vcpu->vsepc += 4;
+
+    uint64_t now = READ_TIME();
+    if (vcpu->timer_deadline != 0 && now >= vcpu->timer_deadline)
+        return EL2_RESUME;   /* 定时器已到期，立即继续 guest */
+
     /* 让出 CPU，等价 AArch64 WFI→yield */
     task_yield();
     return EL2_RESUME;
 }
 
-/* ── VS-mode ecall 处理（scause=10）─────────────────────── */
+/* ── guest 控制台输出（SBI console_putchar）───────────────── */
+static void sbi_console_putchar(uint8_t byte)
+{
+    klog_putchar((char)byte);
+}
+
+/* ── VS-mode ecall 处理（scause=10）─────────────────────────
+ *
+ * 移植自 x-kernel arch/riscv64/mod.rs handle_vs_ecall：
+ *   - guest 测试魔数 PRINT/DONE
+ *   - SBI legacy：set_timer / console_putchar / console_getchar
+ *   - SBI base：spec version / impl id / probe extension
+ *   - SBI TIME.set_timer / RFENCE（单 vCPU 下为 no-op 成功）
+ */
 static int handle_vs_ecall(vcpu_t *vcpu)
 {
-    uint64_t nr   = vcpu->r[17];  /* a7 = hypercall 号 */
-    uint64_t arg0 = vcpu->r[10];  /* a0 = 第一个参数  */
+    uint64_t ext  = vcpu->r[17];  /* a7 = SBI EID / hypercall 号 */
+    uint64_t func = vcpu->r[16];  /* a6 = SBI FID                */
+    uint64_t arg0 = vcpu->r[10];  /* a0 = 第一个参数             */
 
     /* 步进 guest PC 越过 ecall（4 字节） */
     vcpu->vsepc += 4;
 
-    switch (nr) {
-    case GUEST_ECALL_PRINT: {
-        /* 每 20 次打印一次，避免刷屏 */
+    switch (ext) {
+    case GUEST_ECALL_PRINT:
         if (arg0 % 20 == 0)
-            KLOG_INFO("[HEXT] GUEST_ECALL_PRINT: iter=%llu (vcpu%d)\n",
+            KLOG_INFO("[HEXT] ECALL_PRINT: iter=%llu (vcpu%d)\n",
                       (unsigned long long)arg0, vcpu->vcpu_id);
-        /* yield：让其他线程（host_loop / user 进程）运行 */
-        task_yield();
+        return EL2_RESUME;
+
+    case GUEST_ECALL_DONE:
+        KLOG_INFO("[HEXT] ECALL_DONE: vcpu%d exiting\n", vcpu->vcpu_id);
+        return EL2_VMEXIT;
+
+    case SBI_LEGACY_SET_TIMER:
+        vcpu->timer_deadline = arg0;
+        return EL2_RESUME;
+
+    case SBI_LEGACY_CONSOLE_PUTCHAR:
+        sbi_console_putchar((uint8_t)arg0);
+        return EL2_RESUME;
+
+    case SBI_LEGACY_CONSOLE_GETCHAR:
+        vcpu->r[10] = (uint64_t)-1;   /* 无输入 */
+        return EL2_RESUME;
+
+    case SBI_EXT_BASE: {
+        uint64_t value;
+        switch (func) {
+        case SBI_BASE_GET_SPEC_VERSION: value = 0x00000002; break; /* v0.2 */
+        case SBI_BASE_GET_IMPL_ID:      value = 0x584b564d; break; /* "XKVM" */
+        case SBI_BASE_GET_IMPL_VERSION: value = 1;          break;
+        case SBI_BASE_PROBE_EXTENSION:
+            switch (arg0) {
+            case SBI_EXT_BASE:
+            case SBI_EXT_TIME:
+            case SBI_EXT_RFENCE:
+            case SBI_LEGACY_CONSOLE_PUTCHAR:
+            case SBI_LEGACY_CONSOLE_GETCHAR:
+                value = 1; break;
+            default:
+                value = 0; break;
+            }
+            break;
+        default:
+            vcpu->r[10] = SBI_ERR_NOT_SUPPORTED;
+            vcpu->r[11] = 0;
+            return EL2_RESUME;
+        }
+        vcpu->r[10] = SBI_SUCCESS;
+        vcpu->r[11] = value;
         return EL2_RESUME;
     }
-    case GUEST_ECALL_DONE: {
-        KLOG_INFO("[HEXT] GUEST_ECALL_DONE: vcpu%d exiting\n",
-                  vcpu->vcpu_id);
-        return EL2_VMEXIT;
-    }
+
+    case SBI_EXT_TIME:
+        if (func == SBI_TIME_SET_TIMER) {
+            vcpu->timer_deadline = arg0;
+            vcpu->r[10] = SBI_SUCCESS;
+            vcpu->r[11] = 0;
+            return EL2_RESUME;
+        }
+        vcpu->r[10] = SBI_ERR_NOT_SUPPORTED;
+        vcpu->r[11] = 0;
+        return EL2_RESUME;
+
+    case SBI_EXT_RFENCE:
+        /* 单 vCPU 无远端 hart 需同步；报告成功以兼容会探测 RFENCE 的 guest。*/
+        vcpu->r[10] = SBI_SUCCESS;
+        vcpu->r[11] = 0;
+        return EL2_RESUME;
+
     default:
-        KLOG_WARN("[HEXT] Unknown hypercall a7=%llu (vcpu%d)\n",
-                  (unsigned long long)nr, vcpu->vcpu_id);
-        /* 返回 -1 给 guest（a0）*/
-        vcpu->r[10] = (uint64_t)-1;
+        KLOG_WARN("[HEXT] Unknown SBI ecall ext=0x%llx func=0x%llx (vcpu%d)\n",
+                  (unsigned long long)ext, (unsigned long long)func,
+                  vcpu->vcpu_id);
+        vcpu->r[10] = SBI_ERR_NOT_SUPPORTED;
+        vcpu->r[11] = 0;
         return EL2_RESUME;
     }
 }
@@ -225,10 +323,11 @@ int vmm_arch_exit_handler(vcpu_t *vcpu)
 
     switch (code) {
     case 2:
+    case 22:
         /*
-         * scause=2: Virtual Instruction（hstatus.VTW=1 时 WFI 触发此异常）
-         * 也可能是非法指令；通过 stval 判断（WFI 的编码 = 0x10500073）。
-         * 为简化：直接当 WFI 处理（步进 + yield）。
+         * scause=2 (Illegal instruction) 或 22 (Virtual instruction)：
+         * hstatus.VTW=1 时 VS-mode 的 WFI 陷入此处。不同 QEMU 版本报 2 或 22，
+         * 两者都当 WFI 处理（步进 + 按定时器截止 yield/resume）。
          */
         return handle_wfi(vcpu);
 

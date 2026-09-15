@@ -180,8 +180,8 @@ typedef struct vcpu {
     int      vcpu_id;
     int      launched;
     struct vm *vm;
+    uint64_t timer_deadline;  /* guest SBI 定时器截止（guest time 单位），0=未设置 */
 } vcpu_t;
-
 #else
 /* 其他架构：空壳，只有公共字段 */
 typedef struct vcpu {

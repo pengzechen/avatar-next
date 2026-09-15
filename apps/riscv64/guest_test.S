@@ -18,9 +18,11 @@
  *       因此用 auipc/addi 做 PC 相对寻址，不依赖重定位。
  */
 
-/* Hypercall 编号（与 include/riscv64/hext.h GUEST_ECALL_* 一致）*/
-#define GUEST_ECALL_DONE   0
-#define GUEST_ECALL_PRINT  1
+/* Hypercall 编号（与 include/riscv64/hext.h GUEST_ECALL_* 一致）
+ * 使用魔数 0x584b_00xx（"XK"）避免与真实 SBI 号（0/1/2/…）冲突，
+ * 从而让 VMM 可以同时模拟标准 SBI。 */
+#define GUEST_ECALL_DONE   0x584b0000
+#define GUEST_ECALL_PRINT  0x584b0001
 
 .section .text
 .align 2

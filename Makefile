@@ -161,8 +161,8 @@ else ifeq ($(ARCH),x86_64)
     GUEST_TEST_OBJ := $(BUILD_DIR)/apps_x86_guest_test.o
 else ifeq ($(ARCH),riscv64)
     # RISC-V MM subsystem
-    VM_C_SOURCES += $(KERNEL_DIR)/mm/riscv64/vmm.c
-    VM_C_OBJECTS += $(BUILD_DIR)/kernel_mm_rv_vmm.o
+    VM_C_SOURCES += $(KERNEL_DIR)/mm/riscv64/vmm.c $(KERNEL_DIR)/mm/riscv64/gstage.c
+    VM_C_OBJECTS += $(BUILD_DIR)/kernel_mm_rv_vmm.o $(BUILD_DIR)/kernel_mm_rv_gstage.o
     # RISC-V H-extension VMM subsystem
     VMM_C_SOURCES := $(KERNEL_DIR)/vmm/vmm.c \
                      $(KERNEL_DIR)/vmm/riscv64/hext_run.c
@@ -1053,6 +1053,9 @@ endif
 
 ifeq ($(ARCH),riscv64)
 $(BUILD_DIR)/kernel_mm_rv_vmm.o: $(KERNEL_DIR)/mm/riscv64/vmm.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/kernel_mm_rv_gstage.o: $(KERNEL_DIR)/mm/riscv64/gstage.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 endif
 

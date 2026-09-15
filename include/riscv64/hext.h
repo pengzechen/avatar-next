@@ -104,9 +104,31 @@
 /* ================================================================
  * Hypercall 编号（与 apps/riscv64/guest_test.S 约定一致）
  *   guest 使用 ecall，a7 = hypercall 号（VS-mode ecall，scause=10）
+ *   使用魔数 0x584b_00xx（"XK"）避免与真实 SBI 号（0/1/2/…）冲突，
+ *   使 VMM 可同时模拟标准 SBI（见 hext_run.c handle_vs_ecall）。
  * ================================================================ */
-#define GUEST_ECALL_DONE   0   /* guest 正常退出       → EL2_VMEXIT  */
-#define GUEST_ECALL_PRINT  1   /* 打印迭代计数（a0=iter）→ EL2_RESUME  */
+#define GUEST_ECALL_DONE   0x584b0000UL  /* guest 正常退出       → EL2_VMEXIT  */
+#define GUEST_ECALL_PRINT  0x584b0001UL  /* 打印迭代计数（a0=iter）→ EL2_RESUME  */
+
+/* ================================================================
+ * SBI（Supervisor Binary Interface）子集 —— 移植自 x-kernel
+ *   arch/riscv64/mod.rs。guest 以 a7=ext, a6=func, a0..=args 调用 ecall。
+ * ================================================================ */
+#define SBI_SUCCESS               0
+#define SBI_ERR_NOT_SUPPORTED     ((uint64_t)(-2))
+/* Legacy 扩展（a7 直接是功能号）*/
+#define SBI_LEGACY_SET_TIMER      0x00
+#define SBI_LEGACY_CONSOLE_PUTCHAR 0x01
+#define SBI_LEGACY_CONSOLE_GETCHAR 0x02
+/* 现代扩展（a7=EID, a6=FID）*/
+#define SBI_EXT_BASE              0x10
+#define SBI_BASE_GET_SPEC_VERSION 0
+#define SBI_BASE_GET_IMPL_ID      1
+#define SBI_BASE_GET_IMPL_VERSION 2
+#define SBI_BASE_PROBE_EXTENSION  3
+#define SBI_EXT_TIME              0x54494d45UL  /* "TIME" */
+#define SBI_EXT_RFENCE            0x52464e43UL  /* "RFNC" */
+#define SBI_TIME_SET_TIMER        0
 
 /* ================================================================
  * VS-CSR 访问宏（riscv gcc 工具链通过 CSR 编号直接 csrr/csrw）
