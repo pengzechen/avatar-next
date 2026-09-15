@@ -159,13 +159,13 @@ static void vgicd_note_unhandled(uint64_t off, int is_write)
      * 以及轮询哪个寄存器（guest 卡死定位用）。*/
     static uint32_t n_r, n_w;
 
-    if (!is_write) {
-        if (n_r++ < 24)
-            KLOG_INFO("[vgicd] READ  off=0x%llx\n", (unsigned long long)off);
-    } else {
-        if (n_w++ < 24)
-            KLOG_INFO("[vgicd] WRITE off=0x%llx\n", (unsigned long long)off);
-    }
+    // if (!is_write) {
+    //     if (n_r++ < 24)
+    //         KLOG_INFO("[vgicd] READ  off=0x%llx\n", (unsigned long long)off);
+    // } else {
+    //     if (n_w++ < 24)
+    //         KLOG_INFO("[vgicd] WRITE off=0x%llx\n", (unsigned long long)off);
+    // }
 }
 
 static void vgicd_write(mmio_device_t *dev, uint64_t off, uint8_t size,

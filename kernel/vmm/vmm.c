@@ -19,11 +19,13 @@
 #include "vmm_vpl011.h"
 #include "vmm_vgicd.h"
 #include "vmm_vgic.h"
+#include "vmm_vgicc.h"
 
 /* ── 全局 MMIO 总线与虚拟设备实例（静态存储，单 VM）────────── */
 static mmio_bus_t    g_mmio_bus;
 static mmio_device_t g_vpl011_dev;
 static mmio_device_t g_vgicd_dev;
+static mmio_device_t g_vgicc_dev;
 
 /* ── AArch64 VM 初始化 ────────────────────────────────────── */
 static int aarch64_vm_init(vm_t *vm)
@@ -45,15 +47,23 @@ static int aarch64_vm_init(vm_t *vm)
      */
     stage2_enable_mmio_trap();
 
-    /* Linux sees GICC at 0x08010000 in the guest DTB. On QEMU virt with GICv2,
-     * the hardware virtual CPU interface is at 0x08040000, which is the only
-     * CPU-interface window a guest may access directly under virtualization. */
-    stage2_map_device_region(0x08010000ULL, 0x08040000ULL, 0x10000ULL);
+    /*
+     * guest DTB 里 GICC 在 0x08010000。**不做**「直通到硬件 GICV」的映射：
+     * 直通依赖 HW=1 LR 由硬件完成虚拟中断投递，而宿主中断入口是通用
+     * 「ack+EOI+DIR」流程、PPI 27 又是 guest-owned 不能写 DIR，物理中断会
+     * 长期停在 active，硬件于是拒绝投递虚拟中断（实测 GICV_IAR 恒返回 1022）。
+     * 改为让 guest 的 GICC 访问照常陷入 MMIO 总线，由 vgicc 软件模拟 +
+     * HCR_EL2.VI 注入。见 include/vmm_vgicc.h。
+     */
 
     /* 建立 MMIO 总线并注册虚拟设备（虚拟 PL011 控制台）*/
     mmio_bus_init(&g_mmio_bus);
     if (vpl011_init(&g_vpl011_dev, &g_mmio_bus) != 0) {
         KLOG_WARN("[vmm] vpl011 registration failed\n");
+    }
+    /* 虚拟 GICC（CPU 接口）：IAR/EOIR/DIR 驱动 vgic 位图 */
+    if (vgicc_init(&g_vgicc_dev, &g_mmio_bus) != 0) {
+        KLOG_WARN("[vmm] vgicc registration failed\n");
     }
     /* 虚拟 GICv2：分两半
      *   vgicd — 分发器（guest MMIO 访问落到这里）

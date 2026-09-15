@@ -24,6 +24,7 @@
 /* ── 每 vCPU 核心状态 ─────────────────────────────────────── */
 typedef struct {
     uint64_t pending;                /* 挂起位图 */
+    uint64_t active;                 /* 已 ack 未 EOI 位图（软件 GICC 用）*/
     uint16_t sgi_sources[16];        /* 每 SGI 的源 vCPU 位图 */
     uint64_t local_enabled;          /* banked SGI/PPI 使能（0-31）*/
     /* GICH 硬件状态缓存（退出时保存、进入时恢复，跨 pCPU 迁移用）*/
@@ -116,7 +117,8 @@ void vmm_vgic_set_enabled(uint32_t vcpu_id, uint32_t irq, int enabled)
 /* ── LR 值构造 ────────────────────────────────────────────── */
 static uint32_t pending_lr_value(uint32_t irq, uint32_t source_vcpu)
 {
-    uint32_t lr = LR_PRIORITY | LR_STATE_PENDING | irq;
+    /* Group 1：本平台 GICv2 无安全扩展，只有 Group 1 会被投递给 guest。*/
+    uint32_t lr = LR_PRIORITY | LR_STATE_PENDING | LR_GROUP1 | irq;
 
     if (irq < FIRST_HOST_BACKED_GUEST_IRQ) {
         if (irq < 16)
@@ -130,6 +132,61 @@ static uint32_t pending_lr_value(uint32_t irq, uint32_t source_vcpu)
         lr |= LR_HW | (hwirq << LR_PHYSID_SHIFT);
 
     return lr;
+}
+
+/*
+ * 宿主 PPI 27 ISR 专用：直接注入虚拟定时器中断。
+ *
+ * 宿主中断在 guest 运行中到达，ISR 返回后直接回到 guest，不会经过 vCPU
+ * 主循环的 vmm_arch_restore_guest_ctx()，所以必须在 ISR 里完成「挂起 +
+ * 写 LR」。此刻 guest 已经停在 EL2，GICH（每 pCPU 硬件状态）访问安全。
+ */
+void vmm_vgic_inject_timer(uint32_t vcpu_id)
+{
+    vmm_vgic_set_pending(vcpu_id, HOST_VTIMER_IRQ);
+}
+
+/* ── 软件 GICC：挂起/活取/EOI ─────────────────────────────── */
+int vmm_vgic_next_pending(uint32_t vcpu_id)
+{
+    if (vcpu_id >= g_vgic_nr_vcpus)
+        return -1;
+
+    vgic_core_t *core = &g_vgic[vcpu_id];
+    uint64_t enabled = (core->local_enabled | SGI_MASK) | g_vgic_shared_enabled;
+
+    /* active 中的中断不重复投递；SGI 简化处理（有挂起即投递）*/
+    uint64_t ready = core->pending & enabled & ~core->active;
+    if (ready == 0)
+        return -1;
+
+    /* 取最低位：SGI/PPI 优先（编号越小优先级越高，够用）*/
+    uint32_t irq = 0;
+    uint64_t t = ready & (~ready + 1);
+    while (t > 1) { t >>= 1; irq++; }
+    return (int)irq;
+}
+
+int vmm_vgic_ack(uint32_t vcpu_id)
+{
+    if (vcpu_id >= g_vgic_nr_vcpus)
+        return -1;
+
+    int irq = vmm_vgic_next_pending(vcpu_id);
+    if (irq < 0)
+        return -1;
+
+    vgic_core_t *core = &g_vgic[vcpu_id];
+    core->pending &= ~(1ULL << irq);
+    core->active  |= (1ULL << irq);
+    return irq;
+}
+
+void vmm_vgic_eoi(uint32_t vcpu_id, uint32_t irq)
+{
+    if (vcpu_id >= g_vgic_nr_vcpus || irq >= 64)
+        return;
+    g_vgic[vcpu_id].active &= ~(1ULL << irq);
 }
 
 /* ── 进入 guest：整理挂起中断进 LR ────────────────────────── */
@@ -221,11 +278,20 @@ void vmm_vgic_sync_entry(uint32_t vcpu_id)
         }
     }
 
-    /* 写入 GICH（仅在已映射 GICH 窗口时生效）*/
+    /*
+     * GICH/LR 写入已不再是投递路径：中断改由软件 GICC + HCR_EL2.VI 注入
+     * （见 include/vmm_vgicc.h）。硬件 LR 在 QEMU/TCG 下不投递虚拟中断
+     * （GICV_IAR 恒返回 1022），保留这段写入只为 GICH 窗口仍被映射时
+     * 保持状态自洽，不再依赖它。
+     */
     gich_write(GICH_VMCR, core->hw_vmcr);
     gich_write(GICH_APR, core->hw_apr);
-    for (int i = 0; i < VGIC_MAX_LRS; i++)
+    for (int i = 0; i < VGIC_MAX_LRS; i++) {
+        /* 只写有效 LR：inactive 槽位严禁携带 ID 域（见 sync_exit 注释）*/
+        if ((lr[i] & LR_STATE_MASK) == 0)
+            lr[i] = 0;
         gich_write(GICH_LR0 + (uint32_t)i * 4, lr[i]);
+    }
     gich_write(GICH_HCR, GICH_HCR_EN);
 }
 
@@ -241,16 +307,14 @@ void vmm_vgic_sync_exit(uint32_t vcpu_id)
     core->hw_vmcr = gich_read(GICH_VMCR);
     core->hw_apr  = gich_read(GICH_APR);
 
-    uint32_t elsr0 = gich_read(GICH_ELSR0);
-
     for (int i = 0; i < VGIC_MAX_LRS; i++) {
-        lr[i] = gich_read(GICH_LR0 + (uint32_t)i * 4);
-        uint32_t irq = lr[i] & LR_VINTID_MASK;
+        uint32_t val = gich_read(GICH_LR0 + (uint32_t)i * 4);
+        uint32_t irq = val & LR_VINTID_MASK;
 
         /* 未投递完的 SGI 重新挂起，供下次进入继续投递 */
-        if (irq < 16 && (lr[i] & LR_STATE_MASK) != 0) {
-            if (lr[i] & LR_STATE_PENDING) {
-                uint32_t src = (lr[i] >> LR_SGI_SRC_SHIFT) & 0x7;
+        if (irq < 16 && (val & LR_STATE_MASK) != 0) {
+            if (val & LR_STATE_PENDING) {
+                uint32_t src = (val >> LR_SGI_SRC_SHIFT) & 0x7;
                 core->sgi_sources[irq] |= (uint16_t)(1u << src);
                 core->pending |= (1ULL << irq);
             }
@@ -258,9 +322,19 @@ void vmm_vgic_sync_exit(uint32_t vcpu_id)
             gich_write(GICH_LR0 + (uint32_t)i * 4, 0);
             continue;
         }
-        /* 清空非活动 LR：残留 VINTID + 活跃 LR 同 ID 在 GICv2 下未定义 */
-        if (elsr0 & (1u << i))
-            lr[i] = 0;
+        /*
+         * 非 SGI：LR 完全由 VMM 接管 —— 每次退出无条件清空（硬件 + 影子）。
+         *
+         * 不用 HW=1：物理 PPI 27 会被宿主的通用中断流程 ack 成 active 且
+         * 不能 DIR（guest-owned），HW 映射在这期间不向 guest 投递，而 guest
+         * 收不到就永远无法用 EOI 去 deactivate，互锁。纯虚拟 LR 只看 LR
+         * 自身状态，下次 entry 由 pending 位图重建即可，不依赖硬件 ack/EOI
+         * 状态（本设计没有维护中断 EOICount，本来就无法感知 guest 的 EOI）。
+         *
+         * 这也顺带规避了「inactive LR 残留 VINTID」的 UNPREDICTABLE 情形：
+         * QEMU 在 guest ack/EOI 后会把 state 清 00 但保留 ID 域。
+         */
+        lr[i] = 0;
         gich_write(GICH_LR0 + (uint32_t)i * 4, 0);
     }
 

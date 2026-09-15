@@ -141,6 +141,7 @@ ifeq ($(ARCH),aarch64)
                      $(KERNEL_DIR)/vmm/vdev/vpl011.c \
                      $(KERNEL_DIR)/vmm/vdev/vgicd.c \
                      $(KERNEL_DIR)/vmm/vdev/vgic.c \
+                     $(KERNEL_DIR)/vmm/vdev/vgicc.c \
                      $(KERNEL_DIR)/vmm/vdev/vgic_irq_route.c \
                      $(KERNEL_DIR)/vmm/guest_loader.c
     VMM_C_OBJECTS := $(BUILD_DIR)/kernel_vmm_vmm.o \
@@ -149,6 +150,7 @@ ifeq ($(ARCH),aarch64)
                      $(BUILD_DIR)/kernel_vmm_vdev_vpl011.o \
                      $(BUILD_DIR)/kernel_vmm_vdev_vgicd.o \
                      $(BUILD_DIR)/kernel_vmm_vdev_vgic.o \
+                     $(BUILD_DIR)/kernel_vmm_vdev_vgicc.o \
                      $(BUILD_DIR)/kernel_vmm_vdev_vgic_irq_route.o \
                      $(BUILD_DIR)/kernel_vmm_guest_loader.o
     VMM_S_SOURCES := $(KERNEL_DIR)/vmm/aarch64/el2_vmcs.S \
@@ -1175,6 +1177,10 @@ $(BUILD_DIR)/kernel_vmm_vdev_vgicd.o: $(KERNEL_DIR)/vmm/vdev/vgicd.c | $(BUILD_D
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -Ikernel -Ikernel/vmm -c $< -o $@
 
+$(BUILD_DIR)/kernel_vmm_vdev_vgicc.o: $(KERNEL_DIR)/vmm/vdev/vgicc.c | $(BUILD_DIR)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -Ikernel -Ikernel/vmm -c $< -o $@
+
 $(BUILD_DIR)/kernel_vmm_vdev_vgic.o: $(KERNEL_DIR)/vmm/vdev/vgic.c | $(BUILD_DIR)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -Ikernel -Ikernel/vmm -c $< -o $@
@@ -1474,7 +1480,7 @@ test-guest-linux: $(ROOTFS_IMG)
 	fi
 	$(MAKE) PLATFORM=$(PLATFORM) LOG=$(LOG) ASSERT=$(ASSERT) GUEST_LINUX=1 kernel
 	@echo "Starting QEMU (guest Linux)..."
-	timeout 10s $(QEMU) $(QEMU_FLAGS) $(QEMU_ROOTFS_FLAGS)
+	$(QEMU) $(QEMU_FLAGS) $(QEMU_ROOTFS_FLAGS)
 
 # test-ltp: 编译 LTP 测例并启动带 rootfs 的 QEMU
 #   前提: bash tests/ltp/build.sh [ARCH]  已编译测例到 tests/ltp/bin/<arch>/

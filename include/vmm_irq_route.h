@@ -32,6 +32,14 @@
 void vmm_irq_route_publish_owner(void);
 
 /*
+ * vmm_irq_route_publish_vcpu — 记录当前 pCPU 上承载的 vCPU id
+ *
+ * 与 publish_owner() 一并调用；宿主 PPI 27 ISR 需要它来确定把虚拟定时器
+ * 中断注入给哪个 vCPU。
+ */
+void vmm_irq_route_publish_vcpu(uint32_t vcpu_id);
+
+/*
  * vmm_irq_route_clear_owner — 清除当前任务在所有 pCPU 上的承载者记录
  *
  * vCPU 任务退出时调用。

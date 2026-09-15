@@ -211,7 +211,7 @@ void kernel_main(void)
     cpu_init_bsp();          /* Phase 0：安装 BSP per-CPU 指针 */
     task_init();
 
-#if DRIVER_ETH_VIRTIO
+#if DRIVER_ETH_VIRTIO && !defined(RUN_GUEST_LINUX)
     KLOG_INFO("Initializing virtio ethernet driver...\n");
     virtio_net_init_from_platform();
     net_init();

@@ -124,6 +124,14 @@ typedef void (*irq_handler_t)(uint64_t *);
 /* AArch64 专用：访问全局 GIC handler 向量表 */
 irq_handler_t *get_g_handler_vec(void);
 
+/*
+ * 「guest 持有」的中断：宿主的中断入口对它们只做优先级下降（EOIR），
+ * 不写 GICC_DIR —— deactivate 由 guest 的虚拟 EOI（vGIC 的 HW=1 list
+ * register）完成。原因见 boot/aarch64/exception.c: handle_irq_exception()。
+ */
+void irq_mark_guest_owned(int vector);
+int irq_is_guest_owned(int vector);
+
 /* exception_init 由 boot/aarch64/exception.c 提供 */
 void exception_init(void);
 

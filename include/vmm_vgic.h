@@ -38,6 +38,15 @@
 
 /* GICH_LR 位域（GICv2，32 位）*/
 #define LR_HW              (1u << 31)
+/*
+ * LR.Group（bit30）：0 = Group 0，1 = Group 1。
+ *
+ * QEMU virt 的 GICv2 没有安全扩展（GICD_TYPER.SecurityExtn=0），这种 GIC 上
+ * 只有 Group 1：LR 的 Group 位不置 1，硬件不认为该虚拟中断需要投递，guest
+ * 永远收不到（现象是 GICV_IAR 一直读回 1023，guest 卡在 calibrate_delay()
+ * 等 jiffy 推进）。
+ */
+#define LR_GROUP1          (1u << 30)
 #define LR_STATE_PENDING   (1u << 28)
 #define LR_PRIORITY        (0x14u << 23)
 #define LR_STATE_MASK      (0x3u << 28)
@@ -71,5 +80,24 @@ void vmm_vgic_sync_entry(uint32_t vcpu_id);
 
 /* 退出 guest 后：回读 LR 状态并（若已映射）清空 GICH */
 void vmm_vgic_sync_exit(uint32_t vcpu_id);
+
+/*
+ * vmm_vgic_inject_timer — 宿主 PPI 27 ISR 专用：把虚拟定时器中断挂起。
+ *
+ * 供宿主 ISR 在 **guest 运行中** 直接调用；调用方随后置 HCR_EL2.VI，
+ * guest 就会在 EL1 上收到 vIRQ（见 vmm_arch_update_vi）。
+ */
+void vmm_vgic_inject_timer(uint32_t vcpu_id);
+
+/* ── 软件 GICC（GICV 由 VMM 模拟，见 vmm_vgicc.c）───────────────── */
+
+/* 取下一个可投递（挂起且已使能）的中断号；无则返回 -1。不改状态。*/
+int vmm_vgic_next_pending(uint32_t vcpu_id);
+
+/* guest 读 GICC_IAR：取中断号并清挂起、置 active；无则可投递中断返回 -1 */
+int vmm_vgic_ack(uint32_t vcpu_id);
+
+/* guest 写 GICC_EOIR / GICC_DIR：清 active */
+void vmm_vgic_eoi(uint32_t vcpu_id, uint32_t irq);
 
 #endif /* VMM_VGIC_H */
