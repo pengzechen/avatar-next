@@ -54,9 +54,30 @@ struct kernel_termios g_termios = {
     .c_cc    = {0,0,0,0, 4/*VEOF=^D*/, 0/*VTIME*/, 1/*VMIN*/, 0,0,0,0,0,0,0,0,0,0,0,0},
 };
 
+/*
+ * 保护 UART 硬件（LSR/RBR）读取的自旋锁。
+ *
+ * signal_check_uart() 会被每个 CPU 的时钟中断处理程序调用，也会在
+ * read/poll/select/epoll 等系统调用路径中被任意 CPU 调用。若不加锁，
+ * SMP 下多个核会并发轮询同一个 COM1：核 A 读走 RBR 后，核 B 的
+ * uart_getc() 会读到已被消费/空/半更新的寄存器，从而注入乱码字符
+ * （单核时只有一个消费者，故不会复现）。此锁把整段硬件抽取串行化。
+ */
+static spinlock_noirq_t g_uart_hw_lock = SPINLOCK_NOIRQ_INIT;
+
 void signal_check_uart(void) {
-    while (uart_rx_ready()) {
-        char c = uart_getc();
+    char buf[UART_RINGBUF_SIZE];
+    int  n = 0;
+
+    /* 在锁内一次性把硬件 FIFO 抽干到本地缓冲，缩短临界区并避免与
+     * 环形缓冲锁/信号投递产生锁嵌套。剩余字节留待下次调用处理。 */
+    spin_lock_irqsave(&g_uart_hw_lock);
+    while (n < (int)sizeof(buf) && uart_rx_ready())
+        buf[n++] = uart_getc();
+    spin_unlock_irqrestore(&g_uart_hw_lock);
+
+    for (int i = 0; i < n; i++) {
+        char c = buf[i];
         if (c == '\x03' && (g_termios.c_lflag & 0x0001u)) {
             uint32_t fg = g_fg_pgid;
             task_t *cur = task_current();

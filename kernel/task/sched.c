@@ -237,11 +237,11 @@ sched_schedule(void)
         /* 恢复该用户任务的 TLS 基址（fs:offset） */
         x86_write_fs_base(next->fs_base);
 
-        KLOG_DEBUG("[sched] CR3\u21920x%llx TSS.RSP0=0x%llx task='%s'\n",
-                  (uint64_t)next->pgd, kernel_stack_top, next->name);
+        // KLOG_DEBUG("[sched] CR3\u21920x%llx TSS.RSP0=0x%llx task='%s'\n",
+        //           (uint64_t)next->pgd, kernel_stack_top, next->name);
     } else if (!next->is_user_process && prev->is_user_process) {
         /* 从用户任务切换到内核任务：恢复内核页表 */
-        KLOG_DEBUG("[sched] restoring kernel PGD=0x%llx\n", g_kernel_pgd_phys);
+        // KLOG_DEBUG("[sched] restoring kernel PGD=0x%llx\n", g_kernel_pgd_phys);
         write_cr3(g_kernel_pgd_phys);
     }
     /* 用户→用户切换，已在上面处理；内核→内核切换，页表不变 */
