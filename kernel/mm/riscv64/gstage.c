@@ -122,3 +122,57 @@ int rv_gstage_gpa_to_hpa(uint64_t gpa, uint64_t *hpa_out)
         *hpa_out = s_hpa_base + offset;
     return 1;
 }
+
+/*
+ * rv_gstage_enable_mmio_trap — guest RAM 之外的 GPA 全部置为无效
+ *
+ * 对标 kvmm mm/gstage.rs：只映射 guest RAM，其余（设备 MMIO、未支持 GPA）
+ * 保持无效 → G-stage page fault → 陷入 HS-mode → MMIO 总线模拟。
+ * 这样 guest 永远碰不到真实宿主设备。
+ */
+void rv_gstage_enable_mmio_trap(void)
+{
+    uint64_t mem_end = s_mem_base + s_mem_size;
+    int i, j;
+    int cleared = 0;
+
+    for (i = 0; i < L2_ENTRIES; i++) {
+        for (j = 0; j < L1_ENTRIES; j++) {
+            uint64_t gpa = ((uint64_t)i << 30) | ((uint64_t)j << 21);
+
+            if (gpa >= s_mem_base && gpa < mem_end)
+                continue;
+
+            if (g_gstage_l1[i][j] & PTE_V) {
+                g_gstage_l1[i][j] = 0;   /* 无效 → 访问即触发 G-stage fault */
+                cleared++;
+            }
+        }
+    }
+
+    gstage_flush();
+
+    KLOG_INFO("[gstage] MMIO trap enabled: %d non-RAM 2MiB blocks unmapped\n",
+              cleared);
+}
+
+/*
+ * rv_gstage_map_region — 为 GPA 区间建立 identity 映射
+ * 用于把某段 IPA 透传到真实硬件（当前未使用，供后续直通设备）。
+ */
+void rv_gstage_map_region(uint64_t gpa, uint64_t size, uint64_t hpa)
+{
+    uint64_t start = gpa & ~0x1FFFFFULL;          /* 2MiB 对齐 */
+    uint64_t end   = (gpa + size + 0x1FFFFFULL) & ~0x1FFFFFULL;
+    uint64_t addr;
+
+    for (addr = start; addr < end; addr += (2ULL << 20)) {
+        int i = (int)((addr >> 30) & (L2_ENTRIES - 1));
+        int j = (int)((addr >> 21) & (L1_ENTRIES - 1));
+        uint64_t cur_hpa = hpa + (addr - gpa);
+
+        g_gstage_l1[i][j] = ((cur_hpa >> 12) << 10)
+                          | PTE_V | PTE_R | PTE_W | PTE_A | PTE_D;
+    }
+    gstage_flush();
+}

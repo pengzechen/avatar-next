@@ -103,6 +103,7 @@ typedef enum {
     /* 64-bit control */
     VMCS_LINK_PTR         = 0x2800,
     VMCS_LINK_PTR_HI      = 0x2801,
+    EPT_POINTER           = 0x201a,   /* EPTP：EPT 根页表 + 页走行长度 + 内存类型 */
     /* 64-bit guest */
     GUEST_DEBUGCTL        = 0x2802,
     GUEST_EFER            = 0x2806,
@@ -155,6 +156,7 @@ typedef enum {
     CR4_READ_SHADOW       = 0x6006,
     /* natural-width read-only */
     EXI_QUALIFICATION     = 0x6400,
+    GUEST_PHYS_ADDR       = 0x2400,   /* EPT violation 的 guest 物理地址 */
     /* natural-width guest */
     GUEST_CR0             = 0x6800,
     GUEST_CR3             = 0x6802,

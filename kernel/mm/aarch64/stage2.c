@@ -27,6 +27,8 @@ static uint64_t l3_split_ipa = (uint64_t)-1;
 /* guest RAM 范围（由 stage2_init 设置）*/
 static uint64_t s_ram_base;
 static uint64_t s_ram_end;
+static uint64_t s_vtcr;
+static uint64_t s_vttbr;
 
 /* ── 内部工具 ─────────────────────────────────────────────── */
 
@@ -61,17 +63,26 @@ static int ipa_is_ram(uint64_t ipa)
 static void split_l2_to_l3(uint64_t ipa_2mb)
 {
     int i1, i2, i3;
+    uint64_t old;
+    uint64_t old_pa;
+    uint64_t old_attr;
 
     if (l3_split_ipa == ipa_2mb)
         return;
 
     i1 = (ipa_2mb >> 30) & 0x3;
     i2 = (ipa_2mb >> 21) & 0x1FF;
+    old = s2_l2[i1][i2];
+    old_pa = old & ~((2ULL << 20) - 1);
+    old_attr = old & ((2ULL << 20) - 1);
 
     for (i3 = 0; i3 < S2_L3_ENTRIES; i3++) {
-        uint64_t pa = ipa_2mb + (uint64_t)i3 * 4096;
-        s2_l3_ro[i3] = pa | LPAE_PAGE | LPAE_AF | LPAE_SH_IS |
-                        LPAE_MATTR_NORM | LPAE_S2AP_RW;
+        if (old & LPAE_VALID) {
+            uint64_t pa = old_pa + (uint64_t)i3 * 4096;
+            s2_l3_ro[i3] = pa | (old_attr & ~LPAE_VALID) | LPAE_PAGE;
+        } else {
+            s2_l3_ro[i3] = 0;
+        }
     }
     flush_ept(s2_l3_ro, sizeof(s2_l3_ro));
 
@@ -109,16 +120,32 @@ void stage2_init(uint64_t mem_base, uint64_t mem_size)
     flush_ept(s2_l2, sizeof(s2_l2));
 
     /* 配置 VTCR_EL2 */
-    uint64_t vtcr = VTCR_T0SZ(32) | VTCR_SL0(1) | VTCR_TG0_4K |
-                    VTCR_SH0_IS | VTCR_IRGN0_WBWA | VTCR_ORGN0_WBWA |
-                    VTCR_PS_36BITS;
-    __asm__ volatile("msr vtcr_el2, %0" :: "r"(vtcr) : "memory");
+    s_vtcr = VTCR_T0SZ(32) | VTCR_SL0(1) | VTCR_TG0_4K |
+             VTCR_SH0_IS | VTCR_IRGN0_WBWA | VTCR_ORGN0_WBWA |
+             VTCR_PS_36BITS;
 
     /* 配置 VTTBR_EL2：VMID=1，根页表 = s2_l1 物理地址 */
-    uint64_t vttbr = virt_to_phys(s2_l1) | (1ULL << VTTBR_VMID_SHIFT);
-    __asm__ volatile("msr vttbr_el2, %0\nisb" :: "r"(vttbr) : "memory");
+    s_vttbr = virt_to_phys(s2_l1) | (1ULL << VTTBR_VMID_SHIFT);
+    stage2_activate();
 
-    KLOG_INFO("[stage2] VTCR=0x%llx VTTBR=0x%llx\n", vtcr, vttbr);
+    KLOG_INFO("[stage2] VTCR=0x%llx VTTBR=0x%llx\n", s_vtcr, s_vttbr);
+}
+
+void stage2_activate(void)
+{
+    uint64_t hcr = 0;
+
+    __asm__ volatile(
+        "msr vtcr_el2, %[vtcr]\n"
+        "msr vttbr_el2, %[vttbr]\n"
+        "mrs %[hcr], hcr_el2\n"
+        "orr %[hcr], %[hcr], #1\n"
+        "msr hcr_el2, %[hcr]\n"
+        "isb\n"
+        : [hcr] "+r"(hcr)
+        : [vtcr] "r"(s_vtcr), [vttbr] "r"(s_vttbr)
+        : "memory"
+    );
 }
 
 uint64_t *stage2_get_l3entry(uint64_t ipa)
@@ -147,4 +174,50 @@ void stage2_restore(uint64_t ipa)
         s2_l2[i1][i2] |= LPAE_S2AP_RW;
         flush_ept(&s2_l2[i1][i2], 8);
     }
+}
+
+void stage2_map_device_region(uint64_t ipa, uint64_t pa, uint64_t size)
+{
+    uint64_t off;
+
+    for (off = 0; off < size; off += 4096) {
+        uint64_t *e = stage2_get_l3entry(ipa + off);
+        *e = ((pa + off) & ~0xFFFULL) | LPAE_PAGE | LPAE_AF |
+             LPAE_MATTR_DEV | LPAE_S2AP_RW | LPAE_XN;
+        flush_ept(e, 8);
+    }
+}
+
+/*
+ * stage2_enable_mmio_trap — guest RAM 之外的 IPA 全部置为无效
+ *
+ * 对标 kvmm mm/stage2.rs：只映射 guest RAM，其余（设备 MMIO、未支持 IPA）
+ * 保持无效 → guest 访问触发 Stage-2 fault → 陷入 EL2 → MMIO 总线分发。
+ *
+ * 这样 guest 永远碰不到真实宿主设备，所有设备访问都被 VMM 接管。
+ */
+void stage2_enable_mmio_trap(void)
+{
+    int i1, i2;
+    int cleared = 0;
+
+    for (i1 = 0; i1 < S2_L1_ENTRIES; i1++) {
+        for (i2 = 0; i2 < S2_L2_ENTRIES; i2++) {
+            uint64_t ipa = ((uint64_t)i1 << 30) | ((uint64_t)i2 << 21);
+
+            if (ipa_is_ram(ipa))
+                continue;
+
+            if (s2_l2[i1][i2] & LPAE_VALID) {
+                s2_l2[i1][i2] = 0;      /* 无效 → 任何访问都 fault */
+                cleared++;
+            }
+        }
+    }
+
+    flush_ept(s2_l2, sizeof(s2_l2));
+
+    KLOG_INFO("[stage2] MMIO trap enabled: %d non-RAM 2MiB blocks unmapped\n",
+              cleared);
+    KLOG_INFO("[stage2] device MMIO will now trap to VMM for emulation\n");
 }

@@ -55,7 +55,6 @@ mmu_init:
     orr x2, x2, #(1 << 0)      /* M  - MMU 使能 */
     orr x2, x2, #(1 << 2)      /* C  - DCache 使能（必须，否则 walker 看不到页表） */
     orr x2, x2, #(1 << 12)     /* I  - ICache 使能 */
-    orr x2, x2, #(1 << 23)     /* SPAN=1 - 陷入 EL2 时不自动设置 PAN */
     msr sctlr_el1, x2
 
     /* 内存屏障 */

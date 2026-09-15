@@ -24,6 +24,42 @@
  * Generic Timer 系统寄存器
  * ============================================================ */
 
+#define READ_ID_AA64PFR0_EL1()      SYSREG_READ("S3_0_C0_C4_0")
+#define READ_ID_AA64PFR1_EL1()      SYSREG_READ("S3_0_C0_C4_1")
+#define READ_ID_AA64ZFR0_EL1()      SYSREG_READ("S3_0_C0_C4_4")
+#define READ_ID_AA64SMFR0_EL1()     SYSREG_READ("S3_0_C0_C4_5")
+#define READ_ID_AA64DFR0_EL1()      SYSREG_READ("S3_0_C0_C5_0")
+#define READ_ID_AA64DFR1_EL1()      SYSREG_READ("S3_0_C0_C5_1")
+#define READ_ID_AA64ISAR0_EL1()     SYSREG_READ("S3_0_C0_C6_0")
+#define READ_ID_AA64ISAR1_EL1()     SYSREG_READ("S3_0_C0_C6_1")
+#define READ_ID_AA64ISAR2_EL1()     SYSREG_READ("S3_0_C0_C6_2")
+#define READ_ID_AA64MMFR0_EL1()     SYSREG_READ("S3_0_C0_C7_0")
+#define READ_ID_AA64MMFR1_EL1()     SYSREG_READ("S3_0_C0_C7_1")
+#define READ_ID_AA64MMFR2_EL1()     SYSREG_READ("S3_0_C0_C7_2")
+#define READ_ID_AA64MMFR3_EL1()     SYSREG_READ("S3_0_C0_C7_3")
+#define READ_ID_PFR0_EL1()          SYSREG_READ("S3_0_C0_C1_0")
+#define READ_ID_PFR1_EL1()          SYSREG_READ("S3_0_C0_C1_1")
+#define READ_ID_DFR0_EL1()          SYSREG_READ("S3_0_C0_C1_2")
+#define READ_ID_AFR0_EL1()          SYSREG_READ("S3_0_C0_C1_3")
+#define READ_ID_MMFR0_EL1()         SYSREG_READ("S3_0_C0_C1_4")
+#define READ_ID_MMFR1_EL1()         SYSREG_READ("S3_0_C0_C1_5")
+#define READ_ID_MMFR2_EL1()         SYSREG_READ("S3_0_C0_C1_6")
+#define READ_ID_MMFR3_EL1()         SYSREG_READ("S3_0_C0_C1_7")
+#define READ_ID_ISAR0_EL1()         SYSREG_READ("S3_0_C0_C2_0")
+#define READ_ID_ISAR1_EL1()         SYSREG_READ("S3_0_C0_C2_1")
+#define READ_ID_ISAR2_EL1()         SYSREG_READ("S3_0_C0_C2_2")
+#define READ_ID_ISAR3_EL1()         SYSREG_READ("S3_0_C0_C2_3")
+#define READ_ID_ISAR4_EL1()         SYSREG_READ("S3_0_C0_C2_4")
+#define READ_ID_ISAR5_EL1()         SYSREG_READ("S3_0_C0_C2_5")
+#define READ_ID_MMFR4_EL1()         SYSREG_READ("S3_0_C0_C2_6")
+#define READ_ID_ISAR6_EL1()         SYSREG_READ("S3_0_C0_C2_7")
+#define READ_MVFR0_EL1()            SYSREG_READ("S3_0_C0_C3_0")
+#define READ_MVFR1_EL1()            SYSREG_READ("S3_0_C0_C3_1")
+#define READ_MVFR2_EL1()            SYSREG_READ("S3_0_C0_C3_2")
+#define READ_ID_PFR2_EL1()          SYSREG_READ("S3_0_C0_C3_4")
+#define READ_ID_DFR1_EL1()          SYSREG_READ("S3_0_C0_C3_5")
+#define READ_ID_MMFR5_EL1()         SYSREG_READ("S3_0_C0_C3_6")
+
 /* 计数器频率（只读） */
 #define READ_CNTFRQ_EL0()           SYSREG_READ("cntfrq_el0")
 
@@ -51,6 +87,10 @@
 
 /* 物理定时器剩余值（只写常用） */
 #define WRITE_CNTP_TVAL_EL0(val)    SYSREG_WRITE("cntp_tval_el0", val)
+
+/* 虚拟计数器相对物理计数器的偏移（EL2，虚拟定时器投递判据用） */
+#define READ_CNTVOFF_EL2()          SYSREG_READ("cntvoff_el2")
+#define WRITE_CNTVOFF_EL2(val)      SYSREG_WRITE("cntvoff_el2", val)
 
 /* ============================================================
  * Exception 系统寄存器

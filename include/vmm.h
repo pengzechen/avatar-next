@@ -11,7 +11,9 @@
  *   Offset 256 : elr           = 8 B               (guest PC = ELR_EL2)
  *   Offset 264 : spsr          = 8 B               (guest PSTATE = SPSR_EL2)
  *   Offset 272 : host_ctx[13]  = 13 × 8 = 104 B   (x19-x28, x29, x30, sp)
- *   Offset 376 : sysregs[128]  = 128 B             (guest EL1 系统寄存器)
+ *   Offset 376 : host_vbar     = 8 B               host VBAR_EL2
+ *   Offset 384 : host_tpidr    = 8 B               host per-CPU pointer
+ *   Offset 392 : sysregs[128]  = 128 B             (guest EL1 系统寄存器)
  *
  * 以上偏移由下方 VCPU_* 宏固化，请勿在 C 侧调整字段顺序。
  */
@@ -27,7 +29,15 @@
 #define VCPU_ELR        256         /* 31*8 + 8                          */
 #define VCPU_SPSR       264         /* 31*8 + 16                         */
 #define VCPU_HOSTCTX    272         /* 31*8 + 24                         */
-#define VCPU_SYSREGS    376         /* 31*8 + 24 + 13*8                  */
+#define VCPU_HOST_VBAR  376         /* saved host VBAR_EL2               */
+#define VCPU_HOST_TPIDR 384         /* saved host per-CPU pointer        */
+#define VCPU_SYSREGS    392         /* guest EL1 sysregs                 */
+#define VCPU_EXIT_TYPE  520         /* VCPU_SYSREGS + VCPU_SYSREGS_SIZE  */
+#define VCPU_ESR        528
+#define VCPU_FAR        536
+#define VCPU_HPFAR      544
+#define VCPU_CNTV_CTL   552
+#define VCPU_CNTV_CVAL  560
 
 /* sysregs 缓冲区：保存 guest EL1 系统寄存器，128 B 足够覆盖 Phase 2 用到的子集 */
 #define VCPU_SYSREGS_SIZE  128
@@ -60,7 +70,15 @@ typedef struct vcpu {
     uint64_t elr;                      /* guest PC             offset=256 */
     uint64_t spsr;                     /* guest PSTATE         offset=264 */
     uint64_t host_ctx[13];             /* host callee-saved+sp offset=272 */
-    uint8_t  sysregs[VCPU_SYSREGS_SIZE]; /* guest EL1 sysregs offset=376 */
+    uint64_t host_vbar;                /* host VBAR_EL2        offset=376 */
+    uint64_t host_tpidr;               /* host per-CPU pointer offset=384 */
+    uint8_t  sysregs[VCPU_SYSREGS_SIZE]; /* guest EL1 sysregs offset=392 */
+    uint64_t exit_type;                /* 0=sync, 1=IRQ, 2=FIQ, 3=SError */
+    uint64_t esr;                      /* ESR_EL2 captured on guest exit  */
+    uint64_t far;                      /* FAR_EL2 captured on guest exit  */
+    uint64_t hpfar;                    /* HPFAR_EL2 captured on guest exit*/
+    uint64_t cntv_ctl;                 /* guest virtual timer control     */
+    uint64_t cntv_cval;                /* guest virtual timer compare     */
 
     /* ── C-only 字段 ──────────────────────────────────── */
     int      vcpu_id;                  /* vCPU 编号                       */
@@ -199,11 +217,21 @@ typedef struct vm_cfg {
     int      nr_vcpus;   /* vCPU 数量                             */
 } vm_cfg_t;
 
+/* ── MMIO 总线（vmm_mmio.h）──────────────────────────────────── */
+struct mmio_bus;
+
 /* ── VM 控制块 ───────────────────────────────────────────────── */
 typedef struct vm {
     vm_cfg_t cfg;
     vcpu_t   vcpus[MAX_VCPUS];  /* 静态嵌入，不动态分配 */
     int      nr_vcpus;
+
+    /*
+     * 虚拟设备 MMIO 总线（可为 NULL）。启用后 Stage-2/G-stage/EPT 将
+     * 设备所在 GPA 区间映射为无效，guest 访问 → 陷入 VMM → 总线分发。
+     * 见 vmm_mmio.h 与各架构 exit handler。
+     */
+    struct mmio_bus *mmio_bus;
 } vm_t;
 
 /* ── AArch64 专用汇编接口（仅 aarch64 编译时可见）──────────── */

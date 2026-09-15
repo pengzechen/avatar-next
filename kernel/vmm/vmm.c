@@ -8,12 +8,22 @@
  */
 
 #include "vmm.h"
+#include "vmm_mmio.h"
 #include "klog.h"
 #include "string.h"
 #include "task/task.h"
+#include "task/switch.h"
 
 #if ARCH_AARCH64
 #include "aarch64/stage2.h"
+#include "vmm_vpl011.h"
+#include "vmm_vgicd.h"
+#include "vmm_vgic.h"
+
+/* ── 全局 MMIO 总线与虚拟设备实例（静态存储，单 VM）────────── */
+static mmio_bus_t    g_mmio_bus;
+static mmio_device_t g_vpl011_dev;
+static mmio_device_t g_vgicd_dev;
 
 /* ── AArch64 VM 初始化 ────────────────────────────────────── */
 static int aarch64_vm_init(vm_t *vm)
@@ -28,6 +38,50 @@ static int aarch64_vm_init(vm_t *vm)
 
     /* 初始化 Stage-2 页表（identity map）*/
     stage2_init(vm->cfg.mem_base, vm->cfg.mem_size);
+
+    /*
+     * MMIO 设备模拟：只映射 guest RAM，其余 IPA 置为无效，使设备访问
+     * 陷入 EL2。移植自 kvmm mm/stage2.rs 的默认布局。
+     */
+    stage2_enable_mmio_trap();
+
+    /* Linux sees GICC at 0x08010000 in the guest DTB. On QEMU virt with GICv2,
+     * the hardware virtual CPU interface is at 0x08040000, which is the only
+     * CPU-interface window a guest may access directly under virtualization. */
+    stage2_map_device_region(0x08010000ULL, 0x08040000ULL, 0x10000ULL);
+
+    /* 建立 MMIO 总线并注册虚拟设备（虚拟 PL011 控制台）*/
+    mmio_bus_init(&g_mmio_bus);
+    if (vpl011_init(&g_vpl011_dev, &g_mmio_bus) != 0) {
+        KLOG_WARN("[vmm] vpl011 registration failed\n");
+    }
+    /* 虚拟 GICv2：分两半
+     *   vgicd — 分发器（guest MMIO 访问落到这里）
+     *   vgic  — 注入核心（维护挂起/使能位图 + GICH 列表寄存器）*/
+    if (vgicd_init(&g_vgicd_dev, &g_mmio_bus, (uint32_t)nr) != 0) {
+        KLOG_WARN("[vmm] vgicd registration failed\n");
+    }
+    vmm_vgic_init((uint32_t)nr);
+
+    /*
+     * GICH 映射：vGIC 把挂起中断整理进列表寄存器（LR）后，需要写入真实的
+     * GICH 寄存器才能让 guest 收到中断。地址来自平台配置（platform.conf 的
+     * `gich` 项，QEMU virt = 0x08030000），由 platform_get_mmio 自动加上
+     * KERNEL_VMA，**不是猜测的地址**。
+     *
+     * 若平台未提供该项（返回 0）则保持「软件侧模式」：vGIC 只维护位图与
+     * 影子 LR，不写硬件——避免写入非法地址。
+     */
+    {
+        extern uintptr_t platform_get_mmio(const char *block, const char *key);
+        uintptr_t gich = platform_get_mmio("irq", "gich");
+        vmm_vgic_set_gich_base(gich);
+    }
+    vm->mmio_bus = &g_mmio_bus;
+
+    KLOG_INFO("[vmm] MMIO bus ready: PL011 @0x%llx, GICD @0x%llx\n",
+              (unsigned long long)VPL011_BASE,
+              (unsigned long long)VGICD_BASE);
 
     /* 初始化每个 vCPU 的状态 */
     for (i = 0; i < nr; i++) {
@@ -83,17 +137,29 @@ int vmm_run_vcpu(vcpu_t *vcpu)
 {
     KLOG_INFO("[VMM] Starting vcpu%d\n", vcpu->vcpu_id);
 
-    /* 恢复 guest 上下文（AArch64: EL1 sysregs；x86: no-op）*/
-    vmm_arch_restore_guest_ctx(vcpu);
-
     while (1) {
+        uint64_t irq_flags = arch_irq_save();
+
+#if ARCH_AARCH64
+        stage2_activate();
+#endif
+
+        /* 恢复 guest 上下文（AArch64: EL1 sysregs；x86: no-op）*/
+        vmm_arch_restore_guest_ctx(vcpu);
+
         /* 进入 guest（AArch64: eret; x86: vmlaunch/vmresume）*/
         int ok = vmm_arch_enter_guest(vcpu);
         if (!ok) {
+            arch_irq_restore(irq_flags);
             KLOG_ERROR("[VMM] vcpu%d: guest entry failed\n", vcpu->vcpu_id);
             return -1;
         }
         vcpu->launched = 1;
+
+        /* 保存 guest 上下文，再处理可能会阻塞/调度/打印的 VM-exit。*/
+        vmm_arch_save_guest_ctx(vcpu);
+
+        arch_irq_restore(irq_flags);
 
         /* 处理 VM exit */
         int ret = vmm_arch_exit_handler(vcpu);
@@ -103,11 +169,9 @@ int vmm_run_vcpu(vcpu_t *vcpu)
             continue;
         case EL2_VMEXIT:
             KLOG_INFO("[VMM] vcpu%d: guest exited normally\n", vcpu->vcpu_id);
-            vmm_arch_save_guest_ctx(vcpu);
             return 0;
         case EL2_VMABORT:
             KLOG_WARN("[VMM] vcpu%d: guest aborted\n", vcpu->vcpu_id);
-            vmm_arch_save_guest_ctx(vcpu);
             return 0;
         case EL2_VMSKIP:
             continue;

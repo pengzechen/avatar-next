@@ -49,12 +49,24 @@
 
     /*
      * 开放 EL0/EL1 定时器访问（CNTHCTL_EL2）：
-     *   bit 0 EL0PCTEN  = 1  不陷入 EL0 的 CNTPCT 读取
-     *   bit 1 EL0VCTEN  = 1  不陷入 EL0 的 CNTVCT 读取
-     *   bit 10 EL1PTEN  = 1  不陷入 EL1 物理定时器访问
+     *   bit 0  EL0PCTEN = 1  不陷入 EL0 的 CNTPCT 读取
+     *   bit 1  EL1PCEN  = 1  不陷入 EL1 的**物理定时器**访问
+     *                        （CNTP_CTL / CNTP_CVAL / CNTP_TVAL）
+     *   bit 10 EL1PTEN  = 1  不陷入 EL1 的**物理计数器**读取（CNTPCT）
+     *
+     * ⚠️ bit1(EL1PCEN) 与 bit10(EL1PTEN) 是两个不同的控制位，必须同时置位。
+     *    原代码注释把 bit1 误标为 EL0VCTEN，只置了 EL1PTEN。后果：guest
+     *    （EL1）读 CNTP_CTL_EL0 / 写 CNTP_CVAL_EL0 仍陷入 EL2 → VMM 判为
+     *    unhandled exit → vCPU 被静默终止。
+     *    实测现象：guest Linux 在 arch_timer 初始化处无声死亡 —— 无输出、
+     *    无 WFI、无任何 MMIO 访问（vCPU 已经不存在了）。
      */
     mov     x1, #(1 | (1 << 1) | (1 << 10))
     msr     cnthctl_el2, x1
+    isb
+
+    /* 对齐 x-kernel init_el2_vhe：guest 虚拟计数器不加宿主偏移。*/
+    msr     cntvoff_el2, xzr
     isb
 
 #if defined(DRIVER_GIC_V3)

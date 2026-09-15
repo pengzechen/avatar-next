@@ -136,9 +136,21 @@ ifeq ($(ARCH),aarch64)
     VM_C_OBJECTS += $(BUILD_DIR)/kernel_mm_stage2.o
     # VMM subsystem
     VMM_C_SOURCES := $(KERNEL_DIR)/vmm/vmm.c \
-                     $(KERNEL_DIR)/vmm/aarch64/el2_run.c
+                     $(KERNEL_DIR)/vmm/aarch64/el2_run.c \
+                     $(KERNEL_DIR)/vmm/vmm_mmio.c \
+                     $(KERNEL_DIR)/vmm/vdev/vpl011.c \
+                     $(KERNEL_DIR)/vmm/vdev/vgicd.c \
+                     $(KERNEL_DIR)/vmm/vdev/vgic.c \
+                     $(KERNEL_DIR)/vmm/vdev/vgic_irq_route.c \
+                     $(KERNEL_DIR)/vmm/guest_loader.c
     VMM_C_OBJECTS := $(BUILD_DIR)/kernel_vmm_vmm.o \
-                     $(BUILD_DIR)/kernel_vmm_el2_run.o
+                     $(BUILD_DIR)/kernel_vmm_el2_run.o \
+                     $(BUILD_DIR)/kernel_vmm_mmio.o \
+                     $(BUILD_DIR)/kernel_vmm_vdev_vpl011.o \
+                     $(BUILD_DIR)/kernel_vmm_vdev_vgicd.o \
+                     $(BUILD_DIR)/kernel_vmm_vdev_vgic.o \
+                     $(BUILD_DIR)/kernel_vmm_vdev_vgic_irq_route.o \
+                     $(BUILD_DIR)/kernel_vmm_guest_loader.o
     VMM_S_SOURCES := $(KERNEL_DIR)/vmm/aarch64/el2_vmcs.S \
                      $(KERNEL_DIR)/vmm/aarch64/vcpu_ctx.S
     VMM_S_OBJECTS := $(BUILD_DIR)/kernel_vmm_el2_vmcs.o \
@@ -148,13 +160,17 @@ ifeq ($(ARCH),aarch64)
                       $(BUILD_DIR)/apps_el0_loop.o
 else ifeq ($(ARCH),x86_64)
     # x86_64 MM subsystem
-    VM_C_SOURCES += $(KERNEL_DIR)/mm/x86_64/vmm.c
-    VM_C_OBJECTS += $(BUILD_DIR)/kernel_mm_x86_vmm.o
+    VM_C_SOURCES += $(KERNEL_DIR)/mm/x86_64/vmm.c $(KERNEL_DIR)/mm/x86_64/ept.c
+    VM_C_OBJECTS += $(BUILD_DIR)/kernel_mm_x86_vmm.o $(BUILD_DIR)/kernel_mm_x86_ept.o
     # x86_64 VMM subsystem
     VMM_C_SOURCES := $(KERNEL_DIR)/vmm/vmm.c \
-                     $(KERNEL_DIR)/vmm/x86_64/vmx.c
+                     $(KERNEL_DIR)/vmm/x86_64/vmx.c \
+                     $(KERNEL_DIR)/vmm/vmm_mmio.c \
+                     $(KERNEL_DIR)/vmm/vdev/uart16550.c
     VMM_C_OBJECTS := $(BUILD_DIR)/kernel_vmm_vmm.o \
-                     $(BUILD_DIR)/kernel_vmm_x86_vmx.o
+                     $(BUILD_DIR)/kernel_vmm_x86_vmx.o \
+                     $(BUILD_DIR)/kernel_vmm_mmio.o \
+                     $(BUILD_DIR)/kernel_vmm_vdev_uart16550.o
     VMM_S_SOURCES := $(KERNEL_DIR)/vmm/x86_64/vmx_run.S
     VMM_S_OBJECTS := $(BUILD_DIR)/kernel_vmm_x86_vmx_run.o
     # x86_64 guest test program (linked into kernel binary)
@@ -165,9 +181,15 @@ else ifeq ($(ARCH),riscv64)
     VM_C_OBJECTS += $(BUILD_DIR)/kernel_mm_rv_vmm.o $(BUILD_DIR)/kernel_mm_rv_gstage.o
     # RISC-V H-extension VMM subsystem
     VMM_C_SOURCES := $(KERNEL_DIR)/vmm/vmm.c \
-                     $(KERNEL_DIR)/vmm/riscv64/hext_run.c
+                     $(KERNEL_DIR)/vmm/riscv64/hext_run.c \
+                     $(KERNEL_DIR)/vmm/vmm_mmio.c \
+                     $(KERNEL_DIR)/vmm/vdev/uart16550.c \
+                     $(KERNEL_DIR)/vmm/vdev/vplic.c
     VMM_C_OBJECTS := $(BUILD_DIR)/kernel_vmm_vmm.o \
-                     $(BUILD_DIR)/kernel_vmm_riscv_hext_run.o
+                     $(BUILD_DIR)/kernel_vmm_riscv_hext_run.o \
+                     $(BUILD_DIR)/kernel_vmm_mmio.o \
+                     $(BUILD_DIR)/kernel_vmm_vdev_uart16550.o \
+                     $(BUILD_DIR)/kernel_vmm_vdev_vplic.o
     VMM_S_SOURCES := $(KERNEL_DIR)/vmm/riscv64/hext_vcpu.S
     VMM_S_OBJECTS := $(BUILD_DIR)/kernel_vmm_riscv_hext_vcpu.o
     # RISC-V VS-mode guest test program (linked into kernel binary)
@@ -598,7 +620,12 @@ CFLAGS  += -MMD -MP
 # 新增测试时仿照此模式，同时在 _BUILD_VARIANT 里加一个唯一标识。
 VMM_TEST ?= 0
 NGINX_TEST ?= 0
-ifeq ($(VMM_TEST),1)
+# GUEST_LINUX=1：编译 RUN_GUEST_LINUX，从 rootfs 加载并启动 Linux guest
+GUEST_LINUX ?= 0
+ifeq ($(GUEST_LINUX),1)
+    CFLAGS += -DRUN_GUEST_LINUX=1
+    _BUILD_VARIANT := guest_linux
+else ifeq ($(VMM_TEST),1)
     CFLAGS += -DRUN_VMM_TEST=1
     _BUILD_VARIANT := vmm_test
 else ifeq ($(NGINX_TEST),1)
@@ -707,11 +734,16 @@ EPOLL_PERF_CC    :=
 EPOLL_PERF_BIN   :=
 endif
 NGINX_BIN        := $(wildcard apps/nginx-$(ARCH))
+ifeq ($(ARCH),aarch64)
+GUEST_LINUX_FILES := imgs/aarch64/linux.bin imgs/aarch64/linux.dtb imgs/aarch64/initrd.gz
+else
+GUEST_LINUX_FILES :=
+endif
 # ROOTFS_SIZE_MB / ROOTFS_PHYS_ADDR 来自自动生成的 $(MEM_LAYOUT_MK)
 QEMU_ROOTFS_FLAGS = -device loader,file=$(ROOTFS_IMG),addr=$(ROOTFS_PHYS_ADDR),force-raw=on
 
 # ─── §11  顶层目标声明 ───────────────────────────────────────────────────────────
-.PHONY: all clean clean-all help klog kernel run run-net rootfs run-fs test-pthread test-mutex test-vmm test-ltp epoll-perf test-epoll-perf
+.PHONY: all clean clean-all help klog kernel run run-net rootfs run-fs test-pthread test-mutex test-vmm test-guest-linux test-ltp epoll-perf test-epoll-perf
 
 all: $(TARGET) klog
 
@@ -1062,6 +1094,9 @@ endif
 ifeq ($(ARCH),x86_64)
 $(BUILD_DIR)/kernel_mm_x86_vmm.o: $(KERNEL_DIR)/mm/x86_64/vmm.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/kernel_mm_x86_ept.o: $(KERNEL_DIR)/mm/x86_64/ept.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
 endif
 
 $(BUILD_DIR)/kernel_mm_vm_user.o: $(KERNEL_DIR)/mm/vm_user.c | $(BUILD_DIR)
@@ -1128,6 +1163,30 @@ $(BUILD_DIR)/kernel_vmm_vmm.o: $(KERNEL_DIR)/vmm/vmm.c | $(BUILD_DIR)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -Ikernel -Ikernel/vmm -c $< -o $@
 
+$(BUILD_DIR)/kernel_vmm_mmio.o: $(KERNEL_DIR)/vmm/vmm_mmio.c | $(BUILD_DIR)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -Ikernel -Ikernel/vmm -c $< -o $@
+
+$(BUILD_DIR)/kernel_vmm_vdev_vpl011.o: $(KERNEL_DIR)/vmm/vdev/vpl011.c | $(BUILD_DIR)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -Ikernel -Ikernel/vmm -c $< -o $@
+
+$(BUILD_DIR)/kernel_vmm_vdev_vgicd.o: $(KERNEL_DIR)/vmm/vdev/vgicd.c | $(BUILD_DIR)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -Ikernel -Ikernel/vmm -c $< -o $@
+
+$(BUILD_DIR)/kernel_vmm_vdev_vgic.o: $(KERNEL_DIR)/vmm/vdev/vgic.c | $(BUILD_DIR)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -Ikernel -Ikernel/vmm -c $< -o $@
+
+$(BUILD_DIR)/kernel_vmm_vdev_vgic_irq_route.o: $(KERNEL_DIR)/vmm/vdev/vgic_irq_route.c | $(BUILD_DIR)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -Ikernel -Ikernel/vmm -c $< -o $@
+
+$(BUILD_DIR)/kernel_vmm_guest_loader.o: $(KERNEL_DIR)/vmm/guest_loader.c | $(BUILD_DIR)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $(LWEXT4_CFLAGS) -Ikernel -Ikernel/vmm -c $< -o $@
+
 $(BUILD_DIR)/kernel_vmm_el2_run.o: $(KERNEL_DIR)/vmm/aarch64/el2_run.c | $(BUILD_DIR)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -Ikernel -Ikernel/vmm -c $< -o $@
@@ -1152,6 +1211,14 @@ $(BUILD_DIR)/kernel_vmm_vmm.o: $(KERNEL_DIR)/vmm/vmm.c | $(BUILD_DIR)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -Ikernel -Ikernel/vmm -c $< -o $@
 
+$(BUILD_DIR)/kernel_vmm_mmio.o: $(KERNEL_DIR)/vmm/vmm_mmio.c | $(BUILD_DIR)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -Ikernel -Ikernel/vmm -c $< -o $@
+
+$(BUILD_DIR)/kernel_vmm_vdev_uart16550.o: $(KERNEL_DIR)/vmm/vdev/uart16550.c | $(BUILD_DIR)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -Ikernel -Ikernel/vmm -c $< -o $@
+
 $(BUILD_DIR)/kernel_vmm_x86_vmx.o: $(KERNEL_DIR)/vmm/x86_64/vmx.c | $(BUILD_DIR)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -Ikernel -Ikernel/vmm -c $< -o $@
@@ -1166,6 +1233,18 @@ endif
 
 ifeq ($(ARCH),riscv64)
 $(BUILD_DIR)/kernel_vmm_vmm.o: $(KERNEL_DIR)/vmm/vmm.c | $(BUILD_DIR)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -Ikernel -Ikernel/vmm -c $< -o $@
+
+$(BUILD_DIR)/kernel_vmm_mmio.o: $(KERNEL_DIR)/vmm/vmm_mmio.c | $(BUILD_DIR)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -Ikernel -Ikernel/vmm -c $< -o $@
+
+$(BUILD_DIR)/kernel_vmm_vdev_uart16550.o: $(KERNEL_DIR)/vmm/vdev/uart16550.c | $(BUILD_DIR)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -Ikernel -Ikernel/vmm -c $< -o $@
+
+$(BUILD_DIR)/kernel_vmm_vdev_vplic.o: $(KERNEL_DIR)/vmm/vdev/vplic.c | $(BUILD_DIR)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -Ikernel -Ikernel/vmm -c $< -o $@
 
@@ -1221,7 +1300,7 @@ test-epoll-perf: epoll-perf kernel $(ROOTFS_IMG)
 # 创建 ext4 rootfs 镜像（无需 sudo）
 # 依赖：Host 已安装 e2fsprogs（mkfs.ext4 >= 1.43 支持 -d 选项）
 # 每次 apps 变动时自动重建；切换架构直接使用各自的镜像文件，无需 make clean
-$(ROOTFS_IMG): Makefile $(APPS_BINS) $(APPS_C_ELFS) $(LTP_BINS) $(EPOLL_PERF_BIN) $(NGINX_BIN) | $(BUILD_DIR)
+$(ROOTFS_IMG): Makefile $(APPS_BINS) $(APPS_C_ELFS) $(LTP_BINS) $(EPOLL_PERF_BIN) $(NGINX_BIN) $(GUEST_LINUX_FILES) | $(BUILD_DIR)
 	@echo "=== Building rootfs for $(ARCH): $(ROOTFS_IMG) ==="
 	@rm -rf $(ROOTFS_STAGE)
 	@mkdir -p $(ROOTFS_STAGE)/bin
@@ -1293,6 +1372,19 @@ $(ROOTFS_IMG): Makefile $(APPS_BINS) $(APPS_C_ELFS) $(LTP_BINS) $(EPOLL_PERF_BIN
 		'}' > $(ROOTFS_STAGE)/etc/nginx/nginx.conf; \
 		printf '%s\n' '<html><body><h1>Avatar nginx</h1></body></html>' > $(ROOTFS_STAGE)/www/index.html; \
 		echo "  [nginx installed → /bin/nginx]"; \
+	fi
+	@# 安装 AArch64 Linux guest 镜像（供 RUN_GUEST_LINUX 从 rootfs 加载）
+	@if [ "$(ARCH)" = "aarch64" ]; then \
+		missing=0; \
+		for f in imgs/aarch64/linux.bin imgs/aarch64/linux.dtb imgs/aarch64/initrd.gz; do \
+			if [ ! -f "$$f" ]; then echo "ERROR: missing guest image $$f"; missing=1; fi; \
+		done; \
+		if [ "$$missing" -ne 0 ]; then exit 1; fi; \
+		mkdir -p $(ROOTFS_STAGE)/guests/linux; \
+		cp imgs/aarch64/linux.bin $(ROOTFS_STAGE)/guests/linux/linux.bin; \
+		cp imgs/aarch64/linux.dtb $(ROOTFS_STAGE)/guests/linux/linux.dtb; \
+		cp imgs/aarch64/initrd.gz $(ROOTFS_STAGE)/guests/linux/initrd.gz; \
+		echo "  [AArch64 Linux guest installed → /guests/linux]"; \
 	fi
 	@# 安装 Dropbear SSH 服务器
 	@DROPBEAR_MULTI=third_party/dropbear-2024.86/dropbearmulti-$(ARCH); \
@@ -1372,8 +1464,17 @@ test-mutex: kernel
 #
 test-vmm:
 	$(MAKE) ARCH=$(ARCH) LOG=$(LOG) ASSERT=$(ASSERT) VMM_TEST=1 kernel
-	@echo "Starting QEMU for $(ARCH) — VMM 3-thread context switch test..."
-	$(QEMU) $(QEMU_FLAGS)
+
+# test-guest-linux: 编译 GUEST_LINUX=1 内核并把 Linux 作为 EL1 guest 启动
+#                   rootfs 会自动安装 /guests/linux/{linux.bin,linux.dtb,initrd.gz}
+test-guest-linux: $(ROOTFS_IMG)
+	@if [ "$(ARCH)" != "aarch64" ]; then \
+		echo "ERROR: test-guest-linux currently supports ARCH=aarch64 only."; \
+		exit 1; \
+	fi
+	$(MAKE) PLATFORM=$(PLATFORM) LOG=$(LOG) ASSERT=$(ASSERT) GUEST_LINUX=1 kernel
+	@echo "Starting QEMU (guest Linux)..."
+	timeout 10s $(QEMU) $(QEMU_FLAGS) $(QEMU_ROOTFS_FLAGS)
 
 # test-ltp: 编译 LTP 测例并启动带 rootfs 的 QEMU
 #   前提: bash tests/ltp/build.sh [ARCH]  已编译测例到 tests/ltp/bin/<arch>/
