@@ -52,6 +52,10 @@
 /* 物理定时器剩余值（只写常用） */
 #define WRITE_CNTP_TVAL_EL0(val)    SYSREG_WRITE("cntp_tval_el0", val)
 
+/* 虚拟计数器相对物理计数器的偏移（EL2，虚拟定时器投递判据用） */
+#define READ_CNTVOFF_EL2()          SYSREG_READ("cntvoff_el2")
+#define WRITE_CNTVOFF_EL2(val)      SYSREG_WRITE("cntvoff_el2", val)
+
 /* ============================================================
  * Exception 系统寄存器
  * ============================================================ */

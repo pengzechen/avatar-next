@@ -148,3 +148,37 @@ void stage2_restore(uint64_t ipa)
         flush_ept(&s2_l2[i1][i2], 8);
     }
 }
+
+/*
+ * stage2_enable_mmio_trap — guest RAM 之外的 IPA 全部置为无效
+ *
+ * 对标 kvmm mm/stage2.rs：只映射 guest RAM，其余（设备 MMIO、未支持 IPA）
+ * 保持无效 → guest 访问触发 Stage-2 fault → 陷入 EL2 → MMIO 总线分发。
+ *
+ * 这样 guest 永远碰不到真实宿主设备，所有设备访问都被 VMM 接管。
+ */
+void stage2_enable_mmio_trap(void)
+{
+    int i1, i2;
+    int cleared = 0;
+
+    for (i1 = 0; i1 < S2_L1_ENTRIES; i1++) {
+        for (i2 = 0; i2 < S2_L2_ENTRIES; i2++) {
+            uint64_t ipa = ((uint64_t)i1 << 30) | ((uint64_t)i2 << 21);
+
+            if (ipa_is_ram(ipa))
+                continue;
+
+            if (s2_l2[i1][i2] & LPAE_VALID) {
+                s2_l2[i1][i2] = 0;      /* 无效 → 任何访问都 fault */
+                cleared++;
+            }
+        }
+    }
+
+    flush_ept(s2_l2, sizeof(s2_l2));
+
+    KLOG_INFO("[stage2] MMIO trap enabled: %d non-RAM 2MiB blocks unmapped\n",
+              cleared);
+    KLOG_INFO("[stage2] device MMIO will now trap to VMM for emulation\n");
+}

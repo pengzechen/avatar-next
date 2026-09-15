@@ -222,12 +222,18 @@ void kernel_main(void)
      *   VMM_TEST=1:              VMM 三线程上下文切换测试
      *   （新测试：在此处添加 #elif defined(RUN_XXX_TEST)）
      * ──────────────────────────────────────────────────── */
-#if defined(RUN_VMM_TEST)
+#if defined(RUN_GUEST_LINUX)
+    /* 从 rootfs 加载 Linux guest（kernel Image + DTB + initrd）并启动 */
+    KLOG_INFO("=== GUEST_LINUX mode: booting Linux as EL1 guest ===\n");
+    extern int guest_loader_run_linux(void);
+    if (guest_loader_run_linux() != 0)
+        KLOG_ERROR("guest_loader_run_linux failed\n");
+#elif defined(RUN_VMM_TEST)
     KLOG_INFO("=== VMM_TEST mode: 3-thread context switch test ===\n");
     run_vmm_test();
 #endif
 
-#if !defined(RUN_VMM_TEST)
+#if !defined(RUN_VMM_TEST) && !defined(RUN_GUEST_LINUX)
 #if DRIVER_ETH_VIRTIO
     KLOG_INFO("Starting network polling task...\n");
     uint64_t startup_task_irq_flags = arch_irq_save();

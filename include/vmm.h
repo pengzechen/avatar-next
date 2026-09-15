@@ -199,11 +199,21 @@ typedef struct vm_cfg {
     int      nr_vcpus;   /* vCPU 数量                             */
 } vm_cfg_t;
 
+/* ── MMIO 总线（vmm_mmio.h）──────────────────────────────────── */
+struct mmio_bus;
+
 /* ── VM 控制块 ───────────────────────────────────────────────── */
 typedef struct vm {
     vm_cfg_t cfg;
     vcpu_t   vcpus[MAX_VCPUS];  /* 静态嵌入，不动态分配 */
     int      nr_vcpus;
+
+    /*
+     * 虚拟设备 MMIO 总线（可为 NULL）。启用后 Stage-2/G-stage/EPT 将
+     * 设备所在 GPA 区间映射为无效，guest 访问 → 陷入 VMM → 总线分发。
+     * 见 vmm_mmio.h 与各架构 exit handler。
+     */
+    struct mmio_bus *mmio_bus;
 } vm_t;
 
 /* ── AArch64 专用汇编接口（仅 aarch64 编译时可见）──────────── */

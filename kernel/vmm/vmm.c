@@ -8,12 +8,21 @@
  */
 
 #include "vmm.h"
+#include "vmm_mmio.h"
 #include "klog.h"
 #include "string.h"
 #include "task/task.h"
 
 #if ARCH_AARCH64
 #include "aarch64/stage2.h"
+#include "vmm_vpl011.h"
+#include "vmm_vgicd.h"
+#include "vmm_vgic.h"
+
+/* ── 全局 MMIO 总线与虚拟设备实例（静态存储，单 VM）────────── */
+static mmio_bus_t    g_mmio_bus;
+static mmio_device_t g_vpl011_dev;
+static mmio_device_t g_vgicd_dev;
 
 /* ── AArch64 VM 初始化 ────────────────────────────────────── */
 static int aarch64_vm_init(vm_t *vm)
@@ -28,6 +37,45 @@ static int aarch64_vm_init(vm_t *vm)
 
     /* 初始化 Stage-2 页表（identity map）*/
     stage2_init(vm->cfg.mem_base, vm->cfg.mem_size);
+
+    /*
+     * MMIO 设备模拟：只映射 guest RAM，其余 IPA 置为无效，使设备访问
+     * 陷入 EL2。移植自 kvmm mm/stage2.rs 的默认布局。
+     */
+    stage2_enable_mmio_trap();
+
+    /* 建立 MMIO 总线并注册虚拟设备（虚拟 PL011 控制台）*/
+    mmio_bus_init(&g_mmio_bus);
+    if (vpl011_init(&g_vpl011_dev, &g_mmio_bus) != 0) {
+        KLOG_WARN("[vmm] vpl011 registration failed\n");
+    }
+    /* 虚拟 GICv2：分两半
+     *   vgicd — 分发器（guest MMIO 访问落到这里）
+     *   vgic  — 注入核心（维护挂起/使能位图 + GICH 列表寄存器）*/
+    if (vgicd_init(&g_vgicd_dev, &g_mmio_bus, (uint32_t)nr) != 0) {
+        KLOG_WARN("[vmm] vgicd registration failed\n");
+    }
+    vmm_vgic_init((uint32_t)nr);
+
+    /*
+     * GICH 映射：vGIC 把挂起中断整理进列表寄存器（LR）后，需要写入真实的
+     * GICH 寄存器才能让 guest 收到中断。地址来自平台配置（platform.conf 的
+     * `gich` 项，QEMU virt = 0x08030000），由 platform_get_mmio 自动加上
+     * KERNEL_VMA，**不是猜测的地址**。
+     *
+     * 若平台未提供该项（返回 0）则保持「软件侧模式」：vGIC 只维护位图与
+     * 影子 LR，不写硬件——避免写入非法地址。
+     */
+    {
+        extern uintptr_t platform_get_mmio(const char *block, const char *key);
+        uintptr_t gich = platform_get_mmio("irq", "gich");
+        vmm_vgic_set_gich_base(gich);
+    }
+    vm->mmio_bus = &g_mmio_bus;
+
+    KLOG_INFO("[vmm] MMIO bus ready: PL011 @0x%llx, GICD @0x%llx\n",
+              (unsigned long long)VPL011_BASE,
+              (unsigned long long)VGICD_BASE);
 
     /* 初始化每个 vCPU 的状态 */
     for (i = 0; i < nr; i++) {

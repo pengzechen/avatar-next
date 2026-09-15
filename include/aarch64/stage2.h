@@ -57,8 +57,22 @@ extern uint64_t s2_l3_ro[S2_L3_ENTRIES]             __attribute__((aligned(4096)
  * stage2_init — 建立 Stage-2 identity map，写入 VTCR_EL2 / VTTBR_EL2
  * @mem_base: guest 物理内存起始 IPA
  * @mem_size: guest 物理内存大小
+ *
+ * 默认把 [0,4GiB) 全部映射（RAM 用 Normal，其余用 Device 属性）。若要与
+ * MMIO 设备模拟配合，请在 init 后调用 stage2_enable_mmio_trap()。
  */
 void stage2_init(uint64_t mem_base, uint64_t mem_size);
+
+/*
+ * stage2_enable_mmio_trap — 把 guest RAM 之外的 IPA 全部置为「无效」
+ *
+ * 移植自 x-kernel kvmm mm/stage2.rs 的默认布局：只映射 guest RAM，其余
+ * （设备 MMIO、未支持 IPA）保持无效，guest 访问即触发 Stage-2 fault 陷入
+ * EL2，由 VMM 的 MMIO 总线分发到虚拟设备（见 vmm_mmio.h）。
+ *
+ * 必须在 stage2_init() 之后调用；未调用时保持原有全映射行为。
+ */
+void stage2_enable_mmio_trap(void);
 
 /* 精细 4KB 权限控制（用于 Stage-2 权限故障测试）*/
 void      stage2_set_ro(uint64_t ipa);       /* 设为只读 */

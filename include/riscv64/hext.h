@@ -178,4 +178,63 @@
 /* htval（Stage-2 陷阱：guest 物理地址）*/
 #define READ_HTVAL()            CSR_READ(htval)
 
+/* ================================================================
+ * 虚拟中断注入（CSR hvip / hie）
+ *
+ * 移植自 x-kernel arch/riscv64/mod.rs：
+ *   hvip 的 VS 位由 HS-mode 置位后，VS-mode 看到对应的 sip 位挂起，
+ *   从而实现「不依赖 vPLIC/vGIC 的定时器与外部中断注入」。
+ * ================================================================ */
+#define HVIP_VSTIP      (1UL << 6)    /* VS timer 中断挂起      */
+#define HVIP_VSEIP      (1UL << 10)   /* VS external 中断挂起   */
+#define HIE_VSTIE       (1UL << 6)    /* VS timer 中断使能      */
+#define HIE_VSEIE       (1UL << 10)   /* VS external 中断使能   */
+
+/*
+ * 注：本工具链（gcc/as）的 RISC-V 汇编器不识别 hvip/hie 的符号名
+ *     （与 hgatp 同理），必须用数值 CSR 地址 + 内联汇编。
+ */
+#define CSR_HVIP_NUM    0x645u
+#define CSR_HIE_NUM     0x604u
+
+static inline uint64_t hext_read_hvip(void)
+{
+    uint64_t v;
+    __asm__ volatile("csrr %0, 0x645" : "=r"(v) :: "memory");
+    return v;
+}
+
+static inline void hext_set_hvip_bits(uint64_t bits)
+{
+    __asm__ volatile("csrs 0x645, %0" :: "r"(bits) : "memory");
+}
+
+static inline void hext_clear_hvip_bits(uint64_t bits)
+{
+    __asm__ volatile("csrc 0x645, %0" :: "r"(bits) : "memory");
+}
+
+static inline void hext_set_hie_bits(uint64_t bits)
+{
+    __asm__ volatile("csrs 0x604, %0" :: "r"(bits) : "memory");
+}
+
+/* 设置/清除 VS 定时器中断挂起 */
+static inline void hext_set_vs_timer_irq(int pending)
+{
+    if (pending)
+        hext_set_hvip_bits(HVIP_VSTIP);
+    else
+        hext_clear_hvip_bits(HVIP_VSTIP);
+}
+
+/* 设置/清除 VS 外部中断挂起 */
+static inline void hext_set_vs_external_irq(int pending)
+{
+    if (pending)
+        hext_set_hvip_bits(HVIP_VSEIP);
+    else
+        hext_clear_hvip_bits(HVIP_VSEIP);
+}
+
 #endif /* RISCV64_HEXT_H */

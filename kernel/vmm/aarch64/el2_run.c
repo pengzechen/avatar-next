@@ -15,6 +15,9 @@
 #include "aarch64/stage2.h"
 #include "aarch64/sysreg.h"
 #include "task/task.h"
+#include "vmm_mmio.h"      /* MMIO 总线分发 */
+#include "vmm_vgic.h"      /* vGIC 中断注入 */
+#include "vmm_irq_route.h" /* 宿主 IRQ → vCPU 任务唤醒 */
 
 /* ── 读取 ESR / ELR / FAR / HPFAR ────────────────────────── */
 static inline uint64_t read_esr_el2(void)   { return READ_ESR_EL2(); }
@@ -35,14 +38,33 @@ static void el2_advance_pc(vcpu_t *vcpu, uint64_t esr)
 /* ── Test 1: WFI/WFE 陷入 ─────────────────────────────────── */
 static int handle_wfi(vcpu_t *vcpu, uint64_t esr)
 {
-    KLOG_INFO("[VMM] WFI trap: ELR=0x%llx (vcpu%d)\n",
-              vcpu->elr, vcpu->vcpu_id);
+    /* WFI 在网络/定时器驱动的 guest 里会高频触发（guest 空闲时几乎持续
+     * 执行 WFI）。之前每条都打 INFO 日志，实测 25 秒产生 30 万行，会把
+     * guest 控制台输出彻底淹没，故降为 DEBUG。*/
+    static uint64_t wfi_count;
+
+    if ((++wfi_count & 0x3FFFF) == 1) {
+        KLOG_INFO("[VMM] guest idle heartbeat: wfi=%llu ELR=0x%llx (vcpu%d)\n",
+                  (unsigned long long)wfi_count,
+                  (unsigned long long)vcpu->elr, vcpu->vcpu_id);
+    }
+
     el2_advance_pc(vcpu, esr);
-    KLOG_INFO("[VMM] WFI handled, guest PC advanced to 0x%llx\n", vcpu->elr);
     return EL2_RESUME;
 }
 
-/* ── Stage-2 Data Abort（页权限故障）────────────────────── */
+/* ── Stage-2 Data Abort ──────────────────────────────────────
+ *
+ * 两种来源：
+ *   1) 设备 MMIO：stage2_enable_mmio_trap() 把非 RAM 区间置为无效，
+ *      guest 访问设备 → 此处分发到 MMIO 总线（移植自 kvmm stage2.rs +
+ *      el2 的 data-abort 处理）。
+ *   2) 权限故障：Stage-2 页被 stage2_set_ro() 设为只读，写触发故障 →
+ *      恢复写权限让 guest 重试（既有行为，保持不变）。
+ *
+ * 判别：先尝试 MMIO 总线；命中则由设备处理并步进 guest PC，否则按权限
+ * 故障恢复。Data Abort 陷入时 ELR_EL2 指向**出错指令**（需步进）。
+ */
 static int handle_dabt(vcpu_t *vcpu, uint64_t esr)
 {
     uint64_t far   = read_far_el2();
@@ -51,9 +73,33 @@ static int handle_dabt(vcpu_t *vcpu, uint64_t esr)
     uint64_t ipa   = (hpfar << 8) | (far & 0xFFFULL);
     int      wnr   = (esr >> 6) & 1;
 
+    /* 1) 先尝试 MMIO 设备分发 */
+    if (vcpu->vm && vcpu->vm->mmio_bus) {
+        uint64_t out = 0;
+        /* 访问宽度：ESR.ISS.SAS[23:22]（0=byte,1=half,2=word,3=dword）*/
+        uint8_t size = (uint8_t)(1u << ((esr >> 22) & 3));
+        /* 写数据：从 ISS.SRT[20:16] 指定的通用寄存器取 */
+        uint64_t val = 0;
+        if (wnr) {
+            uint32_t srt = (uint32_t)((esr >> 16) & 0x1F);
+            val = vcpu->r[srt];
+        }
+
+        if (mmio_bus_handle(vcpu->vm->mmio_bus, ipa, wnr, size, val,
+                            (uint32_t)vcpu->vcpu_id, &out)) {
+            if (!wnr) {
+                uint32_t srt = (uint32_t)((esr >> 16) & 0x1F);
+                if (srt != 31)   /* XZR 丢弃 */
+                    vcpu->r[srt] = out;
+            }
+            el2_advance_pc(vcpu, esr);
+            return EL2_RESUME;
+        }
+    }
+
+    /* 2) 未命中设备 → 按权限故障处理：恢复写权限，guest 重试 */
     KLOG_INFO("[VMM] Stage-2 %s fault: IPA=0x%llx FAR=0x%llx ELR=0x%llx\n",
               wnr ? "write" : "read", ipa, far, vcpu->elr);
-    /* 恢复写权限，guest 重试 */
     stage2_restore(ipa & ~0xFFFULL);
     KLOG_INFO("[VMM] Stage-2 permission restored, guest retries\n");
     return EL2_RESUME;
@@ -202,9 +248,48 @@ static int vmm_exit_handler(vcpu_t *vcpu)
 
 /* ── AArch64 VMM 架构钩子实现 ───────────────────────────────── */
 
+/*
+ * ── guest 虚拟定时器（vtimer）投递 ──────────────────────────
+ *
+ * 移植自 x-kernel vdev/aarch64/vtimer.rs 的 check_vtimer：
+ *   1. 读 guest 的 CNTV_CTL，未使能或被屏蔽（IMASK）则无到期
+ *   2. 到期判据：CNTPCT_EL0 >= CNTV_CVAL + CNTVOFF_EL2
+ *      （CVAL 在虚拟计数域，加偏移换算到物理计数域）
+ *   3. 到期则把 PPI 27 注入 guest（经 vGIC）
+ *
+ * 注：kvmm 在**世界切换出口存根**里保存 CNTV_CTL/CVAL 到 vcpu，此处直接
+ * 读当前寄存器——在单 vCPU、且 VMM 与 guest 同核运行的 avatar 模型下等价。
+ * 若将来支持 vCPU 跨核迁移，需改为在 vcpu_t 中保存/恢复这两个值。
+ */
+#define VTIMER_PPI_IRQ      27
+#define CNTV_CTL_ENABLE     (1ULL << 0)
+#define CNTV_CTL_IMASK      (1ULL << 1)
+
+static void aarch64_check_vtimer(vcpu_t *vcpu)
+{
+    uint64_t ctl = READ_CNTV_CTL_EL0();
+
+    if ((ctl & CNTV_CTL_ENABLE) == 0 || (ctl & CNTV_CTL_IMASK) != 0)
+        return;
+
+    uint64_t now  = READ_CNTPCT_EL0();
+    uint64_t cval = READ_CNTV_CVAL_EL0();
+    uint64_t off  = READ_CNTVOFF_EL2();
+
+    if (now >= cval + off) {
+        vmm_vgic_set_pending((uint32_t)vcpu->vcpu_id, VTIMER_PPI_IRQ);
+    }
+}
+
 void vmm_arch_restore_guest_ctx(vcpu_t *vcpu)
 {
     restore_sysregs_el12(vcpu->sysregs);
+
+    /* 对标 kvmm HostVtimerHook::on_entry：先登记「本 pCPU 的 vCPU 承载任务」，
+     * 这样宿主 vtimer 中断到来时能唤醒它；再检查定时器到期并同步 vGIC。*/
+    vmm_irq_route_publish_owner();
+    aarch64_check_vtimer(vcpu);
+    vmm_vgic_sync_entry((uint32_t)vcpu->vcpu_id);
 }
 
 int vmm_arch_enter_guest(vcpu_t *vcpu)
@@ -215,6 +300,8 @@ int vmm_arch_enter_guest(vcpu_t *vcpu)
 
 int vmm_arch_exit_handler(vcpu_t *vcpu)
 {
+    /* guest 退出：保存/清空 vGIC 列表寄存器状态 */
+    vmm_vgic_sync_exit((uint32_t)vcpu->vcpu_id);
     return vmm_exit_handler(vcpu);
 }
 

@@ -38,6 +38,23 @@ void rv_gstage_init(uint64_t mem_base, uint64_t mem_size,
 void rv_gstage_activate(void);
 
 /*
+ * rv_gstage_enable_mmio_trap — 把 guest RAM 之外的 GPA 全部置为「无效」
+ *
+ * 对标 x-kernel kvmm mm/gstage.rs：只映射 guest RAM，其余（设备 MMIO、
+ * 未支持 GPA）保持无效 → guest 访问触发 G-stage page fault（cause 20/21/23）
+ * → 陷入 HS-mode，由 VMM 的 MMIO 总线分发到虚拟设备（见 vmm_mmio.h）。
+ *
+ * 必须在 rv_gstage_init() 之后调用；未调用时保持原有全映射行为。
+ */
+void rv_gstage_enable_mmio_trap(void);
+
+/*
+ * rv_gstage_map_region — 为 GPA 区间建立 identity 映射（设备透传用）
+ * 当前仅用于把某段 IPA 重新映射为可访问（如直通真实硬件）。
+ */
+void rv_gstage_map_region(uint64_t gpa, uint64_t size, uint64_t hpa);
+
+/*
  * rv_gstage_gpa_to_hpa — GPA → HPA 翻译（软件侧，用于 MMIO 取指等）
  * 返回 1 并写 *hpa_out；GPA 超出 RAM 范围时返回 0。
  */

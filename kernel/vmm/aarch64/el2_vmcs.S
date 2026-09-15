@@ -165,14 +165,23 @@ el2_enter_guest:
     isb
 
     /*
-     * 6. 安装 guest trap 向量表到 VBAR_EL2
-     *    在 VHE（E2H=1）下，`msr vbar_el1` 写入 VBAR_EL2。
-     *    guest EL1 → EL2 陷入时跳转到 guest_vec_table 中对应的 entry，
-     *    所有 entry 均 b el2_trap_exit。
+     * 6. 安装 guest 陷入向量表到 VBAR_EL2
+     *
+     * ⚠️ 必须直接写 vbar_el2，不能写 vbar_el1！
+     *
+     * 上面的 TGE 已被清零，此时 **E2H 别名不生效**：`msr vbar_el1` 写入的
+     * 是 guest 自己的 VBAR_EL1，而非 VBAR_EL2。原来这里写 vbar_el1 会：
+     *   1) 把 guest（Linux）的异常向量表覆盖掉 —— guest 一旦出异常就跳到
+     *      一个不属于它的向量表，表现为静默卡死；
+     *   2) VBAR_EL2 仍指向 host 向量表，guest 陷入 EL2 时走 host 路径。
+     *
+     * 对标 x-kernel kvmm 的 el2_vmcs.S：
+     *   "With TGE=0, vbar_el1 accesses the real EL1 register (guest's),
+     *    so we must write vbar_el2 directly for the EL2 trap vector."
      */
     adrp x2, guest_vec_table
     add  x2, x2, :lo12:guest_vec_table
-    msr  vbar_el1, x2
+    msr  vbar_el2, x2
     isb
 
     /*
@@ -272,10 +281,18 @@ el2_trap_exit:
     msr  hcr_el2, x1
     isb
 
-    /* 恢复 host VBAR_EL2（通过 vbar_el1 VHE 别名写入 VBAR_EL2）*/
+    /*
+     * 恢复 host 向量表。
+     *
+     * 此时 TGE 刚被置位，而 host 侧（VHE，E2H=1）异常走的是 VBAR_EL1 别名
+     * → VBAR_EL2。两处都写，避免切换瞬间的窗口里异常走错向量表
+     * （对标 kvmm el2_vmcs.S：先写 vbar_el2，HCR 切换后再写 vbar_el1）。
+     */
     adrp x1, g_host_vbar
     add  x1, x1, :lo12:g_host_vbar
     ldr  x1, [x1]
+    msr  vbar_el2, x1
+    isb
     msr  vbar_el1, x1
     isb
 
