@@ -1,5 +1,5 @@
 /*
- * kernel/vmm/vdev/vgic.c — 虚拟 GICv2 中断注入核心实现
+ * kernel/vmm/vdev/vgic/vgic.c — 虚拟 GICv2 中断注入核心实现
  *
  * 移植自 x-kernel: virt/kvmm/src/vdev/aarch64/vgic.rs，适配 Avatar OS：
  *   - Rust Atomic 位图 → 普通静态数组（世界切换窗口内串行访问）

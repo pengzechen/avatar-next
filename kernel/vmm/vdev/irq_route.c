@@ -1,5 +1,5 @@
 /*
- * kernel/vmm/vdev/vgic_irq_route.c — 宿主 IRQ → vCPU 任务唤醒路由
+ * kernel/vmm/vdev/irq_route.c — 宿主 IRQ → vCPU 任务唤醒路由
  *
  * 移植自 x-kernel: virt/kvmm/src/vdev/aarch64/irq_route.rs，适配 Avatar OS：
  *   - kirq desc/virq 框架 → avatar 的 irq_install() + task_unblock()

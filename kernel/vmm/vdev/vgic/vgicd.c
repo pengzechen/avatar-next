@@ -1,5 +1,5 @@
 /*
- * kernel/vmm/vdev/vgicd.c — 虚拟 GICv2 分发器（GICD）实现
+ * kernel/vmm/vdev/vgic/vgicd.c — 虚拟 GICv2 分发器（GICD）实现
  *
  * 移植自 x-kernel: virt/kvmm/src/vdev/aarch64/vgicd.rs，适配 Avatar OS：
  *   - Rust Box<[u8; N]> → 静态 BSS 数组

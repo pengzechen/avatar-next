@@ -1,5 +1,5 @@
 /*
- * kernel/vmm/vdev/vgicc.c — 虚拟 GICv2 CPU 接口（GICC）软件模拟
+ * kernel/vmm/vdev/vgic/vgicc.c — 虚拟 GICv2 CPU 接口（GICC）软件模拟
  *
  * 见 include/vmm_vgicc.h 的说明：直通硬件 GICV 依赖 HW=1 LR 的硬件投递，
  * 在当前宿主中断模型下不可用，改为 VMM 全模拟 + HCR_EL2.VI 注入。

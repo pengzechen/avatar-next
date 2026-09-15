@@ -139,10 +139,10 @@ ifeq ($(ARCH),aarch64)
                      $(KERNEL_DIR)/vmm/aarch64/el2_run.c \
                      $(KERNEL_DIR)/vmm/vmm_mmio.c \
                      $(KERNEL_DIR)/vmm/vdev/vpl011.c \
-                     $(KERNEL_DIR)/vmm/vdev/vgicd.c \
-                     $(KERNEL_DIR)/vmm/vdev/vgic.c \
-                     $(KERNEL_DIR)/vmm/vdev/vgicc.c \
-                     $(KERNEL_DIR)/vmm/vdev/vgic_irq_route.c \
+                     $(KERNEL_DIR)/vmm/vdev/vgic/vgicd.c \
+                     $(KERNEL_DIR)/vmm/vdev/vgic/vgic.c \
+                     $(KERNEL_DIR)/vmm/vdev/vgic/vgicc.c \
+                     $(KERNEL_DIR)/vmm/vdev/irq_route.c \
                      $(KERNEL_DIR)/vmm/guest_loader.c
     VMM_C_OBJECTS := $(BUILD_DIR)/kernel_vmm_vmm.o \
                      $(BUILD_DIR)/kernel_vmm_el2_run.o \
@@ -168,7 +168,7 @@ else ifeq ($(ARCH),x86_64)
     VMM_C_SOURCES := $(KERNEL_DIR)/vmm/vmm.c \
                      $(KERNEL_DIR)/vmm/x86_64/vmx.c \
                      $(KERNEL_DIR)/vmm/vmm_mmio.c \
-                     $(KERNEL_DIR)/vmm/vdev/uart16550.c
+                     $(KERNEL_DIR)/vmm/vdev/vuart16550.c
     VMM_C_OBJECTS := $(BUILD_DIR)/kernel_vmm_vmm.o \
                      $(BUILD_DIR)/kernel_vmm_x86_vmx.o \
                      $(BUILD_DIR)/kernel_vmm_mmio.o \
@@ -185,7 +185,7 @@ else ifeq ($(ARCH),riscv64)
     VMM_C_SOURCES := $(KERNEL_DIR)/vmm/vmm.c \
                      $(KERNEL_DIR)/vmm/riscv64/hext_run.c \
                      $(KERNEL_DIR)/vmm/vmm_mmio.c \
-                     $(KERNEL_DIR)/vmm/vdev/uart16550.c \
+                     $(KERNEL_DIR)/vmm/vdev/vuart16550.c \
                      $(KERNEL_DIR)/vmm/vdev/vplic.c
     VMM_C_OBJECTS := $(BUILD_DIR)/kernel_vmm_vmm.o \
                      $(BUILD_DIR)/kernel_vmm_riscv_hext_run.o \
@@ -1173,19 +1173,19 @@ $(BUILD_DIR)/kernel_vmm_vdev_vpl011.o: $(KERNEL_DIR)/vmm/vdev/vpl011.c | $(BUILD
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -Ikernel -Ikernel/vmm -c $< -o $@
 
-$(BUILD_DIR)/kernel_vmm_vdev_vgicd.o: $(KERNEL_DIR)/vmm/vdev/vgicd.c | $(BUILD_DIR)
+$(BUILD_DIR)/kernel_vmm_vdev_vgicd.o: $(KERNEL_DIR)/vmm/vdev/vgic/vgicd.c | $(BUILD_DIR)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -Ikernel -Ikernel/vmm -c $< -o $@
 
-$(BUILD_DIR)/kernel_vmm_vdev_vgicc.o: $(KERNEL_DIR)/vmm/vdev/vgicc.c | $(BUILD_DIR)
+$(BUILD_DIR)/kernel_vmm_vdev_vgicc.o: $(KERNEL_DIR)/vmm/vdev/vgic/vgicc.c | $(BUILD_DIR)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -Ikernel -Ikernel/vmm -c $< -o $@
 
-$(BUILD_DIR)/kernel_vmm_vdev_vgic.o: $(KERNEL_DIR)/vmm/vdev/vgic.c | $(BUILD_DIR)
+$(BUILD_DIR)/kernel_vmm_vdev_vgic.o: $(KERNEL_DIR)/vmm/vdev/vgic/vgic.c | $(BUILD_DIR)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -Ikernel -Ikernel/vmm -c $< -o $@
 
-$(BUILD_DIR)/kernel_vmm_vdev_vgic_irq_route.o: $(KERNEL_DIR)/vmm/vdev/vgic_irq_route.c | $(BUILD_DIR)
+$(BUILD_DIR)/kernel_vmm_vdev_vgic_irq_route.o: $(KERNEL_DIR)/vmm/vdev/irq_route.c | $(BUILD_DIR)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -Ikernel -Ikernel/vmm -c $< -o $@
 
@@ -1221,7 +1221,7 @@ $(BUILD_DIR)/kernel_vmm_mmio.o: $(KERNEL_DIR)/vmm/vmm_mmio.c | $(BUILD_DIR)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -Ikernel -Ikernel/vmm -c $< -o $@
 
-$(BUILD_DIR)/kernel_vmm_vdev_uart16550.o: $(KERNEL_DIR)/vmm/vdev/uart16550.c | $(BUILD_DIR)
+$(BUILD_DIR)/kernel_vmm_vdev_uart16550.o: $(KERNEL_DIR)/vmm/vdev/vuart16550.c | $(BUILD_DIR)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -Ikernel -Ikernel/vmm -c $< -o $@
 
@@ -1246,7 +1246,7 @@ $(BUILD_DIR)/kernel_vmm_mmio.o: $(KERNEL_DIR)/vmm/vmm_mmio.c | $(BUILD_DIR)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -Ikernel -Ikernel/vmm -c $< -o $@
 
-$(BUILD_DIR)/kernel_vmm_vdev_uart16550.o: $(KERNEL_DIR)/vmm/vdev/uart16550.c | $(BUILD_DIR)
+$(BUILD_DIR)/kernel_vmm_vdev_uart16550.o: $(KERNEL_DIR)/vmm/vdev/vuart16550.c | $(BUILD_DIR)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -Ikernel -Ikernel/vmm -c $< -o $@
 
