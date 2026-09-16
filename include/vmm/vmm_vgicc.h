@@ -9,6 +9,7 @@
 
 #include "types.h"
 #include "vmm_mmio.h"
+#include "vmm_vgic.h"
 
 /* guest 看到的 GICC 基址（DTB 里的 GIC 第二段 reg）*/
 #define VGICC_BASE  0x08010000ULL
@@ -25,13 +26,14 @@
  * vgicc_init — 初始化软件 GICC/GICH state 并注册 GICC MMIO 设备
  * 返回 0 成功。
  */
-int vgicc_init(mmio_device_t *dev, mmio_bus_t *bus, uint32_t nr_vcpus);
+int vgicc_init(mmio_device_t *dev, mmio_bus_t *bus, vgic_t *vgic);
 
 /* GICH LR state helpers. vgic core decides what to inject; vgicc owns where. */
-int  vgicc_lr_has_irq(uint32_t vcpu_id, uint32_t irq);
-int  vgicc_lr_empty_slot(uint32_t vcpu_id);
-void vgicc_write_lr(uint32_t vcpu_id, uint32_t slot, uint32_t value);
-void vgicc_clear_lr_irq(uint32_t vcpu_id, uint32_t irq);
-void vgicc_save_state_from_hw(uint32_t vcpu_id);
+int  vgicc_lr_has_irq(vgic_t *vgic, uint32_t vcpu_id, uint32_t irq);
+int  vgicc_lr_empty_slot(vgic_t *vgic, uint32_t vcpu_id);
+void vgicc_write_lr(vgic_t *vgic, uint32_t vcpu_id, uint32_t slot,
+                    uint32_t value);
+void vgicc_clear_lr_irq(vgic_t *vgic, uint32_t vcpu_id, uint32_t irq);
+void vgicc_save_state_from_hw(vgic_t *vgic, uint32_t vcpu_id);
 
 #endif /* VMM_VGICC_H */

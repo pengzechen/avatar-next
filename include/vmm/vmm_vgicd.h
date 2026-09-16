@@ -20,6 +20,7 @@
 #define VMM_VGICD_H
 
 #include "vmm_mmio.h"
+#include "vmm_vgic.h"
 
 /* QEMU virt GICv2 分发器基址/大小 */
 #define VGICD_BASE   0x08000000ULL
@@ -32,20 +33,17 @@
 /* guest 虚拟定时器中断（PPI 27），对标 vgicd.rs 的 GUEST_VTIMER_IRQ */
 #define VGICD_VTIMER_IRQ   27
 
-/* vCPU 世界切换时处理挂起中断的回调（由 vgic 提供；可为 NULL）*/
-typedef void (*vgicd_sync_fn)(uint32_t vcpu_id);
-
 /*
  * vgicd_init — 初始化 GICD 模拟并注册到 MMIO 总线
  * @nr_vcpus: VM 的 vCPU 数量（影响 GICD_TYPER 与 ITARGETSR 读数）
  * 返回 0 成功。
  */
-int vgicd_init(mmio_device_t *dev, mmio_bus_t *bus, uint32_t nr_vcpus);
+int vgicd_init(mmio_device_t *dev, mmio_bus_t *bus, vgic_t *vgic);
 
 /* 使某个中断挂起（设备/定时器注入入口）*/
-void vgicd_set_pending(uint32_t vcpu_id, uint32_t irq);
+void vgicd_set_pending(vgic_t *vgic, uint32_t vcpu_id, uint32_t irq);
 
 /* 查询某中断是否使能（供投递路径使用）*/
-int  vgicd_is_enabled(uint32_t vcpu_id, uint32_t irq);
+int  vgicd_is_enabled(const vgic_t *vgic, uint32_t vcpu_id, uint32_t irq);
 
 #endif /* VMM_VGICD_H */

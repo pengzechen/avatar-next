@@ -21,6 +21,9 @@
 
 #include "types.h"
 
+struct vgic;
+typedef struct vgic vgic_t;
+
 /* guest 虚拟定时器 PPI（与 vgic.c / el2_run.c 一致）*/
 #define HOST_VTIMER_IRQ  27
 
@@ -38,6 +41,7 @@ void vmm_irq_route_publish_owner(void);
  * 中断注入给哪个 vCPU。
  */
 void vmm_irq_route_publish_vcpu(uint32_t vcpu_id);
+void vmm_irq_route_publish_vgic(vgic_t *vgic);
 
 /*
  * vmm_irq_route_clear_owner — 清除当前任务在所有 pCPU 上的承载者记录

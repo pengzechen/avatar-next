@@ -7,8 +7,8 @@
  *   vmm_arch_exit_handler       / vmm_arch_save_guest_ctx
  */
 
-#include "vmm.h"
-#include "vmm_mmio.h"
+#include "vmm/vmm.h"
+#include "vmm/vmm_mmio.h"
 #include "klog.h"
 #include "string.h"
 #include "task/task.h"
@@ -16,16 +16,10 @@
 
 #if ARCH_AARCH64
 #include "aarch64/stage2.h"
-#include "vmm_vpl011.h"
-#include "vmm_vgicd.h"
-#include "vmm_vgic.h"
-#include "vmm_vgicc.h"
-
-/* ── 全局 MMIO 总线与虚拟设备实例（静态存储，单 VM）────────── */
-static mmio_bus_t    g_mmio_bus;
-static mmio_device_t g_vpl011_dev;
-static mmio_device_t g_vgicd_dev;
-static mmio_device_t g_vgicc_dev;
+#include "vmm/vmm_vpl011.h"
+#include "vmm/vmm_vgicd.h"
+#include "vmm/vmm_vgic.h"
+#include "vmm/vmm_vgicc.h"
 
 /* ── AArch64 VM 初始化 ────────────────────────────────────── */
 static int aarch64_vm_init(vm_t *vm)
@@ -47,28 +41,31 @@ static int aarch64_vm_init(vm_t *vm)
      */
     stage2_enable_mmio_trap();
 
+    mmio_bus_init(&vm->mmio_bus_storage);
+
+    /* 建立 MMIO 总线并注册虚拟设备（虚拟 PL011 控制台）*/
+    if (vmm_vgic_init(&vm->vgic, (uint32_t)nr) != 0)
+        return -1;
+    
+    if (vpl011_init(&vm->vpl011_dev, &vm->mmio_bus_storage) != 0) {
+        KLOG_WARN("[vmm] vpl011 registration failed\n");
+    }
+
     /*
      * vGIC layering:
      *   - vgic: VM-level virtual interrupt lifecycle state
      *   - vgicd: guest GICD MMIO configuration and forwarding
      *   - vgicc: per-vCPU GICC MMIO state plus cached GICH LR state
      */
-
-    /* 建立 MMIO 总线并注册虚拟设备（虚拟 PL011 控制台）*/
-    mmio_bus_init(&g_mmio_bus);
-    if (vpl011_init(&g_vpl011_dev, &g_mmio_bus) != 0) {
-        KLOG_WARN("[vmm] vpl011 registration failed\n");
-    }
     /* 虚拟 CPU 接口：GICC MMIO + per-vCPU GICH LR 缓存。*/
-    if (vgicc_init(&g_vgicc_dev, &g_mmio_bus, (uint32_t)nr) != 0) {
+    if (vgicc_init(&vm->vgicc_dev, &vm->mmio_bus_storage, &vm->vgic) != 0) {
         KLOG_WARN("[vmm] vgicc registration failed\n");
     }
     /* 虚拟 GICv2：GICD/GICC 由 MMIO 模拟，vgic core 维护软件中断状态。*/
-    if (vgicd_init(&g_vgicd_dev, &g_mmio_bus, (uint32_t)nr) != 0) {
+    if (vgicd_init(&vm->vgicd_dev, &vm->mmio_bus_storage, &vm->vgic) != 0) {
         KLOG_WARN("[vmm] vgicd registration failed\n");
     }
-    vmm_vgic_init((uint32_t)nr);
-    vm->mmio_bus = &g_mmio_bus;
+    vm->mmio_bus = &vm->mmio_bus_storage;
 
     KLOG_INFO("[vmm] MMIO bus ready: PL011 @0x%llx, GICD @0x%llx\n",
               (unsigned long long)VPL011_BASE,
@@ -110,10 +107,6 @@ int vm_create(vm_t *vm)
     return vmx_vm_init(vm);
 #elif ARCH_RISCV64
     return hext_vm_init(vm);
-#else
-    (void)vm;
-    KLOG_WARN("[vmm] vm_create: VMM not supported on this arch\n");
-    return -1;
 #endif
 }
 
@@ -182,15 +175,11 @@ static void vcpu_task_fn(void *arg)
 
     KLOG_INFO("[vmm] vcpu%d task started\n", vcpu->vcpu_id);
 
-#if ARCH_AARCH64 || ARCH_X86_64 || ARCH_RISCV64
     int rc = vmm_run_vcpu(vcpu);
     if (rc == 0)
         KLOG_INFO("[vmm] vcpu%d exited normally\n", vcpu->vcpu_id);
     else
         KLOG_ERROR("[vmm] vcpu%d exited with error %d\n", vcpu->vcpu_id, rc);
-#else
-    KLOG_WARN("[vmm] VMM not supported on this arch\n");
-#endif
 
     task_exit();
 }

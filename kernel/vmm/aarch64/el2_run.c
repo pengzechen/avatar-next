@@ -389,7 +389,8 @@ static void aarch64_check_vtimer(vcpu_t *vcpu)
                        (unsigned long long)now,
                        (unsigned long long)off);
         }
-        vmm_vgic_set_pending((uint32_t)vcpu->vcpu_id, VTIMER_PPI_IRQ);
+        vmm_vgic_set_pending(&vcpu->vm->vgic, (uint32_t)vcpu->vcpu_id,
+                             VTIMER_PPI_IRQ);
     }
 }
 
@@ -405,10 +406,11 @@ void vmm_arch_restore_guest_ctx(vcpu_t *vcpu)
      * 再检查定时器到期并同步 vGIC。*/
     vmm_irq_route_publish_owner();
     vmm_irq_route_publish_vcpu((uint32_t)vcpu->vcpu_id);
+    vmm_irq_route_publish_vgic(&vcpu->vm->vgic);
     aarch64_check_vtimer(vcpu);
 
     /* vIRQ：把可投递中断排入 GICH LR，让硬件产生虚拟 IRQ。*/
-    vmm_vgic_sync_entry((uint32_t)vcpu->vcpu_id);
+    vmm_vgic_sync_entry(&vcpu->vm->vgic, (uint32_t)vcpu->vcpu_id);
 }
 
 int vmm_arch_enter_guest(vcpu_t *vcpu)
@@ -425,5 +427,5 @@ int vmm_arch_exit_handler(vcpu_t *vcpu)
 void vmm_arch_save_guest_ctx(vcpu_t *vcpu)
 {
     save_sysregs_el12(vcpu->sysregs);
-    vmm_vgic_sync_exit((uint32_t)vcpu->vcpu_id);
+    vmm_vgic_sync_exit(&vcpu->vm->vgic, (uint32_t)vcpu->vcpu_id);
 }

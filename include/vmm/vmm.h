@@ -22,6 +22,8 @@
 
 #include "types.h"
 #include "arch.h"
+#include "vmm_mmio.h"
+#include "vmm_vgic.h"
 
 /* ── asm 可见的固定偏移（与 el2_vmcs.S 对齐）─────────────────── */
 #define VCPU_R0         0           /* x0-x30, 31×8 bytes               */
@@ -55,6 +57,9 @@
 
 /* ── 最大 vCPU 数量 ────────────────────────────────────────── */
 #define MAX_VCPUS  4
+
+/* 前向声明：避免与 task.h 循环包含 */
+struct task;
 
 /* ── vCPU 控制块 ─────────────────────────────────────────────
  *
@@ -200,14 +205,6 @@ typedef struct vcpu {
     struct vm *vm;
     uint64_t timer_deadline;  /* guest SBI 定时器截止（guest time 单位），0=未设置 */
 } vcpu_t;
-#else
-/* 其他架构：空壳，只有公共字段 */
-typedef struct vcpu {
-    int      vcpu_id;
-    int      launched;
-    uint64_t page_table_base;
-    struct vm *vm;
-} vcpu_t;
 #endif /* ARCH_* */
 
 /* ── VM 配置 ─────────────────────────────────────────────────── */
@@ -226,12 +223,13 @@ typedef struct vm {
     vcpu_t   vcpus[MAX_VCPUS];  /* 静态嵌入，不动态分配 */
     int      nr_vcpus;
 
-    /*
-     * 虚拟设备 MMIO 总线（可为 NULL）。启用后 Stage-2/G-stage/EPT 将
-     * 设备所在 GPA 区间映射为无效，guest 访问 → 陷入 VMM → 总线分发。
-     * 见 vmm_mmio.h 与各架构 exit handler。
-     */
-    struct mmio_bus *mmio_bus;
+    /* VM-owned virtual interrupt controller and MMIO device state. */
+    vgic_t vgic;
+    mmio_bus_t mmio_bus_storage;
+    mmio_bus_t *mmio_bus;
+    mmio_device_t vpl011_dev;
+    mmio_device_t vgicd_dev;
+    mmio_device_t vgicc_dev;
 } vm_t;
 
 /* ── AArch64 专用汇编接口（仅 aarch64 编译时可见）──────────── */
@@ -280,28 +278,11 @@ int  vmm_arch_enter_guest(vcpu_t *vcpu);   /* 1=success, 0=entry-failed */
 int  vmm_arch_exit_handler(vcpu_t *vcpu);
 void vmm_arch_save_guest_ctx(vcpu_t *vcpu);
 
-/*
- * vmm_run_vcpu — 架构无关 vCPU 执行主循环（实现在 vmm.c）
- * 返回 0：guest 正常退出；返回 -1：未处理的 exit。
- */
+
 int vmm_run_vcpu(vcpu_t *vcpu);
 
-/* ── VM 管理 API ─────────────────────────────────────────────── */
-
-/*
- * vm_create — 初始化 VM 实例
- * @vm: 调用方分配的 vm_t（vm->cfg 已填好）
- * 返回 0 成功，-1 失败。
- */
 int vm_create(vm_t *vm);
 
-/* 前向声明：避免与 task.h 循环包含 */
-struct task;
-
-/*
- * vcpu_task_create — 为指定 vCPU 创建内核任务
- * 任务被调度时执行 vmm_run_vcpu(vcpu) VMM 主循环。
- */
 struct task *vcpu_task_create(vcpu_t *vcpu, uint8_t priority);
 
 #endif /* KERNEL_VMM_H */

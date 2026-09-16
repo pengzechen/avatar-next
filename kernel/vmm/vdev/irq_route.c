@@ -13,9 +13,7 @@
 #include "task/cpu.h"
 #include "exception.h"
 #include "irq/irq.h"      /* irq_install / irq_enable_irq / irq_disable_irq */
-
-/* Keep declarations local to avoid dragging VMM internals into the IRQ layer. */
-extern void vmm_vgic_inject_timer(uint32_t vcpu_id);
+#include "vmm.h"
 
 /* 路由状态（对标 Rust 的 ROUTE_UNUSED/REGISTERING/REGISTERED）*/
 #define ROUTE_UNUSED       0
@@ -29,6 +27,7 @@ static task_t *g_owner_tasks[MAX_ROUTE_CPUS];
 
 /* 每个 pCPU 上承载的 vCPU id（宿主 ISR 直接注入用）*/
 static uint32_t g_owner_vcpu[MAX_ROUTE_CPUS];
+static vgic_t *g_owner_vgic[MAX_ROUTE_CPUS];
 
 static volatile int g_route_state = ROUTE_UNUSED;
 
@@ -57,7 +56,8 @@ static void host_vtimer_irq_handler(uint64_t *frame)
      * GICC_IAR/EOIR 完成 ack/EOI。
      */
     if (cpu < MAX_ROUTE_CPUS) {
-        vmm_vgic_inject_timer(g_owner_vcpu[cpu]);
+        if (g_owner_vgic[cpu])
+            vmm_vgic_inject_timer(g_owner_vgic[cpu], g_owner_vcpu[cpu]);
     }
 }
 
@@ -121,12 +121,22 @@ void vmm_irq_route_publish_vcpu(uint32_t vcpu_id)
         g_owner_vcpu[cpu] = vcpu_id;
 }
 
+void vmm_irq_route_publish_vgic(vgic_t *vgic)
+{
+    uint32_t cpu = get_current_cpu_id();
+
+    if (cpu < MAX_ROUTE_CPUS)
+        g_owner_vgic[cpu] = vgic;
+}
+
 void vmm_irq_route_clear_owner(void)
 {
     task_t *cur = task_current();
 
     for (int i = 0; i < MAX_ROUTE_CPUS; i++) {
-        if (g_owner_tasks[i] == cur)
+        if (g_owner_tasks[i] == cur) {
             g_owner_tasks[i] = NULL;
+            g_owner_vgic[i] = NULL;
+        }
     }
 }

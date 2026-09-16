@@ -1,8 +1,5 @@
 /*
- * kernel/vmm/vdev/vgic/vgic.c - GICv2 virtual interrupt core.
- *
- * This is the VM-level vGIC device: it owns virtual interrupt lifecycle state
- * and coordinates the distributor and per-vCPU CPU-interface/GICH layers.
+ * kernel/vmm/vdev/vgic/vgic.c - VM-level virtual GICv2 core.
  */
 
 #include "vmm_vgic.h"
@@ -13,23 +10,9 @@
 
 #define SGI_MASK 0xffffu
 
-typedef struct {
-    uint32_t enabled0;
-    uint32_t pending0;
-    uint32_t active0;
-    uint16_t sgi_sources[16];
-} vgic_vcpu_t;
-
-static vgic_vcpu_t g_vcpus[VGIC_MAX_VCPUS];
-static uint32_t g_enabled[VGIC_MAX_WORDS];
-static uint32_t g_pending[VGIC_MAX_WORDS];
-static uint32_t g_active[VGIC_MAX_WORDS];
-static uint32_t g_nr_vcpus;
-static int g_dist_enabled;
-
-static int valid_vcpu(uint32_t vcpu_id)
+static int valid_vcpu(const vgic_t *vgic, uint32_t vcpu_id)
 {
-    return vcpu_id < g_nr_vcpus;
+    return vgic && vcpu_id < vgic->nr_vcpus;
 }
 
 static int valid_irq(uint32_t irq)
@@ -56,219 +39,224 @@ static uint32_t lowest_irq(uint32_t bits, uint32_t base)
 
 static uint32_t lr_value(uint32_t irq, uint32_t source_vcpu)
 {
-    uint32_t lr = LR_GROUP1 | LR_STATE_PENDING | LR_PRIORITY | (irq & LR_VINTID_MASK);
+    uint32_t lr = LR_GROUP1 | LR_STATE_PENDING | LR_PRIORITY |
+                  (irq & LR_VINTID_MASK);
 
     if (irq < 16)
         lr |= (source_vcpu & 0x7u) << LR_SGI_SRC_SHIFT;
-
     return lr;
 }
 
-int vmm_vgic_init(uint32_t nr_vcpus)
+int vmm_vgic_init(vgic_t *vgic, uint32_t nr_vcpus)
 {
+    if (!vgic)
+        return -1;
     if (nr_vcpus < 1)
         nr_vcpus = 1;
     if (nr_vcpus > VGIC_MAX_VCPUS)
         nr_vcpus = VGIC_MAX_VCPUS;
 
-    memset(g_vcpus, 0, sizeof(g_vcpus));
-    memset(g_enabled, 0, sizeof(g_enabled));
-    memset(g_pending, 0, sizeof(g_pending));
-    memset(g_active, 0, sizeof(g_active));
-
-    g_nr_vcpus = nr_vcpus;
-    g_dist_enabled = 0;
-
+    memset(vgic, 0, sizeof(*vgic));
+    vgic->nr_vcpus = nr_vcpus;
     for (uint32_t i = 0; i < VGIC_MAX_VCPUS; i++)
-        g_vcpus[i].enabled0 = SGI_MASK;
+        vgic->vcpu[i].enabled0 = SGI_MASK;
 
-    KLOG_INFO("[vgic] GICv2 core ready (%u vCPU, %u IRQs, %u LR)\n",
+    KLOG_INFO("[vgic] VM vGIC ready (%u vCPU, %u IRQs, %u LR)\n",
               nr_vcpus, (unsigned)VGIC_MAX_IRQS, (unsigned)VGIC_MAX_LRS);
     return 0;
 }
 
-void vmm_vgic_set_dist_enabled(int enabled)
+void vmm_vgic_set_dist_enabled(vgic_t *vgic, int enabled)
 {
-    g_dist_enabled = enabled ? 1 : 0;
+    if (vgic)
+        vgic->dist_enabled = enabled ? 1 : 0;
 }
 
-int vmm_vgic_dist_enabled(void)
+int vmm_vgic_dist_enabled(const vgic_t *vgic)
 {
-    return g_dist_enabled;
+    return vgic ? vgic->dist_enabled : 0;
 }
 
-void vmm_vgic_set_sgi_pending(uint32_t vcpu_id, uint32_t source_vcpu,
-                              uint32_t irq)
+void vmm_vgic_set_sgi_pending(vgic_t *vgic, uint32_t vcpu_id,
+                              uint32_t source_vcpu, uint32_t irq)
 {
-    if (!valid_vcpu(vcpu_id) || irq >= 16)
+    if (!valid_vcpu(vgic, vcpu_id) || irq >= 16)
         return;
     if (source_vcpu >= VGIC_MAX_VCPUS)
         source_vcpu = 0;
 
-    g_vcpus[vcpu_id].sgi_sources[irq] |= (uint16_t)(1u << source_vcpu);
-    g_vcpus[vcpu_id].pending0 |= irq_bit(irq);
+    vgic->vcpu[vcpu_id].sgi_sources[irq] |= (uint16_t)(1u << source_vcpu);
+    vgic->vcpu[vcpu_id].pending0 |= irq_bit(irq);
 }
 
-void vmm_vgic_set_pending(uint32_t vcpu_id, uint32_t irq)
+void vmm_vgic_set_pending(vgic_t *vgic, uint32_t vcpu_id, uint32_t irq)
 {
-    if (!valid_irq(irq))
+    if (!vgic || !valid_irq(irq))
         return;
-
     if (irq < 16) {
-        vmm_vgic_set_sgi_pending(vcpu_id, 0, irq);
+        vmm_vgic_set_sgi_pending(vgic, vcpu_id, 0, irq);
     } else if (irq < 32) {
-        if (valid_vcpu(vcpu_id))
-            g_vcpus[vcpu_id].pending0 |= irq_bit(irq);
+        if (valid_vcpu(vgic, vcpu_id))
+            vgic->vcpu[vcpu_id].pending0 |= irq_bit(irq);
     } else {
-        g_pending[irq / 32] |= irq_bit(irq);
+        if (valid_vcpu(vgic, vcpu_id))
+            vgic->spi_pending[vcpu_id][irq / 32] |= irq_bit(irq);
     }
 }
 
-void vmm_vgic_set_enabled(uint32_t vcpu_id, uint32_t irq, int enabled)
+void vmm_vgic_set_enabled(vgic_t *vgic, uint32_t vcpu_id, uint32_t irq,
+                          int enabled)
 {
-    if (!valid_irq(irq) || irq < 16)
+    if (!vgic || !valid_irq(irq) || irq < 16)
         return;
-
     if (irq < 32) {
-        if (!valid_vcpu(vcpu_id))
+        if (!valid_vcpu(vgic, vcpu_id))
             return;
         if (enabled)
-            g_vcpus[vcpu_id].enabled0 |= irq_bit(irq);
+            vgic->vcpu[vcpu_id].enabled0 |= irq_bit(irq);
         else
-            g_vcpus[vcpu_id].enabled0 &= ~irq_bit(irq);
+            vgic->vcpu[vcpu_id].enabled0 &= ~irq_bit(irq);
     } else if (enabled) {
-        g_enabled[irq / 32] |= irq_bit(irq);
+        vgic->enabled[irq / 32] |= irq_bit(irq);
     } else {
-        g_enabled[irq / 32] &= ~irq_bit(irq);
+        vgic->enabled[irq / 32] &= ~irq_bit(irq);
     }
 }
 
-uint32_t vmm_vgic_enabled_word(uint32_t vcpu_id, uint32_t word)
+uint32_t vmm_vgic_enabled_word(const vgic_t *vgic, uint32_t vcpu_id,
+                               uint32_t word)
 {
-    if (word >= VGIC_MAX_WORDS)
+    if (!vgic || word >= VGIC_MAX_WORDS)
         return 0;
     if (word == 0)
-        return valid_vcpu(vcpu_id) ? (g_vcpus[vcpu_id].enabled0 | SGI_MASK) : SGI_MASK;
-    return g_enabled[word];
+        return valid_vcpu(vgic, vcpu_id) ?
+               (vgic->vcpu[vcpu_id].enabled0 | SGI_MASK) : SGI_MASK;
+    return vgic->enabled[word];
 }
 
-uint32_t vmm_vgic_pending_word(uint32_t vcpu_id, uint32_t word)
+uint32_t vmm_vgic_pending_word(const vgic_t *vgic, uint32_t vcpu_id,
+                               uint32_t word)
 {
-    if (word >= VGIC_MAX_WORDS)
+    if (!vgic || word >= VGIC_MAX_WORDS)
         return 0;
     if (word == 0)
-        return valid_vcpu(vcpu_id) ? g_vcpus[vcpu_id].pending0 : 0;
-    return g_pending[word];
+        return valid_vcpu(vgic, vcpu_id) ? vgic->vcpu[vcpu_id].pending0 : 0;
+    if (valid_vcpu(vgic, vcpu_id))
+        return vgic->spi_pending[vcpu_id][word];
+    return 0;
 }
 
-uint32_t vmm_vgic_active_word(uint32_t vcpu_id, uint32_t word)
+uint32_t vmm_vgic_active_word(const vgic_t *vgic, uint32_t vcpu_id,
+                              uint32_t word)
 {
-    if (word >= VGIC_MAX_WORDS)
+    if (!vgic || word >= VGIC_MAX_WORDS)
         return 0;
     if (word == 0)
-        return valid_vcpu(vcpu_id) ? g_vcpus[vcpu_id].active0 : 0;
-    return g_active[word];
+        return valid_vcpu(vgic, vcpu_id) ? vgic->vcpu[vcpu_id].active0 : 0;
+    if (valid_vcpu(vgic, vcpu_id))
+        return vgic->spi_active[vcpu_id][word];
+    return 0;
 }
 
-void vmm_vgic_clear_pending_word(uint32_t vcpu_id, uint32_t word,
-                                 uint32_t bits)
+void vmm_vgic_clear_pending_word(vgic_t *vgic, uint32_t vcpu_id,
+                                 uint32_t word, uint32_t bits)
 {
-    if (word >= VGIC_MAX_WORDS)
+    if (!vgic || word >= VGIC_MAX_WORDS)
         return;
     if (word == 0) {
-        if (valid_vcpu(vcpu_id))
-            g_vcpus[vcpu_id].pending0 &= ~bits;
+        if (valid_vcpu(vgic, vcpu_id))
+            vgic->vcpu[vcpu_id].pending0 &= ~bits;
     } else {
-        g_pending[word] &= ~bits;
+        if (valid_vcpu(vgic, vcpu_id))
+            vgic->spi_pending[vcpu_id][word] &= ~bits;
     }
 }
 
-void vmm_vgic_clear_active_word(uint32_t vcpu_id, uint32_t word,
-                                uint32_t bits)
+void vmm_vgic_clear_active_word(vgic_t *vgic, uint32_t vcpu_id,
+                                uint32_t word, uint32_t bits)
 {
-    if (word >= VGIC_MAX_WORDS)
+    if (!vgic || word >= VGIC_MAX_WORDS)
         return;
     if (word == 0) {
-        if (valid_vcpu(vcpu_id))
-            g_vcpus[vcpu_id].active0 &= ~bits;
+        if (valid_vcpu(vgic, vcpu_id))
+            vgic->vcpu[vcpu_id].active0 &= ~bits;
     } else {
-        g_active[word] &= ~bits;
+        if (valid_vcpu(vgic, vcpu_id))
+            vgic->spi_active[vcpu_id][word] &= ~bits;
     }
 }
 
-int vmm_vgic_next_pending(uint32_t vcpu_id)
+int vmm_vgic_next_pending(const vgic_t *vgic, uint32_t vcpu_id)
 {
-    if (!valid_vcpu(vcpu_id))
+    if (!valid_vcpu(vgic, vcpu_id))
         return -1;
 
-    vgic_vcpu_t *vcpu = &g_vcpus[vcpu_id];
-    uint32_t ready0 = vcpu->pending0 & (vcpu->enabled0 | SGI_MASK) & ~vcpu->active0;
+    const vgic_vcpu_state_t *vcpu = &vgic->vcpu[vcpu_id];
+    uint32_t ready0 = vcpu->pending0 & (vcpu->enabled0 | SGI_MASK) &
+                      ~vcpu->active0;
     if (ready0)
         return (int)lowest_irq(ready0, 0);
 
     for (uint32_t word = 1; word < VGIC_MAX_WORDS; word++) {
-        uint32_t ready = g_pending[word] & g_enabled[word] & ~g_active[word];
+        uint32_t ready = vgic->spi_pending[vcpu_id][word] &
+                          vgic->enabled[word] &
+                          ~vgic->spi_active[vcpu_id][word];
         if (ready)
             return (int)lowest_irq(ready, word * 32);
     }
     return -1;
 }
 
-int vmm_vgic_ack(uint32_t vcpu_id)
+int vmm_vgic_ack(vgic_t *vgic, uint32_t vcpu_id)
 {
-    int irq = vmm_vgic_next_pending(vcpu_id);
+    int irq = vmm_vgic_next_pending(vgic, vcpu_id);
     if (irq < 0)
         return -1;
 
     if ((uint32_t)irq < 32) {
-        vgic_vcpu_t *vcpu = &g_vcpus[vcpu_id];
+        vgic_vcpu_state_t *vcpu = &vgic->vcpu[vcpu_id];
         vcpu->pending0 &= ~irq_bit((uint32_t)irq);
         if ((uint32_t)irq < 16)
             vcpu->sgi_sources[irq] = 0;
         vcpu->active0 |= irq_bit((uint32_t)irq);
-        vgicc_clear_lr_irq(vcpu_id, (uint32_t)irq);
     } else {
-        g_pending[(uint32_t)irq / 32] &= ~irq_bit((uint32_t)irq);
-        g_active[(uint32_t)irq / 32] |= irq_bit((uint32_t)irq);
-        vgicc_clear_lr_irq(vcpu_id, (uint32_t)irq);
+        vgic->spi_pending[vcpu_id][(uint32_t)irq / 32] &=
+            ~irq_bit((uint32_t)irq);
+        vgic->spi_active[vcpu_id][(uint32_t)irq / 32] |=
+            irq_bit((uint32_t)irq);
     }
+    vgicc_clear_lr_irq(vgic, vcpu_id, (uint32_t)irq);
     return irq;
 }
 
-void vmm_vgic_eoi(uint32_t vcpu_id, uint32_t irq)
+void vmm_vgic_eoi(vgic_t *vgic, uint32_t vcpu_id, uint32_t irq)
 {
-    if (!valid_irq(irq))
+    if (!vgic || !valid_vcpu(vgic, vcpu_id) || !valid_irq(irq))
         return;
-
-    if (irq < 32) {
-        if (valid_vcpu(vcpu_id))
-            g_vcpus[vcpu_id].active0 &= ~irq_bit(irq);
-    } else {
-        g_active[irq / 32] &= ~irq_bit(irq);
-    }
+    if (irq < 32)
+        vgic->vcpu[vcpu_id].active0 &= ~irq_bit(irq);
+    else
+        vgic->spi_active[vcpu_id][irq / 32] &= ~irq_bit(irq);
 }
 
-void vmm_vgic_inject_timer(uint32_t vcpu_id)
+void vmm_vgic_inject_timer(vgic_t *vgic, uint32_t vcpu_id)
 {
-    vmm_vgic_set_pending(vcpu_id, HOST_VTIMER_IRQ);
-    vmm_vgic_sync_entry(vcpu_id);
+    vmm_vgic_set_pending(vgic, vcpu_id, HOST_VTIMER_IRQ);
+    vmm_vgic_sync_entry(vgic, vcpu_id);
 }
 
-void vmm_vgic_sync_entry(uint32_t vcpu_id)
+void vmm_vgic_sync_entry(vgic_t *vgic, uint32_t vcpu_id)
 {
-    if (!valid_vcpu(vcpu_id))
+    if (!valid_vcpu(vgic, vcpu_id))
         return;
 
-    vgic_vcpu_t *vcpu = &g_vcpus[vcpu_id];
-
+    vgic_vcpu_state_t *vcpu = &vgic->vcpu[vcpu_id];
     while (1) {
-        int irq = vmm_vgic_next_pending(vcpu_id);
-        if (irq < 0)
-            break;
-        if (vgicc_lr_has_irq(vcpu_id, (uint32_t)irq))
+        int irq = vmm_vgic_next_pending(vgic, vcpu_id);
+        if (irq < 0 || vgicc_lr_has_irq(vgic, vcpu_id, (uint32_t)irq))
             break;
 
-        int slot = vgicc_lr_empty_slot(vcpu_id);
+        int slot = vgicc_lr_empty_slot(vgic, vcpu_id);
         if (slot < 0)
             break;
 
@@ -283,16 +271,14 @@ void vmm_vgic_sync_entry(uint32_t vcpu_id)
                 }
             }
         }
-
-        vgicc_write_lr(vcpu_id, (uint32_t)slot, lr_value((uint32_t)irq, src));
+        vgicc_write_lr(vgic, vcpu_id, (uint32_t)slot,
+                       lr_value((uint32_t)irq, src));
         break;
     }
 }
 
-void vmm_vgic_sync_exit(uint32_t vcpu_id)
+void vmm_vgic_sync_exit(vgic_t *vgic, uint32_t vcpu_id)
 {
-    if (!valid_vcpu(vcpu_id))
-        return;
-
-    vgicc_save_state_from_hw(vcpu_id);
+    if (valid_vcpu(vgic, vcpu_id))
+        vgicc_save_state_from_hw(vgic, vcpu_id);
 }
