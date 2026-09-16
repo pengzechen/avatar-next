@@ -1,17 +1,8 @@
 /*
- * include/vmm_vgicc.h — 虚拟 GICv2 CPU 接口（GICC）软件模拟
+ * include/vmm_vgicc.h — per-vCPU virtual CPU interface / GICH state.
  *
- * 为什么不像 kvmm 那样把 guest 的 GICC 直通到硬件 GICV：
- *   直通依赖 GICv2 虚拟化扩展由**硬件**完成虚拟中断投递（GICH LR →
- *   GICV → nIRQ）。但这套机制需要物理中断与虚拟中断严格配对（HW=1 LR），
- *   而宿主的中断入口是「ack + EOI + DIR」的通用流程、且 PPI 27 被标记为
- *   guest-owned 不能 DIR，物理中断会长期停在 active，硬件就不肯再投虚拟
- *   中断（实测 GICV_IAR 恒返回 1022 = "有挂起中断但不可投递"）。
- *
- * 所以这里把 GICC 完整收进 VMM：
- *   - guest 对 0x08010000 的访问全部陷入 MMIO 总线（stage-2 不再直通）
- *   - GICC_IAR/EOIR/DIR 驱动 vgic 的挂起/active 位图
- *   - 中断通过 HCR_EL2.VI 注入（vIRQ），guest 在 EL1 直接收到
+ * guest visible GICC registers are MMIO-emulated here. The same per-vCPU
+ * state also owns the cached GICH list registers used to signal virtual IRQs.
  */
 #ifndef VMM_VGICC_H
 #define VMM_VGICC_H
@@ -31,9 +22,16 @@
 #define GICC_DIR    0x1000
 
 /*
- * vgicc_init — 初始化软件 GICC 并注册到 MMIO 总线
+ * vgicc_init — 初始化软件 GICC/GICH state 并注册 GICC MMIO 设备
  * 返回 0 成功。
  */
-int vgicc_init(mmio_device_t *dev, mmio_bus_t *bus);
+int vgicc_init(mmio_device_t *dev, mmio_bus_t *bus, uint32_t nr_vcpus);
+
+/* GICH LR state helpers. vgic core decides what to inject; vgicc owns where. */
+int  vgicc_lr_has_irq(uint32_t vcpu_id, uint32_t irq);
+int  vgicc_lr_empty_slot(uint32_t vcpu_id);
+void vgicc_write_lr(uint32_t vcpu_id, uint32_t slot, uint32_t value);
+void vgicc_clear_lr_irq(uint32_t vcpu_id, uint32_t irq);
+void vgicc_save_state_from_hw(uint32_t vcpu_id);
 
 #endif /* VMM_VGICC_H */

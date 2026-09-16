@@ -368,36 +368,6 @@ static int vmm_exit_handler(vcpu_t *vcpu)
 #define CNTV_CTL_ENABLE     (1ULL << 0)
 #define CNTV_CTL_IMASK      (1ULL << 1)
 
-/*
- * ── vIRQ 注入（HCR_EL2.VI）──────────────────────────────────
- *
- * GICC 由 VMM 软件模拟（vmm_vgicc.c），虚拟中断不再经过硬件 GICV，而是
- * 用 HCR_EL2.VI 直接把 guest 的 IRQ 线拉起来：只要 vgic 还有「挂起且已
- * 使能」的中断，就置 VI；否则清掉。guest 在 EL1 上收到 vIRQ 后走
- * gic_handle_irq → 读 GICC_IAR（陷入 VMM，返回中断号）→ EOI（陷入）。
- *
- * 注意 HCR_EL2.VI 是 per-CPU 寄存器：进入 guest 前的入口钩子里设置，
- * 退出回宿主后清掉（宿主自己用 IMO 路由物理中断，不该看到 vIRQ）。
- */
-static void aarch64_update_vi(vcpu_t *vcpu, int on)
-{
-    uint64_t hcr;
-
-    __asm__ volatile("mrs %0, hcr_el2" : "=r"(hcr));
-    if (on)
-        hcr |= (1ULL << 7);     /* VI */
-    else
-        hcr &= ~(1ULL << 7);
-    __asm__ volatile("msr hcr_el2, %0" :: "r"(hcr) : "memory");
-    (void)vcpu;
-}
-
-/* 供宿主 ISR（vgic_irq_route.c）在 guest 运行中立即拉起 vIRQ */
-void vmm_arch_raise_vi(void)
-{
-    aarch64_update_vi(NULL, 1);
-}
-
 static void aarch64_check_vtimer(vcpu_t *vcpu)
 {
     uint64_t ctl = vcpu->cntv_ctl;
@@ -437,9 +407,8 @@ void vmm_arch_restore_guest_ctx(vcpu_t *vcpu)
     vmm_irq_route_publish_vcpu((uint32_t)vcpu->vcpu_id);
     aarch64_check_vtimer(vcpu);
 
-    /* vIRQ：有挂起且已使能的中断就拉起 guest 的 IRQ 线（HCR_EL2.VI）*/
-    if (vmm_vgic_next_pending((uint32_t)vcpu->vcpu_id) >= 0)
-        aarch64_update_vi(vcpu, 1);
+    /* vIRQ：把可投递中断排入 GICH LR，让硬件产生虚拟 IRQ。*/
+    vmm_vgic_sync_entry((uint32_t)vcpu->vcpu_id);
 }
 
 int vmm_arch_enter_guest(vcpu_t *vcpu)
@@ -456,9 +425,5 @@ int vmm_arch_exit_handler(vcpu_t *vcpu)
 void vmm_arch_save_guest_ctx(vcpu_t *vcpu)
 {
     save_sysregs_el12(vcpu->sysregs);
-    /* 回宿主前撤掉 vIRQ：宿主靠 IMO 收物理中断，不该看到 guest 的 vIRQ */
-    aarch64_update_vi(vcpu, 0);
-    /* GICH list registers are per-pCPU hardware state. Read back and clear them
-     * before the outer vCPU loop unmasks host IRQs, matching x-kernel hooks. */
     vmm_vgic_sync_exit((uint32_t)vcpu->vcpu_id);
 }

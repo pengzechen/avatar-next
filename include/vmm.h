@@ -259,14 +259,6 @@ void save_sysregs_el12(void *buf);
 void restore_sysregs_el12(void *buf);
 
 /*
- * vmm_arch_raise_vi — 立即给 guest 拉起 vIRQ（HCR_EL2.VI）
- *
- * 供宿主中断 ISR 在 **guest 运行中** 使用：GICC 由 VMM 软件模拟，虚拟中断
- * 不经硬件 GICV，必须靠 VI 位把 guest 的 IRQ 线拉起来。
- */
-void vmm_arch_raise_vi(void);
-
-/*
  * set_stage2_pgd — 写入 VTTBR_EL2（Stage-2 根页表 + VMID）
  */
 void set_stage2_pgd(uint64_t pgd_phys, uint32_t vmid);

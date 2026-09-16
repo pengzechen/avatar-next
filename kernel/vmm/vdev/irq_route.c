@@ -14,12 +14,8 @@
 #include "exception.h"
 #include "irq/irq.h"      /* irq_install / irq_enable_irq / irq_disable_irq */
 
-/*
- * vgic 与 vmm 的入口在此按需声明：vmm_vgic.h / vmm.h 里的 GICH_* 宏与
- * gicv2.h（经 irq/irq.h 引入）重名，整头文件包含会触发重定义告警。
- */
+/* Keep declarations local to avoid dragging VMM internals into the IRQ layer. */
 extern void vmm_vgic_inject_timer(uint32_t vcpu_id);
-extern void vmm_arch_raise_vi(void);
 
 /* 路由状态（对标 Rust 的 ROUTE_UNUSED/REGISTERING/REGISTERED）*/
 #define ROUTE_UNUSED       0
@@ -49,7 +45,7 @@ static void host_vtimer_irq_handler(uint64_t *frame)
         task_unblock(owner);
 
     /*
-     * 关键：在这里**直接**把虚拟中断挂进 vGIC 并同步到 GICH LR。
+     * 关键：在这里**直接**把虚拟中断挂进 vGIC LR。
      *
      * 这个宿主中断是在 guest 运行中到达的：EL2 的异常处理打完就直接返回
      * guest，不会经过 vCPU 主循环的 vmm_arch_restore_guest_ctx()。所以
@@ -57,14 +53,11 @@ static void host_vtimer_irq_handler(uint64_t *frame)
      * trap（例如卡在 calibrate_delay() 里 `while (ticks == jiffies)
      * cpu_relax();` 等 tick），它就永远等不到注入 —— 死锁。
      *
-     * ISR 返回后 guest 立刻看到 GICV 上的虚拟中断，自行 ack/EOI；HW=1 的
-     * LR 让 guest 的 EOI 直接 deactivate 物理 PPI 27（因此宿主 ISR 里不能
-     * 写 GICC_DIR，见 boot/aarch64/exception.c）。
+     * ISR 返回后 guest 立刻通过 GICH LR 看到虚拟 IRQ，随后访问软件
+     * GICC_IAR/EOIR 完成 ack/EOI。
      */
     if (cpu < MAX_ROUTE_CPUS) {
         vmm_vgic_inject_timer(g_owner_vcpu[cpu]);
-        /* guest 正在 EL1 跑，立刻把 vIRQ 拉起来（不必等它 trap 回 EL2）*/
-        vmm_arch_raise_vi();
     }
 }
 
@@ -82,13 +75,9 @@ void vmm_irq_route_set_vtimer_enabled(int enabled)
         irq_install(HOST_VTIMER_IRQ, host_vtimer_irq_handler);
         irq_enable_irq(HOST_VTIMER_IRQ);
 
-        /*
-         * PPI 27 由 guest 的虚拟 EOI 负责 deactivate（vGIC 的 HW=1 list
-         * register 把物理 27 映射到 guest 的虚拟 27）。宿主侧处理它时只能
-         * 做优先级下降（EOIR），**绝不能写 GICC_DIR**，否则物理中断在 guest
-         * 还没收到之前就被 deactivate 了，虚拟中断也就投不进 guest。
-         * 见 boot/aarch64/exception.c: handle_irq_exception()。
-         */
+        /* Keep the host vtimer PPI in the existing guest-owned IRQ flow.
+         * The software vGIC consumes it only as a trigger source, but the
+         * low-level IRQ path still relies on this mark for the timer PPI. */
         irq_mark_guest_owned(HOST_VTIMER_IRQ);
 
         g_route_state = ROUTE_REGISTERED;
@@ -107,18 +96,9 @@ void vmm_irq_route_set_vtimer_enabled(int enabled)
 uint32_t vmm_irq_route_host_hwirq_for_guest_irq(uint32_t guest_irq)
 {
     /*
-     * 恒返回 0：vGIC 不使用 HW=1 的 list register。
-     *
-     * HW=1 要求物理中断与虚拟中断严格配对（guest 的虚拟 EOI 去 deactivate
-     * 物理中断），但宿主中断入口是按「处理完就 EOI+DIR」的通用流程走的，
-     * 而 PPI 27 又被标记为 guest-owned（宿主不能写 DIR，见 exception.c），
-     * 于是物理 27 会长期停在 active：HW=1 的 LR 在这期间不向 guest 投递，
-     * 而 guest 收不到虚拟中断就无法用 EOI 去 deactivate 它 —— 互锁。
-     *
-     * 纯虚拟 LR 只由 LR 自身状态决定投递，与物理中断的 active 状态解耦；
-     * LR 的生命周期由 vmm_vgic_sync_exit() 在每个退出点上完全接管，
-     * 下次 entry 依据 pending 位图重建。宿主 PPI 27 只作为「该给 guest
-     * 送 tick 了」的触发源（ISR 里直接注入）。
+     * 软件 vGIC 不使用 HW=1 list register。宿主 PPI 27 只作为「该给
+     * guest 送 tick 了」的触发源，虚拟 PPI 27 的生命周期完全在 vgic core
+     * 的 pending/active 位图里维护。
      */
     (void)guest_irq;
     return 0;

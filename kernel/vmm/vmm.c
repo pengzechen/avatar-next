@@ -48,12 +48,10 @@ static int aarch64_vm_init(vm_t *vm)
     stage2_enable_mmio_trap();
 
     /*
-     * guest DTB 里 GICC 在 0x08010000。**不做**「直通到硬件 GICV」的映射：
-     * 直通依赖 HW=1 LR 由硬件完成虚拟中断投递，而宿主中断入口是通用
-     * 「ack+EOI+DIR」流程、PPI 27 又是 guest-owned 不能写 DIR，物理中断会
-     * 长期停在 active，硬件于是拒绝投递虚拟中断（实测 GICV_IAR 恒返回 1022）。
-     * 改为让 guest 的 GICC 访问照常陷入 MMIO 总线，由 vgicc 软件模拟 +
-     * HCR_EL2.VI 注入。见 include/vmm_vgicc.h。
+     * vGIC layering:
+     *   - vgic: VM-level virtual interrupt lifecycle state
+     *   - vgicd: guest GICD MMIO configuration and forwarding
+     *   - vgicc: per-vCPU GICC MMIO state plus cached GICH LR state
      */
 
     /* 建立 MMIO 总线并注册虚拟设备（虚拟 PL011 控制台）*/
@@ -61,32 +59,15 @@ static int aarch64_vm_init(vm_t *vm)
     if (vpl011_init(&g_vpl011_dev, &g_mmio_bus) != 0) {
         KLOG_WARN("[vmm] vpl011 registration failed\n");
     }
-    /* 虚拟 GICC（CPU 接口）：IAR/EOIR/DIR 驱动 vgic 位图 */
-    if (vgicc_init(&g_vgicc_dev, &g_mmio_bus) != 0) {
+    /* 虚拟 CPU 接口：GICC MMIO + per-vCPU GICH LR 缓存。*/
+    if (vgicc_init(&g_vgicc_dev, &g_mmio_bus, (uint32_t)nr) != 0) {
         KLOG_WARN("[vmm] vgicc registration failed\n");
     }
-    /* 虚拟 GICv2：分两半
-     *   vgicd — 分发器（guest MMIO 访问落到这里）
-     *   vgic  — 注入核心（维护挂起/使能位图 + GICH 列表寄存器）*/
+    /* 虚拟 GICv2：GICD/GICC 由 MMIO 模拟，vgic core 维护软件中断状态。*/
     if (vgicd_init(&g_vgicd_dev, &g_mmio_bus, (uint32_t)nr) != 0) {
         KLOG_WARN("[vmm] vgicd registration failed\n");
     }
     vmm_vgic_init((uint32_t)nr);
-
-    /*
-     * GICH 映射：vGIC 把挂起中断整理进列表寄存器（LR）后，需要写入真实的
-     * GICH 寄存器才能让 guest 收到中断。地址来自平台配置（platform.conf 的
-     * `gich` 项，QEMU virt = 0x08030000），由 platform_get_mmio 自动加上
-     * KERNEL_VMA，**不是猜测的地址**。
-     *
-     * 若平台未提供该项（返回 0）则保持「软件侧模式」：vGIC 只维护位图与
-     * 影子 LR，不写硬件——避免写入非法地址。
-     */
-    {
-        extern uintptr_t platform_get_mmio(const char *block, const char *key);
-        uintptr_t gich = platform_get_mmio("irq", "gich");
-        vmm_vgic_set_gich_base(gich);
-    }
     vm->mmio_bus = &g_mmio_bus;
 
     KLOG_INFO("[vmm] MMIO bus ready: PL011 @0x%llx, GICD @0x%llx\n",
