@@ -35,6 +35,12 @@ make PLATFORM=qemu-virt-aarch64 clean
 make help
 ```
 
+> ⚠️ **构建不跟踪头文件依赖**：`-MMD` 生成的 `.d` 没有被 `-include`
+> （见 `Makefile` 第 1188 行注释）。因此**改过任何 `.h`、或切换 `SMP=` / `LOG=` /
+> 其它 CFLAGS 之后，必须先 `make PLATFORM=<p> clean` 再全量重编**，否则会用到
+> 布局/配置不一致的旧 `.o`，产生看起来像运行期内存踩踏的"幽灵 bug"。
+> 详见 `docs/X86_64_SMP_SYSCALL_STACK_BUGFIX.md` 附录一。
+
 ### 工具链
 
 - AArch64: `aarch64-linux-musl-gcc`
@@ -93,6 +99,8 @@ avatar/
 ### 架构特定
 
 - **AArch64**: `docs/arch/aarch64/NEON_USAGE.md` - NEON 优化
+- **x86_64 SYSCALL / per-CPU 栈**: `docs/X86_64_SMP_SYSCALL_STACK_BUGFIX.md` -
+  改 `cpu_t` 布局或 SYSCALL 入口前必读（含 `%gs:` 偏移的 static_assert 约束与构建陷阱）
 
 ### 中断与上下文切换
 

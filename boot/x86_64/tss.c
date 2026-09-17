@@ -33,8 +33,10 @@ static uint8_t g_kernel_stack[16384] __attribute__((aligned(16)));
 /* ── 全局 TSS 实例（静态分配）───────────────────────────────────── */
 static tss_t g_tss[AVATAR_MAX_CPUS] __attribute__((aligned(16)));
 
-/* 对外导出的当前 RSP0（供汇编路径读取） */
-uint64_t g_x86_tss_rsp0 = 0;
+/*
+ * SYSCALL 入口（boot/x86_64/syscall_wrapper.S）不经过 TSS，直接读
+ * cpu_t::kernel_rsp0。这里保证它与本核 TSS.RSP0 始终一致。
+ */
 
 /* ── TSS 描述符结构（16 字节，GDT 中占两个 slot）───────────────── */
 static void
@@ -77,8 +79,7 @@ x86_tss_init_cpu(uint32_t cpu_id, uint64_t rsp0)
         rsp0 = (uint64_t)g_kernel_stack + sizeof(g_kernel_stack);
     }
     tss->rsp0 = rsp0;
-    if (cpu_id == 0)
-        g_x86_tss_rsp0 = tss->rsp0;
+    g_cpus[cpu_id].kernel_rsp0 = rsp0;
 
     /* I/O 位图基址设为超出 TSS 末尾（禁用 I/O 权限检查）*/
     tss->iomap_base = sizeof(tss_t);
@@ -119,6 +120,6 @@ x86_tss_set_rsp0(uint64_t rsp0)
     if (cpu_id >= AVATAR_MAX_CPUS)
         cpu_id = 0;
     g_tss[cpu_id].rsp0 = rsp0;
-    if (cpu_id == 0)
-        g_x86_tss_rsp0 = rsp0;
+    /* 同步 per-CPU 镜像：SYSCALL 入口从这里换栈，各核互不影响。 */
+    cpu_current()->kernel_rsp0 = rsp0;
 }

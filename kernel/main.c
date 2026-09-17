@@ -146,9 +146,11 @@ void kernel_main(void)
     /* Initialize IDT and LAPIC */
     KLOG_INFO("Initializing IDT + LAPIC...\n");
     exception_init();
-    /* Initialize TSS (Task State Segment for privilege switching) */
-    extern void x86_tss_init(void);
-    x86_tss_init();
+    /*
+     * TSS（特权级切换用）在 cpu_init_bsp() 之后初始化：TSS.RSP0 要同步进
+     * cpu_t::kernel_rsp0，而 cpu_init_bsp() 会把 g_cpus[0] 整个 memset 掉。
+     * IDT 不使用 IST（ist=0），所以这里晚一点设置不影响异常处理。
+     */
 #endif
 #if ARCH_RISCV64
     /* 必须在 fs_init() 之前设置 stvec，否则 ext4_mount 中的任何
@@ -198,6 +200,10 @@ void kernel_main(void)
     /* ── 初始化任务子系统 ───────────────────────────────── */
     KLOG_INFO("Initializing task subsystem...\n");
     cpu_init_bsp();          /* Phase 0：安装 BSP per-CPU 指针 */
+#if ARCH_X86_64
+    extern void x86_tss_init(void);
+    x86_tss_init();          /* 必须在 cpu_init_bsp() 之后（见上方说明） */
+#endif
     task_init();
 
 #if DRIVER_ETH_VIRTIO && !defined(RUN_GUEST_LINUX)

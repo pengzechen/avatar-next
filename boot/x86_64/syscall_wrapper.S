@@ -34,10 +34,14 @@
 .section .text
 .code64
 .extern syscall_handler
-.extern g_x86_tss_rsp0
 
-/* offsetof(cpu_t, scratch_rsp) — must match kernel/task/cpu.h */
-.equ CPU_SCRATCH_RSP, 80
+/*
+ * cpu_t 字段偏移 — 必须与 kernel/task/cpu.h 一致。
+ * 该头文件里有 static_assert 把关：偏移写错会在编译期报错，
+ * 而不是等到 SMP 下 SYSCALL 把 rq_lock 写坏才炸。
+ */
+.equ CPU_SCRATCH_RSP, 104    /* offsetof(cpu_t, scratch_rsp) */
+.equ CPU_KERNEL_RSP0, 112    /* offsetof(cpu_t, kernel_rsp0) */
 
 .section .text
 
@@ -52,9 +56,11 @@ FUNCS(syscall_entry)
     
     /* 暂存用户 RSP 到 per-CPU scratch（swapgs 后 gs = cpu_t*） */
     movq    %rsp, %gs:CPU_SCRATCH_RSP
-    
-    /* 使用调度器维护的 TSS.RSP0（每任务独立内核栈顶） */
-    movq    g_x86_tss_rsp0(%rip), %rsp
+
+    /* 换到本核当前任务的内核栈。
+     * 必须读 per-CPU 的 kernel_rsp0（本核 TSS.RSP0 的镜像）：读全局值会让
+     * 其它核的 syscall 帧落到本核正在用的任务栈上，两边互相踩踏。 */
+    movq    %gs:CPU_KERNEL_RSP0, %rsp
     
     /*
      * 2. 构建 trap_frame_t（从低到高压栈）
