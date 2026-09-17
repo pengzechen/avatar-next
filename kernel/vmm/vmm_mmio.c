@@ -5,7 +5,7 @@
  * 线性查找：设备数很少（<= MMIO_MAX_DEVICES），无需哈希。
  */
 
-#include "vmm_mmio.h"
+#include "vmm/vmm_mmio.h"
 #include "klog.h"
 #include "string.h"
 

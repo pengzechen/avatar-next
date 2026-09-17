@@ -123,7 +123,7 @@ int32_t
 memory_create_map(void *page_dir, uint64_t vaddr, uint64_t paddr, int32_t count, uint64_t perm)
 {
     extern char __kernel_start[];
-    extern char __kernel_end[];
+    // extern char __kernel_end[];
 
     uint64_t start = (uint64_t)(void *)__kernel_start;
     uint64_t end = (uint64_t)(void *)__heap_flag + HEAP_OFFSET;
@@ -293,7 +293,7 @@ pte_t *
 create_uvm(void)
 {
     extern char __kernel_start[];
-    extern char __kernel_end[];
+    // extern char __kernel_end[];
 
     pte_t *page_dir = (pte_t *)phys_to_virt(pmm_alloc_pages(g_pmm, 1));
     if (page_dir == 0)
@@ -432,7 +432,7 @@ void _destroy_page_table(pte_t *table, int32_t level)
 bool _copy_page_table(pte_t *src_table, pte_t *dst_table, int32_t level)
 {
     extern char __kernel_start[];
-    extern char __kernel_end[];
+    // extern char __kernel_end[];
 
     for (int32_t i = 0; i < 512; i++)
     {

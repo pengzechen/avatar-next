@@ -7,13 +7,13 @@
  *   - SpinNoIrq → 简单静态数组（IRQ 上下文访问，单核路径）
  */
 
-#include "vmm_irq_route.h"
+#include "vmm/vmm_irq_route.h"
 #include "klog.h"
 #include "task/task.h"
 #include "task/cpu.h"
 #include "exception.h"
 #include "irq/irq.h"      /* irq_install / irq_enable_irq / irq_disable_irq */
-#include "vmm.h"
+#include "vmm/vmm.h"
 
 /* 路由状态（对标 Rust 的 ROUTE_UNUSED/REGISTERING/REGISTERED）*/
 #define ROUTE_UNUSED       0

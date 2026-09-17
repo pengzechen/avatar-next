@@ -2,9 +2,9 @@
  * kernel/vmm/vdev/vgic/vgic.c - VM-level virtual GICv2 core.
  */
 
-#include "vmm_vgic.h"
-#include "vmm_vgicc.h"
-#include "vmm_irq_route.h"
+#include "vmm/vmm_vgic.h"
+#include "vmm/vmm_vgicc.h"
+#include "vmm/vmm_irq_route.h"
 #include "klog.h"
 #include "string.h"
 

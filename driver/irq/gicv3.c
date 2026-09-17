@@ -328,3 +328,16 @@ void gic_write_dir(uint32_t irqstat)
 {
     (void)irqstat;  /* EOImode=0: 取消已在 irq_eoi() 写 ICC_EOIR1_EL1 时完成 */
 }
+
+void gic_write_lr(int32_t n, uint32_t mask)
+{
+    (void)n;
+    (void)mask;
+}
+
+uint32_t
+gic_read_lr(int32_t n)
+{
+    (void)n;
+    return 0;
+}

@@ -8,11 +8,11 @@
  */
 
 #include "guest_loader.h"
-#include "vmm.h"
-#include "vmm_mmio.h"
-#include "vmm_vpl011.h"
-#include "vmm_vgicd.h"
-#include "vmm_vgic.h"
+#include "vmm/vmm.h"
+#include "vmm/vmm_mmio.h"
+#include "vmm/vmm_vpl011.h"
+#include "vmm/vmm_vgicd.h"
+#include "vmm/vmm_vgic.h"
 #include "vfs.h"
 #include "mm_vm.h"
 #include "pmm.h"

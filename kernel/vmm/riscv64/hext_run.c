@@ -19,16 +19,16 @@
  *         本 exit handler 两种都处理。
  */
 
-#include "vmm.h"
+#include "vmm/vmm.h"
 #include "klog.h"
 #include "string.h"
 #include "task/task.h"
 #include "riscv64/hext.h"
 #include "riscv64/sysreg.h"
 #include "riscv64/gstage.h"
-#include "vmm_mmio.h"
-#include "vmm_uart16550.h"
-#include "vmm_vplic.h"
+#include "vmm/vmm_mmio.h"
+#include "vmm/vmm_uart16550.h"
+#include "vmm/vmm_vplic.h"
 #include "mm_vm.h"      /* phys_to_virt */
 
 /* ── 汇编入口声明 ─────────────────────────────────────────── */

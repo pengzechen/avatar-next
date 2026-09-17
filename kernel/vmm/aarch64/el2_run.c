@@ -10,15 +10,15 @@
  *   其余 — 未处理，打印诊断信息后退出
  */
 
-#include "vmm.h"
+#include "vmm/vmm.h"
 #include "klog.h"
 #include "aarch64/stage2.h"
 #include "aarch64/sysreg.h"
 #include "task/task.h"
 #include "task/switch.h"
-#include "vmm_mmio.h"      /* MMIO 总线分发 */
-#include "vmm_vgic.h"      /* vGIC 中断注入 */
-#include "vmm_irq_route.h" /* 宿主 IRQ → vCPU 任务唤醒 */
+#include "vmm/vmm_mmio.h"      /* MMIO 总线分发 */
+#include "vmm/vmm_vgic.h"      /* vGIC 中断注入 */
+#include "vmm/vmm_irq_route.h" /* 宿主 IRQ → vCPU 任务唤醒 */
 
 /* ── 读取 ESR / ELR / FAR / HPFAR ────────────────────────── */
 static inline uint64_t read_esr_el2(void)   { return READ_ESR_EL2(); }

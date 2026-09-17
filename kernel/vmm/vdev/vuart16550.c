@@ -7,7 +7,7 @@
  *   - 中断（PLIC）暂未接线 → 轮询模式
  */
 
-#include "vmm_uart16550.h"
+#include "vmm/vmm_uart16550.h"
 #include "klog.h"
 #include "string.h"
 

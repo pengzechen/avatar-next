@@ -2,7 +2,7 @@
  * kernel/vmm/vdev/vgic/vgicc.c - per-vCPU GICC and GICH state.
  */
 
-#include "vmm_vgicc.h"
+#include "vmm/vmm_vgicc.h"
 #include "klog.h"
 #include "string.h"
 

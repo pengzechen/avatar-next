@@ -13,14 +13,14 @@
  * QEMU 启动需要 -enable-kvm -cpu host（KVM 硬件 VMX）。
  */
 
-#include "vmm.h"
+#include "vmm/vmm.h"
 #include "klog.h"
 #include "string.h"
 #include "task/task.h"
 #include "x86_64/vmx.h"
 #include "x86_64/ept.h"  /* EPT 二级翻译 */
-#include "vmm_mmio.h"    /* MMIO 总线 */
-#include "vmm_uart16550.h"
+#include "vmm/vmm_mmio.h"    /* MMIO 总线 */
+#include "vmm/vmm_uart16550.h"
 #include "mm_vm.h"   /* virt_to_phys */
 
 /* ── 静态存储（4KB 对齐）──────────────────────────────────── */

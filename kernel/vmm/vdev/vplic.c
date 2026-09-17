@@ -6,7 +6,7 @@
  *   - 仅支持前 64 源，context N == vCPU N
  */
 
-#include "vmm_vplic.h"
+#include "vmm/vmm_vplic.h"
 #include "klog.h"
 #include "string.h"
 

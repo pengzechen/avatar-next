@@ -2,8 +2,8 @@
  * kernel/vmm/vdev/vgic/vgicd.c - VM-owned virtual GICv2 distributor.
  */
 
-#include "vmm_vgicd.h"
-#include "vmm_irq_route.h"
+#include "vmm/vmm_vgicd.h"
+#include "vmm/vmm_irq_route.h"
 #include "klog.h"
 #include "string.h"
 

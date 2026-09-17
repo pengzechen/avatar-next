@@ -12,31 +12,33 @@
 #include "task/sched.h"
 #include "task/cpu.h"
 #include "pmm.h"
-#if !DRIVER_SDBLK_SG2002
-#include "../driver/blk/ramblk.h"
-#endif
 #include "../fs/lwext4_port/fs_init.h"
 #include "loader/elf_loader.h"
 #include "timer/timer.h"
 #include "task/switch.h"     /* arch_irq_enable */
 #include "net/net.h"
 
-#if DRIVER_ETH_VIRTIO
-#include "eth/virtio_net.h"
-#endif
 
 #if ARCH_AARCH64
 #include "irq/irq.h"
 #include "aarch64/cpu.h"
-#include "vmm.h"
+#include "vmm/vmm.h"
 #include "aarch64/stage2.h"
 #include "mm_vm.h"
 #elif ARCH_RISCV64
 #include "exception.h"
-#include "vmm.h"
+#include "vmm/vmm.h"
 #elif ARCH_X86_64
 #include "exception.h"
-#include "vmm.h"
+#include "vmm/vmm.h"
+#endif
+
+#if !DRIVER_SDBLK_SG2002
+#include "../driver/blk/ramblk.h"
+#endif
+
+#if DRIVER_ETH_VIRTIO
+#include "eth/virtio_net.h"
 #endif
 
 #if DRIVER_UART_DW
@@ -98,9 +100,6 @@ static void platform_init_runtime_drivers(void)
 #endif
 }
 
-/*
- * demo_load_busybox - 从文件系统加载并执行 busybox
- */
 static void demo_load_busybox(void *arg)
 {
     (void)arg;
@@ -112,12 +111,6 @@ static void demo_load_busybox(void *arg)
     }
 
     KLOG_INFO("[busybox_loader] Loading /busybox from filesystem...\n");
-
-#if ARCH_RISCV64
-    uint64_t satp_val;
-    __asm__ volatile("csrr %0, satp" : "=r"(satp_val));
-    KLOG_INFO("[busybox_loader] satp=0x%llx\n", satp_val);
-#endif
 
     /* 以 busybox 的 sh applet 进入交互 shell */
     char *bb_argv[] = { "sh", "-i", NULL };
@@ -146,14 +139,25 @@ static void demo_load_busybox(void *arg)
 void kernel_main(void)
 {
 #if ARCH_AARCH64
-    /*
-     * MMU 已开启（boot.S 中完成），现在运行在高虚拟地址。
-     * 将 UART 基地址切换到 TTBR1 覆盖的高虚拟地址，
-     * 使内核在任意 TTBR0（用户页表）下仍可正常输出。
-     */
     /* Keep NEON enabled for AArch64 code paths that require it. */
     aarch64_enable_neon();
 #endif
+#if ARCH_X86_64
+    /* Initialize IDT and LAPIC */
+    KLOG_INFO("Initializing IDT + LAPIC...\n");
+    exception_init();
+    /* Initialize TSS (Task State Segment for privilege switching) */
+    extern void x86_tss_init(void);
+    x86_tss_init();
+#endif
+#if ARCH_RISCV64
+    /* 必须在 fs_init() 之前设置 stvec，否则 ext4_mount 中的任何
+     * CPU 异常都会落到 M-mode (OpenSBI)，导致 hart 被重置 */
+    KLOG_INFO("Initializing exception handler...\n");
+    exception_init();
+#endif
+
+
 
     /* Initialize platform (UART, etc.) */
     platform_init();
@@ -167,14 +171,6 @@ void kernel_main(void)
     KLOG_INFO("\n");
     pmm_initialize();
 
-    /* ── 初始化文件系统 ─────────────────────────────────────────── */
-    KLOG_INFO("\n");
-#if ARCH_RISCV64
-    /* 必须在 fs_init() 之前设置 stvec，否则 ext4_mount 中的任何
-     * CPU 异常都会落到 M-mode (OpenSBI)，导致 hart 被重置 */
-    KLOG_INFO("Initializing exception handler...\n");
-    exception_init();
-#endif
 #if !DRIVER_SDBLK_SG2002
     ramblk_init();
 #endif
@@ -185,23 +181,16 @@ void kernel_main(void)
     /* ── 运行 PMM 测试 ───────────────────────────────────────── */
     /* 测试时解开下面两行注释 */
     KLOG_INFO("\n");
-#ifdef RUN_PMM_TESTS
+    #ifdef RUN_PMM_TESTS
     run_pmm_tests();
     platform_shutdown();  /* PMM 测试完成后关机，避免后续测试干扰 PMM 状态 */
-#endif
+    #endif
 
-#if ARCH_AARCH64
+    #if ARCH_AARCH64
     KLOG_INFO("=== Running VMM Tests ===\n");
     kmem_test();
     KLOG_INFO("VMM tests completed\n");
-#elif ARCH_X86_64
-    /* Initialize IDT and LAPIC */
-    KLOG_INFO("Initializing IDT + LAPIC...\n");
-    exception_init();
-    /* Initialize TSS (Task State Segment for privilege switching) */
-    extern void x86_tss_init(void);
-    x86_tss_init();
-#endif
+    #endif
 
     platform_init_runtime_drivers();
 

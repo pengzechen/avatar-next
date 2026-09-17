@@ -38,7 +38,7 @@
 #include "arch.h"
 #include "klog.h"
 #include "task/task.h"
-#include "vmm.h"
+#include "vmm/vmm.h"
 
 #if ARCH_AARCH64
 #include "aarch64/stage2.h"

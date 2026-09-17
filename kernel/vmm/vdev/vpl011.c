@@ -7,7 +7,7 @@
  *     RX 恒空、TX 直接走宿主日志。后续如需 guest 交互输入再接 RX FIFO。
  */
 
-#include "vmm_vpl011.h"
+#include "vmm/vmm_vpl011.h"
 #include "klog.h"
 #include "string.h"
 

@@ -65,4 +65,8 @@ uint32_t gicv3_iar_irqnr(uint32_t iar);
 void gic_set_ipriority(uint32_t int_id, uint32_t priority);
 void gic_write_dir(uint32_t irqstat);
 
+void gic_write_lr(int32_t n, uint32_t mask);
+uint32_t
+gic_read_lr(int32_t n);
+
 #endif // __GICV3_H__
