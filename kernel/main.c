@@ -127,7 +127,7 @@ static void demo_load_busybox(void *arg)
 
     if (rc != 0) {
         KLOG_ERROR("[busybox_loader] Failed to load /busybox: %d\n", rc);
-        KLOG_INFO("[busybox_loader] Run: ./install-apps.sh aarch64\n");
+        KLOG_INFO("[busybox_loader] Run: ./tools/install-apps.sh aarch64\n");
     }
 
     /* 任务完成 */

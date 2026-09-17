@@ -86,7 +86,7 @@ static inline int uart_ringbuf_empty(void) {
 
 ### 4. busybox applet 链接列表补全
 
-文件：[`install-apps.sh`](../install-apps.sh)
+文件：[`tools/install-apps.sh`](../tools/install-apps.sh)
 
 ```bash
 for applet in sh ls cat echo pwd mkdir rm cp mv grep find ps kill \
@@ -135,4 +135,4 @@ aarch64 / riscv64 同步编译通过（共用同一份 syscall 调度器）。
 
 ---
 **修复日期**：2026-05-17
-**涉及文件**：[`kernel/syscall/syscall.c`](../kernel/syscall/syscall.c)、[`install-apps.sh`](../install-apps.sh)
+**涉及文件**：[`kernel/syscall/syscall.c`](../kernel/syscall/syscall.c)、[`tools/install-apps.sh`](../tools/install-apps.sh)

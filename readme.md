@@ -89,12 +89,12 @@ make PLATFORM=qemu-virt-x86_64 run-fs LOG=info -j4
 > # 方式一：通过 make（推荐）
 > make PLATFORM=qemu-virt-riscv64 rootfs
 > # 方式二：通过脚本（需先 make PLATFORM=qemu-virt-riscv64 编译内核和 apps）
-> ./install-apps.sh riscv64
+> ./tools/install-apps.sh riscv64
 > ```
 
 ### 一键测试
 
-详细测试体系（apps/ 汇编加载方式、如何添加测试等）见 [tests.md](tests.md)，以下为命令速查：
+详细测试体系（apps/ 汇编加载方式、如何添加测试等）见 [docs/tests.md](docs/tests.md)，以下为命令速查：
 
 ```bash
 # pthread 测试（动态链接 musl，含锁/无锁竞争对比）

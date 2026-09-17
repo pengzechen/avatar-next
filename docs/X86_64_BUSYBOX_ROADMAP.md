@@ -291,7 +291,7 @@ x86_64-linux-musl-gcc -nostdlib -static \
 
 2. 安装到 rootfs:
    ```bash
-   ./install-apps.sh ARCH=x86_64
+   ./tools/install-apps.sh ARCH=x86_64
    ```
 
 3. 在 `kernel/main.c` 中启用 busybox 加载:

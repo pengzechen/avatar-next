@@ -2,17 +2,21 @@
 #
 # install-apps.sh - 构建 rootfs 镜像并安装应用程序（无需 sudo）
 #
-# 用法: ./install-apps.sh [ARCH=]<架构>
+# 用法: tools/install-apps.sh [ARCH=]<架构>
 #
 # 示例:
-#   ./install-apps.sh aarch64
-#   ./install-apps.sh ARCH=riscv64
+#   tools/install-apps.sh aarch64
+#   tools/install-apps.sh ARCH=riscv64
 #
 # 原理：使用 mkfs.ext4 -d <staging_dir> 直接从目录树构建 ext4 镜像，
 #       完全不需要 sudo / loop mount。
 #       需要 e2fsprogs >= 1.43（提供 mkfs.ext4 -d 选项）。
 
 set -e
+
+# 所有路径均相对仓库根，从任意目录调用都成立
+ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$ROOT_DIR"
 
 ARCH=${1:-aarch64}
 case "$ARCH" in
