@@ -17,7 +17,8 @@ endif
 LOG ?= info
 
 # QEMU vCPU 数量（用于 run / run-fs / test-*）
-# Phase 0：仅传给 QEMU，内核当前仍按单核运行（cpu_bring_up_all 是 stub）。
+# 既传给 QEMU 的 -smp，也经 -DCONFIG_SMP_CPUS 传给内核。
+# 默认 1：此时 cpu_bring_up_all() 直接返回，从核不启动，内核单核运行。
 SMP ?= 1
 ifeq ($(filter $(SMP),1 2 3 4 5 6 7 8),)
 $(error Invalid SMP value '$(SMP)'. Use SMP=1..8)
@@ -105,176 +106,105 @@ LIBC_OBJECT         := $(BUILD_DIR)/libc.o
 PLATFORM_CFG_OBJECT := $(BUILD_DIR)/platform_cfg.o
 PLATFORM_STATIC_OBJECT := $(BUILD_DIR)/platform_static.o
 
-# 内核源文件
-KERNEL_SOURCES := $(KERNEL_DIR)/main.c
-KERNEL_OBJECTS := $(KERNEL_SOURCES:$(KERNEL_DIR)/%.c=$(BUILD_DIR)/kernel_%.o)
+# ── §4a  内核源文件自动发现 ────────────────────────────────────────────────────
+# kernel/ 下所有 .c/.S 由 find 递归发现，不再逐文件列举——新增内核源文件
+# 不需要改 Makefile。
+#
+# 排除项只有两类：
+#   1. 其它架构的 mm/task/vmm 子目录（每个架构只选一套）
+#   2. kernel/vmm/vdev/ —— 它按「文件」而非目录区分架构，见下方按 ARCH 的列表
+#
+# 注意 $(filter-out) 的模式里**只有第一个 '%' 是通配符**，后面的 '%' 按字面量
+# 匹配。所以只能用「目录前缀字面量 + 单个尾部 %」的形式；
+# 写成 $(KERNEL_DIR)/%/x86_64/% 会一条都过滤不掉（已实测）。
+_KERNEL_ARCHES       := aarch64 riscv64 x86_64
+_KERNEL_ARCH_MODULES := mm task vmm
+_KERNEL_OTHER_ARCH   := $(filter-out $(ARCH),$(_KERNEL_ARCHES))
 
-# ── §4a  架构特定模块（VMM / 异常 / 上下文切换 / 用户程序）─────────────────────
-VM_C_SOURCES := $(KERNEL_DIR)/mm/pmm.c $(TESTS_DIR)/pmm_test.c $(KERNEL_DIR)/mm/vm_user.c $(KERNEL_DIR)/mm/kmalloc.c $(KERNEL_DIR)/mm/shared_page.c
-VM_C_OBJECTS := $(BUILD_DIR)/kernel_mm_pmm.o $(BUILD_DIR)/kernel_mm_pmm_test.o $(BUILD_DIR)/kernel_mm_vm_user.o $(BUILD_DIR)/kernel_mm_kmalloc.o $(BUILD_DIR)/kernel_mm_shared_page.o
+_KERNEL_EXCLUDE_DIRS := $(foreach a,$(_KERNEL_OTHER_ARCH),$(foreach m,$(_KERNEL_ARCH_MODULES),$(KERNEL_DIR)/$(m)/$(a)/)) \
+                        $(KERNEL_DIR)/vmm/vdev/
+_KERNEL_EXCLUDE_PAT  := $(addsuffix %,$(_KERNEL_EXCLUDE_DIRS))
 
-# 架构特定的 VM 模块
+# 注：$(shell ...) 的输出按空白切词，路径不能含空格（kernel/ 下当前没有）。
+_KERNEL_FOUND := $(patsubst ./%,%,$(shell find $(KERNEL_DIR) -type f \( -name '*.c' -o -name '*.S' \) 2>/dev/null | LC_ALL=C sort))
+
+# vdev 下按文件选架构；guest_loader.c 位于共享目录但只有 aarch64 编译它。
 ifeq ($(ARCH),aarch64)
-    VM_C_SOURCES += $(KERNEL_DIR)/mm/aarch64/vm_early.c
-    VM_C_OBJECTS += $(BUILD_DIR)/kernel_mm_vm_early.o
-    VM_C_SOURCES += $(KERNEL_DIR)/mm/aarch64/vmm.c
-    VM_C_OBJECTS += $(BUILD_DIR)/kernel_mm_vmm.o
-    # Stage-2 MMU
-    VM_C_SOURCES += $(KERNEL_DIR)/mm/aarch64/stage2.c
-    VM_C_OBJECTS += $(BUILD_DIR)/kernel_mm_stage2.o
-    # VMM subsystem
-    VMM_C_SOURCES := $(KERNEL_DIR)/vmm/vmm.c \
-                     $(KERNEL_DIR)/vmm/aarch64/el2_run.c \
-                     $(KERNEL_DIR)/vmm/vmm_mmio.c \
-                     $(KERNEL_DIR)/vmm/vdev/vpl011.c \
-                     $(KERNEL_DIR)/vmm/vdev/vgic/vgicd.c \
-                     $(KERNEL_DIR)/vmm/vdev/vgic/vgic.c \
-                     $(KERNEL_DIR)/vmm/vdev/vgic/vgicc.c \
-                     $(KERNEL_DIR)/vmm/vdev/irq_route.c \
-                     $(KERNEL_DIR)/vmm/guest_loader.c
-    VMM_C_OBJECTS := $(BUILD_DIR)/kernel_vmm_vmm.o \
-                     $(BUILD_DIR)/kernel_vmm_el2_run.o \
-                     $(BUILD_DIR)/kernel_vmm_mmio.o \
-                     $(BUILD_DIR)/kernel_vmm_vdev_vpl011.o \
-                     $(BUILD_DIR)/kernel_vmm_vdev_vgicd.o \
-                     $(BUILD_DIR)/kernel_vmm_vdev_vgic.o \
-                     $(BUILD_DIR)/kernel_vmm_vdev_vgicc.o \
-                     $(BUILD_DIR)/kernel_vmm_vdev_vgic_irq_route.o \
-                     $(BUILD_DIR)/kernel_vmm_guest_loader.o
-    VMM_S_SOURCES := $(KERNEL_DIR)/vmm/aarch64/el2_vmcs.S \
-                     $(KERNEL_DIR)/vmm/aarch64/vcpu_ctx.S
-    VMM_S_OBJECTS := $(BUILD_DIR)/kernel_vmm_el2_vmcs.o \
-                     $(BUILD_DIR)/kernel_vmm_vcpu_ctx.o
+    _KERNEL_VDEV_SRCS     := $(KERNEL_DIR)/vmm/vdev/vpl011.c \
+                             $(KERNEL_DIR)/vmm/vdev/irq_route.c \
+                             $(wildcard $(KERNEL_DIR)/vmm/vdev/vgic/*.c)
+    _KERNEL_ARCHONLY_SRCS := $(KERNEL_DIR)/vmm/guest_loader.c
     # guest_test.S: embedded guest program (linked into kernel binary)
-    GUEST_TEST_OBJ := $(BUILD_DIR)/apps_guest_test.o \
-                      $(BUILD_DIR)/apps_el0_loop.o
-else ifeq ($(ARCH),x86_64)
-    # x86_64 MM subsystem
-    VM_C_SOURCES += $(KERNEL_DIR)/mm/x86_64/vmm.c $(KERNEL_DIR)/mm/x86_64/ept.c
-    VM_C_OBJECTS += $(BUILD_DIR)/kernel_mm_x86_vmm.o $(BUILD_DIR)/kernel_mm_x86_ept.o
-    # x86_64 VMM subsystem
-    VMM_C_SOURCES := $(KERNEL_DIR)/vmm/vmm.c \
-                     $(KERNEL_DIR)/vmm/x86_64/vmx.c \
-                     $(KERNEL_DIR)/vmm/vmm_mmio.c \
-                     $(KERNEL_DIR)/vmm/vdev/vuart16550.c
-    VMM_C_OBJECTS := $(BUILD_DIR)/kernel_vmm_vmm.o \
-                     $(BUILD_DIR)/kernel_vmm_x86_vmx.o \
-                     $(BUILD_DIR)/kernel_vmm_mmio.o \
-                     $(BUILD_DIR)/kernel_vmm_vdev_uart16550.o
-    VMM_S_SOURCES := $(KERNEL_DIR)/vmm/x86_64/vmx_run.S
-    VMM_S_OBJECTS := $(BUILD_DIR)/kernel_vmm_x86_vmx_run.o
-    # x86_64 guest test program (linked into kernel binary)
-    GUEST_TEST_OBJ := $(BUILD_DIR)/apps_x86_guest_test.o
+    GUEST_TEST_OBJ        := $(BUILD_DIR)/apps_guest_test.o \
+                             $(BUILD_DIR)/apps_el0_loop.o
 else ifeq ($(ARCH),riscv64)
-    # RISC-V MM subsystem
-    VM_C_SOURCES += $(KERNEL_DIR)/mm/riscv64/vmm.c $(KERNEL_DIR)/mm/riscv64/gstage.c
-    VM_C_OBJECTS += $(BUILD_DIR)/kernel_mm_rv_vmm.o $(BUILD_DIR)/kernel_mm_rv_gstage.o
-    # RISC-V H-extension VMM subsystem
-    VMM_C_SOURCES := $(KERNEL_DIR)/vmm/vmm.c \
-                     $(KERNEL_DIR)/vmm/riscv64/hext_run.c \
-                     $(KERNEL_DIR)/vmm/vmm_mmio.c \
-                     $(KERNEL_DIR)/vmm/vdev/vuart16550.c \
-                     $(KERNEL_DIR)/vmm/vdev/vplic.c
-    VMM_C_OBJECTS := $(BUILD_DIR)/kernel_vmm_vmm.o \
-                     $(BUILD_DIR)/kernel_vmm_riscv_hext_run.o \
-                     $(BUILD_DIR)/kernel_vmm_mmio.o \
-                     $(BUILD_DIR)/kernel_vmm_vdev_uart16550.o \
-                     $(BUILD_DIR)/kernel_vmm_vdev_vplic.o
-    VMM_S_SOURCES := $(KERNEL_DIR)/vmm/riscv64/hext_vcpu.S
-    VMM_S_OBJECTS := $(BUILD_DIR)/kernel_vmm_riscv_hext_vcpu.o
+    _KERNEL_VDEV_SRCS     := $(KERNEL_DIR)/vmm/vdev/vuart16550.c \
+                             $(KERNEL_DIR)/vmm/vdev/vplic.c
+    _KERNEL_ARCHONLY_SRCS :=
     # RISC-V VS-mode guest test program (linked into kernel binary)
-    GUEST_TEST_OBJ := $(BUILD_DIR)/apps_riscv_guest_test.o
-else
-    VMM_C_SOURCES :=
-    VMM_C_OBJECTS :=
-    VMM_S_SOURCES :=
-    VMM_S_OBJECTS :=
-    GUEST_TEST_OBJ :=
-endif
-
-ifeq ($(ARCH),riscv64)
-    # RISC-V VM 模块（如果有的话）
-    # VM_C_SOURCES += $(KERNEL_DIR)/mm/riscv64/vm_early.c
-    # VM_C_OBJECTS += $(BUILD_DIR)/kernel_mm_vm_early.o
-endif
-
-# 架构特定的 MMU 汇编
-ifeq ($(ARCH),aarch64)
-    VM_S_SRC := $(KERNEL_DIR)/mm/aarch64/mmu.S
-    VM_EARLY_C_SRC := $(KERNEL_DIR)/mm/aarch64/vm_early.c
-else ifeq ($(ARCH),riscv64)
-    VM_S_SRC := $(KERNEL_DIR)/mm/riscv64/mmu.S
-    # VM_EARLY_C_SRC := $(KERNEL_DIR)/mm/riscv64/vm_early.c
+    GUEST_TEST_OBJ        := $(BUILD_DIR)/apps_riscv_guest_test.o
 else ifeq ($(ARCH),x86_64)
-    VM_S_SRC := $(KERNEL_DIR)/mm/x86_64/mmu.S
-    # VM_EARLY_C_SRC := $(KERNEL_DIR)/mm/x86_64/vm_early.c
+    _KERNEL_VDEV_SRCS     := $(KERNEL_DIR)/vmm/vdev/vuart16550.c
+    _KERNEL_ARCHONLY_SRCS :=
+    # x86_64 guest test program (linked into kernel binary)
+    GUEST_TEST_OBJ        := $(BUILD_DIR)/apps_x86_guest_test.o
+else
+    _KERNEL_VDEV_SRCS     :=
+    _KERNEL_ARCHONLY_SRCS :=
+    GUEST_TEST_OBJ        :=
 endif
-VM_S_OBJ := $(BUILD_DIR)/kernel_mm_mmu.o
 
-# 如果存在架构特定的 VM 早期初始化代码，添加到编译列表
-ifdef VM_EARLY_C_SRC
-    VM_C_SOURCES += $(VM_EARLY_C_SRC)
-    VM_C_OBJECTS += $(BUILD_DIR)/kernel_mm_vm_early.o
+KERNEL_SRCS := $(filter-out $(_KERNEL_EXCLUDE_PAT) $(KERNEL_DIR)/vmm/guest_loader.c,$(_KERNEL_FOUND))
+KERNEL_SRCS += $(_KERNEL_VDEV_SRCS) $(_KERNEL_ARCHONLY_SRCS)
+
+# 源路径 → 扁平对象名：kernel/mm/pmm.c → $(BUILD_DIR)/kernel_mm_pmm.o
+kobj = $(BUILD_DIR)/$(subst /,_,$(basename $(1))).o
+KERNEL_OBJECTS := $(foreach f,$(KERNEL_SRCS),$(call kobj,$(f)))
+
+# ── §4a-2  内核编译标志分组 ────────────────────────────────────────────────────
+# kernel/ 的编译标志无法按目录推导（同一目录里有些文件引用第三方头文件、
+# 有些没有），所以引用第三方头文件的文件在这里显式列出，其余一律用 CFLAGS。
+# 这些文件会带 -w（屏蔽第三方头文件自身的警告），因此名单必须准确：
+# 列入 = 该文件的警告被屏蔽，漏列 = 编译失败（include 找不到），两者都看得见。
+KERNEL_LWEXT4_SRCS := \
+    $(KERNEL_DIR)/fs/vfs/vfs.c \
+    $(KERNEL_DIR)/loader/bin_loader.c \
+    $(KERNEL_DIR)/loader/elf_loader.c \
+    $(KERNEL_DIR)/syscall/syscall.c \
+    $(KERNEL_DIR)/syscall/core/proc_lifecycle.c \
+    $(KERNEL_DIR)/syscall/fs/fd_pool.c \
+    $(KERNEL_DIR)/syscall/fs/path.c \
+    $(KERNEL_DIR)/syscall/fs/file_io.c \
+    $(KERNEL_DIR)/syscall/fs/file_ops.c \
+    $(KERNEL_DIR)/syscall/fs/file_stat.c \
+    $(KERNEL_DIR)/syscall/fs/dir.c \
+    $(KERNEL_DIR)/syscall/fs/ioctl.c \
+    $(KERNEL_DIR)/syscall/fs/pipe.c \
+    $(KERNEL_DIR)/syscall/fs/pty.c \
+    $(KERNEL_DIR)/syscall/io/poll.c \
+    $(KERNEL_DIR)/syscall/io/select.c \
+    $(KERNEL_DIR)/syscall/io/epoll.c \
+    $(KERNEL_DIR)/syscall/mm/mmap.c
+
+# guest_loader.c 位于共享目录但仅 aarch64 编译（见 §4a 白名单），且引用 lwext4。
+ifeq ($(ARCH),aarch64)
+KERNEL_LWEXT4_SRCS += $(KERNEL_DIR)/vmm/guest_loader.c
 endif
 
-# task 模块源文件
-TASK_C_SOURCES := $(KERNEL_DIR)/task/task.c $(KERNEL_DIR)/task/sched.c $(KERNEL_DIR)/task/mutex.c $(KERNEL_DIR)/task/exec.c $(KERNEL_DIR)/task/cpu.c $(KERNEL_DIR)/task/preempt.c
-TASK_C_OBJECTS := $(BUILD_DIR)/kernel_task_task.o $(BUILD_DIR)/kernel_task_sched.o $(BUILD_DIR)/kernel_task_mutex.o $(BUILD_DIR)/kernel_task_exec.o $(BUILD_DIR)/kernel_task_cpu.o $(BUILD_DIR)/kernel_task_preempt.o
+# kernel/net/** 全部引用 lwIP，按目录自动派生，将来新增文件不会漏。
+KERNEL_LWIP_SRCS := $(filter $(KERNEL_DIR)/net/%,$(KERNEL_SRCS))
 
-# loader 模块源文件
-LOADER_C_SOURCES := $(KERNEL_DIR)/loader/bin_loader.c $(KERNEL_DIR)/loader/elf_loader.c $(KERNEL_DIR)/loader/elf_image.c
-LOADER_C_OBJECTS := $(BUILD_DIR)/kernel_loader_bin_loader.o $(BUILD_DIR)/kernel_loader_elf_loader.o $(BUILD_DIR)/kernel_loader_elf_image.o
-
-# syscall 模块源文件
-SYSCALL_C_SOURCES := $(KERNEL_DIR)/syscall/syscall.c \
-                     $(KERNEL_DIR)/syscall/core/futex.c \
-                     $(KERNEL_DIR)/syscall/core/proc_lifecycle.c \
-                     $(KERNEL_DIR)/syscall/core/proc_ids.c \
-                     $(KERNEL_DIR)/syscall/core/sched.c \
-                     $(KERNEL_DIR)/syscall/core/signal.c \
-                     $(KERNEL_DIR)/syscall/fs/fd_pool.c \
-                     $(KERNEL_DIR)/syscall/fs/path.c \
-                     $(KERNEL_DIR)/syscall/fs/tty.c \
-                     $(KERNEL_DIR)/syscall/fs/file_io.c \
-                     $(KERNEL_DIR)/syscall/fs/file_ops.c \
-                     $(KERNEL_DIR)/syscall/fs/file_stat.c \
-                     $(KERNEL_DIR)/syscall/fs/dir.c \
-                     $(KERNEL_DIR)/syscall/fs/ioctl.c \
-                     $(KERNEL_DIR)/syscall/fs/pipe.c \
-                     $(KERNEL_DIR)/syscall/fs/pty.c \
-                     $(KERNEL_DIR)/syscall/io/poll.c \
-                     $(KERNEL_DIR)/syscall/io/select.c \
-                     $(KERNEL_DIR)/syscall/io/epoll.c \
-                     $(KERNEL_DIR)/syscall/mm/brk.c \
-                     $(KERNEL_DIR)/syscall/mm/mmap.c \
-                     $(KERNEL_DIR)/syscall/mm/pmap_compat.c \
-                     $(KERNEL_DIR)/syscall/net/ksocket.c \
+# 这两个同时引用 lwIP 与 lwext4：
+# ksocket.c → syscall/fs/fd_pool.h → include/vfs.h:14 → #include <ext4.h>
+KERNEL_LWIPX_SRCS := $(KERNEL_DIR)/syscall/net/ksocket.c \
                      $(KERNEL_DIR)/syscall/net/sock_syscall.c
-SYSCALL_C_OBJECTS := $(BUILD_DIR)/kernel_syscall_syscall.o \
-                     $(BUILD_DIR)/kernel_syscall_core_futex.o \
-                     $(BUILD_DIR)/kernel_syscall_core_proc_lifecycle.o \
-                     $(BUILD_DIR)/kernel_syscall_core_proc_ids.o \
-                     $(BUILD_DIR)/kernel_syscall_core_sched.o \
-                     $(BUILD_DIR)/kernel_syscall_core_signal.o \
-                     $(BUILD_DIR)/kernel_syscall_fs_fd_pool.o \
-                     $(BUILD_DIR)/kernel_syscall_fs_path.o \
-                     $(BUILD_DIR)/kernel_syscall_fs_tty.o \
-                     $(BUILD_DIR)/kernel_syscall_fs_file_io.o \
-                     $(BUILD_DIR)/kernel_syscall_fs_file_ops.o \
-                     $(BUILD_DIR)/kernel_syscall_fs_file_stat.o \
-                     $(BUILD_DIR)/kernel_syscall_fs_dir.o \
-                     $(BUILD_DIR)/kernel_syscall_fs_ioctl.o \
-                     $(BUILD_DIR)/kernel_syscall_fs_pipe.o \
-                     $(BUILD_DIR)/kernel_syscall_fs_pty.o \
-                     $(BUILD_DIR)/kernel_syscall_io_poll.o \
-                     $(BUILD_DIR)/kernel_syscall_io_select.o \
-                     $(BUILD_DIR)/kernel_syscall_io_epoll.o \
-                     $(BUILD_DIR)/kernel_syscall_mm_brk.o \
-                     $(BUILD_DIR)/kernel_syscall_mm_mmap.o \
-                     $(BUILD_DIR)/kernel_syscall_mm_pmap_compat.o \
-                     $(BUILD_DIR)/kernel_syscall_net_ksocket.o \
-                     $(BUILD_DIR)/kernel_syscall_net_sock_syscall.o
-TASK_S_OBJ := $(BUILD_DIR)/task_switch.o
+
+KERNEL_PLAIN_SRCS := $(filter-out $(KERNEL_LWEXT4_SRCS) $(KERNEL_LWIP_SRCS) $(KERNEL_LWIPX_SRCS),$(KERNEL_SRCS))
+
+# 分组完整性断言：漏一个或重一个都当场报错，而不是静默少编一个文件。
+ifneq ($(words $(KERNEL_SRCS)),$(words $(KERNEL_PLAIN_SRCS) $(KERNEL_LWEXT4_SRCS) $(KERNEL_LWIP_SRCS) $(KERNEL_LWIPX_SRCS)))
+$(error kernel source grouping mismatch: $(words $(KERNEL_SRCS)) sources vs $(words $(KERNEL_PLAIN_SRCS) $(KERNEL_LWEXT4_SRCS) $(KERNEL_LWIP_SRCS) $(KERNEL_LWIPX_SRCS)) grouped. Check KERNEL_LWEXT4_SRCS / KERNEL_LWIP*_SRCS)
+endif
 ifeq ($(ARCH),aarch64)
 TASK_USER_TEST_OBJ := $(BUILD_DIR)/user_test.o
 TASK_USER_HELLO_OBJ := $(BUILD_DIR)/hello.o
@@ -383,7 +313,6 @@ ifeq ($(ARCH),x86_64)
     CFLAGS  += -mno-mmx -mno-sse
     LDFLAGS := -nostdlib -nostartfiles -nodefaultlibs -no-pie
     LDFLAGS += -Wl,-z,max-page-size=0x1000
-    TARGET  := $(BUILD_DIR)/spinlock_x86_64.a
     KLOG_TARGET := $(BUILD_DIR)/libklog_x86_64.a
     KERNEL_TARGET := $(BUILD_DIR)/kernel_x86_64.elf
     KERNEL_BIN    := $(BUILD_DIR)/kernel_x86_64.bin
@@ -407,7 +336,6 @@ else ifeq ($(ARCH),aarch64)
     CFLAGS  += -mgeneral-regs-only  # 只使用通用寄存器，禁用 SIMD/FP
     CFLAGS  += -mno-outline-atomics  # freestanding：禁止 GCC outline atomics 调用 libgcc 帮助函数
     CFLAGS  += -ffreestanding -fno-builtin  # 禁用内置函数和标准库
-    TARGET  := $(BUILD_DIR)/spinlock_aarch64.a
     KLOG_TARGET := $(BUILD_DIR)/libklog_aarch64.a
     KERNEL_TARGET := $(BUILD_DIR)/kernel_aarch64.elf
     KERNEL_BIN    := $(BUILD_DIR)/kernel_aarch64.bin
@@ -434,7 +362,6 @@ else ifeq ($(ARCH),riscv64)
     # -no-pie：让链接器输出非 PIE 静态可执行文件，避免生成
     # R_RISCV_RELATIVE 重定位条目（裸机内核无动态链接器处理它们）
     LDFLAGS := -no-pie
-    TARGET  := $(BUILD_DIR)/spinlock_riscv64.a
     KLOG_TARGET := $(BUILD_DIR)/libklog_riscv64.a
     KERNEL_TARGET := $(BUILD_DIR)/kernel_riscv64.elf
     KERNEL_BIN    := $(BUILD_DIR)/kernel_riscv64.bin
@@ -524,20 +451,16 @@ NPU ?= $(DEV_NPU_TYPE)
 ifeq ($(NPU),rknpu)
     DRIVER_NPU_SRCS := driver/npu/rknpu.c driver/npu/rkpm.c
     CFLAGS          += -DDRIVER_NPU_RKNPU=1
-    DRIVER_NPU_OBJS := $(BUILD_DIR)/drv_npu_rknpu.o $(BUILD_DIR)/drv_npu_rkpm.o
 else
     DRIVER_NPU_SRCS :=
-    DRIVER_NPU_OBJS :=
 endif
 
 TPU ?= $(DEV_TPU_TYPE)
 ifeq ($(TPU),cvitpu)
     DRIVER_TPU_SRCS := driver/tpu/cvi_tpu.c
     CFLAGS          += -DDRIVER_TPU_CVITPU=1
-    DRIVER_TPU_OBJS := $(BUILD_DIR)/drv_tpu_cvi_tpu.o
 else
     DRIVER_TPU_SRCS :=
-    DRIVER_TPU_OBJS :=
 endif
 
 # ── §6c  网络驱动（ETH）─────────────────────────────────────────────────────────
@@ -548,62 +471,61 @@ ifeq ($(ETH),virtio)
         $(error ETH=virtio currently supports ARCH=riscv64, ARCH=aarch64 or ARCH=x86_64)
     endif
     CFLAGS          += -DDRIVER_ETH_VIRTIO=1
-    DRIVER_ETH_OBJS := $(BUILD_DIR)/drv_eth/virtio_net.o
+    DRIVER_ETH_SRCS := driver/eth/virtio_net.c
 else ifeq ($(ETH),none)
-    DRIVER_ETH_OBJS :=
+    DRIVER_ETH_SRCS :=
 else ifeq ($(ETH),)
-    DRIVER_ETH_OBJS :=
+    DRIVER_ETH_SRCS :=
 else
     $(error Invalid ETH. Use: none or virtio)
 endif
 
 # ── §6e  DRIVER_OBJECTS 最终组装 ────────────────────────────────────────────────
-# 在所有驱动选择块执行完毕后，统一从各驱动变量中收集目标文件。
-DRIVER_OBJECTS := $(patsubst driver/%.c,$(BUILD_DIR)/drv_%.o,$(DRIVER_UART_SRC))
-ifneq ($(strip $(DRIVER_IRQ_SRC)),)
-ifeq ($(DRIVER_IRQ_SRC),driver/irq/gicv2.c)
-	DRIVER_OBJECTS += $(BUILD_DIR)/gicv2.o
-else ifeq ($(DRIVER_IRQ_SRC),driver/irq/gicv3.c)
-	DRIVER_OBJECTS += $(BUILD_DIR)/gicv3.o
-endif
-endif
-ifeq ($(ARCH),riscv64)
-	DRIVER_OBJECTS += $(BUILD_DIR)/plic.o
-endif
-ifneq ($(strip $(DRIVER_TIMER_SRC)),)
-	DRIVER_OBJECTS += $(BUILD_DIR)/timer.o
-endif
-ifeq ($(DEV_NEED_LAPIC),1)
-	DRIVER_OBJECTS += $(BUILD_DIR)/lapic.o
-endif
-ifneq ($(strip $(DRIVER_NPU_OBJS)),)
-	DRIVER_OBJECTS += $(DRIVER_NPU_OBJS)
-endif
-ifneq ($(strip $(DRIVER_TPU_OBJS)),)
-	DRIVER_OBJECTS += $(DRIVER_TPU_OBJS)
-endif
-ifneq ($(strip $(DRIVER_ETH_OBJS)),)
-	DRIVER_OBJECTS += $(DRIVER_ETH_OBJS)
-endif
-# ── §6e  辅助驱动（ION / SDMMC）────────────────────────────────────────────────
+# 在所有驱动选择块执行完毕后，按「源文件 → $(BUILD_DIR)/driver/<文件名>.o」统一
+# 映射。原先三套命名混用（drv_uart/x.o、gicv2.o、drv_npu_x.o），现在只有一个
+# 平铺的 driver/ 目录。driver/ 下各文件名互不重复，展平不会碰撞。
+#
+# 注意 pattern rule 做不到展平：GNU Make 的 '%' 会匹配 '/'，
+# $(BUILD_DIR)/driver/%.o: driver/%.c 会把 driver/irq/gicv2.c 映射成
+# driver/irq/gicv2.o（子目录被原样带过去）。规则由 §11c 用 $(eval) 逐文件生成。
+_drv_obj = $(BUILD_DIR)/driver/$(notdir $(basename $(1))).o
+
+# ── §6e-1  辅助驱动（ION / SDMMC）──────────────────────────────────────────────
 # Ion 内存分配器（当 TPU=cvitpu 时自动启用；也可独立启用 ION=1）
 ION ?= $(if $(filter cvitpu,$(TPU)),1,0)
+DRIVER_ION_SRCS :=
 ifeq ($(ION),1)
     CFLAGS           += -DDRIVER_ION=1
-    DRIVER_ION_OBJS  := $(BUILD_DIR)/drv_ion_ion.o
-    DRIVER_OBJECTS   += $(DRIVER_ION_OBJS)
+    DRIVER_ION_SRCS  := driver/ion/ion.c
 endif
 
-# SG2002 真机固定从 SD 卡使用 rootfs。
+# ramblk 始终构建（rootfs 的 ramblk0 块设备）；SG2002 真机另加 SD 卡块设备。
+DRIVER_BLK_SRCS := driver/blk/ramblk.c
 ifeq ($(PLATFORM),sg2002-riscv64)
     CFLAGS              += -DDRIVER_SDBLK_SG2002=1
-    DRIVER_OBJECTS      += $(BUILD_DIR)/drv_blk_sdblk.o
+    DRIVER_BLK_SRCS     += driver/blk/sdblk.c
 endif
+
+# ── §6e-2  按编译标志分组（各组标志与重组前逐字一致）─────────────────────────
+DRIVER_SRCS_CFLAGS := $(DRIVER_UART_SRC) $(DRIVER_IRQ_SRC) $(DRIVER_TIMER_SRC) \
+                      $(DRIVER_NPU_SRCS) $(DRIVER_ETH_SRCS) \
+                      $(if $(filter 1,$(DEV_NEED_LAPIC)),driver/irq/lapic.c)
+DRIVER_SRCS_PLIC   := $(if $(filter riscv64,$(ARCH)),driver/irq/plic.c)
+DRIVER_SRCS_TPU    := $(DRIVER_TPU_SRCS)
+DRIVER_SRCS_ION    := $(DRIVER_ION_SRCS)
+DRIVER_SRCS_BLK    := $(DRIVER_BLK_SRCS)
+
+DRIVER_SRCS := $(strip $(DRIVER_SRCS_CFLAGS) $(DRIVER_SRCS_PLIC) $(DRIVER_SRCS_TPU) \
+                       $(DRIVER_SRCS_ION) $(DRIVER_SRCS_BLK))
+DRIVER_OBJECTS := $(foreach f,$(DRIVER_SRCS),$(call _drv_obj,$(f)))
 
 CFLAGS  += -MMD -MP
 
 # ─── §7  构建变体 ─────────────────────────────────────────────────────────────
-# VMM_TEST=1：编译 RUN_VMM_TEST，跳过 busybox，运行三线程切换测试
+# 三个变体互斥，优先级 GUEST_LINUX > VMM_TEST > NGINX_TEST > normal：
+#   VMM_TEST=1    ：定义 RUN_VMM_TEST，跳过 busybox，运行三线程切换测试
+#   GUEST_LINUX=1 ：定义 RUN_GUEST_LINUX，从 rootfs 加载并启动 Linux guest
+#   NGINX_TEST=1  ：定义 RUN_NGINX_TEST，网络栈专供 nginx 压测（无对应 target）
 # 新增测试时仿照此模式，同时在 _BUILD_VARIANT 里加一个唯一标识。
 VMM_TEST ?= 0
 NGINX_TEST ?= 0
@@ -641,14 +563,6 @@ LWEXT4_PORT_DIR := $(FS_DIR)/lwext4_port
 LWIP_DIR      := $(THIRD_PARTY_DIR)/lwip
 LWIP_PORT_DIR := $(KERNEL_DIR)/net/lwip_port
 
-NET_OBJS := $(BUILD_DIR)/kernel_net_netdev.o \
-            $(BUILD_DIR)/kernel_net_net.o \
-            $(BUILD_DIR)/kernel_net_dhcp_server.o \
-            $(BUILD_DIR)/kernel_net_tcp_echo.o \
-            $(BUILD_DIR)/kernel_net_webcam_httpd.o \
-            $(BUILD_DIR)/kernel_net_http_server.o \
-            $(BUILD_DIR)/kernel_net_lwip_port_netif_avatar.o \
-            $(BUILD_DIR)/kernel_net_lwip_port_sys_arch.o
 
 LWIP_CORE_SRCS := $(LWIP_DIR)/src/core/init.c \
                   $(LWIP_DIR)/src/core/def.c \
@@ -689,8 +603,8 @@ LWEXT4_SRCS     := $(wildcard $(LWEXT4_DIR)/src/*.c)
 LWEXT4_OBJS     := $(patsubst $(LWEXT4_DIR)/src/%.c,$(THIRD_PARTY_BUILD_DIR)/lwext4_%.o,$(LWEXT4_SRCS))
 
 # lwext4 移植胶水代码（属于本项目，使用 LWEXT4_CFLAGS）
+# 注：driver/blk/ramblk.c 也是同一组标志，但它是驱动，归 §6e 的 DRIVER_OBJECTS。
 LWEXT4_PORT_OBJS := $(BUILD_DIR)/lwext4_port_kmalloc.o \
-                   $(BUILD_DIR)/drv_blk_ramblk.o \
                    $(BUILD_DIR)/lwext4_port_fs_init.o
 
 # lwext4 专用编译标志（在通用 CFLAGS 基础上添加）
@@ -729,10 +643,10 @@ endif
 # ROOTFS_SIZE_MB / ROOTFS_PHYS_ADDR 来自自动生成的 $(MEM_LAYOUT_MK)
 QEMU_ROOTFS_FLAGS = -device loader,file=$(ROOTFS_IMG),addr=$(ROOTFS_PHYS_ADDR),force-raw=on
 
-# ─── §11  顶层目标声明 ───────────────────────────────────────────────────────────
+# ─── §10  顶层目标声明 ───────────────────────────────────────────────────────────
 .PHONY: all clean clean-all help klog kernel run run-net rootfs run-fs test-pthread test-mutex test-vmm test-guest-linux test-ltp epoll-perf test-epoll-perf
 
-all: $(TARGET) klog
+all: klog
 
 kernel: | kernel_clean
 kernel: $(KERNEL_BIN)
@@ -746,15 +660,13 @@ klog: $(KLOG_TARGET)
 $(BUILD_DIR):
 	$(MKDIR) $(BUILD_DIR)
 
-$(TARGET): $(OBJECTS) | $(BUILD_DIR)
-	$(AR) rcs $@ $^
 
 $(KLOG_TARGET): $(KLOG_OBJECT) | $(BUILD_DIR)
 	$(AR) rcs $@ $^
 
-# ─── §12  构建规则 ───────────────────────────────────────────────────────────────
+# ─── §11  构建规则 ───────────────────────────────────────────────────────────────
 
-# ── §12a  库与通用规则 ───────────────────────────────────────────────────────
+# ── §11a  库与通用规则 ───────────────────────────────────────────────────────
 $(BUILD_DIR)/klog.o: $(LIB_DIR)/klog.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
@@ -767,9 +679,20 @@ $(BUILD_DIR)/string.o: $(LIB_DIR)/string.c | $(BUILD_DIR)
 $(BUILD_DIR)/libc.o: $(LIB_DIR)/libc.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-# ── §12b  内核 / 任务 / 加载器 / 系统调用规则 ──────────────────────────────────
-$(BUILD_DIR)/kernel_%.o: $(KERNEL_DIR)/%.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
+# ── §11b  内核 / 测试 / 平台 / 启动规则 ────────────────────────────────────────
+
+# 内核源文件的编译规则由 §4a 发现出的列表批量生成，不再逐文件手写。
+# 标志参数必须写成 $$(...)：LWEXT4_CFLAGS / LWIP_CFLAGS 定义在 §8，晚于 §4，
+# 用单个 $ 会在本行展开时冻结成空字符串。
+define KERNEL_RULE
+$(call kobj,$(1)): $(1) | $(BUILD_DIR)
+	$$(CC) $(2) -c $$< -o $$@
+endef
+
+$(foreach f,$(KERNEL_PLAIN_SRCS),$(eval $(call KERNEL_RULE,$(f),$$(CFLAGS))))
+$(foreach f,$(KERNEL_LWEXT4_SRCS),$(eval $(call KERNEL_RULE,$(f),$$(LWEXT4_CFLAGS))))
+$(foreach f,$(KERNEL_LWIP_SRCS),$(eval $(call KERNEL_RULE,$(f),$$(LWIP_CFLAGS))))
+$(foreach f,$(KERNEL_LWIPX_SRCS),$(eval $(call KERNEL_RULE,$(f),$$(LWIP_CFLAGS) -I$$(LWEXT4_DIR)/include -I$$(LWEXT4_PORT_DIR))))
 
 $(BUILD_DIR)/tests_%.o: $(TESTS_DIR)/%.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -781,7 +704,24 @@ $(BUILD_DIR)/platform_%.o: $(PLATFORM_DIR)/%.c | $(BUILD_DIR)
 $(BUILD_DIR)/boot_%.o: $(BOOT_DIR)/$(ARCH)/%.S | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-# ── §12c  启动 / 异常 / 驱动规则 ────────────────────────────────────────────────
+# ── §11c  启动 / 异常 / 驱动规则 ────────────────────────────────────────────────
+
+# 驱动源文件的编译规则由 §6e 分好的组批量生成，统一产出到 $(BUILD_DIR)/driver/。
+# 标志参数必须写成 $$(...)：LWEXT4_CFLAGS 定义在 §8，晚于 §6e。
+$(BUILD_DIR)/driver:
+	$(MKDIR) $@
+
+define DRIVER_RULE
+$(call _drv_obj,$(1)): $(1) | $(BUILD_DIR)/driver
+	$$(CC) $(2) -c $$< -o $$@
+endef
+
+$(foreach f,$(DRIVER_SRCS_CFLAGS),$(eval $(call DRIVER_RULE,$(f),$$(CFLAGS))))
+$(foreach f,$(DRIVER_SRCS_PLIC),  $(eval $(call DRIVER_RULE,$(f),$$(CFLAGS) -Idriver)))
+$(foreach f,$(DRIVER_SRCS_TPU),   $(eval $(call DRIVER_RULE,$(f),$$(CFLAGS) -Idriver/tpu)))
+$(foreach f,$(DRIVER_SRCS_ION),   $(eval $(call DRIVER_RULE,$(f),$$(CFLAGS) -Idriver/ion -Ikernel/mm)))
+$(foreach f,$(DRIVER_SRCS_BLK),   $(eval $(call DRIVER_RULE,$(f),$$(LWEXT4_CFLAGS) -Idriver)))
+
 $(BUILD_DIR)/exception_asm.o: $(BOOT_DIR)/aarch64/exception.S | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
@@ -808,214 +748,47 @@ $(BUILD_DIR)/kernel_syscall_entry.o: $(BOOT_DIR)/x86_64/syscall_wrapper.S | $(BU
 $(BUILD_DIR)/x86_tss.o: $(BOOT_DIR)/x86_64/tss.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-# LAPIC 驱动编译规则（x86_64）
-$(BUILD_DIR)/lapic.o: driver/irq/lapic.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-# GIC 和 timer 驱动编译规则（AArch64）
-$(BUILD_DIR)/gicv2.o: driver/irq/gicv2.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/gicv3.o: driver/irq/gicv3.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/plic.o: driver/irq/plic.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -Idriver -c $< -o $@
-
-$(BUILD_DIR)/timer.o: driver/timer/timer.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-# NPU 驱动编译规则
-$(BUILD_DIR)/drv_npu_%.o: driver/npu/%.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/drv_tpu_%.o: driver/tpu/%.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -Idriver/tpu -c $< -o $@
-
-$(BUILD_DIR)/drv_ion_%.o: driver/ion/%.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -Idriver/ion -Ikernel/mm -c $< -o $@
-
-# SD 块设备（包含 lwext4 接口，使用 LWEXT4_CFLAGS）
-$(BUILD_DIR)/drv_blk_sdblk.o: driver/blk/sdblk.c | $(BUILD_DIR)
-	$(CC) $(LWEXT4_CFLAGS) -Idriver -c $< -o $@
-
-# kernel fs core — 始终构建
-KERNEL_FS_OBJS := $(BUILD_DIR)/kernel_fs_vfs.o
-
-# PseudoFS（虚拟文件系统 /dev /proc /sys）— 始终构建
-PSEUDOFS_OBJS := $(BUILD_DIR)/pseudofs_pseudofs.o \
-                 $(BUILD_DIR)/pseudofs_dev.o \
-                 $(BUILD_DIR)/pseudofs_dir.o \
-                 $(BUILD_DIR)/pseudofs_proc.o \
-                 $(BUILD_DIR)/pseudofs_util.o
-
-# Most kernel objects are compiled with platform-derived CFLAGS
-# (PLATFORM_*, DRIVER_*, DEVICE_*, memory layout).  The generator writes these
-# files only when contents change, so this catches real platform switches
-# without forcing recompilation on every make invocation.
+# ── §11c-1  平台配置依赖 ───────────────────────────────────────────────────────
+# 内核对象多数用平台派生的 CFLAGS 编译（PLATFORM_* / DRIVER_* / DEVICE_* / 内存布局）。
+# platform.mk 只在内容变化时才被 gen_platform.py 重写，所以把对象挂到它上面
+# 可以精确捕捉「真的换了平台」，而不会每次 make 都全量重编。
 PLATFORM_CONFIG_DEPS := $(PLATFORM_MK) $(_PLATFORM_CONF)
-$(BOOT_OBJECTS) $(KERNEL_OBJECTS) $(NET_OBJS) $(TASK_C_OBJECTS) $(TASK_S_OBJ) \
+$(BOOT_OBJECTS) $(KERNEL_OBJECTS) \
+$(PMM_TEST_OBJECT) \
 $(TASK_USER_TEST_OBJ) $(TASK_USER_HELLO_OBJ) $(TASK_USER_TESTEXECVE_OBJ) \
-$(LOADER_C_OBJECTS) $(SYSCALL_C_OBJECTS) \
-$(VM_C_OBJECTS) $(VM_S_OBJ) $(VMM_C_OBJECTS) $(VMM_S_OBJECTS) \
 $(GUEST_TEST_OBJ) $(TESTS_OBJECTS) $(PLATFORM_OBJECTS) $(DRIVER_OBJECTS) \
 $(EXCEPTION_OBJECTS) $(KLOG_OBJECT) $(VSNPRINTF_OBJECT) $(STRING_OBJECT) \
-$(LIBC_OBJECT) $(BITMAP_OBJECT) $(PLATFORM_CFG_OBJECT) $(PLATFORM_STATIC_OBJECT) $(LWEXT4_OBJS) $(LWEXT4_PORT_OBJS) $(KERNEL_FS_OBJS) \
-$(PSEUDOFS_OBJS) $(LWIP_OBJS): $(PLATFORM_CONFIG_DEPS)
+$(LIBC_OBJECT) $(BITMAP_OBJECT) $(PLATFORM_CFG_OBJECT) $(PLATFORM_STATIC_OBJECT) $(LWEXT4_OBJS) $(LWEXT4_PORT_OBJS) \
+$(LWIP_OBJS): $(PLATFORM_CONFIG_DEPS)
 
-$(BUILD_DIR)/kernel_fs_vfs.o: $(KERNEL_DIR)/fs/vfs/vfs.c | $(BUILD_DIR)
-	$(CC) $(LWEXT4_CFLAGS) -Idriver -Ikernel -Ikernel/mm -c $< -o $@
 
-$(BUILD_DIR)/pseudofs_pseudofs.o: $(KERNEL_DIR)/fs/pseudofs/pseudofs.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -Idriver -Ikernel -Ikernel/mm -c $< -o $@
-
-$(BUILD_DIR)/pseudofs_util.o: $(KERNEL_DIR)/fs/pseudofs/util.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -Idriver -Ikernel -Ikernel/mm -c $< -o $@
-
-$(BUILD_DIR)/pseudofs_proc.o: $(KERNEL_DIR)/fs/pseudofs/proc.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -Idriver -Ikernel -Ikernel/mm -c $< -o $@
-
-$(BUILD_DIR)/pseudofs_dir.o: $(KERNEL_DIR)/fs/pseudofs/dir.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -Idriver -Ikernel -Ikernel/mm -c $< -o $@
-
-$(BUILD_DIR)/pseudofs_dev.o: $(KERNEL_DIR)/fs/pseudofs/dev.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -Idriver -Ikernel -Ikernel/mm -c $< -o $@
-
-$(BUILD_DIR)/kernel_net_lwip_port_%.o: $(KERNEL_DIR)/net/lwip_port/%.c | $(BUILD_DIR)
-	@mkdir -p $(dir $@)
-	$(CC) $(LWIP_CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_net_%.o: $(KERNEL_DIR)/net/%.c | $(BUILD_DIR)
-	@mkdir -p $(dir $@)
-	$(CC) $(LWIP_CFLAGS) -c $< -o $@
-
-# 驱动编译规则
-$(BUILD_DIR)/drv_%.o: driver/%.c | $(BUILD_DIR)
-	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-# task 模块编译规则
-$(BUILD_DIR)/kernel_task_task.o: $(KERNEL_DIR)/task/task.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_task_sched.o: $(KERNEL_DIR)/task/sched.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_task_mutex.o: $(KERNEL_DIR)/task/mutex.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_task_cpu.o: $(KERNEL_DIR)/task/cpu.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_task_preempt.o: $(KERNEL_DIR)/task/preempt.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_task_exec.o: $(KERNEL_DIR)/task/exec.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/task_switch.o: $(TASK_S_SRC) | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-# loader 模块编译规则
-$(BUILD_DIR)/kernel_loader_bin_loader.o: $(KERNEL_DIR)/loader/bin_loader.c | $(BUILD_DIR)
-	$(CC) $(LWEXT4_CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_loader_elf_loader.o: $(KERNEL_DIR)/loader/elf_loader.c | $(BUILD_DIR)
-	$(CC) $(LWEXT4_CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_loader_elf_image.o: $(KERNEL_DIR)/loader/elf_image.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-# syscall 模块编译规则
-$(BUILD_DIR)/kernel_syscall_syscall.o: $(KERNEL_DIR)/syscall/syscall.c | $(BUILD_DIR)
-	$(CC) $(LWEXT4_CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_syscall_core_futex.o: $(KERNEL_DIR)/syscall/core/futex.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_syscall_core_proc_lifecycle.o: $(KERNEL_DIR)/syscall/core/proc_lifecycle.c | $(BUILD_DIR)
-	$(CC) $(LWEXT4_CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_syscall_core_proc_ids.o: $(KERNEL_DIR)/syscall/core/proc_ids.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_syscall_core_sched.o: $(KERNEL_DIR)/syscall/core/sched.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_syscall_core_signal.o: $(KERNEL_DIR)/syscall/core/signal.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_syscall_fs_fd_pool.o: $(KERNEL_DIR)/syscall/fs/fd_pool.c | $(BUILD_DIR)
-	$(CC) $(LWEXT4_CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_syscall_fs_path.o: $(KERNEL_DIR)/syscall/fs/path.c | $(BUILD_DIR)
-	$(CC) $(LWEXT4_CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_syscall_fs_tty.o: $(KERNEL_DIR)/syscall/fs/tty.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_syscall_fs_file_io.o: $(KERNEL_DIR)/syscall/fs/file_io.c | $(BUILD_DIR)
-	$(CC) $(LWEXT4_CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_syscall_fs_file_ops.o: $(KERNEL_DIR)/syscall/fs/file_ops.c | $(BUILD_DIR)
-	$(CC) $(LWEXT4_CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_syscall_fs_file_stat.o: $(KERNEL_DIR)/syscall/fs/file_stat.c | $(BUILD_DIR)
-	$(CC) $(LWEXT4_CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_syscall_fs_dir.o: $(KERNEL_DIR)/syscall/fs/dir.c | $(BUILD_DIR)
-	$(CC) $(LWEXT4_CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_syscall_fs_ioctl.o: $(KERNEL_DIR)/syscall/fs/ioctl.c | $(BUILD_DIR)
-	$(CC) $(LWEXT4_CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_syscall_fs_pipe.o: $(KERNEL_DIR)/syscall/fs/pipe.c | $(BUILD_DIR)
-	$(CC) $(LWEXT4_CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_syscall_fs_pty.o: $(KERNEL_DIR)/syscall/fs/pty.c | $(BUILD_DIR)
-	$(CC) $(LWEXT4_CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_syscall_io_poll.o: $(KERNEL_DIR)/syscall/io/poll.c | $(BUILD_DIR)
-	$(CC) $(LWEXT4_CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_syscall_io_select.o: $(KERNEL_DIR)/syscall/io/select.c | $(BUILD_DIR)
-	$(CC) $(LWEXT4_CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_syscall_io_epoll.o: $(KERNEL_DIR)/syscall/io/epoll.c | $(BUILD_DIR)
-	$(CC) $(LWEXT4_CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_syscall_mm_brk.o: $(KERNEL_DIR)/syscall/mm/brk.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_syscall_mm_mmap.o: $(KERNEL_DIR)/syscall/mm/mmap.c | $(BUILD_DIR)
-	$(CC) $(LWEXT4_CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_syscall_mm_pmap_compat.o: $(KERNEL_DIR)/syscall/mm/pmap_compat.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_syscall_net_ksocket.o: $(KERNEL_DIR)/syscall/net/ksocket.c | $(BUILD_DIR)
-	$(CC) $(LWIP_CFLAGS) -I$(LWEXT4_DIR)/include -I$(LWEXT4_PORT_DIR) -c $< -o $@
-
-$(BUILD_DIR)/kernel_syscall_net_sock_syscall.o: $(KERNEL_DIR)/syscall/net/sock_syscall.c | $(BUILD_DIR)
-	$(CC) $(LWIP_CFLAGS) -I$(LWEXT4_DIR)/include -I$(LWEXT4_PORT_DIR) -c $< -o $@
-
-# 用户测试程序编译规则
+# 内嵌用户程序：直接链接进内核镜像（与下面「从文件系统加载」的 apps/ 不同）
 $(BUILD_DIR)/user_test.o: $(TASK_USER_TEST_SRC) | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-# hello 用户程序编译规则
 $(BUILD_DIR)/hello.o: $(TASK_USER_HELLO_SRC) | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-# test_execve 用户程序编译规则（x86_64 only）
+# test_execve（仅 x86_64）
 ifeq ($(ARCH),x86_64)
 $(BUILD_DIR)/test_execve.o: apps/x86_64/test_execve.S | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 endif
 
-# 用户应用程序编译规则（从文件系统加载）
+# 用户应用程序：汇编为 .bin / .bin.elf，由 rootfs 装载（非内嵌）
 $(BUILD_DIR)/apps_%.o: $(APPS_DIR)/%.S | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -DAPP_ELF=1 -c $< -o $@
+
+# 这些 .o 只经由模式规则（上面的 apps_%.o 与下面的 %.bin）产生，从未在
+# Makefile 里被显式指名，因此 make 会把它们判为 intermediate 并在构建结束时
+# 自动删除（终端上会看到一行 "rm build/.../apps_hello.o ..."）。
+# 标记为 secondary 即可保留它们，避免每次重建 rootfs 都重新编译。
+# 注意：apps_guest_test.o / apps_el0_loop.o 有显式规则，本来就不会被删。
+# 加 ifneq 是因为裸 ".SECONDARY:"（无前置条件）含义是"所有目标都不删"，
+# 若某架构 apps/ 下没有 .S，会意外变成全局语义。
+ifneq ($(APPS_OBJECTS),)
+.SECONDARY: $(APPS_OBJECTS)
+endif
 
 # 生成应用程序二进制文件
 $(BUILD_DIR)/%.bin: $(BUILD_DIR)/apps_%.o $(APPS_LD) | $(BUILD_DIR)
@@ -1045,51 +818,12 @@ epoll-perf:
 	@exit 1
 endif
 
-$(TASK_USER_BIN): $(BUILD_DIR)/user_test.o $(TASK_USER_LD) | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -nostdlib -nostartfiles -nodefaultlibs -T $(TASK_USER_LD) -o $@.elf $<
-	$(OBJCOPY) -O binary $@.elf $@
-	@echo "User program linked at: $(shell aarch64-linux-musl-nm $@.elf | grep user_test_program)"
-	@echo "User data at: $(shell aarch64-linux-musl-nm $@.elf | grep msg_hello)"
+# ── §11d  测试 / 库对象规则 ────────────────────────────────────────────────────
 
-# ── §12d  VM / VMM / 架构特定规则 ───────────────────────────────────────────────
-$(BUILD_DIR)/kernel_mm_vm_early.o: $(VM_EARLY_C_SRC) | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_mm_pmm.o: $(KERNEL_DIR)/mm/pmm.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
+# PMM 测试（唯一来自 tests/ 却参与内核链接的源文件，不在 §4a 的 find 范围内）
+PMM_TEST_OBJECT := $(BUILD_DIR)/kernel_mm_pmm_test.o
 
 $(BUILD_DIR)/kernel_mm_pmm_test.o: $(TESTS_DIR)/pmm_test.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-# 架构特定的 VMM 模块（仅 AArch64）
-ifeq ($(ARCH),aarch64)
-$(BUILD_DIR)/kernel_mm_vmm.o: $(KERNEL_DIR)/mm/aarch64/vmm.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
-endif
-
-ifeq ($(ARCH),riscv64)
-$(BUILD_DIR)/kernel_mm_rv_vmm.o: $(KERNEL_DIR)/mm/riscv64/vmm.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_mm_rv_gstage.o: $(KERNEL_DIR)/mm/riscv64/gstage.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
-endif
-
-ifeq ($(ARCH),x86_64)
-$(BUILD_DIR)/kernel_mm_x86_vmm.o: $(KERNEL_DIR)/mm/x86_64/vmm.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_mm_x86_ept.o: $(KERNEL_DIR)/mm/x86_64/ept.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
-endif
-
-$(BUILD_DIR)/kernel_mm_vm_user.o: $(KERNEL_DIR)/mm/vm_user.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_mm_kmalloc.o: $(KERNEL_DIR)/mm/kmalloc.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_mm_shared_page.o: $(KERNEL_DIR)/mm/shared_page.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/bitmap.o: $(LIB_DIR)/bitmap.c | $(BUILD_DIR)
@@ -1104,27 +838,13 @@ $(BUILD_DIR)/platform_static.c: $(_PLATFORM_CONF) $(TOOLS_DIR)/gen_platform.py |
 $(BUILD_DIR)/platform_static.o: $(BUILD_DIR)/platform_static.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/kernel_mm_mmu.o: $(VM_S_SRC) | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
 
-# ── §12e  第三方库编译规则（lwext4）──────────────────────────────────────────────
-# 第三方 lwext4 源文件：使用包含 compat 路径的专用 LWEXT4_CFLAGS
+# ── §11e  第三方库编译规则（lwext4 / lwIP）──────────────────────────────────────
+# lwext4 第三方源码：用带 compat 路径的专用 LWEXT4_CFLAGS
 
 $(THIRD_PARTY_BUILD_DIR)/lwext4_%.o: $(LWEXT4_DIR)/src/%.c | $(BUILD_DIR)
 	@mkdir -p $(dir $@)
 	$(CC) $(LWEXT4_CFLAGS) -c $< -o $@
-
-# lwext4 移植胶水代码：属于本项目，使用普通 CFLAGS
-$(BUILD_DIR)/lwext4_port_kmalloc.o: $(LWEXT4_PORT_DIR)/kmalloc.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-# RAM 块设备和 FS 初始化（需要 lwext4 头文件，使用 LWEXT4_CFLAGS）
-$(BUILD_DIR)/drv_blk_ramblk.o: driver/blk/ramblk.c | $(BUILD_DIR)
-	@mkdir -p $(dir $@)
-	$(CC) $(LWEXT4_CFLAGS) -Idriver -c $< -o $@
-
-$(BUILD_DIR)/lwext4_port_fs_init.o: $(LWEXT4_PORT_DIR)/fs_init.c | $(BUILD_DIR)
-	$(CC) $(LWEXT4_CFLAGS) -I$(LWEXT4_PORT_DIR) -c $< -o $@
 
 $(THIRD_PARTY_BUILD_DIR)/lwip_core_%.o: $(LWIP_DIR)/src/core/%.c | $(BUILD_DIR)
 	@mkdir -p $(dir $@)
@@ -1138,54 +858,18 @@ $(THIRD_PARTY_BUILD_DIR)/lwip_netif_%.o: $(LWIP_DIR)/src/netif/%.c | $(BUILD_DIR
 	@mkdir -p $(dir $@)
 	$(CC) $(LWIP_CFLAGS) -c $< -o $@
 
-# VMM 模块编译规则（仅 AArch64）
+# lwext4 移植胶水：属于本项目，用普通 CFLAGS
+$(BUILD_DIR)/lwext4_port_kmalloc.o: $(LWEXT4_PORT_DIR)/kmalloc.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# FS 初始化需要 lwext4 头文件，用 LWEXT4_CFLAGS
+$(BUILD_DIR)/lwext4_port_fs_init.o: $(LWEXT4_PORT_DIR)/fs_init.c | $(BUILD_DIR)
+	$(CC) $(LWEXT4_CFLAGS) -I$(LWEXT4_PORT_DIR) -c $< -o $@
+
+
+# ── §11f  内嵌 guest 测试程序（链接进内核镜像）─────────────────────────────────
 ifeq ($(ARCH),aarch64)
-$(BUILD_DIR)/kernel_mm_stage2.o: $(KERNEL_DIR)/mm/aarch64/stage2.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/kernel_vmm_vmm.o: $(KERNEL_DIR)/vmm/vmm.c | $(BUILD_DIR)
-	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -Ikernel -Ikernel/vmm -c $< -o $@
-
-$(BUILD_DIR)/kernel_vmm_mmio.o: $(KERNEL_DIR)/vmm/vmm_mmio.c | $(BUILD_DIR)
-	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -Ikernel -Ikernel/vmm -c $< -o $@
-
-$(BUILD_DIR)/kernel_vmm_vdev_vpl011.o: $(KERNEL_DIR)/vmm/vdev/vpl011.c | $(BUILD_DIR)
-	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -Ikernel -Ikernel/vmm -c $< -o $@
-
-$(BUILD_DIR)/kernel_vmm_vdev_vgicd.o: $(KERNEL_DIR)/vmm/vdev/vgic/vgicd.c | $(BUILD_DIR)
-	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -Ikernel -Ikernel/vmm -c $< -o $@
-
-$(BUILD_DIR)/kernel_vmm_vdev_vgicc.o: $(KERNEL_DIR)/vmm/vdev/vgic/vgicc.c | $(BUILD_DIR)
-	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -Ikernel -Ikernel/vmm -c $< -o $@
-
-$(BUILD_DIR)/kernel_vmm_vdev_vgic.o: $(KERNEL_DIR)/vmm/vdev/vgic/vgic.c | $(BUILD_DIR)
-	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -Ikernel -Ikernel/vmm -c $< -o $@
-
-$(BUILD_DIR)/kernel_vmm_vdev_vgic_irq_route.o: $(KERNEL_DIR)/vmm/vdev/irq_route.c | $(BUILD_DIR)
-	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -Ikernel -Ikernel/vmm -c $< -o $@
-
-$(BUILD_DIR)/kernel_vmm_guest_loader.o: $(KERNEL_DIR)/vmm/guest_loader.c | $(BUILD_DIR)
-	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) $(LWEXT4_CFLAGS) -Ikernel -Ikernel/vmm -c $< -o $@
-
-$(BUILD_DIR)/kernel_vmm_el2_run.o: $(KERNEL_DIR)/vmm/aarch64/el2_run.c | $(BUILD_DIR)
-	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -Ikernel -Ikernel/vmm -c $< -o $@
-
-$(BUILD_DIR)/kernel_vmm_el2_vmcs.o: $(KERNEL_DIR)/vmm/aarch64/el2_vmcs.S | $(BUILD_DIR)
-	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_vmm_vcpu_ctx.o: $(KERNEL_DIR)/vmm/aarch64/vcpu_ctx.S | $(BUILD_DIR)
-	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/apps_guest_test.o: apps/aarch64/guest_test.S | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -1195,73 +879,34 @@ $(BUILD_DIR)/apps_el0_loop.o: apps/aarch64/el0_loop.S | $(BUILD_DIR)
 endif
 
 ifeq ($(ARCH),x86_64)
-$(BUILD_DIR)/kernel_vmm_vmm.o: $(KERNEL_DIR)/vmm/vmm.c | $(BUILD_DIR)
-	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -Ikernel -Ikernel/vmm -c $< -o $@
 
-$(BUILD_DIR)/kernel_vmm_mmio.o: $(KERNEL_DIR)/vmm/vmm_mmio.c | $(BUILD_DIR)
-	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -Ikernel -Ikernel/vmm -c $< -o $@
-
-$(BUILD_DIR)/kernel_vmm_vdev_uart16550.o: $(KERNEL_DIR)/vmm/vdev/vuart16550.c | $(BUILD_DIR)
-	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -Ikernel -Ikernel/vmm -c $< -o $@
-
-$(BUILD_DIR)/kernel_vmm_x86_vmx.o: $(KERNEL_DIR)/vmm/x86_64/vmx.c | $(BUILD_DIR)
-	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -Ikernel -Ikernel/vmm -c $< -o $@
-
-$(BUILD_DIR)/kernel_vmm_x86_vmx_run.o: $(KERNEL_DIR)/vmm/x86_64/vmx_run.S | $(BUILD_DIR)
-	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/apps_x86_guest_test.o: apps/x86_64/guest_test.S | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 endif
 
 ifeq ($(ARCH),riscv64)
-$(BUILD_DIR)/kernel_vmm_vmm.o: $(KERNEL_DIR)/vmm/vmm.c | $(BUILD_DIR)
-	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -Ikernel -Ikernel/vmm -c $< -o $@
 
-$(BUILD_DIR)/kernel_vmm_mmio.o: $(KERNEL_DIR)/vmm/vmm_mmio.c | $(BUILD_DIR)
-	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -Ikernel -Ikernel/vmm -c $< -o $@
-
-$(BUILD_DIR)/kernel_vmm_vdev_uart16550.o: $(KERNEL_DIR)/vmm/vdev/vuart16550.c | $(BUILD_DIR)
-	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -Ikernel -Ikernel/vmm -c $< -o $@
-
-$(BUILD_DIR)/kernel_vmm_vdev_vplic.o: $(KERNEL_DIR)/vmm/vdev/vplic.c | $(BUILD_DIR)
-	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -Ikernel -Ikernel/vmm -c $< -o $@
-
-$(BUILD_DIR)/kernel_vmm_riscv_hext_run.o: $(KERNEL_DIR)/vmm/riscv64/hext_run.c | $(BUILD_DIR)
-	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -Ikernel -Ikernel/vmm -c $< -o $@
-
-$(BUILD_DIR)/kernel_vmm_riscv_hext_vcpu.o: $(KERNEL_DIR)/vmm/riscv64/hext_vcpu.S | $(BUILD_DIR)
-	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/apps_riscv_guest_test.o: apps/riscv64/guest_test.S | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 endif
 
-# ── §12g  链接 ────────────────────────────────────────────────────────────────────
-$(KERNEL_TARGET): $(BOOT_OBJECTS) $(KERNEL_OBJECTS) $(NET_OBJS) $(LWIP_OBJS) $(TASK_C_OBJECTS) $(TASK_S_OBJ) $(TASK_USER_TEST_OBJ) $(TASK_USER_HELLO_OBJ) $(TASK_USER_TESTEXECVE_OBJ) $(LOADER_C_OBJECTS) $(SYSCALL_C_OBJECTS) $(VM_C_OBJECTS) $(VM_S_OBJ) $(VMM_C_OBJECTS) $(VMM_S_OBJECTS) $(GUEST_TEST_OBJ) $(TESTS_OBJECTS) $(PLATFORM_OBJECTS) $(DRIVER_OBJECTS) $(EXCEPTION_OBJECTS) $(KLOG_OBJECT) $(VSNPRINTF_OBJECT) $(STRING_OBJECT) $(LIBC_OBJECT) $(BITMAP_OBJECT) $(PLATFORM_CFG_OBJECT) $(PLATFORM_STATIC_OBJECT) $(LWEXT4_OBJS) $(LWEXT4_PORT_OBJS) $(KERNEL_FS_OBJS) $(PSEUDOFS_OBJS) | $(BUILD_DIR)
+# ── §11g  链接 ────────────────────────────────────────────────────────────────────
+$(KERNEL_TARGET): $(BOOT_OBJECTS) $(KERNEL_OBJECTS) $(PMM_TEST_OBJECT) $(LWIP_OBJS) $(TASK_USER_TEST_OBJ) $(TASK_USER_HELLO_OBJ) $(TASK_USER_TESTEXECVE_OBJ) $(GUEST_TEST_OBJ) $(TESTS_OBJECTS) $(PLATFORM_OBJECTS) $(DRIVER_OBJECTS) $(EXCEPTION_OBJECTS) $(KLOG_OBJECT) $(VSNPRINTF_OBJECT) $(STRING_OBJECT) $(LIBC_OBJECT) $(BITMAP_OBJECT) $(PLATFORM_CFG_OBJECT) $(PLATFORM_STATIC_OBJECT) $(LWEXT4_OBJS) $(LWEXT4_PORT_OBJS) | $(BUILD_DIR)
 	$(CC) $(LDFLAGS) -nostartfiles -nodefaultlibs -T $(BOOT_DIR)/$(ARCH)/link.ld -o $@ -Wl,--start-group $^ -Wl,--end-group
 
 # 转换为二进制文件
 $(KERNEL_BIN): $(KERNEL_TARGET)
 	$(OBJCOPY) -O binary $< $@
 
-# 创建软盘镜像（1.44MB）
+# 1.44MB 软盘镜像（KERNEL_IMAGE 仅在 x86_64 定义，见 §5；
+# 其它架构下该变量为空，这条规则不会被注册）
 $(KERNEL_IMAGE): $(KERNEL_BIN)
 	dd if=/dev/zero of=$@ bs=1024 count=1440
 	dd if=$< of=$@ bs=512 conv=notrunc
 
-# ─── §13  运行 / 测试目标 ────────────────────────────────────────────────────────
+# ─── §12  运行 / 测试目标 ────────────────────────────────────────────────────────
 run: kernel
 	@echo "Starting QEMU for $(ARCH)..."
 	$(QEMU) $(QEMU_FLAGS)
@@ -1334,14 +979,14 @@ $(ROOTFS_IMG): Makefile $(APPS_BINS) $(APPS_C_ELFS) $(LTP_BINS) $(EPOLL_PERF_BIN
 		done; \
 	fi
 	@# 安装 musl 用户态性能测试程序
-	@if [ -f $(EPOLL_PERF_BIN) ]; then \
+	@if [ -f "$(EPOLL_PERF_BIN)" ]; then \
 		mkdir -p $(ROOTFS_STAGE)/bin; \
 		cp $(EPOLL_PERF_BIN) $(ROOTFS_STAGE)/bin/epoll_perf; \
 		chmod +x $(ROOTFS_STAGE)/bin/epoll_perf; \
 		echo "  [epoll_perf installed → /bin/epoll_perf]"; \
 	fi
 	@# 安装 nginx（如果存在对应架构的静态 musl 构建）
-	@if [ -f $(NGINX_BIN) ]; then \
+	@if [ -f "$(NGINX_BIN)" ]; then \
 		mkdir -p $(ROOTFS_STAGE)/bin $(ROOTFS_STAGE)/etc/nginx $(ROOTFS_STAGE)/www; \
 		cp $(NGINX_BIN) $(ROOTFS_STAGE)/bin/nginx; \
 		chmod +x $(ROOTFS_STAGE)/bin/nginx; \
@@ -1478,7 +1123,7 @@ test-ltp: kernel $(ROOTFS_IMG)
 	@echo "In QEMU shell: /ltp/run_ltp.sh"
 	$(QEMU) $(QEMU_FLAGS) $(QEMU_ROOTFS_FLAGS)
 
-# ─── §14  清理 / 帮助 ────────────────────────────────────────────────────────────
+# ─── §13  清理 / 帮助 ────────────────────────────────────────────────────────────
 clean:
 	rm -rf $(BUILD_DIR)
 
@@ -1544,23 +1189,40 @@ help:
 # 因此修改头文件不会触发重新编译（改头文件后请手动 make clean）。
 # 若要启用，需把所有目标的 .d 汇总成一个变量再 -include 之。
 
-
-
+# ─── 目录索引 ────────────────────────────────────────────────────────────────────
 # 节	内容
-# §1	基本参数（PLATFORM / ARCH兼容 / LOG / 目录）
+# §1	基本参数（PLATFORM / ARCH 兼容 / LOG / SMP / 目录）
 # §2	平台配置生成（gen_platform.py）
-# §3	日志标志
-# §4	源文件与目标文件变量
-# §4a	架构特定模块（VMM / 异常 / 切换 / 用户程序）
-# §4b	平台 / 驱动基础源文件
-# §5	工具链与编译标志
-# §5a	通用编译标志
-# §6	驱动选择
-# §6a-e	UART/GIC → NPU/TPU → ETH → 组装 → ION/SDMMC
-# §7	构建变体（VMM_TEST）
-# §8	第三方库：lwext4
+# §3	日志标志（另含 ASSERT 开关已移除的断言）
+# §4	源文件与目标文件变量（lib 对象）
+# §4a	内核源文件自动发现（find 递归 + 架构目录排除 + vdev 白名单）
+# §4a-2	内核编译标志分组（引用第三方头文件的短名单）
+# §4b	平台 / 驱动基础源文件、启动与异常源文件
+# §5	工具链与编译标志（按架构）
+# §5a	通用编译标志（所有架构共享）
+# §6	驱动选择（UART / GIC / NPU / TPU / ETH / ION / SDMMC）
+# §6a	基础设备驱动选择
+# §6b	加速器驱动选择（NPU / TPU）
+# §6c	网络驱动选择（ETH）
+# §6e	DRIVER_OBJECTS 组装：源文件 → $(BUILD_DIR)/driver/<文件名>.o
+# §6e-1	辅助驱动（ION / SDMMC）
+# §6e-2	驱动按编译标志分组
+# §7	构建变体（VMM_TEST / GUEST_LINUX / NGINX_TEST）
+# §8	第三方库：lwext4 文件系统
+# §8a	内核网络栈：netdev + lwIP
 # §9	Rootfs 配置
 # §10	顶层目标声明
-# §11	构建规则（a~g 子节）
+# §11	构建规则
+# §11a	库与通用规则
+# §11b	内核 / 测试 / 平台 / 启动规则（由 §4a 的列表 eval 生成）
+# §11c	启动 / 异常 / 驱动规则（驱动由 §6e 的列表 eval 生成）
+# §11c-1	平台配置依赖声明（换平台时精确触发重编）
+# §11d	测试 / 库对象规则
+# §11e	第三方库编译规则（lwext4 / lwIP）
+# §11f	内嵌 guest 测试程序
+# §11g	链接（elf → bin → img）
 # §12	运行 / 测试目标
 # §13	清理 / 帮助
+#
+# 新增内核源文件：放进 kernel/ 下即可，无需改本文件（见 §4a）。
+# 新增驱动：在 §6 对应选择块里把它加进 DRIVER_SRCS_* 组（见 §6e-2）。

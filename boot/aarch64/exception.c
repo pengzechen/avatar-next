@@ -9,14 +9,11 @@
 #include "task/cpu.h"
 
 extern void deliver_pending_signals(task_t *t, trap_frame_t *frame);
+extern void syscall_handler(trap_frame_t *frame);
 
 #define MAX_IRQ_VECTORS 512
 
 irq_handler_t g_handler_vec[MAX_IRQ_VECTORS] = {0};
-
-void irq_install(int vector, void (*h)(uint64_t *)) {
-  g_handler_vec[vector] = h;
-}
 
 /*
  * 「guest 持有」的中断位图：这类物理中断的结束由 guest 负责。
@@ -25,6 +22,10 @@ void irq_install(int vector, void (*h)(uint64_t *)) {
  * 详见 handle_irq_exception() 里对 GICC_DIR 的处理。
  */
 static uint8_t g_irq_guest_owned[MAX_IRQ_VECTORS / 8];
+
+void irq_install(int vector, void (*h)(uint64_t *)) {
+  g_handler_vec[vector] = h;
+}
 
 void irq_mark_guest_owned(int vector) {
   if (vector >= 0 && vector < MAX_IRQ_VECTORS)
@@ -58,8 +59,6 @@ void handle_sync_exception(uint64_t *stack_pointer) {
 }
 
 /* ── 用户态同步异常处理（系统调用、缺页等）────────────────────── */
-
-extern void syscall_handler(trap_frame_t *frame);
 
 void handle_el0_sync_exception(uint64_t *stack_pointer) {
   trap_frame_t *el1_ctx = (trap_frame_t *)stack_pointer;

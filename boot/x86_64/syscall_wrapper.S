@@ -29,9 +29,10 @@
  *   RBP, RDI, RSI, RDX, RCX, RBX, RAX
  */
 
+#include "asm.h"
+
 .section .text
 .code64
-.global syscall_entry
 .extern syscall_handler
 .extern g_x86_tss_rsp0
 
@@ -40,7 +41,7 @@
 
 .section .text
 
-syscall_entry:
+FUNCS(syscall_entry)
     /*
      * 1. 保存用户上下文
      *    此时 RCX=用户RIP, R11=用户RFLAGS, RSP=用户栈
@@ -134,3 +135,4 @@ syscall_entry:
     
     /* 不会到达这里 */
     ud2
+FUNCE(syscall_entry)

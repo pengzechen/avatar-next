@@ -108,9 +108,6 @@
     b       .Lexception_return
 .endm
 
-.section .text
-.p2align 11
-.global exception_vector_base
 
 .extern invalid_exception
 .extern handle_sync_exception
@@ -119,6 +116,10 @@
 .extern sched_check_and_yield_from_trap
 .extern signal_deliver_from_trap
 
+
+.section .text
+.p2align 11
+.global exception_vector_base
 exception_vector_base:
     // current EL, with SP_EL0
     INVALID_EXCP 0 0

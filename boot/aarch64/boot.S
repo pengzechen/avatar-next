@@ -1,11 +1,7 @@
-/*
- * AArch64 boot code for QEMU virt machine
- * Entry point: _start at 0x40000000
- */
+
+#include "asm.h"
 
 .section .text.boot
-.global _start
-.type _start, @function
 
 .extern vm_init
 .extern mmu_init
@@ -13,16 +9,6 @@
 
 /*
  * ── EL2/VHE 初始化 ───────────────────────────────────────────────
- *
- * QEMU -machine virt,virtualization=on 从 EL2 进入；真实硬件也可能由
- * 固件移交到 EL2。启用 VHE 后，内核仍使用 EL1 寄存器名，硬件自动
- * 别名到对应 EL2 寄存器：
- *   msr vbar_el1  → VBAR_EL2    msr elr_el1   → ELR_EL2
- *   msr spsr_el1  → SPSR_EL2    msr ttbr0_el1 → TTBR0_EL2
- *   msr ttbr1_el1 → TTBR1_EL2   msr tcr_el1   → TCR_EL2
- *   msr mair_el1  → MAIR_EL2    msr sctlr_el1 → SCTLR_EL2
- *   mrs esr_el1   → ESR_EL2     mrs far_el1   → FAR_EL2
- *
  * clobber: x0, x1
  */
 .macro init_el2_vhe
@@ -53,19 +39,11 @@
      *   bit 1  EL1PCEN  = 1  不陷入 EL1 的**物理定时器**访问
      *                        （CNTP_CTL / CNTP_CVAL / CNTP_TVAL）
      *   bit 10 EL1PTEN  = 1  不陷入 EL1 的**物理计数器**读取（CNTPCT）
-     *
-     * ⚠️ bit1(EL1PCEN) 与 bit10(EL1PTEN) 是两个不同的控制位，必须同时置位。
-     *    原代码注释把 bit1 误标为 EL0VCTEN，只置了 EL1PTEN。后果：guest
-     *    （EL1）读 CNTP_CTL_EL0 / 写 CNTP_CVAL_EL0 仍陷入 EL2 → VMM 判为
-     *    unhandled exit → vCPU 被静默终止。
-     *    实测现象：guest Linux 在 arch_timer 初始化处无声死亡 —— 无输出、
-     *    无 WFI、无任何 MMIO 访问（vCPU 已经不存在了）。
      */
     mov     x1, #(1 | (1 << 1) | (1 << 10))
     msr     cnthctl_el2, x1
     isb
 
-    /* 对齐 x-kernel init_el2_vhe：guest 虚拟计数器不加宿主偏移。*/
     msr     cntvoff_el2, xzr
     isb
 
@@ -84,58 +62,24 @@
     msr     S3_4_C12_C9_5, x1
     isb
 #endif
-
 .arch_extension pan
     msr     pan, #0
     isb
 1:
 .endm
 
-_start:
+FUNCS(_start)
     init_el2_vhe
-
-    /* ── 以下与原 EL1 启动路径完全一致（VHE 别名透明）──────── */
 
     msr daifset, #2   // 关闭 IRQ
 
-    /*
-     * Set stack pointer
-     * Stack grows downward, so we set SP to stack_top
-     */
     ldr x0, =stack_top_phys  // 加载物理栈顶地址
     mov sp, x0               // 设置栈指针
 
-    /*
-     * Clear BSS section（在 MMU 启用前必须完成）
-     * BSS 未清零时 dw_uart_initialized/spinlock 等含 DRAM 垃圾值，
-     * 导致 dw_uart_putchar 进入中断路径并在 garbage lock 上死循环。
-     * 使用 link.ld 导出的物理别名，避免假设 PA 位于 VA 低 32 位。
-     */
-    ldr     x0, =__bss_start_phys
-    ldr     x1, =__bss_end_phys
-    mov     x2, #0
-clear_bss:
-    cmp     x0, x1
-    b.ge    clear_bss_done
-    str     x2, [x0], #8
-    b       clear_bss
-clear_bss_done:
+    bl      clear_bss
 
-    /*
-     * 初始化虚拟内存管理
-     * 建立页表映射（0-1GB 设备内存，1GB-2GB 普通内存）
-     * 此时 MMU 未启用，使用物理地址
-     */
     bl      vm_init
-    
 
-    /*
-     * 启用 MMU
-     * x0 = TTBR0（用户空间页表，暂时为 0）
-     * x1 = TTBR1（内核空间页表）
-     *
-     * vm_init() 返回后，x1 包含内核页表物理地址
-     */
     bl      vm_get_boot_pgtable      // x0 = boot_pt0 物理地址（TTBR0 恒等映射）
     mov     x27, x0                  // 保存到 callee-saved 寄存器
     bl      vm_get_kernel_pgtable    // x0 = kernel_pt0 物理地址（TTBR1）
@@ -143,47 +87,19 @@ clear_bss_done:
     mov     x0, x27                  // x0 = TTBR0 = boot_pt0
     bl      mmu_init
 
-    /*
-     * Trampoline：从 identity-mapped 低地址跳到高虚拟地址
-     *
-     * mmu_init 返回时 LR 里保存的是低地址，ret 后 PC 仍在低地址。
-     * TTBR0 的 identity map 让低地址代码暂时可以继续执行，但必须
-     * 在这里显式跳到高 VMA，否则所有 PC 相对指令（adrp 等）都会
-     * 算出低地址结果。
-     *
-     * ldr x0, =1f 从字面量池加载 label 1f 的链接地址（高地址）
-     * br  x0       跳过去，之后 PC = 0xffff000040080000 + offset
-     */
     ldr     x0, =1f
     br      x0
 1:
     /* ── 以下代码在高虚拟地址（TTBR1 映射）下执行 ────────────── */
 
-    /*
-     * 重新设置栈指针（使用高地址）
-     */
     ldr     x0, =stack_top
     mov     sp, x0
 
-    /*
-     * Set exception vector base address
-     * VBAR_EL1 = &exception_vector_base
-     */
     adrp    x0, exception_vector_base
     add     x0, x0, :lo12:exception_vector_base
     msr     vbar_el1, x0
     dsb     sy
     isb
-
-    /*
-     * 此处不开中断（保持 DAIF.I=1）。
-     * kernel_main 作为 boot 上下文运行，最终会变成 idle 内核线程，
-     * 由 task_idle_loop / task_trampoline 在合适时机 arch_irq_enable()。
-     * 在 timer/GIC 初始化完成前开中断没有意义且不安全。
-     */
-    // msr     daifclr, #2
-    // dsb     sy
-    // isb
 
     /*
      * Jump to C code
@@ -201,27 +117,9 @@ hang:
     wfe
     b       hang
 
-.size _start, . - _start
+FUNCE(_start)
 
-/*
- * ── 次级核启动入口（Phase 2 PSCI CPU_ON 入口）─────────────
- *
- * 由 PSCI SMC CPU_ON 进入，CPU 处于 EL2（QEMU virt + virtualization=on）。
- * 入口约定：
- *   x0 = context_id（BSP 在 psci_cpu_on() 中传入的 cpu_id，0..N-1）
- *
- * 与 _start 的区别：
- *   - 不清零 BSS（BSP 已清零，共享同一段 BSS）
- *   - 不调用 vm_init（页表已建好，secondary 直接复用 BSP 的内核 PGD）
- *   - 不使用 stack_top（BSP 专用），改用 secondary_boot_stacks[cpu_id]
- *   - 不进入 kernel_main，而是调用 cpu_secondary_bootstrap(cpu_id)
- *
- * 重要：必须在执行任何 adrp 访问高 VA 全局变量之前完成 MMU + 跳到高 VA，
- * 否则 PC-相对寻址会落到低物理地址，破坏全局数据。
- */
-.global _secondary_start
-.type _secondary_start, @function
-_secondary_start:
+FUNCS(_secondary_start)
     /* 用 callee-saved 寄存器保存 cpu_id，跨 mmu_init 等调用保持不变 */
     mov     x19, x0                  /* x19 = cpu_id */
 
@@ -241,15 +139,6 @@ _secondary_start:
     add     x0, x0, x1
     mov     sp, x0
 
-    /*
-     * 启用 MMU：复用 BSP 已建好的内核 PGD。
-     *
-     * 关键：与 BSP（boot.S:120）一致，TTBR0 也设为 kernel_pt0 而非 0。
-     * 原因：kernel_pt0 的 L0[0] 指向 kernel_pt1，kernel_pt1 用 1GB 块
-     * 直接映射 0x0/0x4000_0000/0x8000_0000，正好可当低半区恒等映射用。
-     * 这样 mmu_init 之后到 trampoline 跳到高 VA 之前，PC 仍在低 PA 也
-     * 能继续取指；若 TTBR0=0 会导致开 MMU 后立即 translation fault。
-     */
     bl      vm_get_kernel_pgtable
     mov     x1, x0                   /* x1 = TTBR1 = kernel_pt0 */
     /* x0 已是 kernel_pt0，复用为 TTBR0（低半区恒等映射） */
@@ -293,14 +182,27 @@ _secondary_start:
     wfe
     b       .Lsec_hang
 
-.size _secondary_start, . - _secondary_start
+FUNCE(_secondary_start)
 
 /*
- * BSP 启动栈（32KB，与 riscv64/x86_64 boot.S 一致放在汇编 .bss 中）
+ * BSS 清零：按 8 字节把 [__bss_start_phys, __bss_end_phys) 写 0。
  *
- * 注意：link.ld 将整个 .bss 段放在 [__kernel_start, __kernel_end] 区间内，
- * 因此 PMM 不会把这段当作可用物理内存。
+ * 用链接器导出的物理别名，避免假设 PA 位于 VA 低 32 位。
+ * 必须在 MMU 打开前调用（此时 PC = PA）；本文件内局部子程序，不导出符号。
  */
+LFUNCS(clear_bss)
+    ldr     x0, =__bss_start_phys
+    ldr     x1, =__bss_end_phys
+    mov     x2, #0
+bss_clear_loop:
+    cmp     x0, x1
+    b.ge    bss_clear_done
+    str     x2, [x0], #8
+    b       bss_clear_loop
+bss_clear_done:
+    ret
+LFUNCE(clear_bss)
+
 .section .bss
 .align 16
 .global stack_bottom
@@ -310,16 +212,7 @@ stack_bottom:
     .skip 0x8000              /* 32KB */
 stack_top:
 
-/*
- * 次级核启动栈
- *
- * 每核 4KB，索引 [0..AVATAR_MAX_CPUS-1]；CPU0（BSP）不使用 [0]，
- * 但保留以简化下标计算（用 (cpu_id+1)*4096 取栈顶）。
- * 仅在 cpu_secondary_bootstrap() 早期阶段使用；进入 idle 后栈基本闲置。
- *
- * 这里固定按 AVATAR_MAX_CPUS=8 预留；若调高最大核数需同步修改。
- */
 .align 12
 .global secondary_boot_stacks
 secondary_boot_stacks:
-    .skip 4096 * 8
+    .skip 0x8000              /* 32KB */
