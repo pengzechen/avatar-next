@@ -159,6 +159,7 @@ static void x86_translate_syscall(uint64_t *nr, uint64_t regs[9])
     case 15:  *nr = LINUX_SYS_RT_SIGRETURN;  break; /* rt_sigreturn */
     case 16:  *nr = LINUX_SYS_IOCTL;       break; /* ioctl */
     case 17:  *nr = LINUX_SYS_READ;        break; /* pread64 → read(stub) */
+    case 19:  *nr = LINUX_SYS_READV;       break; /* readv */
     case 20:  *nr = LINUX_SYS_WRITEV;      break; /* writev */
     case 21:  /* access(path,mode) → faccessat(AT_FDCWD,path,mode,0) */
         regs[3] = 0; regs[2] = regs[1]; regs[1] = regs[0];
@@ -270,6 +271,7 @@ static void x86_translate_syscall(uint64_t *nr, uint64_t regs[9])
     case 116: *nr = LINUX_SYS_SETGROUPS;   break; /* setgroups */
     case 121: *nr = LINUX_SYS_GETPGID;     break; /* getpgid */
     case 124: *nr = LINUX_SYS_GETSID;      break; /* getsid */
+    case 127: *nr = LINUX_SYS_RT_SIGPENDING; break; /* rt_sigpending */
     case 131: *nr = 0x7FFFFFFEULL;         break; /* sigaltstack → stub 0 */
     case 157: *nr = LINUX_SYS_PRCTL;       break; /* prctl */
     case 158: *nr = X86_SYS_ARCH_PRCTL;    break; /* arch_prctl */

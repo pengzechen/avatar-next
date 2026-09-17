@@ -76,6 +76,22 @@ bash tests/ltp/build.sh x86_64
 
 如果某个测例编译失败，脚本会报错但继续编译其他测例。
 
+> ⚠️ **每个架构要单独编，且产物不入库。**
+> `tests/ltp/bin/<arch>/` 是 gitignore 的构建产物，各架构互不相干。
+> 改过 `testcases.list` 之后，**三个架构都要重新跑一遍 `build.sh`**，
+> 否则没重编的那个架构会**静默地只装旧的那批测例** —— 表现为
+> `run_ltp.sh` 汇总出的测例数少于 `testcases.list` 的行数
+> （曾出现 aarch64 有 35 个、riscv64/x86_64 只有 25 个）。
+>
+> 另外 `build.sh` 开头会 `rm -f "$OUT_DIR"/*`：中途失败会把这个架构的产物
+> 清空或留半套。编完顺手核对一下数量：
+>
+> ```bash
+> for a in aarch64 riscv64 x86_64; do
+>     echo "$a: $(ls tests/ltp/bin/$a/ | wc -l)  # 应为 testcases.list 行数 + 1(run_ltp.sh)"
+> done
+> ```
+
 ### 4. 运行
 
 ```bash
