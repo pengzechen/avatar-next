@@ -48,7 +48,12 @@
 /* PIT (8254) 辅助定义（用于频率校准）*/
 #define PIT_CAL_PORT_CMD        0x43u
 #define PIT_CAL_PORT_CH2        0x42u
-#define PIT_CAL_PORT_CTRL       0x61u   /* PC speaker / counter-2 gate  */
+/*
+ * 注意：不要用 port 0x61（PC speaker / counter-2 gate & OUT）。
+ * 它由南桥 PIIX/ICH 提供，QEMU -machine microvm 没有南桥，该端口
+ * 未实现、读回恒为 0xff，靠它判断 PIT 状态会得到错误结果。
+ * 标定一律只读 PIT 自己的计数器（0x43 latch + 0x42 数据）。
+ */
 #define PIT_BASE_FREQ           1193182UL
 
 /* ── 函数声明 ──────────────────────────────────────────────────*/

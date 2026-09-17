@@ -101,6 +101,8 @@ avatar/
 - **AArch64**: `docs/arch/aarch64/NEON_USAGE.md` - NEON 优化
 - **x86_64 SYSCALL / per-CPU 栈**: `docs/X86_64_SMP_SYSCALL_STACK_BUGFIX.md` -
   改 `cpu_t` 布局或 SYSCALL 入口前必读（含 `%gs:` 偏移的 static_assert 约束与构建陷阱）
+- **x86_64 时间基准 / TSC 标定**: `docs/X86_64_TIMEBASE_TSC_CALIBRATION_FIX.md` -
+  动 `driver/irq/lapic.c` 的频率标定前必读（PIT 只能用 0x43/0x42，**不要用 port 0x61**）
 
 ### 中断与上下文切换
 
