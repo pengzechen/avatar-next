@@ -2,153 +2,103 @@
 
 ## 概述
 
-完整的内核断言系统，支持运行时检查和编译时检查。
+内核断言系统，提供运行时检查与编译时检查。断言**始终启用**，没有编译期开关。
 
 ## 编译
 
+不需要任何额外参数：
+
 ```bash
-# 基本编译（断言启用）
-make ARCH=aarch64
-
-# 禁用断言（发布模式）
-make ARCH=aarch64 ASSERT=off
-
-# 启用断言（调试模式，默认）
-make ARCH=aarch64 ASSERT=panic
+make PLATFORM=qemu-virt-aarch64 kernel
 ```
+
+`ASSERT=` 选项已于 2026-09 移除，显式传入会直接报错（原因见文末）。
 
 ## 断言类型
 
 ### 1. 运行时断言 - `assert()`
 
-可被编译禁用的断言，用于开发和调试。
+用于校验函数入参、内部不变量等。
 
 ```c
 #include "assert.h"
 
-void example(void)
+void example(void *ptr)
 {
-    int *ptr = NULL;
-    assert(ptr != NULL);  // 失败时 panic
+    assert(ptr != NULL);  // 失败时打印信息并 panic
 }
 ```
 
-**行为**：
-- `ASSERT=panic`（默认）：启用断言，失败时调用 `platform_panic()`
-- `ASSERT=off`：完全禁用断言，零运行时开销
+**行为**：条件为 false 时，通过 `KLOG_ERROR` 打印失败表达式、文件与行号，
+然后调用 `platform_panic()` 停机。
 
-### 2. 总是启用的断言 - `assert_always()`
+### 2. 关键路径断言 - `assert_always()`
 
-即使 `ASSERT=off` 仍然有效的断言，用于关键检查。
+与 `assert()` 行为完全一致，仅错误信息措辞不同（`Critical assertion failed`
+vs `Assertion failed`），用于在日志里标注"这里失败说明内核核心状态已被破坏"。
 
 ```c
-void critical_check(void *ptr)
+void critical_check(void)
 {
-    assert_always(ptr != NULL);  // 总是检查
+    assert_always(!in_irq_context());
 }
 ```
 
-**使用场景**：
-- 关键数据结构检查
-- 安全相关验证
-- 不应该被禁用的检查
+当前调用点：`kernel/task/task.c:708`、`kernel/task/sched.c:183`。
+
+> 历史上 `assert_always` 的意义是"即使 `ASSERT=off` 也生效"。该开关移除后，
+> 它与 `assert` 已无功能差异，保留只是为了在调用点表达严重性。
 
 ### 3. 编译时断言 - `static_assert()`
 
-编译时检查，如果条件为常量 false，编译时报错。
+C11 `_Static_assert` 的薄封装，条件为常量 false 时编译报错。
 
 ```c
 static_assert(sizeof(int) == 4, "int must be 4 bytes");
 static_assert(sizeof(void *) == 8, "must be 64-bit");
 ```
 
-**使用场景**：
-- 类型大小验证
-- 常量范围检查
-- 编译时不变量验证
-
-## 辅助宏
-
-### `assert_not_reached()`
-
-声明代码不应该执行到这里。
-
-```c
-int parse_value(int value)
-{
-    switch (value) {
-        case 0: return 100;
-        case 1: return 200;
-        default:
-            assert_not_reached();  // 不应该执行到这里
-    }
-}
-```
-
-### `assert_unreachable(expr)`
-
-声明表达式永远不会为真。
-
-```c
-void process_state(int state)
-{
-    if (state == STATE_INIT) {
-        /* 初始化逻辑 */
-    } else if (state == STATE_RUNNING) {
-        /* 运行逻辑 */
-    } else {
-        assert_unreachable(state);  // 不可能的状态
-    }
-}
-```
+**使用场景**：类型大小验证、常量范围检查、编译时不变量。
 
 ## Panic 行为
 
-断言失败时的行为：
+断言失败时的完整调用链：
 
-1. **输出错误信息**（通过 KLOG_ERROR）
+1. **打印错误信息**（`KLOG_ERROR`）
    ```
-   [ERROR] file.c:42: Assertion failed: ptr != NULL, file test.c, line 123
+   [ERROR] Assertion failed: ptr != NULL, file kernel/mm/pmm.c, line 35
    ```
 
-2. **调用 `platform_panic()`**
-   - 平台层实现 `platform_panic()`
-   - 该函数调用架构特定的 `arch_halt()`
+2. **调用 `platform_panic()`** —— 定义在 `platforms/qemu/qemu_platform.c`，
+   实现为 `qemu_panic()`
 
-3. **架构特定的 halt**
-   - **AArch64**: WFI (Wait For Interrupt) + 禁用中断
-   - **RISC-V**: WFI + 禁用中断
-   - **x86_64**: HLT + 禁用中断
+3. **`qemu_panic()` 关中断后死循环停机**
+
+   | 架构 | 关中断 | 停机指令 |
+   |---|---|---|
+   | AArch64 | `msr daifset, #0xF` | `wfe` |
+   | RISC-V | `csrw sie, zero` / `csrw sip, zero` | `wfi` |
+   | x86_64 | `cli` | `hlt` |
 
 ## 平台集成
 
-### 实现 platform_panic()
-
-在平台层实现：
+平台层只需提供 `platform_panic()`：
 
 ```c
-/* platform.c */
-#if defined(__aarch64__)
-    #include "aarch64/halt_arch.h"
-#elif defined(__x86_64__)
-    #include "x86_64/halt_arch.h"
-#elif defined(__riscv)
-    #include "riscv64/halt_arch.h"
-#endif
-
+/* platforms/qemu/qemu_platform.c */
 void platform_panic(void)
 {
-    /* 可以在这里添加平台特定的清理逻辑 */
-    /* 例如：刷新日志、关闭设备等 */
-
-    /* 最后调用架构特定的 halt */
-    arch_halt();
+    qemu_panic();   /* 关中断 + 死循环 */
 }
 ```
 
+> 注意：`include/{aarch64,riscv64,x86_64}/halt_arch.h` 里的 `arch_halt()`
+> 目前**没有任何调用点**，`qemu_panic()` 用的是自己的内联汇编。这些头文件
+> 是历史遗留，实际不参与 panic 路径。
+
 ## 使用示例
 
-### 示例 1：指针检查
+### 指针与范围检查
 
 ```c
 void init_device(struct device *dev)
@@ -159,32 +109,23 @@ void init_device(struct device *dev)
 }
 ```
 
-### 示例 2：数组边界
+### 内部不变量
 
 ```c
-void buffer_write(int *buf, size_t index, int value)
+uint64_t pmm_alloc_pages(pmm_t *pmm, uint32_t page_count)
 {
-    assert(index < BUFFER_SIZE);
-    buf[index] = value;
+    assert(pmm != NULL);
+    assert(page_count > 0);
+    /* ... */
 }
 ```
 
-### 示例 3：状态机检查
+当前内核里使用 `assert()` 的地方只有 `kernel/mm/pmm.c`（10 处），
+集中在 PMM 的入参与不变量校验。
+
+### 编译时验证
 
 ```c
-void task_switch(task_t *from, task_t *to)
-{
-    assert_always(from != NULL);
-    assert_always(to != NULL);
-    assert(to->state == TASK_READY);
-    /* 切换任务 */
-}
-```
-
-### 示例 4：编译时验证
-
-```c
-/* 确保结构体大小符合预期 */
 struct task_control_block {
     uint64_t sp;
     uint64_t pc;
@@ -195,26 +136,36 @@ static_assert(sizeof(struct task_control_block) == 256,
               "TCB size must be 256 bytes");
 ```
 
-## 性能考虑
+## 性能
 
-### 编译时开销
+断言确实有开销，但实测远小于直觉。x86_64 qemu-virt 平台完整构建对比：
 
-| 配置 | 代码体积 | 运行时开销 |
+| 配置 | `.text` | ELF 总大小 |
 |------|---------|-----------|
-| `ASSERT=panic` | 基准 | 条件检查开销 |
-| `ASSERT=off` | -40% | 零开销 |
+| 断言启用（当前唯一模式） | 397,312 | 2,271,872 |
+| 断言全部禁用（对照，已不可达） | 393,216 | 2,264,272 |
+| **差值** | **-4,096 (-1.03%)** | **-7,600 (-0.335%)** |
 
-### 建议
+开销量级是 **1%**，不是数量级上的差异。
 
-- **开发阶段**：使用 `ASSERT=panic`
-- **性能测试**：使用 `ASSERT=panic`
-- **生产发布**：使用 `ASSERT=off`
+## 为什么没有 ASSERT=off
+
+曾经存在 `ASSERT=panic|off` 编译开关（`-DASSERT_OFF` 控制 `ASSERT_ENABLED`），
+2026-09 移除，理由：
+
+1. **收益极小**：全内核禁用只省 1% 的 `.text`，大头集中在
+   `kernel/mm/pmm.c`。旧文档声称的 `-40%` 与实测相差约 120 倍。
+2. **语义割裂**：关键路径用的是 `assert_always`，它被刻意设计成不受该开关
+   影响——「关闭断言」关掉的只是最不重要的那批检查。
+3. **风险不对称**：省 1% 体积换来一整类 bug 静默通过。
+
+需要去掉某处检查时，直接删除那一行断言即可，不要重新引入整包开关。
 
 ## 注意事项
 
-1. **副作用**：避免在断言条件中使用有副作用的表达式
+1. **副作用**：避免在断言条件里写有副作用的表达式
    ```c
-   /* 错误：有副作用 */
+   /* 错误 */
    assert(x++ > 0);
 
    /* 正确 */
@@ -222,72 +173,31 @@ static_assert(sizeof(struct task_control_block) == 256,
    x++;
    ```
 
-2. **函数调用**：复杂的函数调用不应放在断言中（禁用断言时不执行）
+2. **函数调用**：不要把有副作用的函数调用放进断言条件
 
-3. **assert_always**：谨慎使用，避免在关键路径上使用
+3. **panic 不可恢复**：断言失败会停机，确保这是期望行为
 
-4. **panic 不可恢复**：断言失败会停止系统，确保这是期望的行为
-
-## 架构特定实现
-
-### AArch64
-
-```c
-/* include/aarch64/halt_arch.h */
-static inline void arch_halt(void)
-{
-    dmb();
-    dsb();
-    __asm__ volatile("msr daifset, #0xF" ::: "memory");
-    __asm__ volatile("wfi" ::: "memory");
-    while (1) {
-        __asm__ volatile("wfi" ::: "memory");
-    }
-}
-```
-
-### RISC-V
-
-```c
-/* include/riscv64/halt_arch.h */
-static inline void arch_halt(void)
-{
-    fence(i, w);
-    __asm__ volatile("csrci mstatus, 0x8" ::: "memory");
-    __asm__ volatile("wfi" ::: "memory");
-    while (1) {
-        __asm__ volatile("wfi" ::: "memory");
-    }
-}
-```
-
-### x86_64
-
-```c
-/* include/x86_64/halt_arch.h */
-static inline void arch_halt(void)
-{
-    mfence();
-    __asm__ volatile("cli" ::: "memory");
-    __asm__ volatile("hlt" ::: "memory");
-    while (1) {
-        __asm__ volatile("hlt" ::: "memory");
-    }
-}
-```
+4. **断言不是错误处理**：可恢复的错误（如用户态传入非法指针）应当返回错误码，
+   断言只用于"内核自己绝不该走到这里"的情况
 
 ## 测试
 
-运行 [examples/assert_test.c](../examples/assert_test.c) 中的测试：
+测试代码在 [`tests/assert_test.c`](../tests/assert_test.c)。
 
-```bash
-make ARCH=aarch64 ASSERT=panic
+`tests/*.c` 会由 Makefile 自动编译链接进内核（见 `TESTS_SOURCES`），
+但**不会自动运行**——需要在 `kernel/main.c` 的 `task_init()` 之后手动调用入口：
+
+```c
+run_assert_tests();
 ```
 
-测试覆盖：
-- ✅ 基本断言
-- ✅ 总是启用的断言
+覆盖内容：
 - ✅ 编译时断言
-- ✅ 辅助宏
 - ✅ 数组边界检查
-- ✅ 指针验证
+- ✅ 指针有效性验证
+- ✅ 算术假设
+
+## 相关文档
+
+- 快速参考：[`ASSERT_QUICKREF.md`](ASSERT_QUICKREF.md)
+- 测试体系：[`tests.md`](tests.md)

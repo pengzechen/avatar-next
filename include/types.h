@@ -118,9 +118,7 @@ typedef uint64_t paddr_t;  /* 物理地址 */
 /* 向上取整除法 */
 #define DIV_ROUND_UP(n, d) (((n) + (d) - 1) / (d))
 
-/* ===== 编译时断言 ===== */
-
-#define STATIC_ASSERT(expr, msg) typedef char static_assertion_##msg[(expr) ? 1 : -1]
+/* 编译时断言请用 assert.h 的 static_assert()（C11 _Static_assert） */
 
 /* ===== 属性宏 ===== */
 

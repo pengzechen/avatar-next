@@ -119,11 +119,11 @@ make PLATFORM=qemu-virt-x86_64  test-vmm LOG=info
 ### 其他构建选项
 
 ```bash
-# 调试版本（启用日志和断言）
-make PLATFORM=qemu-virt-aarch64 LOG=debug ASSERT=panic
+# 调试版本（启用日志）
+make PLATFORM=qemu-virt-aarch64 LOG=debug
 
-# 发布版本（零开销）
-make PLATFORM=qemu-virt-aarch64 LOG=none ASSERT=off
+# 发布版本（零日志开销）
+make PLATFORM=qemu-virt-aarch64 LOG=none
 
 # 仅编译内核
 make PLATFORM=qemu-virt-aarch64 kernel
@@ -359,11 +359,10 @@ LOG=debug     # 调试信息及以上
 LOG=trace     # 所有日志包括跟踪
 ```
 
-### 断言模式
-```bash
-ASSERT=panic  # 启用断言，失败时 panic（默认）
-ASSERT=off    # 禁用所有断言（发布模式）
-```
+### 断言
+断言始终启用，没有编译期开关——`assert()` / `assert_always()` 失败即调用
+`platform_panic()`。实测全内核禁用断言只能省约 1% 的 `.text`，却会让 bug
+静默通过，因此不再提供该选项（传 `ASSERT=` 会直接报错）。
 
 ### 架构和平台
 ```bash

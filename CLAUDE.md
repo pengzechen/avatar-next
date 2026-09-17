@@ -23,10 +23,10 @@ make PLATFORM=qemu-virt-riscv64
 make PLATFORM=qemu-virt-x86_64
 
 # 调试版本（日志+断言）
-make PLATFORM=qemu-virt-aarch64 LOG=debug ASSERT=panic
+make PLATFORM=qemu-virt-aarch64 LOG=debug
 
-# 发布版本（零开销）
-make PLATFORM=qemu-virt-aarch64 LOG=none ASSERT=off
+# 发布版本（零日志开销）
+make PLATFORM=qemu-virt-aarch64 LOG=none
 
 # 清理
 make PLATFORM=qemu-virt-aarch64 clean

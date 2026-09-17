@@ -6,21 +6,19 @@
 /*
  * 内核断言系统
  *
- * Makefile 参数:
- *   ASSERT=panic  - 断言失败时 panic（DEBUG 模式默认）
- *   ASSERT=off    - 完全禁用断言（RELEASE 模式）
+ * 断言始终启用，没有编译期开关。断言失败时输出错误信息并 panic。
+ *
+ * 若某处检查在发布版本中确实需要去掉，请直接删除那一行断言，
+ * 而不是引入"整包禁用"的开关——实测全内核禁用只能省 1% 的 .text，
+ * 却会让真正的 bug 静默通过。
  */
 
 /* ===== 平台 panic 函数声明 ===== */
 
 /*
- * platform_panic - 平台 panic 处理函数
- * 该函数应调用架构特定的 halt 实现来停止系统
+ * platform_panic - 平台 panic 处理函数，由平台层实现
  *
- * 注意：此函数由平台层提供，通常实现为：
- *   void platform_panic(void) {
- *       arch_halt();  // 调用架构特定的 halt
- *   }
+ * 当前实现见 platforms/qemu/qemu_platform.c：关中断后死循环停机，不会返回。
  */
 extern void platform_panic(void);
 
@@ -35,18 +33,7 @@ extern void platform_panic(void);
  */
 #define static_assert(cond, msg) _Static_assert(cond, msg)
 
-/* ===== 运行时断言配置 ===== */
-
-/* 默认启用断言（可通过 Makefile 的 ASSERT=off 禁用） */
-#if defined(ASSERT_OFF)
-    #define ASSERT_ENABLED 0
-#elif !defined(ASSERT_ENABLED)
-    #define ASSERT_ENABLED 1
-#endif
-
-/* ===== 运行时断言实现 ===== */
-
-#if ASSERT_ENABLED
+/* ===== 运行时断言 ===== */
 
 /*
  * assert - 运行时断言
@@ -66,12 +53,16 @@ extern void platform_panic(void);
     } while (0)
 
 /*
- * assert_always - 总是启用的断言
- * 即使定义了 ASSERT_OFF，此断言仍然有效
- * 用于关键检查，不应该被禁用
+ * assert_always - 关键路径断言
+ *
+ * 与 assert 行为一致，仅错误信息措辞不同，用于标注"这里失败说明
+ * 内核核心状态已被破坏"的检查点。
+ *
+ * 注意：历史上它存在的意义是"即使 ASSERT=off 也生效"，该开关已移除，
+ * 因此现在它与 assert 完全等价。
  *
  * 使用示例:
- *   assert_always(ptr != NULL);  // 关键检查，总是启用
+ *   assert_always(!in_irq_context());
  */
 #define assert_always(cond) \
     do { \
@@ -81,39 +72,5 @@ extern void platform_panic(void);
             platform_panic(); \
         } \
     } while (0)
-
-#else
-
-/* ASSERT_OFF 模式：禁用 assert，但保留 assert_always */
-#define assert(cond)         ((void)0)
-#define assert_always(cond) \
-    do { \
-        if (!(cond)) { \
-            KLOG_ERROR("Critical assertion failed: %s, file %s, line %d", \
-                       #cond, __FILE__, __LINE__); \
-            platform_panic(); \
-        } \
-    } while (0)
-
-#endif
-
-/* ===== 调试辅助宏 ===== */
-
-/*
- * assert_not_reached - 声明代码不应该执行到这里
- * 如果执行到这里，说明有逻辑错误
- */
-#define assert_not_reached() \
-    do { \
-        KLOG_ERROR("Code should not reach here: file %s, line %d", \
-                   __FILE__, __LINE__); \
-        platform_panic(); \
-    } while (0)
-
-/*
- * assert_unreachable(expr) - 声明表达式永远不会为真
- * 用于标记不可能的代码路径
- */
-#define assert_unreachable(expr) assert(!(expr))
 
 #endif  // ASSERT_H_

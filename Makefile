@@ -1,5 +1,5 @@
 # Avatar OS — 顶层 Makefile
-# 用法: make PLATFORM=<platform> [LOG=none|error|warn|info|debug|trace] [ASSERT=panic|off] [target]
+# 用法: make PLATFORM=<platform> [LOG=none|error|warn|info|debug|trace] [target]
 # 快速参考: make help
 
 # ─── §1  基本参数 ─────────────────────────────────────────────────────────────
@@ -16,9 +16,6 @@ endif
 # 日志级别配置
 LOG ?= info
 
-# 断言配置
-ASSERT ?= panic
-
 # QEMU vCPU 数量（用于 run / run-fs / test-*）
 # Phase 0：仅传给 QEMU，内核当前仍按单核运行（cpu_bring_up_all 是 stub）。
 SMP ?= 1
@@ -27,7 +24,6 @@ $(error Invalid SMP value '$(SMP)'. Use SMP=1..8)
 endif
 
 # 目录设置
-SRC_DIR         := examples
 LIB_DIR         := lib
 BUILD_ROOT      := build
 BUILD_DIR       := $(BUILD_ROOT)/$(PLATFORM)
@@ -65,7 +61,7 @@ ifeq ($(strip $(MEM_RAM_BASE)),)
 $(error Failed to generate platform config from $(_PLATFORM_CONF))
 endif
 
-# ─── §3  日志与断言标志 ──────────────────────────────────────────────────────────
+# ─── §3  日志标志 ────────────────────────────────────────────────────────────────
 ifeq ($(LOG),none)
     LOG_LEVEL := 0
     LOG_DEFINE := -DLOG_LEVEL=0 -DLOG_NONE
@@ -88,21 +84,13 @@ else
     $(error Invalid LOG level. Use: none, error, warn, info, debug, or trace)
 endif
 
-# 断言配置映射
-ifeq ($(ASSERT),panic)
-    ASSERT_DEFINE :=
-else ifeq ($(ASSERT),off)
-    ASSERT_DEFINE := -DASSERT_OFF
-else
-    $(error Invalid ASSERT setting. Use: panic or off)
+# ASSERT 开关已移除：断言恒为启用（见 include/assert.h）。
+# 显式传入时直接报错，而不是静默忽略——否则调用方会以为断言被关掉了。
+ifneq ($(origin ASSERT),undefined)
+    $(error ASSERT= is no longer supported; assertions are always enabled)
 endif
 
 # ─── §4  源文件与目标文件变量 ────────────────────────────────────────────────────
-# 遗留示例源文件（lib/examples/*.c）
-SOURCES := $(wildcard $(SRC_DIR)/*.c)
-OBJECTS := $(SOURCES:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
-DEPS    := $(OBJECTS:.o=.d)
-
 # klog 库源文件
 KLOG_SOURCES := $(LIB_DIR)/klog.c
 VSNPRINTF_SOURCES := $(LIB_DIR)/vsnprintf.c
@@ -389,7 +377,6 @@ ifeq ($(ARCH),x86_64)
     CFLAGS  += -I$(INCLUDE_DIR)/x86_64
     CFLAGS  += -I$(BOOT_DIR)/common
     CFLAGS  += $(LOG_DEFINE)
-    CFLAGS  += $(ASSERT_DEFINE)
     CFLAGS  += -fno-pie -fno-stack-protector -fno-stack-clash-protection -U_FORTIFY_SOURCE
     CFLAGS  += -ffreestanding -fno-builtin
     CFLAGS  += -mcmodel=large -mno-red-zone
@@ -416,7 +403,6 @@ else ifeq ($(ARCH),aarch64)
     CFLAGS  += -I$(INCLUDE_DIR)/aarch64
     CFLAGS  += -I$(BOOT_DIR)/common
     CFLAGS  += $(LOG_DEFINE)
-    CFLAGS  += $(ASSERT_DEFINE)
     CFLAGS  += -fno-pie
     CFLAGS  += -mgeneral-regs-only  # 只使用通用寄存器，禁用 SIMD/FP
     CFLAGS  += -mno-outline-atomics  # freestanding：禁止 GCC outline atomics 调用 libgcc 帮助函数
@@ -442,7 +428,6 @@ else ifeq ($(ARCH),riscv64)
     CFLAGS  += -I$(INCLUDE_DIR)/riscv64
     CFLAGS  += -I$(BOOT_DIR)/common
     CFLAGS  += $(LOG_DEFINE)
-    CFLAGS  += $(ASSERT_DEFINE)
     CFLAGS  += -mcmodel=medany
     CFLAGS  += -fno-pic -fno-pie
     CFLAGS  += -ffreestanding -fno-builtin
@@ -780,9 +765,6 @@ $(BUILD_DIR)/string.o: $(LIB_DIR)/string.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/libc.o: $(LIB_DIR)/libc.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/%.o: $(SRC_DIR)/%.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # ── §12b  内核 / 任务 / 加载器 / 系统调用规则 ──────────────────────────────────
@@ -1469,7 +1451,7 @@ test-mutex: kernel
 #   用法: make ARCH=aarch64 test-vmm LOG=info
 #
 test-vmm:
-	$(MAKE) ARCH=$(ARCH) LOG=$(LOG) ASSERT=$(ASSERT) VMM_TEST=1 kernel
+	$(MAKE) ARCH=$(ARCH) LOG=$(LOG) VMM_TEST=1 kernel
 
 # test-guest-linux: 编译 GUEST_LINUX=1 内核并把 Linux 作为 EL1 guest 启动
 #                   rootfs 会自动安装 /guests/linux/{linux.bin,linux.dtb,initrd.gz}
@@ -1478,7 +1460,7 @@ test-guest-linux: $(ROOTFS_IMG)
 		echo "ERROR: test-guest-linux currently supports ARCH=aarch64 only."; \
 		exit 1; \
 	fi
-	$(MAKE) PLATFORM=$(PLATFORM) LOG=$(LOG) ASSERT=$(ASSERT) GUEST_LINUX=1 kernel
+	$(MAKE) PLATFORM=$(PLATFORM) LOG=$(LOG) GUEST_LINUX=1 kernel
 	@echo "Starting QEMU (guest Linux)..."
 	$(QEMU) $(QEMU_FLAGS) $(QEMU_ROOTFS_FLAGS)
 
@@ -1506,7 +1488,7 @@ clean-all:
 help:
 	@echo "Avatar OS Makefile"
 	@echo ""
-	@echo "Usage: make PLATFORM=<platform> [LOG=<level>] [ASSERT=<mode>] [target]"
+	@echo "Usage: make PLATFORM=<platform> [LOG=<level>] [target]"
 	@echo ""
 	@echo "Platforms:"
 	@echo "  PLATFORM=qemu-virt-x86_64     QEMU x86_64 platform"
@@ -1526,9 +1508,8 @@ help:
 	@echo "  LOG=debug     Show debug info and above"
 	@echo "  LOG=trace     Show all logs including trace"
 	@echo ""
-	@echo "Assert Modes:"
-	@echo "  ASSERT=panic  Enable assertions, panic on failure (default)"
-	@echo "  ASSERT=off    Disable all assertions (release mode)"
+	@echo "Assertions:"
+	@echo "  Assertions are always enabled (assert/assert_always -> platform_panic)"
 	@echo ""
 	@echo "Cross-compiler:"
 	@echo "  CC=<compiler>  Specify compiler (x86_64: gcc, aarch64: aarch64-linux-musl-gcc, riscv64: riscv64-linux-musl-gcc)"
@@ -1550,7 +1531,7 @@ help:
 	@echo "Examples:"
 	@echo "  make PLATFORM=qemu-virt-aarch64 kernel"
 	@echo "  make PLATFORM=qemu-virt-riscv64 run-fs LOG=trace"
-	@echo "  make PLATFORM=qemu-virt-x86_64 ASSERT=off kernel"
+	@echo "  make PLATFORM=qemu-virt-x86_64 kernel LOG=warn"
 	@echo "  make PLATFORM=sg2002-riscv64 kernel LOG=info"
 	@echo "  make PLATFORM=qemu-virt-riscv64 clean"
 	@echo "  make PLATFORM=qemu-virt-riscv64 test-pthread LOG=warn    # pthread_test 一键测试"
@@ -1559,15 +1540,16 @@ help:
 	@echo "  make PLATFORM=qemu-virt-riscv64 run-net"
 	@echo "  make PLATFORM=qemu-virt-riscv64 run-net QEMU_NET_FLAGS='-netdev tap,id=net0,ifname=tap0,script=no,downscript=no -device virtio-net-device,netdev=net0,mac=52:54:00:12:34:56'"
 
-# 包含依赖文件
--include $(DEPS)
+# 头文件依赖：编译时已用 -MMD -MP 生成 build/**.d，但当前未纳入 -include，
+# 因此修改头文件不会触发重新编译（改头文件后请手动 make clean）。
+# 若要启用，需把所有目标的 .d 汇总成一个变量再 -include 之。
 
 
 
 # 节	内容
-# §1	基本参数（PLATFORM / ARCH兼容 / LOG / ASSERT / 目录）
+# §1	基本参数（PLATFORM / ARCH兼容 / LOG / 目录）
 # §2	平台配置生成（gen_platform.py）
-# §3	日志与断言标志
+# §3	日志标志
 # §4	源文件与目标文件变量
 # §4a	架构特定模块（VMM / 异常 / 切换 / 用户程序）
 # §4b	平台 / 驱动基础源文件
