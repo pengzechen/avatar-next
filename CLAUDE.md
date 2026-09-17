@@ -265,6 +265,16 @@ void platform_panic(void);
 
 **规则**：今后所有跨平台 C 代码中的架构判断，一律 `#include "arch.h"` 后使用 `#if ARCH_X86_64` / `#if ARCH_AARCH64` / `#if ARCH_RISCV64`。
 
+**规则（用户指针）**：syscall 里拿到来自 `regs[]` 的指针，**一律经
+`copy_to_user_bytes()` / `copy_from_user_bytes()` / `copy_string_from_user()` 访问，
+禁止裸解引用**（如 `*(int *)regs[1] = ...`、`memset((void *)regs[1], ...)`）。
+这些接口内部用 `user_range_ok()` 校验；裸解引用时用户传一个非法地址
+（例如 `(void*)-1`）就会让内核态写到坏地址 → #PF → 异常处理的 `while(1) hlt`
+→ **整机挂死**。这是 LTP 实测出来的：
+`kernel/syscall/fs/ioctl.c`、`kernel/syscall/fs/pty.c`、`kernel/syscall/core/proc_lifecycle.c`
+（`wait_handler`）、`kernel/syscall/syscall.c`（`getrlimit`/`getrusage`）都踩过一遍。
+新增 syscall 时请顺带检查这一条 —— 详见 `tests/ltp/testcases.list` 文件头。
+
 已进行更改。
 
 

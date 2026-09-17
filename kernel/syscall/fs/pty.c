@@ -333,6 +333,12 @@ void pty_close_slave(int pty_idx)
     }
 }
 
+/*
+ * 注意：下面所有 argp 都是【用户指针】，必须经 copy_to/from_user_bytes
+ * 访问。以前是裸解引用（`*(uint32_t *)argp = ...`），用户传非法地址
+ * （例如 ioctl(fd, TIOCGPTN, (void*)-1)）就会让内核态写坏地址 → #PF →
+ * 异常处理死循环 → 整机挂死。copy_*_bytes 内部用 user_range_ok() 校验。
+ */
 int pty_ioctl(int pty_idx, bool is_master, uint32_t req, void *argp)
 {
     (void)is_master;
@@ -341,64 +347,72 @@ int pty_ioctl(int pty_idx, bool is_master, uint32_t req, void *argp)
 
     switch (req) {
     case TIOCGPTN: {
+        uint32_t n = (uint32_t)pty_idx;
         if (!argp) return -14;
-        *(uint32_t *)argp = (uint32_t)pty_idx;
-        return 0;
+        return (copy_to_user_bytes(&n, argp, sizeof(n)) < 0) ? -14 : 0;
     }
     case TIOCSPTLCK: {
+        int lock;
         if (!argp) return -14;
-        p->locked = *(int *)argp ? true : false;
+        if (copy_from_user_bytes(argp, &lock, sizeof(lock)) < 0) return -14;
+        p->locked = lock ? true : false;
         return 0;
     }
     case TCGETS: {
+        struct kernel_termios t;
         if (!argp) return -14;
-        struct kernel_termios *t = (struct kernel_termios *)argp;
-        t->c_iflag = p->c_iflag;
-        t->c_oflag = p->c_oflag;
-        t->c_cflag = p->c_cflag;
-        t->c_lflag = p->c_lflag;
-        t->c_line  = 0;
-        memcpy(t->c_cc, p->c_cc, sizeof(p->c_cc));
-        return 0;
+        t.c_iflag = p->c_iflag;
+        t.c_oflag = p->c_oflag;
+        t.c_cflag = p->c_cflag;
+        t.c_lflag = p->c_lflag;
+        t.c_line  = 0;
+        memcpy(t.c_cc, p->c_cc, sizeof(p->c_cc));
+        return (copy_to_user_bytes(&t, argp, sizeof(t)) < 0) ? -14 : 0;
     }
     case TCSETS:
     case TCSETSW:
     case TCSETSF: {
+        struct kernel_termios t;
         if (!argp) return -14;
-        struct kernel_termios *t = (struct kernel_termios *)argp;
-        p->c_iflag = t->c_iflag;
-        p->c_oflag = t->c_oflag;
-        p->c_cflag = t->c_cflag;
-        p->c_lflag = t->c_lflag;
-        memcpy(p->c_cc, t->c_cc, sizeof(p->c_cc));
+        if (copy_from_user_bytes(argp, &t, sizeof(t)) < 0) return -14;
+        p->c_iflag = t.c_iflag;
+        p->c_oflag = t.c_oflag;
+        p->c_cflag = t.c_cflag;
+        p->c_lflag = t.c_lflag;
+        memcpy(p->c_cc, t.c_cc, sizeof(p->c_cc));
         return 0;
     }
     case TIOCGWINSZ: {
+        struct kernel_winsize ws;
         if (!argp) return -14;
-        struct kernel_winsize *ws = (struct kernel_winsize *)argp;
-        ws->ws_row = p->ws_row;
-        ws->ws_col = p->ws_col;
-        ws->ws_xpixel = p->ws_xpixel;
-        ws->ws_ypixel = p->ws_ypixel;
-        return 0;
+        ws.ws_row    = p->ws_row;
+        ws.ws_col    = p->ws_col;
+        ws.ws_xpixel = p->ws_xpixel;
+        ws.ws_ypixel = p->ws_ypixel;
+        return (copy_to_user_bytes(&ws, argp, sizeof(ws)) < 0) ? -14 : 0;
     }
     case TIOCSWINSZ: {
+        struct kernel_winsize ws;
         if (!argp) return -14;
-        struct kernel_winsize *ws = (struct kernel_winsize *)argp;
-        p->ws_row = ws->ws_row;
-        p->ws_col = ws->ws_col;
-        p->ws_xpixel = ws->ws_xpixel;
-        p->ws_ypixel = ws->ws_ypixel;
+        if (copy_from_user_bytes(argp, &ws, sizeof(ws)) < 0) return -14;
+        p->ws_row    = ws.ws_row;
+        p->ws_col    = ws.ws_col;
+        p->ws_xpixel = ws.ws_xpixel;
+        p->ws_ypixel = ws.ws_ypixel;
         return 0;
     }
-    case TIOCGPGRP:
+    case TIOCGPGRP: {
+        int pg = (int)p->fg_pgid;
         if (!argp) return -14;
-        *(int *)argp = (int)p->fg_pgid;
-        return 0;
-    case TIOCSPGRP:
+        return (copy_to_user_bytes(&pg, argp, sizeof(pg)) < 0) ? -14 : 0;
+    }
+    case TIOCSPGRP: {
+        int pg;
         if (!argp) return -14;
-        p->fg_pgid = (uint32_t)*(int *)argp;
+        if (copy_from_user_bytes(argp, &pg, sizeof(pg)) < 0) return -14;
+        p->fg_pgid = (uint32_t)pg;
         return 0;
+    }
     case TIOCSCTTY: {
         task_t *cur = task_current();
         if (cur && !is_master)

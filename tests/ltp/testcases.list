@@ -2,21 +2,79 @@
 # LTP 测例选择清单 — 每行格式: <syscall_dir>/<binary_name>
 #
 # 覆盖分类:
-#   进程管理: getpid, getppid, getuid, getgid, getpgid, setsid, exit, fork, wait4, clone
+#   进程管理: getpid, getppid, getuid, getgid, geteuid, getpgid, getsid, setsid,
+#             exit, exit_group, fork, wait4, clone
 #   文件 I/O: write, read, readv, writev, close, dup3, pipe, lseek, fcntl, getcwd
 #   内存管理: brk, mmap, munmap
 #   信号:     kill, rt_sigaction
-#   系统信息: uname, clock_gettime
+#   系统信息: uname, clock_gettime, getrusage
 #   调度:     sched_yield
+#
+# ── 选择原则 ────────────────────────────────────────────────────────────
+# 只覆盖内核【已经实现且行为正确】的功能，不靠测例倒逼新特性。
+#
+# 内核里是 stub / 硬编码的，**不要选**（选了就等于要求补功能）：
+#   fsync, fdatasync    → 直接返回 0
+#   mprotect, madvise   → 直接返回 0
+#   umask               → 恒返回 0022
+#   getrlimit/setrlimit → 恒返回 unlimited
+#   dup                 → x86_64 翻译表有意返回 ENOSYS（syscall.c case 32）
+#
+# 组/权限/cgroup 相关（setuid/setgid/setgroups/faccessat/...）按项目定位不做。
+#
+# ── 试过但过不了的，连同原因记在这里，避免以后重复踩 ────────────────────
+# LTP 对错误路径和边界语义要求很高，而本项目多数实现是"够 busybox 用"，
+# 因此下列失败多数不是功能缺失，而是兼容性/健壮性问题。
+#
+# 【曾导致整机挂死 —— 已修，保留测例作为该类问题的回归网】
+#   这一类 bug 值得单独警惕：**普通用户程序就能让内核死机**，与"是否完全
+#   兼容 Linux"无关。根因都是【裸解引用用户指针】。
+#     ioctl01  → ioctl(fd, TCGETS, (void*)-1)：ioctl.c 的全局 TTY 分支与
+#                pty.c 的 pty_ioctl 各分支都直接 `*(T *)argp = ...`，
+#                用户传非法地址即内核态写 -1 → #PF → 异常处理死循环。
+#                已全部改用 copy_to/from_user_bytes（内部 user_range_ok 校验）。
+#                现在 5 用例 PASS / 4 用例 TFAIL（错误语义仍不符），但不再崩。
+#     waitid01 → waitid 与 wait4 参数布局不同，却共用 wait_handler：
+#                wait_handler 把 regs[1]（waitid 的 id，一个小整数）当成
+#                int *wstatus 去写 → 写地址 0x4 → #PF。
+#                现在 waitid 明确返回 ENOSYS（未实现，但不会崩）。
+#   同一轮还顺手修了同类隐患：wait_handler 的 *wstatus/rusage 回写、
+#   getrlimit/setrlimit/prlimit64 的 rlim 回写、getrusage 的 rusage 回写 ——
+#   它们都在裸解引用用户指针，只是此前没被测例踩到。
+#
+# 【环境依赖缺失】
+#   chdir01 / renameat01 → 需要 LTP 块设备（tst_acquire_device + mkfs + mount）
+#   readlinkat01         → 内核无 symlink()，fixture 建不出来
+#   sysinfo01            → pseudofs 缺 /proc/loadavg
+#   gettid01 / getegid01 → pseudofs 缺 /proc/self/status
+#   execve01             → 辅助二进制 execve01_child 未随 rootfs 安装
+#   epoll_pwait01        → 内核无 socketpair()
+#
+# 【错误语义 / 行为不符】
+#   mkdirat01    → mkdirat 忽略 dirfd，拍不出 ENOTDIR/EBADF
+#   unlinkat01   → 2 个用例 errno 不符
+#   openat01     → 传 filefd 当 dirfd 应返回 ENOTDIR，实返 EBADF
+#   fstat02      → open 的 mode 参数未生效（0666 vs 0644）+ 无硬链接
+#   ftruncate01  → 只支持缩小，不支持扩大
+#   pipe2_01     → pipe2 的 O_NONBLOCK 未反映到 fcntl(F_GETFL)
+#   prctl01      → PR_GET_PDEATHSIG 取不到 PR_SET_PDEATHSIG 设的值
+#   sendfile02   → sendfile 的 offset 与文件位置语义不符
+#   tkill01      → tkill 返回 EBADF，信号也未被捕获
+#   getrandom01  → 返回值语义不符
+#   nanosleep01  → 需要 tick 级精度（当前睡眠粒度受调度 tick 限制）
+#   ppoll01      → 测例自身 SIGSEGV
 
 # ── 进程管理 ──
 getpid/getpid02
 getppid/getppid01
 getuid/getuid01
 getgid/getgid01
+geteuid/geteuid01
 getpgid/getpgid01
+getsid/getsid01
 setsid/setsid01
 exit/exit02
+exit_group/exit_group01
 fork/fork01
 wait4/wait401
 clone/clone06
@@ -47,6 +105,7 @@ rt_sigprocmask/rt_sigprocmask01
 # ── 系统信息 ──
 uname/uname01
 clock_gettime/clock_gettime01
+getrusage/getrusage01
 
 # ── 调度 ──
 sched_yield/sched_yield01

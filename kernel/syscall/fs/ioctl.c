@@ -32,7 +32,8 @@ void ioctl_handler(uint64_t regs[6], task_t *current)
     }
 
     if (request == FIONBIO) {
-        if (!argp) {
+        int on;
+        if (!argp || copy_from_user_bytes(argp, &on, sizeof(on)) < 0) {
             regs[0] = (uint64_t)(int64_t)-EFAULT;
             return;
         }
@@ -40,7 +41,7 @@ void ioctl_handler(uint64_t regs[6], task_t *current)
             regs[0] = (uint64_t)(int64_t)-EBADF;
             return;
         }
-        if (*(int *)argp)
+        if (on)
             ioctl_obj->flags |= 04000;  /* O_NONBLOCK */
         else
             ioctl_obj->flags &= ~04000;
@@ -66,27 +67,50 @@ void ioctl_handler(uint64_t regs[6], task_t *current)
         return;
     }
 
-    /* fd 0-2 默认 UART 或无 pool entry：全局 TTY */
-
+    /*
+     * fd 0-2 默认 UART 或无 pool entry：全局 TTY
+     *
+     * 下面全部经 copy_to_user_bytes / copy_from_user_bytes 访问用户指针。
+     * 以前是裸解引用（如 `*(struct kernel_termios *)argp = g_termios;`），
+     * 用户传非法地址（例如 (void*)-1）就会让内核态写坏地址 → #PF →
+     * 异常处理的死循环 → 整机挂死。copy_*_bytes 内部用 user_range_ok()
+     * 校验，非法指针返回 -1，这里转成 -EFAULT。
+     */
     if (request == TCGETS && argp) {
-        *(struct kernel_termios *)argp = g_termios;
-        regs[0] = 0;
+        if (copy_to_user_bytes(&g_termios, argp, sizeof(g_termios)) < 0)
+            regs[0] = (uint64_t)(int64_t)-EFAULT;
+        else
+            regs[0] = 0;
     } else if (request == TIOCGWINSZ && argp) {
-        struct kernel_winsize *ws = (struct kernel_winsize *)argp;
-        ws->ws_row    = 24;
-        ws->ws_col    = 80;
-        ws->ws_xpixel = 0;
-        ws->ws_ypixel = 0;
-        regs[0] = 0;
+        struct kernel_winsize ws = {
+            .ws_row = 24, .ws_col = 80, .ws_xpixel = 0, .ws_ypixel = 0,
+        };
+        if (copy_to_user_bytes(&ws, argp, sizeof(ws)) < 0)
+            regs[0] = (uint64_t)(int64_t)-EFAULT;
+        else
+            regs[0] = 0;
     } else if ((request == TCSETS || request == TCSETSW || request == TCSETSF) && argp) {
-        g_termios = *(struct kernel_termios *)argp;
-        regs[0] = 0;
+        struct kernel_termios t;
+        if (copy_from_user_bytes(argp, &t, sizeof(t)) < 0)
+            regs[0] = (uint64_t)(int64_t)-EFAULT;
+        else {
+            g_termios = t;
+            regs[0] = 0;
+        }
     } else if (request == TIOCGPGRP && argp) {
-        *(int *)argp = (int)(g_fg_pgid ? g_fg_pgid : current->pgid);
-        regs[0] = 0;
+        int pgrp = (int)(g_fg_pgid ? g_fg_pgid : current->pgid);
+        if (copy_to_user_bytes(&pgrp, argp, sizeof(pgrp)) < 0)
+            regs[0] = (uint64_t)(int64_t)-EFAULT;
+        else
+            regs[0] = 0;
     } else if (request == TIOCSPGRP && argp) {
-        g_fg_pgid = (uint32_t)*(int *)argp;
-        regs[0] = 0;
+        int pgrp;
+        if (copy_from_user_bytes(argp, &pgrp, sizeof(pgrp)) < 0)
+            regs[0] = (uint64_t)(int64_t)-EFAULT;
+        else {
+            g_fg_pgid = (uint32_t)pgrp;
+            regs[0] = 0;
+        }
     } else if (request == TIOCSWINSZ) {
         regs[0] = 0;
     } else if (request == TIOCSCTTY || request == TIOCNOTTY) {

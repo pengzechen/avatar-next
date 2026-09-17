@@ -440,8 +440,22 @@ void syscall_handler(trap_frame_t *frame)
         break;
 
     case LINUX_SYS_WAIT4:
-    case LINUX_SYS_WAITID:
         wait_handler(regs, task_current());
+        break;
+
+    case LINUX_SYS_WAITID:
+        /*
+         * waitid 与 wait4 的参数布局不同：
+         *   wait4 (pid,  status,  options, rusage)
+         *   waitid(idtype, id,    infop,   options, rusage)
+         * 以前两者共用 wait_handler，于是 wait_handler 把 waitid 的
+         * regs[1]（id，一个小整数）当成 int *wstatus 去写 —— 写地址 0x4
+         * → #PF → 异常处理死循环 → 整机挂死。
+         *
+         * 按 waitid 语义要填 siginfo_t，本内核未实现，这里明确返回
+         * ENOSYS。宁可"未实现"，也不要崩。
+         */
+        regs[0] = (uint64_t)(int64_t)-ENOSYS;
         break;
 
     case LINUX_SYS_SET_TID_ADDR:
@@ -748,12 +762,19 @@ void syscall_handler(trap_frame_t *frame)
             /*
              * getrlimit(resource, rlim):                 rlim 在 arg1
              * prlimit64(pid, resource, new, old):        old  在 arg3
+             *
+             * 用户指针必须经 copy_to_user_bytes，不能裸解引用。
              */
-            struct kernel_rlimit *rl = (struct kernel_rlimit *)regs[
-                (syscall_num == LINUX_SYS_PRLIMIT64) ? 3 : 1];
-            if (rl) {
-                rl->rlim_cur = (uint64_t)-1;
-                rl->rlim_max = (uint64_t)-1;
+            uint64_t uptr = regs[(syscall_num == LINUX_SYS_PRLIMIT64) ? 3 : 1];
+            if (uptr) {
+                struct kernel_rlimit rl = {
+                    .rlim_cur = (uint64_t)-1,
+                    .rlim_max = (uint64_t)-1,
+                };
+                if (copy_to_user_bytes(&rl, (void *)uptr, sizeof(rl)) < 0) {
+                    regs[0] = (uint64_t)(int64_t)-EFAULT;
+                    break;
+                }
             }
         }
         regs[0] = 0;
@@ -762,13 +783,18 @@ void syscall_handler(trap_frame_t *frame)
 
     case LINUX_SYS_GETRUSAGE:
         if (regs[1]) {
-            memset((void *)regs[1], 0, 144);
+            /* 用户指针必须经 copy_to_user_bytes，不能裸解引用 */
+            uint64_t ru[18];                 /* sizeof(struct rusage) == 144 */
+            memset(ru, 0, sizeof(ru));
             if (current && current->is_user_process) {
-                uint64_t *ru = (uint64_t *)regs[1];
                 ru[0] = current->utime_ns / 1000000000ULL;
                 ru[1] = (current->utime_ns % 1000000000ULL) / 1000ULL;
                 ru[2] = current->stime_ns / 1000000000ULL;
                 ru[3] = (current->stime_ns % 1000000000ULL) / 1000ULL;
+            }
+            if (copy_to_user_bytes(ru, (void *)regs[1], sizeof(ru)) < 0) {
+                regs[0] = (uint64_t)(int64_t)-EFAULT;
+                break;
             }
         }
         regs[0] = 0;

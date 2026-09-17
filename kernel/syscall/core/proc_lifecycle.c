@@ -508,10 +508,43 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
 /* ───────────────────────────────────────────────────────────────
  *  wait4 / waitid
  * ─────────────────────────────────────────────────────────────── */
+/*
+ * wait_write_result - 把 wait 的结果写回用户空间
+ *
+ * ustatus / urusage 是用户给的指针（可为 NULL）。必须走 copy_to_user_bytes：
+ * 以前这里直接 `*wstatus = ...`，用户传一个非法地址（例如 (void*)-1）就会
+ * 让内核态写到坏地址、触发 #PF 后落进异常处理的死循环，整个系统挂死。
+ *
+ * 返回 false 表示用户指针非法（调用者应回 -EFAULT）。
+ */
+static bool wait_write_result(uint64_t ustatus, uint64_t urusage,
+                              const task_t *child)
+{
+    if (ustatus) {
+        int status = child->exit_signal
+                   ? (int)(child->exit_signal & 0x7F)
+                   : (int)((child->exit_status & 0xFF) << 8);
+        if (copy_to_user_bytes(&status, (void *)ustatus, sizeof(status)) < 0)
+            return false;
+    }
+
+    if (urusage) {
+        uint64_t ru[18];                 /* sizeof(struct rusage) == 144 */
+        memset(ru, 0, sizeof(ru));
+        ru[0] = child->utime_ns / 1000000000ULL;
+        ru[1] = (child->utime_ns % 1000000000ULL) / 1000ULL;
+        ru[2] = child->stime_ns / 1000000000ULL;
+        ru[3] = (child->stime_ns % 1000000000ULL) / 1000ULL;
+        if (copy_to_user_bytes(ru, (void *)urusage, sizeof(ru)) < 0)
+            return false;
+    }
+
+    return true;
+}
+
 void wait_handler(uint64_t regs[6], task_t *me)
 {
     int wait_pid = (int)(int32_t)regs[0];
-    int *wstatus = (int *)regs[1];
     int options  = (int)regs[2];
 
     const int WNOHANG = 1;
@@ -551,17 +584,9 @@ void wait_handler(uint64_t regs[6], task_t *me)
     if (found) {
         KLOG_DEBUG("[wait] pid=%u reap immediately child=%u status=%d signal=%d\n",
                    me->id, found->id, found->exit_status, found->exit_signal);
-        if (wstatus)
-            *wstatus = found->exit_signal
-                     ? (found->exit_signal & 0x7F)
-                     : (found->exit_status & 0xFF) << 8;
-        if (regs[3]) {
-            memset((void *)regs[3], 0, 144);
-            uint64_t *ru = (uint64_t *)regs[3];
-            ru[0] = found->utime_ns / 1000000000ULL;
-            ru[1] = (found->utime_ns % 1000000000ULL) / 1000ULL;
-            ru[2] = found->stime_ns / 1000000000ULL;
-            ru[3] = (found->stime_ns % 1000000000ULL) / 1000ULL;
+        if (!wait_write_result(regs[1], regs[3], found)) {
+            regs[0] = (uint64_t)(int64_t)-EFAULT;
+            return;
         }
         regs[0] = (uint64_t)found->id;
         task_reap_dead(found);
@@ -594,17 +619,9 @@ void wait_handler(uint64_t regs[6], task_t *me)
     if (found) {
         KLOG_DEBUG("[wait] pid=%u reap after wake child=%u status=%d signal=%d\n",
                    me->id, found->id, found->exit_status, found->exit_signal);
-        if (wstatus)
-            *wstatus = found->exit_signal
-                     ? (found->exit_signal & 0x7F)
-                     : (found->exit_status & 0xFF) << 8;
-        if (regs[3]) {
-            memset((void *)regs[3], 0, 144);
-            uint64_t *ru = (uint64_t *)regs[3];
-            ru[0] = found->utime_ns / 1000000000ULL;
-            ru[1] = (found->utime_ns % 1000000000ULL) / 1000ULL;
-            ru[2] = found->stime_ns / 1000000000ULL;
-            ru[3] = (found->stime_ns % 1000000000ULL) / 1000ULL;
+        if (!wait_write_result(regs[1], regs[3], found)) {
+            regs[0] = (uint64_t)(int64_t)-EFAULT;
+            return;
         }
         regs[0] = (uint64_t)found->id;
         task_reap_dead(found);

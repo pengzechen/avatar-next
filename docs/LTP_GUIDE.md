@@ -170,14 +170,24 @@ grep -w 'xxx' /usr/include/asm/unistd_64.h  # 或查 Linux 源码
 
 | 分类 | 测例 | 说明 |
 |------|------|------|
-| 进程 | getpid02, getppid01, getuid01, getgid01, getpgid01, setsid01, exit02, fork01, wait401, clone06 | 进程生命周期和身份 |
+| 进程 | getpid02, getppid01, getuid01, getgid01, geteuid01, getpgid01, getsid01, setsid01, exit02, exit_group01, fork01, wait401, clone06 | 进程生命周期和身份 |
 | 文件 | write01, read01, readv01, writev01, close01, dup3_01, fcntl01, fcntl02, pipe01, lseek01, getcwd01 | 基础文件 I/O 和 cwd/fd 控制 |
 | 内存 | brk01, mmap01, munmap01 | 内存管理 |
 | 信号 | kill03, rt_sigaction01, rt_sigprocmask01 | 信号投递、处理和 mask |
-| 系统 | uname01, clock_gettime01 | 系统信息 |
+| 系统 | uname01, clock_gettime01, getrusage01 | 系统信息 |
 | 调度 | sched_yield01 | CPU 让出 |
+| epoll | epoll_create1_01, epoll_create1_02, epoll_ctl01, epoll_wait01, epoll_wait04 | epoll 事件通知 |
 
-共 35 个测例，覆盖六大类。
+共 39 个测例。
+
+**挑选原则与"试过但过不了"的清单**（含 ioctl/waitid 两处内核崩溃）
+全部记录在 `tests/ltp/testcases.list` 的文件头注释里 —— 往清单里加测例前**先看一眼**，
+避免重复试那些已知需要补功能才能过的。
+
+> 注意：LTP 对错误路径与边界语义要求很高，而本项目多数 syscall 实现是
+> "够 busybox 用"。因此 LTP 失败**未必**代表功能缺失，很多是兼容性问题；
+> 而项目定位不是完全兼容 Linux，所以失败项要按"值不值得修"逐个判断，
+> 不要默认全修。
 
 ## 推荐下一批测例
 
