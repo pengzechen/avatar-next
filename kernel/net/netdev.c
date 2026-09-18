@@ -6,24 +6,34 @@
 static netdev_t *g_default_netdev;
 
 /*
- * 收包中断 → 网络栈的唤醒回调。由 kernel/net/net.c 在 net_init() 里注册。
- * 只在启动阶段写一次，运行期只读，所以不需要锁（中断里也读它）。
+ * 收包通知状态。只在启动阶段写一次（irq_backed），运行期读；
+ * pending 由 ISR 置位、轮询方读取并清除。
  */
-static void (*g_rx_wakeup)(void);
+static bool g_rx_irq_backed;
+static volatile bool g_rx_pending;
 
-void netdev_set_rx_wakeup(void (*fn)(void))
+void netdev_rx_set_irq_backed(void)
 {
-    g_rx_wakeup = fn;
+    g_rx_irq_backed = true;
 }
 
-/*
- * 由驱动的收包 ISR 调用。中断上下文 —— 这里只做转发，
- * 真正的唤醒动作（task_unblock）在注册者那边，同样必须是非阻塞的。
- */
+/* 中断上下文：只置一个标志 */
 void netdev_rx_wakeup(void)
 {
-    if (g_rx_wakeup != NULL)
-        g_rx_wakeup();
+    g_rx_pending = true;
+}
+
+bool netdev_rx_pending(void)
+{
+    /* 没有中断通知机制的驱动：老实报告"可能有帧"，轮询方每次都查 */
+    if (!g_rx_irq_backed)
+        return true;
+
+    if (!g_rx_pending)
+        return false;
+
+    g_rx_pending = false;
+    return true;
 }
 
 int netdev_register(netdev_t *dev)
@@ -78,6 +88,23 @@ int netdev_recv(uint8_t *frame, size_t maxlen)
         }
     }
     return n;
+}
+
+/*
+ * 同 netdev_recv，但让驱动直接写进 dst。
+ * 驱动没有实现 recv_into 时回退到 recv（此时 driver 会经由内部缓冲再拷一次）。
+ */
+int netdev_recv_into(uint8_t *dst, size_t maxlen)
+{
+    netdev_t *dev = g_default_netdev;
+
+    if (!dev || !dst || maxlen == 0U)
+        return -1;
+
+    if (dev->recv_into != NULL)
+        return dev->recv_into(dev->ctx, dst, maxlen);
+
+    return netdev_recv(dst, maxlen);
 }
 
 void netdev_mac(uint8_t mac[6])

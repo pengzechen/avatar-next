@@ -45,11 +45,13 @@ void net_init(void)
     g_net_ready = 1;
 
     /*
-     * 收包中断的唤醒回调**暂不注册**（原因见上面"收包唤醒链路（暂缓）"）：
-     * 将来这里要挂的是"唤醒 net-poll 任务"的函数，即
-     *     netdev_set_rx_wakeup(<唤醒函数>);
-     * 现在 net-poll 走协作式让出、始终在就绪队列里，不需要谁来唤醒；
-     * 中断本身仍然使能（cvitek_eth_init 里），只做去断言。
+     * 收包中断**不唤醒任何任务**（原因见下面"收包唤醒链路（暂缓）"）：
+     * 驱动在 ISR 里只调 netdev_rx_wakeup() 置一个"有新帧"的标志，net-poll
+     * 用 netdev_rx_pending() 读它来挡掉空轮询。net-poll 本身走协作式让出、
+     * 始终在就绪队列里，不存在"需要被唤醒"这回事。
+     *
+     * 等异常返回路径能支持"任务上下文里阻塞、由中断唤醒"之后，再在这里挂
+     * 真正唤醒 net-poll 的钩子。
      */
 
     KLOG_INFO("[net] IPv4 addr=192.168.7.1 mask=255.255.255.0 gw=192.168.7.1\n");
@@ -102,9 +104,8 @@ void net_poll_once(void)
  *
  * 要支持这个模式，得先让异常返回路径在调度切换之后重新取得当前任务的帧指针
  * （例如把 frame 指针存进 per-CPU 变量、由调度器在切换时更新）。
- * 在那之前，netdev 层的唤醒钩子（include/net/netdev.h 的
- * netdev_set_rx_wakeup / netdev_rx_wakeup）保持未注册：驱动的收包中断只做
- * 去断言，不唤醒任何人。
+ * 在那之前，netdev 层的 netdev_rx_wakeup()（驱动 ISR 调用）只置标志、不唤醒
+ * 任何任务：net-poll 靠 netdev_rx_pending() 读这个标志来省掉空轮询。
  */
 
 void net_poll_task(void *arg)

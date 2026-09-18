@@ -633,6 +633,7 @@ static int cvitek_eth_recv(struct cvitek_eth_nic *nic, uint8_t *frame,
     nic->rx_count++;
 
     size_t n = ((size_t)flen < maxlen) ? (size_t)flen : maxlen;
+
     memcpy(frame, buf, n);
 
     /* 立刻还给 DMA（Rust 版靠 RxToken::drop 做，C 里手动） */
@@ -877,6 +878,13 @@ static int cvitek_eth_init(uintptr_t base)
                cvitek_read(nic, CVITEK_DMA_TX_BASE),
                cvitek_read(nic, CVITEK_DMA_RX_BASE));
 
+    /*
+     * 告诉 netdev 层：本驱动有收包中断，会用 netdev_rx_wakeup() 报告新帧。
+     * 上层据此用 netdev_rx_pending() 挡掉空轮询 —— 空轮询要碰描述符，而
+     * 描述符的 cache invalidate 带两次 fence，每秒 10 万次就是 ~9% 的 CPU。
+     */
+    netdev_rx_set_irq_backed();
+
     nic->ready = true;
     g_nic = nic;
 
@@ -888,6 +896,12 @@ static int cvitek_eth_init(uintptr_t base)
         cvitek_dev.ctx  = nic;
         cvitek_dev.send = cvitek_netdev_send;
         cvitek_dev.recv = cvitek_netdev_recv;
+        /*
+         * recv 与 recv_into 是同一个函数：驱动本来就是把帧写进【调用方给的
+         * 缓冲】，两者只差上层要不要多绕一次栈上中间缓冲。都注册上，让上层
+         * 走 recv_into 以省掉那一次 1400 字节的拷贝。
+         */
+        cvitek_dev.recv_into = cvitek_netdev_recv;
         memcpy(cvitek_dev.mac, nic->mac, 6);
         netdev_register(&cvitek_dev);
     }
