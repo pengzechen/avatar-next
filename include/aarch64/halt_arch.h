@@ -6,6 +6,7 @@
  */
 
 #include "barrier.h"
+#include "aarch64/exception_impl.h"
 
 /*
  * arch_halt - 停止 AArch64 处理器
@@ -18,8 +19,8 @@ static inline void arch_halt(void)
     barrier_data();
     barrier_instr_full();
 
-    /* 禁用中断 */
-    __asm__ volatile("msr daifset, #0xF" ::: "memory");
+    /* 禁用中断（统一接口；这里只掩 IRQ，本内核不使用 FIQ/SError） */
+    arch_irq_disable();
 
     /* WFI - Wait For Interrupt */
     /* 在中断禁用的情况下，处理器会永久停止 */

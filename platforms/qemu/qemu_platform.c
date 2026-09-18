@@ -6,6 +6,7 @@
 #include "../../boot/common/platform_ops.h"
 #include "types.h"
 #include "arch.h"
+#include "exception.h"   /* arch_irq_disable()（统一的中断屏蔽原语）*/
 #include "platform_cfg.h"  /* platform_conf_scan */
 #include "uart/uart.h"   /* 统一 UART 驱动，根据架构自动选择 */
 #if ARCH_X86_64
@@ -42,19 +43,11 @@ static void qemu_panic(void) __attribute__((noreturn));
 
 static void qemu_panic(void)
 {
-    /* Disable interrupts */
-#if ARCH_AARCH64
-    __asm__ volatile("msr daifset, #0xF" ::: "memory");
-#elif ARCH_RISCV64
-    /* RISC-V: Disable all interrupts in S-mode */
-    __asm__ volatile(
-        "csrw sie, zero\n"     /* Disable supervisor interrupt enable */
-        "csrw sip, zero\n"     /* Clear supervisor interrupt pending */
-        ::: "memory"
-    );
-#elif ARCH_X86_64
-    __asm__ volatile("cli" ::: "memory");
-#endif
+    /*
+     * 关中断：统一用 arch_irq_disable()（include/<arch>/exception_impl.h）。
+     * 这里原来按架构各写一遍 msr daifset, #0xF / csrw sie,sip / cli。
+     */
+    arch_irq_disable();
 
     /* Hang */
     while (1) {

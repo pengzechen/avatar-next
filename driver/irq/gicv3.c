@@ -1,6 +1,7 @@
 
 #include "gicv3.h"
 #include "mmio.h"
+#include "barrier.h"   /* barrier_sync / barrier_instr_full */
 #include "klog.h"
 #include "timer/timer.h"
 
@@ -75,7 +76,7 @@ void gicv3_init(void)
     write32(gicd_ctrlr, (void *)GICD_CTLR);
 
     // 等待 GICD_CTLR.RWP (bit31) 清零 — ARE_NS 生效需要时间
-    __asm__ volatile("dsb sy" ::: "memory");
+    barrier_sync();
     for (int rwp_to = 1000000; rwp_to > 0; rwp_to--) {
         if (!(read32((void *)GICD_CTLR) & (1u << 31)))
             break;
@@ -85,7 +86,7 @@ void gicv3_init(void)
     uint32_t val = read32((void *)GICR_WAKER);
     val &= ~(1u << 1); // Clear ProcessorSleep
     write32(val, (void *)GICR_WAKER);
-    __asm__ volatile("dsb sy" ::: "memory");
+    barrier_sync();
     uint32_t waker_to = 1000000;
     while ((read32((void *)GICR_WAKER) & (1u << 2)) && waker_to-- > 0)
         timer_spin(1);
@@ -103,7 +104,7 @@ void gicv3_init(void)
         write32(0xFFFFFFFFu, (void *)(sgi_base + 0x0080u)); /* GICR_IGROUPR0 */
         for (uint32_t off = 0; off < 32u; off += 4u)
             write32(0xA0A0A0A0u, (void *)(sgi_base + 0x0400u + off)); /* GICR_IPRIORITYRn */
-        __asm__ volatile("dsb sy" ::: "memory");
+        barrier_sync();
     }
 
     // ---- CPU interface ----
@@ -174,13 +175,13 @@ void gicv3_init_secondary(void)
     __asm__ volatile("mrs %0, S3_0_C12_C12_5" : "=r"(sre)); /* ICC_SRE_EL1 */
     sre |= 0x7u;  /* SRE=1, DIB=1, DFB=1 */
     __asm__ volatile("msr S3_0_C12_C12_5, %0" :: "r"(sre));
-    __asm__ volatile("isb");  /* ISB required after ICC_SRE_EL1 write */
+    barrier_instr_full();  /* ICC_SRE_EL1 写之后必须 isb */
 
     /* Step 2: 唤醒本核 Redistributor */
     uint32_t waker = read32((void *)(gicr + 0x0014)); /* GICR_WAKER */
     waker &= ~(1u << 1); /* Clear ProcessorSleep */
     write32(waker, (void *)(gicr + 0x0014));
-    __asm__ volatile("dsb sy" ::: "memory");  /* 确保写入传播到 GIC 设备 */
+    barrier_sync();  /* 确保写入传播到 GIC 设备 */
 
     uint32_t waker_to = 1000000;
     while ((read32((void *)(gicr + 0x0014)) & (1u << 2)) && waker_to-- > 0)
@@ -197,14 +198,14 @@ void gicv3_init_secondary(void)
         write32(0xFFFFFFFFu, (void *)(sgi_base + 0x0080u)); /* GICR_IGROUPR0 */
         for (uint32_t off = 0; off < 32u; off += 4u)
             write32(0xA0A0A0A0u, (void *)(sgi_base + 0x0400u + off)); /* GICR_IPRIORITYRn */
-        __asm__ volatile("dsb sy" ::: "memory");
+        barrier_sync();
     }
 
     /* Step 3: 配置 ICC 寄存器 */
     __asm__ volatile("msr S3_0_C12_C12_4, %0" :: "r"((uint64_t)0));    /* ICC_CTLR_EL1 */
     __asm__ volatile("msr S3_0_C4_C6_0,   %0" :: "r"((uint64_t)0xFFu)); /* ICC_PMR_EL1 */
     __asm__ volatile("msr S3_0_C12_C12_7, %0" :: "r"((uint64_t)1u));    /* ICC_IGRPEN1_EL1 */
-    __asm__ volatile("isb");
+    barrier_instr_full();
 
     KLOG_INFO("[gicv3] secondary init done\n");
 }

@@ -9,23 +9,7 @@
  */
 
 #include "task/preempt.h"
-
-/* ── DAIF 保存 / 恢复辅助函数 ─────────────────────────────── */
-
-static inline uint64_t
-aarch64_irq_save(void)
-{
-    uint64_t daif;
-    asm volatile("mrs %0, daif" : "=r"(daif) :: "memory");
-    asm volatile("msr daifset, #2" ::: "memory");   /* 关 IRQ (I bit) */
-    return daif;
-}
-
-static inline void
-aarch64_irq_restore(uint64_t daif)
-{
-    asm volatile("msr daif, %0" :: "r"(daif) : "memory");
-}
+#include "aarch64/exception_impl.h"   /* arch_irq_save/restore（统一的中断屏蔽原语）*/
 
 /* ── spin_lock ────────────────────────────────────────────── */
 
@@ -81,33 +65,34 @@ spin_unlock(spinlock_t *lock)
 
 /* ── 带中断保护的 spinlock ────────────────────────────────── */
 /*
- * 设计：与 RISC-V/x86_64 一致——先在 C 层保存并关中断，再调用
- * spin_lock。DAIF 保存在 lock->irq_flags（单核串行持锁时安全）。
+ * 中断状态存在**调用点的局部变量**里（由 *flags 带回），不再存进锁对象 ——
+ * 存进锁对象时，SMP 下争锁的另一颗 CPU 会把它的 flags 覆盖上去，解锁时
+ * 恢复的就是别人的中断状态。中断原语本身统一来自
+ * include/aarch64/exception_impl.h（arch_irq_save/restore）。
  */
 
 static inline void
-spin_lock_irqsave(spinlock_noirq_t *lock)
+spin_lock_irqsave(spinlock_t *lock, uint64_t *flags)
 {
-    lock->irq_flags = aarch64_irq_save();   /* 先关 IRQ，再自旋 */
-    spin_lock((spinlock_t *)lock);
+    *flags = arch_irq_save();               /* 先关中断，再自旋 */
+    spin_lock(lock);
 }
 
 static inline int
-spin_trylock_irqsave(spinlock_noirq_t *lock)
+spin_trylock_irqsave(spinlock_t *lock, uint64_t *flags)
 {
-    lock->irq_flags = aarch64_irq_save();
-    if (spin_trylock((spinlock_t *)lock) == 0)
+    *flags = arch_irq_save();
+    if (spin_trylock(lock) == 0)
         return 0;                           /* 成功 */
-    aarch64_irq_restore(lock->irq_flags);   /* 失败则恢复中断 */
+    arch_irq_restore(*flags);               /* 失败则恢复中断 */
     return 1;
 }
 
 static inline void
-spin_unlock_irqrestore(spinlock_noirq_t *lock)
+spin_unlock_irqrestore(spinlock_t *lock, uint64_t flags)
 {
-    uint64_t saved = lock->irq_flags;
-    spin_unlock((spinlock_t *)lock);        /* 先释放锁 */
-    aarch64_irq_restore(saved);             /* 再恢复中断 */
+    spin_unlock(lock);                      /* 先释放锁 */
+    arch_irq_restore(flags);                /* 再恢复中断 */
 }
 
 #endif  // AARCH64_SPIN_LOCK_IMPL_H

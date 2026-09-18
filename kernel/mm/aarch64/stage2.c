@@ -35,12 +35,9 @@ static uint64_t s_vttbr;
 static void flush_tlb(void)
 {
     /* 刷新所有 VMID 的 Stage-1 + Stage-2 TLB（EL1&0 regime）*/
-    __asm__ volatile(
-        "tlbi vmalls12e1is\n"
-        "dsb  ish\n"
-        "isb\n"
-        ::: "memory"
-    );
+    __asm__ volatile("tlbi vmalls12e1is" ::: "memory");
+    barrier_sync();       /* dsb：等失效完成 */
+    barrier_instr_full(); /* isb */
 }
 
 static void flush_ept(void *addr, uint64_t size)
@@ -49,9 +46,9 @@ static void flush_ept(void *addr, uint64_t size)
     uint64_t e = ((uint64_t)addr + size + 63ULL) & ~63ULL;
     for (; p < e; p += 64)
         __asm__ volatile("dc civac, %0" :: "r"(p) : "memory");
-    __asm__ volatile("dsb sy" ::: "memory");
+    barrier_sync();
     flush_tlb();
-    __asm__ volatile("isb" ::: "memory");
+    barrier_instr_full();
 }
 
 static int ipa_is_ram(uint64_t ipa)

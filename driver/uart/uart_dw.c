@@ -166,20 +166,22 @@ dw_uart_interrupt_handler(uint64_t *stack_pointer)
 
     if (iir == 0x4 || iir == 0xC) {  // RX 中断
         rx_irq_count++;              // 调试计数
-        spin_lock_irqsave(&rx_buffer.lock);
+        uint64_t flags;
+        spin_lock_irqsave(&rx_buffer.lock, &flags);
         while (dw_uart_rx_ready()) {
             char c = (char) dw_reg_r8(DW_UART_RBR);
             // ❌ 不要在中断中打印！会导致死锁和重复输出
             // logger_info("got key: %c\n", c);
             buffer_put(&rx_buffer, c);
         }
-        spin_unlock_irqrestore(&rx_buffer.lock);
+        spin_unlock_irqrestore(&rx_buffer.lock, flags);
     }
 
     // 0x2 = TX Holding Register Empty
     if (iir == 0x2) {  // TX 中断
         tx_irq_count++;  // 调试计数
-        spin_lock_irqsave(&tx_buffer.lock);
+        uint64_t flags;
+        spin_lock_irqsave(&tx_buffer.lock, &flags);
 
         int       sent      = 0;
         const int MAX_BATCH = 16;
@@ -192,7 +194,7 @@ dw_uart_interrupt_handler(uint64_t *stack_pointer)
             }
         }
         bool is_empty = buffer_is_empty(&tx_buffer);
-        spin_unlock_irqrestore(&tx_buffer.lock);
+        spin_unlock_irqrestore(&tx_buffer.lock, flags);
 
         // 在释放锁之后再禁用TX中断，避免竞态条件
         if (is_empty) {
@@ -296,7 +298,8 @@ dw_uart_putchar_nb(char c)
     if (!dw_uart_initialized)
         return false;
     
-    spin_lock_irqsave(&tx_buffer.lock);
+    uint64_t flags;
+    spin_lock_irqsave(&tx_buffer.lock, &flags);
     bool success = false;
     bool need_tx_int = false;
 
@@ -304,7 +307,7 @@ dw_uart_putchar_nb(char c)
     if (c == '\n') {
         if (!buffer_put(&tx_buffer, '\r')) {
             // 缓冲区满，连 '\r' 都放不下
-            spin_unlock_irqrestore(&tx_buffer.lock);
+            spin_unlock_irqrestore(&tx_buffer.lock, flags);
             return false;
         }
         need_tx_int = true;
@@ -321,7 +324,7 @@ dw_uart_putchar_nb(char c)
         dw_uart_enable_tx_interrupt();
     }
     
-    spin_unlock_irqrestore(&tx_buffer.lock);
+    spin_unlock_irqrestore(&tx_buffer.lock, flags);
     return success;
 }
 
@@ -330,9 +333,10 @@ dw_uart_getchar_nb(char *c)
 {
     if (!dw_uart_initialized)
         return false;
-    spin_lock_irqsave(&rx_buffer.lock);
+    uint64_t flags;
+    spin_lock_irqsave(&rx_buffer.lock, &flags);
     bool success = buffer_get(&rx_buffer, c);
-    spin_unlock_irqrestore(&rx_buffer.lock);
+    spin_unlock_irqrestore(&rx_buffer.lock, flags);
     return success;
 }
 
@@ -428,9 +432,10 @@ dw_uart_flush(void)
     
     // 第一阶段：等待软件缓冲区为空
     for (int timeout = 100000; timeout > 0; timeout--) {
-        spin_lock_irqsave(&tx_buffer.lock);
+        uint64_t flags;
+        spin_lock_irqsave(&tx_buffer.lock, &flags);
         bool empty = buffer_is_empty(&tx_buffer);
-        spin_unlock_irqrestore(&tx_buffer.lock);
+        spin_unlock_irqrestore(&tx_buffer.lock, flags);
         
         if (empty)
             break;
@@ -455,9 +460,10 @@ dw_uart_rx_available(void)
     if (!dw_uart_initialized)
         /* early 模式：直接查 LSR 硬件寄存器（中断未启用，数据不经缓冲区） */
         return dw_uart_rx_ready();
-    spin_lock_irqsave(&rx_buffer.lock);
+    uint64_t flags;
+    spin_lock_irqsave(&rx_buffer.lock, &flags);
     bool available = !buffer_is_empty(&rx_buffer);
-    spin_unlock_irqrestore(&rx_buffer.lock);
+    spin_unlock_irqrestore(&rx_buffer.lock, flags);
     return available;
 }
 
@@ -468,9 +474,10 @@ dw_uart_tx_buffer_usage(void)
 {
     if (!dw_uart_initialized)
         return 0;
-    spin_lock_irqsave(&tx_buffer.lock);
+    uint64_t flags;
+    spin_lock_irqsave(&tx_buffer.lock, &flags);
     uint32_t usage = tx_buffer.count;
-    spin_unlock_irqrestore(&tx_buffer.lock);
+    spin_unlock_irqrestore(&tx_buffer.lock, flags);
     return usage;
 }
 
@@ -484,9 +491,10 @@ dw_uart_get_stats(uint32_t *tx_irqs, uint32_t *rx_irqs, uint32_t *tx_usage, uint
     if (tx_usage)
         *tx_usage = dw_uart_tx_buffer_usage();
     if (rx_usage) {
-        spin_lock_irqsave(&rx_buffer.lock);
+        uint64_t flags;
+        spin_lock_irqsave(&rx_buffer.lock, &flags);
         *rx_usage = rx_buffer.count;
-        spin_unlock_irqrestore(&rx_buffer.lock);
+        spin_unlock_irqrestore(&rx_buffer.lock, flags);
     }
 }
 

@@ -16,31 +16,34 @@ static volatile uint32_t g_uart_rb_tail = 0;
 static spinlock_noirq_t g_uart_rb_lock = SPINLOCK_NOIRQ_INIT;
 
 void uart_ringbuf_push(char c) {
-    spin_lock_irqsave(&g_uart_rb_lock);
+    uint64_t flags;
+    spin_lock_irqsave(&g_uart_rb_lock, &flags);
     uint32_t next = (g_uart_rb_head + 1u) % UART_RINGBUF_SIZE;
     if (next != g_uart_rb_tail) {
         g_uart_rb[g_uart_rb_head] = (uint8_t)c;
         g_uart_rb_head = next;
     }
-    spin_unlock_irqrestore(&g_uart_rb_lock);
+    spin_unlock_irqrestore(&g_uart_rb_lock, flags);
 }
 
 int uart_ringbuf_pop(char *out) {
-    spin_lock_irqsave(&g_uart_rb_lock);
+    uint64_t flags;
+    spin_lock_irqsave(&g_uart_rb_lock, &flags);
     if (g_uart_rb_tail == g_uart_rb_head) {
-        spin_unlock_irqrestore(&g_uart_rb_lock);
+        spin_unlock_irqrestore(&g_uart_rb_lock, flags);
         return 0;
     }
     *out = (char)g_uart_rb[g_uart_rb_tail];
     g_uart_rb_tail = (g_uart_rb_tail + 1u) % UART_RINGBUF_SIZE;
-    spin_unlock_irqrestore(&g_uart_rb_lock);
+    spin_unlock_irqrestore(&g_uart_rb_lock, flags);
     return 1;
 }
 
 int uart_ringbuf_empty(void) {
-    spin_lock_irqsave(&g_uart_rb_lock);
+    uint64_t flags;
+    spin_lock_irqsave(&g_uart_rb_lock, &flags);
     int empty = (g_uart_rb_tail == g_uart_rb_head);
-    spin_unlock_irqrestore(&g_uart_rb_lock);
+    spin_unlock_irqrestore(&g_uart_rb_lock, flags);
     return empty;
 }
 
@@ -71,10 +74,11 @@ void signal_check_uart(void) {
 
     /* 在锁内一次性把硬件 FIFO 抽干到本地缓冲，缩短临界区并避免与
      * 环形缓冲锁/信号投递产生锁嵌套。剩余字节留待下次调用处理。 */
-    spin_lock_irqsave(&g_uart_hw_lock);
+    uint64_t flags;
+    spin_lock_irqsave(&g_uart_hw_lock, &flags);
     while (n < (int)sizeof(buf) && uart_rx_ready())
         buf[n++] = uart_getc();
-    spin_unlock_irqrestore(&g_uart_hw_lock);
+    spin_unlock_irqrestore(&g_uart_hw_lock, flags);
 
     for (int i = 0; i < n; i++) {
         char c = buf[i];

@@ -4,6 +4,7 @@
 #include "types.h"
 #include "spinlock.h"
 #include "task/preempt.h"
+#include "riscv64/exception_impl.h"   /* arch_irq_save/restore（统一的中断屏蔽原语）*/
 
 /*
  * RISC-V 64位架构的spinlock实现
@@ -72,53 +73,37 @@ spin_unlock(spinlock_t *lock)
     preempt_enable();
 }
 
-/* RISC-V 中断控制函数 */
-static inline uint64_t
-riscv_irq_save(void)
-{
-    uint64_t status;
-    asm volatile(
-        "   csrrci  %0, sstatus, 2           \n" /* read sstatus and clear SIE bit */
-        : "=r"(status)
-        :
-        : "memory");
-    return status;
-}
+/*
+ * 带中断保护的 spinlock。
+ *
+ * 中断状态存在**调用点的局部变量**里（由 *flags 带回），不再存进锁对象 ——
+ * 存进锁对象时，SMP 下争锁的另一颗 CPU 会把它的 flags 覆盖上去，解锁时
+ * 恢复的就是别人的中断状态。中断原语本身统一来自
+ * include/riscv64/exception_impl.h（arch_irq_save/restore）。
+ */
 
 static inline void
-riscv_irq_restore(uint64_t status)
+spin_lock_irqsave(spinlock_t *lock, uint64_t *flags)
 {
-    asm volatile(
-        "   csrw    sstatus, %0              \n" /* restore sstatus */
-        :
-        : "r"(status)
-        : "memory");
-}
-
-/* 带中断保护的 spinlock */
-static inline void
-spin_lock_irqsave(spinlock_noirq_t *lock)
-{
-    lock->irq_flags = riscv_irq_save();
-    spin_lock((spinlock_t *)lock);
+    *flags = arch_irq_save();
+    spin_lock(lock);
 }
 
 static inline int
-spin_trylock_irqsave(spinlock_noirq_t *lock)
+spin_trylock_irqsave(spinlock_t *lock, uint64_t *flags)
 {
-    lock->irq_flags = riscv_irq_save();
-    if (spin_trylock((spinlock_t *)lock) == 0)
+    *flags = arch_irq_save();
+    if (spin_trylock(lock) == 0)
         return 0;
-    riscv_irq_restore(lock->irq_flags);
+    arch_irq_restore(*flags);
     return 1;
 }
 
 static inline void
-spin_unlock_irqrestore(spinlock_noirq_t *lock)
+spin_unlock_irqrestore(spinlock_t *lock, uint64_t flags)
 {
-    uint64_t saved = lock->irq_flags;
-    spin_unlock((spinlock_t *)lock);
-    riscv_irq_restore(saved);
+    spin_unlock(lock);
+    arch_irq_restore(flags);
 }
 
 #endif  // RISCV64_SPIN_LOCK_IMPL_H

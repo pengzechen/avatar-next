@@ -6,6 +6,7 @@
  */
 
 #include "barrier.h"
+#include "riscv64/exception_impl.h"
 
 /*
  * arch_halt - 停止 RISC-V 处理器
@@ -17,8 +18,15 @@ static inline void arch_halt(void)
     /* 内存屏障，确保所有操作完成 */
     barrier_data();
 
-    /* 禁用中断（设置 MIE 位为 0） */
-    __asm__ volatile("csrci mstatus, 0x8" ::: "memory");
+    /*
+     * 禁用中断。
+     *
+     * 这里原本写的是 `csrci mstatus, 0x8`（MIE）—— 两处都错：
+     *   1) MIE 是 **M 模式**的中断使能位，本内核跑在 S 模式，该用 sstatus.SIE；
+     *   2) S 模式访问 mstatus 会触发非法指令异常，"关中断"实际没生效。
+     * 统一走 arch_irq_disable()。
+     */
+    arch_irq_disable();
 
     /* WFI - Wait For Interrupt */
     /* 在中断禁用的情况下，处理器会永久停止 */

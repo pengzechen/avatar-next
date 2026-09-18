@@ -596,10 +596,6 @@ extern volatile uint64_t g_system_ticks;  /* driver/timer/timer.c */
 
 #if ARCH_AARCH64
 /* 诊断：读 DAIF、CNTP_CTL_EL0、CNTPCT_EL0 */
-static inline uint64_t dbg_read_daif(void)
-{
-    uint64_t v; __asm__ volatile("mrs %0, daif" : "=r"(v)); return v;
-}
 static inline uint64_t dbg_read_cntp_ctl(void)
 {
     uint64_t v; __asm__ volatile("mrs %0, cntp_ctl_el0" : "=r"(v)); return v;
@@ -625,7 +621,7 @@ cpu_smp_timer_test(uint32_t rounds, uint32_t ms_per_round)
 
 #if ARCH_AARCH64
     {
-        uint64_t daif = dbg_read_daif();
+        uint64_t daif = arch_irq_flags();   /* 统一的中断状态读取 */
         uint64_t ctl  = dbg_read_cntp_ctl();
         uint64_t pct  = dbg_read_cntpct();
         KLOG_INFO("[smp-test] BSP DAIF=0x%llx CNTP_CTL=0x%llx CNTPCT=%llu\n",

@@ -9,6 +9,7 @@
 #include "task/task.h"
 #include "task/sched.h"
 #include "task/switch.h"
+#include "spinlock.h"
 #include "arch.h"
 
 #define FUTEX_TABLE_SIZE 64
@@ -18,11 +19,19 @@ static struct {
     task_t   *waiter;   /* 等待该地址的任务 */
 } g_futex_table[FUTEX_TABLE_SIZE];
 
+/*
+ * 保护上面这张**全局**表。
+ * 以前只用 arch_irq_save()（仅关本核中断）——两颗 CPU 同时进来就会把表写坏，
+ * 而 futex syscall 在任何 CPU 上都能并发进入。改用真正的自旋锁。
+ */
+static spinlock_t g_futex_lock = SPINLOCK_INIT;
+
 int
 futex_do_wake(uintptr_t uaddr, int count)
 {
     int woken = 0;
-    uint64_t flags = arch_irq_save();
+    uint64_t flags;
+    spin_lock_irqsave(&g_futex_lock, &flags);
     for (int i = 0; i < FUTEX_TABLE_SIZE && woken < count; i++) {
         if (g_futex_table[i].uaddr == uaddr && g_futex_table[i].waiter != NULL) {
             task_t *t = g_futex_table[i].waiter;
@@ -33,18 +42,29 @@ futex_do_wake(uintptr_t uaddr, int count)
             woken++;
         }
     }
-    arch_irq_restore(flags);
+    spin_unlock_irqrestore(&g_futex_lock, flags);
     return woken;
 }
 
 int
 sys_futex_wait(uint32_t *uaddr, uint32_t val)
 {
-    uint64_t flags = arch_irq_save();
+    uint32_t cur_val;
+    uint64_t flags;
+
+    /*
+     * 用户指针一律经 copy_from_user_bytes 读：这是来自 syscall 参数的地址，
+     * 裸解引用（原来的 *(volatile uint32_t *)uaddr）遇到坏地址就是内核态
+     * 数据中止 → 整机挂死。见 CLAUDE.md 的用户指针规则。
+     */
+    if (copy_from_user_bytes(uaddr, &cur_val, sizeof(cur_val)) < 0)
+        return -EFAULT;
+
+    spin_lock_irqsave(&g_futex_lock, &flags);
 
     /* 原子检查：若 *uaddr != val，立即返回 EAGAIN */
-    if (*(volatile uint32_t *)uaddr != val) {
-        arch_irq_restore(flags);
+    if (cur_val != val) {
+        spin_unlock_irqrestore(&g_futex_lock, flags);
         return -EAGAIN;
     }
 
@@ -57,7 +77,7 @@ sys_futex_wait(uint32_t *uaddr, uint32_t val)
         }
     }
     if (slot < 0) {
-        arch_irq_restore(flags);
+        spin_unlock_irqrestore(&g_futex_lock, flags);
         return -ENOMEM;
     }
 
@@ -66,7 +86,7 @@ sys_futex_wait(uint32_t *uaddr, uint32_t val)
     g_futex_table[slot].waiter = cur;
     cur->state = TASK_BLOCKED;
 
-    arch_irq_restore(flags);
+    spin_unlock_irqrestore(&g_futex_lock, flags);
 
     /* 让出 CPU；被 futex_do_wake 设回 TASK_READY 后继续 */
     sched_schedule();

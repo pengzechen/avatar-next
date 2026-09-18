@@ -36,12 +36,13 @@ example_basic_lock(void)
 void
 example_lock_with_irq(void)
 {
-    spin_lock_irqsave(&irq_lock);
+    uint64_t flags;
+    spin_lock_irqsave(&irq_lock, &flags);
 
     /* 临界区 - 中断已禁用，安全访问共享数据 */
     shared_counter++;
 
-    spin_unlock_irqrestore(&irq_lock);
+    spin_unlock_irqrestore(&irq_lock, flags);
 }
 
 /*

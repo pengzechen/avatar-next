@@ -29,12 +29,15 @@ typedef struct {
     volatile uint32_t head;
     volatile uint32_t tail;
     volatile uint32_t count;
-    spinlock_t lock;
+    spinlock_noirq_t lock;   /* ISR 与线程都会取：必须用 IRQ-safe 变体 */
 } uart_buffer_t;
 
 static uart_buffer_t tx_buffer = {0};
 static uart_buffer_t rx_buffer = {0};
 static volatile bool uart_initialized = false;
+
+/* 阻塞发送超时被丢弃的字符数（只计数不打日志，理由见 pl011_putchar） */
+static volatile uint64_t tx_dropped = 0;
 
 // Buffer operations
 static bool buffer_is_empty(uart_buffer_t *buf) {
@@ -101,7 +104,8 @@ void uart_interrupt_handler(uint64_t *stack_pointer) {
     
     // Handle transmit interrupt
     if (mis & UART_INT_TX) {
-        spin_lock(&tx_buffer.lock);
+        uint64_t flags;
+        spin_lock_irqsave(&tx_buffer.lock, &flags);
         
         // Send as many characters as possible
         while (!uart_tx_fifo_full() && !buffer_is_empty(&tx_buffer)) {
@@ -116,7 +120,7 @@ void uart_interrupt_handler(uint64_t *stack_pointer) {
             uart_disable_tx_interrupt();
         }
         
-        spin_unlock(&tx_buffer.lock);
+        spin_unlock_irqrestore(&tx_buffer.lock, flags);
         
         // Clear TX interrupt
         write32(UART_INT_TX, (void *)UART_ICR);
@@ -124,7 +128,8 @@ void uart_interrupt_handler(uint64_t *stack_pointer) {
     
     // Handle receive interrupt
     if (mis & (UART_INT_RX | UART_INT_RT)) {
-        spin_lock(&rx_buffer.lock);
+        uint64_t flags;
+        spin_lock_irqsave(&rx_buffer.lock, &flags);
         
         // Read all available characters
         while (!uart_rx_fifo_empty()) {
@@ -135,7 +140,7 @@ void uart_interrupt_handler(uint64_t *stack_pointer) {
             // If buffer is full, we drop the character
         }
         
-        spin_unlock(&rx_buffer.lock);
+        spin_unlock_irqrestore(&rx_buffer.lock, flags);
         
         // Clear RX interrupts
         write32(UART_INT_RX | UART_INT_RT, (void *)UART_ICR);
@@ -152,8 +157,8 @@ void pl011_init(void) {
     g_pl011_base = platform_get_mmio("uart", "base");
     
     // Initialize buffers
-    spinlock_init(&tx_buffer.lock);
-    spinlock_init(&rx_buffer.lock);
+    spinlock_irq_init(&tx_buffer.lock);
+    spinlock_irq_init(&rx_buffer.lock);
     tx_buffer.head = tx_buffer.tail = tx_buffer.count = 0;
     rx_buffer.head = rx_buffer.tail = rx_buffer.count = 0;
     
@@ -195,7 +200,8 @@ bool pl011_putchar_nb(char c) {
         return false;
     }
     
-    spin_lock(&tx_buffer.lock);
+    uint64_t flags;
+    spin_lock_irqsave(&tx_buffer.lock, &flags);
     
     bool success = false;
     
@@ -212,7 +218,7 @@ bool pl011_putchar_nb(char c) {
         }
     }
     
-    spin_unlock(&tx_buffer.lock);
+    spin_unlock_irqrestore(&tx_buffer.lock, flags);
     return success;
 }
 
@@ -240,8 +246,15 @@ void pl011_putchar(char c) {
         timer_spin(100);
     }
     
-    // If still failed, drop the character
-    logger_warn("UART TX buffer full, dropping character\n");
+    /*
+     * 仍然失败：丢弃这个字符，只计数、不打印。
+     *
+     * 这里**不能**打日志：pl011_putchar 是 uart_putchar 的实现，而 klog 是
+     * 持着 g_klog_lock 逐字符调用它的。若在此 logger_warn → klog → 同一把
+     * 锁、同一颗 CPU、中断已关 → 自旋死锁。丢弃计数由 pl011_get_stats()
+     * 之类的接口读出去。
+     */
+    tx_dropped++;
 }
 
 // String output
@@ -257,9 +270,10 @@ bool pl011_getchar_nb(char *c) {
         return false;
     }
     
-    spin_lock(&rx_buffer.lock);
+    uint64_t flags;
+    spin_lock_irqsave(&rx_buffer.lock, &flags);
     bool success = buffer_get(&rx_buffer, c);
-    spin_unlock(&rx_buffer.lock);
+    spin_unlock_irqrestore(&rx_buffer.lock, flags);
     
     return success;
 }
@@ -270,21 +284,27 @@ bool pl011_rx_available(void) {
         /* early 模式：直接查硬件 FR.RXFE 位（中断未启用） */
         return !uart_rx_fifo_empty();
 
-    spin_lock(&rx_buffer.lock);
+    uint64_t flags;
+    spin_lock_irqsave(&rx_buffer.lock, &flags);
     bool available = !buffer_is_empty(&rx_buffer);
-    spin_unlock(&rx_buffer.lock);
+    spin_unlock_irqrestore(&rx_buffer.lock, flags);
     return available;
 }
 
 // Get TX buffer usage
+uint64_t pl011_tx_dropped(void) {
+    return tx_dropped;
+}
+
 uint32_t pl011_tx_buffer_usage(void) {
     if (!uart_initialized) {
         return 0;
     }
     
-    spin_lock(&tx_buffer.lock);
+    uint64_t flags;
+    spin_lock_irqsave(&tx_buffer.lock, &flags);
     uint32_t usage = tx_buffer.count;
-    spin_unlock(&tx_buffer.lock);
+    spin_unlock_irqrestore(&tx_buffer.lock, flags);
     
     return usage;
 }

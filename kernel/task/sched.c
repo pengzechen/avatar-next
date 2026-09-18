@@ -118,9 +118,10 @@ sched_enqueue(task_t *task)
     }
 
     /* 跨核入队：持目标核 rq_lock（spin_lock_irqsave 内部关本核 IRQ）。 */
-    spin_lock_irqsave(&tc->rq_lock);
+    uint64_t flags;
+    spin_lock_irqsave(&tc->rq_lock, &flags);
     list_insert_last(&tc->run_queue, &task->run_node);
-    spin_unlock_irqrestore(&tc->rq_lock);
+    spin_unlock_irqrestore(&tc->rq_lock, flags);
 }
 
 /* ── sched_dequeue ───────────────────────────────────────── */
@@ -142,23 +143,25 @@ sched_dequeue(task_t *task)
 
     if (task->cpu_affinity < n) {
         cpu_t *tc = &g_cpus[task->cpu_affinity];
-        spin_lock_irqsave(&tc->rq_lock);
+        uint64_t flags;
+        spin_lock_irqsave(&tc->rq_lock, &flags);
         if (list_contains(&tc->run_queue, &task->run_node)) {
             list_delete(&tc->run_queue, &task->run_node);
-            spin_unlock_irqrestore(&tc->rq_lock);
+            spin_unlock_irqrestore(&tc->rq_lock, flags);
             return;
         }
-        spin_unlock_irqrestore(&tc->rq_lock);
+        spin_unlock_irqrestore(&tc->rq_lock, flags);
     }
     for (uint32_t i = 0; i < n; i++) {
         cpu_t *tc = &g_cpus[i];
-        spin_lock_irqsave(&tc->rq_lock);
+        uint64_t flags;
+        spin_lock_irqsave(&tc->rq_lock, &flags);
         if (list_contains(&tc->run_queue, &task->run_node)) {
             list_delete(&tc->run_queue, &task->run_node);
-            spin_unlock_irqrestore(&tc->rq_lock);
+            spin_unlock_irqrestore(&tc->rq_lock, flags);
             return;
         }
-        spin_unlock_irqrestore(&tc->rq_lock);
+        spin_unlock_irqrestore(&tc->rq_lock, flags);
     }
 }
 
@@ -192,11 +195,14 @@ sched_schedule(void)
     task_t *prev = c->current_task;
 
     /* 持本核 rq_lock 期间操作 run_queue。外层已 arch_irq_save 关本核 IRQ，
-     * 这里用 raw spin_lock 避免 spin_unlock_irqrestore 过早开 IRQ。
-     * 跨核 sched_enqueue 持的是同一把锁，所以 list 操作原子。 */
+     * 这里用不带 irqsave 的 spin_lock —— 中断状态由外层管理，不能用
+     * spin_unlock_irqrestore 提前把 IRQ 打开。
+     * 跨核 sched_enqueue 持的是同一把锁，所以 list 操作原子。
+     * （以前这里要把 spinlock_noirq_t* 强转成 spinlock_t* 才能用 raw 变体；
+     *  锁类型收敛后不需要了。） */
     bool use_rq_lock = (g_num_cpus > 1U);
     if (use_rq_lock)
-        spin_lock((spinlock_t *)&c->rq_lock);
+        spin_lock(&c->rq_lock);
 
     /* 若当前任务仍在运行且不是 idle，则重新入队尾 */
     if (prev->state == TASK_RUNNING && prev != c->idle_task) {
@@ -207,7 +213,7 @@ sched_schedule(void)
     task_t *next = pick_next(c);
 
     if (use_rq_lock)
-        spin_unlock((spinlock_t *)&c->rq_lock);
+        spin_unlock(&c->rq_lock);
 
     /* 无需切换（唯一任务或队空只有 idle） */
     if (next == prev) {

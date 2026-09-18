@@ -10,8 +10,8 @@
  *   irq_disable_irq(n)      禁用 IRQ n
  *   irq_ack()               应答中断，返回 IRQ 号（读 IAR）
  *   irq_eoi(irq)            End-of-Interrupt（写 EOIR）
- *   enable_irqs()           使能 CPU 级中断（清 DAIF.I）
- *   disable_irqs()          禁用 CPU 级中断（设 DAIF.I）
+ *   中断开关不在本文件：统一用 include/aarch64/exception_impl.h 的
+ *   arch_irq_enable() / arch_irq_disable()（见 docs/INTERRUPT_MASKING.md）。
  */
 
 #ifndef DRIVER_IRQ_H
@@ -44,9 +44,9 @@
         gic_write_eoir(irq);
     }
 
-    /* CPU 级中断开关（来自 gicv2.h 的 enable/disable_interrupts） */
-    #define enable_irqs()           enable_interrupts()
-    #define disable_irqs()          disable_interrupts()
+    /* CPU 级中断开关：统一用 include/aarch64/exception_impl.h 的
+     * arch_irq_enable()/arch_irq_disable()（这里曾有一份 enable_irqs/
+     * disable_irqs 的副本，0 调用者，已删）。 */
 
 /* ============================================================
  * GICv3
@@ -71,17 +71,6 @@
     static inline void irq_eoi(uint32_t irq)
     {
         __asm__ volatile("msr S3_0_C12_C12_1, %0" :: "r"((uint64_t)irq)); /* ICC_EOIR1_EL1 */
-    }
-
-    /* CPU 级中断开关（直接操作 DAIF） */
-    static inline void enable_irqs(void)
-    {
-        __asm__ volatile("msr daifclr, #2" ::: "memory");
-    }
-
-    static inline void disable_irqs(void)
-    {
-        __asm__ volatile("msr daifset, #2" ::: "memory");
     }
 
 #endif  /* DRIVER_GIC_* */

@@ -2,14 +2,14 @@
 #define KERNEL_TASK_SWITCH_H
 
 /*
- * kernel/task/switch.h — 架构抽象：上下文切换 & 中断控制
+ * kernel/task/switch.h — 架构抽象：上下文切换
  *
  * 提供：
  *   arch_task_switch()      — 在 .S 文件中实现，保存/恢复被调用者寄存器
- *   arch_irq_save()         — 关中断并保存中断状态
- *   arch_irq_restore()      — 恢复中断状态
- *   arch_irq_enable()       — 无条件开中断（新任务首次运行时调用）
  *   arch_init_task_stack()  — 为新任务构造初始切换帧
+ *
+ * 中断屏蔽（arch_irq_save/restore/enable/disable/flags/is_enabled）已统一到
+ * include/<arch>/exception_impl.h，由本文件顶部 include 的 exception.h 暴露。
  *
  * 上下文切换原理：
  *   仅保存"被调用者保存寄存器"（callee-saved registers）。
@@ -23,6 +23,7 @@
 
 #include "types.h"
 #include "arch.h"
+#include "exception.h"
 
 /* 前向声明：task_trampoline 在 task.c 中实现 */
 void task_trampoline(void);
@@ -70,101 +71,11 @@ void arch_task_switch(uintptr_t *prev_sp, uintptr_t next_sp,
 void arch_switch_to_user(uint64_t user_entry, uint64_t user_sp, uint64_t kernel_sp) __attribute__((noreturn));
 
 /* ── 中断控制 ────────────────────────────────────────────── */
-
-#if ARCH_AARCH64
-
-/* 保存 DAIF，屏蔽 IRQ（置位 DAIF.I），返回旧 DAIF */
-static inline uint64_t
-arch_irq_save(void)
-{
-    uint64_t daif;
-    __asm__ volatile(
-        "mrs %0, daif       \n"
-        "msr daifset, #2    \n"
-        : "=r"(daif)
-        :
-        : "memory");
-    return daif;
-}
-
-/* 恢复 DAIF */
-static inline void
-arch_irq_restore(uint64_t flags)
-{
-    __asm__ volatile("msr daif, %0" :: "r"(flags) : "memory");
-}
-
-/* 无条件开 IRQ（新任务首次运行时使用） */
-static inline void
-arch_irq_enable(void)
-{
-    __asm__ volatile("msr daifclr, #2" ::: "memory");
-}
-
-#elif ARCH_RISCV64
-
-/* 保存 sstatus，清除 SIE 位（关中断），返回旧 sstatus */
-static inline uint64_t
-arch_irq_save(void)
-{
-    uint64_t status;
-    /* csrrci: 读取 sstatus 后清除 bit1 (SIE) */
-    __asm__ volatile("csrrci %0, sstatus, 2" : "=r"(status) :: "memory");
-    return status;
-}
-
-/* 恢复 sstatus */
-static inline void
-arch_irq_restore(uint64_t flags)
-{
-    __asm__ volatile("csrw sstatus, %0" :: "r"(flags) : "memory");
-}
-
-/* 无条件开 IRQ */
-static inline void
-arch_irq_enable(void)
-{
-    __asm__ volatile("csrsi sstatus, 2" ::: "memory");
-}
-
-#elif ARCH_X86_64
-
-/* 保存 RFLAGS，执行 CLI（关中断），返回旧 RFLAGS */
-static inline uint64_t
-arch_irq_save(void)
-{
-    uint64_t flags;
-    __asm__ volatile(
-        "pushfq         \n"
-        "popq %0        \n"
-        "cli            \n"
-        : "=r"(flags)
-        :
-        : "memory");
-    return flags;
-}
-
-/* 恢复 RFLAGS（POPFQ 会恢复 IF 位） */
-static inline void
-arch_irq_restore(uint64_t flags)
-{
-    __asm__ volatile(
-        "pushq %0       \n"
-        "popfq          \n"
-        :
-        : "r"(flags)
-        : "memory", "cc");
-}
-
-/* 无条件开 IRQ */
-static inline void
-arch_irq_enable(void)
-{
-    __asm__ volatile("sti" ::: "memory");
-}
-
-#endif /* ARCH_* */
-
+/*
+ * 中断屏蔽原语已统一到 include/<arch>/exception_impl.h，由 include/exception.h
+ * 暴露（arch_irq_save/restore/enable/disable/flags/is_enabled）。这里不再保留
+ * 副本 —— 以前 switch.h 和各架构的 spin_lock_impl.h 各有一份同名实现。
+ */
 /* ── 新任务栈初始化 ───────────────────────────────────────── */
 
 /**
@@ -353,7 +264,6 @@ void arch_fork_resume_user(void);
  *
  * 返回：应写入 task->sp 的初始值。
  */
-#include "exception.h"
 static inline uintptr_t
 arch_init_fork_child_stack(uint8_t *stack_base, uint32_t stack_size,
                             trap_frame_t *frame,

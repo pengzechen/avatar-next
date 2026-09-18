@@ -81,9 +81,13 @@ avatar/
 
 ### 核心系统
 
-- **内存屏障**: `docs/BARRIER.md` - barrier.h API 和实现
+- **内存屏障**: `docs/BARRIER.md` - barrier.h。**改设备寄存器 / 页表 / TLB 顺序相关代码前必读**：
+  `barrier_data` 是 dmb 强度（只保证顺序），"写完必须确实到达"的场景要用
+  `barrier_sync`（dsb 强度），换错会**削弱**同步
 - **缓存操作**: `docs/CACHE.md` - cache.h DMA 和 MMIO 缓存管理
-- **自旋锁**: `docs/SPINLOCK.md` - spinlock.h 同步原语
+- **自旋锁**: `docs/SPINLOCK.md` - spinlock.h。中断状态存**调用点的局部变量**
+  （`spin_lock_irqsave(&l, &flags)`），不要存进锁对象 —— `irq_flags` 那个字段
+  在 SMP 下会被别的 CPU 覆盖
 
 ### 调试和日志
 
@@ -109,7 +113,11 @@ avatar/
 
 ### 中断与上下文切换
 
-**遇到任何中断 / 抢占 / 上下文切换问题，先读这两篇文档，不要凭空推断。**
+**遇到任何中断 / 抢占 / 上下文切换问题，先读这三篇文档，不要凭空推断。**
+
+- **中断屏蔽接口**: `docs/INTERRUPT_MASKING.md` - C 代码统一用
+  `include/<arch>/exception_impl.h` 的 `arch_irq_*`（由 exception.h 暴露），
+  **不许再写内联汇编**；`.S` 除外
 
 - **中断开关策略**: `docs/INTERRUPT_CONTROL_COMPARISON.md` - AArch64/RISC-V 中断开关的核心约定。关键：中断策略按“EL1 里运行的是谁”区分——EL0 任务的内核侧（syscall/异常）关中断，独立内核线程（含 idle）开中断、可被抢占。含 `task_trampoline` vs `task_trampoline_user` 的分野与代码检查清单。
 - **延迟调度机制**: `docs/INTERRUPT_CONTEXT_SWITCH.md` - 为什么不能在 ISR 内切换任务，而是只置 `need_resched`、在异常返回路径（`sched_check_and_yield`）才切换。

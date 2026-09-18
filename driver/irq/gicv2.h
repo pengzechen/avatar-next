@@ -138,28 +138,9 @@ extern struct gic_t _gicv2;
 #define gicv2_dist_base() (_gicv2.dist_base)
 #define gicv2_cpu_base() (_gicv2.cpu_base)
 
-static inline uint32_t
-get_daif()
-{
-    uint32_t value;
-    asm volatile("mrs %0, daif"
-                 : "=r"(value)
-                 : /* no input*/
-                 :);
-    return value;
-}
-
-static inline void
-enable_interrupts(void)
-{
-    __asm__ __volatile__("msr daifclr, #2" : : : "memory");
-}
-
-static inline void
-disable_interrupts(void)
-{
-    __asm__ __volatile__("msr daifset, #2" : : : "memory");
-}
+/* CPU 级中断开关 / DAIF 读取：统一用 include/aarch64/exception_impl.h 的
+ * arch_irq_enable/disable() 与 arch_irq_flags()（此处原有的
+ * get_daif/enable_interrupts/disable_interrupts 是第 4 份副本，已删）。 */
 
 void gic_init();
 void gic_init_secondary(void);

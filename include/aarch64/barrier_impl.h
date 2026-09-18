@@ -55,6 +55,12 @@ barrier_instr_full(void)
     asm volatile("isb" ::: "memory");
 }
 
+static inline void
+barrier_sync(void)
+{
+    asm volatile("dsb sy" ::: "memory");
+}
+
 /* ===== 获取和释放语义 ===== */
 
 /**

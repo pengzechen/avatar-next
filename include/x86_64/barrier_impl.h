@@ -55,6 +55,12 @@ barrier_instr_full(void)
     asm volatile("mfence" ::: "memory");
 }
 
+static inline void
+barrier_sync(void)
+{
+    asm volatile("mfence" ::: "memory");
+}
+
 /* ===== 获取和释放语义 ===== */
 
 /**

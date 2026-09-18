@@ -51,6 +51,11 @@ static uint32_t s_vmid;
  */
 static inline void gstage_flush(void)
 {
+    /*
+     * 注意：这里的 hfence.gvma / sfence.vma 是**TLB 失效指令**本身，
+     * 不是通用内存屏障，barrier API 里没有对应物，因此保留内联汇编。
+     * （别再拿"统一屏障"去替换它们 —— 换掉就丢掉了失效动作。）
+     */
     __asm__ volatile(
         ".insn r 0x73, 0, 0x31, x0, x0, x0\n"  /* hfence.gvma */
         "sfence.vma\n"

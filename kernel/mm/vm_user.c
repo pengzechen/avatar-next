@@ -6,6 +6,7 @@
  */
 
 #include "vm_user.h"
+#include "barrier.h"
 #include "klog.h"
 #include "mm_vm.h"
 #include "pmm.h"
@@ -281,11 +282,12 @@ uint64_t vm_unmap_user_range(uint64_t pgd_phys, uint64_t vaddr, uint64_t size) {
 #if ARCH_RISCV64
   __asm__ volatile("sfence.vma" ::: "memory");
 #elif ARCH_AARCH64
-  __asm__ volatile("dsb ishst\n"
-                   "tlbi vmalle1is\n"
-                   "dsb ish\n"
-                   "isb" ::
-                       : "memory");
+  /* 页表写 → TLBI → 同步。dsb 用 barrier_sync()（全系统同步），
+   * tlbi 本身是架构 TLB 失效指令，barrier API 里没有对应物。 */
+  barrier_sync();                                  /* 原 dsb ishst */
+  __asm__ volatile("tlbi vmalle1is" ::: "memory");
+  barrier_sync();                                  /* 原 dsb ish   */
+  barrier_instr_full();                            /* 原 isb       */
 #endif
 
   return freed;

@@ -80,9 +80,9 @@ typedef struct cpu {
  * 立刻构建失败，避免再次出现“偏移写错→写坏 rq_lock→SMP 下栈错乱”。
  */
 #if ARCH_X86_64
-static_assert(offsetof(cpu_t, scratch_rsp) == 104,
+static_assert(offsetof(cpu_t, scratch_rsp) == 96,
               "CPU_SCRATCH_RSP in boot/x86_64/syscall_wrapper.S is stale");
-static_assert(offsetof(cpu_t, kernel_rsp0) == 112,
+static_assert(offsetof(cpu_t, kernel_rsp0) == 104,
               "CPU_KERNEL_RSP0 in boot/x86_64/syscall_wrapper.S is stale");
 #endif
 

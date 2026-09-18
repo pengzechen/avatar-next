@@ -47,6 +47,12 @@ static inline void
 __invalidate_dcache_one(const void *addr)
 {
     asm volatile("clflushopt %0" : : "m"(*(const char *)addr) : "memory");
+    /*
+     * CLFLUSHOPT 与其它写**不保序**（这点和 CLFLUSH 不同），Intel SDM 要求
+     * 后面跟一条 SFENCE 才能保证失效先于后续访存完成。少了它，DMA 场景下
+     * 设备可能读到尚未刷回的内存。
+     */
+    barrier_data_write();
 }
 #else
 static inline void

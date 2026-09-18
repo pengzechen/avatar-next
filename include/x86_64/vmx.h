@@ -7,6 +7,7 @@
 #define X86_64_VMX_H
 
 #include "types.h"
+#include "x86_64/exception_impl.h"   /* arch_irq_flags()（引号包含会先命中同目录的 exception.h）*/
 
 /* ── CR 位定义 ───────────────────────────────────────────── */
 #define X86_CR0_PE      0x00000001UL
@@ -266,11 +267,10 @@ static inline void vmx_write_cr4(uint64_t v)
 {
     __asm__ volatile("mov %0,%%cr4" :: "r"(v) : "memory");
 }
+/* 读 RFLAGS：与 arch_irq_flags() 是同一条指令，直接转调，不重复写汇编 */
 static inline uint64_t vmx_read_rflags(void)
 {
-    uint64_t f;
-    __asm__ volatile("pushfq; pop %0" : "=rm"(f));
-    return f;
+    return arch_irq_flags();
 }
 static inline void vmx_cpuid(uint32_t op,
                               uint32_t *eax, uint32_t *ebx,

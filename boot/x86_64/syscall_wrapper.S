@@ -40,8 +40,8 @@
  * 该头文件里有 static_assert 把关：偏移写错会在编译期报错，
  * 而不是等到 SMP 下 SYSCALL 把 rq_lock 写坏才炸。
  */
-.equ CPU_SCRATCH_RSP, 104    /* offsetof(cpu_t, scratch_rsp) */
-.equ CPU_KERNEL_RSP0, 112    /* offsetof(cpu_t, kernel_rsp0) */
+.equ CPU_SCRATCH_RSP, 96     /* offsetof(cpu_t, scratch_rsp) */
+.equ CPU_KERNEL_RSP0, 104    /* offsetof(cpu_t, kernel_rsp0) */
 
 .section .text
 

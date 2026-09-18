@@ -68,11 +68,12 @@ kvprintf(const char *fmt, va_list va)
         len = (int) sizeof(buf) - 1;
     }
 
-    spin_lock_irqsave(&g_klog_lock);
+    uint64_t flags;
+    spin_lock_irqsave(&g_klog_lock, &flags);
     for (i = 0; i < len; i++) {
         uart_putchar(buf[i]);
     }
-    spin_unlock_irqrestore(&g_klog_lock);
+    spin_unlock_irqrestore(&g_klog_lock, flags);
 
     return len;
 }

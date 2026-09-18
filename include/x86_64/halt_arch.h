@@ -6,6 +6,7 @@
  */
 
 #include "barrier.h"
+#include "x86_64/exception_impl.h"
 
 /*
  * arch_halt - 停止 x86_64 处理器
@@ -17,8 +18,8 @@ static inline void arch_halt(void)
     /* 内存屏障，确保所有操作完成 */
     barrier_data();
 
-    /* 禁用中断 */
-    __asm__ volatile("cli" ::: "memory");
+    /* 禁用中断（统一接口） */
+    arch_irq_disable();
 
     /* HLT - Halt Processor */
     /* 在中断禁用的情况下，处理器会永久停止 */

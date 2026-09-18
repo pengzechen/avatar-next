@@ -58,5 +58,6 @@ char     pl011_getchar(void);
 bool     pl011_getchar_nb(char *c);
 bool     pl011_rx_available(void);
 uint32_t pl011_tx_buffer_usage(void);
+uint64_t pl011_tx_dropped(void);   /* 阻塞发送超时被丢弃的字符数 */
 
 #endif // __T_UART_PL011_H__
