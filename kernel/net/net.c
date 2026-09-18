@@ -1,6 +1,7 @@
 #include "net/net.h"
 
 #include "klog.h"
+#include "net/bwtest.h"
 #include "net/dhcp_server.h"
 #include "net/tcp_echo.h"
 #include "task/task.h"
@@ -46,6 +47,7 @@ void net_init(void)
     KLOG_INFO("[net] IPv4 addr=192.168.7.1 mask=255.255.255.0 gw=192.168.7.1\n");
     dhcp_server_init(&ipaddr, &netmask, &lease);
     tcp_echo_init();
+    bwtest_init();
 #if defined(RUN_NGINX_TEST)
     KLOG_INFO("[http] kernel HTTP server disabled for nginx test\n");
 #else
@@ -60,6 +62,7 @@ void net_poll_once(void)
 
     avatar_lwip_poll_rx(&g_lwip_netif);
     sys_check_timeouts();
+    bwtest_poll();
 }
 
 void net_poll_task(void *arg)
