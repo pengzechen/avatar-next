@@ -5,6 +5,27 @@
 
 static netdev_t *g_default_netdev;
 
+/*
+ * 收包中断 → 网络栈的唤醒回调。由 kernel/net/net.c 在 net_init() 里注册。
+ * 只在启动阶段写一次，运行期只读，所以不需要锁（中断里也读它）。
+ */
+static void (*g_rx_wakeup)(void);
+
+void netdev_set_rx_wakeup(void (*fn)(void))
+{
+    g_rx_wakeup = fn;
+}
+
+/*
+ * 由驱动的收包 ISR 调用。中断上下文 —— 这里只做转发，
+ * 真正的唤醒动作（task_unblock）在注册者那边，同样必须是非阻塞的。
+ */
+void netdev_rx_wakeup(void)
+{
+    if (g_rx_wakeup != NULL)
+        g_rx_wakeup();
+}
+
 int netdev_register(netdev_t *dev)
 {
     if (!dev || !dev->send || !dev->recv) {

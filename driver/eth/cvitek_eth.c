@@ -21,9 +21,19 @@
  * 3. 缓存维护。Rust 有、而 virtio_net.c 没有 —— 在 C906 这种非相干 cache 的核上，
  *    缺了它就是收发出错帧。收发路径里的 clean/invalidate 都有注释标明方向。
  *
+ * ── 中断模型 ────────────────────────────────────────────────────────────
+ * 收包走中断（PLIC 源 31，level-high），但**中断里只做去断言 + 唤醒**：
+ * cvitek_eth_isr() 读回 DMA_STATUS 把置位原值写回（W1C，level-high 必须
+ * 真的把源清掉，否则中断风暴），然后 netdev_rx_wakeup() 叫醒 net-poll 任务。
+ * 所有包处理（pbuf、lwIP 输入）都在任务上下文 —— ISR 里做那些会把中断
+ * 延迟拉爆，而且 lwIP 不是中断安全的。
+ *
+ * 发送仍然是"写描述符 + 踢 TX_POLL"，完成回收靠下次 send 时惰性做，不开 TX 中断。
+ *
  * ── 并发假设 ────────────────────────────────────────────────────────────
- * 驱动只被 net-poll 任务访问，不加锁（与 virtio_net.c 同假设）。SG2002 的
- * RISC-V SMP bringup 本来就是关的（kernel/task/cpu.c）。
+ * 描述符环/帧缓冲只被 net-poll 任务访问，不加锁（与 virtio_net.c 同假设）；
+ * ISR 只碰 DMA_STATUS 寄存器，不碰环。SG2002 的 RISC-V SMP bringup 本来就是
+ * 关的（kernel/task/cpu.c），g_num_cpus == 1。
  */
 
 #include "cvitek_eth.h"
@@ -39,6 +49,7 @@
 #include "mmio.h"
 #include "platform_cfg.h"   /* platform_get_mmio / g_mmio_needs_vma */
 #include "string.h"
+#include "irq/plic.h"       /* plic_install / plic_enable_irq */
 #include "net/netdev.h"
 #include "timer/timer.h"
 
@@ -64,6 +75,25 @@
 #define CVITEK_RSTC_SOFT_RSTN_3   0x00CU
 #define CVITEK_RSTC_ETH0_BIT      (1U << 12)  /* SOFT_RSTN_0: eth0 mac 复位  */
 #define CVITEK_RSTC_EPHY_MASK     ((1U << 0) | (1U << 1))  /* SOFT_RSTN_3: ephy */
+
+/* ── 中断 ──────────────────────────────────────────────────────────────── */
+
+/*
+ * GMAC 的 PLIC 中断源号。来自 DTS ethernet@4070000 的
+ *     interrupts = <0x1f 0x04>;
+ * 即源 31、触发类型 4 = level-high。PLIC 源号在 plic.c 里是直接当下标用的，
+ * 没有重映射。
+ *
+ * level-high 是驱动这里最要紧的一条约束：**ISR 必须真正把中断源清掉**，
+ * 否则 PLIC 电平一保持，就会不停重触发，整个系统被拖死。
+ */
+#define CVITEK_IRQ_GMAC           31U
+
+/*
+ * PLIC 优先级。DTS 里 riscv,max-priority = 7，所以只能取 1..7
+ * （plic.c 会把 0 抬成 1）。这里没做优先级调度，取个中间值即可。
+ */
+#define CVITEK_IRQ_PRIO           3U
 
 /* ── PHY ───────────────────────────────────────────────────────────────── */
 
@@ -623,6 +653,51 @@ static int cvitek_netdev_recv(void *ctx, uint8_t *frame, size_t maxlen)
     return cvitek_eth_recv((struct cvitek_eth_nic *)ctx, frame, maxlen);
 }
 
+/* ── 收包中断 ──────────────────────────────────────────────────────────── */
+
+/*
+ * GMAC 收包中断。跑在 PLIC → plic_external_irq → 这里的中断上下文里：
+ * sstatus.SIE 已被硬件清零、不会嵌套、无锁。
+ *
+ * 这里**只做两件事**：去断言 + 唤醒。任何包处理（pbuf 分配、lwIP 输入）
+ * 都留在 net-poll 任务上下文 —— ISR 里做那些会把中断延迟拉爆，而且
+ * lwIP 不是中断安全的。
+ *
+ * 特别注意**没有提前返回**：哪怕驱动状态不正常，也必须把中断源清掉。
+ * level-high 的中断只要不 ack，PLIC 就会一直重触发，那是比丢包严重得多的
+ * 故障（整机卡死）。所以这里不检查 nic->ready 之类的条件。
+ */
+static void cvitek_eth_isr(uint32_t irq, void *ctx)
+{
+    struct cvitek_eth_nic *nic = (struct cvitek_eth_nic *)ctx;
+
+    (void)irq;
+
+    /*
+     * 清中断源。这里**必须只写 W1C 的那几位，不能把读到的整字写回去**：
+     * DMA_STATUS 里除 W1C 位外还有只读的进程状态编码 —— TPS（发送进程状态，
+     * bits[2:1]）和 RPS（接收进程状态，bit7）之类。收发包时 DMA 状态机在跑，
+     * 这些位恒为 1，把 1 写回只读位的行为没有定义，实测会把发送搞坏
+     * （症状：收得到帧、回包发不出去）。
+     *
+     * 本驱动只使能了 RIE|NIE，所以能触发中断的源只有 RI 和 NIS，ack 这两位
+     * 就足以让电平降下来。与 cvitek_requeue_rx() 里的做法保持一致。
+     */
+    uint32_t st   = cvitek_read(nic, CVITEK_DMA_STATUS);
+    uint32_t ack  = st & (CVITEK_DMAST_RI | CVITEK_DMAST_NIS);
+    if (ack != 0U)
+        cvitek_write(nic, CVITEK_DMA_STATUS, ack);
+
+    /*
+     * 通知网络层有新帧。目前 netdev 层**没有任何注册者**，所以这是一个空转发 ——
+     * 因为"中断唤醒阻塞的 net-poll 任务"这条路走不通（原因见 kernel/net/net.c
+     * 的"收包唤醒链路（暂缓）"），net-poll 回到了协作式轮询、不需要被唤醒。
+     * 保留这个调用是为了给将来留一个明确的接入点：修好异常返回路径之后，
+     * 在 netdev 层注册唤醒函数即可，驱动这边不用再动。
+     */
+    netdev_rx_wakeup();
+}
+
 /* ── 初始化 ────────────────────────────────────────────────────────────── */
 
 static void cvitek_free_allocs(struct cvitek_eth_nic *nic)
@@ -723,8 +798,12 @@ static int cvitek_eth_init(uintptr_t base)
     cvitek_write(nic, CVITEK_DMA_TX_BASE, cvitek_dma_pa(nic->tx_descs));
     cvitek_write(nic, CVITEK_DMA_RX_BASE, cvitek_dma_pa(nic->rx_descs));
 
-    /* 纯轮询：GMAC 侧屏蔽无关中断，DMA 侧中断全关 */
+    /*
+     * GMAC 侧掩掉 PCS/LPI 等无关中断。注意 DMA 的 RI/TI **不受这个寄存器管**，
+     * 它只管 MAC 侧那一组；DMA 中断由下面的 DMA_INTR_ENA 控制。
+     */
     cvitek_write(nic, CVITEK_GMAC_INT_MASK, CVITEK_GMAC_INT_DISABLE);
+    /* DMA 中断先全关，等描述符环跑起来之后再开（见 init 末尾） */
     cvitek_write(nic, CVITEK_DMA_INTR_ENA, 0);
 
     cvitek_write_mac(nic, nic->mac);
@@ -763,6 +842,26 @@ static int cvitek_eth_init(uintptr_t base)
     uint32_t op = cvitek_read(nic, CVITEK_DMA_OPERATION);
     cvitek_write(nic, CVITEK_DMA_OPERATION, op | CVITEK_DMAOP_ST | CVITEK_DMAOP_SR);
     cvitek_write(nic, CVITEK_DMA_RX_POLL, 1);
+
+    /*
+     * ── 打开收包中断 ────────────────────────────────────────────────
+     * 顺序有讲究：
+     *   1. 先装 handler。若先开放 PLIC 源而中断恰好立刻到达，plic.c
+     *      找不到 handler，会走"未处理 IRQ"的日志路径（虽然仍会 complete，
+     *      不会活锁，但会刷屏）。
+     *   2. 再开放 PLIC 里这一个源。
+     *   3. 最后打开 DMA 侧的 RIE|NIE，让 GMAC 真正拉高中断线。
+     *
+     * 前提是 plic_init() 已经跑过（kernel/main.c 的
+     * platform_init_runtime_drivers）—— 它负责挂上 S 模式外部中断的
+     * trap handler 并置 sie.SEIE，缺了它这里配了也送不达。
+     */
+    plic_install(CVITEK_IRQ_GMAC, cvitek_eth_isr, nic);
+    plic_enable_irq(CVITEK_IRQ_GMAC, CVITEK_IRQ_PRIO);
+    cvitek_write(nic, CVITEK_DMA_INTR_ENA,
+                 CVITEK_DMAIE_RIE | CVITEK_DMAIE_NIE);
+    KLOG_INFO("[cvitek-eth] RX IRQ on (PLIC source %u, level-high)\n",
+              CVITEK_IRQ_GMAC);
 
     KLOG_DEBUG("[cvitek-eth] mac_ctl=0x%08x frame_filter=0x%08x "
                "addr0_hi=0x%08x addr0_lo=0x%08x\n",

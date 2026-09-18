@@ -103,6 +103,20 @@
 #define CVITEK_DMAST_RI           (1U << 6)   /* Receive Interrupt            */
 #define CVITEK_DMAST_NIS          (1U << 16)  /* Normal Interrupt Summary     */
 
+/*
+ * ── DMA_INTR_ENA 位域 ───────────────────────────────────────────────────
+ *
+ * 位序与 DMA_STATUS 一一对应（DWMAC 的一贯布局），所以同一个 bit 在两个
+ * 寄存器里含义配对：STATUS 是状态、INTR_ENA 是"这一位要不要触发中断"。
+ *
+ * 本驱动只开 RI：收包中断用来唤醒 net-poll。TI 保持关闭 —— 发送完成是靠
+ * 下次 send 时 reclaim_tx() 惰性回收描述符的，不需要中断参与。
+ * NIS 是"正常中断汇总"，开了才会把 RI 汇总成中断线。
+ */
+#define CVITEK_DMAIE_TIE          (1U << 0)   /* Transmit Interrupt Enable    */
+#define CVITEK_DMAIE_RIE          (1U << 6)   /* Receive Interrupt Enable     */
+#define CVITEK_DMAIE_NIE          (1U << 16)  /* Normal Interrupt Sum Enable  */
+
 /* ── DMA_OPERATION 位域 ────────────────────────────────────────────────── */
 
 #define CVITEK_DMAOP_SR           (1U << 1)   /* Start/Stop Receive           */
@@ -143,16 +157,22 @@
 /* ── 环尺寸 ────────────────────────────────────────────────────────────── */
 
 /*
- * RX 环深度的意义是"能吸收多长的调度停顿"：本驱动是纯轮询的，环一旦填满而
- * 轮询任务还没被调度到，后续帧就直接丢。
+ * RX 环深度的意义是"环填满到 net-poll 被调度到之间能顶多久"：环一旦填满，
+ * DMA 无处可写，后续帧被 MAC 直接丢掉。
  *
  *   1400B 载荷 @100Mbps 线速 ≈ 8525 包/秒
- *   RX 32  深 → 只能缓冲 3.6ms
- *   RX 256 深 → 可以缓冲 30ms
+ *   RX 32  深 → 只能顶 3.6ms
+ *   RX 256 深 → 可以顶 30ms
  *
- * 32 是在 SG2002 实测中暴露出来的：busybox shell（优先级 5，高于 net-poll 的
- * 20）和串口输出都能轻易抢占轮询任务几毫秒，3.6ms 的余量根本不够用。
- * 256 深的代价是 512KB 帧缓冲 —— 板子有 256MB，可以忽略。
+ * 32 是实测打回来的：SG2002 上 32 深时，任何超过 3.6ms 的停顿都丢包 —— 连
+ * bwtest 自己每秒打一行统计（走同步串口约 9ms）都能造成 50 多个丢包。
+ *
+ * 注意"停顿"的来源**不是优先级**：本内核的调度器 pick_next() 是纯 FIFO 取队首，
+ * task_create() 的 priority 参数对调度没有任何影响（它只在 idle 赋值和日志里
+ * 出现）。所以 net-poll 和编译任务是完全平等地轮转，没有谁能"抢占"谁。
+ *
+ * RX 中断（见 cvitek_eth.c）解决了及时性问题，但 256 深对突发流量仍然有用，
+ * 512KB 的代价相对板子的 256MB 可以忽略，所以保留。
  *
  * 注意：环深度和描述符步长是两件独立的事。步长恒为 64 字节（见下面的
  * CVITEK_BUSMODE_DSL_WORDS），改环深度不影响它。

@@ -28,6 +28,7 @@
 #include "mm_vm.h"
 #elif ARCH_RISCV64
 #include "exception.h"
+#include "irq/plic.h"       /* plic_init：外部中断控制器 */
 #include "vmm/vmm.h"
 #elif ARCH_X86_64
 #include "exception.h"
@@ -85,6 +86,20 @@ static void platform_init_runtime_drivers(void)
 
 #if DRIVER_GIC_V3
     gicv3_init();
+#endif
+
+#if ARCH_RISCV64
+    /*
+     * PLIC 必须在这里显式初始化 —— 它不会自己跑起来。
+     * plic_init() 做两件缺一不可的事：
+     *   1. irq_install(CAUSE_SUPERVISOR_EXTERNAL, plic_external_irq)
+     *      没有它，S 模式外部中断会落进 boot/riscv64/exception.c 的空分支、
+     *      从不在 PLIC claim/complete，level 触发的中断源会反复重触发，
+     *      直接把系统拖进无限陷入。
+     *   2. SET_SIE(SIE_SEIE) —— 全树唯一开关外部中断的地方。
+     * 在此之前没有任何源被 enable，所以这一步本身不会引入中断。
+     */
+    plic_init();
 #endif
 
     timer_init();
