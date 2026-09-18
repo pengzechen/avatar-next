@@ -121,6 +121,10 @@ static void bw_report(uint32_t window_ms)
     uint64_t mbps_x10 = bytes_s * 8ULL * 10ULL / 1000000ULL;
     uint32_t avg      = g_win_pkts ? (uint32_t)(g_win_bytes / g_win_pkts) : 0U;
 
+    /* 先并入累计再打印 —— 否则同一行里窗口 lost 和累计 lost 会差一个窗口，
+     * 看起来像是"丢了 14242 但累计一个没丢"，很误导。 */
+    g_total_lost += lost;
+
     kprintf("[bwtest] %llu.%02llu MB/s  %llu.%01llu Mbps  pkt=%u  lost=%u  "
             "ooo=%u  avg=%uB  |  total %llu pkt / %llu B / lost %llu\n",
             (unsigned long long)(mbs_x100 / 100ULL),
@@ -134,8 +138,6 @@ static void bw_report(uint32_t window_ms)
             (unsigned long long)g_total_pkts,
             (unsigned long long)g_total_bytes,
             (unsigned long long)g_total_lost);
-
-    g_total_lost += lost;
 }
 
 /* ── 周期统计（net_poll_once 每轮调用一次）─────────────────────────────── */
