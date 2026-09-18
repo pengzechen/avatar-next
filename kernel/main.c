@@ -40,6 +40,8 @@
 
 #if DRIVER_ETH_VIRTIO
 #include "eth/virtio_net.h"
+#elif DRIVER_ETH_CVITEK
+#include "eth/cvitek_eth.h"
 #endif
 
 #if DRIVER_UART_DW
@@ -229,6 +231,10 @@ void kernel_main(void)
     KLOG_INFO("Initializing virtio ethernet driver...\n");
     virtio_net_init_from_platform();
     net_init();
+#elif DRIVER_ETH_CVITEK && !defined(RUN_GUEST_LINUX)
+    KLOG_INFO("Initializing cvitek ethernet driver...\n");
+    cvitek_eth_init_from_platform();
+    net_init();
 #endif
 
     /* ── 选择启动模式 ────────────────────────────────────
@@ -248,7 +254,7 @@ void kernel_main(void)
 #endif
 
 #if !defined(RUN_VMM_TEST) && !defined(RUN_GUEST_LINUX)
-#if DRIVER_ETH_VIRTIO
+#if DRIVER_ETH_VIRTIO || DRIVER_ETH_CVITEK
     KLOG_INFO("Starting network polling task...\n");
     uint64_t startup_task_irq_flags = arch_irq_save();
     task_t *eth_task = task_create("net-poll", net_poll_task, NULL, 20);
@@ -260,7 +266,7 @@ void kernel_main(void)
 
     /* SMP 检查完成，现在才启动 busybox 交互 shell */
     KLOG_INFO("\n=== Launching busybox shell ===\n");
-#if !DRIVER_ETH_VIRTIO
+#if !DRIVER_ETH_VIRTIO && !DRIVER_ETH_CVITEK
     uint64_t startup_task_irq_flags = arch_irq_save();
 #endif
     task_t *bb_task = task_create("busybox", demo_load_busybox, NULL, 5);

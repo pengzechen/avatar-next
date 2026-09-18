@@ -470,7 +470,8 @@ else
 endif
 
 # ── §6c  网络驱动（ETH）─────────────────────────────────────────────────────────
-# 以太网驱动（由 platform.conf 的 eth.driver 自动推导；也可命令行覆盖：ETH=none / ETH=virtio）
+# 以太网驱动（由 platform.conf 的 eth.driver 自动推导；也可命令行覆盖：
+# ETH=none / ETH=virtio / ETH=cvitek）
 ETH ?= $(DEV_ETH_TYPE)
 ifeq ($(ETH),virtio)
     ifeq ($(filter $(ARCH),riscv64 aarch64 x86_64),)
@@ -478,12 +479,21 @@ ifeq ($(ETH),virtio)
     endif
     CFLAGS          += -DDRIVER_ETH_VIRTIO=1
     DRIVER_ETH_SRCS := driver/eth/virtio_net.c
+else ifeq ($(ETH),cvitek)
+    # SG2002/CV1812H 板载 DWMAC 3.70a + 内部 EPHY。驱动里用到 virt_to_phys
+    # 和 C906 的 CMO 指令，只有 riscv64 有意义。
+    ifeq ($(ARCH),riscv64)
+        CFLAGS          += -DDRIVER_ETH_CVITEK=1
+        DRIVER_ETH_SRCS := driver/eth/cvitek_eth.c
+    else
+        $(error ETH=cvitek 目前仅支持 ARCH=riscv64)
+    endif
 else ifeq ($(ETH),none)
     DRIVER_ETH_SRCS :=
 else ifeq ($(ETH),)
     DRIVER_ETH_SRCS :=
 else
-    $(error Invalid ETH. Use: none or virtio)
+    $(error Invalid ETH. Use: none, virtio or cvitek)
 endif
 
 # ── §6e  DRIVER_OBJECTS 最终组装 ────────────────────────────────────────────────
