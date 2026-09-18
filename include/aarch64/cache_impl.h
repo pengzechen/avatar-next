@@ -98,6 +98,18 @@ init_cache(void)
  *
  * 使用 barrier.h 的数据屏障
  */
+/**
+ * sync_icache_all - 让刚写入的指令对本核可见
+ *
+ * `ic iallu` 使本核 I-cache 全失效（另一颗核要看到得用 ialluis），
+ * dsb 保证失效完成，isb 保证后续取指看到新指令 —— 三者缺一不可。
+ */
+static inline void
+sync_icache_all(void)
+{
+    __asm__ volatile("ic iallu\n\tdsb ish\n\tisb" ::: "memory");
+}
+
 static inline void
 sync_caches(void)
 {

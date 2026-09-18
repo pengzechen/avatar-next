@@ -253,7 +253,7 @@ extern uint32_t klog_cpu_id(void);
  * 格式串不进 .rodata）。其余级别（error/warn/info/debug/trace）都只是
  * 把 g_log_level 的**初值**设成该级别，调用点仍然带着
  * "读 g_log_level + 比较 + 分支"，运行期 set_log_level() 还能打开更细的日志。
- * —— 这一点文档以前写反了，见 docs/KLOG_GUIDE.md。
+ * —— 这一点文档以前写反了，见 docs/basic/KLOG.md。
  *
  * LOG_LEVEL_NONE 是枚举常量不是宏，在 #if 里会被预处理成 0；上面的
  * #ifndef LOG_LEVEL 已经挡住了 "未定义 → 0 == 0 → 全静音" 那个坑。

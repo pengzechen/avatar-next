@@ -39,7 +39,7 @@ make help
 > （见 `Makefile` 第 1188 行注释）。因此**改过任何 `.h`、或切换 `SMP=` / `LOG=` /
 > 其它 CFLAGS 之后，必须先 `make PLATFORM=<p> clean` 再全量重编**，否则会用到
 > 布局/配置不一致的旧 `.o`，产生看起来像运行期内存踩踏的"幽灵 bug"。
-> 详见 `docs/X86_64_SMP_SYSCALL_STACK_BUGFIX.md` 附录一。
+> 详见 `docs/bugfix/X86_64_SMP_SYSCALL_STACK_BUGFIX.md` 附录一。
 
 ### 工具链
 
@@ -81,24 +81,24 @@ avatar/
 
 ### 核心系统
 
-- **内存屏障**: `docs/BARRIER.md` - barrier.h。**改设备寄存器 / 页表 / TLB 顺序相关代码前必读**：
+- **内存屏障**: `docs/basic/BARRIER.md` - barrier.h。**改设备寄存器 / 页表 / TLB 顺序相关代码前必读**：
   `barrier_data` 是 dmb 强度（只保证顺序），"写完必须确实到达"的场景要用
   `barrier_sync`（dsb 强度），换错会**削弱**同步
-- **缓存操作**: `docs/CACHE.md` - cache.h DMA 和 MMIO 缓存管理
-- **自旋锁**: `docs/SPINLOCK.md` - spinlock.h。中断状态存**调用点的局部变量**
+- **缓存操作**: `docs/basic/CACHE.md` - cache.h DMA 和 MMIO 缓存管理
+- **自旋锁**: `docs/basic/SPINLOCK.md` - spinlock.h。中断状态存**调用点的局部变量**
   （`spin_lock_irqsave(&l, &flags)`），不要存进锁对象 —— `irq_flags` 那个字段
   在 SMP 下会被别的 CPU 覆盖
 
 ### 调试和日志
 
-- **内核日志**: `docs/KLOG_GUIDE.md` - klog.h 日志系统和模块控制
-- **断言系统**: `docs/ASSERT_GUIDE.md` - assert.h 运行时和编译时断言
+- **内核日志**: `docs/basic/KLOG.md` - klog.h 日志系统和模块控制
+- **断言系统**: `docs/basic/ASSERT.md` - assert.h 运行时和编译时断言
 
 ### 数据结构和工具
 
-- **双向链表**: `docs/LIST_API.md` - list.h Linux 风格链表
-- **字符串操作**: `docs/STRING.md` - string.h 字符串和内存操作
-- **MMIO**: `docs/MMIO.md` - mmio.h 内存映射 I/O
+- **双向链表**: `docs/basic/LIST_API.md` - list.h Linux 风格链表
+- **字符串操作**: `docs/basic/STRING.md` - string.h 字符串和内存操作
+- **MMIO**: `docs/basic/MMIO.md` - mmio.h 内存映射 I/O
 
 ### 架构特定
 
@@ -106,16 +106,16 @@ avatar/
 - **AArch64 FP/SIMD 上下文**: `docs/arch/aarch64/FP_SIMD_CONTEXT.md` -
   改 `trap_frame_t` 布局、`boot/aarch64/exception.S`、`kernel/task/aarch64/switch.S`
   或 `kernel/task/switch.h` 里三处伪帧前必读（含向量表 128 字节槽位预算的坑）
-- **x86_64 SYSCALL / per-CPU 栈**: `docs/X86_64_SMP_SYSCALL_STACK_BUGFIX.md` -
+- **x86_64 SYSCALL / per-CPU 栈**: `docs/bugfix/X86_64_SMP_SYSCALL_STACK_BUGFIX.md` -
   改 `cpu_t` 布局或 SYSCALL 入口前必读（含 `%gs:` 偏移的 static_assert 约束与构建陷阱）
-- **x86_64 时间基准 / TSC 标定**: `docs/X86_64_TIMEBASE_TSC_CALIBRATION_FIX.md` -
+- **x86_64 时间基准 / TSC 标定**: `docs/bugfix/X86_64_TIMEBASE_TSC_CALIBRATION_FIX.md` -
   动 `driver/irq/lapic.c` 的频率标定前必读（PIT 只能用 0x43/0x42，**不要用 port 0x61**）
 
 ### 中断与上下文切换
 
 **遇到任何中断 / 抢占 / 上下文切换问题，先读这三篇文档，不要凭空推断。**
 
-- **中断屏蔽接口**: `docs/INTERRUPT_MASKING.md` - C 代码统一用
+- **中断屏蔽接口**: `docs/basic/INTERRUPT_MASKING.md` - C 代码统一用
   `include/<arch>/exception_impl.h` 的 `arch_irq_*`（由 exception.h 暴露），
   **不许再写内联汇编**；`.S` 除外
 

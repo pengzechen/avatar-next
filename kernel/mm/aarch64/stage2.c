@@ -13,6 +13,8 @@
 
 #include "aarch64/stage2.h"
 #include "mm_vm.h"
+#include "cache.h"    /* clean_and_invalidate_dcache_range */
+#include "barrier.h"  /* barrier_sync / barrier_instr_full */
 #include "klog.h"
 #include "string.h"
 
@@ -42,10 +44,13 @@ static void flush_tlb(void)
 
 static void flush_ept(void *addr, uint64_t size)
 {
-    uint64_t p = (uint64_t)addr & ~63ULL;
-    uint64_t e = ((uint64_t)addr + size + 63ULL) & ~63ULL;
-    for (; p < e; p += 64)
-        __asm__ volatile("dc civac, %0" :: "r"(p) : "memory");
+    /*
+     * 先把这段内存写回并失效：以前这里是手写的 `dc civac` 循环 + 硬编码的
+     * 64 字节步长，现在是 cache API 的一个调用（行大小来自
+     * get_cache_line_size()）。整个项目里 C 代码不该再出现 cache 指令。
+     */
+    clean_and_invalidate_dcache_range(addr, (size_t) size);
+
     barrier_sync();
     flush_tlb();
     barrier_instr_full();

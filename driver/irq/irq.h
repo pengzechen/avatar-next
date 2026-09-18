@@ -11,7 +11,7 @@
  *   irq_ack()               应答中断，返回 IRQ 号（读 IAR）
  *   irq_eoi(irq)            End-of-Interrupt（写 EOIR）
  *   中断开关不在本文件：统一用 include/aarch64/exception_impl.h 的
- *   arch_irq_enable() / arch_irq_disable()（见 docs/INTERRUPT_MASKING.md）。
+ *   arch_irq_enable() / arch_irq_disable()（见 docs/basic/INTERRUPT_MASKING.md）。
  */
 
 #ifndef DRIVER_IRQ_H

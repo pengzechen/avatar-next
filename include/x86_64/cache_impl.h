@@ -101,6 +101,18 @@ init_cache(void)
  *
  * 使用 barrier.h 的数据屏障
  */
+/**
+ * sync_icache_all - 让刚写入的指令可见
+ *
+ * x86 的 I-cache 与 D-cache 由硬件保持一致，写完代码只需一条序列化屏障。
+ * （严格的自改码场景还要求执行 cpuid/jmp 之类的序列化指令，本内核没有 JIT。）
+ */
+static inline void
+sync_icache_all(void)
+{
+    barrier_sync();
+}
+
 static inline void
 sync_caches(void)
 {

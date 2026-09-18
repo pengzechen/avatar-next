@@ -328,7 +328,7 @@ x86_64-linux-musl-gcc -nostdlib -static \
 - [ ] `kernel/main.c` - 启用 busybox 加载
 
 ### 参考文档
-- [ ] `docs/RISCV64_ECALL_OPENSBI_BUG.md` - 异常处理陷阱
+- [ ] `docs/bugfix/RISCV64_ECALL_OPENSBI_BUG.md` - 异常处理陷阱
 - [ ] `docs/RISCV64_PAGE_TABLE_SWITCH.md` - 页表切换问题
 - [ ] `docs/INTERRUPT_CONTROL_COMPARISON.md` - 中断控制比较
 

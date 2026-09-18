@@ -7,6 +7,7 @@
 #include "../boot/common/platform_ops.h"
 #include "arch.h"
 #include "klog.h"
+#include "cache.h"
 #include "string.h"
 #include "task/task.h"
 #include "task/sched.h"
@@ -169,6 +170,12 @@ void kernel_main(void)
      * 必须在 UART 可用之后、任何模块日志之前。
      */
     klog_init();
+
+    /*
+     * 探测/设定缓存行大小（cache API 的 range 操作用它做步长）。
+     * 以前从来没人调用，于是所有架构都吃硬编码的 64。
+     */
+    init_cache();
 
     /* Print welcome message */
     KLOG_INFO("=== Avatar OS Kernel ===\n");

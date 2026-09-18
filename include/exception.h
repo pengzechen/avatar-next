@@ -13,7 +13,7 @@
  * 另外在这里统一暴露**中断屏蔽原语**（arch_irq_save/restore/enable/
  * disable/flags/is_enabled）：它们的实现在 include/<arch>/exception_impl.h，
  * 全项目只有那一份 —— C 代码要关中断就用这些，不要再自己写内联汇编。
- * 详见 docs/INTERRUPT_MASKING.md。
+ * 详见 docs/basic/INTERRUPT_MASKING.md。
  */
 
 #include "types.h"
