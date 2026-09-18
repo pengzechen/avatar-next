@@ -550,6 +550,15 @@ else
     _BUILD_VARIANT := normal
 endif
 
+# STRING_TEST=1：定义 RUN_STRING_TEST，kernel_main 早期跑 tests/string_test.c 自检
+# （与上面三个变体正交：自检跑完继续正常启动）。标志只影响 kernel_main.o，
+# 所以并入 _BUILD_VARIANT 让变体机制在开关变化时清掉那一个对象即可。
+STRING_TEST ?= 0
+ifeq ($(STRING_TEST),1)
+    CFLAGS += -DRUN_STRING_TEST=1
+    _BUILD_VARIANT := $(_BUILD_VARIANT)+string_test
+endif
+
 # 当变体改变时自动清除 kernel/main.o，防止复用缓存了错误条件编译的对象文件。
 _VARIANT_FILE := $(BUILD_DIR)/.build_variant
 _VARIANT_CHECK := $(shell \
@@ -1104,6 +1113,15 @@ test-mutex: kernel
 test-vmm:
 	$(MAKE) ARCH=$(ARCH) LOG=$(LOG) VMM_TEST=1 kernel
 
+# test-string: 字符串/内存函数自检（tests/string_test.c）
+#              长度 × 源对齐 × 目的对齐 全组合，跨过 NEON 阈值两侧，
+#              跑完打印 "=== STRING TEST: PASS (N cases) ===" 后继续正常启动。
+#   用法: make PLATFORM=qemu-virt-aarch64 test-string
+test-string:
+	$(MAKE) PLATFORM=$(PLATFORM) LOG=$(LOG) STRING_TEST=1 kernel
+	@echo "Starting QEMU (string self-test)..."
+	$(QEMU) $(QEMU_FLAGS)
+
 # test-guest-linux: 编译 GUEST_LINUX=1 内核并把 Linux 作为 EL1 guest 启动
 #                   rootfs 会自动安装 /guests/linux/{linux.bin,linux.dtb,initrd.gz}
 test-guest-linux: $(ROOTFS_IMG)
@@ -1187,6 +1205,7 @@ help:
 	@echo "  make PLATFORM=qemu-virt-riscv64 clean"
 	@echo "  make PLATFORM=qemu-virt-riscv64 test-pthread LOG=warn    # pthread_test 一键测试"
 	@echo "  make PLATFORM=qemu-virt-aarch64 test-vmm LOG=info        # VMM 三线程切换测试"
+	@echo "  make PLATFORM=qemu-virt-aarch64 test-string              # 字符串/内存函数自检"
 	@echo "  make ARCH=riscv64 kernel                                 # legacy alias for PLATFORM=qemu-virt-riscv64"
 	@echo "  make PLATFORM=qemu-virt-riscv64 run-net"
 	@echo "  make PLATFORM=qemu-virt-riscv64 run-net QEMU_NET_FLAGS='-netdev tap,id=net0,ifname=tap0,script=no,downscript=no -device virtio-net-device,netdev=net0,mac=52:54:00:12:34:56'"

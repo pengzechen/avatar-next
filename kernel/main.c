@@ -169,6 +169,12 @@ void kernel_main(void)
     KLOG_INFO("Architecture: "ARCH_NAME "\n");
     KLOG_INFO("Build time: " __DATE__ " " __TIME__ "\n");
 
+    /* ── 字符串/内存函数自检（STRING_TEST=1，跑完继续启动）──────── */
+#ifdef RUN_STRING_TEST
+    extern void test_string_functions(void);   /* tests/string_test.c */
+    test_string_functions();
+#endif
+
     /* ── 初始化物理内存管理器 ───────────────────────────────── */
     KLOG_INFO("\n");
     pmm_initialize();
