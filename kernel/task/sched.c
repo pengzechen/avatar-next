@@ -111,6 +111,20 @@ sched_enqueue(task_t *task)
     list_node_init(&task->run_node);
 
     if (n == 1U) {
+        /*
+         * 中断上下文里**绝不要**调 arch_irq_save()/arch_irq_restore()。
+         * 那一对是用「整字写回 sstatus」实现关/开中断的；在 ISR 里写回
+         * sstatus 会破坏它的状态，实测症状是 S 模式中断从此不再投递 ——
+         * 定时器停摆、串口无响应、被唤醒的任务再也跑不起来。
+         *
+         * 设备 ISR 里唤醒任务是常规操作（收包中断叫醒 net-poll 就是），
+         * 而中断本来就是关的，直接插队列即可，不需要再动 sstatus。
+         */
+        if (in_irq_context()) {
+            list_insert_last(&tc->run_queue, &task->run_node);
+            return;
+        }
+
         uint64_t flags = arch_irq_save();
         list_insert_last(&tc->run_queue, &task->run_node);
         arch_irq_restore(flags);
