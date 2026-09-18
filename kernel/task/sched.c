@@ -335,38 +335,65 @@ sched_check_and_yield(void)
     return false;
 }
 
+/*
+ * trap_preempt_kernel_side - 从【内核态】陷入时的抢占判断
+ *
+ * 三个架构共用。用户进程的内核侧（syscall / 缺页处理，跑在它自己的内核栈上）
+ * 不在这里切换：那会让任意 syscall 代码点被交错执行，产生大面积数据竞争；
+ * 它的抢占推迟到 syscall 返回边界。内核线程（含 idle）没有这个问题，可以在
+ * 这里被 timer 抢占 —— 否则纯内核态的循环会独占 CPU。
+ *
+ * preemptible() 内含 irq_depth == 0 判断，嵌套中断里不会误切。
+ */
+static bool
+trap_preempt_kernel_side(void)
+{
+    cpu_t *c = cpu_current();
+
+    if (c->current_task && c->current_task->is_user_process)
+        return false;
+    if (!c->current_task || !c->need_resched || !preemptible() ||
+        c->preempt_schedule_depth != 0)
+        return false;
+
+    c->need_resched = false;
+    c->preempt_schedule_depth++;
+    sched_schedule();
+    c->preempt_schedule_depth--;
+    return true;
+}
+
+/*
+ * sched_check_and_yield_from_trap - trap 返回前的调度检查
+ *
+ * 三个架构的异常/中断返回路径都只调这一个函数，所以这里就是【每个架构唯一的
+ * timer 抢占点】。frame_ptr 用来判断这次 trap 来自用户态还是内核态：
+ *
+ *   AArch64   spsr[3:0] == 0 (EL0t)   → 用户态；!= 0 (EL1h) → 内核态
+ *   x86_64    CS.RPL     == 3        → 用户态
+ *   RISC-V    sstatus.SPP == 0       → 用户态
+ *
+ * 来自用户态时直接 sched_check_and_yield()：被中断的是用户代码，异常现场已
+ * 完整保存在 trap frame 里，在它自己的内核栈上切换没有任何副作用。
+ *
+ * 注意：调用本函数时 handle_exception 已经做过 irq_depth--，因此
+ * sched_schedule() 开头的 assert_always(!in_irq_context()) 不会触发。
+ */
 bool
 sched_check_and_yield_from_trap(void *frame_ptr)
 {
 #if ARCH_AARCH64
     trap_frame_t *frame = (trap_frame_t *)frame_ptr;
-    if (frame && ((frame->spsr & 0xfUL) != 0)) {
-        cpu_t *c = cpu_current();
-        /*
-         * EL0 syscall/page-fault handlers run on the task's kernel stack. With
-         * AArch64 IRQs enabled there, timer IRQs may nest, but switching away
-         * from that nested EL1 frame would interleave arbitrary syscall code
-         * before the syscall reaches a defined preemption boundary.
-         */
-        if (c->current_task && c->current_task->is_user_process)
-            return false;
-        if (!c->current_task || !c->need_resched || !preemptible() ||
-            c->preempt_schedule_depth != 0)
-            return false;
-
-        c->need_resched = false;
-        c->preempt_schedule_depth++;
-        sched_schedule();
-        c->preempt_schedule_depth--;
-        return true;
-    }
-    return sched_check_and_yield();
+    if (frame && ((frame->spsr & 0xfUL) != 0))
+        return trap_preempt_kernel_side();
 #elif ARCH_X86_64
-    (void)frame_ptr;
-    return false;
+    trap_frame_t *frame = (trap_frame_t *)frame_ptr;
+    if (frame && ((frame->cs & 3u) != 3u))
+        return trap_preempt_kernel_side();
 #elif ARCH_RISCV64
-    (void)frame_ptr;
-    return false;
+    trap_frame_t *frame = (trap_frame_t *)frame_ptr;
+    if (frame && (frame->sstatus & SSTATUS_SPP))
+        return trap_preempt_kernel_side();
 #else
     (void)frame_ptr;
 #endif

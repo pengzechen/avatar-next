@@ -202,6 +202,23 @@ void sigpending_handler(uint64_t regs[6], task_t *current)
             : (uint64_t)(int64_t)-EFAULT;
 }
 
+/*
+ * signal_deliver_from_trap - 在 trap 返回用户态之前投递一个待处理信号
+ *
+ * 由各架构的异常/中断返回路径调用（AArch64 的 HANDLE_IRQ、
+ * x86_64 与 RISC-V 的公共 stub）。
+ *
+ * 为什么必须有这一步：deliver_pending_signals() 的另一处调用点在 syscall
+ * 返回路径上，而**纯用户态自旋、不发任何 syscall 的任务**永远不会经过那里。
+ * LTP 的 setsid01 正是这种形态 ——
+ *
+ *     void do_child_2(void) { for (;;) ; }        // 子进程死循环
+ *     父进程: setsid(); kill(pid, SIGKILL); wait(&status);   // 期望 status==9
+ *
+ * 没有 trap 返回路径上的投递，SIGKILL 永远不生效，子进程不死、父进程
+ * wait() 永远等下去，整个测试卡死。只有从**用户态**陷入时才投递：
+ * 内核态陷入时 frame 不是用户现场，改它没有意义。
+ */
 void signal_deliver_from_trap(void *frame_ptr)
 {
     task_t *current = task_current();
@@ -211,7 +228,17 @@ void signal_deliver_from_trap(void *frame_ptr)
 #if ARCH_AARCH64
     trap_frame_t *frame = (trap_frame_t *)frame_ptr;
     if ((frame->spsr & 0xfUL) != 0)
-        return;
+        return;                       /* 来自 EL1，非用户现场 */
+    deliver_pending_signals(current, frame);
+#elif ARCH_X86_64
+    trap_frame_t *frame = (trap_frame_t *)frame_ptr;
+    if ((frame->cs & 3u) != 3u)
+        return;                       /* CS.RPL != 3，来自内核 */
+    deliver_pending_signals(current, frame);
+#elif ARCH_RISCV64
+    trap_frame_t *frame = (trap_frame_t *)frame_ptr;
+    if (frame->sstatus & SSTATUS_SPP)
+        return;                       /* 来自 S 态，非用户现场 */
     deliver_pending_signals(current, frame);
 #else
     (void)frame_ptr;
