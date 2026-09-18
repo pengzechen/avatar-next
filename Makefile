@@ -559,6 +559,18 @@ ifeq ($(STRING_TEST),1)
     _BUILD_VARIANT := $(_BUILD_VARIANT)+string_test
 endif
 
+# ─── §7b  日志模块白名单 ───────────────────────────────────────────────────────
+# LOG_MODULES=uart,gic,timer ：编译期默认模块掩码（配合 LOG=debug|trace 使用）。
+#   不传      = 全部模块（保持旧行为）
+#   all/none  = 全开 / 全关
+#   一经传入即为**白名单**：未打模块标签的 KLOG_DEBUG/KLOG_TRACE 归入
+#   LOG_MODULE_GENERIC，不在名单里就不输出（见 include/klog.h）。
+#   例: make PLATFORM=qemu-virt-aarch64 run LOG=debug LOG_MODULES=gic
+LOG_MODULES ?=
+ifneq ($(LOG_MODULES),)
+    CFLAGS += -DLOG_MODULES_DEFAULT='"$(LOG_MODULES)"'
+endif
+
 # 当变体改变时自动清除 kernel/main.o，防止复用缓存了错误条件编译的对象文件。
 _VARIANT_FILE := $(BUILD_DIR)/.build_variant
 _VARIANT_CHECK := $(shell \
@@ -1175,6 +1187,7 @@ help:
 	@echo "  LOG=warn      Show warnings and errors"
 	@echo "  LOG=info      Show info, warnings and errors (default)"
 	@echo "  LOG=debug     Show debug info and above"
+	@echo "  LOG_MODULES=uart,gic   Whitelist which modules' DEBUG/TRACE logs print (needs LOG=debug|trace)"
 	@echo "  LOG=trace     Show all logs including trace"
 	@echo ""
 	@echo "Assertions:"

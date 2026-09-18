@@ -39,6 +39,10 @@ extern void platform_panic(void);
  * assert - 运行时断言
  * 如果条件为 false，输出错误信息并调用 platform_panic()
  *
+ * 用 kprintf 而不是 KLOG_ERROR 打印：KLOG_ERROR 在 `LOG=none` 构建下会被
+ * 替换成 do{}while(0)，于是断言只剩一个没有任何输出的 panic —— 而
+ * CLAUDE.md 恰恰推荐发布版用 LOG=none。断言信息必须任何构建配置下都看得见。
+ *
  * 使用示例:
  *   assert(ptr != NULL);
  *   assert(x > 0);
@@ -46,8 +50,8 @@ extern void platform_panic(void);
 #define assert(cond) \
     do { \
         if (!(cond)) { \
-            KLOG_ERROR("Assertion failed: %s, file %s, line %d", \
-                       #cond, __FILE__, __LINE__); \
+            kprintf(KLOG_COLOR_RED "[ASSERT][C%u] %s:%d: %s" KLOG_COLOR_RESET "\n", \
+                    klog_cpu_id(), __FILE__, __LINE__, #cond); \
             platform_panic(); \
         } \
     } while (0)
@@ -67,8 +71,8 @@ extern void platform_panic(void);
 #define assert_always(cond) \
     do { \
         if (!(cond)) { \
-            KLOG_ERROR("Critical assertion failed: %s, file %s, line %d", \
-                       #cond, __FILE__, __LINE__); \
+            kprintf(KLOG_COLOR_RED "[ASSERT_ALWAYS][C%u] %s:%d: %s" KLOG_COLOR_RESET "\n", \
+                    klog_cpu_id(), __FILE__, __LINE__, #cond); \
             platform_panic(); \
         } \
     } while (0)

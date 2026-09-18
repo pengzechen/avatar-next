@@ -95,11 +95,17 @@ uint64_t pmm_alloc_pages(pmm_t *pmm, uint32_t page_count)
 
         // KLOG_DEBUG("PMM: allocated %u pages at 0x%llx (index %zu)\n",
         //            page_count, paddr, page_index);
-    } else {
-        KLOG_ERROR("PMM: failed to allocate %u pages\n", page_count);
     }
 
     spin_unlock(&pmm->lock);
+
+    /*
+     * 日志放在解锁之后：klog 会持 g_klog_lock（关中断）把整条消息逐字符
+     * 轮询写 UART，在 pmm->lock —— 全内核最热的锁 —— 里做这件事，等于让
+     * 每个分配者多等一次串口输出。paddr == 0 即分配失败。
+     */
+    if (paddr == 0)
+        KLOG_ERROR("PMM: failed to allocate %u pages\n", page_count);
 
     return paddr;
 }
@@ -134,9 +140,10 @@ void pmm_free_pages(pmm_t *pmm, uint64_t paddr, uint32_t page_count)
     uint64_t page_index = (paddr - pmm->start_addr) / pmm->page_size;
 
     /* 检查范围 */
-    if (page_index + page_count <= pmm->total_pages) {
-        uint64_t freed = 0;
+    uint64_t freed     = 0;
+    bool     bad_range = false;
 
+    if (page_index + page_count <= pmm->total_pages) {
         /* 仅在 bit 为 1 时清除并更新计数，防止 double free 污染统计 */
         for (uint64_t i = 0; i < page_count; i++) {
             uint64_t idx = page_index + i;
@@ -148,19 +155,22 @@ void pmm_free_pages(pmm_t *pmm, uint64_t paddr, uint32_t page_count)
 
         pmm->free_pages += freed;
 
-        if (freed != page_count) {
-            KLOG_WARN("PMM: partial free detected: requested=%u, actually_freed=%llu, paddr=0x%llx\n",
-                      page_count, freed, paddr);
-        }
-
         // KLOG_DEBUG("PMM: freed %u pages at 0x%llx (index %llu)\n",
         //            page_count, paddr, page_index);
     } else {
-        KLOG_ERROR("PMM: invalid free request: paddr=0x%llx, count=%u\n",
-                   paddr, page_count);
+        bad_range = true;
     }
 
     spin_unlock(&pmm->lock);
+
+    /* 日志一律在解锁之后打（理由同 pmm_alloc_pages） */
+    if (bad_range) {
+        KLOG_ERROR("PMM: invalid free request: paddr=0x%llx, count=%u\n",
+                   paddr, page_count);
+    } else if (freed != page_count) {
+        KLOG_WARN("PMM: partial free detected: requested=%u, actually_freed=%llu, paddr=0x%llx\n",
+                  page_count, freed, paddr);
+    }
 }
 
 /* ── 内存标记 ───────────────────────────────────────────────────── */

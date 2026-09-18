@@ -87,7 +87,14 @@ uintptr_t platform_get_mmio(const char *block, const char *key);
 #define logger_warn(...)      KLOG_WARN(__VA_ARGS__)
 #define logger_info(...)      KLOG_INFO(__VA_ARGS__)
 #define logger_debug(...)     KLOG_DEBUG(__VA_ARGS__)
-#define logger_gic_debug(...) KLOG_DEBUG(__VA_ARGS__)
 #define logger_trace(...)     KLOG_TRACE(__VA_ARGS__)
+
+/*
+ * GIC 专用的调试日志：走模块掩码的 GIC 位，而不是普通 KLOG_DEBUG。
+ * 这样 LOG=debug 时可以只开它：
+ *     make PLATFORM=... run LOG=debug LOG_MODULES=gic
+ * 以前它只是 KLOG_DEBUG 的别名，名字里的 "gic" 没有任何过滤作用。
+ */
+#define logger_gic_debug(...) KLOG_MODULE_DEBUG(LOG_MODULE_GIC, __VA_ARGS__)
 
 #endif /* PLATFORM_CFG_H */

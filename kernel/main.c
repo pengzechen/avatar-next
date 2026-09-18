@@ -164,6 +164,12 @@ void kernel_main(void)
     /* Initialize platform (UART, etc.) */
     platform_init();
 
+    /*
+     * 应用编译期模块白名单（Makefile 的 LOG_MODULES=）并打印生效配置。
+     * 必须在 UART 可用之后、任何模块日志之前。
+     */
+    klog_init();
+
     /* Print welcome message */
     KLOG_INFO("=== Avatar OS Kernel ===\n");
     KLOG_INFO("Architecture: "ARCH_NAME "\n");

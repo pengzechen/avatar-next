@@ -61,7 +61,11 @@ static void plic_external_irq(void *frame)
 
     if (irq < PLIC_MAX_IRQS && g_plic_handlers[irq].handler) {
         g_plic_handlers[irq].handler(irq, g_plic_handlers[irq].ctx);
-    } else {
+    } else if (plic_irq_log_sample(g_plic_irq_count)) {
+        /*
+         * 未处理中断同样要过采样器：中断风暴时每个中断打一行会把串口
+         * 彻底堵死（这里在 ISR 上下文，还会一直占着 CPU 轮询 UART）。
+         */
         KLOG_WARN("[PLIC] unhandled irq=%u count=%llu\n", irq, g_plic_irq_count);
     }
 

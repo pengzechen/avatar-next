@@ -584,7 +584,7 @@ int eth_send(VirtioNetNic_t *opaque, const uint8_t *data, size_t len)
     virtq_push_avail(nic, &nic->txq, VIRTIO_NET_Q_TX, (uint16_t)hdr_id);
     nic->tx_packets++;
 
-    KLOG_DEBUG("[virtio-net] tx submit hdr=%d frame=%d buf=%u frame_len=%zu wire_len=%u avail_idx=%u tx_packets=%llu dst=%02x:%02x:%02x:%02x:%02x:%02x ethertype=0x%02x%02x\n",
+    KLOG_MODULE_DEBUG(LOG_MODULE_NET, "[virtio-net] tx submit hdr=%d frame=%d buf=%u frame_len=%zu wire_len=%u avail_idx=%u tx_packets=%llu dst=%02x:%02x:%02x:%02x:%02x:%02x ethertype=0x%02x%02x\n",
                hdr_id, frame_id, buf_id, len,
                (uint32_t)(VIRTIO_NET_HDR_LEN + frame_len), nic->txq.avail.idx,
                (unsigned long long)nic->tx_packets,
@@ -627,7 +627,7 @@ int eth_recv(VirtioNetNic_t *opaque, uint8_t *buf, size_t maxlen)
     virtio_net_refill_rx(nic, true);
     nic->rx_packets++;
 
-    KLOG_DEBUG("[virtio-net] rx packet id=%u frame_len=%u copy=%zu last_used=%u rx_packets=%llu dst=%02x:%02x:%02x:%02x:%02x:%02x src=%02x:%02x:%02x:%02x:%02x:%02x type=0x%02x%02x\n",
+    KLOG_MODULE_DEBUG(LOG_MODULE_NET, "[virtio-net] rx packet id=%u frame_len=%u copy=%zu last_used=%u rx_packets=%llu dst=%02x:%02x:%02x:%02x:%02x:%02x src=%02x:%02x:%02x:%02x:%02x:%02x type=0x%02x%02x\n",
                id, frame_len, copy_len, nic->rxq.last_used_idx,
                (unsigned long long)nic->rx_packets,
                copy_len >= 6U ? buf[0] : 0U, copy_len >= 6U ? buf[1] : 0U,
@@ -699,7 +699,7 @@ void virtio_net_poll_demo_task(void *arg)
     for (;;) {
         int n = eth_recv(nic, rx, sizeof(rx));
         if (n > 0) {
-            KLOG_INFO("[virtio-net] rx frame len=%d dst=%02x:%02x:%02x:%02x:%02x:%02x src=%02x:%02x:%02x:%02x:%02x:%02x type=0x%02x%02x\n",
+            KLOG_MODULE_DEBUG(LOG_MODULE_NET, "[virtio-net] rx frame len=%d dst=%02x:%02x:%02x:%02x:%02x:%02x src=%02x:%02x:%02x:%02x:%02x:%02x type=0x%02x%02x\n",
                       n,
                       rx[0], rx[1], rx[2], rx[3], rx[4], rx[5],
                       rx[6], rx[7], rx[8], rx[9], rx[10], rx[11],
