@@ -64,16 +64,27 @@ deliver_pending_signals(task_t *t, trap_frame_t *frame)
     t->sig_saved_blocked = t->blocked_sigs;
     t->blocked_sigs |= (1ULL << (sig - 1)) | (sa_mask & ~((1ULL<<(SIGKILL-1))|(1ULL<<(SIGSTOP-1))));
 
-    /* 在用户栈上压入当前 trap_frame（已含 syscall 返回值），建立 sigframe */
+    /*
+     * 在用户栈上压入当前 trap_frame（已含 syscall 返回值），建立 sigframe。
+     *
+     * 用户栈地址一律经 copy_to_user_bytes 写（可能跨页、可能未映射）：
+     * 裸 memcpy 一旦踩到未映射页就是内核态数据中止 → 整机挂死。
+     * 写失败就 goto sigframe_fault 回滚：不设 sig_frame_sp、不改 trap_frame，
+     * 信号重新置回 pending 并恢复 blocked 掩码，等下次再投递。
+     */
 #if ARCH_X86_64
     {
         sa_restorer = USER_SIGRET_PAGE;
         uint64_t usp = frame->rsp & ~15ULL;          /* 16 字节对齐 */
         usp -= sizeof(trap_frame_t);
-        memcpy((void *)usp, frame, sizeof(trap_frame_t));
-        t->sig_frame_sp = usp;
+        if (copy_to_user_bytes(frame, (void *)usp, sizeof(trap_frame_t)) < 0)
+            goto sigframe_fault;
+        uint64_t frame_addr = usp;                   /* sigframe 起始地址 */
+        uint64_t ret_addr   = sa_restorer;           /* 返回地址 = restorer */
         usp -= 8;
-        *(uint64_t *)usp = sa_restorer;              /* 返回地址 = restorer */
+        if (copy_to_user_bytes(&ret_addr, (void *)usp, sizeof(ret_addr)) < 0)
+            goto sigframe_fault;
+        t->sig_frame_sp = frame_addr;
         frame->rsp = usp;
         frame->rip = sa_handler;
         frame->rdi = (uint64_t)(uint32_t)sig;        /* 第一个参数 */
@@ -84,14 +95,17 @@ deliver_pending_signals(task_t *t, trap_frame_t *frame)
         uint64_t usp = frame->usp & ~15ULL;
         /* 如果 sa_restorer == 0，在栈上放一个 rt_sigreturn 蹦床 */
         if (sa_restorer == 0) {
-            usp -= 8;
-            uint32_t *tramp = (uint32_t *)usp;
+            uint32_t tramp[2];
             tramp[0] = 0xd2801168u;  /* mov x8, #139 */
             tramp[1] = 0xd4000001u;  /* svc #0       */
+            usp -= 8;
+            if (copy_to_user_bytes(tramp, (void *)usp, sizeof(tramp)) < 0)
+                goto sigframe_fault;
             sa_restorer = usp;
         }
         usp -= sizeof(trap_frame_t);
-        memcpy((void *)usp, frame, sizeof(trap_frame_t));
+        if (copy_to_user_bytes(frame, (void *)usp, sizeof(trap_frame_t)) < 0)
+            goto sigframe_fault;
         t->sig_frame_sp = usp;
         frame->usp    = usp;
         frame->r[0]   = (uint64_t)(uint32_t)sig;    /* x0 = signum */
@@ -103,14 +117,17 @@ deliver_pending_signals(task_t *t, trap_frame_t *frame)
         uint64_t usp = frame->x[2] & ~15ULL;
         /* 如果 sa_restorer == 0，在栈上放一个 rt_sigreturn 蹦床 */
         if (sa_restorer == 0) {
-            usp -= 8;
-            uint32_t *tramp = (uint32_t *)usp;
+            uint32_t tramp[2];
             tramp[0] = 0x08b00893u;  /* li a7, 139   */
             tramp[1] = 0x00000073u;  /* ecall         */
+            usp -= 8;
+            if (copy_to_user_bytes(tramp, (void *)usp, sizeof(tramp)) < 0)
+                goto sigframe_fault;
             sa_restorer = usp;
         }
         usp -= sizeof(trap_frame_t);
-        memcpy((void *)usp, frame, sizeof(trap_frame_t));
+        if (copy_to_user_bytes(frame, (void *)usp, sizeof(trap_frame_t)) < 0)
+            goto sigframe_fault;
         t->sig_frame_sp = usp;
         frame->x[2]  = usp;                         /* sp */
         frame->x[10] = (uint64_t)(uint32_t)sig;     /* a0 = signum */
@@ -121,6 +138,20 @@ deliver_pending_signals(task_t *t, trap_frame_t *frame)
 
     KLOG_DEBUG("[signal] pid=%u: deliver sig=%d handler=0x%llx restorer=0x%llx\n",
               t->id, sig, sa_handler, sa_restorer);
+    return;
+
+sigframe_fault:
+    /*
+     * 用户栈不可写（地址被改坏 / 未映射 / 跨页）：回滚上面已做的状态改动，
+     * 让信号回到"待投递"，并且**不设** sig_frame_sp —— 否则 rt_sigreturn
+     * 会去读一段根本没写成功的垃圾。内核侧 trap_frame 保持原样，任务继续跑。
+     * 相比原来的裸 memcpy（踩到未映射页 = 内核态数据中止 = 整机挂死），
+     * 这里退化成"信号暂时投递不出去"。
+     */
+    t->pending_sigs |= (1ULL << (sig - 1));
+    t->blocked_sigs  = t->sig_saved_blocked;
+    KLOG_WARN("[signal] pid=%u: sig=%d sigframe 写入用户栈失败，保持待投递\n",
+              t->id, sig);
 }
 
 /* ── rt_sigaction ─────────────────────────────────────────────── */
@@ -251,7 +282,20 @@ void sigreturn_handler(uint64_t regs[6], task_t *current, trap_frame_t *frame)
     /* 从信号 handler 返回：恢复进入 handler 前的 trap_frame */
     if (current->sig_frame_sp) {
         trap_frame_t *saved = (trap_frame_t *)current->sig_frame_sp;
-        memcpy(frame, saved, sizeof(trap_frame_t));
+        /*
+         * sigframe 在用户栈上，且这是用户可控的地址（handler 里能改 sp、
+         * 也能 munmap 那段栈），必须经 copy_from_user_bytes 读：裸 memcpy
+         * 踩到坏地址就是内核态数据中止 → 整机挂死。
+         * 该接口先校验再拷贝，失败时 frame 不会被写坏半截。
+         */
+        if (copy_from_user_bytes(saved, frame, sizeof(trap_frame_t)) < 0) {
+            /*
+             * 读不回来：不清 sig_frame_sp（用户修正栈指针后还能重试）、
+             * 不动 blocked_sigs、不改 trap_frame，直接返回 -EFAULT。
+             */
+            regs[0] = (uint64_t)(int64_t)-EFAULT;
+            return;
+        }
         current->sig_frame_sp = 0;
         /* 恢复信号投递前的 blocked_sigs */
         current->blocked_sigs = current->sig_saved_blocked;

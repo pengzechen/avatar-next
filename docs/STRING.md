@@ -11,9 +11,11 @@
 
 ### AArch64 (ARM 64-bit)
 - [include/aarch64/string_impl.h](include/aarch64/string_impl.h)
-- **NEON 优化**: 使用 NEON 128-bit 寄存器
-- 对于大于 128 字节的拷贝自动使用 NEON 优化
+- **NEON 优化**: 使用 NEON 128-bit 寄存器（`ld1`/`st1`，只要求目的地址对齐）
+- 对于大于 128 字节的拷贝自动使用 NEON 优化（阈值 `MEMCPY_NEON_THRESHOLD`）
 - 小块数据使用通用实现
+- 前置条件：内核已启用 FP/SIMD 并保存了 FP 上下文，
+  见 [docs/arch/aarch64/FP_SIMD_CONTEXT.md](docs/arch/aarch64/FP_SIMD_CONTEXT.md)
 
 ### RISC-V64
 - [include/riscv64/string_impl.h](include/riscv64/string_impl.h)

@@ -185,17 +185,21 @@ arch_init_task_stack(uint8_t *stack_base, uint32_t stack_size)
 
 #if ARCH_AARCH64
     /*
-     * arch_task_switch 保存顺序（stp x19,x20 [sp,#-96]! ... stp x29,x30 [sp,#80]）：
+     * arch_task_switch 保存顺序（stp x19,x20 [sp,#-176]! ... stp x9,x10 [sp,#160]）：
      * saved_sp + 0  = x19,  saved_sp + 8  = x20
      * saved_sp + 16 = x21,  saved_sp + 24 = x22
      * saved_sp + 32 = x23,  saved_sp + 40 = x24
      * saved_sp + 48 = x25,  saved_sp + 56 = x26
      * saved_sp + 64 = x27,  saved_sp + 72 = x28
      * saved_sp + 80 = x29,  saved_sp + 88 = x30 (LR)  ← ret 目标
-     * 共 12 × 8 = 96 字节
+     * saved_sp + 96 .. 152 = d8-d15
+     * saved_sp + 160 = fpcr, saved_sp + 168 = fpsr
+     * 共 22 × 8 = 176 字节
+     *
+     * 全部清零：新内核线程以干净的 FP 状态开始（FPCR/FPSR = 0，d8-d15 = 0）。
      */
-    sp -= 12;
-    for (int i = 0; i < 11; i++)
+    sp -= 22;
+    for (int i = 0; i < 22; i++)
         sp[i] = 0;
     sp[11] = (uint64_t)task_trampoline; /* x30 (LR) */
 
@@ -261,19 +265,23 @@ arch_init_user_stack(uint8_t *stack_base, uint32_t stack_size,
 #if ARCH_AARCH64
     (void)user_pgd;
     /*
-     * 保存12个被调用者寄存器（96 字节）
+     * 保存22个被调用者寄存器（176 字节，含 FP 保存区）
      * 布局：
      *   [0]   x19=user_entry  [8]   x20=user_sp
      *   [16]  x21=unused       [24]  x22
      *   [32]  x23              [40]  x24
      *   [48]  x25              [56]  x26
      *   [64]  x27              [72]  x28
-     *   [80]  x29              [88]  x30 (LR) → task_trampoline_user_asm
+     *   [80]  x29              [88]  x30 (LR) → task_trampoline_user
+     *   [96..152] d8-d15, [160] fpcr, [168] fpsr
+     *
+     * FP 区清零：新进程首次进 EL0 时 FPCR/FPSR 与 d8-d15 都是干净的，
+     * 不会把内核残留的 FP 值泄漏给用户态。
      */
-    sp -= 12;
+    sp -= 22;
     sp[0] = user_entry;                  /* x19 = 用户入口 */
     sp[1] = user_sp;                     /* x20 = 用户栈 */
-    for (int i = 2; i < 11; i++)
+    for (int i = 2; i < 22; i++)
         sp[i] = 0;
     sp[11] = (uint64_t)task_trampoline_user; /* x30 (LR) */
 
@@ -358,20 +366,21 @@ arch_init_fork_child_stack(uint8_t *stack_base, uint32_t stack_size,
     /* 先在内核栈顶放一份 trap_frame_t */
     sp = (uint64_t *)((uintptr_t)sp - sizeof(trap_frame_t));
     trap_frame_t *child_frame = (trap_frame_t *)sp;
-    /* 拷贝父进程寄存器 */
-    for (uint32_t i = 0; i < NUM_REGS; i++)
-        child_frame->r[i] = frame->r[i];
-    child_frame->usp      = child_stack ? child_stack : frame->usp;
-    child_frame->elr      = frame->elr;
-    child_frame->spsr     = frame->spsr;
+    /*
+     * 整体拷贝：r[]/usp/elr/spsr/tpidr_el0 与 FP 状态（q0-q31/fpcr/fpsr）
+     * 全部继承父进程 —— 子进程的 FP 状态在 fork 时必须与父进程一致。
+     * （早先这里逐字段拷贝，扩 FP 时容易漏字段。）
+     */
+    *child_frame = *frame;
+    child_frame->usp       = child_stack ? child_stack : frame->usp;
     child_frame->tpidr_el0 = tls ? tls : frame->tpidr_el0;
     /* 子进程 fork/线程 返回 0 */
     child_frame->r[0] = 0;
 
-    /* 再放 12 个被调用者寄存器，x30(LR)→arch_fork_resume_user */
-    sp -= 12;
+    /* 再放 22 个被调用者寄存器（含 FP 保存区），x30(LR)→arch_fork_resume_user */
+    sp -= 22;
     sp[0]  = (uint64_t)(uintptr_t)child_frame;  /* x19 = &child_frame */
-    for (int i = 1; i < 11; i++)
+    for (int i = 1; i < 22; i++)
         sp[i] = 0;
     sp[11] = (uint64_t)arch_fork_resume_user; /* x30 (LR) */
 #elif ARCH_RISCV64

@@ -1,8 +1,12 @@
 # AArch64 NEON 启用指南
 
+> 本文只讲 **CPACR_EL1.FPEN 开关**与 NEON 工具函数。
+> **FP 寄存器状态怎么保存**（陷阱帧 / 任务切换 / 向量表 128 字节预算）见
+> [FP_SIMD_CONTEXT.md](FP_SIMD_CONTEXT.md) —— 动任何 FP 相关汇编前必读。
+
 ## 启用 NEON 工具函数
 
-在 [include/aarch64/cpu.h](include/aarch64/cpu.h) 中提供了完整的 NEON 控制接口。
+在 [include/aarch64/cpu.h](../../../include/aarch64/cpu.h) 中提供了 NEON 控制接口。
 
 ### API 说明
 
@@ -12,7 +16,7 @@
 static inline void aarch64_enable_neon(void);
 ```
 
-**功能**：启用 NEON/浮点指令，允许在 EL0 使用
+**功能**：设置 `CPACR_EL1.FPEN = 0b11`，EL0/EL1 执行 NEON/浮点指令不再陷入
 
 **原理**：
 ```assembly
@@ -23,10 +27,10 @@ isb                        # 指令同步屏障
 ```
 
 **CPACR_EL1.FPEN 字段**：
-- `0b00`: 根据 CPACR_EL1.TTA 决定
-- `0b01`: 执行 NEON/FP 时 Trap 到 EL1
-- `0b10`: 执行 NEON/FP 时 Trap 到 EL2
-- `0b11`: ✅ 允许在 EL0 使用 NEON/FP
+- `0b00`: 执行 NEON/FP 时陷入（**复位值**）
+- `0b01`: 只在 EL0 陷入
+- `0b10`: 保留
+- `0b11`: ✅ EL0/EL1 都不陷入
 
 #### 2. `aarch64_disable_neon()` - 禁用 NEON
 
@@ -34,70 +38,49 @@ isb                        # 指令同步屏障
 static inline void aarch64_disable_neon(void);
 ```
 
-**功能**：禁用 NEON/浮点指令，执行时会触发异常
+**功能**：将 FPEN 设为 `0b01`，EL0 执行 NEON/FP 会陷入
+
+⚠️ 内核自己有 FP 状态（见 FP_SIMD_CONTEXT.md）之后，**不要**在内核执行期调用它。
 
 #### 3. `aarch64_is_neon_enabled()` - 检查状态
 
-```c
-static inline int aarch64_is_neon_enabled(void);
-```
-
-**返回值**：1 表示已启用，0 表示未启用
-
 #### 4. `aarch64_get_cpacr()` - 读取寄存器
 
-```c
-static inline uint64_t aarch64_get_cpacr(void);
-```
+## 什么时候打开 FPEN
 
-**返回值**：CPACR_EL1 寄存器的当前值
+**实际生效点在 [boot/aarch64/boot.S](../../../boot/aarch64/boot.S) 的 `init_el2_vhe`**：
+BSP 与所有 AP 共用该宏，在 `msr vbar_el1` 之前就把 FPEN 置成 0b11。
 
-## 使用方法
-
-### 在内核初始化时启用
+原因：向量表一生效，异常入口的 `SAVE_REGS` 就会保存 q0-q31（`stp q`）。
+FPEN 还是复位值 0b00 时，这些指令会陷入**同一个向量** → 无限递归。
 
 ```c
-#include "aarch64/cpu.h"
-
-void kernel_main(void)
-{
-    /* 早期初始化 */
-    aarch64_enable_neon();  /* 启用 NEON */
-
-    /* 现在可以安全使用 NEON 优化的函数 */
-    memcpy(dest, src, size);  /* 会使用 NEON 优化版本 */
-}
+/* kernel/main.c 与 kernel/task/cpu.c 里的调用保留（幂等）*/
+aarch64_enable_neon();
 ```
 
-### 在 string_impl.h 中的使用
+VHE（E2H=1）下 EL2 访问 `cpacr_el1` 落在 `CPACR_EL2`，正是同时门控 EL1 与 EL0 的
+那一份。
 
-[include/aarch64/string_impl.h](include/aarch64/string_impl.h) 中的 `memcpy_neon()` 依赖 NEON：
+## memcpy 的 NEON 优化
 
-```c
-static inline void *memcpy_neon(void *dest, const void *src, size_t n)
-{
-    /* 使用 NEON 指令 */
-    asm volatile(
-        "ld1 {v0.16b}, [%[src]]\n"
-        "st1 {v0.16b}, [%[dest]]\n"
-        ...
-    );
-}
-```
+[include/aarch64/string_impl.h](../../../include/aarch64/string_impl.h)：
 
-**重要**：调用前必须先执行 `aarch64_enable_neon()`
+- `memcpy_neon()`：`ld1`/`st1` 128-bit 批量传输（每 16 字节）
+- `memcpy()` 按阈值分派：**> 128 字节走 NEON**，否则走 `memcpy_generic()`
+
+只把**目的地址**对齐到 16 字节即可：`ld1/st1` 的 `{v0.16b}` 变体是按字节访问的，
+不要求 16 字节对齐（与 `ldr q`/`ldp q` 不同）。若按两边同时对齐来写，源和目的
+奇偶不同时（如网络缓冲区拷进对齐堆块）对齐循环永不退出，整个拷贝退化成逐字节。
 
 ## 注意事项
 
-1. **必须早期初始化**：在内核启动早期调用，避免任何 NEON 指令执行前
-2. **异常处理**：如果未启用就执行 NEON 指令，会触发异常
-3. **EL1 权限**：这些函数需要在 EL1（内核态）执行
-4. **性能影响**：NEON 可以显著提升大块内存拷贝性能
-
-## 自动启用策略
-
-当前实现中：
-- **小块数据** (≤ 128 字节)：使用通用实现
-- **大块数据** (> 128 字节)：使用 NEON 优化
-
-这样可以确保在启用 NEON 后自动获得最佳性能。
+1. **FPEN 必须先于向量表**（见上），否则是挂死而不是可诊断的 panic
+2. **FP 寄存器状态有 4 个保存点**（陷阱帧 / 任务切换 / 三处伪帧 / fork 恢复），
+   漏掉任一层都会静默破坏状态 —— 见 [FP_SIMD_CONTEXT.md](FP_SIMD_CONTEXT.md)
+3. **向量表每个表项只有 128 字节**，超长代码必须挪到表外（如 `fp_save_common`），
+   `VEC_ALIGN` 会在汇编期挡住
+4. **性能**：每次陷阱约 512 B 的 FP 存取；这是无条件保存的代价，换来的是
+   内核态与用户态 FP 状态都不会被异步事件破坏
+5. **内核浮点只有 `float`/`double`**：未链接 libgcc，`long double` 会引出
+   `__addtf3` 等帮助函数

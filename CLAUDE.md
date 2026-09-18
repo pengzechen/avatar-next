@@ -99,6 +99,9 @@ avatar/
 ### 架构特定
 
 - **AArch64**: `docs/arch/aarch64/NEON_USAGE.md` - NEON 优化
+- **AArch64 FP/SIMD 上下文**: `docs/arch/aarch64/FP_SIMD_CONTEXT.md` -
+  改 `trap_frame_t` 布局、`boot/aarch64/exception.S`、`kernel/task/aarch64/switch.S`
+  或 `kernel/task/switch.h` 里三处伪帧前必读（含向量表 128 字节槽位预算的坑）
 - **x86_64 SYSCALL / per-CPU 栈**: `docs/X86_64_SMP_SYSCALL_STACK_BUGFIX.md` -
   改 `cpu_t` 布局或 SYSCALL 入口前必读（含 `%gs:` 偏移的 static_assert 约束与构建陷阱）
 - **x86_64 时间基准 / TSC 标定**: `docs/X86_64_TIMEBASE_TSC_CALIBRATION_FIX.md` -

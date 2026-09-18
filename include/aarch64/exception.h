@@ -12,13 +12,56 @@
 
 #define NUM_REGS 31
 
+/* ── trap_frame_t 布局（TRAP_FRAME_SIZE = 816 字节）───────────────────
+ *
+ *   偏移      字段
+ *   0..247    r[NUM_REGS]  x0..x30
+ *   248       usp          EL0/EL1 user/guest stack
+ *   256       elr          Exception Link Register
+ *   264       spsr         Saved Process Status Register
+ *   272       tpidr_el0    用户态线程指针寄存器 (TLS)
+ *   280       fp_pad       填充：让 q[] 落在 16 字节边界（stp q 要求）
+ *   288+16*i  q[0..31]     FP/SIMD 寄存器（q31 @ 784）
+ *   800       fpcr         FP 控制寄存器
+ *   808       fpsr         FP 状态寄存器
+ *
+ * 为什么帧大小必须是 16 的倍数：硬件进入 EL1 时不会调整 SP，SP 的 16 字节
+ * 对齐是纯软件不变量（AAPCS64）。SAVE_REGS 的 sub sp 若不是 16 的倍数，C
+ * 函数就会在错位栈上运行（改这段之前的 280 字节正是如此），且 stp q/ldp q
+ * 会做非对齐访问。
+ *
+ * ⚠️ 改这里的任何字段/偏移，必须同步改这两个汇编文件（它们用字面量偏移）：
+ *      boot/aarch64/exception.S       SAVE_REGS / RESTORE_REGS
+ *      kernel/task/aarch64/switch.S   arch_fork_resume_user
+ *    下面的断言只能挡住 C 侧漂移，挡不住 .S 漂移。
+ */
 typedef struct {
-    uint64_t r[NUM_REGS]; /* x0..x30                        */
-    uint64_t usp;         /* EL0/EL1 user/guest stack       */
-    uint64_t elr;         /* Exception Link Register        */
-    uint64_t spsr;        /* Saved Process Status Register  */
-    uint64_t tpidr_el0;   /* 用户态线程指针寄存器 (TLS)    */
+    uint64_t    r[NUM_REGS]; /* x0..x30                        */
+    uint64_t    usp;         /* EL0/EL1 user/guest stack       */
+    uint64_t    elr;         /* Exception Link Register        */
+    uint64_t    spsr;        /* Saved Process Status Register  */
+    uint64_t    tpidr_el0;   /* 用户态线程指针寄存器 (TLS)    */
+    uint64_t    fp_pad;      /* 对齐填充，见上方布局说明        */
+    __uint128_t q[32];       /* q0..q31 FP/SIMD 寄存器          */
+    uint64_t    fpcr;        /* FP 控制寄存器                  */
+    uint64_t    fpsr;        /* FP 状态寄存器                  */
 } trap_frame_t;
+
+#define TRAP_FRAME_SIZE 816
+
+/* 直接用 _Static_assert 而不是 assert.h 的 static_assert：后者会连带
+ * #include "klog.h"，把日志头拽进这个被广泛包含的架构头。 */
+_Static_assert(sizeof(trap_frame_t) == TRAP_FRAME_SIZE,
+               "TRAP_FRAME_SIZE 与 boot/aarch64/exception.S 不一致");
+_Static_assert(sizeof(trap_frame_t) % 16 == 0,
+               "trap frame 必须是 16 字节倍数（AAPCS64 栈对齐 + stp q 对齐）");
+_Static_assert(offsetof(trap_frame_t, usp) == 248, "SAVE_REGS");
+_Static_assert(offsetof(trap_frame_t, elr) == 256, "SAVE_REGS / fork 恢复");
+_Static_assert(offsetof(trap_frame_t, spsr) == 264, "SAVE_REGS");
+_Static_assert(offsetof(trap_frame_t, tpidr_el0) == 272, "RESTORE_REGS");
+_Static_assert(offsetof(trap_frame_t, q) == 288, "SAVE_REGS stp q / fork 恢复");
+_Static_assert(offsetof(trap_frame_t, fpcr) == 800, "SAVE_REGS");
+_Static_assert(offsetof(trap_frame_t, fpsr) == 808, "SAVE_REGS");
 
 typedef trap_frame_t cpu_ctx_t;
 

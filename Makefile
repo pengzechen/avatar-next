@@ -333,7 +333,13 @@ else ifeq ($(ARCH),aarch64)
     CFLAGS  += -I$(BOOT_DIR)/common
     CFLAGS  += $(LOG_DEFINE)
     CFLAGS  += -fno-pie
-    CFLAGS  += -mgeneral-regs-only  # 只使用通用寄存器，禁用 SIMD/FP
+    # 允许 GCC 生成 FP/SIMD（NEON）指令（riscv64 靠 -march=rv64gc -mabi=lp64d 达
+    # 到同样效果）。代价是内核随时可能占用 v0-v31，所以必须有两层保存，缺一不可：
+    #   boot/aarch64/exception.S     陷阱帧保存 q0-q31 + FPCR/FPSR（保护 EL0 用户态）
+    #   kernel/task/aarch64/switch.S 任务切换保存 d8-d15 + FPCR/FPSR（AAPCS64 被调用者保存）
+    # 限制：内核里的浮点只能用 float/double —— 未链接 libgcc，long double（128 位）
+    # 的运算会引出 __addtf3/__divtf3 等帮助函数，在链接期报未定义符号。
+    # 详见 docs/arch/aarch64/FP_SIMD_CONTEXT.md
     CFLAGS  += -mno-outline-atomics  # freestanding：禁止 GCC outline atomics 调用 libgcc 帮助函数
     CFLAGS  += -ffreestanding -fno-builtin  # 禁用内置函数和标准库
     KLOG_TARGET := $(BUILD_DIR)/libklog_aarch64.a

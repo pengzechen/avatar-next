@@ -34,6 +34,23 @@
     msr     cptr_el2, x1
 
     /*
+     * 打开 CPACR.FPEN（[21:20] = 0b11）—— EL1/EL0 执行 FP/SIMD 不再陷入。
+     *
+     * 必须在下面的 `msr vbar_el1` 之前完成：SAVE_REGS 无条件保存 q0-q31，
+     * 而 FPEN 的复位值是 0b00（陷入）。若向量表先生效，第一次异常的
+     * 第一条 `stp q` 就会陷入**同一个向量** → 再执行 SAVE_REGS → 无限
+     * 递归（每轮 sub sp, #816），表现为挂死而不是可诊断的 panic。
+     *
+     * VHE（E2H=1）下 EL2 访问 cpacr_el1 落在 CPACR_EL2，正是同时门控
+     * EL1 与 EL0 的那一份。kernel_main() 里的 aarch64_enable_neon() 保留
+     * （幂等），AP 走同一份 init_el2_vhe。
+     */
+    mrs     x1, cpacr_el1
+    orr     x1, x1, #(3 << 20)
+    msr     cpacr_el1, x1
+    isb
+
+    /*
      * 开放 EL0/EL1 定时器访问（CNTHCTL_EL2）：
      *   bit 0  EL0PCTEN = 1  不陷入 EL0 的 CNTPCT 读取
      *   bit 1  EL1PCEN  = 1  不陷入 EL1 的**物理定时器**访问
