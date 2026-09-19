@@ -11,6 +11,7 @@
 #include "syscall/net/ksocket.h"
 #include "kmalloc.h"
 #include "string.h"
+#include <ext4.h>          /* ext4_readlink（ext4_errno.h 由它带入） */
 #include <ext4_errno.h>
 
 #define VFS_ENOENT   2
@@ -866,14 +867,33 @@ static int pseudo_mount_readlink(const vfs_mount_t *mnt, const char *path,
     return pseudo_readlink(path, buf, bufsz);
 }
 
+/*
+ * ext4 的 readlink。原先是 `return -VFS_ENOENT;` 的桩，于是根文件系统上
+ * 任何 readlink 都失败 —— 症状是 `ls` 能列目录（只读目录项），而
+ * `ls -l` / `ls -ls` 报 "cannot read link: No such file or directory"
+ * （长格式要 readlink 才能显示 `linuxrc -> xxx`）。
+ *
+ * 实现在 lwext4 里是现成的，path.c 的 follow_symlinks() 一直在用，
+ * 只是没接到 VFS 这一层。注意 ext4_readlink() 内部以 EXT4_DE_SYMLINK
+ * 打开，**不会跟随**最后一级链接 —— 这正是 readlink 要的语义。
+ *
+ * 返回值：成功时是写入 buf 的字节数（>0），失败时是负 errno。
+ */
 static int ext4_mount_readlink(const vfs_mount_t *mnt, const char *path,
                                char *buf, size_t bufsz)
 {
     (void)mnt;
-    (void)path;
-    (void)buf;
-    (void)bufsz;
-    return -VFS_ENOENT;
+
+    if (!path || !buf || bufsz == 0)
+        return -VFS_EINVAL;
+
+    size_t rcnt = 0;
+    int rc = ext4_readlink(path, buf, bufsz, &rcnt);
+    if (rc == EOK)
+        return (int)rcnt;
+    if (rc == ENOENT)
+        return -VFS_ENOENT;
+    return -VFS_EIO;
 }
 
 int vfs_readlink(const char *path, char *buf, size_t bufsz)

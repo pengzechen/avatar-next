@@ -125,15 +125,35 @@ void readlinkat_handler(uint64_t regs[6], task_t *current)
 {
     int dirfd = (int)regs[0];
     const char *pathname = (const char *)regs[1];
-    char       *lbuf     = (char *)regs[2];
+    char       *lbuf     = (char *)regs[2];   /* **用户指针** */
     uint64_t    lbufsz   = regs[3];
     if (!pathname || !lbuf) { regs[0] = (uint64_t)(int64_t)-EFAULT; return; }
     char abspath[128];
-    resolve_path_at(current, dirfd, pathname, abspath, sizeof(abspath));
+    /*
+     * 必须接返回值：resolve_path_at() 在 dirfd 非法时返回 -EBADF 且**根本不写
+     * abspath**，忽略它就等于拿未初始化的栈去 vfs_find_mount()。
+     * （本文件其它几处都写了 `int rpa = ...`，只有这里漏了。）
+     */
+    int rpa = resolve_path_at(current, dirfd, pathname, abspath, sizeof(abspath));
+    if (rpa < 0) { regs[0] = (uint64_t)(int64_t)rpa; return; }
     if (trace_heavy_task(current)) {
         KLOG_DEBUG("[vfsstat] pid=%u readlinkat path=%s resolved=%s buf=0x%llx size=0x%llx\n",
                    current->id, pathname, abspath, (uint64_t)lbuf, lbufsz);
     }
+
+    /*
+     * 链目标先读进内核缓冲，最后一次性拷回用户态。
+     *
+     * 原先直接把 lbuf（用户指针）交给 vfs_readlink → pseudo_readlink /
+     * ext4_readlink，由它们 memcpy 进去。用户传个非法地址就是**内核态写坏
+     * 地址** → 内核缺页 → handle_exception 的 platform_shutdown() → 整机挂死。
+     * 这是 CLAUDE.md 里那条规则的又一个漏网处。
+     */
+    char   klbuf[256];
+    size_t want = ((size_t)lbufsz < sizeof(klbuf)) ? (size_t)lbufsz : sizeof(klbuf);
+    if (want == 0) { regs[0] = (uint64_t)(int64_t)-EINVAL; return; }
+
+    int rc;
 
     /* /proc/self/fd/N — resolve from task fd table */
     if (strncmp(abspath, "/proc/self/fd/", 14) == 0) {
@@ -142,14 +162,27 @@ void readlinkat_handler(uint64_t regs[6], task_t *current)
         while (*p >= '0' && *p <= '9')
             fdnum = fdnum * 10 + (*p++ - '0');
         if (*p == '\0') {
-            int rc = proc_self_fd_readlink(current, fdnum, lbuf, (size_t)lbufsz);
-            regs[0] = rc >= 0 ? (uint64_t)rc : (uint64_t)(int64_t)rc;
-            return;
+            rc = proc_self_fd_readlink(current, fdnum, klbuf, want);
+            goto copy_out;
         }
     }
 
-    int rc = vfs_readlink(abspath, lbuf, (size_t)lbufsz);
-    regs[0] = rc >= 0 ? (uint64_t)rc : (uint64_t)(int64_t)-ENOENT;
+    rc = vfs_readlink(abspath, klbuf, want);
+
+copy_out:
+    if (rc < 0) {
+        regs[0] = (uint64_t)(int64_t)rc;
+        return;
+    }
+    /*
+     * copy_to_user_bytes() 内部用 user_range_ok() 校验；地址非法时返回负值
+     * 而不是让内核去踩它。返回 EFAULT 是 readlink(2) 的正确语义。
+     */
+    if (copy_to_user_bytes(klbuf, lbuf, (uint64_t)rc) < 0) {
+        regs[0] = (uint64_t)(int64_t)-EFAULT;
+        return;
+    }
+    regs[0] = (uint64_t)rc;
 }
 
 void faccessat_handler(uint64_t regs[6], task_t *current)

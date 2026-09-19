@@ -229,6 +229,7 @@ int fill_stat_from_ext4(struct kernel_stat *st, const char *path)
         st->st_ino = ino;
 
     if ((mode & 0170000) == 0100000) {
+        /* 普通文件：size 要算上 i_size_hi，交给 lwext4 的 ext4_fsize */
         ext4_file f;
         rc = ext4_fopen2(&f, path, 0 /* O_RDONLY */);
         if (rc != EOK)
@@ -236,6 +237,24 @@ int fill_stat_from_ext4(struct kernel_stat *st, const char *path)
         st->st_size   = (int64_t)ext4_fsize(&f);
         st->st_blocks = (st->st_size + 511) / 512;
         ext4_fclose(&f);
+    } else if ((mode & 0170000) == 0120000) {
+        /*
+         * 符号链接：size = 目标路径的字节数，正好是 readlink 会写出的长度。
+         *
+         * 原先是漏掉的（只处理了 S_IFREG），于是符号链接的 st_size 一直是
+         * memset 之后的 0 —— 直接症状是 `ls -l` 的 size 列对符号链接显示 0
+         * （应为目标串长度），另外 coreutils 会拿 st_size 当 readlink 缓冲区
+         * 的初值，为 0 时会先按 1 字节读、再扩容重试。
+         *
+         * 这里不复用上面 ext4_raw_inode_fill 拿到的 raw inode：它给的是
+         * **未转序**的磁盘原始结构（endian 要自己 to_le32），直接读字段会踩坑。
+         * 走 ext4_readlink 量一次是公开 API、语义明确，代价是 stat 符号链接时
+         * 多一次 open+read —— 不在热路径上。
+         */
+        char tgt[256];
+        size_t rcnt = 0;
+        if (ext4_readlink(path, tgt, sizeof(tgt), &rcnt) == EOK)
+            st->st_size = (int64_t)rcnt;
     }
 
     return 0;
