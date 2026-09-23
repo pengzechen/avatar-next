@@ -17,9 +17,13 @@
 #if ARCH_AARCH64
 #include "aarch64/stage2.h"
 #include "vmm/vmm_vpl011.h"
+#if DRIVER_GIC_V3
+#include "vmm/vmm_vgicv3.h"
+#else
 #include "vmm/vmm_vgicd.h"
 #include "vmm/vmm_vgic.h"
 #include "vmm/vmm_vgicc.h"
+#endif
 
 /* ── AArch64 VM 初始化 ────────────────────────────────────── */
 static int aarch64_vm_init(vm_t *vm)
@@ -44,19 +48,36 @@ static int aarch64_vm_init(vm_t *vm)
     mmio_bus_init(&vm->mmio_bus_storage);
 
     /* 建立 MMIO 总线并注册虚拟设备（虚拟 PL011 控制台）*/
+#if DRIVER_GIC_V3
+    if (vmm_vgic3_init(&vm->vgic3, (uint32_t)nr) != 0)
+        return -1;
+#else
     if (vmm_vgic_init(&vm->vgic, (uint32_t)nr) != 0)
         return -1;
-    
+#endif
+
     if (vpl011_init(&vm->vpl011_dev, &vm->mmio_bus_storage) != 0) {
         KLOG_WARN("[vmm] vpl011 registration failed\n");
     }
 
     /*
      * vGIC layering:
-     *   - vgic: VM-level virtual interrupt lifecycle state
-     *   - vgicd: guest GICD MMIO configuration and forwarding
-     *   - vgicc: per-vCPU GICC MMIO state plus cached GICH LR state
+     *   - vgic/vgic3 : VM-level virtual interrupt lifecycle state
+     *   - vgicd/vgic3d: guest GICD MMIO configuration and forwarding
+     *   - vgicc      : (GICv2) per-vCPU GICC MMIO + GICH LR cache
+     *   - vgic3r     : (GICv3) per-vCPU redistributor（SGI/PPI 的 GICR）
      */
+#if DRIVER_GIC_V3
+    /* GICv3：GICD 只管 SPI，SGI/PPI 在 GICR；CPU interface 是系统寄存器，
+     * VMM 靠 ICH_LR<n>_EL2 注入 —— 没有 GICC MMIO 设备。*/
+    if (vgic3r_init(&vm->vgic3r_dev, &vm->mmio_bus_storage, &vm->vgic3) != 0) {
+        KLOG_WARN("[vmm] vgic3r registration failed\n");
+    }
+    if (vgic3d_init(&vm->vgic3d_dev, &vm->mmio_bus_storage, &vm->vgic3) != 0) {
+        KLOG_WARN("[vmm] vgic3d registration failed\n");
+    }
+    vmm_vgic3_hw_init();
+#else
     /* 虚拟 CPU 接口：GICC MMIO + per-vCPU GICH LR 缓存。*/
     if (vgicc_init(&vm->vgicc_dev, &vm->mmio_bus_storage, &vm->vgic) != 0) {
         KLOG_WARN("[vmm] vgicc registration failed\n");
@@ -65,11 +86,19 @@ static int aarch64_vm_init(vm_t *vm)
     if (vgicd_init(&vm->vgicd_dev, &vm->mmio_bus_storage, &vm->vgic) != 0) {
         KLOG_WARN("[vmm] vgicd registration failed\n");
     }
+#endif
     vm->mmio_bus = &vm->mmio_bus_storage;
 
+#if DRIVER_GIC_V3
+    KLOG_INFO("[vmm] MMIO bus ready: PL011 @0x%llx, GICD @0x%llx, GICR @0x%llx\n",
+              (unsigned long long)VPL011_BASE,
+              (unsigned long long)VGIC3D_BASE,
+              (unsigned long long)VGIC3R_BASE);
+#else
     KLOG_INFO("[vmm] MMIO bus ready: PL011 @0x%llx, GICD @0x%llx\n",
               (unsigned long long)VPL011_BASE,
               (unsigned long long)VGICD_BASE);
+#endif
 
     /* 初始化每个 vCPU 的状态 */
     for (i = 0; i < nr; i++) {

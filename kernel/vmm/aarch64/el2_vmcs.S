@@ -165,7 +165,12 @@ el2_enter_guest:
      *    - 置位 TSC (bit 19)：陷入 SMC（用于 PSCI）
      *    - 置位 TID3 (bit 18)：陷入 ID 寄存器读取，向 guest 暴露一致特性集
      *    - 置位 TWI/TWE (bit 13/14)：陷入 WFI/WFE
-     *    - 置位 IMO/FMO (bit 4/3)：物理 IRQ/FIQ 路由到 EL2，由 host 处理后回 guest
+     *    - 置位 IMO (bit 4)：物理 IRQ 路由到 EL2，由 host 处理后回 guest。
+     *      **GICv3 下这一位是必须的**：只有 HCR_EL2.IMO=1 时，guest 在 EL1
+     *      对 ICC_*_EL1 的访问才会被重定向到虚拟 CPU interface（ICV_*），
+     *      否则 guest 会直接操作物理 GIC。GICv2 走 MMIO GICC 不依赖这一位，
+     *      但打开它同样成立（物理 IRQ 由 host 收，虚拟 IRQ 由 GICH/GICV 送）。
+     *    - FMO (bit 3) 保持 0：guest 不用 Group 0（FIQ），没有任何源
      *    - VM bit 由 stage2_activate() 设置，对齐 x-kernel Stage2::activate()
      *    - 保留 E2H (bit 34) / RW (bit 31) 不变
      */
@@ -175,6 +180,9 @@ el2_enter_guest:
     orr  x2, x2, #(1 << 18)    /* set   TID3 */
     orr  x2, x2, #(1 << 13)    /* set   TWI  */
     orr  x2, x2, #(1 << 14)    /* set   TWE  */
+#ifdef DRIVER_GIC_V3
+    orr  x2, x2, #(1 << 4)     /* set   IMO（仅 GICv3 需要，见上方注释）*/
+#endif
     msr  hcr_el2, x2
     isb
 

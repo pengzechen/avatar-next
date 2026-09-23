@@ -24,6 +24,9 @@
 #include "arch.h"
 #include "vmm_mmio.h"
 #include "vmm_vgic.h"
+#if ARCH_AARCH64 && DRIVER_GIC_V3
+#include "vmm_vgicv3.h"
+#endif
 
 /* ── asm 可见的固定偏移（与 el2_vmcs.S 对齐）─────────────────── */
 #define VCPU_R0         0           /* x0-x30, 31×8 bytes               */
@@ -223,13 +226,21 @@ typedef struct vm {
     vcpu_t   vcpus[MAX_VCPUS];  /* 静态嵌入，不动态分配 */
     int      nr_vcpus;
 
-    /* VM-owned virtual interrupt controller and MMIO device state. */
+    /* VM-owned virtual interrupt controller and MMIO device state.
+     * vgic（GICv2）与 vgic3（GICv3）只会用到一个，由 GIC=v2|v3 编译期二选一，
+     * 但两个字段都保留：vmm.c 里用 DRIVER_GIC_V3 分支。GICv3 的结构体
+     * 只在 aarch64 + GIC=v3 时才嵌入，避免其它平台白扛 ~68KB。*/
     vgic_t vgic;
     mmio_bus_t mmio_bus_storage;
     mmio_bus_t *mmio_bus;
     mmio_device_t vpl011_dev;
     mmio_device_t vgicd_dev;
     mmio_device_t vgicc_dev;
+#if ARCH_AARCH64 && DRIVER_GIC_V3
+    vgic3_t vgic3;
+    mmio_device_t vgic3d_dev;
+    mmio_device_t vgic3r_dev;
+#endif
 } vm_t;
 
 /* ── AArch64 专用汇编接口（仅 aarch64 编译时可见）──────────── */

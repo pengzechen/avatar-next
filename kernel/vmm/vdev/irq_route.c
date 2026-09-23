@@ -32,6 +32,7 @@ static vgic_t *g_owner_vgic[MAX_ROUTE_CPUS];
 static volatile int g_route_state = ROUTE_UNUSED;
 
 /* ── 宿主中断处理：注入 guest 虚拟定时器中断 ───────────────── */
+#if !DRIVER_GIC_V3
 static void host_vtimer_irq_handler(uint64_t *frame)
 {
     (void)frame;
@@ -60,10 +61,28 @@ static void host_vtimer_irq_handler(uint64_t *frame)
             vmm_vgic_inject_timer(g_owner_vgic[cpu], g_owner_vcpu[cpu]);
     }
 }
+#endif /* !DRIVER_GIC_V3 */
 
 /* ── 注册/使能路由 ────────────────────────────────────────── */
 void vmm_irq_route_set_vtimer_enabled(int enabled)
 {
+#if DRIVER_GIC_V3
+    /*
+     * GICv3 下**不**在宿主 GIC 里使能物理 PPI 27。
+     *
+     * 理由：物理 vtimer 中断是电平型，guest 重装 CNTV_CVAL 之前一直有效。
+     * 宿主若接管它，就必须每轮 ack + deactivate，而 deactivate 之后线路
+     * 仍然有效 → 立刻重新 pending → 宿主在 EL2 反复陷入，直到 guest 跑起来
+     * 把 CVAL 改掉为止（x-kernel 在 GICv2 上踩过同一个坑，见
+     * boot/aarch64/exception.c 里对 GICC_DIR 的注释）。
+     *
+     * GICv3 的虚拟中断不再依赖物理中断做后端：VMM 直接在
+     * aarch64_check_vtimer() 里轮询 CNTV 并把 PPI 27 排进 ICH_LR_EL2，
+     * guest 侧由 ICV_* 硬件服务。所以这里只需要记住 guest 侧的使能意愿。
+     */
+    (void)enabled;
+    return;
+#else
     if (enabled) {
         if (g_route_state == ROUTE_REGISTERED)
             return;
@@ -91,6 +110,7 @@ void vmm_irq_route_set_vtimer_enabled(int enabled)
         return;
 
     irq_disable_irq(HOST_VTIMER_IRQ);
+#endif /* DRIVER_GIC_V3 */
 }
 
 uint32_t vmm_irq_route_host_hwirq_for_guest_irq(uint32_t guest_irq)

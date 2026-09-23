@@ -128,11 +128,28 @@ _KERNEL_EXCLUDE_PAT  := $(addsuffix %,$(_KERNEL_EXCLUDE_DIRS))
 # 注：$(shell ...) 的输出按空白切词，路径不能含空格（kernel/ 下当前没有）。
 _KERNEL_FOUND := $(patsubst ./%,%,$(shell find $(KERNEL_DIR) -type f \( -name '*.c' -o -name '*.S' \) 2>/dev/null | LC_ALL=C sort))
 
+# GIC 版本解析。§6 里那句 `GIC ?= $(DEV_DEFAULT_GIC)` 要等到 400 行之后才执行，
+# 但 QEMU_FLAGS（§5）和下面的 vdev 源文件列表都是**立即展开**的，等不到那时候。
+# 命令行赋值总是先于 makefile 生效，而 DEV_DEFAULT_GIC 由 platform.mk（第 59 行
+# include）提供，所以这里算出来的就是最终值。
+GIC_VER := $(if $(GIC),$(GIC),$(DEV_DEFAULT_GIC))
+
+# vGIC 后端按 GIC 版本二选一：vdev/vgic/ = GICv2，vdev/vgicv3/ = GICv3。
+# 两套的寄存器模型（GICH MMIO vs ICH_* 系统寄存器）不兼容，只能编译一套。
+#
+# ⚠️ GIC= 会改变 CFLAGS（-DDRIVER_GIC_V2/V3）和源文件列表，而 -MMD 的 .d
+# 没有被 -include（见本文件 §11 附近说明），make 察觉不到这种变化：
+# 从 GIC=v2 切到 v3（或反向）**必须先 `make PLATFORM=<p> clean`**，
+# 否则会混用两套 flag 编出来的 .o，报一堆莫名其妙的 undefined reference。
+_KERNEL_VGIC_SRCS   := $(if $(filter v3,$(GIC_VER)),\
+                          $(wildcard $(KERNEL_DIR)/vmm/vdev/vgicv3/*.c),\
+                          $(wildcard $(KERNEL_DIR)/vmm/vdev/vgic/*.c))
+
 # vdev 下按文件选架构；guest_loader.c 位于共享目录但只有 aarch64 编译它。
 ifeq ($(ARCH),aarch64)
     _KERNEL_VDEV_SRCS     := $(KERNEL_DIR)/vmm/vdev/vpl011.c \
                              $(KERNEL_DIR)/vmm/vdev/irq_route.c \
-                             $(wildcard $(KERNEL_DIR)/vmm/vdev/vgic/*.c)
+                             $(_KERNEL_VGIC_SRCS)
     _KERNEL_ARCHONLY_SRCS := $(KERNEL_DIR)/vmm/guest_loader.c
     # guest_test.S: embedded guest program (linked into kernel binary)
     GUEST_TEST_OBJ        := $(BUILD_DIR)/apps_guest_test.o \
@@ -348,7 +365,15 @@ else ifeq ($(ARCH),aarch64)
     KERNEL_LINK_ADDR ?= 0xffff000040080000
     LDFLAGS += -Wl,--defsym=KERNEL_LINK_ADDR=$(KERNEL_LINK_ADDR)
     QEMU          := qemu-system-aarch64
-    QEMU_FLAGS    := -cpu cortex-a76 -M virt,virtualization=on -smp $(SMP) -m 2G -nographic -kernel $(KERNEL_BIN)
+    # QEMU virt 默认 gic-version=2（`-machine virt,dumpdtb=…` 实测确认）。
+    # 内核按 GIC=v3 编译时物理 GIC 也必须是 v3：guest DTB 声明的是
+    # arm,gic-v3（GICD + GICR，CPU interface 走系统寄存器），而 QEMU 给的是
+    # GICv2（GICD + GICC/GICH/GICV MMIO）——两边对不上，guest 的 GIC
+    # 初始化会直接卡死。
+    _QEMU_MACHINE_V3 := virt,virtualization=on,gic-version=3
+    _QEMU_MACHINE_V2 := virt,virtualization=on
+    QEMU_MACHINE  := $(if $(filter v3,$(GIC_VER)),$(_QEMU_MACHINE_V3),$(_QEMU_MACHINE_V2))
+    QEMU_FLAGS    := -cpu cortex-a76 -M $(QEMU_MACHINE) -smp $(SMP) -m 2G -nographic -kernel $(KERNEL_BIN)
     QEMU_NET_FLAGS ?= -netdev user,id=net0 -device virtio-net-device,netdev=net0,mac=52:54:00:12:34:56
 else ifeq ($(ARCH),riscv64)
     CC      := riscv64-linux-musl-gcc
@@ -672,11 +697,25 @@ EPOLL_PERF_CC    :=
 EPOLL_PERF_BIN   :=
 endif
 NGINX_BIN        := $(wildcard apps/nginx-$(ARCH))
+# guest 的 DTB 必须与内核用的 GIC 版本匹配：GICv2 的 DTB 里是
+# arm,cortex-a15-gic（GICD + GICC 两段 reg），GICv3 的是 arm,gic-v3
+# （GICD + GICR，且 CPU interface 走系统寄存器）。装错版本 guest 会在
+# GIC 初始化阶段直接卡死。
+GUEST_LINUX_DTB_SRC := $(if $(filter v3,$(GIC)),imgs/aarch64/linux-gicv3.dtb,imgs/aarch64/linux.dtb)
+
 ifeq ($(ARCH),aarch64)
-GUEST_LINUX_FILES := imgs/aarch64/linux.bin imgs/aarch64/linux.dtb imgs/aarch64/initrd.gz
+GUEST_LINUX_FILES := imgs/aarch64/linux.bin $(GUEST_LINUX_DTB_SRC) imgs/aarch64/initrd.gz
 else
 GUEST_LINUX_FILES :=
 endif
+
+# 切换 GIC=v2|v3 时 $(GUEST_LINUX_DTB_SRC) 会换文件，但换个更旧的文件
+# 不会让 rootfs 的 mtime 落后，make 就不会重建镜像 —— 于是 rootfs 里留着
+# 上一版的 DTB。用带版本后缀的戳文件把这个变化显式暴露给 make。
+GUEST_GIC_STAMP := $(BUILD_DIR)/.guest-gic-$(if $(filter v3,$(GIC)),v3,v2)
+$(GUEST_GIC_STAMP):
+	@rm -f $(BUILD_DIR)/.guest-gic-v2 $(BUILD_DIR)/.guest-gic-v3
+	@touch $@
 # ROOTFS_SIZE_MB / ROOTFS_PHYS_ADDR 来自自动生成的 $(MEM_LAYOUT_MK)
 QEMU_ROOTFS_FLAGS = -device loader,file=$(ROOTFS_IMG),addr=$(ROOTFS_PHYS_ADDR),force-raw=on
 
@@ -970,7 +1009,7 @@ test-epoll-perf: epoll-perf kernel $(ROOTFS_IMG)
 # 创建 ext4 rootfs 镜像（无需 sudo）
 # 依赖：Host 已安装 e2fsprogs（mkfs.ext4 >= 1.43 支持 -d 选项）
 # 每次 apps 变动时自动重建；切换架构直接使用各自的镜像文件，无需 make clean
-$(ROOTFS_IMG): Makefile $(APPS_BINS) $(APPS_C_ELFS) $(LTP_BINS) $(EPOLL_PERF_BIN) $(NGINX_BIN) $(GUEST_LINUX_FILES) | $(BUILD_DIR)
+$(ROOTFS_IMG): Makefile $(APPS_BINS) $(APPS_C_ELFS) $(LTP_BINS) $(EPOLL_PERF_BIN) $(NGINX_BIN) $(GUEST_LINUX_FILES) $(GUEST_GIC_STAMP) | $(BUILD_DIR)
 	@echo "=== Building rootfs for $(ARCH): $(ROOTFS_IMG) ==="
 	@rm -rf $(ROOTFS_STAGE)
 	@mkdir -p $(ROOTFS_STAGE)/bin
@@ -1046,15 +1085,15 @@ $(ROOTFS_IMG): Makefile $(APPS_BINS) $(APPS_C_ELFS) $(LTP_BINS) $(EPOLL_PERF_BIN
 	@# 安装 AArch64 Linux guest 镜像（供 RUN_GUEST_LINUX 从 rootfs 加载）
 	@if [ "$(ARCH)" = "aarch64" ]; then \
 		missing=0; \
-		for f in imgs/aarch64/linux.bin imgs/aarch64/linux.dtb imgs/aarch64/initrd.gz; do \
+		for f in imgs/aarch64/linux.bin $(GUEST_LINUX_DTB_SRC) imgs/aarch64/initrd.gz; do \
 			if [ ! -f "$$f" ]; then echo "ERROR: missing guest image $$f"; missing=1; fi; \
 		done; \
 		if [ "$$missing" -ne 0 ]; then exit 1; fi; \
 		mkdir -p $(ROOTFS_STAGE)/guests/linux; \
 		cp imgs/aarch64/linux.bin $(ROOTFS_STAGE)/guests/linux/linux.bin; \
-		cp imgs/aarch64/linux.dtb $(ROOTFS_STAGE)/guests/linux/linux.dtb; \
+		cp $(GUEST_LINUX_DTB_SRC) $(ROOTFS_STAGE)/guests/linux/linux.dtb; \
 		cp imgs/aarch64/initrd.gz $(ROOTFS_STAGE)/guests/linux/initrd.gz; \
-		echo "  [AArch64 Linux guest installed → /guests/linux]"; \
+		echo "  [AArch64 Linux guest installed → /guests/linux ($(GUEST_LINUX_DTB_SRC))]"; \
 	fi
 	@# 安装 Dropbear SSH 服务器
 	@DROPBEAR_MULTI=third_party/dropbear-2024.86/dropbearmulti-$(ARCH); \

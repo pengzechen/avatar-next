@@ -17,8 +17,12 @@
 #include "task/task.h"
 #include "task/switch.h"
 #include "vmm/vmm_mmio.h"      /* MMIO 总线分发 */
-#include "vmm/vmm_vgic.h"      /* vGIC 中断注入 */
 #include "vmm/vmm_irq_route.h" /* 宿主 IRQ → vCPU 任务唤醒 */
+#if DRIVER_GIC_V3
+#include "vmm/vmm_vgicv3.h"    /* vGICv3 中断注入（ICH_LR<n>_EL2）*/
+#else
+#include "vmm/vmm_vgic.h"      /* vGICv2 中断注入（GICH_LR）*/
+#endif
 
 /* ── 读取 ESR / ELR / FAR / HPFAR ────────────────────────── */
 static inline uint64_t read_esr_el2(void)   { return READ_ESR_EL2(); }
@@ -389,8 +393,13 @@ static void aarch64_check_vtimer(vcpu_t *vcpu)
                        (unsigned long long)now,
                        (unsigned long long)off);
         }
+#if DRIVER_GIC_V3
+        vmm_vgic3_set_pending(&vcpu->vm->vgic3, (uint32_t)vcpu->vcpu_id,
+                              VTIMER_PPI_IRQ);
+#else
         vmm_vgic_set_pending(&vcpu->vm->vgic, (uint32_t)vcpu->vcpu_id,
                              VTIMER_PPI_IRQ);
+#endif
     }
 }
 
@@ -409,8 +418,13 @@ void vmm_arch_restore_guest_ctx(vcpu_t *vcpu)
     vmm_irq_route_publish_vgic(&vcpu->vm->vgic);
     aarch64_check_vtimer(vcpu);
 
-    /* vIRQ：把可投递中断排入 GICH LR，让硬件产生虚拟 IRQ。*/
+    /* vIRQ：把可投递中断排入 LR，让 GIC 向 guest 产生虚拟 IRQ。
+     * GICv2 走 GICH_LR（MMIO），GICv3 走 ICH_LR<n>_EL2（系统寄存器）。*/
+#if DRIVER_GIC_V3
+    vmm_vgic3_sync_entry(&vcpu->vm->vgic3, (uint32_t)vcpu->vcpu_id);
+#else
     vmm_vgic_sync_entry(&vcpu->vm->vgic, (uint32_t)vcpu->vcpu_id);
+#endif
 }
 
 int vmm_arch_enter_guest(vcpu_t *vcpu)
@@ -427,5 +441,11 @@ int vmm_arch_exit_handler(vcpu_t *vcpu)
 void vmm_arch_save_guest_ctx(vcpu_t *vcpu)
 {
     save_sysregs_el12(vcpu->sysregs);
+#if DRIVER_GIC_V3
+    /* GICv3：guest 的 ack/EOI 由硬件直接服务，只能在这里回读 LR 状态，
+     * 把 guest 已经 EOI 掉的中断从软件 active 记帐里摘掉。*/
+    vmm_vgic3_sync_exit(&vcpu->vm->vgic3, (uint32_t)vcpu->vcpu_id);
+#else
     vmm_vgic_sync_exit(&vcpu->vm->vgic, (uint32_t)vcpu->vcpu_id);
+#endif
 }
