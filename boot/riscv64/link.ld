@@ -34,8 +34,15 @@ SECTIONS
     /* 导出内核符号供 C 代码使用（高地址） */
     PROVIDE(__kernel_start = .);
 
+    /*
+     * _stext/_etext 界定代码区间，backtrace 用它判断一个地址「像不像返回
+     * 地址」—— 落在区间外的值一律不当成栈帧里的返回地址。
+     * 见 kernel/debug/backtrace.c。
+     */
     .text : AT(ADDR(.text) - KERNEL_VMA_OFF) {
+        _stext = .;
         *(.text*)
+        _etext = .;
     }
 
     .rodata : AT(ADDR(.rodata) - KERNEL_VMA_OFF) {
@@ -55,6 +62,33 @@ SECTIONS
         __global_pointer$ = . + 0x800;
         *(.srodata.cst16) *(.srodata.cst8) *(.srodata.cst4) *(.srodata.cst2) *(.srodata*)
         *(.sdata .sdata.* .gnu.linkonce.s.*)
+    }
+
+    /*
+     * ---- 内嵌函数符号表（由 tools/gen_kallsyms.py 生成）----
+     *
+     * ⚠️ 位置必须严格在这里：.sdata 之后、.bss 之前。
+     *
+     * 表里的地址取自「不带本表」的那一趟链接（stage-1），只有 .text 里的
+     * 函数地址两趟保持不变这张表才有效；构建后的 --verify 会校验。
+     *
+     * 这里比 x86_64/aarch64 多让了一步：那两边把 .kallsyms 放在 .rodata
+     * 之后就够，这边放在 .sdata 之后 —— 目的是让两趟链接之间
+     * .text/.rodata/.data/.sdata **一个都不动**，只有 .bss 后移。
+     *
+     * 为什么这边要更严格：RISC-V 链接器默认开松弛（relaxation），它会根据
+     * 最终地址决定一段访问编成一条还是两条指令，也就意味着**代码长度依赖
+     * 布局**。布局动得越少，两趟差出几个字节的机会就越小。.bss 后移是安全
+     * 的：它离 __global_pointer$ 有 5KB 以上，本来就不走 GP 相对寻址，而
+     * medany 的绝对寻址是等长的。
+     *
+     * x86_64 那边不能照抄这个位置 —— 它必须排在 _edata 之前，否则
+     * multiboot 的 load_end_addr 会把这一段漏掉。
+     */
+    .kallsyms : AT(ADDR(.kallsyms) - KERNEL_VMA_OFF) {
+        __kallsyms_start = .;
+        KEEP(*(.kallsyms))
+        __kallsyms_end = .;
     }
 
     /*

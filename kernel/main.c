@@ -7,6 +7,7 @@
 #include "../boot/common/platform_ops.h"
 #include "arch.h"
 #include "klog.h"
+#include "debug/backtrace.h"   /* backtrace_selftest() */
 #include "cache.h"
 #include "string.h"
 #include "task/task.h"
@@ -188,6 +189,19 @@ void kernel_main(void)
      * 必须在 UART 可用之后、任何模块日志之前。
      */
     klog_init();
+
+    /*
+     * 调用栈回溯自检：造一条已知的调用链，验证"展开 + 符号化"整条路是通的。
+     *
+     * 放在这么早（任务系统、页表都还没起来）是有意的 —— 它只读栈和
+     * .kallsyms 表，两者在镜像加载完就都在了。正常时完全静默，检查失败
+     * 才用 kprintf 报错（不受 LOG= 影响）。
+     *
+     * 为什么值得每次开机都跑：kallsyms 表是两步链接生成的，一旦段序被挪动，
+     * 镜像本身完全正常、但 panic 打出来的函数名会整体错位 —— 假的调用栈比
+     * 打不出来更危险，它会把人带到完全错误的方向。这里当场喊出来。
+     */
+    backtrace_selftest();
 
     /*
      * 探测/设定缓存行大小（cache API 的 range 操作用它做步长）。

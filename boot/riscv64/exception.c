@@ -10,6 +10,7 @@
 #include "exception.h"
 #include "klog.h"
 #include "syscall/trace.h"
+#include "debug/backtrace.h"
 #include "riscv64/sysreg.h"
 #include "syscall/syscall.h"
 #include "syscall/syscall_internal.h"
@@ -206,7 +207,22 @@ void handle_exception(void *frame_ptr)
 #endif
             rv_dump_trap_regs(frame);
         }
-        
+
+        /*
+         * 打调用栈，回答"是谁调过来的"。
+         *
+         * 用异常帧而不是当前栈：现在已经在异常处理程序里，当前栈是处理程序
+         * 自己的，看不到出错的那条路径。
+         *   sepc    = 出错的那条指令
+         *   x[8]    = s0/fp，帧指针
+         *   x[2]    = sp，出错时的栈指针（进了陷阱之后原值保存在帧里）
+         *
+         * 这里保持 platform_shutdown() 而不是换成 platform_panic()：本函数
+         * 原先就是关机，改成死循环会改变对外行为。先打栈、再关机，既保住
+         * 现场又不动语义。
+         */
+        backtrace_dump_fault(frame->sepc, frame->x[8], frame->x[2], frame->x[1]);
+
         platform_shutdown();
     }
 }

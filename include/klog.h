@@ -165,6 +165,18 @@ extern int  kvprintf(const char *fmt, va_list va);
 extern int  kprintf(const char *fmt, ...);
 
 /*
+ * klog_panic_begin - 进入崩溃路径，之后的日志不再取全局输出锁
+ *
+ * 崩溃可能发生在别的 CPU 正持 g_klog_lock 的时候，也可能发生在同一个
+ * CPU 已经持锁的 klog 调用内部 —— 此时再取锁就是自旋到死，现场一个字都
+ * 打不出来。幂等，单向（没有"退出 panic"）。
+ *
+ * 调用点：include/assert.h 的 assert/assert_always、platform_panic()。
+ * 详见 kernel/debug/backtrace.c 与 docs/basic/BACKTRACE.md。
+ */
+extern void klog_panic_begin(void);
+
+/*
  * 当前逻辑 CPU 号；由 kernel/task/cpu.c 实现（weak 默认返回 0，便于
  * 单元测试 / 早期 boot 在 BSP 未注册 TPIDR_EL1 前也能调用 klog）。
  */

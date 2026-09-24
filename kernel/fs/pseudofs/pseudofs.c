@@ -19,6 +19,7 @@
 #include "task/task.h"
 #include "syscall/io/epoll.h"   /* EPOLLIN/EPOLLOUT：pseudo_poll 的兜底返回值 */
 #include "syscall/trace.h"      /* /proc/syscalls */
+#include "debug/backtrace.h"    /* /proc/backtrace */
 
 /* ── Urandom LFSR ─────────────────────────────────────────────── */
 static uint64_t g_lfsr = 0xDEADBEEFCAFEBABEULL;
@@ -242,6 +243,25 @@ static int syscalls_read(int nid, uint64_t off, void *buf, size_t len)
     return pfs_copy_out(off, buf, len, tmp, (size_t)total);
 }
 
+/*
+ * /proc/backtrace — 当前任务的调用栈（kernel/debug/backtrace.c）。
+ *
+ * 和 /proc/syscalls 一样**不受 LOG= 等级影响**，也不需要重编：怀疑哪里
+ * 卡住了，cat 一下就能看到这条路径是怎么调下来的。
+ *
+ * 最上面几帧必然是 backtrace_read → vfs → syscall 入口那一串 ——
+ * 那条路径**就是**这个任务此刻的内核栈，不是噪声。往下才是调用者。
+ */
+static int backtrace_read(int nid, uint64_t off, void *buf, size_t len)
+{
+    static char tmp[4096];
+    int total;
+
+    (void)nid;
+    total = backtrace_render(tmp, (int)sizeof(tmp));
+    return pfs_copy_out(off, buf, len, tmp, (size_t)total);
+}
+
 static const pseudo_node_t g_nodes[] = {
     /* ── 目录 ──────────────────────────────────────────── */
     { "/dev",              PSEUDO_DIR, MODE_DIR,  0,              NULL,         NULL,       NULL,          NULL,        NULL           },
@@ -281,6 +301,8 @@ static const pseudo_node_t g_nodes[] = {
     { "/proc/mounts",      PSEUDO_REG, MODE_REG,  0,              mounts_read,  NULL,        NULL,          NULL,        NULL           },
     /* 最近走过的 syscall。崩了先 cat 这个 —— 不需要重编、不需要事先开开关。 */
     { "/proc/syscalls",    PSEUDO_REG, MODE_REG,  0,              syscalls_read, NULL,       NULL,          NULL,        NULL           },
+    /* 当前任务的调用栈。同上，常开。 */
+    { "/proc/backtrace",   PSEUDO_REG, MODE_REG,  0,              backtrace_read, NULL,      NULL,          NULL,        NULL           },
     { "/proc/meminfo",     PSEUDO_REG, MODE_REG,  0,              meminfo_read, NULL,        NULL,          NULL,        NULL           },
     { "/proc/cpuinfo",     PSEUDO_REG, MODE_REG,  0,              cpuinfo_read, NULL,        NULL,          NULL,        NULL           },
     { "/proc/sys/kernel/pid_max", PSEUDO_REG, MODE_REG, 0,      pid_max_read, NULL,        NULL,          NULL,        NULL           },

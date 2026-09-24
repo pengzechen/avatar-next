@@ -24,6 +24,20 @@ ifeq ($(filter $(SMP),1 2 3 4 5 6 7 8),)
 $(error Invalid SMP value '$(SMP)'. Use SMP=1..8)
 endif
 
+# 帧指针（backtrace 用）：FP=1 加 -fno-omit-frame-pointer，FP=0 不加。
+#
+# panic / 内核异常时的调用栈靠帧指针链走出来（kernel/debug/backtrace.c）。
+# 默认开着 —— 默认关的话 backtrace 一上来只能给启发式扫描的噪声，看着像坏
+# 了一样；要压性能时 FP=0 一行关掉。
+#
+# 代价：占掉一个通用寄存器（x86_64 rbp / aarch64 x29 / riscv64 s0），
+# 全内核大约 1-3% 性能损失。FP=0 时 backtrace 退化为栈扫描 —— 能出东西，
+# 但会有误报、也可能漏帧。
+FP ?= 1
+ifeq ($(filter $(FP),0 1),)
+$(error Invalid FP value '$(FP)'. Use FP=0 or FP=1)
+endif
+
 # 目录设置
 LIB_DIR         := lib
 BUILD_ROOT      := build
@@ -37,6 +51,9 @@ TESTS_DIR       := tests
 TOOLS_DIR       := tools
 FS_DIR          := fs
 THIRD_PARTY_DIR := third_party
+
+# 宿主 Python：tools/ 下的生成脚本（gen_platform.py / gen_kallsyms.py）用它
+PYTHON ?= python3
 
 # ─── §2  平台配置生成 ────────────────────────────────────────────────────────────
 # 平台配置全部在 platforms/$(PLATFORM)/platform.conf 的 platform 表中。
@@ -405,7 +422,26 @@ else
     $(error Unsupported architecture: $(ARCH). Use ARCH=x86_64, aarch64 or riscv64)
 endif
 
+# 内嵌函数符号表（kallsyms）的产物路径。三架构同名不同目录，所以规则只在
+# §11g 写一份。用途和两趟链接的理由见 §11g 顶部注释。
+KERNEL_STAGE1 := $(KERNEL_TARGET:.elf=.stage1.elf)
+KALLSYMS_S    := $(BUILD_DIR)/kallsyms_$(ARCH).S
+KALLSYMS_OBJ  := $(KALLSYMS_S:.S=.o)
+# stage-1 用的空表桩（count=0）。**必须有**，不能靠"不链接"或 C 侧弱符号：
+# 那样两趟的符号解析不同，C 侧生成出来的代码长度会差几个字节，.text 一漂
+# 符号表就全错位。详见 tools/gen_kallsyms.py 里 emit_stub()。
+KALLSYMS_STUB_S   := $(BUILD_DIR)/kallsyms_stub.S
+KALLSYMS_STUB_OBJ := $(KALLSYMS_STUB_S:.S=.o)
+
 # ── §5a  通用编译标志（所有架构共享，追加在架构特定 CFLAGS 之后）────────────────
+
+# 帧指针：三架构通用，放在这里而不是各架构块里各写一遍。
+# -O2 下 GCC 默认省掉帧指针，那样 backtrace 就只能靠栈扫描；
+# 见 §1 的 FP= 说明和 kernel/debug/backtrace.c。
+ifeq ($(FP),1)
+    CFLAGS += -fno-omit-frame-pointer
+endif
+
 CFLAGS  += -nostdinc
 CFLAGS  += -I$(INCLUDE_DIR)/libc
 CFLAGS  += -Idriver
@@ -596,6 +632,21 @@ ifeq ($(STRING_TEST),1)
     _BUILD_VARIANT := $(_BUILD_VARIANT)+string_test
 endif
 
+# PANIC_TEST=1：定义 RUN_PANIC_TEST，在 ELF 解析路径上**故意 panic 一次**，
+# 用来看调用栈回溯长什么样（kernel/loader/elf_image.c、docs/basic/BACKTRACE.md）。
+# 和 STRING_TEST 一样与上面三个变体正交，只影响 elf_image.o 一个对象。
+#
+# 触发点选在 ELF 头部校验之后：那里离 boot 足够远，能打出一条真实的
+# 加载器调用链（exec → elf_image_load → elf_image_load_impl），
+# 而不是只有 kernel_main 两层。
+#
+# ⚠️ 这个变体编出来的内核**跑不完启动** —— 它不是用来跑功能的。
+PANIC_TEST ?= 0
+ifeq ($(PANIC_TEST),1)
+    CFLAGS += -DRUN_PANIC_TEST=1
+    _BUILD_VARIANT := $(_BUILD_VARIANT)+panic_test
+endif
+
 # ─── §7b  日志模块白名单 ───────────────────────────────────────────────────────
 # LOG_MODULES=uart,gic,timer ：编译期默认模块掩码（配合 LOG=debug|trace 使用）。
 #   不传      = 全部模块（保持旧行为）
@@ -608,12 +659,24 @@ ifneq ($(LOG_MODULES),)
     CFLAGS += -DLOG_MODULES_DEFAULT='"$(LOG_MODULES)"'
 endif
 
-# 当变体改变时自动清除 kernel/main.o，防止复用缓存了错误条件编译的对象文件。
+# 变体改变时自动清除**受变体影响的**对象文件，防止复用缓存了错误条件编译的 .o。
+#
+# ⚠️ 新增变体时必须把它的条件编译打到哪个文件加进 _VARIANT_OBJS。
+# 漏了的话症状是"新开关没生效"——**而且没有任何报错**：CFLAGS 变了但
+# _CFG_SIG（§7 下面那个）里没有变体这一项，make 也就不知道要重编。
+# 历史上这里只清 kernel_main.o（当时变体确实只影响它），加 STRING_TEST/
+# PANIC_TEST 之后就靠不住了 —— 后者的条件编译在 kernel/loader/elf_image.c。
+#
+# 两个方向都要正确：从 A 切到 B 和从 B 切回 A 都得清掉。所以这里**无条件**
+# 列出所有可能受影响的文件，而不是只在对应开关打开时列 —— 否则切回去那一趟
+# 会漏。（多编一个 .o 的代价可以忽略。）
 _VARIANT_FILE := $(BUILD_DIR)/.build_variant
+_VARIANT_OBJS := $(BUILD_DIR)/kernel_main.o \
+                 $(BUILD_DIR)/kernel_loader_elf_image.o
 _VARIANT_CHECK := $(shell \
     mkdir -p $(BUILD_DIR) 2>/dev/null; \
     if [ "$$(cat $(_VARIANT_FILE) 2>/dev/null)" != "$(_BUILD_VARIANT)" ]; then \
-        rm -f $(BUILD_DIR)/kernel_main.o; \
+        rm -f $(_VARIANT_OBJS); \
         printf '%s' '$(_BUILD_VARIANT)' > $(_VARIANT_FILE); \
     fi)
 
@@ -631,19 +694,28 @@ _VARIANT_CHECK := $(shell \
 # 只删 .o/.elf —— 都是可再生的；rootfs 镜像不动，guest DTB 的切换由
 # $(GUEST_GIC_STAMP) 单独负责触发重建。
 #
+# ⚠️ kallsyms_*.S 必须一并删掉。它是 tools/gen_kallsyms.py 从**上一趟链接**
+# 出来的 ELF 里抽的符号表（见 §11g）。只删 .elf 而留下这份 .S，重建时它的
+# mtime 会比新生成的 stage-1 ELF 还新，make 判定"已是最新"→ 拿上一次构建
+# 的符号表去链接。症状是 backtrace 打出函数名整体错位，但二进制本身完全
+# 正常 —— 正是 §11 注释里警告的那类「看起来完全合理」的幽灵 bug。
+#
 # 戳文件不存在时（刚 clean 过、或本机制刚引入）也走一次清理：此时无从得知
 # 现有目标文件是用哪套 flag 编的，重建比赌一把便宜。
 #
-# 注：_BUILD_VARIANT（GUEST_LINUX= 等）不在这个签名里，它沿用上面更细粒度的
-# 处理 —— 变体只影响 kernel/main.c 的编译，删那一个 .o 就够。
+# 注：_BUILD_VARIANT（GUEST_LINUX= / STRING_TEST= / PANIC_TEST= 等）不在这个
+# 签名里 —— 它影响面小得多（每个变体只条件编译一两个文件），走上面
+# _VARIANT_CHECK 的细粒度处理：只删 _VARIANT_OBJS 里列的那几个 .o，
+# 不为此整包重编。新增变体时记得把受影响的对象加进那个列表。
 _CFG_STAMP_FILE := $(BUILD_DIR)/.build-cfg
-_CFG_SIG        := $(GIC_VER)/smp$(SMP)/log$(LOG)/mods$(LOG_MODULES)
+_CFG_SIG        := $(GIC_VER)/smp$(SMP)/log$(LOG)/mods$(LOG_MODULES)/fp$(FP)
 _CFG_CHECK := $(shell \
     mkdir -p $(BUILD_DIR) 2>/dev/null; \
     rm -f $(BUILD_DIR)/.gic-last; \
     if [ "$$(cat $(_CFG_STAMP_FILE) 2>/dev/null)" != "$(_CFG_SIG)" ]; then \
         find $(BUILD_DIR) -name '*.o' -delete 2>/dev/null; \
         find $(BUILD_DIR) -name '*.elf' -delete 2>/dev/null; \
+        find $(BUILD_DIR) -name 'kallsyms_*.S' -delete 2>/dev/null; \
         printf '%s' '$(_CFG_SIG)' > $(_CFG_STAMP_FILE); \
     fi)
 
@@ -1014,8 +1086,53 @@ $(BUILD_DIR)/apps_riscv_guest_test.o: apps/riscv64/guest_test.S | $(BUILD_DIR)
 endif
 
 # ── §11g  链接 ────────────────────────────────────────────────────────────────────
-$(KERNEL_TARGET): $(BOOT_OBJECTS) $(KERNEL_OBJECTS) $(PMM_TEST_OBJECT) $(LWIP_OBJS) $(TASK_USER_TEST_OBJ) $(TASK_USER_HELLO_OBJ) $(TASK_USER_TESTEXECVE_OBJ) $(GUEST_TEST_OBJ) $(TESTS_OBJECTS) $(PLATFORM_OBJECTS) $(DRIVER_OBJECTS) $(EXCEPTION_OBJECTS) $(KLOG_OBJECT) $(VSNPRINTF_OBJECT) $(STRING_OBJECT) $(LIBC_OBJECT) $(BITMAP_OBJECT) $(PLATFORM_CFG_OBJECT) $(PLATFORM_STATIC_OBJECT) $(LWEXT4_OBJS) $(LWEXT4_PORT_OBJS) | $(BUILD_DIR)
+#
+# 内核链接是**两趟**的，为的是把函数符号表（kallsyms）嵌进镜像：
+#
+#   stage-1.elf  ──gen_kallsyms.py──>  kallsyms_<arch>.S  ──>  .o
+#        │                                                      │
+#        └────────────────────┬─────────────────────────────────┘
+#                             ▼
+#                      kernel_<arch>.elf （带 .kallsyms 段）
+#                             │
+#                             └─ gen_kallsyms.py --verify 比对两趟的
+#                                (地址, 函数名) 集合是否完全一致
+#
+# 为什么需要两趟：内核是 `objcopy -O binary` 出 .bin 再交给 QEMU `-kernel`
+# 的，镜像里没有符号表；要让 panic backtrace 打出 `func+0x12`，符号表只能
+# 编进内核 —— 而表的内容（地址）又依赖链接结果。鸡生蛋。
+#
+# 为什么两趟的地址对得上：link.ld 把 .kallsyms 放在 .text **之后**（见
+# boot/x86_64/link.ld 里的长注释），新增这一段不移动任何函数；表里也只收
+# STT_FUNC。--verify 是给这条不变量兜底的 —— 一旦有人挪动段序，构建当场
+# 失败，而不是产出二进制正常、函数名整体错位的镜像。
+KERNEL_LINK_OBJS := $(BOOT_OBJECTS) $(KERNEL_OBJECTS) $(PMM_TEST_OBJECT) $(LWIP_OBJS) $(TASK_USER_TEST_OBJ) $(TASK_USER_HELLO_OBJ) $(TASK_USER_TESTEXECVE_OBJ) $(GUEST_TEST_OBJ) $(TESTS_OBJECTS) $(PLATFORM_OBJECTS) $(DRIVER_OBJECTS) $(EXCEPTION_OBJECTS) $(KLOG_OBJECT) $(VSNPRINTF_OBJECT) $(STRING_OBJECT) $(LIBC_OBJECT) $(BITMAP_OBJECT) $(PLATFORM_CFG_OBJECT) $(PLATFORM_STATIC_OBJECT) $(LWEXT4_OBJS) $(LWEXT4_PORT_OBJS)
+
+# 第一趟：链一个**空**符号表桩，只为拿到各函数的最终地址。
+# 桩不是可有可无的：.text 里的代码要引用 __kallsyms_*，两趟必须解析到
+# "同样形态"的符号，生成出来的指令长度才会一样（见 §5 的变量说明）。
+$(KERNEL_STAGE1): $(KERNEL_LINK_OBJS) $(KALLSYMS_STUB_OBJ) | $(BUILD_DIR)
 	$(CC) $(LDFLAGS) -nostartfiles -nodefaultlibs -T $(BOOT_DIR)/$(ARCH)/link.ld -o $@ -Wl,--start-group $^ -Wl,--end-group
+
+$(KALLSYMS_STUB_S): $(TOOLS_DIR)/gen_kallsyms.py | $(BUILD_DIR)
+	$(PYTHON) $(TOOLS_DIR)/gen_kallsyms.py --stub $@
+
+$(KALLSYMS_STUB_OBJ): $(KALLSYMS_STUB_S) | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# 从第一趟的 ELF 抽函数符号表。
+# 依赖 gen_kallsyms.py 本身：改脚本要能触发重生成。
+$(KALLSYMS_S): $(KERNEL_STAGE1) $(TOOLS_DIR)/gen_kallsyms.py
+	$(PYTHON) $(TOOLS_DIR)/gen_kallsyms.py $< $@
+
+$(KALLSYMS_OBJ): $(KALLSYMS_S) | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# 第二趟：带上符号表。链完立刻校验两趟地址一致 —— 这一步失败说明 .kallsyms
+# 的段序被挪了，此时镜像**不能**用来调试，宁可让构建红掉。
+$(KERNEL_TARGET): $(KERNEL_LINK_OBJS) $(KALLSYMS_OBJ) | $(BUILD_DIR)
+	$(CC) $(LDFLAGS) -nostartfiles -nodefaultlibs -T $(BOOT_DIR)/$(ARCH)/link.ld -o $@ -Wl,--start-group $^ -Wl,--end-group
+	$(PYTHON) $(TOOLS_DIR)/gen_kallsyms.py --verify $(KERNEL_STAGE1) $@
 
 # 转换为二进制文件
 $(KERNEL_BIN): $(KERNEL_TARGET)
@@ -1235,6 +1352,28 @@ test-string:
 	@echo "Starting QEMU (string self-test)..."
 	$(QEMU) $(QEMU_FLAGS)
 
+# test-panic: 在 ELF 解析路径上**故意 panic 一次**，用来看调用栈回溯的效果。
+#
+#   用法: make PLATFORM=qemu-virt-x86_64 test-panic
+#
+# 触发点在 kernel/loader/elf_image.c 的 ELF 头部校验之后（PANIC_TEST=1 时才
+# 编译进来），打出来的是一条真实的加载器调用链：
+#   platform_panic ← elf_image_load_impl ← elf_image_load ← exec → …
+# 设计说明与已知局限见 docs/basic/BACKTRACE.md。
+#
+# 需要 rootfs：触发点是"解析 /busybox 的 ELF 头"，没有文件系统就走不到那里
+# （会先在 open 那一步失败退出）。所以这里和 test-pthread 一样先摆好镜像。
+test-panic:
+	@if [ ! -f imgs/rootfs-$(ARCH).img ]; then \
+		echo "ERROR: imgs/rootfs-$(ARCH).img not found."; \
+		echo "Run: bash apps/c/build.sh"; \
+		exit 1; \
+	fi
+	$(MAKE) PLATFORM=$(PLATFORM) LOG=$(LOG) PANIC_TEST=1 kernel
+	@cp imgs/rootfs-$(ARCH).img $(ROOTFS_IMG)
+	@echo "Starting QEMU (PANIC_TEST: 在 ELF 解析路径上故意 panic，看 backtrace)..."
+	$(QEMU) $(QEMU_FLAGS) $(QEMU_ROOTFS_FLAGS)
+
 # test-guest-linux: 编译 GUEST_LINUX=1 内核并把 Linux 作为 EL1 guest 启动
 #                   rootfs 会自动安装 /guests/linux/{linux.bin,linux.dtb,initrd.gz}
 test-guest-linux: $(ROOTFS_IMG)
@@ -1294,6 +1433,14 @@ help:
 	@echo "Assertions:"
 	@echo "  Assertions are always enabled (assert/assert_always -> platform_panic)"
 	@echo ""
+	@echo "Backtrace:"
+	@echo "  FP=1          Add -fno-omit-frame-pointer so panic/exception dumps a"
+	@echo "                symbolicated call stack (default). Costs a GPR and ~1-3%."
+	@echo "  FP=0          Omit frame pointers; backtrace falls back to a heuristic"
+	@echo "                stack scan (works, but may miss or invent frames)."
+	@echo "  Function names come from an embedded kallsyms table generated out of"
+	@echo "  the stage-1 link; see kernel/debug/backtrace.h and docs/basic/BACKTRACE.md"
+	@echo ""
 	@echo "Cross-compiler:"
 	@echo "  CC=<compiler>  Specify compiler (x86_64: gcc, aarch64: aarch64-linux-musl-gcc, riscv64: riscv64-linux-musl-gcc)"
 	@echo ""
@@ -1307,6 +1454,8 @@ help:
 	@echo "  test-pthread  Copy dynamic rootfs from imgs/ and run pthread_test"
 	@echo "  test-mutex    Copy dynamic rootfs from imgs/ and run mutex_test (futex-based)"
 	@echo "  test-vmm      Build with VMM_TEST=1 and run VMM 3-thread switch test"
+	@echo "  test-panic    Build with PANIC_TEST=1: panic on purpose in the ELF"
+	@echo "                parser, to see what a backtrace looks like"
 	@echo "  clean         Remove build artifacts for current PLATFORM"
 	@echo "  clean-all     Remove build artifacts for all platforms"
 	@echo "  help          Show this help message"

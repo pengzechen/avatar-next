@@ -3,6 +3,7 @@
 #include "aarch64/sysreg.h" /* READ_ESR_EL1, READ_ELR_EL1 等 */
 #include "irq/irq.h"
 #include "syscall/trace.h"
+#include "debug/backtrace.h"
 #include "klog.h"
 #include "platform_ops.h"
 #include "types.h"
@@ -55,6 +56,23 @@ void handle_sync_exception(uint64_t *stack_pointer) {
              (dfsc & 0x3C) == 0x04, (dfsc & 0x3C) == 0x0C);
 
   (void)ec;
+
+  /*
+   * 打调用栈，回答"是谁调过来的"。
+   *
+   * 用异常帧而不是当前栈：现在已经在异常处理程序里，当前栈是处理程序
+   * 自己的，看不到出错的那条路径。
+   *   elr     = 出错的那条指令
+   *   r[29]   = x29，帧指针
+   *   sp      = SAVE_REGS 之后 SP 被下移了 TRAP_FRAME_SIZE，所以出错时的
+   *             SP 就是帧地址加上这个大小
+   *
+   * 这里保持 platform_shutdown() 而不是换成 platform_panic()：本函数
+   * 原先就是关机，改成死循环会改变对外行为（依赖"QEMU 自行退出"的脚本
+   * 会挂住）。先打栈、再关机，既保住现场又不动语义。
+   */
+  backtrace_dump_fault(el1_ctx->elr, el1_ctx->r[29],
+                       (uintptr_t)el1_ctx + TRAP_FRAME_SIZE, 0);
 
   platform_shutdown();
 }
@@ -146,10 +164,14 @@ void handle_irq_exception(uint64_t *stack_pointer) {
 
 void invalid_exception(uint64_t *stack_pointer, uint64_t kind,
                        uint64_t source) {
+  /* 调用点（向量表里的 .Lvector_other 宏）是 SAVE_REGS 之后 `mov x0, sp`，
+   * 所以这里拿到的是完整的 trap frame，可以当调用栈的起点用。 */
   trap_frame_t *el1_ctx = (trap_frame_t *)stack_pointer;
-  (void)el1_ctx; // Suppress unused parameter warning
 
   /* 打完下一行就 panic —— panic 路径上的日志永远是 ERROR */
   KLOG_ERROR("invalid_exception: kind: %x, source: %x\n", kind, source);
+
+  backtrace_dump_fault(el1_ctx->elr, el1_ctx->r[29],
+                       (uintptr_t)el1_ctx + TRAP_FRAME_SIZE, 0);
   platform_panic();
 }

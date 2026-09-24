@@ -28,6 +28,9 @@ make PLATFORM=qemu-virt-aarch64 LOG=debug
 # 发布版本（零日志开销）
 make PLATFORM=qemu-virt-aarch64 LOG=none
 
+# 关掉帧指针（backtrace 会退化成栈扫描，见 docs/basic/BACKTRACE.md）
+make PLATFORM=qemu-virt-aarch64 FP=0
+
 # 清理
 make PLATFORM=qemu-virt-aarch64 clean
 
@@ -98,6 +101,13 @@ avatar/
   > 改 `include/klog.h` 之后**必须 `make clean`** —— 头文件 mtime 不被跟踪，
   > 半新半旧的宏混编出来的日志「看起来完全合理」，但行数和采样都是错的。
 - **断言系统**: `docs/basic/ASSERT.md` - assert.h 运行时和编译时断言
+- **调用栈回溯**: `docs/basic/BACKTRACE.md` - panic / 内核态异常时打印带函数名的
+  调用栈。`kernel/debug/backtrace.c` + `tools/gen_kallsyms.py`。
+  改 `.kallsyms` 的段序、`FP=` 开关、或三个 `link.ld` 的段布局前必读 ——
+  符号表是**两趟链接**生成的，段序一挪就会出现"镜像正常、但函数名整体错位"
+  的假调用栈；构建里的 `gen_kallsyms.py --verify` 专门挡这个，失败了别绕过。
+  此外三个架构的**帧布局不同**（RISC-V 的偏移是负的，且叶子函数不保存 `ra`）。
+  想亲眼看效果：`make PLATFORM=<p> test-panic` —— 在 ELF 解析路径上故意 panic 一次
 - **系统调用追踪**: `docs/basic/KLOG.md`「系统调用追踪」一节。用户态程序崩了先看这里 ——
   `kernel/syscall/trace.c` 有一个**常开**的每 CPU 环形缓冲（512 条/CPU），
   SIGSEGV 时自动 dump 该 pid 最近的 syscall，也可以随时 `cat /proc/syscalls`。

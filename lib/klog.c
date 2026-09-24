@@ -42,6 +42,25 @@ klog_flush(void)
     /* 直接输出模式，无需刷新 */
 }
 
+/*
+ * panic 模式：置位后 kvprintf 不再取 g_klog_lock。
+ *
+ * 为什么需要：崩溃路径上的日志（assert 的 [ASSERT] 行、panic 的调用栈）
+ * 有可能发生在**别的 CPU 正持锁**的时候，甚至发生在同一个 CPU 已经持锁
+ * 的 klog 调用内部。那样就是在这把自旋锁上转到天荒地老 —— 最该看见的
+ * 现场反而一个字都打不出来。
+ *
+ * 丢锁的代价（多核下几条消息可能交错）在崩溃面前无所谓：马上就要停机了。
+ * 见 kernel/debug/backtrace.c 与 docs/basic/BACKTRACE.md。
+ */
+static volatile bool g_klog_panic;
+
+void
+klog_panic_begin(void)
+{
+    g_klog_panic = true;
+}
+
 /**
  * kvprintf - 格式化输出到内核日志
  *
@@ -66,6 +85,13 @@ kvprintf(const char *fmt, va_list va)
      */
     if (len > (int) sizeof(buf) - 1) {
         len = (int) sizeof(buf) - 1;
+    }
+
+    if (g_klog_panic) {
+        for (i = 0; i < len; i++) {
+            uart_putchar(buf[i]);
+        }
+        return len;
     }
 
     uint64_t flags;

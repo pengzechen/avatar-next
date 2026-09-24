@@ -43,6 +43,10 @@ extern void platform_panic(void);
  * 替换成 do{}while(0)，于是断言只剩一个没有任何输出的 panic —— 而
  * CLAUDE.md 恰恰推荐发布版用 LOG=none。断言信息必须任何构建配置下都看得见。
  *
+ * klog_panic_begin() 必须在 kprintf **之前**：这行断言信息本身也可能卡在
+ * klog 的全局输出锁上（别的 CPU 正持锁 / 同核重入），那样连下面那句
+ * platform_panic() 都到不了，调用栈自然也打不出来。
+ *
  * 使用示例:
  *   assert(ptr != NULL);
  *   assert(x > 0);
@@ -50,6 +54,7 @@ extern void platform_panic(void);
 #define assert(cond) \
     do { \
         if (!(cond)) { \
+            klog_panic_begin(); \
             kprintf(KLOG_COLOR_RED "[ASSERT][C%u] %s:%d: %s" KLOG_COLOR_RESET "\n", \
                     klog_cpu_id(), __FILE__, __LINE__, #cond); \
             platform_panic(); \
@@ -71,6 +76,7 @@ extern void platform_panic(void);
 #define assert_always(cond) \
     do { \
         if (!(cond)) { \
+            klog_panic_begin(); \
             kprintf(KLOG_COLOR_RED "[ASSERT_ALWAYS][C%u] %s:%d: %s" KLOG_COLOR_RESET "\n", \
                     klog_cpu_id(), __FILE__, __LINE__, #cond); \
             platform_panic(); \

@@ -47,6 +47,29 @@ SECTIONS
     . = ALIGN(4K);
     _erodata = .;
 
+    /*
+     * ---- 内嵌函数符号表（由 tools/gen_kallsyms.py 生成）----
+     *
+     * ⚠️ 位置是有约束的，别挪：
+     *
+     * 表里的地址取自「不带本表」的那一趟链接（stage-1）。之所以两趟能对
+     * 得上，是因为 .kallsyms 排在 .text **之后** —— 新增这么一段不会移动
+     * 任何函数。表里也只收 STT_FUNC（全在 .text 内）；数据符号的地址两趟
+     * 之间确实会变，所以不能收。
+     *
+     * 放到 .text 之前会让所有函数地址整体后移，panic backtrace 打出的是
+     * 一堆对不上号的函数名 —— 构建里的 `gen_kallsyms.py --verify` 就是
+     * 专门挡这个的。
+     *
+     * 也不能放到 .bss 之后：.bss 是 NOBITS，`objcopy -O binary` 会在中间
+     * 填出几 MB 的洞。
+     */
+    .kallsyms : ALIGN(8) {
+        __kallsyms_start = .;
+        KEEP(*(.kallsyms))
+        __kallsyms_end = .;
+    }
+
     /* ---- initialised data ---- */
     .data : ALIGN(4K) {
         _sdata = .;

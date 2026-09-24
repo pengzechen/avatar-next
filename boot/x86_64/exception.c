@@ -11,6 +11,8 @@
 #include "exception.h"
 #include "klog.h"
 #include "syscall/trace.h"
+#include "debug/backtrace.h"
+#include "assert.h"         /* platform_panic() */
 #include "irq/lapic.h"
 #include "x86_64/io.h"      /* outb — 用于屏蔽 8259A PIC */
 #include "task/task.h"
@@ -305,8 +307,15 @@ void handle_exception(void *frame_ptr)
                        (int)((frame->error_code >> 4) & 1));
         }
         
-        while (1)
-            __asm__ volatile("hlt");
+        /*
+         * 用异常帧（不是处理程序自己的栈）打调用栈，然后走统一的
+         * platform_panic() 停机 —— 它比裸 while(1) hlt 多做两件事：
+         * 关中断，并跳过自己那次重复的 backtrace。
+         *
+         * 以前这里是 `while(1) hlt`：整机挂死在现场，看不到"是谁调过来的"。
+         */
+        backtrace_dump_fault(frame->rip, frame->rbp, frame->rsp, 0);
+        platform_panic();
     }
     /* 其余未注册中断静默忽略（包括 spurious）*/
 

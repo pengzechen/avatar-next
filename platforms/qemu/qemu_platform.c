@@ -9,6 +9,8 @@
 #include "exception.h"   /* arch_irq_disable()（统一的中断屏蔽原语）*/
 #include "platform_cfg.h"  /* platform_conf_scan */
 #include "uart/uart.h"   /* 统一 UART 驱动，根据架构自动选择 */
+#include "debug/backtrace.h"  /* platform_panic() 里打调用栈 */
+#include "klog.h"             /* klog_panic_begin() */
 #if ARCH_X86_64
 #include "x86_64/io.h"          /* x86 Port I/O: outw 用于 ACPI shutdown */
 #endif
@@ -125,8 +127,26 @@ void platform_init(void)
     uart_init();
 }
 
+/*
+ * platform_panic - 所有 panic 的汇聚点（assert / assert_always / 各架构的
+ * 内核态异常处理最终都走到这里）
+ *
+ * 调用栈在这里打一次，全站的断言就都自动带上了 —— 这是本功能收益最大
+ * 的一处接入点。
+ *
+ * 三步的顺序是有讲究的，别调换：
+ *   1. klog_panic_begin() —— 先摘掉 klog 的全局输出锁。崩溃完全可能发生在
+ *      别的 CPU 正持锁的时候，不摘锁就可能卡在那里，下面两步都执行不到。
+ *   2. backtrace_panic_enter() —— 让 backtrace 改走无锁 UART 通道，
+ *      并且只打一次（panic 里再 panic 不会刷屏）。
+ *   3. 最后才停机。
+ */
 void platform_panic(void)
 {
+    klog_panic_begin();
+    backtrace_panic_enter();
+    backtrace_print();
+
     qemu_panic();
 }
 

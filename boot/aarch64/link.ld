@@ -30,13 +30,33 @@ SECTIONS
     /* 导出内核符号供 C 代码使用 */
     PROVIDE(__kernel_start = .);
 
+    /*
+     * _stext/_etext 界定代码区间，backtrace 用它判断一个地址「像不像返回
+     * 地址」—— 落在区间外的值一律不当成栈帧里的返回地址。
+     * 见 kernel/debug/backtrace.c。
+     */
     .text : {
+        _stext = .;
         *(.text.boot)
         *(.text .text.*)
+        _etext = .;
     }
 
     .rodata : {
         *(.rodata*)
+    }
+
+    /*
+     * ---- 内嵌函数符号表（由 tools/gen_kallsyms.py 生成）----
+     *
+     * ⚠️ 必须排在 .text 之后、.data 之前，理由见 boot/x86_64/link.ld 里
+     * 同一段的长注释：表里的地址取自不带本表的那一趟链接，只有 .text
+     * 不移动它们才有效。--verify 会在构建时校验。
+     */
+    .kallsyms : ALIGN(8) {
+        __kallsyms_start = .;
+        KEEP(*(.kallsyms))
+        __kallsyms_end = .;
     }
 
     /*

@@ -14,6 +14,7 @@
 #include "arch.h"
 #include "loader/elf_image.h"
 #include "user_layout.h"
+#include "platform_ops.h"   /* platform_panic()，仅 PANIC_TEST=1 时用到 */
 
 extern pmm_t *g_pmm;
 
@@ -133,6 +134,27 @@ elf_image_load_impl(uint8_t *file_data, uint64_t file_size, void *pgd,
         KLOG_ERROR("[elf] Not executable (type=%u)\n", ehdr->e_type);
         return -6;
     }
+
+#ifdef RUN_PANIC_TEST
+    /*
+     * 调用栈回溯的触发点（只在 PANIC_TEST=1 的构建里存在，见 Makefile §7）。
+     *
+     * 放在这里是有讲究的：ELF 头部刚刚校验通过、程序头还没开始解析，
+     * 离 boot 足够远 —— 打出来的是一条真实的加载器调用链
+     *   platform_panic ← elf_image_load_impl ← elf_image_load
+     *                  ← exec_elf_image ← exec_handler/elf_loader …
+     * 而不是只有 kernel_main 两层，正好用来看展开和符号化对不对。
+     *
+     * 直接调 platform_panic() 而不是 assert_always()：走的是和真实断言失败
+     * **完全一样**的那条路（platform_panic 自己会摘 klog 锁、打栈、停机），
+     * 所以看到的东西不会因为是"演示"而和真实崩溃不一样。
+     *
+     * 用法： make PLATFORM=<p> test-panic
+     * 撤掉： 不传 PANIC_TEST 就是普通内核，本段不参与编译。
+     */
+    KLOG_ERROR("[elf] PANIC_TEST=1: 故意在 ELF 解析路径上触发一次 panic\n");
+    platform_panic();
+#endif
 
     KLOG_DEBUG("[elf] Valid ELF: entry=0x%llx, phnum=%u\n",
                ehdr->e_entry, ehdr->e_phnum);
