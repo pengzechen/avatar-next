@@ -38,11 +38,6 @@ volatile uint64_t g_rv_irq_from_kernel = 0;
 volatile uint64_t g_rv_irq_from_user = 0;
 static volatile uint64_t g_rv_non_timer_irq_count = 0;
 
-static bool rv_irq_log_sample(uint64_t n)
-{
-    return n <= 4 || (n <= 4096 && (n & (n - 1)) == 0);
-}
-
 static void rv_dump_trap_regs(trap_frame_t *frame)
 {
     static const char * const reg_names[] = {
@@ -130,24 +125,17 @@ void handle_exception(void *frame_ptr)
         cpu->irq_depth++;
 
         if (irq != CAUSE_SUPERVISOR_TIMER) {
-            uint64_t n = ++g_rv_non_timer_irq_count;
-            if (rv_irq_log_sample(n)) {
-                KLOG_WARN("[riscv irq] non-timer IRQ #%llu cause=%llu mode=%c sepc=0x%lx sstatus=0x%lx stval=0x%lx\n",
-                          n, irq,
-                          (frame->sstatus & SSTATUS_SPP) ? 'S' : 'U',
-                          frame->sepc, frame->sstatus, frame->stval);
-            }
+            /* ISR 上下文 + 逐中断一行，必须采样 */
+            KLOG_WARN_SAMPLE("[riscv irq] non-timer IRQ #%llu cause=%llu mode=%c sepc=0x%lx sstatus=0x%lx stval=0x%lx\n",
+                             (unsigned long long)++g_rv_non_timer_irq_count, irq,
+                             (frame->sstatus & SSTATUS_SPP) ? 'S' : 'U',
+                             frame->sepc, frame->sstatus, frame->stval);
         }
 
         if (frame->sstatus & SSTATUS_SPP) {
-            uint64_t n = ++g_rv_irq_from_kernel;
-            if (rv_irq_log_sample(n)) {
-                // 打开可以确认内核态是否收到中断
-                // KLOG_INFO("[riscv irq] S-mode IRQ #%llu cause=%llu sepc=0x%lx sstatus=0x%lx need_resched=%u preempt=%u\n",
-                //           n, irq, frame->sepc, frame->sstatus,
-                //           cpu->need_resched ? 1U : 0U,
-                //           cpu->current_task ? cpu->current_task->preempt_count : 0U);
-            }
+            /* 内核态收到中断的计数。曾在这里打一行确认，太吵 —— 需要时把下面
+             * 计数配合 KLOG_DEBUG 打开即可。 */
+            g_rv_irq_from_kernel++;
         } else {
             g_rv_irq_from_user++;
         }

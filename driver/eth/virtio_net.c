@@ -412,9 +412,9 @@ VirtioNetNic_t *eth_init(uint64_t base)
     g_virtio_net0_pa = virt_to_phys(nic);
     nic->base = (uintptr_t)base;
 
-    KLOG_INFO("[virtio-net] init begin base=0x%llx nic_va=%p nic_pa=0x%llx pages=%u size=%zu\n",
-              (unsigned long long)base, nic, (unsigned long long)g_virtio_net0_pa,
-              nic_pages, sizeof(*nic));
+    KLOG_NET("[virtio-net] init begin base=0x%llx nic_va=%p nic_pa=0x%llx pages=%u size=%zu\n",
+             (unsigned long long)base, nic, (unsigned long long)g_virtio_net0_pa,
+             nic_pages, sizeof(*nic));
 
     uint32_t magic = vn_read(nic, VIRTIO_MMIO_MAGIC_VALUE);
     uint32_t version = vn_read(nic, VIRTIO_MMIO_VERSION);
@@ -463,9 +463,9 @@ VirtioNetNic_t *eth_init(uint64_t base)
                (unsigned long long)dev_features,
                (unsigned long long)want,
                (unsigned long long)(dev_features & ~(want | BIT64(VIRTIO_F_ANY_LAYOUT)
-                                                     | BIT64(VIRTIO_RING_F_INDIRECT_DESC)
-                                                     | BIT64(VIRTIO_RING_F_EVENT_IDX)
-                                                     | BIT64(VIRTIO_NET_F_MRG_RXBUF))));
+               | BIT64(VIRTIO_RING_F_INDIRECT_DESC)
+               | BIT64(VIRTIO_RING_F_EVENT_IDX)
+               | BIT64(VIRTIO_NET_F_MRG_RXBUF))));
 
     if (version == 2U && !(dev_features & BIT64(VIRTIO_F_VERSION_1))) {
         KLOG_ERROR("[virtio-net] device lacks VIRTIO_F_VERSION_1\n");
@@ -523,10 +523,10 @@ VirtioNetNic_t *eth_init(uint64_t base)
     vn_write(nic, VIRTIO_MMIO_QUEUE_NOTIFY, VIRTIO_NET_Q_RX);
     nic->ready = 1;
 
-    KLOG_INFO("[virtio-net] init done status=0x%x isr=0x%x rx_avail=%u tx_avail=%u\n",
-              vn_read(nic, VIRTIO_MMIO_STATUS),
-              vn_read(nic, VIRTIO_MMIO_INTERRUPT_STATUS),
-              nic->rxq.avail.idx, nic->txq.avail.idx);
+    KLOG_NET("[virtio-net] init done status=0x%x isr=0x%x rx_avail=%u tx_avail=%u\n",
+             vn_read(nic, VIRTIO_MMIO_STATUS),
+             vn_read(nic, VIRTIO_MMIO_INTERRUPT_STATUS),
+             nic->rxq.avail.idx, nic->txq.avail.idx);
 
     g_eth0 = nic;
 
@@ -558,8 +558,14 @@ int eth_send(VirtioNetNic_t *opaque, const uint8_t *data, size_t len)
         if (frame_id >= 0)
             virtq_free_desc(&nic->txq, (uint16_t)frame_id);
         nic->tx_busy_count++;
-        KLOG_DEBUG("[virtio-net] tx busy len=%zu busy_count=%llu\n",
-                   len, (unsigned long long)nic->tx_busy_count);
+        /*
+         * 这是**真实丢包**（TX 描述符耗尽，帧被直接丢掉），以前挂在 DEBUG，
+         * 默认等级下完全看不见 —— 一个正在丢包的网卡看起来和健康的一模一样。
+         * 升到 WARN 并采样：busy_count 是持久总数，采样只影响打印频率，
+         * 不影响这个计数。
+         */
+        KLOG_WARN_SAMPLE("[virtio-net] tx busy (frame dropped) len=%zu busy_count=%llu\n",
+                         len, (unsigned long long)nic->tx_busy_count);
         return -1;
     }
 
@@ -585,11 +591,11 @@ int eth_send(VirtioNetNic_t *opaque, const uint8_t *data, size_t len)
     nic->tx_packets++;
 
     KLOG_MODULE_DEBUG(LOG_MODULE_NET, "[virtio-net] tx submit hdr=%d frame=%d buf=%u frame_len=%zu wire_len=%u avail_idx=%u tx_packets=%llu dst=%02x:%02x:%02x:%02x:%02x:%02x ethertype=0x%02x%02x\n",
-               hdr_id, frame_id, buf_id, len,
-               (uint32_t)(VIRTIO_NET_HDR_LEN + frame_len), nic->txq.avail.idx,
-               (unsigned long long)nic->tx_packets,
-               data[0], data[1], data[2], data[3], data[4], data[5],
-               len >= 14U ? data[12] : 0U, len >= 14U ? data[13] : 0U);
+                      hdr_id, frame_id, buf_id, len,
+                      (uint32_t)(VIRTIO_NET_HDR_LEN + frame_len), nic->txq.avail.idx,
+                      (unsigned long long)nic->tx_packets,
+                      data[0], data[1], data[2], data[3], data[4], data[5],
+                      len >= 14U ? data[12] : 0U, len >= 14U ? data[13] : 0U);
     return 0;
 }
 
@@ -628,15 +634,15 @@ int eth_recv(VirtioNetNic_t *opaque, uint8_t *buf, size_t maxlen)
     nic->rx_packets++;
 
     KLOG_MODULE_DEBUG(LOG_MODULE_NET, "[virtio-net] rx packet id=%u frame_len=%u copy=%zu last_used=%u rx_packets=%llu dst=%02x:%02x:%02x:%02x:%02x:%02x src=%02x:%02x:%02x:%02x:%02x:%02x type=0x%02x%02x\n",
-               id, frame_len, copy_len, nic->rxq.last_used_idx,
-               (unsigned long long)nic->rx_packets,
-               copy_len >= 6U ? buf[0] : 0U, copy_len >= 6U ? buf[1] : 0U,
-               copy_len >= 6U ? buf[2] : 0U, copy_len >= 6U ? buf[3] : 0U,
-               copy_len >= 6U ? buf[4] : 0U, copy_len >= 6U ? buf[5] : 0U,
-               copy_len >= 12U ? buf[6] : 0U, copy_len >= 12U ? buf[7] : 0U,
-               copy_len >= 12U ? buf[8] : 0U, copy_len >= 12U ? buf[9] : 0U,
-               copy_len >= 12U ? buf[10] : 0U, copy_len >= 12U ? buf[11] : 0U,
-               copy_len >= 14U ? buf[12] : 0U, copy_len >= 14U ? buf[13] : 0U);
+                      id, frame_len, copy_len, nic->rxq.last_used_idx,
+                      (unsigned long long)nic->rx_packets,
+                      copy_len >= 6U ? buf[0] : 0U, copy_len >= 6U ? buf[1] : 0U,
+                      copy_len >= 6U ? buf[2] : 0U, copy_len >= 6U ? buf[3] : 0U,
+                      copy_len >= 6U ? buf[4] : 0U, copy_len >= 6U ? buf[5] : 0U,
+                      copy_len >= 12U ? buf[6] : 0U, copy_len >= 12U ? buf[7] : 0U,
+                      copy_len >= 12U ? buf[8] : 0U, copy_len >= 12U ? buf[9] : 0U,
+                      copy_len >= 12U ? buf[10] : 0U, copy_len >= 12U ? buf[11] : 0U,
+                      copy_len >= 14U ? buf[12] : 0U, copy_len >= 14U ? buf[13] : 0U);
     return (int)copy_len;
 }
 
@@ -678,7 +684,8 @@ static void virtio_net_send_probe(struct virtio_net_nic *nic)
     memcpy(&pkt[14], payload, sizeof(payload) - 1U);
 
     int rc = eth_send(nic, pkt, sizeof(pkt));
-    KLOG_INFO("[virtio-net] probe tx rc=%d len=%zu\n", rc, sizeof(pkt));
+    /* bring-up 探针：默认等级下不该占一行 */
+    KLOG_DEBUG("[virtio-net] probe tx rc=%d len=%zu\n", rc, sizeof(pkt));
 }
 
 void virtio_net_poll_demo_task(void *arg)
@@ -690,9 +697,9 @@ void virtio_net_poll_demo_task(void *arg)
         task_exit();
     }
 
-    KLOG_INFO("[virtio-net] poll task started mac=%02x:%02x:%02x:%02x:%02x:%02x\n",
-              nic->mac[0], nic->mac[1], nic->mac[2],
-              nic->mac[3], nic->mac[4], nic->mac[5]);
+    KLOG_NET("[virtio-net] poll task started mac=%02x:%02x:%02x:%02x:%02x:%02x\n",
+             nic->mac[0], nic->mac[1], nic->mac[2],
+             nic->mac[3], nic->mac[4], nic->mac[5]);
 
     uint64_t last_probe_ms = 0;
     uint8_t rx[ETH_BUF_SIZE];
@@ -700,10 +707,10 @@ void virtio_net_poll_demo_task(void *arg)
         int n = eth_recv(nic, rx, sizeof(rx));
         if (n > 0) {
             KLOG_MODULE_DEBUG(LOG_MODULE_NET, "[virtio-net] rx frame len=%d dst=%02x:%02x:%02x:%02x:%02x:%02x src=%02x:%02x:%02x:%02x:%02x:%02x type=0x%02x%02x\n",
-                      n,
-                      rx[0], rx[1], rx[2], rx[3], rx[4], rx[5],
-                      rx[6], rx[7], rx[8], rx[9], rx[10], rx[11],
-                      n >= 14 ? rx[12] : 0U, n >= 14 ? rx[13] : 0U);
+                              n,
+                              rx[0], rx[1], rx[2], rx[3], rx[4], rx[5],
+                              rx[6], rx[7], rx[8], rx[9], rx[10], rx[11],
+                              n >= 14 ? rx[12] : 0U, n >= 14 ? rx[13] : 0U);
         }
 
         uint64_t now = timer_get_uptime_ms();

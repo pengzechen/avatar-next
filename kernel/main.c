@@ -74,7 +74,8 @@ extern void kmem_test(void);      /* kernel/mm/aarch64/vmm.c */
 
 static void platform_init_runtime_drivers(void)
 {
-    KLOG_INFO("Initializing platform runtime drivers...\n");
+    /* "即将做 X" 不是状态迁移 —— 子系统自己会打完成行 */
+    KLOG_INIT("Initializing platform runtime drivers...\n");
 
 #if DRIVER_UART_DW && (defined(PLATFORM_RK3588) || defined(PLATFORM_SG2002))
     dw_uart_init();
@@ -123,7 +124,7 @@ static void demo_load_busybox(void *arg)
     (void)arg;
 
     /* 等待文件系统初始化 */
-    KLOG_INFO("[busybox_loader] Waiting for filesystem...\n");
+    KLOG_INIT("[busybox_loader] Waiting for filesystem...\n");
     for (int i = 0; i < 100; i++) {
         task_yield();
     }
@@ -149,7 +150,7 @@ static void demo_load_busybox(void *arg)
     }
 
     /* 任务完成 */
-    KLOG_INFO("[busybox_loader] Exiting...\n");
+    KLOG_INIT("[busybox_loader] Exiting...\n");
     task_exit();
 }
 
@@ -162,7 +163,7 @@ void kernel_main(void)
 #endif
 #if ARCH_X86_64
     /* Initialize IDT and LAPIC */
-    KLOG_INFO("Initializing IDT + LAPIC...\n");
+    KLOG_INIT("Initializing IDT + LAPIC...\n");
     exception_init();
     /*
      * TSS（特权级切换用）在 cpu_init_bsp() 之后初始化：TSS.RSP0 要同步进
@@ -173,7 +174,7 @@ void kernel_main(void)
 #if ARCH_RISCV64
     /* 必须在 fs_init() 之前设置 stvec，否则 ext4_mount 中的任何
      * CPU 异常都会落到 M-mode (OpenSBI)，导致 hart 被重置 */
-    KLOG_INFO("Initializing exception handler...\n");
+    KLOG_INIT("Initializing exception handler...\n");
     exception_init();
 #endif
 
@@ -195,9 +196,8 @@ void kernel_main(void)
     init_cache();
 
     /* Print welcome message */
-    KLOG_INFO("=== Avatar OS Kernel ===\n");
-    KLOG_INFO("Architecture: "ARCH_NAME "\n");
-    KLOG_INFO("Build time: " __DATE__ " " __TIME__ "\n");
+    /* 一条事实一行 —— 拆成三行没有多出任何信息 */
+    KLOG_INFO("=== Avatar OS Kernel " ARCH_NAME " build " __DATE__ " " __TIME__ " ===\n");
 
     /* ── 字符串/内存函数自检（STRING_TEST=1，跑完继续启动）──────── */
 #ifdef RUN_STRING_TEST
@@ -206,35 +206,33 @@ void kernel_main(void)
 #endif
 
     /* ── 初始化物理内存管理器 ───────────────────────────────── */
-    KLOG_INFO("\n");
     pmm_initialize();
 
 #if !DRIVER_SDBLK_SG2002
     ramblk_init();
 #endif
-    KLOG_INFO("\n");
-    KLOG_INFO("Initializing filesystem...\n");
+    KLOG_FS("Initializing filesystem...\n");
     fs_init();
 
     /* ── 运行 PMM 测试 ───────────────────────────────────────── */
     /* 测试时解开下面两行注释 */
-    KLOG_INFO("\n");
     #ifdef RUN_PMM_TESTS
     run_pmm_tests();
     platform_shutdown();  /* PMM 测试完成后关机，避免后续测试干扰 PMM 状态 */
     #endif
 
     #if ARCH_AARCH64
-    KLOG_INFO("=== Running VMM Tests ===\n");
+    /* 开机自检脚手架：仍然执行，但默认等级下不再占行 */
+    KLOG_INIT("=== Running VMM Tests ===\n");
     kmem_test();
-    KLOG_INFO("VMM tests completed\n");
+    KLOG_INIT("VMM tests completed\n");
     #endif
 
     platform_init_runtime_drivers();
 
 
     /* ── 初始化任务子系统 ───────────────────────────────── */
-    KLOG_INFO("Initializing task subsystem...\n");
+    KLOG_TASK("Initializing task subsystem...\n");
     cpu_init_bsp();          /* Phase 0：安装 BSP per-CPU 指针 */
 #if ARCH_X86_64
     extern void x86_tss_init(void);
@@ -243,11 +241,11 @@ void kernel_main(void)
     task_init();
 
 #if DRIVER_ETH_VIRTIO && !defined(RUN_GUEST_LINUX)
-    KLOG_INFO("Initializing virtio ethernet driver...\n");
+    KLOG_NET("Initializing virtio ethernet driver...\n");
     virtio_net_init_from_platform();
     net_init();
 #elif DRIVER_ETH_CVITEK && !defined(RUN_GUEST_LINUX)
-    KLOG_INFO("Initializing cvitek ethernet driver...\n");
+    KLOG_NET("Initializing cvitek ethernet driver...\n");
     cvitek_eth_init_from_platform();
     net_init();
 #endif
@@ -270,11 +268,11 @@ void kernel_main(void)
 
 #if !defined(RUN_VMM_TEST) && !defined(RUN_GUEST_LINUX)
 #if DRIVER_ETH_VIRTIO || DRIVER_ETH_CVITEK
-    KLOG_INFO("Starting network polling task...\n");
+    KLOG_NET("Starting network polling task...\n");
     uint64_t startup_task_irq_flags = arch_irq_save();
     task_t *eth_task = task_create("net-poll", net_poll_task, NULL, 20);
     if (eth_task)
-        KLOG_INFO("network task created: id=%u\n", eth_task->id);
+        KLOG_TASK("network task created: id=%u\n", eth_task->id);
     else
         KLOG_ERROR("Failed to create network task!\n");
 #endif
@@ -287,7 +285,7 @@ void kernel_main(void)
     task_t *bb_task = task_create("busybox", demo_load_busybox, NULL, 5);
     arch_irq_restore(startup_task_irq_flags);
     if (bb_task)
-        KLOG_INFO("busybox loader task created: id=%u\n", bb_task->id);
+        KLOG_TASK("busybox loader task created: id=%u\n", bb_task->id);
     else
         KLOG_ERROR("Failed to create busybox loader task!\n");
 #endif

@@ -288,10 +288,10 @@ static int handle_hvc(vcpu_t *vcpu, uint64_t esr)
     switch (no) {
     case HVC_PRINT: {
         uint64_t iter = vcpu->r[1];
-        /* 每 100 次打印一次，避免刷屏 */
-        if (iter % 100 == 0)
-            KLOG_INFO("[VMM] HVC_PRINT: iter=%llu (vcpu%d)\n",
-                      iter, vcpu->vcpu_id);
+        /* 必须留在 INFO：readme.md 用 LOG=info 跑 test-vmm，这行就是通过证据。
+         * 但原来的 iter % 100 仍随迭代无界增长 —— 改用公共采样器抽稀成有界。 */
+        KLOG_INFO_SAMPLE("[VMM] HVC_PRINT: iter=%llu (vcpu%d)\n",
+                         iter, vcpu->vcpu_id);
         /* 主动 yield：让出 CPU 给其他线程 */
         task_yield();
         return EL2_RESUME;
@@ -391,11 +391,11 @@ static void aarch64_check_vtimer(vcpu_t *vcpu)
         static uint64_t inject_count;
         if (((++inject_count) & 0xFFFF) == 1) {
             KLOG_INFO("[VMM] inject vtimer count=%llu ctl=0x%llx cval=0x%llx now=0x%llx off=0x%llx\n",
-                       (unsigned long long)inject_count,
-                       (unsigned long long)ctl,
-                       (unsigned long long)cval,
-                       (unsigned long long)now,
-                       (unsigned long long)off);
+                      (unsigned long long)inject_count,
+                      (unsigned long long)ctl,
+                      (unsigned long long)cval,
+                      (unsigned long long)now,
+                      (unsigned long long)off);
         }
 #if DRIVER_GIC_V3
         vmm_vgic3_set_pending(&vcpu->vm->vgic3, (uint32_t)vcpu->vcpu_id,

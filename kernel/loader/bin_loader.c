@@ -41,7 +41,9 @@ int bin_loader_load_from_file(const char *pathname, char **argv, char **envp)
     }
     path_buf[i] = '\0';
 
-    KLOG_INFO("[loader] Loading program: %s\n", path_buf);
+    /* 与 elf_loader.c 的同类事件统一到 DEBUG：装载是逐次 exec 的操作，
+     * busybox 每条命令都会走一遍，不该占 INFO。 */
+    KLOG_DEBUG("[loader] Loading program: %s\n", path_buf);
 
     /* 打开文件 */
     rc = ext4_fopen(&file, path_buf, "r");
@@ -56,7 +58,7 @@ int bin_loader_load_from_file(const char *pathname, char **argv, char **envp)
     fsize = ext4_ftell(&file);
     ext4_fseek(&file, 0, SEEK_SET);
 
-    KLOG_INFO("[loader] File size: %zu bytes\n", fsize);
+    KLOG_DEBUG("[loader] File size: %zu bytes\n", fsize);
 
     /* 检查文件大小 */
     if (fsize == 0 || fsize > MAX_FILE_SIZE) {
@@ -89,7 +91,7 @@ int bin_loader_load_from_file(const char *pathname, char **argv, char **envp)
 
     ext4_fclose(&file);
 
-    KLOG_INFO("[loader] Program loaded: virt=0x%llx\n", (uint64_t)code_buffer);
+    KLOG_DEBUG("[loader] Program loaded: virt=0x%llx\n", (uint64_t)code_buffer);
 
     /* 创建用户进程
      * process_create 的 user_entry 参数在 AArch64 下是代码的内核虚拟地址，
@@ -104,8 +106,8 @@ int bin_loader_load_from_file(const char *pathname, char **argv, char **envp)
         return -5;
     }
 
-    KLOG_INFO("[loader] Process '%s' created successfully, PID=%u\n",
-              path_buf, new_task->id);
+    KLOG_DEBUG("[loader] Process '%s' created successfully, PID=%u\n",
+               path_buf, new_task->id);
 
     /* 退出当前进程，让新进程运行 */
     task_exit();

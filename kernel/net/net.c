@@ -117,7 +117,7 @@ void net_poll_task(void *arg)
         task_exit();
     }
 
-    KLOG_INFO("[net] poll task started\n");
+    KLOG_NET("[net] poll task started\n");
 
     for (;;) {
         net_poll_once();

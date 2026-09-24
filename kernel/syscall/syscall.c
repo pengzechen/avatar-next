@@ -364,8 +364,6 @@ void syscall_handler(trap_frame_t *frame)
 
     /* Dropbear 调试：pid>=7 所有 syscall 都打 */
     // if (current && current->id >= 7)
-    //     KLOG_INFO("[dbg] pid=%u sc=%llu a0=0x%llx a1=0x%llx a2=0x%llx\n",
-    //               current->id, syscall_num, regs[0], regs[1], regs[2]);
 
     switch (syscall_num) {
 
@@ -966,7 +964,11 @@ void syscall_handler(trap_frame_t *frame)
     }
 
     default:
-        KLOG_ERROR("[syscall] Unknown syscall: %llu\n", syscall_num);
+        /*
+         * 连分类都没有 —— 够得上 ERROR。但用户态探测（busybox 启动时会试一批
+         * 调号）会让它刷屏，所以只说一次。
+         */
+        KLOG_ERROR_ONCE("[syscall] Unknown syscall: %llu\n", syscall_num);
         regs[0] = (uint64_t)(int64_t)-ENOSYS;
         break;
     }
@@ -976,13 +978,6 @@ void syscall_handler(trap_frame_t *frame)
         current->stime_ns += kernel_get_ns() - current->sc_entry_ns;
         current->sc_entry_ns = 0;
     }
-
-    /* Dropbear 调试：打印非热路径结果和失败 */
-    /* Dropbear 调试：pid>=7 所有 syscall 结果 */
-    // if (current && current->id >= 7) {
-    //     int64_t sret = (int64_t)regs[0];
-    //     KLOG_INFO("[dbg] pid=%u sc=%llu => %lld\n", current->id, syscall_num, sret);
-    // }
 
     if (trace_sc) {
         KLOG_DEBUG("[strace] pid=%u %s => 0x%llx (%lld)\n",
@@ -1049,13 +1044,15 @@ int64_t sys_open(const char *pathname, int flags, int mode)
 {
     (void)flags;
     (void)mode;
-    KLOG_WARN("[syscall] open('%s') not implemented\n", pathname);
+    /* 返回失败是"未实现"的**正确行为**，不是错误；但"缺哪些"正是 bring-up
+     * 想知道的清单，而 shell 会高频调用它 —— 所以 WARN + 只说一次。 */
+    KLOG_WARN_ONCE("[syscall] open('%s') not implemented\n", pathname);
     return -1;
 }
 
 int64_t sys_close(int fd)
 {
-    KLOG_WARN("[syscall] close(%d) not implemented\n", fd);
+    KLOG_WARN_ONCE("[syscall] close(%d) not implemented\n", fd);
     return -1;
 }
 

@@ -11,10 +11,10 @@ struct gic_t _gicv2;
 
 void gic_test_init(void)
 {
-    logger_info("GIC: GICD enable %s\n", read32((void *)GICD_CTLR) ? "ok" : "error");
-    logger_info("GIC: GICC enable %s\n", read32((void *)GICC_CTLR) ? "ok" : "error");
-    logger_info("GIC: IRQ numbers: %d\n", _gicv2.irq_nr);
-    logger_info("GIC: CPU count: %d\n", cpu_num());
+    KLOG_GIC("GIC: GICD enable %s\n", read32((void *)GICD_CTLR) ? "ok" : "error");
+    KLOG_GIC("GIC: GICC enable %s\n", read32((void *)GICC_CTLR) ? "ok" : "error");
+    KLOG_GIC("GIC: IRQ numbers: %d\n", _gicv2.irq_nr);
+    KLOG_GIC("GIC: CPU count: %d\n", cpu_num());
 }
 
 // ===========================================
@@ -62,7 +62,7 @@ void gic_init(void)
     gicv2_gicc_base = platform_get_mmio("irq", "gicc");
     gicv2_gich_base = platform_get_mmio("irq", "gich");
 
-    logger_info("GIC: Initializing GIC distributor and CPU interface\n");
+    KLOG_GIC("GIC: Initializing GIC distributor and CPU interface\n");
 
     _gicv2.irq_nr = GICD_TYPER_IRQS(read32((void *)GICD_TYPER));
     if (_gicv2.irq_nr > 1020)
@@ -91,7 +91,7 @@ void gic_init_secondary(void)
 // gicd g0, g1  gicc,  gich enable。 smp启动首核执行
 void gic_virtual_init(void)
 {
-    logger_info("GIC: Initializing GIC for virtualization\n");
+    KLOG_GIC("GIC: Initializing GIC for virtualization\n");
 
     /* 关键：必须先从平台拿 MMIO base，否则后续所有寄存器宏都解析成
      * (0 + offset)，写入物理地址 0（QEMU virt 那里是 RAM/device，
@@ -101,10 +101,10 @@ void gic_virtual_init(void)
     gicv2_gicd_base = platform_get_mmio("irq", "gicd");
     gicv2_gicc_base = platform_get_mmio("irq", "gicc");
     gicv2_gich_base = platform_get_mmio("irq", "gich");
-    logger_info("GIC: base addrs: gicd=0x%llx gicc=0x%llx gich=0x%llx\n",
-                (unsigned long long)gicv2_gicd_base,
-                (unsigned long long)gicv2_gicc_base,
-                (unsigned long long)gicv2_gich_base);
+    KLOG_GIC("GIC: base addrs: gicd=0x%llx gicc=0x%llx gich=0x%llx\n",
+             (unsigned long long)gicv2_gicd_base,
+             (unsigned long long)gicv2_gicc_base,
+             (unsigned long long)gicv2_gich_base);
 
     // 获得 gicd irq numbers
     _gicv2.irq_nr = GICD_TYPER_IRQS(read32((void *)GICD_TYPER));
@@ -121,13 +121,10 @@ void gic_virtual_init(void)
 
     gicc_el2_init();
 
-    // logger_gic_debug("GIC: Disabling all private IRQs\n");
-    // for (int32_t i = 0; i < GIC_NR_PRIVATE_IRQS; i++)
-    //     gic_enable_int(i, 0);
 
     gic_test_init();
 
-    logger_info("GIC: GICH enable %s\n", read32((void *)GICH_HCR) ? "ok" : "error");
+    KLOG_GIC("GIC: GICH enable %s\n", read32((void *)GICH_HCR) ? "ok" : "error");
     logger_info("GIC: Virtualization initialization completed\n");
 }
 
@@ -157,7 +154,6 @@ gic_read_iar(void)
     if (irq_id != GICC_INT_SPURIOUS)
     {
         // 这个太多了
-        // KLOG_INFO("GIC: Read IAR=0x%x, IRQ=%d\n", iar, irq_id);
     }
 
     return iar;
@@ -176,7 +172,6 @@ void gic_write_eoir(uint32_t irqstat)
 
     (void)irq_id; // Suppress unused variable warning
     // 这个太多了
-    // logger_gic_debug("GIC: Write EOIR for IRQ %d\n", irq_id);
 }
 
 void gic_write_dir(uint32_t irqstat)
@@ -186,7 +181,6 @@ void gic_write_dir(uint32_t irqstat)
 
     (void)irq_id; // Suppress unused variable warning
     // 这个太多了
-    // logger_gic_debug("GIC: Write DIR for IRQ %d\n", irq_id);
 }
 
 // 发送给特定的核（某个核）
@@ -494,7 +488,6 @@ void gic_write_lr(int32_t n, uint32_t mask)
 
     (void)vid; // Suppress unused variable warning
     // 这个太多了
-    // logger_gic_debug("GIC: Write LR[%d] with vIRQ %d\n", n, vid);
 }
 
 // 启用非优先级中断，这种中断允许在虚拟化环境下处理一些低优先级的中断。

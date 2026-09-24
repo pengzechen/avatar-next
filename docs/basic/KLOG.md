@@ -16,7 +16,7 @@ make PLATFORM=qemu-virt-aarch64 kernel LOG=none
 启动时会打印一行生效配置，排查"为什么我的日志不见了"先看它：
 
 ```
-[INFO][C0] lib/klog.c:225: [klog] level=3 modules=init,task,driver,uart,timer,mm,fs,net,smp,gic,generic
+[INFO][C0] lib/klog.c:226: [klog] level=3 modules=init,task,driver,uart,timer,mm,fs,net,smp,gic,generic
 ```
 
 ## 两种控制手段
@@ -72,7 +72,7 @@ make ... LOG=debug LOG_MODULES=none          # 全不放行
 模块名拼错会在启动时报错并点名（同时掩码为 0，即什么都不输出）：
 
 ```
-[ERROR][C0] lib/klog.c:219: [klog] LOG_MODULES 有 1 个无法识别的模块名："gci"
+[ERROR][C0] lib/klog.c:220: [klog] LOG_MODULES 有 1 个无法识别的模块名："gci"
 ```
 
 ### 运行期等价 API
@@ -112,10 +112,15 @@ KLOG_TRACE("entry: %s\n", __func__);               /* 同上 */
 /* 模块日志：只在 DEBUG/TRACE 且该模块位放行时输出 */
 KLOG_MODULE_DEBUG(LOG_MODULE_GIC, "GIC: PMR=0x%x\n", pmr);
 KLOG_MODULE_TRACE(LOG_MODULE_TASK, "switch %d -> %d\n", from, to);
-KLOG_UART("UART initialized at %d baud\n", baud);   /* == KLOG_MODULE_DEBUG(LOG_MODULE_UART, ...) */
+KLOG_GIC("GIC: PMR=0x%x\n", pmr);                   /* == KLOG_MODULE_DEBUG(LOG_MODULE_GIC, ...) */
+
+/* 一次性 / 抽样：见下节「限流与一次性日志」 */
+KLOG_WARN_ONCE("[syscall] open('%s') not implemented\n", path);
+KLOG_WARN_SAMPLE("[PLIC] unhandled irq=%u hit#%u\n", irq, _klog_seq_);
 ```
 
 `KLOG_DEBUG` 与 `KLOG_MODULE_DEBUG` 的区别只有一个：后者额外带模块位，因此能被 `LOG_MODULES=` 单独选中。
+`KLOG_INIT/TASK/DRIVER/UART/TIMER/MM/FS/NET/SMP/GIC` 都是 `KLOG_MODULE_DEBUG` 的单行简写。
 
 ### 内置模块
 
@@ -130,15 +135,113 @@ KLOG_UART("UART initialized at %d baud\n", baud);   /* == KLOG_MODULE_DEBUG(LOG_
 | `fs` | `LOG_MODULE_FS` | 文件系统 |
 | `net` | `LOG_MODULE_NET` | 网络（virtio-net 的每包日志挂在这里） |
 | `smp` | `LOG_MODULE_SMP` | 多核 |
-| `gic` | `LOG_MODULE_GIC` | GIC（`driver/irq/gicv2.c` 的 `logger_gic_debug`） |
+| `gic` | `LOG_MODULE_GIC` | GIC（`KLOG_GIC` / `logger_gic_debug`） |
 | `generic` | `LOG_MODULE_GENERIC` | 未打标签的 DEBUG/TRACE |
 
 加新模块要同时改两处：`include/klog.h` 的位定义、`lib/klog.c` 的名字表。
 
+### 限流与一次性日志
+
+给**高频且持续**的场合用（ISR、每包、每目录项）。每个级别都有 `_ONCE` / `_SAMPLE` 两个变体，
+模块版是 `KLOG_MODULE_DEBUG_ONCE/SAMPLE(module, ...)`：
+
+| 宏 | 语义 |
+|---|---|
+| `KLOG_*_ONCE` | 该调用点**一辈子只说一次**。用于"缺哪个系统调用""未知系统调用号"这类——它们是真问题，但会被高频调用刷屏 |
+| `KLOG_*_SAMPLE` | 前 `KLOG_SAMPLE_FIRST`(8) 次全打，之后只打 2 的幂，超过 `KLOG_SAMPLE_CAP`(4096) 彻底静音 |
+
+**关键性质：单个调用点的输出有上界。** `FIRST=8 / CAP=4096` 时最多 `8 + 9 = 17` 行，
+无论事件实际发生多少次 —— 中断风暴下这是唯一能保住串口的性质。
+CAP 之后想知道"现在到底多少次了"，看调用点自己维护的计数器
+（参照 `driver/uart/uart_pl011.c` 的 `tx_dropped` / `pl011_tx_dropped()`）。
+
+`_SAMPLE` 宏的格式参数里可以引用 `_klog_seq_`（当前命中序号），
+但它**只在宏的参数表内有效**。
+
+**为什么不做基于时钟的窗口限流**：`g_system_ticks` 在 `timer_init()` 之前恒为 0，
+而 `timer_init()` 晚于 pmm/fs/vmm 初始化。窗口限流会认为"所有事件都发生在 tick 0"，
+打印一次后吞掉整个前 timer 启动阶段 —— 恰好是最需要日志的那一段。所以只做计数采样。
+
+**两条放置约束**：
+
+1. **不要放在被多个 TU include 的头文件的函数里** —— 每个 TU 各拿一份 `static` 计数器，
+   `_ONCE` 会退化成"每 TU 一次"，`_SAMPLE` 的预算成倍。
+2. riscv64 的 `.bss.boot` 不在 `__bss_start/__bss_end` 内、**不被清零**
+   （`boot/riscv64/link.ld`），所以这些宏不得用于 `.text.boot`/`.bss.boot` 里的代码。
+
+状态是**块作用域 `static`**，落在 `.bss`，靠启动时的 `clear_bss` 保证初值 0；
+SMP 安全靠 `__atomic_*`（RELAXED），不碰 `g_klog_lock`。
+
+## 该用哪个级别
+
+> 这一节是**规范**，不是建议。新增日志、或改一条日志的等级之前，先读它。
+
+### 唯一判据
+
+> **这条信息，在一次正常且成功的启动里，值不值得占用人类一行注意力？**
+
+- 值得 → `INFO`（如果这次运行其实并不正常，继续往上走 `WARN` / `ERROR`）
+- 不值得，但排障的时候会想要 → `DEBUG`
+- 不值得，而且按对象/按迭代反复发生 → `DEBUG` + 模块标签，或 `TRACE`
+
+### 各级别规则
+
+| 级别 | 规则 | 说明 |
+|---|---|---|
+| **ERROR** | 子系统**无法完成**被要求的事，或数据/正确性已丢失 | 见下方"鉴别句" |
+| **WARN** | 系统继续跑了，但**降级或非预期**：走了回退、拒绝了东西、能力缺失、吸收了潜在 bug | 可采样处 |
+| **INFO** | **状态迁移**或**生效配置**，每次迁移 / 每次启动 / 每个用户可见事件**至多一行** | 见下方两个取消资格 |
+| **DEBUG** | 排障时想要的一切非状态迁移信息 | **降级 INFO 的默认归宿**；应与模块标签同用 |
+| **TRACE** | 量级由输入无界驱动，或只受 CPU 速度限制 | 逐符号重定位、逐级页表遍历 |
+
+**ERROR 的鉴别句**：*健康系统会不会打出这行？会 → 就不是 ERROR。*
+最容易被误标成 ERROR 的四类：成功读到的结构体特性位、预期内的 `ENOSYS`、
+例行轮询超时、平台能力陈述（"这个平台没接这个设备"）。
+
+**INFO 的两个硬性取消资格**，命中任意一条就不是 INFO：
+
+1. **频率由输入驱动** —— 逐包、逐系统调用、逐目录项、逐页、逐 IRQ、逐循环迭代；
+2. **没有状态改变** —— "即将做 X"、"文件大小是 N"、寄存器快照、banner 拆成好几行。
+
+### 三条硬规则
+
+1. **ISR 里不得出现未采样的任何等级日志。** ISR 打日志等于在关中断下忙等 UART，
+   而逐中断日志是自己造中断风暴。确需观测就用 `_SAMPLE` 宏（见下节）。
+2. **INFO 及以上不得出现在循环体内**，除非行程数是小的编译期常量。
+   `for (i = 0; i < count; i++) KLOG_INFO(...)` **永远是 bug** ——
+   即使当前 `count` 通常等于 1，下一个调用者会传 4096。
+3. **逐字段结构体 dump / 寄存器快照 / 多行 banner** → 降到 DEBUG，或合并成一行 INFO。
+
+### 已经定过分歧的场合
+
+| 场合 | 判定 | 依据 |
+|---|---|---|
+| 成功读到的超级块特性位 | `INFO` | 一次性、生效配置 |
+| *不支持的*特性位掩码 | 非零 → `WARN`；为零 → `DEBUG` | 非零意味着在静默忽略磁盘语义 |
+| 未实现的系统调用返回失败（`ENOSYS`） | `WARN` + `_ONCE` | 返回失败是**正确行为**；"缺哪些"正是 bring-up 想要的清单 |
+| 未知的系统调用号 | `ERROR` + `_ONCE` | 连分类都没有；busybox 探测会刷屏 |
+| panic 路径上的日志 | `ERROR` | 打完就 `platform_panic()` |
+| "没接这个设备 / 这个平台不支持" | `WARN` 或 `INFO` | 平台事实，不是错误 |
+
+### 必须留在 INFO 的行
+
+下列行有**仓库外的依赖**（文档配方、脚本、人眼判据），降级会**静默**破坏它们：
+
+| 行 | 位置 | 依赖方 |
+|---|---|---|
+| `[vmmdev] boot: starting guest` | `kernel/fs/pseudofs/vmm_dev.c` | `docs/vmm/GUEST_NATIVE_QEMU.md` 用 `grep` 轮询它测启动耗时 |
+| `[klog] level=%u modules=%s` | `lib/klog.c` | 本文档开头"日志不见了先看这行" |
+| `=== STRING TEST: PASS (N cases) ===` | `tests/string_test.c` | `make test-string` 的成功判据（见 `docs/basic/STRING.md`） |
+| VMM 测例 transcript | `tests/vmm_test.c`、`kernel/vmm/{aarch64/el2_run.c,x86_64/vmx.c,riscv64/hext_run.c}` | `readme.md` 用 `LOG=info` 跑 `test-vmm`，这些行就是通过证据 |
+| `=== Launching busybox shell ===` 等启动进度标记 | `kernel/main.c` | "到底起来没有"的事实信号 |
+
+> VMM 那几行是**最容易改错的地方**：它们不能降级，只能改成采样 ——
+> 原来的 `iter % N == 0` 节流保留 INFO 语义，但把输出量压成有界。
+
 ## 输出格式
 
 ```
-[INFO][C0] kernel/main.c:174: === Avatar OS Kernel ===
+[INFO][C0] kernel/main.c:200: === Avatar OS Kernel aarch64 build ... ===
 [ERROR][C0] lib/klog.c:219: [klog] LOG_MODULES 有 1 个无法识别的模块名："gci"
 [DEBUG][C0] [MOD] driver/irq/gicv2.c:116: GIC: Detected 288 IRQ lines for virtualization
 ```
@@ -153,6 +256,8 @@ KLOG_UART("UART initialized at %d baud\n", baud);   /* == KLOG_MODULE_DEBUG(LOG_
 4. **线程/中断安全**：klog 自己用 IRQ-safe 自旋锁按**整条消息**加锁（格式化在锁外做），所以 ISR 里打日志是安全的。
 5. **断言不受日志级别影响**：`assert()` 失败时用 `kprintf` 直接输出（不是 `KLOG_ERROR`），因此 `LOG=none` 构建下**也会**打印 —— 以前它会被静默掉，只剩一个没有任何输出的 panic。
 6. **不要在被 klog 依赖的路径里打日志**：UART 驱动的"发送缓冲满、重试超时"分支里有 `logger_warn`，而它是在 klog 持锁逐字符输出的过程中被调用的 —— 一旦该分支可达就是同核自死锁。目前 UART 的缓冲/中断发送路径整体未启用（`uart_initialized` 永远是 false，初始化赋值被注释掉了），所以不可达；**启用那条路径前必须先解决这个重入**。同理，PL011 的 TX 缓冲锁用的是非 IRQ-safe 的 `spin_lock`。
+7. **`LOG_MODULES=` 消费得太晚，挡不住最早的几行**：`klog_init()` 由 `kernel/main.c` 调用，而 x86_64 / riscv64 在它**之前**就有架构初始化行打出（x86 的 `Initializing IDT + LAPIC...`、riscv 的 `Initializing exception handler...`）。`log_set_modules_by_name()` 是**整体赋值**（白名单而非合并），所以那几行是在默认全 1 掩码下输出的，不受 `LOG_MODULES=` 约束。目前已知并接受；要修得把级别/掩码初始化提前到 `platform_init()` 之前。
+8. **改了 `include/klog.h` 之后必须 `make clean`**：Makefile 的 `_CFG_SIG` 只跟踪 `GIC=/SMP=/LOG=/LOG_MODULES=`，**不跟踪头文件 mtime**（`-MMD` 的 `.d` 从未被 `-include`）。后果不是编译失败，而是部分 TU 用旧宏、部分用新宏 —— 输出看起来完全合理，只是行数和采样都是错的。验证这类改动时要按行数比对，所以这个坑特别容易骗过验收。
 
 ## 测试
 

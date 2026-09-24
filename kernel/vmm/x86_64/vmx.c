@@ -604,9 +604,9 @@ static int vmx_exit_handler(vcpu_t *vcpu)
 
         switch (no) {
         case VMX_HYPERCALL_PRINT:
-            if (arg1 % 20 == 0)
-                KLOG_INFO("[VMX] VMCALL_PRINT: iter=%llu (vcpu%d)\n",
-                          arg1, vcpu->vcpu_id);
+            /* 留在 INFO（test-vmm 的通过证据），抽稀成有界输出 */
+            KLOG_INFO_SAMPLE("[VMX] VMCALL_PRINT: iter=%llu (vcpu%d)\n",
+                             arg1, vcpu->vcpu_id);
             task_yield();
             return EL2_RESUME;
 

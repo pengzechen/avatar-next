@@ -101,7 +101,7 @@ uint64_t vm_init(void) {
     dw_uart_base      = 0xFEB50000UL;
     dw_uart_reg_shift = 2;
 #endif
-    KLOG_INFO("Initializing VM...\n");
+    KLOG_MM("Initializing VM...\n");
 
     /* 清空所有页表 */
     memset(kernel_pt0, 0, sizeof(kernel_pt0));
@@ -166,9 +166,9 @@ uint64_t vm_init(void) {
     set_block_entry(&boot_pt1[2], 0x80000000ULL, PTE_NORMAL_MEMORY);  /* 普通内存（0x80000000 - 0xbfffffff） */
 #endif
 
-    KLOG_INFO("VM page tables initialized\n");
-    KLOG_INFO("TTBR0 base: 0x%llx  TTBR1 base: 0x%llx\n",
-              (uint64_t)boot_pt0, (uint64_t)kernel_pt0);
+    KLOG_MM("VM page tables initialized\n");
+    KLOG_MM("TTBR0 base: 0x%llx  TTBR1 base: 0x%llx\n",
+            (uint64_t)boot_pt0, (uint64_t)kernel_pt0);
 
     return (uint64_t)kernel_pt0;
 }

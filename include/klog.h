@@ -119,6 +119,42 @@ log_is_module_enabled(uint64_t module)
     return (g_log_module_mask & module) != 0;
 }
 
+/* ===== 采样判定（限流用） ===== */
+
+/*
+ * klog_sample_hit - 采样判定：前 FIRST 次全打，之后只打 2 的幂，CAP 之后静音。
+ *
+ * 这是三处**相同**形状的手写采样的提取，以后不要再各写一份：
+ *     driver/irq/plic.c         的 plic_irq_log_sample()
+ *     boot/riscv64/exception.c  的 rv_irq_log_sample()
+ *     kernel/net/netdev.c       的内联 rx_count <= 16 || rx_count % 32 == 0
+ *
+ * 关键性质：单个调用点的输出**有上界**。FIRST=8 / CAP=4096 时最多
+ * 8 + 9 = 17 行，无论事件实际发生多少次。中断风暴下这是唯一能保住串口的性质。
+ *
+ * CAP 之后彻底静音 —— 想知道"现在到底多少次了"，看调用点自己维护的计数器
+ * （参照 driver/uart/uart_pl011.c 的 tx_dropped / pl011_tx_dropped()），
+ * 而不是指望这里继续打。
+ *
+ * 为什么**不**做基于时钟的窗口限流：g_system_ticks 在 timer_init() 之前恒为 0，
+ * 而 timer_init() 由 kernel/main.c 调用，**晚于** pmm/fs/vmm 初始化。窗口限流
+ * 会认为"所有事件都发生在 tick 0"，打印一次后吞掉整个前 timer 启动阶段 ——
+ * 恰好是最需要日志的那一段。所以只做计数采样。
+ */
+#ifndef KLOG_SAMPLE_FIRST
+#define KLOG_SAMPLE_FIRST   8U
+#endif
+#ifndef KLOG_SAMPLE_CAP
+#define KLOG_SAMPLE_CAP     4096U
+#endif
+
+static inline int
+klog_sample_hit(uint32_t n)
+{
+    return (n <= KLOG_SAMPLE_FIRST) ||
+           (n <= KLOG_SAMPLE_CAP && (n & (n - 1U)) == 0U);
+}
+
 /* ===== 日志宏定义 ===== */
 
 /* 核心日志函数（由 klog.c 实现） */
@@ -236,6 +272,158 @@ extern uint32_t klog_cpu_id(void);
 #define KLOG_FS(fmt, ...)      KLOG_MODULE_DEBUG(LOG_MODULE_FS, fmt, ##__VA_ARGS__)
 #define KLOG_NET(fmt, ...)     KLOG_MODULE_DEBUG(LOG_MODULE_NET, fmt, ##__VA_ARGS__)
 #define KLOG_SMP(fmt, ...)     KLOG_MODULE_DEBUG(LOG_MODULE_SMP, fmt, ##__VA_ARGS__)
+#define KLOG_GIC(fmt, ...)     KLOG_MODULE_DEBUG(LOG_MODULE_GIC, fmt, ##__VA_ARGS__)
+
+/* ===== 一次性 / 采样日志 =====
+ *
+ * 用于两类场合，判断依据见 docs/basic/KLOG.md「该用哪个级别」：
+ *   _ONCE   —— 同一调用点一辈子只该说一次（缺哪个系统调用、连自己都不认识的条件）
+ *   _SAMPLE —— 高频且持续（ISR、每包、每目录项），前几次全打、之后按 2 的幂抽稀
+ *
+ * 状态是**块作用域 static**，每个宏展开点各自一份，落在 .bss，靠内核启动时的
+ * clear_bss（boot/<arch>/boot.S，在任何 C 代码之前）保证初值为 0。
+ * 无分配、无锁；SMP 安全靠 __atomic_*（RELAXED 足够 —— 顺序由下游
+ * g_klog_lock 的 acquire/release 保证）。不打印时参数**不求值**，与其它宏一致。
+ *
+ * 两条放置约束：
+ *   1. **不要放在被多个 TU include 的头文件的函数里** —— 每个 TU 各拿一份 static，
+ *      _ONCE 会变成"每 TU 一次"，_SAMPLE 的预算成倍。
+ *   2. riscv64 的 `.bss.boot` 不在 __bss_start/__bss_end 内、**不被清零**
+ *      （boot/riscv64/link.ld），所以这些宏不得用于 .text.boot/.bss.boot 里的代码。
+ *
+ * SAMPLE 宏在格式参数里可以用 `_klog_seq_` 取到当前命中序号，例如
+ *     KLOG_WARN_SAMPLE("[plic] unhandled irq=%u hit#%u\n", irq, _klog_seq_);
+ * 它**只在宏的参数表内有效**。
+ */
+
+#define KLOG__ONCE_TAKE(flag) \
+    (__atomic_exchange_n(&(flag), 1U, __ATOMIC_RELAXED) == 0U)
+
+#define KLOG__SAMPLE_NEXT(n) \
+    __atomic_add_fetch(&(n), 1U, __ATOMIC_RELAXED)
+
+/* ERROR：与 KLOG_ERROR 一样没有级别门槛，只是多一次"只说一次/抽稀" */
+#define KLOG_ERROR_ONCE(fmt, ...) \
+    do { \
+        static uint32_t _klog_once; \
+        if (KLOG__ONCE_TAKE(_klog_once)) { \
+            kprintf(KLOG_COLOR_RED "[ERROR][C%u] " "%s:%d: " fmt \
+                    KLOG_COLOR_RESET "", \
+                    klog_cpu_id(), __FILE__, __LINE__, ##__VA_ARGS__); \
+        } \
+    } while (0)
+
+#define KLOG_ERROR_SAMPLE(fmt, ...) \
+    do { \
+        static uint32_t _klog_n; \
+        uint32_t _klog_seq_ = KLOG__SAMPLE_NEXT(_klog_n); \
+        if (klog_sample_hit(_klog_seq_)) { \
+            kprintf(KLOG_COLOR_RED "[ERROR][C%u] " "%s:%d: " fmt \
+                    KLOG_COLOR_RESET "", \
+                    klog_cpu_id(), __FILE__, __LINE__, ##__VA_ARGS__); \
+        } \
+    } while (0)
+
+#define KLOG_WARN_ONCE(fmt, ...) \
+    do { \
+        static uint32_t _klog_once; \
+        if (g_log_level >= LOG_LEVEL_WARN && KLOG__ONCE_TAKE(_klog_once)) { \
+            kprintf(KLOG_COLOR_YELLOW "[WARN][C%u] " "%s:%d: " fmt \
+                    KLOG_COLOR_RESET "", \
+                    klog_cpu_id(), __FILE__, __LINE__, ##__VA_ARGS__); \
+        } \
+    } while (0)
+
+#define KLOG_WARN_SAMPLE(fmt, ...) \
+    do { \
+        static uint32_t _klog_n; \
+        if (g_log_level >= LOG_LEVEL_WARN) { \
+            uint32_t _klog_seq_ = KLOG__SAMPLE_NEXT(_klog_n); \
+            if (klog_sample_hit(_klog_seq_)) { \
+                kprintf(KLOG_COLOR_YELLOW "[WARN][C%u] " "%s:%d: " fmt \
+                        KLOG_COLOR_RESET "", \
+                        klog_cpu_id(), __FILE__, __LINE__, ##__VA_ARGS__); \
+            } \
+        } \
+    } while (0)
+
+#define KLOG_INFO_ONCE(fmt, ...) \
+    do { \
+        static uint32_t _klog_once; \
+        if (g_log_level >= LOG_LEVEL_INFO && KLOG__ONCE_TAKE(_klog_once)) { \
+            kprintf(KLOG_COLOR_GREEN "[INFO][C%u] " "%s:%d: " fmt \
+                    KLOG_COLOR_RESET "", \
+                    klog_cpu_id(), __FILE__, __LINE__, ##__VA_ARGS__); \
+        } \
+    } while (0)
+
+#define KLOG_INFO_SAMPLE(fmt, ...) \
+    do { \
+        static uint32_t _klog_n; \
+        if (g_log_level >= LOG_LEVEL_INFO) { \
+            uint32_t _klog_seq_ = KLOG__SAMPLE_NEXT(_klog_n); \
+            if (klog_sample_hit(_klog_seq_)) { \
+                kprintf(KLOG_COLOR_GREEN "[INFO][C%u] " "%s:%d: " fmt \
+                        KLOG_COLOR_RESET "", \
+                        klog_cpu_id(), __FILE__, __LINE__, ##__VA_ARGS__); \
+            } \
+        } \
+    } while (0)
+
+/* 未打标签的 DEBUG/TRACE 版本**保留 GENERIC 检查**，否则 LOG_MODULES= 的
+ * 白名单语义会被这些新宏绕过去（对照上面的 KLOG_DEBUG）。 */
+#define KLOG_DEBUG_ONCE(fmt, ...) \
+    do { \
+        static uint32_t _klog_once; \
+        if ((g_log_level >= LOG_LEVEL_DEBUG) && \
+            log_is_module_enabled(LOG_MODULE_GENERIC) && \
+            KLOG__ONCE_TAKE(_klog_once)) { \
+            kprintf(KLOG_COLOR_BLUE "[DEBUG][C%u] " "%s:%d: " fmt \
+                    KLOG_COLOR_RESET "", \
+                    klog_cpu_id(), __FILE__, __LINE__, ##__VA_ARGS__); \
+        } \
+    } while (0)
+
+#define KLOG_DEBUG_SAMPLE(fmt, ...) \
+    do { \
+        static uint32_t _klog_n; \
+        if ((g_log_level >= LOG_LEVEL_DEBUG) && \
+            log_is_module_enabled(LOG_MODULE_GENERIC)) { \
+            uint32_t _klog_seq_ = KLOG__SAMPLE_NEXT(_klog_n); \
+            if (klog_sample_hit(_klog_seq_)) { \
+                kprintf(KLOG_COLOR_BLUE "[DEBUG][C%u] " "%s:%d: " fmt \
+                        KLOG_COLOR_RESET "", \
+                        klog_cpu_id(), __FILE__, __LINE__, ##__VA_ARGS__); \
+            } \
+        } \
+    } while (0)
+
+/* 模块版：守卫顺序 level → module → 原子操作，被掩码关掉的点连原子操作都不付。
+ * 这是"降级到 DEBUG 的嘈杂子系统"该用的宏 —— 也是让 LOG_MODULES=timer,mm,fs
+ * 真正能过滤东西的唯一途径。 */
+#define KLOG_MODULE_DEBUG_ONCE(module, fmt, ...) \
+    do { \
+        static uint32_t _klog_once; \
+        if ((g_log_level >= LOG_LEVEL_DEBUG) && log_is_module_enabled(module) && \
+            KLOG__ONCE_TAKE(_klog_once)) { \
+            kprintf(KLOG_COLOR_BLUE "[DEBUG][C%u] [MOD] " "%s:%d: " fmt \
+                    KLOG_COLOR_RESET "", \
+                    klog_cpu_id(), __FILE__, __LINE__, ##__VA_ARGS__); \
+        } \
+    } while (0)
+
+#define KLOG_MODULE_DEBUG_SAMPLE(module, fmt, ...) \
+    do { \
+        static uint32_t _klog_n; \
+        if ((g_log_level >= LOG_LEVEL_DEBUG) && log_is_module_enabled(module)) { \
+            uint32_t _klog_seq_ = KLOG__SAMPLE_NEXT(_klog_n); \
+            if (klog_sample_hit(_klog_seq_)) { \
+                kprintf(KLOG_COLOR_BLUE "[DEBUG][C%u] [MOD] " "%s:%d: " fmt \
+                        KLOG_COLOR_RESET "", \
+                        klog_cpu_id(), __FILE__, __LINE__, ##__VA_ARGS__); \
+            } \
+        } \
+    } while (0)
 
 /* ===== 兼容性宏 ===== */
 
@@ -279,6 +467,44 @@ extern uint32_t klog_cpu_id(void);
 
     #undef KLOG_MODULE_TRACE
     #define KLOG_MODULE_TRACE(module, fmt, ...) do {} while (0)
+
+    /*
+     * 下面这一组必须逐个列出：漏掉任何一个，它的 static 计数器和 __atomic_*
+     * 就会活到 release 构建里。那种情况**编译通过、链接通过、没有任何测试会失败**，
+     * 但上面"LOG=none 零日志开销"的承诺就静默失效了。只能靠对 build 目录下
+     * 全部 .o 跑 nm 并筛 _klog_ 这种检查才看得出来。
+     * （教训：注释里别写带通配符的 shell 路径 —— "斜杠加星号"会提前结束注释，
+     *   "斜杠加星号加..."这种序列 GCC 还会额外报 -Wcomment。）
+     */
+    #undef KLOG_ERROR_ONCE
+    #define KLOG_ERROR_ONCE(fmt, ...) do {} while (0)
+
+    #undef KLOG_ERROR_SAMPLE
+    #define KLOG_ERROR_SAMPLE(fmt, ...) do {} while (0)
+
+    #undef KLOG_WARN_ONCE
+    #define KLOG_WARN_ONCE(fmt, ...) do {} while (0)
+
+    #undef KLOG_WARN_SAMPLE
+    #define KLOG_WARN_SAMPLE(fmt, ...) do {} while (0)
+
+    #undef KLOG_INFO_ONCE
+    #define KLOG_INFO_ONCE(fmt, ...) do {} while (0)
+
+    #undef KLOG_INFO_SAMPLE
+    #define KLOG_INFO_SAMPLE(fmt, ...) do {} while (0)
+
+    #undef KLOG_DEBUG_ONCE
+    #define KLOG_DEBUG_ONCE(fmt, ...) do {} while (0)
+
+    #undef KLOG_DEBUG_SAMPLE
+    #define KLOG_DEBUG_SAMPLE(fmt, ...) do {} while (0)
+
+    #undef KLOG_MODULE_DEBUG_ONCE
+    #define KLOG_MODULE_DEBUG_ONCE(module, fmt, ...) do {} while (0)
+
+    #undef KLOG_MODULE_DEBUG_SAMPLE
+    #define KLOG_MODULE_DEBUG_SAMPLE(module, fmt, ...) do {} while (0)
 #endif
 
 #endif /* KLOG_H */

@@ -138,9 +138,9 @@ void gicv3_init(void)
     gicv3_gicd_base = platform_get_mmio("irq", "gicd");
     gicv3_gicr_base = platform_get_mmio("irq", "gicr");
 
-    logger_info("GICv3: Initializing (gicd=0x%llx gicr=0x%llx)\n",
-                (unsigned long long)gicv3_gicd_base,
-                (unsigned long long)gicv3_gicr_base);
+    KLOG_GIC("GICv3: Initializing (gicd=0x%llx gicr=0x%llx)\n",
+             (unsigned long long)gicv3_gicd_base,
+             (unsigned long long)gicv3_gicr_base);
 
     if (gicv3_gicd_base == 0 || gicv3_gicr_base == 0) {
         logger_error("GICv3: missing MMIO base (gicd/gicr not in platform.conf)\n");
@@ -196,7 +196,7 @@ void gicv3_init(void)
     ICC_WRITE(ICC_IGRPEN1_EL1, 1u);
     barrier_instr_full();
 
-    logger_info("GICv3: Init done\n");
+    KLOG_GIC("GICv3: Init done\n");
 }
 
 /*
@@ -225,8 +225,8 @@ void gicv3_init_secondary(void)
     ICC_WRITE(ICC_IGRPEN1_EL1, 1u);
     barrier_instr_full();
 
-    KLOG_INFO("[gicv3] secondary init done (GICR=0x%lx)\n",
-              (unsigned long)gicr);
+    KLOG_GIC("[gicv3] secondary init done (GICR=0x%lx)\n",
+             (unsigned long)gicr);
 }
 
 /* ── 中断使能 / 查询 ─────────────────────────────────────────── */

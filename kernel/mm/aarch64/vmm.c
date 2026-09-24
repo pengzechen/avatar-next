@@ -46,75 +46,65 @@ find_pte(pte_t *page_dir, // 虚拟地址
          uint64_t vaddr,
          int32_t alloc) // 返回虚拟地址
 {
-    // KLOG_INFO("find_pte called for vaddr: 0x%llx\n", vaddr);
+    KLOG_MODULE_TRACE(LOG_MODULE_MM, "find_pte: vaddr=0x%llx\n", vaddr);
 
     // 获取PGD索引
     pte_t *pgd = &page_dir[GET_PGD_INDEX(vaddr)];
-    // KLOG_INFO("    PGD Index: %d, PGD entry: 0x%llx\n", GET_PGD_INDEX(vaddr), pgd->pte);
 
     // 分配 PUD
     if (!pgd->table.is_valid)
     {
         if (!alloc)
             return NULL;
-        // KLOG_INFO("    PGD entry is not valid, allocating PUD\n");
         uint64_t pud_phys = pmm_alloc_pages(g_pmm, 1);
         if (!pud_phys)
             return NULL;
 
         pgd->pte = (pud_phys >> 12) << 12 | 0x3; // valid + table
-        // KLOG_INFO("    Allocated PUD at: 0x%llx, setting PGD entry to: 0x%llx\n", pud_phys, pgd->pte);
         memset(phys_to_virt(pud_phys), 0, 0x1000);
     }
 
     // 获取PUD表项
     pte_t *pud = (pte_t *)phys_to_virt((uint64_t)((pgd->table.next_table_addr) << 12ULL));
-    // KLOG_INFO("    PUD entry: 0x%llx\n", pud->pte);
 
     pte_t *pud_entry = &pud[GET_PUD_INDEX(vaddr)];
-    // KLOG_INFO("    PUD Index: %d, PUD entry: 0x%llx\n", GET_PUD_INDEX(vaddr), pud_entry->pte);
 
     // 分配 PMD
     if (!pud_entry->table.is_valid)
     {
         if (!alloc)
             return NULL;
-        // KLOG_INFO("    PUD entry is not valid, allocating PMD\n");
         uint64_t pmd_phys = pmm_alloc_pages(g_pmm, 1);
         if (!pmd_phys)
             return NULL;
 
         pud_entry->pte = (pmd_phys >> 12) << 12 | 0x3;
-        // KLOG_INFO("    Allocated PMD at: 0x%llx, setting PUD entry to: 0x%llx\n", pmd_phys, pud_entry->pte);
         memset(phys_to_virt(pmd_phys), 0, 0x1000);
     }
 
     // 获取PMD表项
     pte_t *pmd = (pte_t *)phys_to_virt((uint64_t)((pud_entry->table.next_table_addr) << 12ULL));
-    // KLOG_INFO("    PMD entry: 0x%llx\n", pmd->pte);
 
     pte_t *pmd_entry = &pmd[GET_PMD_INDEX(vaddr)];
-    // KLOG_INFO("    PMD Index: %d, PMD entry: 0x%llx\n", GET_PMD_INDEX(vaddr), pmd_entry->pte);
 
     // 分配 Page Table
     if (!pmd_entry->table.is_valid)
     {
         if (!alloc)
             return NULL;
-        // KLOG_INFO("    PMD entry is not valid, allocating Page Table\n");
         uint64_t pt_phys = pmm_alloc_pages(g_pmm, 1);
         if (!pt_phys)
             return NULL;
 
         pmd_entry->pte = (pt_phys >> 12) << 12 | 0x3;
-        // KLOG_INFO("    Allocated Page Table at: 0x%llx, setting PMD entry to: 0x%llx\n", pt_phys, pmd_entry->pte);
         memset(phys_to_virt(pt_phys), 0, 0x1000);
     }
 
     // 获取PTE表项
     pte_t *pte_base =
         (pte_t *)phys_to_virt((uint64_t)((pmd_entry->table.next_table_addr) << 12ULL));
-    // KLOG_INFO("    PTE Index: %d, PTE entry: 0x%llx\n", GET_PTE_INDEX(vaddr), pte_base[GET_PTE_INDEX(vaddr)].pte);
+    KLOG_MODULE_TRACE(LOG_MODULE_MM, "  PTE[%d] = 0x%llx\n",
+                      GET_PTE_INDEX(vaddr), pte_base[GET_PTE_INDEX(vaddr)].pte);
 
     return &pte_base[GET_PTE_INDEX(vaddr)];
 }
@@ -134,8 +124,6 @@ memory_create_map(void *page_dir, uint64_t vaddr, uint64_t paddr, int32_t count,
         start -= KERNEL_VMA;
     if (end > KERNEL_VMA)
         end -= KERNEL_VMA;
-    // KLOG_DEBUG("=>Starting memory_create_map for vaddr 0x%llx, paddr 0x%llx, count %d\n",
-    //        vaddr, paddr, count);
 
     for (int32_t i = 0; i < count; i++)
     {
@@ -143,20 +131,21 @@ memory_create_map(void *page_dir, uint64_t vaddr, uint64_t paddr, int32_t count,
         pte_t *pte_entry = find_pte((pte_t *)page_dir, vaddr, 1);
         if (pte_entry == NULL)
         {
-            KLOG_INFO("memory_create_map: Failed to find or allocate PTE for vaddr 0x%llx\n", vaddr);
+            /* 映射失败，调用方拿不到它要的地址空间 —— 真错误 */
+            KLOG_ERROR("memory_create_map: Failed to find or allocate PTE for vaddr 0x%llx\n", vaddr);
             return -1;
         }
 
         if (pte_entry->l3_page.is_valid)
         {
-            KLOG_INFO("memory_create_map: vaddr 0x%llx is already mapped to pfn 0x%llx\n",
-                   vaddr,
-                   pte_entry->l3_page.pfn);
+            /* 重复映射是调用方的约定违反：降级但继续，且每个调用点只说一次
+             * （循环调用的调用方会让它反复触发）。两个 return 都在循环体内，
+             * 所以单次调用最多触发一次。 */
+            KLOG_WARN_ONCE("memory_create_map: vaddr 0x%llx is already mapped to pfn 0x%llx\n",
+                           vaddr,
+                           pte_entry->l3_page.pfn);
             return -1;
         }
-
-        // 打印分配信息
-        // KLOG_INFO("Mapping vaddr 0x%llx to paddr 0x%llx\n", vaddr, paddr);    0(ng) 1(af) 11(sh) 00(ap) 0(ns) 000(attr) 01(table valid)  0x701
 
         // 设置 PTE 为有效并设置物理地址
         pte_entry->l3_page.is_valid = 1;
@@ -192,10 +181,12 @@ memory_create_map(void *page_dir, uint64_t vaddr, uint64_t paddr, int32_t count,
             pte_entry->l3_page.attr_index = 0; // device memory
         }
 
-        // 输出映射后的权限和地址信息
-        // KLOG_INFO("Mapped PTE entry: is_valid=%d, pfn=0x%llx, AF=%d, SH=%d, AP=%d, UXN=%d, PXN=%d, attr_index=%d\n",
-        //        pte_entry->l3_page.is_valid, pte_entry->l3_page.pfn, pte_entry->l3_page.AF, pte_entry->l3_page.SH,
-        //        pte_entry->l3_page.AP, pte_entry->l3_page.UXN, pte_entry->l3_page.PXN, pte_entry->l3_page.attr_index);
+        /* 映射结果：页表遍历的落点，排查"映射对不对"时最想要的一条 */
+        KLOG_MODULE_TRACE(LOG_MODULE_MM,
+                          "  mapped: valid=%d pfn=0x%llx AF=%d SH=%d AP=%d UXN=%d PXN=%d attr=%d\n",
+                          pte_entry->l3_page.is_valid, pte_entry->l3_page.pfn, pte_entry->l3_page.AF,
+                          pte_entry->l3_page.SH, pte_entry->l3_page.AP, pte_entry->l3_page.UXN,
+                          pte_entry->l3_page.PXN, pte_entry->l3_page.attr_index);
 
         // 更新虚拟地址和物理地址
         vaddr += PAGE_SIZE;
@@ -256,7 +247,7 @@ memory_alloc_page(void *page_dir, // 虚拟地址
         uint64_t paddr = pmm_alloc_pages(g_pmm, 1);
         if (paddr == 0)
         {
-            KLOG_INFO("mem alloc failed. no memory");
+            KLOG_ERROR("mem alloc failed. no memory\n");
             return -1;
         }
 
@@ -264,7 +255,7 @@ memory_alloc_page(void *page_dir, // 虚拟地址
         int32_t err = memory_create_map((pte_t *)page_dir, curr_vaddr, paddr, 1, perm);
         if (err < 0)
         {
-            KLOG_INFO("create memory map failed. err = %d", err);
+            KLOG_ERROR("create memory map failed. err = %d\n", err);
             pmm_free_pages(g_pmm, vaddr, i + 1);
             return -1;
         }
@@ -308,7 +299,7 @@ create_uvm(void)
     end = ALIGN_UP(end, PAGE_SIZE);
     // 这里start和end计算出来的都是物理地址
 
-    KLOG_INFO("map kernel start: 0x%llx, end: 0x%llx\n", start, end);
+    KLOG_MM("map kernel start: 0x%llx, end: 0x%llx\n", start, end);
     if (start > KERNEL_VMA)
         start -= KERNEL_VMA;
     if (end > KERNEL_VMA)
@@ -320,7 +311,7 @@ create_uvm(void)
     {
         memory_create_map(page_dir, addr, addr, 1, 1); // 内核空间先恒等映射
     }
-    KLOG_INFO("map device memory start: 0x%llx, end: 0x%llx\n", DEVICE_MEM_START, DEVICE_MEM_END);
+    KLOG_MM("map device memory start: 0x%llx, end: 0x%llx\n", DEVICE_MEM_START, DEVICE_MEM_END);
 
     for (uint64_t addr = DEVICE_MEM_START; addr < DEVICE_MEM_END; addr += PAGE_SIZE)
     {
@@ -390,7 +381,6 @@ void _destroy_page_table_vm(pte_t *table, int32_t level)
 void _destroy_page_table(pte_t *table, int32_t level)
 {
     // 输出当前正在处理的层级
-    // KLOG_INFO("Destroying page table at level %d\n", level);
 
     if (level >= 3)
         return;
@@ -414,8 +404,6 @@ void _destroy_page_table(pte_t *table, int32_t level)
         void *next_table = phys_to_virt(next_table_phys);
 
         // 输出当前页表项的信息
-        // KLOG_INFO("Level %d, Entry %d: is_valid = %d, is_table = %d, Next Table Address = 0x%llx\n",
-        //        level, i, entry->table.is_valid, entry->l3_page.is_table, next_table_phys);
 
         // 递归释放下一层页表
         _destroy_page_table((pte_t *)next_table, level + 1);
@@ -423,7 +411,6 @@ void _destroy_page_table(pte_t *table, int32_t level)
         // 释放当前这一级的页表页
         if (entry->l3_page.is_table == 1)
         {
-            // KLOG_INFO("Level %d, Freeing page table at entry %d: 0x%llx\n", level, i, next_table_phys);
             pmm_free_pages(g_pmm, next_table_phys, 1);
         }
     }
@@ -489,7 +476,8 @@ bool _copy_page_table(pte_t *src_table, pte_t *dst_table, int32_t level)
 
             // 设置当前页表项指向新分配的页表
             dst_table[i].pte = (dst_next_phys >> 12 << 12) | (src_entry->pte & 0xFFF);
-            // KLOG_INFO("copy structure, src_next_phys: 0x%llx, dest phys: 0x%llx, level: %d\n", src_next_phys, dst_next_phys, level);
+            KLOG_MODULE_TRACE(LOG_MODULE_MM, "  copy: src=0x%llx dst=0x%llx level=%d\n",
+                              src_next_phys, dst_next_phys, level);
             if (!_copy_page_table(src_next, dst_next, level + 1))
                 return false;
         }
@@ -523,8 +511,9 @@ void copydata_to_uvm(void *page_dir, uint64_t vaddr, uint64_t paddr, uint64_t si
         pte_t *pte = find_pte((pte_t *)page_dir, curr_vaddr, 0);
         if (!pte || pte->l3_page.is_valid == 0)
         {
-            // 页未映射，直接跳过或报错
-            KLOG_INFO("No valid mapping for vaddr 0x%llx\n", curr_vaddr);
+            /* 页未映射 —— 拷贝会被**静默截断**，数据已经不一致了。
+             * 循环体内但紧跟 return，所以每次调用最多一次，不需要采样。 */
+            KLOG_ERROR("copydata_to_uvm: no valid mapping for vaddr 0x%llx\n", curr_vaddr);
             return;
         }
 

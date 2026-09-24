@@ -91,7 +91,12 @@ avatar/
 
 ### 调试和日志
 
-- **内核日志**: `docs/basic/KLOG.md` - klog.h 日志系统和模块控制
+- **内核日志**: `docs/basic/KLOG.md` - klog.h 日志系统、模块控制，以及
+  **「该用哪个级别」的规范**（新增/改日志等级前必读）。含：唯一判据、
+  三条硬规则（ISR 不得未采样打日志 / INFO 不得进循环体 / 逐字段 dump 一律 DEBUG）、
+  必须留在 INFO 的行清单、`_ONCE`/`_SAMPLE` 限流宏。
+  > 改 `include/klog.h` 之后**必须 `make clean`** —— 头文件 mtime 不被跟踪，
+  > 半新半旧的宏混编出来的日志「看起来完全合理」，但行数和采样都是错的。
 - **断言系统**: `docs/basic/ASSERT.md` - assert.h 运行时和编译时断言
 
 ### 数据结构和工具
@@ -187,13 +192,22 @@ static inline void operation(void);
 ```
 
 ### 4. 集成日志
-使用 klog 进行错误和调试输出：
+使用 klog 进行错误和调试输出。**等级怎么选见 `docs/basic/KLOG.md`「该用哪个级别」**，
+一句话判据：*这条信息，在一次正常且成功的启动里，值不值得占用人类一行注意力？*
 
 ```c
-KLOG_ERROR("Critical error: %s", msg);
-KLOG_DEBUG("Value: %d", value);
-KLOG_MODULE_DEBUG(LOG_MODULE_UART, "UART init");
+/* 值得 -> INFO；排障才要的细节 -> DEBUG + 模块标签 */
+KLOG_ERROR("Critical error: %s\n", msg);
+KLOG_INFO("sensor up: %d Hz\n", rate);
+KLOG_DEBUG("Value: %d\n", value);
+KLOG_UART("UART init\n");                       /* == KLOG_MODULE_DEBUG(LOG_MODULE_UART, ...) */
+
+/* 高频且持续（ISR / 每包 / 每目录项）—— 必须限流，不许裸 KLOG_* */
+KLOG_WARN_SAMPLE("[plic] unhandled irq=%u hit#%u\n", irq, _klog_seq_);
+KLOG_WARN_ONCE("[syscall] open('%s') not implemented\n", path);
 ```
+
+> 所有宏都**不**自动补 `\n`；漏写会和下一行粘在一起。
 
 ### 5. 内存安全
 同步和 I/O 操作集成内存屏障：

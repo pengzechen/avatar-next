@@ -44,9 +44,9 @@ err_t avatar_netif_init(struct netif *netif)
     netif->mtu = 1500;
     netif->flags = NETIF_FLAG_BROADCAST | NETIF_FLAG_ETHARP | NETIF_FLAG_LINK_UP;
 
-    KLOG_INFO("[lwip] netif av0 mac=%02x:%02x:%02x:%02x:%02x:%02x mtu=%u\n",
-              mac[0], mac[1], mac[2], mac[3], mac[4], mac[5],
-              (unsigned)netif->mtu);
+    KLOG_NET("[lwip] netif av0 mac=%02x:%02x:%02x:%02x:%02x:%02x mtu=%u\n",
+             mac[0], mac[1], mac[2], mac[3], mac[4], mac[5],
+             (unsigned)netif->mtu);
     return ERR_OK;
 }
 
@@ -95,11 +95,13 @@ void avatar_lwip_poll_rx(struct netif *netif)
         pbuf_realloc(p, (u16_t)n);
 
         rx_count++;
-        if (rx_count <= 16U || (rx_count % 32U) == 0U) {
-            uint8_t *f = (uint8_t *)p->payload;
-            uint16_t etype = n >= 14 ? ((uint16_t)f[12] << 8) | f[13] : 0U;
-            KLOG_INFO("[lwip] rx #%u len=%d etype=0x%04x\n", rx_count, n, etype);
-        }
+        /* 与 netdev.c 的 rx 日志同一级别 + 同一模块位：同一个包可能被两层
+         * 各记一次（recv_into 缺失时 netdev 会走自己的 recv）。 */
+        uint8_t *f = (uint8_t *)p->payload;
+        uint16_t etype = n >= 14 ? ((uint16_t)f[12] << 8) | f[13] : 0U;
+        KLOG_MODULE_DEBUG_SAMPLE(LOG_MODULE_NET,
+                                 "[lwip] rx #%u len=%d etype=0x%04x\n",
+                                 rx_count, n, etype);
 
         err_t rc = netif->input(p, netif);
         if (rc != ERR_OK) {

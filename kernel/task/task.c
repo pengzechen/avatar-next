@@ -231,7 +231,7 @@ task_init(void)
     /* 初始化调度器，传入 idle 任务 */
     sched_init(&g_idle_task);
 
-    KLOG_INFO("[task] subsystem initialized, idle task id=%u stack_base=%p\n",
+    KLOG_TASK("[task] subsystem initialized, idle task id=%u stack_base=%p\n",
               g_idle_task.id, (void *)g_idle_task.stack_base);
 }
 
@@ -248,7 +248,7 @@ void
 task_switch_to_idle_stack(void)
 {
     uintptr_t new_sp = (uintptr_t)(g_idle_stack + TASK_STACK_SIZE);
-    KLOG_INFO("[task] switching to idle stack at 0x%lx\n", (unsigned long)new_sp);
+    KLOG_TASK("[task] switching to idle stack at 0x%lx\n", (unsigned long)new_sp);
 
     /* 切到 idle 栈后**永不返回**：直接在 inline asm 里跳到 idle 主循环，
      * 跳过编译器生成的 epilogue（否则会从未初始化的新栈读 LR/RBP 导
@@ -398,7 +398,7 @@ process_create(const char *name, uint64_t user_entry, uint64_t user_code_size,
         task->user_entry = USER_CODE_BASE;
 
         KLOG_DEBUG("[task] Created RISC-V user PGD=0x%llx for '%s'\n",
-               pgd_phys, name);
+                   pgd_phys, name);
     }
 #elif ARCH_X86_64
     {
@@ -423,7 +423,7 @@ process_create(const char *name, uint64_t user_entry, uint64_t user_code_size,
         task->user_entry = USER_CODE_BASE;
 
         KLOG_DEBUG("[task] Created x86_64 user PGD=0x%llx for '%s'\n",
-               pgd_phys, name);
+                   pgd_phys, name);
     }
 #else
     /* 其他架构暂时使用共享内核页表 */

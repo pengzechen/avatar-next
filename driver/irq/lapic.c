@@ -145,8 +145,8 @@ static bool pit_poll_tsc_freq(uint64_t *out_hz)
         return false;
     }
 
-    KLOG_INFO("TSC freq: PIT counter %u counts over %llu tsc ticks\n",
-              elapsed, (unsigned long long)PIT_WAIT_TSC_TICKS);
+    KLOG_TIMER("TSC freq: PIT counter %u counts over %llu tsc ticks\n",
+               elapsed, (unsigned long long)PIT_WAIT_TSC_TICKS);
     *out_hz = hz;
     return true;
 }
@@ -248,9 +248,9 @@ void lapic_init(void)
     /* 设置 Spurious Vector Register：使能 APIC + 伪中断向量 0xFF */
     lapic_write(LAPIC_REG_SVR, LAPIC_SVR_ENABLE | 0xFFu);
 
-    KLOG_INFO("LAPIC init: ID=0x%x, ver=0x%x\n",
-              lapic_read(LAPIC_REG_ID) >> 24,
-              lapic_read(LAPIC_REG_VER) & 0xFF);
+    KLOG_TIMER("LAPIC init: ID=0x%x, ver=0x%x\n",
+               lapic_read(LAPIC_REG_ID) >> 24,
+               lapic_read(LAPIC_REG_VER) & 0xFF);
 }
 
 uint32_t lapic_id(void)
@@ -333,8 +333,8 @@ void lapic_timer_init(uint8_t vector)
 
     uint32_t ticks_in_10ms = 0xFFFFFFFFu - lapic_read(LAPIC_REG_TIMER_CCR);
 
-    KLOG_INFO("LAPIC timer: %u ticks in 10ms (div=16, tsc_delta=%llu)\n",
-              ticks_in_10ms, (unsigned long long)(tsc_after - tsc_before));
+    KLOG_TIMER("LAPIC timer: %u ticks in 10ms (div=16, tsc_delta=%llu)\n",
+               ticks_in_10ms, (unsigned long long)(tsc_after - tsc_before));
 
     /* 计算每次 tick 中断所需的计数值
      * TIMER_FREQUENCY_HZ = 中断频率 (如 100 Hz → 10ms/tick)
@@ -345,8 +345,8 @@ void lapic_timer_init(uint8_t vector)
     if (ticks_per_interrupt == 0)
         ticks_per_interrupt = ticks_in_10ms;   /* 保底 */
 
-    KLOG_INFO("LAPIC timer: %u ticks/interrupt @ %d Hz\n",
-              ticks_per_interrupt, TIMER_FREQUENCY_HZ);
+    KLOG_TIMER("LAPIC timer: %u ticks/interrupt @ %d Hz\n",
+               ticks_per_interrupt, TIMER_FREQUENCY_HZ);
 
     /* 配置 Periodic 模式 + 向量 */
     lapic_write(LAPIC_REG_TIMER_ICR, ticks_per_interrupt);

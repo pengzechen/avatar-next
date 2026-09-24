@@ -73,7 +73,7 @@ timer_init(void)
     // 调用架构特定的初始化
     timer_arch_init();
 
-    KLOG_INFO("Timer initialized successfully\n");
+    KLOG_TIMER("Timer initialized successfully\n");
 }
 
 // 启用定时器
@@ -313,13 +313,13 @@ timer_reset_stats(void)
 void
 timer_dump_info(void)
 {
-    KLOG_INFO("Timer Information:\n");
-    KLOG_INFO("  Frequency: %llu Hz\n", g_timer_frequency);
-    KLOG_INFO("  System ticks: %llu\n", g_system_ticks);
-    KLOG_INFO("  Uptime: %llu ms\n", timer_get_uptime_ms());
+    KLOG_TIMER("Timer Information:\n");
+    KLOG_TIMER("  Frequency: %llu Hz\n", g_timer_frequency);
+    KLOG_TIMER("  System ticks: %llu\n", g_system_ticks);
+    KLOG_TIMER("  Uptime: %llu ms\n", timer_get_uptime_ms());
 
-    KLOG_INFO("Timer Statistics:\n");
-    KLOG_INFO("  Total interrupts: %llu\n", g_timer_stats.total_interrupts);
-    KLOG_INFO("  Total schedules: %llu\n", g_timer_stats.total_schedules);
-    KLOG_INFO("  Total seconds: %llu\n", g_timer_stats.total_seconds);
+    KLOG_TIMER("Timer Statistics:\n");
+    KLOG_TIMER("  Total interrupts: %llu\n", g_timer_stats.total_interrupts);
+    KLOG_TIMER("  Total schedules: %llu\n", g_timer_stats.total_schedules);
+    KLOG_TIMER("  Total seconds: %llu\n", g_timer_stats.total_seconds);
 }

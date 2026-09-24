@@ -33,9 +33,9 @@ timer_arch_init(void)
      * g_timer_frequency 设一个占位值（校准后 lapic.c 内部使用）*/
     g_timer_frequency = 0;   /* 将由 lapic_timer_init 校准 */
 
-    KLOG_INFO("Timer initialization (x86_64 LAPIC):\n");
-    KLOG_INFO("  Target frequency: %d Hz\n", TIMER_FREQUENCY_HZ);
-    KLOG_INFO("  Tick interval: %d ms\n", TIMER_TICK_MS);
+    /* 时钟配错是经典 bug 来源 —— 值得一行；原来是三行 */
+    KLOG_INFO("Timer: x86_64 LAPIC tick=%dHz (%dms)\n",
+              TIMER_FREQUENCY_HZ, TIMER_TICK_MS);
 
     timer_reset_stats();
 
@@ -48,14 +48,14 @@ timer_arch_enable(void)
 {
     /* 校准 LAPIC 频率并启动 Periodic 模式 */
     lapic_timer_init(IDT_LAPIC_TIMER_VEC);
-    KLOG_INFO("LAPIC timer started @ %d Hz\n", TIMER_FREQUENCY_HZ);
+    KLOG_TIMER("LAPIC timer started @ %d Hz\n", TIMER_FREQUENCY_HZ);
 }
 
 void
 timer_arch_disable(void)
 {
     lapic_timer_stop();
-    KLOG_INFO("LAPIC timer stopped\n");
+    KLOG_TIMER("LAPIC timer stopped\n");
 }
 
 void
@@ -92,7 +92,6 @@ timer_handler(void *frame)
         g_x86_tick_counter = 0;
         g_timer_stats.total_seconds = g_x86_uptime_seconds;
 
-        // KLOG_INFO("System running - Uptime: %llus\n", g_x86_uptime_seconds);
     }
 
     /* LAPIC 必须手动发 EOI */

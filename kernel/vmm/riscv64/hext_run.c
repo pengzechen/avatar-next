@@ -509,9 +509,9 @@ static int handle_vs_ecall(vcpu_t *vcpu)
 
     switch (ext) {
     case GUEST_ECALL_PRINT:
-        if (arg0 % 20 == 0)
-            KLOG_INFO("[HEXT] ECALL_PRINT: iter=%llu (vcpu%d)\n",
-                      (unsigned long long)arg0, vcpu->vcpu_id);
+        /* 留在 INFO（test-vmm 的通过证据），抽稀成有界输出 */
+        KLOG_INFO_SAMPLE("[HEXT] ECALL_PRINT: iter=%llu (vcpu%d)\n",
+                         (unsigned long long)arg0, vcpu->vcpu_id);
         return EL2_RESUME;
 
     case GUEST_ECALL_DONE:

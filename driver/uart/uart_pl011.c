@@ -191,7 +191,7 @@ void pl011_init(void) {
     
     // uart_initialized = true;
     
-    logger_info("UART interrupt driver initialized\n");
+    KLOG_UART("UART interrupt driver initialized\n");
 }
 
 // Non-blocking character output

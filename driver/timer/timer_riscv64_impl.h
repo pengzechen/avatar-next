@@ -36,10 +36,9 @@ timer_arch_init(void)
     // 设置定时器频率
     g_timer_frequency = TIMER_FREQ_HZ;
 
-    KLOG_INFO("Timer initialization (RISC-V):\n");
-    KLOG_INFO("  Timer frequency: %llu Hz\n", g_timer_frequency);
-    KLOG_INFO("  Target frequency: %d Hz\n", TIMER_FREQUENCY_HZ);
-    KLOG_INFO("  Tick interval: %d ms\n", TIMER_TICK_MS);
+    /* 时钟配错是经典 bug 来源 —— 值得一行；原来是四行 */
+    KLOG_INFO("Timer: riscv64 freq=%lluHz tick=%dHz (%dms)\n",
+              g_timer_frequency, TIMER_FREQUENCY_HZ, TIMER_TICK_MS);
 
     // 禁用定时器
     timer_disable();
@@ -79,7 +78,7 @@ timer_arch_enable(void)
     // 计算下一次中断的时间
     uint64_t ticks_per_interrupt = g_timer_frequency / TIMER_FREQUENCY_HZ;
 
-    KLOG_INFO("Timer enabled with %llu ticks per interrupt\n", ticks_per_interrupt);
+    KLOG_TIMER("Timer enabled with %llu ticks per interrupt\n", ticks_per_interrupt);
 
     /*
      * 设时间原点。用 "now - 已过周期数*step" 而不是直接取 now：
@@ -97,7 +96,7 @@ timer_arch_enable(void)
     sie |= SIE_STIE;  // 启用机器定时器中断
     CSR_WRITE(sie, sie);
 
-    KLOG_INFO("Machine timer interrupt enabled\n");
+    KLOG_TIMER("Machine timer interrupt enabled\n");
 }
 
 void
@@ -108,7 +107,7 @@ timer_arch_disable(void)
     sie &= ~SIE_STIE;  // 禁用机器定时器中断
     CSR_WRITE(sie, sie);
 
-    KLOG_INFO("Timer disabled\n");
+    KLOG_TIMER("Timer disabled\n");
 }
 
 void

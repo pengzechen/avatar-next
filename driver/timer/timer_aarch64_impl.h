@@ -32,10 +32,9 @@ timer_arch_init(void)
     // 读取定时器频率
     g_timer_frequency = CNTFRQ_EL0_READ();
 
-    KLOG_INFO("Timer initialization (AArch64):\n");
-    KLOG_INFO("  Timer frequency: %llu Hz\n", g_timer_frequency);
-    KLOG_INFO("  Target frequency: %d Hz\n", TIMER_FREQUENCY_HZ);
-    KLOG_INFO("  Tick interval: %d ms\n", TIMER_TICK_MS);
+    /* 时钟配错是经典 bug 来源 —— 值得一行；原来是四行 */
+    KLOG_INFO("Timer: aarch64 freq=%lluHz tick=%dHz (%dms)\n",
+              g_timer_frequency, TIMER_FREQUENCY_HZ, TIMER_TICK_MS);
 
     // 禁用定时器
     timer_disable();
@@ -53,7 +52,7 @@ timer_arch_init(void)
     irq_install(CNTP_TIMER, timer_handler);
     irq_enable_irq(CNTP_TIMER);
 
-    KLOG_INFO("Timer IRQ %d installed and enabled\n", CNTP_TIMER);
+    KLOG_TIMER("Timer IRQ %d installed and enabled\n", CNTP_TIMER);
 }
 
 void
@@ -68,8 +67,8 @@ timer_arch_enable(void)
     // 启用定时器，不屏蔽中断
     CNTP_CTL_EL0_WRITE(CNTV_CTL_ENABLE);
 
-    KLOG_INFO("Timer enabled with %llu ticks per interrupt\n", ticks_per_interrupt);
-    KLOG_INFO("Timer CTL: 0x%x, TVAL: %llu\n", CNTP_CTL_EL0_READ(), ticks_per_interrupt);
+    KLOG_TIMER("Timer enabled with %llu ticks per interrupt\n", ticks_per_interrupt);
+    KLOG_TIMER("Timer CTL: 0x%x, TVAL: %llu\n", CNTP_CTL_EL0_READ(), ticks_per_interrupt);
 }
 
 void
@@ -78,7 +77,7 @@ timer_arch_disable(void)
     // 禁用定时器并屏蔽中断
     CNTP_CTL_EL0_WRITE(CNTV_CTL_IMASK);
 
-    KLOG_INFO("Timer disabled\n");
+    KLOG_TIMER("Timer disabled\n");
 }
 
 void
@@ -123,7 +122,6 @@ timer_handler(uint64_t *stack_pointer)
     // 调度下一个tick
     timer_schedule_next_tick();
 
-    // KLOG_DEBUG("[timer_handler] tick %llu, g_tick_cb=%p\n", g_system_ticks, g_tick_cb);
 
     // 调用 tick 回调（调度器 sched_tick）
     // 注意SMP 启动期间 secondary timer 可能在 g_tick_cb 被设之前就已触发

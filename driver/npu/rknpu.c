@@ -65,8 +65,13 @@ static void rknpu_irq_handler(uint64_t *frame)
     uint32_t task_count = status & rk3588_cfg.pc_task_number_mask;
 
     g_irq_count++;
-    KLOG_INFO("rknpu: IRQ #%d status=0x%x task_count=%u\n",
-              g_irq_count, status, task_count);
+    /*
+     * 中断上下文 + 逐中断一行：必须**既降级又采样**。只降 DEBUG 挡不住
+     * LOG=debug 构建下的中断风暴 —— 那正是会把串口拖死的情形。
+     */
+    KLOG_MODULE_DEBUG_SAMPLE(LOG_MODULE_DRIVER,
+                             "rknpu: IRQ #%d status=0x%x task_count=%u\n",
+                             g_irq_count, status, task_count);
 
     /* 清除所有中断位 */
     npu_write(RKNPU_INT_CLEAR_ALL, RKNPU_INT_CLEAR);

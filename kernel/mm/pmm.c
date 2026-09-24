@@ -53,14 +53,10 @@ void pmm_init(pmm_t *pmm,
     /* 初始化自旋锁 */
     spinlock_init(&pmm->lock);
 
-    KLOG_INFO("PMM initialized:\n");
-    KLOG_INFO("  start_addr  = 0x%llx\n", start_addr);
-    KLOG_INFO("  total_size = 0x%llx (%llu MB)\n",
-              size, size / (1024 * 1024));
-    KLOG_INFO("  page_size  = 0x%llx (%u KB)\n",
-              pmm->page_size, pmm->page_size / 1024);
-    KLOG_INFO("  total_pages = %llu\n", pmm->total_pages);
-    KLOG_INFO("  free_pages  = %llu\n", pmm->free_pages);
+    /* 原来是六行结构体 dump —— 合并成一行：这是操作者真正要的那条内存事实 */
+    KLOG_INFO("PMM: base=0x%llx size=%lluMB page=%uKB pages=%llu free=%llu\n",
+              start_addr, size / (1024 * 1024), pmm->page_size / 1024,
+              pmm->total_pages, pmm->free_pages);
 }
 
 /* ── 页面分配 ───────────────────────────────────────────────────── */
@@ -93,8 +89,6 @@ uint64_t pmm_alloc_pages(pmm_t *pmm, uint32_t page_count)
         /* 更新空闲页面计数 */
         pmm->free_pages -= page_count;
 
-        // KLOG_DEBUG("PMM: allocated %u pages at 0x%llx (index %zu)\n",
-        //            page_count, paddr, page_index);
     }
 
     spin_unlock(&pmm->lock);
@@ -155,8 +149,6 @@ void pmm_free_pages(pmm_t *pmm, uint64_t paddr, uint32_t page_count)
 
         pmm->free_pages += freed;
 
-        // KLOG_DEBUG("PMM: freed %u pages at 0x%llx (index %llu)\n",
-        //            page_count, paddr, page_index);
     } else {
         bad_range = true;
     }
@@ -201,9 +193,9 @@ void pmm_mark_allocated(pmm_t *pmm, uint64_t start_addr, uint64_t end_addr)
     uint64_t end_page   = (end_addr - pmm->start_addr) / pmm->page_size;
     uint64_t free_before, free_after, newly_marked = 0;
 
-    KLOG_INFO("PMM: marking range 0x%llx - 0x%llx as allocated\n", start_addr, end_addr);
-    KLOG_INFO("  page indices: %llu - %llu (total: %llu pages)\n",
-              start_page, end_page, end_page - start_page + 1);
+    KLOG_MM("PMM: marking range 0x%llx - 0x%llx as allocated\n", start_addr, end_addr);
+    KLOG_MM("  page indices: %llu - %llu (total: %llu pages)\n",
+            start_page, end_page, end_page - start_page + 1);
 
     /* 先锁定，读取 free_pages */
     spin_lock(&pmm->lock);
@@ -222,8 +214,8 @@ void pmm_mark_allocated(pmm_t *pmm, uint64_t start_addr, uint64_t end_addr)
     spin_unlock(&pmm->lock);
 
     /* 在锁外输出日志 */
-    KLOG_INFO("  newly_marked: %llu pages, free_pages before: %llu, after: %llu\n",
-              newly_marked, free_before, free_after);
+    KLOG_MM("  newly_marked: %llu pages, free_pages before: %llu, after: %llu\n",
+            newly_marked, free_before, free_after);
 }
 
 /*
@@ -242,10 +234,10 @@ void pmm_mark_kernel_allocated(pmm_t *pmm)
     uint64_t start = (uint64_t)__kernel_start;
     uint64_t end   = ALIGN_UP((uint64_t)__kernel_end, PAGE_SIZE);
 
-    KLOG_INFO("PMM: __kernel_start = 0x%llx, __kernel_end = 0x%llx\n", start, end);
-    KLOG_INFO("PMM: KERNEL_VMA = 0x%llx\n", KERNEL_VMA);
-    KLOG_INFO("PMM: PMM start_addr = 0x%llx, total_size = 0x%llx\n",
-              pmm->start_addr, pmm->total_size);
+    KLOG_MM("PMM: __kernel_start = 0x%llx, __kernel_end = 0x%llx\n", start, end);
+    KLOG_MM("PMM: KERNEL_VMA = 0x%llx\n", KERNEL_VMA);
+    KLOG_MM("PMM: PMM start_addr = 0x%llx, total_size = 0x%llx\n",
+            pmm->start_addr, pmm->total_size);
 
     /*
      * 检查地址是否在合理的内核虚拟地址范围内
@@ -264,27 +256,28 @@ void pmm_mark_kernel_allocated(pmm_t *pmm)
         if (cand_start >= pmm->start_addr && cand_end <= pmm->start_addr + pmm->total_size) {
             start_phys = cand_start;
             end_phys = cand_end;
-            KLOG_WARN("PMM: kernel symbols are high-half virtual addresses\n");
-            KLOG_INFO("  virtual range: 0x%llx - 0x%llx\n", start, end);
-            KLOG_INFO("  physical range: 0x%llx - 0x%llx\n", start_phys, end_phys);
+            /* 高半区内核符号在 AArch64/x86_64 上是**正常**布局，不是警告 */
+            KLOG_MM("PMM: kernel symbols are high-half virtual addresses\n");
+            KLOG_MM("  virtual range: 0x%llx - 0x%llx\n", start, end);
+            KLOG_MM("  physical range: 0x%llx - 0x%llx\n", start_phys, end_phys);
         } else {
             KLOG_WARN("PMM: virtual->physical conversion out of PMM range, fallback to raw values\n");
             start_phys = start;
             end_phys = end;
-            KLOG_INFO("  fallback range: 0x%llx - 0x%llx\n", start_phys, end_phys);
+            KLOG_MM("  fallback range: 0x%llx - 0x%llx\n", start_phys, end_phys);
         }
     } else if (start >= pmm->start_addr && start < pmm->start_addr + pmm->total_size) {
         /* 地址在 PMM 物理内存范围内，认为已经是物理地址 */
         start_phys = start;
         end_phys   = end;
-        KLOG_WARN("PMM: kernel symbols are already physical addresses\n");
-        KLOG_INFO("  physical range: 0x%llx - 0x%llx\n", start_phys, end_phys);
+        KLOG_MM("PMM: kernel symbols are already physical addresses\n");
+        KLOG_MM("  physical range: 0x%llx - 0x%llx\n", start_phys, end_phys);
     } else {
         /* 异常情况，按原值处理并记录日志 */
         KLOG_WARN("PMM: unusual kernel symbol range, using raw addresses\n");
         start_phys = start;
         end_phys   = end;
-        KLOG_INFO("  raw range: 0x%llx - 0x%llx\n", start_phys, end_phys);
+        KLOG_MM("  raw range: 0x%llx - 0x%llx\n", start_phys, end_phys);
     }
 
 
@@ -298,7 +291,7 @@ void pmm_mark_kernel_allocated(pmm_t *pmm)
  */
 void pmm_initialize(void)
 {
-    KLOG_INFO("=== Initializing Physical Memory Manager ===\n");
+    KLOG_MM("=== Initializing Physical Memory Manager ===\n");
 
     /* 初始化 PMM */
     pmm_init(g_pmm,
@@ -308,25 +301,25 @@ void pmm_initialize(void)
              sizeof(g_pmm_bitmap_buffer));
 
     /* 标记内核内存区域为已分配 */
-    KLOG_INFO("Marking kernel memory as allocated...\n");
+    KLOG_MM("Marking kernel memory as allocated...\n");
     pmm_mark_kernel_allocated(g_pmm);
 
     /* 运行时保留区（由 platform_conf_scan() 从静态平台配置读取） */
     for (int i = 0; i < g_pmm_resv_count; i++) {
-        KLOG_INFO("Reserving PMM extra region(%s): 0x%llx - 0x%llx\n",
-                  g_pmm_reserves[i].tag,
-                  (uint64_t)g_pmm_reserves[i].start,
-                  (uint64_t)g_pmm_reserves[i].end);
+        KLOG_MM("Reserving PMM extra region(%s): 0x%llx - 0x%llx\n",
+                g_pmm_reserves[i].tag,
+                (uint64_t)g_pmm_reserves[i].start,
+                (uint64_t)g_pmm_reserves[i].end);
         pmm_mark_allocated(g_pmm,
                            (uint64_t)g_pmm_reserves[i].start,
                            (uint64_t)g_pmm_reserves[i].end);
     }
 
     /* 预留 rootfs 物理区域，防止 PMM 将其分配出去 */
-    KLOG_INFO("Reserving rootfs region: 0x%llx - 0x%llx\n",
-              (uint64_t)RAMBLK_PHYS_BASE, (uint64_t)RAMBLK_PHYS_END);
+    KLOG_MM("Reserving rootfs region: 0x%llx - 0x%llx\n",
+            (uint64_t)RAMBLK_PHYS_BASE, (uint64_t)RAMBLK_PHYS_END);
     pmm_mark_allocated(g_pmm, RAMBLK_PHYS_BASE, RAMBLK_PHYS_END);
 
-    KLOG_INFO("PMM initialization completed\n");
-    KLOG_INFO("  g_pmm = %p\n", g_pmm);
+    KLOG_MM("PMM initialization completed\n");
+    KLOG_MM("  g_pmm = %p\n", g_pmm);
 }

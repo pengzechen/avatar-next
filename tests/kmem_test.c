@@ -36,10 +36,10 @@ get_available_page_count(void)
 {
     uint64_t free_count = pmm_get_free_pages(g_pmm);
 
-    KLOG_INFO("get_available_page_count: g_pmm = 0x%llx\n", (uint64_t)g_pmm);
-    KLOG_INFO("  g_pmm->free_pages = %llu\n", g_pmm->free_pages);
-    KLOG_INFO("  g_pmm->total_pages = %llu\n", g_pmm->total_pages);
-    KLOG_INFO("  returning: %llu\n", free_count);
+    KLOG_MM("get_available_page_count: g_pmm = 0x%llx\n", (uint64_t)g_pmm);
+    KLOG_MM("  g_pmm->free_pages = %llu\n", g_pmm->free_pages);
+    KLOG_MM("  g_pmm->total_pages = %llu\n", g_pmm->total_pages);
+    KLOG_MM("  returning: %llu\n", free_count);
 
     return (int32_t)free_count;
 }
@@ -55,22 +55,22 @@ void test_alloc_free()
 {
     uint64_t addr;
 
-    KLOG_INFO("test_alloc_free: Starting...\n");
+    KLOG_MM("test_alloc_free: Starting...\n");
 
-    KLOG_INFO("test_alloc_free: Allocating 1 page...\n");
+    KLOG_MM("test_alloc_free: Allocating 1 page...\n");
     addr = pmm_alloc_pages(g_pmm, 1);
-    KLOG_INFO("test_alloc_free: Allocated 1 page at address: 0x%llx\n", addr);
+    KLOG_MM("test_alloc_free: Allocated 1 page at address: 0x%llx\n", addr);
     assert(addr != 0);
 
     assert_bitmap_state(addr, 1);
 
     pmm_free_pages(g_pmm, addr, 1);
-    KLOG_INFO("Freed 1 page at address: 0x%llx\n", addr);
+    KLOG_MM("Freed 1 page at address: 0x%llx\n", addr);
 
     assert_bitmap_state(addr, 0);
 
     addr = pmm_alloc_pages(g_pmm, 4);
-    KLOG_INFO("Allocated 4 pages starting at address: 0x%llx\n", addr);
+    KLOG_MM("Allocated 4 pages starting at address: 0x%llx\n", addr);
     assert(addr != 0);
 
     for (int32_t i = 0; i < 4; i++) {
@@ -78,7 +78,7 @@ void test_alloc_free()
     }
 
     pmm_free_pages(g_pmm, addr, 4);
-    KLOG_INFO("Freed 4 pages starting at address: 0x%llx\n", addr);
+    KLOG_MM("Freed 4 pages starting at address: 0x%llx\n", addr);
 
     for (int32_t i = 0; i < 4; i++) {
         assert_bitmap_state(addr + i * PAGE_SIZE, 0);
@@ -90,11 +90,11 @@ void test_find_free_page()
     uint64_t addr;
 
     addr = pmm_alloc_pages(g_pmm, 1);
-    KLOG_INFO("Allocated 1 page at address: 0x%llx\n", addr);
+    KLOG_MM("Allocated 1 page at address: 0x%llx\n", addr);
     assert(addr != 0);
 
     uint64_t free_page = bitmap_find_first_free(&g_pmm->bitmap);
-    KLOG_INFO("First free page is at index: %lu\n", free_page);
+    KLOG_MM("First free page is at index: %lu\n", free_page);
     assert(free_page != (uint64_t)-1);
 
     assert_bitmap_state(free_page * g_pmm->page_size + g_pmm->start_addr, 0);
@@ -107,11 +107,11 @@ void test_find_contiguous_free_pages()
     uint64_t addr;
 
     addr = pmm_alloc_pages(g_pmm, 4);
-    KLOG_INFO("Allocated 4 pages at address: 0x%llx\n", addr);
+    KLOG_MM("Allocated 4 pages at address: 0x%llx\n", addr);
     assert(addr != 0);
 
     uint64_t free_page = bitmap_find_contiguous_free(&g_pmm->bitmap, 4);
-    KLOG_INFO("Found contiguous 4 free pages at index: %lu\n", free_page);
+    KLOG_MM("Found contiguous 4 free pages at index: %lu\n", free_page);
     assert(free_page != (size_t)-1);
 
     for (int32_t i = 0; i < 4; i++) {
@@ -124,16 +124,16 @@ void test_find_contiguous_free_pages()
 void test_create_uvm_find_pte()
 {
     uint64_t total_nums = get_available_page_count();
-    KLOG_INFO("test start total nums: %d\n", total_nums);
+    KLOG_MM("test start total nums: %d\n", total_nums);
 
     pte_t *page_dir = create_uvm();
     assert(page_dir != (pte_t *)0);
-    KLOG_INFO("Page directory created at: %llx\n", page_dir);
+    KLOG_MM("Page directory created at: %llx\n", page_dir);
 
     uint64_t vaddr = 0x54567890;
     pte_t *pte = find_pte(page_dir, vaddr, 1);
     assert(pte != NULL);
-    KLOG_INFO("Page table entry for vaddr 0x%llx: 0x%llx\n", vaddr, pte);
+    KLOG_MM("Page table entry for vaddr 0x%llx: 0x%llx\n", vaddr, pte);
 
     pte_t *test = find_pte(page_dir, vaddr, 1);
     assert(pte == test);
@@ -141,18 +141,18 @@ void test_create_uvm_find_pte()
     destory_4level(page_dir);
 
     uint64_t end_total_nums = get_available_page_count();
-    KLOG_INFO("test end total nums: %d\n", end_total_nums);
+    KLOG_MM("test end total nums: %d\n", end_total_nums);
     assert(total_nums == end_total_nums);
 }
 
 void test_memory_create_map()
 {
     uint64_t total_nums = get_available_page_count();
-    KLOG_INFO("test start total nums: %d\n", total_nums);
+    KLOG_MM("test start total nums: %d\n", total_nums);
 
     pte_t *page_dir = create_uvm();
     assert(page_dir != (pte_t *)0);
-    KLOG_INFO("Page directory created at: %llx\n", (unsigned long)page_dir);
+    KLOG_MM("Page directory created at: %llx\n", (unsigned long)page_dir);
 
     uint64_t vaddr = 0x1000;
     uint64_t paddr = pmm_alloc_pages(g_pmm, 3);
@@ -172,7 +172,7 @@ void test_memory_create_map()
     uint64_t mapped_paddr3 = memory_get_paddr(page_dir, vaddr3);
     assert(mapped_paddr3 == paddr + PAGE_SIZE * 2);
 
-    KLOG_INFO("test free page: \n");
+    KLOG_MM("test free page: \n");
     memory_free_page(page_dir, vaddr);
     memory_free_page(page_dir, vaddr2);
     memory_free_page(page_dir, vaddr3);
@@ -180,18 +180,18 @@ void test_memory_create_map()
     destory_4level(page_dir);
 
     uint64_t end_total_nums = get_available_page_count();
-    KLOG_INFO("test end total nums: %d\n", end_total_nums);
+    KLOG_MM("test end total nums: %d\n", end_total_nums);
     assert(total_nums == end_total_nums);
 }
 
 void test_uvm_alloc_free()
 {
     uint64_t total_nums = get_available_page_count();
-    KLOG_INFO("test start total nums: %d\n", total_nums);
+    KLOG_MM("test start total nums: %d\n", total_nums);
 
     pte_t *page_dir = create_uvm();
     assert(page_dir != (pte_t *)0);
-    KLOG_INFO("Page directory created at: %llx\n", (unsigned long)page_dir);
+    KLOG_MM("Page directory created at: %llx\n", (unsigned long)page_dir);
 
     memory_alloc_page(page_dir, 0x1000, 34, 0);
     memory_free_page(page_dir, 0x1000);
@@ -199,18 +199,18 @@ void test_uvm_alloc_free()
     destory_4level(page_dir);
 
     uint64_t end_total_nums = get_available_page_count();
-    KLOG_INFO("test end total nums: %d\n", end_total_nums);
+    KLOG_MM("test end total nums: %d\n", end_total_nums);
     assert(total_nums == end_total_nums);
 }
 
 void test_copydata_to_uvm()
 {
     uint64_t total_nums = get_available_page_count();
-    KLOG_INFO("test start total nums: %d\n", total_nums);
+    KLOG_MM("test start total nums: %d\n", total_nums);
 
     pte_t *page_dir = create_uvm();
     assert(page_dir != (pte_t *)0);
-    KLOG_INFO("Page directory created at: %llx\n", (unsigned long)page_dir);
+    KLOG_MM("Page directory created at: %llx\n", (unsigned long)page_dir);
 
     char data[156] = {'1', '2', '3', '4', '5', '6', '7', '8', '9', '0'};
     uint64_t paddr = pmm_alloc_pages(g_pmm, 1);
@@ -221,7 +221,7 @@ void test_copydata_to_uvm()
 
     uint64_t paddr_to_check = memory_get_paddr(page_dir, 0x1000);
     if (memcmp((const void *)paddr, (const void *)paddr_to_check, 156) == 0) {
-        KLOG_INFO("data ok\n");
+        KLOG_MM("data ok\n");
     }
 
     memory_free_page(page_dir, 0x1000);
@@ -230,14 +230,14 @@ void test_copydata_to_uvm()
     destory_4level(page_dir);
 
     uint64_t end_total_nums = get_available_page_count();
-    KLOG_INFO("test end total nums: %d\n", end_total_nums);
+    KLOG_MM("test end total nums: %d\n", end_total_nums);
     assert(total_nums == end_total_nums);
 }
 
 void test_memory_copy_uvm_4level()
 {
     uint64_t total_nums = get_available_page_count();
-    KLOG_INFO("test start total nums: %d\n", total_nums);
+    KLOG_MM("test start total nums: %d\n", total_nums);
 
     pte_t *src_pgd = create_uvm();
     pte_t *dst_pgd = phys_to_virt(pmm_alloc_pages(g_pmm, 1));
@@ -265,7 +265,7 @@ void test_memory_copy_uvm_4level()
     assert(result == 0);
 
     uint64_t dst_phys = memory_get_paddr(dst_pgd, 0x1000);
-    KLOG_INFO("src: %llx, dest: %llx\n", src_phys, dst_phys);
+    KLOG_MM("src: %llx, dest: %llx\n", src_phys, dst_phys);
     assert(memcmp(phys_to_virt(src_phys), phys_to_virt(dst_phys), data_len) == 0);
 
     memory_free_page(src_pgd, 0x1000);
@@ -277,13 +277,13 @@ void test_memory_copy_uvm_4level()
     pmm_free_pages(g_pmm, src_phys, 1);
 
     uint64_t end_total_nums = get_available_page_count();
-    KLOG_INFO("test end total nums: %d\n", end_total_nums);
+    KLOG_MM("test end total nums: %d\n", end_total_nums);
     assert(total_nums == end_total_nums);
 }
 
 void kmem_test()
 {
-    KLOG_INFO("\n=========copy uvm to uvm tests: =========\n");
+    KLOG_MM("\n=========copy uvm to uvm tests: =========\n");
     test_memory_copy_uvm_4level();
 }
 

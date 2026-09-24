@@ -25,11 +25,6 @@ static uintptr_t g_plic_base;
 static plic_handler_slot_t g_plic_handlers[PLIC_MAX_IRQS];
 static volatile uint64_t g_plic_irq_count;
 
-static bool plic_irq_log_sample(uint64_t n)
-{
-    return n <= 16 || (n <= 4096 && (n & (n - 1)) == 0);
-}
-
 static inline uint32_t plic_read32(uintptr_t off)
 {
     return read32((void *)(g_plic_base + off));
@@ -53,20 +48,21 @@ static void plic_external_irq(void *frame)
         return;
 
     g_plic_irq_count++;
-    if (plic_irq_log_sample(g_plic_irq_count)) {
-        KLOG_WARN("[PLIC] external IRQ #%llu claim=%u handled=%u\n",
-                  g_plic_irq_count, irq,
-                  (irq < PLIC_MAX_IRQS && g_plic_handlers[irq].handler) ? 1U : 0U);
-    }
+    /* 走公共采样器；g_plic_irq_count 仍是消息内容里的真实计数 */
+    KLOG_WARN_SAMPLE("[PLIC] external IRQ #%llu claim=%u handled=%u\n",
+                     g_plic_irq_count, irq,
+                     (irq < PLIC_MAX_IRQS && g_plic_handlers[irq].handler) ? 1U : 0U);
 
     if (irq < PLIC_MAX_IRQS && g_plic_handlers[irq].handler) {
         g_plic_handlers[irq].handler(irq, g_plic_handlers[irq].ctx);
-    } else if (plic_irq_log_sample(g_plic_irq_count)) {
+    } else {
         /*
-         * 未处理中断同样要过采样器：中断风暴时每个中断打一行会把串口
+         * 未处理中断同样要采样：中断风暴时每个中断打一行会把串口
          * 彻底堵死（这里在 ISR 上下文，还会一直占着 CPU 轮询 UART）。
+         * 与上面那条各自独立计数 —— 它们是两件不同的事。
          */
-        KLOG_WARN("[PLIC] unhandled irq=%u count=%llu\n", irq, g_plic_irq_count);
+        KLOG_WARN_SAMPLE("[PLIC] unhandled irq=%u count=%llu\n",
+                         irq, g_plic_irq_count);
     }
 
     plic_write32(plic_context_base() + PLIC_CLAIM_OFF, irq);
@@ -79,7 +75,9 @@ void plic_init(void)
 
     g_plic_base = platform_get_mmio("irq", "plic");
     if (g_plic_base == 0) {
-        KLOG_WARN("[PLIC] base is 0, external IRQ disabled\n");
+        /* 平台事实、一次性，而且它回答了"为什么没有外部中断" —— 这是操作者
+         * 需要看到的信息，不是警告。 */
+        KLOG_INFO("[PLIC] base is 0, external IRQ disabled\n");
         return;
     }
 

@@ -75,7 +75,9 @@ static int rkpm_wait_on(rkpm_t *pm, const rkpm_domain_t *d)
             if (v & d->repair_status_mask)
                 return 0;
         }
-        KLOG_ERROR("rkpm: timeout waiting repair_status for %s\n", d->name);
+        /* 轮询超时是"降级但继续"：调用方拿到错误码自行决定，内核没有坏。
+         * 同一类超时在 rknpu.c 的调用点用的是 WARN —— 统一到 WARN。 */
+        KLOG_WARN("rkpm: timeout waiting repair_status for %s\n", d->name);
         return RKPM_ERR_TIMEOUT;
     }
 
@@ -86,7 +88,7 @@ static int rkpm_wait_on(rkpm_t *pm, const rkpm_domain_t *d)
             if (!(v & d->status_mask))
                 return 0;
         }
-        KLOG_ERROR("rkpm: timeout waiting status for %s\n", d->name);
+        KLOG_WARN("rkpm: timeout waiting status for %s\n", d->name);
         return RKPM_ERR_TIMEOUT;
     }
 

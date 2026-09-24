@@ -130,7 +130,6 @@ dw_uart_enable_tx_interrupt(void)
     uint8_t ier = dw_reg_r8(DW_UART_IER);
     if (!(ier & DW_UART_IER_THRI)) {
         // 只在真正需要启用时才打印（避免重复启用的噪音）
-        // logger_info("[UART_DEBUG] Enable TX interrupt, buffer=%u\n", tx_buffer.count);
     }
     ier |= DW_UART_IER_THRI;
     dw_reg_w8(ier, DW_UART_IER);
@@ -141,7 +140,6 @@ static void
 dw_uart_disable_tx_interrupt(void)
 {
     uint8_t ier = dw_reg_r8(DW_UART_IER);
-    // logger_info("[UART_DEBUG] Disable TX interrupt, buffer=%u\n", tx_buffer.count);
     ier &= ~DW_UART_IER_THRI;
     dw_reg_w8(ier, DW_UART_IER);
 }
@@ -159,7 +157,6 @@ void
 dw_uart_interrupt_handler(uint64_t *stack_pointer)
 {
     (void)stack_pointer;
-    // logger_info("Uart handler invoke...\n");
 
     uint32_t iir   = dw_reg_r8(DW_UART_IIR) & 0xF;
     last_iir_value = iir;  // 记录IIR值用于调试
@@ -171,7 +168,6 @@ dw_uart_interrupt_handler(uint64_t *stack_pointer)
         while (dw_uart_rx_ready()) {
             char c = (char) dw_reg_r8(DW_UART_RBR);
             // ❌ 不要在中断中打印！会导致死锁和重复输出
-            // logger_info("got key: %c\n", c);
             buffer_put(&rx_buffer, c);
         }
         spin_unlock_irqrestore(&rx_buffer.lock, flags);
@@ -284,7 +280,6 @@ dw_uart_init(void)
     // gicv3_set_int_target(DW_UART_IRQ, 0x1);  // 目标 CPU 0
     // gicv3_enable_int(DW_UART_IRQ, true);
     // if (gicv3_is_int_enabled(DW_UART_IRQ)) {
-    //     logger_warn("DW UART IRQ %d is enabled in GICv3\n", DW_UART_IRQ);
     // }
 
     // dw_uart_initialized = true;

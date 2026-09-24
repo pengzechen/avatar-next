@@ -54,8 +54,9 @@ static void el2_loop_thread(void *arg)
     uint32_t n = 0;
     while (1) {
         n++;
-        if (n % 20 == 0)
-            KLOG_INFO("[el2_loop] tick=%u (EL2 kernel)\n", n);
+        /* 这行是 test-vmm 在 LOG=info 下的通过证据，必须留 INFO；改用公共
+         * 采样器抽稀（原来的 n % 20 仍随运行时长无界增长）。 */
+        KLOG_INFO_SAMPLE("[el2_loop] tick=%u (EL2 kernel)\n", n);
         task_yield();
     }
 }
@@ -74,8 +75,7 @@ static void rv_host_loop(void *arg)
     uint32_t n = 0;
     while (1) {
         n++;
-        if (n % 20 == 0)
-            KLOG_INFO("[rv_host] tick=%u (HS-mode)\n", n);
+        KLOG_INFO_SAMPLE("[rv_host] tick=%u (HS-mode)\n", n);
         task_yield();
     }
 }
@@ -94,8 +94,7 @@ static void x86_host_loop(void *arg)
     uint32_t n = 0;
     while (1) {
         n++;
-        if (n % 20 == 0)
-            KLOG_INFO("[x86_host] tick=%u (VMX root)\n", n);
+        KLOG_INFO_SAMPLE("[x86_host] tick=%u (VMX root)\n", n);
         task_yield();
     }
 }

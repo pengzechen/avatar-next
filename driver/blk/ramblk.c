@@ -77,9 +77,8 @@ void ramblk_init(void)
     g_ramblk.bdif->ph_bcnt = sector_cnt;
     g_ramblk.part_size     = RAMBLK_SIZE;
 
-    KLOG_INFO("[ramblk] RAM block device:\n");
-    KLOG_INFO("[ramblk]   phys base = 0x%llx\n", (uint64_t)RAMBLK_PHYS_BASE);
-    KLOG_INFO("[ramblk]   size      = %llu MB\n", (uint64_t)(RAMBLK_SIZE >> 20));
-    KLOG_INFO("[ramblk]   sectors   = %llu x %u bytes\n",
+    /* 四行合并成一行 —— 它回答的是"rootfs 在哪"，一句话就够 */
+    KLOG_INFO("[ramblk] RAM block device: base=0x%llx size=%lluMB sectors=%llu x %u\n",
+              (uint64_t)RAMBLK_PHYS_BASE, (uint64_t)(RAMBLK_SIZE >> 20),
               sector_cnt, RAMBLK_SECTOR_SZ);
 }

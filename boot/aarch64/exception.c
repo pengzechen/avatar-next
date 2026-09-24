@@ -91,8 +91,8 @@ void handle_el0_sync_exception(uint64_t *stack_pointer) {
 
   /* 其他异常类型 */
   KLOG_ERROR(
-      "[el0_sync] Unexpected exception: EC=0x%x, ESR=0x%llx, FAR=0x%llx\n", ec,
-      esr, far);
+             "[el0_sync] Unexpected exception: EC=0x%x, ESR=0x%llx, FAR=0x%llx\n", ec,
+             esr, far);
   KLOG_ERROR("[el0_sync] DFSC=0x%x (translation=%d perm=%d)\n", dfsc,
              (dfsc & 0x3C) == 0x04, (dfsc & 0x3C) == 0x0C);
   KLOG_ERROR("[el0_sync] ELR=0x%llx, SP_EL0=0x%llx, SPSR=0x%llx\n",
@@ -145,6 +145,7 @@ void invalid_exception(uint64_t *stack_pointer, uint64_t kind,
   trap_frame_t *el1_ctx = (trap_frame_t *)stack_pointer;
   (void)el1_ctx; // Suppress unused parameter warning
 
-  KLOG_INFO("This is invalid_exception: kind: %x, source: %x\n", kind, source);
+  /* 打完下一行就 panic —— panic 路径上的日志永远是 ERROR */
+  KLOG_ERROR("invalid_exception: kind: %x, source: %x\n", kind, source);
   platform_panic();
 }
