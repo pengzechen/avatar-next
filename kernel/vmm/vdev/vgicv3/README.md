@@ -93,14 +93,32 @@ guest 是 Linux 6.2.15 + initrd。判定标准：guest 打印 `Run /init as init
   `vmm_irq_route_host_hwirq_for_guest_irq()` 恒返回 0。宿主 PPI 27 不使能，
   所以不存在「物理中断需要由 guest EOI 来 deactivate」的场景。
 - **维护中断**：`ICH_HCR_EL2` 只置 `En`，`EOIEn`/`VGrp*IE` 全 0。改成在**每次 VM exit
-  主动轮询** `ICH_ELRSR_EL2` + LR.State。代价见第 6 节第一条。
+  主动轮询** `ICH_ELRSR_EL2` + LR.State。代价见第 6 节第二条。
 - **`GICD_ITARGETSR`**：ARE 模式下按规范读 0、写忽略。
 - **多个 redistributor region / `redist_stride`**：只支持「一个连续区、每核 0x20000」。
 - **GICv4 的 vSGI 直投**。
 
 ## 6. 已知限制与坑
 
-1. **LR 状态只在 VM exit 时回读。** guest ack+EOI 之后如果一直不 exit，软件里的
+1. **`ICH_HCR_EL2.En` 是每 CPU 的，必须设在 vCPU 实际运行的那个核上。**
+
+   `ICH_*` 全都属于 CPU interface，是 per-CPU 系统寄存器。曾经只在
+   `vm_create()` 里设一次，而那里跑在**调用者的核**上 —— 从 `/dev/vmm` 启动时
+   那是用户态 helper 的 `write` 系统调用所在的核，SMP>1 时完全可能是另一个核；
+   而 vCPU 任务被 `vcpu_task_create()` 钉在 CPU0。结果：`En=1` 落在 CPU1，
+   guest 在 CPU0 上跑，`ICC_IAR1_EL1` 永远只返回 spurious，**一个虚拟中断都
+   收不到**。SMP=1 时只有一个核，所以从没暴露。
+
+   症状很有迷惑性（实测）：guest 照常启动、设备探测全部走完，然后停住；
+   宿主侧看到 vtimer 注入计数一路涨，而 guest 的 `CNTV_CVAL` 再也不变 ——
+   因为它压根没收到中断，自然没重编程。
+
+   现在 `vmm_vgic3_hw_init()` 在**每次进入 guest 前**由
+   `vmm_arch_restore_guest_ctx()` 调用（对同一核重复写是幂等的，几条指令）。
+   `vm_create()` 里那个调用点已经删掉，只留注释。启动日志里那行
+   `[vgicv3] ICH_HCR_EL2=… set on cpu=N` 就是给这类问题留的线索。
+
+2. **LR 状态只在 VM exit 时回读。** guest ack+EOI 之后如果一直不 exit，软件里的
    `active` 位不会及时清掉，这一轮就不会重复注入同一个中断。目前靠 guest 频繁
    `WFI` 陷入（`HCR_EL2.TWI=1`）来兜底 —— 实测 guest 空闲时每秒数万次 exit，
    足够。**但如果将来 guest 进了长时间不陷入的忙循环，且中断是「电平型、会重复
@@ -111,28 +129,28 @@ guest 是 Linux 6.2.15 + initrd。判定标准：guest 打印 `Run /init as init
    来模拟电平语义 —— 如果 guest 长时间不陷入，中断在 guest 应答后不会被重拉，
    输入要等到下一次 exit 才恢复。交互式场景下 guest 都在 WFI 等输入，不触发这个坑。
 
-2. **`VMM 用 ICH_HCR_EL2.En=1` 期间，宿主自己的物理中断仍然正常**（QEMU 实测
+3. **`VMM 用 ICH_HCR_EL2.En=1` 期间，宿主自己的物理中断仍然正常**（QEMU 实测
    `[VMM] async exit type=1`），因为 `HCR_EL2.IMO=1` 把物理中断路由到了 EL2。
    这一点比 v2 配置好：v2 下宿主 tick 在 guest 运行期间是收不到的。
 
-3. **`vmm_vgic3_sync_entry()` 每次进入 guest 都扫全部 1024 个 INTID**
+4. **`vmm_vgic3_sync_entry()` 每次进入 guest 都扫全部 1024 个 INTID**
    （32 个字 × 查位 + `lr_has_irq`/`lr_empty_slot` 各扫一遍 LR）。当前中断数
    极少，开销可以忽略；中断源变多时这里要改成维护「待注入队列」。
 
-4. **死代码 / 未使用接口**（留着是为了和 v2 版 API 对齐，改动时注意别被误导）：
+5. **死代码 / 未使用接口**（留着是为了和 v2 版 API 对齐，改动时注意别被误导）：
    - `vmm_vgic3_inject_timer()` —— 没有任何调用者，`el2_run.c` 直接调 `set_pending()`。
    - `gicv3_read_eisr()` / `gicv3_read_misr()` —— 定义了但没用（用的是 `ELRSR` + 回读 LR.State）。
    - `VGIC3_MAX_LRS=16` —— 实际按 `ICH_VTR_EL2.ListRegs+1` 走，QEMU virt 给 4 个。
 
-5. **`_gicv3.nr_lrs` 依赖宿主驱动先初始化。** `vmm_vgic3_init()` 会读它来打日志、
+6. **`_gicv3.nr_lrs` 依赖宿主驱动先初始化。** `vmm_vgic3_init()` 会读它来打日志、
    `sync_entry()` 也用它决定 LR 数量。`gicv3_init()`（`platform_init_runtime_drivers()`）
    早于 `vm_create()`，顺序是对的，但**不能调换**。
 
-6. **guest 写 `ICC_SGI1R_EL1` 不被陷入**，会直接落到物理 GIC 上。1 vCPU 的 Linux
+7. **guest 写 `ICC_SGI1R_EL1` 不被陷入**，会直接落到物理 GIC 上。1 vCPU 的 Linux
    不用它；将来上多 vCPU 或 guest 内部发 IPI 时必须补陷入逻辑（`HCR_EL2` 没有现成
    的开关，需要在 `handle_sysreg()` 里拦，或用 `ICH_HCR_EL2.TALL1` 之类）。
 
-7. **两个口径不一致的地方**（不影响功能，但看日志时别困惑）：
+8. **两个口径不一致的地方**（不影响功能，但看日志时别困惑）：
    - `VGIC3_MAX_IRQS=1024`，guest 看到 `GICD_TYPER` 报 988 个 SPI；而**物理** GIC
      报 288 条线。
    - GICR MMIO 设备注册的窗口是 `0x20000 * 8`，但 guest DTB 只声明了 `0x20000`。
@@ -140,8 +158,8 @@ guest 是 Linux 6.2.15 + initrd。判定标准：guest 打印 `Run /init as init
 ## 7. 怎么复现验证
 
 ```bash
-# 切 GIC 版本不必再手动 clean：Makefile §7 的 _GIC_CHECK 会在检测到版本
-# 变化时自动清掉已编译的目标文件（GIC= 会改 CFLAGS 和源文件列表）。
+# 切 GIC 版本不必再手动 clean：Makefile §7 的 _CFG_CHECK 会在检测到配置
+# 变化（GIC=/SMP=/LOG=）时自动清掉已编译的目标文件。
 make PLATFORM=qemu-virt-aarch64 GIC=v3 test-guest-linux -j8
 # 期望：guest 打印 "Run /init as init process" 后出现 "root login:"，日志无 [ERROR]
 # 交互验证：在 "root login: " 后键入用户名，应逐字回显并推进到 "Password: "

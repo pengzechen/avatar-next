@@ -460,6 +460,37 @@ int guest_loader_nop_dtb_nodes(uint64_t dtb_gpa, uint32_t dtb_size,
     return patched;
 }
 
+/*
+ * guest 内核命令行。
+ *
+ * ⚠️ 上限 78 字节（不含结尾 NUL）：DTB 里 /chosen/bootargs 属性只有 79 字节
+ * 的槽位，而 guest_loader_patch_dtb_bootargs() 是**原地改写、不支持加长**。
+ * 超了补丁就失败，guest 会退回 DTS 里那句 —— 表现和成功一模一样（照常启动），
+ * 所以这个宏等于没生效。历史上就是这样：原串 86 字节，静默失败了很久，
+ * 直到调 guest 启动速度时才发现。下面的 _Static_assert 让超长直接编译不过。
+ *
+ * 内容取舍：
+ *   quiet          console_loglevel 7→4，只放行 ERR 及以上。
+ *                  guest 每写一个字符到 UARTDR 都要陷入 EL2 做一次完整的
+ *                  世界切换（PL011 在 stage-2 里是无效映射），实测 35~70µs
+ *                  /字符。约 1.2 万字符的启动日志要花掉 0.86s —— 而裸跑同样
+ *                  的日志只差 0.02s，因为那边没有 exit。quiet 只影响往串口写
+ *                  的部分，内核环形缓冲里仍是完整的，事后 dmesg 全看得到。
+ *   console=       guest 控制台走 PL011（与 vpl011 同地址 0x09000000）。
+ *   rdinit=/init   显式指定 init，不依赖内核「没有 init= 就找 /init」的回退。
+ *   panic_on_warn=0 / oops=panic  调试用：警告不停机，oops 停。
+ *
+ * 想恢复完整启动日志：去掉 "quiet "（还剩 55 字节，仍在预算内）。
+ * 不带 earlycon：它和 quiet 同时开意义不大（早期消息同样被 loglevel 压掉），
+ * 而且会让每条消息打印两遍（bootconsole + 真 console），白白多一倍 exit。
+ */
+#define GUEST_LINUX_BOOTARGS \
+    "quiet console=ttyAMA0 rdinit=/init panic_on_warn=0 oops=panic"
+
+_Static_assert(sizeof(GUEST_LINUX_BOOTARGS) - 1 <= 78,
+               "GUEST_LINUX_BOOTARGS 超出 DTB 的 /chosen/bootargs 槽位"
+               "（79 字节含结尾 NUL），补丁会静默失败");
+
 /* ── 启动 Linux guest ─────────────────────────────────────── */
 /*
  * 调用者两种：
@@ -519,8 +550,11 @@ int guest_loader_run_linux(void)
     guest_loader_patch_dtb_memory(GUEST_LINUX_DTB_GPA, (uint32_t)dlen,
                                   GUEST_LINUX_MEM_BASE, GUEST_LINUX_MEM_SIZE);
 
-    guest_loader_patch_dtb_bootargs(GUEST_LINUX_DTB_GPA, (uint32_t)dlen,
-                                    "rdinit=/init console=ttyAMA0 earlycon=pl011,mmio,0x9000000 panic_on_warn=0 oops=panic");
+    if (guest_loader_patch_dtb_bootargs(GUEST_LINUX_DTB_GPA, (uint32_t)dlen,
+                                        GUEST_LINUX_BOOTARGS) != 0) {
+        KLOG_ERROR("[guest] bootargs 补丁失败：guest 会用 DTB 自带的那句命令行，"
+                   "GUEST_LINUX_BOOTARGS 不生效（原因见上一条 WARN）\n");
+    }
 
     /* 3. 加载 initrd */
     int ilen = guest_loader_load_file(GUEST_LINUX_INITRD_PATH,

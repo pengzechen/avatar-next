@@ -17,6 +17,7 @@
 #include "klog.h"
 #include "string.h"
 #include "aarch64/sysreg.h"
+#include "task/cpu.h"   /* get_current_cpu_id：诊断「En 设在哪一核」*/
 
 #define SGI_MASK 0xffffu
 
@@ -124,10 +125,24 @@ int vmm_vgic3_init(vgic3_t *vgic, uint32_t nr_vcpus)
 }
 
 /*
- * vmm_vgic3_hw_init — 打开 ICH_HCR_EL2.En
+ * vmm_vgic3_hw_init — 打开**本 CPU** 的 ICH_HCR_EL2.En
  *
- * 不开这个位，QEMU / 硬件在任何 ICC_IAR1_EL1 读上都只会返回 spurious，
- * guest 永远收不到虚拟中断。
+ * 不开这个位，硬件在任何 ICC_IAR1_EL1 读上都只会返回 spurious，guest 永远
+ * 收不到虚拟中断。
+ *
+ * ⚠️ ICH_HCR_EL2 是**每 CPU 的系统寄存器**，必须在**真正跑 vCPU 的那个核**上
+ * 设置 —— 它不是「VM 创建时设一次」的东西。两者并不总是同一个核：
+ *   - vcpu_task_create() 把 vCPU 任务钉在 CPU0（`task_set_cpu_affinity(t, 0)`）；
+ *   - 而 vm_create() 跑在调用者的核上。从 /dev/vmm 启动时，那是用户态 helper
+ *     的 write 系统调用所在的核，SMP>1 时完全可能是 CPU1。
+ *
+ * 实测（GIC=v3 + SMP=2，QEMU）：En=1 落在 CPU1、guest 跑在 CPU0 → guest 永远
+ * 收不到虚拟中断，卡在启动中途。症状很有迷惑性：guest 照常启动到设备探测完，
+ * 然后停住；宿主侧看到的是 vtimer 注入计数一路涨，而 guest 的 CNTV_CVAL 再也
+ * 不变（它压根没收到中断，自然没重编程）。SMP=1 时只有一个核，所以从没暴露。
+ *
+ * 因此本函数在**每次进入 guest 前**调用（见 el2_run.c 的
+ * vmm_arch_restore_guest_ctx）。对同一个核重复写是幂等的，代价只有几条指令。
  */
 void vmm_vgic3_hw_init(void)
 {
@@ -139,8 +154,18 @@ void vmm_vgic3_hw_init(void)
     hcr &= ~(uint64_t)ICH_HCR_UIEN;
     gicv3_write_hcr(hcr);
 
-    KLOG_INFO("[vgicv3] ICH_HCR_EL2=0x%llx (En=1, %u LRs)\n",
-              (unsigned long long)gicv3_read_hcr(), (unsigned)_gicv3.nr_lrs);
+    /*
+     * 只打第一次。带上 cpu 号：本函数的调用核就是 vCPU 的运行核，上面那个
+     * SMP>1 的 bug 里，「En 设在哪一核」是唯一的线索。
+     */
+    static int logged;
+    if (!logged) {
+        logged = 1;
+        KLOG_INFO("[vgicv3] ICH_HCR_EL2=0x%llx (En=1, %u LRs), set on cpu=%u\n",
+                  (unsigned long long)gicv3_read_hcr(),
+                  (unsigned)_gicv3.nr_lrs,
+                  (unsigned)get_current_cpu_id());
+    }
 }
 
 /* ── 状态写入接口 ───────────────────────────────────────────── */

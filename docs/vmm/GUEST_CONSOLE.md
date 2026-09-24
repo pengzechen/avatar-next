@@ -135,7 +135,7 @@ cpu0。
 ## 6. 怎么验证
 
 **GICv2 与 GICv3 都支持**，下面两条命令任选。切 GIC 版本不必手动 `clean`：
-Makefile §7 的 `_GIC_CHECK` 检测到版本变化会自动清掉已编译的目标文件
+Makefile §7 的 `_CFG_CHECK` 检测到配置变化（GIC=/SMP=/LOG=）会自动清掉已编译的目标文件
 （`GIC=` 会改 CFLAGS 和源文件列表，不清理就会混用两套 flag 编出来的 `.o`）。
 
 ```bash

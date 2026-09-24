@@ -450,6 +450,13 @@ void vmm_arch_restore_guest_ctx(vcpu_t *vcpu)
     /* vIRQ：把可投递中断排入 LR，让 GIC 向 guest 产生虚拟 IRQ。
      * GICv2 走 GICH_LR（MMIO），GICv3 走 ICH_LR<n>_EL2（系统寄存器）。*/
 #if DRIVER_GIC_V3
+    /*
+     * 每 CPU 的 ICH_HCR_EL2.En 必须**在这里**开，不能只在 vm_create() 里开一次：
+     * vm_create 跑在调用者的核上，而 vCPU 任务是钉在 CPU0 的，SMP>1 时两者可能
+     * 不是同一个核 —— 那会让 guest 一个虚拟中断都收不到（详见
+     * vmm_vgic3_hw_init 的注释）。同一个核重复写是幂等的。
+     */
+    vmm_vgic3_hw_init();
     vmm_vgic3_sync_entry(&vcpu->vm->vgic3, (uint32_t)vcpu->vcpu_id);
 #else
     vmm_vgic_sync_entry(&vcpu->vm->vgic, (uint32_t)vcpu->vcpu_id);

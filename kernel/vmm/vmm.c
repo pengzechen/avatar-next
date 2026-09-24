@@ -81,7 +81,13 @@ static int aarch64_vm_init(vm_t *vm)
     if (vgic3d_init(&vm->vgic3d_dev, &vm->mmio_bus_storage, &vm->vgic3) != 0) {
         KLOG_WARN("[vmm] vgic3d registration failed\n");
     }
-    vmm_vgic3_hw_init();
+    /*
+     * 注意：**不在这里**开 ICH_HCR_EL2.En。
+     * 那是每 CPU 的系统寄存器，必须设在真正跑 vCPU 的核上，而本函数跑在
+     * 调用者的核上（从 /dev/vmm 启动时是用户态 helper 所在的核）。
+     * 见 vmm_vgic3_hw_init() 的注释 —— SMP>1 时在这里设会直接让 guest 收不到
+     * 虚拟中断。真正的设置点在 vmm_arch_restore_guest_ctx()，每次进 guest 前。
+     */
 #else
     /* 虚拟 CPU 接口：GICC MMIO + per-vCPU GICH LR 缓存。*/
     if (vgicc_init(&vm->vgicc_dev, &vm->mmio_bus_storage, &vm->vgic) != 0) {
