@@ -44,6 +44,24 @@
 #define _IOWR(t, nr, T)  _IOC(_IOC_READ|_IOC_WRITE,   (t), (nr), sizeof(T))
 #endif
 
+/* ── /dev/vmm ioctl（guest 控制设备）────────────────────────────
+ *
+ * ⚠️ 这套号必须与用户态 helper apps/c/vmm_run.c 里的一致。那边不能包含
+ * 本头文件（这是内核头），所以用 musl 的 <sys/ioctl.h> 宏独立定义了一遍；
+ * 两边的 _IOC 编码都是标准 Linux 布局，只要 type/nr/方向 相同就对得上。
+ *
+ * 为什么**所有**控制（含启动）都走 ioctl，而不是「首次写是命令」：
+ * /dev/vmm 的 write() 是 guest 的串口输入。如果命令也走 write，设备就得分
+ * 辨「这次写是命令还是数据」，而它只有一个全局的 booted 标志 —— 重新接入
+ * 一个已在跑的 guest 时，booted 已经是 1，于是 helper 发的 "bootlinux"
+ * 会被当成输入推进 guest，guest 把这个词回显出来（实测踩过）。
+ * 全用 ioctl 之后，write 永远只是数据，不存在二义性。
+ */
+#define VMM_IOC_GET_STATUS  _IOR('V', 0, uint32_t) /* 出参：1=guest 正在跑 */
+#define VMM_IOC_DETACH      _IO ('V', 1)           /* 本次 close 不停 guest */
+#define VMM_IOC_STOP        _IO ('V', 2)           /* 停止 guest */
+#define VMM_IOC_BOOT        _IO ('V', 3)           /* 启动 guest；已在跑则接入 */
+
 /* ── /dev/ion ioctl 结构体 & 请求码 ──────────────────────────── */
 struct ion_alloc_req {
     uint64_t size;         /* [in/out] requested/actual allocation size */
@@ -174,6 +192,18 @@ int pseudo_write(int nid, const void *buf, size_t len);
  * 返回 0 或负 errno。
  */
 int pseudo_ioctl(int nid, uint64_t req, void *argp);
+
+/*
+ * pseudo_poll: 查询节点 nid 的就绪状态，返回 EPOLL* 位掩码。
+ * 未实现 poll_fn 的节点按老行为返回 EPOLLIN|EPOLLOUT（永远就绪）。
+ */
+uint32_t pseudo_poll(int nid);
+
+/*
+ * pseudo_close: 节点 nid 的最后一个引用被关闭时调用（如 /dev/vmm 借此
+ * 停止 guest）。未实现 close_fn 的节点是无操作。
+ */
+int pseudo_close(int nid);
 
 /*
  * pseudo_stat_path: 对路径 abspath 填充 *st。

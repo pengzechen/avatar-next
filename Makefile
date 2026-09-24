@@ -138,9 +138,10 @@ GIC_VER := $(if $(GIC),$(GIC),$(DEV_DEFAULT_GIC))
 # 两套的寄存器模型（GICH MMIO vs ICH_* 系统寄存器）不兼容，只能编译一套。
 #
 # ⚠️ GIC= 会改变 CFLAGS（-DDRIVER_GIC_V2/V3）和源文件列表，而 -MMD 的 .d
-# 没有被 -include（见本文件 §11 附近说明），make 察觉不到这种变化：
-# 从 GIC=v2 切到 v3（或反向）**必须先 `make PLATFORM=<p> clean`**，
-# 否则会混用两套 flag 编出来的 .o，报一堆莫名其妙的 undefined reference。
+# 没有被 -include（见本文件 §11 附近说明），make 察觉不到这种变化。
+# 从 GIC=v2 切到 v3（或反向）**不再需要手动 clean**：§7 的 _GIC_CHECK 会在
+# 检测到版本变化时自动清掉已编译的目标文件（历史上这里要求手动 clean，
+# 忘了就会混用两套 flag 编出来的 .o，报一堆莫名其妙的 undefined reference）。
 _KERNEL_VGIC_SRCS   := $(if $(filter v3,$(GIC_VER)),\
                           $(wildcard $(KERNEL_DIR)/vmm/vdev/vgicv3/*.c),\
                           $(wildcard $(KERNEL_DIR)/vmm/vdev/vgic/*.c))
@@ -615,6 +616,29 @@ _VARIANT_CHECK := $(shell \
         printf '%s' '$(_BUILD_VARIANT)' > $(_VARIANT_FILE); \
     fi)
 
+# GIC 版本切换同理，但影响面大得多：GIC= 会改 -DDRIVER_GIC_V2/V3（每一个 TU
+# 的编译结果都不同）**和源文件列表**（vdev/vgic/ 与 vdev/vgicv3/ 二选一）。
+# .d 没有被 -include，make 察觉不到这种变化，于是新旧两套 .o 混在一起链接，
+# 报出来的是「undefined reference to gicv2_gicd_base」「vmm_vgic_set_pending」
+# 这类**完全指不到真正原因**的符号缺失 —— 实测踩过，很容易误判成驱动写错了。
+#
+# 所以检测到切换就把已编译的目标文件全清掉，不指望用户记得那句 clean
+# （§4a 的注释里虽然写了，但两处说明都在 400 行开外，报错时没人会去翻）。
+#
+# 只删 .o/.elf —— 都是可再生的；rootfs 镜像不动，guest DTB 的切换由
+# $(GUEST_GIC_STAMP) 单独负责触发重建。
+#
+# 戳文件不存在时（刚 clean 过、或本机制刚引入）也走一次清理：此时无从得知
+# 现有目标文件是用哪套 flag 编的，重建比赌一把便宜。
+_GIC_STAMP_FILE := $(BUILD_DIR)/.gic-last
+_GIC_CHECK := $(shell \
+    mkdir -p $(BUILD_DIR) 2>/dev/null; \
+    if [ "$$(cat $(_GIC_STAMP_FILE) 2>/dev/null)" != "$(GIC_VER)" ]; then \
+        find $(BUILD_DIR) -name '*.o' -delete 2>/dev/null; \
+        find $(BUILD_DIR) -name '*.elf' -delete 2>/dev/null; \
+        printf '%s' '$(GIC_VER)' > $(_GIC_STAMP_FILE); \
+    fi)
+
 MKDIR   := mkdir -p
 
 # ─── §8  第三方库：lwext4 文件系统 ──────────────────────────────────────────────
@@ -695,6 +719,14 @@ EPOLL_PERF_BIN   := apps/epoll_perf-$(ARCH)
 else
 EPOLL_PERF_CC    :=
 EPOLL_PERF_BIN   :=
+endif
+
+# vmm-run：宿主 shell 里启动/驱动 guest 的用户态 helper（对标 kvmm-run）。
+# 只有 aarch64 有 VMM，故只在这个架构上构建与安装。
+ifeq ($(ARCH),aarch64)
+VMM_RUN_BIN      := apps/vmm-run-$(ARCH)
+else
+VMM_RUN_BIN      :=
 endif
 NGINX_BIN        := $(wildcard apps/nginx-$(ARCH))
 # guest 的 DTB 必须与内核用的 GIC 版本匹配：GICv2 的 DTB 里是
@@ -894,6 +926,11 @@ epoll-perf:
 	@exit 1
 endif
 
+# §11c-2  vmm-run：静态链接，免得还依赖 rootfs 里的动态 loader
+$(VMM_RUN_BIN): apps/c/vmm_run.c
+	$(ARCH)-linux-musl-gcc -O2 -Wall -Wextra -static $< -o $@
+	@echo "vmm-run helper created: $@"
+
 # ── §11d  测试 / 库对象规则 ────────────────────────────────────────────────────
 
 # PMM 测试（唯一来自 tests/ 却参与内核链接的源文件，不在 §4a 的 find 范围内）
@@ -1009,7 +1046,7 @@ test-epoll-perf: epoll-perf kernel $(ROOTFS_IMG)
 # 创建 ext4 rootfs 镜像（无需 sudo）
 # 依赖：Host 已安装 e2fsprogs（mkfs.ext4 >= 1.43 支持 -d 选项）
 # 每次 apps 变动时自动重建；切换架构直接使用各自的镜像文件，无需 make clean
-$(ROOTFS_IMG): Makefile $(APPS_BINS) $(APPS_C_ELFS) $(LTP_BINS) $(EPOLL_PERF_BIN) $(NGINX_BIN) $(GUEST_LINUX_FILES) $(GUEST_GIC_STAMP) | $(BUILD_DIR)
+$(ROOTFS_IMG): Makefile $(APPS_BINS) $(APPS_C_ELFS) $(LTP_BINS) $(EPOLL_PERF_BIN) $(VMM_RUN_BIN) $(NGINX_BIN) $(GUEST_LINUX_FILES) $(GUEST_GIC_STAMP) | $(BUILD_DIR)
 	@echo "=== Building rootfs for $(ARCH): $(ROOTFS_IMG) ==="
 	@rm -rf $(ROOTFS_STAGE)
 	@mkdir -p $(ROOTFS_STAGE)/bin
@@ -1055,6 +1092,13 @@ $(ROOTFS_IMG): Makefile $(APPS_BINS) $(APPS_C_ELFS) $(LTP_BINS) $(EPOLL_PERF_BIN
 		done; \
 	fi
 	@# 安装 musl 用户态性能测试程序
+	@# 安装宿主侧 guest 控制 helper
+	@if [ -n "$(VMM_RUN_BIN)" ] && [ -f "$(VMM_RUN_BIN)" ]; then \
+		mkdir -p $(ROOTFS_STAGE)/bin; \
+		cp $(VMM_RUN_BIN) $(ROOTFS_STAGE)/bin/vmm-run; \
+		chmod +x $(ROOTFS_STAGE)/bin/vmm-run; \
+		echo "  [vmm-run installed → /bin/vmm-run]"; \
+	fi
 	@if [ -f "$(EPOLL_PERF_BIN)" ]; then \
 		mkdir -p $(ROOTFS_STAGE)/bin; \
 		cp $(EPOLL_PERF_BIN) $(ROOTFS_STAGE)/bin/epoll_perf; \

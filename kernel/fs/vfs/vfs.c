@@ -170,6 +170,17 @@ static int pseudo_file_ioctl(vfs_file_t *file, uint64_t req, void *argp)
     return pseudo_ioctl(file->u.pseudo.node_id, req, argp);
 }
 
+static uint32_t pseudo_file_poll(vfs_file_t *file, int pool_idx)
+{
+    (void)pool_idx;
+    return pseudo_poll(file->u.pseudo.node_id);
+}
+
+static int pseudo_file_close(vfs_file_t *file)
+{
+    return pseudo_close(file->u.pseudo.node_id);
+}
+
 static int pseudo_file_getdents(vfs_file_t *file, void *buf, size_t bufsz)
 {
     return pseudo_getdents(file->u.pseudo.node_id, &file->offset, buf, bufsz);
@@ -474,6 +485,9 @@ static const vfs_file_ops_t pseudo_ops = {
     .getdents = pseudo_file_getdents,
     .seek = pseudo_file_seek,
     .stat = pseudo_file_stat,
+    /* poll/close 只有少数节点（/dev/vmm）真正实现，其余走兜底（见 pseudo_poll）*/
+    .poll = pseudo_file_poll,
+    .close = pseudo_file_close,
 };
 
 static const vfs_file_ops_t ext4_file_ops = {

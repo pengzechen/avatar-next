@@ -17,6 +17,7 @@
 #include "pmm.h"
 #include "uart/uart.h"
 #include "task/task.h"
+#include "syscall/io/epoll.h"   /* EPOLLIN/EPOLLOUT：pseudo_poll 的兜底返回值 */
 
 /* ── Urandom LFSR ─────────────────────────────────────────────── */
 static uint64_t g_lfsr = 0xDEADBEEFCAFEBABEULL;
@@ -213,40 +214,53 @@ static int pid_max_read(int nid, uint64_t off, void *buf, size_t len)
     return (int)copy;
 }
 
+/*
+ * 列：path, type, mode, rdev, read_fn, write_fn, ioctl_fn, poll_fn, close_fn
+ *
+ * 最后两列绝大多数节点是 NULL（poll 走「总是就绪」兜底、close 无事可做），
+ * 但照样显式写出来：这张表用的是位置初始化，漏写会触发
+ * -Wmissing-field-initializers，而且列对齐之后哪一行特殊一眼可见。
+ */
 static const pseudo_node_t g_nodes[] = {
     /* ── 目录 ──────────────────────────────────────────── */
-    { "/dev",              PSEUDO_DIR, MODE_DIR,  0,              NULL,         NULL,       NULL           },
-    { "/proc",             PSEUDO_DIR, MODE_DIR,  0,              NULL,         NULL,       NULL           },
-    { "/proc/self",        PSEUDO_DIR, MODE_DIR,  0,              NULL,         NULL,       NULL           },
-    { "/proc/self/fd",     PSEUDO_DIR, MODE_DIR,  0,              NULL,         NULL,       NULL           },
-    { "/proc/sys",         PSEUDO_DIR, MODE_DIR,  0,              NULL,         NULL,       NULL           },
-    { "/proc/sys/kernel",  PSEUDO_DIR, MODE_DIR,  0,              NULL,         NULL,       NULL           },
-    { "/sys",              PSEUDO_DIR, MODE_DIR,  0,              NULL,         NULL,       NULL           },
+    { "/dev",              PSEUDO_DIR, MODE_DIR,  0,              NULL,         NULL,       NULL,          NULL,        NULL           },
+    { "/proc",             PSEUDO_DIR, MODE_DIR,  0,              NULL,         NULL,       NULL,          NULL,        NULL           },
+    { "/proc/self",        PSEUDO_DIR, MODE_DIR,  0,              NULL,         NULL,       NULL,          NULL,        NULL           },
+    { "/proc/self/fd",     PSEUDO_DIR, MODE_DIR,  0,              NULL,         NULL,       NULL,          NULL,        NULL           },
+    { "/proc/sys",         PSEUDO_DIR, MODE_DIR,  0,              NULL,         NULL,       NULL,          NULL,        NULL           },
+    { "/proc/sys/kernel",  PSEUDO_DIR, MODE_DIR,  0,              NULL,         NULL,       NULL,          NULL,        NULL           },
+    { "/sys",              PSEUDO_DIR, MODE_DIR,  0,              NULL,         NULL,       NULL,          NULL,        NULL           },
 
     /* ── /dev 字符设备 ─────────────────────────────────── */
-    { "/dev/null",         PSEUDO_CHR, MODE_CHRW, (1U<<8)|3U,    null_read,   null_write,  NULL           },
-    { "/dev/zero",         PSEUDO_CHR, MODE_CHRW, (1U<<8)|5U,    zero_read,   null_write,  NULL           },
-    { "/dev/tty",          PSEUDO_CHR, MODE_CHRW, (5U<<8)|0U,    tty_read,    tty_write,   NULL           },
-    { "/dev/console",      PSEUDO_CHR, MODE_CHRW, (5U<<8)|1U,    tty_read,    tty_write,   NULL           },
-    { "/dev/urandom",      PSEUDO_CHR, MODE_CHRW, (1U<<8)|9U,    rand_read,   null_write,  NULL           },
-    { "/dev/random",       PSEUDO_CHR, MODE_CHRW, (1U<<8)|8U,    rand_read,   null_write,  NULL           },
+    { "/dev/null",         PSEUDO_CHR, MODE_CHRW, (1U<<8)|3U,    null_read,   null_write,  NULL,          NULL,        NULL           },
+    { "/dev/zero",         PSEUDO_CHR, MODE_CHRW, (1U<<8)|5U,    zero_read,   null_write,  NULL,          NULL,        NULL           },
+    { "/dev/tty",          PSEUDO_CHR, MODE_CHRW, (5U<<8)|0U,    tty_read,    tty_write,   NULL,          NULL,        NULL           },
+    { "/dev/console",      PSEUDO_CHR, MODE_CHRW, (5U<<8)|1U,    tty_read,    tty_write,   NULL,          NULL,        NULL           },
+    { "/dev/urandom",      PSEUDO_CHR, MODE_CHRW, (1U<<8)|9U,    rand_read,   null_write,  NULL,          NULL,        NULL           },
+    { "/dev/random",       PSEUDO_CHR, MODE_CHRW, (1U<<8)|8U,    rand_read,   null_write,  NULL,          NULL,        NULL           },
     /* 加速器设备 */
-    { "/dev/cvi-tpu0",     PSEUDO_CHR, MODE_CHRW, (240U<<8)|0U,   NULL,         null_write,  tpu_dev_ioctl },
-    { "/dev/ion",          PSEUDO_CHR, MODE_CHRW, (10U <<8)|56U,  NULL,         null_write,  ion_dev_ioctl },
-    { "/dev/npu",          PSEUDO_CHR, MODE_CHRW, (10U <<8)|242U, NULL,         null_write,  npu_dev_ioctl },
-    { "/dev/video0",       PSEUDO_CHR, MODE_CHRW, (81U <<8)|0U,   video0_read,  null_write,  video0_ioctl  },
+    { "/dev/cvi-tpu0",     PSEUDO_CHR, MODE_CHRW, (240U<<8)|0U,   NULL,         null_write,  tpu_dev_ioctl, NULL,       NULL           },
+    { "/dev/ion",          PSEUDO_CHR, MODE_CHRW, (10U <<8)|56U,  NULL,         null_write,  ion_dev_ioctl, NULL,       NULL           },
+    { "/dev/npu",          PSEUDO_CHR, MODE_CHRW, (10U <<8)|242U, NULL,         null_write,  npu_dev_ioctl, NULL,       NULL           },
+    { "/dev/video0",       PSEUDO_CHR, MODE_CHRW, (81U <<8)|0U,   video0_read,  null_write,  video0_ioctl,  NULL,       NULL           },
+    /* guest 控制设备：宿主 shell 里的 /bin/vmm-run 打开它来启动/驱动 guest。
+     * 仅 aarch64 有 VMM；其它架构上这行不编译，节点自然不存在。 */
+#if ARCH_AARCH64
+    { "/dev/vmm",          PSEUDO_CHR, MODE_CHRW, (10U <<8)|200U, vmm_dev_read, vmm_dev_write, vmm_dev_ioctl,
+      vmm_dev_poll, vmm_dev_close },
+#endif
 
     /* ── /proc 条目 ────────────────────────────────────── */
-    { "/proc/self/exe",    PSEUDO_LNK, MODE_LNK,  0,              NULL,         NULL,        NULL          },
-    { "/proc/self/maps",   PSEUDO_REG, MODE_REG,  0,              maps_read,    NULL,        NULL          },
-    { "/proc/self/stat",   PSEUDO_REG, MODE_REG,  0,              stat_read,    NULL,        NULL          },
-    { "/proc/self/status", PSEUDO_REG, MODE_REG,  0,              status_read,  NULL,        NULL          },
-    { "/proc/version",     PSEUDO_REG, MODE_REG,  0,              version_read, NULL,        NULL          },
-    { "/proc/uptime",      PSEUDO_REG, MODE_REG,  0,              uptime_read,  NULL,        NULL          },
-    { "/proc/mounts",      PSEUDO_REG, MODE_REG,  0,              mounts_read,  NULL,        NULL          },
-    { "/proc/meminfo",     PSEUDO_REG, MODE_REG,  0,              meminfo_read, NULL,        NULL          },
-    { "/proc/cpuinfo",     PSEUDO_REG, MODE_REG,  0,              cpuinfo_read, NULL,        NULL          },
-    { "/proc/sys/kernel/pid_max", PSEUDO_REG, MODE_REG, 0,      pid_max_read, NULL,        NULL          },
+    { "/proc/self/exe",    PSEUDO_LNK, MODE_LNK,  0,              NULL,         NULL,        NULL,          NULL,        NULL           },
+    { "/proc/self/maps",   PSEUDO_REG, MODE_REG,  0,              maps_read,    NULL,        NULL,          NULL,        NULL           },
+    { "/proc/self/stat",   PSEUDO_REG, MODE_REG,  0,              stat_read,    NULL,        NULL,          NULL,        NULL           },
+    { "/proc/self/status", PSEUDO_REG, MODE_REG,  0,              status_read,  NULL,        NULL,          NULL,        NULL           },
+    { "/proc/version",     PSEUDO_REG, MODE_REG,  0,              version_read, NULL,        NULL,          NULL,        NULL           },
+    { "/proc/uptime",      PSEUDO_REG, MODE_REG,  0,              uptime_read,  NULL,        NULL,          NULL,        NULL           },
+    { "/proc/mounts",      PSEUDO_REG, MODE_REG,  0,              mounts_read,  NULL,        NULL,          NULL,        NULL           },
+    { "/proc/meminfo",     PSEUDO_REG, MODE_REG,  0,              meminfo_read, NULL,        NULL,          NULL,        NULL           },
+    { "/proc/cpuinfo",     PSEUDO_REG, MODE_REG,  0,              cpuinfo_read, NULL,        NULL,          NULL,        NULL           },
+    { "/proc/sys/kernel/pid_max", PSEUDO_REG, MODE_REG, 0,      pid_max_read, NULL,        NULL,          NULL,        NULL           },
 };
 
 #define NODE_COUNT  ((int)(sizeof(g_nodes) / sizeof(g_nodes[0])))
@@ -349,6 +363,24 @@ int pseudo_ioctl(int nid, uint64_t req, void *argp)
     const pseudo_node_t *n = &g_nodes[nid];
     if (!n->ioctl_fn) return -PFS_ENOSYS;
     return n->ioctl_fn(nid, (uint32_t)req, argp);
+}
+
+uint32_t pseudo_poll(int nid)
+{
+    /* 无 poll_fn 的节点保持老行为：永远可读可写。
+     * 这与 vfs_poll() 在没有 ops->poll 时的兜底一致。 */
+    if (nid < 0 || nid >= NODE_COUNT) return EPOLLIN | EPOLLOUT;
+    const pseudo_node_t *n = &g_nodes[nid];
+    if (!n->poll_fn) return EPOLLIN | EPOLLOUT;
+    return n->poll_fn(nid);
+}
+
+int pseudo_close(int nid)
+{
+    if (nid < 0 || nid >= NODE_COUNT) return 0;
+    const pseudo_node_t *n = &g_nodes[nid];
+    if (!n->close_fn) return 0;
+    return n->close_fn(nid);
 }
 
 int pseudo_stat_path(const char *abspath, struct kernel_stat *st)

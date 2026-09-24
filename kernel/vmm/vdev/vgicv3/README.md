@@ -140,8 +140,8 @@ guest 是 Linux 6.2.15 + initrd。判定标准：guest 打印 `Run /init as init
 ## 7. 怎么复现验证
 
 ```bash
-# 切 GIC 版本必须先 clean（GIC= 会改 CFLAGS 和源文件列表）
-make PLATFORM=qemu-virt-aarch64 clean
+# 切 GIC 版本不必再手动 clean：Makefile §7 的 _GIC_CHECK 会在检测到版本
+# 变化时自动清掉已编译的目标文件（GIC= 会改 CFLAGS 和源文件列表）。
 make PLATFORM=qemu-virt-aarch64 GIC=v3 test-guest-linux -j8
 # 期望：guest 打印 "Run /init as init process" 后出现 "root login:"，日志无 [ERROR]
 # 交互验证：在 "root login: " 后键入用户名，应逐字回显并推进到 "Password: "
@@ -168,6 +168,7 @@ qemu-system-aarch64 ... \
 
 ## 8. 参考
 
+- **guest 控制台（两种运行模式、`/dev/vmm` 协议、Ctrl+] 退出）**：`docs/vmm/GUEST_CONSOLE.md`
 - GICv2 版实现与注释：`../vgic/`
 - 宿主 GICv3 驱动：`driver/irq/gicv3.c`（注意 `GICD_CTLR.EnableGrp1A` 那个坑）
 - guest DTB：`imgs/aarch64/linux-gicv3.dts`

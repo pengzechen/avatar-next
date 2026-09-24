@@ -9,10 +9,14 @@
 
 #include "vmm/vmm.h"
 #include "vmm/vmm_mmio.h"
+#if ARCH_AARCH64
+#include "vmm/vmm_irq_route.h"
+#endif
 #include "klog.h"
 #include "string.h"
 #include "task/task.h"
 #include "task/switch.h"
+#include "task/sched.h"
 
 #if ARCH_AARCH64
 #include "aarch64/stage2.h"
@@ -155,13 +159,43 @@ int vm_create(vm_t *vm)
  *
  * uart_rx_ready() 在 UART 未开中断时直接查硬件 FR.RXFE 位，非阻塞，
  * 所以这里必须先用它把关 —— uart_getc() 在没有数据时是阻塞的。
+ *
+ * ⚠️ 只在 vpl011 的 TX 通道**关闭**时才能跑。helper 模式（/bin/vmm-run）
+ * 下宿主 tty 层独占真实 UART：用户按键由 helper 从自己的 stdin 读走，
+ * 再 write() 到 /dev/vmm。此时若本函数也在跑，两个消费者会从同一个硬件
+ * FIFO 抢字节（tty.c 的 signal_check_uart() 是第一个，本函数是第二个），
+ * 谁先跑谁拿到，输入会随机丢给错误的一方。
  */
 static void vmm_console_pump(void)
 {
+    if (vpl011_tx_channel_enabled())
+        return;
+
     while (uart_rx_ready())
         vpl011_push_rx((uint8_t)uart_getc());
 }
 #endif /* ARCH_AARCH64 */
+
+/* ── 宿主侧 guest 生命周期 ─────────────────────────────────── */
+/*
+ * 两个标志都由「谁创建/结束 vCPU 任务」维护，不从 guest 侧访问：
+ *   running  — vcpu_task_create() 置位，vcpu_task_fn() 退出前清零。
+ *              /dev/vmm 用它判断「还能不能写 guest 输入」以及 bootlinux
+ *              要不要返回 -EBUSY。
+ *   stop     — /dev/vmm 的 close 置位；主循环每轮检查，见到就返回。
+ */
+static volatile int g_vmm_guest_running;
+static volatile int g_vmm_stop_requested;
+
+void vmm_request_stop(void)
+{
+    g_vmm_stop_requested = 1;
+}
+
+int vmm_guest_running(void)
+{
+    return g_vmm_guest_running;
+}
 
 /* ── VMM 主循环（架构无关）────────────────────────────────── */
 /*
@@ -175,6 +209,36 @@ int vmm_run_vcpu(vcpu_t *vcpu)
     KLOG_INFO("[VMM] Starting vcpu%d\n", vcpu->vcpu_id);
 
     while (1) {
+        /*
+         * 宿主请求停止（/dev/vmm 的 close）。
+         *
+         * 在循环顶部查而不是在别处：这里正好是「上一次 guest 已经退出、
+         * HCR_EL2 已被 el2_trap_exit 还原成 host 模式（TGE=1、VM=0）」
+         * 的状态，直接 return 不会把 Stage-2 或 guest 向量表留在生效状态。
+         */
+        if (g_vmm_stop_requested) {
+            KLOG_INFO("[VMM] vcpu%d: stop requested, leaving guest loop\n",
+                      vcpu->vcpu_id);
+            return 0;
+        }
+
+        /*
+         * 主动让出 CPU。
+         *
+         * 必须有这个调用：guest 退出走的是 VMM 自己的 guest_vec_table，
+         * **不经过** sched_check_and_yield_from_trap() —— 那个钩子挂在宿主
+         * 正常异常向量表的返回路径上。所以 vCPU 任务在循环里从不进入调度器，
+         * 宿主其它任务会被完全饿死。实测症状：宿主 shell 里跑 /bin/vmm-run，
+         * helper 卡在启动 guest 的那次 write 之后就再也不动了（连它自己的
+         * banner 都打不出来），因为再也抢不到 cpu0。
+         *
+         * 位置与上面的停止检查相同：此刻上一次 guest 已退出、HCR_EL2 已被
+         * el2_trap_exit 还原成 host 模式，在这里切任务是安全的。
+         * sched_check_and_yield() 自己判 need_resched 与中断上下文，没有
+         * 待调度任务时只是一次廉价判断。
+         */
+        sched_check_and_yield();
+
         uint64_t irq_flags = arch_irq_save();
 
 #if ARCH_AARCH64
@@ -234,10 +298,28 @@ static void vcpu_task_fn(void *arg)
     KLOG_INFO("[vmm] vcpu%d task started\n", vcpu->vcpu_id);
 
     int rc = vmm_run_vcpu(vcpu);
+
+    /* 先清 running：/dev/vmm 的 bootlinux 靠它判断旧 guest 是否已收尾 */
+    g_vmm_guest_running = 0;
+
     if (rc == 0)
         KLOG_INFO("[vmm] vcpu%d exited normally\n", vcpu->vcpu_id);
     else
         KLOG_ERROR("[vmm] vcpu%d exited with error %d\n", vcpu->vcpu_id, rc);
+
+    /*
+     * 摘掉「本 pCPU 的 vCPU 承载任务」登记。
+     *
+     * GICv3 下宿主 vtimer 不由 ISR 注入（见 irq_route.c 的说明），所以这纯
+     * 属清账；但 GICv2 路径会用它，而这张表是按任务指针匹配的 —— 任务退出
+     * 后指针会被复用，留着旧值就可能让 ISR 去 unblock / 注入一个已经不是
+     * vCPU 的任务。
+     *
+     * irq_route.c 只在 aarch64 的 vdev 列表里，其它架构没有这个符号。
+     */
+#if ARCH_AARCH64
+    vmm_irq_route_clear_owner();
+#endif
 
     task_exit();
 }
@@ -254,6 +336,15 @@ struct task *vcpu_task_create(vcpu_t *vcpu, uint8_t priority)
         /* vcpu 状态（VMCS / VHE 寄存器 / SBI HSM 等）尚未支持跨核迁移。
          * 暂时全部钉到 BSP，待后续实现 vcpu 跨核迁移再放开。 */
         task_set_cpu_affinity(t, 0);
+
+        /*
+         * 从这里起就算「guest 在跑」：/dev/vmm 的 write/poll 会立刻看到，
+         * 不必等任务真正被调度上 CPU。同时清掉上一轮可能残留的停止请求，
+         * 否则重启 guest 时主循环第一轮就会直接退出。
+         */
+        g_vmm_stop_requested = 0;
+        g_vmm_guest_running  = 1;
+
         KLOG_INFO("[vmm] vcpu%d task created (id=%u) pinned to cpu0\n",
                   vcpu->vcpu_id, t->id);
     } else {

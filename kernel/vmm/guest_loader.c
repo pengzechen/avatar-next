@@ -461,10 +461,28 @@ int guest_loader_nop_dtb_nodes(uint64_t dtb_gpa, uint32_t dtb_size,
 }
 
 /* ── 启动 Linux guest ─────────────────────────────────────── */
+/*
+ * 调用者两种：
+ *   - kernel_main（RUN_GUEST_LINUX 直启）：开机直接进 guest，没有宿主 shell；
+ *   - /dev/vmm 的 bootlinux（宿主 shell 里跑 /bin/vmm-run）。
+ *
+ * 两个调用者靠 vm_t 是函数静态变量天然互斥，这里再加一道显式闸门：
+ * 直启之后 shell 是不存在的，但反过来 —— 在 shell 里先启动过 guest、
+ * 停掉、再启动 —— 会真的重入本函数。
+ *
+ * 重入是支持的：guest RAM 每次都被 memset 清干净、镜像重新加载、DTB 重新
+ * 修补、vm_create() 重建 Stage-2 与 vGIC/vPL011。所以只需要挡住「上一个
+ * guest 还在跑」这一种情况。
+ */
 int guest_loader_run_linux(void)
 {
     static vm_t vm;
     int rc;
+
+    if (vmm_guest_running()) {
+        KLOG_WARN("[guest] a guest is already running, refusing re-entry\n");
+        return -1;
+    }
 
     KLOG_INFO("\n=== Avatar OS: booting Linux guest (aarch64) ===\n");
 

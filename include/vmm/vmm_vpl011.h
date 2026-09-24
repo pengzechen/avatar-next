@@ -4,16 +4,24 @@
  * 移植自 x-kernel: virt/vdev/vpl011/src/lib.rs
  *
  * 为 guest 模拟一个 PL011 UART：
- *   - guest 写 UARTDR → 立即打到宿主控制台（逐字节直通，见 vpl011.c）
+ *   - guest 写 UARTDR → 见下方「输出通路」两种模式
  *   - guest 读 UARTDR → 从 RX FIFO 弹出字节
  *   - UARTFR/UARTCR/UARTIMSC/UARTRIS/UARTMIS/ID 寄存器按 PL011 语义返回
  *
+ * 输出通路（对标 kvmm 的 TxChannel，两种模式由**宿主**决定）：
+ *   - 通道关闭（默认）：逐字节直打到宿主控制台。这是 RUN_GUEST_LINUX
+ *     直启模式用的 —— guest 独占终端，没有宿主 shell 与它抢。
+ *   - 通道打开：字节进 TX 环形缓冲，由 vpl011_tx_pop() 取走交给用户态
+ *     helper（/bin/vmm-run）再写到自己 stdout。宿主 tty 层保持对真实
+ *     UART 的独占，VMM 不再碰硬件（见 vmm_console_pump 的判据）。
+ *
  * 输入通路（对标 kvmm 的 RxChannel）：
- *   宿主控制台按键 → vmm_console_pump() 轮询真实 PL011
- *                  → vpl011_push_rx() 压入 RX FIFO
- *                  → vpl011_rx_irq_asserted() 为真时，调用方把 VPL011_IRQ
- *                    经 vGIC 置 pending，guest 收到 RX 中断后取走数据。
- *   RX 中断是**电平触发**语义：只要 FIFO 非空且 UARTIMSC 里 RX 位开着，
+ *   - 通道关闭：vmm_console_pump() 轮询真实 PL011 → vpl011_push_rx()
+ *   - 通道打开：用户态 helper 把 stdin 字节 write() 到 /dev/vmm
+ *   两条路都汇入同一个 RX FIFO；vpl011_rx_irq_asserted()（FIFO 非空且
+ *   UARTIMSC 的 RX 位开着）为真时，调用方把 VPL011_IRQ 经 vGIC 置
+ *   pending，guest 收中断后取走数据。
+ *   RX 中断是**电平触发**语义：只要 FIFO 非空且 IMSC 里 RX 位开着，
  *   每次进入 guest 前都要重新置 pending（guest 应答时 vGIC 会清掉该位）。
  *
  * MMIO 基址与 QEMU virt 的真实 PL011 一致（0x09000000）；因此在启用
@@ -55,5 +63,36 @@ void vpl011_push_rx(uint8_t c);
  * 应答中断时 vGIC 会清掉 pending 位，FIFO 里剩余的字节会因此没人再取。
  */
 int vpl011_rx_irq_asserted(void);
+
+/*
+ * vpl011_rx_flush — 丢弃 RX FIFO 里所有未被 guest 取走的字节
+ *
+ * 停在 guest 时用：不清的话，上一轮没消费的按键会在下一次启动时先喂给新
+ * guest 的 getty。
+ */
+void vpl011_rx_flush(void);
+
+/*
+ * ── TX 通道（guest 输出 → 用户态 helper）─────────────────────────
+ *
+ * vpl011_tx_set_enabled — 切换输出目标
+ * @enabled: 1 = 字节进 TX 环形缓冲供 vpl011_tx_pop() 取走；
+ *           0 = 逐字节直打宿主控制台（直启模式）。
+ *
+ * 打开通道同时意味着「宿主 tty 独占真实 UART」，因此 vmm_console_pump()
+ * 的调用方必须用 vpl011_tx_channel_enabled() 把关，否则用户态 helper 与
+ * VMM 会同时从硬件 FIFO 抢字节。
+ */
+void vpl011_tx_set_enabled(int enabled);
+int  vpl011_tx_channel_enabled(void);
+
+/*
+ * vpl011_tx_pop — 取一个 guest 输出字节
+ * @c: 输出参数。缓冲空时返回 0（不修改 *c）。
+ */
+int  vpl011_tx_pop(uint8_t *c);
+
+/* TX 缓冲里是否还有数据（helper 的 poll 用它报 EPOLLIN）*/
+int  vpl011_tx_has_data(void);
 
 #endif /* VMM_VPL011_H */

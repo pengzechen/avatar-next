@@ -294,6 +294,20 @@ int vmm_run_vcpu(vcpu_t *vcpu);
 
 int vm_create(vm_t *vm);
 
+/* ── 宿主侧 guest 生命周期（/dev/vmm 用）──────────────────────── */
+/*
+ * vmm_request_stop — 请求停止当前 guest（非阻塞）
+ *
+ * vCPU 任务在它的下一个安全点（guest 退出路径的循环顶部）看到标志后返回，
+ * 由 vcpu_task_fn 收尾。因为是异步的，调用后 guest 还要跑最多一个宿主
+ * tick（满载约 10ms；空闲时每条 WFI 都是退出，几乎立刻）才真正结束 ——
+ * 想确认请查 vmm_guest_running()。
+ */
+void vmm_request_stop(void);
+
+/* 是否有 vCPU 任务正在跑。从 vcpu_task_create 起为真，任务退出后为假。 */
+int  vmm_guest_running(void);
+
 struct task *vcpu_task_create(vcpu_t *vcpu, uint8_t priority);
 
 #endif /* KERNEL_VMM_H */
