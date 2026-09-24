@@ -69,14 +69,14 @@ void read_handler(uint64_t regs[6], task_t *current)
     fd_obj_t *obj = task_get_fd(current, fd);
     if (obj && fd_obj_file(obj)) {
         if (trace_heavy_task(current)) {
-            KLOG_DEBUG("[vfsio] pid=%u read fd=%d path=%s buf=0x%llx count=0x%llx off=0x%llx\n",
-                       current->id, fd, fd_obj_file(obj)->path,
-                       (uint64_t)buf, count, fd_obj_file(obj)->offset);
+            KLOG_SYSCALL("[vfsio] pid=%u read fd=%d path=%s buf=0x%llx count=0x%llx off=0x%llx\n",
+                         current->id, fd, fd_obj_file(obj)->path,
+                         (uint64_t)buf, count, fd_obj_file(obj)->offset);
         }
         int rc = vfs_read(fd_obj_file(obj), buf, (size_t)count);
         if (trace_heavy_task(current)) {
-            KLOG_DEBUG("[vfsio] pid=%u read fd=%d rc=%d new_off=0x%llx\n",
-                       current->id, fd, rc, fd_obj_file(obj)->offset);
+            KLOG_SYSCALL("[vfsio] pid=%u read fd=%d rc=%d new_off=0x%llx\n",
+                         current->id, fd, rc, fd_obj_file(obj)->offset);
         }
         regs[0] = rc >= 0 ? (uint64_t)rc : (uint64_t)(int64_t)rc;
         return;
@@ -137,14 +137,14 @@ void pread64_handler(uint64_t regs[6], task_t *current)
     }
 
     if (trace_heavy_task(current)) {
-        KLOG_DEBUG("[vfsio] pid=%u pread fd=%d path=%s buf=0x%llx count=0x%llx off=0x%llx\n",
-                   current->id, fd, fd_obj_file(obj)->path,
-                   (uint64_t)buf, count, (uint64_t)offset);
+        KLOG_SYSCALL("[vfsio] pid=%u pread fd=%d path=%s buf=0x%llx count=0x%llx off=0x%llx\n",
+                     current->id, fd, fd_obj_file(obj)->path,
+                     (uint64_t)buf, count, (uint64_t)offset);
     }
     int rc = vfs_pread(fd_obj_file(obj), buf, (size_t)count, offset);
     if (trace_heavy_task(current)) {
-        KLOG_DEBUG("[vfsio] pid=%u pread fd=%d rc=%d\n",
-                   current->id, fd, rc);
+        KLOG_SYSCALL("[vfsio] pid=%u pread fd=%d rc=%d\n",
+                     current->id, fd, rc);
     }
     regs[0] = rc >= 0 ? (uint64_t)rc : (uint64_t)(int64_t)rc;
 }

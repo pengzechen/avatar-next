@@ -1,6 +1,7 @@
 #include "kernel_stat.h"
 #include "syscall/syscall.h"
 #include "syscall/syscall_internal.h"
+#include "syscall/trace.h"
 #include "syscall/core/futex.h"
 #include "loader/bin_loader.h"
 #include "loader/elf_loader.h"
@@ -35,16 +36,16 @@ extern uint8_t g_stack_used[TASK_MAX];
 
 static void notify_parent_wait(task_t *child)
 {
-    KLOG_DEBUG("[wait] child exit notify: child=%u parent=%u status=%d signal=%d\n",
-               child->id, child->parent_id, child->exit_status, child->exit_signal);
+    KLOG_SYSCALL("[wait] child exit notify: child=%u parent=%u status=%d signal=%d\n",
+                 child->id, child->parent_id, child->exit_status, child->exit_signal);
     for (uint32_t i = 0; i < TASK_MAX; i++) {
         if (!g_stack_used[i]) continue;
         task_t *t = &g_task_pool[i];
         if (!t->is_waiting) continue;
         if (t->id != child->parent_id) continue;
         if (t->wait_pid != (uint32_t)-1 && t->wait_pid != child->id) continue;
-        KLOG_DEBUG("[wait] wake parent: parent=%u wait_pid=%u child=%u state=%d\n",
-                   t->id, t->wait_pid, child->id, t->state);
+        KLOG_SYSCALL("[wait] wake parent: parent=%u wait_pid=%u child=%u state=%d\n",
+                     t->id, t->wait_pid, child->id, t->state);
         t->is_waiting = false;
         task_unblock(t);
         return;
@@ -53,14 +54,14 @@ static void notify_parent_wait(task_t *child)
         if (!g_stack_used[i]) continue;
         task_t *t = &g_task_pool[i];
         if (t->id == child->parent_id) {
-            KLOG_DEBUG("[wait] parent not waiting: child=%u parent=%u state=%d waiting=%d wait_pid=%u name='%s'\n",
-                       child->id, child->parent_id, t->state, t->is_waiting,
-                       t->wait_pid, t->name);
+            KLOG_SYSCALL("[wait] parent not waiting: child=%u parent=%u state=%d waiting=%d wait_pid=%u name='%s'\n",
+                         child->id, child->parent_id, t->state, t->is_waiting,
+                         t->wait_pid, t->name);
             return;
         }
     }
-    KLOG_DEBUG("[wait] parent missing: child=%u parent=%u\n",
-               child->id, child->parent_id);
+    KLOG_SYSCALL("[wait] parent missing: child=%u parent=%u\n",
+                 child->id, child->parent_id);
 }
 
 /* Called from task.c's task_exit() to notify waiting parent */
@@ -72,52 +73,19 @@ void notify_parent_wait_from_task(task_t *child)
 /* syscall entry counter（brk.c 等的调试日志会引用） */
 volatile uint32_t g_syscall_entry_count = 0;
 
-static bool syscall_trace_heavy_task(task_t *current)
-{
-    return current && current->is_user_process && current->heap_end >= 0x3000000ULL;
-}
-
-static bool syscall_trace_selected(uint64_t nr)
-{
-    switch (nr) {
-    case LINUX_SYS_OPENAT:
-    case LINUX_SYS_CLOSE:
-    case LINUX_SYS_READ:
-    case LINUX_SYS_PREAD64:
-    case LINUX_SYS_READV:
-    case LINUX_SYS_FSTAT:
-    case LINUX_SYS_NEWFSTATAT:
-    case LINUX_SYS_READLINKAT:
-    case LINUX_SYS_GETDENTS64:
-    case LINUX_SYS_IOCTL:
-    case LINUX_SYS_BRK:
-    case LINUX_SYS_WAIT4:
-    case LINUX_SYS_WAITID:
-        return true;
-    default:
-        return false;
-    }
-}
-
-static const char *syscall_trace_name(uint64_t nr)
-{
-    switch (nr) {
-    case LINUX_SYS_OPENAT:     return "openat";
-    case LINUX_SYS_CLOSE:      return "close";
-    case LINUX_SYS_READ:       return "read";
-    case LINUX_SYS_PREAD64:    return "pread64";
-    case LINUX_SYS_READV:      return "readv";
-    case LINUX_SYS_FSTAT:      return "fstat";
-    case LINUX_SYS_NEWFSTATAT: return "newfstatat";
-    case LINUX_SYS_READLINKAT: return "readlinkat";
-    case LINUX_SYS_GETDENTS64: return "getdents64";
-    case LINUX_SYS_IOCTL:      return "ioctl";
-    case LINUX_SYS_BRK:        return "brk";
-    case LINUX_SYS_MMAP:       return "mmap";
-    case LINUX_SYS_MUNMAP:     return "munmap";
-    default:                   return "?";
-    }
-}
+/*
+ * 流式追踪（直接打 UART）现在只由 syscall 模块位控制：
+ *     make ... LOG=debug LOG_MODULES=syscall
+ *
+ * 原来这里还有两道门 —— 一道是写死的堆阈值（heap_end >= 0x3000000，新程序
+ * 根本够不到），一道是 syscall 号白名单。两道都删了：要筛什么用 LOG_MODULES，
+ * 而不是在代码里猜。
+ *
+ * 注意流式追踪只在 DEBUG 级、且模块位放行时才输出；崩溃后回看请用环形缓冲
+ * （kernel/syscall/trace.c），它常开、不受等级影响。
+ */
+/* syscall 号 → 名字在 kernel/syscall/trace.c，环形缓冲和流式追踪共用一份，
+ * 免得两边各维护一个迟早对不上的表。 */
 
 #if ARCH_X86_64
 /* ─────────────────────────────────────────────────────────────────
@@ -337,8 +305,8 @@ void syscall_handler(trap_frame_t *frame)
     /* 0x7FFFFFFEULL 是 stub 标记：直接返回 0 */
     if (syscall_num == 0x7FFFFFFEULL) {
         if (g_syscall_entry_count <= 16) {
-            KLOG_DEBUG("[syscall:x86] raw=%llu -> stub0 args=[0x%llx,0x%llx,0x%llx,0x%llx,0x%llx,0x%llx]\n",
-                       raw_syscall_num, regs[0], regs[1], regs[2], regs[3], regs[4], regs[5]);
+            KLOG_SYSCALL("[syscall:x86] raw=%llu -> stub0 args=[0x%llx,0x%llx,0x%llx,0x%llx,0x%llx,0x%llx]\n",
+                         raw_syscall_num, regs[0], regs[1], regs[2], regs[3], regs[4], regs[5]);
         }
         syscall_abi_set_ret(frame, 0);
         return;
@@ -346,13 +314,22 @@ void syscall_handler(trap_frame_t *frame)
 #endif
 
     task_t *current = task_current();
-    bool trace_sc = syscall_trace_heavy_task(current) && syscall_trace_selected(syscall_num);
+    bool trace_sc = (current != NULL && current->is_user_process);
+
+    /*
+     * 常开记录：每条 syscall 往本 CPU 的环形缓冲写一条（入口填参数，出口回填
+     * 返回值）。不碰 UART、不加锁 —— 崩溃是事后才知道的，"补录"不成立，
+     * 所以这里不能做成开关。回看用 syscall_trace_dump() / /proc/syscalls。
+     */
+    syscall_trace_enter(current ? (uint16_t)current->id : 0U,
+                        (uint32_t)syscall_num,
+                        regs[0], regs[1], regs[2]);
 
     if (trace_sc) {
-        KLOG_DEBUG("[strace] pid=%u %s(%llu) a0=0x%llx a1=0x%llx a2=0x%llx a3=0x%llx a4=0x%llx a5=0x%llx heap=0x%llx mmap_next=0x%llx\n",
-                   current->id, syscall_trace_name(syscall_num), syscall_num,
-                   regs[0], regs[1], regs[2], regs[3], regs[4], regs[5],
-                   current->heap_end, current->mmap_next);
+        KLOG_SYSCALL("[strace] pid=%u %s(%llu) a0=0x%llx a1=0x%llx a2=0x%llx a3=0x%llx a4=0x%llx a5=0x%llx heap=0x%llx mmap_next=0x%llx\n",
+                     current->id, syscall_trace_name(syscall_num), syscall_num,
+                     regs[0], regs[1], regs[2], regs[3], regs[4], regs[5],
+                     current->heap_end, current->mmap_next);
     }
 
     /* 每次 syscall 入口 poll UART：弥补关中断期间 timer 无法触发的窗口 */
@@ -979,10 +956,14 @@ void syscall_handler(trap_frame_t *frame)
         current->sc_entry_ns = 0;
     }
 
+    /* 回填环形缓冲里的返回值。不返回的 syscall（execve/exit）走不到这里，
+     * 那条记录会一直保持"待返回"哨兵 —— dump 时显示成 "= ?"，本身就是信息。 */
+    syscall_trace_exit((int64_t)regs[0]);
+
     if (trace_sc) {
-        KLOG_DEBUG("[strace] pid=%u %s => 0x%llx (%lld)\n",
-                   current->id, syscall_trace_name(syscall_num),
-                   regs[0], (int64_t)regs[0]);
+        KLOG_SYSCALL("[strace] pid=%u %s => 0x%llx (%lld)\n",
+                     current->id, syscall_trace_name(syscall_num),
+                     regs[0], (int64_t)regs[0]);
     }
 
     syscall_abi_set_ret(frame, regs[0]);

@@ -138,10 +138,10 @@ static err_t ksock_tcp_recv_cb(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, 
         return ERR_MEM;
     }
 
-    KLOG_DEBUG("[tcp_recv_cb] si=%d plen=%u tot=%u cur_off=%u cur_tot=%u\n",
-               (int)(sk - g_ksocks), p->len, p->tot_len,
-               sk->recv_offset,
-               sk->recv_head ? sk->recv_head->tot_len : 0);
+    KLOG_SYSCALL("[tcp_recv_cb] si=%d plen=%u tot=%u cur_off=%u cur_tot=%u\n",
+                 (int)(sk - g_ksocks), p->len, p->tot_len,
+                 sk->recv_offset,
+                 sk->recv_head ? sk->recv_head->tot_len : 0);
 
     if (sk->recv_head)
         pbuf_cat(sk->recv_head, p);
@@ -388,7 +388,7 @@ int ksock_accept(int si, uint32_t *out_addr, uint16_t *out_port, int flags)
 
     while (sk->accept_count == 0) {
         if (nonblock) {
-            KLOG_DEBUG("[ksock] accept would block si=%d flags=0x%x\n", si, flags);
+            KLOG_SYSCALL("[ksock] accept would block si=%d flags=0x%x\n", si, flags);
             return -11; /* EAGAIN */
         }
         sk->blocked_task = task_current();
@@ -520,9 +520,9 @@ int ksock_recv(int si, void *buf, size_t len, int flags)
             static int dbg_cnt = 0;
             if (len == 1 && dbg_cnt < 64) {
                 unsigned char c = ((unsigned char *)buf)[0];
-                KLOG_DEBUG("[ksock_recv] si=%d off=%u tot=%u byte=0x%02x '%c'\n",
-                           si, sk->recv_offset, sk->recv_head ? sk->recv_head->tot_len : 0,
-                           c, (c >= 0x20 && c < 0x7f) ? c : '.');
+                KLOG_SYSCALL("[ksock_recv] si=%d off=%u tot=%u byte=0x%02x '%c'\n",
+                             si, sk->recv_offset, sk->recv_head ? sk->recv_head->tot_len : 0,
+                             c, (c >= 0x20 && c < 0x7f) ? c : '.');
                 dbg_cnt++;
             }
         }
@@ -672,7 +672,7 @@ int ksock_setsockopt(int si, int level, int optname,
             else
                 tcp_nagle_enable(sk->tcp_pcb);
         }
-        KLOG_DEBUG("[ksock] TCP_NODELAY si=%d enabled=%d\n", si, enabled != 0);
+        KLOG_SYSCALL("[ksock] TCP_NODELAY si=%d enabled=%d\n", si, enabled != 0);
         return 0;
     }
 

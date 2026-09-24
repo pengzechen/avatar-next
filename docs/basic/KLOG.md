@@ -137,6 +137,7 @@ KLOG_WARN_SAMPLE("[PLIC] unhandled irq=%u hit#%u\n", irq, _klog_seq_);
 | `smp` | `LOG_MODULE_SMP` | 多核 |
 | `gic` | `LOG_MODULE_GIC` | GIC（`KLOG_GIC` / `logger_gic_debug`） |
 | `generic` | `LOG_MODULE_GENERIC` | 未打标签的 DEBUG/TRACE |
+| `syscall` | `LOG_MODULE_SYSCALL` | 系统调用逐次追踪（`KLOG_SYSCALL`）。见下节「系统调用追踪」 |
 
 加新模块要同时改两处：`include/klog.h` 的位定义、`lib/klog.c` 的名字表。
 
@@ -237,6 +238,65 @@ SMP 安全靠 `__atomic_*`（RELAXED），不碰 `g_klog_lock`。
 
 > VMM 那几行是**最容易改错的地方**：它们不能降级，只能改成采样 ——
 > 原来的 `iter % N == 0` 节流保留 INFO 语义，但把输出量压成有界。
+
+## 系统调用追踪（strace 式）
+
+用户态程序崩了、想按 syscall 调用顺序定位时用这个，**不要**靠 `LOG=debug` 逐条打日志。
+逐条打有三个致命短板：要全量重编、直写 UART 刷过去就没了、崩在 syscall 中间时只剩一个
+配不上对的孤立入口行。
+
+`kernel/syscall/trace.c` 提供两条路：
+
+| 手段 | 用途 | 需要重编吗 |
+|---|---|---|
+| **环形缓冲**（常开） | 崩溃后回看"刚才走了哪些 syscall" | **不需要** |
+| `KLOG_SYSCALL` 流式输出 | 实时盯着看 | 需要（`LOG=debug LOG_MODULES=syscall`）|
+
+### 环形缓冲
+
+每 CPU 一个 512 条的环，**每次 syscall 都记**（入口写参数、出口回填返回值），
+不碰 UART、不加锁 —— syscall 路径本来就关中断且不迁移，各 CPU 只写自己的环。
+一条 syscall 只占一个槽位，所以 dump 出来是一行一条，和 strace 一致。
+
+**为什么必须常开**：崩溃是事后才知道的，没法"补录"。关掉省下的那点开销，
+换来的是崩的时候什么都没有。
+
+**什么时候能看到它**：
+
+1. **进程异常死亡时自动 dump** —— SIGSEGV 等致命信号打出该 pid 最近的
+   `SYSCALL_TRACE_DUMP_MAX`（默认 32）条。零操作，崩溃现场直接出现在屏幕上。
+2. **随时手动看** —— `cat /proc/syscalls`，最多 128 条，不受等级影响。
+
+输出长这样（路径是内联存在记录里的，所以直接看得见文件名）：
+
+```
+[WARN] [SYSCALL] pid=5 崩溃前的最近 3 条系统调用：
+[WARN] [SYSCALL] pid=5 t=5680ms set_tid_address (0x220e0, 0x1, 0x22060) = 0x5 (5)
+[WARN] [SYSCALL] pid=5 t=5680ms openat "/etc/hostname" (0xffffffffffffff9c, 0x110b8, 0x20000) = 0xfffffffffffffffe (-2)
+[WARN] [SYSCALL] pid=5 t=5680ms write (0x1, 0x110c8, 0xd) = 0xd (13)
+```
+
+几个用起来要知道的点：
+
+- **`= ? (没有返回)`**：execve / exit 这类不会返回的 syscall 会一直保持哨兵值。
+  这是**有用信息**，不是记录丢了 —— 它告诉你"走到这里就没再回来"。
+- **只记前 3 个参数**。够看清 `openat` 的 dirfd/flags、`read` 的 fd/count、`brk` 的地址；
+  更靠后的参数要自己对着用户态代码看。
+- **路径型 syscall 的路径**（openat/newfstatat/readlinkat/execve/…）内联存 32 字节，
+  经 `copy_string_from_user()` 抓取 —— 来自 `regs[]` 的用户指针**禁止裸解引用**
+  （用户传非法地址会让内核态读到坏地址 → #PF → 整机挂死）。
+- 内存开销：512 条 × 88B × 8 CPU ≈ **360KB** 的 `.bss`。嵌入式目标可在平台配置里
+  把 `SYSCALL_TRACE_DEPTH` 调小。
+
+### 流式输出（实时）
+
+```bash
+make PLATFORM=... run LOG=debug LOG_MODULES=syscall
+```
+
+只放行 syscall 模块的 DEBUG —— 也就是全部系统调用的逐次记录，别的模块闭嘴。
+这条路不常开（要重编），但适合"看着它跑"的场景。它和环形缓冲共用同一份
+syscall 名字表。
 
 ## 输出格式
 

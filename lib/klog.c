@@ -99,6 +99,7 @@ static const klog_module_name_t g_klog_module_names[] = {
     { "smp",     LOG_MODULE_SMP     },
     { "gic",     LOG_MODULE_GIC     },
     { "generic", LOG_MODULE_GENERIC },
+    { "syscall", LOG_MODULE_SYSCALL },
 };
 
 #define KLOG_MODULE_NAME_COUNT \

@@ -10,6 +10,7 @@
 
 #include "exception.h"
 #include "klog.h"
+#include "syscall/trace.h"
 #include "irq/lapic.h"
 #include "x86_64/io.h"      /* outb — 用于屏蔽 8259A PIC */
 #include "task/task.h"
@@ -254,6 +255,8 @@ void handle_exception(void *frame_ptr)
 
                 if (sig) {
                     KLOG_WARN("  → delivering signal %d to pid=%u\n", sig, cur->id);
+                    /* 崩溃现场：环形缓冲常开，这里直接把该 pid 最近的 syscall 打出来 */
+                    syscall_trace_dump((uint16_t)cur->id, SYSCALL_TRACE_DUMP_MAX);
                     task_send_signal(cur, sig);
                     deliver_pending_signals(cur, frame);
                     return;

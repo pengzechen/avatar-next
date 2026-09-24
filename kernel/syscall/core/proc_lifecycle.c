@@ -85,8 +85,8 @@ void sys_exit(int status)
 {
     task_t *current = task_current();
 
-    KLOG_DEBUG("[syscall] process '%s' (id=%u) exiting with status %d\n",
-               current->name, current->id, status);
+    KLOG_SYSCALL("[syscall] process '%s' (id=%u) exiting with status %d\n",
+                 current->name, current->id, status);
 
     current->exit_status = status;
 
@@ -168,7 +168,7 @@ int64_t sys_execve(const char *pathname, char **argv, char **envp)
     if (pathname == NULL)
         return -1;
 
-    KLOG_DEBUG("[syscall] execve called\n");
+    KLOG_SYSCALL("[syscall] execve called\n");
 
     task_t *current = task_current();
     /* 记录可执行文件路径（/proc/self/exe 使用） */
@@ -200,10 +200,10 @@ int64_t sys_execve(const char *pathname, char **argv, char **envp)
         g_exec_argv_ptrs[n] = NULL;
         kern_argv = g_exec_argv_ptrs;
         if (n == EXEC_MAX_ARGC)
-            KLOG_DEBUG("[execve] argv truncated path=%s max_argc=%d\n",
-                       pathname, EXEC_MAX_ARGC);
-        KLOG_DEBUG("[execve] path=%s argc=%d argv0=%s\n",
-                   pathname, n, n > 0 ? g_exec_argv_ptrs[0] : "");
+            KLOG_SYSCALL("[execve] argv truncated path=%s max_argc=%d\n",
+                         pathname, EXEC_MAX_ARGC);
+        KLOG_SYSCALL("[execve] path=%s argc=%d argv0=%s\n",
+                     pathname, n, n > 0 ? g_exec_argv_ptrs[0] : "");
     }
 
     /* 将相对路径转为绝对路径 */
@@ -286,8 +286,8 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
     bool is_thread_clone   = (flags & CLONE_THREAD) != 0;
 
     if ((flags & CLONE_VM) && !is_thread_clone) {
-        KLOG_DEBUG("[clone/vfork] parent=%u flags=0x%llx: degrade to fork\n",
-                   parent->id, flags);
+        KLOG_SYSCALL("[clone/vfork] parent=%u flags=0x%llx: degrade to fork\n",
+                     parent->id, flags);
         flags &= ~(CLONE_VM | CLONE_VFORK | CLONE_SETTLS |
                    CLONE_PARENT_SETTID | CLONE_CHILD_CLEARTID);
     }
@@ -345,8 +345,8 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
             (flags & CLONE_SETTLS) ? tls : 0
         );
 
-        KLOG_DEBUG("[clone/thread] parent=%u child=%u flags=0x%llx tls=0x%llx usp=0x%llx ctid=%p\n",
-               parent->id, child->id, flags, tls, child_stack, child_tidptr);
+        KLOG_SYSCALL("[clone/thread] parent=%u child=%u flags=0x%llx tls=0x%llx usp=0x%llx ctid=%p\n",
+                     parent->id, child->id, flags, tls, child_stack, child_tidptr);
 
     } else {
         /* ── fork 路径 ── */
@@ -483,8 +483,8 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
             frame, child_stack, 0
         );
 
-        KLOG_DEBUG("[clone/fork] parent=%u child=%u elr=0x%llx usp=0x%llx\n",
-               parent->id, child->id, syscall_abi_ip(frame), syscall_abi_user_sp(frame));
+        KLOG_SYSCALL("[clone/fork] parent=%u child=%u elr=0x%llx usp=0x%llx\n",
+                     parent->id, child->id, syscall_abi_ip(frame), syscall_abi_user_sp(frame));
     }
 
     /* 信号继承 */
@@ -549,8 +549,8 @@ void wait_handler(uint64_t regs[6], task_t *me)
 
     const int WNOHANG = 1;
 
-    KLOG_DEBUG("[wait] enter: pid=%u wait_pid=%d wstatus=0x%llx options=0x%x rusage=0x%llx\n",
-               me->id, wait_pid, regs[1], options, regs[3]);
+    KLOG_SYSCALL("[wait] enter: pid=%u wait_pid=%d wstatus=0x%llx options=0x%x rusage=0x%llx\n",
+                 me->id, wait_pid, regs[1], options, regs[3]);
 
     /* 先判断是否存在匹配的子进程 */
     bool has_matching_child = false;
@@ -565,7 +565,7 @@ void wait_handler(uint64_t regs[6], task_t *me)
     }
 
     if (!has_matching_child) {
-        KLOG_DEBUG("[wait] pid=%u no matching child for wait_pid=%d\n", me->id, wait_pid);
+        KLOG_SYSCALL("[wait] pid=%u no matching child for wait_pid=%d\n", me->id, wait_pid);
         regs[0] = (uint64_t)(int64_t)-ECHILD;
         return;
     }
@@ -582,8 +582,8 @@ void wait_handler(uint64_t regs[6], task_t *me)
     }
 
     if (found) {
-        KLOG_DEBUG("[wait] pid=%u reap immediately child=%u status=%d signal=%d\n",
-                   me->id, found->id, found->exit_status, found->exit_signal);
+        KLOG_SYSCALL("[wait] pid=%u reap immediately child=%u status=%d signal=%d\n",
+                     me->id, found->id, found->exit_status, found->exit_signal);
         if (!wait_write_result(regs[1], regs[3], found)) {
             regs[0] = (uint64_t)(int64_t)-EFAULT;
             return;
@@ -595,18 +595,18 @@ void wait_handler(uint64_t regs[6], task_t *me)
 
     /* 无已退出的子进程 */
     if (options & WNOHANG) {
-        KLOG_DEBUG("[wait] pid=%u WNOHANG no exited child\n", me->id);
+        KLOG_SYSCALL("[wait] pid=%u WNOHANG no exited child\n", me->id);
         regs[0] = 0;
         return;
     }
 
     /* 阻塞等待 */
-    KLOG_DEBUG("[wait] pid=%u block wait_pid=%d\n", me->id, wait_pid);
+    KLOG_SYSCALL("[wait] pid=%u block wait_pid=%d\n", me->id, wait_pid);
     me->is_waiting = true;
     me->wait_pid   = (wait_pid > 0) ? (uint32_t)wait_pid : (uint32_t)-1;
     task_block(NULL);
     me->is_waiting = false;
-    KLOG_DEBUG("[wait] pid=%u resumed wait_pid=%d\n", me->id, wait_pid);
+    KLOG_SYSCALL("[wait] pid=%u resumed wait_pid=%d\n", me->id, wait_pid);
 
     for (uint32_t i = 0; i < TASK_MAX; i++) {
         if (!g_stack_used[i]) continue;
@@ -617,8 +617,8 @@ void wait_handler(uint64_t regs[6], task_t *me)
         if (t->state == TASK_DEAD) { found = t; break; }
     }
     if (found) {
-        KLOG_DEBUG("[wait] pid=%u reap after wake child=%u status=%d signal=%d\n",
-                   me->id, found->id, found->exit_status, found->exit_signal);
+        KLOG_SYSCALL("[wait] pid=%u reap after wake child=%u status=%d signal=%d\n",
+                     me->id, found->id, found->exit_status, found->exit_signal);
         if (!wait_write_result(regs[1], regs[3], found)) {
             regs[0] = (uint64_t)(int64_t)-EFAULT;
             return;
@@ -626,7 +626,7 @@ void wait_handler(uint64_t regs[6], task_t *me)
         regs[0] = (uint64_t)found->id;
         task_reap_dead(found);
     } else {
-        KLOG_DEBUG("[wait] pid=%u resumed but no dead child for wait_pid=%d\n", me->id, wait_pid);
+        KLOG_SYSCALL("[wait] pid=%u resumed but no dead child for wait_pid=%d\n", me->id, wait_pid);
         regs[0] = (uint64_t)(int64_t)-ECHILD;
     }
 }

@@ -36,16 +36,16 @@ void openat_handler(uint64_t regs[6], task_t *current)
     int rpa = resolve_path_at(current, dirfd, pathname, abspath, sizeof(abspath));
     if (rpa < 0) {
         if (trace_heavy_task(current)) {
-            KLOG_DEBUG("[vfsop] pid=%u openat path=%s flags=0x%x rc=%d\n",
-                       current->id, pathname, flags, rpa);
+            KLOG_SYSCALL("[vfsop] pid=%u openat path=%s flags=0x%x rc=%d\n",
+                         current->id, pathname, flags, rpa);
         }
         regs[0] = (uint64_t)(int64_t)rpa;
         return;
     }
     follow_symlinks(abspath, sizeof(abspath));
     if (trace_heavy_task(current)) {
-        KLOG_DEBUG("[vfsop] pid=%u openat path=%s resolved=%s flags=0x%x\n",
-                   current->id, pathname, abspath, flags);
+        KLOG_SYSCALL("[vfsop] pid=%u openat path=%s resolved=%s flags=0x%x\n",
+                     current->id, pathname, abspath, flags);
     }
 
     /* ── PTY: /dev/ptmx 和 /dev/pts/N（不需要 fd pool 预分配）── */
@@ -97,8 +97,8 @@ void openat_handler(uint64_t regs[6], task_t *current)
         return;
     }
     if (trace_heavy_task(current)) {
-        KLOG_DEBUG("[vfsop] pid=%u openat fd=%d pool=%d path=%s kind=%d\n",
-                   current->id, fd, pool, vf->path, vf->kind);
+        KLOG_SYSCALL("[vfsop] pid=%u openat fd=%d pool=%d path=%s kind=%d\n",
+                     current->id, fd, pool, vf->path, vf->kind);
     }
     regs[0] = (uint64_t)fd;
 }
@@ -117,8 +117,8 @@ void close_handler(uint64_t regs[6], task_t *current)
     }
     int idx = current->fd_table[fd];
     fd_obj_t *obj = &g_fd_pool[idx];
-    KLOG_DEBUG("[fd] close: pid=%u fd=%d pool_idx=%d type=%d\n",
-              current->id, fd, idx, obj->type);
+    KLOG_SYSCALL("[fd] close: pid=%u fd=%d pool_idx=%d type=%d\n",
+                 current->id, fd, idx, obj->type);
     fd_close_notify(idx);
     fd_obj_close(idx);
     fd_pool_free(idx);
@@ -328,7 +328,7 @@ void fcntl_handler(uint64_t regs[6], task_t *current)
         return;
     }
     default:
-        KLOG_DEBUG("[fcntl] unsupported cmd=%d fd=%d\n", cmd, fd);
+        KLOG_SYSCALL("[fcntl] unsupported cmd=%d fd=%d\n", cmd, fd);
         regs[0] = 0;
         return;
     }

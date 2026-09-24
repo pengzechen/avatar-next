@@ -2,6 +2,7 @@
 #include "exception.h"
 #include "aarch64/sysreg.h" /* READ_ESR_EL1, READ_ELR_EL1 等 */
 #include "irq/irq.h"
+#include "syscall/trace.h"
 #include "klog.h"
 #include "platform_ops.h"
 #include "types.h"
@@ -83,6 +84,9 @@ void handle_el0_sync_exception(uint64_t *stack_pointer) {
     if (t && t->is_user_process) {
       KLOG_WARN("[el0_sync] user page fault sig=SIGSEGV pid=%u pc=0x%llx va=0x%llx\n",
                 t->id, el1_ctx->elr, far);
+      /* 崩溃现场：把这个 pid 最近走过的 syscall 打出来。
+       * 环形缓冲是常开的，所以这里不需要事先开任何开关。 */
+      syscall_trace_dump((uint16_t)t->id, SYSCALL_TRACE_DUMP_MAX);
       task_send_signal(t, SIGSEGV);
       deliver_pending_signals(t, el1_ctx);
       return;

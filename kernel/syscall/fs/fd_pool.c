@@ -23,7 +23,7 @@ int fd_pool_alloc(void)
         if (g_fd_pool[i].type == FDT_FREE) {
             g_fd_pool[i].type = FDT_ALLOCATED;
             g_fd_pool[i].vfs_file = NULL;
-            KLOG_DEBUG("[fd] pool_alloc: allocated slot %d\n", i);
+            KLOG_SYSCALL("[fd] pool_alloc: allocated slot %d\n", i);
             return i;
         }
     }
@@ -34,7 +34,7 @@ int fd_pool_alloc(void)
 void fd_pool_free(int idx)
 {
     if (idx >= 0 && idx < FD_POOL_SIZE) {
-        KLOG_DEBUG("[fd] pool_free: freeing slot %d\n", idx);
+        KLOG_SYSCALL("[fd] pool_free: freeing slot %d\n", idx);
         g_fd_pool[idx].wq.waiter_count = 0;
         g_fd_pool[idx].vfs_file = NULL;
         g_fd_pool[idx].type = FDT_FREE;
@@ -99,18 +99,18 @@ int task_alloc_fd(task_t *task, int pool_idx)
     for (int fd = 3; fd < (int)TASK_MAX_FD; fd++) {
         if (task->fd_table[fd] == -1) {
             task->fd_table[fd] = (int16_t)pool_idx;
-            KLOG_DEBUG("[fd] task_alloc_fd: pid=%u allocated fd=%d for pool_idx=%d\n",
-                      task->id, fd, pool_idx);
+            KLOG_SYSCALL("[fd] task_alloc_fd: pid=%u allocated fd=%d for pool_idx=%d\n",
+                         task->id, fd, pool_idx);
             return fd;
         }
     }
 
     /* 打印 fd_table 的前几个槽位用于调试 */
     KLOG_ERROR("[fd] task_alloc_fd: pid=%u no free fd (TASK_MAX_FD=%d)\n",
-              task->id, TASK_MAX_FD);
+               task->id, TASK_MAX_FD);
     KLOG_ERROR("[fd] fd_table dump: [0]=%d [1]=%d [2]=%d [3]=%d [4]=%d [5]=%d\n",
-              task->fd_table[0], task->fd_table[1], task->fd_table[2],
-              task->fd_table[3], task->fd_table[4], task->fd_table[5]);
+               task->fd_table[0], task->fd_table[1], task->fd_table[2],
+               task->fd_table[3], task->fd_table[4], task->fd_table[5]);
 
     return -1;
 }

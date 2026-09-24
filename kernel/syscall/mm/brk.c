@@ -58,13 +58,13 @@ void *sys_brk(void *addr)
     uint64_t req_brk = (uint64_t)addr;
 
     if (g_syscall_entry_count <= 16) {
-        KLOG_DEBUG("[brk] req=0x%llx current=0x%llx\n", req_brk, current_brk);
+        KLOG_SYSCALL("[brk] req=0x%llx current=0x%llx\n", req_brk, current_brk);
     }
 
     /* brk(0)：查询当前堆末尾 */
     if ((uint64_t)addr == 0) {
         if (g_syscall_entry_count <= 16) {
-            KLOG_DEBUG("[brk] query -> 0x%llx\n", current_brk);
+            KLOG_SYSCALL("[brk] query -> 0x%llx\n", current_brk);
         }
         return (void *)current_brk;
     }
@@ -81,7 +81,7 @@ void *sys_brk(void *addr)
                                 old_page_end - new_page_end);
         sync_shared_heap_end(current, new_brk);
         if (g_syscall_entry_count <= 16) {
-            KLOG_DEBUG("[brk] shrink/no-grow -> 0x%llx\n", new_brk);
+            KLOG_SYSCALL("[brk] shrink/no-grow -> 0x%llx\n", new_brk);
         }
         return (void *)new_brk;
     }
@@ -129,7 +129,7 @@ void *sys_brk(void *addr)
 
     sync_shared_heap_end(current, new_brk);
     if (g_syscall_entry_count <= 16) {
-        KLOG_DEBUG("[brk] grow success -> 0x%llx\n", new_brk);
+        KLOG_SYSCALL("[brk] grow success -> 0x%llx\n", new_brk);
     }
     return (void *)new_brk;
 }
@@ -148,6 +148,6 @@ void *sys_sbrk(int64_t increment)
 
     heap_end += increment;
 
-    KLOG_DEBUG("[syscall] sbrk(%lld) = 0x%llx\n", increment, old_brk);
+    KLOG_SYSCALL("[syscall] sbrk(%lld) = 0x%llx\n", increment, old_brk);
     return old_brk;
 }

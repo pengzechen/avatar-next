@@ -18,6 +18,7 @@
 #include "uart/uart.h"
 #include "task/task.h"
 #include "syscall/io/epoll.h"   /* EPOLLIN/EPOLLOUT：pseudo_poll 的兜底返回值 */
+#include "syscall/trace.h"      /* /proc/syscalls */
 
 /* ── Urandom LFSR ─────────────────────────────────────────────── */
 static uint64_t g_lfsr = 0xDEADBEEFCAFEBABEULL;
@@ -221,6 +222,26 @@ static int pid_max_read(int nid, uint64_t off, void *buf, size_t len)
  * 但照样显式写出来：这张表用的是位置初始化，漏写会触发
  * -Wmissing-field-initializers，而且列对齐之后哪一行特殊一眼可见。
  */
+/*
+ * /proc/syscalls — 最近走过的系统调用（环形缓冲，见 kernel/syscall/trace.c）。
+ *
+ * 和逐条打 UART 的 [strace] 不同，这个**不受 LOG= 等级影响**：环形缓冲是常开的，
+ * 所以不需要为了看它去重编一个 LOG=debug 内核 —— 用户态程序崩了当场就能看。
+ *
+ * 内容是"渲染那一刻"的快照，且和 /proc/meminfo 一样每次 read 都重新生成，
+ * 所以分多次 read 的 `cat` 可能拼到两个不同时刻的快照。调试用途，可接受。
+ */
+#define SYSCALLS_PROC_LINES  128
+static int syscalls_read(int nid, uint64_t off, void *buf, size_t len)
+{
+    static char tmp[12288];
+    int total;
+
+    (void)nid;
+    total = syscall_trace_render(0, SYSCALLS_PROC_LINES, tmp, (int)sizeof(tmp));
+    return pfs_copy_out(off, buf, len, tmp, (size_t)total);
+}
+
 static const pseudo_node_t g_nodes[] = {
     /* ── 目录 ──────────────────────────────────────────── */
     { "/dev",              PSEUDO_DIR, MODE_DIR,  0,              NULL,         NULL,       NULL,          NULL,        NULL           },
@@ -258,6 +279,8 @@ static const pseudo_node_t g_nodes[] = {
     { "/proc/version",     PSEUDO_REG, MODE_REG,  0,              version_read, NULL,        NULL,          NULL,        NULL           },
     { "/proc/uptime",      PSEUDO_REG, MODE_REG,  0,              uptime_read,  NULL,        NULL,          NULL,        NULL           },
     { "/proc/mounts",      PSEUDO_REG, MODE_REG,  0,              mounts_read,  NULL,        NULL,          NULL,        NULL           },
+    /* 最近走过的 syscall。崩了先 cat 这个 —— 不需要重编、不需要事先开开关。 */
+    { "/proc/syscalls",    PSEUDO_REG, MODE_REG,  0,              syscalls_read, NULL,       NULL,          NULL,        NULL           },
     { "/proc/meminfo",     PSEUDO_REG, MODE_REG,  0,              meminfo_read, NULL,        NULL,          NULL,        NULL           },
     { "/proc/cpuinfo",     PSEUDO_REG, MODE_REG,  0,              cpuinfo_read, NULL,        NULL,          NULL,        NULL           },
     { "/proc/sys/kernel/pid_max", PSEUDO_REG, MODE_REG, 0,      pid_max_read, NULL,        NULL,          NULL,        NULL           },

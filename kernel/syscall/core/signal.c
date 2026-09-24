@@ -136,8 +136,8 @@ deliver_pending_signals(task_t *t, trap_frame_t *frame)
     }
 #endif
 
-    KLOG_DEBUG("[signal] pid=%u: deliver sig=%d handler=0x%llx restorer=0x%llx\n",
-              t->id, sig, sa_handler, sa_restorer);
+    KLOG_SYSCALL("[signal] pid=%u: deliver sig=%d handler=0x%llx restorer=0x%llx\n",
+                 t->id, sig, sa_handler, sa_restorer);
     return;
 
 sigframe_fault:

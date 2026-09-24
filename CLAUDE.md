@@ -98,6 +98,10 @@ avatar/
   > 改 `include/klog.h` 之后**必须 `make clean`** —— 头文件 mtime 不被跟踪，
   > 半新半旧的宏混编出来的日志「看起来完全合理」，但行数和采样都是错的。
 - **断言系统**: `docs/basic/ASSERT.md` - assert.h 运行时和编译时断言
+- **系统调用追踪**: `docs/basic/KLOG.md`「系统调用追踪」一节。用户态程序崩了先看这里 ——
+  `kernel/syscall/trace.c` 有一个**常开**的每 CPU 环形缓冲（512 条/CPU），
+  SIGSEGV 时自动 dump 该 pid 最近的 syscall，也可以随时 `cat /proc/syscalls`。
+  **不需要 LOG=debug、不需要重编**。要实时盯就 `LOG=debug LOG_MODULES=syscall`。
 
 ### 数据结构和工具
 

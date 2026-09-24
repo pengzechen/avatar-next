@@ -9,6 +9,7 @@
 
 #include "exception.h"
 #include "klog.h"
+#include "syscall/trace.h"
 #include "riscv64/sysreg.h"
 #include "syscall/syscall.h"
 #include "syscall/syscall_internal.h"
@@ -166,6 +167,8 @@ void handle_exception(void *frame_ptr)
                 KLOG_WARN("[exception] user page fault sig=SIGSEGV pid=%u pc=0x%lx va=0x%lx\n",
                           t->id, frame->sepc, frame->stval);
                 rv_dump_trap_regs(frame);
+                /* 崩溃现场：环形缓冲常开，这里直接把该 pid 最近的 syscall 打出来 */
+                syscall_trace_dump((uint16_t)t->id, SYSCALL_TRACE_DUMP_MAX);
                 task_send_signal(t, SIGSEGV);
                 deliver_pending_signals(t, frame);
                 return;

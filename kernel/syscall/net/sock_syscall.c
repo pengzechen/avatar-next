@@ -130,8 +130,8 @@ void accept_handler(uint64_t regs[6], task_t *current)
     uint32_t out_addr;
     uint16_t out_port;
     int new_si = ksock_accept(si, &out_addr, &out_port, kflags);
-    KLOG_DEBUG("[sock] accept fd=%d listen_flags=0x%x accept_flags=0x%x kflags=0x%x rc=%d\n",
-               fd, listen_obj->flags, accept_flags, kflags, new_si);
+    KLOG_SYSCALL("[sock] accept fd=%d listen_flags=0x%x accept_flags=0x%x kflags=0x%x rc=%d\n",
+                 fd, listen_obj->flags, accept_flags, kflags, new_si);
     if (new_si < 0) {
         regs[0] = (uint64_t)(int64_t)new_si;
         return;

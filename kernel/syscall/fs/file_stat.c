@@ -27,10 +27,10 @@ void fstat_handler(uint64_t regs[6], task_t *current)
 
     fd_obj_t *obj = task_get_fd(current, fd);
     if (trace_heavy_task(current)) {
-        KLOG_DEBUG("[vfsstat] pid=%u fstat fd=%d st=0x%llx path=%s kind=%d\n",
-                   current->id, fd, (uint64_t)st,
-                   (obj && fd_obj_file(obj)) ? fd_obj_file(obj)->path : "<none>",
-                   (obj && fd_obj_file(obj)) ? fd_obj_file(obj)->kind : -1);
+        KLOG_SYSCALL("[vfsstat] pid=%u fstat fd=%d st=0x%llx path=%s kind=%d\n",
+                     current->id, fd, (uint64_t)st,
+                     (obj && fd_obj_file(obj)) ? fd_obj_file(obj)->path : "<none>",
+                     (obj && fd_obj_file(obj)) ? fd_obj_file(obj)->kind : -1);
     }
     if (fd == 0 || fd == 1 || fd == 2 || (obj && !fd_obj_file(obj))) {
         memset(st, 0, sizeof(*st));
@@ -54,10 +54,10 @@ void newfstatat_handler(uint64_t regs[6], task_t *current)
     if (!pathname || pathname[0] == '\0') {
         fd_obj_t *obj = task_get_fd(current, dirfd);
         if (trace_heavy_task(current)) {
-            KLOG_DEBUG("[vfsstat] pid=%u newfstatat empty dirfd=%d st=0x%llx path=%s kind=%d\n",
-                       current->id, dirfd, (uint64_t)st,
-                       (obj && fd_obj_file(obj)) ? fd_obj_file(obj)->path : "<none>",
-                       (obj && fd_obj_file(obj)) ? fd_obj_file(obj)->kind : -1);
+            KLOG_SYSCALL("[vfsstat] pid=%u newfstatat empty dirfd=%d st=0x%llx path=%s kind=%d\n",
+                         current->id, dirfd, (uint64_t)st,
+                         (obj && fd_obj_file(obj)) ? fd_obj_file(obj)->path : "<none>",
+                         (obj && fd_obj_file(obj)) ? fd_obj_file(obj)->kind : -1);
         }
         if (!obj) { regs[0] = (uint64_t)(int64_t)-EBADF; return; }
         int rc = vfs_stat_file(fd_obj_file(obj), st);
@@ -69,8 +69,8 @@ void newfstatat_handler(uint64_t regs[6], task_t *current)
     int rpa = resolve_path_at(current, dirfd, pathname, abspath, sizeof(abspath));
     if (rpa < 0) {
         if (trace_heavy_task(current)) {
-            KLOG_DEBUG("[vfsstat] pid=%u newfstatat path=%s st=0x%llx rc=%d\n",
-                       current->id, pathname, (uint64_t)st, rpa);
+            KLOG_SYSCALL("[vfsstat] pid=%u newfstatat path=%s st=0x%llx rc=%d\n",
+                         current->id, pathname, (uint64_t)st, rpa);
         }
         regs[0] = (uint64_t)(int64_t)rpa;
         return;
@@ -79,8 +79,8 @@ void newfstatat_handler(uint64_t regs[6], task_t *current)
     if (!(regs[3] & 0x100))
         follow_symlinks(abspath, sizeof(abspath));
     if (trace_heavy_task(current)) {
-        KLOG_DEBUG("[vfsstat] pid=%u newfstatat path=%s resolved=%s st=0x%llx flags=0x%llx\n",
-                   current->id, pathname, abspath, (uint64_t)st, regs[3]);
+        KLOG_SYSCALL("[vfsstat] pid=%u newfstatat path=%s resolved=%s st=0x%llx flags=0x%llx\n",
+                     current->id, pathname, abspath, (uint64_t)st, regs[3]);
     }
 
     if (vfs_stat_path(abspath, st) == 0) { regs[0] = 0; return; }
@@ -137,8 +137,8 @@ void readlinkat_handler(uint64_t regs[6], task_t *current)
     int rpa = resolve_path_at(current, dirfd, pathname, abspath, sizeof(abspath));
     if (rpa < 0) { regs[0] = (uint64_t)(int64_t)rpa; return; }
     if (trace_heavy_task(current)) {
-        KLOG_DEBUG("[vfsstat] pid=%u readlinkat path=%s resolved=%s buf=0x%llx size=0x%llx\n",
-                   current->id, pathname, abspath, (uint64_t)lbuf, lbufsz);
+        KLOG_SYSCALL("[vfsstat] pid=%u readlinkat path=%s resolved=%s buf=0x%llx size=0x%llx\n",
+                     current->id, pathname, abspath, (uint64_t)lbuf, lbufsz);
     }
 
     /*

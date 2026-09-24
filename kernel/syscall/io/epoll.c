@@ -212,7 +212,7 @@ void epoll_create1_handler(uint64_t regs[6], task_t *current)
     if (flags & EPOLL_CLOEXEC)
         current->fd_cloexec[fd / 8] |= (1 << (fd % 8));
 
-    KLOG_DEBUG("[epoll] create1: pid=%u fd=%d ep_idx=%d\n", current->id, fd, ep_idx);
+    KLOG_SYSCALL("[epoll] create1: pid=%u fd=%d ep_idx=%d\n", current->id, fd, ep_idx);
     regs[0] = (uint64_t)fd;
 }
 
@@ -290,8 +290,8 @@ void epoll_ctl_handler(uint64_t regs[6], task_t *current)
             }
         }
 
-        KLOG_DEBUG("[epoll] ctl ADD: ep=%d fd=%d events=0x%x\n",
-                   ep_obj->epoll.ep_idx, fd, ev->events);
+        KLOG_SYSCALL("[epoll] ctl ADD: ep=%d fd=%d events=0x%x\n",
+                     ep_obj->epoll.ep_idx, fd, ev->events);
         regs[0] = 0;
         break;
     }
@@ -323,7 +323,7 @@ void epoll_ctl_handler(uint64_t regs[6], task_t *current)
         }
         ep->item_count--;
 
-        KLOG_DEBUG("[epoll] ctl DEL: ep=%d fd=%d\n", ep_obj->epoll.ep_idx, fd);
+        KLOG_SYSCALL("[epoll] ctl DEL: ep=%d fd=%d\n", ep_obj->epoll.ep_idx, fd);
         regs[0] = 0;
         break;
     }
@@ -480,5 +480,5 @@ void epoll_destroy(int ep_idx)
     }
 
     epoll_instance_free(ep_idx);
-    KLOG_DEBUG("[epoll] destroy: ep_idx=%d\n", ep_idx);
+    KLOG_SYSCALL("[epoll] destroy: ep_idx=%d\n", ep_idx);
 }

@@ -25,10 +25,10 @@ void ioctl_handler(uint64_t regs[6], task_t *current)
     /* 查找 fd 对象（任何 fd，包括 0/1/2） */
     fd_obj_t *ioctl_obj = task_get_fd(current, ioctl_fd);
     if (trace_heavy_task(current)) {
-        KLOG_DEBUG("[vfsioctl] pid=%u fd=%d req=0x%llx arg=0x%llx path=%s kind=%d\n",
-                   current->id, ioctl_fd, request, (uint64_t)argp,
-                   (ioctl_obj && fd_obj_file(ioctl_obj)) ? fd_obj_file(ioctl_obj)->path : "<none>",
-                   (ioctl_obj && fd_obj_file(ioctl_obj)) ? fd_obj_file(ioctl_obj)->kind : -1);
+        KLOG_SYSCALL("[vfsioctl] pid=%u fd=%d req=0x%llx arg=0x%llx path=%s kind=%d\n",
+                     current->id, ioctl_fd, request, (uint64_t)argp,
+                     (ioctl_obj && fd_obj_file(ioctl_obj)) ? fd_obj_file(ioctl_obj)->path : "<none>",
+                     (ioctl_obj && fd_obj_file(ioctl_obj)) ? fd_obj_file(ioctl_obj)->kind : -1);
     }
 
     if (request == FIONBIO) {
@@ -116,8 +116,8 @@ void ioctl_handler(uint64_t regs[6], task_t *current)
     } else if (request == TIOCSCTTY || request == TIOCNOTTY) {
         regs[0] = 0;
     } else {
-        KLOG_DEBUG("[ioctl] unsupported fd=%d req=0x%llx\n",
-                   ioctl_fd, (unsigned long long)request);
+        KLOG_SYSCALL("[ioctl] unsupported fd=%d req=0x%llx\n",
+                     ioctl_fd, (unsigned long long)request);
         regs[0] = (uint64_t)(int64_t)-ENOTTY;
     }
 }

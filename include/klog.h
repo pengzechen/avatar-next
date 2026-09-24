@@ -74,6 +74,7 @@ get_log_level(void)
 #define LOG_MODULE_SMP     (1ULL << 8)  /* 多核模块 */
 #define LOG_MODULE_GIC     (1ULL << 9)  /* 中断控制器（gicv2/gicv3）*/
 #define LOG_MODULE_GENERIC (1ULL << 10) /* 未打模块标签的 KLOG_DEBUG/KLOG_TRACE */
+#define LOG_MODULE_SYSCALL (1ULL << 11) /* 系统调用（strace 式逐次追踪）*/
 
 extern uint64_t g_log_module_mask;
 
@@ -273,6 +274,7 @@ extern uint32_t klog_cpu_id(void);
 #define KLOG_NET(fmt, ...)     KLOG_MODULE_DEBUG(LOG_MODULE_NET, fmt, ##__VA_ARGS__)
 #define KLOG_SMP(fmt, ...)     KLOG_MODULE_DEBUG(LOG_MODULE_SMP, fmt, ##__VA_ARGS__)
 #define KLOG_GIC(fmt, ...)     KLOG_MODULE_DEBUG(LOG_MODULE_GIC, fmt, ##__VA_ARGS__)
+#define KLOG_SYSCALL(fmt, ...) KLOG_MODULE_DEBUG(LOG_MODULE_SYSCALL, fmt, ##__VA_ARGS__)
 
 /* ===== 一次性 / 采样日志 =====
  *

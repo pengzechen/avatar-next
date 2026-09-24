@@ -87,7 +87,7 @@ uint64_t sys_munmap(uint64_t addr, uint64_t len)
 
     uint64_t top  = addr + size;
     uint64_t next = shared_mmap_next(current);
-    /* KLOG_DEBUG("[munmap] pid=%d addr=0x%llx len=0x%llx size=0x%llx top=0x%llx next=0x%llx freed=%llu\n",
+    /* KLOG_SYSCALL("[munmap] pid=%d addr=0x%llx len=0x%llx size=0x%llx top=0x%llx next=0x%llx freed=%llu\n",
                current->id, addr, len, size, top, next, freed); */
     if (top >= next) {
         void *pgd = phys_to_virt((uint64_t)current->pgd);
@@ -100,7 +100,7 @@ uint64_t sys_munmap(uint64_t addr, uint64_t len)
             new_next -= PAGE_SIZE;
         }
         if (new_next < next) {
-            /* KLOG_DEBUG("[munmap] pid=%d shrink mmap_next: 0x%llx -> 0x%llx lo=0x%llx\n",
+            /* KLOG_SYSCALL("[munmap] pid=%d shrink mmap_next: 0x%llx -> 0x%llx lo=0x%llx\n",
                        current->id, next, new_next, lo); */
             sync_shared_mmap_next_to(current, new_next);
         }
@@ -183,10 +183,10 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, int prot, int flags, int fd, uint
 
             if ((flags & MAP_FIXED) == 0)
                 sync_shared_mmap_next(current, map_addr + map_size);
-            KLOG_DEBUG("[mmap] ion fd=%d handle=%u pa=0x%llx va=0x%llx req=0x%llx 0x%llx-0x%llx prot=0x%x flags=0x%x\n",
-                       fd, handle, ion_pa, (unsigned long long)(uintptr_t)ion_va,
-                       addr, map_addr, map_addr + map_size,
-                       prot, flags);
+            KLOG_SYSCALL("[mmap] ion fd=%d handle=%u pa=0x%llx va=0x%llx req=0x%llx 0x%llx-0x%llx prot=0x%x flags=0x%x\n",
+                         fd, handle, ion_pa, (unsigned long long)(uintptr_t)ion_va,
+                         addr, map_addr, map_addr + map_size,
+                         prot, flags);
             return map_addr;
         }
 #endif
@@ -256,7 +256,7 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, int prot, int flags, int fd, uint
         if ((flags & MAP_FIXED) == 0)
             sync_shared_mmap_next(current, map_addr + map_size);
 
-        /* KLOG_DEBUG("[mmap] file path=%s req=0x%llx 0x%llx-0x%llx prot=0x%x flags=0x%x fd=%d off=0x%llx\n",
+        /* KLOG_SYSCALL("[mmap] file path=%s req=0x%llx 0x%llx-0x%llx prot=0x%x flags=0x%x fd=%d off=0x%llx\n",
                fobj->path, addr, map_addr, map_addr + map_size,
                prot, flags, fd, offset); */
         return map_addr;
@@ -313,7 +313,7 @@ found:;
         return (uint64_t)(int64_t)-ENOMEM;
     }
 
-    /* KLOG_DEBUG("[mmap] req: addr=0x%llx len=0x%llx flags=0x%x fd=%d off=0x%llx -> base=0x%llx size=0x%llx\n",
+    /* KLOG_SYSCALL("[mmap] req: addr=0x%llx len=0x%llx flags=0x%x fd=%d off=0x%llx -> base=0x%llx size=0x%llx\n",
                addr, len, flags, fd, offset, map_addr, size); */
 
 #if ARCH_AARCH64 || ARCH_RISCV64
@@ -401,6 +401,6 @@ found:;
         sync_shared_mmap_next(current, map_addr + size);
     }
 
-    /* KLOG_DEBUG("[mmap] 0x%llx - 0x%llx (len=0x%llx)\n", map_addr, map_addr + size, len); */
+    /* KLOG_SYSCALL("[mmap] 0x%llx - 0x%llx (len=0x%llx)\n", map_addr, map_addr + size, len); */
     return map_addr + page_off;
 }
