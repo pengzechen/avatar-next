@@ -3,8 +3,12 @@
  *
  * 移植自 x-kernel: virt/vdev/vpl011/src/lib.rs，适配 Avatar OS：
  *   - klogger::kprint → klog_putchar（宿主内核日志）
- *   - RxChannel/TxChannel（宿主控制设备通道）暂不引入：avatar 无控制设备，
- *     RX 恒空、TX 直接走宿主日志。后续如需 guest 交互输入再接 RX FIFO。
+ *   - RxChannel → 本文件内的 RX 环形缓冲 + vpl011_push_rx()；
+ *     宿主侧由 vmm_console_pump() 轮询真实 PL011 喂入
+ *   - TxChannel：kvmm 里只有控制设备打开了通道才逐字节直通，否则走宿主
+ *     日志。avatar 没有独立控制设备 —— 宿主控制台本身就是终端，故**始终**
+ *     直通：行缓冲会把 guest 的按键回显（无换行的单字符）一直憋到回车，
+ *     交互式会话不可用。见 vpl011_put_char()。
  */
 
 #include "vmm/vmm_vpl011.h"
@@ -32,76 +36,83 @@
 
 /* FR 标志位 */
 #define FR_TXFE     (1u << 7)   /* TX FIFO 空 */
+#define FR_RXFF     (1u << 6)   /* RX FIFO 满 */
 #define FR_RXFE     (1u << 4)   /* RX FIFO 空 */
 
 /* 中断位 */
 #define INT_RX      (1u << 4)   /* RX 中断（RIS/MIS/IMSC bit4）*/
 
-#define LINE_BUF_SIZE  256
+/*
+ * RX FIFO 深度。真实 PL011 的硬件 FIFO 只有 16 字节，这里放宽到 256：
+ * 宿主一次粘贴多字符时，guest 要等到下一次进中断才来取，16 字节不够用。
+ */
+#define RX_FIFO_SIZE   256
 
 /* ── 设备私有状态 ─────────────────────────────────────────── */
 typedef struct {
-    uint32_t cr;        /* UARTCR */
-    uint32_t imsc;      /* UARTIMSC */
-    char     line_buf[LINE_BUF_SIZE];
-    uint32_t line_len;
+    uint32_t cr;                    /* UARTCR */
+    uint32_t imsc;                  /* UARTIMSC */
+
+    /* RX 环形缓冲：宿主控制台写入（push），guest MMIO 读取（UARTDR）*/
+    uint8_t  rx_fifo[RX_FIFO_SIZE];
+    uint32_t rx_head;               /* 写入位置 */
+    uint32_t rx_tail;               /* 读出位置 */
+    uint32_t rx_count;
+
+    uint64_t rx_dropped;            /* FIFO 满而丢弃的字节数 */
 } vpl011_state_t;
 
-/* 设备私有状态（设备实例由调用方持有，见 vmm.c）*/
+/*
+ * 设备私有状态（设备实例由调用方持有，见 vmm.c）。
+ *
+ * 并发：push 与 MMIO 读写都发生在 **同一个 vCPU 任务** 里 ——
+ * Guest 的 MMIO 访问在 VMM 退出路径（vmm_arch_exit_handler）中分发，
+ * 宿主侧的 push 在 vmm_run_vcpu 的循环里，两者同线程，无需加锁。
+ */
 static vpl011_state_t g_vpl011;
 
-/* ── 行缓冲输出到宿主日志 ─────────────────────────────────── */
-/*
- * kvmm 语义：把 guest 的 console 输出按行聚合后打到宿主日志，
- * 避免逐字节输出把内核日志撕碎；对 "login: "/"# " 等无换行提示符
- * 提前 flush，使交互提示能立即出现。
- */
-static void vpl011_flush_line(int newline)
-{
-    vpl011_state_t *s = &g_vpl011;
-
-    if (s->line_len == 0)
-        return;
-
-    for (uint32_t i = 0; i < s->line_len; i++)
-        klog_putchar(s->line_buf[i]);
-    if (newline)
-        klog_putchar('\n');
-
-    s->line_len = 0;
-}
-
-static int line_ends_with(const char *suffix)
-{
-    uint32_t slen = (uint32_t)strlen(suffix);
-
-    if (g_vpl011.line_len < slen)
-        return 0;
-    return memcmp(g_vpl011.line_buf + g_vpl011.line_len - slen,
-                  suffix, slen) == 0;
-}
-
+/* ── 输出：逐字节直通宿主控制台 ───────────────────────────── */
 static void vpl011_put_char(uint8_t c)
 {
+    /*
+     * 立即输出。klog_putchar 直通 uart_putchar（未开中断时是直接 MMIO 写），
+     * 不经行缓冲，所以 guest 的按键回显是实时的。
+     *
+     * 代价：guest 输出可能与宿主日志在同一个字符位置上交错。宿主日志在
+     * guest 运行期间本就稀少（WFI 心跳已降为 DEBUG），交互性优先。
+     */
+    klog_putchar((char)c);
+}
+
+/* ── RX 中断线状态 ────────────────────────────────────────── */
+static int rx_irq_asserted(const vpl011_state_t *s)
+{
+    return s->rx_count > 0 && (s->imsc & INT_RX) != 0;
+}
+
+int vpl011_rx_irq_asserted(void)
+{
+    return rx_irq_asserted(&g_vpl011);
+}
+
+/* ── 宿主侧入口：压入一个控制台字节 ───────────────────────── */
+void vpl011_push_rx(uint8_t c)
+{
     vpl011_state_t *s = &g_vpl011;
 
-    if (c == '\n' || c == '\r') {
-        vpl011_flush_line(1);
+    if (s->rx_count >= RX_FIFO_SIZE) {
+        /*
+         * 满则丢弃。这里可以打日志：调用点在 vmm_run_vcpu 的循环里，
+         * 既不在 klog 锁内也不在中断上下文。只报第一次，避免刷屏。
+         */
+        if (s->rx_dropped++ == 0)
+            KLOG_WARN("[vpl011] RX FIFO full, dropping console input\n");
         return;
     }
 
-    if (s->line_len >= LINE_BUF_SIZE)
-        vpl011_flush_line(1);
-
-    s->line_buf[s->line_len++] = (char)c;
-
-    /* 常见无换行提示符：立即 flush（不补换行）*/
-    if (line_ends_with("login: ") ||
-        line_ends_with("Password: ") ||
-        line_ends_with("# ") ||
-        line_ends_with("$ ")) {
-        vpl011_flush_line(0);
-    }
+    s->rx_fifo[s->rx_head] = c;
+    s->rx_head = (s->rx_head + 1) % RX_FIFO_SIZE;
+    s->rx_count++;
 }
 
 /* ── MMIO 读写回调 ────────────────────────────────────────── */
@@ -111,18 +122,32 @@ static uint64_t vpl011_read(mmio_device_t *dev, uint64_t off, uint8_t size)
     (void)size;
 
     switch (off) {
-    case UARTDR:
-        return 0;                    /* RX FIFO 恒空，见头文件说明 */
-    case UARTFR:
-        return (uint64_t)(FR_TXFE | FR_RXFE);
+    case UARTDR: {
+        uint8_t c = 0;
+        if (s->rx_count > 0) {
+            c = s->rx_fifo[s->rx_tail];
+            s->rx_tail = (s->rx_tail + 1) % RX_FIFO_SIZE;
+            s->rx_count--;
+        }
+        return (uint64_t)c;
+    }
+    case UARTFR: {
+        uint64_t fr = FR_TXFE;              /* 输出永远不阻塞 */
+        if (s->rx_count == 0)
+            fr |= FR_RXFE;
+        if (s->rx_count >= RX_FIFO_SIZE)
+            fr |= FR_RXFF;
+        return fr;
+    }
     case UARTCR:
         return s->cr;
     case UARTIMSC:
         return s->imsc;
     case UARTRIS:
-        return 0;                    /* 无 RX 数据 → 无中断 */
+        /* 电平触发：数据还在 FIFO 里就一直为高 */
+        return rx_irq_asserted(s) ? INT_RX : 0;
     case UARTMIS:
-        return (uint64_t)(0 & s->imsc);
+        return rx_irq_asserted(s) ? INT_RX : 0;
     case PERIPHID0: return 0x11;
     case PERIPHID1: return 0x10;
     case PERIPHID2: return 0x14;
@@ -150,10 +175,13 @@ static void vpl011_write(mmio_device_t *dev, uint64_t off, uint8_t size,
         s->cr = (uint32_t)value;
         break;
     case UARTIMSC:
+        /* RX 中断的使能位只影响 RIS/MIS 的呈现，不改变 FIFO 内容；
+         * 置 pending 由调用方在进入 guest 前按 vpl011_rx_irq_asserted() 做。*/
         s->imsc = (uint32_t)value;
         break;
     case UARTICR:
-        break;                       /* 无中断状态需清除 */
+        /* RIS 完全由 FIFO 状态导出（电平触发），没有需要清的粘滞位 */
+        break;
     default:
         break;
     }

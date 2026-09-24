@@ -60,17 +60,18 @@ guest 是 Linux 6.2.15 + initrd。判定标准：guest 打印 `Run /init as init
 | guest PMR / IGRPEN1 / CTLR 配置 | QEMU trace 里能看到 `gicv3_icv_pmr_write`、`gicv3_icv_igrpen_write`、`gicv3_icv_ctlr_write` 等事件，说明 guest 的 `ICC_*_EL1` 访问确实被重定向到了虚拟接口 |
 | 优先级传递 | LR 里填的是 guest 自己写进 `GICR_IPRIORITYR` 的优先级（默认 0xA0），与 guest 的 VPMR 同源 |
 | LR 复用 / 状态回读 | `ich_hcr_write` 观测到 `En=1`，`ICH_VTR_EL2` 报 4 个 LR（`VGIC3_MAX_LRS=16` 只是上限） |
+| **SPI 33（虚拟 PL011 RX）投递** | 唯一的 SPI 源是 `vpl011.c`。全链路：宿主控制台按键 → `vmm_console_pump()` 推入 RX FIFO → 进 guest 前 `aarch64_check_vpl011_rx()` 置 pending → LR → guest pl011 驱动收到。判据：在 `root login:` 后键入用户名能逐字回显并推进到 `Password:`；`rdinit=/bin/sh` 起 shell 后 `ls /`、`uname -a` 等命令输出正常 |
 
-> 注：**当前唯一真正投递过的中断就是 PPI 27**。换句话说，整条链路验证得比较透，
-> 但覆盖的中断类型只有一个。
+> 注：投递过的中断类型是 PPI 27（虚拟定时器）与 SPI 33（虚拟 PL011 RX）。
+> **SGI（0-15）仍然没有源**，从未投递过。
 
 ## 4. 已实现但**没有验证过**
 
 这些代码路径写全了，运行中从未被触发，改动时要格外小心：
 
-- **SPI 投递**（INTID ≥ 32）。GICD 的 `ISENABLER`/`ISPENDR`/`ISACTIVER` 位图与注入通路
-  都在，但这个 VM 里**没有任何 SPI 源** —— `vpl011.c` 不产生中断，没有 virtio 设备，
-  也没有 ITS。所以「SPI 能不能真的送到 guest」是未知数。
+- **SPI 软触发路径**：`GICD_ISPENDR` / `GICD_ICPENDR` / `GICD_ISACTIVER` /
+  `GICD_ICACTIVER` 已实现但没观察过效果。（**SPI 投递本身已经验证**，见第 3 节 ——
+  源是 `vpl011.c` 的 RX 中断，走的是 `set_pending()` 而非这些寄存器。）
 - **SGI 投递**（INTID 0-15）。`vmm_vgic3_set_sgi_pending()` 会记源核位图，但 GICv3 的
   LR 里没有「SGI 源核」字段，这个信息实际上被丢弃（1 vCPU 下无所谓）。单核启动过程
   中 Linux 没发过 SGI。
@@ -105,6 +106,11 @@ guest 是 Linux 6.2.15 + initrd。判定标准：guest 打印 `Run /init as init
    足够。**但如果将来 guest 进了长时间不陷入的忙循环，且中断是「电平型、会重复
    触发」的，就可能丢一次。** 正规做法是打开 `ICH_HCR_EL2.EOIEn` 走维护中断。
 
+   这条限制现在有了一个**具体的实例**：vpl011 的 RX 中断就是电平型的（FIFO 里还有
+   数据就该一直有效）。`aarch64_check_vpl011_rx()` 在每次进入 guest 前重拉 pending
+   来模拟电平语义 —— 如果 guest 长时间不陷入，中断在 guest 应答后不会被重拉，
+   输入要等到下一次 exit 才恢复。交互式场景下 guest 都在 WFI 等输入，不触发这个坑。
+
 2. **`VMM 用 ICH_HCR_EL2.En=1` 期间，宿主自己的物理中断仍然正常**（QEMU 实测
    `[VMM] async exit type=1`），因为 `HCR_EL2.IMO=1` 把物理中断路由到了 EL2。
    这一点比 v2 配置好：v2 下宿主 tick 在 guest 运行期间是收不到的。
@@ -138,6 +144,8 @@ guest 是 Linux 6.2.15 + initrd。判定标准：guest 打印 `Run /init as init
 make PLATFORM=qemu-virt-aarch64 clean
 make PLATFORM=qemu-virt-aarch64 GIC=v3 test-guest-linux -j8
 # 期望：guest 打印 "Run /init as init process" 后出现 "root login:"，日志无 [ERROR]
+# 交互验证：在 "root login: " 后键入用户名，应逐字回显并推进到 "Password: "
+#          （这同时验证了 SPI 33 的投递与宿主控制台输入桥）
 
 # 反向验证（默认配置）
 make PLATFORM=qemu-virt-aarch64 clean

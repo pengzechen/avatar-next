@@ -18,6 +18,7 @@
 #include "task/switch.h"
 #include "vmm/vmm_mmio.h"      /* MMIO 总线分发 */
 #include "vmm/vmm_irq_route.h" /* 宿主 IRQ → vCPU 任务唤醒 */
+#include "vmm/vmm_vpl011.h"    /* 虚拟 PL011 RX 中断线 */
 #if DRIVER_GIC_V3
 #include "vmm/vmm_vgicv3.h"    /* vGICv3 中断注入（ICH_LR<n>_EL2）*/
 #else
@@ -131,13 +132,16 @@ static int handle_wfi(vcpu_t *vcpu, uint64_t esr)
 {
     /* WFI 在网络/定时器驱动的 guest 里会高频触发（guest 空闲时几乎持续
      * 执行 WFI）。之前每条都打 INFO 日志，实测 25 秒产生 30 万行，会把
-     * guest 控制台输出彻底淹没，故降为 DEBUG。*/
+     * guest 控制台输出彻底淹没，故降为 DEBUG。
+     *
+     * 保留计数而不是整段删掉：它是判断「guest 还活着 / 陷入频率」最直接
+     * 的探针，交互式控制台的输入延迟上限也由这个频率决定。*/
     static uint64_t wfi_count;
 
     if ((++wfi_count & 0x3FFFF) == 1) {
-        KLOG_INFO("[VMM] guest idle heartbeat: wfi=%llu ELR=0x%llx (vcpu%d)\n",
-                  (unsigned long long)wfi_count,
-                  (unsigned long long)vcpu->elr, vcpu->vcpu_id);
+        KLOG_DEBUG("[VMM] guest idle heartbeat: wfi=%llu ELR=0x%llx (vcpu%d)\n",
+                   (unsigned long long)wfi_count,
+                   (unsigned long long)vcpu->elr, vcpu->vcpu_id);
     }
 
     el2_advance_pc(vcpu, esr);
@@ -403,6 +407,30 @@ static void aarch64_check_vtimer(vcpu_t *vcpu)
     }
 }
 
+/*
+ * ── 虚拟 PL011 RX 中断投递 ──────────────────────────────────
+ *
+ * 与 vtimer 同理，在进入 guest 前把「设备侧已就绪」的中断同步给 vGIC。
+ *
+ * RX 中断是**电平触发**：只要 RX FIFO 里还有数据、且 guest 在 UARTIMSC
+ * 里开着 RX 位，就必须保持 pending。只在 push 时置一次不行 —— guest
+ * 应答时 vGIC 会把 pending 位清掉（见 vmm_vgic3_sync_exit 的 clear_pending），
+ * FIFO 里剩余的字节会因此再也没人来取。所以放在每次入口处重拉。
+ */
+static void aarch64_check_vpl011_rx(vcpu_t *vcpu)
+{
+    if (!vpl011_rx_irq_asserted())
+        return;
+
+#if DRIVER_GIC_V3
+    vmm_vgic3_set_pending(&vcpu->vm->vgic3, (uint32_t)vcpu->vcpu_id,
+                          VPL011_IRQ);
+#else
+    vmm_vgic_set_pending(&vcpu->vm->vgic, (uint32_t)vcpu->vcpu_id,
+                         VPL011_IRQ);
+#endif
+}
+
 void vmm_arch_restore_guest_ctx(vcpu_t *vcpu)
 {
     uint64_t vmpidr = (1ULL << 31) | (uint64_t)vcpu->vcpu_id;
@@ -417,6 +445,7 @@ void vmm_arch_restore_guest_ctx(vcpu_t *vcpu)
     vmm_irq_route_publish_vcpu((uint32_t)vcpu->vcpu_id);
     vmm_irq_route_publish_vgic(&vcpu->vm->vgic);
     aarch64_check_vtimer(vcpu);
+    aarch64_check_vpl011_rx(vcpu);
 
     /* vIRQ：把可投递中断排入 LR，让 GIC 向 guest 产生虚拟 IRQ。
      * GICv2 走 GICH_LR（MMIO），GICv3 走 ICH_LR<n>_EL2（系统寄存器）。*/

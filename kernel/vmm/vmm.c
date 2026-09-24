@@ -17,6 +17,7 @@
 #if ARCH_AARCH64
 #include "aarch64/stage2.h"
 #include "vmm/vmm_vpl011.h"
+#include "uart/uart.h"
 #if DRIVER_GIC_V3
 #include "vmm/vmm_vgicv3.h"
 #else
@@ -139,6 +140,29 @@ int vm_create(vm_t *vm)
 #endif
 }
 
+#if ARCH_AARCH64
+/*
+ * vmm_console_pump — 宿主控制台 → guest 虚拟 PL011 的输入桥
+ *
+ * 轮询宿主真实 PL011 的 RX FIFO，把用户按键推进 vpl011 的 RX FIFO
+ * （对标 kvmm 的 RxChannel::push；注入中断由 VMM 在进入 guest 前做）。
+ *
+ * 为什么轮询而不是让宿主收 RX 中断：guest 运行期间宿主中断是关的，
+ * 自己的 RX 中断根本进不来。而退出路径的调用频率足够高 ——
+ *   - guest 空闲：每条 WFI 都陷入 EL2，实测 ~3 万次/秒；
+ *   - guest 满载：宿主定时器每 10ms 也会把它踹回宿主一次。
+ * 对交互式控制台来说，最坏 10ms 的输入延迟完全够用。
+ *
+ * uart_rx_ready() 在 UART 未开中断时直接查硬件 FR.RXFE 位，非阻塞，
+ * 所以这里必须先用它把关 —— uart_getc() 在没有数据时是阻塞的。
+ */
+static void vmm_console_pump(void)
+{
+    while (uart_rx_ready())
+        vpl011_push_rx((uint8_t)uart_getc());
+}
+#endif /* ARCH_AARCH64 */
+
 /* ── VMM 主循环（架构无关）────────────────────────────────── */
 /*
  * vmm_run_vcpu — vCPU 执行主循环
@@ -173,6 +197,11 @@ int vmm_run_vcpu(vcpu_t *vcpu)
         vmm_arch_save_guest_ctx(vcpu);
 
         arch_irq_restore(irq_flags);
+
+#if ARCH_AARCH64
+        /* 每次回到宿主都顺手收一次控制台输入（见 vmm_console_pump）*/
+        vmm_console_pump();
+#endif
 
         /* 处理 VM exit */
         int ret = vmm_arch_exit_handler(vcpu);
