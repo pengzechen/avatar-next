@@ -12,6 +12,7 @@
 #include "syscall/trace.h"
 #include "debug/backtrace.h"
 #include "riscv64/sysreg.h"
+#include "riscv64/hext.h"   /* READ_HSTATUS：必须走数值 CSR，见该文件顶部的警告 */
 #include "syscall/syscall.h"
 #include "syscall/syscall_internal.h"
 #include "platform_ops.h"
@@ -196,7 +197,10 @@ void handle_exception(void *frame_ptr)
                        sstatus_val, (unsigned)((sstatus_val >> 8) & 1),
                        satp_val, satp_val & 0xfffffffffffULL);
 #else
-            uint64_t hstatus_val = CSR_READ(hstatus);
+            /* 注意：这里必须是 0x600。写符号名 hstatus 会被汇编成
+             * 0x200（vsstatus），印出来的 SPV/SPVP 就是别的寄存器的位 ——
+             * 详见 include/riscv64/hext.h 顶部的警告。*/
+            uint64_t hstatus_val = READ_HSTATUS();
             KLOG_ERROR("%s PF: pc=0x%lx va=0x%lx sstatus=0x%lx(SPP=%u) hstatus=0x%lx(SPV=%u SPVP=%u) satp=0x%lx(PPN=0x%lx)\n",
                        fault_type, frame->sepc, frame->stval,
                        sstatus_val, (unsigned)((sstatus_val >> 8) & 1),

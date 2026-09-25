@@ -1,21 +1,59 @@
 /dts-v1/;
 
+/*
+ * Avatar OS — RISC-V 64 guest Linux 设备树源文件
+ *
+ * 由本文件生成 linux.dtb：
+ *     dtc -I dts -O dtb -o linux.dtb linux.dts
+ *
+ * 基线来自 x-kernel（fs-data/rv64/linux.dts），Avatar 侧改了三处，
+ * 都是「让 guest 真的能跟 VMM 对话」所必需的：
+ *
+ * 1) PLIC 的 interrupts-extended 从 <&cpu0_intc 11> 改成 <&cpu0_intc 9>。
+ *    11 是 M-mode 外部中断、9 是 S-mode 外部中断。原值只声明了 M 上下文，
+ *    而 Linux 的 irq-sifive-plic 驱动会跳过所有非 S 上下文
+ *    （`if (parent.args[0] != IRQ_S_EXT) continue;`），于是
+ *    nr_handlers == 0 → 直接 "no PLIC context available" 探测失败，
+ *    **一个中断都进不来**。改成 9 之后这台 PLIC 只有一个上下文（索引 0），
+ *    正好对应 vPLIC 的「context N == vCPU N」。
+ *
+ * 2) uart@10000000 补上 interrupt-parent/interrupts = <10>。
+ *    原节点没有任何中断属性 → Linux 把 8250 当**轮询**口用：输出能出来，
+ *    但**输入永远收不到**（登录 shell 打字没反应）。加上中断后 8250 走
+ *    中断驱动的 RX，与 vPLIC 的 UART16550_IRQ(10) 对上。
+ *
+ * 3) bootargs：去掉 root=/dev/vda（Avatar VMM 没有 virtio-blk），改成
+ *    initramfs + console=ttyS0。字符串同时充当**运行期 bootargs 补丁的容量
+ *    上限**（guest_loader_patch_dtb_bootargs 是原地改写、不支持加长），
+ *    所以这里故意留了详细日志那一版（90 字节）；运行时换成带 quiet 的
+ *    短版本（58 字节）一定放得下。想恢复详细启动日志就把补丁去掉。
+ *
+ * ⚠️ memory 节点的地址必须与 kernel/vmm/guest_loader.c 里的
+ *    GUEST_LINUX_MEM_BASE 一致（当前 0xA0000000）。运行期
+ *    guest_loader_patch_dtb_memory() 会按实际参数改写 reg，所以改了那边
+ *    不改这边也能跑；这里保持一致只是为了让本文件单独看也说得通。
+ *
+ *    0xA0000000 这个值不是随手挑的：宿主内核的 Sv39 直接映射只覆盖
+ *    0x00000000..0xBFFFFFFF（见 kernel/mm/riscv64/mmu.S），0xC0000000 以上
+ *    没有映射，phys_to_virt() 会直接缺页。所以 guest RAM 必须落在
+ *    0xBFFFFFFF 以下。同时要避开 rootfs 窗口 0x88000000..0x98000000。
+ */
 / {
 	#address-cells = <2>;
 	#size-cells = <2>;
-	compatible = "x-kernel,riscv64-virt";
-	model = "X-Kernel RISC-V virtual machine";
+	compatible = "avatar,riscv64-virt";
+	model = "Avatar OS RISC-V virtual machine";
 
 	chosen {
-		bootargs = "console=ttyS0 earlycon=uart8250,mmio,0x10000000 root=/dev/vda rw";
+		bootargs = "console=ttyS0 earlycon=uart8250,mmio,0x10000000 rdinit=/init panic_on_warn=0 oops=panic";
 		linux,initrd-start = <0x0 0x0>;
 		linux,initrd-end = <0x0 0x0>;
-		stdout-path = "/uart@10000000";
+		stdout-path = "/soc/uart@10000000";
 	};
 
-	memory@c0000000 {
+	memory@a0000000 {
 		device_type = "memory";
-		reg = <0x0 0xc0000000 0x0 0x0c000000>;
+		reg = <0x0 0xa0000000 0x0 0x0c000000>;
 	};
 
 	cpus {
@@ -50,7 +88,7 @@
 			#interrupt-cells = <1>;
 			compatible = "riscv,plic0";
 			interrupt-controller;
-			interrupts-extended = <&cpu0_intc 11>;
+			interrupts-extended = <&cpu0_intc 9>;
 			reg = <0x0 0x0c000000 0x0 0x00400000>;
 			riscv,ndev = <63>;
 		};
@@ -62,13 +100,8 @@
 			current-speed = <115200>;
 			reg-shift = <0>;
 			reg-io-width = <1>;
-		};
-
-		virtio_mmio@a000000 {
-			compatible = "virtio,mmio";
-			reg = <0x0 0x0a000000 0x0 0x1000>;
 			interrupt-parent = <&plic>;
-			interrupts = <48>;
+			interrupts = <10>;
 		};
 	};
 };

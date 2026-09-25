@@ -10,9 +10,6 @@
 #include "guest_loader.h"
 #include "vmm/vmm.h"
 #include "vmm/vmm_mmio.h"
-#include "vmm/vmm_vpl011.h"
-#include "vmm/vmm_vgicd.h"
-#include "vmm/vmm_vgic.h"
 #include "vfs.h"
 #include "mm_vm.h"
 #include "pmm.h"
@@ -20,10 +17,12 @@
 #include "string.h"
 #include "cache.h"
 #include "task/task.h"
-#include "aarch64/stage2.h"
 
+#if ARCH_AARCH64
+#include "aarch64/stage2.h"
 /* guest 入口时 x0 的值（ARM64 boot 约定：DTB 物理地址）*/
 volatile uint64_t g_guest_entry_x0;
+#endif
 
 /* 加载缓冲（静态，避免大栈占用）*/
 #define LOAD_CHUNK  4096
@@ -276,8 +275,8 @@ int guest_loader_patch_dtb_memory(uint64_t dtb_gpa, uint32_t dtb_size,
     return patched > 0 ? 0 : -1;
 }
 
-static int guest_loader_patch_dtb_bootargs(uint64_t dtb_gpa, uint32_t dtb_size,
-                                           const char *bootargs)
+int guest_loader_patch_dtb_bootargs(uint64_t dtb_gpa, uint32_t dtb_size,
+                                    const char *bootargs)
 {
     uint8_t *dtb = (uint8_t *)phys_to_virt(dtb_gpa);
 
@@ -484,12 +483,43 @@ int guest_loader_nop_dtb_nodes(uint64_t dtb_gpa, uint32_t dtb_size,
  * 不带 earlycon：它和 quiet 同时开意义不大（早期消息同样被 loglevel 压掉），
  * 而且会让每条消息打印两遍（bootconsole + 真 console），白白多一倍 exit。
  */
+#if ARCH_AARCH64
 #define GUEST_LINUX_BOOTARGS \
     "quiet console=ttyAMA0 rdinit=/init panic_on_warn=0 oops=panic"
 
 _Static_assert(sizeof(GUEST_LINUX_BOOTARGS) - 1 <= 78,
                "GUEST_LINUX_BOOTARGS 超出 DTB 的 /chosen/bootargs 槽位"
                "（79 字节含结尾 NUL），补丁会静默失败");
+
+#elif ARCH_RISCV64
+/*
+ * RISC-V 侧同一个套路，但**槽位大得多**：imgs/guests/rv64/linux.dts 里
+ * 那句自带命令行是详细日志版（90 字节），所以这里可以更宽松地在
+ * 「详细 / quiet」之间切。默认对齐 aarch64 走 quiet。
+ *
+ * 内容取舍与 aarch64 相同（逐字符 UART 写都要陷一次 G-stage → MMIO 模拟，
+ * 约 35~70µs/字符）：
+ *   quiet          console_loglevel 7→4，只放行 ERR 及以上。
+ *   console=       guest 控制台走 16550A（与 vuart16550 同地址 0x10000000）。
+ *   rdinit=/init   显式指定 init，不依赖内核回退。
+ *   panic_on_warn=0 / oops=panic  调试用：警告不停机，oops 停。
+ *
+ * 想恢复完整启动日志：去掉 "quiet "（还剩 32 字节，仍在预算内），想连
+ * 8250 驱动接管之前的部分也看到就再加
+ * `earlycon=uart8250,mmio,0x10000000`（代价是每条早期消息打两遍）。
+ *
+ * 注意：**补丁失败时会退回 DTB 里那句自带命令行**，而 imgs/guests/rv64/
+ * linux.dts 里写的正是详细日志那一版 —— 所以「补丁静默失败」在这边表现得
+ * 不是「少打日志」而是「日志变多」，反过来更好发现。
+ */
+#define GUEST_LINUX_BOOTARGS \
+    "console=ttyS0 rdinit=/init oops=panic"
+
+_Static_assert(sizeof(GUEST_LINUX_BOOTARGS) - 1 <= 90,
+               "GUEST_LINUX_BOOTARGS 超出 DTB 的 /chosen/bootargs 槽位"
+               "（91 字节含结尾 NUL），补丁会静默失败 —— 详见 "
+               "imgs/guests/rv64/linux.dts 的注释（槽位由那句自带命令行决定）");
+#endif
 
 /* ── 启动 Linux guest ─────────────────────────────────────── */
 /*
@@ -515,7 +545,15 @@ int guest_loader_run_linux(void)
         return -1;
     }
 
-    KLOG_INFO("\n=== Avatar OS: booting Linux guest (aarch64) ===\n");
+    KLOG_INFO("\n=== Avatar OS: booting Linux guest (%s) ===\n",
+#if ARCH_AARCH64
+              "aarch64"
+#elif ARCH_RISCV64
+              "riscv64"
+#else
+              "unknown"
+#endif
+    );
 
     /* The guest RAM range is identity-backed by host physical memory. Keep it
      * out of PMM before loading images or creating more host objects. */
@@ -578,15 +616,7 @@ int guest_loader_run_linux(void)
      * 故启动前直接把这些节点从 DTB 中摘除（替换为 FDT_NOP），使 guest
      * 根本不去枚举它们。移植自 kvmm loader.rs 的 nop_dtb_nodes。*/
     {
-        static const char *const unsupported_nodes[] = {
-            "v2m@8020000",      /* GICv2M MSI 帧（导致 GIC 初始化卡死）*/
-            "virtio_mmio@a000000", /* virtio-mmio transport（当前未模拟）*/
-            "pcie@10000000",    /* PCIe ECAM */
-            "pl061@9030000",    /* GPIO */
-            "pl031@9010000",    /* RTC */
-            "flash@0",          /* CFI flash */
-            "fw-cfg@9020000",   /* QEMU fw_cfg */
-        };
+        static const char *const unsupported_nodes[] = GUEST_LINUX_UNSUPPORTED_NODES;
         guest_loader_nop_dtb_nodes(GUEST_LINUX_DTB_GPA, (uint32_t)dlen,
                                    unsupported_nodes,
                                    (int)(sizeof(unsupported_nodes) /
@@ -604,12 +634,20 @@ int guest_loader_run_linux(void)
         return -1;
     }
 
-    /* 5. 配置 vCPU：入口 = kernel Image 起始，x0 = DTB 物理地址
+    /*
+     * 5. 配置 vCPU 的入口状态
      *
+     * 必须在 vm_create() **之后**：两个架构的 vm_init 都会 memset 整个
+     * vcpu 数组，先写会被清掉。
+     */
+    vcpu_t *vcpu = &vm.vcpus[0];
+
+#if ARCH_AARCH64
+    /*
      * x0 直接写 vcpu->r[0]：el2_vmcs.S 在 eret 前用 `ldr x0, [x0, #0]`
      * 最后加载 guest x0（VCPU_R0 偏移 0），因此无需改动汇编。
-     * ARM64 boot 约定：x0 = DTB 物理地址，PSTATE = EL1h 且 DAIF 屏蔽。*/
-    vcpu_t *vcpu = &vm.vcpus[0];
+     * ARM64 boot 约定：x0 = DTB 物理地址，PSTATE = EL1h 且 DAIF 屏蔽。
+     */
     vcpu->elr    = GUEST_LINUX_KERNEL_GPA;
     vcpu->spsr   = 0x5ULL | (0xFULL << 6);   /* EL1h, DAIF 屏蔽 */
     vcpu->sp_el1 = GUEST_LINUX_MEM_BASE + GUEST_LINUX_MEM_SIZE - 0x1000;
@@ -620,6 +658,40 @@ int guest_loader_run_linux(void)
               (unsigned long long)vcpu->elr,
               (unsigned long long)GUEST_LINUX_DTB_GPA,
               (unsigned long long)vcpu->sp_el1);
+
+#elif ARCH_RISCV64
+    /*
+     * RISC-V Linux boot 协议（Documentation/riscv/boot.rst）：
+     *   pc = Image 起始（按 2 MiB 对齐装入）
+     *   a0 = boot hartid
+     *   a1 = DTB 物理地址
+     * 其余寄存器无约定；sp 由内核自己在 head.S 里设好，这里给个合法值
+     * 只是为了「万一它在设 sp 之前先出异常」时不至于落到 0。
+     *
+     * vsatp = 0（bare）：**不能**沿用宿主 satp —— guest 是独立地址空间，
+     * 由 Linux 自己在 head.S 里建页表再写 satp。沿用宿主页表的话，guest
+     * 一取指就会按宿主的内核映射跑，行为完全不可预期。
+     *
+     * vstvec 也留 0：Linux 在 head.S 很早就会 csrw stvec 换成自己的
+     * trap vector；在此之前不让任何中断挂起（vsie=0，hvip 的注入发生在
+     * 每次入口、由 vmm_arch_restore_guest_ctx 计算）。
+     */
+    vcpu->pc        = GUEST_LINUX_KERNEL_GPA;  /* 恢复 PC = sret 目标 */
+    vcpu->vsepc     = GUEST_LINUX_KERNEL_GPA;  /* guest 自己的 sepc   */
+    vcpu->vsatp     = 0;
+    vcpu->vsstatus  = 0;
+    vcpu->vstvec    = 0;
+    vcpu->vsie      = 0;
+    vcpu->vsscratch = 0;
+    vcpu->r[2]      = GUEST_LINUX_MEM_BASE + GUEST_LINUX_MEM_SIZE - 0x1000;
+    vcpu->r[10]     = GUEST_LINUX_BOOT_HARTID;   /* a0 */
+    vcpu->r[11]     = GUEST_LINUX_DTB_GPA;       /* a1 */
+
+    KLOG_INFO("[guest] entry=0x%llx a0(hartid)=%llu a1(DTB)=0x%llx\n",
+              (unsigned long long)vcpu->vsepc,
+              (unsigned long long)vcpu->r[10],
+              (unsigned long long)vcpu->r[11]);
+#endif
 
     /* 6. 创建 vCPU 任务 */
     task_t *vt = vcpu_task_create(vcpu, 5);

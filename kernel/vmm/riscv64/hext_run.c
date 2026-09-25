@@ -20,6 +20,7 @@
  */
 
 #include "vmm/vmm.h"
+#include "vmm/vmm_console.h"
 #include "klog.h"
 #include "string.h"
 #include "task/task.h"
@@ -27,7 +28,6 @@
 #include "riscv64/sysreg.h"
 #include "riscv64/gstage.h"
 #include "vmm/vmm_mmio.h"
-#include "vmm/vmm_uart16550.h"
 #include "vmm/vmm_vplic.h"
 #include "mm_vm.h"      /* phys_to_virt */
 
@@ -35,21 +35,37 @@
 extern int hext_enter_guest(vcpu_t *vcpu);  /* hext_vcpu.S */
 
 /* ── H-extension 支持检测 ─────────────────────────────────── */
+/*
+ * 直接查 misa.H（bit 7），而不是「试探性读一下 hstatus，没炸就算有」。
+ *
+ * 老写法在**没有** H 扩展的 CPU 上表现极差：csrr hstatus 触发 illegal
+ * instruction → 走宿主异常处理 → 通常直接 panic 在启动路径上，报出来的是
+ * 一条和虚拟化毫无关系的非法指令，排查方向全错。
+ *
+ * 实测（QEMU 8.2.2 + OpenSBI v1.3，`-machine virt` 且**不传 -cpu**）：
+ * misa 里 H 位是置上的（OpenSBI 打印 "Boot HART Base ISA : rv64imafdch"），
+ * 所以默认配置就能用。换 QEMU 版本/CPU 型号后如果这里报错，加
+ * `-cpu rv64,h=true` 即可。
+ */
 static int hext_check_support(void)
 {
     /*
-     * 读取 misa 检测 H 位（bit 7）。
-     * 在 S-mode 可以 csrr misa，但若内核运行在 HS-mode，
-     * misa 通常可读（只读）。部分实现可能 trap，此处简单尝试。
-     * QEMU 8.2 rv64imafdch 默认含 H-ext，检测必过。
-     *
-     * 注：RISC-V 没有统一的"虚拟化支持位"，
-     *     通过尝试读取 hstatus 来验证 H-ext 存在。
-     *     若不支持则触发 illegal instruction，内核会 panic。
+     * 先打一行再读 —— 万一读炸了，这行就是日志里的最后一句，
+     * 配合紧随其后的 backtrace（会指向 hext_vm_init）足以定位。
+     * 没有 H 扩展时读 hstatus 必触发 illegal instruction，而 S-mode
+     * 没有任何办法捕获它（内核的异常处理只会 panic），所以只能这样。
      */
-    uint64_t hstat = READ_HSTATUS();
-    (void)hstat;
-    return 1;   /* 若执行到此说明 H-ext 可用 */
+    KLOG_INFO("[HEXT] probing H-extension (reading hstatus)...\n");
+
+    uint64_t hstatus = READ_HSTATUS();
+
+    /*
+     * 能执行到这儿就说明 hstatus 可读 ⇒ CPU 带 H 扩展。
+     * （没有 H 时 0x600 是未定义 CSR，上一条 csrr 已经陷入并 panic。）
+     */
+    KLOG_INFO("[HEXT] H-extension available (hstatus=0x%llx)\n",
+              (unsigned long long)hstatus);
+    return 1;
 }
 
 /* ── 全局 guest 栈（无 EPT，guest 用内核地址空间）─────────── */
@@ -67,8 +83,12 @@ int hext_vcpu_setup(vcpu_t *vcpu, void (*entry)(void))
 {
     memset(vcpu->r, 0, sizeof(vcpu->r));
 
-    /* guest PC = entry（内核虚拟地址，与 host 共享地址空间，无 hgatp）*/
-    vcpu->vsepc     = (uint64_t)entry;
+    /* guest PC = entry（内核虚拟地址，与 host 共享地址空间，无 hgatp）
+     * pc    = 恢复 PC（sret 目标，只写回 HS sepc）
+     * vsepc = guest 自己的 sepc，VMM 不碰；这里给同值只是让 guest 万一在
+     *         首次陷阱前读 sepc 时不至于看到 0。*/
+    vcpu->pc    = (uint64_t)entry;
+    vcpu->vsepc = (uint64_t)entry;
 
     /* vsstatus：SPP=0（guest 运行在 VS-mode），SIE=0（中断关闭）
      * VS-mode 的 sstatus.SPP 在 vsstatus.SPP 处，bit 8 */
@@ -92,7 +112,7 @@ int hext_vcpu_setup(vcpu_t *vcpu, void (*entry)(void))
 
     KLOG_INFO("[HEXT] vcpu%d setup: entry=0x%llx sp=0x%llx\n",
               vcpu->vcpu_id,
-              vcpu->vsepc,
+              vcpu->pc,
               vcpu->r[2]);
     return 0;
 }
@@ -113,46 +133,88 @@ int hext_vm_init(vm_t *vm)
         KLOG_ERROR("[HEXT] Hypervisor Extension not supported!\n");
         return -1;
     }
-    KLOG_INFO("[HEXT] H-extension available\n");
 
-    /* 2. hedeleg/hideleg: 保留默认值 0（不委托）
+    /*
+     * 2. 异常/中断委托
      *
-     * 默认行为：所有 VS-mode 异常和中断直接陷入 HS-mode，
-     * 由 hext_trap_vector 处理。对 WFI(VTW=1) + ecall(scause=10) 测试足够。
+     * hedeleg：把「VU-mode 自己该处理」的异常交给 guest 内核（VS-mode）处理。
+     *   不委托的话，guest 用户进程每次缺页都会陷到 HS-mode，而我们并没有
+     *   把 trap 反射回 VS 的代码 —— 结果是 guest 用户态一跑就死。
+     *   Linux 的 initramfs 起来后 /init 一执行就要缺页，所以这一条是必需的。
      *
-     * 注：在 QEMU 8.2 上，csrw hedeleg/hideleg 会触发 illegal instruction
-     *     异常（推测 OpenSBI/QEMU 不允许 HS-mode 写这两个 CSR），暂时跳过。
-     * TODO: 调查 hedeleg/hideleg 写入失败原因（QEMU virt 配置或 OpenSBI 限制）
+     *   HEDELEG_COMMON 里**不含** bit2（illegal instruction）：hstatus.VTW=1
+     *   时 VS-mode 的 WFI 报 virtual instruction（cause 22），必须陷到 HS-mode
+     *   才能被换成宿主 yield —— 委托出去就再也看不见了。
+     *
+     * hideleg：VS 定时器/外部中断委托给 VS-mode，这样 hvip.VSTIP/VSEIP
+     *   置起后由 guest 自己的 vsie 决定何时接收，而不是每置一次就陷一次
+     *   HS-mode。
+     *
+     * hie：置 VSTIE|VSEIE，与 x-kernel hext_init() 的
+     *   `csrs hie, HIE_VSEIE | HIE_VSTIE` 一致。它管的**只**是「已委托给
+     *   VS 的中断，在 guest 当时接不了时（例如它正跑在自己的陷阱处理程序
+     *   入口、vsstatus.SIE=0）怎么办」——置位则升到 HS 让 VMM 抢断，
+     *   VMM 让宿主跑一段后 resume。留 0 的话这类中断会一直挂在 hvip 里，
+     *   guest 的定时器从此不再推进（实测 guest 完全起不来）。
+     *
+     *   抢断是安全的，前提是「恢复 PC」与「guest 的 vsepc」分开存放
+     *   （VCPU_PC vs VCPU_VSEPC）—— 见 hext_vcpu.S 陷阱向量第 3 节。
+     *
+     * 历史注记：本文件曾写着「QEMU 8.2 上写这两个 CSR 会 illegal instruction」，
+     * 因此长期留着默认值 0。实测是误判 —— binutils 认这两个符号名、QEMU 也
+     * 正常接受写入。真正会让 guest 用户态崩溃的是不委托 hedeleg。
      */
-    KLOG_INFO("[HEXT] hedeleg/hideleg left at default (0) — all VS traps -> HS\n");
+    WRITE_HEDELEG(HEDELEG_COMMON);
+    WRITE_HIDELEG(HIDELEG_COMMON);
+    WRITE_HIE(HIDELEG_COMMON);
+    KLOG_INFO("[HEXT] hedeleg=0x%lx hideleg=0x%lx\n",
+              (unsigned long)HEDELEG_COMMON, (unsigned long)HIDELEG_COMMON);
 
-    /* 3. 配置 hstatus.VTW=1：WFI 在 VS-mode 陷入 HS-mode
-     *    （等价 AArch64 的 HCR_EL2.TWI=1）
-     *    VTW = bit 21 */
-    KLOG_INFO("[HEXT] setting hstatus.VTW...\n");
+    /*
+     * 3. hcounteren：允许 guest 直接执行 rdtime/rdcycle/rdinstret。
+     *    不给的话 guest 读 time 会非法指令 —— 而 Linux RISC-V 的时钟源和
+     *    delay 循环都直接读 time，起不来。
+     */
+    WRITE_HCOUNTEREN(HCOUNTEREN_CY_TM_IR);
+
+    /*
+     * 4. hstatus.VTW=1：WFI 在 VS-mode 陷入 HS-mode
+     *    （等价 AArch64 的 HCR_EL2.TWI=1），由 handle_wfi 换成宿主 yield。
+     */
     uint64_t hs = READ_HSTATUS();
     hs |= HSTATUS_VTW;
     WRITE_HSTATUS(hs);
-    KLOG_INFO("[HEXT] hstatus.VTW set, init vcpus...\n");
+    KLOG_INFO("[HEXT] hstatus.VTW set\n");
 
-    /* 4. 初始化 vCPU 数组 */
+    /* 5. 初始化 vCPU 数组 */
     for (i = 0; i < nr; i++) {
         vcpu_t *vcpu = &vm->vcpus[i];
         memset(vcpu, 0, sizeof(*vcpu));
         vcpu->vcpu_id  = i;
         vcpu->launched = 0;
         vcpu->vm       = vm;
+
+        /*
+         * hstatus_save 是「上次陷入时的 hstatus」快照，入口靠它还原
+         * hstatus.SPVP 来决定 sret 回 VS 还是 VU。**第一次进入 guest 时
+         * 还没有任何陷入**，快照必须是 0 —— 那会让 SPVP=0，sret 进 VU-mode，
+         * guest 的内核代码在用户态取指/执行特权指令，直接全线非法指令。
+         *
+         * 所以这里预置成 SPVP=1（VS-mode）：第一次进入落在 guest 内核。
+         * 这条与 hext_vcpu.S 第 7/8 步是配套的，改那边必看这里。
+         */
+        vcpu->hstatus_save = HSTATUS_SPVP;
     }
     vm->nr_vcpus = nr;
 
-    /* 5. G-stage（hgatp Stage-2）内存隔离：仅当 VM 请求了独立 guest RAM
+    /* 6. G-stage（hgatp Stage-2）内存隔离：仅当 VM 请求了独立 guest RAM
      *    （cfg.mem_size != 0）时启用。移植自 x-kernel gstage.rs。
      *
      *    默认（mem_size==0）保持原「共享 host 地址空间、无 hgatp」路径不变，
      *    即当前 vmm_test 使用的已验证行为，避免回归。
      *
-     *    注：hpa_base 暂用 identity（= mem_base）；后续 Phase 引入 guest RAM
-     *    预留（reserve_guest_ram）后改为分配得到的 HPA。 */
+     *    注：hpa_base 用 identity（= mem_base）：guest RAM 窗口是从宿主
+     *    PMM 里预留的一段真实物理内存，phys_to_virt(GPA) 直接可用。 */
     if (vm->cfg.mem_size != 0) {
         rv_gstage_init(vm->cfg.mem_base, vm->cfg.mem_size,
                        vm->cfg.mem_base /* hpa_base = identity */, 1u);
@@ -160,10 +222,10 @@ int hext_vm_init(vm_t *vm)
         rv_gstage_enable_mmio_trap();
         rv_gstage_activate();
 
-        /* 建立 MMIO 总线并注册虚拟 16550A 控制台 */
+        /* 建立 MMIO 总线并注册虚拟 16550A 控制台 + 虚拟 PLIC */
         mmio_bus_init(&g_rv_mmio_bus);
-        if (uart16550_init(&g_rv_uart_dev, &g_rv_mmio_bus) != 0)
-            KLOG_WARN("[HEXT] uart16550 registration failed\n");
+        if (vmm_console_init(&g_rv_uart_dev, &g_rv_mmio_bus) != 0)
+            KLOG_WARN("[HEXT] console vdev registration failed\n");
         if (vplic_init(&g_rv_plic_dev, &g_rv_mmio_bus, (uint32_t)nr) != 0)
             KLOG_WARN("[HEXT] vplic registration failed\n");
         vm->mmio_bus = &g_rv_mmio_bus;
@@ -171,8 +233,9 @@ int hext_vm_init(vm_t *vm)
         KLOG_INFO("[HEXT] G-stage isolation enabled (mem=0x%llx+0x%llx)\n",
                   (unsigned long long)vm->cfg.mem_base,
                   (unsigned long long)vm->cfg.mem_size);
-        KLOG_INFO("[HEXT] MMIO bus ready: virtual 16550A @0x%llx\n",
-                  (unsigned long long)UART16550_BASE);
+        KLOG_INFO("[HEXT] MMIO bus ready: virtual 16550A @0x%llx, vPLIC @0x%llx\n",
+                  (unsigned long long)UART16550_BASE,
+                  (unsigned long long)VPLIC_BASE);
     } else {
         KLOG_INFO("[HEXT] G-stage disabled: guest shares host address space\n");
     }
@@ -185,19 +248,17 @@ int hext_vm_init(vm_t *vm)
  * 架构钩子实现
  * ================================================================ */
 
-/* restore_guest_ctx：进入 vmm_run_vcpu 主循环前的一次性初始化（当前无操作）*/
-void vmm_arch_restore_guest_ctx(vcpu_t *vcpu)
-{
-    (void)vcpu;
-    /* VS-CSRs 在每次 hext_enter_guest 中动态恢复，无需预置 */
-}
-
 /*
  * vcpu_timer_irq_on_entry — 进入 guest 前注入 VS 定时器中断
  *
  * 对标 x-kernel vdev/riscv64/timer.rs 的 RiscvTimerHook::on_entry：
  * guest 经 SBI 设置了截止时间且已到期 → 置 hvip.VSTIP，使 VS-mode 看到
- * 定时器中断挂起（无需 vPLIC）。
+ * 定时器中断挂起（无需 vCLINT/ACLINT）。
+ *
+ * 客人时间与宿主时间同源：两边 timebase 都是 10 MHz（见 platform.conf 的
+ * counter_hz 与 guest DTB 的 timebase-frequency），所以 htimedelta 保持 0，
+ * guest 的 rdtime 与宿主 READ_TIME() 直接可比。**换平台配置时要一起改**，
+ * 否则 guest 的时钟会按错误的倍率走。
  */
 static void vcpu_timer_irq_on_entry(vcpu_t *vcpu)
 {
@@ -207,15 +268,47 @@ static void vcpu_timer_irq_on_entry(vcpu_t *vcpu)
     hext_set_vs_timer_irq(pending);
 }
 
+/*
+ * vcpu_external_irq_on_entry — 进入 guest 前把 vPLIC 的可投递中断同步给 hvip
+ *
+ * 与定时器同理，也跟 AArch64 的 aarch64_check_vpl011_rx() 同构：
+ * 外部中断是**电平触发** —— 只要 PLIC 里还有「已使能、未 active、优先级
+ * 高于阈值」的中断，每次入口都要重新置 hvip.VSEIP。只在设备侧 push 时置
+ * 一次不行：guest claim 时 vPLIC 会清掉 pending 位，而设备侧（比如 UART 的
+ * RX FIFO 里还有字节）可能仍然是有效的。
+ */
+static void vcpu_external_irq_on_entry(vcpu_t *vcpu)
+{
+    /* 设备侧先同步进 PLIC：控制台 RX 有数据/待发送 → 置对应中断源 */
+    if (vmm_console_irq_asserted())
+        vplic_set_pending(VMM_CONSOLE_IRQ);
+
+    uint32_t irq = vplic_next_deliverable((uint32_t)vcpu->vcpu_id);
+    hext_set_vs_external_irq(irq != 0);
+}
+
+/* restore_guest_ctx：每次进入 guest 前的架构相关同步（见 vmm_run_vcpu）*/
+void vmm_arch_restore_guest_ctx(vcpu_t *vcpu)
+{
+    /*
+     * VS-CSRs 由 hext_enter_guest 汇编逐次恢复，这里只做「设备 → 虚拟中断
+     * 控制器」的同步。两者都必须在**每次**入口做，不能只在启动时做一次。
+     */
+    vcpu_timer_irq_on_entry(vcpu);
+    vcpu_external_irq_on_entry(vcpu);
+
+}
+
 /* enter_guest：执行一次 sret → VS-mode，等到 guest 陷入后返回 */
 int vmm_arch_enter_guest(vcpu_t *vcpu)
 {
     /*
      * 每次 task_yield 后需要重设 hstatus.SPV+SPVP 和 sstatus.SPP。
      * 这些已在 hext_enter_guest 汇编内完成，此处只需调用。
+     *
+     * 虚拟中断的注入不在这里：它在 vmm_arch_restore_guest_ctx()，与本函数
+     * 同属「每次入口」的钩子，但由 vmm_run_vcpu 在**关中断之后**统一调用。
      */
-    vcpu_timer_irq_on_entry(vcpu);
-
     int ret = hext_enter_guest(vcpu);
     if (ret) {
         vcpu->launched = 1;
@@ -231,8 +324,25 @@ int vmm_arch_enter_guest(vcpu_t *vcpu)
  */
 static int handle_wfi(vcpu_t *vcpu)
 {
+    /*
+     * 只有 WFI 才该走这里。
+     *
+     * hstatus.VTW=1 时 VS-mode 的 WFI 报 virtual instruction（cause 22），
+     * stval 里是 WFI 的编码 0x10500073。cause 2（illegal instruction）在
+     * 老 QEMU 上也被用来报同一个陷阱，所以两者都收。
+     *
+     * 但**不能无条件当成 WFI 跳过 4 字节** —— 别的虚拟指令异常也会是
+     * cause 22，盲目 +4 会把 guest 的 PC 挪到错的地方（而且压缩指令只有
+     * 2 字节，+4 会多吃一条）。这里对不上就记一笔再照常跳过 4 字节，
+     * 至少让这种事在日志里留痕。
+     */
+    if (vcpu->stval_save != 0x10500073ULL)
+        KLOG_WARN_SAMPLE("[HEXT] cause2/22 but not WFI: stval=0x%llx sepc=0x%llx\n",
+                         (unsigned long long)vcpu->stval_save,
+                         (unsigned long long)vcpu->pc);
+
     /* 步进 guest PC 越过 WFI 指令（4 字节）*/
-    vcpu->vsepc += 4;
+    vcpu->pc += 4;
 
     uint64_t now = READ_TIME();
     if (vcpu->timer_deadline != 0 && now >= vcpu->timer_deadline)
@@ -243,10 +353,16 @@ static int handle_wfi(vcpu_t *vcpu)
     return EL2_RESUME;
 }
 
-/* ── guest 控制台输出（SBI console_putchar）───────────────── */
+/*
+ * ── guest 控制台输出（SBI console_putchar）─────────────────
+ *
+ * 走与控制台 vdev 的 THR 通路相同的出口（见 vmm_console_putchar）：
+ * helper 模式下必须进 TX 缓冲，否则 guest 在 8250 驱动起来之前的那几行
+ * 会漏进宿主内核日志。
+ */
 static void sbi_console_putchar(uint8_t byte)
 {
-    klog_putchar((char)byte);
+    vmm_console_putchar(byte);
 }
 
 /* ================================================================
@@ -427,7 +543,7 @@ static int mmio_instruction(vcpu_t *vcpu, uint64_t *inst_out)
 {
     uint64_t pc_gpa;
 
-    if (guest_va_to_gpa(vcpu, vcpu->vsepc, &pc_gpa)) {
+    if (guest_va_to_gpa(vcpu, vcpu->pc, &pc_gpa)) {
         uint16_t lo;
         if (guest_read_u16(pc_gpa, &lo)) {
             if ((lo & 0x3) != 0x3) {
@@ -442,8 +558,10 @@ static int mmio_instruction(vcpu_t *vcpu, uint64_t *inst_out)
         }
     }
 
-    if (vcpu->htval_save != 0) {
-        *inst_out = vcpu->htval_save;   /* 部分实现经 htinst 提供指令 */
+    /* 回退取 htinst（不是 htval！）：htval 是出错 GPA>>2，当指令解码会解出
+     * 完全无关的 opcode/长度/寄存器号 —— 偶发的 guest 跑飞。*/
+    if (vcpu->htinst_save != 0) {
+        *inst_out = vcpu->htinst_save;
         return 1;
     }
     return 0;
@@ -461,8 +579,8 @@ static int handle_gstage_fault(vcpu_t *vcpu, uint64_t code)
     if (!mmio_instruction(vcpu, &inst)) {
         KLOG_ERROR("[HEXT] vcpu%d: cannot fetch MMIO inst, pc=0x%llx htinst=0x%llx\n",
                    vcpu->vcpu_id,
-                   (unsigned long long)vcpu->vsepc,
-                   (unsigned long long)vcpu->htval_save);
+                   (unsigned long long)vcpu->pc,
+                   (unsigned long long)vcpu->htinst_save);
         return EL2_EXIT;
     }
     if (!decode_mmio_access(inst, is_store, &acc)) {
@@ -480,13 +598,13 @@ static int handle_gstage_fault(vcpu_t *vcpu, uint64_t code)
                         value, (uint32_t)vcpu->vcpu_id, &out)) {
         if (!acc.is_write && acc.reg != 0)
             vcpu->r[acc.reg] = out;
-        vcpu->vsepc += acc.inst_len;
+        vcpu->pc += acc.inst_len;
         return EL2_RESUME;
     }
 
     KLOG_ERROR("[HEXT] vcpu%d: unhandled G-stage %s fault gpa=0x%llx pc=0x%llx\n",
                vcpu->vcpu_id, acc.is_write ? "write" : "read",
-               (unsigned long long)gpa, (unsigned long long)vcpu->vsepc);
+               (unsigned long long)gpa, (unsigned long long)vcpu->pc);
     return EL2_EXIT;
 }
 
@@ -505,7 +623,7 @@ static int handle_vs_ecall(vcpu_t *vcpu)
     uint64_t arg0 = vcpu->r[10];  /* a0 = 第一个参数             */
 
     /* 步进 guest PC 越过 ecall（4 字节） */
-    vcpu->vsepc += 4;
+    vcpu->pc += 4;
 
     switch (ext) {
     case GUEST_ECALL_PRINT:
@@ -527,23 +645,43 @@ static int handle_vs_ecall(vcpu_t *vcpu)
         return EL2_RESUME;
 
     case SBI_LEGACY_CONSOLE_GETCHAR:
-        vcpu->r[10] = (uint64_t)-1;   /* 无输入 */
+        /* 无输入时按 SBI 约定返回 -1（不是 0 —— 0 是合法字符 '\0'）*/
+        vcpu->r[10] = (uint64_t)-1;
         return EL2_RESUME;
+
+    case SBI_LEGACY_SHUTDOWN:
+        KLOG_INFO("[HEXT] guest requested shutdown (legacy SBI)\n");
+        return EL2_VMEXIT;
 
     case SBI_EXT_BASE: {
         uint64_t value;
         switch (func) {
         case SBI_BASE_GET_SPEC_VERSION: value = 0x00000002; break; /* v0.2 */
-        case SBI_BASE_GET_IMPL_ID:      value = 0x584b564d; break; /* "XKVM" */
+        case SBI_BASE_GET_IMPL_ID:      value = 0x41565452; break; /* "AVTR" */
         case SBI_BASE_GET_IMPL_VERSION: value = 1;          break;
+        /* Linux 会读这三个填 /proc/cpuinfo，返回 0 表示「未知」是合法的 */
+        case SBI_BASE_GET_MVENDORID:
+        case SBI_BASE_GET_MARCHID:
+        case SBI_BASE_GET_MIMPID:       value = 0;          break;
         case SBI_BASE_PROBE_EXTENSION:
             switch (arg0) {
             case SBI_EXT_BASE:
             case SBI_EXT_TIME:
             case SBI_EXT_RFENCE:
+            case SBI_EXT_SRST:
+            case SBI_LEGACY_SET_TIMER:
             case SBI_LEGACY_CONSOLE_PUTCHAR:
             case SBI_LEGACY_CONSOLE_GETCHAR:
+            case SBI_LEGACY_SHUTDOWN:
                 value = 1; break;
+            /*
+             * IPI / HSM 明确报「不支持」。
+             *
+             * 本 VMM 只有 vCPU0 一个 hart（guest DTB 里也只有一个 cpu@0），
+             * 没有 hart_start 的实现，报支持会让 guest 在 SMP 初始化时
+             * 真的去启从核，然后永远等不到它上线 —— 那种挂起比「不支持」
+             * 难查得多。单核 guest 不探测这两个扩展也能正常启动。
+             */
             default:
                 value = 0; break;
             }
@@ -561,6 +699,9 @@ static int handle_vs_ecall(vcpu_t *vcpu)
     case SBI_EXT_TIME:
         if (func == SBI_TIME_SET_TIMER) {
             vcpu->timer_deadline = arg0;
+            /* 新截止时间通常在将来，先撤掉可能还挂着的定时器中断，
+             * 否则 guest 会立刻再吃一次（下一次入口会按新的 deadline 重算）*/
+            hext_set_vs_timer_irq(0);
             vcpu->r[10] = SBI_SUCCESS;
             vcpu->r[11] = 0;
             return EL2_RESUME;
@@ -575,10 +716,34 @@ static int handle_vs_ecall(vcpu_t *vcpu)
         vcpu->r[11] = 0;
         return EL2_RESUME;
 
+    case SBI_EXT_SRST:
+        /*
+         * SRST（复位/关机）。Linux 在 poweroff/reboot 时调用 FID 0。
+         * 收到就当作 guest 正常退出 —— 这也是 guest 里敲 `poweroff` 之后
+         * 宿主能拿回控制权的路径（/dev/vmm 的 helper 会看到 EPOLLHUP）。
+         *
+         * 必须先回一次成功（结果寄存器已写好），再返回 VMEXIT：反过来的话
+         * guest 会带着未定义的 a0 继续跑。
+         */
+        if (func == SBI_SRST_RESET) {
+            KLOG_INFO("[HEXT] guest requested %s via SRST\n",
+                      arg0 == SBI_SRST_RESET_TYPE_SHUTDOWN ? "shutdown"
+                                                           : "reset");
+            vcpu->r[10] = SBI_SUCCESS;
+            vcpu->r[11] = 0;
+            return EL2_VMEXIT;
+        }
+        vcpu->r[10] = SBI_ERR_NOT_SUPPORTED;
+        vcpu->r[11] = 0;
+        return EL2_RESUME;
+
     default:
-        KLOG_WARN("[HEXT] Unknown SBI ecall ext=0x%llx func=0x%llx (vcpu%d)\n",
-                  (unsigned long long)ext, (unsigned long long)func,
-                  vcpu->vcpu_id);
+        /*
+         * 未实现的扩展一律回 NOT_SUPPORTED（不是崩溃）。
+         * 新版 Linux 会探测 DBCN/CPPC/PMU 等，回 -2 它就安静地换别的路径。
+         */
+        KLOG_WARN_ONCE("[HEXT] unimplemented SBI ext=0x%llx func=0x%llx\n",
+                       (unsigned long long)ext, (unsigned long long)func);
         vcpu->r[10] = SBI_ERR_NOT_SUPPORTED;
         vcpu->r[11] = 0;
         return EL2_RESUME;
@@ -593,14 +758,20 @@ int vmm_arch_exit_handler(vcpu_t *vcpu)
     uint64_t code  = cause & ~(1ULL << 63);
 
     /* 对标 x-kernel vdev/riscv64/timer.rs 的 RiscvTimerHook::on_exit：
-     * 已退出 guest，清除注入的 VS 定时器挂起位，避免残留导致下次进入
-     * guest 立即重复触发。*/
+     * 已退出 guest，清除注入的 VS 定时器/外部中断挂起位，避免残留导致下次
+     * 进入 guest 立即重复触发。两者都是电平触发，下一次入口会按当时的设备
+     * 与 vPLIC 状态重新计算（见 vmm_arch_restore_guest_ctx）。*/
     hext_set_vs_timer_irq(0);
+    hext_set_vs_external_irq(0);
 
     if (is_int) {
-        /* 中断（定时器/外部）陷入 HS-mode：短暂开中断让宿主内核处理，
-         * 然后 resume。对标 kvmm exit_handler 的 is_interrupt 分支。 */
-        KLOG_DEBUG("[HEXT] vcpu%d interrupt: code=%llu\n",
+        /* 中断（定时器/外部）陷入 HS-mode：短暂让给宿主内核处理，然后
+         * resume。对标 kvmm exit_handler 的 is_interrupt 分支。
+         *
+         * 注：hideleg 已把 VS 定时器/外部中断委托给 VS-mode，所以正常情况
+         * 下**走不到这里** —— 中断在 guest 内部就被消化了。能到这里的是
+         * 宿主自己（HS 侧）的中断，比如宿主时钟。 */
+        KLOG_DEBUG("[HEXT] vcpu%d host interrupt: code=%llu\n",
                    vcpu->vcpu_id, (unsigned long long)code);
         /* 直接 yield，让 kernel 的 timer handler 运行 */
         task_yield();
@@ -621,18 +792,40 @@ int vmm_arch_exit_handler(vcpu_t *vcpu)
         return handle_vs_ecall(vcpu);
 
     case 20:   /* Instruction G-stage Page Fault */
+        /*
+         * guest 从「未映射的 GPA」取指。本 VMM 不做取指 MMIO 模拟（没有
+         * 需要执行代码段的设备），所以这一定是 guest 跑飞了 —— 跳进了
+         * 设备地址或未映射区间。报出地址比让 handle_gstage_fault 去解码
+         * 「一条根本不存在的指令」有用得多。
+         */
+        KLOG_ERROR("[HEXT] vcpu%d: guest fetched from unmapped GPA 0x%llx "
+                   "(vsepc=0x%llx)\n",
+                   vcpu->vcpu_id,
+                   (unsigned long long)((vcpu->htval_save << 2) |
+                                        (vcpu->stval_save & 0xFFF)),
+                   (unsigned long long)vcpu->pc);
+        return EL2_EXIT;
+
     case 21:   /* Load G-stage Page Fault      */
     case 23:   /* Store/AMO G-stage Page Fault */
         /* 设备 MMIO：G-stage 未映射 → 陷入模拟（移植自 kvmm mod.rs）*/
         return handle_gstage_fault(vcpu, code);
 
-    case 12:   /* Instruction Page Fault（不应发生：vsatp=0 无页表）*/
+    case 12:   /* Instruction Page Fault（guest 自己的页表缺项）*/
     case 13:   /* Load Page Fault */
     case 15:   /* Store Page Fault */
-        KLOG_ERROR("[HEXT] vcpu%d PF: cause=%llu vsepc=0x%llx stval=0x%llx\n",
+        /*
+         * VS-mode 自己取指/访存缺页 —— guest 内核页表的问题，VMM 帮不上忙。
+         *
+         * 从 VU-mode 来的缺页**不该**出现在这里：hedeleg 已经把 12/13/15
+         * 委托给 VS-mode，由 guest 内核自己填页表。真在这儿看到它们，通常
+         * 意味着 guest 内核在 VS-mode 里踩了没映射的地址。
+         */
+        KLOG_ERROR("[HEXT] vcpu%d guest page fault: cause=%llu vsepc=0x%llx "
+                   "stval=0x%llx\n",
                    vcpu->vcpu_id,
                    (unsigned long long)code,
-                   (unsigned long long)vcpu->vsepc,
+                   (unsigned long long)vcpu->pc,
                    (unsigned long long)vcpu->stval_save);
         return EL2_EXIT;
 
@@ -640,7 +833,7 @@ int vmm_arch_exit_handler(vcpu_t *vcpu)
         KLOG_ERROR("[HEXT] vcpu%d unhandled exit: cause=%llu vsepc=0x%llx\n",
                    vcpu->vcpu_id,
                    (unsigned long long)code,
-                   (unsigned long long)vcpu->vsepc);
+                   (unsigned long long)vcpu->pc);
         return EL2_EXIT;
     }
 }

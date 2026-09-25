@@ -61,6 +61,13 @@
 /* ── 最大 vCPU 数量 ────────────────────────────────────────── */
 #define MAX_VCPUS  4
 
+/*
+ * 哪些架构已经实现「从 rootfs 加载并启动 Linux guest」（kernel/vmm/guest_loader.c）。
+ * 用一个宏而不是到处写 #if ARCH_AARCH64：/dev/vmm、kernel_main 的直启分支
+ * 都要按它开关，散落的架构判断会在加架构时漏掉一处。
+ */
+#define VMM_GUEST_LINUX_SUPPORTED  (ARCH_AARCH64 || ARCH_RISCV64)
+
 /* 前向声明：避免与 task.h 循环包含 */
 struct task;
 
@@ -156,7 +163,7 @@ typedef struct vcpu {
  * vcpu_t 前部固定偏移（与 hext_vcpu.S VCPU_RV_* 宏完全一致）：
  *
  *   Offset   0 : r[0..31]      = 32 × 8 = 256 B   (x0-x31 guest GPRs)
- *   Offset 256 : vsepc          = 8 B               (guest PC = vsepc)
+ *   Offset 256 : vsepc          = 8 B               (guest 自己的 sepc)
  *   Offset 264 : vsstatus       = 8 B               (guest sstatus)
  *   Offset 272 : vstvec         = 8 B               (guest trap vector)
  *   Offset 280 : vsscratch      = 8 B               (guest sscratch)
@@ -165,12 +172,24 @@ typedef struct vcpu {
  *   Offset 304 : scause_save    = 8 B               (陷入原因，HS侧保存)
  *   Offset 312 : stval_save     = 8 B               (陷入附加值)
  *   Offset 320 : htval_save     = 8 B               (Stage-2 guest PA)
- *   Offset 328 : host_ctx[15]   = 15 × 8 = 120 B   (ra,s0-s11,sp,orig_stvec)
+ *   Offset 328 : hstatus_save   = 8 B               (陷阱时的 hstatus)
+ *   Offset 336 : pc             = 8 B               (恢复 PC，来自 HS sepc)
+ *   Offset 344 : host_ctx[16]   = 16 × 8 = 128 B   (ra,s0-s11,sp,orig_stvec,tp)
+ *   Offset 472 : htinst_save    = 8 B               (htinst，MMIO 取指回退)
  *
  * host_ctx 布局（与 hext_vcpu.S 对齐）：
  *   [0]  ra   [1]  s0   [2]  s1   [3]  s2   [4]  s3
  *   [5]  s4   [6]  s5   [7]  s6   [8]  s7   [9]  s8
  *   [10] s9   [11] s10  [12] s11  [13] sp   [14] orig_stvec
+ *   [15] tp
+ *
+ * ⚠️ host_ctx 必须覆盖 ra/s0-s11/sp/gp/tp 全部「跨调用保持」的寄存器。
+ * gp 由陷阱向量用 `la gp, __global_pointer$` 重建（不占槽位），**tp 必须
+ * 显式存取** —— 宿主内核把 tp 当 per-CPU 指针用，而进入 guest 时它会被
+ * 换成 guest 的 x4。漏了这个槽位，宿主回来之后每一次取 CPU id / per-CPU
+ * 变量都会踩到 guest 的地址上（实测表现为 klog_cpu_id 取址缺页 + 之后
+ * 陷在异常处理里的死循环）。历史上这里只有 15 个槽位、只恢复了 gp，
+ * tp 是后补的第 16 个 —— 加寄存器时请连带检查这一条。
  */
 
 /* ── asm 可见的固定偏移 ──────────────────────────────────────── */
@@ -184,13 +203,16 @@ typedef struct vcpu {
 #define VCPU_RV_SCAUSE     304
 #define VCPU_RV_STVAL      312
 #define VCPU_RV_HTVAL      320
-#define VCPU_RV_HOSTCTX    328          /* host_ctx[15] = 120 B      */
-#define VCPU_RV_HOSTSTVEC  (328 + 14*8) /* = 440: 原主 stvec (host_ctx[14]) */
+#define VCPU_RV_HSTATUS    328          /* 陷阱时的 hstatus（含 SPVP）*/
+#define VCPU_RV_PC         336          /* 恢复 PC（HS sepc）        */
+#define VCPU_RV_HOSTCTX    344          /* host_ctx[16] = 128 B      */
+#define VCPU_RV_HOSTSTVEC  (344 + 14*8) /* = 456: 原主 stvec (host_ctx[14]) */
+#define VCPU_RV_HTINST     (344 + 16*8) /* = 472: htinst（在 host_ctx 之后）*/
 
 typedef struct vcpu {
     /* ── asm-accessible（勿改动顺序）────────────────────── */
     uint64_t r[32];         /* x0-x31 guest GPRs    offset=0     */
-    uint64_t vsepc;         /* guest PC             offset=256   */
+    uint64_t vsepc;         /* guest 自己的 sepc    offset=256   */
     uint64_t vsstatus;      /* guest sstatus        offset=264   */
     uint64_t vstvec;        /* guest trap vector    offset=272   */
     uint64_t vsscratch;     /* guest sscratch       offset=280   */
@@ -199,8 +221,17 @@ typedef struct vcpu {
     uint64_t scause_save;   /* 陷入原因              offset=304   */
     uint64_t stval_save;    /* 陷入附加值            offset=312   */
     uint64_t htval_save;    /* Stage-2 guest PA     offset=320   */
-    uint64_t host_ctx[15];  /* ra,s0-s11,sp,orig_stvec offset=328
-                             * [0]=ra [1-12]=s0-s11 [13]=sp [14]=orig_stvec */
+    uint64_t hstatus_save;  /* 陷阱时的 hstatus     offset=328   */
+    uint64_t pc;            /* 恢复 PC（HS sepc）   offset=336   */
+    uint64_t host_ctx[16];  /* ra,s0-s11,sp,orig_stvec,tp    offset=344
+                             * [0]=ra [1-12]=s0-s11 [13]=sp [14]=orig_stvec
+                             * [15]=tp（per-CPU 指针，见上方 host_ctx 说明）*/
+
+    /* ⚠️ htinst ≠ htval：htval 是出错 GPA>>2，htinst 才是触发陷阱的指令。
+     * MMIO 模拟在「从 guest PC 取指失败」时用 htinst 回退，用错寄存器会把
+     * 一个地址当指令解码 —— 解出的长度/寄存器全是垃圾。偏移放在 host_ctx
+     * 之后，纯粹是为了不动 HCTX_* 那一组宏。*/
+    uint64_t htinst_save;   /* htinst               offset=472   */
 
     /* ── C-only 字段 ──────────────────────────────────── */
     int      vcpu_id;
@@ -208,6 +239,30 @@ typedef struct vcpu {
     struct vm *vm;
     uint64_t timer_deadline;  /* guest SBI 定时器截止（guest time 单位），0=未设置 */
 } vcpu_t;
+
+/*
+ * 编译期钉死结构体偏移 == hext_vcpu.S 里的 VCPU_RV_* / HCTX_* 宏。
+ * 两边只靠注释约定，加一个字段就会整体错位，而错位的表现是"guest 随机
+ * 跑飞"这种极难反查的故障（历史上 tp 槽位就是漏加过一次，见上方说明）。
+ * 与 include/aarch64/exception.h 钉 trap_frame_t 是同一手法。
+ */
+_Static_assert(offsetof(vcpu_t, r)           == VCPU_RV_R0,       "hext_vcpu.S VCPU_R0");
+_Static_assert(offsetof(vcpu_t, vsepc)       == VCPU_RV_VSEPC,    "hext_vcpu.S VCPU_VSEPC");
+_Static_assert(offsetof(vcpu_t, vsstatus)    == VCPU_RV_VSSTATUS, "hext_vcpu.S VCPU_VSSTATUS");
+_Static_assert(offsetof(vcpu_t, vstvec)      == VCPU_RV_VSTVEC,   "hext_vcpu.S VCPU_VSTVEC");
+_Static_assert(offsetof(vcpu_t, vsscratch)   == VCPU_RV_VSSCRATCH,"hext_vcpu.S VCPU_VSSCRATCH");
+_Static_assert(offsetof(vcpu_t, vsatp)       == VCPU_RV_VSATP,    "hext_vcpu.S VCPU_VSATP");
+_Static_assert(offsetof(vcpu_t, vsie)        == VCPU_RV_VSIE,     "hext_vcpu.S VCPU_VSIE");
+_Static_assert(offsetof(vcpu_t, scause_save) == VCPU_RV_SCAUSE,   "hext_vcpu.S VCPU_SCAUSE");
+_Static_assert(offsetof(vcpu_t, stval_save)  == VCPU_RV_STVAL,    "hext_vcpu.S VCPU_STVAL");
+_Static_assert(offsetof(vcpu_t, htval_save)  == VCPU_RV_HTVAL,    "hext_vcpu.S VCPU_HTVAL");
+_Static_assert(offsetof(vcpu_t, hstatus_save)== VCPU_RV_HSTATUS,  "hext_vcpu.S VCPU_HSTATUS");
+_Static_assert(offsetof(vcpu_t, pc)          == VCPU_RV_PC,       "hext_vcpu.S VCPU_PC");
+_Static_assert(offsetof(vcpu_t, host_ctx)    == VCPU_RV_HOSTCTX,  "hext_vcpu.S HCTX_RA");
+/* host_ctx[15] 必须正好是 tp 槽 —— 漏掉它宿主的 per-CPU 指针就被 guest 覆盖 */
+_Static_assert(offsetof(vcpu_t, host_ctx) + 15 * 8 == VCPU_RV_HOSTCTX + 15 * 8,
+               "hext_vcpu.S HCTX_TP");
+_Static_assert(offsetof(vcpu_t, htinst_save) == VCPU_RV_HTINST, "hext_vcpu.S VCPU_HTINST");
 #endif /* ARCH_* */
 
 /* ── VM 配置 ─────────────────────────────────────────────────── */

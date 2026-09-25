@@ -120,63 +120,150 @@
 #define SBI_LEGACY_SET_TIMER      0x00
 #define SBI_LEGACY_CONSOLE_PUTCHAR 0x01
 #define SBI_LEGACY_CONSOLE_GETCHAR 0x02
+/* Legacy 扩展续 */
+#define SBI_LEGACY_SHUTDOWN       0x08
+
+/* SBI 返回码（a0）*/
+#define SBI_ERR_FAILED            ((uint64_t)(-1))
+#define SBI_ERR_INVALID_PARAM     ((uint64_t)(-3))
+#define SBI_ERR_ALREADY_AVAILABLE ((uint64_t)(-6))
+
 /* 现代扩展（a7=EID, a6=FID）*/
 #define SBI_EXT_BASE              0x10
 #define SBI_BASE_GET_SPEC_VERSION 0
 #define SBI_BASE_GET_IMPL_ID      1
 #define SBI_BASE_GET_IMPL_VERSION 2
 #define SBI_BASE_PROBE_EXTENSION  3
+#define SBI_BASE_GET_MVENDORID    4
+#define SBI_BASE_GET_MARCHID      5
+#define SBI_BASE_GET_MIMPID       6
 #define SBI_EXT_TIME              0x54494d45UL  /* "TIME" */
 #define SBI_EXT_RFENCE            0x52464e43UL  /* "RFNC" */
+#define SBI_EXT_IPI               0x735049UL    /* "sPI"  */
+#define SBI_EXT_HSM               0x48534dUL    /* "HSM"  */
+#define SBI_EXT_SRST              0x53525354UL  /* "SRST" */
 #define SBI_TIME_SET_TIMER        0
+#define SBI_HSM_HART_START        0
+#define SBI_HSM_HART_STOP         1
+#define SBI_HSM_HART_GET_STATUS   2
+#define SBI_SRST_RESET            0
+#define SBI_SRST_RESET_TYPE_SHUTDOWN 0
+#define SBI_SRST_RESET_TYPE_COLD_REBOOT 1
+#define SBI_SRST_RESET_REASON_NONE 0
 
 /* ================================================================
- * VS-CSR 访问宏（riscv gcc 工具链通过 CSR 编号直接 csrr/csrw）
- * 注意：-march=rv64gc 已包含 H-ext；若编译器不认识寄存器名
- *       可改用 .insn r SYSTEM, ... 格式，但直接命名更简洁。
+ * H-extension CSR 访问宏
+ *
+ * ⚠️⚠️ 这里**一律用数值 CSR 地址**，一个符号名都不能用。
+ *
+ * 原因不是「符号名不认」，而是更糟的「符号名认，但含义是错的」：
+ * 本工具链是 `-march=rv64gc`（**不含 h**），而让 binutils 认识这些名字的
+ * 唯一办法就是把 h 写进 -march —— 但 gcc 11.2.1 直接拒绝
+ * （"-march=rv64gch: name of hypervisor extension must be more than 1 letter"，
+ *  rv64gc_h / rv64imafdc_h 也都不认）。于是 binutils 落到「无 H 扩展」的
+ * CSR 表上，把 hypervisor 寄存器名**静默**映射到同名 VS 级的那个编号：
+ *
+ *     写的名字    汇编出来的 CSR     实际含义
+ *     hstatus  →  0x200            vsstatus     （不是 0x600！）
+ *     hedeleg  →  0x202            vsedeleg
+ *     hideleg  →  0x203            vsideleg
+ *     hie      →  0x204            vsie
+ *     hgatp / hvip / hcounteren / vsstatus ...  → 直接汇编报错
+ *
+ * 这是一个**静默的错误代码生成**，编译链接全绿，直到运行期才以
+ * 「illegal instruction」（QEMU 8.2 没实现 vsedeleg/vsideleg）或「行为诡异」
+ * 的形式炸出来。本文件历史上就踩过：`WRITE_HSTATUS(...|HSTATUS_VTW)` 实际写的是
+ * vsstatus，VTW 位（bit21）在 vsstatus 里是保留位 —— 也就是**从来没生效过**；
+ * 而"写 hedeleg 会 illegal instruction"的旧注释，真相是那条指令其实在写
+ * 0x202（未实现），不是 QEMU 不允许写 hedeleg。
+ *
+ * 教训：在这棵树上，H 扩展的 CSR **只写数字**。新增访问前先在
+ * `riscv64-linux-musl-objdump -d` 里确认一下编码。
+ *
+ * 下面用两级宏把参数强制展开成数字再字符串化：C 的 # 运算符不会展开
+ * 宏参数，直接写 `"csrw " #csr` 会拼出字面量 "csr" 而不是它的值。
  * ================================================================ */
+#define RV_STR_INNER(x)  #x
+#define RV_STR(x)        RV_STR_INNER(x)
 
-/* hstatus */
-#define READ_HSTATUS()          CSR_READ(hstatus)
-#define WRITE_HSTATUS(v)        CSR_WRITE(hstatus, v)
-#define SET_HSTATUS(bits)       CSR_SET(hstatus, bits)
-#define CLEAR_HSTATUS(bits)     CSR_CLEAR(hstatus, bits)
+#define RV_CSR_READ(csr) \
+    __extension__({ uint64_t _rv_v; \
+                    __asm__ volatile("csrr %0, " RV_STR(csr) : "=r"(_rv_v)); \
+                    _rv_v; })
+#define RV_CSR_WRITE(csr, val) \
+    __asm__ volatile("csrw " RV_STR(csr) ", %0" \
+                     :: "r"((uint64_t)(val)) : "memory")
+#define RV_CSR_SET(csr, bits) \
+    __asm__ volatile("csrs " RV_STR(csr) ", %0" \
+                     :: "r"((uint64_t)(bits)) : "memory")
+#define RV_CSR_CLEAR(csr, bits) \
+    __asm__ volatile("csrc " RV_STR(csr) ", %0" \
+                     :: "r"((uint64_t)(bits)) : "memory")
 
-/* hedeleg / hideleg */
-#define WRITE_HEDELEG(v)        CSR_WRITE(hedeleg, v)
-#define WRITE_HIDELEG(v)        CSR_WRITE(hideleg, v)
+/* hstatus（数值 0x600 —— 写符号名会变成 0x200=vsstatus，见上）*/
+#define READ_HSTATUS()          RV_CSR_READ(CSR_HSTATUS)
+#define WRITE_HSTATUS(v)        RV_CSR_WRITE(CSR_HSTATUS, v)
+#define SET_HSTATUS(bits)       RV_CSR_SET(CSR_HSTATUS, bits)
+#define CLEAR_HSTATUS(bits)     RV_CSR_CLEAR(CSR_HSTATUS, bits)
 
-/* hgatp (Stage-2 page table) */
-#define READ_HGATP()            CSR_READ(hgatp)
-#define WRITE_HGATP(v)          CSR_WRITE(hgatp, v)
+/* hedeleg / hideleg（数值 0x602 / 0x603）*/
+#define WRITE_HEDELEG(v)        RV_CSR_WRITE(CSR_HEDELEG, v)
+#define READ_HEDELEG()          RV_CSR_READ(CSR_HEDELEG)
+#define WRITE_HIDELEG(v)        RV_CSR_WRITE(CSR_HIDELEG, v)
+#define READ_HIDELEG()          RV_CSR_READ(CSR_HIDELEG)
 
-/* VS-mode 寄存器（HS-mode 可直接读写）*/
-#define READ_VSSTATUS()         CSR_READ(vsstatus)
-#define WRITE_VSSTATUS(v)       CSR_WRITE(vsstatus, v)
+/* hie（数值 0x604）*/
+#define WRITE_HIE(v)            RV_CSR_WRITE(CSR_HIE, v)
+#define SET_HIE(bits)           RV_CSR_SET(CSR_HIE, bits)
 
-#define READ_VSIE()             CSR_READ(vsie)
-#define WRITE_VSIE(v)           CSR_WRITE(vsie, v)
+/* hgatp（数值）*/
+#define READ_HGATP()            RV_CSR_READ(CSR_HGATP)
+#define WRITE_HGATP(v)          RV_CSR_WRITE(CSR_HGATP, v)
 
-#define READ_VSTVEC()           CSR_READ(vstvec)
-#define WRITE_VSTVEC(v)         CSR_WRITE(vstvec, v)
+/* hcounteren（数值）：不置位的话 guest 读 time/cycle/instret 会非法指令 */
+#define READ_HCOUNTEREN()       RV_CSR_READ(CSR_HCOUNTEREN)
+#define WRITE_HCOUNTEREN(v)     RV_CSR_WRITE(CSR_HCOUNTEREN, v)
+#define HCOUNTEREN_CY_TM_IR     0x7UL   /* CY | TM | IR */
 
-#define READ_VSSCRATCH()        CSR_READ(vsscratch)
-#define WRITE_VSSCRATCH(v)      CSR_WRITE(vsscratch, v)
+/* VS-mode 寄存器（HS-mode 可直接读写，一律数值）*/
+#define READ_VSSTATUS()         RV_CSR_READ(CSR_VSSTATUS)
+#define WRITE_VSSTATUS(v)       RV_CSR_WRITE(CSR_VSSTATUS, v)
 
-#define READ_VSEPC()            CSR_READ(vsepc)
-#define WRITE_VSEPC(v)          CSR_WRITE(vsepc, v)
+#define READ_VSIE()             RV_CSR_READ(CSR_VSIE)
+#define WRITE_VSIE(v)           RV_CSR_WRITE(CSR_VSIE, v)
 
-#define READ_VSCAUSE()          CSR_READ(vscause)
-#define WRITE_VSCAUSE(v)        CSR_WRITE(vscause, v)
+#define READ_VSTVEC()           RV_CSR_READ(CSR_VSTVEC)
+#define WRITE_VSTVEC(v)         RV_CSR_WRITE(CSR_VSTVEC, v)
 
-#define READ_VSTVAL()           CSR_READ(vstval)
-#define WRITE_VSTVAL(v)         CSR_WRITE(vstval, v)
+#define READ_VSSCRATCH()        RV_CSR_READ(CSR_VSSCRATCH)
+#define WRITE_VSSCRATCH(v)      RV_CSR_WRITE(CSR_VSSCRATCH, v)
 
-#define READ_VSATP()            CSR_READ(vsatp)
-#define WRITE_VSATP(v)          CSR_WRITE(vsatp, v)
+#define READ_VSEPC()            RV_CSR_READ(CSR_VSEPC)
+#define WRITE_VSEPC(v)          RV_CSR_WRITE(CSR_VSEPC, v)
 
-/* htval（Stage-2 陷阱：guest 物理地址）*/
-#define READ_HTVAL()            CSR_READ(htval)
+#define READ_VSCAUSE()          RV_CSR_READ(CSR_VSCAUSE)
+#define WRITE_VSCAUSE(v)        RV_CSR_WRITE(CSR_VSCAUSE, v)
+
+#define READ_VSTVAL()           RV_CSR_READ(CSR_VSTVAL)
+#define WRITE_VSTVAL(v)         RV_CSR_WRITE(CSR_VSTVAL, v)
+
+#define READ_VSATP()            RV_CSR_READ(CSR_VSATP)
+#define WRITE_VSATP(v)          RV_CSR_WRITE(CSR_VSATP, v)
+
+/* htval（Stage-2 陷阱：guest 物理地址，数值）*/
+#define READ_HTVAL()            RV_CSR_READ(CSR_HTVAL)
+
+/*
+ * 注：**不要**试图在这里读 misa 来判断 H 扩展。
+ *
+ * misa 的 CSR 地址是 0x301（bits[11:10]=11，机器级），S/HS-mode 读它一律
+ * 触发 illegal instruction —— 实测确认（stval 就是那条 csrr 的编码
+ * 0x30102af3）。它只在 M-mode（OpenSBI）里可读：OpenSBI 启动时打印的
+ * "Boot HART Base ISA : rv64imafdch" 就是从 misa 来的。
+ *
+ * 所以「有没有 H 扩展」只能靠**试探性读一个 hypervisor CSR** 来判断：
+ * 读成功即有，非法指令即无。见 hext_run.c 的 hext_check_support()。
+ */
 
 /* ================================================================
  * 虚拟中断注入（CSR hvip / hie）

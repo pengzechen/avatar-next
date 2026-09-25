@@ -176,7 +176,7 @@ ifeq ($(ARCH),aarch64)
 else ifeq ($(ARCH),riscv64)
     _KERNEL_VDEV_SRCS     := $(KERNEL_DIR)/vmm/vdev/vuart16550.c \
                              $(KERNEL_DIR)/vmm/vdev/vplic.c
-    _KERNEL_ARCHONLY_SRCS :=
+    _KERNEL_ARCHONLY_SRCS := $(KERNEL_DIR)/vmm/guest_loader.c
     # RISC-V VS-mode guest test program (linked into kernel binary)
     GUEST_TEST_OBJ        := $(BUILD_DIR)/apps_riscv_guest_test.o
 else ifeq ($(ARCH),x86_64)
@@ -222,8 +222,9 @@ KERNEL_LWEXT4_SRCS := \
     $(KERNEL_DIR)/syscall/io/epoll.c \
     $(KERNEL_DIR)/syscall/mm/mmap.c
 
-# guest_loader.c 位于共享目录但仅 aarch64 编译（见 §4a 白名单），且引用 lwext4。
-ifeq ($(ARCH),aarch64)
+# guest_loader.c 位于共享目录但只给「已实现 Linux guest 启动」的架构编译
+# （见 §4a 白名单与 include/vmm/vmm.h 的 VMM_GUEST_LINUX_SUPPORTED），且引用 lwext4。
+ifneq ($(filter $(ARCH),aarch64 riscv64),)
 KERNEL_LWEXT4_SRCS += $(KERNEL_DIR)/vmm/guest_loader.c
 endif
 
@@ -802,8 +803,10 @@ EPOLL_PERF_BIN   :=
 endif
 
 # vmm-run：宿主 shell 里启动/驱动 guest 的用户态 helper（对标 kvmm-run）。
-# 只有 aarch64 有 VMM，故只在这个架构上构建与安装。
-ifeq ($(ARCH),aarch64)
+# 只给「已实现 Linux guest 启动」的架构构建与安装（与 include/vmm/vmm.h 的
+# VMM_GUEST_LINUX_SUPPORTED 保持一致）。helper 本身是纯 C + ioctl，
+# 与架构无关，两个架构共用同一份 apps/c/vmm_run.c。
+ifneq ($(filter $(ARCH),aarch64 riscv64),)
 VMM_RUN_BIN      := apps/vmm-run-$(ARCH)
 else
 VMM_RUN_BIN      :=
@@ -815,8 +818,13 @@ NGINX_BIN        := $(wildcard apps/nginx-$(ARCH))
 # GIC 初始化阶段直接卡死。
 GUEST_LINUX_DTB_SRC := $(if $(filter v3,$(GIC)),imgs/aarch64/linux-gicv3.dtb,imgs/aarch64/linux.dtb)
 
+ifneq ($(filter $(ARCH),aarch64 riscv64),)
 ifeq ($(ARCH),aarch64)
 GUEST_LINUX_FILES := imgs/aarch64/linux.bin $(GUEST_LINUX_DTB_SRC) imgs/aarch64/initrd.gz
+else
+# RISC-V 的 guest 镜像（DTB 是 imgs/guests/rv64/linux.dts 用 dtc 生成的，见该文件头）
+GUEST_LINUX_FILES := imgs/guests/rv64/linux.bin imgs/guests/rv64/linux.dtb imgs/guests/rv64/initrd.gz
+endif
 else
 GUEST_LINUX_FILES :=
 endif
@@ -1251,7 +1259,20 @@ $(ROOTFS_IMG): Makefile $(APPS_BINS) $(APPS_C_ELFS) $(LTP_BINS) $(EPOLL_PERF_BIN
 		printf '%s\n' '<html><body><h1>Avatar nginx</h1></body></html>' > $(ROOTFS_STAGE)/www/index.html; \
 		echo "  [nginx installed → /bin/nginx]"; \
 	fi
-	@# 安装 AArch64 Linux guest 镜像（供 RUN_GUEST_LINUX 从 rootfs 加载）
+	@# 安装 guest Linux 镜像（供 RUN_GUEST_LINUX / vmm-run 从 rootfs 加载）
+	@# 目录名与 include/guest_loader.h 的 GUEST_LINUX_*_PATH 必须一致。
+	@if [ "$(ARCH)" = "riscv64" ]; then \
+		missing=0; \
+		for f in imgs/guests/rv64/linux.bin imgs/guests/rv64/linux.dtb imgs/guests/rv64/initrd.gz; do \
+			if [ ! -f "$$f" ]; then echo "ERROR: missing guest image $$f"; missing=1; fi; \
+		done; \
+		if [ "$$missing" -ne 0 ]; then exit 1; fi; \
+		mkdir -p $(ROOTFS_STAGE)/guests/rv64; \
+		cp imgs/guests/rv64/linux.bin $(ROOTFS_STAGE)/guests/rv64/linux.bin; \
+		cp imgs/guests/rv64/linux.dtb $(ROOTFS_STAGE)/guests/rv64/linux.dtb; \
+		cp imgs/guests/rv64/initrd.gz $(ROOTFS_STAGE)/guests/rv64/initrd.gz; \
+		echo "  [RISC-V Linux guest installed → /guests/rv64]"; \
+	fi
 	@if [ "$(ARCH)" = "aarch64" ]; then \
 		missing=0; \
 		for f in imgs/aarch64/linux.bin $(GUEST_LINUX_DTB_SRC) imgs/aarch64/initrd.gz; do \
@@ -1377,8 +1398,8 @@ test-panic:
 # test-guest-linux: 编译 GUEST_LINUX=1 内核并把 Linux 作为 EL1 guest 启动
 #                   rootfs 会自动安装 /guests/linux/{linux.bin,linux.dtb,initrd.gz}
 test-guest-linux: $(ROOTFS_IMG)
-	@if [ "$(ARCH)" != "aarch64" ]; then \
-		echo "ERROR: test-guest-linux currently supports ARCH=aarch64 only."; \
+	@if [ "$(ARCH)" != "aarch64" ] && [ "$(ARCH)" != "riscv64" ]; then \
+		echo "ERROR: test-guest-linux supports ARCH=aarch64 or ARCH=riscv64 only."; \
 		exit 1; \
 	fi
 	$(MAKE) PLATFORM=$(PLATFORM) LOG=$(LOG) GUEST_LINUX=1 kernel

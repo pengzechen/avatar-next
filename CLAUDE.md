@@ -43,6 +43,14 @@ make help
 > 其它 CFLAGS 之后，必须先 `make PLATFORM=<p> clean` 再全量重编**，否则会用到
 > 布局/配置不一致的旧 `.o`，产生看起来像运行期内存踩踏的"幽灵 bug"。
 > 详见 `docs/bugfix/X86_64_SMP_SYSCALL_STACK_BUGFIX.md` 附录一。
+>
+> ⚠️ **变体标志（`GUEST_LINUX=` / `VMM_TEST=` / `STRING_TEST=` …）同理，而且更坑**：
+> `make ... rootfs` / `make ... run-fs` 都**会连带重编内核**，用的却是**这一次
+> 命令里给的变体**。所以「编好 `GUEST_LINUX=1` 的内核 → 再 `make ... rootfs`」
+> 会把内核悄悄换成非 guest 变体（症状：guest 一个字符都不输出，宿主 busybox
+> 直接跑起来）。**正确顺序是同变体：`make PLATFORM=<p> GUEST_LINUX=1 rootfs`
+> 之后再 `... GUEST_LINUX=1 kernel`**；起 QEMU 前用
+> `strings build/<p>/kernel_*.bin | grep -c 'GUEST_LINUX mode'`（应为 1）验一下产物。
 
 ### 工具链
 
@@ -140,6 +148,18 @@ avatar/
 
 - **中断开关策略**: `docs/INTERRUPT_CONTROL_COMPARISON.md` - AArch64/RISC-V 中断开关的核心约定。关键：中断策略按“EL1 里运行的是谁”区分——EL0 任务的内核侧（syscall/异常）关中断，独立内核线程（含 idle）开中断、可被抢占。含 `task_trampoline` vs `task_trampoline_user` 的分野与代码检查清单。
 - **延迟调度机制**: `docs/INTERRUPT_CONTEXT_SWITCH.md` - 为什么不能在 ISR 内切换任务，而是只置 `need_resched`、在异常返回路径（`sched_check_and_yield`）才切换。
+
+### 虚拟化（VMM / guest）
+
+- **RISC-V guest Linux**: `docs/vmm/RISCV64_GUEST_LINUX.md` - H-extension 下跑
+  guest Linux 的整个链路（G-stage / sret 进出 / vPLIC / 16550A / SBI / DTB 布局），
+  以及 7 条**移植时真踩过**的坑。**动 `kernel/vmm/riscv64/*`、
+  `include/riscv64/hext.h`、`include/guest_loader.h` 之前必读** ——
+  其中第 1 条（binutils 把 hypervisor CSR 符号名静默映射到 VS 级编号，
+  编译全绿、运行期才炸）尤其反直觉。该文档 §7 还登记了一个**尚未定性的
+  间歇性 guest 用户态 SIGSEGV**。
+- **两种运行模式、`/dev/vmm` 协议、Ctrl+] / Ctrl+[ 语义**: `docs/vmm/GUEST_CONSOLE.md`
+- **裸跑 guest 作基线对照**: `docs/vmm/GUEST_NATIVE_QEMU.md`
 
 **使用方式**: 用 Read tool 读取文档，了解 API 和最佳实践后再实现。
 

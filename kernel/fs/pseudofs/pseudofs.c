@@ -12,6 +12,7 @@
 #include "pseudofs_internal.h"
 #include "types.h"
 #include "arch.h"
+#include "vmm/vmm.h"            /* VMM_GUEST_LINUX_SUPPORTED：决定 /dev/vmm 是否存在 */
 #include "klog.h"
 #include "string.h"
 #include "pmm.h"
@@ -285,8 +286,9 @@ static const pseudo_node_t g_nodes[] = {
     { "/dev/npu",          PSEUDO_CHR, MODE_CHRW, (10U <<8)|242U, NULL,         null_write,  npu_dev_ioctl, NULL,       NULL           },
     { "/dev/video0",       PSEUDO_CHR, MODE_CHRW, (81U <<8)|0U,   video0_read,  null_write,  video0_ioctl,  NULL,       NULL           },
     /* guest 控制设备：宿主 shell 里的 /bin/vmm-run 打开它来启动/驱动 guest。
-     * 仅 aarch64 有 VMM；其它架构上这行不编译，节点自然不存在。 */
-#if ARCH_AARCH64
+     * 只有「已实现 Linux guest 启动」的架构才有这个节点（判据同
+     * include/vmm/vmm.h 的 VMM_GUEST_LINUX_SUPPORTED）。 */
+#if VMM_GUEST_LINUX_SUPPORTED
     { "/dev/vmm",          PSEUDO_CHR, MODE_CHRW, (10U <<8)|200U, vmm_dev_read, vmm_dev_write, vmm_dev_ioctl,
       vmm_dev_poll, vmm_dev_close },
 #endif

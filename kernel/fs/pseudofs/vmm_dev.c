@@ -31,8 +31,8 @@
  * guest 镜像路径是写死的 /guests/linux 下那三个文件，不像 kvmm 那样由
  * 参数带进来；将来要支持多 guest 的话，把参数挂在 BOOT 的 ioctl 出参上。
  *
- * 中断注入不在这里做：RX FIFO 由 vpl011 持有，置 pending 的时机在 VMM
- * 进入 guest 前的 aarch64_check_vpl011_rx()（电平触发，见其注释）。
+ * 中断注入不在这里做：RX FIFO 由控制台 vdev 持有，置 pending 的时机在 VMM
+ * 进入 guest 前（电平触发，见 vmm_console_irq_asserted 的注释）。
  */
 
 #include "pseudofs.h"                   /* VMM_IOC_* */
@@ -42,9 +42,10 @@
 #include "syscall/io/epoll.h"
 #include "syscall/syscall_internal.h"   /* copy_to_user_bytes（GET_STATUS 出参）*/
 
-#if ARCH_AARCH64
-#include "vmm/vmm_vpl011.h"
 #include "vmm/vmm.h"
+#include "vmm/vmm_console.h"
+
+#if VMM_GUEST_LINUX_SUPPORTED
 #include "guest_loader.h"
 #endif
 
@@ -67,7 +68,7 @@ static int g_vmm_booted;
 static int g_vmm_detached;
 
 /* ── 启动 / 接入 ──────────────────────────────────────────── */
-#if ARCH_AARCH64
+#if VMM_GUEST_LINUX_SUPPORTED
 static int vmm_dev_boot(void)
 {
     /*
@@ -88,7 +89,7 @@ static int vmm_dev_boot(void)
         KLOG_INFO("[vmmdev] boot: attaching to running guest\n");
         g_vmm_booted = 1;
         /* 通道应当是开着的；分离期间没关过，这里只是兜底 */
-        vpl011_tx_set_enabled(1);
+        vmm_console_tx_set_enabled(1);
         return 0;
     }
 
@@ -100,7 +101,7 @@ static int vmm_dev_boot(void)
     KLOG_INFO("[vmmdev] boot: starting guest\n");
 
     /*
-     * 先把 vpl011 切到「通道模式」，再启动 guest。
+     * 先把控制台切到「通道模式」，再启动 guest。
      *
      * 顺序有讲究：切了通道之后 VMM 就不再碰宿主 UART（vmm_console_pump 会
      * 让位给 helper），而 guest 的启动输出进 TX 缓冲等 helper 来取。反过来
@@ -109,20 +110,20 @@ static int vmm_dev_boot(void)
      * 此刻 vCPU 任务还没被调度（guest_loader_run_linux 内部才 task_create，
      * 而当前任务不会立刻让出），所以不存在「输出漏到 klog」的窗口。
      */
-    vpl011_tx_set_enabled(1);
+    vmm_console_tx_set_enabled(1);
 
     /* guest_loader_run_linux 内部也做了重入保护，失败会返回负值 */
     int rc = guest_loader_run_linux();
     if (rc != 0) {
         KLOG_ERROR("[vmmdev] guest_loader_run_linux failed: %d\n", rc);
-        vpl011_tx_set_enabled(0);
+        vmm_console_tx_set_enabled(0);
         return -PFS_EIO;
     }
 
     g_vmm_booted = 1;
     return 0;
 }
-#endif /* ARCH_AARCH64 */
+#endif /* VMM_GUEST_LINUX_SUPPORTED */
 
 /* ── 节点操作（声明见 pseudofs_internal.h，与 tpu_dev_ioctl 等同一约定）── */
 
@@ -132,7 +133,7 @@ int vmm_dev_write(int nid, const void *buf, size_t len)
     if (!buf)
         return -PFS_EINVAL;
 
-#if !ARCH_AARCH64
+#if !VMM_GUEST_LINUX_SUPPORTED
     return -PFS_ENOSYS;
 #else
     /*
@@ -144,7 +145,7 @@ int vmm_dev_write(int nid, const void *buf, size_t len)
         return -PFS_EIO;        /* guest 没了，写也没意义 */
 
     for (size_t i = 0; i < len; i++)
-        vpl011_push_rx(((const uint8_t *)buf)[i]);
+        vmm_console_push_rx(((const uint8_t *)buf)[i]);
     return (int)len;
 #endif
 }
@@ -156,11 +157,11 @@ int vmm_dev_read(int nid, uint64_t off, void *buf, size_t len)
     if (!buf)
         return -PFS_EINVAL;
 
-#if !ARCH_AARCH64
+#if !VMM_GUEST_LINUX_SUPPORTED
     return -PFS_ENOSYS;
 #else
     size_t n = 0;
-    while (n < len && vpl011_tx_pop((uint8_t *)buf + n))
+    while (n < len && vmm_console_tx_pop((uint8_t *)buf + n))
         n++;
 
     /* 一个都没有才算空。非阻塞语义：helper 先用 poll() 等可读 */
@@ -174,7 +175,7 @@ int vmm_dev_ioctl(int nid, uint64_t req, void *argp)
 {
     (void)nid;
 
-#if !ARCH_AARCH64
+#if !VMM_GUEST_LINUX_SUPPORTED
     return -PFS_ENOSYS;
 #else
     switch (req) {
@@ -217,12 +218,12 @@ uint32_t vmm_dev_poll(int nid)
 {
     (void)nid;
 
-#if !ARCH_AARCH64
+#if !VMM_GUEST_LINUX_SUPPORTED
     return 0;
 #else
     uint32_t ev = EPOLLOUT;             /* 永远收得下写 */
 
-    if (vpl011_tx_has_data())
+    if (vmm_console_tx_has_data())
         ev |= EPOLLIN;
 
     /* guest 已经退出（比如 guest 自己 poweroff）：告诉 helper 别再等了。
@@ -238,7 +239,7 @@ int vmm_dev_close(int nid)
 {
     (void)nid;
 
-#if !ARCH_AARCH64
+#if !VMM_GUEST_LINUX_SUPPORTED
     return 0;
 #else
     /*
@@ -261,12 +262,12 @@ int vmm_dev_close(int nid)
     }
 
     /*
-     * 把 vpl011 打回「直打宿主控制台」模式，并清掉 RX FIFO 里的残留按键。
+     * 把控制台打回「直打宿主控制台」模式，并清掉 RX FIFO 里的残留按键。
      * 不清的话，下一次 helper 启动 guest 时，上一轮没取走的输入会先喂给
      * 新 guest 的 getty。
      */
-    vpl011_tx_set_enabled(0);
-    vpl011_rx_flush();
+    vmm_console_tx_set_enabled(0);
+    vmm_console_rx_flush();
     return 0;
 #endif
 }
