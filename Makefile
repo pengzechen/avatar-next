@@ -180,8 +180,12 @@ else ifeq ($(ARCH),riscv64)
     # RISC-V VS-mode guest test program (linked into kernel binary)
     GUEST_TEST_OBJ        := $(BUILD_DIR)/apps_riscv_guest_test.o
 else ifeq ($(ARCH),x86_64)
-    _KERNEL_VDEV_SRCS     := $(KERNEL_DIR)/vmm/vdev/vuart16550.c
-    _KERNEL_ARCHONLY_SRCS :=
+    _KERNEL_VDEV_SRCS     := $(KERNEL_DIR)/vmm/vdev/vuart16550.c \
+                             $(KERNEL_DIR)/vmm/vdev/vlapic.c
+    # guest_loader.c 被 KERNEL_SRCS 的 filter-out 排除了，必须在这里加回来；
+    # 它的编译分组另见 KERNEL_LWEXT4_SRCS。两处都要有 —— 少一处，
+    # 下面的「分组完整性断言」会当场报 67 vs 68。
+    _KERNEL_ARCHONLY_SRCS := $(KERNEL_DIR)/vmm/guest_loader.c
     # x86_64 guest test program (linked into kernel binary)
     GUEST_TEST_OBJ        := $(BUILD_DIR)/apps_x86_guest_test.o
 else
@@ -224,7 +228,7 @@ KERNEL_LWEXT4_SRCS := \
 
 # guest_loader.c 位于共享目录但只给「已实现 Linux guest 启动」的架构编译
 # （见 §4a 白名单与 include/vmm/vmm.h 的 VMM_GUEST_LINUX_SUPPORTED），且引用 lwext4。
-ifneq ($(filter $(ARCH),aarch64 riscv64),)
+ifneq ($(filter $(ARCH),aarch64 riscv64 x86_64),)
 KERNEL_LWEXT4_SRCS += $(KERNEL_DIR)/vmm/guest_loader.c
 endif
 
@@ -818,8 +822,11 @@ NGINX_BIN        := $(wildcard apps/nginx-$(ARCH))
 # GIC 初始化阶段直接卡死。
 GUEST_LINUX_DTB_SRC := $(if $(filter v3,$(GIC)),imgs/aarch64/linux-gicv3.dtb,imgs/aarch64/linux.dtb)
 
-ifneq ($(filter $(ARCH),aarch64 riscv64),)
-ifeq ($(ARCH),aarch64)
+ifneq ($(filter $(ARCH),aarch64 riscv64 x86_64),)
+ifeq ($(ARCH),x86_64)
+# x86 guest 镜像：bzImage（自编 linux-6.2.15，带 HdrS 64 位入口）+ initramfs
+GUEST_LINUX_FILES := imgs/guests/x86_64/bzImage imgs/guests/x86_64/initrd
+else ifeq ($(ARCH),aarch64)
 GUEST_LINUX_FILES := imgs/aarch64/linux.bin $(GUEST_LINUX_DTB_SRC) imgs/aarch64/initrd.gz
 else
 # RISC-V 的 guest 镜像（DTB 是 imgs/guests/rv64/linux.dts 用 dtc 生成的，见该文件头）
@@ -1273,6 +1280,17 @@ $(ROOTFS_IMG): Makefile $(APPS_BINS) $(APPS_C_ELFS) $(LTP_BINS) $(EPOLL_PERF_BIN
 		cp imgs/guests/rv64/initrd.gz $(ROOTFS_STAGE)/guests/rv64/initrd.gz; \
 		echo "  [RISC-V Linux guest installed → /guests/rv64]"; \
 	fi
+	@if [ "$(ARCH)" = "x86_64" ]; then \
+		missing=0; \
+		for f in imgs/guests/x86_64/bzImage imgs/guests/x86_64/initrd; do \
+			if [ ! -f "$$f" ]; then echo "ERROR: missing guest image $$f"; missing=1; fi; \
+		done; \
+		if [ "$$missing" -ne 0 ]; then exit 1; fi; \
+		mkdir -p $(ROOTFS_STAGE)/guests/x86_64; \
+		cp imgs/guests/x86_64/bzImage $(ROOTFS_STAGE)/guests/x86_64/bzImage; \
+		cp imgs/guests/x86_64/initrd $(ROOTFS_STAGE)/guests/x86_64/initrd; \
+		echo "  [x86_64 Linux guest installed → /guests/x86_64]"; \
+	fi
 	@if [ "$(ARCH)" = "aarch64" ]; then \
 		missing=0; \
 		for f in imgs/aarch64/linux.bin $(GUEST_LINUX_DTB_SRC) imgs/aarch64/initrd.gz; do \
@@ -1397,13 +1415,28 @@ test-panic:
 
 # test-guest-linux: 编译 GUEST_LINUX=1 内核并把 Linux 作为 EL1 guest 启动
 #                   rootfs 会自动安装 /guests/linux/{linux.bin,linux.dtb,initrd.gz}
-test-guest-linux: $(ROOTFS_IMG)
-	@if [ "$(ARCH)" != "aarch64" ] && [ "$(ARCH)" != "riscv64" ]; then \
-		echo "ERROR: test-guest-linux supports ARCH=aarch64 or ARCH=riscv64 only."; \
+test-guest-linux:
+	@if [ "$(ARCH)" != "aarch64" ] && [ "$(ARCH)" != "riscv64" ] && [ "$(ARCH)" != "x86_64" ]; then \
+		echo "ERROR: test-guest-linux supports ARCH=aarch64, riscv64 or x86_64."; \
 		exit 1; \
 	fi
+ifeq ($(ARCH),x86_64)
+	@# x86_64：**rootfs 必须和内核用同一个变体标志构建** ——
+	@# make rootfs 在 GUEST_LINUX=1 时才会把 /guests/x86_64/{bzImage,initrd}
+	@# 装进镜像；而它同时会用当前命令行的变体重编内核（见 CLAUDE.md 的警告）。
+	@# 所以顺序是：同变体先 rootfs，再 kernel（kernel 放最后），最后校验产物。
+	$(MAKE) PLATFORM=$(PLATFORM) LOG=$(LOG) GUEST_LINUX=1 rootfs
 	$(MAKE) PLATFORM=$(PLATFORM) LOG=$(LOG) GUEST_LINUX=1 kernel
-	@echo "Starting QEMU (guest Linux)..."
+	@if [ "$$(strings $(KERNEL_BIN) | grep -c 'GUEST_LINUX mode')" != "1" ]; then \
+		echo "ERROR: 产物不是 GUEST_LINUX 变体（会被 make rootfs 覆盖）。"; \
+		echo "       请按 CLAUDE.md：同变体先 rootfs 再 kernel。"; \
+		exit 1; \
+	fi
+else
+	$(MAKE) PLATFORM=$(PLATFORM) LOG=$(LOG) GUEST_LINUX=1 kernel
+endif
+	@echo "Starting QEMU (guest Linux, $(ARCH))..."
+	@echo "  提示：guest 串口直接打在本终端；Ctrl-A X 退出 QEMU。"
 	$(QEMU) $(QEMU_FLAGS) $(QEMU_ROOTFS_FLAGS)
 
 # test-ltp: 编译 LTP 测例并启动带 rootfs 的 QEMU
@@ -1476,6 +1509,7 @@ help:
 	@echo "  test-mutex    Copy dynamic rootfs from imgs/ and run mutex_test (futex-based)"
 	@echo "  test-vmm      Build with VMM_TEST=1 and run VMM 3-thread switch test"
 	@echo "  test-panic    Build with PANIC_TEST=1: panic on purpose in the ELF"
+	@echo "  test-guest-linux  - 启动 Linux guest（aarch64/riscv64/x86_64）"
 	@echo "                parser, to see what a backtrace looks like"
 	@echo "  clean         Remove build artifacts for current PLATFORM"
 	@echo "  clean-all     Remove build artifacts for all platforms"

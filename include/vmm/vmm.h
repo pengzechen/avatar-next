@@ -66,7 +66,7 @@
  * 用一个宏而不是到处写 #if ARCH_AARCH64：/dev/vmm、kernel_main 的直启分支
  * 都要按它开关，散落的架构判断会在加架构时漏掉一处。
  */
-#define VMM_GUEST_LINUX_SUPPORTED  (ARCH_AARCH64 || ARCH_RISCV64)
+#define VMM_GUEST_LINUX_SUPPORTED  (ARCH_AARCH64 || ARCH_RISCV64 || ARCH_X86_64)
 
 /* 前向声明：避免与 task.h 循环包含 */
 struct task;
@@ -149,12 +149,62 @@ typedef struct {
 
 typedef struct vcpu {
     x86_guest_regs_t regs;  /* guest GPRs, offset=0, 与 vmx_run.S 对齐  */
-    /* ── C-only 字段 ──────────────────────────────────── */
+    /* ── C-only 字段（launched 的位置被 vmx_run.S 硬编码为 0x84）── */
     int      vcpu_id;
     int      launched;
-    uint64_t page_table_base;   /* 将来用于 EPT/guest CR3               */
+    uint64_t page_table_base;   /* guest CR3 的 GPA（EPT 下的物理地址）*/
     struct vm *vm;
+
+    /*
+     * ── x86 虚拟 MSR 影子 ─────────────────────────────────────
+     *
+     * MSR bitmap 把所有 MSR 访问都陷入 VMM（vmx.c 的 msr_bitmap_init），
+     * 因此 guest 的 wrmsr **不会**碰到真实硬件 —— 否则 Linux 一开机写
+     * STAR/LSTAR/EFER/FS_BASE 就把宿主自己的 syscall 环境搞坏了。
+     * 这里只放 Linux 真正会用到的那几个；其余 MSR 访问按「未知」处理
+     * （读回 0、写忽略），需要时再往这里加。
+     */
+    uint64_t msr_efer;
+    uint64_t msr_star, msr_lstar, msr_cstar, msr_sfmask;
+    uint64_t msr_fs_base, msr_gs_base, msr_kernel_gs_base;
+    uint64_t msr_pat;
+    uint64_t apic_base;          /* IA32_APIC_BASE：vLAPIC 的使能/模式位 */
+
+    /*
+     * ── 待注入 guest 的事件 ───────────────────────────────────
+     *
+     * VS→HS 抢断后，被 VMM 拦下的中断/异常要经 VM-entry
+     * interruption-information 送回 guest。guest 当时屏蔽着中断就置
+     * intr_window，让硬件在它开中断的那一刻(exit 7)再回来投递。
+     */
+    uint64_t pending_event;      /* 0 = 无；否则是 0x4016 的完整编码 */
+    uint64_t pending_errcode;
+    int      intr_window;
+
+    /*
+     * ── guest 启动状态（由 guest_loader 填，vmcs_init_guest 使用）──
+     *
+     * x86 的 guest 状态大部分在 VMCS 字段里（RIP/RSP/CR3/段），不在
+     * vcpu_t 里。为了不改 vmx.c 里那套"玩具 guest 用 entry 指针"的老路径，
+     * 这里放一组可选的启动值：置了就用它，没置就退回旧行为。
+     */
+    uint64_t g_rip;              /* 0 = 用 vmcs_init_guest 的 entry 参数 */
+    uint64_t g_rsp;
+    uint64_t g_cr3;              /* **GPA**（EPT 负责翻译）*/
+    uint64_t g_gdt_base;         /* GPA */
+    uint32_t g_gdt_limit;
+    int      g_boot_linux;       /* 1 = Linux 引导路径 */
 } vcpu_t;
+
+/*
+ * 编译期钉死结构体偏移 == vmx_run.S 里硬编码的偏移。
+ * vmx_run.S 用 0x78(regs.rflags) / 0x84(launched) 直接寻址，改字段顺序
+ * 会让 guest 寄存器保存到错误的槽位 —— 而症状是「guest 随机跑飞」。
+ */
+_Static_assert(offsetof(vcpu_t, regs)     == VCPU_X86_RAX, "vmx_run.S regs @0x00");
+_Static_assert(offsetof(vcpu_t, regs.rflags) == 0x78,      "vmx_run.S rflags @0x78");
+_Static_assert(offsetof(vcpu_t, vcpu_id)  == 0x80,         "vmx_run.S vcpu_id @0x80");
+_Static_assert(offsetof(vcpu_t, launched) == 0x84,         "vmx_run.S launched @0x84");
 
 #elif ARCH_RISCV64
 /*

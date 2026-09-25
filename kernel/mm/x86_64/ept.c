@@ -137,15 +137,35 @@ void x86_ept_enable_mmio_trap(void)
 void x86_ept_invept_all(void)
 {
     /*
-     * 当前为空实现（no-op）。
+     * INVEPT —— 刷新 EPT 派生 TLB（影响所有 VPID）。
      *
-     * x86_ept_init() 在**任何 guest 运行之前**调用，此时 CPU 的 EPT 派生
-     * TLB 中不可能存在旧项，因此无需 INVEPT。INVEPT 仅在运行时修改 EPT
-     * （unmap/remap）后才必需——那属于后续 MMIO/vdev 阶段的工作。
+     * 工具链不认 `invept` 助记符（需要特定 binutils 配置），手工写 VEX：
+     *     VEX.128.66.0F38.W0 80 /r   →   C4 E2 79 80 /r
+     * /r 的 reg 字段 = 类型（1=单 context，2=全 context），
+     *      rm 字段 = 16 字节描述符（低 8 字节是 EPTP）。
+     * 这里生成 `invept %rax,(%rdx)` → ModRM=0x02。
      *
-     * 注：本工具链（gcc/as）不识别 `invept` 助记符（operand size mismatch,
-     * 需要特定 binutils 配置）；届时实现需用 .byte 手工编码 VEX 形式
-     *   VEX.128.66.0F38.W0 80 /r :  invept r32, m128
-     * 并且**必须在 QEMU 下验证编码正确性**，故此处不预先放入未经验证的字节。
+     * 什么时候必须调：**运行期改过 EPT 之后**。x86_ept_init() 在任何 guest
+     * 运行前调用，那时 TLB 里不可能有旧项，不调也没事；但一旦开始按需
+     * map/unmap（MMIO 设备、guest 内存热插拔），漏掉它就会出现「页表改了
+     * 但 guest 还看得见旧映射」的幽灵故障。
      */
+    struct { uint64_t eptp; uint64_t rsvd; } __attribute__((aligned(16))) desc;
+    uint32_t type = 1;   /* single-context：只刷我们自己这个 EPTP */
+
+    if (s_mem_size == 0)
+        return;          /* EPT 还没配置：没有 TLB 要刷 */
+
+    desc.eptp = x86_ept_eptp();
+    desc.rsvd = 0;
+
+    /*
+     * ⚠️ INVEPT 是**传统编码 + 强制 66 前缀**（SDM: 66 0F 38 80 /r），
+     * **没有** VEX 形式。最初写成 VEX（C4 E2 79 80）直接吃了个 #6
+     * invalid opcode —— 那套字节是给别的指令用的。
+     * 这里生成 `invept %rax,(%rdx)`：ModRM=0x02（reg=rax 放类型，
+     * rm=rdx 放 16 字节描述符）。
+     */
+    __asm__ volatile(".byte 0x66,0x0f,0x38,0x80,0x02"   /* invept %rax,(%rdx) */
+                     :: "a"(type), "d"(&desc) : "memory");
 }

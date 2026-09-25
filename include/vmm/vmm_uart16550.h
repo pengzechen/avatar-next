@@ -106,4 +106,12 @@ int  uart16550_tx_has_data(void);
  */
 void uart16550_putchar(uint8_t c);
 
+/*
+ * 端口 I/O 包装（x86 COM1 走 0x3F8 端口，不走 MMIO）。
+ * off = 端口号 - UART16550 基址，访问宽度固定 1 字节。
+ * 复用同一份寄存器状态机，见 vuart16550.c 的说明。
+ */
+uint64_t uart16550_port_read(mmio_device_t *dev, uint64_t off);
+void     uart16550_port_write(mmio_device_t *dev, uint64_t off, uint8_t value);
+
 #endif /* VMM_UART16550_H */

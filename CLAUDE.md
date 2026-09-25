@@ -158,6 +158,15 @@ avatar/
   其中第 1 条（binutils 把 hypervisor CSR 符号名静默映射到 VS 级编号，
   编译全绿、运行期才炸）尤其反直觉。该文档 §7 还登记了一个**尚未定性的
   间歇性 guest 用户态 SIGSEGV**。
+- **x86_64 guest Linux（已跑通到 shell）**: `docs/vmm/X86_GUEST_LINUX.md` ——
+  VMX/EPT + vLAPIC + IO-APIC/PIT/PIC 桩 + PIO 串口，guest Linux 6.2.15
+  已能启动到**交互式 busybox shell**（`make PLATFORM=qemu-virt-x86_64
+  LOG=warn SMP=1 test-guest-linux`，stdin 直通 guest 串口）。
+  该文档 §9 是「最后一公里」的 6 个 bug —— **每个都症状在 guest 侧、
+  根因在 VMM 侧，而且表现都像另一个问题**（MMIO 解码拿 guest RIP 当物理地址、
+  CPUID 0x15/0x16 报 0 掉进 PIT 死循环、STI 影子挡住中断注入、
+  `MSR_FS_BASE` 漏写 `GUEST_BASE_FS` 导致 userspace 段错误…）。
+  改 `kernel/vmm/x86_64/*` 前必读。
 - **两种运行模式、`/dev/vmm` 协议、Ctrl+] / Ctrl+[ 语义**: `docs/vmm/GUEST_CONSOLE.md`
 - **裸跑 guest 作基线对照**: `docs/vmm/GUEST_NATIVE_QEMU.md`
 

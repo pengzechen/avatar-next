@@ -349,6 +349,23 @@ void uart16550_putchar(uint8_t c)
     spin_unlock_irqrestore(&g_uart16550_lock, flags);
 }
 
+/* ── 端口 I/O 包装 ──────────────────────────────────────────
+ *
+ * x86 的 8250 驱动走端口 I/O（COM1 = 0x3F8），不是 MMIO。寄存器语义与
+ * MMIO 版完全一致，所以这里只做「1 字节访问」的转发，让 PIO 后端复用
+ * 同一份状态机（TX/RX 环形缓冲、IIR/LSR 逻辑）而不是再写一份。
+ * 见 kernel/vmm/x86_64/vmx.c 的 x86_pio_handle()。
+ */
+uint64_t uart16550_port_read(mmio_device_t *dev, uint64_t off)
+{
+    return uart16550_read(dev, off, 1);
+}
+
+void uart16550_port_write(mmio_device_t *dev, uint64_t off, uint8_t value)
+{
+    uart16550_write(dev, off, 1, value);
+}
+
 int uart16550_init(mmio_device_t *dev, mmio_bus_t *bus)
 {
     if (!dev || !bus)
