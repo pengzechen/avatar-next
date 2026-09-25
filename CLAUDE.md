@@ -52,6 +52,19 @@ make help
 > 之后再 `... GUEST_LINUX=1 kernel`**；起 QEMU 前用
 > `strings build/<p>/kernel_*.bin | grep -c 'GUEST_LINUX mode'`（应为 1）验一下产物。
 
+### ⚠️ `test-guest-linux` 必须依赖 `$(ROOTFS_IMG)`
+
+三个架构的 guest 镜像（`/guests/rv64/*`、`/guests/linux/*`、`/guests/x86_64/*`）
+都是**打进 rootfs 镜像**、再由 guest_loader 从镜像里读出来的。少了这个依赖，
+镜像不存在，QEMU 只报一句
+
+```
+-device loader,file=.../rootfs-<arch>.img: Cannot load specified image
+```
+
+**看起来像 guest 起不来，其实是文件压根没生成**，很容易查错方向
+（见 `Makefile` 里 `test-guest-linux` 上方的注释）。
+
 ### 工具链
 
 - AArch64: `aarch64-linux-musl-gcc`

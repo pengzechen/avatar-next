@@ -1415,7 +1415,13 @@ test-panic:
 
 # test-guest-linux: 编译 GUEST_LINUX=1 内核并把 Linux 作为 EL1 guest 启动
 #                   rootfs 会自动安装 /guests/linux/{linux.bin,linux.dtb,initrd.gz}
-test-guest-linux:
+# ⚠️ `$(ROOTFS_IMG)` 这个依赖不能少：三个架构的 guest 镜像
+# （/guests/rv64/*、/guests/linux/*、/guests/x86_64/*）都是**打进 rootfs 镜像**、
+# 再由 guest_loader 从镜像里读出来的。少了它，镜像不存在，QEMU 直接报
+#     -device loader,file=.../rootfs-<arch>.img: Cannot load specified image
+# （注意这条报错是 QEMU 打给 stderr 的，看起来很像"guest 起不来"，
+#  实际是文件压根没生成）。曾经在给 x86_64 加分支时误删过一次。
+test-guest-linux: $(ROOTFS_IMG)
 	@if [ "$(ARCH)" != "aarch64" ] && [ "$(ARCH)" != "riscv64" ] && [ "$(ARCH)" != "x86_64" ]; then \
 		echo "ERROR: test-guest-linux supports ARCH=aarch64, riscv64 or x86_64."; \
 		exit 1; \
