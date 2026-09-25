@@ -1433,7 +1433,10 @@ ifeq ($(ARCH),x86_64)
 	@# 所以顺序是：同变体先 rootfs，再 kernel（kernel 放最后），最后校验产物。
 	$(MAKE) PLATFORM=$(PLATFORM) LOG=$(LOG) GUEST_LINUX=1 rootfs
 	$(MAKE) PLATFORM=$(PLATFORM) LOG=$(LOG) GUEST_LINUX=1 kernel
-	@if [ "$$(strings $(KERNEL_BIN) | grep -c 'GUEST_LINUX mode')" != "1" ]; then \
+	@# 判据是 kernel/main.c 里那个 __attribute__((used)) 的构建指纹，
+	@# **不是**任何 KLOG 字符串 —— LOG=none 会把 KLOG 全编译掉，
+	@# 拿它当判据会在正确的产物上误报。见 main.c 里的注释。
+	@if [ "$$(strings $(KERNEL_BIN) | grep -c 'GUEST_LINUX_BUILD_TAG')" != "1" ]; then \
 		echo "ERROR: 产物不是 GUEST_LINUX 变体（会被 make rootfs 覆盖）。"; \
 		echo "       请按 CLAUDE.md：同变体先 rootfs 再 kernel。"; \
 		exit 1; \

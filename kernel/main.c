@@ -270,6 +270,21 @@ void kernel_main(void)
      *   （新测试：在此处添加 #elif defined(RUN_XXX_TEST)）
      * ──────────────────────────────────────────────────── */
 #if defined(RUN_GUEST_LINUX)
+    /*
+     * 构建指纹 —— `make test-guest-linux` 靠它在产物里辨认 GUEST_LINUX 变体。
+     *
+     * ⚠️ 判据**不能**用下面那条 KLOG_INFO 里的字符串：`LOG=none` 会把整条
+     * KLOG 连同字符串一起编译掉，校验于是会在**完全正确的产物**上误报
+     * 「产物不是 GUEST_LINUX 变体」，把 `LOG=none` 变成一条走不通的路。
+     *
+     * 这里用 `used` 属性保证它一定落到 .rodata（链接没有 --gc-sections，
+     * 不会被回收），且**不依赖任何日志宏**。
+     * 用独立 token（而不是复用 KLOG 里那句 "GUEST_LINUX mode"）是因为
+     * Makefile 那边判的是「恰好出现 1 次」—— 复用的话 LOG!=none 时会数到 2 条。
+     */
+    __attribute__((used))
+    static const char g_build_tag_guest_linux[] = "GUEST_LINUX_BUILD_TAG";
+
     /* 从 rootfs 加载 Linux guest（kernel Image + DTB + initrd）并启动 */
     KLOG_INFO("=== GUEST_LINUX mode: booting Linux as EL1 guest ===\n");
     extern int guest_loader_run_linux(void);
