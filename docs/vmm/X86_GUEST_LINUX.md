@@ -594,7 +594,60 @@ Linux 拿它建 `irq_cfg` 直接空指针崩在 `setup_IO_APIC`。
 3. **VM-entry 失败现场要 dump 够**：`actv` / `intr_state` / `inst_error`
    三个字段是这一轮破案的关键，缺一不可。
 
-## 10. 相关
+## 10. 重建 guest 内核（`imgs/guests/x86_64/bzImage`）
+
+guest 内核源码树在 **仓库外**：`~/kbuild/linux-def`（由 `~/kbuild/build2.sh` 从
+`linux-6.2.15.tar.xz` 解出来，`defconfig` + 关掉 ACPI/模块/随机化）。
+
+**必须用 musl 交叉编译器**，与 aarch64/riscv64 的 guest 保持一致（`build2.sh`
+里原本是裸 `make`，会落到宿主 glibc 的 gcc，版本串一眼能看出来）：
+
+```bash
+export PATH=$PATH:~/Desktop/Software/compiler/x86_64-linux-musl-cross/bin
+cd ~/kbuild/linux-def
+make mrproper && cp /tmp/<存好的>.config .config && make olddefconfig   # 换编译器必须全量重来
+make ARCH=x86_64 CROSS_COMPILE=x86_64-linux-musl- -j$(nproc) bzImage
+strings vmlinux | grep -m1 "Linux version"     # 应为 x86_64-linux-musl-gcc (GCC) 11.2.1
+cp arch/x86/boot/bzImage <repo>/imgs/guests/x86_64/bzImage
+```
+
+`HOSTCC` 不用动 —— 构建期工具（kconfig/objtool/…）仍由宿主 gcc 编，只有
+内核本体走交叉编译器。
+
+### 10.1 ⚠️ `CONFIG_SERIAL_8250_DETECT_IRQ` **必须保持 =y**
+
+开机时串口上会出现**一个游离的 `0xFF`** 字节，位置固定在：
+
+```
+Serial: 8250/16550 driver, 4 ports, IRQ sharing enabled\r\r\n <0xFF> [    1.62] serial8250: ttyS0 at I/O 0x3f8 ...
+```
+
+**它不是 VMM 的 bug**：那是内核 `autoconfig_irq()` 在**主动探测串口用的是哪根
+IRQ 线** —— 先 `IER=0x0f` 打开全部中断，再故意往 THR 写一个 `0xFF`，靠它触发的
+"发送寄存器空"中断反推 IRQ（`8250_port.c` 里 `serial_out(up, UART_TX, 0xFF)`，
+其上方 MCR 正好被设成 `0x0b`，与 VMM 侧抓到的 `mcr=0x0b lcr=0x13` 完全吻合）。
+**QEMU 裸跑同一个 guest 也一样有这个字节**（两边都没给 guest ACPI，所以都落到
+`arch/x86/include/asm/serial.h` 的 ISA 兜底路径，其 `STD_COMX_FLAGS` 带
+`UPF_AUTO_IRQ`）。真机有 ACPI，端口由 `serial8250_pnp` 认领、flags 里没有
+`UPF_AUTO_IRQ`，所以看不到。
+
+**试过把它去掉，结论是去不掉**：关掉 `CONFIG_SERIAL_8250_DETECT_IRQ` 后探测不再
+发生，但 `STD_COMX_FLAGS` 里那个 `UPF_AUTO_IRQ` 一没，驱动就会**保留**
+`SERIAL_PORT_DFNS` 表里写死的 `irq = 4`，于是改为等 IRQ 4 的 RX 中断 ——
+而我们的 PIC / IO-APIC 桩**永远不产生中断**，RX 就此死掉。
+实测：`/init` 跑到 `busybox/mount/grep` 之后**卡死，键盘输入没有任何反应**。
+
+反过来，探测**失败**（返回 0）反而是我们现在能用的原因：
+```c
+port->irq = (irq > 0) ? irq : 0;   /* 探不到 → 0 → 驱动走"无 IRQ"那条路 */
+```
+`irq=0` 时驱动不依赖中断，控制台输入正常。
+
+**所以：这个 `0xFF` 是「串口输入能用」的代价，必须留着。**
+真想去掉的话，正道是**让 vUART 真的会报中断**（RX 到达时按 guest 在 IO-APIC
+重定向表里给 IRQ 4 编程的 vector 注入）—— 那是个正经功能，不是一行改动。
+
+## 11. 相关
 
 - 另两个架构的同类文档：`docs/vmm/RISCV64_GUEST_LINUX.md`、`docs/vmm/X86_VMX_GUIDE.md`（旧的玩具 guest 说明）
 - 两种运行模式与 `/dev/vmm` 协议：`docs/vmm/GUEST_CONSOLE.md`
