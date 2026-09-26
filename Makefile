@@ -820,14 +820,16 @@ NGINX_BIN        := $(wildcard apps/nginx-$(ARCH))
 # arm,cortex-a15-gic（GICD + GICC 两段 reg），GICv3 的是 arm,gic-v3
 # （GICD + GICR，且 CPU interface 走系统寄存器）。装错版本 guest 会在
 # GIC 初始化阶段直接卡死。
-GUEST_LINUX_DTB_SRC := $(if $(filter v3,$(GIC)),imgs/aarch64/linux-gicv3.dtb,imgs/aarch64/linux.dtb)
+GUEST_LINUX_DTB_SRC := $(if $(filter v3,$(GIC)),imgs/guests/aarch64/linux-gicv3.dtb,imgs/guests/aarch64/linux.dtb)
 
 ifneq ($(filter $(ARCH),aarch64 riscv64 x86_64),)
 ifeq ($(ARCH),x86_64)
 # x86 guest 镜像：bzImage（自编 linux-6.2.15，带 HdrS 64 位入口）+ initramfs
-GUEST_LINUX_FILES := imgs/guests/x86_64/bzImage imgs/guests/x86_64/initrd
+# 源文件叫 initrd.gz 但内容是**裸 cpio**（和 rv64 一样，别再纠结后缀）；
+# rootfs 里仍落名 initrd —— 必须和 guest_loader.h 的 GUEST_LINUX_INITRD_PATH 一致。
+GUEST_LINUX_FILES := imgs/guests/x86_64/bzImage imgs/guests/x86_64/initrd.gz
 else ifeq ($(ARCH),aarch64)
-GUEST_LINUX_FILES := imgs/aarch64/linux.bin $(GUEST_LINUX_DTB_SRC) imgs/aarch64/initrd.gz
+GUEST_LINUX_FILES := imgs/guests/aarch64/linux.bin $(GUEST_LINUX_DTB_SRC) imgs/guests/aarch64/initrd.gz
 else
 # RISC-V 的 guest 镜像（DTB 是 imgs/guests/rv64/linux.dts 用 dtc 生成的，见该文件头）
 GUEST_LINUX_FILES := imgs/guests/rv64/linux.bin imgs/guests/rv64/linux.dtb imgs/guests/rv64/initrd.gz
@@ -1282,25 +1284,25 @@ $(ROOTFS_IMG): Makefile $(APPS_BINS) $(APPS_C_ELFS) $(LTP_BINS) $(EPOLL_PERF_BIN
 	fi
 	@if [ "$(ARCH)" = "x86_64" ]; then \
 		missing=0; \
-		for f in imgs/guests/x86_64/bzImage imgs/guests/x86_64/initrd; do \
+		for f in imgs/guests/x86_64/bzImage imgs/guests/x86_64/initrd.gz; do \
 			if [ ! -f "$$f" ]; then echo "ERROR: missing guest image $$f"; missing=1; fi; \
 		done; \
 		if [ "$$missing" -ne 0 ]; then exit 1; fi; \
 		mkdir -p $(ROOTFS_STAGE)/guests/x86_64; \
 		cp imgs/guests/x86_64/bzImage $(ROOTFS_STAGE)/guests/x86_64/bzImage; \
-		cp imgs/guests/x86_64/initrd $(ROOTFS_STAGE)/guests/x86_64/initrd; \
+		cp imgs/guests/x86_64/initrd.gz $(ROOTFS_STAGE)/guests/x86_64/initrd; \
 		echo "  [x86_64 Linux guest installed → /guests/x86_64]"; \
 	fi
 	@if [ "$(ARCH)" = "aarch64" ]; then \
 		missing=0; \
-		for f in imgs/aarch64/linux.bin $(GUEST_LINUX_DTB_SRC) imgs/aarch64/initrd.gz; do \
+		for f in imgs/guests/aarch64/linux.bin $(GUEST_LINUX_DTB_SRC) imgs/guests/aarch64/initrd.gz; do \
 			if [ ! -f "$$f" ]; then echo "ERROR: missing guest image $$f"; missing=1; fi; \
 		done; \
 		if [ "$$missing" -ne 0 ]; then exit 1; fi; \
 		mkdir -p $(ROOTFS_STAGE)/guests/linux; \
-		cp imgs/aarch64/linux.bin $(ROOTFS_STAGE)/guests/linux/linux.bin; \
+		cp imgs/guests/aarch64/linux.bin $(ROOTFS_STAGE)/guests/linux/linux.bin; \
 		cp $(GUEST_LINUX_DTB_SRC) $(ROOTFS_STAGE)/guests/linux/linux.dtb; \
-		cp imgs/aarch64/initrd.gz $(ROOTFS_STAGE)/guests/linux/initrd.gz; \
+		cp imgs/guests/aarch64/initrd.gz $(ROOTFS_STAGE)/guests/linux/initrd.gz; \
 		echo "  [AArch64 Linux guest installed → /guests/linux ($(GUEST_LINUX_DTB_SRC))]"; \
 	fi
 	@# 安装 Dropbear SSH 服务器

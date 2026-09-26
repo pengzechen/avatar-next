@@ -5,7 +5,7 @@
 
 ## 1. 这是什么
 
-Avatar 的 `test-guest-linux` / `vmm-run` 会把同一份 guest 镜像（`imgs/aarch64/linux.bin`
+Avatar 的 `test-guest-linux` / `vmm-run` 会把同一份 guest 镜像（`imgs/guests/aarch64/linux.bin`
 + `initrd.gz`）加载进自己的 guest 物理内存再跑。本文的命令**绕开 Avatar 全部代码**，
 让 QEMU 直接启动那份镜像 —— 于是「裸跑用时」与「经过 VMM 的用时」之差，就是 VMM 的净开销。
 
@@ -25,7 +25,7 @@ PL061、PL031、flash、fw-cfg…），guest 会去探测它们，比 Avatar 那
 用 `fdtput` 生成一份等价 DTB（一次性，之后可重复使用）：
 
 ```bash
-cp imgs/aarch64/linux.dtb /tmp/nopdtb.dtb
+cp imgs/guests/aarch64/linux.dtb /tmp/nopdtb.dtb
 for n in /fw-cfg@9020000 /virtio_mmio@a000000 /pl061@9030000 \
          /pcie@10000000 /pl031@9010000 /flash@0 /intc@8000000/v2m@8020000; do
     fdtput -r /tmp/nopdtb.dtb "$n"
@@ -40,29 +40,31 @@ OF: /gpio-keys/poweroff: could not find phandle 32772
 gpio-keys gpio-keys: failed to get gpio: -22
 ```
 
-> GICv3 配置就换成 `imgs/aarch64/linux-gicv3.dtb`，节点路径相同。
+> GICv3 配置就换成 `imgs/guests/aarch64/linux-gicv3.dtb`，节点路径相同。
 
 ## 3. 命令
 
-在仓库根目录执行。`imgs/aarch64/` 下的文件是前提。
+在仓库根目录执行。`imgs/guests/aarch64/` 下的文件是前提。
 
 ### 变体 A：直接进 shell（**推荐**，不需要 root 密码）
 
 ```bash
 qemu-system-aarch64 -cpu cortex-a76 -M virt -smp 1 -m 1G -nographic \
-  -kernel imgs/aarch64/linux.bin \
-  -initrd imgs/aarch64/initrd.gz \
+  -kernel imgs/guests/aarch64/linux.bin \
+  -initrd imgs/guests/aarch64/initrd.gz \
   -dtb /tmp/nopdtb.dtb \
   -append "console=ttyAMA0 rdinit=/bin/sh"
 ```
 
-`rdinit=/bin/sh` 让内核把 `/bin/sh` 当 init 直接跑，跳过要密码的 `getty`。
-**这条在裸跑下能生效** —— 命令行走 `-append`（QEMU 自己往 `/chosen/bootargs` 写），
-不受 Avatar 那个「DTB 里 bootargs 槽位只有 79 字节」的限制。
+`rdinit=/bin/sh` 让内核把 `/bin/sh` 当 init 直接跑 —— initrd 里带了一条
+`bin/sh → busybox` 软链接，所以这条能用。**它在裸跑下能生效**是因为命令行走
+`-append`（QEMU 自己往 `/chosen/bootargs` 写），不受 Avatar 那个
+「DTB 里 bootargs 槽位只有 79 字节」的限制。
+（`rdinit=/init` 现在也进同一个 shell，见变体 B。）
 
 按 **Ctrl-A X** 退出（`-nographic` 下 Ctrl-C 是发给 guest 的）。
 
-### 变体 B：走正常 init（停在 `root login:`）
+### 变体 B：走包里的 `/init`（同样直接进 shell）
 
 把 `-append` 换成：
 
@@ -73,7 +75,7 @@ qemu-system-aarch64 -cpu cortex-a76 -M virt -smp 1 -m 1G -nographic \
 
 ### 变体 C：GICv3（与 `GIC=v3` 的 Avatar 构建对照）
 
-`-M virt,gic-version=3` + `-dtb imgs/aarch64/linux-gicv3.dtb`（先按 §2 同样方式 NOP 一份）。
+`-M virt,gic-version=3` + `-dtb imgs/guests/aarch64/linux-gicv3.dtb`（先按 §2 同样方式 NOP 一份）。
 
 ## 4. 参数为什么这么写
 
@@ -88,9 +90,9 @@ qemu-system-aarch64 -cpu cortex-a76 -M virt -smp 1 -m 1G -nographic \
 
 ## 5. ⚠️ 计时方法有坑
 
-**`root login: ` 没有换行。** 用 `python3`/`while read` 之类**按行**打时间戳的过滤器，
+**`~ #` 提示符没有换行。** 用 `python3`/`while read` 之类**按行**打时间戳的过滤器，
 会把这行卡在管道缓冲区里，直到后面来了 `\n` 或者进程被杀 —— 于是你会看到
-「`root login:` 出现在 timeout 杀进程的那一毫秒」，误以为启动花了 20~70 秒。
+「`~ #` 出现在 timeout 杀进程的那一毫秒」，误以为启动花了 20~70 秒。
 
 **正确做法：后台跑，用 `grep` 轮询输出文件。** GNU grep 能匹配「没有换行的最后一行」：
 
@@ -98,7 +100,7 @@ qemu-system-aarch64 -cpu cortex-a76 -M virt -smp 1 -m 1G -nographic \
 log=/tmp/guest-native.log; rm -f $log
 t0=$(date +%s.%N)
 qemu-system-aarch64 -cpu cortex-a76 -M virt -smp 1 -m 1G -nographic \
-  -kernel imgs/aarch64/linux.bin -initrd imgs/aarch64/initrd.gz \
+  -kernel imgs/guests/aarch64/linux.bin -initrd imgs/guests/aarch64/initrd.gz \
   -dtb /tmp/nopdtb.dtb -append "console=ttyAMA0 rdinit=/bin/sh" \
   > $log 2>&1 < /dev/null &
 qpid=$!
@@ -114,7 +116,7 @@ kill $qpid 2>/dev/null
 | 路径 | 详细日志 | `quiet` |
 |---|---|---|
 | **裸跑**（等效 DTB，`rdinit=/init`） | **1.016 s** | **0.995 s** |
-| **Avatar VMM**（`vmm-run` → `root login:`） | **2.593 s** | **1.683 s**（当前默认） |
+| **Avatar VMM**（`vmm-run` → `~ #`） | **2.593 s** | **1.683 s**（当前默认） |
 | VMM 净开销 | +1.58 s | **+0.69 s** |
 
 > avatar 侧的 `quiet` 现已是默认（`GUEST_LINUX_BOOTARGS`，见 §7），详细日志那一列
@@ -146,7 +148,9 @@ data abort → **一次完整 VM exit**（世界切换：128 字节系统寄存�
 「从磁盘镜像把 guest 装进内存」这件 Avatar 独有的准备工作。**
 
 > 量法：Avatar 路径下用 `grep` 轮询内核日志里的 `[vmmdev] boot: starting guest`
-> 与 `root login` 两个标记（同样**不要**用按行过滤器）。
+> 与 guest 的 `~ #` 两个标记（同样**不要**用按行过滤器）。
+> （上表采于 2026-09-24，当时 initrd 停在 `root login:`；2026-09-27 起 initrd 直接进
+> shell，标记换成 `~ #`，**数值没有重采**。）
 
 ## 7. 降低 guest 控制台开销
 

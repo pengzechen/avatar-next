@@ -505,7 +505,7 @@ _Static_assert(sizeof(GUEST_LINUX_BOOTARGS) - 1 <= 78,
  * 不是「少打日志」而是「日志变多」，反过来更好发现。
  */
 #define GUEST_LINUX_BOOTARGS                                                   \
-  " console=ttyS0 rdinit=/init panic_on_warn=0 oops=panic"
+  "quiet console=ttyS0 rdinit=/init panic_on_warn=0 oops=panic"
 
 _Static_assert(sizeof(GUEST_LINUX_BOOTARGS) - 1 <= 90,
                "GUEST_LINUX_BOOTARGS 超出 DTB 的 /chosen/bootargs 槽位"

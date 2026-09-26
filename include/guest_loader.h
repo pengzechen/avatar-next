@@ -8,7 +8,7 @@
  *
  * ── guest 内存布局（两个架构各自一套常数）────────────────────────
  *
- *  AArch64（依 imgs/aarch64/linux.dts 的 chosen/reg 节点）：
+ *  AArch64（依 imgs/guests/aarch64/linux.dts 的 chosen/reg 节点）：
  *      0x70000000 + 192 MiB   guest RAM
  *      0x70200000             kernel Image（2 MiB 对齐的 ARM64 raw Image）
  *      0x74000000             DTB（4 KiB 内）
@@ -121,10 +121,10 @@ extern volatile uint64_t g_guest_entry_x0;
  *    频率精确。标成 unstable 反而会让内核弃用 TSC、回头去指望
  *    PIT/HPET 这些我们没实现成时钟的桩设备。
  */
-#define GUEST_LINUX_BOOTARGS    "console=ttyS0 earlycon=uart8250,io,0x3f8 earlyprintk=serial,ttyS0,115200 "\
+#define GUEST_LINUX_BOOTARGS    "quiet console=ttyS0 earlycon=uart8250,io,0x3f8 earlyprintk=serial,ttyS0,115200 "\
                                 "rdinit=/init ibt=off "\
                                 "no_timer_check pci=conf1 pci=nomsi "\
-                                "lapic"
+                                "lapic panic_on_warn=0 oops=panic "
 
 /* x86 没有 DTB，也不需要摘节点 */
 #define GUEST_LINUX_UNSUPPORTED_NODES {"", NULL}

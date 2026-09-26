@@ -36,7 +36,8 @@ run() {
   echo "=== guest 侧输出（去掉宿主 klog）==="
   sed 's/\x1b\[[0-9;]*m//g' "$log" | grep -vE '^\[(INFO|WARN|ERROR)\]' | grep -v terminating | head -30
   echo "=== 进度摘要 ==="
-  echo -n "到达 shell:      "; grep -ac 'X86 GUEST LINUX BOOTED' "$log" || true
+  # 判据是 guest init 里那行 `uname -a`（hostname 是 (none)，宿主日志里不会有）
+  echo -n "到达 shell:      "; grep -ac 'Linux (none)' "$log" || true
   echo -n "guest 写串口次数: "; grep -ac 'reason=30' "$log" || true
   echo -n "最近一次采样:     "; sed 's/\x1b\[[0-9;]*m//g' "$log" | grep -a RIP-SAMPLE | tail -1 || true
   echo "完整日志: $log"
@@ -44,7 +45,7 @@ run() {
 
 native() {
   timeout 40 qemu-system-x86_64 -enable-kvm -cpu host -m 1G -display none -serial stdio \
-    -kernel $IMG/bzImage -initrd $IMG/initrd \
+    -kernel $IMG/bzImage -initrd $IMG/initrd.gz \
     -append "console=ttyS0 earlycon=uart8250,io,0x3f8 rdinit=/init nox2apic \
              no_timer_check tsc=unstable irqpoll pci=conf1 pci=nomsi acpi=off" \
     < /dev/null 2>&1 | tail -20

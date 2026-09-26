@@ -44,7 +44,7 @@ qemu-system-x86_64 -machine q35 -enable-kvm -cpu host -smp 1 -m 2G \
 
 ```bash
 qemu-system-x86_64 -enable-kvm -cpu host -m 1G -display none -serial stdio \
-  -kernel imgs/guests/x86_64/bzImage -initrd imgs/guests/x86_64/initrd \
+  -kernel imgs/guests/x86_64/bzImage -initrd imgs/guests/x86_64/initrd.gz \
   -append "console=ttyS0 earlycon=uart8250,io,0x3f8 rdinit=/init nox2apic \
            no_timer_check tsc=unstable irqpoll pci=conf1 pci=nomsi acpi=off"
 ```
@@ -178,13 +178,7 @@ E820 / 命令行 / initrd / 页表 / 长模式入口 / 页表重定位几何**�
 ## 7. 跑通的证据（实测会话）
 
 ```
-=== X86 GUEST LINUX BOOTED (Avatar VMM) ===
 Linux (none) 6.2.15 #2 SMP PREEMPT_DYNAMIC Fri Sep 25 18:19:37 CST 2026 x86_64 GNU/Linux
-model name	: 06/0f
---- 自由内存 ---
-              total        used        free      shared  buff/cache   available
-Mem:         159332        8468      137620        5500       13244      140612
-Swap:             0           0           0
 /bin/sh: can't access tty; job control turned off
 ~ # uname -a
 Linux (none) 6.2.15 #2 SMP PREEMPT_DYNAMIC Fri Sep 25 18:19:37 CST 2026 x86_64 GNU/Linux
@@ -197,6 +191,9 @@ bin   dev   etc   init  proc  root  sys   tmp
 ~ # exit
 [  268.049778] Kernel panic - not syncing: Attempted to kill init! exitcode=0x00000000
 ```
+
+> 2026-09-27 起 initrd 里的 init 只打一行 `uname -a`（横幅 / cpuinfo / free 都删了，
+> getty 登录那条路也一起删了），所以第一行之后紧跟着的就是提示符。
 
 > `exit` 触发的 panic 是**正确行为** —— PID 1 退出时 Linux 一定 panic。
 

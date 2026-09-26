@@ -34,7 +34,7 @@
 #define VGIC3D_REG_SIZE  0x10000   /* GICD 窗口 64KB */
 #define VGIC3R_REG_SIZE  0x20000   /* 每核 Redistributor：RD 64KB + SGI 64KB */
 
-/* ── guest 看到的地址（必须与 imgs/aarch64/linux-gicv3.dts 一致）── */
+/* ── guest 看到的地址（必须与 imgs/guests/aarch64/linux-gicv3.dts 一致）── */
 #define VGIC3D_BASE      0x08000000ULL
 #define VGIC3D_SIZE      0x10000ULL
 #define VGIC3R_BASE      0x080A0000ULL

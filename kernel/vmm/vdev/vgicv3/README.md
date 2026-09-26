@@ -47,7 +47,7 @@ vgicr3.c   GICR（Redistributor）MMIO 模拟 —— 每核的 SGI/PPI
 
 验证环境：QEMU 8.2.2，`-M virt,virtualization=on,gic-version=3`，1 vCPU，
 guest 是 Linux 6.2.15 + initrd。判定标准：guest 打印 `Run /init as init process`
-并出现 `root login:`，全程无 `[ERROR]`。
+并出现 `~ #` 提示符，全程无 `[ERROR]`。
 
 | 功能 | 证据 |
 |---|---|
@@ -60,7 +60,7 @@ guest 是 Linux 6.2.15 + initrd。判定标准：guest 打印 `Run /init as init
 | guest PMR / IGRPEN1 / CTLR 配置 | QEMU trace 里能看到 `gicv3_icv_pmr_write`、`gicv3_icv_igrpen_write`、`gicv3_icv_ctlr_write` 等事件，说明 guest 的 `ICC_*_EL1` 访问确实被重定向到了虚拟接口 |
 | 优先级传递 | LR 里填的是 guest 自己写进 `GICR_IPRIORITYR` 的优先级（默认 0xA0），与 guest 的 VPMR 同源 |
 | LR 复用 / 状态回读 | `ich_hcr_write` 观测到 `En=1`，`ICH_VTR_EL2` 报 4 个 LR（`VGIC3_MAX_LRS=16` 只是上限） |
-| **SPI 33（虚拟 PL011 RX）投递** | 唯一的 SPI 源是 `vpl011.c`。全链路：宿主控制台按键 → `vmm_console_pump()` 推入 RX FIFO → 进 guest 前 `aarch64_check_vpl011_rx()` 置 pending → LR → guest pl011 驱动收到。判据：在 `root login:` 后键入用户名能逐字回显并推进到 `Password:`；`rdinit=/bin/sh` 起 shell 后 `ls /`、`uname -a` 等命令输出正常 |
+| **SPI 33（虚拟 PL011 RX）投递** | 唯一的 SPI 源是 `vpl011.c`。全链路：宿主控制台按键 → `vmm_console_pump()` 推入 RX FIFO → 进 guest 前 `aarch64_check_vpl011_rx()` 置 pending → LR → guest pl011 驱动收到。判据：在 `~ #` 后键入 `ls /`、`uname -a` 能逐字回显并正常输出 |
 
 > 注：投递过的中断类型是 PPI 27（虚拟定时器）与 SPI 33（虚拟 PL011 RX）。
 > **SGI（0-15）仍然没有源**，从未投递过。
@@ -161,8 +161,8 @@ guest 是 Linux 6.2.15 + initrd。判定标准：guest 打印 `Run /init as init
 # 切 GIC 版本不必再手动 clean：Makefile §7 的 _CFG_CHECK 会在检测到配置
 # 变化（GIC=/SMP=/LOG=）时自动清掉已编译的目标文件。
 make PLATFORM=qemu-virt-aarch64 GIC=v3 test-guest-linux -j8
-# 期望：guest 打印 "Run /init as init process" 后出现 "root login:"，日志无 [ERROR]
-# 交互验证：在 "root login: " 后键入用户名，应逐字回显并推进到 "Password: "
+# 期望：guest 打印 "Run /init as init process" 后出现 "~ #" 提示符，日志无 [ERROR]
+# 交互验证：在 "~ #" 后键入 ls /、uname -a，应逐字回显并正常输出
 #          （这同时验证了 SPI 33 的投递与宿主控制台输入桥）
 
 # 反向验证（默认配置）
@@ -189,5 +189,5 @@ qemu-system-aarch64 ... \
 - **guest 控制台（两种运行模式、`/dev/vmm` 协议、Ctrl+] 退出）**：`docs/vmm/GUEST_CONSOLE.md`
 - GICv2 版实现与注释：`../vgic/`
 - 宿主 GICv3 驱动：`driver/irq/gicv3.c`（注意 `GICD_CTLR.EnableGrp1A` 那个坑）
-- guest DTB：`imgs/aarch64/linux-gicv3.dts`
+- guest DTB：`imgs/guests/aarch64/linux-gicv3.dts`
 - 平台配置：`platforms/qemu-virt-aarch64/platform.conf` 的 `irq` 块（`gicd` / `gicr`）
