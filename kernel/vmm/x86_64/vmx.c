@@ -22,6 +22,7 @@
 #include "guest_loader.h"  /* GUEST_LINUX_*_GPA（guest 描述符表要用）*/
 #include "vmm/vmm_mmio.h"    /* MMIO 总线 */
 #include "vmm/vmm_uart16550.h"
+#include "vmm/vmm_console.h" /* vmm_console_irq_asserted：控制台中断线（电平触发）*/
 #include "vmm/vmm_vlapic.h"
 #include "irq/lapic.h"   /* g_tsc_freq_hz：宿主标定出的 TSC 频率（CPUID 0x15/0x16 要报给 guest）*/
 
@@ -147,7 +148,7 @@ static void vmx_inject_pending(vcpu_t *vcpu)
     if ((info & 0x700) == VMX_INTR_TYPE_EXTINT)
         vlapic_accept_interrupt((uint32_t)(info & 0xff), 0);
 
-    vmcs_write(VM_ENTRY_INTR_INFO,   info);
+    vmcs_write(VM_ENTRY_INTR_INFO, info);
     vmcs_write(VM_ENTRY_EXC_ERRCODE,
                (info & VMX_INTR_ERRCODE_VALID) ? vcpu->pending_errcode : 0);
     vmcs_write(VM_ENTRY_INST_LEN, 0);
@@ -168,6 +169,128 @@ static void vmx_inject_pending(vcpu_t *vcpu)
  * 「认得的」走 vcpu 里的影子，「不认得的」读回 0、写忽略 —— 对
  * Linux 来说等价于「这台机器没有那个特性」，比让它看见宿主的值安全得多。
  * ================================================================ */
+/* ================================================================
+ * MSR load/save list：让 guest 的 syscall MSR 在进出时自动装卸
+ *
+ * 为什么必须做：MSR bitmap 只拦**显式**的 rdmsr/wrmsr。guest 执行
+ * `syscall` 指令时，CPU 用的是**真实的** IA32_LSTAR —— 不做处理的话，
+ * guest 用户态一发系统调用就直接跳进**宿主内核的 syscall 入口**，
+ * 在宿主的地址空间里跑 guest 的寄存器。
+ *
+ * 做法是 VMCS 的 MSR 列表（VM-entry load / VM-exit load）：
+ * 硬件在进入 guest 前把这些 MSR 装成 guest 的值，退出时再装回宿主的。
+ * 全程在硬件里原子完成，没有「退出到 C 代码之前宿主还在用 guest MSR」
+ * 的窗口（自己用 wrmsr 换就会留这个窗口，中断打进来就崩）。
+ *
+ * guest 侧的值由 msr_emulate_write 维护（写是被拦下来的）—— 对 syscall 那
+ * 几个 MSR（STAR/LSTAR/CSTAR/SFMASK/PAT）这足够了，**但 GS 那一对不够**：
+ * `swapgs` 指令直接在硬件上换 GS_BASE/KERNEL_GS_BASE，VMM 看不到，必须靠
+ * VM-exit 的 store 表把值捞回来（见 vmx_msr_lists_init 的说明）。
+ * ================================================================ */
+#define VMM_MSR_COUNT 6
+
+typedef struct {
+    uint32_t idx;
+    uint32_t rsvd;
+    uint64_t val;
+} vmx_msr_entry_t;
+
+static vmx_msr_entry_t g_msr_guest[MAX_VCPUS][VMM_MSR_COUNT]
+    __attribute__((aligned(16)));
+static vmx_msr_entry_t g_msr_host[MAX_VCPUS][VMM_MSR_COUNT]
+    __attribute__((aligned(16)));
+
+/* VM-exit MSR store 区**必须与 entry-load 区分开**（KVM 同此）：
+ * 两块区域重叠时 VM-entry 会以 reason 34（MSR loading）失败 —— 实测就是
+ * "Unhandled exit reason=34 rip=0x1000000"。这里只放需要往返的两条。*/
+static vmx_msr_entry_t g_msr_store[MAX_VCPUS][2] __attribute__((aligned(16)));
+
+/*
+ * ⚠️ GS 这一对（GS_BASE / KERNEL_GS_BASE）**必须成对出现**，而且必须同时有
+ * **exit store 表**（见 vmx_msr_lists_init）。
+ *
+ * 原因：guest 的 `swapgs` 指令直接在硬件上交换这两个 MSR，VMM 完全看不见；
+ * 而 VM-entry 每次都会按 load 表把两半**装回旧值**。只 load 不 store 的话，
+ * `swapgs` 等于没执行 —— 而 Linux 的 `paranoid_entry` 恰好靠
+ * `rdmsr MSR_GS_BASE`（`SAVE_AND_SET_GSBASE`）判断"现在在内核 GS 还是用户
+ * GS"，读到的是过期影子就判断错，随后 `%gs:` 取到错误的 per-CPU 基址、异常，
+ * 异常又走同一条 paranoid 入口 —— **死循环，且循环里唯一陷入 VMM 的只有那条
+ * rdmsr**（实测：rip 恒为 paranoid_entry+0x93、exit reason 恒为 31/RDMSR、
+ * 12 万次采样一动不动，guest 停在 `Run /init as init process`）。
+ *
+ * 做法与 KVM 相同：另开一块 **exit-store 区**（g_msr_store）在退出时把
+ * guest 真实的值捞回内存，下一次入口再分别装回去 —— GS_BASE 走
+ * GUEST_BASE_GS 字段、KERNEL_GS_BASE 走 load 表，见
+ * vmx_refresh_host_state()。
+ */
+static const uint32_t g_msr_list[VMM_MSR_COUNT] = {
+    MSR_STAR, MSR_LSTAR, MSR_CSTAR, MSR_SYSCALL_MASK,
+    MSR_KERNEL_GS_BASE, MSR_IA32_PAT,
+};
+
+#define VMM_HOST_MSR_COUNT VMM_MSR_COUNT
+
+/* exit-store 表里的两条（顺序即 g_msr_store 的下标）*/
+static const uint32_t g_msr_store_list[2] = { MSR_GS_BASE, MSR_KERNEL_GS_BASE };
+
+/* MSR 在 g_msr_list 里的下标（不在表里返回 -1）*/
+static int vmx_msr_index(uint32_t msr)
+{
+    for (int i = 0; i < VMM_MSR_COUNT; i++) {
+        if (g_msr_list[i] == msr)
+            return i;
+    }
+    return -1;
+}
+
+/* guest 写了某个被拦截的 MSR 之后，同步进 VM-entry 的装填区 */
+static void vmx_msr_sync_guest(vcpu_t *vcpu, uint32_t idx, uint64_t val)
+{
+    int i = vmx_msr_index(idx);
+
+    if (i >= 0)
+        g_msr_guest[vcpu->vcpu_id][i].val = val;
+}
+
+static void vmx_msr_lists_init(vcpu_t *vcpu)
+{
+    int id = vcpu->vcpu_id;
+    const uint64_t guest_init[VMM_MSR_COUNT] = {
+        vcpu->msr_star, vcpu->msr_lstar, vcpu->msr_cstar,
+        vcpu->msr_sfmask, vcpu->msr_kernel_gs_base, vcpu->msr_pat,
+    };
+
+    for (int i = 0; i < VMM_MSR_COUNT; i++) {
+        g_msr_guest[id][i].idx  = g_msr_list[i];
+        g_msr_guest[id][i].rsvd = 0;
+        g_msr_guest[id][i].val  = guest_init[i];
+
+        g_msr_host[id][i].idx   = g_msr_list[i];
+        g_msr_host[id][i].rsvd  = 0;
+        g_msr_host[id][i].val   = vmx_rdmsr(g_msr_list[i]);
+    }
+
+    vmcs_write(VM_ENTRY_MSR_LOAD_COUNT, VMM_MSR_COUNT);
+    vmcs_write(VM_ENTRY_MSR_LOAD_ADDR,  virt_to_phys(g_msr_guest[id]));
+
+    /*
+     * exit-store 区：**独立缓冲**，只放需要往返回来的 GS 两兄弟。
+     * ⚠️ 不能与 entry-load 区（g_msr_guest）复用同一块内存 —— 重叠时
+     * VM-entry 直接以 reason 34（MSR loading）失败（实测
+     * "Unhandled exit reason=34 rip=0x1000000"）。
+     */
+    for (int i = 0; i < 2; i++) {
+        g_msr_store[id][i].idx  = g_msr_store_list[i];
+        g_msr_store[id][i].rsvd = 0;
+        g_msr_store[id][i].val  = (i == 0) ? vcpu->msr_gs_base
+                                           : vcpu->msr_kernel_gs_base;
+    }
+    vmcs_write(VM_EXIT_MSR_STORE_COUNT, 2);
+    vmcs_write(VM_EXIT_MSR_STORE_ADDR,  virt_to_phys(g_msr_store[id]));
+    vmcs_write(VM_EXIT_MSR_LOAD_COUNT,  VMM_HOST_MSR_COUNT);
+    vmcs_write(VM_EXIT_MSR_LOAD_ADDR,   virt_to_phys(g_msr_host[id]));
+
+}
 
 static int msr_emulate_read(vcpu_t *vcpu, uint32_t msr, uint64_t *val)
 {
@@ -178,8 +301,18 @@ static int msr_emulate_read(vcpu_t *vcpu, uint32_t msr, uint64_t *val)
     case MSR_CSTAR:           *val = vcpu->msr_cstar;           return 1;
     case MSR_SYSCALL_MASK:    *val = vcpu->msr_sfmask;          return 1;
     case MSR_FS_BASE:         *val = vcpu->msr_fs_base;         return 1;
-    case MSR_GS_BASE:         *val = vcpu->msr_gs_base;         return 1;
-    case MSR_KERNEL_GS_BASE:  *val = vcpu->msr_kernel_gs_base;  return 1;
+    /*
+     * ⚠️ GS 这一对**要读硬件维护的那份**（exit-store 写回的 g_msr_guest），
+     * 不能读 vcpu 里的影子：影子只在显式 wrmsr 时更新，而 guest 的 `swapgs`
+     * 直接在硬件上交换这两个 MSR，我们看不见。Linux 的 paranoid_entry 靠
+     * `rdmsr MSR_GS_BASE` 判断自己在哪个 GS，给它过期影子就会判错 → 死循环。
+     */
+    case MSR_GS_BASE:
+        *val = g_msr_store[vcpu->vcpu_id][0].val;
+        return 1;
+    case MSR_KERNEL_GS_BASE:
+        *val = g_msr_store[vcpu->vcpu_id][1].val;
+        return 1;
     case MSR_IA32_PAT:        *val = vcpu->msr_pat;             return 1;
     case MSR_IA32_APIC_BASE:  *val = vcpu->apic_base;           return 1;
     default:
@@ -226,8 +359,12 @@ static int msr_emulate_write_1(vcpu_t *vcpu, uint32_t msr, uint64_t val)
          * 启动里 cr2=0 的缺页 + 异常风暴（4000 次 exit 里 3990 次异常）。*/
         vcpu->msr_gs_base = val;
         vmcs_write(GUEST_BASE_GS, val);
+        g_msr_store[vcpu->vcpu_id][0].val = val;   /* 与 exit-store 同一份 */
         return 1;
-    case MSR_KERNEL_GS_BASE:  vcpu->msr_kernel_gs_base = val; return 1;
+    case MSR_KERNEL_GS_BASE:
+        vcpu->msr_kernel_gs_base = val;
+        g_msr_store[vcpu->vcpu_id][1].val = val;
+        return 1;
     case MSR_IA32_PAT:        vcpu->msr_pat            = val; return 1;
     case MSR_IA32_APIC_BASE:
         /* vLAPIC 的开关：EN(11) 决定 APIC 是否工作，EXTD(10) 是 x2APIC。
@@ -241,76 +378,6 @@ static int msr_emulate_write_1(vcpu_t *vcpu, uint32_t msr, uint64_t val)
     }
 }
 
-/* ================================================================
- * MSR load/save list：让 guest 的 syscall MSR 在进出时自动装卸
- *
- * 为什么必须做：MSR bitmap 只拦**显式**的 rdmsr/wrmsr。guest 执行
- * `syscall` 指令时，CPU 用的是**真实的** IA32_LSTAR —— 不做处理的话，
- * guest 用户态一发系统调用就直接跳进**宿主内核的 syscall 入口**，
- * 在宿主的地址空间里跑 guest 的寄存器。
- *
- * 做法是 VMCS 的 MSR 列表（VM-entry load / VM-exit load）：
- * 硬件在进入 guest 前把这些 MSR 装成 guest 的值，退出时再装回宿主的。
- * 全程在硬件里原子完成，没有「退出到 C 代码之前宿主还在用 guest MSR」
- * 的窗口（自己用 wrmsr 换就会留这个窗口，中断打进来就崩）。
- *
- * guest 侧的值由 msr_emulate_write 维护（写是被拦下来的），所以只需要
- * load 表，不需要 store 表。
- * ================================================================ */
-#define VMM_MSR_COUNT 6
-
-typedef struct {
-    uint32_t idx;
-    uint32_t rsvd;
-    uint64_t val;
-} vmx_msr_entry_t;
-
-static vmx_msr_entry_t g_msr_guest[MAX_VCPUS][VMM_MSR_COUNT]
-    __attribute__((aligned(16)));
-static vmx_msr_entry_t g_msr_host[MAX_VCPUS][VMM_MSR_COUNT]
-    __attribute__((aligned(16)));
-
-static const uint32_t g_msr_list[VMM_MSR_COUNT] = {
-    MSR_STAR, MSR_LSTAR, MSR_CSTAR, MSR_SYSCALL_MASK,
-    MSR_KERNEL_GS_BASE, MSR_IA32_PAT,
-};
-
-/* guest 写了某个被拦截的 MSR 之后，同步进 VM-entry 的装填区 */
-static void vmx_msr_sync_guest(vcpu_t *vcpu, uint32_t idx, uint64_t val)
-{
-    int id = vcpu->vcpu_id;
-
-    for (int i = 0; i < VMM_MSR_COUNT; i++) {
-        if (g_msr_list[i] == idx) {
-            g_msr_guest[id][i].val = val;
-            return;
-        }
-    }
-}
-
-static void vmx_msr_lists_init(vcpu_t *vcpu)
-{
-    int id = vcpu->vcpu_id;
-    const uint64_t guest_init[VMM_MSR_COUNT] = {
-        vcpu->msr_star, vcpu->msr_lstar, vcpu->msr_cstar,
-        vcpu->msr_sfmask, vcpu->msr_kernel_gs_base, vcpu->msr_pat,
-    };
-
-    for (int i = 0; i < VMM_MSR_COUNT; i++) {
-        g_msr_guest[id][i].idx  = g_msr_list[i];
-        g_msr_guest[id][i].rsvd = 0;
-        g_msr_guest[id][i].val  = guest_init[i];
-
-        g_msr_host[id][i].idx   = g_msr_list[i];
-        g_msr_host[id][i].rsvd  = 0;
-        g_msr_host[id][i].val   = vmx_rdmsr(g_msr_list[i]);
-    }
-
-    vmcs_write(VM_ENTRY_MSR_LOAD_COUNT, VMM_MSR_COUNT);
-    vmcs_write(VM_ENTRY_MSR_LOAD_ADDR,  virt_to_phys(g_msr_guest[id]));
-    vmcs_write(VM_EXIT_MSR_LOAD_COUNT,  VMM_MSR_COUNT);
-    vmcs_write(VM_EXIT_MSR_LOAD_ADDR,   virt_to_phys(g_msr_host[id]));
-}
 
 /* ================================================================
  * CPUID 模拟
@@ -583,11 +650,21 @@ static int guest_fetch_code(uint64_t va, uint8_t *buf, uint32_t n)
     return 1;
 }
 
-/* 解码结果 */
+/* 解码结果
+ *
+ * ⚠️ reg 用的就是 x86_gpr_ptr() 的编号：**0 就是 RAX**，不是「没有寄存器」
+ * 的哨兵 —— 有没有源/目标寄存器一律看 has_reg。
+ *
+ * 曾经用 `reg != 0` 当判据（想表达「立即数写没有源寄存器」），于是凡是
+ * 数据来自 %eax/%rax 的 MMIO 写都被当成立即数 0 写进设备：实测 guest 往
+ * IO-APIC 重定向表写的那些表项（编译器恰好用 RAX 传值）全被吞成 0，
+ * 内核看到的表项状态和它自己写的对不上，串口的 IRQ 探测因此永远失败。
+ */
 typedef struct {
     int      is_write;
     uint8_t  size;       /* 访问字节数 */
-    uint32_t reg;        /* GPR 号（0-15）*/
+    uint8_t  has_reg;    /* reg 有效？（0xC6/0xC7 立即数写为 0）*/
+    uint32_t reg;        /* GPR 号（0-15，0 = RAX）*/
     uint64_t inst_len;   /* 指令总长（供步进 RIP）*/
     uint64_t imm;        /* 立即数（0xC6/0xC7 写用）*/
 } x86_mmio_access_t;
@@ -643,7 +720,7 @@ static int decode_mmio_access(uint64_t rip_va, x86_mmio_access_t *acc)
 {
     uint8_t  buf[24];
     uint32_t i = 0;
-    int      rex_w = 0, opsize16 = 0;
+    int      rex_w = 0, rex_r = 0, opsize16 = 0;
 
     if (!guest_fetch_code(rip_va, buf, sizeof(buf)))
         return 0;
@@ -658,6 +735,7 @@ static int decode_mmio_access(uint64_t rip_va, x86_mmio_access_t *acc)
             b == 0x26 || b == 0x64 || b == 0x65) continue;/* 段前缀 */
         if (b >= 0x40 && b <= 0x4F) {                     /* REX */
             rex_w = (b >> 3) & 1;
+            rex_r = (b >> 2) & 1;                         /* 扩展 reg 字段：r8-r15 */
             continue;
         }
         break;                                            /* opcode */
@@ -677,7 +755,9 @@ static int decode_mmio_access(uint64_t rip_va, x86_mmio_access_t *acc)
             return 0;
         acc->is_write = 1;
         acc->size = (op == 0x88) ? 1 : (opsize16 ? 2 : (rex_w ? 8 : 4));
-        acc->reg  = reg_field;
+        /* 源寄存器在 reg 字段，带 REX.R（r8-r15）；0 是 RAX，不是空值 */
+        acc->has_reg = 1;
+        acc->reg  = reg_field | (rex_r ? 8u : 0u);
         acc->inst_len = i + modrm_used;
         return 1;
     }
@@ -687,8 +767,10 @@ static int decode_mmio_access(uint64_t rip_va, x86_mmio_access_t *acc)
             return 0;
         acc->is_write = 0;
         acc->size = (op == 0x8A) ? 1 : (opsize16 ? 2 : (rex_w ? 8 : 4));
-        /* 读方向：目标寄存器在 reg 字段，需带 REX.R */
-        acc->reg  = reg_field | (rex_w ? 8u : 0u);
+        /* 读方向：目标寄存器在 reg 字段，同样要带 REX.R
+         * （原来错写成 rex_w —— 读进 %r8..%r15 的数据会落到 %rax..%rdi）*/
+        acc->has_reg = 1;
+        acc->reg  = reg_field | (rex_r ? 8u : 0u);
         acc->inst_len = i + modrm_used;
         return 1;
     }
@@ -706,7 +788,7 @@ static int decode_mmio_access(uint64_t rip_va, x86_mmio_access_t *acc)
 
         acc->is_write = 1;
         acc->size = imm_size;
-        acc->reg  = 0;               /* 立即数写：无源寄存器 */
+        acc->has_reg = 0;            /* 立即数写：无源寄存器 */
         acc->imm  = imm;
         acc->inst_len = off + imm_size;
         return 1;
@@ -1696,10 +1778,10 @@ static int vmx_exit_handler(vcpu_t *vcpu)
         {   /* TEMP-DBG：前 8 次 EPT violation 的 gpa，看 guest 在碰什么 */
             static unsigned ne;
             if (ne < 8) {
-                KLOG_INFO("[EPT-DBG] gpa=0x%llx %s rip=0x%llx\n",
-                          (unsigned long long)gpa, is_write ? "W" : "R",
-                          (unsigned long long)guest_rip);
-                ne++;
+                // KLOG_INFO("[EPT-DBG] gpa=0x%llx %s rip=0x%llx\n",
+                //           (unsigned long long)gpa, is_write ? "W" : "R",
+                //           (unsigned long long)guest_rip);
+                // ne++;
             }
         }
 
@@ -1714,7 +1796,10 @@ static int vmx_exit_handler(vcpu_t *vcpu)
                 decode_matches_qual(qual, &acc)) {
                 uint64_t val = acc.imm;      /* 立即数写 */
 
-                if (acc.is_write && acc.reg != 0 && acc.imm == 0) {
+                /* ⚠️ 判据必须是 has_reg，不能写 `acc.reg != 0` —— 0 就是
+                 * %rax，那样会把所有从 RAX 传值的写当成立即数 0（见结构体
+                 * 注释里的实测症状）。*/
+                if (acc.is_write && acc.has_reg) {
                     uint64_t *src = x86_gpr_ptr(vcpu, acc.reg);
                     if (src)
                         val = *src;
@@ -2224,6 +2309,47 @@ int vmx_vcpu_setup(vcpu_t *vcpu, void (*entry)(void))
 
 /* ── 架构钩子实现 ────────────────────────────────────────── */
 
+/*
+ * 控制台（COM1 / IRQ4）中断注入
+ *
+ * 为什么必须做：guest 侧的 8250 驱动只有在**真的收到中断**时才会去取
+ * RX FIFO。没有中断它退化成定时器轮询 —— `irq=0` 时 `univ8250_setup_timer()`
+ * 起一个 `serial8250_timeout()`，每 `uart_poll_timeout()`（这里 ≈8ms）
+ * 自己调一次 handle_irq（8250_core.c:308）。交互式输入因此慢一个数量级，
+ * 而且驱动永远停在「等 IRQ4」的退化路径上。
+ *
+ * aarch64/riscv 两个架构早就在每次入口重拉 vGIC/vPLIC 的 pending
+ * （见 el2_run.c 的 aarch64_check_vpl011_rx、hext_run.c 的
+ * vcpu_external_irq_on_entry），**只有 x86 这条线是断的**：
+ * uart16550_irq_asserted() 定义了却没有任何调用者。
+ *
+ * 向量从 guest 自己编的 IO-APIC 重定向表里取：ISA IRQ4 → GSI4 → RT 项 4
+ * （默认 ISA MP 表是 IRQ n → pin n，IRQ0 例外去 pin2 —— guest 日志里的
+ * `..TIMER: vector=0x30 apic1=0 pin1=2` 就是这个表）。表项还没 unmask、
+ * 或投递模式不是 fixed 就什么都不投：那是 guest 自己的状态，它 unmask 完
+ * 下一次入口我们自然会看见。
+ *
+ * 电平触发：条件成立就每入口重拉一次（IRR 位在取走时清掉），这样
+ * guest 应答中断、FIFO 里却还有字节时不会丢。
+ */
+static void x86_console_irq_on_entry(void)
+{
+    uint32_t rt, vec;
+
+    if (!vmm_console_irq_asserted())
+        return;
+
+    rt = g_ioapic_rt[4 * 2];                     /* IRQ4 → GSI4 的低 32 位 */
+    if ((rt & IOAPIC_RT_MASKED) || (rt & 0x700) != 0)
+        return;
+
+    vec = rt & 0xff;
+    if (vec < 16)
+        return;
+
+    vlapic_raise_irq(vec);
+}
+
 void vmm_arch_restore_guest_ctx(vcpu_t *vcpu)
 {
     /*
@@ -2237,6 +2363,10 @@ void vmm_arch_restore_guest_ctx(vcpu_t *vcpu)
      * 每 10ms 退出来一次，不需要额外的宿主定时器基础设施。
      */
     vlapic_timer_poll();
+
+    /* 控制台：电平触发，每次入口按设备状态重拉（见上面 x86_console_irq_on_entry）*/
+    x86_console_irq_on_entry();
+
 
     if (!vcpu->pending_event) {
         uint32_t vec;
@@ -2263,16 +2393,44 @@ void vmm_arch_restore_guest_ctx(vcpu_t *vcpu)
  *   HOST_BASE_GS  — per-CPU 指针。**最关键的一个**：宿主的 syscall 入口、
  *                   中断入口都靠 %gs 取 per-CPU 数据，装回旧值就全错。
  *
+ * ⚠️ 除了 VMCS 宿主区，**VM-exit 的 MSR load 表**里也有宿主的值，而且
+ * 硬件是**最后**装那张表的（在宿主状态字段之后），所以表里的值会盖掉
+ * HOST_BASE_GS。GS 那一对（GS_BASE/KERNEL_GS_BASE）在 g_msr_list 里
+ * （guest 的 swapgs 往返要用），因此这里必须把它们**一起刷**：表里是
+ * vmx_msr_lists_init() 时的一次性快照，不刷就等于把宿主装回旧 %gs ——
+ * 实测症状是宿主立刻崩、QEMU 反复重启（SeaBIOS → 埋 sentinel → 崩）。
+ *
  * 代价是两条 rdmsr + 三条 vmwrite，相对一次世界切换可以忽略，
  * 所以每次入口前无条件刷（x-kernel 的 refresh_host_state 同理）。
  */
-static void vmx_refresh_host_state(void)
+static void vmx_refresh_host_state(vcpu_t *vcpu)
 {
+    int id = vcpu->vcpu_id;
+    int i0 = vmx_msr_index(MSR_GS_BASE);
+    int i1 = vmx_msr_index(MSR_KERNEL_GS_BASE);
+
     vmcs_write(HOST_CR0,     vmx_read_cr0());
     vmcs_write(HOST_CR3,     vmx_read_cr3());
     vmcs_write(HOST_CR4,     vmx_read_cr4());
     vmcs_write(HOST_BASE_FS, vmx_rdmsr(MSR_FS_BASE));
     vmcs_write(HOST_BASE_GS, vmx_rdmsr(MSR_GS_BASE));
+
+    /*
+     * `swapgs` 往返的另一半：guest 里的 swapgs 直接改硬件 MSR，VMM 看不见；
+     * VM-exit 的 store 表把它存进 g_msr_store，这里搬进 entry-load 表
+     * （g_msr_guest），下次进入 guest 时再装回去。
+     *
+     * 少了这一步，guest 的 swapgs 等于没执行：Linux `paranoid_entry` 用
+     * `rdmsr MSR_GS_BASE` 判断自己在哪个 GS 就会判错 → 异常死循环（实测卡在
+     * `Run /init as init process`，rip 恒为 paranoid_entry+0x93、reason 恒为
+     * RDMSR=31、12 万次采样一动不动）。
+     */
+    if (i1 >= 0) g_msr_guest[id][i1].val = g_msr_store[id][1].val;
+
+    /* GS_BASE 不能走 VMX 的 load 表（放进去 VM-entry 直接以 reason 34
+     * "MSR loading" 失败），改走 GUEST_BASE_GS 字段 —— 效果一样：把
+     * exit-store 捞回来的、guest swapgs 之后的真实值装回去。*/
+    vmcs_write(GUEST_BASE_GS, g_msr_store[id][0].val);
 }
 
 int vmm_arch_enter_guest(vcpu_t *vcpu)
@@ -2285,7 +2443,8 @@ int vmm_arch_enter_guest(vcpu_t *vcpu)
                    vcpu->vcpu_id, vmcs_pa);
         return 0;
     }
-    vmx_refresh_host_state();
+    vmx_refresh_host_state(vcpu);
+
 
     {   /* TEMP-DBG：两条路径各打一次入口状态，用来 diff */
         static unsigned n;

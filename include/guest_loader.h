@@ -121,7 +121,10 @@ extern volatile uint64_t g_guest_entry_x0;
  *    频率精确。标成 unstable 反而会让内核弃用 TSC、回头去指望
  *    PIT/HPET 这些我们没实现成时钟的桩设备。
  */
-#define GUEST_LINUX_BOOTARGS     "console=ttyS0 earlycon=uart8250,io,0x3f8 earlyprintk=serial,ttyS0,115200 rdinit=/init ibt=off nox2apic "     "no_timer_check irqpoll pci=conf1 pci=nomsi lapic"
+#define GUEST_LINUX_BOOTARGS    "console=ttyS0 earlycon=uart8250,io,0x3f8 earlyprintk=serial,ttyS0,115200 "\
+                                "rdinit=/init ibt=off nox2apic "\
+                                "no_timer_check irqpoll pci=conf1 pci=nomsi "\
+                                "lapic"
 
 /* x86 没有 DTB，也不需要摘节点 */
 #define GUEST_LINUX_UNSUPPORTED_NODES {"", NULL}

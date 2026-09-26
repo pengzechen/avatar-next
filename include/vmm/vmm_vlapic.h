@@ -56,8 +56,17 @@ int      vlapic_mmio_handle(uint64_t addr, int is_write, uint8_t size,
 /* 定时器：每次进 guest 前轮询；返回 1 表示产生了待注入的中断 */
 int      vlapic_timer_poll(void);
 
-/* 待注入向量：取走后清零（返回 1 = 取到）*/
+/* 待注入向量：取走 IRR 里编号最大的那个（返回 1 = 取到）*/
 int      vlapic_take_pending(uint32_t *vec);
+
+/*
+ * vlapic_raise_irq — 设备侧拉高中断线（电平触发语义）
+ *
+ * 调用方应在**每次进入 guest 前**按设备状态重新调用；APIC 被软件关闭
+ * （SVR.EN=0）时丢弃。定时器、ICR 自发中断、外部设备（vUART 等）都经由
+ * 这里进 IRR —— 取走时才清位，所以「只在 push 时置一次」会丢中断。
+ */
+void     vlapic_raise_irq(uint32_t vector);
 
 /* 中断已投递进 guest（填 ISR/TMR，EOI 靠它工作）*/
 void     vlapic_accept_interrupt(uint32_t vector, int level_triggered);

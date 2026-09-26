@@ -180,6 +180,8 @@ avatar/
   CPUID 0x15/0x16 报 0 掉进 PIT 死循环、STI 影子挡住中断注入、
   `MSR_FS_BASE` 漏写 `GUEST_BASE_FS` 导致 userspace 段错误…）。
   改 `kernel/vmm/x86_64/*` 前必读。
+  **回归门禁**：`tools/boot_regress.sh [次数]` —— 连续启动 N 次、每次都要出
+  `~ #`（§9.9 那个间歇性卡死就是它抓出来的，修复后 500/500 通过）。
 - **两种运行模式、`/dev/vmm` 协议、Ctrl+] / Ctrl+[ 语义**: `docs/vmm/GUEST_CONSOLE.md`
 - **裸跑 guest 作基线对照**: `docs/vmm/GUEST_NATIVE_QEMU.md`
 

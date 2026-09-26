@@ -19,8 +19,11 @@
  *   - **x2APIC**：APIC base MSR 的 EXTD 位一律清掉，Linux 探测到之后会
  *     安心走 MMIO 路径（tgoskits 的官方 Linux 配置也是 `nox2apic`）。
  *   - **INIT/SIPI**：空实现 → **必须保持单 vCPU**，SMP 启动流程没做。
- *   - **IRR 排队语义**：上游这个 crate 自己也没写到 IRR（accept_interrupt
- *     直投 ISR），这里保持一致，IRR 只读 0。
+ *   - **TPR/PPR 门控**：IRR → 投递这一步不看 TPR/PPR（上游也不看），只按
+ *     向量编号取最大的。Linux 的 TPR 常为 0，等价；真要做实时优先级，得把
+ *     update_ppr() 的结果接进 vlapic_take_pending()。
+ *     注意 accept_interrupt 是在**投递那一刻**置 ISR 位的（不是 guest 取走
+ *     之后），所以 ISR 反映的是「我们发过、还没收到 EOI」。
  *   - **LVT LINT0/LINT1/THERMAL/PMI/CMCI**：只存值，不产生行为。上游同样，
  *     PIC 的中断不经过 LINT0，而是 hypervisor 主动注入。
  *
@@ -74,6 +77,7 @@ typedef struct {
     uint32_t r[VLAPIC_REG_COUNT];   /* 按 (addr >> 4) 索引，与 MMIO 布局一致 */
     uint32_t isr[8];                /* 256 位 ISR */
     uint32_t tmr[8];                /* 256 位 TMR（触发方式，只读回）*/
+    uint32_t irr[8];                /* 256 位 IRR：已拉高、待注入的向量 */
 
     /* 定时器 */
     uint64_t t_deadline_ns;
@@ -81,9 +85,6 @@ typedef struct {
     uint32_t t_shift;               /* DCR → 分频指数 */
     int      t_active;
     int      t_periodic;
-
-    /* 待注入 guest 的中断（VMM 在 VM-entry 前取走）*/
-    uint32_t pending_vec;
 
     /* IA32_APIC_BASE（来自 MSR 影子，不是 MMIO 寄存器）*/
     uint64_t apic_base;
@@ -120,14 +121,20 @@ uint64_t vlapic_now_ns(void)
 /* ── ISR / 优先级 ─────────────────────────────────────────── */
 
 
+/* 在 256 位位图里找编号最大的置位向量（-1 = 一个都没有）*/
+static int vec_highest(const uint32_t *bits)
+{
+    for (int i = 7; i >= 0; i--) {
+        if (bits[i])
+            return i * 32 + (31 - __builtin_clz(bits[i]));
+    }
+    return -1;
+}
+
 /* 找到 ISR 中编号最大的已置位向量（EOI 从这里开始退）*/
 static int isr_highest(const vlapic_t *v)
 {
-    for (int i = 7; i >= 0; i--) {
-        if (v->isr[i])
-            return i * 32 + (31 - __builtin_clz(v->isr[i]));
-    }
-    return -1;
+    return vec_highest(v->isr);
 }
 
 static uint8_t priority_class(uint32_t vec)
@@ -221,8 +228,7 @@ static void timer_fire(vlapic_t *v)
 {
     uint32_t vec = LVT_VECTOR(v->r[VLAPIC_REG_LVT_TIMER]);
 
-    if (vec >= 16)                          /* 0-15 是异常，不能当普通中断投 */
-        v->pending_vec = vec;
+    vlapic_raise_irq(vec);                  /* 向量合法性（≥16）在内部把关 */
 
     if (v->t_periodic) {
         /* 追赶：落后多个周期时不要补发一堆，直接跳到未来的第一个点 */
@@ -295,14 +301,62 @@ void vlapic_set_apic_base(uint64_t val)
     g_vlapic[0].apic_base = val;
 }
 
-/* 待注入向量取走（取走后清零）*/
+/*
+ * 拉高一条中断线（电平触发语义）
+ *
+ * 三个来源都走这里进 IRR：LAPIC 定时器、ICR 自发中断、外部设备（vUART）。
+ * IRR 是**位图**不是单个槽 —— 之前只存一个 pending_vec，定时器和设备中断
+ * 会互相覆盖：谁后到谁赢，输的那个要等下次事件才补得回来（周期定时器甚至
+ * 会因此整拍丢掉）。
+ *
+ * 位在 vlapic_take_pending() 取走时才清，所以电平触发的设备（UART RX
+ * FIFO 里还有字节）必须每次入口重新拉一次，与 vPLIC/vGIC 侧的约定一致
+ * （见 vmm_console_irq_asserted 的注释）。
+ */
+void vlapic_raise_irq(uint32_t vector)
+{
+    vlapic_t *v = &g_vlapic[0];
+
+    if (vector < 16 || vector > 255)
+        return;                          /* 0-15 是异常，不能当普通中断投 */
+    if (!s_enabled || !(v->r[VLAPIC_REG_SVR] & SVR_ENABLE))
+        return;                          /* APIC 被软件关掉：什么都不投 */
+
+    v->irr[vector / 32] |= (1u << (vector % 32));
+}
+
+/*
+ * 待注入向量取走：IRR 里编号最大的、**且不在服务中**的那个（取走后清位）
+ *
+ * 「不在服务中」这一条不能省：硬件的投递优先级是
+ *     向量优先级(编号) > 正在服务的最高优先级(ISR) > TPR
+ * 同一向量在 ISR 里挂着时，新的中断只在 IRR 里排队，要等 guest 写 EOI
+ * 才投得出去。
+ *
+ * 电平触发的设备（vUART 的 RX/THRE）会把线**一直**拉着，少了这个门控就
+ * 变成「每个 VM-entry 投一次」—— 空闲时 guest 每条 HLT 退出都会吃一个
+ * 串口中断（实测 2.8 万次/秒量级），串口驱动被中断风暴拖死。有了门控，
+ * 速率自然回落到「每次 EOI 一个」，与真硬件一致。
+ *
+ * ⚠️ ISR 位是在**投递那一刻**由 vlapic_accept_interrupt() 置的，所以这里
+ * 的前提是 guest 一定会 EOI（Linux 的中断处理开头就 EOI）。若某个向量投出去
+ * 而 guest 从不 EOI，它会被永久挡住 —— 这是有意的：真硬件也是这个行为。
+ */
 int vlapic_take_pending(uint32_t *vec)
 {
-    if (!g_vlapic[0].pending_vec)
-        return 0;
-    *vec = g_vlapic[0].pending_vec;
-    g_vlapic[0].pending_vec = 0;
-    return 1;
+    vlapic_t *v = &g_vlapic[0];
+
+    for (int i = 7; i >= 0; i--) {
+        uint32_t cand = v->irr[i] & ~v->isr[i];
+
+        if (cand) {
+            int top = i * 32 + (31 - __builtin_clz(cand));
+            v->irr[i] &= ~(1u << (top % 32));
+            *vec = (uint32_t)top;
+            return 1;
+        }
+    }
+    return 0;
 }
 
 int vlapic_sw_enabled(void)
@@ -338,7 +392,12 @@ static uint32_t reg_read(vlapic_t *v, uint32_t idx)
     case VLAPIC_REG_IRR + 2: case VLAPIC_REG_IRR + 3:
     case VLAPIC_REG_IRR + 4: case VLAPIC_REG_IRR + 5:
     case VLAPIC_REG_IRR + 6: case VLAPIC_REG_IRR + 7:
-        return 0;                       /* 上游同样没实现 IRR 队列 */
+        /*
+         * 真正回位图（上游是恒 0）。guest 用 IRR 判断「还有没有中断挂着」，
+         * 恒 0 会让它在中断处理里误判。注意这是**只读**的 —— 清位只有
+         * vlapic_take_pending()（投递）和 SVR 关闭两条路。
+         */
+        return v->irr[idx - VLAPIC_REG_IRR];
     case VLAPIC_REG_TIMER_CUR: {
         /* 当前计数 = 剩余纳秒 >> shift（与写入时的换算互逆）*/
         uint64_t now = vlapic_now_ns();
@@ -372,9 +431,9 @@ static void reg_write(vlapic_t *v, uint32_t idx, uint32_t val)
     case VLAPIC_REG_SVR:
         v->r[VLAPIC_REG_SVR] = val;
         if (!(val & SVR_ENABLE)) {
-            /* 软件关掉 APIC：定时器一起停（上游 write_svr 同此语义）*/
+            /* 软件关掉 APIC：定时器一起停、挂起的也丢掉（上游 write_svr 同此语义）*/
             timer_stop(v);
-            v->pending_vec = 0;
+            memset(v->irr, 0, sizeof(v->irr));
         } else if (v->r[VLAPIC_REG_TIMER_INIT] &&
                    !(v->r[VLAPIC_REG_LVT_TIMER] & LVT_MASKED)) {
             timer_start(v);              /* 重新使能 → 按原初值重启 */
@@ -406,7 +465,7 @@ static void reg_write(vlapic_t *v, uint32_t idx, uint32_t val)
         /* 单 vCPU：只有「发给自己」是有意义的 */
         if (dest == ICR_DEST_SELF || dest == ICR_DEST_ALL ||
             dest == ICR_DEST_ALL_BUT_SELF)
-            v->pending_vec = LVT_VECTOR(val);
+            vlapic_raise_irq(LVT_VECTOR(val));
         return;
     }
 
@@ -467,9 +526,9 @@ int vlapic_mmio_handle(uint64_t addr, int is_write, uint8_t size, uint64_t *val)
         static unsigned n;
         if (n < 60) {
             n++;
-            KLOG_WARN("[LAPIC] #%u off=0x%03x idx=0x%02x %s val=0x%llx\n",
-                      n, off, idx, is_write ? "WR" : "RD",
-                      (unsigned long long)(is_write ? *val : *val));
+            // KLOG_WARN("[LAPIC] #%u off=0x%03x idx=0x%02x %s val=0x%llx\n",
+            //           n, off, idx, is_write ? "WR" : "RD",
+            //           (unsigned long long)(is_write ? *val : *val));
         }
     }
     return 1;

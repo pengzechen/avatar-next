@@ -57,6 +57,23 @@ qemu-system-x86_64 -enable-kvm -cpu host -m 1G -display none -serial stdio \
 
 ## 4. 修掉的硬 bug（都是「不修就走不通」级别）
 
+0. ★ **MMIO 写：数据来自 `%rax` 时被写成 0**（最隐蔽的一个）。
+   `decode_mmio_access()` 用 `acc->reg == 0` 当"立即数写没有源寄存器"的哨兵，
+   但 `x86_gpr_ptr()` 里 **0 就是 RAX** —— 于是所有从 RAX 传值的 MMIO 写都被
+   写成 `acc.imm` = 0。编译器把 `writel(value, &io_apic->data)` 的值放 RAX 是
+   常态，因此 guest 往 **IO-APIC 重定向表** 写的屏蔽位一半被吞掉：内核看到的
+   表项状态和它自己写的对不上，串口 IRQ 探测（`autoconfig_irq()`）因此**永远
+   失败**（`irq = 0`）。
+   判据：给 IO-APIC 写入加 RIP 打印后，能看到同一表项在"正常值 / 全 0"之间跳，
+   而 Linux 源码里**没有任何路径**会给表项写 0（`ioapic_mask_entry` 写 0x10000、
+   `clear_IO_APIC_pin` 写回"读到的值 + mask"）。
+   修法：结构体加显式 `has_reg`（0 是合法 RAX，不能当哨兵）；顺带修了读方向
+   把 REX.R 误写成 REX.W（读进 `%r8..%r15` 会落到 `%rax..%rdi`）。
+   > 影响面不止 IO-APIC：**任何** MMIO 写（vLAPIC 寄存器、vUART…）源寄存器
+   > 是 RAX 都会被吞成 0。
+
+
+
 1. **`vmcs_init_host` 把 `HOST_BASE_FS/GS` 写成 0** —— 每次 VM-exit 用 0 装回宿主的
    per-CPU 指针，宿主任何 syscall 都在入口 `push %gs:0x60` 缺页到地址 0x60。
    已改为读真实值，并加 `vmx_refresh_host_state()`（CR0/CR3/CR4/FS/GS）**每次入口前刷新**。
@@ -175,6 +192,8 @@ bin   dev   etc   init  proc  root  sys   tmp
 | 2 | **TSC 频率来自宿主 PIT 标定**（2417 MHz，真值 2419.2 MHz，差 0.09%） | guest 时钟每天漂 ~1 分钟 | 宿主侧改用 CPUID 0x15 真值（QEMU/KVM 会抹掉，需从别处取） |
 | 3 | `[VMX-DBG]`/`[RIP-SAMPLE]`/`[HLT-*]` 等 TEMP-DBG 未清 | 噪声 | 见 §8.13 |
 | 4 | 宿主无 FP/SIMD 上下文保存（`fxsave`/`fxrstor`） | guest 一旦真用 SSE/AVX 会踩 | 见 §7.2 旧第 4 条 |
+| 5 | **vLAPIC 的 DCR 分频表错位一位**（`vlapic.c` 的 `dcr_to_shift()`：`0x3` 应为 ÷16，实际返回 3 = ÷8） | guest 的 LAPIC tick 实际快一倍（中断数翻倍、hrtimer 反复早醒重编程）；不是墙上时钟错（timekeeping 走 TSC） | 按 SDM 表 11-19 / Linux `apicdef.h` / 上游 tgoskits `regs/timer/dcr.rs` 改成 `0x0→1,0x1→2,0x2→3,0x3→4,0x8→5,0x9→6,0xa→7,0xb→0` |
+| 6 | 直启模式下 `signal_check_uart()` 与 `vmm_console_pump()` 抢 UART 无仲裁 | 忙时输入的字节被宿主 tick ISR 吞进没人读的 `g_uart_rb` 而丢失（长命令行会被拆散） | 见 §10.0 末尾；分层上建议给 tty 装个 consumer hook，别让 fs 直接依赖 vmm |
 
 ## 8. 解压器阶段的新增结论（历史记录，结论仍然有效）
 
@@ -593,6 +612,47 @@ Linux 拿它建 `irq_cfg` 直接空指针崩在 `setup_IO_APIC`。
    再配合那**一个** RIP 的符号名就定位了。
 3. **VM-entry 失败现场要 dump 够**：`actv` / `intr_state` / `inst_error`
    三个字段是这一轮破案的关键，缺一不可。
+4. **「心跳 + guest RIP」定位间歇性卡死**：每次进 guest 前打一行
+   `n= rip= reason=`（`kernel/vmm/x86_64/vmx.c` 里现成的 TEMP-DBG 模板），
+   RIP 恒定不动 + 退出原因一边倒，比任何日志都直接。**注意**：心跳若放在
+   `vmm_arch_restore_guest_ctx()`（VMCS 尚未 `vmptrld`）里，`vmread` 会失败并
+   回显**字段编码**（`0x681e` = GUEST_RIP、`0x4402` = EXI_REASON），看到这两个
+   数字就说明"读的不是 VMCS，是编码"。
+
+### 9.9 ★★ 间歇性卡死在 `Run /init`：GS 这一对 MSR 的虚拟化（swapgs）
+
+**症状**：约 1/3 概率卡在 `Run /init as init process` 之后不出 shell，其余次数
+完全正常。心跳显示 `rip` 恒为 `0xffffffff81e01863`（= `paranoid_entry+0x93`，
+即 `rdmsr MSR_GS_BASE` 的下一条）、`reason` 恒为 31（**RDMSR** —— 不是异常！
+见下方教训）、十几次采样一动不动。
+
+**根因**：`MSR_GS_BASE` 读的是 VMM 影子，而 guest 的 `swapgs` 是**直接在硬件上**
+交换 GS_BASE↔KERNEL_GS_BASE 的，VMM 看不见；同时 VM-entry 又按 MSR load 表把
+影子**装回去** —— 于是 `swapgs` 等于没执行。Linux 的 `paranoid_entry` 恰恰靠
+`rdmsr MSR_GS_BASE`（`SAVE_AND_SET_GSBASE`）判断"现在在内核 GS 还是用户 GS"，
+读到过期影子就判错 → `%gs:` 取到错误的 per-CPU 基址 → 异常 → 又走同一条
+paranoid 入口 → 死循环，而**循环里唯一会陷入 VMM 的就是那条 `rdmsr`**。
+
+**修法**（照 `arch/x86/kvm/vmx/vmx.c`：KVM 把这俩放进"直接透传"名单，
+KERNEL_GS_BASE 在 C 里手工往返、GS_BASE 走 `GUEST_BASE_GS` 字段）：
+
+1. **GS_BASE 不进 VMX 的 MSR load 表**。放进去 VM-entry 直接以 reason 34
+   （MSR loading）失败 —— 实测 `Unhandled exit reason=34 rip=0x1000000`。
+2. 加 **VM-exit store 表**（`VM_EXIT_MSR_STORE_COUNT/ADDR` = 0x400e/0x2006，
+   原代码只定义了 count 从没用过），把 guest 的真实 GS 两兄弟捞回内存。
+   ⚠️ **store 区必须与 load 区分开**：重叠同样报 reason 34。KVM 也是分开的。
+3. 每次入口：store 捞回的 GS_BASE **写进 `GUEST_BASE_GS` 字段**，
+   KERNEL_GS_BASE 走 load 表；读路径改读"硬件维护的那份"。
+4. **宿主侧一行都别动**：`g_msr_list` 同时喂 guest 的 entry-load 和**宿主的
+   exit-load** —— 把 GS_BASE 加进列表会让硬件在 VM-exit 时用快照重装宿主
+   `%gs`，**宿主立刻三连异常、QEMU 反复重启**（SeaBIOS 循环）。宿主自己的 GS
+   归 `HOST_BASE_GS` + `vmx_refresh_host_state()` 管。
+
+**回归门禁**：`tools/boot_regress.sh [次数] [每次超时秒]` —— 连续启动 N 次，
+每次都必须出现 `~ #`。修复前约 1/3 失败；修复后 **500/500 通过（平均 3s/次）**。
+
+> 教训：**exit reason 的编号别凭记忆**。31 是 `RDMSR`、不是"异常/NMI"；
+> 把它误当成异常，整个方向会偏到"注入的异常有问题"上去。
 
 ## 10. 重建 guest 内核（`imgs/guests/x86_64/bzImage`）
 
@@ -613,6 +673,36 @@ cp arch/x86/boot/bzImage <repo>/imgs/guests/x86_64/bzImage
 
 `HOSTCC` 不用动 —— 构建期工具（kconfig/objtool/…）仍由宿主 gcc 编，只有
 内核本体走交叉编译器。
+
+### 10.0 ★ 串口现在是**中断驱动**的（IRQ4 已接线）
+
+x86 曾经是三个架构里**唯一**控制台靠轮询的：`uart16550_irq_asserted()` 定义了
+却没有任何调用者，guest 探不到中断 → `irq = 0` → 8250 驱动退化成
+`serial8250_timeout()` 每 ≈8ms 轮询一次（`8250_core.c:308`）。
+
+现在已经接上（与 aarch64 的 `aarch64_check_vpl011_rx()`、riscv64 的
+`vcpu_external_irq_on_entry()` 同一套路数）：
+
+- `vmm_arch_restore_guest_ctx()` 里调用 `x86_console_irq_on_entry()`：按
+  `uart16550_irq_asserted()`（电平触发）查 guest 自己编的 IO-APIC `RT[4]`
+  （ISA IRQ4 → GSI4；默认 ISA MP 表是 IRQ n → pin n，IRQ0 例外去 pin2），
+  把该 vector 塞进 vLAPIC。
+- vLAPIC 侧同步改造：单个 `pending_vec` 槽 → **IRR 位图** + `vlapic_raise_irq()`；
+  `vlapic_take_pending()` **跳过已在 ISR 中的向量**（真硬件语义：同优先级不重投）。
+  少了这道门控，电平触发的串口线会被投成"每个 VM-entry 一次"（空闲时 2.8 万
+  次/秒量级），驱动被自己的中断风暴拖死。
+
+判据（`/proc/interrupts`）：
+
+```
+  4:        124   IO-APIC   4-edge      ttyS0     ← 124 次/一次会话（有门控才是这个量级）
+LOC:       1597   Local timer interrupts
+```
+
+**还没做的**：宿主侧 `signal_check_uart()`（tick ISR 里跑）与
+`vmm_console_pump()` **抢同一个硬件 FIFO 且没有仲裁**，直启模式下被 ISR 吞掉的
+字节会永久丢失（`GUEST_CONSOLE.md` §2 记了这条隐患）。实测一次灌 55 字符的
+长命令行会被拆散（`interecho: not found`）；短命令没问题。
 
 ### 10.1 ⚠️ `CONFIG_SERIAL_8250_DETECT_IRQ` **必须保持 =y**
 
@@ -637,15 +727,13 @@ IRQ 线** —— 先 `IER=0x0f` 打开全部中断，再故意往 THR 写一个 
 而我们的 PIC / IO-APIC 桩**永远不产生中断**，RX 就此死掉。
 实测：`/init` 跑到 `busybox/mount/grep` 之后**卡死，键盘输入没有任何反应**。
 
-反过来，探测**失败**（返回 0）反而是我们现在能用的原因：
-```c
-port->irq = (irq > 0) ? irq : 0;   /* 探不到 → 0 → 驱动走"无 IRQ"那条路 */
-```
-`irq=0` 时驱动不依赖中断，控制台输入正常。
+**现在的状态（§10.0 之后）**：探测**成功**了 —— `irq = 4`、IRQ4 真在投中断
+（`/proc/interrupts` 里 `4: 124 IO-APIC 4-edge ttyS0`）。那个 `0xFF` 字节**仍然
+在**（探测照样往 THR 写它），但驱动认领了 IRQ4 走中断路径，输入不再依赖 8ms
+轮询。也就是 §10.0 里说的"正道"已经做了。
 
-**所以：这个 `0xFF` 是「串口输入能用」的代价，必须留着。**
-真想去掉的话，正道是**让 vUART 真的会报中断**（RX 到达时按 guest 在 IO-APIC
-重定向表里给 IRQ 4 编程的 vector 注入）—— 那是个正经功能，不是一行改动。
+> 历史：探测失败时 `port->irq = (irq > 0) ? irq : 0;` → 0 → 驱动退化成定时器
+> 轮询 —— 输入能用的代价是 8ms 延迟 + 驱动永远停在退化路径上。
 
 ## 11. 相关
 

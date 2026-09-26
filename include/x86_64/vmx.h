@@ -118,6 +118,7 @@ typedef enum {
     EPT_POINTER           = 0x201a,   /* EPTP：EPT 根页表 + 页走行长度 + 内存类型 */
     /* MSR 自动换入换出区（进出 guest 时硬件负责装/卸，见 vmx.c）*/
     VM_EXIT_MSR_LOAD_ADDR  = 0x2008,   /* 权威值见 Linux vmx.h */
+    VM_EXIT_MSR_STORE_ADDR = 0x2006,   /* 退出时把 guest 的 MSR 存回内存（swapgs 往返用）*/
     VM_ENTRY_MSR_LOAD_ADDR = 0x200a,
     /* 64-bit guest */
     GUEST_DEBUGCTL        = 0x2802,
