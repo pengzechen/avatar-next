@@ -906,6 +906,19 @@ static int vmx_check_support(void)
 }
 
 /* ── VMXON + CR 设置 ─────────────────────────────────────── */
+/*
+ * VMXON 是**每 CPU 一次**的：对已经处于 VMX operation 的逻辑处理器再执行
+ * 一次，指令直接置 CF（实测 `[VMX] VMXON failed (pa=0x4c6000)`）。
+ *
+ * 直启模式只会走到这里一次，所以原来没暴露；接上 /bin/vmm-run 之后
+ * "启动 → Ctrl+] 停掉 → 再启动" 是常规用法，第二次就卡在 VMXON 上 ——
+ * 报错是 `vm_create failed` → `guest_loader_run_linux failed: -1`，
+ * 看起来像内存/EPT 的问题，其实是这里。
+ *
+ * 保持 VMX 常开（不 VMXOFF）是常规做法（KVM 也是加载时 VMXON、卸载才关）。
+ */
+static int s_vmx_on;
+
 static int vmx_global_init(void)
 {
     uint64_t fix_cr0_set, fix_cr0_clr;
@@ -922,6 +935,11 @@ static int vmx_global_init(void)
     vmx_write_cr0((vmx_read_cr0() & fix_cr0_clr) | fix_cr0_set);
     vmx_write_cr4((vmx_read_cr4() & fix_cr4_clr) | fix_cr4_set | X86_CR4_VMXE);
 
+    /* 已经开过就不用再来一次（见 s_vmx_on 的说明）；CR0/CR4 固定位上面
+     * 每次都会重新写一遍，保持 VMX operation 的前置条件成立。*/
+    if (s_vmx_on)
+        return 0;
+
     /* 写 VMXON 区域版本号 */
     memset(g_vmxon_region, 0, sizeof(g_vmxon_region));
     *(uint32_t *)g_vmxon_region = g_vmx_basic.revision;
@@ -932,6 +950,7 @@ static int vmx_global_init(void)
         KLOG_ERROR("[VMX] VMXON failed (pa=0x%llx)\n", vmxon_pa);
         return -1;
     }
+    s_vmx_on = 1;
     KLOG_INFO("[VMX] VMXON success (revision=0x%x)\n", g_vmx_basic.revision);
     return 0;
 }

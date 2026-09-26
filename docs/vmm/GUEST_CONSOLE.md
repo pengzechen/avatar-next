@@ -12,6 +12,7 @@ guest 侧看不出来：
 | | 直启模式 | helper 模式 |
 |---|---|---|
 | 怎么进 | `make PLATFORM=qemu-virt-aarch64 GIC=v3 test-guest-linux` | `make PLATFORM=qemu-virt-aarch64 GIC=v3 run-fs`，然后在 shell 里敲 `/bin/vmm-run` |
+| x86_64 对应命令 | `make PLATFORM=qemu-virt-x86_64 GUEST_LINUX=1 test-guest-linux` | `make PLATFORM=qemu-virt-x86_64 run-fs`，然后在 shell 里敲 `/bin/vmm-run` |
 | 宿主 shell | 没有（`pass:[RUN_GUEST_LINUX]` 与 busybox 互斥） | 有，guest 停掉后立刻可用 |
 | guest 输入从哪来 | `vmm_console_pump()` 在 vCPU 退出路径直接轮询真实 PL011 | 用户态 helper 读自己的 stdin 再 write 到 `/dev/vmm` |
 | guest 输出到哪去 | 逐字节直打宿主控制台 | 进 vpl011 的 TX 环形缓冲，helper 读走再写自己的 stdout |
@@ -133,6 +134,24 @@ guest 退出走的是 VMM 自己的 `guest_vec_table`（`el2_vmcs.S` 在进 gues
 cpu0。
 
 ## 6. 怎么验证
+
+### x86_64（2026-09-26 接入）
+
+```bash
+make PLATFORM=qemu-virt-x86_64 LOG=warn SMP=1 run-fs
+# 宿主 shell 起来后直接 /bin/vmm-run —— 四条语义都实测过：
+#   启动 guest ✓ / 输入输出透传 ✓ / Ctrl+] 停止后**再启一次**（重入）✓ /
+#   Ctrl+[ 分离 → 宿主 shell 可用 → vmm-run 重新接入 ✓
+```
+
+x86 侧曾经只差 Makefile 里一行：`VMM_RUN_BIN` 的架构过滤写着
+`filter $(ARCH),aarch64 riscv64`，把 x86_64 排除了（helper 本身是纯 C + ioctl，
+`apps/c/vmm_run.c` 三架构共用）。另外**重入**还需要一处修复：VMXON 是"每 CPU
+一次"的，而原来全代码没有任何 VMXOFF，第二次启动会卡在
+`[VMX] VMXON failed` → `vm_create failed`（看起来像内存/EPT 问题），
+现在 `vmx_global_init()` 里用一次性标志挡住（见该函数注释）。
+
+### aarch64
 
 **GICv2 与 GICv3 都支持**，下面两条命令任选。切 GIC 版本不必手动 `clean`：
 Makefile §7 的 `_CFG_CHECK` 检测到配置变化（GIC=/SMP=/LOG=）会自动清掉已编译的目标文件

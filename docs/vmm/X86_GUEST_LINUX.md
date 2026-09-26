@@ -8,6 +8,25 @@
 
 ## 1. 怎么跑
 
+**两种模式**（语义见 `GUEST_CONSOLE.md`），x86 两种都支持：
+
+```bash
+# ① 直启模式：开机直接进 guest，没有宿主 shell
+make PLATFORM=qemu-virt-x86_64 LOG=warn SMP=1 test-guest-linux
+
+# ② helper 模式：先起宿主 busybox shell，再在 shell 里敲 /bin/vmm-run
+make PLATFORM=qemu-virt-x86_64 LOG=warn SMP=1 run-fs
+#   宿主: / # /bin/vmm-run
+#   [vmm-run] guest started — Ctrl+] stop, Ctrl+[ detach
+#   ~ # echo hello            ← guest 控制台，Ctrl+] 停止、Ctrl+[ 分离，
+#                               再敲一次 vmm-run 可重入 / 重新接入
+```
+
+`run-fs` 建的 rootfs 里已经带了 `/guests/x86_64/{bzImage,initrd}` 和
+`/bin/vmm-run`（`GUEST_LINUX_FILES` 不看 `GUEST_LINUX=`，镜像始终安装）。
+
+**直启模式的手动步骤**（等同 `test-guest-linux`，用于调参）：
+
 ```bash
 # 同一变体，顺序不能反（make rootfs 会重编内核，见 CLAUDE.md 的警告）
 make PLATFORM=qemu-virt-x86_64 GUEST_LINUX=1 rootfs
@@ -54,6 +73,9 @@ qemu-system-x86_64 -enable-kvm -cpu host -m 1G -display none -serial stdio \
 - **引导协议**：bzImage 解析（HdrS 校验）、E820、boot_params、临时页表
   （identity + 高半区 `0xffffffff80000000+X→X`）、GDT/空 IDT/空 TSS、长模式直入 64 位入口
 - **入口路径已证明健康**（见 §5 的探针法）：长模式、guest 页表、EPT、COM1 PIO、`%rsi` 取值全部正常
+- **用户态 helper 模式**（`/bin/vmm-run` + `/dev/vmm`）：与 aarch64/riscv64 同一套
+  协议，四条语义实测通过 —— 启动、输入输出透传、Ctrl+] 停止后重入、Ctrl+[ 分离 /
+  重新接入（见 §1）
 
 ## 4. 修掉的硬 bug（都是「不修就走不通」级别）
 
@@ -96,6 +118,11 @@ qemu-system-x86_64 -enable-kvm -cpu host -m 1G -display none -serial stdio \
    （FS/GS base 同时是 VMCS 字段）。症状是 per-CPU 访问全落到地址 0。
 10. **初始栈地址少两个数量级**（0x00BFF000 = 12.5 MiB，落在内核解压区里被覆盖）。
     现在放 190 MiB。
+11. **VMXON 可以执行两次吗？不行** —— 直启模式只走一次，所以一直没暴露；
+    接上 `/bin/vmm-run` 之后"启动 → Ctrl+] 停掉 → 再启动"是常规操作，第二次
+    卡在 `[VMX] VMXON failed` → `vm_create failed`（**看起来像内存/EPT 问题**）。
+    修法：`vmx_global_init()` 加一次性标志（VMXON 是每 CPU 一次的，重复执行
+    直接置 CF；全代码没有任何 VMXOFF，也不需要 —— KVM 也是加载时开、卸载才关）。
 
 ## 5. 调试方法（可直接复用）
 

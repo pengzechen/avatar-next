@@ -809,8 +809,8 @@ endif
 # vmm-run：宿主 shell 里启动/驱动 guest 的用户态 helper（对标 kvmm-run）。
 # 只给「已实现 Linux guest 启动」的架构构建与安装（与 include/vmm/vmm.h 的
 # VMM_GUEST_LINUX_SUPPORTED 保持一致）。helper 本身是纯 C + ioctl，
-# 与架构无关，两个架构共用同一份 apps/c/vmm_run.c。
-ifneq ($(filter $(ARCH),aarch64 riscv64),)
+# 与架构无关，三个架构共用同一份 apps/c/vmm_run.c。
+ifneq ($(filter $(ARCH),aarch64 riscv64 x86_64),)
 VMM_RUN_BIN      := apps/vmm-run-$(ARCH)
 else
 VMM_RUN_BIN      :=
