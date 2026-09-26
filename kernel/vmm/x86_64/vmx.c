@@ -17,6 +17,7 @@
 #include "klog.h"
 #include "string.h"
 #include "task/task.h"
+#include "task/cpu.h"   /* get_current_cpu_id()：VMXON 是按 CPU 记的 */
 #include "x86_64/vmx.h"
 #include "x86_64/ept.h"  /* EPT 二级翻译 */
 #include "guest_loader.h"  /* GUEST_LINUX_*_GPA（guest 描述符表要用）*/
@@ -917,10 +918,21 @@ static int vmx_check_support(void)
  *
  * 保持 VMX 常开（不 VMXOFF）是常规做法（KVM 也是加载时 VMXON、卸载才关）。
  */
-static int s_vmx_on;
+/*
+ * ⚠️ 状态必须**按 CPU** 记，不能用一个全局标志：SMP>1 时 `vmm-run`（helper）
+ * 跑在 CPU1 上做 VMXON，而 vCPU 任务被钉在 CPU0 上跑 —— CPU0 从没进过 VMX
+ * operation，第一条 `vmwrite`（VM_ENTRY_INTR_INFO 之类）就 #UD。
+ * 实测现场：`vmm_arch_enter_guest+0x39`、EC=0x0、`RCX=0xc0000101`
+ * （前一条 rdmsr MSR_GS_BASE 的残留），SMP=1 时完全正常。
+ *
+ * 所以 vmm_arch_enter_guest() 每次入口前也调一遍本函数：跑 vCPU 的那个 CPU
+ * 自己把自己 VMXON 掉（幂等，只是一次数组查表）。
+ */
+static int s_vmx_on[CONFIG_SMP_CPUS];
 
 static int vmx_global_init(void)
 {
+    uint32_t cpu = get_current_cpu_id();
     uint64_t fix_cr0_set, fix_cr0_clr;
     uint64_t fix_cr4_set, fix_cr4_clr;
 
@@ -935,9 +947,9 @@ static int vmx_global_init(void)
     vmx_write_cr0((vmx_read_cr0() & fix_cr0_clr) | fix_cr0_set);
     vmx_write_cr4((vmx_read_cr4() & fix_cr4_clr) | fix_cr4_set | X86_CR4_VMXE);
 
-    /* 已经开过就不用再来一次（见 s_vmx_on 的说明）；CR0/CR4 固定位上面
-     * 每次都会重新写一遍，保持 VMX operation 的前置条件成立。*/
-    if (s_vmx_on)
+    /* 本 CPU 已经开过就不用再来一次（见 s_vmx_on 的说明）；CR0/CR4 固定位
+     * 上面每次都会重新写一遍，保持 VMX operation 的前置条件成立。*/
+    if (s_vmx_on[cpu])
         return 0;
 
     /* 写 VMXON 区域版本号 */
@@ -950,8 +962,9 @@ static int vmx_global_init(void)
         KLOG_ERROR("[VMX] VMXON failed (pa=0x%llx)\n", vmxon_pa);
         return -1;
     }
-    s_vmx_on = 1;
-    KLOG_INFO("[VMX] VMXON success (revision=0x%x)\n", g_vmx_basic.revision);
+    s_vmx_on[cpu] = 1;
+    KLOG_INFO("[VMX] VMXON success on cpu%u (revision=0x%x)\n",
+              cpu, g_vmx_basic.revision);
     return 0;
 }
 
@@ -2454,6 +2467,15 @@ static void vmx_refresh_host_state(vcpu_t *vcpu)
 
 int vmm_arch_enter_guest(vcpu_t *vcpu)
 {
+    /*
+     * 跑 vCPU 的这个 CPU 必须自己处于 VMX operation（VMXON 是每 CPU 一次
+     * 的）：helper 模式下做 VMXON 的是 /bin/vmm-run 所在的 CPU，而 vCPU 任务
+     * 钉在 CPU0 —— 不补这一下，SMP>1 时第一条 vmwrite 就 #UD。
+     * 幂等：只是一次按 CPU 的数组查表。
+     */
+    if (vmx_global_init() != 0)
+        return 0;
+
     /* 重新装载该 vCPU 的 VMCS（yield 后调度回来时需要）*/
     vmcs_t *v = (vmcs_t *)g_vmcs_storage[vcpu->vcpu_id];
     uint64_t vmcs_pa = virt_to_phys(v);
