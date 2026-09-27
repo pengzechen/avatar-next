@@ -29,12 +29,14 @@
 #include "vmm/vmm_uart16550.h"
 #endif
 
-/* 控制台在 guest DTB 里的中断源编号（VPL011_IRQ / UART16550_IRQ）*/
-#if ARCH_AARCH64
-#define VMM_CONSOLE_IRQ   VPL011_IRQ
-#else
-#define VMM_CONSOLE_IRQ   UART16550_IRQ
-#endif
+/*
+ * 控制台的中断线见 include/vmm/vmm_virq.h 的 VIRQ_CONSOLE。
+ *
+ * ⚠️ 从前这里有个 `VMM_CONSOLE_IRQ`，在非 aarch64 上展开成 UART16550_IRQ(10)
+ * —— 而 x86 实际用的是 IO-APIC GSI **4**（vmx.c 里硬编码 `ioapic_rt[4*2]`）。
+ * 两者不是同一个数，之所以一直没爆，是因为那个宏在 x86 上没有使用点。
+ * 收拢到 VIRQ_CONSOLE 时把这个陷阱一并修掉了。
+ */
 
 /*
  * vmm_console_init — 初始化虚拟控制台并注册到 MMIO 总线
@@ -116,7 +118,8 @@ static inline void vmm_console_push_rx(vm_t *vm, uint8_t c)
 
 /*
  * 控制台中断线是否应保持有效（电平触发）。
- * 调用方在每次进入 guest 前调用，为真时把 VMM_CONSOLE_IRQ 置 pending。
+ * 调用方在每次进入 guest 前调用，为真时 `vmm_arch_irq_raise(vcpu,
+ * virq_line(VIRQ_CONSOLE))` —— 必须每次入口重拉，见 vmm_virq.h。
  */
 static inline int vmm_console_irq_asserted(vm_t *vm)
 {

@@ -2627,22 +2627,41 @@ int vmx_vcpu_setup(vcpu_t *vcpu, void (*entry)(void))
  * 电平触发：条件成立就每入口重拉一次（IRR 位在取走时清掉），这样
  * guest 应答中断、FIFO 里却还有字节时不会丢。
  */
-static void x86_console_irq_on_entry(vcpu_t *vcpu)
+/*
+ * vmm_arch_irq_raise — x86_64 的「拉线」适配器（见 include/vmm/vmm_virq.h）
+ *
+ * irq.line 是 **IO-APIC GSI**，不是 vLAPIC 的 vector —— 向量由 guest 写进
+ * 重定向表，VMM 只负责查表。IO-APIC 是纯桩（只保存 guest 写进来的值），所以
+ * guest 还没 unmask 之前这条线等于没接上，这里直接返回是对的。
+ *
+ * ⚠️ 这条路径从前硬编码 `ioapic_rt[4 * 2]`（GSI 4），而 vmm_console.h 的
+ * `VMM_CONSOLE_IRQ` 在 x86 上展开成 `UART16550_IRQ`(10) —— 两个是不同的数。
+ * 之所以一直没爆，是因为那个宏在 x86 上**没有使用点**。收拢到 VIRQ_CONSOLE
+ * 时一并改掉了：现在索引由 irq.line 决定，写死 4 的隐患不存在了。
+ */
+void vmm_arch_irq_raise(vcpu_t *vcpu, virq_t irq)
 {
     uint32_t rt, vec;
 
-    if (!vcpu->vm || !vmm_console_irq_asserted(vcpu->vm))
+    if (!vcpu || !vcpu->vm)
         return;
 
-    rt = chipset_of(vcpu)->ioapic_rt[4 * 2];     /* IRQ4 → GSI4 的低 32 位 */
+    rt = chipset_of(vcpu)->ioapic_rt[irq.line * 2];
     if ((rt & IOAPIC_RT_MASKED) || (rt & 0x700) != 0)
-        return;
-
+        return;                       /* guest 还没 unmask / 非 fixed 模式 */
     vec = rt & 0xff;
     if (vec < 16)
-        return;
+        return;                       /* 0-15 是异常向量，不能当普通中断投 */
 
+    /* 不做 SVR 门控：那是 vlapic_raise_irq 自己的事（它在 raise 时刻判）*/
     vlapic_raise_irq(vcpu->vm, vec);
+}
+
+static void x86_console_irq_on_entry(vcpu_t *vcpu)
+{
+    if (!vcpu->vm || !vmm_console_irq_asserted(vcpu->vm))
+        return;
+    vmm_arch_irq_raise(vcpu, virq_line(VIRQ_CONSOLE));
 }
 
 void vmm_arch_restore_guest_ctx(vcpu_t *vcpu)

@@ -515,7 +515,6 @@ static int vmm_exit_handler(vcpu_t *vcpu)
  * 读当前寄存器——在单 vCPU、且 VMM 与 guest 同核运行的 avatar 模型下等价。
  * 若将来支持 vCPU 跨核迁移，需改为在 vcpu_t 中保存/恢复这两个值。
  */
-#define VTIMER_PPI_IRQ      27
 #define CNTV_CTL_ENABLE     (1ULL << 0)
 #define CNTV_CTL_IMASK      (1ULL << 1)
 
@@ -547,13 +546,7 @@ static void aarch64_check_vtimer(vcpu_t *vcpu)
             if (inject_count > 0x10000)
                 (void)0;    /* vGIC 分层 dump 已收（排查完了，见 git 历史）*/
         }
-#if DRIVER_GIC_V3
-        vmm_vgic3_set_pending(&vcpu->vm->vgic3, (uint32_t)vcpu->vcpu_id,
-                              VTIMER_PPI_IRQ);
-#else
-        vmm_vgic_set_pending(&vcpu->vm->vgic, (uint32_t)vcpu->vcpu_id,
-                             VTIMER_PPI_IRQ);
-#endif
+        vmm_arch_irq_raise(vcpu, virq_line(VIRQ_VTIMER));
     }
 }
 
@@ -572,13 +565,7 @@ static void aarch64_check_vpl011_rx(vcpu_t *vcpu)
     if (!vpl011_rx_irq_asserted(vcpu->vm))
         return;
 
-#if DRIVER_GIC_V3
-    vmm_vgic3_set_pending(&vcpu->vm->vgic3, (uint32_t)vcpu->vcpu_id,
-                          VPL011_IRQ);
-#else
-    vmm_vgic_set_pending(&vcpu->vm->vgic, (uint32_t)vcpu->vcpu_id,
-                         VPL011_IRQ);
-#endif
+    vmm_arch_irq_raise(vcpu, virq_line(VIRQ_CONSOLE));
 }
 
 void vmm_arch_restore_guest_ctx(vcpu_t *vcpu)

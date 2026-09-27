@@ -8,6 +8,7 @@
 #define VMM_VGIC_H
 
 #include "types.h"
+#include "vmm_virq.h"   /* VIRQ_VTIMER */
 
 #define VGIC_MAX_IRQS   1024
 #define VGIC_MAX_WORDS  (VGIC_MAX_IRQS / 32)

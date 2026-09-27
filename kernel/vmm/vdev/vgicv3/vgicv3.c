@@ -445,6 +445,12 @@ void vmm_vgic3_sync_entry(vgic3_t *vgic, uint32_t vcpu_id)
      *
      * 装回去之后闭环就自洽了：guest EOI → 硬件清 LR、ELRSR 置位 →
      * 下次 sync_exit 的 "槽位已空" 分支 → clear_active。
+     *
+     * ⚠️ 这一段正是「中断接口只统一到线、不统一控制器」的理由（见
+     * include/vmm/vmm_virq.h §③）：sync_entry/sync_exit 是 vGIC 独有的
+     * 硬件协助阶段，PLIC/vLAPIC 没有对应物。若把它们塞进一张通用 ops 表，
+     * 缺的只是空实现，将来有人在那张表上写调用点会得到**静默无操作**
+     * 而不是编译错误 —— 这条不变量的成因就是「某个动作没做而没人报错」。
      */
     for (uint32_t word = 0; word < VGIC3_MAX_WORDS; word++) {
         uint32_t act = vmm_vgic3_active_word(vgic, vcpu_id, word);
@@ -559,5 +565,5 @@ void vmm_vgic3_sync_exit(vgic3_t *vgic, uint32_t vcpu_id)
 
 void vmm_vgic3_inject_timer(vgic3_t *vgic, uint32_t vcpu_id)
 {
-    vmm_vgic3_set_pending(vgic, vcpu_id, VGIC3_VTIMER_IRQ);
+    vmm_vgic3_set_pending(vgic, vcpu_id, VIRQ_VTIMER);
 }

@@ -291,10 +291,26 @@ static void vcpu_external_irq_on_entry(vcpu_t *vcpu)
 {
     /* 设备侧先同步进 PLIC：控制台 RX 有数据/待发送 → 置对应中断源 */
     if (vmm_console_irq_asserted(vcpu->vm))
-        vplic_set_pending(vcpu->vm, VMM_CONSOLE_IRQ);
+        vmm_arch_irq_raise(vcpu, virq_line(VIRQ_CONSOLE));
 
     uint32_t irq = vplic_next_deliverable(vcpu->vm, (uint32_t)vcpu->vcpu_id);
     hext_set_vs_external_irq(irq != 0);
+}
+
+/*
+ * vmm_arch_irq_raise — RISC-V 的「拉线」适配器（见 include/vmm/vmm_virq.h）
+ *
+ * PLIC 的 pending 是**源级全局**的：同一个位置进所有 context，可见性由每个
+ * context 自己的 enable/threshold 过滤（见 vplic.c 的说明）。所以这里**没有
+ * vcpu_id 这个维度** —— 不是省略，是语义上不存在。
+ */
+void vmm_arch_irq_raise(vcpu_t *vcpu, virq_t irq)
+{
+    if (!vcpu || !vcpu->vm)
+        return;
+
+    /* 不做任何使能判断：投递时的 enable/threshold 过滤在 vplic_next_deliverable 里 */
+    vplic_set_pending(vcpu->vm, irq.line);
 }
 
 /*

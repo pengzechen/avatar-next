@@ -161,7 +161,7 @@ static void vgic3r_write(mmio_device_t *dev, uint64_t off, uint8_t size,
             for (uint32_t bit = 0; bit < 32; bit++)
                 if (value32 & (1u << bit))
                     vmm_vgic3_set_enabled(vgic, (uint32_t)cpu, bit, 1);
-            if (value32 & (1u << VGIC3_VTIMER_IRQ))
+            if (value32 & (1u << VIRQ_VTIMER))
                 vmm_irq_route_set_vtimer_enabled(1);
             KLOG_DEBUG("[vgic3r] cpu%u ISENABLER0=0x%x\n", cpu, value32);
             return;
@@ -170,7 +170,7 @@ static void vgic3r_write(mmio_device_t *dev, uint64_t off, uint8_t size,
             for (uint32_t bit = 0; bit < 32; bit++)
                 if (value32 & (1u << bit))
                     vmm_vgic3_set_enabled(vgic, (uint32_t)cpu, bit, 0);
-            if (value32 & (1u << VGIC3_VTIMER_IRQ))
+            if (value32 & (1u << VIRQ_VTIMER))
                 vmm_irq_route_set_vtimer_enabled(0);
             return;
 

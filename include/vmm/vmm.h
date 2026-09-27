@@ -23,6 +23,7 @@
 #include "types.h"
 #include "arch.h"
 #include "vmm_mmio.h"
+#include "vmm_virq.h"     /* virq_t：设备中断线的架构无关命名 */
 
 /*
  * 中断控制器的头**只能出现在各自架构的守卫里** —— 共享头不该命名任何具体
@@ -607,6 +608,20 @@ void vmm_arch_save_guest_ctx(vcpu_t *vcpu);
  * 在这里设，必须在每次进 guest 前重设（见 docs/bugfix/SMP_HELPER_MODE_BUGFIX.md）。
  */
 int vmm_arch_vm_init(vm_t *vm);
+
+/*
+ * vmm_arch_irq_raise — 把一个设备的中断线接到本架构的投递机制上
+ *
+ * 这是「设备 → 线」的唯一出口。线的**含义由架构决定**（见 include/vmm/vmm_virq.h）：
+ *   aarch64 → vmm_vgic{,3}_set_pending(&vm->vgic{,3}, vcpu_id, irq.line)
+ *   riscv64 → vplic_set_pending(vm, irq.line)        （PLIC 没有 vcpu_id 这个维度）
+ *   x86_64  → 查 guest 编的 IO-APIC 重定向表拿 vector → vlapic_raise_irq
+ *
+ * ⚠️ **三个实现里不允许出现任何使能/门控判据**。LAPIC 在 raise 那一刻就判
+ * SVR 门控、GIC/PLIC 在投递时才判 enabled —— 这个差异是**可观测行为**
+ * （控制器关闭期间的拉线是否被记住），抽接口时不许拍平。
+ */
+void vmm_arch_irq_raise(vcpu_t *vcpu, virq_t irq);
 
 
 int vmm_run_vcpu(vcpu_t *vcpu);

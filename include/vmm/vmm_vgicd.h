@@ -21,6 +21,7 @@
 
 #include "vmm_mmio.h"
 #include "vmm_vgic.h"
+#include "vmm_virq.h"     /* VIRQ_VTIMER：guest 虚拟定时器的 PPI 号 */
 
 /* QEMU virt GICv2 分发器基址/大小 */
 #define VGICD_BASE   0x08000000ULL
@@ -30,8 +31,11 @@
 #define VGICD_MAX_IRQS   1024
 #define VGICD_MAX_VCPUS  8
 
-/* guest 虚拟定时器中断（PPI 27），对标 vgicd.rs 的 GUEST_VTIMER_IRQ */
-#define VGICD_VTIMER_IRQ   27
+/*
+ * guest 虚拟定时器中断 = PPI 27。从前这里有一份独立的 `VGICD_VTIMER_IRQ 27`
+ * （对标 vgicd.rs 的 GUEST_VTIMER_IRQ）—— 同一个号在仓库里有四份定义，
+ * 现在统一用 VIRQ_VTIMER（见 include/vmm/vmm_virq.h）。
+ */
 
 /*
  * vgicd_init — 初始化 GICD 模拟并注册到 MMIO 总线

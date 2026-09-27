@@ -24,7 +24,14 @@
 struct vgic;
 typedef struct vgic vgic_t;
 
-/* guest 虚拟定时器 PPI（与 vgic.c / el2_run.c 一致）*/
+/*
+ * **宿主**物理定时器 PPI 号。
+ *
+ * ⚠️ 值与 guest 侧的 VIRQ_VTIMER（见 vmm_virq.h）相同，但**属于不同的号空间**：
+ * 这个是宿主 GIC 的物理 PPI，那个是 guest 的 INTID。GICv2 路径靠「两者同号」
+ * 才能把宿主中断直接转成 guest 中断（见本文件顶部说明），但它们是两个概念 ——
+ * 别把这里的 27 换成 VIRQ_VTIMER。
+ */
 #define HOST_VTIMER_IRQ  27
 
 /*

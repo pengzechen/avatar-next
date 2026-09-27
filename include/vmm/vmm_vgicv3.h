@@ -25,6 +25,7 @@
 
 #include "types.h"
 #include "vmm_mmio.h"
+#include "vmm_virq.h"   /* VIRQ_VTIMER */
 
 /* ── 容量 ────────────────────────────────────────────────────── */
 #define VGIC3_MAX_IRQS   1024
@@ -41,8 +42,7 @@
 #define VGIC3R_STRIDE    0x20000ULL
 #define VGIC3R_SGI_OFF   0x10000ULL
 
-/* guest 虚拟定时器 PPI（与 vgicd.c / el2_run.c 一致）*/
-#define VGIC3_VTIMER_IRQ 27
+/* guest 虚拟定时器 PPI 27 —— 统一用 VIRQ_VTIMER（见 include/vmm/vmm_virq.h）*/
 
 /* 默认优先级：与 Linux 给 PPI/SGI 设的 0xA0 一致 */
 #define VGIC3_DEFAULT_PRIO 0xA0

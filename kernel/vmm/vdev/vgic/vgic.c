@@ -241,7 +241,7 @@ void vmm_vgic_eoi(vgic_t *vgic, uint32_t vcpu_id, uint32_t irq)
 
 void vmm_vgic_inject_timer(vgic_t *vgic, uint32_t vcpu_id)
 {
-    vmm_vgic_set_pending(vgic, vcpu_id, HOST_VTIMER_IRQ);
+    vmm_vgic_set_pending(vgic, vcpu_id, VIRQ_VTIMER);
     vmm_vgic_sync_entry(vgic, vcpu_id);
 }
 
