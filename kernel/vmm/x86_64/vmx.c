@@ -2630,9 +2630,22 @@ static void x86_console_irq_on_entry(vcpu_t *vcpu)
 void vmm_arch_restore_guest_ctx(vcpu_t *vcpu)
 {
     /*
-     * ── 先把本 vCPU 的 VMCS 装成"当前 VMCS" ──────────────────────
+     * ── ① 先让**这颗核**进入 VMX operation（VMXON 是每 CPU 一次的）──
      *
-     * ⚠️ **必须在最前面**：下面 vmx_inject_pending() 会用 vmcs_write() 写
+     * ⚠️ 必须在下面那步之前：VMCS 初始化里的 VMCLEAR/VMPTRLD 是 VMX 指令，
+     * 没开 VMX operation 直接 #UD。helper 模式下做 VMXON 的是 /bin/vmm-run
+     * 所在的核，而 vCPU 钉在 CPU0，**SMP>1 时不是同一颗** —— 实测就是
+     * `CPU exception #6 at RIP=vcpu_vmcs_init+0x156`（#UD），backtrace
+     * 指向 vmm_arch_restore_guest_ctx。vmm_arch_enter_guest() 里那次仍然保留
+     * （幂等：s_vmx_on[cpu] 查表），失败那条路由它去报。
+     */
+    if (vmx_global_init() != 0)
+        return;
+
+    /*
+     * ── ② 把本 vCPU 的 VMCS 装成"当前 VMCS" ──────────────────────
+     *
+     * ⚠️ **必须在 vmx_inject_pending() 之前**：那个函数会用 vmcs_write() 写
      * VM_ENTRY_INTR_INFO，而 VMREAD/VMWRITE 操作的永远是**本核当前装载的**
      * 那块 VMCS —— 不是"你想操作的那块"。
      *

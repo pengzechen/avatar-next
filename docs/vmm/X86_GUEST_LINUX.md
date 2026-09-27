@@ -1017,6 +1017,25 @@ VMCS 还是 vm1 的，于是 vm2 的中断信息被写进了 **vm1 的 VMCS**；
 提到 `vmm_arch_restore_guest_ctx()` 的**最前面**，保证注入那次 `vmcs_write`
 落在本 vCPU 的 VMCS 上。
 
+⚠️ **顺带踩到的第二个坑（SMP>1 才炸）**：`VMCLEAR`/`VMPTRLD` 是 VMX 指令，
+执行前必须让**这颗核**处于 VMX operation。而 VMXON 原本在
+`vmm_arch_enter_guest()` 的最上面 —— 把 VMCS 初始化提到 `restore` 之后就跑到
+它**前面**去了。SMP=1 时 helper 与 vCPU 同核（VMXON 早做过了），SMP>1 时
+vCPU 核还没开过 VMX operation，于是第一条 VMX 指令就是
+`CPU exception #6`（#UD）@ `vcpu_vmcs_init+0x156`，vCPU 任务当场死掉、
+guest 一个字节都不输出 —— 看起来"什么都没修好"。
+
+所以 `vmm_arch_restore_guest_ctx()` 现在是这个顺序，缺一不可：
+
+```
+① vmx_global_init()        // VMXON（每 CPU 一次，幂等）
+② vmcs_ready + VMPTRLD     // 本 vCPU 的 VMCS 成为"当前 VMCS"
+③ vlapic_timer_poll / console irq / take_pending
+④ vmx_inject_pending       // vmcs_write(VM_ENTRY_INTR_INFO) —— 必须落在 ② 那块上
+```
+
+`vmm_arch_enter_guest()` 里那次 `vmx_global_init()` 保留（幂等），失败那条路由它报。
+
 **回归门禁**：`tools/vmm_multivm_regress.sh` 的第 6 步（detach 两个之后
 `vmm-run` 附着回先启动的那个，往串口敲一句）。单 VM 门禁永远测不出这条。
 
