@@ -96,7 +96,7 @@
  */
 #define MAX_VMS    4
 
-/* VM 生命周期状态（vmm.c 的 vm_alloc/vm_free 维护）*/
+/* VM 生命周期状态（vm.c 的 vm_alloc/vm_free 维护）*/
 #define VM_FREE      0   /* 槽位可用                        */
 #define VM_LOADING   1   /* 正在加载镜像、建 stage-2        */
 #define VM_RUNNING   2   /* vCPU 任务在跑                   */
@@ -388,7 +388,7 @@ typedef struct vm {
     vcpu_t   vcpus[MAX_VCPUS];  /* 静态嵌入，不动态分配 */
     int      nr_vcpus;
 
-    /* ── VM 身份与生命周期（vmm.c 的静态池管理）───────────────── */
+    /* ── VM 身份与生命周期（vm.c 的静态池管理）───────────────── */
     uint32_t vmid;              /* 1..255，同时写进 VTTBR_EL2 的 VMID 域 */
     int      slot;              /* 静态池下标（也用于索引 stage-2 静态表）*/
     int      state;             /* VM_FREE / VM_LOADING / ...          */
@@ -497,7 +497,7 @@ typedef struct vm {
 
     /* VM-owned virtual interrupt controller and MMIO device state.
      * vgic（GICv2）与 vgic3（GICv3）只会用到一个，由 GIC=v2|v3 编译期二选一，
-     * 但两个字段都保留：vmm.c 里用 DRIVER_GIC_V3 分支。GICv3 的结构体
+     * 但两个字段都保留：kernel/vmm/aarch64/vm_init.c 里用 DRIVER_GIC_V3 分支。GICv3 的结构体
      * 只在 aarch64 + GIC=v3 时才嵌入，避免其它平台白扛 ~68KB。*/
     vgic_t vgic;
     mmio_bus_t mmio_bus_storage;
@@ -562,7 +562,7 @@ void set_stage2_pgd(uint64_t pgd_phys, uint32_t vmid);
 
 /* ── 架构钩子（每个架构各自实现）────────────────────────────── */
 /*
- * 由 vmm_run_vcpu（vmm.c）调用；每个架构在 arch/vmx.c 或 el2_run.c 中提供实现。
+ * 由 vmm_run_vcpu（vcpu.c）调用；每个架构在 arch/vmx.c 或 el2_run.c 中提供实现。
  *
  *   vmm_arch_restore_guest_ctx — 进入 guest 循环前恢复架构相关上下文
  *   vmm_arch_enter_guest       — 执行一次 guest 入口（eret/vmlaunch/vmresume）
@@ -580,9 +580,9 @@ int vmm_run_vcpu(vcpu_t *vcpu);
 
 int vm_create(vm_t *vm);
 
-/* ── VM 池（kernel/vmm/vmm.c）───────────────────────────────────
+/* ── VM 池（kernel/vmm/vm.c）───────────────────────────────────
  *
- * 从前内核里只能有一个 VM；现在是一个静态池，见 vmm.c 里那段注释。
+ * 从前内核里只能有一个 VM；现在是一个静态池，见 vm.c 里那段注释。
  * **并发规则：跨任务只传 vmid，不传 vm_t *，也不做引用计数** —— 谁要操作
  * 某个 VM 就现场 vm_get(vmid) 取一次、用完即放。
  */

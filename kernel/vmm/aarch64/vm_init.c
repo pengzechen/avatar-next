@@ -1,24 +1,20 @@
 /*
- * kernel/vmm/vmm.c — VM 管理与 vCPU 执行主循环
+ * kernel/vmm/aarch64/vm_init.c — AArch64 的 VM 初始化
  *
- * 架构无关层：vmm_run_vcpu 通过架构钩子驱动 guest 执行。
- * 各架构在 arch/el2_run.c 或 arch/vmx.c 中提供钩子实现：
- *   vmm_arch_restore_guest_ctx / vmm_arch_enter_guest
- *   vmm_arch_exit_handler       / vmm_arch_save_guest_ctx
+ * 从 vmm.c 搬过来的：那是「架构无关」的文件，却装着本架构 124 行的完整初始化
+ * （stage-2、MMIO 总线、vGIC、vPL011、vCPU 数组），而它的两个对等物
+ * （x86 的 vmx_vm_init / riscv 的 hext_vm_init）一直就在各自架构目录里。
+ *
+ * 由 vm.c 的 vm_create() 调用（Step 4b 之后统一成 vmm_arch_vm_init 钩子）。
+ * 本目录已被 Makefile 的 _KERNEL_ARCH_MODULES 对非 aarch64 整目录 filter-out，
+ * 所以外面那层 `#if ARCH_AARCH64` 是冗余的、已去掉。
  */
 
 #include "vmm/vmm.h"
 #include "vmm/vmm_mmio.h"
 #include "vmm/vmm_console.h"
-#if ARCH_AARCH64
-#include "vmm/vmm_irq_route.h"
-#endif
 #include "klog.h"
 #include "string.h"
-#include "task/switch.h"
-#include "task/sched.h"
-
-#if ARCH_AARCH64
 #include "aarch64/stage2.h"
 #include "vmm/vmm_vpl011.h"
 #if DRIVER_GIC_V3
@@ -133,103 +129,3 @@ int aarch64_vm_init(vm_t *vm)
               nr, vm->cfg.mem_base, vm->cfg.mem_size);
     return 0;
 }
-#endif /* ARCH_AARCH64 */
-
-
-/* ── VMM 主循环（架构无关）────────────────────────────────── */
-/*
- * vmm_run_vcpu — vCPU 执行主循环
- *
- * 通过架构钩子抽象 eret（AArch64）/ vmlaunch+vmresume（x86）差异。
- * 返回 0：guest 正常退出；-1：未处理 exit。
- */
-int vmm_run_vcpu(vcpu_t *vcpu)
-{
-    KLOG_INFO("[VMM] Starting vcpu%d\n", vcpu->vcpu_id);
-
-    while (1) {
-        /*
-         * 宿主请求停止（/dev/vmm 的 close）。
-         *
-         * 在循环顶部查而不是在别处：这里正好是「上一次 guest 已经退出、
-         * HCR_EL2 已被 el2_trap_exit 还原成 host 模式（TGE=1、VM=0）」
-         * 的状态，直接 return 不会把 Stage-2 或 guest 向量表留在生效状态。
-         */
-        if (vcpu->vm->stop_req) {
-            KLOG_INFO("[VMM] vcpu%d: stop requested, leaving guest loop\n",
-                      vcpu->vcpu_id);
-            return 0;
-        }
-
-        /*
-         * 主动让出 CPU。
-         *
-         * 必须有这个调用：guest 退出走的是 VMM 自己的 guest_vec_table，
-         * **不经过** sched_check_and_yield_from_trap() —— 那个钩子挂在宿主
-         * 正常异常向量表的返回路径上。所以 vCPU 任务在循环里从不进入调度器，
-         * 宿主其它任务会被完全饿死。实测症状：宿主 shell 里跑 /bin/vmm-run，
-         * helper 卡在启动 guest 的那次 write 之后就再也不动了（连它自己的
-         * banner 都打不出来），因为再也抢不到 cpu0。
-         *
-         * 位置与上面的停止检查相同：此刻上一次 guest 已退出、HCR_EL2 已被
-         * el2_trap_exit 还原成 host 模式，在这里切任务是安全的。
-         * sched_check_and_yield() 自己判 need_resched 与中断上下文，没有
-         * 待调度任务时只是一次廉价判断。
-         */
-        sched_check_and_yield();
-
-
-        uint64_t irq_flags = arch_irq_save();
-
-#if ARCH_AARCH64
-        /* 每轮进 guest 前重写本 VM 的 VTCR/VTTBR —— 本核可能刚跑过别的 VM
-         * 的 vCPU 任务（时间片轮转），不重写就会用错页表。这也是"挂起后
-         * 恢复不需要额外 stage-2 动作"的原因。*/
-        stage2_activate(&vcpu->vm->s2);
-#endif
-
-        /* 恢复 guest 上下文（AArch64: EL1 sysregs；x86: no-op）*/
-        vmm_arch_restore_guest_ctx(vcpu);
-
-        /* 进入 guest（AArch64: eret; x86: vmlaunch/vmresume）*/
-        int ok = vmm_arch_enter_guest(vcpu);
-        if (!ok) {
-            arch_irq_restore(irq_flags);
-            KLOG_ERROR("[VMM] vcpu%d: guest entry failed\n", vcpu->vcpu_id);
-            return -1;
-        }
-        vcpu->launched = 1;
-
-        /* 保存 guest 上下文，再处理可能会阻塞/调度/打印的 VM-exit。*/
-        vmm_arch_save_guest_ctx(vcpu);
-
-        arch_irq_restore(irq_flags);
-
-#if VMM_GUEST_LINUX_SUPPORTED
-        /* 每次回到宿主都顺手收一次控制台输入（见 vmm_console_pump）*/
-        vmm_console_pump(vcpu->vm);
-#endif
-
-        /* 处理 VM exit */
-        int ret = vmm_arch_exit_handler(vcpu);
-
-        switch (ret) {
-        case EL2_RESUME:
-            continue;
-        case EL2_VMEXIT:
-            KLOG_INFO("[VMM] vcpu%d: guest exited normally\n", vcpu->vcpu_id);
-            return 0;
-        case EL2_VMABORT:
-            KLOG_WARN("[VMM] vcpu%d: guest aborted\n", vcpu->vcpu_id);
-            return 0;
-        case EL2_VMSKIP:
-            continue;
-        case EL2_EXIT:
-        default:
-            KLOG_ERROR("[VMM] vcpu%d: unhandled exit, stopping VMM\n",
-                       vcpu->vcpu_id);
-            return -1;
-        }
-    }
-}
-

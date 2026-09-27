@@ -36,8 +36,9 @@ vgicr3.c   GICR（Redistributor）MMIO 模拟 —— 每核的 SGI/PPI
 
 集成点：
 
-- `kernel/vmm/vmm.c` —— `vmm_vgic3_init()` / `vgic3r_init()` / `vgic3d_init()` /
+- `kernel/vmm/aarch64/vm_init.c` —— `vmm_vgic3_init()` / `vgic3r_init()` / `vgic3d_init()` /
   `vmm_vgic3_hw_init()`，全部在 `#if DRIVER_GIC_V3` 下，与 v2 路径编译期二选一。
+  （从前这四处写在 `kernel/vmm/vmm.c` 里，那个文件已按对象拆掉。）
 - `kernel/vmm/aarch64/el2_run.c` —— 进 guest 前 `vmm_vgic3_sync_entry()`，退出后
   `vmm_vgic3_sync_exit()`，定时器到期时 `vmm_vgic3_set_pending(PPI 27)`。
 - `kernel/vmm/vdev/irq_route.c` —— GICv3 下**故意不注册**宿主 PPI 27，注入完全靠

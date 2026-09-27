@@ -2488,7 +2488,7 @@ static int vmx_exit_handler(vcpu_t *vcpu)
     }
 }
 
-/* ── x86 VM 初始化（由 vmm.c 中 vm_create 调用）──────────── */
+/* ── x86 VM 初始化（由 vm.c 中 vm_create 调用）──────────── */
 int vmx_vm_init(vm_t *vm)
 {
     int i;

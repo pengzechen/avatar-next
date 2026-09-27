@@ -52,7 +52,7 @@ kylin-x login:
 | 引导协议 | x0 = DTB 物理地址 | a0 = hartid，a1 = DTB 物理地址 |
 
 宿主侧的差异被收进 `include/vmm/vmm_console.h`：`/dev/vmm`（`vmm_dev.c`）和
-VMM 主循环（`vmm.c` 的 `vmm_console_pump`）只调这一组转发函数，不再写
+VMM 主循环（`vmm_console.c` 的 `vmm_console_pump`）只调这一组转发函数，不再写
 `#if ARCH_AARCH64`。加架构时改这一处即可。
 
 guest 内存布局在 `include/guest_loader.h`（按架构挑选），DTB 修补逻辑

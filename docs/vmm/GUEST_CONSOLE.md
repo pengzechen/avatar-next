@@ -2,7 +2,7 @@
 
 > 最后更新：2026-09-24
 > 相关代码：`kernel/vmm/vdev/vpl011.c`、`kernel/fs/pseudofs/vmm_dev.c`、
-> `apps/c/vmm_run.c`、`kernel/vmm/vmm.c`
+> `apps/c/vmm_run.c`、`kernel/vmm/vmm_console.c`
 
 ## 1. 两种模式
 
@@ -24,7 +24,7 @@ guest 侧看不出来：
 
 1. 宿主 tty 层 —— `signal_check_uart()`（`kernel/syscall/fs/tty.c`）在
    **每个 tick 的定时器 ISR 里**就把硬件 FIFO 抽干进 `g_uart_rb`；
-2. `vmm_console_pump()`（`kernel/vmm/vmm.c`）。
+2. `vmm_console_pump()`（`kernel/vmm/vmm_console.c`）。
 
 这两条路**没有任何仲裁**，谁先跑谁拿到字节。所以只要 helper 在场，
 就必须把 (2) 关掉，否则用户按键会被随机分给两条路。

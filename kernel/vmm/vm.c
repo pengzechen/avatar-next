@@ -9,7 +9,7 @@
  *
  * 不在这里的：
  *   - vCPU 内核任务（vcpu.c）—— 它只是**执行**这个 VM 的载体
- *   - 主循环 vmm_run_vcpu（vmm.c）
+ *   - 主循环 vmm_run_vcpu（vcpu.c）
  *   - 各架构的初始化实现（aarch64/vm_init.c、x86_64/vmx.c、riscv64/hext_run.c）
  *
  * ⚠️ 本文件不得依赖任何具体的中断控制器 —— 架构状态由 vm_t 里的守卫块承载，

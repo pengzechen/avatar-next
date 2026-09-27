@@ -17,8 +17,9 @@ Thread 3: u_loop           — Ring 3 用户进程（syscall 测试）
 
 ```
 include/x86_64/vmx.h            — VMX 常量、VMCS 字段编码、辅助类型
-include/vmm.h                   — vcpu_t 布局（x86_64 / AArch64 / stub）、架构钩子声明
-kernel/vmm/vmm.c                — 架构无关 vmm_run_vcpu 主循环 + vm_create/vcpu_task_create
+include/vmm/vmm.h               — vcpu_t 布局（x86_64 / AArch64 / stub）、架构钩子声明
+kernel/vmm/vcpu.c               — vmm_run_vcpu 主循环 + vcpu_task_create
+kernel/vmm/vm.c                 — VM 池 + 生命周期 + vm_create
 kernel/vmm/x86_64/vmx.c        — VMX 初始化、VMCS 管理、架构钩子实现
 kernel/vmm/x86_64/vmx_run.S    — VMLAUNCH / VMRESUME 汇编（guest GPR 保存/恢复）
 kernel/vmm/aarch64/el2_run.c   — AArch64 架构钩子实现（对比参考）
@@ -30,7 +31,7 @@ apps/x86_64/user_test.S        — Ring 3 用户态测试程序（syscall 测试
 
 ## 架构钩子接口
 
-`vmm.h` 声明四个架构钩子，由 `vmm_run_vcpu`（`vmm.c`）调用：
+`vmm.h` 声明四个架构钩子，由 `vmm_run_vcpu`（`vcpu.c`）调用：
 
 ```c
 void vmm_arch_restore_guest_ctx(vcpu_t *vcpu);
@@ -44,7 +45,7 @@ void vmm_arch_save_guest_ctx(vcpu_t *vcpu);
 | AArch64 | `aarch64/el2_run.c` | `eret` |
 | x86_64  | `x86_64/vmx.c`      | `vmlaunch` / `vmresume` |
 
-`vmm_run_vcpu` 主循环（`vmm.c`）：
+`vmm_run_vcpu` 主循环（`vcpu.c`）：
 
 ```
 restore_guest_ctx

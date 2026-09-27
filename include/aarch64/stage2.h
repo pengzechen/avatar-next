@@ -68,7 +68,7 @@
 #define VTTBR_VMID_SHIFT  48
 
 /* ── 多 VM 上限 ──────────────────────────────────────────── */
-/* 静态表按 slot 索引；vmm.c 里有 _Static_assert(MAX_VMS <= STAGE2_MAX_VMS) */
+/* 静态表按 slot 索引；include/vmm/vmm.h 里有 _Static_assert(MAX_VMS <= STAGE2_MAX_VMS) */
 #define STAGE2_MAX_VMS   4
 
 /*

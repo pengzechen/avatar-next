@@ -50,7 +50,7 @@
 #define HGATP_PPN_MASK        ((1ULL << 44) - 1)
 
 /* ── 多 VM 上限 ───────────────────────────────────────────── */
-/* 静态表按 slot 索引；vmm.c 里有 _Static_assert(MAX_VMS <= GSTAGE_MAX_VMS) */
+/* 静态表按 slot 索引；include/vmm/vmm.h 里有 _Static_assert(MAX_VMS <= GSTAGE_MAX_VMS) */
 #define GSTAGE_MAX_VMS        4
 
 /*
