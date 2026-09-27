@@ -23,10 +23,16 @@
 #include "types.h"
 #include "arch.h"
 #include "vmm_mmio.h"
-#include "vmm_vgic.h"
 
+/*
+ * 中断控制器的头**只能出现在各自架构的守卫里** —— 共享头不该命名任何具体
+ * 控制器（第二轮做中断抽象时，这里会换成唯一的 vmm_vintc.h）。
+ * ⚠️ vmm_vgic.h 从前是无条件包含的，于是 GICv2 的定义被拖进包含本头的
+ * 全部 TU（三个架构都算）。
+ */
 #if ARCH_AARCH64
 #include "aarch64/stage2.h"     /* s2_ctx_t：vm_t 里每个 VM 一份 stage-2 */
+#include "vmm/vmm_vgic.h"       /* vgic_t：GICv2 后端 */
 #include "vmm/vmm_vpl011.h"     /* vpl011_state_t：每个 VM 一份控制台状态 */
 #endif
 #if ARCH_AARCH64 && DRIVER_GIC_V3
@@ -495,21 +501,35 @@ typedef struct vm {
     uint8_t guest_stack[MAX_VCPUS][VMM_GUEST_STACK_SIZE];
 #endif
 
-    /* VM-owned virtual interrupt controller and MMIO device state.
-     * vgic（GICv2）与 vgic3（GICv3）只会用到一个，由 GIC=v2|v3 编译期二选一，
-     * 但两个字段都保留：kernel/vmm/aarch64/vm_init.c 里用 DRIVER_GIC_V3 分支。GICv3 的结构体
-     * 只在 aarch64 + GIC=v3 时才嵌入，避免其它平台白扛 ~68KB。*/
-    vgic_t vgic;
+    /*
+     * MMIO 总线 —— 三个架构都有（设备型号不同，总线本身是同一样东西）。
+     * 放守卫块外面：它们不是架构私有状态。
+     */
     mmio_bus_t mmio_bus_storage;
     mmio_bus_t *mmio_bus;
+
+#if ARCH_AARCH64
+    /*
+     * AArch64 的虚拟中断控制器 + 两个 MMIO 设备对象（dev->priv 指向上面的状态）。
+     *
+     * ⚠️ 这一块从前**没有守卫**，于是 x86/riscv 的 vm_t 里白扛一份 vgic_t
+     *（含 dist_regs[4096]，6 KB 量级）和三个 mmio_device_t。它们只在
+     * kernel/vmm/aarch64/ 下被引用，收进守卫是纯收益。
+     *
+     * vgic（GICv2）与 vgic3（GICv3）只会用到一个，由 GIC=v2|v3 编译期二选一，
+     * 但两个字段都保留：kernel/vmm/aarch64/vm_init.c 里用 DRIVER_GIC_V3 分支。
+     * GICv3 的结构体只在 GIC=v3 时才嵌入，避免 v2 路径白扛 ~68KB。
+     */
+    vgic_t vgic;
     mmio_device_t vpl011_dev;
     mmio_device_t vgicd_dev;
     mmio_device_t vgicc_dev;
-#if ARCH_AARCH64 && DRIVER_GIC_V3
+#if DRIVER_GIC_V3
     vgic3_t vgic3;
     mmio_device_t vgic3d_dev;
     mmio_device_t vgic3r_dev;
 #endif
+#endif /* ARCH_AARCH64 */
 } vm_t;
 
 /*
