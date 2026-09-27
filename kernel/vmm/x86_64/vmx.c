@@ -2630,6 +2630,78 @@ static void x86_console_irq_on_entry(vcpu_t *vcpu)
 void vmm_arch_restore_guest_ctx(vcpu_t *vcpu)
 {
     /*
+     * ── 先把本 vCPU 的 VMCS 装成"当前 VMCS" ──────────────────────
+     *
+     * ⚠️ **必须在最前面**：下面 vmx_inject_pending() 会用 vmcs_write() 写
+     * VM_ENTRY_INTR_INFO，而 VMREAD/VMWRITE 操作的永远是**本核当前装载的**
+     * 那块 VMCS —— 不是"你想操作的那块"。
+     *
+     * 单 VM 时当前 VMCS 恰好一直是它的，所以看不出问题；**多 VM 共用一颗核
+     * 时就不是了**：vm1 的 vCPU 任务退出 → 让给 vm2 → vm2 进来时当前 VMCS
+     * 还是 vm1 的，于是 vm2 的中断信息被写进了 **vm1 的 VMCS**；而
+     * vlapic_accept_interrupt() 已经把 ISR 位置在了 vm2 的 vLAPIC 上。
+     * 结果：那个向量既没送到 vm2，vm1 也不会去 EOI 它 —— ISR 位**永久**卡住，
+     * 之后 vlapic_take_pending()（irr & ~isr）再也挑不出这个向量。
+     *
+     * 实测症状正是这样：起第二个 VM 之后，第一个 VM 的定时器在第 501 次
+     * 触发处停住，LAPIC 快照是 `isr[7]=0x1000`（236 = LOCAL_TIMER_VECTOR）
+     * 而 `irr` 全 0 —— 输入能进 guest（那是 IO-APIC 的另一条向量），但
+     * guest 拿不到 tick，tty 的 workqueue 不跑，于是"能输入、没回显"。
+     *
+     * 把装载挪到这里，restore 之后的每一次 vmcs_write/vmcs_read（注入、
+     * ENTRY-DBG、vmlaunch 本身）都作用在正确的 VMCS 上。
+     */
+    {
+    vmcs_t *v = (vmcs_t *)g_vmcs_storage[vcpu_slot(vcpu)];
+    uint64_t vmcs_pa = virt_to_phys(v);
+
+    /*
+     * ── VMCS 初始化搬到**跑 vCPU 的这颗核**上做（每个 VM 一次）────────
+     *
+     * vmx_vcpu_setup() 内部就是 `VMCLEAR → VMPTRLD → 写全部字段`，这正是
+     * 唯一正确的顺序。问题只在于**它在哪颗核上跑**：
+     *
+     *   - VMCLEAR 只对**本核 current 的** VMCS 有效。原路径在 /bin/vmm-run
+     *     所在核（helper 核）上 clear，随后 vCPU 核一 VMPTRLD，那块 VMCS
+     *     就"搬"过去了 —— 再在 helper 核上 clear 是空操作，launch state
+     *     永远停在 launched ⇒ 第二次启动 VMLAUNCH 报 inst_error=0x4
+     *     （VMLAUNCH with non-clear VMCS），guest 一个字节都不输出。
+     *   - VMCLEAR 会把这 VMCS 复位成"上次退出时的快照"。所以它必须发生在
+     *     写字段**之前**：先 clear 再 setup 不能反。（曾经把 clear 单独挪到
+     *     这里、排在 setup 之后 —— 结果是刚写好的入口状态被快照覆盖，guest
+     *     从上次断点继续跑、内存却已被 memset 清零 ⇒ 连第一次启动都 triple
+     *     fault。）
+     *
+     * 所以：在这里（vCPU 核上）整个重做一遍，vmcs_ready 保证每个 VM 生命
+     * 周期只做一次。HLT yield 那条路径也会 clear + launched=0，但它清的是
+     * 运行中的 VMCS，快照即最新状态，不需要（也不该）重做初始化。
+     *
+     * 只对 Linux 引导路径做：玩具 guest（VMM_TEST）的入口在 vmx_vcpu_setup()
+     * 的 entry 参数里，这里拿不到，且它每次 QEMU 只启动一次、没有这个坑。
+     */
+    if (!vcpu->vmcs_ready && vcpu->g_boot_linux) {
+        vmx_vcpu_setup(vcpu, NULL);     /* clear → load → 写全部字段 */
+        vcpu->launched   = 0;           /* 刚 clear 过 ⇒ 必须走 VMLAUNCH */
+        vcpu->vmcs_ready = 1;
+    }
+
+    /*
+     * 无论走上面哪条路，进 guest 之前都必须让**本核的 current VMCS** 是这一块：
+     *   - vmx_vcpu_setup() 结尾还有一次 flush 用的 VMCLEAR（把 VMWRITE 的结果
+     *     真正写回内存），执行完 VMCS 就不再是 current；
+     *   - HLT yield 那条路径也会 VMCLEAR。
+     * 少了这一下，后面的 VMREAD/VMLAUNCH 全在"没有 current VMCS"的状态下执行，
+     * 症状极具误导性：ENTRY-DBG 读出来的是栈上的垃圾、inst_error 是个非法值
+     * （实测 0x4400），而日志里只会看到一句 guest entry failed。
+     */
+    if (vmcs_load_pa(vmcs_pa)) {
+        KLOG_ERROR("[VMX] vmptrld failed in vmm_arch_enter_guest (vcpu%d pa=0x%llx)\n",
+                   vcpu->vcpu_id, vmcs_pa);
+        return 0;
+    }
+    }
+
+    /*
      * 每次进入 guest 前投递积压的事件（中断/异常）。
      * guest 屏蔽着中断时 vmx_inject_pending 会改成开 interrupt-window
      * exiting，等它开中断的那一刻(exit 7)再回来投。
@@ -2742,55 +2814,11 @@ int vmm_arch_enter_guest(vcpu_t *vcpu)
     if (vmx_global_init() != 0)
         return 0;
 
-    /* 重新装载该 vCPU 的 VMCS（yield 后调度回来时需要）*/
-    vmcs_t *v = (vmcs_t *)g_vmcs_storage[vcpu_slot(vcpu)];
-    uint64_t vmcs_pa = virt_to_phys(v);
-
     /*
-     * ── VMCS 初始化搬到**跑 vCPU 的这颗核**上做（每个 VM 一次）────────
-     *
-     * vmx_vcpu_setup() 内部就是 `VMCLEAR → VMPTRLD → 写全部字段`，这正是
-     * 唯一正确的顺序。问题只在于**它在哪颗核上跑**：
-     *
-     *   - VMCLEAR 只对**本核 current 的** VMCS 有效。原路径在 /bin/vmm-run
-     *     所在核（helper 核）上 clear，随后 vCPU 核一 VMPTRLD，那块 VMCS
-     *     就"搬"过去了 —— 再在 helper 核上 clear 是空操作，launch state
-     *     永远停在 launched ⇒ 第二次启动 VMLAUNCH 报 inst_error=0x4
-     *     （VMLAUNCH with non-clear VMCS），guest 一个字节都不输出。
-     *   - VMCLEAR 会把这 VMCS 复位成"上次退出时的快照"。所以它必须发生在
-     *     写字段**之前**：先 clear 再 setup 不能反。（曾经把 clear 单独挪到
-     *     这里、排在 setup 之后 —— 结果是刚写好的入口状态被快照覆盖，guest
-     *     从上次断点继续跑、内存却已被 memset 清零 ⇒ 连第一次启动都 triple
-     *     fault。）
-     *
-     * 所以：在这里（vCPU 核上）整个重做一遍，vmcs_ready 保证每个 VM 生命
-     * 周期只做一次。HLT yield 那条路径也会 clear + launched=0，但它清的是
-     * 运行中的 VMCS，快照即最新状态，不需要（也不该）重做初始化。
-     *
-     * 只对 Linux 引导路径做：玩具 guest（VMM_TEST）的入口在 vmx_vcpu_setup()
-     * 的 entry 参数里，这里拿不到，且它每次 QEMU 只启动一次、没有这个坑。
+     * ⚠️ VMCS 的装载（含 vmcs_ready 那次初始化）**不在这里** —— 它被提到了
+     * vmm_arch_restore_guest_ctx() 的最前面。见那边的注释：本函数之前会有
+     * 一次 vmcs_write()（中断注入），那次写必须落在**本 vCPU 的** VMCS 上。
      */
-    if (!vcpu->vmcs_ready && vcpu->g_boot_linux) {
-        vmx_vcpu_setup(vcpu, NULL);     /* clear → load → 写全部字段 */
-        vcpu->launched   = 0;           /* 刚 clear 过 ⇒ 必须走 VMLAUNCH */
-        vcpu->vmcs_ready = 1;
-    }
-
-    /*
-     * 无论走上面哪条路，进 guest 之前都必须让**本核的 current VMCS** 是这一块：
-     *   - vmx_vcpu_setup() 结尾还有一次 flush 用的 VMCLEAR（把 VMWRITE 的结果
-     *     真正写回内存），执行完 VMCS 就不再是 current；
-     *   - HLT yield 那条路径也会 VMCLEAR。
-     * 少了这一下，后面的 VMREAD/VMLAUNCH 全在"没有 current VMCS"的状态下执行，
-     * 症状极具误导性：ENTRY-DBG 读出来的是栈上的垃圾、inst_error 是个非法值
-     * （实测 0x4400），而日志里只会看到一句 guest entry failed。
-     */
-    if (vmcs_load_pa(vmcs_pa)) {
-        KLOG_ERROR("[VMX] vmptrld failed in vmm_arch_enter_guest (vcpu%d pa=0x%llx)\n",
-                   vcpu->vcpu_id, vmcs_pa);
-        return 0;
-    }
-
     vmx_refresh_host_state(vcpu);
 
 

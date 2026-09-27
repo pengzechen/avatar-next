@@ -54,7 +54,7 @@ qemu-system-x86_64 -enable-kvm -cpu host -m 1G -display none -serial stdio \
 
 | | aarch64 / riscv64 | x86_64 |
 |---|---|---|
-| guest 物理基址 | 与宿主物理地址**同一块**（identity） | **GPA ≠ HPA**：guest 必须从物理 0 开始，宿主另找窗口（`GUEST_X86_HPA_BASE`） |
+| guest 物理基址 | 与宿主物理地址**同一块**（identity） | **GPA ≠ HPA**：guest 必须从物理 0 开始，由 EPT 逐页翻译到 PMM 现分配的宿主页（§11） |
 | 引导协议 | raw Image + DTB | bzImage + zeropage/E820 + 长模式入口 |
 | 控制台 | MMIO PL011 / MMIO 16550 | **PIO 16550 @0x3F8**（I/O bitmap 拦） |
 | 中断 | vGIC / vPLIC | vLAPIC（xAPIC MMIO，无 x2APIC）+ MSR load/save list |
@@ -984,7 +984,43 @@ bzImage 更是改成**按引导协议的两段直接装到最终地址**（`gues
 （`MP_FP_GPA` 0x9FC00 减 `MP_TABLE_GPA` 0x9F800），不是表后面 —— 写错位置同样
 会在 `smp_check_mpc` 上炸。
 
-### 11.4 调试这类问题的顺手工具
+### 11.4 ★★★ 多 VM 共用一颗核：`vmcs_write` 写的是**当前** VMCS
+
+`VMREAD`/`VMWRITE` 操作的永远是**本核当前装载的那块** VMCS —— 不是"你想操作
+的那块"。而中断注入发生在 `vmm_arch_enter_guest()` 的 `VMPTRLD` **之前**：
+
+```
+vmm_arch_restore_guest_ctx(vcpu):
+    vlapic_timer_poll / x86_console_irq_on_entry   → 只动软件状态，没事
+    vmx_inject_pending(vcpu)                       → vmcs_write(VM_ENTRY_INTR_INFO)  ★
+    ...
+vmm_arch_enter_guest(vcpu):
+    vmcs_load_pa(vmcs_pa)                          → 到这里才 VMPTRLD
+```
+
+单 VM 时当前 VMCS 恰好一直是它的，所以看不出问题。**两颗 vCPU 任务共用一颗核
+（本项目默认就是）时就不是了**：vm1 的 vCPU 退出 → 让给 vm2 → vm2 进来时当前
+VMCS 还是 vm1 的，于是 vm2 的中断信息被写进了 **vm1 的 VMCS**；而
+`vlapic_accept_interrupt()` 已经把 ISR 位置在了 **vm2 的 vLAPIC** 上。结果那个
+向量既没送达、也永远不会被 EOI —— ISR 位**永久**卡住，之后
+`vlapic_take_pending()`（`irr & ~isr`）再也挑不出它。
+
+**症状很有欺骗性**：起第二个 VM 之后，第一个 VM **能输入、没回显**。输入是好的
+（IO-APIC 走的是另一条向量，照样投递，8250 驱动的 ISR 照常读 RBR），但 tick
+没了 → tty 的 flip workqueue 不跑 → 不回显、命令也不执行。而 `Ctrl+]` / `Ctrl+[`
+照常工作（那是 helper 自己的键），所以看起来"只是串口坏了"。
+
+判据（本机实测的快照）：`isr[7] = 0x00001000`（236 = `LOCAL_TIMER_VECTOR`）
+而 `irr` 全 0 —— ISR 里有位、IRR 里没位，就是它。
+
+**修法**：把 `vmcs_ready` 初始化 + `VMPTRLD` 整块从 `vmm_arch_enter_guest()`
+提到 `vmm_arch_restore_guest_ctx()` 的**最前面**，保证注入那次 `vmcs_write`
+落在本 vCPU 的 VMCS 上。
+
+**回归门禁**：`tools/vmm_multivm_regress.sh` 的第 6 步（detach 两个之后
+`vmm-run` 附着回先启动的那个，往串口敲一句）。单 VM 门禁永远测不出这条。
+
+### 11.5 调试这类问题的顺手工具
 
 `vmx.c` 里那段 `[RIP-SAMPLE]` 采样（默认 `if (0 && ...)` 关着）：需要时把条件
 改成 `(n % 20000) == 0` 就能看到 guest 还在不在动、卡在哪个 exit reason。

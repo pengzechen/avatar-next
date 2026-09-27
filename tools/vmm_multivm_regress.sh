@@ -6,6 +6,11 @@
 #   2. Ctrl+[（0x1b）     → detach：guest 留在后台，helper 退出，回到宿主 shell
 #   3. vmm-run -n         → **新建** vm2（不是接入 vm1）
 #   4. 两个 guest 都还活着：两行 uname、两个 vcpu0 任务
+#   5. 再 detach，然后 vmm-run **附着回先启动的那个**，往串口敲一句看有没有回显
+#
+# 第 5 步看着多余，其实是多 VM 专属的一类回归的**唯一**探针：单 VM 永远测不出
+# 「两颗 vCPU 共用一颗核时，本核当前的 VMCS 属于谁」这类问题。历史上就栽过一次
+# —— 症状是"能输入、没回显"（见下面第 6 步的注释）。
 #
 # 判据用 guest 自己的 uname（"Linux (none) 6.2.15"）—— 宿主日志里不会有。
 #
@@ -96,15 +101,38 @@ echo "4) 启动 vm2（vmm-run -n = 强制新建）..."
 printf 'vmm-run -n\n' >&3
 wait_count "$GST" 2 220 F && ok "vm2 也跑到 uname" || bad "vm2 没起来"
 
-echo "5) 两个 VM 各自的分配/销毁记录："
+echo "5) detach vm2..."
+printf '\033' >&3
+sleep 1
+
+# ── 6. 附着回 **先启动的那个** VM，并验证串口真的通 ──────────────
+#
+# ⚠️ 这一步是回归门禁里最容易被忽略、也最容易坏的一环。历史 bug：
+# x86 的 vmx_inject_pending() 用 vmcs_write() 写 VM_ENTRY_INTR_INFO，而
+# VMREAD/VMWRITE 操作的是**本核当前装载的** VMCS —— 中断注入发生在
+# vmm_arch_enter_guest() 的 VMPTRLD **之前**，于是两颗 vCPU 任务共用一颗核
+# 时，vm2 的中断信息被写进了 **vm1 的 VMCS**；而 vlapic_accept_interrupt()
+# 已经把 ISR 位置在了 vm2 的 vLAPIC 上。结果那个向量（236 = LAPIC timer）
+# 既没送达、也永远不会被 EOI —— ISR 位永久卡住，guest 拿不到 tick，
+# tty 的 workqueue 不跑。**症状是"能输入、没回显"**：输入确实进了 guest
+# （IO-APIC 的另一条向量是好的），但屏幕上什么都没发生。
+# 单 VM 时当前 VMCS 恰好一直是它的，所以这条只有多 VM 才测得出来。
+echo "6) 再 vmm-run（附着回**先启动的**那个 VM）..."
+printf 'vmm-run\n' >&3
+sleep 5
+printf 'echo ATTACH_BACK_OK\n' >&3
+wait_count 'ATTACH_BACK_OK' 1 30 F && ok "附着回老 VM 后串口可用" \
+                                  || bad "附着回老 VM 后串口不通（能输入没回显？）"
+
+echo "7) 两个 VM 各自的分配/销毁记录："
 grep -aE 'vm[0-9]+ allocated|vm[0-9]+ freed|task created' "$LOG" \
     | sed 's/\x1b\[[0-9;]*[a-zA-Z]//g' | tr -d '\r' | tail -8 | sed 's/^/   /'
 
 N_GST=$(grep -acF "$GST" "$LOG")
 N_TASK=$(grep -ac 'vcpu0 task created' "$LOG")
-echo "6) 终端上 uname 出现 $N_GST 次（要 >= 2）"
+echo "8) 终端上 uname 出现 $N_GST 次（要 >= 2）"
 [ "$N_GST" -ge 2 ] && ok "两个 guest 都在跑" || bad "只有 $N_GST 个 guest"
-echo "7) 宿主侧 vcpu0 任务数 $N_TASK（要 == 2）"
+echo "9) 宿主侧 vcpu0 任务数 $N_TASK（要 == 2）"
 [ "$N_TASK" -eq 2 ] && ok "两个 vCPU 任务" || bad "vCPU 任务数 $N_TASK"
 
 echo "== $ARCH 多 VM：通过 $PASS / 失败 $FAIL =="
