@@ -89,6 +89,8 @@ struct vm;
 typedef struct vm vm_t;
 
 void     vlapic_init(vm_t *vm, uint32_t vcpu_id);
+/* 归还本 VM 的全部 LAPIC 槽位（由 vmm_arch_vm_destroy → vm_free 调用）。幂等。*/
+void     vlapic_destroy(vm_t *vm);
 int      vlapic_mmio_handle(vm_t *vm, uint64_t addr, int is_write, uint8_t size,
                             uint64_t *val);
 

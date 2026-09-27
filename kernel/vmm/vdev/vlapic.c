@@ -75,21 +75,55 @@
 #define ICR_TRIGGER_LEVEL  (1u << 15)
 
 /*
- * 状态在 vm_t 里（vlapic_state_t，每 VM 一份），这里只放取用它的助手。
+ * ── 每 VM × 每 vCPU 一份的设备槽位 ──────────────────────────────────
  *
  * ⚠️ 从前这两行是：
  *     static vlapic_t g_vlapic[MAX_VCPUS];
  *     static int      s_enabled;
  * 按 **vcpu_id** 索引 —— 而 vcpu_id 是每个 VM 内部从 0 开始的编号，于是两个
  * VM 的 vcpu0 指向同一份 LAPIC。第二个 VM 一 init 就把第一个 VM 的寄存器清零，
- * 之后两个 VM 的 LAPIC 访问互相踩。现在按 VM 索引。
+ * 之后两个 VM 的 LAPIC 访问互相踩。后来嵌进 vm_t（每 VM 一份），现在按
+ * (slot, vcpu_id) 索引成静态池 —— 与 stage2/gstage/ept 同模式。
  *
+ * 注意本设备**没有 mmio_device_t**（不走 MMIO 总线，由 vmx.c 直接调
+ * vlapic_mmio_handle），也**没有锁**（只有 guest 一条访问路径，与 vGIC 后端
+ * 同理）—— 所以槽位比 vpl011/uart16550 少两样东西。
+ */
+typedef struct {
+    struct vm      *owner;   /* of() 的守卫，见下 */
+    vlapic_state_t  st;
+} vlapic_slot_t;
+
+static vlapic_slot_t g_vlapic[MAX_VMS][VLAPIC_MAX_VCPUS];
+
+/*
+ * 取 (vm, vcpu_id) 的 LAPIC 状态。
+ *
+ * 除范围检查还要比对 owner —— vm_free 会把整个 vm_t memset 成 0（含 slot），
+ * 并发窗口里已释放的 vm 指针会索引到 0 号槽（**另一个 VM** 的 LAPIC）。
+ * owner 由 init 写入、destroy 清成 NULL。
+ *
+ * 返回 NULL 时调用方必须能容忍（见各调用点的守卫）。
+ */
+static vlapic_state_t *vlapic_of(const vm_t *vm, uint32_t vcpu_id)
+{
+    vlapic_slot_t *d;
+
+    if (!vm || (unsigned)vm->slot >= (unsigned)MAX_VMS)
+        return NULL;
+    d = &g_vlapic[vm->slot][vcpu_id & (VLAPIC_MAX_VCPUS - 1)];
+    if (d->owner != vm)
+        return NULL;
+    return &d->st;
+}
+
+/*
  * 运行期访问统一落在 vcpu0：本 VMM 的 INIT/SIPI 是空实现（见文件头），
  * guest DTB 里也只有一个 cpu@0，所以 nr_vcpus 恒为 1。
  */
 static inline vlapic_state_t *vlapic_cur(vm_t *vm)
 {
-    return &vm->vlapic[0];
+    return vlapic_of(vm, 0);
 }
 
 /* ── 时间源 ─────────────────────────────────────────────────
@@ -155,7 +189,7 @@ void vlapic_accept_interrupt(vm_t *vm, uint32_t vector, int level_triggered)
 {
     vlapic_state_t *v = vlapic_cur(vm);
 
-    if (vector == 0 || vector > 255)
+    if (!v || vector == 0 || vector > 255)
         return;
     v->isr[vector / 32] |= (1u << (vector % 32));
     if (level_triggered)
@@ -250,6 +284,8 @@ int vlapic_timer_poll(vm_t *vm)
     vlapic_state_t *v = vlapic_cur(vm);
     int fired = 0;
 
+    if (!v)
+        return 0;
     if (!v->enabled || !(v->r[VLAPIC_REG_SVR] & SVR_ENABLE))
         return 0;                           /* APIC 被软件关掉：什么都不投 */
     if (!v->t_active)
@@ -266,7 +302,15 @@ int vlapic_timer_poll(vm_t *vm)
 
 void vlapic_init(vm_t *vm, uint32_t vcpu_id)
 {
-    vlapic_state_t *v = &vm->vlapic[vcpu_id & (VLAPIC_MAX_VCPUS - 1)];
+    vlapic_slot_t *d;
+    vlapic_state_t *v;
+
+    if (!vm || (unsigned)vm->slot >= (unsigned)MAX_VMS)
+        return;
+    /* 直接取槽位：of() 要校验 owner，而 owner 正是本函数要写的 */
+    d = &g_vlapic[vm->slot][vcpu_id & (VLAPIC_MAX_VCPUS - 1)];
+    d->owner = vm;
+    v = &d->st;
 
     memset(v, 0, sizeof(*v));
 
@@ -290,14 +334,40 @@ void vlapic_init(vm_t *vm, uint32_t vcpu_id)
     v->enabled = 1;
 }
 
+/*
+ * vlapic_destroy — 归还本 VM 的全部 LAPIC 槽位
+ *（由 vmm_arch_vm_destroy → vm_free 调用）
+ *
+ * 幂等、且对"从未 init 过的槽"安全（槽位是全零 static）。
+ * 本设备没有锁，所以不需要 vpl011_destroy 里那条"永不 memset 锁"的约束。
+ */
+void vlapic_destroy(vm_t *vm)
+{
+    uint32_t i;
+
+    if (!vm || (unsigned)vm->slot >= (unsigned)MAX_VMS)
+        return;
+    for (i = 0; i < VLAPIC_MAX_VCPUS; i++) {
+        vlapic_slot_t *d = &g_vlapic[vm->slot][i];
+
+        memset(&d->st, 0, sizeof(d->st));
+        d->owner = NULL;    /* of() 随即失效 */
+    }
+}
+
 uint64_t vlapic_apic_base(vm_t *vm)
 {
-    return vlapic_cur(vm)->apic_base;
+    vlapic_state_t *v = vlapic_cur(vm);
+
+    return v ? v->apic_base : 0;
 }
 
 void vlapic_set_apic_base(vm_t *vm, uint64_t val)
 {
-    vlapic_cur(vm)->apic_base = val;
+    vlapic_state_t *v = vlapic_cur(vm);
+
+    if (v)
+        v->apic_base = val;
 }
 
 /*
@@ -316,6 +386,8 @@ void vlapic_raise_irq(vm_t *vm, uint32_t vector)
 {
     vlapic_state_t *v = vlapic_cur(vm);
 
+    if (!v)
+        return;
     if (vector < 16 || vector > 255)
         return;                          /* 0-15 是异常，不能当普通中断投 */
     if (!v->enabled || !(v->r[VLAPIC_REG_SVR] & SVR_ENABLE))
@@ -345,6 +417,8 @@ int vlapic_take_pending(vm_t *vm, uint32_t *vec)
 {
     vlapic_state_t *v = vlapic_cur(vm);
 
+    if (!v)
+        return 0;
     for (int i = 7; i >= 0; i--) {
         uint32_t cand = v->irr[i] & ~v->isr[i];
 
@@ -361,7 +435,8 @@ int vlapic_take_pending(vm_t *vm, uint32_t *vec)
 int vlapic_sw_enabled(vm_t *vm)
 {
     vlapic_state_t *v = vlapic_cur(vm);
-    return v->enabled && (v->r[VLAPIC_REG_SVR] & SVR_ENABLE) != 0;
+
+    return v && v->enabled && (v->r[VLAPIC_REG_SVR] & SVR_ENABLE) != 0;
 }
 
 /* ── MMIO 访问 ────────────────────────────────────────────── */
@@ -506,6 +581,8 @@ int vlapic_mmio_handle(vm_t *vm, uint64_t addr, int is_write, uint8_t size,
     uint32_t  off = (uint32_t)(addr & 0xfff);
     uint32_t  idx = off >> 4;            /* 16 字节步长 → 寄存器编号 */
 
+    if (!v)
+        return 0;                        /* 未处理 —— 调用方按未映射设备兜底 */
     if (off & 0xf)
         return 0;                        /* 非对齐访问：不是 LAPIC 语义 */
 

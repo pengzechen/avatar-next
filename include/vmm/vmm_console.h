@@ -42,14 +42,13 @@
  * vmm_console_init — 初始化虚拟控制台并注册到 MMIO 总线
  * 返回 0 成功。
  */
-static inline int vmm_console_init(vm_t *vm, mmio_device_t *dev, mmio_bus_t *bus)
+static inline int vmm_console_init(vm_t *vm, mmio_bus_t *bus)
 {
+    /* 两个控制台的状态与设备对象都已搬进各自 .c 的静态池，不再收 dev */
 #if ARCH_AARCH64
-    /* vpl011 的状态与设备对象已搬进 vpl011.c 的静态池，不再收 dev */
-    (void)dev;
     return vpl011_init(vm, bus);
 #else
-    return uart16550_init(vm, dev, bus);
+    return uart16550_init(vm, bus);
 #endif
 }
 

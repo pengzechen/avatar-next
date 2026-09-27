@@ -1736,9 +1736,9 @@ int x86_pio_handle(vcpu_t *vcpu, uint32_t port, int is_in, uint32_t bytes,
     case 0x3f8: case 0x3f9: case 0x3fa: case 0x3fb:
     case 0x3fc: case 0x3fd: case 0x3fe: case 0x3ff:
         if (is_in)
-            *val = uart16550_port_read(&vcpu->vm->uart_dev, port - 0x3f8);
+            *val = uart16550_port_read(uart16550_dev(vcpu->vm), port - 0x3f8);
         else
-            uart16550_port_write(&vcpu->vm->uart_dev, port - 0x3f8, (uint8_t)*val);
+            uart16550_port_write(uart16550_dev(vcpu->vm), port - 0x3f8, (uint8_t)*val);
         return 1;
 
     /* ── 8259 PIC 桩 ──
@@ -2522,8 +2522,11 @@ int vmm_arch_vm_init(vm_t *vm)
                         vm->cfg.mem_base, vm->cfg.mem_size);
 
         mmio_bus_init(&vm->mmio_bus_storage);
-        if (uart16550_init(vm, &vm->uart_dev, &vm->mmio_bus_storage) != 0)
-            KLOG_WARN("[VMX] uart16550 registration failed\n");
+        if (uart16550_init(vm, &vm->mmio_bus_storage) != 0) {
+            /* 注册失败 = 静默死控制台，必须让建 VM 失败（同 aarch64/riscv）*/
+            KLOG_ERROR("[VMX] uart16550 registration failed\n");
+            return -1;
+        }
         vm->mmio_bus = &vm->mmio_bus_storage;
 
         KLOG_INFO("[VMX] EPT enabled (mem=0x%llx+0x%llx)\n",
@@ -2602,7 +2605,8 @@ int vmm_arch_vm_init(vm_t *vm)
  */
 void vmm_arch_vm_destroy(vm_t *vm)
 {
-    (void)vm;
+    vlapic_destroy(vm);
+    uart16550_destroy(vm);
 }
 
 /*

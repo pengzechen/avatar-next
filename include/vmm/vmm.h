@@ -42,14 +42,14 @@
 
 #if ARCH_RISCV64
 #include "riscv64/gstage.h"     /* gstage_ctx_t：vm_t 里每个 VM 一份 G-stage */
-#include "vmm/vmm_vplic.h"      /* vplic_state_t：每个 VM 一份 vPLIC */
+#include "vmm/vmm_vplic.h"      /* vplic_init/destroy：状态已搬进 vplic.c 的池 */
 #endif
 /*
  * uart16550 是 riscv64 与 x86_64 共用的 guest 控制台型号（两个架构都编
  * kernel/vmm/vdev/vuart16550.c），所以状态字段两个架构都要有。
  */
 #if ARCH_RISCV64 || ARCH_X86_64
-#include "vmm/vmm_uart16550.h"  /* uart16550_state_t：每个 VM 一份控制台状态 */
+#include "vmm/vmm_uart16550.h"  /* uart16550_init/destroy：状态已搬进 vuart16550.c 的池 */
 #endif
 
 #if ARCH_X86_64
@@ -435,18 +435,10 @@ typedef struct vm {
 
 #if ARCH_RISCV64 || ARCH_X86_64
     /*
-     * uart16550 控制台状态（两个架构共用同一份设备模型）。
-     *
-     * 从前这是一对文件级 static（g_uart16550 + g_uart16550_lock）—— 整机
-     * 只有一份，于是第二个 VM 的 uart16550_init() 一句 memset 就把第一个 VM
-     * 的 RX/TX FIFO 清空，两个 VM 从此抢同一个控制台。现在每 VM 一份。
-     * 与 aarch64 侧 vpl011 的处理完全对称。
+     * 控制台设备状态（uart16550_state_t）、它的锁、以及设备对象**不在这里**
+     * —— 它们已按 vm->slot 搬进 kernel/vmm/vdev/vuart16550.c 的静态池。
+     * 见该文件顶部 uart16550_slot_t 的说明。
      */
-    uart16550_state_t uart16550;
-    spinlock_noirq_t  uart16550_lock;
-
-    /* 控制台设备对象本身（dev->priv 指向上面那份状态）。*/
-    mmio_device_t     uart_dev;
 #endif
 
 #if ARCH_X86_64
@@ -457,13 +449,9 @@ typedef struct vm {
     ept_ctx_t ept;
 
     /*
-     * 每 VM 的 vLAPIC（按 vcpu_id 索引）。
-     *
-     * ⚠️ 从前是 `static vlapic_t g_vlapic[MAX_VCPUS]`，按 vcpu_id 索引 ——
-     * 而 vcpu_id 是每个 VM 内部从 0 开始的，于是两个 VM 的 vcpu0 指向同一份
-     * LAPIC。见 include/vmm/vmm_vlapic.h 的说明。
+     * vLAPIC 的状态**不在这里** —— 它已按 (vm->slot, vcpu_id) 搬进
+     * kernel/vmm/vdev/vlapic.c 的二维静态池。见该文件顶部 vlapic_slot_t。
      */
-    vlapic_state_t vlapic[MAX_VCPUS];
 
     /*
      * 传统芯片组桩（PIC / IO-APIC / PIT / 端口 0x61）。
@@ -483,9 +471,10 @@ typedef struct vm {
     gstage_ctx_t gstage;
 
     /* 每 VM 一份 vPLIC（从前是 vplic.c 里的一个 g_vplic 全局）。*/
-    vplic_state_t    vplic;
-    spinlock_noirq_t vplic_lock;
-    mmio_device_t    plic_dev;
+    /*
+     * vPLIC 的状态、锁与设备对象**不在这里** —— 它们已按 vm->slot 搬进
+     * kernel/vmm/vdev/vplic.c 的静态池。见该文件顶部 vplic_slot_t。
+     */
 
     /*
      * hext_vcpu_setup() 给 guest 用的栈。

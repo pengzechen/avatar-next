@@ -59,7 +59,10 @@ typedef struct vm vm_t;
  * vplic_init — 初始化虚拟 PLIC 并注册到 MMIO 总线
  * 状态取自 vm->vplic（dev->priv 会指过去）。返回 0 成功。
  */
-int vplic_init(vm_t *vm, mmio_device_t *dev, mmio_bus_t *bus, uint32_t nr_vcpus);
+int vplic_init(vm_t *vm, mmio_bus_t *bus, uint32_t nr_vcpus);
+
+/* 归还本 VM 的槽位（由 vmm_arch_vm_destroy → vm_free 调用）。幂等。*/
+void vplic_destroy(vm_t *vm);
 
 /* 使某中断源挂起（设备注入入口）*/
 void vplic_set_pending(vm_t *vm, uint32_t irq);

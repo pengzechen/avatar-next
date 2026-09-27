@@ -25,10 +25,45 @@
  */
 
 #include "vmm/vmm_uart16550.h"
-#include "vmm/vmm.h"        /* vm_t：uart16550_state_t 的宿主 */
+#include "vmm/vmm.h"        /* vm_t：只为 slot 与 console_owned，设备状态已不在里面 */
 #include "klog.h"
 #include "string.h"
 #include "spinlock.h"
+
+/*
+ * ── 每 VM 一份的设备槽位 ─────────────────────────────────────────────
+ *
+ * 从前状态与锁都嵌在 vm_t 里，本文件通篇写 `vm->uart16550*`。现在按
+ * vm->slot 索引成静态池，与 stage2 / gstage / ept 同模式（vpl011.c 亦同）。
+ *
+ * 锁**跟着状态一起进槽位**：本设备有两条访问路径（guest MMIO + 宿主侧
+ * push_rx/tx_pop），必须加锁。`dev->priv` 仍指向 &d->st（语义不变），
+ * 包装器用 container_of 找回。
+ */
+typedef struct {
+    uart16550_state_t st;
+    spinlock_noirq_t  lock;   /* 从前是 vm->uart16550_lock */
+    mmio_device_t     dev;    /* 从前是 vm->uart_dev */
+} uart16550_slot_t;
+
+static uart16550_slot_t g_uart16550[MAX_VMS] __attribute__((aligned(64)));
+
+/*
+ * 取本 VM 的槽位。除范围检查还要比对 st.owner —— vm_free 会把整个 vm_t
+ * memset 成 0（含 slot），并发窗口里已释放的 vm 指针会索引到 0 号槽
+ * （另一个 VM 的控制台）。owner 由 init 写入、destroy 清成 NULL。
+ */
+static uart16550_slot_t *uart16550_of(const vm_t *vm)
+{
+    uart16550_slot_t *d;
+
+    if (!vm || (unsigned)vm->slot >= (unsigned)MAX_VMS)
+        return NULL;
+    d = &g_uart16550[vm->slot];
+    if (d->st.owner != vm)
+        return NULL;
+    return d;
+}
 
 /* ── 16550 寄存器偏移 ─────────────────────────────────────── */
 #define UART_RBR_THR_DLL   0x00
@@ -67,13 +102,14 @@
 #define RX_FIFO_SIZE   UART16550_RX_FIFO_SIZE
 #define TX_FIFO_SIZE   UART16550_TX_FIFO_SIZE
 
-/* ── 状态与锁的取用（每个 VM 一份）─────────────────────────── */
+/* ── 状态与锁的取用（每 VM 一份槽位）───────────────────────── */
 
 /*
- * MMIO 回调只有 dev->priv（→ state），没有 vm —— state->owner 就是回指。
- * 这两个宏把"从 state 拿锁"这件事写在一处，免得每个回调各写一遍强制转换。
+ * MMIO 回调只有 dev->priv（→ state），用 container_of 拿回槽位之后，
+ * 锁就在槽位里 —— 不再需要"经 state->owner 回到 vm 再取锁"那条链
+ *（那条链在 owner 还没设时是 NULL 解引用）。
  */
-#define UART_LOCK(s)   (&(s)->owner->uart16550_lock)
+#define UART_LOCK(d)   (&(d)->lock)
 
 static int rx_irq_asserted_locked(const uart16550_state_t *s)
 {
@@ -86,52 +122,77 @@ static int rx_irq_asserted_locked(const uart16550_state_t *s)
 /* ── 公开注入接口（宿主 → guest）───────────────────────────── */
 void uart16550_push_rx(vm_t *vm, uint8_t c)
 {
-    uart16550_state_t *s = &vm->uart16550;
+    uart16550_slot_t *d = uart16550_of(vm);
+    uart16550_state_t *s;
     uint64_t flags;
 
-    spin_lock_irqsave(&vm->uart16550_lock, &flags);
+    if (!d)
+        return;
+    s = &d->st;
+
+    spin_lock_irqsave(&d->lock, &flags);
     if (s->rx_count >= RX_FIFO_SIZE) {
         s->rx_drops++;
-        spin_unlock_irqrestore(&vm->uart16550_lock, flags);
+        spin_unlock_irqrestore(&d->lock, flags);
         return;
     }
     s->rx_fifo[s->rx_head] = c;
     s->rx_head = (s->rx_head + 1) % RX_FIFO_SIZE;
     s->rx_count++;
-    spin_unlock_irqrestore(&vm->uart16550_lock, flags);
+    spin_unlock_irqrestore(&d->lock, flags);
 }
 
 int uart16550_irq_asserted(vm_t *vm)
 {
-    uart16550_state_t *s = &vm->uart16550;
+    uart16550_slot_t *d = uart16550_of(vm);
+    uart16550_state_t *s;
     uint64_t flags;
     int asserted;
 
-    spin_lock_irqsave(&vm->uart16550_lock, &flags);
+    if (!d)
+        return 0;
+    s = &d->st;
+
+    spin_lock_irqsave(&d->lock, &flags);
     asserted = rx_irq_asserted_locked(s);
-    spin_unlock_irqrestore(&vm->uart16550_lock, flags);
+    spin_unlock_irqrestore(&d->lock, flags);
     return asserted;
 }
 
 void uart16550_rx_flush(vm_t *vm)
 {
-    uart16550_state_t *s = &vm->uart16550;
+    uart16550_slot_t *d = uart16550_of(vm);
+    uart16550_state_t *s;
     uint64_t flags;
 
-    spin_lock_irqsave(&vm->uart16550_lock, &flags);
+    if (!d)
+        return;
+    s = &d->st;
+
+    spin_lock_irqsave(&d->lock, &flags);
     s->rx_head  = 0;
     s->rx_tail  = 0;
     s->rx_count = 0;
     s->rx_drops = 0;
-    spin_unlock_irqrestore(&vm->uart16550_lock, flags);
+    spin_unlock_irqrestore(&d->lock, flags);
 }
 
 void uart16550_tx_set_enabled(vm_t *vm, int enabled)
 {
-    uart16550_state_t *s = &vm->uart16550;
+    uart16550_slot_t *d = uart16550_of(vm);
+    uart16550_state_t *s;
     uint64_t flags;
 
-    spin_lock_irqsave(&vm->uart16550_lock, &flags);
+    if (!d) {
+        /* 设备还没 init（vmm_dev.c 在 vm_create 之前就会调这里）——
+         * 归属标志在 vm_t 里，直接写即可，不能因此漏掉。*/
+        if (vm)
+            vm->console_owned = enabled ? 1 : 0;
+        return;
+    }
+    s = &d->st;
+
+    spin_lock_irqsave(&d->lock, &flags);
     vm->console_owned = enabled ? 1 : 0;
     if (!enabled) {
         /* 关通道时清空 TX 环：剩下的字节是上一个 guest 的，别再放给下一个 */
@@ -139,47 +200,60 @@ void uart16550_tx_set_enabled(vm_t *vm, int enabled)
         s->tx_tail  = 0;
         s->tx_count = 0;
     }
-    spin_unlock_irqrestore(&vm->uart16550_lock, flags);
+    spin_unlock_irqrestore(&d->lock, flags);
 }
 
 int uart16550_tx_channel_enabled(vm_t *vm)
 {
-    uart16550_state_t *s = &vm->uart16550;
+    uart16550_slot_t *d = uart16550_of(vm);
     uint64_t flags;
     int enabled;
 
-    spin_lock_irqsave(&vm->uart16550_lock, &flags);
+    /* 归属标志在 vm_t 里，设备未 init 时也要能读（vmm_dev.c 的早期调用）*/
+    if (!d)
+        return vm ? vm->console_owned : 0;
+    spin_lock_irqsave(&d->lock, &flags);
     enabled = vm->console_owned;
-    spin_unlock_irqrestore(&vm->uart16550_lock, flags);
+    spin_unlock_irqrestore(&d->lock, flags);
     return enabled;
 }
 
 int uart16550_tx_pop(vm_t *vm, uint8_t *c)
 {
-    uart16550_state_t *s = &vm->uart16550;
+    uart16550_slot_t *d = uart16550_of(vm);
+    uart16550_state_t *s;
     uint64_t flags;
     int got = 0;
 
-    spin_lock_irqsave(&vm->uart16550_lock, &flags);
+    if (!c || !d)
+        return 0;
+    s = &d->st;
+
+    spin_lock_irqsave(&d->lock, &flags);
     if (s->tx_count > 0) {
         *c = s->tx_fifo[s->tx_tail];
         s->tx_tail = (s->tx_tail + 1) % TX_FIFO_SIZE;
         s->tx_count--;
         got = 1;
     }
-    spin_unlock_irqrestore(&vm->uart16550_lock, flags);
+    spin_unlock_irqrestore(&d->lock, flags);
     return got;
 }
 
 int uart16550_tx_has_data(vm_t *vm)
 {
-    uart16550_state_t *s = &vm->uart16550;
+    uart16550_slot_t *d = uart16550_of(vm);
+    uart16550_state_t *s;
     uint64_t flags;
     int has;
 
-    spin_lock_irqsave(&vm->uart16550_lock, &flags);
+    if (!d)
+        return 0;
+    s = &d->st;
+
+    spin_lock_irqsave(&d->lock, &flags);
     has = s->tx_count > 0;
-    spin_unlock_irqrestore(&vm->uart16550_lock, flags);
+    spin_unlock_irqrestore(&d->lock, flags);
     return has;
 }
 
@@ -216,6 +290,8 @@ static void uart_put_char(uart16550_state_t *s, uint8_t c)
 static uint64_t uart16550_read(mmio_device_t *dev, uint64_t off, uint8_t size)
 {
     uart16550_state_t *s = (uart16550_state_t *)dev->priv;
+    /* priv 仍指向 st（语义不变），锁在包装器里 —— 用 container_of 找回 */
+    uart16550_slot_t  *d = container_of(s, uart16550_slot_t, st);
     uint64_t flags;
     uint64_t ret = 0;
     int dlab;
@@ -223,7 +299,7 @@ static uint64_t uart16550_read(mmio_device_t *dev, uint64_t off, uint8_t size)
     if (size != 1 && size != 4)
         return 0;
 
-    spin_lock_irqsave(UART_LOCK(s), &flags);
+    spin_lock_irqsave(UART_LOCK(d), &flags);
     dlab = (s->lcr & LCR_DLAB) != 0;
 
     switch (off) {
@@ -272,7 +348,7 @@ static uint64_t uart16550_read(mmio_device_t *dev, uint64_t off, uint8_t size)
     default:       ret = 0; break;
     }
 
-    spin_unlock_irqrestore(UART_LOCK(s), flags);
+    spin_unlock_irqrestore(UART_LOCK(d), flags);
     return ret;
 }
 
@@ -280,6 +356,7 @@ static void uart16550_write(mmio_device_t *dev, uint64_t off, uint8_t size,
                             uint64_t value)
 {
     uart16550_state_t *s = (uart16550_state_t *)dev->priv;
+    uart16550_slot_t  *d = container_of(s, uart16550_slot_t, st);
     uint8_t v = (uint8_t)value;
     uint64_t flags;
     int dlab;
@@ -287,7 +364,7 @@ static void uart16550_write(mmio_device_t *dev, uint64_t off, uint8_t size,
     if (size != 1 && size != 4)
         return;
 
-    spin_lock_irqsave(UART_LOCK(s), &flags);
+    spin_lock_irqsave(UART_LOCK(d), &flags);
     dlab = (s->lcr & LCR_DLAB) != 0;
 
     switch (off) {
@@ -312,7 +389,7 @@ static void uart16550_write(mmio_device_t *dev, uint64_t off, uint8_t size,
     default: break;
     }
 
-    spin_unlock_irqrestore(UART_LOCK(s), flags);
+    spin_unlock_irqrestore(UART_LOCK(d), flags);
 }
 
 static const mmio_dev_ops_t g_uart16550_ops = {
@@ -333,11 +410,14 @@ static const mmio_dev_ops_t g_uart16550_ops = {
  */
 void uart16550_putchar(vm_t *vm, uint8_t c)
 {
+    uart16550_slot_t *d = uart16550_of(vm);
     uint64_t flags;
 
-    spin_lock_irqsave(&vm->uart16550_lock, &flags);
-    uart_put_char(&vm->uart16550, c);
-    spin_unlock_irqrestore(&vm->uart16550_lock, flags);
+    if (!d)
+        return;
+    spin_lock_irqsave(&d->lock, &flags);
+    uart_put_char(&d->st, c);
+    spin_unlock_irqrestore(&d->lock, flags);
 }
 
 /* ── 端口 I/O 包装 ──────────────────────────────────────────
@@ -347,7 +427,7 @@ void uart16550_putchar(vm_t *vm, uint8_t c)
  * 同一份状态机（TX/RX 环形缓冲、IIR/LSR 逻辑）而不是再写一份。
  * 见 kernel/vmm/x86_64/vmx.c 的 x86_pio_handle()。
  *
- * 这两个不接 vm：状态在 dev->priv 里，锁再从 state->owner 回指拿。
+ * 这两个不接 vm：状态在 dev->priv 里，锁用 container_of 从槽位拿。
  */
 uint64_t uart16550_port_read(mmio_device_t *dev, uint64_t off)
 {
@@ -359,21 +439,64 @@ void uart16550_port_write(mmio_device_t *dev, uint64_t off, uint8_t value)
     uart16550_write(dev, off, 1, value);
 }
 
-int uart16550_init(vm_t *vm, mmio_device_t *dev, mmio_bus_t *bus)
+int uart16550_init(vm_t *vm, mmio_bus_t *bus)
 {
-    if (!vm || !dev || !bus)
+    uart16550_slot_t *d;
+
+    /* 设备对象在池里，不再由调用方传进来 */
+    if (!vm || !bus || (unsigned)vm->slot >= (unsigned)MAX_VMS)
         return -1;
+    d = &g_uart16550[vm->slot];
 
     /*
-     * 整片清零是安全的：控制台归属（从前叫 state.tx_channel）现在住在
-     * vm->console_owned，不在设备状态里，所以不再需要"先存后恢复"那一套。
+     * 只清状态与设备对象，**不碰锁**（见 uart16550_destroy）。
+     *
+     * 整片清零 state 本身仍是安全的：控制台归属（从前叫 state.tx_channel）
+     * 住在 vm->console_owned，不在设备状态里，所以不需要"先存后恢复"那一套。
      * 见 include/vmm/vmm_uart16550.h 里 state 定义下方的说明。
      */
-    memset(&vm->uart16550, 0, sizeof(vm->uart16550));
-    vm->uart16550.owner = vm;
+    memset(&d->st, 0, sizeof(d->st));
+    d->st.owner = vm;      /* of() 靠它认出"这个槽位属于谁" */
 
-    dev->ops  = &g_uart16550_ops;
-    dev->priv = &vm->uart16550;
+    d->dev.ops  = &g_uart16550_ops;
+    d->dev.priv = &d->st;
 
-    return mmio_bus_register(bus, dev);
+    return mmio_bus_register(bus, &d->dev);
+}
+
+/*
+ * uart16550_dev — 取本 VM 的控制台设备对象
+ *
+ * 给 x86 的 PIO 路径用：它不走 MMIO 总线（IN/OUT 由 VM-exit 的 qualification
+ * 直接给出端口号），所以要自己拿设备对象去调 uart16550_port_read/write。
+ * 设备对象在池里，调用方不再能从 vm_t 拿到它。
+ */
+mmio_device_t *uart16550_dev(vm_t *vm)
+{
+    uart16550_slot_t *d = uart16550_of(vm);
+
+    return d ? &d->dev : NULL;
+}
+
+/*
+ * uart16550_destroy — 归还本 VM 的槽位（由 vmm_arch_vm_destroy → vm_free 调用）
+ *
+ * 三条硬要求（与 vpl011_destroy 同）：幂等、对"从未 init 过的槽"安全、
+ * **永不 memset 锁对象**（清零一个正被持有的锁 = 凭空放锁）。
+ * 必须在 g_vm_pool_lock 外面调用 —— 它靠自己的锁串行化。
+ */
+void uart16550_destroy(vm_t *vm)
+{
+    uart16550_slot_t *d;
+    uint64_t flags;
+
+    if (!vm || (unsigned)vm->slot >= (unsigned)MAX_VMS)
+        return;
+    d = &g_uart16550[vm->slot];
+
+    spin_lock_irqsave(&d->lock, &flags);
+    memset(&d->st, 0, sizeof(d->st));   /* 含 st.owner —— of() 随即失效 */
+    d->dev.ops  = NULL;
+    d->dev.priv = NULL;
+    spin_unlock_irqrestore(&d->lock, flags);
 }

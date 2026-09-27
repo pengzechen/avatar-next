@@ -232,11 +232,16 @@ int vmm_arch_vm_init(vm_t *vm)
 
         /* 建立 MMIO 总线并注册虚拟 16550A 控制台 + 虚拟 PLIC */
         mmio_bus_init(&vm->mmio_bus_storage);
-        if (vmm_console_init(vm, &vm->uart_dev, &vm->mmio_bus_storage) != 0)
-            KLOG_WARN("[HEXT] console vdev registration failed\n");
-        if (vplic_init(vm, &vm->plic_dev, &vm->mmio_bus_storage,
-                       (uint32_t)nr) != 0)
-            KLOG_WARN("[HEXT] vplic registration failed\n");
+        if (vmm_console_init(vm, &vm->mmio_bus_storage) != 0) {
+            /* 注册失败 = 静默死控制台，必须让建 VM 失败（同 aarch64）*/
+            KLOG_ERROR("[HEXT] console vdev registration failed\n");
+            return -1;
+        }
+        if (vplic_init(vm, &vm->mmio_bus_storage, (uint32_t)nr) != 0) {
+            /* 注册失败 = 静默死设备，必须让建 VM 失败（同控制台）*/
+            KLOG_ERROR("[HEXT] vplic registration failed\n");
+            return -1;
+        }
         vm->mmio_bus = &vm->mmio_bus_storage;
 
         KLOG_INFO("[HEXT] vm%u: G-stage isolation enabled (mem=0x%llx+0x%llx)\n",
@@ -257,13 +262,12 @@ int vmm_arch_vm_init(vm_t *vm)
 /*
  * vmm_arch_vm_destroy — 与 vmm_arch_vm_init 严格逆序
  *
- * 本架构目前还没有池化的设备：uart16550 / vplic 的状态仍在 vm_t 里，
- * 由 vm_free 的 memset 顺带清掉，所以这里暂时无事可做。等它们搬进静态池
- * 之后在这里补（顺序与 init 相反：vplic 先于 uart16550）。
+ * 顺序与 init 相反：init 是 uart16550 → vplic，这里是 vplic → uart16550。
  */
 void vmm_arch_vm_destroy(vm_t *vm)
 {
-    (void)vm;
+    vplic_destroy(vm);
+    uart16550_destroy(vm);
 }
 
 /* ================================================================
