@@ -1018,7 +1018,7 @@ static int vmx_global_init(void)
 
     /*
      * IA32_FEATURE_CONTROL 也是**每个逻辑处理器一份**的（KVM 里就是每个 vCPU
-     * 一份）。原来只有 vmx_check_support() 在 vmx_vm_init() 里使能过一次，
+     * 一份）。原来只有 vmx_check_support() 在 vmm_arch_vm_init() 里使能过一次，
      * 那是在 helper 的核上 —— 于是只有那颗核被使能：
      *   SMP=1：helper 与 vCPU 同核，看不出来；
      *   SMP=2：vCPU 所在核的 vmxon 被 KVM 判为「未使能」，直接 #GP
@@ -1087,7 +1087,7 @@ static void vmcs_init_ctrl(int want_ept)
      * 转发），放开之后绝大多数交给硬件直接处理。它要求 EPT 已启用。
      *
      * ⚠️ CPU_EPT 必须跟着 want_ept，不能只看能力位：
-     * vmx_vm_init 只在 vm->cfg.mem_size != 0 时才写 EPT_POINTER。
+     * vmm_arch_vm_init 只在 vm->cfg.mem_size != 0 时才写 EPT_POINTER。
      * 若这里按能力位无条件开 EPT，而 EPTP 还是 0（玩具测试就是这条路），
      * 硬件会让 guest 的**每次取指**都报 EPT violation（exit 48），
      * 而 exit 48 的处理是「解码不成就跳过指令」—— 结果 guest 在乱跑，
@@ -1560,7 +1560,7 @@ static int vcpu_vmcs_init(vcpu_t *vcpu, void (*entry)(void))
  * `static unsigned n` + `n <= 25` 限流的 —— 第一次启动就用掉了全部配额，
  * 第二次启动的 exit 详情**一次都没打**，于是「崩之前 guest 在干什么」
  * 完全看不到。这里用环形缓冲，绕开"次数配额"这种一次性的诊断方式。
- * 每次 vmx_vm_init() 清零（和 vCPU 状态同生命周期）。
+ * 每次 vmm_arch_vm_init() 清零（和 vCPU 状态同生命周期）。
  */
 #define VMM_EXIT_TRACE_MAX 32
 static struct {
@@ -1570,7 +1570,7 @@ static struct {
 } g_exit_trace[MAX_VMS * MAX_VCPUS][VMM_EXIT_TRACE_MAX];
 static uint32_t g_exit_trace_n[MAX_VMS * MAX_VCPUS];  /* 下一个写入位置 */
 
-/* 入口状态诊断的 per-vCPU 计数（每次 vmx_vm_init 清零）。
+/* 入口状态诊断的 per-vCPU 计数（每次 vmm_arch_vm_init 清零）。
  * 早先这里是 `static unsigned n` —— 第一次启动就把配额用光，第二次启动
  * 一条都不打，正好把最需要看的那次盖住了。 */
 static uint32_t g_entry_dbg_n[MAX_VMS * MAX_VCPUS];
@@ -2489,7 +2489,7 @@ static int vmx_exit_handler(vcpu_t *vcpu)
 }
 
 /* ── x86 VM 初始化（由 vm.c 中 vm_create 调用）──────────── */
-int vmx_vm_init(vm_t *vm)
+int vmm_arch_vm_init(vm_t *vm)
 {
     int i;
     int nr = vm->cfg.nr_vcpus;

@@ -244,7 +244,7 @@ void rv_gstage_activate(const gstage_ctx_t *g)
      *
      * 本函数现在**每次进 guest 前**都会被调一次（见 hext_run.c 的
      * vmm_arch_restore_guest_ctx）—— 因为 hgatp 是 per-hart 的，而
-     * hext_vm_init() 是在 helper（/bin/vmm-run）所在的 hart 上跑的。若每次
+     * vmm_arch_vm_init() 是在 helper（/bin/vmm-run）所在的 hart 上跑的。若每次
      * 都无条件写，顺带的 hfence.gvma 会把整个 G-stage TLB 刷掉，进 guest
      * 的成本白白翻倍。
      *

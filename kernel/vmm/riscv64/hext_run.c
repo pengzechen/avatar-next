@@ -8,7 +8,7 @@
  *   vmm_arch_save_guest_ctx     — guest 退出后清理（当前无操作）
  *
  * 以及 RISC-V VMM 初始化：
- *   hext_vm_init(vm_t *)        — 检查 H-ext 支持，配置 hedeleg/hideleg/hstatus
+ *   vmm_arch_vm_init(vm_t *)        — 检查 H-ext 支持，配置 hedeleg/hideleg/hstatus
  *   hext_vcpu_setup(vcpu_t *, entry) — 初始化 vcpu 软件 VMCS
  *
  * 特权级关系：
@@ -52,7 +52,7 @@ static int hext_check_support(void)
 {
     /*
      * 先打一行再读 —— 万一读炸了，这行就是日志里的最后一句，
-     * 配合紧随其后的 backtrace（会指向 hext_vm_init）足以定位。
+     * 配合紧随其后的 backtrace（会指向 vmm_arch_vm_init）足以定位。
      * 没有 H 扩展时读 hstatus 必触发 illegal instruction，而 S-mode
      * 没有任何办法捕获它（内核的异常处理只会 panic），所以只能这样。
      */
@@ -73,7 +73,7 @@ static int hext_check_support(void)
  * ── 每 VM 的 MMIO 总线、虚拟设备与 guest 栈 ────────────────
  *
  * 这三样从前都是文件级 static（g_rv_mmio_bus / g_rv_uart_dev / g_rv_plic_dev
- * / g_guest_stack），整机只有一份 —— 第二个 VM 的 hext_vm_init() 会在同一个
+ * / g_guest_stack），整机只有一份 —— 第二个 VM 的 vmm_arch_vm_init() 会在同一个
  * 总线上重复注册设备、覆盖第一个 VM 的设备实例。现在它们都住在 vm_t 里
  * （见 include/vmm/vmm.h 的 ARCH_RISCV64 段）：
  *
@@ -126,8 +126,8 @@ int hext_vcpu_setup(vcpu_t *vcpu, void (*entry)(void))
     return 0;
 }
 
-/* ── hext_vm_init：VM 初始化（检查 H-ext，配置全局 hstatus）── */
-int hext_vm_init(vm_t *vm)
+/* ── vmm_arch_vm_init：VM 初始化（检查 H-ext，配置全局 hstatus）── */
+int vmm_arch_vm_init(vm_t *vm)
 {
     int nr = vm->cfg.nr_vcpus;
     int i;
@@ -300,7 +300,7 @@ static void vcpu_external_irq_on_entry(vcpu_t *vcpu)
 /*
  * hext_per_hart_csrs_ensure — 把「每 hart 一份」的 HS 级 CSR 补齐
  *
- * hext_vm_init() 是在 **helper（/bin/vmm-run）所在的 hart** 上跑的，而 vCPU
+ * vmm_arch_vm_init() 是在 **helper（/bin/vmm-run）所在的 hart** 上跑的，而 vCPU
  * 任务钉在 hart0 上；SMP>1 时两者不是同一颗。下面这些 CSR 都只写了一处
  * （init），于是 vCPU 跑在另一颗 hart 上时它们全是复位值：
  *   hgatp            = Bare → **G-stage 形同关闭**（penalty：guest 直接访问

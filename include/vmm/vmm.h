@@ -466,7 +466,7 @@ typedef struct vm {
      * 传统芯片组桩（PIC / IO-APIC / PIT / 端口 0x61）。
      *
      * ⚠️ 这些从前是 vmx.c 的文件级 static，整机一份 —— 第二个 VM 启动时
-     * vmx_vm_init() 里那段"复位设备桩"会把第一个 VM 的状态一起清掉。
+     * vmm_arch_vm_init() 里那段"复位设备桩"会把第一个 VM 的状态一起清掉。
      */
     x86_chipset_state_t chipset;
 #endif
@@ -562,22 +562,36 @@ void set_stage2_pgd(uint64_t pgd_phys, uint32_t vmid);
 
 /* ── 架构钩子（每个架构各自实现）────────────────────────────── */
 /*
- * 由 vmm_run_vcpu（vcpu.c）调用；每个架构在 arch/vmx.c 或 el2_run.c 中提供实现。
+ * 前四个由 vmm_run_vcpu（vcpu.c）在**每次进出 guest 时**调用；每个架构在
+ * arch/vmx.c、el2_run.c、hext_run.c 中提供实现。
  *
  *   vmm_arch_restore_guest_ctx — 进入 guest 循环前恢复架构相关上下文
  *   vmm_arch_enter_guest       — 执行一次 guest 入口（eret/vmlaunch/vmresume）
  *                                返回 1 成功，0 入口失败
  *   vmm_arch_exit_handler      — 处理一次 VM exit，返回 EL2_* / VMX_* 状态码
  *   vmm_arch_save_guest_ctx    — guest 退出后保存架构相关上下文
+ *
+ * 第五个不是主循环钩子，而是**建 VM 时**的一次性钩子，由 vm_create()（vm.c）
+ * 调用 —— 所以它没有和上面四个排在一起，单独列在下面。
  */
 void vmm_arch_restore_guest_ctx(vcpu_t *vcpu);
 int  vmm_arch_enter_guest(vcpu_t *vcpu);   /* 1=success, 0=entry-failed */
 int  vmm_arch_exit_handler(vcpu_t *vcpu);
 void vmm_arch_save_guest_ctx(vcpu_t *vcpu);
 
+/*
+ * vmm_arch_vm_init — 建 VM：stage-2、MMIO 总线、虚拟设备、vCPU 数组
+ *
+ * 注意它**跑在调用者的核上**（helper 模式下是 /bin/vmm-run 所在的核），
+ * 而 vCPU 任务可能被摊到别的核 —— 凡是"每个逻辑处理器一份"的状态都不能
+ * 在这里设，必须在每次进 guest 前重设（见 docs/bugfix/SMP_HELPER_MODE_BUGFIX.md）。
+ */
+int vmm_arch_vm_init(vm_t *vm);
+
 
 int vmm_run_vcpu(vcpu_t *vcpu);
 
+/* 建一个 VM：按架构转发到 vmm_arch_vm_init()（见上面的钩子说明）。*/
 int vm_create(vm_t *vm);
 
 /* ── VM 池（kernel/vmm/vm.c）───────────────────────────────────

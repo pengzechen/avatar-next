@@ -8,7 +8,7 @@
  *
  * ⚠️ 从前这些是 vmx.c 的文件级 static（g_pic_master_imr / g_ioapic_rt /
  * g_pit[] / g_port61），整机一份。于是：
- *   - 第二个 VM 启动时 vmx_vm_init() 里那段"复位设备桩"会把**第一个 VM 的**
+ *   - 第二个 VM 启动时 vmm_arch_vm_init() 里那段"复位设备桩"会把**第一个 VM 的**
  *     PIC/PIT/IOAPIC 状态一起清掉（那段复位本身是为"第二次启动"加的，
  *     在单 VM 下对，多 VM 下就是串台）；
  *   - 两个 guest 共用一张重定向表，中断向量互相覆盖。

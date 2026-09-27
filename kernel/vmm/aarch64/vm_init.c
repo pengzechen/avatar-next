@@ -3,7 +3,7 @@
  *
  * 从 vmm.c 搬过来的：那是「架构无关」的文件，却装着本架构 124 行的完整初始化
  * （stage-2、MMIO 总线、vGIC、vPL011、vCPU 数组），而它的两个对等物
- * （x86 的 vmx_vm_init / riscv 的 hext_vm_init）一直就在各自架构目录里。
+ * （x86 的 vmm_arch_vm_init / riscv 的 vmm_arch_vm_init）一直就在各自架构目录里。
  *
  * 由 vm.c 的 vm_create() 调用（Step 4b 之后统一成 vmm_arch_vm_init 钩子）。
  * 本目录已被 Makefile 的 _KERNEL_ARCH_MODULES 对非 aarch64 整目录 filter-out，
@@ -25,12 +25,8 @@
 #include "vmm/vmm_vgicc.h"
 #endif
 
-/* ── AArch64 VM 初始化 ────────────────────────────────────── */
-/*
- * 由 vm.c 的 vm_create() 调用，所以不能是 static。
- * 本函数下一步会搬到 kernel/vmm/aarch64/vm_init.c（那时目录本身就是守卫）。
- */
-int aarch64_vm_init(vm_t *vm)
+/* ── AArch64 VM 初始化（vmm_arch_vm_init 钩子）─────────────── */
+int vmm_arch_vm_init(vm_t *vm)
 {
     int i;
     int nr = vm->cfg.nr_vcpus;

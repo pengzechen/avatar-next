@@ -21,24 +21,23 @@
 #include "spinlock.h"     /* g_vm_pool_lock */
 #include "string.h"       /* memset（vm_alloc / vm_free）*/
 
-#if ARCH_AARCH64
-/* 实现在 kernel/vmm/aarch64/vm_init.c（Step 4b 会统一成 vmm_arch_vm_init）。*/
-extern int aarch64_vm_init(vm_t *vm);
-#endif
-
 /* ── 公开 API ─────────────────────────────────────────────── */
 
+/*
+ * vm_create — 建一个 VM
+ *
+ * 真正的实现在各架构的 vmm_arch_vm_init()（见 include/vmm/vmm.h 的架构钩子节）：
+ *   aarch64 → kernel/vmm/aarch64/vm_init.c
+ *   x86_64  → kernel/vmm/x86_64/vmx.c
+ *   riscv64 → kernel/vmm/riscv64/hext_run.c
+ *
+ * 这里只是一层转发 —— 编译期就解析成一条直接调用，没有运行期分派。
+ * 从前这里是 `#if/#elif` + 两处就地 extern（其中 aarch64 那个函数还内联在
+ * vmm.c 里），三个架构三种放法；钩子化之后三边对称。
+ */
 int vm_create(vm_t *vm)
 {
-#if ARCH_AARCH64
-    return aarch64_vm_init(vm);
-#elif ARCH_X86_64
-    extern int vmx_vm_init(vm_t *vm);
-    return vmx_vm_init(vm);
-#elif ARCH_RISCV64
-    extern int hext_vm_init(vm_t *vm);
-    return hext_vm_init(vm);
-#endif
+    return vmm_arch_vm_init(vm);
 }
 
 /* ── 宿主侧 guest 生命周期：VM 池 ─────────────────────────────
