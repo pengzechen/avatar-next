@@ -137,4 +137,18 @@ static inline void vmm_console_rx_flush(vm_t *vm)
 #endif
 }
 
+/*
+ * vmm_console_pump — 宿主控制台 → guest 控制台的输入桥（实现在 vmm_console.c）
+ *
+ * 上面文件头说的"宿主侧两处消费者"里的第二处就是它：直启模式没有宿主
+ * shell，只能由 VMM 在每次退出 guest 后自己轮询宿主 UART 的 RX FIFO。
+ * helper 模式下宿主 tty 层独占真实 UART，它会在归属检查处直接让位。
+ *
+ * **不是 static inline**：它有一段循环、且要用 uart_rx_ready()/uart_getc()，
+ * 不做转发、也不该把 uart/uart.h 拖进每个包含本头的 TU。
+ */
+#if VMM_GUEST_LINUX_SUPPORTED
+void vmm_console_pump(vm_t *vm);
+#endif
+
 #endif /* VMM_CONSOLE_H */
