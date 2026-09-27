@@ -30,6 +30,7 @@
 #include "vmm/vmm_mmio.h"
 #include "vmm/vmm_vplic.h"
 #include "mm_vm.h"      /* phys_to_virt */
+#include "pmm.h"        /* pmm_get_free_pages（缺页失败时的诊断）*/
 
 /* ── 汇编入口声明 ─────────────────────────────────────────── */
 extern int hext_enter_guest(vcpu_t *vcpu);  /* hext_vcpu.S */
@@ -68,15 +69,19 @@ static int hext_check_support(void)
     return 1;
 }
 
-/* ── 全局 guest 栈（无 EPT，guest 用内核地址空间）─────────── */
-#define GUEST_STACK_SIZE  4096
-static uint8_t g_guest_stack[MAX_VCPUS][GUEST_STACK_SIZE]
-    __attribute__((aligned(16)));
-
-/* ── 全局 MMIO 总线与虚拟设备（静态存储，单 VM）───────────── */
-static mmio_bus_t    g_rv_mmio_bus;
-static mmio_device_t g_rv_uart_dev;
-static mmio_device_t g_rv_plic_dev;
+/*
+ * ── 每 VM 的 MMIO 总线、虚拟设备与 guest 栈 ────────────────
+ *
+ * 这三样从前都是文件级 static（g_rv_mmio_bus / g_rv_uart_dev / g_rv_plic_dev
+ * / g_guest_stack），整机只有一份 —— 第二个 VM 的 hext_vm_init() 会在同一个
+ * 总线上重复注册设备、覆盖第一个 VM 的设备实例。现在它们都住在 vm_t 里
+ * （见 include/vmm/vmm.h 的 ARCH_RISCV64 段）：
+ *
+ *   vm->mmio_bus_storage  总线本体        （通用字段，aarch64/x86 也有）
+ *   vm->uart_dev          虚拟 16550A 设备对象（状态在 vm->uart16550）
+ *   vm->plic_dev          虚拟 PLIC 设备对象  （状态在 vm->vplic）
+ *   vm->guest_stack[]     给 hext_vcpu_setup 用的 guest 栈
+ */
 
 /* ── hext_vcpu_setup：初始化 vcpu 软件 VMCS ──────────────── */
 int hext_vcpu_setup(vcpu_t *vcpu, void (*entry)(void))
@@ -107,8 +112,12 @@ int hext_vcpu_setup(vcpu_t *vcpu, void (*entry)(void))
     /* vsie = 0：guest 中不使能任何中断 */
     vcpu->vsie      = 0;
 
-    /* guest 栈：r[2] = sp */
-    vcpu->r[2]      = (uint64_t)(g_guest_stack[vcpu->vcpu_id] + GUEST_STACK_SIZE);
+    /*
+     * guest 栈：r[2] = sp。栈从本 VM 的 vm_t 里取 —— 从前是按 vcpu_id 索引
+     * 的文件级数组，两个 VM 的 vcpu0 会共用同一块栈。
+     */
+    vcpu->r[2]      = (uint64_t)(vcpu->vm->guest_stack[vcpu->vcpu_id] +
+                                 VMM_GUEST_STACK_SIZE);
 
     KLOG_INFO("[HEXT] vcpu%d setup: entry=0x%llx sp=0x%llx\n",
               vcpu->vcpu_id,
@@ -213,25 +222,25 @@ int hext_vm_init(vm_t *vm)
      *    默认（mem_size==0）保持原「共享 host 地址空间、无 hgatp」路径不变，
      *    即当前 vmm_test 使用的已验证行为，避免回归。
      *
-     *    注：hpa_base 用 identity（= mem_base）：guest RAM 窗口是从宿主
-     *    PMM 里预留的一段真实物理内存，phys_to_virt(GPA) 直接可用。 */
+     *    ⚠️ 建出来的是**空表**（"空表即全 trap"）：guest RAM 不再预映射，
+     *    首次访问才由缺页处理分配物理页并装映射。宿主自己要写的那几块
+     *    （内核映像/DTB/initrd/初始栈）由 guest_loader 用
+     *    rv_gstage_map_range() 显式映射 —— 与 aarch64 完全同构。 */
     if (vm->cfg.mem_size != 0) {
-        rv_gstage_init(vm->cfg.mem_base, vm->cfg.mem_size,
-                       vm->cfg.mem_base /* hpa_base = identity */, 1u);
-        /* 只映射 guest RAM，其余置无效 → 设备访问陷入 HS-mode 模拟 */
-        rv_gstage_enable_mmio_trap();
-        rv_gstage_activate();
+        rv_gstage_vm_init(&vm->gstage, (uint32_t)vm->slot, vm->vmid,
+                          vm->cfg.mem_base, vm->cfg.mem_size);
 
         /* 建立 MMIO 总线并注册虚拟 16550A 控制台 + 虚拟 PLIC */
-        mmio_bus_init(&g_rv_mmio_bus);
-        /* vm 参数：riscv 的 uart16550 尚未 per-VM 化，接口先对齐（见 vmm_console.h）*/
-        if (vmm_console_init(vm, &g_rv_uart_dev, &g_rv_mmio_bus) != 0)
+        mmio_bus_init(&vm->mmio_bus_storage);
+        if (vmm_console_init(vm, &vm->uart_dev, &vm->mmio_bus_storage) != 0)
             KLOG_WARN("[HEXT] console vdev registration failed\n");
-        if (vplic_init(&g_rv_plic_dev, &g_rv_mmio_bus, (uint32_t)nr) != 0)
+        if (vplic_init(vm, &vm->plic_dev, &vm->mmio_bus_storage,
+                       (uint32_t)nr) != 0)
             KLOG_WARN("[HEXT] vplic registration failed\n");
-        vm->mmio_bus = &g_rv_mmio_bus;
+        vm->mmio_bus = &vm->mmio_bus_storage;
 
-        KLOG_INFO("[HEXT] G-stage isolation enabled (mem=0x%llx+0x%llx)\n",
+        KLOG_INFO("[HEXT] vm%u: G-stage isolation enabled (mem=0x%llx+0x%llx)\n",
+                  vm->vmid,
                   (unsigned long long)vm->cfg.mem_base,
                   (unsigned long long)vm->cfg.mem_size);
         KLOG_INFO("[HEXT] MMIO bus ready: virtual 16550A @0x%llx, vPLIC @0x%llx\n",
@@ -282,9 +291,9 @@ static void vcpu_external_irq_on_entry(vcpu_t *vcpu)
 {
     /* 设备侧先同步进 PLIC：控制台 RX 有数据/待发送 → 置对应中断源 */
     if (vmm_console_irq_asserted(vcpu->vm))
-        vplic_set_pending(VMM_CONSOLE_IRQ);
+        vplic_set_pending(vcpu->vm, VMM_CONSOLE_IRQ);
 
-    uint32_t irq = vplic_next_deliverable((uint32_t)vcpu->vcpu_id);
+    uint32_t irq = vplic_next_deliverable(vcpu->vm, (uint32_t)vcpu->vcpu_id);
     hext_set_vs_external_irq(irq != 0);
 }
 
@@ -302,8 +311,14 @@ static void vcpu_external_irq_on_entry(vcpu_t *vcpu)
  * 症状与 x86 那两个「每核状态只在别的核上初始化」的坑完全一样：SMP=1 正常、
  * SMP>1 概率性起不来（helper 落在哪颗 hart 决定），所以必须在**每次进 guest 前**
  * 在真正跑 vCPU 的 hart 上重设一遍。
+ *
+ * ⚠️ 多 VM 之后这里还要多一层：hgatp 不只是 per-hart，还是**per-VM** 的。
+ * 同一颗 hart 上时间片轮转两个 VM 的 vCPU 任务时，每次入口都得把 hgatp 换回
+ * 本 VM 的（否则 guest 会拿着另一个 VM 的 G-stage 跑，症状是"两个 VM 互相
+ * 看见对方的内存"这种最不该出现的故障）。所以本函数必须收 vcpu 而不是
+ * 不收参数 —— 见下面的 rv_gstage_activate(&vcpu->vm->gstage)。
  */
-static void hext_per_hart_csrs_ensure(void)
+static void hext_per_hart_csrs_ensure(vcpu_t *vcpu)
 {
     WRITE_HEDELEG(HEDELEG_COMMON);
     WRITE_HIDELEG(HIDELEG_COMMON);
@@ -314,17 +329,23 @@ static void hext_per_hart_csrs_ensure(void)
     if (!(hs & HSTATUS_VTW))
         WRITE_HSTATUS(hs | HSTATUS_VTW);
 
-    rv_gstage_activate();   /* 幂等：hgatp 没变就不写、也不刷 TLB */
+    /*
+     * hgatp 换成本 VM 的。幂等：已经是这个值就不写、也不刷 TLB（进 guest 的
+     * 常态路径因此只有一次 csrr）。
+     */
+    if (vcpu->vm)
+        rv_gstage_activate(&vcpu->vm->gstage);
 }
 
 void vmm_arch_restore_guest_ctx(vcpu_t *vcpu)
 {
     /*
      * VS-CSRs 由 hext_enter_guest 汇编逐次恢复，这里做的是「每次入口」的
-     * 两件事：每 hart 的 HS 级 CSR 补齐，以及「设备 → 虚拟中断控制器」的同步。
-     * 都必须在**每次**入口做，不能只在启动时做一次。
+     * 两件事：每 hart 的 HS 级 CSR 补齐（含本 VM 的 hgatp），以及
+     * 「设备 → 虚拟中断控制器」的同步。都必须在**每次**入口做，不能只在
+     * 启动时做一次。
      */
-    hext_per_hart_csrs_ensure();
+    hext_per_hart_csrs_ensure(vcpu);
 
     vcpu_timer_irq_on_entry(vcpu);
     vcpu_external_irq_on_entry(vcpu);
@@ -392,9 +413,9 @@ static int handle_wfi(vcpu_t *vcpu)
  * helper 模式下必须进 TX 缓冲，否则 guest 在 8250 驱动起来之前的那几行
  * 会漏进宿主内核日志。
  */
-static void sbi_console_putchar(uint8_t byte)
+static void sbi_console_putchar(vcpu_t *vcpu, uint8_t byte)
 {
-    vmm_console_putchar(byte);
+    vmm_console_putchar(vcpu->vm, byte);
 }
 
 /* ================================================================
@@ -407,29 +428,41 @@ static void sbi_console_putchar(uint8_t byte)
  *   3. 交给 MMIO 总线分发，读结果写回 guest 寄存器，步进 PC
  * ================================================================ */
 
-/* guest 物理地址读取（GPA → HPA → 内核直接映射）*/
-static int guest_read_u64(uint64_t gpa, uint64_t *out)
+/*
+ * ── guest 物理地址读取（GPA → HPA → 内核直接映射）────────────
+ *
+ * ⚠️ 翻译必须走**查表**（rv_gstage_lookup），不能再用「GPA 减窗口基址」那种
+ * 算术换算。老版本那样写是因为 guest RAM 被整段预留、identity 映射，
+ * GPA 与 HPA 之间有个固定偏移；改成按需分页之后每一页都是各自从 PMM 分配
+ * 的，那个偏移根本不存在 —— 继续用算术换算会读到**别的 VM 或宿主内核**的
+ * 物理内存（没有任何报错，只是数据是错的）。
+ *
+ * 查不到就是查不到：调用方（MMIO 取指/解码）要靠这个返回值决定放弃。
+ * 注意这里**不会**触发缺页分配 —— 缺页只由 guest 自己的访问驱动，
+ * 宿主读 guest 内存是另一回事，读到未映射地址说明 guest 的状态本身不对。
+ */
+static int guest_read_u64(vcpu_t *vcpu, uint64_t gpa, uint64_t *out)
 {
     uint64_t hpa;
-    if (!rv_gstage_gpa_to_hpa(gpa, &hpa))
+    if (!vcpu->vm || !rv_gstage_lookup(&vcpu->vm->gstage, gpa, &hpa))
         return 0;
     *out = *(volatile uint64_t *)phys_to_virt(hpa);
     return 1;
 }
 
-static int guest_read_u32(uint64_t gpa, uint32_t *out)
+static int guest_read_u32(vcpu_t *vcpu, uint64_t gpa, uint32_t *out)
 {
     uint64_t hpa;
-    if (!rv_gstage_gpa_to_hpa(gpa, &hpa))
+    if (!vcpu->vm || !rv_gstage_lookup(&vcpu->vm->gstage, gpa, &hpa))
         return 0;
     *out = *(volatile uint32_t *)phys_to_virt(hpa);
     return 1;
 }
 
-static int guest_read_u16(uint64_t gpa, uint16_t *out)
+static int guest_read_u16(vcpu_t *vcpu, uint64_t gpa, uint16_t *out)
 {
     uint64_t hpa;
-    if (!rv_gstage_gpa_to_hpa(gpa, &hpa))
+    if (!vcpu->vm || !rv_gstage_lookup(&vcpu->vm->gstage, gpa, &hpa))
         return 0;
     *out = *(volatile uint16_t *)phys_to_virt(hpa);
     return 1;
@@ -464,7 +497,7 @@ static int guest_va_to_gpa(vcpu_t *vcpu, uint64_t va, uint64_t *gpa_out)
         uint64_t vpn = (va >> (12 + level * 9)) & 0x1FF;
         uint64_t pte;
 
-        if (!guest_read_u64(table_gpa + vpn * 8, &pte))
+        if (!guest_read_u64(vcpu, table_gpa + vpn * 8, &pte))
             return 0;
         if ((pte & PTE_V) == 0)
             return 0;
@@ -577,13 +610,13 @@ static int mmio_instruction(vcpu_t *vcpu, uint64_t *inst_out)
 
     if (guest_va_to_gpa(vcpu, vcpu->pc, &pc_gpa)) {
         uint16_t lo;
-        if (guest_read_u16(pc_gpa, &lo)) {
+        if (guest_read_u16(vcpu, pc_gpa, &lo)) {
             if ((lo & 0x3) != 0x3) {
                 *inst_out = lo;      /* 压缩指令 */
                 return 1;
             }
             uint32_t full;
-            if (guest_read_u32(pc_gpa, &full)) {
+            if (guest_read_u32(vcpu, pc_gpa, &full)) {
                 *inst_out = full;
                 return 1;
             }
@@ -599,26 +632,100 @@ static int mmio_instruction(vcpu_t *vcpu, uint64_t *inst_out)
     return 0;
 }
 
+/*
+ * ── G-stage 缺页：先分 RAM / MMIO，再各自处理 ───────────────
+ *
+ * 出错 GPA 的取法：htval 保存的是 **GPA >> 2**，低两位拿不回来；页内偏移
+ * 从 stval 取。两者拼起来是对的 —— 因为 VS-stage 与 G-stage 的翻译都是
+ * 页粒度的，虚拟地址的 [11:0] 与 guest 物理地址的 [11:0] 恒等，而 stval
+ * 给的正是那个虚拟地址（GVA=1 时）。
+ *
+ * ⚠️ 别把它和 htinst 搞混：htinst 是"触发陷阱的那条指令"，用来解码 MMIO
+ * 访问；拿 htval 当指令解会解出完全无关的 opcode/长度/寄存器号（见
+ * mmio_instruction 的说明）。
+ */
+static inline uint64_t gstage_fault_gpa(const vcpu_t *vcpu)
+{
+    return (vcpu->htval_save << 2) | (vcpu->stval_save & 0xFFF);
+}
+
+/*
+ * handle_ram_fault — RAM 窗口内的 G-stage 缺页：分配物理页 + 装映射
+ *
+ * 这是**按需分页**的落点。返回 EL2_RESUME 表示映射已装好，guest 重跑同一条
+ * 指令即可；失败返回 EL2_EXIT（PMM 没页 / 没有 VM）。
+ *
+ * ⚠️ **不推进 guest PC** —— 这正是"缺页"与"MMIO 模拟"的分野：MMIO 那条路
+ * 是 VMM 替 guest 完成了这次访问，所以必须把 PC 挪过去（否则无限重复）；
+ * 这里只是把内存补上，访问本身还得 guest 自己重做一次。两条路走反了的表现
+ * 分别是"死循环"和"跳过一条随机指令"，都很难查。
+ *
+ * ⚠️ 一次装整个 2 MiB 块（512 页）而不是一页：每次缺页都要一次完整的
+ * HS-mode 往返，而 guest 启动期是密集触碰内存的。aarch64 那边实测把 1447 次
+ * 缺页压到 6 次。代价是最多 2 MiB 的过取。
+ */
+static int handle_ram_fault(vcpu_t *vcpu, uint64_t gpa, uint64_t code)
+{
+    vm_t *vm = vcpu->vm;
+    uint64_t n;
+
+    if (!vm)
+        return EL2_EXIT;
+
+    n = rv_gstage_map_block(&vm->gstage, gpa, 1 /* 清零，防跨 VM 数据泄漏 */);
+    if (n == 0) {
+        KLOG_ERROR("[HEXT] vcpu%d: RAM fault at gpa=0x%llx but PMM is out "
+                   "of pages (free=%llu), stopping vm%u\n",
+                   vcpu->vcpu_id, (unsigned long long)gpa,
+                   (unsigned long long)pmm_get_free_pages(g_pmm),
+                   vm->vmid);
+        return EL2_EXIT;
+    }
+
+    vm->gstage.nr_fault += n;
+
+    /*
+     * 装完必须刷 G-stage TLB。
+     *
+     * aarch64 那边省掉了这一步（"刚缺页就说明这条翻译本来没缓存"），riscv
+     * 这里保留：hfence.gvma 就是一条指令，而 RISC-V 规范明确允许实现缓存
+     * "不可翻译"的结果 —— 省掉它就等于把"能不能跑"押在具体实现的行为上。
+     */
+    rv_gstage_tlb_flush(&vm->gstage);
+
+    /* 抽样打印，便于按地址对账（首次启动的几条最有诊断价值）*/
+    KLOG_INFO_SAMPLE("[HEXT] vm%u: gstage %s fault gpa=0x%llx -> block "
+                     "+%llu pages (total fault=%llu)\n",
+                     vm->vmid, (code == 23) ? "store" : "load",
+                     (unsigned long long)gpa, (unsigned long long)n,
+                     (unsigned long long)vm->gstage.nr_fault);
+    return EL2_RESUME;
+}
+
 /* ── G-stage MMIO fault（cause 20/21/23）──────────────────── */
 static int handle_gstage_fault(vcpu_t *vcpu, uint64_t code)
 {
-    /* 出错 GPA：htval 保存的是 GPA>>2，stval 低位给出页内偏移 */
-    uint64_t gpa = (vcpu->htval_save << 2) | (vcpu->stval_save & 0xFFF);
+    uint64_t gpa = gstage_fault_gpa(vcpu);
     int is_store = (code == 23);
     uint64_t inst;
     mmio_access_t acc;
 
     if (!mmio_instruction(vcpu, &inst)) {
-        KLOG_ERROR("[HEXT] vcpu%d: cannot fetch MMIO inst, pc=0x%llx htinst=0x%llx\n",
-                   vcpu->vcpu_id,
+        KLOG_ERROR("[HEXT] vcpu%d: cannot fetch MMIO inst, gpa=0x%llx "
+                   "pc=0x%llx htinst=0x%llx\n",
+                   vcpu->vcpu_id, (unsigned long long)gpa,
                    (unsigned long long)vcpu->pc,
                    (unsigned long long)vcpu->htinst_save);
         return EL2_EXIT;
     }
     if (!decode_mmio_access(inst, is_store, &acc)) {
-        KLOG_ERROR("[HEXT] vcpu%d: undecodable MMIO inst=0x%llx cause=%llu\n",
+        /* gpa 一定要打：解不出来时第一个要问的就是"guest 在访问哪"，
+         * 少了它只能看到一串像随机数的指令编码（实测踩过）。*/
+        KLOG_ERROR("[HEXT] vcpu%d: undecodable MMIO inst=0x%llx cause=%llu "
+                   "gpa=0x%llx pc=0x%llx\n",
                    vcpu->vcpu_id, (unsigned long long)inst,
-                   (unsigned long long)code);
+                   (unsigned long long)code, (unsigned long long)gpa,
+                   (unsigned long long)vcpu->pc);
         return EL2_EXIT;
     }
 
@@ -673,7 +780,7 @@ static int handle_vs_ecall(vcpu_t *vcpu)
         return EL2_RESUME;
 
     case SBI_LEGACY_CONSOLE_PUTCHAR:
-        sbi_console_putchar((uint8_t)arg0);
+        sbi_console_putchar(vcpu, (uint8_t)arg0);
         return EL2_RESUME;
 
     case SBI_LEGACY_CONSOLE_GETCHAR:
@@ -824,24 +931,43 @@ int vmm_arch_exit_handler(vcpu_t *vcpu)
         return handle_vs_ecall(vcpu);
 
     case 20:   /* Instruction G-stage Page Fault */
-        /*
-         * guest 从「未映射的 GPA」取指。本 VMM 不做取指 MMIO 模拟（没有
-         * 需要执行代码段的设备），所以这一定是 guest 跑飞了 —— 跳进了
-         * 设备地址或未映射区间。报出地址比让 handle_gstage_fault 去解码
-         * 「一条根本不存在的指令」有用得多。
-         */
-        KLOG_ERROR("[HEXT] vcpu%d: guest fetched from unmapped GPA 0x%llx "
-                   "(vsepc=0x%llx)\n",
-                   vcpu->vcpu_id,
-                   (unsigned long long)((vcpu->htval_save << 2) |
-                                        (vcpu->stval_save & 0xFFF)),
-                   (unsigned long long)vcpu->pc);
-        return EL2_EXIT;
-
     case 21:   /* Load G-stage Page Fault      */
     case 23:   /* Store/AMO G-stage Page Fault */
+    {
+        uint64_t gpa = gstage_fault_gpa(vcpu);
+
+        /*
+         * ── 先分 RAM / MMIO ────────────────────────────────────
+         *
+         * 按需分页之后 G-stage 表初始是空的，所以 guest 取指/访存**每一次
+         * 落到新页**都会走到这里。RAM 窗口内的走缺页分配，窗口外的才是
+         * 设备 MMIO，交给总线模拟。
+         *
+         * ⚠️ 这个分支必须在最前面。老版本没有它，20/21/23 一律按 MMIO 处理
+         * —— 对 RAM 地址取指会去"解码一条根本不存在的指令"，而访存则是
+         * 查表未命中 → EL2_EXIT → **整个 VM 停机**。缺页因此表现为
+         * "guest 启动到一半毫无征兆地没了"，而不是一个缺页。
+         */
+        if (vcpu->vm && rv_gstage_ipa_is_ram(&vcpu->vm->gstage, gpa))
+            return handle_ram_fault(vcpu, gpa, code);
+
+        /*
+         * 非 RAM 的取指：本 VMM 不做取指 MMIO 模拟（没有需要执行代码段的
+         * 设备），所以这一定是 guest 跑飞了 —— 跳进了设备地址或未映射区间。
+         * 报出地址比让 handle_gstage_fault 去解码「一条根本不存在的指令」
+         * 有用得多。
+         */
+        if (code == 20) {
+            KLOG_ERROR("[HEXT] vcpu%d: guest fetched from unmapped GPA 0x%llx "
+                       "(vsepc=0x%llx)\n",
+                       vcpu->vcpu_id, (unsigned long long)gpa,
+                       (unsigned long long)vcpu->pc);
+            return EL2_EXIT;
+        }
+
         /* 设备 MMIO：G-stage 未映射 → 陷入模拟（移植自 kvmm mod.rs）*/
         return handle_gstage_fault(vcpu, code);
+    }
 
     case 12:   /* Instruction Page Fault（guest 自己的页表缺项）*/
     case 13:   /* Load Page Fault */

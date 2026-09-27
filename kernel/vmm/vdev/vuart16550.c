@@ -2,7 +2,7 @@
  * kernel/vmm/vdev/vuart16550.c — 虚拟 16550A UART 实现（riscv64/x86_64）
  *
  * 移植自 x-kernel: virt/vdev/uart16550/src/lib.rs，适配 Avatar OS：
- *   - klogger::kprint → klog_putchar（直启模式）/ TX 环形缓冲（helper 模式）
+ *   - klogger::kprint → klog_write（直启模式）/ TX 环形缓冲（helper 模式）
  *   - RxChannel → 本文件内的 RX 环形缓冲 + uart16550_push_rx()
  *   - 中断：由宿主在每次进 guest 前按 uart16550_irq_asserted() 经 vPLIC
  *     置 pending（电平触发语义，见头文件）
@@ -15,9 +15,17 @@
  * （无换行的单字符）一直憋到回车 —— 交互式会话直接不可用。这里逐字节直通。
  * 同理，THR 空中断必须实现：Linux 的 8250 驱动靠它推进发送队列，缺了会让
  * 输出在第一批字符之后静默停住（详见头文件）。
+ *
+ * ── 多 VM：状态与锁都搬进了 vm_t ─────────────────────────────
+ *
+ * 从前上面那两样是文件级 static（g_uart16550 / g_uart16550_lock），整机只有
+ * 一份 —— 第二个 VM 的 init 一句 memset 就把第一个 VM 的控制台清空。现在
+ * 每个 vm_t 里各有一份，函数一律以 vm 为第一参数；MMIO 回调拿不到 vm，
+ * 就走 dev->priv → state->owner 回指（与 vpl011.c 同一手法）。
  */
 
 #include "vmm/vmm_uart16550.h"
+#include "vmm/vmm.h"        /* vm_t：uart16550_state_t 的宿主 */
 #include "klog.h"
 #include "string.h"
 #include "spinlock.h"
@@ -55,158 +63,139 @@
 /* FCR 位 0：使能 FIFO */
 #define FCR_ENABLE_FIFO    (1u << 0)
 
-/* 缓冲深度：TX 要能扛住 guest 启动那一大串内核日志的突发 */
-#define RX_FIFO_SIZE   4096
-#define TX_FIFO_SIZE   8192
+/* 缓冲深度在头文件里（vm_t 要按它算大小），这里只取短名 */
+#define RX_FIFO_SIZE   UART16550_RX_FIFO_SIZE
+#define TX_FIFO_SIZE   UART16550_TX_FIFO_SIZE
 
-/* ── 设备私有状态 ─────────────────────────────────────────── */
-typedef struct {
-    uint8_t  ier;
-    uint8_t  lcr;
-    uint8_t  mcr;
-    uint8_t  scr;
-    uint8_t  fcr;
-    uint8_t  dll;
-    uint8_t  dlm;
-
-    /* RX 环形缓冲：宿主/helper 写入，guest 读 RBR 弹出 */
-    uint8_t  rx_fifo[RX_FIFO_SIZE];
-    uint32_t rx_head;
-    uint32_t rx_tail;
-    uint32_t rx_count;
-    uint32_t rx_drops;
-
-    /* TX 环形缓冲：guest 写 THR 推入，宿主用户态 helper 读走 */
-    uint8_t  tx_fifo[TX_FIFO_SIZE];
-    uint32_t tx_head;
-    uint32_t tx_tail;
-    uint32_t tx_count;
-
-    int      tx_channel;    /* 1 = 走 TX 缓冲；0 = 直打宿主控制台 */
-} uart16550_state_t;
-
-static uart16550_state_t g_uart16550;
+/* ── 状态与锁的取用（每个 VM 一份）─────────────────────────── */
 
 /*
- * 宿主 pump 线程与 guest 写入路径（vCPU 任务 / helper 的 write(2)）不在同
- * 一个上下文，两把环都要用 IRQ-safe 的锁保护。
+ * MMIO 回调只有 dev->priv（→ state），没有 vm —— state->owner 就是回指。
+ * 这两个宏把"从 state 拿锁"这件事写在一处，免得每个回调各写一遍强制转换。
  */
-static spinlock_noirq_t g_uart16550_lock = SPINLOCK_NOIRQ_INIT;
+#define UART_LOCK(s)   (&(s)->owner->uart16550_lock)
 
 static int rx_irq_asserted_locked(const uart16550_state_t *s)
 {
-    return (s->rx_count > 0 && (s->ier & IER_RX_AVAILABLE) != 0)
-        || (s->ier & IER_THR_EMPTY) != 0;
+    /* 电平触发：FIFO 非空且 guest 开了 RX 中断，或者 guest 开了 THR 空中断 */
+    if (s->rx_count > 0 && (s->ier & IER_RX_AVAILABLE))
+        return 1;
+    return (s->ier & IER_THR_EMPTY) != 0;
 }
 
-/* ── RX 通路（宿主 → guest）───────────────────────────────── */
-void uart16550_push_rx(uint8_t c)
+/* ── 公开注入接口（宿主 → guest）───────────────────────────── */
+void uart16550_push_rx(vm_t *vm, uint8_t c)
 {
+    uart16550_state_t *s = &vm->uart16550;
     uint64_t flags;
 
-    spin_lock_irqsave(&g_uart16550_lock, &flags);
-    if (g_uart16550.rx_count >= RX_FIFO_SIZE) {
-        g_uart16550.rx_drops++;
-        spin_unlock_irqrestore(&g_uart16550_lock, flags);
+    spin_lock_irqsave(&vm->uart16550_lock, &flags);
+    if (s->rx_count >= RX_FIFO_SIZE) {
+        s->rx_drops++;
+        spin_unlock_irqrestore(&vm->uart16550_lock, flags);
         return;
     }
-    g_uart16550.rx_fifo[g_uart16550.rx_head] = c;
-    g_uart16550.rx_head = (g_uart16550.rx_head + 1) % RX_FIFO_SIZE;
-    g_uart16550.rx_count++;
-    spin_unlock_irqrestore(&g_uart16550_lock, flags);
+    s->rx_fifo[s->rx_head] = c;
+    s->rx_head = (s->rx_head + 1) % RX_FIFO_SIZE;
+    s->rx_count++;
+    spin_unlock_irqrestore(&vm->uart16550_lock, flags);
 }
 
-int uart16550_irq_asserted(void)
+int uart16550_irq_asserted(vm_t *vm)
 {
+    uart16550_state_t *s = &vm->uart16550;
     uint64_t flags;
     int asserted;
 
-    spin_lock_irqsave(&g_uart16550_lock, &flags);
-    asserted = rx_irq_asserted_locked(&g_uart16550);
-    spin_unlock_irqrestore(&g_uart16550_lock, flags);
+    spin_lock_irqsave(&vm->uart16550_lock, &flags);
+    asserted = rx_irq_asserted_locked(s);
+    spin_unlock_irqrestore(&vm->uart16550_lock, flags);
     return asserted;
 }
 
-void uart16550_rx_flush(void)
+void uart16550_rx_flush(vm_t *vm)
 {
+    uart16550_state_t *s = &vm->uart16550;
     uint64_t flags;
 
-    spin_lock_irqsave(&g_uart16550_lock, &flags);
-    g_uart16550.rx_head  = 0;
-    g_uart16550.rx_tail  = 0;
-    g_uart16550.rx_count = 0;
-    g_uart16550.rx_drops = 0;
-    spin_unlock_irqrestore(&g_uart16550_lock, flags);
+    spin_lock_irqsave(&vm->uart16550_lock, &flags);
+    s->rx_head  = 0;
+    s->rx_tail  = 0;
+    s->rx_count = 0;
+    s->rx_drops = 0;
+    spin_unlock_irqrestore(&vm->uart16550_lock, flags);
 }
 
-/* ── TX 通道（guest 输出 → 用户态 helper）─────────────────── */
-void uart16550_tx_set_enabled(int enabled)
+void uart16550_tx_set_enabled(vm_t *vm, int enabled)
 {
+    uart16550_state_t *s = &vm->uart16550;
     uint64_t flags;
 
-    spin_lock_irqsave(&g_uart16550_lock, &flags);
-    g_uart16550.tx_channel = enabled ? 1 : 0;
+    spin_lock_irqsave(&vm->uart16550_lock, &flags);
+    vm->console_owned = enabled ? 1 : 0;
     if (!enabled) {
-        g_uart16550.tx_head  = 0;
-        g_uart16550.tx_tail  = 0;
-        g_uart16550.tx_count = 0;
+        /* 关通道时清空 TX 环：剩下的字节是上一个 guest 的，别再放给下一个 */
+        s->tx_head  = 0;
+        s->tx_tail  = 0;
+        s->tx_count = 0;
     }
-    spin_unlock_irqrestore(&g_uart16550_lock, flags);
+    spin_unlock_irqrestore(&vm->uart16550_lock, flags);
 }
 
-int uart16550_tx_channel_enabled(void)
+int uart16550_tx_channel_enabled(vm_t *vm)
 {
+    uart16550_state_t *s = &vm->uart16550;
     uint64_t flags;
     int enabled;
 
-    spin_lock_irqsave(&g_uart16550_lock, &flags);
-    enabled = g_uart16550.tx_channel;
-    spin_unlock_irqrestore(&g_uart16550_lock, flags);
+    spin_lock_irqsave(&vm->uart16550_lock, &flags);
+    enabled = vm->console_owned;
+    spin_unlock_irqrestore(&vm->uart16550_lock, flags);
     return enabled;
 }
 
-int uart16550_tx_pop(uint8_t *c)
+int uart16550_tx_pop(vm_t *vm, uint8_t *c)
 {
+    uart16550_state_t *s = &vm->uart16550;
     uint64_t flags;
     int got = 0;
 
-    spin_lock_irqsave(&g_uart16550_lock, &flags);
-    if (g_uart16550.tx_count > 0) {
-        *c = g_uart16550.tx_fifo[g_uart16550.tx_tail];
-        g_uart16550.tx_tail = (g_uart16550.tx_tail + 1) % TX_FIFO_SIZE;
-        g_uart16550.tx_count--;
+    spin_lock_irqsave(&vm->uart16550_lock, &flags);
+    if (s->tx_count > 0) {
+        *c = s->tx_fifo[s->tx_tail];
+        s->tx_tail = (s->tx_tail + 1) % TX_FIFO_SIZE;
+        s->tx_count--;
         got = 1;
     }
-    spin_unlock_irqrestore(&g_uart16550_lock, flags);
+    spin_unlock_irqrestore(&vm->uart16550_lock, flags);
     return got;
 }
 
-int uart16550_tx_has_data(void)
+int uart16550_tx_has_data(vm_t *vm)
 {
+    uart16550_state_t *s = &vm->uart16550;
     uint64_t flags;
     int has;
 
-    spin_lock_irqsave(&g_uart16550_lock, &flags);
-    has = g_uart16550.tx_count > 0;
-    spin_unlock_irqrestore(&g_uart16550_lock, flags);
+    spin_lock_irqsave(&vm->uart16550_lock, &flags);
+    has = s->tx_count > 0;
+    spin_unlock_irqrestore(&vm->uart16550_lock, flags);
     return has;
 }
 
 /*
- * uart_put_char — guest 写 THR 的一个字节
+ * uart_put_char — guest 写 THR 的一个字节（**调用方必须已持锁**）
  *
- * 直启模式：立即 klog_putchar。宿主 uart_putchar 会把 '\n' 补成 "\r\n"，
- * 所以 guest 的裸 '\n'（earlycon）与 tty 已转好的 "\r\n" 都能正确换行。
+ * 直启模式：立即走 klog 的唯一入口。宿主 uart_putchar 会把 '\n' 补成
+ * "\r\n"，所以 guest 的裸 '\n'（earlycon）与 tty 已转好的 "\r\n" 都能正确换行。
  *
- * 注意本函数**在持锁状态下**调 klog_putchar：klog 自己也有锁，且
- * uart_putchar 在缓冲满时会等待。这把锁的中断已关，因此不会有锁序反转；
- * 与 vpl011_put_char 的处理一致。
+ * 注意本函数**在持锁状态下**调 klog_write：klog 自己也有锁，且 uart_putchar
+ * 在缓冲满时会等待。这把锁的中断已关，因此不会有锁序反转；与 vpl011 的处理
+ * 一致。
  */
-static void uart_put_char(uint8_t c)
+static void uart_put_char(uart16550_state_t *s, uint8_t c)
 {
-    uart16550_state_t *s = &g_uart16550;
-
-    if (!s->tx_channel) {
+    if (!s->owner->console_owned) {
         /* 逐字符走唯一入口：guest 控制台本来就是字节流，粒度只能是字节，
          * 但至少每次输出都真的经过那把锁，不和别的核各写各的。*/
         klog_write((const char *)&c, 1);
@@ -215,8 +204,8 @@ static void uart_put_char(uint8_t c)
 
     if (s->tx_count >= TX_FIFO_SIZE) {
         /* 缓冲满：丢尾。helper 读得比 guest 写得慢时才会发生 */
-        g_uart16550.tx_tail = (g_uart16550.tx_tail + 1) % TX_FIFO_SIZE;
-        g_uart16550.tx_count--;
+        s->tx_tail = (s->tx_tail + 1) % TX_FIFO_SIZE;
+        s->tx_count--;
     }
     s->tx_fifo[s->tx_head] = c;
     s->tx_head = (s->tx_head + 1) % TX_FIFO_SIZE;
@@ -234,7 +223,7 @@ static uint64_t uart16550_read(mmio_device_t *dev, uint64_t off, uint8_t size)
     if (size != 1 && size != 4)
         return 0;
 
-    spin_lock_irqsave(&g_uart16550_lock, &flags);
+    spin_lock_irqsave(UART_LOCK(s), &flags);
     dlab = (s->lcr & LCR_DLAB) != 0;
 
     switch (off) {
@@ -283,7 +272,7 @@ static uint64_t uart16550_read(mmio_device_t *dev, uint64_t off, uint8_t size)
     default:       ret = 0; break;
     }
 
-    spin_unlock_irqrestore(&g_uart16550_lock, flags);
+    spin_unlock_irqrestore(UART_LOCK(s), flags);
     return ret;
 }
 
@@ -298,7 +287,7 @@ static void uart16550_write(mmio_device_t *dev, uint64_t off, uint8_t size,
     if (size != 1 && size != 4)
         return;
 
-    spin_lock_irqsave(&g_uart16550_lock, &flags);
+    spin_lock_irqsave(UART_LOCK(s), &flags);
     dlab = (s->lcr & LCR_DLAB) != 0;
 
     switch (off) {
@@ -306,7 +295,7 @@ static void uart16550_write(mmio_device_t *dev, uint64_t off, uint8_t size,
         if (dlab)
             s->dll = v;
         else
-            uart_put_char(v);      /* THR：输出 guest 字符 */
+            uart_put_char(s, v);   /* THR：输出 guest 字符 */
         break;
 
     case UART_IER_DLM:
@@ -323,7 +312,7 @@ static void uart16550_write(mmio_device_t *dev, uint64_t off, uint8_t size,
     default: break;
     }
 
-    spin_unlock_irqrestore(&g_uart16550_lock, flags);
+    spin_unlock_irqrestore(UART_LOCK(s), flags);
 }
 
 static const mmio_dev_ops_t g_uart16550_ops = {
@@ -342,13 +331,13 @@ static const mmio_dev_ops_t g_uart16550_ops = {
  * 否则 helper 模式下这几行会漏进宿主内核日志（走 klog）而不是 helper 的
  * 终端 —— 表现是 guest 启动日志中间莫名少一段。
  */
-void uart16550_putchar(uint8_t c)
+void uart16550_putchar(vm_t *vm, uint8_t c)
 {
     uint64_t flags;
 
-    spin_lock_irqsave(&g_uart16550_lock, &flags);
-    uart_put_char(c);
-    spin_unlock_irqrestore(&g_uart16550_lock, flags);
+    spin_lock_irqsave(&vm->uart16550_lock, &flags);
+    uart_put_char(&vm->uart16550, c);
+    spin_unlock_irqrestore(&vm->uart16550_lock, flags);
 }
 
 /* ── 端口 I/O 包装 ──────────────────────────────────────────
@@ -357,6 +346,8 @@ void uart16550_putchar(uint8_t c)
  * MMIO 版完全一致，所以这里只做「1 字节访问」的转发，让 PIO 后端复用
  * 同一份状态机（TX/RX 环形缓冲、IIR/LSR 逻辑）而不是再写一份。
  * 见 kernel/vmm/x86_64/vmx.c 的 x86_pio_handle()。
+ *
+ * 这两个不接 vm：状态在 dev->priv 里，锁再从 state->owner 回指拿。
  */
 uint64_t uart16550_port_read(mmio_device_t *dev, uint64_t off)
 {
@@ -368,32 +359,21 @@ void uart16550_port_write(mmio_device_t *dev, uint64_t off, uint8_t value)
     uart16550_write(dev, off, 1, value);
 }
 
-int uart16550_init(mmio_device_t *dev, mmio_bus_t *bus)
+int uart16550_init(vm_t *vm, mmio_device_t *dev, mmio_bus_t *bus)
 {
-    if (!dev || !bus)
+    if (!vm || !dev || !bus)
         return -1;
 
     /*
-     * tx_channel 是**宿主侧的模式选择**，不是设备寄存器状态：/dev/vmm 在
-     * 调 guest_loader_run_linux() 之前就把通道打开，而那条路径会走到这里
-     * （vm_create → vmm_console_init → uart16550_init）。整片 memset 会把它
-     * 清回 0，于是：
-     *   - guest 输出不再进 TX 缓冲，而是经 klog 直打宿主控制台；
-     *   - vmm_console_pump() 复活，直接读真实 UART 抢宿主键盘，和用户态
-     *     helper 争同一个 FIFO —— 谁先跑谁拿到。
-     * 症状是「Ctrl+[ 之后回不到宿主 shell」：内核侧 detach 成功了，但按键
-     * 仍被泵喂给 guest（helper 已经退出，没人再读它的 stdin）。也会让
-     * Ctrl+] 收不到（这正是 aarch64 版 vpl011_init 里那段注释的由来）。
-     *
-     * 所以这里先存后恢复；其余字段（FIFO、寄存器）该清还是清。
+     * 整片清零是安全的：控制台归属（从前叫 state.tx_channel）现在住在
+     * vm->console_owned，不在设备状态里，所以不再需要"先存后恢复"那一套。
+     * 见 include/vmm/vmm_uart16550.h 里 state 定义下方的说明。
      */
-    int tx_channel = g_uart16550.tx_channel;
-
-    memset(&g_uart16550, 0, sizeof(g_uart16550));
-    g_uart16550.tx_channel = tx_channel;
+    memset(&vm->uart16550, 0, sizeof(vm->uart16550));
+    vm->uart16550.owner = vm;
 
     dev->ops  = &g_uart16550_ops;
-    dev->priv = &g_uart16550;
+    dev->priv = &vm->uart16550;
 
     return mmio_bus_register(bus, dev);
 }

@@ -22,6 +22,23 @@
 #include "aarch64/stage2.h"
 /* guest 入口时 x0 的值（ARM64 boot 约定：DTB 物理地址）*/
 volatile uint64_t g_guest_entry_x0;
+#elif ARCH_RISCV64
+#include "riscv64/gstage.h"
+#endif
+
+/*
+ * 每 VM 的静态表槽位数必须装得下 guest RAM 窗口 —— 按需分页的账本是
+ * 「每 2 MiB 块一张页表」（aarch64 是 L3，riscv 是 L0），窗口比它大就会在
+ * 缺页路径上被 ram_blk_index() 判为"窗口外"，表现是 guest 访问那段内存
+ * 时被当成 MMIO 去解码，或者直接停机。两条常量分别定义在两个架构头里，
+ * 只有这里同时看得见它们。
+ */
+#if ARCH_AARCH64
+_Static_assert(GUEST_LINUX_MEM_SIZE / S2_BLOCK_SIZE <= S2_MAX_L3_TABLES,
+               "GUEST_LINUX_MEM_SIZE 超出 S2_MAX_L3_TABLES 覆盖范围");
+#elif ARCH_RISCV64
+_Static_assert(GUEST_LINUX_MEM_SIZE / GSTAGE_BLOCK_SIZE <= GSTAGE_MAX_L0_TABLES,
+               "GUEST_LINUX_MEM_SIZE 超出 GSTAGE_MAX_L0_TABLES 覆盖范围");
 #endif
 
 /* 加载缓冲（静态，避免大栈占用）*/
@@ -96,6 +113,19 @@ static void *vm_gpa_ptr(vm_t *vm, uint64_t gpa, int alloc) {
   if (!pa)
     return NULL;
   vm->s2.nr_premap++;   /* 加载期分配的页（与缺页驱动的 nr_fault 区分统计）*/
+  return phys_to_virt(pa);
+#elif ARCH_RISCV64
+  uint64_t pa = 0;
+
+  if (rv_gstage_lookup(&vm->gstage, gpa, &pa))
+    return phys_to_virt(pa);
+  if (!alloc)
+    return NULL;
+
+  pa = rv_gstage_map_page(&vm->gstage, gpa, 1 /*zero*/);
+  if (!pa)
+    return NULL;
+  vm->gstage.nr_premap++;   /* 加载期分配的页（与缺页驱动的 nr_fault 区分统计）*/
   return phys_to_virt(pa);
 #else
   /* 其它架构本次未改，仍是 identity 映射 */

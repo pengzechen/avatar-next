@@ -21,12 +21,16 @@
  *      0xA8000000             initrd
  *
  *  RISC-V 的基址为什么是 0xA0000000 而不是 QEMU virt 惯用的 0x80000000：
- *  前者被宿主内核自己占了（kernel 0x80200000、rootfs 0x88000000..0x98000000），
- *  后者 0xC0000000 以上**没有**建直接映射（见 kernel/mm/riscv64/mmu.S，
- *  只覆盖 0..0xBFFFFFFF），phys_to_virt() 会缺页。0xA0000000..0xAC000000
- *  正好落在「已映射、且在 rootfs 之上」的那段空洞里，并在
- *  platforms/qemu-virt-riscv64/platform.conf 的 reserves 里预先占掉。
- *  偏移量与 x-kernel 一致（+2 MiB / +64 MiB / +128 MiB）。
+ *  后者被宿主内核自己占了（kernel 0x80200000、rootfs 0x88000000..0x98000000）。
+ *  0xA0000000 是「在 rootfs 之上、又避开宿主自己」的一段空洞，偏移量与
+ *  x-kernel 一致（+2 MiB / +64 MiB / +128 MiB）。
+ *
+ *  ⚠️ 这个地址是 **guest 眼里的** GPA —— 从 G-stage 改成按需分页起，它不再
+ *  对应任何一段宿主物理内存：guest 的每一页都是缺页时从 PMM 现拿的，落到
+ *  哪里由 PMM 决定（aarch64 那边同理，它的 GPA 基址是 0x70000000）。
+ *  所以 platform.conf 里那段 guest_ram 预留也一并删掉了。
+ *  历史注记：早期实现是 identity 映射（GPA == HPA），基址才必须是"宿主上
+ *  真实存在且已直接映射的一段"，见 include/riscv64/gstage.h 的说明。
  */
 #ifndef GUEST_LOADER_H
 #define GUEST_LOADER_H

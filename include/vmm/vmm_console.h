@@ -45,8 +45,7 @@ static inline int vmm_console_init(vm_t *vm, mmio_device_t *dev, mmio_bus_t *bus
 #if ARCH_AARCH64
     return vpl011_init(vm, dev, bus);
 #else
-    (void)vm;   /* uart16550 尚未 per-VM 化（本次只做 aarch64）*/
-    return uart16550_init(dev, bus);
+    return uart16550_init(vm, dev, bus);
 #endif
 }
 
@@ -56,8 +55,7 @@ static inline void vmm_console_tx_set_enabled(vm_t *vm, int enabled)
 #if ARCH_AARCH64
     vpl011_tx_set_enabled(vm, enabled);
 #else
-    (void)vm;
-    uart16550_tx_set_enabled(enabled);
+    uart16550_tx_set_enabled(vm, enabled);
 #endif
 }
 
@@ -66,8 +64,7 @@ static inline int vmm_console_tx_channel_enabled(vm_t *vm)
 #if ARCH_AARCH64
     return vpl011_tx_channel_enabled(vm);
 #else
-    (void)vm;   /* uart16550 尚未 per-VM 化（本次只做 aarch64）*/
-    return uart16550_tx_channel_enabled();
+    return uart16550_tx_channel_enabled(vm);
 #endif
 }
 
@@ -77,8 +74,7 @@ static inline int vmm_console_tx_pop(vm_t *vm, uint8_t *c)
 #if ARCH_AARCH64
     return vpl011_tx_pop(vm, c);
 #else
-    (void)vm;   /* uart16550 尚未 per-VM 化（本次只做 aarch64）*/
-    return uart16550_tx_pop(c);
+    return uart16550_tx_pop(vm, c);
 #endif
 }
 
@@ -87,8 +83,7 @@ static inline int vmm_console_tx_has_data(vm_t *vm)
 #if ARCH_AARCH64
     return vpl011_tx_has_data(vm);
 #else
-    (void)vm;   /* uart16550 尚未 per-VM 化（本次只做 aarch64）*/
-    return uart16550_tx_has_data();
+    return uart16550_tx_has_data(vm);
 #endif
 }
 
@@ -97,14 +92,15 @@ static inline int vmm_console_tx_has_data(vm_t *vm)
  *
  * 与 guest 写 THR/UARTDR 走同一条通路，所以 helper 模式下同样进 TX 缓冲。
  * 目前只有 RISC-V 的 SBI console_putchar 用它（aarch64 没有 SBI 控制台，
- * 退回宿主日志即可）。
+ * 退回宿主日志即可 —— 那里也必须走 klog_write 这个唯一入口）。
  */
-static inline void vmm_console_putchar(uint8_t c)
+static inline void vmm_console_putchar(vm_t *vm, uint8_t c)
 {
 #if ARCH_AARCH64
+    (void)vm;
     klog_write((const char *)&c, 1);
 #else
-    uart16550_putchar(c);
+    uart16550_putchar(vm, c);
 #endif
 }
 
@@ -114,8 +110,7 @@ static inline void vmm_console_push_rx(vm_t *vm, uint8_t c)
 #if ARCH_AARCH64
     vpl011_push_rx(vm, c);
 #else
-    (void)vm;
-    uart16550_push_rx(c);
+    uart16550_push_rx(vm, c);
 #endif
 }
 
@@ -128,8 +123,7 @@ static inline int vmm_console_irq_asserted(vm_t *vm)
 #if ARCH_AARCH64
     return vpl011_rx_irq_asserted(vm);
 #else
-    (void)vm;   /* uart16550 尚未 per-VM 化（本次只做 aarch64）*/
-    return uart16550_irq_asserted();
+    return uart16550_irq_asserted(vm);
 #endif
 }
 
@@ -139,8 +133,7 @@ static inline void vmm_console_rx_flush(vm_t *vm)
 #if ARCH_AARCH64
     vpl011_rx_flush(vm);
 #else
-    (void)vm;
-    uart16550_rx_flush();
+    uart16550_rx_flush(vm);
 #endif
 }
 

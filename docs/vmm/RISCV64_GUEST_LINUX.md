@@ -340,8 +340,98 @@ i=0; while [ $i -lt 1000 ]; do ...; i=$((i+1)); done; echo "BIGSOAK-$i-token"
 strings build/qemu-virt-riscv64/kernel_riscv64.bin | grep -c 'GUEST_LINUX mode'   # 必须是 1
 ```
 
-## 8. 相关
+## 8. 同内核多 VM（每 VM 一份 G-stage + 按需分页）
+
+对照 aarch64 侧同名改造做的，两边现在是**同构**的（G-stage ↔ stage-2，
+hgatp ↔ VTTBR_EL2）。手写 G-stage 的就是 `kernel/mm/riscv64/gstage.c` 顶部
+那段注释，这里只记要点和踩过的坑。
+
+### 8.1 跑法
+
+```bash
+make PLATFORM=qemu-virt-riscv64 clean && make PLATFORM=qemu-virt-riscv64 kernel rootfs
+tools/vmm_multivm_regress.sh riscv64 1        # vm1 → Ctrl+[ → vmm-run -n → vm2
+```
+
+宿主 shell 里就是两条命令：`vmm-run` 起 vm1，`Ctrl+[`（0x1b）把它留在后台，
+`vmm-run -n` **新建** vm2。两个 guest 各自跑自己那份 Linux。
+
+### 8.2 每 VM 一份的东西
+
+| 从前（文件级 static，只能有一个 VM） | 现在 |
+|---|---|
+| `g_gstage_root[2048]` / `g_gstage_l1[4][512]` | `vm->gstage`（静态表按 slot 索引，`GSTAGE_MAX_VMS=4`） |
+| `g_rv_mmio_bus` / `g_rv_uart_dev` / `g_rv_plic_dev` | `vm->mmio_bus_storage` / `vm->uart_dev` / `vm->plic_dev` |
+| `uart16550.c` 的 `g_uart16550` + 锁 | `vm->uart16550` / `vm->uart16550_lock`（riscv 与 x86 共用，两边都改了） |
+| `vplic.c` 的 `g_vplic`（**连锁都没有**） | `vm->vplic` / `vm->vplic_lock` |
+| `g_guest_stack[MAX_VCPUS][4K]`（按 vcpu_id 索引 ⇒ 两个 VM 的 vcpu0 共用一块栈） | `vm->guest_stack[]` |
+| `rv_gstage_activate()` 不收参数 | `rv_gstage_activate(&vm->gstage)` —— hgatp 不只是 per-hart，还是 **per-VM** |
+
+最后一条是关键：`hext_per_hart_csrs_ensure()` 从前不收 vcpu，于是**只在
+helper 所在的 hart 上**补 hgatp。多 VM 之后同一颗 hart 上时间片轮转两个
+VM 的 vCPU 任务，每次入口都必须把 hgatp 换回本 VM 的 —— 不换就是"guest 拿着
+另一个 VM 的 G-stage 在跑"，两个 VM 互相看见对方的内存。改签名时顺带把
+vcpu 传了进去（`hext_per_hart_csrs_ensure(vcpu)`）。
+
+### 8.3 按需分页
+
+`rv_gstage_vm_init()` 建出来的是**空表**（"空表即全 trap"，所以
+`rv_gstage_enable_mmio_trap()` 整个删掉了）：guest RAM 不再预映射、
+不再需要 `platform.conf` 里的 192 MiB `guest_ram` 预留（那段也删了）。
+guest 首次访问某页 → G-stage fault（scause 20/21/23）→
+`handle_ram_fault()` 分配一整块 2 MiB 并装映射 → 返回 `EL2_RESUME`；
+**非 RAM** 的才走 `handle_gstage_fault()` 交给 MMIO 总线。
+
+宿主自己要写的那几块（内核映像/DTB/initrd）在加载期由
+`guest_loader.c` 的 `vm_gpa_ptr()`/`vm_write_guest()` 显式映射 —— 那是宿主
+碰 guest 内存的**唯一**入口。
+
+### 8.4 ★ 三个坑
+
+**① `PTE → PA` 必须移位，不能像 ARM 那样 `pte & ~0xFFF`。**
+ARM 的 LPAE 把物理地址原样放在 `pte[47:12]`；RISC-V 存的是 **PPN** 在
+`pte[53:10]`。直接抹低位得到的是 `pa >> 2`。两个症状都不指向"翻译错了"：
+
+- 查表返回偏小的 PA ⇒ 宿主从**错误的物理页**取指 ⇒
+  `undecodable MMIO inst=0x2781`（看着像指令解码器坏了）；
+- 释放路径按错地址 `pmm_free` ⇒ 满屏 `PMM: invalid free address: 0x204xxxxx`
+  （这些地址连 RAM 都不在），而真正的页一页都没还回去。
+
+修法是 `PTE_TO_PA()` 宏（`gstage.c`）。**跟 aarch64 的 stage2.c 逐行对照时
+尤其容易栽在这条上** —— 那边 `t[j] & ~0xFFF` 是对的。
+
+**② 根页表必须 16 KiB 对齐，且每个 VM 独占一个 16 KiB 块。**
+hgatp 的 PPN 低两位被硬件忽略，对齐不够时"映射加到了 A 表，硬件在用 B 表"。
+用 16 KiB 的 `gstage_root_page_t` 补满 + `aligned(16384)`，与 aarch64 的
+`s2_l1_page_t` 同一手法。
+
+**③ 空表也要把 root → L1 那几条装上。**
+那几条是"表结构"不是"映射"。漏掉时软件侧（`l0_ensure`/`map_page`/`lookup`）
+看上去**完全正常**，但硬件从 root 就走进了死胡同 —— guest 在同一条取指上
+无限重复 fault。
+
+### 8.5 附带修掉的两处（都不是本架构独有）
+
+- **`kernel/mm/riscv64/mmu.S` 只直接映射到 `0xbfffffff`**，而 PMM 按 2 GiB
+  管（`ram = 0x80000000 + 0x80000000`）。PMM 一旦分配到 `0xc0000000` 以上，
+  `phys_to_virt()` 就踩到不存在的映射 → 宿主缺页 → **整机挂死**。
+  改成按需分页后 guest 的每一页都从 PMM 现拿，多开几个 VM 就能推到那条线，
+  所以补上了 `L2[3]` / `L2[0x103]`。旧版本没炸只是因为分配没推到那儿。
+- **`kernel/main.c` 的 `#include "guest_loader.h"` 只在 `ARCH_AARCH64` 分支里**：
+  riscv/x86 的 `GUEST_LINUX=1` 变体因此报
+  `implicit declaration of 'guest_loader_run_linux'`（现代 GCC 当错误），
+  两条直启路径其实一直是编不过的。两个分支都补上了。
+
+### 8.6 日志量
+
+`rv_gstage_activate()` 每次进入 guest 前都会被调一次，多 VM 时每轮都在两个
+VM 的 hgatp 之间来回切 —— 那行 `hgatp=... activated` 若是 INFO，实测会占掉
+整个日志的 **81%**（670/825 行）。已经降成 DEBUG
+（klog 规范里「INFO 不得进循环体」的典型案例）。
+
+## 9. 相关
 
 - 两种运行模式、`/dev/vmm` 协议、Ctrl+] / Ctrl+[ 语义：`docs/vmm/GUEST_CONSOLE.md`
 - 裸跑基线怎么做：`docs/vmm/GUEST_NATIVE_QEMU.md`
+- 多 VM 的验收脚本：`tools/vmm_multivm_regress.sh`（riscv64/aarch64/x86_64）
 - H-extension 陷阱委托与特权级：RISC-V Privileged Spec 1.12 §19-20

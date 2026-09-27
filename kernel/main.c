@@ -38,9 +38,21 @@
 #include "exception.h"
 #include "irq/plic.h"       /* plic_init：外部中断控制器 */
 #include "vmm/vmm.h"
+#if defined(RUN_GUEST_LINUX)
+/* 与 aarch64 分支同理（见上）：直启模式要用 GUEST_LINUX_MEM_* 和
+ * guest_loader_run_linux 的声明，且必须在文件作用域包含。
+ * 漏了这段的症状是 `implicit declaration of function
+ * 'guest_loader_run_linux'` —— 现代 GCC 把隐式声明当**错误**，
+ * 所以 riscv 的 GUEST_LINUX 变体直接编不过。*/
+#include "guest_loader.h"
+#endif
 #elif ARCH_X86_64
 #include "exception.h"
 #include "vmm/vmm.h"
+#if defined(RUN_GUEST_LINUX)
+/* 同上：直启变体要 guest_loader_run_linux 的声明。*/
+#include "guest_loader.h"
+#endif
 #endif
 
 #if !DRIVER_SDBLK_SG2002

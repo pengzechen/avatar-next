@@ -276,6 +276,8 @@ void vm_free(vm_t *vm)
 
 #if ARCH_AARCH64
     stage2_vm_destroy(&vm->s2);     /* 释放按需页 + L3 表 */
+#elif ARCH_RISCV64
+    rv_gstage_vm_destroy(&vm->gstage);  /* 释放按需页 + L0 表 */
 #endif
 
     KLOG_INFO("[vmm] vm%u freed (slot %d)\n", vm->vmid, vm->slot);

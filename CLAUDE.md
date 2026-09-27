@@ -171,6 +171,11 @@ avatar/
   其中第 1 条（binutils 把 hypervisor CSR 符号名静默映射到 VS 级编号，
   编译全绿、运行期才炸）尤其反直觉。该文档 §7 还登记了一个**尚未定性的
   间歇性 guest 用户态 SIGSEGV**。
+  **§8 是「同内核多 VM」**（每 VM 一份 G-stage + 按需分页，与 aarch64 同构）。
+  动 G-stage 之前必读那里的小节 8.4 —— 第 1 条（**RISC-V 的 PTE 存的是
+  PPN，`pte & ~0xFFF` 拿到的是 `pa>>2`**，与 ARM 的 LPAE 正相反）会让宿主
+  从错误的物理页取指、并满屏 `PMM: invalid free address`，两个症状都不指向
+  "翻译错了"。
 - **x86_64 guest Linux（已跑通到 shell）**: `docs/vmm/X86_GUEST_LINUX.md` ——
   VMX/EPT + vLAPIC + IO-APIC/PIT/PIC 桩 + PIO 串口，guest Linux 6.2.15
   已能启动到**交互式 busybox shell**（`make PLATFORM=qemu-virt-x86_64
@@ -180,7 +185,7 @@ avatar/
   CPUID 0x15/0x16 报 0 掉进 PIT 死循环、STI 影子挡住中断注入、
   `MSR_FS_BASE` 漏写 `GUEST_BASE_FS` 导致 userspace 段错误…）。
   改 `kernel/vmm/x86_64/*` 前必读。
-  **回归门禁（两条路各一个，别只跑一个）**：
+  **回归门禁（三条路各一个，别只跑一个）**：
   - **直启 + SMP=1**：`tools/boot_regress.sh [次数]` —— 连续启动 N 次、每次都要出
     `~ #`（§9.9 那个间歇性卡死就是它抓出来的，修复后 500/500 通过）。
   - **helper + 多核**：`tools/vmm_helper_regress.sh <arch> [次数] [smp] [--restart]` ——
@@ -188,6 +193,10 @@ avatar/
     之后还能再启动」。**SMP>1 下的坑几乎都只在这条路上出现**（VM setup 跑在 helper
     的核上、vCPU 钉在另一颗核上），根因清单见 `docs/bugfix/SMP_HELPER_MODE_BUGFIX.md`
     与 `docs/vmm/X86_GUEST_LINUX.md` §9.10~§9.12。
+  - **多 VM**：`tools/vmm_multivm_regress.sh <arch> [smp]` —— `vmm-run` 起 vm1 →
+    `Ctrl+[`（0x1b）detach → `vmm-run -n` 新建 vm2，要求两个 guest 各自跑到
+    `uname`、宿主侧留下两个 `vcpu0 task created`。改 VM 池 / 设备 per-VM 化 /
+    stage-2（G-stage）之后必须跑这条 —— 单 VM 的门禁**测不出**这类回归。
 - **两种运行模式、`/dev/vmm` 协议、Ctrl+] / Ctrl+[ 语义**: `docs/vmm/GUEST_CONSOLE.md`
 - **裸跑 guest 作基线对照**: `docs/vmm/GUEST_NATIVE_QEMU.md`
 

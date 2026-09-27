@@ -6,10 +6,23 @@
  *   * 0x00000000..0x3fffffff  (MMIO)
  *   * 0x40000000..0x7fffffff  (MMIO)
  *   * 0x80000000..0xbfffffff  (RAM)
+ *   * 0xc0000000..0xffffffff  (RAM，见下方 ⚠️)
  * - 高地址别名映射（KERNEL_VMA = 0xffffffc000000000）：
  *   * KERNEL_VMA + 0x00000000..0x3fffffff
  *   * KERNEL_VMA + 0x40000000..0x7fffffff
  *   * KERNEL_VMA + 0x80000000..0xbfffffff
+ *   * KERNEL_VMA + 0xc0000000..0xffffffff
+ *
+ * ⚠️ 0xc0000000..0xffffffff 这一段是 **RAM**（platform.conf 的
+ *    ram = { base = 0x80000000, size = 0x80000000 } 即 2 GiB），
+ *    PMM 也照着 2 GiB 管。旧版本这里只映射到 0xbfffffff，于是 PMM 一旦
+ *    分配到 0xc0000000 以上，phys_to_virt() 就会踩到一条**不存在**的映射
+ *    → 宿主自己缺页 → 异常处理里 while(1) → **整机挂死**。
+ *
+ *    为什么以前没炸：可用内存里靠前的那 ~575 MB（0x80206000..0x88000000 与
+ *    0x98000000..0xa0000000）够单 VM 用，分配推不到 0xc0000000。
+ *    riscv 跟着 aarch64 改成**按需分页**之后，guest 的每一页都从 PMM 现拿，
+ *    多开几个 VM 就能把分配推过这条线 —— 于是补上。
  */
 
 .equ PGSZ,            4096
@@ -97,6 +110,20 @@ mmu_init:
     MAKE_GIGA_PTE t2, t1, PTE_LEAF_RWX
     ADD_PTE_ATTR t2, PTE_ATTR_KERNEL
     li      t3, (0x102 * 8)
+    add     t3, t0, t3
+    sd      t2, 0(t3)
+
+    /* L2[3] = 低地址 0xc0000000 (1GB, normal memory，RAM 上半段) */
+    li      t1, 0xc0000000
+    MAKE_GIGA_PTE t2, t1, PTE_LEAF_RWX
+    ADD_PTE_ATTR t2, PTE_ATTR_KERNEL
+    sd      t2, (3 * 8)(t0)
+
+    /* L2[0x103] = 高地址别名 -> 物理 0xc0000000 (1GB, normal memory) */
+    li      t1, 0xc0000000
+    MAKE_GIGA_PTE t2, t1, PTE_LEAF_RWX
+    ADD_PTE_ATTR t2, PTE_ATTR_KERNEL
+    li      t3, (0x103 * 8)
     add     t3, t0, t3
     sd      t2, 0(t3)
 

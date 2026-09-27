@@ -64,7 +64,6 @@ static uint32_t g_ctrl_enter;
 
 /* ── 全局 MMIO 总线与虚拟设备（静态存储，单 VM）───────────── */
 static mmio_bus_t    g_x86_mmio_bus;
-static mmio_device_t g_x86_uart_dev;
 
 /* ================================================================
  * MSR / I/O bitmap
@@ -1648,7 +1647,8 @@ static void pit_write_data(int ch, uint8_t v)
     p->lat_valid  = 0;
 }
 
-int x86_pio_handle(uint32_t port, int is_in, uint32_t bytes, uint64_t *val)
+int x86_pio_handle(vcpu_t *vcpu, uint32_t port, int is_in, uint32_t bytes,
+                   uint64_t *val)
 {
     (void)bytes;   /* 端口访问一律按字节语义处理 */
 
@@ -1658,9 +1658,9 @@ int x86_pio_handle(uint32_t port, int is_in, uint32_t bytes, uint64_t *val)
     case 0x3f8: case 0x3f9: case 0x3fa: case 0x3fb:
     case 0x3fc: case 0x3fd: case 0x3fe: case 0x3ff:
         if (is_in)
-            *val = uart16550_port_read(&g_x86_uart_dev, port - 0x3f8);
+            *val = uart16550_port_read(&vcpu->vm->uart_dev, port - 0x3f8);
         else
-            uart16550_port_write(&g_x86_uart_dev, port - 0x3f8, (uint8_t)*val);
+            uart16550_port_write(&vcpu->vm->uart_dev, port - 0x3f8, (uint8_t)*val);
         return 1;
 
     /* ── 8259 PIC 桩 ──
@@ -2022,7 +2022,7 @@ static int vmx_exit_handler(vcpu_t *vcpu)
         uint32_t bytes = (sz == 0) ? 1 : (sz == 1 ? 2 : 4);
         uint64_t val   = is_in ? 0 : (vcpu->regs.rax & 0xffffffffULL);
 
-        if (x86_pio_handle(port, is_in, bytes, &val)) {
+        if (x86_pio_handle(vcpu, port, is_in, bytes, &val)) {
             if (is_in)
                 vcpu->regs.rax = val;
         } else if (is_in) {
@@ -2387,7 +2387,7 @@ int vmx_vm_init(vm_t *vm)
         x86_ept_enable_mmio_trap();
 
         mmio_bus_init(&g_x86_mmio_bus);
-        if (uart16550_init(&g_x86_uart_dev, &g_x86_mmio_bus) != 0)
+        if (uart16550_init(vm, &vm->uart_dev, &g_x86_mmio_bus) != 0)
             KLOG_WARN("[VMX] uart16550 registration failed\n");
         vm->mmio_bus = &g_x86_mmio_bus;
 
@@ -2481,11 +2481,11 @@ int vmx_vcpu_setup(vcpu_t *vcpu, void (*entry)(void))
  * 电平触发：条件成立就每入口重拉一次（IRR 位在取走时清掉），这样
  * guest 应答中断、FIFO 里却还有字节时不会丢。
  */
-static void x86_console_irq_on_entry(void)
+static void x86_console_irq_on_entry(vcpu_t *vcpu)
 {
     uint32_t rt, vec;
 
-    if (!vmm_console_irq_asserted())
+    if (!vcpu->vm || !vmm_console_irq_asserted(vcpu->vm))
         return;
 
     rt = g_ioapic_rt[4 * 2];                     /* IRQ4 → GSI4 的低 32 位 */
@@ -2514,7 +2514,7 @@ void vmm_arch_restore_guest_ctx(vcpu_t *vcpu)
     vlapic_timer_poll();
 
     /* 控制台：电平触发，每次入口按设备状态重拉（见上面 x86_console_irq_on_entry）*/
-    x86_console_irq_on_entry();
+    x86_console_irq_on_entry(vcpu);
 
 
     if (!vcpu->pending_event) {

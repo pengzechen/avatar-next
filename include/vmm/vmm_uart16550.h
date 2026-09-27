@@ -38,6 +38,7 @@
 #define VMM_UART16550_H
 
 #include "vmm_mmio.h"
+#include "spinlock.h"
 
 /* QEMU virt：16550A 基址与大小 */
 #define UART16550_BASE   0x10000000ULL
@@ -46,17 +47,73 @@
 /* guest PLIC 中断源（对应 guest DTB uart@10000000 的 interrupts = <10>）*/
 #define UART16550_IRQ    10
 
+/* 缓冲深度：TX 要能扛住 guest 启动那一大串内核日志的突发 */
+#define UART16550_RX_FIFO_SIZE  4096
+#define UART16550_TX_FIFO_SIZE  8192
+
+/* ── 设备私有状态 ─────────────────────────────────────────────
+ *
+ * ⚠️ 从前这是一个**文件级 static**（`static uart16550_state_t g_uart16550;`），
+ * 于是整个内核只有一份控制台状态 —— 第二个 VM 的 uart16550_init() 里那句
+ * memset 会把第一个 VM 的 RX/TX FIFO 清空，两个 VM 从此抢同一个控制台。
+ * 现在它嵌在 vm_t 里，每个 VM 一份（与 aarch64 的 vpl011_state_t 对称）。
+ *
+ * 并发：两个环都是跨任务的 ——
+ *   - guest MMIO/PIO 读写发生在 vCPU 任务里（VMM 退出路径分发）；
+ *   - 宿主侧 push_rx / tx_pop 在 /dev/vmm 的 read/write 里，属于 helper 任务。
+ * 所以都要用 IRQ-safe 的锁（锁也跟着进 vm_t，见 vm_t 的 uart16550_lock）。
+ */
+typedef struct uart16550_state {
+    /*
+     * 回指所属的 VM —— MMIO ops 只拿得到 dev->priv（指向本结构），而它要
+     * 访问 vm->console_owned（控制台归属）等 VM 级字段。
+     */
+    struct vm *owner;
+
+    uint8_t  ier;
+    uint8_t  lcr;
+    uint8_t  mcr;
+    uint8_t  scr;
+    uint8_t  fcr;
+    uint8_t  dll;
+    uint8_t  dlm;
+
+    /* RX 环形缓冲：宿主/helper 写入，guest 读 RBR 弹出 */
+    uint8_t  rx_fifo[UART16550_RX_FIFO_SIZE];
+    uint32_t rx_head;
+    uint32_t rx_tail;
+    uint32_t rx_count;
+    uint32_t rx_drops;
+
+    /* TX 环形缓冲：guest 写 THR 推入，宿主用户态 helper 读走 */
+    uint8_t  tx_fifo[UART16550_TX_FIFO_SIZE];
+    uint32_t tx_head;
+    uint32_t tx_tail;
+    uint32_t tx_count;
+} uart16550_state_t;
+
+/*
+ * 输出目标（走 TX 环还是直打宿主控制台）**不在**本结构里，而是
+ * vm->console_owned —— 那是宿主侧的运行模式选择，不是设备寄存器状态。
+ * 从前它叫 state.tx_channel，于是 uart16550_init() 的 memset 必须特意把它
+ * 存下来再恢复（GUEST_CONSOLE.md §2 记着这个陷阱）。挪进 vm_t 之后
+ * memset 可以整片清零，陷阱自然消失。与 aarch64 的 vpl011 处理一致。
+ */
+
+struct vm;
+typedef struct vm vm_t;
+
 /*
  * uart16550_init — 初始化虚拟 16550A 并注册到 MMIO 总线
- * 返回 0 成功。
+ * 状态取自 vm->uart16550（dev->priv 会指过去）。返回 0 成功。
  */
-int uart16550_init(mmio_device_t *dev, mmio_bus_t *bus);
+int uart16550_init(vm_t *vm, mmio_device_t *dev, mmio_bus_t *bus);
 
 /*
  * uart16550_push_rx — 把宿主控制台收到的一个字节喂给 guest
  * @c: 字符。FIFO 满时丢弃（只计数，不打印：调用点可能持有宿主日志锁）。
  */
-void uart16550_push_rx(uint8_t c);
+void uart16550_push_rx(vm_t *vm, uint8_t c);
 
 /*
  * uart16550_irq_asserted — 中断线是否应保持有效
@@ -66,7 +123,7 @@ void uart16550_push_rx(uint8_t c);
  * 为真时把 UART16550_IRQ 置 pending。只在 push 时置一次是不够的 ——
  * guest 应答中断时 vPLIC 会清掉 pending 位。
  */
-int uart16550_irq_asserted(void);
+int uart16550_irq_asserted(vm_t *vm);
 
 /*
  * uart16550_rx_flush — 丢弃 RX FIFO 里所有未被 guest 取走的字节
@@ -74,7 +131,7 @@ int uart16550_irq_asserted(void);
  * 停在 guest 时用：不清的话，上一轮没消费的按键会在下一次启动时先喂给新
  * guest 的 getty。
  */
-void uart16550_rx_flush(void);
+void uart16550_rx_flush(vm_t *vm);
 
 /*
  * ── TX 通道（guest 输出 → 用户态 helper）─────────────────────────
@@ -87,24 +144,24 @@ void uart16550_rx_flush(void);
  * 的调用方必须用 uart16550_tx_channel_enabled() 把关，否则用户态 helper 与
  * VMM 会同时从硬件 FIFO 抢字节。
  */
-void uart16550_tx_set_enabled(int enabled);
-int  uart16550_tx_channel_enabled(void);
+void uart16550_tx_set_enabled(vm_t *vm, int enabled);
+int  uart16550_tx_channel_enabled(vm_t *vm);
 
 /*
  * uart16550_tx_pop — 取一个 guest 输出字节
  * @c: 输出参数。缓冲空时返回 0（不修改 *c）。
  */
-int  uart16550_tx_pop(uint8_t *c);
+int  uart16550_tx_pop(vm_t *vm, uint8_t *c);
 
 /* TX 缓冲里是否还有数据（helper 的 poll 用它报 EPOLLIN）*/
-int  uart16550_tx_has_data(void);
+int  uart16550_tx_has_data(vm_t *vm);
 
 /*
  * uart16550_putchar — 从 VMM 自己往 guest 控制台送一个字节
  * 走与 guest 写 THR 完全相同的输出通路（见文件头的「输出通路」）。
  * 目前唯一调用者是 RISC-V 的 SBI console_putchar。
  */
-void uart16550_putchar(uint8_t c);
+void uart16550_putchar(vm_t *vm, uint8_t c);
 
 /*
  * 端口 I/O 包装（x86 COM1 走 0x3F8 端口，不走 MMIO）。

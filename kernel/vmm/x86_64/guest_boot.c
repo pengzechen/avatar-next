@@ -331,6 +331,13 @@ static void build_gdt(uint8_t *gdt)
  */
 int x86_guest_boot(void)
 {
+    /*
+     * ⚠️ x86 这条路径**还没**迁到 VM 池（vmm.c 的 vm_alloc/vm_get）：它自带
+     * 一个 static vm_t，也没有 stage-2 的按需分页（EPT 仍是整段预留 +
+     * enable_mmio_trap）。多 VM 在 x86 上还没做，别被这里的 static 误导。
+     * 下面传 &vm 只是为了让 guest_loader_load_file 的新签名（它要靠 host-va
+     * 翻译才知道往哪写）能编过。
+     */
     static vm_t vm;
     uint8_t hdr[HDR_HDR_SIZE];
     int klen, ilen;
@@ -362,7 +369,7 @@ int x86_guest_boot(void)
     {
         /* 先把整个文件读进来再解析：直接按段加载需要知道 setup_sects，
          * 而它在文件头里。guest_loader_load_file 一次装完最简单。*/
-        klen = guest_loader_load_file(GUEST_LINUX_KERNEL_PATH,
+        klen = guest_loader_load_file(&vm, GUEST_LINUX_KERNEL_PATH,
                                       GUEST_X86_HPA_BASE + GUEST_LINUX_SETUP_GPA);
         if (klen <= 0) {
             KLOG_ERROR("[x86boot] 无法加载 %s\n", GUEST_LINUX_KERNEL_PATH);
@@ -427,7 +434,7 @@ int x86_guest_boot(void)
     }
 
     /* ── 4. initrd ── */
-    ilen = guest_loader_load_file(GUEST_LINUX_INITRD_PATH,
+    ilen = guest_loader_load_file(&vm, GUEST_LINUX_INITRD_PATH,
                                   GUEST_X86_HPA_BASE + GUEST_LINUX_INITRD_GPA);
     if (ilen <= 0) {
         KLOG_ERROR("[x86boot] 无法加载 %s\n", GUEST_LINUX_INITRD_PATH);

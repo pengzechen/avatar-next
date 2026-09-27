@@ -33,6 +33,18 @@
 #include "vmm_vgicv3.h"
 #endif
 
+#if ARCH_RISCV64
+#include "riscv64/gstage.h"     /* gstage_ctx_t：vm_t 里每个 VM 一份 G-stage */
+#include "vmm/vmm_vplic.h"      /* vplic_state_t：每个 VM 一份 vPLIC */
+#endif
+/*
+ * uart16550 是 riscv64 与 x86_64 共用的 guest 控制台型号（两个架构都编
+ * kernel/vmm/vdev/vuart16550.c），所以状态字段两个架构都要有。
+ */
+#if ARCH_RISCV64 || ARCH_X86_64
+#include "vmm/vmm_uart16550.h"  /* uart16550_state_t：每个 VM 一份控制台状态 */
+#endif
+
 /* ── asm 可见的固定偏移（与 el2_vmcs.S 对齐）─────────────────── */
 #define VCPU_R0         0           /* x0-x30, 31×8 bytes               */
 #define VCPU_SP_EL1     248         /* 31*8                              */
@@ -396,17 +408,60 @@ typedef struct vm {
      */
     vpl011_state_t   vpl011;
     spinlock_noirq_t vpl011_lock;
+#endif
 
     /*
      * 控制台归属：1 = 本 VM 的输出进自己的 TX 环（等 helper 来取）；
      * 0 = 直打宿主控制台（直启模式，或后台 VM 的输出走 klog）。
      *
-     * ⚠️ 这个标志从前叫 vpl011 的 tx_channel，是**宿主侧的运行模式选择**，
-     * 不是设备寄存器状态。它放在 vpl011 state 里的时候，vpl011_init() 那句
-     * memset 必须特意把它存下来再恢复（GUEST_CONSOLE.md §2 记着这个陷阱）。
-     * 挪到 vm_t 之后 memset 可以整片清零，陷阱自然消失。
+     * ⚠️ 这个标志从前叫设备 state 里的 tx_channel（aarch64 是 vpl011 的，
+     * riscv/x86 是 uart16550 的），是**宿主侧的运行模式选择**，不是设备
+     * 寄存器状态。放在设备 state 里的时候，*_init() 那句 memset 必须特意
+     * 把它存下来再恢复（GUEST_CONSOLE.md §2 记着这个陷阱）。挪到 vm_t 之后
+     * memset 可以整片清零，陷阱自然消失。
+     *
+     * 设备侧通过 dev->priv → state->owner 回指到这里读取。
      */
     int console_owned;
+
+#if ARCH_RISCV64 || ARCH_X86_64
+    /*
+     * uart16550 控制台状态（两个架构共用同一份设备模型）。
+     *
+     * 从前这是一对文件级 static（g_uart16550 + g_uart16550_lock）—— 整机
+     * 只有一份，于是第二个 VM 的 uart16550_init() 一句 memset 就把第一个 VM
+     * 的 RX/TX FIFO 清空，两个 VM 从此抢同一个控制台。现在每 VM 一份。
+     * 与 aarch64 侧 vpl011 的处理完全对称。
+     */
+    uart16550_state_t uart16550;
+    spinlock_noirq_t  uart16550_lock;
+
+    /* 控制台设备对象本身（dev->priv 指向上面那份状态）。*/
+    mmio_device_t     uart_dev;
+#endif
+
+#if ARCH_RISCV64
+    /*
+     * 每 VM 自己的 G-stage：页表、VMID、RAM 窗口、按需页账本。
+     * 与 aarch64 的 s2 字段同义（那边是 stage-2 / VTTBR_EL2，这边是
+     * G-stage / hgatp）。
+     */
+    gstage_ctx_t gstage;
+
+    /* 每 VM 一份 vPLIC（从前是 vplic.c 里的一个 g_vplic 全局）。*/
+    vplic_state_t    vplic;
+    spinlock_noirq_t vplic_lock;
+    mmio_device_t    plic_dev;
+
+    /*
+     * hext_vcpu_setup() 给 guest 用的栈。
+     *
+     * 从前是 `g_guest_stack[MAX_VCPUS][4096]` —— 按 vcpu_id 索引，于是两个
+     * VM 的 vcpu0 会共用同一块栈。这个函数目前没有调用者（guest_loader 路径
+     * 自己设 vcpu 状态），但按 VM 分开才是它对多 VM 唯一安全的形态。
+     */
+#define VMM_GUEST_STACK_SIZE  4096
+    uint8_t guest_stack[MAX_VCPUS][VMM_GUEST_STACK_SIZE];
 #endif
 
     /* VM-owned virtual interrupt controller and MMIO device state.
@@ -425,6 +480,18 @@ typedef struct vm {
     mmio_device_t vgic3r_dev;
 #endif
 } vm_t;
+
+/*
+ * 池大小必须 <= 各架构静态表的槽位数 —— 那些表按 vm->slot 索引，
+ * 越界就是踩到隔壁（或 BSS 之外）。放到这里而不是各架构文件里：
+ * 两边都要看得见 MAX_VMS 才能断言。
+ */
+#if ARCH_AARCH64
+_Static_assert(MAX_VMS <= STAGE2_MAX_VMS, "MAX_VMS > STAGE2_MAX_VMS");
+#endif
+#if ARCH_RISCV64
+_Static_assert(MAX_VMS <= GSTAGE_MAX_VMS, "MAX_VMS > GSTAGE_MAX_VMS");
+#endif
 
 /* ── AArch64 专用汇编接口（仅 aarch64 编译时可见）──────────── */
 #if ARCH_AARCH64
