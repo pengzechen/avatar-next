@@ -72,8 +72,72 @@ static void encode_cells(uint8_t *p, int cells, uint64_t value) {
   }
 }
 
+/* ── GPA → 宿主可写地址（按需分页下**唯一**的入口）────────────────
+ *
+ * ⚠️ 从前这里到处是 `phys_to_virt(gpa)` —— 因为 guest RAM 是 identity 映射
+ * （GPA == PA），随手一算就能写。按需分页之后这两条前提都没了：
+ *   - 同一个 GPA 在不同 VM 里指向**不同的**物理页（隔离就靠这个）；
+ *   - 页面可能**还没分配**（首次访问才由缺页处理补上）。
+ * 所以宿主代码要碰 guest 内存，一律走这里。
+ *
+ * @alloc: 允许在未映射时现分配一页（加载映像时为 1；只想看看时为 0）。
+ * 返回 NULL 表示"没映射且不允许分配"或"PMN 没页了"。
+ */
+static void *vm_gpa_ptr(vm_t *vm, uint64_t gpa, int alloc) {
+#if ARCH_AARCH64
+  uint64_t pa = 0;
+
+  if (stage2_lookup(&vm->s2, gpa, &pa))
+    return phys_to_virt(pa);
+  if (!alloc)
+    return NULL;
+
+  pa = stage2_map_page(&vm->s2, gpa, 1 /*zero*/);
+  if (!pa)
+    return NULL;
+  vm->s2.nr_premap++;   /* 加载期分配的页（与缺页驱动的 nr_fault 区分统计）*/
+  return phys_to_virt(pa);
+#else
+  /* 其它架构本次未改，仍是 identity 映射 */
+  (void)vm;
+  (void)alloc;
+  return phys_to_virt(gpa);
+#endif
+}
+
+/* 把一段数据写进 guest 内存（自动跨页、按需分配）。
+ *
+ * 不需要 clean_dcache_range：stage-2 映射用的属性（Normal WB）与宿主线性
+ * 映射一致，同一物理页在两边是同一个 cache 视图。若将来把 guest RAM 的
+ * 属性改成 non-cacheable/Device，这里就必须补 clean。*/
+static int vm_write_guest(vm_t *vm, uint64_t gpa, const void *src, size_t n) {
+  const uint8_t *s = (const uint8_t *)src;
+
+  while (n > 0) {
+    uint64_t off_in_page = gpa & 0xFFFULL;
+    size_t chunk = (size_t)(4096 - off_in_page);
+    void *dst;
+
+    if (chunk > n)
+      chunk = n;
+
+    dst = vm_gpa_ptr(vm, gpa, 1);
+    if (!dst) {
+      KLOG_ERROR("[guest] vm_write_guest: cannot map gpa=0x%llx\n",
+                 (unsigned long long)gpa);
+      return -1;
+    }
+    memcpy(dst, s, chunk);
+
+    gpa += chunk;
+    s += chunk;
+    n -= chunk;
+  }
+  return 0;
+}
+
 /* ── 文件加载 ─────────────────────────────────────────────── */
-int guest_loader_load_file(const char *path, uint64_t gpa) {
+int guest_loader_load_file(vm_t *vm, const char *path, uint64_t gpa) {
   vfs_file_t *f = NULL;
   uint64_t off = 0;
   int total = 0;
@@ -89,8 +153,11 @@ int guest_loader_load_file(const char *path, uint64_t gpa) {
     if (n <= 0)
       break;
 
-    /* guest 物理地址 → 内核可写地址（stage2 identity map，GPA==PA）*/
-    memcpy(phys_to_virt(gpa + off), g_load_buf, (size_t)n);
+    /* 写进 guest 内存：按需分页下必须经 vm_write_guest（见它的注释）*/
+    if (vm_write_guest(vm, gpa + off, g_load_buf, (size_t)n) != 0) {
+      total = -1;
+      break;
+    }
 
     off += (uint64_t)n;
     total += n;
@@ -100,11 +167,57 @@ int guest_loader_load_file(const char *path, uint64_t gpa) {
   }
 
   vfs_close(f);
-  if (total > 0)
-    clean_dcache_range(phys_to_virt(gpa), (size_t)total);
   KLOG_INFO("[guest] loaded '%s': %d bytes -> GPA 0x%llx\n", path, total,
             (unsigned long long)gpa);
   return total;
+}
+
+/*
+ * 把文件读进**宿主缓冲**（不碰 guest 内存）。
+ *
+ * DTB 补丁必须走这条路：补丁代码是按线性偏移索引 FDT 的，而在按需分页下
+ * 一个 4 KB 的 DTB 可能落在**不连续的**物理页上 —— 直接对 guest 内存做
+ * `dtb[i]` 会写坏宿主或别的 VM。所以：读到宿主缓冲 → 在缓冲上打补丁 →
+ * 一次 vm_write_guest() 写回去。
+ *
+ * 返回读到的字节数；缓冲不够放下整个文件时返回 -1（宁可不启动也不能截断
+ * DTB —— 截断的 FDT 会让 guest 解析到垃圾）。
+ */
+static int guest_loader_read_file(const char *path, uint8_t *buf, size_t cap) {
+  vfs_file_t *f = NULL;
+  uint64_t off = 0;
+  size_t total = 0;
+  int rc = vfs_open(path, 0 /*O_RDONLY*/, 0, &f);
+
+  if (rc != 0 || !f) {
+    KLOG_ERROR("[guest] cannot open '%s' (rc=%d)\n", path, rc);
+    return -1;
+  }
+
+  for (;;) {
+    int n = (int)vfs_read_to_phys(f, off, buf + total, cap - total);
+    if (n < 0) {
+      vfs_close(f);
+      return -1;
+    }
+    if (n == 0)
+      break;
+    total += (size_t)n;
+    off += (uint64_t)n;
+    if (total >= cap) {
+      /* 缓冲满了但文件可能还没读完 —— 再探一次 */
+      uint8_t probe;
+      if (vfs_read_to_phys(f, off, &probe, 1) > 0) {
+        KLOG_ERROR("[guest] '%s' larger than %zu bytes buffer\n", path, cap);
+        vfs_close(f);
+        return -1;
+      }
+      break;
+    }
+  }
+
+  vfs_close(f);
+  return (int)total;
 }
 
 /* ── DTB 修补 ─────────────────────────────────────────────── */
@@ -112,9 +225,8 @@ int guest_loader_load_file(const char *path, uint64_t gpa) {
  * 遍历 FDT 结构块，把 initrd 的 start/end 两个 64 位属性改写到指定值。
  * （对标 kvmm loader.rs 的 patch_dtb_initrd）
  */
-int guest_loader_patch_dtb_initrd(uint64_t dtb_gpa, uint32_t dtb_size,
+int guest_loader_patch_dtb_initrd(uint8_t *dtb, uint32_t dtb_size,
                                   uint64_t initrd_start, uint64_t initrd_end) {
-  uint8_t *dtb = (uint8_t *)phys_to_virt(dtb_gpa);
 
   if (dtb_size < 40 || be32(dtb, 0) != FDT_MAGIC) {
     KLOG_ERROR("[guest] DTB bad magic\n");
@@ -185,9 +297,8 @@ int guest_loader_patch_dtb_initrd(uint64_t dtb_gpa, uint32_t dtb_size,
  * 改写 /memory 节点的 reg（base/size），使 guest 看到我们实际提供的大小。
  * cells 数取根节点 #address-cells/#size-cells（arm64 通常 2/2）。
  */
-int guest_loader_patch_dtb_memory(uint64_t dtb_gpa, uint32_t dtb_size,
+int guest_loader_patch_dtb_memory(uint8_t *dtb, uint32_t dtb_size,
                                   uint64_t mem_base, uint64_t mem_size) {
-  uint8_t *dtb = (uint8_t *)phys_to_virt(dtb_gpa);
 
   if (dtb_size < 40 || be32(dtb, 0) != FDT_MAGIC)
     return -1;
@@ -271,9 +382,8 @@ int guest_loader_patch_dtb_memory(uint64_t dtb_gpa, uint32_t dtb_size,
   return patched > 0 ? 0 : -1;
 }
 
-int guest_loader_patch_dtb_bootargs(uint64_t dtb_gpa, uint32_t dtb_size,
+int guest_loader_patch_dtb_bootargs(uint8_t *dtb, uint32_t dtb_size,
                                     const char *bootargs) {
-  uint8_t *dtb = (uint8_t *)phys_to_virt(dtb_gpa);
 
   if (dtb_size < 40 || be32(dtb, 0) != FDT_MAGIC)
     return -1;
@@ -388,9 +498,8 @@ static void dtb_nop_range(uint8_t *dtb, uint32_t start, uint32_t end) {
     put_be32(dtb + p, FDT_NOP);
 }
 
-int guest_loader_nop_dtb_nodes(uint64_t dtb_gpa, uint32_t dtb_size,
+int guest_loader_nop_dtb_nodes(uint8_t *dtb, uint32_t dtb_size,
                                const char *const *names, int nr_names) {
-  uint8_t *dtb = (uint8_t *)phys_to_virt(dtb_gpa);
 
   if (dtb_size < 40 || be32(dtb, 0) != FDT_MAGIC)
     return -1;
@@ -477,7 +586,7 @@ int guest_loader_nop_dtb_nodes(uint64_t dtb_gpa, uint32_t dtb_size,
  */
 #if ARCH_AARCH64
 #define GUEST_LINUX_BOOTARGS                                                   \
-  "quiet console=ttyAMA0 rdinit=/init panic_on_warn=0 oops=panic"
+  " console=ttyAMA0 rdinit=/init  oops=panic"
 
 _Static_assert(sizeof(GUEST_LINUX_BOOTARGS) - 1 <= 78,
                "GUEST_LINUX_BOOTARGS 超出 DTB 的 /chosen/bootargs 槽位"
@@ -537,15 +646,19 @@ _Static_assert(sizeof(GUEST_LINUX_BOOTARGS) - 1 <= 90,
 extern int x86_guest_boot(void);
 #endif
 
-int guest_loader_run_linux(void) {
+int guest_loader_run_linux(vm_t *vm) {
 #if ARCH_X86_64
   return x86_guest_boot();
 #else
-  static vm_t vm;
   int rc;
 
-  if (vmm_guest_running()) {
-    KLOG_WARN("[guest] a guest is already running, refusing re-entry\n");
+  /*
+   * 重入保护：调用者（/dev/vmm 或直启路径）已经从 VM 池里拿到一个槽位并
+   * 置成 LOADING，这里只需确认它可用。（从前是一个全局 "guest 在跑吗"，
+   * 那在多 VM 下会拦住第二个 VM。）
+   */
+  if (!vm || vm->state != VM_LOADING) {
+    KLOG_WARN("[guest] run_linux: vm slot not in LOADING state, refusing\n");
     return -1;
   }
 
@@ -559,50 +672,62 @@ int guest_loader_run_linux(void) {
 #endif
   );
 
-  /* The guest RAM range is identity-backed by host physical memory. Keep it
-   * out of PMM before loading images or creating more host objects. */
-  KLOG_INFO(
-      "[guest] reserving RAM: 0x%llx - 0x%llx\n",
-      (unsigned long long)GUEST_LINUX_MEM_BASE,
-      (unsigned long long)(GUEST_LINUX_MEM_BASE + GUEST_LINUX_MEM_SIZE - 1));
-  pmm_mark_allocated(g_pmm, GUEST_LINUX_MEM_BASE,
-                     GUEST_LINUX_MEM_BASE + GUEST_LINUX_MEM_SIZE - 1);
-
-  /* x-kernel backs guest RAM with freshly allocated zeroed pages. Avatar uses
-   * a reserved physical window, so explicitly clear it before loading Linux;
-   * otherwise stale host data can corrupt the guest's .bss/static tables. */
-  memset((void *)phys_to_virt(GUEST_LINUX_MEM_BASE), 0, GUEST_LINUX_MEM_SIZE);
-  clean_dcache_range((void *)phys_to_virt(GUEST_LINUX_MEM_BASE),
-                     GUEST_LINUX_MEM_SIZE);
+  /*
+   * ── 建立 VM（**必须**在加载映像之前）──────────────────────────
+   *
+   * stage-2 是在 vm_create() 里初始化的 —— 一张**空表**。而加载映像要往
+   * guest 物理地址里写，那需要映射。按需分页下 vm_write_guest() 会为每一页
+   * 现分配，所以这里**不再需要**预先预留物理内存或整片清零：
+   *
+   *   pmm_mark_allocated(192 MiB)   ← 删掉了
+   *   memset(192 MiB)               ← 删掉了
+   *
+   * 从前那两行既是"只能有一个 VM"的根源（第二份无处安放、memset 会抹掉
+   * 第一个 VM 的内存），也让每个 VM 无论用多少都硬吃 192 MiB。现在宿主
+   * 只为 guest 真正碰过的页付内存，且两个 VM 的页天然隔离。
+   */
+  rc = vm_create(vm);
+  if (rc != 0) {
+    KLOG_ERROR("[guest] vm_create failed\n");
+    return -1;
+  }
 
   /* 1. 加载 kernel Image */
-  int klen =
-      guest_loader_load_file(GUEST_LINUX_KERNEL_PATH, GUEST_LINUX_KERNEL_GPA);
+  int klen = guest_loader_load_file(vm, GUEST_LINUX_KERNEL_PATH,
+                                    GUEST_LINUX_KERNEL_GPA);
   if (klen <= 0)
     return -1;
   KLOG_INFO("[guest] kernel: %d bytes\n", klen);
 
-  /* 2. 加载 DTB，并修补 memory / initrd 节点 */
-  int dlen = guest_loader_load_file(GUEST_LINUX_DTB_PATH, GUEST_LINUX_DTB_GPA);
+  /*
+   * 2. DTB：**读进宿主缓冲**再打补丁，最后一次性写回 guest。
+   *
+   * 不能像从前那样直接对 guest 内存 `dtb[i]`：补丁代码按线性偏移索引 FDT，
+   * 而按需分页下 4 KB 的 DTB 可能落在不连续的物理页上 —— 越过页边界继续
+   * 线性索引就会写到宿主或别的 VM 的内存里。
+   */
+  static uint8_t dtb_buf[8192];
+  int dlen = guest_loader_read_file(GUEST_LINUX_DTB_PATH, dtb_buf,
+                                    sizeof(dtb_buf));
   if (dlen <= 0)
     return -1;
 
-  guest_loader_patch_dtb_memory(GUEST_LINUX_DTB_GPA, (uint32_t)dlen,
+  guest_loader_patch_dtb_memory(dtb_buf, (uint32_t)dlen,
                                 GUEST_LINUX_MEM_BASE, GUEST_LINUX_MEM_SIZE);
 
-  if (guest_loader_patch_dtb_bootargs(GUEST_LINUX_DTB_GPA, (uint32_t)dlen,
+  if (guest_loader_patch_dtb_bootargs(dtb_buf, (uint32_t)dlen,
                                       GUEST_LINUX_BOOTARGS) != 0) {
     KLOG_ERROR("[guest] bootargs 补丁失败：guest 会用 DTB 自带的那句命令行，"
                "GUEST_LINUX_BOOTARGS 不生效（原因见上一条 WARN）\n");
   }
 
   /* 3. 加载 initrd */
-  int ilen =
-      guest_loader_load_file(GUEST_LINUX_INITRD_PATH, GUEST_LINUX_INITRD_GPA);
+  int ilen = guest_loader_load_file(vm, GUEST_LINUX_INITRD_PATH,
+                                    GUEST_LINUX_INITRD_GPA);
   if (ilen <= 0)
     return -1;
 
-  guest_loader_patch_dtb_initrd(GUEST_LINUX_DTB_GPA, (uint32_t)dlen,
+  guest_loader_patch_dtb_initrd(dtb_buf, (uint32_t)dlen,
                                 GUEST_LINUX_INITRD_GPA,
                                 GUEST_LINUX_INITRD_GPA + (uint64_t)ilen);
 
@@ -621,20 +746,13 @@ int guest_loader_run_linux(void) {
     static const char *const unsupported_nodes[] =
         GUEST_LINUX_UNSUPPORTED_NODES;
     guest_loader_nop_dtb_nodes(
-        GUEST_LINUX_DTB_GPA, (uint32_t)dlen, unsupported_nodes,
+        dtb_buf, (uint32_t)dlen, unsupported_nodes,
         (int)(sizeof(unsupported_nodes) / sizeof(unsupported_nodes[0])));
   }
 
-  /* 4. 建立 VM（启用 Stage-2 隔离与 MMIO 设备）*/
-  vm.cfg.mem_base = GUEST_LINUX_MEM_BASE;
-  vm.cfg.mem_size = GUEST_LINUX_MEM_SIZE;
-  vm.cfg.nr_vcpus = 1;
-
-  rc = vm_create(&vm);
-  if (rc != 0) {
-    KLOG_ERROR("[guest] vm_create failed\n");
+  /* 补好的 DTB 一次性写进 guest（memory/bootargs/initrd 都改完了）*/
+  if (vm_write_guest(vm, GUEST_LINUX_DTB_GPA, dtb_buf, (size_t)dlen) != 0)
     return -1;
-  }
 
   /*
    * 5. 配置 vCPU 的入口状态
@@ -642,7 +760,7 @@ int guest_loader_run_linux(void) {
    * 必须在 vm_create() **之后**：两个架构的 vm_init 都会 memset 整个
    * vcpu 数组，先写会被清掉。
    */
-  vcpu_t *vcpu = &vm.vcpus[0];
+  vcpu_t *vcpu = &vm->vcpus[0];
 
 #if ARCH_AARCH64
   /*

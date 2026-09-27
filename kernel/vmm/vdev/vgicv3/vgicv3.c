@@ -16,6 +16,7 @@
 #include "irq/gicv3.h"
 #include "klog.h"
 #include "string.h"
+#include "barrier.h"   /* barrier_sync：清 LR 后要等它落地 */
 #include "aarch64/sysreg.h"
 #include "task/cpu.h"   /* get_current_cpu_id：诊断「En 设在哪一核」*/
 
@@ -109,6 +110,17 @@ int vmm_vgic3_init(vgic3_t *vgic, uint32_t nr_vcpus)
 
     memset(vgic, 0, sizeof(*vgic));
     vgic->nr_vcpus = nr_vcpus;
+    /*
+     * ICH_VMCR_EL2 的 per-VM 初值。
+     *
+     * ⚠️ 不能全 0：VPMR（bit[31:24]，guest 的 ICC_PMR_EL1）在 ARM 里是
+     * **优先级屏蔽**，值 0 表示"屏蔽一切优先级"—— 全 0 的初值会让 guest
+     * 在写下自己的 PMR 之前一个中断都收不到，于是 vm1 直接卡在启动早期
+     * （实测：改成全 0 后连单 VM 都起不来）。
+     *
+     * 全放行 = VPMR=0xFF（最低优先级）、VENG1=1（Group1 使能）、VBPR1=0。
+     */
+    vgic->ich_vmcr = (0xFFULL << 24) | (1ULL << 1);
 
     for (uint32_t i = 0; i < VGIC3_MAX_VCPUS; i++) {
         /* SGIs 永远使能（GICv3 下 SGI 的使能位同样是 banked 的，但 Linux
@@ -310,7 +322,93 @@ static void clear_pending(vgic3_t *vgic, uint32_t vcpu_id, uint32_t irq)
     }
 }
 
+
+/* ── per-CPU 的 ICH_*_EL2 访问（见 vgic3_t 里 ich_vmcr 的注释）─────────
+ *
+ * ⚠️ 只碰 ICH_VMCR_EL2。**不要**去读写 ICH_AP1R1/2/3_EL2 —— 实测在 QEMU 上
+ * 那几条 mrs/msr 直接触发 EL1 的 "Unknown reason" 异常（EC=0x0），崩在
+ * vmm_vgic3_lr_switch_in+0xf0，连单 VM 都起不来。AP1R0 在头文件里有编码，
+ * 但既然 AP1R 只影响 active priority（我们不做优先级分组），不值得为它冒险。
+ */
+
+static uint64_t ich_read_vmcr(void)
+{
+    uint64_t v;
+    __asm__ volatile("mrs %0, " ICH_VMCR_EL2 : "=r"(v));
+    return v;
+}
+
+static void ich_write_vmcr(uint64_t v)
+{
+    __asm__ volatile("msr " ICH_VMCR_EL2 ", %0" :: "r"(v) : "memory");
+}
+
 /* ── 进入 guest 前：把可投递中断写进空 LR ───────────────────── */
+
+/*
+ * 本 pCPU 的 ICH_LR<n>_EL2 当前"属于"哪个 VM 的哪个 vCPU。
+ *
+ * ⚠️ LR 是 **per-pCPU 的硬件**，而多个 VM 的 vCPU 任务可以在同一颗核上
+ * 分时跑（都钉 CPU0 时必然如此）。没有这张表的话：VM2 的 sync_entry() 会
+ * 看到 VM1 还留在 LR 里的 active 项 —— 要么把 VM1 的中断当成自己的
+ * （guest 收到不属于它的 IRQ），要么因为槽位被占满而排不进自己的中断
+ * （guest 卡死等不到 tick）。两种症状都极其难查。
+ *
+ * 做法照抄 irq_route.c 的 per-pCPU 数组模式（那边管的是"哪颗核跑哪个
+ * vCPU"，这里管的是"哪颗核的 LR 归谁"）。
+ */
+#define VGIC3_MAX_LR_CPUS  8
+static vgic3_t  *g_lr_owner_vgic[VGIC3_MAX_LR_CPUS];
+static uint32_t  g_lr_owner_vcpu[VGIC3_MAX_LR_CPUS];
+
+/*
+ * vmm_vgic3_lr_switch_in — 进入 guest 前调用：确保本核的 LR 属于给定的
+ * vCPU，然后把可投递的中断排进去。
+ *
+ * 归属变化时的顺序**不能反**：
+ *   ① 先 sync_exit(上一个) —— 把硬件里仍 active/pending 的项回收进**上一个
+ *      VM 自己的**软件镜像（它的 guest 可能已经 ack 但还没 EOI，状态不能丢）；
+ *   ② 再清空全部 LR —— 让新 VM 从一个干净的硬件状态开始；
+ *   ③ 最后 sync_entry(当前) 排入当前 VM 的中断。
+ *
+ * 反过来（先清再 sync_exit）会把上一个 VM 尚未 EOI 的中断状态直接抹掉。
+ */
+void vmm_vgic3_lr_switch_in(vgic3_t *vgic, uint32_t vcpu_id)
+{
+    uint32_t cpu = get_current_cpu_id();
+
+    if (cpu < VGIC3_MAX_LR_CPUS &&
+        (g_lr_owner_vgic[cpu] != vgic || g_lr_owner_vcpu[cpu] != vcpu_id)) {
+
+        if (g_lr_owner_vgic[cpu]) {
+            vgic3_t *prev = g_lr_owner_vgic[cpu];
+            uint32_t n = _gicv3.nr_lrs > VGIC3_MAX_LRS ? VGIC3_MAX_LRS
+                                                       : _gicv3.nr_lrs;
+
+            vmm_vgic3_sync_exit(prev, g_lr_owner_vcpu[cpu]);
+
+            /*
+             * 把本 CPU 的 ICH_*_EL2 硬件状态**存回上一个 VM**，
+             * 稍后它被调度回来时再装回去（见下面的 restore）。
+             * 顺序：先 sync_exit（回收 LR 语义）→ 再存 ICH → 再清 LR。
+             */
+            prev->ich_vmcr = ich_read_vmcr();
+
+            for (uint32_t i = 0; i < n; i++)
+                gicv3_write_lr(i, 0);
+            barrier_sync();
+        }
+
+        /* 装入当前 VM 的 ICH 状态（首次进入时是 init 给的默认值）*/
+        ich_write_vmcr(vgic->ich_vmcr);
+        barrier_sync();
+
+        g_lr_owner_vgic[cpu] = vgic;
+        g_lr_owner_vcpu[cpu] = vcpu_id;
+    }
+
+    vmm_vgic3_sync_entry(vgic, vcpu_id);
+}
 
 void vmm_vgic3_sync_entry(vgic3_t *vgic, uint32_t vcpu_id)
 {
@@ -330,6 +428,48 @@ void vmm_vgic3_sync_entry(vgic3_t *vgic, uint32_t vcpu_id)
     for (uint32_t i = 0; i < n; i++)
         if ((elrsr >> i) & 1)
             vcpu->lr[i] = 0;
+
+    /*
+     * 1b) 把**软件记着 active、但硬件 LR 里已经没有**的中断重新装回 LR，
+     *     状态只置 Active（不带 Pending）。
+     *
+     * 为什么必须补这一步（实测第二个 VM 卡在 init 的根因）：
+     *   多 VM 分时跑时，切换 VM 必须清空硬件 LR 让给下一个 VM，于是
+     *   "guest 已 ack、但还没 EOI"的中断只能记在软件 active 位里。等它被
+     *   调度回来时，若**不**把那个中断装回 LR，guest 随后写的
+     *   ICC_EOIR1_EL1 落在一个空槽上 —— 硬件无事发生、ELRSR 不会置位、
+     *   我们也收不到通知 ⇒ 软件 active 位**永远没人清**。
+     *   而 sync_entry 的排队条件是 `pending & enabled & ~active`，
+     *   于是这个 INTID 被永久堵死：宿主侧看 vtimer 注入计数一路涨，
+     *   guest 的 CNTV_CVAL 却再也不变。
+     *
+     * 装回去之后闭环就自洽了：guest EOI → 硬件清 LR、ELRSR 置位 →
+     * 下次 sync_exit 的 "槽位已空" 分支 → clear_active。
+     */
+    for (uint32_t word = 0; word < VGIC3_MAX_WORDS; word++) {
+        uint32_t act = vmm_vgic3_active_word(vgic, vcpu_id, word);
+
+        while (act) {
+            uint32_t irq = word * 32 + (uint32_t)__builtin_ctz(act);
+            int slot;
+            uint64_t lr;
+
+            act &= act - 1;
+
+            if (lr_has_irq(vgic, vcpu_id, irq))
+                continue;               /* 已经在 LR 里了 */
+
+            slot = lr_empty_slot(vgic, vcpu_id);
+            if (slot < 0)
+                break;                  /* 槽位不够，留给下一轮 */
+
+            lr = vgic3_lr_value(vgic, vcpu_id, irq);
+            lr = (lr & ~ICH_LR_STATE_MASK) |
+                 ((uint64_t)ICH_LR_ST_ACTIVE << ICH_LR_STATE_SHIFT);
+            vcpu->lr[slot] = lr;
+            gicv3_write_lr((uint32_t)slot, lr);
+        }
+    }
 
     /*
      * 2) 扫全部 INTID，把 pending & enabled & !active 且尚未排入 LR 的

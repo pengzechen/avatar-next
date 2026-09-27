@@ -75,6 +75,25 @@ typedef struct vgic3 {
     uint32_t nr_vcpus;
     int      dist_enabled;
 
+    /*
+     * ── per-CPU 硬件寄存器 ICH_*_EL2 的软件镜像 ──────────────────
+     *
+     * ICH_VMCR_EL2 / ICH_AP1R*_EL2 是**每 CPU 一份**的硬件。VHE 下 guest
+     * 读写的 ICC_PMR_EL1 / ICC_CTLR_EL1 / ICC_BPR1_EL1 / ICC_IGRPEN1_EL1 /
+     * ICC_AP1R*_EL1 全部落在它们上面 —— 而多个 VM 的 vCPU 可以在同一颗核上
+     * 分时跑，不保存/恢复就会互相覆盖。
+     *
+     * 症状（实测）：第二个 VM 的 guest 内核完整启动到
+     * "Freeing unused kernel memory"，之后 init 再也推进不了；宿主侧看到
+     * vtimer 注入计数一路涨、而 guest 的 CNTV_CVAL 恒定不变 —— 也就是
+     * 「我们在注入，guest 收不到」。原因是它的 vGIC 配置被前一个 VM 的覆盖，
+     * 中断被 PMR/IGRPEN1 挡住了。
+     *
+     * 切换 VMC R/AP1R 的动作在 vmm_vgic3_lr_switch_in() 里（和 LR 同一处）。
+     */
+    uint64_t ich_vmcr;
+    uint64_t ich_ap1r[4];
+
     /* Distributor 侧（SPI，INTID >= 32）*/
     uint32_t enabled[VGIC3_MAX_WORDS];
     uint32_t spi_pending[VGIC3_MAX_VCPUS][VGIC3_MAX_WORDS];
@@ -112,6 +131,16 @@ void vmm_vgic3_clear_active_word(vgic3_t *vgic, uint32_t vcpu_id,
 
 /* ── 硬件（ICH_*_EL2）侧 ────────────────────────────────────── */
 void vmm_vgic3_hw_init(void);
+/*
+ * vmm_vgic3_lr_switch_in — 进入 guest 前调用：确保**本 pCPU** 的
+ * ICH_LR<n>_EL2 属于给定的 vCPU，再把可投递中断排进去。
+ *
+ * LR 是 per-pCPU 硬件，多个 VM 的 vCPU 在同一核上分时跑时会互相看到对方
+ * 的残留中断。本函数处理归属切换（先回收上一个 VM 的状态、再清空硬件、
+ * 最后排入当前 VM 的），替代直接调用 vmm_vgic3_sync_entry()。
+ */
+void vmm_vgic3_lr_switch_in(vgic3_t *vgic, uint32_t vcpu_id);
+
 void vmm_vgic3_sync_entry(vgic3_t *vgic, uint32_t vcpu_id);
 void vmm_vgic3_sync_exit(vgic3_t *vgic, uint32_t vcpu_id);
 void vmm_vgic3_inject_timer(vgic3_t *vgic, uint32_t vcpu_id);

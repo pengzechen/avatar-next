@@ -61,6 +61,8 @@
 #define VMM_IOC_DETACH      _IO ('V', 1)            /* 本次 close 不停 guest */
 #define VMM_IOC_STOP        _IO ('V', 2)            /* 停止 guest */
 #define VMM_IOC_BOOT        _IO ('V', 3)            /* 启动 guest；已在跑则接入 */
+/* 强制新建一个 VM（多 VM）。入参 0=自动分配 vmid，出参回填实际值。*/
+#define VMM_IOC_BOOT_EX     _IOWR('V', 4, uint32_t)
 
 /* 等上一个 guest 收尾时的重试次数（每次 1ms，见 delay_ms）*/
 #define BOOT_RETRIES  2000
@@ -150,10 +152,13 @@ static int esc_is_standalone(void)
 int main(int argc, char **argv)
 {
     int kill_only = 0;
+    int force_new = 0;
 
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "-k") || !strcmp(argv[i], "--kill"))
             kill_only = 1;
+        if (!strcmp(argv[i], "-n") || !strcmp(argv[i], "--new"))
+            force_new = 1;      /* 已有 VM 在跑时也再起一个，而不是接入 */
     }
 
     int fd = open(DEV_VMM, O_RDWR);
@@ -184,7 +189,13 @@ int main(int argc, char **argv)
     /* ── 启动或接入 guest ────────────────────────────────── */
     int ok = 0;
     for (int i = 0; i < BOOT_RETRIES; i++) {
-        if (ioctl(fd, VMM_IOC_BOOT, 0) == 0) {
+        uint32_t vmid = 0;
+        int booted = force_new
+            ? (ioctl(fd, VMM_IOC_BOOT_EX, &vmid) == 0)
+            : (ioctl(fd, VMM_IOC_BOOT, 0) == 0);
+        if (booted) {
+            if (force_new)
+                printf("\r\n[vmm-run] new VM vmid=%u\r\n", vmid);
             ok = 1;
             break;
         }

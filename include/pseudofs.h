@@ -61,6 +61,12 @@
 #define VMM_IOC_DETACH      _IO ('V', 1)           /* 本次 close 不停 guest */
 #define VMM_IOC_STOP        _IO ('V', 2)           /* 停止 guest */
 #define VMM_IOC_BOOT        _IO ('V', 3)           /* 启动 guest；已在跑则接入 */
+/*
+ * VMM_IOC_BOOT_EX — 强制**新建**一个 VM（多 VM 的入口）
+ * 入参/出参：uint32_t *vmid。入参 0 = 自动分配；出参回填实际分到的 vmid。
+ * 与 BOOT 的区别：BOOT 见到有 VM 在跑就接入它，本号总是新建一个。
+ */
+#define VMM_IOC_BOOT_EX     _IOWR('V', 4, uint32_t)
 
 /* ── /dev/ion ioctl 结构体 & 请求码 ──────────────────────────── */
 struct ion_alloc_req {

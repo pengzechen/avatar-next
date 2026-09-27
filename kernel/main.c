@@ -27,6 +27,13 @@
 #include "vmm/vmm.h"
 #include "aarch64/stage2.h"
 #include "mm_vm.h"
+#if defined(RUN_GUEST_LINUX)
+/* 直启模式的 GUEST_LINUX_MEM_* 与 guest_loader_run_linux 声明。
+ * ⚠️ 必须在**文件作用域**包含：这个头里有一个 `typedef struct vm vm_t;`
+ * 前置声明，若在函数体内展开，它会遮蔽掉 vmm.h 里那个完整的 vm_t，
+ * 后面所有 `vm->cfg` 之类的访问都会报 "invalid use of incomplete typedef"。*/
+#include "guest_loader.h"
+#endif
 #elif ARCH_RISCV64
 #include "exception.h"
 #include "irq/plic.h"       /* plic_init：外部中断控制器 */
@@ -287,9 +294,22 @@ void kernel_main(void)
 
     /* 从 rootfs 加载 Linux guest（kernel Image + DTB + initrd）并启动 */
     KLOG_INFO("=== GUEST_LINUX mode: booting Linux as EL1 guest ===\n");
-    extern int guest_loader_run_linux(void);
-    if (guest_loader_run_linux() != 0)
-        KLOG_ERROR("guest_loader_run_linux failed\n");
+    {
+        /* vmm.h / guest_loader.h 都在文件顶部包含（见那里的注释：
+         * 类型声明不能放在函数体内）*/
+
+        /* 直启模式：从 VM 池里取一个槽位（多 VM 之后直启也用同一条路径）*/
+        vm_t *vm = vm_alloc();
+        if (!vm) {
+            KLOG_ERROR("GUEST_LINUX: no free VM slot\n");
+        } else {
+            vm->cfg.mem_base = GUEST_LINUX_MEM_BASE;
+            vm->cfg.mem_size = GUEST_LINUX_MEM_SIZE;
+            vm->cfg.nr_vcpus = 1;
+            if (guest_loader_run_linux(vm) != 0)
+                KLOG_ERROR("guest_loader_run_linux failed\n");
+        }
+    }
 #elif defined(RUN_VMM_TEST)
     KLOG_INFO("=== VMM_TEST mode: 3-thread context switch test ===\n");
     run_vmm_test();

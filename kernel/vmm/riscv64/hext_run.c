@@ -224,7 +224,8 @@ int hext_vm_init(vm_t *vm)
 
         /* 建立 MMIO 总线并注册虚拟 16550A 控制台 + 虚拟 PLIC */
         mmio_bus_init(&g_rv_mmio_bus);
-        if (vmm_console_init(&g_rv_uart_dev, &g_rv_mmio_bus) != 0)
+        /* vm 参数：riscv 的 uart16550 尚未 per-VM 化，接口先对齐（见 vmm_console.h）*/
+        if (vmm_console_init(vm, &g_rv_uart_dev, &g_rv_mmio_bus) != 0)
             KLOG_WARN("[HEXT] console vdev registration failed\n");
         if (vplic_init(&g_rv_plic_dev, &g_rv_mmio_bus, (uint32_t)nr) != 0)
             KLOG_WARN("[HEXT] vplic registration failed\n");
@@ -280,7 +281,7 @@ static void vcpu_timer_irq_on_entry(vcpu_t *vcpu)
 static void vcpu_external_irq_on_entry(vcpu_t *vcpu)
 {
     /* 设备侧先同步进 PLIC：控制台 RX 有数据/待发送 → 置对应中断源 */
-    if (vmm_console_irq_asserted())
+    if (vmm_console_irq_asserted(vcpu->vm))
         vplic_set_pending(VMM_CONSOLE_IRQ);
 
     uint32_t irq = vplic_next_deliverable((uint32_t)vcpu->vcpu_id);

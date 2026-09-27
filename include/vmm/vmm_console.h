@@ -21,6 +21,7 @@
 #include "arch.h"
 #include "klog.h"
 #include "vmm_mmio.h"
+#include "vmm/vmm.h"   /* vm_t：控制台状态现在是每 VM 一份 */
 
 #if ARCH_AARCH64
 #include "vmm/vmm_vpl011.h"
@@ -39,49 +40,54 @@
  * vmm_console_init — 初始化虚拟控制台并注册到 MMIO 总线
  * 返回 0 成功。
  */
-static inline int vmm_console_init(mmio_device_t *dev, mmio_bus_t *bus)
+static inline int vmm_console_init(vm_t *vm, mmio_device_t *dev, mmio_bus_t *bus)
 {
 #if ARCH_AARCH64
-    return vpl011_init(dev, bus);
+    return vpl011_init(vm, dev, bus);
 #else
+    (void)vm;   /* uart16550 尚未 per-VM 化（本次只做 aarch64）*/
     return uart16550_init(dev, bus);
 #endif
 }
 
 /* ── 输出通路（guest → 宿主）───────────────────────────────── */
-static inline void vmm_console_tx_set_enabled(int enabled)
+static inline void vmm_console_tx_set_enabled(vm_t *vm, int enabled)
 {
 #if ARCH_AARCH64
-    vpl011_tx_set_enabled(enabled);
+    vpl011_tx_set_enabled(vm, enabled);
 #else
+    (void)vm;
     uart16550_tx_set_enabled(enabled);
 #endif
 }
 
-static inline int vmm_console_tx_channel_enabled(void)
+static inline int vmm_console_tx_channel_enabled(vm_t *vm)
 {
 #if ARCH_AARCH64
-    return vpl011_tx_channel_enabled();
+    return vpl011_tx_channel_enabled(vm);
 #else
+    (void)vm;   /* uart16550 尚未 per-VM 化（本次只做 aarch64）*/
     return uart16550_tx_channel_enabled();
 #endif
 }
 
 /* 取一个 guest 输出字节；缓冲空时返回 0 */
-static inline int vmm_console_tx_pop(uint8_t *c)
+static inline int vmm_console_tx_pop(vm_t *vm, uint8_t *c)
 {
 #if ARCH_AARCH64
-    return vpl011_tx_pop(c);
+    return vpl011_tx_pop(vm, c);
 #else
+    (void)vm;   /* uart16550 尚未 per-VM 化（本次只做 aarch64）*/
     return uart16550_tx_pop(c);
 #endif
 }
 
-static inline int vmm_console_tx_has_data(void)
+static inline int vmm_console_tx_has_data(vm_t *vm)
 {
 #if ARCH_AARCH64
-    return vpl011_tx_has_data();
+    return vpl011_tx_has_data(vm);
 #else
+    (void)vm;   /* uart16550 尚未 per-VM 化（本次只做 aarch64）*/
     return uart16550_tx_has_data();
 #endif
 }
@@ -103,11 +109,12 @@ static inline void vmm_console_putchar(uint8_t c)
 }
 
 /* ── 输入通路（宿主 → guest）───────────────────────────────── */
-static inline void vmm_console_push_rx(uint8_t c)
+static inline void vmm_console_push_rx(vm_t *vm, uint8_t c)
 {
 #if ARCH_AARCH64
-    vpl011_push_rx(c);
+    vpl011_push_rx(vm, c);
 #else
+    (void)vm;
     uart16550_push_rx(c);
 #endif
 }
@@ -116,21 +123,23 @@ static inline void vmm_console_push_rx(uint8_t c)
  * 控制台中断线是否应保持有效（电平触发）。
  * 调用方在每次进入 guest 前调用，为真时把 VMM_CONSOLE_IRQ 置 pending。
  */
-static inline int vmm_console_irq_asserted(void)
+static inline int vmm_console_irq_asserted(vm_t *vm)
 {
 #if ARCH_AARCH64
-    return vpl011_rx_irq_asserted();
+    return vpl011_rx_irq_asserted(vm);
 #else
+    (void)vm;   /* uart16550 尚未 per-VM 化（本次只做 aarch64）*/
     return uart16550_irq_asserted();
 #endif
 }
 
 /* 丢弃未被 guest 取走的输入字节（停在 guest 时用）*/
-static inline void vmm_console_rx_flush(void)
+static inline void vmm_console_rx_flush(vm_t *vm)
 {
 #if ARCH_AARCH64
-    vpl011_rx_flush();
+    vpl011_rx_flush(vm);
 #else
+    (void)vm;
     uart16550_rx_flush();
 #endif
 }

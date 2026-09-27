@@ -24,6 +24,11 @@
 #include "arch.h"
 #include "vmm_mmio.h"
 #include "vmm_vgic.h"
+
+#if ARCH_AARCH64
+#include "aarch64/stage2.h"     /* s2_ctx_t：vm_t 里每个 VM 一份 stage-2 */
+#include "vmm/vmm_vpl011.h"     /* vpl011_state_t：每个 VM 一份控制台状态 */
+#endif
 #if ARCH_AARCH64 && DRIVER_GIC_V3
 #include "vmm_vgicv3.h"
 #endif
@@ -60,6 +65,25 @@
 
 /* ── 最大 vCPU 数量 ────────────────────────────────────────── */
 #define MAX_VCPUS  4
+
+/* ── 同一个内核里最多几个 VM ──────────────────────────────────
+ *
+ * 每个 VM 的 vm_t 里嵌着 vGIC（GICv3 时约 70 KB，含 64 KB 的 dist_regs）、
+ * vpl011 状态、以及 stage-2 的静态 L1/L2 —— 合计约 80 KB。静态池 4 个 =
+ * 约 320 KB BSS，相对内核窗口（0x40080000 起、到 rootfs 保留区还有 500 MB+）
+ * 可以忽略；换成动态分配反而要几十页**连续**物理内存，还会丢掉表所需的
+ * 对齐保证。所以用静态池。
+ *
+ * ⚠️ 必须 <= stage2.h 的 STAGE2_MAX_VMS（静态 stage-2 表按 slot 索引）。
+ */
+#define MAX_VMS    4
+
+/* VM 生命周期状态（vmm.c 的 vm_alloc/vm_free 维护）*/
+#define VM_FREE      0   /* 槽位可用                        */
+#define VM_LOADING   1   /* 正在加载镜像、建 stage-2        */
+#define VM_RUNNING   2   /* vCPU 任务在跑                   */
+#define VM_SUSPENDED 3   /* vCPU 任务被 park，状态完整保留  */
+#define VM_DYING     4   /* 已请求销毁，等 vCPU 任务收拾完  */
 
 /*
  * 哪些架构已经实现「从 rootfs 加载并启动 Linux guest」（kernel/vmm/guest_loader.c）。
@@ -346,6 +370,45 @@ typedef struct vm {
     vcpu_t   vcpus[MAX_VCPUS];  /* 静态嵌入，不动态分配 */
     int      nr_vcpus;
 
+    /* ── VM 身份与生命周期（vmm.c 的静态池管理）───────────────── */
+    uint32_t vmid;              /* 1..255，同时写进 VTTBR_EL2 的 VMID 域 */
+    int      slot;              /* 静态池下标（也用于索引 stage-2 静态表）*/
+    int      state;             /* VM_FREE / VM_LOADING / ...          */
+    volatile int stop_req;      /* 置位后 vCPU 任务在主循环顶部退出     */
+
+#if ARCH_AARCH64
+    /*
+     * 每个 VM 自己的 Stage-2：页表、VMID、RAM 窗口、按需页账本。
+     *
+     * 从前这些是全局的（stage2.c 里的 s2_l1/s2_l2/s_vttbr…），只能有一个 VM；
+     * 而且 guest RAM 要预先分配 192 MiB 并整片清零。现在改成按需分页：
+     * 表初始化后是空的，guest 首次访问某页时才分配宿主物理页并装映射
+     * （缺页处理见 kernel/vmm/aarch64/el2_run.c 的 handle_dabt）。
+     */
+    s2_ctx_t s2;
+
+    /*
+     * 本 VM 的控制台设备状态与锁。
+     *
+     * 从前这是一对文件级 static（g_vpl011 + g_vpl011_lock）—— 整机只有一份，
+     * 于是第二个 VM 的 vpl011_init() 一句 memset 就把第一个 VM 的 RX/TX FIFO
+     * 清空，两个 VM 从此抢同一个控制台。现在每 VM 一份。
+     */
+    vpl011_state_t   vpl011;
+    spinlock_noirq_t vpl011_lock;
+
+    /*
+     * 控制台归属：1 = 本 VM 的输出进自己的 TX 环（等 helper 来取）；
+     * 0 = 直打宿主控制台（直启模式，或后台 VM 的输出走 klog）。
+     *
+     * ⚠️ 这个标志从前叫 vpl011 的 tx_channel，是**宿主侧的运行模式选择**，
+     * 不是设备寄存器状态。它放在 vpl011 state 里的时候，vpl011_init() 那句
+     * memset 必须特意把它存下来再恢复（GUEST_CONSOLE.md §2 记着这个陷阱）。
+     * 挪到 vm_t 之后 memset 可以整片清零，陷阱自然消失。
+     */
+    int console_owned;
+#endif
+
     /* VM-owned virtual interrupt controller and MMIO device state.
      * vgic（GICv2）与 vgic3（GICv3）只会用到一个，由 GIC=v2|v3 编译期二选一，
      * 但两个字段都保留：vmm.c 里用 DRIVER_GIC_V3 分支。GICv3 的结构体
@@ -414,18 +477,29 @@ int vmm_run_vcpu(vcpu_t *vcpu);
 
 int vm_create(vm_t *vm);
 
+/* ── VM 池（kernel/vmm/vmm.c）───────────────────────────────────
+ *
+ * 从前内核里只能有一个 VM；现在是一个静态池，见 vmm.c 里那段注释。
+ * **并发规则：跨任务只传 vmid，不传 vm_t *，也不做引用计数** —— 谁要操作
+ * 某个 VM 就现场 vm_get(vmid) 取一次、用完即放。
+ */
+vm_t *vm_alloc(void);           /* 取一个空闲槽位（state=LOADING）；满了返回 NULL */
+vm_t *vm_get(uint32_t vmid);    /* 按 vmid 查；不存在或已释放返回 NULL     */
+void  vm_free(vm_t *vm);        /* **只能由该 VM 的 vCPU 任务自己调**      */
+int   vm_count_used(void);      /* 池里非 FREE 的槽位数                    */
+
 /* ── 宿主侧 guest 生命周期（/dev/vmm 用）──────────────────────── */
 /*
- * vmm_request_stop — 请求停止当前 guest（非阻塞）
+ * vm_request_stop — 请求停止**指定** VM（非阻塞）
  *
  * vCPU 任务在它的下一个安全点（guest 退出路径的循环顶部）看到标志后返回，
- * 由 vcpu_task_fn 收尾。因为是异步的，调用后 guest 还要跑最多一个宿主
- * tick（满载约 10ms；空闲时每条 WFI 都是退出，几乎立刻）才真正结束 ——
- * 想确认请查 vmm_guest_running()。
+ * 由 vcpu_task_fn 收尾（vm_free）。因为是异步的，调用后 guest 还要跑最多
+ * 一个宿主 tick（满载约 10ms；空闲时每条 WFI 都是退出，几乎立刻）才真正
+ * 结束 —— 想确认请查 vm_get(vmid)->state == VM_FREE。
  */
-void vmm_request_stop(void);
+void vm_request_stop(vm_t *vm);
 
-/* 是否有 vCPU 任务正在跑。从 vcpu_task_create 起为真，任务退出后为假。 */
+/* 是否有**任意** VM 在跑（单 VM 视角的粗判；精细判断用 vm_get(vmid)->state）。*/
 int  vmm_guest_running(void);
 
 struct task *vcpu_task_create(vcpu_t *vcpu, uint8_t priority);

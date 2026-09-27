@@ -12,6 +12,7 @@
  */
 
 #include "vmm/vmm_vpl011.h"
+#include "vmm/vmm.h"   /* 完整的 vm_t：设备状态与锁都在它里面 */
 #include "klog.h"
 #include "string.h"
 #include "spinlock.h"
@@ -47,32 +48,12 @@
  * RX FIFO 深度。真实 PL011 的硬件 FIFO 只有 16 字节，这里放宽到 256：
  * 宿主一次粘贴多字符时，guest 要等到下一次进中断才来取，16 字节不够用。
  */
-#define RX_FIFO_SIZE   256
+#define VPL011_RX_FIFO_SIZE   256
 
 /* TX 缓冲深度：要能扛住 guest 启动那一大串内核日志的突发 */
-#define TX_FIFO_SIZE   8192
+#define VPL011_TX_FIFO_SIZE   8192
 
 /* ── 设备私有状态 ─────────────────────────────────────────── */
-typedef struct {
-    uint32_t cr;                    /* UARTCR */
-    uint32_t imsc;                  /* UARTIMSC */
-
-    /* RX 环形缓冲：宿主用户态写入（push），guest MMIO 读取（UARTDR）*/
-    uint8_t  rx_fifo[RX_FIFO_SIZE];
-    uint32_t rx_head;               /* 写入位置 */
-    uint32_t rx_tail;               /* 读出位置 */
-    uint32_t rx_count;
-
-    /* TX 环形缓冲：guest MMIO 写入（UARTDR），宿主用户态读取（tx_pop）*/
-    uint8_t  tx_fifo[TX_FIFO_SIZE];
-    uint32_t tx_head;
-    uint32_t tx_tail;
-    uint32_t tx_count;
-    int      tx_channel;            /* 1 = 走 TX 缓冲；0 = 直打宿主控制台 */
-
-    uint64_t rx_dropped;            /* FIFO 满而丢弃的字节数 */
-    uint64_t tx_dropped;
-} vpl011_state_t;
 
 /*
  * 设备私有状态（设备实例由调用方持有，见 vmm.c）。
@@ -83,115 +64,113 @@ typedef struct {
  *   - 宿主侧 push_rx / tx_pop 在 /dev/vmm 的 read/write 里，属于 helper 任务。
  * 所以两把环都要用 IRQ-safe 的锁保护，不能像同线程时期那样裸操作。
  */
-static vpl011_state_t g_vpl011;
-static spinlock_noirq_t g_vpl011_lock = SPINLOCK_NOIRQ_INIT;
 
 /* ── RX 中断线状态 ────────────────────────────────────────── */
-/* 调用者需持有 g_vpl011_lock */
+/* 调用者需持有 vm->vpl011_lock */
 static int rx_irq_asserted_locked(const vpl011_state_t *s)
 {
     return s->rx_count > 0 && (s->imsc & INT_RX) != 0;
 }
 
-int vpl011_rx_irq_asserted(void)
+int vpl011_rx_irq_asserted(vm_t *vm)
 {
     uint64_t flags;
     int asserted;
 
-    spin_lock_irqsave(&g_vpl011_lock, &flags);
-    asserted = rx_irq_asserted_locked(&g_vpl011);
-    spin_unlock_irqrestore(&g_vpl011_lock, flags);
+    spin_lock_irqsave(&vm->vpl011_lock, &flags);
+    asserted = rx_irq_asserted_locked(&vm->vpl011);
+    spin_unlock_irqrestore(&vm->vpl011_lock, flags);
     return asserted;
 }
 
 /* ── 宿主侧入口：压入一个控制台字节 ───────────────────────── */
-void vpl011_push_rx(uint8_t c)
+void vpl011_push_rx(vm_t *vm, uint8_t c)
 {
     uint64_t flags;
 
-    spin_lock_irqsave(&g_vpl011_lock, &flags);
-    if (g_vpl011.rx_count >= RX_FIFO_SIZE) {
-        g_vpl011.rx_dropped++;
-        spin_unlock_irqrestore(&g_vpl011_lock, flags);
+    spin_lock_irqsave(&vm->vpl011_lock, &flags);
+    if (vm->vpl011.rx_count >= VPL011_RX_FIFO_SIZE) {
+        vm->vpl011.rx_dropped++;
+        spin_unlock_irqrestore(&vm->vpl011_lock, flags);
         /*
          * 满则丢弃。这里可以打日志：调用点是任务上下文（/dev/vmm 的
          * write 或 vmm_run_vcpu 的循环），不在 klog 锁内。只报第一次。
          */
-        if (g_vpl011.rx_dropped == 1)
+        if (vm->vpl011.rx_dropped == 1)
             KLOG_WARN("[vpl011] RX FIFO full, dropping console input\n");
         return;
     }
 
-    g_vpl011.rx_fifo[g_vpl011.rx_head] = c;
-    g_vpl011.rx_head = (g_vpl011.rx_head + 1) % RX_FIFO_SIZE;
-    g_vpl011.rx_count++;
-    spin_unlock_irqrestore(&g_vpl011_lock, flags);
+    vm->vpl011.rx_fifo[vm->vpl011.rx_head] = c;
+    vm->vpl011.rx_head = (vm->vpl011.rx_head + 1) % VPL011_RX_FIFO_SIZE;
+    vm->vpl011.rx_count++;
+    spin_unlock_irqrestore(&vm->vpl011_lock, flags);
 }
 
-void vpl011_rx_flush(void)
+void vpl011_rx_flush(vm_t *vm)
 {
     uint64_t flags;
 
-    spin_lock_irqsave(&g_vpl011_lock, &flags);
-    g_vpl011.rx_head = g_vpl011.rx_tail = g_vpl011.rx_count = 0;
-    spin_unlock_irqrestore(&g_vpl011_lock, flags);
+    spin_lock_irqsave(&vm->vpl011_lock, &flags);
+    vm->vpl011.rx_head = vm->vpl011.rx_tail = vm->vpl011.rx_count = 0;
+    spin_unlock_irqrestore(&vm->vpl011_lock, flags);
 }
 
 /* ── TX 通道（guest 输出 → 用户态 helper）─────────────────── */
-void vpl011_tx_set_enabled(int enabled)
+void vpl011_tx_set_enabled(vm_t *vm, int enabled)
 {
     uint64_t flags;
 
-    spin_lock_irqsave(&g_vpl011_lock, &flags);
-    g_vpl011.tx_channel = enabled ? 1 : 0;
+    spin_lock_irqsave(&vm->vpl011_lock, &flags);
+    vm->console_owned = enabled ? 1 : 0;
     if (!enabled) {
         /* 关通道时清空残留，免得下次开通道吐出上一次会话的尾巴 */
-        g_vpl011.tx_head = g_vpl011.tx_tail = g_vpl011.tx_count = 0;
+        vm->vpl011.tx_head = vm->vpl011.tx_tail = vm->vpl011.tx_count = 0;
     }
-    spin_unlock_irqrestore(&g_vpl011_lock, flags);
+    spin_unlock_irqrestore(&vm->vpl011_lock, flags);
 }
 
-int vpl011_tx_channel_enabled(void)
+int vpl011_tx_channel_enabled(vm_t *vm)
 {
-    return g_vpl011.tx_channel;
+    return vm->console_owned;
 }
 
-int vpl011_tx_has_data(void)
+int vpl011_tx_has_data(vm_t *vm)
 {
     uint64_t flags;
     int has;
 
-    spin_lock_irqsave(&g_vpl011_lock, &flags);
-    has = g_vpl011.tx_count > 0;
-    spin_unlock_irqrestore(&g_vpl011_lock, flags);
+    spin_lock_irqsave(&vm->vpl011_lock, &flags);
+    has = vm->vpl011.tx_count > 0;
+    spin_unlock_irqrestore(&vm->vpl011_lock, flags);
     return has;
 }
 
-int vpl011_tx_pop(uint8_t *c)
+int vpl011_tx_pop(vm_t *vm, uint8_t *c)
 {
     uint64_t flags;
-    vpl011_state_t *s = &g_vpl011;
+    vpl011_state_t *s = &vm->vpl011;
 
     if (!c)
         return 0;
 
-    spin_lock_irqsave(&g_vpl011_lock, &flags);
+    spin_lock_irqsave(&vm->vpl011_lock, &flags);
     if (s->tx_count == 0) {
-        spin_unlock_irqrestore(&g_vpl011_lock, flags);
+        spin_unlock_irqrestore(&vm->vpl011_lock, flags);
         return 0;
     }
     *c = s->tx_fifo[s->tx_tail];
-    s->tx_tail = (s->tx_tail + 1) % TX_FIFO_SIZE;
+    s->tx_tail = (s->tx_tail + 1) % VPL011_TX_FIFO_SIZE;
     s->tx_count--;
-    spin_unlock_irqrestore(&g_vpl011_lock, flags);
+    spin_unlock_irqrestore(&vm->vpl011_lock, flags);
     return 1;
 }
 
 /* ── 输出：通道模式走缓冲，否则直通宿主控制台 ─────────────── */
-/* 调用者需持有 g_vpl011_lock */
+/* 调用者需持有 vm->vpl011_lock */
 static void put_char_locked(vpl011_state_t *s, uint8_t c)
 {
-    if (!s->tx_channel) {
+    if (!s->owner->console_owned) {
         /*
          * 直启模式：立即输出。klog_putchar 直通 uart_putchar（未开中断时
          * 是直接 MMIO 写），不经行缓冲，所以 guest 按键回显是实时的。
@@ -206,12 +185,12 @@ static void put_char_locked(vpl011_state_t *s, uint8_t c)
         return;
     }
 
-    if (s->tx_count >= TX_FIFO_SIZE) {
+    if (s->tx_count >= VPL011_TX_FIFO_SIZE) {
         s->tx_dropped++;
         return;                         /* 丢弃最新字节，与 kvmm 一致 */
     }
     s->tx_fifo[s->tx_head] = c;
-    s->tx_head = (s->tx_head + 1) % TX_FIFO_SIZE;
+    s->tx_head = (s->tx_head + 1) % VPL011_TX_FIFO_SIZE;
     s->tx_count++;
 }
 
@@ -219,18 +198,19 @@ static void put_char_locked(vpl011_state_t *s, uint8_t c)
 static uint64_t vpl011_read(mmio_device_t *dev, uint64_t off, uint8_t size)
 {
     vpl011_state_t *s = (vpl011_state_t *)dev->priv;
+    vm_t *vm = s->owner;   /* 锁与归属标志都在 vm_t 里 */
     uint64_t flags;
     uint64_t ret = 0;
     (void)size;
 
-    spin_lock_irqsave(&g_vpl011_lock, &flags);
+    spin_lock_irqsave(&vm->vpl011_lock, &flags);
 
     switch (off) {
     case UARTDR: {
         uint8_t c = 0;
         if (s->rx_count > 0) {
             c = s->rx_fifo[s->rx_tail];
-            s->rx_tail = (s->rx_tail + 1) % RX_FIFO_SIZE;
+            s->rx_tail = (s->rx_tail + 1) % VPL011_RX_FIFO_SIZE;
             s->rx_count--;
         }
         ret = (uint64_t)c;
@@ -240,7 +220,7 @@ static uint64_t vpl011_read(mmio_device_t *dev, uint64_t off, uint8_t size)
         uint64_t fr = FR_TXFE;              /* 输出永远不阻塞 */
         if (s->rx_count == 0)
             fr |= FR_RXFE;
-        if (s->rx_count >= RX_FIFO_SIZE)
+        if (s->rx_count >= VPL011_RX_FIFO_SIZE)
             fr |= FR_RXFF;
         ret = fr;
         break;
@@ -271,7 +251,7 @@ static uint64_t vpl011_read(mmio_device_t *dev, uint64_t off, uint8_t size)
         break;
     }
 
-    spin_unlock_irqrestore(&g_vpl011_lock, flags);
+    spin_unlock_irqrestore(&vm->vpl011_lock, flags);
     return ret;
 }
 
@@ -279,10 +259,11 @@ static void vpl011_write(mmio_device_t *dev, uint64_t off, uint8_t size,
                          uint64_t value)
 {
     vpl011_state_t *s = (vpl011_state_t *)dev->priv;
+    vm_t *vm = s->owner;   /* 锁与归属标志都在 vm_t 里 */
     uint64_t flags;
     (void)size;
 
-    spin_lock_irqsave(&g_vpl011_lock, &flags);
+    spin_lock_irqsave(&vm->vpl011_lock, &flags);
 
     switch (off) {
     case UARTDR:
@@ -303,7 +284,7 @@ static void vpl011_write(mmio_device_t *dev, uint64_t off, uint8_t size,
         break;
     }
 
-    spin_unlock_irqrestore(&g_vpl011_lock, flags);
+    spin_unlock_irqrestore(&vm->vpl011_lock, flags);
 }
 
 static const mmio_dev_ops_t g_vpl011_ops = {
@@ -314,27 +295,26 @@ static const mmio_dev_ops_t g_vpl011_ops = {
     .write = vpl011_write,
 };
 
-int vpl011_init(mmio_device_t *dev, mmio_bus_t *bus)
+int vpl011_init(vm_t *vm, mmio_device_t *dev, mmio_bus_t *bus)
 {
     if (!dev || !bus)
         return -1;
 
     /*
-     * tx_channel 是**宿主侧的模式选择**，不是设备寄存器状态：/dev/vmm 在
-     * 调 guest_loader_run_linux() 之前就把通道打开，而那条路径会走到这里
-     * （vm_create → vpl011_init）。整片 memset 会把它清回 0，于是通道模式
-     * 失效、vmm_console_pump 继续跑，结果就是宿主泵和用户态 helper 抢同一个
-     * UART —— 用户按键被泵吃掉，helper 永远收不到 Ctrl+]。
-     * 所以这里先存后恢复；其余字段（FIFO、寄存器）该清还是清。
+     * 从前这里要"先存后恢复 tx_channel" —— 因为归属标志当时是 vpl011 state
+     * 的一个字段，而下面那句 memset 会把它清回 0，导致通道模式失效、
+     * vmm_console_pump 复活去跟用户态 helper 抢同一个 UART（GUEST_CONSOLE.md
+     * §2 记着这个陷阱）。
+     *
+     * 现在归属标志是 vm_t.console_owned —— 不在这个结构里，memset 碰不到它，
+     * 所以可以放心整片清零，那个陷阱连同它的 workaround 一起消失。
      */
-    int tx_channel = g_vpl011.tx_channel;
-
-    memset(&g_vpl011, 0, sizeof(g_vpl011));
-    g_vpl011.cr = 0x301;   /* UARTEN | TXE | RXE */
-    g_vpl011.tx_channel = tx_channel;
+    memset(&vm->vpl011, 0, sizeof(vm->vpl011));
+    vm->vpl011.cr    = 0x301;   /* UARTEN | TXE | RXE */
+    vm->vpl011.owner = vm;      /* MMIO ops 靠它从 dev->priv 找回 VM */
 
     dev->ops  = &g_vpl011_ops;
-    dev->priv = &g_vpl011;
+    dev->priv = &vm->vpl011;
 
     return mmio_bus_register(bus, dev);
 }

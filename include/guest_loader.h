@@ -174,19 +174,32 @@ extern volatile uint64_t g_guest_entry_x0;
     {  "virtio_mmio@a000000" }
 #endif
 
+/* vm_t 由 vmm.h 定义；这里只用到指针 */
+struct vm;
+typedef struct vm vm_t;
+
 /*
  * guest_loader_load_file — 把 rootfs 中的文件加载到 guest 物理地址 gpa
  * 返回加载字节数，失败返回负值。
+ *
+ * ⚠️ 需要 vm 是因为按需分页：同一个 GPA 在不同 VM 里指向不同的物理页，
+ * 而且页面可能是"还没分配"的。内部走 vm_write_guest() 逐页分配。
  */
-int guest_loader_load_file(const char *path, uint64_t gpa);
+int guest_loader_load_file(vm_t *vm, const char *path, uint64_t gpa);
 
 /*
- * guest_loader_patch_dtb_initrd / _memory — 修补 DTB 中的 initrd / memory 节点
+ * guest_loader_patch_dtb_* — 修补 DTB 中的 initrd / memory / bootargs 节点
+ *
+ * ⚠️ 入参是**宿主缓冲**，不是 guest 物理地址。补丁代码按线性偏移索引 FDT，
+ * 而按需分页下 DTB 可能落在不连续的物理页上 —— 直接对 guest 内存做
+ * `dtb[i]` 会写到宿主或别的 VM 里。调用方先读到宿主缓冲、补完再
+ * vm_write_guest() 写回。
+ *
  * 返回 0 成功。
  */
-int guest_loader_patch_dtb_initrd(uint64_t dtb_gpa, uint32_t dtb_size,
+int guest_loader_patch_dtb_initrd(uint8_t *dtb, uint32_t dtb_size,
                                   uint64_t initrd_start, uint64_t initrd_end);
-int guest_loader_patch_dtb_memory(uint64_t dtb_gpa, uint32_t dtb_size,
+int guest_loader_patch_dtb_memory(uint8_t *dtb, uint32_t dtb_size,
                                   uint64_t mem_base, uint64_t mem_size);
 
 /*
@@ -199,7 +212,7 @@ int guest_loader_patch_dtb_memory(uint64_t dtb_gpa, uint32_t dtb_size,
  *
  * 返回 0 成功。
  */
-int guest_loader_patch_dtb_bootargs(uint64_t dtb_gpa, uint32_t dtb_size,
+int guest_loader_patch_dtb_bootargs(uint8_t *dtb, uint32_t dtb_size,
                                     const char *bootargs);
 
 /*
@@ -208,13 +221,13 @@ int guest_loader_patch_dtb_bootargs(uint64_t dtb_gpa, uint32_t dtb_size,
  * 参见上面 GUEST_LINUX_UNSUPPORTED_NODES 的说明。
  * 返回被屏蔽的节点数。
  */
-int guest_loader_nop_dtb_nodes(uint64_t dtb_gpa, uint32_t dtb_size,
+int guest_loader_nop_dtb_nodes(uint8_t *dtb, uint32_t dtb_size,
                                const char *const *names, int nr_names);
 
 /*
  * guest_loader_run_linux — 加载并启动 Linux guest（BSP 侧调用）
  * 返回 0 表示已成功建立 VM 并创建 vCPU 任务。
  */
-int guest_loader_run_linux(void);
+int guest_loader_run_linux(vm_t *vm);
 
 #endif /* GUEST_LOADER_H */

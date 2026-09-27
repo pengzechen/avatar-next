@@ -15,6 +15,7 @@
 #endif
 #include "uart/uart.h"
 #include "klog.h"
+#include "spinlock.h"     /* VM 池的槽位锁 */
 #include "string.h"
 #include "task/task.h"
 #include "task/switch.h"
@@ -42,14 +43,19 @@ static int aarch64_vm_init(vm_t *vm)
         return -1;
     }
 
-    /* 初始化 Stage-2 页表（identity map）*/
-    stage2_init(vm->cfg.mem_base, vm->cfg.mem_size);
-
     /*
-     * MMIO 设备模拟：只映射 guest RAM，其余 IPA 置为无效，使设备访问
-     * 陷入 EL2。移植自 kvmm mm/stage2.rs 的默认布局。
+     * 初始化本 VM 自己的 Stage-2 —— **空表**。
+     *
+     * 空表即"全 trap"：guest 访问任何 IPA 都会陷入 EL2，由缺页处理决定是
+     * 模拟设备还是分配一页 RAM。所以不再需要老版本那句
+     * stage2_enable_mmio_trap()（它是"先把 4 GiB 全映射再清掉非 RAM"，
+     * 本质是同一件事，只是绕了一圈）。
+     *
+     * 调用方（guest_loader）随后用 stage2_map_range() 把内核映像/DTB/initrd/
+     * 初始栈这几块宿主自己要写的地方显式映射进去，其余全靠缺页。
      */
-    stage2_enable_mmio_trap();
+    stage2_vm_init(&vm->s2, (uint32_t)vm->slot, vm->vmid,
+                   vm->cfg.mem_base, vm->cfg.mem_size);
 
     mmio_bus_init(&vm->mmio_bus_storage);
 
@@ -62,7 +68,7 @@ static int aarch64_vm_init(vm_t *vm)
         return -1;
 #endif
 
-    if (vpl011_init(&vm->vpl011_dev, &vm->mmio_bus_storage) != 0) {
+    if (vpl011_init(vm, &vm->vpl011_dev, &vm->mmio_bus_storage) != 0) {
         KLOG_WARN("[vmm] vpl011 registration failed\n");
     }
 
@@ -174,35 +180,141 @@ int vm_create(vm_t *vm)
  * FIFO 抢字节（tty.c 的 signal_check_uart() 是第一个，本函数是第二个），
  * 谁先跑谁拿到，输入会随机丢给错误的一方。
  */
-static void vmm_console_pump(void)
+static void vmm_console_pump(vm_t *vm)
 {
-    if (vmm_console_tx_channel_enabled())
+    /*
+     * 归属在别的 VM 手上就让位 —— 从前这是一个全局的 tx_channel 开关，
+     * 多 VM 之后每个 VM 各有自己的 console_owned：只有"没有前台 VM"时才
+     * 需要 VMM 自己去泵主机控制台，否则宿主 tty 层（helper）独占真实 UART。
+     */
+    if (vmm_console_tx_channel_enabled(vm))
         return;
 
     while (uart_rx_ready())
-        vmm_console_push_rx((uint8_t)uart_getc());
+        vmm_console_push_rx(vm, (uint8_t)uart_getc());
 }
 #endif /* VMM_GUEST_LINUX_SUPPORTED */
 
-/* ── 宿主侧 guest 生命周期 ─────────────────────────────────── */
-/*
- * 两个标志都由「谁创建/结束 vCPU 任务」维护，不从 guest 侧访问：
- *   running  — vcpu_task_create() 置位，vcpu_task_fn() 退出前清零。
- *              /dev/vmm 用它判断「还能不能写 guest 输入」以及 bootlinux
- *              要不要返回 -EBUSY。
- *   stop     — /dev/vmm 的 close 置位；主循环每轮检查，见到就返回。
+/* ── 宿主侧 guest 生命周期：VM 池 ─────────────────────────────
+ *
+ * 从前这里只有一个 VM —— guest_loader.c 里一个 `static vm_t vm`，加上下面
+ * 两个全局标志（running / stop）。那套从数据结构上就假定了"内核里最多一个
+ * VM"：第二个 VM 会直接覆盖第一个的对象，而 stop 请求也没法说清是给谁的。
+ *
+ * 现在改成静态池。为什么不用动态分配：vm_t 里嵌着 vGIC（GICv3 时约 70 KB）
+ * 与 stage-2 静态表，sizeof 有几十 KB，动态分配要几十页**连续**物理内存、
+ * 还会丢掉表所需的页对齐保证；静态池一共几百 KB BSS，相对内核窗口可忽略。
+ *
+ * 并发规则（重要）：
+ *   - 槽位与 state 由 g_vm_pool_lock 保护（IRQ-safe：vmm_dev 的任务上下文
+ *     和 vCPU 任务上下文都会碰）；
+ *   - **跨任务只传 vmid，不传 vm_t *，也不做引用计数** —— 谁要操作某个 VM
+ *     就现场 vm_get(vmid) 取一次、用完即放；
+ *   - **销毁由该 VM 的 vCPU 任务自己完成**（vmm_run_vcpu 返回后调 vm_free），
+ *     杜绝"任务还在跑、槽位已被回收"。外部想销毁就置 stop_req 等它收拾。
  */
-static volatile int g_vmm_guest_running;
-static volatile int g_vmm_stop_requested;
+static vm_t g_vm_pool[MAX_VMS];
+static spinlock_noirq_t g_vm_pool_lock = SPINLOCK_NOIRQ_INIT;
+static uint32_t g_next_vmid = 1;
 
-void vmm_request_stop(void)
+vm_t *vm_alloc(void)
 {
-    g_vmm_stop_requested = 1;
+    uint64_t flags;
+    vm_t *found = NULL;
+    int i;
+
+    spin_lock_irqsave(&g_vm_pool_lock, &flags);
+    for (i = 0; i < MAX_VMS; i++) {
+        if (g_vm_pool[i].state == VM_FREE) {
+            found = &g_vm_pool[i];
+            memset(found, 0, sizeof(*found));
+            found->slot  = i;
+            found->vmid  = g_next_vmid;
+            g_next_vmid  = (g_next_vmid >= 255) ? 1 : (g_next_vmid + 1);
+            found->state = VM_LOADING;
+            break;
+        }
+    }
+    spin_unlock_irqrestore(&g_vm_pool_lock, flags);
+
+    if (found)
+        KLOG_INFO("[vmm] vm%u allocated (slot %d)\n", found->vmid, found->slot);
+    else
+        KLOG_WARN("[vmm] vm_alloc: no free slot (MAX_VMS=%d)\n", MAX_VMS);
+    return found;
 }
 
+vm_t *vm_get(uint32_t vmid)
+{
+    uint64_t flags;
+    vm_t *found = NULL;
+    int i;
+
+    spin_lock_irqsave(&g_vm_pool_lock, &flags);
+    for (i = 0; i < MAX_VMS; i++) {
+        if (g_vm_pool[i].state != VM_FREE && g_vm_pool[i].vmid == vmid) {
+            found = &g_vm_pool[i];
+            break;
+        }
+    }
+    spin_unlock_irqrestore(&g_vm_pool_lock, flags);
+    return found;
+}
+
+/*
+ * vm_free — 由该 VM 的 vCPU 任务在退出前调用（见上面的并发规则）
+ *
+ * 目前只回收 stage-2（连同它按需分配的那些物理页）。vGIC / vpl011 的状态
+ * 都是 vm_t 的一部分，跟着槽位一起被 vm_alloc 的 memset 清掉。
+ */
+void vm_free(vm_t *vm)
+{
+    uint64_t flags;
+
+    if (!vm || vm->state == VM_FREE)
+        return;
+
+#if ARCH_AARCH64
+    stage2_vm_destroy(&vm->s2);     /* 释放按需页 + L3 表 */
+#endif
+
+    KLOG_INFO("[vmm] vm%u freed (slot %d)\n", vm->vmid, vm->slot);
+
+    spin_lock_irqsave(&g_vm_pool_lock, &flags);
+    memset(vm, 0, sizeof(*vm));
+    vm->state = VM_FREE;
+    spin_unlock_irqrestore(&g_vm_pool_lock, flags);
+}
+
+int vm_count_used(void)
+{
+    uint64_t flags;
+    int n = 0;
+
+    spin_lock_irqsave(&g_vm_pool_lock, &flags);
+    for (int i = 0; i < MAX_VMS; i++)
+        if (g_vm_pool[i].state != VM_FREE)
+            n++;
+    spin_unlock_irqrestore(&g_vm_pool_lock, flags);
+    return n;
+}
+
+void vm_request_stop(vm_t *vm)
+{
+    if (vm)
+        vm->stop_req = 1;
+}
+
+/*
+ * vmm_guest_running — 是否有**任意** VM 正在跑
+ *
+ * 保留这个"全局"语义是因为 /dev/vmm 的若干判断（还能不能往 guest 写、
+ * bootlinux 要不要 -EBUSY）在单 VM 视角下就是这么用的。多 VM 的精细判断
+ * 走 vm_get(vmid)->state。
+ */
 int vmm_guest_running(void)
 {
-    return g_vmm_guest_running;
+    return vm_count_used() > 0;
 }
 
 /* ── VMM 主循环（架构无关）────────────────────────────────── */
@@ -224,7 +336,7 @@ int vmm_run_vcpu(vcpu_t *vcpu)
          * HCR_EL2 已被 el2_trap_exit 还原成 host 模式（TGE=1、VM=0）」
          * 的状态，直接 return 不会把 Stage-2 或 guest 向量表留在生效状态。
          */
-        if (g_vmm_stop_requested) {
+        if (vcpu->vm->stop_req) {
             KLOG_INFO("[VMM] vcpu%d: stop requested, leaving guest loop\n",
                       vcpu->vcpu_id);
             return 0;
@@ -250,7 +362,10 @@ int vmm_run_vcpu(vcpu_t *vcpu)
         uint64_t irq_flags = arch_irq_save();
 
 #if ARCH_AARCH64
-        stage2_activate();
+        /* 每轮进 guest 前重写本 VM 的 VTCR/VTTBR —— 本核可能刚跑过别的 VM
+         * 的 vCPU 任务（时间片轮转），不重写就会用错页表。这也是"挂起后
+         * 恢复不需要额外 stage-2 动作"的原因。*/
+        stage2_activate(&vcpu->vm->s2);
 #endif
 
         /* 恢复 guest 上下文（AArch64: EL1 sysregs；x86: no-op）*/
@@ -272,7 +387,7 @@ int vmm_run_vcpu(vcpu_t *vcpu)
 
 #if VMM_GUEST_LINUX_SUPPORTED
         /* 每次回到宿主都顺手收一次控制台输入（见 vmm_console_pump）*/
-        vmm_console_pump();
+        vmm_console_pump(vcpu->vm);
 #endif
 
         /* 处理 VM exit */
@@ -307,8 +422,15 @@ static void vcpu_task_fn(void *arg)
 
     int rc = vmm_run_vcpu(vcpu);
 
-    /* 先清 running：/dev/vmm 的 bootlinux 靠它判断旧 guest 是否已收尾 */
-    g_vmm_guest_running = 0;
+    /*
+     * 先把状态推到 DYING，再走收尾。
+     *
+     * /dev/vmm 的 bootlinux 靠 state 判断"旧 guest 是否已收尾"（从前是一个
+     * 全局 running 标志）。标记成 DYING 之后才做那些可能阻塞/打印的清理，
+     * 这样外部不会在收尾中途看到"还活着"的假象。
+     */
+    vm_t *vm = vcpu->vm;
+    vm->state = VM_DYING;
 
     if (rc == 0)
         KLOG_INFO("[vmm] vcpu%d exited normally\n", vcpu->vcpu_id);
@@ -328,6 +450,15 @@ static void vcpu_task_fn(void *arg)
 #if ARCH_AARCH64
     vmm_irq_route_clear_owner();
 #endif
+
+    /*
+     * 回收这个 VM 的槽位（连同它的 stage-2 按需页）。
+     *
+     * **必须由 vCPU 任务自己调、而且必须在 task_exit() 之前** —— 池的并发
+     * 规则是"跨任务只传 vmid"，谁也不能在任务还活着的时候把这个槽位清掉；
+     * 而 task_exit() 之后本任务就没了，再没人能安全地做这件事。
+     */
+    vm_free(vm);
 
     task_exit();
 }
@@ -355,12 +486,15 @@ struct task *vcpu_task_create(vcpu_t *vcpu, uint8_t priority)
     if (t) {
 
         /*
-         * 从这里起就算「guest 在跑」：/dev/vmm 的 write/poll 会立刻看到，
-         * 不必等任务真正被调度上 CPU。同时清掉上一轮可能残留的停止请求，
-         * 否则重启 guest 时主循环第一轮就会直接退出。
+         * 从这里起就算「这个 VM 在跑」：/dev/vmm 的 write/poll 会立刻看到，
+         * 不必等任务真正被调度上 CPU。
+         *
+         * ⚠️ 从前这里还有一句 `g_vmm_stop_requested = 0` —— 那在多 VM 下是
+         * 个真 bug：起第二个 VM 会把第一个 VM 尚未被消费的停止请求清掉。
+         * 现在停止请求是 per-VM 的（vm->stop_req），创建时就随 vm_alloc 的
+         * memset 归零，不需要在这里动别人的。
          */
-        g_vmm_stop_requested = 0;
-        g_vmm_guest_running  = 1;
+        vcpu->vm->state = VM_RUNNING;
 
         KLOG_INFO("[vmm] vcpu%d task created (id=%u) pinned to cpu0\n",
                   vcpu->vcpu_id, t->id);

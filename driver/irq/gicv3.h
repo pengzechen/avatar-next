@@ -115,6 +115,9 @@ extern uintptr_t gicv3_gicr_base;
 /* ── Hypervisor（vGIC）系统寄存器编码，仅 EL2 可访问 ─────────── */
 #define ICH_AP0R0_EL2     "S3_4_C12_C8_0"
 #define ICH_AP1R0_EL2     "S3_4_C12_C9_0"
+#define ICH_AP1R1_EL2     "S3_4_C12_C9_1"
+#define ICH_AP1R2_EL2     "S3_4_C12_C9_2"
+#define ICH_AP1R3_EL2     "S3_4_C12_C9_3"
 #define ICH_HCR_EL2       "S3_4_C12_C11_0"
 #define ICH_VTR_EL2       "S3_4_C12_C11_1"
 #define ICH_MISR_EL2      "S3_4_C12_C11_2"

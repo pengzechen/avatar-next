@@ -13,6 +13,7 @@
 #include "vmm/vmm.h"
 #include "klog.h"
 #include "aarch64/stage2.h"
+#include "pmm.h"               /* 按需分页：缺页时要从 PMM 现拿物理页 */
 #include "aarch64/sysreg.h"
 #include "task/task.h"
 #include "task/switch.h"
@@ -150,23 +151,100 @@ static int handle_wfi(vcpu_t *vcpu, uint64_t esr)
 
 /* ── Stage-2 Data Abort ──────────────────────────────────────
  *
- * 两种来源：
- *   1) 设备 MMIO：stage2_enable_mmio_trap() 把非 RAM 区间置为无效，
- *      guest 访问设备 → 此处分发到 MMIO 总线（移植自 kvmm stage2.rs +
- *      el2 的 data-abort 处理）。
+ * 三种来源（判别顺序就是下面的顺序）：
+ *   0) **guest RAM 缺页**：按需分页下 RAM 不预先映射，首次访问某页才在这里
+ *      现分配一个宿主物理页并补上 stage-2 映射，然后**不推进 PC** 让 guest
+ *      重试那条指令。必须放最前面 —— 见下面那段注释。
+ *   1) 设备 MMIO：空表让非 RAM 区间天然无效，guest 访问设备 → 分发到 MMIO
+ *      总线（移植自 kvmm stage2.rs + el2 的 data-abort 处理）。
  *   2) 权限故障：Stage-2 页被 stage2_set_ro() 设为只读，写触发故障 →
  *      恢复写权限让 guest 重试（既有行为，保持不变）。
  *
- * 判别：先尝试 MMIO 总线；命中则由设备处理并步进 guest PC，否则按权限
- * 故障恢复。Data Abort 陷入时 ELR_EL2 指向**出错指令**（需步进）。
+ * Data Abort 陷入时 ELR_EL2 指向**出错指令**（需步进）。
  */
+
+/*
+ * 诊断：打印硬件 VTTBR_EL2/VTCR_EL2 与软件值的对比。
+ *
+ * 用来区分两种"映射加了但 guest 看不到"的故障：
+ *   MATCH    — 硬件确实在用本 VM 的表 ⇒ 问题在表内容/属性
+ *   MISMATCH — 硬件用的是**别人的**表 ⇒ 缺页处理把映射加到了 A 表，
+ *              而 guest 走 B 表（永远 fault，且 stage2_map_page 第二次
+ *              就能命中自己那张表，看起来"完全正常"）
+ */
+static void dump_vttbr_diag(vm_t *vm, const char *what, uint64_t ipa,
+                            uint64_t pa, uint64_t esr)
+{
+    uint64_t hw_vttbr = 0, hw_vtcr = 0, hw_hcr = 0, look = 0;
+    int      fsc  = (int)(esr & 0x3F);          /* ISS.FSC：故障类型 */
+    int      s1ptw = (int)((esr >> 7) & 1);
+    int      found = stage2_lookup(&vm->s2, ipa, &look);
+
+    __asm__ volatile("mrs %0, vttbr_el2" : "=r"(hw_vttbr));
+    __asm__ volatile("mrs %0, vtcr_el2"  : "=r"(hw_vtcr));
+    __asm__ volatile("mrs %0, hcr_el2"   : "=r"(hw_hcr));
+
+    /*
+     * FSC 是这里最关键的信息：
+     *   0x04/0x05/0x06/0x07 = translation fault (L0..L3)  ⇒ 表里真的没有
+     *   0x0D/0x0E/0x0F      = permission fault            ⇒ 表项在、属性不对
+     *   0x09/0x0A/0x0B      = access flag fault            ⇒ AF 位没置
+     */
+    KLOG_INFO("[vmm] vm%u %s ipa=0x%llx pa=0x%llx esr=0x%llx FSC=0x%x s1ptw=%d "
+              "| sw_lookup=%s(pa=0x%llx) | VTTBR %s | VTCR %s | HCR.VM=%d\n",
+              vm->vmid, what,
+              (unsigned long long)ipa, (unsigned long long)pa,
+              (unsigned long long)esr, fsc, s1ptw,
+              found ? "HIT" : "MISS", (unsigned long long)look,
+              (hw_vttbr == vm->s2.vttbr) ? "MATCH" : "MISMATCH",
+              (hw_vtcr == vm->s2.vtcr) ? "MATCH" : "MISMATCH",
+              (int)((hw_hcr >> 0) & 1));
+}
+
 static int handle_dabt(vcpu_t *vcpu, uint64_t esr)
 {
     uint64_t far   = vcpu->far;
     uint64_t hpfar = vcpu->hpfar;
-    /* HPFAR[39:4] = IPA[47:12] → IPA_base = hpfar << 8 */
-    uint64_t ipa   = (hpfar << 8) | (far & 0xFFFULL);
-    int      wnr   = (esr >> 6) & 1;
+    int      s1ptw = (int)((esr >> 7) & 1);
+    int      wnr   = (int)((esr >> 6) & 1);
+
+    /*
+     * HPFAR[39:4] = IPA[47:12] → IPA_base = hpfar << 8（**总是页对齐的**）。
+     *
+     * ⚠️ 页内偏移只在**数据访问**（S1PTW=0）时能从 FAR 拿到；S1PTW=1 表示
+     * 这次故障是 guest 的 stage-1 页表遍历引起的，此时 FAR_EL2 是 UNKNOWN
+     * （实测装的是 guest 的虚拟地址），把它的低 12 位并进来是错的。
+     */
+    uint64_t ipa_page = hpfar << 8;
+    uint64_t ipa      = ipa_page | (s1ptw ? 0 : (far & 0xFFFULL));
+
+    /*
+     * 0) ── RAM 缺页：按需分配一个物理页 ──────────────────────────
+     *
+     * ⚠️ 这一段必须在最前面。下面那条「没有匹配设备就返回 0 并推进 PC」的
+     * 兜底（x-kernel 的语义）会**静默吞掉**未映射的 RAM 访问：读回 0、写丢
+     * 进黑洞、guest 带着垃圾数据继续跑。那比直接崩掉难查得多。
+     *
+     * 判定用 ipa_page（页对齐）—— HPFAR 给的就是页基址。
+     */
+    if (vcpu->vm && stage2_ipa_is_ram(&vcpu->vm->s2, ipa_page)) {
+        vm_t *vm = vcpu->vm;
+        uint64_t pa = stage2_map_page(&vm->s2, ipa_page, 1 /*zero*/);
+
+        if (!pa) {
+            KLOG_ERROR("[vmm] vm%u: stage-2 fault ipa=0x%llx but PMM exhausted "
+                       "(free=%llu pages)\n",
+                       vm->vmid, (unsigned long long)ipa_page,
+                       (unsigned long long)pmm_get_free_pages(g_pmm));
+            return EL2_EXIT;
+        }
+
+        vm->s2.nr_fault++;
+        if (vm->s2.nr_fault <= 4)
+            dump_vttbr_diag(vm, "dfault", ipa_page, pa, esr);
+        stage2_tlb_flush_ipa(&vm->s2, ipa_page);
+        return EL2_RESUME;      /* ⚠️ 不推进 PC：让 guest 重试那条指令 */
+    }
 
     /* 1) 先尝试 MMIO 设备分发 */
     if (vcpu->vm && vcpu->vm->mmio_bus) {
@@ -202,6 +280,49 @@ static int handle_dabt(vcpu_t *vcpu, uint64_t esr)
     }
     el2_advance_pc(vcpu, esr);
     return EL2_RESUME;
+}
+
+/* ── Stage-2 Instruction Abort（EC=0x20）─────────────────────
+ *
+ * 按需分页之前这条路径基本不会出现；现在**必然**会被触发：
+ *   - guest 的 stage-1 页表遍历要为取指服务 → S1PTW=1 的 instruction abort；
+ *   - guest 关 MMU 的早期阶段，取指也会变成 stage-2 fault。
+ *
+ * ⚠️ 不能像 data abort 那样在"没命中设备"时走「返回 0 并推进 PC」的兜底 ——
+ * 取指没有"返回 0"这回事，静默推进 PC 只会让 guest 跑到垃圾地址上。所以
+ * 非 RAM 的取指一律报错停 VM。
+ */
+static int handle_iabt(vcpu_t *vcpu, uint64_t esr)
+{
+    uint64_t hpfar = vcpu->hpfar;
+    int      s1ptw = (int)((esr >> 7) & 1);
+    uint64_t ipa_page = hpfar << 8;      /* HPFAR 给的就是页基址 */
+
+    if (vcpu->vm && stage2_ipa_is_ram(&vcpu->vm->s2, ipa_page)) {
+        vm_t *vm = vcpu->vm;
+        uint64_t pa = stage2_map_page(&vm->s2, ipa_page, 1 /*zero*/);
+
+        if (!pa) {
+            KLOG_ERROR("[vmm] vm%u: ifetch fault ipa=0x%llx but PMM exhausted "
+                       "(free=%llu pages)\n",
+                       vm->vmid, (unsigned long long)ipa_page,
+                       (unsigned long long)pmm_get_free_pages(g_pmm));
+            return EL2_EXIT;
+        }
+
+        vm->s2.nr_fault++;
+        if (vm->s2.nr_fault <= 4)
+            dump_vttbr_diag(vm, "ifault", ipa_page, pa, esr);
+        stage2_tlb_flush_ipa(&vm->s2, ipa_page);
+        return EL2_RESUME;      /* 不推进 PC：重试这次取指 */
+    }
+
+    KLOG_ERROR("[VMM] vm%u: instruction abort at ipa=0x%llx — outside guest RAM "
+               "(s1ptw=%d elr=0x%llx esr=0x%llx)\n",
+               vcpu->vm ? vcpu->vm->vmid : 0,
+               (unsigned long long)ipa_page, s1ptw,
+               (unsigned long long)vcpu->elr, (unsigned long long)esr);
+    return EL2_EXIT;
 }
 
 /* ── 虚拟 PSCI（guest CPU/电源管理）───────────────────────────
@@ -347,6 +468,9 @@ static int vmm_exit_handler(vcpu_t *vcpu)
     }
     case 0x18:  return handle_sysreg(vcpu, esr); /* trapped sysreg     */
     case 0x24:  return handle_dabt(vcpu, esr);   /* Stage-2 Data Abort */
+    case 0x20:  return handle_iabt(vcpu, esr);   /* Stage-2 Instruction Abort
+                                                  * —— 按需分页后必然触发
+                                                  * （取指缺页 / S1PTW）*/
     default:
         KLOG_ERROR("[VMM] Unhandled exit: EC=0x%x ESR=0x%llx ELR=0x%llx SPSR=0x%llx\n",
                    ec, esr, vcpu->elr, vcpu->spsr);
@@ -376,6 +500,39 @@ static int vmm_exit_handler(vcpu_t *vcpu)
 #define CNTV_CTL_ENABLE     (1ULL << 0)
 #define CNTV_CTL_IMASK      (1ULL << 1)
 
+
+/*
+ * 诊断：把 vGIC 的**每一层**状态一次打全，用来定位"pending 置了但 guest
+ * 收不到"卡在哪一步。
+ *
+ * 层次（从内到外）：
+ *   软件位图 pending → enabled → active  ⇒ sync_entry 的排队条件
+ *   硬件 ICH_HCR(En) / ELRSR(空槽) / EISR(有 active 的槽)
+ *   LR 镜像 ⇒ 我们实际写进硬件的东西
+ */
+static void dump_vgic_state(vm_t *vm, vcpu_t *vcpu, const char *why)
+{
+    vgic3_t *g = &vm->vgic3;
+    uint32_t id = (uint32_t)vcpu->vcpu_id;
+    uint32_t bit = 1u << (VTIMER_PPI_IRQ & 31);
+
+    KLOG_INFO("[vgic-dbg] vm%u %s: PPI%u pend=%u enab=%u act=%u | "
+              "HCR=0x%llx ELRSR=0x%llx EISR=0x%llx | "
+              "LR=[0x%llx 0x%llx 0x%llx 0x%llx] | VMCR=0x%llx\n",
+              vm->vmid, why, (unsigned)VTIMER_PPI_IRQ,
+              !!(vmm_vgic3_pending_word(g, id, 0) & bit),
+              !!(vmm_vgic3_enabled_word(g, id, 0) & bit),
+              !!(vmm_vgic3_active_word(g, id, 0) & bit),
+              (unsigned long long)gicv3_read_hcr(),
+              (unsigned long long)gicv3_read_elrsr(),
+              (unsigned long long)gicv3_read_eisr(),
+              (unsigned long long)g->vcpu[id].lr[0],
+              (unsigned long long)g->vcpu[id].lr[1],
+              (unsigned long long)g->vcpu[id].lr[2],
+              (unsigned long long)g->vcpu[id].lr[3],
+              (unsigned long long)g->ich_vmcr);
+}
+
 static void aarch64_check_vtimer(vcpu_t *vcpu)
 {
     uint64_t ctl = vcpu->cntv_ctl;
@@ -396,6 +553,8 @@ static void aarch64_check_vtimer(vcpu_t *vcpu)
                       (unsigned long long)cval,
                       (unsigned long long)now,
                       (unsigned long long)off);
+            if (inject_count > 0x10000)
+                dump_vgic_state(vcpu->vm, vcpu, "vtimer");
         }
 #if DRIVER_GIC_V3
         vmm_vgic3_set_pending(&vcpu->vm->vgic3, (uint32_t)vcpu->vcpu_id,
@@ -419,7 +578,7 @@ static void aarch64_check_vtimer(vcpu_t *vcpu)
  */
 static void aarch64_check_vpl011_rx(vcpu_t *vcpu)
 {
-    if (!vpl011_rx_irq_asserted())
+    if (!vpl011_rx_irq_asserted(vcpu->vm))
         return;
 
 #if DRIVER_GIC_V3
@@ -457,7 +616,9 @@ void vmm_arch_restore_guest_ctx(vcpu_t *vcpu)
      * vmm_vgic3_hw_init 的注释）。同一个核重复写是幂等的。
      */
     vmm_vgic3_hw_init();
-    vmm_vgic3_sync_entry(&vcpu->vm->vgic3, (uint32_t)vcpu->vcpu_id);
+    /* ⚠️ 用 switch_in 而不是直接 sync_entry：LR 是 per-pCPU 硬件，本核
+     * 可能刚跑过**别的 VM** 的 vCPU 任务，直接 sync 会串味（见其注释）。*/
+    vmm_vgic3_lr_switch_in(&vcpu->vm->vgic3, (uint32_t)vcpu->vcpu_id);
 #else
     vmm_vgic_sync_entry(&vcpu->vm->vgic, (uint32_t)vcpu->vcpu_id);
 #endif
