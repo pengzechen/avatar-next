@@ -1039,42 +1039,70 @@ guest 一个字节都不输出 —— 看起来"什么都没修好"。
 **回归门禁**：`tools/vmm_multivm_regress.sh` 的第 6 步（detach 两个之后
 `vmm-run` 附着回先启动的那个，往串口敲一句）。单 VM 门禁永远测不出这条。
 
-### 11.5 ⚠️ 未定位：三个 VM 摊到两颗核上并发时的宿主内存踩踏
+### 11.5 已定位并修复：VMCS 宿主区里的 TSS 是 cpu0 的
 
-**现状：vCPU 任务默认仍然钉 cpu0。** 摊开的开关在 `vcpu_task_create()`
-（`want = 0` 那一行），但**现在别打开** —— 跨核并发下有一个还没定位的竞态。
+**vCPU 任务现在默认摊开**（`vcpu_task_create()` 里
+`want = vcpu->vm->slot % g_num_cpus`）。曾经挡住摊开的那个"跨核并发竞态"
+根因是**「每核状态」这个家族的又一处**（前四处见
+`docs/bugfix/SMP_HELPER_MODE_BUGFIX.md` §四）：**VMCS 宿主区里的 TR**。
+但它和前面几处**形态不同** —— 前面几处都是"初始化点和使用点不同核"，
+这一处是"**这个字段只会被装回、永远不会被保存**"，所以那个陈旧快照连
+"运行中被纠正"的机会都没有。
 
-实测（x86_64 / SMP=2 / microvm / 三个 VM；判据是"宿主 busybox 有没有被
-SIGSEGV 打死"）：
+**症状**（x86_64 / SMP=2 / microvm / 三个 VM；判据是"宿主 busybox 有没有被
+SIGSEGV 打死"）：三个 guest 都起到 shell，但随后**宿主自己的 busybox** 收
+SIGSEGV —— `User PF CR2=0x1103 bits: P=0 W=1 U=1`，RIP 处的字节根本不是有效
+代码。典型的"内存被踩"，而且只在摊开时出现（钉 cpu0 或钉 cpu1 都干净）。
 
-| 配置 | 结果 |
-|---|---|
-| 3 VM 全钉 cpu0 | 3/3 干净（**当前默认**） |
-| 3 VM 全钉 cpu1 | 2/2 干净 |
-| 2 VM 摊在两核 | 3/3 干净 |
-| **3 VM 摊在两核** | **约 50% 失败** |
+**根因**（`kernel/vmm/x86_64/vmx.c`）：
 
-失败的形态：三个 guest 都能起到 shell，但随后**宿主自己的 busybox** 收到
-SIGSEGV —— `User PF CR2=0x1103 bits: P=0 W=1 U=1`，而 RIP 处的字节根本不是
-有效代码。典型的"内存被踩"，不是 busybox 自己的 bug。
+1. `vmcs_init_host()` 读 TSS 基址时**硬编码 `gdt[6]`** —— 而 TSS 是每核一份的
+   （`boot/x86_64/tss.c` 的 `g_tss[]`，`x86_tss_init_cpu()` 把第 N 核写在
+   `gdt[6 + cpu_id*2]`，选择子 `0x30 + cpu_id*0x10`）。`gdt[6]` 永远是 **cpu0**
+   的 TSS。
+2. VMCS 宿主区**在 VM-exit 时只会被"装回"、不会被保存** —— 所以那个一次性
+   快照永远留在 VMCS 里，`vmx_refresh_host_state()` 又从来没管过 TR。
+3. 于是 vCPU 在 cpu1 上退出一次之后，**cpu1 的 TR 就指向 `g_tss[0]`**。
+   x86_64 宿主的 IDT 门 `ist` 全是 0（`boot/x86_64/exception.c`），
+   ring3→ring0 一律靠 **TSS.RSP0** 换栈 —— 而 `g_tss[0].rsp0` 是
+   **cpu0 当前任务**的内核栈顶。cpu1 上任何一个用户态中断/异常
+   （定时器、用户缺页）都会把陷阱帧压进 cpu0 那个任务的栈里，**两颗核同时
+   写同一段栈**。
 
-**已排除**：
+**老的双分表里，"3 VM 全钉 cpu0 是干净的"这一条由根因直接解释**：那时 cpu1
+上根本不发生 VM-exit，TR 永远不会被装坏。但表里另两行（钉 cpu1 的 2/2、
+2 VM 摊两核的 3/3）**不能按同一个理由解释** —— 那两种配置下 cpu1 上是有
+VM-exit 的。样本太小（按当时约 50% 的失败率，2/2 和 3/3 全绿各有 25% / 12.5%
+的概率），所以本模型预测**它们同样会失败**，只是当时没抽到。**别把那张表当成
+"只有 3 VM 摊两核才有问题"的结论** —— 真正的判据是"有没有 VM-exit 落在
+非 BSP 核上"，而这只取决于摊核，与 VM 个数无关。
 
-- **内核栈溢出**：`TASK_STACK_SIZE` 加到 32 KiB 仍然复现；`task_stack_used()`
-  量出来的高水位只有 1760 字节（工具留在 `kernel/task/task.h`，值得保留
-  —— 内核栈是静态数组挨着放的，溢出先踩坏**邻居**任务，"崩没崩"不可靠）。
-- **"vCPU 跑在非 BSP 核上"**：全部钉 cpu1 是干净的，所以不是"某颗核缺初始化"。
-- **VMCS 被"当前那块"误导**：退出处理里三处 `task_yield()` 后面都立刻
-  `return`，没有 VMCS 访问；而每轮入口前都会重新 `VMPTRLD`（见 §11.4）。
+**修复**：
 
-**下一步的怀疑方向**（留给后来者）：失败需要"同一颗核上有两个 vCPU 任务"
-（3 VM 摊在两核 ⇒ cpu0 跑两个、cpu1 跑一个），而 2 VM 摊两核（每核一个）是
-干净的。所以嫌疑集中在**"vCPU 任务被让出/抢占、期间另一颗核在跑 guest"**
-这条路径上 —— 例如某个只在"本核当前 vCPU 不是自己"时才错的共享状态。
+- `boot/x86_64/tss.c` 新增 `x86_tss_current()`（取**本核** TSS 选择子 + 基址）
+  与 `x86_tss_sel_of_cpu()`（纯编码，见下）。
+- `vmcs_init_host()` 不再读 `gdt[6]`，改用 `x86_tss_current()`。
+- `vmx_refresh_host_state()` **每次入口前重刷** `HOST_SEL_TR` / `HOST_BASE_TR`
+  —— 和 CR3/GS 同一类问题，只是方向相反：CR3/GS 跟着**任务**变，TR 跟着**核**
+  变。代价是一条 `str` + 一次数组寻址 + 两条 `vmwrite`。
 
-复现：`VMN=3 /tmp/three_vm.sh x86_64 2`（脚本见 §11.4 的说明；核心是起三个
-VM 再各自 detach）。摊开：把 `vcpu_task_create()` 的 `want` 改成
-`vcpu->vm->slot % g_num_cpus`。
+**不变量自检**（留在 `vmm_arch_exit_handler()` 里，每核最多报一次）：VM-exit
+之后立刻 `str` 读 TR，和 `x86_tss_sel_of_cpu(get_current_cpu_id())` 比。
+⚠️ 期望值**必须**走 `x86_tss_sel_of_cpu()` 这条纯编码路径，**不能**用
+`x86_tss_current()` —— 后者是写入路径，拿它当期望等于自己证明自己（第一版
+探测器就是这么写的，结果 bug 在眼前也不报）。
+
+**修复前后实测**（同一套探测器，先把 `x86_tss_current()` 临时改成永远返回
+cpu0 的 TSS 复现旧行为）：
+
+| | 探测器（cpu1） | 宿主异常 |
+|---|---|---|
+| 修复前 3 轮 | 3/3 报 `TR=0x30 应为 0x40` | 第 3 轮复现 `User PF CR2=0x1102` |
+| 修复后 9 轮 | 0/9 | 0/9 |
+
+**回归门禁**：`tools/vmm_multivm_regress.sh <arch> 2` 三架构各 6/6；
+`tools/vmm_helper_regress.sh x86_64 3 2 --restart` 3/3。
+摊开的复现脚本：`VMN=3 /tmp/three_vm.sh x86_64 2`（起三个 VM 再各自 detach）。
 
 ### 11.6 调试这类问题的顺手工具
 

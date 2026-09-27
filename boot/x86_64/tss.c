@@ -112,6 +112,34 @@ x86_tss_init_cpu(uint32_t cpu_id, uint64_t rsp0)
               cpu_id, (uint64_t)tss, tss->rsp0, tss_sel);
 }
 
+/*
+ * ── 取本核 TSS 的选择子/基址 ────────────────────────────────────────
+ *
+ * cpu_id 从 per-CPU 指针（%gs / TPIDR）读，**不**从 TR 反推 —— 调用者
+ * （VMCS 宿主区）恰恰是在 TR 可能已经不对的时候需要它，用 TR 反推会自我
+ * 复制错误。选择子/基址的编码与 x86_tss_init_cpu() 里 ltr 的那一套必须一致。
+ */
+uint16_t
+x86_tss_sel_of_cpu(uint32_t cpu_id)
+{
+    if (cpu_id >= AVATAR_MAX_CPUS)
+        cpu_id = 0;
+    return (uint16_t)(0x30 + cpu_id * 0x10);
+}
+
+void
+x86_tss_current(uint16_t *sel, uint64_t *base)
+{
+    uint32_t cpu_id = cpu_current()->cpu_id;
+    if (cpu_id >= AVATAR_MAX_CPUS)
+        cpu_id = 0;
+
+    if (sel)
+        *sel = x86_tss_sel_of_cpu(cpu_id);
+    if (base)
+        *base = (uint64_t)(uintptr_t)&g_tss[cpu_id];
+}
+
 /* ── 更新 TSS.RSP0（任务切换时调用）──────────────────────────────── */
 void
 x86_tss_set_rsp0(uint64_t rsp0)

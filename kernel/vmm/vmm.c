@@ -520,35 +520,35 @@ struct task *vcpu_task_create(vcpu_t *vcpu, uint8_t priority)
      * ③ 真摊开之后，多个 VM 的 vCPU 在**不同核上真正并发**跑，而不是挤在一颗
      *    核上时间片轮转。
      *
-     * ── ⚠️ 但目前**还不敢**默认摊开：跨核并发下有一个未定位的竞态 ──────
+     * ── 曾经在这里挡路的跨核竞态：VMCS 宿主区里的 TSS 是 cpu0 的 ──────
      *
-     * 实测（x86_64, SMP=2, microvm, 三个 VM；判定用"宿主 busybox 有没有被
-     * SIGSEGV 打死"）：
+     * 摊开之后一度出现「三个 guest 都能起到 shell，但宿主 busybox 随后被
+     * SIGSEGV 打死」（`User PF CR2=0x1103`，RIP 处的字节根本不是有效代码），
+     * 且只在 SMP>1 且 vCPU 跑在非 BSP 核上时出现。根因不在调度器、也不在
+     * 栈，而在 VMCS 的**宿主 TR**：
      *
-     *     3 VM 全钉 cpu0  ................ 3/3 干净   ← 当前默认
-     *     3 VM 全钉 cpu1  ................ 2/2 干净
-     *     2 VM 摊在两核    ................ 3/3 干净
-     *     3 VM 摊在两核    ................ **约 50% 失败**
+     *   - TSS 是每核一份的（boot/x86_64/tss.c 的 g_tss[]，选择子
+     *     0x30 + cpu_id*0x10），而 vmcs_init_host() 原来硬读 GDT[6] ——
+     *     那是 **cpu0** 的 TSS 描述符；
+     *   - VMCS 宿主区**只会在 VM-exit 时被装回、不会被保存**，所以那个
+     *     一次性快照永远留在 VMCS 里，refresh 也从来没管过它；
+     *   - 于是 vCPU 在 cpu1 上退出一次之后，cpu1 的 TR 就指向 g_tss[0]。
+     *     x86_64 主机的 IDT 门 ist 全是 0（boot/x86_64/exception.c），
+     *     ring3→ring0 一律靠 TSS.RSP0 换栈 —— 而 g_tss[0].rsp0 是
+     *     **cpu0 当前任务**的内核栈顶。cpu1 上任何一个用户态中断/异常
+     *     （定时器、用户缺页）都会把陷阱帧压进 cpu0 那个任务的栈里，
+     *     两颗核同时写同一段栈。
      *
-     * 失败的形态：三个 guest 都能起到 shell，但随后**宿主自己的 busybox**
-     * 收到 SIGSEGV（`User PF CR2=0x1103 bits: P=0 W=1 U=1`，RIP 处的字节
-     * 根本不是有效代码）—— 典型的"内存被踩"，不是它自己的 bug。
+     * 修复：x86_tss_current() 取本核 TSS，vmcs_init_host() 和
+     * vmx_refresh_host_state() 都用它（后者每次入口前重刷，见那边注释，
+     * 同时留了一条不变量自检）。**钉 cpu0 时永远不会复现**，因为那时
+     * cpu1 上根本不发生 VM-exit —— 老的双分表里"3 VM 全钉 cpu0 干净"
+     * 那一行就是这么来的。（判据是"有没有 VM-exit 落在非 BSP 核上"，
+     * 与 VM 个数无关；表里另两行的"干净"是小样本，别当成结论。）
      *
-     * 已排除的：
-     *   - **内核栈溢出**：把 TASK_STACK_SIZE 加到 32 KiB 仍然复现；而且
-     *     `task_stack_used()` 量出来的循环顶部高水位只有 1760 字节。
-     *     （栈高水位那套工具留着了，见 kernel/task/task.h 的 TASK_STACK_SIZE。）
-     *   - **"vCPU 跑在非 BSP 核上"**：全部钉 cpu1 是干净的。
-     *   - **VMCS 被"当前那块"误导**：退出处理里三处 task_yield() 后面都立刻
-     *     return，没有 VMCS 访问；而每轮入口前都会重新 VMPTRLD。
-     *
-     * 所以：**默认仍然钉 cpu0**，把摊开留成一行开关，等竞态定位后再打开。
-     * 复现：`VMN=3 /tmp/three_vm.sh x86_64 2`（或见 docs/vmm/X86_GUEST_LINUX.md §11.6）。
-     * 要试摊开：把下面的 want 换成 `(uint32_t)vcpu->vm->slot % ncpu`。
+     * 复现：`VMN=3 /tmp/three_vm.sh x86_64 2`（或见 docs/vmm/X86_GUEST_LINUX.md §11.5）。
      */
-    uint32_t want = 0;   /* ← 见上面 ③：跨核并发有未定位竞态，暂不摊开。
-                          *    要试摊开就换成：
-                          *    (uint32_t)vcpu->vm->slot % (g_num_cpus ? g_num_cpus : 1U) */
+    uint32_t want = (uint32_t)vcpu->vm->slot % (g_num_cpus ? g_num_cpus : 1U);
 
     struct task *t = task_create_affinity(name, vcpu_task_fn, vcpu, priority,
                                           want);

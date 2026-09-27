@@ -131,3 +131,10 @@ x86 侧另有一条同族根因（VMCS 初始化必须在 vCPU 核上）见
 宿主 MSR 载入表；riscv64 一处：`hgatp` 等 HS CSR），外加这里的一处。它们的
 共同外壳都是「SMP=1 永远正常、直启模式也正常、只有 helper 模式 + 多核才犯」——
 因为**只有 helper 模式才会让 setup 核 ≠ vCPU 核**。
+
+**同一家族后来还有第五处，但形态反过来**：VMCS 宿主区的 `HOST_SEL_TR` /
+`HOST_BASE_TR`（TSS 也是每核一份，却写死了 cpu0 那份）。它的特殊之处在于
+**VMCS 宿主区在 VM-exit 时只会被"装回"、不会被保存** —— 所以连"运行中被
+纠正"的机会都没有，那个错值会一直留在里面。判据因此不是"setup 核 ≠ vCPU 核"，
+而是"**有没有 VM-exit 落在非 BSP 核上**"。根因、自检与实测见
+`docs/vmm/X86_GUEST_LINUX.md` §11.5。

@@ -31,6 +31,14 @@
 /* guest RAM 的宿主物理窗口（定义在 guest_boot.c）*/
 #include "mm_vm.h"   /* virt_to_phys */
 
+/*
+ * boot/x86_64/tss.c —— 取本核 TSS 的选择子/基址。
+ * boot/ 不在头文件搜索路径上，这里按 kernel/task/cpu.c 的先例手写声明
+ * （那边声明的是 x86_tss_init_cpu）。实现见 boot/x86_64/tss.c。
+ */
+extern void x86_tss_current(uint16_t *sel, uint64_t *base);
+extern uint16_t x86_tss_sel_of_cpu(uint32_t cpu_id);
+
 /* ── 静态存储（4KB 对齐）──────────────────────────────────── */
 
 /* VMXON 区域（4KB，**每个逻辑处理器一块**）
@@ -1162,14 +1170,24 @@ static void vmcs_init_host(void)
     __asm__ volatile("sgdt %0" : "=m"(gdt_desc));
     __asm__ volatile("sidt %0" : "=m"(idt_desc));
 
-    /* 从 GDT[6] 读取 TSS base（16 字节 TSS 描述符，selector=0x30）*/
-    uint64_t *gdt = (uint64_t *)gdt_desc.base;
-    /* GDT[6] = lower 8B, GDT[7] = upper 8B */
-    uint64_t tss_lo = gdt[6];
-    uint64_t tss_hi = gdt[7];
-    uint64_t tss_base = ((tss_lo >> 16) & 0xFFFFFFULL)
-                      | (((tss_lo >> 56) & 0xFFULL) << 24)
-                      | ((tss_hi & 0xFFFFFFFFULL) << 32);
+    /*
+     * 宿主 TR 必须是**本核**的 TSS。
+     *
+     * 这里原来硬读 GDT[6]（= cpu0 的 TSS 描述符，selector 0x30），于是 VMCS
+     * 宿主区里存的就是 cpu0 的 TSS。VM-exit 时 CPU 会按这两个字段装回宿主的
+     * TR —— 而宿主区**只会被装回、不会被保存**，那个陈旧值就永远留在 VMCS 里。
+     * 后果：vCPU 在 cpu1 上退出一次之后，cpu1 的 TR 就指向 g_tss[0]。
+     *
+     * TR 是 ring3→ring0 换栈的依据（用 TSS.RSP0），而 g_tss[0].rsp0 是
+     * **cpu0 当前任务**的内核栈顶。于是 cpu1 上任何一个用户态中断/异常
+     * （定时器、用户缺页）都会把陷阱帧压进 cpu0 那个任务的栈里 —— 两颗核
+     * 同时写同一段栈。实测症状：宿主 busybox 恢复出一个错的 RIP 和一个垃圾
+     * 指针（`User PF CR2=0x1103`，RIP 处字节是数据不是代码），而且**只有
+     * SMP>1 且 vCPU 跑在非 BSP 核上时才出现** —— 钉在 cpu0 时永远不复现。
+     */
+    uint16_t tss_sel;
+    uint64_t tss_base;
+    x86_tss_current(&tss_sel, &tss_base);
 
     vmcs_write(HOST_EFER,       vmx_rdmsr(MSR_EFER));
     vmcs_write(EXI_CONTROLS,    g_ctrl_exit);
@@ -1185,7 +1203,7 @@ static void vmcs_init_host(void)
     vmcs_write(HOST_SEL_ES,     X86_SEL_DATA);
     vmcs_write(HOST_SEL_FS,     X86_SEL_DATA);
     vmcs_write(HOST_SEL_GS,     X86_SEL_DATA);
-    vmcs_write(HOST_SEL_TR,     X86_SEL_TSS);
+    vmcs_write(HOST_SEL_TR,     tss_sel);
 
     vmcs_write(HOST_BASE_TR,    tss_base);
     vmcs_write(HOST_BASE_GDTR,  gdt_desc.base);
@@ -2754,6 +2772,8 @@ void vmm_arch_restore_guest_ctx(vcpu_t *vcpu)
  *   HOST_BASE_FS  — 宿主用户态线程的 TLS 基址。
  *   HOST_BASE_GS  — per-CPU 指针。**最关键的一个**：宿主的 syscall 入口、
  *                   中断入口都靠 %gs 取 per-CPU 数据，装回旧值就全错。
+ *   HOST_TR       — 本核的 TSS（选择子 + 基址）。TSS 每核一份，而上面的
+ *                   CR3/GS 是"跟着任务变"，TR 是"跟着核变" —— 见下面那段。
  *
  * ⚠️ 除了 VMCS 宿主区，**VM-exit 的 MSR load 表**里也有宿主的值，而且
  * 硬件是**最后**装那张表的（在宿主状态字段之后），所以表里的值会盖掉
@@ -2776,6 +2796,28 @@ static void vmx_refresh_host_state(vcpu_t *vcpu)
     vmcs_write(HOST_CR4,     vmx_read_cr4());
     vmcs_write(HOST_BASE_FS, vmx_rdmsr(MSR_FS_BASE));
     vmcs_write(HOST_BASE_GS, vmx_rdmsr(MSR_GS_BASE));
+
+    /*
+     * HOST_SEL_TR / HOST_BASE_TR —— 本核的 TSS。
+     *
+     * 和 CR3/GS 是同一类问题，但方向相反：TR 不是"跟着任务变"，而是**跟着核
+     * 变**，VMCS 宿主区又只在创建时抓一次快照。TSS 是每核一份的
+     * （boot/x86_64/tss.c 的 g_tss[]，选择子 0x30 + cpu_id*0x10），而 VMCS
+     * 是每个 VM 一份 —— vCPU 任务被调度到哪颗核上跑，宿主区里那份 TSS 就
+     * 得是哪颗核的。
+     *
+     * 不刷的后果见 vmcs_init_host() 里那段注释：非 BSP 核上的用户态陷阱会
+     * 用 cpu0 任务的栈，两核同时写同一段栈 → 宿主进程随机崩。
+     *
+     * 代价是一条 str + 一次数组寻址 + 两条 vmwrite，可以忽略。
+     */
+    {
+        uint16_t tss_sel;
+        uint64_t tss_base;
+        x86_tss_current(&tss_sel, &tss_base);
+        vmcs_write(HOST_SEL_TR,  tss_sel);
+        vmcs_write(HOST_BASE_TR, tss_base);
+    }
 
     /*
      * 宿主 MSR 载入表（g_msr_host）里的值也必须是**本核**的。
@@ -2890,6 +2932,35 @@ int vmm_arch_enter_guest(vcpu_t *vcpu)
 
 int vmm_arch_exit_handler(vcpu_t *vcpu)
 {
+    /*
+     * 不变量自检（每核最多报一次）：TR 此刻装的是**这一次 VM-exit** 从 VMCS
+     * 宿主区装回来的值。它必须等于本核 TSS 的选择子 —— x86_64 宿主的 IDT 门
+     * ist 全是 0（boot/x86_64/exception.c），ring3→ring0 一律靠 TSS.RSP0
+     * 换栈；装回了别的核的 TSS，本核的用户态中断/异常就会把陷阱帧压进
+     * 那颗核当前任务的栈里。
+     *
+     * 放在退出路径上而不是入口：入口处 TR 还没被这次 VM-exit 覆盖，
+     * 看到的是上一轮的值，抓不到"刚被装回来的是什么"。
+     */
+    {
+        static uint8_t warned[AVATAR_MAX_CPUS];
+        uint32_t cid = get_current_cpu_id();
+        uint16_t tr;
+        uint16_t want;
+
+        if (cid >= AVATAR_MAX_CPUS)
+            cid = 0;
+        __asm__ volatile("str %0" : "=r"(tr));
+        /* 期望值走"纯编码"那条路，不走写入用的 x86_tss_current() */
+        want = x86_tss_sel_of_cpu(cid);
+        if (tr != want && !warned[cid]) {
+            warned[cid] = 1;
+            KLOG_ERROR("[VMX] cpu%u: VM-exit 后 TR=0x%x 应为 0x%x —— VMCS 宿主区"
+                       "装回了别的核的 TSS，本核用户态陷阱会用错栈\n",
+                       cid, tr, want);
+        }
+    }
+
     return vmx_exit_handler(vcpu);
 }
 
