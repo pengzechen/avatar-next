@@ -63,10 +63,19 @@ extern volatile uint64_t g_guest_entry_x0;
  * Linux 假定低端有 640KB 常规内存、1MB 起是内核，e820 也是这么报的。
  *
  * 所以这里出现了一个 arm64/riscv 没有的概念：**GPA ≠ HPA**。
- * guest 的物理 0 当然不能映射到宿主的物理 0，得多一层偏移
- * （GUEST_X86_HPA_BASE），由 EPT 负责翻译。所有往 guest 内存写东西的
- * 地方都必须加上这个偏移 —— 直接拿 GPA 去 phys_to_virt 会写到宿主的
- * 低端物理内存上，后果是宿主当场崩。
+ * guest 的物理 0 当然不能映射到宿主的物理 0，由 EPT 负责翻译。
+ * 所有往 guest 内存写数据的地方都要过 `gpa_ptr(vm, ...)`
+ * （kernel/vmm/x86_64/guest_boot.c）—— 直接拿 GPA 去 phys_to_virt 会写到
+ * 宿主的低端物理内存上，后果是宿主当场崩。
+ *
+ * ⚠️ 另有一条同源的约束：**不要对 `guest_loader_gpa_ptr()` 的返回值做跨页的
+ * 指针算术**。identity 时代 `phys_to_virt(gpa)` 是线性的，`p + off` 恰好就是
+ * "gpa + off"；改成按需分页后每个 guest 页各自分配、物理不连续，那句写法会
+ * 走到宿主的物理下一页上，**而且没有任何报错**。跨页一律用
+ * guest_loader_write_guest() / read_guest() / fill_guest() 那一族。
+ *
+ * 历史注记：早期实现是"预占宿主一段固定窗口（GUEST_X86_HPA_BASE）+ 线性
+ * 偏移"，platform.conf 里还有对应的 192 MiB 预留。按需分页之后两者都删了。
  */
 #define GUEST_LINUX_MEM_BASE    0x00000000ULL   /* guest 物理 0（不是宿主物理 0）*/
 #define GUEST_LINUX_MEM_SIZE    0x0C000000ULL   /* 192 MiB */
@@ -227,6 +236,53 @@ int guest_loader_patch_dtb_bootargs(uint8_t *dtb, uint32_t dtb_size,
  */
 int guest_loader_nop_dtb_nodes(uint8_t *dtb, uint32_t dtb_size,
                                const char *const *names, int nr_names);
+
+/*
+ * guest_loader_gpa_ptr — guest 物理地址 → 宿主内核可直接读写 的指针
+ *
+ * 这是宿主代码碰 guest 内存的**唯一**入口：按本 VM 的 stage-2（aarch64 的
+ * stage-2 / riscv 的 G-stage / x86 的 EPT）查表翻译，未映射且 @alloc 非 0 时
+ * 现分配一页（清零）。
+ *
+ * ⚠️ 声明必须放在这里。x86 的 guest_boot.c 要用它，而早先忘记声明时 GCC 只
+ * 给一条 `-Wimplicit-function-declaration` **警告**、按 `int` 处理返回值 ——
+ * 于是返回的 64 位指针被截断低 32 位（反汇编里就是一句 `movslq %eax,%r15`），
+ * 症状是随后读写一个"看着像物理地址"的野指针（实测 CR2=0x10ee202）。
+ * 三层翻译里最不该出问题的一层，栽在一行缺失的声明上。
+ */
+void *guest_loader_gpa_ptr(vm_t *vm, uint64_t gpa, int alloc);
+
+/*
+ * ── 页感知的 guest 内存访问族 ────────────────────────────────
+ *
+ * ⚠️ **不要对 guest_loader_gpa_ptr() 的返回值做跨页的指针算术。**
+ * 每个 guest 页都是各自分配的、物理上不连续，`p + off`（off 超过一页）走到
+ * 的是宿主的物理下一页，而不是 guest 的下一页 —— 没有任何报错，只是数据
+ * 错位。identity 映射时代这个写法是对的，按需分页之后不是了。
+ * 跨页的一律用下面这几个（语义与 memcpy/memset/memmove 一致）。
+ */
+int guest_loader_write_guest(vm_t *vm, uint64_t gpa, const void *src, size_t n);
+int guest_loader_read_guest(vm_t *vm, uint64_t gpa, void *dst, size_t n);
+int guest_loader_fill_guest(vm_t *vm, uint64_t gpa, int byte, size_t n);
+
+/*
+ * guest_loader_load_range — 把文件的 [file_off, file_off+len) 装到 guest 的 gpa
+ * len == 0 表示读到文件尾。返回装上的字节数，失败返回 -1。
+ *
+ * x86 的 bzImage 走这条：它按引导协议分成「setup 段」与「保护模式内核」两段、
+ * 分别装到不同的 GPA，**不要再**"整个文件装到暂存区再搬"（那需要一段逐页的
+ * guest→guest 拷贝，凭空多一层机制）。
+ */
+int guest_loader_load_range(vm_t *vm, const char *path, uint64_t file_off,
+                            uint64_t gpa, uint64_t len);
+
+/* 把文件的 [file_off, file_off+len) 读进宿主缓冲（len == 0 = 到文件尾）。
+ * 先看头部、再决定各段装到哪，就靠它。返回读到的字节数，失败返回 -1。*/
+int guest_loader_read_file_range(const char *path, uint64_t file_off,
+                                 void *buf, size_t len);
+
+/* 取文件大小（字节），失败返回 -1。*/
+int guest_loader_file_size(const char *path);
 
 /*
  * guest_loader_run_linux — 加载并启动 Linux guest（BSP 侧调用）

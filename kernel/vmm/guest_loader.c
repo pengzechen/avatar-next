@@ -24,6 +24,8 @@
 volatile uint64_t g_guest_entry_x0;
 #elif ARCH_RISCV64
 #include "riscv64/gstage.h"
+#elif ARCH_X86_64
+#include "x86_64/ept.h"
 #endif
 
 /*
@@ -39,6 +41,9 @@ _Static_assert(GUEST_LINUX_MEM_SIZE / S2_BLOCK_SIZE <= S2_MAX_L3_TABLES,
 #elif ARCH_RISCV64
 _Static_assert(GUEST_LINUX_MEM_SIZE / GSTAGE_BLOCK_SIZE <= GSTAGE_MAX_L0_TABLES,
                "GUEST_LINUX_MEM_SIZE 超出 GSTAGE_MAX_L0_TABLES 覆盖范围");
+#elif ARCH_X86_64
+_Static_assert(GUEST_LINUX_MEM_SIZE / EPT_BLOCK_SIZE <= EPT_MAX_PT_TABLES,
+               "GUEST_LINUX_MEM_SIZE 超出 EPT_MAX_PT_TABLES 覆盖范围");
 #endif
 
 /* 加载缓冲（静态，避免大栈占用）*/
@@ -100,7 +105,19 @@ static void encode_cells(uint8_t *p, int cells, uint64_t value) {
  * @alloc: 允许在未映射时现分配一页（加载映像时为 1；只想看看时为 0）。
  * 返回 NULL 表示"没映射且不允许分配"或"PMN 没页了"。
  */
-static void *vm_gpa_ptr(vm_t *vm, uint64_t gpa, int alloc) {
+void *guest_loader_gpa_ptr(vm_t *vm, uint64_t gpa, int alloc) {
+  /*
+   * ⚠️ 两条路径都必须把**页内偏移**加回去。
+   *
+   * map_* 系列返回的是**页基址**（它们只负责把 gpa 所在的页映射好），而
+   * lookup 系列返回的地址里已经带了偏移（`(entry & ~0xFFF) | (gpa & 0xFFF)`）。
+   * 早先 map 那条路忘了加，症状极具误导性：
+   *   - **顺序装载、且起点页对齐**时完全正常 —— 一页里第一次写 off==0，
+   *     之后同一页的写都走 lookup 分支（已经映射了），偏移是对的；
+   *   - 而**起点不在页边界**的一次性写入（比如 x86 的 MP 表，GPA 0x9F800）
+   *     会把整段数据写到**页首**去，目标位置留下一片零，且没有任何报错。
+   * aarch64/riscv 的 guest 镜像恰好都是页对齐顺序装载，所以一直没暴露。
+   */
 #if ARCH_AARCH64
   uint64_t pa = 0;
 
@@ -113,7 +130,7 @@ static void *vm_gpa_ptr(vm_t *vm, uint64_t gpa, int alloc) {
   if (!pa)
     return NULL;
   vm->s2.nr_premap++;   /* 加载期分配的页（与缺页驱动的 nr_fault 区分统计）*/
-  return phys_to_virt(pa);
+  return phys_to_virt(pa | (gpa & 0xFFF));
 #elif ARCH_RISCV64
   uint64_t pa = 0;
 
@@ -126,21 +143,48 @@ static void *vm_gpa_ptr(vm_t *vm, uint64_t gpa, int alloc) {
   if (!pa)
     return NULL;
   vm->gstage.nr_premap++;   /* 加载期分配的页（与缺页驱动的 nr_fault 区分统计）*/
-  return phys_to_virt(pa);
+  return phys_to_virt(pa | (gpa & 0xFFF));
+#elif ARCH_X86_64
+  uint64_t hpa = 0;
+
+  if (x86_ept_lookup(&vm->ept, gpa, &hpa))
+    return phys_to_virt(hpa);
+  if (!alloc)
+    return NULL;
+
+  hpa = x86_ept_map_page(&vm->ept, gpa, 1 /*zero*/);
+  if (!hpa)
+    return NULL;
+  vm->ept.nr_premap++;      /* 加载期分配的页（与缺页驱动的 nr_fault 区分统计）*/
+  return phys_to_virt(hpa | (gpa & 0xFFF));
 #else
-  /* 其它架构本次未改，仍是 identity 映射 */
+  /* 还没有 stage-2 的架构（vmm_test 的玩具 guest）：identity 映射 */
   (void)vm;
   (void)alloc;
   return phys_to_virt(gpa);
 #endif
 }
 
-/* 把一段数据写进 guest 内存（自动跨页、按需分配）。
+/*
+ * ── 页感知的 guest 内存访问族 ───────────────────────────────
  *
- * 不需要 clean_dcache_range：stage-2 映射用的属性（Normal WB）与宿主线性
- * 映射一致，同一物理页在两边是同一个 cache 视图。若将来把 guest RAM 的
- * 属性改成 non-cacheable/Device，这里就必须补 clean。*/
-static int vm_write_guest(vm_t *vm, uint64_t gpa, const void *src, size_t n) {
+ * ⚠️ **不要对 guest_loader_gpa_ptr() 的返回值做跨页的指针算术。**
+ *
+ * identity 映射时代 `phys_to_virt(gpa)` 是线性的，于是 `p + off`（off 超过
+ * 一页）恰好就是"gpa + off 那一页"—— 很多代码靠这个跨页 memcpy/memmove。
+ * 改成按需分页之后那条不变量没了：每个 guest 页都是各自从 PMM 分配的、
+ * **物理上不连续**，`p + off` 走到的是宿主物理内存里的下一页，而不是 guest
+ * 的下一页。表现是"数据搬过去了一部分，另一部分是宿主的随机内容"，且没有
+ * 任何报错。
+ *
+ * x86 的 bzImage 装载就栽在这里：11 MB 的保护模式内核用一句 memmove 搬运，
+ * 搬完 guest 的 GDT（在 payload 末尾 0xAA7B40）是垃圾，`lgdt` 之后
+ * `mov %ax,%ds` 直接 #GP → IDT 还没建 → **triple fault**。
+ *
+ * 所以跨页的一律走下面这几个：它们逐页翻译、逐页搬。
+ */
+int guest_loader_write_guest(vm_t *vm, uint64_t gpa, const void *src, size_t n)
+{
   const uint8_t *s = (const uint8_t *)src;
 
   while (n > 0) {
@@ -151,9 +195,9 @@ static int vm_write_guest(vm_t *vm, uint64_t gpa, const void *src, size_t n) {
     if (chunk > n)
       chunk = n;
 
-    dst = vm_gpa_ptr(vm, gpa, 1);
+    dst = guest_loader_gpa_ptr(vm, gpa, 1);
     if (!dst) {
-      KLOG_ERROR("[guest] vm_write_guest: cannot map gpa=0x%llx\n",
+      KLOG_ERROR("[guest] write_guest: cannot map gpa=0x%llx\n",
                  (unsigned long long)gpa);
       return -1;
     }
@@ -166,7 +210,191 @@ static int vm_write_guest(vm_t *vm, uint64_t gpa, const void *src, size_t n) {
   return 0;
 }
 
+/* 从 guest 内存读一段到宿主缓冲（逐页）。*/
+int guest_loader_read_guest(vm_t *vm, uint64_t gpa, void *dst, size_t n)
+{
+  uint8_t *d = (uint8_t *)dst;
+
+  while (n > 0) {
+    uint64_t off_in_page = gpa & 0xFFFULL;
+    size_t chunk = (size_t)(4096 - off_in_page);
+    const void *src;
+
+    if (chunk > n)
+      chunk = n;
+
+    src = guest_loader_gpa_ptr(vm, gpa, 0 /*只读，不分配*/);
+    if (!src) {
+      KLOG_ERROR("[guest] read_guest: gpa=0x%llx unmapped\n",
+                 (unsigned long long)gpa);
+      return -1;
+    }
+    memcpy(d, src, chunk);
+
+    gpa += chunk;
+    d += chunk;
+    n -= chunk;
+  }
+  return 0;
+}
+
+/* 往 guest 内存填一段字节（逐页）。*/
+int guest_loader_fill_guest(vm_t *vm, uint64_t gpa, int byte, size_t n)
+{
+  while (n > 0) {
+    uint64_t off_in_page = gpa & 0xFFFULL;
+    size_t chunk = (size_t)(4096 - off_in_page);
+    void *dst;
+
+    if (chunk > n)
+      chunk = n;
+
+    dst = guest_loader_gpa_ptr(vm, gpa, 1);
+    if (!dst) {
+      KLOG_ERROR("[guest] fill_guest: cannot map gpa=0x%llx\n",
+                 (unsigned long long)gpa);
+      return -1;
+    }
+    memset(dst, byte, chunk);
+
+    gpa += chunk;
+    n -= chunk;
+  }
+  return 0;
+}
+
 /* ── 文件加载 ─────────────────────────────────────────────── */
+
+/*
+ * guest_loader_read_file_range — 把文件的 [file_off, file_off+len) 读进宿主缓冲
+ *
+ * 与 guest_loader_read_file() 的区别：能从中间读。bzImage 要用它先取头部
+ * （解析 setup_sects / pref_address），再决定各段装到哪。
+ * len == 0 表示读到文件尾。返回读到的字节数（可能少于 len），失败返回 -1。
+ */
+int guest_loader_read_file_range(const char *path, uint64_t file_off,
+                                 void *buf, size_t len) {
+  vfs_file_t *f = NULL;
+  uint8_t *d = (uint8_t *)buf;
+  size_t total = 0;
+  int rc;
+
+  if (file_off > 0) {
+    uint64_t new_off = 0;
+    rc = vfs_open(path, 0, 0, &f);
+    if (rc != 0 || !f)
+      return -1;
+    rc = vfs_seek(f, (int64_t)file_off, 0 /*SEEK_SET*/, &new_off);
+    if (rc != 0) {
+      vfs_close(f);
+      return -1;
+    }
+  } else {
+    rc = vfs_open(path, 0, 0, &f);
+    if (rc != 0 || !f)
+      return -1;
+  }
+
+  while (len == 0 || total < len) {
+    size_t want = (len == 0) ? 4096 : (len - total);
+    int n;
+
+    if (want > 4096)
+      want = 4096;
+    n = vfs_read_to_phys(f, file_off + total, d + total, want);
+    if (n <= 0)
+      break;
+    total += (size_t)n;
+    if ((size_t)n < want && len != 0)
+      break;                      /* 文件尾 */
+  }
+
+  vfs_close(f);
+  return (int)total;
+}
+
+/*
+ * guest_loader_file_size — 取文件大小（字节），失败返回 -1
+ *
+ * ⚠️ 不要用 bzImage 头里的 `syssize`：那是 16 位时代以 16 字节为单位的旧账，
+ * 对现代 bzImage 不准。seek 到末尾最可靠。
+ */
+int guest_loader_file_size(const char *path) {
+  vfs_file_t *f = NULL;
+  uint64_t end = 0;
+  int rc;
+
+  rc = vfs_open(path, 0, 0, &f);
+  if (rc != 0 || !f)
+    return -1;
+  rc = vfs_seek(f, 0, 2 /*SEEK_END*/, &end);
+  vfs_close(f);
+  if (rc != 0)
+    return -1;
+  return (int)end;
+}
+
+/*
+ * guest_loader_load_range — 把文件的 [file_off, file_off+len) 直接装到 guest 的 gpa
+ *
+ * len == 0 表示读到文件尾。
+ *
+ * ⚠️ 这是 x86 bzImage 装载的**首选**方式，别再用"整个文件装到暂存区再搬"那套。
+ * 原因有二：
+ *   1. 那段搬运在按需分页下必须走逐页的 guest→guest 拷贝（见
+ *      guest_loader_write_guest 的说明），凭空多一层容易出错的机制；
+ *   2. 直接按最终地址装载，连 11 MB 的临时副本都不用，启动更快。
+ * 两条装载区间（setup 与保护模式内核）本来就是分开的，天然没有重叠。
+ *
+ * 返回装上的字节数，失败返回 -1。
+ */
+int guest_loader_load_range(vm_t *vm, const char *path, uint64_t file_off,
+                            uint64_t gpa, uint64_t len) {
+  vfs_file_t *f = NULL;
+  uint64_t off = file_off;
+  uint64_t done = 0;
+  int rc = vfs_open(path, 0 /*O_RDONLY*/, 0, &f);
+
+  if (rc != 0 || !f) {
+    KLOG_ERROR("[guest] cannot open '%s' (rc=%d)\n", path, rc);
+    return -1;
+  }
+  if (file_off > 0) {
+    uint64_t new_off = 0;
+    if (vfs_seek(f, (int64_t)file_off, 0, &new_off) != 0) {
+      vfs_close(f);
+      return -1;
+    }
+  }
+
+  while (len == 0 || done < len) {
+    size_t want = (len == 0) ? sizeof(g_load_buf)
+                             : (size_t)(len - done);
+    int n;
+
+    if (want > sizeof(g_load_buf))
+      want = sizeof(g_load_buf);
+
+    n = vfs_read_to_phys(f, off, g_load_buf, want);
+    if (n <= 0)
+      break;
+
+    if (guest_loader_write_guest(vm, gpa + done, g_load_buf, (size_t)n) != 0) {
+      vfs_close(f);
+      return -1;
+    }
+
+    off += (uint64_t)n;
+    done += (uint64_t)n;
+
+    if ((size_t)n < want && len != 0)
+      break;                      /* 文件尾 */
+  }
+
+  vfs_close(f);
+  return (int)done;
+}
+
 int guest_loader_load_file(vm_t *vm, const char *path, uint64_t gpa) {
   vfs_file_t *f = NULL;
   uint64_t off = 0;
@@ -183,8 +411,8 @@ int guest_loader_load_file(vm_t *vm, const char *path, uint64_t gpa) {
     if (n <= 0)
       break;
 
-    /* 写进 guest 内存：按需分页下必须经 vm_write_guest（见它的注释）*/
-    if (vm_write_guest(vm, gpa + off, g_load_buf, (size_t)n) != 0) {
+    /* 写进 guest 内存：按需分页下必须经 guest_loader_write_guest（见它的注释）*/
+    if (guest_loader_write_guest(vm, gpa + off, g_load_buf, (size_t)n) != 0) {
       total = -1;
       break;
     }
@@ -208,46 +436,26 @@ int guest_loader_load_file(vm_t *vm, const char *path, uint64_t gpa) {
  * DTB 补丁必须走这条路：补丁代码是按线性偏移索引 FDT 的，而在按需分页下
  * 一个 4 KB 的 DTB 可能落在**不连续的**物理页上 —— 直接对 guest 内存做
  * `dtb[i]` 会写坏宿主或别的 VM。所以：读到宿主缓冲 → 在缓冲上打补丁 →
- * 一次 vm_write_guest() 写回去。
+ * 一次 guest_loader_write_guest() 写回去。
  *
  * 返回读到的字节数；缓冲不够放下整个文件时返回 -1（宁可不启动也不能截断
  * DTB —— 截断的 FDT 会让 guest 解析到垃圾）。
  */
 static int guest_loader_read_file(const char *path, uint8_t *buf, size_t cap) {
-  vfs_file_t *f = NULL;
-  uint64_t off = 0;
-  size_t total = 0;
-  int rc = vfs_open(path, 0 /*O_RDONLY*/, 0, &f);
+  int n = guest_loader_read_file_range(path, 0, buf, cap);
 
-  if (rc != 0 || !f) {
-    KLOG_ERROR("[guest] cannot open '%s' (rc=%d)\n", path, rc);
+  if (n < 0)
     return -1;
-  }
 
-  for (;;) {
-    int n = (int)vfs_read_to_phys(f, off, buf + total, cap - total);
-    if (n < 0) {
-      vfs_close(f);
+  /* 缓冲满了但文件可能还没读完 —— 再探一个字节 */
+  if ((size_t)n == cap) {
+    uint8_t probe;
+    if (guest_loader_read_file_range(path, (uint64_t)cap, &probe, 1) > 0) {
+      KLOG_ERROR("[guest] '%s' larger than %zu bytes buffer\n", path, cap);
       return -1;
     }
-    if (n == 0)
-      break;
-    total += (size_t)n;
-    off += (uint64_t)n;
-    if (total >= cap) {
-      /* 缓冲满了但文件可能还没读完 —— 再探一次 */
-      uint8_t probe;
-      if (vfs_read_to_phys(f, off, &probe, 1) > 0) {
-        KLOG_ERROR("[guest] '%s' larger than %zu bytes buffer\n", path, cap);
-        vfs_close(f);
-        return -1;
-      }
-      break;
-    }
   }
-
-  vfs_close(f);
-  return (int)total;
+  return n;
 }
 
 /* ── DTB 修补 ─────────────────────────────────────────────── */
@@ -673,12 +881,12 @@ _Static_assert(sizeof(GUEST_LINUX_BOOTARGS) - 1 <= 90,
  * 共用的 DTB 逻辑里塞满 #if，不如整条路径单独实现、在这里分流 ——
  * 这样 arm64/riscv 那两段一行都不用动（回归风险为 0）。
  */
-extern int x86_guest_boot(void);
+extern int x86_guest_boot(vm_t *vm);
 #endif
 
 int guest_loader_run_linux(vm_t *vm) {
 #if ARCH_X86_64
-  return x86_guest_boot();
+  return x86_guest_boot(vm);
 #else
   int rc;
 
@@ -706,7 +914,7 @@ int guest_loader_run_linux(vm_t *vm) {
    * ── 建立 VM（**必须**在加载映像之前）──────────────────────────
    *
    * stage-2 是在 vm_create() 里初始化的 —— 一张**空表**。而加载映像要往
-   * guest 物理地址里写，那需要映射。按需分页下 vm_write_guest() 会为每一页
+   * guest 物理地址里写，那需要映射。按需分页下 guest_loader_write_guest() 会为每一页
    * 现分配，所以这里**不再需要**预先预留物理内存或整片清零：
    *
    *   pmm_mark_allocated(192 MiB)   ← 删掉了
@@ -781,7 +989,7 @@ int guest_loader_run_linux(vm_t *vm) {
   }
 
   /* 补好的 DTB 一次性写进 guest（memory/bootargs/initrd 都改完了）*/
-  if (vm_write_guest(vm, GUEST_LINUX_DTB_GPA, dtb_buf, (size_t)dlen) != 0)
+  if (guest_loader_write_guest(vm, GUEST_LINUX_DTB_GPA, dtb_buf, (size_t)dlen) != 0)
     return -1;
 
   /*

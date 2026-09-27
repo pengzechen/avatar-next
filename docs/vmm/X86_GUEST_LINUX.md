@@ -905,8 +905,96 @@ IRQ 线** —— 先 `IER=0x0f` 打开全部中断，再故意往 THR 写一个 
 > 历史：探测失败时 `port->irq = (irq > 0) ? irq : 0;` → 0 → 驱动退化成定时器
 > 轮询 —— 输入能用的代价是 8ms 延迟 + 驱动永远停在退化路径上。
 
-## 11. 相关
+## 11. 同内核多 VM（每 VM 一份 EPT + 按需分页）
+
+对着 aarch64（提交 `e284ce4`）与 riscv64 两份改造做的，三个架构现在**同构**：
+EPT ↔ stage-2 ↔ G-stage。
+
+```bash
+make PLATFORM=qemu-virt-x86_64 clean && make PLATFORM=qemu-virt-x86_64 kernel rootfs
+tools/vmm_multivm_regress.sh x86_64 1        # vm1 → Ctrl+[ → vmm-run -n → vm2
+```
+
+### 11.1 每 VM 一份的东西
+
+| 从前（文件级 static / 按 vcpu_id 索引） | 现在 |
+|---|---|
+| `g_ept_pml4` / `g_ept_pdpt` / `g_ept_pd[4]` + `s_mem_*` | `vm->ept`（`ept_ctx_t`，静态表按 slot 索引） |
+| `g_x86_mmio_bus` | `vm->mmio_bus_storage`（`vm_t` 里本来就有这个字段） |
+| `g_vlapic[MAX_VCPUS]` + `s_enabled` | `vm->vlapic[]`（**注意：原来所有运行时访问器都硬编码 `[0]`**，只有 init 按 vcpu_id 取槽） |
+| `g_pic_*_imr` / `g_ioapic_*` / `g_pit[]` / `g_port61` | `vm->chipset`（见 `include/vmm/vmm_x86_chipset.h`） |
+| `g_vmcs_storage[vcpu_id]` / `g_msr_guest` / `g_msr_host` / `g_msr_store` / `g_guest_stack` / `g_exit_trace` / `g_entry_dbg_n` | 多一维 VM：下标改成 `vcpu_slot(vcpu)` = `(vm->slot, vcpu_id)` 展平 |
+| `guest_boot.c` 里的 `static vm_t vm` | 直接用调用方（`/dev/vmm` 从 VM 池）给的那个 |
+
+最后一条是**功能性的关键**：从前 `guest_loader_run_linux(vm)` 在 x86 上把 `vm`
+参数丢掉、用自带的 static，于是 `/dev/vmm` 的 STOP/`Ctrl+]` 打在池里那个 VM 上，
+而真正在跑的是 static 那个 —— **guest 停不掉**（症状：`Ctrl+]` 之后 `/bin/vmm-run`
+被喂进了 guest，回显 `/bin/sh: /bin/vmm-run: not found`），第二次启动也无从谈起。
+
+### 11.2 按需分页
+
+`x86_ept_vm_init()` 建出来的是**空表**（"空表即全 trap"，所以
+`x86_ept_enable_mmio_trap()` 整个删掉了）：guest RAM 不再预映射，`guest_boot.c`
+里那两行 `pmm_mark_allocated(192 MiB)` + `memset(192 MiB)` 也一并删了。
+EPT violation（VM-exit 48）里先分 RAM / MMIO：
+
+- RAM 窗口内 → `x86_ept_map_block()` 装 2 MiB、**不推进 RIP**，返回 `EL2_RESUME`；
+- 窗口外 → 原来的设备模拟路径。
+
+⚠️ **`vm_create()` 必须挪到加载任何镜像之前**：EPT 空表之后所有往 guest 内存的
+写都要经 `guest_loader_gpa_ptr()` 现分配 + 装映射，而它依赖 `vm->ept`。顺序反了
+会拿到一片 NULL，症状是 `cannot map guest gpa=...` 之后紧跟一个写零地址的 #PF。
+
+### 11.3 ★★★ 两个跨页的坑（都是 identity 时代的写法埋下的）
+
+这两条是这次改造里最花时间的，**都不报错**，只是数据错位：
+
+**① `guest_loader_gpa_ptr()` 在"新映射"那条路上漏了页内偏移。**
+`x86_ept_map_page()` 返回的是**页基址**（它只负责把页映射好），而 lookup 那条路
+返回的地址里已经带了偏移（`(entry & ~0xFFF) | (gpa & 0xFFF)`）。map 这条忘了加。
+
+- **顺序装载 + 起点页对齐**时完全正常：一页里第一次写 off==0，之后同一页的写都
+  走 lookup 分支（页已映射），偏移是对的。aarch64/riscv 的 guest 镜像恰好都是
+  这种形态，所以一直没暴露。
+- 起点**不在页边界**的一次性写入就错了：x86 的 MP 表（GPA 0x9F800）整段被写到
+  页首 0x9F000 去，0x9F800 留下一片零。guest 于是在 0x9FC00 读到一个全 0 的
+  `_MP_`，`smp_check_mpc()` 拿着空 mpc 指针解引用 → `BUG: kernel NULL pointer
+  dereference` @ `smp_check_mpc+0x2`。
+
+修法是三条分支（aarch64/riscv/x86）都 `phys_to_virt(pa | (gpa & 0xFFF))`。
+
+**② 不要对 `guest_loader_gpa_ptr()` 的返回值做跨页的指针算术。**
+`memmove(gpa_ptr(dst), gpa_ptr(src) + off, 11MB)` 这种写法在 identity 时代成立
+（`phys_to_virt` 线性），按需分页之后**每个 guest 页各自分配、物理不连续**，
+`ptr + off` 走到的是宿主的物理下一页。bzImage 装载就是这么把 11 MB 搬错的
+（guest 的 GDT 在 payload 末尾 0xAA7B40，搬完全是垃圾 → `lgdt` 之后
+`mov %ax,%ds` 直接 #GP → IDT 还没建好 → **triple fault**，
+日志里只有 `guest triple fault rip=0x1000022`）。
+
+现在跨页一律走 `guest_loader_write_guest()` / `read_guest()` / `fill_guest()`；
+bzImage 更是改成**按引导协议的两段直接装到最终地址**（`guest_loader_load_range()`），
+连暂存区和那趟搬运都不需要了：
+
+```
+[0, setup_bytes)     → GPA 0x10000     （引导扇区 + setup，14 KB）
+[setup_bytes, klen)  → s_kernel_load   （保护模式内核，11 MB）
+```
+
+顺带还快了一点。**顺带提醒**：MP 表的浮点指针结构在**表内 +0x400 处**
+（`MP_FP_GPA` 0x9FC00 减 `MP_TABLE_GPA` 0x9F800），不是表后面 —— 写错位置同样
+会在 `smp_check_mpc` 上炸。
+
+### 11.4 调试这类问题的顺手工具
+
+`vmx.c` 里那段 `[RIP-SAMPLE]` 采样（默认 `if (0 && ...)` 关着）：需要时把条件
+改成 `(n % 20000) == 0` 就能看到 guest 还在不在动、卡在哪个 exit reason。
+**"guest 看起来没动静"要分清两种**：退出计数还在涨 = 它在跑（很可能在 idle）；
+计数停住 = 真卡了。这次就是靠它一眼看出 guest 在 `reason=12`（HLT）里打转 —— 
+即"内核起来了但拿不到 tick"，方向立刻从"EPT 坏了"转到"时钟/MP 表"。
+
+## 12. 相关
 
 - 另两个架构的同类文档：`docs/vmm/RISCV64_GUEST_LINUX.md`、`docs/vmm/X86_VMX_GUIDE.md`（旧的玩具 guest 说明）
 - 两种运行模式与 `/dev/vmm` 协议：`docs/vmm/GUEST_CONSOLE.md`
 - 裸跑基准的做法：`docs/vmm/GUEST_NATIVE_QEMU.md`
+- 多 VM 的验收脚本：`tools/vmm_multivm_regress.sh`（三个架构共用）

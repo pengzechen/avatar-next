@@ -45,6 +45,12 @@
 #include "vmm/vmm_uart16550.h"  /* uart16550_state_t：每个 VM 一份控制台状态 */
 #endif
 
+#if ARCH_X86_64
+#include "x86_64/ept.h"          /* ept_ctx_t：vm_t 里每个 VM 一份 EPT */
+#include "vmm/vmm_vlapic.h"      /* vlapic_state_t：每个 VM 一份 vLAPIC */
+#include "vmm/vmm_x86_chipset.h" /* x86_chipset_state_t：PIC/PIT/IOAPIC 桩 */
+#endif
+
 /* ── asm 可见的固定偏移（与 el2_vmcs.S 对齐）─────────────────── */
 #define VCPU_R0         0           /* x0-x30, 31×8 bytes               */
 #define VCPU_SP_EL1     248         /* 31*8                              */
@@ -440,6 +446,31 @@ typedef struct vm {
     mmio_device_t     uart_dev;
 #endif
 
+#if ARCH_X86_64
+    /*
+     * 每 VM 自己的 EPT：页表、RAM 窗口、按需页账本。
+     * 与 aarch64 的 s2 / riscv 的 gstage 同义（三个架构各有一份 stage-2）。
+     */
+    ept_ctx_t ept;
+
+    /*
+     * 每 VM 的 vLAPIC（按 vcpu_id 索引）。
+     *
+     * ⚠️ 从前是 `static vlapic_t g_vlapic[MAX_VCPUS]`，按 vcpu_id 索引 ——
+     * 而 vcpu_id 是每个 VM 内部从 0 开始的，于是两个 VM 的 vcpu0 指向同一份
+     * LAPIC。见 include/vmm/vmm_vlapic.h 的说明。
+     */
+    vlapic_state_t vlapic[MAX_VCPUS];
+
+    /*
+     * 传统芯片组桩（PIC / IO-APIC / PIT / 端口 0x61）。
+     *
+     * ⚠️ 这些从前是 vmx.c 的文件级 static，整机一份 —— 第二个 VM 启动时
+     * vmx_vm_init() 里那段"复位设备桩"会把第一个 VM 的状态一起清掉。
+     */
+    x86_chipset_state_t chipset;
+#endif
+
 #if ARCH_RISCV64
     /*
      * 每 VM 自己的 G-stage：页表、VMID、RAM 窗口、按需页账本。
@@ -491,6 +522,11 @@ _Static_assert(MAX_VMS <= STAGE2_MAX_VMS, "MAX_VMS > STAGE2_MAX_VMS");
 #endif
 #if ARCH_RISCV64
 _Static_assert(MAX_VMS <= GSTAGE_MAX_VMS, "MAX_VMS > GSTAGE_MAX_VMS");
+#endif
+#if ARCH_X86_64
+_Static_assert(MAX_VMS <= EPT_MAX_VMS, "MAX_VMS > EPT_MAX_VMS");
+/* vlapic_state_t 数组按 MAX_VCPUS 定长，两边必须一致 */
+_Static_assert(MAX_VCPUS <= VLAPIC_MAX_VCPUS, "MAX_VCPUS > VLAPIC_MAX_VCPUS");
 #endif
 
 /* ── AArch64 专用汇编接口（仅 aarch64 编译时可见）──────────── */

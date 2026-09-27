@@ -16,10 +16,13 @@
  *
  * ⚠️ 本架构独有：**GPA ≠ HPA**。
  *   guest 物理地址必须从 0 开始（Linux 假定低端有常规内存、内核在 1 MiB），
- *   而宿主的物理 0 显然不能给它。所以 guest RAM 放在宿主的
- *   GUEST_X86_HPA_BASE 窗口里，由 EPT 翻译。**所有往 guest 内存写数据的
- *   地方都要过 gpa_ptr()** —— 直接拿 GPA 去 phys_to_virt 就写到宿主的
- *   低端物理内存上了，宿主当场崩。
+ *   而宿主的物理 0 显然不能给它。所以 GPA 由 EPT 翻译到宿主物理页上。
+ *   **所有往 guest 内存写数据的地方都要过 gpa_ptr(vm, ...)** —— 直接拿 GPA
+ *   去 phys_to_virt 就写到宿主的低端物理内存上了，宿主当场崩。
+ *
+ *   注：早期实现是「预占宿主的一段固定窗口 + 线性偏移」（GUEST_X86_HPA_BASE），
+ *   改成按需分页后那个偏移没了 —— 每个 GPA 各自映射到一个现分配的宿主页，
+ *   由 EPT 查表翻译。GUEST_X86_HPA_BASE 只剩历史意义。
  *
  * 引导协议为什么选 64 位入口（而不是走 16 位实模式 setup）：
  *   HdrS + xloadflags 的 XLF_KERNEL_64 表明内核自带 64 位入口，直接跳过去
@@ -88,23 +91,25 @@
 
 static uint64_t s_kernel_load;   /* 保护模式内核的装载物理地址（GPA）*/
 
-/* ── GPA → 宿主内核可直接写的指针 ────────────────────────── */
-
-static void *gpa_ptr(uint64_t gpa)
+/* ── GPA → 宿主内核可直接写的指针 ──────────────────────────
+ *
+ * ⚠️ 从前这里是 `phys_to_virt(GUEST_X86_HPA_BASE + gpa)` —— 常量基址 +
+ * 线性偏移。改成**按需分页**之后那条不变量没了：guest 的每一页都是缺页时
+ * 各自从 PMM 现分配的，GPA 与 HPA 之间不再有固定偏移，而且可能**还没分配**。
+ * 所以一律走 guest_loader_gpa_ptr()（宿主碰 guest 内存的唯一入口，它按
+ * EPT 查表翻译，未映射时现分配一页）。
+ *
+ * ⚠️ 另有一条同源的约束：**不要对这个返回值做跨页的指针算术**。见
+ * include/guest_loader.h 里 guest_loader_write_guest() 那一族的说明。
+ */
+static void *gpa_ptr(vm_t *vm, uint64_t gpa)
 {
-    return phys_to_virt(GUEST_X86_HPA_BASE + gpa);
-}
+    void *p = guest_loader_gpa_ptr(vm, gpa, 1 /*alloc*/);
 
-/* guest 物理窗口对应的宿主物理基址（vmx.c 的 EPT 初始化要用）*/
-uint64_t x86_guest_hpa_base(void)
-{
-    return GUEST_X86_HPA_BASE;
-}
-
-/* guest RAM 大小（vmx.c 的诊断要判断地址是否落在 guest 内存里）*/
-uint64_t x86_guest_mem_size(void)
-{
-    return GUEST_LINUX_MEM_SIZE;
+    if (!p)
+        KLOG_ERROR("[x86boot] cannot map guest gpa=0x%llx\n",
+                   (unsigned long long)gpa);
+    return p;
 }
 
 /* ================================================================
@@ -135,10 +140,24 @@ static uint8_t mp_sum(const uint8_t *p, uint32_t n)
     return s;
 }
 
-static void build_mptable(void)
+/*
+ * ⚠️ MP 表 0x800 字节、起点 0x9F800，**跨页**（0x9F000 与 0xA0000 两页）。
+ * 按需分页下必须先在宿主缓冲里建好再逐页写下去 —— 直接拿 gpa_ptr() 的返回值
+ * 当基址线性写的话，0x9F800 之后的部分会落到宿主物理内存里。
+ * （缓冲区 0x900 是 0x800 向上取整到页 + 少量余量。）
+ */
+static void build_mptable(vm_t *vm)
 {
-    uint8_t *t = (uint8_t *)gpa_ptr(MP_TABLE_GPA);
-    uint8_t *f = (uint8_t *)gpa_ptr(MP_FP_GPA);
+    static uint8_t mpbuf[0x800] __attribute__((aligned(4096)));
+    uint8_t *t = mpbuf;
+    /*
+     * ⚠️ 浮点指针结构在 **表内 0x400 处**（MP_FP_GPA 0x9FC00 减去
+     * MP_TABLE_GPA 0x9F800），不是表后面。写成 +0x800 的话整个 0x800 缓冲区
+     * 里那一块是空的，写下去之后 guest 在 0x9FC00 读到一个全 0 的 `_MP_`
+     * 结构 —— 于是 `smp_check_mpc()` 拿着空的 mpc 指针解引用，内核报
+     * `BUG: kernel NULL pointer dereference` @ `smp_check_mpc+0x2`。
+     */
+    uint8_t *f = mpbuf + 0x400;
     uint32_t o = 44;                       /* 条目紧跟在 44 字节头之后 */
     uint16_t nent = 0;
     static const uint8_t irq[5] = { 0, 1, 3, 4, 14 };
@@ -174,6 +193,14 @@ static void build_mptable(void)
     mp_w(f, 4, MP_TABLE_GPA, 4);
     f[8] = 1; f[9] = 4;                    /* 长度（16B 单位）、spec */
     f[10] = (uint8_t)(0 - mp_sum(f, 16));
+
+    /*
+     * 整体落盘。0x800 字节从 0x9F800 起正好到 0x9FFFF 为止 —— **不跨页**
+     * （0x9F000 页内），所以一次 write_guest 就够。浮点指针结构在缓冲区
+     * +0x400 处，随这 0x800 一起落下，不必单独写。
+     */
+    if (guest_loader_write_guest(vm, MP_TABLE_GPA, mpbuf, 0x800) != 0)
+        return;
 
     KLOG_INFO("[x86boot] MP table @0x%llx: %u entries / %u bytes\n",
               (unsigned long long)MP_TABLE_GPA, (unsigned)nent, (unsigned)o);
@@ -329,113 +356,164 @@ static void build_gdt(uint8_t *gdt)
  *
  * 返回 0 = vCPU 任务已创建（由它跑 guest）。
  */
-int x86_guest_boot(void)
+int x86_guest_boot(vm_t *vm)
 {
-    /*
-     * ⚠️ x86 这条路径**还没**迁到 VM 池（vmm.c 的 vm_alloc/vm_get）：它自带
-     * 一个 static vm_t，也没有 stage-2 的按需分页（EPT 仍是整段预留 +
-     * enable_mmio_trap）。多 VM 在 x86 上还没做，别被这里的 static 误导。
-     * 下面传 &vm 只是为了让 guest_loader_load_file 的新签名（它要靠 host-va
-     * 翻译才知道往哪写）能编过。
-     */
-    static vm_t vm;
     uint8_t hdr[HDR_HDR_SIZE];
     int klen, ilen;
     uint32_t setup_bytes, cmdline_len;
     uint64_t pref;
 
-    /* ── 1. 预留并清零 guest RAM（宿主侧的物理窗口）── */
-    KLOG_INFO("[x86boot] reserving host RAM: 0x%llx - 0x%llx (guest 192 MiB)\n",
-              (unsigned long long)GUEST_X86_HPA_BASE,
-              (unsigned long long)(GUEST_X86_HPA_BASE + GUEST_LINUX_MEM_SIZE - 1));
-    pmm_mark_allocated(g_pmm, GUEST_X86_HPA_BASE,
-                       GUEST_X86_HPA_BASE + GUEST_LINUX_MEM_SIZE - 1);
-    memset(phys_to_virt(GUEST_X86_HPA_BASE), 0, GUEST_LINUX_MEM_SIZE);
-    clean_dcache_range(phys_to_virt(GUEST_X86_HPA_BASE), GUEST_LINUX_MEM_SIZE);
+    /*
+     * ── 1. guest RAM ──────────────────────────────────────────
+     *
+     * ⚠️ 这里**从前**有两件事，现在都删了：
+     *     pmm_mark_allocated(192 MiB)   —— 把整段窗口从 PMM 里划走
+     *     memset(phys_to_virt(...), 0, 192 MiB)  —— 整片清零
+     * 那是 identity 映射时代的要求：guest 的 GPA 就是宿主的一段真实物理内存，
+     * 不预先占住就会被宿主的分配踩掉。改成**按需分页**之后这两条前提都消失了
+     * —— guest 的每一页都是缺页时各自从 PMM 现分配的（分配时就清零，见
+     * x86_ept_map_block 的 zero 参数），所以：
+     *   - 两个 VM 的内存天然隔离（落到不同的物理页，与 GPA 无固定关系）；
+     *   - 也不再需要"预留一整段连续物理内存"这个前提。
+     * 另一条：x86 的 guest 物理地址必须从 0 开始（Linux 假定低端有常规内存、
+     * 内核装载在 1 MiB），而宿主的物理 0 不能给它 —— 老实现靠 EPT 的线性偏移
+     * 解决，现在靠"每个 GPA 各自映射到一个现分配的宿主页"，约束自然满足。
+     */
+    KLOG_INFO("[x86boot] guest RAM window: GPA 0x%llx+0x%llx (按需分页)\n",
+              (unsigned long long)GUEST_LINUX_MEM_BASE,
+              (unsigned long long)GUEST_LINUX_MEM_SIZE);
 
-    /* TEMP-DBG: 哨兵 —— 放在 guest 不会碰的两处（低端 0x4000 与中间 0x5000000）。
-     * 若宿主 PMM 没真正预留 guest RAM，宿主自己的分配会踩掉它们；
-     * 这就是「每次运行解压位置都不同」的来源。*/
-    {
-        volatile uint64_t *s1 = (volatile uint64_t *)gpa_ptr(0x4000);
-        volatile uint64_t *s2 = (volatile uint64_t *)gpa_ptr(0x5000000);
-        s1[0] = 0xA5A5A5A55A5A5A5AULL; s1[1] = 0x1122334455667788ULL;
-        s2[0] = 0xDEADBEEFCAFEBABEULL; s2[1] = 0x00FF00FF00FF00FFULL;
-        KLOG_WARN("[SENTINEL] 已埋: 0x4000=%llx 0x5000000=%llx\n",
-                  (unsigned long long)s1[0], (unsigned long long)s2[0]);
+    /*
+     * ── 建 VM（EPT / MMIO 总线 / vCPU 都在这里就绪）──
+     *
+     * ⚠️ 必须在**加载任何镜像之前**。改为按需分页之后 EPT 初始是空的，所有
+     * 往 guest 内存的写入都要经 guest_loader_gpa_ptr() 现分配 + 装映射，而它
+     * 依赖 vm->ept —— 顺序反了会拿到一片 NULL，症状是 `cannot map guest
+     * gpa=...` 之后紧跟一个写零地址的 #PF（实测 CR2=0、错误码 W=1）。
+     * aarch64/riscv 两侧的 guest_loader 是同一条约束。
+     *
+     * 配置（mem_base/mem_size/nr_vcpus）由调用方填好，这里不再自建。
+     *
+     * 注：这里**从前**还有一段 TEMP-DBG 哨兵（往 0x4000 / 0x5000000 埋魔数，
+     * 验证「宿主没踩掉 guest RAM」）。它当年是为 identity 时代的那个坑加的；
+     * 按需分页之后每页都是现分配的、分配时清零，那个坑不存在了，所以删掉。
+     */
+    if (vm_create(vm) != 0) {
+        KLOG_ERROR("[x86boot] vm_create failed\n");
+        return -1;
     }
 
-    /* ── 2. 读 bzImage 头，校验 HdrS ── */
+    /* ── 2. 读 bzImage 头 + 按范围装载 ── */
     {
-        /* 先把整个文件读进来再解析：直接按段加载需要知道 setup_sects，
-         * 而它在文件头里。guest_loader_load_file 一次装完最简单。*/
-        klen = guest_loader_load_file(&vm, GUEST_LINUX_KERNEL_PATH,
-                                      GUEST_X86_HPA_BASE + GUEST_LINUX_SETUP_GPA);
-        if (klen <= 0) {
-            KLOG_ERROR("[x86boot] 无法加载 %s\n", GUEST_LINUX_KERNEL_PATH);
-            return -1;
-        }
-    }
-
-    {
-        const uint8_t *img = (const uint8_t *)gpa_ptr(GUEST_LINUX_SETUP_GPA);
-
         /*
-         * ── 未压缩的原始内核 ELF（与 aarch64/riscv64 同款思路）──
+         * ── 读 bzImage 头 ───────────────────────────────────────
          *
-         * `vmlinux.bin` 的 `e_entry` 就是 0x1000000（= 装载地址），PT_LOAD 段的
-         * `p_paddr` 是最终物理地址。内核自己的 `startup_64` 会建页表/栈并继续，
-         * **整段自解压器被跳过** —— 而解压器正是此前所有 session 的死因
-         * （inflate_fast 里距离表变坏、缺页风暴、cr2=0 …）。
-         * 入口环境（长模式 + identity/高半区页表 + `%rsi = boot_params`）
-         * 与本文件里已经调通的那条 64 位路径完全一致。
+         * 只读文件开头这一小段：setup_sects 决定各段多长，pref_address 决定
+         * 内核装到哪 —— 都得先知道才能装。
+         *
+         * ⚠️ 这里**不再**"把整个文件装到暂存区（0x10000）再搬"。
+         * 老写法（identity 映射时代）是：
+         *     load_file(SETUP_GPA)                       # 整个 11 MB 装到 0x10000
+         *     memmove(gpa_ptr(dst), gpa_ptr(src) + off, pm_len)
+         * 第二句在按需分页下**根本不成立**：每个 guest 页各自从 PMM 分配、
+         * 物理上不连续，`ptr + off` 走到的是宿主物理内存的下一页，而不是
+         * guest 的下一页。数据错位且没有任何报错 —— 实测症状是 payload 末尾
+         * 的 GDT（0xAA7B40）成了垃圾，guest `lgdt` 之后 `mov %ax,%ds` 直接
+         * #GP，而 IDT 还没建好 → triple fault，日志里只有
+         * `guest triple fault rip=0x1000022` 和一段看着像代码的 dump。
+         *
+         * 现在按**引导协议**本来就分开的两段直接装到各自的最终地址，既不
+         * 需要暂存区、也不需要那趟 11 MB 的搬运（顺带还快了一点）：
+         *     [0, setup_bytes)            → GPA 0x10000（引导扇区 + setup）
+         *     [setup_bytes, klen)         → s_kernel_load（保护模式内核）
+         * 两段区间不重叠，天然没有 memmove 语义的需求。
          */
-        if (le32(img + HDR_MAGIC) != 0x53726448u /* "HdrS" 小端 */) {
-            KLOG_ERROR("[x86boot] 不是 bzImage：HdrS 魔数缺失\n");
-            return -1;
-        }
-        if (le16(img + HDR_BOOT_FLAG) != 0xAA55) {
-            KLOG_ERROR("[x86boot] boot_flag != 0xAA55\n");
-            return -1;
-        }
-        if (!(le16(img + HDR_XLOADFLAGS) & XLF_KERNEL_64)) {
-            KLOG_ERROR("[x86boot] 内核没有 64 位入口（xloadflags=0x%x），"
-                       "本 VMM 不走 16 位实模式路径\n", le16(img + HDR_XLOADFLAGS));
-            return -1;
-        }
-        memcpy(hdr, img + HDR_OFF, HDR_HDR_SIZE);
+        {
+            uint8_t bhdr[4096];
 
-        setup_bytes = ((uint32_t)hdr[HDR_SETUP_SECTS - HDR_OFF] + 1u) * 512u;
-        pref        = le64(hdr + (HDR_PREF_ADDRESS - HDR_OFF));
-        s_kernel_load = pref ? pref : GUEST_LINUX_KERNEL_GPA;
+            klen = guest_loader_read_file_range(GUEST_LINUX_KERNEL_PATH, 0,
+                                                bhdr, sizeof(bhdr));
+            if (klen <= 0) {
+                KLOG_ERROR("[x86boot] 无法读取 %s\n", GUEST_LINUX_KERNEL_PATH);
+                return -1;
+            }
+            /* 头在 0x1f1..0x271，4 KiB 一定放得下；放不下说明文件不对 */
+            if ((size_t)klen < HDR_OFF + HDR_HDR_SIZE) {
+                KLOG_ERROR("[x86boot] %s 太短（%d 字节）\n",
+                           GUEST_LINUX_KERNEL_PATH, klen);
+                return -1;
+            }
 
-        KLOG_INFO("[x86boot] bzImage %d bytes, header version 0x%x, "
-                  "setup=%u bytes, pref=0x%llx → load@0x%llx, payload@file+%u\n",
-                  klen, le16(hdr + (HDR_VERSION - HDR_OFF)), setup_bytes,
-                  (unsigned long long)pref, (unsigned long long)s_kernel_load,
-                  setup_bytes);
-    }
+            if (le32(bhdr + HDR_MAGIC) != 0x53726448u /* "HdrS" 小端 */) {
+                KLOG_ERROR("[x86boot] 不是 bzImage：HdrS 魔数缺失\n");
+                return -1;
+            }
+            if (le16(bhdr + HDR_BOOT_FLAG) != 0xAA55) {
+                KLOG_ERROR("[x86boot] boot_flag != 0xAA55\n");
+                return -1;
+            }
+            if (!(le16(bhdr + HDR_XLOADFLAGS) & XLF_KERNEL_64)) {
+                KLOG_ERROR("[x86boot] 内核没有 64 位入口（xloadflags=0x%x），"
+                           "本 VMM 不走 16 位实模式路径\n",
+                           le16(bhdr + HDR_XLOADFLAGS));
+                return -1;
+            }
+            memcpy(hdr, bhdr + HDR_OFF, HDR_HDR_SIZE);
 
-    /* ── 3. 把保护模式内核搬到装载地址（**仅 bzImage**）──
-     * 原始内核 ELF 的各段在第 2 步已按 p_paddr 就位，绝不能在这里再搬一次。*/
-    {
-        uint64_t pm_len = (uint64_t)klen - setup_bytes;
-        if ((int64_t)pm_len <= 0) {
-            KLOG_ERROR("[x86boot] bzImage 长度异常\n");
+            setup_bytes = ((uint32_t)hdr[HDR_SETUP_SECTS - HDR_OFF] + 1u) * 512u;
+            pref        = le64(hdr + (HDR_PREF_ADDRESS - HDR_OFF));
+            s_kernel_load = pref ? pref : GUEST_LINUX_KERNEL_GPA;
+
+            /*
+             * 整个文件有多大：用 seek 到末尾取偏移（读文件头的 `syssize`
+             * 是 16 位时代的老账，不可靠）。
+             */
+            klen = guest_loader_file_size(GUEST_LINUX_KERNEL_PATH);
+            if (klen <= 0) {
+                KLOG_ERROR("[x86boot] 无法取 %s 的长度\n",
+                           GUEST_LINUX_KERNEL_PATH);
+                return -1;
+            }
+
+            KLOG_INFO("[x86boot] bzImage %d bytes, header version 0x%x, "
+                      "setup=%u bytes, pref=0x%llx → load@0x%llx, payload@file+%u\n",
+                      klen, le16(hdr + (HDR_VERSION - HDR_OFF)), setup_bytes,
+                      (unsigned long long)pref,
+                      (unsigned long long)s_kernel_load, setup_bytes);
+        }
+
+        /* ── 2b. setup 段 → 0x10000 ── */
+        if (guest_loader_load_range(vm, GUEST_LINUX_KERNEL_PATH, 0,
+                                    GUEST_LINUX_SETUP_GPA,
+                                    setup_bytes) != (int)setup_bytes) {
+            KLOG_ERROR("[x86boot] setup 段装载失败\n");
             return -1;
         }
-        /* 先清掉装载区内可能残留的头副本，再按偏移搬（源在 GPA 0x10000，
-         * 目标在 0x100000 或 pref，两者区间可能重叠 → 用 memmove 语义）。*/
-        memmove(gpa_ptr(s_kernel_load),
-                (const uint8_t *)gpa_ptr(GUEST_LINUX_SETUP_GPA) + setup_bytes,
-                pm_len);
-        KLOG_INFO("[x86boot] protected-mode kernel: %llu bytes @gpa 0x%llx\n",
-                  (unsigned long long)pm_len, (unsigned long long)s_kernel_load);
+
+        /* ── 2c. 保护模式内核 → s_kernel_load ── */
+        {
+            uint64_t pm_len = (uint64_t)klen - setup_bytes;
+
+            if ((int64_t)pm_len <= 0) {
+                KLOG_ERROR("[x86boot] bzImage 长度异常\n");
+                return -1;
+            }
+            if (guest_loader_load_range(vm, GUEST_LINUX_KERNEL_PATH, setup_bytes,
+                                        s_kernel_load, pm_len)
+                    != (int)pm_len) {
+                KLOG_ERROR("[x86boot] 保护模式内核装载失败\n");
+                return -1;
+            }
+            KLOG_INFO("[x86boot] protected-mode kernel: %llu bytes @gpa 0x%llx\n",
+                      (unsigned long long)pm_len,
+                      (unsigned long long)s_kernel_load);
+        }
     }
 
     /* ── 4. initrd ── */
-    ilen = guest_loader_load_file(&vm, GUEST_LINUX_INITRD_PATH,
-                                  GUEST_X86_HPA_BASE + GUEST_LINUX_INITRD_GPA);
+    /* 同上：纯 GPA，不带宿主窗口偏移 */
+    ilen = guest_loader_load_file(vm, GUEST_LINUX_INITRD_PATH,
+                                  GUEST_LINUX_INITRD_GPA);
     if (ilen <= 0) {
         KLOG_ERROR("[x86boot] 无法加载 %s\n", GUEST_LINUX_INITRD_PATH);
         return -1;
@@ -445,11 +523,11 @@ int x86_guest_boot(void)
 
     /* ── 5. 命令行 ── */
     cmdline_len = (uint32_t)strlen(GUEST_LINUX_BOOTARGS) + 1;
-    memcpy(gpa_ptr(GUEST_LINUX_CMDLINE_GPA), GUEST_LINUX_BOOTARGS, cmdline_len);
+    memcpy(gpa_ptr(vm, GUEST_LINUX_CMDLINE_GPA), GUEST_LINUX_BOOTARGS, cmdline_len);
 
     /* ── 6. boot_params ── */
     {
-        uint8_t *bp = (uint8_t *)gpa_ptr(GUEST_LINUX_BOOTPARAMS_GPA);
+        uint8_t *bp = (uint8_t *)gpa_ptr(vm, GUEST_LINUX_BOOTPARAMS_GPA);
 
         memset(bp, 0, BP_SIZE);
         memcpy(bp + HDR_OFF, hdr, HDR_HDR_SIZE);   /* setup_header 原样拷入 */
@@ -501,8 +579,7 @@ int x86_guest_boot(void)
         build_e820(bp);
 
         {
-            extern uint64_t x86_guest_hpa_base(void);
-            const uint8_t *h = (const uint8_t *)gpa_ptr(GUEST_LINUX_BOOTPARAMS_GPA);
+            const uint8_t *h = (const uint8_t *)gpa_ptr(vm, GUEST_LINUX_BOOTPARAMS_GPA);
             KLOG_INFO("[x86boot] hdr: code32=0x%x init_size=0x%x pref=0x%llx "
                       "loadflags=0x%x setup_sects=%u reloc=%u align=0x%x "
                       "cmdline_size=0x%x xload=0x%x\n",
@@ -518,7 +595,7 @@ int x86_guest_boot(void)
                   (unsigned long long)GUEST_LINUX_BOOTPARAMS_GPA,
                   GUEST_LINUX_BOOTARGS);
     }
-    build_mptable();
+    build_mptable(vm);
 
     /* ── 7. 临时页表 + GDT + 空 IDT/TSS ──
 
@@ -526,24 +603,27 @@ int x86_guest_boot(void)
      * IDT/TSS 全 0 即可：IDT 全 0 = 任何异常都 triple fault（与真机同阶段
      * 行为一致）；TSS 在 guest 自己 lidt/ltr 之前不会被真正使用，但
      * VM-entry 要求 TR base 落在 guest 物理空间内。*/
-    build_pgtbl((uint8_t *)gpa_ptr(GUEST_LINUX_PGTBL_GPA));
-    build_gdt((uint8_t *)gpa_ptr(GUEST_LINUX_GDT_GPA));
-    memset(gpa_ptr(GUEST_LINUX_IDT_GPA), 0, 0x1000);
-    memset(gpa_ptr(GUEST_LINUX_TSS_GPA), 0, 0x1000);
-
-    /* ── 8. 建 VM（EPT 会把 guest RAM 映射到宿主窗口、其余置无效）── */
-    vm.cfg.mem_base = GUEST_LINUX_MEM_BASE;
-    vm.cfg.mem_size = GUEST_LINUX_MEM_SIZE;
-    vm.cfg.nr_vcpus = 1;
-
-    if (vm_create(&vm) != 0) {
-        KLOG_ERROR("[x86boot] vm_create failed\n");
-        return -1;
-    }
-
-    /* ── 9. vCPU 入口状态（在 vm_create 之后：vm_init 会 memset vcpu）── */
+    /*
+     * ⚠️ 页表有 20 KiB，**跨 5 个 guest 页**。按需分页下不能拿一个
+     * `gpa_ptr()` 的返回值当基址线性写 -- 那样第 2 页之后写的是宿主物理内存的
+     * 下一页，而不是 guest 的下一页。所以：先在宿主缓冲里建好，再
+     * guest_loader_write_guest() 逐页落下去（DTB 补丁也是同一个套路）。
+     */
     {
-        vcpu_t *vcpu = &vm.vcpus[0];
+        static uint8_t pgtbl_buf[0x5000] __attribute__((aligned(4096)));
+
+        build_pgtbl(pgtbl_buf);
+        if (guest_loader_write_guest(vm, GUEST_LINUX_PGTBL_GPA, pgtbl_buf,
+                                     sizeof(pgtbl_buf)) != 0)
+            return -1;
+    }
+    build_gdt((uint8_t *)gpa_ptr(vm, GUEST_LINUX_GDT_GPA));
+    memset(gpa_ptr(vm, GUEST_LINUX_IDT_GPA), 0, 0x1000);
+    memset(gpa_ptr(vm, GUEST_LINUX_TSS_GPA), 0, 0x1000);
+
+    /* ── vCPU 入口状态（在 vm_create 之后：vm_init 会 memset vcpu）── */
+    {
+        vcpu_t *vcpu = &vm->vcpus[0];
 
         /*
          * ── 入口探针 stub ──
@@ -599,7 +679,7 @@ int x86_guest_boot(void)
 
 #if GUEST_X86_ENTRY_PROBE
         {
-            uint8_t *st = (uint8_t *)gpa_ptr(GUEST_LINUX_PROBE_GPA);
+            uint8_t *st = (uint8_t *)gpa_ptr(vm, GUEST_LINUX_PROBE_GPA);
             uint64_t ent = s_kernel_load + CODE64_OFFSET;
             int i = 0;
             /* 探针1：入口活着 */
@@ -733,14 +813,24 @@ int x86_guest_boot(void)
      * 症状看着像"VMX 坏了"，其实只是没人建表。
      * entry 参数在 g_boot_linux 路径下不用（RIP 取自 vcpu->g_rip），传 0 即可。
      */
-    if (vmx_vcpu_setup(&vm.vcpus[0], 0) != 0) {
+    /*
+     * ⚠️ 显式声明：vmx.c 里定义了 vmx_vcpu_setup() 但没有在头文件里声明
+     * （头文件侧要它就得前向声明 vcpu_t，而 x86 的 vcpu_t 是匿名 struct 的
+     * typedef，没法前向）。不声明时 GCC 只给一条 -Wimplicit-function-
+     * declaration 警告 —— 返回 int 时侥幸没事，返回**指针**时就是低 32 位
+     * 截断（guest_loader_gpa_ptr 刚在同一个文件里栽过，见它的注释）。
+     * 玩具 guest（VMM_TEST）那边也是这么声明的。
+     */
+    extern int vmx_vcpu_setup(vcpu_t *vcpu, void (*entry)(void));
+
+    if (vmx_vcpu_setup(&vm->vcpus[0], 0) != 0) {
         KLOG_ERROR("[x86boot] vmx_vcpu_setup failed\n");
         return -1;
     }
 
     /* ── 10. 交给 vCPU 任务 ── */
     {
-        task_t *vt = vcpu_task_create(&vm.vcpus[0], 5);
+        task_t *vt = vcpu_task_create(&vm->vcpus[0], 5);
         if (!vt) {
             KLOG_ERROR("[x86boot] vcpu_task_create failed\n");
             return -1;

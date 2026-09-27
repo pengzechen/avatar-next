@@ -14,6 +14,7 @@
  */
 
 #include "vmm/vmm.h"
+#include "pmm.h"        /* pmm_get_free_pages（缺页失败时的诊断）*/
 #include "klog.h"
 #include "string.h"
 #include "task/task.h"
@@ -28,7 +29,6 @@
 #include "irq/lapic.h"   /* g_tsc_freq_hz：宿主标定出的 TSC 频率（CPUID 0x15/0x16 要报给 guest）*/
 
 /* guest RAM 的宿主物理窗口（定义在 guest_boot.c）*/
-extern uint64_t x86_guest_hpa_base(void);
 #include "mm_vm.h"   /* virt_to_phys */
 
 /* ── 静态存储（4KB 对齐）──────────────────────────────────── */
@@ -48,10 +48,29 @@ extern uint64_t x86_guest_hpa_base(void);
 static uint8_t g_vmxon_region[CONFIG_SMP_CPUS][4096] __attribute__((aligned(4096)));
 
 /* 每个 vCPU 的 VMCS（4KB）*/
-static uint8_t g_vmcs_storage[MAX_VCPUS][4096] __attribute__((aligned(4096)));
+static uint8_t g_vmcs_storage[MAX_VMS * MAX_VCPUS][4096]
+    __attribute__((aligned(4096)));
 
 /* 每个 vCPU 的 guest 栈（4KB）*/
-static uint8_t g_guest_stack[MAX_VCPUS][4096] __attribute__((aligned(16)));
+static uint8_t g_guest_stack[MAX_VMS * MAX_VCPUS][4096]
+    __attribute__((aligned(16)));
+
+/*
+ * vcpu → 引擎状态数组的下标
+ *
+ * 下面这些数组（VMCS / guest 栈 / MSR 加载表 / 诊断环形缓冲）从前按
+ * **vcpu_id** 索引。而 vcpu_id 是**每个 VM 内部**从 0 开始的编号，于是两个
+ * VM 的 vcpu0 指向同一块 VMCS：第二个 VM 一启动就把第一个 VM 的 VMCS 覆盖
+ * 掉，症状是"guest 随机跑飞"这种最难反查的一类。
+ *
+ * 改成 (vm->slot, vcpu_id) 展平。vm 可能是 NULL（直接建 vcpu 的玩具路径），
+ * 那时退回只用 vcpu_id —— 与改动前的行为一致。
+ */
+static inline uint32_t vcpu_slot(const vcpu_t *vcpu)
+{
+    return vcpu->vm ? (uint32_t)(vcpu->vm->slot * MAX_VCPUS + vcpu->vcpu_id)
+                    : (uint32_t)vcpu->vcpu_id;
+}
 
 /* VMX capability（init 时从 MSR 读取）*/
 static vmx_basic_t   g_vmx_basic;
@@ -62,8 +81,6 @@ static uint32_t g_ctrl_cpu[2];
 static uint32_t g_ctrl_exit;
 static uint32_t g_ctrl_enter;
 
-/* ── 全局 MMIO 总线与虚拟设备（静态存储，单 VM）───────────── */
-static mmio_bus_t    g_x86_mmio_bus;
 
 /* ================================================================
  * MSR / I/O bitmap
@@ -157,7 +174,7 @@ static void vmx_inject_pending(vcpu_t *vcpu)
 
     /* 记进 vLAPIC 的 ISR：guest 处理完写 EOI 时要能退掉它 */
     if ((info & 0x700) == VMX_INTR_TYPE_EXTINT)
-        vlapic_accept_interrupt((uint32_t)(info & 0xff), 0);
+        vlapic_accept_interrupt(vcpu->vm, (uint32_t)(info & 0xff), 0);
 
     vmcs_write(VM_ENTRY_INTR_INFO, info);
     vmcs_write(VM_ENTRY_EXC_ERRCODE,
@@ -206,15 +223,16 @@ typedef struct {
     uint64_t val;
 } vmx_msr_entry_t;
 
-static vmx_msr_entry_t g_msr_guest[MAX_VCPUS][VMM_MSR_COUNT]
+static vmx_msr_entry_t g_msr_guest[MAX_VMS * MAX_VCPUS][VMM_MSR_COUNT]
     __attribute__((aligned(16)));
-static vmx_msr_entry_t g_msr_host[MAX_VCPUS][VMM_MSR_COUNT]
+static vmx_msr_entry_t g_msr_host[MAX_VMS * MAX_VCPUS][VMM_MSR_COUNT]
     __attribute__((aligned(16)));
 
 /* VM-exit MSR store 区**必须与 entry-load 区分开**（KVM 同此）：
  * 两块区域重叠时 VM-entry 会以 reason 34（MSR loading）失败 —— 实测就是
  * "Unhandled exit reason=34 rip=0x1000000"。这里只放需要往返的两条。*/
-static vmx_msr_entry_t g_msr_store[MAX_VCPUS][2] __attribute__((aligned(16)));
+static vmx_msr_entry_t g_msr_store[MAX_VMS * MAX_VCPUS][2]
+    __attribute__((aligned(16)));
 
 /*
  * ⚠️ GS 这一对（GS_BASE / KERNEL_GS_BASE）**必须成对出现**，而且必须同时有
@@ -260,12 +278,12 @@ static void vmx_msr_sync_guest(vcpu_t *vcpu, uint32_t idx, uint64_t val)
     int i = vmx_msr_index(idx);
 
     if (i >= 0)
-        g_msr_guest[vcpu->vcpu_id][i].val = val;
+        g_msr_guest[vcpu_slot(vcpu)][i].val = val;
 }
 
 static void vmx_msr_lists_init(vcpu_t *vcpu)
 {
-    int id = vcpu->vcpu_id;
+    int id = (int)vcpu_slot(vcpu);
     const uint64_t guest_init[VMM_MSR_COUNT] = {
         vcpu->msr_star, vcpu->msr_lstar, vcpu->msr_cstar,
         vcpu->msr_sfmask, vcpu->msr_kernel_gs_base, vcpu->msr_pat,
@@ -319,10 +337,10 @@ static int msr_emulate_read(vcpu_t *vcpu, uint32_t msr, uint64_t *val)
      * `rdmsr MSR_GS_BASE` 判断自己在哪个 GS，给它过期影子就会判错 → 死循环。
      */
     case MSR_GS_BASE:
-        *val = g_msr_store[vcpu->vcpu_id][0].val;
+        *val = g_msr_store[vcpu_slot(vcpu)][0].val;
         return 1;
     case MSR_KERNEL_GS_BASE:
-        *val = g_msr_store[vcpu->vcpu_id][1].val;
+        *val = g_msr_store[vcpu_slot(vcpu)][1].val;
         return 1;
     case MSR_IA32_PAT:        *val = vcpu->msr_pat;             return 1;
     case MSR_IA32_APIC_BASE:  *val = vcpu->apic_base;           return 1;
@@ -370,11 +388,11 @@ static int msr_emulate_write_1(vcpu_t *vcpu, uint32_t msr, uint64_t val)
          * 启动里 cr2=0 的缺页 + 异常风暴（4000 次 exit 里 3990 次异常）。*/
         vcpu->msr_gs_base = val;
         vmcs_write(GUEST_BASE_GS, val);
-        g_msr_store[vcpu->vcpu_id][0].val = val;   /* 与 exit-store 同一份 */
+        g_msr_store[vcpu_slot(vcpu)][0].val = val; /* 与 exit-store 同一份 */
         return 1;
     case MSR_KERNEL_GS_BASE:
         vcpu->msr_kernel_gs_base = val;
-        g_msr_store[vcpu->vcpu_id][1].val = val;
+        g_msr_store[vcpu_slot(vcpu)][1].val = val;
         return 1;
     case MSR_IA32_PAT:        vcpu->msr_pat            = val; return 1;
     case MSR_IA32_APIC_BASE:
@@ -382,7 +400,7 @@ static int msr_emulate_write_1(vcpu_t *vcpu, uint32_t msr, uint64_t val)
          * 第一版只做 xAPIC，所以 EXTD 一律清掉 —— Linux 探测到
          *「x2APIC 不可用」就会安心走 MMIO 路径。*/
         vcpu->apic_base = val & ~APIC_BASE_X2APIC;
-        vlapic_set_apic_base(vcpu->apic_base);
+        vlapic_set_apic_base(vcpu->vm, vcpu->apic_base);
         return 1;
     default:
         return 0;   /* 未知 MSR：写忽略 */
@@ -560,26 +578,52 @@ static int msr_emulate_write(vcpu_t *vcpu, uint32_t msr, uint64_t val)
  * 操作数宽度，因此这里解析到「寄存器号 + 访问宽度」即停。
  * ================================================================ */
 
+/*
+ * guest 物理地址 → 本核可以直接读的宿主指针（**查表**，不是算术换算）
+ *
+ * ⚠️ 按需分页之后 GPA 与 HPA 之间不再有固定偏移 —— 每一页都是各自从 PMM
+ * 分配的。老版本那种 `phys_to_virt(x86_guest_hpa_base() + gpa)` 会读到完全
+ * 无关的物理页（可能属于别的 VM 或宿主内核），而且**没有任何报错**。
+ *
+ * 返回 NULL 表示这一页还没被 guest 碰过（按需分页下未映射 = 从没访问）。
+ * 调用方必须判 NULL —— 这几处都是诊断代码，跳过即可，不要当成功继续用。
+ */
+static void *gpa_to_host(const vcpu_t *vcpu, uint64_t gpa)
+{
+    uint64_t hpa;
+
+    if (!vcpu->vm || !x86_ept_lookup(&vcpu->vm->ept, gpa, &hpa))
+        return NULL;
+    return phys_to_virt(hpa);
+}
+
+/* 本 VM 的 guest RAM 窗口大小（诊断里当越界判据用）。*/
+static uint64_t guest_mem_size(const vcpu_t *vcpu)
+{
+    return vcpu->vm ? vcpu->vm->cfg.mem_size : 0;
+}
+
 /* 从 guest 内存取字节（经 EPT 翻译 GPA→HPA→内核直接映射）*/
-static int guest_fetch_bytes(uint64_t gpa, uint8_t *buf, uint32_t n)
+static int guest_fetch_bytes(const vcpu_t *vcpu, uint64_t gpa, uint8_t *buf,
+                             uint32_t n)
 {
     for (uint32_t i = 0; i < n; i++) {
-        uint64_t hpa;
-        if (!x86_ept_gpa_to_hpa(gpa + i, &hpa))
+        void *p = gpa_to_host(vcpu, gpa + i);
+        if (!p)
             return 0;
-        buf[i] = *(volatile uint8_t *)phys_to_virt(hpa);
+        buf[i] = *(volatile uint8_t *)p;
     }
     return 1;
 }
 
 /* 读 guest 的一个 64 位页表项（GPA → HPA → 直接映射）*/
-static int guest_read_u64(uint64_t gpa, uint64_t *out)
+static int guest_read_u64(const vcpu_t *vcpu, uint64_t gpa, uint64_t *out)
 {
-    uint64_t hpa;
+    void *p = gpa_to_host(vcpu, gpa);
 
-    if (!x86_ept_gpa_to_hpa(gpa, &hpa))
+    if (!p)
         return 0;
-    *out = *(volatile uint64_t *)phys_to_virt(hpa);
+    *out = *(volatile uint64_t *)p;
     return 1;
 }
 
@@ -603,7 +647,7 @@ static int guest_read_u64(uint64_t gpa, uint64_t *out)
  * 其余（32 位 PAE / 2 级）按恒等兜底 —— guest 跑到 MMIO 密集期时
  * 早就是 4 级页表了。
  */
-static int guest_va_to_gpa(uint64_t va, uint64_t *gpa)
+static int guest_va_to_gpa(const vcpu_t *vcpu, uint64_t va, uint64_t *gpa)
 {
     uint64_t cr0  = vmcs_read(GUEST_CR0);
     uint64_t cr4  = vmcs_read(GUEST_CR4);
@@ -621,7 +665,7 @@ static int guest_va_to_gpa(uint64_t va, uint64_t *gpa)
     for (lvl = 0; lvl < 4; lvl++) {
         uint64_t idx = (va >> (12 + 9 * (3 - lvl))) & 0x1FF;
 
-        if (!guest_read_u64(tbl + idx * 8, &e))
+        if (!guest_read_u64(vcpu, tbl + idx * 8, &e))
             return 0;
         if (!(e & 1))
             return 0;                    /* P=0：这一级没映射 */
@@ -644,17 +688,18 @@ static int guest_va_to_gpa(uint64_t va, uint64_t *gpa)
  * x86 保证指令不跨页，所以读满本页剩余部分就够；页尾之后补 0，
  * 免得解码器读到未初始化的栈。
  */
-static int guest_fetch_code(uint64_t va, uint8_t *buf, uint32_t n)
+static int guest_fetch_code(const vcpu_t *vcpu, uint64_t va, uint8_t *buf,
+                            uint32_t n)
 {
     uint64_t gpa;
     uint32_t room, got;
 
-    if (!guest_va_to_gpa(va, &gpa))
+    if (!guest_va_to_gpa(vcpu, va, &gpa))
         return 0;
 
     room = 0x1000u - (uint32_t)(va & 0xFFFu);
     got  = (n < room) ? n : room;
-    if (!guest_fetch_bytes(gpa, buf, got))
+    if (!guest_fetch_bytes(vcpu, gpa, buf, got))
         return 0;
     for (uint32_t i = got; i < n; i++)
         buf[i] = 0;
@@ -727,13 +772,14 @@ static int parse_modrm(const uint8_t *p, uint32_t n,
     return 1;
 }
 
-static int decode_mmio_access(uint64_t rip_va, x86_mmio_access_t *acc)
+static int decode_mmio_access(const vcpu_t *vcpu, uint64_t rip_va,
+                              x86_mmio_access_t *acc)
 {
     uint8_t  buf[24];
     uint32_t i = 0;
     int      rex_w = 0, rex_r = 0, opsize16 = 0;
 
-    if (!guest_fetch_code(rip_va, buf, sizeof(buf)))
+    if (!guest_fetch_code(vcpu, rip_va, buf, sizeof(buf)))
         return 0;
 
     /* ── 前缀扫描 ── */
@@ -1363,7 +1409,7 @@ static void vmcs_init_guest(vcpu_t *vcpu, void (*entry)(void))
     } else {
         vmcs_write(GUEST_RIP,    (uint64_t)(uintptr_t)entry);
         vmcs_write(GUEST_RSP,    (uint64_t)(uintptr_t)
-                   (g_guest_stack[vcpu->vcpu_id] + sizeof(g_guest_stack[0])));
+                   (g_guest_stack[vcpu_slot(vcpu)] + sizeof(g_guest_stack[0])));
     }
     vmcs_write(GUEST_RFLAGS, vcpu->g_boot_linux ? vcpu->regs.rflags : 0x2);
 
@@ -1375,7 +1421,7 @@ static void vmcs_init_guest(vcpu_t *vcpu, void (*entry)(void))
 /* ── VMCS 每 vCPU 初始化 ─────────────────────────────────── */
 static int vcpu_vmcs_init(vcpu_t *vcpu, void (*entry)(void))
 {
-    vmcs_t *v = (vmcs_t *)g_vmcs_storage[vcpu->vcpu_id];
+    vmcs_t *v = (vmcs_t *)g_vmcs_storage[vcpu_slot(vcpu)];
     memset(v, 0, 4096);
     v->hdr.revision_id = g_vmx_basic.revision;
     v->hdr.shadow_vmcs = 0;
@@ -1404,7 +1450,7 @@ static int vcpu_vmcs_init(vcpu_t *vcpu, void (*entry)(void))
     vcpu->pending_errcode   = 0;
     vcpu->intr_window       = 0;
 
-    vlapic_init((uint32_t)vcpu->vcpu_id);
+    vlapic_init(vcpu->vm, (uint32_t)vcpu->vcpu_id);
 
     uint64_t vmcs_pa = virt_to_phys(v);
     if (vmcs_clear_pa(vmcs_pa)) {
@@ -1424,7 +1470,7 @@ static int vcpu_vmcs_init(vcpu_t *vcpu, void (*entry)(void))
 
     /* 若已协商启用 EPT，写入 EPTP（EPT 根页表指针）*/
     if (g_ctrl_cpu[0] & CPU_SECONDARY && g_ctrl_cpu[1] & CPU_EPT) {
-        vmcs_write(EPT_POINTER, x86_ept_eptp());
+        vmcs_write(EPT_POINTER, x86_ept_eptp(&vcpu->vm->ept));
     }
 
     /*
@@ -1472,8 +1518,7 @@ static int vcpu_vmcs_init(vcpu_t *vcpu, void (*entry)(void))
  * 误判硬件（例如把 PIC 认成有中断挂起、把 PCI 认成有总线），然后卡在
  * 探测循环或者认错设备模型。桩的原则是「给一个自洽的、什么都没有的视图」。
  * ================================================================ */
-static uint8_t g_pic_master_imr = 0xFF;   /* 上电默认全屏蔽 */
-static uint8_t g_pic_slave_imr  = 0xFF;
+/* 状态在 vm->chipset（见 include/vmm/vmm_x86_chipset.h 的说明）*/
 /* ── IO-APIC（MMIO 0xFEC00000）─────────────────────────────
  *
  * 两个寄存器：0x00 IOREGSEL 选**间接寄存器号**，0x10 IOWIN 读写数据。
@@ -1488,9 +1533,7 @@ static uint8_t g_pic_slave_imr  = 0xFF;
 #define IOAPIC_NENT        24           /* 对应 version 0x11 */
 #define IOAPIC_RT_MASKED   0x00010000u  /* 重定向表项低位的 mask 位 */
 
-static uint32_t g_ioapic_sel;
-static uint32_t g_ioapic_rt[IOAPIC_NENT * 2];
-static int      g_ioapic_inited;
+/* 状态在 vm->chipset */
 
 /*
  * 诊断：最近 N 次 VM-exit 的环形记录（per-vCPU），triple fault 时整段回放。
@@ -1506,15 +1549,30 @@ static struct {
     uint32_t reason;
     uint32_t intr;
     uint64_t rip;
-} g_exit_trace[MAX_VCPUS][VMM_EXIT_TRACE_MAX];
-static uint32_t g_exit_trace_n[MAX_VCPUS];      /* 下一个写入位置 */
+} g_exit_trace[MAX_VMS * MAX_VCPUS][VMM_EXIT_TRACE_MAX];
+static uint32_t g_exit_trace_n[MAX_VMS * MAX_VCPUS];  /* 下一个写入位置 */
 
 /* 入口状态诊断的 per-vCPU 计数（每次 vmx_vm_init 清零）。
  * 早先这里是 `static unsigned n` —— 第一次启动就把配额用光，第二次启动
  * 一条都不打，正好把最需要看的那次盖住了。 */
-static uint32_t g_entry_dbg_n[MAX_VCPUS];
+static uint32_t g_entry_dbg_n[MAX_VMS * MAX_VCPUS];
 
-static uint32_t ioapic_reg_read(uint32_t reg)
+/*
+ * 传统芯片组桩（PIC/IO-APIC/PIT/0x61）的状态现在住在 vm->chipset 里
+ * （每 VM 一份，见 include/vmm/vmm_x86_chipset.h）。
+ *
+ * vm 可能是 NULL —— 只建 vcpu、不建 VM 的玩具路径就是（vmcs_init_ctrl 那边
+ * 也按 `vcpu->vm &&` 判过）。那条路径下退回一份全局兜底状态，行为与多 VM
+ * 改造前完全一致。
+ */
+static x86_chipset_state_t g_fallback_chipset;
+
+static inline x86_chipset_state_t *chipset_of(const vcpu_t *vcpu)
+{
+    return vcpu->vm ? &vcpu->vm->chipset : &g_fallback_chipset;
+}
+
+static uint32_t ioapic_reg_read(x86_chipset_state_t *chip, uint32_t reg)
 {
     switch (reg) {
     case 0x00: return 0;                                    /* ID = 0 */
@@ -1522,16 +1580,17 @@ static uint32_t ioapic_reg_read(uint32_t reg)
     case 0x02: return 0;                                    /* ARB（只读）*/
     default:
         if (reg >= 0x10 && reg < 0x10 + IOAPIC_NENT * 2)
-            return g_ioapic_rt[reg - 0x10];
+            return chip->ioapic_rt[reg - 0x10];
         return 0;
     }
 }
 
-static void ioapic_reg_write(uint32_t reg, uint32_t val)
+static void ioapic_reg_write(x86_chipset_state_t *chip, uint32_t reg,
+                             uint32_t val)
 {
     /* ID/VER/ARB 只读，写忽略；只接受重定向表 */
     if (reg >= 0x10 && reg < 0x10 + IOAPIC_NENT * 2)
-        g_ioapic_rt[reg - 0x10] = val;
+        chip->ioapic_rt[reg - 0x10] = val;
 }
 
 /* ── 8254 PIT（三个通道，各一个 16 位递减计数）───────────────
@@ -1551,7 +1610,7 @@ static void ioapic_reg_write(uint32_t reg, uint32_t val)
 #define PIT_HZ        1193182ULL
 #define PIT_NS_PER_S  1000000000ULL
 
-typedef struct {
+typedef struct {   /* 定义已移到 include/vmm/vmm_x86_chipset.h */
     uint16_t reload;      /* 装载值 */
     uint64_t base_ns;     /* 装载时刻（宿主单调 ns）*/
     int      running;     /* 已装载、正在计数 */
@@ -1563,12 +1622,11 @@ typedef struct {
     int      lat_valid;
 } pit_ch_t;
 
-static pit_ch_t g_pit[3];
-static uint8_t  g_port61;   /* 端口 B：gate2/speaker 位回写 */
+/* 状态在 vm->chipset */
 
-static uint16_t pit_now(int ch)
+static uint16_t pit_now(x86_chipset_state_t *chip, int ch)
 {
-    pit_ch_t *p = &g_pit[ch];
+    x86_pit_ch_t *p = &chip->pit[ch];
     uint64_t ns, ticks;
 
     if (!p->running)
@@ -1582,9 +1640,9 @@ static uint16_t pit_now(int ch)
     return (uint16_t)(p->reload - ticks);
 }
 
-static uint8_t pit_read(int ch)
+static uint8_t pit_read(x86_chipset_state_t *chip, int ch)
 {
-    pit_ch_t *p = &g_pit[ch];
+    x86_pit_ch_t *p = &chip->pit[ch];
     uint16_t c;
     uint8_t  v;
 
@@ -1595,13 +1653,13 @@ static uint8_t pit_read(int ch)
         p->read_hi ^= 1;
         return v;
     }
-    c = pit_now(ch);
+    c = pit_now(chip, ch);
     v = p->read_hi ? (uint8_t)(c >> 8) : (uint8_t)c;
     p->read_hi ^= 1;                    /* 内部 LSB/MSB 翻转触发器 */
     return v;
 }
 
-static void pit_write_ctrl(uint8_t v)
+static void pit_write_ctrl(x86_chipset_state_t *chip, uint8_t v)
 {
     int ch = (v >> 6) & 3;
 
@@ -1609,23 +1667,23 @@ static void pit_write_ctrl(uint8_t v)
         return;                         /* read-back 命令：忽略 */
 
     if (((v >> 4) & 3) == 0) {          /* Latch：冻结当前计数 */
-        g_pit[ch].latched   = pit_now(ch);
-        g_pit[ch].lat_valid = 1;
-        g_pit[ch].read_hi   = 0;
+        chip->pit[ch].latched   = pit_now(chip, ch);
+        chip->pit[ch].lat_valid = 1;
+        chip->pit[ch].read_hi   = 0;
         return;
     }
 
     /* 装/卸模式（RW 位）并复位字节指针；mode/BCD 位忽略 —— 我们只做
      * 「递减到 0」这一种，够内核标定用。*/
-    g_pit[ch].rw       = (v >> 4) & 3;
-    g_pit[ch].wstate   = 0;
-    g_pit[ch].read_hi  = 0;
-    g_pit[ch].lat_valid = 0;
+    chip->pit[ch].rw       = (v >> 4) & 3;
+    chip->pit[ch].wstate   = 0;
+    chip->pit[ch].read_hi  = 0;
+    chip->pit[ch].lat_valid = 0;
 }
 
-static void pit_write_data(int ch, uint8_t v)
+static void pit_write_data(x86_chipset_state_t *chip, int ch, uint8_t v)
 {
-    pit_ch_t *p = &g_pit[ch];
+    x86_pit_ch_t *p = &chip->pit[ch];
 
     if (p->rw == 1) {                   /* 只写 LSB */
         p->reload = v;
@@ -1650,6 +1708,8 @@ static void pit_write_data(int ch, uint8_t v)
 int x86_pio_handle(vcpu_t *vcpu, uint32_t port, int is_in, uint32_t bytes,
                    uint64_t *val)
 {
+    x86_chipset_state_t *chip = chipset_of(vcpu);
+
     (void)bytes;   /* 端口访问一律按字节语义处理 */
 
     switch (port) {
@@ -1671,22 +1731,22 @@ int x86_pio_handle(vcpu_t *vcpu, uint32_t port, int is_in, uint32_t bytes,
         if (is_in) { *val = 0; return 1; }
         return 1;
     case 0x21:
-        if (is_in) { *val = g_pic_master_imr; return 1; }
-        g_pic_master_imr = (uint8_t)*val;
+        if (is_in) { *val = chip->pic_master_imr; return 1; }
+        chip->pic_master_imr = (uint8_t)*val;
         return 1;
     case 0xa1:
-        if (is_in) { *val = g_pic_slave_imr; return 1; }
-        g_pic_slave_imr = (uint8_t)*val;
+        if (is_in) { *val = chip->pic_slave_imr; return 1; }
+        chip->pic_slave_imr = (uint8_t)*val;
         return 1;
 
     /* ── 8254 PIT ── 实现见上面 pit_* 一组函数。
      * 只做计数、**不产生任何中断**（guest 的 tick 由 vLAPIC timer 提供）。*/
     case 0x40: case 0x41: case 0x42:
-        if (is_in) { *val = pit_read(port - 0x40); return 1; }
-        pit_write_data(port - 0x40, (uint8_t)*val);
+        if (is_in) { *val = pit_read(chip, port - 0x40); return 1; }
+        pit_write_data(chip, port - 0x40, (uint8_t)*val);
         return 1;
     case 0x43:
-        if (!is_in) pit_write_ctrl((uint8_t)*val);
+        if (!is_in) pit_write_ctrl(chip, (uint8_t)*val);
         return 1;
 
     /* ── 0x61（端口 B / NMI 状态）──
@@ -1694,10 +1754,10 @@ int x86_pio_handle(vcpu_t *vcpu, uint32_t port, int is_in, uint32_t bytes,
      * 通道 2 的输出位。bit5 = 输出（mode 0 下数到 0 才置 1）。
      * bit4 是输出的反相副本，老代码用它做「计数器已归零」检测。*/
     case 0x61:
-        if (!is_in) { g_port61 = (uint8_t)*val; return 1; }
+        if (!is_in) { chip->port61 = (uint8_t)*val; return 1; }
         {
-            uint8_t v = (uint8_t)(g_port61 & 0x03);   /* 保留 gate/speaker */
-            if (g_pit[2].running && pit_now(2) == 0)
+            uint8_t v = (uint8_t)(chip->port61 & 0x03);  /* 保留 gate/speaker */
+            if (chip->pit[2].running && pit_now(chip, 2) == 0)
                 v |= 0x20;                            /* bit5: 计数到 0 */
             *val = v;
         }
@@ -1733,15 +1793,20 @@ static int vmx_exit_handler(vcpu_t *vcpu)
     /* TEMP-DBG：前 25 次退出打详细，之后每 2000 次采一次 RIP + 原因直方图 */
     {
         static unsigned n;
-        if (n >= 25 && (n % 2000) == 0) {
+        /*
+         * 诊断：每 20000 次退出采一次样（guest 在不在动、卡在哪个 reason）。
+         * 需要时把这行的注释去掉即可 —— 排查「guest 看起来没动静」时很有用：
+         * 有采样 = 还在跑，采样停住 = 真的卡了。
+         */
+        if (0 && (n % 20000) == 0) {
             extern unsigned g_reason_hist[64];
-            // KLOG_INFO("[RIP-SAMPLE] exit#%u rip=0x%llx | 1:%u 2:%u 7:%u "
-            //           "10:%u 12:%u 28:%u 30:%u 31:%u 32:%u 48:%u\n",
-            //           n, (unsigned long long)vmcs_read(GUEST_RIP),
-            //           g_reason_hist[1], g_reason_hist[2], g_reason_hist[7],
-            //           g_reason_hist[10], g_reason_hist[12], g_reason_hist[28],
-            //           g_reason_hist[30], g_reason_hist[31], g_reason_hist[32],
-            //           g_reason_hist[48]);
+            KLOG_WARN("[RIP-SAMPLE] exit#%u rip=0x%llx | 1:%u 2:%u 7:%u "
+                      "10:%u 12:%u 28:%u 30:%u 31:%u 32:%u 48:%u\n",
+                      n, (unsigned long long)vmcs_read(GUEST_RIP),
+                      g_reason_hist[1], g_reason_hist[2], g_reason_hist[7],
+                      g_reason_hist[10], g_reason_hist[12], g_reason_hist[28],
+                      g_reason_hist[30], g_reason_hist[31], g_reason_hist[32],
+                      g_reason_hist[48]);
         }
         if (reason < 64) g_reason_hist[reason]++;
         n++;
@@ -1757,7 +1822,7 @@ static int vmx_exit_handler(vcpu_t *vcpu)
 
     /* 环形记录（见 g_exit_trace 的注释）—— 只在 triple fault 时才回放 */
     {
-        uint32_t id = (uint32_t)(vcpu->vcpu_id & (MAX_VCPUS - 1));
+        int id = (int)vcpu_slot(vcpu);
         uint32_t k  = g_exit_trace_n[id];
         g_exit_trace[id][k].reason = reason;
         g_exit_trace[id][k].intr   = (uint32_t)vmcs_read(EXI_INTR_INFO);
@@ -1794,7 +1859,7 @@ static int vmx_exit_handler(vcpu_t *vcpu)
         vmcs_write(GUEST_RIP, guest_rip + inst_len);
         /* kvmm 在让出前执行 vmclear：VMCS 的「当前加载」状态不能跨线程
          * 存续，清除后由 vmm_arch_enter_guest 重新 vmptrld。*/
-        vmcs_clear_pa(virt_to_phys((vmcs_t *)g_vmcs_storage[vcpu->vcpu_id]));
+        vmcs_clear_pa(virt_to_phys((vmcs_t *)g_vmcs_storage[vcpu_slot(vcpu)]));
         vcpu->launched = 0;
         task_yield();
         return EL2_RESUME;
@@ -1864,6 +1929,47 @@ static int vmx_exit_handler(vcpu_t *vcpu)
         uint64_t gpa  = vmcs_read(GUEST_PHYS_ADDR);
         uint64_t qual = vmcs_read(EXI_QUALIFICATION);
         int is_write  = (int)((qual >> 1) & 1);
+        x86_chipset_state_t *chip = chipset_of(vcpu);
+
+        /*
+         * ── 先分 RAM / MMIO ────────────────────────────────────────
+         *
+         * 按需分页之后 EPT 初始是空的，所以 guest **每一次落到新页**都会走到
+         * 这里。RAM 窗口内的走缺页分配，窗口外的才是设备 MMIO。
+         *
+         * ⚠️ 这个分支必须在最前面。老版本没有它 —— 因为那时 guest RAM 是
+         * 预先整段映射好的，任何 EPT violation 按定义都必是非 RAM。改成按需
+         * 分页后若不加这一条，guest 取指/访存第一次碰到新页就会掉进下面的
+         * MMIO 解码路径：解码失败 → 落到最底下的兜底 → **只推进 RIP、不写
+         * 目标寄存器**，于是 guest 拿着上一条指令的残留值继续跑。那种故障
+         * 表现为"guest 随机跑飞"，比直接崩掉难查得多。
+         *
+         * ⚠️ **不推进 RIP** —— 这正是"缺页"与"MMIO 模拟"的分野：MMIO 那条路
+         * 是 VMM 替 guest 完成了这次访问，所以要把 RIP 挪过去；这里只是把内存
+         * 补上，访问本身还得 guest 自己重做一次。两条路走反了的表现分别是
+         * "死循环"和"跳过一条随机指令"。
+         */
+        if (vcpu->vm && x86_ept_ipa_is_ram(&vcpu->vm->ept, gpa)) {
+            uint64_t n = x86_ept_map_block(&vcpu->vm->ept, gpa, 1 /*zero*/);
+
+            if (n == 0) {
+                KLOG_ERROR("[VMX] vcpu%d: RAM fault at gpa=0x%llx but PMM is "
+                           "out of pages (free=%llu), stopping vm%u\n",
+                           vcpu->vcpu_id, (unsigned long long)gpa,
+                           (unsigned long long)pmm_get_free_pages(g_pmm),
+                           vcpu->vm->vmid);
+                return EL2_EXIT;
+            }
+            vcpu->vm->ept.nr_fault += n;
+            x86_ept_invept_all(&vcpu->vm->ept);
+
+            KLOG_INFO_SAMPLE("[VMX] vm%u: ept %s fault gpa=0x%llx -> block "
+                             "+%llu pages (total fault=%llu)\n",
+                             vcpu->vm->vmid, is_write ? "write" : "read",
+                             (unsigned long long)gpa, (unsigned long long)n,
+                             (unsigned long long)vcpu->vm->ept.nr_fault);
+            return EL2_RESUME;
+        }
 
         {   /* TEMP-DBG：前 8 次 EPT violation 的 gpa，看 guest 在碰什么 */
             static unsigned ne;
@@ -1882,7 +1988,7 @@ static int vmx_exit_handler(vcpu_t *vcpu)
 
             /* 解码出错指令（GUEST_RIP 处，CISC 变长）以取得
              * 「数据寄存器 + 访问宽度 + 源/目标方向」*/
-            if (decode_mmio_access(guest_rip, &acc) &&
+            if (decode_mmio_access(vcpu, guest_rip, &acc) &&
                 decode_matches_qual(qual, &acc)) {
                 uint64_t val = acc.imm;      /* 立即数写 */
 
@@ -1914,10 +2020,10 @@ static int vmx_exit_handler(vcpu_t *vcpu)
                  */
                 if (gpa >= IOAPIC_MMIO_BASE &&
                     gpa <  IOAPIC_MMIO_BASE + IOAPIC_MMIO_SIZE) {
-                    if (!g_ioapic_inited) {
-                        g_ioapic_inited = 1;
+                    if (!chip->ioapic_inited) {
+                        chip->ioapic_inited = 1;
                         for (int i = 0; i < IOAPIC_NENT; i++)
-                            g_ioapic_rt[i * 2] = IOAPIC_RT_MASKED;
+                            chip->ioapic_rt[i * 2] = IOAPIC_RT_MASKED;
                     }
                     /* ⚠️ 必须按**页内偏移**区分两个寄存器。曾经写成
                      * `(gpa & ~0xFFF) == BASE && (gpa & 0xf) == 0` ——
@@ -1925,14 +2031,14 @@ static int vmx_exit_handler(vcpu_t *vcpu)
                      * 访问都被当成 IOREGSEL，数据寄存器永远读不回真值，
                      * Linux 拿它去建 irq_cfg 直接空指针崩在 setup_IO_APIC。*/
                     uint32_t off = (uint32_t)(gpa - IOAPIC_MMIO_BASE);
-                    uint32_t reg = g_ioapic_sel & 0xff;
+                    uint32_t reg = chip->ioapic_sel & 0xff;
                     uint32_t v32 = (uint32_t)val;
                     if (off == 0x00) {          /* IOREGSEL */
-                        if (acc.is_write) g_ioapic_sel = v32;
-                        else              v32 = g_ioapic_sel;
+                        if (acc.is_write) chip->ioapic_sel = v32;
+                        else              v32 = chip->ioapic_sel;
                     } else {                     /* 0x10 IOWIN */
-                        if (acc.is_write) ioapic_reg_write(reg, v32);
-                        else              v32 = ioapic_reg_read(reg);
+                        if (acc.is_write) ioapic_reg_write(chip, reg, v32);
+                        else              v32 = ioapic_reg_read(chip, reg);
                     }
                     if (!acc.is_write) {
                         uint64_t *dst = x86_gpr_ptr(vcpu, acc.reg);
@@ -1946,7 +2052,8 @@ static int vmx_exit_handler(vcpu_t *vcpu)
                 if (gpa >= VLAPIC_MMIO_BASE &&
                     gpa <  VLAPIC_MMIO_BASE + VLAPIC_MMIO_SIZE) {
                     uint64_t lval = acc.is_write ? val : 0;
-                    if (vlapic_mmio_handle(gpa, acc.is_write, acc.size, &lval)) {
+                    if (vlapic_mmio_handle(vcpu->vm, gpa, acc.is_write,
+                                           acc.size, &lval)) {
                         if (!acc.is_write) {
                             uint64_t *dst = x86_gpr_ptr(vcpu, acc.reg);
                             if (dst)
@@ -1978,9 +2085,26 @@ static int vmx_exit_handler(vcpu_t *vcpu)
             }
         }
 
+        /*
+         * 未映射且不是已知设备：记一笔再吞掉。
+         *
+         * ⚠️ 只推进 RIP 是**不够**的 —— 读操作的目标寄存器会保留上一条指令
+         * 的残留值，guest 于是拿着一个看似合法、实则陈旧的数继续跑。老版本
+         * 就是这么写的，IOAPICVER 读成 0 那类 bug 正是它养出来的
+         * （见本文件上面 IO-APIC 那段的注释）。这里至少把目标寄存器写成 0，
+         * 让"读到一个设备返回 0"这件事显式化。
+         */
         KLOG_ERROR("[VMX] EPT violation: gpa=0x%llx qual=0x%llx rip=0x%llx "
                    "(vcpu%d)\n",
                    gpa, qual, guest_rip, vcpu->vcpu_id);
+        if (!is_write) {
+            x86_mmio_access_t acc2;
+            if (decode_mmio_access(vcpu, guest_rip, &acc2)) {
+                uint64_t *dst = x86_gpr_ptr(vcpu, acc2.reg);
+                if (dst)
+                    *dst = 0;
+            }
+        }
         vmcs_write(GUEST_RIP, guest_rip + inst_len);
         return EL2_RESUME;
     }
@@ -2085,7 +2209,7 @@ static int vmx_exit_handler(vcpu_t *vcpu)
         /* 回放最近 VMM_EXIT_TRACE_MAX 次退出（最旧在前）。triple fault
          * 往往是"前面某个异常没被正确处理"的终点，这一段比终点本身有用。*/
         {
-            uint32_t id = (uint32_t)(vcpu->vcpu_id & (MAX_VCPUS - 1));
+            int id = (int)vcpu_slot(vcpu);
             KLOG_ERROR("[VMX] last %d VM-exits of vcpu%u (oldest first):\n",
                        VMM_EXIT_TRACE_MAX, id);
             for (uint32_t k = 0; k < VMM_EXIT_TRACE_MAX; k++) {
@@ -2101,12 +2225,9 @@ static int vmx_exit_handler(vcpu_t *vcpu)
          * 可以直接读 —— 没有这一手就只能对着 "triple fault" 干瞪眼。
          */
         {
-            extern uint64_t x86_guest_hpa_base(void);
-            extern uint64_t x86_guest_mem_size(void);
             static const char hx[] = "0123456789abcdef";
             char line[3 * 32 + 4];
-            uint64_t base = x86_guest_hpa_base();
-            uint64_t lim  = x86_guest_mem_size();
+            uint64_t lim  = guest_mem_size(vcpu);
 
             /*
              * guest_rip 是**线性地址**：guest 内核 text 在 0xffffffff80000000
@@ -2120,18 +2241,20 @@ static int vmx_exit_handler(vcpu_t *vcpu)
                 gp = guest_rip - 0xffffffff80000000ULL + 0x1000000ULL;
 
             if (gp >= 0x10 && gp < lim) {
-                const uint8_t *p =
-                    (const uint8_t *)phys_to_virt(base + gp - 0x10);
-                int o = 0;
-                for (int i = 0; i < 32; i++) {
-                    line[o++] = hx[p[i] >> 4];
-                    line[o++] = hx[p[i] & 0xf];
-                    if (i == 15)
-                        line[o++] = ' ';
+                const uint8_t *p = gpa_to_host(vcpu, gp - 0x10);
+
+                if (p) {
+                    int o = 0;
+                    for (int i = 0; i < 32; i++) {
+                        line[o++] = hx[p[i] >> 4];
+                        line[o++] = hx[p[i] & 0xf];
+                        if (i == 15)
+                            line[o++] = ' ';
+                    }
+                    line[o] = 0;
+                    KLOG_ERROR("[VMX]   guest@0x%llx-0x10: %s\n",
+                               (unsigned long long)guest_rip, line);
                 }
-                line[o] = 0;
-                KLOG_ERROR("[VMX]   guest@0x%llx-0x10: %s\n",
-                           (unsigned long long)guest_rip, line);
             }
         }
         return EL2_EXIT;
@@ -2149,12 +2272,10 @@ static int vmx_exit_handler(vcpu_t *vcpu)
         {
             static unsigned seen[32];
             if (vector < 32 && seen[vector] < 40) {
-                extern uint64_t x86_guest_hpa_base(void);
-                extern uint64_t x86_guest_mem_size(void);
                 uint64_t rsp = vmcs_read(GUEST_RSP);
                 const uint64_t *st = NULL;
-                if (rsp + 0x40 < x86_guest_mem_size())
-                    st = (const uint64_t *)phys_to_virt(x86_guest_hpa_base() + rsp);
+                if (rsp + 0x40 < guest_mem_size(vcpu))
+                    st = (const uint64_t *)gpa_to_host(vcpu, rsp);
                 KLOG_INFO("[EXC-DBG] v=%u #%u rip=0x%llx cr2=0x%llx err=0x%llx "
                           "rsp=0x%llx cs=0x%llx rax=0x%llx rcx=0x%llx\n",
                           vector, seen[vector],
@@ -2200,8 +2321,6 @@ static int vmx_exit_handler(vcpu_t *vcpu)
         {
             static unsigned npf;
             if (npf < 1) {
-                extern uint64_t x86_guest_hpa_base(void);
-                extern uint64_t x86_guest_mem_size(void);
                 uint64_t rsp = vmcs_read(GUEST_RSP);
                 KLOG_INFO("[PF-DBG] #%u rip=0x%llx cr2=0x%llx err=0x%llx "
                           "cr3=0x%llx rsp=0x%llx\n",
@@ -2211,9 +2330,9 @@ static int vmx_exit_handler(vcpu_t *vcpu)
                           (unsigned long long)vmcs_read(GUEST_CR3),
                           (unsigned long long)rsp);
                 /* dump guest 栈顶 12 个 qword（物理地址可读 → 可符号化）*/
-                if (rsp + 0x60 < x86_guest_mem_size()) {
-                    const uint64_t *st =
-                        (const uint64_t *)phys_to_virt(x86_guest_hpa_base() + rsp);
+                const uint64_t *st =
+                    (const uint64_t *)gpa_to_host(vcpu, rsp);
+                if (st && rsp + 0x60 < guest_mem_size(vcpu)) {
                     for (int i = 0; i < 12; i += 4)
                         KLOG_INFO("[PF-STACK] +%02x: %016llx %016llx "
                                   "%016llx %016llx\n", i * 8,
@@ -2260,34 +2379,34 @@ static int vmx_exit_handler(vcpu_t *vcpu)
                      *   end 存在 0x00(%rsp) （aa9017）
                      *   beg 存在 0x10(%rsp) （aa9033）
                      * 于是 op = out - beg 可以直接算，判定是 dist 野还是 beg 歪。*/
-                    extern uint64_t x86_guest_hpa_base(void);
                     uint64_t rsp = vmcs_read(GUEST_RSP);
-                    const uint64_t *st = (const uint64_t *)phys_to_virt(
-                        x86_guest_hpa_base() + rsp);
-                    const uint8_t *z = (const uint8_t *)phys_to_virt(
-                        x86_guest_hpa_base() + 0x3422e40u);
-                    uint64_t no = 0, ao = 0;
-                    __builtin_memcpy(&no, z + 0x18, 8);
-                    __builtin_memcpy(&ao, z + 0x20, 4);
-                    KLOG_WARN("[FLOCAL] window(0x20%%rsp)=0x%llx "
-                              "state.wsize=0x%x whave=0x%x write=0x%x "
-                              "len(%%rdx)=0x%llx\n",
-                              (unsigned long long)st[4],
-                              *(const uint32_t *)((const uint8_t *)phys_to_virt(
-                                  x86_guest_hpa_base() + 0x3422ea0u) + 0x2c),
-                              *(const uint32_t *)((const uint8_t *)phys_to_virt(
-                                  x86_guest_hpa_base() + 0x3422ea0u) + 0x30),
-                              *(const uint32_t *)((const uint8_t *)phys_to_virt(
-                                  x86_guest_hpa_base() + 0x3422ea0u) + 0x34),
-                              (unsigned long long)vcpu->regs.rdx);
-                    KLOG_WARN("[FLOCAL] end=0x%llx beg=0x%llx 0x30=0x%llx "
-                              "out=0x%llx dist=0x%llx\n",
-                              (unsigned long long)st[0], (unsigned long long)st[2],
-                              (unsigned long long)st[6],
-                              (unsigned long long)vcpu->regs.r11,
-                              (unsigned long long)vcpu->regs.r8);
-                    KLOG_WARN("[FLOCAL] strm: next_out=0x%llx avail_out=%llu\n",
-                              (unsigned long long)no, (unsigned long long)ao);
+                    const uint64_t *st = (const uint64_t *)gpa_to_host(vcpu, rsp);
+                    const uint8_t  *z  = (const uint8_t *)gpa_to_host(vcpu, 0x3422e40u);
+                    const uint8_t  *zi = (const uint8_t *)gpa_to_host(vcpu, 0x3422ea0u);
+
+                    /* 按需分页下这几个地址可能还没被 guest 碰过 —— 判 NULL 跳过 */
+                    if (st && z && zi) {
+                        uint64_t no = 0, ao = 0;
+                        __builtin_memcpy(&no, z + 0x18, 8);
+                        __builtin_memcpy(&ao, z + 0x20, 4);
+                        KLOG_WARN("[FLOCAL] window(0x20%%rsp)=0x%llx "
+                                  "state.wsize=0x%x whave=0x%x write=0x%x "
+                                  "len(%%rdx)=0x%llx\n",
+                                  (unsigned long long)st[4],
+                                  *(const uint32_t *)(zi + 0x2c),
+                                  *(const uint32_t *)(zi + 0x30),
+                                  *(const uint32_t *)(zi + 0x34),
+                                  (unsigned long long)vcpu->regs.rdx);
+                        KLOG_WARN("[FLOCAL] end=0x%llx beg=0x%llx 0x30=0x%llx "
+                                  "out=0x%llx dist=0x%llx\n",
+                                  (unsigned long long)st[0],
+                                  (unsigned long long)st[2],
+                                  (unsigned long long)st[6],
+                                  (unsigned long long)vcpu->regs.r11,
+                                  (unsigned long long)vcpu->regs.r8);
+                        KLOG_WARN("[FLOCAL] strm: next_out=0x%llx avail_out=%llu\n",
+                                  (unsigned long long)no, (unsigned long long)ao);
+                    }
                 }
                 pf_n++;
             }
@@ -2371,25 +2490,23 @@ int vmx_vm_init(vm_t *vm)
         return -1;
 
     /* EPT 二级地址翻译（移植自 kvmm mm/ept.rs）：仅在 VM 请求了独立
-     * guest RAM（cfg.mem_size != 0）时建立。hpa_base 暂用 identity
-     * （= mem_base），与 riscv64 gstage 一致。
+     * guest RAM（cfg.mem_size != 0）时建立。
+     *
+     * ⚠️ 建出来的是**空表**（"空表即全 trap"）：guest RAM 不再预映射，首次
+     * 访问才由 EPT violation 处理分配物理页并装映射。宿主自己要写的那几块
+     * （bzImage 各段 / initrd / boot_params / 初始页表）由 guest_boot.c 用
+     * x86_ept_map_range() 显式映射 —— 与 aarch64/riscv 完全同构。
+     *
      * 注：即使建表，也需 CPU_EXEC_CTRL1 的 CPU_EPT 位真正置位才生效
      * （见 vmcs_init_ctrl 协商结果）。*/
     if (vm->cfg.mem_size != 0) {
-        /*
-         * hpa_base 用 guest_boot.c 给的宿主窗口，**不是** identity：
-         * x86 的 guest 物理地址必须从 0 开始（Linux 假定有常规内存、
-         * 内核在 1 MiB），而宿主的物理 0 不能给它。EPT 负责这层翻译。
-         */
-        x86_ept_init(vm->cfg.mem_base, vm->cfg.mem_size,
-                     x86_guest_hpa_base());
-        /* 只映射 guest RAM，其余无效 → 设备访问触发 EPT violation → 模拟 */
-        x86_ept_enable_mmio_trap();
+        x86_ept_vm_init(&vm->ept, (uint32_t)vm->slot,
+                        vm->cfg.mem_base, vm->cfg.mem_size);
 
-        mmio_bus_init(&g_x86_mmio_bus);
-        if (uart16550_init(vm, &vm->uart_dev, &g_x86_mmio_bus) != 0)
+        mmio_bus_init(&vm->mmio_bus_storage);
+        if (uart16550_init(vm, &vm->uart_dev, &vm->mmio_bus_storage) != 0)
             KLOG_WARN("[VMX] uart16550 registration failed\n");
-        vm->mmio_bus = &g_x86_mmio_bus;
+        vm->mmio_bus = &vm->mmio_bus_storage;
 
         KLOG_INFO("[VMX] EPT enabled (mem=0x%llx+0x%llx)\n",
                   (unsigned long long)vm->cfg.mem_base,
@@ -2410,38 +2527,49 @@ int vmx_vm_init(vm_t *vm)
     }
     vm->nr_vcpus = nr;
 
-    /* exit 诊断环形缓冲与 vCPU 同生命周期 —— 不清的话第二次启动回放出来的
-     * 是上一次启动的尾巴（和 static 限流计数是同一类坑）。*/
-    memset(g_exit_trace, 0, sizeof(g_exit_trace));
-    memset(g_exit_trace_n, 0, sizeof(g_exit_trace_n));
-    memset(g_entry_dbg_n, 0, sizeof(g_entry_dbg_n));
+    /*
+     * exit 诊断环形缓冲与 vCPU 同生命周期 —— 不清的话第二次启动回放出来的
+     * 是上一次启动的尾巴（和 static 限流计数是同一类坑）。
+     * 只清**本 VM 这一格**：这些数组现在按 (vm->slot, vcpu_id) 索引，全清会
+     * 把另一个正在跑的 VM 的诊断信息一起抹掉。
+     */
+    for (i = 0; i < nr; i++) {
+        uint32_t sl = (uint32_t)(vm->slot * MAX_VCPUS + i);
+        memset(g_exit_trace[sl], 0, sizeof(g_exit_trace[sl]));
+        g_exit_trace_n[sl] = 0;
+        g_entry_dbg_n[sl]  = 0;
+    }
 
     /*
      * ── 复位虚拟设备桩的可变状态 ────────────────────────────────
      *
-     * 下面这些是**文件级 static**，生命周期是整个内核；而 VM 的生命周期是
-     * 「每次 /bin/vmm-run」。于是第二次启动会带着第一次停止那一刻的残留：
+     * 语义上每次 boot 本就该等于设备上电。从前这些是**文件级 static**，
+     * 生命周期是整个内核，于是第二次启动会带着第一次停止那一刻的残留：
      *
-     *   - g_ioapic_inited==1 ⇒ 「把所有重定向项设成屏蔽」那段初始化被
-     *     **整段跳过**（它是 if (!inited) 守卫的）；
-     *   - g_ioapic_sel / g_ioapic_rt[] ⇒ 上次的寄存器选择与路由表；
+     *   - ioapic_inited==1 ⇒ 「把所有重定向项设成屏蔽」那段初始化被**整段
+     *     跳过**（它是 if (!inited) 守卫的）；
+     *   - ioapic_sel / ioapic_rt[] ⇒ 上次的寄存器选择与路由表；
      *   - PIC 屏蔽字、PIT 通道、端口 61 同理。
      *
      * 症状（x86_64 + helper + SMP=4 实测）：第二次启动的 guest triple fault，
-     * RIP 每次都是同一个地址 —— 确定性崩溃，只是"是否踩中"取决于上次停止
-     * 时残留了什么，所以表现为概率性。
+     * RIP 每次都是同一个地址 —— 确定性崩溃，只是"是否踩中"取决于上次停止时
+     * 残留了什么，所以表现为概率性。
      *
-     * 语义上每次 boot 本就该等于设备上电，所以统一在这里复位。
+     * ⚠️ 多 VM 之后这段**不能**再写成全清：vm_t 里每 VM 一份 chipset，但这段
+     * 代码是在**新 VM 启动**时跑的，全清就会把另一个正在跑的 VM 的 PIC/PIT/
+     * IOAPIC 状态一起抹掉（单 VM 下看着对，多 VM 下就是串台）。
      * （vLAPIC 和 UART 桩各自在 vlapic_init()/uart16550_init() 里已经 memset，
      *   不在这里重复 —— 那两个函数每次 boot 都会被调到。）
      */
-    g_pic_master_imr = 0xFF;
-    g_pic_slave_imr  = 0xFF;
-    g_ioapic_sel     = 0;
-    g_ioapic_inited  = 0;
-    memset(g_ioapic_rt, 0, sizeof(g_ioapic_rt));
-    memset(g_pit, 0, sizeof(g_pit));
-    g_port61 = 0;
+    g_fallback_chipset.pic_master_imr = 0xFF;
+    g_fallback_chipset.pic_slave_imr  = 0xFF;
+    vm->chipset.pic_master_imr = 0xFF;
+    vm->chipset.pic_slave_imr  = 0xFF;
+    vm->chipset.ioapic_sel     = 0;
+    vm->chipset.ioapic_inited  = 0;
+    memset(vm->chipset.ioapic_rt, 0, sizeof(vm->chipset.ioapic_rt));
+    memset(vm->chipset.pit, 0, sizeof(vm->chipset.pit));
+    vm->chipset.port61 = 0;
 
     KLOG_INFO("[VMX] vmx_vm_init: %d vCPU(s) ready\n", nr);
     return 0;
@@ -2488,7 +2616,7 @@ static void x86_console_irq_on_entry(vcpu_t *vcpu)
     if (!vcpu->vm || !vmm_console_irq_asserted(vcpu->vm))
         return;
 
-    rt = g_ioapic_rt[4 * 2];                     /* IRQ4 → GSI4 的低 32 位 */
+    rt = chipset_of(vcpu)->ioapic_rt[4 * 2];     /* IRQ4 → GSI4 的低 32 位 */
     if ((rt & IOAPIC_RT_MASKED) || (rt & 0x700) != 0)
         return;
 
@@ -2496,7 +2624,7 @@ static void x86_console_irq_on_entry(vcpu_t *vcpu)
     if (vec < 16)
         return;
 
-    vlapic_raise_irq(vec);
+    vlapic_raise_irq(vcpu->vm, vec);
 }
 
 void vmm_arch_restore_guest_ctx(vcpu_t *vcpu)
@@ -2511,7 +2639,7 @@ void vmm_arch_restore_guest_ctx(vcpu_t *vcpu)
      * 轮询节拍由 PIN_EXTINT 提供 —— 宿主 100Hz 时钟本身就让 guest
      * 每 10ms 退出来一次，不需要额外的宿主定时器基础设施。
      */
-    vlapic_timer_poll();
+    vlapic_timer_poll(vcpu->vm);
 
     /* 控制台：电平触发，每次入口按设备状态重拉（见上面 x86_console_irq_on_entry）*/
     x86_console_irq_on_entry(vcpu);
@@ -2519,7 +2647,7 @@ void vmm_arch_restore_guest_ctx(vcpu_t *vcpu)
 
     if (!vcpu->pending_event) {
         uint32_t vec;
-        if (vlapic_sw_enabled() && vlapic_take_pending(&vec))
+        if (vlapic_sw_enabled(vcpu->vm) && vlapic_take_pending(vcpu->vm, &vec))
             vcpu->pending_event = VMX_INTR_VALID | VMX_INTR_TYPE_EXTINT
                                 | VMX_INTR_VECTOR(vec);
     }
@@ -2554,7 +2682,7 @@ void vmm_arch_restore_guest_ctx(vcpu_t *vcpu)
  */
 static void vmx_refresh_host_state(vcpu_t *vcpu)
 {
-    int id = vcpu->vcpu_id;
+    int id = (int)vcpu_slot(vcpu);
     int i0 = vmx_msr_index(MSR_GS_BASE);
     int i1 = vmx_msr_index(MSR_KERNEL_GS_BASE);
 
@@ -2615,7 +2743,7 @@ int vmm_arch_enter_guest(vcpu_t *vcpu)
         return 0;
 
     /* 重新装载该 vCPU 的 VMCS（yield 后调度回来时需要）*/
-    vmcs_t *v = (vmcs_t *)g_vmcs_storage[vcpu->vcpu_id];
+    vmcs_t *v = (vmcs_t *)g_vmcs_storage[vcpu_slot(vcpu)];
     uint64_t vmcs_pa = virt_to_phys(v);
 
     /*
@@ -2669,7 +2797,7 @@ int vmm_arch_enter_guest(vcpu_t *vcpu)
     {   /* 入口状态：每次 VM 启动的头 2 次 entry 打印，用来还原「第二次启动
          * 时 VMCS 里的 guest 状态到底是什么」。计数是 per-vCPU 且随 VM 生命
          * 周期清零 —— 见 g_entry_dbg_n 的注释。*/
-        uint32_t id = (uint32_t)(vcpu->vcpu_id & (MAX_VCPUS - 1));
+        int id = (int)vcpu_slot(vcpu);
         if (g_entry_dbg_n[id] < 2) {
             KLOG_INFO("[ENTRY-DBG] cr0=%llx cr3=%llx cr4=%llx efer=%llx "
                       "rflags=%llx rip=%llx rsp=%llx\n",
