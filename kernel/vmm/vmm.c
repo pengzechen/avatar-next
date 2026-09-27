@@ -20,6 +20,7 @@
 #include "task/task.h"
 #include "task/switch.h"
 #include "task/sched.h"
+#include "task/cpu.h"      /* g_num_cpus：vCPU 摊核时用（见 vcpu_task_create）*/
 
 #if ARCH_AARCH64
 #include "aarch64/stage2.h"
@@ -363,6 +364,7 @@ int vmm_run_vcpu(vcpu_t *vcpu)
          */
         sched_check_and_yield();
 
+
         uint64_t irq_flags = arch_irq_save();
 
 #if ARCH_AARCH64
@@ -462,6 +464,18 @@ static void vcpu_task_fn(void *arg)
      * 规则是"跨任务只传 vmid"，谁也不能在任务还活着的时候把这个槽位清掉；
      * 而 task_exit() 之后本任务就没了，再没人能安全地做这件事。
      */
+    /*
+     * 打印这个 vCPU 任务的内核栈高水位 —— 定 TASK_STACK_SIZE 的依据就是它。
+     * 栈是静态数组挨着放的，溢出会先踩坏**邻居**任务而不是自己，所以这个
+     * 数字比"崩没崩"可靠得多（见 task.h 里 TASK_STACK_SIZE 的说明）。
+     */
+    {
+        extern size_t task_stack_used(const struct task *);
+        size_t used = task_stack_used(task_current());
+        KLOG_INFO("[vmm] vcpu%d kernel stack high-water: %zu / %u bytes\n",
+                  vcpu->vcpu_id, used, (unsigned)TASK_STACK_SIZE);
+    }
+
     vm_free(vm);
 
     task_exit();
@@ -475,18 +489,69 @@ struct task *vcpu_task_create(vcpu_t *vcpu, uint8_t priority)
     name[5] = '\0';
 
     /*
-     * vcpu 状态（VMCS / VHE 寄存器 / SBI HSM 等）尚未支持跨核迁移，
-     * 全部钉到 BSP。
-     *
      * ⚠️ 必须用 task_create_affinity()，**不能** task_create() 之后再
-     * task_set_cpu_affinity(t, 0)：后者有窗口 —— 任务在 task_create() 里已经
+     * task_set_cpu_affinity()：后者有窗口 —— 任务在 task_create() 里已经
      * 入队（round-robin 可能挑中 CPU1），若 CPU1 在那两步之间把它挑走执行，
      * sched_dequeue() 就找不到它（RUNNING 不在队列里）→ 紧接着 sched_enqueue()
-     * 又把它挂到 CPU0 队列 → 同一个 vcpu 任务被他核运行着、同时躺在 CPU0 队列，
-     * 被两个核同时跑，任务状态/运行队列双双写坏。
+     * 又把它挂到指定核的队列 → 同一个 vcpu 任务被他核运行着、同时躺在那个核的
+     * 队列里，被两个核同时跑，任务状态/运行队列双双写坏。
      * 实测就是 Ctrl+] 停 guest 之后再启动时崩在 sched_schedule 的 pick_next()。
+     *
+     * ── vCPU 落在哪颗核上：VMM 自己按核轮转（不钉死 cpu0）──────────
+     *
+     * 三个前提值得写清楚：
+     *
+     * ① **调度器没有负载均衡**（sched.c 里没有 balance/steal/migrate），
+     *    所以任务一旦入队就粘在某颗核上 —— 这不是"跑着跑着被迁走"，而是
+     *    "启动时摊开"。也正因如此，per-CPU 硬件状态只要在**每次进 guest 前**
+     *    重设就够了（运行中迁移是另一件事，本设计不涉及；task_set_cpu_affinity
+     *    的注释也写了这条）。这些重设点早就按 per-CPU 写好了：
+     *      x86    : VMXON（s_vmx_on[]）+ VMPTRLD + I/O/MSR bitmap（只读）
+     *      aarch64: VTTBR/VTCR + GICv3 的 LR 归属表（按 get_current_cpu_id() 索引）
+     *      riscv  : hgatp + hdeleg/hideleg/hstatus（hext_per_hart_csrs_ensure）
+     *
+     * ② **不要把摊开这件事交给 `CPU_AFFINITY_ANY`** —— 试过，实测摊不开：
+     *    sched_enqueue 的 RR 是 `__atomic_fetch_add(&g_rr_counter, 1) % n`，
+     *    而每次启动一个 VM 恰好有**偶数**个 ANY 任务入队（vCPU + 另一个），
+     *    奇偶恒定 ⇒ 三个 VM 的 vCPU 全落在 cpu0，等于还是钉死的。
+     *    判据：日志里连着三行 `on cpu0/2`。
+     *    （要试"完全交给调度器"：把下面的 want 换成 CPU_AFFINITY_ANY。）
+     *
+     * ③ 真摊开之后，多个 VM 的 vCPU 在**不同核上真正并发**跑，而不是挤在一颗
+     *    核上时间片轮转。
+     *
+     * ── ⚠️ 但目前**还不敢**默认摊开：跨核并发下有一个未定位的竞态 ──────
+     *
+     * 实测（x86_64, SMP=2, microvm, 三个 VM；判定用"宿主 busybox 有没有被
+     * SIGSEGV 打死"）：
+     *
+     *     3 VM 全钉 cpu0  ................ 3/3 干净   ← 当前默认
+     *     3 VM 全钉 cpu1  ................ 2/2 干净
+     *     2 VM 摊在两核    ................ 3/3 干净
+     *     3 VM 摊在两核    ................ **约 50% 失败**
+     *
+     * 失败的形态：三个 guest 都能起到 shell，但随后**宿主自己的 busybox**
+     * 收到 SIGSEGV（`User PF CR2=0x1103 bits: P=0 W=1 U=1`，RIP 处的字节
+     * 根本不是有效代码）—— 典型的"内存被踩"，不是它自己的 bug。
+     *
+     * 已排除的：
+     *   - **内核栈溢出**：把 TASK_STACK_SIZE 加到 32 KiB 仍然复现；而且
+     *     `task_stack_used()` 量出来的循环顶部高水位只有 1760 字节。
+     *     （栈高水位那套工具留着了，见 kernel/task/task.h 的 TASK_STACK_SIZE。）
+     *   - **"vCPU 跑在非 BSP 核上"**：全部钉 cpu1 是干净的。
+     *   - **VMCS 被"当前那块"误导**：退出处理里三处 task_yield() 后面都立刻
+     *     return，没有 VMCS 访问；而每轮入口前都会重新 VMPTRLD。
+     *
+     * 所以：**默认仍然钉 cpu0**，把摊开留成一行开关，等竞态定位后再打开。
+     * 复现：`VMN=3 /tmp/three_vm.sh x86_64 2`（或见 docs/vmm/X86_GUEST_LINUX.md §11.6）。
+     * 要试摊开：把下面的 want 换成 `(uint32_t)vcpu->vm->slot % ncpu`。
      */
-    struct task *t = task_create_affinity(name, vcpu_task_fn, vcpu, priority, 0);
+    uint32_t want = 0;   /* ← 见上面 ③：跨核并发有未定位竞态，暂不摊开。
+                          *    要试摊开就换成：
+                          *    (uint32_t)vcpu->vm->slot % (g_num_cpus ? g_num_cpus : 1U) */
+
+    struct task *t = task_create_affinity(name, vcpu_task_fn, vcpu, priority,
+                                          want);
     if (t) {
 
         /*
@@ -500,8 +565,8 @@ struct task *vcpu_task_create(vcpu_t *vcpu, uint8_t priority)
          */
         vcpu->vm->state = VM_RUNNING;
 
-        KLOG_INFO("[vmm] vcpu%d task created (id=%u) pinned to cpu0\n",
-                  vcpu->vcpu_id, t->id);
+        KLOG_INFO("[vmm] vcpu%d task created (id=%u) on cpu%u/%u\n",
+                  vcpu->vcpu_id, t->id, t->cpu_affinity, g_num_cpus);
     } else {
         KLOG_ERROR("[vmm] failed to create vcpu%d task\n", vcpu->vcpu_id);
     }

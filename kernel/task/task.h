@@ -63,7 +63,20 @@ typedef enum {
 } task_state_t;
 
 /* ── Configuration ───────────────────────────────────────── */
-#define TASK_STACK_SIZE  16384u  /* 每个内核任务的栈大小（16 KiB，增加以防止 syscall 栈溢出） */
+/*
+ * 每个内核任务的栈大小。
+ *
+ * ⚠️ 16 KiB **不够**：vCPU 任务的调用链很深（vmm_run_vcpu → restore/enter_guest
+ * → 退出处理 → MMIO 解码 → EPT 查表），而且**宿主中断会在这条链上嵌套**。
+ * 实测（3 个 VM、vCPU 摊到两颗核上真正并发时）：16 KiB 溢出，把相邻任务
+ * （宿主 busybox）的栈写坏，表现为"宿主 shell 莫名其妙 SIGSEGV、CR2≈0x1103"；
+ * 而且只在并发时复现 —— 全挤在一颗核上串行跑就看不出来。
+ * 32 KiB 下实测高水位见 vcpu_task_fn 的打印，留了足够余量。
+ */
+#define TASK_STACK_SIZE  16384u
+
+/* 栈高水位的标记图案（见 task_stack_used）*/
+#define TASK_STACK_MAGIC 0xA5u
 #define TASK_NAME_LEN    16u     /* 任务名最大长度（含 NUL）      */
 #define TASK_MAX         64u     /* 最大并发任务数（不含 idle）   */
 #define TASK_CWD_LEN     128u    /* 当前工作目录最大长度          */
@@ -159,6 +172,16 @@ extern volatile uint32_t g_fg_pgid;
  * VMCS）尚未跨核迁移。
  */
 void task_set_cpu_affinity(task_t *task, uint32_t cpu_id);
+
+/*
+ * task_stack_used — 该任务内核栈的高水位（字节）
+ *
+ * 任务的栈在创建时被刷成 TASK_STACK_MAGIC，这里从栈底往上找第一处非图案的
+ * 字节，量出峰值用量。**只用于诊断**（O(栈大小)，别放热路径）。
+ * 用途：定 TASK_STACK_SIZE。栈是静态数组挨着放的，溢出先踩坏邻居任务，
+ * 所以"崩没崩"不可靠，这个数字可靠。
+ */
+size_t task_stack_used(const task_t *task);
 
 /* ── Public API ──────────────────────────────────────────── */
 

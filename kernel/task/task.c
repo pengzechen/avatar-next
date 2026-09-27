@@ -69,6 +69,17 @@ static task_t *alloc_task_slot(void) {
       g_stack_used[i] = 1;
       task->state = TASK_ALLOCATING;
       task->stack_base = g_task_stacks[i];
+      /*
+       * 把整块栈刷成已知图案：配合 task_stack_used() 量"这个任务实际用掉
+       * 多少栈"。arch_init_task_stack() 稍后会在栈顶写好初始帧，其余部分
+       * 保持图案 —— 高水位就是"从栈底往上第一处非图案的位置"。
+       *
+       * 为什么值得留：内核任务栈是**静态数组挨着放的**（g_task_stacks[N][...]），
+       * 溢出会直接踩坏邻居任务的栈/TCB，症状是"隔壁任务莫名其妙崩"，
+       * 而不是栈溢出的任务自己崩 —— 实测宿主 busybox 就是这么被写坏的
+       * （见 vcpu_task_fn 里那段说明）。有数字才能定 size，不然只能靠翻倍赌。
+       */
+      memset(task->stack_base, TASK_STACK_MAGIC, TASK_STACK_SIZE);
       /* 默认 affinity = ANY：让 sched_enqueue round-robin 分发到所有核。
        * 调用方（如 vcpu_task_create）可在 enqueue 前覆盖。 */
       task->cpu_affinity = CPU_AFFINITY_ANY;
@@ -108,6 +119,24 @@ void task_reap_dead(task_t *task) {
     task->stack_base = NULL;
     return;
   }
+}
+
+/*
+ * task_stack_used — 该任务栈的高水位（字节，含初始帧）
+ *
+ * 从栈底往上找第一处非 TASK_STACK_MAGIC 的字节，它到栈顶的距离就是峰值用量。
+ * 任务还没跑过时返回 0。**只用于诊断**，不要在热路径里调（O(栈大小)）。
+ */
+size_t task_stack_used(const task_t *task)
+{
+  if (!task || !task->stack_base)
+    return 0;
+  const uint8_t *p = task->stack_base;
+  for (size_t i = 0; i < TASK_STACK_SIZE; i++) {
+    if (p[i] != TASK_STACK_MAGIC)
+      return TASK_STACK_SIZE - i;
+  }
+  return 0;
 }
 
 static void free_task_slot(task_t *task) {
