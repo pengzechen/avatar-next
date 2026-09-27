@@ -285,6 +285,15 @@ int guest_loader_read_file_range(const char *path, uint64_t file_off,
 int guest_loader_file_size(const char *path);
 
 /*
+ * 把整个文件读进宿主缓冲（与 read_file_range 的区别：只从 0 读、且校验
+ * "文件是否比缓冲还长"）。返回读到的字节数，失败返回 -1。
+ *
+ * 实现从 guest_loader.c 拆到了 image_load.c —— 调用者仍在 guest_loader.c
+ *（把 DTB 读进宿主缓冲再打补丁那一步），所以不能再是 static。
+ */
+int guest_loader_read_file(const char *path, uint8_t *buf, size_t cap);
+
+/*
  * guest_loader_run_linux — 加载并启动 Linux guest（BSP 侧调用）
  * 返回 0 表示已成功建立 VM 并创建 vCPU 任务。
  */

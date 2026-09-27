@@ -228,8 +228,14 @@ KERNEL_LWEXT4_SRCS := \
 
 # guest_loader.c 位于共享目录但只给「已实现 Linux guest 启动」的架构编译
 # （见 §4a 白名单与 include/vmm/vmm.h 的 VMM_GUEST_LINUX_SUPPORTED），且引用 lwext4。
+#
+# ⚠️ image_load.c 是 2026-09 从 guest_loader.c 拆出来的装载通路（VFS 读 + 逐块
+# 写 guest 内存），它同样 #include "vfs.h"（→ <ext4.h>），所以**必须进同一组** ——
+# 少了这一条，编译会以 "include/vfs.h:14:10: fatal error: ext4.h: No such file" 失败，
+# 而且因为 §236 的 filter-out，它同时还会触发下面的「分组完整性断言」。
 ifneq ($(filter $(ARCH),aarch64 riscv64 x86_64),)
-KERNEL_LWEXT4_SRCS += $(KERNEL_DIR)/vmm/guest_loader.c
+KERNEL_LWEXT4_SRCS += $(KERNEL_DIR)/vmm/guest_loader.c \
+                      $(KERNEL_DIR)/vmm/image_load.c
 endif
 
 # kernel/net/** 全部引用 lwIP，按目录自动派生，将来新增文件不会漏。
