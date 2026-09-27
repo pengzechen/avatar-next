@@ -180,6 +180,16 @@ setup_secondary_idle_task(cpu_t *c)
     idle->arg          = NULL;
     idle->cpu_affinity = c->cpu_id;
     idle->fs_base      = 0;
+    /*
+     * ⚠️ fd_table 必须显式填 -1：memset 归零后 0 是个**合法的池槽位号**，
+     * 于是这张表在 fd_table_inherit() 眼里就是「256 个都指向槽位 0 的 fd」，
+     * 一次继承会把 FD_POOL_SIZE(128) 个槽全部吃光 —— 之后宿主里任何进程
+     * 连 open() 都失败（实测 `[fd] pool_alloc: no free slots`，Ctrl+] 停 guest
+     * 后再启动 vmm-run 直接起不来）。CPU0 的 idle 走 task.c 的 g_idle_task，
+     * 那份是初始化过的；只有次级核这条路径漏了。
+     */
+    for (uint32_t j = 0; j < TASK_MAX_FD; j++)
+        idle->fd_table[j] = -1;
     list_node_init(&idle->run_node);
     list_node_init(&idle->wait_node);
 

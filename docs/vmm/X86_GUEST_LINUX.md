@@ -678,7 +678,153 @@ KERNEL_GS_BASE 在 C 里手工往返、GS_BASE 走 `GUEST_BASE_GS` 字段）：
 > 教训：**exit reason 的编号别凭记忆**。31 是 `RDMSR`、不是"异常/NMI"；
 > 把它误当成异常，整个方向会偏到"注入的异常有问题"上去。
 
+### 9.10 ★★★ helper 模式 + SMP>1：一整类「每核状态只在 helper 那颗核上初始化」
+
+**症状**（2026-09-27）：`test-guest-linux`（直启）SMP=2 一切正常，但
+`run-net` → 宿主 shell → `/bin/vmm-run`（helper）**SMP=2 概率性起不来**；
+SMP=1 永远正常。概率 ≈ 50%，且取决于 helper 落在哪颗核上。
+
+**根因是同一类错误的三处实例**：VM 的初始化全部跑在**调用 ioctl 的那颗核**
+（= helper 的核）上，而 vCPU 任务 `task_set_cpu_affinity(t, 0)` 钉在 **CPU0**。
+凡是「每个逻辑处理器一份」的状态，只在 helper 核上设一次，vCPU 核上就是
+复位值：
+
+| 状态 | 症状 | 修法 |
+|---|---|---|
+| `IA32_FEATURE_CONTROL`（**每 vCPU**） | helper 核上被 `vmx_check_support()` 使能过，vCPU 核没有 → 那条 `vmxon` 被 KVM 的 `handle_vmon` 判为"未使能"直接 **#GP**（`vmx_global_init+0x11e`，EC=0） | `vmx_global_init()` 里也调一次 `vmx_check_support()`（幂等） |
+| VMXON 区域 | 全局单例，两个核共用一块 | 改成 `g_vmxon_region[CONFIG_SMP_CPUS][4096]` |
+| **宿主 MSR 载入表**（`g_msr_host`） | 见下 | `vmx_refresh_host_state()` 里按本核重读 |
+
+**宿主 MSR 载入表这一条最隐蔽**：`vmx_msr_lists_init()` 里那句
+`g_msr_host[id][i].val = vmx_rdmsr(g_msr_list[i])` 是在**调用者所在的核**上抓
+快照，而这张表是 `VM_EXIT_MSR_LOAD_ADDR` —— **每次 VM-exit 硬件都按它把宿主
+MSR 装回去**。`g_msr_list` 里有 `MSR_KERNEL_GS_BASE`，也就是那颗核的 **per-CPU
+指针**。于是 helper 在 CPU1 时，CPU0 每从 guest 出来一次就被装上 `&g_cpus[1]`：
+宿主自己的 `swapgs`（SYSCALL 入口）随即把内核 `%gs` 指到别的核 →
+`task_current()` 返回别的核的任务。实测连锁反应：
+
+```
+[DEBUG] [sched] cpu0 switch net-poll(1) -> /busybox(7)      ← 任务切到 CPU0 上跑
+[DEBUG] [syscall] execve called                              ← 但它的 syscall 自认在 C1
+[DEBUG] [fd-inherit] 异常：parent id=4294901761('idle/1') 有 256 个有效 fd
+[DEBUG] [task] 'idle/1' (id=4294901761) exiting              ← execve 的 wrapper 把 idle 干掉
+<整机卡死>
+```
+
+（§9.9 那句"宿主侧一行都别动"说的是**别往列表里加 GS_BASE**，这点仍然成立；
+但列表里的**值**必须每次入口按本核刷新。）
+
+**修法**：`vmx_refresh_host_state()` 里把 `g_msr_host` 的每一项按当前核重读一遍
+（它本来就已经在每次入口刷新 `HOST_BASE_GS` 和 guest 侧的那对 GS，代价同量级）。
+
+**回归门禁**：`tools/vmm_helper_regress.sh x86_64 <N> <smp> [--restart]` ——
+helper 模式启动 + Ctrl+] 后再启动。修复前 SMP=2：启动 6/6 失败、重启 0/6；
+修复后：启动 10/10、重启 6/6。
+
+### 9.11 ★★ 在 bootstrap 核之外跑的 vCPU 任务：`task_create()` 之后再改核有窗口
+
+**症状**：SMP=2 下 Ctrl+] 停掉 guest 之后再启动，概率性崩在调度器里：
+
+```
+[ERROR] CPU exception #14 at RIP=sched_schedule+0xf2 EC=0x2
+        CR2 (fault addr) = 0xffffffffffffffc8        ← 野指针
+=== BACKTRACE [C0 'vcpu0' id=6] ===
+  #0 sched_schedule+0xf2   #1 net_poll_task+0x68   #2 task_trampoline+0x2e
+```
+
+**根因**：`vcpu_task_create()` 原来是
+`task_create(...)` （内部**已经** `sched_enqueue`，round-robin 可能挑中 CPU1）
+**之后**才 `task_set_cpu_affinity(t, 0)`。若 CPU1 在那两步之间把新任务挑走开始
+执行，`sched_dequeue()` 就找不到它（RUNNING 的任务不在任何队列里），紧接着
+`sched_enqueue()` 又把它挂到 CPU0 队列 —— 同一个 vCPU 任务**既在 CPU1 上跑、
+又躺在 CPU0 的运行队列里**，被两个核同时执行，任务状态与队列双双写坏。
+
+**修法**：新增 `task_create_affinity(name, fn, arg, prio, cpu)`：在 `sched_enqueue`
+**之前**就把 `cpu_affinity` 定好，一次入队到位。vcpu 任务改用它。
+另外在 `sched_enqueue()` 里加了一道防御（拒绝入队 RUNNING 任务），
+`pick_next()` 里加了"取出的指针必须落在任务池内"的校验（越界就跳过并
+`KLOG_ERROR`，而不是让整机跟着野指针崩）。
+
+### 9.12 ★ 次级核 idle 任务的 `fd_table` 没初始化 ⇒ 整个 fd 池被一次吃光
+
+**症状**：SMP=2 下 Ctrl+] 之后再 `/bin/vmm-run`，宿主里所有 `open()` 都失败：
+
+```
+[ERROR] [fd] pool_alloc: no free slots (FD_POOL_SIZE=128)
+```
+
+**根因**：`setup_secondary_idle_task()` 里 `memset(idle, 0, ...)` 之后**没有**把
+`fd_table[]` 填成 -1，于是它是**一片 0** —— 而 0 是合法的池槽位号。
+`fd_table_inherit()` 按表逐个 `fd_pool_alloc()`，把「256 个 fd」挨个拷一遍，
+128 个槽瞬间占满。是谁会拿 idle 当父进程？见 §9.10 —— 宿主 GS 被装错核之后
+`task_current()` 就会返回 idle。
+
+**修法**：① `setup_secondary_idle_task()` 显式填 -1；② `fd_table_inherit()`
+遇到非用户进程的父进程直接按「无可继承」处理（表清成 -1），从根上杜绝
+"内核任务当父进程"这种事再造成破坏。
+
+### 9.13 ★★★★ 第二次启动的双重陷阱：launch state 与「上次退出快照」
+
+**症状**（helper 模式，Ctrl+] 之后再 `/bin/vmm-run`）：第二次启动概率性失败，两种
+表现 —— `VM-entry failed: inst_error=0x4`（= *VMLAUNCH with non-clear VMCS*），
+或进去了但 `guest triple fault`（RIP 每次同一个 guest 内核地址、串口零输出）。
+
+**根因（两个约束合起来只有一种写法）**：
+
+1. **`VMCLEAR` 只对「本核 current 的」VMCS 有效。** `vmx_vcpu_setup()` 跑在
+   `/bin/vmm-run` 所在核，而 vCPU 任务钉在 CPU0 —— helper 核 clear 之后 vCPU 核
+   一 `VMPTRLD`，那块 VMCS 就"搬"走了，再在 helper 核 clear 是**空操作**。
+   于是 launch state 永远停在 *launched*，而 `vmx_run.S` 按**软件**字段
+   `vcpu->launched`（=0）选了 `VMLAUNCH` → inst_error=0x4。软件标志和 VMCS 的
+   硬件状态是两回事，后者只有 VMCLEAR 能复位。
+2. **`VMCLEAR` 会把该 VMCS 复位成「上次退出时的快照」**，所以它必须发生在
+   写字段**之前**。把 clear 挪到入口路径、排在 `vmcs_init_guest()` 之后，会把
+   刚写好的入口状态整个抹掉 —— guest 从**上一次的断点**继续执行，而它的内存
+   刚被 `guest_boot` 的 `memset` 清零（页表、IDT 全没）→ 立刻 triple fault。
+
+**修法**：`vmx_vcpu_setup()` 内部本来就是 `VMCLEAR → VMPTRLD → 写全部字段`，
+顺序是对的，**错的只是它跑在哪颗核**。整体搬到 **vCPU 核**、每个 VM 生命周期
+一次（`vcpu_t.vmcs_ready` 守卫），之后**无条件**补一次 `VMPTRLD`（setup 结尾还有
+一次 flush 用的 VMCLEAR 会拿掉 current）。`vmx_vm_init()` 每次 memset vCPU ⇒
+`vmcs_ready` 归零 ⇒ 第二次启动重做完整初始化。
+
+**走过的弯路（都不要再试）**：
+
+| 尝试 | 结果 |
+|---|---|
+| 入口路径补一次 `VMCLEAR` | 治好 0x4，但抹掉入口状态 → 从上次断点跑 → triple fault |
+| `VMCLEAR` 后调 `vmcs_init_guest()` 重写全部 guest 字段 | **第一次启动就起不来**（0/5）：冲掉 `guest_boot` 铺好的 GDT/段/CR 掩码 |
+| `VMCLEAR` 后只重写 RIP/RSP/CR3 | 仍 0/25 —— 抹掉的是**整个** VMCS，补一部分注定不完整 |
+
+**诊断配套**（这次的排障靠它们收敛）：
+
+* **`ENTRY-DBG`**：每次 VM 启动的头 2 次 entry 打印 VMCS 里的 guest 状态。
+  ⚠️ 计数必须 **per-vCPU + 随 VM 生命周期清零** —— 原来用 `static unsigned n`，
+  第一次启动就用光配额，**第二次一条都不打**，正好盖住最需要看的那次。
+* **exit 环形回放**（`g_exit_trace`）：triple fault 时打印最近 32 次 VM-exit。
+  失败轮里**只有 1 条记录**（就是 triple fault 本身）—— 这一条就排除了"跑一半
+  崩"的假设，直接指向"入口状态本来就是错的"。
+* triple fault 的 guest 字节 dump 要按**线性地址**换算：
+  `phys = rip - 0xffffffff80000000 + 0x1000000`。直接拿 RIP 和 guest 物理窗口比
+  永远不成立（原来就是），最需要它的时候一行都打不出来。
+
 ## 10. 重建 guest 内核（`imgs/guests/x86_64/bzImage`）
+
+> **为什么 x86 的 guest 内核是压缩的 bzImage，而另两个架构是未压缩的 raw Image**
+> （2026-09-27 实测过，别再试）：
+> bzImage 偏移 `0x3ce0` 处是个 gzip 流，解开是 37,628,408 字节的 ELF（entry
+> `0x1000000`），和构建树里的 `arch/x86/boot/compressed/vmlinux.bin` 逐字节相同 ——
+> 但**这份 ELF 两条路都进不去**：
+> * **QEMU 裸跑**拒绝它：`Error loading uncompressed kernel without PVH ELF Note`
+>   （需要内核带 Xen PVH note，即 `CONFIG_PVH=y`；当前 config 没开，`ACPI`/`XEN`
+>   也都是 n）。裸跑基线就没了。
+> * **Avatar VMM** 也拒绝：`guest_boot.c` 硬校验 `HdrS`，入口固定是 32 位协议跳
+>   `code32_start`（解压器），全文件没有 ELF 解析。
+>
+> 要用未压缩镜像，得同时做两件事：VMM 加 ELF 直启（按 `p_paddr` 装段 + 长模式进
+> `e_entry`、`%rsi=boot_params`），**并且**重编 guest 内核开 `CONFIG_PVH` 才能保住
+> QEMU 裸跑基线。当时的结论是：不值得，x86 保持 bzImage。
+
 
 guest 内核源码树在 **仓库外**：`~/kbuild/linux-def`（由 `~/kbuild/build2.sh` 从
 `linux-6.2.15.tar.xz` 解出来，`defconfig` + 关掉 ACPI/模块/随机化）。

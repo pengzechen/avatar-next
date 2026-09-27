@@ -168,6 +168,19 @@ int task_get_ion_handle(task_t *task, int fd, uint32_t *handle)
 
 void fd_table_inherit(task_t *child, task_t *parent)
 {
+    /*
+     * 只在内核任务/进程之间谈继承没意义：idle 之类的内核任务一张 fd 表都没有
+     * （正常全是 -1），而且它们的 fd_table 一旦忘了初始化就是一片 0 ——
+     * 而 0 是合法槽位号，会被当成「256 个 fd」逐个拷贝，一次就把整个池子
+     * 吃光（实测过：idle/1 作父进程，128 个槽瞬间占满，此后宿主里所有
+     * open() 都失败）。这里直接按「没有可继承的 fd」处理，表清成 -1。
+     */
+    if (!parent->is_user_process) {
+        for (uint32_t fd = 0; fd < TASK_MAX_FD; fd++)
+            child->fd_table[fd] = -1;
+        return;
+    }
+
     for (uint32_t fd = 0; fd < TASK_MAX_FD; fd++) {
         /* execve: FD_CLOEXEC 标记的 fd 不继承 */
         if ((parent->fd_cloexec[fd / 8] >> (fd % 8)) & 1) {

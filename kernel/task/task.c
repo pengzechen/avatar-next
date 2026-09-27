@@ -546,6 +546,28 @@ task_t *process_create_with_pgd(const char *name, uint64_t user_entry,
 
 task_t *task_create(const char *name, void (*entry)(void *), void *arg,
                     uint8_t priority) {
+  return task_create_affinity(name, entry, arg, priority, CPU_AFFINITY_ANY);
+}
+
+/*
+ * task_create_affinity - 创建任务，**入队前**就定好跑在哪颗核上
+ *
+ * 与 task_create() 的区别只在 `cpu_affinity` 的设置时机，但这正是关键：
+ * 先 task_create()（内部已经 sched_enqueue，round-robin 可能挑中别的核）
+ * 再 task_set_cpu_affinity() 有窗口 —— 如果新任务在那两步之间已经被目标核
+ * 挑走开始执行，sched_dequeue() 就找不到它（RUNNING 的任务不在任何队列里），
+ * 紧接着 sched_enqueue() 又把它挂到指定核的队列上，于是同一个任务
+ * **既在他核上运行、又躺在指定核的运行队列里** —— 会被两个核同时执行，
+ * 任务状态与运行队列双双被写坏。
+ *
+ * 窗口对两种落点都存在，只是后果不同：落在他核 = 同一任务被两个核同时跑；
+ * 落在目标核 = 同一任务"正在跑"又"躺在自己核的队列里"，之后会被重复调度。
+ * 实测症状（SMP=2、helper 模式下 Ctrl+] 停 guest 再重启，约 1/2 命中）：
+ *   CPU exception #14 at RIP=sched_schedule+0xf2  (next->state = TASK_RUNNING)
+ *   CR2 = 0xffffffffffffffc8                      ← pick_next() 拿到野指针
+ */
+task_t *task_create_affinity(const char *name, void (*entry)(void *), void *arg,
+                             uint8_t priority, uint32_t cpu_affinity) {
   task_t *task = alloc_task_slot();
   if (!task) {
     KLOG_ERROR("[task] task_create: no free task slots (max=%u)\n", TASK_MAX);
@@ -595,6 +617,9 @@ task_t *task_create(const char *name, void (*entry)(void *), void *arg,
 
   /* 初始化完成后才发布为 READY，避免查找路径看到半初始化 TCB。 */
   task->state = TASK_READY;
+
+  /* 入队之前定好核（见本函数上方注释：入队后再改有窗口） */
+  task->cpu_affinity = cpu_affinity;
 
   /* 加入就绪队列，等待调度 */
   sched_enqueue(task);

@@ -201,7 +201,8 @@ make PLATFORM=qemu-virt-aarch64 run-fs
 memset + 重新加载镜像 + `vm_create()` 重建 Stage-2 与 vGIC/vPL011）。
 
 反向验证直启模式没被破坏：`make PLATFORM=qemu-virt-aarch64 test-guest-linux`
-（不指定 `GIC=` 时走设备画像默认的 v2），应照旧直接进 `~ #` shell 并能
+（2026-09-27 起 `platforms/qemu-virt-aarch64/platform.conf` 的默认已是 **v3**，
+不指定 `GIC=` 就走 v3；要回 v2 得显式 `GIC=v2`），应照旧直接进 `~ #` shell 并能
 逐字回显输入 —— 那条路走 `vmm_console_pump`，不经过 helper。
 
 **已验证的组合**（2026-09-24，均为 0 个 `[ERROR]`）：

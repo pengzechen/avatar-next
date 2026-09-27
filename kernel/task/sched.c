@@ -92,6 +92,18 @@ static uint32_t g_rr_counter;
 void
 sched_enqueue(task_t *task)
 {
+    /*
+     * 防御：正在运行的任务不在任何队列里，把它再挂进队列会让它被两个核
+     * 同时执行（任务栈/状态互相踩）。合法的调用者只会入队 READY/BLOCKED
+     * 的任务 —— 走到这里说明有人破坏了「谁在哪」的不变量，宁可漏入队
+     * （任务下次被唤醒时还会再试）也不要写坏运行队列。
+     */
+    if (task->state == TASK_RUNNING) {
+        KLOG_ERROR("[sched] enqueue RUNNING task '%s' id=%u (affinity=%u) —— 拒绝\n",
+                   task->name, task->id, task->cpu_affinity);
+        return;
+    }
+
     uint32_t n = g_num_cpus ? g_num_cpus : 1U;
     uint32_t target;
     if (n == 1U) {
@@ -184,9 +196,24 @@ sched_dequeue(task_t *task)
 static task_t *
 pick_next(cpu_t *c)
 {
+    extern task_t g_task_pool[];        /* 定义在 task.c（非 static） */
+
     list_node_t *node = list_delete_first(&c->run_queue);
     if (node) {
         task_t *task = container_of(node, task_t, run_node);
+
+        /*
+         * 队列里捡出来的指针必须落在任务池里。落到池外 = 运行队列已经被
+         * 写坏（历史上真出现过：CR2=0xffffffffffffffc8 的野指针）。
+         * 这时候**不要**继续用这个指针（一写就崩），跳过它并让本核跑 idle ——
+         * 坏的是一个节点，整机还能继续跑，日志里也留下了现场。
+         */
+        if (task < g_task_pool || task >= g_task_pool + TASK_MAX) {
+            KLOG_ERROR("[sched] CORRUPT runqueue on cpu%u: node=%p -> task=%p "
+                       "(out of pool) —— 跳过\n", c->cpu_id, (void *)node,
+                       (void *)task);
+            return c->idle_task;
+        }
         return task;
     }
     return c->idle_task; /* 队列为空，回退到本核 idle */
@@ -237,6 +264,7 @@ sched_schedule(void)
     }
 
     next->state     = TASK_RUNNING;
+
     barrier_compiler();  // 确保 state 在 current_task 之前完成
     c->current_task = next;             /* Phase 1：per-CPU 主存储 */
     barrier_compiler();  // 确保 current_task 在 arch_task_switch 之前完成

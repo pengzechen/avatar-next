@@ -339,11 +339,20 @@ struct task *vcpu_task_create(vcpu_t *vcpu, uint8_t priority)
     name[4] = '0' + (char)(vcpu->vcpu_id & 0xF);
     name[5] = '\0';
 
-    struct task *t = task_create(name, vcpu_task_fn, vcpu, priority);
+    /*
+     * vcpu 状态（VMCS / VHE 寄存器 / SBI HSM 等）尚未支持跨核迁移，
+     * 全部钉到 BSP。
+     *
+     * ⚠️ 必须用 task_create_affinity()，**不能** task_create() 之后再
+     * task_set_cpu_affinity(t, 0)：后者有窗口 —— 任务在 task_create() 里已经
+     * 入队（round-robin 可能挑中 CPU1），若 CPU1 在那两步之间把它挑走执行，
+     * sched_dequeue() 就找不到它（RUNNING 不在队列里）→ 紧接着 sched_enqueue()
+     * 又把它挂到 CPU0 队列 → 同一个 vcpu 任务被他核运行着、同时躺在 CPU0 队列，
+     * 被两个核同时跑，任务状态/运行队列双双写坏。
+     * 实测就是 Ctrl+] 停 guest 之后再启动时崩在 sched_schedule 的 pick_next()。
+     */
+    struct task *t = task_create_affinity(name, vcpu_task_fn, vcpu, priority, 0);
     if (t) {
-        /* vcpu 状态（VMCS / VHE 寄存器 / SBI HSM 等）尚未支持跨核迁移。
-         * 暂时全部钉到 BSP，待后续实现 vcpu 跨核迁移再放开。 */
-        task_set_cpu_affinity(t, 0);
 
         /*
          * 从这里起就算「guest 在跑」：/dev/vmm 的 write/poll 会立刻看到，

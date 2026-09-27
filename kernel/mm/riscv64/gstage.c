@@ -109,6 +109,19 @@ void rv_gstage_activate(void)
                      ((uint64_t)s_vmid << HGATP_VMID_SHIFT) |
                      root_ppn;
 
+    /*
+     * 幂等：hgatp 已经是这个值就直接返回。
+     *
+     * 本函数现在**每次进 guest 前**都会被调一次（见 hext_run.c 的
+     * vmm_arch_restore_guest_ctx）—— 因为 hgatp 是 per-hart 的，而
+     * hext_vm_init() 是在 helper 所在的 hart 上跑的。若每次都无条件写，
+     * 顺带的 hfence.gvma 会把整个 G-stage TLB 刷掉，进 guest 的成本白白翻倍。
+     */
+    uint64_t cur;
+    __asm__ volatile("csrr %0, 0x680" : "=r"(cur));
+    if (cur == hgatp)
+        return;
+
     /* hgatp = CSR 0x680（数值形式，避免汇编器不识别 hgatp 名字）*/
     __asm__ volatile("csrw 0x680, %0" :: "r"(hgatp) : "memory");
     gstage_flush();

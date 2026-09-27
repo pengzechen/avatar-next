@@ -178,6 +178,32 @@ DBCN/CPPC/PMU 时会安静地换别的路径。
    随机出现的 guest 用户态 SIGSEGV。这条最反直觉（VMM 抢断时硬件把恢复 PC 放在
    **HS `sepc`**，`vsepc` 原封不动），单独写在 **§7**。
 
+10. **HS 级 CSR 是 per-hart 的，而 `hext_vm_init()` 跑在 helper 那颗 hart 上。**
+    helper 模式（`/bin/vmm-run`）下，VM 的 setup 全在**调用 ioctl 的那颗 hart**
+    上做，而 vCPU 任务钉在 hart0 上（`task_set_cpu_affinity`）。下面这些只写了
+    一处的 CSR 于是全是**复位值**：
+
+    | CSR | 不补的后果 |
+    |---|---|
+    | `hgatp` | = Bare → **G-stage 形同关闭**：guest 直接访问宿主物理地址，MMIO 也不再陷入 |
+    | `hedeleg`/`hideleg`/`hie` | guest 的缺页、VS 定时器/外部中断全不委托 |
+    | `hcounteren` | guest 读 `time` 直接非法指令（Linux 的时钟源就是它） |
+    | `hstatus.VTW` | VS-mode 的 `wfi` 不再陷入，宿主 yield 路径失效 |
+
+    **症状**：SMP=1 永远正常、直启模式也正常，**SMP>1 时概率性起不来**（helper
+    落在哪颗 hart 决定，≈50%）。修法：`vmm_arch_restore_guest_ctx()` 里加
+    `hext_per_hart_csrs_ensure()`，每次进 guest 前在**真正跑 vCPU 的 hart** 上
+    重设一遍；`rv_gstage_activate()` 做成幂等（hgatp 没变就不写、也不刷
+    G-stage TLB），否则每次入口都白白 `hfence.gvma`。
+
+    > 这是「每核/每 hart 一份的状态，初始化点必须和使用点同核」这一类的实例之一；
+    > x86 上有三处同族问题（`IA32_FEATURE_CONTROL`、VMXON 区域、宿主 MSR 载入表），
+    > 一并记在 `docs/bugfix/SMP_HELPER_MODE_BUGFIX.md` 与
+    > `docs/vmm/X86_GUEST_LINUX.md` §9.10。**helper 模式 + SMP>1** 是唯一会
+    > 暴露它们的组合，回归用 `tools/vmm_helper_regress.sh riscv64 6 2 --restart`。
+    > 实测（2026-09-27，`run-net` helper 模式）：修前 SMP=2 约 1/2 起不来；
+    > 修后 **SMP=2 启动 6/6 通过**。
+
 ## 7. VMM 抢断 guest 时的现场保存：三个同源 bug
 
 这三个是同一类问题 —— **VS→HS 抢断绕过了 guest 自己的 `vstvec`，所以 guest

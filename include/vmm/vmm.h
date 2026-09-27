@@ -194,6 +194,21 @@ typedef struct vcpu {
     uint64_t g_gdt_base;         /* GPA */
     uint32_t g_gdt_limit;
     int      g_boot_linux;       /* 1 = Linux 引导路径 */
+
+    /*
+     * VMCS 是否已在**跑 vCPU 的这颗核**上初始化过（每个 VM 生命周期一次）。
+     *
+     * 不能沿用 vmx_vcpu_setup() 在 /bin/vmm-run 所在核上的初始化：
+     *   1) VMCLEAR 只对**本核 current 的** VMCS 有效 —— setup 核 clear 之后
+     *      vCPU 核一 VMPTRLD，那块 VMCS 就"搬"走了，下次再在 setup 核上
+     *      clear 是空操作，launch state 永远停在 launched ⇒ 第二次启动的
+     *      VMLAUNCH 报 inst_error=0x4（VMLAUNCH with non-clear VMCS）。
+     *   2) VMCLEAR 会把 VMCS 复位成"上次退出时的快照"，所以它必须发生在
+     *      写字段**之前** —— 先 clear 再 setup 的顺序不能反。
+     * 两条合起来只有一个写法：clear + 全部初始化一起，在 vCPU 核上做完。
+     * 字段放末尾 —— vmx_run.S 硬编码了 launched@0x84 等偏移，不能动前面。
+     */
+    int      vmcs_ready;
 } vcpu_t;
 
 /*

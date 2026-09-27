@@ -180,8 +180,14 @@ avatar/
   CPUID 0x15/0x16 报 0 掉进 PIT 死循环、STI 影子挡住中断注入、
   `MSR_FS_BASE` 漏写 `GUEST_BASE_FS` 导致 userspace 段错误…）。
   改 `kernel/vmm/x86_64/*` 前必读。
-  **回归门禁**：`tools/boot_regress.sh [次数]` —— 连续启动 N 次、每次都要出
-  `~ #`（§9.9 那个间歇性卡死就是它抓出来的，修复后 500/500 通过）。
+  **回归门禁（两条路各一个，别只跑一个）**：
+  - **直启 + SMP=1**：`tools/boot_regress.sh [次数]` —— 连续启动 N 次、每次都要出
+    `~ #`（§9.9 那个间歇性卡死就是它抓出来的，修复后 500/500 通过）。
+  - **helper + 多核**：`tools/vmm_helper_regress.sh <arch> [次数] [smp] [--restart]` ——
+    `run-net` 起宿主 shell 再敲 `/bin/vmm-run`；`--restart` 额外验证「Ctrl+] 停掉
+    之后还能再启动」。**SMP>1 下的坑几乎都只在这条路上出现**（VM setup 跑在 helper
+    的核上、vCPU 钉在另一颗核上），根因清单见 `docs/bugfix/SMP_HELPER_MODE_BUGFIX.md`
+    与 `docs/vmm/X86_GUEST_LINUX.md` §9.10~§9.12。
 - **两种运行模式、`/dev/vmm` 协议、Ctrl+] / Ctrl+[ 语义**: `docs/vmm/GUEST_CONSOLE.md`
 - **裸跑 guest 作基线对照**: `docs/vmm/GUEST_NATIVE_QEMU.md`
 

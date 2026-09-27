@@ -287,13 +287,44 @@ static void vcpu_external_irq_on_entry(vcpu_t *vcpu)
     hext_set_vs_external_irq(irq != 0);
 }
 
-/* restore_guest_ctx：每次进入 guest 前的架构相关同步（见 vmm_run_vcpu）*/
+/*
+ * hext_per_hart_csrs_ensure — 把「每 hart 一份」的 HS 级 CSR 补齐
+ *
+ * hext_vm_init() 是在 **helper（/bin/vmm-run）所在的 hart** 上跑的，而 vCPU
+ * 任务钉在 hart0 上；SMP>1 时两者不是同一颗。下面这些 CSR 都只写了一处
+ * （init），于是 vCPU 跑在另一颗 hart 上时它们全是复位值：
+ *   hgatp            = Bare → **G-stage 形同关闭**（penalty：guest 直接访问
+ *                      宿主物理地址，MMIO 也不再陷入）
+ *   hedeleg/hideleg/hie   → guest 的缺页、VS 定时器/外部中断全不委托
+ *   hcounteren       → guest 读 time 直接非法指令（Linux 的时钟源就是它）
+ *   hstatus.VTW      → VS-mode 的 WFI 不再陷入，宿主 yield 路径失效
+ * 症状与 x86 那两个「每核状态只在别的核上初始化」的坑完全一样：SMP=1 正常、
+ * SMP>1 概率性起不来（helper 落在哪颗 hart 决定），所以必须在**每次进 guest 前**
+ * 在真正跑 vCPU 的 hart 上重设一遍。
+ */
+static void hext_per_hart_csrs_ensure(void)
+{
+    WRITE_HEDELEG(HEDELEG_COMMON);
+    WRITE_HIDELEG(HIDELEG_COMMON);
+    WRITE_HIE(HIDELEG_COMMON);
+    WRITE_HCOUNTEREN(HCOUNTEREN_CY_TM_IR);
+
+    uint64_t hs = READ_HSTATUS();
+    if (!(hs & HSTATUS_VTW))
+        WRITE_HSTATUS(hs | HSTATUS_VTW);
+
+    rv_gstage_activate();   /* 幂等：hgatp 没变就不写、也不刷 TLB */
+}
+
 void vmm_arch_restore_guest_ctx(vcpu_t *vcpu)
 {
     /*
-     * VS-CSRs 由 hext_enter_guest 汇编逐次恢复，这里只做「设备 → 虚拟中断
-     * 控制器」的同步。两者都必须在**每次**入口做，不能只在启动时做一次。
+     * VS-CSRs 由 hext_enter_guest 汇编逐次恢复，这里做的是「每次入口」的
+     * 两件事：每 hart 的 HS 级 CSR 补齐，以及「设备 → 虚拟中断控制器」的同步。
+     * 都必须在**每次**入口做，不能只在启动时做一次。
      */
+    hext_per_hart_csrs_ensure();
+
     vcpu_timer_irq_on_entry(vcpu);
     vcpu_external_irq_on_entry(vcpu);
 

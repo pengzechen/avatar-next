@@ -33,8 +33,19 @@ extern uint64_t x86_guest_hpa_base(void);
 
 /* ── 静态存储（4KB 对齐）──────────────────────────────────── */
 
-/* VMXON 区域（4KB）*/
-static uint8_t g_vmxon_region[4096] __attribute__((aligned(4096)));
+/* VMXON 区域（4KB，**每个逻辑处理器一块**）
+ *
+ * VMXON 区域是「该逻辑处理器在 VMX operation 期间使用」的，每个进 VMX
+ * operation 的核都要有自己的一块（KVM / Xen 都按 per-CPU 分配）。
+ *
+ * 来历（2026-09-27 定位 SMP=2 helper 模式那个 #GP 时）：这块原来是全局单例，
+ * 一度被当成根因 —— 真正的根因是 `IA32_FEATURE_CONTROL`（每 vCPU 一份，
+ * 只在 helper 核上使能过，见 vmx_global_init 里的说明）。改成 per-CPU 之后
+ * 症状照旧，才顺着 KVM 的 handle_vmon 找到真凶。**per-CPU 化本身仍然是对的**，
+ * 只是它不是那次故障的原因 —— 别把这段历史当成「共用一块必挂」的证据。
+ *
+ * 对照：VMCS 那边本来就是 per-vCPU 的（g_vmcs_storage[MAX_VCPUS]）。*/
+static uint8_t g_vmxon_region[CONFIG_SMP_CPUS][4096] __attribute__((aligned(4096)));
 
 /* 每个 vCPU 的 VMCS（4KB）*/
 static uint8_t g_vmcs_storage[MAX_VCPUS][4096] __attribute__((aligned(4096)));
@@ -952,12 +963,27 @@ static int vmx_global_init(void)
     if (s_vmx_on[cpu])
         return 0;
 
-    /* 写 VMXON 区域版本号 */
-    memset(g_vmxon_region, 0, sizeof(g_vmxon_region));
-    *(uint32_t *)g_vmxon_region = g_vmx_basic.revision;
+    /*
+     * IA32_FEATURE_CONTROL 也是**每个逻辑处理器一份**的（KVM 里就是每个 vCPU
+     * 一份）。原来只有 vmx_check_support() 在 vmx_vm_init() 里使能过一次，
+     * 那是在 helper 的核上 —— 于是只有那颗核被使能：
+     *   SMP=1：helper 与 vCPU 同核，看不出来；
+     *   SMP=2：vCPU 所在核的 vmxon 被 KVM 判为「未使能」，直接 #GP
+     *          （handle_vmon 里 `msr_ia32_feature_control &
+     *            VMXON_NEEDED_FEATURES` 那一条）。
+     * 这也解释了「有概率」：helper 落在哪颗核，决定哪颗核被使能。
+     * vmx_check_support() 幂等（已使能就直接返回），这里补在真正 VMXON 的核上。
+     */
+    if (vmx_check_support() != 0)
+        return -1;
+
+    /* 写**本核自己那块** VMXON 区域的版本号（区域是 per-CPU 的，见其声明）*/
+    uint8_t *vmxon_region = g_vmxon_region[cpu];
+    memset(vmxon_region, 0, sizeof(g_vmxon_region[0]));
+    *(uint32_t *)vmxon_region = g_vmx_basic.revision;
 
     /* vmxon 需要物理地址 */
-    uint64_t vmxon_pa = virt_to_phys(g_vmxon_region);
+    uint64_t vmxon_pa = virt_to_phys(vmxon_region);
     if (vmx_on(vmxon_pa)) {
         KLOG_ERROR("[VMX] VMXON failed (pa=0x%llx)\n", vmxon_pa);
         return -1;
@@ -1467,6 +1493,28 @@ static uint32_t g_ioapic_sel;
 static uint32_t g_ioapic_rt[IOAPIC_NENT * 2];
 static int      g_ioapic_inited;
 
+/*
+ * 诊断：最近 N 次 VM-exit 的环形记录（per-vCPU），triple fault 时整段回放。
+ *
+ * 起因：第二次启动 guest 会 triple fault，但 exit 路径上的 TEMP-DBG 是
+ * `static unsigned n` + `n <= 25` 限流的 —— 第一次启动就用掉了全部配额，
+ * 第二次启动的 exit 详情**一次都没打**，于是「崩之前 guest 在干什么」
+ * 完全看不到。这里用环形缓冲，绕开"次数配额"这种一次性的诊断方式。
+ * 每次 vmx_vm_init() 清零（和 vCPU 状态同生命周期）。
+ */
+#define VMM_EXIT_TRACE_MAX 32
+static struct {
+    uint32_t reason;
+    uint32_t intr;
+    uint64_t rip;
+} g_exit_trace[MAX_VCPUS][VMM_EXIT_TRACE_MAX];
+static uint32_t g_exit_trace_n[MAX_VCPUS];      /* 下一个写入位置 */
+
+/* 入口状态诊断的 per-vCPU 计数（每次 vmx_vm_init 清零）。
+ * 早先这里是 `static unsigned n` —— 第一次启动就把配额用光，第二次启动
+ * 一条都不打，正好把最需要看的那次盖住了。 */
+static uint32_t g_entry_dbg_n[MAX_VCPUS];
+
 static uint32_t ioapic_reg_read(uint32_t reg)
 {
     switch (reg) {
@@ -1706,6 +1754,16 @@ static int vmx_exit_handler(vcpu_t *vcpu)
 
     uint64_t guest_rip = vmcs_read(GUEST_RIP);
     uint64_t inst_len  = vmcs_read(EXI_INST_LEN);
+
+    /* 环形记录（见 g_exit_trace 的注释）—— 只在 triple fault 时才回放 */
+    {
+        uint32_t id = (uint32_t)(vcpu->vcpu_id & (MAX_VCPUS - 1));
+        uint32_t k  = g_exit_trace_n[id];
+        g_exit_trace[id][k].reason = reason;
+        g_exit_trace[id][k].intr   = (uint32_t)vmcs_read(EXI_INTR_INFO);
+        g_exit_trace[id][k].rip    = guest_rip;
+        g_exit_trace_n[id] = (k + 1) % VMM_EXIT_TRACE_MAX;
+    }
 
     /* 保存 guest rflags（从 VMCS 读取，不从寄存器）*/
     vcpu->regs.rflags = vmcs_read(GUEST_RFLAGS);
@@ -2023,6 +2081,21 @@ static int vmx_exit_handler(vcpu_t *vcpu)
                    vcpu->vcpu_id,
                    (unsigned long long)guest_rip,
                    (unsigned long long)vmcs_read(GUEST_RSP));
+
+        /* 回放最近 VMM_EXIT_TRACE_MAX 次退出（最旧在前）。triple fault
+         * 往往是"前面某个异常没被正确处理"的终点，这一段比终点本身有用。*/
+        {
+            uint32_t id = (uint32_t)(vcpu->vcpu_id & (MAX_VCPUS - 1));
+            KLOG_ERROR("[VMX] last %d VM-exits of vcpu%u (oldest first):\n",
+                       VMM_EXIT_TRACE_MAX, id);
+            for (uint32_t k = 0; k < VMM_EXIT_TRACE_MAX; k++) {
+                uint32_t i = (g_exit_trace_n[id] + k) % VMM_EXIT_TRACE_MAX;
+                KLOG_ERROR("[VMX]   +%u reason=%u rip=0x%llx intr=0x%x\n",
+                           k, g_exit_trace[id][i].reason,
+                           (unsigned long long)g_exit_trace[id][i].rip,
+                           g_exit_trace[id][i].intr);
+            }
+        }
         /*
          * 把出错 RIP 附近的 guest 字节 dump 出来。guest RAM 就在宿主窗口里，
          * 可以直接读 —— 没有这一手就只能对着 "triple fault" 干瞪眼。
@@ -2035,9 +2108,20 @@ static int vmx_exit_handler(vcpu_t *vcpu)
             uint64_t base = x86_guest_hpa_base();
             uint64_t lim  = x86_guest_mem_size();
 
-            if (guest_rip >= 0x10 && guest_rip < lim) {
+            /*
+             * guest_rip 是**线性地址**：guest 内核 text 在 0xffffffff80000000
+             * 之上，直接拿它跟 guest 物理窗口（0..192MiB）比永远不成立 ——
+             * 早先的写法就是这样，于是最需要 dump 的时候一行都没打。
+             * 按 __pa_symbol 的公式换算：phys = rip - __START_KERNEL_map +
+             * phys_base，其中 phys_base = 0x1000000（bzImage 的 pref 地址）。
+             */
+            uint64_t gp = guest_rip;
+            if (guest_rip >= 0xffffffff80000000ULL)
+                gp = guest_rip - 0xffffffff80000000ULL + 0x1000000ULL;
+
+            if (gp >= 0x10 && gp < lim) {
                 const uint8_t *p =
-                    (const uint8_t *)phys_to_virt(base + guest_rip - 0x10);
+                    (const uint8_t *)phys_to_virt(base + gp - 0x10);
                 int o = 0;
                 for (int i = 0; i < 32; i++) {
                     line[o++] = hx[p[i] >> 4];
@@ -2326,6 +2410,39 @@ int vmx_vm_init(vm_t *vm)
     }
     vm->nr_vcpus = nr;
 
+    /* exit 诊断环形缓冲与 vCPU 同生命周期 —— 不清的话第二次启动回放出来的
+     * 是上一次启动的尾巴（和 static 限流计数是同一类坑）。*/
+    memset(g_exit_trace, 0, sizeof(g_exit_trace));
+    memset(g_exit_trace_n, 0, sizeof(g_exit_trace_n));
+    memset(g_entry_dbg_n, 0, sizeof(g_entry_dbg_n));
+
+    /*
+     * ── 复位虚拟设备桩的可变状态 ────────────────────────────────
+     *
+     * 下面这些是**文件级 static**，生命周期是整个内核；而 VM 的生命周期是
+     * 「每次 /bin/vmm-run」。于是第二次启动会带着第一次停止那一刻的残留：
+     *
+     *   - g_ioapic_inited==1 ⇒ 「把所有重定向项设成屏蔽」那段初始化被
+     *     **整段跳过**（它是 if (!inited) 守卫的）；
+     *   - g_ioapic_sel / g_ioapic_rt[] ⇒ 上次的寄存器选择与路由表；
+     *   - PIC 屏蔽字、PIT 通道、端口 61 同理。
+     *
+     * 症状（x86_64 + helper + SMP=4 实测）：第二次启动的 guest triple fault，
+     * RIP 每次都是同一个地址 —— 确定性崩溃，只是"是否踩中"取决于上次停止
+     * 时残留了什么，所以表现为概率性。
+     *
+     * 语义上每次 boot 本就该等于设备上电，所以统一在这里复位。
+     * （vLAPIC 和 UART 桩各自在 vlapic_init()/uart16550_init() 里已经 memset，
+     *   不在这里重复 —— 那两个函数每次 boot 都会被调到。）
+     */
+    g_pic_master_imr = 0xFF;
+    g_pic_slave_imr  = 0xFF;
+    g_ioapic_sel     = 0;
+    g_ioapic_inited  = 0;
+    memset(g_ioapic_rt, 0, sizeof(g_ioapic_rt));
+    memset(g_pit, 0, sizeof(g_pit));
+    g_port61 = 0;
+
     KLOG_INFO("[VMX] vmx_vm_init: %d vCPU(s) ready\n", nr);
     return 0;
 }
@@ -2448,6 +2565,27 @@ static void vmx_refresh_host_state(vcpu_t *vcpu)
     vmcs_write(HOST_BASE_GS, vmx_rdmsr(MSR_GS_BASE));
 
     /*
+     * 宿主 MSR 载入表（g_msr_host）里的值也必须是**本核**的。
+     *
+     * VM-exit 时硬件按这张表把宿主 MSR 装回去，而 vmx_msr_lists_init() 只在
+     * VM 初始化时、在**调用者所在的核**上抓过一次快照 —— helper 模式下那是
+     * /bin/vmm-run 的核，而 vCPU 钉在 BSP 上。于是 SMP>1 且 helper 落在另一颗
+     * 核时，每次从 guest 出来宿主都被装上了**别的核**的 MSR；其中
+     * MSR_KERNEL_GS_BASE 就是那颗核的 per-CPU 指针（见 g_msr_list）。
+     *
+     * 宿主自己的 swapgs（SYSCALL 入口）随即把内核的 %gs 指到别的核上，
+     * task_current() 于是返回别的核的任务。实测连锁反应（SMP=2）：
+     *   - execve 的 fd 继承把 idle 任务那张没初始化过的 fd_table 当父进程，
+     *     128 个 fd 池槽被一次吃光（之后宿主里所有 open() 都失败）；
+     *   - execve 的 wrapper 把 idle/1 当自己退出掉 → 该核没有 idle → 整机卡死。
+     * SMP=1 时 helper 与 vCPU 同核，快照恰好是对的，所以一直没暴露。
+     */
+    for (int i = 0; i < VMM_MSR_COUNT; i++) {
+        if (g_msr_host[id][i].idx)
+            g_msr_host[id][i].val = vmx_rdmsr(g_msr_host[id][i].idx);
+    }
+
+    /*
      * `swapgs` 往返的另一半：guest 里的 swapgs 直接改硬件 MSR，VMM 看不见；
      * VM-exit 的 store 表把它存进 g_msr_store，这里搬进 entry-load 表
      * （g_msr_guest），下次进入 guest 时再装回去。
@@ -2479,17 +2617,60 @@ int vmm_arch_enter_guest(vcpu_t *vcpu)
     /* 重新装载该 vCPU 的 VMCS（yield 后调度回来时需要）*/
     vmcs_t *v = (vmcs_t *)g_vmcs_storage[vcpu->vcpu_id];
     uint64_t vmcs_pa = virt_to_phys(v);
+
+    /*
+     * ── VMCS 初始化搬到**跑 vCPU 的这颗核**上做（每个 VM 一次）────────
+     *
+     * vmx_vcpu_setup() 内部就是 `VMCLEAR → VMPTRLD → 写全部字段`，这正是
+     * 唯一正确的顺序。问题只在于**它在哪颗核上跑**：
+     *
+     *   - VMCLEAR 只对**本核 current 的** VMCS 有效。原路径在 /bin/vmm-run
+     *     所在核（helper 核）上 clear，随后 vCPU 核一 VMPTRLD，那块 VMCS
+     *     就"搬"过去了 —— 再在 helper 核上 clear 是空操作，launch state
+     *     永远停在 launched ⇒ 第二次启动 VMLAUNCH 报 inst_error=0x4
+     *     （VMLAUNCH with non-clear VMCS），guest 一个字节都不输出。
+     *   - VMCLEAR 会把这 VMCS 复位成"上次退出时的快照"。所以它必须发生在
+     *     写字段**之前**：先 clear 再 setup 不能反。（曾经把 clear 单独挪到
+     *     这里、排在 setup 之后 —— 结果是刚写好的入口状态被快照覆盖，guest
+     *     从上次断点继续跑、内存却已被 memset 清零 ⇒ 连第一次启动都 triple
+     *     fault。）
+     *
+     * 所以：在这里（vCPU 核上）整个重做一遍，vmcs_ready 保证每个 VM 生命
+     * 周期只做一次。HLT yield 那条路径也会 clear + launched=0，但它清的是
+     * 运行中的 VMCS，快照即最新状态，不需要（也不该）重做初始化。
+     *
+     * 只对 Linux 引导路径做：玩具 guest（VMM_TEST）的入口在 vmx_vcpu_setup()
+     * 的 entry 参数里，这里拿不到，且它每次 QEMU 只启动一次、没有这个坑。
+     */
+    if (!vcpu->vmcs_ready && vcpu->g_boot_linux) {
+        vmx_vcpu_setup(vcpu, NULL);     /* clear → load → 写全部字段 */
+        vcpu->launched   = 0;           /* 刚 clear 过 ⇒ 必须走 VMLAUNCH */
+        vcpu->vmcs_ready = 1;
+    }
+
+    /*
+     * 无论走上面哪条路，进 guest 之前都必须让**本核的 current VMCS** 是这一块：
+     *   - vmx_vcpu_setup() 结尾还有一次 flush 用的 VMCLEAR（把 VMWRITE 的结果
+     *     真正写回内存），执行完 VMCS 就不再是 current；
+     *   - HLT yield 那条路径也会 VMCLEAR。
+     * 少了这一下，后面的 VMREAD/VMLAUNCH 全在"没有 current VMCS"的状态下执行，
+     * 症状极具误导性：ENTRY-DBG 读出来的是栈上的垃圾、inst_error 是个非法值
+     * （实测 0x4400），而日志里只会看到一句 guest entry failed。
+     */
     if (vmcs_load_pa(vmcs_pa)) {
         KLOG_ERROR("[VMX] vmptrld failed in vmm_arch_enter_guest (vcpu%d pa=0x%llx)\n",
                    vcpu->vcpu_id, vmcs_pa);
         return 0;
     }
+
     vmx_refresh_host_state(vcpu);
 
 
-    {   /* TEMP-DBG：两条路径各打一次入口状态，用来 diff */
-        static unsigned n;
-        if (n < 2) {
+    {   /* 入口状态：每次 VM 启动的头 2 次 entry 打印，用来还原「第二次启动
+         * 时 VMCS 里的 guest 状态到底是什么」。计数是 per-vCPU 且随 VM 生命
+         * 周期清零 —— 见 g_entry_dbg_n 的注释。*/
+        uint32_t id = (uint32_t)(vcpu->vcpu_id & (MAX_VCPUS - 1));
+        if (g_entry_dbg_n[id] < 2) {
             KLOG_INFO("[ENTRY-DBG] cr0=%llx cr3=%llx cr4=%llx efer=%llx "
                       "rflags=%llx rip=%llx rsp=%llx\n",
                       vmcs_read(GUEST_CR0), vmcs_read(GUEST_CR3),
@@ -2515,7 +2696,7 @@ int vmm_arch_enter_guest(vcpu_t *vcpu)
                       (unsigned)vmcs_read(EXI_CONTROLS),
                       (unsigned)vmcs_read(EXC_BITMAP),
                       vmcs_read(EPT_POINTER));
-            n++;
+            g_entry_dbg_n[id]++;
         }
     }
 
@@ -2527,9 +2708,9 @@ int vmm_arch_enter_guest(vcpu_t *vcpu)
          * 日志上看只剩「task started」然后就没了）。
          * 编码见 Intel SDM Vol 3C 附录 C。
          */
-        KLOG_ERROR("[VMX] VM-entry failed: inst_error=0x%llx "
+        KLOG_ERROR("[VMX] VM-entry failed: inst_error=0x%llx launched=%d "
                    "(entry intr=0x%llx, msr_load_cnt=%llu, reason=0x%llx)\n",
-                   vmcs_read(VMX_INST_ERROR),
+                   vmcs_read(VMX_INST_ERROR), vcpu->launched,
                    vmcs_read(VM_ENTRY_INTR_INFO),
                    vmcs_read(VM_ENTRY_MSR_LOAD_COUNT),
                    vmcs_read(EXI_REASON));

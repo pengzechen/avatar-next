@@ -195,6 +195,18 @@ task_t *task_create(const char *name, void (*entry)(void *), void *arg,
                     uint8_t priority);
 
 /**
+ * task_create_affinity - 创建内核任务并**在入队前**指定它跑在哪颗核上
+ * @cpu_affinity: 目标逻辑 CPU（0..g_num_cpus-1）或 CPU_AFFINITY_ANY
+ *
+ * 需要把任务钉在某个核上的调用者（vcpu 就是）必须用这个，而不是
+ * task_create() + task_set_cpu_affinity()：后者有窗口 —— 新任务可能在两次
+ * 调用之间就被别的核挑走执行，于是既在跑又被塞进指定核的队列，
+ * 会被两个核同时执行（详见 task.c 里 task_create_affinity 的注释）。
+ */
+task_t *task_create_affinity(const char *name, void (*entry)(void *), void *arg,
+                             uint8_t priority, uint32_t cpu_affinity);
+
+/**
  * process_create - 创建用户进程
  * @name:       进程名称（最长 TASK_NAME_LEN-1 字节）
  * @user_entry: 用户态入口点（虚拟地址）
