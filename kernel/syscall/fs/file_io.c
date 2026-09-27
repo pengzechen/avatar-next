@@ -329,7 +329,12 @@ void sendfile_handler(uint64_t regs[6], task_t *current)
         if (nr <= 0) break;
 
         if (out_fd == 0 || out_fd == 1 || out_fd == 2) {
-            for (int i = 0; i < nr; i++) uart_putc(sbuf[i]);
+            /*
+             * sbuf 是**内核**缓冲（上面 vfs_read 填的），整段交给
+             * klog_write —— 它是往物理 UART 写的唯一入口，整段持锁，
+             * 所以这一块不会与别的核的日志逐字符插花。
+             */
+            klog_write(sbuf, (size_t)nr);
         } else if (out_obj && fd_obj_file(out_obj)) {
             vfs_write(fd_obj_file(out_obj), sbuf, (size_t)nr);
         }

@@ -83,8 +83,14 @@ static int tty_write(int nid, const void *buf, size_t len)
 {
     (void)nid;
     const char *src = (const char *)buf;
+    /*
+     * 逐字符走 klog_write，而不是整段 —— 因为 src 可能是**用户指针**
+     * （vfs_write 的 buf 一路来自 syscall 的 regs[]），整段输出会把裸访问
+     * 的爆炸半径从 1 字节放大到 len 字节。逐字符至少保证单字符不被撕裂，
+     * 且不绕过那把锁。用户指针校验在 syscall 入口那一层补。
+     */
     for (size_t i = 0; i < len; i++)
-        uart_putc(src[i]);
+        klog_write(&src[i], 1);
     return (int)len;
 }
 

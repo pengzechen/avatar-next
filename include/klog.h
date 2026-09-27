@@ -159,6 +159,34 @@ klog_sample_hit(uint32_t n)
 /* ===== 日志宏定义 ===== */
 
 /* 核心日志函数（由 klog.c 实现） */
+
+/*
+ * klog_write - 往物理 UART 输出的**唯一入口**
+ *
+ * 整段持 g_klog_lock 写完 len 个字节，保证一次调用不与别的输出交错。
+ *
+ * 为什么要有这个统一入口：从前每条路径各自直写（klog 自己有锁，
+ * sys_write / tty_write / VMM 各自 uart_putc 或 klog_putchar 无锁直写），
+ * 于是两个核一并发输出就逐字符插花 —— 实测 helper 模式下
+ *   [IN[FvOmm-]ru[Cn0]] kgueersnte ls/tvamrmt/vedm
+ * （C1 的 vmm-run printf 撞上 C0 的内核日志）。锁必须覆盖所有写者，
+ * 只锁住自己那条路等于没锁。
+ *
+ * ⚠️ 粒度是**整段**：逐字符调用它仍会与别的整段输出交错。逐字符只在
+ * 「数据本来就是逐字符来的」场合用（比如模拟 16550 的 TX），那时它至少
+ * 保证单字符不被撕裂。
+ *
+ * panic 路径（g_klog_panic）不取锁 —— 崩溃可能正发生在别的 CPU 持锁时，
+ * 取锁会死等。乱码远比死机可接受。
+ */
+extern void klog_write(const char *buf, size_t len);
+
+/*
+ * klog_putchar - 单字符输出，**不加锁**
+ *
+ * ⚠️ 只允许在已经持有 g_klog_lock 的上下文里用（即 klog_write 内部，
+ * 或明确知道自己在 panic 路径上）。新代码一律用 klog_write()。
+ */
 extern void klog_putchar(char c);
 extern void klog_flush(void);
 extern int  kvprintf(const char *fmt, va_list va);

@@ -978,17 +978,32 @@ void syscall_handler(trap_frame_t *frame)
 
 /* ── 具体系统调用实现 ──────────────────────────────────────────── */
 
+/* 一次 console write 最多搬多少字节到内核栈上（栈上缓冲，别开太大）*/
+#define SYS_WRITE_MAX 512
+
 int64_t sys_write(const char *str, uint64_t len)
 {
-    if (str == NULL) {
+    if (str == NULL)
         return -1;
-    }
+    if (len == 0)
+        return 0;
+    if (len > SYS_WRITE_MAX)
+        len = SYS_WRITE_MAX;
 
-    /* 简单实现：直接输出到 UART（未验证用户指针，后续改进） */
-    for (uint64_t i = 0; i < len; i++) {
-        klog_putchar(str[i]);
-    }
+    /*
+     * ⚠️ str 来自 regs[]，是**用户指针** —— 必须先经 copy_from_user_bytes
+     * 落进内核缓冲再输出，绝不能裸解引用（用户传个非法地址就是内核态
+     * #PF → 异常处理的 while(1) hlt → 整机挂死，LTP 实测踩过，
+     * 见 CLAUDE.md「用户指针」那条规则）。
+     *
+     * 输出走 klog_write()：它是往物理 UART 写的唯一入口，整段持锁，
+     * 所以这一整条 write 不会与别的核的日志逐字符插花。
+     */
+    char kbuf[SYS_WRITE_MAX];
+    if (copy_from_user_bytes(str, kbuf, len) < 0)
+        return -1;
 
+    klog_write(kbuf, (size_t)len);
     return (int64_t)len;
 }
 

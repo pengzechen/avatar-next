@@ -201,7 +201,8 @@ static void put_char_locked(vpl011_state_t *s, uint8_t c)
          * 不至于死锁，但属于「锁内做 I/O」—— 换来的是直启模式下不引入
          * 新的锁层级。通道模式（helper）下不会走到这里。
          */
-        klog_putchar((char)c);
+        /* 逐字符走唯一入口（与 vuart16550.c 的 uart_put_char 同理）*/
+        klog_write((const char *)&c, 1);
         return;
     }
 

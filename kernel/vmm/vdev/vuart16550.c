@@ -207,7 +207,9 @@ static void uart_put_char(uint8_t c)
     uart16550_state_t *s = &g_uart16550;
 
     if (!s->tx_channel) {
-        klog_putchar((char)c);
+        /* 逐字符走唯一入口：guest 控制台本来就是字节流，粒度只能是字节，
+         * 但至少每次输出都真的经过那把锁，不和别的核各写各的。*/
+        klog_write((const char *)&c, 1);
         return;
     }
 

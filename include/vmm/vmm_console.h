@@ -96,7 +96,7 @@ static inline int vmm_console_tx_has_data(void)
 static inline void vmm_console_putchar(uint8_t c)
 {
 #if ARCH_AARCH64
-    klog_putchar((char)c);
+    klog_write((const char *)&c, 1);
 #else
     uart16550_putchar(c);
 #endif
