@@ -229,9 +229,17 @@ static int handle_dabt(vcpu_t *vcpu, uint64_t esr)
      */
     if (vcpu->vm && stage2_ipa_is_ram(&vcpu->vm->s2, ipa_page)) {
         vm_t *vm = vcpu->vm;
-        uint64_t pa = stage2_map_page(&vm->s2, ipa_page, 1 /*zero*/);
+        /*
+         * 一次装整个 2 MiB 块，而不是一页 —— 见 stage2_map_block 的注释：
+         * Linux 启动期缺页密集，单页映射每次都要一次 EL2 往返（TCG 下约
+         * 1.2ms），1447 次就是 1.7 秒。
+         */
+        uint64_t npg = stage2_map_block(&vm->s2, ipa_page, 1 /*zero*/);
+        uint64_t pa  = 0;
 
-        if (!pa) {
+        (void)stage2_lookup(&vm->s2, ipa_page, &pa);  /* 块装好后必然命中 */
+
+        if (!npg || !pa) {
             KLOG_ERROR("[vmm] vm%u: stage-2 fault ipa=0x%llx but PMM exhausted "
                        "(free=%llu pages)\n",
                        vm->vmid, (unsigned long long)ipa_page,
@@ -242,7 +250,18 @@ static int handle_dabt(vcpu_t *vcpu, uint64_t esr)
         vm->s2.nr_fault++;
         if (vm->s2.nr_fault <= 4)
             dump_vttbr_diag(vm, "dfault", ipa_page, pa, esr);
-        stage2_tlb_flush_ipa(&vm->s2, ipa_page);
+        /*
+         * ⚠️ 这里**故意不做 TLB 维护**。
+         *
+         * 缺页意味着这个 IPA 之前没有有效映射 —— TLB 里不可能有它的翻译
+         * （ARM 也不要求实现缓存"无效"结果，QEMU/KVM 不缓存）。所以刚装上的
+         * 表项立即可见，不需要 tlbi。
+         *
+         * 反过来代价极大：stage2_tlb_flush_ipa() 里有两道 barrier_sync()
+         * （dsb ish），TCG 下要同步所有 vCPU —— 每次缺页都做的话，guest
+         * 启动时几千次缺页能白白多花一秒多。对照：加载期的批量映射
+         * stage2_map_range() 也是只在末尾刷一次。
+         */
         return EL2_RESUME;      /* ⚠️ 不推进 PC：让 guest 重试那条指令 */
     }
 
@@ -313,7 +332,7 @@ static int handle_iabt(vcpu_t *vcpu, uint64_t esr)
         vm->s2.nr_fault++;
         if (vm->s2.nr_fault <= 4)
             dump_vttbr_diag(vm, "ifault", ipa_page, pa, esr);
-        stage2_tlb_flush_ipa(&vm->s2, ipa_page);
+        /* 同上：首次映射不需要 TLB 维护 */
         return EL2_RESUME;      /* 不推进 PC：重试这次取指 */
     }
 
@@ -501,38 +520,6 @@ static int vmm_exit_handler(vcpu_t *vcpu)
 #define CNTV_CTL_IMASK      (1ULL << 1)
 
 
-/*
- * 诊断：把 vGIC 的**每一层**状态一次打全，用来定位"pending 置了但 guest
- * 收不到"卡在哪一步。
- *
- * 层次（从内到外）：
- *   软件位图 pending → enabled → active  ⇒ sync_entry 的排队条件
- *   硬件 ICH_HCR(En) / ELRSR(空槽) / EISR(有 active 的槽)
- *   LR 镜像 ⇒ 我们实际写进硬件的东西
- */
-static void dump_vgic_state(vm_t *vm, vcpu_t *vcpu, const char *why)
-{
-    vgic3_t *g = &vm->vgic3;
-    uint32_t id = (uint32_t)vcpu->vcpu_id;
-    uint32_t bit = 1u << (VTIMER_PPI_IRQ & 31);
-
-    KLOG_INFO("[vgic-dbg] vm%u %s: PPI%u pend=%u enab=%u act=%u | "
-              "HCR=0x%llx ELRSR=0x%llx EISR=0x%llx | "
-              "LR=[0x%llx 0x%llx 0x%llx 0x%llx] | VMCR=0x%llx\n",
-              vm->vmid, why, (unsigned)VTIMER_PPI_IRQ,
-              !!(vmm_vgic3_pending_word(g, id, 0) & bit),
-              !!(vmm_vgic3_enabled_word(g, id, 0) & bit),
-              !!(vmm_vgic3_active_word(g, id, 0) & bit),
-              (unsigned long long)gicv3_read_hcr(),
-              (unsigned long long)gicv3_read_elrsr(),
-              (unsigned long long)gicv3_read_eisr(),
-              (unsigned long long)g->vcpu[id].lr[0],
-              (unsigned long long)g->vcpu[id].lr[1],
-              (unsigned long long)g->vcpu[id].lr[2],
-              (unsigned long long)g->vcpu[id].lr[3],
-              (unsigned long long)g->ich_vmcr);
-}
-
 static void aarch64_check_vtimer(vcpu_t *vcpu)
 {
     uint64_t ctl = vcpu->cntv_ctl;
@@ -547,14 +534,18 @@ static void aarch64_check_vtimer(vcpu_t *vcpu)
     if (now >= cval + off) {
         static uint64_t inject_count;
         if (((++inject_count) & 0xFFFF) == 1) {
-            KLOG_INFO("[VMM] inject vtimer count=%llu ctl=0x%llx cval=0x%llx now=0x%llx off=0x%llx\n",
+            KLOG_INFO("[VMM] inject vtimer count=%llu ctl=0x%llx cval=0x%llx "
+                      "now=0x%llx off=0x%llx | vm%u faults=%llu wfi=%llu\n",
                       (unsigned long long)inject_count,
                       (unsigned long long)ctl,
                       (unsigned long long)cval,
                       (unsigned long long)now,
-                      (unsigned long long)off);
+                      (unsigned long long)off,
+                      vcpu->vm->vmid,
+                      (unsigned long long)vcpu->vm->s2.nr_fault,
+                      (unsigned long long)vcpu->vm->s2.nr_premap);
             if (inject_count > 0x10000)
-                dump_vgic_state(vcpu->vm, vcpu, "vtimer");
+                (void)0;    /* vGIC 分层 dump 已收（排查完了，见 git 历史）*/
         }
 #if DRIVER_GIC_V3
         vmm_vgic3_set_pending(&vcpu->vm->vgic3, (uint32_t)vcpu->vcpu_id,

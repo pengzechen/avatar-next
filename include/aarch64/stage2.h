@@ -137,6 +137,14 @@ int stage2_ipa_is_ram(const s2_ctx_t *s2, uint64_t ipa);
  */
 uint64_t stage2_map_page(s2_ctx_t *s2, uint64_t ipa, int zero);
 
+/*
+ * stage2_map_block — 一次装好 ipa 所在的整个 2 MiB 块（512 页）
+ *
+ * 缺页处理用它替代单页映射：把 EL2 往返次数从"每页一次"降到"每块一次"。
+ * 返回本次装上的页数（PMM 不足时会少装）。
+ */
+uint64_t stage2_map_block(s2_ctx_t *s2, uint64_t ipa, int zero);
+
 /* 批量版：从 ipa 起 size 字节逐页映射，末尾只做一次 TLB 刷新。*/
 uint64_t stage2_map_range(s2_ctx_t *s2, uint64_t ipa, uint64_t size, int zero);
 

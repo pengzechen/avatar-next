@@ -134,4 +134,11 @@ size_t bitmap_find_first_free(const bitmap_t *bitmap);
  */
 size_t bitmap_find_contiguous_free(const bitmap_t *bitmap, size_t count);
 
+/*
+ * 从 start 开始找（next-fit）。调用方在返回 -1 时自行从 0 回绕再找一次。
+ * 用途见 lib/bitmap.c 里的说明：避免 PMM 每次分配都从头扫位图。
+ */
+size_t bitmap_find_contiguous_free_from(const bitmap_t *bitmap, size_t count,
+                                        size_t start);
+
 #endif /* BITMAP_H */

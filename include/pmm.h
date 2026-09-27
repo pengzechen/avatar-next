@@ -32,6 +32,15 @@ typedef struct {
     uint64_t page_size;    /* 页面大小（通常 4KB）        */
     uint64_t total_pages;  /* 总页面数                    */
     uint64_t free_pages;   /* 空闲页面数                  */
+
+    /*
+     * next-fit 分配提示：下次从哪一位开始找。
+     *
+     * 没有它的话每次分配都从位图**开头**扫 —— 而低地址被内核与 rootfs
+     * 保留区占着，于是每分配一页都要白扫几万位。加载 guest 内核映像要
+     * 近万次分配，累计下来是几亿次位测试（详见 lib/bitmap.c 的说明）。
+     */
+    size_t   alloc_hint;
 } pmm_t;
 
 extern pmm_t *g_pmm;

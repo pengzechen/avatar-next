@@ -77,8 +77,12 @@ uint64_t pmm_alloc_pages(pmm_t *pmm, uint32_t page_count)
 
     spin_lock(&pmm->lock);
 
-    /* 查找连续的空闲页面 */
-    size_t page_index = bitmap_find_contiguous_free(&pmm->bitmap, page_count);
+    /* 查找连续的空闲页面：先从上一次的落点找（next-fit），失败再回绕 */
+    size_t page_index =
+        bitmap_find_contiguous_free_from(&pmm->bitmap, page_count,
+                                         pmm->alloc_hint);
+    if (page_index == (size_t)-1 && pmm->alloc_hint != 0)
+        page_index = bitmap_find_contiguous_free(&pmm->bitmap, page_count);
     if (page_index != (size_t)-1) {
         /* 标记页面为已分配 */
         bitmap_set_range(&pmm->bitmap, page_index, page_count);
@@ -86,8 +90,9 @@ uint64_t pmm_alloc_pages(pmm_t *pmm, uint32_t page_count)
         /* 计算物理地址 */
         paddr = pmm->start_addr + page_index * pmm->page_size;
 
-        /* 更新空闲页面计数 */
+        /* 更新空闲页面计数与 next-fit 提示 */
         pmm->free_pages -= page_count;
+        pmm->alloc_hint  = page_index + page_count;
 
     }
 
