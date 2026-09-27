@@ -166,7 +166,7 @@ _KERNEL_VGIC_SRCS   := $(if $(filter v3,$(GIC_VER)),\
 
 # vdev 下按文件选架构；guest_loader.c 位于共享目录但只有 aarch64 编译它。
 ifeq ($(ARCH),aarch64)
-    _KERNEL_VDEV_SRCS     := $(KERNEL_DIR)/vmm/vdev/vpl011.c \
+    _KERNEL_VDEV_SRCS     := $(KERNEL_DIR)/vmm/vdev/console/vpl011.c \
                              $(KERNEL_DIR)/vmm/vdev/irq_route.c \
                              $(_KERNEL_VGIC_SRCS)
     _KERNEL_ARCHONLY_SRCS := $(KERNEL_DIR)/vmm/guest_loader.c
@@ -174,13 +174,13 @@ ifeq ($(ARCH),aarch64)
     GUEST_TEST_OBJ        := $(BUILD_DIR)/apps_guest_test.o \
                              $(BUILD_DIR)/apps_el0_loop.o
 else ifeq ($(ARCH),riscv64)
-    _KERNEL_VDEV_SRCS     := $(KERNEL_DIR)/vmm/vdev/vuart16550.c \
+    _KERNEL_VDEV_SRCS     := $(KERNEL_DIR)/vmm/vdev/console/vuart16550.c \
                              $(KERNEL_DIR)/vmm/vdev/vplic.c
     _KERNEL_ARCHONLY_SRCS := $(KERNEL_DIR)/vmm/guest_loader.c
     # RISC-V VS-mode guest test program (linked into kernel binary)
     GUEST_TEST_OBJ        := $(BUILD_DIR)/apps_riscv_guest_test.o
 else ifeq ($(ARCH),x86_64)
-    _KERNEL_VDEV_SRCS     := $(KERNEL_DIR)/vmm/vdev/vuart16550.c \
+    _KERNEL_VDEV_SRCS     := $(KERNEL_DIR)/vmm/vdev/console/vuart16550.c \
                              $(KERNEL_DIR)/vmm/vdev/vlapic.c
     # guest_loader.c 被 KERNEL_SRCS 的 filter-out 排除了，必须在这里加回来；
     # 它的编译分组另见 KERNEL_LWEXT4_SRCS。两处都要有 —— 少一处，
