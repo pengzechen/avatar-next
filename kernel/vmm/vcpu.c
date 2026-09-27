@@ -171,7 +171,6 @@ static void vcpu_task_fn(void *arg)
      * 数字比"崩没崩"可靠得多（见 task.h 里 TASK_STACK_SIZE 的说明）。
      */
     {
-        extern size_t task_stack_used(const struct task *);
         size_t used = task_stack_used(task_current());
         KLOG_INFO("[vmm] vcpu%d kernel stack high-water: %zu / %u bytes\n",
                   vcpu->vcpu_id, used, (unsigned)TASK_STACK_SIZE);

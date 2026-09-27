@@ -12,7 +12,6 @@
 
 #include "guest_loader.h"
 #include "klog.h"
-#include "string.h"
 #include "vfs.h"        /* vfs_open / vfs_read_to_phys / vfs_seek / vfs_close */
 #include "vmm/vmm.h"
 

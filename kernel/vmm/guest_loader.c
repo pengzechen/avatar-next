@@ -8,15 +8,10 @@
  */
 
 #include "guest_loader.h"
-#include "cache.h"
 #include "klog.h"
-#include "mm_vm.h"
-#include "pmm.h"
 #include "string.h"
 #include "task/task.h"
-#include "vfs.h"
 #include "vmm/vmm.h"
-#include "vmm/vmm_mmio.h"
 
 #if ARCH_AARCH64
 #include "aarch64/stage2.h"

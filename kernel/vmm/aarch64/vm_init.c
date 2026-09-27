@@ -12,7 +12,6 @@
 
 #include "vmm/vmm.h"
 #include "vmm/vmm_mmio.h"
-#include "vmm/vmm_console.h"
 #include "klog.h"
 #include "string.h"
 #include "aarch64/stage2.h"
