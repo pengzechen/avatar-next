@@ -78,9 +78,10 @@ static int hext_check_support(void)
  * （见 include/vmm/vmm.h 的 ARCH_RISCV64 段）：
  *
  *   vm->mmio_bus_storage  总线本体        （通用字段，aarch64/x86 也有）
- *   vm->uart_dev          虚拟 16550A 设备对象（状态在 vm->uart16550）
- *   vm->plic_dev          虚拟 PLIC 设备对象  （状态在 vm->vplic）
  *   vm->guest_stack[]     给 hext_vcpu_setup 用的 guest 栈
+ *
+ * 设备的 state / 锁 / 设备对象都不在 vm_t 里了 —— 它们按 vm->slot 住在
+ * kernel/vmm/vdev/ 下各设备自己的静态池（见 vpl011/uart16550/vplic 的槽位说明）。
  */
 
 /* ── hext_vcpu_setup：初始化 vcpu 软件 VMCS ──────────────── */

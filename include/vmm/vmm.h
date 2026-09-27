@@ -27,7 +27,12 @@
 
 /*
  * 中断控制器的头**只能出现在各自架构的守卫里** —— 共享头不该命名任何具体
- * 控制器（第二轮做中断抽象时，这里会换成唯一的 vmm_vintc.h）。
+ * 控制器。
+ *
+ * 「中断抽象」已经落地，但**不是**换成一个统一的 vmm_vintc.h：真正能统一的
+ * 只有「一根设备中断线」那一层，见 vmm_virq.h（那里写清了为什么不给控制器
+ * 做 ops 表）。四个控制器后端原样保留。
+ *
  * ⚠️ vmm_vgic.h 从前是无条件包含的，于是 GICv2 的定义被拖进包含本头的
  * 全部 TU（三个架构都算）。
  */
@@ -433,13 +438,11 @@ typedef struct vm {
      */
     int console_owned;
 
-#if ARCH_RISCV64 || ARCH_X86_64
     /*
-     * 控制台设备状态（uart16550_state_t）、它的锁、以及设备对象**不在这里**
-     * —— 它们已按 vm->slot 搬进 kernel/vmm/vdev/vuart16550.c 的静态池。
-     * 见该文件顶部 uart16550_slot_t 的说明。
+     * 控制台设备状态（uart16550_state_t，riscv/x86 共用）、它的锁、以及设备
+     * 对象**不在这里** —— 它们已按 vm->slot 搬进
+     * kernel/vmm/vdev/console/vuart16550.c 的静态池（aarch64 侧对应 vpl011.c）。
      */
-#endif
 
 #if ARCH_X86_64
     /*
@@ -470,7 +473,6 @@ typedef struct vm {
      */
     gstage_ctx_t gstage;
 
-    /* 每 VM 一份 vPLIC（从前是 vplic.c 里的一个 g_vplic 全局）。*/
     /*
      * vPLIC 的状态、锁与设备对象**不在这里** —— 它们已按 vm->slot 搬进
      * kernel/vmm/vdev/vplic.c 的静态池。见该文件顶部 vplic_slot_t。
@@ -530,7 +532,7 @@ _Static_assert(MAX_VMS <= GSTAGE_MAX_VMS, "MAX_VMS > GSTAGE_MAX_VMS");
 #endif
 #if ARCH_X86_64
 _Static_assert(MAX_VMS <= EPT_MAX_VMS, "MAX_VMS > EPT_MAX_VMS");
-/* vlapic_state_t 数组按 MAX_VCPUS 定长，两边必须一致 */
+/* vlapic.c 的池按 MAX_VCPUS 定长，两边必须一致 */
 _Static_assert(MAX_VCPUS <= VLAPIC_MAX_VCPUS, "MAX_VCPUS > VLAPIC_MAX_VCPUS");
 #endif
 

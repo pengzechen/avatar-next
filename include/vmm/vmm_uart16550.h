@@ -105,11 +105,12 @@ typedef struct vm vm_t;
 
 /*
  * uart16550_init — 初始化虚拟 16550A 并注册到 MMIO 总线
- * 状态取自 vm->uart16550（dev->priv 会指过去）。返回 0 成功。
- */
-/*
- * 初始化并把设备注册到 MMIO 总线。设备对象在 vuart16550.c 的静态池里，
- * 不再由调用方传进来（与 vpl011_init 同形）。
+ *
+ * @vm:  所属 VM（状态按 vm->slot 取自 vuart16550.c 的静态池）
+ * @bus: 目标 MMIO 总线
+ *
+ * 设备对象也在那个池里，不再由调用方传进来（与 vpl011_init 同形）。
+ * 返回 0 成功。
  */
 int uart16550_init(vm_t *vm, mmio_bus_t *bus);
 

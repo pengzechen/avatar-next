@@ -59,11 +59,14 @@
  * MAX_VCPUS 份，按 **vcpu_id** 索引。而 vcpu_id 是**每个 VM 内部**的编号
  * （vm->vcpus[i].vcpu_id == i），于是两个 VM 的 vcpu0 会指向同一份 LAPIC：
  * 第二个 VM 的 MMIO 访问读写第一个 VM 的寄存器、它的定时器中断被投到第一个
- * VM 上。现在按 VM 分开（vm->vlapic[]），下面所有 API 都要传 vm。
+ * VM 上。现在按 (vm->slot, vcpu_id) 住在 vlapic.c 的二维静态池里，下面所有
+ * API 仍以 vm 为第一参数。
  *
  * 另一个坑：原来所有运行时访问器都硬编码 `&g_vlapic[0]`（只有 init 按
- * vcpu_id 取槽），所以单 vCPU 时看着是对的，多 vCPU 就会串台。现在统一
- * 走 `vlapic_for(vm, vcpu_id)`。
+ * vcpu_id 取槽），所以单 vCPU 时看着是对的，多 vCPU 就会串台。
+ * ⚠️ 这个坑**至今仍在**：vlapic.c 的 `vlapic_cur(vm)` 仍固定取 vcpu 0
+ * （本 VMM 的 nr_vcpus 恒为 1，所以现在无害）。修它要先改掉那 8 个不接
+ * vcpu_id 的公开 API。
  */
 typedef struct vlapic_state {
     uint32_t r[VLAPIC_REG_COUNT];   /* 按 (addr >> 4) 索引，与 MMIO 布局一致 */

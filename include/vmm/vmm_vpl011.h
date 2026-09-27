@@ -86,16 +86,15 @@ typedef struct vpl011_state {
 
 /*
  * vpl011_init — 初始化虚拟 PL011 并注册到 MMIO 总线
- * @dev:  调用方提供的设备实例（静态存储）
- * @bus:  目标 MMIO 总线
+ *
+ * @vm:  所属 VM（状态按 vm->slot 取自 vpl011.c 的静态池）
+ * @bus: 目标 MMIO 总线
+ *
+ * 设备对象（mmio_device_t）也在那个池里，不再由调用方传进来。
  * 返回 0 成功。
  */
 struct vm;
 typedef struct vm vm_t;
-/*
- * 初始化并把设备注册到 MMIO 总线。设备对象（mmio_device_t）在 vpl011.c 的
- * 静态池里，不再由调用方传进来。
- */
 int vpl011_init(vm_t *vm, mmio_bus_t *bus);
 
 /* 归还本 VM 的槽位（由 vmm_arch_vm_destroy → vm_free 调用）。幂等。*/

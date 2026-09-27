@@ -57,7 +57,7 @@ typedef struct vm vm_t;
 
 /*
  * vplic_init — 初始化虚拟 PLIC 并注册到 MMIO 总线
- * 状态取自 vm->vplic（dev->priv 会指过去）。返回 0 成功。
+ * 状态取自 vplic.c 的静态池（按 vm->slot 索引；dev->priv 会指过去）。返回 0 成功。
  */
 int vplic_init(vm_t *vm, mmio_bus_t *bus, uint32_t nr_vcpus);
 
