@@ -2594,6 +2594,18 @@ int vmm_arch_vm_init(vm_t *vm)
 }
 
 /*
+ * vmm_arch_vm_destroy — 与 vmm_arch_vm_init 严格逆序
+ *
+ * 本架构目前还没有池化的设备：uart16550 / vlapic / chipset 的状态仍在 vm_t
+ * 里，由 vm_free 的 memset 顺带清掉，所以这里暂时无事可做。等它们搬进
+ * 静态池之后在这里补（顺序与 init 相反）。
+ */
+void vmm_arch_vm_destroy(vm_t *vm)
+{
+    (void)vm;
+}
+
+/*
  * vmx_vcpu_setup — 为 vCPU 设置 VMCS（含 guest 入口地址）
  * 必须在 vcpu_task_create 之前调用（或在 vCPU 任务启动时调用）。
  */

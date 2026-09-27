@@ -45,7 +45,9 @@
 static inline int vmm_console_init(vm_t *vm, mmio_device_t *dev, mmio_bus_t *bus)
 {
 #if ARCH_AARCH64
-    return vpl011_init(vm, dev, bus);
+    /* vpl011 的状态与设备对象已搬进 vpl011.c 的静态池，不再收 dev */
+    (void)dev;
+    return vpl011_init(vm, bus);
 #else
     return uart16550_init(vm, dev, bus);
 #endif

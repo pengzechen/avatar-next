@@ -60,8 +60,15 @@ int vmm_arch_vm_init(vm_t *vm)
         return -1;
 #endif
 
-    if (vpl011_init(vm, &vm->vpl011_dev, &vm->mmio_bus_storage) != 0) {
-        KLOG_WARN("[vmm] vpl011 registration failed\n");
+    if (vpl011_init(vm, &vm->mmio_bus_storage) != 0) {
+        /*
+         * 注册失败的后果是**静默死设备**：该 GPA 在 stage-2 里没有映射 →
+         * guest 访问时陷入 → MMIO 总线未命中 → 读 0/写丢弃。guest 侧的
+         * PL011 会「初始化成功但永远收不到中断」，日志上看不出任何异常。
+         * 所以这里必须让建 VM 失败，而不是打个警告继续。
+         */
+        KLOG_ERROR("[vmm] vpl011 registration failed\n");
+        return -1;
     }
 
     /*
@@ -123,4 +130,15 @@ int vmm_arch_vm_init(vm_t *vm)
     KLOG_INFO("[vmm] vm_create: %d vCPU(s) initialized, mem=0x%llx+0x%llx\n",
               nr, vm->cfg.mem_base, vm->cfg.mem_size);
     return 0;
+}
+
+/*
+ * vmm_arch_vm_destroy — 与 vmm_arch_vm_init 严格逆序
+ *
+ * 目前 aarch64 只有 vpl011 一个池化设备（vGIC 的状态仍在 vm_t 里，本轮不动）。
+ * 加新设备时在这里补一行，顺序与 init 相反。
+ */
+void vmm_arch_vm_destroy(vm_t *vm)
+{
+    vpl011_destroy(vm);
 }

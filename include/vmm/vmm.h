@@ -34,7 +34,7 @@
 #if ARCH_AARCH64
 #include "aarch64/stage2.h"     /* s2_ctx_t：vm_t 里每个 VM 一份 stage-2 */
 #include "vmm/vmm_vgic.h"       /* vgic_t：GICv2 后端 */
-#include "vmm/vmm_vpl011.h"     /* vpl011_state_t：每个 VM 一份控制台状态 */
+#include "vmm/vmm_vpl011.h"     /* vpl011_init/destroy：状态已搬进 vpl011.c 的池 */
 #endif
 #if ARCH_AARCH64 && DRIVER_GIC_V3
 #include "vmm_vgicv3.h"
@@ -413,14 +413,10 @@ typedef struct vm {
     s2_ctx_t s2;
 
     /*
-     * 本 VM 的控制台设备状态与锁。
-     *
-     * 从前这是一对文件级 static（g_vpl011 + g_vpl011_lock）—— 整机只有一份，
-     * 于是第二个 VM 的 vpl011_init() 一句 memset 就把第一个 VM 的 RX/TX FIFO
-     * 清空，两个 VM 从此抢同一个控制台。现在每 VM 一份。
+     * 控制台设备状态（vpl011_state_t）与它的锁**不在这里** ——
+     * 它们已按 vm->slot 搬进 kernel/vmm/vdev/vpl011.c 的静态池。
+     * 见该文件顶部 vpl011_slot_t 的说明。
      */
-    vpl011_state_t   vpl011;
-    spinlock_noirq_t vpl011_lock;
 #endif
 
     /*
@@ -522,7 +518,6 @@ typedef struct vm {
      * GICv3 的结构体只在 GIC=v3 时才嵌入，避免 v2 路径白扛 ~68KB。
      */
     vgic_t vgic;
-    mmio_device_t vpl011_dev;
     mmio_device_t vgicd_dev;
     mmio_device_t vgicc_dev;
 #if DRIVER_GIC_V3
@@ -608,6 +603,16 @@ void vmm_arch_save_guest_ctx(vcpu_t *vcpu);
  * 在这里设，必须在每次进 guest 前重设（见 docs/bugfix/SMP_HELPER_MODE_BUGFIX.md）。
  */
 int vmm_arch_vm_init(vm_t *vm);
+
+/*
+ * vmm_arch_vm_destroy — 拆 VM：与 vmm_arch_vm_init 严格逆序
+ *
+ * 设备状态搬到按 slot 索引的静态池之后，vm_free 里那句
+ * `memset(vm, 0, sizeof(*vm))` **再也碰不到它们** —— 必须由这里显式归还。
+ * 各设备自己的 destroy 必须幂等、且对"从未 init 过的槽"安全（回滚路径上
+ * vm_free 会在 vm_create 失败时被调用）。
+ */
+void vmm_arch_vm_destroy(vm_t *vm);
 
 /*
  * vmm_arch_irq_raise — 把一个设备的中断线接到本架构的投递机制上

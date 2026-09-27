@@ -127,6 +127,17 @@ void vm_free(vm_t *vm)
     x86_ept_vm_destroy(&vm->ept);   /* 释放按需页 + PT 表 */
 #endif
 
+    /*
+     * 归还设备槽位。
+     *
+     * ⚠️ 必须在 memset **之前**、且在池锁**外面**：
+     *   - 之前：下面那句 memset 会把 vm->slot 清成 0，之后就没法索引池了；
+     *   - 外面：各设备的 destroy 靠自己的锁串行化（池锁里不该做设备操作）。
+     * 从前设备状态就嵌在 vm_t 里，那句 memset 顺手就把它们清了 —— 搬到
+     * 静态池之后 memset 碰不到池子，必须显式归还。
+     */
+    vmm_arch_vm_destroy(vm);
+
     KLOG_INFO("[vmm] vm%u freed (slot %d)\n", vm->vmid, vm->slot);
 
     spin_lock_irqsave(&g_vm_pool_lock, &flags);

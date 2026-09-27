@@ -92,7 +92,14 @@ typedef struct vpl011_state {
  */
 struct vm;
 typedef struct vm vm_t;
-int vpl011_init(vm_t *vm, mmio_device_t *dev, mmio_bus_t *bus);
+/*
+ * 初始化并把设备注册到 MMIO 总线。设备对象（mmio_device_t）在 vpl011.c 的
+ * 静态池里，不再由调用方传进来。
+ */
+int vpl011_init(vm_t *vm, mmio_bus_t *bus);
+
+/* 归还本 VM 的槽位（由 vmm_arch_vm_destroy → vm_free 调用）。幂等。*/
+void vpl011_destroy(vm_t *vm);
 
 /*
  * vpl011_push_rx — 把宿主控制台收到的一个字节喂给 guest
