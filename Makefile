@@ -812,6 +812,16 @@ EPOLL_PERF_CC    :=
 EPOLL_PERF_BIN   :=
 endif
 
+# racetest：并发竞争态复现工具（apps/c/racetest.c）。
+# 三架构都编 —— 它只依赖 fork/pipe/waitpid，没有架构特定代码。
+# 跑法见 apps/c/racetest.c 顶部；**部分子命令要 SMP>1** 才可能复现。
+#
+# 产物落在 $(BUILD_DIR)/ 下，**不进 git**（build/ 已被 .gitignore 覆盖）。
+# 注意别放到 apps/ —— 那里已经有一批提交进仓库的二进制（busybox、
+# mutex_test 等），是历史遗留，新东西不要再往里加。
+RACETEST_CC      := $(ARCH)-linux-musl-gcc
+RACETEST_BIN     := $(BUILD_DIR)/racetest
+
 # vmm-run：宿主 shell 里启动/驱动 guest 的用户态 helper（对标 kvmm-run）。
 # 只给「已实现 Linux guest 启动」的架构构建与安装（与 include/vmm/vmm.h 的
 # VMM_GUEST_LINUX_SUPPORTED 保持一致）。helper 本身是纯 C + ioctl，
@@ -1083,6 +1093,13 @@ epoll-perf:
 	@exit 1
 endif
 
+# §11c-2  racetest：并发竞争态复现工具，静态链接
+racetest: $(RACETEST_BIN)
+
+$(RACETEST_BIN): apps/c/racetest.c
+	$(RACETEST_CC) -O2 -Wall -Wextra -static $< -o $@
+	@echo "racetest app created: $@"
+
 # §11c-2  vmm-run：静态链接，免得还依赖 rootfs 里的动态 loader
 $(VMM_RUN_BIN): apps/c/vmm_run.c
 	$(ARCH)-linux-musl-gcc -O2 -Wall -Wextra -static $< -o $@
@@ -1248,7 +1265,7 @@ test-epoll-perf: epoll-perf kernel $(ROOTFS_IMG)
 # 创建 ext4 rootfs 镜像（无需 sudo）
 # 依赖：Host 已安装 e2fsprogs（mkfs.ext4 >= 1.43 支持 -d 选项）
 # 每次 apps 变动时自动重建；切换架构直接使用各自的镜像文件，无需 make clean
-$(ROOTFS_IMG): Makefile $(APPS_BINS) $(APPS_C_ELFS) $(LTP_BINS) $(EPOLL_PERF_BIN) $(VMM_RUN_BIN) $(NGINX_BIN) $(GUEST_LINUX_FILES) $(GUEST_GIC_STAMP) | $(BUILD_DIR)
+$(ROOTFS_IMG): Makefile $(APPS_BINS) $(APPS_C_ELFS) $(LTP_BINS) $(EPOLL_PERF_BIN) $(RACETEST_BIN) $(VMM_RUN_BIN) $(NGINX_BIN) $(GUEST_LINUX_FILES) $(GUEST_GIC_STAMP) | $(BUILD_DIR)
 	@echo "=== Building rootfs for $(ARCH): $(ROOTFS_IMG) ==="
 	@rm -rf $(ROOTFS_STAGE)
 	@mkdir -p $(ROOTFS_STAGE)/bin
@@ -1306,6 +1323,12 @@ $(ROOTFS_IMG): Makefile $(APPS_BINS) $(APPS_C_ELFS) $(LTP_BINS) $(EPOLL_PERF_BIN
 		cp $(EPOLL_PERF_BIN) $(ROOTFS_STAGE)/bin/epoll_perf; \
 		chmod +x $(ROOTFS_STAGE)/bin/epoll_perf; \
 		echo "  [epoll_perf installed → /bin/epoll_perf]"; \
+	fi
+	@if [ -f "$(RACETEST_BIN)" ]; then \
+		mkdir -p $(ROOTFS_STAGE)/bin; \
+		cp $(RACETEST_BIN) $(ROOTFS_STAGE)/bin/racetest; \
+		chmod +x $(ROOTFS_STAGE)/bin/racetest; \
+		echo "  [racetest installed → /bin/racetest]"; \
 	fi
 	@# 安装 nginx（如果存在对应架构的静态 musl 构建）
 	@if [ -f "$(NGINX_BIN)" ]; then \
