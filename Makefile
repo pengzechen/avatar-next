@@ -854,8 +854,59 @@ $(GUEST_GIC_STAMP):
 # ROOTFS_SIZE_MB / ROOTFS_PHYS_ADDR 来自自动生成的 $(MEM_LAYOUT_MK)
 QEMU_ROOTFS_FLAGS = -device loader,file=$(ROOTFS_IMG),addr=$(ROOTFS_PHYS_ADDR),force-raw=on
 
+# ─── §9a  第三方 submodule 前置检查 ─────────────────────────────────────────────
+#
+# lwext4 / lwIP 是 git submodule，而 `git clone` **默认不拉 submodule**。所以刚
+# clone 下来 third_party/lwext4 是个空目录，构建会死在一行极具误导性的错误上：
+#
+#     include/vfs.h:14:10: fatal error: ext4.h: No such file or directory
+#
+# 这行指向的是**我们自己的**头文件，和真正的原因（submodule 没拉）看不出任何关系
+# —— 照着它去查 vfs.h 会白查很久。所以在任何编译发生之前先拦一道。
+#
+# 还有一种更阴的形态：submodule 的 `.git` 指针文件在、`git submodule status` 也
+# 不带 '-' 前缀、`git submodule update --init` 还 exit 0，**但工作树是空的**
+# （.git/modules 里有对象，index 里却是 staged 删除）。这个状态真的出现过一次，
+# 排查代价很高。所以下面直接查头文件在不在 —— 判据只能是文件本身，不能信 git 的
+# 状态字段。
+#
+# 挂载点选在 KERNEL_RULE（见 §11b）而不是顶层的 kernel 目标：那样只能保证
+# **链接前**检查，各 .o 的编译（也就是真正报 ext4.h 的地方）早就先炸了。
+SUBMODULE_HEADERS := $(LWEXT4_DIR)/include/ext4.h \
+                     $(LWIP_DIR)/src/include/lwip/init.h
+
+# 一键修复。--force 是必需的：对付上面那种"index 里是 staged 删除"的僵局，
+# 不带 --force 的 update 会认为无事可做。
+submodules:
+	git submodule update --init --recursive --force
+	@echo "submodule 就绪。"
+
+check-submodules:
+	@missing=""; \
+	for h in $(SUBMODULE_HEADERS); do \
+	    [ -e "$$h" ] || missing="$$missing $$h"; \
+	done; \
+	if [ -n "$$missing" ]; then \
+	    echo ""; \
+	    echo "════════════════════════════════════════════════════════════════"; \
+	    echo " 第三方 submodule 没拉下来（lwext4 / lwIP 是 submodule，"; \
+	    echo " git clone 默认不拉它们）。缺少："; \
+	    for h in $$missing; do echo "     $$h"; done; \
+	    echo ""; \
+	    echo " 修复（仓库根目录执行）："; \
+	    echo "     make submodules"; \
+	    echo " 等价于："; \
+	    echo "     git submodule update --init --recursive --force"; \
+	    echo ""; \
+	    echo " 以后 clone 可以直接带子模块："; \
+	    echo "     git clone --recurse-submodules <url>"; \
+	    echo "════════════════════════════════════════════════════════════════"; \
+	    echo ""; \
+	    exit 1; \
+	fi
+
 # ─── §10  顶层目标声明 ───────────────────────────────────────────────────────────
-.PHONY: all clean clean-all help klog kernel run run-net rootfs run-fs test-pthread test-mutex test-vmm test-guest-linux test-ltp epoll-perf test-epoll-perf format format-check
+.PHONY: all clean clean-all help klog kernel run run-net rootfs run-fs test-pthread test-mutex test-vmm test-guest-linux test-ltp epoll-perf test-epoll-perf format format-check submodules check-submodules
 
 all: klog
 
@@ -895,8 +946,11 @@ $(BUILD_DIR)/libc.o: $(LIB_DIR)/libc.c | $(BUILD_DIR)
 # 内核源文件的编译规则由 §4a 发现出的列表批量生成，不再逐文件手写。
 # 标志参数必须写成 $$(...)：LWEXT4_CFLAGS / LWIP_CFLAGS 定义在 §8，晚于 §4，
 # 用单个 $ 会在本行展开时冻结成空字符串。
+# check-submodules 是 order-only 依赖：它必须在这个 .o 的编译**之前**跑完，
+# 但不该影响 .o 的新旧判断。挂了它才能保证"缺 submodule"时先看到 §9a 的
+# 提示，而不是各 .o 那行指向 include/vfs.h 的误导性 ext4.h 报错。
 define KERNEL_RULE
-$(call kobj,$(1)): $(1) | $(BUILD_DIR)
+$(call kobj,$(1)): $(1) | $(BUILD_DIR) check-submodules
 	$$(CC) $(2) -c $$< -o $$@
 endef
 
@@ -1058,7 +1112,7 @@ $(BUILD_DIR)/platform_static.o: $(BUILD_DIR)/platform_static.c | $(BUILD_DIR)
 # ── §11e  第三方库编译规则（lwext4 / lwIP）──────────────────────────────────────
 # lwext4 第三方源码：用带 compat 路径的专用 LWEXT4_CFLAGS
 
-$(THIRD_PARTY_BUILD_DIR)/lwext4_%.o: $(LWEXT4_DIR)/src/%.c | $(BUILD_DIR)
+$(THIRD_PARTY_BUILD_DIR)/lwext4_%.o: $(LWEXT4_DIR)/src/%.c | $(BUILD_DIR) check-submodules
 	@mkdir -p $(dir $@)
 	$(CC) $(LWEXT4_CFLAGS) -c $< -o $@
 
@@ -1075,11 +1129,11 @@ $(THIRD_PARTY_BUILD_DIR)/lwip_netif_%.o: $(LWIP_DIR)/src/netif/%.c | $(BUILD_DIR
 	$(CC) $(LWIP_CFLAGS) -c $< -o $@
 
 # lwext4 移植胶水：属于本项目，用普通 CFLAGS
-$(BUILD_DIR)/lwext4_port_kmalloc.o: $(LWEXT4_PORT_DIR)/kmalloc.c | $(BUILD_DIR)
+$(BUILD_DIR)/lwext4_port_kmalloc.o: $(LWEXT4_PORT_DIR)/kmalloc.c | $(BUILD_DIR) check-submodules
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # FS 初始化需要 lwext4 头文件，用 LWEXT4_CFLAGS
-$(BUILD_DIR)/lwext4_port_fs_init.o: $(LWEXT4_PORT_DIR)/fs_init.c | $(BUILD_DIR)
+$(BUILD_DIR)/lwext4_port_fs_init.o: $(LWEXT4_PORT_DIR)/fs_init.c | $(BUILD_DIR) check-submodules
 	$(CC) $(LWEXT4_CFLAGS) -I$(LWEXT4_PORT_DIR) -c $< -o $@
 
 
@@ -1571,6 +1625,7 @@ help:
 	@echo "  test-panic    Build with PANIC_TEST=1: panic on purpose in the ELF"
 	@echo "  test-guest-linux  - 启动 Linux guest（aarch64/riscv64/x86_64）"
 	@echo "                parser, to see what a backtrace looks like"
+	@echo "  submodules    Init/update third_party submodules (lwext4, lwIP)"
 	@echo "  clean         Remove build artifacts for current PLATFORM"
 	@echo "  clean-all     Remove build artifacts for all platforms"
 	@echo "  format        Reformat all project .c/.h with clang-format (.clang-format)"

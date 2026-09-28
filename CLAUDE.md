@@ -14,6 +14,34 @@ Claude 会自动读取这个文件来了解项目上下文。
 
 ## 快速开始
 
+### 第一步：拉 submodule
+
+`lwext4` 和 `lwIP` 是 **git submodule**，而 `git clone` 默认**不拉**它们。
+少了它们构建会死在这样一行：
+
+```
+include/vfs.h:14:10: fatal error: ext4.h: No such file or directory
+```
+
+这行指向的是**我们自己的**头文件，和真正的原因（submodule 是空的）看不出关系。
+`make` 现在会在编译任何东西之前先拦一道并告诉你怎么办，但**建议直接这样 clone**：
+
+```bash
+git clone --recurse-submodules <url>
+```
+
+已经 clone 过了（或者 submodule 目录是空的）：
+
+```bash
+make submodules        # = git submodule update --init --recursive --force
+```
+
+> `--force` 不是摆设。有一种状态是"`.git` 指针文件在、`git submodule status` 也不带
+> `-` 前缀、`git submodule update --init` 还 exit 0 —— 但工作树是空的（`.git/modules`
+> 里有对象，index 里却是 staged 删除）"。这时**不带 `--force` 的 update 会静默地
+> 什么都不做**，只有 `--force` 能把它拽回来。判据只能是看文件在不在，不能信 git 的
+> 状态字段。
+
 ### 编译命令
 
 ```bash
