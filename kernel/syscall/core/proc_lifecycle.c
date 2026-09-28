@@ -245,34 +245,25 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
     uint64_t tls = regs[3];
     uint32_t *child_tidptr = (uint32_t *)regs[4];
 
-    /* 分配子任务槽 */
-    task_t *child = NULL;
-    {
-        /* 先回收已死亡的槽 */
-        for (uint32_t i = 0; i < TASK_MAX; i++) {
-            if (g_stack_used[i] && g_task_pool[i].state == TASK_DEAD) {
-                task_reap_dead(&g_task_pool[i]);
-                break;
-            }
-        }
-        for (uint32_t i = 0; i < TASK_MAX; i++) {
-            if (!g_stack_used[i]) {
-                g_stack_used[i] = 1;
-                g_task_pool[i].state = TASK_ALLOCATING;
-                g_task_pool[i].stack_base = g_task_stacks[i];
-                child = &g_task_pool[i];
-                break;
-            }
-        }
-    }
-
+    /*
+     * 分配子任务槽。走和 task_create 同一条路（task_alloc_slot）——
+     * 以前这里内联抄了一份自己的认领循环，三个问题：
+     *   1. 无锁：两核同时 fork 会认领到同一个槽（共用 TCB + 栈）；
+     *   2. 不清零 TCB：子进程继承上一个占位者的 cpu_affinity /
+     *      preempt_count 等残值（preempt_count 非 0 = 永久不可抢占）；
+     *   3. 回收循环只判 state == TASK_DEAD、不判 parent_id：
+     *      A 进程的 fork 会把 B 进程还没 wait 的僵尸收走，B 的
+     *      waitpid 于是拿到 ECHILD（实测 SMP=4 下约 72%）。
+     * task_alloc_slot 内部已经处理了这三条。
+     */
+    task_t *child = task_alloc_slot();
     if (!child) {
         KLOG_ERROR("[clone] no free task slots\n");
         regs[0] = (uint64_t)(int64_t)-ENOMEM;
         return;
     }
 
-    child->id = g_task_id_cnt++;
+    child->id = task_alloc_id();
     child->state = TASK_ALLOCATING;
     child->priority = parent->priority;
     child->is_user_process = true;

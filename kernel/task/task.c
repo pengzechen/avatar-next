@@ -56,75 +56,176 @@ static task_t g_idle_task;
 /* ── idle 专用栈（防止 boot 栈在频繁中断下溢出）────────────── */
 static uint8_t g_idle_stack[TASK_STACK_SIZE] __attribute__((aligned(16)));
 
-/* ── 内部：分配/释放任务槽 ──────────────────────────────── */
+/* ── 槽表的锁 ────────────────────────────────────────────── *
+ *
+ * 保护 g_stack_used[]、各 TCB 里"这个槽归谁/还活着吗"那几个字段
+ * （state / parent_id / id）、以及 id 分配。
+ *
+ * 以前这三样全是裸奔的。后果有两类：
+ *   1. 两核同时扫到同一个 DEAD 槽 → 都调 task_reap_dead →
+ *      vm_destroy_user_process() 跑两遍（它不幂等，第二次照样
+ *      pmm_free_pages）→ PMM 双重释放。
+ *   2. 两核同时读到 !g_stack_used[i] → 认领同一个槽 →
+ *      两个任务共用一个 task_t 和一块栈。
+ *
+ * 锁内只做"改状态、占位"这种 O(1) 的事；释放用户页表要走几百页，
+ * 放到锁外做（先用 state = TASK_ALLOCATING 把槽占住，别人就不会碰）。
+ */
+static spinlock_t g_task_pool_lock = SPINLOCK_INIT;
 
-/* 前向声明 */
-static void cleanup_dead_task_slot(void);
-
-static task_t *alloc_task_slot(void)
+/* 任务 id 分配。原来是无保护的 `g_task_id_cnt++`，两核同时 fork 会撞 id。 */
+uint32_t task_alloc_id(void)
 {
-    /* 先尝试清理已死亡的任务槽（延迟清理策略） */
-    cleanup_dead_task_slot();
+    return __atomic_fetch_add(&g_task_id_cnt, 1U, __ATOMIC_RELAXED);
+}
+
+/*
+ * slot_is_reapable_orphan_locked - **持锁调用**：这个 DEAD 槽现在能收吗？
+ *
+ * 光看 state == TASK_DEAD 是不够的 —— 僵尸要留给父进程 wait4 取退出码，
+ * 谁都能收就把退出码丢了（实测：父进程 waitpid 自己的直接子进程拿到
+ * ECHILD，SMP=1 下都有 8%）。只有"没人会再来 wait 它"的才收：
+ *
+ *   - parent_id == 0：压根没有父进程（idle / 内核线程）
+ *   - 父进程已经不在了：槽被释放，或父进程自己也 DEAD
+ *
+ * 其余情况等它爹来收。这也顺带修掉 fork 路径那个"回收任意 DEAD 槽"的
+ * 循环 —— 它让 A 进程的 fork 把 B 进程还没 wait 的僵尸收走。
+ */
+static bool slot_is_reapable_orphan_locked(uint32_t idx)
+{
+    task_t *t = &g_task_pool[idx];
+    if (!g_stack_used[idx] || t->state != TASK_DEAD)
+        return false;
+    if (t->parent_id == 0)
+        return true;
 
     for (uint32_t i = 0; i < TASK_MAX; i++) {
-        if (!g_stack_used[i]) {
-            task_t *task = &g_task_pool[i];
-            memset(task, 0, sizeof(*task));
-            g_stack_used[i] = 1;
-            task->state = TASK_ALLOCATING;
-            task->stack_base = g_task_stacks[i];
-            /*
-       * 把整块栈刷成已知图案：配合 task_stack_used() 量"这个任务实际用掉
-       * 多少栈"。arch_init_task_stack() 稍后会在栈顶写好初始帧，其余部分
-       * 保持图案 —— 高水位就是"从栈底往上第一处非图案的位置"。
-       *
-       * 为什么值得留：内核任务栈是**静态数组挨着放的**（g_task_stacks[N][...]），
-       * 溢出会直接踩坏邻居任务的栈/TCB，症状是"隔壁任务莫名其妙崩"，
-       * 而不是栈溢出的任务自己崩 —— 实测宿主 busybox 就是这么被写坏的
-       * （见 vcpu_task_fn 里那段说明）。有数字才能定 size，不然只能靠翻倍赌。
-       */
-            memset(task->stack_base, TASK_STACK_MAGIC, TASK_STACK_SIZE);
-            /* 默认 affinity = ANY：让 sched_enqueue round-robin 分发到所有核。
-       * 调用方（如 vcpu_task_create）可在 enqueue 前覆盖。 */
-            task->cpu_affinity = CPU_AFFINITY_ANY;
-            return task;
-        }
+        if (!g_stack_used[i] || g_task_pool[i].id != t->parent_id)
+            continue;
+        /* 找到父进程：它只要还活着（非 DEAD），就轮不到我们收 */
+        return g_task_pool[i].state == TASK_DEAD;
     }
+    return true; /* 父进程的槽已经没了 */
+}
+
+/*
+ * slot_take_and_free - 收掉一个已经**被占住**的槽（state == TASK_ALLOCATING）
+ *
+ * 调用者必须已经在锁内把它标成 TASK_ALLOCATING（占位），
+ * 这里在锁外做重活，最后回锁内释放槽位。
+ */
+static void slot_take_and_free(uint32_t idx)
+{
+    task_t *task = &g_task_pool[idx];
+    uint64_t flags;
+
+    KLOG_DEBUG("[task] Reaping dead task slot %u (id=%u, pgd=0x%llx)\n", idx,
+               task->id, (uint64_t)task->pgd);
+
+    /* 锁外：释放用户页表（几百页，不能占着全池的锁） */
+    if (task->is_user_process && !task->shares_pgd && task->pgd != NULL) {
+        vm_destroy_user_process((uint64_t)task->pgd);
+        task->pgd = NULL;
+    }
+
+    spin_lock_irqsave(&g_task_pool_lock, &flags);
+    g_stack_used[idx] = 0;
+    task->stack_base = NULL;
+    spin_unlock_irqrestore(&g_task_pool_lock, flags);
+}
+
+/* ── 内部：分配/释放任务槽 ──────────────────────────────── */
+
+/*
+ * task_alloc_slot - 认领一个空闲任务槽（已清零、栈已刷图案）
+ *
+ * fork 路径也走这里（以前它内联抄了一份自己的循环，于是漏掉了
+ * cpu_affinity / preempt_count 的初始化 —— 那两个字段是复用的 TCB 里
+ * 上一个占位者的残值，preempt_count 非 0 会让新任务永久不可抢占）。
+ * 清零的代价（sizeof(task_t) + 16KB 栈）相比 fork 要拷的几百页可以忽略。
+ */
+task_t *task_alloc_slot(void)
+{
+    /* 先试着回收"没人会来 wait"的僵尸槽 */
+    for (;;) {
+        uint64_t flags;
+        uint32_t victim = TASK_MAX;
+        spin_lock_irqsave(&g_task_pool_lock, &flags);
+        for (uint32_t i = 0; i < TASK_MAX; i++) {
+            if (!slot_is_reapable_orphan_locked(i))
+                continue;
+            g_task_pool[i].state = TASK_ALLOCATING; /* 占住 */
+            victim = i;
+            break;
+        }
+        spin_unlock_irqrestore(&g_task_pool_lock, flags);
+        if (victim == TASK_MAX)
+            break;
+        slot_take_and_free(victim);
+    }
+
+    uint64_t flags;
+    spin_lock_irqsave(&g_task_pool_lock, &flags);
+    for (uint32_t i = 0; i < TASK_MAX; i++) {
+        if (g_stack_used[i])
+            continue;
+        task_t *task = &g_task_pool[i];
+        g_stack_used[i] = 1;
+        task->state = TASK_ALLOCATING;
+        task->stack_base = g_task_stacks[i];
+        spin_unlock_irqrestore(&g_task_pool_lock, flags);
+
+        /* 槽已归本调用者，锁外清零 */
+        memset(task, 0, sizeof(*task));
+        task->state = TASK_ALLOCATING;
+        task->stack_base = g_task_stacks[i];
+        /*
+         * 把整块栈刷成已知图案：配合 task_stack_used() 量"这个任务实际用掉
+         * 多少栈"。arch_init_task_stack() 稍后会在栈顶写好初始帧，其余部分
+         * 保持图案 —— 高水位就是"从栈底往上第一处非图案的位置"。
+         *
+         * 为什么值得留：内核任务栈是**静态数组挨着放的**（g_task_stacks[N][...]），
+         * 溢出会直接踩坏邻居任务的栈/TCB，症状是"隔壁任务莫名其妙崩"，
+         * 而不是栈溢出的任务自己崩 —— 实测宿主 busybox 就是这么被写坏的
+         * （见 vcpu_task_fn 里那段说明）。有数字才能定 size，不然只能靠翻倍赌。
+         */
+        memset(task->stack_base, TASK_STACK_MAGIC, TASK_STACK_SIZE);
+        /* 默认 affinity = ANY：让 sched_enqueue round-robin 分发到所有核。
+         * 调用方（如 vcpu_task_create）可在 enqueue 前覆盖。 */
+        task->cpu_affinity = CPU_AFFINITY_ANY;
+        return task;
+    }
+    spin_unlock_irqrestore(&g_task_pool_lock, flags);
     return NULL;
 }
 
-/* ── 内部：清理 DEAD 任务槽 ──────────────────────────────────── */
-static void cleanup_dead_task_slot(void)
-{
-    for (uint32_t i = 0; i < TASK_MAX; i++) {
-        if (g_stack_used[i] && g_task_pool[i].state == TASK_DEAD) {
-            task_reap_dead(&g_task_pool[i]);
-            return;
-        }
-    }
-}
-
+/*
+ * task_reap_dead - 回收一个已退出任务的资源
+ *
+ * 调用者（wait4 / exec wrapper）已经读过它的退出码，所以这里不做
+ * "父进程还在不在"的判断 —— 但**会**防重入：先把 state 从 DEAD 改成
+ * ALLOCATING 占住，并发的第二个调用者就进不来了。
+ */
 void task_reap_dead(task_t *task)
 {
-    if (!task || task->state != TASK_DEAD)
+    if (!task)
+        return;
+    uint32_t idx = (uint32_t)(task - g_task_pool);
+    if (idx >= TASK_MAX)
         return;
 
-    for (uint32_t i = 0; i < TASK_MAX; i++) {
-        if (&g_task_pool[i] != task)
-            continue;
+    uint64_t flags;
+    spin_lock_irqsave(&g_task_pool_lock, &flags);
+    bool mine = (task->state == TASK_DEAD);
+    if (mine)
+        task->state = TASK_ALLOCATING; /* 占住，防双重释放 */
+    spin_unlock_irqrestore(&g_task_pool_lock, flags);
 
-        KLOG_DEBUG("[task] Reaping dead task slot %u (id=%u, pgd=0x%llx)\n", i,
-                   task->id, (uint64_t)task->pgd);
+    if (!mine)
+        return; /* 别人已经收过了 */
 
-        if (task->is_user_process && !task->shares_pgd && task->pgd != NULL) {
-            vm_destroy_user_process((uint64_t)task->pgd);
-            task->pgd = NULL;
-        }
-
-        g_stack_used[i] = 0;
-        task->stack_base = NULL;
-        return;
-    }
+    slot_take_and_free(idx);
 }
 
 /*
@@ -145,14 +246,21 @@ size_t task_stack_used(const task_t *task)
     return 0;
 }
 
+/* 创建失败时的回滚：把刚认领的槽还回去。同样要走槽表的锁，
+ * 否则和并发认领者之间又是一个"两个人都以为槽是空的"窗口。 */
 static void free_task_slot(task_t *task)
 {
+    uint64_t flags;
+    spin_lock_irqsave(&g_task_pool_lock, &flags);
     for (uint32_t i = 0; i < TASK_MAX; i++) {
-        if (&g_task_pool[i] == task) {
-            g_stack_used[i] = 0;
-            return;
-        }
+        if (&g_task_pool[i] != task)
+            continue;
+        task->state = TASK_ALLOCATING;
+        task->stack_base = NULL;
+        g_stack_used[i] = 0;
+        break;
     }
+    spin_unlock_irqrestore(&g_task_pool_lock, flags);
 }
 
 /* ── task_trampoline ─────────────────────────────────────── */
@@ -227,7 +335,7 @@ void task_init(void)
     /* 初始化 idle 任务（boot 上下文，使用 idle 专栈） */
     g_idle_task.sp = (uintptr_t)(g_idle_stack + TASK_STACK_SIZE);
     g_idle_task.state = TASK_RUNNING;
-    g_idle_task.id = g_task_id_cnt++;
+    g_idle_task.id = task_alloc_id();
     g_idle_task.priority = 255; /* 最低优先级 */
     g_idle_task.stack_base = g_idle_stack;
     g_idle_task.entry = NULL;
@@ -352,14 +460,14 @@ task_t *process_create(const char *name, uint64_t user_entry,
                        uint64_t user_code_size, uint64_t user_sp,
                        uint8_t priority)
 {
-    task_t *task = alloc_task_slot();
+    task_t *task = task_alloc_slot();
     if (!task) {
         KLOG_ERROR("[task] process_create: no free task slots (max=%u)\n",
                    TASK_MAX);
         return NULL;
     }
 
-    task->id = g_task_id_cnt++;
+    task->id = task_alloc_id();
     task->state = TASK_ALLOCATING;
     task->priority = priority;
 
@@ -496,13 +604,13 @@ task_t *process_create_with_pgd(const char *name, uint64_t user_entry,
                                 uint64_t pgd_phys, uint64_t heap_end_val,
                                 uint64_t mmap_next_val)
 {
-    task_t *task = alloc_task_slot();
+    task_t *task = task_alloc_slot();
     if (!task) {
         KLOG_ERROR("[task] process_create_with_pgd: no free task slots\n");
         return NULL;
     }
 
-    task->id = g_task_id_cnt++;
+    task->id = task_alloc_id();
     task->state = TASK_ALLOCATING;
     task->priority = priority;
     task->is_user_process = true;
@@ -623,14 +731,14 @@ task_t *task_create(const char *name, void (*entry)(void *), void *arg,
 task_t *task_create_affinity(const char *name, void (*entry)(void *), void *arg,
                              uint8_t priority, uint32_t cpu_affinity)
 {
-    task_t *task = alloc_task_slot();
+    task_t *task = task_alloc_slot();
     if (!task) {
         KLOG_ERROR("[task] task_create: no free task slots (max=%u)\n",
                    TASK_MAX);
         return NULL;
     }
 
-    task->id = g_task_id_cnt++;
+    task->id = task_alloc_id();
     task->state = TASK_ALLOCATING;
     task->priority = priority;
     task->entry = entry;
@@ -699,7 +807,18 @@ void task_exit(void)
     task_t *cur = task_current();
     KLOG_TASK("[task] '%s' (id=%u) exiting\n", cur->name, cur->id);
 
-    cur->state = TASK_DEAD;
+    /*
+     * 置 DEAD 要在槽表的锁里做：否则会有一个窗口 —— 别的核正好在
+     * task_alloc_slot 的孤儿回收扫描里读这个槽，看到"父进程还活着"，
+     * 于是不收；而本任务马上就要变成 DEAD 的父进程。反过来也一样。
+     * 拿锁之后，"谁是死是活"和"能不能收"就是同一个瞬间的判定了。
+     */
+    {
+        uint64_t _pf;
+        spin_lock_irqsave(&g_task_pool_lock, &_pf);
+        cur->state = TASK_DEAD;
+        spin_unlock_irqrestore(&g_task_pool_lock, _pf);
+    }
 
     /* Notify waiting parent */
     extern void notify_parent_wait_from_task(task_t * child);
@@ -719,8 +838,9 @@ void task_exit(void)
    * 到同一个栈槽，导致两个任务使用同一个栈，造成数据损坏。
    *
    * 正确的做法是：标记为 DEAD 后，让栈槽保持"已占用"状态。
-   * 当后续创建新任务时，alloc_task_slot() 会调用
-   * cleanup_dead_task_slot() 来清理已死亡的任务槽。
+   * 当后续创建新任务时，task_alloc_slot() 会回收"没人会再来 wait"的
+   * 僵尸槽（判据见 slot_is_reapable_orphan_locked）。父进程自己那一份
+   * 由 wait4 / exec wrapper 读完成码后调 task_reap_dead() 收。
    *
    * 这样可以确保在 task_exit() 执行期间和调度切换期间，
    * 没有其他任务会重用这个栈。

@@ -298,6 +298,26 @@ void task_exit(void) __attribute__((noreturn));
 void task_reap_dead(task_t *task);
 
 /**
+ * task_alloc_slot - 认领一个空闲任务槽（已清零、栈已刷图案）
+ *
+ * 返回的 TCB 里 state = TASK_ALLOCATING、cpu_affinity = CPU_AFFINITY_ANY、
+ * stack_base 指向本槽的静态栈。**调用方拿到的是一块干净 TCB** ——
+ * 以前 fork 路径自己抄了一份认领循环且不清零，于是子进程继承了上一个
+ * 占位者的残值（cpu_affinity / preempt_count）。
+ *
+ * 失败（池满）返回 NULL；池满时会先回收一轮"没人会再来 wait"的僵尸槽。
+ */
+task_t *task_alloc_slot(void);
+
+/**
+ * task_alloc_id - 原子分配一个任务 id
+ *
+ * 裸的 `g_task_id_cnt++` 在两核同时 fork 时会撞 id —— 而 wait4、信号、
+ * /proc 全靠 id 找人。
+ */
+uint32_t task_alloc_id(void);
+
+/**
  * task_current - 返回当前正在运行的任务指针
  */
 task_t *task_current(void);
