@@ -35,12 +35,12 @@
  * 进入 guest 前（电平触发，见 vmm_console_irq_asserted 的注释）。
  */
 
-#include "pseudofs.h"                   /* VMM_IOC_* */
+#include "pseudofs.h" /* VMM_IOC_* */
 #include "pseudofs_internal.h"
 #include "klog.h"
 #include "string.h"
 #include "syscall/io/epoll.h"
-#include "syscall/syscall_internal.h"   /* copy_to_user_bytes（GET_STATUS 出参）*/
+#include "syscall/syscall_internal.h" /* copy_to_user_bytes（GET_STATUS 出参）*/
 
 #include "vmm/vmm.h"
 #include "vmm/vmm_console.h"
@@ -92,7 +92,10 @@ static int vmm_dev_boot(int force_new)
         /* 接入最近在跑的那个（多 VM 时用 LIST/BOOT_EX 指定，见 Step 3）*/
         for (uint32_t v = 1; v <= 255; v++) {
             vm_t *p = vm_get(v);
-            if (p && p->state != VM_FREE) { g_vmm_fg_vmid = (int)v; break; }
+            if (p && p->state != VM_FREE) {
+                g_vmm_fg_vmid = (int)v;
+                break;
+            }
         }
         /* 通道应当是开着的；分离期间没关过，这里只是兜底 */
         vm_t *fg = vm_get((uint32_t)g_vmm_fg_vmid);
@@ -148,7 +151,7 @@ static int vmm_dev_boot(int force_new)
     if (rc != 0) {
         KLOG_ERROR("[vmmdev] guest_loader_run_linux failed: %d\n", rc);
         vmm_console_tx_set_enabled(vm, 0);
-        vm_free(vm);            /* 槽位不能漏 —— 没人在跑了 */
+        vm_free(vm); /* 槽位不能漏 —— 没人在跑了 */
         return -PFS_EIO;
     }
 
@@ -176,7 +179,7 @@ int vmm_dev_write(int nid, const void *buf, size_t len)
      */
     vm_t *fg = vm_get((uint32_t)g_vmm_fg_vmid);
     if (!fg)
-        return -PFS_EIO;        /* 没有前台 VM，写也没意义 */
+        return -PFS_EIO; /* 没有前台 VM，写也没意义 */
 
     for (size_t i = 0; i < len; i++)
         vmm_console_push_rx(fg, ((const uint8_t *)buf)[i]);
@@ -279,7 +282,7 @@ uint32_t vmm_dev_poll(int nid)
 #if !VMM_GUEST_LINUX_SUPPORTED
     return 0;
 #else
-    uint32_t ev = EPOLLOUT;             /* 永远收得下写 */
+    uint32_t ev = EPOLLOUT; /* 永远收得下写 */
 
     vm_t *fg = vm_get((uint32_t)g_vmm_fg_vmid);
     if (fg && vmm_console_tx_has_data(fg))
@@ -340,4 +343,3 @@ int vmm_dev_close(int nid)
     return 0;
 #endif
 }
-

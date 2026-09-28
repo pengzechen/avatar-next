@@ -22,18 +22,24 @@
 #if ARCH_RISCV64 && defined(PLATFORM_SG2002)
 static inline void sg2002_dbg_putc(char c)
 {
-    volatile unsigned char *uart = (volatile unsigned char *)(KERNEL_VMA + DEVICE_UART_BASE_RAW);
+    volatile unsigned char *uart =
+        (volatile unsigned char *)(KERNEL_VMA + DEVICE_UART_BASE_RAW);
     while (!(uart[0x14] & 0x20))
         timer_spin(1);
     uart[0] = (unsigned char)c;
 }
 #else
-static inline void sg2002_dbg_putc(char c) { (void)c; }
+static inline void sg2002_dbg_putc(char c)
+{
+    (void)c;
+}
 #endif
 
 /* DW UART 模块内基地址（dw_uart_early_init() 从 platform_get_mmio 填充） */
-uintptr_t dw_uart_base = DEVICE_UART_BASE_RAW + (DEVICE_MMIO_NEEDS_VMA ? KERNEL_VMA : 0UL);
-uint8_t   dw_uart_reg_shift = DEVICE_UART_REG_SHIFT; /* 0=字节寻址(QEMU); 2=4字节MMIO(SG2002) */
+uintptr_t dw_uart_base =
+    DEVICE_UART_BASE_RAW + (DEVICE_MMIO_NEEDS_VMA ? KERNEL_VMA : 0UL);
+uint8_t dw_uart_reg_shift =
+    DEVICE_UART_REG_SHIFT; /* 0=字节寻址(QEMU); 2=4字节MMIO(SG2002) */
 
 // #include "irq.h"
 /* WFI：在等待中断时让出 CPU，若架构未定义则用 nop 代替 */
@@ -44,88 +50,78 @@ uint8_t   dw_uart_reg_shift = DEVICE_UART_REG_SHIFT; /* 0=字节寻址(QEMU); 2=
 #define DW_UART_TX_BUFFER_SIZE 1024
 #define DW_UART_RX_BUFFER_SIZE 1024
 
-typedef struct
-{
-    char              buffer[DW_UART_TX_BUFFER_SIZE];
+typedef struct {
+    char buffer[DW_UART_TX_BUFFER_SIZE];
     volatile uint32_t head, tail, count;
-    spinlock_noirq_t    lock;
+    spinlock_noirq_t lock;
 } dw_uart_buffer_t;
 
-static dw_uart_buffer_t tx_buffer           = {0};
-static dw_uart_buffer_t rx_buffer           = {0};
-static volatile bool    dw_uart_initialized = false;
+static dw_uart_buffer_t tx_buffer = { 0 };
+static dw_uart_buffer_t rx_buffer = { 0 };
+static volatile bool dw_uart_initialized = false;
 
 // 调试计数器
-static volatile uint32_t tx_irq_count   = 0;
-static volatile uint32_t rx_irq_count   = 0;
-static volatile uint32_t last_iir_value = 0;  // 记录最后一次IIR值
-static volatile uint32_t tx_sent_total  = 0;  // 总共发送的字节数
+static volatile uint32_t tx_irq_count = 0;
+static volatile uint32_t rx_irq_count = 0;
+static volatile uint32_t last_iir_value = 0; // 记录最后一次IIR值
+static volatile uint32_t tx_sent_total = 0;  // 总共发送的字节数
 
 static bool dw_uart_lsr_temt_ready(void *ctx);
 static bool dw_uart_lsr_thre_ready(void *ctx);
 
-static bool
-buffer_is_empty(dw_uart_buffer_t *buf)
+static bool buffer_is_empty(dw_uart_buffer_t *buf)
 {
     return buf->count == 0;
 }
-static bool
-buffer_is_full(dw_uart_buffer_t *buf)
+static bool buffer_is_full(dw_uart_buffer_t *buf)
 {
     return buf->count >= DW_UART_TX_BUFFER_SIZE;
 }
-static bool
-buffer_put(dw_uart_buffer_t *buf, char c)
+static bool buffer_put(dw_uart_buffer_t *buf, char c)
 {
     if (buffer_is_full(buf))
         return false;
     buf->buffer[buf->head] = c;
-    buf->head              = (buf->head + 1) % DW_UART_TX_BUFFER_SIZE;
+    buf->head = (buf->head + 1) % DW_UART_TX_BUFFER_SIZE;
     buf->count++;
     return true;
 }
-static bool
-buffer_get(dw_uart_buffer_t *buf, char *c)
+static bool buffer_get(dw_uart_buffer_t *buf, char *c)
 {
     if (buffer_is_empty(buf))
         return false;
-    *c        = buf->buffer[buf->tail];
+    *c = buf->buffer[buf->tail];
     buf->tail = (buf->tail + 1) % DW_UART_TX_BUFFER_SIZE;
     buf->count--;
     return true;
 }
 
 /// DW_UART_THR 空了，可以写入新数据时，硬件会置位
-static bool __attribute__((unused)) 
-dw_uart_tx_ready(void)
+static bool __attribute__((unused)) dw_uart_tx_ready(void)
 {
     return (dw_reg_r8(DW_UART_LSR) & DW_UART_LSR_THRE) != 0;
 }
 
 /// DW_UART_RBR 中的数据可读了，硬件给他置位
-static bool
-dw_uart_rx_ready(void)
+static bool dw_uart_rx_ready(void)
 {
     return (dw_reg_r8(DW_UART_LSR) & DW_UART_LSR_DR) != 0;
 }
 
-static bool
-dw_uart_lsr_temt_ready(void *ctx)
+static bool dw_uart_lsr_temt_ready(void *ctx)
 {
     (void)ctx;
     return (dw_reg_r8(DW_UART_LSR) & DW_UART_LSR_TEMT) != 0;
 }
 
-static bool
-dw_uart_lsr_thre_ready(void *ctx)
+static bool dw_uart_lsr_thre_ready(void *ctx)
 {
     (void)ctx;
     return (dw_reg_r8(DW_UART_LSR) & DW_UART_LSR_THRE) != 0;
 }
 
 // 启用发送中断， 我有数据可以发送了
-static void
-dw_uart_enable_tx_interrupt(void)
+static void dw_uart_enable_tx_interrupt(void)
 {
     uint8_t ier = dw_reg_r8(DW_UART_IER);
     if (!(ier & DW_UART_IER_THRI)) {
@@ -136,8 +132,7 @@ dw_uart_enable_tx_interrupt(void)
 }
 
 // 禁用发送中断， 我已经没有数据可以发送了
-static void
-dw_uart_disable_tx_interrupt(void)
+static void dw_uart_disable_tx_interrupt(void)
 {
     uint8_t ier = dw_reg_r8(DW_UART_IER);
     ier &= ~DW_UART_IER_THRI;
@@ -145,28 +140,26 @@ dw_uart_disable_tx_interrupt(void)
 }
 
 // 启用接收中断， 我准备好接收数据了
-static void
-dw_uart_enable_rx_interrupt(void)
+static void dw_uart_enable_rx_interrupt(void)
 {
     uint8_t ier = dw_reg_r8(DW_UART_IER);
     ier |= DW_UART_IER_RDI;
     dw_reg_w8(ier, DW_UART_IER);
 }
 
-void
-dw_uart_interrupt_handler(uint64_t *stack_pointer)
+void dw_uart_interrupt_handler(uint64_t *stack_pointer)
 {
     (void)stack_pointer;
 
-    uint32_t iir   = dw_reg_r8(DW_UART_IIR) & 0xF;
-    last_iir_value = iir;  // 记录IIR值用于调试
+    uint32_t iir = dw_reg_r8(DW_UART_IIR) & 0xF;
+    last_iir_value = iir; // 记录IIR值用于调试
 
-    if (iir == 0x4 || iir == 0xC) {  // RX 中断
-        rx_irq_count++;              // 调试计数
+    if (iir == 0x4 || iir == 0xC) { // RX 中断
+        rx_irq_count++;             // 调试计数
         uint64_t flags;
         spin_lock_irqsave(&rx_buffer.lock, &flags);
         while (dw_uart_rx_ready()) {
-            char c = (char) dw_reg_r8(DW_UART_RBR);
+            char c = (char)dw_reg_r8(DW_UART_RBR);
             // ❌ 不要在中断中打印！会导致死锁和重复输出
             buffer_put(&rx_buffer, c);
         }
@@ -174,19 +167,19 @@ dw_uart_interrupt_handler(uint64_t *stack_pointer)
     }
 
     // 0x2 = TX Holding Register Empty
-    if (iir == 0x2) {  // TX 中断
-        tx_irq_count++;  // 调试计数
+    if (iir == 0x2) {   // TX 中断
+        tx_irq_count++; // 调试计数
         uint64_t flags;
         spin_lock_irqsave(&tx_buffer.lock, &flags);
 
-        int       sent      = 0;
+        int sent = 0;
         const int MAX_BATCH = 16;
         while (sent < MAX_BATCH && !buffer_is_empty(&tx_buffer)) {
             char c;
             if (buffer_get(&tx_buffer, &c)) {
-                dw_reg_w8((uint8_t) c, DW_UART_THR);
+                dw_reg_w8((uint8_t)c, DW_UART_THR);
                 sent++;
-                tx_sent_total++;  // 记录总共发送的字节数
+                tx_sent_total++; // 记录总共发送的字节数
             }
         }
         bool is_empty = buffer_is_empty(&tx_buffer);
@@ -212,19 +205,18 @@ dw_uart_interrupt_handler(uint64_t *stack_pointer)
  * 检查 LSR.TEMT (bit 6): 发送器完全空（TX Holding + TX Shift Register 均空）
  * 适用于标准 16550 / QEMU ns16550（byte-addressed, reg-shift=0）
  */
-static void
-dw_uart_wait_idle(void)
+static void dw_uart_wait_idle(void)
 {
     if (timer_poll_until(dw_uart_lsr_temt_ready, NULL, 100000U, 1) == 0)
         return;
     // 超时也继续，避免卡死
 }
 
-void
-dw_uart_early_init(void)
+void dw_uart_early_init(void)
 {
     dw_uart_reg_shift = DEVICE_UART_REG_SHIFT;
-    dw_uart_base = DEVICE_UART_BASE_RAW + (DEVICE_MMIO_NEEDS_VMA ? KERNEL_VMA : 0UL);
+    dw_uart_base =
+        DEVICE_UART_BASE_RAW + (DEVICE_MMIO_NEEDS_VMA ? KERNEL_VMA : 0UL);
 
     /*
      * OpenSBI (或 QEMU) 已经完成波特率和帧格式的配置，
@@ -241,12 +233,12 @@ dw_uart_early_init(void)
     dw_reg_w8(0, DW_UART_IER);
 
     // 使能 FIFO 并清空收发缓冲
-    dw_reg_w8(DW_UART_FCR_ENABLE_FIFO | DW_UART_FCR_CLEAR_RCVR | DW_UART_FCR_CLEAR_XMIT,
+    dw_reg_w8(DW_UART_FCR_ENABLE_FIFO | DW_UART_FCR_CLEAR_RCVR |
+                  DW_UART_FCR_CLEAR_XMIT,
               DW_UART_FCR);
 }
 
-void
-dw_uart_init(void)
+void dw_uart_init(void)
 {
     if (dw_uart_initialized)
         return;
@@ -264,7 +256,8 @@ dw_uart_init(void)
     dw_reg_w8(0, DW_UART_IER);
 
     // 使能 FIFO 并清空收发队列（不改波特率，OpenSBI 已配好）
-    dw_reg_w8(DW_UART_FCR_ENABLE_FIFO | DW_UART_FCR_CLEAR_RCVR | DW_UART_FCR_CLEAR_XMIT,
+    dw_reg_w8(DW_UART_FCR_ENABLE_FIFO | DW_UART_FCR_CLEAR_RCVR |
+                  DW_UART_FCR_CLEAR_XMIT,
               DW_UART_FCR);
 
     // TODO: 安装中断处理
@@ -287,12 +280,11 @@ dw_uart_init(void)
     logger_info("DWC UART interrupt driver initialized\n");
 }
 
-bool
-dw_uart_putchar_nb(char c)
+bool dw_uart_putchar_nb(char c)
 {
     if (!dw_uart_initialized)
         return false;
-    
+
     uint64_t flags;
     spin_lock_irqsave(&tx_buffer.lock, &flags);
     bool success = false;
@@ -313,18 +305,17 @@ dw_uart_putchar_nb(char c)
     if (success) {
         need_tx_int = true;
     }
-    
+
     // 如果有数据入队，启用 TX 中断
     if (need_tx_int) {
         dw_uart_enable_tx_interrupt();
     }
-    
+
     spin_unlock_irqrestore(&tx_buffer.lock, flags);
     return success;
 }
 
-bool
-dw_uart_getchar_nb(char *c)
+bool dw_uart_getchar_nb(char *c)
 {
     if (!dw_uart_initialized)
         return false;
@@ -337,8 +328,7 @@ dw_uart_getchar_nb(char *c)
 
 // early init 的时候会阻塞到发送完成 (等待时间未知)
 // int init 后会使用缓冲区和中断，一次失败仍会多次尝试 (可以设置重试次数)
-void
-dw_uart_putchar(char c)
+void dw_uart_putchar(char c)
 {
 #if ARCH_RISCV64 && defined(PLATFORM_SG2002)
     if (c == '\n')
@@ -362,7 +352,7 @@ dw_uart_putchar(char c)
         dw_reg_w8((uint8_t)c, DW_UART_THR);
         return;
     }
-    
+
     // 已初始化：先尝试非阻塞发送
     if (dw_uart_putchar_nb(c))
         return;
@@ -374,15 +364,14 @@ dw_uart_putchar(char c)
         // 短暂延迟，让中断有机会发送数据
         timer_spin(100);
     }
-    
+
     // 超时仍然失败，丢弃字符
     logger_warn("DWC UART TX buffer full, dropping character\n");
 }
 
 // early init 的时候会阻塞到接收数据 (等待时间未知)
 // int init 后会使用缓冲区和中断，如果无数据则睡眠 WFI
-char
-dw_uart_getchar(void)
+char dw_uart_getchar(void)
 {
     char c;
 
@@ -401,16 +390,14 @@ dw_uart_getchar(void)
         timer_spin(1);
     }
 
-    return (char) dw_reg_r8(DW_UART_RBR);
+    return (char)dw_reg_r8(DW_UART_RBR);
 }
 
-void
-dw_uart_putstr(const char *str)
+void dw_uart_putstr(const char *str)
 {
     while (*str)
         dw_uart_putchar(*str++);
 }
-
 
 // ================= 其它辅助函数 =================
 
@@ -419,38 +406,36 @@ dw_uart_putstr(const char *str)
         ↑                    ↑      ↑
     第一阶段检查          THRE   TEMT (第二阶段检查)
 */
-void
-dw_uart_flush(void)
+void dw_uart_flush(void)
 {
     if (!dw_uart_initialized)
         return;
-    
+
     // 第一阶段：等待软件缓冲区为空
     for (int timeout = 100000; timeout > 0; timeout--) {
         uint64_t flags;
         spin_lock_irqsave(&tx_buffer.lock, &flags);
         bool empty = buffer_is_empty(&tx_buffer);
         spin_unlock_irqrestore(&tx_buffer.lock, flags);
-        
+
         if (empty)
             break;
-            
+
         timer_spin(10);
     }
-    
+
     // 第二阶段：等待硬件发送完成（THR 和 TSR 都为空）
     // TEMT (Transmitter Empty) 位表示发送器完全空闲
     for (int timeout = 10000; timeout > 0; timeout--) {
         uint32_t lsr = dw_reg_r8(DW_UART_LSR);
         if (lsr & DW_UART_LSR_TEMT)
             break;
-            
+
         timer_spin(10);
     }
 }
 
-bool
-dw_uart_rx_available(void)
+bool dw_uart_rx_available(void)
 {
     if (!dw_uart_initialized)
         /* early 模式：直接查 LSR 硬件寄存器（中断未启用，数据不经缓冲区） */
@@ -464,8 +449,7 @@ dw_uart_rx_available(void)
 
 // ================= Debug Functions =================
 
-uint32_t
-dw_uart_tx_buffer_usage(void)
+uint32_t dw_uart_tx_buffer_usage(void)
 {
     if (!dw_uart_initialized)
         return 0;
@@ -476,8 +460,8 @@ dw_uart_tx_buffer_usage(void)
     return usage;
 }
 
-void
-dw_uart_get_stats(uint32_t *tx_irqs, uint32_t *rx_irqs, uint32_t *tx_usage, uint32_t *rx_usage)
+void dw_uart_get_stats(uint32_t *tx_irqs, uint32_t *rx_irqs, uint32_t *tx_usage,
+                       uint32_t *rx_usage)
 {
     if (tx_irqs)
         *tx_irqs = tx_irq_count;
@@ -494,23 +478,20 @@ dw_uart_get_stats(uint32_t *tx_irqs, uint32_t *rx_irqs, uint32_t *tx_usage, uint
 }
 
 // 调试函数：检查TX中断是否启用
-bool
-dw_uart_is_tx_interrupt_enabled(void)
+bool dw_uart_is_tx_interrupt_enabled(void)
 {
-    uint32_t ier = read32((void *) DW_UART_IER);
+    uint32_t ier = read32((void *)DW_UART_IER);
     return (ier & DW_UART_IER_THRI) != 0;
 }
 
 // 调试函数：获取最后一次IIR值
-uint32_t
-dw_uart_get_last_iir(void)
+uint32_t dw_uart_get_last_iir(void)
 {
     return last_iir_value;
 }
 
 // 调试函数：获取总共发送的字节数
-uint32_t
-dw_uart_get_tx_sent_total(void)
+uint32_t dw_uart_get_tx_sent_total(void)
 {
     return tx_sent_total;
 }

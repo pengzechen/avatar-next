@@ -35,8 +35,8 @@
 #include "spinlock.h"
 
 /* QEMU virt：PL011 基址与大小 */
-#define VPL011_BASE   0x09000000ULL
-#define VPL011_SIZE   0x1000ULL
+#define VPL011_BASE 0x09000000ULL
+#define VPL011_SIZE 0x1000ULL
 
 /* ── 设备私有状态 ─────────────────────────────────────────────
  *
@@ -62,27 +62,27 @@ typedef struct vpl011_state {
      */
     struct vm *owner;
 
-    uint32_t cr;                    /* UARTCR */
-    uint32_t imsc;                  /* UARTIMSC */
+    uint32_t cr;   /* UARTCR */
+    uint32_t imsc; /* UARTIMSC */
 
     /* RX 环形缓冲：宿主用户态写入（push），guest MMIO 读取（UARTDR）*/
-    uint8_t  rx_fifo[VPL011_RX_FIFO_SIZE];
-    uint32_t rx_head;               /* 写入位置 */
-    uint32_t rx_tail;               /* 读出位置 */
+    uint8_t rx_fifo[VPL011_RX_FIFO_SIZE];
+    uint32_t rx_head; /* 写入位置 */
+    uint32_t rx_tail; /* 读出位置 */
     uint32_t rx_count;
 
     /* TX 环形缓冲：guest MMIO 写入（UARTDR），宿主用户态读取（tx_pop）*/
-    uint8_t  tx_fifo[VPL011_TX_FIFO_SIZE];
+    uint8_t tx_fifo[VPL011_TX_FIFO_SIZE];
     uint32_t tx_head;
     uint32_t tx_tail;
     uint32_t tx_count;
 
-    uint64_t rx_dropped;            /* FIFO 满而丢弃的字节数 */
+    uint64_t rx_dropped; /* FIFO 满而丢弃的字节数 */
     uint64_t tx_dropped;
 } vpl011_state_t;
 
 /* RX 中断线（QEMU virt：PL011 = SPI 1 = IRQ 33）*/
-#define VPL011_IRQ    33
+#define VPL011_IRQ 33
 
 /*
  * vpl011_init — 初始化虚拟 PL011 并注册到 MMIO 总线
@@ -136,15 +136,15 @@ void vpl011_rx_flush(vm_t *vm);
  * VMM 会同时从硬件 FIFO 抢字节。
  */
 void vpl011_tx_set_enabled(vm_t *vm, int enabled);
-int  vpl011_tx_channel_enabled(vm_t *vm);
+int vpl011_tx_channel_enabled(vm_t *vm);
 
 /*
  * vpl011_tx_pop — 取一个 guest 输出字节
  * @c: 输出参数。缓冲空时返回 0（不修改 *c）。
  */
-int  vpl011_tx_pop(vm_t *vm, uint8_t *c);
+int vpl011_tx_pop(vm_t *vm, uint8_t *c);
 
 /* TX 缓冲里是否还有数据（helper 的 poll 用它报 EPOLLIN）*/
-int  vpl011_tx_has_data(vm_t *vm);
+int vpl011_tx_has_data(vm_t *vm);
 
 #endif /* VMM_VPL011_H */

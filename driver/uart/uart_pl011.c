@@ -29,41 +29,45 @@ typedef struct {
     volatile uint32_t head;
     volatile uint32_t tail;
     volatile uint32_t count;
-    spinlock_noirq_t lock;   /* ISR 与线程都会取：必须用 IRQ-safe 变体 */
+    spinlock_noirq_t lock; /* ISR 与线程都会取：必须用 IRQ-safe 变体 */
 } uart_buffer_t;
 
-static uart_buffer_t tx_buffer = {0};
-static uart_buffer_t rx_buffer = {0};
+static uart_buffer_t tx_buffer = { 0 };
+static uart_buffer_t rx_buffer = { 0 };
 static volatile bool uart_initialized = false;
 
 /* 阻塞发送超时被丢弃的字符数（只计数不打日志，理由见 pl011_putchar） */
 static volatile uint64_t tx_dropped = 0;
 
 // Buffer operations
-static bool buffer_is_empty(uart_buffer_t *buf) {
+static bool buffer_is_empty(uart_buffer_t *buf)
+{
     return buf->count == 0;
 }
 
-static bool buffer_is_full(uart_buffer_t *buf) {
+static bool buffer_is_full(uart_buffer_t *buf)
+{
     return buf->count >= UART_TX_BUFFER_SIZE;
 }
 
-static bool buffer_put(uart_buffer_t *buf, char c) {
+static bool buffer_put(uart_buffer_t *buf, char c)
+{
     if (buffer_is_full(buf)) {
         return false;
     }
-    
+
     buf->buffer[buf->head] = c;
     buf->head = (buf->head + 1) % UART_TX_BUFFER_SIZE;
     buf->count++;
     return true;
 }
 
-static bool buffer_get(uart_buffer_t *buf, char *c) {
+static bool buffer_get(uart_buffer_t *buf, char *c)
+{
     if (buffer_is_empty(buf)) {
         return false;
     }
-    
+
     *c = buf->buffer[buf->tail];
     buf->tail = (buf->tail + 1) % UART_TX_BUFFER_SIZE;
     buf->count--;
@@ -71,42 +75,48 @@ static bool buffer_get(uart_buffer_t *buf, char *c) {
 }
 
 // UART hardware operations
-static void uart_enable_tx_interrupt(void) {
+static void uart_enable_tx_interrupt(void)
+{
     uint32_t imsc = read32((void *)UART_IMSC);
     imsc |= UART_INT_TX;
     write32(imsc, (void *)UART_IMSC);
 }
 
-static void uart_disable_tx_interrupt(void) {
+static void uart_disable_tx_interrupt(void)
+{
     uint32_t imsc = read32((void *)UART_IMSC);
     imsc &= ~UART_INT_TX;
     write32(imsc, (void *)UART_IMSC);
 }
 
-static void uart_enable_rx_interrupt(void) {
+static void uart_enable_rx_interrupt(void)
+{
     uint32_t imsc = read32((void *)UART_IMSC);
     imsc |= (UART_INT_RX | UART_INT_RT);
     write32(imsc, (void *)UART_IMSC);
 }
 
-static bool uart_tx_fifo_full(void) {
+static bool uart_tx_fifo_full(void)
+{
     return (read32((void *)UART_FR) & UART_FR_TXFF) != 0;
 }
 
-static bool uart_rx_fifo_empty(void) {
+static bool uart_rx_fifo_empty(void)
+{
     return (read32((void *)UART_FR) & UART_FR_RXFE) != 0;
 }
 
 // UART interrupt handler
-void uart_interrupt_handler(uint64_t *stack_pointer) {
+void uart_interrupt_handler(uint64_t *stack_pointer)
+{
     (void)stack_pointer;
     uint32_t mis = read32((void *)UART_MIS);
-    
+
     // Handle transmit interrupt
     if (mis & UART_INT_TX) {
         uint64_t flags;
         spin_lock_irqsave(&tx_buffer.lock, &flags);
-        
+
         // Send as many characters as possible
         while (!uart_tx_fifo_full() && !buffer_is_empty(&tx_buffer)) {
             char c;
@@ -114,23 +124,23 @@ void uart_interrupt_handler(uint64_t *stack_pointer) {
                 write32((uint32_t)c, (void *)UART_DR);
             }
         }
-        
+
         // If buffer is empty, disable TX interrupt
         if (buffer_is_empty(&tx_buffer)) {
             uart_disable_tx_interrupt();
         }
-        
+
         spin_unlock_irqrestore(&tx_buffer.lock, flags);
-        
+
         // Clear TX interrupt
         write32(UART_INT_TX, (void *)UART_ICR);
     }
-    
+
     // Handle receive interrupt
     if (mis & (UART_INT_RX | UART_INT_RT)) {
         uint64_t flags;
         spin_lock_irqsave(&rx_buffer.lock, &flags);
-        
+
         // Read all available characters
         while (!uart_rx_fifo_empty()) {
             char c = (char)read32((void *)UART_DR);
@@ -139,72 +149,74 @@ void uart_interrupt_handler(uint64_t *stack_pointer) {
             }
             // If buffer is full, we drop the character
         }
-        
+
         spin_unlock_irqrestore(&rx_buffer.lock, flags);
-        
+
         // Clear RX interrupts
         write32(UART_INT_RX | UART_INT_RT, (void *)UART_ICR);
     }
 }
 
 // Initialize UART with interrupt support
-void pl011_init(void) {
+void pl011_init(void)
+{
     if (uart_initialized) {
         return;
     }
 
     /* MMU 已开启后用 platform_get_mmio 更新为正确的虚拟地址 */
     g_pl011_base = platform_get_mmio("uart", "base");
-    
+
     // Initialize buffers
     spinlock_irq_init(&tx_buffer.lock);
     spinlock_irq_init(&rx_buffer.lock);
     tx_buffer.head = tx_buffer.tail = tx_buffer.count = 0;
     rx_buffer.head = rx_buffer.tail = rx_buffer.count = 0;
-    
+
     // Disable UART first
     write32(0, (void *)UART_CR);
-    
+
     // Clear all interrupts
     write32(0x7FF, (void *)UART_ICR);
-    
+
     // Configure UART (115200 baud, 8N1)
     // For 24MHz clock: IBRD = 24000000 / (16 * 115200) = 13
     // FBRD = (0.0208 * 64) + 0.5 = 1
     write32(13, (void *)UART_IBRD);
     write32(1, (void *)UART_FBRD);
-    
+
     // 8 bits, no parity, 1 stop bit, enable FIFOs
     write32((3 << 5) | (1 << 4), (void *)UART_LCR_H);
-    
+
     // Enable UART, TX, RX
     write32(UART_CR_UARTEN | UART_CR_TXE | UART_CR_RXE, (void *)UART_CR);
-    
+
     // Enable RX interrupts (TX interrupts enabled on demand)
     uart_enable_rx_interrupt();
-    
+
     // TODO: Install UART interrupt handler
     // Install interrupt handler
     // irq_install(UART_IRQ, uart_interrupt_handler);
     // Enable UART interrupt in GIC
     // gic_enable_int(UART_IRQ, 0);
-    
+
     // uart_initialized = true;
-    
+
     KLOG_UART("UART interrupt driver initialized\n");
 }
 
 // Non-blocking character output
-bool pl011_putchar_nb(char c) {
+bool pl011_putchar_nb(char c)
+{
     if (!uart_initialized) {
         return false;
     }
-    
+
     uint64_t flags;
     spin_lock_irqsave(&tx_buffer.lock, &flags);
-    
+
     bool success = false;
-    
+
     // Try to put directly to FIFO if buffer is empty and FIFO not full
     if (buffer_is_empty(&tx_buffer) && !uart_tx_fifo_full()) {
         write32((uint32_t)c, (void *)UART_DR);
@@ -217,25 +229,26 @@ bool pl011_putchar_nb(char c) {
             uart_enable_tx_interrupt();
         }
     }
-    
+
     spin_unlock_irqrestore(&tx_buffer.lock, flags);
     return success;
 }
 
 // Blocking character output (with timeout)
-void pl011_putchar(char c) {
+void pl011_putchar(char c)
+{
     if (!uart_initialized) {
         // Fallback to direct write if not initialized
         volatile unsigned int *const UART0DR = (unsigned int *)UART_DR;
         *UART0DR = (unsigned int)c;
         return;
     }
-    
+
     // Try non-blocking first
     if (pl011_putchar_nb(c)) {
         return;
     }
-    
+
     // If buffer is full, wait a bit and retry
     int timeout = 10000;
     while (timeout-- > 0) {
@@ -245,7 +258,7 @@ void pl011_putchar(char c) {
         // Small delay
         timer_spin(100);
     }
-    
+
     /*
      * 仍然失败：丢弃这个字符，只计数、不打印。
      *
@@ -258,28 +271,31 @@ void pl011_putchar(char c) {
 }
 
 // String output
-void pl011_putstr(const char *str) {
+void pl011_putstr(const char *str)
+{
     while (*str) {
         pl011_putchar(*str++);
     }
 }
 
 // Non-blocking character input
-bool pl011_getchar_nb(char *c) {
+bool pl011_getchar_nb(char *c)
+{
     if (!uart_initialized) {
         return false;
     }
-    
+
     uint64_t flags;
     spin_lock_irqsave(&rx_buffer.lock, &flags);
     bool success = buffer_get(&rx_buffer, c);
     spin_unlock_irqrestore(&rx_buffer.lock, flags);
-    
+
     return success;
 }
 
 // Check if RX data is available
-bool pl011_rx_available(void) {
+bool pl011_rx_available(void)
+{
     if (!uart_initialized)
         /* early 模式：直接查硬件 FR.RXFE 位（中断未启用） */
         return !uart_rx_fifo_empty();
@@ -292,20 +308,22 @@ bool pl011_rx_available(void) {
 }
 
 // Get TX buffer usage
-uint64_t pl011_tx_dropped(void) {
+uint64_t pl011_tx_dropped(void)
+{
     return tx_dropped;
 }
 
-uint32_t pl011_tx_buffer_usage(void) {
+uint32_t pl011_tx_buffer_usage(void)
+{
     if (!uart_initialized) {
         return 0;
     }
-    
+
     uint64_t flags;
     spin_lock_irqsave(&tx_buffer.lock, &flags);
     uint32_t usage = tx_buffer.count;
     spin_unlock_irqrestore(&tx_buffer.lock, flags);
-    
+
     return usage;
 }
 
@@ -315,7 +333,8 @@ uint32_t pl011_tx_buffer_usage(void) {
  * 优先从中断驱动的 rx_buffer 中取；若 UART 未初始化，
  * 直接轮询硬件 FIFO（UART_FR_RXFE）。
  */
-char pl011_getchar(void) {
+char pl011_getchar(void)
+{
     if (uart_initialized) {
         /* 优先尝试软件缓冲区 */
         char c;

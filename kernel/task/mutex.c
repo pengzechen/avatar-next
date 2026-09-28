@@ -12,19 +12,17 @@
 
 /* ── mutex_init ──────────────────────────────────────────── */
 
-void
-mutex_init(mutex_t *mutex)
+void mutex_init(mutex_t *mutex)
 {
     mutex->locked = false;
     list_init(&mutex->wait_queue);
     mutex->holder = NULL;
-    mutex->count  = 0;
+    mutex->count = 0;
 }
 
 /* ── mutex_lock ──────────────────────────────────────────── */
 
-void
-mutex_lock(mutex_t *mutex)
+void mutex_lock(mutex_t *mutex)
 {
     task_t *cur = task_current();
 
@@ -47,11 +45,11 @@ mutex_lock(mutex_t *mutex)
 
     /* 如果锁已被持有，进入等待队列 */
     while (mutex->locked) {
-        barrier_compiler();  // 防止编译器重排，确保每次都重新读取 mutex->locked
+        barrier_compiler(); // 防止编译器重排，确保每次都重新读取 mutex->locked
 
         /* 等待队列中的任务不是持有者，正常排队等待 */
-        KLOG_DEBUG("[mutex] task '%s' (id=%u) waiting for mutex\n",
-                  cur->name, cur->id);
+        KLOG_DEBUG("[mutex] task '%s' (id=%u) waiting for mutex\n", cur->name,
+                   cur->id);
 
         /* 恢复中断，允许调度器工作 */
         arch_irq_restore(flags);
@@ -66,7 +64,7 @@ mutex_lock(mutex_t *mutex)
     mutex->locked = true;
     barrier_compiler();
     mutex->holder = cur;
-    mutex->count  = 1;  /* 首次持有，计数为 1 */
+    mutex->count = 1; /* 首次持有，计数为 1 */
 
     arch_irq_restore(flags);
 
@@ -76,8 +74,7 @@ mutex_lock(mutex_t *mutex)
 
 /* ── mutex_unlock ────────────────────────────────────────── */
 
-void
-mutex_unlock(mutex_t *mutex)
+void mutex_unlock(mutex_t *mutex)
 {
     task_t *cur = task_current();
 
@@ -87,7 +84,7 @@ mutex_unlock(mutex_t *mutex)
     /* 检查是否是锁的持有者 */
     if (!mutex->locked || mutex->holder != cur) {
         KLOG_ERROR("[mutex] task '%s' (id=%u) trying to unlock unheld mutex!\n",
-                  cur->name, cur->id);
+                   cur->name, cur->id);
         arch_irq_restore(flags);
         return;
     }
@@ -107,8 +104,8 @@ mutex_unlock(mutex_t *mutex)
         list_node_t *node = list_delete_first(&mutex->wait_queue);
         waiter = container_of(node, task_t, wait_node);
 
-        KLOG_DEBUG("[mutex] waking task '%s' (id=%u)\n",
-                  waiter->name, waiter->id);
+        KLOG_DEBUG("[mutex] waking task '%s' (id=%u)\n", waiter->name,
+                   waiter->id);
     }
 
     /* 释放锁 */
@@ -127,8 +124,7 @@ mutex_unlock(mutex_t *mutex)
 
 /* ── mutex_trylock ───────────────────────────────────────── */
 
-bool
-mutex_trylock(mutex_t *mutex)
+bool mutex_trylock(mutex_t *mutex)
 {
     task_t *cur = task_current();
     bool success;
@@ -140,11 +136,11 @@ mutex_trylock(mutex_t *mutex)
     if (!mutex->locked) {
         mutex->locked = true;
         mutex->holder = cur;
-        mutex->count  = 1;
+        mutex->count = 1;
         success = true;
 
-        KLOG_DEBUG("[mutex] task '%s' (id=%u) trylock succeeded\n",
-                  cur->name, cur->id);
+        KLOG_DEBUG("[mutex] task '%s' (id=%u) trylock succeeded\n", cur->name,
+                   cur->id);
     } else if (mutex->holder == cur) {
         /* 可重入：已是持有者，递增计数 */
         mutex->count++;
@@ -152,8 +148,8 @@ mutex_trylock(mutex_t *mutex)
     } else {
         success = false;
 
-        KLOG_DEBUG("[mutex] task '%s' (id=%u) trylock failed\n",
-                  cur->name, cur->id);
+        KLOG_DEBUG("[mutex] task '%s' (id=%u) trylock failed\n", cur->name,
+                   cur->id);
     }
 
     arch_irq_restore(flags);
@@ -163,16 +159,14 @@ mutex_trylock(mutex_t *mutex)
 
 /* ── mutex_is_locked ─────────────────────────────────────── */
 
-bool
-mutex_is_locked(mutex_t *mutex)
+bool mutex_is_locked(mutex_t *mutex)
 {
     return mutex->locked;
 }
 
 /* ── mutex_holder ────────────────────────────────────────── */
 
-task_t *
-mutex_holder(mutex_t *mutex)
+task_t *mutex_holder(mutex_t *mutex)
 {
     return mutex->holder;
 }

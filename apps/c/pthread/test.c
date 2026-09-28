@@ -19,12 +19,16 @@
  * 公共工具
  * ──────────────────────────────────────────────────────────────────── */
 
-#define NUM_THREADS   4
-#define LOOP_COUNT    20000
-#define RACE_LOOPS    2000   /* Test 0: fewer iters, sched_yield per step */
+#define NUM_THREADS 4
+#define LOOP_COUNT  20000
+#define RACE_LOOPS  2000 /* Test 0: fewer iters, sched_yield per step */
 
-static void pass(const char *name) { printf("  [PASS] %s\n", name); }
-static void fail(const char *name, const char *reason) {
+static void pass(const char *name)
+{
+    printf("  [PASS] %s\n", name);
+}
+static void fail(const char *name, const char *reason)
+{
     printf("  [FAIL] %s: %s\n", name, reason);
 }
 
@@ -42,7 +46,7 @@ static void *t1_worker(void *arg)
 static void test1_basic_join(void)
 {
     pthread_t tids[NUM_THREADS];
-    int       ids[NUM_THREADS];
+    int ids[NUM_THREADS];
     int ok = 1;
 
     for (int i = 0; i < NUM_THREADS; i++) {
@@ -59,8 +63,10 @@ static void test1_basic_join(void)
             ok = 0;
         }
     }
-    if (ok) pass("basic_join");
-    else    fail("basic_join", "wrong return value");
+    if (ok)
+        pass("basic_join");
+    else
+        fail("basic_join", "wrong return value");
 }
 
 /* ────────────────────────────────────────────────────────────────────
@@ -76,9 +82,9 @@ static void *t0_worker_racy(void *arg)
     (void)arg;
     for (int i = 0; i < RACE_LOOPS; i++) {
         /* 显式三步 read-modify-write，中间 sched_yield 强制切换 CPU */
-        long tmp = t0_counter;          /* step 1: read */
-        sched_yield();                  /* step 2: 让出 CPU，保证另一线程运行 */
-        t0_counter = tmp + 1;           /* step 3: write 过时值，覆盖别人的更新 */
+        long tmp = t0_counter; /* step 1: read */
+        sched_yield();         /* step 2: 让出 CPU，保证另一线程运行 */
+        t0_counter = tmp + 1;  /* step 3: write 过时值，覆盖别人的更新 */
     }
     return NULL;
 }
@@ -94,16 +100,17 @@ static void test0_race_demo(void)
         pthread_join(tids[i], NULL);
 
     long expected = (long)NUM_THREADS * RACE_LOOPS;
-    long actual   = t0_counter;
-    long lost     = expected - actual;
-    int  pct      = (int)(lost * 100 / expected);
+    long actual = t0_counter;
+    long lost = expected - actual;
+    int pct = (int)(lost * 100 / expected);
 
     printf("  expected = %ld\n", expected);
     printf("  actual   = %ld\n", actual);
     if (lost > 0)
         printf("  lost     = %ld (%d%%)  --> RACE CONFIRMED\n", lost, pct);
     else
-        printf("  WARNING: no loss observed (scheduler may be fully serializing)\n");
+        printf(
+            "  WARNING: no loss observed (scheduler may be fully serializing)\n");
 }
 
 /* ────────────────────────────────────────────────────────────────────
@@ -111,7 +118,7 @@ static void test0_race_demo(void)
  * ──────────────────────────────────────────────────────────────────── */
 
 static pthread_mutex_t t2_mutex = PTHREAD_MUTEX_INITIALIZER;
-static volatile long   t2_counter = 0;
+static volatile long t2_counter = 0;
 
 static void *t2_worker(void *arg)
 {
@@ -139,7 +146,8 @@ static void test2_mutex_counter(void)
         pass("mutex_counter");
     else {
         char buf[64];
-        snprintf(buf, sizeof(buf), "expected %ld got %ld", expected, t2_counter);
+        snprintf(buf, sizeof(buf), "expected %ld got %ld", expected,
+                 t2_counter);
         fail("mutex_counter", buf);
     }
 }
@@ -151,17 +159,17 @@ static void test2_mutex_counter(void)
 #define T3_ITEMS 8
 
 static pthread_mutex_t t3_mutex = PTHREAD_MUTEX_INITIALIZER;
-static pthread_cond_t  t3_cond  = PTHREAD_COND_INITIALIZER;
-static int             t3_queue[T3_ITEMS];
-static int             t3_head = 0, t3_tail = 0, t3_count = 0;
-static int             t3_done = 0;   /* 生产者完成标志 */
+static pthread_cond_t t3_cond = PTHREAD_COND_INITIALIZER;
+static int t3_queue[T3_ITEMS];
+static int t3_head = 0, t3_tail = 0, t3_count = 0;
+static int t3_done = 0; /* 生产者完成标志 */
 
 static void *t3_producer(void *arg)
 {
     int total = *(int *)arg;
     for (int i = 0; i < total; i++) {
         pthread_mutex_lock(&t3_mutex);
-        while (t3_count == T3_ITEMS)        /* 队列满则等待 */
+        while (t3_count == T3_ITEMS) /* 队列满则等待 */
             pthread_cond_wait(&t3_cond, &t3_mutex);
         t3_queue[t3_tail % T3_ITEMS] = i + 1;
         t3_tail++;
@@ -209,7 +217,7 @@ static void test3_cond_producer_consumer(void)
     pthread_join(prod, NULL);
     pthread_join(cons, NULL);
 
-    long expected = (long)total * (total + 1) / 2;   /* 1+2+...+200 = 20100 */
+    long expected = (long)total * (total + 1) / 2; /* 1+2+...+200 = 20100 */
     if (sum == expected)
         pass("cond_producer_consumer");
     else {
@@ -223,11 +231,11 @@ static void test3_cond_producer_consumer(void)
  * Test 4: 多线程压力竞争互斥锁
  * ──────────────────────────────────────────────────────────────────── */
 
-#define T4_THREADS  4
-#define T4_LOOPS    10000
+#define T4_THREADS 4
+#define T4_LOOPS   10000
 
-static pthread_mutex_t t4_mutex   = PTHREAD_MUTEX_INITIALIZER;
-static volatile long   t4_counter = 0;
+static pthread_mutex_t t4_mutex = PTHREAD_MUTEX_INITIALIZER;
+static volatile long t4_counter = 0;
 
 static void *t4_worker(void *arg)
 {
@@ -258,7 +266,8 @@ static void test4_mutex_stress(void)
         pass("mutex_stress");
     else {
         char buf[64];
-        snprintf(buf, sizeof(buf), "expected %ld got %ld", expected, t4_counter);
+        snprintf(buf, sizeof(buf), "expected %ld got %ld", expected,
+                 t4_counter);
         fail("mutex_stress", buf);
     }
 }
@@ -275,7 +284,7 @@ static void *t5_worker(void *arg)
     tls_val = id * 100;
     /* 让调度器有机会切换 */
     for (volatile int i = 0; i < 100000; i++) {}
-    return (void *)(long)tls_val;   /* 如果 TLS 正确，应返回 id*100 */
+    return (void *)(long)tls_val; /* 如果 TLS 正确，应返回 id*100 */
 }
 
 static void test5_tls(void)
@@ -294,8 +303,10 @@ static void test5_tls(void)
         if ((long)ret != ids[i] * 100)
             ok = 0;
     }
-    if (ok) pass("tls_thread_local");
-    else    fail("tls_thread_local", "TLS value corrupted across threads");
+    if (ok)
+        pass("tls_thread_local");
+    else
+        fail("tls_thread_local", "TLS value corrupted across threads");
 }
 
 /* ────────────────────────────────────────────────────────────────────
@@ -306,24 +317,25 @@ int main(void)
 {
     printf("=== Avatar OS pthread test ===\n");
 
-    printf("\n[Test 0] RACE DEMO: NO mutex (%d threads x %d loops, sched_yield in race window)\n",
-           NUM_THREADS, RACE_LOOPS);
+    printf(
+        "\n[Test 0] RACE DEMO: NO mutex (%d threads x %d loops, sched_yield in race window)\n",
+        NUM_THREADS, RACE_LOOPS);
     printf("  (intentional data race to verify contention is real)\n");
     test0_race_demo();
 
     printf("\n[Test 1] Basic create/join\n");
     test1_basic_join();
 
-    printf("\n[Test 2] Mutex counter (%d threads x %d loops)\n",
-           NUM_THREADS, LOOP_COUNT);
+    printf("\n[Test 2] Mutex counter (%d threads x %d loops)\n", NUM_THREADS,
+           LOOP_COUNT);
     printf("  (same workload as Test 0, but with mutex)\n");
     test2_mutex_counter();
 
     printf("\n[Test 3] Condition variable producer/consumer\n");
     test3_cond_producer_consumer();
 
-    printf("\n[Test 4] Mutex stress (%d threads x %d loops)\n",
-           T4_THREADS, T4_LOOPS);
+    printf("\n[Test 4] Mutex stress (%d threads x %d loops)\n", T4_THREADS,
+           T4_LOOPS);
     test4_mutex_stress();
 
     printf("\n[Test 5] Thread-local storage (__thread)\n");

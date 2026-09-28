@@ -41,15 +41,15 @@
 #include "spinlock.h"
 
 /* QEMU virt：16550A 基址与大小 */
-#define UART16550_BASE   0x10000000ULL
-#define UART16550_SIZE   0x100ULL
+#define UART16550_BASE 0x10000000ULL
+#define UART16550_SIZE 0x100ULL
 
 /* guest PLIC 中断源（对应 guest DTB uart@10000000 的 interrupts = <10>）*/
-#define UART16550_IRQ    10
+#define UART16550_IRQ 10
 
 /* 缓冲深度：TX 要能扛住 guest 启动那一大串内核日志的突发 */
-#define UART16550_RX_FIFO_SIZE  4096
-#define UART16550_TX_FIFO_SIZE  8192
+#define UART16550_RX_FIFO_SIZE 4096
+#define UART16550_TX_FIFO_SIZE 8192
 
 /* ── 设备私有状态 ─────────────────────────────────────────────
  *
@@ -70,23 +70,23 @@ typedef struct uart16550_state {
      */
     struct vm *owner;
 
-    uint8_t  ier;
-    uint8_t  lcr;
-    uint8_t  mcr;
-    uint8_t  scr;
-    uint8_t  fcr;
-    uint8_t  dll;
-    uint8_t  dlm;
+    uint8_t ier;
+    uint8_t lcr;
+    uint8_t mcr;
+    uint8_t scr;
+    uint8_t fcr;
+    uint8_t dll;
+    uint8_t dlm;
 
     /* RX 环形缓冲：宿主/helper 写入，guest 读 RBR 弹出 */
-    uint8_t  rx_fifo[UART16550_RX_FIFO_SIZE];
+    uint8_t rx_fifo[UART16550_RX_FIFO_SIZE];
     uint32_t rx_head;
     uint32_t rx_tail;
     uint32_t rx_count;
     uint32_t rx_drops;
 
     /* TX 环形缓冲：guest 写 THR 推入，宿主用户态 helper 读走 */
-    uint8_t  tx_fifo[UART16550_TX_FIFO_SIZE];
+    uint8_t tx_fifo[UART16550_TX_FIFO_SIZE];
     uint32_t tx_head;
     uint32_t tx_tail;
     uint32_t tx_count;
@@ -156,16 +156,16 @@ void uart16550_rx_flush(vm_t *vm);
  * VMM 会同时从硬件 FIFO 抢字节。
  */
 void uart16550_tx_set_enabled(vm_t *vm, int enabled);
-int  uart16550_tx_channel_enabled(vm_t *vm);
+int uart16550_tx_channel_enabled(vm_t *vm);
 
 /*
  * uart16550_tx_pop — 取一个 guest 输出字节
  * @c: 输出参数。缓冲空时返回 0（不修改 *c）。
  */
-int  uart16550_tx_pop(vm_t *vm, uint8_t *c);
+int uart16550_tx_pop(vm_t *vm, uint8_t *c);
 
 /* TX 缓冲里是否还有数据（helper 的 poll 用它报 EPOLLIN）*/
-int  uart16550_tx_has_data(vm_t *vm);
+int uart16550_tx_has_data(vm_t *vm);
 
 /*
  * uart16550_putchar — 从 VMM 自己往 guest 控制台送一个字节
@@ -180,6 +180,6 @@ void uart16550_putchar(vm_t *vm, uint8_t c);
  * 复用同一份寄存器状态机，见 vuart16550.c 的说明。
  */
 uint64_t uart16550_port_read(mmio_device_t *dev, uint64_t off);
-void     uart16550_port_write(mmio_device_t *dev, uint64_t off, uint8_t value);
+void uart16550_port_write(mmio_device_t *dev, uint64_t off, uint8_t value);
 
 #endif /* VMM_UART16550_H */

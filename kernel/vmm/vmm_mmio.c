@@ -23,15 +23,13 @@ int mmio_bus_register(mmio_bus_t *bus, mmio_device_t *dev)
     }
     bus->devs[bus->nr++] = dev;
     KLOG_INFO("[mmio] registered '%s' base=0x%llx size=0x%llx\n",
-              dev->ops->name,
-              (unsigned long long)dev->ops->base,
+              dev->ops->name, (unsigned long long)dev->ops->base,
               (unsigned long long)dev->ops->size);
     return 0;
 }
 
-int mmio_bus_handle(mmio_bus_t *bus, uint64_t gpa, int is_write,
-                    uint8_t size, uint64_t value, uint32_t vcpu_id,
-                    uint64_t *out)
+int mmio_bus_handle(mmio_bus_t *bus, uint64_t gpa, int is_write, uint8_t size,
+                    uint64_t value, uint32_t vcpu_id, uint64_t *out)
 {
     int i;
 
@@ -63,7 +61,7 @@ int mmio_bus_handle(mmio_bus_t *bus, uint64_t gpa, int is_write,
             if (out)
                 *out = v;
         }
-        return 1;   /* 命中 */
+        return 1; /* 命中 */
     }
-    return 0;       /* 无设备命中 */
+    return 0; /* 无设备命中 */
 }

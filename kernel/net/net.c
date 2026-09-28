@@ -54,7 +54,8 @@ void net_init(void)
      * 真正唤醒 net-poll 的钩子。
      */
 
-    KLOG_INFO("[net] IPv4 addr=192.168.7.1 mask=255.255.255.0 gw=192.168.7.1\n");
+    KLOG_INFO(
+        "[net] IPv4 addr=192.168.7.1 mask=255.255.255.0 gw=192.168.7.1\n");
     dhcp_server_init(&ipaddr, &netmask, &lease);
     tcp_echo_init();
     bwtest_init();

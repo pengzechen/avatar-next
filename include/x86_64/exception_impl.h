@@ -13,8 +13,7 @@
  */
 
 /* 读当前 RFLAGS（不改动状态） */
-static inline uint64_t
-arch_irq_flags(void)
+static inline uint64_t arch_irq_flags(void)
 {
     uint64_t flags;
 
@@ -24,51 +23,44 @@ arch_irq_flags(void)
 }
 
 /* 读是否允许 IRQ（抢占判断用） */
-static inline int
-arch_irq_is_enabled(void)
+static inline int arch_irq_is_enabled(void)
 {
     return (arch_irq_flags() & (1UL << 9)) != 0;
 }
 
 /* 关中断并返回旧 RFLAGS（必须用 arch_irq_restore 配对恢复） */
-static inline uint64_t
-arch_irq_save(void)
+static inline uint64_t arch_irq_save(void)
 {
     uint64_t flags;
 
-    __asm__ volatile(
-        "pushfq         \n"
-        "popq %0        \n"
-        "cli            \n"
-        : "=r"(flags)
-        :
-        : "memory");
+    __asm__ volatile("pushfq         \n"
+                     "popq %0        \n"
+                     "cli            \n"
+                     : "=r"(flags)
+                     :
+                     : "memory");
 
     return flags;
 }
 
 /* 恢复到 arch_irq_save()/arch_irq_flags() 取到的状态（POPFQ 恢复 IF） */
-static inline void
-arch_irq_restore(uint64_t flags)
+static inline void arch_irq_restore(uint64_t flags)
 {
-    __asm__ volatile(
-        "pushq %0       \n"
-        "popfq          \n"
-        :
-        : "r"(flags)
-        : "memory", "cc");
+    __asm__ volatile("pushq %0       \n"
+                     "popfq          \n"
+                     :
+                     : "r"(flags)
+                     : "memory", "cc");
 }
 
 /* 无条件关中断（不需要旧状态时用） */
-static inline void
-arch_irq_disable(void)
+static inline void arch_irq_disable(void)
 {
     __asm__ volatile("cli" ::: "memory");
 }
 
 /* 无条件开中断（新任务首次运行时使用） */
-static inline void
-arch_irq_enable(void)
+static inline void arch_irq_enable(void)
 {
     __asm__ volatile("sti" ::: "memory");
 }

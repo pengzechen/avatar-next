@@ -34,9 +34,9 @@
  * 两者产出的 ELF 符号类型相同（STT_FUNC）。
  */
 #if ARCH_AARCH64
-#  define ASM_TYPE_CHAR %
+#define ASM_TYPE_CHAR %
 #else
-#  define ASM_TYPE_CHAR @
+#define ASM_TYPE_CHAR @
 #endif
 
 /*
@@ -46,7 +46,9 @@
  * 必须放在函数代码之前，且在 .text 段内。
  */
 #define FUNCS(name) \
-    .globl name; .type name, ASM_TYPE_CHAR function; name:
+    .globl name; \
+    .type name, ASM_TYPE_CHAR function; \
+    name:
 
 /*
  * FUNCE(name) — 函数结束
@@ -54,8 +56,7 @@
  * 产生 .size，供调试器与栈回溯确定函数边界。
  * 若函数结尾会 fall-through 到下一段代码（例如不返回的尾调用），省略本宏即可。
  */
-#define FUNCE(name) \
-    .size name, . - name
+#define FUNCE(name) .size name, .- name
 
 /*
  * LFUNCS(name) / LFUNCE(name) — 文件内局部函数
@@ -71,9 +72,9 @@
  *   LFUNCE(helper)
  */
 #define LFUNCS(name) \
-    .type name, ASM_TYPE_CHAR function; name:
+    .type name, ASM_TYPE_CHAR function; \
+    name:
 
-#define LFUNCE(name) \
-    .size name, . - name
+#define LFUNCE(name) .size name, .- name
 
-#endif  // ASM_H
+#endif // ASM_H

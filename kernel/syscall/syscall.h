@@ -16,34 +16,34 @@
  * @tv_usec: 微秒
  */
 struct timeval {
-    int64_t tv_sec;     /* 秒 */
-    int64_t tv_usec;    /* 微秒 */
+    int64_t tv_sec;  /* 秒 */
+    int64_t tv_usec; /* 微秒 */
 };
 
 /* ── 系统调用号定义 ──────────────────────────────────────────── */
 
 typedef enum {
     /* 进程管理 */
-    SYS_EXIT  = 0,    /* 退出当前进程 */
-    SYS_YIELD = 1,    /* 让出 CPU */
-    SYS_GETPID = 2,   /* 获取进程 ID */
-    SYS_SLEEP = 3,    /* 睡眠指定毫秒数 */
-    SYS_EXECVE = 4,   /* 执行程序 */
+    SYS_EXIT = 0,   /* 退出当前进程 */
+    SYS_YIELD = 1,  /* 让出 CPU */
+    SYS_GETPID = 2, /* 获取进程 ID */
+    SYS_SLEEP = 3,  /* 睡眠指定毫秒数 */
+    SYS_EXECVE = 4, /* 执行程序 */
 
     /* 内存管理 */
-    SYS_BRK   = 10,   /* 设置程序断点 */
-    SYS_SBRK  = 11,   /* 增加程序断点 */
+    SYS_BRK = 10,  /* 设置程序断点 */
+    SYS_SBRK = 11, /* 增加程序断点 */
 
     /* 文件操作 — 使用私有号段避免与 Linux AArch64 号冲突 */
-    SYS_WRITE = 0x4000,   /* 写入字符串到 UART */
-    SYS_READ  = 0x4001,   /* 从设备读取 */
-    SYS_OPEN  = 0x4002,   /* 打开文件 */
-    SYS_CLOSE = 0x4003,   /* 关闭文件 */
+    SYS_WRITE = 0x4000, /* 写入字符串到 UART */
+    SYS_READ = 0x4001,  /* 从设备读取 */
+    SYS_OPEN = 0x4002,  /* 打开文件 */
+    SYS_CLOSE = 0x4003, /* 关闭文件 */
 
     /* 时间相关 */
-    SYS_GETTIMEOFDAY = 30,  /* 获取系统时间 */
+    SYS_GETTIMEOFDAY = 30, /* 获取系统时间 */
 
-    SYS_MAX          /* 系统调用数量 */
+    SYS_MAX /* 系统调用数量 */
 } syscall_num_t;
 
 /* ── 系统调用处理函数 ──────────────────────────────────────────── */
@@ -161,7 +161,8 @@ int64_t sys_gettimeofday(struct timeval *tv, void *tz);
 /**
  * sys_mmap - 匿名内存映射（供 musl malloc 使用）
  */
-uint64_t sys_mmap(uint64_t addr, uint64_t len, int prot, int flags, int fd, uint64_t offset);
+uint64_t sys_mmap(uint64_t addr, uint64_t len, int prot, int flags, int fd,
+                  uint64_t offset);
 uint64_t sys_munmap(uint64_t addr, uint64_t len);
 
 #endif /* KERNEL_SYSCALL_SYSCALL_H */

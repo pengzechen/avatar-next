@@ -59,7 +59,8 @@ static int wq_register(fd_waitqueue_t *wq, epoll_instance_t *ep, int item_idx)
     return 0;
 }
 
-static void wq_unregister(fd_waitqueue_t *wq, epoll_instance_t *ep, int item_idx)
+static void wq_unregister(fd_waitqueue_t *wq, epoll_instance_t *ep,
+                          int item_idx)
 {
     for (int i = 0; i < wq->waiter_count; i++) {
         if (wq->waiters[i].ep == ep && wq->waiters[i].item_idx == item_idx) {
@@ -212,7 +213,8 @@ void epoll_create1_handler(uint64_t regs[6], task_t *current)
     if (flags & EPOLL_CLOEXEC)
         current->fd_cloexec[fd / 8] |= (1 << (fd % 8));
 
-    KLOG_SYSCALL("[epoll] create1: pid=%u fd=%d ep_idx=%d\n", current->id, fd, ep_idx);
+    KLOG_SYSCALL("[epoll] create1: pid=%u fd=%d ep_idx=%d\n", current->id, fd,
+                 ep_idx);
     regs[0] = (uint64_t)fd;
 }
 
@@ -221,8 +223,8 @@ void epoll_create1_handler(uint64_t regs[6], task_t *current)
 void epoll_ctl_handler(uint64_t regs[6], task_t *current)
 {
     int epfd = (int)regs[0];
-    int op   = (int)regs[1];
-    int fd   = (int)regs[2];
+    int op = (int)regs[1];
+    int fd = (int)regs[2];
     struct epoll_event *ev = (struct epoll_event *)regs[3];
 
     fd_obj_t *ep_obj = task_get_fd(current, epfd);
@@ -267,11 +269,11 @@ void epoll_ctl_handler(uint64_t regs[6], task_t *current)
 
         int idx = ep->item_count;
         epoll_item_t *item = &ep->items[idx];
-        item->fd       = fd;
+        item->fd = fd;
         item->pool_idx = target_pool;
-        item->events   = ev->events;
-        item->data     = ev->data;
-        item->ready    = false;
+        item->events = ev->events;
+        item->data = ev->data;
+        item->ready = false;
         ep->item_count++;
 
         if (wq_register(&target->wq, ep, idx) < 0) {
@@ -323,7 +325,8 @@ void epoll_ctl_handler(uint64_t regs[6], task_t *current)
         }
         ep->item_count--;
 
-        KLOG_SYSCALL("[epoll] ctl DEL: ep=%d fd=%d\n", ep_obj->epoll.ep_idx, fd);
+        KLOG_SYSCALL("[epoll] ctl DEL: ep=%d fd=%d\n", ep_obj->epoll.ep_idx,
+                     fd);
         regs[0] = 0;
         break;
     }
@@ -346,7 +349,7 @@ void epoll_ctl_handler(uint64_t regs[6], task_t *current)
         }
 
         ep->items[found].events = ev->events;
-        ep->items[found].data   = ev->data;
+        ep->items[found].data = ev->data;
 
         bool was_ready = ep->items[found].ready;
         uint32_t cur_events = fd_poll(current, fd);
@@ -432,7 +435,7 @@ void epoll_pwait_handler(uint64_t regs[6], task_t *current)
                 if (cur & (EPOLLERR | EPOLLHUP))
                     matched |= cur & (EPOLLERR | EPOLLHUP);
                 events[n].events = matched;
-                events[n].data   = ep->items[i].data;
+                events[n].data = ep->items[i].data;
                 ep->items[i].ready = false;
                 n++;
             }

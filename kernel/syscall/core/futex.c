@@ -15,8 +15,8 @@
 #define FUTEX_TABLE_SIZE 64
 
 static struct {
-    uintptr_t uaddr;    /* 用户虚拟地址 (0 = 空闲) */
-    task_t   *waiter;   /* 等待该地址的任务 */
+    uintptr_t uaddr; /* 用户虚拟地址 (0 = 空闲) */
+    task_t *waiter;  /* 等待该地址的任务 */
 } g_futex_table[FUTEX_TABLE_SIZE];
 
 /*
@@ -26,16 +26,16 @@ static struct {
  */
 static spinlock_t g_futex_lock = SPINLOCK_INIT;
 
-int
-futex_do_wake(uintptr_t uaddr, int count)
+int futex_do_wake(uintptr_t uaddr, int count)
 {
     int woken = 0;
     uint64_t flags;
     spin_lock_irqsave(&g_futex_lock, &flags);
     for (int i = 0; i < FUTEX_TABLE_SIZE && woken < count; i++) {
-        if (g_futex_table[i].uaddr == uaddr && g_futex_table[i].waiter != NULL) {
+        if (g_futex_table[i].uaddr == uaddr &&
+            g_futex_table[i].waiter != NULL) {
             task_t *t = g_futex_table[i].waiter;
-            g_futex_table[i].uaddr  = 0;
+            g_futex_table[i].uaddr = 0;
             g_futex_table[i].waiter = NULL;
             t->state = TASK_READY;
             sched_enqueue(t);
@@ -46,8 +46,7 @@ futex_do_wake(uintptr_t uaddr, int count)
     return woken;
 }
 
-int
-sys_futex_wait(uint32_t *uaddr, uint32_t val)
+int sys_futex_wait(uint32_t *uaddr, uint32_t val)
 {
     uint32_t cur_val;
     uint64_t flags;
@@ -82,7 +81,7 @@ sys_futex_wait(uint32_t *uaddr, uint32_t val)
     }
 
     task_t *cur = task_current();
-    g_futex_table[slot].uaddr  = (uintptr_t)uaddr;
+    g_futex_table[slot].uaddr = (uintptr_t)uaddr;
     g_futex_table[slot].waiter = cur;
     cur->state = TASK_BLOCKED;
 
@@ -99,7 +98,7 @@ sys_futex_wait(uint32_t *uaddr, uint32_t val)
 void futex_handler(uint64_t regs[6])
 {
     uint32_t *uaddr = (uint32_t *)regs[0];
-    int op  = (int)regs[1] & ~(FUTEX_PRIVATE_FLAG | FUTEX_CLOCK_REALTIME);
+    int op = (int)regs[1] & ~(FUTEX_PRIVATE_FLAG | FUTEX_CLOCK_REALTIME);
     uint32_t val = (uint32_t)regs[2];
     /* FUTEX_WAKE: regs[2] 是唤醒数量 */
     if (op == FUTEX_WAIT)

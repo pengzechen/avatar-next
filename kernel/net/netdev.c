@@ -45,9 +45,8 @@ int netdev_register(netdev_t *dev)
 
     g_default_netdev = dev;
     KLOG_NET("[netdev] registered %s mac=%02x:%02x:%02x:%02x:%02x:%02x\n",
-             dev->name ? dev->name : "net0",
-             dev->mac[0], dev->mac[1], dev->mac[2],
-             dev->mac[3], dev->mac[4], dev->mac[5]);
+             dev->name ? dev->name : "net0", dev->mac[0], dev->mac[1],
+             dev->mac[2], dev->mac[3], dev->mac[4], dev->mac[5]);
     return 0;
 }
 
@@ -78,9 +77,9 @@ int netdev_recv(uint8_t *frame, size_t maxlen)
          * 没有 recv_into 时会回退到这里，而 netif_avatar 自己也会打一条 ——
          * 所以两处的级别和模块位必须一致，否则同一个包会被两层重复输出。 */
         uint16_t etype = n >= 14 ? ((uint16_t)frame[12] << 8) | frame[13] : 0U;
-        KLOG_MODULE_DEBUG_SAMPLE(LOG_MODULE_NET,
-                                 "[netdev] rx #%u dev=%s len=%d etype=0x%04x\n",
-                                 rx_count, dev->name ? dev->name : "net0", n, etype);
+        KLOG_MODULE_DEBUG_SAMPLE(
+            LOG_MODULE_NET, "[netdev] rx #%u dev=%s len=%d etype=0x%04x\n",
+            rx_count, dev->name ? dev->name : "net0", n, etype);
     }
     return n;
 }

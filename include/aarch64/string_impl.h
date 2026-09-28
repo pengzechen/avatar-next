@@ -28,27 +28,25 @@
  * 版本要求 src/dest 两边同时 16 字节对齐，一旦两者奇偶不同（比如网络
  * 缓冲区拷进对齐的堆块），对齐循环永不退出，整个拷贝退化成逐字节。
  */
-static inline void *
-memcpy_neon(void *dest, const void *src, size_t n)
+static inline void *memcpy_neon(void *dest, const void *src, size_t n)
 {
-    size_t         i = 0;
-    uint8_t       *d = (uint8_t *) dest;
-    const uint8_t *s = (const uint8_t *) src;
+    size_t i = 0;
+    uint8_t *d = (uint8_t *)dest;
+    const uint8_t *s = (const uint8_t *)src;
 
     /* 1. 先把目的地址推到 16 字节边界（最多 15 字节） */
-    while (i < n && ((uint64_t) (d + i) % 16 != 0)) {
+    while (i < n && ((uint64_t)(d + i) % 16 != 0)) {
         d[i] = s[i];
         i++;
     }
 
     /* 2. NEON 128-bit 拷贝 */
     for (; i + 15 < n; i += 16) {
-        asm volatile(
-            "ld1 {v0.16b}, [%[src]]\n"    /* 加载 16 字节到 NEON v0 */
-            "st1 {v0.16b}, [%[dest]]\n"   /* 存储 16 字节到 dest */
-            :
-            : [src] "r"(s + i), [dest] "r"(d + i)
-            : "v0", "memory");
+        asm volatile("ld1 {v0.16b}, [%[src]]\n"  /* 加载 16 字节到 NEON v0 */
+                     "st1 {v0.16b}, [%[dest]]\n" /* 存储 16 字节到 dest */
+                     :
+                     : [src] "r"(s + i), [dest] "r"(d + i)
+                     : "v0", "memory");
     }
 
     /* 3. 剩余不足 16 字节拷贝 */
@@ -68,30 +66,28 @@ memcpy_neon(void *dest, const void *src, size_t n)
  * dup 把字节广播到 16 个 lane，再用 st1 一次写 16 字节。
  * 与 memcpy_neon 同理，st1 {v0.16b} 按字节访问，只需目的地址对齐。
  */
-static inline void *
-memset_neon(void *s, int c, size_t n)
+static inline void *memset_neon(void *s, int c, size_t n)
 {
-    size_t   i = 0;
-    uint8_t *d = (uint8_t *) s;
-    unsigned byte = (unsigned) (uint8_t) c;
+    size_t i = 0;
+    uint8_t *d = (uint8_t *)s;
+    unsigned byte = (unsigned)(uint8_t)c;
 
     /* 1. 先把目的地址推到 16 字节边界 */
-    while (i < n && ((uint64_t) (d + i) % 16 != 0))
-        d[i++] = (uint8_t) byte;
+    while (i < n && ((uint64_t)(d + i) % 16 != 0))
+        d[i++] = (uint8_t)byte;
 
     /* 2. NEON 128-bit 填充 */
     for (; i + 15 < n; i += 16) {
-        asm volatile(
-            "dup v0.16b, %w[b]\n"        /* 字节广播到 16 个 lane */
-            "st1 {v0.16b}, [%[dst]]\n"
-            :
-            : [b] "r"(byte), [dst] "r"(d + i)
-            : "v0", "memory");
+        asm volatile("dup v0.16b, %w[b]\n" /* 字节广播到 16 个 lane */
+                     "st1 {v0.16b}, [%[dst]]\n"
+                     :
+                     : [b] "r"(byte), [dst] "r"(d + i)
+                     : "v0", "memory");
     }
 
     /* 3. 剩余不足 16 字节 */
     for (; i < n; i++)
-        d[i] = (uint8_t) byte;
+        d[i] = (uint8_t)byte;
 
     return s;
 }
@@ -107,16 +103,14 @@ memset_neon(void *s, int c, size_t n)
 #define MEMCPY_NEON_THRESHOLD 128u
 #define MEMSET_NEON_THRESHOLD 128u
 
-static inline void *
-memcpy_arch(void *dest, const void *src, size_t n)
+static inline void *memcpy_arch(void *dest, const void *src, size_t n)
 {
     if (n > MEMCPY_NEON_THRESHOLD)
         return memcpy_neon(dest, src, n);
     return memcpy_generic(dest, src, n);
 }
 
-static inline void *
-memset_arch(void *s, int c, size_t n)
+static inline void *memset_arch(void *s, int c, size_t n)
 {
     if (n > MEMSET_NEON_THRESHOLD)
         return memset_neon(s, c, n);

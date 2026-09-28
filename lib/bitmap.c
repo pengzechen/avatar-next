@@ -10,13 +10,14 @@
  *
  * 返回：第一个空闲位的索引，失败返回 (size_t)-1
  */
-size_t bitmap_find_first_free(const bitmap_t *bitmap) {
-  for (size_t i = 0; i < bitmap->size; i++) {
-    if (!bitmap_test(bitmap, i)) {
-      return i;
+size_t bitmap_find_first_free(const bitmap_t *bitmap)
+{
+    for (size_t i = 0; i < bitmap->size; i++) {
+        if (!bitmap_test(bitmap, i)) {
+            return i;
+        }
     }
-  }
-  return (size_t)-1;
+    return (size_t)-1;
 }
 
 /*
@@ -41,44 +42,46 @@ size_t bitmap_find_first_free(const bitmap_t *bitmap) {
  * 从 0 再找一遍，保证不会漏掉 start 之前的空洞。
  */
 size_t bitmap_find_contiguous_free_from(const bitmap_t *bitmap, size_t count,
-                                        size_t start) {
-  if (count == 0 || count > bitmap->size) {
-    return (size_t)-1;
-  }
-  if (start + count > bitmap->size) {
-    return (size_t)-1;          /* 起点太靠后，交给调用方回绕 */
-  }
+                                        size_t start)
+{
+    if (count == 0 || count > bitmap->size) {
+        return (size_t)-1;
+    }
+    if (start + count > bitmap->size) {
+        return (size_t)-1; /* 起点太靠后，交给调用方回绕 */
+    }
 
-  for (size_t i = start; i + count <= bitmap->size; i++) {
-    size_t j;
-    for (j = 0; j < count; j++) {
-      if (bitmap_test(bitmap, i + j)) {
-        i += j;                 /* 跳过已占位，别一位一位挪 */
-        break;
-      }
+    for (size_t i = start; i + count <= bitmap->size; i++) {
+        size_t j;
+        for (j = 0; j < count; j++) {
+            if (bitmap_test(bitmap, i + j)) {
+                i += j; /* 跳过已占位，别一位一位挪 */
+                break;
+            }
+        }
+        if (j == count) {
+            return i;
+        }
     }
-    if (j == count) {
-      return i;
-    }
-  }
-  return (size_t)-1;
+    return (size_t)-1;
 }
 
-size_t bitmap_find_contiguous_free(const bitmap_t *bitmap, size_t count) {
-  if (count == 0 || count > bitmap->size) {
-    return (size_t)-1;
-  }
+size_t bitmap_find_contiguous_free(const bitmap_t *bitmap, size_t count)
+{
+    if (count == 0 || count > bitmap->size) {
+        return (size_t)-1;
+    }
 
-  for (size_t i = 0; i + count <= bitmap->size; i++) {
-    size_t j;
-    for (j = 0; j < count; j++) {
-      if (bitmap_test(bitmap, i + j)) {
-        break;
-      }
+    for (size_t i = 0; i + count <= bitmap->size; i++) {
+        size_t j;
+        for (j = 0; j < count; j++) {
+            if (bitmap_test(bitmap, i + j)) {
+                break;
+            }
+        }
+        if (j == count) {
+            return i; /* 找到足够的连续空闲位 */
+        }
     }
-    if (j == count) {
-      return i; /* 找到足够的连续空闲位 */
-    }
-  }
-  return (size_t)-1;
+    return (size_t)-1;
 }

@@ -21,15 +21,15 @@
 
 #include "vmm_mmio.h"
 #include "vmm_vgic.h"
-#include "vmm_virq.h"     /* VIRQ_VTIMER：guest 虚拟定时器的 PPI 号 */
+#include "vmm_virq.h" /* VIRQ_VTIMER：guest 虚拟定时器的 PPI 号 */
 
 /* QEMU virt GICv2 分发器基址/大小 */
-#define VGICD_BASE   0x08000000ULL
-#define VGICD_SIZE   0x10000ULL
+#define VGICD_BASE 0x08000000ULL
+#define VGICD_SIZE 0x10000ULL
 
 /* 最大跟踪中断数 */
-#define VGICD_MAX_IRQS   1024
-#define VGICD_MAX_VCPUS  8
+#define VGICD_MAX_IRQS  1024
+#define VGICD_MAX_VCPUS 8
 
 /*
  * guest 虚拟定时器中断 = PPI 27。从前这里有一份独立的 `VGICD_VTIMER_IRQ 27`
@@ -48,6 +48,6 @@ int vgicd_init(mmio_device_t *dev, mmio_bus_t *bus, vgic_t *vgic);
 void vgicd_set_pending(vgic_t *vgic, uint32_t vcpu_id, uint32_t irq);
 
 /* 查询某中断是否使能（供投递路径使用）*/
-int  vgicd_is_enabled(const vgic_t *vgic, uint32_t vcpu_id, uint32_t irq);
+int vgicd_is_enabled(const vgic_t *vgic, uint32_t vcpu_id, uint32_t irq);
 
 #endif /* VMM_VGICD_H */

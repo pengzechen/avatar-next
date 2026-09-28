@@ -7,20 +7,20 @@
 #include "klog.h"
 #include "string.h"
 
-#define GICD_CTLR        0x000
-#define GICD_TYPER       0x004
-#define GICD_IIDR        0x008
-#define GICD_ISENABLER   0x100
-#define GICD_ICENABLER   0x180
-#define GICD_ISPENDR     0x200
-#define GICD_ICPENDR     0x280
-#define GICD_ISACTIVER   0x300
-#define GICD_ICACTIVER   0x380
-#define GICD_IPRIORITYR  0x400
-#define GICD_ITARGETSR   0x800
-#define GICD_ICFGR       0xc00
-#define GICD_SGIR        0xf00
-#define ENABLE_WORDS     32
+#define GICD_CTLR       0x000
+#define GICD_TYPER      0x004
+#define GICD_IIDR       0x008
+#define GICD_ISENABLER  0x100
+#define GICD_ICENABLER  0x180
+#define GICD_ISPENDR    0x200
+#define GICD_ICPENDR    0x280
+#define GICD_ISACTIVER  0x300
+#define GICD_ICACTIVER  0x380
+#define GICD_IPRIORITYR 0x400
+#define GICD_ITARGETSR  0x800
+#define GICD_ICFGR      0xc00
+#define GICD_SGIR       0xf00
+#define ENABLE_WORDS    32
 
 static uint64_t reg_read(const vgic_t *vgic, uint32_t off, uint8_t size)
 {
@@ -31,8 +31,7 @@ static uint64_t reg_read(const vgic_t *vgic, uint32_t off, uint8_t size)
     return value;
 }
 
-static void reg_write(vgic_t *vgic, uint32_t off, uint8_t size,
-                      uint64_t value)
+static void reg_write(vgic_t *vgic, uint32_t off, uint8_t size, uint64_t value)
 {
     for (uint32_t i = 0; i < size; i++)
         if (off + i < VGICD_REG_SIZE)
@@ -117,9 +116,8 @@ static uint64_t vgicd_read_for_vcpu(mmio_device_t *dev, uint64_t off,
     return reg_read(vgic, (uint32_t)off, size);
 }
 
-static void vgicd_write_for_vcpu(mmio_device_t *dev, uint64_t off,
-                                 uint8_t size, uint64_t value,
-                                 uint32_t vcpu_id)
+static void vgicd_write_for_vcpu(mmio_device_t *dev, uint64_t off, uint8_t size,
+                                 uint64_t value, uint32_t vcpu_id)
 {
     vgic_t *vgic = (vgic_t *)dev->priv;
     uint32_t word;

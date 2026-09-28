@@ -19,8 +19,10 @@
 #include "types.h"
 #include "klog.h"
 
-#define BUF_SIZE   1200u    /* 足够容纳最大测试长度 + 前后守卫（守卫靠整缓冲区比对覆盖） */
-#define BLOB_SIZE  900u     /* 大结构体赋值：要大到 GCC 走 bl memcpy 而不是内联展开 */
+#define BUF_SIZE \
+    1200u /* 足够容纳最大测试长度 + 前后守卫（守卫靠整缓冲区比对覆盖） */
+#define BLOB_SIZE \
+    900u /* 大结构体赋值：要大到 GCC 走 bl memcpy 而不是内联展开 */
 
 /* 16 字节对齐，便于构造各种对齐组合（偏移量仍然任取） */
 static uint8_t g_src[BUF_SIZE] __attribute__((aligned(16)));
@@ -31,15 +33,13 @@ static int g_cases;
 static int g_failed;
 
 /* ── 参考实现（逐字节，作为唯一权威）────────────────────────────── */
-static void
-ref_memcpy(uint8_t *d, const uint8_t *s, size_t n)
+static void ref_memcpy(uint8_t *d, const uint8_t *s, size_t n)
 {
     for (size_t i = 0; i < n; i++)
         d[i] = s[i];
 }
 
-static void
-ref_memset(uint8_t *d, uint8_t b, size_t n)
+static void ref_memset(uint8_t *d, uint8_t b, size_t n)
 {
     for (size_t i = 0; i < n; i++)
         d[i] = b;
@@ -47,30 +47,28 @@ ref_memset(uint8_t *d, uint8_t b, size_t n)
 
 /* ── 用例驱动 ─────────────────────────────────────────────────── */
 
-static void
-fail(const char *what, size_t n, unsigned doff, unsigned soff)
+static void fail(const char *what, size_t n, unsigned doff, unsigned soff)
 {
     g_failed++;
-    KLOG_ERROR("[string_test] FAIL %s: n=%u doff=%u soff=%u\n",
-               what, (unsigned) n, doff, soff);
+    KLOG_ERROR("[string_test] FAIL %s: n=%u doff=%u soff=%u\n", what,
+               (unsigned)n, doff, soff);
 }
 
 /*
  * 用给定的长度/对齐组合测一次 memcpy。
  * 期望：dst[c..c+n) == src 的对应内容，且前后守卫字节不变。
  */
-static void
-case_memcpy(size_t n, unsigned doff, unsigned soff)
+static void case_memcpy(size_t n, unsigned doff, unsigned soff)
 {
     const uint8_t *s = g_src + soff;
-    uint8_t       *d = g_dst + doff;
+    uint8_t *d = g_dst + doff;
 
     g_cases++;
 
     /* 铺底：源、目的、参考各自填不同图案 */
     ref_memset(g_src, 0xA5, sizeof(g_src));
     for (unsigned i = 0; i < n; i++)
-        g_src[soff + i] = (uint8_t) (i * 7 + 3);
+        g_src[soff + i] = (uint8_t)(i * 7 + 3);
 
     ref_memset(g_dst, 0x3C, sizeof(g_dst));
     ref_memset(g_ref, 0x3C, sizeof(g_ref));
@@ -82,7 +80,7 @@ case_memcpy(size_t n, unsigned doff, unsigned soff)
     memcpy(d, s, n);
 
     /* 逐字节比对整个缓冲区：既查拷贝内容，也查守卫字节没被踩 */
-    for (unsigned i = 0; i < (unsigned) sizeof(g_dst); i++) {
+    for (unsigned i = 0; i < (unsigned)sizeof(g_dst); i++) {
         if (g_dst[i] != g_ref[i]) {
             fail("memcpy", n, doff, soff);
             return;
@@ -90,8 +88,7 @@ case_memcpy(size_t n, unsigned doff, unsigned soff)
     }
 }
 
-static void
-case_memset(size_t n, unsigned doff, uint8_t value)
+static void case_memset(size_t n, unsigned doff, uint8_t value)
 {
     uint8_t *d = g_dst + doff;
 
@@ -103,7 +100,7 @@ case_memset(size_t n, unsigned doff, uint8_t value)
 
     memset(d, value, n);
 
-    for (unsigned i = 0; i < (unsigned) sizeof(g_dst); i++) {
+    for (unsigned i = 0; i < (unsigned)sizeof(g_dst); i++) {
         if (g_dst[i] != g_ref[i]) {
             fail("memset", n, doff, value);
             return;
@@ -111,8 +108,7 @@ case_memset(size_t n, unsigned doff, uint8_t value)
     }
 }
 
-static void
-case_memmove(size_t n, unsigned doff, unsigned soff)
+static void case_memmove(size_t n, unsigned doff, unsigned soff)
 {
     /* 只用一块缓冲区，制造真实重叠：d 和 s 都在 g_dst 里 */
     uint8_t *d = g_dst + doff;
@@ -122,9 +118,9 @@ case_memmove(size_t n, unsigned doff, unsigned soff)
 
     ref_memset(g_dst, 0xA5, sizeof(g_dst));
     for (unsigned i = 0; i < n; i++)
-        g_dst[soff + i] = (uint8_t) (i * 5 + 1);
+        g_dst[soff + i] = (uint8_t)(i * 5 + 1);
 
-    memcpy(g_ref, g_dst, sizeof(g_ref));   /* 参考快照（搬之前）*/
+    memcpy(g_ref, g_dst, sizeof(g_ref)); /* 参考快照（搬之前）*/
 
     /*
      * 参考：在快照上按逐字节 memmove 语义重放（重叠方向由地址高低决定）。
@@ -134,13 +130,13 @@ case_memmove(size_t n, unsigned doff, unsigned soff)
         for (unsigned i = 0; i < n; i++)
             g_ref[doff + i] = g_ref[soff + i];
     } else if (doff > soff) {
-        for (unsigned i = (unsigned) n; i > 0; i--)
+        for (unsigned i = (unsigned)n; i > 0; i--)
             g_ref[doff + i - 1] = g_ref[soff + i - 1];
     }
 
     memmove(d, s, n);
 
-    for (unsigned i = 0; i < (unsigned) sizeof(g_dst); i++) {
+    for (unsigned i = 0; i < (unsigned)sizeof(g_dst); i++) {
         if (g_dst[i] != g_ref[i]) {
             fail("memmove", n, doff, soff);
             return;
@@ -150,14 +146,12 @@ case_memmove(size_t n, unsigned doff, unsigned soff)
 
 /* ── 入口 ─────────────────────────────────────────────────────── */
 
-void
-test_string_functions(void)
+void test_string_functions(void)
 {
     /* 长度矩阵：跨过 0/1、对齐边界（16 的倍数附近）、以及 128 阈值两侧 */
-    static const size_t lens[] = {
-        0, 1, 2, 3, 7, 8, 9, 15, 16, 17, 31, 32, 33,
-        63, 64, 65, 127, 128, 129, 255, 256, 257, 511, 512, 1000
-    };
+    static const size_t lens[] = { 0,   1,   2,   3,   7,   8,   9,   15,  16,
+                                   17,  31,  32,  33,  63,  64,  65,  127, 128,
+                                   129, 255, 256, 257, 511, 512, 1000 };
     static const unsigned offs[] = { 0, 1, 2, 3, 7, 8, 15, 16 };
 
     KLOG_INFO("=== string self-test (memcpy/memset/memmove) ===\n");
@@ -198,14 +192,16 @@ test_string_functions(void)
      * 所以专门测一下：拷贝结果必须与逐字节参考一致。
      */
     {
-        static struct { uint8_t b[BLOB_SIZE]; } blob_a, blob_b;
+        static struct {
+            uint8_t b[BLOB_SIZE];
+        } blob_a, blob_b;
 
         g_cases++;
         for (unsigned i = 0; i < BLOB_SIZE; i++)
-            blob_a.b[i] = (uint8_t) (i * 13 + 7);
+            blob_a.b[i] = (uint8_t)(i * 13 + 7);
         ref_memset(blob_b.b, 0x11, BLOB_SIZE);
 
-        blob_b = blob_a;        /* ← 期望编译成 bl memcpy（外部符号） */
+        blob_b = blob_a; /* ← 期望编译成 bl memcpy（外部符号） */
 
         for (unsigned i = 0; i < BLOB_SIZE; i++) {
             if (blob_b.b[i] != blob_a.b[i]) {
@@ -219,23 +215,50 @@ test_string_functions(void)
     {
         char buf[64];
 
-        if (strlen("hello") != 5)                 { g_failed++; KLOG_ERROR("[string_test] FAIL strlen\n"); }
+        if (strlen("hello") != 5) {
+            g_failed++;
+            KLOG_ERROR("[string_test] FAIL strlen\n");
+        }
         strcpy(buf, "hello ");
         strcat(buf, "world");
-        if (strlen(buf) != 11)                    { g_failed++; KLOG_ERROR("[string_test] FAIL strcat\n"); }
-        if (strcmp("abc", "abc") != 0)            { g_failed++; KLOG_ERROR("[string_test] FAIL strcmp(eq)\n"); }
-        if (strcmp("abc", "abd") >= 0)            { g_failed++; KLOG_ERROR("[string_test] FAIL strcmp(lt)\n"); }
-        if (strncmp("abc", "abd", 2) != 0)        { g_failed++; KLOG_ERROR("[string_test] FAIL strncmp\n"); }
-        if (memcmp("abc", "abc", 3) != 0)         { g_failed++; KLOG_ERROR("[string_test] FAIL memcmp\n"); }
-        if (atol("12345") != 12345)               { g_failed++; KLOG_ERROR("[string_test] FAIL atol\n"); }
-        if (memchr("abcdef", 'd', 6) == NULL)     { g_failed++; KLOG_ERROR("[string_test] FAIL memchr\n"); }
-        if (strchr("abc", 'b') == NULL)           { g_failed++; KLOG_ERROR("[string_test] FAIL strchr\n"); }
+        if (strlen(buf) != 11) {
+            g_failed++;
+            KLOG_ERROR("[string_test] FAIL strcat\n");
+        }
+        if (strcmp("abc", "abc") != 0) {
+            g_failed++;
+            KLOG_ERROR("[string_test] FAIL strcmp(eq)\n");
+        }
+        if (strcmp("abc", "abd") >= 0) {
+            g_failed++;
+            KLOG_ERROR("[string_test] FAIL strcmp(lt)\n");
+        }
+        if (strncmp("abc", "abd", 2) != 0) {
+            g_failed++;
+            KLOG_ERROR("[string_test] FAIL strncmp\n");
+        }
+        if (memcmp("abc", "abc", 3) != 0) {
+            g_failed++;
+            KLOG_ERROR("[string_test] FAIL memcmp\n");
+        }
+        if (atol("12345") != 12345) {
+            g_failed++;
+            KLOG_ERROR("[string_test] FAIL atol\n");
+        }
+        if (memchr("abcdef", 'd', 6) == NULL) {
+            g_failed++;
+            KLOG_ERROR("[string_test] FAIL memchr\n");
+        }
+        if (strchr("abc", 'b') == NULL) {
+            g_failed++;
+            KLOG_ERROR("[string_test] FAIL strchr\n");
+        }
         g_cases += 9;
     }
 
     if (g_failed == 0)
-        KLOG_INFO("=== STRING TEST: PASS (%u cases) ===\n", (unsigned) g_cases);
+        KLOG_INFO("=== STRING TEST: PASS (%u cases) ===\n", (unsigned)g_cases);
     else
         KLOG_ERROR("=== STRING TEST: %u FAILED of %u cases ===\n",
-                   (unsigned) g_failed, (unsigned) g_cases);
+                   (unsigned)g_failed, (unsigned)g_cases);
 }

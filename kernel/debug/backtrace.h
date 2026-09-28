@@ -23,9 +23,9 @@
 /* 一帧。name 指向 kallsyms 表里的名字（静态存储，不需要释放）；
  * 表里查不到时 name 为 NULL —— 此时只报地址。 */
 typedef struct {
-    uintptr_t   addr;    /* 调用点地址（返回地址，指向 call 的**下一条**指令）*/
-    const char *name;    /* 所属函数名，NULL = 没查到 */
-    uintptr_t   offset;  /* addr - 函数入口 */
+    uintptr_t addr;   /* 调用点地址（返回地址，指向 call 的**下一条**指令）*/
+    const char *name; /* 所属函数名，NULL = 没查到 */
+    uintptr_t offset; /* addr - 函数入口 */
 } bt_entry_t;
 
 /* ── 收集 ─────────────────────────────────────────────────────── */
@@ -57,8 +57,8 @@ int backtrace_collect(bt_entry_t *out, int max);
  * frame 的 x[1] 把它捞回来，否则这一帧就只能空着。
  * 详见 backtrace.c 里 bt_read_frame 的说明。
  */
-int backtrace_collect_from(uintptr_t pc, uintptr_t fp, uintptr_t sp, uintptr_t ra,
-                           bt_entry_t *out, int max);
+int backtrace_collect_from(uintptr_t pc, uintptr_t fp, uintptr_t sp,
+                           uintptr_t ra, bt_entry_t *out, int max);
 
 /* ── 打印 ─────────────────────────────────────────────────────── */
 
@@ -71,7 +71,8 @@ int backtrace_collect_from(uintptr_t pc, uintptr_t fp, uintptr_t sp, uintptr_t r
  * klog 的全局锁（见下）。
  */
 void backtrace_print(void);
-void backtrace_print_from(uintptr_t pc, uintptr_t fp, uintptr_t sp, uintptr_t ra);
+void backtrace_print_from(uintptr_t pc, uintptr_t fp, uintptr_t sp,
+                          uintptr_t ra);
 
 /*
  * backtrace_dump_fault - 内核态异常处理里的标准三步
@@ -86,7 +87,8 @@ void backtrace_print_from(uintptr_t pc, uintptr_t fp, uintptr_t sp, uintptr_t ra
  * ⚠️ 顺序别自己展开重排。如果先调 platform_panic()，它打的是**异常处理
  * 程序自己**的栈（此时早已不在出错的那条路径上），看到的调用栈是错的。
  */
-void backtrace_dump_fault(uintptr_t pc, uintptr_t fp, uintptr_t sp, uintptr_t ra);
+void backtrace_dump_fault(uintptr_t pc, uintptr_t fp, uintptr_t sp,
+                          uintptr_t ra);
 
 /*
  * backtrace_render - 渲染进调用者给的缓冲区（/proc/backtrace 用）

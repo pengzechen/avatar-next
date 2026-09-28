@@ -18,16 +18,17 @@
  * 新增平台时在这里加一个 RV_CMO_* 类别与对应分支，cache_impl.h 不用动。
  */
 
-#define RV_CMO_NONE    0   /* 没有任何 CMO（平台由硬件保证一致，如 QEMU virt） */
-#define RV_CMO_ZICBOM  1   /* 标准 Zicbom 扩展：cbo.clean / cbo.flush / cbo.inval */
-#define RV_CMO_THEAD   2   /* T-Head C906/C910 私有 CMO（CUSTOM-0 编码） */
+#define RV_CMO_NONE 0 /* 没有任何 CMO（平台由硬件保证一致，如 QEMU virt） */
+#define RV_CMO_ZICBOM \
+    1                  /* 标准 Zicbom 扩展：cbo.clean / cbo.flush / cbo.inval */
+#define RV_CMO_THEAD 2 /* T-Head C906/C910 私有 CMO（CUSTOM-0 编码） */
 
 #if defined(PLATFORM_SG2002)
-#  define RV_CMO_KIND RV_CMO_THEAD
+#define RV_CMO_KIND RV_CMO_THEAD
 #elif defined(__riscv_zicbom)
-#  define RV_CMO_KIND RV_CMO_ZICBOM
+#define RV_CMO_KIND RV_CMO_ZICBOM
 #else
-#  define RV_CMO_KIND RV_CMO_NONE
+#define RV_CMO_KIND RV_CMO_NONE
 #endif
 
 /* 一个 cache block 的字节数（CMO 的最小粒度）。
@@ -36,12 +37,14 @@
 #define RV_CMO_BLOCK_SIZE 64u
 
 static inline size_t rv_cmo_block_size(void);
-static inline void   rv_cmo_clean(void *addr);          /* 写回，保留在缓存里 */
-static inline void   rv_cmo_invalidate(void *addr);     /* 失效，不写回（脏数据会丢） */
-static inline void   rv_cmo_clean_invalidate(void *addr);/* 写回并失效 */
-static inline void   rv_cmo_invalidate_all(void);       /* 整 cache 失效（仅 T-Head 提供） */
-static inline void   rv_cmo_sync(void);                 /* CMO 之后的完成屏障 */
-static inline void   rv_cmo_icache_sync(void);          /* 让刚写入的指令可见 */
+static inline void rv_cmo_clean(void *addr); /* 写回，保留在缓存里 */
+static inline void
+rv_cmo_invalidate(void *addr); /* 失效，不写回（脏数据会丢） */
+static inline void rv_cmo_clean_invalidate(void *addr); /* 写回并失效 */
+static inline void
+rv_cmo_invalidate_all(void);          /* 整 cache 失效（仅 T-Head 提供） */
+static inline void rv_cmo_sync(void); /* CMO 之后的完成屏障 */
+static inline void rv_cmo_icache_sync(void); /* 让刚写入的指令可见 */
 
 /* ══════════════════════════════════════════════════════════════════════
  * T-Head C906 / C910（CUSTOM-0 私有编码）
@@ -64,26 +67,22 @@ static inline void   rv_cmo_icache_sync(void);          /* 让刚写入的指令
  * ══════════════════════════════════════════════════════════════════════ */
 #if RV_CMO_KIND == RV_CMO_THEAD
 
-static inline size_t
-rv_cmo_block_size(void)
+static inline size_t rv_cmo_block_size(void)
 {
     return RV_CMO_BLOCK_SIZE;
 }
 
-static inline void
-rv_cmo_clean(void *addr)
+static inline void rv_cmo_clean(void *addr)
 {
     __asm__ volatile(".insn i 0x0b, 0, x0, %0, 0x025" : : "r"(addr) : "memory");
 }
 
-static inline void
-rv_cmo_invalidate(void *addr)
+static inline void rv_cmo_invalidate(void *addr)
 {
     __asm__ volatile(".insn i 0x0b, 0, x0, %0, 0x026" : : "r"(addr) : "memory");
 }
 
-static inline void
-rv_cmo_clean_invalidate(void *addr)
+static inline void rv_cmo_clean_invalidate(void *addr)
 {
     /* civa：一条指令完成"写回 + 失效"。原来的代码发 cva 再发 iva，
      * 两次访问之间别的 agent 可能把行弄脏，语义上不等价。 */
@@ -101,72 +100,62 @@ rv_cmo_clean_invalidate(void *addr)
  * 在查手册或上板确认之前：函数名按表（invalidate），不要把它接到 clean 语义上；
  * 若确认表有误，改这里的编码/命名，并考虑是否需要 *_all 形式的清理。
  */
-static inline void
-rv_cmo_invalidate_all(void)
+static inline void rv_cmo_invalidate_all(void)
 {
     __asm__ volatile(".long 0x0030000b" ::: "memory");
 }
 
-static inline void
-rv_cmo_sync(void)
+static inline void rv_cmo_sync(void)
 {
     __asm__ volatile("fence rw, rw" ::: "memory");
 }
 
-static inline void
-rv_cmo_icache_sync(void)
+static inline void rv_cmo_icache_sync(void)
 {
     /* fence.i 在 C906 上**不足以**让新写入的指令可见（这正是下面两条厂商指令
      * 存在的原因，.S 的 exec/fork 返回路径里也是这么写的）。 */
-    __asm__ volatile(
-        "fence.i            \n"
-        ".long 0x0100000b   \n"   /* icache.iall */
-        ".long 0x01a0000b   \n"   /* sync.i      */
-        ::: "memory");
+    __asm__ volatile("fence.i            \n"
+                     ".long 0x0100000b   \n" /* icache.iall */
+                     ".long 0x01a0000b   \n" /* sync.i      */
+                     ::
+                         : "memory");
 }
 
 /* ═══════════════════════════════════════════ Zicbom（标准扩展）══ */
 #elif RV_CMO_KIND == RV_CMO_ZICBOM
 
-static inline size_t
-rv_cmo_block_size(void)
+static inline size_t rv_cmo_block_size(void)
 {
     return RV_CMO_BLOCK_SIZE;
 }
 
-static inline void
-rv_cmo_clean(void *addr)
+static inline void rv_cmo_clean(void *addr)
 {
     __asm__ volatile("cbo.clean %0" : : "r"(addr) : "memory");
 }
 
-static inline void
-rv_cmo_invalidate(void *addr)
+static inline void rv_cmo_invalidate(void *addr)
 {
     __asm__ volatile("cbo.inval %0" : : "r"(addr) : "memory");
 }
 
-static inline void
-rv_cmo_clean_invalidate(void *addr)
+static inline void rv_cmo_clean_invalidate(void *addr)
 {
     __asm__ volatile("cbo.flush %0" : : "r"(addr) : "memory");
 }
 
-static inline void
-rv_cmo_invalidate_all(void)
+static inline void rv_cmo_invalidate_all(void)
 {
     /* Zicbom 只有按 block 的形式，没有"整 cache"指令；真需要时按内存区间循环。
      * 这里显式不做（平台层另有 *_all 需求时再实现）。 */
 }
 
-static inline void
-rv_cmo_sync(void)
+static inline void rv_cmo_sync(void)
 {
     __asm__ volatile("fence rw, rw" ::: "memory");
 }
 
-static inline void
-rv_cmo_icache_sync(void)
+static inline void rv_cmo_icache_sync(void)
 {
     __asm__ volatile("fence.i" ::: "memory");
 }
@@ -174,8 +163,7 @@ rv_cmo_icache_sync(void)
 /* ═══════════════════════════════ 没有 CMO（平台保证一致）══════ */
 #else
 
-static inline size_t
-rv_cmo_block_size(void)
+static inline size_t rv_cmo_block_size(void)
 {
     return RV_CMO_BLOCK_SIZE;
 }
@@ -183,19 +171,27 @@ rv_cmo_block_size(void)
 /* 没有 CMO 的平台（QEMU virt）：DMA 由模拟器/硬件保证一致，
  * 这里全部是空操作。以前 clean 分支会发一条 `fence ow, ow` —— 那是访存顺序
  * 屏障，不是 cache 操作，对"清理"没有任何作用，已去掉。 */
-static inline void rv_cmo_clean(void *addr)            { (void)addr; }
-static inline void rv_cmo_invalidate(void *addr)       { (void)addr; }
-static inline void rv_cmo_clean_invalidate(void *addr) { (void)addr; }
-static inline void rv_cmo_invalidate_all(void)         { }
+static inline void rv_cmo_clean(void *addr)
+{
+    (void)addr;
+}
+static inline void rv_cmo_invalidate(void *addr)
+{
+    (void)addr;
+}
+static inline void rv_cmo_clean_invalidate(void *addr)
+{
+    (void)addr;
+}
+static inline void rv_cmo_invalidate_all(void)
+{}
 
-static inline void
-rv_cmo_sync(void)
+static inline void rv_cmo_sync(void)
 {
     __asm__ volatile("fence rw, rw" ::: "memory");
 }
 
-static inline void
-rv_cmo_icache_sync(void)
+static inline void rv_cmo_icache_sync(void)
 {
     __asm__ volatile("fence.i" ::: "memory");
 }

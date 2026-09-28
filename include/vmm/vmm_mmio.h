@@ -15,7 +15,7 @@
 #include "types.h"
 
 /* ── 最大注册设备数 ────────────────────────────────────────── */
-#define MMIO_MAX_DEVICES  16
+#define MMIO_MAX_DEVICES 16
 
 struct mmio_device;
 
@@ -30,42 +30,41 @@ struct mmio_device;
  */
 typedef struct mmio_dev_ops {
     const char *name;
-    uint64_t    base;
-    uint64_t    size;
+    uint64_t base;
+    uint64_t size;
 
     uint64_t (*read)(struct mmio_device *dev, uint64_t offset, uint8_t size);
-    void     (*write)(struct mmio_device *dev, uint64_t offset, uint8_t size,
-                      uint64_t value);
+    void (*write)(struct mmio_device *dev, uint64_t offset, uint8_t size,
+                  uint64_t value);
 
     uint64_t (*read_for_vcpu)(struct mmio_device *dev, uint64_t offset,
                               uint8_t size, uint32_t vcpu_id);
-    void     (*write_for_vcpu)(struct mmio_device *dev, uint64_t offset,
-                               uint8_t size, uint64_t value, uint32_t vcpu_id);
+    void (*write_for_vcpu)(struct mmio_device *dev, uint64_t offset,
+                           uint8_t size, uint64_t value, uint32_t vcpu_id);
 } mmio_dev_ops_t;
 
 /* 设备实例：操作表 + 设备私有状态 */
 typedef struct mmio_device {
     const mmio_dev_ops_t *ops;
-    void                 *priv;
+    void *priv;
 } mmio_device_t;
 
 /* ── MMIO 总线 ─────────────────────────────────────────────── */
 typedef struct mmio_bus {
     mmio_device_t *devs[MMIO_MAX_DEVICES];
-    int            nr;
+    int nr;
 } mmio_bus_t;
 
 void mmio_bus_init(mmio_bus_t *bus);
 
 /* 注册设备；超过 MMIO_MAX_DEVICES 返回 -1 */
-int  mmio_bus_register(mmio_bus_t *bus, mmio_device_t *dev);
+int mmio_bus_register(mmio_bus_t *bus, mmio_device_t *dev);
 
 /*
  * 分发一次 MMIO 访问。
  * 命中设备返回 1（读访问时把读到的值写入 *out）；无设备命中返回 0。
  */
-int  mmio_bus_handle(mmio_bus_t *bus, uint64_t gpa, int is_write,
-                     uint8_t size, uint64_t value, uint32_t vcpu_id,
-                     uint64_t *out);
+int mmio_bus_handle(mmio_bus_t *bus, uint64_t gpa, int is_write, uint8_t size,
+                    uint64_t value, uint32_t vcpu_id, uint64_t *out);
 
 #endif /* VMM_MMIO_H */

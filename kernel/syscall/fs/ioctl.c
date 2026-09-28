@@ -13,22 +13,26 @@
 
 static bool trace_heavy_task(task_t *current)
 {
-    return current && current->is_user_process && current->heap_end >= 0x3000000ULL;
+    return current && current->is_user_process &&
+           current->heap_end >= 0x3000000ULL;
 }
 
 void ioctl_handler(uint64_t regs[6], task_t *current)
 {
-    int      ioctl_fd = (int)regs[0];
-    uint64_t request  = regs[1];
-    void    *argp     = (void *)regs[2];
+    int ioctl_fd = (int)regs[0];
+    uint64_t request = regs[1];
+    void *argp = (void *)regs[2];
 
     /* 查找 fd 对象（任何 fd，包括 0/1/2） */
     fd_obj_t *ioctl_obj = task_get_fd(current, ioctl_fd);
     if (trace_heavy_task(current)) {
-        KLOG_SYSCALL("[vfsioctl] pid=%u fd=%d req=0x%llx arg=0x%llx path=%s kind=%d\n",
-                     current->id, ioctl_fd, request, (uint64_t)argp,
-                     (ioctl_obj && fd_obj_file(ioctl_obj)) ? fd_obj_file(ioctl_obj)->path : "<none>",
-                     (ioctl_obj && fd_obj_file(ioctl_obj)) ? fd_obj_file(ioctl_obj)->kind : -1);
+        KLOG_SYSCALL(
+            "[vfsioctl] pid=%u fd=%d req=0x%llx arg=0x%llx path=%s kind=%d\n",
+            current->id, ioctl_fd, request, (uint64_t)argp,
+            (ioctl_obj && fd_obj_file(ioctl_obj)) ? fd_obj_file(ioctl_obj)->path
+                                                  : "<none>",
+            (ioctl_obj && fd_obj_file(ioctl_obj)) ? fd_obj_file(ioctl_obj)->kind
+                                                  : -1);
     }
 
     if (request == FIONBIO) {
@@ -42,7 +46,7 @@ void ioctl_handler(uint64_t regs[6], task_t *current)
             return;
         }
         if (on)
-            ioctl_obj->flags |= 04000;  /* O_NONBLOCK */
+            ioctl_obj->flags |= 04000; /* O_NONBLOCK */
         else
             ioctl_obj->flags &= ~04000;
         if (fd_obj_file(ioctl_obj))
@@ -54,7 +58,10 @@ void ioctl_handler(uint64_t regs[6], task_t *current)
     /* VFS-backed fd: devices handle their own ioctl, regular files return ENOSYS. */
     if (ioctl_obj && fd_obj_file(ioctl_obj)) {
         int rc = vfs_ioctl(fd_obj_file(ioctl_obj), request, argp);
-        if (rc >= 0) { regs[0] = 0; return; }
+        if (rc >= 0) {
+            regs[0] = 0;
+            return;
+        }
         if (rc != -38 /* ENOSYS */) {
             regs[0] = (uint64_t)(int64_t)rc;
             return;
@@ -83,13 +90,18 @@ void ioctl_handler(uint64_t regs[6], task_t *current)
             regs[0] = 0;
     } else if (request == TIOCGWINSZ && argp) {
         struct kernel_winsize ws = {
-            .ws_row = 24, .ws_col = 80, .ws_xpixel = 0, .ws_ypixel = 0,
+            .ws_row = 24,
+            .ws_col = 80,
+            .ws_xpixel = 0,
+            .ws_ypixel = 0,
         };
         if (copy_to_user_bytes(&ws, argp, sizeof(ws)) < 0)
             regs[0] = (uint64_t)(int64_t)-EFAULT;
         else
             regs[0] = 0;
-    } else if ((request == TCSETS || request == TCSETSW || request == TCSETSF) && argp) {
+    } else if ((request == TCSETS || request == TCSETSW ||
+                request == TCSETSF) &&
+               argp) {
         struct kernel_termios t;
         if (copy_from_user_bytes(argp, &t, sizeof(t)) < 0)
             regs[0] = (uint64_t)(int64_t)-EFAULT;
@@ -116,8 +128,8 @@ void ioctl_handler(uint64_t regs[6], task_t *current)
     } else if (request == TIOCSCTTY || request == TIOCNOTTY) {
         regs[0] = 0;
     } else {
-        KLOG_SYSCALL("[ioctl] unsupported fd=%d req=0x%llx\n",
-                     ioctl_fd, (unsigned long long)request);
+        KLOG_SYSCALL("[ioctl] unsupported fd=%d req=0x%llx\n", ioctl_fd,
+                     (unsigned long long)request);
         regs[0] = (uint64_t)(int64_t)-ENOTTY;
     }
 }

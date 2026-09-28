@@ -15,15 +15,15 @@
 
 #if ARCH_AARCH64
 /* AArch64 TTBR1 高半地址 */
-#define KERNEL_VMA  0xffff000000000000ULL
+#define KERNEL_VMA 0xffff000000000000ULL
 #elif ARCH_X86_64
 /* x86_64 高半地址空间 */
-#define KERNEL_VMA  0xffff800000000000ULL
+#define KERNEL_VMA 0xffff800000000000ULL
 #elif ARCH_RISCV64
 /* RISC-V Sv39 高半区内核偏移 */
-#define KERNEL_VMA  0xffffffc000000000ULL
+#define KERNEL_VMA 0xffffffc000000000ULL
 #else
-#define KERNEL_VMA  0ULL
+#define KERNEL_VMA 0ULL
 #endif
 
 /* 虚拟地址转换宏 */
@@ -31,19 +31,18 @@
 #define virt_to_phys(va) ((uint64_t)(va) - KERNEL_VMA)
 
 /* 页大小配置（必须在架构特定头文件之前定义） */
-#define PAGE_SIZE       4096
-#define PAGE_SHIFT      12
-#define PAGE_MASK       (~(PAGE_SIZE - 1))
+#define PAGE_SIZE  4096
+#define PAGE_SHIFT 12
+#define PAGE_MASK  (~(PAGE_SIZE - 1))
 
 #if ARCH_AARCH64
-#  include "aarch64/mm_vm.h"
+#include "aarch64/mm_vm.h"
 #elif ARCH_RISCV64
-#  include "riscv64/mm_vm.h"
+#include "riscv64/mm_vm.h"
 #elif ARCH_X86_64
-#  include "x86_64/mm_vm.h"
+#include "x86_64/mm_vm.h"
 #else
-#  error "Unsupported architecture for mm_vm"
+#error "Unsupported architecture for mm_vm"
 #endif
-
 
 #endif /* MM_VM_H */

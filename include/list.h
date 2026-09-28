@@ -8,17 +8,15 @@
  * 所有函数都是内联的，无链接冲突
  */
 
-typedef struct _list_node_t
-{
+typedef struct _list_node_t {
     struct _list_node_t *pre;
     struct _list_node_t *next;
 } list_node_t;
 
-typedef struct _list_t
-{
+typedef struct _list_t {
     list_node_t *first;
     list_node_t *last;
-    int32_t      count;
+    int32_t count;
 } list_t;
 
 /* ===== 节点操作 ===== */
@@ -27,8 +25,7 @@ typedef struct _list_t
  * list_node_init - 初始化链表节点
  * @node: 节点指针
  */
-static inline void
-list_node_init(list_node_t *node)
+static inline void list_node_init(list_node_t *node)
 {
     node->pre = node->next = (list_node_t *)0;
 }
@@ -39,8 +36,7 @@ list_node_init(list_node_t *node)
  *
  * 返回值: 前驱节点指针
  */
-static inline list_node_t *
-list_node_pre(list_node_t *node)
+static inline list_node_t *list_node_pre(list_node_t *node)
 {
     return node->pre;
 }
@@ -51,8 +47,7 @@ list_node_pre(list_node_t *node)
  *
  * 返回值: 后继节点指针
  */
-static inline list_node_t *
-list_node_next(list_node_t *node)
+static inline list_node_t *list_node_next(list_node_t *node)
 {
     return node->next;
 }
@@ -65,8 +60,7 @@ list_node_next(list_node_t *node)
  *
  * 返回值: 1 表示空，0 表示非空
  */
-static inline int32_t
-list_is_empty(list_t *list)
+static inline int32_t list_is_empty(list_t *list)
 {
     return list->count == 0;
 }
@@ -77,8 +71,7 @@ list_is_empty(list_t *list)
  *
  * 返回值: 节点数量
  */
-static inline int32_t
-list_count(list_t *list)
+static inline int32_t list_count(list_t *list)
 {
     return list->count;
 }
@@ -89,8 +82,7 @@ list_count(list_t *list)
  *
  * 返回值: 首节点指针，空链表返回 NULL
  */
-static inline list_node_t *
-list_first(list_t *list)
+static inline list_node_t *list_first(list_t *list)
 {
     return list->first;
 }
@@ -101,8 +93,7 @@ list_first(list_t *list)
  *
  * 返回值: 尾节点指针，空链表返回 NULL
  */
-static inline list_node_t *
-list_last(list_t *list)
+static inline list_node_t *list_last(list_t *list)
 {
     return list->last;
 }
@@ -113,11 +104,10 @@ list_last(list_t *list)
  * list_init - 初始化链表
  * @list: 链表指针
  */
-static inline void
-list_init(list_t *list)
+static inline void list_init(list_t *list)
 {
     list->first = list->last = (list_node_t *)0;
-    list->count              = 0;
+    list->count = 0;
 }
 
 /**
@@ -125,17 +115,16 @@ list_init(list_t *list)
  * @list: 链表指针
  * @node: 要插入的节点（必须已初始化）
  */
-static inline void
-list_insert_first(list_t *list, list_node_t *node)
+static inline void list_insert_first(list_t *list, list_node_t *node)
 {
     node->next = list->first;
-    node->pre  = (list_node_t *)0;
+    node->pre = (list_node_t *)0;
 
     if (list->count == 0) {
         list->last = list->first = node;
     } else {
         list->first->pre = node;
-        list->first      = node;
+        list->first = node;
     }
 
     list->count++;
@@ -146,17 +135,16 @@ list_insert_first(list_t *list, list_node_t *node)
  * @list: 链表指针
  * @node: 要插入的节点（必须已初始化，且不在链表中）
  */
-static inline void
-list_insert_last(list_t *list, list_node_t *node)
+static inline void list_insert_last(list_t *list, list_node_t *node)
 {
-    node->pre  = list->last;
+    node->pre = list->last;
     node->next = (list_node_t *)0;
 
     if (list->count == 0) {
         list->first = list->last = node;
     } else {
         list->last->next = node;
-        list->last       = node;
+        list->last = node;
     }
 
     list->count++;
@@ -168,15 +156,14 @@ list_insert_last(list_t *list, list_node_t *node)
  *
  * 返回值: 被删除的节点指针，空链表返回 NULL
  */
-static inline list_node_t *
-list_delete_first(list_t *list)
+static inline list_node_t *list_delete_first(list_t *list)
 {
     if (list->count == 0) {
         return (list_node_t *)0;
     }
 
     list_node_t *remove_node = list->first;
-    list->first              = remove_node->next;
+    list->first = remove_node->next;
 
     if (list->first == (list_node_t *)0) {
         list->last = (list_node_t *)0;
@@ -197,8 +184,7 @@ list_delete_first(list_t *list)
  *
  * 返回值: 被删除的节点指针
  */
-static inline list_node_t *
-list_delete(list_t *list, list_node_t *node)
+static inline list_node_t *list_delete(list_t *list, list_node_t *node)
 {
     if (node->pre) {
         node->pre->next = node->next;
@@ -225,8 +211,7 @@ list_delete(list_t *list, list_node_t *node)
  *
  * 返回值: 1 表示在链表中，0 表示不在
  */
-static inline int32_t
-list_contains(list_t *list, list_node_t *node)
+static inline int32_t list_contains(list_t *list, list_node_t *node)
 {
     list_node_t *cur = list->first;
     while (cur != (list_node_t *)0) {
@@ -247,7 +232,7 @@ list_contains(list_t *list, list_node_t *node)
  * 返回值: 成员在结构体中的字节偏移量
  */
 #define offset_in_parent(parent_type, node_name) \
-    ((uint64_t) & (((parent_type *)0)->node_name))
+    ((uint64_t)&(((parent_type *)0)->node_name))
 
 /**
  * parent_addr - 根据成员地址获取父结构体地址

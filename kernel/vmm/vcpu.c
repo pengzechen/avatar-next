@@ -12,14 +12,14 @@
  */
 
 #include "vmm/vmm.h"
-#include "vmm/vmm_console.h"   /* vmm_console_pump（直启模式的输入桥）*/
+#include "vmm/vmm_console.h" /* vmm_console_pump（直启模式的输入桥）*/
 #include "klog.h"
 #include "task/task.h"
-#include "task/sched.h"    /* sched_check_and_yield：主循环顶部主动让出 CPU */
-#include "task/cpu.h"      /* g_num_cpus：vCPU 摊核时用 */
+#include "task/sched.h" /* sched_check_and_yield：主循环顶部主动让出 CPU */
+#include "task/cpu.h"   /* g_num_cpus：vCPU 摊核时用 */
 #if ARCH_AARCH64
-#include "aarch64/stage2.h"      /* stage2_activate：每轮进 guest 前重写 VTTBR */
-#include "vmm/vmm_irq_route.h"   /* vmm_irq_route_clear_owner */
+#include "aarch64/stage2.h"    /* stage2_activate：每轮进 guest 前重写 VTTBR */
+#include "vmm/vmm_irq_route.h" /* vmm_irq_route_clear_owner */
 #endif
 
 /* ── VMM 主循环（架构无关）────────────────────────────────── */
@@ -63,7 +63,6 @@ int vmm_run_vcpu(vcpu_t *vcpu)
          * 待调度任务时只是一次廉价判断。
          */
         sched_check_and_yield();
-
 
         uint64_t irq_flags = arch_irq_save();
 
@@ -118,7 +117,6 @@ int vmm_run_vcpu(vcpu_t *vcpu)
         }
     }
 }
-
 
 /* ── vCPU 任务入口（内核任务函数）────────────────────────── */
 static void vcpu_task_fn(void *arg)
@@ -184,7 +182,10 @@ static void vcpu_task_fn(void *arg)
 struct task *vcpu_task_create(vcpu_t *vcpu, uint8_t priority)
 {
     char name[TASK_NAME_LEN];
-    name[0] = 'v'; name[1] = 'c'; name[2] = 'p'; name[3] = 'u';
+    name[0] = 'v';
+    name[1] = 'c';
+    name[2] = 'p';
+    name[3] = 'u';
     name[4] = '0' + (char)(vcpu->vcpu_id & 0xF);
     name[5] = '\0';
 
@@ -250,10 +251,9 @@ struct task *vcpu_task_create(vcpu_t *vcpu, uint8_t priority)
      */
     uint32_t want = (uint32_t)vcpu->vm->slot % (g_num_cpus ? g_num_cpus : 1U);
 
-    struct task *t = task_create_affinity(name, vcpu_task_fn, vcpu, priority,
-                                          want);
+    struct task *t =
+        task_create_affinity(name, vcpu_task_fn, vcpu, priority, want);
     if (t) {
-
         /*
          * 从这里起就算「这个 VM 在跑」：/dev/vmm 的 write/poll 会立刻看到，
          * 不必等任务真正被调度上 CPU。

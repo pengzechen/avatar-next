@@ -58,7 +58,8 @@ int pfs_puts(char *buf, size_t pos, size_t bufsz, const char *s)
     return written;
 }
 
-int pfs_copy_out(uint64_t off, void *buf, size_t len, const char *src, size_t total)
+int pfs_copy_out(uint64_t off, void *buf, size_t len, const char *src,
+                 size_t total)
 {
     if ((size_t)off >= total)
         return 0;

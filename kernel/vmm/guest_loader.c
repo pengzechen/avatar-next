@@ -66,8 +66,7 @@ _Static_assert(GUEST_LINUX_MEM_SIZE / EPT_BLOCK_SIZE <= EPT_MAX_PT_TABLES,
  * 而且会让每条消息打印两遍（bootconsole + 真 console），白白多一倍 exit。
  */
 #if ARCH_AARCH64
-#define GUEST_LINUX_BOOTARGS                                                   \
-  " console=ttyAMA0 rdinit=/init  oops=panic"
+#define GUEST_LINUX_BOOTARGS " console=ttyAMA0 rdinit=/init  oops=panic"
 
 _Static_assert(sizeof(GUEST_LINUX_BOOTARGS) - 1 <= 78,
                "GUEST_LINUX_BOOTARGS 超出 DTB 的 /chosen/bootargs 槽位"
@@ -94,8 +93,8 @@ _Static_assert(sizeof(GUEST_LINUX_BOOTARGS) - 1 <= 78,
  * linux.dts 里写的正是详细日志那一版 —— 所以「补丁静默失败」在这边表现得
  * 不是「少打日志」而是「日志变多」，反过来更好发现。
  */
-#define GUEST_LINUX_BOOTARGS                                                   \
-  "quiet console=ttyS0 rdinit=/init panic_on_warn=0 oops=panic"
+#define GUEST_LINUX_BOOTARGS \
+    "quiet console=ttyS0 rdinit=/init panic_on_warn=0 oops=panic"
 
 _Static_assert(sizeof(GUEST_LINUX_BOOTARGS) - 1 <= 90,
                "GUEST_LINUX_BOOTARGS 超出 DTB 的 /chosen/bootargs 槽位"
@@ -127,33 +126,35 @@ _Static_assert(sizeof(GUEST_LINUX_BOOTARGS) - 1 <= 90,
 extern int x86_guest_boot(vm_t *vm);
 #endif
 
-int guest_loader_run_linux(vm_t *vm) {
+int guest_loader_run_linux(vm_t *vm)
+{
 #if ARCH_X86_64
-  return x86_guest_boot(vm);
+    return x86_guest_boot(vm);
 #else
-  int rc;
+    int rc;
 
-  /*
+    /*
    * 重入保护：调用者（/dev/vmm 或直启路径）已经从 VM 池里拿到一个槽位并
    * 置成 LOADING，这里只需确认它可用。（从前是一个全局 "guest 在跑吗"，
    * 那在多 VM 下会拦住第二个 VM。）
    */
-  if (!vm || vm->state != VM_LOADING) {
-    KLOG_WARN("[guest] run_linux: vm slot not in LOADING state, refusing\n");
-    return -1;
-  }
+    if (!vm || vm->state != VM_LOADING) {
+        KLOG_WARN(
+            "[guest] run_linux: vm slot not in LOADING state, refusing\n");
+        return -1;
+    }
 
-  KLOG_INFO("\n=== Avatar OS: booting Linux guest (%s) ===\n",
+    KLOG_INFO("\n=== Avatar OS: booting Linux guest (%s) ===\n",
 #if ARCH_AARCH64
-            "aarch64"
+              "aarch64"
 #elif ARCH_RISCV64
-            "riscv64"
+              "riscv64"
 #else
-            "unknown"
+              "unknown"
 #endif
-  );
+    );
 
-  /*
+    /*
    * ── 建立 VM（**必须**在加载映像之前）──────────────────────────
    *
    * stage-2 是在 vm_create() 里初始化的 —— 一张**空表**。而加载映像要往
@@ -167,52 +168,53 @@ int guest_loader_run_linux(vm_t *vm) {
    * 第一个 VM 的内存），也让每个 VM 无论用多少都硬吃 192 MiB。现在宿主
    * 只为 guest 真正碰过的页付内存，且两个 VM 的页天然隔离。
    */
-  rc = vm_create(vm);
-  if (rc != 0) {
-    KLOG_ERROR("[guest] vm_create failed\n");
-    return -1;
-  }
+    rc = vm_create(vm);
+    if (rc != 0) {
+        KLOG_ERROR("[guest] vm_create failed\n");
+        return -1;
+    }
 
-  /* 1. 加载 kernel Image */
-  int klen = guest_loader_load_file(vm, GUEST_LINUX_KERNEL_PATH,
-                                    GUEST_LINUX_KERNEL_GPA);
-  if (klen <= 0)
-    return -1;
-  KLOG_INFO("[guest] kernel: %d bytes\n", klen);
+    /* 1. 加载 kernel Image */
+    int klen = guest_loader_load_file(vm, GUEST_LINUX_KERNEL_PATH,
+                                      GUEST_LINUX_KERNEL_GPA);
+    if (klen <= 0)
+        return -1;
+    KLOG_INFO("[guest] kernel: %d bytes\n", klen);
 
-  /*
+    /*
    * 2. DTB：**读进宿主缓冲**再打补丁，最后一次性写回 guest。
    *
    * 不能像从前那样直接对 guest 内存 `dtb[i]`：补丁代码按线性偏移索引 FDT，
    * 而按需分页下 4 KB 的 DTB 可能落在不连续的物理页上 —— 越过页边界继续
    * 线性索引就会写到宿主或别的 VM 的内存里。
    */
-  static uint8_t dtb_buf[8192];
-  int dlen = guest_loader_read_file(GUEST_LINUX_DTB_PATH, dtb_buf,
-                                    sizeof(dtb_buf));
-  if (dlen <= 0)
-    return -1;
+    static uint8_t dtb_buf[8192];
+    int dlen =
+        guest_loader_read_file(GUEST_LINUX_DTB_PATH, dtb_buf, sizeof(dtb_buf));
+    if (dlen <= 0)
+        return -1;
 
-  guest_loader_patch_dtb_memory(dtb_buf, (uint32_t)dlen,
-                                GUEST_LINUX_MEM_BASE, GUEST_LINUX_MEM_SIZE);
+    guest_loader_patch_dtb_memory(dtb_buf, (uint32_t)dlen, GUEST_LINUX_MEM_BASE,
+                                  GUEST_LINUX_MEM_SIZE);
 
-  if (guest_loader_patch_dtb_bootargs(dtb_buf, (uint32_t)dlen,
-                                      GUEST_LINUX_BOOTARGS) != 0) {
-    KLOG_ERROR("[guest] bootargs 补丁失败：guest 会用 DTB 自带的那句命令行，"
-               "GUEST_LINUX_BOOTARGS 不生效（原因见上一条 WARN）\n");
-  }
+    if (guest_loader_patch_dtb_bootargs(dtb_buf, (uint32_t)dlen,
+                                        GUEST_LINUX_BOOTARGS) != 0) {
+        KLOG_ERROR(
+            "[guest] bootargs 补丁失败：guest 会用 DTB 自带的那句命令行，"
+            "GUEST_LINUX_BOOTARGS 不生效（原因见上一条 WARN）\n");
+    }
 
-  /* 3. 加载 initrd */
-  int ilen = guest_loader_load_file(vm, GUEST_LINUX_INITRD_PATH,
-                                    GUEST_LINUX_INITRD_GPA);
-  if (ilen <= 0)
-    return -1;
+    /* 3. 加载 initrd */
+    int ilen = guest_loader_load_file(vm, GUEST_LINUX_INITRD_PATH,
+                                      GUEST_LINUX_INITRD_GPA);
+    if (ilen <= 0)
+        return -1;
 
-  guest_loader_patch_dtb_initrd(dtb_buf, (uint32_t)dlen,
-                                GUEST_LINUX_INITRD_GPA,
-                                GUEST_LINUX_INITRD_GPA + (uint64_t)ilen);
+    guest_loader_patch_dtb_initrd(dtb_buf, (uint32_t)dlen,
+                                  GUEST_LINUX_INITRD_GPA,
+                                  GUEST_LINUX_INITRD_GPA + (uint64_t)ilen);
 
-  /* ── 屏蔽 VMM 未模拟的 DTB 设备节点 ─────────────────────
+    /* ── 屏蔽 VMM 未模拟的 DTB 设备节点 ─────────────────────
    *
    * VMM 只模拟了 PL011 与 GICD。其余设备一旦被 guest 访问就会 Stage-2
    * fault，而 exit handler 在 MMIO 总线未命中时按「权限故障」处理
@@ -223,45 +225,46 @@ int guest_loader_run_linux(vm_t *vm) {
    *
    * 故启动前直接把这些节点从 DTB 中摘除（替换为 FDT_NOP），使 guest
    * 根本不去枚举它们。移植自 kvmm loader.rs 的 nop_dtb_nodes。*/
-  {
-    static const char *const unsupported_nodes[] =
-        GUEST_LINUX_UNSUPPORTED_NODES;
-    guest_loader_nop_dtb_nodes(
-        dtb_buf, (uint32_t)dlen, unsupported_nodes,
-        (int)(sizeof(unsupported_nodes) / sizeof(unsupported_nodes[0])));
-  }
+    {
+        static const char *const unsupported_nodes[] =
+            GUEST_LINUX_UNSUPPORTED_NODES;
+        guest_loader_nop_dtb_nodes(
+            dtb_buf, (uint32_t)dlen, unsupported_nodes,
+            (int)(sizeof(unsupported_nodes) / sizeof(unsupported_nodes[0])));
+    }
 
-  /* 补好的 DTB 一次性写进 guest（memory/bootargs/initrd 都改完了）*/
-  if (guest_loader_write_guest(vm, GUEST_LINUX_DTB_GPA, dtb_buf, (size_t)dlen) != 0)
-    return -1;
+    /* 补好的 DTB 一次性写进 guest（memory/bootargs/initrd 都改完了）*/
+    if (guest_loader_write_guest(vm, GUEST_LINUX_DTB_GPA, dtb_buf,
+                                 (size_t)dlen) != 0)
+        return -1;
 
-  /*
+    /*
    * 5. 配置 vCPU 的入口状态
    *
    * 必须在 vm_create() **之后**：两个架构的 vm_init 都会 memset 整个
    * vcpu 数组，先写会被清掉。
    */
-  vcpu_t *vcpu = &vm->vcpus[0];
+    vcpu_t *vcpu = &vm->vcpus[0];
 
 #if ARCH_AARCH64
-  /*
+    /*
    * x0 直接写 vcpu->r[0]：el2_vmcs.S 在 eret 前用 `ldr x0, [x0, #0]`
    * 最后加载 guest x0（VCPU_R0 偏移 0），因此无需改动汇编。
    * ARM64 boot 约定：x0 = DTB 物理地址，PSTATE = EL1h 且 DAIF 屏蔽。
    */
-  vcpu->elr = GUEST_LINUX_KERNEL_GPA;
-  vcpu->spsr = 0x5ULL | (0xFULL << 6); /* EL1h, DAIF 屏蔽 */
-  vcpu->sp_el1 = GUEST_LINUX_MEM_BASE + GUEST_LINUX_MEM_SIZE - 0x1000;
-  vcpu->r[0] = GUEST_LINUX_DTB_GPA;
-  g_guest_entry_x0 = GUEST_LINUX_DTB_GPA;
+    vcpu->elr = GUEST_LINUX_KERNEL_GPA;
+    vcpu->spsr = 0x5ULL | (0xFULL << 6); /* EL1h, DAIF 屏蔽 */
+    vcpu->sp_el1 = GUEST_LINUX_MEM_BASE + GUEST_LINUX_MEM_SIZE - 0x1000;
+    vcpu->r[0] = GUEST_LINUX_DTB_GPA;
+    g_guest_entry_x0 = GUEST_LINUX_DTB_GPA;
 
-  KLOG_INFO("[guest] entry=0x%llx x0(DTB)=0x%llx sp_el1=0x%llx\n",
-            (unsigned long long)vcpu->elr,
-            (unsigned long long)GUEST_LINUX_DTB_GPA,
-            (unsigned long long)vcpu->sp_el1);
+    KLOG_INFO("[guest] entry=0x%llx x0(DTB)=0x%llx sp_el1=0x%llx\n",
+              (unsigned long long)vcpu->elr,
+              (unsigned long long)GUEST_LINUX_DTB_GPA,
+              (unsigned long long)vcpu->sp_el1);
 
 #elif ARCH_RISCV64
-  /*
+    /*
    * RISC-V Linux boot 协议（Documentation/riscv/boot.rst）：
    *   pc = Image 起始（按 2 MiB 对齐装入）
    *   a0 = boot hartid
@@ -277,29 +280,29 @@ int guest_loader_run_linux(vm_t *vm) {
    * trap vector；在此之前不让任何中断挂起（vsie=0，hvip 的注入发生在
    * 每次入口、由 vmm_arch_restore_guest_ctx 计算）。
    */
-  vcpu->pc = GUEST_LINUX_KERNEL_GPA;    /* 恢复 PC = sret 目标 */
-  vcpu->vsepc = GUEST_LINUX_KERNEL_GPA; /* guest 自己的 sepc   */
-  vcpu->vsatp = 0;
-  vcpu->vsstatus = 0;
-  vcpu->vstvec = 0;
-  vcpu->vsie = 0;
-  vcpu->vsscratch = 0;
-  vcpu->r[2] = GUEST_LINUX_MEM_BASE + GUEST_LINUX_MEM_SIZE - 0x1000;
-  vcpu->r[10] = GUEST_LINUX_BOOT_HARTID; /* a0 */
-  vcpu->r[11] = GUEST_LINUX_DTB_GPA;     /* a1 */
+    vcpu->pc = GUEST_LINUX_KERNEL_GPA;    /* 恢复 PC = sret 目标 */
+    vcpu->vsepc = GUEST_LINUX_KERNEL_GPA; /* guest 自己的 sepc   */
+    vcpu->vsatp = 0;
+    vcpu->vsstatus = 0;
+    vcpu->vstvec = 0;
+    vcpu->vsie = 0;
+    vcpu->vsscratch = 0;
+    vcpu->r[2] = GUEST_LINUX_MEM_BASE + GUEST_LINUX_MEM_SIZE - 0x1000;
+    vcpu->r[10] = GUEST_LINUX_BOOT_HARTID; /* a0 */
+    vcpu->r[11] = GUEST_LINUX_DTB_GPA;     /* a1 */
 
-  KLOG_INFO("[guest] entry=0x%llx a0(hartid)=%llu a1(DTB)=0x%llx\n",
-            (unsigned long long)vcpu->vsepc, (unsigned long long)vcpu->r[10],
-            (unsigned long long)vcpu->r[11]);
+    KLOG_INFO("[guest] entry=0x%llx a0(hartid)=%llu a1(DTB)=0x%llx\n",
+              (unsigned long long)vcpu->vsepc, (unsigned long long)vcpu->r[10],
+              (unsigned long long)vcpu->r[11]);
 #endif
 
-  /* 6. 创建 vCPU 任务 */
-  task_t *vt = vcpu_task_create(vcpu, 5);
-  if (!vt) {
-    KLOG_ERROR("[guest] vcpu_task_create failed\n");
-    return -1;
-  }
-  KLOG_INFO("[guest] Linux vCPU task id=%u running\n", vt->id);
-  return 0;
+    /* 6. 创建 vCPU 任务 */
+    task_t *vt = vcpu_task_create(vcpu, 5);
+    if (!vt) {
+        KLOG_ERROR("[guest] vcpu_task_create failed\n");
+        return -1;
+    }
+    KLOG_INFO("[guest] Linux vCPU task id=%u running\n", vt->id);
+    return 0;
 #endif /* !ARCH_X86_64 */
 }

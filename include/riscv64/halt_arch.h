@@ -38,4 +38,4 @@ static inline void arch_halt(void)
     }
 }
 
-#endif  // RISCV64_HALT_ARCH_H_
+#endif // RISCV64_HALT_ARCH_H_

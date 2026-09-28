@@ -23,11 +23,11 @@
 #include "vmm_mmio.h"
 
 /* QEMU virt PLIC 基址与大小 */
-#define VPLIC_BASE   0x0c000000ULL
-#define VPLIC_SIZE   0x400000ULL
+#define VPLIC_BASE 0x0c000000ULL
+#define VPLIC_SIZE 0x400000ULL
 
-#define VPLIC_MAX_IRQS    64
-#define VPLIC_MAX_VCPUS   8
+#define VPLIC_MAX_IRQS  64
+#define VPLIC_MAX_VCPUS 8
 
 /* ── 设备私有状态 ─────────────────────────────────────────────
  *

@@ -16,9 +16,9 @@ void test_arch(void)
 #elif ARCH_AARCH64
     KLOG_INFO("Detected Architecture: AArch64 (ARM 64-bit)\n");
     KLOG_INFO("ARCH_AARCH64 = 1\n");
-    #ifdef __ARM_ARCH
+#ifdef __ARM_ARCH
     KLOG_INFO("ARM Architecture version: %d\n", __ARM_ARCH);
-    #endif
+#endif
 #elif ARCH_RISCV64
     KLOG_INFO("Detected Architecture: RISC-V 64-bit\n");
     KLOG_INFO("ARCH_RISCV64 = 1\n");
@@ -36,4 +36,3 @@ void test_arch(void)
     KLOG_INFO("Long size: %u bytes\n", (unsigned int)sizeof(long));
     KLOG_INFO("Long long size: %u bytes\n", (unsigned int)sizeof(long long));
 }
-

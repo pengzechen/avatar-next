@@ -23,7 +23,7 @@
 #include "types.h"
 #include "arch.h"
 #include "vmm_mmio.h"
-#include "vmm_virq.h"     /* virq_t：设备中断线的架构无关命名 */
+#include "vmm_virq.h" /* virq_t：设备中断线的架构无关命名 */
 
 /*
  * 中断控制器的头**只能出现在各自架构的守卫里** —— 共享头不该命名任何具体
@@ -37,24 +37,24 @@
  * 全部 TU（三个架构都算）。
  */
 #if ARCH_AARCH64
-#include "aarch64/stage2.h"     /* s2_ctx_t：vm_t 里每个 VM 一份 stage-2 */
-#include "vmm/vmm_vgic.h"       /* vgic_t：GICv2 后端 */
-#include "vmm/vmm_vpl011.h"     /* vpl011_init/destroy：状态已搬进 vpl011.c 的池 */
+#include "aarch64/stage2.h" /* s2_ctx_t：vm_t 里每个 VM 一份 stage-2 */
+#include "vmm/vmm_vgic.h"   /* vgic_t：GICv2 后端 */
+#include "vmm/vmm_vpl011.h" /* vpl011_init/destroy：状态已搬进 vpl011.c 的池 */
 #endif
 #if ARCH_AARCH64 && DRIVER_GIC_V3
 #include "vmm_vgicv3.h"
 #endif
 
 #if ARCH_RISCV64
-#include "riscv64/gstage.h"     /* gstage_ctx_t：vm_t 里每个 VM 一份 G-stage */
-#include "vmm/vmm_vplic.h"      /* vplic_init/destroy：状态已搬进 vplic.c 的池 */
+#include "riscv64/gstage.h" /* gstage_ctx_t：vm_t 里每个 VM 一份 G-stage */
+#include "vmm/vmm_vplic.h"  /* vplic_init/destroy：状态已搬进 vplic.c 的池 */
 #endif
 /*
  * uart16550 是 riscv64 与 x86_64 共用的 guest 控制台型号（两个架构都编
  * kernel/vmm/vdev/vuart16550.c），所以状态字段两个架构都要有。
  */
 #if ARCH_RISCV64 || ARCH_X86_64
-#include "vmm/vmm_uart16550.h"  /* uart16550_init/destroy：状态已搬进 vuart16550.c 的池 */
+#include "vmm/vmm_uart16550.h" /* uart16550_init/destroy：状态已搬进 vuart16550.c 的池 */
 #endif
 
 #if ARCH_X86_64
@@ -64,15 +64,15 @@
 #endif
 
 /* ── asm 可见的固定偏移（与 el2_vmcs.S 对齐）─────────────────── */
-#define VCPU_R0         0           /* x0-x30, 31×8 bytes               */
-#define VCPU_SP_EL1     248         /* 31*8                              */
-#define VCPU_ELR        256         /* 31*8 + 8                          */
-#define VCPU_SPSR       264         /* 31*8 + 16                         */
-#define VCPU_HOSTCTX    272         /* 31*8 + 24                         */
-#define VCPU_HOST_VBAR  376         /* saved host VBAR_EL2               */
-#define VCPU_HOST_TPIDR 384         /* saved host per-CPU pointer        */
-#define VCPU_SYSREGS    392         /* guest EL1 sysregs                 */
-#define VCPU_EXIT_TYPE  520         /* VCPU_SYSREGS + VCPU_SYSREGS_SIZE  */
+#define VCPU_R0         0   /* x0-x30, 31×8 bytes               */
+#define VCPU_SP_EL1     248 /* 31*8                              */
+#define VCPU_ELR        256 /* 31*8 + 8                          */
+#define VCPU_SPSR       264 /* 31*8 + 16                         */
+#define VCPU_HOSTCTX    272 /* 31*8 + 24                         */
+#define VCPU_HOST_VBAR  376 /* saved host VBAR_EL2               */
+#define VCPU_HOST_TPIDR 384 /* saved host per-CPU pointer        */
+#define VCPU_SYSREGS    392 /* guest EL1 sysregs                 */
+#define VCPU_EXIT_TYPE  520 /* VCPU_SYSREGS + VCPU_SYSREGS_SIZE  */
 #define VCPU_ESR        528
 #define VCPU_FAR        536
 #define VCPU_HPFAR      544
@@ -80,21 +80,21 @@
 #define VCPU_CNTV_CVAL  560
 
 /* sysregs 缓冲区：保存 guest EL1 系统寄存器，128 B 足够覆盖 Phase 2 用到的子集 */
-#define VCPU_SYSREGS_SIZE  128
+#define VCPU_SYSREGS_SIZE 128
 
 /* ── VMM 退出原因（对标 x86 VMX_RESUME/VMEXIT 等）──────────── */
-#define EL2_RESUME   0   /* 继续运行 guest              */
-#define EL2_VMEXIT   1   /* guest 正常结束              */
-#define EL2_VMABORT  2   /* guest 中止                  */
-#define EL2_VMSKIP   3   /* 跳过当前指令后继续          */
-#define EL2_EXIT     4   /* 未处理陷入，终止 VMM 循环   */
+#define EL2_RESUME  0 /* 继续运行 guest              */
+#define EL2_VMEXIT  1 /* guest 正常结束              */
+#define EL2_VMABORT 2 /* guest 中止                  */
+#define EL2_VMSKIP  3 /* 跳过当前指令后继续          */
+#define EL2_EXIT    4 /* 未处理陷入，终止 VMM 循环   */
 
 /* HVC hypercall number（与 guest_test.S 保持一致）*/
-#define HVC_DONE   0
-#define HVC_PRINT  1
+#define HVC_DONE  0
+#define HVC_PRINT 1
 
 /* ── 最大 vCPU 数量 ────────────────────────────────────────── */
-#define MAX_VCPUS  4
+#define MAX_VCPUS 4
 
 /* ── 同一个内核里最多几个 VM ──────────────────────────────────
  *
@@ -106,21 +106,21 @@
  *
  * ⚠️ 必须 <= stage2.h 的 STAGE2_MAX_VMS（静态 stage-2 表按 slot 索引）。
  */
-#define MAX_VMS    4
+#define MAX_VMS 4
 
 /* VM 生命周期状态（vm.c 的 vm_alloc/vm_free 维护）*/
-#define VM_FREE      0   /* 槽位可用                        */
-#define VM_LOADING   1   /* 正在加载镜像、建 stage-2        */
-#define VM_RUNNING   2   /* vCPU 任务在跑                   */
-#define VM_SUSPENDED 3   /* vCPU 任务被 park，状态完整保留  */
-#define VM_DYING     4   /* 已请求销毁，等 vCPU 任务收拾完  */
+#define VM_FREE      0 /* 槽位可用                        */
+#define VM_LOADING   1 /* 正在加载镜像、建 stage-2        */
+#define VM_RUNNING   2 /* vCPU 任务在跑                   */
+#define VM_SUSPENDED 3 /* vCPU 任务被 park，状态完整保留  */
+#define VM_DYING     4 /* 已请求销毁，等 vCPU 任务收拾完  */
 
 /*
  * 哪些架构已经实现「从 rootfs 加载并启动 Linux guest」（kernel/vmm/guest_loader.c）。
  * 用一个宏而不是到处写 #if ARCH_AARCH64：/dev/vmm、kernel_main 的直启分支
  * 都要按它开关，散落的架构判断会在加架构时漏掉一处。
  */
-#define VMM_GUEST_LINUX_SUPPORTED  (ARCH_AARCH64 || ARCH_RISCV64 || ARCH_X86_64)
+#define VMM_GUEST_LINUX_SUPPORTED (ARCH_AARCH64 || ARCH_RISCV64 || ARCH_X86_64)
 
 /* 前向声明：避免与 task.h 循环包含 */
 struct task;
@@ -134,26 +134,26 @@ struct task;
 /* 前 VCPU_SYSREGS + VCPU_SYSREGS_SIZE 字节由汇编直接寻址，勿调整顺序 */
 typedef struct vcpu {
     /* ── asm-accessible（勿改动顺序）────────────────────── */
-    uint64_t r[31];                    /* x0-x30 guest GPRs    offset=0   */
-    uint64_t sp_el1;                   /* guest SP_EL1         offset=248 */
-    uint64_t elr;                      /* guest PC             offset=256 */
-    uint64_t spsr;                     /* guest PSTATE         offset=264 */
-    uint64_t host_ctx[13];             /* host callee-saved+sp offset=272 */
-    uint64_t host_vbar;                /* host VBAR_EL2        offset=376 */
-    uint64_t host_tpidr;               /* host per-CPU pointer offset=384 */
-    uint8_t  sysregs[VCPU_SYSREGS_SIZE]; /* guest EL1 sysregs offset=392 */
-    uint64_t exit_type;                /* 0=sync, 1=IRQ, 2=FIQ, 3=SError */
-    uint64_t esr;                      /* ESR_EL2 captured on guest exit  */
-    uint64_t far;                      /* FAR_EL2 captured on guest exit  */
-    uint64_t hpfar;                    /* HPFAR_EL2 captured on guest exit*/
-    uint64_t cntv_ctl;                 /* guest virtual timer control     */
-    uint64_t cntv_cval;                /* guest virtual timer compare     */
+    uint64_t r[31];                     /* x0-x30 guest GPRs    offset=0   */
+    uint64_t sp_el1;                    /* guest SP_EL1         offset=248 */
+    uint64_t elr;                       /* guest PC             offset=256 */
+    uint64_t spsr;                      /* guest PSTATE         offset=264 */
+    uint64_t host_ctx[13];              /* host callee-saved+sp offset=272 */
+    uint64_t host_vbar;                 /* host VBAR_EL2        offset=376 */
+    uint64_t host_tpidr;                /* host per-CPU pointer offset=384 */
+    uint8_t sysregs[VCPU_SYSREGS_SIZE]; /* guest EL1 sysregs offset=392 */
+    uint64_t exit_type;                 /* 0=sync, 1=IRQ, 2=FIQ, 3=SError */
+    uint64_t esr;                       /* ESR_EL2 captured on guest exit  */
+    uint64_t far;                       /* FAR_EL2 captured on guest exit  */
+    uint64_t hpfar;                     /* HPFAR_EL2 captured on guest exit*/
+    uint64_t cntv_ctl;                  /* guest virtual timer control     */
+    uint64_t cntv_cval;                 /* guest virtual timer compare     */
 
     /* ── C-only 字段 ──────────────────────────────────── */
-    int      vcpu_id;                  /* vCPU 编号                       */
-    int      launched;                 /* 已进入 guest 至少一次？         */
-    uint64_t page_table_base;          /* VTTBR_EL2 (VMID:PGD)           */
-    struct vm *vm;                     /* 所属 VM 反向指针                */
+    int vcpu_id;              /* vCPU 编号                       */
+    int launched;             /* 已进入 guest 至少一次？         */
+    uint64_t page_table_base; /* VTTBR_EL2 (VMID:PGD)           */
+    struct vm *vm;            /* 所属 VM 反向指针                */
 } vcpu_t;
 
 #elif ARCH_X86_64
@@ -185,28 +185,28 @@ typedef struct {
 } x86_guest_regs_t;
 
 /* vmx_run.S 中使用的 vcpu->regs 字段偏移（vcpu_t 起始处）*/
-#define VCPU_X86_RAX    0x00
-#define VCPU_X86_RBX    0x08
-#define VCPU_X86_RCX    0x10
-#define VCPU_X86_RDX    0x18
-#define VCPU_X86_RBP    0x20
-#define VCPU_X86_RSI    0x28
-#define VCPU_X86_RDI    0x30
-#define VCPU_X86_R8     0x38
-#define VCPU_X86_R9     0x40
-#define VCPU_X86_R10    0x48
-#define VCPU_X86_R11    0x50
-#define VCPU_X86_R12    0x58
-#define VCPU_X86_R13    0x60
-#define VCPU_X86_R14    0x68
-#define VCPU_X86_R15    0x70
+#define VCPU_X86_RAX 0x00
+#define VCPU_X86_RBX 0x08
+#define VCPU_X86_RCX 0x10
+#define VCPU_X86_RDX 0x18
+#define VCPU_X86_RBP 0x20
+#define VCPU_X86_RSI 0x28
+#define VCPU_X86_RDI 0x30
+#define VCPU_X86_R8  0x38
+#define VCPU_X86_R9  0x40
+#define VCPU_X86_R10 0x48
+#define VCPU_X86_R11 0x50
+#define VCPU_X86_R12 0x58
+#define VCPU_X86_R13 0x60
+#define VCPU_X86_R14 0x68
+#define VCPU_X86_R15 0x70
 
 typedef struct vcpu {
-    x86_guest_regs_t regs;  /* guest GPRs, offset=0, 与 vmx_run.S 对齐  */
+    x86_guest_regs_t regs; /* guest GPRs, offset=0, 与 vmx_run.S 对齐  */
     /* ── C-only 字段（launched 的位置被 vmx_run.S 硬编码为 0x84）── */
-    int      vcpu_id;
-    int      launched;
-    uint64_t page_table_base;   /* guest CR3 的 GPA（EPT 下的物理地址）*/
+    int vcpu_id;
+    int launched;
+    uint64_t page_table_base; /* guest CR3 的 GPA（EPT 下的物理地址）*/
     struct vm *vm;
 
     /*
@@ -222,7 +222,7 @@ typedef struct vcpu {
     uint64_t msr_star, msr_lstar, msr_cstar, msr_sfmask;
     uint64_t msr_fs_base, msr_gs_base, msr_kernel_gs_base;
     uint64_t msr_pat;
-    uint64_t apic_base;          /* IA32_APIC_BASE：vLAPIC 的使能/模式位 */
+    uint64_t apic_base; /* IA32_APIC_BASE：vLAPIC 的使能/模式位 */
 
     /*
      * ── 待注入 guest 的事件 ───────────────────────────────────
@@ -231,9 +231,9 @@ typedef struct vcpu {
      * interruption-information 送回 guest。guest 当时屏蔽着中断就置
      * intr_window，让硬件在它开中断的那一刻(exit 7)再回来投递。
      */
-    uint64_t pending_event;      /* 0 = 无；否则是 0x4016 的完整编码 */
+    uint64_t pending_event; /* 0 = 无；否则是 0x4016 的完整编码 */
     uint64_t pending_errcode;
-    int      intr_window;
+    int intr_window;
 
     /*
      * ── guest 启动状态（由 guest_loader 填，vmcs_init_guest 使用）──
@@ -242,12 +242,12 @@ typedef struct vcpu {
      * vcpu_t 里。为了不改 vmx.c 里那套"玩具 guest 用 entry 指针"的老路径，
      * 这里放一组可选的启动值：置了就用它，没置就退回旧行为。
      */
-    uint64_t g_rip;              /* 0 = 用 vmcs_init_guest 的 entry 参数 */
+    uint64_t g_rip; /* 0 = 用 vmcs_init_guest 的 entry 参数 */
     uint64_t g_rsp;
-    uint64_t g_cr3;              /* **GPA**（EPT 负责翻译）*/
-    uint64_t g_gdt_base;         /* GPA */
+    uint64_t g_cr3;      /* **GPA**（EPT 负责翻译）*/
+    uint64_t g_gdt_base; /* GPA */
     uint32_t g_gdt_limit;
-    int      g_boot_linux;       /* 1 = Linux 引导路径 */
+    int g_boot_linux; /* 1 = Linux 引导路径 */
 
     /*
      * VMCS 是否已在**跑 vCPU 的这颗核**上初始化过（每个 VM 生命周期一次）。
@@ -262,7 +262,7 @@ typedef struct vcpu {
      * 两条合起来只有一个写法：clear + 全部初始化一起，在 vCPU 核上做完。
      * 字段放末尾 —— vmx_run.S 硬编码了 launched@0x84 等偏移，不能动前面。
      */
-    int      vmcs_ready;
+    int vmcs_ready;
 } vcpu_t;
 
 /*
@@ -270,10 +270,10 @@ typedef struct vcpu {
  * vmx_run.S 用 0x78(regs.rflags) / 0x84(launched) 直接寻址，改字段顺序
  * 会让 guest 寄存器保存到错误的槽位 —— 而症状是「guest 随机跑飞」。
  */
-_Static_assert(offsetof(vcpu_t, regs)     == VCPU_X86_RAX, "vmx_run.S regs @0x00");
-_Static_assert(offsetof(vcpu_t, regs.rflags) == 0x78,      "vmx_run.S rflags @0x78");
-_Static_assert(offsetof(vcpu_t, vcpu_id)  == 0x80,         "vmx_run.S vcpu_id @0x80");
-_Static_assert(offsetof(vcpu_t, launched) == 0x84,         "vmx_run.S launched @0x84");
+_Static_assert(offsetof(vcpu_t, regs) == VCPU_X86_RAX, "vmx_run.S regs @0x00");
+_Static_assert(offsetof(vcpu_t, regs.rflags) == 0x78, "vmx_run.S rflags @0x78");
+_Static_assert(offsetof(vcpu_t, vcpu_id) == 0x80, "vmx_run.S vcpu_id @0x80");
+_Static_assert(offsetof(vcpu_t, launched) == 0x84, "vmx_run.S launched @0x84");
 
 #elif ARCH_RISCV64
 /*
@@ -312,37 +312,37 @@ _Static_assert(offsetof(vcpu_t, launched) == 0x84,         "vmx_run.S launched @
  */
 
 /* ── asm 可见的固定偏移 ──────────────────────────────────────── */
-#define VCPU_RV_R0         0            /* x0-x31, 32×8 bytes        */
-#define VCPU_RV_VSEPC      256          /* 32*8                      */
-#define VCPU_RV_VSSTATUS   264
-#define VCPU_RV_VSTVEC     272
-#define VCPU_RV_VSSCRATCH  280
-#define VCPU_RV_VSATP      288
-#define VCPU_RV_VSIE       296
-#define VCPU_RV_SCAUSE     304
-#define VCPU_RV_STVAL      312
-#define VCPU_RV_HTVAL      320
-#define VCPU_RV_HSTATUS    328          /* 陷阱时的 hstatus（含 SPVP）*/
-#define VCPU_RV_PC         336          /* 恢复 PC（HS sepc）        */
-#define VCPU_RV_HOSTCTX    344          /* host_ctx[16] = 128 B      */
-#define VCPU_RV_HOSTSTVEC  (344 + 14*8) /* = 456: 原主 stvec (host_ctx[14]) */
-#define VCPU_RV_HTINST     (344 + 16*8) /* = 472: htinst（在 host_ctx 之后）*/
+#define VCPU_RV_R0        0   /* x0-x31, 32×8 bytes        */
+#define VCPU_RV_VSEPC     256 /* 32*8                      */
+#define VCPU_RV_VSSTATUS  264
+#define VCPU_RV_VSTVEC    272
+#define VCPU_RV_VSSCRATCH 280
+#define VCPU_RV_VSATP     288
+#define VCPU_RV_VSIE      296
+#define VCPU_RV_SCAUSE    304
+#define VCPU_RV_STVAL     312
+#define VCPU_RV_HTVAL     320
+#define VCPU_RV_HSTATUS   328            /* 陷阱时的 hstatus（含 SPVP）*/
+#define VCPU_RV_PC        336            /* 恢复 PC（HS sepc）        */
+#define VCPU_RV_HOSTCTX   344            /* host_ctx[16] = 128 B      */
+#define VCPU_RV_HOSTSTVEC (344 + 14 * 8) /* = 456: 原主 stvec (host_ctx[14]) */
+#define VCPU_RV_HTINST (344 + 16 * 8) /* = 472: htinst（在 host_ctx 之后）*/
 
 typedef struct vcpu {
     /* ── asm-accessible（勿改动顺序）────────────────────── */
-    uint64_t r[32];         /* x0-x31 guest GPRs    offset=0     */
-    uint64_t vsepc;         /* guest 自己的 sepc    offset=256   */
-    uint64_t vsstatus;      /* guest sstatus        offset=264   */
-    uint64_t vstvec;        /* guest trap vector    offset=272   */
-    uint64_t vsscratch;     /* guest sscratch       offset=280   */
-    uint64_t vsatp;         /* guest page table     offset=288   */
-    uint64_t vsie;          /* guest int enable     offset=296   */
-    uint64_t scause_save;   /* 陷入原因              offset=304   */
-    uint64_t stval_save;    /* 陷入附加值            offset=312   */
-    uint64_t htval_save;    /* Stage-2 guest PA     offset=320   */
-    uint64_t hstatus_save;  /* 陷阱时的 hstatus     offset=328   */
-    uint64_t pc;            /* 恢复 PC（HS sepc）   offset=336   */
-    uint64_t host_ctx[16];  /* ra,s0-s11,sp,orig_stvec,tp    offset=344
+    uint64_t r[32];        /* x0-x31 guest GPRs    offset=0     */
+    uint64_t vsepc;        /* guest 自己的 sepc    offset=256   */
+    uint64_t vsstatus;     /* guest sstatus        offset=264   */
+    uint64_t vstvec;       /* guest trap vector    offset=272   */
+    uint64_t vsscratch;    /* guest sscratch       offset=280   */
+    uint64_t vsatp;        /* guest page table     offset=288   */
+    uint64_t vsie;         /* guest int enable     offset=296   */
+    uint64_t scause_save;  /* 陷入原因              offset=304   */
+    uint64_t stval_save;   /* 陷入附加值            offset=312   */
+    uint64_t htval_save;   /* Stage-2 guest PA     offset=320   */
+    uint64_t hstatus_save; /* 陷阱时的 hstatus     offset=328   */
+    uint64_t pc;           /* 恢复 PC（HS sepc）   offset=336   */
+    uint64_t host_ctx[16]; /* ra,s0-s11,sp,orig_stvec,tp    offset=344
                              * [0]=ra [1-12]=s0-s11 [13]=sp [14]=orig_stvec
                              * [15]=tp（per-CPU 指针，见上方 host_ctx 说明）*/
 
@@ -350,13 +350,14 @@ typedef struct vcpu {
      * MMIO 模拟在「从 guest PC 取指失败」时用 htinst 回退，用错寄存器会把
      * 一个地址当指令解码 —— 解出的长度/寄存器全是垃圾。偏移放在 host_ctx
      * 之后，纯粹是为了不动 HCTX_* 那一组宏。*/
-    uint64_t htinst_save;   /* htinst               offset=472   */
+    uint64_t htinst_save; /* htinst               offset=472   */
 
     /* ── C-only 字段 ──────────────────────────────────── */
-    int      vcpu_id;
-    int      launched;
+    int vcpu_id;
+    int launched;
     struct vm *vm;
-    uint64_t timer_deadline;  /* guest SBI 定时器截止（guest time 单位），0=未设置 */
+    uint64_t
+        timer_deadline; /* guest SBI 定时器截止（guest time 单位），0=未设置 */
 } vcpu_t;
 
 /*
@@ -365,30 +366,41 @@ typedef struct vcpu {
  * 跑飞"这种极难反查的故障（历史上 tp 槽位就是漏加过一次，见上方说明）。
  * 与 include/aarch64/exception.h 钉 trap_frame_t 是同一手法。
  */
-_Static_assert(offsetof(vcpu_t, r)           == VCPU_RV_R0,       "hext_vcpu.S VCPU_R0");
-_Static_assert(offsetof(vcpu_t, vsepc)       == VCPU_RV_VSEPC,    "hext_vcpu.S VCPU_VSEPC");
-_Static_assert(offsetof(vcpu_t, vsstatus)    == VCPU_RV_VSSTATUS, "hext_vcpu.S VCPU_VSSTATUS");
-_Static_assert(offsetof(vcpu_t, vstvec)      == VCPU_RV_VSTVEC,   "hext_vcpu.S VCPU_VSTVEC");
-_Static_assert(offsetof(vcpu_t, vsscratch)   == VCPU_RV_VSSCRATCH,"hext_vcpu.S VCPU_VSSCRATCH");
-_Static_assert(offsetof(vcpu_t, vsatp)       == VCPU_RV_VSATP,    "hext_vcpu.S VCPU_VSATP");
-_Static_assert(offsetof(vcpu_t, vsie)        == VCPU_RV_VSIE,     "hext_vcpu.S VCPU_VSIE");
-_Static_assert(offsetof(vcpu_t, scause_save) == VCPU_RV_SCAUSE,   "hext_vcpu.S VCPU_SCAUSE");
-_Static_assert(offsetof(vcpu_t, stval_save)  == VCPU_RV_STVAL,    "hext_vcpu.S VCPU_STVAL");
-_Static_assert(offsetof(vcpu_t, htval_save)  == VCPU_RV_HTVAL,    "hext_vcpu.S VCPU_HTVAL");
-_Static_assert(offsetof(vcpu_t, hstatus_save)== VCPU_RV_HSTATUS,  "hext_vcpu.S VCPU_HSTATUS");
-_Static_assert(offsetof(vcpu_t, pc)          == VCPU_RV_PC,       "hext_vcpu.S VCPU_PC");
-_Static_assert(offsetof(vcpu_t, host_ctx)    == VCPU_RV_HOSTCTX,  "hext_vcpu.S HCTX_RA");
+_Static_assert(offsetof(vcpu_t, r) == VCPU_RV_R0, "hext_vcpu.S VCPU_R0");
+_Static_assert(offsetof(vcpu_t, vsepc) == VCPU_RV_VSEPC,
+               "hext_vcpu.S VCPU_VSEPC");
+_Static_assert(offsetof(vcpu_t, vsstatus) == VCPU_RV_VSSTATUS,
+               "hext_vcpu.S VCPU_VSSTATUS");
+_Static_assert(offsetof(vcpu_t, vstvec) == VCPU_RV_VSTVEC,
+               "hext_vcpu.S VCPU_VSTVEC");
+_Static_assert(offsetof(vcpu_t, vsscratch) == VCPU_RV_VSSCRATCH,
+               "hext_vcpu.S VCPU_VSSCRATCH");
+_Static_assert(offsetof(vcpu_t, vsatp) == VCPU_RV_VSATP,
+               "hext_vcpu.S VCPU_VSATP");
+_Static_assert(offsetof(vcpu_t, vsie) == VCPU_RV_VSIE, "hext_vcpu.S VCPU_VSIE");
+_Static_assert(offsetof(vcpu_t, scause_save) == VCPU_RV_SCAUSE,
+               "hext_vcpu.S VCPU_SCAUSE");
+_Static_assert(offsetof(vcpu_t, stval_save) == VCPU_RV_STVAL,
+               "hext_vcpu.S VCPU_STVAL");
+_Static_assert(offsetof(vcpu_t, htval_save) == VCPU_RV_HTVAL,
+               "hext_vcpu.S VCPU_HTVAL");
+_Static_assert(offsetof(vcpu_t, hstatus_save) == VCPU_RV_HSTATUS,
+               "hext_vcpu.S VCPU_HSTATUS");
+_Static_assert(offsetof(vcpu_t, pc) == VCPU_RV_PC, "hext_vcpu.S VCPU_PC");
+_Static_assert(offsetof(vcpu_t, host_ctx) == VCPU_RV_HOSTCTX,
+               "hext_vcpu.S HCTX_RA");
 /* host_ctx[15] 必须正好是 tp 槽 —— 漏掉它宿主的 per-CPU 指针就被 guest 覆盖 */
 _Static_assert(offsetof(vcpu_t, host_ctx) + 15 * 8 == VCPU_RV_HOSTCTX + 15 * 8,
                "hext_vcpu.S HCTX_TP");
-_Static_assert(offsetof(vcpu_t, htinst_save) == VCPU_RV_HTINST, "hext_vcpu.S VCPU_HTINST");
-#endif /* ARCH_* */
+_Static_assert(offsetof(vcpu_t, htinst_save) == VCPU_RV_HTINST,
+               "hext_vcpu.S VCPU_HTINST");
+#endif                                /* ARCH_* */
 
 /* ── VM 配置 ─────────────────────────────────────────────────── */
 typedef struct vm_cfg {
-    uint64_t mem_base;   /* guest 物理内存基址（Stage-2 IPA base）*/
-    uint64_t mem_size;   /* guest 物理内存大小                    */
-    int      nr_vcpus;   /* vCPU 数量                             */
+    uint64_t mem_base; /* guest 物理内存基址（Stage-2 IPA base）*/
+    uint64_t mem_size; /* guest 物理内存大小                    */
+    int nr_vcpus;      /* vCPU 数量                             */
 } vm_cfg_t;
 
 /* ── MMIO 总线（vmm_mmio.h）──────────────────────────────────── */
@@ -397,14 +409,14 @@ struct mmio_bus;
 /* ── VM 控制块 ───────────────────────────────────────────────── */
 typedef struct vm {
     vm_cfg_t cfg;
-    vcpu_t   vcpus[MAX_VCPUS];  /* 静态嵌入，不动态分配 */
-    int      nr_vcpus;
+    vcpu_t vcpus[MAX_VCPUS]; /* 静态嵌入，不动态分配 */
+    int nr_vcpus;
 
     /* ── VM 身份与生命周期（vm.c 的静态池管理）───────────────── */
-    uint32_t vmid;              /* 1..255，同时写进 VTTBR_EL2 的 VMID 域 */
-    int      slot;              /* 静态池下标（也用于索引 stage-2 静态表）*/
-    int      state;             /* VM_FREE / VM_LOADING / ...          */
-    volatile int stop_req;      /* 置位后 vCPU 任务在主循环顶部退出     */
+    uint32_t vmid;         /* 1..255，同时写进 VTTBR_EL2 的 VMID 域 */
+    int slot;              /* 静态池下标（也用于索引 stage-2 静态表）*/
+    int state;             /* VM_FREE / VM_LOADING / ...          */
+    volatile int stop_req; /* 置位后 vCPU 任务在主循环顶部退出     */
 
 #if ARCH_AARCH64
     /*
@@ -485,7 +497,7 @@ typedef struct vm {
      * VM 的 vcpu0 会共用同一块栈。这个函数目前没有调用者（guest_loader 路径
      * 自己设 vcpu 状态），但按 VM 分开才是它对多 VM 唯一安全的形态。
      */
-#define VMM_GUEST_STACK_SIZE  4096
+#define VMM_GUEST_STACK_SIZE 4096
     uint8_t guest_stack[MAX_VCPUS][VMM_GUEST_STACK_SIZE];
 #endif
 
@@ -582,8 +594,8 @@ void set_stage2_pgd(uint64_t pgd_phys, uint32_t vmid);
  * 调用 —— 所以它没有和上面四个排在一起，单独列在下面。
  */
 void vmm_arch_restore_guest_ctx(vcpu_t *vcpu);
-int  vmm_arch_enter_guest(vcpu_t *vcpu);   /* 1=success, 0=entry-failed */
-int  vmm_arch_exit_handler(vcpu_t *vcpu);
+int vmm_arch_enter_guest(vcpu_t *vcpu); /* 1=success, 0=entry-failed */
+int vmm_arch_exit_handler(vcpu_t *vcpu);
 void vmm_arch_save_guest_ctx(vcpu_t *vcpu);
 
 /*
@@ -619,7 +631,6 @@ void vmm_arch_vm_destroy(vm_t *vm);
  */
 void vmm_arch_irq_raise(vcpu_t *vcpu, virq_t irq);
 
-
 int vmm_run_vcpu(vcpu_t *vcpu);
 
 /* 建一个 VM：按架构转发到 vmm_arch_vm_init()（见上面的钩子说明）。*/
@@ -631,10 +642,10 @@ int vm_create(vm_t *vm);
  * **并发规则：跨任务只传 vmid，不传 vm_t *，也不做引用计数** —— 谁要操作
  * 某个 VM 就现场 vm_get(vmid) 取一次、用完即放。
  */
-vm_t *vm_alloc(void);           /* 取一个空闲槽位（state=LOADING）；满了返回 NULL */
-vm_t *vm_get(uint32_t vmid);    /* 按 vmid 查；不存在或已释放返回 NULL     */
-void  vm_free(vm_t *vm);        /* **只能由该 VM 的 vCPU 任务自己调**      */
-int   vm_count_used(void);      /* 池里非 FREE 的槽位数                    */
+vm_t *vm_alloc(void); /* 取一个空闲槽位（state=LOADING）；满了返回 NULL */
+vm_t *vm_get(uint32_t vmid); /* 按 vmid 查；不存在或已释放返回 NULL     */
+void vm_free(vm_t *vm);      /* **只能由该 VM 的 vCPU 任务自己调**      */
+int vm_count_used(void);     /* 池里非 FREE 的槽位数                    */
 
 /* ── 宿主侧 guest 生命周期（/dev/vmm 用）──────────────────────── */
 /*
@@ -648,7 +659,7 @@ int   vm_count_used(void);      /* 池里非 FREE 的槽位数                  
 void vm_request_stop(vm_t *vm);
 
 /* 是否有**任意** VM 在跑（单 VM 视角的粗判；精细判断用 vm_get(vmid)->state）。*/
-int  vmm_guest_running(void);
+int vmm_guest_running(void);
 
 struct task *vcpu_task_create(vcpu_t *vcpu, uint8_t priority);
 

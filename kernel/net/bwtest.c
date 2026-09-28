@@ -49,7 +49,7 @@
 
 #include "net/bwtest.h"
 
-#include "klog.h"        /* kprintf */
+#include "klog.h" /* kprintf */
 #include "string.h"
 #include "timer/timer.h"
 
@@ -57,11 +57,11 @@
 
 /* ── 配置 ──────────────────────────────────────────────────────────────── */
 
-#define BW_PORT            1235U          /* 与 TCP echo(1234)/HTTP(80) 不冲突 */
-#define BW_MAGIC           0x41564257U    /* "AVBW"，小端 */
-#define BW_HDR_LEN         8U
-#define BW_REPORT_MS       1000U          /* 统计窗口 */
-#define BW_MAX_IDLE_WINDOWS 3U            /* 连续几个空窗口后停止打印 */
+#define BW_PORT             1235U       /* 与 TCP echo(1234)/HTTP(80) 不冲突 */
+#define BW_MAGIC            0x41564257U /* "AVBW"，小端 */
+#define BW_HDR_LEN          8U
+#define BW_REPORT_MS        1000U /* 统计窗口 */
+#define BW_MAX_IDLE_WINDOWS 3U    /* 连续几个空窗口后停止打印 */
 
 /* ── 状态 ──────────────────────────────────────────────────────────────── */
 
@@ -72,7 +72,7 @@ static uint32_t g_win_pkts;
 static uint64_t g_win_bytes;
 static uint32_t g_win_first_seq;
 static uint32_t g_win_max_seq;
-static uint32_t g_win_ooo;        /* 序号不大于已见最大值的到达（乱序或重复） */
+static uint32_t g_win_ooo; /* 序号不大于已见最大值的到达（乱序或重复） */
 
 /* 累计 */
 static uint64_t g_total_pkts;
@@ -80,25 +80,25 @@ static uint64_t g_total_bytes;
 static uint64_t g_total_lost;
 
 static uint64_t g_win_start_ms;
-static bool     g_running;        /* 收到过有效包 → 开始统计 */
+static bool g_running; /* 收到过有效包 → 开始统计 */
 static uint32_t g_idle_windows;
 
 /* ── 工具 ──────────────────────────────────────────────────────────────── */
 
 static inline uint32_t bw_rd32le(const uint8_t *p)
 {
-    return (uint32_t)p[0] | ((uint32_t)p[1] << 8)
-         | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) |
+           ((uint32_t)p[3] << 24);
 }
 
 static void bw_reset_window(uint64_t now_ms)
 {
-    g_win_pkts      = 0;
-    g_win_bytes     = 0;
+    g_win_pkts = 0;
+    g_win_bytes = 0;
     g_win_first_seq = 0;
-    g_win_max_seq   = 0;
-    g_win_ooo       = 0;
-    g_win_start_ms  = now_ms;
+    g_win_max_seq = 0;
+    g_win_ooo = 0;
+    g_win_start_ms = now_ms;
 }
 
 /* ── 统计输出 ──────────────────────────────────────────────────────────── */
@@ -116,10 +116,10 @@ static void bw_report(uint32_t window_ms)
             lost = expected - g_win_pkts;
     }
 
-    uint64_t bytes_s  = g_win_bytes * 1000ULL / window_ms;
+    uint64_t bytes_s = g_win_bytes * 1000ULL / window_ms;
     uint64_t mbs_x100 = bytes_s * 100ULL / (1024ULL * 1024ULL);
     uint64_t mbps_x10 = bytes_s * 8ULL * 10ULL / 1000000ULL;
-    uint32_t avg      = g_win_pkts ? (uint32_t)(g_win_bytes / g_win_pkts) : 0U;
+    uint32_t avg = g_win_pkts ? (uint32_t)(g_win_bytes / g_win_pkts) : 0U;
 
     /* 先并入累计再打印 —— 否则同一行里窗口 lost 和累计 lost 会差一个窗口，
      * 看起来像是"丢了 14242 但累计一个没丢"，很误导。 */
@@ -130,13 +130,9 @@ static void bw_report(uint32_t window_ms)
             (unsigned long long)(mbs_x100 / 100ULL),
             (unsigned long long)(mbs_x100 % 100ULL),
             (unsigned long long)(mbps_x10 / 10ULL),
-            (unsigned long long)(mbps_x10 % 10ULL),
-            (unsigned)g_win_pkts,
-            (unsigned)lost,
-            (unsigned)g_win_ooo,
-            (unsigned)avg,
-            (unsigned long long)g_total_pkts,
-            (unsigned long long)g_total_bytes,
+            (unsigned long long)(mbps_x10 % 10ULL), (unsigned)g_win_pkts,
+            (unsigned)lost, (unsigned)g_win_ooo, (unsigned)avg,
+            (unsigned long long)g_total_pkts, (unsigned long long)g_total_bytes,
             (unsigned long long)g_total_lost);
 }
 
@@ -145,10 +141,10 @@ static void bw_report(uint32_t window_ms)
 void bwtest_poll(void)
 {
     if (!g_running)
-        return;                                  /* 快路径：一次 load */
+        return; /* 快路径：一次 load */
 
     uint64_t now = timer_get_uptime_ms();
-    uint64_t dt  = now - g_win_start_ms;
+    uint64_t dt = now - g_win_start_ms;
     if (dt < BW_REPORT_MS)
         return;
 
@@ -197,16 +193,15 @@ static void bw_recv(void *arg, struct udp_pcb *pcb, struct pbuf *p,
     uint32_t seq = bw_rd32le(hdr + 4);
 
     if (!g_running) {
-        g_running      = true;
+        g_running = true;
         g_idle_windows = 0U;
         bw_reset_window(timer_get_uptime_ms());
-        kprintf("[bwtest] 开始统计：来自 %s\n",
-                addr ? ipaddr_ntoa(addr) : "?");
+        kprintf("[bwtest] 开始统计：来自 %s\n", addr ? ipaddr_ntoa(addr) : "?");
     }
 
     if (g_win_pkts == 0U) {
         g_win_first_seq = seq;
-        g_win_max_seq   = seq;
+        g_win_max_seq = seq;
     } else if (seq > g_win_max_seq) {
         g_win_max_seq = seq;
     } else {

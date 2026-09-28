@@ -32,4 +32,4 @@ static inline void arch_halt(void)
     }
 }
 
-#endif  // AARCH64_HALT_ARCH_H_
+#endif // AARCH64_HALT_ARCH_H_

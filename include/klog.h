@@ -27,32 +27,31 @@
  * 曾经就是这样：手工编译某个文件时日志集体失踪，且没有任何提示。
  */
 #ifndef LOG_LEVEL
-#  error "LOG_LEVEL 未定义：请用 Makefile 的 LOG=<none|error|warn|info|debug|trace> 构建（见 make help）"
+#error \
+    "LOG_LEVEL 未定义：请用 Makefile 的 LOG=<none|error|warn|info|debug|trace> 构建（见 make help）"
 #endif
 
 /* ===== 日志等级定义 ===== */
 
 typedef enum {
-    LOG_LEVEL_NONE = 0,  /* 关闭所有日志 */
-    LOG_LEVEL_ERROR,      /* 只显示错误 */
-    LOG_LEVEL_WARN,       /* 显示警告和错误 */
-    LOG_LEVEL_INFO,       /* 显示信息、警告和错误 */
-    LOG_LEVEL_DEBUG,      /* 显示调试信息及以上 */
-    LOG_LEVEL_TRACE,      /* 显示所有日志（包括跟踪） */
+    LOG_LEVEL_NONE = 0, /* 关闭所有日志 */
+    LOG_LEVEL_ERROR,    /* 只显示错误 */
+    LOG_LEVEL_WARN,     /* 显示警告和错误 */
+    LOG_LEVEL_INFO,     /* 显示信息、警告和错误 */
+    LOG_LEVEL_DEBUG,    /* 显示调试信息及以上 */
+    LOG_LEVEL_TRACE,    /* 显示所有日志（包括跟踪） */
 } log_level_t;
 
 /* ===== 全局日志级别 ===== */
 
 extern log_level_t g_log_level;
 
-static inline void
-set_log_level(log_level_t level)
+static inline void set_log_level(log_level_t level)
 {
     g_log_level = level;
 }
 
-static inline log_level_t
-get_log_level(void)
+static inline log_level_t get_log_level(void)
 {
     return g_log_level;
 }
@@ -63,17 +62,18 @@ get_log_level(void)
  * 模块位定义
  * 每个模块占用 1 位，最多支持 64 个模块
  */
-#define LOG_MODULE_INIT    (1ULL << 0)  /* 初始化模块 */
-#define LOG_MODULE_TASK    (1ULL << 1)  /* 任务调度模块 */
-#define LOG_MODULE_DRIVER  (1ULL << 2)  /* 驱动模块 */
-#define LOG_MODULE_UART    (1ULL << 3)  /* UART 驱动 */
-#define LOG_MODULE_TIMER   (1ULL << 4)  /* 定时器模块 */
-#define LOG_MODULE_MM      (1ULL << 5)  /* 内存管理模块 */
-#define LOG_MODULE_FS      (1ULL << 6)  /* 文件系统模块 */
-#define LOG_MODULE_NET     (1ULL << 7)  /* 网络模块 */
-#define LOG_MODULE_SMP     (1ULL << 8)  /* 多核模块 */
-#define LOG_MODULE_GIC     (1ULL << 9)  /* 中断控制器（gicv2/gicv3）*/
-#define LOG_MODULE_GENERIC (1ULL << 10) /* 未打模块标签的 KLOG_DEBUG/KLOG_TRACE */
+#define LOG_MODULE_INIT   (1ULL << 0) /* 初始化模块 */
+#define LOG_MODULE_TASK   (1ULL << 1) /* 任务调度模块 */
+#define LOG_MODULE_DRIVER (1ULL << 2) /* 驱动模块 */
+#define LOG_MODULE_UART   (1ULL << 3) /* UART 驱动 */
+#define LOG_MODULE_TIMER  (1ULL << 4) /* 定时器模块 */
+#define LOG_MODULE_MM     (1ULL << 5) /* 内存管理模块 */
+#define LOG_MODULE_FS     (1ULL << 6) /* 文件系统模块 */
+#define LOG_MODULE_NET    (1ULL << 7) /* 网络模块 */
+#define LOG_MODULE_SMP    (1ULL << 8) /* 多核模块 */
+#define LOG_MODULE_GIC    (1ULL << 9) /* 中断控制器（gicv2/gicv3）*/
+#define LOG_MODULE_GENERIC \
+    (1ULL << 10) /* 未打模块标签的 KLOG_DEBUG/KLOG_TRACE */
 #define LOG_MODULE_SYSCALL (1ULL << 11) /* 系统调用（strace 式逐次追踪）*/
 
 extern uint64_t g_log_module_mask;
@@ -96,26 +96,22 @@ extern int log_modules_to_string(char *out, int len);
  */
 extern void klog_init(void);
 
-static inline void
-log_set_modules(uint64_t mask)
+static inline void log_set_modules(uint64_t mask)
 {
     g_log_module_mask = mask;
 }
 
-static inline void
-log_add_module(uint64_t module)
+static inline void log_add_module(uint64_t module)
 {
     g_log_module_mask |= module;
 }
 
-static inline void
-log_remove_module(uint64_t module)
+static inline void log_remove_module(uint64_t module)
 {
     g_log_module_mask &= ~module;
 }
 
-static inline int
-log_is_module_enabled(uint64_t module)
+static inline int log_is_module_enabled(uint64_t module)
 {
     return (g_log_module_mask & module) != 0;
 }
@@ -143,14 +139,13 @@ log_is_module_enabled(uint64_t module)
  * 恰好是最需要日志的那一段。所以只做计数采样。
  */
 #ifndef KLOG_SAMPLE_FIRST
-#define KLOG_SAMPLE_FIRST   8U
+#define KLOG_SAMPLE_FIRST 8U
 #endif
 #ifndef KLOG_SAMPLE_CAP
-#define KLOG_SAMPLE_CAP     4096U
+#define KLOG_SAMPLE_CAP 4096U
 #endif
 
-static inline int
-klog_sample_hit(uint32_t n)
+static inline int klog_sample_hit(uint32_t n)
 {
     return (n <= KLOG_SAMPLE_FIRST) ||
            (n <= KLOG_SAMPLE_CAP && (n & (n - 1U)) == 0U);
@@ -189,8 +184,8 @@ extern void klog_write(const char *buf, size_t len);
  */
 extern void klog_putchar(char c);
 extern void klog_flush(void);
-extern int  kvprintf(const char *fmt, va_list va);
-extern int  kprintf(const char *fmt, ...);
+extern int kvprintf(const char *fmt, va_list va);
+extern int kprintf(const char *fmt, ...);
 
 /*
  * klog_panic_begin - 进入崩溃路径，之后的日志不再取全局输出锁
@@ -224,18 +219,18 @@ extern uint32_t klog_cpu_id(void);
 /* ERROR 日志 - 总是显示（LOG=none 构建下整个宏被替换为空，见文件末尾） */
 #define KLOG_ERROR(fmt, ...) \
     do { \
-        kprintf(KLOG_COLOR_RED "[ERROR][C%u] " "%s:%d: " fmt \
-               KLOG_COLOR_RESET "", \
-               klog_cpu_id(), __FILE__, __LINE__, ##__VA_ARGS__); \
+        kprintf(KLOG_COLOR_RED "[ERROR][C%u] " \
+                               "%s:%d: " fmt KLOG_COLOR_RESET "", \
+                klog_cpu_id(), __FILE__, __LINE__, ##__VA_ARGS__); \
     } while (0)
 
 /* WARN 日志 - 在 WARN 级别及以上显示 */
 #define KLOG_WARN(fmt, ...) \
     do { \
         if (g_log_level >= LOG_LEVEL_WARN) { \
-            kprintf(KLOG_COLOR_YELLOW "[WARN][C%u] " "%s:%d: " fmt \
-                   KLOG_COLOR_RESET "", \
-                   klog_cpu_id(), __FILE__, __LINE__, ##__VA_ARGS__); \
+            kprintf(KLOG_COLOR_YELLOW "[WARN][C%u] " \
+                                      "%s:%d: " fmt KLOG_COLOR_RESET "", \
+                    klog_cpu_id(), __FILE__, __LINE__, ##__VA_ARGS__); \
         } \
     } while (0)
 
@@ -243,9 +238,9 @@ extern uint32_t klog_cpu_id(void);
 #define KLOG_INFO(fmt, ...) \
     do { \
         if (g_log_level >= LOG_LEVEL_INFO) { \
-            kprintf(KLOG_COLOR_GREEN "[INFO][C%u] " "%s:%d: " fmt \
-                   KLOG_COLOR_RESET "", \
-                   klog_cpu_id(), __FILE__, __LINE__, ##__VA_ARGS__); \
+            kprintf(KLOG_COLOR_GREEN "[INFO][C%u] " \
+                                     "%s:%d: " fmt KLOG_COLOR_RESET "", \
+                    klog_cpu_id(), __FILE__, __LINE__, ##__VA_ARGS__); \
         } \
     } while (0)
 
@@ -258,9 +253,9 @@ extern uint32_t klog_cpu_id(void);
     do { \
         if ((g_log_level >= LOG_LEVEL_DEBUG) && \
             log_is_module_enabled(LOG_MODULE_GENERIC)) { \
-            kprintf(KLOG_COLOR_BLUE "[DEBUG][C%u] " "%s:%d: " fmt \
-                   KLOG_COLOR_RESET "", \
-                   klog_cpu_id(), __FILE__, __LINE__, ##__VA_ARGS__); \
+            kprintf(KLOG_COLOR_BLUE "[DEBUG][C%u] " \
+                                    "%s:%d: " fmt KLOG_COLOR_RESET "", \
+                    klog_cpu_id(), __FILE__, __LINE__, ##__VA_ARGS__); \
         } \
     } while (0)
 
@@ -269,9 +264,9 @@ extern uint32_t klog_cpu_id(void);
     do { \
         if ((g_log_level >= LOG_LEVEL_TRACE) && \
             log_is_module_enabled(LOG_MODULE_GENERIC)) { \
-            kprintf(KLOG_COLOR_GRAY "[TRACE][C%u] " "%s:%d: " fmt \
-                   KLOG_COLOR_RESET "", \
-                   klog_cpu_id(), __FILE__, __LINE__, ##__VA_ARGS__); \
+            kprintf(KLOG_COLOR_GRAY "[TRACE][C%u] " \
+                                    "%s:%d: " fmt KLOG_COLOR_RESET "", \
+                    klog_cpu_id(), __FILE__, __LINE__, ##__VA_ARGS__); \
         } \
     } while (0)
 
@@ -286,35 +281,43 @@ extern uint32_t klog_cpu_id(void);
  */
 #define KLOG_MODULE_DEBUG(module, fmt, ...) \
     do { \
-        if ((g_log_level >= LOG_LEVEL_DEBUG) && log_is_module_enabled(module)) { \
-            kprintf(KLOG_COLOR_BLUE "[DEBUG][C%u] [MOD] " "%s:%d: " fmt \
-                   KLOG_COLOR_RESET "", \
-                   klog_cpu_id(), __FILE__, __LINE__, ##__VA_ARGS__); \
+        if ((g_log_level >= LOG_LEVEL_DEBUG) && \
+            log_is_module_enabled(module)) { \
+            kprintf(KLOG_COLOR_BLUE "[DEBUG][C%u] [MOD] " \
+                                    "%s:%d: " fmt KLOG_COLOR_RESET "", \
+                    klog_cpu_id(), __FILE__, __LINE__, ##__VA_ARGS__); \
         } \
     } while (0)
 
 #define KLOG_MODULE_TRACE(module, fmt, ...) \
     do { \
-        if ((g_log_level >= LOG_LEVEL_TRACE) && log_is_module_enabled(module)) { \
-            kprintf(KLOG_COLOR_GRAY "[TRACE][C%u] [MOD] " "%s:%d: " fmt \
-                   KLOG_COLOR_RESET "", \
-                   klog_cpu_id(), __FILE__, __LINE__, ##__VA_ARGS__); \
+        if ((g_log_level >= LOG_LEVEL_TRACE) && \
+            log_is_module_enabled(module)) { \
+            kprintf(KLOG_COLOR_GRAY "[TRACE][C%u] [MOD] " \
+                                    "%s:%d: " fmt KLOG_COLOR_RESET "", \
+                    klog_cpu_id(), __FILE__, __LINE__, ##__VA_ARGS__); \
         } \
     } while (0)
 
 /* ===== 简化的模块日志宏 ===== */
 
-#define KLOG_INIT(fmt, ...)    KLOG_MODULE_DEBUG(LOG_MODULE_INIT, fmt, ##__VA_ARGS__)
-#define KLOG_TASK(fmt, ...)    KLOG_MODULE_DEBUG(LOG_MODULE_TASK, fmt, ##__VA_ARGS__)
-#define KLOG_DRIVER(fmt, ...)  KLOG_MODULE_DEBUG(LOG_MODULE_DRIVER, fmt, ##__VA_ARGS__)
-#define KLOG_UART(fmt, ...)    KLOG_MODULE_DEBUG(LOG_MODULE_UART, fmt, ##__VA_ARGS__)
-#define KLOG_TIMER(fmt, ...)   KLOG_MODULE_DEBUG(LOG_MODULE_TIMER, fmt, ##__VA_ARGS__)
-#define KLOG_MM(fmt, ...)      KLOG_MODULE_DEBUG(LOG_MODULE_MM, fmt, ##__VA_ARGS__)
-#define KLOG_FS(fmt, ...)      KLOG_MODULE_DEBUG(LOG_MODULE_FS, fmt, ##__VA_ARGS__)
-#define KLOG_NET(fmt, ...)     KLOG_MODULE_DEBUG(LOG_MODULE_NET, fmt, ##__VA_ARGS__)
-#define KLOG_SMP(fmt, ...)     KLOG_MODULE_DEBUG(LOG_MODULE_SMP, fmt, ##__VA_ARGS__)
-#define KLOG_GIC(fmt, ...)     KLOG_MODULE_DEBUG(LOG_MODULE_GIC, fmt, ##__VA_ARGS__)
-#define KLOG_SYSCALL(fmt, ...) KLOG_MODULE_DEBUG(LOG_MODULE_SYSCALL, fmt, ##__VA_ARGS__)
+#define KLOG_INIT(fmt, ...) \
+    KLOG_MODULE_DEBUG(LOG_MODULE_INIT, fmt, ##__VA_ARGS__)
+#define KLOG_TASK(fmt, ...) \
+    KLOG_MODULE_DEBUG(LOG_MODULE_TASK, fmt, ##__VA_ARGS__)
+#define KLOG_DRIVER(fmt, ...) \
+    KLOG_MODULE_DEBUG(LOG_MODULE_DRIVER, fmt, ##__VA_ARGS__)
+#define KLOG_UART(fmt, ...) \
+    KLOG_MODULE_DEBUG(LOG_MODULE_UART, fmt, ##__VA_ARGS__)
+#define KLOG_TIMER(fmt, ...) \
+    KLOG_MODULE_DEBUG(LOG_MODULE_TIMER, fmt, ##__VA_ARGS__)
+#define KLOG_MM(fmt, ...)  KLOG_MODULE_DEBUG(LOG_MODULE_MM, fmt, ##__VA_ARGS__)
+#define KLOG_FS(fmt, ...)  KLOG_MODULE_DEBUG(LOG_MODULE_FS, fmt, ##__VA_ARGS__)
+#define KLOG_NET(fmt, ...) KLOG_MODULE_DEBUG(LOG_MODULE_NET, fmt, ##__VA_ARGS__)
+#define KLOG_SMP(fmt, ...) KLOG_MODULE_DEBUG(LOG_MODULE_SMP, fmt, ##__VA_ARGS__)
+#define KLOG_GIC(fmt, ...) KLOG_MODULE_DEBUG(LOG_MODULE_GIC, fmt, ##__VA_ARGS__)
+#define KLOG_SYSCALL(fmt, ...) \
+    KLOG_MODULE_DEBUG(LOG_MODULE_SYSCALL, fmt, ##__VA_ARGS__)
 
 /* ===== 一次性 / 采样日志 =====
  *
@@ -341,16 +344,15 @@ extern uint32_t klog_cpu_id(void);
 #define KLOG__ONCE_TAKE(flag) \
     (__atomic_exchange_n(&(flag), 1U, __ATOMIC_RELAXED) == 0U)
 
-#define KLOG__SAMPLE_NEXT(n) \
-    __atomic_add_fetch(&(n), 1U, __ATOMIC_RELAXED)
+#define KLOG__SAMPLE_NEXT(n) __atomic_add_fetch(&(n), 1U, __ATOMIC_RELAXED)
 
 /* ERROR：与 KLOG_ERROR 一样没有级别门槛，只是多一次"只说一次/抽稀" */
 #define KLOG_ERROR_ONCE(fmt, ...) \
     do { \
         static uint32_t _klog_once; \
         if (KLOG__ONCE_TAKE(_klog_once)) { \
-            kprintf(KLOG_COLOR_RED "[ERROR][C%u] " "%s:%d: " fmt \
-                    KLOG_COLOR_RESET "", \
+            kprintf(KLOG_COLOR_RED "[ERROR][C%u] " \
+                                   "%s:%d: " fmt KLOG_COLOR_RESET "", \
                     klog_cpu_id(), __FILE__, __LINE__, ##__VA_ARGS__); \
         } \
     } while (0)
@@ -360,8 +362,8 @@ extern uint32_t klog_cpu_id(void);
         static uint32_t _klog_n; \
         uint32_t _klog_seq_ = KLOG__SAMPLE_NEXT(_klog_n); \
         if (klog_sample_hit(_klog_seq_)) { \
-            kprintf(KLOG_COLOR_RED "[ERROR][C%u] " "%s:%d: " fmt \
-                    KLOG_COLOR_RESET "", \
+            kprintf(KLOG_COLOR_RED "[ERROR][C%u] " \
+                                   "%s:%d: " fmt KLOG_COLOR_RESET "", \
                     klog_cpu_id(), __FILE__, __LINE__, ##__VA_ARGS__); \
         } \
     } while (0)
@@ -370,8 +372,8 @@ extern uint32_t klog_cpu_id(void);
     do { \
         static uint32_t _klog_once; \
         if (g_log_level >= LOG_LEVEL_WARN && KLOG__ONCE_TAKE(_klog_once)) { \
-            kprintf(KLOG_COLOR_YELLOW "[WARN][C%u] " "%s:%d: " fmt \
-                    KLOG_COLOR_RESET "", \
+            kprintf(KLOG_COLOR_YELLOW "[WARN][C%u] " \
+                                      "%s:%d: " fmt KLOG_COLOR_RESET "", \
                     klog_cpu_id(), __FILE__, __LINE__, ##__VA_ARGS__); \
         } \
     } while (0)
@@ -382,8 +384,8 @@ extern uint32_t klog_cpu_id(void);
         if (g_log_level >= LOG_LEVEL_WARN) { \
             uint32_t _klog_seq_ = KLOG__SAMPLE_NEXT(_klog_n); \
             if (klog_sample_hit(_klog_seq_)) { \
-                kprintf(KLOG_COLOR_YELLOW "[WARN][C%u] " "%s:%d: " fmt \
-                        KLOG_COLOR_RESET "", \
+                kprintf(KLOG_COLOR_YELLOW "[WARN][C%u] " \
+                                          "%s:%d: " fmt KLOG_COLOR_RESET "", \
                         klog_cpu_id(), __FILE__, __LINE__, ##__VA_ARGS__); \
             } \
         } \
@@ -393,8 +395,8 @@ extern uint32_t klog_cpu_id(void);
     do { \
         static uint32_t _klog_once; \
         if (g_log_level >= LOG_LEVEL_INFO && KLOG__ONCE_TAKE(_klog_once)) { \
-            kprintf(KLOG_COLOR_GREEN "[INFO][C%u] " "%s:%d: " fmt \
-                    KLOG_COLOR_RESET "", \
+            kprintf(KLOG_COLOR_GREEN "[INFO][C%u] " \
+                                     "%s:%d: " fmt KLOG_COLOR_RESET "", \
                     klog_cpu_id(), __FILE__, __LINE__, ##__VA_ARGS__); \
         } \
     } while (0)
@@ -405,8 +407,8 @@ extern uint32_t klog_cpu_id(void);
         if (g_log_level >= LOG_LEVEL_INFO) { \
             uint32_t _klog_seq_ = KLOG__SAMPLE_NEXT(_klog_n); \
             if (klog_sample_hit(_klog_seq_)) { \
-                kprintf(KLOG_COLOR_GREEN "[INFO][C%u] " "%s:%d: " fmt \
-                        KLOG_COLOR_RESET "", \
+                kprintf(KLOG_COLOR_GREEN "[INFO][C%u] " \
+                                         "%s:%d: " fmt KLOG_COLOR_RESET "", \
                         klog_cpu_id(), __FILE__, __LINE__, ##__VA_ARGS__); \
             } \
         } \
@@ -420,8 +422,8 @@ extern uint32_t klog_cpu_id(void);
         if ((g_log_level >= LOG_LEVEL_DEBUG) && \
             log_is_module_enabled(LOG_MODULE_GENERIC) && \
             KLOG__ONCE_TAKE(_klog_once)) { \
-            kprintf(KLOG_COLOR_BLUE "[DEBUG][C%u] " "%s:%d: " fmt \
-                    KLOG_COLOR_RESET "", \
+            kprintf(KLOG_COLOR_BLUE "[DEBUG][C%u] " \
+                                    "%s:%d: " fmt KLOG_COLOR_RESET "", \
                     klog_cpu_id(), __FILE__, __LINE__, ##__VA_ARGS__); \
         } \
     } while (0)
@@ -433,8 +435,8 @@ extern uint32_t klog_cpu_id(void);
             log_is_module_enabled(LOG_MODULE_GENERIC)) { \
             uint32_t _klog_seq_ = KLOG__SAMPLE_NEXT(_klog_n); \
             if (klog_sample_hit(_klog_seq_)) { \
-                kprintf(KLOG_COLOR_BLUE "[DEBUG][C%u] " "%s:%d: " fmt \
-                        KLOG_COLOR_RESET "", \
+                kprintf(KLOG_COLOR_BLUE "[DEBUG][C%u] " \
+                                        "%s:%d: " fmt KLOG_COLOR_RESET "", \
                         klog_cpu_id(), __FILE__, __LINE__, ##__VA_ARGS__); \
             } \
         } \
@@ -446,10 +448,10 @@ extern uint32_t klog_cpu_id(void);
 #define KLOG_MODULE_DEBUG_ONCE(module, fmt, ...) \
     do { \
         static uint32_t _klog_once; \
-        if ((g_log_level >= LOG_LEVEL_DEBUG) && log_is_module_enabled(module) && \
-            KLOG__ONCE_TAKE(_klog_once)) { \
-            kprintf(KLOG_COLOR_BLUE "[DEBUG][C%u] [MOD] " "%s:%d: " fmt \
-                    KLOG_COLOR_RESET "", \
+        if ((g_log_level >= LOG_LEVEL_DEBUG) && \
+            log_is_module_enabled(module) && KLOG__ONCE_TAKE(_klog_once)) { \
+            kprintf(KLOG_COLOR_BLUE "[DEBUG][C%u] [MOD] " \
+                                    "%s:%d: " fmt KLOG_COLOR_RESET "", \
                     klog_cpu_id(), __FILE__, __LINE__, ##__VA_ARGS__); \
         } \
     } while (0)
@@ -457,11 +459,12 @@ extern uint32_t klog_cpu_id(void);
 #define KLOG_MODULE_DEBUG_SAMPLE(module, fmt, ...) \
     do { \
         static uint32_t _klog_n; \
-        if ((g_log_level >= LOG_LEVEL_DEBUG) && log_is_module_enabled(module)) { \
+        if ((g_log_level >= LOG_LEVEL_DEBUG) && \
+            log_is_module_enabled(module)) { \
             uint32_t _klog_seq_ = KLOG__SAMPLE_NEXT(_klog_n); \
             if (klog_sample_hit(_klog_seq_)) { \
-                kprintf(KLOG_COLOR_BLUE "[DEBUG][C%u] [MOD] " "%s:%d: " fmt \
-                        KLOG_COLOR_RESET "", \
+                kprintf(KLOG_COLOR_BLUE "[DEBUG][C%u] [MOD] " \
+                                        "%s:%d: " fmt KLOG_COLOR_RESET "", \
                         klog_cpu_id(), __FILE__, __LINE__, ##__VA_ARGS__); \
             } \
         } \
@@ -469,9 +472,9 @@ extern uint32_t klog_cpu_id(void);
 
 /* ===== 兼容性宏 ===== */
 
-#define pr_err KLOG_ERROR
-#define pr_warn KLOG_WARN
-#define pr_info KLOG_INFO
+#define pr_err   KLOG_ERROR
+#define pr_warn  KLOG_WARN
+#define pr_info  KLOG_INFO
 #define pr_debug KLOG_DEBUG
 
 #define printk kprintf
@@ -489,28 +492,42 @@ extern uint32_t klog_cpu_id(void);
  * #ifndef LOG_LEVEL 已经挡住了 "未定义 → 0 == 0 → 全静音" 那个坑。
  */
 #if defined(LOG_NONE) || (LOG_LEVEL == LOG_LEVEL_NONE)
-    #undef KLOG_ERROR
-    #define KLOG_ERROR(fmt, ...) do {} while (0)
+#undef KLOG_ERROR
+#define KLOG_ERROR(fmt, ...) \
+    do { \
+    } while (0)
 
-    #undef KLOG_WARN
-    #define KLOG_WARN(fmt, ...) do {} while (0)
+#undef KLOG_WARN
+#define KLOG_WARN(fmt, ...) \
+    do { \
+    } while (0)
 
-    #undef KLOG_INFO
-    #define KLOG_INFO(fmt, ...) do {} while (0)
+#undef KLOG_INFO
+#define KLOG_INFO(fmt, ...) \
+    do { \
+    } while (0)
 
-    #undef KLOG_DEBUG
-    #define KLOG_DEBUG(fmt, ...) do {} while (0)
+#undef KLOG_DEBUG
+#define KLOG_DEBUG(fmt, ...) \
+    do { \
+    } while (0)
 
-    #undef KLOG_TRACE
-    #define KLOG_TRACE(fmt, ...) do {} while (0)
+#undef KLOG_TRACE
+#define KLOG_TRACE(fmt, ...) \
+    do { \
+    } while (0)
 
-    #undef KLOG_MODULE_DEBUG
-    #define KLOG_MODULE_DEBUG(module, fmt, ...) do {} while (0)
+#undef KLOG_MODULE_DEBUG
+#define KLOG_MODULE_DEBUG(module, fmt, ...) \
+    do { \
+    } while (0)
 
-    #undef KLOG_MODULE_TRACE
-    #define KLOG_MODULE_TRACE(module, fmt, ...) do {} while (0)
+#undef KLOG_MODULE_TRACE
+#define KLOG_MODULE_TRACE(module, fmt, ...) \
+    do { \
+    } while (0)
 
-    /*
+/*
      * 下面这一组必须逐个列出：漏掉任何一个，它的 static 计数器和 __atomic_*
      * 就会活到 release 构建里。那种情况**编译通过、链接通过、没有任何测试会失败**，
      * 但上面"LOG=none 零日志开销"的承诺就静默失效了。只能靠对 build 目录下
@@ -518,35 +535,55 @@ extern uint32_t klog_cpu_id(void);
      * （教训：注释里别写带通配符的 shell 路径 —— "斜杠加星号"会提前结束注释，
      *   "斜杠加星号加..."这种序列 GCC 还会额外报 -Wcomment。）
      */
-    #undef KLOG_ERROR_ONCE
-    #define KLOG_ERROR_ONCE(fmt, ...) do {} while (0)
+#undef KLOG_ERROR_ONCE
+#define KLOG_ERROR_ONCE(fmt, ...) \
+    do { \
+    } while (0)
 
-    #undef KLOG_ERROR_SAMPLE
-    #define KLOG_ERROR_SAMPLE(fmt, ...) do {} while (0)
+#undef KLOG_ERROR_SAMPLE
+#define KLOG_ERROR_SAMPLE(fmt, ...) \
+    do { \
+    } while (0)
 
-    #undef KLOG_WARN_ONCE
-    #define KLOG_WARN_ONCE(fmt, ...) do {} while (0)
+#undef KLOG_WARN_ONCE
+#define KLOG_WARN_ONCE(fmt, ...) \
+    do { \
+    } while (0)
 
-    #undef KLOG_WARN_SAMPLE
-    #define KLOG_WARN_SAMPLE(fmt, ...) do {} while (0)
+#undef KLOG_WARN_SAMPLE
+#define KLOG_WARN_SAMPLE(fmt, ...) \
+    do { \
+    } while (0)
 
-    #undef KLOG_INFO_ONCE
-    #define KLOG_INFO_ONCE(fmt, ...) do {} while (0)
+#undef KLOG_INFO_ONCE
+#define KLOG_INFO_ONCE(fmt, ...) \
+    do { \
+    } while (0)
 
-    #undef KLOG_INFO_SAMPLE
-    #define KLOG_INFO_SAMPLE(fmt, ...) do {} while (0)
+#undef KLOG_INFO_SAMPLE
+#define KLOG_INFO_SAMPLE(fmt, ...) \
+    do { \
+    } while (0)
 
-    #undef KLOG_DEBUG_ONCE
-    #define KLOG_DEBUG_ONCE(fmt, ...) do {} while (0)
+#undef KLOG_DEBUG_ONCE
+#define KLOG_DEBUG_ONCE(fmt, ...) \
+    do { \
+    } while (0)
 
-    #undef KLOG_DEBUG_SAMPLE
-    #define KLOG_DEBUG_SAMPLE(fmt, ...) do {} while (0)
+#undef KLOG_DEBUG_SAMPLE
+#define KLOG_DEBUG_SAMPLE(fmt, ...) \
+    do { \
+    } while (0)
 
-    #undef KLOG_MODULE_DEBUG_ONCE
-    #define KLOG_MODULE_DEBUG_ONCE(module, fmt, ...) do {} while (0)
+#undef KLOG_MODULE_DEBUG_ONCE
+#define KLOG_MODULE_DEBUG_ONCE(module, fmt, ...) \
+    do { \
+    } while (0)
 
-    #undef KLOG_MODULE_DEBUG_SAMPLE
-    #define KLOG_MODULE_DEBUG_SAMPLE(module, fmt, ...) do {} while (0)
+#undef KLOG_MODULE_DEBUG_SAMPLE
+#define KLOG_MODULE_DEBUG_SAMPLE(module, fmt, ...) \
+    do { \
+    } while (0)
 #endif
 
 #endif /* KLOG_H */

@@ -19,11 +19,11 @@
  *   0x20 = LAPIC Timer   (IRQ remapping 起始, 对应原 IRQ0)
  *   0xFF = LAPIC Spurious
  */
-#define IDT_EXCEPTION_BASE    0x00u
-#define IDT_IRQ_BASE          0x20u   /* 外部/本地中断起始向量         */
-#define IDT_LAPIC_TIMER_VEC   0x20u   /* LAPIC timer 使用的 IDT 向量  */
-#define IDT_LAPIC_SPURIOUS    0xFFu   /* LAPIC 伪中断向量              */
-#define IDT_MAX_ENTRIES       256u
+#define IDT_EXCEPTION_BASE  0x00u
+#define IDT_IRQ_BASE        0x20u /* 外部/本地中断起始向量         */
+#define IDT_LAPIC_TIMER_VEC 0x20u /* LAPIC timer 使用的 IDT 向量  */
+#define IDT_LAPIC_SPURIOUS  0xFFu /* LAPIC 伪中断向量              */
+#define IDT_MAX_ENTRIES     256u
 
 /* ── trap_frame ─────────────────────────────────────────────────
  *
@@ -42,12 +42,12 @@ typedef struct {
      * 栈向低地址增长，因此 trap_frame_t* 指向最低地址时，布局为 r15..rax。
      */
     uint64_t r15, r14, r13, r12;
-    uint64_t r11, r10, r9,  r8;
+    uint64_t r11, r10, r9, r8;
     uint64_t rbp, rdi, rsi, rdx;
     uint64_t rcx, rbx, rax;
     /* ISR 存根填充的辅助字段 */
-    uint64_t vector;      /* 中断向量号                     */
-    uint64_t error_code;  /* 错误码（无则为 0）              */
+    uint64_t vector;     /* 中断向量号                     */
+    uint64_t error_code; /* 错误码（无则为 0）              */
     /* CPU 硬件自动压栈 */
     uint64_t rip;
     uint64_t cs;
@@ -70,12 +70,12 @@ typedef void (*irq_handler_t)(void *);
  * offset[31:16] 在中间 64 位
  */
 typedef struct __attribute__((packed)) {
-    uint16_t offset_low;   /* offset[15:0]             */
-    uint16_t selector;     /* code segment selector    */
-    uint8_t  ist;          /* IST (Interrupt Stack Table), 0=disabled */
-    uint8_t  type_attr;    /* P | DPL | 0 | type       */
-    uint16_t offset_mid;   /* offset[31:16]            */
-    uint32_t offset_high;  /* offset[63:32]            */
+    uint16_t offset_low;  /* offset[15:0]             */
+    uint16_t selector;    /* code segment selector    */
+    uint8_t ist;          /* IST (Interrupt Stack Table), 0=disabled */
+    uint8_t type_attr;    /* P | DPL | 0 | type       */
+    uint16_t offset_mid;  /* offset[31:16]            */
+    uint32_t offset_high; /* offset[63:32]            */
     uint32_t reserved;
 } idt_entry_t;
 
@@ -83,7 +83,7 @@ typedef struct __attribute__((packed)) {
  *   0x8E = P(1) | DPL(00) | 0 | type(1110) — kernel interrupt gate
  *   0xEF = P(1) | DPL(11) | 0 | type(1111) — user trap gate
  */
-#define IDT_ATTR_KERNEL_INT  0x8Eu
+#define IDT_ATTR_KERNEL_INT 0x8Eu
 
 /* ── IDTR 结构 ──────────────────────────────────────────────────*/
 typedef struct __attribute__((packed)) {
@@ -98,6 +98,7 @@ void exception_init(void);
 void exception_init_secondary(void);
 
 /* 设置单个 IDT 门（供 exception.c 内部使用） */
-void idt_set_gate(uint8_t vec, void (*handler)(void), uint16_t sel, uint8_t attr);
+void idt_set_gate(uint8_t vec, void (*handler)(void), uint16_t sel,
+                  uint8_t attr);
 
 #endif /* X86_64_EXCEPTION_H */

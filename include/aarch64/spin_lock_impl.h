@@ -9,12 +9,11 @@
  */
 
 #include "task/preempt.h"
-#include "aarch64/exception_impl.h"   /* arch_irq_save/restore（统一的中断屏蔽原语）*/
+#include "aarch64/exception_impl.h" /* arch_irq_save/restore（统一的中断屏蔽原语）*/
 
 /* ── spin_lock ────────────────────────────────────────────── */
 
-static inline void
-spin_lock(spinlock_t *lock)
+static inline void spin_lock(spinlock_t *lock)
 {
     uint64_t tmp, one = 1;
     preempt_disable();
@@ -24,16 +23,15 @@ spin_lock(spinlock_t *lock)
         "   cbnz   %w0, 1b            \n"
         /* 再用 ldaxr/stlxr 原子取锁 */
         "2: ldaxr  %w0, [%2]          \n"
-        "   cbnz   %w0, 1b            \n"   /* 锁被抢走，回到等待 */
+        "   cbnz   %w0, 1b            \n" /* 锁被抢走，回到等待 */
         "   stlxr  %w0, %w1, [%2]     \n"
-        "   cbnz   %w0, 2b            \n"   /* stlxr 失败，重试 */
+        "   cbnz   %w0, 2b            \n" /* stlxr 失败，重试 */
         : "=&r"(tmp)
         : "r"(one), "r"(&lock->lock)
         : "memory");
 }
 
-static inline int
-spin_trylock(spinlock_t *lock)
+static inline int spin_trylock(spinlock_t *lock)
 {
     uint64_t tmp, one = 1;
     preempt_disable();
@@ -41,10 +39,10 @@ spin_trylock(spinlock_t *lock)
         "   ldaxr  %w0, [%2]          \n"
         "   cbnz   %w0, 1f            \n"
         "   stlxr  %w0, %w1, [%2]     \n"
-        "   cbnz   %w0, 1f            \n"   /* store 失败 → 返回 1（失败） */
-        "   mov    %w0, #0            \n"   /* 成功 → 返回 0 */
+        "   cbnz   %w0, 1f            \n" /* store 失败 → 返回 1（失败） */
+        "   mov    %w0, #0            \n" /* 成功 → 返回 0 */
         "   b      2f                 \n"
-        "1: mov    %w0, #1            \n"   /* 失败 → 返回 1 */
+        "1: mov    %w0, #1            \n" /* 失败 → 返回 1 */
         "2:                           \n"
         : "=&r"(tmp)
         : "r"(one), "r"(&lock->lock)
@@ -54,12 +52,10 @@ spin_trylock(spinlock_t *lock)
     return (int)tmp;
 }
 
-static inline void
-spin_unlock(spinlock_t *lock)
+static inline void spin_unlock(spinlock_t *lock)
 {
     /* stlr 已含 release 语义，无需额外 dmb */
-    asm volatile(
-        "stlr  wzr, [%0]" :: "r"(&lock->lock) : "memory");
+    asm volatile("stlr  wzr, [%0]" ::"r"(&lock->lock) : "memory");
     preempt_enable();
 }
 
@@ -71,28 +67,25 @@ spin_unlock(spinlock_t *lock)
  * include/aarch64/exception_impl.h（arch_irq_save/restore）。
  */
 
-static inline void
-spin_lock_irqsave(spinlock_t *lock, uint64_t *flags)
+static inline void spin_lock_irqsave(spinlock_t *lock, uint64_t *flags)
 {
-    *flags = arch_irq_save();               /* 先关中断，再自旋 */
+    *flags = arch_irq_save(); /* 先关中断，再自旋 */
     spin_lock(lock);
 }
 
-static inline int
-spin_trylock_irqsave(spinlock_t *lock, uint64_t *flags)
+static inline int spin_trylock_irqsave(spinlock_t *lock, uint64_t *flags)
 {
     *flags = arch_irq_save();
     if (spin_trylock(lock) == 0)
-        return 0;                           /* 成功 */
-    arch_irq_restore(*flags);               /* 失败则恢复中断 */
+        return 0;             /* 成功 */
+    arch_irq_restore(*flags); /* 失败则恢复中断 */
     return 1;
 }
 
-static inline void
-spin_unlock_irqrestore(spinlock_t *lock, uint64_t flags)
+static inline void spin_unlock_irqrestore(spinlock_t *lock, uint64_t flags)
 {
-    spin_unlock(lock);                      /* 先释放锁 */
-    arch_irq_restore(flags);                /* 再恢复中断 */
+    spin_unlock(lock);       /* 先释放锁 */
+    arch_irq_restore(flags); /* 再恢复中断 */
 }
 
-#endif  // AARCH64_SPIN_LOCK_IMPL_H
+#endif // AARCH64_SPIN_LOCK_IMPL_H

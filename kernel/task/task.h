@@ -15,19 +15,19 @@
 #include "list.h"
 
 /* ── 信号常量 ────────────────────────────────────────────── */
-#define NSIG     64
-#define SIG_DFL  0ULL   /* 默认动作（终止） */
-#define SIG_IGN  1ULL   /* 忽略 */
+#define NSIG    64
+#define SIG_DFL 0ULL /* 默认动作（终止） */
+#define SIG_IGN 1ULL /* 忽略 */
 
-#define SIGHUP    1
-#define SIGINT    2
-#define SIGQUIT   3
-#define SIGILL    4
-#define SIGTRAP   5
-#define SIGABRT   6
-#define SIGBUS    7
-#define SIGFPE    8
-#define SIGKILL   9
+#define SIGHUP   1
+#define SIGINT   2
+#define SIGQUIT  3
+#define SIGILL   4
+#define SIGTRAP  5
+#define SIGABRT  6
+#define SIGBUS   7
+#define SIGFPE   8
+#define SIGKILL  9
 #define SIGUSR1  10
 #define SIGSEGV  11
 #define SIGUSR2  12
@@ -43,23 +43,23 @@
 #define SIGURG   23
 #define SIGWINCH 28
 
-#define SA_RESTORER  0x04000000ULL
+#define SA_RESTORER 0x04000000ULL
 
 /* ── 信号动作结构 ────────────────────────────────────────── */
 typedef struct {
-    uint64_t sa_handler;    /* SIG_DFL / SIG_IGN / 用户 handler 地址 */
-    uint64_t sa_flags;      /* SA_RESTORER 等标志                     */
-    uint64_t sa_restorer;   /* rt_sigreturn 蹦床地址                  */
-    uint64_t sa_mask;       /* handler 执行期间额外屏蔽的信号         */
+    uint64_t sa_handler;  /* SIG_DFL / SIG_IGN / 用户 handler 地址 */
+    uint64_t sa_flags;    /* SA_RESTORER 等标志                     */
+    uint64_t sa_restorer; /* rt_sigreturn 蹦床地址                  */
+    uint64_t sa_mask;     /* handler 执行期间额外屏蔽的信号         */
 } sig_action_t;
 
 /* ── Task states ─────────────────────────────────────────── */
 typedef enum {
-    TASK_ALLOCATING = -1,  /* 槽位已占用，但 TCB 尚未完成初始化     */
-    TASK_READY   = 0,   /* 在就绪队列中，等待调度               */
-    TASK_RUNNING = 1,   /* 当前正在 CPU 上运行                  */
-    TASK_BLOCKED = 2,   /* 等待事件，不在就绪队列中              */
-    TASK_DEAD    = 3,   /* 已退出，资源待回收                   */
+    TASK_ALLOCATING = -1, /* 槽位已占用，但 TCB 尚未完成初始化     */
+    TASK_READY = 0,       /* 在就绪队列中，等待调度               */
+    TASK_RUNNING = 1,     /* 当前正在 CPU 上运行                  */
+    TASK_BLOCKED = 2,     /* 等待事件，不在就绪队列中              */
+    TASK_DEAD = 3,        /* 已退出，资源待回收                   */
 } task_state_t;
 
 /* ── Configuration ───────────────────────────────────────── */
@@ -73,84 +73,86 @@ typedef enum {
  * 而且只在并发时复现 —— 全挤在一颗核上串行跑就看不出来。
  * 32 KiB 下实测高水位见 vcpu_task_fn 的打印，留了足够余量。
  */
-#define TASK_STACK_SIZE  16384u
+#define TASK_STACK_SIZE 16384u
 
 /* 栈高水位的标记图案（见 task_stack_used）*/
 #define TASK_STACK_MAGIC 0xA5u
-#define TASK_NAME_LEN    16u     /* 任务名最大长度（含 NUL）      */
-#define TASK_MAX         64u     /* 最大并发任务数（不含 idle）   */
-#define TASK_CWD_LEN     128u    /* 当前工作目录最大长度          */
-#define TASK_EXE_LEN     128u    /* 可执行文件路径最大长度        */
-#define TASK_MAX_FD      256u    /* 每进程最大文件描述符数        */
+#define TASK_NAME_LEN    16u  /* 任务名最大长度（含 NUL）      */
+#define TASK_MAX         64u  /* 最大并发任务数（不含 idle）   */
+#define TASK_CWD_LEN     128u /* 当前工作目录最大长度          */
+#define TASK_EXE_LEN     128u /* 可执行文件路径最大长度        */
+#define TASK_MAX_FD      256u /* 每进程最大文件描述符数        */
 
 /* ── Task Control Block ──────────────────────────────────── */
 typedef struct task {
-    uintptr_t       sp;                  /* 保存的内核栈指针（上下文切换时填入） */
-    task_state_t    state;               /* 任务状态                              */
-    uint32_t        id;                  /* 唯一任务 ID                           */
-    uint8_t         priority;            /* 优先级（0 = 最高，255 = 最低）        */
-    char            name[TASK_NAME_LEN]; /* 任务名称                              */
-    uint8_t        *stack_base;          /* 内核栈底（低地址）；idle 为 NULL      */
-    void          (*entry)(void *);      /* 任务入口函数                          */
-    void           *arg;                 /* 传给 entry 的参数                     */
-    list_node_t     run_node;            /* 就绪队列节点                          */
-    list_node_t     wait_node;           /* 等待队列节点（用于 mutex/semaphore）  */
+    uintptr_t sp;             /* 保存的内核栈指针（上下文切换时填入） */
+    task_state_t state;       /* 任务状态                              */
+    uint32_t id;              /* 唯一任务 ID                           */
+    uint8_t priority;         /* 优先级（0 = 最高，255 = 最低）        */
+    char name[TASK_NAME_LEN]; /* 任务名称                              */
+    uint8_t *stack_base;      /* 内核栈底（低地址）；idle 为 NULL      */
+    void (*entry)(void *);    /* 任务入口函数                          */
+    void *arg;                /* 传给 entry 的参数                     */
+    list_node_t run_node;     /* 就绪队列节点                          */
+    list_node_t wait_node;    /* 等待队列节点（用于 mutex/semaphore）  */
 
     /* === SMP 支持（Phase 0：仅占位，调度器在 Phase 1 开始读取） === */
-    uint32_t        cpu_affinity;        /* 绑定的逻辑 CPU 编号。0..N-1 为硬亲和性；
+    uint32_t cpu_affinity; /* 绑定的逻辑 CPU 编号。0..N-1 为硬亲和性；
                                           * CPU_AFFINITY_ANY 代表“任一”，
                                           * 由 sched_enqueue 以 round-robin
                                           * 选一个物理核。 */
 
     /* === 用户态支持 === */
-    bool            is_user_process;     /* true=用户进程, false=内核任务          */
-    bool            user_started;        /* true=已至少进入过一次用户态            */
-    bool            is_thread;           /* true=线程(共享页表), false=独立进程 */
-    bool            shares_pgd;          /* true=共享地址空间，不拥有 pgd 释放权 */
-    uint32_t        tgid;                /* thread group id: getpid() 返回该值 */
-    uint64_t       *pgd;                 /* 页表基址（用户进程的TTBR0）            */
-    uint64_t        user_entry;          /* 用户态入口点（虚拟地址）               */
-    uint64_t        user_sp;             /* 用户栈指针（虚拟地址）                */
-    uint64_t        user_stack_top;      /* 用户栈顶（虚拟地址）                  */
-    uint64_t        user_stack_size;     /* 用户栈大小                            */
-    uint64_t        heap_end;            /* 进程堆当前末尾（brk 系统调用使用）    */
-    uint64_t        mmap_next;           /* 下一个 mmap 分配的起始地址            */
-    uint64_t        fs_base;             /* x86_64 TLS: IA32_FS_BASE              */
-    uint64_t        ctid_ptr;            /* CLONE_CHILD_CLEARTID 地址 (0=无)       */
+    bool is_user_process;     /* true=用户进程, false=内核任务          */
+    bool user_started;        /* true=已至少进入过一次用户态            */
+    bool is_thread;           /* true=线程(共享页表), false=独立进程 */
+    bool shares_pgd;          /* true=共享地址空间，不拥有 pgd 释放权 */
+    uint32_t tgid;            /* thread group id: getpid() 返回该值 */
+    uint64_t *pgd;            /* 页表基址（用户进程的TTBR0）            */
+    uint64_t user_entry;      /* 用户态入口点（虚拟地址）               */
+    uint64_t user_sp;         /* 用户栈指针（虚拟地址）                */
+    uint64_t user_stack_top;  /* 用户栈顶（虚拟地址）                  */
+    uint64_t user_stack_size; /* 用户栈大小                            */
+    uint64_t heap_end;        /* 进程堆当前末尾（brk 系统调用使用）    */
+    uint64_t mmap_next;       /* 下一个 mmap 分配的起始地址            */
+    uint64_t fs_base;         /* x86_64 TLS: IA32_FS_BASE              */
+    uint64_t ctid_ptr;        /* CLONE_CHILD_CLEARTID 地址 (0=无)       */
 
     /* === 进程/文件系统支持 === */
-    char            cwd[TASK_CWD_LEN];  /* 当前工作目录（用户进程）               */
-    char            exe_path[TASK_EXE_LEN]; /* 可执行文件路径（/proc/self/exe）   */
-    int16_t         fd_table[TASK_MAX_FD]; /* FD → g_fd_pool 索引，-1=未打开     */
-    uint8_t         fd_cloexec[TASK_MAX_FD / 8]; /* FD_CLOEXEC 位图              */
-    uint32_t        parent_id;           /* 父进程 ID                              */
-    uint32_t        uid;                 /* real user ID                           */
-    uint32_t        euid;                /* effective user ID                      */
-    uint32_t        gid;                 /* real group ID                          */
-    uint32_t        egid;                /* effective group ID                     */
-    int             exit_status;         /* 退出状态（wait4 使用）                 */
-    int             exit_signal;         /* 被信号杀死时的信号号（0=正常退出）     */
-    bool            is_waiting;          /* 正在 wait4 子进程                      */
-    uint32_t        wait_pid;            /* 等待的子进程 PID（-1=任意）            */
+    char cwd[TASK_CWD_LEN];        /* 当前工作目录（用户进程）               */
+    char exe_path[TASK_EXE_LEN];   /* 可执行文件路径（/proc/self/exe）   */
+    int16_t fd_table[TASK_MAX_FD]; /* FD → g_fd_pool 索引，-1=未打开     */
+    uint8_t fd_cloexec[TASK_MAX_FD / 8]; /* FD_CLOEXEC 位图              */
+    uint32_t parent_id; /* 父进程 ID                              */
+    uint32_t uid;       /* real user ID                           */
+    uint32_t euid;      /* effective user ID                      */
+    uint32_t gid;       /* real group ID                          */
+    uint32_t egid;      /* effective group ID                     */
+    int exit_status;    /* 退出状态（wait4 使用）                 */
+    int exit_signal;    /* 被信号杀死时的信号号（0=正常退出）     */
+    bool is_waiting;    /* 正在 wait4 子进程                      */
+    uint32_t wait_pid;  /* 等待的子进程 PID（-1=任意）            */
 
     /* === CPU 时间统计 === */
-    uint64_t        utime_ns;            /* 用户态 CPU 时间（纳秒），task_exit 前计算  */
-    uint64_t        stime_ns;            /* 内核态 CPU 时间（纳秒），syscall 路径累积  */
-    uint64_t        sc_entry_ns;         /* 当前 syscall 入口时间戳（0=不在 syscall）  */
-    uint64_t        create_ns;           /* 进程创建时间戳（用于 utime = wall−stime）  */
+    uint64_t utime_ns;    /* 用户态 CPU 时间（纳秒），task_exit 前计算  */
+    uint64_t stime_ns;    /* 内核态 CPU 时间（纳秒），syscall 路径累积  */
+    uint64_t sc_entry_ns; /* 当前 syscall 入口时间戳（0=不在 syscall）  */
+    uint64_t create_ns;   /* 进程创建时间戳（用于 utime = wall−stime）  */
 
     /* === 信号系统 === */
-    uint64_t        pending_sigs;        /* 待投递信号位图，bit(N-1) = 信号 N           */
-    uint64_t        blocked_sigs;        /* 被阻塞信号位图（sigprocmask）               */
-    uint64_t        sig_saved_blocked;   /* signal 投递前保存的 blocked_sigs            */
-    uint32_t        pgid;                /* 进程组 ID                                   */
-    uint32_t        sid;                 /* 会话 ID (session leader = sid == id)         */
-    int16_t         ctty_pty_idx;        /* controlling tty PTY index, -1 if detached    */
-    uint64_t        sig_frame_sp;        /* sigframe 在用户栈上的起始地址（rt_sigreturn）*/
-    sig_action_t    sig_actions[NSIG];   /* 每信号的 action（下标 0 对应信号 1）        */
+    uint64_t pending_sigs; /* 待投递信号位图，bit(N-1) = 信号 N           */
+    uint64_t blocked_sigs; /* 被阻塞信号位图（sigprocmask）               */
+    uint64_t
+        sig_saved_blocked; /* signal 投递前保存的 blocked_sigs            */
+    uint32_t pgid;         /* 进程组 ID                                   */
+    uint32_t sid;          /* 会话 ID (session leader = sid == id)         */
+    int16_t ctty_pty_idx;  /* controlling tty PTY index, -1 if detached    */
+    uint64_t sig_frame_sp; /* sigframe 在用户栈上的起始地址（rt_sigreturn）*/
+    sig_action_t
+        sig_actions[NSIG]; /* 每信号的 action（下标 0 对应信号 1）        */
 
     /* === 内核抢占控制 === */
-    uint32_t        preempt_count;       /* >0 时 S-mode timer 不抢占该任务             */
+    uint32_t preempt_count; /* >0 时 S-mode timer 不抢占该任务             */
 } task_t;
 
 /* 前台进程组 ID（0 = 无前台进程）*/
@@ -158,7 +160,7 @@ extern volatile uint32_t g_fg_pgid;
 
 /* ── SMP 调度亲和性 ──────────────────────────────────────────── */
 /* "任一核"哨兵值； sched_enqueue 看到后会用 round-robin 选目标。 */
-#define CPU_AFFINITY_ANY  ((uint32_t)-1)
+#define CPU_AFFINITY_ANY ((uint32_t)-1)
 
 /**
  * task_set_cpu_affinity - 将任务迁移到指定逻辑 CPU
@@ -241,8 +243,9 @@ task_t *task_create_affinity(const char *name, void (*entry)(void *), void *arg,
  *
  * 注意：当前版本使用共享内核页表，后续扩展为独立地址空间。
  */
-task_t *process_create(const char *name, uint64_t user_entry, uint64_t user_code_size,
-                       uint64_t user_sp, uint8_t priority);
+task_t *process_create(const char *name, uint64_t user_entry,
+                       uint64_t user_code_size, uint64_t user_sp,
+                       uint8_t priority);
 
 /**
  * process_create_with_pgd - 使用已有用户页表创建用户进程
@@ -257,8 +260,8 @@ task_t *process_create(const char *name, uint64_t user_entry, uint64_t user_code
  */
 task_t *process_create_with_pgd(const char *name, uint64_t user_entry,
                                 uint64_t user_sp, uint8_t priority,
-                                uint64_t pgd_phys,
-                                uint64_t heap_end, uint64_t mmap_next);
+                                uint64_t pgd_phys, uint64_t heap_end,
+                                uint64_t mmap_next);
 
 /**
  * task_yield - 主动让出 CPU

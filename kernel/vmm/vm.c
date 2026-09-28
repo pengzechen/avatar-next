@@ -18,8 +18,8 @@
 
 #include "vmm/vmm.h"
 #include "klog.h"
-#include "spinlock.h"     /* g_vm_pool_lock */
-#include "string.h"       /* memset（vm_alloc / vm_free）*/
+#include "spinlock.h" /* g_vm_pool_lock */
+#include "string.h"   /* memset（vm_alloc / vm_free）*/
 
 /* ── 公开 API ─────────────────────────────────────────────── */
 
@@ -73,9 +73,9 @@ vm_t *vm_alloc(void)
         if (g_vm_pool[i].state == VM_FREE) {
             found = &g_vm_pool[i];
             memset(found, 0, sizeof(*found));
-            found->slot  = i;
-            found->vmid  = g_next_vmid;
-            g_next_vmid  = (g_next_vmid >= 255) ? 1 : (g_next_vmid + 1);
+            found->slot = i;
+            found->vmid = g_next_vmid;
+            g_next_vmid = (g_next_vmid >= 255) ? 1 : (g_next_vmid + 1);
             found->state = VM_LOADING;
             break;
         }
@@ -120,11 +120,11 @@ void vm_free(vm_t *vm)
         return;
 
 #if ARCH_AARCH64
-    stage2_vm_destroy(&vm->s2);     /* 释放按需页 + L3 表 */
+    stage2_vm_destroy(&vm->s2); /* 释放按需页 + L3 表 */
 #elif ARCH_RISCV64
-    rv_gstage_vm_destroy(&vm->gstage);  /* 释放按需页 + L0 表 */
+    rv_gstage_vm_destroy(&vm->gstage); /* 释放按需页 + L0 表 */
 #elif ARCH_X86_64
-    x86_ept_vm_destroy(&vm->ept);   /* 释放按需页 + PT 表 */
+    x86_ept_vm_destroy(&vm->ept); /* 释放按需页 + PT 表 */
 #endif
 
     /*

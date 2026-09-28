@@ -5,21 +5,20 @@
 // ============================================================
 // 全局变量定义（在架构实现包含之前，使 timer_handler 可见）
 // ============================================================
-volatile uint64_t g_system_ticks    = 0;
+volatile uint64_t g_system_ticks = 0;
 volatile uint64_t g_timer_frequency = 0;
-timer_stats_t     g_timer_stats     = {0};
+timer_stats_t g_timer_stats = { 0 };
 
 /* 定时器配置（由 timer_init() 填充） */
-unsigned  g_timer_cfg_freq_hz    = 100;
-unsigned  g_timer_cfg_tick_ms    = 10;
+unsigned g_timer_cfg_freq_hz = 100;
+unsigned g_timer_cfg_tick_ms = 10;
 uintptr_t g_timer_cfg_counter_hz = 0;
-unsigned  g_timer_cfg_cntp       = 0;
+unsigned g_timer_cfg_cntp = 0;
 
 /* tick 回调（调度器通过 timer_set_tick_cb 注册）*/
 static timer_tick_cb_t g_tick_cb = NULL;
 
-void
-timer_set_tick_cb(timer_tick_cb_t cb)
+void timer_set_tick_cb(timer_tick_cb_t cb)
 {
     g_tick_cb = cb;
 }
@@ -27,20 +26,20 @@ timer_set_tick_cb(timer_tick_cb_t cb)
 // RISC-V 特定的全局变量
 #if ARCH_RISCV64
 volatile uint64_t g_uptime_seconds = 0;
-volatile uint32_t g_tick_counter   = 0;
+volatile uint32_t g_tick_counter = 0;
 #endif
 
 // ============================================================
 // 包含架构特定实现
 // ============================================================
 #if ARCH_AARCH64
-    #include "timer_aarch64_impl.h"
+#include "timer_aarch64_impl.h"
 #elif ARCH_RISCV64
-    #include "timer_riscv64_impl.h"
+#include "timer_riscv64_impl.h"
 #elif ARCH_X86_64
-    #include "timer_x86_64_impl.h"
+#include "timer_x86_64_impl.h"
 #else
-    #error "Unsupported architecture"
+#error "Unsupported architecture"
 #endif
 
 #if ARCH_X86_64
@@ -61,14 +60,13 @@ static uint64_t timer_delay_counter_frequency(void)
 // ============================================================
 
 // 初始化定时器
-void
-timer_init(void)
+void timer_init(void)
 {
     /* 从平台配置中读取定时器参数 */
-    g_timer_cfg_freq_hz    = platform_get_uint("timer", "freq_hz");
-    g_timer_cfg_tick_ms    = platform_get_uint("timer", "tick_ms");
+    g_timer_cfg_freq_hz = platform_get_uint("timer", "freq_hz");
+    g_timer_cfg_tick_ms = platform_get_uint("timer", "tick_ms");
     g_timer_cfg_counter_hz = platform_get_uintptr("timer", "counter_hz");
-    g_timer_cfg_cntp       = platform_get_uint("timer", "cntp");
+    g_timer_cfg_cntp = platform_get_uint("timer", "cntp");
 
     // 调用架构特定的初始化
     timer_arch_init();
@@ -77,14 +75,12 @@ timer_init(void)
 }
 
 // 启用定时器
-void
-timer_enable(void)
+void timer_enable(void)
 {
     timer_arch_enable();
 }
 
-void
-timer_init_secondary(void)
+void timer_init_secondary(void)
 {
 #if ARCH_AARCH64
     /*
@@ -103,22 +99,19 @@ timer_init_secondary(void)
 }
 
 // 禁用定时器
-void
-timer_disable(void)
+void timer_disable(void)
 {
     timer_arch_disable();
 }
 
 // 设置下一次中断
-void
-timer_set_next_interrupt(uint64_t ticks_from_now)
+void timer_set_next_interrupt(uint64_t ticks_from_now)
 {
     timer_arch_set_next_interrupt(ticks_from_now);
 }
 
 // 调度下一个tick
-void
-timer_schedule_next_tick(void)
+void timer_schedule_next_tick(void)
 {
     uint64_t ticks_per_interrupt = g_timer_frequency / TIMER_FREQUENCY_HZ;
     timer_set_next_interrupt(ticks_per_interrupt);
@@ -128,8 +121,7 @@ timer_schedule_next_tick(void)
 // 时间相关函数
 // ============================================================
 
-uint64_t
-timer_read_counter(void)
+uint64_t timer_read_counter(void)
 {
 #if ARCH_AARCH64
     return READ_CNTPCT_EL0();
@@ -142,8 +134,7 @@ timer_read_counter(void)
 #endif
 }
 
-uint64_t
-timer_counter_frequency(void)
+uint64_t timer_counter_frequency(void)
 {
 #if ARCH_X86_64
     if (g_tsc_freq_hz)
@@ -163,8 +154,7 @@ timer_counter_frequency(void)
 #endif
 }
 
-uint64_t
-timer_counter_to_ns(uint64_t ticks)
+uint64_t timer_counter_to_ns(uint64_t ticks)
 {
 #if ARCH_X86_64
     if (!g_tsc_freq_hz) {
@@ -175,20 +165,18 @@ timer_counter_to_ns(uint64_t ticks)
     uint64_t freq = timer_counter_frequency();
     if (!freq)
         return 0;
-    return (ticks / freq) * 1000000000ULL
-         + (ticks % freq) * 1000000000ULL / freq;
+    return (ticks / freq) * 1000000000ULL +
+           (ticks % freq) * 1000000000ULL / freq;
 }
 
-void
-timer_spin(uint32_t iterations)
+void timer_spin(uint32_t iterations)
 {
     for (uint32_t i = 0; i < iterations; i++)
         asm volatile("nop");
 }
 
-int
-timer_poll_until(timer_poll_predicate_t pred, void *ctx,
-                 uint32_t max_polls, uint32_t relax_iters)
+int timer_poll_until(timer_poll_predicate_t pred, void *ctx, uint32_t max_polls,
+                     uint32_t relax_iters)
 {
     if (!pred)
         return -1;
@@ -202,9 +190,8 @@ timer_poll_until(timer_poll_predicate_t pred, void *ctx,
     return -1;
 }
 
-int
-timer_poll_until_us(timer_poll_predicate_t pred, void *ctx,
-                    uint64_t timeout_us, uint32_t relax_iters)
+int timer_poll_until_us(timer_poll_predicate_t pred, void *ctx,
+                        uint64_t timeout_us, uint32_t relax_iters)
 {
     if (!pred)
         return -1;
@@ -214,8 +201,8 @@ timer_poll_until_us(timer_poll_predicate_t pred, void *ctx,
         return timer_poll_until(pred, ctx, (uint32_t)timeout_us, relax_iters);
 
     uint64_t start = timer_read_counter();
-    uint64_t timeout_ticks = (freq / 1000000ULL) * timeout_us
-                           + (freq % 1000000ULL) * timeout_us / 1000000ULL;
+    uint64_t timeout_ticks = (freq / 1000000ULL) * timeout_us +
+                             (freq % 1000000ULL) * timeout_us / 1000000ULL;
 
     do {
         if (pred(ctx))
@@ -227,29 +214,25 @@ timer_poll_until_us(timer_poll_predicate_t pred, void *ctx,
 }
 
 // 获取系统tick数
-uint64_t
-timer_get_system_ticks(void)
+uint64_t timer_get_system_ticks(void)
 {
     return g_system_ticks;
 }
 
 // 获取系统运行时间（毫秒）
-uint64_t
-timer_get_uptime_ms(void)
+uint64_t timer_get_uptime_ms(void)
 {
     return g_system_ticks * TIMER_TICK_MS;
 }
 
 // 获取定时器频率
-uint64_t
-timer_get_frequency(void)
+uint64_t timer_get_frequency(void)
 {
     return g_timer_frequency;
 }
 
 // 毫秒延时（忙等待）
-void
-timer_delay_ms(uint32_t ms)
+void timer_delay_ms(uint32_t ms)
 {
     uint64_t freq = timer_delay_counter_frequency();
     if (!freq) {
@@ -259,7 +242,7 @@ timer_delay_ms(uint32_t ms)
         return;
     }
 
-    uint64_t start_time  = timer_read_counter();
+    uint64_t start_time = timer_read_counter();
     uint64_t delay_ticks = (freq * ms) / 1000;
     uint64_t target_time = start_time + delay_ticks;
 
@@ -268,8 +251,7 @@ timer_delay_ms(uint32_t ms)
 }
 
 // 微秒延时（忙等待）
-void
-timer_delay_us(uint32_t us)
+void timer_delay_us(uint32_t us)
 {
     uint64_t freq = timer_delay_counter_frequency();
     if (!freq) {
@@ -277,9 +259,9 @@ timer_delay_us(uint32_t us)
         return;
     }
 
-    uint64_t start_time  = timer_read_counter();
-    uint64_t delay_ticks = (freq / 1000000ULL) * us
-                         + (freq % 1000000ULL) * us / 1000000ULL;
+    uint64_t start_time = timer_read_counter();
+    uint64_t delay_ticks =
+        (freq / 1000000ULL) * us + (freq % 1000000ULL) * us / 1000000ULL;
     uint64_t target_time = start_time + delay_ticks;
 
     while ((int64_t)(timer_read_counter() - target_time) < 0)
@@ -291,8 +273,7 @@ timer_delay_us(uint32_t us)
 // ============================================================
 
 // 获取统计信息
-void
-timer_get_stats(timer_stats_t *stats)
+void timer_get_stats(timer_stats_t *stats)
 {
     if (stats) {
         *stats = g_timer_stats;
@@ -300,18 +281,16 @@ timer_get_stats(timer_stats_t *stats)
 }
 
 // 重置统计信息
-void
-timer_reset_stats(void)
+void timer_reset_stats(void)
 {
-    g_timer_stats.total_interrupts    = 0;
-    g_timer_stats.total_schedules     = 0;
-    g_timer_stats.total_seconds       = 0;
+    g_timer_stats.total_interrupts = 0;
+    g_timer_stats.total_schedules = 0;
+    g_timer_stats.total_seconds = 0;
     g_timer_stats.last_interrupt_time = 0;
 }
 
 // 打印定时器信息
-void
-timer_dump_info(void)
+void timer_dump_info(void)
 {
     KLOG_TIMER("Timer Information:\n");
     KLOG_TIMER("  Frequency: %llu Hz\n", g_timer_frequency);

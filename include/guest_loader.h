@@ -42,7 +42,7 @@
 
 /* guest 物理内存布局 */
 #define GUEST_LINUX_MEM_BASE   0x70000000ULL
-#define GUEST_LINUX_MEM_SIZE   0x0C000000ULL   /* 192 MiB，与 DTS 一致 */
+#define GUEST_LINUX_MEM_SIZE   0x0C000000ULL /* 192 MiB，与 DTS 一致 */
 #define GUEST_LINUX_KERNEL_GPA 0x70200000ULL
 #define GUEST_LINUX_DTB_GPA    0x74000000ULL
 #define GUEST_LINUX_INITRD_GPA 0x78000000ULL
@@ -77,23 +77,24 @@ extern volatile uint64_t g_guest_entry_x0;
  * 历史注记：早期实现是"预占宿主一段固定窗口（GUEST_X86_HPA_BASE）+ 线性
  * 偏移"，platform.conf 里还有对应的 192 MiB 预留。按需分页之后两者都删了。
  */
-#define GUEST_LINUX_MEM_BASE    0x00000000ULL   /* guest 物理 0（不是宿主物理 0）*/
-#define GUEST_LINUX_MEM_SIZE    0x0C000000ULL   /* 192 MiB */
+#define GUEST_LINUX_MEM_BASE  0x00000000ULL /* guest 物理 0（不是宿主物理 0）*/
+#define GUEST_LINUX_MEM_SIZE  0x0C000000ULL /* 192 MiB */
 
 /* 宿主侧承载 guest RAM 的物理窗口（见 platforms/qemu-virt-x86_64/platform.conf
  * 的 reserves：必须在这里预留，否则中间的宿主分配会落进窗口被 guest 踩掉）。*/
-#define GUEST_X86_HPA_BASE      0x20000000ULL   /* 512 MiB 处，192 MiB */
+#define GUEST_X86_HPA_BASE    0x20000000ULL /* 512 MiB 处，192 MiB */
 
 /* guest 内部各块的 GPA */
-#define GUEST_LINUX_SETUP_GPA      0x00010000ULL  /* bzImage 引导扇区 + setup */
-#define GUEST_LINUX_KERNEL_GPA     0x00100000ULL  /* 保护模式内核（pref_address 为 0 时）*/
-#define GUEST_LINUX_BOOTPARAMS_GPA 0x00070000ULL  /* zero page（boot_params）*/
-#define GUEST_LINUX_CMDLINE_GPA    0x00080000ULL  /* 命令行 */
-#define GUEST_LINUX_PGTBL_GPA      0x00090000ULL  /* 临时页表（12 KiB）*/
-#define GUEST_LINUX_GDT_GPA        0x00098000ULL  /* 临时 GDT */
-#define GUEST_LINUX_IDT_GPA        0x00099000ULL  /* 空 IDT（全 0）*/
-#define GUEST_LINUX_TSS_GPA        0x0009A000ULL  /* 空 TSS（全 0）*/
-#define GUEST_LINUX_PROBE_GPA      0x0009B000ULL  /* 入口探针 stub */
+#define GUEST_LINUX_SETUP_GPA 0x00010000ULL /* bzImage 引导扇区 + setup */
+#define GUEST_LINUX_KERNEL_GPA \
+    0x00100000ULL /* 保护模式内核（pref_address 为 0 时）*/
+#define GUEST_LINUX_BOOTPARAMS_GPA 0x00070000ULL /* zero page（boot_params）*/
+#define GUEST_LINUX_CMDLINE_GPA    0x00080000ULL /* 命令行 */
+#define GUEST_LINUX_PGTBL_GPA      0x00090000ULL /* 临时页表（12 KiB）*/
+#define GUEST_LINUX_GDT_GPA        0x00098000ULL /* 临时 GDT */
+#define GUEST_LINUX_IDT_GPA        0x00099000ULL /* 空 IDT（全 0）*/
+#define GUEST_LINUX_TSS_GPA        0x0009A000ULL /* 空 TSS（全 0）*/
+#define GUEST_LINUX_PROBE_GPA      0x0009B000ULL /* 入口探针 stub */
 /*
  * 早期栈。⚠️ 必须放在**远离内核装载区**的高处：
  * 内核装在 16 MiB、解压后占 16~41 MiB，解压器/重定位还会用到周围的内存。
@@ -112,9 +113,9 @@ extern volatile uint64_t g_guest_entry_x0;
  * 「取到空指针后往地址 0 拷」）。
  * 现在统一放到 0x1000–0x9000（低于 setup 代码 0x10000，也在堆区间之外）。
  */
-#define GUEST_LINUX_STACK_GPA      0x0BE00000ULL  /* 190 MiB */
+#define GUEST_LINUX_STACK_GPA      0x0BE00000ULL /* 190 MiB */
 #define GUEST_LINUX_STACK_SIZE     0x1000ULL
-#define GUEST_LINUX_INITRD_GPA     0x06000000ULL  /* 96 MiB 处 */
+#define GUEST_LINUX_INITRD_GPA     0x06000000ULL /* 96 MiB 处 */
 
 #define GUEST_LINUX_KERNEL_PATH "/guests/x86_64/bzImage"
 #define GUEST_LINUX_INITRD_PATH "/guests/x86_64/initrd"
@@ -134,22 +135,23 @@ extern volatile uint64_t g_guest_entry_x0;
  *    频率精确。标成 unstable 反而会让内核弃用 TSC、回头去指望
  *    PIT/HPET 这些我们没实现成时钟的桩设备。
  */
-#define GUEST_LINUX_BOOTARGS    "quiet console=ttyS0 earlycon=uart8250,io,0x3f8 earlyprintk=serial,ttyS0,115200 "\
-                                "rdinit=/init ibt=off "\
-                                "no_timer_check pci=conf1 pci=nomsi "\
-                                "lapic panic_on_warn=0 oops=panic "
+#define GUEST_LINUX_BOOTARGS \
+    "quiet console=ttyS0 earlycon=uart8250,io,0x3f8 earlyprintk=serial,ttyS0,115200 " \
+    "rdinit=/init ibt=off " \
+    "no_timer_check pci=conf1 pci=nomsi " \
+    "lapic panic_on_warn=0 oops=panic "
 
 /* x86 没有 DTB，也不需要摘节点 */
-#define GUEST_LINUX_UNSUPPORTED_NODES {"", NULL}
+#define GUEST_LINUX_UNSUPPORTED_NODES { "", NULL }
 
 #elif ARCH_RISCV64
 
 /* guest 物理内存布局（见文件头「RISC-V 的基址为什么是 0xA0000000」）*/
 #define GUEST_LINUX_MEM_BASE   0xA0000000ULL
-#define GUEST_LINUX_MEM_SIZE   0x0C000000ULL   /* 192 MiB */
-#define GUEST_LINUX_KERNEL_GPA 0xA0200000ULL   /* +2   MiB */
-#define GUEST_LINUX_DTB_GPA    0xA4000000ULL   /* +64  MiB */
-#define GUEST_LINUX_INITRD_GPA 0xA8000000ULL   /* +128 MiB */
+#define GUEST_LINUX_MEM_SIZE   0x0C000000ULL /* 192 MiB */
+#define GUEST_LINUX_KERNEL_GPA 0xA0200000ULL /* +2   MiB */
+#define GUEST_LINUX_DTB_GPA    0xA4000000ULL /* +64  MiB */
+#define GUEST_LINUX_INITRD_GPA 0xA8000000ULL /* +128 MiB */
 
 #define GUEST_LINUX_KERNEL_PATH "/guests/rv64/linux.bin"
 #define GUEST_LINUX_DTB_PATH    "/guests/rv64/linux.dtb"
@@ -173,18 +175,17 @@ extern volatile uint64_t g_guest_entry_x0;
  */
 #if ARCH_AARCH64
 /* VMM 只模拟了 PL011 与 GICD，DTB 里其余设备都没有实现。*/
-#define GUEST_LINUX_UNSUPPORTED_NODES                                       \
-    {  "v2m@8020000",           /* GICv2M MSI 帧（导致 GIC 初始化卡死）*/   \
-       "virtio_mmio@a000000",   /* virtio-mmio transport（当前未模拟）*/    \
-       "pcie@10000000",         /* PCIe ECAM */                            \
-       "pl061@9030000",         /* GPIO */                                 \
-       "pl031@9010000",         /* RTC */                                  \
-       "flash@0",               /* CFI flash */                            \
-       "fw-cfg@9020000" }       /* QEMU fw_cfg */
+#define GUEST_LINUX_UNSUPPORTED_NODES \
+    { "v2m@8020000",         /* GICv2M MSI 帧（导致 GIC 初始化卡死）*/ \
+      "virtio_mmio@a000000", /* virtio-mmio transport（当前未模拟）*/ \
+      "pcie@10000000",       /* PCIe ECAM */ \
+      "pl061@9030000",       /* GPIO */ \
+      "pl031@9010000",       /* RTC */ \
+      "flash@0",             /* CFI flash */ \
+      "fw-cfg@9020000" }     /* QEMU fw_cfg */
 #elif ARCH_RISCV64
 /* 只模拟了 16550A 与 PLIC；virtio-mmio 未实现（guest 也不该从它启动）。*/
-#define GUEST_LINUX_UNSUPPORTED_NODES                                       \
-    {  "virtio_mmio@a000000" }
+#define GUEST_LINUX_UNSUPPORTED_NODES { "virtio_mmio@a000000" }
 #endif
 
 /* vm_t 由 vmm.h 定义；这里只用到指针 */
@@ -278,8 +279,8 @@ int guest_loader_load_range(vm_t *vm, const char *path, uint64_t file_off,
 
 /* 把文件的 [file_off, file_off+len) 读进宿主缓冲（len == 0 = 到文件尾）。
  * 先看头部、再决定各段装到哪，就靠它。返回读到的字节数，失败返回 -1。*/
-int guest_loader_read_file_range(const char *path, uint64_t file_off,
-                                 void *buf, size_t len);
+int guest_loader_read_file_range(const char *path, uint64_t file_off, void *buf,
+                                 size_t len);
 
 /* 取文件大小（字节），失败返回 -1。*/
 int guest_loader_file_size(const char *path);

@@ -13,14 +13,12 @@
 struct cpu;
 extern volatile uint64_t riscv64_boot_hartid;
 
-static inline void
-arch_cpu_self_set(struct cpu *self)
+static inline void arch_cpu_self_set(struct cpu *self)
 {
-    __asm__ volatile("mv tp, %0" :: "r"(self) : "memory");
+    __asm__ volatile("mv tp, %0" ::"r"(self) : "memory");
 }
 
-static inline struct cpu *
-arch_cpu_self_get(void)
+static inline struct cpu *arch_cpu_self_get(void)
 {
     struct cpu *self;
     __asm__ volatile("mv %0, tp" : "=r"(self));
@@ -28,8 +26,7 @@ arch_cpu_self_get(void)
 }
 
 /* mhartid 在 S-mode 不可读；hartid 由 OpenSBI/HSM 传入并存入 cpu_t::hw_id。 */
-static inline uint64_t
-arch_cpu_hw_id(void)
+static inline uint64_t arch_cpu_hw_id(void)
 {
     return riscv64_boot_hartid;
 }

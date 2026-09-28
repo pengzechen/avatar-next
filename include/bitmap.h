@@ -12,8 +12,8 @@
 /* ── 位图结构 ───────────────────────────────────────────────────── */
 
 typedef struct {
-    uint8_t *bits;  /* 位图缓冲区               */
-    size_t   size;  /* 位图大小（以 bit 为单位） */
+    uint8_t *bits; /* 位图缓冲区               */
+    size_t size;   /* 位图大小（以 bit 为单位） */
 } bitmap_t;
 
 /* ── 位图 API ───────────────────────────────────────────────────── */
@@ -60,10 +60,11 @@ static inline void bitmap_set(bitmap_t *bitmap, size_t index)
  *
  * 标记多个连续的位为已分配。
  */
-static inline void bitmap_set_range(bitmap_t *bitmap, size_t start, size_t count)
+static inline void bitmap_set_range(bitmap_t *bitmap, size_t start,
+                                    size_t count)
 {
     if (start + count > bitmap->size) {
-        return;  /* 超出范围 */
+        return; /* 超出范围 */
     }
 
     for (size_t i = 0; i < count; i++) {
@@ -89,10 +90,11 @@ static inline void bitmap_clear(bitmap_t *bitmap, size_t index)
  * @start:  起始索引
  * @count:  位数量
  */
-static inline void bitmap_clear_range(bitmap_t *bitmap, size_t start, size_t count)
+static inline void bitmap_clear_range(bitmap_t *bitmap, size_t start,
+                                      size_t count)
 {
     if (start + count > bitmap->size) {
-        return;  /* 超出范围 */
+        return; /* 超出范围 */
     }
 
     for (size_t i = 0; i < count; i++) {

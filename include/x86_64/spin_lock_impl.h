@@ -8,7 +8,7 @@
  */
 
 #include "task/preempt.h"
-#include "x86_64/exception_impl.h"   /* arch_irq_save/restore（统一的中断屏蔽原语）*/
+#include "x86_64/exception_impl.h" /* arch_irq_save/restore（统一的中断屏蔽原语）*/
 
 /* spinlock_t 和 spinlock_noirq_t 定义在 spinlock.h 中 */
 
@@ -16,8 +16,7 @@
  * x86_64 的原子操作使用 xchg 指令
  * xchg 会自动锁定总线，保证原子性
  */
-static inline void
-spin_lock(spinlock_t *lock)
+static inline void spin_lock(spinlock_t *lock)
 {
     uint64_t val = 1;
     preempt_disable();
@@ -31,37 +30,33 @@ spin_lock(spinlock_t *lock)
         : "memory", "cc");
 }
 
-static inline int
-spin_trylock(spinlock_t *lock)
+static inline int spin_trylock(spinlock_t *lock)
 {
     uint64_t val = 1;
     uint64_t result;
     preempt_disable();
-    asm volatile(
-        "   lock xchg %0, %2    \n" /* 尝试获取锁 */
-        "   test %0, %0          \n"
-        "   mov $0, %1           \n" /* result = 0 */
-        "   jnz 1f               \n" /* 如果非 0，跳转 */
-        "   jmp 2f               \n"
-        "1:  mov $1, %1          \n" /* result = 1 */
-        "2:  mfence              \n"
-        : "+r"(val), "=r"(result), "+m"(lock->lock)
-        :
-        : "memory", "cc");
+    asm volatile("   lock xchg %0, %2    \n" /* 尝试获取锁 */
+                 "   test %0, %0          \n"
+                 "   mov $0, %1           \n" /* result = 0 */
+                 "   jnz 1f               \n" /* 如果非 0，跳转 */
+                 "   jmp 2f               \n"
+                 "1:  mov $1, %1          \n" /* result = 1 */
+                 "2:  mfence              \n"
+                 : "+r"(val), "=r"(result), "+m"(lock->lock)
+                 :
+                 : "memory", "cc");
     if (result != 0)
         preempt_enable();
     return result;
 }
 
-static inline void
-spin_unlock(spinlock_t *lock)
+static inline void spin_unlock(spinlock_t *lock)
 {
-    asm volatile(
-        "   mfence               \n" /* 内存屏障 */
-        "   movl $0, %0          \n" /* lock->lock = 0 */
-        :
-        : "m"(lock->lock)
-        : "memory", "cc");
+    asm volatile("   mfence               \n" /* 内存屏障 */
+                 "   movl $0, %0          \n" /* lock->lock = 0 */
+                 :
+                 : "m"(lock->lock)
+                 : "memory", "cc");
     preempt_enable();
 }
 
@@ -74,15 +69,13 @@ spin_unlock(spinlock_t *lock)
  * include/x86_64/exception_impl.h（arch_irq_save/restore）。
  */
 
-static inline void
-spin_lock_irqsave(spinlock_t *lock, uint64_t *flags)
+static inline void spin_lock_irqsave(spinlock_t *lock, uint64_t *flags)
 {
     *flags = arch_irq_save();
     spin_lock(lock);
 }
 
-static inline int
-spin_trylock_irqsave(spinlock_t *lock, uint64_t *flags)
+static inline int spin_trylock_irqsave(spinlock_t *lock, uint64_t *flags)
 {
     *flags = arch_irq_save();
     if (spin_trylock(lock) == 0)
@@ -91,11 +84,10 @@ spin_trylock_irqsave(spinlock_t *lock, uint64_t *flags)
     return 1;
 }
 
-static inline void
-spin_unlock_irqrestore(spinlock_t *lock, uint64_t flags)
+static inline void spin_unlock_irqrestore(spinlock_t *lock, uint64_t flags)
 {
     spin_unlock(lock);
     arch_irq_restore(flags);
 }
 
-#endif  // X86_64_SPIN_LOCK_IMPL_H
+#endif // X86_64_SPIN_LOCK_IMPL_H

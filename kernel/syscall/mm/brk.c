@@ -26,7 +26,8 @@ static uint64_t shared_heap_end(task_t *current)
 
     for (uint32_t i = 0; i < TASK_MAX; i++) {
         task_t *task = &g_task_pool[i];
-        if (!g_stack_used[i] || !task->is_user_process || task->state == TASK_DEAD)
+        if (!g_stack_used[i] || !task->is_user_process ||
+            task->state == TASK_DEAD)
             continue;
         if (task->pgd == current->pgd && task->heap_end > heap_end)
             heap_end = task->heap_end;
@@ -39,7 +40,8 @@ static void sync_shared_heap_end(task_t *current, uint64_t heap_end)
 {
     for (uint32_t i = 0; i < TASK_MAX; i++) {
         task_t *task = &g_task_pool[i];
-        if (!g_stack_used[i] || !task->is_user_process || task->state == TASK_DEAD)
+        if (!g_stack_used[i] || !task->is_user_process ||
+            task->state == TASK_DEAD)
             continue;
         if (task->pgd == current->pgd)
             task->heap_end = heap_end;
@@ -48,7 +50,7 @@ static void sync_shared_heap_end(task_t *current, uint64_t heap_end)
 
 void *sys_brk(void *addr)
 {
-    task_t  *current = task_current();
+    task_t *current = task_current();
 
     if (!current->is_user_process) {
         return (void *)(uint64_t)(int64_t)-12; /* ENOMEM */
@@ -74,10 +76,9 @@ void *sys_brk(void *addr)
     /* 缩小或不变：释放高水位以上页后更新 */
     if (new_brk <= current_brk) {
         uint64_t old_page_end = ALIGN_UP(current_brk, PAGE_SIZE);
-        uint64_t new_page_end = ALIGN_UP(new_brk,     PAGE_SIZE);
+        uint64_t new_page_end = ALIGN_UP(new_brk, PAGE_SIZE);
         if (new_page_end < old_page_end)
-            vm_unmap_user_range((uint64_t)current->pgd,
-                                new_page_end,
+            vm_unmap_user_range((uint64_t)current->pgd, new_page_end,
                                 old_page_end - new_page_end);
         sync_shared_heap_end(current, new_brk);
         if (g_syscall_entry_count <= 16) {
@@ -89,8 +90,8 @@ void *sys_brk(void *addr)
 #if ARCH_AARCH64 || ARCH_RISCV64
     /* 扩展堆：映射新页 */
     uint64_t old_page_end = ALIGN_UP(current_brk, PAGE_SIZE);
-    uint64_t new_page_end = ALIGN_UP(new_brk,     PAGE_SIZE);
-    void    *pgd          = phys_to_virt((uint64_t)current->pgd);
+    uint64_t new_page_end = ALIGN_UP(new_brk, PAGE_SIZE);
+    void *pgd = phys_to_virt((uint64_t)current->pgd);
 
     for (uint64_t va = old_page_end; va < new_page_end; va += PAGE_SIZE) {
         uint64_t pa = pmm_alloc_pages(g_pmm, 1);
@@ -109,8 +110,8 @@ void *sys_brk(void *addr)
     /* x86_64：扩展堆，使用 g_pmm */
     {
         uint64_t old_page_end = ALIGN_UP(current_brk, PAGE_SIZE);
-        uint64_t new_page_end = ALIGN_UP(new_brk,     PAGE_SIZE);
-        void    *pgd          = phys_to_virt((uint64_t)current->pgd);
+        uint64_t new_page_end = ALIGN_UP(new_brk, PAGE_SIZE);
+        void *pgd = phys_to_virt((uint64_t)current->pgd);
 
         for (uint64_t va = old_page_end; va < new_page_end; va += PAGE_SIZE) {
             uint64_t pa = pmm_alloc_pages(g_pmm, 1);

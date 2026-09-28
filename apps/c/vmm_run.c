@@ -41,34 +41,34 @@
 #include <termios.h>
 #include <unistd.h>
 
-#define DEV_VMM     "/dev/vmm"
+#define DEV_VMM "/dev/vmm"
 
 /* 两个转义键。其它字节一律透传。 */
-#define ESC_STOP    0x1d    /* Ctrl+] —— 停止并退出 */
-#define ESC_DETACH  0x1b    /* Ctrl+[ —— 分离，guest 留在后台 */
+#define ESC_STOP   0x1d /* Ctrl+] —— 停止并退出 */
+#define ESC_DETACH 0x1b /* Ctrl+[ —— 分离，guest 留在后台 */
 
 /*
  * ESC 消歧的等待窗口（毫秒）。见 esc_is_standalone()。
  */
-#define ESC_LOOKAHEAD_MS  40
+#define ESC_LOOKAHEAD_MS 40
 
 /*
  * /dev/vmm 的 ioctl 号 —— 必须与内核侧 include/pseudofs.h 里的一致。
  * 这里不能包含那个头（内核头文件），所以独立定义了一遍；两边的 _IOC
  * 编码都是标准 Linux 布局，只要 type/nr/方向 相同就对得上。
  */
-#define VMM_IOC_GET_STATUS  _IOR('V', 0, uint32_t)  /* 出参：1 = 有 guest 在跑 */
-#define VMM_IOC_DETACH      _IO ('V', 1)            /* 本次 close 不停 guest */
-#define VMM_IOC_STOP        _IO ('V', 2)            /* 停止 guest */
-#define VMM_IOC_BOOT        _IO ('V', 3)            /* 启动 guest；已在跑则接入 */
+#define VMM_IOC_GET_STATUS _IOR('V', 0, uint32_t) /* 出参：1 = 有 guest 在跑 */
+#define VMM_IOC_DETACH     _IO('V', 1)            /* 本次 close 不停 guest */
+#define VMM_IOC_STOP       _IO('V', 2)            /* 停止 guest */
+#define VMM_IOC_BOOT       _IO('V', 3)            /* 启动 guest；已在跑则接入 */
 /* 强制新建一个 VM（多 VM）。入参 0=自动分配 vmid，出参回填实际值。*/
-#define VMM_IOC_BOOT_EX     _IOWR('V', 4, uint32_t)
+#define VMM_IOC_BOOT_EX _IOWR('V', 4, uint32_t)
 
 /* 等上一个 guest 收尾时的重试次数（每次 1ms，见 delay_ms）*/
-#define BOOT_RETRIES  2000
+#define BOOT_RETRIES 2000
 
 static struct termios g_saved_tty;
-static int            g_tty_saved;
+static int g_tty_saved;
 
 static void delay_ms(int ms)
 {
@@ -142,8 +142,8 @@ static int esc_is_standalone(void)
 {
     struct pollfd p;
 
-    p.fd      = STDIN_FILENO;
-    p.events  = POLLIN;
+    p.fd = STDIN_FILENO;
+    p.events = POLLIN;
     p.revents = 0;
 
     return poll(&p, 1, ESC_LOOKAHEAD_MS) == 0;
@@ -158,7 +158,7 @@ int main(int argc, char **argv)
         if (!strcmp(argv[i], "-k") || !strcmp(argv[i], "--kill"))
             kill_only = 1;
         if (!strcmp(argv[i], "-n") || !strcmp(argv[i], "--new"))
-            force_new = 1;      /* 已有 VM 在跑时也再起一个，而不是接入 */
+            force_new = 1; /* 已有 VM 在跑时也再起一个，而不是接入 */
     }
 
     int fd = open(DEV_VMM, O_RDWR);
@@ -169,7 +169,7 @@ int main(int argc, char **argv)
 
     uint32_t running = 0;
     if (ioctl(fd, VMM_IOC_GET_STATUS, &running) < 0)
-        running = 0;            /* 查不到就当没有，后面 bootlinux 会给出结论 */
+        running = 0; /* 查不到就当没有，后面 bootlinux 会给出结论 */
 
     /* ── -k：只清理后台 guest，不接管控制台 ───────────────── */
     if (kill_only) {
@@ -190,9 +190,8 @@ int main(int argc, char **argv)
     int ok = 0;
     for (int i = 0; i < BOOT_RETRIES; i++) {
         uint32_t vmid = 0;
-        int booted = force_new
-            ? (ioctl(fd, VMM_IOC_BOOT_EX, &vmid) == 0)
-            : (ioctl(fd, VMM_IOC_BOOT, 0) == 0);
+        int booted = force_new ? (ioctl(fd, VMM_IOC_BOOT_EX, &vmid) == 0)
+                               : (ioctl(fd, VMM_IOC_BOOT, 0) == 0);
         if (booted) {
             if (force_new)
                 printf("\r\n[vmm-run] new VM vmid=%u\r\n", vmid);
@@ -223,13 +222,13 @@ int main(int argc, char **argv)
 
     /* ── 双向搬运 ────────────────────────────────────────── */
     struct pollfd pfds[2];
-    pfds[0].fd     = STDIN_FILENO;
+    pfds[0].fd = STDIN_FILENO;
     pfds[0].events = POLLIN;
-    pfds[1].fd     = fd;
+    pfds[1].fd = fd;
     pfds[1].events = POLLIN;
 
-    int quit   = 0;     /* Ctrl+]：停止 */
-    int detach = 0;     /* Ctrl+[：分离 */
+    int quit = 0;   /* Ctrl+]：停止 */
+    int detach = 0; /* Ctrl+[：分离 */
 
     while (!quit && !detach) {
         pfds[0].revents = 0;
@@ -255,7 +254,7 @@ int main(int argc, char **argv)
                     continue;
                 }
                 if (n < 0 && errno == EAGAIN)
-                    break;          /* 取空了，正常 */
+                    break; /* 取空了，正常 */
                 if (n < 0 && errno == EINTR)
                     continue;
                 /* 出错或 guest 已经退出 */
@@ -273,7 +272,7 @@ int main(int argc, char **argv)
             if (n <= 0) {
                 if (n < 0 && (errno == EAGAIN || errno == EINTR))
                     continue;
-                break;              /* stdin 关了 */
+                break; /* stdin 关了 */
             }
 
             /*

@@ -14,8 +14,7 @@
  */
 
 /* 读当前 sstatus（不改动状态） */
-static inline uint64_t
-arch_irq_flags(void)
+static inline uint64_t arch_irq_flags(void)
 {
     uint64_t status;
 
@@ -25,15 +24,13 @@ arch_irq_flags(void)
 }
 
 /* 读是否允许 IRQ（抢占判断用） */
-static inline int
-arch_irq_is_enabled(void)
+static inline int arch_irq_is_enabled(void)
 {
     return (arch_irq_flags() & 2UL) != 0;
 }
 
 /* 关中断并返回旧 sstatus（必须用 arch_irq_restore 配对恢复） */
-static inline uint64_t
-arch_irq_save(void)
+static inline uint64_t arch_irq_save(void)
 {
     uint64_t status;
 
@@ -44,22 +41,19 @@ arch_irq_save(void)
 }
 
 /* 恢复到 arch_irq_save()/arch_irq_flags() 取到的状态 */
-static inline void
-arch_irq_restore(uint64_t flags)
+static inline void arch_irq_restore(uint64_t flags)
 {
     __asm__ volatile("csrw sstatus, %0" : : "r"(flags) : "memory");
 }
 
 /* 无条件关中断（不需要旧状态时用） */
-static inline void
-arch_irq_disable(void)
+static inline void arch_irq_disable(void)
 {
     __asm__ volatile("csrci sstatus, 2" ::: "memory");
 }
 
 /* 无条件开中断（新任务首次运行时使用） */
-static inline void
-arch_irq_enable(void)
+static inline void arch_irq_enable(void)
 {
     __asm__ volatile("csrsi sstatus, 2" ::: "memory");
 }

@@ -40,20 +40,20 @@
 #include "string.h"
 
 /* ── EPT PTE 位定义 ────────────────────────────────────────── */
-#define EPT_READ    (1ULL << 0)
-#define EPT_WRITE   (1ULL << 1)
-#define EPT_EXEC    (1ULL << 2)
-#define EPT_RWX     (EPT_READ | EPT_WRITE | EPT_EXEC)
+#define EPT_READ  (1ULL << 0)
+#define EPT_WRITE (1ULL << 1)
+#define EPT_EXEC  (1ULL << 2)
+#define EPT_RWX   (EPT_READ | EPT_WRITE | EPT_EXEC)
 
 /* 内存类型（位 5:3）*/
-#define EPT_MT_UC   (0ULL << 3)   /* Uncacheable（设备）*/
-#define EPT_MT_WB   (6ULL << 3)   /* Write-Back（RAM）  */
+#define EPT_MT_UC (0ULL << 3) /* Uncacheable（设备）*/
+#define EPT_MT_WB (6ULL << 3) /* Write-Back（RAM）  */
 
 /* PD 级大页位 */
-#define EPT_LARGE   (1ULL << 7)
+#define EPT_LARGE (1ULL << 7)
 
 /* 从 EPT 项提取物理地址（位 12-51）*/
-#define EPT_ADDR_MASK  0x000FFFFFFFFFF000ULL
+#define EPT_ADDR_MASK 0x000FFFFFFFFFF000ULL
 
 /* ── 静态表：每个 VM 一组（BSS，4KiB 对齐）───────────────────
  *
@@ -71,9 +71,18 @@ static uint64_t g_ept_pd[EPT_MAX_VMS][EPT_L1_ENTRIES][EPT_PD_ENTRIES]
 
 /* ── 内部工具 ─────────────────────────────────────────────── */
 
-static inline int pdpt_index(uint64_t gpa) { return (int)((gpa >> 30) & 0x1FF); }
-static inline int pd_index(uint64_t gpa)   { return (int)((gpa >> 21) & 0x1FF); }
-static inline int pt_index(uint64_t gpa)   { return (int)((gpa >> 12) & 0x1FF); }
+static inline int pdpt_index(uint64_t gpa)
+{
+    return (int)((gpa >> 30) & 0x1FF);
+}
+static inline int pd_index(uint64_t gpa)
+{
+    return (int)((gpa >> 21) & 0x1FF);
+}
+static inline int pt_index(uint64_t gpa)
+{
+    return (int)((gpa >> 12) & 0x1FF);
+}
 
 /*
  * RAM 窗口内的 2 MiB 块序号（0..EPT_MAX_PT_TABLES-1），窗口外返回 -1。
@@ -132,8 +141,8 @@ static inline uint64_t ept_leaf(uint64_t pa)
 
 /* ── 生命周期 ─────────────────────────────────────────────── */
 
-void x86_ept_vm_init(ept_ctx_t *e, uint32_t slot,
-                     uint64_t ram_base, uint64_t ram_size)
+void x86_ept_vm_init(ept_ctx_t *e, uint32_t slot, uint64_t ram_base,
+                     uint64_t ram_size)
 {
     int i;
 
@@ -143,12 +152,12 @@ void x86_ept_vm_init(ept_ctx_t *e, uint32_t slot,
     }
 
     memset(e, 0, sizeof(*e));
-    e->slot     = slot;
+    e->slot = slot;
     e->ram_base = ram_base;
     e->ram_size = ram_size;
-    e->ram_end  = ram_base + ram_size;
-    e->pml4     = g_ept_pml4[slot];
-    e->pdpt     = g_ept_pdpt[slot];
+    e->ram_end = ram_base + ram_size;
+    e->pml4 = g_ept_pml4[slot];
+    e->pdpt = g_ept_pdpt[slot];
 
     /* 空表 = 全 trap：没有一条有效映射，任何 GPA 访问都触发 EPT violation */
     memset(e->pml4, 0, sizeof(g_ept_pml4[slot]));
@@ -175,8 +184,7 @@ void x86_ept_vm_init(ept_ctx_t *e, uint32_t slot,
     e->eptp = (virt_to_phys(e->pml4) & EPT_ADDR_MASK) | (3ULL << 3) | 6ULL;
 
     KLOG_INFO("[ept] vm slot=%u mem=0x%llx+0x%llx pml4_pa=0x%llx eptp=0x%llx\n",
-              slot,
-              (unsigned long long)ram_base, (unsigned long long)ram_size,
+              slot, (unsigned long long)ram_base, (unsigned long long)ram_size,
               (unsigned long long)virt_to_phys(e->pml4),
               (unsigned long long)e->eptp);
 }
@@ -201,7 +209,8 @@ void x86_ept_vm_destroy(ept_ctx_t *e)
                 freed++;
             }
         }
-        pmm_free_pages(g_pmm, virt_to_phys(t) & EPT_ADDR_MASK, 1);  /* 表页本身 */
+        pmm_free_pages(g_pmm, virt_to_phys(t) & EPT_ADDR_MASK,
+                       1); /* 表页本身 */
         e->pt_tbl[i] = NULL;
     }
 
@@ -214,8 +223,7 @@ void x86_ept_vm_destroy(ept_ctx_t *e)
     KLOG_INFO("[ept] vm slot=%u destroyed: %llu pages (%llu KB) reclaimed, "
               "premap=%llu fault=%llu, pmm free=%llu MB\n",
               e->slot, (unsigned long long)freed,
-              (unsigned long long)(freed * 4),
-              (unsigned long long)e->nr_premap,
+              (unsigned long long)(freed * 4), (unsigned long long)e->nr_premap,
               (unsigned long long)e->nr_fault,
               (unsigned long long)(pmm_get_free_pages(g_pmm) * 4 / 1024));
 
@@ -253,7 +261,7 @@ uint64_t x86_ept_map_page(ept_ctx_t *e, uint64_t gpa, int zero)
 
     pa = pmm_alloc_pages(g_pmm, 1);
     if (!pa)
-        return 0;               /* ⚠️ 调用方必须处理，不能当成功继续 */
+        return 0; /* ⚠️ 调用方必须处理，不能当成功继续 */
 
     if (zero)
         memset(phys_to_virt(pa), 0, EPT_PAGE_SIZE);
@@ -276,11 +284,11 @@ uint64_t x86_ept_map_block(ept_ctx_t *e, uint64_t gpa, int zero)
         uint64_t pa;
 
         if (t[i] & EPT_READ)
-            continue;                   /* 已经映射过 */
+            continue; /* 已经映射过 */
 
         pa = pmm_alloc_pages(g_pmm, 1);
         if (!pa)
-            break;                      /* PMM 没页：装多少算多少 */
+            break; /* PMM 没页：装多少算多少 */
 
         if (zero)
             memset(phys_to_virt(pa), 0, EPT_PAGE_SIZE);
@@ -300,8 +308,8 @@ uint64_t x86_ept_map_range(ept_ctx_t *e, uint64_t gpa, uint64_t size, int zero)
         if (x86_ept_map_page(e, gpa + off, zero) == 0) {
             KLOG_ERROR("[ept] map_range failed at gpa=0x%llx "
                        "(+0x%llx of 0x%llx), pmm free=%llu pages\n",
-                       (unsigned long long)gpa,
-                       (unsigned long long)off, (unsigned long long)size,
+                       (unsigned long long)gpa, (unsigned long long)off,
+                       (unsigned long long)size,
                        (unsigned long long)pmm_get_free_pages(g_pmm));
             return n;
         }
@@ -351,11 +359,14 @@ void x86_ept_invept_all(const ept_ctx_t *e)
      *      rm 字段 = 16 字节描述符（低 8 字节是 EPTP）。
      * 这里生成 `invept %rax,(%rdx)` → ModRM=0x02。
      */
-    struct { uint64_t eptp; uint64_t rsvd; } __attribute__((aligned(16))) desc;
-    uint32_t type = 1;   /* single-context：只刷本 VM 这个 EPTP */
+    struct {
+        uint64_t eptp;
+        uint64_t rsvd;
+    } __attribute__((aligned(16))) desc;
+    uint32_t type = 1; /* single-context：只刷本 VM 这个 EPTP */
 
     if (!e || e->eptp == 0)
-        return;          /* 还没配置（或已销毁）：没有 TLB 要刷 */
+        return; /* 还没配置（或已销毁）：没有 TLB 要刷 */
 
     desc.eptp = e->eptp;
     desc.rsvd = 0;
@@ -365,6 +376,8 @@ void x86_ept_invept_all(const ept_ctx_t *e)
      * **没有** VEX 形式。最初写成 VEX（C4 E2 79 80）直接吃了个 #6
      * invalid opcode —— 那套字节是给别的指令用的。
      */
-    __asm__ volatile(".byte 0x66,0x0f,0x38,0x80,0x02"   /* invept %rax,(%rdx) */
-                     :: "a"(type), "d"(&desc) : "memory");
+    __asm__ volatile(".byte 0x66,0x0f,0x38,0x80,0x02" /* invept %rax,(%rdx) */
+                     ::"a"(type),
+                     "d"(&desc)
+                     : "memory");
 }

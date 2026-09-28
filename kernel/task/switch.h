@@ -68,7 +68,8 @@ void arch_task_switch(uintptr_t *prev_sp, uintptr_t next_sp,
  *
  * 注意：此函数不返回，会跳转到用户态执行。
  */
-void arch_switch_to_user(uint64_t user_entry, uint64_t user_sp, uint64_t kernel_sp) __attribute__((noreturn));
+void arch_switch_to_user(uint64_t user_entry, uint64_t user_sp,
+                         uint64_t kernel_sp) __attribute__((noreturn));
 
 /* ── 中断控制 ────────────────────────────────────────────── */
 /*
@@ -89,8 +90,8 @@ void arch_switch_to_user(uint64_t user_entry, uint64_t user_sp, uint64_t kernel_
  * 使得首次调度到该任务时 arch_task_switch 的 "ret"
  * 跳转到 task_trampoline()。
  */
-static inline uintptr_t
-arch_init_task_stack(uint8_t *stack_base, uint32_t stack_size)
+static inline uintptr_t arch_init_task_stack(uint8_t *stack_base,
+                                             uint32_t stack_size)
 {
     uint64_t *sp = (uint64_t *)((uintptr_t)(stack_base + stack_size));
 
@@ -190,8 +191,8 @@ arch_init_user_stack(uint8_t *stack_base, uint32_t stack_size,
      * 不会把内核残留的 FP 值泄漏给用户态。
      */
     sp -= 22;
-    sp[0] = user_entry;                  /* x19 = 用户入口 */
-    sp[1] = user_sp;                     /* x20 = 用户栈 */
+    sp[0] = user_entry; /* x19 = 用户入口 */
+    sp[1] = user_sp;    /* x20 = 用户栈 */
     for (int i = 2; i < 22; i++)
         sp[i] = 0;
     sp[11] = (uint64_t)task_trampoline_user; /* x30 (LR) */
@@ -229,17 +230,17 @@ arch_init_user_stack(uint8_t *stack_base, uint32_t stack_size,
      * 保存6个被调用者寄存器 + 返回地址 + 2个参数 = 9 个 uint64_t
      */
     sp -= 9;
-    sp[0] = 0;                               /* rbx */
-    sp[1] = 0;                               /* rbp */
-    sp[2] = 0;                               /* r12 */
-    sp[3] = 0;                               /* r13 */
-    sp[4] = 0;                               /* r14 */
-    sp[5] = 0;                               /* r15 */
-    sp[6] = (uint64_t)task_trampoline_user;  /* 返回地址 (LR) */
-    sp[7] = user_entry;                      /* 用户入口 */
-    sp[8] = user_sp;                         /* 用户栈 */
-    
-    (void)user_pgd;  /* x86_64 页表通过 task->pgd 在调度时切换 CR3 */
+    sp[0] = 0;                              /* rbx */
+    sp[1] = 0;                              /* rbp */
+    sp[2] = 0;                              /* r12 */
+    sp[3] = 0;                              /* r13 */
+    sp[4] = 0;                              /* r14 */
+    sp[5] = 0;                              /* r15 */
+    sp[6] = (uint64_t)task_trampoline_user; /* 返回地址 (LR) */
+    sp[7] = user_entry;                     /* 用户入口 */
+    sp[8] = user_sp;                        /* 用户栈 */
+
+    (void)user_pgd; /* x86_64 页表通过 task->pgd 在调度时切换 CR3 */
 #endif
 
     return (uintptr_t)sp;
@@ -264,11 +265,11 @@ void arch_fork_resume_user(void);
  *
  * 返回：应写入 task->sp 的初始值。
  */
-static inline uintptr_t
-arch_init_fork_child_stack(uint8_t *stack_base, uint32_t stack_size,
-                            trap_frame_t *frame,
-                            uint64_t child_stack,
-                            uint64_t tls)
+static inline uintptr_t arch_init_fork_child_stack(uint8_t *stack_base,
+                                                   uint32_t stack_size,
+                                                   trap_frame_t *frame,
+                                                   uint64_t child_stack,
+                                                   uint64_t tls)
 {
     uint64_t *sp = (uint64_t *)((uintptr_t)(stack_base + stack_size));
 
@@ -282,14 +283,14 @@ arch_init_fork_child_stack(uint8_t *stack_base, uint32_t stack_size,
      * （早先这里逐字段拷贝，扩 FP 时容易漏字段。）
      */
     *child_frame = *frame;
-    child_frame->usp       = child_stack ? child_stack : frame->usp;
+    child_frame->usp = child_stack ? child_stack : frame->usp;
     child_frame->tpidr_el0 = tls ? tls : frame->tpidr_el0;
     /* 子进程 fork/线程 返回 0 */
     child_frame->r[0] = 0;
 
     /* 再放 22 个被调用者寄存器（含 FP 保存区），x30(LR)→arch_fork_resume_user */
     sp -= 22;
-    sp[0]  = (uint64_t)(uintptr_t)child_frame;  /* x19 = &child_frame */
+    sp[0] = (uint64_t)(uintptr_t)child_frame; /* x19 = &child_frame */
     for (int i = 1; i < 22; i++)
         sp[i] = 0;
     sp[11] = (uint64_t)arch_fork_resume_user; /* x30 (LR) */
@@ -300,26 +301,26 @@ arch_init_fork_child_stack(uint8_t *stack_base, uint32_t stack_size,
 
     for (uint32_t i = 0; i < 32; i++)
         child_frame->x[i] = frame->x[i];
-    child_frame->sepc    = frame->sepc;
-    child_frame->scause  = frame->scause;
-    child_frame->stval   = frame->stval;
+    child_frame->sepc = frame->sepc;
+    child_frame->scause = frame->scause;
+    child_frame->stval = frame->stval;
     child_frame->sstatus = frame->sstatus;
     for (uint32_t i = 0; i < 32; i++)
         child_frame->f[i] = frame->f[i];
-    child_frame->fcsr    = frame->fcsr;
+    child_frame->fcsr = frame->fcsr;
 
     /* fork/线程返回值 = 0 (a0/x10) */
     child_frame->x[10] = 0;
     /* 覆盖用户栈 / TLS (tp = x4) */
     if (child_stack)
-        child_frame->x[2] = child_stack;  /* sp */
+        child_frame->x[2] = child_stack; /* sp */
     if (tls)
-        child_frame->x[4] = tls;          /* tp */
+        child_frame->x[4] = tls; /* tp */
 
     /* 再放 26 个被调用者寄存器（含 FP），ra->arch_fork_resume_user，s0->child_frame */
     sp -= 26;
-    sp[0] = (uint64_t)arch_fork_resume_user;           /* ra */
-    sp[1] = (uint64_t)(uintptr_t)child_frame;          /* s0 = &child_frame */
+    sp[0] = (uint64_t)arch_fork_resume_user;  /* ra */
+    sp[1] = (uint64_t)(uintptr_t)child_frame; /* s0 = &child_frame */
     for (int i = 2; i < 26; i++)
         sp[i] = 0;
 #else
@@ -328,9 +329,9 @@ arch_init_fork_child_stack(uint8_t *stack_base, uint32_t stack_size,
     sp = (uint64_t *)((uintptr_t)sp - sizeof(trap_frame_t));
     trap_frame_t *child_frame = (trap_frame_t *)sp;
     *child_frame = *frame;
-    child_frame->rax = 0;   /* fork/线程子进程返回 0 */
+    child_frame->rax = 0; /* fork/线程子进程返回 0 */
     if (child_stack)
-        child_frame->rsp = child_stack;  /* 覆盖用户栈 */
+        child_frame->rsp = child_stack; /* 覆盖用户栈 */
     /* x86_64 TLS (fs_base) 在 clone 调用者处通过 task->fs_base 设置 */
 
     /*
@@ -340,13 +341,13 @@ arch_init_fork_child_stack(uint8_t *stack_base, uint32_t stack_size,
      * rbx 恢复后值为 &child_frame，ret 后跳 arch_fork_resume_user。
      */
     sp -= 7;
-    sp[0] = 0;                                       /* r15 */
-    sp[1] = 0;                                       /* r14 */
-    sp[2] = 0;                                       /* r13 */
-    sp[3] = 0;                                       /* r12 */
-    sp[4] = 0;                                       /* rbp */
-    sp[5] = (uint64_t)(uintptr_t)child_frame;        /* rbx = frame 指针 */
-    sp[6] = (uint64_t)arch_fork_resume_user;         /* 返回地址 */
+    sp[0] = 0;                                /* r15 */
+    sp[1] = 0;                                /* r14 */
+    sp[2] = 0;                                /* r13 */
+    sp[3] = 0;                                /* r12 */
+    sp[4] = 0;                                /* rbp */
+    sp[5] = (uint64_t)(uintptr_t)child_frame; /* rbx = frame 指针 */
+    sp[6] = (uint64_t)arch_fork_resume_user;  /* 返回地址 */
 #endif
 
     return (uintptr_t)sp;

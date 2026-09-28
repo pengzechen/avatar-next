@@ -9,8 +9,8 @@ int atoi(const char *s)
     if (!s)
         return 0;
 
-    while (*s == ' ' || *s == '\t' || *s == '\n' ||
-           *s == '\r' || *s == '\f' || *s == '\v')
+    while (*s == ' ' || *s == '\t' || *s == '\n' || *s == '\r' || *s == '\f' ||
+           *s == '\v')
         s++;
 
     if (*s == '-') {

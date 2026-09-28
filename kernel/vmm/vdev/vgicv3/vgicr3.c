@@ -16,7 +16,7 @@
 
 #include "vmm/vmm_vgicv3.h"
 #include "vmm/vmm_irq_route.h"
-#include "irq/gicv3.h"      /* GICR_WAKER_* 等 GICv3 寄存器位定义 */
+#include "irq/gicv3.h" /* GICR_WAKER_* 等 GICv3 寄存器位定义 */
 #include "klog.h"
 #include "string.h"
 
@@ -27,17 +27,17 @@
  *
  * SGI 帧的寄存器在下面 switch 里直接用 0x100xx 字面量，语义一目了然。
  */
-#define VGIC3R_RD_CTLR       0x00000
-#define VGIC3R_RD_IIDR       0x00004
-#define VGIC3R_RD_TYPER      0x00008
-#define VGIC3R_RD_STATUSR    0x00010
-#define VGIC3R_RD_WAKER      0x00014
-#define VGIC3R_RD_PROPBASER  0x00070
-#define VGIC3R_RD_PENDBASER  0x00078
-#define VGIC3R_RD_PIDR2      0x0ffe8
-#define VGIC3R_SGI_PIDR2     0x1ffe8
+#define VGIC3R_RD_CTLR      0x00000
+#define VGIC3R_RD_IIDR      0x00004
+#define VGIC3R_RD_TYPER     0x00008
+#define VGIC3R_RD_STATUSR   0x00010
+#define VGIC3R_RD_WAKER     0x00014
+#define VGIC3R_RD_PROPBASER 0x00070
+#define VGIC3R_RD_PENDBASER 0x00078
+#define VGIC3R_RD_PIDR2     0x0ffe8
+#define VGIC3R_SGI_PIDR2    0x1ffe8
 
-#define GICR_CTLR_RWP   (1u << 31)
+#define GICR_CTLR_RWP (1u << 31)
 
 /* 取出本次访问落在哪个 vCPU 的 redistributor 上 */
 static int redist_cpu(uint64_t off, const vgic3_t *vgic, uint32_t vcpu_id)
@@ -47,7 +47,7 @@ static int redist_cpu(uint64_t off, const vgic3_t *vgic, uint32_t vcpu_id)
     if (cpu < vgic->nr_vcpus)
         return (int)cpu;
     if (vcpu_id < vgic->nr_vcpus)
-        return (int)vcpu_id;   /* 偏移越界时退回访问者所属 vCPU */
+        return (int)vcpu_id; /* 偏移越界时退回访问者所属 vCPU */
     return 0;
 }
 
@@ -71,25 +71,37 @@ static uint64_t vgic3r_read(mmio_device_t *dev, uint64_t off, uint8_t size,
     if (word >= VGIC3R_SGI_OFF) {
         /* ── SGI 帧 ── */
         switch (word - VGIC3R_SGI_OFF) {
-        case 0x080:  /* GICR_IGROUPR0 */
+        case 0x080: /* GICR_IGROUPR0 */
             return vcpu->sgi_igroupr0;
-        case 0x100: case 0x180:   /* ISENABLER0 / ICENABLER0 */
+        case 0x100:
+        case 0x180: /* ISENABLER0 / ICENABLER0 */
             return vmm_vgic3_enabled_word(vgic, (uint32_t)cpu, 0);
-        case 0x200: case 0x280:   /* ISPENDR0 / ICPENDR0 */
+        case 0x200:
+        case 0x280: /* ISPENDR0 / ICPENDR0 */
             return vmm_vgic3_pending_word(vgic, (uint32_t)cpu, 0);
-        case 0x300: case 0x380:   /* ISACTIVER0 / ICACTIVER0 */
+        case 0x300:
+        case 0x380: /* ISACTIVER0 / ICACTIVER0 */
             return vmm_vgic3_active_word(vgic, (uint32_t)cpu, 0);
-        case 0x400: case 0x404: case 0x408: case 0x40c:
-        case 0x410: case 0x414: case 0x418: case 0x41c: {
+        case 0x400:
+        case 0x404:
+        case 0x408:
+        case 0x40c:
+        case 0x410:
+        case 0x414:
+        case 0x418:
+        case 0x41c: {
             uint32_t n = (word - 0x400u) / 4u;
             uint64_t v = 0;
             for (uint32_t i = 0; i < 4; i++)
                 v |= (uint64_t)vcpu->prio0[n * 4u + i] << (8 * i);
             return v;
         }
-        case 0xc00: return vcpu->sgi_icfgr[0];
-        case 0xc04: return vcpu->sgi_icfgr[1];
-        case 0xd00: return vcpu->sgi_igrpmodr0;
+        case 0xc00:
+            return vcpu->sgi_icfgr[0];
+        case 0xc04:
+            return vcpu->sgi_icfgr[1];
+        case 0xd00:
+            return vcpu->sgi_igrpmodr0;
         default:
             if (word == (VGIC3R_SGI_PIDR2 - VGIC3R_SGI_OFF))
                 return 0x30u;
@@ -111,8 +123,7 @@ static uint64_t vgic3r_read(mmio_device_t *dev, uint64_t off, uint8_t size,
     case VGIC3R_RD_TYPER:
         /* [4]=Last（每个核一个 redistributor，最后一个是自己）；
          * PLPIS/VLPIS=0；ProcessorNumber/位图放在 [31:8]/[63:32]。*/
-        return ((uint64_t)cpu << 8) |
-               (((uint64_t)cpu) << 32) |
+        return ((uint64_t)cpu << 8) | (((uint64_t)cpu) << 32) |
                (((uint32_t)cpu == vgic->nr_vcpus - 1u) ? (1ULL << 4) : 0ULL);
 
     case VGIC3R_RD_WAKER:
@@ -157,7 +168,7 @@ static void vgic3r_write(mmio_device_t *dev, uint64_t off, uint8_t size,
             vcpu->sgi_igroupr0 = value32;
             return;
 
-        case 0x100:   /* GICR_ISENABLER0 */
+        case 0x100: /* GICR_ISENABLER0 */
             for (uint32_t bit = 0; bit < 32; bit++)
                 if (value32 & (1u << bit))
                     vmm_vgic3_set_enabled(vgic, (uint32_t)cpu, bit, 1);
@@ -166,7 +177,7 @@ static void vgic3r_write(mmio_device_t *dev, uint64_t off, uint8_t size,
             KLOG_DEBUG("[vgic3r] cpu%u ISENABLER0=0x%x\n", cpu, value32);
             return;
 
-        case 0x180:   /* GICR_ICENABLER0 */
+        case 0x180: /* GICR_ICENABLER0 */
             for (uint32_t bit = 0; bit < 32; bit++)
                 if (value32 & (1u << bit))
                     vmm_vgic3_set_enabled(vgic, (uint32_t)cpu, bit, 0);
@@ -174,38 +185,51 @@ static void vgic3r_write(mmio_device_t *dev, uint64_t off, uint8_t size,
                 vmm_irq_route_set_vtimer_enabled(0);
             return;
 
-        case 0x200:   /* GICR_ISPENDR0 */
+        case 0x200: /* GICR_ISPENDR0 */
             for (uint32_t bit = 0; bit < 32; bit++)
                 if (value32 & (1u << bit))
                     vmm_vgic3_set_pending(vgic, (uint32_t)cpu, bit);
             return;
 
-        case 0x280:   /* GICR_ICPENDR0 */
+        case 0x280: /* GICR_ICPENDR0 */
             vmm_vgic3_clear_pending_word(vgic, (uint32_t)cpu, 0, value32);
             return;
 
-        case 0x300:   /* GICR_ISACTIVER0 */
+        case 0x300: /* GICR_ISACTIVER0 */
             for (uint32_t bit = 0; bit < 32; bit++)
                 if (value32 & (1u << bit))
                     vgic->vcpu[cpu].active0 |= (1u << bit);
             return;
 
-        case 0x380:   /* GICR_ICACTIVER0 */
+        case 0x380: /* GICR_ICACTIVER0 */
             vmm_vgic3_clear_active_word(vgic, (uint32_t)cpu, 0, value32);
             return;
 
-        case 0x400: case 0x404: case 0x408: case 0x40c:
-        case 0x410: case 0x414: case 0x418: case 0x41c: {
+        case 0x400:
+        case 0x404:
+        case 0x408:
+        case 0x40c:
+        case 0x410:
+        case 0x414:
+        case 0x418:
+        case 0x41c: {
             uint32_t n = (word - 0x400u) / 4u;
             for (uint32_t i = 0; i < 4; i++)
                 vcpu->prio0[n * 4u + i] = (uint8_t)(value >> (8 * i));
             return;
         }
 
-        case 0xc00: vcpu->sgi_icfgr[0] = value32; return;
-        case 0xc04: vcpu->sgi_icfgr[1] = value32; return;
-        case 0xd00: vcpu->sgi_igrpmodr0 = value32; return;
-        default: return;
+        case 0xc00:
+            vcpu->sgi_icfgr[0] = value32;
+            return;
+        case 0xc04:
+            vcpu->sgi_icfgr[1] = value32;
+            return;
+        case 0xd00:
+            vcpu->sgi_igrpmodr0 = value32;
+            return;
+        default:
+            return;
         }
     }
 
@@ -233,12 +257,12 @@ static void vgic3r_write(mmio_device_t *dev, uint64_t off, uint8_t size,
 }
 
 static const mmio_dev_ops_t g_vgic3r_ops = {
-    .name           = "vgic3r",
-    .base           = VGIC3R_BASE,
-    .size           = VGIC3R_STRIDE * VGIC3_MAX_VCPUS,
-    .read           = NULL,
-    .write          = NULL,
-    .read_for_vcpu  = vgic3r_read,
+    .name = "vgic3r",
+    .base = VGIC3R_BASE,
+    .size = VGIC3R_STRIDE * VGIC3_MAX_VCPUS,
+    .read = NULL,
+    .write = NULL,
+    .read_for_vcpu = vgic3r_read,
     .write_for_vcpu = vgic3r_write,
 };
 
@@ -247,7 +271,7 @@ int vgic3r_init(mmio_device_t *dev, mmio_bus_t *bus, vgic3_t *vgic)
     if (!dev || !bus || !vgic)
         return -1;
 
-    dev->ops  = &g_vgic3r_ops;
+    dev->ops = &g_vgic3r_ops;
     dev->priv = vgic;
 
     if (mmio_bus_register(bus, dev) != 0)

@@ -7,9 +7,9 @@
 
 #include "lwip/tcp.h"
 
-#define WEBCAM_PORT       80
-#define FRAME_BUF_SIZE    (512U * 1024U)
-#define MIN_CAPTURE_MS    200
+#define WEBCAM_PORT    80
+#define FRAME_BUF_SIZE (512U * 1024U)
+#define MIN_CAPTURE_MS 200
 
 extern int my_vsnprintf(char *buf, int size, const char *fmt, va_list va);
 
@@ -49,8 +49,9 @@ static int webcam_grab_frame(void)
     } else {
         g_fail_streak++;
         if (g_fail_streak >= MAX_FAIL_STREAK)
-            KLOG_WARN("[webcam] USB capture failed %u times, serving cached frame\n",
-                      g_fail_streak);
+            KLOG_WARN(
+                "[webcam] USB capture failed %u times, serving cached frame\n",
+                g_fail_streak);
     }
     if (n <= 0 && g_cached_len > 0)
         return (int)g_cached_len;
@@ -72,17 +73,17 @@ static const char INDEX_HTML[] =
     "<p id=\"st\">loading...</p>"
     "<script>"
     "var img=document.getElementById('cam'),"
-        "st=document.getElementById('st'),"
-        "n=0;"
+    "st=document.getElementById('st'),"
+    "n=0;"
     "function grab(){"
-        "var t=new Image();"
-        "t.onload=function(){"
-            "img.src=t.src;n++;"
-            "st.textContent='frame #'+n+' '+t.naturalWidth+'x'+t.naturalHeight;"
-            "setTimeout(grab,100);"
-        "};"
-        "t.onerror=function(){st.textContent='error';setTimeout(grab,1000);};"
-        "t.src='/frame.jpg?'+Date.now();"
+    "var t=new Image();"
+    "t.onload=function(){"
+    "img.src=t.src;n++;"
+    "st.textContent='frame #'+n+' '+t.naturalWidth+'x'+t.naturalHeight;"
+    "setTimeout(grab,100);"
+    "};"
+    "t.onerror=function(){st.textContent='error';setTimeout(grab,1000);};"
+    "t.src='/frame.jpg?'+Date.now();"
     "}"
     "grab();"
     "</script></body></html>";
@@ -114,8 +115,8 @@ static void conn_free(webcam_conn_t *c);
 
 /* ── Request parsing ───────────────────────────────────────────────────── */
 
-static int match_path(const char *req, uint16_t len,
-                      const char *path, size_t plen)
+static int match_path(const char *req, uint16_t len, const char *path,
+                      size_t plen)
 {
     const char *p = req;
     const char *end = req + len;
@@ -151,11 +152,12 @@ static int build_response(webcam_conn_t *c, const char *req, uint16_t len)
         c->body_len = (uint32_t)n;
         c->body_sent = 0;
         int hlen = snfmt(c->hdr_buf, sizeof(c->hdr_buf),
-            "HTTP/1.0 200 OK\r\n"
-            "Content-Type: image/jpeg\r\n"
-            "Content-Length: %d\r\n"
-            "Cache-Control: no-cache\r\n"
-            "Connection: close\r\n\r\n", n);
+                         "HTTP/1.0 200 OK\r\n"
+                         "Content-Type: image/jpeg\r\n"
+                         "Content-Length: %d\r\n"
+                         "Cache-Control: no-cache\r\n"
+                         "Connection: close\r\n\r\n",
+                         n);
         c->hdr_len = (uint16_t)hlen;
         c->hdr_sent = 0;
         c->state = CS_SEND_HEADER;
@@ -166,11 +168,11 @@ static int build_response(webcam_conn_t *c, const char *req, uint16_t len)
     c->body_len = (uint32_t)(sizeof(INDEX_HTML) - 1);
     c->body_sent = 0;
     int hlen = snfmt(c->hdr_buf, sizeof(c->hdr_buf),
-        "HTTP/1.0 200 OK\r\n"
-        "Content-Type: text/html; charset=utf-8\r\n"
-        "Content-Length: %u\r\n"
-        "Connection: close\r\n\r\n",
-        (unsigned)(sizeof(INDEX_HTML) - 1));
+                     "HTTP/1.0 200 OK\r\n"
+                     "Content-Type: text/html; charset=utf-8\r\n"
+                     "Content-Length: %u\r\n"
+                     "Connection: close\r\n\r\n",
+                     (unsigned)(sizeof(INDEX_HTML) - 1));
     c->hdr_len = (uint16_t)hlen;
     c->hdr_sent = 0;
     c->state = CS_SEND_HEADER;

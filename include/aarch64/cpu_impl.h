@@ -12,15 +12,13 @@
 /* 前向声明：cpu_t 在 kernel/task/cpu.h 中定义 */
 struct cpu;
 
-static inline void
-arch_cpu_self_set(struct cpu *self)
+static inline void arch_cpu_self_set(struct cpu *self)
 {
-    __asm__ volatile("msr tpidr_el1, %0" :: "r"(self) : "memory");
+    __asm__ volatile("msr tpidr_el1, %0" ::"r"(self) : "memory");
     __asm__ volatile("isb" ::: "memory");
 }
 
-static inline struct cpu *
-arch_cpu_self_get(void)
+static inline struct cpu *arch_cpu_self_get(void)
 {
     uint64_t v;
     __asm__ volatile("mrs %0, tpidr_el1" : "=r"(v));
@@ -28,8 +26,7 @@ arch_cpu_self_get(void)
 }
 
 /* MPIDR_EL1 低 24 位为 Affinity 0/1/2；QEMU virt 单簇时 Aff0 即 CPU 序号 */
-static inline uint64_t
-arch_cpu_hw_id(void)
+static inline uint64_t arch_cpu_hw_id(void)
 {
     uint64_t v;
     __asm__ volatile("mrs %0, mpidr_el1" : "=r"(v));

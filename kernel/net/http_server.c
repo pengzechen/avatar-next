@@ -92,18 +92,18 @@ static void conn_free(http_conn_t *c);
 
 static void build_response(http_conn_t *c)
 {
-    c->body     = (const uint8_t *)INDEX_HTML;
+    c->body = (const uint8_t *)INDEX_HTML;
     c->body_len = (uint32_t)(sizeof(INDEX_HTML) - 1);
     c->body_sent = 0;
     int hlen = snfmt(c->hdr_buf, sizeof(c->hdr_buf),
-        "HTTP/1.0 200 OK\r\n"
-        "Content-Type: text/html; charset=utf-8\r\n"
-        "Content-Length: %u\r\n"
-        "Connection: close\r\n\r\n",
-        (unsigned)(sizeof(INDEX_HTML) - 1));
-    c->hdr_len  = (uint16_t)hlen;
+                     "HTTP/1.0 200 OK\r\n"
+                     "Content-Type: text/html; charset=utf-8\r\n"
+                     "Content-Length: %u\r\n"
+                     "Connection: close\r\n\r\n",
+                     (unsigned)(sizeof(INDEX_HTML) - 1));
+    c->hdr_len = (uint16_t)hlen;
     c->hdr_sent = 0;
-    c->state    = CS_SEND_HEADER;
+    c->state = CS_SEND_HEADER;
 }
 
 /* ── TCP send engine ──────────────────────────────────────────────────── */
@@ -208,7 +208,7 @@ static void http_err(void *arg, err_t err)
 
 #define MAX_CONNS 4
 static http_conn_t g_conns[MAX_CONNS];
-static uint8_t     g_conn_used[MAX_CONNS];
+static uint8_t g_conn_used[MAX_CONNS];
 
 static http_conn_t *conn_alloc(void)
 {

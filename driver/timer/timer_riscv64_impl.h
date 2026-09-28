@@ -4,25 +4,25 @@
 #include "timer.h"
 #include "sysreg.h"
 #include "klog.h"
-#include "exception.h"   /* irq_install, CAUSE_SUPERVISOR_TIMER */
+#include "exception.h" /* irq_install, CAUSE_SUPERVISOR_TIMER */
 
 /* SBI v0.2+ TIME extension and legacy timer extension IDs */
-#define SBI_EID_TIME            0x54494D45UL
-#define SBI_FID_SET_TIMER       0UL
-#define SBI_LEGACY_SET_TIMER    0UL
+#define SBI_EID_TIME         0x54494D45UL
+#define SBI_FID_SET_TIMER    0UL
+#define SBI_LEGACY_SET_TIMER 0UL
 
 // ============================================================
 // RISC-V 定时器相关宏（仅保留 sysreg.h 中没有的）
 // ============================================================
-#define READ_TIME()         CSR_READ(time)   /* sysreg.h 中同名，内容相同 */
+#define READ_TIME() CSR_READ(time) /* sysreg.h 中同名，内容相同 */
 
 /* TIMER_FREQ_HZ 由 platform_cfg.h 提供（= g_timer_counter_hz，从平台配置扫描）*/
 
 // ============================================================
 // RISC-V 特定的全局变量
 // ============================================================
-extern volatile uint64_t g_uptime_seconds;   // 系统运行时间（秒）
-extern volatile uint32_t g_tick_counter;     // tick计数器，用于计算秒
+extern volatile uint64_t g_uptime_seconds; // 系统运行时间（秒）
+extern volatile uint32_t g_tick_counter;   // tick计数器，用于计算秒
 
 /* 前向声明在 timer.h 中已存在，无需重复 */
 
@@ -30,8 +30,7 @@ extern volatile uint32_t g_tick_counter;     // tick计数器，用于计算秒
 // 架构特定操作实现
 // ============================================================
 
-void
-timer_arch_init(void)
+void timer_arch_init(void)
 {
     // 设置定时器频率
     g_timer_frequency = TIMER_FREQ_HZ;
@@ -69,49 +68,47 @@ timer_arch_init(void)
  *   2. 由取整的性质，(ticks+1)*step 必然大于 now-base，所以下一个截止时间
  *      **永远在未来**，最多差一个周期 —— 不会因为追赶而连发中断。
  */
-static uint64_t s_tick_base;   /* 时间原点（READ_TIME 的刻度）      */
-static uint64_t s_tick_step;   /* 一个 tick 周期折合多少计数器刻度  */
+static uint64_t s_tick_base; /* 时间原点（READ_TIME 的刻度）      */
+static uint64_t s_tick_step; /* 一个 tick 周期折合多少计数器刻度  */
 
-void
-timer_arch_enable(void)
+void timer_arch_enable(void)
 {
     // 计算下一次中断的时间
     uint64_t ticks_per_interrupt = g_timer_frequency / TIMER_FREQUENCY_HZ;
 
-    KLOG_TIMER("Timer enabled with %llu ticks per interrupt\n", ticks_per_interrupt);
+    KLOG_TIMER("Timer enabled with %llu ticks per interrupt\n",
+               ticks_per_interrupt);
 
     /*
      * 设时间原点。用 "now - 已过周期数*step" 而不是直接取 now：
      * disable/enable 再次调用时（SMP 启动路径）g_system_ticks 不会倒退。
      */
     s_tick_step = ticks_per_interrupt;
-    s_tick_base = READ_TIME() -
-                  (s_tick_step ? g_system_ticks * s_tick_step : 0ULL);
+    s_tick_base =
+        READ_TIME() - (s_tick_step ? g_system_ticks * s_tick_step : 0ULL);
 
     // 首先设置下一次中断时间
     timer_arch_set_next_interrupt(ticks_per_interrupt);
 
     // 然后启用Machine模式定时器中断
     uint64_t sie = READ_SIE();
-    sie |= SIE_STIE;  // 启用机器定时器中断
+    sie |= SIE_STIE; // 启用机器定时器中断
     CSR_WRITE(sie, sie);
 
     KLOG_TIMER("Machine timer interrupt enabled\n");
 }
 
-void
-timer_arch_disable(void)
+void timer_arch_disable(void)
 {
     // 禁用Machine模式定时器中断
     uint64_t sie = READ_SIE();
-    sie &= ~SIE_STIE;  // 禁用机器定时器中断
+    sie &= ~SIE_STIE; // 禁用机器定时器中断
     CSR_WRITE(sie, sie);
 
     KLOG_TIMER("Timer disabled\n");
 }
 
-void
-timer_arch_set_next_interrupt(uint64_t ticks_from_now)
+void timer_arch_set_next_interrupt(uint64_t ticks_from_now)
 {
     uint64_t step = s_tick_step ? s_tick_step : ticks_from_now;
     uint64_t next_time;
@@ -139,24 +136,17 @@ timer_arch_set_next_interrupt(uint64_t ticks_from_now)
     register uint64_t a6 asm("a6") = SBI_FID_SET_TIMER;
     register uint64_t a7 asm("a7") = SBI_EID_TIME;
 
-    asm volatile(
-        "ecall"
-        : "+r"(a0), "+r"(a1)
-        : "r"(a6), "r"(a7)
-        : "memory"
-    );
+    asm volatile("ecall" : "+r"(a0), "+r"(a1) : "r"(a6), "r"(a7) : "memory");
 
     if ((long)a0 != 0) {
         /* Legacy SBI: EID=0, arg0=stime_value */
         register uint64_t l_a0 asm("a0") = next_time;
         register uint64_t l_a7 asm("a7") = SBI_LEGACY_SET_TIMER;
 
-        asm volatile(
-            "ecall"
-            : "+r"(l_a0)
-            : "r"(l_a7)
-            : "a1", "a2", "a3", "a4", "a5", "a6", "memory"
-        );
+        asm volatile("ecall"
+                     : "+r"(l_a0)
+                     : "r"(l_a7)
+                     : "a1", "a2", "a3", "a4", "a5", "a6", "memory");
     }
 }
 
@@ -167,8 +157,7 @@ timer_arch_set_next_interrupt(uint64_t ticks_from_now)
 /* 扫描 UART，向前台进程组发 SIGINT（来自 syscall.c） */
 extern void signal_check_uart(void);
 
-void
-timer_handler(void *frame)
+void timer_handler(void *frame)
 {
     trap_frame_t *tf = (trap_frame_t *)frame;
 
@@ -192,8 +181,8 @@ timer_handler(void *frame)
     if (s_tick_step != 0ULL) {
         uint64_t hz = TIMER_FREQUENCY_HZ;
 
-        g_system_ticks  = (READ_TIME() - s_tick_base) / s_tick_step;
-        g_tick_counter  = hz ? (uint32_t)(g_system_ticks % hz) : 0U;
+        g_system_ticks = (READ_TIME() - s_tick_base) / s_tick_step;
+        g_tick_counter = hz ? (uint32_t)(g_system_ticks % hz) : 0U;
         g_uptime_seconds = hz ? (g_system_ticks / hz) : 0ULL;
     } else {
         /* 兜底：频率未知，退化成老行为 */

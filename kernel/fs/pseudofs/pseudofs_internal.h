@@ -4,13 +4,13 @@
 #include "types.h"
 #include "kernel_stat.h"
 
-#define PFS_EINVAL  22
-#define PFS_ENOENT   2
-#define PFS_ENOSYS  38
-#define PFS_EIO      5
-#define PFS_EMFILE  24
-#define PFS_EAGAIN  11
-#define PFS_EBUSY   16
+#define PFS_EINVAL 22
+#define PFS_ENOENT 2
+#define PFS_ENOSYS 38
+#define PFS_EIO    5
+#define PFS_EMFILE 24
+#define PFS_EAGAIN 11
+#define PFS_EBUSY  16
 
 #define DYNC_PID_DIR_BASE   2000
 #define DYNC_PID_STAT_BASE  3000
@@ -54,9 +54,11 @@ int pfs_strcmp(const char *a, const char *b);
 int pfs_strncmp(const char *a, const char *b, size_t n);
 int u64_to_dec(char *buf, uint64_t v);
 int pfs_puts(char *buf, size_t pos, size_t bufsz, const char *s);
-int pfs_copy_out(uint64_t off, void *buf, size_t len, const char *src, size_t total);
+int pfs_copy_out(uint64_t off, void *buf, size_t len, const char *src,
+                 size_t total);
 
-bool pfs_parse_proc_pid(const char *path, uint32_t *pid_out, const char **rest_out);
+bool pfs_parse_proc_pid(const char *path, uint32_t *pid_out,
+                        const char **rest_out);
 int pfs_pid_status_read(uint32_t pid, uint64_t off, void *buf, size_t len);
 int pfs_pid_stat_read(uint32_t pid, uint64_t off, void *buf, size_t len);
 int pfs_self_status_read(uint64_t off, void *buf, size_t len);
@@ -70,16 +72,15 @@ const pseudo_node_t *pfs_node_at(int nid);
 const char *pfs_node_name(const pseudo_node_t *node);
 int pfs_getdents_node(int nid, uint64_t *off, void *buf, size_t bufsz);
 
-
 int ion_dev_ioctl(int nid, uint64_t req, void *argp);
 int tpu_dev_ioctl(int nid, uint64_t req, void *argp);
 
 /* /dev/vmm —— 宿主 shell 里控制 guest 的字符设备（vmm_dev.c）*/
-int      vmm_dev_write(int nid, const void *buf, size_t len);
-int      vmm_dev_read(int nid, uint64_t off, void *buf, size_t len);
-int      vmm_dev_ioctl(int nid, uint64_t req, void *argp);
+int vmm_dev_write(int nid, const void *buf, size_t len);
+int vmm_dev_read(int nid, uint64_t off, void *buf, size_t len);
+int vmm_dev_ioctl(int nid, uint64_t req, void *argp);
 uint32_t vmm_dev_poll(int nid);
-int      vmm_dev_close(int nid);
+int vmm_dev_close(int nid);
 int npu_dev_ioctl(int nid, uint64_t req, void *argp);
 int video0_read(int nid, uint64_t off, void *buf, size_t len);
 int video0_ioctl(int nid, uint64_t req, void *argp);

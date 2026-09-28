@@ -4,7 +4,7 @@
 #include "types.h"
 #include "spinlock.h"
 #include "task/preempt.h"
-#include "riscv64/exception_impl.h"   /* arch_irq_save/restore（统一的中断屏蔽原语）*/
+#include "riscv64/exception_impl.h" /* arch_irq_save/restore（统一的中断屏蔽原语）*/
 
 /*
  * RISC-V 64位架构的spinlock实现
@@ -20,8 +20,7 @@
  * sc.w: 条件存储 Store-Conditional
  * 如果在lr到sc之间有其他核心修改了地址，sc会失败
  */
-static inline void
-spin_lock(spinlock_t *lock)
+static inline void spin_lock(spinlock_t *lock)
 {
     uint32_t tmp;
     preempt_disable();
@@ -37,8 +36,7 @@ spin_lock(spinlock_t *lock)
         : "memory", "t0");
 }
 
-static inline int
-spin_trylock(spinlock_t *lock)
+static inline int spin_trylock(spinlock_t *lock)
 {
     uint32_t tmp, result;
     preempt_disable();
@@ -61,15 +59,13 @@ spin_trylock(spinlock_t *lock)
     return result;
 }
 
-static inline void
-spin_unlock(spinlock_t *lock)
+static inline void spin_unlock(spinlock_t *lock)
 {
-    asm volatile(
-        "   fence   rw, rw                   \n" /* memory barrier */
-        "   sw      zero, (%0)               \n" /* lock->lock = 0 */
-        :
-        : "r"(&lock->lock)
-        : "memory");
+    asm volatile("   fence   rw, rw                   \n" /* memory barrier */
+                 "   sw      zero, (%0)               \n" /* lock->lock = 0 */
+                 :
+                 : "r"(&lock->lock)
+                 : "memory");
     preempt_enable();
 }
 
@@ -82,15 +78,13 @@ spin_unlock(spinlock_t *lock)
  * include/riscv64/exception_impl.h（arch_irq_save/restore）。
  */
 
-static inline void
-spin_lock_irqsave(spinlock_t *lock, uint64_t *flags)
+static inline void spin_lock_irqsave(spinlock_t *lock, uint64_t *flags)
 {
     *flags = arch_irq_save();
     spin_lock(lock);
 }
 
-static inline int
-spin_trylock_irqsave(spinlock_t *lock, uint64_t *flags)
+static inline int spin_trylock_irqsave(spinlock_t *lock, uint64_t *flags)
 {
     *flags = arch_irq_save();
     if (spin_trylock(lock) == 0)
@@ -99,11 +93,10 @@ spin_trylock_irqsave(spinlock_t *lock, uint64_t *flags)
     return 1;
 }
 
-static inline void
-spin_unlock_irqrestore(spinlock_t *lock, uint64_t flags)
+static inline void spin_unlock_irqrestore(spinlock_t *lock, uint64_t flags)
 {
     spin_unlock(lock);
     arch_irq_restore(flags);
 }
 
-#endif  // RISCV64_SPIN_LOCK_IMPL_H
+#endif // RISCV64_SPIN_LOCK_IMPL_H

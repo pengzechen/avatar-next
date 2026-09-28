@@ -89,7 +89,7 @@ void resolve_path(const char *cwd, const char *path, char *out, int outlen)
 
         if (seg_count < (int)(sizeof(seg_start) / sizeof(seg_start[0]))) {
             seg_start[seg_count] = start;
-            seg_len[seg_count]   = len;
+            seg_len[seg_count] = len;
             seg_count++;
         }
     }
@@ -137,7 +137,10 @@ void follow_symlinks(char *out, size_t outsz)
 {
     char cur[128];
     int n = 0;
-    while (out[n] && n < 127) { cur[n] = out[n]; n++; }
+    while (out[n] && n < 127) {
+        cur[n] = out[n];
+        n++;
+    }
     cur[n] = '\0';
 
     for (int depth = 0; depth < 8; depth++) {
@@ -149,12 +152,16 @@ void follow_symlinks(char *out, size_t outsz)
 
         if (target[0] == '/') {
             n = 0;
-            while (target[n] && n < 127) { cur[n] = target[n]; n++; }
+            while (target[n] && n < 127) {
+                cur[n] = target[n];
+                n++;
+            }
             cur[n] = '\0';
         } else {
             int slash = 0;
             for (int i = 0; cur[i]; i++)
-                if (cur[i] == '/') slash = i;
+                if (cur[i] == '/')
+                    slash = i;
             char parent[128];
             int k;
             for (k = 0; k <= slash && k < 126; k++)
@@ -165,17 +172,22 @@ void follow_symlinks(char *out, size_t outsz)
     }
 
     n = 0;
-    while (cur[n] && n < (int)outsz - 1) { out[n] = cur[n]; n++; }
+    while (cur[n] && n < (int)outsz - 1) {
+        out[n] = cur[n];
+        n++;
+    }
     out[n] = '\0';
 }
 
 int copy_string_from_user(const char *ustr, char *kbuf, int maxlen)
 {
-    if (!user_range_ok(ustr, (uint64_t)maxlen)) return -1;
+    if (!user_range_ok(ustr, (uint64_t)maxlen))
+        return -1;
     int i = 0;
     while (i < maxlen - 1) {
         kbuf[i] = ustr[i];
-        if (ustr[i] == '\0') return i;
+        if (ustr[i] == '\0')
+            return i;
         i++;
     }
     kbuf[i] = '\0';
@@ -184,7 +196,8 @@ int copy_string_from_user(const char *ustr, char *kbuf, int maxlen)
 
 int copy_string_to_user(const char *kstr, char *ubuf, int maxlen)
 {
-    if (!user_range_ok(ubuf, (uint64_t)maxlen)) return -1;
+    if (!user_range_ok(ubuf, (uint64_t)maxlen))
+        return -1;
     int i = 0;
     while (i < maxlen - 1 && kstr[i]) {
         ubuf[i] = kstr[i];
@@ -213,8 +226,8 @@ int copy_to_user_bytes(const void *ksrc, void *udst, uint64_t len)
 int fill_stat_from_ext4(struct kernel_stat *st, const char *path)
 {
     memset(st, 0, sizeof(*st));
-    st->st_dev     = 1;
-    st->st_nlink   = 1;
+    st->st_dev = 1;
+    st->st_nlink = 1;
     st->st_blksize = 4096;
 
     uint32_t mode = 0;
@@ -234,7 +247,7 @@ int fill_stat_from_ext4(struct kernel_stat *st, const char *path)
         rc = ext4_fopen2(&f, path, 0 /* O_RDONLY */);
         if (rc != EOK)
             return -rc;
-        st->st_size   = (int64_t)ext4_fsize(&f);
+        st->st_size = (int64_t)ext4_fsize(&f);
         st->st_blocks = (st->st_size + 511) / 512;
         ext4_fclose(&f);
     } else if ((mode & 0170000) == 0120000) {

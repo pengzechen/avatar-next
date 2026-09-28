@@ -22,18 +22,23 @@
 
 static bool trace_heavy_task(task_t *current)
 {
-    return current && current->is_user_process && current->heap_end >= 0x3000000ULL;
+    return current && current->is_user_process &&
+           current->heap_end >= 0x3000000ULL;
 }
 
 void openat_handler(uint64_t regs[6], task_t *current)
 {
     int dirfd = (int)regs[0];
     const char *pathname = (const char *)regs[1];
-    int         flags    = (int)regs[2];
-    if (!pathname) { regs[0] = (uint64_t)(int64_t)-ENOENT; return; }
+    int flags = (int)regs[2];
+    if (!pathname) {
+        regs[0] = (uint64_t)(int64_t)-ENOENT;
+        return;
+    }
 
     char abspath[128];
-    int rpa = resolve_path_at(current, dirfd, pathname, abspath, sizeof(abspath));
+    int rpa =
+        resolve_path_at(current, dirfd, pathname, abspath, sizeof(abspath));
     if (rpa < 0) {
         if (trace_heavy_task(current)) {
             KLOG_SYSCALL("[vfsop] pid=%u openat path=%s flags=0x%x rc=%d\n",
@@ -68,8 +73,8 @@ void openat_handler(uint64_t regs[6], task_t *current)
         if (pts_idx >= 0) {
             int fd = pty_open_slave(current, pts_idx);
             if (fd < 0)
-                KLOG_WARN("[pty] open_slave(%d) failed: %d path=%s\n",
-                          pts_idx, fd, abspath);
+                KLOG_WARN("[pty] open_slave(%d) failed: %d path=%s\n", pts_idx,
+                          fd, abspath);
             regs[0] = fd >= 0 ? (uint64_t)fd : (uint64_t)(int64_t)fd;
             return;
         }
@@ -77,7 +82,10 @@ void openat_handler(uint64_t regs[6], task_t *current)
 
     vfs_file_t *vf = NULL;
     int rc = vfs_open(abspath, flags, 0, &vf);
-    if (rc < 0) { regs[0] = (uint64_t)(int64_t)rc; return; }
+    if (rc < 0) {
+        regs[0] = (uint64_t)(int64_t)rc;
+        return;
+    }
 
     int pool = fd_pool_alloc();
     if (pool < 0) {
@@ -117,8 +125,8 @@ void close_handler(uint64_t regs[6], task_t *current)
     }
     int idx = current->fd_table[fd];
     fd_obj_t *obj = &g_fd_pool[idx];
-    KLOG_SYSCALL("[fd] close: pid=%u fd=%d pool_idx=%d type=%d\n",
-                 current->id, fd, idx, obj->type);
+    KLOG_SYSCALL("[fd] close: pid=%u fd=%d pool_idx=%d type=%d\n", current->id,
+                 fd, idx, obj->type);
     fd_close_notify(idx);
     fd_obj_close(idx);
     fd_pool_free(idx);
@@ -128,11 +136,14 @@ void close_handler(uint64_t regs[6], task_t *current)
 
 static int dup_to_fd(task_t *current, int oldfd, int newfd, int flags)
 {
-    if (oldfd < 0 || oldfd >= (int)TASK_MAX_FD) return -EBADF;
-    if (newfd < 0 || newfd >= (int)TASK_MAX_FD) return -EBADF;
+    if (oldfd < 0 || oldfd >= (int)TASK_MAX_FD)
+        return -EBADF;
+    if (newfd < 0 || newfd >= (int)TASK_MAX_FD)
+        return -EBADF;
 
     fd_obj_t *src = task_get_fd(current, oldfd);
-    if (oldfd > 2 && !src) return -EBADF;
+    if (oldfd > 2 && !src)
+        return -EBADF;
 
     if (current->fd_table[newfd] != -1) {
         int idx = current->fd_table[newfd];
@@ -145,17 +156,20 @@ static int dup_to_fd(task_t *current, int oldfd, int newfd, int flags)
 
     if (!src) {
         int uart_idx = fd_pool_alloc();
-        if (uart_idx < 0) return -EMFILE;
-        g_fd_pool[uart_idx].type  = FDT_ALLOCATED;
+        if (uart_idx < 0)
+            return -EMFILE;
+        g_fd_pool[uart_idx].type = FDT_ALLOCATED;
         g_fd_pool[uart_idx].flags = 0;
         g_fd_pool[uart_idx].vfs_file = NULL;
         g_fd_pool[uart_idx].path[0] = '\0';
         current->fd_table[newfd] = uart_idx;
     } else {
         int new_idx = fd_pool_alloc();
-        if (new_idx < 0) return -EMFILE;
+        if (new_idx < 0)
+            return -EMFILE;
 #if DRIVER_ION
-        if (src->type == FDT_ION && ion_ref((ion_handle_t)src->ion.handle) != 0) {
+        if (src->type == FDT_ION &&
+            ion_ref((ion_handle_t)src->ion.handle) != 0) {
             fd_pool_free(new_idx);
             return -EBADF;
         }
@@ -213,7 +227,7 @@ void dup3_handler(uint64_t regs[6], task_t *current)
 
 void fcntl_handler(uint64_t regs[6], task_t *current)
 {
-    int fd  = (int)regs[0];
+    int fd = (int)regs[0];
     int cmd = (int)regs[1];
 
     if (fd < 0 || fd >= (int)TASK_MAX_FD) {
@@ -228,18 +242,18 @@ void fcntl_handler(uint64_t regs[6], task_t *current)
         return;
     }
 
-    #define F_DUPFD     0
-    #define F_GETFD     1
-    #define F_SETFD     2
-    #define F_GETFL     3
-    #define F_SETFL     4
-    #define F_DUPFD_CLOEXEC 1030
-    #define FD_CLOEXEC  1
-    #define O_NONBLOCK  04000
-    #define O_APPEND    02000
-    #define O_ASYNC     020000
-    /* F_SETFL 只能改这些位 */
-    #define SETFL_MASK  (O_NONBLOCK | O_APPEND | O_ASYNC)
+#define F_DUPFD         0
+#define F_GETFD         1
+#define F_SETFD         2
+#define F_GETFL         3
+#define F_SETFL         4
+#define F_DUPFD_CLOEXEC 1030
+#define FD_CLOEXEC      1
+#define O_NONBLOCK      04000
+#define O_APPEND        02000
+#define O_ASYNC         020000
+/* F_SETFL 只能改这些位 */
+#define SETFL_MASK (O_NONBLOCK | O_APPEND | O_ASYNC)
 
     switch (cmd) {
     case F_GETFD: {
@@ -274,7 +288,8 @@ void fcntl_handler(uint64_t regs[6], task_t *current)
     case F_DUPFD_CLOEXEC: {
         /* F_DUPFD / F_DUPFD_CLOEXEC: duplicate fd, allocate >= arg */
         int minfd = (int)regs[2];
-        if (minfd < 0) minfd = 0;
+        if (minfd < 0)
+            minfd = 0;
         if (!obj && fd > 2) {
             regs[0] = (uint64_t)(int64_t)-EBADF;
             return;
@@ -294,9 +309,11 @@ void fcntl_handler(uint64_t regs[6], task_t *current)
                     g_fd_pool[uart_idx].path[0] = '\0';
                     current->fd_table[nf] = (int16_t)uart_idx;
                     if (cmd == F_DUPFD_CLOEXEC)
-                        current->fd_cloexec[nf / 8] |= (uint8_t)(1u << (nf % 8));
+                        current->fd_cloexec[nf / 8] |=
+                            (uint8_t)(1u << (nf % 8));
                     else
-                        current->fd_cloexec[nf / 8] &= (uint8_t)~(1u << (nf % 8));
+                        current->fd_cloexec[nf / 8] &=
+                            (uint8_t)~(1u << (nf % 8));
                     regs[0] = (uint64_t)nf;
                     return;
                 }
@@ -333,17 +350,17 @@ void fcntl_handler(uint64_t regs[6], task_t *current)
         return;
     }
 
-    #undef F_DUPFD
-    #undef F_DUPFD_CLOEXEC
-    #undef F_GETFD
-    #undef F_SETFD
-    #undef F_GETFL
-    #undef F_SETFL
-    #undef FD_CLOEXEC
-    #undef O_NONBLOCK
-    #undef O_APPEND
-    #undef O_ASYNC
-    #undef SETFL_MASK
+#undef F_DUPFD
+#undef F_DUPFD_CLOEXEC
+#undef F_GETFD
+#undef F_SETFD
+#undef F_GETFL
+#undef F_SETFL
+#undef FD_CLOEXEC
+#undef O_NONBLOCK
+#undef O_APPEND
+#undef O_ASYNC
+#undef SETFL_MASK
 }
 
 void pipe2_handler(uint64_t regs[6], task_t *current)

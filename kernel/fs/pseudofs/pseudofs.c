@@ -12,15 +12,15 @@
 #include "pseudofs_internal.h"
 #include "types.h"
 #include "arch.h"
-#include "vmm/vmm.h"            /* VMM_GUEST_LINUX_SUPPORTED：决定 /dev/vmm 是否存在 */
+#include "vmm/vmm.h" /* VMM_GUEST_LINUX_SUPPORTED：决定 /dev/vmm 是否存在 */
 #include "klog.h"
 #include "string.h"
 #include "pmm.h"
 #include "uart/uart.h"
 #include "task/task.h"
-#include "syscall/io/epoll.h"   /* EPOLLIN/EPOLLOUT：pseudo_poll 的兜底返回值 */
-#include "syscall/trace.h"      /* /proc/syscalls */
-#include "debug/backtrace.h"    /* /proc/backtrace */
+#include "syscall/io/epoll.h" /* EPOLLIN/EPOLLOUT：pseudo_poll 的兜底返回值 */
+#include "syscall/trace.h"    /* /proc/syscalls */
+#include "debug/backtrace.h"  /* /proc/backtrace */
 
 /* ── Urandom LFSR ─────────────────────────────────────────────── */
 static uint64_t g_lfsr = 0xDEADBEEFCAFEBABEULL;
@@ -38,41 +38,49 @@ static uint8_t lfsr_byte(void)
 /* /dev/null */
 static int null_read(int nid, uint64_t off, void *buf, size_t len)
 {
-    (void)nid; (void)off; (void)buf; (void)len;
+    (void)nid;
+    (void)off;
+    (void)buf;
+    (void)len;
     return 0;
 }
 static int null_write(int nid, const void *buf, size_t len)
 {
-    (void)nid; (void)buf;
+    (void)nid;
+    (void)buf;
     return (int)len;
 }
 
 /* /dev/zero */
 static int zero_read(int nid, uint64_t off, void *buf, size_t len)
 {
-    (void)nid; (void)off;
+    (void)nid;
+    (void)off;
     memset(buf, 0, len);
     return (int)len;
 }
 
 /* /dev/tty, /dev/console */
-extern int tty_getchar_nb(char *c);  /* syscall.c: drain UART + pop ring buf */
-extern int termios_is_raw(void);     /* syscall.c: g_termios ICANON check */
-extern int termios_do_icrnl(void);   /* syscall.c: g_termios ICRNL check */
+extern int tty_getchar_nb(char *c); /* syscall.c: drain UART + pop ring buf */
+extern int termios_is_raw(void);    /* syscall.c: g_termios ICANON check */
+extern int termios_do_icrnl(void);  /* syscall.c: g_termios ICRNL check */
 
 static int tty_read(int nid, uint64_t off, void *buf, size_t len)
 {
-    (void)nid; (void)off;
-    int raw   = termios_is_raw();
+    (void)nid;
+    (void)off;
+    int raw = termios_is_raw();
     int do_cr = termios_do_icrnl();
-    char  *dst = (char *)buf;
-    size_t n   = 0;
+    char *dst = (char *)buf;
+    size_t n = 0;
     while (n < len) {
         char c;
         if (tty_getchar_nb(&c)) {
-            if (do_cr && c == '\r') c = '\n';
+            if (do_cr && c == '\r')
+                c = '\n';
             dst[n++] = c;
-            if (raw || c == '\n') break; /* raw: 单字符; canonical: 换行截止 */
+            if (raw || c == '\n')
+                break; /* raw: 单字符; canonical: 换行截止 */
         } else {
             task_yield();
         }
@@ -97,7 +105,8 @@ static int tty_write(int nid, const void *buf, size_t len)
 /* /dev/urandom, /dev/random */
 static int rand_read(int nid, uint64_t off, void *buf, size_t len)
 {
-    (void)nid; (void)off;
+    (void)nid;
+    (void)off;
     uint8_t *dst = (uint8_t *)buf;
     for (size_t i = 0; i < len; i++)
         dst[i] = lfsr_byte();
@@ -107,7 +116,10 @@ static int rand_read(int nid, uint64_t off, void *buf, size_t len)
 /* /proc/self/maps — musl 启动时读取，空文件即可 */
 static int maps_read(int nid, uint64_t off, void *buf, size_t len)
 {
-    (void)nid; (void)off; (void)buf; (void)len;
+    (void)nid;
+    (void)off;
+    (void)buf;
+    (void)len;
     return 0;
 }
 
@@ -145,11 +157,10 @@ static int uptime_read(int nid, uint64_t off, void *buf, size_t len)
 static int mounts_read(int nid, uint64_t off, void *buf, size_t len)
 {
     (void)nid;
-    static const char content[] =
-        "rootfs / ext4 rw,relatime 0 0\n"
-        "devtmpfs /dev devtmpfs rw 0 0\n"
-        "proc /proc proc rw 0 0\n"
-        "sysfs /sys sysfs rw 0 0\n";
+    static const char content[] = "rootfs / ext4 rw,relatime 0 0\n"
+                                  "devtmpfs /dev devtmpfs rw 0 0\n"
+                                  "proc /proc proc rw 0 0\n"
+                                  "sysfs /sys sysfs rw 0 0\n";
     return pfs_copy_out(off, buf, len, content, sizeof(content) - 1);
 }
 
@@ -163,7 +174,7 @@ static int meminfo_read(int nid, uint64_t off, void *buf, size_t len)
     uint64_t total_kb = 0, free_kb = 0;
     if (g_pmm) {
         total_kb = (g_pmm->total_pages * g_pmm->page_size) / 1024ULL;
-        free_kb  = (g_pmm->free_pages  * g_pmm->page_size) / 1024ULL;
+        free_kb = (g_pmm->free_pages * g_pmm->page_size) / 1024ULL;
     }
 
     char nbuf[24];
@@ -183,10 +194,10 @@ static int meminfo_read(int nid, uint64_t off, void *buf, size_t len)
     pos += (size_t)pfs_puts(tmp, pos, sizeof(tmp), " kB\n");
     /* Stubs */
     pos += (size_t)pfs_puts(tmp, pos, sizeof(tmp),
-        "Buffers:               0 kB\n"
-        "Cached:                0 kB\n"
-        "SwapTotal:             0 kB\n"
-        "SwapFree:              0 kB\n");
+                            "Buffers:               0 kB\n"
+                            "Cached:                0 kB\n"
+                            "SwapTotal:             0 kB\n"
+                            "SwapFree:              0 kB\n");
 
     return pfs_copy_out(off, buf, len, tmp, pos);
 }
@@ -197,13 +208,18 @@ static int cpuinfo_read(int nid, uint64_t off, void *buf, size_t len)
     (void)nid;
     char tmp[512];
     size_t pos = 0;
-    pos += (size_t)pfs_puts(tmp, pos, sizeof(tmp), "processor\t: 0\nBogoMIPS\t: 100.00\n");
+    pos += (size_t)pfs_puts(tmp, pos, sizeof(tmp),
+                            "processor\t: 0\nBogoMIPS\t: 100.00\n");
 #if ARCH_AARCH64
-    pos += (size_t)pfs_puts(tmp, pos, sizeof(tmp), "CPU architecture: AArch64\nHardware\t: ARM Cortex-A\n");
+    pos += (size_t)pfs_puts(
+        tmp, pos, sizeof(tmp),
+        "CPU architecture: AArch64\nHardware\t: ARM Cortex-A\n");
 #elif ARCH_RISCV64
-    pos += (size_t)pfs_puts(tmp, pos, sizeof(tmp), "CPU architecture: riscv64\nHardware\t: RISC-V\n");
+    pos += (size_t)pfs_puts(tmp, pos, sizeof(tmp),
+                            "CPU architecture: riscv64\nHardware\t: RISC-V\n");
 #else
-    pos += (size_t)pfs_puts(tmp, pos, sizeof(tmp), "CPU architecture: x86_64\nHardware\t: x86_64\n");
+    pos += (size_t)pfs_puts(tmp, pos, sizeof(tmp),
+                            "CPU architecture: x86_64\nHardware\t: x86_64\n");
 #endif
     return pfs_copy_out(off, buf, len, tmp, pos);
 }
@@ -216,9 +232,10 @@ static int pid_max_read(int nid, uint64_t off, void *buf, size_t len)
     (void)nid;
     const char *s = "4096\n";
     size_t slen = 5;
-    if ((size_t)off >= slen) return 0;
+    if ((size_t)off >= slen)
+        return 0;
     size_t avail = slen - (size_t)off;
-    size_t copy  = avail < len ? avail : len;
+    size_t copy = avail < len ? avail : len;
     memcpy(buf, s + off, copy);
     return (int)copy;
 }
@@ -239,7 +256,7 @@ static int pid_max_read(int nid, uint64_t off, void *buf, size_t len)
  * 内容是"渲染那一刻"的快照，且和 /proc/meminfo 一样每次 read 都重新生成，
  * 所以分多次 read 的 `cat` 可能拼到两个不同时刻的快照。调试用途，可接受。
  */
-#define SYSCALLS_PROC_LINES  128
+#define SYSCALLS_PROC_LINES 128
 static int syscalls_read(int nid, uint64_t off, void *buf, size_t len)
 {
     static char tmp[12288];
@@ -271,52 +288,74 @@ static int backtrace_read(int nid, uint64_t off, void *buf, size_t len)
 
 static const pseudo_node_t g_nodes[] = {
     /* ── 目录 ──────────────────────────────────────────── */
-    { "/dev",              PSEUDO_DIR, MODE_DIR,  0,              NULL,         NULL,       NULL,          NULL,        NULL           },
-    { "/proc",             PSEUDO_DIR, MODE_DIR,  0,              NULL,         NULL,       NULL,          NULL,        NULL           },
-    { "/proc/self",        PSEUDO_DIR, MODE_DIR,  0,              NULL,         NULL,       NULL,          NULL,        NULL           },
-    { "/proc/self/fd",     PSEUDO_DIR, MODE_DIR,  0,              NULL,         NULL,       NULL,          NULL,        NULL           },
-    { "/proc/sys",         PSEUDO_DIR, MODE_DIR,  0,              NULL,         NULL,       NULL,          NULL,        NULL           },
-    { "/proc/sys/kernel",  PSEUDO_DIR, MODE_DIR,  0,              NULL,         NULL,       NULL,          NULL,        NULL           },
-    { "/sys",              PSEUDO_DIR, MODE_DIR,  0,              NULL,         NULL,       NULL,          NULL,        NULL           },
+    { "/dev", PSEUDO_DIR, MODE_DIR, 0, NULL, NULL, NULL, NULL, NULL },
+    { "/proc", PSEUDO_DIR, MODE_DIR, 0, NULL, NULL, NULL, NULL, NULL },
+    { "/proc/self", PSEUDO_DIR, MODE_DIR, 0, NULL, NULL, NULL, NULL, NULL },
+    { "/proc/self/fd", PSEUDO_DIR, MODE_DIR, 0, NULL, NULL, NULL, NULL, NULL },
+    { "/proc/sys", PSEUDO_DIR, MODE_DIR, 0, NULL, NULL, NULL, NULL, NULL },
+    { "/proc/sys/kernel", PSEUDO_DIR, MODE_DIR, 0, NULL, NULL, NULL, NULL,
+      NULL },
+    { "/sys", PSEUDO_DIR, MODE_DIR, 0, NULL, NULL, NULL, NULL, NULL },
 
     /* ── /dev 字符设备 ─────────────────────────────────── */
-    { "/dev/null",         PSEUDO_CHR, MODE_CHRW, (1U<<8)|3U,    null_read,   null_write,  NULL,          NULL,        NULL           },
-    { "/dev/zero",         PSEUDO_CHR, MODE_CHRW, (1U<<8)|5U,    zero_read,   null_write,  NULL,          NULL,        NULL           },
-    { "/dev/tty",          PSEUDO_CHR, MODE_CHRW, (5U<<8)|0U,    tty_read,    tty_write,   NULL,          NULL,        NULL           },
-    { "/dev/console",      PSEUDO_CHR, MODE_CHRW, (5U<<8)|1U,    tty_read,    tty_write,   NULL,          NULL,        NULL           },
-    { "/dev/urandom",      PSEUDO_CHR, MODE_CHRW, (1U<<8)|9U,    rand_read,   null_write,  NULL,          NULL,        NULL           },
-    { "/dev/random",       PSEUDO_CHR, MODE_CHRW, (1U<<8)|8U,    rand_read,   null_write,  NULL,          NULL,        NULL           },
+    { "/dev/null", PSEUDO_CHR, MODE_CHRW, (1U << 8) | 3U, null_read, null_write,
+      NULL, NULL, NULL },
+    { "/dev/zero", PSEUDO_CHR, MODE_CHRW, (1U << 8) | 5U, zero_read, null_write,
+      NULL, NULL, NULL },
+    { "/dev/tty", PSEUDO_CHR, MODE_CHRW, (5U << 8) | 0U, tty_read, tty_write,
+      NULL, NULL, NULL },
+    { "/dev/console", PSEUDO_CHR, MODE_CHRW, (5U << 8) | 1U, tty_read,
+      tty_write, NULL, NULL, NULL },
+    { "/dev/urandom", PSEUDO_CHR, MODE_CHRW, (1U << 8) | 9U, rand_read,
+      null_write, NULL, NULL, NULL },
+    { "/dev/random", PSEUDO_CHR, MODE_CHRW, (1U << 8) | 8U, rand_read,
+      null_write, NULL, NULL, NULL },
     /* 加速器设备 */
-    { "/dev/cvi-tpu0",     PSEUDO_CHR, MODE_CHRW, (240U<<8)|0U,   NULL,         null_write,  tpu_dev_ioctl, NULL,       NULL           },
-    { "/dev/ion",          PSEUDO_CHR, MODE_CHRW, (10U <<8)|56U,  NULL,         null_write,  ion_dev_ioctl, NULL,       NULL           },
-    { "/dev/npu",          PSEUDO_CHR, MODE_CHRW, (10U <<8)|242U, NULL,         null_write,  npu_dev_ioctl, NULL,       NULL           },
-    { "/dev/video0",       PSEUDO_CHR, MODE_CHRW, (81U <<8)|0U,   video0_read,  null_write,  video0_ioctl,  NULL,       NULL           },
-    /* guest 控制设备：宿主 shell 里的 /bin/vmm-run 打开它来启动/驱动 guest。
+    { "/dev/cvi-tpu0", PSEUDO_CHR, MODE_CHRW, (240U << 8) | 0U, NULL,
+      null_write, tpu_dev_ioctl, NULL, NULL },
+    { "/dev/ion", PSEUDO_CHR, MODE_CHRW, (10U << 8) | 56U, NULL, null_write,
+      ion_dev_ioctl, NULL, NULL },
+    { "/dev/npu", PSEUDO_CHR, MODE_CHRW, (10U << 8) | 242U, NULL, null_write,
+      npu_dev_ioctl, NULL, NULL },
+    { "/dev/video0", PSEUDO_CHR, MODE_CHRW, (81U << 8) | 0U, video0_read,
+      null_write, video0_ioctl, NULL, NULL },
+/* guest 控制设备：宿主 shell 里的 /bin/vmm-run 打开它来启动/驱动 guest。
      * 只有「已实现 Linux guest 启动」的架构才有这个节点（判据同
      * include/vmm/vmm.h 的 VMM_GUEST_LINUX_SUPPORTED）。 */
 #if VMM_GUEST_LINUX_SUPPORTED
-    { "/dev/vmm",          PSEUDO_CHR, MODE_CHRW, (10U <<8)|200U, vmm_dev_read, vmm_dev_write, vmm_dev_ioctl,
-      vmm_dev_poll, vmm_dev_close },
+    { "/dev/vmm", PSEUDO_CHR, MODE_CHRW, (10U << 8) | 200U, vmm_dev_read,
+      vmm_dev_write, vmm_dev_ioctl, vmm_dev_poll, vmm_dev_close },
 #endif
 
     /* ── /proc 条目 ────────────────────────────────────── */
-    { "/proc/self/exe",    PSEUDO_LNK, MODE_LNK,  0,              NULL,         NULL,        NULL,          NULL,        NULL           },
-    { "/proc/self/maps",   PSEUDO_REG, MODE_REG,  0,              maps_read,    NULL,        NULL,          NULL,        NULL           },
-    { "/proc/self/stat",   PSEUDO_REG, MODE_REG,  0,              stat_read,    NULL,        NULL,          NULL,        NULL           },
-    { "/proc/self/status", PSEUDO_REG, MODE_REG,  0,              status_read,  NULL,        NULL,          NULL,        NULL           },
-    { "/proc/version",     PSEUDO_REG, MODE_REG,  0,              version_read, NULL,        NULL,          NULL,        NULL           },
-    { "/proc/uptime",      PSEUDO_REG, MODE_REG,  0,              uptime_read,  NULL,        NULL,          NULL,        NULL           },
-    { "/proc/mounts",      PSEUDO_REG, MODE_REG,  0,              mounts_read,  NULL,        NULL,          NULL,        NULL           },
+    { "/proc/self/exe", PSEUDO_LNK, MODE_LNK, 0, NULL, NULL, NULL, NULL, NULL },
+    { "/proc/self/maps", PSEUDO_REG, MODE_REG, 0, maps_read, NULL, NULL, NULL,
+      NULL },
+    { "/proc/self/stat", PSEUDO_REG, MODE_REG, 0, stat_read, NULL, NULL, NULL,
+      NULL },
+    { "/proc/self/status", PSEUDO_REG, MODE_REG, 0, status_read, NULL, NULL,
+      NULL, NULL },
+    { "/proc/version", PSEUDO_REG, MODE_REG, 0, version_read, NULL, NULL, NULL,
+      NULL },
+    { "/proc/uptime", PSEUDO_REG, MODE_REG, 0, uptime_read, NULL, NULL, NULL,
+      NULL },
+    { "/proc/mounts", PSEUDO_REG, MODE_REG, 0, mounts_read, NULL, NULL, NULL,
+      NULL },
     /* 最近走过的 syscall。崩了先 cat 这个 —— 不需要重编、不需要事先开开关。 */
-    { "/proc/syscalls",    PSEUDO_REG, MODE_REG,  0,              syscalls_read, NULL,       NULL,          NULL,        NULL           },
+    { "/proc/syscalls", PSEUDO_REG, MODE_REG, 0, syscalls_read, NULL, NULL,
+      NULL, NULL },
     /* 当前任务的调用栈。同上，常开。 */
-    { "/proc/backtrace",   PSEUDO_REG, MODE_REG,  0,              backtrace_read, NULL,      NULL,          NULL,        NULL           },
-    { "/proc/meminfo",     PSEUDO_REG, MODE_REG,  0,              meminfo_read, NULL,        NULL,          NULL,        NULL           },
-    { "/proc/cpuinfo",     PSEUDO_REG, MODE_REG,  0,              cpuinfo_read, NULL,        NULL,          NULL,        NULL           },
-    { "/proc/sys/kernel/pid_max", PSEUDO_REG, MODE_REG, 0,      pid_max_read, NULL,        NULL,          NULL,        NULL           },
+    { "/proc/backtrace", PSEUDO_REG, MODE_REG, 0, backtrace_read, NULL, NULL,
+      NULL, NULL },
+    { "/proc/meminfo", PSEUDO_REG, MODE_REG, 0, meminfo_read, NULL, NULL, NULL,
+      NULL },
+    { "/proc/cpuinfo", PSEUDO_REG, MODE_REG, 0, cpuinfo_read, NULL, NULL, NULL,
+      NULL },
+    { "/proc/sys/kernel/pid_max", PSEUDO_REG, MODE_REG, 0, pid_max_read, NULL,
+      NULL, NULL, NULL },
 };
 
-#define NODE_COUNT  ((int)(sizeof(g_nodes) / sizeof(g_nodes[0])))
+#define NODE_COUNT ((int)(sizeof(g_nodes) / sizeof(g_nodes[0])))
 
 int pfs_node_count(void)
 {
@@ -345,7 +384,11 @@ static int find_node(const char *path)
 const char *pfs_node_name(const pseudo_node_t *n)
 {
     const char *p = n->path, *last = n->path;
-    while (*p) { if (*p == '/') last = p + 1; p++; }
+    while (*p) {
+        if (*p == '/')
+            last = p + 1;
+        p++;
+    }
     return last;
 }
 
@@ -353,19 +396,21 @@ const char *pfs_node_name(const pseudo_node_t *n)
 
 int pseudo_open(const char *abspath)
 {
-    if (!abspath) return -1;
+    if (!abspath)
+        return -1;
     /* /proc/self/fd/<N> 归并到 /proc/self/fd 目录节点 */
     if (pfs_strncmp(abspath, "/proc/self/fd/", 14) == 0)
         return find_node("/proc/self/fd");
 
     /* /proc/<pid>  或  /proc/<pid>/status */
-    uint32_t pid; const char *rest;
+    uint32_t pid;
+    const char *rest;
     if (pfs_parse_proc_pid(abspath, &pid, &rest)) {
-        if (*rest == '\0')                            /* /proc/<pid> */
-            return (int)(DYNC_PID_DIR_BASE  + pid);
-        if (pfs_strcmp(rest, "/status") == 0)         /* /proc/<pid>/status */
+        if (*rest == '\0') /* /proc/<pid> */
+            return (int)(DYNC_PID_DIR_BASE + pid);
+        if (pfs_strcmp(rest, "/status") == 0) /* /proc/<pid>/status */
             return (int)(DYNC_PID_STAT_BASE + pid);
-        if (pfs_strcmp(rest, "/stat") == 0)           /* /proc/<pid>/stat */
+        if (pfs_strcmp(rest, "/stat") == 0) /* /proc/<pid>/stat */
             return (int)(DYNC_PID_PSTAT_BASE + pid);
     }
 
@@ -374,13 +419,15 @@ int pseudo_open(const char *abspath)
 
 int pseudo_read(int nid, uint64_t *off, void *buf, size_t len)
 {
-    if (!buf || !off) return -PFS_EINVAL;
+    if (!buf || !off)
+        return -PFS_EINVAL;
 
     /* 动态 /proc/<pid>/stat */
     if (nid >= DYNC_PID_PSTAT_BASE) {
         uint32_t pid = (uint32_t)(nid - DYNC_PID_PSTAT_BASE);
         int rc = pfs_pid_stat_read(pid, *off, buf, len);
-        if (rc > 0) *off += (uint64_t)rc;
+        if (rc > 0)
+            *off += (uint64_t)rc;
         return rc;
     }
 
@@ -388,33 +435,42 @@ int pseudo_read(int nid, uint64_t *off, void *buf, size_t len)
     if (nid >= DYNC_PID_STAT_BASE) {
         uint32_t pid = (uint32_t)(nid - DYNC_PID_STAT_BASE);
         int rc = pfs_pid_status_read(pid, *off, buf, len);
-        if (rc > 0) *off += (uint64_t)rc;
+        if (rc > 0)
+            *off += (uint64_t)rc;
         return rc;
     }
     /* 动态 /proc/<pid> 目录：无内容可读 */
-    if (nid >= DYNC_PID_DIR_BASE) return 0;
+    if (nid >= DYNC_PID_DIR_BASE)
+        return 0;
 
-    if (nid < 0 || nid >= NODE_COUNT) return -PFS_EINVAL;
+    if (nid < 0 || nid >= NODE_COUNT)
+        return -PFS_EINVAL;
     const pseudo_node_t *n = &g_nodes[nid];
-    if (!n->read_fn) return 0;  /* 空文件 */
+    if (!n->read_fn)
+        return 0; /* 空文件 */
     int rc = n->read_fn(nid, *off, buf, len);
-    if (rc > 0) *off += (uint64_t)rc;
+    if (rc > 0)
+        *off += (uint64_t)rc;
     return rc;
 }
 
 int pseudo_write(int nid, const void *buf, size_t len)
 {
-    if (nid < 0 || nid >= NODE_COUNT || !buf) return -PFS_EINVAL;
+    if (nid < 0 || nid >= NODE_COUNT || !buf)
+        return -PFS_EINVAL;
     const pseudo_node_t *n = &g_nodes[nid];
-    if (!n->write_fn) return -PFS_EINVAL;
+    if (!n->write_fn)
+        return -PFS_EINVAL;
     return n->write_fn(nid, buf, len);
 }
 
 int pseudo_ioctl(int nid, uint64_t req, void *argp)
 {
-    if (nid < 0 || nid >= NODE_COUNT) return -PFS_EINVAL;
+    if (nid < 0 || nid >= NODE_COUNT)
+        return -PFS_EINVAL;
     const pseudo_node_t *n = &g_nodes[nid];
-    if (!n->ioctl_fn) return -PFS_ENOSYS;
+    if (!n->ioctl_fn)
+        return -PFS_ENOSYS;
     return n->ioctl_fn(nid, (uint32_t)req, argp);
 }
 
@@ -422,37 +478,47 @@ uint32_t pseudo_poll(int nid)
 {
     /* 无 poll_fn 的节点保持老行为：永远可读可写。
      * 这与 vfs_poll() 在没有 ops->poll 时的兜底一致。 */
-    if (nid < 0 || nid >= NODE_COUNT) return EPOLLIN | EPOLLOUT;
+    if (nid < 0 || nid >= NODE_COUNT)
+        return EPOLLIN | EPOLLOUT;
     const pseudo_node_t *n = &g_nodes[nid];
-    if (!n->poll_fn) return EPOLLIN | EPOLLOUT;
+    if (!n->poll_fn)
+        return EPOLLIN | EPOLLOUT;
     return n->poll_fn(nid);
 }
 
 int pseudo_close(int nid)
 {
-    if (nid < 0 || nid >= NODE_COUNT) return 0;
+    if (nid < 0 || nid >= NODE_COUNT)
+        return 0;
     const pseudo_node_t *n = &g_nodes[nid];
-    if (!n->close_fn) return 0;
+    if (!n->close_fn)
+        return 0;
     return n->close_fn(nid);
 }
 
 int pseudo_stat_path(const char *abspath, struct kernel_stat *st)
 {
-    if (!abspath || !st) return -PFS_EINVAL;
+    if (!abspath || !st)
+        return -PFS_EINVAL;
     /* /proc/self/fd/<N> */
     if (pfs_strncmp(abspath, "/proc/self/fd/", 14) == 0) {
         int nid = find_node("/proc/self/fd");
-        if (nid >= 0) { pseudo_fill_stat(nid, st); return 0; }
+        if (nid >= 0) {
+            pseudo_fill_stat(nid, st);
+            return 0;
+        }
     }
 
     /* /proc/<pid>  或  /proc/<pid>/status */
-    uint32_t pid; const char *rest;
+    uint32_t pid;
+    const char *rest;
     if (pfs_parse_proc_pid(abspath, &pid, &rest)) {
         return pfs_stat_pid_path(pid, rest, st);
     }
 
     int nid = find_node(abspath);
-    if (nid < 0) return -PFS_ENOENT;
+    if (nid < 0)
+        return -PFS_ENOENT;
     pseudo_fill_stat(nid, st);
     return 0;
 }
@@ -460,28 +526,32 @@ int pseudo_stat_path(const char *abspath, struct kernel_stat *st)
 void pseudo_fill_stat(int nid, struct kernel_stat *st)
 {
     memset(st, 0, sizeof(*st));
-    if (nid < 0 || nid >= NODE_COUNT) return;
+    if (nid < 0 || nid >= NODE_COUNT)
+        return;
     const pseudo_node_t *n = &g_nodes[nid];
-    st->st_dev     = 5;                    /* 虚拟设备号 */
-    st->st_ino     = (uint64_t)(unsigned)nid + 1U;
-    st->st_mode    = n->mode;
-    st->st_nlink   = 1;
+    st->st_dev = 5; /* 虚拟设备号 */
+    st->st_ino = (uint64_t)(unsigned)nid + 1U;
+    st->st_mode = n->mode;
+    st->st_nlink = 1;
     st->st_blksize = 4096;
-    st->st_rdev    = (uint64_t)n->rdev;
+    st->st_rdev = (uint64_t)n->rdev;
     /* 目录和符号链接给个合理的 size */
-    if (n->type == PSEUDO_LNK) st->st_size = 64;
-    if (n->type == PSEUDO_DIR) st->st_size = 4096;
+    if (n->type == PSEUDO_LNK)
+        st->st_size = 64;
+    if (n->type == PSEUDO_DIR)
+        st->st_size = 4096;
 }
 
 int pseudo_readlink(const char *abspath, char *buf, size_t bufsz)
 {
-    if (!abspath || !buf || !bufsz) return -PFS_EINVAL;
+    if (!abspath || !buf || !bufsz)
+        return -PFS_EINVAL;
 
     /* /proc/self/exe → 当前进程的可执行路径 */
     if (pfs_strcmp(abspath, "/proc/self/exe") == 0) {
-        task_t     *t   = task_current();
+        task_t *t = task_current();
         const char *exe = (t && t->exe_path[0]) ? t->exe_path : "/unknown";
-        size_t n   = pfs_strlen(exe);
+        size_t n = pfs_strlen(exe);
         size_t copy = n < bufsz ? n : bufsz;
         memcpy(buf, exe, copy);
         return (int)copy;
@@ -495,12 +565,15 @@ int pseudo_readlink(const char *abspath, char *buf, size_t bufsz)
             fdnum = fdnum * 10 + (*p++ - '0');
 
         const char *target = NULL;
-        if      (fdnum == 0) target = "/dev/stdin";
-        else if (fdnum == 1) target = "/dev/stdout";
-        else if (fdnum == 2) target = "/dev/stderr";
+        if (fdnum == 0)
+            target = "/dev/stdin";
+        else if (fdnum == 1)
+            target = "/dev/stdout";
+        else if (fdnum == 2)
+            target = "/dev/stderr";
 
         if (target) {
-            size_t n    = pfs_strlen(target);
+            size_t n = pfs_strlen(target);
             size_t copy = n < bufsz ? n : bufsz;
             memcpy(buf, target, copy);
             return (int)copy;

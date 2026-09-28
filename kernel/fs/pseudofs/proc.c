@@ -17,7 +17,8 @@ uint32_t pfs_task_pid(uint32_t slot)
     return g_task_pool[slot].id;
 }
 
-bool pfs_parse_proc_pid(const char *path, uint32_t *pid_out, const char **rest_out)
+bool pfs_parse_proc_pid(const char *path, uint32_t *pid_out,
+                        const char **rest_out)
 {
     if (pfs_strncmp(path, "/proc/", 6) != 0)
         return false;
@@ -68,11 +69,26 @@ static size_t format_status(char *tmp, size_t bufsz, task_t *t)
     }
 
     switch (t->state) {
-    case TASK_RUNNING: state_c = 'R'; state_s = "running"; break;
-    case TASK_READY:   state_c = 'R'; state_s = "running"; break;
-    case TASK_BLOCKED: state_c = 'S'; state_s = "sleeping"; break;
-    case TASK_DEAD:    state_c = 'Z'; state_s = "zombie"; break;
-    default:           state_c = 'S'; state_s = "sleeping"; break;
+    case TASK_RUNNING:
+        state_c = 'R';
+        state_s = "running";
+        break;
+    case TASK_READY:
+        state_c = 'R';
+        state_s = "running";
+        break;
+    case TASK_BLOCKED:
+        state_c = 'S';
+        state_s = "sleeping";
+        break;
+    case TASK_DEAD:
+        state_c = 'Z';
+        state_s = "zombie";
+        break;
+    default:
+        state_c = 'S';
+        state_s = "sleeping";
+        break;
     }
 
     pos += (size_t)pfs_puts(tmp, pos, bufsz, "Name:\t");
@@ -160,7 +176,8 @@ static int stat_read_task(task_t *t, uint64_t off, void *buf, size_t len)
     pos += (size_t)pfs_puts(tmp, pos, sizeof(tmp), nbuf);
     pos += (size_t)pfs_puts(tmp, pos, sizeof(tmp), " 0 0 20 0 1 0 0");
     pos += (size_t)pfs_puts(tmp, pos, sizeof(tmp), " 0 0");
-    pos += (size_t)pfs_puts(tmp, pos, sizeof(tmp),
+    pos += (size_t)pfs_puts(
+        tmp, pos, sizeof(tmp),
         " 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0\n");
 
     return pfs_copy_out(off, buf, len, tmp, pos);

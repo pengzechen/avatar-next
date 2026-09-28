@@ -12,13 +12,13 @@
 #include "exception.h"
 
 #if ARCH_AARCH64
-#  include "aarch64/syscall_abi.h"
+#include "aarch64/syscall_abi.h"
 #elif ARCH_RISCV64
-#  include "riscv64/syscall_abi.h"
+#include "riscv64/syscall_abi.h"
 #elif ARCH_X86_64
-#  include "x86_64/syscall_abi.h"
+#include "x86_64/syscall_abi.h"
 #else
-#  error "Unsupported architecture for syscall ABI"
+#error "Unsupported architecture for syscall ABI"
 #endif
 
 #endif /* SYSCALL_ABI_H */

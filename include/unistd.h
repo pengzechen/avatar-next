@@ -9,11 +9,11 @@
 
 /* ── 系统调用号 ───────────────────────────────────────────────── */
 
-#define SYS_EXIT          0
-#define SYS_YIELD         1
-#define SYS_GETPID        2
-#define SYS_SLEEP         3
-#define SYS_EXECVE        4
+#define SYS_EXIT         0
+#define SYS_YIELD        1
+#define SYS_GETPID       2
+#define SYS_SLEEP        3
+#define SYS_EXECVE       4
 #define SYS_BRK          10
 #define SYS_SBRK         11
 #define SYS_WRITE        0x4000

@@ -10,14 +10,14 @@
 #include "platform_cfg.h"
 
 /* ── Rootfs / RAMBLK 物理地址窗口 ─────────────────────────────── */
-#define RAMBLK_PHYS_BASE      g_mem_rootfs_base
-#define RAMBLK_SIZE           g_mem_rootfs_size
+#define RAMBLK_PHYS_BASE g_mem_rootfs_base
+#define RAMBLK_SIZE      g_mem_rootfs_size
 
 /* ── 区域大小与块参数 ─────────────────────────────────────────── */
-#define RAMBLK_SECTOR_SZ      512u
+#define RAMBLK_SECTOR_SZ 512u
 
 /* PMM 标记函数使用闭区间，因此 END 为最后一个字节地址。 */
-#define RAMBLK_PHYS_END_EXCL  (RAMBLK_PHYS_BASE + RAMBLK_SIZE)
-#define RAMBLK_PHYS_END       (RAMBLK_PHYS_END_EXCL - 1UL)
+#define RAMBLK_PHYS_END_EXCL (RAMBLK_PHYS_BASE + RAMBLK_SIZE)
+#define RAMBLK_PHYS_END      (RAMBLK_PHYS_END_EXCL - 1UL)
 
 #endif /* __RAMBLK_CFG_H__ */

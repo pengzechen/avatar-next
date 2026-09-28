@@ -17,28 +17,28 @@
 #include "klog.h"
 #include "string.h"
 
-#define GICD_CTLR        0x0000
-#define GICD_TYPER       0x0004
-#define GICD_IIDR        0x0008
-#define GICD_IGROUPR     0x0080
-#define GICD_ISENABLER   0x0100
-#define GICD_ICENABLER   0x0180
-#define GICD_ISPENDR     0x0200
-#define GICD_ICPENDR     0x0280
-#define GICD_ISACTIVER   0x0300
-#define GICD_ICACTIVER   0x0380
-#define GICD_IPRIORITYR  0x0400
-#define GICD_ITARGETSR   0x0800
-#define GICD_ICFGR       0x0c00
-#define GICD_IGRPMODR    0x0d00
-#define GICD_IROUTER     0x6000
-#define GICD_PIDR2       0xffe8
+#define GICD_CTLR       0x0000
+#define GICD_TYPER      0x0004
+#define GICD_IIDR       0x0008
+#define GICD_IGROUPR    0x0080
+#define GICD_ISENABLER  0x0100
+#define GICD_ICENABLER  0x0180
+#define GICD_ISPENDR    0x0200
+#define GICD_ICPENDR    0x0280
+#define GICD_ISACTIVER  0x0300
+#define GICD_ICACTIVER  0x0380
+#define GICD_IPRIORITYR 0x0400
+#define GICD_ITARGETSR  0x0800
+#define GICD_ICFGR      0x0c00
+#define GICD_IGRPMODR   0x0d00
+#define GICD_IROUTER    0x6000
+#define GICD_PIDR2      0xffe8
 
-#define GICD_CTLR_RWP    (1u << 31)
-#define GICD_REG_WORDS   32          /* 每个 word-indexed 寄存器块 32 个字 */
+#define GICD_CTLR_RWP  (1u << 31)
+#define GICD_REG_WORDS 32 /* 每个 word-indexed 寄存器块 32 个字 */
 
 /* 一个 word-indexed 寄存器块覆盖的字节数 */
-#define GICD_BLOCK_SIZE  (GICD_REG_WORDS * 4u)
+#define GICD_BLOCK_SIZE (GICD_REG_WORDS * 4u)
 
 static int word_index(uint64_t off, uint32_t base, uint32_t *index)
 {
@@ -83,15 +83,14 @@ static uint64_t vgic3d_read(mmio_device_t *dev, uint64_t off, uint8_t size,
          * LPIS/ESPI/安全扩展全 0（没有 LPI，也没有 SPI 之外的扩展）；
          * IDbits=15 → 16 位 INTID，与 QEMU virt 的 GICv3 一致。*/
         return ((uint64_t)(VGIC3_MAX_IRQS / 32 - 1) & 0x1fu) |
-               (((uint64_t)(vgic->nr_vcpus - 1) & 0x7u) << 5) |
-               (0xFu << 19);
+               (((uint64_t)(vgic->nr_vcpus - 1) & 0x7u) << 5) | (0xFu << 19);
     }
 
     if (off == GICD_IIDR)
-        return 0x0202043Bu;   /* ARM, GICv3 架构修订 3 */
+        return 0x0202043Bu; /* ARM, GICv3 架构修订 3 */
 
     if (off == GICD_PIDR2)
-        return 0x30u;   /* 架构修订 = GICv3 */
+        return 0x30u; /* 架构修订 = GICv3 */
 
     if (word_index(off, GICD_ISENABLER, &word) ||
         word_index(off, GICD_ICENABLER, &word))
@@ -171,19 +170,19 @@ static void vgic3d_write(mmio_device_t *dev, uint64_t off, uint8_t size,
     }
 
     if (off >= GICD_ITARGETSR && off < GICD_ITARGETSR + 0x400u)
-        return;   /* ARE: RES0 */
+        return; /* ARE: RES0 */
 
     /* IROUTER：8 字节/SPI，直接存进后备存储即可（本 VM 没有 SPI）*/
     reg_write(vgic, (uint32_t)off, size, value);
 }
 
 static const mmio_dev_ops_t g_vgic3d_ops = {
-    .name           = "vgic3d",
-    .base           = VGIC3D_BASE,
-    .size           = VGIC3D_SIZE,
-    .read           = NULL,
-    .write          = NULL,
-    .read_for_vcpu  = vgic3d_read,
+    .name = "vgic3d",
+    .base = VGIC3D_BASE,
+    .size = VGIC3D_SIZE,
+    .read = NULL,
+    .write = NULL,
+    .read_for_vcpu = vgic3d_read,
     .write_for_vcpu = vgic3d_write,
 };
 
@@ -192,7 +191,7 @@ int vgic3d_init(mmio_device_t *dev, mmio_bus_t *bus, vgic3_t *vgic)
     if (!dev || !bus || !vgic)
         return -1;
 
-    dev->ops  = &g_vgic3d_ops;
+    dev->ops = &g_vgic3d_ops;
     dev->priv = vgic;
 
     if (mmio_bus_register(bus, dev) != 0)

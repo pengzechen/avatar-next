@@ -20,43 +20,43 @@
 static const rkpm_domain_t rk3588_npu_domains[] = {
     /* PD_NPU */
     {
-        .name               = "npu",
-        .pwr_mask           = (1u << 1),
-        .pwr_w_mask         = (1u << 1) << 16,
-        .status_mask        = (1u << 1),  /* 0 = on */
+        .name = "npu",
+        .pwr_mask = (1u << 1),
+        .pwr_w_mask = (1u << 1) << 16,
+        .status_mask = (1u << 1), /* 0 = on */
         .repair_status_mask = 0,
-        .req_mask           = 0,
-        .idle_mask          = 0,
+        .req_mask = 0,
+        .idle_mask = 0,
     },
     /* PD_NPUTOP */
     {
-        .name               = "nputop",
-        .pwr_mask           = (1u << 3),
-        .pwr_w_mask         = (1u << 3) << 16,
-        .status_mask        = 0,
-        .repair_status_mask = (1u << 2),  /* repair_status bit 2 = ready */
-        .req_mask           = (1u << 1),
-        .idle_mask          = (1u << 1),
+        .name = "nputop",
+        .pwr_mask = (1u << 3),
+        .pwr_w_mask = (1u << 3) << 16,
+        .status_mask = 0,
+        .repair_status_mask = (1u << 2), /* repair_status bit 2 = ready */
+        .req_mask = (1u << 1),
+        .idle_mask = (1u << 1),
     },
     /* PD_NPU1 */
     {
-        .name               = "npu1",
-        .pwr_mask           = (1u << 4),
-        .pwr_w_mask         = (1u << 4) << 16,
-        .status_mask        = 0,
+        .name = "npu1",
+        .pwr_mask = (1u << 4),
+        .pwr_w_mask = (1u << 4) << 16,
+        .status_mask = 0,
         .repair_status_mask = (1u << 3),
-        .req_mask           = (1u << 2),
-        .idle_mask          = (1u << 2),
+        .req_mask = (1u << 2),
+        .idle_mask = (1u << 2),
     },
     /* PD_NPU2 */
     {
-        .name               = "npu2",
-        .pwr_mask           = (1u << 5),
-        .pwr_w_mask         = (1u << 5) << 16,
-        .status_mask        = 0,
+        .name = "npu2",
+        .pwr_mask = (1u << 5),
+        .pwr_w_mask = (1u << 5) << 16,
+        .status_mask = 0,
         .repair_status_mask = (1u << 4),
-        .req_mask           = (1u << 3),
-        .idle_mask          = (1u << 3),
+        .req_mask = (1u << 3),
+        .idle_mask = (1u << 3),
     },
 };
 

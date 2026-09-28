@@ -22,84 +22,88 @@
  * ================================================================ */
 
 /* Hypervisor CSRs（HS-mode 控制虚拟化）*/
-#define CSR_HSTATUS        0x600
-#define CSR_HEDELEG        0x602   /* 异常委托到 VS-mode          */
-#define CSR_HIDELEG        0x603   /* 中断委托到 VS-mode          */
-#define CSR_HIE            0x604
-#define CSR_HTIMEDELTA     0x605
-#define CSR_HCOUNTEREN     0x606
-#define CSR_HGEIE          0x607
-#define CSR_HTVAL          0x643
-#define CSR_HIP            0x644
-#define CSR_HVIP           0x645
-#define CSR_HTINST         0x64a
-#define CSR_HGEIP          0xe12
-#define CSR_HENVCFG        0x60a
-#define CSR_HGATP          0x680   /* Second-level page table (Stage-2) */
-#define CSR_HTIMEDELTAH    0x615   /* 32-bit 高位（RV32 only）    */
+#define CSR_HSTATUS     0x600
+#define CSR_HEDELEG     0x602 /* 异常委托到 VS-mode          */
+#define CSR_HIDELEG     0x603 /* 中断委托到 VS-mode          */
+#define CSR_HIE         0x604
+#define CSR_HTIMEDELTA  0x605
+#define CSR_HCOUNTEREN  0x606
+#define CSR_HGEIE       0x607
+#define CSR_HTVAL       0x643
+#define CSR_HIP         0x644
+#define CSR_HVIP        0x645
+#define CSR_HTINST      0x64a
+#define CSR_HGEIP       0xe12
+#define CSR_HENVCFG     0x60a
+#define CSR_HGATP       0x680 /* Second-level page table (Stage-2) */
+#define CSR_HTIMEDELTAH 0x615 /* 32-bit 高位（RV32 only）    */
 
 /* VS-mode CSRs（虚拟的 S-mode 寄存器，HS-mode 可直接读写）*/
-#define CSR_VSSTATUS       0x200
-#define CSR_VSIE           0x204
-#define CSR_VSTVEC         0x205
-#define CSR_VSSCRATCH      0x240
-#define CSR_VSEPC          0x241
-#define CSR_VSCAUSE        0x242
-#define CSR_VSTVAL         0x243
-#define CSR_VSIP           0x244
-#define CSR_VSATP          0x280
+#define CSR_VSSTATUS  0x200
+#define CSR_VSIE      0x204
+#define CSR_VSTVEC    0x205
+#define CSR_VSSCRATCH 0x240
+#define CSR_VSEPC     0x241
+#define CSR_VSCAUSE   0x242
+#define CSR_VSTVAL    0x243
+#define CSR_VSIP      0x244
+#define CSR_VSATP     0x280
 
 /* ================================================================
  * hstatus 字段位定义
  * ================================================================ */
-#define HSTATUS_VSBE    (1UL <<  5)  /* VS-mode big-endian              */
-#define HSTATUS_GVA     (1UL <<  6)  /* guest virtual address in htval  */
-#define HSTATUS_SPV     (1UL <<  7)  /* Supervisor Previous Virtualization
+#define HSTATUS_VSBE (1UL << 5) /* VS-mode big-endian              */
+#define HSTATUS_GVA  (1UL << 6) /* guest virtual address in htval  */
+#define HSTATUS_SPV \
+    (1UL << 7) /* Supervisor Previous Virtualization
                                         =1: sret 进入 VS-mode
                                         =0: sret 进入 HS/U-mode          */
-#define HSTATUS_SPVP    (1UL <<  8)  /* SPV 时的先前 VS priv 级别
+#define HSTATUS_SPVP \
+    (1UL << 8)                    /* SPV 时的先前 VS priv 级别
                                         =1: VS-mode; =0: VU-mode        */
-#define HSTATUS_HU      (1UL <<  9)  /* 允许 U-mode 使用 hypervisor 指令 */
-#define HSTATUS_VGEIN   (6)          /* 虚拟化中断 external 号，shift   */
-#define HSTATUS_VTVM    (1UL << 20)  /* 陷阱 sfence.vma in VS-mode      */
-#define HSTATUS_VTW     (1UL << 21)  /* 陷阱 WFI in VS-mode             */
-#define HSTATUS_VTSR    (1UL << 22)  /* 陷阱 sret in VS-mode            */
-#define HSTATUS_VSXL    (32)         /* VS XLEN，shift                  */
+#define HSTATUS_HU    (1UL << 9)  /* 允许 U-mode 使用 hypervisor 指令 */
+#define HSTATUS_VGEIN (6)         /* 虚拟化中断 external 号，shift   */
+#define HSTATUS_VTVM  (1UL << 20) /* 陷阱 sfence.vma in VS-mode      */
+#define HSTATUS_VTW   (1UL << 21) /* 陷阱 WFI in VS-mode             */
+#define HSTATUS_VTSR  (1UL << 22) /* 陷阱 sret in VS-mode            */
+#define HSTATUS_VSXL  (32)        /* VS XLEN，shift                  */
 
 /* ================================================================
  * hstatus.SPV + SPVP 组合：进入 VS-mode 时设置
  *   SPV=1: sret 进入 VS-mode
  *   SPVP=1: VS-mode（非 VU-mode）
  * ================================================================ */
-#define HSTATUS_SPV_VS  (HSTATUS_SPV | HSTATUS_SPVP)
+#define HSTATUS_SPV_VS (HSTATUS_SPV | HSTATUS_SPVP)
 
 /* ================================================================
  * scause 中 VS-mode ecall 的编号
  * VS-mode ecall: cause=10（与普通 U-mode ecall=8 不同）
  * ================================================================ */
-#define CAUSE_VS_ECALL   10u
+#define CAUSE_VS_ECALL 10u
 
 /* ================================================================
  * hedeleg 建议委托给 VS-mode 的异常掩码
  * 常用：用户 ecall(8)、缺页(12/13/15)、非对齐(0/4/6)
  * ================================================================ */
-#define HEDELEG_COMMON  ((1UL << 0)  |   /* Insn addr misalign          */ \
-                         (1UL << 3)  |   /* Breakpoint                  */ \
-                         (1UL << 4)  |   /* Load addr misalign          */ \
-                         (1UL << 5)  |   /* Load access fault           */ \
-                         (1UL << 6)  |   /* Store addr misalign         */ \
-                         (1UL << 7)  |   /* Store access fault          */ \
-                         (1UL << 8)  |   /* U-mode ecall                */ \
-                         (1UL << 12) |   /* Insn page fault             */ \
-                         (1UL << 13) |   /* Load page fault             */ \
-                         (1UL << 15))    /* Store page fault            */
+#define HEDELEG_COMMON \
+    ((1UL << 0) |  /* Insn addr misalign          */ \
+     (1UL << 3) |  /* Breakpoint                  */ \
+     (1UL << 4) |  /* Load addr misalign          */ \
+     (1UL << 5) |  /* Load access fault           */ \
+     (1UL << 6) |  /* Store addr misalign         */ \
+     (1UL << 7) |  /* Store access fault          */ \
+     (1UL << 8) |  /* U-mode ecall                */ \
+     (1UL << 12) | /* Insn page fault             */ \
+     (1UL << 13) | /* Load page fault             */ \
+     (1UL << 15))  /* Store page fault            */
 /* 注意：bit1(insn access fault) 和 bit2(illegal insn/WFI virtual trap)
  *       不委托：bit2=virtual instruction 陷阱（hstatus.VTW=1 时 WFI）需到 HS-mode */
 
 /* hideleg 建议委托给 VS-mode 的中断掩码（VS-mode 软件/定时器/外部中断）*/
-#define HIDELEG_COMMON  ((1UL << 2)  |   /* VS software int            */ \
-                         (1UL << 6)  |   /* VS timer int               */ \
-                         (1UL << 10))    /* VS external int            */
+#define HIDELEG_COMMON \
+    ((1UL << 2) | /* VS software int            */ \
+     (1UL << 6) | /* VS timer int               */ \
+     (1UL << 10)) /* VS external int            */
 
 /* ================================================================
  * Hypercall 编号（与 apps/riscv64/guest_test.S 约定一致）
@@ -107,21 +111,22 @@
  *   使用魔数 0x584b_00xx（"XK"）避免与真实 SBI 号（0/1/2/…）冲突，
  *   使 VMM 可同时模拟标准 SBI（见 hext_run.c handle_vs_ecall）。
  * ================================================================ */
-#define GUEST_ECALL_DONE   0x584b0000UL  /* guest 正常退出       → EL2_VMEXIT  */
-#define GUEST_ECALL_PRINT  0x584b0001UL  /* 打印迭代计数（a0=iter）→ EL2_RESUME  */
+#define GUEST_ECALL_DONE 0x584b0000UL /* guest 正常退出       → EL2_VMEXIT  */
+#define GUEST_ECALL_PRINT \
+    0x584b0001UL /* 打印迭代计数（a0=iter）→ EL2_RESUME  */
 
 /* ================================================================
  * SBI（Supervisor Binary Interface）子集 —— 移植自 x-kernel
  *   arch/riscv64/mod.rs。guest 以 a7=ext, a6=func, a0..=args 调用 ecall。
  * ================================================================ */
-#define SBI_SUCCESS               0
-#define SBI_ERR_NOT_SUPPORTED     ((uint64_t)(-2))
+#define SBI_SUCCESS           0
+#define SBI_ERR_NOT_SUPPORTED ((uint64_t)(-2))
 /* Legacy 扩展（a7 直接是功能号）*/
-#define SBI_LEGACY_SET_TIMER      0x00
+#define SBI_LEGACY_SET_TIMER       0x00
 #define SBI_LEGACY_CONSOLE_PUTCHAR 0x01
 #define SBI_LEGACY_CONSOLE_GETCHAR 0x02
 /* Legacy 扩展续 */
-#define SBI_LEGACY_SHUTDOWN       0x08
+#define SBI_LEGACY_SHUTDOWN 0x08
 
 /* SBI 返回码（a0）*/
 #define SBI_ERR_FAILED            ((uint64_t)(-1))
@@ -129,27 +134,27 @@
 #define SBI_ERR_ALREADY_AVAILABLE ((uint64_t)(-6))
 
 /* 现代扩展（a7=EID, a6=FID）*/
-#define SBI_EXT_BASE              0x10
-#define SBI_BASE_GET_SPEC_VERSION 0
-#define SBI_BASE_GET_IMPL_ID      1
-#define SBI_BASE_GET_IMPL_VERSION 2
-#define SBI_BASE_PROBE_EXTENSION  3
-#define SBI_BASE_GET_MVENDORID    4
-#define SBI_BASE_GET_MARCHID      5
-#define SBI_BASE_GET_MIMPID       6
-#define SBI_EXT_TIME              0x54494d45UL  /* "TIME" */
-#define SBI_EXT_RFENCE            0x52464e43UL  /* "RFNC" */
-#define SBI_EXT_IPI               0x735049UL    /* "sPI"  */
-#define SBI_EXT_HSM               0x48534dUL    /* "HSM"  */
-#define SBI_EXT_SRST              0x53525354UL  /* "SRST" */
-#define SBI_TIME_SET_TIMER        0
-#define SBI_HSM_HART_START        0
-#define SBI_HSM_HART_STOP         1
-#define SBI_HSM_HART_GET_STATUS   2
-#define SBI_SRST_RESET            0
-#define SBI_SRST_RESET_TYPE_SHUTDOWN 0
+#define SBI_EXT_BASE                    0x10
+#define SBI_BASE_GET_SPEC_VERSION       0
+#define SBI_BASE_GET_IMPL_ID            1
+#define SBI_BASE_GET_IMPL_VERSION       2
+#define SBI_BASE_PROBE_EXTENSION        3
+#define SBI_BASE_GET_MVENDORID          4
+#define SBI_BASE_GET_MARCHID            5
+#define SBI_BASE_GET_MIMPID             6
+#define SBI_EXT_TIME                    0x54494d45UL /* "TIME" */
+#define SBI_EXT_RFENCE                  0x52464e43UL /* "RFNC" */
+#define SBI_EXT_IPI                     0x735049UL   /* "sPI"  */
+#define SBI_EXT_HSM                     0x48534dUL   /* "HSM"  */
+#define SBI_EXT_SRST                    0x53525354UL /* "SRST" */
+#define SBI_TIME_SET_TIMER              0
+#define SBI_HSM_HART_START              0
+#define SBI_HSM_HART_STOP               1
+#define SBI_HSM_HART_GET_STATUS         2
+#define SBI_SRST_RESET                  0
+#define SBI_SRST_RESET_TYPE_SHUTDOWN    0
 #define SBI_SRST_RESET_TYPE_COLD_REBOOT 1
-#define SBI_SRST_RESET_REASON_NONE 0
+#define SBI_SRST_RESET_REASON_NONE      0
 
 /* ================================================================
  * H-extension CSR 访问宏
@@ -183,75 +188,77 @@
  * 下面用两级宏把参数强制展开成数字再字符串化：C 的 # 运算符不会展开
  * 宏参数，直接写 `"csrw " #csr` 会拼出字面量 "csr" 而不是它的值。
  * ================================================================ */
-#define RV_STR_INNER(x)  #x
-#define RV_STR(x)        RV_STR_INNER(x)
+#define RV_STR_INNER(x) #x
+#define RV_STR(x)       RV_STR_INNER(x)
 
 #define RV_CSR_READ(csr) \
-    __extension__({ uint64_t _rv_v; \
-                    __asm__ volatile("csrr %0, " RV_STR(csr) : "=r"(_rv_v)); \
-                    _rv_v; })
+    __extension__({ \
+        uint64_t _rv_v; \
+        __asm__ volatile("csrr %0, " RV_STR(csr) : "=r"(_rv_v)); \
+        _rv_v; \
+    })
 #define RV_CSR_WRITE(csr, val) \
-    __asm__ volatile("csrw " RV_STR(csr) ", %0" \
-                     :: "r"((uint64_t)(val)) : "memory")
+    __asm__ volatile("csrw " RV_STR(csr) ", %0" ::"r"((uint64_t)(val)) \
+                     : "memory")
 #define RV_CSR_SET(csr, bits) \
-    __asm__ volatile("csrs " RV_STR(csr) ", %0" \
-                     :: "r"((uint64_t)(bits)) : "memory")
+    __asm__ volatile("csrs " RV_STR(csr) ", %0" ::"r"((uint64_t)(bits)) \
+                     : "memory")
 #define RV_CSR_CLEAR(csr, bits) \
-    __asm__ volatile("csrc " RV_STR(csr) ", %0" \
-                     :: "r"((uint64_t)(bits)) : "memory")
+    __asm__ volatile("csrc " RV_STR(csr) ", %0" ::"r"((uint64_t)(bits)) \
+                     : "memory")
 
 /* hstatus（数值 0x600 —— 写符号名会变成 0x200=vsstatus，见上）*/
-#define READ_HSTATUS()          RV_CSR_READ(CSR_HSTATUS)
-#define WRITE_HSTATUS(v)        RV_CSR_WRITE(CSR_HSTATUS, v)
-#define SET_HSTATUS(bits)       RV_CSR_SET(CSR_HSTATUS, bits)
-#define CLEAR_HSTATUS(bits)     RV_CSR_CLEAR(CSR_HSTATUS, bits)
+#define READ_HSTATUS()      RV_CSR_READ(CSR_HSTATUS)
+#define WRITE_HSTATUS(v)    RV_CSR_WRITE(CSR_HSTATUS, v)
+#define SET_HSTATUS(bits)   RV_CSR_SET(CSR_HSTATUS, bits)
+#define CLEAR_HSTATUS(bits) RV_CSR_CLEAR(CSR_HSTATUS, bits)
 
 /* hedeleg / hideleg（数值 0x602 / 0x603）*/
-#define WRITE_HEDELEG(v)        RV_CSR_WRITE(CSR_HEDELEG, v)
-#define READ_HEDELEG()          RV_CSR_READ(CSR_HEDELEG)
-#define WRITE_HIDELEG(v)        RV_CSR_WRITE(CSR_HIDELEG, v)
-#define READ_HIDELEG()          RV_CSR_READ(CSR_HIDELEG)
+#define WRITE_HEDELEG(v) RV_CSR_WRITE(CSR_HEDELEG, v)
+#define READ_HEDELEG()   RV_CSR_READ(CSR_HEDELEG)
+#define WRITE_HIDELEG(v) RV_CSR_WRITE(CSR_HIDELEG, v)
+#define READ_HIDELEG()   RV_CSR_READ(CSR_HIDELEG)
 
 /* hie（数值 0x604）*/
-#define WRITE_HIE(v)            RV_CSR_WRITE(CSR_HIE, v)
-#define SET_HIE(bits)           RV_CSR_SET(CSR_HIE, bits)
+#define WRITE_HIE(v)  RV_CSR_WRITE(CSR_HIE, v)
+#define SET_HIE(bits) RV_CSR_SET(CSR_HIE, bits)
 
 /* hgatp（数值）*/
-#define READ_HGATP()            RV_CSR_READ(CSR_HGATP)
-#define WRITE_HGATP(v)          RV_CSR_WRITE(CSR_HGATP, v)
+#define READ_HGATP()   RV_CSR_READ(CSR_HGATP)
+#define WRITE_HGATP(v) RV_CSR_WRITE(CSR_HGATP, v)
 
 /* hcounteren（数值）：不置位的话 guest 读 time/cycle/instret 会非法指令 */
-#define READ_HCOUNTEREN()       RV_CSR_READ(CSR_HCOUNTEREN)
-#define WRITE_HCOUNTEREN(v)     RV_CSR_WRITE(CSR_HCOUNTEREN, v)
-#define HCOUNTEREN_CY_TM_IR     0x7UL   /* CY | TM | IR */
+#define READ_HCOUNTEREN()   RV_CSR_READ(CSR_HCOUNTEREN)
+#define WRITE_HCOUNTEREN(v) RV_CSR_WRITE(CSR_HCOUNTEREN, v)
+#define HCOUNTEREN_CY_TM_IR 0x7UL /* CY | TM | IR */
 
 /* VS-mode 寄存器（HS-mode 可直接读写，一律数值）*/
-#define READ_VSSTATUS()         RV_CSR_READ(CSR_VSSTATUS)
-#define WRITE_VSSTATUS(v)       RV_CSR_WRITE(CSR_VSSTATUS, v)
+#define READ_VSSTATUS()   RV_CSR_READ(CSR_VSSTATUS)
+#define WRITE_VSSTATUS(v) RV_CSR_WRITE(CSR_VSSTATUS, v)
 
-#define READ_VSIE()             RV_CSR_READ(CSR_VSIE)
-#define WRITE_VSIE(v)           RV_CSR_WRITE(CSR_VSIE, v)
+#define READ_VSIE()   RV_CSR_READ(CSR_VSIE)
+#define WRITE_VSIE(v) RV_CSR_WRITE(CSR_VSIE, v)
 
-#define READ_VSTVEC()           RV_CSR_READ(CSR_VSTVEC)
-#define WRITE_VSTVEC(v)         RV_CSR_WRITE(CSR_VSTVEC, v)
+#define READ_VSTVEC()   RV_CSR_READ(CSR_VSTVEC)
+#define WRITE_VSTVEC(v) RV_CSR_WRITE(CSR_VSTVEC, v)
 
-#define READ_VSSCRATCH()        RV_CSR_READ(CSR_VSSCRATCH)
-#define WRITE_VSSCRATCH(v)      RV_CSR_WRITE(CSR_VSSCRATCH, v)
+#define READ_VSSCRATCH()   RV_CSR_READ(CSR_VSSCRATCH)
+#define WRITE_VSSCRATCH(v) RV_CSR_WRITE(CSR_VSSCRATCH, v)
 
-#define READ_VSEPC()            RV_CSR_READ(CSR_VSEPC)
-#define WRITE_VSEPC(v)          RV_CSR_WRITE(CSR_VSEPC, v)
+#define READ_VSEPC()   RV_CSR_READ(CSR_VSEPC)
+#define WRITE_VSEPC(v) RV_CSR_WRITE(CSR_VSEPC, v)
 
-#define READ_VSCAUSE()          RV_CSR_READ(CSR_VSCAUSE)
-#define WRITE_VSCAUSE(v)        RV_CSR_WRITE(CSR_VSCAUSE, v)
+#define READ_VSCAUSE()   RV_CSR_READ(CSR_VSCAUSE)
+#define WRITE_VSCAUSE(v) RV_CSR_WRITE(CSR_VSCAUSE, v)
 
-#define READ_VSTVAL()           RV_CSR_READ(CSR_VSTVAL)
-#define WRITE_VSTVAL(v)         RV_CSR_WRITE(CSR_VSTVAL, v)
+#define READ_VSTVAL()   RV_CSR_READ(CSR_VSTVAL)
+#define WRITE_VSTVAL(v) RV_CSR_WRITE(CSR_VSTVAL, v)
 
-#define READ_VSATP()            RV_CSR_READ(CSR_VSATP)
-#define WRITE_VSATP(v)          RV_CSR_WRITE(CSR_VSATP, v)
+#define READ_VSATP()   RV_CSR_READ(CSR_VSATP)
+#define WRITE_VSATP(v) RV_CSR_WRITE(CSR_VSATP, v)
 
 /* htval（Stage-2 陷阱：guest 物理地址，数值）*/
-#define READ_HTVAL()            RV_CSR_READ(CSR_HTVAL)
+#define READ_HTVAL() RV_CSR_READ(CSR_HTVAL)
 
 /*
  * 注：**不要**试图在这里读 misa 来判断 H 扩展。
@@ -272,38 +279,38 @@
  *   hvip 的 VS 位由 HS-mode 置位后，VS-mode 看到对应的 sip 位挂起，
  *   从而实现「不依赖 vPLIC/vGIC 的定时器与外部中断注入」。
  * ================================================================ */
-#define HVIP_VSTIP      (1UL << 6)    /* VS timer 中断挂起      */
-#define HVIP_VSEIP      (1UL << 10)   /* VS external 中断挂起   */
-#define HIE_VSTIE       (1UL << 6)    /* VS timer 中断使能      */
-#define HIE_VSEIE       (1UL << 10)   /* VS external 中断使能   */
+#define HVIP_VSTIP (1UL << 6)  /* VS timer 中断挂起      */
+#define HVIP_VSEIP (1UL << 10) /* VS external 中断挂起   */
+#define HIE_VSTIE  (1UL << 6)  /* VS timer 中断使能      */
+#define HIE_VSEIE  (1UL << 10) /* VS external 中断使能   */
 
 /*
  * 注：本工具链（gcc/as）的 RISC-V 汇编器不识别 hvip/hie 的符号名
  *     （与 hgatp 同理），必须用数值 CSR 地址 + 内联汇编。
  */
-#define CSR_HVIP_NUM    0x645u
-#define CSR_HIE_NUM     0x604u
+#define CSR_HVIP_NUM 0x645u
+#define CSR_HIE_NUM  0x604u
 
 static inline uint64_t hext_read_hvip(void)
 {
     uint64_t v;
-    __asm__ volatile("csrr %0, 0x645" : "=r"(v) :: "memory");
+    __asm__ volatile("csrr %0, 0x645" : "=r"(v)::"memory");
     return v;
 }
 
 static inline void hext_set_hvip_bits(uint64_t bits)
 {
-    __asm__ volatile("csrs 0x645, %0" :: "r"(bits) : "memory");
+    __asm__ volatile("csrs 0x645, %0" ::"r"(bits) : "memory");
 }
 
 static inline void hext_clear_hvip_bits(uint64_t bits)
 {
-    __asm__ volatile("csrc 0x645, %0" :: "r"(bits) : "memory");
+    __asm__ volatile("csrc 0x645, %0" ::"r"(bits) : "memory");
 }
 
 static inline void hext_set_hie_bits(uint64_t bits)
 {
-    __asm__ volatile("csrs 0x604, %0" :: "r"(bits) : "memory");
+    __asm__ volatile("csrs 0x604, %0" ::"r"(bits) : "memory");
 }
 
 /* 设置/清除 VS 定时器中断挂起 */

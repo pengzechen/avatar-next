@@ -10,8 +10,6 @@
  * @date 2024
  */
 
-
-
 #ifndef __TCR_H__
 #define __TCR_H__
 
@@ -31,12 +29,12 @@
 
 /* 高地址空间（TTBR1_EL1）翻译控制 */
 #define TCR_T1SZ(x)  (((x) & 0x3F) << 16) /* 高地址空间的区域大小 (6 位) */
-#define TCR_A1       (1 << 22)            /* 选择 TTBR0_EL1 或 TTBR1_EL1 作为 ASID 选择 */
-#define TCR_EPD1     (1 << 23)            /* 禁用 TTBR1_EL1 表项 */
-#define TCR_IRGN1(x) (((x) & 0x3) << 24)  /* 高地址空间的内部缓存属性 (2 位) */
-#define TCR_ORGN1(x) (((x) & 0x3) << 26)  /* 高地址空间的外部缓存属性 (2 位) */
-#define TCR_SH1(x)   (((x) & 0x3) << 28)  /* 高地址空间的共享属性 (2 位) */
-#define TCR_TG1(x)   (((x) & 0x3) << 30)  /* 高地址空间的翻译粒度 (2 位) */
+#define TCR_A1       (1 << 22) /* 选择 TTBR0_EL1 或 TTBR1_EL1 作为 ASID 选择 */
+#define TCR_EPD1     (1 << 23) /* 禁用 TTBR1_EL1 表项 */
+#define TCR_IRGN1(x) (((x) & 0x3) << 24) /* 高地址空间的内部缓存属性 (2 位) */
+#define TCR_ORGN1(x) (((x) & 0x3) << 26) /* 高地址空间的外部缓存属性 (2 位) */
+#define TCR_SH1(x)   (((x) & 0x3) << 28) /* 高地址空间的共享属性 (2 位) */
+#define TCR_TG1(x)   (((x) & 0x3) << 30) /* 高地址空间的翻译粒度 (2 位) */
 
 /* 物理地址大小 */
 #define TCR_IPS(x) (((x) & 0x7) << 32) /* 物理地址大小 (3 位) */
@@ -55,12 +53,13 @@
  * dirty cache line 中（U-Boot 开启了 D-cache），Walker
  * 读到全 0 → Level-0 translation fault。
  */
-#define TCR_EL1 (TCR_T0SZ(64 - 48) | TCR_T1SZ(64 - 48) | \
-                 TCR_TG0(0) | TCR_TG1(2) | \
-                 TCR_IRGN0(1) | TCR_ORGN0(1) | TCR_SH0(3) | \
-                 TCR_IRGN1(1) | TCR_ORGN1(1) | TCR_SH1(3))
+#define TCR_EL1 \
+    (TCR_T0SZ(64 - 48) | TCR_T1SZ(64 - 48) | TCR_TG0(0) | TCR_TG1(2) | \
+     TCR_IRGN0(1) | TCR_ORGN0(1) | TCR_SH0(3) | TCR_IRGN1(1) | TCR_ORGN1(1) | \
+     TCR_SH1(3))
 
 /* el2 的设置可能不同 */
-#define TCR_EL2 (TCR_T0SZ(64 - 48) | TCR_TG0(0) | TCR_IRGN0(1) | TCR_ORGN0(1) | TCR_SH0(3))
+#define TCR_EL2 \
+    (TCR_T0SZ(64 - 48) | TCR_TG0(0) | TCR_IRGN0(1) | TCR_ORGN0(1) | TCR_SH0(3))
 
 #endif /* __TCR_H__ */

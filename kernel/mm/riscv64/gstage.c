@@ -32,20 +32,20 @@
 #include "string.h"
 
 /* ── RISC-V PTE 位（S-stage / G-stage 通用）─────────────────── */
-#define PTE_V   (1ULL << 0)
-#define PTE_R   (1ULL << 1)
-#define PTE_W   (1ULL << 2)
-#define PTE_X   (1ULL << 3)
-#define PTE_U   (1ULL << 4)
-#define PTE_A   (1ULL << 6)
-#define PTE_D   (1ULL << 7)
+#define PTE_V (1ULL << 0)
+#define PTE_R (1ULL << 1)
+#define PTE_W (1ULL << 2)
+#define PTE_X (1ULL << 3)
+#define PTE_U (1ULL << 4)
+#define PTE_A (1ULL << 6)
+#define PTE_D (1ULL << 7)
 
 /* RAM 页：可读可写可执行。U 位在 G-stage 里不参与权限判定，与老实现保持一致。*/
-#define GSTAGE_RAM_FLAGS  (PTE_V | PTE_R | PTE_W | PTE_X | PTE_U | PTE_A | PTE_D)
+#define GSTAGE_RAM_FLAGS (PTE_V | PTE_R | PTE_W | PTE_X | PTE_U | PTE_A | PTE_D)
 
 /* PTE 里 PPN 的存放位置：Sv39 是 pte[53:10] = PPN */
-#define PTE_PPN_SHIFT  10
-#define PTE_PPN_MASK   ((1ULL << 44) - 1)
+#define PTE_PPN_SHIFT 10
+#define PTE_PPN_MASK  ((1ULL << 44) - 1)
 
 /*
  * ⚠️ PTE → PA 必须走移位，**不能**像 ARM 的 LPAE 那样直接 `pte & ~0xFFF`。
@@ -59,7 +59,7 @@
  *     而真正的页一页都没还回去。
  * 两处都不会报"翻译错了"，只会报各自的表象。
  */
-#define PTE_TO_PA(e)   ((((e) >> PTE_PPN_SHIFT) & PTE_PPN_MASK) << 12)
+#define PTE_TO_PA(e) ((((e) >> PTE_PPN_SHIFT) & PTE_PPN_MASK) << 12)
 
 /* ── 静态表：每个 VM 一组（BSS）──────────────────────────────
  *
@@ -77,7 +77,7 @@
  */
 typedef struct {
     uint64_t entry[GSTAGE_ROOT_ENTRIES];
-    uint8_t  _pad[16384 - GSTAGE_ROOT_ENTRIES * sizeof(uint64_t)];
+    uint8_t _pad[16384 - GSTAGE_ROOT_ENTRIES * sizeof(uint64_t)];
 } gstage_root_page_t;
 
 static gstage_root_page_t g_gstage_root[GSTAGE_MAX_VMS]
@@ -89,9 +89,18 @@ static uint64_t g_gstage_l1[GSTAGE_MAX_VMS][4][GSTAGE_L1_ENTRIES]
 
 /* ── 内部工具 ─────────────────────────────────────────────── */
 
-static inline int root_index(uint64_t gpa) { return (int)((gpa >> 30) & 0x7FF); }
-static inline int l1_index(uint64_t gpa)   { return (int)((gpa >> 21) & 0x1FF); }
-static inline int l0_index(uint64_t gpa)   { return (int)((gpa >> 12) & 0x1FF); }
+static inline int root_index(uint64_t gpa)
+{
+    return (int)((gpa >> 30) & 0x7FF);
+}
+static inline int l1_index(uint64_t gpa)
+{
+    return (int)((gpa >> 21) & 0x1FF);
+}
+static inline int l0_index(uint64_t gpa)
+{
+    return (int)((gpa >> 12) & 0x1FF);
+}
 
 /*
  * RAM 窗口内的 2 MiB 块序号（0..GSTAGE_MAX_L0_TABLES-1），窗口外返回 -1。
@@ -155,12 +164,12 @@ void rv_gstage_vm_init(gstage_ctx_t *g, uint32_t slot, uint32_t vmid,
     }
 
     memset(g, 0, sizeof(*g));
-    g->slot     = slot;
-    g->vmid     = vmid & 0x3FFF;        /* hgatp.VMID 是 14 位 */
+    g->slot = slot;
+    g->vmid = vmid & 0x3FFF; /* hgatp.VMID 是 14 位 */
     g->ram_base = ram_base;
     g->ram_size = ram_size;
-    g->ram_end  = ram_base + ram_size;
-    g->root     = g_gstage_root[slot].entry;
+    g->ram_end = ram_base + ram_size;
+    g->root = g_gstage_root[slot].entry;
 
     /* 空表 = 全 trap：没有一条有效映射，任何 GPA 访问都陷入 HS-mode */
     memset(g->root, 0, sizeof(g_gstage_root[slot].entry));
@@ -181,16 +190,15 @@ void rv_gstage_vm_init(gstage_ctx_t *g, uint32_t slot, uint32_t vmid,
         g->root[i] = ((l1_pa >> 12) << PTE_PPN_SHIFT) | PTE_V;
     }
 
-    g->hgatp = HGATP_MODE_SV39X4 |
-               ((uint64_t)g->vmid << HGATP_VMID_SHIFT) |
+    g->hgatp = HGATP_MODE_SV39X4 | ((uint64_t)g->vmid << HGATP_VMID_SHIFT) |
                ((virt_to_phys(g->root) >> 12) & HGATP_PPN_MASK);
 
     rv_gstage_activate(g);
 
     KLOG_INFO("[gstage] vm slot=%u vmid=%u mem=0x%llx+0x%llx "
               "root_pa=0x%llx hgatp=0x%llx\n",
-              slot, g->vmid,
-              (unsigned long long)ram_base, (unsigned long long)ram_size,
+              slot, g->vmid, (unsigned long long)ram_base,
+              (unsigned long long)ram_size,
               (unsigned long long)virt_to_phys(g->root),
               (unsigned long long)g->hgatp);
 }
@@ -212,7 +220,7 @@ void rv_gstage_vm_destroy(gstage_ctx_t *g)
                 freed++;
             }
         }
-        pmm_free_pages(g_pmm, virt_to_phys(t) & ~0xFFFULL, 1);  /* 表页本身 */
+        pmm_free_pages(g_pmm, virt_to_phys(t) & ~0xFFFULL, 1); /* 表页本身 */
         g->l0_tbl[i] = NULL;
     }
 
@@ -224,8 +232,7 @@ void rv_gstage_vm_destroy(gstage_ctx_t *g)
     KLOG_INFO("[gstage] vm%u destroyed: %llu pages (%llu KB) reclaimed, "
               "premap=%llu fault=%llu, pmm free=%llu MB\n",
               g->vmid, (unsigned long long)freed,
-              (unsigned long long)(freed * 4),
-              (unsigned long long)g->nr_premap,
+              (unsigned long long)(freed * 4), (unsigned long long)g->nr_premap,
               (unsigned long long)g->nr_fault,
               (unsigned long long)(pmm_get_free_pages(g_pmm) * 4 / 1024));
 
@@ -256,7 +263,7 @@ void rv_gstage_activate(const gstage_ctx_t *g)
         return;
 
     /* hgatp = CSR 0x680（数值形式，见文件头警告）*/
-    __asm__ volatile("csrw 0x680, %0" :: "r"(g->hgatp) : "memory");
+    __asm__ volatile("csrw 0x680, %0" ::"r"(g->hgatp) : "memory");
     rv_gstage_tlb_flush(g);
 
     /*
@@ -292,7 +299,7 @@ uint64_t rv_gstage_map_page(gstage_ctx_t *g, uint64_t gpa, int zero)
 
     pa = pmm_alloc_pages(g_pmm, 1);
     if (!pa)
-        return 0;               /* ⚠️ 调用方必须处理，不能当成功继续 */
+        return 0; /* ⚠️ 调用方必须处理，不能当成功继续 */
 
     if (zero)
         memset(phys_to_virt(pa), 0, GSTAGE_PAGE_SIZE);
@@ -326,11 +333,11 @@ uint64_t rv_gstage_map_block(gstage_ctx_t *g, uint64_t gpa, int zero)
         uint64_t pa;
 
         if (t[i] & PTE_V)
-            continue;                   /* 已经映射过 */
+            continue; /* 已经映射过 */
 
         pa = pmm_alloc_pages(g_pmm, 1);
         if (!pa)
-            break;                      /* PMM 没页：装多少算多少 */
+            break; /* PMM 没页：装多少算多少 */
 
         if (zero)
             memset(phys_to_virt(pa), 0, GSTAGE_PAGE_SIZE);
@@ -351,8 +358,8 @@ uint64_t rv_gstage_map_range(gstage_ctx_t *g, uint64_t gpa, uint64_t size,
         if (rv_gstage_map_page(g, gpa + off, zero) == 0) {
             KLOG_ERROR("[gstage] map_range failed at gpa=0x%llx "
                        "(+0x%llx of 0x%llx), pmm free=%llu pages\n",
-                       (unsigned long long)gpa,
-                       (unsigned long long)off, (unsigned long long)size,
+                       (unsigned long long)gpa, (unsigned long long)off,
+                       (unsigned long long)size,
                        (unsigned long long)pmm_get_free_pages(g_pmm));
             return n;
         }
@@ -384,7 +391,7 @@ int rv_gstage_lookup(const gstage_ctx_t *g, uint64_t gpa, uint64_t *pa_out)
 
     e = t[l0_index(gpa)];
     if (!(e & PTE_V) || !(e & (PTE_R | PTE_W | PTE_X)))
-        return 0;               /* 未映射，或不是叶项 */
+        return 0; /* 未映射，或不是叶项 */
 
     if (pa_out)
         *pa_out = PTE_TO_PA(e) | (gpa & 0xFFF);
@@ -406,8 +413,7 @@ void rv_gstage_tlb_flush(const gstage_ctx_t *g)
      * 编码：SYSTEM(0x73), funct3=0, funct7(HFENCE.GVMA)=0x31,
      * rd=x0, rs1=x0(vaddr), rs2=x0(vmid) → 刷新全部 G-stage 映射。
      */
-    __asm__ volatile(
-        ".insn r 0x73, 0, 0x31, x0, x0, x0\n"  /* hfence.gvma */
-        "sfence.vma\n"
-        ::: "memory");
+    __asm__ volatile(".insn r 0x73, 0, 0x31, x0, x0, x0\n" /* hfence.gvma */
+                     "sfence.vma\n" ::
+                         : "memory");
 }

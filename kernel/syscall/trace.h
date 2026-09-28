@@ -51,22 +51,22 @@
 
 /* ret 字段的"入口已写、还没返回"哨兵。execve/exit 这类不返回的 syscall
  * 会一直保持这个值 —— dump 时显示成 "= ?"，本身就是有用信息。 */
-#define SYSCALL_TRACE_PENDING  (0x5A5A5A5A5A5A5A5AULL)
+#define SYSCALL_TRACE_PENDING (0x5A5A5A5A5A5A5A5AULL)
 
 typedef struct {
-    uint64_t seq;                            /* 每 CPU 单调序号，用于排序 */
-    uint64_t a0, a1, a2;                     /* 前三个参数 */
-    int64_t  ret;                            /* 返回值，或 SYSCALL_TRACE_PENDING */
-    uint32_t at_ms;                          /* 相对启动的毫秒数 */
+    uint64_t seq;        /* 每 CPU 单调序号，用于排序 */
+    uint64_t a0, a1, a2; /* 前三个参数 */
+    int64_t ret;         /* 返回值，或 SYSCALL_TRACE_PENDING */
+    uint32_t at_ms;      /* 相对启动的毫秒数 */
     uint16_t pid;
     uint16_t nr;
-    uint8_t  flags;                          /* bit0 = 已返回；bit1 = path[] 有效 */
-    uint8_t  _pad[3];
-    char     path[SYSCALL_TRACE_PATH_MAX];
+    uint8_t flags; /* bit0 = 已返回；bit1 = path[] 有效 */
+    uint8_t _pad[3];
+    char path[SYSCALL_TRACE_PATH_MAX];
 } syscall_trace_rec_t;
 
-#define SYSCALL_TRACE_F_RETURNED  0x01U
-#define SYSCALL_TRACE_F_PATH      0x02U
+#define SYSCALL_TRACE_F_RETURNED 0x01U
+#define SYSCALL_TRACE_F_PATH     0x02U
 
 /* syscall 号 → 名字（未知返回 "?"）。syscall.c 的流式追踪也用这个。 */
 const char *syscall_trace_name(uint32_t nr);
@@ -75,8 +75,8 @@ const char *syscall_trace_name(uint32_t nr);
  * 入口记一条。入口只填参数，返回值留哨兵，出口由 syscall_trace_exit() 回填
  * —— 一条 syscall 只占一个槽位，dump 出来是一行一条，和 strace 一致。
  */
-void syscall_trace_enter(uint16_t pid, uint32_t nr,
-                         uint64_t a0, uint64_t a1, uint64_t a2);
+void syscall_trace_enter(uint16_t pid, uint32_t nr, uint64_t a0, uint64_t a1,
+                         uint64_t a2);
 
 /* 出口回填返回值。没有待回填记录时是空操作。 */
 void syscall_trace_exit(int64_t ret);

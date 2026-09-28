@@ -14,8 +14,7 @@
  * DMB ISH: Inner Shareable 数据内存屏障
  * 确保所有可见的内存访问完成
  */
-static inline void
-barrier_data(void)
+static inline void barrier_data(void)
 {
     asm volatile("dmb ish" ::: "memory");
 }
@@ -25,8 +24,7 @@ barrier_data(void)
  *
  * DMB ISHLD: Inner Shareable 读数据屏障
  */
-static inline void
-barrier_data_read(void)
+static inline void barrier_data_read(void)
 {
     asm volatile("dmb ishld" ::: "memory");
 }
@@ -36,8 +34,7 @@ barrier_data_read(void)
  *
  * DMB ISHST: Inner Shareable 写数据屏障
  */
-static inline void
-barrier_data_write(void)
+static inline void barrier_data_write(void)
 {
     asm volatile("dmb ishst" ::: "memory");
 }
@@ -49,14 +46,12 @@ barrier_data_write(void)
  *
  * ISB: 指令同步屏障，刷新流水线
  */
-static inline void
-barrier_instr_full(void)
+static inline void barrier_instr_full(void)
 {
     asm volatile("isb" ::: "memory");
 }
 
-static inline void
-barrier_sync(void)
+static inline void barrier_sync(void)
 {
     asm volatile("dsb sy" ::: "memory");
 }
@@ -68,8 +63,7 @@ barrier_sync(void)
  *
  * 使用 LDAR 加载指令的隐含屏障
  */
-static inline void
-barrier_acquire(void)
+static inline void barrier_acquire(void)
 {
     asm volatile("dmb ishld" ::: "memory");
 }
@@ -79,8 +73,7 @@ barrier_acquire(void)
  *
  * 使用 STLR 存储指令的隐含屏障
  */
-static inline void
-barrier_release(void)
+static inline void barrier_release(void)
 {
     asm volatile("dmb ishst" ::: "memory");
 }

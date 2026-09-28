@@ -23,8 +23,8 @@
 #include "aarch64/stage2.h"
 #include "pmm.h"
 #include "mm_vm.h"
-#include "cache.h"    /* clean_and_invalidate_dcache_range */
-#include "barrier.h"  /* barrier_sync / barrier_instr_full */
+#include "cache.h"   /* clean_and_invalidate_dcache_range */
+#include "barrier.h" /* barrier_sync / barrier_instr_full */
 #include "klog.h"
 #include "string.h"
 
@@ -48,12 +48,12 @@
  */
 typedef struct {
     uint64_t entry[S2_L1_ENTRIES];
-    uint8_t  _pad[4096 - S2_L1_ENTRIES * sizeof(uint64_t)];
+    uint8_t _pad[4096 - S2_L1_ENTRIES * sizeof(uint64_t)];
 } s2_l1_page_t;
 
 static s2_l1_page_t g_s2_l1[STAGE2_MAX_VMS] __attribute__((aligned(4096)));
 static uint64_t g_s2_l2[STAGE2_MAX_VMS][S2_L1_ENTRIES][S2_L2_ENTRIES]
-                        __attribute__((aligned(4096)));
+    __attribute__((aligned(4096)));
 
 /* ── 内部工具 ─────────────────────────────────────────────── */
 
@@ -105,7 +105,8 @@ static uint64_t *l3_ensure(s2_ctx_t *s2, uint64_t ipa)
     memset(t, 0, S2_PAGE_SIZE);
 
     ipa_idx(ipa, &i1, &i2, &i3);
-    s2->l2[i1 * S2_L2_ENTRIES + i2] = (pa & ~0xFFFULL) | LPAE_VALID | LPAE_TABLE;
+    s2->l2[i1 * S2_L2_ENTRIES + i2] =
+        (pa & ~0xFFFULL) | LPAE_VALID | LPAE_TABLE;
     s2->l3_tbl[idx] = t;
     return t;
 }
@@ -123,13 +124,13 @@ void stage2_vm_init(s2_ctx_t *s2, uint32_t slot, uint32_t vmid,
     }
 
     memset(s2, 0, sizeof(*s2));
-    s2->slot     = slot;
-    s2->vmid     = vmid & 0xFF;
+    s2->slot = slot;
+    s2->vmid = vmid & 0xFF;
     s2->ram_base = ram_base;
     s2->ram_size = ram_size;
-    s2->ram_end  = ram_base + ram_size;
-    s2->l1       = g_s2_l1[slot].entry;
-    s2->l2       = &g_s2_l2[slot][0][0];
+    s2->ram_end = ram_base + ram_size;
+    s2->l1 = g_s2_l1[slot].entry;
+    s2->l2 = &g_s2_l2[slot][0][0];
 
     /* 空表 = 全 trap：没有一条有效映射，任何 IPA 访问都陷入 EL2 */
     memset(s2->l1, 0, sizeof(g_s2_l1[slot].entry));
@@ -147,9 +148,8 @@ void stage2_vm_init(s2_ctx_t *s2, uint32_t slot, uint32_t vmid,
                     LPAE_VALID | LPAE_TABLE;
     }
 
-    s2->vtcr = VTCR_T0SZ(32) | VTCR_SL0(1) | VTCR_TG0_4K |
-               VTCR_SH0_IS | VTCR_IRGN0_WBWA | VTCR_ORGN0_WBWA |
-               VTCR_PS_36BITS;
+    s2->vtcr = VTCR_T0SZ(32) | VTCR_SL0(1) | VTCR_TG0_4K | VTCR_SH0_IS |
+               VTCR_IRGN0_WBWA | VTCR_ORGN0_WBWA | VTCR_PS_36BITS;
     s2->vttbr = (virt_to_phys(s2->l1) & ~0xFFFULL) |
                 ((uint64_t)s2->vmid << VTTBR_VMID_SHIFT);
 
@@ -157,8 +157,8 @@ void stage2_vm_init(s2_ctx_t *s2, uint32_t slot, uint32_t vmid,
 
     KLOG_INFO("[stage2] vm slot=%u vmid=%u mem=0x%llx+0x%llx "
               "l1=0x%llx VTCR=0x%llx VTTBR=0x%llx\n",
-              slot, s2->vmid,
-              (unsigned long long)ram_base, (unsigned long long)ram_size,
+              slot, s2->vmid, (unsigned long long)ram_base,
+              (unsigned long long)ram_size,
               (unsigned long long)virt_to_phys(s2->l1),
               (unsigned long long)s2->vtcr, (unsigned long long)s2->vttbr);
 }
@@ -180,7 +180,7 @@ void stage2_vm_destroy(s2_ctx_t *s2)
                 freed++;
             }
         }
-        pmm_free_pages(g_pmm, virt_to_phys(t) & ~0xFFFULL, 1);  /* 表页本身 */
+        pmm_free_pages(g_pmm, virt_to_phys(t) & ~0xFFFULL, 1); /* 表页本身 */
         s2->l3_tbl[i] = NULL;
     }
 
@@ -189,13 +189,12 @@ void stage2_vm_destroy(s2_ctx_t *s2)
     memset(s2->l2, 0, sizeof(g_s2_l2[s2->slot]));
     stage2_tlb_flush_vm(s2);
 
-    KLOG_INFO("[stage2] vm%u destroyed: %llu pages (%llu KB) reclaimed, "
-              "premap=%llu fault=%llu, pmm free=%llu MB\n",
-              s2->vmid, (unsigned long long)freed,
-              (unsigned long long)(freed * 4),
-              (unsigned long long)s2->nr_premap,
-              (unsigned long long)s2->nr_fault,
-              (unsigned long long)(pmm_get_free_pages(g_pmm) * 4 / 1024));
+    KLOG_INFO(
+        "[stage2] vm%u destroyed: %llu pages (%llu KB) reclaimed, "
+        "premap=%llu fault=%llu, pmm free=%llu MB\n",
+        s2->vmid, (unsigned long long)freed, (unsigned long long)(freed * 4),
+        (unsigned long long)s2->nr_premap, (unsigned long long)s2->nr_fault,
+        (unsigned long long)(pmm_get_free_pages(g_pmm) * 4 / 1024));
 
     memset(s2, 0, sizeof(*s2));
 }
@@ -204,17 +203,15 @@ void stage2_activate(const s2_ctx_t *s2)
 {
     uint64_t hcr = 0;
 
-    __asm__ volatile(
-        "msr vtcr_el2, %[vtcr]\n"
-        "msr vttbr_el2, %[vttbr]\n"
-        "mrs %[hcr], hcr_el2\n"
-        "orr %[hcr], %[hcr], #1\n"
-        "msr hcr_el2, %[hcr]\n"
-        "isb\n"
-        : [hcr] "+r"(hcr)
-        : [vtcr] "r"(s2->vtcr), [vttbr] "r"(s2->vttbr)
-        : "memory"
-    );
+    __asm__ volatile("msr vtcr_el2, %[vtcr]\n"
+                     "msr vttbr_el2, %[vttbr]\n"
+                     "mrs %[hcr], hcr_el2\n"
+                     "orr %[hcr], %[hcr], #1\n"
+                     "msr hcr_el2, %[hcr]\n"
+                     "isb\n"
+                     : [hcr] "+r"(hcr)
+                     : [vtcr] "r"(s2->vtcr), [vttbr] "r"(s2->vttbr)
+                     : "memory");
 }
 
 /* ── 映射 ─────────────────────────────────────────────────── */
@@ -241,7 +238,7 @@ uint64_t stage2_map_page(s2_ctx_t *s2, uint64_t ipa, int zero)
 
     pa = pmm_alloc_pages(g_pmm, 1);
     if (!pa)
-        return 0;               /* ⚠️ 调用方必须处理，不能当成功继续 */
+        return 0; /* ⚠️ 调用方必须处理，不能当成功继续 */
 
     if (zero)
         memset(phys_to_virt(pa), 0, S2_PAGE_SIZE);
@@ -250,7 +247,6 @@ uint64_t stage2_map_page(s2_ctx_t *s2, uint64_t ipa, int zero)
             LPAE_MATTR_NORM | LPAE_S2AP_RW;
     return pa;
 }
-
 
 /*
  * stage2_map_block — 一次把 ipa 所在的整个 2 MiB 块装好（512 个 4 KiB 页）
@@ -281,11 +277,11 @@ uint64_t stage2_map_block(s2_ctx_t *s2, uint64_t ipa, int zero)
         uint64_t pa;
 
         if (t[i] & LPAE_VALID)
-            continue;                   /* 已经映射过 */
+            continue; /* 已经映射过 */
 
         pa = pmm_alloc_pages(g_pmm, 1);
         if (!pa)
-            break;                      /* PMM 没页：装多少算多少 */
+            break; /* PMM 没页：装多少算多少 */
 
         if (zero)
             memset(phys_to_virt(pa), 0, S2_PAGE_SIZE);
@@ -306,8 +302,8 @@ uint64_t stage2_map_range(s2_ctx_t *s2, uint64_t ipa, uint64_t size, int zero)
         if (stage2_map_page(s2, ipa + off, zero) == 0) {
             KLOG_ERROR("[stage2] map_range failed at ipa=0x%llx "
                        "(+0x%llx of 0x%llx), pmm free=%llu pages\n",
-                       (unsigned long long)ipa,
-                       (unsigned long long)off, (unsigned long long)size,
+                       (unsigned long long)ipa, (unsigned long long)off,
+                       (unsigned long long)size,
                        (unsigned long long)pmm_get_free_pages(g_pmm));
             return n;
         }
@@ -332,7 +328,7 @@ int stage2_lookup(const s2_ctx_t *s2, uint64_t ipa, uint64_t *pa_out)
 
     e = s2->l2[i1 * S2_L2_ENTRIES + i2];
     if (!(e & LPAE_VALID) || !(e & LPAE_TABLE))
-        return 0;               /* RAM 窗口内只允许 table descriptor */
+        return 0; /* RAM 窗口内只允许 table descriptor */
 
     if (!s2->l3_tbl[ram_blk_index(s2, ipa)])
         return 0;
@@ -373,7 +369,7 @@ void stage2_tlb_flush_vm(const s2_ctx_t *s2)
      * 而本核可能刚被定时器抢占去跑了另一个 VM 的 vCPU 任务（它一进循环就
      * 改 VTTBR_EL2）。不拉回来的话会出现"改了映射但不生效，偶尔又生效"。
      */
-    __asm__ volatile("msr vttbr_el2, %0" :: "r"(s2->vttbr) : "memory");
+    __asm__ volatile("msr vttbr_el2, %0" ::"r"(s2->vttbr) : "memory");
     barrier_sync();
     __asm__ volatile("tlbi vmalls12e1is" ::: "memory");
     barrier_sync();
@@ -382,9 +378,9 @@ void stage2_tlb_flush_vm(const s2_ctx_t *s2)
 
 void stage2_tlb_flush_ipa(const s2_ctx_t *s2, uint64_t ipa)
 {
-    __asm__ volatile("msr vttbr_el2, %0" :: "r"(s2->vttbr) : "memory");
+    __asm__ volatile("msr vttbr_el2, %0" ::"r"(s2->vttbr) : "memory");
     barrier_sync();
-    __asm__ volatile("tlbi ipas2e1is, %0" :: "r"(ipa >> 12) : "memory");
+    __asm__ volatile("tlbi ipas2e1is, %0" ::"r"(ipa >> 12) : "memory");
     barrier_sync();
     barrier_instr_full();
 }

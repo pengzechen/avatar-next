@@ -13,8 +13,7 @@
  *
  * FENCE RW,RW: 读+写屏障
  */
-static inline void
-barrier_data(void)
+static inline void barrier_data(void)
 {
     asm volatile("fence rw, rw" ::: "memory");
 }
@@ -24,8 +23,7 @@ barrier_data(void)
  *
  * FENCE R,R: 读屏障
  */
-static inline void
-barrier_data_read(void)
+static inline void barrier_data_read(void)
 {
     asm volatile("fence r, r" ::: "memory");
 }
@@ -35,8 +33,7 @@ barrier_data_read(void)
  *
  * FENCE W,W: 写屏障
  */
-static inline void
-barrier_data_write(void)
+static inline void barrier_data_write(void)
 {
     asm volatile("fence w, w" ::: "memory");
 }
@@ -49,14 +46,12 @@ barrier_data_write(void)
  * FENCE IORW,IORW: IO + 读 + 写 屏障
  * 用于同步指令和数据流
  */
-static inline void
-barrier_instr_full(void)
+static inline void barrier_instr_full(void)
 {
     asm volatile("fence iorw, iorw" ::: "memory");
 }
 
-static inline void
-barrier_sync(void)
+static inline void barrier_sync(void)
 {
     asm volatile("fence iorw, iorw" ::: "memory");
 }
@@ -68,8 +63,7 @@ barrier_sync(void)
  *
  * FENCE R,R: 读屏障确保加载操作完成
  */
-static inline void
-barrier_acquire(void)
+static inline void barrier_acquire(void)
 {
     asm volatile("fence r, r" ::: "memory");
 }
@@ -79,8 +73,7 @@ barrier_acquire(void)
  *
  * FENCE WW,WW: 写屏障确保存储操作对其他核心可见
  */
-static inline void
-barrier_release(void)
+static inline void barrier_release(void)
 {
     asm volatile("fence w, w" ::: "memory");
 }

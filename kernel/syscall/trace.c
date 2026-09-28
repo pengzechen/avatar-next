@@ -15,22 +15,21 @@
  */
 
 #include "syscall/trace.h"
-#include "syscall/syscall_internal.h"   /* LINUX_SYS_*, copy_string_from_user */
+#include "syscall/syscall_internal.h" /* LINUX_SYS_*, copy_string_from_user */
 #include "klog.h"
 #include "string.h"
 #include "arg.h"
 #include "timer/timer.h"
-#include "task/cpu.h"                   /* AVATAR_MAX_CPUS */
+#include "task/cpu.h" /* AVATAR_MAX_CPUS */
 
 /* my_vsnprintf 取 va_list（和 lib/klog.c 用法一致），这里包一层变参入口。
  * 语义是 C99 snprintf：截断时返回"本该写多长"，所以调用方必须自己 clamp。 */
 extern int my_vsnprintf(char *buf, int size, const char *fmt, va_list va);
 
-static int
-trace_snprintf(char *buf, int size, const char *fmt, ...)
+static int trace_snprintf(char *buf, int size, const char *fmt, ...)
 {
     va_list va;
-    int     r;
+    int r;
 
     va_start(va, fmt);
     r = my_vsnprintf(buf, size, fmt, va);
@@ -42,20 +41,18 @@ trace_snprintf(char *buf, int size, const char *fmt, ...)
 /* ── 环形缓冲本体 ───────────────────────────────────────────────── */
 
 static syscall_trace_rec_t s_ring[AVATAR_MAX_CPUS][SYSCALL_TRACE_DEPTH];
-static uint32_t s_head[AVATAR_MAX_CPUS];           /* 下一个要写的槽位 */
-static uint64_t s_seq[AVATAR_MAX_CPUS];            /* 每 CPU 单调序号 */
-static uint32_t s_pending[AVATAR_MAX_CPUS];        /* 待回填的槽位 */
-static uint8_t  s_pending_valid[AVATAR_MAX_CPUS];
+static uint32_t s_head[AVATAR_MAX_CPUS];    /* 下一个要写的槽位 */
+static uint64_t s_seq[AVATAR_MAX_CPUS];     /* 每 CPU 单调序号 */
+static uint32_t s_pending[AVATAR_MAX_CPUS]; /* 待回填的槽位 */
+static uint8_t s_pending_valid[AVATAR_MAX_CPUS];
 
-static inline uint32_t
-trace_cpu(void)
+static inline uint32_t trace_cpu(void)
 {
     uint32_t c = klog_cpu_id();
     return (c < AVATAR_MAX_CPUS) ? c : 0U;
 }
 
-uint32_t
-syscall_trace_count(void)
+uint32_t syscall_trace_count(void)
 {
     uint32_t n = 0;
 
@@ -68,107 +65,194 @@ syscall_trace_count(void)
 
 /* ── syscall 号 → 名字 ──────────────────────────────────────────── */
 
-const char *
-syscall_trace_name(uint32_t nr)
+const char *syscall_trace_name(uint32_t nr)
 {
     switch (nr) {
     /* 文件 */
-    case LINUX_SYS_OPENAT:      return "openat";
-    case LINUX_SYS_CLOSE:       return "close";
-    case LINUX_SYS_READ:        return "read";
-    case LINUX_SYS_WRITE:       return "write";
-    case LINUX_SYS_READV:       return "readv";
-    case LINUX_SYS_WRITEV:      return "writev";
-    case LINUX_SYS_PREAD64:     return "pread64";
-    case LINUX_SYS_PWRITE64:    return "pwrite64";
-    case LINUX_SYS_LSEEK:       return "lseek";
-    case LINUX_SYS_FSTAT:       return "fstat";
-    case LINUX_SYS_NEWFSTATAT:  return "newfstatat";
-    case LINUX_SYS_READLINKAT:  return "readlinkat";
-    case LINUX_SYS_FACCESSAT:   return "faccessat";
-    case LINUX_SYS_FACCESSAT2:  return "faccessat2";
-    case LINUX_SYS_GETCWD:      return "getcwd";
-    case LINUX_SYS_CHDIR:       return "chdir";
-    case LINUX_SYS_MKDIRAT:     return "mkdirat";
-    case LINUX_SYS_UNLINKAT:    return "unlinkat";
-    case LINUX_SYS_RENAMEAT:    return "renameat";
-    case LINUX_SYS_RENAMEAT2:   return "renameat2";
-    case LINUX_SYS_GETDENTS64:  return "getdents64";
-    case LINUX_SYS_FSYNC:       return "fsync";
-    case LINUX_SYS_FDATASYNC:   return "fdatasync";
-    case LINUX_SYS_FTRUNCATE:   return "ftruncate";
-    case LINUX_SYS_IOCTL:       return "ioctl";
-    case LINUX_SYS_FCNTL:       return "fcntl";
-    case LINUX_SYS_DUP:         return "dup";
-    case LINUX_SYS_DUP3:        return "dup3";
-    case LINUX_SYS_PIPE2:       return "pipe2";
-    case LINUX_SYS_SENDFILE:    return "sendfile";
+    case LINUX_SYS_OPENAT:
+        return "openat";
+    case LINUX_SYS_CLOSE:
+        return "close";
+    case LINUX_SYS_READ:
+        return "read";
+    case LINUX_SYS_WRITE:
+        return "write";
+    case LINUX_SYS_READV:
+        return "readv";
+    case LINUX_SYS_WRITEV:
+        return "writev";
+    case LINUX_SYS_PREAD64:
+        return "pread64";
+    case LINUX_SYS_PWRITE64:
+        return "pwrite64";
+    case LINUX_SYS_LSEEK:
+        return "lseek";
+    case LINUX_SYS_FSTAT:
+        return "fstat";
+    case LINUX_SYS_NEWFSTATAT:
+        return "newfstatat";
+    case LINUX_SYS_READLINKAT:
+        return "readlinkat";
+    case LINUX_SYS_FACCESSAT:
+        return "faccessat";
+    case LINUX_SYS_FACCESSAT2:
+        return "faccessat2";
+    case LINUX_SYS_GETCWD:
+        return "getcwd";
+    case LINUX_SYS_CHDIR:
+        return "chdir";
+    case LINUX_SYS_MKDIRAT:
+        return "mkdirat";
+    case LINUX_SYS_UNLINKAT:
+        return "unlinkat";
+    case LINUX_SYS_RENAMEAT:
+        return "renameat";
+    case LINUX_SYS_RENAMEAT2:
+        return "renameat2";
+    case LINUX_SYS_GETDENTS64:
+        return "getdents64";
+    case LINUX_SYS_FSYNC:
+        return "fsync";
+    case LINUX_SYS_FDATASYNC:
+        return "fdatasync";
+    case LINUX_SYS_FTRUNCATE:
+        return "ftruncate";
+    case LINUX_SYS_IOCTL:
+        return "ioctl";
+    case LINUX_SYS_FCNTL:
+        return "fcntl";
+    case LINUX_SYS_DUP:
+        return "dup";
+    case LINUX_SYS_DUP3:
+        return "dup3";
+    case LINUX_SYS_PIPE2:
+        return "pipe2";
+    case LINUX_SYS_SENDFILE:
+        return "sendfile";
 
     /* 进程 / 内存 */
-    case LINUX_SYS_EXECVE:      return "execve";
-    case LINUX_SYS_EXIT:        return "exit";
-    case LINUX_SYS_EXIT_GROUP:  return "exit_group";
-    case LINUX_SYS_CLONE:       return "clone";
-    case LINUX_SYS_WAIT4:       return "wait4";
-    case LINUX_SYS_WAITID:      return "waitid";
-    case LINUX_SYS_BRK:         return "brk";
-    case LINUX_SYS_MMAP:        return "mmap";
-    case LINUX_SYS_MUNMAP:      return "munmap";
-    case LINUX_SYS_MPROTECT:    return "mprotect";
-    case LINUX_SYS_MADVISE:     return "madvise";
-    case LINUX_SYS_GETPID:      return "getpid";
-    case LINUX_SYS_GETPPID:     return "getppid";
-    case LINUX_SYS_GETTID:      return "gettid";
-    case LINUX_SYS_SET_TID_ADDR:return "set_tid_address";
-    case LINUX_SYS_SET_ROBUST_LIST: return "set_robust_list";
-    case LINUX_SYS_SCHED_YIELD: return "sched_yield";
-    case LINUX_SYS_NANOSLEEP:   return "nanosleep";
-    case LINUX_SYS_FUTEX:       return "futex";
-    case LINUX_SYS_UNAME:       return "uname";
-    case LINUX_SYS_GETRANDOM:   return "getrandom";
-    case LINUX_SYS_SYSINFO:     return "sysinfo";
-    case LINUX_SYS_GETRLIMIT:   return "getrlimit";
-    case LINUX_SYS_SETRLIMIT:   return "setrlimit";
-    case LINUX_SYS_PRLIMIT64:   return "prlimit64";
-    case LINUX_SYS_GETRUSAGE:   return "getrusage";
-    case LINUX_SYS_UMASK:       return "umask";
-    case LINUX_SYS_PRCTL:       return "prctl";
-    case LINUX_SYS_CLOCK_GETTIME: return "clock_gettime";
+    case LINUX_SYS_EXECVE:
+        return "execve";
+    case LINUX_SYS_EXIT:
+        return "exit";
+    case LINUX_SYS_EXIT_GROUP:
+        return "exit_group";
+    case LINUX_SYS_CLONE:
+        return "clone";
+    case LINUX_SYS_WAIT4:
+        return "wait4";
+    case LINUX_SYS_WAITID:
+        return "waitid";
+    case LINUX_SYS_BRK:
+        return "brk";
+    case LINUX_SYS_MMAP:
+        return "mmap";
+    case LINUX_SYS_MUNMAP:
+        return "munmap";
+    case LINUX_SYS_MPROTECT:
+        return "mprotect";
+    case LINUX_SYS_MADVISE:
+        return "madvise";
+    case LINUX_SYS_GETPID:
+        return "getpid";
+    case LINUX_SYS_GETPPID:
+        return "getppid";
+    case LINUX_SYS_GETTID:
+        return "gettid";
+    case LINUX_SYS_SET_TID_ADDR:
+        return "set_tid_address";
+    case LINUX_SYS_SET_ROBUST_LIST:
+        return "set_robust_list";
+    case LINUX_SYS_SCHED_YIELD:
+        return "sched_yield";
+    case LINUX_SYS_NANOSLEEP:
+        return "nanosleep";
+    case LINUX_SYS_FUTEX:
+        return "futex";
+    case LINUX_SYS_UNAME:
+        return "uname";
+    case LINUX_SYS_GETRANDOM:
+        return "getrandom";
+    case LINUX_SYS_SYSINFO:
+        return "sysinfo";
+    case LINUX_SYS_GETRLIMIT:
+        return "getrlimit";
+    case LINUX_SYS_SETRLIMIT:
+        return "setrlimit";
+    case LINUX_SYS_PRLIMIT64:
+        return "prlimit64";
+    case LINUX_SYS_GETRUSAGE:
+        return "getrusage";
+    case LINUX_SYS_UMASK:
+        return "umask";
+    case LINUX_SYS_PRCTL:
+        return "prctl";
+    case LINUX_SYS_CLOCK_GETTIME:
+        return "clock_gettime";
 
     /* 信号 */
-    case LINUX_SYS_KILL:        return "kill";
-    case LINUX_SYS_TKILL:       return "tkill";
-    case LINUX_SYS_TGKILL:      return "tgkill";
-    case LINUX_SYS_RT_SIGACTION:   return "rt_sigaction";
-    case LINUX_SYS_RT_SIGPROCMASK: return "rt_sigprocmask";
-    case LINUX_SYS_RT_SIGPENDING:  return "rt_sigpending";
-    case LINUX_SYS_RT_SIGRETURN:   return "rt_sigreturn";
+    case LINUX_SYS_KILL:
+        return "kill";
+    case LINUX_SYS_TKILL:
+        return "tkill";
+    case LINUX_SYS_TGKILL:
+        return "tgkill";
+    case LINUX_SYS_RT_SIGACTION:
+        return "rt_sigaction";
+    case LINUX_SYS_RT_SIGPROCMASK:
+        return "rt_sigprocmask";
+    case LINUX_SYS_RT_SIGPENDING:
+        return "rt_sigpending";
+    case LINUX_SYS_RT_SIGRETURN:
+        return "rt_sigreturn";
 
     /* 网络 */
-    case LINUX_SYS_SOCKET:      return "socket";
-    case LINUX_SYS_BIND:        return "bind";
-    case LINUX_SYS_LISTEN:      return "listen";
-    case LINUX_SYS_ACCEPT:      return "accept";
-    case LINUX_SYS_ACCEPT4:     return "accept4";
-    case LINUX_SYS_CONNECT:     return "connect";
-    case LINUX_SYS_SENDTO:      return "sendto";
-    case LINUX_SYS_RECVFROM:    return "recvfrom";
-    case LINUX_SYS_SENDMSG:     return "sendmsg";
-    case LINUX_SYS_RECVMSG:     return "recvmsg";
-    case LINUX_SYS_SETSOCKOPT:  return "setsockopt";
-    case LINUX_SYS_GETSOCKOPT:  return "getsockopt";
-    case LINUX_SYS_SHUTDOWN:    return "shutdown";
-    case LINUX_SYS_GETSOCKNAME: return "getsockname";
-    case LINUX_SYS_GETPEERNAME: return "getpeername";
-    case LINUX_SYS_SOCKETPAIR:  return "socketpair";
+    case LINUX_SYS_SOCKET:
+        return "socket";
+    case LINUX_SYS_BIND:
+        return "bind";
+    case LINUX_SYS_LISTEN:
+        return "listen";
+    case LINUX_SYS_ACCEPT:
+        return "accept";
+    case LINUX_SYS_ACCEPT4:
+        return "accept4";
+    case LINUX_SYS_CONNECT:
+        return "connect";
+    case LINUX_SYS_SENDTO:
+        return "sendto";
+    case LINUX_SYS_RECVFROM:
+        return "recvfrom";
+    case LINUX_SYS_SENDMSG:
+        return "sendmsg";
+    case LINUX_SYS_RECVMSG:
+        return "recvmsg";
+    case LINUX_SYS_SETSOCKOPT:
+        return "setsockopt";
+    case LINUX_SYS_GETSOCKOPT:
+        return "getsockopt";
+    case LINUX_SYS_SHUTDOWN:
+        return "shutdown";
+    case LINUX_SYS_GETSOCKNAME:
+        return "getsockname";
+    case LINUX_SYS_GETPEERNAME:
+        return "getpeername";
+    case LINUX_SYS_SOCKETPAIR:
+        return "socketpair";
 
     /* 多路复用 */
-    case LINUX_SYS_PSELECT6:    return "pselect6";
-    case LINUX_SYS_PPOLL:       return "ppoll";
-    case LINUX_SYS_EPOLL_CREATE1: return "epoll_create1";
-    case LINUX_SYS_EPOLL_CTL:     return "epoll_ctl";
-    case LINUX_SYS_EPOLL_PWAIT:   return "epoll_pwait";
-    default:                    return "?";
+    case LINUX_SYS_PSELECT6:
+        return "pselect6";
+    case LINUX_SYS_PPOLL:
+        return "ppoll";
+    case LINUX_SYS_EPOLL_CREATE1:
+        return "epoll_create1";
+    case LINUX_SYS_EPOLL_CTL:
+        return "epoll_ctl";
+    case LINUX_SYS_EPOLL_PWAIT:
+        return "epoll_pwait";
+    default:
+        return "?";
     }
 }
 
@@ -176,8 +260,7 @@ syscall_trace_name(uint32_t nr)
  * 路径型 syscall：哪个参数是用户态路径串。
  * 判断错的后果是往环里存一段无意义的字节，所以宁可少认几个，不要乱认。
  */
-static const char *
-path_arg_of(uint32_t nr, const uint64_t *a)
+static const char *path_arg_of(uint32_t nr, const uint64_t *a)
 {
     switch (nr) {
     /* *at 家族：a0 是 dirfd，路径在 a1 */
@@ -204,24 +287,24 @@ path_arg_of(uint32_t nr, const uint64_t *a)
 
 /* ── 记录 ───────────────────────────────────────────────────────── */
 
-void
-syscall_trace_enter(uint16_t pid, uint32_t nr, uint64_t a0, uint64_t a1, uint64_t a2)
+void syscall_trace_enter(uint16_t pid, uint32_t nr, uint64_t a0, uint64_t a1,
+                         uint64_t a2)
 {
-    uint32_t c    = trace_cpu();
+    uint32_t c = trace_cpu();
     uint32_t slot = s_head[c];
     uint64_t args[3] = { a0, a1, a2 };
 
     syscall_trace_rec_t *r = &s_ring[c][slot];
 
-    r->seq     = s_seq[c];
-    r->a0      = a0;
-    r->a1      = a1;
-    r->a2      = a2;
-    r->ret     = (int64_t)SYSCALL_TRACE_PENDING;
-    r->at_ms   = (uint32_t)timer_get_uptime_ms();
-    r->pid     = pid;
-    r->nr      = (uint16_t)nr;
-    r->flags   = 0;
+    r->seq = s_seq[c];
+    r->a0 = a0;
+    r->a1 = a1;
+    r->a2 = a2;
+    r->ret = (int64_t)SYSCALL_TRACE_PENDING;
+    r->at_ms = (uint32_t)timer_get_uptime_ms();
+    r->pid = pid;
+    r->nr = (uint16_t)nr;
+    r->flags = 0;
     r->path[0] = '\0';
 
     const char *upath = path_arg_of(nr, args);
@@ -231,14 +314,13 @@ syscall_trace_enter(uint16_t pid, uint32_t nr, uint64_t a0, uint64_t a1, uint64_
         r->flags |= SYSCALL_TRACE_F_PATH;
     }
 
-    s_head[c]          = (slot + 1U) % SYSCALL_TRACE_DEPTH;
-    s_seq[c]           = s_seq[c] + 1U;
-    s_pending[c]       = slot;
+    s_head[c] = (slot + 1U) % SYSCALL_TRACE_DEPTH;
+    s_seq[c] = s_seq[c] + 1U;
+    s_pending[c] = slot;
     s_pending_valid[c] = 1U;
 }
 
-void
-syscall_trace_exit(int64_t ret)
+void syscall_trace_exit(int64_t ret)
 {
     uint32_t c = trace_cpu();
 
@@ -263,28 +345,29 @@ syscall_trace_exit(int64_t ret)
  * 需要一个全局原子计数，那会在热路径上加一条争用的 cache line，不值得。
  */
 typedef struct {
-    uint32_t cur;     /* 当前可读槽位 */
-    uint32_t left;    /* 本 CPU 还剩多少条没输出 */
+    uint32_t cur;  /* 当前可读槽位 */
+    uint32_t left; /* 本 CPU 还剩多少条没输出 */
     uint64_t seq;
     uint32_t at_ms;
 } merge_cur_t;
 
-static int
-render_one(char *out, int len, const syscall_trace_rec_t *r)
+static int render_one(char *out, int len, const syscall_trace_rec_t *r)
 {
     int n;
     const char *name = syscall_trace_name(r->nr);
 
     if (r->flags & SYSCALL_TRACE_F_PATH)
-        n = trace_snprintf(out, len, "pid=%u t=%ums %s \"%s\" (0x%llx, 0x%llx, 0x%llx) = ",
-                         (unsigned)r->pid, (unsigned)r->at_ms, name, r->path,
-                         (unsigned long long)r->a0, (unsigned long long)r->a1,
-                         (unsigned long long)r->a2);
+        n = trace_snprintf(
+            out, len, "pid=%u t=%ums %s \"%s\" (0x%llx, 0x%llx, 0x%llx) = ",
+            (unsigned)r->pid, (unsigned)r->at_ms, name, r->path,
+            (unsigned long long)r->a0, (unsigned long long)r->a1,
+            (unsigned long long)r->a2);
     else
-        n = trace_snprintf(out, len, "pid=%u t=%ums %s (0x%llx, 0x%llx, 0x%llx) = ",
-                         (unsigned)r->pid, (unsigned)r->at_ms, name,
-                         (unsigned long long)r->a0, (unsigned long long)r->a1,
-                         (unsigned long long)r->a2);
+        n = trace_snprintf(
+            out, len,
+            "pid=%u t=%ums %s (0x%llx, 0x%llx, 0x%llx) = ", (unsigned)r->pid,
+            (unsigned)r->at_ms, name, (unsigned long long)r->a0,
+            (unsigned long long)r->a1, (unsigned long long)r->a2);
 
     if (n < 0)
         n = 0;
@@ -296,10 +379,10 @@ render_one(char *out, int len, const syscall_trace_rec_t *r)
         m = trace_snprintf(out + n, len - n, "? (没有返回)\n");
     else if (r->ret < 0)
         m = trace_snprintf(out + n, len - n, "0x%llx (%lld)\n",
-                         (unsigned long long)r->ret, (long long)r->ret);
+                           (unsigned long long)r->ret, (long long)r->ret);
     else
         m = trace_snprintf(out + n, len - n, "0x%llx (%lld)\n",
-                         (unsigned long long)r->ret, (long long)r->ret);
+                           (unsigned long long)r->ret, (long long)r->ret);
 
     if (m < 0)
         m = 0;
@@ -308,11 +391,10 @@ render_one(char *out, int len, const syscall_trace_rec_t *r)
     return n + m;
 }
 
-int
-syscall_trace_render(uint16_t pid_filter, uint32_t max, char *out, int len)
+int syscall_trace_render(uint16_t pid_filter, uint32_t max, char *out, int len)
 {
     merge_cur_t cur[AVATAR_MAX_CPUS];
-    int         pos = 0;
+    int pos = 0;
 
     if (out == NULL || len <= 0)
         return 0;
@@ -330,7 +412,7 @@ syscall_trace_render(uint16_t pid_filter, uint32_t max, char *out, int len)
     }
 
     for (uint32_t emitted = 0; emitted < max; emitted++) {
-        int      pick = -1;
+        int pick = -1;
         uint32_t best_ms = 0;
         uint64_t best_seq = 0;
 
@@ -344,14 +426,14 @@ syscall_trace_render(uint16_t pid_filter, uint32_t max, char *out, int len)
                 /* 被过滤掉的也要推进游标，否则死循环 */
                 cur[c].cur = (cur[c].cur + 1U) % SYSCALL_TRACE_DEPTH;
                 cur[c].left--;
-                c--;   /* 重新看这个 CPU 的下一条 */
+                c--; /* 重新看这个 CPU 的下一条 */
                 continue;
             }
 
             if (pick < 0 || r->at_ms < best_ms ||
                 (r->at_ms == best_ms && r->seq < best_seq)) {
-                pick     = (int)c;
-                best_ms  = r->at_ms;
+                pick = (int)c;
+                best_ms = r->at_ms;
                 best_seq = r->seq;
             }
         }
@@ -373,8 +455,7 @@ syscall_trace_render(uint16_t pid_filter, uint32_t max, char *out, int len)
     return pos;
 }
 
-void
-syscall_trace_dump(uint16_t pid_filter, uint32_t max)
+void syscall_trace_dump(uint16_t pid_filter, uint32_t max)
 {
     static char buf[4096];
     int n = syscall_trace_render(pid_filter, max, buf, (int)sizeof(buf));

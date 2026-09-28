@@ -92,26 +92,26 @@ static inline void barrier_release(void);
 
 /* ===== 辅助宏（兼容 Linux 内核风格）===== */
 
-#define mb()         barrier_data()
-#define rmb()        barrier_data_read()
-#define wmb()        barrier_data_write()
-#define isb()        barrier_instr_full()
-#define smp_mb()     barrier_data()
-#define smp_rmb()    barrier_data_read()
-#define smp_wmb()    barrier_data_write()
+#define mb()          barrier_data()
+#define rmb()         barrier_data_read()
+#define wmb()         barrier_data_write()
+#define isb()         barrier_instr_full()
+#define smp_mb()      barrier_data()
+#define smp_rmb()     barrier_data_read()
+#define smp_wmb()     barrier_data_write()
 #define smp_acquire() barrier_acquire()
 #define smp_release() barrier_release()
 
 /* ===== 架构特定实现 ===== */
 
 #if defined(ARCH_X86_64)
-    #include "x86_64/barrier_impl.h"
+#include "x86_64/barrier_impl.h"
 #elif defined(ARCH_AARCH64)
-    #include "aarch64/barrier_impl.h"
+#include "aarch64/barrier_impl.h"
 #elif defined(ARCH_RISCV64)
-    #include "riscv64/barrier_impl.h"
+#include "riscv64/barrier_impl.h"
 #else
-    #error "Unsupported architecture"
+#error "Unsupported architecture"
 #endif
 
 #endif /* BARRIER_H */

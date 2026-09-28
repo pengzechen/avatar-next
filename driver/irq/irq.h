@@ -25,26 +25,26 @@
  * ============================================================ */
 #if DRIVER_GIC_V2
 
-    #include "irq/gicv2.h"
+#include "irq/gicv2.h"
 
-    #define irq_init()              gic_virtual_init()
-    #define irq_init_secondary()    gic_init_secondary()
-    #define irq_enable_irq(n)       gic_enable_int((int32_t)(n), 1)
-    #define irq_disable_irq(n)      gic_enable_int((int32_t)(n), 0)
+#define irq_init()           gic_virtual_init()
+#define irq_init_secondary() gic_init_secondary()
+#define irq_enable_irq(n)    gic_enable_int((int32_t)(n), 1)
+#define irq_disable_irq(n)   gic_enable_int((int32_t)(n), 0)
 
-    /* GICv2：通过 MMIO 读 GICC_IAR / 写 GICC_EOIR */
-    static inline uint32_t irq_ack(void)
-    {
-        uint32_t iar = gic_read_iar();
-        return gic_iar_irqnr(iar);
-    }
+/* GICv2：通过 MMIO 读 GICC_IAR / 写 GICC_EOIR */
+static inline uint32_t irq_ack(void)
+{
+    uint32_t iar = gic_read_iar();
+    return gic_iar_irqnr(iar);
+}
 
-    static inline void irq_eoi(uint32_t irq)
-    {
-        gic_write_eoir(irq);
-    }
+static inline void irq_eoi(uint32_t irq)
+{
+    gic_write_eoir(irq);
+}
 
-    /* CPU 级中断开关：统一用 include/aarch64/exception_impl.h 的
+/* CPU 级中断开关：统一用 include/aarch64/exception_impl.h 的
      * arch_irq_enable()/arch_irq_disable()（这里曾有一份 enable_irqs/
      * disable_irqs 的副本，0 调用者，已删）。 */
 
@@ -53,26 +53,27 @@
  * ============================================================ */
 #elif DRIVER_GIC_V3
 
-    #include "irq/gicv3.h"
+#include "irq/gicv3.h"
 
-    #define irq_init()              gicv3_init()
-    #define irq_init_secondary()    gicv3_init_secondary()
-    #define irq_enable_irq(n)       gicv3_enable_int((int)(n), true)
-    #define irq_disable_irq(n)      gicv3_enable_int((int)(n), false)
+#define irq_init()           gicv3_init()
+#define irq_init_secondary() gicv3_init_secondary()
+#define irq_enable_irq(n)    gicv3_enable_int((int)(n), true)
+#define irq_disable_irq(n)   gicv3_enable_int((int)(n), false)
 
-    /* GICv3：通过系统寄存器读 ICC_IAR1_EL1 / 写 ICC_EOIR1_EL1 */
-    static inline uint32_t irq_ack(void)
-    {
-        uint64_t iar;
-        __asm__ volatile("mrs %0, S3_0_C12_C12_0" : "=r"(iar));   /* ICC_IAR1_EL1 */
-        return (uint32_t)(iar & ICC_IAR_INTID_MASK);
-    }
+/* GICv3：通过系统寄存器读 ICC_IAR1_EL1 / 写 ICC_EOIR1_EL1 */
+static inline uint32_t irq_ack(void)
+{
+    uint64_t iar;
+    __asm__ volatile("mrs %0, S3_0_C12_C12_0" : "=r"(iar)); /* ICC_IAR1_EL1 */
+    return (uint32_t)(iar & ICC_IAR_INTID_MASK);
+}
 
-    static inline void irq_eoi(uint32_t irq)
-    {
-        __asm__ volatile("msr S3_0_C12_C12_1, %0" :: "r"((uint64_t)irq)); /* ICC_EOIR1_EL1 */
-    }
+static inline void irq_eoi(uint32_t irq)
+{
+    __asm__ volatile(
+        "msr S3_0_C12_C12_1, %0" ::"r"((uint64_t)irq)); /* ICC_EOIR1_EL1 */
+}
 
-#endif  /* DRIVER_GIC_* */
+#endif /* DRIVER_GIC_* */
 
-#endif  /* DRIVER_IRQ_H */
+#endif /* DRIVER_IRQ_H */

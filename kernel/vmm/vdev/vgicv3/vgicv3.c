@@ -16,9 +16,9 @@
 #include "irq/gicv3.h"
 #include "klog.h"
 #include "string.h"
-#include "barrier.h"   /* barrier_sync：清 LR 后要等它落地 */
+#include "barrier.h" /* barrier_sync：清 LR 后要等它落地 */
 #include "aarch64/sysreg.h"
-#include "task/cpu.h"   /* get_current_cpu_id：诊断「En 设在哪一核」*/
+#include "task/cpu.h" /* get_current_cpu_id：诊断「En 设在哪一核」*/
 
 #define SGI_MASK 0xffffu
 
@@ -67,8 +67,7 @@ static uint64_t vgic3_lr_value(const vgic3_t *vgic, uint32_t vcpu_id,
     else if (irq < VGIC3D_REG_SIZE - 0x400)
         prio = vgic->dist_regs[0x400 + irq];
 
-    return ((uint64_t)ICH_LR_ST_PENDING << ICH_LR_STATE_SHIFT) |
-           ICH_LR_GROUP1 |
+    return ((uint64_t)ICH_LR_ST_PENDING << ICH_LR_STATE_SHIFT) | ICH_LR_GROUP1 |
            ((uint64_t)prio << ICH_LR_PRIO_SHIFT) |
            ((uint64_t)irq & ICH_LR_VINTID_MASK);
 }
@@ -131,8 +130,8 @@ int vmm_vgic3_init(vgic3_t *vgic, uint32_t nr_vcpus)
         vgic->vcpu[i].rd_waker = GICR_WAKER_PROCESSOR_SLEEP;
     }
 
-    KLOG_INFO("[vgicv3] VM vGIC ready (%u vCPU, %u IRQs, %u LR)\n",
-              nr_vcpus, (unsigned)VGIC3_MAX_IRQS, (unsigned)_gicv3.nr_lrs);
+    KLOG_INFO("[vgicv3] VM vGIC ready (%u vCPU, %u IRQs, %u LR)\n", nr_vcpus,
+              (unsigned)VGIC3_MAX_IRQS, (unsigned)_gicv3.nr_lrs);
     return 0;
 }
 
@@ -174,8 +173,7 @@ void vmm_vgic3_hw_init(void)
     if (!logged) {
         logged = 1;
         KLOG_INFO("[vgicv3] ICH_HCR_EL2=0x%llx (En=1, %u LRs), set on cpu=%u\n",
-                  (unsigned long long)gicv3_read_hcr(),
-                  (unsigned)_gicv3.nr_lrs,
+                  (unsigned long long)gicv3_read_hcr(), (unsigned)_gicv3.nr_lrs,
                   (unsigned)get_current_cpu_id());
     }
 }
@@ -223,7 +221,7 @@ void vmm_vgic3_set_enabled(vgic3_t *vgic, uint32_t vcpu_id, uint32_t irq,
                            int enabled)
 {
     if (!vgic || !valid_irq(irq) || irq < 16)
-        return;   /* SGI 使能位不参与投递判定，忽略 */
+        return; /* SGI 使能位不参与投递判定，忽略 */
 
     if (irq < 32) {
         if (!valid_vcpu(vgic, vcpu_id))
@@ -245,8 +243,9 @@ uint32_t vmm_vgic3_enabled_word(const vgic3_t *vgic, uint32_t vcpu_id,
     if (!vgic || word >= VGIC3_MAX_WORDS)
         return 0;
     if (word == 0)
-        return valid_vcpu(vgic, vcpu_id) ?
-               (vgic->vcpu[vcpu_id].enabled0 | SGI_MASK) : SGI_MASK;
+        return valid_vcpu(vgic, vcpu_id)
+                   ? (vgic->vcpu[vcpu_id].enabled0 | SGI_MASK)
+                   : SGI_MASK;
     return vgic->enabled[word];
 }
 
@@ -281,8 +280,8 @@ void vmm_vgic3_clear_pending_word(vgic3_t *vgic, uint32_t vcpu_id,
         vgic->spi_pending[vcpu_id][word] &= ~bits;
 }
 
-void vmm_vgic3_clear_active_word(vgic3_t *vgic, uint32_t vcpu_id,
-                                 uint32_t word, uint32_t bits)
+void vmm_vgic3_clear_active_word(vgic3_t *vgic, uint32_t vcpu_id, uint32_t word,
+                                 uint32_t bits)
 {
     if (!vgic || word >= VGIC3_MAX_WORDS || !valid_vcpu(vgic, vcpu_id))
         return;
@@ -322,7 +321,6 @@ static void clear_pending(vgic3_t *vgic, uint32_t vcpu_id, uint32_t irq)
     }
 }
 
-
 /* ── per-CPU 的 ICH_*_EL2 访问（见 vgic3_t 里 ich_vmcr 的注释）─────────
  *
  * ⚠️ 只碰 ICH_VMCR_EL2。**不要**去读写 ICH_AP1R1/2/3_EL2 —— 实测在 QEMU 上
@@ -340,7 +338,7 @@ static uint64_t ich_read_vmcr(void)
 
 static void ich_write_vmcr(uint64_t v)
 {
-    __asm__ volatile("msr " ICH_VMCR_EL2 ", %0" :: "r"(v) : "memory");
+    __asm__ volatile("msr " ICH_VMCR_EL2 ", %0" ::"r"(v) : "memory");
 }
 
 /* ── 进入 guest 前：把可投递中断写进空 LR ───────────────────── */
@@ -357,9 +355,9 @@ static void ich_write_vmcr(uint64_t v)
  * 做法照抄 irq_route.c 的 per-pCPU 数组模式（那边管的是"哪颗核跑哪个
  * vCPU"，这里管的是"哪颗核的 LR 归谁"）。
  */
-#define VGIC3_MAX_LR_CPUS  8
-static vgic3_t  *g_lr_owner_vgic[VGIC3_MAX_LR_CPUS];
-static uint32_t  g_lr_owner_vcpu[VGIC3_MAX_LR_CPUS];
+#define VGIC3_MAX_LR_CPUS 8
+static vgic3_t *g_lr_owner_vgic[VGIC3_MAX_LR_CPUS];
+static uint32_t g_lr_owner_vcpu[VGIC3_MAX_LR_CPUS];
 
 /*
  * vmm_vgic3_lr_switch_in — 进入 guest 前调用：确保本核的 LR 属于给定的
@@ -379,11 +377,10 @@ void vmm_vgic3_lr_switch_in(vgic3_t *vgic, uint32_t vcpu_id)
 
     if (cpu < VGIC3_MAX_LR_CPUS &&
         (g_lr_owner_vgic[cpu] != vgic || g_lr_owner_vcpu[cpu] != vcpu_id)) {
-
         if (g_lr_owner_vgic[cpu]) {
             vgic3_t *prev = g_lr_owner_vgic[cpu];
-            uint32_t n = _gicv3.nr_lrs > VGIC3_MAX_LRS ? VGIC3_MAX_LRS
-                                                       : _gicv3.nr_lrs;
+            uint32_t n =
+                _gicv3.nr_lrs > VGIC3_MAX_LRS ? VGIC3_MAX_LRS : _gicv3.nr_lrs;
 
             vmm_vgic3_sync_exit(prev, g_lr_owner_vcpu[cpu]);
 
@@ -463,11 +460,11 @@ void vmm_vgic3_sync_entry(vgic3_t *vgic, uint32_t vcpu_id)
             act &= act - 1;
 
             if (lr_has_irq(vgic, vcpu_id, irq))
-                continue;               /* 已经在 LR 里了 */
+                continue; /* 已经在 LR 里了 */
 
             slot = lr_empty_slot(vgic, vcpu_id);
             if (slot < 0)
-                break;                  /* 槽位不够，留给下一轮 */
+                break; /* 槽位不够，留给下一轮 */
 
             lr = vgic3_lr_value(vgic, vcpu_id, irq);
             lr = (lr & ~ICH_LR_STATE_MASK) |
@@ -487,11 +484,14 @@ void vmm_vgic3_sync_entry(vgic3_t *vgic, uint32_t vcpu_id)
                          ~vmm_vgic3_active_word(vgic, vcpu_id, word);
 
         while (ready) {
-            uint32_t bit  = ready & (~ready + 1u);
-            uint32_t off  = 0;
-            uint32_t tmp  = bit;
+            uint32_t bit = ready & (~ready + 1u);
+            uint32_t off = 0;
+            uint32_t tmp = bit;
 
-            while (tmp > 1u) { tmp >>= 1; off++; }
+            while (tmp > 1u) {
+                tmp >>= 1;
+                off++;
+            }
             ready &= ~bit;
 
             uint32_t irq = word * 32u + off;
@@ -502,7 +502,7 @@ void vmm_vgic3_sync_entry(vgic3_t *vgic, uint32_t vcpu_id)
 
             int slot = lr_empty_slot(vgic, vcpu_id);
             if (slot < 0)
-                return;   /* LR 用满 */
+                return; /* LR 用满 */
 
             uint64_t value = vgic3_lr_value(vgic, vcpu_id, irq);
             vcpu->lr[slot] = value;

@@ -25,7 +25,7 @@
  */
 
 #include "vmm/vmm_uart16550.h"
-#include "vmm/vmm.h"        /* vm_t：只为 slot 与 console_owned，设备状态已不在里面 */
+#include "vmm/vmm.h" /* vm_t：只为 slot 与 console_owned，设备状态已不在里面 */
 #include "klog.h"
 #include "string.h"
 #include "spinlock.h"
@@ -42,8 +42,8 @@
  */
 typedef struct {
     uart16550_state_t st;
-    spinlock_noirq_t  lock;   /* 从前是 vm->uart16550_lock */
-    mmio_device_t     dev;    /* 从前是 vm->uart_dev */
+    spinlock_noirq_t lock; /* 从前是 vm->uart16550_lock */
+    mmio_device_t dev;     /* 从前是 vm->uart_dev */
 } uart16550_slot_t;
 
 static uart16550_slot_t g_uart16550[MAX_VMS] __attribute__((aligned(64)));
@@ -66,41 +66,41 @@ static uart16550_slot_t *uart16550_of(const vm_t *vm)
 }
 
 /* ── 16550 寄存器偏移 ─────────────────────────────────────── */
-#define UART_RBR_THR_DLL   0x00
-#define UART_IER_DLM       0x01
-#define UART_IIR_FCR       0x02
-#define UART_LCR           0x03
-#define UART_MCR           0x04
-#define UART_LSR           0x05
-#define UART_MSR           0x06
-#define UART_SCR           0x07
+#define UART_RBR_THR_DLL 0x00
+#define UART_IER_DLM     0x01
+#define UART_IIR_FCR     0x02
+#define UART_LCR         0x03
+#define UART_MCR         0x04
+#define UART_LSR         0x05
+#define UART_MSR         0x06
+#define UART_SCR         0x07
 
 /* IER 位 */
-#define IER_RX_AVAILABLE   (1u << 0)
-#define IER_THR_EMPTY      (1u << 1)
+#define IER_RX_AVAILABLE (1u << 0)
+#define IER_THR_EMPTY    (1u << 1)
 
 /* IIR 值（bit0=0 表示有中断挂起，bits3:1 是中断 ID）*/
-#define IIR_NO_INTERRUPT   (1u << 0)   /* 0x01 */
-#define IIR_THR_EMPTY      0x02
-#define IIR_RX_AVAILABLE   0x04
+#define IIR_NO_INTERRUPT (1u << 0) /* 0x01 */
+#define IIR_THR_EMPTY    0x02
+#define IIR_RX_AVAILABLE 0x04
 
 /* IIR bits7:6 = FIFO 状态（FCR 使能 FIFO 后为 0b11）*/
-#define IIR_FIFO_ENABLED   0xC0
+#define IIR_FIFO_ENABLED 0xC0
 
 /* LSR 位 */
-#define LSR_DATA_READY     (1u << 0)
-#define LSR_THRE           (1u << 5)
-#define LSR_TEMT           (1u << 6)
+#define LSR_DATA_READY (1u << 0)
+#define LSR_THRE       (1u << 5)
+#define LSR_TEMT       (1u << 6)
 
 /* LCR 位 7：除数锁存使能（DLAB）*/
-#define LCR_DLAB           (1u << 7)
+#define LCR_DLAB (1u << 7)
 
 /* FCR 位 0：使能 FIFO */
-#define FCR_ENABLE_FIFO    (1u << 0)
+#define FCR_ENABLE_FIFO (1u << 0)
 
 /* 缓冲深度在头文件里（vm_t 要按它算大小），这里只取短名 */
-#define RX_FIFO_SIZE   UART16550_RX_FIFO_SIZE
-#define TX_FIFO_SIZE   UART16550_TX_FIFO_SIZE
+#define RX_FIFO_SIZE UART16550_RX_FIFO_SIZE
+#define TX_FIFO_SIZE UART16550_TX_FIFO_SIZE
 
 /* ── 状态与锁的取用（每 VM 一份槽位）───────────────────────── */
 
@@ -109,7 +109,7 @@ static uart16550_slot_t *uart16550_of(const vm_t *vm)
  * 锁就在槽位里 —— 不再需要"经 state->owner 回到 vm 再取锁"那条链
  *（那条链在 owner 还没设时是 NULL 解引用）。
  */
-#define UART_LOCK(d)   (&(d)->lock)
+#define UART_LOCK(d) (&(d)->lock)
 
 static int rx_irq_asserted_locked(const uart16550_state_t *s)
 {
@@ -170,8 +170,8 @@ void uart16550_rx_flush(vm_t *vm)
     s = &d->st;
 
     spin_lock_irqsave(&d->lock, &flags);
-    s->rx_head  = 0;
-    s->rx_tail  = 0;
+    s->rx_head = 0;
+    s->rx_tail = 0;
     s->rx_count = 0;
     s->rx_drops = 0;
     spin_unlock_irqrestore(&d->lock, flags);
@@ -196,8 +196,8 @@ void uart16550_tx_set_enabled(vm_t *vm, int enabled)
     vm->console_owned = enabled ? 1 : 0;
     if (!enabled) {
         /* 关通道时清空 TX 环：剩下的字节是上一个 guest 的，别再放给下一个 */
-        s->tx_head  = 0;
-        s->tx_tail  = 0;
+        s->tx_head = 0;
+        s->tx_tail = 0;
         s->tx_count = 0;
     }
     spin_unlock_irqrestore(&d->lock, flags);
@@ -291,7 +291,7 @@ static uint64_t uart16550_read(mmio_device_t *dev, uint64_t off, uint8_t size)
 {
     uart16550_state_t *s = (uart16550_state_t *)dev->priv;
     /* priv 仍指向 st（语义不变），锁在包装器里 —— 用 container_of 找回 */
-    uart16550_slot_t  *d = container_of(s, uart16550_slot_t, st);
+    uart16550_slot_t *d = container_of(s, uart16550_slot_t, st);
     uint64_t flags;
     uint64_t ret = 0;
     int dlab;
@@ -333,8 +333,12 @@ static uint64_t uart16550_read(mmio_device_t *dev, uint64_t off, uint8_t size)
             ret |= IIR_FIFO_ENABLED;
         break;
 
-    case UART_LCR: ret = s->lcr; break;
-    case UART_MCR: ret = s->mcr; break;
+    case UART_LCR:
+        ret = s->lcr;
+        break;
+    case UART_MCR:
+        ret = s->mcr;
+        break;
 
     case UART_LSR:
         /* 发送即时完成 → THRE/TEMT 恒置位；RX 有数据时加 DR */
@@ -343,9 +347,15 @@ static uint64_t uart16550_read(mmio_device_t *dev, uint64_t off, uint8_t size)
             ret |= LSR_DATA_READY;
         break;
 
-    case UART_MSR: ret = 0; break;
-    case UART_SCR: ret = s->scr; break;
-    default:       ret = 0; break;
+    case UART_MSR:
+        ret = 0;
+        break;
+    case UART_SCR:
+        ret = s->scr;
+        break;
+    default:
+        ret = 0;
+        break;
     }
 
     spin_unlock_irqrestore(UART_LOCK(d), flags);
@@ -356,7 +366,7 @@ static void uart16550_write(mmio_device_t *dev, uint64_t off, uint8_t size,
                             uint64_t value)
 {
     uart16550_state_t *s = (uart16550_state_t *)dev->priv;
-    uart16550_slot_t  *d = container_of(s, uart16550_slot_t, st);
+    uart16550_slot_t *d = container_of(s, uart16550_slot_t, st);
     uint8_t v = (uint8_t)value;
     uint64_t flags;
     int dlab;
@@ -372,7 +382,7 @@ static void uart16550_write(mmio_device_t *dev, uint64_t off, uint8_t size,
         if (dlab)
             s->dll = v;
         else
-            uart_put_char(s, v);   /* THR：输出 guest 字符 */
+            uart_put_char(s, v); /* THR：输出 guest 字符 */
         break;
 
     case UART_IER_DLM:
@@ -382,21 +392,30 @@ static void uart16550_write(mmio_device_t *dev, uint64_t off, uint8_t size,
             s->ier = v;
         break;
 
-    case UART_IIR_FCR: s->fcr = v; break;   /* 只记 FIFO 使能位 */
-    case UART_LCR:     s->lcr = v; break;
-    case UART_MCR:     s->mcr = v; break;
-    case UART_SCR:     s->scr = v; break;
-    default: break;
+    case UART_IIR_FCR:
+        s->fcr = v;
+        break; /* 只记 FIFO 使能位 */
+    case UART_LCR:
+        s->lcr = v;
+        break;
+    case UART_MCR:
+        s->mcr = v;
+        break;
+    case UART_SCR:
+        s->scr = v;
+        break;
+    default:
+        break;
     }
 
     spin_unlock_irqrestore(UART_LOCK(d), flags);
 }
 
 static const mmio_dev_ops_t g_uart16550_ops = {
-    .name  = "uart16550",
-    .base  = UART16550_BASE,
-    .size  = UART16550_SIZE,
-    .read  = uart16550_read,
+    .name = "uart16550",
+    .base = UART16550_BASE,
+    .size = UART16550_SIZE,
+    .read = uart16550_read,
     .write = uart16550_write,
 };
 
@@ -456,9 +475,9 @@ int uart16550_init(vm_t *vm, mmio_bus_t *bus)
      * 见 include/vmm/vmm_uart16550.h 里 state 定义下方的说明。
      */
     memset(&d->st, 0, sizeof(d->st));
-    d->st.owner = vm;      /* of() 靠它认出"这个槽位属于谁" */
+    d->st.owner = vm; /* of() 靠它认出"这个槽位属于谁" */
 
-    d->dev.ops  = &g_uart16550_ops;
+    d->dev.ops = &g_uart16550_ops;
     d->dev.priv = &d->st;
 
     return mmio_bus_register(bus, &d->dev);
@@ -495,8 +514,8 @@ void uart16550_destroy(vm_t *vm)
     d = &g_uart16550[vm->slot];
 
     spin_lock_irqsave(&d->lock, &flags);
-    memset(&d->st, 0, sizeof(d->st));   /* 含 st.owner —— of() 随即失效 */
-    d->dev.ops  = NULL;
+    memset(&d->st, 0, sizeof(d->st)); /* 含 st.owner —— of() 随即失效 */
+    d->dev.ops = NULL;
     d->dev.priv = NULL;
     spin_unlock_irqrestore(&d->lock, flags);
 }

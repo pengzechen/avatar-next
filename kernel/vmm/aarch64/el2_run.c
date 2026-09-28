@@ -13,7 +13,7 @@
 #include "vmm/vmm.h"
 #include "klog.h"
 #include "aarch64/stage2.h"
-#include "pmm.h"               /* 按需分页：缺页时要从 PMM 现拿物理页 */
+#include "pmm.h" /* 按需分页：缺页时要从 PMM 现拿物理页 */
 #include "aarch64/sysreg.h"
 #include "task/task.h"
 #include "task/switch.h"
@@ -21,13 +21,16 @@
 #include "vmm/vmm_irq_route.h" /* 宿主 IRQ → vCPU 任务唤醒 */
 #include "vmm/vmm_vpl011.h"    /* 虚拟 PL011 RX 中断线 */
 #if DRIVER_GIC_V3
-#include "vmm/vmm_vgicv3.h"    /* vGICv3 中断注入（ICH_LR<n>_EL2）*/
+#include "vmm/vmm_vgicv3.h" /* vGICv3 中断注入（ICH_LR<n>_EL2）*/
 #else
-#include "vmm/vmm_vgic.h"      /* vGICv2 中断注入（GICH_LR）*/
+#include "vmm/vmm_vgic.h" /* vGICv2 中断注入（GICH_LR）*/
 #endif
 
 /* ── 读取 ESR / ELR / FAR / HPFAR ────────────────────────── */
-static inline uint64_t read_esr_el2(void)   { return READ_ESR_EL2(); }
+static inline uint64_t read_esr_el2(void)
+{
+    return READ_ESR_EL2();
+}
 extern void handle_irq_exception(uint64_t *stack_pointer);
 
 /* ── 步进 guest PC 越过陷入指令 ───────────────────────────── */
@@ -47,60 +50,99 @@ static void el2_advance_pc(vcpu_t *vcpu, uint64_t esr)
  * capabilities, and QEMU/host values can advertise duplicate or unsupported
  * virtual features. Present a small, coherent ARMv8.0 profile instead. */
 #define SYSREG_ID(op0, op1, crn, crm, op2) \
-    ((((op0) & 3u) << 14) | (((op1) & 7u) << 11) | \
-     (((crn) & 15u) << 7) | (((crm) & 15u) << 3) | ((op2) & 7u))
+    ((((op0) & 3u) << 14) | (((op1) & 7u) << 11) | (((crn) & 15u) << 7) | \
+     (((crm) & 15u) << 3) | ((op2) & 7u))
 
-#define ID_AA64PFR0_FP_SIMD  ((0ULL << 16) | (0ULL << 20))
-#define ID_AA64PFR0_ELS      ((1ULL << 0) | (1ULL << 4))
-#define ID_AA64MMFR0_BASE    ((1ULL << 0) | (0xFULL << 20) | (0xFULL << 24))
+#define ID_AA64PFR0_FP_SIMD ((0ULL << 16) | (0ULL << 20))
+#define ID_AA64PFR0_ELS     ((1ULL << 0) | (1ULL << 4))
+#define ID_AA64MMFR0_BASE   ((1ULL << 0) | (0xFULL << 20) | (0xFULL << 24))
 
 static uint64_t aarch64_vcpu_idreg_read(uint32_t key)
 {
     switch (key) {
-    case SYSREG_ID(3, 0, 0, 0, 0): return 0x410fd0b0ULL; /* MIDR: Cortex-A76-like */
-    case SYSREG_ID(3, 0, 0, 0, 5): return 0x80000000ULL; /* MPIDR: uniprocessor */
-    case SYSREG_ID(3, 0, 0, 0, 6): return 0;            /* REVIDR */
+    case SYSREG_ID(3, 0, 0, 0, 0):
+        return 0x410fd0b0ULL; /* MIDR: Cortex-A76-like */
+    case SYSREG_ID(3, 0, 0, 0, 5):
+        return 0x80000000ULL; /* MPIDR: uniprocessor */
+    case SYSREG_ID(3, 0, 0, 0, 6):
+        return 0; /* REVIDR */
 
-    case SYSREG_ID(3, 0, 0, 4, 0): return ID_AA64PFR0_ELS | ID_AA64PFR0_FP_SIMD;
-    case SYSREG_ID(3, 0, 0, 4, 1): return 0; /* ID_AA64PFR1_EL1 */
-    case SYSREG_ID(3, 0, 0, 4, 4): return 0; /* ID_AA64ZFR0_EL1 */
-    case SYSREG_ID(3, 0, 0, 4, 5): return 0; /* ID_AA64SMFR0_EL1 */
+    case SYSREG_ID(3, 0, 0, 4, 0):
+        return ID_AA64PFR0_ELS | ID_AA64PFR0_FP_SIMD;
+    case SYSREG_ID(3, 0, 0, 4, 1):
+        return 0; /* ID_AA64PFR1_EL1 */
+    case SYSREG_ID(3, 0, 0, 4, 4):
+        return 0; /* ID_AA64ZFR0_EL1 */
+    case SYSREG_ID(3, 0, 0, 4, 5):
+        return 0; /* ID_AA64SMFR0_EL1 */
 
-    case SYSREG_ID(3, 0, 0, 5, 0): return 0x0000000000000006ULL; /* ID_AA64DFR0_EL1 */
-    case SYSREG_ID(3, 0, 0, 5, 1): return 0; /* ID_AA64DFR1_EL1 */
+    case SYSREG_ID(3, 0, 0, 5, 0):
+        return 0x0000000000000006ULL; /* ID_AA64DFR0_EL1 */
+    case SYSREG_ID(3, 0, 0, 5, 1):
+        return 0; /* ID_AA64DFR1_EL1 */
 
-    case SYSREG_ID(3, 0, 0, 6, 0): return 0; /* ID_AA64ISAR0_EL1 */
-    case SYSREG_ID(3, 0, 0, 6, 1): return 0; /* ID_AA64ISAR1_EL1: no PAuth */
-    case SYSREG_ID(3, 0, 0, 6, 2): return 0; /* ID_AA64ISAR2_EL1: no newer PAuth */
+    case SYSREG_ID(3, 0, 0, 6, 0):
+        return 0; /* ID_AA64ISAR0_EL1 */
+    case SYSREG_ID(3, 0, 0, 6, 1):
+        return 0; /* ID_AA64ISAR1_EL1: no PAuth */
+    case SYSREG_ID(3, 0, 0, 6, 2):
+        return 0; /* ID_AA64ISAR2_EL1: no newer PAuth */
 
-    case SYSREG_ID(3, 0, 0, 7, 0): return ID_AA64MMFR0_BASE;
-    case SYSREG_ID(3, 0, 0, 7, 1): return 0; /* ID_AA64MMFR1_EL1 */
-    case SYSREG_ID(3, 0, 0, 7, 2): return 0; /* ID_AA64MMFR2_EL1 */
-    case SYSREG_ID(3, 0, 0, 7, 3): return 0; /* ID_AA64MMFR3_EL1 */
+    case SYSREG_ID(3, 0, 0, 7, 0):
+        return ID_AA64MMFR0_BASE;
+    case SYSREG_ID(3, 0, 0, 7, 1):
+        return 0; /* ID_AA64MMFR1_EL1 */
+    case SYSREG_ID(3, 0, 0, 7, 2):
+        return 0; /* ID_AA64MMFR2_EL1 */
+    case SYSREG_ID(3, 0, 0, 7, 3):
+        return 0; /* ID_AA64MMFR3_EL1 */
 
-    case SYSREG_ID(3, 0, 0, 1, 0): return 0; /* ID_PFR0_EL1 */
-    case SYSREG_ID(3, 0, 0, 1, 1): return 0; /* ID_PFR1_EL1 */
-    case SYSREG_ID(3, 0, 0, 1, 2): return 0; /* ID_DFR0_EL1 */
-    case SYSREG_ID(3, 0, 0, 1, 3): return 0; /* ID_AFR0_EL1 */
-    case SYSREG_ID(3, 0, 0, 1, 4): return 0; /* ID_MMFR0_EL1 */
-    case SYSREG_ID(3, 0, 0, 1, 5): return 0; /* ID_MMFR1_EL1 */
-    case SYSREG_ID(3, 0, 0, 1, 6): return 0; /* ID_MMFR2_EL1 */
-    case SYSREG_ID(3, 0, 0, 1, 7): return 0; /* ID_MMFR3_EL1 */
-    case SYSREG_ID(3, 0, 0, 2, 0): return 0; /* ID_ISAR0_EL1 */
-    case SYSREG_ID(3, 0, 0, 2, 1): return 0; /* ID_ISAR1_EL1 */
-    case SYSREG_ID(3, 0, 0, 2, 2): return 0; /* ID_ISAR2_EL1 */
-    case SYSREG_ID(3, 0, 0, 2, 3): return 0; /* ID_ISAR3_EL1 */
-    case SYSREG_ID(3, 0, 0, 2, 4): return 0; /* ID_ISAR4_EL1 */
-    case SYSREG_ID(3, 0, 0, 2, 5): return 0; /* ID_ISAR5_EL1 */
-    case SYSREG_ID(3, 0, 0, 2, 6): return 0; /* ID_MMFR4_EL1 */
-    case SYSREG_ID(3, 0, 0, 2, 7): return 0; /* ID_ISAR6_EL1 */
-    case SYSREG_ID(3, 0, 0, 3, 0): return 0; /* MVFR0_EL1 */
-    case SYSREG_ID(3, 0, 0, 3, 1): return 0; /* MVFR1_EL1 */
-    case SYSREG_ID(3, 0, 0, 3, 2): return 0; /* MVFR2_EL1 */
-    case SYSREG_ID(3, 0, 0, 3, 4): return 0; /* ID_PFR2_EL1 */
-    case SYSREG_ID(3, 0, 0, 3, 5): return 0; /* ID_DFR1_EL1 */
-    case SYSREG_ID(3, 0, 0, 3, 6): return 0; /* ID_MMFR5_EL1 */
-    default: return 0;
+    case SYSREG_ID(3, 0, 0, 1, 0):
+        return 0; /* ID_PFR0_EL1 */
+    case SYSREG_ID(3, 0, 0, 1, 1):
+        return 0; /* ID_PFR1_EL1 */
+    case SYSREG_ID(3, 0, 0, 1, 2):
+        return 0; /* ID_DFR0_EL1 */
+    case SYSREG_ID(3, 0, 0, 1, 3):
+        return 0; /* ID_AFR0_EL1 */
+    case SYSREG_ID(3, 0, 0, 1, 4):
+        return 0; /* ID_MMFR0_EL1 */
+    case SYSREG_ID(3, 0, 0, 1, 5):
+        return 0; /* ID_MMFR1_EL1 */
+    case SYSREG_ID(3, 0, 0, 1, 6):
+        return 0; /* ID_MMFR2_EL1 */
+    case SYSREG_ID(3, 0, 0, 1, 7):
+        return 0; /* ID_MMFR3_EL1 */
+    case SYSREG_ID(3, 0, 0, 2, 0):
+        return 0; /* ID_ISAR0_EL1 */
+    case SYSREG_ID(3, 0, 0, 2, 1):
+        return 0; /* ID_ISAR1_EL1 */
+    case SYSREG_ID(3, 0, 0, 2, 2):
+        return 0; /* ID_ISAR2_EL1 */
+    case SYSREG_ID(3, 0, 0, 2, 3):
+        return 0; /* ID_ISAR3_EL1 */
+    case SYSREG_ID(3, 0, 0, 2, 4):
+        return 0; /* ID_ISAR4_EL1 */
+    case SYSREG_ID(3, 0, 0, 2, 5):
+        return 0; /* ID_ISAR5_EL1 */
+    case SYSREG_ID(3, 0, 0, 2, 6):
+        return 0; /* ID_MMFR4_EL1 */
+    case SYSREG_ID(3, 0, 0, 2, 7):
+        return 0; /* ID_ISAR6_EL1 */
+    case SYSREG_ID(3, 0, 0, 3, 0):
+        return 0; /* MVFR0_EL1 */
+    case SYSREG_ID(3, 0, 0, 3, 1):
+        return 0; /* MVFR1_EL1 */
+    case SYSREG_ID(3, 0, 0, 3, 2):
+        return 0; /* MVFR2_EL1 */
+    case SYSREG_ID(3, 0, 0, 3, 4):
+        return 0; /* ID_PFR2_EL1 */
+    case SYSREG_ID(3, 0, 0, 3, 5):
+        return 0; /* ID_DFR1_EL1 */
+    case SYSREG_ID(3, 0, 0, 3, 6):
+        return 0; /* ID_MMFR5_EL1 */
+    default:
+        return 0;
     }
 }
 
@@ -110,7 +152,7 @@ static int handle_sysreg(vcpu_t *vcpu, uint64_t esr)
     uint32_t op2 = (uint32_t)((esr >> 17) & 0x7);
     uint32_t op1 = (uint32_t)((esr >> 14) & 0x7);
     uint32_t crn = (uint32_t)((esr >> 10) & 0xF);
-    uint32_t rt  = (uint32_t)((esr >> 5) & 0x1F);
+    uint32_t rt = (uint32_t)((esr >> 5) & 0x1F);
     uint32_t crm = (uint32_t)((esr >> 1) & 0xF);
     uint32_t dir = (uint32_t)(esr & 1);
     uint32_t key = SYSREG_ID(op0, op1, crn, crm, op2);
@@ -122,8 +164,9 @@ static int handle_sysreg(vcpu_t *vcpu, uint64_t esr)
         return EL2_RESUME;
     }
 
-    KLOG_WARN("[VMM] Unhandled sysreg %s op0=%u op1=%u crn=%u crm=%u op2=%u rt=%u\n",
-              dir ? "read" : "write", op0, op1, crn, crm, op2, rt);
+    KLOG_WARN(
+        "[VMM] Unhandled sysreg %s op0=%u op1=%u crn=%u crm=%u op2=%u rt=%u\n",
+        dir ? "read" : "write", op0, op1, crn, crm, op2, rt);
     el2_advance_pc(vcpu, esr);
     return EL2_RESUME;
 }
@@ -141,8 +184,8 @@ static int handle_wfi(vcpu_t *vcpu, uint64_t esr)
 
     if ((++wfi_count & 0x3FFFF) == 1) {
         KLOG_DEBUG("[VMM] guest idle heartbeat: wfi=%llu ELR=0x%llx (vcpu%d)\n",
-                   (unsigned long long)wfi_count,
-                   (unsigned long long)vcpu->elr, vcpu->vcpu_id);
+                   (unsigned long long)wfi_count, (unsigned long long)vcpu->elr,
+                   vcpu->vcpu_id);
     }
 
     el2_advance_pc(vcpu, esr);
@@ -176,13 +219,13 @@ static void dump_vttbr_diag(vm_t *vm, const char *what, uint64_t ipa,
                             uint64_t pa, uint64_t esr)
 {
     uint64_t hw_vttbr = 0, hw_vtcr = 0, hw_hcr = 0, look = 0;
-    int      fsc  = (int)(esr & 0x3F);          /* ISS.FSC：故障类型 */
-    int      s1ptw = (int)((esr >> 7) & 1);
-    int      found = stage2_lookup(&vm->s2, ipa, &look);
+    int fsc = (int)(esr & 0x3F); /* ISS.FSC：故障类型 */
+    int s1ptw = (int)((esr >> 7) & 1);
+    int found = stage2_lookup(&vm->s2, ipa, &look);
 
     __asm__ volatile("mrs %0, vttbr_el2" : "=r"(hw_vttbr));
-    __asm__ volatile("mrs %0, vtcr_el2"  : "=r"(hw_vtcr));
-    __asm__ volatile("mrs %0, hcr_el2"   : "=r"(hw_hcr));
+    __asm__ volatile("mrs %0, vtcr_el2" : "=r"(hw_vtcr));
+    __asm__ volatile("mrs %0, hcr_el2" : "=r"(hw_hcr));
 
     /*
      * FSC 是这里最关键的信息：
@@ -192,10 +235,9 @@ static void dump_vttbr_diag(vm_t *vm, const char *what, uint64_t ipa,
      */
     KLOG_INFO("[vmm] vm%u %s ipa=0x%llx pa=0x%llx esr=0x%llx FSC=0x%x s1ptw=%d "
               "| sw_lookup=%s(pa=0x%llx) | VTTBR %s | VTCR %s | HCR.VM=%d\n",
-              vm->vmid, what,
-              (unsigned long long)ipa, (unsigned long long)pa,
-              (unsigned long long)esr, fsc, s1ptw,
-              found ? "HIT" : "MISS", (unsigned long long)look,
+              vm->vmid, what, (unsigned long long)ipa, (unsigned long long)pa,
+              (unsigned long long)esr, fsc, s1ptw, found ? "HIT" : "MISS",
+              (unsigned long long)look,
               (hw_vttbr == vm->s2.vttbr) ? "MATCH" : "MISMATCH",
               (hw_vtcr == vm->s2.vtcr) ? "MATCH" : "MISMATCH",
               (int)((hw_hcr >> 0) & 1));
@@ -203,10 +245,10 @@ static void dump_vttbr_diag(vm_t *vm, const char *what, uint64_t ipa,
 
 static int handle_dabt(vcpu_t *vcpu, uint64_t esr)
 {
-    uint64_t far   = vcpu->far;
+    uint64_t far = vcpu->far;
     uint64_t hpfar = vcpu->hpfar;
-    int      s1ptw = (int)((esr >> 7) & 1);
-    int      wnr   = (int)((esr >> 6) & 1);
+    int s1ptw = (int)((esr >> 7) & 1);
+    int wnr = (int)((esr >> 6) & 1);
 
     /*
      * HPFAR[39:4] = IPA[47:12] → IPA_base = hpfar << 8（**总是页对齐的**）。
@@ -216,7 +258,7 @@ static int handle_dabt(vcpu_t *vcpu, uint64_t esr)
      * （实测装的是 guest 的虚拟地址），把它的低 12 位并进来是错的。
      */
     uint64_t ipa_page = hpfar << 8;
-    uint64_t ipa      = ipa_page | (s1ptw ? 0 : (far & 0xFFFULL));
+    uint64_t ipa = ipa_page | (s1ptw ? 0 : (far & 0xFFFULL));
 
     /*
      * 0) ── RAM 缺页：按需分配一个物理页 ──────────────────────────
@@ -235,9 +277,9 @@ static int handle_dabt(vcpu_t *vcpu, uint64_t esr)
          * 1.2ms），1447 次就是 1.7 秒。
          */
         uint64_t npg = stage2_map_block(&vm->s2, ipa_page, 1 /*zero*/);
-        uint64_t pa  = 0;
+        uint64_t pa = 0;
 
-        (void)stage2_lookup(&vm->s2, ipa_page, &pa);  /* 块装好后必然命中 */
+        (void)stage2_lookup(&vm->s2, ipa_page, &pa); /* 块装好后必然命中 */
 
         if (!npg || !pa) {
             KLOG_ERROR("[vmm] vm%u: stage-2 fault ipa=0x%llx but PMM exhausted "
@@ -262,7 +304,7 @@ static int handle_dabt(vcpu_t *vcpu, uint64_t esr)
          * 启动时几千次缺页能白白多花一秒多。对照：加载期的批量映射
          * stage2_map_range() 也是只在末尾刷一次。
          */
-        return EL2_RESUME;      /* ⚠️ 不推进 PC：让 guest 重试那条指令 */
+        return EL2_RESUME; /* ⚠️ 不推进 PC：让 guest 重试那条指令 */
     }
 
     /* 1) 先尝试 MMIO 设备分发 */
@@ -281,7 +323,7 @@ static int handle_dabt(vcpu_t *vcpu, uint64_t esr)
                             (uint32_t)vcpu->vcpu_id, &out)) {
             if (!wnr) {
                 uint32_t srt = (uint32_t)((esr >> 16) & 0x1F);
-                if (srt != 31)   /* XZR 丢弃 */
+                if (srt != 31) /* XZR 丢弃 */
                     vcpu->r[srt] = out;
             }
             el2_advance_pc(vcpu, esr);
@@ -314,8 +356,8 @@ static int handle_dabt(vcpu_t *vcpu, uint64_t esr)
 static int handle_iabt(vcpu_t *vcpu, uint64_t esr)
 {
     uint64_t hpfar = vcpu->hpfar;
-    int      s1ptw = (int)((esr >> 7) & 1);
-    uint64_t ipa_page = hpfar << 8;      /* HPFAR 给的就是页基址 */
+    int s1ptw = (int)((esr >> 7) & 1);
+    uint64_t ipa_page = hpfar << 8; /* HPFAR 给的就是页基址 */
 
     if (vcpu->vm && stage2_ipa_is_ram(&vcpu->vm->s2, ipa_page)) {
         vm_t *vm = vcpu->vm;
@@ -333,14 +375,14 @@ static int handle_iabt(vcpu_t *vcpu, uint64_t esr)
         if (vm->s2.nr_fault <= 4)
             dump_vttbr_diag(vm, "ifault", ipa_page, pa, esr);
         /* 同上：首次映射不需要 TLB 维护 */
-        return EL2_RESUME;      /* 不推进 PC：重试这次取指 */
+        return EL2_RESUME; /* 不推进 PC：重试这次取指 */
     }
 
-    KLOG_ERROR("[VMM] vm%u: instruction abort at ipa=0x%llx — outside guest RAM "
-               "(s1ptw=%d elr=0x%llx esr=0x%llx)\n",
-               vcpu->vm ? vcpu->vm->vmid : 0,
-               (unsigned long long)ipa_page, s1ptw,
-               (unsigned long long)vcpu->elr, (unsigned long long)esr);
+    KLOG_ERROR(
+        "[VMM] vm%u: instruction abort at ipa=0x%llx — outside guest RAM "
+        "(s1ptw=%d elr=0x%llx esr=0x%llx)\n",
+        vcpu->vm ? vcpu->vm->vmid : 0, (unsigned long long)ipa_page, s1ptw,
+        (unsigned long long)vcpu->elr, (unsigned long long)esr);
     return EL2_EXIT;
 }
 
@@ -350,12 +392,12 @@ static int handle_iabt(vcpu_t *vcpu, uint64_t esr)
  * x0=function ID（0x8400_00xx=32 位调用约定 / 0xC400_00xx=64 位）。
  * 返回 EL2_RESUME（继续）或 EL2_VMEXIT（SYSTEM_OFF/RESET）。
  */
-#define PSCI_VERSION_FID    0x84000000ULL
-#define PSCI_CPU_ON_32      0x84000003ULL
-#define PSCI_CPU_ON_64      0xC4000003ULL
-#define PSCI_SYSTEM_OFF     0x84000008ULL
-#define PSCI_SYSTEM_RESET   0x84000009ULL
-#define PSCI_FEATURES_FID   0x8400000AULL
+#define PSCI_VERSION_FID  0x84000000ULL
+#define PSCI_CPU_ON_32    0x84000003ULL
+#define PSCI_CPU_ON_64    0xC4000003ULL
+#define PSCI_SYSTEM_OFF   0x84000008ULL
+#define PSCI_SYSTEM_RESET 0x84000009ULL
+#define PSCI_FEATURES_FID 0x8400000AULL
 
 #define PSCI_RET_SUCCESS        0ULL
 #define PSCI_RET_NOT_SUPPORTED  ((uint64_t)-1)
@@ -365,8 +407,12 @@ static int handle_iabt(vcpu_t *vcpu, uint64_t esr)
 static int psci_fid_supported(uint64_t fid)
 {
     switch (fid) {
-    case PSCI_VERSION_FID: case PSCI_CPU_ON_32: case PSCI_CPU_ON_64:
-    case PSCI_SYSTEM_OFF:  case PSCI_SYSTEM_RESET: case PSCI_FEATURES_FID:
+    case PSCI_VERSION_FID:
+    case PSCI_CPU_ON_32:
+    case PSCI_CPU_ON_64:
+    case PSCI_SYSTEM_OFF:
+    case PSCI_SYSTEM_RESET:
+    case PSCI_FEATURES_FID:
         return 1;
     default:
         return 0;
@@ -376,23 +422,24 @@ static int psci_fid_supported(uint64_t fid)
 /* 返回 EL2_RESUME / EL2_VMEXIT；非 PSCI（前缀不符）时返回 -1 表示未处理 */
 static int handle_psci(vcpu_t *vcpu)
 {
-    uint64_t fid    = vcpu->r[0];
-    uint8_t  prefix = (uint8_t)(fid >> 24);
+    uint64_t fid = vcpu->r[0];
+    uint8_t prefix = (uint8_t)(fid >> 24);
 
     if (prefix != 0x84 && prefix != 0xC4)
-        return -1;   /* 非 PSCI 调用 */
+        return -1; /* 非 PSCI 调用 */
 
     switch (fid) {
     case PSCI_VERSION_FID:
-        vcpu->r[0] = 0x00000002;   /* PSCI v0.2 */
+        vcpu->r[0] = 0x00000002; /* PSCI v0.2 */
         return EL2_RESUME;
 
     case PSCI_CPU_ON_32:
     case PSCI_CPU_ON_64:
         /* 多 vCPU guest 拉起：当前单 vCPU 模型未支持，忠实记录后返回。
          * TODO(Phase 3): 为 target_cpu 创建第二个 vcpu_task。 */
-        KLOG_WARN("[vpsci] CPU_ON target=0x%llx entry=0x%llx not supported (single vCPU)\n",
-                  (unsigned long long)vcpu->r[1], (unsigned long long)vcpu->r[2]);
+        KLOG_WARN(
+            "[vpsci] CPU_ON target=0x%llx entry=0x%llx not supported (single vCPU)\n",
+            (unsigned long long)vcpu->r[1], (unsigned long long)vcpu->r[2]);
         vcpu->r[0] = PSCI_RET_NOT_SUPPORTED;
         return EL2_RESUME;
 
@@ -403,12 +450,13 @@ static int handle_psci(vcpu_t *vcpu)
         return EL2_VMEXIT;
 
     case PSCI_FEATURES_FID:
-        vcpu->r[0] = psci_fid_supported(vcpu->r[1])
-                     ? PSCI_RET_SUCCESS : PSCI_RET_NOT_SUPPORTED;
+        vcpu->r[0] = psci_fid_supported(vcpu->r[1]) ? PSCI_RET_SUCCESS
+                                                    : PSCI_RET_NOT_SUPPORTED;
         return EL2_RESUME;
 
     default:
-        KLOG_DEBUG("[vpsci] unsupported function 0x%llx\n", (unsigned long long)fid);
+        KLOG_DEBUG("[vpsci] unsupported function 0x%llx\n",
+                   (unsigned long long)fid);
         vcpu->r[0] = PSCI_RET_NOT_SUPPORTED;
         return EL2_RESUME;
     }
@@ -418,7 +466,7 @@ static int handle_psci(vcpu_t *vcpu)
 static int handle_hvc(vcpu_t *vcpu, uint64_t esr)
 {
     (void)esr;
-    uint64_t no = vcpu->r[0];   /* HVC number from guest x0 */
+    uint64_t no = vcpu->r[0]; /* HVC number from guest x0 */
 
     /* 先尝试 PSCI（function ID 前缀 0x84/0xC4，与 HVC_PRINT/DONE 不冲突）*/
     int psci = handle_psci(vcpu);
@@ -430,8 +478,8 @@ static int handle_hvc(vcpu_t *vcpu, uint64_t esr)
         uint64_t iter = vcpu->r[1];
         /* 必须留在 INFO：readme.md 用 LOG=info 跑 test-vmm，这行就是通过证据。
          * 但原来的 iter % 100 仍随迭代无界增长 —— 改用公共采样器抽稀成有界。 */
-        KLOG_INFO_SAMPLE("[VMM] HVC_PRINT: iter=%llu (vcpu%d)\n",
-                         iter, vcpu->vcpu_id);
+        KLOG_INFO_SAMPLE("[VMM] HVC_PRINT: iter=%llu (vcpu%d)\n", iter,
+                         vcpu->vcpu_id);
         /* 主动 yield：让出 CPU 给其他线程 */
         task_yield();
         return EL2_RESUME;
@@ -445,8 +493,7 @@ static int handle_hvc(vcpu_t *vcpu, uint64_t esr)
     }
 
     default:
-        KLOG_WARN("[VMM] Unknown HVC no=%llu (vcpu%d)\n",
-                  no, vcpu->vcpu_id);
+        KLOG_WARN("[VMM] Unknown HVC no=%llu (vcpu%d)\n", no, vcpu->vcpu_id);
         return EL2_RESUME;
     }
 }
@@ -455,7 +502,7 @@ static int handle_hvc(vcpu_t *vcpu, uint64_t esr)
 static int vmm_exit_handler(vcpu_t *vcpu)
 {
     uint64_t esr = vcpu->esr;
-    uint32_t ec  = (uint32_t)(esr >> 26);
+    uint32_t ec = (uint32_t)(esr >> 26);
 
     if ((vcpu->exit_type & 0xFF) != 0) {
         static uint64_t async_count;
@@ -469,9 +516,11 @@ static int vmm_exit_handler(vcpu_t *vcpu)
     }
 
     switch (ec) {
-    case 0x01:  return handle_wfi(vcpu, esr);   /* WFI/WFE            */
-    case 0x16:  return handle_hvc(vcpu, esr);   /* HVC                */
-    case 0x17: {                                /* SMC (PSCI conduit) */
+    case 0x01:
+        return handle_wfi(vcpu, esr); /* WFI/WFE            */
+    case 0x16:
+        return handle_hvc(vcpu, esr); /* HVC                */
+    case 0x17: {                      /* SMC (PSCI conduit) */
         /* SMC 陷入时 ELR_EL2 指向 SMC 指令本身，需手动步进；
          * 而 HVC 陷入时硬件已指向下一条。 */
         int r = handle_psci(vcpu);
@@ -485,17 +534,21 @@ static int vmm_exit_handler(vcpu_t *vcpu)
             el2_advance_pc(vcpu, esr);
         return r;
     }
-    case 0x18:  return handle_sysreg(vcpu, esr); /* trapped sysreg     */
-    case 0x24:  return handle_dabt(vcpu, esr);   /* Stage-2 Data Abort */
-    case 0x20:  return handle_iabt(vcpu, esr);   /* Stage-2 Instruction Abort
+    case 0x18:
+        return handle_sysreg(vcpu, esr); /* trapped sysreg     */
+    case 0x24:
+        return handle_dabt(vcpu, esr); /* Stage-2 Data Abort */
+    case 0x20:
+        return handle_iabt(vcpu, esr); /* Stage-2 Instruction Abort
                                                   * —— 按需分页后必然触发
                                                   * （取指缺页 / S1PTW）*/
     default:
-        KLOG_ERROR("[VMM] Unhandled exit: EC=0x%x ESR=0x%llx ELR=0x%llx SPSR=0x%llx\n",
-                   ec, esr, vcpu->elr, vcpu->spsr);
+        KLOG_ERROR(
+            "[VMM] Unhandled exit: EC=0x%x ESR=0x%llx ELR=0x%llx SPSR=0x%llx\n",
+            ec, esr, vcpu->elr, vcpu->spsr);
         for (int i = 0; i < 8; i += 2)
-            KLOG_ERROR("  x%d=0x%llx  x%d=0x%llx\n",
-                       i, vcpu->r[i], i+1, vcpu->r[i+1]);
+            KLOG_ERROR("  x%d=0x%llx  x%d=0x%llx\n", i, vcpu->r[i], i + 1,
+                       vcpu->r[i + 1]);
         return EL2_EXIT;
     }
 }
@@ -515,9 +568,8 @@ static int vmm_exit_handler(vcpu_t *vcpu)
  * 读当前寄存器——在单 vCPU、且 VMM 与 guest 同核运行的 avatar 模型下等价。
  * 若将来支持 vCPU 跨核迁移，需改为在 vcpu_t 中保存/恢复这两个值。
  */
-#define CNTV_CTL_ENABLE     (1ULL << 0)
-#define CNTV_CTL_IMASK      (1ULL << 1)
-
+#define CNTV_CTL_ENABLE (1ULL << 0)
+#define CNTV_CTL_IMASK  (1ULL << 1)
 
 static void aarch64_check_vtimer(vcpu_t *vcpu)
 {
@@ -526,25 +578,22 @@ static void aarch64_check_vtimer(vcpu_t *vcpu)
     if ((ctl & CNTV_CTL_ENABLE) == 0 || (ctl & CNTV_CTL_IMASK) != 0)
         return;
 
-    uint64_t now  = READ_CNTPCT_EL0();
+    uint64_t now = READ_CNTPCT_EL0();
     uint64_t cval = vcpu->cntv_cval;
-    uint64_t off  = READ_CNTVOFF_EL2();
+    uint64_t off = READ_CNTVOFF_EL2();
 
     if (now >= cval + off) {
         static uint64_t inject_count;
         if (((++inject_count) & 0xFFFF) == 1) {
             KLOG_INFO("[VMM] inject vtimer count=%llu ctl=0x%llx cval=0x%llx "
                       "now=0x%llx off=0x%llx | vm%u faults=%llu wfi=%llu\n",
-                      (unsigned long long)inject_count,
-                      (unsigned long long)ctl,
-                      (unsigned long long)cval,
-                      (unsigned long long)now,
-                      (unsigned long long)off,
-                      vcpu->vm->vmid,
+                      (unsigned long long)inject_count, (unsigned long long)ctl,
+                      (unsigned long long)cval, (unsigned long long)now,
+                      (unsigned long long)off, vcpu->vm->vmid,
                       (unsigned long long)vcpu->vm->s2.nr_fault,
                       (unsigned long long)vcpu->vm->s2.nr_premap);
             if (inject_count > 0x10000)
-                (void)0;    /* vGIC 分层 dump 已收（排查完了，见 git 历史）*/
+                (void)0; /* vGIC 分层 dump 已收（排查完了，见 git 历史）*/
         }
         vmm_arch_irq_raise(vcpu, virq_line(VIRQ_VTIMER));
     }
@@ -571,7 +620,7 @@ static void aarch64_check_vpl011_rx(vcpu_t *vcpu)
 void vmm_arch_restore_guest_ctx(vcpu_t *vcpu)
 {
     uint64_t vmpidr = (1ULL << 31) | (uint64_t)vcpu->vcpu_id;
-    __asm__ volatile("msr vmpidr_el2, %0" :: "r"(vmpidr) : "memory");
+    __asm__ volatile("msr vmpidr_el2, %0" ::"r"(vmpidr) : "memory");
 
     restore_sysregs_el12(vcpu->sysregs);
 
@@ -605,7 +654,7 @@ void vmm_arch_restore_guest_ctx(vcpu_t *vcpu)
 int vmm_arch_enter_guest(vcpu_t *vcpu)
 {
     el2_enter_guest(vcpu);
-    return 1;   /* el2_enter_guest 总是成功返回（否则直接崩溃）*/
+    return 1; /* el2_enter_guest 总是成功返回（否则直接崩溃）*/
 }
 
 int vmm_arch_exit_handler(vcpu_t *vcpu)

@@ -55,7 +55,8 @@ extern void platform_panic(void);
     do { \
         if (!(cond)) { \
             klog_panic_begin(); \
-            kprintf(KLOG_COLOR_RED "[ASSERT][C%u] %s:%d: %s" KLOG_COLOR_RESET "\n", \
+            kprintf(KLOG_COLOR_RED "[ASSERT][C%u] %s:%d: %s" KLOG_COLOR_RESET \
+                                   "\n", \
                     klog_cpu_id(), __FILE__, __LINE__, #cond); \
             platform_panic(); \
         } \
@@ -77,10 +78,11 @@ extern void platform_panic(void);
     do { \
         if (!(cond)) { \
             klog_panic_begin(); \
-            kprintf(KLOG_COLOR_RED "[ASSERT_ALWAYS][C%u] %s:%d: %s" KLOG_COLOR_RESET "\n", \
+            kprintf(KLOG_COLOR_RED \
+                    "[ASSERT_ALWAYS][C%u] %s:%d: %s" KLOG_COLOR_RESET "\n", \
                     klog_cpu_id(), __FILE__, __LINE__, #cond); \
             platform_panic(); \
         } \
     } while (0)
 
-#endif  // ASSERT_H_
+#endif // ASSERT_H_

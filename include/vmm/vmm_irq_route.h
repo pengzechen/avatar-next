@@ -32,7 +32,7 @@ typedef struct vgic vgic_t;
  * 才能把宿主中断直接转成 guest 中断（见本文件顶部说明），但它们是两个概念 ——
  * 别把这里的 27 换成 VIRQ_VTIMER。
  */
-#define HOST_VTIMER_IRQ  27
+#define HOST_VTIMER_IRQ 27
 
 /*
  * vmm_irq_route_publish_owner — 记录当前任务为当前 pCPU 的 vCPU 承载者

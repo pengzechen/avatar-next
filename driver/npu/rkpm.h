@@ -15,39 +15,39 @@
 #include "mmio.h"
 
 /* ── 电源域 ID（与 rk3588_domains[] 索引对应）──────────────────────────── */
-#define PD_NPU     0  /* NPU top-level power island */
-#define PD_NPUTOP  1  /* NPU bus & logic */
-#define PD_NPU1    2  /* NPU core 1 */
-#define PD_NPU2    3  /* NPU core 2 */
+#define PD_NPU    0 /* NPU top-level power island */
+#define PD_NPUTOP 1 /* NPU bus & logic */
+#define PD_NPU1   2 /* NPU core 1 */
+#define PD_NPU2   3 /* NPU core 2 */
 
 /* 最大等待轮数（轮询状态位）*/
-#define RKPM_MAX_WAIT  10000
+#define RKPM_MAX_WAIT 10000
 
 /* 返回错误码 */
-#define RKPM_ERR_TIMEOUT  (-1)
+#define RKPM_ERR_TIMEOUT (-1)
 
 /* ── PMU 寄存器偏移（相对 PMU1 基地址）──────────────────────────────────── */
-#define PMU_PWR_OFFSET          0x14C   /* 写电源控制（带写掩码方式）*/
-#define PMU_STATUS_OFFSET       0x180   /* 电源域状态 */
-#define PMU_REQ_OFFSET          0x10C   /* IDLE 请求 */
-#define PMU_IDLE_OFFSET         0x120   /* IDLE 状态 */
-#define PMU_ACK_OFFSET          0x118   /* IDLE ACK */
-#define PMU_REPAIR_STATUS_OFF   0x290   /* repair done 状态 */
+#define PMU_PWR_OFFSET        0x14C /* 写电源控制（带写掩码方式）*/
+#define PMU_STATUS_OFFSET     0x180 /* 电源域状态 */
+#define PMU_REQ_OFFSET        0x10C /* IDLE 请求 */
+#define PMU_IDLE_OFFSET       0x120 /* IDLE 状态 */
+#define PMU_ACK_OFFSET        0x118 /* IDLE ACK */
+#define PMU_REPAIR_STATUS_OFF 0x290 /* repair done 状态 */
 
 /* ── 电源域描述符 ────────────────────────────────────────────────────────── */
 typedef struct {
     const char *name;
-    uint32_t    pwr_mask;           /* PWR 寄存器中对应位 */
-    uint32_t    pwr_w_mask;         /* 写掩码高 16 位 = pwr_mask << 16 */
-    uint32_t    status_mask;        /* STATUS 寄存器中对应位（0=on） */
-    uint32_t    repair_status_mask; /* REPAIR_STATUS 中的就绪位（0=无） */
-    uint32_t    req_mask;           /* IDLE REQ 位 */
-    uint32_t    idle_mask;          /* IDLE 状态位 */
+    uint32_t pwr_mask;           /* PWR 寄存器中对应位 */
+    uint32_t pwr_w_mask;         /* 写掩码高 16 位 = pwr_mask << 16 */
+    uint32_t status_mask;        /* STATUS 寄存器中对应位（0=on） */
+    uint32_t repair_status_mask; /* REPAIR_STATUS 中的就绪位（0=无） */
+    uint32_t req_mask;           /* IDLE REQ 位 */
+    uint32_t idle_mask;          /* IDLE 状态位 */
 } rkpm_domain_t;
 
 /* ── PMU 句柄 ────────────────────────────────────────────────────────────── */
 typedef struct {
-    void *base;  /* PMU1 MMIO 基地址（虚拟，mmio_vma=false 时 = 物理）*/
+    void *base; /* PMU1 MMIO 基地址（虚拟，mmio_vma=false 时 = 物理）*/
 } rkpm_t;
 
 /* ── 内联 MMIO 访问 ──────────────────────────────────────────────────────── */

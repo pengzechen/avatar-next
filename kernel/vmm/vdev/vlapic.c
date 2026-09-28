@@ -33,11 +33,11 @@
  */
 
 #include "vmm/vmm_vlapic.h"
-#include "vmm/vmm.h"        /* vm_t：vlapic_state_t 的宿主 */
+#include "vmm/vmm.h" /* vm_t：vlapic_state_t 的宿主 */
 #include "vmm/vmm.h"
 #include "klog.h"
 #include "string.h"
-#include "irq/lapic.h"   /* g_tsc_freq_hz（宿主已标定的 TSC 频率）*/
+#include "irq/lapic.h" /* g_tsc_freq_hz（宿主已标定的 TSC 频率）*/
 
 /* ── 虚拟 APIC timer 的「频率」───────────────────────────────
  *
@@ -48,31 +48,31 @@
  * （它数一个 jiffy 内 CurrentCount 掉了多少），所以具体频率不重要，
  * 重要的是**稳定**。别随手改，改了 Linux 那边感觉到的周期会跟着变。
  */
-#define VLAPIC_TIMER_HZ   1000000000ULL
-#define VLAPIC_PERIODIC_MIN_NS  200000ULL   /* 周期模式最小 200us（照抄 KVM）*/
+#define VLAPIC_TIMER_HZ        1000000000ULL
+#define VLAPIC_PERIODIC_MIN_NS 200000ULL /* 周期模式最小 200us（照抄 KVM）*/
 
 /* LVT 位 */
-#define LVT_MASKED      (1u << 16)
-#define LVT_MODE_MASK   (3u << 17)
-#define LVT_MODE_ONESHOT   (0u << 17)
-#define LVT_MODE_PERIODIC  (1u << 17)
+#define LVT_MASKED           (1u << 16)
+#define LVT_MODE_MASK        (3u << 17)
+#define LVT_MODE_ONESHOT     (0u << 17)
+#define LVT_MODE_PERIODIC    (1u << 17)
 #define LVT_MODE_TSCDEADLINE (2u << 17)
-#define LVT_VECTOR(v)   ((v) & 0xff)
+#define LVT_VECTOR(v)        ((v) & 0xff)
 
 /* SVR 位 */
-#define SVR_ENABLE      (1u << 8)
+#define SVR_ENABLE (1u << 8)
 
 /* ICR 位 */
-#define ICR_DELIVERY_MASK  (7u << 8)
-#define ICR_MODE_FIXED     (0u << 8)
-#define ICR_MODE_INIT      (5u << 8)
-#define ICR_MODE_SIPI      (6u << 8)
-#define ICR_DEST_MASK      (7u << 18)
-#define ICR_DEST_SELF      (1u << 18)
-#define ICR_DEST_ALL       (2u << 18)
+#define ICR_DELIVERY_MASK     (7u << 8)
+#define ICR_MODE_FIXED        (0u << 8)
+#define ICR_MODE_INIT         (5u << 8)
+#define ICR_MODE_SIPI         (6u << 8)
+#define ICR_DEST_MASK         (7u << 18)
+#define ICR_DEST_SELF         (1u << 18)
+#define ICR_DEST_ALL          (2u << 18)
 #define ICR_DEST_ALL_BUT_SELF (3u << 18)
-#define ICR_LEVEL_ASSERT   (1u << 14)
-#define ICR_TRIGGER_LEVEL  (1u << 15)
+#define ICR_LEVEL_ASSERT      (1u << 14)
+#define ICR_TRIGGER_LEVEL     (1u << 15)
 
 /*
  * ── 每 VM × 每 vCPU 一份的设备槽位 ──────────────────────────────────
@@ -90,8 +90,8 @@
  * 同理）—— 所以槽位比 vpl011/uart16550 少两样东西。
  */
 typedef struct {
-    struct vm      *owner;   /* of() 的守卫，见下 */
-    vlapic_state_t  st;
+    struct vm *owner; /* of() 的守卫，见下 */
+    vlapic_state_t st;
 } vlapic_slot_t;
 
 static vlapic_slot_t g_vlapic[MAX_VMS][VLAPIC_MAX_VCPUS];
@@ -143,7 +143,7 @@ uint64_t vlapic_now_ns(void)
     tsc = lo | ((uint64_t)hi << 32);
 
     if (g_tsc_freq_hz == 0)
-        return 0;                        /* 还没标定：调用方按 0 处理 */
+        return 0; /* 还没标定：调用方按 0 处理 */
 
     mhz = g_tsc_freq_hz / 1000000ULL;
     if (mhz == 0)
@@ -152,7 +152,6 @@ uint64_t vlapic_now_ns(void)
 }
 
 /* ── ISR / 优先级 ─────────────────────────────────────────── */
-
 
 /* 在 256 位位图里找编号最大的置位向量（-1 = 一个都没有）*/
 static int vec_highest(const uint32_t *bits)
@@ -179,7 +178,7 @@ static uint8_t priority_class(uint32_t vec)
 static void update_ppr(vlapic_state_t *v)
 {
     uint8_t tpr = (uint8_t)(v->r[VLAPIC_REG_TPR] & 0xff);
-    int     top = isr_highest(v);
+    int top = isr_highest(v);
     uint8_t isrv = (top >= 0) ? priority_class((uint32_t)top) : 0;
 
     v->r[VLAPIC_REG_PPR] = (tpr > isrv) ? tpr : isrv;
@@ -214,14 +213,22 @@ static void process_eoi(vlapic_state_t *v)
 static uint32_t dcr_to_shift(uint32_t dcr)
 {
     switch (dcr & 0xb) {
-    case 0x0: return 1;   /* ÷2  */
-    case 0x1: return 0;   /* ÷1  */
-    case 0x2: return 2;   /* ÷4  */
-    case 0x3: return 3;   /* ÷8  */
-    case 0x8: return 4;   /* ÷16 */
-    case 0x9: return 5;   /* ÷32 */
-    case 0xa: return 6;   /* ÷64 */
-    default:  return 7;   /* ÷128 */
+    case 0x0:
+        return 1; /* ÷2  */
+    case 0x1:
+        return 0; /* ÷1  */
+    case 0x2:
+        return 2; /* ÷4  */
+    case 0x3:
+        return 3; /* ÷8  */
+    case 0x8:
+        return 4; /* ÷16 */
+    case 0x9:
+        return 5; /* ÷32 */
+    case 0xa:
+        return 6; /* ÷64 */
+    default:
+        return 7; /* ÷128 */
     }
 }
 
@@ -230,25 +237,25 @@ static void timer_start(vlapic_state_t *v)
     uint32_t init = v->r[VLAPIC_REG_TIMER_INIT];
     uint64_t ticks;
 
-    v->t_active   = 0;
-    v->t_periodic = ((v->r[VLAPIC_REG_LVT_TIMER] & LVT_MODE_MASK)
-                     == LVT_MODE_PERIODIC);
+    v->t_active = 0;
+    v->t_periodic =
+        ((v->r[VLAPIC_REG_LVT_TIMER] & LVT_MODE_MASK) == LVT_MODE_PERIODIC);
 
     if (init == 0)
-        return;                             /* 写 0 = 停 */
+        return; /* 写 0 = 停 */
     if (v->r[VLAPIC_REG_LVT_TIMER] & LVT_MASKED)
-        return;                             /* LVT 屏蔽着：不启动 */
+        return; /* LVT 屏蔽着：不启动 */
 
     /* interval_ns = (init << shift) / VLAPIC_TIMER_HZ * 1e9
      * 由于 VLAPIC_TIMER_HZ 就是 1e9，tick 数直接等于纳秒数。*/
     ticks = (uint64_t)init << v->t_shift;
 
     if (v->t_periodic && ticks < VLAPIC_PERIODIC_MIN_NS)
-        ticks = VLAPIC_PERIODIC_MIN_NS;     /* 周期模式的下限，照抄 KVM */
+        ticks = VLAPIC_PERIODIC_MIN_NS; /* 周期模式的下限，照抄 KVM */
 
     v->t_interval_ns = ticks;
     v->t_deadline_ns = vlapic_now_ns() + ticks;
-    v->t_active      = 1;
+    v->t_active = 1;
 }
 
 static void timer_stop(vlapic_state_t *v)
@@ -261,7 +268,7 @@ static void timer_fire(vm_t *vm, vlapic_state_t *v)
 {
     uint32_t vec = LVT_VECTOR(v->r[VLAPIC_REG_LVT_TIMER]);
 
-    vlapic_raise_irq(vm, vec);                  /* 向量合法性（≥16）在内部把关 */
+    vlapic_raise_irq(vm, vec); /* 向量合法性（≥16）在内部把关 */
 
     if (v->t_periodic) {
         /* 追赶：落后多个周期时不要补发一堆，直接跳到未来的第一个点 */
@@ -287,7 +294,7 @@ int vlapic_timer_poll(vm_t *vm)
     if (!v)
         return 0;
     if (!v->enabled || !(v->r[VLAPIC_REG_SVR] & SVR_ENABLE))
-        return 0;                           /* APIC 被软件关掉：什么都不投 */
+        return 0; /* APIC 被软件关掉：什么都不投 */
     if (!v->t_active)
         return 0;
 
@@ -323,7 +330,7 @@ void vlapic_init(vm_t *vm, uint32_t vcpu_id)
      * Linux 用 bit24 判断「EOI 广播抑制」是否支持 —— 不置位。*/
     v->r[VLAPIC_REG_VERSION] = 0x14 | (6u << 16);
 
-    v->r[VLAPIC_REG_DFR] = 0xf0000000u;     /* flat 模型 */
+    v->r[VLAPIC_REG_DFR] = 0xf0000000u; /* flat 模型 */
     v->r[VLAPIC_REG_LDR] = 0x01000000u;
 
     /* 上电默认值：基址 0xFEE00000 | EN(11) | BSP(8)。EXT D 位恒 0 —— 本
@@ -351,7 +358,7 @@ void vlapic_destroy(vm_t *vm)
         vlapic_slot_t *d = &g_vlapic[vm->slot][i];
 
         memset(&d->st, 0, sizeof(d->st));
-        d->owner = NULL;    /* of() 随即失效 */
+        d->owner = NULL; /* of() 随即失效 */
     }
 }
 
@@ -389,9 +396,9 @@ void vlapic_raise_irq(vm_t *vm, uint32_t vector)
     if (!v)
         return;
     if (vector < 16 || vector > 255)
-        return;                          /* 0-15 是异常，不能当普通中断投 */
+        return; /* 0-15 是异常，不能当普通中断投 */
     if (!v->enabled || !(v->r[VLAPIC_REG_SVR] & SVR_ENABLE))
-        return;                          /* APIC 被软件关掉：什么都不投 */
+        return; /* APIC 被软件关掉：什么都不投 */
 
     v->irr[vector / 32] |= (1u << (vector % 32));
 }
@@ -449,24 +456,36 @@ static uint32_t reg_read(vlapic_state_t *v, uint32_t idx)
     case VLAPIC_REG_VERSION:
     case VLAPIC_REG_APR:
     case VLAPIC_REG_RRR:
-        return 0;                       /* 只读占位，恒 0 */
+        return 0; /* 只读占位，恒 0 */
     case VLAPIC_REG_PPR:
         update_ppr(v);
         return v->r[VLAPIC_REG_PPR];
-    case VLAPIC_REG_ISR + 0: case VLAPIC_REG_ISR + 1:
-    case VLAPIC_REG_ISR + 2: case VLAPIC_REG_ISR + 3:
-    case VLAPIC_REG_ISR + 4: case VLAPIC_REG_ISR + 5:
-    case VLAPIC_REG_ISR + 6: case VLAPIC_REG_ISR + 7:
+    case VLAPIC_REG_ISR + 0:
+    case VLAPIC_REG_ISR + 1:
+    case VLAPIC_REG_ISR + 2:
+    case VLAPIC_REG_ISR + 3:
+    case VLAPIC_REG_ISR + 4:
+    case VLAPIC_REG_ISR + 5:
+    case VLAPIC_REG_ISR + 6:
+    case VLAPIC_REG_ISR + 7:
         return v->isr[idx - VLAPIC_REG_ISR];
-    case VLAPIC_REG_TMR + 0: case VLAPIC_REG_TMR + 1:
-    case VLAPIC_REG_TMR + 2: case VLAPIC_REG_TMR + 3:
-    case VLAPIC_REG_TMR + 4: case VLAPIC_REG_TMR + 5:
-    case VLAPIC_REG_TMR + 6: case VLAPIC_REG_TMR + 7:
+    case VLAPIC_REG_TMR + 0:
+    case VLAPIC_REG_TMR + 1:
+    case VLAPIC_REG_TMR + 2:
+    case VLAPIC_REG_TMR + 3:
+    case VLAPIC_REG_TMR + 4:
+    case VLAPIC_REG_TMR + 5:
+    case VLAPIC_REG_TMR + 6:
+    case VLAPIC_REG_TMR + 7:
         return v->tmr[idx - VLAPIC_REG_TMR];
-    case VLAPIC_REG_IRR + 0: case VLAPIC_REG_IRR + 1:
-    case VLAPIC_REG_IRR + 2: case VLAPIC_REG_IRR + 3:
-    case VLAPIC_REG_IRR + 4: case VLAPIC_REG_IRR + 5:
-    case VLAPIC_REG_IRR + 6: case VLAPIC_REG_IRR + 7:
+    case VLAPIC_REG_IRR + 0:
+    case VLAPIC_REG_IRR + 1:
+    case VLAPIC_REG_IRR + 2:
+    case VLAPIC_REG_IRR + 3:
+    case VLAPIC_REG_IRR + 4:
+    case VLAPIC_REG_IRR + 5:
+    case VLAPIC_REG_IRR + 6:
+    case VLAPIC_REG_IRR + 7:
         /*
          * 真正回位图（上游是恒 0）。guest 用 IRR 判断「还有没有中断挂着」，
          * 恒 0 会让它在中断处理里误判。注意这是**只读**的 —— 清位只有
@@ -477,7 +496,8 @@ static uint32_t reg_read(vlapic_state_t *v, uint32_t idx)
         /* 当前计数 = 剩余纳秒 >> shift（与写入时的换算互逆）*/
         uint64_t now = vlapic_now_ns();
         uint64_t left = (v->t_active && v->t_deadline_ns > now)
-                      ? (v->t_deadline_ns - now) : 0;
+                            ? (v->t_deadline_ns - now)
+                            : 0;
         return (uint32_t)(left >> v->t_shift);
     }
     default:
@@ -492,7 +512,7 @@ static void reg_write(vm_t *vm, vlapic_state_t *v, uint32_t idx, uint32_t val)
 {
     switch (idx) {
     case VLAPIC_REG_ID:
-        return;                          /* 只读 */
+        return; /* 只读 */
 
     case VLAPIC_REG_TPR:
         v->r[VLAPIC_REG_TPR] = val & 0xff;
@@ -511,12 +531,12 @@ static void reg_write(vm_t *vm, vlapic_state_t *v, uint32_t idx, uint32_t val)
             memset(v->irr, 0, sizeof(v->irr));
         } else if (v->r[VLAPIC_REG_TIMER_INIT] &&
                    !(v->r[VLAPIC_REG_LVT_TIMER] & LVT_MASKED)) {
-            timer_start(v);              /* 重新使能 → 按原初值重启 */
+            timer_start(v); /* 重新使能 → 按原初值重启 */
         }
         return;
 
     case VLAPIC_REG_ESR:
-        v->r[VLAPIC_REG_ESR] = 0;        /* 写 = 清挂起位 */
+        v->r[VLAPIC_REG_ESR] = 0; /* 写 = 清挂起位 */
         return;
 
     case VLAPIC_REG_ICR_HI:
@@ -535,7 +555,7 @@ static void reg_write(vm_t *vm, vlapic_state_t *v, uint32_t idx, uint32_t val)
             return;
         }
         if (mode != ICR_MODE_FIXED)
-            return;                      /* lowest-priority 等：忽略（上游会 panic）*/
+            return; /* lowest-priority 等：忽略（上游会 panic）*/
 
         /* 单 vCPU：只有「发给自己」是有意义的 */
         if (dest == ICR_DEST_SELF || dest == ICR_DEST_ALL ||
@@ -549,7 +569,7 @@ static void reg_write(vm_t *vm, vlapic_state_t *v, uint32_t idx, uint32_t val)
         if (val & LVT_MASKED)
             timer_stop(v);
         else
-            timer_start(v);              /* 解除屏蔽 → 按初值重启 */
+            timer_start(v); /* 解除屏蔽 → 按初值重启 */
         return;
 
     case VLAPIC_REG_TIMER_INIT:
@@ -564,7 +584,7 @@ static void reg_write(vm_t *vm, vlapic_state_t *v, uint32_t idx, uint32_t val)
 
     default:
         if (idx < VLAPIC_REG_COUNT)
-            v->r[idx] = val;             /* LVT LINT0/1、error 等：只存值 */
+            v->r[idx] = val; /* LVT LINT0/1、error 等：只存值 */
         return;
     }
 }
@@ -578,19 +598,19 @@ int vlapic_mmio_handle(vm_t *vm, uint64_t addr, int is_write, uint8_t size,
                        uint64_t *val)
 {
     vlapic_state_t *v = vlapic_cur(vm);
-    uint32_t  off = (uint32_t)(addr & 0xfff);
-    uint32_t  idx = off >> 4;            /* 16 字节步长 → 寄存器编号 */
+    uint32_t off = (uint32_t)(addr & 0xfff);
+    uint32_t idx = off >> 4; /* 16 字节步长 → 寄存器编号 */
 
     if (!v)
-        return 0;                        /* 未处理 —— 调用方按未映射设备兜底 */
+        return 0; /* 未处理 —— 调用方按未映射设备兜底 */
     if (off & 0xf)
-        return 0;                        /* 非对齐访问：不是 LAPIC 语义 */
+        return 0; /* 非对齐访问：不是 LAPIC 语义 */
 
     if (size != 4)
-        return 0;                        /* xAPIC 只支持 32 位访问 */
+        return 0; /* xAPIC 只支持 32 位访问 */
 
     if (idx >= VLAPIC_REG_COUNT)
-        return 1;                        /* 保留区：静默吞掉，读 0 */
+        return 1; /* 保留区：静默吞掉，读 0 */
 
     if (is_write)
         reg_write(vm, v, idx, (uint32_t)*val);

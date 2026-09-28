@@ -12,15 +12,15 @@
 #include "task/task.h"
 #include "task/cpu.h"
 #include "exception.h"
-#include "irq/irq.h"      /* irq_install / irq_enable_irq / irq_disable_irq */
+#include "irq/irq.h" /* irq_install / irq_enable_irq / irq_disable_irq */
 #include "vmm/vmm.h"
 
 /* 路由状态（对标 Rust 的 ROUTE_UNUSED/REGISTERING/REGISTERED）*/
-#define ROUTE_UNUSED       0
-#define ROUTE_REGISTERING  1
-#define ROUTE_REGISTERED   2
+#define ROUTE_UNUSED      0
+#define ROUTE_REGISTERING 1
+#define ROUTE_REGISTERED  2
 
-#define MAX_ROUTE_CPUS  8
+#define MAX_ROUTE_CPUS 8
 
 /* 每个 pCPU 上承载 vCPU 的任务 */
 static task_t *g_owner_tasks[MAX_ROUTE_CPUS];
@@ -38,7 +38,7 @@ static void host_vtimer_irq_handler(uint64_t *frame)
     (void)frame;
 
     uint32_t cpu = get_current_cpu_id();
-    task_t  *owner = (cpu < MAX_ROUTE_CPUS) ? g_owner_tasks[cpu] : NULL;
+    task_t *owner = (cpu < MAX_ROUTE_CPUS) ? g_owner_tasks[cpu] : NULL;
 
     /* 任务若是睡着的（将来支持 WFI 真睡眠时）需要唤醒 */
     if (owner)
@@ -87,7 +87,7 @@ void vmm_irq_route_set_vtimer_enabled(int enabled)
         if (g_route_state == ROUTE_REGISTERED)
             return;
         if (g_route_state != ROUTE_UNUSED)
-            return;                 /* 正在注册中 */
+            return; /* 正在注册中 */
 
         g_route_state = ROUTE_REGISTERING;
 

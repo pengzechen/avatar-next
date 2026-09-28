@@ -23,35 +23,35 @@
 #include "types.h"
 
 /* IO-APIC 重定向表项数（对应 version 寄存器报的 0x11，即 24 项）*/
-#define X86_IOAPIC_NENT   24
+#define X86_IOAPIC_NENT 24
 
 /* 8254 PIT 的一个通道 */
 typedef struct x86_pit_ch {
-    uint16_t reload;      /* 装载值 */
-    uint64_t base_ns;     /* 装载时刻（宿主单调 ns）*/
-    int      running;     /* 已装载、正在计数 */
-    int      read_hi;     /* 读指针：0=下次读 LSB，1=下次读 MSB */
-    int      rw;          /* 控制字 RW 位：1=只 LSB 2=只 MSB 3=先 LSB 后 MSB */
-    int      wstate;      /* RW=3 时已写的字节数 */
-    uint8_t  wlo;         /* RW=3 时暂存的低字节 */
-    uint16_t latched;     /* latch 命令冻结的值 */
-    int      lat_valid;
+    uint16_t reload;  /* 装载值 */
+    uint64_t base_ns; /* 装载时刻（宿主单调 ns）*/
+    int running;      /* 已装载、正在计数 */
+    int read_hi;      /* 读指针：0=下次读 LSB，1=下次读 MSB */
+    int rw;           /* 控制字 RW 位：1=只 LSB 2=只 MSB 3=先 LSB 后 MSB */
+    int wstate;       /* RW=3 时已写的字节数 */
+    uint8_t wlo;      /* RW=3 时暂存的低字节 */
+    uint16_t latched; /* latch 命令冻结的值 */
+    int lat_valid;
 } x86_pit_ch_t;
 
 /* 每 VM 一份的传统芯片组桩状态 */
 typedef struct x86_chipset_state {
     /* 8259 PIC 的两片中断屏蔽寄存器 */
-    uint8_t  pic_master_imr;
-    uint8_t  pic_slave_imr;
+    uint8_t pic_master_imr;
+    uint8_t pic_slave_imr;
 
     /* IO-APIC：IOREGSEL 间接寄存器 + 重定向表 */
     uint32_t ioapic_sel;
     uint32_t ioapic_rt[X86_IOAPIC_NENT * 2];
-    int      ioapic_inited;      /* "初值全屏蔽"那段的一次性守卫 */
+    int ioapic_inited; /* "初值全屏蔽"那段的一次性守卫 */
 
     /* 8254 PIT：三个通道 + 端口 0x61（gate2/speaker）*/
     x86_pit_ch_t pit[3];
-    uint8_t      port61;
+    uint8_t port61;
 } x86_chipset_state_t;
 
 #endif /* VMM_X86_CHIPSET_H */

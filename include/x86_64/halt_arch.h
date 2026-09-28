@@ -31,4 +31,4 @@ static inline void arch_halt(void)
     }
 }
 
-#endif  // X86_64_HALT_ARCH_H_
+#endif // X86_64_HALT_ARCH_H_

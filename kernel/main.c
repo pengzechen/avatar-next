@@ -7,7 +7,7 @@
 #include "../boot/common/platform_ops.h"
 #include "arch.h"
 #include "klog.h"
-#include "debug/backtrace.h"   /* backtrace_selftest() */
+#include "debug/backtrace.h" /* backtrace_selftest() */
 #include "cache.h"
 #include "string.h"
 #include "task/task.h"
@@ -17,9 +17,8 @@
 #include "../fs/lwext4_port/fs_init.h"
 #include "loader/elf_loader.h"
 #include "timer/timer.h"
-#include "task/switch.h"     /* arch_irq_enable */
+#include "task/switch.h" /* arch_irq_enable */
 #include "net/net.h"
-
 
 #if ARCH_AARCH64
 #include "irq/irq.h"
@@ -36,7 +35,7 @@
 #endif
 #elif ARCH_RISCV64
 #include "exception.h"
-#include "irq/plic.h"       /* plic_init：外部中断控制器 */
+#include "irq/plic.h" /* plic_init：外部中断控制器 */
 #include "vmm/vmm.h"
 #if defined(RUN_GUEST_LINUX)
 /* 与 aarch64 分支同理（见上）：直启模式要用 GUEST_LINUX_MEM_* 和
@@ -89,8 +88,8 @@
 #include "blk/sdblk.h"
 #endif
 
-extern void run_vmm_test(void);  /* tests/vmm_test.c */
-extern void kmem_test(void);      /* kernel/mm/aarch64/vmm.c */
+extern void run_vmm_test(void); /* tests/vmm_test.c */
+extern void kmem_test(void);    /* kernel/mm/aarch64/vmm.c */
 
 static void platform_init_runtime_drivers(void)
 {
@@ -153,12 +152,8 @@ static void demo_load_busybox(void *arg)
 
     /* 以 busybox 的 sh applet 进入交互 shell */
     char *bb_argv[] = { "sh", "-i", NULL };
-    char *bb_envp[] = {
-        "PATH=/bin:/usr/bin:/sbin:/usr/sbin",
-        "HOME=/root",
-        "TERM=vt100",
-        NULL
-    };
+    char *bb_envp[] = { "PATH=/bin:/usr/bin:/sbin:/usr/sbin", "HOME=/root",
+                        "TERM=vt100", NULL };
 
     /* 调用 ELF 加载器执行 /busybox */
     const char *path = "/busybox";
@@ -173,7 +168,6 @@ static void demo_load_busybox(void *arg)
     KLOG_INIT("[busybox_loader] Exiting...\n");
     task_exit();
 }
-
 
 void kernel_main(void)
 {
@@ -197,8 +191,6 @@ void kernel_main(void)
     KLOG_INIT("Initializing exception handler...\n");
     exception_init();
 #endif
-
-
 
     /* Initialize platform (UART, etc.) */
     platform_init();
@@ -230,11 +222,12 @@ void kernel_main(void)
 
     /* Print welcome message */
     /* 一条事实一行 —— 拆成三行没有多出任何信息 */
-    KLOG_INFO("=== Avatar OS Kernel " ARCH_NAME " build " __DATE__ " " __TIME__ " ===\n");
+    KLOG_INFO("=== Avatar OS Kernel " ARCH_NAME " build " __DATE__ " " __TIME__
+              " ===\n");
 
     /* ── 字符串/内存函数自检（STRING_TEST=1，跑完继续启动）──────── */
 #ifdef RUN_STRING_TEST
-    extern void test_string_functions(void);   /* tests/string_test.c */
+    extern void test_string_functions(void); /* tests/string_test.c */
     test_string_functions();
 #endif
 
@@ -247,29 +240,28 @@ void kernel_main(void)
     KLOG_FS("Initializing filesystem...\n");
     fs_init();
 
-    /* ── 运行 PMM 测试 ───────────────────────────────────────── */
-    /* 测试时解开下面两行注释 */
-    #ifdef RUN_PMM_TESTS
+/* ── 运行 PMM 测试 ───────────────────────────────────────── */
+/* 测试时解开下面两行注释 */
+#ifdef RUN_PMM_TESTS
     run_pmm_tests();
-    platform_shutdown();  /* PMM 测试完成后关机，避免后续测试干扰 PMM 状态 */
-    #endif
+    platform_shutdown(); /* PMM 测试完成后关机，避免后续测试干扰 PMM 状态 */
+#endif
 
-    #if ARCH_AARCH64
+#if ARCH_AARCH64
     /* 开机自检脚手架：仍然执行，但默认等级下不再占行 */
     KLOG_INIT("=== Running VMM Tests ===\n");
     kmem_test();
     KLOG_INIT("VMM tests completed\n");
-    #endif
+#endif
 
     platform_init_runtime_drivers();
 
-
     /* ── 初始化任务子系统 ───────────────────────────────── */
     KLOG_TASK("Initializing task subsystem...\n");
-    cpu_init_bsp();          /* Phase 0：安装 BSP per-CPU 指针 */
+    cpu_init_bsp(); /* Phase 0：安装 BSP per-CPU 指针 */
 #if ARCH_X86_64
     extern void x86_tss_init(void);
-    x86_tss_init();          /* 必须在 cpu_init_bsp() 之后（见上方说明） */
+    x86_tss_init(); /* 必须在 cpu_init_bsp() 之后（见上方说明） */
 #endif
     task_init();
 
@@ -301,8 +293,8 @@ void kernel_main(void)
      * 用独立 token（而不是复用 KLOG 里那句 "GUEST_LINUX mode"）是因为
      * Makefile 那边判的是「恰好出现 1 次」—— 复用的话 LOG!=none 时会数到 2 条。
      */
-    __attribute__((used))
-    static const char g_build_tag_guest_linux[] = "GUEST_LINUX_BUILD_TAG";
+    __attribute__((used)) static const char g_build_tag_guest_linux[] =
+        "GUEST_LINUX_BUILD_TAG";
 
     /* 从 rootfs 加载 Linux guest（kernel Image + DTB + initrd）并启动 */
     KLOG_INFO("=== GUEST_LINUX mode: booting Linux as EL1 guest ===\n");

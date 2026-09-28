@@ -17,8 +17,8 @@
  *   [59:44] ASID  = 0  （当前内核不使用 ASID）
  *   [43:0]  PPN        → 根页表物理地址 >> 12
  */
-#define SATP_PPN_MASK    0x00000FFFFFFFFFFFULL   /* bits [43:0] */
-#define SATP_SV39_MODE   (8ULL << 60)            /* MODE = Sv39 */
+#define SATP_PPN_MASK  0x00000FFFFFFFFFFFULL /* bits [43:0] */
+#define SATP_SV39_MODE (8ULL << 60)          /* MODE = Sv39 */
 
 /*
  * 内核高半区 L1（Sv39 根页表）索引，由 KERNEL_VMA 严格派生：
@@ -32,10 +32,10 @@
  *   L1[0x101] → KERNEL_VMA + 0x40000000..0x7fffffff  (MMIO 高半别名)
  *   L1[0x102] → KERNEL_VMA + 0x80000000..0xbfffffff  (DRAM 高半别名，含内核代码/数据)
  */
-#define RISCV64_KERNEL_L1_MMIO0_IDX  0x100U
-#define RISCV64_KERNEL_L1_MMIO1_IDX  0x101U
-#define RISCV64_KERNEL_L1_RAM_IDX    0x102U
-#define RISCV64_KERNEL_L1_MMIO_IDX   RISCV64_KERNEL_L1_MMIO0_IDX
+#define RISCV64_KERNEL_L1_MMIO0_IDX 0x100U
+#define RISCV64_KERNEL_L1_MMIO1_IDX 0x101U
+#define RISCV64_KERNEL_L1_RAM_IDX   0x102U
+#define RISCV64_KERNEL_L1_MMIO_IDX  RISCV64_KERNEL_L1_MMIO0_IDX
 
 /**
  * satp_read_pgd_phys - 读取当前 satp 并返回根页表物理地址
@@ -43,7 +43,7 @@
 static inline uint64_t satp_read_pgd_phys(void)
 {
     uint64_t satp;
-    __asm__ volatile("csrr %0, satp" : "=r"(satp) :: "memory");
+    __asm__ volatile("csrr %0, satp" : "=r"(satp)::"memory");
     return (satp & SATP_PPN_MASK) << 12;
 }
 
@@ -67,9 +67,11 @@ static inline uint64_t pgd_phys_to_satp(uint64_t pgd_phys)
 static inline void riscv64_copy_kernel_mappings(uint64_t *user_l1,
                                                 const uint64_t *kernel_l1)
 {
-    user_l1[RISCV64_KERNEL_L1_MMIO0_IDX] = kernel_l1[RISCV64_KERNEL_L1_MMIO0_IDX];
-    user_l1[RISCV64_KERNEL_L1_MMIO1_IDX] = kernel_l1[RISCV64_KERNEL_L1_MMIO1_IDX];
-    user_l1[RISCV64_KERNEL_L1_RAM_IDX]   = kernel_l1[RISCV64_KERNEL_L1_RAM_IDX];
+    user_l1[RISCV64_KERNEL_L1_MMIO0_IDX] =
+        kernel_l1[RISCV64_KERNEL_L1_MMIO0_IDX];
+    user_l1[RISCV64_KERNEL_L1_MMIO1_IDX] =
+        kernel_l1[RISCV64_KERNEL_L1_MMIO1_IDX];
+    user_l1[RISCV64_KERNEL_L1_RAM_IDX] = kernel_l1[RISCV64_KERNEL_L1_RAM_IDX];
 }
 
 #endif /* RISCV64_SATP_UTILS_H */

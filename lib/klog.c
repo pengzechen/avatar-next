@@ -42,8 +42,7 @@ extern void uart_putstr(const char *str);
  * 不在此处加锁：调用者按整条消息加锁（klog_write），避免每字符锁开销 +
  * 多核穿插。**除 klog_write 内部与 panic 路径外不要直接调它** —— 见 klog.h。
  */
-void
-klog_putchar(char c)
+void klog_putchar(char c)
 {
     uart_putchar(c);
 }
@@ -54,8 +53,7 @@ klog_putchar(char c)
  * 整段持 g_klog_lock。所有写者（内核日志 / sys_write / tty_write / VMM 的
  * guest 控制台）都要经过它，否则锁不住 —— 只锁自己那条路等于没锁。
  */
-void
-klog_write(const char *buf, size_t len)
+void klog_write(const char *buf, size_t len)
 {
     size_t i;
 
@@ -82,14 +80,12 @@ klog_write(const char *buf, size_t len)
 /**
  * klog_flush - 空操作（保留用于兼容性）
  */
-void
-klog_flush(void)
+void klog_flush(void)
 {
     /* 直接输出模式，无需刷新 */
 }
 
-void
-klog_panic_begin(void)
+void klog_panic_begin(void)
 {
     g_klog_panic = true;
 }
@@ -100,12 +96,11 @@ klog_panic_begin(void)
  * 多核下整条消息持锁输出，防止 `[INFO][C0] foo[C1] bar` 这种交错。
  * 使用 IRQ-safe 锁，避免中断处理也调用 klog 导致同核重入死锁。
  */
-int
-kvprintf(const char *fmt, va_list va)
+int kvprintf(const char *fmt, va_list va)
 {
     extern int my_vsnprintf(char *buf, int size, const char *fmt, va_list va);
-    char     buf[BUFSZ];
-    int      len;
+    char buf[BUFSZ];
+    int len;
 
     len = my_vsnprintf(buf, sizeof(buf), fmt, va);
 
@@ -115,8 +110,8 @@ kvprintf(const char *fmt, va_list va)
      * 栈上 buf 之后的内容（返回地址、保存的寄存器…）并原样打到串口。
      * 单行超过 511 字节就会触发（长路径、大 %s、参数多的 trace）。
      */
-    if (len > (int) sizeof(buf) - 1) {
-        len = (int) sizeof(buf) - 1;
+    if (len > (int)sizeof(buf) - 1) {
+        len = (int)sizeof(buf) - 1;
     }
 
     /* 整行一次交出：取锁 / panic 判定都在 klog_write 里统一处理 */
@@ -130,30 +125,23 @@ kvprintf(const char *fmt, va_list va)
  */
 typedef struct {
     const char *name;
-    uint64_t    bit;
+    uint64_t bit;
 } klog_module_name_t;
 
 static const klog_module_name_t g_klog_module_names[] = {
-    { "init",    LOG_MODULE_INIT    },
-    { "task",    LOG_MODULE_TASK    },
-    { "driver",  LOG_MODULE_DRIVER  },
-    { "uart",    LOG_MODULE_UART    },
-    { "timer",   LOG_MODULE_TIMER   },
-    { "mm",      LOG_MODULE_MM      },
-    { "fs",      LOG_MODULE_FS      },
-    { "net",     LOG_MODULE_NET     },
-    { "smp",     LOG_MODULE_SMP     },
-    { "gic",     LOG_MODULE_GIC     },
-    { "generic", LOG_MODULE_GENERIC },
-    { "syscall", LOG_MODULE_SYSCALL },
+    { "init", LOG_MODULE_INIT },       { "task", LOG_MODULE_TASK },
+    { "driver", LOG_MODULE_DRIVER },   { "uart", LOG_MODULE_UART },
+    { "timer", LOG_MODULE_TIMER },     { "mm", LOG_MODULE_MM },
+    { "fs", LOG_MODULE_FS },           { "net", LOG_MODULE_NET },
+    { "smp", LOG_MODULE_SMP },         { "gic", LOG_MODULE_GIC },
+    { "generic", LOG_MODULE_GENERIC }, { "syscall", LOG_MODULE_SYSCALL },
 };
 
 #define KLOG_MODULE_NAME_COUNT \
     (sizeof(g_klog_module_names) / sizeof(g_klog_module_names[0]))
 
 /* tok[0..len) 是否等于 name（tok 不是 NUL 结尾的，来自逗号切分） */
-static int
-klog_name_eq(const char *tok, int len, const char *name)
+static int klog_name_eq(const char *tok, int len, const char *name)
 {
     int i = 0;
 
@@ -163,24 +151,23 @@ klog_name_eq(const char *tok, int len, const char *name)
     return (i == len) && (name[i] == '\0');
 }
 
-int
-log_set_modules_by_name(const char *names)
+int log_set_modules_by_name(const char *names)
 {
-    uint64_t    mask = 0;
-    int         bad  = 0;
-    const char *p    = names;
+    uint64_t mask = 0;
+    int bad = 0;
+    const char *p = names;
 
     if (p == NULL)
         return 0;
 
     while (*p) {
         const char *start = p;
-        int         len;
-        int         found = 0;
+        int len;
+        int found = 0;
 
         while (*p && *p != ',')
             p++;
-        len = (int) (p - start);
+        len = (int)(p - start);
 
         /* 去掉两端空白，允许 "uart, gic" */
         while (len > 0 && (*start == ' ' || *start == '\t')) {
@@ -193,10 +180,10 @@ log_set_modules_by_name(const char *names)
         if (len == 0) {
             /* 空项（如 "uart,,gic" 或结尾逗号）：忽略 */
         } else if (klog_name_eq(start, len, "all")) {
-            mask  = ~0ULL;
+            mask = ~0ULL;
             found = 1;
         } else if (klog_name_eq(start, len, "none")) {
-            mask  = 0;
+            mask = 0;
             found = 1;
         } else {
             for (unsigned i = 0; i < KLOG_MODULE_NAME_COUNT; i++) {
@@ -219,16 +206,14 @@ log_set_modules_by_name(const char *names)
     return bad;
 }
 
-static void
-klog_append(char *out, int len, int *n, const char *s)
+static void klog_append(char *out, int len, int *n, const char *s)
 {
     while (*s && *n < len - 1)
         out[(*n)++] = *s++;
     out[*n] = '\0';
 }
 
-int
-log_modules_to_string(char *out, int len)
+int log_modules_to_string(char *out, int len)
 {
     int n = 0;
 
@@ -250,37 +235,35 @@ log_modules_to_string(char *out, int len)
         }
     }
 
-    if (n == 0)   /* 掩码里只有表外的位 */
+    if (n == 0) /* 掩码里只有表外的位 */
         klog_append(out, len, &n, "unknown");
 
     return n;
 }
 
-void
-klog_init(void)
+void klog_init(void)
 {
     char names[128];
 
 #ifdef LOG_MODULES_DEFAULT
     int bad = log_set_modules_by_name(LOG_MODULES_DEFAULT);
     if (bad > 0) {
-        KLOG_ERROR("[klog] LOG_MODULES 有 %d 个无法识别的模块名：\"%s\"\n",
-                   bad, LOG_MODULES_DEFAULT);
+        KLOG_ERROR("[klog] LOG_MODULES 有 %d 个无法识别的模块名：\"%s\"\n", bad,
+                   LOG_MODULES_DEFAULT);
     }
 #endif
 
     log_modules_to_string(names, sizeof(names));
-    KLOG_INFO("[klog] level=%u modules=%s\n", (unsigned) g_log_level, names);
+    KLOG_INFO("[klog] level=%u modules=%s\n", (unsigned)g_log_level, names);
 }
 
 /**
  * kprintf - 格式化输出到内核日志
  */
-int
-kprintf(const char *fmt, ...)
+int kprintf(const char *fmt, ...)
 {
     va_list va;
-    int     r;
+    int r;
 
     va_start(va, fmt);
     r = kvprintf(fmt, va);

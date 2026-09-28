@@ -14,8 +14,7 @@
  */
 
 /* 读当前 DAIF（不改动状态） */
-static inline uint64_t
-arch_irq_flags(void)
+static inline uint64_t arch_irq_flags(void)
 {
     uint64_t daif;
 
@@ -25,45 +24,39 @@ arch_irq_flags(void)
 }
 
 /* 读是否允许 IRQ（抢占判断用：处于 irqsave 临界区时为 0） */
-static inline int
-arch_irq_is_enabled(void)
+static inline int arch_irq_is_enabled(void)
 {
     return (arch_irq_flags() & (1UL << 7)) == 0;
 }
 
 /* 关中断并返回旧状态（必须用 arch_irq_restore 配对恢复） */
-static inline uint64_t
-arch_irq_save(void)
+static inline uint64_t arch_irq_save(void)
 {
     uint64_t daif;
 
-    __asm__ volatile(
-        "mrs %0, daif       \n"
-        "msr daifset, #2    \n"
-        : "=r"(daif)
-        :
-        : "memory");
+    __asm__ volatile("mrs %0, daif       \n"
+                     "msr daifset, #2    \n"
+                     : "=r"(daif)
+                     :
+                     : "memory");
 
     return daif;
 }
 
 /* 恢复到 arch_irq_save()/arch_irq_flags() 取到的状态 */
-static inline void
-arch_irq_restore(uint64_t flags)
+static inline void arch_irq_restore(uint64_t flags)
 {
     __asm__ volatile("msr daif, %0" : : "r"(flags) : "memory");
 }
 
 /* 无条件关中断（不需要旧状态时用） */
-static inline void
-arch_irq_disable(void)
+static inline void arch_irq_disable(void)
 {
     __asm__ volatile("msr daifset, #2" ::: "memory");
 }
 
 /* 无条件开中断（新任务首次运行时使用） */
-static inline void
-arch_irq_enable(void)
+static inline void arch_irq_enable(void)
 {
     __asm__ volatile("msr daifclr, #2" ::: "memory");
 }

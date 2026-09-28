@@ -12,7 +12,7 @@
  */
 
 #include "vmm/vmm_vpl011.h"
-#include "vmm/vmm.h"   /* vm_t：只为 slot 与 console_owned，设备状态已不在里面 */
+#include "vmm/vmm.h" /* vm_t：只为 slot 与 console_owned，设备状态已不在里面 */
 #include "klog.h"
 #include "string.h"
 #include "spinlock.h"
@@ -31,9 +31,9 @@
  * dev->priv 仍指向 &d->st（语义不变），包装器用 container_of 找回。
  */
 typedef struct {
-    vpl011_state_t   st;     /* 纯设备寄存器/FIFO 状态；st.owner 见下 */
-    spinlock_noirq_t lock;   /* 从前是 vm->vpl011_lock */
-    mmio_device_t    dev;    /* 从前是 vm->vpl011_dev */
+    vpl011_state_t st;     /* 纯设备寄存器/FIFO 状态；st.owner 见下 */
+    spinlock_noirq_t lock; /* 从前是 vm->vpl011_lock */
+    mmio_device_t dev;     /* 从前是 vm->vpl011_dev */
 } vpl011_slot_t;
 
 static vpl011_slot_t g_vpl011[MAX_VMS] __attribute__((aligned(64)));
@@ -59,40 +59,40 @@ static vpl011_slot_t *vpl011_of(const vm_t *vm)
 }
 
 /* ── PL011 寄存器偏移 ─────────────────────────────────────── */
-#define UARTDR      0x000
-#define UARTFR      0x018
-#define UARTCR      0x030
-#define UARTIMSC    0x038
-#define UARTRIS     0x03C
-#define UARTMIS     0x040
-#define UARTICR     0x044
+#define UARTDR   0x000
+#define UARTFR   0x018
+#define UARTCR   0x030
+#define UARTIMSC 0x038
+#define UARTRIS  0x03C
+#define UARTMIS  0x040
+#define UARTICR  0x044
 
 /* PrimeCell / Peripheral ID（ARM PL011 签名）*/
-#define PERIPHID0   0xFE0
-#define PERIPHID1   0xFE4
-#define PERIPHID2   0xFE8
-#define PERIPHID3   0xFEC
-#define PCELLID0    0xFF0
-#define PCELLID1    0xFF4
-#define PCELLID2    0xFF8
-#define PCELLID3    0xFFC
+#define PERIPHID0 0xFE0
+#define PERIPHID1 0xFE4
+#define PERIPHID2 0xFE8
+#define PERIPHID3 0xFEC
+#define PCELLID0  0xFF0
+#define PCELLID1  0xFF4
+#define PCELLID2  0xFF8
+#define PCELLID3  0xFFC
 
 /* FR 标志位 */
-#define FR_TXFE     (1u << 7)   /* TX FIFO 空 */
-#define FR_RXFF     (1u << 6)   /* RX FIFO 满 */
-#define FR_RXFE     (1u << 4)   /* RX FIFO 空 */
+#define FR_TXFE (1u << 7) /* TX FIFO 空 */
+#define FR_RXFF (1u << 6) /* RX FIFO 满 */
+#define FR_RXFE (1u << 4) /* RX FIFO 空 */
 
 /* 中断位 */
-#define INT_RX      (1u << 4)   /* RX 中断（RIS/MIS/IMSC bit4）*/
+#define INT_RX (1u << 4) /* RX 中断（RIS/MIS/IMSC bit4）*/
 
 /*
  * RX FIFO 深度。真实 PL011 的硬件 FIFO 只有 16 字节，这里放宽到 256：
  * 宿主一次粘贴多字符时，guest 要等到下一次进中断才来取，16 字节不够用。
  */
-#define VPL011_RX_FIFO_SIZE   256
+#define VPL011_RX_FIFO_SIZE 256
 
 /* TX 缓冲深度：要能扛住 guest 启动那一大串内核日志的突发 */
-#define VPL011_TX_FIFO_SIZE   8192
+#define VPL011_TX_FIFO_SIZE 8192
 
 /* ── 设备私有状态 ─────────────────────────────────────────── */
 
@@ -250,7 +250,7 @@ static void put_char_locked(vpl011_state_t *s, uint8_t c)
 
     if (s->tx_count >= VPL011_TX_FIFO_SIZE) {
         s->tx_dropped++;
-        return;                         /* 丢弃最新字节，与 kvmm 一致 */
+        return; /* 丢弃最新字节，与 kvmm 一致 */
     }
     s->tx_fifo[s->tx_head] = c;
     s->tx_head = (s->tx_head + 1) % VPL011_TX_FIFO_SIZE;
@@ -262,7 +262,7 @@ static uint64_t vpl011_read(mmio_device_t *dev, uint64_t off, uint8_t size)
 {
     vpl011_state_t *s = (vpl011_state_t *)dev->priv;
     /* priv 仍指向 st（语义不变），锁在包装器里 —— 用 container_of 找回 */
-    vpl011_slot_t  *d = container_of(s, vpl011_slot_t, st);
+    vpl011_slot_t *d = container_of(s, vpl011_slot_t, st);
     uint64_t flags;
     uint64_t ret = 0;
     (void)size;
@@ -281,7 +281,7 @@ static uint64_t vpl011_read(mmio_device_t *dev, uint64_t off, uint8_t size)
         break;
     }
     case UARTFR: {
-        uint64_t fr = FR_TXFE;              /* 输出永远不阻塞 */
+        uint64_t fr = FR_TXFE; /* 输出永远不阻塞 */
         if (s->rx_count == 0)
             fr |= FR_RXFE;
         if (s->rx_count >= VPL011_RX_FIFO_SIZE)
@@ -302,14 +302,30 @@ static uint64_t vpl011_read(mmio_device_t *dev, uint64_t off, uint8_t size)
     case UARTMIS:
         ret = rx_irq_asserted_locked(s) ? INT_RX : 0;
         break;
-    case PERIPHID0: ret = 0x11; break;
-    case PERIPHID1: ret = 0x10; break;
-    case PERIPHID2: ret = 0x14; break;
-    case PERIPHID3: ret = 0x00; break;
-    case PCELLID0:  ret = 0x0D; break;
-    case PCELLID1:  ret = 0xF0; break;
-    case PCELLID2:  ret = 0x05; break;
-    case PCELLID3:  ret = 0xB1; break;
+    case PERIPHID0:
+        ret = 0x11;
+        break;
+    case PERIPHID1:
+        ret = 0x10;
+        break;
+    case PERIPHID2:
+        ret = 0x14;
+        break;
+    case PERIPHID3:
+        ret = 0x00;
+        break;
+    case PCELLID0:
+        ret = 0x0D;
+        break;
+    case PCELLID1:
+        ret = 0xF0;
+        break;
+    case PCELLID2:
+        ret = 0x05;
+        break;
+    case PCELLID3:
+        ret = 0xB1;
+        break;
     default:
         ret = 0;
         break;
@@ -323,7 +339,7 @@ static void vpl011_write(mmio_device_t *dev, uint64_t off, uint8_t size,
                          uint64_t value)
 {
     vpl011_state_t *s = (vpl011_state_t *)dev->priv;
-    vpl011_slot_t  *d = container_of(s, vpl011_slot_t, st);
+    vpl011_slot_t *d = container_of(s, vpl011_slot_t, st);
     uint64_t flags;
     (void)size;
 
@@ -352,10 +368,10 @@ static void vpl011_write(mmio_device_t *dev, uint64_t off, uint8_t size,
 }
 
 static const mmio_dev_ops_t g_vpl011_ops = {
-    .name  = "vpl011",
-    .base  = VPL011_BASE,
-    .size  = VPL011_SIZE,
-    .read  = vpl011_read,
+    .name = "vpl011",
+    .base = VPL011_BASE,
+    .size = VPL011_SIZE,
+    .read = vpl011_read,
     .write = vpl011_write,
 };
 
@@ -378,10 +394,10 @@ int vpl011_init(vm_t *vm, mmio_bus_t *bus)
      * 状态清零本身 —— 它现在只对"锁"这一类跨 init 存活的对象有意义。
      */
     memset(&d->st, 0, sizeof(d->st));
-    d->st.cr    = 0x301;   /* UARTEN | TXE | RXE */
-    d->st.owner = vm;      /* of() 靠它认出"这个槽位属于谁" */
+    d->st.cr = 0x301; /* UARTEN | TXE | RXE */
+    d->st.owner = vm; /* of() 靠它认出"这个槽位属于谁" */
 
-    d->dev.ops  = &g_vpl011_ops;
+    d->dev.ops = &g_vpl011_ops;
     d->dev.priv = &d->st;
 
     return mmio_bus_register(bus, &d->dev);
@@ -409,8 +425,8 @@ void vpl011_destroy(vm_t *vm)
     d = &g_vpl011[vm->slot];
 
     spin_lock_irqsave(&d->lock, &flags);
-    memset(&d->st, 0, sizeof(d->st));   /* 含 st.owner —— of() 随即失效 */
-    d->dev.ops  = NULL;
+    memset(&d->st, 0, sizeof(d->st)); /* 含 st.owner —— of() 随即失效 */
+    d->dev.ops = NULL;
     d->dev.priv = NULL;
     spin_unlock_irqrestore(&d->lock, flags);
 }

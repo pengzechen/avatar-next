@@ -40,40 +40,40 @@
 #include "types.h"
 
 /* ── 页表层级尺寸（4 级：PML4 → PDPT → PD → PT）────────────── */
-#define EPT_PDPT_ENTRIES   512
-#define EPT_PD_ENTRIES     512
-#define EPT_PT_ENTRIES     512
+#define EPT_PDPT_ENTRIES 512
+#define EPT_PD_ENTRIES   512
+#define EPT_PT_ENTRIES   512
 
 /* 覆盖 [0, 4 GiB) 需要的 PDPT/PD 项数（每项 1 GiB）*/
-#define EPT_L1_ENTRIES     4
+#define EPT_L1_ENTRIES 4
 
-#define EPT_PAGE_SIZE      4096ULL
-#define EPT_BLOCK_SIZE     (2ULL * 1024 * 1024)   /* 一张 PT 覆盖的粒度 */
+#define EPT_PAGE_SIZE  4096ULL
+#define EPT_BLOCK_SIZE (2ULL * 1024 * 1024) /* 一张 PT 覆盖的粒度 */
 
 /* ── 多 VM 上限 ───────────────────────────────────────────── */
 /* 静态表按 slot 索引；vmm.h 里有 _Static_assert(MAX_VMS <= EPT_MAX_VMS) */
-#define EPT_MAX_VMS        4
+#define EPT_MAX_VMS 4
 
 /*
  * 每 VM 最多几张 PT = guest RAM 窗口 / 2 MiB。
  * 192 MiB / 2 MiB = 96 —— 与 GUEST_LINUX_MEM_SIZE 对应，
  * guest_loader 那边有 _Static_assert 钉住这个关系（与 aarch64/riscv 同款）。
  */
-#define EPT_MAX_PT_TABLES  96
+#define EPT_MAX_PT_TABLES 96
 
 /* ── 每 VM 的 EPT 上下文 ──────────────────────────────────── */
 typedef struct ept_ctx {
-    uint32_t  slot;                      /* 0..EPT_MAX_VMS-1（索引静态表）*/
-    uint64_t  ram_base;                  /* guest RAM 窗口（GPA）          */
-    uint64_t  ram_size;
-    uint64_t  ram_end;                   /* = ram_base + ram_size          */
-    uint64_t  eptp;                      /* 写进 VMCS 的 EPT_POINTER 值    */
+    uint32_t slot;     /* 0..EPT_MAX_VMS-1（索引静态表）*/
+    uint64_t ram_base; /* guest RAM 窗口（GPA）          */
+    uint64_t ram_size;
+    uint64_t ram_end;                    /* = ram_base + ram_size          */
+    uint64_t eptp;                       /* 写进 VMCS 的 EPT_POINTER 值    */
     uint64_t *pml4;                      /* → 静态 g_ept_pml4[slot]        */
     uint64_t *pdpt;                      /* → 静态 g_ept_pdpt[slot]        */
     uint64_t *pd[EPT_L1_ENTRIES];        /* → 静态 g_ept_pd[slot][i]       */
     uint64_t *pt_tbl[EPT_MAX_PT_TABLES]; /* +1 = 该 2MiB 块已有表；动态分配 */
-    uint64_t  nr_premap;                 /* 统计：加载期预映射页数          */
-    uint64_t  nr_fault;                  /* 统计：按需缺页分配页数          */
+    uint64_t nr_premap;                  /* 统计：加载期预映射页数          */
+    uint64_t nr_fault;                   /* 统计：按需缺页分配页数          */
 } ept_ctx_t;
 
 /* ── 生命周期 ─────────────────────────────────────────────── */
@@ -91,8 +91,8 @@ typedef struct ept_ctx {
  * 内存、内核在 1 MiB），而宿主的物理 0 不能给它 —— 以前靠 EPT 的线性偏移，
  * 现在靠"每个 GPA 各自映射到一个现分配的宿主页"。
  */
-void x86_ept_vm_init(ept_ctx_t *e, uint32_t slot,
-                     uint64_t ram_base, uint64_t ram_size);
+void x86_ept_vm_init(ept_ctx_t *e, uint32_t slot, uint64_t ram_base,
+                     uint64_t ram_size);
 
 /*
  * x86_ept_vm_destroy — 释放该 VM 的所有按需页与 PT 表

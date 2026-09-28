@@ -37,49 +37,50 @@
 #include "types.h"
 
 /* ── Sv39x4 页表几何 ──────────────────────────────────────── */
-#define GSTAGE_ROOT_ENTRIES   2048   /* 16 KiB / 8：每项覆盖 1 GiB  */
-#define GSTAGE_L1_ENTRIES     512    /* 每项覆盖 2 MiB              */
-#define GSTAGE_L0_ENTRIES     512    /* 每项覆盖 4 KiB              */
+#define GSTAGE_ROOT_ENTRIES 2048 /* 16 KiB / 8：每项覆盖 1 GiB  */
+#define GSTAGE_L1_ENTRIES   512  /* 每项覆盖 2 MiB              */
+#define GSTAGE_L0_ENTRIES   512  /* 每项覆盖 4 KiB              */
 
-#define GSTAGE_PAGE_SIZE      4096ULL
-#define GSTAGE_BLOCK_SIZE     (2ULL * 1024 * 1024)   /* 一张 L0 表覆盖的粒度 */
+#define GSTAGE_PAGE_SIZE  4096ULL
+#define GSTAGE_BLOCK_SIZE (2ULL * 1024 * 1024) /* 一张 L0 表覆盖的粒度 */
 
 /* hgatp 字段（MODE=8 即 Sv39x4；数值形式，见下方警告）*/
-#define HGATP_MODE_SV39X4     (8ULL << 60)
-#define HGATP_VMID_SHIFT      44
-#define HGATP_PPN_MASK        ((1ULL << 44) - 1)
+#define HGATP_MODE_SV39X4 (8ULL << 60)
+#define HGATP_VMID_SHIFT  44
+#define HGATP_PPN_MASK    ((1ULL << 44) - 1)
 
 /* ── 多 VM 上限 ───────────────────────────────────────────── */
 /* 静态表按 slot 索引；include/vmm/vmm.h 里有 _Static_assert(MAX_VMS <= GSTAGE_MAX_VMS) */
-#define GSTAGE_MAX_VMS        4
+#define GSTAGE_MAX_VMS 4
 
 /*
  * 每 VM 最多几张 L0 表 = guest RAM 窗口 / 2 MiB。
  * 192 MiB / 2 MiB = 96 —— 与 GUEST_LINUX_MEM_SIZE 对应，
  * guest_loader 那边有 _Static_assert 钉住这个关系（与 aarch64 同款）。
  */
-#define GSTAGE_MAX_L0_TABLES  96
+#define GSTAGE_MAX_L0_TABLES 96
 
 /*
  * ⚠️ hgatp 一律用**数值** CSR 地址 0x680 访问（本文件只定义常量，实际读写
  * 在 gstage.c 里用内联汇编）。原因见 hext.h 顶部：-march=rv64gc 下汇编器
  * 会把 `hgatp` 这个名字静默映射到 VS 级的编号，编译全绿、运行期才炸。
  */
-#define CSR_HGATP_NUM         0x680
+#define CSR_HGATP_NUM 0x680
 
 /* ── 每 VM 的 G-stage 上下文 ───────────────────────────────── */
 typedef struct gstage_ctx {
-    uint32_t  slot;                        /* 0..GSTAGE_MAX_VMS-1（索引静态表）*/
-    uint32_t  vmid;                        /* 1..255，写进 hgatp.VMID         */
-    uint64_t  ram_base;                    /* guest RAM 窗口（GPA）           */
-    uint64_t  ram_size;
-    uint64_t  ram_end;                     /* = ram_base + ram_size           */
-    uint64_t  hgatp;                       /* hgatp 的值（MODE|VMID|root_ppn）*/
-    uint64_t *root;                        /* → 静态 g_gstage_root[slot]      */
-    uint64_t *l1[4];                       /* → 静态 g_gstage_l1[slot][i]     */
-    uint64_t *l0_tbl[GSTAGE_MAX_L0_TABLES];/* +1 = 该 2MiB 块已有表；动态分配 */
-    uint64_t  nr_premap;                   /* 统计：加载期预映射页数           */
-    uint64_t  nr_fault;                    /* 统计：按需缺页分配页数           */
+    uint32_t slot;     /* 0..GSTAGE_MAX_VMS-1（索引静态表）*/
+    uint32_t vmid;     /* 1..255，写进 hgatp.VMID         */
+    uint64_t ram_base; /* guest RAM 窗口（GPA）           */
+    uint64_t ram_size;
+    uint64_t ram_end; /* = ram_base + ram_size           */
+    uint64_t hgatp;   /* hgatp 的值（MODE|VMID|root_ppn）*/
+    uint64_t *root;   /* → 静态 g_gstage_root[slot]      */
+    uint64_t *l1[4];  /* → 静态 g_gstage_l1[slot][i]     */
+    uint64_t
+        *l0_tbl[GSTAGE_MAX_L0_TABLES]; /* +1 = 该 2MiB 块已有表；动态分配 */
+    uint64_t nr_premap;                /* 统计：加载期预映射页数           */
+    uint64_t nr_fault;                 /* 统计：按需缺页分配页数           */
 } gstage_ctx_t;
 
 /* ── 生命周期 ─────────────────────────────────────────────── */

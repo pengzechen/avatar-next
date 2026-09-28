@@ -855,7 +855,7 @@ $(GUEST_GIC_STAMP):
 QEMU_ROOTFS_FLAGS = -device loader,file=$(ROOTFS_IMG),addr=$(ROOTFS_PHYS_ADDR),force-raw=on
 
 # ─── §10  顶层目标声明 ───────────────────────────────────────────────────────────
-.PHONY: all clean clean-all help klog kernel run run-net rootfs run-fs test-pthread test-mutex test-vmm test-guest-linux test-ltp epoll-perf test-epoll-perf
+.PHONY: all clean clean-all help klog kernel run run-net rootfs run-fs test-pthread test-mutex test-vmm test-guest-linux test-ltp epoll-perf test-epoll-perf format format-check
 
 all: klog
 
@@ -1470,12 +1470,55 @@ test-ltp: kernel $(ROOTFS_IMG)
 	@echo "In QEMU shell: /ltp/run_ltp.sh"
 	$(QEMU) $(QEMU_FLAGS) $(QEMU_ROOTFS_FLAGS)
 
-# ─── §13  清理 / 帮助 ────────────────────────────────────────────────────────────
+# ─── §13  清理 / 格式化 / 帮助 ───────────────────────────────────────────────────
 clean:
 	rm -rf $(BUILD_DIR)
 
 clean-all:
 	rm -rf $(BUILD_ROOT)/*
+
+# 代码格式化（配置见仓库根的 .clang-format）
+#
+# FORMAT_DIRS 只列本项目自己的源码树。third_party/ 是外部 submodule
+# （lwext4 / lwIP），人家有自己的风格，不归我们管；build/ 是产物。
+# 与 PLATFORM 无关，任何平台下跑结果都一样。
+FORMAT_DIRS  := boot driver fs include kernel lib platforms apps tests
+FORMAT_SRCS  := $(shell find $(FORMAT_DIRS) \( -name '*.c' -o -name '*.h' \) 2>/dev/null)
+CLANG_FORMAT ?= clang-format
+
+# 为什么是「跑到收敛」而不是「跑一遍」：
+# clang-format 不保证幂等，个别构造要两三遍才稳定。本项目实测命中一处 ——
+# driver/uart/uart.h 里有个注释插在连续 #define 块中间，那个注释的缩进会在
+# 第 1、2 遍之间来回摆一次，第 3 遍才定住。只跑一遍的话，紧接着的
+# `make format-check` 会报错，看起来像"格式化没生效"。
+format:
+	@command -v $(CLANG_FORMAT) >/dev/null 2>&1 || {                     \
+	    echo "找不到 $(CLANG_FORMAT)。装一个：";                          \
+	    echo "  pipx install clang-format     # 用户级，免 sudo";         \
+	    echo "  sudo apt install clang-format";                           \
+	    exit 1; }
+	@echo "clang-format $$($(CLANG_FORMAT) --version | sed 's/.*version //')" \
+	      "—— 目标 $(words $(FORMAT_SRCS)) 个文件"
+	@prev=""; converged="";                                                    \
+	for pass in 1 2 3 4 5; do                                                 \
+	    cur=$$(cat $(FORMAT_SRCS) | cksum);                                    \
+	    if [ "$$cur" = "$$prev" ]; then converged=$$((pass - 1)); break; fi;   \
+	    $(CLANG_FORMAT) -i $(FORMAT_SRCS);                                     \
+	    prev="$$cur";                                                          \
+	done;                                                                      \
+	if [ -n "$$converged" ]; then echo "  ✅ 第 $$converged 遍收敛";            \
+	else echo "  ⚠️  5 遍仍未收敛，请人工看一眼"; fi
+	@echo "⚠️  .h 被改过，构建不跟踪头文件 mtime —— 下次编译前先 make clean，"
+	@echo "    否则会用到布局不一致的旧 .o（见 CLAUDE.md 的「幽灵 bug」一节）。"
+
+# 注意：--dry-run 只做"再跑一遍会不会变"的判断，所以它隐含要求工作区已经处在
+# 不动点上 —— 这正是 format 跑到收敛的原因。CI 里直接用它即可。
+format-check:
+	@command -v $(CLANG_FORMAT) >/dev/null 2>&1 || {                     \
+	    echo "找不到 $(CLANG_FORMAT)（pipx install clang-format）"; exit 1; }
+	@$(CLANG_FORMAT) --dry-run --Werror $(FORMAT_SRCS) 2>&1 \
+	    && echo "✅ 格式检查通过（$(words $(FORMAT_SRCS)) 个文件）" \
+	    || { echo "❌ 上面的文件不符合 .clang-format，跑 make format 修正"; exit 1; }
 
 help:
 	@echo "Avatar OS Makefile"
@@ -1530,6 +1573,8 @@ help:
 	@echo "                parser, to see what a backtrace looks like"
 	@echo "  clean         Remove build artifacts for current PLATFORM"
 	@echo "  clean-all     Remove build artifacts for all platforms"
+	@echo "  format        Reformat all project .c/.h with clang-format (.clang-format)"
+	@echo "  format-check  Dry-run: exit non-zero if anything is not formatted (CI)"
 	@echo "  help          Show this help message"
 	@echo ""
 	@echo "Examples:"

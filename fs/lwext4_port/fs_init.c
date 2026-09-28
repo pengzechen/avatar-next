@@ -24,8 +24,8 @@
 struct ext4_blockdev;
 extern struct ext4_blockdev *sdblk_get_bdev(void);
 
-#define BDEV_NAME   "sdblk0p2"
-#define ROOTFS_MP   "/"
+#define BDEV_NAME "sdblk0p2"
+#define ROOTFS_MP "/"
 
 static struct ext4_mbr_bdevs g_mbr_bdevs;
 
@@ -49,15 +49,16 @@ static void fs_log_ext4_features(struct ext4_blockdev *bdev)
     uint32_t fincom = ext4_get32(&sb, features_incompatible);
     uint32_t fro = ext4_get32(&sb, features_read_only);
     /* 成功读到了超级块 —— 这是"生效配置"，不是错误。 */
-    KLOG_INFO("[fs] superblock features: compat=0x%08x incompat=0x%08x ro=0x%08x\n",
-              fcom, fincom, fro);
+    KLOG_INFO(
+        "[fs] superblock features: compat=0x%08x incompat=0x%08x ro=0x%08x\n",
+        fcom, fincom, fro);
 
     /*
      * 只在**确实存在**不支持的位时才 WARN：非零意味着我们在静默忽略磁盘上的
      * 语义，那是真该被看见的；全零是正常情况，不该占 WARN 的注意力。
      */
     uint32_t unsup_incom = fincom & ~CONFIG_SUPPORTED_FINCOM;
-    uint32_t unsup_ro    = fro & ~CONFIG_SUPPORTED_FRO_COM;
+    uint32_t unsup_ro = fro & ~CONFIG_SUPPORTED_FRO_COM;
     if (unsup_incom || unsup_ro) {
         KLOG_WARN("[fs] unsupported features: incompat=0x%08x ro=0x%08x\n",
                   unsup_incom, unsup_ro);
@@ -126,8 +127,8 @@ int fs_init(void)
 struct ext4_blockdev;
 extern struct ext4_blockdev *ramblk_get_bdev(void);
 
-#define BDEV_NAME   "ramblk0"
-#define ROOTFS_MP   "/"
+#define BDEV_NAME "ramblk0"
+#define ROOTFS_MP "/"
 
 int fs_init(void)
 {
@@ -144,7 +145,8 @@ int fs_init(void)
     rc = ext4_mount(BDEV_NAME, ROOTFS_MP, false);
     if (rc != EOK) {
         KLOG_ERROR("[fs] ext4_mount failed: %d\n", rc);
-        KLOG_ERROR("[fs] Make sure rootfs.img was loaded by QEMU at the correct address.\n");
+        KLOG_ERROR(
+            "[fs] Make sure rootfs.img was loaded by QEMU at the correct address.\n");
         KLOG_ERROR("[fs] Run: make ARCH=... run-fs\n");
         ext4_device_unregister(BDEV_NAME);
         return -rc;

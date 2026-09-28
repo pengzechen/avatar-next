@@ -18,7 +18,7 @@
 #include "barrier.h"
 #include "klog.h"
 #include "timer/timer.h"
-#include "aarch64/sysreg.h"   /* SYSREG_READ / SYSREG_WRITE */
+#include "aarch64/sysreg.h" /* SYSREG_READ / SYSREG_WRITE */
 
 /* GICv3 模块内基地址 */
 uintptr_t gicv3_gicd_base = 0;
@@ -41,8 +41,7 @@ struct gicv3_t _gicv3;
  * GICR 是一串 128KB 对齐的块，块的 GICR_TYPER[63:32] 保存该核的亲和性，
  * [4]=Last 表示链尾。找不到（或遍历到 Last）时回退到 gicv3_gicr_base。
  */
-static uintptr_t
-gicv3_find_cpu_gicr(void)
+static uintptr_t gicv3_find_cpu_gicr(void)
 {
     uint64_t mpidr;
     __asm__ volatile("mrs %0, mpidr_el1" : "=r"(mpidr));
@@ -58,7 +57,7 @@ gicv3_find_cpu_gicr(void)
         uint64_t typer = read64((const volatile void *)(gicr + 0x0008u));
         if ((uint32_t)(typer >> 32) == mpidr_aff)
             return gicr;
-        if (typer & (1u << 4))   /* GICR_TYPER.Last */
+        if (typer & (1u << 4)) /* GICR_TYPER.Last */
             break;
         gicr += GICR_STRIDE;
     }
@@ -71,7 +70,7 @@ static void gicv3_wake_redistributor(uintptr_t gicr)
     uint32_t waker = read32((void *)(gicr + 0x0014)); /* GICR_WAKER */
     waker &= ~GICR_WAKER_PROCESSOR_SLEEP;
     write32(waker, (void *)(gicr + 0x0014));
-    barrier_sync();   /* 必须确实到达 GIC 设备 */
+    barrier_sync(); /* 必须确实到达 GIC 设备 */
 
     uint32_t timeout = 1000000u;
     while ((read32((void *)(gicr + 0x0014)) & GICR_WAKER_CHILDREN_ASLEEP) &&
@@ -109,7 +108,7 @@ static void gicv3_config_sgi_frame(uintptr_t gicr)
 
     for (uint32_t off = 0; off < 32u; off += 4u)
         write32(GICV3_DEFAULT_PRIORITY * 0x01010101u,
-                (void *)(sgi + 0x0400u + off));    /* GICR_IPRIORITYRn */
+                (void *)(sgi + 0x0400u + off)); /* GICR_IPRIORITYRn */
 
     barrier_sync();
 }
@@ -129,7 +128,7 @@ static void gicv3_enable_cpuif_sysreg(void)
     sre |= ICC_SRE_EL2_SRE | ICC_SRE_EL2_DIB | ICC_SRE_EL2_DFB |
            ICC_SRE_EL2_ENABLE;
     ICC_WRITE(ICC_SRE_EL1, sre);
-    barrier_instr_full();   /* 写完 ICC_SRE 必须 isb 才对后续访问生效 */
+    barrier_instr_full(); /* 写完 ICC_SRE 必须 isb 才对后续访问生效 */
 }
 
 /* ── 宿主 BSP 初始化 ─────────────────────────────────────────── */
@@ -143,14 +142,15 @@ void gicv3_init(void)
              (unsigned long long)gicv3_gicr_base);
 
     if (gicv3_gicd_base == 0 || gicv3_gicr_base == 0) {
-        logger_error("GICv3: missing MMIO base (gicd/gicr not in platform.conf)\n");
+        logger_error(
+            "GICv3: missing MMIO base (gicd/gicr not in platform.conf)\n");
         return;
     }
 
     _gicv3.irq_nr = GICD_TYPER_IRQS(read32((void *)GICD_TYPER));
     _gicv3.nr_lrs = gicv3_vtr_nr_lrs();
-    logger_info("GICv3: %u IRQ lines, %u list registers\n",
-                _gicv3.irq_nr, _gicv3.nr_lrs);
+    logger_info("GICv3: %u IRQ lines, %u list registers\n", _gicv3.irq_nr,
+                _gicv3.nr_lrs);
 
     /*
      * GICD_CTLR：ARE（亲和性路由，SPI 目标改用 IROUTER）+
@@ -165,7 +165,8 @@ void gicv3_init(void)
      * Linux 的 gic_dist_init() 同样同时写 GICD_CTLR_ENABLE_G1 和 _G1A。
      */
     write32(GICD_CTLR_ENABLE_G1NS_BIT | GICD_CTLR_ENABLE_G1A_BIT |
-            GICD_CTLR_ARE_S_BIT | GICD_CTLR_ARE_NS_BIT, (void *)GICD_CTLR);
+                GICD_CTLR_ARE_S_BIT | GICD_CTLR_ARE_NS_BIT,
+            (void *)GICD_CTLR);
 
     /* ARE 生效需要等 RWP 清零，否则后续 SPI 配置会被丢弃 */
     barrier_sync();
@@ -225,8 +226,7 @@ void gicv3_init_secondary(void)
     ICC_WRITE(ICC_IGRPEN1_EL1, 1u);
     barrier_instr_full();
 
-    KLOG_GIC("[gicv3] secondary init done (GICR=0x%lx)\n",
-             (unsigned long)gicr);
+    KLOG_GIC("[gicv3] secondary init done (GICR=0x%lx)\n", (unsigned long)gicr);
 }
 
 /* ── 中断使能 / 查询 ─────────────────────────────────────────── */
@@ -244,7 +244,8 @@ void gicv3_enable_int(int int_id, bool enable)
         write32(mask, (void *)(uint64_t)(enable ? GICD_ISENABLER(reg)
                                                 : GICD_ICENABLER(reg)));
     }
-    logger_gic_debug("GICv3: %s int %d\n", enable ? "enable" : "disable", int_id);
+    logger_gic_debug("GICv3: %s int %d\n", enable ? "enable" : "disable",
+                     int_id);
 }
 
 bool gicv3_is_int_enabled(int int_id)
@@ -254,7 +255,7 @@ bool gicv3_is_int_enabled(int int_id)
 
     if (int_id < 32) {
         uintptr_t sgi = gicv3_find_cpu_gicr() + GICR_SGI_OFFSET;
-        val = read32((void *)(sgi + 0x100u));   /* GICR_ISENABLER0 */
+        val = read32((void *)(sgi + 0x100u)); /* GICR_ISENABLER0 */
     } else {
         val = read32((void *)(uint64_t)GICD_ISENABLER((uint32_t)int_id / 32));
     }
@@ -263,7 +264,7 @@ bool gicv3_is_int_enabled(int int_id)
 
 void gicv3_set_int_trigger(uint32_t int_id, int edge)
 {
-    uint32_t reg   = int_id / 16;
+    uint32_t reg = int_id / 16;
     uint32_t shift = (int_id % 16) * 2;
     uint32_t val;
 
@@ -272,16 +273,20 @@ void gicv3_set_int_trigger(uint32_t int_id, int edge)
         uintptr_t sgi = gicv3_find_cpu_gicr() + GICR_SGI_OFFSET;
         uintptr_t addr = sgi + 0x0c00u + (reg & 1u) * 4u;
         val = read32((void *)addr);
-        if (edge) val |=  (1u << (shift + 1));
-        else      val &= ~(1u << (shift + 1));
+        if (edge)
+            val |= (1u << (shift + 1));
+        else
+            val &= ~(1u << (shift + 1));
         write32(val, (void *)addr);
         return;
     }
 
     uintptr_t addr = GICD_ICFGR(reg);
     val = read32((void *)addr);
-    if (edge) val |=  (1u << (shift + 1));
-    else      val &= ~(1u << (shift + 1));
+    if (edge)
+        val |= (1u << (shift + 1));
+    else
+        val &= ~(1u << (shift + 1));
     write32(val, (void *)addr);
 }
 
@@ -294,7 +299,7 @@ void gicv3_set_int_trigger(uint32_t int_id, int edge)
 void gicv3_set_int_target(uint32_t int_id, uint8_t target_cpu_mask)
 {
     if (int_id < 32)
-        return;   /* SGI/PPI 是 per-CPU，没有目标配置 */
+        return; /* SGI/PPI 是 per-CPU，没有目标配置 */
 
     uint32_t cpu = 0;
     while (cpu < 8 && !(target_cpu_mask & (1u << cpu)))
@@ -307,14 +312,12 @@ void gicv3_set_int_target(uint32_t int_id, uint8_t target_cpu_mask)
 
 /* ── CPU interface 应答 / 结束 ───────────────────────────────── */
 
-uint32_t
-gicv3_read_iar(void)
+uint32_t gicv3_read_iar(void)
 {
     return (uint32_t)ICC_READ(ICC_IAR1_EL1);
 }
 
-uint32_t
-gicv3_iar_irqnr(uint32_t iar)
+uint32_t gicv3_iar_irqnr(uint32_t iar)
 {
     return iar & ICC_IAR_INTID_MASK;
 }
@@ -333,14 +336,14 @@ void gicv3_write_eoir(uint32_t irqstat)
  */
 void gic_set_ipriority(uint32_t int_id, uint32_t priority)
 {
-    uint32_t reg   = int_id / 4;
+    uint32_t reg = int_id / 4;
     uint32_t shift = (int_id % 4) * 8;
-    uint8_t  pri   = (uint8_t)((priority << 3) & 0xF8u);
+    uint8_t pri = (uint8_t)((priority << 3) & 0xF8u);
     uint32_t val;
 
     if (int_id < 32) {
         uintptr_t sgi = gicv3_find_cpu_gicr() + GICR_SGI_OFFSET;
-        uintptr_t addr = sgi + 0x400u + reg * 4u;   /* GICR_IPRIORITYRn */
+        uintptr_t addr = sgi + 0x400u + reg * 4u; /* GICR_IPRIORITYRn */
         val = read32((void *)addr);
         val &= ~(0xFFu << shift);
         val |= (uint32_t)pri << shift;
@@ -367,11 +370,10 @@ void gic_write_dir(uint32_t irqstat)
 
 /* ── vGIC：ICH_LR<n>_EL2 访问 ───────────────────────────────── */
 
-uint32_t
-gicv3_vtr_nr_lrs(void)
+uint32_t gicv3_vtr_nr_lrs(void)
 {
     uint64_t vtr = ICC_READ(ICH_VTR_EL2);
-    uint32_t n = (uint32_t)(vtr & 0xFu) + 1u;   /* ListRegs[3:0] */
+    uint32_t n = (uint32_t)(vtr & 0xFu) + 1u; /* ListRegs[3:0] */
     return n > GICV3_MAX_LRS ? GICV3_MAX_LRS : n;
 }
 
@@ -384,72 +386,134 @@ void gicv3_write_lr(int32_t n, uint64_t value)
         return;
 
     switch (n) {
-    case 0:  ICC_WRITE("S3_4_C12_C12_0", value); break;
-    case 1:  ICC_WRITE("S3_4_C12_C12_1", value); break;
-    case 2:  ICC_WRITE("S3_4_C12_C12_2", value); break;
-    case 3:  ICC_WRITE("S3_4_C12_C12_3", value); break;
-    case 4:  ICC_WRITE("S3_4_C12_C12_4", value); break;
-    case 5:  ICC_WRITE("S3_4_C12_C12_5", value); break;
-    case 6:  ICC_WRITE("S3_4_C12_C12_6", value); break;
-    case 7:  ICC_WRITE("S3_4_C12_C12_7", value); break;
-    case 8:  ICC_WRITE("S3_4_C12_C13_0", value); break;
-    case 9:  ICC_WRITE("S3_4_C12_C13_1", value); break;
-    case 10: ICC_WRITE("S3_4_C12_C13_2", value); break;
-    case 11: ICC_WRITE("S3_4_C12_C13_3", value); break;
-    case 12: ICC_WRITE("S3_4_C12_C13_4", value); break;
-    case 13: ICC_WRITE("S3_4_C12_C13_5", value); break;
-    case 14: ICC_WRITE("S3_4_C12_C13_6", value); break;
-    case 15: ICC_WRITE("S3_4_C12_C13_7", value); break;
-    default: break;
+    case 0:
+        ICC_WRITE("S3_4_C12_C12_0", value);
+        break;
+    case 1:
+        ICC_WRITE("S3_4_C12_C12_1", value);
+        break;
+    case 2:
+        ICC_WRITE("S3_4_C12_C12_2", value);
+        break;
+    case 3:
+        ICC_WRITE("S3_4_C12_C12_3", value);
+        break;
+    case 4:
+        ICC_WRITE("S3_4_C12_C12_4", value);
+        break;
+    case 5:
+        ICC_WRITE("S3_4_C12_C12_5", value);
+        break;
+    case 6:
+        ICC_WRITE("S3_4_C12_C12_6", value);
+        break;
+    case 7:
+        ICC_WRITE("S3_4_C12_C12_7", value);
+        break;
+    case 8:
+        ICC_WRITE("S3_4_C12_C13_0", value);
+        break;
+    case 9:
+        ICC_WRITE("S3_4_C12_C13_1", value);
+        break;
+    case 10:
+        ICC_WRITE("S3_4_C12_C13_2", value);
+        break;
+    case 11:
+        ICC_WRITE("S3_4_C12_C13_3", value);
+        break;
+    case 12:
+        ICC_WRITE("S3_4_C12_C13_4", value);
+        break;
+    case 13:
+        ICC_WRITE("S3_4_C12_C13_5", value);
+        break;
+    case 14:
+        ICC_WRITE("S3_4_C12_C13_6", value);
+        break;
+    case 15:
+        ICC_WRITE("S3_4_C12_C13_7", value);
+        break;
+    default:
+        break;
     }
 }
 
-uint64_t
-gicv3_read_lr(int32_t n)
+uint64_t gicv3_read_lr(int32_t n)
 {
     switch (n) {
-    case 0:  return ICC_READ("S3_4_C12_C12_0");
-    case 1:  return ICC_READ("S3_4_C12_C12_1");
-    case 2:  return ICC_READ("S3_4_C12_C12_2");
-    case 3:  return ICC_READ("S3_4_C12_C12_3");
-    case 4:  return ICC_READ("S3_4_C12_C12_4");
-    case 5:  return ICC_READ("S3_4_C12_C12_5");
-    case 6:  return ICC_READ("S3_4_C12_C12_6");
-    case 7:  return ICC_READ("S3_4_C12_C12_7");
-    case 8:  return ICC_READ("S3_4_C12_C13_0");
-    case 9:  return ICC_READ("S3_4_C12_C13_1");
-    case 10: return ICC_READ("S3_4_C12_C13_2");
-    case 11: return ICC_READ("S3_4_C12_C13_3");
-    case 12: return ICC_READ("S3_4_C12_C13_4");
-    case 13: return ICC_READ("S3_4_C12_C13_5");
-    case 14: return ICC_READ("S3_4_C12_C13_6");
-    case 15: return ICC_READ("S3_4_C12_C13_7");
-    default: return 0;
+    case 0:
+        return ICC_READ("S3_4_C12_C12_0");
+    case 1:
+        return ICC_READ("S3_4_C12_C12_1");
+    case 2:
+        return ICC_READ("S3_4_C12_C12_2");
+    case 3:
+        return ICC_READ("S3_4_C12_C12_3");
+    case 4:
+        return ICC_READ("S3_4_C12_C12_4");
+    case 5:
+        return ICC_READ("S3_4_C12_C12_5");
+    case 6:
+        return ICC_READ("S3_4_C12_C12_6");
+    case 7:
+        return ICC_READ("S3_4_C12_C12_7");
+    case 8:
+        return ICC_READ("S3_4_C12_C13_0");
+    case 9:
+        return ICC_READ("S3_4_C12_C13_1");
+    case 10:
+        return ICC_READ("S3_4_C12_C13_2");
+    case 11:
+        return ICC_READ("S3_4_C12_C13_3");
+    case 12:
+        return ICC_READ("S3_4_C12_C13_4");
+    case 13:
+        return ICC_READ("S3_4_C12_C13_5");
+    case 14:
+        return ICC_READ("S3_4_C12_C13_6");
+    case 15:
+        return ICC_READ("S3_4_C12_C13_7");
+    default:
+        return 0;
     }
 }
 
-uint64_t gicv3_read_elrsr(void) { return ICC_READ(ICH_ELRSR_EL2); }
-uint64_t gicv3_read_eisr(void)  { return ICC_READ(ICH_EISR_EL2);  }
-uint64_t gicv3_read_misr(void)  { return ICC_READ(ICH_MISR_EL2);  }
-uint64_t gicv3_read_hcr(void)   { return ICC_READ(ICH_HCR_EL2);   }
-void gicv3_write_hcr(uint64_t v) { ICC_WRITE(ICH_HCR_EL2, v); barrier_instr_full(); }
+uint64_t gicv3_read_elrsr(void)
+{
+    return ICC_READ(ICH_ELRSR_EL2);
+}
+uint64_t gicv3_read_eisr(void)
+{
+    return ICC_READ(ICH_EISR_EL2);
+}
+uint64_t gicv3_read_misr(void)
+{
+    return ICC_READ(ICH_MISR_EL2);
+}
+uint64_t gicv3_read_hcr(void)
+{
+    return ICC_READ(ICH_HCR_EL2);
+}
+void gicv3_write_hcr(uint64_t v)
+{
+    ICC_WRITE(ICH_HCR_EL2, v);
+    barrier_instr_full();
+}
 
 /* ── 杂项 ────────────────────────────────────────────────────── */
 
-uint32_t
-gicv3_get_typer(void)
+uint32_t gicv3_get_typer(void)
 {
     return read32((void *)GICD_TYPER);
 }
 
-uint32_t
-gicv3_get_iidr(void)
+uint32_t gicv3_get_iidr(void)
 {
     return read32((void *)GICD_IIDR);
 }
 
-uint32_t
-cpu_num(void)
+uint32_t cpu_num(void)
 {
     return GICD_TYPER_CPU_NUM(read32((void *)GICD_TYPER));
 }
@@ -463,6 +527,6 @@ void gicv3_ipi_send_single(int32_t irq, int32_t cpu)
     }
 
     uint64_t sgi = ((uint64_t)irq & 0xFu) |
-                   ((uint64_t)1 << (16 + cpu));   /* TargetList: Aff0 位图 */
+                   ((uint64_t)1 << (16 + cpu)); /* TargetList: Aff0 位图 */
     ICC_WRITE(ICC_SGI1R_EL1, sgi);
 }

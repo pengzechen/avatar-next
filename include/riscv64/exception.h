@@ -19,54 +19,54 @@
  *   f[0]  .. f[31]   : FP 寄存器 (f0..f31)
  *   fcsr   @ [68]    : FP 控制/状态寄存器
  */
-#define TRAP_FRAME_SIZE  552   /* 69 * 8 */
+#define TRAP_FRAME_SIZE 552 /* 69 * 8 */
 
 typedef struct {
-    uint64_t x[32];      /* x0 .. x31  (x2=sp 保存进入陷阱前的原始值) */
-    uint64_t sepc;       /* Supervisor Exception PC                    */
-    uint64_t scause;     /* Supervisor Cause Register                  */
-    uint64_t stval;      /* Supervisor Trap Value                      */
-    uint64_t sstatus;    /* Supervisor Status Register                 */
-    uint64_t f[32];      /* f0 .. f31  (FP registers, double-width)    */
-    uint64_t fcsr;       /* FP Control/Status Register                 */
+    uint64_t x[32];   /* x0 .. x31  (x2=sp 保存进入陷阱前的原始值) */
+    uint64_t sepc;    /* Supervisor Exception PC                    */
+    uint64_t scause;  /* Supervisor Cause Register                  */
+    uint64_t stval;   /* Supervisor Trap Value                      */
+    uint64_t sstatus; /* Supervisor Status Register                 */
+    uint64_t f[32];   /* f0 .. f31  (FP registers, double-width)    */
+    uint64_t fcsr;    /* FP Control/Status Register                 */
 } trap_frame_t;
 
 /* ── IRQ handler typedef (RISC-V scause-based) ──────────────────── */
 
-typedef void (*irq_handler_t)(void *);   /* frame 实际是 trap_frame_t * */
+typedef void (*irq_handler_t)(void *); /* frame 实际是 trap_frame_t * */
 
 /* ── scause 中断原因（bit63=1 时生效）────────────────────────────── */
 
-#define SCAUSE_INTERRUPT_BIT      (1ULL << 63)
+#define SCAUSE_INTERRUPT_BIT (1ULL << 63)
 
-#define CAUSE_SUPERVISOR_SOFTWARE  1u
-#define CAUSE_SUPERVISOR_TIMER     5u
-#define CAUSE_SUPERVISOR_EXTERNAL  9u
+#define CAUSE_SUPERVISOR_SOFTWARE 1u
+#define CAUSE_SUPERVISOR_TIMER    5u
+#define CAUSE_SUPERVISOR_EXTERNAL 9u
 
 /* ── scause 异常原因（bit63=0 时生效）───────────────────────────── */
 
-#define CAUSE_INSN_ADDR_MISALIGN   0u
-#define CAUSE_INSN_FAULT           1u
-#define CAUSE_ILLEGAL_INSN         2u
-#define CAUSE_BREAKPOINT           3u
-#define CAUSE_LOAD_ADDR_MISALIGN   4u
-#define CAUSE_LOAD_FAULT           5u
-#define CAUSE_STORE_ADDR_MISALIGN  6u
-#define CAUSE_STORE_FAULT          7u
-#define CAUSE_USER_ECALL           8u
-#define CAUSE_SUPERVISOR_ECALL     9u
-#define CAUSE_INSN_PAGE_FAULT      12u
-#define CAUSE_LOAD_PAGE_FAULT      13u
-#define CAUSE_STORE_PAGE_FAULT     15u
+#define CAUSE_INSN_ADDR_MISALIGN     0u
+#define CAUSE_INSN_FAULT             1u
+#define CAUSE_ILLEGAL_INSN           2u
+#define CAUSE_BREAKPOINT             3u
+#define CAUSE_LOAD_ADDR_MISALIGN     4u
+#define CAUSE_LOAD_FAULT             5u
+#define CAUSE_STORE_ADDR_MISALIGN    6u
+#define CAUSE_STORE_FAULT            7u
+#define CAUSE_USER_ECALL             8u
+#define CAUSE_SUPERVISOR_ECALL       9u
+#define CAUSE_INSN_PAGE_FAULT        12u
+#define CAUSE_LOAD_PAGE_FAULT        13u
+#define CAUSE_STORE_PAGE_FAULT       15u
 #define CAUSE_INSN_GUEST_PAGE_FAULT  20u
 #define CAUSE_LOAD_GUEST_PAGE_FAULT  21u
 #define CAUSE_STORE_GUEST_PAGE_FAULT 23u
 
 /* ── sstatus 相关位 ──────────────────────────────────────────────── */
 
-#define SSTATUS_SIE   (1UL << 1)   /* Supervisor Interrupt Enable */
-#define SSTATUS_SPIE  (1UL << 5)   /* Saved SIE before trap       */
-#define SSTATUS_SPP   (1UL << 8)   /* Previous privilege (S-mode) */
+#define SSTATUS_SIE  (1UL << 1) /* Supervisor Interrupt Enable */
+#define SSTATUS_SPIE (1UL << 5) /* Saved SIE before trap       */
+#define SSTATUS_SPP  (1UL << 8) /* Previous privilege (S-mode) */
 
 /* ── 声明 ────────────────────────────────────────────────────────── */
 

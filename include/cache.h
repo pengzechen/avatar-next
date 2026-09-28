@@ -37,7 +37,8 @@ static inline void invalidate_dcache_range(const void *addr, size_t size);
  *
  * 将指定地址范围的数据缓存行写回到内存，然后从缓存中移除
  */
-static inline void clean_and_invalidate_dcache_range(const void *addr, size_t size);
+static inline void clean_and_invalidate_dcache_range(const void *addr,
+                                                     size_t size);
 
 /**
  * sync_caches - 同步所有缓存操作
@@ -78,13 +79,13 @@ static inline void init_cache(void);
 /* ===== 架构特定底层操作 ===== */
 
 #if ARCH_X86_64
-    #include "x86_64/cache_impl.h"
+#include "x86_64/cache_impl.h"
 #elif ARCH_AARCH64
-    #include "aarch64/cache_impl.h"
+#include "aarch64/cache_impl.h"
 #elif ARCH_RISCV64
-    #include "riscv64/cache_impl.h"
+#include "riscv64/cache_impl.h"
 #else
-    #error "Unsupported architecture"
+#error "Unsupported architecture"
 #endif
 
 /* ===== 通用 Range 操作实现 ===== */
@@ -101,33 +102,31 @@ static inline void init_cache(void);
 /**
  * clean_dcache_range - 清理地址范围的缓存
  */
-static inline void
-clean_dcache_range(const void *addr, size_t size)
+static inline void clean_dcache_range(const void *addr, size_t size)
 {
-    const unsigned char *p      = (const unsigned char *)addr;
-    const unsigned char *end    = p + size;
-    size_t                    cacheline_size = get_cache_line_size();
+    const unsigned char *p = (const unsigned char *)addr;
+    const unsigned char *end = p + size;
+    size_t cacheline_size = get_cache_line_size();
 
-    sync_caches();  /* 确保之前的所有内存访问完成 */
+    sync_caches(); /* 确保之前的所有内存访问完成 */
 
     for (; p < end; p += cacheline_size)
         __clean_dcache_one(p);
 
-    sync_caches();  /* 确保 clean 完成 */
+    sync_caches(); /* 确保 clean 完成 */
 }
 
 /**
  * invalidate_dcache_range - 使地址范围的缓存失效
  */
-static inline void
-invalidate_dcache_range(const void *addr, size_t size)
+static inline void invalidate_dcache_range(const void *addr, size_t size)
 {
-    unsigned char       *p      = (unsigned char *)addr;
-    const unsigned char *end    = p + size;
-    size_t                off;
-    size_t                cacheline_size = get_cache_line_size();
+    unsigned char *p = (unsigned char *)addr;
+    const unsigned char *end = p + size;
+    size_t off;
+    size_t cacheline_size = get_cache_line_size();
 
-    sync_caches();  /* CPU 发出所有写入到范围 */
+    sync_caches(); /* CPU 发出所有写入到范围 */
 
     /* 对齐到缓存行边界 */
     off = (unsigned long)p % cacheline_size;
@@ -146,18 +145,18 @@ invalidate_dcache_range(const void *addr, size_t size)
     for (; p < end; p += cacheline_size)
         __invalidate_dcache_one(p);
 
-    sync_caches();  /* 确保失效完成 */
+    sync_caches(); /* 确保失效完成 */
 }
 
 /**
  * clean_and_invalidate_dcache_range - 清理并使地址范围的缓存失效
  */
-static inline void
-clean_and_invalidate_dcache_range(const void *addr, size_t size)
+static inline void clean_and_invalidate_dcache_range(const void *addr,
+                                                     size_t size)
 {
-    const unsigned char *p      = (const unsigned char *)addr;
-    const unsigned char *end    = p + size;
-    size_t                    cacheline_size = get_cache_line_size();
+    const unsigned char *p = (const unsigned char *)addr;
+    const unsigned char *end = p + size;
+    size_t cacheline_size = get_cache_line_size();
 
     sync_caches();
 

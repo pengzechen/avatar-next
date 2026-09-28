@@ -13,7 +13,7 @@
 
 #include "guest_loader.h"
 #include "klog.h"
-#include "mm_vm.h"     /* phys_to_virt */
+#include "mm_vm.h" /* phys_to_virt */
 #include "string.h"
 #include "vmm/vmm.h"
 
@@ -36,8 +36,9 @@
  * @alloc: 允许在未映射时现分配一页（加载映像时为 1；只想看看时为 0）。
  * 返回 NULL 表示"没映射且不允许分配"或"PMN 没页了"。
  */
-void *guest_loader_gpa_ptr(vm_t *vm, uint64_t gpa, int alloc) {
-  /*
+void *guest_loader_gpa_ptr(vm_t *vm, uint64_t gpa, int alloc)
+{
+    /*
    * ⚠️ 两条路径都必须把**页内偏移**加回去。
    *
    * map_* 系列返回的是**页基址**（它们只负责把 gpa 所在的页映射好），而
@@ -50,49 +51,50 @@ void *guest_loader_gpa_ptr(vm_t *vm, uint64_t gpa, int alloc) {
    * aarch64/riscv 的 guest 镜像恰好都是页对齐顺序装载，所以一直没暴露。
    */
 #if ARCH_AARCH64
-  uint64_t pa = 0;
+    uint64_t pa = 0;
 
-  if (stage2_lookup(&vm->s2, gpa, &pa))
-    return phys_to_virt(pa);
-  if (!alloc)
-    return NULL;
+    if (stage2_lookup(&vm->s2, gpa, &pa))
+        return phys_to_virt(pa);
+    if (!alloc)
+        return NULL;
 
-  pa = stage2_map_page(&vm->s2, gpa, 1 /*zero*/);
-  if (!pa)
-    return NULL;
-  vm->s2.nr_premap++;   /* 加载期分配的页（与缺页驱动的 nr_fault 区分统计）*/
-  return phys_to_virt(pa | (gpa & 0xFFF));
+    pa = stage2_map_page(&vm->s2, gpa, 1 /*zero*/);
+    if (!pa)
+        return NULL;
+    vm->s2.nr_premap++; /* 加载期分配的页（与缺页驱动的 nr_fault 区分统计）*/
+    return phys_to_virt(pa | (gpa & 0xFFF));
 #elif ARCH_RISCV64
-  uint64_t pa = 0;
+    uint64_t pa = 0;
 
-  if (rv_gstage_lookup(&vm->gstage, gpa, &pa))
-    return phys_to_virt(pa);
-  if (!alloc)
-    return NULL;
+    if (rv_gstage_lookup(&vm->gstage, gpa, &pa))
+        return phys_to_virt(pa);
+    if (!alloc)
+        return NULL;
 
-  pa = rv_gstage_map_page(&vm->gstage, gpa, 1 /*zero*/);
-  if (!pa)
-    return NULL;
-  vm->gstage.nr_premap++;   /* 加载期分配的页（与缺页驱动的 nr_fault 区分统计）*/
-  return phys_to_virt(pa | (gpa & 0xFFF));
+    pa = rv_gstage_map_page(&vm->gstage, gpa, 1 /*zero*/);
+    if (!pa)
+        return NULL;
+    vm->gstage
+        .nr_premap++; /* 加载期分配的页（与缺页驱动的 nr_fault 区分统计）*/
+    return phys_to_virt(pa | (gpa & 0xFFF));
 #elif ARCH_X86_64
-  uint64_t hpa = 0;
+    uint64_t hpa = 0;
 
-  if (x86_ept_lookup(&vm->ept, gpa, &hpa))
-    return phys_to_virt(hpa);
-  if (!alloc)
-    return NULL;
+    if (x86_ept_lookup(&vm->ept, gpa, &hpa))
+        return phys_to_virt(hpa);
+    if (!alloc)
+        return NULL;
 
-  hpa = x86_ept_map_page(&vm->ept, gpa, 1 /*zero*/);
-  if (!hpa)
-    return NULL;
-  vm->ept.nr_premap++;      /* 加载期分配的页（与缺页驱动的 nr_fault 区分统计）*/
-  return phys_to_virt(hpa | (gpa & 0xFFF));
+    hpa = x86_ept_map_page(&vm->ept, gpa, 1 /*zero*/);
+    if (!hpa)
+        return NULL;
+    vm->ept.nr_premap++; /* 加载期分配的页（与缺页驱动的 nr_fault 区分统计）*/
+    return phys_to_virt(hpa | (gpa & 0xFFF));
 #else
-  /* 还没有 stage-2 的架构（vmm_test 的玩具 guest）：identity 映射 */
-  (void)vm;
-  (void)alloc;
-  return phys_to_virt(gpa);
+    /* 还没有 stage-2 的架构（vmm_test 的玩具 guest）：identity 映射 */
+    (void)vm;
+    (void)alloc;
+    return phys_to_virt(gpa);
 #endif
 }
 
@@ -116,80 +118,80 @@ void *guest_loader_gpa_ptr(vm_t *vm, uint64_t gpa, int alloc) {
  */
 int guest_loader_write_guest(vm_t *vm, uint64_t gpa, const void *src, size_t n)
 {
-  const uint8_t *s = (const uint8_t *)src;
+    const uint8_t *s = (const uint8_t *)src;
 
-  while (n > 0) {
-    uint64_t off_in_page = gpa & 0xFFFULL;
-    size_t chunk = (size_t)(4096 - off_in_page);
-    void *dst;
+    while (n > 0) {
+        uint64_t off_in_page = gpa & 0xFFFULL;
+        size_t chunk = (size_t)(4096 - off_in_page);
+        void *dst;
 
-    if (chunk > n)
-      chunk = n;
+        if (chunk > n)
+            chunk = n;
 
-    dst = guest_loader_gpa_ptr(vm, gpa, 1);
-    if (!dst) {
-      KLOG_ERROR("[guest] write_guest: cannot map gpa=0x%llx\n",
-                 (unsigned long long)gpa);
-      return -1;
+        dst = guest_loader_gpa_ptr(vm, gpa, 1);
+        if (!dst) {
+            KLOG_ERROR("[guest] write_guest: cannot map gpa=0x%llx\n",
+                       (unsigned long long)gpa);
+            return -1;
+        }
+        memcpy(dst, s, chunk);
+
+        gpa += chunk;
+        s += chunk;
+        n -= chunk;
     }
-    memcpy(dst, s, chunk);
-
-    gpa += chunk;
-    s += chunk;
-    n -= chunk;
-  }
-  return 0;
+    return 0;
 }
 
 /* 从 guest 内存读一段到宿主缓冲（逐页）。*/
 int guest_loader_read_guest(vm_t *vm, uint64_t gpa, void *dst, size_t n)
 {
-  uint8_t *d = (uint8_t *)dst;
+    uint8_t *d = (uint8_t *)dst;
 
-  while (n > 0) {
-    uint64_t off_in_page = gpa & 0xFFFULL;
-    size_t chunk = (size_t)(4096 - off_in_page);
-    const void *src;
+    while (n > 0) {
+        uint64_t off_in_page = gpa & 0xFFFULL;
+        size_t chunk = (size_t)(4096 - off_in_page);
+        const void *src;
 
-    if (chunk > n)
-      chunk = n;
+        if (chunk > n)
+            chunk = n;
 
-    src = guest_loader_gpa_ptr(vm, gpa, 0 /*只读，不分配*/);
-    if (!src) {
-      KLOG_ERROR("[guest] read_guest: gpa=0x%llx unmapped\n",
-                 (unsigned long long)gpa);
-      return -1;
+        src = guest_loader_gpa_ptr(vm, gpa, 0 /*只读，不分配*/);
+        if (!src) {
+            KLOG_ERROR("[guest] read_guest: gpa=0x%llx unmapped\n",
+                       (unsigned long long)gpa);
+            return -1;
+        }
+        memcpy(d, src, chunk);
+
+        gpa += chunk;
+        d += chunk;
+        n -= chunk;
     }
-    memcpy(d, src, chunk);
-
-    gpa += chunk;
-    d += chunk;
-    n -= chunk;
-  }
-  return 0;
+    return 0;
 }
 
 /* 往 guest 内存填一段字节（逐页）。*/
 int guest_loader_fill_guest(vm_t *vm, uint64_t gpa, int byte, size_t n)
 {
-  while (n > 0) {
-    uint64_t off_in_page = gpa & 0xFFFULL;
-    size_t chunk = (size_t)(4096 - off_in_page);
-    void *dst;
+    while (n > 0) {
+        uint64_t off_in_page = gpa & 0xFFFULL;
+        size_t chunk = (size_t)(4096 - off_in_page);
+        void *dst;
 
-    if (chunk > n)
-      chunk = n;
+        if (chunk > n)
+            chunk = n;
 
-    dst = guest_loader_gpa_ptr(vm, gpa, 1);
-    if (!dst) {
-      KLOG_ERROR("[guest] fill_guest: cannot map gpa=0x%llx\n",
-                 (unsigned long long)gpa);
-      return -1;
+        dst = guest_loader_gpa_ptr(vm, gpa, 1);
+        if (!dst) {
+            KLOG_ERROR("[guest] fill_guest: cannot map gpa=0x%llx\n",
+                       (unsigned long long)gpa);
+            return -1;
+        }
+        memset(dst, byte, chunk);
+
+        gpa += chunk;
+        n -= chunk;
     }
-    memset(dst, byte, chunk);
-
-    gpa += chunk;
-    n -= chunk;
-  }
-  return 0;
+    return 0;
 }

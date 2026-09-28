@@ -25,22 +25,22 @@
 
 #include "types.h"
 #include "vmm_mmio.h"
-#include "vmm_virq.h"   /* VIRQ_VTIMER */
+#include "vmm_virq.h" /* VIRQ_VTIMER */
 
 /* ── 容量 ────────────────────────────────────────────────────── */
-#define VGIC3_MAX_IRQS   1024
-#define VGIC3_MAX_WORDS  (VGIC3_MAX_IRQS / 32)
-#define VGIC3_MAX_VCPUS  8
-#define VGIC3_MAX_LRS    16
-#define VGIC3D_REG_SIZE  0x10000   /* GICD 窗口 64KB */
-#define VGIC3R_REG_SIZE  0x20000   /* 每核 Redistributor：RD 64KB + SGI 64KB */
+#define VGIC3_MAX_IRQS  1024
+#define VGIC3_MAX_WORDS (VGIC3_MAX_IRQS / 32)
+#define VGIC3_MAX_VCPUS 8
+#define VGIC3_MAX_LRS   16
+#define VGIC3D_REG_SIZE 0x10000 /* GICD 窗口 64KB */
+#define VGIC3R_REG_SIZE 0x20000 /* 每核 Redistributor：RD 64KB + SGI 64KB */
 
 /* ── guest 看到的地址（必须与 imgs/guests/aarch64/linux-gicv3.dts 一致）── */
-#define VGIC3D_BASE      0x08000000ULL
-#define VGIC3D_SIZE      0x10000ULL
-#define VGIC3R_BASE      0x080A0000ULL
-#define VGIC3R_STRIDE    0x20000ULL
-#define VGIC3R_SGI_OFF   0x10000ULL
+#define VGIC3D_BASE    0x08000000ULL
+#define VGIC3D_SIZE    0x10000ULL
+#define VGIC3R_BASE    0x080A0000ULL
+#define VGIC3R_STRIDE  0x20000ULL
+#define VGIC3R_SGI_OFF 0x10000ULL
 
 /* guest 虚拟定时器 PPI 27 —— 统一用 VIRQ_VTIMER（见 include/vmm/vmm_virq.h）*/
 
@@ -53,12 +53,12 @@ typedef struct vgic3_vcpu {
     uint32_t enabled0;
     uint32_t pending0;
     uint32_t active0;
-    uint16_t sgi_sources[16];      /* 每 SGI 的源核位图 */
-    uint8_t  prio0[32];            /* GICR_IPRIORITYR0..7 */
+    uint16_t sgi_sources[16]; /* 每 SGI 的源核位图 */
+    uint8_t prio0[32];        /* GICR_IPRIORITYR0..7 */
 
     /* Redistributor RD_base 帧里需要读回的字 */
     uint32_t rd_ctlr;
-    uint32_t rd_waker;             /* 只跟踪 ProcessorSleep */
+    uint32_t rd_waker; /* 只跟踪 ProcessorSleep */
     uint64_t rd_propbaser;
     uint64_t rd_pendbaser;
 
@@ -73,7 +73,7 @@ typedef struct vgic3_vcpu {
 
 typedef struct vgic3 {
     uint32_t nr_vcpus;
-    int      dist_enabled;
+    int dist_enabled;
 
     /*
      * ── per-CPU 硬件寄存器 ICH_*_EL2 的软件镜像 ──────────────────
@@ -101,13 +101,13 @@ typedef struct vgic3 {
 
     /* GICD 字节可寻址后备存储：保证 guest 探测 IGROUPR/IPRIORITYR/
      * ICFGR/PIDR… 时读回合理值 */
-    uint8_t  dist_regs[VGIC3D_REG_SIZE];
+    uint8_t dist_regs[VGIC3D_REG_SIZE];
 
     vgic3_vcpu_t vcpu[VGIC3_MAX_VCPUS];
 } vgic3_t;
 
 /* ── 核心状态机 ─────────────────────────────────────────────── */
-int  vmm_vgic3_init(vgic3_t *vgic, uint32_t nr_vcpus);
+int vmm_vgic3_init(vgic3_t *vgic, uint32_t nr_vcpus);
 
 void vmm_vgic3_set_pending(vgic3_t *vgic, uint32_t vcpu_id, uint32_t irq);
 void vmm_vgic3_set_sgi_pending(vgic3_t *vgic, uint32_t vcpu_id,
@@ -116,7 +116,7 @@ void vmm_vgic3_set_enabled(vgic3_t *vgic, uint32_t vcpu_id, uint32_t irq,
                            int enabled);
 
 void vmm_vgic3_set_dist_enabled(vgic3_t *vgic, int enabled);
-int  vmm_vgic3_dist_enabled(const vgic3_t *vgic);
+int vmm_vgic3_dist_enabled(const vgic3_t *vgic);
 
 uint32_t vmm_vgic3_enabled_word(const vgic3_t *vgic, uint32_t vcpu_id,
                                 uint32_t word);
@@ -126,8 +126,8 @@ uint32_t vmm_vgic3_active_word(const vgic3_t *vgic, uint32_t vcpu_id,
                                uint32_t word);
 void vmm_vgic3_clear_pending_word(vgic3_t *vgic, uint32_t vcpu_id,
                                   uint32_t word, uint32_t bits);
-void vmm_vgic3_clear_active_word(vgic3_t *vgic, uint32_t vcpu_id,
-                                 uint32_t word, uint32_t bits);
+void vmm_vgic3_clear_active_word(vgic3_t *vgic, uint32_t vcpu_id, uint32_t word,
+                                 uint32_t bits);
 
 /* ── 硬件（ICH_*_EL2）侧 ────────────────────────────────────── */
 void vmm_vgic3_hw_init(void);

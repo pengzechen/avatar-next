@@ -20,14 +20,14 @@
 #include "arch.h"
 
 #if ARCH_AARCH64
-#  include "aarch64/exception.h"
-#  include "aarch64/exception_impl.h"
+#include "aarch64/exception.h"
+#include "aarch64/exception_impl.h"
 #elif ARCH_RISCV64
-#  include "riscv64/exception.h"
-#  include "riscv64/exception_impl.h"
+#include "riscv64/exception.h"
+#include "riscv64/exception_impl.h"
 #elif ARCH_X86_64
-#  include "x86_64/exception.h"
-#  include "x86_64/exception_impl.h"
+#include "x86_64/exception.h"
+#include "x86_64/exception_impl.h"
 #endif
 
 /*
@@ -39,5 +39,3 @@
 void irq_install(int vector, irq_handler_t h);
 
 #endif /* EXCEPTION_H */
-
-

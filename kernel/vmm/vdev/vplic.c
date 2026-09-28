@@ -20,7 +20,7 @@
  */
 
 #include "vmm/vmm_vplic.h"
-#include "vmm/vmm.h"        /* vm_t：只为 slot 与 vmid，设备状态已不在里面 */
+#include "vmm/vmm.h" /* vm_t：只为 slot 与 vmid，设备状态已不在里面 */
 #include "klog.h"
 #include "string.h"
 #include "spinlock.h"
@@ -33,9 +33,9 @@
  * 锁**跟着状态一起进槽位**；`dev->priv` 仍指向 &d->st（语义不变）。
  */
 typedef struct {
-    vplic_state_t    st;
-    spinlock_noirq_t lock;   /* 从前是 vm->vplic_lock */
-    mmio_device_t    dev;    /* 从前是 vm->plic_dev */
+    vplic_state_t st;
+    spinlock_noirq_t lock; /* 从前是 vm->vplic_lock */
+    mmio_device_t dev;     /* 从前是 vm->plic_dev */
 } vplic_slot_t;
 
 static vplic_slot_t g_vplic[MAX_VMS] __attribute__((aligned(64)));
@@ -64,17 +64,17 @@ static vplic_slot_t *vplic_of(const vm_t *vm)
 #define ENABLE_STRIDE          0x80
 #define CONTEXT_OFFSET         0x200000
 #define CONTEXT_STRIDE         0x1000
-#define CONTEXT_THRESHOLD_OFF    0x00
-#define CONTEXT_CLAIM_COMPLETE   0x04
+#define CONTEXT_THRESHOLD_OFF  0x00
+#define CONTEXT_CLAIM_COMPLETE 0x04
 
 /* 源 0 无效（不支持 IRQ 0）*/
-#define VALID_IRQ_MASK   (~1ULL)
+#define VALID_IRQ_MASK (~1ULL)
 
 /*
  * MMIO 回调只有 dev->priv（→ state），用 container_of 拿回槽位之后锁就在
  * 槽位里 —— 不再需要"经 state->owner 回到 vm 再取锁"那条链。
  */
-#define VPLIC_LOCK(d)   (&(d)->lock)
+#define VPLIC_LOCK(d) (&(d)->lock)
 
 /* ── 内部实现（调用方已持锁）──────────────────────────────── */
 
@@ -84,10 +84,8 @@ static uint32_t vplic_next_deliverable_locked(const vplic_state_t *s,
     if (vcpu_id >= s->nr_vcpus || vcpu_id >= VPLIC_MAX_VCPUS)
         return 0;
 
-    uint64_t candidates = s->pending[vcpu_id]
-                        & s->enable[vcpu_id]
-                        & ~s->active[vcpu_id]
-                        & VALID_IRQ_MASK;
+    uint64_t candidates = s->pending[vcpu_id] & s->enable[vcpu_id] &
+                          ~s->active[vcpu_id] & VALID_IRQ_MASK;
 
     uint32_t threshold = s->threshold[vcpu_id];
     uint32_t best_irq = 0;
@@ -99,8 +97,11 @@ static uint32_t vplic_next_deliverable_locked(const vplic_state_t *s,
      */
     while (candidates != 0) {
         uint32_t irq = 0;
-        uint64_t t = candidates & (~candidates + 1);   /* 取最低置位 */
-        while (t > 1) { t >>= 1; irq++; }              /* 位序号 */
+        uint64_t t = candidates & (~candidates + 1); /* 取最低置位 */
+        while (t > 1) {
+            t >>= 1;
+            irq++;
+        } /* 位序号 */
 
         candidates &= candidates - 1;
 
@@ -125,7 +126,7 @@ static uint32_t vplic_claim_locked(vplic_state_t *s, uint32_t vcpu_id)
         return 0;
 
     s->pending[vcpu_id] &= ~(1ULL << irq);
-    s->active[vcpu_id]  |=  (1ULL << irq);
+    s->active[vcpu_id] |= (1ULL << irq);
     return irq;
 }
 
@@ -202,7 +203,7 @@ static uint64_t vplic_read(mmio_device_t *dev, uint64_t off, uint8_t size)
 {
     vplic_state_t *s = (vplic_state_t *)dev->priv;
     /* priv 仍指向 st（语义不变），锁在包装器里 —— 用 container_of 找回 */
-    vplic_slot_t  *d = container_of(s, vplic_slot_t, st);
+    vplic_slot_t *d = container_of(s, vplic_slot_t, st);
     uint64_t flags;
     uint64_t ret = 0;
 
@@ -234,22 +235,23 @@ static uint64_t vplic_read(mmio_device_t *dev, uint64_t off, uint8_t size)
     /* enable：按 context 分块 */
     if (off >= ENABLE_OFFSET &&
         off < ENABLE_OFFSET + (uint64_t)ENABLE_STRIDE * VPLIC_MAX_VCPUS) {
-        uint32_t ctx  = (uint32_t)((off - ENABLE_OFFSET) / ENABLE_STRIDE);
+        uint32_t ctx = (uint32_t)((off - ENABLE_OFFSET) / ENABLE_STRIDE);
         uint32_t word = (uint32_t)(((off - ENABLE_OFFSET) % ENABLE_STRIDE) / 4);
         ret = (ctx < s->nr_vcpus && word < 2)
-            ? (uint32_t)((s->enable[ctx] >> (word * 32)) & 0xFFFFFFFFu) : 0;
+                  ? (uint32_t)((s->enable[ctx] >> (word * 32)) & 0xFFFFFFFFu)
+                  : 0;
         goto out;
     }
 
     /* context 区：threshold / claim-complete */
     if (off >= CONTEXT_OFFSET) {
-        uint32_t ctx  = (uint32_t)((off - CONTEXT_OFFSET) / CONTEXT_STRIDE);
-        uint32_t reg  = (uint32_t)((off - CONTEXT_OFFSET) % CONTEXT_STRIDE);
+        uint32_t ctx = (uint32_t)((off - CONTEXT_OFFSET) / CONTEXT_STRIDE);
+        uint32_t reg = (uint32_t)((off - CONTEXT_OFFSET) % CONTEXT_STRIDE);
         if (ctx < s->nr_vcpus) {
             if (reg == CONTEXT_THRESHOLD_OFF)
                 ret = s->threshold[ctx];
             else if (reg == CONTEXT_CLAIM_COMPLETE)
-                ret = vplic_claim_locked(s, ctx);   /* 读 claim = 认领 */
+                ret = vplic_claim_locked(s, ctx); /* 读 claim = 认领 */
         }
         goto out;
     }
@@ -263,7 +265,7 @@ static void vplic_write(mmio_device_t *dev, uint64_t off, uint8_t size,
                         uint64_t value)
 {
     vplic_state_t *s = (vplic_state_t *)dev->priv;
-    vplic_slot_t  *d = container_of(s, vplic_slot_t, st);
+    vplic_slot_t *d = container_of(s, vplic_slot_t, st);
     uint64_t flags;
     uint32_t v = (uint32_t)value;
 
@@ -282,7 +284,7 @@ static void vplic_write(mmio_device_t *dev, uint64_t off, uint8_t size,
     /* enable */
     if (off >= ENABLE_OFFSET &&
         off < ENABLE_OFFSET + (uint64_t)ENABLE_STRIDE * VPLIC_MAX_VCPUS) {
-        uint32_t ctx  = (uint32_t)((off - ENABLE_OFFSET) / ENABLE_STRIDE);
+        uint32_t ctx = (uint32_t)((off - ENABLE_OFFSET) / ENABLE_STRIDE);
         uint32_t word = (uint32_t)(((off - ENABLE_OFFSET) % ENABLE_STRIDE) / 4);
         if (ctx < s->nr_vcpus && word < 2) {
             uint32_t shift = word * 32;
@@ -300,7 +302,7 @@ static void vplic_write(mmio_device_t *dev, uint64_t off, uint8_t size,
             if (reg == CONTEXT_THRESHOLD_OFF)
                 s->threshold[ctx] = v;
             else if (reg == CONTEXT_CLAIM_COMPLETE)
-                vplic_complete_locked(s, ctx, v);   /* 写 complete = 完成 */
+                vplic_complete_locked(s, ctx, v); /* 写 complete = 完成 */
         }
         goto out;
     }
@@ -311,10 +313,10 @@ out:
 }
 
 static const mmio_dev_ops_t g_vplic_ops = {
-    .name  = "vplic",
-    .base  = VPLIC_BASE,
-    .size  = VPLIC_SIZE,
-    .read  = vplic_read,
+    .name = "vplic",
+    .base = VPLIC_BASE,
+    .size = VPLIC_SIZE,
+    .read = vplic_read,
     .write = vplic_write,
 };
 
@@ -332,11 +334,11 @@ int vplic_init(vm_t *vm, mmio_bus_t *bus, uint32_t nr_vcpus)
     if (nr_vcpus > VPLIC_MAX_VCPUS)
         nr_vcpus = VPLIC_MAX_VCPUS;
 
-    memset(&d->st, 0, sizeof(d->st));   /* 不碰锁，见 vplic_destroy */
+    memset(&d->st, 0, sizeof(d->st)); /* 不碰锁，见 vplic_destroy */
     d->st.nr_vcpus = nr_vcpus;
-    d->st.owner    = vm;
+    d->st.owner = vm;
 
-    d->dev.ops  = &g_vplic_ops;
+    d->dev.ops = &g_vplic_ops;
     d->dev.priv = &d->st;
 
     KLOG_INFO("[vplic] vm%u: virtual PLIC ready (%u vCPU, %u sources)\n",
@@ -360,8 +362,8 @@ void vplic_destroy(vm_t *vm)
     d = &g_vplic[vm->slot];
 
     spin_lock_irqsave(&d->lock, &flags);
-    memset(&d->st, 0, sizeof(d->st));   /* 含 st.owner —— of() 随即失效 */
-    d->dev.ops  = NULL;
+    memset(&d->st, 0, sizeof(d->st)); /* 含 st.owner —— of() 随即失效 */
+    d->dev.ops = NULL;
     d->dev.priv = NULL;
     spin_unlock_irqrestore(&d->lock, flags);
 }

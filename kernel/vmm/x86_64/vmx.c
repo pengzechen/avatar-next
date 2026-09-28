@@ -14,22 +14,22 @@
  */
 
 #include "vmm/vmm.h"
-#include "pmm.h"        /* pmm_get_free_pages（缺页失败时的诊断）*/
+#include "pmm.h" /* pmm_get_free_pages（缺页失败时的诊断）*/
 #include "klog.h"
 #include "string.h"
 #include "task/task.h"
-#include "task/cpu.h"   /* get_current_cpu_id()：VMXON 是按 CPU 记的 */
+#include "task/cpu.h" /* get_current_cpu_id()：VMXON 是按 CPU 记的 */
 #include "x86_64/vmx.h"
-#include "x86_64/ept.h"  /* EPT 二级翻译 */
-#include "guest_loader.h"  /* GUEST_LINUX_*_GPA（guest 描述符表要用）*/
-#include "vmm/vmm_mmio.h"    /* MMIO 总线 */
+#include "x86_64/ept.h"   /* EPT 二级翻译 */
+#include "guest_loader.h" /* GUEST_LINUX_*_GPA（guest 描述符表要用）*/
+#include "vmm/vmm_mmio.h" /* MMIO 总线 */
 #include "vmm/vmm_uart16550.h"
 #include "vmm/vmm_console.h" /* vmm_console_irq_asserted：控制台中断线（电平触发）*/
 #include "vmm/vmm_vlapic.h"
-#include "irq/lapic.h"   /* g_tsc_freq_hz：宿主标定出的 TSC 频率（CPUID 0x15/0x16 要报给 guest）*/
+#include "irq/lapic.h" /* g_tsc_freq_hz：宿主标定出的 TSC 频率（CPUID 0x15/0x16 要报给 guest）*/
 
 /* guest RAM 的宿主物理窗口（定义在 guest_boot.c）*/
-#include "mm_vm.h"   /* virt_to_phys */
+#include "mm_vm.h" /* virt_to_phys */
 
 /*
  * boot/x86_64/tss.c —— 取本核 TSS 的选择子/基址。
@@ -53,7 +53,8 @@ extern uint16_t x86_tss_sel_of_cpu(uint32_t cpu_id);
  * 只是它不是那次故障的原因 —— 别把这段历史当成「共用一块必挂」的证据。
  *
  * 对照：VMCS 那边本来就是 per-vCPU 的（g_vmcs_storage[MAX_VCPUS]）。*/
-static uint8_t g_vmxon_region[CONFIG_SMP_CPUS][4096] __attribute__((aligned(4096)));
+static uint8_t g_vmxon_region[CONFIG_SMP_CPUS][4096]
+    __attribute__((aligned(4096)));
 
 /* 每个 vCPU 的 VMCS（4KB）*/
 static uint8_t g_vmcs_storage[MAX_VMS * MAX_VCPUS][4096]
@@ -81,14 +82,13 @@ static inline uint32_t vcpu_slot(const vcpu_t *vcpu)
 }
 
 /* VMX capability（init 时从 MSR 读取）*/
-static vmx_basic_t   g_vmx_basic;
+static vmx_basic_t g_vmx_basic;
 static vmx_ctrl_msr_t g_pin_rev, g_cpu_rev[2], g_exi_rev, g_ent_rev;
 
 static uint32_t g_ctrl_pin;
 static uint32_t g_ctrl_cpu[2];
 static uint32_t g_ctrl_exit;
 static uint32_t g_ctrl_enter;
-
 
 /* ================================================================
  * MSR / I/O bitmap
@@ -145,7 +145,7 @@ static void vmx_inject_pending(vcpu_t *vcpu)
     uint64_t info = vcpu->pending_event;
 
     if (!info) {
-        if (vcpu->intr_window) {   /* 事件已消散，撤掉窗口 */
+        if (vcpu->intr_window) { /* 事件已消散，撤掉窗口 */
             vcpu->intr_window = 0;
             vmcs_write(CPU_EXEC_CTRL0, g_ctrl_cpu[0] & ~CPU_INTR_WINDOW);
         }
@@ -189,14 +189,13 @@ static void vmx_inject_pending(vcpu_t *vcpu)
                (info & VMX_INTR_ERRCODE_VALID) ? vcpu->pending_errcode : 0);
     vmcs_write(VM_ENTRY_INST_LEN, 0);
 
-    vcpu->pending_event   = 0;
+    vcpu->pending_event = 0;
     vcpu->pending_errcode = 0;
     if (vcpu->intr_window) {
         vcpu->intr_window = 0;
         vmcs_write(CPU_EXEC_CTRL0, g_ctrl_cpu[0] & ~CPU_INTR_WINDOW);
     }
 }
-
 
 /* ================================================================
  * MSR 模拟
@@ -261,8 +260,8 @@ static vmx_msr_entry_t g_msr_store[MAX_VMS * MAX_VCPUS][2]
  * vmx_refresh_host_state()。
  */
 static const uint32_t g_msr_list[VMM_MSR_COUNT] = {
-    MSR_STAR, MSR_LSTAR, MSR_CSTAR, MSR_SYSCALL_MASK,
-    MSR_KERNEL_GS_BASE, MSR_IA32_PAT,
+    MSR_STAR,         MSR_LSTAR,          MSR_CSTAR,
+    MSR_SYSCALL_MASK, MSR_KERNEL_GS_BASE, MSR_IA32_PAT,
 };
 
 #define VMM_HOST_MSR_COUNT VMM_MSR_COUNT
@@ -293,22 +292,22 @@ static void vmx_msr_lists_init(vcpu_t *vcpu)
 {
     int id = (int)vcpu_slot(vcpu);
     const uint64_t guest_init[VMM_MSR_COUNT] = {
-        vcpu->msr_star, vcpu->msr_lstar, vcpu->msr_cstar,
+        vcpu->msr_star,   vcpu->msr_lstar,          vcpu->msr_cstar,
         vcpu->msr_sfmask, vcpu->msr_kernel_gs_base, vcpu->msr_pat,
     };
 
     for (int i = 0; i < VMM_MSR_COUNT; i++) {
-        g_msr_guest[id][i].idx  = g_msr_list[i];
+        g_msr_guest[id][i].idx = g_msr_list[i];
         g_msr_guest[id][i].rsvd = 0;
-        g_msr_guest[id][i].val  = guest_init[i];
+        g_msr_guest[id][i].val = guest_init[i];
 
-        g_msr_host[id][i].idx   = g_msr_list[i];
-        g_msr_host[id][i].rsvd  = 0;
-        g_msr_host[id][i].val   = vmx_rdmsr(g_msr_list[i]);
+        g_msr_host[id][i].idx = g_msr_list[i];
+        g_msr_host[id][i].rsvd = 0;
+        g_msr_host[id][i].val = vmx_rdmsr(g_msr_list[i]);
     }
 
     vmcs_write(VM_ENTRY_MSR_LOAD_COUNT, VMM_MSR_COUNT);
-    vmcs_write(VM_ENTRY_MSR_LOAD_ADDR,  virt_to_phys(g_msr_guest[id]));
+    vmcs_write(VM_ENTRY_MSR_LOAD_ADDR, virt_to_phys(g_msr_guest[id]));
 
     /*
      * exit-store 区：**独立缓冲**，只放需要往返回来的 GS 两兄弟。
@@ -317,27 +316,38 @@ static void vmx_msr_lists_init(vcpu_t *vcpu)
      * "Unhandled exit reason=34 rip=0x1000000"）。
      */
     for (int i = 0; i < 2; i++) {
-        g_msr_store[id][i].idx  = g_msr_store_list[i];
+        g_msr_store[id][i].idx = g_msr_store_list[i];
         g_msr_store[id][i].rsvd = 0;
-        g_msr_store[id][i].val  = (i == 0) ? vcpu->msr_gs_base
-                                           : vcpu->msr_kernel_gs_base;
+        g_msr_store[id][i].val =
+            (i == 0) ? vcpu->msr_gs_base : vcpu->msr_kernel_gs_base;
     }
     vmcs_write(VM_EXIT_MSR_STORE_COUNT, 2);
-    vmcs_write(VM_EXIT_MSR_STORE_ADDR,  virt_to_phys(g_msr_store[id]));
-    vmcs_write(VM_EXIT_MSR_LOAD_COUNT,  VMM_HOST_MSR_COUNT);
-    vmcs_write(VM_EXIT_MSR_LOAD_ADDR,   virt_to_phys(g_msr_host[id]));
-
+    vmcs_write(VM_EXIT_MSR_STORE_ADDR, virt_to_phys(g_msr_store[id]));
+    vmcs_write(VM_EXIT_MSR_LOAD_COUNT, VMM_HOST_MSR_COUNT);
+    vmcs_write(VM_EXIT_MSR_LOAD_ADDR, virt_to_phys(g_msr_host[id]));
 }
 
 static int msr_emulate_read(vcpu_t *vcpu, uint32_t msr, uint64_t *val)
 {
     switch (msr) {
-    case MSR_EFER:            *val = vcpu->msr_efer;            return 1;
-    case MSR_STAR:            *val = vcpu->msr_star;            return 1;
-    case MSR_LSTAR:           *val = vcpu->msr_lstar;           return 1;
-    case MSR_CSTAR:           *val = vcpu->msr_cstar;           return 1;
-    case MSR_SYSCALL_MASK:    *val = vcpu->msr_sfmask;          return 1;
-    case MSR_FS_BASE:         *val = vcpu->msr_fs_base;         return 1;
+    case MSR_EFER:
+        *val = vcpu->msr_efer;
+        return 1;
+    case MSR_STAR:
+        *val = vcpu->msr_star;
+        return 1;
+    case MSR_LSTAR:
+        *val = vcpu->msr_lstar;
+        return 1;
+    case MSR_CSTAR:
+        *val = vcpu->msr_cstar;
+        return 1;
+    case MSR_SYSCALL_MASK:
+        *val = vcpu->msr_sfmask;
+        return 1;
+    case MSR_FS_BASE:
+        *val = vcpu->msr_fs_base;
+        return 1;
     /*
      * ⚠️ GS 这一对**要读硬件维护的那份**（exit-store 写回的 g_msr_guest），
      * 不能读 vcpu 里的影子：影子只在显式 wrmsr 时更新，而 guest 的 `swapgs`
@@ -350,10 +360,14 @@ static int msr_emulate_read(vcpu_t *vcpu, uint32_t msr, uint64_t *val)
     case MSR_KERNEL_GS_BASE:
         *val = g_msr_store[vcpu_slot(vcpu)][1].val;
         return 1;
-    case MSR_IA32_PAT:        *val = vcpu->msr_pat;             return 1;
-    case MSR_IA32_APIC_BASE:  *val = vcpu->apic_base;           return 1;
+    case MSR_IA32_PAT:
+        *val = vcpu->msr_pat;
+        return 1;
+    case MSR_IA32_APIC_BASE:
+        *val = vcpu->apic_base;
+        return 1;
     default:
-        *val = 0;   /* 未知 MSR：当作「没有这个特性」 */
+        *val = 0; /* 未知 MSR：当作「没有这个特性」 */
         return 0;
     }
 }
@@ -367,10 +381,18 @@ static int msr_emulate_write_1(vcpu_t *vcpu, uint32_t msr, uint64_t val)
         vcpu->msr_efer = val & ~(1ULL << 10);
         vmcs_write(GUEST_EFER, vcpu->msr_efer);
         return 1;
-    case MSR_STAR:            vcpu->msr_star           = val; return 1;
-    case MSR_LSTAR:           vcpu->msr_lstar          = val; return 1;
-    case MSR_CSTAR:           vcpu->msr_cstar          = val; return 1;
-    case MSR_SYSCALL_MASK:    vcpu->msr_sfmask         = val; return 1;
+    case MSR_STAR:
+        vcpu->msr_star = val;
+        return 1;
+    case MSR_LSTAR:
+        vcpu->msr_lstar = val;
+        return 1;
+    case MSR_CSTAR:
+        vcpu->msr_cstar = val;
+        return 1;
+    case MSR_SYSCALL_MASK:
+        vcpu->msr_sfmask = val;
+        return 1;
     case MSR_FS_BASE:
         /*
          * ⚠️ FS/GS base 不只是「影子」——它们同时是 **VMCS 字段**
@@ -402,7 +424,9 @@ static int msr_emulate_write_1(vcpu_t *vcpu, uint32_t msr, uint64_t val)
         vcpu->msr_kernel_gs_base = val;
         g_msr_store[vcpu_slot(vcpu)][1].val = val;
         return 1;
-    case MSR_IA32_PAT:        vcpu->msr_pat            = val; return 1;
+    case MSR_IA32_PAT:
+        vcpu->msr_pat = val;
+        return 1;
     case MSR_IA32_APIC_BASE:
         /* vLAPIC 的开关：EN(11) 决定 APIC 是否工作，EXTD(10) 是 x2APIC。
          * 第一版只做 xAPIC，所以 EXTD 一律清掉 —— Linux 探测到
@@ -411,10 +435,9 @@ static int msr_emulate_write_1(vcpu_t *vcpu, uint32_t msr, uint64_t val)
         vlapic_set_apic_base(vcpu->vm, vcpu->apic_base);
         return 1;
     default:
-        return 0;   /* 未知 MSR：写忽略 */
+        return 0; /* 未知 MSR：写忽略 */
     }
 }
-
 
 /* ================================================================
  * CPUID 模拟
@@ -424,18 +447,17 @@ static int msr_emulate_write_1(vcpu_t *vcpu, uint32_t msr, uint64_t val)
  * 以及宿主的核数拓扑。这里报一个保守但自洽的 CPU：SSE2 级别、单核、
  * **没有** XSAVE/AVX/VMX，但有 APIC/TSC/PAE/NX/SYSCALL。
  * ================================================================ */
-static void vmx_cpuid_emulate(uint32_t leaf, uint32_t sub,
-                              uint32_t *eax, uint32_t *ebx,
-                              uint32_t *ecx, uint32_t *edx)
+static void vmx_cpuid_emulate(uint32_t leaf, uint32_t sub, uint32_t *eax,
+                              uint32_t *ebx, uint32_t *ecx, uint32_t *edx)
 {
     (void)sub;
     *eax = *ebx = *ecx = *edx = 0;
 
     switch (leaf) {
     case 0x00000000:
-        *ebx = 0x756e6547;   /* "Genu" */
-        *edx = 0x49656e69;   /* "ineI" */
-        *ecx = 0x6c65746e;   /* "ntel" */
+        *ebx = 0x756e6547; /* "Genu" */
+        *edx = 0x49656e69; /* "ineI" */
+        *ecx = 0x6c65746e; /* "ntel" */
         /*
          * 最高基础叶 = 0x16。
          * ⚠️ 这个值必须 ≥ 0x15，否则 native_calibrate_tsc() 直接
@@ -449,13 +471,13 @@ static void vmx_cpuid_emulate(uint32_t leaf, uint32_t sub,
         return;
 
     case 0x00000001:
-        *eax = 0x000006f2;   /* family 6 / model 6 / stepping 2 */
+        *eax = 0x000006f2; /* family 6 / model 6 / stepping 2 */
         /* EDX：FPU PSE TSC MSR PAE CX8 APIC SEP PGE CMOV PAT CLFSH
          *      MMX FXSR SSE SSE2  —— 只放行这些 */
-        *edx = (1u << 0)  | (1u << 3)  | (1u << 4)  | (1u << 5)
-             | (1u << 6)  | (1u << 8)  | (1u << 9)  | (1u << 11)
-             | (1u << 13) | (1u << 15) | (1u << 16) | (1u << 19)
-             | (1u << 23) | (1u << 24) | (1u << 25) | (1u << 26);
+        *edx = (1u << 0) | (1u << 3) | (1u << 4) | (1u << 5) | (1u << 6) |
+               (1u << 8) | (1u << 9) | (1u << 11) | (1u << 13) | (1u << 15) |
+               (1u << 16) | (1u << 19) | (1u << 23) | (1u << 24) | (1u << 25) |
+               (1u << 26);
         /* ECX 全 0：**特别**是 VMX(5)、XSAVE(26)、OSXSAVE(27)、AVX(28) */
         *ecx = 0;
         /*
@@ -499,16 +521,19 @@ static void vmx_cpuid_emulate(uint32_t leaf, uint32_t sub,
         uint64_t mhz;
 
         vmx_cpuid(0x15, &a, &b, &c, &d);
-        if (a == 0 || b == 0) {          /* 宿主不报（QEMU/KVM 全是 0）*/
+        if (a == 0 || b == 0) { /* 宿主不报（QEMU/KVM 全是 0）*/
             mhz = g_tsc_freq_hz / 1000000ULL;
             if (g_tsc_freq_hz == 0 || mhz == 0)
-                return;                  /* 自己也没标定出来：保持全 0 */
-            a = 1000;                    /* 分母：比例 = mhz/1000 */
-            b = (uint32_t)mhz;           /* 分子 */
-            c = 1000000000u;             /* 晶体 = 1 GHz（对齐 vLAPIC 模型）*/
+                return;        /* 自己也没标定出来：保持全 0 */
+            a = 1000;          /* 分母：比例 = mhz/1000 */
+            b = (uint32_t)mhz; /* 分子 */
+            c = 1000000000u;   /* 晶体 = 1 GHz（对齐 vLAPIC 模型）*/
             d = 0;
         }
-        *eax = a; *ebx = b; *ecx = c; *edx = d;
+        *eax = a;
+        *ebx = b;
+        *ecx = c;
+        *edx = d;
         return;
     }
 
@@ -519,15 +544,18 @@ static void vmx_cpuid_emulate(uint32_t leaf, uint32_t sub,
         if (a == 0) {
             if (g_tsc_freq_hz == 0)
                 return;
-            a = (uint32_t)(g_tsc_freq_hz / 1000000ULL);   /* 基准频率 MHz */
+            a = (uint32_t)(g_tsc_freq_hz / 1000000ULL); /* 基准频率 MHz */
             b = c = d = 0;
         }
-        *eax = a; *ebx = b; *ecx = c; *edx = d;
+        *eax = a;
+        *ebx = b;
+        *ecx = c;
+        *edx = d;
         return;
     }
 
     case 0x80000000:
-        *eax = 0x80000001;   /* 最高扩展叶 */
+        *eax = 0x80000001; /* 最高扩展叶 */
         return;
 
     case 0x80000001:
@@ -542,18 +570,18 @@ static void vmx_cpuid_emulate(uint32_t leaf, uint32_t sub,
          * 串口一个字都没有），非常难从现象反推。
          */
         *eax = 0;
-        *edx = (1u << 11)    /* SYSCALL/SYSRET */
-             | (1u << 20)    /* NX            */
-             | (1u << 26)    /* PDPE1GB：1 GiB 大页。**必须给** —— 缺了它
+        *edx = (1u << 11)   /* SYSCALL/SYSRET */
+               | (1u << 20) /* NX            */
+               | (1u << 26) /* PDPE1GB：1 GiB 大页。**必须给** —— 缺了它
                               * 内核会走另一条直接映射路径（实测：裸跑打印
                               * "Using GB pages for direct mapping"，
                               *  我们这里没有），随后在自己声明为 usable 的
                               * 物理地址上缺页（CR2=ffff888003200000）。*/
-             | (1u << 29);   /* **LM 长模式** */
+               | (1u << 29); /* **LM 长模式** */
         return;
 
     default:
-        return;   /* 其余叶一律全 0 */
+        return; /* 其余叶一律全 0 */
     }
 }
 
@@ -657,15 +685,14 @@ static int guest_read_u64(const vcpu_t *vcpu, uint64_t gpa, uint64_t *out)
  */
 static int guest_va_to_gpa(const vcpu_t *vcpu, uint64_t va, uint64_t *gpa)
 {
-    uint64_t cr0  = vmcs_read(GUEST_CR0);
-    uint64_t cr4  = vmcs_read(GUEST_CR4);
+    uint64_t cr0 = vmcs_read(GUEST_CR0);
+    uint64_t cr4 = vmcs_read(GUEST_CR4);
     uint64_t efer = vmcs_read(GUEST_EFER);
     uint64_t tbl, e;
-    int      lvl;
+    int lvl;
 
-    if (!(cr0 & X86_CR0_PG) ||
-        !(cr4 & X86_CR4_PAE) || !(efer & 0x100ULL)) {
-        *gpa = va;                       /* 未开分页 / 非 4 级：恒等兜底 */
+    if (!(cr0 & X86_CR0_PG) || !(cr4 & X86_CR4_PAE) || !(efer & 0x100ULL)) {
+        *gpa = va; /* 未开分页 / 非 4 级：恒等兜底 */
         return 1;
     }
 
@@ -676,12 +703,12 @@ static int guest_va_to_gpa(const vcpu_t *vcpu, uint64_t va, uint64_t *gpa)
         if (!guest_read_u64(vcpu, tbl + idx * 8, &e))
             return 0;
         if (!(e & 1))
-            return 0;                    /* P=0：这一级没映射 */
-        if (lvl == 1 && (e & 0x80)) {    /* PDPT 项指向 1 GiB 大页 */
+            return 0;                 /* P=0：这一级没映射 */
+        if (lvl == 1 && (e & 0x80)) { /* PDPT 项指向 1 GiB 大页 */
             *gpa = (e & ~((1ULL << 30) - 1)) | (va & ((1ULL << 30) - 1));
             return 1;
         }
-        if (lvl == 2 && (e & 0x80)) {    /* PD 项指向 2 MiB 大页 */
+        if (lvl == 2 && (e & 0x80)) { /* PD 项指向 2 MiB 大页 */
             *gpa = (e & ~((1ULL << 21) - 1)) | (va & ((1ULL << 21) - 1));
             return 1;
         }
@@ -706,7 +733,7 @@ static int guest_fetch_code(const vcpu_t *vcpu, uint64_t va, uint8_t *buf,
         return 0;
 
     room = 0x1000u - (uint32_t)(va & 0xFFFu);
-    got  = (n < room) ? n : room;
+    got = (n < room) ? n : room;
     if (!guest_fetch_bytes(vcpu, gpa, buf, got))
         return 0;
     for (uint32_t i = got; i < n; i++)
@@ -725,12 +752,12 @@ static int guest_fetch_code(const vcpu_t *vcpu, uint64_t va, uint8_t *buf,
  * 内核看到的表项状态和它自己写的对不上，串口的 IRQ 探测因此永远失败。
  */
 typedef struct {
-    int      is_write;
-    uint8_t  size;       /* 访问字节数 */
-    uint8_t  has_reg;    /* reg 有效？（0xC6/0xC7 立即数写为 0）*/
-    uint32_t reg;        /* GPR 号（0-15，0 = RAX）*/
-    uint64_t inst_len;   /* 指令总长（供步进 RIP）*/
-    uint64_t imm;        /* 立即数（0xC6/0xC7 写用）*/
+    int is_write;
+    uint8_t size;      /* 访问字节数 */
+    uint8_t has_reg;   /* reg 有效？（0xC6/0xC7 立即数写为 0）*/
+    uint32_t reg;      /* GPR 号（0-15，0 = RAX）*/
+    uint64_t inst_len; /* 指令总长（供步进 RIP）*/
+    uint64_t imm;      /* 立即数（0xC6/0xC7 写用）*/
 } x86_mmio_access_t;
 
 /*
@@ -738,8 +765,8 @@ typedef struct {
  * MMIO 场景下操作数是内存操作数（mod != 3），我们只关心它用了哪个寄存器
  * 作为数据源/目标（reg 字段），以及指令总长度。
  */
-static int parse_modrm(const uint8_t *p, uint32_t n,
-                       uint32_t *reg_field, uint32_t *bytes_consumed)
+static int parse_modrm(const uint8_t *p, uint32_t n, uint32_t *reg_field,
+                       uint32_t *bytes_consumed)
 {
     uint8_t modrm;
     uint32_t used = 1;
@@ -749,24 +776,25 @@ static int parse_modrm(const uint8_t *p, uint32_t n,
     modrm = p[0];
 
     uint32_t mod = (modrm >> 6) & 3;
-    uint32_t rm  = modrm & 7;
+    uint32_t rm = modrm & 7;
 
     *reg_field = (modrm >> 3) & 7;
 
     if (mod != 3) {
         /* 内存操作数：SIB + 位移 */
-        if (rm == 4) {                 /* SIB */
-            if (n < 2) return 0;
+        if (rm == 4) { /* SIB */
+            if (n < 2)
+                return 0;
             uint32_t base = p[1] & 7;
             used++;
             if (mod == 0 && base == 5)
-                used += 4;             /* disp32 */
+                used += 4; /* disp32 */
             else if (mod == 1)
-                used += 1;             /* disp8  */
+                used += 1; /* disp8  */
             else if (mod == 2)
-                used += 4;             /* disp32 */
+                used += 4; /* disp32 */
         } else if (mod == 0 && rm == 5) {
-            used += 4;                 /* RIP 相对 disp32 */
+            used += 4; /* RIP 相对 disp32 */
         } else if (mod == 1) {
             used += 1;
         } else if (mod == 2) {
@@ -783,9 +811,9 @@ static int parse_modrm(const uint8_t *p, uint32_t n,
 static int decode_mmio_access(const vcpu_t *vcpu, uint64_t rip_va,
                               x86_mmio_access_t *acc)
 {
-    uint8_t  buf[24];
+    uint8_t buf[24];
     uint32_t i = 0;
-    int      rex_w = 0, rex_r = 0, opsize16 = 0;
+    int rex_w = 0, rex_r = 0, opsize16 = 0;
 
     if (!guest_fetch_code(vcpu, rip_va, buf, sizeof(buf)))
         return 0;
@@ -793,17 +821,24 @@ static int decode_mmio_access(const vcpu_t *vcpu, uint64_t rip_va,
     /* ── 前缀扫描 ── */
     for (; i < sizeof(buf); i++) {
         uint8_t b = buf[i];
-        if (b == 0x66) { opsize16 = 1; continue; }        /* 操作数宽度 */
-        if (b == 0x67) { continue; }                      /* 地址宽度（忽略）*/
-        if (b == 0xF0 || b == 0xF2 || b == 0xF3) continue;/* lock/rep */
-        if (b == 0x2E || b == 0x36 || b == 0x3E ||
-            b == 0x26 || b == 0x64 || b == 0x65) continue;/* 段前缀 */
-        if (b >= 0x40 && b <= 0x4F) {                     /* REX */
+        if (b == 0x66) {
+            opsize16 = 1;
+            continue;
+        } /* 操作数宽度 */
+        if (b == 0x67) {
+            continue;
+        } /* 地址宽度（忽略）*/
+        if (b == 0xF0 || b == 0xF2 || b == 0xF3)
+            continue; /* lock/rep */
+        if (b == 0x2E || b == 0x36 || b == 0x3E || b == 0x26 || b == 0x64 ||
+            b == 0x65)
+            continue;                 /* 段前缀 */
+        if (b >= 0x40 && b <= 0x4F) { /* REX */
             rex_w = (b >> 3) & 1;
-            rex_r = (b >> 2) & 1;                         /* 扩展 reg 字段：r8-r15 */
+            rex_r = (b >> 2) & 1; /* 扩展 reg 字段：r8-r15 */
             continue;
         }
-        break;                                            /* opcode */
+        break; /* opcode */
     }
     if (i >= sizeof(buf))
         return 0;
@@ -814,34 +849,37 @@ static int decode_mmio_access(const vcpu_t *vcpu, uint64_t rip_va,
     uint32_t reg_field = 0, modrm_used = 0;
 
     switch (op) {
-    case 0x88: case 0x89: {          /* MOV r/m, r  → 写 */
-        if (!parse_modrm(buf + i, (uint32_t)(sizeof(buf) - i),
-                         &reg_field, &modrm_used))
+    case 0x88:
+    case 0x89: { /* MOV r/m, r  → 写 */
+        if (!parse_modrm(buf + i, (uint32_t)(sizeof(buf) - i), &reg_field,
+                         &modrm_used))
             return 0;
         acc->is_write = 1;
         acc->size = (op == 0x88) ? 1 : (opsize16 ? 2 : (rex_w ? 8 : 4));
         /* 源寄存器在 reg 字段，带 REX.R（r8-r15）；0 是 RAX，不是空值 */
         acc->has_reg = 1;
-        acc->reg  = reg_field | (rex_r ? 8u : 0u);
+        acc->reg = reg_field | (rex_r ? 8u : 0u);
         acc->inst_len = i + modrm_used;
         return 1;
     }
-    case 0x8A: case 0x8B: {          /* MOV r, r/m  → 读 */
-        if (!parse_modrm(buf + i, (uint32_t)(sizeof(buf) - i),
-                         &reg_field, &modrm_used))
+    case 0x8A:
+    case 0x8B: { /* MOV r, r/m  → 读 */
+        if (!parse_modrm(buf + i, (uint32_t)(sizeof(buf) - i), &reg_field,
+                         &modrm_used))
             return 0;
         acc->is_write = 0;
         acc->size = (op == 0x8A) ? 1 : (opsize16 ? 2 : (rex_w ? 8 : 4));
         /* 读方向：目标寄存器在 reg 字段，同样要带 REX.R
          * （原来错写成 rex_w —— 读进 %r8..%r15 的数据会落到 %rax..%rdi）*/
         acc->has_reg = 1;
-        acc->reg  = reg_field | (rex_r ? 8u : 0u);
+        acc->reg = reg_field | (rex_r ? 8u : 0u);
         acc->inst_len = i + modrm_used;
         return 1;
     }
-    case 0xC6: case 0xC7: {          /* MOV r/m, imm → 写 */
-        if (!parse_modrm(buf + i, (uint32_t)(sizeof(buf) - i),
-                         &reg_field, &modrm_used))
+    case 0xC6:
+    case 0xC7: { /* MOV r/m, imm → 写 */
+        if (!parse_modrm(buf + i, (uint32_t)(sizeof(buf) - i), &reg_field,
+                         &modrm_used))
             return 0;
         uint32_t off = i + modrm_used;
         uint32_t imm_size = (op == 0xC6) ? 1 : (opsize16 ? 2 : 4);
@@ -853,13 +891,13 @@ static int decode_mmio_access(const vcpu_t *vcpu, uint64_t rip_va,
 
         acc->is_write = 1;
         acc->size = imm_size;
-        acc->has_reg = 0;            /* 立即数写：无源寄存器 */
-        acc->imm  = imm;
+        acc->has_reg = 0; /* 立即数写：无源寄存器 */
+        acc->imm = imm;
         acc->inst_len = off + imm_size;
         return 1;
     }
     default:
-        return 0;                   /* 不支持的 opcode */
+        return 0; /* 不支持的 opcode */
     }
 }
 
@@ -881,25 +919,42 @@ static int decode_matches_qual(uint64_t qual, const x86_mmio_access_t *acc)
 static uint64_t *x86_gpr_ptr(vcpu_t *vcpu, uint32_t reg)
 {
     switch (reg & 0xF) {
-    case 0:  return &vcpu->regs.rax;
-    case 1:  return &vcpu->regs.rcx;
-    case 2:  return &vcpu->regs.rdx;
-    case 3:  return &vcpu->regs.rbx;
-    case 4:  return NULL;   /* RSP 未保存在 x86_guest_regs_t 中（VMCS 自动
+    case 0:
+        return &vcpu->regs.rax;
+    case 1:
+        return &vcpu->regs.rcx;
+    case 2:
+        return &vcpu->regs.rdx;
+    case 3:
+        return &vcpu->regs.rbx;
+    case 4:
+        return NULL; /* RSP 未保存在 x86_guest_regs_t 中（VMCS 自动
                              * 保存/恢复），MMIO 亦不从 RSP 取数据；返回 NULL
                              * 使调用方跳过读写回。*/
-    case 5:  return &vcpu->regs.rbp;
-    case 6:  return &vcpu->regs.rsi;
-    case 7:  return &vcpu->regs.rdi;
-    case 8:  return &vcpu->regs.r8;
-    case 9:  return &vcpu->regs.r9;
-    case 10: return &vcpu->regs.r10;
-    case 11: return &vcpu->regs.r11;
-    case 12: return &vcpu->regs.r12;
-    case 13: return &vcpu->regs.r13;
-    case 14: return &vcpu->regs.r14;
-    case 15: return &vcpu->regs.r15;
-    default: return NULL;
+    case 5:
+        return &vcpu->regs.rbp;
+    case 6:
+        return &vcpu->regs.rsi;
+    case 7:
+        return &vcpu->regs.rdi;
+    case 8:
+        return &vcpu->regs.r8;
+    case 9:
+        return &vcpu->regs.r9;
+    case 10:
+        return &vcpu->regs.r10;
+    case 11:
+        return &vcpu->regs.r11;
+    case 12:
+        return &vcpu->regs.r12;
+    case 13:
+        return &vcpu->regs.r13;
+    case 14:
+        return &vcpu->regs.r14;
+    case 15:
+        return &vcpu->regs.r15;
+    default:
+        return NULL;
     }
 }
 
@@ -907,7 +962,7 @@ static uint64_t *x86_gpr_ptr(vcpu_t *vcpu, uint32_t reg)
 extern void vmx_return(void);
 
 /* ── VMLAUNCH/VMRESUME 汇编入口 ─────────────────────────── */
-extern int vmx_enter_guest(vcpu_t *vcpu);  /* vmx_run.S */
+extern int vmx_enter_guest(vcpu_t *vcpu); /* vmx_run.S */
 
 /* ── VMXON / VMCS 内联操作 ──────────────────────────────────────────────
  * vmxon / vmclear / vmptrld 的 m64 操作数是存放「物理地址」的内存位置。
@@ -919,9 +974,10 @@ static inline int vmx_on(uint64_t pa)
 {
     uint8_t ret;
     uint64_t fl = vmx_read_rflags() | X86_EFLAGS_CF | X86_EFLAGS_ZF;
-    __asm__ volatile(
-        "pushq %1; popfq; vmxon %2; setbe %0\n\t"
-        : "=qm"(ret) : "q"(fl), "m"(pa) : "cc");
+    __asm__ volatile("pushq %1; popfq; vmxon %2; setbe %0\n\t"
+                     : "=qm"(ret)
+                     : "q"(fl), "m"(pa)
+                     : "cc");
     return ret;
 }
 
@@ -930,9 +986,10 @@ static inline int vmcs_clear_pa(uint64_t pa)
 {
     uint8_t ret;
     uint64_t fl = vmx_read_rflags() | X86_EFLAGS_CF | X86_EFLAGS_ZF;
-    __asm__ volatile(
-        "pushq %1; popfq; vmclear %2; setbe %0"
-        : "=qm"(ret) : "q"(fl), "m"(pa) : "cc");
+    __asm__ volatile("pushq %1; popfq; vmclear %2; setbe %0"
+                     : "=qm"(ret)
+                     : "q"(fl), "m"(pa)
+                     : "cc");
     return ret;
 }
 
@@ -941,9 +998,10 @@ static inline int vmcs_load_pa(uint64_t pa)
 {
     uint8_t ret;
     uint64_t fl = vmx_read_rflags() | X86_EFLAGS_CF | X86_EFLAGS_ZF;
-    __asm__ volatile(
-        "pushq %1; popfq; vmptrld %2; setbe %0"
-        : "=qm"(ret) : "q"(fl), "m"(pa) : "cc");
+    __asm__ volatile("pushq %1; popfq; vmptrld %2; setbe %0"
+                     : "=qm"(ret)
+                     : "q"(fl), "m"(pa)
+                     : "cc");
     return ret;
 }
 
@@ -1042,23 +1100,27 @@ static int vmx_global_init(void)
         return -1;
     }
     s_vmx_on[cpu] = 1;
-    KLOG_INFO("[VMX] VMXON success on cpu%u (revision=0x%x)\n",
-              cpu, g_vmx_basic.revision);
+    KLOG_INFO("[VMX] VMXON success on cpu%u (revision=0x%x)\n", cpu,
+              g_vmx_basic.revision);
     return 0;
 }
 
 /* ── VMCS 控制字段初始化 ─────────────────────────────────── */
 static void vmcs_init_ctrl(int want_ept)
 {
-    uint32_t msr_pin  = g_vmx_basic.ctrl ? MSR_IA32_VMX_TRUE_PIN   : MSR_IA32_VMX_PINBASED_CTLS;
-    uint32_t msr_cpu  = g_vmx_basic.ctrl ? MSR_IA32_VMX_TRUE_PROC  : MSR_IA32_VMX_PROCBASED_CTLS;
-    uint32_t msr_exit = g_vmx_basic.ctrl ? MSR_IA32_VMX_TRUE_EXIT  : MSR_IA32_VMX_EXIT_CTLS;
-    uint32_t msr_ent  = g_vmx_basic.ctrl ? MSR_IA32_VMX_TRUE_ENTRY : MSR_IA32_VMX_ENTRY_CTLS;
+    uint32_t msr_pin =
+        g_vmx_basic.ctrl ? MSR_IA32_VMX_TRUE_PIN : MSR_IA32_VMX_PINBASED_CTLS;
+    uint32_t msr_cpu =
+        g_vmx_basic.ctrl ? MSR_IA32_VMX_TRUE_PROC : MSR_IA32_VMX_PROCBASED_CTLS;
+    uint32_t msr_exit =
+        g_vmx_basic.ctrl ? MSR_IA32_VMX_TRUE_EXIT : MSR_IA32_VMX_EXIT_CTLS;
+    uint32_t msr_ent =
+        g_vmx_basic.ctrl ? MSR_IA32_VMX_TRUE_ENTRY : MSR_IA32_VMX_ENTRY_CTLS;
 
-    g_pin_rev.val    = vmx_rdmsr(msr_pin);
+    g_pin_rev.val = vmx_rdmsr(msr_pin);
     g_cpu_rev[0].val = vmx_rdmsr(msr_cpu);
-    g_exi_rev.val    = vmx_rdmsr(msr_exit);
-    g_ent_rev.val    = vmx_rdmsr(msr_ent);
+    g_exi_rev.val = vmx_rdmsr(msr_exit);
+    g_ent_rev.val = vmx_rdmsr(msr_ent);
 
     if (g_cpu_rev[0].clr & CPU_SECONDARY)
         g_cpu_rev[1].val = vmx_rdmsr(MSR_IA32_VMX_PROCBASED_CTLS2);
@@ -1073,9 +1135,9 @@ static void vmcs_init_ctrl(int want_ept)
      *   中断则靠 vLAPIC + VM-entry 注入送回。
      *
      * CPU_IO_BITMAPS / CPU_USE_MSR_BITMAPS：见文件上方 bitmap 说明。*/
-    g_ctrl_pin    = PIN_EXTINT | PIN_NMI | PIN_VIRT_NMI;
-    g_ctrl_exit   = EXI_HOST_64 | EXI_LOAD_EFER | EXI_SAVE_EFER;
-    g_ctrl_enter  = ENT_GUEST_64 | ENT_LOAD_EFER;
+    g_ctrl_pin = PIN_EXTINT | PIN_NMI | PIN_VIRT_NMI;
+    g_ctrl_exit = EXI_HOST_64 | EXI_LOAD_EFER | EXI_SAVE_EFER;
+    g_ctrl_enter = ENT_GUEST_64 | ENT_LOAD_EFER;
     g_ctrl_cpu[0] = CPU_HLT | CPU_IO_BITMAPS | CPU_USE_MSR_BITMAPS;
 
     /* Secondary controls：启用 EPT（移植自 kvmm arch/x86_64/mod.rs）。
@@ -1096,13 +1158,13 @@ static void vmcs_init_ctrl(int want_ept)
     if (want_ept && (g_cpu_rev[0].clr & CPU_SECONDARY) &&
         (g_cpu_rev[1].clr & CPU_EPT)) {
         g_ctrl_cpu[0] |= CPU_SECONDARY;
-        g_ctrl_cpu[1]  = CPU_EPT | CPU2_UNRESTRICTED_GUEST;
+        g_ctrl_cpu[1] = CPU_EPT | CPU2_UNRESTRICTED_GUEST;
     }
 
     /* 与 capability MSR 协商（allowed-1 & allowed-0）*/
-    g_ctrl_pin    = (g_ctrl_pin    | g_pin_rev.set)    & g_pin_rev.clr;
-    g_ctrl_exit   = (g_ctrl_exit   | g_exi_rev.set)    & g_exi_rev.clr;
-    g_ctrl_enter  = (g_ctrl_enter  | g_ent_rev.set)    & g_ent_rev.clr;
+    g_ctrl_pin = (g_ctrl_pin | g_pin_rev.set) & g_pin_rev.clr;
+    g_ctrl_exit = (g_ctrl_exit | g_exi_rev.set) & g_exi_rev.clr;
+    g_ctrl_enter = (g_ctrl_enter | g_ent_rev.set) & g_ent_rev.clr;
     g_ctrl_cpu[0] = (g_ctrl_cpu[0] | g_cpu_rev[0].set) & g_cpu_rev[0].clr;
     /* allowed-1/allowed-0 协商；若 CPU_SECONDARY 最终未置位则清除 ctrl1 */
     if (g_ctrl_cpu[0] & CPU_SECONDARY) {
@@ -1111,7 +1173,7 @@ static void vmcs_init_ctrl(int want_ept)
         g_ctrl_cpu[1] = 0;
     }
 
-    vmcs_write(PIN_CONTROLS,  g_ctrl_pin);
+    vmcs_write(PIN_CONTROLS, g_ctrl_pin);
     vmcs_write(CPU_EXEC_CTRL0, g_ctrl_cpu[0]);
     if (g_ctrl_cpu[0] & CPU_SECONDARY)
         vmcs_write(CPU_EXEC_CTRL1, g_ctrl_cpu[1]);
@@ -1155,18 +1217,21 @@ static void vmcs_init_ctrl(int want_ept)
     if (g_ctrl_cpu[0] & CPU_USE_MSR_BITMAPS)
         vmcs_write(MSR_BITMAP, virt_to_phys(g_msr_bitmap));
 
-    KLOG_INFO("[VMX] ctrl: pin=0x%x cpu0=0x%x cpu1=0x%x (EPT=%d io_bm=%d msr_bm=%d)\n",
-              g_ctrl_pin, g_ctrl_cpu[0], g_ctrl_cpu[1],
-              !!(g_ctrl_cpu[1] & CPU_EPT),
-              !!(g_ctrl_cpu[0] & CPU_IO_BITMAPS),
-              !!(g_ctrl_cpu[0] & CPU_USE_MSR_BITMAPS));
+    KLOG_INFO(
+        "[VMX] ctrl: pin=0x%x cpu0=0x%x cpu1=0x%x (EPT=%d io_bm=%d msr_bm=%d)\n",
+        g_ctrl_pin, g_ctrl_cpu[0], g_ctrl_cpu[1], !!(g_ctrl_cpu[1] & CPU_EPT),
+        !!(g_ctrl_cpu[0] & CPU_IO_BITMAPS),
+        !!(g_ctrl_cpu[0] & CPU_USE_MSR_BITMAPS));
 }
 
 /* ── VMCS 主机状态初始化 ─────────────────────────────────── */
 static void vmcs_init_host(void)
 {
     /* 读取当前 GDTR / IDTR */
-    struct { uint16_t limit; uint64_t base; } __attribute__((packed)) gdt_desc, idt_desc;
+    struct {
+        uint16_t limit;
+        uint64_t base;
+    } __attribute__((packed)) gdt_desc, idt_desc;
     __asm__ volatile("sgdt %0" : "=m"(gdt_desc));
     __asm__ volatile("sidt %0" : "=m"(idt_desc));
 
@@ -1189,25 +1254,25 @@ static void vmcs_init_host(void)
     uint64_t tss_base;
     x86_tss_current(&tss_sel, &tss_base);
 
-    vmcs_write(HOST_EFER,       vmx_rdmsr(MSR_EFER));
-    vmcs_write(EXI_CONTROLS,    g_ctrl_exit);
-    vmcs_write(ENT_CONTROLS,    g_ctrl_enter);
+    vmcs_write(HOST_EFER, vmx_rdmsr(MSR_EFER));
+    vmcs_write(EXI_CONTROLS, g_ctrl_exit);
+    vmcs_write(ENT_CONTROLS, g_ctrl_enter);
 
-    vmcs_write(HOST_CR0,        vmx_read_cr0());
-    vmcs_write(HOST_CR3,        vmx_read_cr3());
-    vmcs_write(HOST_CR4,        vmx_read_cr4());
+    vmcs_write(HOST_CR0, vmx_read_cr0());
+    vmcs_write(HOST_CR3, vmx_read_cr3());
+    vmcs_write(HOST_CR4, vmx_read_cr4());
 
-    vmcs_write(HOST_SEL_CS,     X86_SEL_CODE64);
-    vmcs_write(HOST_SEL_SS,     X86_SEL_DATA);
-    vmcs_write(HOST_SEL_DS,     X86_SEL_DATA);
-    vmcs_write(HOST_SEL_ES,     X86_SEL_DATA);
-    vmcs_write(HOST_SEL_FS,     X86_SEL_DATA);
-    vmcs_write(HOST_SEL_GS,     X86_SEL_DATA);
-    vmcs_write(HOST_SEL_TR,     tss_sel);
+    vmcs_write(HOST_SEL_CS, X86_SEL_CODE64);
+    vmcs_write(HOST_SEL_SS, X86_SEL_DATA);
+    vmcs_write(HOST_SEL_DS, X86_SEL_DATA);
+    vmcs_write(HOST_SEL_ES, X86_SEL_DATA);
+    vmcs_write(HOST_SEL_FS, X86_SEL_DATA);
+    vmcs_write(HOST_SEL_GS, X86_SEL_DATA);
+    vmcs_write(HOST_SEL_TR, tss_sel);
 
-    vmcs_write(HOST_BASE_TR,    tss_base);
-    vmcs_write(HOST_BASE_GDTR,  gdt_desc.base);
-    vmcs_write(HOST_BASE_IDTR,  idt_desc.base);
+    vmcs_write(HOST_BASE_TR, tss_base);
+    vmcs_write(HOST_BASE_GDTR, gdt_desc.base);
+    vmcs_write(HOST_BASE_IDTR, idt_desc.base);
     /*
      * 宿主的 FS/GS base 是 **VMCS 宿主状态字段**：VM-exit 时 CPU 会拿这里
      * 的值装回 IA32_FS_BASE / IA32_GS_BASE。原来这两行写的是 0，等于
@@ -1218,14 +1283,14 @@ static void vmcs_init_host(void)
      *
      * 这里先取真实值；之后每次入口前还要再刷（见 vmx_refresh_host_state）。
      */
-    vmcs_write(HOST_BASE_FS,    vmx_rdmsr(MSR_FS_BASE));
-    vmcs_write(HOST_BASE_GS,    vmx_rdmsr(MSR_GS_BASE));
+    vmcs_write(HOST_BASE_FS, vmx_rdmsr(MSR_FS_BASE));
+    vmcs_write(HOST_BASE_GS, vmx_rdmsr(MSR_GS_BASE));
 
-    vmcs_write(HOST_SYSENTER_CS,  0);
+    vmcs_write(HOST_SYSENTER_CS, 0);
     vmcs_write(HOST_SYSENTER_ESP, 0);
     vmcs_write(HOST_SYSENTER_EIP, 0);
 
-    vmcs_write(VMCS_LINK_PTR,    ~0ULL);
+    vmcs_write(VMCS_LINK_PTR, ~0ULL);
 
     /* HOST_RSP 每次 vmlaunch/vmresume 前在 vmx_run.S 中动态写入 */
     vmcs_write(HOST_RIP, (uint64_t)(uintptr_t)vmx_return);
@@ -1235,69 +1300,72 @@ static void vmcs_init_host(void)
 static void vmcs_init_guest(vcpu_t *vcpu, void (*entry)(void))
 {
     /* ── CR 寄存器（guest 与 host 共享 CR3，不使用 EPT）── */
-    vmcs_write(GUEST_CR0,   vmx_read_cr0());
-    vmcs_write(GUEST_CR3,   vmx_read_cr3()); /* 共享 host 页表 */
-    vmcs_write(GUEST_CR4,   vmx_read_cr4());
-    vmcs_write(GUEST_EFER,  vmx_rdmsr(MSR_EFER));
-    vmcs_write(GUEST_DR7,   0);
+    vmcs_write(GUEST_CR0, vmx_read_cr0());
+    vmcs_write(GUEST_CR3, vmx_read_cr3()); /* 共享 host 页表 */
+    vmcs_write(GUEST_CR4, vmx_read_cr4());
+    vmcs_write(GUEST_EFER, vmx_rdmsr(MSR_EFER));
+    vmcs_write(GUEST_DR7, 0);
 
     /* ── 段选择子 ── */
-    vmcs_write(GUEST_SEL_CS,   X86_SEL_CODE64);
-    vmcs_write(GUEST_SEL_SS,   X86_SEL_DATA);
-    vmcs_write(GUEST_SEL_DS,   X86_SEL_DATA);
-    vmcs_write(GUEST_SEL_ES,   X86_SEL_DATA);
-    vmcs_write(GUEST_SEL_FS,   X86_SEL_DATA);
-    vmcs_write(GUEST_SEL_GS,   X86_SEL_DATA);
+    vmcs_write(GUEST_SEL_CS, X86_SEL_CODE64);
+    vmcs_write(GUEST_SEL_SS, X86_SEL_DATA);
+    vmcs_write(GUEST_SEL_DS, X86_SEL_DATA);
+    vmcs_write(GUEST_SEL_ES, X86_SEL_DATA);
+    vmcs_write(GUEST_SEL_FS, X86_SEL_DATA);
+    vmcs_write(GUEST_SEL_GS, X86_SEL_DATA);
     vmcs_write(GUEST_SEL_LDTR, 0);
-    vmcs_write(GUEST_SEL_TR,   X86_SEL_TSS);
+    vmcs_write(GUEST_SEL_TR, X86_SEL_TSS);
 
     /* ── 段基址 ── */
-    vmcs_write(GUEST_BASE_CS,   0);
-    vmcs_write(GUEST_BASE_SS,   0);
-    vmcs_write(GUEST_BASE_DS,   0);
-    vmcs_write(GUEST_BASE_ES,   0);
-    vmcs_write(GUEST_BASE_FS,   0);
-    vmcs_write(GUEST_BASE_GS,   0);
+    vmcs_write(GUEST_BASE_CS, 0);
+    vmcs_write(GUEST_BASE_SS, 0);
+    vmcs_write(GUEST_BASE_DS, 0);
+    vmcs_write(GUEST_BASE_ES, 0);
+    vmcs_write(GUEST_BASE_FS, 0);
+    vmcs_write(GUEST_BASE_GS, 0);
     vmcs_write(GUEST_BASE_LDTR, 0);
 
     /* TSS base（与 host 相同）*/
-    struct { uint16_t limit; uint64_t base; } __attribute__((packed)) gdt_desc, idt_desc;
+    struct {
+        uint16_t limit;
+        uint64_t base;
+    } __attribute__((packed)) gdt_desc, idt_desc;
     __asm__ volatile("sgdt %0" : "=m"(gdt_desc));
     __asm__ volatile("sidt %0" : "=m"(idt_desc));
     uint64_t *gdt = (uint64_t *)gdt_desc.base;
     uint64_t tss_lo = gdt[6];
     uint64_t tss_hi = gdt[7];
-    uint64_t tss_base = ((tss_lo >> 16) & 0xFFFFFFULL)
-                      | (((tss_lo >> 56) & 0xFFULL) << 24)
-                      | ((tss_hi & 0xFFFFFFFFULL) << 32);
-    vmcs_write(GUEST_BASE_TR,   tss_base);
+    uint64_t tss_base = ((tss_lo >> 16) & 0xFFFFFFULL) |
+                        (((tss_lo >> 56) & 0xFFULL) << 24) |
+                        ((tss_hi & 0xFFFFFFFFULL) << 32);
+    vmcs_write(GUEST_BASE_TR, tss_base);
     vmcs_write(GUEST_BASE_GDTR, gdt_desc.base);
     vmcs_write(GUEST_BASE_IDTR, idt_desc.base);
 
     /* ── 段限制 ── */
-    vmcs_write(GUEST_LIMIT_CS,   0xFFFFFFFF);
-    vmcs_write(GUEST_LIMIT_SS,   0xFFFFFFFF);
-    vmcs_write(GUEST_LIMIT_DS,   0xFFFFFFFF);
-    vmcs_write(GUEST_LIMIT_ES,   0xFFFFFFFF);
-    vmcs_write(GUEST_LIMIT_FS,   0xFFFFFFFF);
-    vmcs_write(GUEST_LIMIT_GS,   0xFFFFFFFF);
+    vmcs_write(GUEST_LIMIT_CS, 0xFFFFFFFF);
+    vmcs_write(GUEST_LIMIT_SS, 0xFFFFFFFF);
+    vmcs_write(GUEST_LIMIT_DS, 0xFFFFFFFF);
+    vmcs_write(GUEST_LIMIT_ES, 0xFFFFFFFF);
+    vmcs_write(GUEST_LIMIT_FS, 0xFFFFFFFF);
+    vmcs_write(GUEST_LIMIT_GS, 0xFFFFFFFF);
     vmcs_write(GUEST_LIMIT_LDTR, 0xFFFF);
-    vmcs_write(GUEST_LIMIT_TR,   0x0067);  /* 103 bytes TSS */
+    vmcs_write(GUEST_LIMIT_TR, 0x0067); /* 103 bytes TSS */
     vmcs_write(GUEST_LIMIT_GDTR, (uint64_t)(gdt_desc.limit));
     vmcs_write(GUEST_LIMIT_IDTR, (uint64_t)(idt_desc.limit));
 
     /* ── 段访问权限 ── */
-    vmcs_write(GUEST_AR_CS,   0xa09b); /* 64-bit code: L=1, G=1, P=1, DPL=0 */
-    vmcs_write(GUEST_AR_SS,   0xc093);
-    vmcs_write(GUEST_AR_DS,   0xc093);
-    vmcs_write(GUEST_AR_ES,   0xc093);
-    vmcs_write(GUEST_AR_FS,   0xc093);
-    vmcs_write(GUEST_AR_GS,   0xc093);
+    vmcs_write(GUEST_AR_CS, 0xa09b); /* 64-bit code: L=1, G=1, P=1, DPL=0 */
+    vmcs_write(GUEST_AR_SS, 0xc093);
+    vmcs_write(GUEST_AR_DS, 0xc093);
+    vmcs_write(GUEST_AR_ES, 0xc093);
+    vmcs_write(GUEST_AR_FS, 0xc093);
+    vmcs_write(GUEST_AR_GS, 0xc093);
     vmcs_write(GUEST_AR_LDTR, 0x0082); /* LDT, present */
-    vmcs_write(GUEST_AR_TR,   0x008b); /* Busy TSS 64-bit */
+    vmcs_write(GUEST_AR_TR, 0x008b);   /* Busy TSS 64-bit */
 
     /* ── SYSENTER ── */
-    vmcs_write(GUEST_SYSENTER_CS,  0);
+    vmcs_write(GUEST_SYSENTER_CS, 0);
     vmcs_write(GUEST_SYSENTER_ESP, 0);
     vmcs_write(GUEST_SYSENTER_EIP, 0);
 
@@ -1349,26 +1417,26 @@ static void vmcs_init_guest(vcpu_t *vcpu, void (*entry)(void))
          * 所以这里给 guest 自建 GDT（含 64 位代码段）、空 IDT、空 TSS，
          * 三者都在 guest 低端内存里（0x98000/0x99000/0x9A000）。
          */
-        vmcs_write(GUEST_BASE_GDTR,  vcpu->g_gdt_base);
+        vmcs_write(GUEST_BASE_GDTR, vcpu->g_gdt_base);
         vmcs_write(GUEST_LIMIT_GDTR, vcpu->g_gdt_limit);
-        vmcs_write(GUEST_BASE_IDTR,  GUEST_LINUX_IDT_GPA);
+        vmcs_write(GUEST_BASE_IDTR, GUEST_LINUX_IDT_GPA);
         vmcs_write(GUEST_LIMIT_IDTR, 0xFFF);
-        vmcs_write(GUEST_BASE_TR,    GUEST_LINUX_TSS_GPA);
-        vmcs_write(GUEST_LIMIT_TR,   0x67);      /* 104 字节，64 位 TSS */
-        vmcs_write(GUEST_AR_TR,      0x8b);      /* busy 64-bit TSS */
-        vmcs_write(GUEST_SEL_TR,     0x30);
+        vmcs_write(GUEST_BASE_TR, GUEST_LINUX_TSS_GPA);
+        vmcs_write(GUEST_LIMIT_TR, 0x67); /* 104 字节，64 位 TSS */
+        vmcs_write(GUEST_AR_TR, 0x8b);    /* busy 64-bit TSS */
+        vmcs_write(GUEST_SEL_TR, 0x30);
         /* 选择子必须是 Linux 硬编码的那两个：CS=0x10、DS/ES/SS=0x18
          * （见 guest_boot.c 里 GDT 布局的说明）*/
-        vmcs_write(GUEST_SEL_CS,  0x10);
-        vmcs_write(GUEST_SEL_SS,  0x18);
-        vmcs_write(GUEST_SEL_DS,  0x18);
-        vmcs_write(GUEST_SEL_ES,  0x18);
-        vmcs_write(GUEST_AR_CS,   0xa09b);
-        vmcs_write(GUEST_AR_SS,   0xc093);
-        vmcs_write(GUEST_AR_DS,   0xc093);
-        vmcs_write(GUEST_AR_ES,   0xc093);
-        vmcs_write(GUEST_AR_FS,   0xc093);
-        vmcs_write(GUEST_AR_GS,   0xc093);
+        vmcs_write(GUEST_SEL_CS, 0x10);
+        vmcs_write(GUEST_SEL_SS, 0x18);
+        vmcs_write(GUEST_SEL_DS, 0x18);
+        vmcs_write(GUEST_SEL_ES, 0x18);
+        vmcs_write(GUEST_AR_CS, 0xa09b);
+        vmcs_write(GUEST_AR_SS, 0xc093);
+        vmcs_write(GUEST_AR_DS, 0xc093);
+        vmcs_write(GUEST_AR_ES, 0xc093);
+        vmcs_write(GUEST_AR_FS, 0xc093);
+        vmcs_write(GUEST_AR_GS, 0xc093);
         vmcs_write(GUEST_BASE_FS, 0);
         vmcs_write(GUEST_BASE_GS, 0);
         vmcs_write(GUEST_BASE_LDTR, 0);
@@ -1425,15 +1493,16 @@ static void vmcs_init_guest(vcpu_t *vcpu, void (*entry)(void))
             vmcs_write(ENT_CONTROLS, g_ctrl_enter & ~ENT_GUEST_64);
         }
     } else {
-        vmcs_write(GUEST_RIP,    (uint64_t)(uintptr_t)entry);
-        vmcs_write(GUEST_RSP,    (uint64_t)(uintptr_t)
-                   (g_guest_stack[vcpu_slot(vcpu)] + sizeof(g_guest_stack[0])));
+        vmcs_write(GUEST_RIP, (uint64_t)(uintptr_t)entry);
+        vmcs_write(GUEST_RSP,
+                   (uint64_t)(uintptr_t)(g_guest_stack[vcpu_slot(vcpu)] +
+                                         sizeof(g_guest_stack[0])));
     }
     vmcs_write(GUEST_RFLAGS, vcpu->g_boot_linux ? vcpu->regs.rflags : 0x2);
 
-    vmcs_write(GUEST_ACTV_STATE,  ACTV_ACTIVE);
-    vmcs_write(GUEST_INTR_STATE,  0);
-    vmcs_write(GUEST_DEBUGCTL,    0);
+    vmcs_write(GUEST_ACTV_STATE, ACTV_ACTIVE);
+    vmcs_write(GUEST_INTR_STATE, 0);
+    vmcs_write(GUEST_DEBUGCTL, 0);
 }
 
 /* ── VMCS 每 vCPU 初始化 ─────────────────────────────────── */
@@ -1454,19 +1523,19 @@ static int vcpu_vmcs_init(vcpu_t *vcpu, void (*entry)(void))
      *
      * APIC base 预置成上电默认值 0xFEE00900：EN(bit11)=1、BSP 位(bit8)=1、
      * 基址 0xFEE00000。vLAPIC 靠读它判断 guest 是否已经打开 APIC。*/
-    vcpu->msr_efer          = vmx_rdmsr(MSR_EFER);
-    vcpu->msr_star          = 0;
-    vcpu->msr_lstar         = 0;
-    vcpu->msr_cstar         = 0;
-    vcpu->msr_sfmask        = 0;
-    vcpu->msr_fs_base       = 0;
-    vcpu->msr_gs_base       = 0;
+    vcpu->msr_efer = vmx_rdmsr(MSR_EFER);
+    vcpu->msr_star = 0;
+    vcpu->msr_lstar = 0;
+    vcpu->msr_cstar = 0;
+    vcpu->msr_sfmask = 0;
+    vcpu->msr_fs_base = 0;
+    vcpu->msr_gs_base = 0;
     vcpu->msr_kernel_gs_base = 0;
-    vcpu->msr_pat           = 0x0007040600070406ULL;  /* 上电默认 PAT */
-    vcpu->apic_base         = 0xFEE00900ULL;
-    vcpu->pending_event     = 0;
-    vcpu->pending_errcode   = 0;
-    vcpu->intr_window       = 0;
+    vcpu->msr_pat = 0x0007040600070406ULL; /* 上电默认 PAT */
+    vcpu->apic_base = 0xFEE00900ULL;
+    vcpu->pending_event = 0;
+    vcpu->pending_errcode = 0;
+    vcpu->intr_window = 0;
 
     vlapic_init(vcpu->vm, (uint32_t)vcpu->vcpu_id);
 
@@ -1516,12 +1585,13 @@ static int vcpu_vmcs_init(vcpu_t *vcpu, void (*entry)(void))
     vmx_msr_lists_init(vcpu);
 
     if (vmcs_clear_pa(vmcs_pa)) {
-        KLOG_ERROR("[VMX] vmcs_clear(flush) failed for vcpu%d\n", vcpu->vcpu_id);
+        KLOG_ERROR("[VMX] vmcs_clear(flush) failed for vcpu%d\n",
+                   vcpu->vcpu_id);
         return -1;
     }
 
-    KLOG_INFO("[VMX] VMCS initialized for vcpu%d, entry=%p\n",
-              vcpu->vcpu_id, entry);
+    KLOG_INFO("[VMX] VMCS initialized for vcpu%d, entry=%p\n", vcpu->vcpu_id,
+              entry);
     return 0;
 }
 
@@ -1546,10 +1616,10 @@ static int vcpu_vmcs_init(vcpu_t *vcpu, void (*entry)(void))
  * 表项初值全**屏蔽**（低 32 位的 bit16）—— 我们没有真外部中断，
  * 让所有线都是屏蔽态，内核探测完就会安心走 LAPIC timer。
  */
-#define IOAPIC_MMIO_BASE   0xFEC00000ULL
-#define IOAPIC_MMIO_SIZE   0x1000ULL
-#define IOAPIC_NENT        24           /* 对应 version 0x11 */
-#define IOAPIC_RT_MASKED   0x00010000u  /* 重定向表项低位的 mask 位 */
+#define IOAPIC_MMIO_BASE 0xFEC00000ULL
+#define IOAPIC_MMIO_SIZE 0x1000ULL
+#define IOAPIC_NENT      24          /* 对应 version 0x11 */
+#define IOAPIC_RT_MASKED 0x00010000u /* 重定向表项低位的 mask 位 */
 
 /* 状态在 vm->chipset */
 
@@ -1568,7 +1638,7 @@ static struct {
     uint32_t intr;
     uint64_t rip;
 } g_exit_trace[MAX_VMS * MAX_VCPUS][VMM_EXIT_TRACE_MAX];
-static uint32_t g_exit_trace_n[MAX_VMS * MAX_VCPUS];  /* 下一个写入位置 */
+static uint32_t g_exit_trace_n[MAX_VMS * MAX_VCPUS]; /* 下一个写入位置 */
 
 /* 入口状态诊断的 per-vCPU 计数（每次 vmm_arch_vm_init 清零）。
  * 早先这里是 `static unsigned n` —— 第一次启动就把配额用光，第二次启动
@@ -1593,9 +1663,12 @@ static inline x86_chipset_state_t *chipset_of(const vcpu_t *vcpu)
 static uint32_t ioapic_reg_read(x86_chipset_state_t *chip, uint32_t reg)
 {
     switch (reg) {
-    case 0x00: return 0;                                    /* ID = 0 */
-    case 0x01: return ((uint32_t)(IOAPIC_NENT - 1) << 16) | 0x11u;
-    case 0x02: return 0;                                    /* ARB（只读）*/
+    case 0x00:
+        return 0; /* ID = 0 */
+    case 0x01:
+        return ((uint32_t)(IOAPIC_NENT - 1) << 16) | 0x11u;
+    case 0x02:
+        return 0; /* ARB（只读）*/
     default:
         if (reg >= 0x10 && reg < 0x10 + IOAPIC_NENT * 2)
             return chip->ioapic_rt[reg - 0x10];
@@ -1625,19 +1698,19 @@ static void ioapic_reg_write(x86_chipset_state_t *chip, uint32_t reg,
  * 一致，也正因为是「一次性」，内核只买得到 ~55ms 的窗口，它自己也
  * 按 50ms 上限（MAX_QUICK_PIT_MS）设计。
  */
-#define PIT_HZ        1193182ULL
-#define PIT_NS_PER_S  1000000000ULL
+#define PIT_HZ       1193182ULL
+#define PIT_NS_PER_S 1000000000ULL
 
-typedef struct {   /* 定义已移到 include/vmm/vmm_x86_chipset.h */
-    uint16_t reload;      /* 装载值 */
-    uint64_t base_ns;     /* 装载时刻（宿主单调 ns）*/
-    int      running;     /* 已装载、正在计数 */
-    int      read_hi;     /* 读指针：0=下次读 LSB，1=下次读 MSB */
-    int      rw;          /* 控制字 RW 位：1=只 LSB 2=只 MSB 3=先 LSB 后 MSB */
-    int      wstate;      /* RW=3 时已写的字节数 */
-    uint8_t  wlo;         /* RW=3 时暂存的低字节 */
-    uint16_t latched;     /* latch 命令冻结的值 */
-    int      lat_valid;
+typedef struct {      /* 定义已移到 include/vmm/vmm_x86_chipset.h */
+    uint16_t reload;  /* 装载值 */
+    uint64_t base_ns; /* 装载时刻（宿主单调 ns）*/
+    int running;      /* 已装载、正在计数 */
+    int read_hi;      /* 读指针：0=下次读 LSB，1=下次读 MSB */
+    int rw;           /* 控制字 RW 位：1=只 LSB 2=只 MSB 3=先 LSB 后 MSB */
+    int wstate;       /* RW=3 时已写的字节数 */
+    uint8_t wlo;      /* RW=3 时暂存的低字节 */
+    uint16_t latched; /* latch 命令冻结的值 */
+    int lat_valid;
 } pit_ch_t;
 
 /* 状态在 vm->chipset */
@@ -1651,10 +1724,10 @@ static uint16_t pit_now(x86_chipset_state_t *chip, int ch)
         return p->reload;
     ns = vlapic_now_ns();
     if (ns <= p->base_ns)
-        return p->reload;               /* 标定未就绪/回绕：当作刚装载 */
+        return p->reload; /* 标定未就绪/回绕：当作刚装载 */
     ticks = (ns - p->base_ns) * PIT_HZ / PIT_NS_PER_S;
     if (ticks >= p->reload)
-        return 0;                       /* mode 0：到 0 停住 */
+        return 0; /* mode 0：到 0 停住 */
     return (uint16_t)(p->reload - ticks);
 }
 
@@ -1662,9 +1735,9 @@ static uint8_t pit_read(x86_chipset_state_t *chip, int ch)
 {
     x86_pit_ch_t *p = &chip->pit[ch];
     uint16_t c;
-    uint8_t  v;
+    uint8_t v;
 
-    if (p->lat_valid) {                 /* latch 快照：先低后高 */
+    if (p->lat_valid) { /* latch 快照：先低后高 */
         v = p->read_hi ? (uint8_t)(p->latched >> 8) : (uint8_t)p->latched;
         if (p->read_hi)
             p->lat_valid = 0;
@@ -1673,7 +1746,7 @@ static uint8_t pit_read(x86_chipset_state_t *chip, int ch)
     }
     c = pit_now(chip, ch);
     v = p->read_hi ? (uint8_t)(c >> 8) : (uint8_t)c;
-    p->read_hi ^= 1;                    /* 内部 LSB/MSB 翻转触发器 */
+    p->read_hi ^= 1; /* 内部 LSB/MSB 翻转触发器 */
     return v;
 }
 
@@ -1682,20 +1755,20 @@ static void pit_write_ctrl(x86_chipset_state_t *chip, uint8_t v)
     int ch = (v >> 6) & 3;
 
     if (ch == 3)
-        return;                         /* read-back 命令：忽略 */
+        return; /* read-back 命令：忽略 */
 
-    if (((v >> 4) & 3) == 0) {          /* Latch：冻结当前计数 */
-        chip->pit[ch].latched   = pit_now(chip, ch);
+    if (((v >> 4) & 3) == 0) { /* Latch：冻结当前计数 */
+        chip->pit[ch].latched = pit_now(chip, ch);
         chip->pit[ch].lat_valid = 1;
-        chip->pit[ch].read_hi   = 0;
+        chip->pit[ch].read_hi = 0;
         return;
     }
 
     /* 装/卸模式（RW 位）并复位字节指针；mode/BCD 位忽略 —— 我们只做
      * 「递减到 0」这一种，够内核标定用。*/
-    chip->pit[ch].rw       = (v >> 4) & 3;
-    chip->pit[ch].wstate   = 0;
-    chip->pit[ch].read_hi  = 0;
+    chip->pit[ch].rw = (v >> 4) & 3;
+    chip->pit[ch].wstate = 0;
+    chip->pit[ch].read_hi = 0;
     chip->pit[ch].lat_valid = 0;
 }
 
@@ -1703,13 +1776,13 @@ static void pit_write_data(x86_chipset_state_t *chip, int ch, uint8_t v)
 {
     x86_pit_ch_t *p = &chip->pit[ch];
 
-    if (p->rw == 1) {                   /* 只写 LSB */
+    if (p->rw == 1) { /* 只写 LSB */
         p->reload = v;
-    } else if (p->rw == 2) {            /* 只写 MSB */
+    } else if (p->rw == 2) { /* 只写 MSB */
         p->reload = (uint16_t)(v << 8);
-    } else {                            /* RW=3：先 LSB 后 MSB，写 MSB 才装载 */
+    } else { /* RW=3：先 LSB 后 MSB，写 MSB 才装载 */
         if (p->wstate == 0) {
-            p->wlo    = v;
+            p->wlo = v;
             p->wstate = 1;
             return;
         }
@@ -1717,10 +1790,10 @@ static void pit_write_data(x86_chipset_state_t *chip, int ch, uint8_t v)
         p->wstate = 0;
     }
 
-    p->running    = 1;                  /* 真 8254 是在写 MSB 那一刻起算 */
-    p->base_ns    = vlapic_now_ns();
-    p->read_hi    = 0;
-    p->lat_valid  = 0;
+    p->running = 1; /* 真 8254 是在写 MSB 那一刻起算 */
+    p->base_ns = vlapic_now_ns();
+    p->read_hi = 0;
+    p->lat_valid = 0;
 }
 
 int x86_pio_handle(vcpu_t *vcpu, uint32_t port, int is_in, uint32_t bytes,
@@ -1728,43 +1801,66 @@ int x86_pio_handle(vcpu_t *vcpu, uint32_t port, int is_in, uint32_t bytes,
 {
     x86_chipset_state_t *chip = chipset_of(vcpu);
 
-    (void)bytes;   /* 端口访问一律按字节语义处理 */
+    (void)bytes; /* 端口访问一律按字节语义处理 */
 
     switch (port) {
     /* ── COM1（16550A）：复用 vUART 的寄存器状态机 ──
      * x86 Linux 的 8250 驱动读写的就是这 8 个端口。*/
-    case 0x3f8: case 0x3f9: case 0x3fa: case 0x3fb:
-    case 0x3fc: case 0x3fd: case 0x3fe: case 0x3ff:
+    case 0x3f8:
+    case 0x3f9:
+    case 0x3fa:
+    case 0x3fb:
+    case 0x3fc:
+    case 0x3fd:
+    case 0x3fe:
+    case 0x3ff:
         if (is_in)
             *val = uart16550_port_read(uart16550_dev(vcpu->vm), port - 0x3f8);
         else
-            uart16550_port_write(uart16550_dev(vcpu->vm), port - 0x3f8, (uint8_t)*val);
+            uart16550_port_write(uart16550_dev(vcpu->vm), port - 0x3f8,
+                                 (uint8_t)*val);
         return 1;
 
     /* ── 8259 PIC 桩 ──
      * 中断走 vLAPIC，这里没有真控制器；但 Linux 要读写它做探测/屏蔽。
      * 给「全屏蔽、无中断挂起」的一致视图：读 IMR 回写过的掩码，
      * 读 IRR/ISR 回 0，写 ICW/OCW2(EOI) 忽略。*/
-    case 0x20: case 0xa0:
-        if (is_in) { *val = 0; return 1; }
+    case 0x20:
+    case 0xa0:
+        if (is_in) {
+            *val = 0;
+            return 1;
+        }
         return 1;
     case 0x21:
-        if (is_in) { *val = chip->pic_master_imr; return 1; }
+        if (is_in) {
+            *val = chip->pic_master_imr;
+            return 1;
+        }
         chip->pic_master_imr = (uint8_t)*val;
         return 1;
     case 0xa1:
-        if (is_in) { *val = chip->pic_slave_imr; return 1; }
+        if (is_in) {
+            *val = chip->pic_slave_imr;
+            return 1;
+        }
         chip->pic_slave_imr = (uint8_t)*val;
         return 1;
 
     /* ── 8254 PIT ── 实现见上面 pit_* 一组函数。
      * 只做计数、**不产生任何中断**（guest 的 tick 由 vLAPIC timer 提供）。*/
-    case 0x40: case 0x41: case 0x42:
-        if (is_in) { *val = pit_read(chip, port - 0x40); return 1; }
+    case 0x40:
+    case 0x41:
+    case 0x42:
+        if (is_in) {
+            *val = pit_read(chip, port - 0x40);
+            return 1;
+        }
         pit_write_data(chip, port - 0x40, (uint8_t)*val);
         return 1;
     case 0x43:
-        if (!is_in) pit_write_ctrl(chip, (uint8_t)*val);
+        if (!is_in)
+            pit_write_ctrl(chip, (uint8_t)*val);
         return 1;
 
     /* ── 0x61（端口 B / NMI 状态）──
@@ -1772,28 +1868,43 @@ int x86_pio_handle(vcpu_t *vcpu, uint32_t port, int is_in, uint32_t bytes,
      * 通道 2 的输出位。bit5 = 输出（mode 0 下数到 0 才置 1）。
      * bit4 是输出的反相副本，老代码用它做「计数器已归零」检测。*/
     case 0x61:
-        if (!is_in) { chip->port61 = (uint8_t)*val; return 1; }
+        if (!is_in) {
+            chip->port61 = (uint8_t)*val;
+            return 1;
+        }
         {
-            uint8_t v = (uint8_t)(chip->port61 & 0x03);  /* 保留 gate/speaker */
+            uint8_t v = (uint8_t)(chip->port61 & 0x03); /* 保留 gate/speaker */
             if (chip->pit[2].running && pit_now(chip, 2) == 0)
-                v |= 0x20;                            /* bit5: 计数到 0 */
+                v |= 0x20; /* bit5: 计数到 0 */
             *val = v;
         }
         return 1;
 
     /* ── 0x70/0x71（CMOS / RTC）──
      * 回 0：Linux 读到的 RTC 是 1970，但不会挂。*/
-    case 0x70: case 0x71:
-        if (is_in) { *val = 0; return 1; }
+    case 0x70:
+    case 0x71:
+        if (is_in) {
+            *val = 0;
+            return 1;
+        }
         return 1;
 
     /* ── PCI 配置空间（0xCF8/0xCFC）──
      * 全 1 =「没有这个设备」，Linux 会判定无 PCI 总线。*/
-    case 0xcf8: case 0xcf9: case 0xcfc: case 0xcfd: case 0xcfe: case 0xcff:
-        if (is_in) { *val = 0xffffffffULL; return 1; }
+    case 0xcf8:
+    case 0xcf9:
+    case 0xcfc:
+    case 0xcfd:
+    case 0xcfe:
+    case 0xcff:
+        if (is_in) {
+            *val = 0xffffffffULL;
+            return 1;
+        }
         return 1;
 
-    case 0x80:   /* 诊断口：历史上什么都不接 */
+    case 0x80: /* 诊断口：历史上什么都不接 */
         return 1;
 
     default:
@@ -1805,8 +1916,7 @@ unsigned g_reason_hist[64];
 
 static int vmx_exit_handler(vcpu_t *vcpu)
 {
-    uint32_t reason    = (uint32_t)(vmcs_read(EXI_REASON) & 0xff);
-
+    uint32_t reason = (uint32_t)(vmcs_read(EXI_REASON) & 0xff);
 
     /* TEMP-DBG：前 25 次退出打详细，之后每 2000 次采一次 RIP + 原因直方图 */
     {
@@ -1826,25 +1936,27 @@ static int vmx_exit_handler(vcpu_t *vcpu)
                       g_reason_hist[30], g_reason_hist[31], g_reason_hist[32],
                       g_reason_hist[48]);
         }
-        if (reason < 64) g_reason_hist[reason]++;
+        if (reason < 64)
+            g_reason_hist[reason]++;
         n++;
         if (n <= 25) {
-            KLOG_INFO("[VMX-DBG] exit#%u reason=%u rip=0x%llx intr_info=0x%llx\n",
-                      n, reason, (unsigned long long)vmcs_read(GUEST_RIP),
-                      (unsigned long long)vmcs_read(EXI_INTR_INFO));
+            KLOG_INFO(
+                "[VMX-DBG] exit#%u reason=%u rip=0x%llx intr_info=0x%llx\n", n,
+                reason, (unsigned long long)vmcs_read(GUEST_RIP),
+                (unsigned long long)vmcs_read(EXI_INTR_INFO));
         }
     }
 
     uint64_t guest_rip = vmcs_read(GUEST_RIP);
-    uint64_t inst_len  = vmcs_read(EXI_INST_LEN);
+    uint64_t inst_len = vmcs_read(EXI_INST_LEN);
 
     /* 环形记录（见 g_exit_trace 的注释）—— 只在 triple fault 时才回放 */
     {
         int id = (int)vcpu_slot(vcpu);
-        uint32_t k  = g_exit_trace_n[id];
+        uint32_t k = g_exit_trace_n[id];
         g_exit_trace[id][k].reason = reason;
-        g_exit_trace[id][k].intr   = (uint32_t)vmcs_read(EXI_INTR_INFO);
-        g_exit_trace[id][k].rip    = guest_rip;
+        g_exit_trace[id][k].intr = (uint32_t)vmcs_read(EXI_INTR_INFO);
+        g_exit_trace[id][k].rip = guest_rip;
         g_exit_trace_n[id] = (k + 1) % VMM_EXIT_TRACE_MAX;
     }
 
@@ -1885,7 +1997,7 @@ static int vmx_exit_handler(vcpu_t *vcpu)
 
     case VMX_REASON_VMCALL: {
         /* VMCALL: rdi = hypercall no, rsi = arg1 */
-        uint64_t no   = vcpu->regs.rdi;
+        uint64_t no = vcpu->regs.rdi;
         uint64_t arg1 = vcpu->regs.rsi;
         /* 步进 RIP 跳过 vmcall（长度取自 VMCS，移植自 kvmm handle_vmcall）*/
         vmcs_write(GUEST_RIP, guest_rip + inst_len);
@@ -1893,8 +2005,8 @@ static int vmx_exit_handler(vcpu_t *vcpu)
         switch (no) {
         case VMX_HYPERCALL_PRINT:
             /* 留在 INFO（test-vmm 的通过证据），抽稀成有界输出 */
-            KLOG_INFO_SAMPLE("[VMX] VMCALL_PRINT: iter=%llu (vcpu%d)\n",
-                             arg1, vcpu->vcpu_id);
+            KLOG_INFO_SAMPLE("[VMX] VMCALL_PRINT: iter=%llu (vcpu%d)\n", arg1,
+                             vcpu->vcpu_id);
             task_yield();
             return EL2_RESUME;
 
@@ -1904,8 +2016,8 @@ static int vmx_exit_handler(vcpu_t *vcpu)
             return EL2_VMEXIT;
 
         default:
-            KLOG_WARN("[VMX] Unknown hypercall no=%llu (vcpu%d)\n",
-                      no, vcpu->vcpu_id);
+            KLOG_WARN("[VMX] Unknown hypercall no=%llu (vcpu%d)\n", no,
+                      vcpu->vcpu_id);
             return EL2_RESUME;
         }
     }
@@ -1916,7 +2028,7 @@ static int vmx_exit_handler(vcpu_t *vcpu)
         uint32_t a, b, c, d;
         vmx_cpuid_emulate((uint32_t)vcpu->regs.rax, (uint32_t)vcpu->regs.rcx,
                           &a, &b, &c, &d);
-        {   /* TEMP-DBG：前 12 次 CPUID + 每次 0x15/0x16（TSC 频率）*/
+        { /* TEMP-DBG：前 12 次 CPUID + 每次 0x15/0x16（TSC 频率）*/
             static unsigned n;
             uint32_t leaf_now = (uint32_t)vcpu->regs.rax;
             if (n < 12 || leaf_now == 0x15 || leaf_now == 0x16) {
@@ -1944,9 +2056,9 @@ static int vmx_exit_handler(vcpu_t *vcpu)
          * qualification 位：0=读,1=写,2=取指,3=读权限,4=写权限,5=取指权限,
          *                   6=因 EPT 页表项无效（vs 权限不足）。
          */
-        uint64_t gpa  = vmcs_read(GUEST_PHYS_ADDR);
+        uint64_t gpa = vmcs_read(GUEST_PHYS_ADDR);
         uint64_t qual = vmcs_read(EXI_QUALIFICATION);
-        int is_write  = (int)((qual >> 1) & 1);
+        int is_write = (int)((qual >> 1) & 1);
         x86_chipset_state_t *chip = chipset_of(vcpu);
 
         /*
@@ -1989,7 +2101,7 @@ static int vmx_exit_handler(vcpu_t *vcpu)
             return EL2_RESUME;
         }
 
-        {   /* TEMP-DBG：前 8 次 EPT violation 的 gpa，看 guest 在碰什么 */
+        { /* TEMP-DBG：前 8 次 EPT violation 的 gpa，看 guest 在碰什么 */
             static unsigned ne;
             if (ne < 8) {
                 // KLOG_INFO("[EPT-DBG] gpa=0x%llx %s rip=0x%llx\n",
@@ -2002,13 +2114,13 @@ static int vmx_exit_handler(vcpu_t *vcpu)
         if (vcpu->vm && vcpu->vm->mmio_bus) {
             uint64_t out = 0;
             /* 清零：imm 仅立即数写路径才赋值，其余路径保持 0 */
-            x86_mmio_access_t acc = {0};
+            x86_mmio_access_t acc = { 0 };
 
             /* 解码出错指令（GUEST_RIP 处，CISC 变长）以取得
              * 「数据寄存器 + 访问宽度 + 源/目标方向」*/
             if (decode_mmio_access(vcpu, guest_rip, &acc) &&
                 decode_matches_qual(qual, &acc)) {
-                uint64_t val = acc.imm;      /* 立即数写 */
+                uint64_t val = acc.imm; /* 立即数写 */
 
                 /* ⚠️ 判据必须是 has_reg，不能写 `acc.reg != 0` —— 0 就是
                  * %rax，那样会把所有从 RAX 传值的写当成立即数 0（见结构体
@@ -2037,7 +2149,7 @@ static int vmx_exit_handler(vcpu_t *vcpu)
                  * 把表项数算错、打出 "version 0, GSI 0-95"）。
                  */
                 if (gpa >= IOAPIC_MMIO_BASE &&
-                    gpa <  IOAPIC_MMIO_BASE + IOAPIC_MMIO_SIZE) {
+                    gpa < IOAPIC_MMIO_BASE + IOAPIC_MMIO_SIZE) {
                     if (!chip->ioapic_inited) {
                         chip->ioapic_inited = 1;
                         for (int i = 0; i < IOAPIC_NENT; i++)
@@ -2051,12 +2163,16 @@ static int vmx_exit_handler(vcpu_t *vcpu)
                     uint32_t off = (uint32_t)(gpa - IOAPIC_MMIO_BASE);
                     uint32_t reg = chip->ioapic_sel & 0xff;
                     uint32_t v32 = (uint32_t)val;
-                    if (off == 0x00) {          /* IOREGSEL */
-                        if (acc.is_write) chip->ioapic_sel = v32;
-                        else              v32 = chip->ioapic_sel;
-                    } else {                     /* 0x10 IOWIN */
-                        if (acc.is_write) ioapic_reg_write(chip, reg, v32);
-                        else              v32 = ioapic_reg_read(chip, reg);
+                    if (off == 0x00) { /* IOREGSEL */
+                        if (acc.is_write)
+                            chip->ioapic_sel = v32;
+                        else
+                            v32 = chip->ioapic_sel;
+                    } else { /* 0x10 IOWIN */
+                        if (acc.is_write)
+                            ioapic_reg_write(chip, reg, v32);
+                        else
+                            v32 = ioapic_reg_read(chip, reg);
                     }
                     if (!acc.is_write) {
                         uint64_t *dst = x86_gpr_ptr(vcpu, acc.reg);
@@ -2068,7 +2184,7 @@ static int vmx_exit_handler(vcpu_t *vcpu)
                 }
 
                 if (gpa >= VLAPIC_MMIO_BASE &&
-                    gpa <  VLAPIC_MMIO_BASE + VLAPIC_MMIO_SIZE) {
+                    gpa < VLAPIC_MMIO_BASE + VLAPIC_MMIO_SIZE) {
                     uint64_t lval = acc.is_write ? val : 0;
                     if (vlapic_mmio_handle(vcpu->vm, gpa, acc.is_write,
                                            acc.size, &lval)) {
@@ -2082,24 +2198,25 @@ static int vmx_exit_handler(vcpu_t *vcpu)
                     }
                 }
 
-                if (mmio_bus_handle(vcpu->vm->mmio_bus, gpa, is_write,
-                                    acc.size, val,
-                                    (uint32_t)vcpu->vcpu_id, &out)) {
+                if (mmio_bus_handle(vcpu->vm->mmio_bus, gpa, is_write, acc.size,
+                                    val, (uint32_t)vcpu->vcpu_id, &out)) {
                     if (!acc.is_write) {
                         /* 读：写回目标 GPR */
                         uint64_t *dst = x86_gpr_ptr(vcpu, acc.reg);
                         if (dst)
                             *dst = out;
                     }
-                    KLOG_INFO("[VMX] MMIO %s GPA=0x%llx size=%u reg=%u (vcpu%d)\n",
-                              is_write ? "write" : "read", gpa,
-                              acc.size, acc.reg, vcpu->vcpu_id);
+                    KLOG_INFO(
+                        "[VMX] MMIO %s GPA=0x%llx size=%u reg=%u (vcpu%d)\n",
+                        is_write ? "write" : "read", gpa, acc.size, acc.reg,
+                        vcpu->vcpu_id);
                     vmcs_write(GUEST_RIP, guest_rip + acc.inst_len);
                     return EL2_RESUME;
                 }
             } else {
                 KLOG_WARN("[VMX] MMIO inst decode failed at rip=0x%llx "
-                          "(vcpu%d), falling back\n", guest_rip, vcpu->vcpu_id);
+                          "(vcpu%d), falling back\n",
+                          guest_rip, vcpu->vcpu_id);
             }
         }
 
@@ -2138,10 +2255,10 @@ static int vmx_exit_handler(vcpu_t *vcpu)
          * 1=读CR, 2=写CR8 hmm 见 SDM），不是 CR4 就原样放行。
          */
         uint64_t qual = vmcs_read(EXI_QUALIFICATION);
-        uint32_t cr   = (uint32_t)(qual & 0xf);
+        uint32_t cr = (uint32_t)(qual & 0xf);
         uint32_t type = (uint32_t)((qual >> 4) & 0x3);
 
-        if (cr == 4 && type == 0) {           /* MOV CR4, r */
+        if (cr == 4 && type == 0) { /* MOV CR4, r */
             uint32_t gpr = (uint32_t)((qual >> 8) & 0xf);
             uint64_t *src = x86_gpr_ptr(vcpu, gpr);
             if (src) {
@@ -2157,12 +2274,12 @@ static int vmx_exit_handler(vcpu_t *vcpu)
     case VMX_REASON_IO: {
         /* IN/OUT：I/O bitmap 全拦，所以 guest 每次端口访问都到这里。
          * qualification 给端口号/方向/宽度，指令长度由 VMCS 提供。*/
-        uint64_t qual  = vmcs_read(EXI_QUALIFICATION);
-        uint32_t port  = VMX_IO_QUAL_PORT(qual);
-        int      is_in = (qual & VMX_IO_QUAL_IN) != 0;
-        uint32_t sz    = VMX_IO_QUAL_SIZE(qual);
+        uint64_t qual = vmcs_read(EXI_QUALIFICATION);
+        uint32_t port = VMX_IO_QUAL_PORT(qual);
+        int is_in = (qual & VMX_IO_QUAL_IN) != 0;
+        uint32_t sz = VMX_IO_QUAL_SIZE(qual);
         uint32_t bytes = (sz == 0) ? 1 : (sz == 1 ? 2 : 4);
-        uint64_t val   = is_in ? 0 : (vcpu->regs.rax & 0xffffffffULL);
+        uint64_t val = is_in ? 0 : (vcpu->regs.rax & 0xffffffffULL);
 
         if (x86_pio_handle(vcpu, port, is_in, bytes, &val)) {
             if (is_in)
@@ -2189,8 +2306,8 @@ static int vmx_exit_handler(vcpu_t *vcpu)
 
     case VMX_REASON_MSR_WRITE: {
         uint32_t msr = (uint32_t)vcpu->regs.rcx;
-        uint64_t val = ((uint64_t)(uint32_t)vcpu->regs.rdx << 32)
-                     | (uint32_t)vcpu->regs.rax;
+        uint64_t val = ((uint64_t)(uint32_t)vcpu->regs.rdx << 32) |
+                       (uint32_t)vcpu->regs.rax;
         msr_emulate_write(vcpu, msr, val);
         vmcs_write(GUEST_RIP, guest_rip + inst_len);
         return EL2_RESUME;
@@ -2220,8 +2337,7 @@ static int vmx_exit_handler(vcpu_t *vcpu)
 
     case VMX_REASON_TRIPLE_FAULT:
         KLOG_ERROR("[VMX] guest triple fault (vcpu%d) rip=0x%llx rsp=0x%llx\n",
-                   vcpu->vcpu_id,
-                   (unsigned long long)guest_rip,
+                   vcpu->vcpu_id, (unsigned long long)guest_rip,
                    (unsigned long long)vmcs_read(GUEST_RSP));
 
         /* 回放最近 VMM_EXIT_TRACE_MAX 次退出（最旧在前）。triple fault
@@ -2232,8 +2348,8 @@ static int vmx_exit_handler(vcpu_t *vcpu)
                        VMM_EXIT_TRACE_MAX, id);
             for (uint32_t k = 0; k < VMM_EXIT_TRACE_MAX; k++) {
                 uint32_t i = (g_exit_trace_n[id] + k) % VMM_EXIT_TRACE_MAX;
-                KLOG_ERROR("[VMX]   +%u reason=%u rip=0x%llx intr=0x%x\n",
-                           k, g_exit_trace[id][i].reason,
+                KLOG_ERROR("[VMX]   +%u reason=%u rip=0x%llx intr=0x%x\n", k,
+                           g_exit_trace[id][i].reason,
                            (unsigned long long)g_exit_trace[id][i].rip,
                            g_exit_trace[id][i].intr);
             }
@@ -2245,7 +2361,7 @@ static int vmx_exit_handler(vcpu_t *vcpu)
         {
             static const char hx[] = "0123456789abcdef";
             char line[3 * 32 + 4];
-            uint64_t lim  = guest_mem_size(vcpu);
+            uint64_t lim = guest_mem_size(vcpu);
 
             /*
              * guest_rip 是**线性地址**：guest 内核 text 在 0xffffffff80000000
@@ -2279,7 +2395,7 @@ static int vmx_exit_handler(vcpu_t *vcpu)
 
     case VMX_REASON_EXC_NMI: {
         uint64_t intr_info = vmcs_read(EXI_INTR_INFO);
-        uint8_t  vector    = (uint8_t)(intr_info & 0xFF);
+        uint8_t vector = (uint8_t)(intr_info & 0xFF);
         uint64_t cr2;
         __asm__ volatile("mov %%cr2, %0" : "=r"(cr2));
 
@@ -2296,29 +2412,29 @@ static int vmx_exit_handler(vcpu_t *vcpu)
                     st = (const uint64_t *)gpa_to_host(vcpu, rsp);
                 KLOG_INFO("[EXC-DBG] v=%u #%u rip=0x%llx cr2=0x%llx err=0x%llx "
                           "rsp=0x%llx cs=0x%llx rax=0x%llx rcx=0x%llx\n",
-                          vector, seen[vector],
-                          (unsigned long long)guest_rip,
+                          vector, seen[vector], (unsigned long long)guest_rip,
                           (unsigned long long)cr2,
                           (unsigned long long)vmcs_read(EXI_INTR_ERROR),
                           (unsigned long long)rsp,
                           (unsigned long long)vmcs_read(GUEST_SEL_CS),
                           (unsigned long long)vcpu->regs.rax,
                           (unsigned long long)vcpu->regs.rcx);
-                KLOG_INFO("[EXC-REG] rbx=0x%llx rbp=0x%llx rsi=0x%llx rdi=0x%llx "
-                          "r8=0x%llx r9=0x%llx r10=0x%llx r11=0x%llx "
-                          "r12=0x%llx r13=0x%llx r14=0x%llx r15=0x%llx\n",
-                          (unsigned long long)vcpu->regs.rbx,
-                          (unsigned long long)vcpu->regs.rbp,
-                          (unsigned long long)vcpu->regs.rsi,
-                          (unsigned long long)vcpu->regs.rdi,
-                          (unsigned long long)vcpu->regs.r8,
-                          (unsigned long long)vcpu->regs.r9,
-                          (unsigned long long)vcpu->regs.r10,
-                          (unsigned long long)vcpu->regs.r11,
-                          (unsigned long long)vcpu->regs.r12,
-                          (unsigned long long)vcpu->regs.r13,
-                          (unsigned long long)vcpu->regs.r14,
-                          (unsigned long long)vcpu->regs.r15);
+                KLOG_INFO(
+                    "[EXC-REG] rbx=0x%llx rbp=0x%llx rsi=0x%llx rdi=0x%llx "
+                    "r8=0x%llx r9=0x%llx r10=0x%llx r11=0x%llx "
+                    "r12=0x%llx r13=0x%llx r14=0x%llx r15=0x%llx\n",
+                    (unsigned long long)vcpu->regs.rbx,
+                    (unsigned long long)vcpu->regs.rbp,
+                    (unsigned long long)vcpu->regs.rsi,
+                    (unsigned long long)vcpu->regs.rdi,
+                    (unsigned long long)vcpu->regs.r8,
+                    (unsigned long long)vcpu->regs.r9,
+                    (unsigned long long)vcpu->regs.r10,
+                    (unsigned long long)vcpu->regs.r11,
+                    (unsigned long long)vcpu->regs.r12,
+                    (unsigned long long)vcpu->regs.r13,
+                    (unsigned long long)vcpu->regs.r14,
+                    (unsigned long long)vcpu->regs.r15);
                 KLOG_INFO("[EXC-IDT] idtr=0x%llx/0x%llx gdtr=0x%llx cr3=0x%llx "
                           "efer=0x%llx cr0=0x%llx\n",
                           (unsigned long long)vmcs_read(GUEST_BASE_IDTR),
@@ -2328,11 +2444,12 @@ static int vmx_exit_handler(vcpu_t *vcpu)
                           (unsigned long long)vmcs_read(GUEST_EFER),
                           (unsigned long long)vmcs_read(GUEST_CR0));
                 if (st)
-                    KLOG_INFO("[EXC-STACK] +00:%016llx +08:%016llx "
-                              "+10:%016llx +18:%016llx +20:%016llx +28:%016llx\n",
-                              (unsigned long long)st[0], (unsigned long long)st[1],
-                              (unsigned long long)st[2], (unsigned long long)st[3],
-                              (unsigned long long)st[4], (unsigned long long)st[5]);
+                    KLOG_INFO(
+                        "[EXC-STACK] +00:%016llx +08:%016llx "
+                        "+10:%016llx +18:%016llx +20:%016llx +28:%016llx\n",
+                        (unsigned long long)st[0], (unsigned long long)st[1],
+                        (unsigned long long)st[2], (unsigned long long)st[3],
+                        (unsigned long long)st[4], (unsigned long long)st[5]);
                 seen[vector]++;
             }
         }
@@ -2348,13 +2465,12 @@ static int vmx_exit_handler(vcpu_t *vcpu)
                           (unsigned long long)vmcs_read(GUEST_CR3),
                           (unsigned long long)rsp);
                 /* dump guest 栈顶 12 个 qword（物理地址可读 → 可符号化）*/
-                const uint64_t *st =
-                    (const uint64_t *)gpa_to_host(vcpu, rsp);
+                const uint64_t *st = (const uint64_t *)gpa_to_host(vcpu, rsp);
                 if (st && rsp + 0x60 < guest_mem_size(vcpu)) {
                     for (int i = 0; i < 12; i += 4)
                         KLOG_INFO("[PF-STACK] +%02x: %016llx %016llx "
-                                  "%016llx %016llx\n", i * 8,
-                                  (unsigned long long)st[i],
+                                  "%016llx %016llx\n",
+                                  i * 8, (unsigned long long)st[i],
                                   (unsigned long long)st[i + 1],
                                   (unsigned long long)st[i + 2],
                                   (unsigned long long)st[i + 3]);
@@ -2368,20 +2484,22 @@ static int vmx_exit_handler(vcpu_t *vcpu)
              * 之后不再打印，避免宿主代码把 CR2 冲掉影响后续判断。*/
             static unsigned long pf_n;
             if (pf_n < 3UL) {
-                KLOG_WARN("[PFSITE] #%lu rip=0x%llx cr2=0x%llx err=0x%llx rsp=0x%llx\n",
-                          pf_n, (unsigned long long)guest_rip,
-                          (unsigned long long)cr2,
-                          (unsigned long long)vmcs_read(EXI_INTR_ERROR),
-                          (unsigned long long)vmcs_read(GUEST_RSP));
-                KLOG_WARN("[PFSITE] rax=0x%llx rbx=0x%llx rcx=0x%llx rdx=0x%llx "
-                          "rsi=0x%llx rdi=0x%llx rbp=0x%llx\n",
-                          (unsigned long long)vcpu->regs.rax,
-                          (unsigned long long)vcpu->regs.rbx,
-                          (unsigned long long)vcpu->regs.rcx,
-                          (unsigned long long)vcpu->regs.rdx,
-                          (unsigned long long)vcpu->regs.rsi,
-                          (unsigned long long)vcpu->regs.rdi,
-                          (unsigned long long)vcpu->regs.rbp);
+                KLOG_WARN(
+                    "[PFSITE] #%lu rip=0x%llx cr2=0x%llx err=0x%llx rsp=0x%llx\n",
+                    pf_n, (unsigned long long)guest_rip,
+                    (unsigned long long)cr2,
+                    (unsigned long long)vmcs_read(EXI_INTR_ERROR),
+                    (unsigned long long)vmcs_read(GUEST_RSP));
+                KLOG_WARN(
+                    "[PFSITE] rax=0x%llx rbx=0x%llx rcx=0x%llx rdx=0x%llx "
+                    "rsi=0x%llx rdi=0x%llx rbp=0x%llx\n",
+                    (unsigned long long)vcpu->regs.rax,
+                    (unsigned long long)vcpu->regs.rbx,
+                    (unsigned long long)vcpu->regs.rcx,
+                    (unsigned long long)vcpu->regs.rdx,
+                    (unsigned long long)vcpu->regs.rsi,
+                    (unsigned long long)vcpu->regs.rdi,
+                    (unsigned long long)vcpu->regs.rbp);
                 KLOG_WARN("[PFSITE] r8=0x%llx r9=0x%llx r10=0x%llx r11=0x%llx "
                           "r12=0x%llx r13=0x%llx r14=0x%llx r15=0x%llx\n",
                           (unsigned long long)vcpu->regs.r8,
@@ -2398,9 +2516,12 @@ static int vmx_exit_handler(vcpu_t *vcpu)
                      *   beg 存在 0x10(%rsp) （aa9033）
                      * 于是 op = out - beg 可以直接算，判定是 dist 野还是 beg 歪。*/
                     uint64_t rsp = vmcs_read(GUEST_RSP);
-                    const uint64_t *st = (const uint64_t *)gpa_to_host(vcpu, rsp);
-                    const uint8_t  *z  = (const uint8_t *)gpa_to_host(vcpu, 0x3422e40u);
-                    const uint8_t  *zi = (const uint8_t *)gpa_to_host(vcpu, 0x3422ea0u);
+                    const uint64_t *st =
+                        (const uint64_t *)gpa_to_host(vcpu, rsp);
+                    const uint8_t *z =
+                        (const uint8_t *)gpa_to_host(vcpu, 0x3422e40u);
+                    const uint8_t *zi =
+                        (const uint8_t *)gpa_to_host(vcpu, 0x3422ea0u);
 
                     /* 按需分页下这几个地址可能还没被 guest 碰过 —— 判 NULL 跳过 */
                     if (st && z && zi) {
@@ -2422,17 +2543,18 @@ static int vmx_exit_handler(vcpu_t *vcpu)
                                   (unsigned long long)st[6],
                                   (unsigned long long)vcpu->regs.r11,
                                   (unsigned long long)vcpu->regs.r8);
-                        KLOG_WARN("[FLOCAL] strm: next_out=0x%llx avail_out=%llu\n",
-                                  (unsigned long long)no, (unsigned long long)ao);
+                        KLOG_WARN(
+                            "[FLOCAL] strm: next_out=0x%llx avail_out=%llu\n",
+                            (unsigned long long)no, (unsigned long long)ao);
                     }
                 }
                 pf_n++;
             }
         }
         /* 原样注回 guest：硬件异常，带 error code（如果需要）*/
-        if (vector != 0) {   /* 注回 guest：硬件异常原样送回 */
-            vcpu->pending_event = VMX_INTR_VALID | VMX_INTR_TYPE_HWEXC
-                                | VMX_INTR_VECTOR(vector);
+        if (vector != 0) { /* 注回 guest：硬件异常原样送回 */
+            vcpu->pending_event =
+                VMX_INTR_VALID | VMX_INTR_TYPE_HWEXC | VMX_INTR_VECTOR(vector);
             if (intr_info & (1u << 11)) {
                 vcpu->pending_event |= VMX_INTR_ERRCODE_VALID;
                 vcpu->pending_errcode = vmcs_read(EXI_INTR_ERROR);
@@ -2440,8 +2562,8 @@ static int vmx_exit_handler(vcpu_t *vcpu)
             return EL2_RESUME;
         }
 
-        KLOG_ERROR("[VMX] EXCEPTION vector=%u rip=0x%llx (vcpu%d)\n",
-                   vector, guest_rip, vcpu->vcpu_id);
+        KLOG_ERROR("[VMX] EXCEPTION vector=%u rip=0x%llx (vcpu%d)\n", vector,
+                   guest_rip, vcpu->vcpu_id);
         return EL2_EXIT;
     }
 
@@ -2450,7 +2572,7 @@ static int vmx_exit_handler(vcpu_t *vcpu)
                    "(vcpu%d)\n",
                    reason, guest_rip, vmcs_read(EXI_QUALIFICATION),
                    vcpu->vcpu_id);
-        if (reason == 33) {   /* VM-entry failure: invalid guest state */
+        if (reason == 33) { /* VM-entry failure: invalid guest state */
             KLOG_ERROR("[VMX] entry state: intr=0x%llx err=0x%llx ilen=%llu "
                        "msr_cnt=%llu msr_adr=0x%llx\n",
                        vmcs_read(VM_ENTRY_INTR_INFO),
@@ -2518,8 +2640,8 @@ int vmm_arch_vm_init(vm_t *vm)
      * 注：即使建表，也需 CPU_EXEC_CTRL1 的 CPU_EPT 位真正置位才生效
      * （见 vmcs_init_ctrl 协商结果）。*/
     if (vm->cfg.mem_size != 0) {
-        x86_ept_vm_init(&vm->ept, (uint32_t)vm->slot,
-                        vm->cfg.mem_base, vm->cfg.mem_size);
+        x86_ept_vm_init(&vm->ept, (uint32_t)vm->slot, vm->cfg.mem_base,
+                        vm->cfg.mem_size);
 
         mmio_bus_init(&vm->mmio_bus_storage);
         if (uart16550_init(vm, &vm->mmio_bus_storage) != 0) {
@@ -2542,9 +2664,9 @@ int vmm_arch_vm_init(vm_t *vm)
     for (i = 0; i < nr; i++) {
         vcpu_t *vcpu = &vm->vcpus[i];
         memset(vcpu, 0, sizeof(*vcpu));
-        vcpu->vcpu_id  = i;
+        vcpu->vcpu_id = i;
         vcpu->launched = 0;
-        vcpu->vm       = vm;
+        vcpu->vm = vm;
     }
     vm->nr_vcpus = nr;
 
@@ -2558,7 +2680,7 @@ int vmm_arch_vm_init(vm_t *vm)
         uint32_t sl = (uint32_t)(vm->slot * MAX_VCPUS + i);
         memset(g_exit_trace[sl], 0, sizeof(g_exit_trace[sl]));
         g_exit_trace_n[sl] = 0;
-        g_entry_dbg_n[sl]  = 0;
+        g_entry_dbg_n[sl] = 0;
     }
 
     /*
@@ -2583,11 +2705,11 @@ int vmm_arch_vm_init(vm_t *vm)
      *   不在这里重复 —— 那两个函数每次 boot 都会被调到。）
      */
     g_fallback_chipset.pic_master_imr = 0xFF;
-    g_fallback_chipset.pic_slave_imr  = 0xFF;
+    g_fallback_chipset.pic_slave_imr = 0xFF;
     vm->chipset.pic_master_imr = 0xFF;
-    vm->chipset.pic_slave_imr  = 0xFF;
-    vm->chipset.ioapic_sel     = 0;
-    vm->chipset.ioapic_inited  = 0;
+    vm->chipset.pic_slave_imr = 0xFF;
+    vm->chipset.ioapic_sel = 0;
+    vm->chipset.ioapic_inited = 0;
     memset(vm->chipset.ioapic_rt, 0, sizeof(vm->chipset.ioapic_rt));
     memset(vm->chipset.pit, 0, sizeof(vm->chipset.pit));
     vm->chipset.port61 = 0;
@@ -2664,10 +2786,10 @@ void vmm_arch_irq_raise(vcpu_t *vcpu, virq_t irq)
 
     rt = chipset_of(vcpu)->ioapic_rt[irq.line * 2];
     if ((rt & IOAPIC_RT_MASKED) || (rt & 0x700) != 0)
-        return;                       /* guest 还没 unmask / 非 fixed 模式 */
+        return; /* guest 还没 unmask / 非 fixed 模式 */
     vec = rt & 0xff;
     if (vec < 16)
-        return;                       /* 0-15 是异常向量，不能当普通中断投 */
+        return; /* 0-15 是异常向量，不能当普通中断投 */
 
     /* 不做 SVR 门控：那是 vlapic_raise_irq 自己的事（它在 raise 时刻判）*/
     vlapic_raise_irq(vcpu->vm, vec);
@@ -2718,10 +2840,10 @@ void vmm_arch_restore_guest_ctx(vcpu_t *vcpu)
      * ENTRY-DBG、vmlaunch 本身）都作用在正确的 VMCS 上。
      */
     {
-    vmcs_t *v = (vmcs_t *)g_vmcs_storage[vcpu_slot(vcpu)];
-    uint64_t vmcs_pa = virt_to_phys(v);
+        vmcs_t *v = (vmcs_t *)g_vmcs_storage[vcpu_slot(vcpu)];
+        uint64_t vmcs_pa = virt_to_phys(v);
 
-    /*
+        /*
      * ── VMCS 初始化搬到**跑 vCPU 的这颗核**上做（每个 VM 一次）────────
      *
      * vmx_vcpu_setup() 内部就是 `VMCLEAR → VMPTRLD → 写全部字段`，这正是
@@ -2745,13 +2867,13 @@ void vmm_arch_restore_guest_ctx(vcpu_t *vcpu)
      * 只对 Linux 引导路径做：玩具 guest（VMM_TEST）的入口在 vmx_vcpu_setup()
      * 的 entry 参数里，这里拿不到，且它每次 QEMU 只启动一次、没有这个坑。
      */
-    if (!vcpu->vmcs_ready && vcpu->g_boot_linux) {
-        vmx_vcpu_setup(vcpu, NULL);     /* clear → load → 写全部字段 */
-        vcpu->launched   = 0;           /* 刚 clear 过 ⇒ 必须走 VMLAUNCH */
-        vcpu->vmcs_ready = 1;
-    }
+        if (!vcpu->vmcs_ready && vcpu->g_boot_linux) {
+            vmx_vcpu_setup(vcpu, NULL); /* clear → load → 写全部字段 */
+            vcpu->launched = 0;         /* 刚 clear 过 ⇒ 必须走 VMLAUNCH */
+            vcpu->vmcs_ready = 1;
+        }
 
-    /*
+        /*
      * 无论走上面哪条路，进 guest 之前都必须让**本核的 current VMCS** 是这一块：
      *   - vmx_vcpu_setup() 结尾还有一次 flush 用的 VMCLEAR（把 VMWRITE 的结果
      *     真正写回内存），执行完 VMCS 就不再是 current；
@@ -2760,11 +2882,12 @@ void vmm_arch_restore_guest_ctx(vcpu_t *vcpu)
      * 症状极具误导性：ENTRY-DBG 读出来的是栈上的垃圾、inst_error 是个非法值
      * （实测 0x4400），而日志里只会看到一句 guest entry failed。
      */
-    if (vmcs_load_pa(vmcs_pa)) {
-        KLOG_ERROR("[VMX] vmptrld failed in vmm_arch_enter_guest (vcpu%d pa=0x%llx)\n",
-                   vcpu->vcpu_id, vmcs_pa);
-        return 0;
-    }
+        if (vmcs_load_pa(vmcs_pa)) {
+            KLOG_ERROR(
+                "[VMX] vmptrld failed in vmm_arch_enter_guest (vcpu%d pa=0x%llx)\n",
+                vcpu->vcpu_id, vmcs_pa);
+            return 0;
+        }
     }
 
     /*
@@ -2782,12 +2905,11 @@ void vmm_arch_restore_guest_ctx(vcpu_t *vcpu)
     /* 控制台：电平触发，每次入口按设备状态重拉（见上面 x86_console_irq_on_entry）*/
     x86_console_irq_on_entry(vcpu);
 
-
     if (!vcpu->pending_event) {
         uint32_t vec;
         if (vlapic_sw_enabled(vcpu->vm) && vlapic_take_pending(vcpu->vm, &vec))
-            vcpu->pending_event = VMX_INTR_VALID | VMX_INTR_TYPE_EXTINT
-                                | VMX_INTR_VECTOR(vec);
+            vcpu->pending_event =
+                VMX_INTR_VALID | VMX_INTR_TYPE_EXTINT | VMX_INTR_VECTOR(vec);
     }
 
     vmx_inject_pending(vcpu);
@@ -2826,9 +2948,9 @@ static void vmx_refresh_host_state(vcpu_t *vcpu)
     int i0 = vmx_msr_index(MSR_GS_BASE);
     int i1 = vmx_msr_index(MSR_KERNEL_GS_BASE);
 
-    vmcs_write(HOST_CR0,     vmx_read_cr0());
-    vmcs_write(HOST_CR3,     vmx_read_cr3());
-    vmcs_write(HOST_CR4,     vmx_read_cr4());
+    vmcs_write(HOST_CR0, vmx_read_cr0());
+    vmcs_write(HOST_CR3, vmx_read_cr3());
+    vmcs_write(HOST_CR4, vmx_read_cr4());
     vmcs_write(HOST_BASE_FS, vmx_rdmsr(MSR_FS_BASE));
     vmcs_write(HOST_BASE_GS, vmx_rdmsr(MSR_GS_BASE));
 
@@ -2850,7 +2972,7 @@ static void vmx_refresh_host_state(vcpu_t *vcpu)
         uint16_t tss_sel;
         uint64_t tss_base;
         x86_tss_current(&tss_sel, &tss_base);
-        vmcs_write(HOST_SEL_TR,  tss_sel);
+        vmcs_write(HOST_SEL_TR, tss_sel);
         vmcs_write(HOST_BASE_TR, tss_base);
     }
 
@@ -2885,7 +3007,8 @@ static void vmx_refresh_host_state(vcpu_t *vcpu)
      * `Run /init as init process`，rip 恒为 paranoid_entry+0x93、reason 恒为
      * RDMSR=31、12 万次采样一动不动）。
      */
-    if (i1 >= 0) g_msr_guest[id][i1].val = g_msr_store[id][1].val;
+    if (i1 >= 0)
+        g_msr_guest[id][i1].val = g_msr_store[id][1].val;
 
     /* GS_BASE 不能走 VMX 的 load 表（放进去 VM-entry 直接以 reason 34
      * "MSR loading" 失败），改走 GUEST_BASE_GS 字段 —— 效果一样：把
@@ -2911,8 +3034,7 @@ int vmm_arch_enter_guest(vcpu_t *vcpu)
      */
     vmx_refresh_host_state(vcpu);
 
-
-    {   /* 入口状态：每次 VM 启动的头 2 次 entry 打印，用来还原「第二次启动
+    { /* 入口状态：每次 VM 启动的头 2 次 entry 打印，用来还原「第二次启动
          * 时 VMCS 里的 guest 状态到底是什么」。计数是 per-vCPU 且随 VM 生命
          * 周期清零 —— 见 g_entry_dbg_n 的注释。*/
         int id = (int)vcpu_slot(vcpu);
@@ -2930,9 +3052,9 @@ int vmm_arch_enter_guest(vcpu_t *vcpu)
                       vmcs_read(GUEST_SEL_SS), vmcs_read(GUEST_AR_SS),
                       vmcs_read(GUEST_SEL_DS), vmcs_read(GUEST_AR_DS),
                       vmcs_read(GUEST_SEL_TR), vmcs_read(GUEST_AR_TR),
-                      vmcs_read(GUEST_BASE_TR),
-                      vmcs_read(GUEST_BASE_GDTR), vmcs_read(GUEST_LIMIT_GDTR),
-                      vmcs_read(GUEST_BASE_IDTR), vmcs_read(GUEST_LIMIT_IDTR));
+                      vmcs_read(GUEST_BASE_TR), vmcs_read(GUEST_BASE_GDTR),
+                      vmcs_read(GUEST_LIMIT_GDTR), vmcs_read(GUEST_BASE_IDTR),
+                      vmcs_read(GUEST_LIMIT_IDTR));
             KLOG_INFO("[ENTRY-DBG] pin=%x cpu0=%x cpu1=%x entry=%x/%x/%x "
                       "eptp=%llx\n",
                       (unsigned)vmcs_read(PIN_CONTROLS),
@@ -2940,8 +3062,7 @@ int vmm_arch_enter_guest(vcpu_t *vcpu)
                       (unsigned)vmcs_read(CPU_EXEC_CTRL1),
                       (unsigned)vmcs_read(ENT_CONTROLS),
                       (unsigned)vmcs_read(EXI_CONTROLS),
-                      (unsigned)vmcs_read(EXC_BITMAP),
-                      vmcs_read(EPT_POINTER));
+                      (unsigned)vmcs_read(EXC_BITMAP), vmcs_read(EPT_POINTER));
             g_entry_dbg_n[id]++;
         }
     }
@@ -2958,8 +3079,7 @@ int vmm_arch_enter_guest(vcpu_t *vcpu)
                    "(entry intr=0x%llx, msr_load_cnt=%llu, reason=0x%llx)\n",
                    vmcs_read(VMX_INST_ERROR), vcpu->launched,
                    vmcs_read(VM_ENTRY_INTR_INFO),
-                   vmcs_read(VM_ENTRY_MSR_LOAD_COUNT),
-                   vmcs_read(EXI_REASON));
+                   vmcs_read(VM_ENTRY_MSR_LOAD_COUNT), vmcs_read(EXI_REASON));
         return 0;
     }
     return ret;
@@ -2990,9 +3110,10 @@ int vmm_arch_exit_handler(vcpu_t *vcpu)
         want = x86_tss_sel_of_cpu(cid);
         if (tr != want && !warned[cid]) {
             warned[cid] = 1;
-            KLOG_ERROR("[VMX] cpu%u: VM-exit 后 TR=0x%x 应为 0x%x —— VMCS 宿主区"
-                       "装回了别的核的 TSS，本核用户态陷阱会用错栈\n",
-                       cid, tr, want);
+            KLOG_ERROR(
+                "[VMX] cpu%u: VM-exit 后 TR=0x%x 应为 0x%x —— VMCS 宿主区"
+                "装回了别的核的 TSS，本核用户态陷阱会用错栈\n",
+                cid, tr, want);
         }
     }
 

@@ -19,18 +19,18 @@
 
 /* ── 内部条目 ───────────────────────────────────────────────────────────── */
 typedef struct {
-    uint64_t   paddr;       /* 物理地址（PMM 分配起始） */
-    uint32_t   page_count;  /* 分配的页数               */
-    uint32_t   ref_count;   /* fd/handle 引用计数       */
-    size_t     size;        /* 用户请求大小（字节）      */
-    bool       used;        /* 是否被占用               */
+    uint64_t paddr;      /* 物理地址（PMM 分配起始） */
+    uint32_t page_count; /* 分配的页数               */
+    uint32_t ref_count;  /* fd/handle 引用计数       */
+    size_t size;         /* 用户请求大小（字节）      */
+    bool used;           /* 是否被占用               */
 } ion_entry_t;
 
-static ion_entry_t  g_ion_table[ION_MAX_BUFS];
-static spinlock_t   g_ion_lock = SPINLOCK_INIT;
-static bool         g_ion_initialized = false;
+static ion_entry_t g_ion_table[ION_MAX_BUFS];
+static spinlock_t g_ion_lock = SPINLOCK_INIT;
+static bool g_ion_initialized = false;
 
-#define PAGE_SIZE_4K  4096U
+#define PAGE_SIZE_4K 4096U
 
 /* ── 初始化（懒初始化，第一次调用时触发） ─────────────────────────────── */
 static void ion_init_once(void)
@@ -87,23 +87,23 @@ int ion_alloc(size_t size, void **vaddr, uint64_t *paddr, ion_handle_t *handle)
         return -1;
     }
 
-    g_ion_table[slot].paddr      = pa;
+    g_ion_table[slot].paddr = pa;
     g_ion_table[slot].page_count = pages;
-    g_ion_table[slot].ref_count  = 1U;
-    g_ion_table[slot].size       = pages * PAGE_SIZE_4K;
-    g_ion_table[slot].used       = true;
+    g_ion_table[slot].ref_count = 1U;
+    g_ion_table[slot].size = pages * PAGE_SIZE_4K;
+    g_ion_table[slot].used = true;
     spin_unlock(&g_ion_lock);
 
     /* 清零缓冲区（DMA coherent 语义） */
     void *va = phys_to_virt(pa);
     memset(va, 0, pages * PAGE_SIZE_4K);
 
-    *vaddr  = va;
-    *paddr  = pa;
+    *vaddr = va;
+    *paddr = pa;
     *handle = (ion_handle_t)(slot + 1U);
 
-    KLOG_DEBUG("ion_alloc: size=%zu pages=%u pa=0x%llx handle=%u\n",
-               size, pages, (unsigned long long)pa, *handle);
+    KLOG_DEBUG("ion_alloc: size=%zu pages=%u pa=0x%llx handle=%u\n", size,
+               pages, (unsigned long long)pa, *handle);
     return 0;
 }
 
@@ -134,14 +134,14 @@ int ion_free(ion_handle_t handle)
         return 0;
     }
 
-    uint64_t pa    = g_ion_table[idx].paddr;
+    uint64_t pa = g_ion_table[idx].paddr;
     uint32_t pages = g_ion_table[idx].page_count;
     memset(&g_ion_table[idx], 0, sizeof(ion_entry_t));
     spin_unlock(&g_ion_lock);
 
     pmm_free_pages(g_pmm, pa, pages);
-    KLOG_DEBUG("ion_free: handle=%u pa=0x%llx pages=%u\n",
-               handle, (unsigned long long)pa, pages);
+    KLOG_DEBUG("ion_free: handle=%u pa=0x%llx pages=%u\n", handle,
+               (unsigned long long)pa, pages);
     return 0;
 }
 

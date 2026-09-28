@@ -26,8 +26,7 @@
  *     ...
  *     spin_unlock_irqrestore(&lock, flags);
  */
-typedef struct
-{
+typedef struct {
     volatile uint64_t lock;
 } spinlock_t;
 
@@ -35,37 +34,32 @@ typedef struct
 typedef spinlock_t spinlock_noirq_t;
 
 /* 初始化宏 */
-#define SPINLOCK_INIT           \
-    {                           \
-        .lock = 0               \
-    }
-#define SPINLOCK_NOIRQ_INIT  SPINLOCK_INIT
+#define SPINLOCK_INIT       { .lock = 0 }
+#define SPINLOCK_NOIRQ_INIT SPINLOCK_INIT
 
 /*
  * 通用初始化函数（内联）
  * 所有架构的实现相同
  */
-static inline void
-spinlock_init(spinlock_t *lock)
+static inline void spinlock_init(spinlock_t *lock)
 {
     lock->lock = 0;
 }
 
-static inline void
-spinlock_irq_init(spinlock_noirq_t *lock)
+static inline void spinlock_irq_init(spinlock_noirq_t *lock)
 {
     lock->lock = 0;
 }
 
 /* 根据架构选择对应的实现 */
 #if defined(ARCH_X86_64)
-    #include "x86_64/spin_lock_impl.h"
+#include "x86_64/spin_lock_impl.h"
 #elif defined(ARCH_AARCH64)
-    #include "aarch64/spin_lock_impl.h"
+#include "aarch64/spin_lock_impl.h"
 #elif defined(ARCH_RISCV64)
-    #include "riscv64/spin_lock_impl.h"
+#include "riscv64/spin_lock_impl.h"
 #else
-    #error "Unsupported architecture"
+#error "Unsupported architecture"
 #endif
 
 /*
@@ -91,4 +85,4 @@ spinlock_irq_init(spinlock_noirq_t *lock)
  *   }
  */
 
-#endif  // SPINLOCK_H
+#endif // SPINLOCK_H

@@ -15,25 +15,25 @@ struct task;
 typedef struct task task_t;
 
 /* ── epoll_event flags ──────────────────────────────────────────── */
-#define EPOLLIN      0x001
-#define EPOLLOUT     0x004
-#define EPOLLERR     0x008
-#define EPOLLHUP     0x010
-#define EPOLLRDHUP   0x2000
-#define EPOLLET      (1U << 31)
+#define EPOLLIN    0x001
+#define EPOLLOUT   0x004
+#define EPOLLERR   0x008
+#define EPOLLHUP   0x010
+#define EPOLLRDHUP 0x2000
+#define EPOLLET    (1U << 31)
 
 /* ── epoll_ctl operations ───────────────────────────────────────── */
-#define EPOLL_CTL_ADD  1
-#define EPOLL_CTL_DEL  2
-#define EPOLL_CTL_MOD  3
+#define EPOLL_CTL_ADD 1
+#define EPOLL_CTL_DEL 2
+#define EPOLL_CTL_MOD 3
 
 /* ── epoll_create1 flags ────────────────────────────────────────── */
-#define EPOLL_CLOEXEC  0x80000
+#define EPOLL_CLOEXEC 0x80000
 
 /* ── 容量限制 ───────────────────────────────────────────────────── */
-#define EPOLL_MAX_INSTANCES  16
-#define EPOLL_MAX_ITEMS      64
-#define FD_WAIT_MAX          4
+#define EPOLL_MAX_INSTANCES 16
+#define EPOLL_MAX_ITEMS     64
+#define FD_WAIT_MAX         4
 
 /* ── fd_waitqueue：挂在每个 fd_obj_t 上的等待链 ─────────────────── */
 
@@ -46,28 +46,28 @@ typedef struct {
 
 typedef struct {
     fd_waiter_t waiters[FD_WAIT_MAX];
-    int         waiter_count;
+    int waiter_count;
 } fd_waitqueue_t;
 
 /* ── epoll 监听项 ───────────────────────────────────────────────── */
 
 typedef struct {
-    int      fd;
-    int      pool_idx;
+    int fd;
+    int pool_idx;
     uint32_t events;
     uint64_t data;
-    bool     ready;
+    bool ready;
 } epoll_item_t;
 
 /* ── epoll 实例 ─────────────────────────────────────────────────── */
 
 typedef struct epoll_instance {
-    bool          in_use;
-    uint32_t      owner_pid;
-    epoll_item_t  items[EPOLL_MAX_ITEMS];
-    int           item_count;
-    int           ready_count;
-    task_t       *blocked_task;
+    bool in_use;
+    uint32_t owner_pid;
+    epoll_item_t items[EPOLL_MAX_ITEMS];
+    int item_count;
+    int ready_count;
+    task_t *blocked_task;
 } epoll_instance_t;
 
 /* ── 用户空间 epoll_event 布局（与 Linux ABI 兼容）─────────────── */
@@ -95,8 +95,8 @@ uint32_t fd_poll(task_t *task, int fd);
 
 /* syscall handlers */
 void epoll_create1_handler(uint64_t regs[6], task_t *current);
-void epoll_ctl_handler    (uint64_t regs[6], task_t *current);
-void epoll_pwait_handler  (uint64_t regs[6], task_t *current);
+void epoll_ctl_handler(uint64_t regs[6], task_t *current);
+void epoll_pwait_handler(uint64_t regs[6], task_t *current);
 
 /* close(epfd) 时调用 */
 void epoll_destroy(int ep_idx);

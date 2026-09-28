@@ -1,0 +1,156 @@
+# ═══════════════════════════════════════════════════════════════════════
+# Avatar OS —— C / H 代码格式化配置
+#
+# 用法：
+#   make format              # 格式化全项目（推荐；见 Makefile 的 format 目标）
+#   make format-check        # 只检查不改写，有差异则非零退出（CI 用）
+#   clang-format -i <files>  # 单独格式化若干文件
+#   git clang-format HEAD~1  # 只格式化最近一次提交碰过的行
+#
+# 这套配置是**从现有代码里反推**出来的，不是另立一套风格。统计依据
+# （约 300 个文件、5.8 万行）：
+#
+#   函数定义      Allman（`{` 独占一行）  1591 处  vs 跟在行尾 172 处
+#   控制语句      K&R  （`{` 跟在行尾）   1698 处  vs 独占一行  40 处
+#   struct/enum   K&R                     148 处  vs 独占一行   5 处
+#   else          K&R                     207 处  vs 独占一行   0 处
+#   指针          靠右（`char *p`）      1135 处  vs 靠左         0 处
+#   缩进          4 空格，无 Tab（仅 lib/vsnprintf.c 是外来文件）
+#   代码行 >80 列 仅 2%（且多半是 KLOG 的长格式串）
+#
+# 所以「函数 Allman + 控制语句 K&R」这种混搭是刻意的，别"顺手统一"成
+# 纯 Allman 或纯 K&R —— 那会凭空产生几千行无意义 diff。
+#
+# ⚠️ 改动本文件（或跑 `make format`）之后必须 `make clean` 再全量重编：
+#    构建不跟踪头文件 mtime，格式化 .h 会让 .o 与配置脱节，
+#    症状是"幽灵 bug"（见 CLAUDE.md 与 docs/bugfix/X86_64_SMP_SYSCALL_STACK_BUGFIX.md）。
+# ═══════════════════════════════════════════════════════════════════════
+
+Language: Cpp
+BasedOnStyle: LLVM
+
+# ─── 缩进 ────────────────────────────────────────────────────────────
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+ContinuationIndentWidth: 4
+IndentCaseLabels: false          # case 与 switch 平级
+IndentCaseBlocks: false          # case 内部再缩进一级
+IndentPPDirectives: None         # 预处理指令一律顶格
+IndentWrappedFunctionNames: false
+NamespaceIndentation: None
+LambdaBodyIndentation: OuterScope
+# 空行策略：块首不留空行、连续空行压成一行
+KeepEmptyLinesAtTheStartOfBlocks: false
+MaxEmptyLinesToKeep: 1
+EmptyLineBeforeAccessModifier: LogicalBlock
+
+# ─── 花括号（本项目的性格就在这一段）───────────────────────────────
+BreakBeforeBraces: Custom
+BraceWrapping:
+  AfterFunction: true            # 函数定义：{ 独占一行（Allman）
+  AfterControlStatement: Never   # if/for/while/switch：{ 跟在行尾（K&R）
+  AfterStruct: false
+  AfterEnum: false
+  AfterUnion: false
+  AfterClass: false
+  AfterNamespace: false
+  AfterExternBlock: false
+  AfterObjCDeclaration: false
+  BeforeElse: false              # } else {
+  BeforeCatch: false
+  BeforeWhile: false             # do { ... } while (...);
+  SplitEmptyFunction: false
+  SplitEmptyRecord: false
+  SplitEmptyNamespace: false
+
+# ─── 列宽与换行 ──────────────────────────────────────────────────────
+ColumnLimit: 80
+# 中文注释**绝不能**交给 clang-format 重排：它按码点算宽度，而终端里一个
+# 汉字占两列，重排出来的注释会参差不齐，还会打断 `── 分隔线 ──` 这类对齐。
+ReflowComments: false
+# 长日志格式串保持完整，否则 KLOG 的 fmt 会被拆成多段，grep 日志时很难受
+BreakStringLiterals: false
+BinPackArguments: true
+BinPackParameters: true
+AllowAllArgumentsOnNextLine: true
+AllowAllParametersOfDeclarationOnNextLine: true
+
+# ─── 对齐 ────────────────────────────────────────────────────────────
+AlignAfterOpenBracket: Align     # 续行参数对齐到左括号
+# 宏续行反斜杠紧跟内容。Left/Right 都会把同组反斜杠对齐到某一列，从而往短行尾部
+# 塞一圈空格；现有代码 210 处是"紧跟内容"、77 处是对齐，取多数，且无行尾空白。
+AlignEscapedNewlines: DontAlign
+AlignOperands: Align
+AlignTrailingComments: true      # 行尾注释成组对齐
+# 宏表对齐**要开**：本项目大量使用「寄存器偏移表」写法
+#     #define VIRTIO_MMIO_MAGIC_VALUE   0x000U
+#     #define VIRTIO_MMIO_VERSION       0x004U
+# 关掉它反而会把这些表拆散（实测多出 400 行 diff）。
+AlignConsecutiveMacros: true
+# 这三项保持关闭：开启会把每一处连续赋值/声明都拉齐，diff 上万行，
+# 且以后插入一行就会让整段重新对齐。
+AlignConsecutiveAssignments: false
+AlignConsecutiveDeclarations: false
+AlignConsecutiveBitFields: false
+AlignArrayOfStructures: None
+
+# ─── 短结构 ──────────────────────────────────────────────────────────
+# 不合并函数体：全项目 1591 个函数定义里只有 28 个是单行的，主流是多行。
+# 让格式化器替作者决定"这个函数体够短、可以压成一行"不是它该管的事 ——
+# 压行会把控制流藏起来。（实测 All 与 None 的 diff 量只差 0.3%，不值得。）
+AllowShortFunctionsOnASingleLine: None
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AllowShortBlocksOnASingleLine: Empty
+AllowShortCaseLabelsOnASingleLine: false
+AllowShortEnumsOnASingleLine: false
+AllowShortNamespacesOnASingleLine: false
+
+# ─── 空格 ────────────────────────────────────────────────────────────
+SpaceBeforeParens: ControlStatements
+SpaceAfterCStyleCast: false
+SpaceAfterLogicalNot: false
+SpaceBeforeSquareBrackets: false
+SpaceInEmptyBlock: false
+SpaceBeforeRangeBasedForLoopColon: true
+Cpp11BracedListStyle: false
+PointerAlignment: Right
+DerivePointerAlignment: false
+ReferenceAlignment: Right
+
+# ─── include ─────────────────────────────────────────────────────────
+# **不要**排序：#include 的顺序在本项目里有语义。架构头用引号 include 时会
+# 「就近命中」同目录下的架构版（见 CLAUDE.md），改动顺序会踩坑。
+SortIncludes: Never
+IncludeBlocks: Preserve
+
+# ─── 预处理宏 ────────────────────────────────────────────────────────
+# 告诉 clang-format 这些是「语句」，别当函数调用来折行
+StatementMacros:
+  - static_assert
+  - KLOG_ASSERT
+  - BUILD_BUG_ON
+NamespaceMacros: []
+AttributeMacros:
+  - __packed
+  - __aligned
+  - __attribute__
+  - __section
+  - __used
+  - __unused
+  - __noreturn
+  - __always_inline
+  - __weak
+  - __maybe_unused
+
+# ─── 其它 ────────────────────────────────────────────────────────────
+Standard: c++17
+PenaltyReturnTypeOnItsOwnLine: 60
+PenaltyBreakAssignment: 2
+PenaltyBreakBeforeFirstCallParameter: 19
+PenaltyBreakComment: 300
+PenaltyBreakFirstLessLess: 120
+PenaltyBreakString: 1000
+PenaltyBreakTemplateDeclaration: 10
+PenaltyExcessCharacter: 1000000

@@ -14,7 +14,7 @@ void x86_write_msr(uint32_t msr, uint64_t value)
 {
     uint32_t lo = (uint32_t)(value & 0xFFFFFFFFU);
     uint32_t hi = (uint32_t)(value >> 32);
-    __asm__ volatile("wrmsr" :: "c"(msr), "a"(lo), "d"(hi));
+    __asm__ volatile("wrmsr" ::"c"(msr), "a"(lo), "d"(hi));
 }
 
 void x86_write_fs_base(uint64_t fs_base)
@@ -46,8 +46,8 @@ void arch_prctl_handler(uint64_t regs[6], task_t *current)
 
 void getrandom_handler(uint64_t regs[6])
 {
-    char     *buf = (char *)regs[0];
-    uint64_t  len = regs[1];
+    char *buf = (char *)regs[0];
+    uint64_t len = regs[1];
     if (buf) {
         /* LCG 伪随机，以启动时间戳为种子。不是密码学安全的，
          * 但每次调用输出不同序列，满足 musl stack canary 等基本需求。 */
@@ -55,8 +55,8 @@ void getrandom_handler(uint64_t regs[6])
         if (s_prng_state == 0)
             s_prng_state = kernel_get_ns() ^ 0x9e3779b97f4a7c15ULL;
         for (uint64_t i = 0; i < len; i++) {
-            s_prng_state = s_prng_state * 6364136223846793005ULL
-                         + 1442695040888963407ULL;
+            s_prng_state =
+                s_prng_state * 6364136223846793005ULL + 1442695040888963407ULL;
             buf[i] = (char)(s_prng_state >> 56);
         }
     }

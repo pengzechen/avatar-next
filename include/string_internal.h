@@ -44,12 +44,11 @@
  * （AArch64 的 memcpy_neon 没有这个问题：ld1/st1 {v0.16b} 按字节访问，只需要
  * 对齐目的地址。）
  */
-static inline void *
-memcpy_generic(void *dest, const void *src, size_t n)
+static inline void *memcpy_generic(void *dest, const void *src, size_t n)
 {
-    size_t         i = 0;
-    uint8_t       *d = (uint8_t *) dest;
-    const uint8_t *s = (const uint8_t *) src;
+    size_t i = 0;
+    uint8_t *d = (uint8_t *)dest;
+    const uint8_t *s = (const uint8_t *)src;
 
     if (n < sizeof(uint64_t)) {
         while (i < n) {
@@ -60,15 +59,16 @@ memcpy_generic(void *dest, const void *src, size_t n)
     }
 
     /* 逐字节拷贝直到两边都 2 字节对齐 */
-    while (i < n && ((uintptr_t) (d + i) % 2 != 0 || (uintptr_t) (s + i) % 2 != 0)) {
+    while (i < n &&
+           ((uintptr_t)(d + i) % 2 != 0 || (uintptr_t)(s + i) % 2 != 0)) {
         d[i] = s[i];
         i++;
     }
 
     /* 8 字节拷贝 */
     while ((n - i) >= sizeof(uint64_t) &&
-           ((uintptr_t) (d + i) % sizeof(uint64_t) == 0) &&
-           ((uintptr_t) (s + i) % sizeof(uint64_t) == 0)) {
+           ((uintptr_t)(d + i) % sizeof(uint64_t) == 0) &&
+           ((uintptr_t)(s + i) % sizeof(uint64_t) == 0)) {
         uint64_t word;
         __builtin_memcpy(&word, s + i, sizeof(word));
         __builtin_memcpy(d + i, &word, sizeof(word));
@@ -77,8 +77,8 @@ memcpy_generic(void *dest, const void *src, size_t n)
 
     /* 4 字节拷贝 */
     while ((n - i) >= sizeof(uint32_t) &&
-           ((uintptr_t) (d + i) % sizeof(uint32_t) == 0) &&
-           ((uintptr_t) (s + i) % sizeof(uint32_t) == 0)) {
+           ((uintptr_t)(d + i) % sizeof(uint32_t) == 0) &&
+           ((uintptr_t)(s + i) % sizeof(uint32_t) == 0)) {
         uint32_t word;
         __builtin_memcpy(&word, s + i, sizeof(word));
         __builtin_memcpy(d + i, &word, sizeof(word));
@@ -87,8 +87,8 @@ memcpy_generic(void *dest, const void *src, size_t n)
 
     /* 2 字节拷贝 */
     while ((n - i) >= sizeof(uint16_t) &&
-           ((uintptr_t) (d + i) % sizeof(uint16_t) == 0) &&
-           ((uintptr_t) (s + i) % sizeof(uint16_t) == 0)) {
+           ((uintptr_t)(d + i) % sizeof(uint16_t) == 0) &&
+           ((uintptr_t)(s + i) % sizeof(uint16_t) == 0)) {
         uint16_t word;
         __builtin_memcpy(&word, s + i, sizeof(word));
         __builtin_memcpy(d + i, &word, sizeof(word));
@@ -107,12 +107,11 @@ memcpy_generic(void *dest, const void *src, size_t n)
 /**
  * memset_generic - 通用 memset（按字宽填充，同样要求目的地址对齐后才加宽）
  */
-static inline void *
-memset_generic(void *s, int c, size_t n)
+static inline void *memset_generic(void *s, int c, size_t n)
 {
-    size_t   i = 0;
-    uint8_t *d = (uint8_t *) s;
-    uint8_t  b = (uint8_t) c;
+    size_t i = 0;
+    uint8_t *d = (uint8_t *)s;
+    uint8_t b = (uint8_t)c;
 
     if (n < sizeof(uint64_t)) {
         while (i < n)
@@ -121,27 +120,27 @@ memset_generic(void *s, int c, size_t n)
     }
 
     /* 先把目的地址推到 2 字节边界 */
-    while (i < n && ((uintptr_t) (d + i) % 2 != 0))
+    while (i < n && ((uintptr_t)(d + i) % 2 != 0))
         d[i++] = b;
 
     /* 8 字节填充（源是常量，不存在"两边对齐"问题，只需目的对齐） */
     uint64_t word64 = 0x0101010101010101ULL * b;
     while ((n - i) >= sizeof(uint64_t) &&
-           ((uintptr_t) (d + i) % sizeof(uint64_t) == 0)) {
+           ((uintptr_t)(d + i) % sizeof(uint64_t) == 0)) {
         __builtin_memcpy(d + i, &word64, sizeof(word64));
         i += sizeof(uint64_t);
     }
 
     uint32_t word32 = 0x01010101U * b;
     while ((n - i) >= sizeof(uint32_t) &&
-           ((uintptr_t) (d + i) % sizeof(uint32_t) == 0)) {
+           ((uintptr_t)(d + i) % sizeof(uint32_t) == 0)) {
         __builtin_memcpy(d + i, &word32, sizeof(word32));
         i += sizeof(uint32_t);
     }
 
-    uint16_t word16 = (uint16_t) (0x0101U * b);
+    uint16_t word16 = (uint16_t)(0x0101U * b);
     while ((n - i) >= sizeof(uint16_t) &&
-           ((uintptr_t) (d + i) % sizeof(uint16_t) == 0)) {
+           ((uintptr_t)(d + i) % sizeof(uint16_t) == 0)) {
         __builtin_memcpy(d + i, &word16, sizeof(word16));
         i += sizeof(uint16_t);
     }
@@ -155,11 +154,10 @@ memset_generic(void *s, int c, size_t n)
 /**
  * memmove_generic - 通用 memmove（重叠时反向拷贝）
  */
-static inline void *
-memmove_generic(void *dest, const void *src, size_t n)
+static inline void *memmove_generic(void *dest, const void *src, size_t n)
 {
-    uint8_t       *d = (uint8_t *) dest;
-    const uint8_t *s = (const uint8_t *) src;
+    uint8_t *d = (uint8_t *)dest;
+    const uint8_t *s = (const uint8_t *)src;
 
     if (d == s || n == 0)
         return dest;
@@ -178,24 +176,22 @@ memmove_generic(void *dest, const void *src, size_t n)
 /* ── 架构实现 ──────────────────────────────────────────────────── */
 
 #if ARCH_X86_64
-    #include "x86_64/string_impl.h"
+#include "x86_64/string_impl.h"
 #elif ARCH_AARCH64
-    #include "aarch64/string_impl.h"
+#include "aarch64/string_impl.h"
 #elif ARCH_RISCV64
-    #include "riscv64/string_impl.h"
+#include "riscv64/string_impl.h"
 #else
-    /* 未知架构：直接用通用实现 */
-    static inline void *
-    memcpy_arch(void *dest, const void *src, size_t n)
-    {
-        return memcpy_generic(dest, src, n);
-    }
+/* 未知架构：直接用通用实现 */
+static inline void *memcpy_arch(void *dest, const void *src, size_t n)
+{
+    return memcpy_generic(dest, src, n);
+}
 
-    static inline void *
-    memset_arch(void *s, int c, size_t n)
-    {
-        return memset_generic(s, c, n);
-    }
+static inline void *memset_arch(void *s, int c, size_t n)
+{
+    return memset_generic(s, c, n);
+}
 #endif
 
 #endif /* __STRING_INTERNAL_H */

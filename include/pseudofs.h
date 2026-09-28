@@ -33,15 +33,15 @@
 
 /* ── _IOC 宏（freestanding 环境无 glibc） ────────────────────── */
 #ifndef _IOC
-#define _IOC(dir, t, nr, sz)  \
-    (((uint32_t)(dir) << 30) | ((uint32_t)(t) << 8) | \
-     (uint32_t)(nr)          | ((uint32_t)(sz) << 16))
-#define _IOC_WRITE  1U
-#define _IOC_READ   2U
-#define _IO(t, nr)       _IOC(0,                       (t), (nr), 0)
-#define _IOW(t, nr, T)   _IOC(_IOC_WRITE,            (t), (nr), sizeof(T))
-#define _IOR(t, nr, T)   _IOC(_IOC_READ,              (t), (nr), sizeof(T))
-#define _IOWR(t, nr, T)  _IOC(_IOC_READ|_IOC_WRITE,   (t), (nr), sizeof(T))
+#define _IOC(dir, t, nr, sz) \
+    (((uint32_t)(dir) << 30) | ((uint32_t)(t) << 8) | (uint32_t)(nr) | \
+     ((uint32_t)(sz) << 16))
+#define _IOC_WRITE      1U
+#define _IOC_READ       2U
+#define _IO(t, nr)      _IOC(0, (t), (nr), 0)
+#define _IOW(t, nr, T)  _IOC(_IOC_WRITE, (t), (nr), sizeof(T))
+#define _IOR(t, nr, T)  _IOC(_IOC_READ, (t), (nr), sizeof(T))
+#define _IOWR(t, nr, T) _IOC(_IOC_READ | _IOC_WRITE, (t), (nr), sizeof(T))
 #endif
 
 /* ── /dev/vmm ioctl（guest 控制设备）────────────────────────────
@@ -57,73 +57,73 @@
  * 会被当成输入推进 guest，guest 把这个词回显出来（实测踩过）。
  * 全用 ioctl 之后，write 永远只是数据，不存在二义性。
  */
-#define VMM_IOC_GET_STATUS  _IOR('V', 0, uint32_t) /* 出参：1=guest 正在跑 */
-#define VMM_IOC_DETACH      _IO ('V', 1)           /* 本次 close 不停 guest */
-#define VMM_IOC_STOP        _IO ('V', 2)           /* 停止 guest */
-#define VMM_IOC_BOOT        _IO ('V', 3)           /* 启动 guest；已在跑则接入 */
+#define VMM_IOC_GET_STATUS _IOR('V', 0, uint32_t) /* 出参：1=guest 正在跑 */
+#define VMM_IOC_DETACH     _IO('V', 1)            /* 本次 close 不停 guest */
+#define VMM_IOC_STOP       _IO('V', 2)            /* 停止 guest */
+#define VMM_IOC_BOOT       _IO('V', 3)            /* 启动 guest；已在跑则接入 */
 /*
  * VMM_IOC_BOOT_EX — 强制**新建**一个 VM（多 VM 的入口）
  * 入参/出参：uint32_t *vmid。入参 0 = 自动分配；出参回填实际分到的 vmid。
  * 与 BOOT 的区别：BOOT 见到有 VM 在跑就接入它，本号总是新建一个。
  */
-#define VMM_IOC_BOOT_EX     _IOWR('V', 4, uint32_t)
+#define VMM_IOC_BOOT_EX _IOWR('V', 4, uint32_t)
 
 /* ── /dev/ion ioctl 结构体 & 请求码 ──────────────────────────── */
 struct ion_alloc_req {
     uint64_t size;         /* [in/out] requested/actual allocation size */
     uint32_t heap_id_mask; /* [in] heap mask, accepted for ABI compat   */
     uint32_t flags;        /* [in] ION flags, accepted for ABI compat   */
-    int32_t  fd;           /* [out] dmabuf-like fd                      */
+    int32_t fd;            /* [out] dmabuf-like fd                      */
     uint32_t unused;
-    uint64_t paddr;        /* [out] physical address                    */
+    uint64_t paddr; /* [out] physical address                    */
 };
 struct ion_get_req {
-    uint32_t handle;    /* [in]  句柄                           */
+    uint32_t handle; /* [in]  句柄                           */
     uint32_t _pad;
-    uint64_t paddr;     /* [out] 物理地址                       */
-    uint64_t vaddr;     /* [out] 内核虚拟地址                   */
+    uint64_t paddr; /* [out] 物理地址                       */
+    uint64_t vaddr; /* [out] 内核虚拟地址                   */
 };
 struct ion_size_req {
-    uint32_t handle;    /* [in]  句柄                           */
+    uint32_t handle; /* [in]  句柄                           */
     uint32_t _pad;
-    uint64_t size;      /* [out] 分配大小（字节）               */
+    uint64_t size; /* [out] 分配大小（字节）               */
 };
 
 /* CVITEK/SOPHGO runtime 64-byte ION allocation ABI (ioctl 0xc0404900).
  * This extends ion_alloc_req with a 32-byte buffer name. */
 struct ion_cvi_alloc_data {
-    uint64_t size;      /* [in/out] requested/actual allocation size */
+    uint64_t size; /* [in/out] requested/actual allocation size */
     uint32_t heap_id_mask;
     uint32_t flags;
-    int32_t  fd;        /* [out] ion handle, used as dmabuf fd       */
+    int32_t fd; /* [out] ion handle, used as dmabuf fd       */
     uint32_t unused;
-    uint64_t paddr;     /* [out] physical address                    */
-    char     heap_name[32];
+    uint64_t paddr; /* [out] physical address                    */
+    char heap_name[32];
 };
 
-#define ION_IOC_ALLOC   _IOWR('I', 0, struct ion_alloc_req)
-#define ION_IOC_FREE    _IOW ('I', 1, uint32_t)
-#define ION_IOC_GET     _IOWR('I', 2, struct ion_get_req)
-#define ION_IOC_SIZE    _IOWR('I', 3, struct ion_size_req)
+#define ION_IOC_ALLOC     _IOWR('I', 0, struct ion_alloc_req)
+#define ION_IOC_FREE      _IOW('I', 1, uint32_t)
+#define ION_IOC_GET       _IOWR('I', 2, struct ion_get_req)
+#define ION_IOC_SIZE      _IOWR('I', 3, struct ion_size_req)
 #define ION_IOC_CVI_ALLOC _IOWR('I', 0, struct ion_cvi_alloc_data)
 
 /* Android ION ABI 标准命令（nr=5 IMPORT, nr=8 HEAP_QUERY） */
 struct ion_fd_data {
-    int32_t  fd;          /* [in]  ion buffer fd（= ion handle）  */
-    uint32_t handle;      /* [out] ion 句柄                       */
+    int32_t fd;      /* [in]  ion buffer fd（= ion handle）  */
+    uint32_t handle; /* [out] ion 句柄                       */
 };
 struct ion_heap_data {
-    char     name[32];    /* 堆名称                               */
-    uint32_t type;        /* 0=System 1=DmaCoherent 2=Carveout    */
-    uint32_t heap_id;     /* 堆 ID                                */
+    char name[32];    /* 堆名称                               */
+    uint32_t type;    /* 0=System 1=DmaCoherent 2=Carveout    */
+    uint32_t heap_id; /* 堆 ID                                */
     uint32_t reserved0;
     uint32_t reserved1;
     uint32_t reserved2;
 };
 struct ion_heap_query {
-    uint32_t cnt;         /* [in/out] 堆数量                      */
+    uint32_t cnt; /* [in/out] 堆数量                      */
     uint32_t reserved0;
-    uint64_t heaps;       /* [in]  ion_heap_data 数组用户空间指针 */
+    uint64_t heaps; /* [in]  ion_heap_data 数组用户空间指针 */
     uint32_t reserved1;
     uint32_t reserved2;
 };
@@ -133,37 +133,37 @@ struct ion_heap_query {
 
 /* ── /dev/cvi-tpu0 ioctl（SOPHGO CVITPU SDK ABI） ───────────── */
 struct cvitpu_submit_dma_arg {
-    int32_t  fd;        /* [in]  Ion buffer fd（= ion handle） */
-    uint32_t seq_no;    /* [in]  序列号（同步驱动中忽略）      */
+    int32_t fd;      /* [in]  Ion buffer fd（= ion handle） */
+    uint32_t seq_no; /* [in]  序列号（同步驱动中忽略）      */
 };
 struct cvitpu_wait_dma_arg {
-    uint32_t seq_no;    /* [in]  序列号                        */
-    int32_t  ret;       /* [out] 结果（同步时恒为 0）          */
+    uint32_t seq_no; /* [in]  序列号                        */
+    int32_t ret;     /* [out] 结果（同步时恒为 0）          */
 };
 struct cvitpu_cache_op_arg {
-    uint64_t paddr;     /* 物理地址                            */
-    uint64_t size;      /* 字节数                              */
+    uint64_t paddr; /* 物理地址                            */
+    uint64_t size;  /* 字节数                              */
 };
 
 struct cvitpu_legacy_cache_op_arg {
-    uint64_t paddr;     /* 64-byte aligned physical address     */
-    uint64_t size;      /* 64-byte aligned length               */
-    int32_t  fd;        /* Ion buffer fd                        */
+    uint64_t paddr; /* 64-byte aligned physical address     */
+    uint64_t size;  /* 64-byte aligned length               */
+    int32_t fd;     /* Ion buffer fd                        */
 };
 
-#define CVITPU_SUBMIT_DMABUF   _IOW ('T',  1, struct cvitpu_submit_dma_arg)
-#define CVITPU_WAIT_DMABUF     _IOWR('T',  2, struct cvitpu_wait_dma_arg)
-#define CVITPU_LOAD_TEE        _IOW ('T',  3, uint64_t)
-#define CVITPU_SUBMIT_TEE      _IOW ('T',  4, uint64_t)
-#define CVITPU_UNLOAD_TEE      _IOW ('T',  5, uint64_t)
-#define CVITPU_PIO_MODE        _IO  ('T',  6)
-#define CVITPU_DMABUF_FLUSH    _IOW ('T',  7, struct cvitpu_cache_op_arg)
-#define CVITPU_DMABUF_INVLD    _IOW ('T',  8, struct cvitpu_cache_op_arg)
-#define CVITPU_DMABUF_FLUSH_FD _IOW ('T',  9, int32_t)
-#define CVITPU_DMABUF_INVLD_FD _IOW ('T', 10, int32_t)
+#define CVITPU_SUBMIT_DMABUF   _IOW('T', 1, struct cvitpu_submit_dma_arg)
+#define CVITPU_WAIT_DMABUF     _IOWR('T', 2, struct cvitpu_wait_dma_arg)
+#define CVITPU_LOAD_TEE        _IOW('T', 3, uint64_t)
+#define CVITPU_SUBMIT_TEE      _IOW('T', 4, uint64_t)
+#define CVITPU_UNLOAD_TEE      _IOW('T', 5, uint64_t)
+#define CVITPU_PIO_MODE        _IO('T', 6)
+#define CVITPU_DMABUF_FLUSH    _IOW('T', 7, struct cvitpu_cache_op_arg)
+#define CVITPU_DMABUF_INVLD    _IOW('T', 8, struct cvitpu_cache_op_arg)
+#define CVITPU_DMABUF_FLUSH_FD _IOW('T', 9, int32_t)
+#define CVITPU_DMABUF_INVLD_FD _IOW('T', 10, int32_t)
 
 /* CVITEK runtime on SG2002 also uses legacy 'p' requests. */
-#define CVITPU_LEGACY_SUBMIT_DMABUF   _IOW ('p', 1, uint64_t)
+#define CVITPU_LEGACY_SUBMIT_DMABUF   _IOW('p', 1, uint64_t)
 #define CVITPU_LEGACY_DMABUF_FLUSH_FD _IOW('p', 2, uint64_t)
 #define CVITPU_LEGACY_DMABUF_INVLD_FD _IOW('p', 3, uint64_t)
 #define CVITPU_LEGACY_DMABUF_FLUSH    _IOW('p', 4, uint64_t)

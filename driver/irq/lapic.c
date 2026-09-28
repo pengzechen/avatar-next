@@ -13,14 +13,14 @@
 #include "lapic.h"
 #include "x86_64/io.h"
 #include "klog.h"
-#include "../timer/timer.h"  /* TIMER_FREQUENCY_HZ = g_timer_cfg_freq_hz */
+#include "../timer/timer.h" /* TIMER_FREQUENCY_HZ = g_timer_cfg_freq_hz */
 
 /* ── LAPIC 虚拟基址 ─────────────────────────────────────────────
  * boot.S 建立了 identity + high-half 两份映射（1GB huge page），
  * 物理 0xFEE00000 对应虚拟 PHYS_OFFSET + 0xFEE00000。
  */
-#define PHYS_OFFSET  0xffff800000000000UL
-#define LAPIC_VIRT   (PHYS_OFFSET + LAPIC_BASE_PHYS)
+#define PHYS_OFFSET 0xffff800000000000UL
+#define LAPIC_VIRT  (PHYS_OFFSET + LAPIC_BASE_PHYS)
 
 /* ── 寄存器访问 ──────────────────────────────────────────────── */
 
@@ -58,15 +58,15 @@ static inline uint64_t _lapic_rdtsc(void)
 }
 
 /* PIT 输入时钟 1.193182 MHz；11932 count ≈ 10ms */
-#define PIT_INPUT_HZ     1193182ULL
-#define PIT_CAL_TICKS    11932u
+#define PIT_INPUT_HZ  1193182ULL
+#define PIT_CAL_TICKS 11932u
 
 /*
  * 低于此值的 TSC 频率一律视为标定失败，不再采用。
  * 正是缺少这道校验，3 MHz 这种明显错误的值才会一路传到
  * CLOCK_MONOTONIC，让整个系统时钟快约 1000 倍。
  */
-#define TSC_MIN_PLAUSIBLE_HZ  50000000ULL   /* 50 MHz */
+#define TSC_MIN_PLAUSIBLE_HZ 50000000ULL /* 50 MHz */
 
 /*
  * pit_start_oneshot - 让 channel 2 以 mode 0 从 0xFFFF 开始倒计数
@@ -116,7 +116,7 @@ static uint32_t pit_latch_read(void)
  * 失败返回 false（PIT 不存在 / 不计数 / 结果不合理），调用者退化为
  * 粗粒度时钟而不是采用一个错的值。
  */
-#define PIT_WAIT_TSC_TICKS  2000000ULL   /* 约为毫秒量级，具体取决于 TSC 频率 */
+#define PIT_WAIT_TSC_TICKS 2000000ULL /* 约为毫秒量级，具体取决于 TSC 频率 */
 
 static bool pit_poll_tsc_freq(uint64_t *out_hz)
 {
@@ -135,7 +135,7 @@ static bool pit_poll_tsc_freq(uint64_t *out_hz)
 
     uint32_t elapsed = 0xFFFFu - now;
     if (elapsed < 200u)
-        return false;              /* 走得太少，量化误差会很大 */
+        return false; /* 走得太少，量化误差会很大 */
 
     uint64_t hz = PIT_WAIT_TSC_TICKS * PIT_INPUT_HZ / (uint64_t)elapsed;
     if (hz < TSC_MIN_PLAUSIBLE_HZ || hz > 20000000000ULL) {
@@ -145,8 +145,8 @@ static bool pit_poll_tsc_freq(uint64_t *out_hz)
         return false;
     }
 
-    KLOG_TIMER("TSC freq: PIT counter %u counts over %llu tsc ticks\n",
-               elapsed, (unsigned long long)PIT_WAIT_TSC_TICKS);
+    KLOG_TIMER("TSC freq: PIT counter %u counts over %llu tsc ticks\n", elapsed,
+               (unsigned long long)PIT_WAIT_TSC_TICKS);
     *out_hz = hz;
     return true;
 }
@@ -186,16 +186,15 @@ static bool pit_wait_10ms(void)
  *
  * 低于 TSC_MIN_PLAUSIBLE_HZ 的结果一律视为标定失败，不再采用。
  */
-static inline void
-_lapic_cpuid(uint32_t leaf, uint32_t *a, uint32_t *b, uint32_t *c, uint32_t *d)
+static inline void _lapic_cpuid(uint32_t leaf, uint32_t *a, uint32_t *b,
+                                uint32_t *c, uint32_t *d)
 {
     __asm__ volatile("cpuid"
                      : "=a"(*a), "=b"(*b), "=c"(*c), "=d"(*d)
                      : "a"(leaf));
 }
 
-static bool
-tsc_freq_from_cpuid(uint64_t *out_hz)
+static bool tsc_freq_from_cpuid(uint64_t *out_hz)
 {
     uint32_t a, b, c, d, max_leaf;
 
@@ -268,7 +267,8 @@ void lapic_send_init(uint32_t apic_id)
 {
     lapic_wait_icr_idle();
     lapic_write(LAPIC_REG_ICR_HIGH, apic_id << 24);
-    lapic_write(LAPIC_REG_ICR_LOW, 0x00004500u); /* INIT, level assert, physical */
+    lapic_write(LAPIC_REG_ICR_LOW,
+                0x00004500u); /* INIT, level assert, physical */
     lapic_wait_icr_idle();
 }
 
@@ -315,7 +315,8 @@ void lapic_timer_init(uint8_t vector)
                   "monotonic clock (CLOCK_MONOTONIC resolution = 1 tick)\n");
 
     /* ── 校准：测量 10ms 内 LAPIC 计数器减少了多少 ── */
-    lapic_write(LAPIC_REG_TIMER_ICR, 0xFFFFFFFFu);  /* 设置最大初始值开始倒计数 */
+    lapic_write(LAPIC_REG_TIMER_ICR,
+                0xFFFFFFFFu); /* 设置最大初始值开始倒计数 */
 
     uint64_t tsc_before = _lapic_rdtsc();
     if (tsc_freq_hz) {
@@ -343,10 +344,10 @@ void lapic_timer_init(uint8_t vector)
      */
     uint32_t ticks_per_interrupt = ticks_in_10ms * TIMER_FREQUENCY_HZ / 100u;
     if (ticks_per_interrupt == 0)
-        ticks_per_interrupt = ticks_in_10ms;   /* 保底 */
+        ticks_per_interrupt = ticks_in_10ms; /* 保底 */
 
-    KLOG_TIMER("LAPIC timer: %u ticks/interrupt @ %d Hz\n",
-               ticks_per_interrupt, TIMER_FREQUENCY_HZ);
+    KLOG_TIMER("LAPIC timer: %u ticks/interrupt @ %d Hz\n", ticks_per_interrupt,
+               TIMER_FREQUENCY_HZ);
 
     /* 配置 Periodic 模式 + 向量 */
     lapic_write(LAPIC_REG_TIMER_ICR, ticks_per_interrupt);

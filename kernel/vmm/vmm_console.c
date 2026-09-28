@@ -11,7 +11,7 @@
  */
 
 #include "vmm/vmm_console.h"
-#include "uart/uart.h"    /* uart_rx_ready / uart_getc */
+#include "uart/uart.h" /* uart_rx_ready / uart_getc */
 
 #if VMM_GUEST_LINUX_SUPPORTED
 /*

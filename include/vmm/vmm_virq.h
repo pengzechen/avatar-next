@@ -64,7 +64,7 @@ typedef struct virq {
 static inline virq_t virq_line(uint32_t line)
 {
     virq_t v;
-    v.line = line;      /* 用函数而不是复合字面量：freestanding 下更稳 */
+    v.line = line; /* 用函数而不是复合字面量：freestanding 下更稳 */
     return v;
 }
 
@@ -77,12 +77,12 @@ static inline virq_t virq_line(uint32_t line)
  *    表，VMM 不决定。
  */
 #if ARCH_AARCH64
-#define VIRQ_CONSOLE   33u   /* vPL011 → SPI 1 → INTID 33 */
-#define VIRQ_VTIMER    27u   /* guest 虚拟定时器 → PPI 27  */
+#define VIRQ_CONSOLE 33u /* vPL011 → SPI 1 → INTID 33 */
+#define VIRQ_VTIMER  27u /* guest 虚拟定时器 → PPI 27  */
 #elif ARCH_RISCV64
-#define VIRQ_CONSOLE   10u   /* vuart16550 → PLIC source 10 */
+#define VIRQ_CONSOLE 10u /* vuart16550 → PLIC source 10 */
 #elif ARCH_X86_64
-#define VIRQ_CONSOLE    4u   /* COM1 → IO-APIC GSI 4 */
+#define VIRQ_CONSOLE 4u /* COM1 → IO-APIC GSI 4 */
 #endif
 
 #endif /* VMM_VIRQ_H */

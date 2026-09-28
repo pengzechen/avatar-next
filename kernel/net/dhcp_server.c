@@ -56,10 +56,8 @@ static void put_be32(uint8_t *p, uint32_t v)
 static uint32_t ip4_to_be32(const ip4_addr_t *ip)
 {
     uint32_t v = ip4_addr_get_u32(ip);
-    return ((v & 0x000000ffUL) << 24) |
-           ((v & 0x0000ff00UL) << 8) |
-           ((v & 0x00ff0000UL) >> 8) |
-           ((v & 0xff000000UL) >> 24);
+    return ((v & 0x000000ffUL) << 24) | ((v & 0x0000ff00UL) << 8) |
+           ((v & 0x00ff0000UL) >> 8) | ((v & 0xff000000UL) >> 24);
 }
 
 static void put_ip(uint8_t *p, const ip4_addr_t *ip)
@@ -74,7 +72,8 @@ static void add_opt_u8(uint8_t *buf, size_t *off, uint8_t opt, uint8_t val)
     buf[(*off)++] = val;
 }
 
-static void add_opt_ip(uint8_t *buf, size_t *off, uint8_t opt, const ip4_addr_t *ip)
+static void add_opt_ip(uint8_t *buf, size_t *off, uint8_t opt,
+                       const ip4_addr_t *ip)
 {
     buf[(*off)++] = opt;
     buf[(*off)++] = 4;
@@ -113,7 +112,8 @@ static uint8_t dhcp_get_msg_type(const uint8_t *pkt, size_t len)
     return 0;
 }
 
-static void dhcp_send_reply(const uint8_t *req, size_t req_len, uint8_t msg_type)
+static void dhcp_send_reply(const uint8_t *req, size_t req_len,
+                            uint8_t msg_type)
 {
     uint8_t reply[DHCP_REPLY_LEN];
     memset(reply, 0, sizeof(reply));
@@ -122,11 +122,11 @@ static void dhcp_send_reply(const uint8_t *req, size_t req_len, uint8_t msg_type
     reply[1] = DHCP_HTYPE_ETHERNET;
     reply[2] = DHCP_HLEN_ETHERNET;
     reply[3] = 0;
-    memcpy(&reply[4], &req[4], 4);      /* xid */
-    memcpy(&reply[10], &req[10], 2);    /* flags */
-    put_ip(&reply[16], &g_lease_ip);    /* yiaddr */
-    put_ip(&reply[20], &g_server_ip);   /* siaddr */
-    memcpy(&reply[28], &req[28], 16);   /* chaddr */
+    memcpy(&reply[4], &req[4], 4);    /* xid */
+    memcpy(&reply[10], &req[10], 2);  /* flags */
+    put_ip(&reply[16], &g_lease_ip);  /* yiaddr */
+    put_ip(&reply[20], &g_server_ip); /* siaddr */
+    memcpy(&reply[28], &req[28], 16); /* chaddr */
     put_be32(&reply[236], DHCP_MAGIC_COOKIE);
 
     size_t off = DHCP_FIXED_LEN;
@@ -188,10 +188,8 @@ static void dhcp_recv(void *arg, struct udp_pcb *pcb, struct pbuf *p,
         pkt[1] != DHCP_HTYPE_ETHERNET || pkt[2] != DHCP_HLEN_ETHERNET)
         return;
 
-    uint32_t magic = ((uint32_t)pkt[236] << 24) |
-                     ((uint32_t)pkt[237] << 16) |
-                     ((uint32_t)pkt[238] << 8) |
-                     (uint32_t)pkt[239];
+    uint32_t magic = ((uint32_t)pkt[236] << 24) | ((uint32_t)pkt[237] << 16) |
+                     ((uint32_t)pkt[238] << 8) | (uint32_t)pkt[239];
     if (magic != DHCP_MAGIC_COOKIE)
         return;
 
@@ -207,8 +205,7 @@ static void dhcp_recv(void *arg, struct udp_pcb *pcb, struct pbuf *p,
     }
 }
 
-void dhcp_server_init(const ip4_addr_t *server_ip,
-                      const ip4_addr_t *netmask,
+void dhcp_server_init(const ip4_addr_t *server_ip, const ip4_addr_t *netmask,
                       const ip4_addr_t *lease_ip)
 {
     if (g_dhcp_pcb)

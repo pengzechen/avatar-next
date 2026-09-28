@@ -7,8 +7,7 @@
 #include "types.h"
 
 /* 测试不同日志级别 */
-void
-test_log_levels(void)
+void test_log_levels(void)
 {
     /* ERROR 级别 - 总是显示 */
     KLOG_ERROR("This is an error message: %s\n", "test error");
@@ -27,8 +26,7 @@ test_log_levels(void)
 }
 
 /* 测试模块日志 */
-void
-test_module_logs(void)
+void test_module_logs(void)
 {
     /*
      * 启用 INIT/UART/TIMER 三个模块的调试日志。
@@ -51,8 +49,7 @@ test_module_logs(void)
 }
 
 /* 测试动态日志级别切换 */
-void
-test_dynamic_level(void)
+void test_dynamic_level(void)
 {
     KLOG_INFO("Setting log level to DEBUG\n");
     set_log_level(LOG_LEVEL_DEBUG);
@@ -68,8 +65,7 @@ test_dynamic_level(void)
 }
 
 /* 测试带格式的日志 */
-void
-test_formatted_logs(void)
+void test_formatted_logs(void)
 {
     int value = 42;
     void *ptr = (void *)0xDEADBEEF;
@@ -84,8 +80,7 @@ test_formatted_logs(void)
 }
 
 /* 主测试函数 */
-void
-run_klog_tests(void)
+void run_klog_tests(void)
 {
     KLOG_INFO("=== Kernel Log System Test ===\n");
 

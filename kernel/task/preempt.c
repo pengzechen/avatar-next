@@ -4,7 +4,7 @@
 #include "task/cpu.h"
 #include "task/sched.h"
 
-#include "exception.h"   /* arch_irq_is_enabled()（统一的中断屏蔽原语）*/
+#include "exception.h" /* arch_irq_is_enabled()（统一的中断屏蔽原语）*/
 
 void preempt_disable(void)
 {

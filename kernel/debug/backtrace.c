@@ -41,10 +41,10 @@
  * 两趟不一样长，后面的函数地址整体偏移，符号表全错位（实测差 16 字节）。
  *
  * 表空不空只看 count：空表的 addrs 数组不参与比较（下面短路了）。 */
-extern const uint32_t  __kallsyms_count;
+extern const uint32_t __kallsyms_count;
 extern const uintptr_t __kallsyms_addrs[];
-extern const uint32_t  __kallsyms_name_off[];
-extern const char      __kallsyms_names[];
+extern const uint32_t __kallsyms_name_off[];
+extern const char __kallsyms_names[];
 
 /* 代码区间，三个 link.ld 都导出。用来判断"这个值像不像返回地址"。 */
 extern const char _stext[];
@@ -56,13 +56,13 @@ extern const char _etext[];
 #if ARCH_X86_64
 extern const char boot_stack_bottom[];
 extern const char boot_stack_top[];
-#define BT_BOOT_STACK_LO  ((uintptr_t)boot_stack_bottom)
-#define BT_BOOT_STACK_HI  ((uintptr_t)boot_stack_top)
+#define BT_BOOT_STACK_LO ((uintptr_t)boot_stack_bottom)
+#define BT_BOOT_STACK_HI ((uintptr_t)boot_stack_top)
 #elif ARCH_AARCH64
 extern const char stack_bottom[];
 extern const char stack_top[];
-#define BT_BOOT_STACK_LO  ((uintptr_t)stack_bottom)
-#define BT_BOOT_STACK_HI  ((uintptr_t)stack_top)
+#define BT_BOOT_STACK_LO ((uintptr_t)stack_bottom)
+#define BT_BOOT_STACK_HI ((uintptr_t)stack_top)
 #elif ARCH_RISCV64
 /*
  * ⚠️ 用 stack_bottom/stack_top 而不是 boot_stack_bottom/boot_stack_top。
@@ -73,14 +73,14 @@ extern const char stack_top[];
  */
 extern const char stack_bottom[];
 extern const char stack_top[];
-#define BT_BOOT_STACK_LO  ((uintptr_t)stack_bottom)
-#define BT_BOOT_STACK_HI  ((uintptr_t)stack_top)
+#define BT_BOOT_STACK_LO ((uintptr_t)stack_bottom)
+#define BT_BOOT_STACK_HI ((uintptr_t)stack_top)
 #endif
 
 /* 平台提供的无锁 UART 输出（也就是 klog 自己用的那个出口）
  * 与 klog 的多行缓冲格式化。和 lib/klog.c 的用法保持一致。 */
 extern void uart_putstr(const char *str);
-extern int  my_vsnprintf(char *buf, int size, const char *fmt, va_list va);
+extern int my_vsnprintf(char *buf, int size, const char *fmt, va_list va);
 
 /*
  * bt_get_sp - 读当前栈指针
@@ -92,8 +92,7 @@ extern int  my_vsnprintf(char *buf, int size, const char *fmt, va_list va);
  * 读 sp 没有现成的 wrapper（exception_impl.h 里那些是管中断屏蔽的），
  * 就地内联汇编 —— 和 boot/x86_64/exception.c 读 CR2/CR3 是同一个做法。
  */
-static uintptr_t
-bt_get_sp(void)
+static uintptr_t bt_get_sp(void)
 {
     uintptr_t sp;
 
@@ -112,24 +111,22 @@ bt_get_sp(void)
  * 三个架构的 KERNEL_VMA_OFF / PHYS_OFFSET 都不低于这个值
  * （x86_64 0xffff8000_00000000、aarch64 0xffff0000_00000000、
  *  riscv64 0xffffffc0_00000000），所以一个常量对三者都成立。 */
-#define BT_KERNEL_ADDR_MIN  0xffff000000000000UL
+#define BT_KERNEL_ADDR_MIN 0xffff000000000000UL
 
 /* ── 输出通道 ──────────────────────────────────────────────────── */
 
-static bool g_bt_panic;        /* panic 模式：绕开 klog 锁，直写 UART */
-static bool g_bt_panic_done;   /* panic 模式下已经打过一次，不再刷屏 */
-static bool g_bt_busy;         /* 防重入：dump 过程中又崩了 */
+static bool g_bt_panic;      /* panic 模式：绕开 klog 锁，直写 UART */
+static bool g_bt_panic_done; /* panic 模式下已经打过一次，不再刷屏 */
+static bool g_bt_busy;       /* 防重入：dump 过程中又崩了 */
 
-void
-backtrace_panic_enter(void)
+void backtrace_panic_enter(void)
 {
     g_bt_panic = true;
 }
 
 /* 整段调用栈拼成一条消息再发：走 kprintf 时是一条消息一次加锁，多核下
  * 这段输出不会和别的日志交错。 */
-static void
-bt_puts(const char *s)
+static void bt_puts(const char *s)
 {
     if (g_bt_panic) {
         uart_putstr(s);
@@ -140,8 +137,7 @@ bt_puts(const char *s)
 
 /* ── 符号查询 ──────────────────────────────────────────────────── */
 
-const char *
-backtrace_lookup(uintptr_t addr, uintptr_t *offset)
+const char *backtrace_lookup(uintptr_t addr, uintptr_t *offset)
 {
     uint32_t n = __kallsyms_count;
 
@@ -173,17 +169,15 @@ backtrace_lookup(uintptr_t addr, uintptr_t *offset)
     return __kallsyms_names + __kallsyms_name_off[best];
 }
 
-static bool
-bt_is_text(uintptr_t a)
+static bool bt_is_text(uintptr_t a)
 {
     return a >= (uintptr_t)_stext && a < (uintptr_t)_etext;
 }
 
-static void
-bt_fill(bt_entry_t *e, uintptr_t addr)
+static void bt_fill(bt_entry_t *e, uintptr_t addr)
 {
-    e->addr   = addr;
-    e->name   = backtrace_lookup(addr, &e->offset);
+    e->addr = addr;
+    e->name = backtrace_lookup(addr, &e->offset);
 }
 
 /* ── 展开 ──────────────────────────────────────────────────────── */
@@ -220,24 +214,23 @@ bt_fill(bt_entry_t *e, uintptr_t addr)
  * 寄存器里，异常路径可以从 trap frame 的 x[1] 捞回来（见
  * backtrace_dump_fault 的 ra 参数）。
  */
-static bool
-bt_read_frame(uintptr_t fp, uintptr_t *prev_fp, uintptr_t *ra)
+static bool bt_read_frame(uintptr_t fp, uintptr_t *prev_fp, uintptr_t *ra)
 {
 #if ARCH_RISCV64
     uintptr_t top = *(const uintptr_t *)(fp - 8);
 
     if (bt_is_text(top)) {
-        *ra      = top;
+        *ra = top;
         *prev_fp = *(const uintptr_t *)(fp - 16);
         return true;
     }
 
-    *prev_fp = top;   /* 叶子帧：[s0-8] 里是上一帧的 s0 */
-    *ra      = 0;
+    *prev_fp = top; /* 叶子帧：[s0-8] 里是上一帧的 s0 */
+    *ra = 0;
     return false;
 #else
     *prev_fp = *(const uintptr_t *)fp;
-    *ra      = *(const uintptr_t *)(fp + 8);
+    *ra = *(const uintptr_t *)(fp + 8);
     return true;
 #endif
 }
@@ -245,11 +238,11 @@ bt_read_frame(uintptr_t fp, uintptr_t *prev_fp, uintptr_t *ra)
 /* 读一个帧记录要在 fp 上下各留多少余量 —— 必须和 bt_read_frame 的偏移一致，
  * 否则边界检查会放进一个读起来越界的 fp。 */
 #if ARCH_RISCV64
-    #define BT_FRAME_PAD_LO  16
-    #define BT_FRAME_PAD_HI  0
+#define BT_FRAME_PAD_LO 16
+#define BT_FRAME_PAD_HI 0
 #else
-    #define BT_FRAME_PAD_LO  0
-    #define BT_FRAME_PAD_HI  16
+#define BT_FRAME_PAD_LO 0
+#define BT_FRAME_PAD_HI 16
 #endif
 
 /*
@@ -266,8 +259,7 @@ bt_read_frame(uintptr_t fp, uintptr_t *prev_fp, uintptr_t *ra)
  * 三个分支依次是：任务的栈（且 sp 确实在里面）→ 启动栈 → 都不认识时以 sp
  * 为中心开一个窗口（至少让首帧自身能过检查，剩下的靠单调性和 .text 检查兜）。
  */
-static void
-bt_stack_bounds(uintptr_t sp, uintptr_t *lo, uintptr_t *hi)
+static void bt_stack_bounds(uintptr_t sp, uintptr_t *lo, uintptr_t *hi)
 {
     task_t *cur = task_current();
 
@@ -298,13 +290,12 @@ bt_stack_bounds(uintptr_t sp, uintptr_t *lo, uintptr_t *hi)
  * fp 是起始帧的帧指针，返回的第一帧是 fp 所属函数的**调用者**里的位置
  * （[fp+8]/[fp-8] 存的是返回地址，也就是 call 的下一条指令）。
  */
-static int
-bt_walk_fp(uintptr_t fp, uintptr_t sp, uintptr_t seed_ra,
-           bt_entry_t *out, int max)
+static int bt_walk_fp(uintptr_t fp, uintptr_t sp, uintptr_t seed_ra,
+                      bt_entry_t *out, int max)
 {
     uintptr_t lo, hi;
-    int       n     = 0;
-    bool      first = true;
+    int n = 0;
+    bool first = true;
 
     bt_stack_bounds(sp, &lo, &hi);
 
@@ -324,7 +315,7 @@ bt_walk_fp(uintptr_t fp, uintptr_t sp, uintptr_t seed_ra,
             break;
 
         uintptr_t prev_fp, ra;
-        bool      ra_ok = bt_read_frame(fp, &prev_fp, &ra);
+        bool ra_ok = bt_read_frame(fp, &prev_fp, &ra);
 
         if (ra_ok) {
             if (!bt_is_text(ra)) /* 不是返回地址：链到头了，或者这帧是假的 */
@@ -339,12 +330,12 @@ bt_walk_fp(uintptr_t fp, uintptr_t sp, uintptr_t seed_ra,
             ra = (first && bt_is_text(seed_ra)) ? seed_ra : 0;
         }
 
-        if (prev_fp <= fp)       /* 栈向下增长，往上走必须严格递增 */
+        if (prev_fp <= fp) /* 栈向下增长，往上走必须严格递增 */
             break;
 
         if (ra != 0)
             bt_fill(&out[n++], ra);
-        fp    = prev_fp;
+        fp = prev_fp;
         first = false;
     }
 
@@ -360,9 +351,8 @@ bt_walk_fp(uintptr_t fp, uintptr_t sp, uintptr_t seed_ra,
  * 代价是**会误报**：局部变量、被调用者保存的旧 PC、任何碰巧等于代码地址
  * 的常量都会被当成一帧。所以它只是补充，不替代帧指针链。
  */
-static int
-bt_scan_stack(uintptr_t sp, uintptr_t lo, uintptr_t hi,
-              bt_entry_t *out, int n, int max)
+static int bt_scan_stack(uintptr_t sp, uintptr_t lo, uintptr_t hi,
+                         bt_entry_t *out, int n, int max)
 {
     uintptr_t p = sp & ~(uintptr_t)(sizeof(uintptr_t) - 1);
 
@@ -374,7 +364,7 @@ bt_scan_stack(uintptr_t sp, uintptr_t lo, uintptr_t hi,
 
         if (!bt_is_text(v))
             continue;
-        if (n > 0 && out[n - 1].addr == v)   /* 同一个值的多份副本，压掉 */
+        if (n > 0 && out[n - 1].addr == v) /* 同一个值的多份副本，压掉 */
             continue;
 
         bt_fill(&out[n++], v);
@@ -405,11 +395,11 @@ static bool g_bt_last_used_scan;
  */
 static bt_entry_t g_bt_scratch[BT_MAX_DEPTH];
 
-static int
-bt_collect(uintptr_t pc, uintptr_t fp, uintptr_t sp, uintptr_t ra, int max)
+static int bt_collect(uintptr_t pc, uintptr_t fp, uintptr_t sp, uintptr_t ra,
+                      int max)
 {
     bt_entry_t *out = g_bt_scratch;
-    int         n = 0;
+    int n = 0;
 
     g_bt_last_used_scan = false;
 
@@ -437,7 +427,7 @@ bt_collect(uintptr_t pc, uintptr_t fp, uintptr_t sp, uintptr_t ra, int max)
      */
     if (n < 2 && sp != 0) {
         uintptr_t lo, hi;
-        int       keep = n;
+        int keep = n;
 
         bt_stack_bounds(sp, &lo, &hi);
         n = bt_scan_stack(sp, lo, hi, out, keep, max);
@@ -451,8 +441,7 @@ bt_collect(uintptr_t pc, uintptr_t fp, uintptr_t sp, uintptr_t ra, int max)
 /* 把 g_bt_scratch 里的结果交给调用者。
  * 只在 bt_collect **返回之后**才写 out —— 见 g_bt_scratch 的说明：
  * 扫描期间往栈上的 out 写会自反馈。 */
-static int
-bt_copy_out(bt_entry_t *out, int max, int n)
+static int bt_copy_out(bt_entry_t *out, int max, int n)
 {
     if (out == NULL)
         return n;
@@ -465,9 +454,7 @@ bt_copy_out(bt_entry_t *out, int max, int n)
     return n;
 }
 
-__attribute__((noinline))
-int
-backtrace_collect(bt_entry_t *out, int max)
+__attribute__((noinline)) int backtrace_collect(bt_entry_t *out, int max)
 {
     /*
      * 帧指针必须在这里取（而不是被内联出去的某个 helper 里）：取到的是
@@ -482,9 +469,8 @@ backtrace_collect(bt_entry_t *out, int max)
     return bt_copy_out(out, max, bt_collect(0, fp, bt_get_sp(), 0, max));
 }
 
-int
-backtrace_collect_from(uintptr_t pc, uintptr_t fp, uintptr_t sp, uintptr_t ra,
-                       bt_entry_t *out, int max)
+int backtrace_collect_from(uintptr_t pc, uintptr_t fp, uintptr_t sp,
+                           uintptr_t ra, bt_entry_t *out, int max)
 {
     return bt_copy_out(out, max, bt_collect(pc, fp, sp, ra, max));
 }
@@ -494,11 +480,10 @@ backtrace_collect_from(uintptr_t pc, uintptr_t fp, uintptr_t sp, uintptr_t ra,
 /* 追加一段格式化文本，返回新的 pos。
  * my_vsnprintf 是 C99 语义（截断时返回"本该多长"），所以必须自己 clamp ——
  * 否则 pos 会一路越界，最后写穿缓冲区。 */
-static int
-bt_appendf(char *buf, int size, int pos, const char *fmt, ...)
+static int bt_appendf(char *buf, int size, int pos, const char *fmt, ...)
 {
     va_list va;
-    int     r;
+    int r;
 
     if (pos >= size - 1)
         return size - 1;
@@ -515,21 +500,20 @@ bt_appendf(char *buf, int size, int pos, const char *fmt, ...)
     return pos + r;
 }
 
-static int
-bt_render_entry(char *buf, int size, int pos, int idx, const bt_entry_t *e)
+static int bt_render_entry(char *buf, int size, int pos, int idx,
+                           const bt_entry_t *e)
 {
     if (e->name != NULL) {
-        return bt_appendf(buf, size, pos, "  #%-2d 0x%lx  %s+0x%lx\n",
-                          idx, (unsigned long)e->addr, e->name,
+        return bt_appendf(buf, size, pos, "  #%-2d 0x%lx  %s+0x%lx\n", idx,
+                          (unsigned long)e->addr, e->name,
                           (unsigned long)e->offset);
     }
-    return bt_appendf(buf, size, pos, "  #%-2d 0x%lx  <no symbol>\n",
-                      idx, (unsigned long)e->addr);
+    return bt_appendf(buf, size, pos, "  #%-2d 0x%lx  <no symbol>\n", idx,
+                      (unsigned long)e->addr);
 }
 
-static int
-bt_render_common(char *buf, int size, uintptr_t pc, uintptr_t fp, uintptr_t sp,
-                 uintptr_t ra, const char *banner)
+static int bt_render_common(char *buf, int size, uintptr_t pc, uintptr_t fp,
+                            uintptr_t sp, uintptr_t ra, const char *banner)
 {
     int n, pos;
 
@@ -544,8 +528,9 @@ bt_render_common(char *buf, int size, uintptr_t pc, uintptr_t fp, uintptr_t sp,
     pos = bt_appendf(buf, size, 0, "%s\n", banner);
 
     if (g_bt_last_used_scan) {
-        pos = bt_appendf(buf, size, pos,
-                         "  [bt] 帧指针链不可用，以下是栈扫描结果（可能有误报）\n");
+        pos = bt_appendf(
+            buf, size, pos,
+            "  [bt] 帧指针链不可用，以下是栈扫描结果（可能有误报）\n");
     }
 
     for (int i = 0; i < n; i++)
@@ -561,18 +546,17 @@ bt_render_common(char *buf, int size, uintptr_t pc, uintptr_t fp, uintptr_t sp,
     return pos;
 }
 
-static void
-bt_banner(char *buf, int size, const char *what)
+static void bt_banner(char *buf, int size, const char *what)
 {
     task_t *cur = task_current();
 
     if (cur != NULL) {
-        bt_appendf(buf, size, 0, "=== BACKTRACE%s [C%u '%s' id=%u] ===",
-                   what, klog_cpu_id(), cur->name, cur->id);
+        bt_appendf(buf, size, 0, "=== BACKTRACE%s [C%u '%s' id=%u] ===", what,
+                   klog_cpu_id(), cur->name, cur->id);
     } else {
         /* task_init() 之前的 boot 上下文没有任务可报 */
-        bt_appendf(buf, size, 0, "=== BACKTRACE%s [C%u boot] ===",
-                   what, klog_cpu_id());
+        bt_appendf(buf, size, 0, "=== BACKTRACE%s [C%u boot] ===", what,
+                   klog_cpu_id());
     }
 }
 
@@ -582,8 +566,7 @@ bt_banner(char *buf, int size, const char *what)
  * 最上面几帧必然是 backtrace_read → vfs → syscall 入口那一串 —— 那条路径
  * **就是**这个任务此刻的内核栈，不是噪声。Linux 的 /proc/PID/stack 也一样。
  */
-int
-backtrace_render(char *buf, int size)
+int backtrace_render(char *buf, int size)
 {
     char banner[128];
 
@@ -592,11 +575,10 @@ backtrace_render(char *buf, int size)
                             bt_get_sp(), 0, banner);
 }
 
-void
-backtrace_print(void)
+void backtrace_print(void)
 {
     static char buf[2048];
-    char        banner[128];
+    char banner[128];
 
     /*
      * 这两道闸和 backtrace_print_from 里的一样，缺一不可：
@@ -617,17 +599,18 @@ backtrace_print(void)
 
     bt_banner(banner, (int)sizeof(banner), "");
     bt_render_common(buf, (int)sizeof(buf), 0,
-                     (uintptr_t)__builtin_frame_address(0), bt_get_sp(), 0, banner);
+                     (uintptr_t)__builtin_frame_address(0), bt_get_sp(), 0,
+                     banner);
     bt_puts(buf);
 
     g_bt_busy = false;
 }
 
-void
-backtrace_print_from(uintptr_t pc, uintptr_t fp, uintptr_t sp, uintptr_t ra)
+void backtrace_print_from(uintptr_t pc, uintptr_t fp, uintptr_t sp,
+                          uintptr_t ra)
 {
     static char buf[2048];
-    char        banner[128];
+    char banner[128];
 
     /*
      * 重入和"只打一次"两道闸：
@@ -653,8 +636,8 @@ backtrace_print_from(uintptr_t pc, uintptr_t fp, uintptr_t sp, uintptr_t ra)
     g_bt_busy = false;
 }
 
-void
-backtrace_dump_fault(uintptr_t pc, uintptr_t fp, uintptr_t sp, uintptr_t ra)
+void backtrace_dump_fault(uintptr_t pc, uintptr_t fp, uintptr_t sp,
+                          uintptr_t ra)
 {
     klog_panic_begin();      /* 先把 klog 的全局锁摘掉，否则可能卡在锁上 */
     backtrace_panic_enter(); /* 改走无锁 UART，并只打一次 */
@@ -667,8 +650,7 @@ backtrace_dump_fault(uintptr_t pc, uintptr_t fp, uintptr_t sp, uintptr_t ra)
  * 那样这条测试链就只剩一层，测不出展开对不对。 */
 static volatile int bt_selftest_sink;
 
-static __attribute__((noinline)) int
-bt_selftest_c(bt_entry_t *out, int max)
+static __attribute__((noinline)) int bt_selftest_c(bt_entry_t *out, int max)
 {
     int n = backtrace_collect(out, max);
 
@@ -676,8 +658,7 @@ bt_selftest_c(bt_entry_t *out, int max)
     return n;
 }
 
-static __attribute__((noinline)) int
-bt_selftest_b(bt_entry_t *out, int max)
+static __attribute__((noinline)) int bt_selftest_b(bt_entry_t *out, int max)
 {
     int n = bt_selftest_c(out, max);
 
@@ -685,8 +666,7 @@ bt_selftest_b(bt_entry_t *out, int max)
     return n;
 }
 
-static __attribute__((noinline)) int
-bt_selftest_a(bt_entry_t *out, int max)
+static __attribute__((noinline)) int bt_selftest_a(bt_entry_t *out, int max)
 {
     int n = bt_selftest_b(out, max);
 
@@ -695,8 +675,7 @@ bt_selftest_a(bt_entry_t *out, int max)
 }
 
 /* freestanding 下不依赖 strstr 是否可用（string.h 里没有它） */
-static bool
-bt_name_contains(const char *hay, const char *needle)
+static bool bt_name_contains(const char *hay, const char *needle)
 {
     if (hay == NULL)
         return false;
@@ -714,8 +693,7 @@ bt_name_contains(const char *hay, const char *needle)
     return false;
 }
 
-void
-backtrace_selftest(void)
+void backtrace_selftest(void)
 {
     /*
      * 期望的链路：backtrace_collect 的调用者开始往上是
@@ -723,11 +701,13 @@ backtrace_selftest(void)
      * 用"包含"而不是全等匹配：GCC 可能给 static 函数加上 .constprop.0 /
      * .isra.0 后缀。
      */
-    static const char * const want[] = {
-        "bt_selftest_c", "bt_selftest_b", "bt_selftest_a",
+    static const char *const want[] = {
+        "bt_selftest_c",
+        "bt_selftest_b",
+        "bt_selftest_a",
     };
     bt_entry_t e[BT_MAX_DEPTH];
-    int        n, bad = -1;
+    int n, bad = -1;
 
     n = bt_selftest_a(e, BT_MAX_DEPTH);
 
@@ -744,8 +724,9 @@ backtrace_selftest(void)
          * 调用栈 —— 它同时是"展开对不对"和"符号化对不对"的现场证据，
          * 比一句 ok 有用得多。
          */
-        KLOG_DEBUG("[bt] selftest ok: %d frames, 走的是%s\n",
-                   n, g_bt_last_used_scan ? "栈扫描（帧指针链没走通）" : "帧指针链");
+        KLOG_DEBUG("[bt] selftest ok: %d frames, 走的是%s\n", n,
+                   g_bt_last_used_scan ? "栈扫描（帧指针链没走通）"
+                                       : "帧指针链");
         for (int i = 0; i < n; i++) {
             if (e[i].name != NULL) {
                 KLOG_DEBUG("[bt]   #%-2d 0x%lx  %s+0x%lx\n", i,
@@ -764,13 +745,14 @@ backtrace_selftest(void)
      * 空语句，而"调用栈是假的"这件事任何构建配置下都得看得见 —— 假的栈比
      * 打不出来更危险，它会把人带到完全错误的方向去。理由同 include/assert.h。
      */
-    kprintf(KLOG_COLOR_RED
-            "[bt] SELFTEST FAILED: 第 %d 帧应是 '%s'，实际是 '%s' (共 %d 帧)\n"
-            KLOG_COLOR_RESET,
-            bad, want[bad],
-            (bad < n && e[bad].name != NULL) ? e[bad].name : "<no symbol>", n);
+    kprintf(
+        KLOG_COLOR_RED
+        "[bt] SELFTEST FAILED: 第 %d 帧应是 '%s'，实际是 '%s' (共 %d 帧)\n" KLOG_COLOR_RESET,
+        bad, want[bad],
+        (bad < n && e[bad].name != NULL) ? e[bad].name : "<no symbol>", n);
     kprintf("[bt] panic 时打出的调用栈不可信。常见原因：\n");
-    kprintf("[bt]   1. kallsyms 表错位 —— link.ld 里 .kallsyms 段被挪到了 .text 之前\n");
+    kprintf(
+        "[bt]   1. kallsyms 表错位 —— link.ld 里 .kallsyms 段被挪到了 .text 之前\n");
     kprintf("[bt]   2. FP=0 构建 —— 帧指针链不可用，退化成栈扫描\n");
     kprintf("[bt] 详见 docs/basic/BACKTRACE.md\n");
 }

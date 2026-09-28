@@ -11,8 +11,8 @@
 #include <ext4_errno.h>
 #include "blk/ramblk_cfg.h"
 #include "klog.h"
-#include "string.h"   /* memcpy */
-#include "mm_vm.h"       /* phys_to_virt */
+#include "string.h" /* memcpy */
+#include "mm_vm.h"  /* phys_to_virt */
 
 /* ── 内部 I/O 回调 ──────────────────────────────────────────────── */
 
@@ -23,12 +23,11 @@ static int ramblk_open(struct ext4_blockdev *bdev)
     return EOK;
 }
 
-static int ramblk_bread(struct ext4_blockdev *bdev, void *buf,
-                        uint64_t blk_id, uint32_t blk_cnt)
+static int ramblk_bread(struct ext4_blockdev *bdev, void *buf, uint64_t blk_id,
+                        uint32_t blk_cnt)
 {
     uint32_t bsize = bdev->bdif->ph_bsize;
-    uint8_t *src   = (uint8_t *)phys_to_virt(RAMBLK_PHYS_BASE)
-                     + blk_id * bsize;
+    uint8_t *src = (uint8_t *)phys_to_virt(RAMBLK_PHYS_BASE) + blk_id * bsize;
     memcpy(buf, src, (size_t)blk_cnt * bsize);
     return EOK;
 }
@@ -37,8 +36,7 @@ static int ramblk_bwrite(struct ext4_blockdev *bdev, const void *buf,
                          uint64_t blk_id, uint32_t blk_cnt)
 {
     uint32_t bsize = bdev->bdif->ph_bsize;
-    uint8_t *dst   = (uint8_t *)phys_to_virt(RAMBLK_PHYS_BASE)
-                     + blk_id * bsize;
+    uint8_t *dst = (uint8_t *)phys_to_virt(RAMBLK_PHYS_BASE) + blk_id * bsize;
     memcpy(dst, buf, (size_t)blk_cnt * bsize);
     return EOK;
 }
@@ -52,15 +50,11 @@ static int ramblk_close(struct ext4_blockdev *bdev)
 /* ── 静态块设备实例（由 lwext4 宏生成）─────────────────────────── */
 
 EXT4_BLOCKDEV_STATIC_INSTANCE(
-    g_ramblk,
-    RAMBLK_SECTOR_SZ,
-    0,                  /* ph_bcnt 在 ramblk_init() 中从运行时全局变量赋值 */
-    ramblk_open,
-    ramblk_bread,
-    ramblk_bwrite,
-    ramblk_close,
-    NULL,   /* lock   - 单核暂不需要 */
-    NULL    /* unlock */
+    g_ramblk, RAMBLK_SECTOR_SZ,
+    0, /* ph_bcnt 在 ramblk_init() 中从运行时全局变量赋值 */
+    ramblk_open, ramblk_bread, ramblk_bwrite, ramblk_close,
+    NULL, /* lock   - 单核暂不需要 */
+    NULL  /* unlock */
 );
 
 /* ── 公开接口 ───────────────────────────────────────────────────── */
@@ -75,10 +69,11 @@ void ramblk_init(void)
     /* 从运行时全局变量设置扇区数和分区大小（platform_conf_scan() 已填充）*/
     uint64_t sector_cnt = RAMBLK_SIZE / RAMBLK_SECTOR_SZ;
     g_ramblk.bdif->ph_bcnt = sector_cnt;
-    g_ramblk.part_size     = RAMBLK_SIZE;
+    g_ramblk.part_size = RAMBLK_SIZE;
 
     /* 四行合并成一行 —— 它回答的是"rootfs 在哪"，一句话就够 */
-    KLOG_INFO("[ramblk] RAM block device: base=0x%llx size=%lluMB sectors=%llu x %u\n",
-              (uint64_t)RAMBLK_PHYS_BASE, (uint64_t)(RAMBLK_SIZE >> 20),
-              sector_cnt, RAMBLK_SECTOR_SZ);
+    KLOG_INFO(
+        "[ramblk] RAM block device: base=0x%llx size=%lluMB sectors=%llu x %u\n",
+        (uint64_t)RAMBLK_PHYS_BASE, (uint64_t)(RAMBLK_SIZE >> 20), sector_cnt,
+        RAMBLK_SECTOR_SZ);
 }

@@ -9,8 +9,7 @@
 /* platform_panic is now provided by the platform layer */
 
 /* 测试基本断言 */
-void
-test_basic_assert(void)
+void test_basic_assert(void)
 {
     int x = 42;
     int y = 0;
@@ -20,21 +19,19 @@ test_basic_assert(void)
 
     /* 这个断言会失败并 panic */
     /* assert(y != 0);  这里会触发 panic - 已禁用 */
-    (void)y;  /* 避免未使用警告 */
+    (void)y; /* 避免未使用警告 */
 }
 
 /* 测试关键路径断言 */
-void
-test_assert_always(void)
+void test_assert_always(void)
 {
-    void *ptr = (void *)0x1000;  /* 使用非空指针避免 panic */
+    void *ptr = (void *)0x1000; /* 使用非空指针避免 panic */
 
     assert_always(ptr != NULL);
 }
 
 /* 测试编译时断言 */
-void
-test_static_assert(void)
+void test_static_assert(void)
 {
     /* 编译时检查，如果失败则编译报错 */
     static_assert(sizeof(int) == 4, "int must be 4 bytes");
@@ -43,8 +40,7 @@ test_static_assert(void)
 }
 
 /* 测试数组边界 */
-void
-test_array_bounds(void)
+void test_array_bounds(void)
 {
     int arr[10];
     size_t index = 5;
@@ -55,8 +51,7 @@ test_array_bounds(void)
 }
 
 /* 测试指针有效性 */
-void
-test_pointer_validity(void)
+void test_pointer_validity(void)
 {
     void *ptr = (void *)0x1000;
 
@@ -68,8 +63,7 @@ test_pointer_validity(void)
 }
 
 /* 测试算术假设 */
-void
-test_arithmetic_assumptions(void)
+void test_arithmetic_assumptions(void)
 {
     int a = 10, b = 20;
 
@@ -83,8 +77,7 @@ test_arithmetic_assumptions(void)
 }
 
 /* 主测试函数 */
-void
-run_assert_tests(void)
+void run_assert_tests(void)
 {
     KLOG_INFO("=== Assert System Test ===\n");
 
@@ -92,10 +85,10 @@ run_assert_tests(void)
 
     /* test_basic_assert();      // 会 panic */
     /* test_assert_always();     // 会 panic */
-    test_static_assert();        /* 编译时检查 */
-    test_array_bounds();         /* 应该成功 */
-    test_pointer_validity();     /* 应该成功 */
-    test_arithmetic_assumptions();  /* 应该成功 */
+    test_static_assert();          /* 编译时检查 */
+    test_array_bounds();           /* 应该成功 */
+    test_pointer_validity();       /* 应该成功 */
+    test_arithmetic_assumptions(); /* 应该成功 */
 
     KLOG_INFO("=== Non-panic tests passed ===\n");
 }

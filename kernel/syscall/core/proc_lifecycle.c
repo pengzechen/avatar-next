@@ -39,35 +39,43 @@
 
 /* MAP_SHARED fork helpers: check/set NOFREE PTE bit per architecture */
 #if ARCH_RISCV64
-#define CLONE_CHECK_SHARED(pgd, va, out)  do {                       \
-        uint64_t _pte = mm_vm_get_pte(pgd, va);                     \
-        (out) = ((_pte & RV_PTE_NOFREE) != 0);                      \
+#define CLONE_CHECK_SHARED(pgd, va, out) \
+    do { \
+        uint64_t _pte = mm_vm_get_pte(pgd, va); \
+        (out) = ((_pte & RV_PTE_NOFREE) != 0); \
     } while (0)
-#define CLONE_MARK_NOFREE(pgd, va) do {                              \
-        uint64_t *_p = rv_walk_l0_pte(pgd, va, false);              \
-        if (_p) *_p |= RV_PTE_NOFREE;                               \
+#define CLONE_MARK_NOFREE(pgd, va) \
+    do { \
+        uint64_t *_p = rv_walk_l0_pte(pgd, va, false); \
+        if (_p) \
+            *_p |= RV_PTE_NOFREE; \
     } while (0)
 #elif ARCH_X86_64
-#define CLONE_CHECK_SHARED(pgd, va, out)  do {                       \
-        uint64_t *_p = x86_walk_pt(pgd, va, false);                 \
-        (out) = (_p && (*_p & PTE_NOFREE));                          \
+#define CLONE_CHECK_SHARED(pgd, va, out) \
+    do { \
+        uint64_t *_p = x86_walk_pt(pgd, va, false); \
+        (out) = (_p && (*_p & PTE_NOFREE)); \
     } while (0)
-#define CLONE_MARK_NOFREE(pgd, va) do {                              \
-        uint64_t *_p = x86_walk_pt(pgd, va, false);                 \
-        if (_p) *_p |= PTE_NOFREE;                                  \
+#define CLONE_MARK_NOFREE(pgd, va) \
+    do { \
+        uint64_t *_p = x86_walk_pt(pgd, va, false); \
+        if (_p) \
+            *_p |= PTE_NOFREE; \
     } while (0)
 #elif ARCH_AARCH64
-#define CLONE_CHECK_SHARED(pgd, va, out)  do {                       \
-        uint64_t _raw = memory_get_pte_raw(pgd, va);                \
-        (out) = ((_raw & PTE_NOFREE) != 0);                         \
+#define CLONE_CHECK_SHARED(pgd, va, out) \
+    do { \
+        uint64_t _raw = memory_get_pte_raw(pgd, va); \
+        (out) = ((_raw & PTE_NOFREE) != 0); \
     } while (0)
-#define CLONE_MARK_NOFREE(pgd, va) do {                              \
-        memory_set_pte_nofree(pgd, va);                              \
+#define CLONE_MARK_NOFREE(pgd, va) \
+    do { \
+        memory_set_pte_nofree(pgd, va); \
     } while (0)
 #endif
 
 /* 任务池（定义在 kernel/task/task.c） */
-extern task_t  g_task_pool[TASK_MAX];
+extern task_t g_task_pool[TASK_MAX];
 extern uint8_t g_stack_used[TASK_MAX];
 extern uint8_t g_task_stacks[TASK_MAX][TASK_STACK_SIZE];
 extern uint32_t g_task_id_cnt;
@@ -75,7 +83,7 @@ extern uint32_t g_task_id_cnt;
 #define EXEC_MAX_ARGC   128
 #define EXEC_MAX_ARGLEN 256
 
-static char  g_exec_arg_store[EXEC_MAX_ARGC][EXEC_MAX_ARGLEN];
+static char g_exec_arg_store[EXEC_MAX_ARGC][EXEC_MAX_ARGLEN];
 static char *g_exec_argv_ptrs[EXEC_MAX_ARGC + 1];
 
 /* ───────────────────────────────────────────────────────────────
@@ -120,7 +128,8 @@ void sys_exit(int status)
         }
         if (current->create_ns != 0) {
             uint64_t _wall = _now - current->create_ns;
-            current->utime_ns = (_wall > current->stime_ns) ? _wall - current->stime_ns : 0;
+            current->utime_ns =
+                (_wall > current->stime_ns) ? _wall - current->stime_ns : 0;
         }
     }
 
@@ -175,7 +184,8 @@ int64_t sys_execve(const char *pathname, char **argv, char **envp)
     {
         int k = 0;
         while (pathname[k] && k < (int)TASK_EXE_LEN - 1) {
-            current->exe_path[k] = pathname[k]; k++;
+            current->exe_path[k] = pathname[k];
+            k++;
         }
         current->exe_path[k] = '\0';
     }
@@ -192,7 +202,8 @@ int64_t sys_execve(const char *pathname, char **argv, char **envp)
         int n = 0;
         while (n < EXEC_MAX_ARGC) {
             char *uarg = uav[n];
-            if (!uarg) break;
+            if (!uarg)
+                break;
             copy_string_from_user(uarg, g_exec_arg_store[n], EXEC_MAX_ARGLEN);
             g_exec_argv_ptrs[n] = g_exec_arg_store[n];
             n++;
@@ -202,8 +213,8 @@ int64_t sys_execve(const char *pathname, char **argv, char **envp)
         if (n == EXEC_MAX_ARGC)
             KLOG_SYSCALL("[execve] argv truncated path=%s max_argc=%d\n",
                          pathname, EXEC_MAX_ARGC);
-        KLOG_SYSCALL("[execve] path=%s argc=%d argv0=%s\n",
-                     pathname, n, n > 0 ? g_exec_argv_ptrs[0] : "");
+        KLOG_SYSCALL("[execve] path=%s argc=%d argv0=%s\n", pathname, n,
+                     n > 0 ? g_exec_argv_ptrs[0] : "");
     }
 
     /* 将相对路径转为绝对路径 */
@@ -228,11 +239,11 @@ void execve_handler(uint64_t regs[6])
  * ─────────────────────────────────────────────────────────────── */
 void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
 {
-    uint64_t flags          = regs[0];
-    uint64_t child_stack    = regs[1];
+    uint64_t flags = regs[0];
+    uint64_t child_stack = regs[1];
     uint32_t *parent_tidptr = (uint32_t *)regs[2];
-    uint64_t tls            = regs[3];
-    uint32_t *child_tidptr  = (uint32_t *)regs[4];
+    uint64_t tls = regs[3];
+    uint32_t *child_tidptr = (uint32_t *)regs[4];
 
     /* 分配子任务槽 */
     task_t *child = NULL;
@@ -261,53 +272,53 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
         return;
     }
 
-    child->id              = g_task_id_cnt++;
-    child->state           = TASK_ALLOCATING;
-    child->priority        = parent->priority;
+    child->id = g_task_id_cnt++;
+    child->state = TASK_ALLOCATING;
+    child->priority = parent->priority;
     child->is_user_process = true;
-    child->user_started    = true;
-    child->exit_status     = 0;
-    child->exit_signal     = 0;
-    child->is_waiting      = false;
-    child->wait_pid        = (uint32_t)-1;
-    child->ctid_ptr        = 0;
-    child->tgid            = child->id;
-    child->uid             = parent->uid;
-    child->euid            = parent->euid;
-    child->gid             = parent->gid;
-    child->egid            = parent->egid;
-    child->ctty_pty_idx    = parent->ctty_pty_idx;
-    child->is_thread       = false;
-    child->shares_pgd      = false;
-    child->utime_ns        = 0;
-    child->stime_ns        = 0;
-    child->sc_entry_ns     = 0;
-    child->create_ns       = 0;
-    bool is_thread_clone   = (flags & CLONE_THREAD) != 0;
+    child->user_started = true;
+    child->exit_status = 0;
+    child->exit_signal = 0;
+    child->is_waiting = false;
+    child->wait_pid = (uint32_t)-1;
+    child->ctid_ptr = 0;
+    child->tgid = child->id;
+    child->uid = parent->uid;
+    child->euid = parent->euid;
+    child->gid = parent->gid;
+    child->egid = parent->egid;
+    child->ctty_pty_idx = parent->ctty_pty_idx;
+    child->is_thread = false;
+    child->shares_pgd = false;
+    child->utime_ns = 0;
+    child->stime_ns = 0;
+    child->sc_entry_ns = 0;
+    child->create_ns = 0;
+    bool is_thread_clone = (flags & CLONE_THREAD) != 0;
 
     if ((flags & CLONE_VM) && !is_thread_clone) {
         KLOG_SYSCALL("[clone/vfork] parent=%u flags=0x%llx: degrade to fork\n",
                      parent->id, flags);
-        flags &= ~(CLONE_VM | CLONE_VFORK | CLONE_SETTLS |
-                   CLONE_PARENT_SETTID | CLONE_CHILD_CLEARTID);
+        flags &= ~(CLONE_VM | CLONE_VFORK | CLONE_SETTLS | CLONE_PARENT_SETTID |
+                   CLONE_CHILD_CLEARTID);
     }
 
     if (flags & CLONE_VM) {
         /* ── 共享地址空间路径：pthread 才是同一 thread group，vfork 仍是子进程。 ── */
-        child->is_thread       = is_thread_clone;
-        child->shares_pgd      = true;
-        child->tgid            = is_thread_clone ?
-                                 (parent->tgid ? parent->tgid : parent->id) :
-                                 child->id;
-        child->pgd             = parent->pgd;
-        child->user_entry      = parent->user_entry;
-        child->user_sp         = child_stack;
-        child->user_stack_top  = child_stack;
+        child->is_thread = is_thread_clone;
+        child->shares_pgd = true;
+        child->tgid = is_thread_clone
+                          ? (parent->tgid ? parent->tgid : parent->id)
+                          : child->id;
+        child->pgd = parent->pgd;
+        child->user_entry = parent->user_entry;
+        child->user_sp = child_stack;
+        child->user_stack_top = child_stack;
         child->user_stack_size = parent->user_stack_size;
-        child->heap_end        = parent->heap_end;
-        child->mmap_next       = parent->mmap_next;
-        child->fs_base         = (flags & CLONE_SETTLS) ? tls : parent->fs_base;
-        child->parent_id       = parent->id;
+        child->heap_end = parent->heap_end;
+        child->mmap_next = parent->mmap_next;
+        child->fs_base = (flags & CLONE_SETTLS) ? tls : parent->fs_base;
+        child->parent_id = parent->id;
 
         if ((flags & CLONE_PARENT_SETTID) && parent_tidptr)
             *parent_tidptr = child->id;
@@ -317,21 +328,24 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
         {
             int k = 0;
             while (parent->cwd[k] && k < (int)TASK_CWD_LEN - 1) {
-                child->cwd[k] = parent->cwd[k]; k++;
+                child->cwd[k] = parent->cwd[k];
+                k++;
             }
             child->cwd[k] = '\0';
         }
         if (is_thread_clone) {
             for (uint32_t k = 0; k < TASK_MAX_FD; k++)
                 child->fd_table[k] = parent->fd_table[k];
-            memcpy(child->fd_cloexec, parent->fd_cloexec, sizeof(parent->fd_cloexec));
+            memcpy(child->fd_cloexec, parent->fd_cloexec,
+                   sizeof(parent->fd_cloexec));
         } else {
             fd_table_inherit(child, parent);
         }
         {
             int k = 0;
             while (parent->name[k] && k < (int)TASK_NAME_LEN - 1) {
-                child->name[k] = parent->name[k]; k++;
+                child->name[k] = parent->name[k];
+                k++;
             }
             child->name[k] = '\0';
         }
@@ -340,13 +354,12 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
         list_node_init(&child->wait_node);
 
         child->sp = arch_init_fork_child_stack(
-            child->stack_base, TASK_STACK_SIZE,
-            frame, child_stack,
-            (flags & CLONE_SETTLS) ? tls : 0
-        );
+            child->stack_base, TASK_STACK_SIZE, frame, child_stack,
+            (flags & CLONE_SETTLS) ? tls : 0);
 
-        KLOG_SYSCALL("[clone/thread] parent=%u child=%u flags=0x%llx tls=0x%llx usp=0x%llx ctid=%p\n",
-                     parent->id, child->id, flags, tls, child_stack, child_tidptr);
+        KLOG_SYSCALL(
+            "[clone/thread] parent=%u child=%u flags=0x%llx tls=0x%llx usp=0x%llx ctid=%p\n",
+            parent->id, child->id, flags, tls, child_stack, child_tidptr);
 
     } else {
         /* ── fork 路径 ── */
@@ -357,7 +370,7 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
             regs[0] = (uint64_t)(int64_t)-ENOMEM;
             return;
         }
-        void *child_pgd_virt  = phys_to_virt(child_pgd_phys);
+        void *child_pgd_virt = phys_to_virt(child_pgd_phys);
         void *parent_pgd_virt = phys_to_virt((uint64_t)parent->pgd);
         memset(child_pgd_virt, 0, PAGE_SIZE);
 
@@ -367,46 +380,47 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
 #endif
 #if ARCH_RISCV64
         {
-            uint64_t *child_l1  = (uint64_t *)child_pgd_virt;
-            uint64_t *kernel_l1 = (uint64_t *)phys_to_virt(satp_read_pgd_phys());
+            uint64_t *child_l1 = (uint64_t *)child_pgd_virt;
+            uint64_t *kernel_l1 =
+                (uint64_t *)phys_to_virt(satp_read_pgd_phys());
             riscv64_copy_kernel_mappings(child_l1, kernel_l1);
         }
 #endif
 
         bool clone_copy_ok = true;
 
-        #define CLONE_COPY_RANGE(start, end)                                              \
-            do {                                                                           \
-                uint64_t __s = ALIGN_DOWN((start), PAGE_SIZE);                            \
-                uint64_t __e = ALIGN_UP((end), PAGE_SIZE);                                \
-                for (uint64_t va = __s; clone_copy_ok && va < __e; va += PAGE_SIZE) {     \
-                    uint64_t src_pa = mm_vm_get_paddr(parent_pgd_virt, va);               \
-                    if (src_pa == 0)                                                       \
-                        continue;                                                          \
-                    bool is_shared = false;                                                 \
-                    CLONE_CHECK_SHARED(parent_pgd_virt, va, is_shared);                    \
-                    if (is_shared) {                                                        \
-                        if (mm_vm_map_pages(child_pgd_virt, va, src_pa, 1, 0) != 0) {     \
-                            clone_copy_ok = false;                                         \
-                            break;                                                         \
-                        }                                                                  \
-                        CLONE_MARK_NOFREE(child_pgd_virt, va);                             \
-                        shared_page_ref(src_pa);                                           \
-                        continue;                                                          \
-                    }                                                                      \
-                    uint64_t dst_pa = pmm_alloc_pages(g_pmm, 1);                          \
-                    if (dst_pa == 0) {                                                     \
-                        clone_copy_ok = false;                                             \
-                        break;                                                             \
-                    }                                                                      \
-                    memcpy(phys_to_virt(dst_pa), phys_to_virt(src_pa), PAGE_SIZE);        \
-                    if (mm_vm_map_pages(child_pgd_virt, va, dst_pa, 1, 0) != 0) {         \
-                        pmm_free_pages(g_pmm, dst_pa, 1);                                  \
-                        clone_copy_ok = false;                                             \
-                        break;                                                             \
-                    }                                                                      \
-                }                                                                          \
-            } while (0)
+#define CLONE_COPY_RANGE(start, end) \
+    do { \
+        uint64_t __s = ALIGN_DOWN((start), PAGE_SIZE); \
+        uint64_t __e = ALIGN_UP((end), PAGE_SIZE); \
+        for (uint64_t va = __s; clone_copy_ok && va < __e; va += PAGE_SIZE) { \
+            uint64_t src_pa = mm_vm_get_paddr(parent_pgd_virt, va); \
+            if (src_pa == 0) \
+                continue; \
+            bool is_shared = false; \
+            CLONE_CHECK_SHARED(parent_pgd_virt, va, is_shared); \
+            if (is_shared) { \
+                if (mm_vm_map_pages(child_pgd_virt, va, src_pa, 1, 0) != 0) { \
+                    clone_copy_ok = false; \
+                    break; \
+                } \
+                CLONE_MARK_NOFREE(child_pgd_virt, va); \
+                shared_page_ref(src_pa); \
+                continue; \
+            } \
+            uint64_t dst_pa = pmm_alloc_pages(g_pmm, 1); \
+            if (dst_pa == 0) { \
+                clone_copy_ok = false; \
+                break; \
+            } \
+            memcpy(phys_to_virt(dst_pa), phys_to_virt(src_pa), PAGE_SIZE); \
+            if (mm_vm_map_pages(child_pgd_virt, va, dst_pa, 1, 0) != 0) { \
+                pmm_free_pages(g_pmm, dst_pa, 1); \
+                clone_copy_ok = false; \
+                break; \
+            } \
+        } \
+    } while (0)
 
         CLONE_COPY_RANGE(0x0, parent->heap_end);
         if (clone_copy_ok && parent->mmap_next > USER_MMAP_BASE_EXEC)
@@ -414,7 +428,7 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
         if (clone_copy_ok)
             CLONE_COPY_RANGE(parent->user_stack_top - parent->user_stack_size,
                              parent->user_stack_top);
-        #undef CLONE_COPY_RANGE
+#undef CLONE_COPY_RANGE
 
         if (!clone_copy_ok) {
             KLOG_ERROR("[clone] failed to copy user address space\n");
@@ -424,22 +438,23 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
             return;
         }
 
-        child->pgd             = (uint64_t *)child_pgd_phys;
-        child->shares_pgd      = false;
-        child->tgid            = child->id;
-        child->user_entry      = parent->user_entry;
-        child->user_sp         = child_stack ? child_stack : parent->user_sp;
-        child->user_stack_top  = parent->user_stack_top;
+        child->pgd = (uint64_t *)child_pgd_phys;
+        child->shares_pgd = false;
+        child->tgid = child->id;
+        child->user_entry = parent->user_entry;
+        child->user_sp = child_stack ? child_stack : parent->user_sp;
+        child->user_stack_top = parent->user_stack_top;
         child->user_stack_size = parent->user_stack_size;
-        child->heap_end        = parent->heap_end;
-        child->mmap_next       = parent->mmap_next;
-        child->fs_base         = parent->fs_base;
-        child->parent_id       = parent->id;
+        child->heap_end = parent->heap_end;
+        child->mmap_next = parent->mmap_next;
+        child->fs_base = parent->fs_base;
+        child->parent_id = parent->id;
 
         {
             int k = 0;
             while (parent->cwd[k] && k < (int)TASK_CWD_LEN - 1) {
-                child->cwd[k] = parent->cwd[k]; k++;
+                child->cwd[k] = parent->cwd[k];
+                k++;
             }
             child->cwd[k] = '\0';
         }
@@ -466,11 +481,13 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
             fd_obj_ref(new_idx);
             child->fd_table[k] = (int16_t)new_idx;
         }
-        memcpy(child->fd_cloexec, parent->fd_cloexec, sizeof(parent->fd_cloexec));
+        memcpy(child->fd_cloexec, parent->fd_cloexec,
+               sizeof(parent->fd_cloexec));
         {
             int k = 0;
             while (parent->name[k] && k < (int)TASK_NAME_LEN - 1) {
-                child->name[k] = parent->name[k]; k++;
+                child->name[k] = parent->name[k];
+                k++;
             }
             child->name[k] = '\0';
         }
@@ -479,21 +496,20 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
         list_node_init(&child->wait_node);
 
         child->sp = arch_init_fork_child_stack(
-            child->stack_base, TASK_STACK_SIZE,
-            frame, child_stack, 0
-        );
+            child->stack_base, TASK_STACK_SIZE, frame, child_stack, 0);
 
         KLOG_SYSCALL("[clone/fork] parent=%u child=%u elr=0x%llx usp=0x%llx\n",
-                     parent->id, child->id, syscall_abi_ip(frame), syscall_abi_user_sp(frame));
+                     parent->id, child->id, syscall_abi_ip(frame),
+                     syscall_abi_user_sp(frame));
     }
 
     /* 信号继承 */
-    child->pending_sigs      = 0;
-    child->sig_frame_sp      = 0;
+    child->pending_sigs = 0;
+    child->sig_frame_sp = 0;
     child->sig_saved_blocked = 0;
-    child->blocked_sigs      = parent->blocked_sigs;
-    child->pgid              = parent->pgid;
-    child->sid               = parent->sid;
+    child->blocked_sigs = parent->blocked_sigs;
+    child->pgid = parent->pgid;
+    child->sid = parent->sid;
     for (int _si = 0; _si < NSIG; _si++)
         child->sig_actions[_si] = parent->sig_actions[_si];
 
@@ -522,14 +538,14 @@ static bool wait_write_result(uint64_t ustatus, uint64_t urusage,
 {
     if (ustatus) {
         int status = child->exit_signal
-                   ? (int)(child->exit_signal & 0x7F)
-                   : (int)((child->exit_status & 0xFF) << 8);
+                         ? (int)(child->exit_signal & 0x7F)
+                         : (int)((child->exit_status & 0xFF) << 8);
         if (copy_to_user_bytes(&status, (void *)ustatus, sizeof(status)) < 0)
             return false;
     }
 
     if (urusage) {
-        uint64_t ru[18];                 /* sizeof(struct rusage) == 144 */
+        uint64_t ru[18]; /* sizeof(struct rusage) == 144 */
         memset(ru, 0, sizeof(ru));
         ru[0] = child->utime_ns / 1000000000ULL;
         ru[1] = (child->utime_ns % 1000000000ULL) / 1000ULL;
@@ -545,27 +561,33 @@ static bool wait_write_result(uint64_t ustatus, uint64_t urusage,
 void wait_handler(uint64_t regs[6], task_t *me)
 {
     int wait_pid = (int)(int32_t)regs[0];
-    int options  = (int)regs[2];
+    int options = (int)regs[2];
 
     const int WNOHANG = 1;
 
-    KLOG_SYSCALL("[wait] enter: pid=%u wait_pid=%d wstatus=0x%llx options=0x%x rusage=0x%llx\n",
-                 me->id, wait_pid, regs[1], options, regs[3]);
+    KLOG_SYSCALL(
+        "[wait] enter: pid=%u wait_pid=%d wstatus=0x%llx options=0x%x rusage=0x%llx\n",
+        me->id, wait_pid, regs[1], options, regs[3]);
 
     /* 先判断是否存在匹配的子进程 */
     bool has_matching_child = false;
     for (uint32_t i = 0; i < TASK_MAX; i++) {
-        if (!g_stack_used[i]) continue;
+        if (!g_stack_used[i])
+            continue;
         task_t *t = &g_task_pool[i];
-        if (t->is_thread) continue;
-        if (t->parent_id != me->id) continue;
-        if (wait_pid > 0 && (int)t->id != wait_pid) continue;
+        if (t->is_thread)
+            continue;
+        if (t->parent_id != me->id)
+            continue;
+        if (wait_pid > 0 && (int)t->id != wait_pid)
+            continue;
         has_matching_child = true;
         break;
     }
 
     if (!has_matching_child) {
-        KLOG_SYSCALL("[wait] pid=%u no matching child for wait_pid=%d\n", me->id, wait_pid);
+        KLOG_SYSCALL("[wait] pid=%u no matching child for wait_pid=%d\n",
+                     me->id, wait_pid);
         regs[0] = (uint64_t)(int64_t)-ECHILD;
         return;
     }
@@ -573,17 +595,25 @@ void wait_handler(uint64_t regs[6], task_t *me)
     /* 查找已退出的子进程 */
     task_t *found = NULL;
     for (uint32_t i = 0; i < TASK_MAX; i++) {
-        if (!g_stack_used[i]) continue;
+        if (!g_stack_used[i])
+            continue;
         task_t *t = &g_task_pool[i];
-        if (t->is_thread) continue;
-        if (t->parent_id != me->id) continue;
-        if (wait_pid > 0 && (int)t->id != wait_pid) continue;
-        if (t->state == TASK_DEAD) { found = t; break; }
+        if (t->is_thread)
+            continue;
+        if (t->parent_id != me->id)
+            continue;
+        if (wait_pid > 0 && (int)t->id != wait_pid)
+            continue;
+        if (t->state == TASK_DEAD) {
+            found = t;
+            break;
+        }
     }
 
     if (found) {
-        KLOG_SYSCALL("[wait] pid=%u reap immediately child=%u status=%d signal=%d\n",
-                     me->id, found->id, found->exit_status, found->exit_signal);
+        KLOG_SYSCALL(
+            "[wait] pid=%u reap immediately child=%u status=%d signal=%d\n",
+            me->id, found->id, found->exit_status, found->exit_signal);
         if (!wait_write_result(regs[1], regs[3], found)) {
             regs[0] = (uint64_t)(int64_t)-EFAULT;
             return;
@@ -603,22 +633,30 @@ void wait_handler(uint64_t regs[6], task_t *me)
     /* 阻塞等待 */
     KLOG_SYSCALL("[wait] pid=%u block wait_pid=%d\n", me->id, wait_pid);
     me->is_waiting = true;
-    me->wait_pid   = (wait_pid > 0) ? (uint32_t)wait_pid : (uint32_t)-1;
+    me->wait_pid = (wait_pid > 0) ? (uint32_t)wait_pid : (uint32_t)-1;
     task_block(NULL);
     me->is_waiting = false;
     KLOG_SYSCALL("[wait] pid=%u resumed wait_pid=%d\n", me->id, wait_pid);
 
     for (uint32_t i = 0; i < TASK_MAX; i++) {
-        if (!g_stack_used[i]) continue;
+        if (!g_stack_used[i])
+            continue;
         task_t *t = &g_task_pool[i];
-        if (t->is_thread) continue;
-        if (t->parent_id != me->id) continue;
-        if (wait_pid > 0 && (int)t->id != wait_pid) continue;
-        if (t->state == TASK_DEAD) { found = t; break; }
+        if (t->is_thread)
+            continue;
+        if (t->parent_id != me->id)
+            continue;
+        if (wait_pid > 0 && (int)t->id != wait_pid)
+            continue;
+        if (t->state == TASK_DEAD) {
+            found = t;
+            break;
+        }
     }
     if (found) {
-        KLOG_SYSCALL("[wait] pid=%u reap after wake child=%u status=%d signal=%d\n",
-                     me->id, found->id, found->exit_status, found->exit_signal);
+        KLOG_SYSCALL(
+            "[wait] pid=%u reap after wake child=%u status=%d signal=%d\n",
+            me->id, found->id, found->exit_status, found->exit_signal);
         if (!wait_write_result(regs[1], regs[3], found)) {
             regs[0] = (uint64_t)(int64_t)-EFAULT;
             return;
@@ -626,7 +664,9 @@ void wait_handler(uint64_t regs[6], task_t *me)
         regs[0] = (uint64_t)found->id;
         task_reap_dead(found);
     } else {
-        KLOG_SYSCALL("[wait] pid=%u resumed but no dead child for wait_pid=%d\n", me->id, wait_pid);
+        KLOG_SYSCALL(
+            "[wait] pid=%u resumed but no dead child for wait_pid=%d\n", me->id,
+            wait_pid);
         regs[0] = (uint64_t)(int64_t)-ECHILD;
     }
 }

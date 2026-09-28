@@ -24,36 +24,47 @@
  * 选取最低编号的待投递信号，执行 SIG_DFL / SIG_IGN / 用户 handler。
  * 用户 handler 通过在用户栈上构建 sigframe 实现。
  * ─────────────────────────────────────────────────────────────── */
-void
-deliver_pending_signals(task_t *t, trap_frame_t *frame)
+void deliver_pending_signals(task_t *t, trap_frame_t *frame)
 {
     uint64_t unblocked = t->pending_sigs & ~t->blocked_sigs;
-    if (!unblocked) return;
+    if (!unblocked)
+        return;
 
     /* 取最低编号的待投递信号 */
     int sig = 0;
     for (int i = 0; i < NSIG; i++) {
-        if (unblocked & (1ULL << i)) { sig = i + 1; break; }
+        if (unblocked & (1ULL << i)) {
+            sig = i + 1;
+            break;
+        }
     }
-    if (!sig) return;
+    if (!sig)
+        return;
 
     /* 清除待投递位 */
     t->pending_sigs &= ~(1ULL << (sig - 1));
 
-    uint64_t sa_handler  = t->sig_actions[sig - 1].sa_handler;
+    uint64_t sa_handler = t->sig_actions[sig - 1].sa_handler;
     uint64_t sa_restorer = t->sig_actions[sig - 1].sa_restorer;
-    uint64_t sa_mask     = t->sig_actions[sig - 1].sa_mask;
+    uint64_t sa_mask = t->sig_actions[sig - 1].sa_mask;
 
-    if (sa_handler == SIG_IGN) return;   /* 忽略 */
+    if (sa_handler == SIG_IGN)
+        return; /* 忽略 */
 
     if (sa_handler == SIG_DFL) {
         /* 默认动作：SIGCHLD/SIGCONT/SIGURG/SIGWINCH/SIGTTIN/SIGTTOU/SIGTSTP → 忽略；其余 → 终止 */
         switch (sig) {
-        case SIGCHLD: case SIGCONT: case SIGURG: case SIGWINCH:
-        case SIGTTIN: case SIGTTOU: case SIGTSTP: return;
+        case SIGCHLD:
+        case SIGCONT:
+        case SIGURG:
+        case SIGWINCH:
+        case SIGTTIN:
+        case SIGTTOU:
+        case SIGTSTP:
+            return;
         default:
-            KLOG_INFO("[signal] pid=%u: SIG_DFL sig=%d → exit(%d)\n",
-                      t->id, sig, 128 + sig);
+            KLOG_INFO("[signal] pid=%u: SIG_DFL sig=%d → exit(%d)\n", t->id,
+                      sig, 128 + sig);
             t->exit_signal = sig;
             sys_exit(128 + sig);
             return; /* unreachable */
@@ -62,7 +73,9 @@ deliver_pending_signals(task_t *t, trap_frame_t *frame)
 
     /* 在 handler 执行期间屏蔽本信号（+ sa_mask） */
     t->sig_saved_blocked = t->blocked_sigs;
-    t->blocked_sigs |= (1ULL << (sig - 1)) | (sa_mask & ~((1ULL<<(SIGKILL-1))|(1ULL<<(SIGSTOP-1))));
+    t->blocked_sigs |=
+        (1ULL << (sig - 1)) |
+        (sa_mask & ~((1ULL << (SIGKILL - 1)) | (1ULL << (SIGSTOP - 1))));
 
     /*
      * 在用户栈上压入当前 trap_frame（已含 syscall 返回值），建立 sigframe。
@@ -75,20 +88,20 @@ deliver_pending_signals(task_t *t, trap_frame_t *frame)
 #if ARCH_X86_64
     {
         sa_restorer = USER_SIGRET_PAGE;
-        uint64_t usp = frame->rsp & ~15ULL;          /* 16 字节对齐 */
+        uint64_t usp = frame->rsp & ~15ULL; /* 16 字节对齐 */
         usp -= sizeof(trap_frame_t);
         if (copy_to_user_bytes(frame, (void *)usp, sizeof(trap_frame_t)) < 0)
             goto sigframe_fault;
-        uint64_t frame_addr = usp;                   /* sigframe 起始地址 */
-        uint64_t ret_addr   = sa_restorer;           /* 返回地址 = restorer */
+        uint64_t frame_addr = usp;       /* sigframe 起始地址 */
+        uint64_t ret_addr = sa_restorer; /* 返回地址 = restorer */
         usp -= 8;
         if (copy_to_user_bytes(&ret_addr, (void *)usp, sizeof(ret_addr)) < 0)
             goto sigframe_fault;
         t->sig_frame_sp = frame_addr;
         frame->rsp = usp;
         frame->rip = sa_handler;
-        frame->rdi = (uint64_t)(uint32_t)sig;        /* 第一个参数 */
-        frame->rflags &= ~(1ULL << 10);              /* 清 DF */
+        frame->rdi = (uint64_t)(uint32_t)sig; /* 第一个参数 */
+        frame->rflags &= ~(1ULL << 10);       /* 清 DF */
     }
 #elif ARCH_AARCH64
     {
@@ -96,8 +109,8 @@ deliver_pending_signals(task_t *t, trap_frame_t *frame)
         /* 如果 sa_restorer == 0，在栈上放一个 rt_sigreturn 蹦床 */
         if (sa_restorer == 0) {
             uint32_t tramp[2];
-            tramp[0] = 0xd2801168u;  /* mov x8, #139 */
-            tramp[1] = 0xd4000001u;  /* svc #0       */
+            tramp[0] = 0xd2801168u; /* mov x8, #139 */
+            tramp[1] = 0xd4000001u; /* svc #0       */
             usp -= 8;
             if (copy_to_user_bytes(tramp, (void *)usp, sizeof(tramp)) < 0)
                 goto sigframe_fault;
@@ -107,10 +120,10 @@ deliver_pending_signals(task_t *t, trap_frame_t *frame)
         if (copy_to_user_bytes(frame, (void *)usp, sizeof(trap_frame_t)) < 0)
             goto sigframe_fault;
         t->sig_frame_sp = usp;
-        frame->usp    = usp;
-        frame->r[0]   = (uint64_t)(uint32_t)sig;    /* x0 = signum */
-        frame->r[30]  = sa_restorer;                /* lr  = restorer */
-        frame->elr    = sa_handler;
+        frame->usp = usp;
+        frame->r[0] = (uint64_t)(uint32_t)sig; /* x0 = signum */
+        frame->r[30] = sa_restorer;            /* lr  = restorer */
+        frame->elr = sa_handler;
     }
 #elif ARCH_RISCV64
     {
@@ -118,8 +131,8 @@ deliver_pending_signals(task_t *t, trap_frame_t *frame)
         /* 如果 sa_restorer == 0，在栈上放一个 rt_sigreturn 蹦床 */
         if (sa_restorer == 0) {
             uint32_t tramp[2];
-            tramp[0] = 0x08b00893u;  /* li a7, 139   */
-            tramp[1] = 0x00000073u;  /* ecall         */
+            tramp[0] = 0x08b00893u; /* li a7, 139   */
+            tramp[1] = 0x00000073u; /* ecall         */
             usp -= 8;
             if (copy_to_user_bytes(tramp, (void *)usp, sizeof(tramp)) < 0)
                 goto sigframe_fault;
@@ -129,15 +142,16 @@ deliver_pending_signals(task_t *t, trap_frame_t *frame)
         if (copy_to_user_bytes(frame, (void *)usp, sizeof(trap_frame_t)) < 0)
             goto sigframe_fault;
         t->sig_frame_sp = usp;
-        frame->x[2]  = usp;                         /* sp */
-        frame->x[10] = (uint64_t)(uint32_t)sig;     /* a0 = signum */
-        frame->x[1]  = sa_restorer;                 /* ra = restorer */
-        frame->sepc  = sa_handler;
+        frame->x[2] = usp;                      /* sp */
+        frame->x[10] = (uint64_t)(uint32_t)sig; /* a0 = signum */
+        frame->x[1] = sa_restorer;              /* ra = restorer */
+        frame->sepc = sa_handler;
     }
 #endif
 
-    KLOG_SYSCALL("[signal] pid=%u: deliver sig=%d handler=0x%llx restorer=0x%llx\n",
-                 t->id, sig, sa_handler, sa_restorer);
+    KLOG_SYSCALL(
+        "[signal] pid=%u: deliver sig=%d handler=0x%llx restorer=0x%llx\n",
+        t->id, sig, sa_handler, sa_restorer);
     return;
 
 sigframe_fault:
@@ -149,7 +163,7 @@ sigframe_fault:
      * 这里退化成"信号暂时投递不出去"。
      */
     t->pending_sigs |= (1ULL << (sig - 1));
-    t->blocked_sigs  = t->sig_saved_blocked;
+    t->blocked_sigs = t->sig_saved_blocked;
     KLOG_WARN("[signal] pid=%u: sig=%d sigframe 写入用户栈失败，保持待投递\n",
               t->id, sig);
 }
@@ -158,8 +172,9 @@ sigframe_fault:
 void sigaction_handler(uint64_t regs[6], task_t *current)
 {
     int sig = (int)regs[0];
-    const struct kernel_sigaction *act = (const struct kernel_sigaction *)regs[1];
-    struct kernel_sigaction       *old = (struct kernel_sigaction *)regs[2];
+    const struct kernel_sigaction *act =
+        (const struct kernel_sigaction *)regs[1];
+    struct kernel_sigaction *old = (struct kernel_sigaction *)regs[2];
     size_t sigsetsize = (size_t)regs[3];
 
     if (sigsetsize != sizeof(uint64_t)) {
@@ -172,16 +187,16 @@ void sigaction_handler(uint64_t regs[6], task_t *current)
         return;
     }
     if (old) {
-        old->sa_handler  = current->sig_actions[sig-1].sa_handler;
-        old->sa_flags    = current->sig_actions[sig-1].sa_flags;
-        old->sa_restorer = current->sig_actions[sig-1].sa_restorer;
-        old->sa_mask     = current->sig_actions[sig-1].sa_mask;
+        old->sa_handler = current->sig_actions[sig - 1].sa_handler;
+        old->sa_flags = current->sig_actions[sig - 1].sa_flags;
+        old->sa_restorer = current->sig_actions[sig - 1].sa_restorer;
+        old->sa_mask = current->sig_actions[sig - 1].sa_mask;
     }
     if (act) {
-        current->sig_actions[sig-1].sa_handler  = act->sa_handler;
-        current->sig_actions[sig-1].sa_flags    = act->sa_flags;
-        current->sig_actions[sig-1].sa_restorer = act->sa_restorer;
-        current->sig_actions[sig-1].sa_mask     = act->sa_mask;
+        current->sig_actions[sig - 1].sa_handler = act->sa_handler;
+        current->sig_actions[sig - 1].sa_flags = act->sa_flags;
+        current->sig_actions[sig - 1].sa_restorer = act->sa_restorer;
+        current->sig_actions[sig - 1].sa_mask = act->sa_mask;
     }
     regs[0] = 0;
 }
@@ -189,9 +204,9 @@ void sigaction_handler(uint64_t regs[6], task_t *current)
 /* ── rt_sigprocmask ───────────────────────────────────────────── */
 void sigprocmask_handler(uint64_t regs[6], task_t *current)
 {
-    int            how   = (int)regs[0];
+    int how = (int)regs[0];
     const uint64_t *nset = (const uint64_t *)regs[1];
-    uint64_t       *oset = (uint64_t *)regs[2];
+    uint64_t *oset = (uint64_t *)regs[2];
 
     if (oset && copy_to_user_bytes(&current->blocked_sigs, oset,
                                    sizeof(current->blocked_sigs)) < 0) {
@@ -205,11 +220,17 @@ void sigprocmask_handler(uint64_t regs[6], task_t *current)
             return;
         }
         /* SIGKILL / SIGSTOP 不可屏蔽 */
-        uint64_t m = set & ~((1ULL<<(SIGKILL-1))|(1ULL<<(SIGSTOP-1)));
-        if      (how == SIG_BLOCK)   current->blocked_sigs |= m;
-        else if (how == SIG_UNBLOCK) current->blocked_sigs &= ~m;
-        else if (how == SIG_SETMASK) current->blocked_sigs  = m;
-        else { regs[0] = (uint64_t)(int64_t)-EINVAL; return; }
+        uint64_t m = set & ~((1ULL << (SIGKILL - 1)) | (1ULL << (SIGSTOP - 1)));
+        if (how == SIG_BLOCK)
+            current->blocked_sigs |= m;
+        else if (how == SIG_UNBLOCK)
+            current->blocked_sigs &= ~m;
+        else if (how == SIG_SETMASK)
+            current->blocked_sigs = m;
+        else {
+            regs[0] = (uint64_t)(int64_t)-EINVAL;
+            return;
+        }
     }
     regs[0] = 0;
 }
@@ -229,8 +250,8 @@ void sigpending_handler(uint64_t regs[6], task_t *current)
         return;
     }
     regs[0] = (copy_to_user_bytes(&pending, uset, sizeof(pending)) >= 0)
-            ? 0
-            : (uint64_t)(int64_t)-EFAULT;
+                  ? 0
+                  : (uint64_t)(int64_t)-EFAULT;
 }
 
 /*
@@ -259,17 +280,17 @@ void signal_deliver_from_trap(void *frame_ptr)
 #if ARCH_AARCH64
     trap_frame_t *frame = (trap_frame_t *)frame_ptr;
     if ((frame->spsr & 0xfUL) != 0)
-        return;                       /* 来自 EL1，非用户现场 */
+        return; /* 来自 EL1，非用户现场 */
     deliver_pending_signals(current, frame);
 #elif ARCH_X86_64
     trap_frame_t *frame = (trap_frame_t *)frame_ptr;
     if ((frame->cs & 3u) != 3u)
-        return;                       /* CS.RPL != 3，来自内核 */
+        return; /* CS.RPL != 3，来自内核 */
     deliver_pending_signals(current, frame);
 #elif ARCH_RISCV64
     trap_frame_t *frame = (trap_frame_t *)frame_ptr;
     if (frame->sstatus & SSTATUS_SPP)
-        return;                       /* 来自 S 态，非用户现场 */
+        return; /* 来自 S 态，非用户现场 */
     deliver_pending_signals(current, frame);
 #else
     (void)frame_ptr;
@@ -316,8 +337,7 @@ void sigreturn_handler(uint64_t regs[6], task_t *current, trap_frame_t *frame)
  * pid > 0 : 单进程; pid == 0 / -1 : 当前 pgid; pid < -1 : (-pid) pgid
  * sig == 0 : 仅做存在性检查
  * ────────────────────────────────────────────────────────────── */
-void
-kill_handler(uint64_t regs[6], task_t *current)
+void kill_handler(uint64_t regs[6], task_t *current)
 {
     int pid = (int)(int32_t)regs[0];
     int sig = (int)regs[1];
@@ -327,20 +347,28 @@ kill_handler(uint64_t regs[6], task_t *current)
         return;
     }
 
-    if (sig == 0) { regs[0] = 0; return; }
+    if (sig == 0) {
+        regs[0] = 0;
+        return;
+    }
 
     if (pid > 0) {
         task_t *tgt = task_find_by_id((uint32_t)pid);
-        if (!tgt) { regs[0] = (uint64_t)(int64_t)-ESRCH; return; }
+        if (!tgt) {
+            regs[0] = (uint64_t)(int64_t)-ESRCH;
+            return;
+        }
         task_send_signal(tgt, sig);
     } else if (pid == 0) {
         if (!task_send_signal_to_pgid(current->pgid, sig)) {
-            regs[0] = (uint64_t)(int64_t)-ESRCH; return;
+            regs[0] = (uint64_t)(int64_t)-ESRCH;
+            return;
         }
     } else if (pid == -1) {
         /* 简化：向 current 的 pgid 广播 */
         if (!task_send_signal_to_pgid(current->pgid, sig)) {
-            regs[0] = (uint64_t)(int64_t)-ESRCH; return;
+            regs[0] = (uint64_t)(int64_t)-ESRCH;
+            return;
         }
     } else {
         /* pid < -1: send to process group (-pid) */
@@ -356,13 +384,15 @@ kill_handler(uint64_t regs[6], task_t *current)
 /* ── tkill (Linux 130) ─────────────────────────────────────────
  * 旧接口：按 tid 向单个任务发送信号。
  * ────────────────────────────────────────────────────────────── */
-void
-tkill_handler(uint64_t regs[6])
+void tkill_handler(uint64_t regs[6])
 {
     int tid = (int)(int32_t)regs[0];
     int sig = (int)regs[1];
 
-    if (sig == 0) { regs[0] = 0; return; }
+    if (sig == 0) {
+        regs[0] = 0;
+        return;
+    }
 
     task_t *tgt = task_find_by_id((uint32_t)tid);
     if (!tgt) {
@@ -376,19 +406,20 @@ tkill_handler(uint64_t regs[6])
 /* ── tgkill (Linux 131) ────────────────────────────────────────
  * tgid 是线程组 leader 的 PID（不是 pgid）。
  * ────────────────────────────────────────────────────────────── */
-void
-tgkill_handler(uint64_t regs[6])
+void tgkill_handler(uint64_t regs[6])
 {
     int tgid = (int)(int32_t)regs[0];
-    int tid  = (int)(int32_t)regs[1];
-    int sig  = (int)regs[2];
+    int tid = (int)(int32_t)regs[1];
+    int sig = (int)regs[2];
 
-    if (sig == 0) { regs[0] = 0; return; }
+    if (sig == 0) {
+        regs[0] = 0;
+        return;
+    }
 
     task_t *tgt = task_find_by_id((uint32_t)tid);
     uint32_t tgt_tgid = tgt ? (tgt->tgid ? tgt->tgid : tgt->id) : 0;
-    if (!tgt ||
-        (tgid > 0 && (uint32_t)tgid != tgt_tgid)) {
+    if (!tgt || (tgid > 0 && (uint32_t)tgid != tgt_tgid)) {
         regs[0] = (uint64_t)(int64_t)-ESRCH;
         return;
     }

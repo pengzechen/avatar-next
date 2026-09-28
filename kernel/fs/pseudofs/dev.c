@@ -14,7 +14,7 @@
 #if DRIVER_ION
 static int ion_alloc_fd_for_current(ion_handle_t handle)
 {
-    extern int task_alloc_ion_fd(task_t *task, uint32_t handle);
+    extern int task_alloc_ion_fd(task_t * task, uint32_t handle);
 
     task_t *current = task_current();
     if (!current)
@@ -25,7 +25,7 @@ static int ion_alloc_fd_for_current(ion_handle_t handle)
 
 static ion_handle_t ion_handle_from_user_fd(int fd)
 {
-    extern int task_get_ion_handle(task_t *task, int fd, uint32_t *handle);
+    extern int task_get_ion_handle(task_t * task, int fd, uint32_t *handle);
 
     task_t *current = task_current();
     uint32_t handle = 0;
@@ -49,9 +49,10 @@ static int tpu_cache_fd_op(int32_t fd, int invalidate)
     else
         clean_and_invalidate_dcache_range(va, sz);
 
-    KLOG_DEBUG("[pseudofs] cvi-tpu0 cache_%s fd=%d h=%u pa=0x%llx size=0x%llx\n",
-               invalidate ? "invld" : "flush", fd, handle,
-               (unsigned long long)pa, (unsigned long long)sz);
+    KLOG_DEBUG(
+        "[pseudofs] cvi-tpu0 cache_%s fd=%d h=%u pa=0x%llx size=0x%llx\n",
+        invalidate ? "invld" : "flush", fd, handle, (unsigned long long)pa,
+        (unsigned long long)sz);
     return 0;
 }
 
@@ -84,9 +85,10 @@ static int tpu_cache_range_op(const struct cvitpu_legacy_cache_op_arg *op,
     else
         clean_and_invalidate_dcache_range(va, (size_t)op->size);
 
-    KLOG_DEBUG("[pseudofs] cvi-tpu0 cache_%s_range fd=%d h=%u pa=0x%llx va=%p size=0x%llx\n",
-               invalidate ? "invld" : "flush", op->fd, handle,
-               (unsigned long long)pa, va, (unsigned long long)op->size);
+    KLOG_DEBUG(
+        "[pseudofs] cvi-tpu0 cache_%s_range fd=%d h=%u pa=0x%llx va=%p size=0x%llx\n",
+        invalidate ? "invld" : "flush", op->fd, handle, (unsigned long long)pa,
+        va, (unsigned long long)op->size);
     return 0;
 }
 #endif
@@ -244,9 +246,11 @@ int tpu_dev_ioctl(int nid, uint64_t req, void *argp)
         return tpu_cache_fd_op(*(int32_t *)argp, 1);
     }
     if (req == CVITPU_LEGACY_DMABUF_FLUSH)
-        return tpu_cache_range_op((const struct cvitpu_legacy_cache_op_arg *)argp, 0);
+        return tpu_cache_range_op(
+            (const struct cvitpu_legacy_cache_op_arg *)argp, 0);
     if (req == CVITPU_LEGACY_DMABUF_INVLD)
-        return tpu_cache_range_op((const struct cvitpu_legacy_cache_op_arg *)argp, 1);
+        return tpu_cache_range_op(
+            (const struct cvitpu_legacy_cache_op_arg *)argp, 1);
     if (req == CVITPU_PIO_MODE)
         return 0;
     return -PFS_ENOSYS;

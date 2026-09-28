@@ -15,14 +15,14 @@
 /* Linux sockaddr_in layout */
 struct kernel_sockaddr_in {
     uint16_t sin_family;
-    uint16_t sin_port;       /* network byte order */
-    uint32_t sin_addr;       /* network byte order */
-    uint8_t  sin_zero[8];
+    uint16_t sin_port; /* network byte order */
+    uint32_t sin_addr; /* network byte order */
+    uint8_t sin_zero[8];
 };
 
-#define AF_INET    2
-#define SOCK_STREAM 1
-#define SOCK_DGRAM  2
+#define AF_INET       2
+#define SOCK_STREAM   1
+#define SOCK_DGRAM    2
 #define SOCK_NONBLOCK 04000
 #define O_NONBLOCK    04000
 
@@ -38,8 +38,8 @@ static uint16_t htons_val(uint16_t x)
 
 void socket_handler(uint64_t regs[6], task_t *current)
 {
-    int domain   = (int)regs[0];
-    int type     = (int)regs[1];
+    int domain = (int)regs[0];
+    int type = (int)regs[1];
     int protocol = (int)regs[2];
 
     int si = ksock_create(domain, type, protocol);
@@ -90,8 +90,14 @@ void bind_handler(uint64_t regs[6], task_t *current)
     struct kernel_sockaddr_in *addr = (struct kernel_sockaddr_in *)regs[1];
 
     int si = get_sock_idx(current, fd);
-    if (si < 0) { regs[0] = (uint64_t)(int64_t)-EBADF; return; }
-    if (!addr)   { regs[0] = (uint64_t)(int64_t)-EFAULT; return; }
+    if (si < 0) {
+        regs[0] = (uint64_t)(int64_t)-EBADF;
+        return;
+    }
+    if (!addr) {
+        regs[0] = (uint64_t)(int64_t)-EFAULT;
+        return;
+    }
 
     int rc = ksock_bind(si, addr->sin_addr, ntohs_val(addr->sin_port));
     regs[0] = rc < 0 ? (uint64_t)(int64_t)rc : 0;
@@ -99,11 +105,14 @@ void bind_handler(uint64_t regs[6], task_t *current)
 
 void listen_handler(uint64_t regs[6], task_t *current)
 {
-    int fd      = (int)regs[0];
+    int fd = (int)regs[0];
     int backlog = (int)regs[1];
 
     int si = get_sock_idx(current, fd);
-    if (si < 0) { regs[0] = (uint64_t)(int64_t)-EBADF; return; }
+    if (si < 0) {
+        regs[0] = (uint64_t)(int64_t)-EBADF;
+        return;
+    }
 
     int rc = ksock_listen(si, backlog);
     regs[0] = rc < 0 ? (uint64_t)(int64_t)rc : 0;
@@ -130,8 +139,9 @@ void accept_handler(uint64_t regs[6], task_t *current)
     uint32_t out_addr;
     uint16_t out_port;
     int new_si = ksock_accept(si, &out_addr, &out_port, kflags);
-    KLOG_SYSCALL("[sock] accept fd=%d listen_flags=0x%x accept_flags=0x%x kflags=0x%x rc=%d\n",
-                 fd, listen_obj->flags, accept_flags, kflags, new_si);
+    KLOG_SYSCALL(
+        "[sock] accept fd=%d listen_flags=0x%x accept_flags=0x%x kflags=0x%x rc=%d\n",
+        fd, listen_obj->flags, accept_flags, kflags, new_si);
     if (new_si < 0) {
         regs[0] = (uint64_t)(int64_t)new_si;
         return;
@@ -182,8 +192,14 @@ void connect_handler(uint64_t regs[6], task_t *current)
     struct kernel_sockaddr_in *addr = (struct kernel_sockaddr_in *)regs[1];
 
     int si = get_sock_idx(current, fd);
-    if (si < 0) { regs[0] = (uint64_t)(int64_t)-EBADF; return; }
-    if (!addr)   { regs[0] = (uint64_t)(int64_t)-EFAULT; return; }
+    if (si < 0) {
+        regs[0] = (uint64_t)(int64_t)-EBADF;
+        return;
+    }
+    if (!addr) {
+        regs[0] = (uint64_t)(int64_t)-EFAULT;
+        return;
+    }
 
     int rc = ksock_connect(si, addr->sin_addr, ntohs_val(addr->sin_port));
     regs[0] = rc < 0 ? (uint64_t)(int64_t)rc : 0;
@@ -191,19 +207,22 @@ void connect_handler(uint64_t regs[6], task_t *current)
 
 void sendto_handler(uint64_t regs[6], task_t *current)
 {
-    int fd           = (int)regs[0];
-    const void *buf  = (const void *)regs[1];
-    size_t len       = (size_t)regs[2];
-    int flags        = (int)regs[3];
+    int fd = (int)regs[0];
+    const void *buf = (const void *)regs[1];
+    size_t len = (size_t)regs[2];
+    int flags = (int)regs[3];
     struct kernel_sockaddr_in *dest = (struct kernel_sockaddr_in *)regs[4];
 
     int si = get_sock_idx(current, fd);
-    if (si < 0) { regs[0] = (uint64_t)(int64_t)-EBADF; return; }
+    if (si < 0) {
+        regs[0] = (uint64_t)(int64_t)-EBADF;
+        return;
+    }
 
     int rc;
     if (dest) {
-        rc = ksock_sendto(si, buf, len, flags,
-                          dest->sin_addr, ntohs_val(dest->sin_port));
+        rc = ksock_sendto(si, buf, len, flags, dest->sin_addr,
+                          ntohs_val(dest->sin_port));
     } else {
         rc = ksock_send(si, buf, len, flags);
     }
@@ -212,15 +231,18 @@ void sendto_handler(uint64_t regs[6], task_t *current)
 
 void recvfrom_handler(uint64_t regs[6], task_t *current)
 {
-    int fd           = (int)regs[0];
-    void *buf        = (void *)regs[1];
-    size_t len       = (size_t)regs[2];
-    int flags        = (int)regs[3];
+    int fd = (int)regs[0];
+    void *buf = (void *)regs[1];
+    size_t len = (size_t)regs[2];
+    int flags = (int)regs[3];
     struct kernel_sockaddr_in *src = (struct kernel_sockaddr_in *)regs[4];
     uint32_t *addrlen = (uint32_t *)regs[5];
 
     int si = get_sock_idx(current, fd);
-    if (si < 0) { regs[0] = (uint64_t)(int64_t)-EBADF; return; }
+    if (si < 0) {
+        regs[0] = (uint64_t)(int64_t)-EBADF;
+        return;
+    }
 
     int rc;
     if (src) {
@@ -243,14 +265,17 @@ void recvfrom_handler(uint64_t regs[6], task_t *current)
 
 void setsockopt_handler(uint64_t regs[6], task_t *current)
 {
-    int fd        = (int)regs[0];
-    int level     = (int)regs[1];
-    int optname   = (int)regs[2];
+    int fd = (int)regs[0];
+    int level = (int)regs[1];
+    int optname = (int)regs[2];
     const void *v = (const void *)regs[3];
-    uint32_t len  = (uint32_t)regs[4];
+    uint32_t len = (uint32_t)regs[4];
 
     int si = get_sock_idx(current, fd);
-    if (si < 0) { regs[0] = (uint64_t)(int64_t)-EBADF; return; }
+    if (si < 0) {
+        regs[0] = (uint64_t)(int64_t)-EBADF;
+        return;
+    }
 
     int rc = ksock_setsockopt(si, level, optname, v, len);
     regs[0] = rc < 0 ? (uint64_t)(int64_t)rc : 0;
@@ -258,14 +283,17 @@ void setsockopt_handler(uint64_t regs[6], task_t *current)
 
 void getsockopt_handler(uint64_t regs[6], task_t *current)
 {
-    int fd         = (int)regs[0];
-    int level      = (int)regs[1];
-    int optname    = (int)regs[2];
-    void *v        = (void *)regs[3];
-    uint32_t *len  = (uint32_t *)regs[4];
+    int fd = (int)regs[0];
+    int level = (int)regs[1];
+    int optname = (int)regs[2];
+    void *v = (void *)regs[3];
+    uint32_t *len = (uint32_t *)regs[4];
 
     int si = get_sock_idx(current, fd);
-    if (si < 0) { regs[0] = (uint64_t)(int64_t)-EBADF; return; }
+    if (si < 0) {
+        regs[0] = (uint64_t)(int64_t)-EBADF;
+        return;
+    }
 
     int rc = ksock_getsockopt(si, level, optname, v, len);
     regs[0] = rc < 0 ? (uint64_t)(int64_t)rc : 0;
@@ -278,11 +306,18 @@ void getsockname_handler(uint64_t regs[6], task_t *current)
     uint32_t *addrlen = (uint32_t *)regs[2];
 
     int si = get_sock_idx(current, fd);
-    if (si < 0) { regs[0] = (uint64_t)(int64_t)-EBADF; return; }
+    if (si < 0) {
+        regs[0] = (uint64_t)(int64_t)-EBADF;
+        return;
+    }
 
-    uint32_t a; uint16_t p;
+    uint32_t a;
+    uint16_t p;
     int rc = ksock_getsockname(si, &a, &p);
-    if (rc < 0) { regs[0] = (uint64_t)(int64_t)rc; return; }
+    if (rc < 0) {
+        regs[0] = (uint64_t)(int64_t)rc;
+        return;
+    }
 
     if (addr) {
         memset(addr, 0, sizeof(*addr));
@@ -290,7 +325,8 @@ void getsockname_handler(uint64_t regs[6], task_t *current)
         addr->sin_port = htons_val(p);
         addr->sin_addr = a;
     }
-    if (addrlen) *addrlen = sizeof(struct kernel_sockaddr_in);
+    if (addrlen)
+        *addrlen = sizeof(struct kernel_sockaddr_in);
     regs[0] = 0;
 }
 
@@ -301,11 +337,18 @@ void getpeername_handler(uint64_t regs[6], task_t *current)
     uint32_t *addrlen = (uint32_t *)regs[2];
 
     int si = get_sock_idx(current, fd);
-    if (si < 0) { regs[0] = (uint64_t)(int64_t)-EBADF; return; }
+    if (si < 0) {
+        regs[0] = (uint64_t)(int64_t)-EBADF;
+        return;
+    }
 
-    uint32_t a; uint16_t p;
+    uint32_t a;
+    uint16_t p;
     int rc = ksock_getpeername(si, &a, &p);
-    if (rc < 0) { regs[0] = (uint64_t)(int64_t)rc; return; }
+    if (rc < 0) {
+        regs[0] = (uint64_t)(int64_t)rc;
+        return;
+    }
 
     if (addr) {
         memset(addr, 0, sizeof(*addr));
@@ -313,17 +356,21 @@ void getpeername_handler(uint64_t regs[6], task_t *current)
         addr->sin_port = htons_val(p);
         addr->sin_addr = a;
     }
-    if (addrlen) *addrlen = sizeof(struct kernel_sockaddr_in);
+    if (addrlen)
+        *addrlen = sizeof(struct kernel_sockaddr_in);
     regs[0] = 0;
 }
 
 void shutdown_handler(uint64_t regs[6], task_t *current)
 {
-    int fd  = (int)regs[0];
+    int fd = (int)regs[0];
     int how = (int)regs[1];
 
     int si = get_sock_idx(current, fd);
-    if (si < 0) { regs[0] = (uint64_t)(int64_t)-EBADF; return; }
+    if (si < 0) {
+        regs[0] = (uint64_t)(int64_t)-EBADF;
+        return;
+    }
 
     int rc = ksock_shutdown(si, how);
     regs[0] = rc < 0 ? (uint64_t)(int64_t)rc : 0;

@@ -10,7 +10,7 @@
  */
 
 #include "blk/sdblk.h"
-#include "platform_cfg.h"   /* platform_get_mmio / platform_get_uintptr */
+#include "platform_cfg.h" /* platform_get_mmio / platform_get_uintptr */
 
 #include "types.h"
 #include "mmio.h"
@@ -18,69 +18,69 @@
 #include "timer/timer.h"
 
 /* ── SDMMC 寄存器偏移（相对 sd_base） ───────────────────────── */
-#define R_SDMA_SYSADDR   0x00
-#define R_BLK_SIZE_CNT   0x04   /* [31:16]=BLK_CNT  [11:0]=XFER_BLK_SIZE */
-#define R_ARG1           0x08
-#define R_XFER_MODE_CMD  0x0C   /* [31:16]=CMD  [15:0]=XFER_MODE */
-#define R_RESP0          0x10
-#define R_RESP1          0x14
-#define R_RESP2          0x18
-#define R_RESP3          0x1C
-#define R_BUF_DATA       0x20
-#define R_PSTATE         0x24   /* Present State */
-#define R_HOST_CTL1      0x28   /* Host Control 1 + Power + Bgap + Wakeup */
-#define R_CLK_CTL        0x2C   /* Clock Control + Timeout */
-#define R_INT_STS        0x30   /* Normal/Error Interrupt Status */
-#define R_INT_STS_EN     0x34
-#define R_INT_SIG_EN     0x38
-#define R_HOST_CTL2      0x3C   /* Auto CMD Error + Host Control 2 */
-#define R_CAP1           0x40
-#define R_CAP2           0x44
+#define R_SDMA_SYSADDR  0x00
+#define R_BLK_SIZE_CNT  0x04 /* [31:16]=BLK_CNT  [11:0]=XFER_BLK_SIZE */
+#define R_ARG1          0x08
+#define R_XFER_MODE_CMD 0x0C /* [31:16]=CMD  [15:0]=XFER_MODE */
+#define R_RESP0         0x10
+#define R_RESP1         0x14
+#define R_RESP2         0x18
+#define R_RESP3         0x1C
+#define R_BUF_DATA      0x20
+#define R_PSTATE        0x24 /* Present State */
+#define R_HOST_CTL1     0x28 /* Host Control 1 + Power + Bgap + Wakeup */
+#define R_CLK_CTL       0x2C /* Clock Control + Timeout */
+#define R_INT_STS       0x30 /* Normal/Error Interrupt Status */
+#define R_INT_STS_EN    0x34
+#define R_INT_SIG_EN    0x38
+#define R_HOST_CTL2     0x3C /* Auto CMD Error + Host Control 2 */
+#define R_CAP1          0x40
+#define R_CAP2          0x44
 
 /* ── Present State 位域 ──────────────────────────────────────── */
-#define PSTATE_CMD_INHIBIT    (1U << 0)
-#define PSTATE_DAT_INHIBIT    (1U << 1)
-#define PSTATE_CARD_INSERTED  (1U << 16)
+#define PSTATE_CMD_INHIBIT   (1U << 0)
+#define PSTATE_DAT_INHIBIT   (1U << 1)
+#define PSTATE_CARD_INSERTED (1U << 16)
 
 /* ── Host Control 1 / Power 位域 ────────────────────────────── */
 #define HCTL_DAT_4BIT   (1U << 1)
 #define HCTL_HS_EN      (1U << 2)
 #define HCTL_SD_BUS_PWR (1U << 8)
-#define HCTL_VOL_1V8    (5U << 9)   /* 101b = 1.8 V */
-#define HCTL_VOL_3V0    (6U << 9)   /* 110b = 3.0 V */
-#define HCTL_VOL_3V3    (7U << 9)   /* 111b = 3.3 V */
+#define HCTL_VOL_1V8    (5U << 9) /* 101b = 1.8 V */
+#define HCTL_VOL_3V0    (6U << 9) /* 110b = 3.0 V */
+#define HCTL_VOL_3V3    (7U << 9) /* 111b = 3.3 V */
 #define HCTL_VOL_MASK   (7U << 9)
 
 /* ── Clock Control 位域 ──────────────────────────────────────── */
-#define CLK_INT_CLK_EN        (1U << 0)
-#define CLK_INT_STABLE        (1U << 1)
-#define CLK_SD_CLK_EN         (1U << 2)
-#define CLK_FREQ_SEL_SHIFT    8
-#define CLK_FREQ_SEL_MASK     (0xFFU << 8)
-#define CLK_TOUT_MASK         (0xFU << 16)
-#define CLK_TOUT_MAX          (14U << 16)  /* TMCLK × 2^27，最大超时 */
-#define CLK_SW_RST_ALL        (1U << 24)
-#define CLK_SW_RST_CMD        (1U << 25)
-#define CLK_SW_RST_DAT        (1U << 26)
+#define CLK_INT_CLK_EN     (1U << 0)
+#define CLK_INT_STABLE     (1U << 1)
+#define CLK_SD_CLK_EN      (1U << 2)
+#define CLK_FREQ_SEL_SHIFT 8
+#define CLK_FREQ_SEL_MASK  (0xFFU << 8)
+#define CLK_TOUT_MASK      (0xFU << 16)
+#define CLK_TOUT_MAX       (14U << 16) /* TMCLK × 2^27，最大超时 */
+#define CLK_SW_RST_ALL     (1U << 24)
+#define CLK_SW_RST_CMD     (1U << 25)
+#define CLK_SW_RST_DAT     (1U << 26)
 
 /* ── Interrupt Status 位域 ────────────────────────────────────── */
-#define INT_CMD_CMPL   (1U << 0)
-#define INT_XFER_CMPL  (1U << 1)
-#define INT_BUF_WRDY   (1U << 4)
-#define INT_BUF_RRDY   (1U << 5)
-#define INT_ERR        (1U << 15)
-#define INT_CLEAR_ALL  0xF3FFFFFFU
+#define INT_CMD_CMPL  (1U << 0)
+#define INT_XFER_CMPL (1U << 1)
+#define INT_BUF_WRDY  (1U << 4)
+#define INT_BUF_RRDY  (1U << 5)
+#define INT_ERR       (1U << 15)
+#define INT_CLEAR_ALL 0xF3FFFFFFU
 
 /* ── Transfer Mode / Command 位域（写入 R_XFER_MODE_CMD） ──── */
 #define XFER_DMA_EN      (1U << 0)
 #define XFER_BLK_CNT_EN  (1U << 1)
-#define XFER_AUTOCMD12   (1U << 2)    /* AUTO_CMD_EN = 01b */
-#define XFER_DIR_READ    (1U << 4)    /* 1=read(card→host), 0=write */
+#define XFER_AUTOCMD12   (1U << 2) /* AUTO_CMD_EN = 01b */
+#define XFER_DIR_READ    (1U << 4) /* 1=read(card→host), 0=write */
 #define XFER_MULTI_BLK   (1U << 5)
 #define CMD_RESP_NONE    (0U << 16)
-#define CMD_RESP_136     (1U << 16)   /* R2 */
-#define CMD_RESP_48      (2U << 16)   /* R1/R3/R6/R7 */
-#define CMD_RESP_48BUSY  (3U << 16)   /* R1b */
+#define CMD_RESP_136     (1U << 16) /* R2 */
+#define CMD_RESP_48      (2U << 16) /* R1/R3/R6/R7 */
+#define CMD_RESP_48BUSY  (3U << 16) /* R1b */
 #define CMD_CRC_EN       (1U << 19)
 #define CMD_IDX_EN       (1U << 20)
 #define CMD_DATA_PRESENT (1U << 21)
@@ -88,24 +88,24 @@
 
 /* ── 常用命令字辅助宏 ─────────────────────────────────────────── */
 #define CMDW_NONE(n) (CMD_IDX(n) | CMD_RESP_NONE)
-#define CMDW_R1(n)   (CMD_IDX(n) | CMD_RESP_48    | CMD_CRC_EN | CMD_IDX_EN)
-#define CMDW_R1B(n)  (CMD_IDX(n) | CMD_RESP_48BUSY| CMD_CRC_EN | CMD_IDX_EN)
-#define CMDW_R2(n)   (CMD_IDX(n) | CMD_RESP_136   | CMD_CRC_EN)
-#define CMDW_R3(n)   (CMD_IDX(n) | CMD_RESP_48)   /* OCR: 无 CRC/IDX 检查 */
+#define CMDW_R1(n)   (CMD_IDX(n) | CMD_RESP_48 | CMD_CRC_EN | CMD_IDX_EN)
+#define CMDW_R1B(n)  (CMD_IDX(n) | CMD_RESP_48BUSY | CMD_CRC_EN | CMD_IDX_EN)
+#define CMDW_R2(n)   (CMD_IDX(n) | CMD_RESP_136 | CMD_CRC_EN)
+#define CMDW_R3(n)   (CMD_IDX(n) | CMD_RESP_48) /* OCR: 无 CRC/IDX 检查 */
 
 /* ── Block Size/Count 寄存器辅助 ─────────────────────────────── */
-#define BLKSZ_512  0x200U
+#define BLKSZ_512          0x200U
 #define BLKSZ_CNT(sz, cnt) ((uint32_t)(sz) | ((uint32_t)(cnt) << 16))
 
 /* ── 驱动状态（前置声明，MMIO 助手需要访问） ─────────────────── */
 static struct {
-    uintptr_t sd_base;        /* platform.sdmmc.sd_base  （SDHCI 寄存器基址） */
-    uintptr_t top_base;       /* platform.sdmmc.top_base （TOP 控制模块基址） */
-    uint32_t  top_off_pwrsw;  /* platform.sdmmc.top_off_pwrsw_ctrl 偏移 */
+    uintptr_t sd_base;      /* platform.sdmmc.sd_base  （SDHCI 寄存器基址） */
+    uintptr_t top_base;     /* platform.sdmmc.top_base （TOP 控制模块基址） */
+    uint32_t top_off_pwrsw; /* platform.sdmmc.top_off_pwrsw_ctrl 偏移 */
     uint32_t rca;           /* 相对卡地址（高 16 位有效） */
-    uint8_t  csd_structure; /* 0=v1.0(SDSC), 1=v2.0(SDHC/SDXC), 2=v3.0(SDUC) */
+    uint8_t csd_structure;  /* 0=v1.0(SDSC), 1=v2.0(SDHC/SDXC), 2=v3.0(SDUC) */
     uint64_t capacity;      /* 卡容量（字节） */
-    bool     initialized;
+    bool initialized;
 } g_sdblk;
 
 /* ── MMIO 助手（运行时地址，来自 g_sdblk.sd_base / top_base）── */
@@ -156,8 +156,8 @@ static void sd_delay(volatile uint32_t n)
     timer_spin(n);
 }
 
-#define SD_DELAY_SHORT()  sd_delay(0x10U)
-#define SD_DELAY_LONG()   sd_delay(0x100000U)
+#define SD_DELAY_SHORT() sd_delay(0x10U)
+#define SD_DELAY_LONG()  sd_delay(0x100000U)
 
 /* ════════════════════════════════════════════════════════════════
  * 内部函数
@@ -269,11 +269,11 @@ static int sd_pio_read_blocks(uint8_t *buf, size_t count)
             }
         }
         return SDBLK_ERR;
-rd_ready:
+    rd_ready:
         for (size_t i = 0; i < SDBLK_BLOCK_SIZE / 4; i++) {
             uint32_t v = sd_rd_pio(R_BUF_DATA);
             buf[0] = (uint8_t)(v);
-            buf[1] = (uint8_t)(v >>  8);
+            buf[1] = (uint8_t)(v >> 8);
             buf[2] = (uint8_t)(v >> 16);
             buf[3] = (uint8_t)(v >> 24);
             buf += 4;
@@ -301,12 +301,10 @@ static int sd_pio_write_blocks(const uint8_t *buf, size_t count)
             }
         }
         return SDBLK_ERR;
-wr_ready:
+    wr_ready:
         for (size_t i = 0; i < SDBLK_BLOCK_SIZE / 4; i++) {
-            uint32_t v = (uint32_t)buf[0]
-                       | ((uint32_t)buf[1] <<  8)
-                       | ((uint32_t)buf[2] << 16)
-                       | ((uint32_t)buf[3] << 24);
+            uint32_t v = (uint32_t)buf[0] | ((uint32_t)buf[1] << 8) |
+                         ((uint32_t)buf[2] << 16) | ((uint32_t)buf[3] << 24);
             sd_wr_pio(R_BUF_DATA, v);
             buf += 4;
         }
@@ -322,23 +320,23 @@ wr_ready:
  *   r3=RESP3=CSD[127:96], r2=RESP2=CSD[95:64],
  *   r1=RESP1=CSD[63:32],  r0=RESP0=CSD[39:8]
  */
-static uint64_t sd_parse_csd(uint8_t *out_struct,
-                              uint32_t r0, uint32_t r1,
-                              uint32_t r2, uint32_t r3)
+static uint64_t sd_parse_csd(uint8_t *out_struct, uint32_t r0, uint32_t r1,
+                             uint32_t r2, uint32_t r3)
 {
     uint8_t csd_struct = (uint8_t)((r3 >> 22) & 0x3U);
-    if (out_struct) *out_struct = csd_struct;
+    if (out_struct)
+        *out_struct = csd_struct;
 
     uint64_t cap = 0;
     switch (csd_struct) {
     case 0: {
         /* CSD v1.0 (SDSC) */
         uint32_t read_bl_len = (r2 >> 8) & 0xFU;
-        uint32_t c_size      = ((r2 & 0x3U) << 10) | ((r1 >> 22) & 0x3FFU);
+        uint32_t c_size = ((r2 & 0x3U) << 10) | ((r1 >> 22) & 0x3FFU);
         uint32_t c_size_mult = (r1 >> 7) & 0x7U;
-        uint64_t mult        = 1ULL << (c_size_mult + 2);
-        uint64_t blocknr     = ((uint64_t)c_size + 1) * mult;
-        uint64_t block_len   = 1ULL << read_bl_len;
+        uint64_t mult = 1ULL << (c_size_mult + 2);
+        uint64_t blocknr = ((uint64_t)c_size + 1) * mult;
+        uint64_t block_len = 1ULL << read_bl_len;
         cap = blocknr * block_len;
         break;
     }
@@ -350,8 +348,8 @@ static uint64_t sd_parse_csd(uint8_t *out_struct,
     }
     case 2: {
         /* CSD v3.0 (SDUC)：C_SIZE 28-bit，跨 response2/response1 */
-        uint64_t c_size = ((uint64_t)(r2 & 0xFU) << 24)
-                        | ((r1 >> 8) & 0xFFFFFFU);
+        uint64_t c_size =
+            ((uint64_t)(r2 & 0xFU) << 24) | ((r1 >> 8) & 0xFFFFFFU);
         cap = (c_size + 1) * 512ULL * 1024ULL;
         break;
     }
@@ -368,11 +366,12 @@ static uint64_t sd_parse_csd(uint8_t *out_struct,
 
 int sdblk_init(void)
 {
-    g_sdblk.initialized  = false;
+    g_sdblk.initialized = false;
     /* 从 platform.conf 的 platform.sdmmc.* 读取硬件地址 */
-    g_sdblk.sd_base       = platform_get_mmio("sdmmc", "sd_base");
-    g_sdblk.top_base      = platform_get_mmio("sdmmc", "top_base");
-    g_sdblk.top_off_pwrsw = (uint32_t)platform_get_uintptr("sdmmc", "top_off_pwrsw_ctrl");
+    g_sdblk.sd_base = platform_get_mmio("sdmmc", "sd_base");
+    g_sdblk.top_base = platform_get_mmio("sdmmc", "top_base");
+    g_sdblk.top_off_pwrsw =
+        (uint32_t)platform_get_uintptr("sdmmc", "top_off_pwrsw_ctrl");
     if (!g_sdblk.sd_base) {
         KLOG_ERROR("[sdblk] platform.sdmmc not configured\n");
         return SDBLK_ERR;
@@ -435,8 +434,8 @@ int sdblk_init(void)
     uint32_t csd_r1 = sd_rd(R_RESP1);
     uint32_t csd_r2 = sd_rd(R_RESP2);
     uint32_t csd_r3 = sd_rd(R_RESP3);
-    g_sdblk.capacity = sd_parse_csd(&g_sdblk.csd_structure,
-                                     csd_r0, csd_r1, csd_r2, csd_r3);
+    g_sdblk.capacity =
+        sd_parse_csd(&g_sdblk.csd_structure, csd_r0, csd_r1, csd_r2, csd_r3);
     KLOG_INFO("[sdblk] CSD v%u.0, capacity = %llu MiB\n",
               (unsigned)(g_sdblk.csd_structure + 1),
               (unsigned long long)(g_sdblk.capacity >> 20));
@@ -456,8 +455,8 @@ int sdblk_init(void)
     sd_set(R_HOST_CTL1, HCTL_DAT_4BIT);
 
     g_sdblk.initialized = true;
-    KLOG_INFO("[sdblk] init done, rca=0x%08x, cap=%llu MiB\n",
-              g_sdblk.rca, (unsigned long long)(g_sdblk.capacity >> 20));
+    KLOG_INFO("[sdblk] init done, rca=0x%08x, cap=%llu MiB\n", g_sdblk.rca,
+              (unsigned long long)(g_sdblk.capacity >> 20));
     return SDBLK_OK;
 }
 
@@ -475,14 +474,16 @@ int sdblk_read_blocks(uint32_t block_id, void *buf, size_t count)
     } else {
         /* CMD18: READ_MULTIPLE_BLOCK + AutoCMD12 */
         sd_wr(R_BLK_SIZE_CNT, BLKSZ_CNT(BLKSZ_512, (uint32_t)count));
-        uint32_t cmdw = CMDW_R1(18) | CMD_DATA_PRESENT | XFER_DIR_READ
-                      | XFER_BLK_CNT_EN | XFER_MULTI_BLK | XFER_AUTOCMD12;
+        uint32_t cmdw = CMDW_R1(18) | CMD_DATA_PRESENT | XFER_DIR_READ |
+                        XFER_BLK_CNT_EN | XFER_MULTI_BLK | XFER_AUTOCMD12;
         rc = sd_send_cmd(cmdw, block_id);
     }
-    if (rc != SDBLK_OK) return rc;
+    if (rc != SDBLK_OK)
+        return rc;
 
     rc = sd_pio_read_blocks((uint8_t *)buf, count);
-    if (rc != SDBLK_OK) return rc;
+    if (rc != SDBLK_OK)
+        return rc;
 
     rc = sd_wait_xfer_done();
     sd_wr(R_INT_STS, sd_rd(R_INT_STS));
@@ -503,14 +504,16 @@ int sdblk_write_blocks(uint32_t block_id, const void *buf, size_t count)
     } else {
         /* CMD25: WRITE_MULTIPLE_BLOCK + AutoCMD12 */
         sd_wr(R_BLK_SIZE_CNT, BLKSZ_CNT(BLKSZ_512, (uint32_t)count));
-        uint32_t cmdw = CMDW_R1(25) | CMD_DATA_PRESENT
-                      | XFER_BLK_CNT_EN | XFER_MULTI_BLK | XFER_AUTOCMD12;
+        uint32_t cmdw = CMDW_R1(25) | CMD_DATA_PRESENT | XFER_BLK_CNT_EN |
+                        XFER_MULTI_BLK | XFER_AUTOCMD12;
         rc = sd_send_cmd(cmdw, block_id);
     }
-    if (rc != SDBLK_OK) return rc;
+    if (rc != SDBLK_OK)
+        return rc;
 
     rc = sd_pio_write_blocks((const uint8_t *)buf, count);
-    if (rc != SDBLK_OK) return rc;
+    if (rc != SDBLK_OK)
+        return rc;
 
     rc = sd_wait_xfer_done();
     sd_wr(R_INT_STS, sd_rd(R_INT_STS));
@@ -539,7 +542,7 @@ static int sdblk_bdev_open(struct ext4_blockdev *bdev)
     if (r != SDBLK_OK)
         return (r == SDBLK_NOCARD) ? ENODEV : EIO;
     bdev->bdif->ph_bcnt = sdblk_capacity_blocks();
-    bdev->part_size     = sdblk_capacity_bytes();
+    bdev->part_size = sdblk_capacity_bytes();
     return EOK;
 }
 
@@ -547,16 +550,16 @@ static int sdblk_bdev_bread(struct ext4_blockdev *bdev, void *buf,
                             uint64_t blk_id, uint32_t blk_cnt)
 {
     (void)bdev;
-    return sdblk_read_blocks((uint32_t)blk_id, buf, blk_cnt) == SDBLK_OK
-           ? EOK : EIO;
+    return sdblk_read_blocks((uint32_t)blk_id, buf, blk_cnt) == SDBLK_OK ? EOK
+                                                                         : EIO;
 }
 
 static int sdblk_bdev_bwrite(struct ext4_blockdev *bdev, const void *buf,
                              uint64_t blk_id, uint32_t blk_cnt)
 {
     (void)bdev;
-    return sdblk_write_blocks((uint32_t)blk_id, buf, blk_cnt) == SDBLK_OK
-           ? EOK : EIO;
+    return sdblk_write_blocks((uint32_t)blk_id, buf, blk_cnt) == SDBLK_OK ? EOK
+                                                                          : EIO;
 }
 
 static int sdblk_bdev_close(struct ext4_blockdev *bdev)
@@ -566,15 +569,11 @@ static int sdblk_bdev_close(struct ext4_blockdev *bdev)
 }
 
 EXT4_BLOCKDEV_STATIC_INSTANCE(
-    g_sdblk_bdev,
-    SDBLK_BLOCK_SIZE,
-    0,               /* ph_bcnt 在 sdblk_bdev_open() 中由 sdblk_capacity_blocks() 填充 */
-    sdblk_bdev_open,
-    sdblk_bdev_bread,
-    sdblk_bdev_bwrite,
-    sdblk_bdev_close,
-    NULL,   /* lock   */
-    NULL    /* unlock */
+    g_sdblk_bdev, SDBLK_BLOCK_SIZE,
+    0, /* ph_bcnt 在 sdblk_bdev_open() 中由 sdblk_capacity_blocks() 填充 */
+    sdblk_bdev_open, sdblk_bdev_bread, sdblk_bdev_bwrite, sdblk_bdev_close,
+    NULL, /* lock   */
+    NULL  /* unlock */
 );
 
 struct ext4_blockdev *sdblk_get_bdev(void)

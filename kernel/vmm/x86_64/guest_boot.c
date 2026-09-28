@@ -42,54 +42,54 @@
 #if ARCH_X86_64
 
 /* ── bzImage setup header 的文件内偏移（Documentation/arch/x86/boot.rst）── */
-#define HDR_OFF           0x1f1
-#define HDR_SETUP_SECTS   (HDR_OFF + 0x00)   /* u8  */
-#define HDR_SYSSIZE       (HDR_OFF + 0x03)   /* u32 */
-#define HDR_BOOT_FLAG     (HDR_OFF + 0x0d)   /* u16，应为 0xAA55 */
-#define HDR_MAGIC         (HDR_OFF + 0x11)   /* "HdrS" */
-#define HDR_VERSION       (HDR_OFF + 0x15)   /* u16 */
-#define HDR_LOADFLAGS     (HDR_OFF + 0x18)   /* u8  */
-#define HDR_CODE32_START  (HDR_OFF + 0x23)   /* u32 */
-#define HDR_INITRD_MAX    (HDR_OFF + 0x3b)   /* u32：initrd 必须在这之下 */
-#define HDR_KERNEL_ALIGN  (HDR_OFF + 0x3f)   /* u32 */
-#define HDR_RELOCATABLE   (HDR_OFF + 0x43)   /* u8  */
-#define HDR_XLOADFLAGS    (HDR_OFF + 0x45)   /* u16 */
-#define HDR_CMDLINE_SIZE  (HDR_OFF + 0x47)   /* u32 */
-#define HDR_PREF_ADDRESS  (HDR_OFF + 0x67)   /* u64：首选装载地址 */
-#define HDR_INIT_SIZE     (HDR_OFF + 0x6f)   /* u32 */
-#define HDR_HDR_SIZE      0x80               /* 拷进 boot_params 的长度 */
+#define HDR_OFF          0x1f1
+#define HDR_SETUP_SECTS  (HDR_OFF + 0x00) /* u8  */
+#define HDR_SYSSIZE      (HDR_OFF + 0x03) /* u32 */
+#define HDR_BOOT_FLAG    (HDR_OFF + 0x0d) /* u16，应为 0xAA55 */
+#define HDR_MAGIC        (HDR_OFF + 0x11) /* "HdrS" */
+#define HDR_VERSION      (HDR_OFF + 0x15) /* u16 */
+#define HDR_LOADFLAGS    (HDR_OFF + 0x18) /* u8  */
+#define HDR_CODE32_START (HDR_OFF + 0x23) /* u32 */
+#define HDR_INITRD_MAX   (HDR_OFF + 0x3b) /* u32：initrd 必须在这之下 */
+#define HDR_KERNEL_ALIGN (HDR_OFF + 0x3f) /* u32 */
+#define HDR_RELOCATABLE  (HDR_OFF + 0x43) /* u8  */
+#define HDR_XLOADFLAGS   (HDR_OFF + 0x45) /* u16 */
+#define HDR_CMDLINE_SIZE (HDR_OFF + 0x47) /* u32 */
+#define HDR_PREF_ADDRESS (HDR_OFF + 0x67) /* u64：首选装载地址 */
+#define HDR_INIT_SIZE    (HDR_OFF + 0x6f) /* u32 */
+#define HDR_HDR_SIZE     0x80             /* 拷进 boot_params 的长度 */
 
-#define XLF_KERNEL_64     (1u << 0)          /* 有 64 位入口 */
+#define XLF_KERNEL_64 (1u << 0) /* 有 64 位入口 */
 
 /* ── boot_params（zero page）里的字段偏移 ── */
-#define BP_E820_ENTRIES   0x1e8   /* u8  */
-#define BP_TYPE_OF_LOADER 0x210   /* u8  */
-#define BP_LOADFLAGS      0x211   /* u8  */
-#define BP_CODE32_START   0x214   /* u32 */
-#define BP_RAMDISK_IMAGE  0x218   /* u32 */
-#define BP_RAMDISK_SIZE   0x21c   /* u32 */
-#define BP_CMD_LINE_PTR   0x228   /* u32 */
+#define BP_E820_ENTRIES    0x1e8  /* u8  */
+#define BP_TYPE_OF_LOADER  0x210  /* u8  */
+#define BP_LOADFLAGS       0x211  /* u8  */
+#define BP_CODE32_START    0x214  /* u32 */
+#define BP_RAMDISK_IMAGE   0x218  /* u32 */
+#define BP_RAMDISK_SIZE    0x21c  /* u32 */
+#define BP_CMD_LINE_PTR    0x228  /* u32 */
 #define BP_INITRD_ADDR_MAX 0x22c  /* u32 */
-#define BP_KERNEL_ALIGN   0x230   /* u32 */
-#define BP_RELOCATABLE    0x234   /* u8  */
-#define BP_XLOADFLAGS     0x236   /* u16 */
-#define BP_CMDLINE_SIZE   0x238   /* u32 */
-#define BP_E820_TABLE     0x2d0   /* 每项 20 字节：addr(8) size(8) type(4) */
-#define BP_SIZE           0x1000  /* zero page 本身 4 KiB */
+#define BP_KERNEL_ALIGN    0x230  /* u32 */
+#define BP_RELOCATABLE     0x234  /* u8  */
+#define BP_XLOADFLAGS      0x236  /* u16 */
+#define BP_CMDLINE_SIZE    0x238  /* u32 */
+#define BP_E820_TABLE      0x2d0  /* 每项 20 字节：addr(8) size(8) type(4) */
+#define BP_SIZE            0x1000 /* zero page 本身 4 KiB */
 
-#define BP_LOADED_HIGH    (1u << 0)
-#define BP_CAN_USE_HEAP   (1u << 7)   /* 解压器用 heap_end_ptr 里的堆 */
-#define BP_HEAP_END_PTR   0x224        /* u16 */
-#define BP_SETUP_MOVE_SZ  0x212        /* u16 */
+#define BP_LOADED_HIGH   (1u << 0)
+#define BP_CAN_USE_HEAP  (1u << 7) /* 解压器用 heap_end_ptr 里的堆 */
+#define BP_HEAP_END_PTR  0x224     /* u16 */
+#define BP_SETUP_MOVE_SZ 0x212     /* u16 */
 
 /* E820 类型 */
-#define E820_RAM          1
-#define E820_RESERVED     2
+#define E820_RAM      1
+#define E820_RESERVED 2
 
 /* 64 位入口点相对内核装载地址的偏移（引导协议规定）*/
-#define CODE64_OFFSET     0x200
+#define CODE64_OFFSET 0x200
 
-static uint64_t s_kernel_load;   /* 保护模式内核的装载物理地址（GPA）*/
+static uint64_t s_kernel_load; /* 保护模式内核的装载物理地址（GPA）*/
 
 /* ── GPA → 宿主内核可直接写的指针 ──────────────────────────
  *
@@ -122,8 +122,8 @@ static void *gpa_ptr(vm_t *vm, uint64_t gpa)
  * task` panic）。只提供 LAPIC + ISA 中断源，**不提供 IOAPIC**（本 VMM 未
  * 实现 IOAPIC，声明了内核会去用然后失败）。
  * ================================================================ */
-#define MP_TABLE_GPA   0x9F800ULL
-#define MP_FP_GPA      0x9FC00ULL
+#define MP_TABLE_GPA 0x9F800ULL
+#define MP_FP_GPA    0x9FC00ULL
 
 static void mp_w(void *base, uint32_t off, uint64_t v, int n)
 {
@@ -158,21 +158,37 @@ static void build_mptable(vm_t *vm)
      * `BUG: kernel NULL pointer dereference` @ `smp_check_mpc+0x2`。
      */
     uint8_t *f = mpbuf + 0x400;
-    uint32_t o = 44;                       /* 条目紧跟在 44 字节头之后 */
+    uint32_t o = 44; /* 条目紧跟在 44 字节头之后 */
     uint16_t nent = 0;
     static const uint8_t irq[5] = { 0, 1, 3, 4, 14 };
 
     memset(t, 0, 0x800);
     memset(f, 0, 16);
 
-    t[o] = 0; t[o + 1] = 0; t[o + 2] = 0x14; t[o + 3] = 0x03;   /* type0 处理器：id0，enabled|BSP */
-    o += 20; nent++;
-    t[o] = 1; t[o + 1] = 0; memcpy(t + o + 2, "ISA   ", 6); o += 8; nent++;
-    t[o] = 1; t[o + 1] = 1; memcpy(t + o + 2, "PCI   ", 6); o += 8; nent++;
+    t[o] = 0;
+    t[o + 1] = 0;
+    t[o + 2] = 0x14;
+    t[o + 3] = 0x03; /* type0 处理器：id0，enabled|BSP */
+    o += 20;
+    nent++;
+    t[o] = 1;
+    t[o + 1] = 0;
+    memcpy(t + o + 2, "ISA   ", 6);
+    o += 8;
+    nent++;
+    t[o] = 1;
+    t[o + 1] = 1;
+    memcpy(t + o + 2, "PCI   ", 6);
+    o += 8;
+    nent++;
     /* type2：IOAPIC @0xFEC00000（symmetric I/O 模式要求它存在）*/
-    t[o] = 2; t[o + 1] = 0; t[o + 2] = 0x11; t[o + 3] = 0x01;
+    t[o] = 2;
+    t[o + 1] = 0;
+    t[o + 2] = 0x11;
+    t[o + 3] = 0x01;
     mp_w(t, o + 4, 0xFEC00000ULL, 4);
-    o += 8; nent++;
+    o += 8;
+    nent++;
 
     /*
      * **不**写 type-3（ISA 中断源）条目：写了内核会判定为 symmetric I/O
@@ -187,11 +203,12 @@ static void build_mptable(vm_t *vm)
     t[6] = 4;
     mp_w(t, 34, nent, 2);
     mp_w(t, 36, 0xFEE00000ULL, 4);
-    t[7] = (uint8_t)(0 - mp_sum(t, o));    /* 校验和：整表求和 = 0 */
+    t[7] = (uint8_t)(0 - mp_sum(t, o)); /* 校验和：整表求和 = 0 */
 
     memcpy(f, "_MP_", 4);
     mp_w(f, 4, MP_TABLE_GPA, 4);
-    f[8] = 1; f[9] = 4;                    /* 长度（16B 单位）、spec */
+    f[8] = 1;
+    f[9] = 4; /* 长度（16B 单位）、spec */
     f[10] = (uint8_t)(0 - mp_sum(f, 16));
 
     /*
@@ -205,7 +222,6 @@ static void build_mptable(vm_t *vm)
     KLOG_INFO("[x86boot] MP table @0x%llx: %u entries / %u bytes\n",
               (unsigned long long)MP_TABLE_GPA, (unsigned)nent, (unsigned)o);
 }
-
 
 /*
  * ── 小工具 ──
@@ -228,11 +244,14 @@ static void bp_put32(uint8_t *bp, uint32_t off, uint32_t v)
     memcpy(bp + off, &v, 4);
 }
 
-static uint16_t le16(const uint8_t *p) { return (uint16_t)(p[0] | (p[1] << 8)); }
+static uint16_t le16(const uint8_t *p)
+{
+    return (uint16_t)(p[0] | (p[1] << 8));
+}
 static uint32_t le32(const uint8_t *p)
 {
-    return (uint32_t)p[0] | ((uint32_t)p[1] << 8)
-         | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) |
+           ((uint32_t)p[3] << 24);
 }
 static uint64_t le64(const uint8_t *p)
 {
@@ -242,23 +261,36 @@ static uint64_t le64(const uint8_t *p)
 /* ── 构造 E820 内存图 ─────────────────────────────────────── */
 static void build_e820(uint8_t *bp)
 {
-    struct { uint64_t addr, size; uint32_t type; } ent[5];
+    struct {
+        uint64_t addr, size;
+        uint32_t type;
+    } ent[5];
     int n = 0;
 
-    ent[n].addr = 0x00000000ULL; ent[n].size = 0x0009F000ULL; ent[n].type = E820_RAM;      n++;
-    ent[n].addr = 0x0009F000ULL; ent[n].size = 0x00061000ULL; ent[n].type = E820_RESERVED; n++;
+    ent[n].addr = 0x00000000ULL;
+    ent[n].size = 0x0009F000ULL;
+    ent[n].type = E820_RAM;
+    n++;
+    ent[n].addr = 0x0009F000ULL;
+    ent[n].size = 0x00061000ULL;
+    ent[n].type = E820_RESERVED;
+    n++;
     /* guest RAM 的可扩展区（1 MiB 起，到 192 MiB 顶）*/
     ent[n].addr = 0x00100000ULL;
     ent[n].size = GUEST_LINUX_MEM_SIZE - 0x00100000ULL;
-    ent[n].type = E820_RAM; n++;
+    ent[n].type = E820_RAM;
+    n++;
     /* LAPIC 窗口：标成保留，免得内核把这个区间当普通内存用 */
-    ent[n].addr = 0xFEE00000ULL; ent[n].size = 0x00100000ULL; ent[n].type = E820_RESERVED; n++;
+    ent[n].addr = 0xFEE00000ULL;
+    ent[n].size = 0x00100000ULL;
+    ent[n].type = E820_RESERVED;
+    n++;
 
     bp_put8(bp, BP_E820_ENTRIES, (uint8_t)n);
     for (int i = 0; i < n; i++) {
         uint8_t *e = bp + BP_E820_TABLE + i * 20;
-        memcpy(e + 0,  &ent[i].addr, 8);
-        memcpy(e + 8,  &ent[i].size, 8);
+        memcpy(e + 0, &ent[i].addr, 8);
+        memcpy(e + 8, &ent[i].size, 8);
         memcpy(e + 16, &ent[i].type, 4);
     }
     KLOG_INFO("[x86boot] e820: %d entries, RAM 1MiB..0x%llx\n", n,
@@ -270,7 +302,7 @@ static void build_pgtbl(uint8_t *pg)
 {
     uint64_t *pml4 = (uint64_t *)pg;
     uint64_t *pdpt = (uint64_t *)(pg + 0x1000);
-    uint64_t *pd   = (uint64_t *)(pg + 0x2000);
+    uint64_t *pd = (uint64_t *)(pg + 0x2000);
 
     memset(pg, 0, 0x3000);
 
@@ -282,11 +314,11 @@ static void build_pgtbl(uint8_t *pg)
      * 而缺页处理又"解码失败就跳过指令"，RIP 每次 +3，看起来像 guest 在
      * 乱跑。判据就是 EPT violation 报出来的 gpa 落在宿主窗口里（0x2xxxxxxx）。
      */
-    pml4[0] = (GUEST_LINUX_PGTBL_GPA + 0x1000) | 0x3ULL;   /* P|RW → PDPT */
-    pdpt[0] = (GUEST_LINUX_PGTBL_GPA + 0x2000) | 0x3ULL;   /* P|RW → PD   */
+    pml4[0] = (GUEST_LINUX_PGTBL_GPA + 0x1000) | 0x3ULL; /* P|RW → PDPT */
+    pdpt[0] = (GUEST_LINUX_PGTBL_GPA + 0x2000) | 0x3ULL; /* P|RW → PD   */
 
-    for (int i = 0; i < 512; i++)                        /* 512 × 2 MiB = 1 GiB */
-        pd[i] = ((uint64_t)i << 21) | 0x83ULL;           /* P|RW|PS */
+    for (int i = 0; i < 512; i++)              /* 512 × 2 MiB = 1 GiB */
+        pd[i] = ((uint64_t)i << 21) | 0x83ULL; /* P|RW|PS */
 
     /*
      * ── 高半区映射（缺了它 kernel 会在早期陷入自取异常的死循环）──
@@ -308,13 +340,13 @@ static void build_pgtbl(uint8_t *pg)
      */
     {
         uint64_t *hpdpt = (uint64_t *)(pg + 0x3000);
-        uint64_t *hpd   = (uint64_t *)(pg + 0x4000);
+        uint64_t *hpd = (uint64_t *)(pg + 0x4000);
 
         memset(hpdpt, 0, 0x2000);
-        pml4[511]  = (GUEST_LINUX_PGTBL_GPA + 0x3000) | 0x3ULL;  /* P|RW */
-        hpdpt[510] = (GUEST_LINUX_PGTBL_GPA + 0x4000) | 0x3ULL;  /* P|RW */
+        pml4[511] = (GUEST_LINUX_PGTBL_GPA + 0x3000) | 0x3ULL;  /* P|RW */
+        hpdpt[510] = (GUEST_LINUX_PGTBL_GPA + 0x4000) | 0x3ULL; /* P|RW */
         for (int i = 0; i < 512; i++)
-            hpd[i] = ((uint64_t)i << 21) | 0x83ULL;      /* 2 MiB 页，1 GiB */
+            hpd[i] = ((uint64_t)i << 21) | 0x83ULL; /* 2 MiB 页，1 GiB */
     }
 
     KLOG_INFO("[x86boot] page tables @gpa 0x%llx, identity 0..1GiB\n",
@@ -343,9 +375,9 @@ static void build_gdt(uint8_t *gdt)
      * 数值直接对标 tgoskits `virtualization/axvm/src/arch/x86_64/boot/linux_boot.rs`
      * 里的引导 stub，以及 QEMU 的 load_linux()。
      */
-    g[1] = 0x0000000000000000ULL;   /* 0x08: 保留（32 位协议不用）*/
-    g[2] = 0x00CF9A000000FFFFULL;   /* 0x10: 32 位代码 */
-    g[3] = 0x00CF92000000FFFFULL;   /* 0x18: 32 位数据 */
+    g[1] = 0x0000000000000000ULL; /* 0x08: 保留（32 位协议不用）*/
+    g[2] = 0x00CF9A000000FFFFULL; /* 0x10: 32 位代码 */
+    g[3] = 0x00CF92000000FFFFULL; /* 0x18: 32 位数据 */
 
     KLOG_INFO("[x86boot] gdt @gpa 0x%llx (code64=0x%x data=0x%x)\n",
               (unsigned long long)GUEST_LINUX_GDT_GPA, 0x08, 0x10);
@@ -460,8 +492,9 @@ int x86_guest_boot(vm_t *vm)
             }
             memcpy(hdr, bhdr + HDR_OFF, HDR_HDR_SIZE);
 
-            setup_bytes = ((uint32_t)hdr[HDR_SETUP_SECTS - HDR_OFF] + 1u) * 512u;
-            pref        = le64(hdr + (HDR_PREF_ADDRESS - HDR_OFF));
+            setup_bytes =
+                ((uint32_t)hdr[HDR_SETUP_SECTS - HDR_OFF] + 1u) * 512u;
+            pref = le64(hdr + (HDR_PREF_ADDRESS - HDR_OFF));
             s_kernel_load = pref ? pref : GUEST_LINUX_KERNEL_GPA;
 
             /*
@@ -475,11 +508,12 @@ int x86_guest_boot(vm_t *vm)
                 return -1;
             }
 
-            KLOG_INFO("[x86boot] bzImage %d bytes, header version 0x%x, "
-                      "setup=%u bytes, pref=0x%llx → load@0x%llx, payload@file+%u\n",
-                      klen, le16(hdr + (HDR_VERSION - HDR_OFF)), setup_bytes,
-                      (unsigned long long)pref,
-                      (unsigned long long)s_kernel_load, setup_bytes);
+            KLOG_INFO(
+                "[x86boot] bzImage %d bytes, header version 0x%x, "
+                "setup=%u bytes, pref=0x%llx → load@0x%llx, payload@file+%u\n",
+                klen, le16(hdr + (HDR_VERSION - HDR_OFF)), setup_bytes,
+                (unsigned long long)pref, (unsigned long long)s_kernel_load,
+                setup_bytes);
         }
 
         /* ── 2b. setup 段 → 0x10000 ── */
@@ -498,15 +532,15 @@ int x86_guest_boot(vm_t *vm)
                 KLOG_ERROR("[x86boot] bzImage 长度异常\n");
                 return -1;
             }
-            if (guest_loader_load_range(vm, GUEST_LINUX_KERNEL_PATH, setup_bytes,
-                                        s_kernel_load, pm_len)
-                    != (int)pm_len) {
+            if (guest_loader_load_range(vm, GUEST_LINUX_KERNEL_PATH,
+                                        setup_bytes, s_kernel_load,
+                                        pm_len) != (int)pm_len) {
                 KLOG_ERROR("[x86boot] 保护模式内核装载失败\n");
                 return -1;
             }
-            KLOG_INFO("[x86boot] protected-mode kernel: %llu bytes @gpa 0x%llx\n",
-                      (unsigned long long)pm_len,
-                      (unsigned long long)s_kernel_load);
+            KLOG_INFO(
+                "[x86boot] protected-mode kernel: %llu bytes @gpa 0x%llx\n",
+                (unsigned long long)pm_len, (unsigned long long)s_kernel_load);
         }
     }
 
@@ -523,16 +557,17 @@ int x86_guest_boot(vm_t *vm)
 
     /* ── 5. 命令行 ── */
     cmdline_len = (uint32_t)strlen(GUEST_LINUX_BOOTARGS) + 1;
-    memcpy(gpa_ptr(vm, GUEST_LINUX_CMDLINE_GPA), GUEST_LINUX_BOOTARGS, cmdline_len);
+    memcpy(gpa_ptr(vm, GUEST_LINUX_CMDLINE_GPA), GUEST_LINUX_BOOTARGS,
+           cmdline_len);
 
     /* ── 6. boot_params ── */
     {
         uint8_t *bp = (uint8_t *)gpa_ptr(vm, GUEST_LINUX_BOOTPARAMS_GPA);
 
         memset(bp, 0, BP_SIZE);
-        memcpy(bp + HDR_OFF, hdr, HDR_HDR_SIZE);   /* setup_header 原样拷入 */
+        memcpy(bp + HDR_OFF, hdr, HDR_HDR_SIZE); /* setup_header 原样拷入 */
 
-        bp_put8(bp, BP_TYPE_OF_LOADER, 0xff);      /* 0xff = 未知 bootloader */
+        bp_put8(bp, BP_TYPE_OF_LOADER, 0xff); /* 0xff = 未知 bootloader */
         /*
          * loadflags 必须带上 CAN_USE_HEAP —— 解压器（extract_kernel）就是
          * 靠它决定去用 boot_params 里声明的那块堆，并据此算出「解压输出
@@ -546,8 +581,7 @@ int x86_guest_boot(vm_t *vm)
         /* heap_end_ptr：**原值保留**（tgoskits 同款）。32 位入口的栈就是
          * 由内核用它算出来的（esp = heap_end_ptr + STACK_SIZE - 4），
          * 自己编一个值会把栈挪到别处。*/
-        bp_put16(bp, BP_HEAP_END_PTR,
-                 le16(hdr + (BP_HEAP_END_PTR - HDR_OFF)));
+        bp_put16(bp, BP_HEAP_END_PTR, le16(hdr + (BP_HEAP_END_PTR - HDR_OFF)));
         bp_put16(bp, BP_SETUP_MOVE_SZ, 0x8000);
         bp_put32(bp, BP_CODE32_START, (uint32_t)s_kernel_load);
         bp_put32(bp, BP_RAMDISK_IMAGE, GUEST_LINUX_INITRD_GPA);
@@ -579,16 +613,17 @@ int x86_guest_boot(vm_t *vm)
         build_e820(bp);
 
         {
-            const uint8_t *h = (const uint8_t *)gpa_ptr(vm, GUEST_LINUX_BOOTPARAMS_GPA);
+            const uint8_t *h =
+                (const uint8_t *)gpa_ptr(vm, GUEST_LINUX_BOOTPARAMS_GPA);
             KLOG_INFO("[x86boot] hdr: code32=0x%x init_size=0x%x pref=0x%llx "
                       "loadflags=0x%x setup_sects=%u reloc=%u align=0x%x "
                       "cmdline_size=0x%x xload=0x%x\n",
                       le32(h + BP_CODE32_START),
                       le32(h + 0x260 /* init_size */),
                       (unsigned long long)le64(h + 0x258 /* pref_address */),
-                      h[BP_LOADFLAGS],
-                      h[0x1f1], h[BP_RELOCATABLE], le32(h + BP_KERNEL_ALIGN),
-                      le32(h + BP_CMDLINE_SIZE), le16(h + BP_XLOADFLAGS));
+                      h[BP_LOADFLAGS], h[0x1f1], h[BP_RELOCATABLE],
+                      le32(h + BP_KERNEL_ALIGN), le32(h + BP_CMDLINE_SIZE),
+                      le16(h + BP_XLOADFLAGS));
         }
 
         KLOG_INFO("[x86boot] boot_params @gpa 0x%llx: cmdline='%s'\n",
@@ -670,10 +705,10 @@ int x86_guest_boot(vm_t *vm)
          * g_cr3 = 0 是本文件的约定：**非零 = 64 位直启，0 = 32 位协议**
          * （vmx.c 的 vmx_vcpu_setup 据此设 guest 状态，这样不用改头文件）。
          */
-        vcpu->g_rip = s_kernel_load;          /* bzImage: startup_32 / ELF: e_entry */
-        vcpu->g_cr3 = 0;                      /* 分页关闭（32 位保护模式）*/
-        vcpu->regs.rsi = GUEST_LINUX_BOOTPARAMS_GPA;   /* esi = boot_params */
-        vcpu->regs.rbx = 0;                   /* 32 位协议要求 ebx/edi/ebp=0 */
+        vcpu->g_rip = s_kernel_load; /* bzImage: startup_32 / ELF: e_entry */
+        vcpu->g_cr3 = 0;             /* 分页关闭（32 位保护模式）*/
+        vcpu->regs.rsi = GUEST_LINUX_BOOTPARAMS_GPA; /* esi = boot_params */
+        vcpu->regs.rbx = 0; /* 32 位协议要求 ebx/edi/ebp=0 */
         vcpu->regs.rdi = 0;
         vcpu->regs.rbp = 0;
 
@@ -683,8 +718,11 @@ int x86_guest_boot(vm_t *vm)
             uint64_t ent = s_kernel_load + CODE64_OFFSET;
             int i = 0;
             /* 探针1：入口活着 */
-            st[i++] = 0xba; st[i++] = 0xf8; st[i++] = 0x03;  /* mov $0x3f8,%dx */
-            st[i++] = 0xb0; st[i++] = 'A';
+            st[i++] = 0xba;
+            st[i++] = 0xf8;
+            st[i++] = 0x03; /* mov $0x3f8,%dx */
+            st[i++] = 0xb0;
+            st[i++] = 'A';
             st[i++] = 0xee;
             /*
              * 探针2..4：测三个关键地址的**可读性**（读安全、失败即 triple
@@ -702,68 +740,110 @@ int x86_guest_boot(vm_t *vm)
              * 标签：i=init_size  h=heap_end_ptr  l=loadflags  e=e820_entries
              */
             {
-                static const uint32_t fld[4] = {0x260, 0x224, 0x211, 0x1e8};
-                static const uint8_t  tag[4] = {'i', 'h', 'l', 'e'};
+                static const uint32_t fld[4] = { 0x260, 0x224, 0x211, 0x1e8 };
+                static const uint8_t tag[4] = { 'i', 'h', 'l', 'e' };
                 /* 打印 %bl 的低两字节（先高字节后低字节，各两位 hex）*/
                 static const uint8_t hexseq[] = {
-                    0x88,0xd8, 0x24,0x0f, 0x3c,0x0a, 0x72,0x02, 0x04,0x07,
-                    0x04,0x30, 0xee,                       /* 低半字节 → 先存起来? 简化：逐 nibble 直接打 */
+                    0x88, 0xd8, 0x24, 0x0f, 0x3c, 0x0a, 0x72,
+                    0x02, 0x04, 0x07, 0x04, 0x30, 0xee, /* 低半字节 → 先存起来? 简化：逐 nibble 直接打 */
                 };
                 (void)hexseq;
                 for (int k = 0; k < 4; k++) {
                     /* 标签 */
-                    st[i++] = 0xb0; st[i++] = tag[k]; st[i++] = 0xee;
+                    st[i++] = 0xb0;
+                    st[i++] = tag[k];
+                    st[i++] = 0xee;
                     /* 取字段到 %rbx */
-                    st[i++] = 0x48; st[i++] = 0xb8;
-                    { uint64_t bp = GUEST_LINUX_BOOTPARAMS_GPA; memcpy(st+i,&bp,8); i+=8; }
-                    st[i++] = 0x48; st[i++] = 0x8b; st[i++] = 0x98;
-                    memcpy(st+i, &fld[k], 4); i += 4;
+                    st[i++] = 0x48;
+                    st[i++] = 0xb8;
+                    {
+                        uint64_t bp = GUEST_LINUX_BOOTPARAMS_GPA;
+                        memcpy(st + i, &bp, 8);
+                        i += 8;
+                    }
+                    st[i++] = 0x48;
+                    st[i++] = 0x8b;
+                    st[i++] = 0x98;
+                    memcpy(st + i, &fld[k], 4);
+                    i += 4;
                     /* 打高字节（bits 15:8）再打低字节（bits 7:0）*/
                     for (int half = 0; half < 2; half++) {
                         /* %al = (value >> (half?0:8)) & 0xff */
-                        st[i++] = 0x88; st[i++] = 0xd8;                 /* mov %bl,%al */
-                        if (half == 0) { st[i++]=0xc0; st[i++]=0xe8; st[i++]=0x08; } /* shr $8,%al */
+                        st[i++] = 0x88;
+                        st[i++] = 0xd8; /* mov %bl,%al */
+                        if (half == 0) {
+                            st[i++] = 0xc0;
+                            st[i++] = 0xe8;
+                            st[i++] = 0x08;
+                        } /* shr $8,%al */
                         /* 高 nibble */
-                        st[i++] = 0xd0; st[i++] = 0xe8;                 /* shr $1,%al */
-                        st[i++] = 0xd0; st[i++] = 0xe8;
-                        st[i++] = 0xd0; st[i++] = 0xe8;
-                        st[i++] = 0xd0; st[i++] = 0xe8;
-                        st[i++] = 0x24; st[i++] = 0x0f;                 /* and $0xf,%al */
-                        st[i++] = 0x3c; st[i++] = 0x0a;                 /* cmp $10,%al */
-                        st[i++] = 0x72; st[i++] = 0x02;
-                        st[i++] = 0x04; st[i++] = 0x07;
-                        st[i++] = 0x04; st[i++] = 0x30;
+                        st[i++] = 0xd0;
+                        st[i++] = 0xe8; /* shr $1,%al */
+                        st[i++] = 0xd0;
+                        st[i++] = 0xe8;
+                        st[i++] = 0xd0;
+                        st[i++] = 0xe8;
+                        st[i++] = 0xd0;
+                        st[i++] = 0xe8;
+                        st[i++] = 0x24;
+                        st[i++] = 0x0f; /* and $0xf,%al */
+                        st[i++] = 0x3c;
+                        st[i++] = 0x0a; /* cmp $10,%al */
+                        st[i++] = 0x72;
+                        st[i++] = 0x02;
+                        st[i++] = 0x04;
+                        st[i++] = 0x07;
+                        st[i++] = 0x04;
+                        st[i++] = 0x30;
                         st[i++] = 0xee;
                         /* 低 nibble */
-                        st[i++] = 0x88; st[i++] = 0xd8;
-                        if (half == 0) { st[i++]=0xc0; st[i++]=0xe8; st[i++]=0x08; }
-                        st[i++] = 0x24; st[i++] = 0x0f;
-                        st[i++] = 0x3c; st[i++] = 0x0a;
-                        st[i++] = 0x72; st[i++] = 0x02;
-                        st[i++] = 0x04; st[i++] = 0x07;
-                        st[i++] = 0x04; st[i++] = 0x30;
+                        st[i++] = 0x88;
+                        st[i++] = 0xd8;
+                        if (half == 0) {
+                            st[i++] = 0xc0;
+                            st[i++] = 0xe8;
+                            st[i++] = 0x08;
+                        }
+                        st[i++] = 0x24;
+                        st[i++] = 0x0f;
+                        st[i++] = 0x3c;
+                        st[i++] = 0x0a;
+                        st[i++] = 0x72;
+                        st[i++] = 0x02;
+                        st[i++] = 0x04;
+                        st[i++] = 0x07;
+                        st[i++] = 0x04;
+                        st[i++] = 0x30;
                         st[i++] = 0xee;
                     }
                 }
             }
             {
-                static const uint64_t probe_addrs[3] = {
-                    0x00070000ULL, 0x02000000ULL, 0x02500000ULL
-                };
+                static const uint64_t probe_addrs[3] = { 0x00070000ULL,
+                                                         0x02000000ULL,
+                                                         0x02500000ULL };
                 static const uint8_t probe_ch[3] = { '2', '3', '4' };
                 for (int k = 0; k < 3; k++) {
-                    st[i++] = 0x48; st[i++] = 0xb8;              /* movabs $imm64,%rax */
-                    memcpy(st + i, &probe_addrs[k], 8); i += 8;
-                    st[i++] = 0x48; st[i++] = 0x8b; st[i++] = 0x18; /* mov (%rax),%rbx */
-                    st[i++] = 0xb0; st[i++] = probe_ch[k];
+                    st[i++] = 0x48;
+                    st[i++] = 0xb8; /* movabs $imm64,%rax */
+                    memcpy(st + i, &probe_addrs[k], 8);
+                    i += 8;
+                    st[i++] = 0x48;
+                    st[i++] = 0x8b;
+                    st[i++] = 0x18; /* mov (%rax),%rbx */
+                    st[i++] = 0xb0;
+                    st[i++] = probe_ch[k];
                     st[i++] = 0xee;
                 }
             }
             {
                 uint64_t ent = s_kernel_load + CODE64_OFFSET;
-                st[i++] = 0x48; st[i++] = 0xb8;
-                memcpy(st + i, &ent, 8); i += 8;
-                st[i++] = 0xff; st[i++] = 0xe0;
+                st[i++] = 0x48;
+                st[i++] = 0xb8;
+                memcpy(st + i, &ent, 8);
+                i += 8;
+                st[i++] = 0xff;
+                st[i++] = 0xe0;
             }
             vcpu->g_rip = GUEST_LINUX_PROBE_GPA;
             KLOG_INFO("[x86boot] probe stub @0x%llx -> real entry 0x%llx\n",
@@ -774,14 +854,14 @@ int x86_guest_boot(vm_t *vm)
         if (vcpu->g_cr3 != 0) {
             /* 64 位直启路径（保留）：自带临时页表，栈在 190 MiB 处 */
             vcpu->g_rsp = GUEST_LINUX_STACK_GPA + 0x1000;
-            vcpu->g_cr3 = GUEST_LINUX_PGTBL_GPA;   /* GPA：EPT 会翻译 */
+            vcpu->g_cr3 = GUEST_LINUX_PGTBL_GPA; /* GPA：EPT 会翻译 */
         } else {
             /* 32 位协议：分页关闭，栈只要在低端可用内存里即可。
              * 内核的 startup_32 会立刻用 boot_params->hdr.scratch 重设 esp。*/
             vcpu->g_rsp = 0x8000;
         }
         vcpu->g_gdt_base = GUEST_LINUX_GDT_GPA;
-        vcpu->g_gdt_limit = 4 * 8 - 1;   /* 4 项：空/0x08/0x10/0x18 */
+        vcpu->g_gdt_limit = 4 * 8 - 1; /* 4 项：空/0x08/0x10/0x18 */
         vcpu->g_boot_linux = 1;
         /*
          * 64 位引导入口的两个参数（缺一不可）：
@@ -795,7 +875,7 @@ int x86_guest_boot(vm_t *vm)
          * 缓冲区准备好，所以同一镜像裸跑完全正常。
          * 输出地址就是内核装载地址（pref_address）。
          */
-        vcpu->regs.rflags = 0x2;                        /* IF=0，初始不开中断 */
+        vcpu->regs.rflags = 0x2; /* IF=0，初始不开中断 */
 
         KLOG_INFO("[x86boot] entry=0x%llx rsi(boot_params)=0x%llx cr3=0x%llx\n",
                   (unsigned long long)vcpu->g_rip,
@@ -821,7 +901,7 @@ int x86_guest_boot(vm_t *vm)
      * 截断（guest_loader_gpa_ptr 刚在同一个文件里栽过，见它的注释）。
      * 玩具 guest（VMM_TEST）那边也是这么声明的。
      */
-    extern int vmx_vcpu_setup(vcpu_t *vcpu, void (*entry)(void));
+    extern int vmx_vcpu_setup(vcpu_t * vcpu, void (*entry)(void));
 
     if (vmx_vcpu_setup(&vm->vcpus[0], 0) != 0) {
         KLOG_ERROR("[x86boot] vmx_vcpu_setup failed\n");

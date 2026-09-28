@@ -45,11 +45,11 @@
 #include "cache.h"
 #include "klog.h"
 #include "kmalloc.h"
-#include "mm_vm.h"          /* virt_to_phys / KERNEL_VMA */
+#include "mm_vm.h" /* virt_to_phys / KERNEL_VMA */
 #include "mmio.h"
-#include "platform_cfg.h"   /* platform_get_mmio / g_mmio_needs_vma */
+#include "platform_cfg.h" /* platform_get_mmio / g_mmio_needs_vma */
 #include "string.h"
-#include "irq/plic.h"       /* plic_install / plic_enable_irq */
+#include "irq/plic.h" /* plic_install / plic_enable_irq */
 #include "net/netdev.h"
 #include "timer/timer.h"
 
@@ -63,18 +63,18 @@
  * 的固定 IP 地址，只在解除 eth 时钟门控和软复位时各碰一次，不做成配置项。
  * 它们同样受平台 mmio_vma 规则约束 —— 见 cvitek_mmio_va()。
  */
-#define CVITEK_CLKGEN_BASE        0x03002000UL  /* 时钟生成器           */
-#define CVITEK_RSTC_BASE          0x03003000UL  /* 复位控制器           */
+#define CVITEK_CLKGEN_BASE 0x03002000UL /* 时钟生成器           */
+#define CVITEK_RSTC_BASE   0x03003000UL /* 复位控制器           */
 
 /* CLKGEN：bit25 = eth0 ahb 时钟，bit26 = eth0 ptpclk */
-#define CVITEK_CLKGEN_CLK_EN_0    0x000U
-#define CVITEK_CLKGEN_ETH_MASK    ((1U << 25) | (1U << 26))
+#define CVITEK_CLKGEN_CLK_EN_0 0x000U
+#define CVITEK_CLKGEN_ETH_MASK ((1U << 25) | (1U << 26))
 
 /* RSTC：低电平有效，写 1 解除复位 */
-#define CVITEK_RSTC_SOFT_RSTN_0   0x000U
-#define CVITEK_RSTC_SOFT_RSTN_3   0x00CU
-#define CVITEK_RSTC_ETH0_BIT      (1U << 12)  /* SOFT_RSTN_0: eth0 mac 复位  */
-#define CVITEK_RSTC_EPHY_MASK     ((1U << 0) | (1U << 1))  /* SOFT_RSTN_3: ephy */
+#define CVITEK_RSTC_SOFT_RSTN_0 0x000U
+#define CVITEK_RSTC_SOFT_RSTN_3 0x00CU
+#define CVITEK_RSTC_ETH0_BIT    (1U << 12) /* SOFT_RSTN_0: eth0 mac 复位  */
+#define CVITEK_RSTC_EPHY_MASK   ((1U << 0) | (1U << 1)) /* SOFT_RSTN_3: ephy */
 
 /* ── 中断 ──────────────────────────────────────────────────────────────── */
 
@@ -87,60 +87,61 @@
  * level-high 是驱动这里最要紧的一条约束：**ISR 必须真正把中断源清掉**，
  * 否则 PLIC 电平一保持，就会不停重触发，整个系统被拖死。
  */
-#define CVITEK_IRQ_GMAC           31U
+#define CVITEK_IRQ_GMAC 31U
 
 /*
  * PLIC 优先级。DTS 里 riscv,max-priority = 7，所以只能取 1..7
  * （plic.c 会把 0 抬成 1）。这里没做优先级调度，取个中间值即可。
  */
-#define CVITEK_IRQ_PRIO           3U
+#define CVITEK_IRQ_PRIO 3U
 
 /* ── PHY ───────────────────────────────────────────────────────────────── */
 
-#define CVITEK_PHY_ADDR           0U
+#define CVITEK_PHY_ADDR 0U
 
-#define CVITEK_PHY_REG_BMCR       0U
-#define CVITEK_PHY_REG_BMSR       1U
-#define CVITEK_PHY_REG_ANAR       4U
-#define CVITEK_PHY_REG_LPA        5U
+#define CVITEK_PHY_REG_BMCR 0U
+#define CVITEK_PHY_REG_BMSR 1U
+#define CVITEK_PHY_REG_ANAR 4U
+#define CVITEK_PHY_REG_LPA  5U
 
-#define CVITEK_PHY_BMCR_RESET        (1U << 15)
-#define CVITEK_PHY_BMCR_SPEED_100    (1U << 13)
-#define CVITEK_PHY_BMCR_AN_ENABLE    (1U << 12)
-#define CVITEK_PHY_BMCR_RESTART_AN   (1U << 9)
-#define CVITEK_PHY_BMCR_FULL_DUPLEX  (1U << 8)
+#define CVITEK_PHY_BMCR_RESET       (1U << 15)
+#define CVITEK_PHY_BMCR_SPEED_100   (1U << 13)
+#define CVITEK_PHY_BMCR_AN_ENABLE   (1U << 12)
+#define CVITEK_PHY_BMCR_RESTART_AN  (1U << 9)
+#define CVITEK_PHY_BMCR_FULL_DUPLEX (1U << 8)
 
-#define CVITEK_PHY_BMSR_LINK         (1U << 2)  /* latch-low，读两次才准 */
+#define CVITEK_PHY_BMSR_LINK (1U << 2) /* latch-low，读两次才准 */
 
 /* ANAR(reg4) ∩ LPA(reg5) 的协商结果位 */
-#define CVITEK_PHY_AN_100FD  (1U << 8)
-#define CVITEK_PHY_AN_100HD  (1U << 7)
-#define CVITEK_PHY_AN_10FD   (1U << 6)
-#define CVITEK_PHY_AN_10HD   (1U << 5)
+#define CVITEK_PHY_AN_100FD (1U << 8)
+#define CVITEK_PHY_AN_100HD (1U << 7)
+#define CVITEK_PHY_AN_10FD  (1U << 6)
+#define CVITEK_PHY_AN_10HD  (1U << 5)
 
 /* 0x3300 = 100M + 自协商使能 + 重启自协商 + 全双工 */
-#define CVITEK_PHY_BMCR_AN_100FD                                       \
-    (CVITEK_PHY_BMCR_SPEED_100 | CVITEK_PHY_BMCR_AN_ENABLE |           \
+#define CVITEK_PHY_BMCR_AN_100FD \
+    (CVITEK_PHY_BMCR_SPEED_100 | CVITEK_PHY_BMCR_AN_ENABLE | \
      CVITEK_PHY_BMCR_RESTART_AN | CVITEK_PHY_BMCR_FULL_DUPLEX)
 
 /* ── 超时（微秒）────────────────────────────────────────────────────────── */
 
-#define CVITEK_MDIO_TIMEOUT_US     10000U    /* 单次 MDIO 事务          */
-#define CVITEK_DMA_RESET_TIMEOUT_US 10000U   /* DMA 软复位              */
-#define CVITEK_FIFO_FLUSH_TIMEOUT_US 10000U  /* TX FIFO flush           */
-#define CVITEK_PHY_RESET_TIMEOUT_US 500000U  /* PHY 软复位              */
-#define CVITEK_LINK_AN_TIMEOUT_US  2500000U  /* 自协商等 link up ~2.5s  */
+#define CVITEK_MDIO_TIMEOUT_US       10000U   /* 单次 MDIO 事务          */
+#define CVITEK_DMA_RESET_TIMEOUT_US  10000U   /* DMA 软复位              */
+#define CVITEK_FIFO_FLUSH_TIMEOUT_US 10000U   /* TX FIFO flush           */
+#define CVITEK_PHY_RESET_TIMEOUT_US  500000U  /* PHY 软复位              */
+#define CVITEK_LINK_AN_TIMEOUT_US    2500000U /* 自协商等 link up ~2.5s  */
 
 /* EPHY 上电稳定时间 */
-#define CVITEK_EPHY_SETTLE_MS      2U
+#define CVITEK_EPHY_SETTLE_MS 2U
 
 /* ── 其他 ─────────────────────────────────────────────────────────────── */
 
-#define CVITEK_MIN_ETH_FRAME       60U    /* 不含 FCS 的最小载荷，不足补零 */
-#define CVITEK_GMAC_INT_DISABLE    0x60FU /* PCS/LPI 等无关中断位，保持原值 */
+#define CVITEK_MIN_ETH_FRAME    60U    /* 不含 FCS 的最小载荷，不足补零 */
+#define CVITEK_GMAC_INT_DISABLE 0x60FU /* PCS/LPI 等无关中断位，保持原值 */
 
 /* 硬件 MAC 读出来全 0 / 全 F 时使用的兜底地址 */
-static const uint8_t cvitek_mac_fallback[6] = { 0x00, 0x50, 0x43, 0x02, 0x02, 0x02 };
+static const uint8_t cvitek_mac_fallback[6] = { 0x00, 0x50, 0x43,
+                                                0x02, 0x02, 0x02 };
 
 /*
  * 四块 DMA 内存各自的页数。分配（cvitek_eth_init）和释放（cvitek_free_allocs）
@@ -148,10 +149,12 @@ static const uint8_t cvitek_mac_fallback[6] = { 0x00, 0x50, 0x43, 0x02, 0x02, 0x
  * 1 页，环一加深就会漏放。
  * 描述符按 64 字节步长算（见 CVITEK_BUSMODE_DSL_WORDS）。
  */
-#define CVITEK_TX_DESC_PAGES  DIV_ROUND_UP(CVITEK_TX_RING_SIZE * 64U, 4096U)
-#define CVITEK_RX_DESC_PAGES  DIV_ROUND_UP(CVITEK_RX_RING_SIZE * 64U, 4096U)
-#define CVITEK_TX_BUF_PAGES   DIV_ROUND_UP(CVITEK_TX_RING_SIZE * CVITEK_BUF_SIZE, 4096U)
-#define CVITEK_RX_BUF_PAGES   DIV_ROUND_UP(CVITEK_RX_RING_SIZE * CVITEK_BUF_SIZE, 4096U)
+#define CVITEK_TX_DESC_PAGES DIV_ROUND_UP(CVITEK_TX_RING_SIZE * 64U, 4096U)
+#define CVITEK_RX_DESC_PAGES DIV_ROUND_UP(CVITEK_RX_RING_SIZE * 64U, 4096U)
+#define CVITEK_TX_BUF_PAGES \
+    DIV_ROUND_UP(CVITEK_TX_RING_SIZE *CVITEK_BUF_SIZE, 4096U)
+#define CVITEK_RX_BUF_PAGES \
+    DIV_ROUND_UP(CVITEK_RX_RING_SIZE *CVITEK_BUF_SIZE, 4096U)
 
 /* ── DMA 描述符 ────────────────────────────────────────────────────────── */
 
@@ -164,19 +167,20 @@ static const uint8_t cvitek_mac_fallback[6] = { 0x00, 0x50, 0x43, 0x02, 0x02, 0x
 typedef struct {
     uint32_t des0;
     uint32_t des1;
-    uint32_t des2;   /* 数据缓冲物理地址 */
+    uint32_t des2; /* 数据缓冲物理地址 */
     uint32_t des3;
 } __attribute__((aligned(64))) cvitek_dma_desc_t;
 
-static_assert(sizeof(cvitek_dma_desc_t) == 64,
-              "描述符必须占满 64 字节（DSL=12 words + 16 字节描述符 = 64 字节步长）");
+static_assert(
+    sizeof(cvitek_dma_desc_t) == 64,
+    "描述符必须占满 64 字节（DSL=12 words + 16 字节描述符 = 64 字节步长）");
 
 /*
  * 描述符字段一律走 volatile 访问：这些字会被 DMA 在背后改写，编译器既不能
  * 缓存进寄存器，也不能把它们重排到缓存维护指令之后。
  */
-#define CVITEK_DESC_RD(d, f)      (*(volatile uint32_t *)&(d)->f)
-#define CVITEK_DESC_WR(d, f, v)   (*(volatile uint32_t *)&(d)->f = (uint32_t)(v))
+#define CVITEK_DESC_RD(d, f)    (*(volatile uint32_t *)&(d)->f)
+#define CVITEK_DESC_WR(d, f, v) (*(volatile uint32_t *)&(d)->f = (uint32_t)(v))
 
 /* ── 驱动状态 ──────────────────────────────────────────────────────────── */
 
@@ -187,12 +191,12 @@ struct cvitek_eth_nic {
 
     cvitek_dma_desc_t *tx_descs;
     cvitek_dma_desc_t *rx_descs;
-    uint8_t           *tx_bufs;   /* TX_RING_SIZE 个连续的 BUF_SIZE 缓冲 */
-    uint8_t           *rx_bufs;
+    uint8_t *tx_bufs; /* TX_RING_SIZE 个连续的 BUF_SIZE 缓冲 */
+    uint8_t *rx_bufs;
 
-    uint32_t tx_head;   /* 下一个可写的 TX 描述符             */
-    uint32_t tx_tail;   /* 已发出但尚未回收的最早 TX 描述符   */
-    uint32_t rx_cur;    /* 下一个期望 DMA 填完的 RX 描述符    */
+    uint32_t tx_head; /* 下一个可写的 TX 描述符             */
+    uint32_t tx_tail; /* 已发出但尚未回收的最早 TX 描述符   */
+    uint32_t rx_cur;  /* 下一个期望 DMA 填完的 RX 描述符    */
 
     uint32_t tx_count;
     uint32_t rx_count;
@@ -204,7 +208,8 @@ static struct cvitek_eth_nic *g_nic;
 
 /* ── 寄存器访问 ────────────────────────────────────────────────────────── */
 
-static inline uint32_t cvitek_read(const struct cvitek_eth_nic *nic, uint32_t off)
+static inline uint32_t cvitek_read(const struct cvitek_eth_nic *nic,
+                                   uint32_t off)
 {
     return read32((const volatile void *)(nic->base + off));
 }
@@ -253,9 +258,8 @@ static uint64_t cvitek_deadline_us(uint32_t us)
     uint64_t freq = timer_counter_frequency();
     if (!freq)
         freq = 1000000ULL;
-    return timer_read_counter()
-         + (freq / 1000000ULL) * us
-         + (freq % 1000000ULL) * us / 1000000ULL;
+    return timer_read_counter() + (freq / 1000000ULL) * us +
+           (freq % 1000000ULL) * us / 1000000ULL;
 }
 
 static inline bool cvitek_expired(uint64_t deadline)
@@ -279,12 +283,12 @@ static inline void cvitek_inval_desc(const cvitek_dma_desc_t *d)
 
 static void cvitek_clk_and_reset_enable(void)
 {
-    volatile uint32_t *clk_en0 =
-        (volatile uint32_t *)cvitek_mmio_va(CVITEK_CLKGEN_BASE + CVITEK_CLKGEN_CLK_EN_0);
-    volatile uint32_t *soft_rstn_0 =
-        (volatile uint32_t *)cvitek_mmio_va(CVITEK_RSTC_BASE + CVITEK_RSTC_SOFT_RSTN_0);
-    volatile uint32_t *soft_rstn_3 =
-        (volatile uint32_t *)cvitek_mmio_va(CVITEK_RSTC_BASE + CVITEK_RSTC_SOFT_RSTN_3);
+    volatile uint32_t *clk_en0 = (volatile uint32_t *)cvitek_mmio_va(
+        CVITEK_CLKGEN_BASE + CVITEK_CLKGEN_CLK_EN_0);
+    volatile uint32_t *soft_rstn_0 = (volatile uint32_t *)cvitek_mmio_va(
+        CVITEK_RSTC_BASE + CVITEK_RSTC_SOFT_RSTN_0);
+    volatile uint32_t *soft_rstn_3 = (volatile uint32_t *)cvitek_mmio_va(
+        CVITEK_RSTC_BASE + CVITEK_RSTC_SOFT_RSTN_3);
 
     /* 放开 eth0 时钟门控 */
     write32(read32(clk_en0) | CVITEK_CLKGEN_ETH_MASK, clk_en0);
@@ -324,11 +328,12 @@ static int cvitek_mdio_read(const struct cvitek_eth_nic *nic, uint32_t phy,
      * MII_ADDR 是「写进去就生效」的整字寄存器，PHY/REG/CLK_CSR/BUSY 必须一次拼好，
      * 不能用读改写 —— 读回的值带 BUSY，写回去会重复触发事务。
      */
-    cvitek_write(nic, CVITEK_GMAC_MII_ADDR,
-                 ((phy << CVITEK_MIIADDR_PHY_SHIFT) & CVITEK_MIIADDR_PHY_MASK) |
-                 ((reg << CVITEK_MIIADDR_REG_SHIFT) & CVITEK_MIIADDR_REG_MASK) |
-                 (CVITEK_MII_CLK_CSR_60_100M_DIV42 << CVITEK_MIIADDR_CLK_CSR_SHIFT) |
-                 CVITEK_MIIADDR_BUSY);
+    cvitek_write(
+        nic, CVITEK_GMAC_MII_ADDR,
+        ((phy << CVITEK_MIIADDR_PHY_SHIFT) & CVITEK_MIIADDR_PHY_MASK) |
+            ((reg << CVITEK_MIIADDR_REG_SHIFT) & CVITEK_MIIADDR_REG_MASK) |
+            (CVITEK_MII_CLK_CSR_60_100M_DIV42 << CVITEK_MIIADDR_CLK_CSR_SHIFT) |
+            CVITEK_MIIADDR_BUSY);
 
     if (cvitek_mdio_wait(nic) != 0)
         return -1;
@@ -344,11 +349,12 @@ static int cvitek_mdio_write(const struct cvitek_eth_nic *nic, uint32_t phy,
         return -1;
 
     cvitek_write(nic, CVITEK_GMAC_MII_DATA, val);
-    cvitek_write(nic, CVITEK_GMAC_MII_ADDR,
-                 ((phy << CVITEK_MIIADDR_PHY_SHIFT) & CVITEK_MIIADDR_PHY_MASK) |
-                 ((reg << CVITEK_MIIADDR_REG_SHIFT) & CVITEK_MIIADDR_REG_MASK) |
-                 (CVITEK_MII_CLK_CSR_60_100M_DIV42 << CVITEK_MIIADDR_CLK_CSR_SHIFT) |
-                 CVITEK_MIIADDR_WRITE | CVITEK_MIIADDR_BUSY);
+    cvitek_write(
+        nic, CVITEK_GMAC_MII_ADDR,
+        ((phy << CVITEK_MIIADDR_PHY_SHIFT) & CVITEK_MIIADDR_PHY_MASK) |
+            ((reg << CVITEK_MIIADDR_REG_SHIFT) & CVITEK_MIIADDR_REG_MASK) |
+            (CVITEK_MII_CLK_CSR_60_100M_DIV42 << CVITEK_MIIADDR_CLK_CSR_SHIFT) |
+            CVITEK_MIIADDR_WRITE | CVITEK_MIIADDR_BUSY);
 
     return cvitek_mdio_wait(nic);
 }
@@ -429,7 +435,7 @@ static void cvitek_reclaim_tx(struct cvitek_eth_nic *nic)
 
         cvitek_inval_desc(d);
         if (CVITEK_DESC_RD(d, des0) & CVITEK_TDES0_OWN)
-            break;   /* DMA 还没发完 */
+            break; /* DMA 还没发完 */
 
         nic->tx_tail = (nic->tx_tail + 1) % CVITEK_TX_RING_SIZE;
     }
@@ -463,7 +469,8 @@ static void cvitek_phy_init(struct cvitek_eth_nic *nic, bool *speed_100m,
 
     deadline = cvitek_deadline_us(CVITEK_PHY_RESET_TIMEOUT_US);
     while ((cvitek_read(nic, CVITEK_GMAC_MII_ADDR) & CVITEK_MIIADDR_BUSY) ||
-           ((cvitek_mdio_read(nic, CVITEK_PHY_ADDR, CVITEK_PHY_REG_BMCR, &bmcr) == 0) &&
+           ((cvitek_mdio_read(nic, CVITEK_PHY_ADDR, CVITEK_PHY_REG_BMCR,
+                              &bmcr) == 0) &&
             (bmcr & CVITEK_PHY_BMCR_RESET))) {
         if (cvitek_expired(deadline)) {
             KLOG_WARN("[cvitek-eth] PHY reset timeout (bmcr=0x%04x)\n", bmcr);
@@ -490,29 +497,35 @@ static void cvitek_phy_init(struct cvitek_eth_nic *nic, bool *speed_100m,
                   bmcr, bmsr, lpa);
     else
         KLOG_WARN("[cvitek-eth] link still DOWN after AN timeout, continuing "
-                  "(bmcr=0x%04x bmsr=0x%04x lpa=0x%04x)\n", bmcr, bmsr, lpa);
+                  "(bmcr=0x%04x bmsr=0x%04x lpa=0x%04x)\n",
+                  bmcr, bmsr, lpa);
 
     /* 4. 由 ANAR ∩ LPA 定速率/双工 */
     (void)cvitek_mdio_read(nic, CVITEK_PHY_ADDR, CVITEK_PHY_REG_ANAR, &anar);
     uint16_t common = (uint16_t)(anar & lpa);
 
     if (common & CVITEK_PHY_AN_100FD) {
-        *speed_100m = true;  *full_duplex = true;
+        *speed_100m = true;
+        *full_duplex = true;
     } else if (common & CVITEK_PHY_AN_100HD) {
-        *speed_100m = true;  *full_duplex = false;
+        *speed_100m = true;
+        *full_duplex = false;
     } else if (common & CVITEK_PHY_AN_10FD) {
-        *speed_100m = false; *full_duplex = true;
+        *speed_100m = false;
+        *full_duplex = true;
     } else if (common & CVITEK_PHY_AN_10HD) {
-        *speed_100m = false; *full_duplex = false;
+        *speed_100m = false;
+        *full_duplex = false;
     } else {
         /* 协商结果无法确定：Rust 原版这里无条件落 100M FD，保持一致 */
         KLOG_WARN("[cvitek-eth] AN result indeterminate, assuming 100M FD\n");
-        *speed_100m = true;  *full_duplex = true;
+        *speed_100m = true;
+        *full_duplex = true;
     }
 
     KLOG_INFO("[cvitek-eth] link mode = %s %s (anar=0x%04x lpa=0x%04x)\n",
-              *speed_100m ? "100M" : "10M",
-              *full_duplex ? "FD" : "HD", anar, lpa);
+              *speed_100m ? "100M" : "10M", *full_duplex ? "FD" : "HD", anar,
+              lpa);
 }
 
 /* ── MAC 地址 ──────────────────────────────────────────────────────────── */
@@ -530,12 +543,11 @@ static void cvitek_read_mac(const struct cvitek_eth_nic *nic, uint8_t mac[6])
     mac[5] = (uint8_t)((hi >> 8) & 0xFF);
 }
 
-static void cvitek_write_mac(const struct cvitek_eth_nic *nic, const uint8_t mac[6])
+static void cvitek_write_mac(const struct cvitek_eth_nic *nic,
+                             const uint8_t mac[6])
 {
-    uint32_t lo = (uint32_t)mac[0]
-                | ((uint32_t)mac[1] << 8)
-                | ((uint32_t)mac[2] << 16)
-                | ((uint32_t)mac[3] << 24);
+    uint32_t lo = (uint32_t)mac[0] | ((uint32_t)mac[1] << 8) |
+                  ((uint32_t)mac[2] << 16) | ((uint32_t)mac[3] << 24);
     uint32_t hi = (uint32_t)mac[4] | ((uint32_t)mac[5] << 8);
 
     cvitek_write(nic, CVITEK_GMAC_ADDR0_LOW, lo);
@@ -562,7 +574,7 @@ static int cvitek_eth_send(struct cvitek_eth_nic *nic, const uint8_t *frame,
 
     cvitek_inval_desc(d);
     if (CVITEK_DESC_RD(d, des0) & CVITEK_TDES0_OWN)
-        return -1;   /* 环满，DMA 还没回收 */
+        return -1; /* 环满，DMA 还没回收 */
 
     uint8_t *buf = cvitek_buf(nic->tx_bufs, idx);
     size_t tx_len = (len < CVITEK_MIN_ETH_FRAME) ? CVITEK_MIN_ETH_FRAME : len;
@@ -574,8 +586,8 @@ static int cvitek_eth_send(struct cvitek_eth_nic *nic, const uint8_t *frame,
     /* CPU 写 → DMA 读：先把帧数据推到内存，再交给 DMA */
     clean_dcache_range(buf, tx_len);
 
-    uint32_t tdes1 = CVITEK_TDES1_IC | CVITEK_TDES1_FS | CVITEK_TDES1_LS
-                   | ((uint32_t)tx_len & CVITEK_TDES1_TBS1_MASK);
+    uint32_t tdes1 = CVITEK_TDES1_IC | CVITEK_TDES1_FS | CVITEK_TDES1_LS |
+                     ((uint32_t)tx_len & CVITEK_TDES1_TBS1_MASK);
     if (idx == CVITEK_TX_RING_SIZE - 1)
         tdes1 |= CVITEK_TDES1_TER;
 
@@ -609,7 +621,7 @@ static int cvitek_eth_recv(struct cvitek_eth_nic *nic, uint8_t *frame,
     uint32_t des0 = CVITEK_DESC_RD(d, des0);
 
     if (des0 & CVITEK_RDES0_OWN)
-        return 0;   /* DMA 还没填完，本轮无帧 */
+        return 0; /* DMA 还没填完，本轮无帧 */
 
     if (des0 & CVITEK_RDES0_ES) {
         /* 坏帧：还回去，跳过 */
@@ -684,8 +696,8 @@ static void cvitek_eth_isr(uint32_t irq, void *ctx)
      * 本驱动只使能了 RIE|NIE，所以能触发中断的源只有 RI 和 NIS，ack 这两位
      * 就足以让电平降下来。与 cvitek_requeue_rx() 里的做法保持一致。
      */
-    uint32_t st   = cvitek_read(nic, CVITEK_DMA_STATUS);
-    uint32_t ack  = st & (CVITEK_DMAST_RI | CVITEK_DMAST_NIS);
+    uint32_t st = cvitek_read(nic, CVITEK_DMA_STATUS);
+    uint32_t ack = st & (CVITEK_DMAST_RI | CVITEK_DMAST_NIS);
     if (ack != 0U)
         cvitek_write(nic, CVITEK_DMA_STATUS, ack);
 
@@ -739,16 +751,16 @@ static int cvitek_eth_init(uintptr_t base)
      */
     nic->tx_descs = kalloc_pages(CVITEK_TX_DESC_PAGES);
     nic->rx_descs = kalloc_pages(CVITEK_RX_DESC_PAGES);
-    nic->tx_bufs  = kalloc_pages(CVITEK_TX_BUF_PAGES);
-    nic->rx_bufs  = kalloc_pages(CVITEK_RX_BUF_PAGES);
+    nic->tx_bufs = kalloc_pages(CVITEK_TX_BUF_PAGES);
+    nic->rx_bufs = kalloc_pages(CVITEK_RX_BUF_PAGES);
 
     if (!nic->tx_descs || !nic->rx_descs || !nic->tx_bufs || !nic->rx_bufs) {
-        KLOG_ERROR("[cvitek-eth] DMA 分配失败：需要的页数 desc tx=%u rx=%u, "
-                   "buf tx=%u rx=%u（拿到 desc tx=%d rx=%d, buf tx=%d rx=%d）\n",
-                   CVITEK_TX_DESC_PAGES, CVITEK_RX_DESC_PAGES,
-                   CVITEK_TX_BUF_PAGES, CVITEK_RX_BUF_PAGES,
-                   nic->tx_descs != NULL, nic->rx_descs != NULL,
-                   nic->tx_bufs != NULL, nic->rx_bufs != NULL);
+        KLOG_ERROR(
+            "[cvitek-eth] DMA 分配失败：需要的页数 desc tx=%u rx=%u, "
+            "buf tx=%u rx=%u（拿到 desc tx=%d rx=%d, buf tx=%d rx=%d）\n",
+            CVITEK_TX_DESC_PAGES, CVITEK_RX_DESC_PAGES, CVITEK_TX_BUF_PAGES,
+            CVITEK_RX_BUF_PAGES, nic->tx_descs != NULL, nic->rx_descs != NULL,
+            nic->tx_bufs != NULL, nic->rx_bufs != NULL);
         cvitek_free_allocs(nic);
         return -1;
     }
@@ -771,15 +783,16 @@ static int cvitek_eth_init(uintptr_t base)
     {
         bool all_zero = true, all_ff = true;
         for (int i = 0; i < 6; i++) {
-            if (nic->mac[i] != 0x00) all_zero = false;
-            if (nic->mac[i] != 0xFF) all_ff = false;
+            if (nic->mac[i] != 0x00)
+                all_zero = false;
+            if (nic->mac[i] != 0xFF)
+                all_ff = false;
         }
         if (all_zero || all_ff)
             memcpy(nic->mac, cvitek_mac_fallback, 6);
     }
-    KLOG_INFO("[cvitek-eth] MAC %02x:%02x:%02x:%02x:%02x:%02x\n",
-              nic->mac[0], nic->mac[1], nic->mac[2],
-              nic->mac[3], nic->mac[4], nic->mac[5]);
+    KLOG_INFO("[cvitek-eth] MAC %02x:%02x:%02x:%02x:%02x:%02x\n", nic->mac[0],
+              nic->mac[1], nic->mac[2], nic->mac[3], nic->mac[4], nic->mac[5]);
 
     /* 时钟 + 复位 */
     cvitek_clk_and_reset_enable();
@@ -792,10 +805,11 @@ static int cvitek_eth_init(uintptr_t base)
     cvitek_setup_rx_ring(nic);
 
     /* 总线模式：PBL=8, DSL=12（64 字节步长）, FB=1, AAL=1 */
-    cvitek_write(nic, CVITEK_DMA_BUS_MODE,
-                 (8U << CVITEK_BUSMODE_PBL_SHIFT) |
-                 ((uint32_t)CVITEK_BUSMODE_DSL_WORDS << CVITEK_BUSMODE_DSL_SHIFT) |
-                 CVITEK_BUSMODE_FB | CVITEK_BUSMODE_AAL);
+    cvitek_write(
+        nic, CVITEK_DMA_BUS_MODE,
+        (8U << CVITEK_BUSMODE_PBL_SHIFT) |
+            ((uint32_t)CVITEK_BUSMODE_DSL_WORDS << CVITEK_BUSMODE_DSL_SHIFT) |
+            CVITEK_BUSMODE_FB | CVITEK_BUSMODE_AAL);
     cvitek_write(nic, CVITEK_DMA_TX_BASE, cvitek_dma_pa(nic->tx_descs));
     cvitek_write(nic, CVITEK_DMA_RX_BASE, cvitek_dma_pa(nic->rx_descs));
 
@@ -810,7 +824,8 @@ static int cvitek_eth_init(uintptr_t base)
     cvitek_write_mac(nic, nic->mac);
 
     /* 收所有帧（Promiscuous + ReceiveAll + hash 全 1） */
-    cvitek_write(nic, CVITEK_GMAC_FRAME_FILTER, CVITEK_FILTER_PR | CVITEK_FILTER_RA);
+    cvitek_write(nic, CVITEK_GMAC_FRAME_FILTER,
+                 CVITEK_FILTER_PR | CVITEK_FILTER_RA);
     cvitek_write(nic, CVITEK_GMAC_HASH_HIGH, 0xFFFFFFFFU);
     cvitek_write(nic, CVITEK_GMAC_HASH_LOW, 0xFFFFFFFFU);
 
@@ -825,12 +840,12 @@ static int cvitek_eth_init(uintptr_t base)
     if (full_duplex)
         mc |= CVITEK_MACCTL_DM;
     cvitek_write(nic, CVITEK_GMAC_MAC_CONTROL, mc);
-    cvitek_write(nic, CVITEK_GMAC_MMC_CNTRL, 0x01U);   /* 冻结 MMC 计数器 */
+    cvitek_write(nic, CVITEK_GMAC_MMC_CNTRL, 0x01U); /* 冻结 MMC 计数器 */
 
     /* 启动 DMA：先 flush TX FIFO 并等它自清零，再开 ST/SR */
     cvitek_write(nic, CVITEK_DMA_OPERATION,
-                 CVITEK_DMAOP_TSF | CVITEK_DMAOP_RSF |
-                 CVITEK_DMAOP_OSF | CVITEK_DMAOP_FTF);
+                 CVITEK_DMAOP_TSF | CVITEK_DMAOP_RSF | CVITEK_DMAOP_OSF |
+                     CVITEK_DMAOP_FTF);
 
     uint64_t deadline = cvitek_deadline_us(CVITEK_FIFO_FLUSH_TIMEOUT_US);
     while (cvitek_read(nic, CVITEK_DMA_OPERATION) & CVITEK_DMAOP_FTF) {
@@ -841,7 +856,8 @@ static int cvitek_eth_init(uintptr_t base)
     }
 
     uint32_t op = cvitek_read(nic, CVITEK_DMA_OPERATION);
-    cvitek_write(nic, CVITEK_DMA_OPERATION, op | CVITEK_DMAOP_ST | CVITEK_DMAOP_SR);
+    cvitek_write(nic, CVITEK_DMA_OPERATION,
+                 op | CVITEK_DMAOP_ST | CVITEK_DMAOP_SR);
     cvitek_write(nic, CVITEK_DMA_RX_POLL, 1);
 
     /*
@@ -859,8 +875,7 @@ static int cvitek_eth_init(uintptr_t base)
      */
     plic_install(CVITEK_IRQ_GMAC, cvitek_eth_isr, nic);
     plic_enable_irq(CVITEK_IRQ_GMAC, CVITEK_IRQ_PRIO);
-    cvitek_write(nic, CVITEK_DMA_INTR_ENA,
-                 CVITEK_DMAIE_RIE | CVITEK_DMAIE_NIE);
+    cvitek_write(nic, CVITEK_DMA_INTR_ENA, CVITEK_DMAIE_RIE | CVITEK_DMAIE_NIE);
     KLOG_INFO("[cvitek-eth] RX IRQ on (PLIC source %u, level-high)\n",
               CVITEK_IRQ_GMAC);
 
@@ -893,7 +908,7 @@ static int cvitek_eth_init(uintptr_t base)
         static netdev_t cvitek_dev;
         memset(&cvitek_dev, 0, sizeof(cvitek_dev));
         cvitek_dev.name = "cvitek0";
-        cvitek_dev.ctx  = nic;
+        cvitek_dev.ctx = nic;
         cvitek_dev.send = cvitek_netdev_send;
         cvitek_dev.recv = cvitek_netdev_recv;
         /*
@@ -930,9 +945,9 @@ void cvitek_eth_send_probe(void)
 
     uint8_t pkt[64];
     memset(pkt, 0, sizeof(pkt));
-    memset(&pkt[0], 0xFF, 6);            /* 目的地址：广播 */
-    memcpy(&pkt[6], g_nic->mac, 6);      /* 源地址：本机 MAC */
-    pkt[12] = 0x88U;                     /* 自定义 EtherType */
+    memset(&pkt[0], 0xFF, 6);       /* 目的地址：广播 */
+    memcpy(&pkt[6], g_nic->mac, 6); /* 源地址：本机 MAC */
+    pkt[12] = 0x88U;                /* 自定义 EtherType */
     pkt[13] = 0xB5U;
     {
         const char payload[] = "avatar cvitek-eth probe";
@@ -946,6 +961,6 @@ void cvitek_eth_send_probe(void)
      * 上板排障时常用 LOG=none 构建（热路径日志会污染性能测量），而 KLOG_*
      * 在 LOG=none 下被编译期抹除，用它会让探针变成一声不吭的空操作。
      */
-    kprintf("[cvitek-eth] probe tx rc=%d len=%zu tx_count=%u rx_count=%u\n",
-            rc, sizeof(pkt), g_nic->tx_count, g_nic->rx_count);
+    kprintf("[cvitek-eth] probe tx rc=%d len=%zu tx_count=%u rx_count=%u\n", rc,
+            sizeof(pkt), g_nic->tx_count, g_nic->rx_count);
 }

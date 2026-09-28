@@ -8,21 +8,21 @@
 #define VMM_VGIC_H
 
 #include "types.h"
-#include "vmm_virq.h"   /* VIRQ_VTIMER */
+#include "vmm_virq.h" /* VIRQ_VTIMER */
 
-#define VGIC_MAX_IRQS   1024
-#define VGIC_MAX_WORDS  (VGIC_MAX_IRQS / 32)
-#define VGIC_MAX_VCPUS  8
-#define VGIC_MAX_LRS    4
-#define VGICD_REG_SIZE  0x1000
+#define VGIC_MAX_IRQS  1024
+#define VGIC_MAX_WORDS (VGIC_MAX_IRQS / 32)
+#define VGIC_MAX_VCPUS 8
+#define VGIC_MAX_LRS   4
+#define VGICD_REG_SIZE 0x1000
 
-#define LR_HW              (1u << 31)
-#define LR_GROUP1         (1u << 30)
-#define LR_STATE_PENDING  (1u << 28)
-#define LR_PRIORITY       (0x14u << 23)
-#define LR_STATE_MASK     (0x3u << 28)
-#define LR_SGI_SRC_SHIFT  10
-#define LR_VINTID_MASK    0x3ffu
+#define LR_HW            (1u << 31)
+#define LR_GROUP1        (1u << 30)
+#define LR_STATE_PENDING (1u << 28)
+#define LR_PRIORITY      (0x14u << 23)
+#define LR_STATE_MASK    (0x3u << 28)
+#define LR_SGI_SRC_SHIFT 10
+#define LR_VINTID_MASK   0x3ffu
 
 typedef struct vgic_vcpu_state {
     /* Banked SGI/PPI state for IRQs 0..31. SGIs are always enabled here. */
@@ -49,8 +49,8 @@ typedef struct vgic {
     uint32_t enabled[VGIC_MAX_WORDS];
     uint32_t spi_pending[VGIC_MAX_VCPUS][VGIC_MAX_WORDS];
     uint32_t spi_active[VGIC_MAX_VCPUS][VGIC_MAX_WORDS];
-    uint8_t  dist_regs[VGICD_REG_SIZE];
-    uint8_t  targets[VGIC_MAX_IRQS];
+    uint8_t dist_regs[VGICD_REG_SIZE];
+    uint8_t targets[VGIC_MAX_IRQS];
 
     vgic_vcpu_state_t vcpu[VGIC_MAX_VCPUS];
 } vgic_t;
@@ -64,7 +64,7 @@ void vmm_vgic_set_enabled(vgic_t *vgic, uint32_t vcpu_id, uint32_t irq,
                           int enabled);
 
 void vmm_vgic_set_dist_enabled(vgic_t *vgic, int enabled);
-int  vmm_vgic_dist_enabled(const vgic_t *vgic);
+int vmm_vgic_dist_enabled(const vgic_t *vgic);
 
 uint32_t vmm_vgic_enabled_word(const vgic_t *vgic, uint32_t vcpu_id,
                                uint32_t word);
@@ -72,17 +72,17 @@ uint32_t vmm_vgic_pending_word(const vgic_t *vgic, uint32_t vcpu_id,
                                uint32_t word);
 uint32_t vmm_vgic_active_word(const vgic_t *vgic, uint32_t vcpu_id,
                               uint32_t word);
-void vmm_vgic_clear_pending_word(vgic_t *vgic, uint32_t vcpu_id,
-                                 uint32_t word, uint32_t bits);
-void vmm_vgic_clear_active_word(vgic_t *vgic, uint32_t vcpu_id,
-                                uint32_t word, uint32_t bits);
+void vmm_vgic_clear_pending_word(vgic_t *vgic, uint32_t vcpu_id, uint32_t word,
+                                 uint32_t bits);
+void vmm_vgic_clear_active_word(vgic_t *vgic, uint32_t vcpu_id, uint32_t word,
+                                uint32_t bits);
 
 void vmm_vgic_inject_timer(vgic_t *vgic, uint32_t vcpu_id);
 void vmm_vgic_sync_entry(vgic_t *vgic, uint32_t vcpu_id);
 void vmm_vgic_sync_exit(vgic_t *vgic, uint32_t vcpu_id);
 
-int  vmm_vgic_next_pending(const vgic_t *vgic, uint32_t vcpu_id);
-int  vmm_vgic_ack(vgic_t *vgic, uint32_t vcpu_id);
+int vmm_vgic_next_pending(const vgic_t *vgic, uint32_t vcpu_id);
+int vmm_vgic_ack(vgic_t *vgic, uint32_t vcpu_id);
 void vmm_vgic_eoi(vgic_t *vgic, uint32_t vcpu_id, uint32_t irq);
 
 #endif /* VMM_VGIC_H */

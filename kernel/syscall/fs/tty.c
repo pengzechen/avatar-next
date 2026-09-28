@@ -9,13 +9,14 @@
 #include "spinlock.h"
 #include "uart/uart.h"
 
-#define UART_RINGBUF_SIZE  64u
-static volatile uint8_t  g_uart_rb[UART_RINGBUF_SIZE];
+#define UART_RINGBUF_SIZE 64u
+static volatile uint8_t g_uart_rb[UART_RINGBUF_SIZE];
 static volatile uint32_t g_uart_rb_head = 0;
 static volatile uint32_t g_uart_rb_tail = 0;
 static spinlock_noirq_t g_uart_rb_lock = SPINLOCK_NOIRQ_INIT;
 
-void uart_ringbuf_push(char c) {
+void uart_ringbuf_push(char c)
+{
     uint64_t flags;
     spin_lock_irqsave(&g_uart_rb_lock, &flags);
     uint32_t next = (g_uart_rb_head + 1u) % UART_RINGBUF_SIZE;
@@ -26,7 +27,8 @@ void uart_ringbuf_push(char c) {
     spin_unlock_irqrestore(&g_uart_rb_lock, flags);
 }
 
-int uart_ringbuf_pop(char *out) {
+int uart_ringbuf_pop(char *out)
+{
     uint64_t flags;
     spin_lock_irqsave(&g_uart_rb_lock, &flags);
     if (g_uart_rb_tail == g_uart_rb_head) {
@@ -39,7 +41,8 @@ int uart_ringbuf_pop(char *out) {
     return 1;
 }
 
-int uart_ringbuf_empty(void) {
+int uart_ringbuf_empty(void)
+{
     uint64_t flags;
     spin_lock_irqsave(&g_uart_rb_lock, &flags);
     int empty = (g_uart_rb_tail == g_uart_rb_head);
@@ -53,8 +56,9 @@ struct kernel_termios g_termios = {
     .c_oflag = 0x00000005U, /* OPOST | ONLCR */
     .c_cflag = 0x000000BFU, /* B38400 | CS8 | CREAD */
     .c_lflag = 0x00008A3BU, /* ISIG | ICANON | ECHO* | IEXTEN */
-    .c_line  = 0,
-    .c_cc    = {0,0,0,0, 4/*VEOF=^D*/, 0/*VTIME*/, 1/*VMIN*/, 0,0,0,0,0,0,0,0,0,0,0,0},
+    .c_line = 0,
+    .c_cc = { 0, 0, 0, 0, 4 /*VEOF=^D*/, 0 /*VTIME*/, 1 /*VMIN*/, 0, 0, 0, 0, 0,
+              0, 0, 0, 0, 0, 0, 0 },
 };
 
 /*
@@ -68,9 +72,10 @@ struct kernel_termios g_termios = {
  */
 static spinlock_noirq_t g_uart_hw_lock = SPINLOCK_NOIRQ_INIT;
 
-void signal_check_uart(void) {
+void signal_check_uart(void)
+{
     char buf[UART_RINGBUF_SIZE];
-    int  n = 0;
+    int n = 0;
 
     /* 在锁内一次性把硬件 FIFO 抽干到本地缓冲，缩短临界区并避免与
      * 环形缓冲锁/信号投递产生锁嵌套。剩余字节留待下次调用处理。 */
@@ -87,7 +92,8 @@ void signal_check_uart(void) {
             task_t *cur = task_current();
             if (fg == 0 && cur)
                 fg = cur->pgid;
-            if (fg) task_send_signal_to_pgid(fg, SIGINT);
+            if (fg)
+                task_send_signal_to_pgid(fg, SIGINT);
         } else {
             uart_ringbuf_push(c);
         }
@@ -95,6 +101,16 @@ void signal_check_uart(void) {
 }
 
 /* tty 辅助接口：供 pseudofs/tty_read 等调用 */
-int termios_is_raw(void)   { return !(g_termios.c_lflag & 0x0002u); }
-int termios_do_icrnl(void) { return  (g_termios.c_iflag & 0x0100u); }
-int tty_getchar_nb(char *c) { signal_check_uart(); return uart_ringbuf_pop(c); }
+int termios_is_raw(void)
+{
+    return !(g_termios.c_lflag & 0x0002u);
+}
+int termios_do_icrnl(void)
+{
+    return (g_termios.c_iflag & 0x0100u);
+}
+int tty_getchar_nb(char *c)
+{
+    signal_check_uart();
+    return uart_ringbuf_pop(c);
+}

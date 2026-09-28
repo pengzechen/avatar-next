@@ -1,4 +1,4 @@
-#ifndef  __MAIR_H__
+#ifndef __MAIR_H__
 #define __MAIR_H__
 
 //  ===================== MAIR 寄存器 ===========================
@@ -24,9 +24,9 @@
 #define PTE_AIDX_MEMORY_NOCACHE (MA_MEMORY_NoCache << 2)
 
 // 这个值 我们一会放到MAIR_EL1 寄存器中
-#define MAIR_VALUE                                                                                 \
-    (MA_DEVICE_nGnRnE_Flags << (8 * MA_DEVICE_nGnRnE)) | (MA_MEMORY_Flags << (8 * MA_MEMORY)) |    \
+#define MAIR_VALUE \
+    (MA_DEVICE_nGnRnE_Flags << (8 * MA_DEVICE_nGnRnE)) | \
+        (MA_MEMORY_Flags << (8 * MA_MEMORY)) | \
         (MA_MEMORY_NoCache_Flags << (8 * MA_MEMORY_NoCache))
-
 
 #endif /* __MAIR_H__ */

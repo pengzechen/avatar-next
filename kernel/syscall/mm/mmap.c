@@ -30,7 +30,8 @@ static uint64_t shared_mmap_next(task_t *current)
 
     for (uint32_t i = 0; i < TASK_MAX; i++) {
         task_t *task = &g_task_pool[i];
-        if (!g_stack_used[i] || !task->is_user_process || task->state == TASK_DEAD)
+        if (!g_stack_used[i] || !task->is_user_process ||
+            task->state == TASK_DEAD)
             continue;
         if (task->pgd == current->pgd && task->mmap_next > next)
             next = task->mmap_next;
@@ -43,7 +44,8 @@ static void sync_shared_mmap_next(task_t *current, uint64_t next)
 {
     for (uint32_t i = 0; i < TASK_MAX; i++) {
         task_t *task = &g_task_pool[i];
-        if (!g_stack_used[i] || !task->is_user_process || task->state == TASK_DEAD)
+        if (!g_stack_used[i] || !task->is_user_process ||
+            task->state == TASK_DEAD)
             continue;
         if (task->pgd == current->pgd && task->mmap_next < next)
             task->mmap_next = next;
@@ -67,7 +69,8 @@ static void sync_shared_mmap_next_to(task_t *current, uint64_t val)
 {
     for (uint32_t i = 0; i < TASK_MAX; i++) {
         task_t *task = &g_task_pool[i];
-        if (!g_stack_used[i] || !task->is_user_process || task->state == TASK_DEAD)
+        if (!g_stack_used[i] || !task->is_user_process ||
+            task->state == TASK_DEAD)
             continue;
         if (task->pgd == current->pgd)
             task->mmap_next = val;
@@ -85,7 +88,7 @@ uint64_t sys_munmap(uint64_t addr, uint64_t len)
     uint64_t size = ALIGN_UP(len, PAGE_SIZE);
     uint64_t freed = vm_unmap_user_range((uint64_t)current->pgd, addr, size);
 
-    uint64_t top  = addr + size;
+    uint64_t top = addr + size;
     uint64_t next = shared_mmap_next(current);
     /* KLOG_SYSCALL("[munmap] pid=%d addr=0x%llx len=0x%llx size=0x%llx top=0x%llx next=0x%llx freed=%llu\n",
                current->id, addr, len, size, top, next, freed); */
@@ -109,7 +112,8 @@ uint64_t sys_munmap(uint64_t addr, uint64_t len)
     return 0;
 }
 
-uint64_t sys_mmap(uint64_t addr, uint64_t len, int prot, int flags, int fd, uint64_t offset)
+uint64_t sys_mmap(uint64_t addr, uint64_t len, int prot, int flags, int fd,
+                  uint64_t offset)
 {
     task_t *current = task_current();
     if (!current->is_user_process) {
@@ -118,7 +122,8 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, int prot, int flags, int fd, uint
 
     /* ── 文件映射（ld.so 用于映射 .so 段）───────────────────── */
     if (!(flags & MAP_ANONYMOUS)) {
-        if (len == 0) return (uint64_t)(int64_t)-EINVAL;
+        if (len == 0)
+            return (uint64_t)(int64_t)-EINVAL;
 
         int16_t fidx = -1;
         fd_obj_t *fobj = NULL;
@@ -130,7 +135,8 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, int prot, int flags, int fd, uint
 
         uint64_t map_addr;
         if ((flags & MAP_FIXED) != 0) {
-            if (addr & (PAGE_SIZE - 1)) return (uint64_t)(int64_t)-EINVAL;
+            if (addr & (PAGE_SIZE - 1))
+                return (uint64_t)(int64_t)-EINVAL;
             map_addr = addr;
         } else {
             map_addr = ALIGN_UP(shared_mmap_next(current), PAGE_SIZE);
@@ -138,8 +144,9 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, int prot, int flags, int fd, uint
         uint64_t map_size = ALIGN_UP(len, PAGE_SIZE);
 
         if (!mmap_user_range_ok(map_addr, map_size)) {
-            KLOG_WARN("[mmap] file range rejected: path=%s req=0x%llx base=0x%llx size=0x%llx flags=0x%x\n",
-                      fobj ? fobj->path : "<none>", addr, map_addr, map_size, flags);
+            KLOG_WARN(
+                "[mmap] file range rejected: path=%s req=0x%llx base=0x%llx size=0x%llx flags=0x%x\n",
+                fobj ? fobj->path : "<none>", addr, map_addr, map_size, flags);
             return (uint64_t)(int64_t)-ENOMEM;
         }
 
@@ -152,26 +159,30 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, int prot, int flags, int fd, uint
             ion_handle_t handle = (ion_handle_t)fobj->ion.handle;
             size_t ion_size = ion_get_size(handle);
 
-            if (ion_size == 0 || offset != 0 || ion_get_buf(handle, &ion_va, &ion_pa) != 0) {
+            if (ion_size == 0 || offset != 0 ||
+                ion_get_buf(handle, &ion_va, &ion_pa) != 0) {
                 KLOG_WARN("[mmap] ion fd=%d handle=%u invalid (flags=0x%x)\n",
                           fd, handle, flags);
                 return MMAP_FAILED;
             }
             if (map_size > ALIGN_UP((uint64_t)ion_size, PAGE_SIZE)) {
-                KLOG_WARN("[mmap] ion fd=%d handle=%u len=0x%llx exceeds size=0x%llx\n",
-                          fd, handle, map_size, (unsigned long long)ion_size);
+                KLOG_WARN(
+                    "[mmap] ion fd=%d handle=%u len=0x%llx exceeds size=0x%llx\n",
+                    fd, handle, map_size, (unsigned long long)ion_size);
                 return (uint64_t)(int64_t)-EINVAL;
             }
 
-            for (uint64_t page_off = 0; page_off < map_size; page_off += PAGE_SIZE) {
+            for (uint64_t page_off = 0; page_off < map_size;
+                 page_off += PAGE_SIZE) {
                 uint64_t va = map_addr + page_off;
                 uint64_t pa = ion_pa + page_off;
 
                 if ((flags & MAP_FIXED) != 0 && mm_vm_get_paddr(pgd, va) != 0)
                     vm_unmap_user_range((uint64_t)current->pgd, va, PAGE_SIZE);
                 if (mm_vm_map_pages(pgd, va, pa, 1, 0) != 0) {
-                    KLOG_WARN("[mmap] ion map failed: fd=%d handle=%u va=0x%llx pa=0x%llx\n",
-                              fd, handle, va, pa);
+                    KLOG_WARN(
+                        "[mmap] ion map failed: fd=%d handle=%u va=0x%llx pa=0x%llx\n",
+                        fd, handle, va, pa);
                     return MMAP_FAILED;
                 }
 #if ARCH_RISCV64
@@ -183,10 +194,10 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, int prot, int flags, int fd, uint
 
             if ((flags & MAP_FIXED) == 0)
                 sync_shared_mmap_next(current, map_addr + map_size);
-            KLOG_SYSCALL("[mmap] ion fd=%d handle=%u pa=0x%llx va=0x%llx req=0x%llx 0x%llx-0x%llx prot=0x%x flags=0x%x\n",
-                         fd, handle, ion_pa, (unsigned long long)(uintptr_t)ion_va,
-                         addr, map_addr, map_addr + map_size,
-                         prot, flags);
+            KLOG_SYSCALL(
+                "[mmap] ion fd=%d handle=%u pa=0x%llx va=0x%llx req=0x%llx 0x%llx-0x%llx prot=0x%x flags=0x%x\n",
+                fd, handle, ion_pa, (unsigned long long)(uintptr_t)ion_va, addr,
+                map_addr, map_addr + map_size, prot, flags);
             return map_addr;
         }
 #endif
@@ -200,20 +211,23 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, int prot, int flags, int fd, uint
             return MMAP_FAILED;
         }
 
-        for (uint64_t page_off = 0; page_off < map_size; page_off += PAGE_SIZE) {
+        for (uint64_t page_off = 0; page_off < map_size;
+             page_off += PAGE_SIZE) {
             uint64_t va = map_addr + page_off;
             uint64_t pa;
 
             if ((flags & MAP_FIXED) == 0 && mm_vm_get_paddr(pgd, va) != 0) {
-                KLOG_WARN("[mmap] file non-fixed overlaps existing PTE: pid=%d va=0x%llx base=0x%llx size=0x%llx path=%s flags=0x%x\n",
-                          current->id, va, map_addr, map_size, fobj->path, flags);
+                KLOG_WARN(
+                    "[mmap] file non-fixed overlaps existing PTE: pid=%d va=0x%llx base=0x%llx size=0x%llx path=%s flags=0x%x\n",
+                    current->id, va, map_addr, map_size, fobj->path, flags);
             }
 
             if ((flags & MAP_FIXED) != 0) {
                 pa = mm_vm_get_paddr(pgd, va);
                 if (pa == 0) {
                     pa = pmm_alloc_pages(g_pmm, 1);
-                    if (pa == 0) return MMAP_FAILED;
+                    if (pa == 0)
+                        return MMAP_FAILED;
                     if (mm_vm_map_pages(pgd, va, pa, 1, 0) != 0) {
                         pmm_free_pages(g_pmm, pa, 1);
                         return MMAP_FAILED;
@@ -221,7 +235,8 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, int prot, int flags, int fd, uint
                 }
             } else {
                 pa = pmm_alloc_pages(g_pmm, 1);
-                if (pa == 0) return MMAP_FAILED;
+                if (pa == 0)
+                    return MMAP_FAILED;
                 if (mm_vm_map_pages(pgd, va, pa, 1, 0) != 0) {
                     pmm_free_pages(g_pmm, pa, 1);
                     return MMAP_FAILED;
@@ -232,22 +247,25 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, int prot, int flags, int fd, uint
 
             /* 从文件读取对应区间的数据，剩余已由 memset 清零 */
             uint64_t file_off = offset + page_off;
-            uint64_t to_read  = PAGE_SIZE;
+            uint64_t to_read = PAGE_SIZE;
             if (page_off + PAGE_SIZE > len)
                 to_read = len - page_off;
             if (to_read > 0) {
-                vfs_read_to_phys(fd_obj_file(fobj), file_off, phys_to_virt(pa), to_read);
+                vfs_read_to_phys(fd_obj_file(fobj), file_off, phys_to_virt(pa),
+                                 to_read);
             }
 
             if (flags & MAP_SHARED) {
 #if ARCH_RISCV64
                 uint64_t *pte = rv_walk_l0_pte(pgd, va, false);
-                if (pte) *pte |= RV_PTE_NOFREE;
+                if (pte)
+                    *pte |= RV_PTE_NOFREE;
 #elif ARCH_AARCH64
                 memory_set_pte_nofree(pgd, va);
 #elif ARCH_X86_64
                 uint64_t *pte = x86_walk_pt(pgd, va, false);
-                if (pte) *pte |= PTE_NOFREE;
+                if (pte)
+                    *pte |= PTE_NOFREE;
 #endif
                 shared_page_ref(pa);
             }
@@ -292,7 +310,8 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, int prot, int flags, int fd, uint
         uint64_t cand = 0;
         for (uint64_t va = lo; va + size <= hi; va += PAGE_SIZE) {
             if (mm_vm_get_paddr(pgd, va) == 0) {
-                if (run == 0) cand = va;
+                if (run == 0)
+                    cand = va;
                 if (++run >= need) {
                     map_addr = cand;
                     goto found;
@@ -304,12 +323,13 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, int prot, int flags, int fd, uint
         KLOG_WARN("[mmap] anon gap-search failed: len=0x%llx free_pg=%llu\n",
                   len, pmm_get_free_pages(g_pmm));
         return (uint64_t)(int64_t)-ENOMEM;
-found:;
+    found:;
     }
 
     if (!mmap_user_range_ok(map_addr, size)) {
-        KLOG_WARN("[mmap] anon range rejected: req=0x%llx base=0x%llx size=0x%llx flags=0x%x\n",
-                  addr, map_addr, size, flags);
+        KLOG_WARN(
+            "[mmap] anon range rejected: req=0x%llx base=0x%llx size=0x%llx flags=0x%x\n",
+            addr, map_addr, size, flags);
         return (uint64_t)(int64_t)-ENOMEM;
     }
 
@@ -321,9 +341,10 @@ found:;
 
     for (uint64_t va = map_addr; va < map_addr + size; va += PAGE_SIZE) {
         if ((flags & MAP_FIXED) == 0 && mm_vm_get_paddr(pgd, va) != 0) {
-            KLOG_WARN("[mmap] anon non-fixed overlaps existing PTE: pid=%d va=0x%llx base=0x%llx size=0x%llx flags=0x%x next=0x%llx heap=0x%llx\n",
-                      current->id, va, map_addr, size, flags,
-                      shared_mmap_next(current), current->heap_end);
+            KLOG_WARN(
+                "[mmap] anon non-fixed overlaps existing PTE: pid=%d va=0x%llx base=0x%llx size=0x%llx flags=0x%x next=0x%llx heap=0x%llx\n",
+                current->id, va, map_addr, size, flags,
+                shared_mmap_next(current), current->heap_end);
         }
 
         if ((flags & MAP_FIXED) != 0) {
@@ -348,7 +369,8 @@ found:;
 #if ARCH_RISCV64
         if (flags & MAP_SHARED) {
             uint64_t *pte = rv_walk_l0_pte(pgd, va, false);
-            if (pte) *pte |= RV_PTE_NOFREE;
+            if (pte)
+                *pte |= RV_PTE_NOFREE;
             shared_page_ref(pa);
         }
 #elif ARCH_AARCH64
@@ -364,9 +386,10 @@ found:;
 
         for (uint64_t va = map_addr; va < map_addr + size; va += PAGE_SIZE) {
             if ((flags & MAP_FIXED) == 0 && mm_vm_get_paddr(pgd, va) != 0) {
-                KLOG_WARN("[mmap] anon non-fixed overlaps existing PTE: pid=%d va=0x%llx base=0x%llx size=0x%llx flags=0x%x next=0x%llx heap=0x%llx\n",
-                          current->id, va, map_addr, size, flags,
-                          shared_mmap_next(current), current->heap_end);
+                KLOG_WARN(
+                    "[mmap] anon non-fixed overlaps existing PTE: pid=%d va=0x%llx base=0x%llx size=0x%llx flags=0x%x next=0x%llx heap=0x%llx\n",
+                    current->id, va, map_addr, size, flags,
+                    shared_mmap_next(current), current->heap_end);
             }
 
             if ((flags & MAP_FIXED) != 0) {
@@ -384,13 +407,15 @@ found:;
             }
             memset(phys_to_virt(pa), 0, PAGE_SIZE);
             if (mm_vm_map_pages(pgd, va, pa, 1, 0) != 0) {
-                KLOG_WARN("[mmap] map failed: va=0x%llx flags=0x%x\n", va, flags);
+                KLOG_WARN("[mmap] map failed: va=0x%llx flags=0x%x\n", va,
+                          flags);
                 pmm_free_pages(g_pmm, pa, 1);
                 return MMAP_FAILED;
             }
             if (flags & MAP_SHARED) {
                 uint64_t *pte = x86_walk_pt(pgd, va, false);
-                if (pte) *pte |= PTE_NOFREE;
+                if (pte)
+                    *pte |= PTE_NOFREE;
                 shared_page_ref(pa);
             }
         }

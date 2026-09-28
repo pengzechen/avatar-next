@@ -28,48 +28,48 @@
 /* ── Guest 物理内存默认布局（QEMU virt）──────────────────────
  * 历史遗留：实际用的是 guest_loader.h 的 GUEST_LINUX_MEM_BASE/SIZE。
  * 保留是因为别处可能还在引用。*/
-#define GUEST_RAM_BASE   0x40000000ULL   /* 1 GiB（QEMU virt 默认 RAM 起始）*/
-#define GUEST_RAM_SIZE   0x08000000ULL   /* 128 MiB                         */
+#define GUEST_RAM_BASE 0x40000000ULL /* 1 GiB（QEMU virt 默认 RAM 起始）*/
+#define GUEST_RAM_SIZE 0x08000000ULL /* 128 MiB                         */
 
 /* ── LPAE 页表项格式 ─────────────────────────────────────────
  * Stage-2 三级页表: VTCR SL0=1 → L1 → L2 → L3
  * T0SZ=32 → IPA[31:0]: L1[1:0]=2bit, L2[8:0]=9bit, L3[8:0]=9bit
  * ─────────────────────────────────────────────────────────── */
-#define LPAE_VALID       (1ULL << 0)
-#define LPAE_TABLE       (1ULL << 1)   /* L1/L2: 指向下一级表       */
-#define LPAE_PAGE        (3ULL << 0)   /* L3 page: bits[1:0]=11     */
-#define LPAE_AF          (1ULL << 10)  /* Access Flag               */
-#define LPAE_SH_IS       (3ULL << 8)   /* Inner Shareable           */
-#define LPAE_MATTR_NORM  (0xFULL << 2) /* Normal WB cacheable       */
-#define LPAE_MATTR_DEV   (0x1ULL << 2) /* Device-nGnRE              */
-#define LPAE_XN          (1ULL << 54)  /* Execute-never             */
-#define LPAE_S2AP_RW     (3ULL << 6)   /* Stage-2 AP: read/write    */
-#define LPAE_S2AP_RO     (1ULL << 6)   /* Stage-2 AP: read-only     */
+#define LPAE_VALID      (1ULL << 0)
+#define LPAE_TABLE      (1ULL << 1)   /* L1/L2: 指向下一级表       */
+#define LPAE_PAGE       (3ULL << 0)   /* L3 page: bits[1:0]=11     */
+#define LPAE_AF         (1ULL << 10)  /* Access Flag               */
+#define LPAE_SH_IS      (3ULL << 8)   /* Inner Shareable           */
+#define LPAE_MATTR_NORM (0xFULL << 2) /* Normal WB cacheable       */
+#define LPAE_MATTR_DEV  (0x1ULL << 2) /* Device-nGnRE              */
+#define LPAE_XN         (1ULL << 54)  /* Execute-never             */
+#define LPAE_S2AP_RW    (3ULL << 6)   /* Stage-2 AP: read/write    */
+#define LPAE_S2AP_RO    (1ULL << 6)   /* Stage-2 AP: read-only     */
 
 /* ── 页表层级尺寸 ─────────────────────────────────────────── */
 /* T0SZ=32: IPA[31:30]=L1(4 entry), IPA[29:21]=L2(512 entry/L1) */
-#define S2_L1_ENTRIES   4
-#define S2_L2_ENTRIES   512
-#define S2_L3_ENTRIES   512
+#define S2_L1_ENTRIES 4
+#define S2_L2_ENTRIES 512
+#define S2_L3_ENTRIES 512
 
-#define S2_PAGE_SIZE    4096ULL
-#define S2_BLOCK_SIZE   (2ULL * 1024 * 1024)   /* 一个 L3 表覆盖的粒度 */
+#define S2_PAGE_SIZE  4096ULL
+#define S2_BLOCK_SIZE (2ULL * 1024 * 1024) /* 一个 L3 表覆盖的粒度 */
 
 /* ── VTCR_EL2 构造宏 ─────────────────────────────────────── */
-#define VTCR_T0SZ(n)      ((n) & 0x3f)
-#define VTCR_SL0(n)       (((n) & 0x3) << 6)
-#define VTCR_IRGN0_WBWA   (1ULL << 8)
-#define VTCR_ORGN0_WBWA   (1ULL << 10)
-#define VTCR_SH0_IS       (3ULL << 12)
-#define VTCR_TG0_4K       (0ULL << 14)
-#define VTCR_PS_36BITS    (1ULL << 16)
+#define VTCR_T0SZ(n)    ((n) & 0x3f)
+#define VTCR_SL0(n)     (((n) & 0x3) << 6)
+#define VTCR_IRGN0_WBWA (1ULL << 8)
+#define VTCR_ORGN0_WBWA (1ULL << 10)
+#define VTCR_SH0_IS     (3ULL << 12)
+#define VTCR_TG0_4K     (0ULL << 14)
+#define VTCR_PS_36BITS  (1ULL << 16)
 
 /* ── VTTBR_EL2 VMID 编码 ────────────────────────────────── */
-#define VTTBR_VMID_SHIFT  48
+#define VTTBR_VMID_SHIFT 48
 
 /* ── 多 VM 上限 ──────────────────────────────────────────── */
 /* 静态表按 slot 索引；include/vmm/vmm.h 里有 _Static_assert(MAX_VMS <= STAGE2_MAX_VMS) */
-#define STAGE2_MAX_VMS   4
+#define STAGE2_MAX_VMS 4
 
 /*
  * 每 VM 最多几张 L3 表 = guest RAM 窗口 / 2 MiB。
@@ -80,18 +80,18 @@
 
 /* ── 每 VM 的 stage-2 上下文 ───────────────────────────────── */
 typedef struct s2_ctx {
-    uint32_t  slot;                     /* 0..STAGE2_MAX_VMS-1（索引静态表）*/
-    uint32_t  vmid;                     /* 1..255，写进 VTTBR_EL2          */
-    uint64_t  ram_base;                 /* guest RAM 窗口（IPA）           */
-    uint64_t  ram_size;
-    uint64_t  ram_end;                  /* = ram_base + ram_size           */
-    uint64_t  vtcr;                     /* VTCR_EL2 的值                   */
-    uint64_t  vttbr;                    /* VTTBR_EL2 的值（含 VMID）       */
+    uint32_t slot;     /* 0..STAGE2_MAX_VMS-1（索引静态表）*/
+    uint32_t vmid;     /* 1..255，写进 VTTBR_EL2          */
+    uint64_t ram_base; /* guest RAM 窗口（IPA）           */
+    uint64_t ram_size;
+    uint64_t ram_end;                   /* = ram_base + ram_size           */
+    uint64_t vtcr;                      /* VTCR_EL2 的值                   */
+    uint64_t vttbr;                     /* VTTBR_EL2 的值（含 VMID）       */
     uint64_t *l1;                       /* → 静态 g_s2_l1[slot]            */
     uint64_t *l2;                       /* → 静态 g_s2_l2[slot]            */
     uint64_t *l3_tbl[S2_MAX_L3_TABLES]; /* +1 = 该 2MiB 块已有表；动态分配 */
-    uint64_t  nr_premap;                /* 统计：加载期预映射页数           */
-    uint64_t  nr_fault;                 /* 统计：按需缺页分配页数           */
+    uint64_t nr_premap;                 /* 统计：加载期预映射页数           */
+    uint64_t nr_fault;                  /* 统计：按需缺页分配页数           */
 } s2_ctx_t;
 
 /* ── 生命周期 ───────────────────────────────────────────── */
@@ -155,7 +155,8 @@ int stage2_lookup(const s2_ctx_t *s2, uint64_t ipa, uint64_t *pa_out);
  * 把一段 IPA 映射到指定 PA（设备 MMIO 用，属性为 Device-nGnRE + XN）。
  * GICv2 后端会用它把 GICD/GICC 直接映射进 guest。
  */
-void stage2_map_device_region(s2_ctx_t *s2, uint64_t ipa, uint64_t pa, uint64_t size);
+void stage2_map_device_region(s2_ctx_t *s2, uint64_t ipa, uint64_t pa,
+                              uint64_t size);
 
 /* ── TLB 维护 ───────────────────────────────────────────────
  *
@@ -164,8 +165,8 @@ void stage2_map_device_region(s2_ctx_t *s2, uint64_t ipa, uint64_t pa, uint64_t 
  * 任务（它一进循环就改 VTTBR_EL2）。不先拉回来的话，会出现"改了映射但不
  * 生效，偶尔又生效"这种最难查的现象。
  */
-void stage2_tlb_flush_vm(const s2_ctx_t *s2);            /* 整个 VM */
-void stage2_tlb_flush_ipa(const s2_ctx_t *s2, uint64_t ipa);  /* 单个 IPA */
+void stage2_tlb_flush_vm(const s2_ctx_t *s2);                /* 整个 VM */
+void stage2_tlb_flush_ipa(const s2_ctx_t *s2, uint64_t ipa); /* 单个 IPA */
 
 /* ── 精细权限（Stage-2 权限故障测试用）───────────────────── */
 void stage2_set_ro(s2_ctx_t *s2, uint64_t ipa);

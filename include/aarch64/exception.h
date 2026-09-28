@@ -36,15 +36,15 @@
  *    下面的断言只能挡住 C 侧漂移，挡不住 .S 漂移。
  */
 typedef struct {
-    uint64_t    r[NUM_REGS]; /* x0..x30                        */
-    uint64_t    usp;         /* EL0/EL1 user/guest stack       */
-    uint64_t    elr;         /* Exception Link Register        */
-    uint64_t    spsr;        /* Saved Process Status Register  */
-    uint64_t    tpidr_el0;   /* 用户态线程指针寄存器 (TLS)    */
-    uint64_t    fp_pad;      /* 对齐填充，见上方布局说明        */
-    __uint128_t q[32];       /* q0..q31 FP/SIMD 寄存器          */
-    uint64_t    fpcr;        /* FP 控制寄存器                  */
-    uint64_t    fpsr;        /* FP 状态寄存器                  */
+    uint64_t r[NUM_REGS]; /* x0..x30                        */
+    uint64_t usp;         /* EL0/EL1 user/guest stack       */
+    uint64_t elr;         /* Exception Link Register        */
+    uint64_t spsr;        /* Saved Process Status Register  */
+    uint64_t tpidr_el0;   /* 用户态线程指针寄存器 (TLS)    */
+    uint64_t fp_pad;      /* 对齐填充，见上方布局说明        */
+    __uint128_t q[32];    /* q0..q31 FP/SIMD 寄存器          */
+    uint64_t fpcr;        /* FP 控制寄存器                  */
+    uint64_t fpsr;        /* FP 状态寄存器                  */
 } trap_frame_t;
 
 #define TRAP_FRAME_SIZE 816
@@ -73,76 +73,76 @@ union hsr {
     struct {
         unsigned long iss : 25;
         unsigned long len : 1;
-        unsigned long ec  : 6;
+        unsigned long ec : 6;
     };
 
     struct hsr_cond {
-        unsigned long iss     : 20;
-        unsigned long cc      : 4;
+        unsigned long iss : 20;
+        unsigned long cc : 4;
         unsigned long ccvalid : 1;
-        unsigned long len     : 1;
-        unsigned long ec      : 6;
+        unsigned long len : 1;
+        unsigned long ec : 6;
     } cond;
 
     struct hsr_wfi_wfe {
-        unsigned long ti      : 1;
-        unsigned long sbzp    : 19;
-        unsigned long cc      : 4;
+        unsigned long ti : 1;
+        unsigned long sbzp : 19;
+        unsigned long cc : 4;
         unsigned long ccvalid : 1;
-        unsigned long len     : 1;
-        unsigned long ec      : 6;
+        unsigned long len : 1;
+        unsigned long ec : 6;
     } wfi_wfe;
 
     struct hsr_cp32 {
-        unsigned long read    : 1;
-        unsigned long crm     : 4;
-        unsigned long reg     : 5;
-        unsigned long crn     : 4;
-        unsigned long op1     : 3;
-        unsigned long op2     : 3;
-        unsigned long cc      : 4;
+        unsigned long read : 1;
+        unsigned long crm : 4;
+        unsigned long reg : 5;
+        unsigned long crn : 4;
+        unsigned long op1 : 3;
+        unsigned long op2 : 3;
+        unsigned long cc : 4;
         unsigned long ccvalid : 1;
-        unsigned long len     : 1;
-        unsigned long ec      : 6;
+        unsigned long len : 1;
+        unsigned long ec : 6;
     } cp32;
 
     struct hsr_cp64 {
-        unsigned long read    : 1;
-        unsigned long crm     : 4;
-        unsigned long reg1    : 5;
-        unsigned long reg2    : 5;
-        unsigned long sbzp    : 1;
-        unsigned long op1     : 4;
-        unsigned long cc      : 4;
+        unsigned long read : 1;
+        unsigned long crm : 4;
+        unsigned long reg1 : 5;
+        unsigned long reg2 : 5;
+        unsigned long sbzp : 1;
+        unsigned long op1 : 4;
+        unsigned long cc : 4;
         unsigned long ccvalid : 1;
-        unsigned long len     : 1;
-        unsigned long ec      : 6;
+        unsigned long len : 1;
+        unsigned long ec : 6;
     } cp64;
 
     struct hsr_cp {
-        unsigned long coproc  : 4;
-        unsigned long sbz0p   : 1;
-        unsigned long tas     : 1;
-        unsigned long res0    : 14;
-        unsigned long cc      : 4;
+        unsigned long coproc : 4;
+        unsigned long sbz0p : 1;
+        unsigned long tas : 1;
+        unsigned long res0 : 14;
+        unsigned long cc : 4;
         unsigned long ccvalid : 1;
-        unsigned long len     : 1;
-        unsigned long ec      : 6;
+        unsigned long len : 1;
+        unsigned long ec : 6;
     } cp;
 
     struct hsr_dabt {
-        unsigned long dfsc   : 6;
-        unsigned long write  : 1;
-        unsigned long s1ptw  : 1;
-        unsigned long cache  : 1;
-        unsigned long eat    : 1;
-        unsigned long sbzp0  : 6;
-        unsigned long reg    : 5;
-        unsigned long sign   : 1;
-        unsigned long size   : 2;
-        unsigned long valid  : 1;
-        unsigned long len    : 1;
-        unsigned long ec     : 6;
+        unsigned long dfsc : 6;
+        unsigned long write : 1;
+        unsigned long s1ptw : 1;
+        unsigned long cache : 1;
+        unsigned long eat : 1;
+        unsigned long sbzp0 : 6;
+        unsigned long reg : 5;
+        unsigned long sign : 1;
+        unsigned long size : 2;
+        unsigned long valid : 1;
+        unsigned long len : 1;
+        unsigned long ec : 6;
     } dabt;
 };
 
@@ -154,10 +154,10 @@ enum EPT_VIOLATION_REASON {
 };
 
 typedef struct _ept_violation_info_t {
-    union hsr              hsr;
+    union hsr hsr;
     enum EPT_VIOLATION_REASON reason;
-    vaddr_t                gva;
-    paddr_t                gpa;
+    vaddr_t gva;
+    paddr_t gpa;
 } ept_violation_info_t;
 
 /* ── IRQ handler typedef (AArch64 GIC) ──────────────────────────── */

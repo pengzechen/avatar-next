@@ -21,7 +21,7 @@
 #include "arch.h"
 #include "klog.h"
 #include "vmm_mmio.h"
-#include "vmm/vmm.h"   /* vm_t：控制台状态现在是每 VM 一份 */
+#include "vmm/vmm.h" /* vm_t：控制台状态现在是每 VM 一份 */
 
 #if ARCH_AARCH64
 #include "vmm/vmm_vpl011.h"

@@ -9,7 +9,7 @@
 uint32_t gic_read_lr(int32_t n);
 void gic_write_lr(int32_t n, uint32_t mask);
 
-#define GICC_IIDR_VALUE  0x0202043B
+#define GICC_IIDR_VALUE   0x0202043B
 #define GICC_IAR_SPURIOUS 1023
 
 static int valid_vcpu(const vgic_t *vgic, uint32_t vcpu_id)
@@ -42,9 +42,8 @@ static uint64_t vgicc_read_for_vcpu(mmio_device_t *dev, uint64_t off,
     }
 }
 
-static void vgicc_write_for_vcpu(mmio_device_t *dev, uint64_t off,
-                                 uint8_t size, uint64_t value,
-                                 uint32_t vcpu_id)
+static void vgicc_write_for_vcpu(mmio_device_t *dev, uint64_t off, uint8_t size,
+                                 uint64_t value, uint32_t vcpu_id)
 {
     (void)size;
     vgic_t *vgic = (vgic_t *)dev->priv;
@@ -73,12 +72,12 @@ static void vgicc_write_for_vcpu(mmio_device_t *dev, uint64_t off,
 }
 
 static const mmio_dev_ops_t g_vgicc_ops = {
-    .name           = "vgicc",
-    .base           = VGICC_BASE,
-    .size           = 0x10000,
-    .read           = NULL,
-    .write          = NULL,
-    .read_for_vcpu  = vgicc_read_for_vcpu,
+    .name = "vgicc",
+    .base = VGICC_BASE,
+    .size = 0x10000,
+    .read = NULL,
+    .write = NULL,
+    .read_for_vcpu = vgicc_read_for_vcpu,
     .write_for_vcpu = vgicc_write_for_vcpu,
 };
 
@@ -154,8 +153,7 @@ void vgicc_save_state_from_hw(vgic_t *vgic, uint32_t vcpu_id)
         return;
     for (uint32_t i = 0; i < VGIC_MAX_LRS; i++) {
         uint32_t value = gic_read_lr((int32_t)i);
-        vgic->vcpu[vcpu_id].lr[i] =
-            (value & LR_STATE_MASK) ? value : 0;
+        vgic->vcpu[vcpu_id].lr[i] = (value & LR_STATE_MASK) ? value : 0;
         gic_write_lr((int32_t)i, 0);
     }
 }

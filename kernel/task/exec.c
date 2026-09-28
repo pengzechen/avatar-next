@@ -44,14 +44,14 @@ static void exec_wrapper_close_fds(task_t *task)
     }
 }
 
-    static void exec_free_loader_buffer(const void *data, uint64_t size)
-    {
-        if (!data || size == 0)
-            return;
+static void exec_free_loader_buffer(const void *data, uint64_t size)
+{
+    if (!data || size == 0)
+        return;
 
-        uint32_t pages = (uint32_t)(ALIGN_UP(size, PAGE_SIZE) / PAGE_SIZE);
-        pmm_free_pages(g_pmm, virt_to_phys((uint64_t)data), pages);
-    }
+    uint32_t pages = (uint32_t)(ALIGN_UP(size, PAGE_SIZE) / PAGE_SIZE);
+    pmm_free_pages(g_pmm, virt_to_phys((uint64_t)data), pages);
+}
 
 #if ARCH_X86_64
 #include "x86_64/mmu.h"
@@ -91,47 +91,50 @@ extern pmm_t *g_pmm;
  *   argc
  *   <- new sp
  */
-static int
-elf_setup_stack(void *pgd, uint64_t stack_top, uint64_t entry,
-                const char *pathname,
-                char **argv, char **envp, uint64_t *out_sp,
-                uint64_t phdr_uaddr, uint16_t phnum, uint16_t phent,
-                uint64_t at_base)
+static int elf_setup_stack(void *pgd, uint64_t stack_top, uint64_t entry,
+                           const char *pathname, char **argv, char **envp,
+                           uint64_t *out_sp, uint64_t phdr_uaddr,
+                           uint16_t phnum, uint16_t phent, uint64_t at_base)
 {
-    uint64_t top_page_uvaddr = stack_top - PAGE_SIZE;  /* 0x6ffff000 */
-    uint64_t top_page_paddr  = mm_vm_get_paddr(pgd, top_page_uvaddr);
+    uint64_t top_page_uvaddr = stack_top - PAGE_SIZE; /* 0x6ffff000 */
+    uint64_t top_page_paddr = mm_vm_get_paddr(pgd, top_page_uvaddr);
     if (top_page_paddr == 0) {
         KLOG_ERROR("[elf] elf_setup_stack: cannot get stack page paddr\n");
         return -1;
     }
 
     uint8_t *page = (uint8_t *)phys_to_virt(top_page_paddr);
-    uint8_t *ptr  = page + PAGE_SIZE;
+    uint8_t *ptr = page + PAGE_SIZE;
 
-#define UADDR(p)  (top_page_uvaddr + (uint64_t)((p) - page))
+#define UADDR(p) (top_page_uvaddr + (uint64_t)((p) - page))
 
     const char *default_arg0 = pathname ? pathname : "/init";
     const char *default_argv[] = { NULL, NULL };
-    static const char *default_envp[] = {
-        "PATH=/bin:/usr/bin:/sbin:/usr/sbin", "HOME=/", "TERM=vt100", NULL
-    };
+    static const char *default_envp[] = { "PATH=/bin:/usr/bin:/sbin:/usr/sbin",
+                                          "HOME=/", "TERM=vt100", NULL };
 
     default_argv[0] = default_arg0;
 
-    const char **av = (const char **)( argv ? (void *)argv : (void *)default_argv );
-    const char **ev = (const char **)( envp ? (void *)envp : (void *)default_envp );
+    const char **av =
+        (const char **)(argv ? (void *)argv : (void *)default_argv);
+    const char **ev =
+        (const char **)(envp ? (void *)envp : (void *)default_envp);
 
     int argc = 0;
-    while (av[argc]) argc++;
+    while (av[argc])
+        argc++;
     int envc = 0;
-    while (ev[envc]) envc++;
+    while (ev[envc])
+        envc++;
 
 #define MAX_ARGS 128
     uint64_t av_uaddr[MAX_ARGS];
     uint64_t ev_uaddr[MAX_ARGS];
 
-    if (argc > MAX_ARGS - 1) argc = MAX_ARGS - 1;
-    if (envc > MAX_ARGS - 1) envc = MAX_ARGS - 1;
+    if (argc > MAX_ARGS - 1)
+        argc = MAX_ARGS - 1;
+    if (envc > MAX_ARGS - 1)
+        envc = MAX_ARGS - 1;
 
     for (int i = envc - 1; i >= 0; i--) {
         uint64_t len = strlen(ev[i]) + 1;
@@ -158,26 +161,30 @@ elf_setup_stack(void *pgd, uint64_t stack_top, uint64_t entry,
 
     ptr = (uint8_t *)((uint64_t)ptr & ~7ULL);
 
-#define PUSH64(v) do { ptr -= 8; *(uint64_t *)ptr = (uint64_t)(v); } while(0)
+#define PUSH64(v) \
+    do { \
+        ptr -= 8; \
+        *(uint64_t *)ptr = (uint64_t)(v); \
+    } while (0)
     PUSH64(0);
     PUSH64(0);
     PUSH64(at_random_uaddr);
-    PUSH64(25);      /* AT_RANDOM */
+    PUSH64(25); /* AT_RANDOM */
     PUSH64(4096);
-    PUSH64(6);       /* AT_PAGESZ */
+    PUSH64(6); /* AT_PAGESZ */
     PUSH64(entry);
-    PUSH64(9);       /* AT_ENTRY */
+    PUSH64(9); /* AT_ENTRY */
     if (at_base) {
         PUSH64(at_base);
-        PUSH64(7);   /* AT_BASE: interpreter 加载基址（静态连接时为 0） */
+        PUSH64(7); /* AT_BASE: interpreter 加载基址（静态连接时为 0） */
     }
     if (phdr_uaddr) {
         PUSH64(phnum);
-        PUSH64(5);   /* AT_PHNUM */
+        PUSH64(5); /* AT_PHNUM */
         PUSH64(phent);
-        PUSH64(4);   /* AT_PHENT */
+        PUSH64(4); /* AT_PHENT */
         PUSH64(phdr_uaddr);
-        PUSH64(3);   /* AT_PHDR */
+        PUSH64(3); /* AT_PHDR */
     }
 
     PUSH64(0);
@@ -200,16 +207,14 @@ elf_setup_stack(void *pgd, uint64_t stack_top, uint64_t entry,
 
 /* ── execve 主逻辑 ───────────────────────────────────────────────── */
 
-int
-task_execve(const char *pathname,
-            uint8_t *file_data, uint64_t file_size,
-            uint8_t *interp_data, uint64_t interp_size,
-            char **argv, char **envp)
+int task_execve(const char *pathname, uint8_t *file_data, uint64_t file_size,
+                uint8_t *interp_data, uint64_t interp_size, char **argv,
+                char **envp)
 {
     elf_image_info_t info;
     uint64_t pgd_phys;
-    void    *pgd;
-    int      rc;
+    void *pgd;
+    int rc;
 
     /* 1. 分配并清零用户页表 */
     pgd_phys = pmm_alloc_pages(g_pmm, 1);
@@ -226,19 +231,21 @@ task_execve(const char *pathname,
         extern uint64_t g_kernel_pgd_phys;
         uint64_t *kernel_pml4 = (uint64_t *)phys_to_virt(g_kernel_pgd_phys);
         x86_copy_kernel_mappings((uint64_t *)pgd, kernel_pml4);
-        KLOG_DEBUG("[exec] x86_64 copied kernel PML4[%u..%u] to user PGD=0x%llx\n",
-               X86_PML4_KERNEL_START, X86_PML4_ENTRIES - 1U, pgd_phys);
+        KLOG_DEBUG(
+            "[exec] x86_64 copied kernel PML4[%u..%u] to user PGD=0x%llx\n",
+            X86_PML4_KERNEL_START, X86_PML4_ENTRIES - 1U, pgd_phys);
     }
 #endif
 #if ARCH_RISCV64
     {
         uint64_t *kernel_l1 = (uint64_t *)phys_to_virt(satp_read_pgd_phys());
-        uint64_t *user_l1   = (uint64_t *)pgd;
+        uint64_t *user_l1 = (uint64_t *)pgd;
         riscv64_copy_kernel_mappings(user_l1, kernel_l1);
-          KLOG_DEBUG("[exec] RISC-V kernel mappings: l1[0x%x]=0x%llx l1[0x%x]=0x%llx l1[0x%x]=0x%llx\n",
-                 RISCV64_KERNEL_L1_MMIO0_IDX, user_l1[RISCV64_KERNEL_L1_MMIO0_IDX],
-                 RISCV64_KERNEL_L1_MMIO1_IDX, user_l1[RISCV64_KERNEL_L1_MMIO1_IDX],
-                 RISCV64_KERNEL_L1_RAM_IDX,   user_l1[RISCV64_KERNEL_L1_RAM_IDX]);
+        KLOG_DEBUG(
+            "[exec] RISC-V kernel mappings: l1[0x%x]=0x%llx l1[0x%x]=0x%llx l1[0x%x]=0x%llx\n",
+            RISCV64_KERNEL_L1_MMIO0_IDX, user_l1[RISCV64_KERNEL_L1_MMIO0_IDX],
+            RISCV64_KERNEL_L1_MMIO1_IDX, user_l1[RISCV64_KERNEL_L1_MMIO1_IDX],
+            RISCV64_KERNEL_L1_RAM_IDX, user_l1[RISCV64_KERNEL_L1_RAM_IDX]);
     }
 #endif
     /* AArch64: TTBR0/TTBR1 硬件分割，无需复制内核映射 */
@@ -251,28 +258,30 @@ task_execve(const char *pathname,
     }
 
     /* 3b. 加载动态连接器（如果有）——加载到同一 PGD 的独立地址区 */
-    uint64_t exec_entry = info.entry_point;  /* 静态连接时：直接跳入主程序 */
-    uint64_t at_base    = 0;
+    uint64_t exec_entry = info.entry_point; /* 静态连接时：直接跳入主程序 */
+    uint64_t at_base = 0;
     uint64_t loaded_end = info.max_vaddr;
     if (interp_data && interp_size > 0) {
         elf_image_info_t interp_info;
-        rc = elf_image_load_at(interp_data, interp_size, pgd,
-                               USER_INTERP_BASE, &interp_info);
+        rc = elf_image_load_at(interp_data, interp_size, pgd, USER_INTERP_BASE,
+                               &interp_info);
         if (rc < 0) {
             KLOG_ERROR("[exec] Failed to load interpreter: %d\n", rc);
             return rc;
         }
-        exec_entry = interp_info.entry_point;   /* 动态连接：跳入 ld-musl */
-        at_base    = interp_info.min_vaddr;     /* AT_BASE = interpreter 实际加载基址 */
+        exec_entry = interp_info.entry_point; /* 动态连接：跳入 ld-musl */
+        at_base =
+            interp_info.min_vaddr; /* AT_BASE = interpreter 实际加载基址 */
         if (interp_info.max_vaddr > loaded_end)
             loaded_end = interp_info.max_vaddr;
         KLOG_DEBUG("[exec] Interpreter loaded: entry=0x%llx base=0x%llx\n",
-               exec_entry, at_base);
+                   exec_entry, at_base);
     }
 
     /* 4. 分配并映射用户栈 */
-    uint64_t stack_bottom = ALIGN_DOWN(USER_STACK_TOP - USER_STACK_SIZE, PAGE_SIZE);
-    uint64_t stack_pages  = (USER_STACK_TOP - stack_bottom) / PAGE_SIZE;
+    uint64_t stack_bottom =
+        ALIGN_DOWN(USER_STACK_TOP - USER_STACK_SIZE, PAGE_SIZE);
+    uint64_t stack_pages = (USER_STACK_TOP - stack_bottom) / PAGE_SIZE;
     uint64_t stack_base_paddr = pmm_alloc_pages(g_pmm, (uint32_t)stack_pages);
     if (stack_base_paddr == 0) {
         KLOG_ERROR("[exec] Failed to allocate %llu stack pages\n", stack_pages);
@@ -281,7 +290,8 @@ task_execve(const char *pathname,
 
     memset(phys_to_virt(stack_base_paddr), 0, stack_pages * PAGE_SIZE);
 
-    if (mm_vm_map_pages(pgd, stack_bottom, stack_base_paddr, (int32_t)stack_pages, 0) != 0) {
+    if (mm_vm_map_pages(pgd, stack_bottom, stack_base_paddr,
+                        (int32_t)stack_pages, 0) != 0) {
         KLOG_ERROR("[exec] Failed to map user stack: vaddr=0x%llx pages=%llu\n",
                    stack_bottom, stack_pages);
         pmm_free_pages(g_pmm, stack_base_paddr, (uint32_t)stack_pages);
@@ -294,10 +304,15 @@ task_execve(const char *pathname,
         uint64_t sigret_pa = pmm_alloc_pages(g_pmm, 1);
         if (sigret_pa) {
             uint8_t *p = (uint8_t *)phys_to_virt(sigret_pa);
-            memset(p, 0xcc, PAGE_SIZE);     /* int3 填充（安全兜底） */
+            memset(p, 0xcc, PAGE_SIZE); /* int3 填充（安全兜底） */
             /* mov $15, %eax; syscall  — rt_sigreturn on x86_64 */
-            p[0] = 0xb8; p[1] = 0x0f; p[2] = 0x00; p[3] = 0x00; p[4] = 0x00;
-            p[5] = 0x0f; p[6] = 0x05;
+            p[0] = 0xb8;
+            p[1] = 0x0f;
+            p[2] = 0x00;
+            p[3] = 0x00;
+            p[4] = 0x00;
+            p[5] = 0x0f;
+            p[6] = 0x05;
             mm_vm_map_pages(pgd, USER_SIGRET_PAGE, sigret_pa, 1, 0);
         }
     }
@@ -305,27 +320,27 @@ task_execve(const char *pathname,
 
     /* 5. 构建 Linux ABI 初始栈 */
     uint64_t user_sp = USER_STACK_TOP;
-    if (elf_setup_stack(pgd, USER_STACK_TOP, info.entry_point, pathname,
-                        argv, envp, &user_sp,
-                        info.phdr_uaddr, info.phnum, info.phent,
+    if (elf_setup_stack(pgd, USER_STACK_TOP, info.entry_point, pathname, argv,
+                        envp, &user_sp, info.phdr_uaddr, info.phnum, info.phent,
                         at_base) != 0) {
         KLOG_ERROR("[exec] Failed to setup initial stack\n");
         return -4;
     }
 
     /* 6. 创建用户进程 */
-    task_t *current  = task_current();
-    uint64_t mmap_base = (info.min_vaddr == USER_CODE_BASE) ? USER_MMAP_BASE_PIE
-                                                               : USER_MMAP_BASE_EXEC;
+    task_t *current = task_current();
+    uint64_t mmap_base = (info.min_vaddr == USER_CODE_BASE)
+                             ? USER_MMAP_BASE_PIE
+                             : USER_MMAP_BASE_EXEC;
     uint64_t loaded_end_aligned = ALIGN_UP(loaded_end, PAGE_SIZE);
     if (loaded_end_aligned > mmap_base)
         mmap_base = loaded_end_aligned;
 
     uint64_t exec_irq_flags = arch_irq_save();
 
-    task_t *new_task = process_create_with_pgd(
-        pathname, exec_entry, user_sp, 10, pgd_phys,
-        ALIGN_UP(info.max_vaddr, PAGE_SIZE), mmap_base);
+    task_t *new_task =
+        process_create_with_pgd(pathname, exec_entry, user_sp, 10, pgd_phys,
+                                ALIGN_UP(info.max_vaddr, PAGE_SIZE), mmap_base);
 
     if (new_task == NULL) {
         arch_irq_restore(exec_irq_flags);
@@ -334,18 +349,18 @@ task_execve(const char *pathname,
     }
 
     /* exec 新进程继承调用者的进程组 ID 和信号掩码（POSIX） */
-    new_task->pgid         = current->pgid;
-    new_task->sid          = current->sid;
-    new_task->uid          = current->uid;
-    new_task->euid         = current->euid;
-    new_task->gid          = current->gid;
-    new_task->egid         = current->egid;
-    new_task->tgid         = new_task->id;
+    new_task->pgid = current->pgid;
+    new_task->sid = current->sid;
+    new_task->uid = current->uid;
+    new_task->euid = current->euid;
+    new_task->gid = current->gid;
+    new_task->egid = current->egid;
+    new_task->tgid = new_task->id;
     new_task->ctty_pty_idx = current->ctty_pty_idx;
     new_task->blocked_sigs = current->blocked_sigs;
 
     /* 继承 fd_table：深拷贝 fd 对象 + 增加引用计数 */
-    extern void fd_table_inherit(task_t *child, task_t *parent);
+    extern void fd_table_inherit(task_t * child, task_t * parent);
     fd_table_inherit(new_task, current);
     exec_wrapper_close_fds(current);
 
@@ -355,7 +370,7 @@ task_execve(const char *pathname,
 
     /* 7. 阻塞当前进程，等待新进程退出 */
     current->is_waiting = true;
-    current->wait_pid   = new_task_id;
+    current->wait_pid = new_task_id;
     KLOG_DEBUG("[exec] wrapper wait: wrapper=%u child=%u state=%d\n",
                current->id, new_task_id, current->state);
     arch_irq_restore(exec_irq_flags);
@@ -365,19 +380,22 @@ task_execve(const char *pathname,
 
     task_block(NULL);
 
-    KLOG_DEBUG("[exec] wrapper resumed: wrapper=%u child=%u waiting=%d wait_pid=%u state=%d\n",
-               current->id, new_task_id, current->is_waiting, current->wait_pid,
-               current->state);
+    KLOG_DEBUG(
+        "[exec] wrapper resumed: wrapper=%u child=%u waiting=%d wait_pid=%u state=%d\n",
+        current->id, new_task_id, current->is_waiting, current->wait_pid,
+        current->state);
 
     /* 8. 新进程已退出：获取退出状态并释放槽位，然后以相同状态退出 */
     {
-        extern task_t  g_task_pool[];
+        extern task_t g_task_pool[];
         extern uint8_t g_stack_used[];
         for (uint32_t i = 0; i < TASK_MAX; i++) {
-            if (!g_stack_used[i]) continue;
+            if (!g_stack_used[i])
+                continue;
             if (g_task_pool[i].id == new_task_id) {
                 current->exit_status = g_task_pool[i].exit_status;
-                current->stime_ns   += g_task_pool[i].stime_ns;  /* 继承子进程内核时间 */
+                current->stime_ns +=
+                    g_task_pool[i].stime_ns; /* 继承子进程内核时间 */
                 task_reap_dead(&g_task_pool[i]);
                 break;
             }
@@ -393,11 +411,12 @@ task_execve(const char *pathname,
         }
         if (current->create_ns != 0) {
             uint64_t _wall = _now - current->create_ns;
-            current->utime_ns = (_wall > current->stime_ns) ? _wall - current->stime_ns : 0;
+            current->utime_ns =
+                (_wall > current->stime_ns) ? _wall - current->stime_ns : 0;
         }
     }
 
     task_exit();
 
-    return 0;  /* unreachable */
+    return 0; /* unreachable */
 }

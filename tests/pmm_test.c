@@ -7,9 +7,7 @@
 #include "assert.h"
 #include "mm_vm.h"
 
-
-
-#define PMM_PAGE_SIZE   4096  /* 4KB */
+#define PMM_PAGE_SIZE 4096 /* 4KB */
 
 /* ── 测试函数 ───────────────────────────────────────────────────── */
 
@@ -127,7 +125,7 @@ static void test_pmm_stress(void)
 
     /* 尽可能多地分配页面 */
     while (iterations < 1000) {
-        uint32_t count = (iterations % 10) + 1;  /* 1-10 页 */
+        uint32_t count = (iterations % 10) + 1; /* 1-10 页 */
         uint64_t paddr = pmm_alloc_pages(g_pmm, count);
 
         if (paddr == 0) {
@@ -147,8 +145,7 @@ static void test_pmm_stress(void)
 
     KLOG_INFO("Stress test completed:\n");
     KLOG_INFO("  Iterations: %llu\n", iterations);
-    KLOG_INFO("  Total allocated: %llu pages (~%llu MB)\n",
-              total_allocated,
+    KLOG_INFO("  Total allocated: %llu pages (~%llu MB)\n", total_allocated,
               (total_allocated * PMM_PAGE_SIZE) / (1024 * 1024));
 
     /* 注意：这里没有释放分配的内存，实际使用中应该保存地址并释放 */
@@ -166,7 +163,7 @@ static void test_pmm_boundary(void)
     /* 测试对齐 */
     uint64_t page1 = pmm_alloc_pages(g_pmm, 1);
     KLOG_INFO("Allocated page at: 0x%llx\n", page1);
-    assert(page1 % PMM_PAGE_SIZE == 0);  /* 应该页对齐 */
+    assert(page1 % PMM_PAGE_SIZE == 0); /* 应该页对齐 */
 
     /* 测试地址范围 */
     assert(page1 >= PMM_RAM_BASE);
@@ -176,8 +173,8 @@ static void test_pmm_boundary(void)
 
     /* 测试无效释放（应该被优雅处理） */
     KLOG_INFO("Testing invalid free (expecting error message)...\n");
-    pmm_free_pages(g_pmm, 0x0, 1);  /* 无效地址 */
-    pmm_free_pages(g_pmm, 0xFFFFFFFFULL, 1);  /* 超出范围 */
+    pmm_free_pages(g_pmm, 0x0, 1);           /* 无效地址 */
+    pmm_free_pages(g_pmm, 0xFFFFFFFFULL, 1); /* 超出范围 */
 
     KLOG_INFO("✓ Boundary test passed\n");
 }

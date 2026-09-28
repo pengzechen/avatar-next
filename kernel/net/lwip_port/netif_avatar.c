@@ -17,8 +17,8 @@ static err_t avatar_linkoutput(struct netif *netif, struct pbuf *p)
     size_t off = 0;
     for (struct pbuf *q = p; q != NULL; q = q->next) {
         if (off + q->len > sizeof(frame)) {
-            KLOG_WARN("[lwip] tx frame too large len=%zu add=%u\n",
-                      off, (unsigned)q->len);
+            KLOG_WARN("[lwip] tx frame too large len=%zu add=%u\n", off,
+                      (unsigned)q->len);
             return ERR_BUF;
         }
         memcpy(frame + off, q->payload, q->len);
@@ -42,7 +42,8 @@ err_t avatar_netif_init(struct netif *netif)
     netif->hwaddr_len = 6;
     memcpy(netif->hwaddr, mac, 6);
     netif->mtu = 1500;
-    netif->flags = NETIF_FLAG_BROADCAST | NETIF_FLAG_ETHARP | NETIF_FLAG_LINK_UP;
+    netif->flags =
+        NETIF_FLAG_BROADCAST | NETIF_FLAG_ETHARP | NETIF_FLAG_LINK_UP;
 
     KLOG_NET("[lwip] netif av0 mac=%02x:%02x:%02x:%02x:%02x:%02x mtu=%u\n",
              mac[0], mac[1], mac[2], mac[3], mac[4], mac[5],
@@ -83,7 +84,7 @@ void avatar_lwip_poll_rx(struct netif *netif)
         struct pbuf *p = pbuf_alloc(PBUF_RAW, NETDEV_FRAME_MAX, PBUF_POOL);
         if (!p) {
             KLOG_WARN("[lwip] rx: no pbuf\n");
-            break;                      /* 池满，下一轮再试 */
+            break; /* 池满，下一轮再试 */
         }
 
         int n = netdev_recv_into((uint8_t *)p->payload, NETDEV_FRAME_MAX);

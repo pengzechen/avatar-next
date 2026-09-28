@@ -27,7 +27,8 @@ int fd_pool_alloc(void)
             return i;
         }
     }
-    KLOG_ERROR("[fd] pool_alloc: no free slots (FD_POOL_SIZE=%d)\n", FD_POOL_SIZE);
+    KLOG_ERROR("[fd] pool_alloc: no free slots (FD_POOL_SIZE=%d)\n",
+               FD_POOL_SIZE);
     return -1;
 }
 
@@ -99,8 +100,9 @@ int task_alloc_fd(task_t *task, int pool_idx)
     for (int fd = 3; fd < (int)TASK_MAX_FD; fd++) {
         if (task->fd_table[fd] == -1) {
             task->fd_table[fd] = (int16_t)pool_idx;
-            KLOG_SYSCALL("[fd] task_alloc_fd: pid=%u allocated fd=%d for pool_idx=%d\n",
-                         task->id, fd, pool_idx);
+            KLOG_SYSCALL(
+                "[fd] task_alloc_fd: pid=%u allocated fd=%d for pool_idx=%d\n",
+                task->id, fd, pool_idx);
             return fd;
         }
     }
@@ -108,9 +110,10 @@ int task_alloc_fd(task_t *task, int pool_idx)
     /* 打印 fd_table 的前几个槽位用于调试 */
     KLOG_ERROR("[fd] task_alloc_fd: pid=%u no free fd (TASK_MAX_FD=%d)\n",
                task->id, TASK_MAX_FD);
-    KLOG_ERROR("[fd] fd_table dump: [0]=%d [1]=%d [2]=%d [3]=%d [4]=%d [5]=%d\n",
-               task->fd_table[0], task->fd_table[1], task->fd_table[2],
-               task->fd_table[3], task->fd_table[4], task->fd_table[5]);
+    KLOG_ERROR(
+        "[fd] fd_table dump: [0]=%d [1]=%d [2]=%d [3]=%d [4]=%d [5]=%d\n",
+        task->fd_table[0], task->fd_table[1], task->fd_table[2],
+        task->fd_table[3], task->fd_table[4], task->fd_table[5]);
 
     return -1;
 }
@@ -137,8 +140,8 @@ int task_alloc_ion_fd(task_t *task, uint32_t handle)
         return -1;
 
     fd_obj_t *obj = &g_fd_pool[pool];
-    obj->type       = FDT_ION;
-    obj->flags      = 0;
+    obj->type = FDT_ION;
+    obj->flags = 0;
     obj->ion.handle = handle;
 
     const char *path = "/dev/ion_buffer";

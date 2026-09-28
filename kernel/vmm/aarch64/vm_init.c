@@ -46,8 +46,8 @@ int vmm_arch_vm_init(vm_t *vm)
      * 调用方（guest_loader）随后用 stage2_map_range() 把内核映像/DTB/initrd/
      * 初始栈这几块宿主自己要写的地方显式映射进去，其余全靠缺页。
      */
-    stage2_vm_init(&vm->s2, (uint32_t)vm->slot, vm->vmid,
-                   vm->cfg.mem_base, vm->cfg.mem_size);
+    stage2_vm_init(&vm->s2, (uint32_t)vm->slot, vm->vmid, vm->cfg.mem_base,
+                   vm->cfg.mem_size);
 
     mmio_bus_init(&vm->mmio_bus_storage);
 
@@ -107,23 +107,22 @@ int vmm_arch_vm_init(vm_t *vm)
     vm->mmio_bus = &vm->mmio_bus_storage;
 
 #if DRIVER_GIC_V3
-    KLOG_INFO("[vmm] MMIO bus ready: PL011 @0x%llx, GICD @0x%llx, GICR @0x%llx\n",
-              (unsigned long long)VPL011_BASE,
-              (unsigned long long)VGIC3D_BASE,
-              (unsigned long long)VGIC3R_BASE);
+    KLOG_INFO(
+        "[vmm] MMIO bus ready: PL011 @0x%llx, GICD @0x%llx, GICR @0x%llx\n",
+        (unsigned long long)VPL011_BASE, (unsigned long long)VGIC3D_BASE,
+        (unsigned long long)VGIC3R_BASE);
 #else
     KLOG_INFO("[vmm] MMIO bus ready: PL011 @0x%llx, GICD @0x%llx\n",
-              (unsigned long long)VPL011_BASE,
-              (unsigned long long)VGICD_BASE);
+              (unsigned long long)VPL011_BASE, (unsigned long long)VGICD_BASE);
 #endif
 
     /* 初始化每个 vCPU 的状态 */
     for (i = 0; i < nr; i++) {
         vcpu_t *vcpu = &vm->vcpus[i];
         memset(vcpu, 0, sizeof(*vcpu));
-        vcpu->vcpu_id  = i;
+        vcpu->vcpu_id = i;
         vcpu->launched = 0;
-        vcpu->vm       = vm;
+        vcpu->vm = vm;
     }
     vm->nr_vcpus = nr;
 

@@ -29,11 +29,11 @@
 #include "riscv64/gstage.h"
 #include "vmm/vmm_mmio.h"
 #include "vmm/vmm_vplic.h"
-#include "mm_vm.h"      /* phys_to_virt */
-#include "pmm.h"        /* pmm_get_free_pages（缺页失败时的诊断）*/
+#include "mm_vm.h" /* phys_to_virt */
+#include "pmm.h"   /* pmm_get_free_pages（缺页失败时的诊断）*/
 
 /* ── 汇编入口声明 ─────────────────────────────────────────── */
-extern int hext_enter_guest(vcpu_t *vcpu);  /* hext_vcpu.S */
+extern int hext_enter_guest(vcpu_t *vcpu); /* hext_vcpu.S */
 
 /* ── H-extension 支持检测 ─────────────────────────────────── */
 /*
@@ -93,37 +93,35 @@ int hext_vcpu_setup(vcpu_t *vcpu, void (*entry)(void))
      * pc    = 恢复 PC（sret 目标，只写回 HS sepc）
      * vsepc = guest 自己的 sepc，VMM 不碰；这里给同值只是让 guest 万一在
      *         首次陷阱前读 sepc 时不至于看到 0。*/
-    vcpu->pc    = (uint64_t)entry;
+    vcpu->pc = (uint64_t)entry;
     vcpu->vsepc = (uint64_t)entry;
 
     /* vsstatus：SPP=0（guest 运行在 VS-mode），SIE=0（中断关闭）
      * VS-mode 的 sstatus.SPP 在 vsstatus.SPP 处，bit 8 */
-    vcpu->vsstatus  = 0;
+    vcpu->vsstatus = 0;
 
     /* guest trap vector：暂用 entry 作为 guest stvec */
-    vcpu->vstvec    = (uint64_t)entry;
+    vcpu->vstvec = (uint64_t)entry;
 
     /* vsscratch = 0（guest 初始值）*/
     vcpu->vsscratch = 0;
 
     /* vsatp：与 host 共享内核页表，guest 可执行 kernel VA 地址的代码
      * vsatp=0（bare）时 guest 会把 kernel VA 当物理地址使用，立即 page fault */
-    vcpu->vsatp     = CSR_READ(satp);
+    vcpu->vsatp = CSR_READ(satp);
 
     /* vsie = 0：guest 中不使能任何中断 */
-    vcpu->vsie      = 0;
+    vcpu->vsie = 0;
 
     /*
      * guest 栈：r[2] = sp。栈从本 VM 的 vm_t 里取 —— 从前是按 vcpu_id 索引
      * 的文件级数组，两个 VM 的 vcpu0 会共用同一块栈。
      */
-    vcpu->r[2]      = (uint64_t)(vcpu->vm->guest_stack[vcpu->vcpu_id] +
-                                 VMM_GUEST_STACK_SIZE);
+    vcpu->r[2] =
+        (uint64_t)(vcpu->vm->guest_stack[vcpu->vcpu_id] + VMM_GUEST_STACK_SIZE);
 
-    KLOG_INFO("[HEXT] vcpu%d setup: entry=0x%llx sp=0x%llx\n",
-              vcpu->vcpu_id,
-              vcpu->pc,
-              vcpu->r[2]);
+    KLOG_INFO("[HEXT] vcpu%d setup: entry=0x%llx sp=0x%llx\n", vcpu->vcpu_id,
+              vcpu->pc, vcpu->r[2]);
     return 0;
 }
 
@@ -200,9 +198,9 @@ int vmm_arch_vm_init(vm_t *vm)
     for (i = 0; i < nr; i++) {
         vcpu_t *vcpu = &vm->vcpus[i];
         memset(vcpu, 0, sizeof(*vcpu));
-        vcpu->vcpu_id  = i;
+        vcpu->vcpu_id = i;
         vcpu->launched = 0;
-        vcpu->vm       = vm;
+        vcpu->vm = vm;
 
         /*
          * hstatus_save 是「上次陷入时的 hstatus」快照，入口靠它还原
@@ -245,13 +243,13 @@ int vmm_arch_vm_init(vm_t *vm)
         }
         vm->mmio_bus = &vm->mmio_bus_storage;
 
-        KLOG_INFO("[HEXT] vm%u: G-stage isolation enabled (mem=0x%llx+0x%llx)\n",
-                  vm->vmid,
-                  (unsigned long long)vm->cfg.mem_base,
-                  (unsigned long long)vm->cfg.mem_size);
-        KLOG_INFO("[HEXT] MMIO bus ready: virtual 16550A @0x%llx, vPLIC @0x%llx\n",
-                  (unsigned long long)UART16550_BASE,
-                  (unsigned long long)VPLIC_BASE);
+        KLOG_INFO(
+            "[HEXT] vm%u: G-stage isolation enabled (mem=0x%llx+0x%llx)\n",
+            vm->vmid, (unsigned long long)vm->cfg.mem_base,
+            (unsigned long long)vm->cfg.mem_size);
+        KLOG_INFO(
+            "[HEXT] MMIO bus ready: virtual 16550A @0x%llx, vPLIC @0x%llx\n",
+            (unsigned long long)UART16550_BASE, (unsigned long long)VPLIC_BASE);
     } else {
         KLOG_INFO("[HEXT] G-stage disabled: guest shares host address space\n");
     }
@@ -382,7 +380,6 @@ void vmm_arch_restore_guest_ctx(vcpu_t *vcpu)
 
     vcpu_timer_irq_on_entry(vcpu);
     vcpu_external_irq_on_entry(vcpu);
-
 }
 
 /* enter_guest：执行一次 sret → VS-mode，等到 guest 陷入后返回 */
@@ -423,16 +420,16 @@ static int handle_wfi(vcpu_t *vcpu)
      * 至少让这种事在日志里留痕。
      */
     if (vcpu->stval_save != 0x10500073ULL)
-        KLOG_WARN_SAMPLE("[HEXT] cause2/22 but not WFI: stval=0x%llx sepc=0x%llx\n",
-                         (unsigned long long)vcpu->stval_save,
-                         (unsigned long long)vcpu->pc);
+        KLOG_WARN_SAMPLE(
+            "[HEXT] cause2/22 but not WFI: stval=0x%llx sepc=0x%llx\n",
+            (unsigned long long)vcpu->stval_save, (unsigned long long)vcpu->pc);
 
     /* 步进 guest PC 越过 WFI 指令（4 字节）*/
     vcpu->pc += 4;
 
     uint64_t now = READ_TIME();
     if (vcpu->timer_deadline != 0 && now >= vcpu->timer_deadline)
-        return EL2_RESUME;   /* 定时器已到期，立即继续 guest */
+        return EL2_RESUME; /* 定时器已到期，立即继续 guest */
 
     /* 让出 CPU，等价 AArch64 WFI→yield */
     task_yield();
@@ -504,18 +501,25 @@ static int guest_read_u16(vcpu_t *vcpu, uint64_t gpa, uint16_t *out)
 /* guest 虚拟地址 → guest 物理地址（软件遍历 vsatp 指向的 Sv39/Sv48 页表）*/
 static int guest_va_to_gpa(vcpu_t *vcpu, uint64_t va, uint64_t *gpa_out)
 {
-    const uint64_t PTE_V = 1u << 0, PTE_R = 1u << 1, PTE_W = 1u << 2, PTE_X = 1u << 3;
+    const uint64_t PTE_V = 1u << 0, PTE_R = 1u << 1, PTE_W = 1u << 2,
+                   PTE_X = 1u << 3;
 
     uint64_t satp = vcpu->vsatp;
     uint64_t mode = satp >> 60;
     int levels;
 
     switch (mode) {
-    case 8:  levels = 3; break;   /* Sv39 */
-    case 9:  levels = 4; break;   /* Sv48 */
-    case 10: levels = 5; break;   /* Sv57 */
+    case 8:
+        levels = 3;
+        break; /* Sv39 */
+    case 9:
+        levels = 4;
+        break; /* Sv48 */
+    case 10:
+        levels = 5;
+        break; /* Sv57 */
     default:
-        *gpa_out = va;   /* 无页表：VA 即 GPA（bare 模式）*/
+        *gpa_out = va; /* 无页表：VA 即 GPA（bare 模式）*/
         return 1;
     }
 
@@ -535,7 +539,7 @@ static int guest_va_to_gpa(vcpu_t *vcpu, uint64_t va, uint64_t *gpa_out)
         if ((pte & PTE_V) == 0)
             return 0;
         if ((pte & PTE_W) && !(pte & PTE_R))
-            return 0;   /* 保留组合 */
+            return 0; /* 保留组合 */
 
         if (pte & (PTE_R | PTE_X)) {
             /* 叶项：4KiB(level0) / 2MiB / 1GiB */
@@ -551,10 +555,10 @@ static int guest_va_to_gpa(vcpu_t *vcpu, uint64_t va, uint64_t *gpa_out)
 
 /* 一条 MMIO 访存指令的解码结果 */
 typedef struct {
-    int      is_write;
-    uint8_t  size;      /* 字节数 */
-    uint32_t reg;       /* 目标/源寄存器号 */
-    uint64_t inst_len;  /* 指令长度（2=压缩, 4=普通）*/
+    int is_write;
+    uint8_t size;      /* 字节数 */
+    uint32_t reg;      /* 目标/源寄存器号 */
+    uint64_t inst_len; /* 指令长度（2=压缩, 4=普通）*/
 } mmio_access_t;
 
 static int decode_compressed_mmio(uint16_t inst, int is_store,
@@ -607,27 +611,48 @@ static int decode_mmio_access(uint64_t inst, int is_store, mmio_access_t *acc)
     uint32_t opcode = w & 0x7f;
     uint32_t funct3 = (w >> 12) & 0x7;
 
-    if (opcode == 0x03 && !is_store) {          /* LOAD */
+    if (opcode == 0x03 && !is_store) { /* LOAD */
         acc->is_write = 0;
         switch (funct3) {
-        case 0: case 4: acc->size = 1; break;
-        case 1: case 5: acc->size = 2; break;
-        case 2: case 6: acc->size = 4; break;
-        case 3:         acc->size = 8; break;
-        default: return 0;
+        case 0:
+        case 4:
+            acc->size = 1;
+            break;
+        case 1:
+        case 5:
+            acc->size = 2;
+            break;
+        case 2:
+        case 6:
+            acc->size = 4;
+            break;
+        case 3:
+            acc->size = 8;
+            break;
+        default:
+            return 0;
         }
         acc->reg = (w >> 7) & 0x1F;
         acc->inst_len = 4;
         return 1;
     }
-    if (opcode == 0x23 && is_store) {           /* STORE */
+    if (opcode == 0x23 && is_store) { /* STORE */
         acc->is_write = 1;
         switch (funct3) {
-        case 0: acc->size = 1; break;
-        case 1: acc->size = 2; break;
-        case 2: acc->size = 4; break;
-        case 3: acc->size = 8; break;
-        default: return 0;
+        case 0:
+            acc->size = 1;
+            break;
+        case 1:
+            acc->size = 2;
+            break;
+        case 2:
+            acc->size = 4;
+            break;
+        case 3:
+            acc->size = 8;
+            break;
+        default:
+            return 0;
         }
         acc->reg = (w >> 20) & 0x1F;
         acc->inst_len = 4;
@@ -645,7 +670,7 @@ static int mmio_instruction(vcpu_t *vcpu, uint64_t *inst_out)
         uint16_t lo;
         if (guest_read_u16(vcpu, pc_gpa, &lo)) {
             if ((lo & 0x3) != 0x3) {
-                *inst_out = lo;      /* 压缩指令 */
+                *inst_out = lo; /* 压缩指令 */
                 return 1;
             }
             uint32_t full;
@@ -710,8 +735,7 @@ static int handle_ram_fault(vcpu_t *vcpu, uint64_t gpa, uint64_t code)
         KLOG_ERROR("[HEXT] vcpu%d: RAM fault at gpa=0x%llx but PMM is out "
                    "of pages (free=%llu), stopping vm%u\n",
                    vcpu->vcpu_id, (unsigned long long)gpa,
-                   (unsigned long long)pmm_get_free_pages(g_pmm),
-                   vm->vmid);
+                   (unsigned long long)pmm_get_free_pages(g_pmm), vm->vmid);
         return EL2_EXIT;
     }
 
@@ -766,17 +790,18 @@ static int handle_gstage_fault(vcpu_t *vcpu, uint64_t code)
     uint64_t out = 0;
 
     if (vcpu->vm && vcpu->vm->mmio_bus &&
-        mmio_bus_handle(vcpu->vm->mmio_bus, gpa, acc.is_write, acc.size,
-                        value, (uint32_t)vcpu->vcpu_id, &out)) {
+        mmio_bus_handle(vcpu->vm->mmio_bus, gpa, acc.is_write, acc.size, value,
+                        (uint32_t)vcpu->vcpu_id, &out)) {
         if (!acc.is_write && acc.reg != 0)
             vcpu->r[acc.reg] = out;
         vcpu->pc += acc.inst_len;
         return EL2_RESUME;
     }
 
-    KLOG_ERROR("[HEXT] vcpu%d: unhandled G-stage %s fault gpa=0x%llx pc=0x%llx\n",
-               vcpu->vcpu_id, acc.is_write ? "write" : "read",
-               (unsigned long long)gpa, (unsigned long long)vcpu->pc);
+    KLOG_ERROR(
+        "[HEXT] vcpu%d: unhandled G-stage %s fault gpa=0x%llx pc=0x%llx\n",
+        vcpu->vcpu_id, acc.is_write ? "write" : "read", (unsigned long long)gpa,
+        (unsigned long long)vcpu->pc);
     return EL2_EXIT;
 }
 
@@ -790,9 +815,9 @@ static int handle_gstage_fault(vcpu_t *vcpu, uint64_t code)
  */
 static int handle_vs_ecall(vcpu_t *vcpu)
 {
-    uint64_t ext  = vcpu->r[17];  /* a7 = SBI EID / hypercall 号 */
-    uint64_t func = vcpu->r[16];  /* a6 = SBI FID                */
-    uint64_t arg0 = vcpu->r[10];  /* a0 = 第一个参数             */
+    uint64_t ext = vcpu->r[17];  /* a7 = SBI EID / hypercall 号 */
+    uint64_t func = vcpu->r[16]; /* a6 = SBI FID                */
+    uint64_t arg0 = vcpu->r[10]; /* a0 = 第一个参数             */
 
     /* 步进 guest PC 越过 ecall（4 字节） */
     vcpu->pc += 4;
@@ -828,13 +853,21 @@ static int handle_vs_ecall(vcpu_t *vcpu)
     case SBI_EXT_BASE: {
         uint64_t value;
         switch (func) {
-        case SBI_BASE_GET_SPEC_VERSION: value = 0x00000002; break; /* v0.2 */
-        case SBI_BASE_GET_IMPL_ID:      value = 0x41565452; break; /* "AVTR" */
-        case SBI_BASE_GET_IMPL_VERSION: value = 1;          break;
+        case SBI_BASE_GET_SPEC_VERSION:
+            value = 0x00000002;
+            break; /* v0.2 */
+        case SBI_BASE_GET_IMPL_ID:
+            value = 0x41565452;
+            break; /* "AVTR" */
+        case SBI_BASE_GET_IMPL_VERSION:
+            value = 1;
+            break;
         /* Linux 会读这三个填 /proc/cpuinfo，返回 0 表示「未知」是合法的 */
         case SBI_BASE_GET_MVENDORID:
         case SBI_BASE_GET_MARCHID:
-        case SBI_BASE_GET_MIMPID:       value = 0;          break;
+        case SBI_BASE_GET_MIMPID:
+            value = 0;
+            break;
         case SBI_BASE_PROBE_EXTENSION:
             switch (arg0) {
             case SBI_EXT_BASE:
@@ -845,7 +878,8 @@ static int handle_vs_ecall(vcpu_t *vcpu)
             case SBI_LEGACY_CONSOLE_PUTCHAR:
             case SBI_LEGACY_CONSOLE_GETCHAR:
             case SBI_LEGACY_SHUTDOWN:
-                value = 1; break;
+                value = 1;
+                break;
             /*
              * IPI / HSM 明确报「不支持」。
              *
@@ -855,7 +889,8 @@ static int handle_vs_ecall(vcpu_t *vcpu)
              * 难查得多。单核 guest 不探测这两个扩展也能正常启动。
              */
             default:
-                value = 0; break;
+                value = 0;
+                break;
             }
             break;
         default:
@@ -926,8 +961,8 @@ static int handle_vs_ecall(vcpu_t *vcpu)
 int vmm_arch_exit_handler(vcpu_t *vcpu)
 {
     uint64_t cause = vcpu->scause_save;
-    int      is_int = (int)(cause >> 63);
-    uint64_t code  = cause & ~(1ULL << 63);
+    int is_int = (int)(cause >> 63);
+    uint64_t code = cause & ~(1ULL << 63);
 
     /* 对标 x-kernel vdev/riscv64/timer.rs 的 RiscvTimerHook::on_exit：
      * 已退出 guest，清除注入的 VS 定时器/外部中断挂起位，避免残留导致下次
@@ -943,8 +978,8 @@ int vmm_arch_exit_handler(vcpu_t *vcpu)
          * 注：hideleg 已把 VS 定时器/外部中断委托给 VS-mode，所以正常情况
          * 下**走不到这里** —— 中断在 guest 内部就被消化了。能到这里的是
          * 宿主自己（HS 侧）的中断，比如宿主时钟。 */
-        KLOG_DEBUG("[HEXT] vcpu%d host interrupt: code=%llu\n",
-                   vcpu->vcpu_id, (unsigned long long)code);
+        KLOG_DEBUG("[HEXT] vcpu%d host interrupt: code=%llu\n", vcpu->vcpu_id,
+                   (unsigned long long)code);
         /* 直接 yield，让 kernel 的 timer handler 运行 */
         task_yield();
         return EL2_RESUME;
@@ -960,12 +995,12 @@ int vmm_arch_exit_handler(vcpu_t *vcpu)
          */
         return handle_wfi(vcpu);
 
-    case CAUSE_VS_ECALL:   /* 10 */
+    case CAUSE_VS_ECALL: /* 10 */
         return handle_vs_ecall(vcpu);
 
-    case 20:   /* Instruction G-stage Page Fault */
-    case 21:   /* Load G-stage Page Fault      */
-    case 23:   /* Store/AMO G-stage Page Fault */
+    case 20: /* Instruction G-stage Page Fault */
+    case 21: /* Load G-stage Page Fault      */
+    case 23: /* Store/AMO G-stage Page Fault */
     {
         uint64_t gpa = gstage_fault_gpa(vcpu);
 
@@ -1002,9 +1037,9 @@ int vmm_arch_exit_handler(vcpu_t *vcpu)
         return handle_gstage_fault(vcpu, code);
     }
 
-    case 12:   /* Instruction Page Fault（guest 自己的页表缺项）*/
-    case 13:   /* Load Page Fault */
-    case 15:   /* Store Page Fault */
+    case 12: /* Instruction Page Fault（guest 自己的页表缺项）*/
+    case 13: /* Load Page Fault */
+    case 15: /* Store Page Fault */
         /*
          * VS-mode 自己取指/访存缺页 —— guest 内核页表的问题，VMM 帮不上忙。
          *
@@ -1014,16 +1049,14 @@ int vmm_arch_exit_handler(vcpu_t *vcpu)
          */
         KLOG_ERROR("[HEXT] vcpu%d guest page fault: cause=%llu vsepc=0x%llx "
                    "stval=0x%llx\n",
-                   vcpu->vcpu_id,
-                   (unsigned long long)code,
+                   vcpu->vcpu_id, (unsigned long long)code,
                    (unsigned long long)vcpu->pc,
                    (unsigned long long)vcpu->stval_save);
         return EL2_EXIT;
 
     default:
         KLOG_ERROR("[HEXT] vcpu%d unhandled exit: cause=%llu vsepc=0x%llx\n",
-                   vcpu->vcpu_id,
-                   (unsigned long long)code,
+                   vcpu->vcpu_id, (unsigned long long)code,
                    (unsigned long long)vcpu->pc);
         return EL2_EXIT;
     }
