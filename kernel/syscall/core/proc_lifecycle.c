@@ -317,6 +317,7 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
         child->user_stack_size = parent->user_stack_size;
         child->heap_end = parent->heap_end;
         child->mmap_next = parent->mmap_next;
+        child->mmap_base = parent->mmap_base;
         child->fs_base = (flags & CLONE_SETTLS) ? tls : parent->fs_base;
         child->parent_id = parent->id;
 
@@ -423,8 +424,16 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
     } while (0)
 
         CLONE_COPY_RANGE(0x0, parent->heap_end);
-        if (clone_copy_ok && parent->mmap_next > USER_MMAP_BASE_EXEC)
-            CLONE_COPY_RANGE(USER_MMAP_BASE_EXEC, parent->mmap_next);
+        /*
+         * mmap 区从**本进程真实的**基址扫起，不是写死的 USER_MMAP_BASE_EXEC。
+         * PIE 进程的基址是 0x50000000，用 0x30000000 当起点会逐页空扫
+         * 512MB 的 VA 空洞（实测每次 fork 131,077 次四级页表遍历、约 9ms）。
+         * 下界取 mmap_base 是安全的：mmap_next 是递增高水位，且 munmap 的
+         * 回退下限也是 mmap_base（见 mmap.c），所以 [mmap_base, mmap_next)
+         * 必然覆盖该进程全部的 mmap 映射。
+         */
+        if (clone_copy_ok && parent->mmap_next > parent->mmap_base)
+            CLONE_COPY_RANGE(parent->mmap_base, parent->mmap_next);
         if (clone_copy_ok)
             CLONE_COPY_RANGE(parent->user_stack_top - parent->user_stack_size,
                              parent->user_stack_top);
@@ -447,6 +456,7 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
         child->user_stack_size = parent->user_stack_size;
         child->heap_end = parent->heap_end;
         child->mmap_next = parent->mmap_next;
+        child->mmap_base = parent->mmap_base;
         child->fs_base = parent->fs_base;
         child->parent_id = parent->id;
 

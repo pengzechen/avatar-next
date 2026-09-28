@@ -95,7 +95,18 @@ uint64_t sys_munmap(uint64_t addr, uint64_t len)
     if (top >= next) {
         void *pgd = phys_to_virt((uint64_t)current->pgd);
         uint64_t new_next = addr;
-        uint64_t lo = ALIGN_UP(current->heap_end, PAGE_SIZE);
+        /*
+         * 回退下限是**本进程 mmap 区的基址**，不是 heap_end。
+         *
+         * 原来写的是 heap_end（~0x153000），比 mmap 基址（PIE 0x50000000）
+         * 低得多 —— 把一个进程的 mmap 页全部 munmap 掉之后，mmap_next 会
+         * 一路缩到 heap 里面去，下一次 mmap 就在堆区分配，和 brk 打架。
+         * mmap_user_range_ok() 只挡栈顶和 0 页，拦不住这种分配。
+         *
+         * 顺带这也是 fork 拷贝 mmap 区的前提：[mmap_base, mmap_next) 要
+         * 能覆盖该进程全部 mmap 映射，就得保证 mmap_next 永不小于基址。
+         */
+        uint64_t lo = current->mmap_base;
         int budget = 512;
         while (new_next > lo && budget-- > 0) {
             if (mm_vm_get_paddr(pgd, new_next - PAGE_SIZE) != 0)

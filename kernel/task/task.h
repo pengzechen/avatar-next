@@ -115,8 +115,19 @@ typedef struct task {
     uint64_t user_stack_size; /* 用户栈大小                            */
     uint64_t heap_end;        /* 进程堆当前末尾（brk 系统调用使用）    */
     uint64_t mmap_next;       /* 下一个 mmap 分配的起始地址            */
-    uint64_t fs_base;         /* x86_64 TLS: IA32_FS_BASE              */
-    uint64_t ctid_ptr;        /* CLONE_CHILD_CLEARTID 地址 (0=无)       */
+    /*
+     * mmap 区的**起始**地址（ET_DYN 用 0x50000000，ET_EXEC 用 0x30000000，
+     * 见 user_layout.h）。mmap_next 会一路涨上去，涨完就再也回不到初值，
+     * 所以基址必须单独存一份。
+     *
+     * 为什么需要它：fork 拷贝父进程地址空间时，mmap 区的扫描范围是
+     * [mmap_base, mmap_next)。以前这里写死 USER_MMAP_BASE_EXEC(0x30000000)，
+     * 而 PIE 进程的映射其实都在 0x50000000 以上 —— 于是每个 fork 都要
+     * 逐页空扫 512MB 的 VA 空洞（131,077 次四级页表遍历，白花 ~9ms）。
+     */
+    uint64_t mmap_base;
+    uint64_t fs_base;  /* x86_64 TLS: IA32_FS_BASE              */
+    uint64_t ctid_ptr; /* CLONE_CHILD_CLEARTID 地址 (0=无)       */
 
     /* === 进程/文件系统支持 === */
     char cwd[TASK_CWD_LEN];        /* 当前工作目录（用户进程）               */

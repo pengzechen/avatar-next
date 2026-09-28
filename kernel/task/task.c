@@ -575,6 +575,12 @@ task_t *process_create_with_pgd(const char *name, uint64_t user_entry,
     /* 在入队之前设置堆和 mmap 地址，避免调度器过早切换到该任务时看到 0 */
     task->heap_end = heap_end_val;
     task->mmap_next = mmap_next_val;
+    /*
+     * 初值即基址：exec 传进来的 mmap_next_val 就是本进程 mmap 区的起点
+     * （task_execve 里算出来的 mmap_base）。fork 拷贝地址空间时用它当
+     * 扫描下界，见 task.h 里 mmap_base 的注释。
+     */
+    task->mmap_base = mmap_next_val;
 
     task->sp =
         arch_init_user_stack(task->stack_base, TASK_STACK_SIZE,
