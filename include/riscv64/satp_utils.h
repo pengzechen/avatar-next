@@ -31,11 +31,23 @@
  *   L1[0x100] → KERNEL_VMA + 0x00000000..0x3fffffff  (MMIO 高半别名)
  *   L1[0x101] → KERNEL_VMA + 0x40000000..0x7fffffff  (MMIO 高半别名)
  *   L1[0x102] → KERNEL_VMA + 0x80000000..0xbfffffff  (DRAM 高半别名，含内核代码/数据)
+ *   L1[0x103] → KERNEL_VMA + 0xc0000000..0xffffffff  (DRAM 高半别名，RAM 第二个 1GB)
+ *
+ * ⚠️ 这一组下标在**两个地方**必须同时列出：boot 时建映射的
+ * kernel/mm/riscv64/mmu.S，以及下面 riscv64_copy_kernel_mappings 的
+ * 逐条目复制。**漏掉后者的后果极隐蔽**：内核根表里映射是好的，所以
+ * 内核自己跑着不出事；但用户页表里没有那一条，而 syscall 期间 satp
+ * 指向的正是用户页表 —— 于是"分配到了 RAM 第二个 1GB 的物理页"这件事，
+ * 只在复制它的那一刻炸（Store PF，pc 在 clone_handler 里）。
+ * 曾经就是 0x103 只加在了 mmu.S、没加进复制列表。
  */
-#define RISCV64_KERNEL_L1_MMIO0_IDX 0x100U
-#define RISCV64_KERNEL_L1_MMIO1_IDX 0x101U
-#define RISCV64_KERNEL_L1_RAM_IDX   0x102U
-#define RISCV64_KERNEL_L1_MMIO_IDX  RISCV64_KERNEL_L1_MMIO0_IDX
+#define RISCV64_KERNEL_L1_MMIO0_IDX  0x100U
+#define RISCV64_KERNEL_L1_MMIO1_IDX  0x101U
+#define RISCV64_KERNEL_L1_RAM_IDX    0x102U
+#define RISCV64_KERNEL_L1_RAM_HI_IDX 0x103U
+#define RISCV64_KERNEL_L1_MMIO_IDX   RISCV64_KERNEL_L1_MMIO0_IDX
+/* 内核占用的 L1 条目上界（用户页表只该拥有 [0, 这个值)） */
+#define RISCV64_KERNEL_L1_FIRST_IDX RISCV64_KERNEL_L1_MMIO0_IDX
 
 /**
  * satp_read_pgd_phys - 读取当前 satp 并返回根页表物理地址
@@ -72,6 +84,11 @@ static inline void riscv64_copy_kernel_mappings(uint64_t *user_l1,
     user_l1[RISCV64_KERNEL_L1_MMIO1_IDX] =
         kernel_l1[RISCV64_KERNEL_L1_MMIO1_IDX];
     user_l1[RISCV64_KERNEL_L1_RAM_IDX] = kernel_l1[RISCV64_KERNEL_L1_RAM_IDX];
+    /* RAM 第二个 1GB：boot 时 mmu.S 建了内核根表的那一条，但这里一度
+     * 漏了 —— 于是 PMM 一旦把 0xc0000000 以上的页分出去，内核在用户
+     * 页表上（syscall 期间）碰它就 Store PF。详见上面下标表处的说明。 */
+    user_l1[RISCV64_KERNEL_L1_RAM_HI_IDX] =
+        kernel_l1[RISCV64_KERNEL_L1_RAM_HI_IDX];
 }
 
 #endif /* RISCV64_SATP_UTILS_H */
