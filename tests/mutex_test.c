@@ -13,8 +13,7 @@ static uint32_t g_shared_counter = 0;
 static mutex_t g_mutex;
 
 /* 测试任务 A：递增共享计数器 */
-static void
-mutex_task_a(void *arg)
+static void mutex_task_a(void *arg)
 {
     (void)arg;
 
@@ -25,7 +24,8 @@ mutex_task_a(void *arg)
         KLOG_INFO("[task_a] counter = %u\n", g_shared_counter);
 
         /* 模拟一些工作 */
-        for (volatile int j = 0; j < 1000000; j++);
+        for (volatile int j = 0; j < 1000000; j++)
+            ;
 
         mutex_unlock(&g_mutex);
 
@@ -38,8 +38,7 @@ mutex_task_a(void *arg)
 }
 
 /* 测试任务 B：递增共享计数器 */
-static void
-mutex_task_b(void *arg)
+static void mutex_task_b(void *arg)
 {
     (void)arg;
 
@@ -50,7 +49,8 @@ mutex_task_b(void *arg)
         KLOG_INFO("[task_b] counter = %u\n", g_shared_counter);
 
         /* 模拟一些工作 */
-        for (volatile int j = 0; j < 1000000; j++);
+        for (volatile int j = 0; j < 1000000; j++)
+            ;
 
         mutex_unlock(&g_mutex);
 
@@ -63,8 +63,7 @@ mutex_task_b(void *arg)
 }
 
 /* 测试任务 C：递增共享计数器 */
-static void
-mutex_task_c(void *arg)
+static void mutex_task_c(void *arg)
 {
     (void)arg;
 
@@ -75,7 +74,8 @@ mutex_task_c(void *arg)
         KLOG_INFO("[task_c] counter = %u\n", g_shared_counter);
 
         /* 模拟一些工作 */
-        for (volatile int j = 0; j < 1000000; j++);
+        for (volatile int j = 0; j < 1000000; j++)
+            ;
 
         mutex_unlock(&g_mutex);
 
@@ -88,8 +88,7 @@ mutex_task_c(void *arg)
 }
 
 /* 测试 trylock */
-static void
-trylock_task(void *arg)
+static void trylock_task(void *arg)
 {
     (void)arg;
 
@@ -108,8 +107,7 @@ trylock_task(void *arg)
 }
 
 /* 主测试入口 */
-void
-run_mutex_tests(void)
+void run_mutex_tests(void)
 {
     KLOG_INFO("=== Mutex Test ===\n");
 

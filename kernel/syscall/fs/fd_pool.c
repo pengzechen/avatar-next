@@ -23,18 +23,19 @@ int fd_pool_alloc(void)
         if (g_fd_pool[i].type == FDT_FREE) {
             g_fd_pool[i].type = FDT_ALLOCATED;
             g_fd_pool[i].vfs_file = NULL;
-            KLOG_DEBUG("[fd] pool_alloc: allocated slot %d\n", i);
+            KLOG_SYSCALL("[fd] pool_alloc: allocated slot %d\n", i);
             return i;
         }
     }
-    KLOG_ERROR("[fd] pool_alloc: no free slots (FD_POOL_SIZE=%d)\n", FD_POOL_SIZE);
+    KLOG_ERROR("[fd] pool_alloc: no free slots (FD_POOL_SIZE=%d)\n",
+               FD_POOL_SIZE);
     return -1;
 }
 
 void fd_pool_free(int idx)
 {
     if (idx >= 0 && idx < FD_POOL_SIZE) {
-        KLOG_DEBUG("[fd] pool_free: freeing slot %d\n", idx);
+        KLOG_SYSCALL("[fd] pool_free: freeing slot %d\n", idx);
         g_fd_pool[idx].wq.waiter_count = 0;
         g_fd_pool[idx].vfs_file = NULL;
         g_fd_pool[idx].type = FDT_FREE;
@@ -99,18 +100,20 @@ int task_alloc_fd(task_t *task, int pool_idx)
     for (int fd = 3; fd < (int)TASK_MAX_FD; fd++) {
         if (task->fd_table[fd] == -1) {
             task->fd_table[fd] = (int16_t)pool_idx;
-            KLOG_DEBUG("[fd] task_alloc_fd: pid=%u allocated fd=%d for pool_idx=%d\n",
-                      task->id, fd, pool_idx);
+            KLOG_SYSCALL(
+                "[fd] task_alloc_fd: pid=%u allocated fd=%d for pool_idx=%d\n",
+                task->id, fd, pool_idx);
             return fd;
         }
     }
 
     /* 打印 fd_table 的前几个槽位用于调试 */
     KLOG_ERROR("[fd] task_alloc_fd: pid=%u no free fd (TASK_MAX_FD=%d)\n",
-              task->id, TASK_MAX_FD);
-    KLOG_ERROR("[fd] fd_table dump: [0]=%d [1]=%d [2]=%d [3]=%d [4]=%d [5]=%d\n",
-              task->fd_table[0], task->fd_table[1], task->fd_table[2],
-              task->fd_table[3], task->fd_table[4], task->fd_table[5]);
+               task->id, TASK_MAX_FD);
+    KLOG_ERROR(
+        "[fd] fd_table dump: [0]=%d [1]=%d [2]=%d [3]=%d [4]=%d [5]=%d\n",
+        task->fd_table[0], task->fd_table[1], task->fd_table[2],
+        task->fd_table[3], task->fd_table[4], task->fd_table[5]);
 
     return -1;
 }
@@ -137,8 +140,8 @@ int task_alloc_ion_fd(task_t *task, uint32_t handle)
         return -1;
 
     fd_obj_t *obj = &g_fd_pool[pool];
-    obj->type       = FDT_ION;
-    obj->flags      = 0;
+    obj->type = FDT_ION;
+    obj->flags = 0;
     obj->ion.handle = handle;
 
     const char *path = "/dev/ion_buffer";
@@ -168,6 +171,19 @@ int task_get_ion_handle(task_t *task, int fd, uint32_t *handle)
 
 void fd_table_inherit(task_t *child, task_t *parent)
 {
+    /*
+     * 只在内核任务/进程之间谈继承没意义：idle 之类的内核任务一张 fd 表都没有
+     * （正常全是 -1），而且它们的 fd_table 一旦忘了初始化就是一片 0 ——
+     * 而 0 是合法槽位号，会被当成「256 个 fd」逐个拷贝，一次就把整个池子
+     * 吃光（实测过：idle/1 作父进程，128 个槽瞬间占满，此后宿主里所有
+     * open() 都失败）。这里直接按「没有可继承的 fd」处理，表清成 -1。
+     */
+    if (!parent->is_user_process) {
+        for (uint32_t fd = 0; fd < TASK_MAX_FD; fd++)
+            child->fd_table[fd] = -1;
+        return;
+    }
+
     for (uint32_t fd = 0; fd < TASK_MAX_FD; fd++) {
         /* execve: FD_CLOEXEC 标记的 fd 不继承 */
         if ((parent->fd_cloexec[fd / 8] >> (fd % 8)) & 1) {

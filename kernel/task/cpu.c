@@ -13,17 +13,17 @@
 #include "task/cpu.h"
 #include "task/task.h"
 #include "task/sched.h"
-#include "task/switch.h"     /* arch_irq_enable */
+#include "task/switch.h" /* arch_irq_enable */
 #include "klog.h"
 #include "string.h"
 #include "arch.h"
 #include "barrier.h"
-#include "timer/timer.h"     /* timer_delay_ms (供 SMP 自检使用，所有架构通用) */
+#include "timer/timer.h" /* timer_delay_ms (供 SMP 自检使用，所有架构通用) */
 
 #if ARCH_AARCH64
-#include "mm_vm.h"          /* KERNEL_VMA / virt_to_phys */
-#include "aarch64/cpu.h"    /* aarch64_enable_neon (per-core CPACR_EL1.FPEN) */
-#include "irq/irq.h"        /* irq_init_secondary() */
+#include "mm_vm.h"       /* KERNEL_VMA / virt_to_phys */
+#include "aarch64/cpu.h" /* aarch64_enable_neon (per-core CPACR_EL1.FPEN) */
+#include "irq/irq.h"     /* irq_init_secondary() */
 #endif
 
 #if ARCH_RISCV64
@@ -41,8 +41,8 @@ extern void x86_tss_init_cpu(uint32_t cpu_id, uint64_t rsp0);
 #endif
 
 /* ── 全局 CPU 池 ────────────────────────────────────────── */
-cpu_t   g_cpus[AVATAR_MAX_CPUS];
-uint32_t g_num_cpus = 1;     /* Phase 0：恒为 1；Phase 2 起会增长 */
+cpu_t g_cpus[AVATAR_MAX_CPUS];
+uint32_t g_num_cpus = 1; /* Phase 0：恒为 1；Phase 2 起会增长 */
 
 /*
  * klog_cpu_id - 给 klog.h 宏使用，返回当前逻辑 CPU 编号。
@@ -50,8 +50,7 @@ uint32_t g_num_cpus = 1;     /* Phase 0：恒为 1；Phase 2 起会增长 */
  * 早期 boot（BSP 还没装 per-CPU 寄存器）arch_cpu_self_get 返回 0，
  * cpu_current() 退化到 &g_cpus[0]，cpu_id=0（BSS 默认值），正确。
  */
-uint32_t
-klog_cpu_id(void)
+uint32_t klog_cpu_id(void)
 {
     return cpu_current()->cpu_id;
 }
@@ -60,24 +59,22 @@ klog_cpu_id(void)
  * cpu_bump_local_ticks - timer ISR 每次调用，让本核累计 tick 计数器 +1。
  * 用于 SMP 健康检查：cpu_smp_timer_test 会读所有核的计数器，确认都在动。
  */
-void
-cpu_bump_local_ticks(void)
+void cpu_bump_local_ticks(void)
 {
     cpu_current()->local_ticks++;
 }
 
 /* ── BSP 初始化 ─────────────────────────────────────────── */
-void
-cpu_init_bsp(void)
+void cpu_init_bsp(void)
 {
     cpu_t *c = &g_cpus[0];
     memset(c, 0, sizeof(*c));
 
-    c->cpu_id       = 0;
-    c->hw_id        = arch_cpu_hw_id();
-    c->online       = true;
+    c->cpu_id = 0;
+    c->hw_id = arch_cpu_hw_id();
+    c->online = true;
     c->current_task = NULL;
-    c->idle_task    = NULL;
+    c->idle_task = NULL;
     c->need_resched = false;
     list_init(&c->run_queue);
     spinlock_irq_init(&c->rq_lock);
@@ -87,8 +84,8 @@ cpu_init_bsp(void)
 
     g_num_cpus = 1;
 
-    KLOG_INFO("[cpu] BSP initialized: cpu_id=0 hw_id=0x%llx\n",
-              (unsigned long long)c->hw_id);
+    KLOG_SMP("[cpu] BSP initialized: cpu_id=0 hw_id=0x%llx\n",
+             (unsigned long long)c->hw_id);
 }
 
 /* ── 二级核启动 ─────────────────────────────────────────── */
@@ -97,9 +94,9 @@ cpu_init_bsp(void)
 /* 各架构 boot.S 中定义的次级核启动栈，共享供 idle 复用。 */
 extern uint8_t secondary_boot_stacks[];
 #if ARCH_AARCH64
-#define SECONDARY_STACK_SIZE  4096U
+#define SECONDARY_STACK_SIZE 4096U
 #else
-#define SECONDARY_STACK_SIZE  16384U
+#define SECONDARY_STACK_SIZE 16384U
 #endif
 
 /* 每个次级核的 idle 任务控制块（CPU0 用 task.c 里的 g_idle_task）。 */
@@ -118,8 +115,8 @@ extern void gic_init_secondary(void);
 #define PSCI_CPU_ON_AARCH64        0xC4000003UL
 #define PSCI_AFFINITY_INFO_AARCH64 0xC4000004UL
 
-static int64_t
-psci_cpu_on(uint64_t mpidr, uint64_t entry_phys, uint64_t context_id)
+static int64_t psci_cpu_on(uint64_t mpidr, uint64_t entry_phys,
+                           uint64_t context_id)
 {
     register uint64_t x0 __asm__("x0") = PSCI_CPU_ON_AARCH64;
     register uint64_t x1 __asm__("x1") = mpidr;
@@ -140,17 +137,13 @@ psci_cpu_on(uint64_t mpidr, uint64_t entry_phys, uint64_t context_id)
  *   2 = ON_PENDING
  *   <0 = error (例如 -2 INVALID_PARAMS 表示 ATF 不认该 mpidr)
  */
-static int64_t
-psci_affinity_info(uint64_t mpidr)
+static int64_t psci_affinity_info(uint64_t mpidr)
 {
     register uint64_t x0 __asm__("x0") = PSCI_AFFINITY_INFO_AARCH64;
     register uint64_t x1 __asm__("x1") = mpidr;
     register uint64_t x2 __asm__("x2") = 0; /* lowest_affinity_level = 0 */
 
-    __asm__ volatile("smc #0"
-                     : "+r"(x0)
-                     : "r"(x1), "r"(x2)
-                     : "memory");
+    __asm__ volatile("smc #0" : "+r"(x0) : "r"(x1), "r"(x2) : "memory");
     return (int64_t)x0;
 }
 
@@ -166,20 +159,29 @@ psci_affinity_info(uint64_t mpidr)
  * 必须在第一次允许中断 / 第一次调用 sched_schedule 之前完成，
  * 否则 sched_check_and_yield 会读到 NULL current_task 而崩溃。
  */
-static void
-setup_secondary_idle_task(cpu_t *c)
+static void setup_secondary_idle_task(cpu_t *c)
 {
     task_t *idle = &g_secondary_idle[c->cpu_id - 1];
     memset(idle, 0, sizeof(*idle));
 
-    idle->state        = TASK_RUNNING;
-    idle->id           = 0xFFFF0000U | c->cpu_id; /* 用高位段避免与 g_task_id_cnt 冲突 */
-    idle->priority     = 255;
-    idle->stack_base   = &secondary_boot_stacks[c->cpu_id * SECONDARY_STACK_SIZE];
-    idle->entry        = NULL;
-    idle->arg          = NULL;
+    idle->state = TASK_RUNNING;
+    idle->id = 0xFFFF0000U | c->cpu_id; /* 用高位段避免与 g_task_id_cnt 冲突 */
+    idle->priority = 255;
+    idle->stack_base = &secondary_boot_stacks[c->cpu_id * SECONDARY_STACK_SIZE];
+    idle->entry = NULL;
+    idle->arg = NULL;
     idle->cpu_affinity = c->cpu_id;
-    idle->fs_base      = 0;
+    idle->fs_base = 0;
+    /*
+     * ⚠️ fd_table 必须显式填 -1：memset 归零后 0 是个**合法的池槽位号**，
+     * 于是这张表在 fd_table_inherit() 眼里就是「256 个都指向槽位 0 的 fd」，
+     * 一次继承会把 FD_POOL_SIZE(128) 个槽全部吃光 —— 之后宿主里任何进程
+     * 连 open() 都失败（实测 `[fd] pool_alloc: no free slots`，Ctrl+] 停 guest
+     * 后再启动 vmm-run 直接起不来）。CPU0 的 idle 走 task.c 的 g_idle_task，
+     * 那份是初始化过的；只有次级核这条路径漏了。
+     */
+    for (uint32_t j = 0; j < TASK_MAX_FD; j++)
+        idle->fd_table[j] = -1;
     list_node_init(&idle->run_node);
     list_node_init(&idle->wait_node);
 
@@ -192,7 +194,7 @@ setup_secondary_idle_task(cpu_t *c)
     idle->name[5] = '0' + (char)(c->cpu_id % 10);
     idle->name[6] = '\0';
 
-    c->idle_task    = idle;
+    c->idle_task = idle;
     c->current_task = idle;
 }
 #endif /* ARCH_AARCH64 || ARCH_RISCV64 || ARCH_X86_64 */
@@ -217,8 +219,7 @@ setup_secondary_idle_task(cpu_t *c)
  * 此阶段次级核的 run_queue 始终为空：sched_schedule 会一直 pick 到自己
  * 的 idle，行为退化为带 IRQ 的 WFI。跨核 enqueue / IPI 留给 Phase 4+。
  */
-void
-cpu_secondary_bootstrap(uint32_t cpu_id)
+void cpu_secondary_bootstrap(uint32_t cpu_id)
 {
     cpu_t *c = &g_cpus[cpu_id];
 
@@ -235,7 +236,6 @@ cpu_secondary_bootstrap(uint32_t cpu_id)
 
     /* GIC CPU interface（PMR / CTLR / GICH 等，per-core 寄存器） */
     irq_init_secondary();
-    // KLOG_WARN(">>>>");
 
     /*
      * Phase 3.1/3.2：必须在开中断之前装好 current_task，否则首个
@@ -265,8 +265,7 @@ cpu_secondary_bootstrap(uint32_t cpu_id)
     }
 }
 
-void
-cpu_bring_up_all(void)
+void cpu_bring_up_all(void)
 {
     if (CONFIG_SMP_CPUS <= 1U) {
         return;
@@ -275,8 +274,8 @@ cpu_bring_up_all(void)
     /* _secondary_start 链接在高 VA；PSCI 需要物理入口地址。 */
     uint64_t entry_phys = virt_to_phys((uint64_t)(uintptr_t)&_secondary_start);
 
-    KLOG_INFO("[cpu] SMP bringup: CONFIG_SMP_CPUS=%u entry_phys=0x%llx\n",
-              (unsigned)CONFIG_SMP_CPUS, (unsigned long long)entry_phys);
+    KLOG_SMP("[cpu] SMP bringup: CONFIG_SMP_CPUS=%u entry_phys=0x%llx\n",
+             (unsigned)CONFIG_SMP_CPUS, (unsigned long long)entry_phys);
 
     for (uint32_t i = 1; i < CONFIG_SMP_CPUS && i < AVATAR_MAX_CPUS; i++) {
         cpu_t *c = &g_cpus[i];
@@ -284,24 +283,23 @@ cpu_bring_up_all(void)
         c->cpu_id = i;
 #if defined(PLATFORM_RK3588)
         /* RK3588: Aff0 恒为 0，各核用 Aff1 区分，MPIDR = cpu_idx << 8 */
-        c->hw_id  = (uint64_t)i << 8;
+        c->hw_id = (uint64_t)i << 8;
 #else
-        c->hw_id  = i;             /* QEMU virt: MPIDR.Aff0 = CPU 序号 */
+        c->hw_id = i; /* QEMU virt: MPIDR.Aff0 = CPU 序号 */
 #endif
         c->online = false;
         list_init(&c->run_queue);
         spinlock_irq_init(&c->rq_lock);
 
-        KLOG_INFO("[cpu] PSCI CPU_ON cpu=%u mpidr=0x%llx\n",
-                  i, (unsigned long long)c->hw_id);
+        KLOG_SMP("[cpu] PSCI CPU_ON cpu=%u mpidr=0x%llx\n", i,
+                 (unsigned long long)c->hw_id);
 
         int64_t ret = psci_cpu_on(/*mpidr=*/c->hw_id, entry_phys,
                                   /*context_id=*/i);
-        KLOG_INFO("[cpu] PSCI CPU_ON cpu=%u ret=%lld\n",
-                  i, (long long)ret);
+        KLOG_SMP("[cpu] PSCI CPU_ON cpu=%u ret=%lld\n", i, (long long)ret);
         if (ret != 0) {
-            KLOG_ERROR("[cpu] PSCI CPU_ON cpu=%u failed: ret=%lld\n",
-                       i, (long long)ret);
+            KLOG_ERROR("[cpu] PSCI CPU_ON cpu=%u failed: ret=%lld\n", i,
+                       (long long)ret);
             continue;
         }
 
@@ -319,13 +317,13 @@ cpu_bring_up_all(void)
         }
         if (c->online) {
             g_num_cpus++;
-            KLOG_INFO("[cpu] cpu%u online (hw_id=0x%llx)\n",
-                      i, (unsigned long long)c->hw_id);
+            KLOG_SMP("[cpu] cpu%u online (hw_id=0x%llx)\n", i,
+                     (unsigned long long)c->hw_id);
         }
     }
 
-    KLOG_WARN("[cpu] SMP bringup done: %u CPU(s) online\n",
-              (unsigned)g_num_cpus);
+    KLOG_SMP("[cpu] SMP bringup done: %u CPU(s) online\n",
+             (unsigned)g_num_cpus);
 }
 
 #elif ARCH_RISCV64
@@ -333,16 +331,16 @@ cpu_bring_up_all(void)
 extern const uint64_t riscv64_hart_release_phys;
 extern volatile uint64_t riscv64_boot_hartid;
 
-#define SBI_SUCCESS      0L
-#define SBI_EID_IPI      0x735049UL
-#define SBI_FID_SEND_IPI 0UL
-#define SBI_EID_HSM      0x48534DUL
+#define SBI_SUCCESS        0L
+#define SBI_EID_IPI        0x735049UL
+#define SBI_FID_SEND_IPI   0UL
+#define SBI_EID_HSM        0x48534DUL
 #define SBI_FID_HART_START 0UL
 
 extern const uint64_t riscv64_secondary_start_phys;
 
-static long
-sbi_hart_start(uint64_t hartid, uint64_t start_addr, uint64_t opaque)
+static long sbi_hart_start(uint64_t hartid, uint64_t start_addr,
+                           uint64_t opaque)
 {
     register uint64_t a0 __asm__("a0") = hartid;
     register uint64_t a1 __asm__("a1") = start_addr;
@@ -357,8 +355,7 @@ sbi_hart_start(uint64_t hartid, uint64_t start_addr, uint64_t opaque)
     return (long)a0;
 }
 
-static long
-sbi_send_ipi(uint64_t hartid)
+static long sbi_send_ipi(uint64_t hartid)
 {
     if (hartid >= 64U)
         return -1;
@@ -375,13 +372,12 @@ sbi_send_ipi(uint64_t hartid)
     return (long)a0;
 }
 
-void
-cpu_secondary_bootstrap(uint32_t cpu_id)
+void cpu_secondary_bootstrap(uint32_t cpu_id)
 {
     cpu_t *c = &g_cpus[cpu_id];
 
     arch_cpu_self_set(c);
-    CSR_SET(sstatus, 1UL << 18);   /* SUM */
+    CSR_SET(sstatus, 1UL << 18); /* SUM */
     WRITE_STVEC((uint64_t)trap_vector);
 
     setup_secondary_idle_task(c);
@@ -397,8 +393,7 @@ cpu_secondary_bootstrap(uint32_t cpu_id)
     }
 }
 
-void
-cpu_bring_up_all(void)
+void cpu_bring_up_all(void)
 {
     if (CONFIG_SMP_CPUS <= 1U)
         return;
@@ -408,9 +403,9 @@ cpu_bring_up_all(void)
     return;
 #endif
 
-    KLOG_INFO("[cpu] RISC-V SMP bringup: CONFIG_SMP_CPUS=%u boot_hart=%llu\n",
-              (unsigned)CONFIG_SMP_CPUS,
-              (unsigned long long)riscv64_boot_hartid);
+    KLOG_SMP("[cpu] RISC-V SMP bringup: CONFIG_SMP_CPUS=%u boot_hart=%llu\n",
+             (unsigned)CONFIG_SMP_CPUS,
+             (unsigned long long)riscv64_boot_hartid);
     volatile uint64_t *hart_release =
         (volatile uint64_t *)phys_to_virt(riscv64_hart_release_phys);
     uint64_t entry_phys = riscv64_secondary_start_phys;
@@ -429,15 +424,15 @@ cpu_bring_up_all(void)
         list_init(&c->run_queue);
         spinlock_irq_init(&c->rq_lock);
 
-        KLOG_INFO("[cpu] start/release cpu=%u hart=%llu\n",
-                  i, (unsigned long long)c->hw_id);
+        KLOG_SMP("[cpu] start/release cpu=%u hart=%llu\n", i,
+                 (unsigned long long)c->hw_id);
 
         hart_release[c->hw_id] = (uint64_t)i + 1ULL;
         wmb();
 
         if (!hsm_unavailable) {
             long ret = sbi_hart_start(c->hw_id, entry_phys, i);
-            KLOG_INFO("[cpu] SBI hart_start cpu=%u ret=%ld\n", i, ret);
+            KLOG_SMP("[cpu] SBI hart_start cpu=%u ret=%ld\n", i, ret);
             if (ret != SBI_SUCCESS)
                 hsm_unavailable = true;
         }
@@ -459,27 +454,26 @@ cpu_bring_up_all(void)
         }
         if (c->online) {
             g_num_cpus++;
-            KLOG_INFO("[cpu] cpu%u online (hart=%llu)\n",
-                      i, (unsigned long long)c->hw_id);
+            KLOG_SMP("[cpu] cpu%u online (hart=%llu)\n", i,
+                     (unsigned long long)c->hw_id);
         }
     }
 
-    KLOG_WARN("[cpu] RISC-V SMP bringup done: %u CPU(s) online\n",
-              (unsigned)g_num_cpus);
+    KLOG_SMP("[cpu] RISC-V SMP bringup done: %u CPU(s) online\n",
+             (unsigned)g_num_cpus);
 }
 
 #elif ARCH_X86_64
 
-#define X86_AP_TRAMP_PHYS       0x00007000UL
-#define X86_AP_TRAMP_VECTOR     (X86_AP_TRAMP_PHYS >> 12)
-#define X86_AP_DATA_CPU_ID      ((volatile uint32_t *)0x00007f00UL)
-#define X86_AP_DATA_STACK_TOP   ((volatile uint64_t *)0x00007f08UL)
+#define X86_AP_TRAMP_PHYS     0x00007000UL
+#define X86_AP_TRAMP_VECTOR   (X86_AP_TRAMP_PHYS >> 12)
+#define X86_AP_DATA_CPU_ID    ((volatile uint32_t *)0x00007f00UL)
+#define X86_AP_DATA_STACK_TOP ((volatile uint64_t *)0x00007f08UL)
 
 extern uint8_t x86_ap_trampoline_start[];
 extern uint8_t x86_ap_trampoline_end[];
 
-void
-cpu_secondary_bootstrap(uint32_t cpu_id)
+void cpu_secondary_bootstrap(uint32_t cpu_id)
 {
     cpu_t *c = &g_cpus[cpu_id];
 
@@ -488,8 +482,10 @@ cpu_secondary_bootstrap(uint32_t cpu_id)
 
     exception_init_secondary();
     setup_secondary_idle_task(c);
-    x86_tss_init_cpu(cpu_id,
-                     (uint64_t)(uintptr_t)&secondary_boot_stacks[(cpu_id + 1U) * SECONDARY_STACK_SIZE]);
+    x86_tss_init_cpu(
+        cpu_id,
+        (uint64_t)(uintptr_t)&secondary_boot_stacks[(cpu_id + 1U) *
+                                                    SECONDARY_STACK_SIZE]);
     timer_init_secondary();
 
     wmb();
@@ -502,13 +498,13 @@ cpu_secondary_bootstrap(uint32_t cpu_id)
     }
 }
 
-void
-cpu_bring_up_all(void)
+void cpu_bring_up_all(void)
 {
     if (CONFIG_SMP_CPUS <= 1U)
         return;
 
-    uintptr_t tramp_size = (uintptr_t)(x86_ap_trampoline_end - x86_ap_trampoline_start);
+    uintptr_t tramp_size =
+        (uintptr_t)(x86_ap_trampoline_end - x86_ap_trampoline_start);
     if (tramp_size > 0x1000U) {
         KLOG_ERROR("[cpu] x86 AP trampoline too large: %llu bytes\n",
                    (unsigned long long)tramp_size);
@@ -519,9 +515,10 @@ cpu_bring_up_all(void)
     for (uintptr_t j = 0; j < tramp_size; j++)
         tramp_dst[j] = x86_ap_trampoline_start[j];
 
-    KLOG_INFO("[cpu] x86_64 SMP bringup: CONFIG_SMP_CPUS=%u trampoline=0x%lx size=%llu\n",
-              (unsigned)CONFIG_SMP_CPUS, (unsigned long)X86_AP_TRAMP_PHYS,
-              (unsigned long long)tramp_size);
+    KLOG_SMP(
+        "[cpu] x86_64 SMP bringup: CONFIG_SMP_CPUS=%u trampoline=0x%lx size=%llu\n",
+        (unsigned)CONFIG_SMP_CPUS, (unsigned long)X86_AP_TRAMP_PHYS,
+        (unsigned long long)tramp_size);
 
     for (uint32_t i = 1; i < CONFIG_SMP_CPUS && i < AVATAR_MAX_CPUS; i++) {
         cpu_t *c = &g_cpus[i];
@@ -534,11 +531,12 @@ cpu_bring_up_all(void)
 
         *X86_AP_DATA_CPU_ID = i;
         *X86_AP_DATA_STACK_TOP =
-            (uint64_t)(uintptr_t)&secondary_boot_stacks[(i + 1U) * SECONDARY_STACK_SIZE];
+            (uint64_t)(uintptr_t)&secondary_boot_stacks[(i + 1U) *
+                                                        SECONDARY_STACK_SIZE];
         wmb();
 
-        KLOG_INFO("[cpu] INIT/SIPI cpu=%u apic_id=%llu\n",
-                  i, (unsigned long long)c->hw_id);
+        KLOG_SMP("[cpu] INIT/SIPI cpu=%u apic_id=%llu\n", i,
+                 (unsigned long long)c->hw_id);
         lapic_send_init((uint32_t)c->hw_id);
         timer_delay_ms(10);
         lapic_send_sipi((uint32_t)c->hw_id, (uint8_t)X86_AP_TRAMP_VECTOR);
@@ -549,26 +547,26 @@ cpu_bring_up_all(void)
         while (!c->online) {
             __asm__ volatile("pause");
             if (++spin > 100000000ULL) {
-                KLOG_ERROR("[cpu] timeout waiting for cpu%u apic_id=%llu online\n",
-                           i, (unsigned long long)c->hw_id);
+                KLOG_ERROR(
+                    "[cpu] timeout waiting for cpu%u apic_id=%llu online\n", i,
+                    (unsigned long long)c->hw_id);
                 break;
             }
         }
         if (c->online) {
             g_num_cpus++;
-            KLOG_INFO("[cpu] cpu%u online (apic_id=%llu)\n",
-                      i, (unsigned long long)c->hw_id);
+            KLOG_SMP("[cpu] cpu%u online (apic_id=%llu)\n", i,
+                     (unsigned long long)c->hw_id);
         }
     }
 
-    KLOG_WARN("[cpu] x86_64 SMP bringup done: %u CPU(s) online\n",
-              (unsigned)g_num_cpus);
+    KLOG_SMP("[cpu] x86_64 SMP bringup done: %u CPU(s) online\n",
+             (unsigned)g_num_cpus);
 }
 
-#else  /* !ARCH_AARCH64 && !ARCH_RISCV64 && !ARCH_X86_64 */
+#else /* !ARCH_AARCH64 && !ARCH_RISCV64 && !ARCH_X86_64 */
 
-void
-cpu_bring_up_all(void)
+void cpu_bring_up_all(void)
 {
     /* x86_64 SMP 拉起留待后续 Phase 实现。 */
     if (CONFIG_SMP_CPUS > 1U) {
@@ -592,17 +590,15 @@ cpu_bring_up_all(void)
  * 全核必须共享一致的时间基准；aarch64 是 CNTPCT_EL0，per-core 但同源
  * 振荡器，timer_delay_ms 在任何核上读数一致。
  */
-extern volatile uint64_t g_system_ticks;  /* driver/timer/timer.c */
+extern volatile uint64_t g_system_ticks; /* driver/timer/timer.c */
 
 #if ARCH_AARCH64
 /* 诊断：读 DAIF、CNTP_CTL_EL0、CNTPCT_EL0 */
-static inline uint64_t dbg_read_daif(void)
-{
-    uint64_t v; __asm__ volatile("mrs %0, daif" : "=r"(v)); return v;
-}
 static inline uint64_t dbg_read_cntp_ctl(void)
 {
-    uint64_t v; __asm__ volatile("mrs %0, cntp_ctl_el0" : "=r"(v)); return v;
+    uint64_t v;
+    __asm__ volatile("mrs %0, cntp_ctl_el0" : "=r"(v));
+    return v;
 }
 static inline uint64_t dbg_read_cntpct(void)
 {
@@ -610,8 +606,7 @@ static inline uint64_t dbg_read_cntpct(void)
 }
 #endif
 
-void
-cpu_smp_timer_test(uint32_t rounds, uint32_t ms_per_round)
+void cpu_smp_timer_test(uint32_t rounds, uint32_t ms_per_round)
 {
     /* 即使单核也跑诊断：先确认 BSP 自己的 timer 是否在 tick。 */
 
@@ -625,13 +620,12 @@ cpu_smp_timer_test(uint32_t rounds, uint32_t ms_per_round)
 
 #if ARCH_AARCH64
     {
-        uint64_t daif = dbg_read_daif();
-        uint64_t ctl  = dbg_read_cntp_ctl();
-        uint64_t pct  = dbg_read_cntpct();
-        KLOG_INFO("[smp-test] BSP DAIF=0x%llx CNTP_CTL=0x%llx CNTPCT=%llu\n",
-                  (unsigned long long)daif,
-                  (unsigned long long)ctl,
-                  (unsigned long long)pct);
+        uint64_t daif = arch_irq_flags(); /* 统一的中断状态读取 */
+        uint64_t ctl = dbg_read_cntp_ctl();
+        uint64_t pct = dbg_read_cntpct();
+        KLOG_SMP("[smp-test] BSP DAIF=0x%llx CNTP_CTL=0x%llx CNTPCT=%llu\n",
+                 (unsigned long long)daif, (unsigned long long)ctl,
+                 (unsigned long long)pct);
 
         /* GIC 寄存器 dump：定位 IRQ 卡在哪一层 */
 #if DRIVER_GIC_V2
@@ -639,51 +633,57 @@ cpu_smp_timer_test(uint32_t rounds, uint32_t ms_per_round)
         extern uintptr_t gicv2_gicc_base;
         uintptr_t gicd_b = gicv2_gicd_base;
         uintptr_t gicc_b = gicv2_gicc_base;
-        KLOG_INFO("[smp-test] GIC base: gicd=0x%llx gicc=0x%llx\n",
-                  (unsigned long long)gicd_b, (unsigned long long)gicc_b);
-        uint32_t gicd_ctlr   = *(volatile uint32_t *)(gicd_b + 0x000);
-        uint32_t gicd_isen0  = *(volatile uint32_t *)(gicd_b + 0x100);
+        KLOG_SMP("[smp-test] GIC base: gicd=0x%llx gicc=0x%llx\n",
+                 (unsigned long long)gicd_b, (unsigned long long)gicc_b);
+        uint32_t gicd_ctlr = *(volatile uint32_t *)(gicd_b + 0x000);
+        uint32_t gicd_isen0 = *(volatile uint32_t *)(gicd_b + 0x100);
         uint32_t gicd_ispend = *(volatile uint32_t *)(gicd_b + 0x200);
-        uint32_t gicd_pri26  = *(volatile uint32_t *)(gicd_b + 0x400 + (26/4)*4);
-        uint32_t gicc_ctlr   = *(volatile uint32_t *)(gicc_b + 0x000);
-        uint32_t gicc_pmr    = *(volatile uint32_t *)(gicc_b + 0x004);
-        uint32_t gicc_hppir  = *(volatile uint32_t *)(gicc_b + 0x018);
-        uint32_t gicc_rpr    = *(volatile uint32_t *)(gicc_b + 0x014);
-        KLOG_INFO("[smp-test] GICD CTLR=0x%x ISENABLER0=0x%x ISPENDR0=0x%x IPRIORITY[26..]=0x%x\n",
-                  gicd_ctlr, gicd_isen0, gicd_ispend, gicd_pri26);
-        KLOG_INFO("[smp-test] GICC CTLR=0x%x PMR=0x%x HPPIR=0x%x RPR=0x%x\n",
-                  gicc_ctlr, gicc_pmr, gicc_hppir, gicc_rpr);
+        uint32_t gicd_pri26 =
+            *(volatile uint32_t *)(gicd_b + 0x400 + (26 / 4) * 4);
+        uint32_t gicc_ctlr = *(volatile uint32_t *)(gicc_b + 0x000);
+        uint32_t gicc_pmr = *(volatile uint32_t *)(gicc_b + 0x004);
+        uint32_t gicc_hppir = *(volatile uint32_t *)(gicc_b + 0x018);
+        uint32_t gicc_rpr = *(volatile uint32_t *)(gicc_b + 0x014);
+        KLOG_SMP(
+            "[smp-test] GICD CTLR=0x%x ISENABLER0=0x%x ISPENDR0=0x%x IPRIORITY[26..]=0x%x\n",
+            gicd_ctlr, gicd_isen0, gicd_ispend, gicd_pri26);
+        KLOG_SMP("[smp-test] GICC CTLR=0x%x PMR=0x%x HPPIR=0x%x RPR=0x%x\n",
+                 gicc_ctlr, gicc_pmr, gicc_hppir, gicc_rpr);
 #elif DRIVER_GIC_V3
         extern uintptr_t gicv3_gicd_base;
         extern uintptr_t gicv3_gicr_base;
-        KLOG_INFO("[smp-test] GIC base: gicd=0x%llx gicr=0x%llx (GICv3)\n",
-                  (unsigned long long)gicv3_gicd_base,
-                  (unsigned long long)gicv3_gicr_base);
-        uint32_t gicd_ctlr  = *(volatile uint32_t *)(gicv3_gicd_base + 0x000);
+        KLOG_SMP("[smp-test] GIC base: gicd=0x%llx gicr=0x%llx (GICv3)\n",
+                 (unsigned long long)gicv3_gicd_base,
+                 (unsigned long long)gicv3_gicr_base);
+        uint32_t gicd_ctlr = *(volatile uint32_t *)(gicv3_gicd_base + 0x000);
         uint32_t gicd_isen0 = *(volatile uint32_t *)(gicv3_gicd_base + 0x100);
-        KLOG_INFO("[smp-test] GICD CTLR=0x%x ISENABLER0=0x%x\n",
-                  gicd_ctlr, gicd_isen0);
+        KLOG_SMP("[smp-test] GICD CTLR=0x%x ISENABLER0=0x%x\n", gicd_ctlr,
+                 gicd_isen0);
         /* PPI 实际开关 / 组配置 / 优先级在 GICR SGI frame，不在 GICD */
         uintptr_t sgi = gicv3_gicr_base + 0x10000ULL;
         uint32_t r_isen0 = *(volatile uint32_t *)(sgi + 0x100);
-        uint32_t r_grp0  = *(volatile uint32_t *)(sgi + 0x080);
-        uint32_t r_pri_ppi26 = *(volatile uint32_t *)(sgi + 0x400 + (26/4)*4);
+        uint32_t r_grp0 = *(volatile uint32_t *)(sgi + 0x080);
+        uint32_t r_pri_ppi26 =
+            *(volatile uint32_t *)(sgi + 0x400 + (26 / 4) * 4);
         uint64_t icc_pmr, icc_igrpen1, icc_ctlr;
-        __asm__ volatile("mrs %0, S3_0_C4_C6_0"  : "=r"(icc_pmr));      /* ICC_PMR_EL1 */
-        __asm__ volatile("mrs %0, S3_0_C12_C12_7": "=r"(icc_igrpen1));  /* ICC_IGRPEN1_EL1 */
-        __asm__ volatile("mrs %0, S3_0_C12_C12_4": "=r"(icc_ctlr));     /* ICC_CTLR_EL1 */
-        KLOG_INFO("[smp-test] GICR SGI ISENABLER0=0x%x IGROUPR0=0x%x IPRI[26..29]=0x%x\n",
-                  r_isen0, r_grp0, r_pri_ppi26);
-        KLOG_INFO("[smp-test] ICC PMR=0x%llx IGRPEN1=0x%llx CTLR=0x%llx\n",
-                  (unsigned long long)icc_pmr,
-                  (unsigned long long)icc_igrpen1,
-                  (unsigned long long)icc_ctlr);
+        __asm__ volatile("mrs %0, S3_0_C4_C6_0"
+                         : "=r"(icc_pmr)); /* ICC_PMR_EL1 */
+        __asm__ volatile("mrs %0, S3_0_C12_C12_7"
+                         : "=r"(icc_igrpen1)); /* ICC_IGRPEN1_EL1 */
+        __asm__ volatile("mrs %0, S3_0_C12_C12_4"
+                         : "=r"(icc_ctlr)); /* ICC_CTLR_EL1 */
+        KLOG_SMP(
+            "[smp-test] GICR SGI ISENABLER0=0x%x IGROUPR0=0x%x IPRI[26..29]=0x%x\n",
+            r_isen0, r_grp0, r_pri_ppi26);
+        KLOG_SMP("[smp-test] ICC PMR=0x%llx IGRPEN1=0x%llx CTLR=0x%llx\n",
+                 (unsigned long long)icc_pmr, (unsigned long long)icc_igrpen1,
+                 (unsigned long long)icc_ctlr);
 #endif
     }
 #endif
 
-    KLOG_INFO("[smp-test] timer health: %u cpu(s), %u rounds x %u ms\n",
-              (unsigned)g_num_cpus, (unsigned)rounds, (unsigned)ms_per_round);
+    KLOG_SMP("[smp-test] timer health: %u cpu(s), %u rounds x %u ms\n",
+             (unsigned)g_num_cpus, (unsigned)rounds, (unsigned)ms_per_round);
 
     uint64_t prev[AVATAR_MAX_CPUS];
     for (uint32_t i = 0; i < g_num_cpus; i++) {
@@ -699,26 +699,23 @@ cpu_smp_timer_test(uint32_t rounds, uint32_t ms_per_round)
 #if ARCH_AARCH64
         uint64_t pct_now = dbg_read_cntpct();
         uint64_t ctl_now = dbg_read_cntp_ctl();
-        KLOG_INFO("[smp-test] round=%u CNTPCT=%llu CNTP_CTL=0x%llx\n",
-                  (unsigned)r,
-                  (unsigned long long)pct_now,
-                  (unsigned long long)ctl_now);
+        KLOG_SMP("[smp-test] round=%u CNTPCT=%llu CNTP_CTL=0x%llx\n",
+                 (unsigned)r, (unsigned long long)pct_now,
+                 (unsigned long long)ctl_now);
 #endif
 
         uint64_t sys_now = g_system_ticks;
-        KLOG_INFO("[smp-test] round=%u system_ticks=%llu (+%llu)\n",
-                  (unsigned)r,
-                  (unsigned long long)sys_now,
-                  (unsigned long long)(sys_now - prev_sys));
+        KLOG_SMP("[smp-test] round=%u system_ticks=%llu (+%llu)\n", (unsigned)r,
+                 (unsigned long long)sys_now,
+                 (unsigned long long)(sys_now - prev_sys));
         prev_sys = sys_now;
 
         for (uint32_t i = 0; i < g_num_cpus; i++) {
-            uint64_t now  = g_cpus[i].local_ticks;
+            uint64_t now = g_cpus[i].local_ticks;
             uint64_t diff = now - prev[i];
-            KLOG_INFO("[smp-test] round=%u cpu%u local_ticks=%llu (+%llu)\n",
-                      (unsigned)r, (unsigned)i,
-                      (unsigned long long)now,
-                      (unsigned long long)diff);
+            KLOG_SMP("[smp-test] round=%u cpu%u local_ticks=%llu (+%llu)\n",
+                     (unsigned)r, (unsigned)i, (unsigned long long)now,
+                     (unsigned long long)diff);
             if (diff == 0ULL) {
                 all_ok = false;
             }
@@ -727,8 +724,8 @@ cpu_smp_timer_test(uint32_t rounds, uint32_t ms_per_round)
     }
 
     if (all_ok) {
-        KLOG_INFO("[smp-test] PASS: all %u cpu(s) timer ticking\n",
-                  (unsigned)g_num_cpus);
+        KLOG_SMP("[smp-test] PASS: all %u cpu(s) timer ticking\n",
+                 (unsigned)g_num_cpus);
     } else {
         KLOG_ERROR("[smp-test] FAIL: some cpu(s) timer stuck\n");
     }

@@ -15,7 +15,7 @@
 #define ELFCLASS64 2
 
 /* ELF 数据编码 */
-#define ELFDATA2LSB 1  /* 小端序 */
+#define ELFDATA2LSB 1 /* 小端序 */
 
 /* ELF 版本 */
 #define EV_CURRENT 1
@@ -24,51 +24,51 @@
 #define EM_AARCH64 183
 
 /* ELF 文件类型 */
-#define ET_NONE   0
-#define ET_REL    1  /* 可重定位文件 */
-#define ET_EXEC   2  /* 可执行文件 */
-#define ET_DYN    3  /* 共享对象 */
+#define ET_NONE 0
+#define ET_REL  1 /* 可重定位文件 */
+#define ET_EXEC 2 /* 可执行文件 */
+#define ET_DYN  3 /* 共享对象 */
 
 /* ELF 程序头类型 */
 #define PT_NULL    0
-#define PT_LOAD    1  /* 可加载段 */
+#define PT_LOAD    1 /* 可加载段 */
 #define PT_DYNAMIC 2
 #define PT_INTERP  3
-#define PT_TLS     7  /* 线程本地存储 */
+#define PT_TLS     7 /* 线程本地存储 */
 
 /* ELF 段权限 */
-#define PF_X 0x1  /* 可执行 */
-#define PF_W 0x2  /* 可写 */
-#define PF_R 0x4  /* 可读 */
+#define PF_X 0x1 /* 可执行 */
+#define PF_W 0x2 /* 可写 */
+#define PF_R 0x4 /* 可读 */
 
 /* DT_* 动态标签 */
 #define DT_NULL    0
-#define DT_RELA    7   /* RELA 重定位表地址 */
-#define DT_RELASZ  8   /* RELA 重定位表大小 */
-#define DT_RELAENT 9   /* RELA 条目大小 */
-#define DT_SYMTAB  6   /* 动态符号表地址 */
-#define DT_SYMENT  11  /* 动态符号表条目大小 */
+#define DT_RELA    7  /* RELA 重定位表地址 */
+#define DT_RELASZ  8  /* RELA 重定位表大小 */
+#define DT_RELAENT 9  /* RELA 条目大小 */
+#define DT_SYMTAB  6  /* 动态符号表地址 */
+#define DT_SYMENT  11 /* 动态符号表条目大小 */
 
 /* AArch64 重定位类型 */
-#define R_AARCH64_RELATIVE   1027  /* 0x403: base + addend */
-#define R_AARCH64_JUMP_SLOT  1026  /* 0x402: PLT entry */
-#define R_AARCH64_GLOB_DAT   1025  /* 0x401: GOT entry */
+#define R_AARCH64_RELATIVE  1027 /* 0x403: base + addend */
+#define R_AARCH64_JUMP_SLOT 1026 /* 0x402: PLT entry */
+#define R_AARCH64_GLOB_DAT  1025 /* 0x401: GOT entry */
 
 /* RISC-V 重定位类型 */
-#define R_RISCV_64           2  /* 64-bit 绝对地址，sym=0 时等价于 RELATIVE */
-#define R_RISCV_RELATIVE     3
-#define R_RISCV_JUMP_SLOT    5
-#define R_RISCV_GLOB_DAT     6
+#define R_RISCV_64        2 /* 64-bit 绝对地址，sym=0 时等价于 RELATIVE */
+#define R_RISCV_RELATIVE  3
+#define R_RISCV_JUMP_SLOT 5
+#define R_RISCV_GLOB_DAT  6
 
 /* x86_64 重定位类型 */
-#define R_X86_64_COPY        5  /* 从共享库复制符号，需符号解析，由 ld.so 处理 */
-#define R_X86_64_GLOB_DAT    6
-#define R_X86_64_JUMP_SLOT   7
-#define R_X86_64_RELATIVE    8
+#define R_X86_64_COPY      5 /* 从共享库复制符号，需符号解析，由 ld.so 处理 */
+#define R_X86_64_GLOB_DAT  6
+#define R_X86_64_JUMP_SLOT 7
+#define R_X86_64_RELATIVE  8
 
 /* 64-bit ELF 动态段条目 */
 typedef struct {
-    int64_t  d_tag;
+    int64_t d_tag;
     union {
         uint64_t d_val;
         uint64_t d_ptr;
@@ -77,40 +77,40 @@ typedef struct {
 
 /* 64-bit ELF RELA 重定位条目 */
 typedef struct {
-    uint64_t r_offset;  /* 需要重定位的虚拟地址 */
-    uint64_t r_info;    /* 符号索引 + 类型 */
-    int64_t  r_addend;  /* 加数 */
+    uint64_t r_offset; /* 需要重定位的虚拟地址 */
+    uint64_t r_info;   /* 符号索引 + 类型 */
+    int64_t r_addend;  /* 加数 */
 } elf64_rela_t;
 
 /* 64-bit ELF 符号表条目 */
 typedef struct {
-    uint32_t st_name;   /* 符号名在字符串表中的偏移 */
-    uint8_t  st_info;   /* 类型和绑定 */
-    uint8_t  st_other;  /* 可见性 */
-    uint16_t st_shndx;  /* 所在节索引 */
-    uint64_t st_value;  /* 符号值（地址） */
-    uint64_t st_size;   /* 符号大小 */
+    uint32_t st_name;  /* 符号名在字符串表中的偏移 */
+    uint8_t st_info;   /* 类型和绑定 */
+    uint8_t st_other;  /* 可见性 */
+    uint16_t st_shndx; /* 所在节索引 */
+    uint64_t st_value; /* 符号值（地址） */
+    uint64_t st_size;  /* 符号大小 */
 } elf64_sym_t;
 
-#define ELF64_R_TYPE(info)  ((uint32_t)(info))
-#define ELF64_R_SYM(info)   ((uint32_t)((info) >> 32))
+#define ELF64_R_TYPE(info) ((uint32_t)(info))
+#define ELF64_R_SYM(info)  ((uint32_t)((info) >> 32))
 
 /* 64-bit ELF 头 */
 typedef struct {
-    uint8_t  e_ident[EI_NIDENT]; /* 魔数和其他信息 */
-    uint16_t e_type;             /* 文件类型 */
-    uint16_t e_machine;          /* 机器类型 */
-    uint32_t e_version;          /* 版本 */
-    uint64_t e_entry;            /* 入口点虚拟地址 */
-    uint64_t e_phoff;            /* 程序头表文件偏移 */
-    uint64_t e_shoff;            /* 节头表文件偏移 */
-    uint32_t e_flags;            /* 处理器特定标志 */
-    uint16_t e_ehsize;           /* ELF 头大小 */
-    uint16_t e_phentsize;        /* 程序头表条目大小 */
-    uint16_t e_phnum;            /* 程序头表条目数量 */
-    uint16_t e_shentsize;        /* 节头表条目大小 */
-    uint16_t e_shnum;            /* 节头表条目数量 */
-    uint16_t e_shstrndx;         /* 节头字符串表索引 */
+    uint8_t e_ident[EI_NIDENT]; /* 魔数和其他信息 */
+    uint16_t e_type;            /* 文件类型 */
+    uint16_t e_machine;         /* 机器类型 */
+    uint32_t e_version;         /* 版本 */
+    uint64_t e_entry;           /* 入口点虚拟地址 */
+    uint64_t e_phoff;           /* 程序头表文件偏移 */
+    uint64_t e_shoff;           /* 节头表文件偏移 */
+    uint32_t e_flags;           /* 处理器特定标志 */
+    uint16_t e_ehsize;          /* ELF 头大小 */
+    uint16_t e_phentsize;       /* 程序头表条目大小 */
+    uint16_t e_phnum;           /* 程序头表条目数量 */
+    uint16_t e_shentsize;       /* 节头表条目大小 */
+    uint16_t e_shnum;           /* 节头表条目数量 */
+    uint16_t e_shstrndx;        /* 节头字符串表索引 */
 } elf64_ehdr_t;
 
 /* 64-bit ELF 程序头 */
@@ -131,10 +131,8 @@ typedef struct {
 /* 工具函数 */
 static inline int elf_check_magic(elf64_ehdr_t *ehdr)
 {
-    return ehdr->e_ident[0] == 0x7f &&
-           ehdr->e_ident[1] == 'E' &&
-           ehdr->e_ident[2] == 'L' &&
-           ehdr->e_ident[3] == 'F';
+    return ehdr->e_ident[0] == 0x7f && ehdr->e_ident[1] == 'E' &&
+           ehdr->e_ident[2] == 'L' && ehdr->e_ident[3] == 'F';
 }
 
 static inline int elf_check_class(elf64_ehdr_t *ehdr)
@@ -152,7 +150,7 @@ static inline int elf_check_machine(elf64_ehdr_t *ehdr)
 #if ARCH_AARCH64
     return ehdr->e_machine == EM_AARCH64;
 #elif ARCH_X86_64
-    return ehdr->e_machine == 62;  /* EM_X86_64 */
+    return ehdr->e_machine == 62; /* EM_X86_64 */
 #elif ARCH_RISCV64
     return ehdr->e_machine == 243; /* EM_RISCV */
 #else

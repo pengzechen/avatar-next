@@ -23,44 +23,44 @@
  * ============================================================ */
 #if DRIVER_UART_PL011
 
-    #include "uart_pl011.h"
+#include "uart_pl011.h"
 
-    #define uart_init()         pl011_init()
-    #define uart_putc(c)        pl011_putchar(c)
-    #define uart_puts(s)        pl011_putstr(s)
-    #define uart_getc()         pl011_getchar()
-    #define uart_getc_nb(c)     pl011_getchar_nb(c)
-    #define uart_rx_ready()     pl011_rx_available()
+#define uart_init()     pl011_init()
+#define uart_putc(c)    pl011_putchar(c)
+#define uart_puts(s)    pl011_putstr(s)
+#define uart_getc()     pl011_getchar()
+#define uart_getc_nb(c) pl011_getchar_nb(c)
+#define uart_rx_ready() pl011_rx_available()
 
 /* ============================================================
  * DesignWare 16550（riscv64）
  * ============================================================ */
 #elif DRIVER_UART_DW
 
-    #include "uart_dw.h"
+#include "uart_dw.h"
 
-    #define uart_init()         dw_uart_early_init()
-    #define uart_putc(c)        dw_uart_putchar(c)
-    #define uart_puts(s)        dw_uart_putstr(s)
-    #define uart_getc()         dw_uart_getchar()
-    #define uart_getc_nb(c)     dw_uart_getchar_nb(c)
-    #define uart_rx_ready()     dw_uart_rx_available()
+#define uart_init()     dw_uart_early_init()
+#define uart_putc(c)    dw_uart_putchar(c)
+#define uart_puts(s)    dw_uart_putstr(s)
+#define uart_getc()     dw_uart_getchar()
+#define uart_getc_nb(c) dw_uart_getchar_nb(c)
+#define uart_rx_ready() dw_uart_rx_available()
 
 /* ============================================================
  * x86 COM1 16550 Port I/O（x86_64）
  * ============================================================ */
 #elif DRIVER_UART_X86
 
-    #include "uart_x86.h"
+#include "uart_x86.h"
 
-    #define uart_init()         uart_x86_early_init()
-    #define uart_putc(c)        uart_x86_putchar(c)
-    #define uart_puts(s)        uart_x86_putstr(s)
-    #define uart_getc()         uart_x86_getchar()
-    #define uart_getc_nb(c)     uart_x86_getchar_nb(c)
-    /* x86: 直接检查 LSR 数据就绪位，不消费字符 */
-    #define uart_rx_ready()     uart_x86_rx_available()
+#define uart_init()     uart_x86_early_init()
+#define uart_putc(c)    uart_x86_putchar(c)
+#define uart_puts(s)    uart_x86_putstr(s)
+#define uart_getc()     uart_x86_getchar()
+#define uart_getc_nb(c) uart_x86_getchar_nb(c)
+/* x86: 直接检查 LSR 数据就绪位，不消费字符 */
+#define uart_rx_ready() uart_x86_rx_available()
 
-#endif  /* DRIVER_UART_* */
+#endif /* DRIVER_UART_* */
 
-#endif  /* DRIVER_UART_H */
+#endif /* DRIVER_UART_H */

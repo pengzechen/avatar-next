@@ -12,8 +12,7 @@
 #include <ext4.h>
 #include <ext4_types.h>
 
-
-#define MAX_FILE_SIZE        (1024 * 1024) /* 最大程序大小 1MB */
+#define MAX_FILE_SIZE (1024 * 1024) /* 最大程序大小 1MB */
 
 /**
  * bin_loader_load_from_file - 从文件系统加载并执行程序
@@ -26,10 +25,10 @@ int bin_loader_load_from_file(const char *pathname, char **argv, char **envp)
     uint8_t *code_buffer;
     uint64_t file_size;
     task_t *new_task;
-    char path_buf[256];  /* 内核缓冲区，用于存储路径名 */
+    char path_buf[256]; /* 内核缓冲区，用于存储路径名 */
 
-    (void)argv;  /* 暂未使用参数 */
-    (void)envp;  /* 暂未使用环境变量 */
+    (void)argv; /* 暂未使用参数 */
+    (void)envp; /* 暂未使用环境变量 */
 
     /* 从用户空间复制路径名到内核缓冲区 */
     /* 简单实现：假设当前使用共享页表，可以直接访问 */
@@ -41,7 +40,9 @@ int bin_loader_load_from_file(const char *pathname, char **argv, char **envp)
     }
     path_buf[i] = '\0';
 
-    KLOG_INFO("[loader] Loading program: %s\n", path_buf);
+    /* 与 elf_loader.c 的同类事件统一到 DEBUG：装载是逐次 exec 的操作，
+     * busybox 每条命令都会走一遍，不该占 INFO。 */
+    KLOG_DEBUG("[loader] Loading program: %s\n", path_buf);
 
     /* 打开文件 */
     rc = ext4_fopen(&file, path_buf, "r");
@@ -56,7 +57,7 @@ int bin_loader_load_from_file(const char *pathname, char **argv, char **envp)
     fsize = ext4_ftell(&file);
     ext4_fseek(&file, 0, SEEK_SET);
 
-    KLOG_INFO("[loader] File size: %zu bytes\n", fsize);
+    KLOG_DEBUG("[loader] File size: %zu bytes\n", fsize);
 
     /* 检查文件大小 */
     if (fsize == 0 || fsize > MAX_FILE_SIZE) {
@@ -89,7 +90,7 @@ int bin_loader_load_from_file(const char *pathname, char **argv, char **envp)
 
     ext4_fclose(&file);
 
-    KLOG_INFO("[loader] Program loaded: virt=0x%llx\n", (uint64_t)code_buffer);
+    KLOG_DEBUG("[loader] Program loaded: virt=0x%llx\n", (uint64_t)code_buffer);
 
     /* 创建用户进程
      * process_create 的 user_entry 参数在 AArch64 下是代码的内核虚拟地址，
@@ -104,8 +105,8 @@ int bin_loader_load_from_file(const char *pathname, char **argv, char **envp)
         return -5;
     }
 
-    KLOG_INFO("[loader] Process '%s' created successfully, PID=%u\n",
-              path_buf, new_task->id);
+    KLOG_DEBUG("[loader] Process '%s' created successfully, PID=%u\n", path_buf,
+               new_task->id);
 
     /* 退出当前进程，让新进程运行 */
     task_exit();

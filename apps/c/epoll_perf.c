@@ -62,20 +62,23 @@ static int run_pipe_bench(int iterations, int batch)
     for (int i = 0; i < iterations; i++) {
         ssize_t wr = write(p[1], buf, (size_t)batch);
         if (wr != batch) {
-            fprintf(stderr, "write failed at iter %d: wr=%zd errno=%d\n", i, wr, errno);
+            fprintf(stderr, "write failed at iter %d: wr=%zd errno=%d\n", i, wr,
+                    errno);
             return 1;
         }
 
         int n = epoll_wait(ep, out, 8, 1000);
         if (n <= 0) {
-            fprintf(stderr, "epoll_wait failed at iter %d: n=%d errno=%d\n", i, n, errno);
+            fprintf(stderr, "epoll_wait failed at iter %d: n=%d errno=%d\n", i,
+                    n, errno);
             return 1;
         }
         events_seen += (uint64_t)n;
 
         ssize_t rd = read(p[0], buf, (size_t)batch);
         if (rd != batch) {
-            fprintf(stderr, "read failed at iter %d: rd=%zd errno=%d\n", i, rd, errno);
+            fprintf(stderr, "read failed at iter %d: rd=%zd errno=%d\n", i, rd,
+                    errno);
             return 1;
         }
         bytes += (uint64_t)rd;
@@ -87,10 +90,8 @@ static int run_pipe_bench(int iterations, int batch)
 
     printf("epoll_perf pipe\n");
     printf("iterations=%d batch=%d bytes=%llu events=%llu time_us=%llu\n",
-           iterations, batch,
-           (unsigned long long)bytes,
-           (unsigned long long)events_seen,
-           (unsigned long long)dt);
+           iterations, batch, (unsigned long long)bytes,
+           (unsigned long long)events_seen, (unsigned long long)dt);
     printf("event_rate=%llu/s byte_rate=%llu B/s avg=%llu ns/iter\n",
            (unsigned long long)((uint64_t)iterations * 1000000ULL / dt),
            (unsigned long long)(bytes * 1000000ULL / dt),

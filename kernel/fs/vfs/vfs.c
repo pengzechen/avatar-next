@@ -11,37 +11,38 @@
 #include "syscall/net/ksocket.h"
 #include "kmalloc.h"
 #include "string.h"
+#include <ext4.h> /* ext4_readlink（ext4_errno.h 由它带入） */
 #include <ext4_errno.h>
 
-#define VFS_ENOENT   2
-#define VFS_EIO      5
-#define VFS_EBADF    9
+#define VFS_ENOENT  2
+#define VFS_EIO     5
+#define VFS_EBADF   9
 #define VFS_EINVAL  22
 #define VFS_ENOTDIR 20
 #define VFS_EMFILE  24
 #define VFS_ENOSYS  38
 #define VFS_ESPIPE  29
 
-#define O_ACCMODE_AVATAR 0000003
-#define O_WRONLY_AVATAR  0000001
-#define O_RDWR_AVATAR    0000002
-#define O_CREAT_AVATAR   0000100
-#define O_TRUNC_AVATAR   0001000
-#define O_APPEND_AVATAR  0002000
+#define O_ACCMODE_AVATAR   0000003
+#define O_WRONLY_AVATAR    0000001
+#define O_RDWR_AVATAR      0000002
+#define O_CREAT_AVATAR     0000100
+#define O_TRUNC_AVATAR     0001000
+#define O_APPEND_AVATAR    0002000
 #define O_DIRECTORY_AVATAR 0200000
-#define SEEK_SET_AVATAR 0
-#define SEEK_CUR_AVATAR 1
-#define SEEK_END_AVATAR 2
+#define SEEK_SET_AVATAR    0
+#define SEEK_CUR_AVATAR    1
+#define SEEK_END_AVATAR    2
 
 typedef struct vfs_mount vfs_mount_t;
 
 typedef struct {
-    int (*open)(const vfs_mount_t *mnt, const char *path, int flags,
-                int mode, vfs_file_t **out);
+    int (*open)(const vfs_mount_t *mnt, const char *path, int flags, int mode,
+                vfs_file_t **out);
     int (*stat)(const vfs_mount_t *mnt, const char *path,
                 struct kernel_stat *st);
-    int (*readlink)(const vfs_mount_t *mnt, const char *path,
-                    char *buf, size_t bufsz);
+    int (*readlink)(const vfs_mount_t *mnt, const char *path, char *buf,
+                    size_t bufsz);
 } vfs_mount_ops_t;
 
 struct vfs_mount {
@@ -55,8 +56,8 @@ static int pseudo_mount_stat(const vfs_mount_t *mnt, const char *path,
                              struct kernel_stat *st);
 static int pseudo_mount_readlink(const vfs_mount_t *mnt, const char *path,
                                  char *buf, size_t bufsz);
-static int ext4_mount_open(const vfs_mount_t *mnt, const char *path,
-                           int flags, int mode, vfs_file_t **out);
+static int ext4_mount_open(const vfs_mount_t *mnt, const char *path, int flags,
+                           int mode, vfs_file_t **out);
 static int ext4_mount_stat(const vfs_mount_t *mnt, const char *path,
                            struct kernel_stat *st);
 static int ext4_mount_readlink(const vfs_mount_t *mnt, const char *path,
@@ -75,10 +76,10 @@ static const vfs_mount_ops_t ext4_mount_ops = {
 };
 
 static const vfs_mount_t g_mounts[] = {
-    { "/dev",  &pseudo_mount_ops },
+    { "/dev", &pseudo_mount_ops },
     { "/proc", &pseudo_mount_ops },
-    { "/sys",  &pseudo_mount_ops },
-    { "/",     &ext4_mount_ops   },
+    { "/sys", &pseudo_mount_ops },
+    { "/", &ext4_mount_ops },
 };
 
 static bool mount_path_matches(const char *mnt, const char *path)
@@ -169,6 +170,17 @@ static int pseudo_file_ioctl(vfs_file_t *file, uint64_t req, void *argp)
     return pseudo_ioctl(file->u.pseudo.node_id, req, argp);
 }
 
+static uint32_t pseudo_file_poll(vfs_file_t *file, int pool_idx)
+{
+    (void)pool_idx;
+    return pseudo_poll(file->u.pseudo.node_id);
+}
+
+static int pseudo_file_close(vfs_file_t *file)
+{
+    return pseudo_close(file->u.pseudo.node_id);
+}
+
 static int pseudo_file_getdents(vfs_file_t *file, void *buf, size_t bufsz)
 {
     return pseudo_getdents(file->u.pseudo.node_id, &file->offset, buf, bufsz);
@@ -229,7 +241,8 @@ static int ext4_file_write(vfs_file_t *file, const void *buf, size_t len)
         uint64_t target = (uint64_t)pos;
         uint64_t gap = target - size;
 
-        if (ext4_fseek(&file->u.ext4_file, (int64_t)size, SEEK_SET_AVATAR) != EOK)
+        if (ext4_fseek(&file->u.ext4_file, (int64_t)size, SEEK_SET_AVATAR) !=
+            EOK)
             return -VFS_EIO;
 
         while (gap > 0) {
@@ -241,7 +254,8 @@ static int ext4_file_write(vfs_file_t *file, const void *buf, size_t len)
             gap -= chunk;
         }
 
-        if (ext4_fseek(&file->u.ext4_file, (int64_t)target, SEEK_SET_AVATAR) != EOK)
+        if (ext4_fseek(&file->u.ext4_file, (int64_t)target, SEEK_SET_AVATAR) !=
+            EOK)
             return -VFS_EIO;
     }
 
@@ -320,10 +334,18 @@ static int ext4_dir_getdents(vfs_file_t *file, void *buf, size_t bufsz)
         kd->d_off = (int64_t)(written + reclen);
         kd->d_reclen = reclen;
         switch (de->inode_type) {
-        case EXT4_DE_REG_FILE: kd->d_type = 8; break;
-        case EXT4_DE_DIR:      kd->d_type = 4; break;
-        case EXT4_DE_SYMLINK:  kd->d_type = 10; break;
-        default:               kd->d_type = 0; break;
+        case EXT4_DE_REG_FILE:
+            kd->d_type = 8;
+            break;
+        case EXT4_DE_DIR:
+            kd->d_type = 4;
+            break;
+        case EXT4_DE_SYMLINK:
+            kd->d_type = 10;
+            break;
+        default:
+            kd->d_type = 0;
+            break;
         }
         for (uint8_t k = 0; k < namelen; k++)
             kd->d_name[k] = (char)de->name[k];
@@ -396,19 +418,21 @@ static int pty_file_write(vfs_file_t *file, const void *buf, size_t len)
 
 static int pty_file_ioctl(vfs_file_t *file, uint64_t req, void *argp)
 {
-    return pty_ioctl(file->u.pty.pty_idx, file->u.pty.is_master,
-                     (uint32_t)req, argp);
+    return pty_ioctl(file->u.pty.pty_idx, file->u.pty.is_master, (uint32_t)req,
+                     argp);
 }
 
 static int pty_file_stat(vfs_file_t *file, struct kernel_stat *st)
 {
     memset(st, 0, sizeof(*st));
     st->st_dev = 5;
-    st->st_ino = file->u.pty.is_master ? 128U : 256U + (uint32_t)file->u.pty.pty_idx;
+    st->st_ino =
+        file->u.pty.is_master ? 128U : 256U + (uint32_t)file->u.pty.pty_idx;
     st->st_mode = 0020620;
     st->st_nlink = 1;
-    st->st_rdev = file->u.pty.is_master ? ((uint64_t)5 << 8) | 2 :
-                                          ((uint64_t)136 << 8) | (uint32_t)file->u.pty.pty_idx;
+    st->st_rdev = file->u.pty.is_master
+                      ? ((uint64_t)5 << 8) | 2
+                      : ((uint64_t)136 << 8) | (uint32_t)file->u.pty.pty_idx;
     st->st_blksize = 4096;
     return 0;
 }
@@ -473,6 +497,9 @@ static const vfs_file_ops_t pseudo_ops = {
     .getdents = pseudo_file_getdents,
     .seek = pseudo_file_seek,
     .stat = pseudo_file_stat,
+    /* poll/close 只有少数节点（/dev/vmm）真正实现，其余走兜底（见 pseudo_poll）*/
+    .poll = pseudo_file_poll,
+    .close = pseudo_file_close,
 };
 
 static const vfs_file_ops_t ext4_file_ops = {
@@ -534,8 +561,8 @@ static int pseudo_mount_open(const vfs_mount_t *mnt, const char *path,
     return 0;
 }
 
-static int ext4_mount_open(const vfs_mount_t *mnt, const char *path,
-                           int flags, int mode, vfs_file_t **out)
+static int ext4_mount_open(const vfs_mount_t *mnt, const char *path, int flags,
+                           int mode, vfs_file_t **out)
 {
     (void)mnt;
     (void)mode;
@@ -736,7 +763,8 @@ int vfs_pread(vfs_file_t *file, void *buf, size_t len, int64_t offset)
     if (offset < 0)
         return -VFS_EINVAL;
     int64_t saved = ext4_ftell(&file->u.ext4_file);
-    if (saved < 0 || ext4_fseek(&file->u.ext4_file, offset, SEEK_SET_AVATAR) != EOK)
+    if (saved < 0 ||
+        ext4_fseek(&file->u.ext4_file, offset, SEEK_SET_AVATAR) != EOK)
         return -VFS_EIO;
     size_t rcnt = 0;
     int rc = ext4_fread(&file->u.ext4_file, buf, len, &rcnt);
@@ -751,7 +779,8 @@ int vfs_pwrite(vfs_file_t *file, const void *buf, size_t len, int64_t offset)
     if (offset < 0)
         return -VFS_EINVAL;
     int64_t saved = ext4_ftell(&file->u.ext4_file);
-    if (saved < 0 || ext4_fseek(&file->u.ext4_file, offset, SEEK_SET_AVATAR) != EOK)
+    if (saved < 0 ||
+        ext4_fseek(&file->u.ext4_file, offset, SEEK_SET_AVATAR) != EOK)
         return -VFS_EIO;
     size_t wcnt = 0;
     int rc = ext4_fwrite(&file->u.ext4_file, buf, len, &wcnt);
@@ -775,7 +804,8 @@ int vfs_socket_index(vfs_file_t *file)
 
 bool vfs_file_matches_socket(vfs_file_t *file, int sock_idx)
 {
-    return file && file->kind == VFS_FILE_SOCKET && file->u.sock.sock_idx == sock_idx;
+    return file && file->kind == VFS_FILE_SOCKET &&
+           file->u.sock.sock_idx == sock_idx;
 }
 
 bool vfs_file_matches_pty(vfs_file_t *file, int pty_idx, bool is_master)
@@ -796,10 +826,18 @@ int vfs_proc_fd_target(vfs_file_t *file, char *buf, size_t bufsz)
             target = "/dev/ptmx";
         } else {
             int n = file->u.pty.pty_idx;
-            tmp[0] = '/'; tmp[1] = 'd'; tmp[2] = 'e'; tmp[3] = 'v';
-            tmp[4] = '/'; tmp[5] = 'p'; tmp[6] = 't'; tmp[7] = 's'; tmp[8] = '/';
+            tmp[0] = '/';
+            tmp[1] = 'd';
+            tmp[2] = 'e';
+            tmp[3] = 'v';
+            tmp[4] = '/';
+            tmp[5] = 'p';
+            tmp[6] = 't';
+            tmp[7] = 's';
+            tmp[8] = '/';
             if (n < 10) {
-                tmp[9] = (char)('0' + n); tmp[10] = '\0';
+                tmp[9] = (char)('0' + n);
+                tmp[10] = '\0';
             } else {
                 tmp[9] = (char)('0' + n / 10);
                 tmp[10] = (char)('0' + n % 10);
@@ -866,14 +904,33 @@ static int pseudo_mount_readlink(const vfs_mount_t *mnt, const char *path,
     return pseudo_readlink(path, buf, bufsz);
 }
 
+/*
+ * ext4 的 readlink。原先是 `return -VFS_ENOENT;` 的桩，于是根文件系统上
+ * 任何 readlink 都失败 —— 症状是 `ls` 能列目录（只读目录项），而
+ * `ls -l` / `ls -ls` 报 "cannot read link: No such file or directory"
+ * （长格式要 readlink 才能显示 `linuxrc -> xxx`）。
+ *
+ * 实现在 lwext4 里是现成的，path.c 的 follow_symlinks() 一直在用，
+ * 只是没接到 VFS 这一层。注意 ext4_readlink() 内部以 EXT4_DE_SYMLINK
+ * 打开，**不会跟随**最后一级链接 —— 这正是 readlink 要的语义。
+ *
+ * 返回值：成功时是写入 buf 的字节数（>0），失败时是负 errno。
+ */
 static int ext4_mount_readlink(const vfs_mount_t *mnt, const char *path,
                                char *buf, size_t bufsz)
 {
     (void)mnt;
-    (void)path;
-    (void)buf;
-    (void)bufsz;
-    return -VFS_ENOENT;
+
+    if (!path || !buf || bufsz == 0)
+        return -VFS_EINVAL;
+
+    size_t rcnt = 0;
+    int rc = ext4_readlink(path, buf, bufsz, &rcnt);
+    if (rc == EOK)
+        return (int)rcnt;
+    if (rc == ENOENT)
+        return -VFS_ENOENT;
+    return -VFS_EIO;
 }
 
 int vfs_readlink(const char *path, char *buf, size_t bufsz)

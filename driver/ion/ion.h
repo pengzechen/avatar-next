@@ -20,7 +20,7 @@
 
 /* ── 句柄类型 ──────────────────────────────────────────────────────────── */
 typedef uint32_t ion_handle_t;
-#define ION_HANDLE_INVALID  0U
+#define ION_HANDLE_INVALID 0U
 
 /* ── 堆类型（与 Linux ION ABI 兼容） ──────────────────────────────────── */
 #define ION_HEAP_SYSTEM       0U
@@ -28,7 +28,7 @@ typedef uint32_t ion_handle_t;
 #define ION_HEAP_CARVEOUT     2U
 
 /* ── 最大并发缓冲区数 ─────────────────────────────────────────────────── */
-#define ION_MAX_BUFS  64U
+#define ION_MAX_BUFS 64U
 
 /* ── 公开 API ──────────────────────────────────────────────────────────── */
 

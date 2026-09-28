@@ -20,10 +20,10 @@ typedef struct task task_t;
 /* ── Mutex 结构 ──────────────────────────────────────────── */
 
 typedef struct mutex {
-    volatile bool    locked;      /* 锁状态：true = 已锁定          */
-    list_t           wait_queue;  /* 等待队列（FIFO）               */
-    task_t          *holder;      /* 当前持有锁的任务               */
-    uint32_t         count;       /* 重入计数（1 = 首次持有）        */
+    volatile bool locked; /* 锁状态：true = 已锁定          */
+    list_t wait_queue;    /* 等待队列（FIFO）               */
+    task_t *holder;       /* 当前持有锁的任务               */
+    uint32_t count;       /* 重入计数（1 = 首次持有）        */
 } mutex_t;
 
 /* ── Mutex API ───────────────────────────────────────────── */

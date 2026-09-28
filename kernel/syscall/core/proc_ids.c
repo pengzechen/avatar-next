@@ -14,7 +14,7 @@
 #include "syscall/syscall.h"
 #include "task/task.h"
 
-extern task_t  g_task_pool[TASK_MAX];
+extern task_t g_task_pool[TASK_MAX];
 extern uint8_t g_stack_used[TASK_MAX];
 
 static bool process_group_exists(uint32_t pgid)
@@ -135,10 +135,13 @@ void proc_ids_handler(uint64_t syscall_num, uint64_t regs[6], task_t *current)
     }
 
     case LINUX_SYS_SETPGID: {
-        int pid  = (int)(int32_t)regs[0];
+        int pid = (int)(int32_t)regs[0];
         int pgid = (int)(int32_t)regs[1];
         task_t *tgt = (pid == 0) ? current : task_find_by_id((uint32_t)pid);
-        if (!tgt) { regs[0] = (uint64_t)(int64_t)-ESRCH; break; }
+        if (!tgt) {
+            regs[0] = (uint64_t)(int64_t)-ESRCH;
+            break;
+        }
         if (pgid != 0)
             tgt->pgid = (uint32_t)pgid;
         else if (pid != 0)
@@ -168,7 +171,7 @@ void proc_ids_handler(uint64_t syscall_num, uint64_t regs[6], task_t *current)
             regs[0] = (uint64_t)(int64_t)-EPERM;
             break;
         }
-        current->sid  = current->id;
+        current->sid = current->id;
         current->pgid = current->id;
         current->ctty_pty_idx = -1;
         regs[0] = (uint64_t)current->id;

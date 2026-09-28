@@ -89,12 +89,12 @@ make PLATFORM=qemu-virt-x86_64 run-fs LOG=info -j4
 > # 方式一：通过 make（推荐）
 > make PLATFORM=qemu-virt-riscv64 rootfs
 > # 方式二：通过脚本（需先 make PLATFORM=qemu-virt-riscv64 编译内核和 apps）
-> ./install-apps.sh riscv64
+> ./tools/install-apps.sh riscv64
 > ```
 
 ### 一键测试
 
-详细测试体系（apps/ 汇编加载方式、如何添加测试等）见 [tests.md](tests.md)，以下为命令速查：
+详细测试体系（apps/ 汇编加载方式、如何添加测试等）见 [docs/tests/TESTS.md](docs/tests/TESTS.md)，以下为命令速查：
 
 ```bash
 # pthread 测试（动态链接 musl，含锁/无锁竞争对比）
@@ -119,11 +119,11 @@ make PLATFORM=qemu-virt-x86_64  test-vmm LOG=info
 ### 其他构建选项
 
 ```bash
-# 调试版本（启用日志和断言）
-make PLATFORM=qemu-virt-aarch64 LOG=debug ASSERT=panic
+# 调试版本（启用日志）
+make PLATFORM=qemu-virt-aarch64 LOG=debug
 
-# 发布版本（零开销）
-make PLATFORM=qemu-virt-aarch64 LOG=none ASSERT=off
+# 发布版本（零日志开销）
+make PLATFORM=qemu-virt-aarch64 LOG=none
 
 # 仅编译内核
 make PLATFORM=qemu-virt-aarch64 kernel
@@ -320,31 +320,31 @@ KLOG_MODULE_DEBUG(LOG_MODULE_UART, "UART init");
 ## 📚 文档索引
 
 ### 核心系统
-- [内存屏障](docs/BARRIER.md) - barrier.h API 和实现
-- [缓存操作](docs/CACHE.md) - cache.h DMA 和 MMIO 缓存管理
-- [自旋锁](docs/SPINLOCK.md) - spinlock.h 同步原语
+- [内存屏障](docs/basic/BARRIER.md) - barrier.h API 和实现
+- [缓存操作](docs/basic/CACHE.md) - cache.h DMA 和 MMIO 缓存管理
+- [自旋锁](docs/basic/SPINLOCK.md) - spinlock.h 同步原语
 
 ### 调试和日志
-- [内核日志](docs/KLOG_GUIDE.md) - klog.h 日志系统和模块控制
-- [断言系统](docs/ASSERT_GUIDE.md) - assert.h 运行时和编译时断言
+- [内核日志](docs/basic/KLOG.md) - klog.h 日志系统和模块控制
+- [断言系统](docs/basic/ASSERT.md) - assert.h 运行时和编译时断言
 
 ### 数据结构和工具
-- [双向链表](docs/LIST_API.md) - list.h Linux 风格链表
-- [字符串操作](docs/STRING.md) - string.h 字符串和内存操作
-- [MMIO](docs/MMIO.md) - mmio.h 内存映射 I/O
+- [双向链表](docs/basic/LIST_API.md) - list.h Linux 风格链表
+- [字符串操作](docs/basic/STRING.md) - string.h 字符串和内存操作
+- [MMIO](docs/basic/MMIO.md) - mmio.h 内存映射 I/O
 
 ### 架构和平台
 - [架构平台配置](docs/ARCH_PLATFORM_PROFILE_GUIDE.md) - 多架构多平台支持
 - [AArch64 NEON](docs/arch/aarch64/NEON_USAGE.md) - NEON 优化
-- [RISC-V64 SG2002 Busybox Bring-up 坑点](docs/RISCV64_SG2002_BUSYBOX_BRINGUP_NOTES.md) - SG2002 页表、trap、UART 和平台切换注意事项
+- [RISC-V64 SG2002 Busybox Bring-up 坑点](docs/bugfix/hardware/SG2002_BUSYBOX_BRINGUP_NOTES.md) - SG2002 页表、trap、UART 和平台切换注意事项
 
 ### 开发指南
-- [Busybox 编译](docs/BUILD_BUSYBOX.md) - Busybox 交叉编译指南
+- [Busybox 编译](docs/app/BUILD_BUSYBOX.md) - Busybox 交叉编译指南
 - [系统调用实现](docs/SYSCALL_IMPLEMENTATION.md) - syscall 接口详解
 
 ### 故障排查
 - [中断上下文切换](docs/INTERRUPT_CONTEXT_SWITCH.md) - 中断处理和任务切换
-- [RISC-V ecall bug](docs/RISCV64_ECALL_OPENSBI_BUG.md) - OpenSBI 兼容性问题
+- [RISC-V ecall bug](docs/bugfix/RISCV64_ECALL_OPENSBI_BUG.md) - OpenSBI 兼容性问题
 - [用户进程状态](docs/USER_PROCESS_STATUS.md) - 用户态进程管理
 
 ## 🔧 配置选项
@@ -359,11 +359,10 @@ LOG=debug     # 调试信息及以上
 LOG=trace     # 所有日志包括跟踪
 ```
 
-### 断言模式
-```bash
-ASSERT=panic  # 启用断言，失败时 panic（默认）
-ASSERT=off    # 禁用所有断言（发布模式）
-```
+### 断言
+断言始终启用，没有编译期开关——`assert()` / `assert_always()` 失败即调用
+`platform_panic()`。实测全内核禁用断言只能省约 1% 的 `.text`，却会让 bug
+静默通过，因此不再提供该选项（传 `ASSERT=` 会直接报错）。
 
 ### 架构和平台
 ```bash

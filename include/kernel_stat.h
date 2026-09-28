@@ -21,16 +21,16 @@ struct kernel_stat {
     uint32_t st_gid;
     uint32_t __pad0;
     uint64_t st_rdev;
-    int64_t  st_size;
-    int64_t  st_blksize;
-    int64_t  st_blocks;
-    int64_t  st_atime_sec;
+    int64_t st_size;
+    int64_t st_blksize;
+    int64_t st_blocks;
+    int64_t st_atime_sec;
     uint64_t st_atime_nsec;
-    int64_t  st_mtime_sec;
+    int64_t st_mtime_sec;
     uint64_t st_mtime_nsec;
-    int64_t  st_ctime_sec;
+    int64_t st_ctime_sec;
     uint64_t st_ctime_nsec;
-    int64_t  __unused[3];
+    int64_t __unused[3];
 };
 #else
 /* Linux AArch64/RISC-V64 ABI */
@@ -43,15 +43,15 @@ struct kernel_stat {
     uint32_t st_gid;
     uint64_t st_rdev;
     uint64_t _pad1;
-    int64_t  st_size;
-    int32_t  st_blksize;
-    int32_t  _pad2;
-    int64_t  st_blocks;
-    int64_t  st_atime_sec;
+    int64_t st_size;
+    int32_t st_blksize;
+    int32_t _pad2;
+    int64_t st_blocks;
+    int64_t st_atime_sec;
     uint64_t st_atime_nsec;
-    int64_t  st_mtime_sec;
+    int64_t st_mtime_sec;
     uint64_t st_mtime_nsec;
-    int64_t  st_ctime_sec;
+    int64_t st_ctime_sec;
     uint64_t st_ctime_nsec;
     uint32_t _unused[2];
 };
@@ -59,10 +59,10 @@ struct kernel_stat {
 
 struct kernel_dirent64 {
     uint64_t d_ino;
-    int64_t  d_off;
+    int64_t d_off;
     uint16_t d_reclen;
-    uint8_t  d_type;
-    char     d_name[1]; /* variable length */
+    uint8_t d_type;
+    char d_name[1]; /* variable length */
 };
 
 #endif /* KERNEL_STAT_H */

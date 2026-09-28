@@ -16,6 +16,8 @@
  *   not the ELF program-header addresses.
  */
 
+#include "asm.h"
+
 /* Physical-to-virtual offset */
 .set PHYS_OFFSET,   0xffff800000000000
 
@@ -55,9 +57,7 @@
  * 32-bit entry point  (multiboot calls _start in 32-bit PM)
  * ---------------------------------------------------------- */
 .code32
-.global _start
-.type   _start, @function
-_start:
+FUNCS(_start)
     /* Save multiboot magic / info pointer (not used yet) */
     mov     %eax, %edi
     mov     %ebx, %esi
@@ -122,14 +122,13 @@ boot32_entry:
     /* Far jump into 64-bit code segment (GDT selector 0x10) */
     ljmp    $0x10, $(boot64_entry - PHYS_OFFSET)
 
-.size _start, . - _start
+FUNCE(_start)
 
 /* ----------------------------------------------------------
  * 64-bit entry  (still running at physical address)
  * ---------------------------------------------------------- */
 .code64
-.global boot64_entry
-boot64_entry:
+FUNCS(boot64_entry)
     /* Clear segment registers (not needed in 64-bit but tidy) */
     xor     %ax, %ax
     mov     %ax, %ss
@@ -141,6 +140,8 @@ boot64_entry:
     /* Jump to virtual (high-half) address */
     movabs  $boot64_virt, %rax
     jmp     *%rax
+
+FUNCE(boot64_entry)
 
 boot64_virt:
     /*

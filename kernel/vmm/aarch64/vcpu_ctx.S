@@ -55,14 +55,19 @@ save_sysregs_el12:
     mrs  x2, cpacr_el12
     stp  x1, x2, [x0], #16
 
-    /* [64]: tpidr_el1, tpidr_el0（不被 E2H 别名，直接访问）*/
-    mrs  x1, tpidr_el1
+    /*
+     * [64]: tpidr_el1, tpidr_el0
+     * VHE+TGE=1 下 tpidr_el1 会别名到 host tpidr_el2。guest tpidr_el1
+     * 已在 el2_trap_exit 中 TGE=0 时保存，这里必须保留原槽位。
+     */
+    ldr  x1, [x0]
     mrs  x2, tpidr_el0
     stp  x1, x2, [x0], #16
 
     /* [80]: tpidrro_el0, sp_el0 */
     mrs  x1, tpidrro_el0
-    mrs  x2, sp_el0
+    /* guest SP_EL0 同样由 el2_trap_exit 在 TGE=0 时保存。*/
+    ldr  x2, [x0, #8]
     stp  x1, x2, [x0], #16
 
     /* [96]: elr_el12, spsr_el12（guest EL1 嵌套异常的保存寄存器）*/
@@ -105,13 +110,13 @@ restore_sysregs_el12:
 
     /* [64]: tpidr_el1, tpidr_el0 */
     ldp  x1, x2, [x0], #16
-    msr  tpidr_el1, x1
+    /* 跳过 tpidr_el1：VHE+TGE=1 会写到 host alias，guest 值在 entry 恢复。*/
     msr  tpidr_el0, x2
 
     /* [80]: tpidrro_el0, sp_el0 */
     ldp  x1, x2, [x0], #16
     msr  tpidrro_el0, x1
-    msr  sp_el0, x2
+    /* 跳过 sp_el0：guest current 指针在 el2_enter_guest 中 TGE=0 后恢复。*/
 
     /* [96]: elr_el12, spsr_el12 */
     ldp  x1, x2, [x0], #16

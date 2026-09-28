@@ -38,11 +38,11 @@ static volatile int g_irq_count = 0;
 
 /* ── RK3588 NPU 配置 ─────────────────────────────────────────────────────── */
 static const rknpu_config_t rk3588_cfg = {
-    .pc_data_amount_scale  = 2,
-    .pc_task_number_bits   = 12,
-    .pc_task_number_mask   = 0xFFF,
+    .pc_data_amount_scale = 2,
+    .pc_task_number_bits = 12,
+    .pc_task_number_mask = 0xFFF,
     .pc_task_status_offset = 0x3C,
-    .core_mask             = 0x7,   /* 三核全启 */
+    .core_mask = 0x7, /* 三核全启 */
 };
 
 /* ── 内联 MMIO 辅助（以 g_npu0_base 为基址）────────────────────────────── */
@@ -65,8 +65,13 @@ static void rknpu_irq_handler(uint64_t *frame)
     uint32_t task_count = status & rk3588_cfg.pc_task_number_mask;
 
     g_irq_count++;
-    KLOG_INFO("rknpu: IRQ #%d status=0x%x task_count=%u\n",
-              g_irq_count, status, task_count);
+    /*
+     * 中断上下文 + 逐中断一行：必须**既降级又采样**。只降 DEBUG 挡不住
+     * LOG=debug 构建下的中断风暴 —— 那正是会把串口拖死的情形。
+     */
+    KLOG_MODULE_DEBUG_SAMPLE(LOG_MODULE_DRIVER,
+                             "rknpu: IRQ #%d status=0x%x task_count=%u\n",
+                             g_irq_count, status, task_count);
 
     /* 清除所有中断位 */
     npu_write(RKNPU_INT_CLEAR_ALL, RKNPU_INT_CLEAR);
@@ -77,7 +82,7 @@ static void rknpu_irq_handler(uint64_t *frame)
 /* ── 版本校验 ────────────────────────────────────────────────────────────── */
 bool rknpu_validate_version(void)
 {
-    uint32_t version     = npu_read(RKNPU_VERSION);
+    uint32_t version = npu_read(RKNPU_VERSION);
     uint32_t version_num = npu_read(RKNPU_VERSION_NUM);
 
     KLOG_INFO("rknpu: version=0x%08x version_num=0x%x\n", version, version_num);
@@ -99,35 +104,39 @@ void rknpu_init(void)
 
     /* 1. 从平台配置获取运行时参数 */
     g_npu0_base = platform_get_uintptr("npu", "base0");
-    g_npu0_irq  = (int)platform_get_uintptr("npu", "irq0");
+    g_npu0_irq = (int)platform_get_uintptr("npu", "irq0");
 
     if (g_npu0_base == 0) {
         KLOG_ERROR("rknpu: platform 'npu.base0' not set, aborting\n");
         return;
     }
-    KLOG_INFO("rknpu: NPU0 base=0x%lx irq=%d\n",
-              (unsigned long)g_npu0_base, g_npu0_irq);
+    KLOG_INFO("rknpu: NPU0 base=0x%lx irq=%d\n", (unsigned long)g_npu0_base,
+              g_npu0_irq);
 
     /* 2. 上电 NPU 电源域 */
     rkpm_t pm;
     uintptr_t pmu_base = platform_get_uintptr("npu", "pmu");
     if (pmu_base == 0)
-        pmu_base = RKNPU_PMU1_BASE;   /* 回退到硬编码地址 */
+        pmu_base = RKNPU_PMU1_BASE; /* 回退到硬编码地址 */
 
     rkpm_init(&pm, pmu_base);
 
     int ret;
     ret = rkpm_power_on(&pm, PD_NPU);
-    if (ret) KLOG_WARN("rknpu: PD_NPU power-on timeout\n");
+    if (ret)
+        KLOG_WARN("rknpu: PD_NPU power-on timeout\n");
 
     ret = rkpm_power_on(&pm, PD_NPUTOP);
-    if (ret) KLOG_WARN("rknpu: PD_NPUTOP power-on timeout\n");
+    if (ret)
+        KLOG_WARN("rknpu: PD_NPUTOP power-on timeout\n");
 
     ret = rkpm_power_on(&pm, PD_NPU1);
-    if (ret) KLOG_WARN("rknpu: PD_NPU1 power-on timeout\n");
+    if (ret)
+        KLOG_WARN("rknpu: PD_NPU1 power-on timeout\n");
 
     ret = rkpm_power_on(&pm, PD_NPU2);
-    if (ret) KLOG_WARN("rknpu: PD_NPU2 power-on timeout\n");
+    if (ret)
+        KLOG_WARN("rknpu: PD_NPU2 power-on timeout\n");
 
     KLOG_INFO("rknpu: NPU power domains on\n");
 

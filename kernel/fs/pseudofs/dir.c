@@ -6,17 +6,21 @@
 static uint8_t dirent_type(pseudo_type_t type)
 {
     switch (type) {
-    case PSEUDO_DIR: return 4;
-    case PSEUDO_REG: return 8;
-    case PSEUDO_CHR: return 2;
-    case PSEUDO_LNK: return 10;
-    default: return 0;
+    case PSEUDO_DIR:
+        return 4;
+    case PSEUDO_REG:
+        return 8;
+    case PSEUDO_CHR:
+        return 2;
+    case PSEUDO_LNK:
+        return 10;
+    default:
+        return 0;
     }
 }
 
-static size_t emit_dirent(void *buf, size_t written, size_t bufsz,
-                          uint64_t ino, uint64_t seq,
-                          uint8_t dtype, const char *name)
+static size_t emit_dirent(void *buf, size_t written, size_t bufsz, uint64_t ino,
+                          uint64_t seq, uint8_t dtype, const char *name)
 {
     size_t namelen = pfs_strlen(name);
     uint16_t reclen = (uint16_t)(19u + namelen + 1u);
@@ -79,9 +83,9 @@ static int emit_proc_pid_dirs(uint64_t *off, void *buf, size_t bufsz,
         uint32_t pid = pfs_task_pid(i);
         char pidbuf[12];
         u64_to_dec(pidbuf, (uint64_t)pid);
-        size_t r = emit_dirent(buf, *written, bufsz,
-                               (uint64_t)(DYNC_PID_DIR_BASE + pid),
-                               idx, 4, pidbuf);
+        size_t r =
+            emit_dirent(buf, *written, bufsz,
+                        (uint64_t)(DYNC_PID_DIR_BASE + pid), idx, 4, pidbuf);
         if (r == 0)
             break;
         *written += r;
@@ -102,8 +106,8 @@ int pfs_getdents_node(int nid, uint64_t *off, void *buf, size_t bufsz)
         uint64_t idx = 0;
         if (idx >= *off) {
             size_t r = emit_dirent(buf, written, bufsz,
-                                   (uint64_t)(DYNC_PID_STAT_BASE + pid),
-                                   idx, 8, "status");
+                                   (uint64_t)(DYNC_PID_STAT_BASE + pid), idx, 8,
+                                   "status");
             if (r == 0)
                 return (int)written;
             written += r;
@@ -128,10 +132,9 @@ int pfs_getdents_node(int nid, uint64_t *off, void *buf, size_t bufsz)
             continue;
         }
 
-        size_t r = emit_dirent(buf, written, bufsz,
-                               (uint64_t)(unsigned)i + 1u, idx,
-                               dirent_type(child->type),
-                               pfs_node_name(child));
+        size_t r =
+            emit_dirent(buf, written, bufsz, (uint64_t)(unsigned)i + 1u, idx,
+                        dirent_type(child->type), pfs_node_name(child));
         if (r == 0)
             break;
         written += r;

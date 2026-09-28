@@ -17,25 +17,22 @@
 #define CNTP_TVAL_EL0_WRITE(val) WRITE_CNTP_TVAL_EL0(val)
 
 // 定时器控制寄存器位定义
-#define CNTV_CTL_ENABLE  (1 << 0)  // 使能定时器
-#define CNTV_CTL_IMASK   (1 << 1)  // 中断屏蔽
-#define CNTV_CTL_ISTATUS (1 << 2)  // 中断状态
-
+#define CNTV_CTL_ENABLE  (1 << 0) // 使能定时器
+#define CNTV_CTL_IMASK   (1 << 1) // 中断屏蔽
+#define CNTV_CTL_ISTATUS (1 << 2) // 中断状态
 
 // ============================================================
 // 架构特定操作实现
 // ============================================================
 
-void
-timer_arch_init(void)
+void timer_arch_init(void)
 {
     // 读取定时器频率
     g_timer_frequency = CNTFRQ_EL0_READ();
 
-    KLOG_INFO("Timer initialization (AArch64):\n");
-    KLOG_INFO("  Timer frequency: %llu Hz\n", g_timer_frequency);
-    KLOG_INFO("  Target frequency: %d Hz\n", TIMER_FREQUENCY_HZ);
-    KLOG_INFO("  Tick interval: %d ms\n", TIMER_TICK_MS);
+    /* 时钟配错是经典 bug 来源 —— 值得一行；原来是四行 */
+    KLOG_INFO("Timer: aarch64 freq=%lluHz tick=%dHz (%dms)\n",
+              g_timer_frequency, TIMER_FREQUENCY_HZ, TIMER_TICK_MS);
 
     // 禁用定时器
     timer_disable();
@@ -46,18 +43,17 @@ timer_arch_init(void)
     // 配置 GIC 中断
     // PPI (Private Peripheral Interrupt) 需要设置优先级
     extern void gic_set_ipriority(uint32_t, uint32_t);
-    gic_set_ipriority(CNTP_TIMER, 0x00);  // 设置优先级
+    gic_set_ipriority(CNTP_TIMER, 0x00); // 设置优先级
 
     // 安装定时器中断处理函数
     extern void irq_install(int, void (*)(uint64_t *));
     irq_install(CNTP_TIMER, timer_handler);
     irq_enable_irq(CNTP_TIMER);
 
-    KLOG_INFO("Timer IRQ %d installed and enabled\n", CNTP_TIMER);
+    KLOG_TIMER("Timer IRQ %d installed and enabled\n", CNTP_TIMER);
 }
 
-void
-timer_arch_enable(void)
+void timer_arch_enable(void)
 {
     // 计算下一次中断的时间
     uint64_t ticks_per_interrupt = g_timer_frequency / TIMER_FREQUENCY_HZ;
@@ -68,21 +64,21 @@ timer_arch_enable(void)
     // 启用定时器，不屏蔽中断
     CNTP_CTL_EL0_WRITE(CNTV_CTL_ENABLE);
 
-    KLOG_INFO("Timer enabled with %llu ticks per interrupt\n", ticks_per_interrupt);
-    KLOG_INFO("Timer CTL: 0x%x, TVAL: %llu\n", CNTP_CTL_EL0_READ(), ticks_per_interrupt);
+    KLOG_TIMER("Timer enabled with %llu ticks per interrupt\n",
+               ticks_per_interrupt);
+    KLOG_TIMER("Timer CTL: 0x%x, TVAL: %llu\n", CNTP_CTL_EL0_READ(),
+               ticks_per_interrupt);
 }
 
-void
-timer_arch_disable(void)
+void timer_arch_disable(void)
 {
     // 禁用定时器并屏蔽中断
     CNTP_CTL_EL0_WRITE(CNTV_CTL_IMASK);
 
-    KLOG_INFO("Timer disabled\n");
+    KLOG_TIMER("Timer disabled\n");
 }
 
-void
-timer_arch_set_next_interrupt(uint64_t ticks_from_now)
+void timer_arch_set_next_interrupt(uint64_t ticks_from_now)
 {
     CNTP_TVAL_EL0_WRITE(ticks_from_now);
 }
@@ -94,10 +90,9 @@ timer_arch_set_next_interrupt(uint64_t ticks_from_now)
 /* 扫描 UART，向前台进程组发 SIGINT（来自 syscall.c） */
 extern void signal_check_uart(void);
 
-void
-timer_handler(uint64_t *stack_pointer)
+void timer_handler(uint64_t *stack_pointer)
 {
-    (void)stack_pointer;  // Suppress unused parameter warning
+    (void)stack_pointer; // Suppress unused parameter warning
 
     /* 每个 tick 排空 UART，确保 Ctrl+C 能及时被检测 */
     signal_check_uart();
@@ -122,8 +117,6 @@ timer_handler(uint64_t *stack_pointer)
 
     // 调度下一个tick
     timer_schedule_next_tick();
-
-    // KLOG_DEBUG("[timer_handler] tick %llu, g_tick_cb=%p\n", g_system_ticks, g_tick_cb);
 
     // 调用 tick 回调（调度器 sched_tick）
     // 注意SMP 启动期间 secondary timer 可能在 g_tick_cb 被设之前就已触发

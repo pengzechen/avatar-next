@@ -368,7 +368,66 @@ make ARCH=x86_64
 
 ---
 
-**文档版本**: 1.0
+## 陷阱返回路径的契约（三架构必须一致）
+
+**每个架构的异常/中断返回路径，都必须在 `handle_exception` 之后依次调用这两个
+C 函数**（顺序不能反）：
+
+```asm
+    call handle_exception
+    call signal_deliver_from_trap        /* ① 先投递信号 */
+    call sched_check_and_yield_from_trap /* ② 再检查抢占 */
+```
+
+顺序的理由：SIG_DFL 的终止动作走 `sys_exit()`，必须先于调度决策发生。
+
+### 为什么缺一不可
+
+**① `signal_deliver_from_trap`**
+`deliver_pending_signals()` 的另一处调用点在 syscall 返回路径上。**纯用户态自旋、
+不发任何 syscall 的任务**永远不经过那里 —— 于是连 `SIGKILL` 都杀不掉它。
+LTP 的 `setsid01` 正是这个形态：
+
+```c
+void do_child_2(void) { for (;;) ; }              /* 子进程死循环 */
+/* 父进程： setsid(); kill(pid, SIGKILL); wait(&status);  期望 status == 9 */
+```
+
+缺这一步，子进程不死、父进程 `wait()` 永远等下去，整个测试无声挂死。
+`signal_deliver_from_trap` 内部按 trap frame 判断来源，只对**从用户态陷入**的
+trap 投递（各架构判据见下）。
+
+**② `sched_check_and_yield_from_trap`**
+这是每个架构**唯一**的 timer 抢占点。判据（`frame` 的字段）+ 处理：
+
+| 架构 | 来自用户态 | 来自内核态 |
+|------|-----------|-----------|
+| AArch64 | `spsr[3:0] == 0` (EL0t) | `!= 0` (EL1h) |
+| x86_64 | `cs & 3 == 3` (RPL) | `!= 3` |
+| RISC-V | `sstatus.SPP == 0` | `SPP == 1` |
+
+- **来自用户态** → `sched_check_and_yield()`：异常现场已完整保存在 trap frame 里，
+  在任务自己的内核栈上切换没有副作用。
+- **来自内核态** → `trap_preempt_kernel_side()`：**用户进程**的内核侧（syscall/缺页，
+  跑在它的内核栈上）不切，避免任意 syscall 代码点被交错执行；**内核线程**（含 idle）
+  可以切，否则纯内核循环会独占 CPU。
+
+### 曾经的坑（2026-09 修复）
+
+`x86_64` 与 `riscv64` 的这两个函数都写成 `return false` / 空实现，导致：
+
+- **完全没有 timer 抢占** —— 连用户态都不是"内核态不抢占"，而是**任何 trap 返回都不调度**。
+  实测：SMP=1 下发一条 `while :; do :; done &`（busybox 内建循环，零 syscall），
+  shell 立刻永久饿死。同时 `need_resched` 只剩 idle 循环和 `preempt_enable()` 两个消费者。
+- **自旋任务收不到信号** —— 依赖被测代码自己发 syscall 才能投递。
+
+两处都是"**文档描述了 aarch64 的行为，另两个架构没有实现**"。改这两个函数时，
+三架构要一起看。
+
+---
+
+**文档版本**: 1.1
 **创建日期**: 2026-05-02
+**更新**: 2026-09-18（补充陷阱返回路径的三架构契约）
 **作者**: Avatar OS Team
 **适用架构**: AArch64, RISC-V, x86_64

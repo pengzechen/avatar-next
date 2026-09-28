@@ -1,52 +1,35 @@
 /*
- * 字符串函数实现
+ * lib/string.c — 字符串/内存函数的**外部符号**版本
  *
- * 所有字符串函数已在 include/string.h 中以 static inline 形式实现，
- * 架构优化版本由各架构的 string_impl.h 提供。
+ * 绝大多数调用点是 include/string.h 里的 static inline 版本（会被内联，
+ * 或者退化成调用点自己的副本）。但编译器**自己生成**的调用 —— 大结构体整体
+ * 赋值、循环→memcpy 变换等 —— 会直接发一个对本文件这些符号的引用：
  *
- * 此文件提供非内联版本，供编译器生成的外部引用使用（如数组初始化）。
+ *     0xc0c: bl memcpy
+ *
+ * 所以这里必须提供外部符号，而且必须和 inline 版本走**同一份实现**
+ * （string_internal.h 里的 *_arch），否则就会出现"源码里写的 memcpy 是 NEON，
+ * 编译器生成的 memcpy 是逐字节循环"这种分裂 —— fork/clone 拷贝 816 字节
+ * trap frame 正好踩过这个坑。
+ *
+ * 注意：本文件包含的是实现层头，不是 string.h —— 后者的 static inline
+ * memcpy/memset 与本文件要定义的外部符号同名，同一翻译单元里内部链接与外部
+ * 链接同名是未定义行为（C11 6.2.2p7）。详见 include/string_internal.h 顶部。
  */
 
-#include "types.h"
-
-/*
- * memset - 填充内存
- *
- * 当编译器需要 memset 作为外部符号时（如数组初始化），
- * 使用此非内联版本。
- *
- * 注意：不包含 string.h 以避免与 static inline 版本冲突
- */
-void *memset(void *s, int c, size_t n)
-{
-    size_t i;
-    char  *a = s;
-    for (i = 0; i < n; ++i)
-        a[i] = (char)c;
-    return s;
-}
+#include "string_internal.h"
 
 void *memcpy(void *dst, const void *src, size_t n)
 {
-    char       *d = dst;
-    const char *s = src;
-    size_t      i;
-    for (i = 0; i < n; ++i)
-        d[i] = s[i];
-    return dst;
+    return memcpy_arch(dst, src, n);
+}
+
+void *memset(void *s, int c, size_t n)
+{
+    return memset_arch(s, c, n);
 }
 
 void *memmove(void *dst, const void *src, size_t n)
 {
-    char       *d = dst;
-    const char *s = src;
-    size_t      i;
-    if (d < s || d >= s + n) {
-        for (i = 0; i < n; ++i)
-            d[i] = s[i];
-    } else {
-        for (i = n; i > 0; --i)
-            d[i - 1] = s[i - 1];
-    }
-    return dst;
+    return memmove_generic(dst, src, n);
 }

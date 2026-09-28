@@ -9,14 +9,14 @@
 #define KERNEL_SYSCALL_FS_TTY_H
 
 #include "types.h"
-#include "syscall/syscall_internal.h"   /* struct kernel_termios */
+#include "syscall/syscall_internal.h" /* struct kernel_termios */
 
 /* 全局终端状态（TCGETS/TCSETS 读写）*/
 extern struct kernel_termios g_termios;
 
 /* UART 环形缓冲区接口 */
 void uart_ringbuf_push(char c);
-int  uart_ringbuf_pop (char *out);
+int uart_ringbuf_pop(char *out);
 /* int uart_ringbuf_empty(void); — 已在 syscall_internal.h 声明 */
 
 /* 排空 UART FIFO，普通字符入 ring buffer，Ctrl+C 发 SIGINT */

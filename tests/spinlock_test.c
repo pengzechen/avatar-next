@@ -18,8 +18,7 @@ static int shared_counter = 0;
 /*
  * 基本自旋锁使用示例
  */
-void
-example_basic_lock(void)
+void example_basic_lock(void)
 {
     spin_lock(&global_lock);
 
@@ -33,22 +32,21 @@ example_basic_lock(void)
  * 带中断保护的自旋锁使用示例
  * 在中断处理程序中也可能访问的共享数据必须使用这种锁
  */
-void
-example_lock_with_irq(void)
+void example_lock_with_irq(void)
 {
-    spin_lock_irqsave(&irq_lock);
+    uint64_t flags;
+    spin_lock_irqsave(&irq_lock, &flags);
 
     /* 临界区 - 中断已禁用，安全访问共享数据 */
     shared_counter++;
 
-    spin_unlock_irqrestore(&irq_lock);
+    spin_unlock_irqrestore(&irq_lock, flags);
 }
 
 /*
  * trylock 使用示例
  */
-int
-example_trylock(void)
+int example_trylock(void)
 {
     if (spin_trylock(&global_lock) == 0) {
         /* 成功获取锁 */
@@ -64,8 +62,7 @@ example_trylock(void)
 /*
  * 嵌套锁使用示例（注意：避免死锁！）
  */
-void
-example_nested_locks(void)
+void example_nested_locks(void)
 {
     spinlock_t lock1 = SPINLOCK_INIT;
     spinlock_t lock2 = SPINLOCK_INIT;
@@ -85,8 +82,7 @@ example_nested_locks(void)
 /*
  * 初始化示例（动态分配的锁）
  */
-void
-example_dynamic_lock(void)
+void example_dynamic_lock(void)
 {
     /* 动态分配示例 */
     /* spinlock_t *my_lock = malloc(sizeof(spinlock_t)); */

@@ -18,15 +18,16 @@
 #include "list.h"
 #include "spinlock.h"
 #include "arch.h"
+#include "assert.h" /* static_assert：校验下方 .S 可见的字段偏移 */
 
 #if ARCH_AARCH64
-    #include "aarch64/cpu_impl.h"
+#include "aarch64/cpu_impl.h"
 #elif ARCH_RISCV64
-    #include "riscv64/cpu_impl.h"
+#include "riscv64/cpu_impl.h"
 #elif ARCH_X86_64
-    #include "x86_64/cpu_impl.h"
+#include "x86_64/cpu_impl.h"
 #else
-    #error "Unsupported architecture for cpu_impl.h"
+#error "Unsupported architecture for cpu_impl.h"
 #endif
 
 #ifndef AVATAR_MAX_CPUS
@@ -47,41 +48,58 @@ struct task;
  * 任何跨 CPU 访问这些字段都必须持有 rq_lock。
  */
 typedef struct cpu {
-    uint32_t            cpu_id;        /* 逻辑 CPU 编号（0..g_num_cpus-1） */
-    uint64_t            hw_id;         /* MPIDR / hartid / APIC ID         */
-    volatile bool       online;        /* 是否已通过 bootstrap（BSP 自旋等待，必须 volatile） */
+    uint32_t cpu_id; /* 逻辑 CPU 编号（0..g_num_cpus-1） */
+    uint64_t hw_id;  /* MPIDR / hartid / APIC ID         */
+    volatile bool
+        online; /* 是否已通过 bootstrap（BSP 自旋等待，必须 volatile） */
 
     /* ── Phase 1 将迁入的调度器状态（现在仅占位）────────── */
-    struct task        *current_task;  /* 本核当前任务                     */
-    struct task        *idle_task;     /* 本核 idle 任务                   */
-    list_t              run_queue;     /* 本核就绪队列                     */
-    volatile bool       need_resched;  /* 时钟中断置位                     */
-    spinlock_noirq_t    rq_lock;       /* 保护 run_queue + current_task    */
-    uint32_t            irq_depth;     /* 硬中断嵌套深度（抢占边界判断） */
-    uint32_t            preempt_schedule_depth; /* 防止 preempt_enable 递归调度 */
+    struct task *current_task;       /* 本核当前任务                     */
+    struct task *idle_task;          /* 本核 idle 任务                   */
+    list_t run_queue;                /* 本核就绪队列                     */
+    volatile bool need_resched;      /* 时钟中断置位                     */
+    spinlock_noirq_t rq_lock;        /* 保护 run_queue + current_task    */
+    uint32_t irq_depth;              /* 硬中断嵌套深度（抢占边界判断） */
+    uint32_t preempt_schedule_depth; /* 防止 preempt_enable 递归调度 */
 
     /* ── 诊断 / 测试 ─────────────────────────────────────── */
-    volatile uint64_t   local_ticks;   /* 本核 timer ISR 累计次数（SMP 验证用） */
+    volatile uint64_t local_ticks; /* 本核 timer ISR 累计次数（SMP 验证用） */
 
     /* x86_64 SYSCALL 路径暂存用户 RSP（per-CPU，通过 gs:offset 访问） */
-    uint64_t            scratch_rsp;
+    uint64_t scratch_rsp;
+
+    /* x86_64 SYSCALL 入口切换到本核内核栈用的栈顶，即本核 TSS.RSP0 的镜像。
+     * SYSCALL 不像中断那样自动换栈，入口必须显式从本核取值装入 RSP；
+     * 以前读的是全局 g_x86_tss_rsp0（只由 CPU0 更新），SMP 下会把 AP 的
+     * syscall 帧建到别的 CPU 正在用的任务栈上，导致栈互相破坏。 */
+    uint64_t kernel_rsp0;
 } cpu_t;
 
+/*
+ * boot/x86_64/syscall_wrapper.S 用 gs:offset 直接访问下面两个字段，
+ * .S 里无法写 offsetof，只能手抄常量。这里加编译期断言，字段布局一变
+ * 立刻构建失败，避免再次出现“偏移写错→写坏 rq_lock→SMP 下栈错乱”。
+ */
+#if ARCH_X86_64
+static_assert(offsetof(cpu_t, scratch_rsp) == 96,
+              "CPU_SCRATCH_RSP in boot/x86_64/syscall_wrapper.S is stale");
+static_assert(offsetof(cpu_t, kernel_rsp0) == 104,
+              "CPU_KERNEL_RSP0 in boot/x86_64/syscall_wrapper.S is stale");
+#endif
+
 /* ── 全局 CPU 池 ────────────────────────────────────────── */
-extern cpu_t   g_cpus[AVATAR_MAX_CPUS];
-extern uint32_t g_num_cpus;               /* 当前在线 CPU 数（Phase 0 = 1） */
+extern cpu_t g_cpus[AVATAR_MAX_CPUS];
+extern uint32_t g_num_cpus; /* 当前在线 CPU 数（Phase 0 = 1） */
 
 /* ── 获取当前 CPU ────────────────────────────────────────── */
-static inline cpu_t *
-cpu_current(void)
+static inline cpu_t *cpu_current(void)
 {
     cpu_t *c = arch_cpu_self_get();
     /* 若 per-CPU 寄存器尚未安装（早期 boot 或测试代码），回退 CPU0。 */
     return c ? c : &g_cpus[0];
 }
 
-static inline uint32_t
-get_current_cpu_id(void)
+static inline uint32_t get_current_cpu_id(void)
 {
     return cpu_current()->cpu_id;
 }

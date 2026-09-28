@@ -78,9 +78,19 @@ vmx_enter_guest:
     /* 6. VMLAUNCH 或 VMRESUME */
     test  %r11d, %r11d          /* ZF=1 if not launched */
     jnz   .Ldo_resume
+    /* ⚠️ 补装 guest 的 %%r11（偏移 0x50）——进入路径原先整段漏了它，
+     * 导致每次 VM-entry 后 guest 的 %%r11 仍是上面 test 用掉的 launched 标志。
+     * vcpu* 仍在栈顶（第 44 行 push，VMRESUME 前未被弹出）。*/
+    movq  (%rsp), %r11
+    movq  0x50(%r11), %r11
     vmlaunch
     jmp   .Lentry_failed
 .Ldo_resume:
+    /* ⚠️ 补装 guest 的 %%r11（偏移 0x50）——进入路径原先整段漏了它，
+     * 导致每次 VM-entry 后 guest 的 %%r11 仍是上面 test 用掉的 launched 标志。
+     * vcpu* 仍在栈顶（第 44 行 push，VMRESUME 前未被弹出）。*/
+    movq  (%rsp), %r11
+    movq  0x50(%r11), %r11
     vmresume
     /* vmresume 失败则顺序执行到此 */
 

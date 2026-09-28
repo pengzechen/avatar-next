@@ -10,19 +10,21 @@
 #include "task/task.h"
 #include "task/sched.h"
 
-void
-poll_handler(uint64_t regs[6], uint64_t syscall_num, task_t *current)
+void poll_handler(uint64_t regs[6], uint64_t syscall_num, task_t *current)
 {
     struct kernel_pollfd *pfds = (struct kernel_pollfd *)regs[0];
     uint64_t nfds = regs[1];
-    int64_t  timeout_ms;
+    int64_t timeout_ms;
     if (syscall_num == X86_SYS_POLL) {
         timeout_ms = (int64_t)regs[2];
     } else {
         struct kernel_timespec *ts = (struct kernel_timespec *)regs[2];
-        if (!ts)            timeout_ms = -1;
-        else if (ts->tv_sec == 0 && ts->tv_nsec == 0) timeout_ms = 0;
-        else                timeout_ms = ts->tv_sec * 1000 + ts->tv_nsec / 1000000;
+        if (!ts)
+            timeout_ms = -1;
+        else if (ts->tv_sec == 0 && ts->tv_nsec == 0)
+            timeout_ms = 0;
+        else
+            timeout_ms = ts->tv_sec * 1000 + ts->tv_nsec / 1000000;
     }
 
     uint64_t deadline_ns = 0;
@@ -41,7 +43,8 @@ poll_handler(uint64_t regs[6], uint64_t syscall_num, task_t *current)
             for (uint64_t pi = 0; pi < nfds; pi++) {
                 pfds[pi].revents = 0;
                 short ev = pfds[pi].events;
-                if (pfds[pi].fd < 0) continue;
+                if (pfds[pi].fd < 0)
+                    continue;
 
                 uint32_t poll_ev = fd_poll(current, pfds[pi].fd);
                 if ((ev & 0x01) && (poll_ev & EPOLLIN))
@@ -53,12 +56,17 @@ poll_handler(uint64_t regs[6], uint64_t syscall_num, task_t *current)
                 if (poll_ev & EPOLLHUP)
                     pfds[pi].revents |= 0x10;
 
-                if (pfds[pi].revents) ready++;
+                if (pfds[pi].revents)
+                    ready++;
             }
         }
-        if (ready > 0 || timeout_ms == 0) { regs[0] = (uint64_t)ready; return; }
+        if (ready > 0 || timeout_ms == 0) {
+            regs[0] = (uint64_t)ready;
+            return;
+        }
         if (timeout_ms > 0 && kernel_get_ns() >= deadline_ns) {
-            regs[0] = 0; return;
+            regs[0] = 0;
+            return;
         }
         task_yield();
     }

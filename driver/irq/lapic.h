@@ -17,39 +17,44 @@
  * 物理基址默认 0xFEE00000（可由 IA32_APIC_BASE MSR 修改）
  * 所有寄存器 32-bit 宽，每个占 16 字节（步进 0x10）
  */
-#define LAPIC_BASE_PHYS         0xFEE00000UL
+#define LAPIC_BASE_PHYS 0xFEE00000UL
 
-#define LAPIC_REG_ID            0x020u   /* APIC ID                      */
-#define LAPIC_REG_VER           0x030u   /* APIC Version                 */
-#define LAPIC_REG_TPR           0x080u   /* Task Priority                */
-#define LAPIC_REG_SVR           0x0F0u   /* Spurious Interrupt Vector    */
-#define LAPIC_REG_EOI           0x0B0u   /* End of Interrupt             */
-#define LAPIC_REG_ICR_LOW       0x300u   /* Interrupt Command Register   */
-#define LAPIC_REG_ICR_HIGH      0x310u   /* ICR destination field        */
-#define LAPIC_REG_LVT_TIMER     0x320u   /* LVT Timer                    */
-#define LAPIC_REG_TIMER_ICR     0x380u   /* Timer Initial Count          */
-#define LAPIC_REG_TIMER_CCR     0x390u   /* Timer Current Count          */
-#define LAPIC_REG_TIMER_DCR     0x3E0u   /* Timer Divide Configuration   */
+#define LAPIC_REG_ID        0x020u /* APIC ID                      */
+#define LAPIC_REG_VER       0x030u /* APIC Version                 */
+#define LAPIC_REG_TPR       0x080u /* Task Priority                */
+#define LAPIC_REG_SVR       0x0F0u /* Spurious Interrupt Vector    */
+#define LAPIC_REG_EOI       0x0B0u /* End of Interrupt             */
+#define LAPIC_REG_ICR_LOW   0x300u /* Interrupt Command Register   */
+#define LAPIC_REG_ICR_HIGH  0x310u /* ICR destination field        */
+#define LAPIC_REG_LVT_TIMER 0x320u /* LVT Timer                    */
+#define LAPIC_REG_TIMER_ICR 0x380u /* Timer Initial Count          */
+#define LAPIC_REG_TIMER_CCR 0x390u /* Timer Current Count          */
+#define LAPIC_REG_TIMER_DCR 0x3E0u /* Timer Divide Configuration   */
 
 /* SVR 位 */
-#define LAPIC_SVR_ENABLE        (1u << 8)   /* APIC Software Enable     */
+#define LAPIC_SVR_ENABLE (1u << 8) /* APIC Software Enable     */
 
 /* LVT Timer 位 */
-#define LAPIC_TIMER_PERIODIC    (1u << 17)  /* Periodic 模式             */
-#define LAPIC_TIMER_MASKED      (1u << 16)  /* 屏蔽中断                  */
+#define LAPIC_TIMER_PERIODIC (1u << 17) /* Periodic 模式             */
+#define LAPIC_TIMER_MASKED   (1u << 16) /* 屏蔽中断                  */
 
 /* Divide Configuration 值（用于 TIMER_DCR）*/
-#define LAPIC_TIMER_DIV_1       0x0Bu   /* 不分频                       */
-#define LAPIC_TIMER_DIV_2       0x00u
-#define LAPIC_TIMER_DIV_4       0x01u
-#define LAPIC_TIMER_DIV_8       0x02u
-#define LAPIC_TIMER_DIV_16      0x03u
+#define LAPIC_TIMER_DIV_1  0x0Bu /* 不分频                       */
+#define LAPIC_TIMER_DIV_2  0x00u
+#define LAPIC_TIMER_DIV_4  0x01u
+#define LAPIC_TIMER_DIV_8  0x02u
+#define LAPIC_TIMER_DIV_16 0x03u
 
 /* PIT (8254) 辅助定义（用于频率校准）*/
-#define PIT_CAL_PORT_CMD        0x43u
-#define PIT_CAL_PORT_CH2        0x42u
-#define PIT_CAL_PORT_CTRL       0x61u   /* PC speaker / counter-2 gate  */
-#define PIT_BASE_FREQ           1193182UL
+#define PIT_CAL_PORT_CMD 0x43u
+#define PIT_CAL_PORT_CH2 0x42u
+/*
+ * 注意：不要用 port 0x61（PC speaker / counter-2 gate & OUT）。
+ * 它由南桥 PIIX/ICH 提供，QEMU -machine microvm 没有南桥，该端口
+ * 未实现、读回恒为 0xff，靠它判断 PIT 状态会得到错误结果。
+ * 标定一律只读 PIT 自己的计数器（0x43 latch + 0x42 数据）。
+ */
+#define PIT_BASE_FREQ 1193182UL
 
 /* ── 函数声明 ──────────────────────────────────────────────────*/
 

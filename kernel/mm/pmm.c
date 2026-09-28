@@ -8,7 +8,7 @@
 #include "klog.h"
 #include "assert.h"
 #include "string.h"
-#include "mm_vm.h"  /* 提供 PAGE_SIZE */
+#include "mm_vm.h"                       /* 提供 PAGE_SIZE */
 #include "../../driver/blk/ramblk_cfg.h" /* RAMBLK_PHYS_BASE / RAMBLK_PHYS_END */
 
 /* 全局 PMM 状态 — 位图缓冲区使用编译期最大值（PMM_BITMAP_MAX_BYTES = 128KB = 4GB/4KB/8bit）*/
@@ -26,22 +26,19 @@ pmm_t *g_pmm = &pmm;
  * @bitmap_buffer: 位图缓冲区
  * @bitmap_size:   位图大小（字节）
  */
-void pmm_init(pmm_t *pmm,
-              uint64_t start_addr,
-              uint64_t size,
-              uint8_t *bitmap_buffer,
-              size_t bitmap_size)
+void pmm_init(pmm_t *pmm, uint64_t start_addr, uint64_t size,
+              uint8_t *bitmap_buffer, size_t bitmap_size)
 {
     assert(pmm != NULL);
     assert(bitmap_buffer != NULL);
     assert(size > 0);
 
     /* 初始化基本信息 */
-    pmm->start_addr  = start_addr;
-    pmm->total_size  = size;
-    pmm->page_size   = PAGE_SIZE;
+    pmm->start_addr = start_addr;
+    pmm->total_size = size;
+    pmm->page_size = PAGE_SIZE;
     pmm->total_pages = size / PAGE_SIZE;
-    pmm->free_pages  = pmm->total_pages;
+    pmm->free_pages = pmm->total_pages;
 
     /*
      * bitmap_init 的 size 单位是 bit，bitmap_size 传入单位是 byte。
@@ -53,14 +50,10 @@ void pmm_init(pmm_t *pmm,
     /* 初始化自旋锁 */
     spinlock_init(&pmm->lock);
 
-    KLOG_INFO("PMM initialized:\n");
-    KLOG_INFO("  start_addr  = 0x%llx\n", start_addr);
-    KLOG_INFO("  total_size = 0x%llx (%llu MB)\n",
-              size, size / (1024 * 1024));
-    KLOG_INFO("  page_size  = 0x%llx (%u KB)\n",
-              pmm->page_size, pmm->page_size / 1024);
-    KLOG_INFO("  total_pages = %llu\n", pmm->total_pages);
-    KLOG_INFO("  free_pages  = %llu\n", pmm->free_pages);
+    /* 原来是六行结构体 dump —— 合并成一行：这是操作者真正要的那条内存事实 */
+    KLOG_INFO("PMM: base=0x%llx size=%lluMB page=%uKB pages=%llu free=%llu\n",
+              start_addr, size / (1024 * 1024), pmm->page_size / 1024,
+              pmm->total_pages, pmm->free_pages);
 }
 
 /* ── 页面分配 ───────────────────────────────────────────────────── */
@@ -81,8 +74,11 @@ uint64_t pmm_alloc_pages(pmm_t *pmm, uint32_t page_count)
 
     spin_lock(&pmm->lock);
 
-    /* 查找连续的空闲页面 */
-    size_t page_index = bitmap_find_contiguous_free(&pmm->bitmap, page_count);
+    /* 查找连续的空闲页面：先从上一次的落点找（next-fit），失败再回绕 */
+    size_t page_index = bitmap_find_contiguous_free_from(
+        &pmm->bitmap, page_count, pmm->alloc_hint);
+    if (page_index == (size_t)-1 && pmm->alloc_hint != 0)
+        page_index = bitmap_find_contiguous_free(&pmm->bitmap, page_count);
     if (page_index != (size_t)-1) {
         /* 标记页面为已分配 */
         bitmap_set_range(&pmm->bitmap, page_index, page_count);
@@ -90,16 +86,20 @@ uint64_t pmm_alloc_pages(pmm_t *pmm, uint32_t page_count)
         /* 计算物理地址 */
         paddr = pmm->start_addr + page_index * pmm->page_size;
 
-        /* 更新空闲页面计数 */
+        /* 更新空闲页面计数与 next-fit 提示 */
         pmm->free_pages -= page_count;
-
-        // KLOG_DEBUG("PMM: allocated %u pages at 0x%llx (index %zu)\n",
-        //            page_count, paddr, page_index);
-    } else {
-        KLOG_ERROR("PMM: failed to allocate %u pages\n", page_count);
+        pmm->alloc_hint = page_index + page_count;
     }
 
     spin_unlock(&pmm->lock);
+
+    /*
+     * 日志放在解锁之后：klog 会持 g_klog_lock（关中断）把整条消息逐字符
+     * 轮询写 UART，在 pmm->lock —— 全内核最热的锁 —— 里做这件事，等于让
+     * 每个分配者多等一次串口输出。paddr == 0 即分配失败。
+     */
+    if (paddr == 0)
+        KLOG_ERROR("PMM: failed to allocate %u pages\n", page_count);
 
     return paddr;
 }
@@ -134,9 +134,10 @@ void pmm_free_pages(pmm_t *pmm, uint64_t paddr, uint32_t page_count)
     uint64_t page_index = (paddr - pmm->start_addr) / pmm->page_size;
 
     /* 检查范围 */
-    if (page_index + page_count <= pmm->total_pages) {
-        uint64_t freed = 0;
+    uint64_t freed = 0;
+    bool bad_range = false;
 
+    if (page_index + page_count <= pmm->total_pages) {
         /* 仅在 bit 为 1 时清除并更新计数，防止 double free 污染统计 */
         for (uint64_t i = 0; i < page_count; i++) {
             uint64_t idx = page_index + i;
@@ -148,19 +149,21 @@ void pmm_free_pages(pmm_t *pmm, uint64_t paddr, uint32_t page_count)
 
         pmm->free_pages += freed;
 
-        if (freed != page_count) {
-            KLOG_WARN("PMM: partial free detected: requested=%u, actually_freed=%llu, paddr=0x%llx\n",
-                      page_count, freed, paddr);
-        }
-
-        // KLOG_DEBUG("PMM: freed %u pages at 0x%llx (index %llu)\n",
-        //            page_count, paddr, page_index);
     } else {
-        KLOG_ERROR("PMM: invalid free request: paddr=0x%llx, count=%u\n",
-                   paddr, page_count);
+        bad_range = true;
     }
 
     spin_unlock(&pmm->lock);
+
+    /* 日志一律在解锁之后打（理由同 pmm_alloc_pages） */
+    if (bad_range) {
+        KLOG_ERROR("PMM: invalid free request: paddr=0x%llx, count=%u\n", paddr,
+                   page_count);
+    } else if (freed != page_count) {
+        KLOG_WARN(
+            "PMM: partial free detected: requested=%u, actually_freed=%llu, paddr=0x%llx\n",
+            page_count, freed, paddr);
+    }
 }
 
 /* ── 内存标记 ───────────────────────────────────────────────────── */
@@ -179,21 +182,24 @@ void pmm_mark_allocated(pmm_t *pmm, uint64_t start_addr, uint64_t end_addr)
     assert(start_addr <= end_addr);
 
     /* 检查地址范围是否在PMM管理的内存内 */
-    if (start_addr < pmm->start_addr || end_addr >= pmm->start_addr + pmm->total_size) {
+    if (start_addr < pmm->start_addr ||
+        end_addr >= pmm->start_addr + pmm->total_size) {
         KLOG_ERROR("PMM: invalid address range for marking\n");
         KLOG_ERROR("  requested: 0x%llx - 0x%llx\n", start_addr, end_addr);
-        KLOG_ERROR("  PMM range: 0x%llx - 0x%llx\n", pmm->start_addr, pmm->start_addr + pmm->total_size);
+        KLOG_ERROR("  PMM range: 0x%llx - 0x%llx\n", pmm->start_addr,
+                   pmm->start_addr + pmm->total_size);
         return;
     }
 
     /* 计算页面范围 */
     uint64_t start_page = (start_addr - pmm->start_addr) / pmm->page_size;
-    uint64_t end_page   = (end_addr - pmm->start_addr) / pmm->page_size;
+    uint64_t end_page = (end_addr - pmm->start_addr) / pmm->page_size;
     uint64_t free_before, free_after, newly_marked = 0;
 
-    KLOG_INFO("PMM: marking range 0x%llx - 0x%llx as allocated\n", start_addr, end_addr);
-    KLOG_INFO("  page indices: %llu - %llu (total: %llu pages)\n",
-              start_page, end_page, end_page - start_page + 1);
+    KLOG_MM("PMM: marking range 0x%llx - 0x%llx as allocated\n", start_addr,
+            end_addr);
+    KLOG_MM("  page indices: %llu - %llu (total: %llu pages)\n", start_page,
+            end_page, end_page - start_page + 1);
 
     /* 先锁定，读取 free_pages */
     spin_lock(&pmm->lock);
@@ -212,8 +218,9 @@ void pmm_mark_allocated(pmm_t *pmm, uint64_t start_addr, uint64_t end_addr)
     spin_unlock(&pmm->lock);
 
     /* 在锁外输出日志 */
-    KLOG_INFO("  newly_marked: %llu pages, free_pages before: %llu, after: %llu\n",
-              newly_marked, free_before, free_after);
+    KLOG_MM(
+        "  newly_marked: %llu pages, free_pages before: %llu, after: %llu\n",
+        newly_marked, free_before, free_after);
 }
 
 /*
@@ -230,12 +237,13 @@ void pmm_mark_kernel_allocated(pmm_t *pmm)
     extern char __kernel_end[];
 
     uint64_t start = (uint64_t)__kernel_start;
-    uint64_t end   = ALIGN_UP((uint64_t)__kernel_end, PAGE_SIZE);
+    uint64_t end = ALIGN_UP((uint64_t)__kernel_end, PAGE_SIZE);
 
-    KLOG_INFO("PMM: __kernel_start = 0x%llx, __kernel_end = 0x%llx\n", start, end);
-    KLOG_INFO("PMM: KERNEL_VMA = 0x%llx\n", KERNEL_VMA);
-    KLOG_INFO("PMM: PMM start_addr = 0x%llx, total_size = 0x%llx\n",
-              pmm->start_addr, pmm->total_size);
+    KLOG_MM("PMM: __kernel_start = 0x%llx, __kernel_end = 0x%llx\n", start,
+            end);
+    KLOG_MM("PMM: KERNEL_VMA = 0x%llx\n", KERNEL_VMA);
+    KLOG_MM("PMM: PMM start_addr = 0x%llx, total_size = 0x%llx\n",
+            pmm->start_addr, pmm->total_size);
 
     /*
      * 检查地址是否在合理的内核虚拟地址范围内
@@ -251,32 +259,37 @@ void pmm_mark_kernel_allocated(pmm_t *pmm)
     if (start >= KERNEL_VMA) {
         uint64_t cand_start = virt_to_phys(start);
         uint64_t cand_end = virt_to_phys(end);
-        if (cand_start >= pmm->start_addr && cand_end <= pmm->start_addr + pmm->total_size) {
+        if (cand_start >= pmm->start_addr &&
+            cand_end <= pmm->start_addr + pmm->total_size) {
             start_phys = cand_start;
             end_phys = cand_end;
-            KLOG_WARN("PMM: kernel symbols are high-half virtual addresses\n");
-            KLOG_INFO("  virtual range: 0x%llx - 0x%llx\n", start, end);
-            KLOG_INFO("  physical range: 0x%llx - 0x%llx\n", start_phys, end_phys);
+            /* 高半区内核符号在 AArch64/x86_64 上是**正常**布局，不是警告 */
+            KLOG_MM("PMM: kernel symbols are high-half virtual addresses\n");
+            KLOG_MM("  virtual range: 0x%llx - 0x%llx\n", start, end);
+            KLOG_MM("  physical range: 0x%llx - 0x%llx\n", start_phys,
+                    end_phys);
         } else {
-            KLOG_WARN("PMM: virtual->physical conversion out of PMM range, fallback to raw values\n");
+            KLOG_WARN(
+                "PMM: virtual->physical conversion out of PMM range, fallback to raw values\n");
             start_phys = start;
             end_phys = end;
-            KLOG_INFO("  fallback range: 0x%llx - 0x%llx\n", start_phys, end_phys);
+            KLOG_MM("  fallback range: 0x%llx - 0x%llx\n", start_phys,
+                    end_phys);
         }
-    } else if (start >= pmm->start_addr && start < pmm->start_addr + pmm->total_size) {
+    } else if (start >= pmm->start_addr &&
+               start < pmm->start_addr + pmm->total_size) {
         /* 地址在 PMM 物理内存范围内，认为已经是物理地址 */
         start_phys = start;
-        end_phys   = end;
-        KLOG_WARN("PMM: kernel symbols are already physical addresses\n");
-        KLOG_INFO("  physical range: 0x%llx - 0x%llx\n", start_phys, end_phys);
+        end_phys = end;
+        KLOG_MM("PMM: kernel symbols are already physical addresses\n");
+        KLOG_MM("  physical range: 0x%llx - 0x%llx\n", start_phys, end_phys);
     } else {
         /* 异常情况，按原值处理并记录日志 */
         KLOG_WARN("PMM: unusual kernel symbol range, using raw addresses\n");
         start_phys = start;
-        end_phys   = end;
-        KLOG_INFO("  raw range: 0x%llx - 0x%llx\n", start_phys, end_phys);
+        end_phys = end;
+        KLOG_MM("  raw range: 0x%llx - 0x%llx\n", start_phys, end_phys);
     }
-
 
     pmm_mark_allocated(pmm, start_phys, end_phys);
 }
@@ -288,35 +301,30 @@ void pmm_mark_kernel_allocated(pmm_t *pmm)
  */
 void pmm_initialize(void)
 {
-    KLOG_INFO("=== Initializing Physical Memory Manager ===\n");
+    KLOG_MM("=== Initializing Physical Memory Manager ===\n");
 
     /* 初始化 PMM */
-    pmm_init(g_pmm,
-             PMM_RAM_BASE,
-             PMM_RAM_SIZE,
-             g_pmm_bitmap_buffer,
+    pmm_init(g_pmm, PMM_RAM_BASE, PMM_RAM_SIZE, g_pmm_bitmap_buffer,
              sizeof(g_pmm_bitmap_buffer));
 
     /* 标记内核内存区域为已分配 */
-    KLOG_INFO("Marking kernel memory as allocated...\n");
+    KLOG_MM("Marking kernel memory as allocated...\n");
     pmm_mark_kernel_allocated(g_pmm);
 
     /* 运行时保留区（由 platform_conf_scan() 从静态平台配置读取） */
     for (int i = 0; i < g_pmm_resv_count; i++) {
-        KLOG_INFO("Reserving PMM extra region(%s): 0x%llx - 0x%llx\n",
-                  g_pmm_reserves[i].tag,
-                  (uint64_t)g_pmm_reserves[i].start,
-                  (uint64_t)g_pmm_reserves[i].end);
-        pmm_mark_allocated(g_pmm,
-                           (uint64_t)g_pmm_reserves[i].start,
+        KLOG_MM("Reserving PMM extra region(%s): 0x%llx - 0x%llx\n",
+                g_pmm_reserves[i].tag, (uint64_t)g_pmm_reserves[i].start,
+                (uint64_t)g_pmm_reserves[i].end);
+        pmm_mark_allocated(g_pmm, (uint64_t)g_pmm_reserves[i].start,
                            (uint64_t)g_pmm_reserves[i].end);
     }
 
     /* 预留 rootfs 物理区域，防止 PMM 将其分配出去 */
-    KLOG_INFO("Reserving rootfs region: 0x%llx - 0x%llx\n",
-              (uint64_t)RAMBLK_PHYS_BASE, (uint64_t)RAMBLK_PHYS_END);
+    KLOG_MM("Reserving rootfs region: 0x%llx - 0x%llx\n",
+            (uint64_t)RAMBLK_PHYS_BASE, (uint64_t)RAMBLK_PHYS_END);
     pmm_mark_allocated(g_pmm, RAMBLK_PHYS_BASE, RAMBLK_PHYS_END);
 
-    KLOG_INFO("PMM initialization completed\n");
-    KLOG_INFO("  g_pmm = %p\n", g_pmm);
+    KLOG_MM("PMM initialization completed\n");
+    KLOG_MM("  g_pmm = %p\n", g_pmm);
 }

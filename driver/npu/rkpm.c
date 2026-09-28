@@ -20,43 +20,43 @@
 static const rkpm_domain_t rk3588_npu_domains[] = {
     /* PD_NPU */
     {
-        .name               = "npu",
-        .pwr_mask           = (1u << 1),
-        .pwr_w_mask         = (1u << 1) << 16,
-        .status_mask        = (1u << 1),  /* 0 = on */
+        .name = "npu",
+        .pwr_mask = (1u << 1),
+        .pwr_w_mask = (1u << 1) << 16,
+        .status_mask = (1u << 1), /* 0 = on */
         .repair_status_mask = 0,
-        .req_mask           = 0,
-        .idle_mask          = 0,
+        .req_mask = 0,
+        .idle_mask = 0,
     },
     /* PD_NPUTOP */
     {
-        .name               = "nputop",
-        .pwr_mask           = (1u << 3),
-        .pwr_w_mask         = (1u << 3) << 16,
-        .status_mask        = 0,
-        .repair_status_mask = (1u << 2),  /* repair_status bit 2 = ready */
-        .req_mask           = (1u << 1),
-        .idle_mask          = (1u << 1),
+        .name = "nputop",
+        .pwr_mask = (1u << 3),
+        .pwr_w_mask = (1u << 3) << 16,
+        .status_mask = 0,
+        .repair_status_mask = (1u << 2), /* repair_status bit 2 = ready */
+        .req_mask = (1u << 1),
+        .idle_mask = (1u << 1),
     },
     /* PD_NPU1 */
     {
-        .name               = "npu1",
-        .pwr_mask           = (1u << 4),
-        .pwr_w_mask         = (1u << 4) << 16,
-        .status_mask        = 0,
+        .name = "npu1",
+        .pwr_mask = (1u << 4),
+        .pwr_w_mask = (1u << 4) << 16,
+        .status_mask = 0,
         .repair_status_mask = (1u << 3),
-        .req_mask           = (1u << 2),
-        .idle_mask          = (1u << 2),
+        .req_mask = (1u << 2),
+        .idle_mask = (1u << 2),
     },
     /* PD_NPU2 */
     {
-        .name               = "npu2",
-        .pwr_mask           = (1u << 5),
-        .pwr_w_mask         = (1u << 5) << 16,
-        .status_mask        = 0,
+        .name = "npu2",
+        .pwr_mask = (1u << 5),
+        .pwr_w_mask = (1u << 5) << 16,
+        .status_mask = 0,
         .repair_status_mask = (1u << 4),
-        .req_mask           = (1u << 3),
-        .idle_mask          = (1u << 3),
+        .req_mask = (1u << 3),
+        .idle_mask = (1u << 3),
     },
 };
 
@@ -75,7 +75,9 @@ static int rkpm_wait_on(rkpm_t *pm, const rkpm_domain_t *d)
             if (v & d->repair_status_mask)
                 return 0;
         }
-        KLOG_ERROR("rkpm: timeout waiting repair_status for %s\n", d->name);
+        /* 轮询超时是"降级但继续"：调用方拿到错误码自行决定，内核没有坏。
+         * 同一类超时在 rknpu.c 的调用点用的是 WARN —— 统一到 WARN。 */
+        KLOG_WARN("rkpm: timeout waiting repair_status for %s\n", d->name);
         return RKPM_ERR_TIMEOUT;
     }
 
@@ -86,7 +88,7 @@ static int rkpm_wait_on(rkpm_t *pm, const rkpm_domain_t *d)
             if (!(v & d->status_mask))
                 return 0;
         }
-        KLOG_ERROR("rkpm: timeout waiting status for %s\n", d->name);
+        KLOG_WARN("rkpm: timeout waiting status for %s\n", d->name);
         return RKPM_ERR_TIMEOUT;
     }
 

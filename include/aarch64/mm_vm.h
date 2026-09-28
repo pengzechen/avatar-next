@@ -15,9 +15,8 @@ extern uint64_t memory_get_pte_raw(void *page_dir, uint64_t vaddr);
 extern void memory_set_pte_nofree(void *page_dir, uint64_t vaddr);
 
 /* copydata_to_uvm: 将 src_paddr 处的数据拷贝到 pgd 对应用户地址空间的 user_vaddr */
-extern void copydata_to_uvm(void *page_dir, uint64_t vaddr, uint64_t paddr, uint64_t size);
-
-
+extern void copydata_to_uvm(void *page_dir, uint64_t vaddr, uint64_t paddr,
+                            uint64_t size);
 
 static inline int32_t mm_vm_map_pages(void *page_dir, uint64_t vaddr,
                                       uint64_t paddr, int32_t count,
@@ -35,7 +34,6 @@ static inline int32_t mm_vm_copy_user_space(void *dst_pgd, void *src_pgd)
 {
     return memory_copy_uvm_4level(dst_pgd, src_pgd);
 }
-
 
 static inline void mm_vm_copy_to_uva(void *pgd, uint64_t user_vaddr,
                                      uint64_t src_paddr, uint64_t size)

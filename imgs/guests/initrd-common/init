@@ -1,0 +1,35 @@
+#!/bin/busybox sh
+# x86_64 / aarch64 / riscv64 三个 guest **共用同一份** init：
+#   1) 装 busybox applet 软链接（包内不再预置那 ~400 个链接，省得三个包各存一份）
+#   2) 挂 proc/sys/dev 伪文件系统，补出必需的设备节点
+#   3) 打一行 uname -a 当「启动成功」的标志
+#   4) 进 busybox sh
+#
+# 这是 initrd 里唯一的文本源文件（imgs/guests/initrd-common/init），改完要跑
+# tools/guest-initrd.py {x86_64|aarch64|rv64} 重新打包 —— 光改这里不改包。
+#
+# 历史上这里是 busybox init + /etc/inittab + getty，每次启动都要在 `root login:`
+# 前面输密码；那条路已经删掉了（连带 /etc/{passwd,shadow,securetty,inittab}）。
+
+/bin/busybox --install -s /bin 2>/dev/null
+
+mount -t proc     proc /proc 2>/dev/null
+mount -t sysfs    sys  /sys  2>/dev/null
+mount -t devtmpfs dev  /dev  2>/dev/null
+
+# 内核没开 devtmpfs / 没自动挂时补出必需节点（有 devtmpfs 时这几行全是 no-op）。
+# 串口名字三个架构不同：x86_64/rv64 是 ttyS0，aarch64 是 ttyAMA0 —— 两个都建，
+# 驱动不存在的那个只有真的被 open 时才报错，平时躺在 /dev 里不碍事。
+[ -e /dev/console ] || mknod /dev/console c 5   1
+[ -e /dev/null ]    || mknod /dev/null    c 1   3
+[ -e /dev/ttyS0 ]   || mknod /dev/ttyS0   c 4  64
+[ -e /dev/ttyAMA0 ] || mknod /dev/ttyAMA0 c 204 64
+
+uname -a
+
+# PID 1 天生没有控制终端，busybox sh 起来会跟着打一行
+#   /bin/sh: can't access tty; job control turned off
+# 这行**去不掉**：job control 要求 shell 自己是一个新会话的领头（setsid），而 PID 1
+# 已经是会话/进程组领头，setsid 必然失败。busybox 的 cttyhack 试过，同样无效 ——
+# 别再加回来了（2026-09 实测：把 /dev/ttyS0 当控制终端打开也没用）。
+exec /bin/sh

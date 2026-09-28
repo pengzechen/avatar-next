@@ -19,7 +19,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <pthread.h>      /* 仅用于线程创建（pthread_create / join） */
+#include <pthread.h> /* 仅用于线程创建（pthread_create / join） */
 #include <stdatomic.h>
 #include <unistd.h>
 #include <sys/syscall.h>
@@ -29,23 +29,22 @@
 
 /* ─── futex 系统调用号（如果 musl 没有定义则自行补充） ──────────── */
 #ifndef SYS_futex
-#  if defined(__aarch64__) || defined(__riscv)
-#    define SYS_futex 98
-#  elif defined(__x86_64__)
-#    define SYS_futex 202
-#  else
-#    error "SYS_futex: unsupported architecture"
-#  endif
+#if defined(__aarch64__) || defined(__riscv)
+#define SYS_futex 98
+#elif defined(__x86_64__)
+#define SYS_futex 202
+#else
+#error "SYS_futex: unsupported architecture"
+#endif
 #endif
 
-#define FUTEX_WAIT          0
-#define FUTEX_WAKE          1
-#define FUTEX_PRIVATE_FLAG  128
-#define FUTEX_WAIT_PRIVATE  (FUTEX_WAIT | FUTEX_PRIVATE_FLAG)
-#define FUTEX_WAKE_PRIVATE  (FUTEX_WAKE | FUTEX_PRIVATE_FLAG)
+#define FUTEX_WAIT         0
+#define FUTEX_WAKE         1
+#define FUTEX_PRIVATE_FLAG 128
+#define FUTEX_WAIT_PRIVATE (FUTEX_WAIT | FUTEX_PRIVATE_FLAG)
+#define FUTEX_WAKE_PRIVATE (FUTEX_WAKE | FUTEX_PRIVATE_FLAG)
 
-static inline long
-futex(atomic_int *addr, int op, int val)
+static inline long futex(atomic_int *addr, int op, int val)
 {
     return syscall(SYS_futex, addr, op, val, NULL, NULL, 0);
 }
@@ -64,22 +63,19 @@ typedef struct {
 
 #define UMUTEX_INIT { .state = ATOMIC_VAR_INIT(0) }
 
-static void
-umutex_init(umutex_t *m)
+static void umutex_init(umutex_t *m)
 {
     atomic_init(&m->state, 0);
 }
 
-static void
-umutex_lock(umutex_t *m)
+static void umutex_lock(umutex_t *m)
 {
     int c;
 
     /* 快速路径：0 → 1（无竞争）*/
     c = 0;
     if (atomic_compare_exchange_strong_explicit(
-            &m->state, &c, 1,
-            memory_order_acquire, memory_order_relaxed))
+            &m->state, &c, 1, memory_order_acquire, memory_order_relaxed))
         return;
 
     /* 慢速路径：有竞争，设置 state=2 后进入 futex 睡眠 */
@@ -87,29 +83,24 @@ umutex_lock(umutex_t *m)
         /* 若当前 state=1 或 state=2，先确保 state=2（通知 unlock 要唤醒） */
         if (c == 2 ||
             atomic_compare_exchange_strong_explicit(
-                &m->state, &c, 2,
-                memory_order_acquire, memory_order_relaxed)) {
+                &m->state, &c, 2, memory_order_acquire, memory_order_relaxed)) {
             /* 睡眠直到 state != 2 */
             futex(&m->state, FUTEX_WAIT_PRIVATE, 2);
         }
         /* 尝试以 state=2 方式获取（保留"有等待者"信息）*/
         c = 0;
     } while (!atomic_compare_exchange_strong_explicit(
-                 &m->state, &c, 2,
-                 memory_order_acquire, memory_order_relaxed));
+        &m->state, &c, 2, memory_order_acquire, memory_order_relaxed));
 }
 
-static int
-umutex_trylock(umutex_t *m)
+static int umutex_trylock(umutex_t *m)
 {
     int c = 0;
     return atomic_compare_exchange_strong_explicit(
-               &m->state, &c, 1,
-               memory_order_acquire, memory_order_relaxed);
+        &m->state, &c, 1, memory_order_acquire, memory_order_relaxed);
 }
 
-static void
-umutex_unlock(umutex_t *m)
+static void umutex_unlock(umutex_t *m)
 {
     /* fetch_sub: 1→0 无等待者直接返回；2→1 有等待者需要唤醒 */
     if (atomic_fetch_sub_explicit(&m->state, 1, memory_order_release) != 1) {
@@ -126,25 +117,22 @@ umutex_unlock(umutex_t *m)
  * ═══════════════════════════════════════════════════════════════════ */
 
 typedef struct {
-    umutex_t       base;
-    atomic_size_t  owner;  /* pthread_t 转 size_t，0 表示无持有者 */
-    int            count;  /* 重入深度（仅由持有线程访问） */
+    umutex_t base;
+    atomic_size_t owner; /* pthread_t 转 size_t，0 表示无持有者 */
+    int count;           /* 重入深度（仅由持有线程访问） */
 } rmutex_t;
 
-#define RMUTEX_INIT { .base = UMUTEX_INIT, \
-                      .owner = ATOMIC_VAR_INIT(0), \
-                      .count = 0 }
+#define RMUTEX_INIT \
+    { .base = UMUTEX_INIT, .owner = ATOMIC_VAR_INIT(0), .count = 0 }
 
-static void
-rmutex_init(rmutex_t *m)
+static void rmutex_init(rmutex_t *m)
 {
     umutex_init(&m->base);
     atomic_init(&m->owner, 0);
     m->count = 0;
 }
 
-static void
-rmutex_lock(rmutex_t *m)
+static void rmutex_lock(rmutex_t *m)
 {
     size_t self = (size_t)pthread_self();
 
@@ -161,8 +149,7 @@ rmutex_lock(rmutex_t *m)
     m->count = 1;
 }
 
-static void
-rmutex_unlock(rmutex_t *m)
+static void rmutex_unlock(rmutex_t *m)
 {
     /* 递减计数；不为 0 则仍在递归持有中 */
     if (--m->count > 0)
@@ -175,12 +162,16 @@ rmutex_unlock(rmutex_t *m)
 
 /* ─────────────────────────────────────────────────────────────────── */
 
-#define NUM_THREADS   4
-#define LOOP_COUNT    20000
-#define RACE_LOOPS    2000
+#define NUM_THREADS 4
+#define LOOP_COUNT  20000
+#define RACE_LOOPS  2000
 
-static void pass(const char *name) { printf("  [PASS] %s\n", name); }
-static void fail(const char *name, const char *reason) {
+static void pass(const char *name)
+{
+    printf("  [PASS] %s\n", name);
+}
+static void fail(const char *name, const char *reason)
+{
     printf("  [FAIL] %s: %s\n", name, reason);
 }
 
@@ -212,9 +203,9 @@ static void test0_race_demo(void)
         pthread_join(tids[i], NULL);
 
     long expected = (long)NUM_THREADS * RACE_LOOPS;
-    long actual   = t0_counter;
-    long lost     = expected - actual;
-    int  pct      = (int)(lost * 100 / expected);
+    long actual = t0_counter;
+    long lost = expected - actual;
+    int pct = (int)(lost * 100 / expected);
 
     printf("  expected = %ld\n", expected);
     printf("  actual   = %ld\n", actual);
@@ -253,7 +244,8 @@ static void test1_umutex_basic(void)
     if (umutex_trylock(&m)) {
         umutex_unlock(&m);
         umutex_unlock(&m);
-        fail("umutex_basic", "trylock on held mutex should fail (non-reentrant)");
+        fail("umutex_basic",
+             "trylock on held mutex should fail (non-reentrant)");
         return;
     }
     umutex_unlock(&m);
@@ -295,7 +287,8 @@ static void test2_umutex_counter(void)
         pass("umutex_counter");
     else {
         char buf[64];
-        snprintf(buf, sizeof(buf), "expected %ld got %ld", expected, t2_counter);
+        snprintf(buf, sizeof(buf), "expected %ld got %ld", expected,
+                 t2_counter);
         fail("umutex_counter", buf);
     }
 }
@@ -310,27 +303,46 @@ static void test3_rmutex_recursive(void)
 
     /* 递归加锁三次 */
     rmutex_lock(&m);
-    if (m.count != 1) { fail("rmutex_recursive", "count should be 1"); return; }
+    if (m.count != 1) {
+        fail("rmutex_recursive", "count should be 1");
+        return;
+    }
 
     rmutex_lock(&m);
-    if (m.count != 2) { fail("rmutex_recursive", "count should be 2"); return; }
+    if (m.count != 2) {
+        fail("rmutex_recursive", "count should be 2");
+        return;
+    }
 
     rmutex_lock(&m);
-    if (m.count != 3) { fail("rmutex_recursive", "count should be 3"); return; }
+    if (m.count != 3) {
+        fail("rmutex_recursive", "count should be 3");
+        return;
+    }
 
     /* 对应三次解锁：前两次不释放锁 */
     rmutex_unlock(&m);
-    if (m.count != 2) { fail("rmutex_recursive", "count should be 2 after 1st unlock"); return; }
+    if (m.count != 2) {
+        fail("rmutex_recursive", "count should be 2 after 1st unlock");
+        return;
+    }
     if (atomic_load(&m.base.state) == 0) {
-        fail("rmutex_recursive", "lock should still be held after partial unlock");
+        fail("rmutex_recursive",
+             "lock should still be held after partial unlock");
         return;
     }
 
     rmutex_unlock(&m);
-    if (m.count != 1) { fail("rmutex_recursive", "count should be 1 after 2nd unlock"); return; }
+    if (m.count != 1) {
+        fail("rmutex_recursive", "count should be 1 after 2nd unlock");
+        return;
+    }
 
     rmutex_unlock(&m);
-    if (m.count != 0) { fail("rmutex_recursive", "count should be 0 after full unlock"); return; }
+    if (m.count != 0) {
+        fail("rmutex_recursive", "count should be 0 after full unlock");
+        return;
+    }
     if (atomic_load(&m.base.state) != 0) {
         fail("rmutex_recursive", "lock should be released after full unlock");
         return;
@@ -351,8 +363,8 @@ static void *t4_worker(void *arg)
 {
     (void)arg;
     for (int i = 0; i < LOOP_COUNT; i++) {
-        rmutex_lock(&t4_mutex);   /* 第 1 次 */
-        rmutex_lock(&t4_mutex);   /* 第 2 次（重入）*/
+        rmutex_lock(&t4_mutex); /* 第 1 次 */
+        rmutex_lock(&t4_mutex); /* 第 2 次（重入）*/
         t4_counter++;
         rmutex_unlock(&t4_mutex); /* 释放第 2 次 */
         rmutex_unlock(&t4_mutex); /* 释放第 1 次（真正释放）*/
@@ -376,7 +388,8 @@ static void test4_rmutex_threaded(void)
         pass("rmutex_threaded");
     else {
         char buf[64];
-        snprintf(buf, sizeof(buf), "expected %ld got %ld", expected, t4_counter);
+        snprintf(buf, sizeof(buf), "expected %ld got %ld", expected,
+                 t4_counter);
         fail("rmutex_threaded", buf);
     }
 }
@@ -385,9 +398,9 @@ static void test4_rmutex_threaded(void)
  * Test 5: umutex trylock 竞争场景
  * ═══════════════════════════════════════════════════════════════════ */
 
-static umutex_t t5_mutex    = UMUTEX_INIT;
+static umutex_t t5_mutex = UMUTEX_INIT;
 static volatile long t5_acquired = 0;
-static volatile long t5_failed   = 0;
+static volatile long t5_failed = 0;
 
 static void *t5_worker(void *arg)
 {
@@ -407,7 +420,7 @@ static void test5_trylock_race(void)
 {
     pthread_t tids[NUM_THREADS];
     t5_acquired = 0;
-    t5_failed   = 0;
+    t5_failed = 0;
     umutex_init(&t5_mutex);
 
     for (int i = 0; i < NUM_THREADS; i++)
@@ -416,8 +429,8 @@ static void test5_trylock_race(void)
         pthread_join(tids[i], NULL);
 
     long total = (long)NUM_THREADS * LOOP_COUNT;
-    printf("  trylock acquired=%ld failed=%ld total=%ld\n",
-           t5_acquired, t5_failed, total);
+    printf("  trylock acquired=%ld failed=%ld total=%ld\n", t5_acquired,
+           t5_failed, total);
 
     /* 所有尝试之和 = 成功 + 失败 */
     if (t5_acquired + t5_failed == total)

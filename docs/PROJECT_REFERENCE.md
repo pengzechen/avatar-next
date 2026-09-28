@@ -151,11 +151,11 @@ static inline void common_operation(void) {
 通过宏参数控制功能，实现零开销：
 
 ```bash
-# 开发模式：完整日志和断言
-make LOG=debug ASSERT=panic
+# 开发模式：完整日志
+make LOG=debug
 
-# 发布模式：零日志开销，零断言开销
-make LOG=none ASSERT=off
+# 发布模式：零日志开销
+make LOG=none
 ```
 
 #### 4. **类型安全宏**
@@ -202,10 +202,8 @@ LOG=trace      # 所有日志
 
 #### 断言控制
 
-```bash
-ASSERT=panic   # 启用断言，失败时 panic（默认）
-ASSERT=off     # 禁用断言（零开销）
-```
+断言始终启用，无编译期开关（原 `ASSERT=panic|off` 选项已于 2026-09 移除）。
+详见 [`ASSERT_GUIDE.md`](ASSERT_GUIDE.md)。
 
 ### 编译流程
 
@@ -240,8 +238,7 @@ Makefile
 -Iinclude/<arch>              # 架构特定头文件路径
 -D<arch_macro>                # 架构宏定义
 -DLOG_LEVEL=<level>           # 日志级别定义
--DASSERT_OFF (可选)           # 禁用断言
--MMD -MP                      # 生成依赖文件
+-MMD -MP                      # 生成依赖文件（当前未 -include，见 Makefile 注释）
 ```
 
 ### 输出文件
@@ -265,10 +262,10 @@ build/
 make ARCH=aarch64 clean && make ARCH=aarch64
 
 # 调试版本
-make ARCH=aarch64 LOG=debug ASSERT=panic
+make ARCH=aarch64 LOG=debug
 
 # 发布版本
-make ARCH=aarch64 LOG=none ASSERT=off
+make ARCH=aarch64 LOG=none
 
 # 测试所有架构
 for arch in aarch64 riscv64 x86_64; do
@@ -948,27 +945,25 @@ mmio_setbits32(UART_BASE + UART_CR, BIT(0));  // 使能 UART
 
 #### 断言类型
 
-##### 1. 可禁用断言
+##### 1. 运行时断言
 
 ```c
 assert(ptr != NULL);
 assert(x > 0);
 ```
 
-**行为**：
-- `ASSERT=panic`：启用，失败时 panic
-- `ASSERT=off`：完全禁用，零开销
+**行为**：失败时 `KLOG_ERROR` 打印表达式/文件/行号，然后调用
+`platform_panic()` 停机。始终启用。
 
-##### 2. 总是启用的断言
+##### 2. 关键路径断言
 
 ```c
-assert_always(ptr != NULL);
-assert_always(critical_flag);
+assert_always(!in_irq_context());
 ```
 
-**行为**：即使 `ASSERT=off` 仍然检查。
+**行为**：与 `assert` 一致，仅错误信息措辞不同（`Critical assertion failed`）。
 
-**使用场景**：关键检查，如安全验证、空指针检查。
+**使用场景**：失败即说明内核核心状态已被破坏的检查点。
 
 ##### 3. 编译时断言
 
@@ -978,16 +973,6 @@ static_assert(sizeof(void *) == 8, "must be 64-bit");
 ```
 
 **行为**：编译时检查，如果失败则编译报错。
-
-##### 4. 辅助宏
-
-```c
-// 声明代码不应到达这里
-assert_not_reached();
-
-// 声明表达式不可能为真
-assert_unreachable(error_code);
-```
 
 #### Panic 行为
 
@@ -1048,7 +1033,9 @@ int parse_state(int state) {
         case STATE_RUNNING:
             return 1;
         default:
-            assert_unreachable(state);
+            /* 不可能的状态：断言失败即停机 */
+            assert(state == STATE_INIT || state == STATE_RUNNING);
+            return -1;
     }
 }
 ```
@@ -1423,7 +1410,7 @@ KLOG_UART("Debug message");
 
 ```bash
 # 发布版本
-make LOG=none ASSERT=off  # 移除所有日志和断言
+make LOG=none  # 移除所有日志（断言无法移除，见 ASSERT_GUIDE.md）
 ```
 
 ### 代码优化
@@ -1478,9 +1465,12 @@ static inline int abs(int x) {
 # 查看生成的库大小
 ls -lh build/*.a
 
-# 不同配置的对比
-# LOG=debug ASSERT=panic:  ~50KB
-# LOG=none  ASSERT=off:    ~30KB (减少 40%)
+# 不同配置的对比（x86_64 qemu-virt 完整内核实测）
+# LOG=info  (默认):  .text 397,312   ELF 2,271,872
+# LOG=debug:         .text 397,312   ELF 2,271,800
+# LOG=none:          .text 348,160   ELF 2,091,784   (.text -12.4%)
+#
+# 注：日志级别是体积的主要杠杆；断言全禁用只能再省 1%（且已不提供该选项）。
 ```
 
 ---
@@ -1576,9 +1566,9 @@ export PATH=$PATH:/path/to/toolchain/bin
 #### 编译命令
 
 ```bash
-make ARCH=aarch64 LOG=debug ASSERT=panic
-make ARCH=riscv64 LOG=info ASSERT=panic
-make ARCH=x86_64 LOG=none ASSERT=off
+make ARCH=aarch64 LOG=debug
+make ARCH=riscv64 LOG=info
+make ARCH=x86_64 LOG=none
 ```
 
 #### 常用宏

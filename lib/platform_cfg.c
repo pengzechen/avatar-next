@@ -7,7 +7,7 @@
  */
 
 #include "platform_cfg.h"
-#include "mm_vm.h"   /* KERNEL_VMA */
+#include "mm_vm.h" /* KERNEL_VMA */
 #include "string.h"
 
 #ifndef PLATFORM_MEM_RAM_BASE
@@ -30,15 +30,15 @@
 #define DEVICE_MMIO_NEEDS_VMA 0
 #endif
 
-uintptr_t g_mem_ram_base    = PLATFORM_MEM_RAM_BASE;
-uintptr_t g_mem_ram_size    = PLATFORM_MEM_RAM_SIZE;
+uintptr_t g_mem_ram_base = PLATFORM_MEM_RAM_BASE;
+uintptr_t g_mem_ram_size = PLATFORM_MEM_RAM_SIZE;
 uintptr_t g_mem_rootfs_base = PLATFORM_MEM_ROOTFS_BASE;
 uintptr_t g_mem_rootfs_size = PLATFORM_MEM_ROOTFS_SIZE;
 
 int g_mmio_needs_vma = DEVICE_MMIO_NEEDS_VMA;
 
 pmm_resv_t g_pmm_reserves[PMM_MAX_RESV];
-int        g_pmm_resv_count = 0;
+int g_pmm_resv_count = 0;
 
 static void platform_tag_copy(char *dst, const char *src, unsigned n)
 {
@@ -77,14 +77,15 @@ uintptr_t platform_get_mmio(const char *block, const char *key)
 
 void platform_conf_scan(void)
 {
-    g_mem_ram_base    = platform_get_uintptr("memory.ram", "base");
-    g_mem_ram_size    = platform_get_uintptr("memory.ram", "size");
+    g_mem_ram_base = platform_get_uintptr("memory.ram", "base");
+    g_mem_ram_size = platform_get_uintptr("memory.ram", "size");
     g_mem_rootfs_base = platform_get_uintptr("memory.rootfs", "base");
     g_mem_rootfs_size = platform_get_uintptr("memory.rootfs", "size");
-    g_mmio_needs_vma  = platform_get_uint("platform", "mmio_vma") ? 1 : 0;
+    g_mmio_needs_vma = platform_get_uint("platform", "mmio_vma") ? 1 : 0;
 
     g_pmm_resv_count = 0;
-    for (unsigned i = 0; i < g_platform_static_reserve_count && i < PMM_MAX_RESV; i++) {
+    for (unsigned i = 0;
+         i < g_platform_static_reserve_count && i < PMM_MAX_RESV; i++) {
         pmm_resv_t *dst = &g_pmm_reserves[i];
         const platform_reserve_t *src = &g_platform_static_reserves[i];
 
@@ -96,5 +97,4 @@ void platform_conf_scan(void)
 }
 
 void platform_conf_close(void)
-{
-}
+{}

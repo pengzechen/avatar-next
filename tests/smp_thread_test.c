@@ -22,8 +22,7 @@ static volatile uint64_t s_hits[AVATAR_MAX_CPUS];
 static volatile uint32_t s_done;
 static volatile uint32_t s_stop;
 
-static void
-smp_worker_fn(void *arg)
+static void smp_worker_fn(void *arg)
 {
     uint32_t iters = (uint32_t)(uintptr_t)arg;
     for (uint32_t i = 0; i < iters && !s_stop; i++) {
@@ -44,8 +43,7 @@ smp_worker_fn(void *arg)
  * @iters:      每个线程循环次数
  * @wait_ms:    BSP 等待的毫秒数（足够线程跑完）
  */
-void
-smp_thread_test_run(uint32_t nthreads, uint32_t iters, uint32_t wait_ms)
+void smp_thread_test_run(uint32_t nthreads, uint32_t iters, uint32_t wait_ms)
 {
     for (uint32_t i = 0; i < AVATAR_MAX_CPUS; i++) {
         s_hits[i] = 0;
@@ -59,11 +57,15 @@ smp_thread_test_run(uint32_t nthreads, uint32_t iters, uint32_t wait_ms)
 
     for (uint32_t i = 0; i < nthreads; i++) {
         char name[8];
-        name[0] = 's'; name[1] = 'm'; name[2] = 'p';
-        name[3] = 'w'; name[4] = '0' + (char)(i / 10);
-        name[5] = '0' + (char)(i % 10); name[6] = '\0';
-        task_t *t = task_create(name, smp_worker_fn,
-                                (void *)(uintptr_t)iters, 10);
+        name[0] = 's';
+        name[1] = 'm';
+        name[2] = 'p';
+        name[3] = 'w';
+        name[4] = '0' + (char)(i / 10);
+        name[5] = '0' + (char)(i % 10);
+        name[6] = '\0';
+        task_t *t =
+            task_create(name, smp_worker_fn, (void *)(uintptr_t)iters, 10);
         if (!t) {
             KLOG_ERROR("[smp-thr] task_create failed at i=%u\n", (unsigned)i);
             break;
@@ -83,14 +85,14 @@ smp_thread_test_run(uint32_t nthreads, uint32_t iters, uint32_t wait_ms)
     for (uint32_t i = 0; i < n; i++) {
         uint64_t v = s_hits[i];
         total += v;
-        KLOG_INFO("[smp-thr] cpu%u hits=%llu\n",
-                  (unsigned)i, (unsigned long long)v);
+        KLOG_INFO("[smp-thr] cpu%u hits=%llu\n", (unsigned)i,
+                  (unsigned long long)v);
         if (v == 0ULL) {
             all_hit = false;
         }
     }
-    KLOG_INFO("[smp-thr] total=%llu done=%u\n",
-              (unsigned long long)total, (unsigned)s_done);
+    KLOG_INFO("[smp-thr] total=%llu done=%u\n", (unsigned long long)total,
+              (unsigned)s_done);
 
     if (n == 1U) {
         if (total > 0ULL) {

@@ -24,8 +24,8 @@
 struct ext4_blockdev;
 extern struct ext4_blockdev *sdblk_get_bdev(void);
 
-#define BDEV_NAME   "sdblk0p2"
-#define ROOTFS_MP   "/"
+#define BDEV_NAME "sdblk0p2"
+#define ROOTFS_MP "/"
 
 static struct ext4_mbr_bdevs g_mbr_bdevs;
 
@@ -48,11 +48,23 @@ static void fs_log_ext4_features(struct ext4_blockdev *bdev)
     uint32_t fcom = ext4_get32(&sb, features_compatible);
     uint32_t fincom = ext4_get32(&sb, features_incompatible);
     uint32_t fro = ext4_get32(&sb, features_read_only);
-    KLOG_ERROR("[fs] superblock features: compat=0x%08x incompat=0x%08x ro=0x%08x\n",
-               fcom, fincom, fro);
-    KLOG_ERROR("[fs] unsupported features: incompat=0x%08x ro=0x%08x\n",
-               fincom & ~CONFIG_SUPPORTED_FINCOM,
-               fro & ~CONFIG_SUPPORTED_FRO_COM);
+    /* 成功读到了超级块 —— 这是"生效配置"，不是错误。 */
+    KLOG_INFO(
+        "[fs] superblock features: compat=0x%08x incompat=0x%08x ro=0x%08x\n",
+        fcom, fincom, fro);
+
+    /*
+     * 只在**确实存在**不支持的位时才 WARN：非零意味着我们在静默忽略磁盘上的
+     * 语义，那是真该被看见的；全零是正常情况，不该占 WARN 的注意力。
+     */
+    uint32_t unsup_incom = fincom & ~CONFIG_SUPPORTED_FINCOM;
+    uint32_t unsup_ro = fro & ~CONFIG_SUPPORTED_FRO_COM;
+    if (unsup_incom || unsup_ro) {
+        KLOG_WARN("[fs] unsupported features: incompat=0x%08x ro=0x%08x\n",
+                  unsup_incom, unsup_ro);
+    } else {
+        KLOG_DEBUG("[fs] superblock: no unsupported feature bits\n");
+    }
 
     ext4_block_fini(bdev);
 }
@@ -62,7 +74,7 @@ int fs_init(void)
     int rc;
     struct ext4_blockdev *raw = sdblk_get_bdev();
 
-    KLOG_INFO("[fs] Scanning MBR on SD card...\n");
+    KLOG_FS("[fs] Scanning MBR on SD card...\n");
     rc = ext4_mbr_scan(raw, &g_mbr_bdevs);
     if (rc != EOK) {
         KLOG_ERROR("[fs] ext4_mbr_scan failed: %d\n", rc);
@@ -74,18 +86,18 @@ int fs_init(void)
         KLOG_ERROR("[fs] SD partition 2 not found in MBR\n");
         return -ENODEV;
     }
-    KLOG_INFO("[fs] Found partition 2: offset=%llu size=%llu MiB\n",
-              (unsigned long long)part->part_offset,
-              (unsigned long long)(part->part_size >> 20));
+    KLOG_FS("[fs] Found partition 2: offset=%llu size=%llu MiB\n",
+            (unsigned long long)part->part_offset,
+            (unsigned long long)(part->part_size >> 20));
 
-    KLOG_INFO("[fs] Registering block device '%s'...\n", BDEV_NAME);
+    KLOG_FS("[fs] Registering block device '%s'...\n", BDEV_NAME);
     rc = ext4_device_register(part, BDEV_NAME);
     if (rc != EOK) {
         KLOG_ERROR("[fs] ext4_device_register failed: %d\n", rc);
         return -rc;
     }
 
-    KLOG_INFO("[fs] Mounting '%s' at '%s'...\n", BDEV_NAME, ROOTFS_MP);
+    KLOG_FS("[fs] Mounting '%s' at '%s'...\n", BDEV_NAME, ROOTFS_MP);
     rc = ext4_mount(BDEV_NAME, ROOTFS_MP, false);
     if (rc != EOK) {
         KLOG_ERROR("[fs] ext4_mount failed: %d\n", rc);
@@ -100,9 +112,10 @@ int fs_init(void)
     rc = ext4_dir_open(&dir, ROOTFS_MP);
     if (rc == EOK) {
         const ext4_direntry *de;
-        KLOG_INFO("[fs] Root directory entries:\n");
+        /* 目录项数量由镜像内容决定 —— 逐项一行，只能采样，不能留在 INFO */
+        KLOG_MODULE_DEBUG(LOG_MODULE_FS, "[fs] Root directory entries:\n");
         while ((de = ext4_dir_entry_next(&dir)) != NULL)
-            KLOG_INFO("[fs]   %s\n", de->name);
+            KLOG_MODULE_DEBUG_SAMPLE(LOG_MODULE_FS, "[fs]   %s\n", de->name);
         ext4_dir_close(&dir);
     }
 
@@ -114,25 +127,26 @@ int fs_init(void)
 struct ext4_blockdev;
 extern struct ext4_blockdev *ramblk_get_bdev(void);
 
-#define BDEV_NAME   "ramblk0"
-#define ROOTFS_MP   "/"
+#define BDEV_NAME "ramblk0"
+#define ROOTFS_MP "/"
 
 int fs_init(void)
 {
     int rc;
 
-    KLOG_INFO("[fs] Registering block device '%s'...\n", BDEV_NAME);
+    KLOG_FS("[fs] Registering block device '%s'...\n", BDEV_NAME);
     rc = ext4_device_register(ramblk_get_bdev(), BDEV_NAME);
     if (rc != EOK) {
         KLOG_ERROR("[fs] ext4_device_register failed: %d\n", rc);
         return -rc;
     }
 
-    KLOG_INFO("[fs] Mounting '%s' at '%s'...\n", BDEV_NAME, ROOTFS_MP);
+    KLOG_FS("[fs] Mounting '%s' at '%s'...\n", BDEV_NAME, ROOTFS_MP);
     rc = ext4_mount(BDEV_NAME, ROOTFS_MP, false);
     if (rc != EOK) {
         KLOG_ERROR("[fs] ext4_mount failed: %d\n", rc);
-        KLOG_ERROR("[fs] Make sure rootfs.img was loaded by QEMU at the correct address.\n");
+        KLOG_ERROR(
+            "[fs] Make sure rootfs.img was loaded by QEMU at the correct address.\n");
         KLOG_ERROR("[fs] Run: make ARCH=... run-fs\n");
         ext4_device_unregister(BDEV_NAME);
         return -rc;
@@ -144,9 +158,10 @@ int fs_init(void)
     rc = ext4_dir_open(&dir, ROOTFS_MP);
     if (rc == EOK) {
         const ext4_direntry *de;
-        KLOG_INFO("[fs] Root directory entries:\n");
+        /* 目录项数量由镜像内容决定 —— 逐项一行，只能采样，不能留在 INFO */
+        KLOG_MODULE_DEBUG(LOG_MODULE_FS, "[fs] Root directory entries:\n");
         while ((de = ext4_dir_entry_next(&dir)) != NULL)
-            KLOG_INFO("[fs]   %s\n", de->name);
+            KLOG_MODULE_DEBUG_SAMPLE(LOG_MODULE_FS, "[fs]   %s\n", de->name);
         ext4_dir_close(&dir);
     }
 

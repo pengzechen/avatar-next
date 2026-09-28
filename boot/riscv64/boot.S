@@ -1,10 +1,6 @@
-/*
- * RISC-V 64-bit boot code for QEMU virt machine
- */
+#include "asm.h"
 
 .section .text.boot
-.global _start
-.type _start, @function
 
 .extern mmu_init
 .extern cpu_secondary_bootstrap
@@ -14,7 +10,7 @@
 .equ RISCV64_SATP_MODE_SV39, (8 << 60)
 .equ RISCV64_SECONDARY_STACK_SIZE, 16384
 
-_start:
+FUNCS(_start)
     /* OpenSBI may choose any boot hart. The first hart reaching _start becomes
      * BSP; the rest park until cpu_bring_up_all() writes the release table. */
     la      t0, riscv64_boot_claim
@@ -73,6 +69,8 @@ hang:
     wfi
     j       hang
 
+FUNCE(_start)
+
 secondary_park:
     csrw sie, zero
     csrw sip, zero
@@ -94,9 +92,7 @@ secondary_park:
  *   a0 = hartid
  *   a1 = opaque cpu_id from sbi_hart_start()
  */
-.global _riscv64_secondary_start
-.type _riscv64_secondary_start, @function
-_riscv64_secondary_start:
+FUNCS(_riscv64_secondary_start)
     csrw    sie, zero
     csrw    sip, zero
 
@@ -134,14 +130,14 @@ _riscv64_secondary_start:
     lla     t0, .Lcpu_secondary_bootstrap_ptr
     ld      t0, 0(t0)
     jr      t0
-.size _riscv64_secondary_start, . - _riscv64_secondary_start
+FUNCE(_riscv64_secondary_start)
 
 .align 3
 .Lcpu_secondary_bootstrap_ptr:
     .dword cpu_secondary_bootstrap
 
 
-clear_bss:
+LFUNCS(clear_bss)
     # 获取 BSS 段低地址别名（由链接器提供）
     la   t0, __bss_start_phys
     la   t1, __bss_end_phys
@@ -157,6 +153,7 @@ bss_clear_loop:
 
 bss_clear_done:
     ret                            # 返回调用者
+LFUNCE(clear_bss)
 
 
 .section .bss.boot

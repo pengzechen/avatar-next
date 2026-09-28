@@ -203,8 +203,8 @@ void load_program(void) {
 ## 相关文档
 
 - [系统调用实现](SYSCALL_IMPLEMENTATION.md)
-- [任务管理](../docs/TASK_MANAGEMENT.md)
-- [内存管理](../docs/MEMORY_MANAGEMENT.md)
+- [任务与调度实现](PROJECT_REFERENCE.md)
+- [异常/中断与上下文切换](INTERRUPT_CONTROL_COMPARISON.md)
 
 ---
 **更新时间**: 2026-05-03

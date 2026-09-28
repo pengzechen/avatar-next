@@ -16,18 +16,16 @@
  *
  * 注意：必须在内核初始化时调用，否则 NEON 指令会触发异常
  */
-static inline void
-aarch64_enable_neon(void)
+static inline void aarch64_enable_neon(void)
 {
     uint64_t cpacr;
-    asm volatile(
-        "mrs %0, cpacr_el1\n"       /* 读取 CPACR_EL1 */
-        "orr %0, %0, #(3 << 20)\n"  /* 设置 FPEN[21:20] = 0b11 */
-        "msr cpacr_el1, %0\n"       /* 写回 CPACR_EL1 */
-        "isb\n"                     /* 指令同步屏障，确保修改生效 */
-        : "=r"(cpacr)
-        :
-        : "memory");
+    asm volatile("mrs %0, cpacr_el1\n"      /* 读取 CPACR_EL1 */
+                 "orr %0, %0, #(3 << 20)\n" /* 设置 FPEN[21:20] = 0b11 */
+                 "msr cpacr_el1, %0\n"      /* 写回 CPACR_EL1 */
+                 "isb\n"                    /* 指令同步屏障，确保修改生效 */
+                 : "=r"(cpacr)
+                 :
+                 : "memory");
 }
 
 /**
@@ -35,14 +33,10 @@ aarch64_enable_neon(void)
  *
  * 返回值: CPACR_EL1 寄存器的当前值
  */
-static inline uint64_t
-aarch64_get_cpacr(void)
+static inline uint64_t aarch64_get_cpacr(void)
 {
     uint64_t cpacr;
-    asm volatile(
-        "mrs %0, cpacr_el1\n"
-        : "=r"(cpacr)
-        );
+    asm volatile("mrs %0, cpacr_el1\n" : "=r"(cpacr));
     return cpacr;
 }
 
@@ -51,8 +45,7 @@ aarch64_get_cpacr(void)
  *
  * 返回值: 1 表示已启用，0 表示未启用
  */
-static inline int
-aarch64_is_neon_enabled(void)
+static inline int aarch64_is_neon_enabled(void)
 {
     uint64_t cpacr = aarch64_get_cpacr();
     return ((cpacr >> 20) & 0x3) == 0x3;
@@ -65,18 +58,16 @@ aarch64_is_neon_enabled(void)
  *
  * 警告：禁用后执行 NEON 指令会导致异常
  */
-static inline void
-aarch64_disable_neon(void)
+static inline void aarch64_disable_neon(void)
 {
     uint64_t cpacr = aarch64_get_cpacr();
-    cpacr &= ~(0x3 << 20);           /* 清除 FPEN 位 */
-    cpacr |= (1 << 20);              /* 设置 FPEN = 0b01 */
-    asm volatile(
-        "msr cpacr_el1, %0\n"
-        "isb\n"
-        :
-        : "r"(cpacr)
-        : "memory");
+    cpacr &= ~(0x3 << 20); /* 清除 FPEN 位 */
+    cpacr |= (1 << 20);    /* 设置 FPEN = 0b01 */
+    asm volatile("msr cpacr_el1, %0\n"
+                 "isb\n"
+                 :
+                 : "r"(cpacr)
+                 : "memory");
 }
 
 #endif /* AARCH64_CPU_H */

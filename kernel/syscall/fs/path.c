@@ -89,7 +89,7 @@ void resolve_path(const char *cwd, const char *path, char *out, int outlen)
 
         if (seg_count < (int)(sizeof(seg_start) / sizeof(seg_start[0]))) {
             seg_start[seg_count] = start;
-            seg_len[seg_count]   = len;
+            seg_len[seg_count] = len;
             seg_count++;
         }
     }
@@ -137,7 +137,10 @@ void follow_symlinks(char *out, size_t outsz)
 {
     char cur[128];
     int n = 0;
-    while (out[n] && n < 127) { cur[n] = out[n]; n++; }
+    while (out[n] && n < 127) {
+        cur[n] = out[n];
+        n++;
+    }
     cur[n] = '\0';
 
     for (int depth = 0; depth < 8; depth++) {
@@ -149,12 +152,16 @@ void follow_symlinks(char *out, size_t outsz)
 
         if (target[0] == '/') {
             n = 0;
-            while (target[n] && n < 127) { cur[n] = target[n]; n++; }
+            while (target[n] && n < 127) {
+                cur[n] = target[n];
+                n++;
+            }
             cur[n] = '\0';
         } else {
             int slash = 0;
             for (int i = 0; cur[i]; i++)
-                if (cur[i] == '/') slash = i;
+                if (cur[i] == '/')
+                    slash = i;
             char parent[128];
             int k;
             for (k = 0; k <= slash && k < 126; k++)
@@ -165,17 +172,22 @@ void follow_symlinks(char *out, size_t outsz)
     }
 
     n = 0;
-    while (cur[n] && n < (int)outsz - 1) { out[n] = cur[n]; n++; }
+    while (cur[n] && n < (int)outsz - 1) {
+        out[n] = cur[n];
+        n++;
+    }
     out[n] = '\0';
 }
 
 int copy_string_from_user(const char *ustr, char *kbuf, int maxlen)
 {
-    if (!user_range_ok(ustr, (uint64_t)maxlen)) return -1;
+    if (!user_range_ok(ustr, (uint64_t)maxlen))
+        return -1;
     int i = 0;
     while (i < maxlen - 1) {
         kbuf[i] = ustr[i];
-        if (ustr[i] == '\0') return i;
+        if (ustr[i] == '\0')
+            return i;
         i++;
     }
     kbuf[i] = '\0';
@@ -184,7 +196,8 @@ int copy_string_from_user(const char *ustr, char *kbuf, int maxlen)
 
 int copy_string_to_user(const char *kstr, char *ubuf, int maxlen)
 {
-    if (!user_range_ok(ubuf, (uint64_t)maxlen)) return -1;
+    if (!user_range_ok(ubuf, (uint64_t)maxlen))
+        return -1;
     int i = 0;
     while (i < maxlen - 1 && kstr[i]) {
         ubuf[i] = kstr[i];
@@ -213,8 +226,8 @@ int copy_to_user_bytes(const void *ksrc, void *udst, uint64_t len)
 int fill_stat_from_ext4(struct kernel_stat *st, const char *path)
 {
     memset(st, 0, sizeof(*st));
-    st->st_dev     = 1;
-    st->st_nlink   = 1;
+    st->st_dev = 1;
+    st->st_nlink = 1;
     st->st_blksize = 4096;
 
     uint32_t mode = 0;
@@ -229,13 +242,32 @@ int fill_stat_from_ext4(struct kernel_stat *st, const char *path)
         st->st_ino = ino;
 
     if ((mode & 0170000) == 0100000) {
+        /* 普通文件：size 要算上 i_size_hi，交给 lwext4 的 ext4_fsize */
         ext4_file f;
         rc = ext4_fopen2(&f, path, 0 /* O_RDONLY */);
         if (rc != EOK)
             return -rc;
-        st->st_size   = (int64_t)ext4_fsize(&f);
+        st->st_size = (int64_t)ext4_fsize(&f);
         st->st_blocks = (st->st_size + 511) / 512;
         ext4_fclose(&f);
+    } else if ((mode & 0170000) == 0120000) {
+        /*
+         * 符号链接：size = 目标路径的字节数，正好是 readlink 会写出的长度。
+         *
+         * 原先是漏掉的（只处理了 S_IFREG），于是符号链接的 st_size 一直是
+         * memset 之后的 0 —— 直接症状是 `ls -l` 的 size 列对符号链接显示 0
+         * （应为目标串长度），另外 coreutils 会拿 st_size 当 readlink 缓冲区
+         * 的初值，为 0 时会先按 1 字节读、再扩容重试。
+         *
+         * 这里不复用上面 ext4_raw_inode_fill 拿到的 raw inode：它给的是
+         * **未转序**的磁盘原始结构（endian 要自己 to_le32），直接读字段会踩坑。
+         * 走 ext4_readlink 量一次是公开 API、语义明确，代价是 stat 符号链接时
+         * 多一次 open+read —— 不在热路径上。
+         */
+        char tgt[256];
+        size_t rcnt = 0;
+        if (ext4_readlink(path, tgt, sizeof(tgt), &rcnt) == EOK)
+            st->st_size = (int64_t)rcnt;
     }
 
     return 0;

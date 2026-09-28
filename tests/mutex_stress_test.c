@@ -15,9 +15,9 @@
 
 /* ── 测试配置 ─────────────────────────────────────────────── */
 
-#define STRESS_NUM_TASKS    10      /* 并发任务数 */
-#define STRESS_ITERATIONS   100     /* 每个任务的迭代次数 */
-#define STRESS_LIST_SIZE    50      /* 链表最大节点数 */
+#define STRESS_NUM_TASKS  10  /* 并发任务数 */
+#define STRESS_ITERATIONS 100 /* 每个任务的迭代次数 */
+#define STRESS_LIST_SIZE  50  /* 链表最大节点数 */
 
 /* ── 共享数据结构 ─────────────────────────────────────────── */
 
@@ -39,13 +39,12 @@ static uint32_t g_list_length = 0;
 
 /* 统计信息 */
 static uint32_t g_total_lock_operations = 0;
-static uint32_t g_total_contentions = 0;  /* 锁竞争次数 */
+static uint32_t g_total_contentions = 0; /* 锁竞争次数 */
 
 /* ── 辅助函数 ─────────────────────────────────────────────── */
 
 /* 链表长度验证 */
-static uint32_t
-list_verify_length(void)
+static uint32_t list_verify_length(void)
 {
     uint32_t count = 0;
     stress_node_t *node = g_shared_list;
@@ -60,8 +59,7 @@ list_verify_length(void)
 
 /* ── 压力测试任务 1：计数器递增 ──────────────────────────── */
 
-static void
-counter_task(void *arg)
+static void counter_task(void *arg)
 {
     uint32_t task_id = *(uint32_t *)arg;
     uint32_t local_count = 0;
@@ -76,12 +74,13 @@ counter_task(void *arg)
         local_count++;
 
         /* 模拟一些工作 */
-        for (volatile int j = 0; j < 10000; j++);
+        for (volatile int j = 0; j < 10000; j++)
+            ;
 
         /* 验证：递增后应该等于递增前 + 1 */
         if (g_shared_counter != old_value + 1) {
             KLOG_ERROR("[stress] task_%u: counter corruption! old=%u new=%u\n",
-                      task_id, old_value, g_shared_counter);
+                       task_id, old_value, g_shared_counter);
         }
 
         g_total_lock_operations++;
@@ -94,7 +93,8 @@ counter_task(void *arg)
         }
     }
 
-    KLOG_INFO("[stress] task_%u: completed %u increments\n", task_id, local_count);
+    KLOG_INFO("[stress] task_%u: completed %u increments\n", task_id,
+              local_count);
     task_exit();
 }
 
@@ -103,8 +103,7 @@ counter_task(void *arg)
 static stress_node_t g_node_pool[STRESS_LIST_SIZE];
 static bool g_node_used[STRESS_LIST_SIZE];
 
-static stress_node_t *
-alloc_node(void)
+static stress_node_t *alloc_node(void)
 {
     for (uint32_t i = 0; i < STRESS_LIST_SIZE; i++) {
         if (!g_node_used[i]) {
@@ -115,8 +114,7 @@ alloc_node(void)
     return NULL;
 }
 
-static void
-free_node(stress_node_t *node)
+static void free_node(stress_node_t *node)
 {
     if (node >= g_node_pool && node < g_node_pool + STRESS_LIST_SIZE) {
         uint32_t index = node - g_node_pool;
@@ -124,8 +122,7 @@ free_node(stress_node_t *node)
     }
 }
 
-static void
-list_task(void *arg)
+static void list_task(void *arg)
 {
     uint32_t task_id = *(uint32_t *)arg;
     uint32_t insert_count = 0;
@@ -159,8 +156,9 @@ list_task(void *arg)
         /* 验证链表长度 */
         uint32_t actual_length = list_verify_length();
         if (actual_length != g_list_length) {
-            KLOG_ERROR("[stress] task_%u: list length mismatch! expected=%u actual=%u\n",
-                      task_id, g_list_length, actual_length);
+            KLOG_ERROR(
+                "[stress] task_%u: list length mismatch! expected=%u actual=%u\n",
+                task_id, g_list_length, actual_length);
         }
 
         g_total_lock_operations++;
@@ -172,15 +170,14 @@ list_task(void *arg)
         }
     }
 
-    KLOG_INFO("[stress] task_%u: %u inserts, %u deletes\n",
-              task_id, insert_count, delete_count);
+    KLOG_INFO("[stress] task_%u: %u inserts, %u deletes\n", task_id,
+              insert_count, delete_count);
     task_exit();
 }
 
 /* ── 压力测试任务 3：混合操作 ────────────────────────────── */
 
-static void
-mixed_task(void *arg)
+static void mixed_task(void *arg)
 {
     uint32_t task_id = *(uint32_t *)arg;
     uint32_t operations = 0;
@@ -220,7 +217,8 @@ mixed_task(void *arg)
         }
 
         /* 短暂延迟 */
-        for (volatile int j = 0; j < 1000; j++);
+        for (volatile int j = 0; j < 1000; j++)
+            ;
 
         if (i % 8 == 0) {
             task_yield();
@@ -233,8 +231,7 @@ mixed_task(void *arg)
 
 /* ── 验证任务 ───────────────────────────────────────────── */
 
-static void
-verify_task(void *arg)
+static void verify_task(void *arg)
 {
     (void)arg;
 
@@ -256,7 +253,7 @@ verify_task(void *arg)
     uint32_t actual_length = list_verify_length();
     if (actual_length != g_list_length) {
         KLOG_ERROR("[stress] LIST CORRUPTION! expected=%u actual=%u\n",
-                  g_list_length, actual_length);
+                   g_list_length, actual_length);
     } else {
         KLOG_INFO("[stress] List verification: PASSED ✓\n");
     }
@@ -265,7 +262,7 @@ verify_task(void *arg)
     uint32_t expected_min = STRESS_NUM_TASKS * STRESS_ITERATIONS / 2;
     if (g_shared_counter < expected_min) {
         KLOG_WARN("[stress] Counter lower than expected: %u < %u\n",
-                 g_shared_counter, expected_min);
+                  g_shared_counter, expected_min);
     } else {
         KLOG_INFO("[stress] Counter verification: PASSED ✓\n");
     }
@@ -280,8 +277,7 @@ verify_task(void *arg)
 
 static uint32_t g_task_ids[STRESS_NUM_TASKS];
 
-void
-run_mutex_stress_test(void)
+void run_mutex_stress_test(void)
 {
     KLOG_INFO("=== Mutex Stress Test ===\n");
     KLOG_INFO("[stress] Configuration:\n");

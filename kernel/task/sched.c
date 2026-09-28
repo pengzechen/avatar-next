@@ -52,7 +52,7 @@ static inline void x86_write_msr(uint32_t msr, uint64_t value)
 {
     uint32_t lo = (uint32_t)(value & 0xFFFFFFFFU);
     uint32_t hi = (uint32_t)(value >> 32);
-    __asm__ volatile("wrmsr" :: "c"(msr), "a"(lo), "d"(hi));
+    __asm__ volatile("wrmsr" ::"c"(msr), "a"(lo), "d"(hi));
 }
 
 static inline void x86_write_fs_base(uint64_t fs_base)
@@ -75,12 +75,11 @@ static inline void x86_write_fs_base(uint64_t fs_base)
 
 /* ── sched_init ──────────────────────────────────────────── */
 
-void
-sched_init(task_t *idle_task)
+void sched_init(task_t *idle_task)
 {
     /* run_queue 已由 cpu_init_bsp() 初始化为空链表，这里只装 idle。*/
     cpu_t *c = cpu_current();
-    c->idle_task    = idle_task;
+    c->idle_task = idle_task;
     c->current_task = idle_task;
 }
 
@@ -89,9 +88,21 @@ sched_init(task_t *idle_task)
 /* Phase 4a SMP 分发计数器：atomic round-robin。 */
 static uint32_t g_rr_counter;
 
-void
-sched_enqueue(task_t *task)
+void sched_enqueue(task_t *task)
 {
+    /*
+     * 防御：正在运行的任务不在任何队列里，把它再挂进队列会让它被两个核
+     * 同时执行（任务栈/状态互相踩）。合法的调用者只会入队 READY/BLOCKED
+     * 的任务 —— 走到这里说明有人破坏了「谁在哪」的不变量，宁可漏入队
+     * （任务下次被唤醒时还会再试）也不要写坏运行队列。
+     */
+    if (task->state == TASK_RUNNING) {
+        KLOG_ERROR(
+            "[sched] enqueue RUNNING task '%s' id=%u (affinity=%u) —— 拒绝\n",
+            task->name, task->id, task->cpu_affinity);
+        return;
+    }
+
     uint32_t n = g_num_cpus ? g_num_cpus : 1U;
     uint32_t target;
     if (n == 1U) {
@@ -111,6 +122,20 @@ sched_enqueue(task_t *task)
     list_node_init(&task->run_node);
 
     if (n == 1U) {
+        /*
+         * 中断上下文里**绝不要**调 arch_irq_save()/arch_irq_restore()。
+         * 那一对是用「整字写回 sstatus」实现关/开中断的；在 ISR 里写回
+         * sstatus 会破坏它的状态，实测症状是 S 模式中断从此不再投递 ——
+         * 定时器停摆、串口无响应、被唤醒的任务再也跑不起来。
+         *
+         * 设备 ISR 里唤醒任务是常规操作（收包中断叫醒 net-poll 就是），
+         * 而中断本来就是关的，直接插队列即可，不需要再动 sstatus。
+         */
+        if (in_irq_context()) {
+            list_insert_last(&tc->run_queue, &task->run_node);
+            return;
+        }
+
         uint64_t flags = arch_irq_save();
         list_insert_last(&tc->run_queue, &task->run_node);
         arch_irq_restore(flags);
@@ -118,15 +143,15 @@ sched_enqueue(task_t *task)
     }
 
     /* 跨核入队：持目标核 rq_lock（spin_lock_irqsave 内部关本核 IRQ）。 */
-    spin_lock_irqsave(&tc->rq_lock);
+    uint64_t flags;
+    spin_lock_irqsave(&tc->rq_lock, &flags);
     list_insert_last(&tc->run_queue, &task->run_node);
-    spin_unlock_irqrestore(&tc->rq_lock);
+    spin_unlock_irqrestore(&tc->rq_lock, flags);
 }
 
 /* ── sched_dequeue ───────────────────────────────────────── */
 
-void
-sched_dequeue(task_t *task)
+void sched_dequeue(task_t *task)
 {
     /* 任务以其 cpu_affinity 为准处于某核 rq。先查 affinity 对应核，
      * 找不到再退一步遍历所有核（防 affinity 字段与实际不一致）。 */
@@ -142,34 +167,50 @@ sched_dequeue(task_t *task)
 
     if (task->cpu_affinity < n) {
         cpu_t *tc = &g_cpus[task->cpu_affinity];
-        spin_lock_irqsave(&tc->rq_lock);
+        uint64_t flags;
+        spin_lock_irqsave(&tc->rq_lock, &flags);
         if (list_contains(&tc->run_queue, &task->run_node)) {
             list_delete(&tc->run_queue, &task->run_node);
-            spin_unlock_irqrestore(&tc->rq_lock);
+            spin_unlock_irqrestore(&tc->rq_lock, flags);
             return;
         }
-        spin_unlock_irqrestore(&tc->rq_lock);
+        spin_unlock_irqrestore(&tc->rq_lock, flags);
     }
     for (uint32_t i = 0; i < n; i++) {
         cpu_t *tc = &g_cpus[i];
-        spin_lock_irqsave(&tc->rq_lock);
+        uint64_t flags;
+        spin_lock_irqsave(&tc->rq_lock, &flags);
         if (list_contains(&tc->run_queue, &task->run_node)) {
             list_delete(&tc->run_queue, &task->run_node);
-            spin_unlock_irqrestore(&tc->rq_lock);
+            spin_unlock_irqrestore(&tc->rq_lock, flags);
             return;
         }
-        spin_unlock_irqrestore(&tc->rq_lock);
+        spin_unlock_irqrestore(&tc->rq_lock, flags);
     }
 }
 
 /* ── 内部：选择下一个任务 ─────────────────────────────────── */
 
-static task_t *
-pick_next(cpu_t *c)
+static task_t *pick_next(cpu_t *c)
 {
+    extern task_t g_task_pool[]; /* 定义在 task.c（非 static） */
+
     list_node_t *node = list_delete_first(&c->run_queue);
     if (node) {
         task_t *task = container_of(node, task_t, run_node);
+
+        /*
+         * 队列里捡出来的指针必须落在任务池里。落到池外 = 运行队列已经被
+         * 写坏（历史上真出现过：CR2=0xffffffffffffffc8 的野指针）。
+         * 这时候**不要**继续用这个指针（一写就崩），跳过它并让本核跑 idle ——
+         * 坏的是一个节点，整机还能继续跑，日志里也留下了现场。
+         */
+        if (task < g_task_pool || task >= g_task_pool + TASK_MAX) {
+            KLOG_ERROR("[sched] CORRUPT runqueue on cpu%u: node=%p -> task=%p "
+                       "(out of pool) —— 跳过\n",
+                       c->cpu_id, (void *)node, (void *)task);
+            return c->idle_task;
+        }
         return task;
     }
     return c->idle_task; /* 队列为空，回退到本核 idle */
@@ -177,8 +218,7 @@ pick_next(cpu_t *c)
 
 /* ── sched_schedule ──────────────────────────────────────── */
 
-void
-sched_schedule(void)
+void sched_schedule(void)
 {
     assert_always(!in_irq_context());
 
@@ -192,11 +232,14 @@ sched_schedule(void)
     task_t *prev = c->current_task;
 
     /* 持本核 rq_lock 期间操作 run_queue。外层已 arch_irq_save 关本核 IRQ，
-     * 这里用 raw spin_lock 避免 spin_unlock_irqrestore 过早开 IRQ。
-     * 跨核 sched_enqueue 持的是同一把锁，所以 list 操作原子。 */
+     * 这里用不带 irqsave 的 spin_lock —— 中断状态由外层管理，不能用
+     * spin_unlock_irqrestore 提前把 IRQ 打开。
+     * 跨核 sched_enqueue 持的是同一把锁，所以 list 操作原子。
+     * （以前这里要把 spinlock_noirq_t* 强转成 spinlock_t* 才能用 raw 变体；
+     *  锁类型收敛后不需要了。） */
     bool use_rq_lock = (g_num_cpus > 1U);
     if (use_rq_lock)
-        spin_lock((spinlock_t *)&c->rq_lock);
+        spin_lock(&c->rq_lock);
 
     /* 若当前任务仍在运行且不是 idle，则重新入队尾 */
     if (prev->state == TASK_RUNNING && prev != c->idle_task) {
@@ -207,7 +250,7 @@ sched_schedule(void)
     task_t *next = pick_next(c);
 
     if (use_rq_lock)
-        spin_unlock((spinlock_t *)&c->rq_lock);
+        spin_unlock(&c->rq_lock);
 
     /* 无需切换（唯一任务或队空只有 idle） */
     if (next == prev) {
@@ -216,10 +259,11 @@ sched_schedule(void)
         return;
     }
 
-    next->state     = TASK_RUNNING;
-    barrier_compiler();  // 确保 state 在 current_task 之前完成
-    c->current_task = next;             /* Phase 1：per-CPU 主存储 */
-    barrier_compiler();  // 确保 current_task 在 arch_task_switch 之前完成
+    next->state = TASK_RUNNING;
+
+    barrier_compiler();     // 确保 state 在 current_task 之前完成
+    c->current_task = next; /* Phase 1：per-CPU 主存储 */
+    barrier_compiler();     // 确保 current_task 在 arch_task_switch 之前完成
 
 #if ARCH_X86_64
     /* x86_64：通过 CR3 切换页表
@@ -231,17 +275,15 @@ sched_schedule(void)
         write_cr3((uint64_t)next->pgd);
 
         /* 更新 TSS.RSP0 为当前任务的内核栈顶 */
-        uint64_t kernel_stack_top = (uint64_t)next->stack_base + TASK_STACK_SIZE;
+        uint64_t kernel_stack_top =
+            (uint64_t)next->stack_base + TASK_STACK_SIZE;
         x86_tss_set_rsp0(kernel_stack_top);
 
         /* 恢复该用户任务的 TLS 基址（fs:offset） */
         x86_write_fs_base(next->fs_base);
 
-        // KLOG_DEBUG("[sched] CR3\u21920x%llx TSS.RSP0=0x%llx task='%s'\n",
-        //           (uint64_t)next->pgd, kernel_stack_top, next->name);
     } else if (!next->is_user_process && prev->is_user_process) {
         /* 从用户任务切换到内核任务：恢复内核页表 */
-        // KLOG_DEBUG("[sched] restoring kernel PGD=0x%llx\n", g_kernel_pgd_phys);
         write_cr3(g_kernel_pgd_phys);
     }
     /* 用户→用户切换，已在上面处理；内核→内核切换，页表不变 */
@@ -267,7 +309,8 @@ sched_schedule(void)
         /* 首次进入用户进程：延迟satp切换到arch_switch_to_user */
         next_pgd_for_switch = NULL;
 
-    } else if (!next->is_user_process && next->pgd == NULL && g_kernel_pgd_phys != 0) {
+    } else if (!next->is_user_process && next->pgd == NULL &&
+               g_kernel_pgd_phys != 0) {
         /* 切换到内核任务：恢复内核页表 */
         next_pgd_for_switch = (uint64_t *)g_kernel_pgd_phys;
     }
@@ -284,16 +327,13 @@ sched_schedule(void)
     arch_task_switch(&prev->sp, switch_sp, &prev->pgd, next->pgd);
 #endif
 
-    // KLOG_DEBUG("[sched] returned to prev='%s' (id=%u)\n", prev->name, prev->id);
-
     /* prev 被恢复后恢复其中断状态 */
     arch_irq_restore(flags);
 }
 
 /* ── sched_tick ──────────────────────────────────────────── */
 
-void
-sched_tick(void)
+void sched_tick(void)
 {
     /*
      * 由 timer ISR 调用。
@@ -312,8 +352,7 @@ sched_tick(void)
  * 如果需要，执行任务切换。
  * 返回 true 表示发生了切换，false 表示没有。
  */
-bool
-sched_check_and_yield(void)
+bool sched_check_and_yield(void)
 {
     cpu_t *c = cpu_current();
     if (!c->current_task) {
@@ -335,38 +374,63 @@ sched_check_and_yield(void)
     return false;
 }
 
-bool
-sched_check_and_yield_from_trap(void *frame_ptr)
+/*
+ * trap_preempt_kernel_side - 从【内核态】陷入时的抢占判断
+ *
+ * 三个架构共用。用户进程的内核侧（syscall / 缺页处理，跑在它自己的内核栈上）
+ * 不在这里切换：那会让任意 syscall 代码点被交错执行，产生大面积数据竞争；
+ * 它的抢占推迟到 syscall 返回边界。内核线程（含 idle）没有这个问题，可以在
+ * 这里被 timer 抢占 —— 否则纯内核态的循环会独占 CPU。
+ *
+ * preemptible() 内含 irq_depth == 0 判断，嵌套中断里不会误切。
+ */
+static bool trap_preempt_kernel_side(void)
+{
+    cpu_t *c = cpu_current();
+
+    if (c->current_task && c->current_task->is_user_process)
+        return false;
+    if (!c->current_task || !c->need_resched || !preemptible() ||
+        c->preempt_schedule_depth != 0)
+        return false;
+
+    c->need_resched = false;
+    c->preempt_schedule_depth++;
+    sched_schedule();
+    c->preempt_schedule_depth--;
+    return true;
+}
+
+/*
+ * sched_check_and_yield_from_trap - trap 返回前的调度检查
+ *
+ * 三个架构的异常/中断返回路径都只调这一个函数，所以这里就是【每个架构唯一的
+ * timer 抢占点】。frame_ptr 用来判断这次 trap 来自用户态还是内核态：
+ *
+ *   AArch64   spsr[3:0] == 0 (EL0t)   → 用户态；!= 0 (EL1h) → 内核态
+ *   x86_64    CS.RPL     == 3        → 用户态
+ *   RISC-V    sstatus.SPP == 0       → 用户态
+ *
+ * 来自用户态时直接 sched_check_and_yield()：被中断的是用户代码，异常现场已
+ * 完整保存在 trap frame 里，在它自己的内核栈上切换没有任何副作用。
+ *
+ * 注意：调用本函数时 handle_exception 已经做过 irq_depth--，因此
+ * sched_schedule() 开头的 assert_always(!in_irq_context()) 不会触发。
+ */
+bool sched_check_and_yield_from_trap(void *frame_ptr)
 {
 #if ARCH_AARCH64
     trap_frame_t *frame = (trap_frame_t *)frame_ptr;
-    if (frame && ((frame->spsr & 0xfUL) != 0)) {
-        cpu_t *c = cpu_current();
-        /*
-         * EL0 syscall/page-fault handlers run on the task's kernel stack. With
-         * AArch64 IRQs enabled there, timer IRQs may nest, but switching away
-         * from that nested EL1 frame would interleave arbitrary syscall code
-         * before the syscall reaches a defined preemption boundary.
-         */
-        if (c->current_task && c->current_task->is_user_process)
-            return false;
-        if (!c->current_task || !c->need_resched || !preemptible() ||
-            c->preempt_schedule_depth != 0)
-            return false;
-
-        c->need_resched = false;
-        c->preempt_schedule_depth++;
-        sched_schedule();
-        c->preempt_schedule_depth--;
-        return true;
-    }
-    return sched_check_and_yield();
+    if (frame && ((frame->spsr & 0xfUL) != 0))
+        return trap_preempt_kernel_side();
 #elif ARCH_X86_64
-    (void)frame_ptr;
-    return false;
+    trap_frame_t *frame = (trap_frame_t *)frame_ptr;
+    if (frame && ((frame->cs & 3u) != 3u))
+        return trap_preempt_kernel_side();
 #elif ARCH_RISCV64
-    (void)frame_ptr;
-    return false;
+    trap_frame_t *frame = (trap_frame_t *)frame_ptr;
+    if (frame && (frame->sstatus & SSTATUS_SPP))
+        return trap_preempt_kernel_side();
 #else
     (void)frame_ptr;
 #endif

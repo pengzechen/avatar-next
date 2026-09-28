@@ -19,11 +19,11 @@
 static struct {
     uintptr_t tdma_base;
     uintptr_t tiu_base;
-    int       initialized;
+    int initialized;
 } g_tpu;
 
 /* 轮询超时：~60s（粗略循环计数） */
-#define TDMA_TIMEOUT_LOOP  60000000U
+#define TDMA_TIMEOUT_LOOP 60000000U
 
 /* ── MMIO 读写辅助 ──────────────────────────────────────────────────────── */
 static inline uint32_t tdma_read(uint32_t off)
@@ -103,14 +103,12 @@ static void fire_tdma(uint64_t desc_offset, uint32_t num_tdma)
     tdma_write(0U, TDMA_DEBUG_MODE);
     tdma_write(0U, TDMA_DCM_DISABLE);
     tdma_write(TDMA_MASK_INIT, TDMA_INT_MASK);
-    tdma_write((1U << TDMA_CTRL_ENABLE_BIT)       |
-               (1U << TDMA_CTRL_MODESEL_BIT)       |
-               (num_tdma << TDMA_CTRL_DESNUM_BIT)  |
-               (3U << TDMA_CTRL_BURSTLEN_BIT)      |
-               (1U << TDMA_CTRL_FORCE_1ARRAY)      |
-               (1U << TDMA_CTRL_INTRA_CMD_OFF)     |
-               (1U << TDMA_CTRL_64BYTE_ALIGN_EN),
-               TDMA_CTRL);
+    tdma_write(
+        (1U << TDMA_CTRL_ENABLE_BIT) | (1U << TDMA_CTRL_MODESEL_BIT) |
+            (num_tdma << TDMA_CTRL_DESNUM_BIT) |
+            (3U << TDMA_CTRL_BURSTLEN_BIT) | (1U << TDMA_CTRL_FORCE_1ARRAY) |
+            (1U << TDMA_CTRL_INTRA_CMD_OFF) | (1U << TDMA_CTRL_64BYTE_ALIGN_EN),
+        TDMA_CTRL);
 }
 
 /*
@@ -138,9 +136,8 @@ static void fire_tiu(uint64_t desc_offset)
 
     /* 触发 TIU */
     v = tiu_read(BD_CTRL_BASE_ADDR);
-    tiu_write(v | (1U << BD_DES_ADDR_VLD)
-                | (1U << BD_INTR_ENABLE)
-                | (1U << BD_TPU_EN),
+    tiu_write(v | (1U << BD_DES_ADDR_VLD) | (1U << BD_INTR_ENABLE) |
+                  (1U << BD_TPU_EN),
               BD_CTRL_BASE_ADDR);
 }
 
@@ -156,11 +153,11 @@ static int poll_tdma_done(void)
 {
     uint32_t i;
     for (i = 0U; i < TDMA_TIMEOUT_LOOP; i++) {
-        uint32_t reg        = tdma_read(TDMA_INT_MASK);
+        uint32_t reg = tdma_read(TDMA_INT_MASK);
         uint32_t int_status = (reg >> 16U) & ~TDMA_MASK_INIT;
 
         if (int_status == TDMA_INT_EOD || int_status == TDMA_INT_EOPMU) {
-            tdma_write(0xFFFF0000U, TDMA_INT_MASK);  /* 清中断 */
+            tdma_write(0xFFFF0000U, TDMA_INT_MASK); /* 清中断 */
             return 0;
         }
         if (int_status != 0U) {
@@ -184,11 +181,11 @@ static int poll_tiu_done(uint32_t bd_cmd_id)
     if (bd_cmd_id == 0U)
         return 0;
     for (i = 0U; i < TDMA_TIMEOUT_LOOP; i++) {
-        uint32_t v       = tiu_read(BD_CTRL_BASE_ADDR);
+        uint32_t v = tiu_read(BD_CTRL_BASE_ADDR);
         uint32_t done_id = (v >> 6U) & 0xFFFFU;
-        bool     done    = (v & (1U << 1U)) != 0U;
+        bool done = (v & (1U << 1U)) != 0U;
         if (done_id >= bd_cmd_id && done) {
-            tiu_write(v | (1U << 1U), BD_CTRL_BASE_ADDR);  /* 清中断 */
+            tiu_write(v | (1U << 1U), BD_CTRL_BASE_ADDR); /* 清中断 */
             return 0;
         }
     }
@@ -203,17 +200,17 @@ static int poll_tiu_done(uint32_t bd_cmd_id)
  */
 void cvi_tpu_init(void)
 {
-    g_tpu.tdma_base  = platform_get_mmio("tpu", "tdma_base");
-    g_tpu.tiu_base   = platform_get_mmio("tpu", "tiu_base");
+    g_tpu.tdma_base = platform_get_mmio("tpu", "tdma_base");
+    g_tpu.tiu_base = platform_get_mmio("tpu", "tiu_base");
     g_tpu.initialized = 0;
 
     if (!g_tpu.tdma_base || !g_tpu.tiu_base) {
-        KLOG_ERROR("cvi_tpu: tpu.tdma_base or tpu.tiu_base not in platform config\n");
+        KLOG_ERROR(
+            "cvi_tpu: tpu.tdma_base or tpu.tiu_base not in platform config\n");
         return;
     }
 
-    KLOG_INFO("cvi_tpu: TDMA=0x%lx TIU=0x%lx\n",
-              (unsigned long)g_tpu.tdma_base,
+    KLOG_INFO("cvi_tpu: TDMA=0x%lx TIU=0x%lx\n", (unsigned long)g_tpu.tdma_base,
               (unsigned long)g_tpu.tiu_base);
 
     /* 清残留中断，复位指令 ID */
@@ -247,11 +244,11 @@ int cvi_tpu_run_dmabuf(void *dmabuf_v, uint64_t dmabuf_p)
         return -1;
     }
 
-    const struct cvi_tpu_dma_hdr      *hdr  =
+    const struct cvi_tpu_dma_hdr *hdr =
         (const struct cvi_tpu_dma_hdr *)dmabuf_v;
     const struct cvi_tpu_cpu_sync_desc *desc =
-        (const struct cvi_tpu_cpu_sync_desc *)
-        ((const uint8_t *)dmabuf_v + sizeof(*hdr));
+        (const struct cvi_tpu_cpu_sync_desc *)((const uint8_t *)dmabuf_v +
+                                               sizeof(*hdr));
 
     if (hdr->dmabuf_magic_m != TPU_DMABUF_HEADER_M) {
         KLOG_ERROR("cvi_tpu: bad magic 0x%x (expect 0x%x)\n",
@@ -273,29 +270,29 @@ int cvi_tpu_run_dmabuf(void *dmabuf_v, uint64_t dmabuf_p)
     set_array_bases(hdr);
 
     /* PMU 缓冲（可选，需 16 字节对齐） */
-    bool pmu_en = (hdr->pmubuf_offset != 0U && hdr->pmubuf_size != 0U
-                   && (hdr->pmubuf_offset & 0xFU) == 0U
-                   && (hdr->pmubuf_size   & 0xFU) == 0U);
+    bool pmu_en =
+        (hdr->pmubuf_offset != 0U && hdr->pmubuf_size != 0U &&
+         (hdr->pmubuf_offset & 0xFU) == 0U && (hdr->pmubuf_size & 0xFU) == 0U);
     if (pmu_en) {
-        uint64_t pmu_p    = dmabuf_p + hdr->pmubuf_offset;
+        uint64_t pmu_p = dmabuf_p + hdr->pmubuf_offset;
         uint32_t buf_addr = (uint32_t)(pmu_p >> 4U);
         uint32_t buf_size = hdr->pmubuf_size >> 4U;
         uint32_t pmu_ctrl = 0U;
         tdma_write(buf_addr, TPUPMU_BUFBASE);
         tdma_write(buf_size, TPUPMU_BUFSIZE);
         /* event=TdmaBandwidth(0x2)«带宽统计», enable+tpu+tdma, burst=16, ring-buf */
-        pmu_ctrl |= 0x1U;              /* enable */
-        pmu_ctrl |= 0x8U;              /* enable_tpu */
-        pmu_ctrl |= 0x10U;             /* enable_tdma */
-        pmu_ctrl |= (0x2U << 5U);      /* event = TdmaBandwidth */
-        pmu_ctrl |= (0x3U << 8U);      /* burst length = 16 */
-        pmu_ctrl |= (0x1U << 10U);     /* ring buffer mode */
-        pmu_ctrl &= ~0xFFFF0000U;      /* enable dcm */
+        pmu_ctrl |= 0x1U;          /* enable */
+        pmu_ctrl |= 0x8U;          /* enable_tpu */
+        pmu_ctrl |= 0x10U;         /* enable_tdma */
+        pmu_ctrl |= (0x2U << 5U);  /* event = TdmaBandwidth */
+        pmu_ctrl |= (0x3U << 8U);  /* burst length = 16 */
+        pmu_ctrl |= (0x1U << 10U); /* ring buffer mode */
+        pmu_ctrl &= ~0xFFFF0000U;  /* enable dcm */
         tdma_write(pmu_ctrl, TPUPMU_CTRL);
     }
 
     for (i = 0U; i < hdr->cpu_desc_count; i++, desc++) {
-        uint32_t bd_num   = desc->num_bd   & 0xFFFFU;
+        uint32_t bd_num = desc->num_bd & 0xFFFFU;
         uint32_t tdma_num = desc->num_gdma & 0xFFFFU;
 
         KLOG_DEBUG("cvi_tpu: desc[%u] bd=%u tdma=%u\n", i, bd_num, tdma_num);

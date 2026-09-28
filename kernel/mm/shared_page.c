@@ -45,7 +45,8 @@ void shared_page_unref(uint64_t paddr)
         return;
 
     for (uint32_t i = 0; i < SHARED_PAGE_MAX; i++) {
-        if (g_shared_pages[i].paddr == paddr && g_shared_pages[i].refcount > 0) {
+        if (g_shared_pages[i].paddr == paddr &&
+            g_shared_pages[i].refcount > 0) {
             g_shared_pages[i].refcount--;
             if (g_shared_pages[i].refcount == 0) {
                 g_shared_pages[i].paddr = 0;

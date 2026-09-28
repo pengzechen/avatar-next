@@ -12,13 +12,20 @@ static inline uint64_t syscall_abi_nr(const trap_frame_t *frame)
 static inline uint64_t syscall_abi_arg(const trap_frame_t *frame, int idx)
 {
     switch (idx) {
-    case 0: return frame->rdi;
-    case 1: return frame->rsi;
-    case 2: return frame->rdx;
-    case 3: return frame->r10;
-    case 4: return frame->r8;
-    case 5: return frame->r9;
-    default: return 0;
+    case 0:
+        return frame->rdi;
+    case 1:
+        return frame->rsi;
+    case 2:
+        return frame->rdx;
+    case 3:
+        return frame->r10;
+    case 4:
+        return frame->r8;
+    case 5:
+        return frame->r9;
+    default:
+        return 0;
     }
 }
 

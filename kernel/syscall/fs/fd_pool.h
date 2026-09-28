@@ -15,7 +15,7 @@
 struct task;
 typedef struct task task_t;
 
-#define FD_POOL_SIZE  128
+#define FD_POOL_SIZE 128
 
 typedef enum {
     FDT_FREE = 0,
@@ -26,16 +26,16 @@ typedef enum {
 } fd_type_t;
 
 typedef struct {
-    fd_type_t  type;
-    int        flags;
-    char       path[128];
+    fd_type_t type;
+    int flags;
+    char path[128];
     vfs_file_t *vfs_file;
     union {
         struct {
             uint32_t handle;
         } ion;
         struct {
-            int16_t  ep_idx;
+            int16_t ep_idx;
         } epoll;
     };
     fd_waitqueue_t wq;
@@ -44,18 +44,18 @@ typedef struct {
 extern fd_obj_t g_fd_pool[FD_POOL_SIZE];
 
 /* ── fd 池槽位分配 / 释放 ─────────────────────────────────────── */
-int  fd_pool_alloc(void);
-void fd_pool_free (int idx);
-void fd_obj_ref   (int idx);
-void fd_obj_close (int idx);
+int fd_pool_alloc(void);
+void fd_pool_free(int idx);
+void fd_obj_ref(int idx);
+void fd_obj_close(int idx);
 void fd_obj_attach_vfs(int idx, vfs_file_t *file);
 
 /* ── 任务级 fd 表操作 ─────────────────────────────────────────── */
 int task_alloc_ion_fd(task_t *task, uint32_t handle);
 int task_get_ion_handle(task_t *task, int fd, uint32_t *handle);
-int        task_alloc_fd(task_t *task, int pool_idx);
-fd_obj_t  *task_get_fd  (task_t *task, int fd);
-void       fd_table_inherit(task_t *child, task_t *parent);
+int task_alloc_fd(task_t *task, int pool_idx);
+fd_obj_t *task_get_fd(task_t *task, int fd);
+void fd_table_inherit(task_t *child, task_t *parent);
 
 static inline vfs_file_t *fd_obj_file(fd_obj_t *obj)
 {

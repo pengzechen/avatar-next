@@ -21,29 +21,33 @@
  */
 
 /* TTBR1 页表（高地址空间，内核使用） */
-static uint64_t kernel_pt0[1] __attribute__((aligned(PAGE_SIZE)));    /* L0 页表 */
-static uint64_t kernel_pt1[512] __attribute__((aligned(PAGE_SIZE)));  /* L1 页表 */
+static uint64_t kernel_pt0[1] __attribute__((aligned(PAGE_SIZE))); /* L0 页表 */
+static uint64_t kernel_pt1[512]
+    __attribute__((aligned(PAGE_SIZE))); /* L1 页表 */
 
 /* TTBR0 页表（低地址空间，用于开启MMU前的恒等映射） */
-static uint64_t boot_pt0[1] __attribute__((aligned(PAGE_SIZE)));    /* L0 页表 */
-static uint64_t boot_pt1[512] __attribute__((aligned(PAGE_SIZE)));  /* L1 页表 */
+static uint64_t boot_pt0[1] __attribute__((aligned(PAGE_SIZE)));   /* L0 页表 */
+static uint64_t boot_pt1[512] __attribute__((aligned(PAGE_SIZE))); /* L1 页表 */
 
 /* 页表项标志（参考 earlypage.c） */
-#define PTE_TABLE_FLAGS  0b11  /* 页表项标志（有效+表） */
+#define PTE_TABLE_FLAGS 0b11 /* 页表项标志（有效+表） */
 
 /* ── 辅助函数 ───────────────────────────────────────────────────── */
 
 /**
  * set_table_entry - 设置页表项指向下一级页表
  */
-static inline void set_table_entry(uint64_t *pte, uint64_t *next_table) {
+static inline void set_table_entry(uint64_t *pte, uint64_t *next_table)
+{
     *pte = (uint64_t)next_table | PTE_TABLE_FLAGS;
 }
 
 /**
  * set_block_entry - 设置 1GB 块映射页表项
  */
-static inline void set_block_entry(uint64_t *pte, uint64_t base_addr, uint64_t flags) {
+static inline void set_block_entry(uint64_t *pte, uint64_t base_addr,
+                                   uint64_t flags)
+{
     *pte = base_addr | flags;
 }
 
@@ -52,7 +56,8 @@ static inline void set_block_entry(uint64_t *pte, uint64_t base_addr, uint64_t f
 /**
  * vm_kernel_pgtable - 获取内核页表基址（虚拟地址）
  */
-pte_t *vm_kernel_pgtable(void) {
+pte_t *vm_kernel_pgtable(void)
+{
     return (pte_t *)kernel_pt0;
 }
 
@@ -61,7 +66,8 @@ pte_t *vm_kernel_pgtable(void) {
  *
  * 返回：内核页表物理地址（用于 TTBR1_EL1）
  */
-uint64_t vm_get_kernel_pgtable(void) {
+uint64_t vm_get_kernel_pgtable(void)
+{
     return (uint64_t)kernel_pt0;
 }
 
@@ -70,7 +76,8 @@ uint64_t vm_get_kernel_pgtable(void) {
  *
  * 返回：启动页表物理地址（用于 TTBR0_EL1，低地址恒等映射）
  */
-uint64_t vm_get_boot_pgtable(void) {
+uint64_t vm_get_boot_pgtable(void)
+{
     return (uint64_t)boot_pt0;
 }
 
@@ -87,7 +94,8 @@ uint64_t vm_get_boot_pgtable(void) {
  *
  * 返回：0 表示成功，负值表示失败
  */
-uint64_t vm_init(void) {
+uint64_t vm_init(void)
+{
 #ifdef PLATFORM_RK3588
     /*
      * platform_conf_scan() 在 kernel_main 中才运行，现在 dw_uart_base / reg_shift
@@ -97,11 +105,11 @@ uint64_t vm_init(void) {
      *   reg_shift=0 会导致 LSR 地址=0xFEB50005（错！THRE 永远读不到 → 死循环）
      */
     extern uintptr_t dw_uart_base;
-    extern uint8_t   dw_uart_reg_shift;
-    dw_uart_base      = 0xFEB50000UL;
+    extern uint8_t dw_uart_reg_shift;
+    dw_uart_base = 0xFEB50000UL;
     dw_uart_reg_shift = 2;
 #endif
-    KLOG_INFO("Initializing VM...\n");
+    KLOG_MM("Initializing VM...\n");
 
     /* 清空所有页表 */
     memset(kernel_pt0, 0, sizeof(kernel_pt0));
@@ -140,14 +148,24 @@ uint64_t vm_init(void) {
      *   [3] 0xC0000000-0xFFFFFFFF  设备内存 (UART@0xFEB50000, GIC@0xFE600000)
      */
 #ifdef PLATFORM_RK3588
-    set_block_entry(&kernel_pt1[0], 0x00000000ULL, PTE_NORMAL_MEMORY);  /* RAM Bank0 0x00000000-0x3FFFFFFF */
-    set_block_entry(&kernel_pt1[1], 0x40000000ULL, PTE_NORMAL_MEMORY);  /* RAM Bank1 0x40000000-0x7FFFFFFF */
-    set_block_entry(&kernel_pt1[2], 0x80000000ULL, PTE_NORMAL_MEMORY);  /* RAM Bank2 0x80000000-0xBFFFFFFF */
-    set_block_entry(&kernel_pt1[3], 0xC0000000ULL, PTE_DEVICE_MEMORY);  /* MMIO      0xC0000000-0xFFFFFFFF */
+    set_block_entry(&kernel_pt1[0], 0x00000000ULL,
+                    PTE_NORMAL_MEMORY); /* RAM Bank0 0x00000000-0x3FFFFFFF */
+    set_block_entry(&kernel_pt1[1], 0x40000000ULL,
+                    PTE_NORMAL_MEMORY); /* RAM Bank1 0x40000000-0x7FFFFFFF */
+    set_block_entry(&kernel_pt1[2], 0x80000000ULL,
+                    PTE_NORMAL_MEMORY); /* RAM Bank2 0x80000000-0xBFFFFFFF */
+    set_block_entry(&kernel_pt1[3], 0xC0000000ULL,
+                    PTE_DEVICE_MEMORY); /* MMIO      0xC0000000-0xFFFFFFFF */
 #else
-    set_block_entry(&kernel_pt1[0], 0x00000000ULL, PTE_DEVICE_MEMORY);  /* 设备内存（0x00000000 - 0x3fffffff） */
-    set_block_entry(&kernel_pt1[1], 0x40000000ULL, PTE_NORMAL_MEMORY);  /* 普通内存（0x40000000 - 0x7fffffff） */
-    set_block_entry(&kernel_pt1[2], 0x80000000ULL, PTE_NORMAL_MEMORY);  /* 普通内存（0x80000000 - 0xbfffffff） */
+    set_block_entry(
+        &kernel_pt1[0], 0x00000000ULL,
+        PTE_DEVICE_MEMORY); /* 设备内存（0x00000000 - 0x3fffffff） */
+    set_block_entry(
+        &kernel_pt1[1], 0x40000000ULL,
+        PTE_NORMAL_MEMORY); /* 普通内存（0x40000000 - 0x7fffffff） */
+    set_block_entry(
+        &kernel_pt1[2], 0x80000000ULL,
+        PTE_NORMAL_MEMORY); /* 普通内存（0x80000000 - 0xbfffffff） */
 #endif
 
     /*
@@ -156,19 +174,29 @@ uint64_t vm_init(void) {
     set_table_entry(&boot_pt0[0], boot_pt1);
 
 #ifdef PLATFORM_RK3588
-    set_block_entry(&boot_pt1[0], 0x00000000ULL, PTE_NORMAL_MEMORY);  /* RAM Bank0 0x00000000-0x3FFFFFFF */
-    set_block_entry(&boot_pt1[1], 0x40000000ULL, PTE_NORMAL_MEMORY);  /* RAM Bank1 0x40000000-0x7FFFFFFF */
-    set_block_entry(&boot_pt1[2], 0x80000000ULL, PTE_NORMAL_MEMORY);  /* RAM Bank2 0x80000000-0xBFFFFFFF */
-    set_block_entry(&boot_pt1[3], 0xC0000000ULL, PTE_DEVICE_MEMORY);  /* MMIO      0xC0000000-0xFFFFFFFF */
+    set_block_entry(&boot_pt1[0], 0x00000000ULL,
+                    PTE_NORMAL_MEMORY); /* RAM Bank0 0x00000000-0x3FFFFFFF */
+    set_block_entry(&boot_pt1[1], 0x40000000ULL,
+                    PTE_NORMAL_MEMORY); /* RAM Bank1 0x40000000-0x7FFFFFFF */
+    set_block_entry(&boot_pt1[2], 0x80000000ULL,
+                    PTE_NORMAL_MEMORY); /* RAM Bank2 0x80000000-0xBFFFFFFF */
+    set_block_entry(&boot_pt1[3], 0xC0000000ULL,
+                    PTE_DEVICE_MEMORY); /* MMIO      0xC0000000-0xFFFFFFFF */
 #else
-    set_block_entry(&boot_pt1[0], 0x00000000ULL, PTE_DEVICE_MEMORY);  /* 设备内存（0x00000000 - 0x3fffffff） */
-    set_block_entry(&boot_pt1[1], 0x40000000ULL, PTE_NORMAL_MEMORY);  /* 普通内存（0x40000000 - 0x7fffffff） */
-    set_block_entry(&boot_pt1[2], 0x80000000ULL, PTE_NORMAL_MEMORY);  /* 普通内存（0x80000000 - 0xbfffffff） */
+    set_block_entry(
+        &boot_pt1[0], 0x00000000ULL,
+        PTE_DEVICE_MEMORY); /* 设备内存（0x00000000 - 0x3fffffff） */
+    set_block_entry(
+        &boot_pt1[1], 0x40000000ULL,
+        PTE_NORMAL_MEMORY); /* 普通内存（0x40000000 - 0x7fffffff） */
+    set_block_entry(
+        &boot_pt1[2], 0x80000000ULL,
+        PTE_NORMAL_MEMORY); /* 普通内存（0x80000000 - 0xbfffffff） */
 #endif
 
-    KLOG_INFO("VM page tables initialized\n");
-    KLOG_INFO("TTBR0 base: 0x%llx  TTBR1 base: 0x%llx\n",
-              (uint64_t)boot_pt0, (uint64_t)kernel_pt0);
+    KLOG_MM("VM page tables initialized\n");
+    KLOG_MM("TTBR0 base: 0x%llx  TTBR1 base: 0x%llx\n", (uint64_t)boot_pt0,
+            (uint64_t)kernel_pt0);
 
     return (uint64_t)kernel_pt0;
 }

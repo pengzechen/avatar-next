@@ -13,29 +13,28 @@
 
 #include "timer.h"
 #include "klog.h"
-#include "exception.h"     /* irq_install, IDT_LAPIC_TIMER_VEC */
-#include "irq/lapic.h"     /* lapic_timer_init, lapic_eoi      */
+#include "exception.h" /* irq_install, IDT_LAPIC_TIMER_VEC */
+#include "irq/lapic.h" /* lapic_timer_init, lapic_eoi      */
 
 /* ── x86_64 特定全局变量 ────────────────────────────────────── */
 
 volatile uint64_t g_x86_uptime_seconds = 0;
-static   uint32_t g_x86_tick_counter   = 0;
+static uint32_t g_x86_tick_counter = 0;
 
 /* 前向声明（定义在本文件末尾）*/
 void timer_handler(void *frame);
 
 /* ── 架构特定操作实现 ────────────────────────────────────────── */
 
-void
-timer_arch_init(void)
+void timer_arch_init(void)
 {
     /* x86_64 上 LAPIC 是计时源，实际频率由校准决定；
      * g_timer_frequency 设一个占位值（校准后 lapic.c 内部使用）*/
-    g_timer_frequency = 0;   /* 将由 lapic_timer_init 校准 */
+    g_timer_frequency = 0; /* 将由 lapic_timer_init 校准 */
 
-    KLOG_INFO("Timer initialization (x86_64 LAPIC):\n");
-    KLOG_INFO("  Target frequency: %d Hz\n", TIMER_FREQUENCY_HZ);
-    KLOG_INFO("  Tick interval: %d ms\n", TIMER_TICK_MS);
+    /* 时钟配错是经典 bug 来源 —— 值得一行；原来是三行 */
+    KLOG_INFO("Timer: x86_64 LAPIC tick=%dHz (%dms)\n", TIMER_FREQUENCY_HZ,
+              TIMER_TICK_MS);
 
     timer_reset_stats();
 
@@ -43,23 +42,20 @@ timer_arch_init(void)
     irq_install(IDT_LAPIC_TIMER_VEC, (irq_handler_t)timer_handler);
 }
 
-void
-timer_arch_enable(void)
+void timer_arch_enable(void)
 {
     /* 校准 LAPIC 频率并启动 Periodic 模式 */
     lapic_timer_init(IDT_LAPIC_TIMER_VEC);
-    KLOG_INFO("LAPIC timer started @ %d Hz\n", TIMER_FREQUENCY_HZ);
+    KLOG_TIMER("LAPIC timer started @ %d Hz\n", TIMER_FREQUENCY_HZ);
 }
 
-void
-timer_arch_disable(void)
+void timer_arch_disable(void)
 {
     lapic_timer_stop();
-    KLOG_INFO("LAPIC timer stopped\n");
+    KLOG_TIMER("LAPIC timer stopped\n");
 }
 
-void
-timer_arch_set_next_interrupt(uint64_t ticks_from_now)
+void timer_arch_set_next_interrupt(uint64_t ticks_from_now)
 {
     /* LAPIC Periodic 模式硬件自动重载，无需软件干预 */
     (void)ticks_from_now;
@@ -70,8 +66,7 @@ extern void signal_check_uart(void);
 
 /* ── 定时器中断处理函数 ──────────────────────────────────────── */
 
-void
-timer_handler(void *frame)
+void timer_handler(void *frame)
 {
     (void)frame;
 
@@ -91,8 +86,6 @@ timer_handler(void *frame)
         g_x86_uptime_seconds++;
         g_x86_tick_counter = 0;
         g_timer_stats.total_seconds = g_x86_uptime_seconds;
-
-        // KLOG_INFO("System running - Uptime: %llus\n", g_x86_uptime_seconds);
     }
 
     /* LAPIC 必须手动发 EOI */

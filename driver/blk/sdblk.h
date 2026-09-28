@@ -14,15 +14,15 @@
 
 #include "types.h"
 
-#define SDBLK_TOP_OFF_PWRSW_CTRL  0x1F4U         /* sd_pwrsw_ctrl 寄存器偏移 */
+#define SDBLK_TOP_OFF_PWRSW_CTRL 0x1F4U /* sd_pwrsw_ctrl 寄存器偏移 */
 
 /* ── 块大小 ───────────────────────────────────────────────────── */
-#define SDBLK_BLOCK_SIZE  512U
+#define SDBLK_BLOCK_SIZE 512U
 
 /* ── 错误码 ───────────────────────────────────────────────────── */
-#define SDBLK_OK       0
-#define SDBLK_NOCARD  (-2)   /* 卡未插入 */
-#define SDBLK_ERR     (-1)   /* 通用错误（命令/数据传输失败） */
+#define SDBLK_OK     0
+#define SDBLK_NOCARD (-2) /* 卡未插入 */
+#define SDBLK_ERR    (-1) /* 通用错误（命令/数据传输失败） */
 
 /* ── 公开 API ─────────────────────────────────────────────────── */
 

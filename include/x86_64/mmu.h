@@ -21,10 +21,10 @@
 
 /* ── 页表索引宏 ───────────────────────────────────────────────────── */
 
-#define GET_PML4_INDEX(vaddr)  ((((uint64_t)(vaddr)) >> 39) & 0x1FF)
-#define GET_PDPT_INDEX(vaddr)  ((((uint64_t)(vaddr)) >> 30) & 0x1FF)
-#define GET_PD_INDEX(vaddr)    ((((uint64_t)(vaddr)) >> 21) & 0x1FF)
-#define GET_PT_INDEX(vaddr)    ((((uint64_t)(vaddr)) >> 12) & 0x1FF)
+#define GET_PML4_INDEX(vaddr) ((((uint64_t)(vaddr)) >> 39) & 0x1FF)
+#define GET_PDPT_INDEX(vaddr) ((((uint64_t)(vaddr)) >> 30) & 0x1FF)
+#define GET_PD_INDEX(vaddr)   ((((uint64_t)(vaddr)) >> 21) & 0x1FF)
+#define GET_PT_INDEX(vaddr)   ((((uint64_t)(vaddr)) >> 12) & 0x1FF)
 
 /* 获取页内偏移 */
 #define GET_PAGE_OFFSET(vaddr) ((uint64_t)(vaddr) & 0xFFF)
@@ -32,35 +32,35 @@
 /* ── 页表项标志位 ───────────────────────────────────────────────────── */
 
 /* 基本标志 */
-#define PTE_PRESENT     (1ULL << 0)   /* Present (P) - 页面在内存中 */
-#define PTE_WRITABLE    (1ULL << 1)   /* Read/Write (R/W) - 可写 */
-#define PTE_USER        (1ULL << 2)   /* User/Supervisor (U/S) - 用户可访问 */
-#define PTE_PWT         (1ULL << 3)   /* Page-level Write-Through */
-#define PTE_PCD         (1ULL << 4)   /* Page-level Cache Disable */
-#define PTE_ACCESSED    (1ULL << 5)   /* Accessed (A) - 页面被访问过 */
-#define PTE_DIRTY       (1ULL << 6)   /* Dirty (D) - 页面被写入过 */
-#define PTE_HUGE        (1ULL << 7)   /* Page Size (PS) - 大页（2MB/1GB） */
-#define PTE_GLOBAL      (1ULL << 8)   /* Global (G) - 全局页（TLB 不刷新） */
+#define PTE_PRESENT  (1ULL << 0) /* Present (P) - 页面在内存中 */
+#define PTE_WRITABLE (1ULL << 1) /* Read/Write (R/W) - 可写 */
+#define PTE_USER     (1ULL << 2) /* User/Supervisor (U/S) - 用户可访问 */
+#define PTE_PWT      (1ULL << 3) /* Page-level Write-Through */
+#define PTE_PCD      (1ULL << 4) /* Page-level Cache Disable */
+#define PTE_ACCESSED (1ULL << 5) /* Accessed (A) - 页面被访问过 */
+#define PTE_DIRTY    (1ULL << 6) /* Dirty (D) - 页面被写入过 */
+#define PTE_HUGE     (1ULL << 7) /* Page Size (PS) - 大页（2MB/1GB） */
+#define PTE_GLOBAL   (1ULL << 8) /* Global (G) - 全局页（TLB 不刷新） */
 
 /* 扩展标志（位 9-11 可供软件使用） */
-#define PTE_SW_BIT1     (1ULL << 9)   /* Available for software */
-#define PTE_SW_BIT2     (1ULL << 10)  /* Available for software */
-#define PTE_SW_BIT3     (1ULL << 11)  /* Available for software */
-#define PTE_NOFREE      PTE_SW_BIT1   /* Shared page: don't free on unmap */
+#define PTE_SW_BIT1 (1ULL << 9)  /* Available for software */
+#define PTE_SW_BIT2 (1ULL << 10) /* Available for software */
+#define PTE_SW_BIT3 (1ULL << 11) /* Available for software */
+#define PTE_NOFREE  PTE_SW_BIT1  /* Shared page: don't free on unmap */
 
 /* NX（No eXecute）标志 - 位 63 */
-#define PTE_NX          (1ULL << 63)  /* Execute Disable (XD/NX) */
+#define PTE_NX (1ULL << 63) /* Execute Disable (XD/NX) */
 
 /* 物理地址掩码（位 12-51，40 位物理地址） */
-#define PTE_ADDR_MASK   0x000FFFFFFFFFF000ULL
+#define PTE_ADDR_MASK 0x000FFFFFFFFFF000ULL
 
 /* ── 预定义页表项组合 ────────────────────────────────────────────── */
 
 /* 内核页表项：存在 + 可写 + 全局 */
-#define PTE_KERNEL      (PTE_PRESENT | PTE_WRITABLE | PTE_GLOBAL)
+#define PTE_KERNEL (PTE_PRESENT | PTE_WRITABLE | PTE_GLOBAL)
 
 /* 内核代码：存在 + 只读 + 全局 */
-#define PTE_KERNEL_RO   (PTE_PRESENT | PTE_GLOBAL)
+#define PTE_KERNEL_RO (PTE_PRESENT | PTE_GLOBAL)
 
 /* 内核代码（可执行）：存在 + 只读 + 全局 */
 #define PTE_KERNEL_CODE (PTE_PRESENT | PTE_GLOBAL)
@@ -69,19 +69,19 @@
 #define PTE_KERNEL_DATA (PTE_PRESENT | PTE_WRITABLE | PTE_GLOBAL | PTE_NX)
 
 /* 用户页表项：存在 + 可写 + 用户 + 不可执行 */
-#define PTE_USER_DATA   (PTE_PRESENT | PTE_WRITABLE | PTE_USER | PTE_NX)
+#define PTE_USER_DATA (PTE_PRESENT | PTE_WRITABLE | PTE_USER | PTE_NX)
 
 /* 用户代码：存在 + 只读 + 用户 */
-#define PTE_USER_CODE   (PTE_PRESENT | PTE_USER)
+#define PTE_USER_CODE (PTE_PRESENT | PTE_USER)
 
 /* 用户代码（可执行，可写）：存在 + 可写 + 用户 */
-#define PTE_USER_RWX    (PTE_PRESENT | PTE_WRITABLE | PTE_USER)
+#define PTE_USER_RWX (PTE_PRESENT | PTE_WRITABLE | PTE_USER)
 
 /* 用户栈：存在 + 可写 + 用户 + 不可执行 */
-#define PTE_USER_STACK  (PTE_PRESENT | PTE_WRITABLE | PTE_USER | PTE_NX)
+#define PTE_USER_STACK (PTE_PRESENT | PTE_WRITABLE | PTE_USER | PTE_NX)
 
 /* 设备内存：存在 + 可写 + 缓存禁用 + Write-Through + 不可执行 */
-#define PTE_DEVICE      (PTE_PRESENT | PTE_WRITABLE | PTE_PCD | PTE_PWT | PTE_NX)
+#define PTE_DEVICE (PTE_PRESENT | PTE_WRITABLE | PTE_PCD | PTE_PWT | PTE_NX)
 
 /* ── 页表项类型定义 ───────────────────────────────────────────────── */
 
@@ -91,56 +91,56 @@
  */
 typedef union {
     struct {
-        uint64_t present    : 1;   /* 0: Present */
-        uint64_t writable   : 1;   /* 1: Read/Write */
-        uint64_t user       : 1;   /* 2: User/Supervisor */
-        uint64_t pwt        : 1;   /* 3: Page-level Write-Through */
-        uint64_t pcd        : 1;   /* 4: Page-level Cache Disable */
-        uint64_t accessed   : 1;   /* 5: Accessed */
-        uint64_t dirty      : 1;   /* 6: Dirty (仅在最后一级) */
-        uint64_t huge       : 1;   /* 7: Page Size (PS) / PAT */
-        uint64_t global     : 1;   /* 8: Global */
-        uint64_t sw_bits    : 3;   /* 9-11: Available for software */
-        uint64_t phys_addr  : 40;  /* 12-51: Physical address (4KB aligned) */
-        uint64_t sw_bits2   : 11;  /* 52-62: Available for software */
-        uint64_t nx         : 1;   /* 63: No Execute */
+        uint64_t present : 1;    /* 0: Present */
+        uint64_t writable : 1;   /* 1: Read/Write */
+        uint64_t user : 1;       /* 2: User/Supervisor */
+        uint64_t pwt : 1;        /* 3: Page-level Write-Through */
+        uint64_t pcd : 1;        /* 4: Page-level Cache Disable */
+        uint64_t accessed : 1;   /* 5: Accessed */
+        uint64_t dirty : 1;      /* 6: Dirty (仅在最后一级) */
+        uint64_t huge : 1;       /* 7: Page Size (PS) / PAT */
+        uint64_t global : 1;     /* 8: Global */
+        uint64_t sw_bits : 3;    /* 9-11: Available for software */
+        uint64_t phys_addr : 40; /* 12-51: Physical address (4KB aligned) */
+        uint64_t sw_bits2 : 11;  /* 52-62: Available for software */
+        uint64_t nx : 1;         /* 63: No Execute */
     } bits;
-    
+
     /* 表项（指向下一级页表） */
     struct {
-        uint64_t present    : 1;
-        uint64_t writable   : 1;
-        uint64_t user       : 1;
-        uint64_t pwt        : 1;
-        uint64_t pcd        : 1;
-        uint64_t accessed   : 1;
-        uint64_t ignored1   : 1;
-        uint64_t reserved   : 1;   /* Must be 0 for table entry */
-        uint64_t ignored2   : 4;
-        uint64_t next_table : 40;  /* 下一级页表的物理地址（PPN） */
-        uint64_t ignored3   : 11;
-        uint64_t nx         : 1;
+        uint64_t present : 1;
+        uint64_t writable : 1;
+        uint64_t user : 1;
+        uint64_t pwt : 1;
+        uint64_t pcd : 1;
+        uint64_t accessed : 1;
+        uint64_t ignored1 : 1;
+        uint64_t reserved : 1; /* Must be 0 for table entry */
+        uint64_t ignored2 : 4;
+        uint64_t next_table : 40; /* 下一级页表的物理地址（PPN） */
+        uint64_t ignored3 : 11;
+        uint64_t nx : 1;
     } table;
-    
+
     /* 大页（2MB 在 PD，1GB 在 PDPT） */
     struct {
-        uint64_t present    : 1;
-        uint64_t writable   : 1;
-        uint64_t user       : 1;
-        uint64_t pwt        : 1;
-        uint64_t pcd        : 1;
-        uint64_t accessed   : 1;
-        uint64_t dirty      : 1;
-        uint64_t huge       : 1;   /* Must be 1 for huge page */
-        uint64_t global     : 1;
-        uint64_t sw_bits    : 3;
-        uint64_t pat        : 1;   /* Page Attribute Table */
-        uint64_t reserved1  : 8;   /* 2MB: bits 13-20 must be 0 */
-        uint64_t phys_addr  : 31;  /* 2MB: bits 21-51 */
-        uint64_t sw_bits2   : 11;
-        uint64_t nx         : 1;
+        uint64_t present : 1;
+        uint64_t writable : 1;
+        uint64_t user : 1;
+        uint64_t pwt : 1;
+        uint64_t pcd : 1;
+        uint64_t accessed : 1;
+        uint64_t dirty : 1;
+        uint64_t huge : 1; /* Must be 1 for huge page */
+        uint64_t global : 1;
+        uint64_t sw_bits : 3;
+        uint64_t pat : 1;        /* Page Attribute Table */
+        uint64_t reserved1 : 8;  /* 2MB: bits 13-20 must be 0 */
+        uint64_t phys_addr : 31; /* 2MB: bits 21-51 */
+        uint64_t sw_bits2 : 11;
+        uint64_t nx : 1;
     } huge_2mb;
-    
+
     /* 原始 64 位值 */
     uint64_t raw;
 } pte_t;
@@ -148,11 +148,11 @@ typedef union {
 /* ── 页表操作宏 ───────────────────────────────────────────────────── */
 
 /* 从 PTE 提取物理地址（页帧号 → 物理地址） */
-#define PTE_TO_PHYS(pte)   ((pte).bits.phys_addr << 12)
-#define PTE_TO_PFN(pte)    ((pte).bits.phys_addr)
+#define PTE_TO_PHYS(pte) ((pte).bits.phys_addr << 12)
+#define PTE_TO_PFN(pte)  ((pte).bits.phys_addr)
 
 /* 从物理地址创建 PTE */
-#define PHYS_TO_PTE(paddr, flags)  (((paddr) & PTE_ADDR_MASK) | (flags))
+#define PHYS_TO_PTE(paddr, flags) (((paddr) & PTE_ADDR_MASK) | (flags))
 
 /* 检查 PTE 是否有效 */
 #define PTE_IS_PRESENT(pte)  ((pte).bits.present)
@@ -194,7 +194,7 @@ static inline uint64_t read_cr3(void)
 /* 写入 CR3（切换页表） */
 static inline void write_cr3(uint64_t value)
 {
-    __asm__ volatile("mov %0, %%cr3" :: "r"(value) : "memory");
+    __asm__ volatile("mov %0, %%cr3" ::"r"(value) : "memory");
 }
 
 /* 刷新 TLB */
@@ -207,7 +207,7 @@ static inline void flush_tlb(void)
 /* 刷新单个虚拟地址的 TLB */
 static inline void flush_tlb_single(uint64_t vaddr)
 {
-    __asm__ volatile("invlpg (%0)" :: "r"(vaddr) : "memory");
+    __asm__ volatile("invlpg (%0)" ::"r"(vaddr) : "memory");
 }
 
 /* ── 物理/虚拟地址转换 ───────────────────────────────────────────── */
@@ -218,10 +218,10 @@ static inline void flush_tlb_single(uint64_t vaddr)
  */
 
 /* 内核虚拟地址偏移（用于参考） */
-#define KERNEL_VMA_OFFSET  0xffff800000000000ULL
+#define KERNEL_VMA_OFFSET 0xffff800000000000ULL
 
 /* 检查是否是内核虚拟地址 */
-#define is_kernel_vaddr(vaddr)  ((uint64_t)(vaddr) >= KERNEL_VMA_OFFSET)
+#define is_kernel_vaddr(vaddr) ((uint64_t)(vaddr) >= KERNEL_VMA_OFFSET)
 
 /* ── 页对齐宏 ───────────────────────────────────────────────────── */
 
@@ -231,13 +231,13 @@ static inline void flush_tlb_single(uint64_t vaddr)
  */
 
 /* 向下对齐到页边界 */
-#define PAGE_ALIGN_DOWN(addr)  ((uint64_t)(addr) & PAGE_MASK)
+#define PAGE_ALIGN_DOWN(addr) ((uint64_t)(addr) & PAGE_MASK)
 
 /* 向上对齐到页边界 */
-#define PAGE_ALIGN_UP(addr)    (((uint64_t)(addr) + PAGE_SIZE - 1) & PAGE_MASK)
+#define PAGE_ALIGN_UP(addr) (((uint64_t)(addr) + PAGE_SIZE - 1) & PAGE_MASK)
 
 /* 检查是否页对齐 */
-#define IS_PAGE_ALIGNED(addr)  (((uint64_t)(addr) & ~PAGE_MASK) == 0)
+#define IS_PAGE_ALIGNED(addr) (((uint64_t)(addr) & ~PAGE_MASK) == 0)
 
 /* ── 内核高半区 PML4 范围 ───────────────────────────────────────── */
 
@@ -249,8 +249,8 @@ static inline void flush_tlb_single(uint64_t vaddr)
  * 用户页表必须包含 PML4[X86_PML4_KERNEL_START..511] 的内核映射，
  * 否则 SYSCALL / 中断时内核高半区不可达 → 三重错误 → 重启。
  */
-#define X86_PML4_KERNEL_START  256U      /* (KERNEL_VMA_OFFSET >> 39) & 0x1ff */
-#define X86_PML4_ENTRIES       512U
+#define X86_PML4_KERNEL_START 256U /* (KERNEL_VMA_OFFSET >> 39) & 0x1ff */
+#define X86_PML4_ENTRIES      512U
 
 /**
  * x86_copy_kernel_mappings - 将内核高半区 PML4[256..511] 复制到用户页表

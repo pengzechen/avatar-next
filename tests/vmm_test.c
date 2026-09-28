@@ -38,13 +38,13 @@
 #include "arch.h"
 #include "klog.h"
 #include "task/task.h"
-#include "vmm.h"
+#include "vmm/vmm.h"
 
 #if ARCH_AARCH64
 #include "aarch64/stage2.h"
 #include "mm_vm.h"
-extern void guest_test_entry(void);  /* apps/aarch64/guest_test.S */
-extern void el0_loop_program(void);  /* apps/aarch64/el0_loop.S   */
+extern void guest_test_entry(void); /* apps/aarch64/guest_test.S */
+extern void el0_loop_program(void); /* apps/aarch64/el0_loop.S   */
 
 static vm_t g_test_vm;
 
@@ -54,17 +54,18 @@ static void el2_loop_thread(void *arg)
     uint32_t n = 0;
     while (1) {
         n++;
-        if (n % 20 == 0)
-            KLOG_INFO("[el2_loop] tick=%u (EL2 kernel)\n", n);
+        /* 这行是 test-vmm 在 LOG=info 下的通过证据，必须留 INFO；改用公共
+         * 采样器抽稀（原来的 n % 20 仍随运行时长无界增长）。 */
+        KLOG_INFO_SAMPLE("[el2_loop] tick=%u (EL2 kernel)\n", n);
         task_yield();
     }
 }
 #endif /* ARCH_AARCH64 */
 
 #if ARCH_RISCV64
-extern void rv_guest_test_entry(void);                          /* apps/riscv64/guest_test.S */
-extern void user_test_program(void);                            /* apps/riscv64/user_test.S  */
-extern int  hext_vcpu_setup(vcpu_t *vcpu, void (*entry)(void));
+extern void rv_guest_test_entry(void); /* apps/riscv64/guest_test.S */
+extern void user_test_program(void);   /* apps/riscv64/user_test.S  */
+extern int hext_vcpu_setup(vcpu_t *vcpu, void (*entry)(void));
 
 static vm_t g_rv_vm;
 
@@ -74,17 +75,16 @@ static void rv_host_loop(void *arg)
     uint32_t n = 0;
     while (1) {
         n++;
-        if (n % 20 == 0)
-            KLOG_INFO("[rv_host] tick=%u (HS-mode)\n", n);
+        KLOG_INFO_SAMPLE("[rv_host] tick=%u (HS-mode)\n", n);
         task_yield();
     }
 }
 #endif /* ARCH_RISCV64 */
 
 #if ARCH_X86_64
-extern void x86_guest_test_entry(void);                         /* apps/x86_64/guest_test.S */
-extern void user_test_program(void);                            /* apps/x86_64/user_test.S  */
-extern int  vmx_vcpu_setup(vcpu_t *vcpu, void (*entry)(void));
+extern void x86_guest_test_entry(void); /* apps/x86_64/guest_test.S */
+extern void user_test_program(void);    /* apps/x86_64/user_test.S  */
+extern int vmx_vcpu_setup(vcpu_t *vcpu, void (*entry)(void));
 
 static vm_t g_x86_vm;
 
@@ -94,8 +94,7 @@ static void x86_host_loop(void *arg)
     uint32_t n = 0;
     while (1) {
         n++;
-        if (n % 20 == 0)
-            KLOG_INFO("[x86_host] tick=%u (VMX root)\n", n);
+        KLOG_INFO_SAMPLE("[x86_host] tick=%u (VMX root)\n", n);
         task_yield();
     }
 }
@@ -128,14 +127,14 @@ void run_vmm_test(void)
     g_test_vm.cfg.nr_vcpus = 1;
     if (vm_create(&g_test_vm) == 0) {
         vcpu_t *vcpu = &g_test_vm.vcpus[0];
-        vcpu->elr    = virt_to_phys(guest_test_entry);
-        vcpu->spsr   = 0x5ULL | (0xFULL << 6);   /* EL1h, DAIF masked */
+        vcpu->elr = virt_to_phys(guest_test_entry);
+        vcpu->spsr = 0x5ULL | (0xFULL << 6); /* EL1h, DAIF masked */
         vcpu->sp_el1 = GUEST_RAM_BASE + GUEST_RAM_SIZE - 0x1000;
 
         task_t *vt = vcpu_task_create(vcpu, 5);
         if (vt)
-            KLOG_INFO("Thread 2 [EL1 guest/vcpu]: id=%u entry=0x%llx\n",
-                      vt->id, vcpu->elr);
+            KLOG_INFO("Thread 2 [EL1 guest/vcpu]: id=%u entry=0x%llx\n", vt->id,
+                      vcpu->elr);
         else
             KLOG_ERROR("vcpu_task_create failed!\n");
     } else {
@@ -143,11 +142,10 @@ void run_vmm_test(void)
     }
 
     /* Thread 3: EL0 user process */
-    task_t *el0_task = process_create("el0_loop",
-                                      (uint64_t)el0_loop_program,
-                                      0x4000,  /* 16KB，覆盖 el0_loop_program 代码 */
-                                      0x200000,
-                                      5);
+    task_t *el0_task =
+        process_create("el0_loop", (uint64_t)el0_loop_program,
+                       0x4000, /* 16KB，覆盖 el0_loop_program 代码 */
+                       0x200000, 5);
     if (el0_task)
         KLOG_INFO("Thread 3 [EL0 user]:       id=%u entry=0x%llx\n",
                   el0_task->id, (uint64_t)el0_loop_program);
@@ -172,7 +170,7 @@ void run_vmm_test(void)
     /* Thread 2: VS-mode guest vCPU（调试时可将 #if 1 改为 #if 0 禁用）*/
 #if 1
     g_rv_vm.cfg.mem_base = 0;
-    g_rv_vm.cfg.mem_size = 0;   /* 无 hgatp，guest 共享 host 地址空间 */
+    g_rv_vm.cfg.mem_size = 0; /* 无 hgatp，guest 共享 host 地址空间 */
     g_rv_vm.cfg.nr_vcpus = 1;
     if (vm_create(&g_rv_vm) == 0) {
         vcpu_t *vcpu = &g_rv_vm.vcpus[0];
@@ -192,14 +190,13 @@ void run_vmm_test(void)
 #endif
 
     /* Thread 3: U-mode user process */
-    task_t *u_task_rv = process_create("u_loop",
-                                       (uint64_t)user_test_program,
-                                       0x4000,  /* 16KB，覆盖 user_test_program 代码 */
-                                       0x200000,
-                                       5);
+    task_t *u_task_rv =
+        process_create("u_loop", (uint64_t)user_test_program,
+                       0x4000, /* 16KB，覆盖 user_test_program 代码 */
+                       0x200000, 5);
     if (u_task_rv)
-        KLOG_INFO("Thread 3 [U-mode]:    id=%u entry=%p\n",
-                  u_task_rv->id, (void *)user_test_program);
+        KLOG_INFO("Thread 3 [U-mode]:    id=%u entry=%p\n", u_task_rv->id,
+                  (void *)user_test_program);
     else
         KLOG_ERROR("Failed to create user loop thread!\n");
 
@@ -220,7 +217,7 @@ void run_vmm_test(void)
 
     /* Thread 2: VMX non-root guest vCPU */
     g_x86_vm.cfg.mem_base = 0;
-    g_x86_vm.cfg.mem_size = 0;   /* no EPT, guest shares host CR3 */
+    g_x86_vm.cfg.mem_size = 0; /* no EPT, guest shares host CR3 */
     g_x86_vm.cfg.nr_vcpus = 1;
     if (vm_create(&g_x86_vm) == 0) {
         vcpu_t *vcpu = &g_x86_vm.vcpus[0];
@@ -239,14 +236,13 @@ void run_vmm_test(void)
     }
 
     /* Thread 3: Ring3 user process */
-    task_t *u_task = process_create("u_loop",
-                                    (uint64_t)user_test_program,
-                                    0x4000,  /* 16KB，覆盖 user_test_program 代码 */
-                                    0x200000,
-                                    5);
+    task_t *u_task =
+        process_create("u_loop", (uint64_t)user_test_program,
+                       0x4000, /* 16KB，覆盖 user_test_program 代码 */
+                       0x200000, 5);
     if (u_task)
-        KLOG_INFO("Thread 3 [user]:      id=%u entry=%p\n",
-                  u_task->id, (void *)user_test_program);
+        KLOG_INFO("Thread 3 [user]:      id=%u entry=%p\n", u_task->id,
+                  (void *)user_test_program);
     else
         KLOG_ERROR("Failed to create user loop thread!\n");
 

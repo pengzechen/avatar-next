@@ -14,16 +14,16 @@
 
 /* ── 测试配置 ─────────────────────────────────────────────── */
 
-#define COMPARE_NUM_TASKS    10      /* 增加任务数 */
-#define COMPARE_ITERATIONS   200     /* 增加迭代次数 */
+#define COMPARE_NUM_TASKS  10  /* 增加任务数 */
+#define COMPARE_ITERATIONS 200 /* 增加迭代次数 */
 
 /* ── 共享数据（模拟银行账户）──────────────────────────────── */
 
 typedef struct {
-    uint32_t balance;           /* 账户余额 */
-    uint32_t deposits;          /* 存款次数 */
-    uint32_t withdrawals;       /* 取款次数 */
-    uint32_t errors;            /* 错误次数 */
+    uint32_t balance;     /* 账户余额 */
+    uint32_t deposits;    /* 存款次数 */
+    uint32_t withdrawals; /* 取款次数 */
+    uint32_t errors;      /* 错误次数 */
 } account_t;
 
 /* 无锁版本使用的账户 */
@@ -31,12 +31,11 @@ static account_t g_account_no_lock;
 
 /* 有锁版本使用的账户 */
 static account_t g_account_locked;
-static mutex_t   g_account_mutex;
+static mutex_t g_account_mutex;
 
 /* ── 无锁版本：直接操作共享数据 ───────────────────────────── */
 
-static void
-no_lock_deposit_task(void *arg)
+static void no_lock_deposit_task(void *arg)
 {
     uint32_t task_id = *(uint32_t *)arg;
 
@@ -56,13 +55,12 @@ no_lock_deposit_task(void *arg)
         }
     }
 
-    KLOG_INFO("[no-lock] deposit_task_%u: completed %u deposits\n",
-              task_id, COMPARE_ITERATIONS);
+    KLOG_INFO("[no-lock] deposit_task_%u: completed %u deposits\n", task_id,
+              COMPARE_ITERATIONS);
     task_exit();
 }
 
-static void
-no_lock_withdraw_task(void *arg)
+static void no_lock_withdraw_task(void *arg)
 {
     uint32_t task_id = *(uint32_t *)arg;
 
@@ -84,15 +82,14 @@ no_lock_withdraw_task(void *arg)
         }
     }
 
-    KLOG_INFO("[no-lock] withdraw_task_%u: completed %u withdrawals\n",
-              task_id, COMPARE_ITERATIONS);
+    KLOG_INFO("[no-lock] withdraw_task_%u: completed %u withdrawals\n", task_id,
+              COMPARE_ITERATIONS);
     task_exit();
 }
 
 /* ── 有锁版本：使用 mutex 保护 ───────────────────────────── */
 
-static void
-locked_deposit_task(void *arg)
+static void locked_deposit_task(void *arg)
 {
     uint32_t task_id = *(uint32_t *)arg;
 
@@ -116,13 +113,12 @@ locked_deposit_task(void *arg)
         task_yield();
     }
 
-    KLOG_INFO("[locked] deposit_task_%u: completed %u deposits\n",
-              task_id, COMPARE_ITERATIONS);
+    KLOG_INFO("[locked] deposit_task_%u: completed %u deposits\n", task_id,
+              COMPARE_ITERATIONS);
     task_exit();
 }
 
-static void
-locked_withdraw_task(void *arg)
+static void locked_withdraw_task(void *arg)
 {
     uint32_t task_id = *(uint32_t *)arg;
 
@@ -148,15 +144,14 @@ locked_withdraw_task(void *arg)
         task_yield();
     }
 
-    KLOG_INFO("[locked] withdraw_task_%u: completed %u withdrawals\n",
-              task_id, COMPARE_ITERATIONS);
+    KLOG_INFO("[locked] withdraw_task_%u: completed %u withdrawals\n", task_id,
+              COMPARE_ITERATIONS);
     task_exit();
 }
 
 /* ── 结果验证和打印 ───────────────────────────────────────── */
 
-static void
-print_results(const char *test_name, account_t *account)
+static void print_results(const char *test_name, account_t *account)
 {
     KLOG_INFO("\n");
     KLOG_INFO("=== %s Results ===\n", test_name);
@@ -168,7 +163,7 @@ print_results(const char *test_name, account_t *account)
     KLOG_INFO("Errors detected: %u\n", account->errors);
 
     /* 计算预期余额 */
-    int32_t expected = 1000 +  /* 初始余额 */
+    int32_t expected = 1000 + /* 初始余额 */
                        (int32_t)account->deposits * 100 -
                        (int32_t)account->withdrawals * 50;
     int32_t difference = (int32_t)account->balance - expected;
@@ -181,25 +176,28 @@ print_results(const char *test_name, account_t *account)
 
     /* 1. 验证错误（balance不是50的倍数）*/
     if (account->errors > 0) {
-        KLOG_ERROR("❌ VALIDATION ERRORS: %u operations failed balance check!\n",
-                  account->errors);
+        KLOG_ERROR(
+            "❌ VALIDATION ERRORS: %u operations failed balance check!\n",
+            account->errors);
         has_error = true;
     }
 
     /* 2. 丢失操作（deposits/withdrawals计数不正确）*/
     uint32_t expected_deposits = COMPARE_NUM_TASKS / 2 * COMPARE_ITERATIONS;
     uint32_t expected_withdrawals = COMPARE_NUM_TASKS / 2 * COMPARE_ITERATIONS;
-    if (account->deposits != expected_deposits || account->withdrawals != expected_withdrawals) {
-        KLOG_ERROR("❌ LOST OPERATIONS: Expected %u deposits/%u withdrawals, got %u/%u\n",
-                  expected_deposits, expected_withdrawals,
-                  account->deposits, account->withdrawals);
+    if (account->deposits != expected_deposits ||
+        account->withdrawals != expected_withdrawals) {
+        KLOG_ERROR(
+            "❌ LOST OPERATIONS: Expected %u deposits/%u withdrawals, got %u/%u\n",
+            expected_deposits, expected_withdrawals, account->deposits,
+            account->withdrawals);
         has_error = true;
     }
 
     /* 3. Balance不正确（lost updates导致）*/
     if (difference != 0) {
         KLOG_ERROR("❌ LOST UPDATES: Balance off by %d (expected %d, got %u)\n",
-                  difference, expected, account->balance);
+                   difference, expected, account->balance);
         has_error = true;
     }
 
@@ -215,8 +213,7 @@ print_results(const char *test_name, account_t *account)
 
 static uint32_t g_no_lock_ids[COMPARE_NUM_TASKS];
 
-static void
-run_no_lock_test(void)
+static void run_no_lock_test(void)
 {
     KLOG_INFO("╔══════════════════════════════════════════════════════╗\n");
     KLOG_INFO("║  Phase 1: NO LOCK (Race Condition Demo)            ║\n");
@@ -236,14 +233,18 @@ run_no_lock_test(void)
     for (uint32_t i = 0; i < COMPARE_NUM_TASKS / 2; i++) {
         g_no_lock_ids[i] = i;
         char name[16];
-        name[0] = 'd'; name[1] = '0' + i; name[2] = '\0';
+        name[0] = 'd';
+        name[1] = '0' + i;
+        name[2] = '\0';
         task_create(name, no_lock_deposit_task, &g_no_lock_ids[i], 1);
     }
 
     for (uint32_t i = COMPARE_NUM_TASKS / 2; i < COMPARE_NUM_TASKS; i++) {
         g_no_lock_ids[i] = i;
         char name[16];
-        name[0] = 'w'; name[1] = '0' + i; name[2] = '\0';
+        name[0] = 'w';
+        name[1] = '0' + i;
+        name[2] = '\0';
         task_create(name, no_lock_withdraw_task, &g_no_lock_ids[i], 1);
     }
 }
@@ -252,8 +253,7 @@ run_no_lock_test(void)
 
 static uint32_t g_locked_ids[COMPARE_NUM_TASKS];
 
-static void
-run_locked_test(void)
+static void run_locked_test(void)
 {
     KLOG_INFO("╔══════════════════════════════════════════════════════╗\n");
     KLOG_INFO("║  Phase 2: WITH LOCK (Mutex Protected)               ║\n");
@@ -276,14 +276,18 @@ run_locked_test(void)
     for (uint32_t i = 0; i < COMPARE_NUM_TASKS / 2; i++) {
         g_locked_ids[i] = i;
         char name[16];
-        name[0] = 'D'; name[1] = '0' + i; name[2] = '\0';
+        name[0] = 'D';
+        name[1] = '0' + i;
+        name[2] = '\0';
         task_create(name, locked_deposit_task, &g_locked_ids[i], 1);
     }
 
     for (uint32_t i = COMPARE_NUM_TASKS / 2; i < COMPARE_NUM_TASKS; i++) {
         g_locked_ids[i] = i;
         char name[16];
-        name[0] = 'W'; name[1] = '0' + i; name[2] = '\0';
+        name[0] = 'W';
+        name[1] = '0' + i;
+        name[2] = '\0';
         task_create(name, locked_withdraw_task, &g_locked_ids[i], 1);
     }
 
@@ -295,8 +299,7 @@ run_locked_test(void)
 
 /* ── 对比总结任务 ─────────────────────────────────────────── */
 
-static void
-summary_task(void *arg)
+static void summary_task(void *arg)
 {
     (void)arg;
 
@@ -322,9 +325,11 @@ summary_task(void *arg)
     KLOG_INFO("Key Takeaways:\n");
     KLOG_INFO("  1. Without locks: multiple tasks can read-modify-write\n");
     KLOG_INFO("     the same data simultaneously, causing lost updates\n");
-    KLOG_INFO("  2. With mutex: only one task can access the data at a time,\n");
+    KLOG_INFO(
+        "  2. With mutex: only one task can access the data at a time,\n");
     KLOG_INFO("     ensuring atomicity and correctness\n");
-    KLOG_INFO("  3. The cost: mutex adds overhead due to blocking/context switch\n");
+    KLOG_INFO(
+        "  3. The cost: mutex adds overhead due to blocking/context switch\n");
     KLOG_INFO("\n");
 
     KLOG_INFO("[summary] Test complete. Exiting...\n");
@@ -333,8 +338,7 @@ summary_task(void *arg)
 
 /* ── 主测试入口 ───────────────────────────────────────────── */
 
-void
-run_mutex_comparison_test(void)
+void run_mutex_comparison_test(void)
 {
     KLOG_INFO("=== Mutex Comparison Test: No Lock vs With Lock ===\n");
     KLOG_INFO("\n");

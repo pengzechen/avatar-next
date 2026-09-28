@@ -28,7 +28,7 @@ extern int g_mmio_needs_vma;
 #define PMM_MAX_RESV 4
 
 typedef struct {
-    char     tag[32];
+    char tag[32];
     uint64_t start;
     uint64_t end;
 } pmm_resv_t;
@@ -36,22 +36,22 @@ typedef struct {
 typedef struct {
     const char *block;
     const char *key;
-    uintptr_t   value;
+    uintptr_t value;
 } platform_kv_t;
 
 typedef struct {
     const char *tag;
-    uint64_t    start;
-    uint64_t    end;
+    uint64_t start;
+    uint64_t end;
 } platform_reserve_t;
 
-extern const platform_kv_t      g_platform_static_kv[];
-extern const unsigned           g_platform_static_kv_count;
+extern const platform_kv_t g_platform_static_kv[];
+extern const unsigned g_platform_static_kv_count;
 extern const platform_reserve_t g_platform_static_reserves[];
-extern const unsigned           g_platform_static_reserve_count;
+extern const unsigned g_platform_static_reserve_count;
 
 extern pmm_resv_t g_pmm_reserves[PMM_MAX_RESV];
-extern int        g_pmm_resv_count;
+extern int g_pmm_resv_count;
 
 /* ── 初始化函数 ──────────────────────────────────────────────────────── */
 
@@ -72,7 +72,7 @@ void platform_conf_close(void);
  *   unsigned  irq  = platform_get_uint("irq", "gicd");
  */
 uintptr_t platform_get_uintptr(const char *block, const char *key);
-unsigned  platform_get_uint   (const char *block, const char *key);
+unsigned platform_get_uint(const char *block, const char *key);
 
 /**
  * platform_get_mmio - 返回 MMIO 物理地址（mmio_vma=true 平台自动加 KERNEL_VMA）。
@@ -83,11 +83,18 @@ uintptr_t platform_get_mmio(const char *block, const char *key);
 /* ── logger_* 兼容宏（与旧 driver_cfg.h 保持兼容）─────────────────────── */
 
 #include "klog.h"
-#define logger_error(...)     KLOG_ERROR(__VA_ARGS__)
-#define logger_warn(...)      KLOG_WARN(__VA_ARGS__)
-#define logger_info(...)      KLOG_INFO(__VA_ARGS__)
-#define logger_debug(...)     KLOG_DEBUG(__VA_ARGS__)
-#define logger_gic_debug(...) KLOG_DEBUG(__VA_ARGS__)
-#define logger_trace(...)     KLOG_TRACE(__VA_ARGS__)
+#define logger_error(...) KLOG_ERROR(__VA_ARGS__)
+#define logger_warn(...)  KLOG_WARN(__VA_ARGS__)
+#define logger_info(...)  KLOG_INFO(__VA_ARGS__)
+#define logger_debug(...) KLOG_DEBUG(__VA_ARGS__)
+#define logger_trace(...) KLOG_TRACE(__VA_ARGS__)
+
+/*
+ * GIC 专用的调试日志：走模块掩码的 GIC 位，而不是普通 KLOG_DEBUG。
+ * 这样 LOG=debug 时可以只开它：
+ *     make PLATFORM=... run LOG=debug LOG_MODULES=gic
+ * 以前它只是 KLOG_DEBUG 的别名，名字里的 "gic" 没有任何过滤作用。
+ */
+#define logger_gic_debug(...) KLOG_MODULE_DEBUG(LOG_MODULE_GIC, __VA_ARGS__)
 
 #endif /* PLATFORM_CFG_H */

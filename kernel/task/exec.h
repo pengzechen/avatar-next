@@ -23,9 +23,8 @@
  * 创建新进程，阻塞当前任务直到新进程退出，然后以相同退出码退出。
  * 返回：失败时返回负值；成功时调用 task_exit() 不返回。
  */
-int task_execve(const char *pathname,
-                uint8_t *file_data, uint64_t file_size,
-                uint8_t *interp_data, uint64_t interp_size,
-                char **argv, char **envp);
+int task_execve(const char *pathname, uint8_t *file_data, uint64_t file_size,
+                uint8_t *interp_data, uint64_t interp_size, char **argv,
+                char **envp);
 
 #endif /* KERNEL_TASK_EXEC_H */

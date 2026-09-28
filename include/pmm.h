@@ -6,15 +6,14 @@
 #include "spinlock.h"
 #include "platform_cfg.h"
 
-
 /* ── 物理内存配置 ───────────────────────────────────────────────────── */
 
 /* 运行时变量别名（从 platform_conf_scan() 提取，在 pmm_initialize() 前有效） */
-#define PMM_RAM_BASE    g_mem_ram_base
-#define PMM_RAM_SIZE    g_mem_ram_size
+#define PMM_RAM_BASE g_mem_ram_base
+#define PMM_RAM_SIZE g_mem_ram_size
 
 /* 位图静态缓冲区的最大字节数：支持最多 4GB RAM @ 4KB 页 */
-#define PMM_BITMAP_MAX_BYTES  131072U
+#define PMM_BITMAP_MAX_BYTES 131072U
 
 /*
  * include/pmm.h - 物理内存管理器
@@ -25,13 +24,22 @@
 /* ── 物理内存管理器结构 ───────────────────────────────────────────── */
 
 typedef struct {
-    spinlock_t lock;       /* 自旋锁（任务初始化前可用）  */
-    bitmap_t bitmap;       /* 页面分配位图                */
-    uint64_t start_addr;   /* 物理内存起始地址            */
-    uint64_t total_size;   /* 总内存大小                  */
-    uint64_t page_size;    /* 页面大小（通常 4KB）        */
-    uint64_t total_pages;  /* 总页面数                    */
-    uint64_t free_pages;   /* 空闲页面数                  */
+    spinlock_t lock;      /* 自旋锁（任务初始化前可用）  */
+    bitmap_t bitmap;      /* 页面分配位图                */
+    uint64_t start_addr;  /* 物理内存起始地址            */
+    uint64_t total_size;  /* 总内存大小                  */
+    uint64_t page_size;   /* 页面大小（通常 4KB）        */
+    uint64_t total_pages; /* 总页面数                    */
+    uint64_t free_pages;  /* 空闲页面数                  */
+
+    /*
+     * next-fit 分配提示：下次从哪一位开始找。
+     *
+     * 没有它的话每次分配都从位图**开头**扫 —— 而低地址被内核与 rootfs
+     * 保留区占着，于是每分配一页都要白扫几万位。加载 guest 内核映像要
+     * 近万次分配，累计下来是几亿次位测试（详见 lib/bitmap.c 的说明）。
+     */
+    size_t alloc_hint;
 } pmm_t;
 
 extern pmm_t *g_pmm;
@@ -48,11 +56,8 @@ extern pmm_t *g_pmm;
  *
  * 使用前必须调用此函数初始化 PMM。
  */
-void pmm_init(pmm_t *pmm,
-              uint64_t start_addr,
-              uint64_t size,
-              uint8_t *bitmap_buffer,
-              size_t bitmap_size);
+void pmm_init(pmm_t *pmm, uint64_t start_addr, uint64_t size,
+              uint8_t *bitmap_buffer, size_t bitmap_size);
 
 /**
  * pmm_alloc_pages - 分配连续的物理页面

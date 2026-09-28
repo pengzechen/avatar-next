@@ -20,6 +20,7 @@
 .code64
 .extern handle_exception
 .extern sched_check_and_yield_from_trap
+.extern signal_deliver_from_trap
 
 /* ── 宏：无错误码的存根 ─────────────────────────────────────── */
 .macro ISR_NOERR vec
@@ -119,6 +120,16 @@ isr_common_stub:
     /* 传递 trap_frame_t * 作为第一个参数（System V ABI: rdi） */
     leaq    8(%rsp), %rdi
     call    handle_exception
+
+    /*
+     * 投递待处理信号。
+     * deliver_pending_signals() 的另一处调用点在 syscall 返回路径上，
+     * 而纯用户态自旋（不发任何 syscall）的任务永远不经过那里 ——
+     * 那样连 SIGKILL 都杀不掉它。这里补上 IRQ/异常返回这条路径。
+     * 必须在调度检查之前：SIG_DFL 的终止动作会走 sys_exit()。
+     */
+    leaq    8(%rsp), %rdi
+    call    signal_deliver_from_trap
 
     /* 检查是否需要重调度（IRQ 触发的抢占）──────────────────────── */
     leaq    8(%rsp), %rdi

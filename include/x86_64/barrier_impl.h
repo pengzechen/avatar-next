@@ -13,8 +13,7 @@
  *
  * MFENCE: 内存屏障（读+写）
  */
-static inline void
-barrier_data(void)
+static inline void barrier_data(void)
 {
     asm volatile("mfence" ::: "memory");
 }
@@ -24,8 +23,7 @@ barrier_data(void)
  *
  * LFENCE: 加载屏障
  */
-static inline void
-barrier_data_read(void)
+static inline void barrier_data_read(void)
 {
     asm volatile("lfence" ::: "memory");
 }
@@ -35,8 +33,7 @@ barrier_data_read(void)
  *
  * SFENCE: 存储屏障
  */
-static inline void
-barrier_data_write(void)
+static inline void barrier_data_write(void)
 {
     asm volatile("sfence" ::: "memory");
 }
@@ -49,8 +46,12 @@ barrier_data_write(void)
  * x86_64 上 MFENCE 已经提供了完整的同步
  * CPUID 也可以用作指令序列化器
  */
-static inline void
-barrier_instr_full(void)
+static inline void barrier_instr_full(void)
+{
+    asm volatile("mfence" ::: "memory");
+}
+
+static inline void barrier_sync(void)
 {
     asm volatile("mfence" ::: "memory");
 }
@@ -63,8 +64,7 @@ barrier_instr_full(void)
  * x86_64 的 TSO (Total Store Order) 模型已经提供了较强的保证
  * 使用编译器屏障即可
  */
-static inline void
-barrier_acquire(void)
+static inline void barrier_acquire(void)
 {
     asm volatile("" ::: "memory");
 }
@@ -75,8 +75,7 @@ barrier_acquire(void)
  * x86_64 的 TSO 模型已经提供了较强的保证
  * 使用编译器屏障即可
  */
-static inline void
-barrier_release(void)
+static inline void barrier_release(void)
 {
     asm volatile("" ::: "memory");
 }

@@ -1,5 +1,5 @@
 # Avatar OS — 顶层 Makefile
-# 用法: make PLATFORM=<platform> [LOG=none|error|warn|info|debug|trace] [ASSERT=panic|off] [target]
+# 用法: make PLATFORM=<platform> [LOG=none|error|warn|info|debug|trace] [target]
 # 快速参考: make help
 
 # ─── §1  基本参数 ─────────────────────────────────────────────────────────────
@@ -16,18 +16,29 @@ endif
 # 日志级别配置
 LOG ?= info
 
-# 断言配置
-ASSERT ?= panic
-
 # QEMU vCPU 数量（用于 run / run-fs / test-*）
-# Phase 0：仅传给 QEMU，内核当前仍按单核运行（cpu_bring_up_all 是 stub）。
+# 既传给 QEMU 的 -smp，也经 -DCONFIG_SMP_CPUS 传给内核。
+# 默认 1：此时 cpu_bring_up_all() 直接返回，从核不启动，内核单核运行。
 SMP ?= 1
 ifeq ($(filter $(SMP),1 2 3 4 5 6 7 8),)
 $(error Invalid SMP value '$(SMP)'. Use SMP=1..8)
 endif
 
+# 帧指针（backtrace 用）：FP=1 加 -fno-omit-frame-pointer，FP=0 不加。
+#
+# panic / 内核异常时的调用栈靠帧指针链走出来（kernel/debug/backtrace.c）。
+# 默认开着 —— 默认关的话 backtrace 一上来只能给启发式扫描的噪声，看着像坏
+# 了一样；要压性能时 FP=0 一行关掉。
+#
+# 代价：占掉一个通用寄存器（x86_64 rbp / aarch64 x29 / riscv64 s0），
+# 全内核大约 1-3% 性能损失。FP=0 时 backtrace 退化为栈扫描 —— 能出东西，
+# 但会有误报、也可能漏帧。
+FP ?= 1
+ifeq ($(filter $(FP),0 1),)
+$(error Invalid FP value '$(FP)'. Use FP=0 or FP=1)
+endif
+
 # 目录设置
-SRC_DIR         := examples
 LIB_DIR         := lib
 BUILD_ROOT      := build
 BUILD_DIR       := $(BUILD_ROOT)/$(PLATFORM)
@@ -40,6 +51,9 @@ TESTS_DIR       := tests
 TOOLS_DIR       := tools
 FS_DIR          := fs
 THIRD_PARTY_DIR := third_party
+
+# 宿主 Python：tools/ 下的生成脚本（gen_platform.py / gen_kallsyms.py）用它
+PYTHON ?= python3
 
 # ─── §2  平台配置生成 ────────────────────────────────────────────────────────────
 # 平台配置全部在 platforms/$(PLATFORM)/platform.conf 的 platform 表中。
@@ -65,7 +79,7 @@ ifeq ($(strip $(MEM_RAM_BASE)),)
 $(error Failed to generate platform config from $(_PLATFORM_CONF))
 endif
 
-# ─── §3  日志与断言标志 ──────────────────────────────────────────────────────────
+# ─── §3  日志标志 ────────────────────────────────────────────────────────────────
 ifeq ($(LOG),none)
     LOG_LEVEL := 0
     LOG_DEFINE := -DLOG_LEVEL=0 -DLOG_NONE
@@ -88,21 +102,13 @@ else
     $(error Invalid LOG level. Use: none, error, warn, info, debug, or trace)
 endif
 
-# 断言配置映射
-ifeq ($(ASSERT),panic)
-    ASSERT_DEFINE :=
-else ifeq ($(ASSERT),off)
-    ASSERT_DEFINE := -DASSERT_OFF
-else
-    $(error Invalid ASSERT setting. Use: panic or off)
+# ASSERT 开关已移除：断言恒为启用（见 include/assert.h）。
+# 显式传入时直接报错，而不是静默忽略——否则调用方会以为断言被关掉了。
+ifneq ($(origin ASSERT),undefined)
+    $(error ASSERT= is no longer supported; assertions are always enabled)
 endif
 
 # ─── §4  源文件与目标文件变量 ────────────────────────────────────────────────────
-# 遗留示例源文件（lib/examples/*.c）
-SOURCES := $(wildcard $(SRC_DIR)/*.c)
-OBJECTS := $(SOURCES:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
-DEPS    := $(OBJECTS:.o=.d)
-
 # klog 库源文件
 KLOG_SOURCES := $(LIB_DIR)/klog.c
 VSNPRINTF_SOURCES := $(LIB_DIR)/vsnprintf.c
@@ -117,152 +123,135 @@ LIBC_OBJECT         := $(BUILD_DIR)/libc.o
 PLATFORM_CFG_OBJECT := $(BUILD_DIR)/platform_cfg.o
 PLATFORM_STATIC_OBJECT := $(BUILD_DIR)/platform_static.o
 
-# 内核源文件
-KERNEL_SOURCES := $(KERNEL_DIR)/main.c
-KERNEL_OBJECTS := $(KERNEL_SOURCES:$(KERNEL_DIR)/%.c=$(BUILD_DIR)/kernel_%.o)
+# ── §4a  内核源文件自动发现 ────────────────────────────────────────────────────
+# kernel/ 下所有 .c/.S 由 find 递归发现，不再逐文件列举——新增内核源文件
+# 不需要改 Makefile。
+#
+# 排除项只有两类：
+#   1. 其它架构的 mm/task/vmm 子目录（每个架构只选一套）
+#   2. kernel/vmm/vdev/ —— 它按「文件」而非目录区分架构，见下方按 ARCH 的列表
+#
+# 注意 $(filter-out) 的模式里**只有第一个 '%' 是通配符**，后面的 '%' 按字面量
+# 匹配。所以只能用「目录前缀字面量 + 单个尾部 %」的形式；
+# 写成 $(KERNEL_DIR)/%/x86_64/% 会一条都过滤不掉（已实测）。
+_KERNEL_ARCHES       := aarch64 riscv64 x86_64
+_KERNEL_ARCH_MODULES := mm task vmm
+_KERNEL_OTHER_ARCH   := $(filter-out $(ARCH),$(_KERNEL_ARCHES))
 
-# ── §4a  架构特定模块（VMM / 异常 / 上下文切换 / 用户程序）─────────────────────
-VM_C_SOURCES := $(KERNEL_DIR)/mm/pmm.c $(TESTS_DIR)/pmm_test.c $(KERNEL_DIR)/mm/vm_user.c $(KERNEL_DIR)/mm/kmalloc.c $(KERNEL_DIR)/mm/shared_page.c
-VM_C_OBJECTS := $(BUILD_DIR)/kernel_mm_pmm.o $(BUILD_DIR)/kernel_mm_pmm_test.o $(BUILD_DIR)/kernel_mm_vm_user.o $(BUILD_DIR)/kernel_mm_kmalloc.o $(BUILD_DIR)/kernel_mm_shared_page.o
+_KERNEL_EXCLUDE_DIRS := $(foreach a,$(_KERNEL_OTHER_ARCH),$(foreach m,$(_KERNEL_ARCH_MODULES),$(KERNEL_DIR)/$(m)/$(a)/)) \
+                        $(KERNEL_DIR)/vmm/vdev/
+_KERNEL_EXCLUDE_PAT  := $(addsuffix %,$(_KERNEL_EXCLUDE_DIRS))
 
-# 架构特定的 VM 模块
+# 注：$(shell ...) 的输出按空白切词，路径不能含空格（kernel/ 下当前没有）。
+_KERNEL_FOUND := $(patsubst ./%,%,$(shell find $(KERNEL_DIR) -type f \( -name '*.c' -o -name '*.S' \) 2>/dev/null | LC_ALL=C sort))
+
+# GIC 版本解析。§6 里那句 `GIC ?= $(DEV_DEFAULT_GIC)` 要等到 400 行之后才执行，
+# 但 QEMU_FLAGS（§5）和下面的 vdev 源文件列表都是**立即展开**的，等不到那时候。
+# 命令行赋值总是先于 makefile 生效，而 DEV_DEFAULT_GIC 由 platform.mk（第 59 行
+# include）提供，所以这里算出来的就是最终值。
+GIC_VER := $(if $(GIC),$(GIC),$(DEV_DEFAULT_GIC))
+
+# vGIC 后端按 GIC 版本二选一：vdev/vgic/ = GICv2，vdev/vgicv3/ = GICv3。
+# 两套的寄存器模型（GICH MMIO vs ICH_* 系统寄存器）不兼容，只能编译一套。
+#
+# ⚠️ GIC= 会改变 CFLAGS（-DDRIVER_GIC_V2/V3）和源文件列表，而 -MMD 的 .d
+# 没有被 -include（见本文件 §11 附近说明），make 察觉不到这种变化。
+# 从 GIC=v2 切到 v3（或反向）**不再需要手动 clean**：§7 的 _CFG_CHECK 会在
+# 检测到配置变化时自动清掉已编译的目标文件（历史上这里要求手动 clean，
+# 忘了就会混用两套 flag 编出来的 .o，报一堆莫名其妙的 undefined reference）。
+# 该检查同样覆盖 SMP= / LOG= / LOG_MODULES=。
+_KERNEL_VGIC_SRCS   := $(if $(filter v3,$(GIC_VER)),\
+                          $(wildcard $(KERNEL_DIR)/vmm/vdev/vgicv3/*.c),\
+                          $(wildcard $(KERNEL_DIR)/vmm/vdev/vgic/*.c))
+
+# vdev 下按文件选架构；guest_loader.c 位于共享目录但只有 aarch64 编译它。
 ifeq ($(ARCH),aarch64)
-    VM_C_SOURCES += $(KERNEL_DIR)/mm/aarch64/vm_early.c
-    VM_C_OBJECTS += $(BUILD_DIR)/kernel_mm_vm_early.o
-    VM_C_SOURCES += $(KERNEL_DIR)/mm/aarch64/vmm.c
-    VM_C_OBJECTS += $(BUILD_DIR)/kernel_mm_vmm.o
-    # Stage-2 MMU
-    VM_C_SOURCES += $(KERNEL_DIR)/mm/aarch64/stage2.c
-    VM_C_OBJECTS += $(BUILD_DIR)/kernel_mm_stage2.o
-    # VMM subsystem
-    VMM_C_SOURCES := $(KERNEL_DIR)/vmm/vmm.c \
-                     $(KERNEL_DIR)/vmm/aarch64/el2_run.c
-    VMM_C_OBJECTS := $(BUILD_DIR)/kernel_vmm_vmm.o \
-                     $(BUILD_DIR)/kernel_vmm_el2_run.o
-    VMM_S_SOURCES := $(KERNEL_DIR)/vmm/aarch64/el2_vmcs.S \
-                     $(KERNEL_DIR)/vmm/aarch64/vcpu_ctx.S
-    VMM_S_OBJECTS := $(BUILD_DIR)/kernel_vmm_el2_vmcs.o \
-                     $(BUILD_DIR)/kernel_vmm_vcpu_ctx.o
+    _KERNEL_VDEV_SRCS     := $(KERNEL_DIR)/vmm/vdev/console/vpl011.c \
+                             $(KERNEL_DIR)/vmm/vdev/irq_route.c \
+                             $(_KERNEL_VGIC_SRCS)
+    _KERNEL_ARCHONLY_SRCS := $(KERNEL_DIR)/vmm/guest_loader.c
     # guest_test.S: embedded guest program (linked into kernel binary)
-    GUEST_TEST_OBJ := $(BUILD_DIR)/apps_guest_test.o \
-                      $(BUILD_DIR)/apps_el0_loop.o
-else ifeq ($(ARCH),x86_64)
-    # x86_64 MM subsystem
-    VM_C_SOURCES += $(KERNEL_DIR)/mm/x86_64/vmm.c
-    VM_C_OBJECTS += $(BUILD_DIR)/kernel_mm_x86_vmm.o
-    # x86_64 VMM subsystem
-    VMM_C_SOURCES := $(KERNEL_DIR)/vmm/vmm.c \
-                     $(KERNEL_DIR)/vmm/x86_64/vmx.c
-    VMM_C_OBJECTS := $(BUILD_DIR)/kernel_vmm_vmm.o \
-                     $(BUILD_DIR)/kernel_vmm_x86_vmx.o
-    VMM_S_SOURCES := $(KERNEL_DIR)/vmm/x86_64/vmx_run.S
-    VMM_S_OBJECTS := $(BUILD_DIR)/kernel_vmm_x86_vmx_run.o
-    # x86_64 guest test program (linked into kernel binary)
-    GUEST_TEST_OBJ := $(BUILD_DIR)/apps_x86_guest_test.o
+    GUEST_TEST_OBJ        := $(BUILD_DIR)/apps_guest_test.o \
+                             $(BUILD_DIR)/apps_el0_loop.o
 else ifeq ($(ARCH),riscv64)
-    # RISC-V MM subsystem
-    VM_C_SOURCES += $(KERNEL_DIR)/mm/riscv64/vmm.c
-    VM_C_OBJECTS += $(BUILD_DIR)/kernel_mm_rv_vmm.o
-    # RISC-V H-extension VMM subsystem
-    VMM_C_SOURCES := $(KERNEL_DIR)/vmm/vmm.c \
-                     $(KERNEL_DIR)/vmm/riscv64/hext_run.c
-    VMM_C_OBJECTS := $(BUILD_DIR)/kernel_vmm_vmm.o \
-                     $(BUILD_DIR)/kernel_vmm_riscv_hext_run.o
-    VMM_S_SOURCES := $(KERNEL_DIR)/vmm/riscv64/hext_vcpu.S
-    VMM_S_OBJECTS := $(BUILD_DIR)/kernel_vmm_riscv_hext_vcpu.o
+    _KERNEL_VDEV_SRCS     := $(KERNEL_DIR)/vmm/vdev/console/vuart16550.c \
+                             $(KERNEL_DIR)/vmm/vdev/vplic.c
+    _KERNEL_ARCHONLY_SRCS := $(KERNEL_DIR)/vmm/guest_loader.c
     # RISC-V VS-mode guest test program (linked into kernel binary)
-    GUEST_TEST_OBJ := $(BUILD_DIR)/apps_riscv_guest_test.o
-else
-    VMM_C_SOURCES :=
-    VMM_C_OBJECTS :=
-    VMM_S_SOURCES :=
-    VMM_S_OBJECTS :=
-    GUEST_TEST_OBJ :=
-endif
-
-ifeq ($(ARCH),riscv64)
-    # RISC-V VM 模块（如果有的话）
-    # VM_C_SOURCES += $(KERNEL_DIR)/mm/riscv64/vm_early.c
-    # VM_C_OBJECTS += $(BUILD_DIR)/kernel_mm_vm_early.o
-endif
-
-# 架构特定的 MMU 汇编
-ifeq ($(ARCH),aarch64)
-    VM_S_SRC := $(KERNEL_DIR)/mm/aarch64/mmu.S
-    VM_EARLY_C_SRC := $(KERNEL_DIR)/mm/aarch64/vm_early.c
-else ifeq ($(ARCH),riscv64)
-    VM_S_SRC := $(KERNEL_DIR)/mm/riscv64/mmu.S
-    # VM_EARLY_C_SRC := $(KERNEL_DIR)/mm/riscv64/vm_early.c
+    GUEST_TEST_OBJ        := $(BUILD_DIR)/apps_riscv_guest_test.o
 else ifeq ($(ARCH),x86_64)
-    VM_S_SRC := $(KERNEL_DIR)/mm/x86_64/mmu.S
-    # VM_EARLY_C_SRC := $(KERNEL_DIR)/mm/x86_64/vm_early.c
+    _KERNEL_VDEV_SRCS     := $(KERNEL_DIR)/vmm/vdev/console/vuart16550.c \
+                             $(KERNEL_DIR)/vmm/vdev/vlapic.c
+    # guest_loader.c 被 KERNEL_SRCS 的 filter-out 排除了，必须在这里加回来；
+    # 它的编译分组另见 KERNEL_LWEXT4_SRCS。两处都要有 —— 少一处，
+    # 下面的「分组完整性断言」会当场报 67 vs 68。
+    _KERNEL_ARCHONLY_SRCS := $(KERNEL_DIR)/vmm/guest_loader.c
+    # x86_64 guest test program (linked into kernel binary)
+    GUEST_TEST_OBJ        := $(BUILD_DIR)/apps_x86_guest_test.o
+else
+    _KERNEL_VDEV_SRCS     :=
+    _KERNEL_ARCHONLY_SRCS :=
+    GUEST_TEST_OBJ        :=
 endif
-VM_S_OBJ := $(BUILD_DIR)/kernel_mm_mmu.o
 
-# 如果存在架构特定的 VM 早期初始化代码，添加到编译列表
-ifdef VM_EARLY_C_SRC
-    VM_C_SOURCES += $(VM_EARLY_C_SRC)
-    VM_C_OBJECTS += $(BUILD_DIR)/kernel_mm_vm_early.o
+KERNEL_SRCS := $(filter-out $(_KERNEL_EXCLUDE_PAT) $(KERNEL_DIR)/vmm/guest_loader.c,$(_KERNEL_FOUND))
+KERNEL_SRCS += $(_KERNEL_VDEV_SRCS) $(_KERNEL_ARCHONLY_SRCS)
+
+# 源路径 → 扁平对象名：kernel/mm/pmm.c → $(BUILD_DIR)/kernel_mm_pmm.o
+kobj = $(BUILD_DIR)/$(subst /,_,$(basename $(1))).o
+KERNEL_OBJECTS := $(foreach f,$(KERNEL_SRCS),$(call kobj,$(f)))
+
+# ── §4a-2  内核编译标志分组 ────────────────────────────────────────────────────
+# kernel/ 的编译标志无法按目录推导（同一目录里有些文件引用第三方头文件、
+# 有些没有），所以引用第三方头文件的文件在这里显式列出，其余一律用 CFLAGS。
+# 这些文件会带 -w（屏蔽第三方头文件自身的警告），因此名单必须准确：
+# 列入 = 该文件的警告被屏蔽，漏列 = 编译失败（include 找不到），两者都看得见。
+KERNEL_LWEXT4_SRCS := \
+    $(KERNEL_DIR)/fs/vfs/vfs.c \
+    $(KERNEL_DIR)/loader/bin_loader.c \
+    $(KERNEL_DIR)/loader/elf_loader.c \
+    $(KERNEL_DIR)/syscall/syscall.c \
+    $(KERNEL_DIR)/syscall/core/proc_lifecycle.c \
+    $(KERNEL_DIR)/syscall/fs/fd_pool.c \
+    $(KERNEL_DIR)/syscall/fs/path.c \
+    $(KERNEL_DIR)/syscall/fs/file_io.c \
+    $(KERNEL_DIR)/syscall/fs/file_ops.c \
+    $(KERNEL_DIR)/syscall/fs/file_stat.c \
+    $(KERNEL_DIR)/syscall/fs/dir.c \
+    $(KERNEL_DIR)/syscall/fs/ioctl.c \
+    $(KERNEL_DIR)/syscall/fs/pipe.c \
+    $(KERNEL_DIR)/syscall/fs/pty.c \
+    $(KERNEL_DIR)/syscall/io/poll.c \
+    $(KERNEL_DIR)/syscall/io/select.c \
+    $(KERNEL_DIR)/syscall/io/epoll.c \
+    $(KERNEL_DIR)/syscall/mm/mmap.c
+
+# guest_loader.c 位于共享目录但只给「已实现 Linux guest 启动」的架构编译
+# （见 §4a 白名单与 include/vmm/vmm.h 的 VMM_GUEST_LINUX_SUPPORTED），且引用 lwext4。
+#
+# ⚠️ image_load.c 是 2026-09 从 guest_loader.c 拆出来的装载通路（VFS 读 + 逐块
+# 写 guest 内存），它同样 #include "vfs.h"（→ <ext4.h>），所以**必须进同一组** ——
+# 少了这一条，编译会以 "include/vfs.h:14:10: fatal error: ext4.h: No such file" 失败，
+# 而且因为 §236 的 filter-out，它同时还会触发下面的「分组完整性断言」。
+ifneq ($(filter $(ARCH),aarch64 riscv64 x86_64),)
+KERNEL_LWEXT4_SRCS += $(KERNEL_DIR)/vmm/guest_loader.c \
+                      $(KERNEL_DIR)/vmm/image_load.c
 endif
 
-# task 模块源文件
-TASK_C_SOURCES := $(KERNEL_DIR)/task/task.c $(KERNEL_DIR)/task/sched.c $(KERNEL_DIR)/task/mutex.c $(KERNEL_DIR)/task/exec.c $(KERNEL_DIR)/task/cpu.c $(KERNEL_DIR)/task/preempt.c
-TASK_C_OBJECTS := $(BUILD_DIR)/kernel_task_task.o $(BUILD_DIR)/kernel_task_sched.o $(BUILD_DIR)/kernel_task_mutex.o $(BUILD_DIR)/kernel_task_exec.o $(BUILD_DIR)/kernel_task_cpu.o $(BUILD_DIR)/kernel_task_preempt.o
+# kernel/net/** 全部引用 lwIP，按目录自动派生，将来新增文件不会漏。
+KERNEL_LWIP_SRCS := $(filter $(KERNEL_DIR)/net/%,$(KERNEL_SRCS))
 
-# loader 模块源文件
-LOADER_C_SOURCES := $(KERNEL_DIR)/loader/bin_loader.c $(KERNEL_DIR)/loader/elf_loader.c $(KERNEL_DIR)/loader/elf_image.c
-LOADER_C_OBJECTS := $(BUILD_DIR)/kernel_loader_bin_loader.o $(BUILD_DIR)/kernel_loader_elf_loader.o $(BUILD_DIR)/kernel_loader_elf_image.o
-
-# syscall 模块源文件
-SYSCALL_C_SOURCES := $(KERNEL_DIR)/syscall/syscall.c \
-                     $(KERNEL_DIR)/syscall/core/futex.c \
-                     $(KERNEL_DIR)/syscall/core/proc_lifecycle.c \
-                     $(KERNEL_DIR)/syscall/core/proc_ids.c \
-                     $(KERNEL_DIR)/syscall/core/sched.c \
-                     $(KERNEL_DIR)/syscall/core/signal.c \
-                     $(KERNEL_DIR)/syscall/fs/fd_pool.c \
-                     $(KERNEL_DIR)/syscall/fs/path.c \
-                     $(KERNEL_DIR)/syscall/fs/tty.c \
-                     $(KERNEL_DIR)/syscall/fs/file_io.c \
-                     $(KERNEL_DIR)/syscall/fs/file_ops.c \
-                     $(KERNEL_DIR)/syscall/fs/file_stat.c \
-                     $(KERNEL_DIR)/syscall/fs/dir.c \
-                     $(KERNEL_DIR)/syscall/fs/ioctl.c \
-                     $(KERNEL_DIR)/syscall/fs/pipe.c \
-                     $(KERNEL_DIR)/syscall/fs/pty.c \
-                     $(KERNEL_DIR)/syscall/io/poll.c \
-                     $(KERNEL_DIR)/syscall/io/select.c \
-                     $(KERNEL_DIR)/syscall/io/epoll.c \
-                     $(KERNEL_DIR)/syscall/mm/brk.c \
-                     $(KERNEL_DIR)/syscall/mm/mmap.c \
-                     $(KERNEL_DIR)/syscall/mm/pmap_compat.c \
-                     $(KERNEL_DIR)/syscall/net/ksocket.c \
+# 这两个同时引用 lwIP 与 lwext4：
+# ksocket.c → syscall/fs/fd_pool.h → include/vfs.h:14 → #include <ext4.h>
+KERNEL_LWIPX_SRCS := $(KERNEL_DIR)/syscall/net/ksocket.c \
                      $(KERNEL_DIR)/syscall/net/sock_syscall.c
-SYSCALL_C_OBJECTS := $(BUILD_DIR)/kernel_syscall_syscall.o \
-                     $(BUILD_DIR)/kernel_syscall_core_futex.o \
-                     $(BUILD_DIR)/kernel_syscall_core_proc_lifecycle.o \
-                     $(BUILD_DIR)/kernel_syscall_core_proc_ids.o \
-                     $(BUILD_DIR)/kernel_syscall_core_sched.o \
-                     $(BUILD_DIR)/kernel_syscall_core_signal.o \
-                     $(BUILD_DIR)/kernel_syscall_fs_fd_pool.o \
-                     $(BUILD_DIR)/kernel_syscall_fs_path.o \
-                     $(BUILD_DIR)/kernel_syscall_fs_tty.o \
-                     $(BUILD_DIR)/kernel_syscall_fs_file_io.o \
-                     $(BUILD_DIR)/kernel_syscall_fs_file_ops.o \
-                     $(BUILD_DIR)/kernel_syscall_fs_file_stat.o \
-                     $(BUILD_DIR)/kernel_syscall_fs_dir.o \
-                     $(BUILD_DIR)/kernel_syscall_fs_ioctl.o \
-                     $(BUILD_DIR)/kernel_syscall_fs_pipe.o \
-                     $(BUILD_DIR)/kernel_syscall_fs_pty.o \
-                     $(BUILD_DIR)/kernel_syscall_io_poll.o \
-                     $(BUILD_DIR)/kernel_syscall_io_select.o \
-                     $(BUILD_DIR)/kernel_syscall_io_epoll.o \
-                     $(BUILD_DIR)/kernel_syscall_mm_brk.o \
-                     $(BUILD_DIR)/kernel_syscall_mm_mmap.o \
-                     $(BUILD_DIR)/kernel_syscall_mm_pmap_compat.o \
-                     $(BUILD_DIR)/kernel_syscall_net_ksocket.o \
-                     $(BUILD_DIR)/kernel_syscall_net_sock_syscall.o
-TASK_S_OBJ := $(BUILD_DIR)/task_switch.o
+
+KERNEL_PLAIN_SRCS := $(filter-out $(KERNEL_LWEXT4_SRCS) $(KERNEL_LWIP_SRCS) $(KERNEL_LWIPX_SRCS),$(KERNEL_SRCS))
+
+# 分组完整性断言：漏一个或重一个都当场报错，而不是静默少编一个文件。
+ifneq ($(words $(KERNEL_SRCS)),$(words $(KERNEL_PLAIN_SRCS) $(KERNEL_LWEXT4_SRCS) $(KERNEL_LWIP_SRCS) $(KERNEL_LWIPX_SRCS)))
+$(error kernel source grouping mismatch: $(words $(KERNEL_SRCS)) sources vs $(words $(KERNEL_PLAIN_SRCS) $(KERNEL_LWEXT4_SRCS) $(KERNEL_LWIP_SRCS) $(KERNEL_LWIPX_SRCS)) grouped. Check KERNEL_LWEXT4_SRCS / KERNEL_LWIP*_SRCS)
+endif
 ifeq ($(ARCH),aarch64)
 TASK_USER_TEST_OBJ := $(BUILD_DIR)/user_test.o
 TASK_USER_HELLO_OBJ := $(BUILD_DIR)/hello.o
@@ -365,14 +354,12 @@ ifeq ($(ARCH),x86_64)
     CFLAGS  += -I$(INCLUDE_DIR)/x86_64
     CFLAGS  += -I$(BOOT_DIR)/common
     CFLAGS  += $(LOG_DEFINE)
-    CFLAGS  += $(ASSERT_DEFINE)
     CFLAGS  += -fno-pie -fno-stack-protector -fno-stack-clash-protection -U_FORTIFY_SOURCE
     CFLAGS  += -ffreestanding -fno-builtin
     CFLAGS  += -mcmodel=large -mno-red-zone
     CFLAGS  += -mno-mmx -mno-sse
     LDFLAGS := -nostdlib -nostartfiles -nodefaultlibs -no-pie
     LDFLAGS += -Wl,-z,max-page-size=0x1000
-    TARGET  := $(BUILD_DIR)/spinlock_x86_64.a
     KLOG_TARGET := $(BUILD_DIR)/libklog_x86_64.a
     KERNEL_TARGET := $(BUILD_DIR)/kernel_x86_64.elf
     KERNEL_BIN    := $(BUILD_DIR)/kernel_x86_64.bin
@@ -392,19 +379,31 @@ else ifeq ($(ARCH),aarch64)
     CFLAGS  += -I$(INCLUDE_DIR)/aarch64
     CFLAGS  += -I$(BOOT_DIR)/common
     CFLAGS  += $(LOG_DEFINE)
-    CFLAGS  += $(ASSERT_DEFINE)
     CFLAGS  += -fno-pie
-    CFLAGS  += -mgeneral-regs-only  # 只使用通用寄存器，禁用 SIMD/FP
+    # 允许 GCC 生成 FP/SIMD（NEON）指令（riscv64 靠 -march=rv64gc -mabi=lp64d 达
+    # 到同样效果）。代价是内核随时可能占用 v0-v31，所以必须有两层保存，缺一不可：
+    #   boot/aarch64/exception.S     陷阱帧保存 q0-q31 + FPCR/FPSR（保护 EL0 用户态）
+    #   kernel/task/aarch64/switch.S 任务切换保存 d8-d15 + FPCR/FPSR（AAPCS64 被调用者保存）
+    # 限制：内核里的浮点只能用 float/double —— 未链接 libgcc，long double（128 位）
+    # 的运算会引出 __addtf3/__divtf3 等帮助函数，在链接期报未定义符号。
+    # 详见 docs/arch/aarch64/FP_SIMD_CONTEXT.md
     CFLAGS  += -mno-outline-atomics  # freestanding：禁止 GCC outline atomics 调用 libgcc 帮助函数
     CFLAGS  += -ffreestanding -fno-builtin  # 禁用内置函数和标准库
-    TARGET  := $(BUILD_DIR)/spinlock_aarch64.a
     KLOG_TARGET := $(BUILD_DIR)/libklog_aarch64.a
     KERNEL_TARGET := $(BUILD_DIR)/kernel_aarch64.elf
     KERNEL_BIN    := $(BUILD_DIR)/kernel_aarch64.bin
     KERNEL_LINK_ADDR ?= 0xffff000040080000
     LDFLAGS += -Wl,--defsym=KERNEL_LINK_ADDR=$(KERNEL_LINK_ADDR)
     QEMU          := qemu-system-aarch64
-    QEMU_FLAGS    := -cpu cortex-a76 -M virt,virtualization=on -smp $(SMP) -m 2G -nographic -kernel $(KERNEL_BIN)
+    # QEMU virt 默认 gic-version=2（`-machine virt,dumpdtb=…` 实测确认）。
+    # 内核按 GIC=v3 编译时物理 GIC 也必须是 v3：guest DTB 声明的是
+    # arm,gic-v3（GICD + GICR，CPU interface 走系统寄存器），而 QEMU 给的是
+    # GICv2（GICD + GICC/GICH/GICV MMIO）——两边对不上，guest 的 GIC
+    # 初始化会直接卡死。
+    _QEMU_MACHINE_V3 := virt,virtualization=on,gic-version=3
+    _QEMU_MACHINE_V2 := virt,virtualization=on
+    QEMU_MACHINE  := $(if $(filter v3,$(GIC_VER)),$(_QEMU_MACHINE_V3),$(_QEMU_MACHINE_V2))
+    QEMU_FLAGS    := -cpu cortex-a76 -M $(QEMU_MACHINE) -smp $(SMP) -m 2G -nographic -kernel $(KERNEL_BIN)
     QEMU_NET_FLAGS ?= -netdev user,id=net0 -device virtio-net-device,netdev=net0,mac=52:54:00:12:34:56
 else ifeq ($(ARCH),riscv64)
     CC      := riscv64-linux-musl-gcc
@@ -418,14 +417,12 @@ else ifeq ($(ARCH),riscv64)
     CFLAGS  += -I$(INCLUDE_DIR)/riscv64
     CFLAGS  += -I$(BOOT_DIR)/common
     CFLAGS  += $(LOG_DEFINE)
-    CFLAGS  += $(ASSERT_DEFINE)
     CFLAGS  += -mcmodel=medany
     CFLAGS  += -fno-pic -fno-pie
     CFLAGS  += -ffreestanding -fno-builtin
     # -no-pie：让链接器输出非 PIE 静态可执行文件，避免生成
     # R_RISCV_RELATIVE 重定位条目（裸机内核无动态链接器处理它们）
     LDFLAGS := -no-pie
-    TARGET  := $(BUILD_DIR)/spinlock_riscv64.a
     KLOG_TARGET := $(BUILD_DIR)/libklog_riscv64.a
     KERNEL_TARGET := $(BUILD_DIR)/kernel_riscv64.elf
     KERNEL_BIN    := $(BUILD_DIR)/kernel_riscv64.bin
@@ -436,7 +433,26 @@ else
     $(error Unsupported architecture: $(ARCH). Use ARCH=x86_64, aarch64 or riscv64)
 endif
 
+# 内嵌函数符号表（kallsyms）的产物路径。三架构同名不同目录，所以规则只在
+# §11g 写一份。用途和两趟链接的理由见 §11g 顶部注释。
+KERNEL_STAGE1 := $(KERNEL_TARGET:.elf=.stage1.elf)
+KALLSYMS_S    := $(BUILD_DIR)/kallsyms_$(ARCH).S
+KALLSYMS_OBJ  := $(KALLSYMS_S:.S=.o)
+# stage-1 用的空表桩（count=0）。**必须有**，不能靠"不链接"或 C 侧弱符号：
+# 那样两趟的符号解析不同，C 侧生成出来的代码长度会差几个字节，.text 一漂
+# 符号表就全错位。详见 tools/gen_kallsyms.py 里 emit_stub()。
+KALLSYMS_STUB_S   := $(BUILD_DIR)/kallsyms_stub.S
+KALLSYMS_STUB_OBJ := $(KALLSYMS_STUB_S:.S=.o)
+
 # ── §5a  通用编译标志（所有架构共享，追加在架构特定 CFLAGS 之后）────────────────
+
+# 帧指针：三架构通用，放在这里而不是各架构块里各写一遍。
+# -O2 下 GCC 默认省掉帧指针，那样 backtrace 就只能靠栈扫描；
+# 见 §1 的 FP= 说明和 kernel/debug/backtrace.c。
+ifeq ($(FP),1)
+    CFLAGS += -fno-omit-frame-pointer
+endif
+
 CFLAGS  += -nostdinc
 CFLAGS  += -I$(INCLUDE_DIR)/libc
 CFLAGS  += -Idriver
@@ -515,90 +531,100 @@ NPU ?= $(DEV_NPU_TYPE)
 ifeq ($(NPU),rknpu)
     DRIVER_NPU_SRCS := driver/npu/rknpu.c driver/npu/rkpm.c
     CFLAGS          += -DDRIVER_NPU_RKNPU=1
-    DRIVER_NPU_OBJS := $(BUILD_DIR)/drv_npu_rknpu.o $(BUILD_DIR)/drv_npu_rkpm.o
 else
     DRIVER_NPU_SRCS :=
-    DRIVER_NPU_OBJS :=
 endif
 
 TPU ?= $(DEV_TPU_TYPE)
 ifeq ($(TPU),cvitpu)
     DRIVER_TPU_SRCS := driver/tpu/cvi_tpu.c
     CFLAGS          += -DDRIVER_TPU_CVITPU=1
-    DRIVER_TPU_OBJS := $(BUILD_DIR)/drv_tpu_cvi_tpu.o
 else
     DRIVER_TPU_SRCS :=
-    DRIVER_TPU_OBJS :=
 endif
 
 # ── §6c  网络驱动（ETH）─────────────────────────────────────────────────────────
-# 以太网驱动（由 platform.conf 的 eth.driver 自动推导；也可命令行覆盖：ETH=none / ETH=virtio）
+# 以太网驱动（由 platform.conf 的 eth.driver 自动推导；也可命令行覆盖：
+# ETH=none / ETH=virtio / ETH=cvitek）
 ETH ?= $(DEV_ETH_TYPE)
 ifeq ($(ETH),virtio)
     ifeq ($(filter $(ARCH),riscv64 aarch64 x86_64),)
         $(error ETH=virtio currently supports ARCH=riscv64, ARCH=aarch64 or ARCH=x86_64)
     endif
     CFLAGS          += -DDRIVER_ETH_VIRTIO=1
-    DRIVER_ETH_OBJS := $(BUILD_DIR)/drv_eth/virtio_net.o
+    DRIVER_ETH_SRCS := driver/eth/virtio_net.c
+else ifeq ($(ETH),cvitek)
+    # SG2002/CV1812H 板载 DWMAC 3.70a + 内部 EPHY。驱动里用到 virt_to_phys
+    # 和 C906 的 CMO 指令，只有 riscv64 有意义。
+    ifeq ($(ARCH),riscv64)
+        CFLAGS          += -DDRIVER_ETH_CVITEK=1
+        DRIVER_ETH_SRCS := driver/eth/cvitek_eth.c
+    else
+        $(error ETH=cvitek 目前仅支持 ARCH=riscv64)
+    endif
 else ifeq ($(ETH),none)
-    DRIVER_ETH_OBJS :=
+    DRIVER_ETH_SRCS :=
 else ifeq ($(ETH),)
-    DRIVER_ETH_OBJS :=
+    DRIVER_ETH_SRCS :=
 else
-    $(error Invalid ETH. Use: none or virtio)
+    $(error Invalid ETH. Use: none, virtio or cvitek)
 endif
 
 # ── §6e  DRIVER_OBJECTS 最终组装 ────────────────────────────────────────────────
-# 在所有驱动选择块执行完毕后，统一从各驱动变量中收集目标文件。
-DRIVER_OBJECTS := $(patsubst driver/%.c,$(BUILD_DIR)/drv_%.o,$(DRIVER_UART_SRC))
-ifneq ($(strip $(DRIVER_IRQ_SRC)),)
-ifeq ($(DRIVER_IRQ_SRC),driver/irq/gicv2.c)
-	DRIVER_OBJECTS += $(BUILD_DIR)/gicv2.o
-else ifeq ($(DRIVER_IRQ_SRC),driver/irq/gicv3.c)
-	DRIVER_OBJECTS += $(BUILD_DIR)/gicv3.o
-endif
-endif
-ifeq ($(ARCH),riscv64)
-	DRIVER_OBJECTS += $(BUILD_DIR)/plic.o
-endif
-ifneq ($(strip $(DRIVER_TIMER_SRC)),)
-	DRIVER_OBJECTS += $(BUILD_DIR)/timer.o
-endif
-ifeq ($(DEV_NEED_LAPIC),1)
-	DRIVER_OBJECTS += $(BUILD_DIR)/lapic.o
-endif
-ifneq ($(strip $(DRIVER_NPU_OBJS)),)
-	DRIVER_OBJECTS += $(DRIVER_NPU_OBJS)
-endif
-ifneq ($(strip $(DRIVER_TPU_OBJS)),)
-	DRIVER_OBJECTS += $(DRIVER_TPU_OBJS)
-endif
-ifneq ($(strip $(DRIVER_ETH_OBJS)),)
-	DRIVER_OBJECTS += $(DRIVER_ETH_OBJS)
-endif
-# ── §6e  辅助驱动（ION / SDMMC）────────────────────────────────────────────────
+# 在所有驱动选择块执行完毕后，按「源文件 → $(BUILD_DIR)/driver/<文件名>.o」统一
+# 映射。原先三套命名混用（drv_uart/x.o、gicv2.o、drv_npu_x.o），现在只有一个
+# 平铺的 driver/ 目录。driver/ 下各文件名互不重复，展平不会碰撞。
+#
+# 注意 pattern rule 做不到展平：GNU Make 的 '%' 会匹配 '/'，
+# $(BUILD_DIR)/driver/%.o: driver/%.c 会把 driver/irq/gicv2.c 映射成
+# driver/irq/gicv2.o（子目录被原样带过去）。规则由 §11c 用 $(eval) 逐文件生成。
+_drv_obj = $(BUILD_DIR)/driver/$(notdir $(basename $(1))).o
+
+# ── §6e-1  辅助驱动（ION / SDMMC）──────────────────────────────────────────────
 # Ion 内存分配器（当 TPU=cvitpu 时自动启用；也可独立启用 ION=1）
 ION ?= $(if $(filter cvitpu,$(TPU)),1,0)
+DRIVER_ION_SRCS :=
 ifeq ($(ION),1)
     CFLAGS           += -DDRIVER_ION=1
-    DRIVER_ION_OBJS  := $(BUILD_DIR)/drv_ion_ion.o
-    DRIVER_OBJECTS   += $(DRIVER_ION_OBJS)
+    DRIVER_ION_SRCS  := driver/ion/ion.c
 endif
 
-# SG2002 真机固定从 SD 卡使用 rootfs。
+# ramblk 始终构建（rootfs 的 ramblk0 块设备）；SG2002 真机另加 SD 卡块设备。
+DRIVER_BLK_SRCS := driver/blk/ramblk.c
 ifeq ($(PLATFORM),sg2002-riscv64)
     CFLAGS              += -DDRIVER_SDBLK_SG2002=1
-    DRIVER_OBJECTS      += $(BUILD_DIR)/drv_blk_sdblk.o
+    DRIVER_BLK_SRCS     += driver/blk/sdblk.c
 endif
+
+# ── §6e-2  按编译标志分组（各组标志与重组前逐字一致）─────────────────────────
+DRIVER_SRCS_CFLAGS := $(DRIVER_UART_SRC) $(DRIVER_IRQ_SRC) $(DRIVER_TIMER_SRC) \
+                      $(DRIVER_NPU_SRCS) $(DRIVER_ETH_SRCS) \
+                      $(if $(filter 1,$(DEV_NEED_LAPIC)),driver/irq/lapic.c)
+DRIVER_SRCS_PLIC   := $(if $(filter riscv64,$(ARCH)),driver/irq/plic.c)
+DRIVER_SRCS_TPU    := $(DRIVER_TPU_SRCS)
+DRIVER_SRCS_ION    := $(DRIVER_ION_SRCS)
+DRIVER_SRCS_BLK    := $(DRIVER_BLK_SRCS)
+
+DRIVER_SRCS := $(strip $(DRIVER_SRCS_CFLAGS) $(DRIVER_SRCS_PLIC) $(DRIVER_SRCS_TPU) \
+                       $(DRIVER_SRCS_ION) $(DRIVER_SRCS_BLK))
+DRIVER_OBJECTS := $(foreach f,$(DRIVER_SRCS),$(call _drv_obj,$(f)))
 
 CFLAGS  += -MMD -MP
 
 # ─── §7  构建变体 ─────────────────────────────────────────────────────────────
-# VMM_TEST=1：编译 RUN_VMM_TEST，跳过 busybox，运行三线程切换测试
+# 三个变体互斥，优先级 GUEST_LINUX > VMM_TEST > NGINX_TEST > normal：
+#   VMM_TEST=1    ：定义 RUN_VMM_TEST，跳过 busybox，运行三线程切换测试
+#   GUEST_LINUX=1 ：定义 RUN_GUEST_LINUX，从 rootfs 加载并启动 Linux guest
+#   NGINX_TEST=1  ：定义 RUN_NGINX_TEST，网络栈专供 nginx 压测（无对应 target）
 # 新增测试时仿照此模式，同时在 _BUILD_VARIANT 里加一个唯一标识。
 VMM_TEST ?= 0
 NGINX_TEST ?= 0
-ifeq ($(VMM_TEST),1)
+# GUEST_LINUX=1：编译 RUN_GUEST_LINUX，从 rootfs 加载并启动 Linux guest
+GUEST_LINUX ?= 0
+ifeq ($(GUEST_LINUX),1)
+    CFLAGS += -DRUN_GUEST_LINUX=1
+    _BUILD_VARIANT := guest_linux
+else ifeq ($(VMM_TEST),1)
     CFLAGS += -DRUN_VMM_TEST=1
     _BUILD_VARIANT := vmm_test
 else ifeq ($(NGINX_TEST),1)
@@ -608,13 +634,100 @@ else
     _BUILD_VARIANT := normal
 endif
 
-# 当变体改变时自动清除 kernel/main.o，防止复用缓存了错误条件编译的对象文件。
+# STRING_TEST=1：定义 RUN_STRING_TEST，kernel_main 早期跑 tests/string_test.c 自检
+# （与上面三个变体正交：自检跑完继续正常启动）。标志只影响 kernel_main.o，
+# 所以并入 _BUILD_VARIANT 让变体机制在开关变化时清掉那一个对象即可。
+STRING_TEST ?= 0
+ifeq ($(STRING_TEST),1)
+    CFLAGS += -DRUN_STRING_TEST=1
+    _BUILD_VARIANT := $(_BUILD_VARIANT)+string_test
+endif
+
+# PANIC_TEST=1：定义 RUN_PANIC_TEST，在 ELF 解析路径上**故意 panic 一次**，
+# 用来看调用栈回溯长什么样（kernel/loader/elf_image.c、docs/basic/BACKTRACE.md）。
+# 和 STRING_TEST 一样与上面三个变体正交，只影响 elf_image.o 一个对象。
+#
+# 触发点选在 ELF 头部校验之后：那里离 boot 足够远，能打出一条真实的
+# 加载器调用链（exec → elf_image_load → elf_image_load_impl），
+# 而不是只有 kernel_main 两层。
+#
+# ⚠️ 这个变体编出来的内核**跑不完启动** —— 它不是用来跑功能的。
+PANIC_TEST ?= 0
+ifeq ($(PANIC_TEST),1)
+    CFLAGS += -DRUN_PANIC_TEST=1
+    _BUILD_VARIANT := $(_BUILD_VARIANT)+panic_test
+endif
+
+# ─── §7b  日志模块白名单 ───────────────────────────────────────────────────────
+# LOG_MODULES=uart,gic,timer ：编译期默认模块掩码（配合 LOG=debug|trace 使用）。
+#   不传      = 全部模块（保持旧行为）
+#   all/none  = 全开 / 全关
+#   一经传入即为**白名单**：未打模块标签的 KLOG_DEBUG/KLOG_TRACE 归入
+#   LOG_MODULE_GENERIC，不在名单里就不输出（见 include/klog.h）。
+#   例: make PLATFORM=qemu-virt-aarch64 run LOG=debug LOG_MODULES=gic
+LOG_MODULES ?=
+ifneq ($(LOG_MODULES),)
+    CFLAGS += -DLOG_MODULES_DEFAULT='"$(LOG_MODULES)"'
+endif
+
+# 变体改变时自动清除**受变体影响的**对象文件，防止复用缓存了错误条件编译的 .o。
+#
+# ⚠️ 新增变体时必须把它的条件编译打到哪个文件加进 _VARIANT_OBJS。
+# 漏了的话症状是"新开关没生效"——**而且没有任何报错**：CFLAGS 变了但
+# _CFG_SIG（§7 下面那个）里没有变体这一项，make 也就不知道要重编。
+# 历史上这里只清 kernel_main.o（当时变体确实只影响它），加 STRING_TEST/
+# PANIC_TEST 之后就靠不住了 —— 后者的条件编译在 kernel/loader/elf_image.c。
+#
+# 两个方向都要正确：从 A 切到 B 和从 B 切回 A 都得清掉。所以这里**无条件**
+# 列出所有可能受影响的文件，而不是只在对应开关打开时列 —— 否则切回去那一趟
+# 会漏。（多编一个 .o 的代价可以忽略。）
 _VARIANT_FILE := $(BUILD_DIR)/.build_variant
+_VARIANT_OBJS := $(BUILD_DIR)/kernel_main.o \
+                 $(BUILD_DIR)/kernel_loader_elf_image.o
 _VARIANT_CHECK := $(shell \
     mkdir -p $(BUILD_DIR) 2>/dev/null; \
     if [ "$$(cat $(_VARIANT_FILE) 2>/dev/null)" != "$(_BUILD_VARIANT)" ]; then \
-        rm -f $(BUILD_DIR)/kernel_main.o; \
+        rm -f $(_VARIANT_OBJS); \
         printf '%s' '$(_BUILD_VARIANT)' > $(_VARIANT_FILE); \
+    fi)
+
+# 凡是**会改 CFLAGS 的配置项**（GIC= / SMP= / LOG= / LOG_MODULES=）切换时同理，
+# 而且影响面大得多：它们改变每一个 TU 的编译结果；GIC= 还会改**源文件列表**
+# （vdev/vgic/ 与 vdev/vgicv3/ 二选一）。.d 没有被 -include，make 察觉不到这种
+# 变化，于是新旧两套 .o 混在一起链接，报出来的是
+# 「undefined reference to gicv2_gicd_base」「vmm_vgic_set_pending」这类
+# **完全指不到真正原因**的符号缺失 —— 实测踩过两次（GIC 一次、SMP 一次），
+# 都很容易误判成驱动写错了。
+#
+# 所以配置一变就把已编译的目标文件全清掉，不指望用户记得那句 clean
+# （§4a 的注释里虽然写了，但说明都在 400 行开外，报错时没人会去翻）。
+#
+# 只删 .o/.elf —— 都是可再生的；rootfs 镜像不动，guest DTB 的切换由
+# $(GUEST_GIC_STAMP) 单独负责触发重建。
+#
+# ⚠️ kallsyms_*.S 必须一并删掉。它是 tools/gen_kallsyms.py 从**上一趟链接**
+# 出来的 ELF 里抽的符号表（见 §11g）。只删 .elf 而留下这份 .S，重建时它的
+# mtime 会比新生成的 stage-1 ELF 还新，make 判定"已是最新"→ 拿上一次构建
+# 的符号表去链接。症状是 backtrace 打出函数名整体错位，但二进制本身完全
+# 正常 —— 正是 §11 注释里警告的那类「看起来完全合理」的幽灵 bug。
+#
+# 戳文件不存在时（刚 clean 过、或本机制刚引入）也走一次清理：此时无从得知
+# 现有目标文件是用哪套 flag 编的，重建比赌一把便宜。
+#
+# 注：_BUILD_VARIANT（GUEST_LINUX= / STRING_TEST= / PANIC_TEST= 等）不在这个
+# 签名里 —— 它影响面小得多（每个变体只条件编译一两个文件），走上面
+# _VARIANT_CHECK 的细粒度处理：只删 _VARIANT_OBJS 里列的那几个 .o，
+# 不为此整包重编。新增变体时记得把受影响的对象加进那个列表。
+_CFG_STAMP_FILE := $(BUILD_DIR)/.build-cfg
+_CFG_SIG        := $(GIC_VER)/smp$(SMP)/log$(LOG)/mods$(LOG_MODULES)/fp$(FP)
+_CFG_CHECK := $(shell \
+    mkdir -p $(BUILD_DIR) 2>/dev/null; \
+    rm -f $(BUILD_DIR)/.gic-last; \
+    if [ "$$(cat $(_CFG_STAMP_FILE) 2>/dev/null)" != "$(_CFG_SIG)" ]; then \
+        find $(BUILD_DIR) -name '*.o' -delete 2>/dev/null; \
+        find $(BUILD_DIR) -name '*.elf' -delete 2>/dev/null; \
+        find $(BUILD_DIR) -name 'kallsyms_*.S' -delete 2>/dev/null; \
+        printf '%s' '$(_CFG_SIG)' > $(_CFG_STAMP_FILE); \
     fi)
 
 MKDIR   := mkdir -p
@@ -627,14 +740,6 @@ LWEXT4_PORT_DIR := $(FS_DIR)/lwext4_port
 LWIP_DIR      := $(THIRD_PARTY_DIR)/lwip
 LWIP_PORT_DIR := $(KERNEL_DIR)/net/lwip_port
 
-NET_OBJS := $(BUILD_DIR)/kernel_net_netdev.o \
-            $(BUILD_DIR)/kernel_net_net.o \
-            $(BUILD_DIR)/kernel_net_dhcp_server.o \
-            $(BUILD_DIR)/kernel_net_tcp_echo.o \
-            $(BUILD_DIR)/kernel_net_webcam_httpd.o \
-            $(BUILD_DIR)/kernel_net_http_server.o \
-            $(BUILD_DIR)/kernel_net_lwip_port_netif_avatar.o \
-            $(BUILD_DIR)/kernel_net_lwip_port_sys_arch.o
 
 LWIP_CORE_SRCS := $(LWIP_DIR)/src/core/init.c \
                   $(LWIP_DIR)/src/core/def.c \
@@ -675,8 +780,8 @@ LWEXT4_SRCS     := $(wildcard $(LWEXT4_DIR)/src/*.c)
 LWEXT4_OBJS     := $(patsubst $(LWEXT4_DIR)/src/%.c,$(THIRD_PARTY_BUILD_DIR)/lwext4_%.o,$(LWEXT4_SRCS))
 
 # lwext4 移植胶水代码（属于本项目，使用 LWEXT4_CFLAGS）
+# 注：driver/blk/ramblk.c 也是同一组标志，但它是驱动，归 §6e 的 DRIVER_OBJECTS。
 LWEXT4_PORT_OBJS := $(BUILD_DIR)/lwext4_port_kmalloc.o \
-                   $(BUILD_DIR)/drv_blk_ramblk.o \
                    $(BUILD_DIR)/lwext4_port_fs_init.o
 
 # lwext4 专用编译标志（在通用 CFLAGS 基础上添加）
@@ -706,14 +811,104 @@ else
 EPOLL_PERF_CC    :=
 EPOLL_PERF_BIN   :=
 endif
+
+# vmm-run：宿主 shell 里启动/驱动 guest 的用户态 helper（对标 kvmm-run）。
+# 只给「已实现 Linux guest 启动」的架构构建与安装（与 include/vmm/vmm.h 的
+# VMM_GUEST_LINUX_SUPPORTED 保持一致）。helper 本身是纯 C + ioctl，
+# 与架构无关，三个架构共用同一份 apps/c/vmm_run.c。
+ifneq ($(filter $(ARCH),aarch64 riscv64 x86_64),)
+VMM_RUN_BIN      := apps/vmm-run-$(ARCH)
+else
+VMM_RUN_BIN      :=
+endif
 NGINX_BIN        := $(wildcard apps/nginx-$(ARCH))
+# guest 的 DTB 必须与内核用的 GIC 版本匹配：GICv2 的 DTB 里是
+# arm,cortex-a15-gic（GICD + GICC 两段 reg），GICv3 的是 arm,gic-v3
+# （GICD + GICR，且 CPU interface 走系统寄存器）。装错版本 guest 会在
+# GIC 初始化阶段直接卡死。
+GUEST_LINUX_DTB_SRC := $(if $(filter v3,$(GIC)),imgs/guests/aarch64/linux-gicv3.dtb,imgs/guests/aarch64/linux.dtb)
+
+ifneq ($(filter $(ARCH),aarch64 riscv64 x86_64),)
+ifeq ($(ARCH),x86_64)
+# x86 guest 镜像：bzImage（自编 linux-6.2.15，带 HdrS 64 位入口）+ initramfs
+# 源文件叫 initrd.gz 但内容是**裸 cpio**（和 rv64 一样，别再纠结后缀）；
+# rootfs 里仍落名 initrd —— 必须和 guest_loader.h 的 GUEST_LINUX_INITRD_PATH 一致。
+GUEST_LINUX_FILES := imgs/guests/x86_64/bzImage imgs/guests/x86_64/initrd.gz
+else ifeq ($(ARCH),aarch64)
+GUEST_LINUX_FILES := imgs/guests/aarch64/linux.bin $(GUEST_LINUX_DTB_SRC) imgs/guests/aarch64/initrd.gz
+else
+# RISC-V 的 guest 镜像（DTB 是 imgs/guests/rv64/linux.dts 用 dtc 生成的，见该文件头）
+GUEST_LINUX_FILES := imgs/guests/rv64/linux.bin imgs/guests/rv64/linux.dtb imgs/guests/rv64/initrd.gz
+endif
+else
+GUEST_LINUX_FILES :=
+endif
+
+# 切换 GIC=v2|v3 时 $(GUEST_LINUX_DTB_SRC) 会换文件，但换个更旧的文件
+# 不会让 rootfs 的 mtime 落后，make 就不会重建镜像 —— 于是 rootfs 里留着
+# 上一版的 DTB。用带版本后缀的戳文件把这个变化显式暴露给 make。
+GUEST_GIC_STAMP := $(BUILD_DIR)/.guest-gic-$(if $(filter v3,$(GIC)),v3,v2)
+$(GUEST_GIC_STAMP):
+	@rm -f $(BUILD_DIR)/.guest-gic-v2 $(BUILD_DIR)/.guest-gic-v3
+	@touch $@
 # ROOTFS_SIZE_MB / ROOTFS_PHYS_ADDR 来自自动生成的 $(MEM_LAYOUT_MK)
 QEMU_ROOTFS_FLAGS = -device loader,file=$(ROOTFS_IMG),addr=$(ROOTFS_PHYS_ADDR),force-raw=on
 
-# ─── §11  顶层目标声明 ───────────────────────────────────────────────────────────
-.PHONY: all clean clean-all help klog kernel run run-net rootfs run-fs test-pthread test-mutex test-vmm test-ltp epoll-perf test-epoll-perf
+# ─── §9a  第三方 submodule 前置检查 ─────────────────────────────────────────────
+#
+# lwext4 / lwIP 是 git submodule，而 `git clone` **默认不拉 submodule**。所以刚
+# clone 下来 third_party/lwext4 是个空目录，构建会死在一行极具误导性的错误上：
+#
+#     include/vfs.h:14:10: fatal error: ext4.h: No such file or directory
+#
+# 这行指向的是**我们自己的**头文件，和真正的原因（submodule 没拉）看不出任何关系
+# —— 照着它去查 vfs.h 会白查很久。所以在任何编译发生之前先拦一道。
+#
+# 还有一种更阴的形态：submodule 的 `.git` 指针文件在、`git submodule status` 也
+# 不带 '-' 前缀、`git submodule update --init` 还 exit 0，**但工作树是空的**
+# （.git/modules 里有对象，index 里却是 staged 删除）。这个状态真的出现过一次，
+# 排查代价很高。所以下面直接查头文件在不在 —— 判据只能是文件本身，不能信 git 的
+# 状态字段。
+#
+# 挂载点选在 KERNEL_RULE（见 §11b）而不是顶层的 kernel 目标：那样只能保证
+# **链接前**检查，各 .o 的编译（也就是真正报 ext4.h 的地方）早就先炸了。
+SUBMODULE_HEADERS := $(LWEXT4_DIR)/include/ext4.h \
+                     $(LWIP_DIR)/src/include/lwip/init.h
 
-all: $(TARGET) klog
+# 一键修复。--force 是必需的：对付上面那种"index 里是 staged 删除"的僵局，
+# 不带 --force 的 update 会认为无事可做。
+submodules:
+	git submodule update --init --recursive --force
+	@echo "submodule 就绪。"
+
+check-submodules:
+	@missing=""; \
+	for h in $(SUBMODULE_HEADERS); do \
+	    [ -e "$$h" ] || missing="$$missing $$h"; \
+	done; \
+	if [ -n "$$missing" ]; then \
+	    echo ""; \
+	    echo "════════════════════════════════════════════════════════════════"; \
+	    echo " 第三方 submodule 没拉下来（lwext4 / lwIP 是 submodule，"; \
+	    echo " git clone 默认不拉它们）。缺少："; \
+	    for h in $$missing; do echo "     $$h"; done; \
+	    echo ""; \
+	    echo " 修复（仓库根目录执行）："; \
+	    echo "     make submodules"; \
+	    echo " 等价于："; \
+	    echo "     git submodule update --init --recursive --force"; \
+	    echo ""; \
+	    echo " 以后 clone 可以直接带子模块："; \
+	    echo "     git clone --recurse-submodules <url>"; \
+	    echo "════════════════════════════════════════════════════════════════"; \
+	    echo ""; \
+	    exit 1; \
+	fi
+
+# ─── §10  顶层目标声明 ───────────────────────────────────────────────────────────
+.PHONY: all clean clean-all help klog kernel run run-net rootfs run-fs test-pthread test-mutex test-vmm test-guest-linux test-ltp epoll-perf test-epoll-perf format format-check submodules check-submodules
+
+all: klog
 
 kernel: | kernel_clean
 kernel: $(KERNEL_BIN)
@@ -727,15 +922,13 @@ klog: $(KLOG_TARGET)
 $(BUILD_DIR):
 	$(MKDIR) $(BUILD_DIR)
 
-$(TARGET): $(OBJECTS) | $(BUILD_DIR)
-	$(AR) rcs $@ $^
 
 $(KLOG_TARGET): $(KLOG_OBJECT) | $(BUILD_DIR)
 	$(AR) rcs $@ $^
 
-# ─── §12  构建规则 ───────────────────────────────────────────────────────────────
+# ─── §11  构建规则 ───────────────────────────────────────────────────────────────
 
-# ── §12a  库与通用规则 ───────────────────────────────────────────────────────
+# ── §11a  库与通用规则 ───────────────────────────────────────────────────────
 $(BUILD_DIR)/klog.o: $(LIB_DIR)/klog.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
@@ -748,12 +941,23 @@ $(BUILD_DIR)/string.o: $(LIB_DIR)/string.c | $(BUILD_DIR)
 $(BUILD_DIR)/libc.o: $(LIB_DIR)/libc.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/%.o: $(SRC_DIR)/%.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
+# ── §11b  内核 / 测试 / 平台 / 启动规则 ────────────────────────────────────────
 
-# ── §12b  内核 / 任务 / 加载器 / 系统调用规则 ──────────────────────────────────
-$(BUILD_DIR)/kernel_%.o: $(KERNEL_DIR)/%.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
+# 内核源文件的编译规则由 §4a 发现出的列表批量生成，不再逐文件手写。
+# 标志参数必须写成 $$(...)：LWEXT4_CFLAGS / LWIP_CFLAGS 定义在 §8，晚于 §4，
+# 用单个 $ 会在本行展开时冻结成空字符串。
+# check-submodules 是 order-only 依赖：它必须在这个 .o 的编译**之前**跑完，
+# 但不该影响 .o 的新旧判断。挂了它才能保证"缺 submodule"时先看到 §9a 的
+# 提示，而不是各 .o 那行指向 include/vfs.h 的误导性 ext4.h 报错。
+define KERNEL_RULE
+$(call kobj,$(1)): $(1) | $(BUILD_DIR) check-submodules
+	$$(CC) $(2) -c $$< -o $$@
+endef
+
+$(foreach f,$(KERNEL_PLAIN_SRCS),$(eval $(call KERNEL_RULE,$(f),$$(CFLAGS))))
+$(foreach f,$(KERNEL_LWEXT4_SRCS),$(eval $(call KERNEL_RULE,$(f),$$(LWEXT4_CFLAGS))))
+$(foreach f,$(KERNEL_LWIP_SRCS),$(eval $(call KERNEL_RULE,$(f),$$(LWIP_CFLAGS))))
+$(foreach f,$(KERNEL_LWIPX_SRCS),$(eval $(call KERNEL_RULE,$(f),$$(LWIP_CFLAGS) -I$$(LWEXT4_DIR)/include -I$$(LWEXT4_PORT_DIR))))
 
 $(BUILD_DIR)/tests_%.o: $(TESTS_DIR)/%.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -765,7 +969,24 @@ $(BUILD_DIR)/platform_%.o: $(PLATFORM_DIR)/%.c | $(BUILD_DIR)
 $(BUILD_DIR)/boot_%.o: $(BOOT_DIR)/$(ARCH)/%.S | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-# ── §12c  启动 / 异常 / 驱动规则 ────────────────────────────────────────────────
+# ── §11c  启动 / 异常 / 驱动规则 ────────────────────────────────────────────────
+
+# 驱动源文件的编译规则由 §6e 分好的组批量生成，统一产出到 $(BUILD_DIR)/driver/。
+# 标志参数必须写成 $$(...)：LWEXT4_CFLAGS 定义在 §8，晚于 §6e。
+$(BUILD_DIR)/driver:
+	$(MKDIR) $@
+
+define DRIVER_RULE
+$(call _drv_obj,$(1)): $(1) | $(BUILD_DIR)/driver
+	$$(CC) $(2) -c $$< -o $$@
+endef
+
+$(foreach f,$(DRIVER_SRCS_CFLAGS),$(eval $(call DRIVER_RULE,$(f),$$(CFLAGS))))
+$(foreach f,$(DRIVER_SRCS_PLIC),  $(eval $(call DRIVER_RULE,$(f),$$(CFLAGS) -Idriver)))
+$(foreach f,$(DRIVER_SRCS_TPU),   $(eval $(call DRIVER_RULE,$(f),$$(CFLAGS) -Idriver/tpu)))
+$(foreach f,$(DRIVER_SRCS_ION),   $(eval $(call DRIVER_RULE,$(f),$$(CFLAGS) -Idriver/ion -Ikernel/mm)))
+$(foreach f,$(DRIVER_SRCS_BLK),   $(eval $(call DRIVER_RULE,$(f),$$(LWEXT4_CFLAGS) -Idriver)))
+
 $(BUILD_DIR)/exception_asm.o: $(BOOT_DIR)/aarch64/exception.S | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
@@ -792,214 +1013,47 @@ $(BUILD_DIR)/kernel_syscall_entry.o: $(BOOT_DIR)/x86_64/syscall_wrapper.S | $(BU
 $(BUILD_DIR)/x86_tss.o: $(BOOT_DIR)/x86_64/tss.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-# LAPIC 驱动编译规则（x86_64）
-$(BUILD_DIR)/lapic.o: driver/irq/lapic.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-# GIC 和 timer 驱动编译规则（AArch64）
-$(BUILD_DIR)/gicv2.o: driver/irq/gicv2.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/gicv3.o: driver/irq/gicv3.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/plic.o: driver/irq/plic.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -Idriver -c $< -o $@
-
-$(BUILD_DIR)/timer.o: driver/timer/timer.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-# NPU 驱动编译规则
-$(BUILD_DIR)/drv_npu_%.o: driver/npu/%.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/drv_tpu_%.o: driver/tpu/%.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -Idriver/tpu -c $< -o $@
-
-$(BUILD_DIR)/drv_ion_%.o: driver/ion/%.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -Idriver/ion -Ikernel/mm -c $< -o $@
-
-# SD 块设备（包含 lwext4 接口，使用 LWEXT4_CFLAGS）
-$(BUILD_DIR)/drv_blk_sdblk.o: driver/blk/sdblk.c | $(BUILD_DIR)
-	$(CC) $(LWEXT4_CFLAGS) -Idriver -c $< -o $@
-
-# kernel fs core — 始终构建
-KERNEL_FS_OBJS := $(BUILD_DIR)/kernel_fs_vfs.o
-
-# PseudoFS（虚拟文件系统 /dev /proc /sys）— 始终构建
-PSEUDOFS_OBJS := $(BUILD_DIR)/pseudofs_pseudofs.o \
-                 $(BUILD_DIR)/pseudofs_dev.o \
-                 $(BUILD_DIR)/pseudofs_dir.o \
-                 $(BUILD_DIR)/pseudofs_proc.o \
-                 $(BUILD_DIR)/pseudofs_util.o
-
-# Most kernel objects are compiled with platform-derived CFLAGS
-# (PLATFORM_*, DRIVER_*, DEVICE_*, memory layout).  The generator writes these
-# files only when contents change, so this catches real platform switches
-# without forcing recompilation on every make invocation.
+# ── §11c-1  平台配置依赖 ───────────────────────────────────────────────────────
+# 内核对象多数用平台派生的 CFLAGS 编译（PLATFORM_* / DRIVER_* / DEVICE_* / 内存布局）。
+# platform.mk 只在内容变化时才被 gen_platform.py 重写，所以把对象挂到它上面
+# 可以精确捕捉「真的换了平台」，而不会每次 make 都全量重编。
 PLATFORM_CONFIG_DEPS := $(PLATFORM_MK) $(_PLATFORM_CONF)
-$(BOOT_OBJECTS) $(KERNEL_OBJECTS) $(NET_OBJS) $(TASK_C_OBJECTS) $(TASK_S_OBJ) \
+$(BOOT_OBJECTS) $(KERNEL_OBJECTS) \
+$(PMM_TEST_OBJECT) \
 $(TASK_USER_TEST_OBJ) $(TASK_USER_HELLO_OBJ) $(TASK_USER_TESTEXECVE_OBJ) \
-$(LOADER_C_OBJECTS) $(SYSCALL_C_OBJECTS) \
-$(VM_C_OBJECTS) $(VM_S_OBJ) $(VMM_C_OBJECTS) $(VMM_S_OBJECTS) \
 $(GUEST_TEST_OBJ) $(TESTS_OBJECTS) $(PLATFORM_OBJECTS) $(DRIVER_OBJECTS) \
 $(EXCEPTION_OBJECTS) $(KLOG_OBJECT) $(VSNPRINTF_OBJECT) $(STRING_OBJECT) \
-$(LIBC_OBJECT) $(BITMAP_OBJECT) $(PLATFORM_CFG_OBJECT) $(PLATFORM_STATIC_OBJECT) $(LWEXT4_OBJS) $(LWEXT4_PORT_OBJS) $(KERNEL_FS_OBJS) \
-$(PSEUDOFS_OBJS) $(LWIP_OBJS): $(PLATFORM_CONFIG_DEPS)
+$(LIBC_OBJECT) $(BITMAP_OBJECT) $(PLATFORM_CFG_OBJECT) $(PLATFORM_STATIC_OBJECT) $(LWEXT4_OBJS) $(LWEXT4_PORT_OBJS) \
+$(LWIP_OBJS): $(PLATFORM_CONFIG_DEPS)
 
-$(BUILD_DIR)/kernel_fs_vfs.o: $(KERNEL_DIR)/fs/vfs/vfs.c | $(BUILD_DIR)
-	$(CC) $(LWEXT4_CFLAGS) -Idriver -Ikernel -Ikernel/mm -c $< -o $@
 
-$(BUILD_DIR)/pseudofs_pseudofs.o: $(KERNEL_DIR)/fs/pseudofs/pseudofs.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -Idriver -Ikernel -Ikernel/mm -c $< -o $@
-
-$(BUILD_DIR)/pseudofs_util.o: $(KERNEL_DIR)/fs/pseudofs/util.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -Idriver -Ikernel -Ikernel/mm -c $< -o $@
-
-$(BUILD_DIR)/pseudofs_proc.o: $(KERNEL_DIR)/fs/pseudofs/proc.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -Idriver -Ikernel -Ikernel/mm -c $< -o $@
-
-$(BUILD_DIR)/pseudofs_dir.o: $(KERNEL_DIR)/fs/pseudofs/dir.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -Idriver -Ikernel -Ikernel/mm -c $< -o $@
-
-$(BUILD_DIR)/pseudofs_dev.o: $(KERNEL_DIR)/fs/pseudofs/dev.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -Idriver -Ikernel -Ikernel/mm -c $< -o $@
-
-$(BUILD_DIR)/kernel_net_lwip_port_%.o: $(KERNEL_DIR)/net/lwip_port/%.c | $(BUILD_DIR)
-	@mkdir -p $(dir $@)
-	$(CC) $(LWIP_CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_net_%.o: $(KERNEL_DIR)/net/%.c | $(BUILD_DIR)
-	@mkdir -p $(dir $@)
-	$(CC) $(LWIP_CFLAGS) -c $< -o $@
-
-# 驱动编译规则
-$(BUILD_DIR)/drv_%.o: driver/%.c | $(BUILD_DIR)
-	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-# task 模块编译规则
-$(BUILD_DIR)/kernel_task_task.o: $(KERNEL_DIR)/task/task.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_task_sched.o: $(KERNEL_DIR)/task/sched.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_task_mutex.o: $(KERNEL_DIR)/task/mutex.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_task_cpu.o: $(KERNEL_DIR)/task/cpu.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_task_preempt.o: $(KERNEL_DIR)/task/preempt.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_task_exec.o: $(KERNEL_DIR)/task/exec.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/task_switch.o: $(TASK_S_SRC) | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-# loader 模块编译规则
-$(BUILD_DIR)/kernel_loader_bin_loader.o: $(KERNEL_DIR)/loader/bin_loader.c | $(BUILD_DIR)
-	$(CC) $(LWEXT4_CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_loader_elf_loader.o: $(KERNEL_DIR)/loader/elf_loader.c | $(BUILD_DIR)
-	$(CC) $(LWEXT4_CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_loader_elf_image.o: $(KERNEL_DIR)/loader/elf_image.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-# syscall 模块编译规则
-$(BUILD_DIR)/kernel_syscall_syscall.o: $(KERNEL_DIR)/syscall/syscall.c | $(BUILD_DIR)
-	$(CC) $(LWEXT4_CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_syscall_core_futex.o: $(KERNEL_DIR)/syscall/core/futex.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_syscall_core_proc_lifecycle.o: $(KERNEL_DIR)/syscall/core/proc_lifecycle.c | $(BUILD_DIR)
-	$(CC) $(LWEXT4_CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_syscall_core_proc_ids.o: $(KERNEL_DIR)/syscall/core/proc_ids.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_syscall_core_sched.o: $(KERNEL_DIR)/syscall/core/sched.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_syscall_core_signal.o: $(KERNEL_DIR)/syscall/core/signal.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_syscall_fs_fd_pool.o: $(KERNEL_DIR)/syscall/fs/fd_pool.c | $(BUILD_DIR)
-	$(CC) $(LWEXT4_CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_syscall_fs_path.o: $(KERNEL_DIR)/syscall/fs/path.c | $(BUILD_DIR)
-	$(CC) $(LWEXT4_CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_syscall_fs_tty.o: $(KERNEL_DIR)/syscall/fs/tty.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_syscall_fs_file_io.o: $(KERNEL_DIR)/syscall/fs/file_io.c | $(BUILD_DIR)
-	$(CC) $(LWEXT4_CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_syscall_fs_file_ops.o: $(KERNEL_DIR)/syscall/fs/file_ops.c | $(BUILD_DIR)
-	$(CC) $(LWEXT4_CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_syscall_fs_file_stat.o: $(KERNEL_DIR)/syscall/fs/file_stat.c | $(BUILD_DIR)
-	$(CC) $(LWEXT4_CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_syscall_fs_dir.o: $(KERNEL_DIR)/syscall/fs/dir.c | $(BUILD_DIR)
-	$(CC) $(LWEXT4_CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_syscall_fs_ioctl.o: $(KERNEL_DIR)/syscall/fs/ioctl.c | $(BUILD_DIR)
-	$(CC) $(LWEXT4_CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_syscall_fs_pipe.o: $(KERNEL_DIR)/syscall/fs/pipe.c | $(BUILD_DIR)
-	$(CC) $(LWEXT4_CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_syscall_fs_pty.o: $(KERNEL_DIR)/syscall/fs/pty.c | $(BUILD_DIR)
-	$(CC) $(LWEXT4_CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_syscall_io_poll.o: $(KERNEL_DIR)/syscall/io/poll.c | $(BUILD_DIR)
-	$(CC) $(LWEXT4_CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_syscall_io_select.o: $(KERNEL_DIR)/syscall/io/select.c | $(BUILD_DIR)
-	$(CC) $(LWEXT4_CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_syscall_io_epoll.o: $(KERNEL_DIR)/syscall/io/epoll.c | $(BUILD_DIR)
-	$(CC) $(LWEXT4_CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_syscall_mm_brk.o: $(KERNEL_DIR)/syscall/mm/brk.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_syscall_mm_mmap.o: $(KERNEL_DIR)/syscall/mm/mmap.c | $(BUILD_DIR)
-	$(CC) $(LWEXT4_CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_syscall_mm_pmap_compat.o: $(KERNEL_DIR)/syscall/mm/pmap_compat.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_syscall_net_ksocket.o: $(KERNEL_DIR)/syscall/net/ksocket.c | $(BUILD_DIR)
-	$(CC) $(LWIP_CFLAGS) -I$(LWEXT4_DIR)/include -I$(LWEXT4_PORT_DIR) -c $< -o $@
-
-$(BUILD_DIR)/kernel_syscall_net_sock_syscall.o: $(KERNEL_DIR)/syscall/net/sock_syscall.c | $(BUILD_DIR)
-	$(CC) $(LWIP_CFLAGS) -I$(LWEXT4_DIR)/include -I$(LWEXT4_PORT_DIR) -c $< -o $@
-
-# 用户测试程序编译规则
+# 内嵌用户程序：直接链接进内核镜像（与下面「从文件系统加载」的 apps/ 不同）
 $(BUILD_DIR)/user_test.o: $(TASK_USER_TEST_SRC) | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-# hello 用户程序编译规则
 $(BUILD_DIR)/hello.o: $(TASK_USER_HELLO_SRC) | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-# test_execve 用户程序编译规则（x86_64 only）
+# test_execve（仅 x86_64）
 ifeq ($(ARCH),x86_64)
 $(BUILD_DIR)/test_execve.o: apps/x86_64/test_execve.S | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 endif
 
-# 用户应用程序编译规则（从文件系统加载）
+# 用户应用程序：汇编为 .bin / .bin.elf，由 rootfs 装载（非内嵌）
 $(BUILD_DIR)/apps_%.o: $(APPS_DIR)/%.S | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -DAPP_ELF=1 -c $< -o $@
+
+# 这些 .o 只经由模式规则（上面的 apps_%.o 与下面的 %.bin）产生，从未在
+# Makefile 里被显式指名，因此 make 会把它们判为 intermediate 并在构建结束时
+# 自动删除（终端上会看到一行 "rm build/.../apps_hello.o ..."）。
+# 标记为 secondary 即可保留它们，避免每次重建 rootfs 都重新编译。
+# 注意：apps_guest_test.o / apps_el0_loop.o 有显式规则，本来就不会被删。
+# 加 ifneq 是因为裸 ".SECONDARY:"（无前置条件）含义是"所有目标都不删"，
+# 若某架构 apps/ 下没有 .S，会意外变成全局语义。
+ifneq ($(APPS_OBJECTS),)
+.SECONDARY: $(APPS_OBJECTS)
+endif
 
 # 生成应用程序二进制文件
 $(BUILD_DIR)/%.bin: $(BUILD_DIR)/apps_%.o $(APPS_LD) | $(BUILD_DIR)
@@ -1029,45 +1083,17 @@ epoll-perf:
 	@exit 1
 endif
 
-$(TASK_USER_BIN): $(BUILD_DIR)/user_test.o $(TASK_USER_LD) | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -nostdlib -nostartfiles -nodefaultlibs -T $(TASK_USER_LD) -o $@.elf $<
-	$(OBJCOPY) -O binary $@.elf $@
-	@echo "User program linked at: $(shell aarch64-linux-musl-nm $@.elf | grep user_test_program)"
-	@echo "User data at: $(shell aarch64-linux-musl-nm $@.elf | grep msg_hello)"
+# §11c-2  vmm-run：静态链接，免得还依赖 rootfs 里的动态 loader
+$(VMM_RUN_BIN): apps/c/vmm_run.c
+	$(ARCH)-linux-musl-gcc -O2 -Wall -Wextra -static $< -o $@
+	@echo "vmm-run helper created: $@"
 
-# ── §12d  VM / VMM / 架构特定规则 ───────────────────────────────────────────────
-$(BUILD_DIR)/kernel_mm_vm_early.o: $(VM_EARLY_C_SRC) | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
+# ── §11d  测试 / 库对象规则 ────────────────────────────────────────────────────
 
-$(BUILD_DIR)/kernel_mm_pmm.o: $(KERNEL_DIR)/mm/pmm.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
+# PMM 测试（唯一来自 tests/ 却参与内核链接的源文件，不在 §4a 的 find 范围内）
+PMM_TEST_OBJECT := $(BUILD_DIR)/kernel_mm_pmm_test.o
 
 $(BUILD_DIR)/kernel_mm_pmm_test.o: $(TESTS_DIR)/pmm_test.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-# 架构特定的 VMM 模块（仅 AArch64）
-ifeq ($(ARCH),aarch64)
-$(BUILD_DIR)/kernel_mm_vmm.o: $(KERNEL_DIR)/mm/aarch64/vmm.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
-endif
-
-ifeq ($(ARCH),riscv64)
-$(BUILD_DIR)/kernel_mm_rv_vmm.o: $(KERNEL_DIR)/mm/riscv64/vmm.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
-endif
-
-ifeq ($(ARCH),x86_64)
-$(BUILD_DIR)/kernel_mm_x86_vmm.o: $(KERNEL_DIR)/mm/x86_64/vmm.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
-endif
-
-$(BUILD_DIR)/kernel_mm_vm_user.o: $(KERNEL_DIR)/mm/vm_user.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_mm_kmalloc.o: $(KERNEL_DIR)/mm/kmalloc.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_mm_shared_page.o: $(KERNEL_DIR)/mm/shared_page.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/bitmap.o: $(LIB_DIR)/bitmap.c | $(BUILD_DIR)
@@ -1082,27 +1108,13 @@ $(BUILD_DIR)/platform_static.c: $(_PLATFORM_CONF) $(TOOLS_DIR)/gen_platform.py |
 $(BUILD_DIR)/platform_static.o: $(BUILD_DIR)/platform_static.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/kernel_mm_mmu.o: $(VM_S_SRC) | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
 
-# ── §12e  第三方库编译规则（lwext4）──────────────────────────────────────────────
-# 第三方 lwext4 源文件：使用包含 compat 路径的专用 LWEXT4_CFLAGS
+# ── §11e  第三方库编译规则（lwext4 / lwIP）──────────────────────────────────────
+# lwext4 第三方源码：用带 compat 路径的专用 LWEXT4_CFLAGS
 
-$(THIRD_PARTY_BUILD_DIR)/lwext4_%.o: $(LWEXT4_DIR)/src/%.c | $(BUILD_DIR)
+$(THIRD_PARTY_BUILD_DIR)/lwext4_%.o: $(LWEXT4_DIR)/src/%.c | $(BUILD_DIR) check-submodules
 	@mkdir -p $(dir $@)
 	$(CC) $(LWEXT4_CFLAGS) -c $< -o $@
-
-# lwext4 移植胶水代码：属于本项目，使用普通 CFLAGS
-$(BUILD_DIR)/lwext4_port_kmalloc.o: $(LWEXT4_PORT_DIR)/kmalloc.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-# RAM 块设备和 FS 初始化（需要 lwext4 头文件，使用 LWEXT4_CFLAGS）
-$(BUILD_DIR)/drv_blk_ramblk.o: driver/blk/ramblk.c | $(BUILD_DIR)
-	@mkdir -p $(dir $@)
-	$(CC) $(LWEXT4_CFLAGS) -Idriver -c $< -o $@
-
-$(BUILD_DIR)/lwext4_port_fs_init.o: $(LWEXT4_PORT_DIR)/fs_init.c | $(BUILD_DIR)
-	$(CC) $(LWEXT4_CFLAGS) -I$(LWEXT4_PORT_DIR) -c $< -o $@
 
 $(THIRD_PARTY_BUILD_DIR)/lwip_core_%.o: $(LWIP_DIR)/src/core/%.c | $(BUILD_DIR)
 	@mkdir -p $(dir $@)
@@ -1116,26 +1128,18 @@ $(THIRD_PARTY_BUILD_DIR)/lwip_netif_%.o: $(LWIP_DIR)/src/netif/%.c | $(BUILD_DIR
 	@mkdir -p $(dir $@)
 	$(CC) $(LWIP_CFLAGS) -c $< -o $@
 
-# VMM 模块编译规则（仅 AArch64）
+# lwext4 移植胶水：属于本项目，用普通 CFLAGS
+$(BUILD_DIR)/lwext4_port_kmalloc.o: $(LWEXT4_PORT_DIR)/kmalloc.c | $(BUILD_DIR) check-submodules
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# FS 初始化需要 lwext4 头文件，用 LWEXT4_CFLAGS
+$(BUILD_DIR)/lwext4_port_fs_init.o: $(LWEXT4_PORT_DIR)/fs_init.c | $(BUILD_DIR) check-submodules
+	$(CC) $(LWEXT4_CFLAGS) -I$(LWEXT4_PORT_DIR) -c $< -o $@
+
+
+# ── §11f  内嵌 guest 测试程序（链接进内核镜像）─────────────────────────────────
 ifeq ($(ARCH),aarch64)
-$(BUILD_DIR)/kernel_mm_stage2.o: $(KERNEL_DIR)/mm/aarch64/stage2.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/kernel_vmm_vmm.o: $(KERNEL_DIR)/vmm/vmm.c | $(BUILD_DIR)
-	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -Ikernel -Ikernel/vmm -c $< -o $@
-
-$(BUILD_DIR)/kernel_vmm_el2_run.o: $(KERNEL_DIR)/vmm/aarch64/el2_run.c | $(BUILD_DIR)
-	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -Ikernel -Ikernel/vmm -c $< -o $@
-
-$(BUILD_DIR)/kernel_vmm_el2_vmcs.o: $(KERNEL_DIR)/vmm/aarch64/el2_vmcs.S | $(BUILD_DIR)
-	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/kernel_vmm_vcpu_ctx.o: $(KERNEL_DIR)/vmm/aarch64/vcpu_ctx.S | $(BUILD_DIR)
-	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/apps_guest_test.o: apps/aarch64/guest_test.S | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -1145,53 +1149,79 @@ $(BUILD_DIR)/apps_el0_loop.o: apps/aarch64/el0_loop.S | $(BUILD_DIR)
 endif
 
 ifeq ($(ARCH),x86_64)
-$(BUILD_DIR)/kernel_vmm_vmm.o: $(KERNEL_DIR)/vmm/vmm.c | $(BUILD_DIR)
-	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -Ikernel -Ikernel/vmm -c $< -o $@
 
-$(BUILD_DIR)/kernel_vmm_x86_vmx.o: $(KERNEL_DIR)/vmm/x86_64/vmx.c | $(BUILD_DIR)
-	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -Ikernel -Ikernel/vmm -c $< -o $@
-
-$(BUILD_DIR)/kernel_vmm_x86_vmx_run.o: $(KERNEL_DIR)/vmm/x86_64/vmx_run.S | $(BUILD_DIR)
-	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/apps_x86_guest_test.o: apps/x86_64/guest_test.S | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 endif
 
 ifeq ($(ARCH),riscv64)
-$(BUILD_DIR)/kernel_vmm_vmm.o: $(KERNEL_DIR)/vmm/vmm.c | $(BUILD_DIR)
-	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -Ikernel -Ikernel/vmm -c $< -o $@
 
-$(BUILD_DIR)/kernel_vmm_riscv_hext_run.o: $(KERNEL_DIR)/vmm/riscv64/hext_run.c | $(BUILD_DIR)
-	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -Ikernel -Ikernel/vmm -c $< -o $@
-
-$(BUILD_DIR)/kernel_vmm_riscv_hext_vcpu.o: $(KERNEL_DIR)/vmm/riscv64/hext_vcpu.S | $(BUILD_DIR)
-	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/apps_riscv_guest_test.o: apps/riscv64/guest_test.S | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 endif
 
-# ── §12g  链接 ────────────────────────────────────────────────────────────────────
-$(KERNEL_TARGET): $(BOOT_OBJECTS) $(KERNEL_OBJECTS) $(NET_OBJS) $(LWIP_OBJS) $(TASK_C_OBJECTS) $(TASK_S_OBJ) $(TASK_USER_TEST_OBJ) $(TASK_USER_HELLO_OBJ) $(TASK_USER_TESTEXECVE_OBJ) $(LOADER_C_OBJECTS) $(SYSCALL_C_OBJECTS) $(VM_C_OBJECTS) $(VM_S_OBJ) $(VMM_C_OBJECTS) $(VMM_S_OBJECTS) $(GUEST_TEST_OBJ) $(TESTS_OBJECTS) $(PLATFORM_OBJECTS) $(DRIVER_OBJECTS) $(EXCEPTION_OBJECTS) $(KLOG_OBJECT) $(VSNPRINTF_OBJECT) $(STRING_OBJECT) $(LIBC_OBJECT) $(BITMAP_OBJECT) $(PLATFORM_CFG_OBJECT) $(PLATFORM_STATIC_OBJECT) $(LWEXT4_OBJS) $(LWEXT4_PORT_OBJS) $(KERNEL_FS_OBJS) $(PSEUDOFS_OBJS) | $(BUILD_DIR)
+# ── §11g  链接 ────────────────────────────────────────────────────────────────────
+#
+# 内核链接是**两趟**的，为的是把函数符号表（kallsyms）嵌进镜像：
+#
+#   stage-1.elf  ──gen_kallsyms.py──>  kallsyms_<arch>.S  ──>  .o
+#        │                                                      │
+#        └────────────────────┬─────────────────────────────────┘
+#                             ▼
+#                      kernel_<arch>.elf （带 .kallsyms 段）
+#                             │
+#                             └─ gen_kallsyms.py --verify 比对两趟的
+#                                (地址, 函数名) 集合是否完全一致
+#
+# 为什么需要两趟：内核是 `objcopy -O binary` 出 .bin 再交给 QEMU `-kernel`
+# 的，镜像里没有符号表；要让 panic backtrace 打出 `func+0x12`，符号表只能
+# 编进内核 —— 而表的内容（地址）又依赖链接结果。鸡生蛋。
+#
+# 为什么两趟的地址对得上：link.ld 把 .kallsyms 放在 .text **之后**（见
+# boot/x86_64/link.ld 里的长注释），新增这一段不移动任何函数；表里也只收
+# STT_FUNC。--verify 是给这条不变量兜底的 —— 一旦有人挪动段序，构建当场
+# 失败，而不是产出二进制正常、函数名整体错位的镜像。
+KERNEL_LINK_OBJS := $(BOOT_OBJECTS) $(KERNEL_OBJECTS) $(PMM_TEST_OBJECT) $(LWIP_OBJS) $(TASK_USER_TEST_OBJ) $(TASK_USER_HELLO_OBJ) $(TASK_USER_TESTEXECVE_OBJ) $(GUEST_TEST_OBJ) $(TESTS_OBJECTS) $(PLATFORM_OBJECTS) $(DRIVER_OBJECTS) $(EXCEPTION_OBJECTS) $(KLOG_OBJECT) $(VSNPRINTF_OBJECT) $(STRING_OBJECT) $(LIBC_OBJECT) $(BITMAP_OBJECT) $(PLATFORM_CFG_OBJECT) $(PLATFORM_STATIC_OBJECT) $(LWEXT4_OBJS) $(LWEXT4_PORT_OBJS)
+
+# 第一趟：链一个**空**符号表桩，只为拿到各函数的最终地址。
+# 桩不是可有可无的：.text 里的代码要引用 __kallsyms_*，两趟必须解析到
+# "同样形态"的符号，生成出来的指令长度才会一样（见 §5 的变量说明）。
+$(KERNEL_STAGE1): $(KERNEL_LINK_OBJS) $(KALLSYMS_STUB_OBJ) | $(BUILD_DIR)
 	$(CC) $(LDFLAGS) -nostartfiles -nodefaultlibs -T $(BOOT_DIR)/$(ARCH)/link.ld -o $@ -Wl,--start-group $^ -Wl,--end-group
+
+$(KALLSYMS_STUB_S): $(TOOLS_DIR)/gen_kallsyms.py | $(BUILD_DIR)
+	$(PYTHON) $(TOOLS_DIR)/gen_kallsyms.py --stub $@
+
+$(KALLSYMS_STUB_OBJ): $(KALLSYMS_STUB_S) | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# 从第一趟的 ELF 抽函数符号表。
+# 依赖 gen_kallsyms.py 本身：改脚本要能触发重生成。
+$(KALLSYMS_S): $(KERNEL_STAGE1) $(TOOLS_DIR)/gen_kallsyms.py
+	$(PYTHON) $(TOOLS_DIR)/gen_kallsyms.py $< $@
+
+$(KALLSYMS_OBJ): $(KALLSYMS_S) | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# 第二趟：带上符号表。链完立刻校验两趟地址一致 —— 这一步失败说明 .kallsyms
+# 的段序被挪了，此时镜像**不能**用来调试，宁可让构建红掉。
+$(KERNEL_TARGET): $(KERNEL_LINK_OBJS) $(KALLSYMS_OBJ) | $(BUILD_DIR)
+	$(CC) $(LDFLAGS) -nostartfiles -nodefaultlibs -T $(BOOT_DIR)/$(ARCH)/link.ld -o $@ -Wl,--start-group $^ -Wl,--end-group
+	$(PYTHON) $(TOOLS_DIR)/gen_kallsyms.py --verify $(KERNEL_STAGE1) $@
 
 # 转换为二进制文件
 $(KERNEL_BIN): $(KERNEL_TARGET)
 	$(OBJCOPY) -O binary $< $@
 
-# 创建软盘镜像（1.44MB）
+# 1.44MB 软盘镜像（KERNEL_IMAGE 仅在 x86_64 定义，见 §5；
+# 其它架构下该变量为空，这条规则不会被注册）
 $(KERNEL_IMAGE): $(KERNEL_BIN)
 	dd if=/dev/zero of=$@ bs=1024 count=1440
 	dd if=$< of=$@ bs=512 conv=notrunc
 
-# ─── §13  运行 / 测试目标 ────────────────────────────────────────────────────────
+# ─── §12  运行 / 测试目标 ────────────────────────────────────────────────────────
 run: kernel
 	@echo "Starting QEMU for $(ARCH)..."
 	$(QEMU) $(QEMU_FLAGS)
@@ -1218,7 +1248,7 @@ test-epoll-perf: epoll-perf kernel $(ROOTFS_IMG)
 # 创建 ext4 rootfs 镜像（无需 sudo）
 # 依赖：Host 已安装 e2fsprogs（mkfs.ext4 >= 1.43 支持 -d 选项）
 # 每次 apps 变动时自动重建；切换架构直接使用各自的镜像文件，无需 make clean
-$(ROOTFS_IMG): Makefile $(APPS_BINS) $(APPS_C_ELFS) $(LTP_BINS) $(EPOLL_PERF_BIN) $(NGINX_BIN) | $(BUILD_DIR)
+$(ROOTFS_IMG): Makefile $(APPS_BINS) $(APPS_C_ELFS) $(LTP_BINS) $(EPOLL_PERF_BIN) $(VMM_RUN_BIN) $(NGINX_BIN) $(GUEST_LINUX_FILES) $(GUEST_GIC_STAMP) | $(BUILD_DIR)
 	@echo "=== Building rootfs for $(ARCH): $(ROOTFS_IMG) ==="
 	@rm -rf $(ROOTFS_STAGE)
 	@mkdir -p $(ROOTFS_STAGE)/bin
@@ -1264,14 +1294,21 @@ $(ROOTFS_IMG): Makefile $(APPS_BINS) $(APPS_C_ELFS) $(LTP_BINS) $(EPOLL_PERF_BIN
 		done; \
 	fi
 	@# 安装 musl 用户态性能测试程序
-	@if [ -f $(EPOLL_PERF_BIN) ]; then \
+	@# 安装宿主侧 guest 控制 helper
+	@if [ -n "$(VMM_RUN_BIN)" ] && [ -f "$(VMM_RUN_BIN)" ]; then \
+		mkdir -p $(ROOTFS_STAGE)/bin; \
+		cp $(VMM_RUN_BIN) $(ROOTFS_STAGE)/bin/vmm-run; \
+		chmod +x $(ROOTFS_STAGE)/bin/vmm-run; \
+		echo "  [vmm-run installed → /bin/vmm-run]"; \
+	fi
+	@if [ -f "$(EPOLL_PERF_BIN)" ]; then \
 		mkdir -p $(ROOTFS_STAGE)/bin; \
 		cp $(EPOLL_PERF_BIN) $(ROOTFS_STAGE)/bin/epoll_perf; \
 		chmod +x $(ROOTFS_STAGE)/bin/epoll_perf; \
 		echo "  [epoll_perf installed → /bin/epoll_perf]"; \
 	fi
 	@# 安装 nginx（如果存在对应架构的静态 musl 构建）
-	@if [ -f $(NGINX_BIN) ]; then \
+	@if [ -f "$(NGINX_BIN)" ]; then \
 		mkdir -p $(ROOTFS_STAGE)/bin $(ROOTFS_STAGE)/etc/nginx $(ROOTFS_STAGE)/www; \
 		cp $(NGINX_BIN) $(ROOTFS_STAGE)/bin/nginx; \
 		chmod +x $(ROOTFS_STAGE)/bin/nginx; \
@@ -1290,6 +1327,43 @@ $(ROOTFS_IMG): Makefile $(APPS_BINS) $(APPS_C_ELFS) $(LTP_BINS) $(EPOLL_PERF_BIN
 		'}' > $(ROOTFS_STAGE)/etc/nginx/nginx.conf; \
 		printf '%s\n' '<html><body><h1>Avatar nginx</h1></body></html>' > $(ROOTFS_STAGE)/www/index.html; \
 		echo "  [nginx installed → /bin/nginx]"; \
+	fi
+	@# 安装 guest Linux 镜像（供 RUN_GUEST_LINUX / vmm-run 从 rootfs 加载）
+	@# 目录名与 include/guest_loader.h 的 GUEST_LINUX_*_PATH 必须一致。
+	@if [ "$(ARCH)" = "riscv64" ]; then \
+		missing=0; \
+		for f in imgs/guests/rv64/linux.bin imgs/guests/rv64/linux.dtb imgs/guests/rv64/initrd.gz; do \
+			if [ ! -f "$$f" ]; then echo "ERROR: missing guest image $$f"; missing=1; fi; \
+		done; \
+		if [ "$$missing" -ne 0 ]; then exit 1; fi; \
+		mkdir -p $(ROOTFS_STAGE)/guests/rv64; \
+		cp imgs/guests/rv64/linux.bin $(ROOTFS_STAGE)/guests/rv64/linux.bin; \
+		cp imgs/guests/rv64/linux.dtb $(ROOTFS_STAGE)/guests/rv64/linux.dtb; \
+		cp imgs/guests/rv64/initrd.gz $(ROOTFS_STAGE)/guests/rv64/initrd.gz; \
+		echo "  [RISC-V Linux guest installed → /guests/rv64]"; \
+	fi
+	@if [ "$(ARCH)" = "x86_64" ]; then \
+		missing=0; \
+		for f in imgs/guests/x86_64/bzImage imgs/guests/x86_64/initrd.gz; do \
+			if [ ! -f "$$f" ]; then echo "ERROR: missing guest image $$f"; missing=1; fi; \
+		done; \
+		if [ "$$missing" -ne 0 ]; then exit 1; fi; \
+		mkdir -p $(ROOTFS_STAGE)/guests/x86_64; \
+		cp imgs/guests/x86_64/bzImage $(ROOTFS_STAGE)/guests/x86_64/bzImage; \
+		cp imgs/guests/x86_64/initrd.gz $(ROOTFS_STAGE)/guests/x86_64/initrd; \
+		echo "  [x86_64 Linux guest installed → /guests/x86_64]"; \
+	fi
+	@if [ "$(ARCH)" = "aarch64" ]; then \
+		missing=0; \
+		for f in imgs/guests/aarch64/linux.bin $(GUEST_LINUX_DTB_SRC) imgs/guests/aarch64/initrd.gz; do \
+			if [ ! -f "$$f" ]; then echo "ERROR: missing guest image $$f"; missing=1; fi; \
+		done; \
+		if [ "$$missing" -ne 0 ]; then exit 1; fi; \
+		mkdir -p $(ROOTFS_STAGE)/guests/linux; \
+		cp imgs/guests/aarch64/linux.bin $(ROOTFS_STAGE)/guests/linux/linux.bin; \
+		cp $(GUEST_LINUX_DTB_SRC) $(ROOTFS_STAGE)/guests/linux/linux.dtb; \
+		cp imgs/guests/aarch64/initrd.gz $(ROOTFS_STAGE)/guests/linux/initrd.gz; \
+		echo "  [AArch64 Linux guest installed → /guests/linux ($(GUEST_LINUX_DTB_SRC))]"; \
 	fi
 	@# 安装 Dropbear SSH 服务器
 	@DROPBEAR_MULTI=third_party/dropbear-2024.86/dropbearmulti-$(ARCH); \
@@ -1368,9 +1442,73 @@ test-mutex: kernel
 #   用法: make ARCH=aarch64 test-vmm LOG=info
 #
 test-vmm:
-	$(MAKE) ARCH=$(ARCH) LOG=$(LOG) ASSERT=$(ASSERT) VMM_TEST=1 kernel
-	@echo "Starting QEMU for $(ARCH) — VMM 3-thread context switch test..."
+	$(MAKE) ARCH=$(ARCH) LOG=$(LOG) VMM_TEST=1 kernel
+
+# test-string: 字符串/内存函数自检（tests/string_test.c）
+#              长度 × 源对齐 × 目的对齐 全组合，跨过 NEON 阈值两侧，
+#              跑完打印 "=== STRING TEST: PASS (N cases) ===" 后继续正常启动。
+#   用法: make PLATFORM=qemu-virt-aarch64 test-string
+test-string:
+	$(MAKE) PLATFORM=$(PLATFORM) LOG=$(LOG) STRING_TEST=1 kernel
+	@echo "Starting QEMU (string self-test)..."
 	$(QEMU) $(QEMU_FLAGS)
+
+# test-panic: 在 ELF 解析路径上**故意 panic 一次**，用来看调用栈回溯的效果。
+#
+#   用法: make PLATFORM=qemu-virt-x86_64 test-panic
+#
+# 触发点在 kernel/loader/elf_image.c 的 ELF 头部校验之后（PANIC_TEST=1 时才
+# 编译进来），打出来的是一条真实的加载器调用链：
+#   platform_panic ← elf_image_load_impl ← elf_image_load ← exec → …
+# 设计说明与已知局限见 docs/basic/BACKTRACE.md。
+#
+# 需要 rootfs：触发点是"解析 /busybox 的 ELF 头"，没有文件系统就走不到那里
+# （会先在 open 那一步失败退出）。所以这里和 test-pthread 一样先摆好镜像。
+test-panic:
+	@if [ ! -f imgs/rootfs-$(ARCH).img ]; then \
+		echo "ERROR: imgs/rootfs-$(ARCH).img not found."; \
+		echo "Run: bash apps/c/build.sh"; \
+		exit 1; \
+	fi
+	$(MAKE) PLATFORM=$(PLATFORM) LOG=$(LOG) PANIC_TEST=1 kernel
+	@cp imgs/rootfs-$(ARCH).img $(ROOTFS_IMG)
+	@echo "Starting QEMU (PANIC_TEST: 在 ELF 解析路径上故意 panic，看 backtrace)..."
+	$(QEMU) $(QEMU_FLAGS) $(QEMU_ROOTFS_FLAGS)
+
+# test-guest-linux: 编译 GUEST_LINUX=1 内核并把 Linux 作为 EL1 guest 启动
+#                   rootfs 会自动安装 /guests/linux/{linux.bin,linux.dtb,initrd.gz}
+# ⚠️ `$(ROOTFS_IMG)` 这个依赖不能少：三个架构的 guest 镜像
+# （/guests/rv64/*、/guests/linux/*、/guests/x86_64/*）都是**打进 rootfs 镜像**、
+# 再由 guest_loader 从镜像里读出来的。少了它，镜像不存在，QEMU 直接报
+#     -device loader,file=.../rootfs-<arch>.img: Cannot load specified image
+# （注意这条报错是 QEMU 打给 stderr 的，看起来很像"guest 起不来"，
+#  实际是文件压根没生成）。曾经在给 x86_64 加分支时误删过一次。
+test-guest-linux: $(ROOTFS_IMG)
+	@if [ "$(ARCH)" != "aarch64" ] && [ "$(ARCH)" != "riscv64" ] && [ "$(ARCH)" != "x86_64" ]; then \
+		echo "ERROR: test-guest-linux supports ARCH=aarch64, riscv64 or x86_64."; \
+		exit 1; \
+	fi
+ifeq ($(ARCH),x86_64)
+	@# x86_64：**rootfs 必须和内核用同一个变体标志构建** ——
+	@# make rootfs 在 GUEST_LINUX=1 时才会把 /guests/x86_64/{bzImage,initrd}
+	@# 装进镜像；而它同时会用当前命令行的变体重编内核（见 CLAUDE.md 的警告）。
+	@# 所以顺序是：同变体先 rootfs，再 kernel（kernel 放最后），最后校验产物。
+	$(MAKE) PLATFORM=$(PLATFORM) LOG=$(LOG) GUEST_LINUX=1 rootfs
+	$(MAKE) PLATFORM=$(PLATFORM) LOG=$(LOG) GUEST_LINUX=1 kernel
+	@# 判据是 kernel/main.c 里那个 __attribute__((used)) 的构建指纹，
+	@# **不是**任何 KLOG 字符串 —— LOG=none 会把 KLOG 全编译掉，
+	@# 拿它当判据会在正确的产物上误报。见 main.c 里的注释。
+	@if [ "$$(strings $(KERNEL_BIN) | grep -c 'GUEST_LINUX_BUILD_TAG')" != "1" ]; then \
+		echo "ERROR: 产物不是 GUEST_LINUX 变体（会被 make rootfs 覆盖）。"; \
+		echo "       请按 CLAUDE.md：同变体先 rootfs 再 kernel。"; \
+		exit 1; \
+	fi
+else
+	$(MAKE) PLATFORM=$(PLATFORM) LOG=$(LOG) GUEST_LINUX=1 kernel
+endif
+	@echo "Starting QEMU (guest Linux, $(ARCH))..."
+	@echo "  提示：guest 串口直接打在本终端；Ctrl-A X 退出 QEMU。"
+	$(QEMU) $(QEMU_FLAGS) $(QEMU_ROOTFS_FLAGS)
 
 # test-ltp: 编译 LTP 测例并启动带 rootfs 的 QEMU
 #   前提: bash tests/ltp/build.sh [ARCH]  已编译测例到 tests/ltp/bin/<arch>/
@@ -1386,17 +1524,60 @@ test-ltp: kernel $(ROOTFS_IMG)
 	@echo "In QEMU shell: /ltp/run_ltp.sh"
 	$(QEMU) $(QEMU_FLAGS) $(QEMU_ROOTFS_FLAGS)
 
-# ─── §14  清理 / 帮助 ────────────────────────────────────────────────────────────
+# ─── §13  清理 / 格式化 / 帮助 ───────────────────────────────────────────────────
 clean:
 	rm -rf $(BUILD_DIR)
 
 clean-all:
 	rm -rf $(BUILD_ROOT)/*
 
+# 代码格式化（配置见仓库根的 .clang-format）
+#
+# FORMAT_DIRS 只列本项目自己的源码树。third_party/ 是外部 submodule
+# （lwext4 / lwIP），人家有自己的风格，不归我们管；build/ 是产物。
+# 与 PLATFORM 无关，任何平台下跑结果都一样。
+FORMAT_DIRS  := boot driver fs include kernel lib platforms apps tests
+FORMAT_SRCS  := $(shell find $(FORMAT_DIRS) \( -name '*.c' -o -name '*.h' \) 2>/dev/null)
+CLANG_FORMAT ?= clang-format
+
+# 为什么是「跑到收敛」而不是「跑一遍」：
+# clang-format 不保证幂等，个别构造要两三遍才稳定。本项目实测命中一处 ——
+# driver/uart/uart.h 里有个注释插在连续 #define 块中间，那个注释的缩进会在
+# 第 1、2 遍之间来回摆一次，第 3 遍才定住。只跑一遍的话，紧接着的
+# `make format-check` 会报错，看起来像"格式化没生效"。
+format:
+	@command -v $(CLANG_FORMAT) >/dev/null 2>&1 || {                     \
+	    echo "找不到 $(CLANG_FORMAT)。装一个：";                          \
+	    echo "  pipx install clang-format     # 用户级，免 sudo";         \
+	    echo "  sudo apt install clang-format";                           \
+	    exit 1; }
+	@echo "clang-format $$($(CLANG_FORMAT) --version | sed 's/.*version //')" \
+	      "—— 目标 $(words $(FORMAT_SRCS)) 个文件"
+	@prev=""; converged="";                                                    \
+	for pass in 1 2 3 4 5; do                                                 \
+	    cur=$$(cat $(FORMAT_SRCS) | cksum);                                    \
+	    if [ "$$cur" = "$$prev" ]; then converged=$$((pass - 1)); break; fi;   \
+	    $(CLANG_FORMAT) -i $(FORMAT_SRCS);                                     \
+	    prev="$$cur";                                                          \
+	done;                                                                      \
+	if [ -n "$$converged" ]; then echo "  ✅ 第 $$converged 遍收敛";            \
+	else echo "  ⚠️  5 遍仍未收敛，请人工看一眼"; fi
+	@echo "⚠️  .h 被改过，构建不跟踪头文件 mtime —— 下次编译前先 make clean，"
+	@echo "    否则会用到布局不一致的旧 .o（见 CLAUDE.md 的「幽灵 bug」一节）。"
+
+# 注意：--dry-run 只做"再跑一遍会不会变"的判断，所以它隐含要求工作区已经处在
+# 不动点上 —— 这正是 format 跑到收敛的原因。CI 里直接用它即可。
+format-check:
+	@command -v $(CLANG_FORMAT) >/dev/null 2>&1 || {                     \
+	    echo "找不到 $(CLANG_FORMAT)（pipx install clang-format）"; exit 1; }
+	@$(CLANG_FORMAT) --dry-run --Werror $(FORMAT_SRCS) 2>&1 \
+	    && echo "✅ 格式检查通过（$(words $(FORMAT_SRCS)) 个文件）" \
+	    || { echo "❌ 上面的文件不符合 .clang-format，跑 make format 修正"; exit 1; }
+
 help:
 	@echo "Avatar OS Makefile"
 	@echo ""
-	@echo "Usage: make PLATFORM=<platform> [LOG=<level>] [ASSERT=<mode>] [target]"
+	@echo "Usage: make PLATFORM=<platform> [LOG=<level>] [target]"
 	@echo ""
 	@echo "Platforms:"
 	@echo "  PLATFORM=qemu-virt-x86_64     QEMU x86_64 platform"
@@ -1414,11 +1595,19 @@ help:
 	@echo "  LOG=warn      Show warnings and errors"
 	@echo "  LOG=info      Show info, warnings and errors (default)"
 	@echo "  LOG=debug     Show debug info and above"
+	@echo "  LOG_MODULES=uart,gic   Whitelist which modules' DEBUG/TRACE logs print (needs LOG=debug|trace)"
 	@echo "  LOG=trace     Show all logs including trace"
 	@echo ""
-	@echo "Assert Modes:"
-	@echo "  ASSERT=panic  Enable assertions, panic on failure (default)"
-	@echo "  ASSERT=off    Disable all assertions (release mode)"
+	@echo "Assertions:"
+	@echo "  Assertions are always enabled (assert/assert_always -> platform_panic)"
+	@echo ""
+	@echo "Backtrace:"
+	@echo "  FP=1          Add -fno-omit-frame-pointer so panic/exception dumps a"
+	@echo "                symbolicated call stack (default). Costs a GPR and ~1-3%."
+	@echo "  FP=0          Omit frame pointers; backtrace falls back to a heuristic"
+	@echo "                stack scan (works, but may miss or invent frames)."
+	@echo "  Function names come from an embedded kallsyms table generated out of"
+	@echo "  the stage-1 link; see kernel/debug/backtrace.h and docs/basic/BACKTRACE.md"
 	@echo ""
 	@echo "Cross-compiler:"
 	@echo "  CC=<compiler>  Specify compiler (x86_64: gcc, aarch64: aarch64-linux-musl-gcc, riscv64: riscv64-linux-musl-gcc)"
@@ -1433,42 +1622,74 @@ help:
 	@echo "  test-pthread  Copy dynamic rootfs from imgs/ and run pthread_test"
 	@echo "  test-mutex    Copy dynamic rootfs from imgs/ and run mutex_test (futex-based)"
 	@echo "  test-vmm      Build with VMM_TEST=1 and run VMM 3-thread switch test"
+	@echo "  test-panic    Build with PANIC_TEST=1: panic on purpose in the ELF"
+	@echo "  test-guest-linux  - 启动 Linux guest（aarch64/riscv64/x86_64）"
+	@echo "                parser, to see what a backtrace looks like"
+	@echo "  submodules    Init/update third_party submodules (lwext4, lwIP)"
 	@echo "  clean         Remove build artifacts for current PLATFORM"
 	@echo "  clean-all     Remove build artifacts for all platforms"
+	@echo "  format        Reformat all project .c/.h with clang-format (.clang-format)"
+	@echo "  format-check  Dry-run: exit non-zero if anything is not formatted (CI)"
 	@echo "  help          Show this help message"
 	@echo ""
 	@echo "Examples:"
 	@echo "  make PLATFORM=qemu-virt-aarch64 kernel"
 	@echo "  make PLATFORM=qemu-virt-riscv64 run-fs LOG=trace"
-	@echo "  make PLATFORM=qemu-virt-x86_64 ASSERT=off kernel"
+	@echo "  make PLATFORM=qemu-virt-x86_64 kernel LOG=warn"
 	@echo "  make PLATFORM=sg2002-riscv64 kernel LOG=info"
 	@echo "  make PLATFORM=qemu-virt-riscv64 clean"
 	@echo "  make PLATFORM=qemu-virt-riscv64 test-pthread LOG=warn    # pthread_test 一键测试"
 	@echo "  make PLATFORM=qemu-virt-aarch64 test-vmm LOG=info        # VMM 三线程切换测试"
+	@echo "  make PLATFORM=qemu-virt-aarch64 test-string              # 字符串/内存函数自检"
 	@echo "  make ARCH=riscv64 kernel                                 # legacy alias for PLATFORM=qemu-virt-riscv64"
 	@echo "  make PLATFORM=qemu-virt-riscv64 run-net"
 	@echo "  make PLATFORM=qemu-virt-riscv64 run-net QEMU_NET_FLAGS='-netdev tap,id=net0,ifname=tap0,script=no,downscript=no -device virtio-net-device,netdev=net0,mac=52:54:00:12:34:56'"
 
-# 包含依赖文件
--include $(DEPS)
+# 头文件依赖：编译时已用 -MMD -MP 生成 build/**.d，但当前未纳入 -include，
+# 因此修改头文件不会触发重新编译（改头文件后请手动 make clean）。
+# 若要启用，需把所有目标的 .d 汇总成一个变量再 -include 之。
+#
+# ⚠️ 最常踩这个坑的头文件是 include/klog.h —— 它定义所有 KLOG_* 宏，
+# 改它等于改每一个 TU。而 _CFG_SIG（见 §7b 附近）只跟踪 GIC=/SMP=/LOG=/
+# LOG_MODULES=，**不跟踪头文件 mtime**，所以不会替你清 .o。
+# 后果很隐蔽：新旧宏混在同一个镜像里，输出**看起来完全合理**，
+# 只是行数和采样都不对 —— 而日志改动的验收恰恰是按行数比对的。
+# 改 klog.h 后务必 make clean 再全量重编。
 
-
-
+# ─── 目录索引 ────────────────────────────────────────────────────────────────────
 # 节	内容
-# §1	基本参数（PLATFORM / ARCH兼容 / LOG / ASSERT / 目录）
+# §1	基本参数（PLATFORM / ARCH 兼容 / LOG / SMP / 目录）
 # §2	平台配置生成（gen_platform.py）
-# §3	日志与断言标志
-# §4	源文件与目标文件变量
-# §4a	架构特定模块（VMM / 异常 / 切换 / 用户程序）
-# §4b	平台 / 驱动基础源文件
-# §5	工具链与编译标志
-# §5a	通用编译标志
-# §6	驱动选择
-# §6a-e	UART/GIC → NPU/TPU → ETH → 组装 → ION/SDMMC
-# §7	构建变体（VMM_TEST）
-# §8	第三方库：lwext4
+# §3	日志标志（另含 ASSERT 开关已移除的断言）
+# §4	源文件与目标文件变量（lib 对象）
+# §4a	内核源文件自动发现（find 递归 + 架构目录排除 + vdev 白名单）
+# §4a-2	内核编译标志分组（引用第三方头文件的短名单）
+# §4b	平台 / 驱动基础源文件、启动与异常源文件
+# §5	工具链与编译标志（按架构）
+# §5a	通用编译标志（所有架构共享）
+# §6	驱动选择（UART / GIC / NPU / TPU / ETH / ION / SDMMC）
+# §6a	基础设备驱动选择
+# §6b	加速器驱动选择（NPU / TPU）
+# §6c	网络驱动选择（ETH）
+# §6e	DRIVER_OBJECTS 组装：源文件 → $(BUILD_DIR)/driver/<文件名>.o
+# §6e-1	辅助驱动（ION / SDMMC）
+# §6e-2	驱动按编译标志分组
+# §7	构建变体（VMM_TEST / GUEST_LINUX / NGINX_TEST）
+# §8	第三方库：lwext4 文件系统
+# §8a	内核网络栈：netdev + lwIP
 # §9	Rootfs 配置
 # §10	顶层目标声明
-# §11	构建规则（a~g 子节）
+# §11	构建规则
+# §11a	库与通用规则
+# §11b	内核 / 测试 / 平台 / 启动规则（由 §4a 的列表 eval 生成）
+# §11c	启动 / 异常 / 驱动规则（驱动由 §6e 的列表 eval 生成）
+# §11c-1	平台配置依赖声明（换平台时精确触发重编）
+# §11d	测试 / 库对象规则
+# §11e	第三方库编译规则（lwext4 / lwIP）
+# §11f	内嵌 guest 测试程序
+# §11g	链接（elf → bin → img）
 # §12	运行 / 测试目标
 # §13	清理 / 帮助
+#
+# 新增内核源文件：放进 kernel/ 下即可，无需改本文件（见 §4a）。
+# 新增驱动：在 §6 对应选择块里把它加进 DRIVER_SRCS_* 组（见 §6e-2）。

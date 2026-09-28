@@ -12,7 +12,7 @@
 #include <string.h>
 
 #ifndef LWEXT4_HEAP_SIZE
-#define LWEXT4_HEAP_SIZE  (512UL * 1024UL)   /* 512 KB */
+#define LWEXT4_HEAP_SIZE (512UL * 1024UL) /* 512 KB */
 #endif
 
 /* ── 内部对齐 ──────────────────────────────────────────────────── */
@@ -21,22 +21,22 @@
 
 /* ── 块头 ───────────────────────────────────────────────────────── */
 typedef struct blk_hdr {
-    uint32_t        size;   /* 可用数据区大小（不含 blk_hdr 自身） */
-    uint32_t        free;   /* 1=空闲, 0=已分配                    */
-    struct blk_hdr *next;   /* 链表中的下一个块                    */
+    uint32_t size;        /* 可用数据区大小（不含 blk_hdr 自身） */
+    uint32_t free;        /* 1=空闲, 0=已分配                    */
+    struct blk_hdr *next; /* 链表中的下一个块                    */
 } blk_hdr_t;
 
 /* ── 静态堆 ─────────────────────────────────────────────────────── */
-static uint8_t   heap_mem[LWEXT4_HEAP_SIZE] __attribute__((aligned(ALIGN_SIZE)));
+static uint8_t heap_mem[LWEXT4_HEAP_SIZE] __attribute__((aligned(ALIGN_SIZE)));
 static blk_hdr_t *heap_list = NULL;
 
 /* ── 堆初始化（懒初始化，第一次 malloc 时触发）─────────────────── */
 static void heap_init(void)
 {
-    heap_list        = (blk_hdr_t *)heap_mem;
-    heap_list->size  = (uint32_t)(LWEXT4_HEAP_SIZE - sizeof(blk_hdr_t));
-    heap_list->free  = 1u;
-    heap_list->next  = NULL;
+    heap_list = (blk_hdr_t *)heap_mem;
+    heap_list->size = (uint32_t)(LWEXT4_HEAP_SIZE - sizeof(blk_hdr_t));
+    heap_list->free = 1u;
+    heap_list->next = NULL;
 }
 
 /* ── ext4_user_malloc ───────────────────────────────────────────── */
@@ -54,22 +54,24 @@ void *ext4_user_malloc(size_t size)
     while (blk) {
         if (blk->free && blk->size >= (uint32_t)size) {
             /* 若剩余空间足够容纳新的块头 + 最小分配单元，则分裂 */
-            uint32_t split_threshold = (uint32_t)(sizeof(blk_hdr_t) + ALIGN_SIZE);
+            uint32_t split_threshold =
+                (uint32_t)(sizeof(blk_hdr_t) + ALIGN_SIZE);
             if (blk->size >= (uint32_t)size + split_threshold) {
-                blk_hdr_t *next = (blk_hdr_t *)((uint8_t *)blk
-                                  + sizeof(blk_hdr_t) + size);
-                next->size  = blk->size - (uint32_t)size - (uint32_t)sizeof(blk_hdr_t);
-                next->free  = 1u;
-                next->next  = blk->next;
-                blk->size   = (uint32_t)size;
-                blk->next   = next;
+                blk_hdr_t *next =
+                    (blk_hdr_t *)((uint8_t *)blk + sizeof(blk_hdr_t) + size);
+                next->size =
+                    blk->size - (uint32_t)size - (uint32_t)sizeof(blk_hdr_t);
+                next->free = 1u;
+                next->next = blk->next;
+                blk->size = (uint32_t)size;
+                blk->next = next;
             }
             blk->free = 0u;
             return (void *)((uint8_t *)blk + sizeof(blk_hdr_t));
         }
         blk = blk->next;
     }
-    return NULL;   /* 堆耗尽 */
+    return NULL; /* 堆耗尽 */
 }
 
 /* ── ext4_user_free ─────────────────────────────────────────────── */
@@ -86,7 +88,7 @@ void ext4_user_free(void *ptr)
     while (cur && cur->next) {
         if (cur->free && cur->next->free) {
             cur->size += (uint32_t)sizeof(blk_hdr_t) + cur->next->size;
-            cur->next  = cur->next->next;
+            cur->next = cur->next->next;
             /* 不前进 cur，继续尝试合并 */
         } else {
             cur = cur->next;
@@ -98,7 +100,7 @@ void ext4_user_free(void *ptr)
 void *ext4_user_calloc(size_t nmemb, size_t size)
 {
     size_t total = nmemb * size;
-    void  *p     = ext4_user_malloc(total);
+    void *p = ext4_user_malloc(total);
     if (p)
         memset(p, 0, total);
     return p;

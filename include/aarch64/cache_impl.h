@@ -1,7 +1,7 @@
 #ifndef AARCH64_CACHE_IMPL_H
 #define AARCH64_CACHE_IMPL_H
 
-#include "barrier.h"  /* 使用 barrier.h 的内存屏障 */
+#include "barrier.h" /* 使用 barrier.h 的内存屏障 */
 
 /*
  * AArch64 缓存操作底层实现
@@ -9,18 +9,18 @@
  */
 
 /* AArch64 系统寄存器定义 */
-#define CTR_EL0_DMINLINE_SHIFT  16
-#define CTR_EL0_DMINLINE_MASK   0xF
-#define CTR_EL0_ILINE_SHIFT     0
-#define CTR_EL0_ILINE_MASK      0xF
+#define CTR_EL0_DMINLINE_SHIFT 16
+#define CTR_EL0_DMINLINE_MASK  0xF
+#define CTR_EL0_ILINE_SHIFT    0
+#define CTR_EL0_ILINE_MASK     0xF
 
 /* 缓存行大小相关常量 */
-#define CACHE_LINE_WORD_SIZE    4      /* WORD = 4 bytes */
-#define MIN_CACHELINE_SIZE      16     /* 最小缓存行 */
-#define MAX_CACHELINE_SIZE      2048   /* 最大缓存行 */
+#define CACHE_LINE_WORD_SIZE 4    /* WORD = 4 bytes */
+#define MIN_CACHELINE_SIZE   16   /* 最小缓存行 */
+#define MAX_CACHELINE_SIZE   2048 /* 最大缓存行 */
 
 /* 全局缓存行大小 */
-static size_t g_cache_line_size = 64;  /* 默认 64 字节 */
+static size_t g_cache_line_size = 64; /* 默认 64 字节 */
 
 /* ===== 底层缓存操作指令 ===== */
 
@@ -28,8 +28,7 @@ static size_t g_cache_line_size = 64;  /* 默认 64 字节 */
  * __clean_dcache_one - 清理单个缓存行
  * @addr: 缓存行对齐的地址
  */
-static inline void
-__clean_dcache_one(const void *addr)
+static inline void __clean_dcache_one(const void *addr)
 {
     asm volatile("dc cvac, %0" : : "r"(addr) : "memory");
 }
@@ -38,8 +37,7 @@ __clean_dcache_one(const void *addr)
  * __invalidate_dcache_one - 使单个缓存行失效
  * @addr: 缓存行对齐的地址
  */
-static inline void
-__invalidate_dcache_one(const void *addr)
+static inline void __invalidate_dcache_one(const void *addr)
 {
     asm volatile("dc ivac, %0" : : "r"(addr) : "memory");
 }
@@ -48,8 +46,7 @@ __invalidate_dcache_one(const void *addr)
  * __clean_and_invalidate_dcache_one - 清理并使单个缓存行失效
  * @addr: 缓存行对齐的地址
  */
-static inline void
-__clean_and_invalidate_dcache_one(const void *addr)
+static inline void __clean_and_invalidate_dcache_one(const void *addr)
 {
     asm volatile("dc civac, %0" : : "r"(addr) : "memory");
 }
@@ -59,8 +56,7 @@ __clean_and_invalidate_dcache_one(const void *addr)
 /**
  * get_cache_line_size - 获取缓存行大小
  */
-static inline size_t
-get_cache_line_size(void)
+static inline size_t get_cache_line_size(void)
 {
     return g_cache_line_size;
 }
@@ -68,12 +64,11 @@ get_cache_line_size(void)
 /**
  * init_cache - 初始化缓存子系统
  */
-static inline void
-init_cache(void)
+static inline void init_cache(void)
 {
     uint64_t ctr_el0;
     uint32_t dminline;
-    size_t   cache_size;
+    size_t cache_size;
 
     /* 读取 CTR_EL0 寄存器 */
     asm volatile("mrs %0, ctr_el0" : "=r"(ctr_el0));
@@ -98,8 +93,18 @@ init_cache(void)
  *
  * 使用 barrier.h 的数据屏障
  */
-static inline void
-sync_caches(void)
+/**
+ * sync_icache_all - 让刚写入的指令对本核可见
+ *
+ * `ic iallu` 使本核 I-cache 全失效（另一颗核要看到得用 ialluis），
+ * dsb 保证失效完成，isb 保证后续取指看到新指令 —— 三者缺一不可。
+ */
+static inline void sync_icache_all(void)
+{
+    __asm__ volatile("ic iallu\n\tdsb ish\n\tisb" ::: "memory");
+}
+
+static inline void sync_caches(void)
 {
     barrier_data();
 }

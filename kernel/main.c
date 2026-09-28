@@ -7,36 +7,61 @@
 #include "../boot/common/platform_ops.h"
 #include "arch.h"
 #include "klog.h"
+#include "debug/backtrace.h" /* backtrace_selftest() */
+#include "cache.h"
 #include "string.h"
 #include "task/task.h"
 #include "task/sched.h"
 #include "task/cpu.h"
 #include "pmm.h"
-#if !DRIVER_SDBLK_SG2002
-#include "../driver/blk/ramblk.h"
-#endif
 #include "../fs/lwext4_port/fs_init.h"
 #include "loader/elf_loader.h"
 #include "timer/timer.h"
-#include "task/switch.h"     /* arch_irq_enable */
+#include "task/switch.h" /* arch_irq_enable */
 #include "net/net.h"
-
-#if DRIVER_ETH_VIRTIO
-#include "eth/virtio_net.h"
-#endif
 
 #if ARCH_AARCH64
 #include "irq/irq.h"
 #include "aarch64/cpu.h"
-#include "vmm.h"
+#include "vmm/vmm.h"
 #include "aarch64/stage2.h"
 #include "mm_vm.h"
+#if defined(RUN_GUEST_LINUX)
+/* 直启模式的 GUEST_LINUX_MEM_* 与 guest_loader_run_linux 声明。
+ * ⚠️ 必须在**文件作用域**包含：这个头里有一个 `typedef struct vm vm_t;`
+ * 前置声明，若在函数体内展开，它会遮蔽掉 vmm.h 里那个完整的 vm_t，
+ * 后面所有 `vm->cfg` 之类的访问都会报 "invalid use of incomplete typedef"。*/
+#include "guest_loader.h"
+#endif
 #elif ARCH_RISCV64
 #include "exception.h"
-#include "vmm.h"
+#include "irq/plic.h" /* plic_init：外部中断控制器 */
+#include "vmm/vmm.h"
+#if defined(RUN_GUEST_LINUX)
+/* 与 aarch64 分支同理（见上）：直启模式要用 GUEST_LINUX_MEM_* 和
+ * guest_loader_run_linux 的声明，且必须在文件作用域包含。
+ * 漏了这段的症状是 `implicit declaration of function
+ * 'guest_loader_run_linux'` —— 现代 GCC 把隐式声明当**错误**，
+ * 所以 riscv 的 GUEST_LINUX 变体直接编不过。*/
+#include "guest_loader.h"
+#endif
 #elif ARCH_X86_64
 #include "exception.h"
-#include "vmm.h"
+#include "vmm/vmm.h"
+#if defined(RUN_GUEST_LINUX)
+/* 同上：直启变体要 guest_loader_run_linux 的声明。*/
+#include "guest_loader.h"
+#endif
+#endif
+
+#if !DRIVER_SDBLK_SG2002
+#include "../driver/blk/ramblk.h"
+#endif
+
+#if DRIVER_ETH_VIRTIO
+#include "eth/virtio_net.h"
+#elif DRIVER_ETH_CVITEK
+#include "eth/cvitek_eth.h"
 #endif
 
 #if DRIVER_UART_DW
@@ -63,12 +88,13 @@
 #include "blk/sdblk.h"
 #endif
 
-extern void run_vmm_test(void);  /* tests/vmm_test.c */
-extern void kmem_test(void);      /* kernel/mm/aarch64/vmm.c */
+extern void run_vmm_test(void); /* tests/vmm_test.c */
+extern void kmem_test(void);    /* kernel/mm/aarch64/vmm.c */
 
 static void platform_init_runtime_drivers(void)
 {
-    KLOG_INFO("Initializing platform runtime drivers...\n");
+    /* "即将做 X" 不是状态迁移 —— 子系统自己会打完成行 */
+    KLOG_INIT("Initializing platform runtime drivers...\n");
 
 #if DRIVER_UART_DW && (defined(PLATFORM_RK3588) || defined(PLATFORM_SG2002))
     dw_uart_init();
@@ -80,6 +106,20 @@ static void platform_init_runtime_drivers(void)
 
 #if DRIVER_GIC_V3
     gicv3_init();
+#endif
+
+#if ARCH_RISCV64
+    /*
+     * PLIC 必须在这里显式初始化 —— 它不会自己跑起来。
+     * plic_init() 做两件缺一不可的事：
+     *   1. irq_install(CAUSE_SUPERVISOR_EXTERNAL, plic_external_irq)
+     *      没有它，S 模式外部中断会落进 boot/riscv64/exception.c 的空分支、
+     *      从不在 PLIC claim/complete，level 触发的中断源会反复重触发，
+     *      直接把系统拖进无限陷入。
+     *   2. SET_SIE(SIE_SEIE) —— 全树唯一开关外部中断的地方。
+     * 在此之前没有任何源被 enable，所以这一步本身不会引入中断。
+     */
+    plic_init();
 #endif
 
     timer_init();
@@ -98,35 +138,22 @@ static void platform_init_runtime_drivers(void)
 #endif
 }
 
-/*
- * demo_load_busybox - 从文件系统加载并执行 busybox
- */
 static void demo_load_busybox(void *arg)
 {
     (void)arg;
 
     /* 等待文件系统初始化 */
-    KLOG_INFO("[busybox_loader] Waiting for filesystem...\n");
+    KLOG_INIT("[busybox_loader] Waiting for filesystem...\n");
     for (int i = 0; i < 100; i++) {
         task_yield();
     }
 
     KLOG_INFO("[busybox_loader] Loading /busybox from filesystem...\n");
 
-#if ARCH_RISCV64
-    uint64_t satp_val;
-    __asm__ volatile("csrr %0, satp" : "=r"(satp_val));
-    KLOG_INFO("[busybox_loader] satp=0x%llx\n", satp_val);
-#endif
-
     /* 以 busybox 的 sh applet 进入交互 shell */
     char *bb_argv[] = { "sh", "-i", NULL };
-    char *bb_envp[] = {
-        "PATH=/bin:/usr/bin:/sbin:/usr/sbin",
-        "HOME=/root",
-        "TERM=vt100",
-        NULL
-    };
+    char *bb_envp[] = { "PATH=/bin:/usr/bin:/sbin:/usr/sbin", "HOME=/root",
+                        "TERM=vt100", NULL };
 
     /* 调用 ELF 加载器执行 /busybox */
     const char *path = "/busybox";
@@ -134,86 +161,117 @@ static void demo_load_busybox(void *arg)
 
     if (rc != 0) {
         KLOG_ERROR("[busybox_loader] Failed to load /busybox: %d\n", rc);
-        KLOG_INFO("[busybox_loader] Run: ./install-apps.sh aarch64\n");
+        KLOG_INFO("[busybox_loader] Run: ./tools/install-apps.sh aarch64\n");
     }
 
     /* 任务完成 */
-    KLOG_INFO("[busybox_loader] Exiting...\n");
+    KLOG_INIT("[busybox_loader] Exiting...\n");
     task_exit();
 }
-
 
 void kernel_main(void)
 {
 #if ARCH_AARCH64
-    /*
-     * MMU 已开启（boot.S 中完成），现在运行在高虚拟地址。
-     * 将 UART 基地址切换到 TTBR1 覆盖的高虚拟地址，
-     * 使内核在任意 TTBR0（用户页表）下仍可正常输出。
-     */
     /* Keep NEON enabled for AArch64 code paths that require it. */
     aarch64_enable_neon();
+#endif
+#if ARCH_X86_64
+    /* Initialize IDT and LAPIC */
+    KLOG_INIT("Initializing IDT + LAPIC...\n");
+    exception_init();
+    /*
+     * TSS（特权级切换用）在 cpu_init_bsp() 之后初始化：TSS.RSP0 要同步进
+     * cpu_t::kernel_rsp0，而 cpu_init_bsp() 会把 g_cpus[0] 整个 memset 掉。
+     * IDT 不使用 IST（ist=0），所以这里晚一点设置不影响异常处理。
+     */
+#endif
+#if ARCH_RISCV64
+    /* 必须在 fs_init() 之前设置 stvec，否则 ext4_mount 中的任何
+     * CPU 异常都会落到 M-mode (OpenSBI)，导致 hart 被重置 */
+    KLOG_INIT("Initializing exception handler...\n");
+    exception_init();
 #endif
 
     /* Initialize platform (UART, etc.) */
     platform_init();
 
+    /*
+     * 应用编译期模块白名单（Makefile 的 LOG_MODULES=）并打印生效配置。
+     * 必须在 UART 可用之后、任何模块日志之前。
+     */
+    klog_init();
+
+    /*
+     * 调用栈回溯自检：造一条已知的调用链，验证"展开 + 符号化"整条路是通的。
+     *
+     * 放在这么早（任务系统、页表都还没起来）是有意的 —— 它只读栈和
+     * .kallsyms 表，两者在镜像加载完就都在了。正常时完全静默，检查失败
+     * 才用 kprintf 报错（不受 LOG= 影响）。
+     *
+     * 为什么值得每次开机都跑：kallsyms 表是两步链接生成的，一旦段序被挪动，
+     * 镜像本身完全正常、但 panic 打出来的函数名会整体错位 —— 假的调用栈比
+     * 打不出来更危险，它会把人带到完全错误的方向。这里当场喊出来。
+     */
+    backtrace_selftest();
+
+    /*
+     * 探测/设定缓存行大小（cache API 的 range 操作用它做步长）。
+     * 以前从来没人调用，于是所有架构都吃硬编码的 64。
+     */
+    init_cache();
+
     /* Print welcome message */
-    KLOG_INFO("=== Avatar OS Kernel ===\n");
-    KLOG_INFO("Architecture: "ARCH_NAME "\n");
-    KLOG_INFO("Build time: " __DATE__ " " __TIME__ "\n");
+    /* 一条事实一行 —— 拆成三行没有多出任何信息 */
+    KLOG_INFO("=== Avatar OS Kernel " ARCH_NAME " build " __DATE__ " " __TIME__
+              " ===\n");
+
+    /* ── 字符串/内存函数自检（STRING_TEST=1，跑完继续启动）──────── */
+#ifdef RUN_STRING_TEST
+    extern void test_string_functions(void); /* tests/string_test.c */
+    test_string_functions();
+#endif
 
     /* ── 初始化物理内存管理器 ───────────────────────────────── */
-    KLOG_INFO("\n");
     pmm_initialize();
 
-    /* ── 初始化文件系统 ─────────────────────────────────────────── */
-    KLOG_INFO("\n");
-#if ARCH_RISCV64
-    /* 必须在 fs_init() 之前设置 stvec，否则 ext4_mount 中的任何
-     * CPU 异常都会落到 M-mode (OpenSBI)，导致 hart 被重置 */
-    KLOG_INFO("Initializing exception handler...\n");
-    exception_init();
-#endif
 #if !DRIVER_SDBLK_SG2002
     ramblk_init();
 #endif
-    KLOG_INFO("\n");
-    KLOG_INFO("Initializing filesystem...\n");
+    KLOG_FS("Initializing filesystem...\n");
     fs_init();
 
-    /* ── 运行 PMM 测试 ───────────────────────────────────────── */
-    /* 测试时解开下面两行注释 */
-    KLOG_INFO("\n");
+/* ── 运行 PMM 测试 ───────────────────────────────────────── */
+/* 测试时解开下面两行注释 */
 #ifdef RUN_PMM_TESTS
     run_pmm_tests();
-    platform_shutdown();  /* PMM 测试完成后关机，避免后续测试干扰 PMM 状态 */
+    platform_shutdown(); /* PMM 测试完成后关机，避免后续测试干扰 PMM 状态 */
 #endif
 
 #if ARCH_AARCH64
-    KLOG_INFO("=== Running VMM Tests ===\n");
+    /* 开机自检脚手架：仍然执行，但默认等级下不再占行 */
+    KLOG_INIT("=== Running VMM Tests ===\n");
     kmem_test();
-    KLOG_INFO("VMM tests completed\n");
-#elif ARCH_X86_64
-    /* Initialize IDT and LAPIC */
-    KLOG_INFO("Initializing IDT + LAPIC...\n");
-    exception_init();
-    /* Initialize TSS (Task State Segment for privilege switching) */
-    extern void x86_tss_init(void);
-    x86_tss_init();
+    KLOG_INIT("VMM tests completed\n");
 #endif
 
     platform_init_runtime_drivers();
 
-
     /* ── 初始化任务子系统 ───────────────────────────────── */
-    KLOG_INFO("Initializing task subsystem...\n");
-    cpu_init_bsp();          /* Phase 0：安装 BSP per-CPU 指针 */
+    KLOG_TASK("Initializing task subsystem...\n");
+    cpu_init_bsp(); /* Phase 0：安装 BSP per-CPU 指针 */
+#if ARCH_X86_64
+    extern void x86_tss_init(void);
+    x86_tss_init(); /* 必须在 cpu_init_bsp() 之后（见上方说明） */
+#endif
     task_init();
 
-#if DRIVER_ETH_VIRTIO
-    KLOG_INFO("Initializing virtio ethernet driver...\n");
+#if DRIVER_ETH_VIRTIO && !defined(RUN_GUEST_LINUX)
+    KLOG_NET("Initializing virtio ethernet driver...\n");
     virtio_net_init_from_platform();
+    net_init();
+#elif DRIVER_ETH_CVITEK && !defined(RUN_GUEST_LINUX)
+    KLOG_NET("Initializing cvitek ethernet driver...\n");
+    cvitek_eth_init_from_platform();
     net_init();
 #endif
 
@@ -222,31 +280,65 @@ void kernel_main(void)
      *   VMM_TEST=1:              VMM 三线程上下文切换测试
      *   （新测试：在此处添加 #elif defined(RUN_XXX_TEST)）
      * ──────────────────────────────────────────────────── */
-#if defined(RUN_VMM_TEST)
+#if defined(RUN_GUEST_LINUX)
+    /*
+     * 构建指纹 —— `make test-guest-linux` 靠它在产物里辨认 GUEST_LINUX 变体。
+     *
+     * ⚠️ 判据**不能**用下面那条 KLOG_INFO 里的字符串：`LOG=none` 会把整条
+     * KLOG 连同字符串一起编译掉，校验于是会在**完全正确的产物**上误报
+     * 「产物不是 GUEST_LINUX 变体」，把 `LOG=none` 变成一条走不通的路。
+     *
+     * 这里用 `used` 属性保证它一定落到 .rodata（链接没有 --gc-sections，
+     * 不会被回收），且**不依赖任何日志宏**。
+     * 用独立 token（而不是复用 KLOG 里那句 "GUEST_LINUX mode"）是因为
+     * Makefile 那边判的是「恰好出现 1 次」—— 复用的话 LOG!=none 时会数到 2 条。
+     */
+    __attribute__((used)) static const char g_build_tag_guest_linux[] =
+        "GUEST_LINUX_BUILD_TAG";
+
+    /* 从 rootfs 加载 Linux guest（kernel Image + DTB + initrd）并启动 */
+    KLOG_INFO("=== GUEST_LINUX mode: booting Linux as EL1 guest ===\n");
+    {
+        /* vmm.h / guest_loader.h 都在文件顶部包含（见那里的注释：
+         * 类型声明不能放在函数体内）*/
+
+        /* 直启模式：从 VM 池里取一个槽位（多 VM 之后直启也用同一条路径）*/
+        vm_t *vm = vm_alloc();
+        if (!vm) {
+            KLOG_ERROR("GUEST_LINUX: no free VM slot\n");
+        } else {
+            vm->cfg.mem_base = GUEST_LINUX_MEM_BASE;
+            vm->cfg.mem_size = GUEST_LINUX_MEM_SIZE;
+            vm->cfg.nr_vcpus = 1;
+            if (guest_loader_run_linux(vm) != 0)
+                KLOG_ERROR("guest_loader_run_linux failed\n");
+        }
+    }
+#elif defined(RUN_VMM_TEST)
     KLOG_INFO("=== VMM_TEST mode: 3-thread context switch test ===\n");
     run_vmm_test();
 #endif
 
-#if !defined(RUN_VMM_TEST)
-#if DRIVER_ETH_VIRTIO
-    KLOG_INFO("Starting network polling task...\n");
+#if !defined(RUN_VMM_TEST) && !defined(RUN_GUEST_LINUX)
+#if DRIVER_ETH_VIRTIO || DRIVER_ETH_CVITEK
+    KLOG_NET("Starting network polling task...\n");
     uint64_t startup_task_irq_flags = arch_irq_save();
     task_t *eth_task = task_create("net-poll", net_poll_task, NULL, 20);
     if (eth_task)
-        KLOG_INFO("network task created: id=%u\n", eth_task->id);
+        KLOG_TASK("network task created: id=%u\n", eth_task->id);
     else
         KLOG_ERROR("Failed to create network task!\n");
 #endif
 
     /* SMP 检查完成，现在才启动 busybox 交互 shell */
     KLOG_INFO("\n=== Launching busybox shell ===\n");
-#if !DRIVER_ETH_VIRTIO
+#if !DRIVER_ETH_VIRTIO && !DRIVER_ETH_CVITEK
     uint64_t startup_task_irq_flags = arch_irq_save();
 #endif
     task_t *bb_task = task_create("busybox", demo_load_busybox, NULL, 5);
     arch_irq_restore(startup_task_irq_flags);
     if (bb_task)
-        KLOG_INFO("busybox loader task created: id=%u\n", bb_task->id);
+        KLOG_TASK("busybox loader task created: id=%u\n", bb_task->id);
     else
         KLOG_ERROR("Failed to create busybox loader task!\n");
 #endif

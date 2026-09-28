@@ -8,31 +8,31 @@
 
 /* ── 页表项标志位 ───────────────────────────────────────────────── */
 
-#define PTE_VALID   (1ULL << 0)   /* 描述符有效 */
-#define PTE_TABLE   (1ULL << 1)   /* 指向下一级页表（非块） */
-#define PTE_BLOCK   (0ULL << 1)   /* 块描述符 */
+#define PTE_VALID (1ULL << 0) /* 描述符有效 */
+#define PTE_TABLE (1ULL << 1) /* 指向下一级页表（非块） */
+#define PTE_BLOCK (0ULL << 1) /* 块描述符 */
 
 /* 访问权限 */
-#define PTE_AP_EL0  (1ULL << 6)   /* EL0 可访问 */
-#define PTE_AP_RO   (1ULL << 7)   /* 只读 */
-#define PTE_AP_RW   (0ULL << 7)   /* 读写 */
+#define PTE_AP_EL0 (1ULL << 6) /* EL0 可访问 */
+#define PTE_AP_RO  (1ULL << 7) /* 只读 */
+#define PTE_AP_RW  (0ULL << 7) /* 读写 */
 
 /* 共享性 */
-#define PTE_SH_INNER   (3ULL << 8) /* Inner Shareable */
+#define PTE_SH_INNER (3ULL << 8) /* Inner Shareable */
 
 /* 其他标志 */
-#define PTE_AF      (1ULL << 10)  /* Access Flag */
-#define PTE_NG      (1ULL << 11)  /* Not Global */
-#define PTE_PXN     (1ULL << 53)  /* Privileged Execute Never */
-#define PTE_UXN     (1ULL << 54)  /* Unprivileged Execute Never */
-#define PTE_NOFREE  (1ULL << 55)  /* SW: shared page, don't free on unmap */
+#define PTE_AF     (1ULL << 10) /* Access Flag */
+#define PTE_NG     (1ULL << 11) /* Not Global */
+#define PTE_PXN    (1ULL << 53) /* Privileged Execute Never */
+#define PTE_UXN    (1ULL << 54) /* Unprivileged Execute Never */
+#define PTE_NOFREE (1ULL << 55) /* SW: shared page, don't free on unmap */
 
 /* 共享性定义 */
-#define PTE_SH  (0b11 << 8)  /* Inner Shareable（SMP 系统） */
+#define PTE_SH (0b11 << 8) /* Inner Shareable（SMP 系统） */
 
 /* 默认页表项类型 */
-#define MM_TYPE_BLOCK  0b01
-#define MM_TYPE_TABLE  0b11
+#define MM_TYPE_BLOCK 0b01
+#define MM_TYPE_TABLE 0b11
 
 /* 预定义页表项 */
 #define PTE_NORMAL_MEMORY \
@@ -41,13 +41,12 @@
 #define PTE_DEVICE_MEMORY \
     (MM_TYPE_BLOCK | PTE_AIDX_DEVICE_nGnRn | PTE_SH | PTE_AF | PTE_AP_RW)
 
-
 /* ── SCTLR_EL1（系统控制寄存器） ────────────────────────────────── */
 
-#define SCTLR_EL1_M  (1 << 0)  /* MMU 使能 */
-#define SCTLR_EL1_A  (1 << 1)  /* 对齐检查 */
-#define SCTLR_EL1_C  (1 << 2)  /* 数据缓存使能 */
-#define SCTLR_EL1_I  (1 << 12) /* 指令缓存使能 */
+#define SCTLR_EL1_M   (1 << 0)  /* MMU 使能 */
+#define SCTLR_EL1_A   (1 << 1)  /* 对齐检查 */
+#define SCTLR_EL1_C   (1 << 2)  /* 数据缓存使能 */
+#define SCTLR_EL1_I   (1 << 12) /* 指令缓存使能 */
 #define SCTLR_EL1_nAA (1 << 26) /* 不检查对齐 */
 
 /* ── 页表索引宏 ───────────────────────────────────────────────────── */
@@ -66,9 +65,7 @@
 
 /* ── 页表项结构 ───────────────────────────────────────────────────── */
 
-
-typedef struct __packed
-{
+typedef struct __packed {
     /* 这些字段在所有类型的条目中都使用。 */
     unsigned long valid : 1; /* 有效映射 */
     unsigned long table : 1; /* 在4k映射条目中也等于1 */
@@ -95,70 +92,68 @@ typedef struct __packed
 } lpae_p2m_t;
 
 typedef union {
-    uint64_t   bits;
+    uint64_t bits;
     lpae_p2m_t p2m;
 } lpae_t;
 
 typedef union {
-    struct
-    {
-        unsigned long is_valid : 1, is_table : 1, ignored1 : 10, next_table_addr : 36, reserved : 4,
-            ignored2 : 7,
-            PXNTable : 1,  // Privileged Execute-never for next level
-            XNTable : 1,   // Execute-never for next level
-            APTable : 2,   // Access permissions for next level
+    struct {
+        unsigned long is_valid : 1, is_table : 1, ignored1 : 10,
+            next_table_addr : 36, reserved : 4, ignored2 : 7,
+            PXNTable : 1, // Privileged Execute-never for next level
+            XNTable : 1,  // Execute-never for next level
+            APTable : 2,  // Access permissions for next level
             NSTable : 1;
     } table;
-    struct
-    {
+    struct {
         unsigned long is_valid : 1, is_table : 1,
-            attr_index : 3,  // Memory attributes index
-            NS : 1,          // Non-secure
-            AP : 2,          // Data access permissions
-            SH : 2,          // Shareability
-            AF : 1,          // Accesss flag
-            nG : 1,          // Not global bit
-            reserved1 : 4, nT : 1, reserved2 : 13, pfn : 18, reserved3 : 2, GP : 1, reserved4 : 1,
-            DBM : 1,  // Dirty bit modifier
+            attr_index : 3, // Memory attributes index
+            NS : 1,         // Non-secure
+            AP : 2,         // Data access permissions
+            SH : 2,         // Shareability
+            AF : 1,         // Accesss flag
+            nG : 1,         // Not global bit
+            reserved1 : 4, nT : 1, reserved2 : 13, pfn : 18, reserved3 : 2,
+            GP : 1, reserved4 : 1,
+            DBM : 1, // Dirty bit modifier
             Contiguous : 1,
-            PXN : 1,  // Privileged execute-never
-            UXN : 1,  // Execute never
+            PXN : 1, // Privileged execute-never
+            UXN : 1, // Execute never
             soft_reserved : 4,
-            PBHA : 4;  // Page based hardware attributes
+            PBHA : 4; // Page based hardware attributes
     } l1_block;
-    struct
-    {
+    struct {
         unsigned long is_valid : 1, is_table : 1,
-            attr_index : 3,  // Memory attributes index
-            NS : 1,          // Non-secure
-            AP : 2,          // Data access permissions
-            SH : 2,          // Shareability
-            AF : 1,          // Accesss flag
-            nG : 1,          // Not global bit
-            reserved1 : 4, nT : 1, reserved2 : 4, pfn : 27, reserved3 : 2, GP : 1, reserved4 : 1,
-            DBM : 1,  // Dirty bit modifier
+            attr_index : 3, // Memory attributes index
+            NS : 1,         // Non-secure
+            AP : 2,         // Data access permissions
+            SH : 2,         // Shareability
+            AF : 1,         // Accesss flag
+            nG : 1,         // Not global bit
+            reserved1 : 4, nT : 1, reserved2 : 4, pfn : 27, reserved3 : 2,
+            GP : 1, reserved4 : 1,
+            DBM : 1, // Dirty bit modifier
             Contiguous : 1,
-            PXN : 1,  // Privileged execute-never
-            UXN : 1,  // Execute never
+            PXN : 1, // Privileged execute-never
+            UXN : 1, // Execute never
             soft_reserved : 4,
-            PBHA : 4;  // Page based hardware attributes
+            PBHA : 4; // Page based hardware attributes
     } l2_block;
-    struct
-    {
+    struct {
         unsigned long is_valid : 1, is_table : 1,
-            attr_index : 3,  // Memory attributes index
-            NS : 1,          // Non-secure
-            AP : 2,          // Data access permissions
-            SH : 2,          // Shareability
-            AF : 1,          // Accesss flag
-            nG : 1,          // Not global bit
+            attr_index : 3, // Memory attributes index
+            NS : 1,         // Non-secure
+            AP : 2,         // Data access permissions
+            SH : 2,         // Shareability
+            AF : 1,         // Accesss flag
+            nG : 1,         // Not global bit
             pfn : 36, reserved : 3,
-            DBM : 1,  // Dirty bit modifier
+            DBM : 1, // Dirty bit modifier
             Contiguous : 1,
-            PXN : 1,  // Privileged execute-never
-            UXN : 1,  // Execute never
+            PXN : 1, // Privileged execute-never
+            UXN : 1, // Execute never
             soft_reserved : 4,
-            PBHA : 4,  // Page based hardware attributes
+            PBHA : 4, // Page based hardware attributes
             ignored : 1;
     } l3_page;
     uint64_t pte;
