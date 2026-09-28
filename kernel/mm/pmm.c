@@ -74,11 +74,27 @@ uint64_t pmm_alloc_pages(pmm_t *pmm, uint32_t page_count)
 
     spin_lock(&pmm->lock);
 
-    /* 查找连续的空闲页面：先从上一次的落点找（next-fit），失败再回绕 */
+    /*
+     * 查找连续的空闲页面：先从上一次的落点找（next-fit），失败再回绕。
+     *
+     * ⚠️ 每次拿到索引都必须按 **total_pages** 复核，不能只信 bitmap 查找的
+     * 结果。原因：位图缓冲是按 PMM_BITMAP_MAX_BYTES（上限）给的，容量
+     * （131072B × 8 = 1,048,576 位）**比实际页数（2GB/4KB = 524,288）大一倍**，
+     * 尾部那片位永远是 0 —— 对 bitmap_find_* 来说就是"全空闲"。
+     * 而 alloc_hint 是**单调前移**的 next-fit，跑过 total_pages 之后查找会
+     * 在那片假空闲区里"成功"，于是分配器把 RAM 之外的物理页交出去
+     * （实测：返回 index=524288 即 paddr=0xC0000000，刚好越过 RAM 末尾；
+     *  clone_handler 拿它当 memcpy 目标 → 内核态数据中止）。
+     * 这不需要内存耗尽，只要分配次数够多把 hint 顶过去就必然发生。
+     */
     size_t page_index = bitmap_find_contiguous_free_from(
         &pmm->bitmap, page_count, pmm->alloc_hint);
+    if (page_index != (size_t)-1 && page_index + page_count > pmm->total_pages)
+        page_index = (size_t)-1; /* 落进假空闲区，当没找到，走回绕 */
     if (page_index == (size_t)-1 && pmm->alloc_hint != 0)
         page_index = bitmap_find_contiguous_free(&pmm->bitmap, page_count);
+    if (page_index != (size_t)-1 && page_index + page_count > pmm->total_pages)
+        page_index = (size_t)-1; /* 回绕那次同样要复核 */
     if (page_index != (size_t)-1) {
         /* 标记页面为已分配 */
         bitmap_set_range(&pmm->bitmap, page_index, page_count);
