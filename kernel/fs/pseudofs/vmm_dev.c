@@ -334,8 +334,9 @@ int vmm_dev_ioctl(int nid, uint64_t req, void *argp)
             return -PFS_EINVAL;
 
         uint32_t cap = req.max;
-        if (cap > 8)
-            cap = 8; /* info[] 固定 8 项（见 pseudofs.h 的说明）*/
+        /* 上限取自结构体本身，别写死——写死的话改了 info[] 容量这里会忘 */
+        if (cap > sizeof(req.info) / sizeof(req.info[0]))
+            cap = sizeof(req.info) / sizeof(req.info[0]);
 
         uint32_t n = 0;
         for (uint32_t v = 1; v <= 255; v++) {
@@ -351,7 +352,8 @@ int vmm_dev_ioctl(int nid, uint64_t req, void *argp)
 
         /*
          * count 报**真实总数**（可能大于 cap），info[] 只填了前 cap 个 ——
-         * 调用方据此知道被截断了。当前 MAX_VMS=4 而 cap=8，走不到截断。
+         * 调用方据此知道被截断了。当前 MAX_VMS=32 而 info[] 容量也是 32，
+         * 正常走不到截断；但池子大小一改，这段仍然是对的。
          *
          * 为什么这里不做原子快照也够用：每次 vm_get 只借池锁查一遍，拿到
          * vm_t* 之后读 vmid/state 是无锁的，理论上可能读到刚被回收的槽位。

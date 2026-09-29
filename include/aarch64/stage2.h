@@ -69,7 +69,7 @@
 
 /* ── 多 VM 上限 ──────────────────────────────────────────── */
 /* 静态表按 slot 索引；include/vmm/vmm.h 里有 _Static_assert(MAX_VMS <= STAGE2_MAX_VMS) */
-#define STAGE2_MAX_VMS 4
+#define STAGE2_MAX_VMS 32
 
 /*
  * 每 VM 最多几张 L3 表 = guest RAM 窗口 / 2 MiB。

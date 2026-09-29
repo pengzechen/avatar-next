@@ -106,7 +106,7 @@
  *
  * ⚠️ 必须 <= stage2.h 的 STAGE2_MAX_VMS（静态 stage-2 表按 slot 索引）。
  */
-#define MAX_VMS 4
+#define MAX_VMS 32
 
 /* VM 生命周期状态（vm.c 的 vm_alloc/vm_free 维护）*/
 #define VM_FREE      0 /* 槽位可用                        */

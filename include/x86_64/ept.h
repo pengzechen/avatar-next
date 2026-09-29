@@ -52,7 +52,7 @@
 
 /* ── 多 VM 上限 ───────────────────────────────────────────── */
 /* 静态表按 slot 索引；vmm.h 里有 _Static_assert(MAX_VMS <= EPT_MAX_VMS) */
-#define EPT_MAX_VMS 4
+#define EPT_MAX_VMS 32
 
 /*
  * 每 VM 最多几张 PT = guest RAM 窗口 / 2 MiB。

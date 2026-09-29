@@ -188,14 +188,35 @@ struct task *vcpu_task_create(vcpu_t *vcpu, uint8_t priority)
      * 覆盖掉了，所以 ps 里永远显示 vcpu<id>，第一段是死代码（改了半天名字
      * 不变就是这个原因）。两段都保留：一个 VM 可以有多个 vCPU
      * （MAX_VCPUS=4），只用 vmid 会让同一 VM 的 vcpu 任务重名。
+     *
+     * ⚠️ vmid 必须**按十进制打出来**，不能写成 `'0' + (vmid & 0xF)`。
+     * 后者在 MAX_VMS=4 时看不出问题，但 vmid 是自增到 255 才回绕的
+     * （vm.c 的 g_next_vmid），只要超过 15 就折回来 —— vmid 1 和 17 会同时
+     * 显示成 `vm1c0`。MAX_VMS=32 之后这是必然撞的，ps 里两个不同的 vCPU
+     * 任务重名，排查时非常误导。
+     * 长度上界："vm255" + "c3" = 7 字符，TASK_NAME_LEN=16 富余。
      */
     char name[TASK_NAME_LEN];
-    name[0] = 'v';
-    name[1] = 'm';
-    name[2] = '0' + (char)(vcpu->vm->vmid & 0xF);
-    name[3] = 'c';
-    name[4] = '0' + (char)(vcpu->vcpu_id & 0xF);
-    name[5] = '\0';
+    unsigned p = 0;
+
+    name[p++] = 'v';
+    name[p++] = 'm';
+    {
+        char d[4]; /* vmid <= 255 → 最多 3 位 */
+        unsigned n = 0, v = vcpu->vm->vmid;
+
+        if (v == 0)
+            d[n++] = '0';
+        while (v > 0 && n < sizeof(d)) {
+            d[n++] = (char)('0' + (v % 10));
+            v /= 10;
+        }
+        while (n > 0)
+            name[p++] = d[--n];
+    }
+    name[p++] = 'c';
+    name[p++] = (char)('0' + (vcpu->vcpu_id % 10));
+    name[p] = '\0';
 
     /*
      * ⚠️ 必须用 task_create_affinity()，**不能** task_create() 之后再

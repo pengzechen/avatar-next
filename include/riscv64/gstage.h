@@ -51,7 +51,7 @@
 
 /* ── 多 VM 上限 ───────────────────────────────────────────── */
 /* 静态表按 slot 索引；include/vmm/vmm.h 里有 _Static_assert(MAX_VMS <= GSTAGE_MAX_VMS) */
-#define GSTAGE_MAX_VMS 4
+#define GSTAGE_MAX_VMS 32
 
 /*
  * 每 VM 最多几张 L0 表 = guest RAM 窗口 / 2 MiB。

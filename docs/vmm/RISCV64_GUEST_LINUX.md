@@ -360,7 +360,7 @@ tools/vmm_multivm_regress.sh riscv64 1        # vm1 → Ctrl+T d → vmm-run -n 
 
 | 从前（文件级 static，只能有一个 VM） | 现在 |
 |---|---|
-| `g_gstage_root[2048]` / `g_gstage_l1[4][512]` | `vm->gstage`（静态表按 slot 索引，`GSTAGE_MAX_VMS=4`） |
+| `g_gstage_root[2048]` / `g_gstage_l1[4][512]` | `vm->gstage`（静态表按 slot 索引，`GSTAGE_MAX_VMS=32`） |
 | `g_rv_mmio_bus` / `g_rv_uart_dev` / `g_rv_plic_dev` | `vm->mmio_bus_storage` / `vm->uart_dev` / `vm->plic_dev` |
 | `uart16550.c` 的 `g_uart16550` + 锁 | `vm->uart16550` / `vm->uart16550_lock`（riscv 与 x86 共用，两边都改了） |
 | `vplic.c` 的 `g_vplic`（**连锁都没有**） | `vm->vplic` / `vm->vplic_lock` |

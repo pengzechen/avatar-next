@@ -124,7 +124,7 @@
  * 钉着尺寸，改了那边这里会因为 ioctl 号变了而在运行期失败 —— 反过来说
  * 改了这里那边什么都不会报，只会在运行期变成下面 ENOTTY 那条排障提示。
  */
-#define VMM_INFO_MAX 8
+#define VMM_INFO_MAX 32
 
 struct vmm_vm_info {
     uint32_t vmid;
@@ -322,7 +322,7 @@ static void print_help(void)
  * Ctrl+T n —— 新建一个 VM 并切过去。
  *
  * 不复用 main() 里那个 2000×1ms 的重试循环：那是为「上一个 guest 还没收完尾」
- * 设计的，而这里更常见的失败是**池满**（MAX_VMS=4），内核立刻回 -EBUSY，
+ * 设计的，而这里更常见的失败是**池满**（池满），内核立刻回 -EBUSY，
  * 再重试 2000 次只是白卡两秒 —— 更糟的是每次重试内核都要打两行日志，而
  * klog 是持全局锁、关中断逐字节写的，115200 下就是十几秒的关中断自旋。
  * 所以 EBUSY 直接认输。
@@ -339,7 +339,7 @@ static void console_new_vm(int fd)
             return;
         }
         if (errno == EBUSY) {
-            printf("[vmm-run] no free VM slot (MAX_VMS=4) — stop one with "
+            printf("[vmm-run] no free VM slot (no free slot) — stop one with "
                    "`vmm-run -k <vmid>`\r\n");
             return;
         }
@@ -594,13 +594,13 @@ int main(int argc, char **argv)
              * 下一个安全点才退出，期间 guest_loader 的重入保护会拒绝。内核
              * 不做定时等待，隔 1ms 重试即可。
              *
-             * 但池满（MAX_VMS=4）是立刻失败、重试无意义的，早点认输 ——
+             * 但池满（池满）是立刻失败、重试无意义的，早点认输 ——
              * 而且每次重试内核都打两行日志，klog 是关中断写的，重试 2000 次
              * 就是十几秒的关中断自旋（顺带把别的核堵在 klog 锁上）。
              */
             if (errno == EBUSY && force_new) {
                 fprintf(stderr,
-                        "vmm-run: no free VM slot (MAX_VMS=4) — stop one "
+                        "vmm-run: no free VM slot (no free slot) — stop one "
                         "first (`vmm-run -l`, `vmm-run -k <vmid>`)\r\n");
                 close(fd);
                 return 1;

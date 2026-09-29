@@ -84,26 +84,31 @@
  *    是响亮的失败，不是静默损坏。下面 _Static_assert 再钉一道，谁改字段
  *    谁在编译期就被拦住。改这里请同步改 vmm_run.c 的同名结构体。
  *
- * 为什么 info[] 是**固定容量 8**而不是 MAX_VMS：helper 看不到 MAX_VMS
+ * 为什么 info[] 是**写死的容量**而不是 MAX_VMS：helper 看不到 MAX_VMS
  * （那是 include/vmm/vmm.h 的编译期常量），一旦把数组开成 MAX_VMS，
- * 改 MAX_VMS 就会悄悄改掉 ABI。固定 8 之后内核只填 min(max, MAX_VMS) 个，
- * 容量与池大小解耦（MAX_VMS 当前是 4）。
+ * 改 MAX_VMS 就会悄悄改掉 ABI。写死之后内核只填 min(max, MAX_VMS) 个，
+ * 容量与池大小解耦；count 报的是**真实总数**，被截断时调用方能看出来。
+ *
+ * 容量取 32 = MAX_VMS 的上限：两个数**相等但不是同一个宏**，所以把
+ * MAX_VMS 调到 32 时这里不需要跟着动，而 helper 也一定装得下全部条目。
+ * （曾经是 8 —— MAX_VMS 还是 4 时够用，调大之后 `vmm-run -l` 就只会显示
+ * 前 8 个了。）
  */
 struct vmm_vm_info {
     uint32_t vmid;
     uint32_t state; /* vm.c 的状态机数值：1=LOADING 2=RUNNING 4=DYING */
 };
 struct vmm_list_req {
-    uint32_t max;     /* [in]  info[] 的容量（helper 传 8）      */
-    uint32_t count;   /* [out] 实际写入的条目数                  */
+    uint32_t max;     /* [in]  info[] 的容量（helper 传 32）     */
+    uint32_t count;   /* [out] 真实总数（可能 > 容量，见上）      */
     uint32_t fg_vmid; /* [out] 前台 vmid；0 = 没有前台           */
     uint32_t _rsv;    /* 对齐填充，保持 16 字节头                */
-    struct vmm_vm_info info[8];
+    struct vmm_vm_info info[32];
 };
 
 _Static_assert(sizeof(struct vmm_vm_info) == 8,
                "vmm_vm_info 尺寸变了 —— apps/c/vmm_run.c 里那份要同步");
-_Static_assert(sizeof(struct vmm_list_req) == 80,
+_Static_assert(sizeof(struct vmm_list_req) == 272,
                "vmm_list_req 尺寸变了 —— apps/c/vmm_run.c 里那份要同步");
 
 #define VMM_IOC_LIST    _IOWR('V', 5, struct vmm_list_req) /* 出参：VM 列表 */
