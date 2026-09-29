@@ -267,6 +267,11 @@ int task_execve(const char *pathname, uint8_t *file_data, uint64_t file_size,
     uint64_t exec_entry = info.entry_point; /* 静态连接时：直接跳入主程序 */
     uint64_t at_base = 0;
     uint64_t loaded_end = info.max_vaddr;
+    /*
+     * interp 区的末端，记到 task->interp_end 供 fork 复制用。
+     * 0 = 本进程是静态链接的（绝大多数程序），fork 时不必扫这一带。
+     */
+    uint64_t interp_end = 0;
     if (interp_data && interp_size > 0) {
         elf_image_info_t interp_info;
         rc = elf_image_load_at(interp_data, interp_size, pgd, USER_INTERP_BASE,
@@ -280,8 +285,10 @@ int task_execve(const char *pathname, uint8_t *file_data, uint64_t file_size,
             interp_info.min_vaddr; /* AT_BASE = interpreter 实际加载基址 */
         if (interp_info.max_vaddr > loaded_end)
             loaded_end = interp_info.max_vaddr;
-        KLOG_DEBUG("[exec] Interpreter loaded: entry=0x%llx base=0x%llx\n",
-                   exec_entry, at_base);
+        interp_end = ALIGN_UP(interp_info.max_vaddr, PAGE_SIZE);
+        KLOG_DEBUG("[exec] Interpreter loaded: entry=0x%llx base=0x%llx "
+                   "end=0x%llx\n",
+                   exec_entry, at_base, interp_end);
     }
 
     /* 4. 分配并映射用户栈 */
@@ -364,6 +371,13 @@ int task_execve(const char *pathname, uint8_t *file_data, uint64_t file_size,
     new_task->tgid = new_task->id;
     new_task->ctty_pty_idx = current->ctty_pty_idx;
     new_task->blocked_sigs = current->blocked_sigs;
+    /*
+     * 记下 interp 区末端 —— fork 要照着它把这一带复制给子进程。
+     * 不在 process_create_with_pgd 的入参里传：那个签名已经有 7 个参数，
+     * 而"创建后再逐个赋字段"本来就是本文件对 pgid/sid/blocked_sigs 的既定写法
+     * （process_start 之前任务还没入队，不会被别的核看见）。
+     */
+    new_task->interp_end = interp_end;
 
     /* 继承 fd_table：深拷贝 fd 对象 + 增加引用计数 */
     extern void fd_table_inherit(task_t * child, task_t * parent);

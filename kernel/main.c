@@ -350,6 +350,22 @@ void kernel_main(void)
      */
     cpu_bring_up_all();
 
+    /*
+     * SMP 结果打一条 **INFO**。
+     *
+     * cpu_bring_up_all() 内部逐核的 "cpuN online" 和收尾的
+     * "SMP bringup done: %u CPU(s) online" 都是 KLOG_SMP（== 模块 DEBUG），
+     * 于是 LOG=info 下**一条都看不见** —— 整个启动日志里就没有"这台机器到底
+     * 几个核在跑"这个事实，而它决定了后面所有的并发行为（调度器、per-CPU
+     * 状态、VMM 的核间竞态、GIC 投递）。实测在 rk3588 上就是这个症状。
+     *
+     * 两个数一起报：CONFIG_SMP_CPUS 是编译期**请求**的，g_num_cpus 是实际
+     * 上线的。两者不等（PSCI CPU_ON 失败、核被固件扣住）是最该一眼看出来的
+     * 情况，只报一个的话那种情况会伪装成一切正常。
+     */
+    KLOG_INFO("[cpu] SMP: %u/%u CPU(s) online\n", (unsigned)g_num_cpus,
+              (unsigned)CONFIG_SMP_CPUS);
+
     /* ── 启用抢占，进入 idle 循环（所有模式共用）─────────
      * 在所有任务创建完成后启用，避免 tick 打断内核初始化路径。
      * 切换到 idle 专用栈（防止 boot 栈在频繁中断下溢出）。

@@ -331,6 +331,7 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
         child->heap_end = parent->heap_end;
         child->mmap_next = parent->mmap_next;
         child->mmap_base = parent->mmap_base;
+        child->interp_end = parent->interp_end; /* 共享 pgd，不复制只继承 */
         child->fs_base = (flags & CLONE_SETTLS) ? tls : parent->fs_base;
         child->parent_id = parent->id;
 
@@ -451,6 +452,31 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
             CLONE_COPY_RANGE(parent->user_stack_top - parent->user_stack_size,
                              parent->user_stack_top);
 
+        /*
+         * 动态链接器（ld-musl）那一带必须单独复制。
+         *
+         * exec 把 interp 加载在 USER_INTERP_BASE(0x40000000)，而上面三个区间
+         * 一个都不覆盖它（[0,heap_end) 只到主程序末端，对动态 busybox 就是
+         * 0x10E000）。**而 musl 的 fork() 正是在 ld-musl 内部调 clone 的** ——
+         * 子进程从 syscall 返回时 PC 就在 0x4003xxxx，那一页不存在 →
+         * 取指页错误，子进程一启动就 SIGSEGV。
+         *
+         * 实测（SG2002 上跑动态链接的 busybox，一条 fork 就中）：
+         *   [clone/fork] parent=3 child=4 elr=0x4003d892 usp=0x6ffff690
+         *   [exception] sync: code=12 pc=0x4003d892 stval=0x4003d892
+         * 判据是 code=12（RISC-V 指令页错误）且 stval == pc —— 和 x86_64 那个
+         * sigret 缺失（RIP==CR2、I/D=1）是同一类指纹：**跳到未映射页执行**。
+         *
+         * 为什么一直没被发现：默认 rootfs 装的是**静态** busybox，没有 interp，
+         * interp_end 恒为 0，下面这行是空操作。只有跑动态链接的程序才会撞上。
+         *
+         * 为什么不干脆扫 [USER_INTERP_BASE, USER_MMAP_BASE_PIE)：那是 256MB 的
+         * 空洞，每个 fork 白扫 65536 页 —— 正是 mmap_base 那条注释里抱怨过的
+         * 那种浪费。interp_end 只覆盖真正映射过的部分（ld-musl 约几十页）。
+         */
+        if (clone_copy_ok && parent->interp_end > USER_INTERP_BASE)
+            CLONE_COPY_RANGE(USER_INTERP_BASE, parent->interp_end);
+
 #if ARCH_X86_64
         /*
          * x86_64 的信号返回蹦床页，必须单独补一页。
@@ -497,6 +523,8 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
         child->heap_end = parent->heap_end;
         child->mmap_next = parent->mmap_next;
         child->mmap_base = parent->mmap_base;
+        /* 上面已按 [USER_INTERP_BASE, interp_end) 复制过，子进程同样要记住 */
+        child->interp_end = parent->interp_end;
         child->fs_base = parent->fs_base;
         child->parent_id = parent->id;
 

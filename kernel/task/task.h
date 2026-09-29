@@ -126,6 +126,24 @@ typedef struct task {
      * 逐页空扫 512MB 的 VA 空洞（131,077 次四级页表遍历，白花 ~9ms）。
      */
     uint64_t mmap_base;
+    /*
+     * 动态链接器（ld-musl 等）映射区的**末端**（不含），0 = 本进程没有 interp。
+     *
+     * interp 由 exec 加载在 USER_INTERP_BASE(0x40000000)（见 user_layout.h），
+     * 而 fork 拷贝地址空间时只扫 [0,heap_end) / [mmap_base,mmap_next) / 用户栈
+     * 三个区间 —— **没有一个覆盖 interp 那一带**。于是动态链接的程序 fork 出来
+     * 的子进程手里没有 interp：musl 的 fork() 正是在 ld-musl 内部调 clone 的，
+     * 子进程一从 syscall 返回就取指到 0x4003xxxx，而那一页不存在 →
+     * SIGSEGV（RISC-V 上是 code=12 指令页错误，判据是 stval == pc）。
+     *
+     * 默认 rootfs 装的是**静态** busybox（没有 interp），所以这个 bug 一直被
+     * 掩盖着 —— 只有跑动态链接的程序才会撞上（实测 SG2002 上跑动态 busybox，
+     * 一个 fork 就炸）。
+     *
+     * 存末端而不是让 fork 去扫一个固定的大区间，是为了保住 mmap_base 那条
+     * 注释里的性能性质：静态程序这里恒为 0，fork 一次空扫都不做。
+     */
+    uint64_t interp_end;
     uint64_t fs_base;  /* x86_64 TLS: IA32_FS_BASE              */
     uint64_t ctid_ptr; /* CLONE_CHILD_CLEARTID 地址 (0=无)       */
 
