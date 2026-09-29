@@ -181,11 +181,19 @@ static void vcpu_task_fn(void *arg)
 
 struct task *vcpu_task_create(vcpu_t *vcpu, uint8_t priority)
 {
+    /*
+     * 任务名：vm<vmid>c<vcpu_id>。
+     *
+     * 曾经这里写成先 "vm<vmid>" 再 "vcpu<id>" —— 第二段把 name[0..2] 整个
+     * 覆盖掉了，所以 ps 里永远显示 vcpu<id>，第一段是死代码（改了半天名字
+     * 不变就是这个原因）。两段都保留：一个 VM 可以有多个 vCPU
+     * （MAX_VCPUS=4），只用 vmid 会让同一 VM 的 vcpu 任务重名。
+     */
     char name[TASK_NAME_LEN];
     name[0] = 'v';
-    name[1] = 'c';
-    name[2] = 'p';
-    name[3] = 'u';
+    name[1] = 'm';
+    name[2] = '0' + (char)(vcpu->vm->vmid & 0xF);
+    name[3] = 'c';
     name[4] = '0' + (char)(vcpu->vcpu_id & 0xF);
     name[5] = '\0';
 
