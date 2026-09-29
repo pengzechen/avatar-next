@@ -204,8 +204,12 @@ KERNEL_OBJECTS := $(foreach f,$(KERNEL_SRCS),$(call kobj,$(f)))
 # ── §4a-2  内核编译标志分组 ────────────────────────────────────────────────────
 # kernel/ 的编译标志无法按目录推导（同一目录里有些文件引用第三方头文件、
 # 有些没有），所以引用第三方头文件的文件在这里显式列出，其余一律用 CFLAGS。
-# 这些文件会带 -w（屏蔽第三方头文件自身的警告），因此名单必须准确：
-# 列入 = 该文件的警告被屏蔽，漏列 = 编译失败（include 找不到），两者都看得见。
+# 列入 = 拿到 lwext4 的头文件路径；漏列 = 编译失败（include 找不到），
+# 所以名单不准会立刻炸，不会静默走错分支。
+#
+# 注意这一组是**内核自己的代码**，警告必须可见（LWEXT4_CFLAGS 里不再带 -w，
+# `-w` 只加在编译第三方源码的那条规则上）—— 见 §8 里 LWEXT4_THIRD_PARTY_CFLAGS
+# 的注释：fs_lock.c 的指针截断事故就是被一刀切的 -w 藏掉的。
 KERNEL_LWEXT4_SRCS := \
     $(KERNEL_DIR)/fs/vfs/vfs.c \
     $(KERNEL_DIR)/loader/bin_loader.c \
@@ -782,7 +786,32 @@ LWEXT4_OBJS     := $(patsubst $(LWEXT4_DIR)/src/%.c,$(THIRD_PARTY_BUILD_DIR)/lwe
 # lwext4 移植胶水代码（属于本项目，使用 LWEXT4_CFLAGS）
 # 注：driver/blk/ramblk.c 也是同一组标志，但它是驱动，归 §6e 的 DRIVER_OBJECTS。
 LWEXT4_PORT_OBJS := $(BUILD_DIR)/lwext4_port_kmalloc.o \
-                   $(BUILD_DIR)/lwext4_port_fs_init.o
+                   $(BUILD_DIR)/lwext4_port_fs_init.o \
+                   $(BUILD_DIR)/lwext4_port_fs_lock.o
+
+# lwext4 的全局串行化（详见 fs/lwext4_port/fs_lock.c）。
+#
+# lwext4 是单线程用户态库，全局缓冲缓存无内部同步 —— SMP>1 时并发 exec
+# 会把它的红黑树写坏。这里用**链接期符号包装**把所有公开 API 的引用改指向
+# 我们的包装函数（进去先拿全局锁），真实实现仍可经 __real_* 调用。
+#
+# 为什么不直接在调用点加锁：内核里有 90+ 个调用点、22 个直接调用者中 15 个
+# 是多出口的，手工配对 lock/unlock 必漏；而且粒度必须落在"每次 API 调用"
+# 上（read_file_fully 要循环读 5.6MB，整函数持锁会关中断几十~几百毫秒）。
+#
+# ⚠️ 新增 lwext4 调用时，如果用到列表外的符号，**要把它加进来**，
+#    否则那条路径不受保护。列表与 fs_lock.c 里的 FS_WRAP(...) 一一对应，
+#    两处必须同时改。漏了包装不会报错（只是没锁），所以改 lwext4 调用时
+#    顺手用 `grep -rhoE '\bext4_[a-z0-9_]+' kernel/ fs/ driver/` 对一遍。
+LWEXT4_WRAP_SYMS := \
+    ext4_block_fini ext4_block_init ext4_device_register ext4_device_unregister \
+    ext4_dir_close ext4_dir_entry_next ext4_dir_mk ext4_dir_open ext4_dir_rm \
+    ext4_fclose ext4_fopen ext4_fopen2 ext4_fread ext4_fremove ext4_frename \
+    ext4_fseek ext4_fsize ext4_ftell ext4_ftruncate ext4_fwrite \
+    ext4_inode_exist ext4_mbr_scan ext4_mode_get ext4_mount \
+    ext4_raw_inode_fill ext4_readlink ext4_sb_read
+
+LDFLAGS += $(foreach s,$(LWEXT4_WRAP_SYMS),-Wl,--wrap=$(s))
 
 # lwext4 专用编译标志（在通用 CFLAGS 基础上添加）
 LWEXT4_CFLAGS  := $(CFLAGS)
@@ -796,7 +825,13 @@ LWEXT4_CFLAGS  += -DCONFIG_DEBUG_PRINTF=0
 LWEXT4_CFLAGS  += -DCONFIG_DEBUG_ASSERT=0
 LWEXT4_CFLAGS  += -DCONFIG_HAVE_OWN_ASSERT=1
 LWEXT4_CFLAGS  += -DCONFIG_USE_USER_MALLOC=1
-LWEXT4_CFLAGS  += -w   # 屏蔽第三方代码警告
+
+# `-w` 只给 lwext4 自己的源码。**本项目的胶水代码（fs/lwext4_port/*、
+# driver/blk/ramblk.c）必须保持警告可见** —— 曾经这里是一刀切的 `-w`，
+# 于是 fs_lock.c 里漏声明 `__real_ext4_*` （编译器按隐式声明当成返回 int）
+# 这条致命警告被吞掉，最终表现成 aarch64 上指针被 `sxtw` 截断的
+# "确定性崩溃"（详见 fs/lwext4_port/fs_lock.c 顶部注释）。
+LWEXT4_THIRD_PARTY_CFLAGS := $(LWEXT4_CFLAGS) -w
 
 # ─── §9  Rootfs 配置 ────────────────────────────────────────────────────────────
 # 每个平台独立一个 build/<platform>/ 目录，切换平台无需 make clean。
@@ -1131,7 +1166,7 @@ $(BUILD_DIR)/platform_static.o: $(BUILD_DIR)/platform_static.c | $(BUILD_DIR)
 
 $(THIRD_PARTY_BUILD_DIR)/lwext4_%.o: $(LWEXT4_DIR)/src/%.c | $(BUILD_DIR) check-submodules
 	@mkdir -p $(dir $@)
-	$(CC) $(LWEXT4_CFLAGS) -c $< -o $@
+	$(CC) $(LWEXT4_THIRD_PARTY_CFLAGS) -c $< -o $@
 
 $(THIRD_PARTY_BUILD_DIR)/lwip_core_%.o: $(LWIP_DIR)/src/core/%.c | $(BUILD_DIR)
 	@mkdir -p $(dir $@)
@@ -1151,6 +1186,10 @@ $(BUILD_DIR)/lwext4_port_kmalloc.o: $(LWEXT4_PORT_DIR)/kmalloc.c | $(BUILD_DIR) 
 
 # FS 初始化需要 lwext4 头文件，用 LWEXT4_CFLAGS
 $(BUILD_DIR)/lwext4_port_fs_init.o: $(LWEXT4_PORT_DIR)/fs_init.c | $(BUILD_DIR) check-submodules
+	$(CC) $(LWEXT4_CFLAGS) -I$(LWEXT4_PORT_DIR) -c $< -o $@
+
+# lwext4 全局串行化的包装层（要 lwext4 的头文件才能写对签名）
+$(BUILD_DIR)/lwext4_port_fs_lock.o: $(LWEXT4_PORT_DIR)/fs_lock.c | $(BUILD_DIR) check-submodules
 	$(CC) $(LWEXT4_CFLAGS) -I$(LWEXT4_PORT_DIR) -c $< -o $@
 
 

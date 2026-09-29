@@ -13,6 +13,8 @@
 #include "string.h"
 #include <ext4.h> /* ext4_readlink（ext4_errno.h 由它带入） */
 #include <ext4_errno.h>
+/* 跨多次 lwext4 调用的临界区（目录迭代）；单次调用那层由 --wrap 自动加 */
+#include "../../../fs/lwext4_port/fs_lock.h"
 
 #define VFS_ENOENT  2
 #define VFS_EIO     5
@@ -318,6 +320,14 @@ static int ext4_dir_getdents(vfs_file_t *file, void *buf, size_t bufsz)
     uint64_t written = 0;
     char *dst = (char *)buf;
 
+    /*
+     * 整个迭代圈进一个临界区：ext4_dir_entry_next 把条目拷进 ext4_dir
+     * （内联在本对象里）并返回它的地址，循环里要一直拿着它用。只靠 --wrap
+     * 那层"每次调用"的锁不够 —— 两次调用之间另一个核可以对同一个目录对象
+     * 做操作。锁是可重入的，里面的 __wrap_* 照常嵌套。
+     */
+    fs_lwext4_lock();
+
     while (written + 32 < bufsz) {
         const ext4_direntry *de = ext4_dir_entry_next(&file->u.ext4_dir);
         if (!de)
@@ -353,6 +363,7 @@ static int ext4_dir_getdents(vfs_file_t *file, void *buf, size_t bufsz)
         written += reclen;
         file->offset++;
     }
+    fs_lwext4_unlock();
     return (int)written;
 }
 
@@ -678,10 +689,17 @@ int vfs_create_socket_file(int sock_idx, int flags, vfs_file_t **out)
     return 0;
 }
 
+/*
+ * refcnt 必须原子：fork / dup 之后同一个 vfs_file_t 会被多个任务同时持有，
+ * 两边的 ref++ / ref-- 撞在一起就是丢更新 —— 计数偏小的一方会提前 kfree，
+ * 另一方接着用的是已经还给 kmalloc 的对象（"文件内容看起来是乱码"这类
+ * 症状）。用 sub_fetch 的返回值判断归零，顺带把"读 refcnt 再减"那个窗口
+ * 去掉了。
+ */
 void vfs_ref(vfs_file_t *file)
 {
     if (file)
-        file->refcnt++;
+        __atomic_add_fetch(&file->refcnt, 1, __ATOMIC_RELAXED);
 }
 
 int vfs_close(vfs_file_t *file)
@@ -689,10 +707,8 @@ int vfs_close(vfs_file_t *file)
     int rc = 0;
     if (!file)
         return 0;
-    if (file->refcnt > 1) {
-        file->refcnt--;
+    if (__atomic_sub_fetch(&file->refcnt, 1, __ATOMIC_ACQ_REL) > 0)
         return 0;
-    }
     if (file->ops && file->ops->close)
         rc = file->ops->close(file);
     kfree(file, sizeof(*file));
