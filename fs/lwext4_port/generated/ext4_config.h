@@ -32,7 +32,10 @@ void ext4_user_free(void *ptr);
 /* ── 文件系统功能特性 ───────────────────────────────────────────── */
 #define CONFIG_EXT_FEATURE_SET_LVL 4 /* ext4 */
 #define CONFIG_JOURNALING_ENABLE   1
-#define CONFIG_XATTR_ENABLE        1
+/* 0：xattr 支持已整块移除。原实现 ext4_xattr.c 是 lwext4 里两个
+ * GPLv2 文件之一（另一个是 ext4_extent.c，已重写）。本内核不暴露
+ * xattr API，摘掉它才能让 lwext4 变成纯 BSD-3-Clause。 */
+#define CONFIG_XATTR_ENABLE        0
 #define CONFIG_EXTENTS_ENABLE      1
 
 /* ── 块设备和挂载点限制 ─────────────────────────────────────────── */

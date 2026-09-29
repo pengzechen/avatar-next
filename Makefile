@@ -934,8 +934,8 @@ check-submodules:
 	if [ -n "$$missing" ]; then \
 	    echo ""; \
 	    echo "════════════════════════════════════════════════════════════════"; \
-	    echo " 第三方 submodule 没拉下来（lwext4 / lwIP 是 submodule，"; \
-	    echo " git clone 默认不拉它们）。缺少："; \
+	    echo " 第三方源码缺失。lwIP 仍是 submodule（git clone 默认不拉），"; \
+	    echo " lwext4 已改为内嵌副本、随仓库一起 clone。缺少："; \
 	    for h in $$missing; do echo "     $$h"; done; \
 	    echo ""; \
 	    echo " 修复（仓库根目录执行）："; \
