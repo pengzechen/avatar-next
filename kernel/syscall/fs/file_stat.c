@@ -6,6 +6,7 @@
 #include "syscall/syscall_internal.h"
 #include "syscall/fs/fd_pool.h"
 #include "syscall/fs/path.h"
+#include "syscall/fs/pty.h" /* pty_match_pts_path（漏了会退化成隐式声明）*/
 #include "task/task.h"
 #include "kernel_stat.h"
 #include "string.h"

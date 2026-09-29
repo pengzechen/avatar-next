@@ -118,19 +118,23 @@ void close_handler(uint64_t regs[6], task_t *current)
         regs[0] = (uint64_t)(int64_t)-EBADF;
         return;
     }
-    /* fd 0/1/2 默认 UART（fd_table == -1），close 直接成功 */
-    if (current->fd_table[fd] == -1) {
+    /*
+     * 一次原子摘取同时解决三件事：fd 0/1/2 默认 UART（fd_table 是 -1，
+     * close 直接成功）、把表项置回 -1、以及保证同一个 fd 只会有**一个**
+     * 线程拿到 idx（否则两个线程都关同一个槽，第二次归还时槽可能已经被
+     * 别的 open 拿走）。详见 task_take_fd 的注释。
+     */
+    int idx = task_take_fd(current, fd);
+    if (idx < 0 || idx >= FD_POOL_SIZE) {
         regs[0] = 0;
         return;
     }
-    int idx = current->fd_table[fd];
     fd_obj_t *obj = &g_fd_pool[idx];
     KLOG_SYSCALL("[fd] close: pid=%u fd=%d pool_idx=%d type=%d\n", current->id,
                  fd, idx, obj->type);
     fd_close_notify(idx);
     fd_obj_close(idx);
     fd_pool_free(idx);
-    current->fd_table[fd] = -1;
     regs[0] = 0;
 }
 
@@ -145,13 +149,11 @@ static int dup_to_fd(task_t *current, int oldfd, int newfd, int flags)
     if (oldfd > 2 && !src)
         return -EBADF;
 
-    if (current->fd_table[newfd] != -1) {
-        int idx = current->fd_table[newfd];
-        fd_obj_t *o = &g_fd_pool[idx];
-        fd_close_notify(idx);
-        fd_obj_close(idx);
-        fd_pool_free(idx);
-        current->fd_table[newfd] = -1;
+    int old_idx = task_take_fd(current, newfd);
+    if (old_idx >= 0 && old_idx < FD_POOL_SIZE) {
+        fd_close_notify(old_idx);
+        fd_obj_close(old_idx);
+        fd_pool_free(old_idx);
     }
 
     if (!src) {

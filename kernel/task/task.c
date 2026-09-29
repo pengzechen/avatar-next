@@ -694,13 +694,37 @@ task_t *process_create_with_pgd(const char *name, uint64_t user_entry,
         arch_init_user_stack(task->stack_base, TASK_STACK_SIZE,
                              task->user_entry, user_sp, (uint64_t)task->pgd);
 
-    task->state = TASK_READY;
-    sched_enqueue(task);
-
+    /*
+     * 这里**故意不入队**：调用方（execve）在新任务创建之后还要填 fd 表、
+     * pgid/sid/uid、信号掩码等状态，而 TCB 里 fd_table 的初值是 -1
+     * —— 那意味着 fd 0/1/2 退回控制台。如果在入队之后才填，SMP 下别的核
+     * 可能抢先把这个新任务调度上去，让它带着未初始化的状态跑。
+     *
+     * 实测症状（`ls /bin | grep bin` 这类管道）：新任务抢先跑起来时
+     * fd 0/1/2 还是控制台，于是 ls 把目录列表直接打到串口、grep 去读控制台
+     * 并永久阻塞，shell 卡死在 wait 上 —— 表现为"管道没生效 / 挂死"。
+     * 上面提前设 heap_end/mmap_next 是同一个道理，只是那次只管了这两个字段。
+     * 状态齐了由调用方调 process_start() 入队。
+     */
     KLOG_TASK("[task] created user process '%s' id=%u prio=%u (pgd=0x%llx)\n",
               task->name, task->id, (uint32_t)task->priority, pgd_phys);
 
     return task;
+}
+
+/*
+ * process_start - 把 process_create_with_pgd 建好的进程挂进运行队列
+ *
+ * 与 process_create_with_pgd 配对使用：创建时任务停在 TASK_ALLOCATING，
+ * 调用方把"必须在新任务跑起来之前就位"的状态全部填完，再调这里放行。
+ * 中途失败想放弃这个任务就用 task_reap_dead()/free_task_slot() 收尾。
+ */
+void process_start(task_t *task)
+{
+    if (!task)
+        return;
+    task->state = TASK_READY;
+    sched_enqueue(task);
 }
 
 /* ── task_create ─────────────────────────────────────────── */

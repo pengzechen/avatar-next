@@ -268,11 +268,23 @@ task_t *process_create(const char *name, uint64_t user_entry,
  *
  * 与 process_create 不同，跳过 vm_create_user_process，
  * 直接使用调用方已准备好的页表。用于 ELF 加载器等自行管理地址空间的场景。
+ *
+ * ⚠️ 返回的任务**还没有入运行队列**（state 停在 TASK_ALLOCATING）。
+ * 调用方必须先把所有"新任务跑起来之前就该就位"的状态填完
+ * （fd 表、pgid/sid/uid、信号掩码……），再调 process_start() 放行。
+ * 不这么做的话，SMP 下别的核会抢先调度到它，让它带着初值跑 ——
+ * fd_table 的初值是 -1，即 fd 0/1/2 退回控制台，
+ * 症状是管道重定向失效 / 挂死（详见 task.c 里 process_create_with_pgd 的注释）。
  */
 task_t *process_create_with_pgd(const char *name, uint64_t user_entry,
                                 uint64_t user_sp, uint8_t priority,
                                 uint64_t pgd_phys, uint64_t heap_end,
                                 uint64_t mmap_next);
+
+/**
+ * process_start - 把 process_create_with_pgd 建好的进程挂进运行队列
+ */
+void process_start(task_t *task);
 
 /**
  * task_yield - 主动让出 CPU

@@ -22,8 +22,15 @@
 #include "timer/timer.h"
 #include "user_layout.h"
 
+/*
+ * fd 池接口在这里只能手写 extern：本文件用普通 CFLAGS 编译，没有 lwext4
+ * 的头文件路径，而 syscall/fs/fd_pool.h -> vfs.h -> ext4.h 会直接爆
+ * `ext4.h: No such file or directory`。签名以 fd_pool.h 为准，改那边时
+ * 记得同步这三行。
+ */
 extern void fd_pool_free(int idx);
 extern void fd_obj_close(int idx);
+extern int task_take_fd(task_t *task, int fd);
 
 static inline uint64_t exec_get_ns(void)
 {
@@ -33,14 +40,13 @@ static inline uint64_t exec_get_ns(void)
 static void exec_wrapper_close_fds(task_t *task)
 {
     for (int fd = 0; fd < (int)TASK_MAX_FD; fd++) {
-        int idx = task->fd_table[fd];
-        if (idx < 0) {
-            task->fd_table[fd] = -1;
+        /* 原子摘取；理由同 proc_lifecycle 的退出清理（上界由下面两个
+         * 函数各自兜底，本文件看不到 FD_POOL_SIZE）*/
+        int idx = task_take_fd(task, fd);
+        if (idx < 0)
             continue;
-        }
         fd_obj_close(idx);
         fd_pool_free(idx);
-        task->fd_table[fd] = -1;
     }
 }
 
@@ -363,6 +369,14 @@ int task_execve(const char *pathname, uint8_t *file_data, uint64_t file_size,
     extern void fd_table_inherit(task_t * child, task_t * parent);
     fd_table_inherit(new_task, current);
     exec_wrapper_close_fds(current);
+
+    /*
+     * 到这里新任务需要的状态才全部就位，可以放它上运行队列了。
+     * process_create_with_pgd 故意没有入队 —— 否则上面这些赋值和
+     * fd_table_inherit 都可能被别的核抢在前面，新任务会带着
+     * "fd 0/1/2 = 控制台"的初值跑起来（管道失效 / 挂死）。
+     */
+    process_start(new_task);
 
     uint32_t new_task_id = new_task->id;
     KLOG_DEBUG("[exec] Process '%s' created, PID=%u, pgd=0x%llx, parent=%u\n",

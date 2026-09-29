@@ -7,6 +7,8 @@
  *
  */
 #include "syscall/fs/fd_pool.h"
+#include "arch.h"
+#include "spinlock.h"
 #include "klog.h"
 #include "task/task.h"
 
@@ -14,32 +16,65 @@
 #include "ion/ion.h"
 #endif
 
+/*
+ * 池和 fd 表的并发保护。
+ *
+ * `g_fd_pool` 是**全局**的，而"扫一个 FDT_FREE 槽 -> 占住它"是读改写：
+ * 两个核同时进来会双双看到同一个 FREE 槽、双双占住它，于是两个任务的 fd
+ * 指向同一个 fd_obj —— 后开的那个把前一个的 vfs_file 覆盖掉，谁先 close
+ * 谁就把还在用的槽 fd_pool_free 掉，另一个任务接着用的是已经归还的槽
+ * （真有别的 open 复用，就是"用错文件"甚至 use-after-free）。
+ *
+ * 锁只圈**槽位状态和 fd 表表项的读改写**那几行，不圈 vfs_close / 日志：
+ * 前者会走到 lwext4 的全局 fs 锁上（锁序要单向：fd 池锁 -> fs 锁），
+ * 后者在持锁期间打串口是自找麻烦。
+ */
+static spinlock_t g_fd_pool_lock = SPINLOCK_INIT;
+
 /* 池数组本体：mm/mmap.c 等其它模块通过 extern 在 fd_pool.h 中可见。 */
 fd_obj_t g_fd_pool[FD_POOL_SIZE];
 
 int fd_pool_alloc(void)
 {
+    uint64_t flags = arch_irq_save();
+    spin_lock(&g_fd_pool_lock);
+
+    int slot = -1;
     for (int i = 0; i < FD_POOL_SIZE; i++) {
         if (g_fd_pool[i].type == FDT_FREE) {
             g_fd_pool[i].type = FDT_ALLOCATED;
             g_fd_pool[i].vfs_file = NULL;
-            KLOG_SYSCALL("[fd] pool_alloc: allocated slot %d\n", i);
-            return i;
+            slot = i;
+            break;
         }
     }
-    KLOG_ERROR("[fd] pool_alloc: no free slots (FD_POOL_SIZE=%d)\n",
-               FD_POOL_SIZE);
-    return -1;
+
+    spin_unlock(&g_fd_pool_lock);
+    arch_irq_restore(flags);
+
+    if (slot < 0) {
+        KLOG_ERROR("[fd] pool_alloc: no free slots (FD_POOL_SIZE=%d)\n",
+                   FD_POOL_SIZE);
+        return -1;
+    }
+    KLOG_SYSCALL("[fd] pool_alloc: allocated slot %d\n", slot);
+    return slot;
 }
 
 void fd_pool_free(int idx)
 {
-    if (idx >= 0 && idx < FD_POOL_SIZE) {
-        KLOG_SYSCALL("[fd] pool_free: freeing slot %d\n", idx);
-        g_fd_pool[idx].wq.waiter_count = 0;
-        g_fd_pool[idx].vfs_file = NULL;
-        g_fd_pool[idx].type = FDT_FREE;
-    }
+    if (idx < 0 || idx >= FD_POOL_SIZE)
+        return;
+
+    uint64_t flags = arch_irq_save();
+    spin_lock(&g_fd_pool_lock);
+    g_fd_pool[idx].wq.waiter_count = 0;
+    g_fd_pool[idx].vfs_file = NULL;
+    g_fd_pool[idx].type = FDT_FREE;
+    spin_unlock(&g_fd_pool_lock);
+    arch_irq_restore(flags);
+
+    KLOG_SYSCALL("[fd] pool_free: freeing slot %d\n", idx);
 }
 
 void fd_obj_ref(int idx)
@@ -96,15 +131,31 @@ void fd_obj_attach_vfs(int idx, vfs_file_t *file)
 
 int task_alloc_fd(task_t *task, int pool_idx)
 {
+    /*
+     * 同一进程的两个线程共享 fd_table，所以"找 -1 槽 -> 写上"同样要互斥，
+     * 否则两个线程会拿到同一个 fd 号、后写的那个把先写的挤掉。
+     */
+    uint64_t flags = arch_irq_save();
+    spin_lock(&g_fd_pool_lock);
+
+    int fd = -1;
     /* fd 0,1,2 reserved for stdin/stdout/stderr */
-    for (int fd = 3; fd < (int)TASK_MAX_FD; fd++) {
-        if (task->fd_table[fd] == -1) {
-            task->fd_table[fd] = (int16_t)pool_idx;
-            KLOG_SYSCALL(
-                "[fd] task_alloc_fd: pid=%u allocated fd=%d for pool_idx=%d\n",
-                task->id, fd, pool_idx);
-            return fd;
+    for (int i = 3; i < (int)TASK_MAX_FD; i++) {
+        if (task->fd_table[i] == -1) {
+            task->fd_table[i] = (int16_t)pool_idx;
+            fd = i;
+            break;
         }
+    }
+
+    spin_unlock(&g_fd_pool_lock);
+    arch_irq_restore(flags);
+
+    if (fd >= 0) {
+        KLOG_SYSCALL(
+            "[fd] task_alloc_fd: pid=%u allocated fd=%d for pool_idx=%d\n",
+            task->id, fd, pool_idx);
+        return fd;
     }
 
     /* 打印 fd_table 的前几个槽位用于调试 */
@@ -116,6 +167,29 @@ int task_alloc_fd(task_t *task, int pool_idx)
         task->fd_table[3], task->fd_table[4], task->fd_table[5]);
 
     return -1;
+}
+
+/*
+ * 原子地摘走 fd_table[fd]，返回它原来的池索引（-1 = 本来就没开）。
+ *
+ * close 路径必须用它而不是"先读 fd_table[fd] 再去做关闭"：同一进程的两个
+ * 线程同时 close 同一个 fd 时，两边都会读到同一个 idx，于是同一个槽被
+ * 关两次、归还两次 —— 第二次归还时槽可能已经被别的 open 拿走了，直接把
+ * 别人正在用的槽标成 FREE。摘表项这一步是"谁抢到谁负责关"的分界点。
+ */
+int task_take_fd(task_t *task, int fd)
+{
+    if (!task || fd < 0 || fd >= (int)TASK_MAX_FD)
+        return -1;
+
+    uint64_t flags = arch_irq_save();
+    spin_lock(&g_fd_pool_lock);
+    int idx = task->fd_table[fd];
+    task->fd_table[fd] = -1;
+    spin_unlock(&g_fd_pool_lock);
+    arch_irq_restore(flags);
+
+    return idx;
 }
 
 fd_obj_t *task_get_fd(task_t *task, int fd)

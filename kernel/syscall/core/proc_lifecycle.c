@@ -18,6 +18,7 @@
 #include "syscall/fs/pty.h"
 #include "loader/elf_loader.h"
 #include "task/task.h"
+#include "task/cpu.h" /* get_current_cpu_id / AVATAR_MAX_CPUS（execve argv 副本按 CPU 分行）*/
 #include "task/sched.h"
 #include "task/switch.h"
 #include "user_layout.h"
@@ -83,8 +84,24 @@ extern uint32_t g_task_id_cnt;
 #define EXEC_MAX_ARGC   128
 #define EXEC_MAX_ARGLEN 256
 
-static char g_exec_arg_store[EXEC_MAX_ARGC][EXEC_MAX_ARGLEN];
-static char *g_exec_argv_ptrs[EXEC_MAX_ARGC + 1];
+/*
+ * execve 的 argv 内核副本，**必须按 CPU 分行**。
+ *
+ * 曾经是两个全局数组，后果（busybox 管道场景实测）：SMP 下 shell fork 出
+ * 两个 wrapper 并发 execve，`ls` 侧刚把 argv 拷进来，`grep` 侧就把**同一块**
+ * 全局缓冲覆写成自己的 argv —— 两个新任务拿到同一份参数。/bin/ls 和
+ * /bin/grep 是同一个 busybox 的拷贝、applet 由 argv[0] 决定，于是**两个
+ * 任务跑的是同一个程序**：grep 侧（fd1=控制台）跑了 ls → 完整目录列表
+ * 不经过滤直接上屏；ls 侧往管道里写却没人读 → SIGPIPE → exit(141)。
+ * 表现为"管道没生效/结果不对"，极易误判成竞态锁问题。
+ *
+ * 安全性依据：syscall 路径本核关中断（见 docs/INTERRUPT_CONTROL_COMPARISON.md
+ * 的分野 —— EL0 任务的内核侧关中断），同核不会重入；跨核走不同行。
+ * 缓冲从拷入到消费（elf_setup_stack 把字符串写进新任务栈）全程同步，
+ * 不跨 task_block。
+ */
+static char g_exec_arg_store[AVATAR_MAX_CPUS][EXEC_MAX_ARGC][EXEC_MAX_ARGLEN];
+static char *g_exec_argv_ptrs[AVATAR_MAX_CPUS][EXEC_MAX_ARGC + 1];
 
 /* ───────────────────────────────────────────────────────────────
  *  sys_exit
@@ -107,15 +124,13 @@ void sys_exit(int status)
     /* CLONE_VM/CLONE_FILES threads share fd objects with the process. */
     if (!current->is_thread) {
         for (int _fd = 0; _fd < (int)TASK_MAX_FD; _fd++) {
-            int _idx = (int)current->fd_table[_fd];
-            if (_idx < 0 || _idx >= FD_POOL_SIZE) {
-                current->fd_table[_fd] = -1;
+            /* 摘表项要原子：进程退出时可能还有别的线程在 close 同一个 fd，
+             * 两边都拿到同一个 idx 就会把同一个槽归还两次。 */
+            int _idx = task_take_fd(current, _fd);
+            if (_idx < 0 || _idx >= FD_POOL_SIZE)
                 continue;
-            }
-            fd_obj_t *_obj = &g_fd_pool[_idx];
             fd_obj_close(_idx);
             fd_pool_free(_idx);
-            current->fd_table[_fd] = -1;
         }
     }
 
@@ -194,27 +209,34 @@ int64_t sys_execve(const char *pathname, char **argv, char **envp)
      * 这里不关闭 fd，让新进程继承连接 socket 等。
      * CLOEXEC 标记的 fd 在新进程创建后才关闭。 */
 
-    /* 从 userspace 复制 argv */
+    /* 从 userspace 复制 argv（按 CPU 取行，理由见 g_exec_arg_store 的注释） */
     char **kern_argv = NULL;
 
     if (argv) {
+        uint32_t cpu = get_current_cpu_id();
+        if (cpu >= AVATAR_MAX_CPUS)
+            cpu = 0;
+        char *store = &g_exec_arg_store[cpu][0][0];
+        char **ptrs = g_exec_argv_ptrs[cpu];
+
         char **uav = argv;
         int n = 0;
         while (n < EXEC_MAX_ARGC) {
             char *uarg = uav[n];
             if (!uarg)
                 break;
-            copy_string_from_user(uarg, g_exec_arg_store[n], EXEC_MAX_ARGLEN);
-            g_exec_argv_ptrs[n] = g_exec_arg_store[n];
+            copy_string_from_user(uarg, store + (size_t)n * EXEC_MAX_ARGLEN,
+                                  EXEC_MAX_ARGLEN);
+            ptrs[n] = store + (size_t)n * EXEC_MAX_ARGLEN;
             n++;
         }
-        g_exec_argv_ptrs[n] = NULL;
-        kern_argv = g_exec_argv_ptrs;
+        ptrs[n] = NULL;
+        kern_argv = ptrs;
         if (n == EXEC_MAX_ARGC)
             KLOG_SYSCALL("[execve] argv truncated path=%s max_argc=%d\n",
                          pathname, EXEC_MAX_ARGC);
         KLOG_SYSCALL("[execve] path=%s argc=%d argv0=%s\n", pathname, n,
-                     n > 0 ? g_exec_argv_ptrs[0] : "");
+                     n > 0 ? ptrs[0] : "");
     }
 
     /* 将相对路径转为绝对路径 */
