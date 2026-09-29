@@ -14,33 +14,19 @@ Claude 会自动读取这个文件来了解项目上下文。
 
 ## 快速开始
 
-### 第一步：拉 submodule
+### 第一步：第三方源码（已内嵌，无需操作）
 
-`lwext4` 和 `lwIP` 是 **git submodule**，而 `git clone` 默认**不拉**它们。
-少了它们构建会死在这样一行：
+`third_party/` 下的 **lwext4 与 lwIP 都已是内嵌源码副本，不再是 submodule**。
+`git clone` 直接就能拿到它们，**不需要** `--recurse-submodules`，也没有
+`make submodules` 这一步了（那个目标保留着只是为了不让旧脚本报错）。
 
-```
-include/vfs.h:14:10: fatal error: ext4.h: No such file or directory
-```
+（历史：曾经 `lwext4` 是 submodule，而 `.gitmodules` 指向上游、父仓库钉的却是
+我们 fork 的 commit —— 全新 clone 必然失败，且报错指向 `include/vfs.h` 这个
+**我们自己的**头文件，极具误导性。改成内嵌后这个失败面就没了。
+`lwext4` 为什么 fork、`lwIP` 为什么原样内嵌，见各自的 `README.md`。）
 
-这行指向的是**我们自己的**头文件，和真正的原因（submodule 是空的）看不出关系。
-`make` 现在会在编译任何东西之前先拦一道并告诉你怎么办，但**建议直接这样 clone**：
-
-```bash
-git clone --recurse-submodules <url>
-```
-
-已经 clone 过了（或者 submodule 目录是空的）：
-
-```bash
-make submodules        # = git submodule update --init --recursive --force
-```
-
-> `--force` 不是摆设。有一种状态是"`.git` 指针文件在、`git submodule status` 也不带
-> `-` 前缀、`git submodule update --init` 还 exit 0 —— 但工作树是空的（`.git/modules`
-> 里有对象，index 里却是 staged 删除）"。这时**不带 `--force` 的 update 会静默地
-> 什么都不做**，只有 `--force` 能把它拽回来。判据只能是看文件在不在，不能信 git 的
-> 状态字段。
+如果构建报 `ext4.h: No such file or directory`（或 lwIP 的头），现在只有一个
+原因：**工作树不完整**，重新 clone 即可。`make` 会在编译任何东西之前先拦一道。
 
 ### 编译命令
 

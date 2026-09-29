@@ -899,47 +899,50 @@ $(GUEST_GIC_STAMP):
 # ROOTFS_SIZE_MB / ROOTFS_PHYS_ADDR 来自自动生成的 $(MEM_LAYOUT_MK)
 QEMU_ROOTFS_FLAGS = -device loader,file=$(ROOTFS_IMG),addr=$(ROOTFS_PHYS_ADDR),force-raw=on
 
-# ─── §9a  第三方 submodule 前置检查 ─────────────────────────────────────────────
+# ─── §9a  第三方源码前置检查 ─────────────────────────────────────────────────────
 #
-# lwext4 / lwIP 是 git submodule，而 `git clone` **默认不拉 submodule**。所以刚
-# clone 下来 third_party/lwext4 是个空目录，构建会死在一行极具误导性的错误上：
+# third_party/ 下的 lwext4 与 lwIP 都**不再是 submodule**，而是内嵌在本仓库里
+# 的源码副本。原因见各自的 README.md：lwext4 是因为我们 fork 并修改了它，而
+# .gitmodules 指向上游、父仓库钉的却是 fork 的 commit —— 全新 clone 必失败；
+# lwIP 是未修改的上游代码，一并内嵌以彻底去掉 "submodule 状态可能撒谎" 这个
+# 失败面。
+#
+# 这个检查仍然保留：它现在挡的是**工作树不完整**（checkout 被中断、有人手工
+# 删过 third_party 里的东西）。那种情况下构建会死在一行极具误导性的错误上：
 #
 #     include/vfs.h:14:10: fatal error: ext4.h: No such file or directory
 #
-# 这行指向的是**我们自己的**头文件，和真正的原因（submodule 没拉）看不出任何关系
-# —— 照着它去查 vfs.h 会白查很久。所以在任何编译发生之前先拦一道。
+# 这行指向的是**我们自己的**头文件，和真正的原因看不出关系 —— 照着它去查
+# vfs.h 会白查很久。所以在任何编译发生之前先拦一道。
 #
-# 还有一种更阴的形态：submodule 的 `.git` 指针文件在、`git submodule status` 也
-# 不带 '-' 前缀、`git submodule update --init` 还 exit 0，**但工作树是空的**
-# （.git/modules 里有对象，index 里却是 staged 删除）。这个状态真的出现过一次，
-# 排查代价很高。所以下面直接查头文件在不在 —— 判据只能是文件本身，不能信 git 的
-# 状态字段。
+# 判据只能是文件本身，不能信版本控制的状态字段。历史教训：曾出现过
+# "指针文件在、status 不带 '-'、update --init 还 exit 0，但工作树是空的"
+# 这种状态，排查代价很高。
 #
 # 挂载点选在 KERNEL_RULE（见 §11b）而不是顶层的 kernel 目标：那样只能保证
 # **链接前**检查，各 .o 的编译（也就是真正报 ext4.h 的地方）早就先炸了。
-SUBMODULE_HEADERS := $(LWEXT4_DIR)/include/ext4.h \
-                     $(LWIP_DIR)/src/include/lwip/init.h
+THIRD_PARTY_HEADERS := $(LWEXT4_DIR)/include/ext4.h \
+                       $(LWIP_DIR)/src/include/lwip/init.h
 
-# 一键修复。--force 是必需的：对付上面那种"index 里是 staged 删除"的僵局，
-# 不带 --force 的 update 会认为无事可做。
+# 兼容旧命令：以前这一步是拉 submodule，现在源码随仓库一起 clone。
+# 保留目标只是别让旧脚本/旧文档里的 `make submodules` 直接报错。
 submodules:
-	git submodule update --init --recursive --force
-	@echo "submodule 就绪。"
+	@echo "third_party 源码已内嵌在仓库里，无需拉取 submodule。"
 
 check-submodules:
 	@missing=""; \
-	for h in $(SUBMODULE_HEADERS); do \
+	for h in $(THIRD_PARTY_HEADERS); do \
 	    [ -e "$$h" ] || missing="$$missing $$h"; \
 	done; \
 	if [ -n "$$missing" ]; then \
 	    echo ""; \
 	    echo "════════════════════════════════════════════════════════════════"; \
-	    echo " 第三方源码缺失。lwIP 仍是 submodule（git clone 默认不拉），"; \
-	    echo " lwext4 已改为内嵌副本、随仓库一起 clone。缺少："; \
+	    echo " 第三方源码缺失（lwext4 与 lwIP 都已内嵌，正常情况下不会缺）。"; \
+	    echo " 说明工作树不完整，请重新 clone。缺少："; \
 	    for h in $$missing; do echo "     $$h"; done; \
 	    echo ""; \
 	    echo " 修复（仓库根目录执行）："; \
-	    echo "     make submodules"; \
+	    echo "     重新 clone"; \
 	    echo " 等价于："; \
 	    echo "     git submodule update --init --recursive --force"; \
 	    echo ""; \
