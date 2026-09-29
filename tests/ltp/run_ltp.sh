@@ -11,6 +11,15 @@
 #   4  = TWARN
 #   32 = TCONF (跳过)
 
+# LTP 找辅助二进制（*_child）的顺序是：
+#   $LTP_DATAROOT → $LTPROOT/testcases/bin → **测试启动时所在的目录**
+#   （lib/tst_resource.c 的 tst_get_startwd 兜底）
+# build.sh 已经把 <bin>_child 一起拷进了 /ltp，但 shell 的 CWD 是 /，
+# 前两条路都不存在，于是报 "Failed to copy resource 'xxx_child'"。
+# 把 CWD 切到 /ltp 即可命中第三条。
+#   实测受影响：pipe2_02、getrusage03、openat02
+cd /ltp || exit 1
+
 PASS=0
 FAIL=0
 SKIP=0
@@ -25,6 +34,9 @@ for test in /ltp/*; do
     case "$name" in
         run_ltp.sh) continue ;;
         *.sh)       continue ;;
+        # 辅助二进制（build.sh 会跟着主测例一起拷进来，供主测例运行期 exec）。
+        # 单独跑它们不带参数、没有意义，计成 FAIL 会污染结果。
+        *_child)    continue ;;
     esac
     [ -x "$test" ] || continue
 

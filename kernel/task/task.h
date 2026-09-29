@@ -162,6 +162,15 @@ typedef struct task {
     sig_action_t
         sig_actions[NSIG]; /* 每信号的 action（下标 0 对应信号 1）        */
 
+    /* === ITIMER_REAL（alarm / setitimer）=========================
+     *
+     * 到期由 tick 驱动，投 SIGALRM 并唤醒阻塞中的任务。见 task/itimer.c。
+     * expire_ns == 0 表示未装（与 interval 无关：一次性定时器触发后 expire
+     * 归零，但 interval 保留，便于 getitimer 报告）。
+     */
+    uint64_t itimer_expire_ns;   /* 绝对到期时刻；0 = 未装                */
+    uint64_t itimer_interval_ns; /* 周期；0 = 一次性                      */
+
     /* === 内核抢占控制 === */
     uint32_t preempt_count; /* >0 时 S-mode timer 不抢占该任务             */
 } task_t;

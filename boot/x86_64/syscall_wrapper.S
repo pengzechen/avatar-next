@@ -34,6 +34,7 @@
 .section .text
 .code64
 .extern syscall_handler
+.extern sched_check_and_yield_from_trap
 
 /*
  * cpu_t 字段偏移 — 必须与 kernel/task/cpu.h 一致。
@@ -99,9 +100,35 @@ FUNCS(syscall_entry)
      */
     movq    %rsp, %rdi              /* 第一个参数：trap_frame_t * */
     call    syscall_handler
-    
+
     /* 返回值已在 RAX 中，会被恢复到用户态 */
-    
+
+    /*
+     * 3.5. trap 返回边界的调度检查
+     *
+     * 这是 x86_64 SYSCALL 路径上与 aarch64 HANDLE_EL0_SYNC 相对应的那一步
+     * （boot/aarch64/exception.S）。没有它，x86_64 就少了「syscall 返回边界」
+     * 这个抢占点：need_resched 只能等下一次 timer IRQ 在用户态落下时才被消费。
+     *
+     * frame->cs 这里是 0x2B（RPL=3，第 73 行压入的用户代码段），
+     * sched_check_and_yield_from_trap() 据此判为「来自用户态」→ 走
+     * sched_check_and_yield()：用户现场已完整保存在 frame 里，在任务自己的
+     * 内核栈上切换无副作用。
+     *
+     * 这里**不**调 signal_deliver_from_trap()：syscall_handler() 收尾已经调过
+     * deliver_pending_signals()（kernel/syscall/syscall.c），重复调用是空操作；
+     * aarch64 的 syscall 出口同样只有调度这一条。用户态缺页那条路走的是
+     * isr_common_stub，那里的 signal_deliver_from_trap 才是必需的。
+     *
+     * %rsp 此刻仍是 trap_frame_t*（与上面 call syscall_handler 前同一个值，
+     * 中间没有额外的 push/pop），且满足 SysV 的 16 字节对齐。
+     *
+     * 中断状态：SYSCALL 由 MSR_SFMASK 清 IF，本行执行时 IF=0，
+     * 与 aarch64 在 HANDLE_EL0_SYNC 里先 msr daifset, #2 再调是同一条件。
+     */
+    movq    %rsp, %rdi
+    call    sched_check_and_yield_from_trap
+
     /*
      * 4. 恢复用户上下文
      */

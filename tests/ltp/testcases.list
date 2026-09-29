@@ -64,48 +64,149 @@
 #   nanosleep01  → 需要 tick 级精度（当前睡眠粒度受调度 tick 限制）
 #   ppoll01      → 测例自身 SIGSEGV
 
+
+# ── 第二轮扩充的剔除记录（2026-09，x86_64 实测）─────────────────────────
+# 在原有 39 个之外又试了 66 个，覆盖 socket 簇 / 信号补充 / 多路复用 /
+# 文件属性 / 目录操作 / itimer 等。其中 **24 个通过并保留在上面的清单里**，
+# 下面 42 个实测不通过，已移出。分类记录，将来想补这些语义时有现成清单。
+#
+# 注意：本轮只在 **x86_64** 上逐条验过；aarch64 / riscv64 未复验。要启用
+# 其中任何一个，请先在另两个架构上跑一遍（这三架构的语义实现并不总是同步）。
+#
+# 【A 环境/框架依赖 —— 不是内核缺陷，是这些测例在本环境里跑不了】17 个
+#   clock_gettime02/03  → LTP 的 tst_kconfig 读不到内核 .config
+#   epoll_wait02        → 依赖 clock_getres()，未实现
+#   getcwd02            → 需要 realpath() / 符号链接
+#   getdents01, openat02 → tst_acquire_device 需要块设备（还调了 fallocate）
+#   ioctl02             → 需要 -d 指定 tty 设备
+#   kill05              → 需要 shmget（System V 共享内存）
+#   kill10              → 测例自身收到意外 SIGSEGV
+#   lseek02, read03, select01 → 需要 mkfifo() / mknod()
+#   prctl02, getrusage03 → 需要 capget（组/权限类，按项目定位不做）
+#   renameat201         → 需要 renameat2
+#   wait403             → 需要 /proc/sys/kernel/tainted
+#   writev03            → 需要 ≥2 个在线 CPU（当前 SMP=1）
+#
+# 【B 参数校验缺失 —— 内核不拒绝非法参数；与"是否兼容 Linux"无关，是健壮性】
+#   getrusage02   getrusage(-2) 应失败却成功
+#   mkdirat02     mkdirat 应失败却成功
+#   readv02       readv 应失败却成功
+#   sendfile03    sendfile 的 out_fd=-1 应失败却成功
+#   setpgid02     setpgid(pid, -1) 应失败却成功
+#   sysinfo02     sysinfo(bad_info) 应失败却成功
+#   tkill02       tkill 参数非法应 EINVAL，实返 EBADF
+#   uname02       uname(bad_addr) 应 EFAULT 却成功
+#   write03       write 应失败却成功
+#
+# 【C 语义不符】
+#   close02       重复 close 同一 fd 应返 EBADF
+#   dup3_02       dup3 非法 flags 应 EINVAL，实返 EBADF
+#   epoll_ctl02   不支持 epoll 的 fd 应被拒；重复 ADD 应 EEXIST
+#   faccessat02   dirfd 指向非目录应 ENOTDIR，实返 EBADF（与已知 openat01 同源）
+#   fcntl05       F_GETLK / flock 未实现
+#   ftruncate03   ftruncate 语义（与已知 ftruncate01 同源）
+#   kill02        进程组信号未送达所有成员 —— kill(0, sig) 的广播不全
+#   nanosleep02   nanosleep 需可被信号打断并返 EINTR（当前是 yield 桩）
+#   read02        读目录应返 EISDIR
+#   pipe2_02      pipe2 的 O_CLOEXEC 未生效
+#
+# 【D 未实现的功能】
+#   pread01 / pwrite01 → pread64 / pwrite64 返回 ENOSYS
+#   sigpending02       → raise() 之后取 pending 失败
+#
+# 【E 疑似真 bug —— 不是"语义不够细"，是行为不对，值得单独查】
+#   mmap03    MAP_SHARED 的数据与父进程不一致（memcmp 非 0）
+#   munmap04  进程以 SIGSEGV 退出（exit=139）
+#   tgkill01  进程以 SIGSEGV 退出（exit=139）
+#
+# ── 本轮顺带修掉的三个内核 bug（留着测例当回归网）──────────────────────
+#   1. x86_64 信号返回蹦床页 fork 不复制
+#        USER_SIGRET_PAGE(0x70001000) 比用户栈顶还高，落在 fork 的三个复制区间
+#        之外，exec 映射了它、fork 没有 → 子进程收到信号、handler 返回时
+#        取指到未映射页 → SIGSEGV。#0 症状 RIP==CR2。
+#        修：proc_lifecycle.c 的 fork 路径补一页。
+#   2. 管道读写不认 O_NONBLOCK
+#        fcntl(F_SETFL, O_NONBLOCK) 存了标志但读写路径不看 → 等 EAGAIN 的
+#        程序永久阻塞（kill02 曾因此挂死整个套件）。修：pipe_read/write_endpoint
+#        加 nonblock 参数，无数据/缓冲区满返 -EAGAIN。
+#   3. 用户指针只查范围、不查页是否映射
+#        user_range_ok() 挡得住 (void*)-1（回绕），挡不住"范围合法但已 munmap"
+#        的地址 → copy_*_user_bytes 里的裸 memcpy 踩空 → 内核态 #PF → 停机。
+#        writev02 正是这个形态（期望 EFAULT）。修：新增 user_range_accessible()，
+#        逐页走页表确认存在；write 路径改为先拷进内核缓冲，read 路径先验映射。
+#        已知局限：不解决 SMP 下的 TOCTOU，彻底解决需要异常表 fixup。
+#
+# ── 尚未做的（本条清单管不到，但同属"用户输入能让内核出错"）──────────
+#   中断/异常路径的 copy_* 调用、其它阻塞 syscall 的 EINTR（pty/socket/epoll_wait/
+#   wait4/futex 仍不会因信号返回 EINTR，只修了管道）。
+#
+
 # ── 进程管理 ──
 getpid/getpid02
+getpid/getpid01
 getppid/getppid01
+getppid/getppid02
 getuid/getuid01
 getgid/getgid01
 geteuid/geteuid01
+getegid/getegid02
 getpgid/getpgid01
+getpgid/getpgid02
 getsid/getsid01
+getsid/getsid02
 setsid/setsid01
 exit/exit02
+exit/exit01
 exit_group/exit_group01
 fork/fork01
 wait4/wait401
+wait4/wait402
 clone/clone06
 
 # ── 文件 I/O ──
 write/write01
+write/write02
 read/read01
 readv/readv01
 writev/writev01
+writev/writev02
 close/close01
 dup3/dup3_01
 fcntl/fcntl01
 fcntl/fcntl02
+fcntl/fcntl03
+fcntl/fcntl04
 pipe/pipe01
 lseek/lseek01
 getcwd/getcwd01
+chdir/chdir02
+fstat/fstat03
+faccessat/faccessat01
 
 # ── 内存管理 ──
 brk/brk01
+brk/brk02
 mmap/mmap01
+mmap/mmap02
 munmap/munmap01
+munmap/munmap03
 
 # ── 信号 ──
 kill/kill03
+kill/kill06
+kill/kill08
 rt_sigaction/rt_sigaction01
+sigaction/sigaction02
 rt_sigprocmask/rt_sigprocmask01
 
 # ── 系统信息 ──
 uname/uname01
 clock_gettime/clock_gettime01
 getrusage/getrusage01
+
+# ── I/O 多路复用 ──
+poll/poll01
+poll/poll02
 
 # ── 调度 ──
 sched_yield/sched_yield01
@@ -114,5 +215,9 @@ sched_yield/sched_yield01
 epoll_create1/epoll_create1_01
 epoll_create1/epoll_create1_02
 epoll_ctl/epoll_ctl01
+epoll_ctl/epoll_ctl03
 epoll_wait/epoll_wait01
 epoll_wait/epoll_wait04
+
+# ── 杂项 ──
+getrandom/getrandom02

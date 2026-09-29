@@ -8,6 +8,7 @@
 #include "syscall/syscall_internal.h"
 #include "kernel_stat.h"
 #include "string.h"
+#include "mm_vm.h" /* PAGE_SIZE / phys_to_virt / mm_vm_get_paddr */
 #include "vfs.h"
 #include <ext4.h>
 #include <ext4_errno.h>
@@ -28,6 +29,50 @@ static bool user_range_ok(const void *ptr, uint64_t len)
     if (end < start)
         return false;
     return end < USER_PTR_LIMIT;
+}
+
+/*
+ * user_range_accessible - 用户地址能否安全解引用：范围合法 **且每一页都映射着**
+ *
+ * user_range_ok() 只管前半段。它挡得住 (void*)-1（回绕），
+ * 挡不住"范围合法、但已经 munmap"的地址 —— 那种地址会让后面 copy_*_bytes
+ * 里的裸 memcpy 踩空 → **内核态 #PF → platform_panic → 整机停机**。
+ *
+ * LTP writev02 就是这么打的：它 mmap 一段让内核能写，然后 munmap，
+ * 再把那个地址放进 iovec，期望内核返回 EFAULT 而不是崩。
+ * 实测现场（修复前）：
+ *   CR2=0x50002000  Error bits: P=0 W=0 U=0   ← 内核态读不存在的页
+ *   #0 copy_from_user_bytes  #1 write_handler  #2 writev_handler
+ *
+ * 代价：每页一次多级页表遍历。选择"查得到才算合法"而不是 Linux 那套异常表
+ * fixup —— 后者要在三个架构各写一份带 fixup 表的汇编，改动面大得多。
+ *
+ * 已知局限：**不解决 SMP 下的 TOCTOU** —— 查完到这里 memcpy 之间，别的核
+ * 仍可能把这页拆掉。要彻底解决只能上异常表。
+ */
+bool user_range_accessible(const void *ptr, uint64_t len)
+{
+    if (!user_range_ok(ptr, len))
+        return false;
+    if (len == 0)
+        return true;
+
+    task_t *t = task_current();
+    if (!t || !t->pgd)
+        return true; /* 非用户进程上下文：维持旧行为，只做范围检查 */
+
+    uint64_t start = (uint64_t)ptr;
+    uint64_t first = start & ~(uint64_t)(PAGE_SIZE - 1);
+    uint64_t last = (start + len - 1) & ~(uint64_t)(PAGE_SIZE - 1);
+    void *pgd = phys_to_virt((uint64_t)t->pgd);
+
+    for (uint64_t va = first;; va += PAGE_SIZE) {
+        if (mm_vm_get_paddr(pgd, va) == 0)
+            return false;
+        if (va == last)
+            break;
+    }
+    return true;
 }
 
 void resolve_path(const char *cwd, const char *path, char *out, int outlen)
@@ -183,8 +228,23 @@ int copy_string_from_user(const char *ustr, char *kbuf, int maxlen)
 {
     if (!user_range_ok(ustr, (uint64_t)maxlen))
         return -1;
+
+    /*
+     * 映射检查**逐页做**，而不是对 [ustr, ustr+maxlen) 整段预检。
+     *
+     * 原因：maxlen 是内核缓冲的大小（调用方给的是 sizeof(kbuf)），通常远大于
+     * 字符串本身。整段预检会误杀"字符串贴在页尾、后面还有半个页没映射"这种
+     * 完全合法的入参 —— 那是把现有能跑的东西改崩。
+     * 逐页检查则只在真正要读某个新页之前查那一页，语义是"读得到的才算数"。
+     *
+     * 进入新页时 i 正好是该页的第一字节（(ustr+i) % PAGE_SIZE == 0）。
+     */
     int i = 0;
     while (i < maxlen - 1) {
+        if ((((uint64_t)ustr + (uint64_t)i) & (PAGE_SIZE - 1)) == 0 &&
+            !user_range_accessible(ustr + i, 1))
+            return -1;
+
         kbuf[i] = ustr[i];
         if (ustr[i] == '\0')
             return i;
@@ -209,7 +269,7 @@ int copy_string_to_user(const char *kstr, char *ubuf, int maxlen)
 
 int copy_from_user_bytes(const void *usrc, void *kdst, uint64_t len)
 {
-    if (!user_range_ok(usrc, len))
+    if (!user_range_accessible(usrc, len))
         return -1;
     memcpy(kdst, usrc, len);
     return 0;
@@ -217,7 +277,7 @@ int copy_from_user_bytes(const void *usrc, void *kdst, uint64_t len)
 
 int copy_to_user_bytes(const void *ksrc, void *udst, uint64_t len)
 {
-    if (!user_range_ok(udst, len))
+    if (!user_range_accessible(udst, len))
         return -1;
     memcpy(udst, ksrc, len);
     return 0;

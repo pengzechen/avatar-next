@@ -450,6 +450,33 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
         if (clone_copy_ok)
             CLONE_COPY_RANGE(parent->user_stack_top - parent->user_stack_size,
                              parent->user_stack_top);
+
+#if ARCH_X86_64
+        /*
+         * x86_64 的信号返回蹦床页，必须单独补一页。
+         *
+         * USER_SIGRET_PAGE = 0x70001000，比用户栈顶 USER_STACK_TOP = 0x70000000
+         * **还高 0x1000** —— 上面三个区间一个都不覆盖它。它由 exec 映射
+         * （kernel/task/exec.c 的 4b），fork 却从来没复制过，于是：
+         *
+         *   fork 出来的子进程 → 用户态装了 handler → 收到信号 → handler 返回时
+         *   `ret` 到 sa_restorer = USER_SIGRET_PAGE → 该页不存在 → 取指页故障。
+         *
+         * 实测（LTP kill02）：
+         *   User exception #14 at RIP=0x70001000
+         *   User PF CR2=0x70001000, bits: P=0 W=0 U=1 R=0 I=1   ← RIP==CR2 且 I/D=1
+         * RIP 等于 CR2 且是取指，正是「跳到未映射页执行」的指纹。
+         *
+         * 为什么只有 x86_64 需要：aarch64/riscv64 在 sa_restorer == 0 时是
+         * 在用户栈上写一个 rt_sigreturn 蹦床（见 signal.c），不依赖固定页。
+         * x86_64 不能用这招 —— 用户栈是 NX 的，栈上蹦床取不了指。
+         *
+         * 宏内部对未映射页有 `src_pa == 0 → continue` 的保护，父进程若也没有
+         * 这一页（例如父进程自己就是修复前 fork 出来的），这里是安全的空操作。
+         */
+        if (clone_copy_ok)
+            CLONE_COPY_RANGE(USER_SIGRET_PAGE, USER_SIGRET_PAGE + PAGE_SIZE);
+#endif
 #undef CLONE_COPY_RANGE
 
         if (!clone_copy_ok) {

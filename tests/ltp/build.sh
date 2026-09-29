@@ -103,6 +103,21 @@ while IFS= read -r line; do
         cp "$tc_dir/$bin" "$OUT_DIR/"
         ok "$bin → $OUT_DIR/$bin"
         ((BUILT++)) || true
+
+        # 辅助二进制：不少测例（kill05/08/10、getpid01、pipe2_02、mmap03、
+        # clock_gettime03、getrusage03、openat02、fstat03、nanosleep02、
+        # ioctl02 …）在运行期 exec 同目录的 <bin>_child。以前只点名主测例，
+        # 辅助二进制不随 rootfs 安装 → 主测例必失败（execve01 就是这么废掉的，
+        # 见 testcases.list 的失败清单）。这里一并带上。
+        #
+        # 注意：run_ltp.sh 必须跳过 *_child，否则会把它们当测例跑（它们不带
+        # 参数单独跑没有意义，必然计成 FAIL）。
+        for helper in "$tc_dir/${bin}_child"; do
+            if [ -f "$helper" ]; then
+                cp "$helper" "$OUT_DIR/"
+                ok "  + ${bin}_child (aux)"
+            fi
+        done
     else
         err "Build failed: $line"
         ((FAILED++)) || true

@@ -7,6 +7,7 @@
 #include "loader/elf_loader.h"
 #include "klog.h"
 #include "task/task.h"
+#include "task/itimer.h"
 #include "user_layout.h"
 #include "task/sched.h"
 #include "task/switch.h"
@@ -209,6 +210,18 @@ static void x86_translate_syscall(uint64_t *nr, uint64_t regs[9])
     case 35:
         *nr = LINUX_SYS_NANOSLEEP;
         break; /* nanosleep */
+    /*
+     * getitimer(36) / setitimer(38)：x86_64 原来没有这两条翻译，于是落到
+     * default: 返回 ENOSYS —— 主 switch 里那个 case 103 桩对 x86_64 根本
+     * 不可达。转到内部编号（= aarch64/riscv64 的号）去交给同一份实现。
+     * alarm(37) 不映射：musl 的 alarm() 本身就是走 setitimer 实现的。
+     */
+    case 36:
+        *nr = 102;
+        break; /* getitimer → 内部 __NR_getitimer */
+    case 38:
+        *nr = 103;
+        break; /* setitimer → 内部 __NR_setitimer */
     case 39:
         *nr = LINUX_SYS_GETPID;
         break; /* getpid */
@@ -1166,9 +1179,72 @@ void syscall_handler(trap_frame_t *frame)
 
     case 103:   /* riscv64/aarch64 __NR_setitimer */
     case 102: { /* riscv64/aarch64 __NR_getitimer */
-        uint64_t *old_value = (uint64_t *)regs[2];
-        if (old_value)
-            memset(old_value, 0, 32);
+        /*
+         * ITIMER_REAL（alarm/setitimer）。实现见 task/itimer.c。
+         *
+         * 以前这里是纯桩：把 old_value 清零、返回 0，从不真正装定时器。
+         * 后果不只是"少个功能"—— LTP 每个测例都用 alarm() 当看门狗来打断
+         * 阻塞 read，桩吃掉它之后**卡住的测例会永久挂死整个套件**。
+         *
+         * 参数：
+         *   setitimer(which, new_value, old_value)  regs[1]=new regs[2]=old
+         *   getitimer(which, curr_value)            regs[1]=curr
+         *
+         * struct itimerval 在 64 位下 32 字节：
+         *   [+0] it_interval.tv_sec   [+8]  it_interval.tv_usec
+         *   [+16] it_value.tv_sec     [+24] it_value.tv_usec
+         */
+        const uint64_t NS_PER_SEC = 1000000000ULL;
+        const uint64_t NS_PER_USEC = 1000ULL;
+
+        task_t *it_cur = task_current();
+        if (!it_cur) {
+            regs[0] = (uint64_t)(int64_t)-EINVAL;
+            break;
+        }
+
+        /* 只支持 ITIMER_REAL：本内核没有虚拟/统计 CPU 时间。明确报 EINVAL，
+         * 不假装成功 —— 装一个永远不会响的定时器比报错更难查。 */
+        if ((int64_t)regs[0] != 0 /* ITIMER_REAL */) {
+            regs[0] = (uint64_t)(int64_t)-EINVAL;
+            break;
+        }
+
+        bool is_set = (syscall_num == 103);
+        uint64_t *oldp = (uint64_t *)(uintptr_t)regs[is_set ? 2 : 1];
+
+        /* setitimer：先读用户传的新值并装载，再回填旧值（Linux 语义：
+         * old_value 拿到的正是本次替换掉的那一份）。 */
+        if (is_set && regs[1]) {
+            uint64_t nv[4];
+            if (copy_from_user_bytes((const void *)(uintptr_t)regs[1], nv,
+                                     sizeof(nv)) < 0) {
+                regs[0] = (uint64_t)(int64_t)-EFAULT;
+                break;
+            }
+            uint64_t interval = nv[0] * NS_PER_SEC + nv[1] * NS_PER_USEC;
+            uint64_t value = nv[2] * NS_PER_SEC + nv[3] * NS_PER_USEC;
+            itimer_set(it_cur, value, interval);
+        } else if (is_set) {
+            /* new_value == NULL：取消定时器（Linux 同样语义） */
+            itimer_set(it_cur, 0, 0);
+        }
+
+        if (oldp) {
+            uint64_t remain = 0, interval = 0;
+            itimer_get(it_cur, &remain, &interval);
+            uint64_t ov[4];
+            ov[0] = interval / NS_PER_SEC;
+            ov[1] = (interval % NS_PER_SEC) / NS_PER_USEC;
+            ov[2] = remain / NS_PER_SEC;
+            ov[3] = (remain % NS_PER_SEC) / NS_PER_USEC;
+            /* 用户指针一律经 copy_to_user_bytes，禁止裸解引用（见 CLAUDE.md） */
+            if (copy_to_user_bytes(ov, (void *)oldp, sizeof(ov)) < 0) {
+                regs[0] = (uint64_t)(int64_t)-EFAULT;
+                break;
+            }
+        }
+
         regs[0] = 0;
         break;
     }

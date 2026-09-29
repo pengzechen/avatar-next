@@ -382,6 +382,14 @@ int copy_string_to_user(const char *kstr, char *ubuf, int maxlen);
 int copy_from_user_bytes(const void *usrc, void *kdst, uint64_t len);
 int copy_to_user_bytes(const void *ksrc, void *udst, uint64_t len);
 
+/*
+ * 用户地址是否"范围合法**且每一页都映射着**"。copy_*_user_bytes 内部就是用它。
+ * 需要自己校验用户指针时（例如 copy_iov_from_user）也应当用这个，而不是
+ * 只查范围的 user_range_ok —— 只查范围挡不住"合法但已 munmap"的地址，
+ * 那种地址会让后续裸拷贝变成内核态 #PF。见 fs/path.c 里的详细说明。
+ */
+bool user_range_accessible(const void *ptr, uint64_t len);
+
 /* ── fs/ 子系统：文件 / 目录 / TTY ─────────────────────────────── */
 /* 文件 I/O（fs/file_io.c）*/
 void read_handler(uint64_t regs[6], task_t *current);

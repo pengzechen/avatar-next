@@ -17,19 +17,14 @@
 #define IOV_COPY_MAX   16
 #define USER_PTR_LIMIT 0x80000000ULL
 
-static bool user_range_ok_local(uint64_t ptr, uint64_t len)
-{
-    uint64_t end;
+/* write_handler 往内核搬用户数据的块大小。取小值是为了直接在栈上开，
+ * 不为此引入一次 kmalloc/free（write 是最高频的 syscall 之一）。
+ * 内核栈 16 KB，2 KB 的局部数组在 syscall 调用链深度下是安全的。 */
+#define WRITE_USER_CHUNK 2048
 
-    if (ptr == 0)
-        return false;
-    if (len == 0)
-        return true;
-    end = ptr + len - 1;
-    if (end < ptr)
-        return false;
-    return end < USER_PTR_LIMIT;
-}
+/* 本地这份曾经只查范围，现在统一走 syscall/fs/path.c 的 user_range_accessible：
+ * 范围 + **每页映射**。理由见那里的注释（writev02 用"合法但已 munmap"的地址
+ * 让 copy_*_bytes 里的裸拷贝踩空 → 内核态 #PF → 停机）。 */
 
 static bool trace_heavy_task(task_t *current)
 {
@@ -44,7 +39,7 @@ static int copy_iov_from_user(struct kernel_iovec *dst,
         return -EINVAL;
     if (iovcnt == 0)
         return 0;
-    if (!user_range_ok_local((uint64_t)uiov, (uint64_t)iovcnt * sizeof(*uiov)))
+    if (!user_range_accessible(uiov, (uint64_t)iovcnt * sizeof(*uiov)))
         return -EFAULT;
 
     for (int i = 0; i < iovcnt; i++) {
@@ -52,7 +47,8 @@ static int copy_iov_from_user(struct kernel_iovec *dst,
         if (dst[i].iov_len > (1ULL << 31))
             return -EINVAL;
         if (dst[i].iov_len != 0 &&
-            !user_range_ok_local(dst[i].iov_base, dst[i].iov_len))
+            !user_range_accessible((const void *)(uintptr_t)dst[i].iov_base,
+                                   dst[i].iov_len))
             return -EFAULT;
     }
     return 0;
@@ -70,6 +66,17 @@ void read_handler(uint64_t regs[6], task_t *current)
 
     fd_obj_t *obj = task_get_fd(current, fd);
     if (obj && fd_obj_file(obj)) {
+        /*
+         * read 侧和 write 侧是**同一个洞**：vfs_read 会直接往用户缓冲里写
+         * （ext4_fread → memcpy），未映射的地址就是内核态 #PF → 停机。
+         * write 侧现在把数据先搬进内核缓冲；read 侧方向相反，代价最小的做法
+         * 是先验"这一段每一页都映射着"。校验通过后当前页表就是该进程的
+         * 用户页表（syscall 期间 CR3 未切走），直接写是安全的。
+         */
+        if (!user_range_accessible(buf, count)) {
+            regs[0] = (uint64_t)(int64_t)-EFAULT;
+            return;
+        }
         if (trace_heavy_task(current)) {
             KLOG_SYSCALL(
                 "[vfsio] pid=%u read fd=%d path=%s buf=0x%llx count=0x%llx off=0x%llx\n",
@@ -167,8 +174,48 @@ void write_handler(uint64_t regs[6], task_t *current)
 
     fd_obj_t *wobj = task_get_fd(current, fd);
     if (wobj && fd_obj_file(wobj)) {
-        int rc = vfs_write(fd_obj_file(wobj), buf, (size_t)count);
-        regs[0] = rc >= 0 ? (uint64_t)rc : (uint64_t)(int64_t)rc;
+        /*
+         * ⚠️ 用户缓冲必须先落进内核，再把**内核地址**交给 VFS/ext4/块设备。
+         *
+         * 这里以前是把 buf（用户指针）裸传给 vfs_write，于是一路穿到
+         * ramblk_bwrite 的 `memcpy(dst, buf, n)` —— 用户给个不在页表里的
+         * 地址就是**内核态 #PF → platform_panic → 整机停机**。
+         *
+         * LTP writev02 正是冲着这个来的，它的 iovec 第一项就是
+         * `{(caddr_t)-1, 8192}`：期望内核返回 EFAULT，而不是崩。
+         * 实测崩溃现场：CR2=0x50002000、U=0、
+         *   #0 ramblk_bwrite #2 ext4_fwrite #5 write_handler #6 writev_handler
+         *
+         * 用分块而不是一次 kmalloc 整块：count 是用户给的，可以大到离谱，
+         * 先分配再校验等于让用户决定内核分配多少；分块则天然有界，第一块
+         * 拷不动就直接 EFAULT（copy_from_user_bytes 内部走 user_range_ok）。
+         * 与 Linux 的"部分写"语义也一致：已经写成功的字节数照常返回。
+         */
+        char kbuf[WRITE_USER_CHUNK];
+        uint64_t done = 0;
+
+        while (done < count) {
+            size_t n = (size_t)(count - done);
+            if (n > sizeof(kbuf))
+                n = sizeof(kbuf);
+
+            if (copy_from_user_bytes(buf + done, kbuf, n) < 0) {
+                /* 一个字节都没写成 → EFAULT；已写成的部分按部分写返回 */
+                regs[0] = done ? done : (uint64_t)(int64_t)-EFAULT;
+                return;
+            }
+
+            int rc = vfs_write(fd_obj_file(wobj), kbuf, n);
+            if (rc < 0) {
+                regs[0] = done ? done : (uint64_t)(int64_t)rc;
+                return;
+            }
+            done += (uint64_t)rc;
+            if ((size_t)rc < n)
+                break; /* 后端短写，别硬凑 */
+        }
+
+        regs[0] = done;
         return;
     }
 

@@ -32,6 +32,7 @@
 #include "spinlock.h"
 #include "assert.h"
 #include "task/preempt.h"
+#include "task/itimer.h"
 #if ARCH_AARCH64 || ARCH_X86_64
 #include "exception.h"
 #endif
@@ -342,7 +343,26 @@ void sched_tick(void)
      *
      * Phase 1：标志已是 per-CPU，每核独立计数。
      */
-    cpu_current()->need_resched = true;
+    cpu_t *c = cpu_current();
+
+    c->need_resched = true;
+
+    /*
+     * idle 记账。挂在 tick 上而不是各个 idle 循环里：g_tick_cb 每个核都会调，
+     * 一处就覆盖了 task_idle_loop 和三个架构各自的次级核 idle 循环。
+     * /proc/uptime 的第二列靠它，否则永远是 0（top/vmstat 会当成"从不空闲"）。
+     */
+    if (c->current_task && c->current_task == c->idle_task)
+        c->idle_ticks++;
+
+    /*
+     * 每任务的 ITIMER_REAL 到期检查也挂在这个 tick 上（100 Hz）。
+     * 放在这里而不是另开一个回调：g_tick_cb 只有一个，而 sched_tick 既被
+     * timer 驱动经 timer_set_tick_cb 调用，也被 x86_64 的 fallback 路径
+     * （boot/x86_64/exception.c）直接调用 —— 挂在这里两条路都覆盖到。
+     * 见 task/itimer.c 顶部对"为什么需要它"的说明。
+     */
+    itimer_tick();
 }
 
 /* ── sched_check_and_yield ─────────────────────────────────── */

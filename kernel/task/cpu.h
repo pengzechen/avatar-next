@@ -73,6 +73,17 @@ typedef struct cpu {
      * 以前读的是全局 g_x86_tss_rsp0（只由 CPU0 更新），SMP 下会把 AP 的
      * syscall 帧建到别的 CPU 正在用的任务栈上，导致栈互相破坏。 */
     uint64_t kernel_rsp0;
+
+    /*
+     * 本核在 idle 任务上累计的 tick 数。/proc/uptime 的第二个字段要它。
+     *
+     * ⚠️ 必须加在 scratch_rsp / kernel_rsp0 **之后**：那两个字段的偏移被
+     * boot/x86_64/syscall_wrapper.S 手抄成常量（CPU_SCRATCH_RSP=96 /
+     * CPU_KERNEL_RSP0=104），.S 里写不了 offsetof，只能靠下面那组
+     * static_assert 把关。往它们前面插字段会当场把断言打炸（这是好事），
+     * 但更省事的做法就是加在最后。
+     */
+    uint64_t idle_ticks;
 } cpu_t;
 
 /*

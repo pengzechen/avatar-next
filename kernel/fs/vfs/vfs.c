@@ -32,9 +32,12 @@
 #define O_TRUNC_AVATAR     0001000
 #define O_APPEND_AVATAR    0002000
 #define O_DIRECTORY_AVATAR 0200000
-#define SEEK_SET_AVATAR    0
-#define SEEK_CUR_AVATAR    1
-#define SEEK_END_AVATAR    2
+/* O_NONBLOCK 由 fcntl(F_SETFL) 存进 fd_obj/vfs_file 的 flags（见
+ * syscall/fs/file_ops.c）。管道读写要**读**这个位，否则非阻塞语义不成立。 */
+#define O_NONBLOCK_AVATAR 04000
+#define SEEK_SET_AVATAR   0
+#define SEEK_CUR_AVATAR   1
+#define SEEK_END_AVATAR   2
 
 typedef struct vfs_mount vfs_mount_t;
 
@@ -381,14 +384,16 @@ static int pipe_file_read(vfs_file_t *file, void *buf, size_t len)
 {
     if (file->u.pipe.is_write_end)
         return -VFS_EBADF;
-    return pipe_read_endpoint(file->u.pipe.pipe_idx, buf, len);
+    return pipe_read_endpoint(file->u.pipe.pipe_idx, buf, len,
+                              (file->flags & O_NONBLOCK_AVATAR) != 0);
 }
 
 static int pipe_file_write(vfs_file_t *file, const void *buf, size_t len)
 {
     if (!file->u.pipe.is_write_end)
         return -VFS_EBADF;
-    return pipe_write_endpoint(file->u.pipe.pipe_idx, buf, len);
+    return pipe_write_endpoint(file->u.pipe.pipe_idx, buf, len,
+                               (file->flags & O_NONBLOCK_AVATAR) != 0);
 }
 
 static int pipe_file_close(vfs_file_t *file)
