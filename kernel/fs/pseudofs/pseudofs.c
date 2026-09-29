@@ -18,6 +18,8 @@
 #include "pmm.h"
 #include "uart/uart.h"
 #include "task/task.h"
+#include "task/cpu.h" /* g_cpus / g_num_cpus / AVATAR_MAX_CPUS（/proc/uptime 的 idle 列）*/
+#include "timer/timer.h"      /* timer_get_ns / TIMER_FREQUENCY_HZ */
 #include "syscall/io/epoll.h" /* EPOLLIN/EPOLLOUT：pseudo_poll 的兜底返回值 */
 #include "syscall/trace.h"    /* /proc/syscalls */
 #include "debug/backtrace.h"  /* /proc/backtrace */
@@ -146,11 +148,56 @@ static int version_read(int nid, uint64_t off, void *buf, size_t len)
 }
 
 /* /proc/uptime */
+
+/* 把"百分之一秒"写成 "S.CC"，返回写入字节数 */
+static size_t uptime_put_secs(char *dst, size_t pos, size_t cap, uint64_t cs)
+{
+    char nbuf[24];
+    /* u64_to_dec 是"填 buf、返回长度"，不是返回指针 —— 别拿它的返回值当字符串 */
+    (void)u64_to_dec(nbuf, cs / 100);
+    pos += (size_t)pfs_puts(dst, pos, cap, nbuf);
+    pos += (size_t)pfs_puts(dst, pos, cap, ".");
+    nbuf[0] = (char)('0' + (int)((cs % 100) / 10));
+    nbuf[1] = (char)('0' + (int)(cs % 10));
+    nbuf[2] = '\0';
+    pos += (size_t)pfs_puts(dst, pos, cap, nbuf);
+    return pos;
+}
+
+/*
+ * 格式与 Linux 一致："<uptime秒> <idle秒>"，各两位小数。
+ *
+ * 这里以前是写死的静态字符串 "0.00 0.00" —— 跑多久都纹丝不动（用户实测
+ * `cat /proc/uptime` 恒为 0.00 0.00）。硬编码本身不算错，错在它看起来
+ * 像"系统刚起来"，会把人往错误方向带。
+ */
 static int uptime_read(int nid, uint64_t off, void *buf, size_t len)
 {
     (void)nid;
-    static const char content[] = "0.00 0.00\n";
-    return pfs_copy_out(off, buf, len, content, sizeof(content) - 1);
+    char tmp[64];
+    size_t pos = 0;
+
+    /* 上电以来的单调时间。用 timer_get_ns() 而不是 g_system_ticks：
+     * 后者是 100 Hz 的 tick 计数，先除成秒再乘回百分秒会丢精度，
+     * 而且 tick 在中断关闭的窗口里不一定在走。 */
+    uint64_t up_cs = timer_get_ns() / 10000000ULL; /* 纳秒 → 百分之一秒 */
+
+    /* idle：**所有核**在 idle 任务上累计的 tick 数 ÷ tick 频率。
+     * 求和而不是只看本核 —— Linux 的 /proc/uptime 第二列就是各 CPU 之和。
+     * 记账在 sched_tick() 里（见 cpu.h 的 idle_ticks）。 */
+    uint64_t idle_ticks = 0;
+    for (uint32_t i = 0; i < g_num_cpus && i < AVATAR_MAX_CPUS; i++)
+        idle_ticks += g_cpus[i].idle_ticks;
+
+    uint64_t hz = TIMER_FREQUENCY_HZ ? (uint64_t)TIMER_FREQUENCY_HZ : 100ULL;
+    uint64_t idle_cs = (idle_ticks * 100ULL) / hz;
+
+    pos = uptime_put_secs(tmp, pos, sizeof(tmp), up_cs);
+    pos += (size_t)pfs_puts(tmp, pos, sizeof(tmp), " ");
+    pos = uptime_put_secs(tmp, pos, sizeof(tmp), idle_cs);
+    pos += (size_t)pfs_puts(tmp, pos, sizeof(tmp), "\n");
+
+    return pfs_copy_out(off, buf, len, tmp, pos);
 }
 
 /* /proc/mounts */
