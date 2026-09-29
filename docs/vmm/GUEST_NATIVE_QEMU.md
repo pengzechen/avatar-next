@@ -180,6 +180,6 @@ data abort → **一次完整 VM exit**（世界切换：128 字节系统寄存�
 
 ## 8. 相关
 
-- 两种运行模式、`/dev/vmm` 协议、Ctrl+] / Ctrl+[ 语义：`docs/vmm/GUEST_CONSOLE.md`
+- 两种运行模式、`/dev/vmm` 协议、Ctrl+T 前缀键语义：`docs/vmm/GUEST_CONSOLE.md`
 - 命令行的长度约束与取舍理由：`kernel/vmm/guest_loader.c` 的
   `GUEST_LINUX_BOOTARGS` 注释

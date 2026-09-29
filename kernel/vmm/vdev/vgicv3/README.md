@@ -187,7 +187,7 @@ qemu-system-aarch64 ... \
 
 ## 8. 参考
 
-- **guest 控制台（两种运行模式、`/dev/vmm` 协议、Ctrl+] 退出）**：`docs/vmm/GUEST_CONSOLE.md`
+- **guest 控制台（两种运行模式、`/dev/vmm` 协议、Ctrl+T k 退出）**：`docs/vmm/GUEST_CONSOLE.md`
 - GICv2 版实现与注释：`../vgic/`
 - 宿主 GICv3 驱动：`driver/irq/gicv3.c`（注意 `GICD_CTLR.EnableGrp1A` 那个坑）
 - guest DTB：`imgs/guests/aarch64/linux-gicv3.dts`

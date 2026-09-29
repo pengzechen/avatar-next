@@ -13,6 +13,7 @@
  *   /dev/cvi-tpu0 — CVI TPU 驱动（ioctl 接口，SOPHGO CVITPU SDK ABI）
  *   /dev/ion      — ION DMA 分配器（ioctl 接口）
  *   /dev/npu     — NPU stub（保留）
+ *   /dev/vmm     — guest 控制设备（ioctl 接口，见下方 VMM_IOC_*）
  *
  * proc 条目：
  *   /proc/self/exe      — 当前进程可执行路径（readlink）
@@ -22,7 +23,7 @@
  *   /proc/mounts        — rootfs 挂载表
  *   /proc/meminfo       — 从 PMM 动态生成
  *   /proc/version       — 静态内核版本字符串
- *   /proc/uptime        — 静态 "0.00 0.00\n"
+ *   /proc/uptime        — 真实 uptime + 各 CPU 累计 idle（timer_get_ns / idle_ticks）
  *   /proc/cpuinfo       — 架构信息
  */
 #ifndef PSEUDOFS_H
@@ -67,6 +68,47 @@
  * 与 BOOT 的区别：BOOT 见到有 VM 在跑就接入它，本号总是新建一个。
  */
 #define VMM_IOC_BOOT_EX _IOWR('V', 4, uint32_t)
+
+/*
+ * ── 多 VM 的按 vmid 操作（VMM_IOC_LIST / ATTACH / STOP_VM）─────
+ *
+ * 动机：在此之前，要停掉某个 VM **必须先接入它**（只有 VMM_IOC_STOP，而它
+ * 打在"前台"那一个上），而接入路径又只挑最小 vmid —— 于是 vm1/vm2 同时在跑
+ * 时，`vmm-run` 永远接到 vm1，你想停的 vm2 反而碰不到。这三个号把"按 vmid
+ * 寻址"补齐：列出、接入指定、停指定，都不要求先接管控制台。
+ *
+ * ⚠️ struct 的定义必须与用户态 helper apps/c/vmm_run.c 里那份**逐字节一致**。
+ *    helper 不能包含本头（会拖进 types.h / kernel_stat.h），只能手抄一份。
+ *    _IOC 把 sizeof 编进了操作码（见上面 _IOC 宏），所以两边尺寸不同不是
+ *    "错位"而是**换了个 ioctl 号** → 内核 default 分支回 -PFS_ENOSYS ——
+ *    是响亮的失败，不是静默损坏。下面 _Static_assert 再钉一道，谁改字段
+ *    谁在编译期就被拦住。改这里请同步改 vmm_run.c 的同名结构体。
+ *
+ * 为什么 info[] 是**固定容量 8**而不是 MAX_VMS：helper 看不到 MAX_VMS
+ * （那是 include/vmm/vmm.h 的编译期常量），一旦把数组开成 MAX_VMS，
+ * 改 MAX_VMS 就会悄悄改掉 ABI。固定 8 之后内核只填 min(max, MAX_VMS) 个，
+ * 容量与池大小解耦（MAX_VMS 当前是 4）。
+ */
+struct vmm_vm_info {
+    uint32_t vmid;
+    uint32_t state; /* vm.c 的状态机数值：1=LOADING 2=RUNNING 4=DYING */
+};
+struct vmm_list_req {
+    uint32_t max;     /* [in]  info[] 的容量（helper 传 8）      */
+    uint32_t count;   /* [out] 实际写入的条目数                  */
+    uint32_t fg_vmid; /* [out] 前台 vmid；0 = 没有前台           */
+    uint32_t _rsv;    /* 对齐填充，保持 16 字节头                */
+    struct vmm_vm_info info[8];
+};
+
+_Static_assert(sizeof(struct vmm_vm_info) == 8,
+               "vmm_vm_info 尺寸变了 —— apps/c/vmm_run.c 里那份要同步");
+_Static_assert(sizeof(struct vmm_list_req) == 80,
+               "vmm_list_req 尺寸变了 —— apps/c/vmm_run.c 里那份要同步");
+
+#define VMM_IOC_LIST    _IOWR('V', 5, struct vmm_list_req) /* 出参：VM 列表 */
+#define VMM_IOC_ATTACH  _IOW('V', 6, uint32_t) /* 入参 vmid：设为前台 */
+#define VMM_IOC_STOP_VM _IOW('V', 7, uint32_t) /* 入参 vmid：停指定 VM */
 
 /* ── /dev/ion ioctl 结构体 & 请求码 ──────────────────────────── */
 struct ion_alloc_req {

@@ -208,15 +208,19 @@ avatar/
   - **直启 + SMP=1**：`tools/boot_regress.sh [次数]` —— 连续启动 N 次、每次都要出
     `~ #`（§9.9 那个间歇性卡死就是它抓出来的，修复后 500/500 通过）。
   - **helper + 多核**：`tools/vmm_helper_regress.sh <arch> [次数] [smp] [--restart]` ——
-    `run-net` 起宿主 shell 再敲 `/bin/vmm-run`；`--restart` 额外验证「Ctrl+] 停掉
+    `run-net` 起宿主 shell 再敲 `/bin/vmm-run`；`--restart` 额外验证「Ctrl+T k 停掉
     之后还能再启动」。**SMP>1 下的坑几乎都只在这条路上出现**（VM setup 跑在 helper
     的核上、vCPU 钉在另一颗核上），根因清单见 `docs/bugfix/SMP_HELPER_MODE_BUGFIX.md`
     与 `docs/vmm/X86_GUEST_LINUX.md` §9.10~§9.12。
   - **多 VM**：`tools/vmm_multivm_regress.sh <arch> [smp]` —— `vmm-run` 起 vm1 →
-    `Ctrl+[`（0x1b）detach → `vmm-run -n` 新建 vm2，要求两个 guest 各自跑到
+    `Ctrl+T d`（0x14 0x64）detach → `vmm-run -n` 新建 vm2，要求两个 guest 各自跑到
     `uname`、宿主侧留下两个 `vcpu0 task created`。改 VM 池 / 设备 per-VM 化 /
     stage-2（G-stage）之后必须跑这条 —— 单 VM 的门禁**测不出**这类回归。
-- **两种运行模式、`/dev/vmm` 协议、Ctrl+] / Ctrl+[ 语义**: `docs/vmm/GUEST_CONSOLE.md`
+- **两种运行模式、`/dev/vmm` 协议、控制台按键（Ctrl+T 前缀）与 `-a/-l/-k`**:
+  `docs/vmm/GUEST_CONSOLE.md`。**动 `apps/c/vmm_run.c` 或
+  `kernel/fs/pseudofs/vmm_dev.c` 前必读** —— 里面有三条反直觉的约定：
+  会话 owner 守卫（纯查询不能停 VM）、`console_owned` 是"归 helper"而不是
+  "谁是前台"、以及 helper 收到 EPOLLHUP 必须收尾（否则原地死循环且退不出来）。
 - **裸跑 guest 作基线对照**: `docs/vmm/GUEST_NATIVE_QEMU.md`
 
 **使用方式**: 用 Read tool 读取文档，了解 API 和最佳实践后再实现。

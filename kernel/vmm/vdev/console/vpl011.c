@@ -190,7 +190,28 @@ void vpl011_tx_set_enabled(vm_t *vm, int enabled)
 
 int vpl011_tx_channel_enabled(vm_t *vm)
 {
-    return vm->console_owned;
+    vpl011_slot_t *d = vpl011_of(vm);
+    uint64_t flags;
+    int enabled;
+
+    /*
+     * 归属标志在 vm_t 里，设备未 init 时也要能读（vmm_dev.c 的早期调用）。
+     *
+     * ⚠️ 有设备时必须**在锁里读**，不要图快写成裸 `return vm->console_owned;`
+     *    （这里从前就是那么写的）。那个标志过去只在 boot 时写一次 —— 那时
+     *    vCPU 任务还没被创建，天然有序，裸读没暴露过问题。但 VMM_IOC_ATTACH
+     *    现在会在**运行期**改它（切前台），而读它的 vmm_console_pump() 常常
+     *    跑在**另一颗核**上：裸读在弱序架构上没有 acquire 语义，那一核可能
+     *    好几轮之后才看见新值，表现为"刚 attach 的那几下按键有概率被泵抢走"
+     *    —— 字节会被推进一台用户看不见的 guest 的 RX FIFO。
+     *    uart16550 那份一直是在锁里读的，这里跟上它。
+     */
+    if (!d)
+        return vm ? vm->console_owned : 0;
+    spin_lock_irqsave(&d->lock, &flags);
+    enabled = vm->console_owned;
+    spin_unlock_irqrestore(&d->lock, flags);
+    return enabled;
 }
 
 int vpl011_tx_has_data(vm_t *vm)

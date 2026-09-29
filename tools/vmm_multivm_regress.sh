@@ -3,14 +3,22 @@
 #
 # 验证的是多 VM 那条链路，而不是单 VM 能不能起来（那个归 vmm_helper_regress.sh）：
 #   1. vmm-run            → vm1 跑起 guest Linux（自己 uname）
-#   2. Ctrl+[（0x1b）     → detach：guest 留在后台，helper 退出，回到宿主 shell
+#   2. Ctrl+T d（0x14 0x64）→ detach：guest 留在后台，helper 退出，回到宿主 shell
 #   3. vmm-run -n         → **新建** vm2（不是接入 vm1）
 #   4. 两个 guest 都还活着：两行 uname、两个 vcpu0 任务
-#   5. 再 detach，然后 vmm-run **附着回先启动的那个**，往串口敲一句看有没有回显
+#   5b. `vmm-run -l` 连查两次，两次都必须报 2 个 RUNNING —— 纯查询不能有副作用
+#   5c. 裸 `vmm-run` 接回**上次离开的那个**（vm2），而不是最小 vmid 的 vm1
+#   6.  再 detach，vmm-run -a <vm1> 附着回**先启动的那个**，往串口敲一句看有没有回显
+#   6b. 控制台命令：Ctrl+T l 列出 → 前台标记在第 1 行；Ctrl+T 2 切过去 → 标记到第 2 行
 #
 # 第 5 步看着多余，其实是多 VM 专属的一类回归的**唯一**探针：单 VM 永远测不出
 # 「两颗 vCPU 共用一颗核时，本核当前的 VMCS 属于谁」这类问题。历史上就栽过一次
-# —— 症状是"能输入、没回显"（见下面第 6 步的注释）。
+# —— 症状是"能输入、没回显"（见下面第 7 步的注释）。
+#
+# ⚠️ 第 5 步必须**显式**用 `-a <vm1>`，不能图省事写光秃秃的 `vmm-run`。
+#    默认接入的语义是"接回你上次离开的那个"（screen -r 那套），所以从 vm2
+#    detach 之后敲 `vmm-run` 接回的是 **vm2** —— 而 vm2 正是"踩人的"那一方，
+#    它的控制台即便在 bug 复现时也是好的。用它当探针等于把这条回归作废。
 #
 # 判据用 guest 自己的 uname（"Linux (none) 6.2.15"）—— 宿主日志里不会有。
 #
@@ -53,7 +61,7 @@ FIFO=$OUT/.stdin.$$
 rm -f "$LOG" "$FIFO"; mkfifo "$FIFO"
 
 # shellcheck disable=SC2086
-timeout 420 $Q -smp "$SMPV" -m 2G -nographic -kernel "$K" \
+timeout 540 $Q -smp "$SMPV" -m 2G -nographic -kernel "$K" \
     -device loader,file="$R",addr=$RA,force-raw=on \
     < "$FIFO" > "$LOG" 2>&1 &
 QPID=$!
@@ -90,11 +98,12 @@ echo "2) 启动 vm1..."
 printf 'vmm-run\n' >&3
 wait_count "$GST" 1 180 F && ok "vm1 跑到 uname" || bad "vm1 没起来"
 
-echo "3) detach vm1（Ctrl+[ = 0x1b）..."
-printf '\033' >&3
-# ⚠️ 必须停顿：helper 的 esc_is_standalone() 有 ~40ms 消歧窗口，收到 0x1b 后
-# 要等一下看有没有后续字节（方向键那种转义序列）。紧接着发命令的话，0x1b
-# 会被当成转义序列的开头转发给 guest，detach 不发生。
+echo "3) detach vm1（Ctrl+T d = 0x14 0x64）..."
+printf '\x14d' >&3
+# ⚠️ 必须停顿：要等 helper 真的收尾退出、控制台还给宿主 shell，否则紧接着
+# 敲的命令会被**还在跑的 helper** 读走转发给 guest。
+# （从前还多一个理由：0x1b 有 ~40ms 的转义序列消歧窗口。换成前缀键之后
+#   那个窗口没有了 —— 前缀之后的字节一定是命令，不可能是转义序列的一部分。）
 sleep 1
 
 echo "4) 启动 vm2（vmm-run -n = 强制新建）..."
@@ -102,7 +111,57 @@ printf 'vmm-run -n\n' >&3
 wait_count "$GST" 2 220 F && ok "vm2 也跑到 uname" || bad "vm2 没起来"
 
 echo "5) detach vm2..."
-printf '\033' >&3
+printf '\x14d' >&3
+sleep 1
+
+# ── 5b. 纯查询不能有副作用 ──────────────────────────────────────
+#
+# 回归：`vmm-run -l` 曾经会把**正在跑的 guest 停掉**。根因是 close() 的兜底
+# 语义「停掉前台 VM」，而 /dev/vmm 是全局单例设备 —— 一个从没 BOOT 过的进程
+# open 一下再 close，照样走到那个破坏性分支。修复是内核侧加了「会话 owner」
+# 守卫（见 vmm_dev.c 的 g_vmm_owner_pid）。
+#
+# 探针用「连查两次、两次都必须是 2」：只查一次的话，就算它真的停了 VM，
+# 那一下也可能还在 DYING 没落到 FREE，数字看着仍然对。
+echo "5b) vmm-run -l 是纯查询（不该动任何 VM）..."
+OFF=$(wc -c < "$LOG"); printf 'vmm-run -l\n' >&3
+sleep 3
+L1=$(tail -c +$((OFF + 1)) "$LOG" 2>/dev/null)
+OFF=$(wc -c < "$LOG"); printf 'vmm-run -l\n' >&3
+sleep 3
+L2=$(tail -c +$((OFF + 1)) "$LOG" 2>/dev/null)
+# 表头也要看：只数 "RUNNING" 的话，表头整行消失（`[vmm-run]  #   vmid  state`）
+# 这条断言照样绿 —— 实测被这么骗过一次。
+N1=$(printf '%s' "$L1" | grep -ac 'RUNNING')
+N2=$(printf '%s' "$L2" | grep -ac 'RUNNING')
+if ! printf '%s' "$L1" | grep -aq 'vmid  state'; then
+    bad "-l 没打出表头（只有数据行？）"
+    N1=0
+fi
+if [ "$N1" -eq 2 ] && [ "$N2" -eq 2 ]; then
+    ok "两次 -l 都报 2 个 RUNNING（查询无副作用）"
+else
+    bad "-l 之后 VM 数变了（$N1 → $N2）—— 查询有副作用"
+fi
+
+# ── 5c. 裸 vmm-run = 接回"上次离开的那个" ───────────────────────
+#
+# 这是本次另一个行为变化，必须单独验：从前接入只挑**最小 vmid**，所以从 vm2
+# 分离后再敲 vmm-run 会接到 vm1（g_vmm_fg_vmid 明明记着 vm2 却没人看它）。
+#
+# ⚠️ 判据必须是 banner 里的 vmid，不能只看"接上了没有" —— 接到 vm1 也算接上。
+echo "5c) 裸 vmm-run 应接回上次离开的 vm2（不是最小 vmid 的 vm1）..."
+VM2=$(grep -aoE '\(vm[0-9]+\)' "$LOG" | sed -n 2p | tr -dc '0-9')
+[ -n "$VM2" ] || VM2=2
+OFF=$(wc -c < "$LOG"); printf 'vmm-run\n' >&3
+sleep 5
+NEW=$(tail -c +$((OFF + 1)) "$LOG" 2>/dev/null)
+if printf '%s' "$NEW" | grep -aq "attached (vm$VM2)"; then
+    ok "裸 vmm-run 接回了 vm$VM2（上次离开的那个）"
+else
+    bad "裸 vmm-run 没接回 vm$VM2 —— 多半又退化成挑最小 vmid 了"
+fi
+printf '\x14d' >&3
 sleep 1
 
 # ── 6. 附着回 **先启动的那个** VM，并验证串口真的通 ──────────────
@@ -117,12 +176,46 @@ sleep 1
 # tty 的 workqueue 不跑。**症状是"能输入、没回显"**：输入确实进了 guest
 # （IO-APIC 的另一条向量是好的），但屏幕上什么都没发生。
 # 单 VM 时当前 VMCS 恰好一直是它的，所以这条只有多 VM 才测得出来。
-echo "6) 再 vmm-run（附着回**先启动的**那个 VM）..."
-printf 'vmm-run\n' >&3
+#
+# ⚠️ 必须**显式** `-a <vm1>`，不能图省事写光秃秃的 `vmm-run`：
+#    默认接入的语义是"接回你上次离开的那个"（screen -r 那套），所以从 vm2
+#    detach 之后敲 `vmm-run` 接回的是 **vm2** —— 而 vm2 正是"踩人的"那一方，
+#    它的控制台即便在 bug 复现时也是好的。用它当探针等于把这条回归作废。
+#    vm1 的 vmid 从 helper 自己打的 banner（`guest started (vmN)`）里取，
+#    不写死 1（vmid 会回绕，虽然这里是全新启动的 QEMU）。
+VM1=$(grep -aoE '\(vm[0-9]+\)' "$LOG" | head -1 | tr -dc '0-9')
+[ -n "$VM1" ] || VM1=1
+echo "6) vmm-run -a $VM1（附着回**先启动的**那个 VM）..."
+printf 'vmm-run -a %s\n' "$VM1" >&3
 sleep 5
 printf 'echo ATTACH_BACK_OK\n' >&3
 wait_count 'ATTACH_BACK_OK' 1 30 F && ok "附着回老 VM 后串口可用" \
                                   || bad "附着回老 VM 后串口不通（能输入没回显？）"
+
+# ── 6b. 控制台里的命令（前缀 + 单键）────────────────────────────
+#
+# 覆盖本次改动的门面：`Ctrl+T l` 列 VM、`Ctrl+T <n>` 切前台。
+# 判据取的是**表里带 `*` 那一行的序号**，而不是"switched to vm2"那句话 ——
+# 后者只能证明 ATTACH ioctl 返回了 0，证明不了前台真的换了。
+# 带 `*` 的行长这样（第 1 列是序号，第 2 列才是 vmid）：
+#           1     1  RUNNING     *
+#           2     2  RUNNING
+echo "6b) 控制台命令：Ctrl+T l 列出、Ctrl+T 2 切换..."
+OFF=$(wc -c < "$LOG"); printf '\x14l' >&3
+sleep 2
+NEW=$(tail -c +$((OFF + 1)) "$LOG" 2>/dev/null)
+FG_BEFORE=$(printf '%s' "$NEW" | grep -a '\*' | head -1 | awk '{print $1}')
+[ "$FG_BEFORE" = "1" ] && ok "Ctrl+T l 列出 VM，前台在第 1 行（刚 -a 的是 vm1）" \
+                       || bad "Ctrl+T l 前台标记不对（拿到 '$FG_BEFORE'，期望 1）"
+
+OFF=$(wc -c < "$LOG"); printf '\x142' >&3
+sleep 2
+OFF=$(wc -c < "$LOG"); printf '\x14l' >&3
+sleep 2
+NEW=$(tail -c +$((OFF + 1)) "$LOG" 2>/dev/null)
+FG_AFTER=$(printf '%s' "$NEW" | grep -a '\*' | head -1 | awk '{print $1}')
+[ "$FG_AFTER" = "2" ] && ok "Ctrl+T 2 把前台切到了第 2 个 VM" \
+                      || bad "Ctrl+T 2 没切换前台（拿到 '$FG_AFTER'，期望 2）"
 
 echo "7) 两个 VM 各自的分配/销毁记录："
 grep -aE 'vm[0-9]+ allocated|vm[0-9]+ freed|task created' "$LOG" \

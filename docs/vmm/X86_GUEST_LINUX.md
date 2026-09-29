@@ -17,8 +17,8 @@ make PLATFORM=qemu-virt-x86_64 LOG=warn SMP=1 test-guest-linux
 # ② helper 模式：先起宿主 busybox shell，再在 shell 里敲 /bin/vmm-run
 make PLATFORM=qemu-virt-x86_64 LOG=warn SMP=1 run-fs
 #   宿主: / # /bin/vmm-run
-#   [vmm-run] guest started — Ctrl+] stop, Ctrl+[ detach
-#   ~ # echo hello            ← guest 控制台，Ctrl+] 停止、Ctrl+[ 分离，
+#   [vmm-run] guest started (vm1) — Ctrl+T ? for help
+#   ~ # echo hello            ← guest 控制台，Ctrl+T k 停止、Ctrl+T d 分离，
 #                               再敲一次 vmm-run 可重入 / 重新接入
 ```
 
@@ -74,7 +74,7 @@ qemu-system-x86_64 -enable-kvm -cpu host -m 1G -display none -serial stdio \
   （identity + 高半区 `0xffffffff80000000+X→X`）、GDT/空 IDT/空 TSS、长模式直入 64 位入口
 - **入口路径已证明健康**（见 §5 的探针法）：长模式、guest 页表、EPT、COM1 PIO、`%rsi` 取值全部正常
 - **用户态 helper 模式**（`/bin/vmm-run` + `/dev/vmm`）：与 aarch64/riscv64 同一套
-  协议，四条语义实测通过 —— 启动、输入输出透传、Ctrl+] 停止后重入、Ctrl+[ 分离 /
+  协议，四条语义实测通过 —— 启动、输入输出透传、Ctrl+T k 停止后重入、Ctrl+T d 分离 /
   重新接入（见 §1）
 
 ## 4. 修掉的硬 bug（都是「不修就走不通」级别）
@@ -912,7 +912,7 @@ EPT ↔ stage-2 ↔ G-stage。
 
 ```bash
 make PLATFORM=qemu-virt-x86_64 clean && make PLATFORM=qemu-virt-x86_64 kernel rootfs
-tools/vmm_multivm_regress.sh x86_64 1        # vm1 → Ctrl+[ → vmm-run -n → vm2
+tools/vmm_multivm_regress.sh x86_64 1        # vm1 → Ctrl+T d → vmm-run -n → vm2
 ```
 
 ### 11.1 每 VM 一份的东西
@@ -1007,7 +1007,7 @@ VMCS 还是 vm1 的，于是 vm2 的中断信息被写进了 **vm1 的 VMCS**；
 
 **症状很有欺骗性**：起第二个 VM 之后，第一个 VM **能输入、没回显**。输入是好的
 （IO-APIC 走的是另一条向量，照样投递，8250 驱动的 ISR 照常读 RBR），但 tick
-没了 → tty 的 flip workqueue 不跑 → 不回显、命令也不执行。而 `Ctrl+]` / `Ctrl+[`
+没了 → tty 的 flip workqueue 不跑 → 不回显、命令也不执行。而 `Ctrl+T k` / `Ctrl+T d`
 照常工作（那是 helper 自己的键），所以看起来"只是串口坏了"。
 
 判据（本机实测的快照）：`isr[7] = 0x00001000`（236 = `LOCAL_TIMER_VECTOR`）

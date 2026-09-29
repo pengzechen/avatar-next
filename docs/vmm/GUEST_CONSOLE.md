@@ -16,7 +16,7 @@ guest 侧看不出来：
 | 宿主 shell | 没有（`pass:[RUN_GUEST_LINUX]` 与 busybox 互斥） | 有，guest 停掉后立刻可用 |
 | guest 输入从哪来 | `vmm_console_pump()` 在 vCPU 退出路径直接轮询真实 PL011 | 用户态 helper 读自己的 stdin 再 write 到 `/dev/vmm` |
 | guest 输出到哪去 | 逐字节直打宿主控制台 | 进 vpl011 的 TX 环形缓冲，helper 读走再写自己的 stdout |
-| 怎么停 guest | 只能等 guest 自己 poweroff | Ctrl+] → helper 退出 → 内核停止 guest |
+| 怎么停 guest | 只能等 guest 自己 poweroff | Ctrl+T k → helper 退出 → 内核停止 guest |
 
 ## 2. 为什么需要「控制台归属」这件事
 
@@ -37,7 +37,7 @@ guest 侧看不出来：
 >
 > 归属标志从前叫设备 state 里的 `tx_channel`，而 `vpl011_init()` 会整片
 > `memset` 掉 state —— 于是必须在 init 前先存、init 后恢复，否则通道模式
-> 失效、泵复活，症状是 helper 收不到任何按键（包括 Ctrl+]）。
+> 失效、泵复活，症状是 helper 收不到任何按键（包括 Ctrl+T 前缀）。
 >
 > 现在它是 `vm_t.console_owned`：**不在设备状态里**，`*_init()` 的 memset
 > 碰不到它，所以那套"先存后恢复"连同陷阱一起消失了。
@@ -54,12 +54,16 @@ guest 侧看不出来：
 ```
 open("/dev/vmm", O_RDWR)
 ioctl(fd, VMM_IOC_BOOT)       启动 guest；已经有在跑的就接入它
+ioctl(fd, VMM_IOC_BOOT_EX)    强制新建一个 VM，出参回填 vmid
+ioctl(fd, VMM_IOC_LIST)       出参：所有 VM 的 {vmid,state} + 前台 vmid
+ioctl(fd, VMM_IOC_ATTACH)     入参 vmid：把它设为前台（不必重新 boot）
+ioctl(fd, VMM_IOC_STOP_VM)    入参 vmid：停指定的那个，**不要求先接入**
 write(fd, bytes, n)           **永远**是 guest 的串口输入
 read(fd, buf, n)              guest 的串口输出；无数据返回 -EAGAIN
 poll(fd)                      TX 有数据 → EPOLLIN；guest 已退出 → EPOLLHUP
 ioctl(fd, VMM_IOC_GET_STATUS) 出参 1 = 有 guest 在跑
-ioctl(fd, VMM_IOC_DETACH)     分离：本次 close 不停 guest（Ctrl+[）
-ioctl(fd, VMM_IOC_STOP)       停止 guest（Ctrl+]）
+ioctl(fd, VMM_IOC_DETACH)     分离：本次 close 不停 guest（Ctrl+T d）
+ioctl(fd, VMM_IOC_STOP)       停止前台 guest（Ctrl+T k）
 close(fd)                     默认停止 guest；DETACH 过则不停止
 ```
 
@@ -84,13 +88,50 @@ helper 发的 `bootlinux` 会被当成输入推进 guest，guest 把它回显出
 
 ## 3a. 分离与重新接入
 
+前缀键是 **`Ctrl+T`（0x14）**，按完再按一个键：
+
 | 按键 | 语义 |
 |---|---|
-| Ctrl+] `0x1d` | 停止 guest，回宿主 shell（destroy） |
-| Ctrl+[ `0x1b` | guest 留在后台继续跑，回宿主 shell（detach） |
+| `Ctrl+T d` | detach：guest 留在后台继续跑，回宿主 shell |
+| `Ctrl+T k` | 停止当前前台 guest 并退出 helper（destroy） |
+| `Ctrl+T l` | 列出所有 VM（带序号，供 `Ctrl+T <n>` 用） |
+| `Ctrl+T n` | 新建一个 VM 并切过去 |
+| `Ctrl+T 1..8` | 切到 `-l` 列表里的第 n 个 VM（`VMM_IOC_ATTACH`，不重新 boot） |
+| `Ctrl+T ?` | 帮助 |
+| `Ctrl+T Ctrl+T` | 把 `Ctrl+T` 本身发给 guest |
 
-重新接入就是再跑一次 `vmm-run`。`vmm-run -k` 可以不接管控制台、直接停掉
-后台的 guest。
+宿主 shell 里另有四个开关：
+
+```bash
+vmm-run                启动 guest；已有在跑的就接入它
+vmm-run -a <vmid>      接入指定的那个 VM（不新建）
+vmm-run -n             强制新建一个 VM
+vmm-run -l             列出所有 VM，不接管控制台
+vmm-run -k [vmid]      停止 VM，不接管控制台；不带 vmid 停全部
+```
+
+`-l` 的输出（`*` 是当前前台，第 1 列是给 `Ctrl+T <n>` 用的序号）：
+
+```
+[vmm-run]  #   vmid  state      fg
+           1     1  RUNNING     *
+           2     2  RUNNING
+```
+
+> ⚠️ **序号（第 1 列）和 vmid 是两套编号，别混。** vmid 从 1 自增、到 255
+> 回绕（`vm.c` 的 `g_next_vmid`），长会话里 vm9 后面接的是 vm10 而不是
+> 「第 10 个」；序号就是列表里的位置。`-a` / `-k` 收 vmid，`Ctrl+T <n>` 收序号。
+
+### 为什么要有 `-l` / `-a` / `-k` 这一组
+
+在此之前，**要停掉某个 VM 必须先接入它** —— 只有 `VMM_IOC_STOP`，而它打在
+「前台」那一个上。更别扭的是接入路径只挑最小 vmid：vm1/vm2 同时在跑时，
+`vmm-run` 永远接到 vm1，你想接回的 vm2 反而碰不到（`g_vmm_fg_vmid` 明明
+记着 vm2，却没人看它）。现在：
+
+- 接入优先「接回你上次离开的那个」（screen -r 语义），接不到才退回扫最小 vmid；
+- `-a <vmid>` 显式指定；
+- `-k <vmid>` 直接从宿主 shell 停掉它，**全程不用接入**。
 
 分离期间：vpl011 的 TX 通道**保持打开**（关了 `vmm_console_pump()` 就会复活
 跟宿主 shell 抢 UART），RX FIFO 也不清（那是给当前这个 guest 的）。guest
@@ -100,19 +141,62 @@ helper 发的 `bootlinux` 会被当成输入推进 guest，guest 把它回显出
 `close` 默认仍然停 guest，只有 `VMM_IOC_DETACH` 过才不停 —— 这条兜底是为了
 helper 被 `kill -9` 或崩溃时不要把 guest 无声地留在后台烧 CPU。
 
-### ⚠️ Ctrl+[ 就是 ESC，必须消歧
+### ⚠️ 会话 owner：纯查询不能有副作用
 
-方向键 / Home / End / Fn 发出的都是以 `0x1b` 开头的转义序列（上箭头 =
-`\x1b[A`），而宿主内核在 raw mode 下的 `read()` **每次只返回 1 字节**
-（`read_handler` 的 raw 分支），所以 `\x1b[A` 会拆成三次到达 —— 见到 `0x1b`
-就分离的话，guest 里的方向键会全部失效。
+上面那条兜底有个要命的副作用：`/dev/vmm` 是**全局单例**设备，于是任何一个
+进程 open 一下再 close（比如 `vmm-run -l` 这种纯查询）都会走到「停掉前台
+VM」那个分支 —— **一个查列表的动作会把正在用的 guest 杀掉**。同理
+`vmm-run -k <非前台vmid>` 停完目标之后，close 还会顺手把前台也停掉。
 
-`vmm_run.c` 的 `esc_is_standalone()` 用一次 ~40ms 的 `poll` 消歧：有后续
-字节就是转义序列，`0x1b` 照常转发；没有才是单独的 Ctrl+[。正常敲方向键时
-后续字节几乎同时到达，感知不到延迟。`poll` 出错时按「不是单独 ESC」处理 ——
-宁可把字节转给 guest，也不要因为一次信号打断就把用户踢出 guest。
+所以 `vmm_dev.c` 里加了 `g_vmm_owner_pid`：只有做过 BOOT / BOOT_EX / ATTACH
+的那个任务（本次会话的主人）才有资格在 close 里停 VM、才有资格消费
+`detached` 标志。`-l` / `-k` 从不 BOOT，于是天然退化成只读（`-k` 的停止走
+的是显式 ioctl，不依赖 close 兜底）。
 
-实测：`\033[A\033[B` 被原样转发并由 guest 回显，没有触发分离。
+存 pid 而不是 `task_t *`：任务退出后指针会被复用。helper 被 `kill -9` 仍然
+兜得住 —— `sys_exit` 会关闭它所有 fd，那一刻 `task_current()` 还是它自己。
+
+### ⚠️ 同一时刻只支持一个交互式 helper
+
+前台 VM 是内核里的一个全局变量（`g_vmm_fg_vmid`），所以 B 一 attach，A 那个
+终端的读写就变成了 B 的 VM —— A 的窗口会不知不觉变成另一个 guest 的窗口。
+`-a` 的语义是「切走前台」，不是「再开一个会话」。
+
+### 为什么是 Ctrl+T（以及 ESC 消歧为什么消失了）
+
+从前的键是 `Ctrl+]`（停）和 `Ctrl+[`（分离），两个都换掉了：
+
+- `Ctrl+]` 是 **telnet** 的转义键；
+- `Ctrl+[` 就是 **ESC(0x1b)** —— 方向键 / Home / End / Fn 发出的正是以
+  `0x1b` 开头的转义序列（上箭头 = `\x1b[A`），而宿主内核在 raw mode 下的
+  `read()` **每次只返回 1 字节**（`read_handler` 的 raw 分支），所以
+  `\x1b[A` 会拆成三次到达 —— 见到 `0x1b` 就分离的话，guest 里的方向键会
+  全部失效。当时靠一个 ~40ms 的 `poll` 窗口消歧（`esc_is_standalone()`：
+  有后续字节就当转义序列，没有才是单独按下的 ESC），能用但很 hack。
+
+换成「前缀 + 单键命令」（screen / tmux / QEMU 都是这个路子）之后，**那个
+消歧窗口连同 `esc_is_standalone()` 一起删掉了**：前缀之后的那个字节一定是
+命令，不可能是转义序列的一部分。顺带白送一个好处 —— ESC 不再被拦截，guest
+里的方向键天然可用。
+
+前缀选 `Ctrl+T`，是因为它是唯一一个既好按、又没被占用的控制字节：
+
+| 字节 | 被谁占了 |
+|---|---|
+| `Ctrl+A` | QEMU `-nographic` 的转义前缀（三个架构的 Makefile 都这么启）+ screen / minicom / picocom —— **根本到不了这个内核** |
+| `Ctrl+B` | tmux |
+| `Ctrl+]` | telnet |
+| `Ctrl+C` | 必须留给 guest（SIGINT） |
+| `Ctrl+^` `Ctrl+_` | 没人用，但要 Shift+6 / Shift+-，部分键盘布局和终端发不出来 |
+| `Ctrl+\` | kermit，而且是 guest 里的 SIGQUIT |
+
+代价：guest 里 bash 的 `transpose-chars`（罕用）让位给控制台；要发字面量就
+按两次（`Ctrl+T Ctrl+T`），或者单按一次前缀、等 ~1s 超时后它会被自动补发。
+
+> ⚠️ 那个 ~1s 超时是**必须**的，不是装饰：没有它，单独误按一次 `Ctrl+T`
+> 会把**下一次**按键当成命令执行 —— 而其中 `k` 是「停掉前台 VM 并退出」。
+> 超时的实现是"poll 超时算一整步、有事件算一小步"的近似累加（helper 没有
+> 时钟源可用），精度不重要。
 
 ## 4. 停止是异步的
 
@@ -149,8 +233,12 @@ cpu0。
 ```bash
 make PLATFORM=qemu-virt-x86_64 LOG=warn SMP=1 run-fs
 # 宿主 shell 起来后直接 /bin/vmm-run —— 四条语义都实测过：
-#   启动 guest ✓ / 输入输出透传 ✓ / Ctrl+] 停止后**再启一次**（重入）✓ /
-#   Ctrl+[ 分离 → 宿主 shell 可用 → vmm-run 重新接入 ✓
+#   启动 guest ✓ / 输入输出透传 ✓ / 停止后**再启一次**（重入）✓ /
+#   分离 → 宿主 shell 可用 → vmm-run 重新接入 ✓
+#
+# ⚠️ 这是 2026-09-26 的记录，当时用的还是 Ctrl+] / Ctrl+[。四条**语义**与
+#    按键无关，换键（2026-09-29，改成 Ctrl+T 前缀 + -a/-l/-k）不影响这些
+#    结论，但换键之后的操作序列需要按 §3a 的新表重跑一遍。
 ```
 
 x86 侧曾经只差 Makefile 里一行：`VMM_RUN_BIN` 的架构过滤写着
@@ -185,10 +273,10 @@ make PLATFORM=qemu-virt-aarch64 run-fs
 ```bash
 # 宿主 shell 起来后：
 #   / # vmm-run
-#   [vmm-run] guest started — Ctrl+] stop, Ctrl+[ detach
+#   [vmm-run] guest started (vm1) — Ctrl+T ? for help
 #   ... guest 启动日志 ...
 #   ~ # （能逐字回显，说明输入通了）
-#   ^]            ← Ctrl+]
+#   ^T k          ← Ctrl+T 然后 k
 #   [vmm-run] guest stopping
 #   / #           ← 回到宿主 shell，立刻可用
 ```
@@ -197,13 +285,15 @@ make PLATFORM=qemu-virt-aarch64 run-fs
 
 ```
 #   / # vmm-run          （guest 已在跑就接入，否则新建）
-#   [vmm-run] attached to running guest — Ctrl+] stop, Ctrl+[ detach
-#   ^[                   ← Ctrl+[：guest 留后台
+#   [vmm-run] attached (vm1) — Ctrl+T ? for help
+#   ^T d                 ← Ctrl+T 然后 d：guest 留后台
 #   [vmm-run] detached — guest keeps running; run vmm-run to reattach
 #   / # echo alive       （宿主 shell 立刻可用，guest 仍在跑）
 #   alive
-#   / # vmm-run          ← 接回来
-#   / # vmm-run -k       ← 或者直接停掉后台的 guest
+#   / # vmm-run -l       ← 看有哪些 VM 在跑
+#   / # vmm-run          ← 接回来（接回**上次离开的那个**）
+#   / # vmm-run -a 2     ← 或者显式指定接哪个
+#   / # vmm-run -k       ← 不带参数：停掉**全部**；-k <vmid> 只停一个
 ```
 
 再跑一次 `vmm-run` 应当能重新启动（重入是支持的：guest RAM 每次重新

@@ -27,7 +27,7 @@ stdout）。两条路都已实测：
 
 ```
 / # /bin/vmm-run
-[vmm-run] guest started — Ctrl+] stop, Ctrl+[ detach
+[vmm-run] guest started (vm1) — Ctrl+T ? for help
 kylin-x login:
 ```
 
@@ -350,10 +350,10 @@ hgatp ↔ VTTBR_EL2）。手写 G-stage 的就是 `kernel/mm/riscv64/gstage.c` �
 
 ```bash
 make PLATFORM=qemu-virt-riscv64 clean && make PLATFORM=qemu-virt-riscv64 kernel rootfs
-tools/vmm_multivm_regress.sh riscv64 1        # vm1 → Ctrl+[ → vmm-run -n → vm2
+tools/vmm_multivm_regress.sh riscv64 1        # vm1 → Ctrl+T d → vmm-run -n → vm2
 ```
 
-宿主 shell 里就是两条命令：`vmm-run` 起 vm1，`Ctrl+[`（0x1b）把它留在后台，
+宿主 shell 里就是两条命令：`vmm-run` 起 vm1，`Ctrl+T d`（0x14 0x64）把它留在后台，
 `vmm-run -n` **新建** vm2。两个 guest 各自跑自己那份 Linux。
 
 ### 8.2 每 VM 一份的东西
@@ -431,7 +431,7 @@ VM 的 hgatp 之间来回切 —— 那行 `hgatp=... activated` 若是 INFO，�
 
 ## 9. 相关
 
-- 两种运行模式、`/dev/vmm` 协议、Ctrl+] / Ctrl+[ 语义：`docs/vmm/GUEST_CONSOLE.md`
+- 两种运行模式、`/dev/vmm` 协议、Ctrl+T 前缀键语义：`docs/vmm/GUEST_CONSOLE.md`
 - 裸跑基线怎么做：`docs/vmm/GUEST_NATIVE_QEMU.md`
 - 多 VM 的验收脚本：`tools/vmm_multivm_regress.sh`（riscv64/aarch64/x86_64）
 - H-extension 陷阱委托与特权级：RISC-V Privileged Spec 1.12 §19-20

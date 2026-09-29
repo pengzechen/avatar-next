@@ -15,7 +15,7 @@
 - **🔒 内存安全**：集成内存屏障的同步和 I/O 操作
 - **📦 用户态支持**：支持运行 busybox 及用户程序
 - **🗂️ 文件系统**：支持 ext4 rootfs 镜像
-- **🖥️ 虚拟化（vCPU）**：RISC-V H 扩展 Hypervisor，支持 vCPU 创建、运行与陷入处理
+- **🖥️ 虚拟化（VMM）**：三个架构各有硬件虚拟化后端，能在同一个内核里同时跑多台 guest Linux，各自启动到**交互式 shell**
 
 ## 🚀 快速开始
 
@@ -238,7 +238,7 @@ avatar/
 - ✅ **中断处理** - 异常和中断支持
 - ✅ **设备驱动** - UART、定时器、中断控制器
 - ✅ **文件系统** - ext4 支持（lwext4）
-- ✅ **虚拟化** - vCPU（RISC-V H 扩展 Hypervisor）：vCPU 创建、运行、陷入分发
+- ✅ **虚拟化** - 三架构硬件后端（AArch64 EL2/Stage-2、RISC-V H 扩展、x86_64 VMX/EPT）；guest Linux 到交互式 shell；同内核多 VM；`/dev/vmm` 控制接口 + `/bin/vmm-run` 用户态 helper
 
 ### 内核启动模式
 
@@ -317,6 +317,60 @@ KLOG_DEBUG("Value: %d", value);
 KLOG_MODULE_DEBUG(LOG_MODULE_UART, "UART init");
 ```
 
+## 🖥️ 虚拟化（VMM）
+
+三个架构各有自己的硬件虚拟化后端，能在**同一个内核里同时跑多台** guest Linux，
+每台都启动到交互式 shell：
+
+| 架构 | 后端 | guest |
+|------|------|-------|
+| AArch64 | EL2 / Stage-2（GICv2 与 GICv3 两条中断投递路径都支持） | Linux 6.2.15 |
+| RISC-V 64 | H 扩展（G-stage、vPLIC、SBI、16550A） | Linux 6.2.15 |
+| x86_64 | VMX / EPT（vLAPIC、IO-APIC/PIT 桩、PIO 串口） | Linux 6.2.15 |
+
+### 跑起来
+
+宿主 busybox shell 起来后，在里面敲 `vmm-run`：
+
+```bash
+/ # vmm-run              # 启动一个 guest（已有在跑的就接入它）
+  ... 在 guest 里干活 ...
+  Ctrl+T d               # 挂起：guest 留在后台继续跑，回宿主 shell
+/ # vmm-run -l           # 列出所有 VM 与当前前台
+/ # vmm-run -n           # 再起一个
+/ # vmm-run -k 1         # 直接停掉 vm1 —— 不用先进去
+/ # vmm-run              # 接回上次离开的那个
+```
+
+控制台用 **`Ctrl+T` 前缀键**（像 screen / tmux 那样，前缀之后再按一个键）：
+
+| 按键 | 作用 |
+|------|------|
+| `Ctrl+T ?` | 帮助 |
+| `Ctrl+T d` / `k` | 挂起 / 停掉前台并退出 |
+| `Ctrl+T l` / `n` | 列出 VM / 新建一个 VM |
+| `Ctrl+T 1..8` | 切到第 n 个 VM（**不用退出再进**） |
+
+前缀之所以选 `Ctrl+T`，是因为它不与链路上的其它工具冲突：QEMU `-nographic`
+的转义键是 `Ctrl+A`（所以 `Ctrl+A` 根本到不了本内核），screen/minicom/picocom
+也是 `Ctrl+A`，tmux 是 `Ctrl+B`，telnet 是 `Ctrl+]`。
+
+**完整用法、按键表、`/dev/vmm` 协议、多 VM 的并发规则见
+[Guest 控制台](docs/vmm/GUEST_CONSOLE.md)。**
+
+### 回归门禁
+
+改动 VMM 之后按覆盖面对号入座 —— 下面三条各管一个失败面，**只跑一条不够**：
+
+| 脚本 | 覆盖什么 |
+|------|----------|
+| `tools/boot_regress.sh [N]` | x86_64 **直启**（需 `GUEST_LINUX=1` 构建）连续启动 N 次都要进 shell |
+| `tools/vmm_helper_regress.sh <arch> [N] [smp] [--restart]` | helper 模式 + **多核** + 停止后重入 |
+| `tools/vmm_multivm_regress.sh <arch> [smp]` | **同内核多 VM** —— 单 VM 门禁测不出这类回归 |
+
+> 多核那条最容易被忽略：`SMP>1` 下 VM setup 跑在 helper 的核上、vCPU 钉在另一颗
+> 核上，**坑几乎都只在这条路上出现**。细节见 `CLAUDE.md` 的回归门禁一节。
+
 ## 📚 文档索引
 
 ### 核心系统
@@ -337,6 +391,12 @@ KLOG_MODULE_DEBUG(LOG_MODULE_UART, "UART init");
 - [架构平台配置](docs/ARCH_PLATFORM_PROFILE_GUIDE.md) - 多架构多平台支持
 - [AArch64 NEON](docs/arch/aarch64/NEON_USAGE.md) - NEON 优化
 - [RISC-V64 SG2002 Busybox Bring-up 坑点](docs/bugfix/hardware/SG2002_BUSYBOX_BRINGUP_NOTES.md) - SG2002 页表、trap、UART 和平台切换注意事项
+
+### 虚拟化
+- [Guest 控制台：两种运行模式与 /dev/vmm 协议](docs/vmm/GUEST_CONSOLE.md) - **用法、按键表、多 VM 管理，先看这篇**
+- [RISC-V64 guest Linux](docs/vmm/RISCV64_GUEST_LINUX.md) - H 扩展下跑通 guest Linux 的整个链路，以及移植时真踩过的坑
+- [x86_64 guest Linux](docs/vmm/X86_GUEST_LINUX.md) - VMX/EPT + vLAPIC，以及「最后一公里」的 6 个 bug
+- [裸跑 guest 作基线对照](docs/vmm/GUEST_NATIVE_QEMU.md) - 用 QEMU 直接跑同一个 guest，用来区分「是 guest 的问题还是 VMM 的问题」
 
 ### 开发指南
 - [Busybox 编译](docs/app/BUILD_BUSYBOX.md) - Busybox 交叉编译指南

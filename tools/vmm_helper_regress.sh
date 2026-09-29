@@ -5,14 +5,14 @@
 # **helper 模式 + 多核** —— 历史上最容易出问题的那条路：
 #   - 内核 setup（VMXON / IA32_FEATURE_CONTROL / 宿主 MSR 表 / hgatp）跑在
 #     /bin/vmm-run 所在的那颗核上，而 vCPU 任务钉在另一颗核上；
-#   - Ctrl+] 停掉 guest 之后要能**再次启动**（fd 池、调度器不变量）。
+#   - Ctrl+T k 停掉 guest 之后要能**再次启动**（fd 池、调度器不变量）。
 # 根因清单见 docs/bugfix/SMP_HELPER_MODE_BUGFIX.md 与
 # docs/vmm/X86_GUEST_LINUX.md §9.10~§9.12。
 #
 # 用法：
 #   tools/vmm_helper_regress.sh <x86_64|aarch64|riscv64> [轮数] [smp] [--restart]
 # 产物：/tmp/helper_rep_<arch>/smp<N>_<i>.log
-#   --restart：每轮「启动 → Ctrl+] 停 → 再启动」，要求 guest 起来两次
+#   --restart：每轮「启动 → Ctrl+T k 停 → 再启动」，要求 guest 起来两次
 #
 # 判据是 guest 自己那行 uname（"Linux (none) 6.2.15"）—— 宿主日志里不会有。
 #
@@ -56,7 +56,7 @@ esac
 # 变体自检：本脚本测的是 **helper 模式**，内核必须是**非** GUEST_LINUX 变体。
 # 直启变体会在启动时自己引导 guest，而 guest 的提示符也是 `~ #` —— 脚本会把它
 # 当成宿主就绪、把 /bin/vmm-run 喂进 guest（回显 "not found"），于是把
-# 「直启成功」误判成「helper 成功」，Ctrl+] 那轮则必然失败。
+# 「直启成功」误判成「helper 成功」，Ctrl+T k 那轮则必然失败。
 # 2026-09-27 实测踩过：跑直启门禁（GUEST_LINUX=1 SMP=1）会**覆盖 build/ 里的
 # 内核**，之后拿它跑 SMP=4 回归，整轮数据作废（见 CLAUDE.md 变体标志那一条）。
 if strings "$K" 2>/dev/null | grep -q 'GUEST_LINUX mode'; then
@@ -102,7 +102,7 @@ wait_count() {
 }
 
 # wait_count_from <file> <起始字节偏移> <模式> <次数> <超时秒> [F]
-#   只看 offset **之后**新增的内容 —— 用来判断"Ctrl+] 之后宿主提示符**重新**
+#   只看 offset **之后**新增的内容 —— 用来判断"Ctrl+T k 之后宿主提示符**重新**
 #   出现"，而不是复用之前那次启动时的提示符。
 wait_count_from() {
     local f=$1 off=$2 pat=$3 want=$4 tmo=$5 mode=${6:-E}
@@ -136,7 +136,7 @@ for i in $(seq 1 "$N"); do
         if [ "$RESTART" = "--restart" ]; then
             wait_count "$log" "$GST" 1 "$GUEST_WAIT" F
             off=$(wc -c < "$log" 2>/dev/null); case "$off" in ''|*[!0-9]*) off=0 ;; esac
-            printf '\035' >&3                              # Ctrl+]
+            printf '\x14k' >&3                             # Ctrl+T k
             # 等 guest 真的收尾再启第二次：没停就再敲 vmm-run 只会**接入**
             # 还在跑的 guest（attach），不会产生第二个 uname → 假失败。
             #
