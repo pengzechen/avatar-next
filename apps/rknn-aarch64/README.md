@@ -138,6 +138,85 @@ numpy 顶到 2.x 而 toolkit 要 `<=1.26.4`；**新版 setuptools（≥81）删�
 板上是靠内核那句"未知 syscall 返回 `-ENOSYS`"让 glibc 2.39 的
 `clone3`/`rseq`/`futex_waitv` 回退路径生效的。
 
+### ⚠️ 核数：默认是**单核**，要用三核必须显式设置
+
+`librknnrt` 的默认值是 `RKNN_NPU_CORE_AUTO`(0)，注释写的是 "run on NPU core
+randomly"，但落到内核里就是**单核** —— vendor 的 `rknpu_schedule_core_index()`
+在 AUTO 下强制 `use_core_num = 1`，只挑一个核跑完整个 job。
+
+想用满三个核，应用侧必须调：
+
+```c
+rknn_set_core_mask(ctx, RKNN_NPU_CORE_0_1_2);   /* = 7 */
+```
+
+**rknn_model_zoo 的 demo 一次都没调它**（静态查过动态符号表，只导入
+`rknn_init/query/inputs_set/run/outputs_get/outputs_release/destroy`），
+所以原版 demo 跑的是单核。我们打了补丁（`tools/rknn_zoo_core_mask.patch`），
+但**它不改变默认行为** —— 只有显式给了参数才去调：
+
+```
+~ # yolo            # AUTO（默认，真机验证过）
+~ # yolo 1          # 只 core0
+~ # yolo 7          # 三核
+~ # yolo 7 /tmp/m.rknn /tmp/x.png
+```
+
+> ⚠️ **核数走位置参数，不能走环境变量。** 本内核的 `execve` **不传环境变量**
+> （`kernel/syscall/core/proc_lifecycle.c` 里 `(void)envp;`），所以
+> `RKNN_CORE_MASK=7 yolo` 里的变量根本到不了 demo，`getenv()` 永远是 NULL ——
+> 这个坑真机上实际踩过一次（设了 1 却还是跑三核，查了半天以为补丁没生效）。
+> `argv` 是可靠的，内核还专门按 CPU 分行拷贝以避免并发覆写。
+
+> ⚠️ **两次尝试之间要重启板子。** 一个作业超时后，对应的核会**卡在半路**
+> （`PC_OP_EN` 读回 1、`task_status` 停在中间值），在那之后同一个核上的任何
+> 提交都起不来 —— 看起来像"单核也坏了"，其实是上一次的余波。
+
+内核对多核提交会打取证日志（单核是常态，不打，省 UART 时间）：
+
+```
+[rknpu] 多核提交 core_mask=0x7 -> 3 核: c0[672+4] c1[923+4] c2[998+4] use_core_num=3
+[rknpu]   job=[676,688) subcore_task: [0]=672+4 [1]=923+4 [2]=672+4 [3]=923+4 [4]=998+4
+[rknpu] 多核完成: c0[irq=1 done=4/4] c1[irq=1 done=4/4] c2[irq=1 done=4/4]
+```
+
+### librknnrt 的切片语义（真机实测确定，别再猜）
+
+`subcore_task[i]` **不落在 job 的 `[task_start, task_start+task_number)` 区间内**。
+真机上跑了 25 个作业，规律完全一致：
+
+```
+job=[670,676)  n=6   →  c0=670+2  c1=921+2  c2=996+2
+job=[676,688)  n=12  →  c0=672+4  c1=923+4  c2=998+4
+job=[723,738)  n=15  →  c0=703+5  c1=931+5  c2=1006+5
+...
+```
+
+两个规律，25/25 条成立：
+
+1. **`n0 + n1 + n2 == job 的 task_number`**（三个核分掉这个作业的活）
+2. **三个核各占任务数组里一段互不重叠的连续区域**：
+
+```
+c0: 670..921      c1: 921..996      c2: 996..1071     (数组共 1071 条)
+```
+
+也就是说 librknnrt 把整个任务缓冲区**按核切成三段**，每个核的活写在自己那段里；
+`task_start` 是 c0 那段的游标，`task_number` 是三个核的总数。
+
+> ⚠️ **别自己给切片加校验。** vendor 的 `rknpu_job_subcore_commit_pc()`
+> 直接取值、不做任何检查。我一度按"切片必须落在 job 范围内"加了一条校验，
+> 真机上把正确的切片判成非法 → 退回单核完整范围 → 12 个任务全塞给 core0 →
+> 跑一半卡死，**整颗核卡住**（PC_OP_EN 停在 1），之后同一核上的所有提交都起不来。
+> 现在只留缓冲区边界检查（内核自己的安全底线），越界当场拒绝而不是硬凑。
+
+> ⚠️ **两次尝试之间要重启板子。** 作业超时后对应的核会卡住，之后所有提交都失败
+> —— 看起来像"别的也坏了"，其实是上一次的余波。
+
+`irq` 是**该核自己那条中断线**（142/143/144）上的次数，`done` 是读**该核自己**
+的 `PC_TASK_STATUS` 得到的完成数 —— 两列都是从硬件读的，不是我们写下去的回显。
+core1/core2 两列都非零，才说明它们真的在跑。
+
 ### 用法
 
 ```

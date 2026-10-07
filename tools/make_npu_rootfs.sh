@@ -109,11 +109,21 @@ if [ -d "$RKNN/yolo" ] && [ -f "$RKNN/yolo/rknn_yolov8_demo" ]; then
 #!/bin/sh
 # YOLOv8 目标检测 demo（rknn_model_zoo / rk3588）。
 #
-#   yolo [模型.rknn] [图片]
+#   yolo [核数] [模型.rknn] [图片]
 #
-# 两个参数都可省，默认用自带的 yolov8n.rknn + bus.png。
+# 第一个参数只要是个纯数字就当成**核数**，其余按位置补齐默认值：
+#
+#   yolo                 # librknnrt 默认（AUTO＝单核），自带模型+图片
+#   yolo 7               # 三核
+#   yolo 1               # 只 core0
+#   yolo 7 /tmp/m.rknn /tmp/x.png
+#
 # 检测结果直接打到 stdout；带框的图写到 /tmp/yolo/out.png。
-# 换自己的图：先放进 rootfs（或 /tmp），再 yolo /usr/lib/rknn-yolo/yolov8n.rknn /tmp/你的图.png
+#
+# ⚠️ 为什么要用位置参数而不是环境变量：**本内核的 execve 不传环境变量**
+#    （kernel/syscall/core/proc_lifecycle.c 里 `(void)envp;`），所以
+#    `RKNN_CORE_MASK=7 yolo` 里的变量根本到不了 demo，getenv() 永远是 NULL。
+#    argv 是可靠的。
 #
 # 注意图片格式：demo 把 .jpg/.jpeg 交给 turbojpeg（本项目没编那个依赖），
 # 其它扩展名才走内置的 stb_image —— 所以**请用 .png / .bmp**。
@@ -127,10 +137,22 @@ mkdir -p "$W/model" 2>/dev/null
 #    `Open ./model/coco_80_labels_list.txt fail!`。
 cp /usr/lib/rknn-yolo/model/coco_80_labels_list.txt "$W/model/" 2>/dev/null
 cd "$W" 2>/dev/null || cd /usr/lib/rknn-yolo || exit 1
+
+# 第一个参数是纯数字就当核数（librknnrt 的 rknn_core_mask：1/3/7），
+# 剩下的按位置当模型和图片。
+case "$1" in
+    1|2|3|4|5|6|7) MASK=$1; shift ;;
+    *)             MASK= ;;
+esac
+MODEL=${1:-/usr/lib/rknn-yolo/yolov8n.rknn}
+IMAGE=${2:-/usr/lib/rknn-yolo/bus.png}
+
+if [ -n "$MASK" ]; then
+    exec /usr/lib/rknn-yolo/ld-linux-aarch64.so.1 --library-path /usr/lib/rknn-yolo \
+        /usr/lib/rknn-yolo/rknn_yolov8_demo "$MODEL" "$IMAGE" "$MASK"
+fi
 exec /usr/lib/rknn-yolo/ld-linux-aarch64.so.1 --library-path /usr/lib/rknn-yolo \
-    /usr/lib/rknn-yolo/rknn_yolov8_demo \
-    "${1:-/usr/lib/rknn-yolo/yolov8n.rknn}" \
-    "${2:-/usr/lib/rknn-yolo/bus.png}"
+    /usr/lib/rknn-yolo/rknn_yolov8_demo "$MODEL" "$IMAGE"
 EOF
     chmod 0755 "$STAGE/bin/yolo"
     say "  rknn_yolov8_demo  ($(stat -c%s "$RKNN/yolo/rknn_yolov8_demo") 字节)"
