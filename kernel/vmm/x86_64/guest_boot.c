@@ -633,8 +633,6 @@ int x86_guest_boot(vm_t *vm)
     build_mptable(vm);
 
     /* ── 7. 临时页表 + GDT + 空 IDT/TSS ──
-
-/* ── 7. 临时页表 + GDT + 空 IDT/TSS ──
      * IDT/TSS 全 0 即可：IDT 全 0 = 任何异常都 triple fault（与真机同阶段
      * 行为一致）；TSS 在 guest 自己 lidt/ltr 之前不会被真正使用，但
      * VM-entry 要求 TR base 落在 guest 物理空间内。*/

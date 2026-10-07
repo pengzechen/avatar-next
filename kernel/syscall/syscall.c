@@ -580,13 +580,15 @@ void syscall_handler(trap_frame_t *frame)
 {
     g_syscall_entry_count++;
     uint64_t syscall_num = syscall_abi_nr(frame);
-    uint64_t raw_syscall_num = syscall_num;
     uint64_t regs[9] = { 0 };
     for (int i = 0; i < 6; i++) {
         regs[i] = syscall_abi_arg(frame, i);
     }
 
 #if ARCH_X86_64
+    /* 翻译**前**的原始号，只有下面那条 stub 日志要看 —— 所以声明也留在这个
+     * 块里。放外面的话，其它架构上它就是一条 -Wunused-variable。 */
+    uint64_t raw_syscall_num = syscall_num;
     /* 将 Linux x86_64 syscall 号翻译为下方 switch 使用的内部编号 */
     x86_translate_syscall(&syscall_num, regs);
     /* 0x7FFFFFFEULL 是 stub 标记：直接返回 0 */

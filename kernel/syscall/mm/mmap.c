@@ -86,7 +86,8 @@ uint64_t sys_munmap(uint64_t addr, uint64_t len)
         return (uint64_t)(int64_t)-EINVAL;
 
     uint64_t size = ALIGN_UP(len, PAGE_SIZE);
-    uint64_t freed = vm_unmap_user_range((uint64_t)current->pgd, addr, size);
+    uint64_t freed UNUSED =
+        vm_unmap_user_range((uint64_t)current->pgd, addr, size);
 
     uint64_t top = addr + size;
     uint64_t next = shared_mmap_next(current);
@@ -126,6 +127,10 @@ uint64_t sys_munmap(uint64_t addr, uint64_t len)
 uint64_t sys_mmap(uint64_t addr, uint64_t len, int prot, int flags, int fd,
                   uint64_t offset)
 {
+    /* prot 目前只在 `#if DRIVER_ION` 那段（见下面 ion 分支）的调试日志里出现，
+     * 该宏关闭的平台上它就是没人用；保护属性本身尚未实现。 */
+    (void)prot;
+
     task_t *current = task_current();
     if (!current->is_user_process) {
         return MMAP_FAILED;

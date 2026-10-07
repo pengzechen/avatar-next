@@ -1,7 +1,7 @@
 /*
  * fs/path.h - 路径规范化与用户/内核字符串拷贝辅助
  *
- * 仅供 kernel/syscall/fs/*.c 内部使用（除 resolve_path /
+ * 仅供 kernel/syscall/fs/ 目录下的 .c 内部使用（除 resolve_path /
  * copy_string_from_user 之外，这两个在 syscall_internal.h 中也声明，
  * 供 core/ 模块共享）。
  */

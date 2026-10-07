@@ -482,50 +482,77 @@ extern uint32_t klog_cpu_id(void);
 /* ===== 条件编译优化 ===== */
 
 /*
- * 只有 LOG=none 是**编译期**抹除（宏体变 do{}while(0)，参数不求值、
- * 格式串不进 .rodata）。其余级别（error/warn/info/debug/trace）都只是
+ * 只有 LOG=none 是**编译期**抹除（实参不求值、格式串不进 .rodata）。
+ * 其余级别（error/warn/info/debug/trace）都只是
  * 把 g_log_level 的**初值**设成该级别，调用点仍然带着
  * "读 g_log_level + 比较 + 分支"，运行期 set_log_level() 还能打开更细的日志。
  * —— 这一点文档以前写反了，见 docs/basic/KLOG.md。
  *
  * LOG_LEVEL_NONE 是枚举常量不是宏，在 #if 里会被预处理成 0；上面的
  * #ifndef LOG_LEVEL 已经挡住了 "未定义 → 0 == 0 → 全静音" 那个坑。
+ *
+ * ── 宏体为什么是 `if (0) { kprintf(...); }` 而不是空的 `do{}while(0)` ──
+ *
+ * 日志的实参经常是**只为打印而存在**的局部变量/形参。宏体一空，它们就变成
+ * "定义了没用" / "赋了值没用" / "形参没用"，-Wall -Wextra 下分别报
+ * -Wunused-variable / -Wunused-but-set-variable / -Wunused-parameter。
+ * （LOG=none 构建实测 46 个，散在 boot/、kernel/task/、kernel/vmm/、
+ * driver/eth/ 等处。）
+ *
+ * 而这些站点里有一大类**不能靠删变量解决**：cpu.c 里的 GIC 寄存器读、
+ * virtio_net.c 的 VIRTIO_MMIO_QUEUE_READY、各处的 MMIO/系统寄存器读 ——
+ * **读本身就是设备访问**，删掉变量等于删掉那次读，是行为变更。
+ * 这类只能"留下读、再告诉编译器结果没人要"。
+ *
+ * `__attribute__((unused))` 在这里救不了场：属性只能挂在**声明**上，
+ * 宏没有把属性贴回调用方局部变量/形参的能力（在宏里写 `unused` 只能标
+ * 宏自己的内部变量）。宏这一层唯一能"接住"实参的办法，就是
+ * **在语法上引用它们** —— 即 Linux 内核 `no_printk` 的老办法：
+ *     #define no_printk(fmt, ...) \
+ *         do { if (0) printk(fmt, ##__VA_ARGS__); } while (0)
+ *
+ * 已验证（aarch64-linux-musl-gcc -Wall -Wextra，-O0 与 -O2 都测过）：
+ *   - 不生成任何代码，实参**不求值**、副作用不执行（-O0 下也不执行）；
+ *   - 格式串不进 .rodata（strings 查不到）；
+ *   - 不引入任何 _klog_ 静态计数器，下面"零开销"的 nm 检查依旧成立；
+ *   - 保住 -Wformat —— kprintf 将来若挂上 format 属性，格式串写错
+ *     在 LOG=none 下也照样报。
+ *
+ * 代价要写明白：它同时会静音"真忘了用变量"那一类警告
+ * （set-but-not-used 本来是用来抓"存了一半、装回一半"的）。
+ * 所以**只有 LOG=none 这个分支**这么写，其余级别原样保留 ——
+ * 排障用的构建依旧看得见这类问题。
  */
 #if defined(LOG_NONE) || (LOG_LEVEL == LOG_LEVEL_NONE)
-#undef KLOG_ERROR
-#define KLOG_ERROR(fmt, ...) \
+
+/* LOG=none 专用：把实参引用一次，但永不执行（详见上面的说明）。 */
+#define KLOG__DROP(fmt, ...) \
     do { \
+        if (0) { \
+            kprintf(fmt, ##__VA_ARGS__); \
+        } \
     } while (0)
+
+#undef KLOG_ERROR
+#define KLOG_ERROR(fmt, ...) KLOG__DROP(fmt, ##__VA_ARGS__)
 
 #undef KLOG_WARN
-#define KLOG_WARN(fmt, ...) \
-    do { \
-    } while (0)
+#define KLOG_WARN(fmt, ...) KLOG__DROP(fmt, ##__VA_ARGS__)
 
 #undef KLOG_INFO
-#define KLOG_INFO(fmt, ...) \
-    do { \
-    } while (0)
+#define KLOG_INFO(fmt, ...) KLOG__DROP(fmt, ##__VA_ARGS__)
 
 #undef KLOG_DEBUG
-#define KLOG_DEBUG(fmt, ...) \
-    do { \
-    } while (0)
+#define KLOG_DEBUG(fmt, ...) KLOG__DROP(fmt, ##__VA_ARGS__)
 
 #undef KLOG_TRACE
-#define KLOG_TRACE(fmt, ...) \
-    do { \
-    } while (0)
+#define KLOG_TRACE(fmt, ...) KLOG__DROP(fmt, ##__VA_ARGS__)
 
 #undef KLOG_MODULE_DEBUG
-#define KLOG_MODULE_DEBUG(module, fmt, ...) \
-    do { \
-    } while (0)
+#define KLOG_MODULE_DEBUG(module, fmt, ...) KLOG__DROP(fmt, ##__VA_ARGS__)
 
 #undef KLOG_MODULE_TRACE
-#define KLOG_MODULE_TRACE(module, fmt, ...) \
-    do { \
-    } while (0)
+#define KLOG_MODULE_TRACE(module, fmt, ...) KLOG__DROP(fmt, ##__VA_ARGS__)
 
 /*
      * 下面这一组必须逐个列出：漏掉任何一个，它的 static 计数器和 __atomic_*
@@ -534,55 +561,71 @@ extern uint32_t klog_cpu_id(void);
      * 全部 .o 跑 nm 并筛 _klog_ 这种检查才看得出来。
      * （教训：注释里别写带通配符的 shell 路径 —— "斜杠加星号"会提前结束注释，
      *   "斜杠加星号加..."这种序列 GCC 还会额外报 -Wcomment。）
+     *
+     * KLOG__DROP 只引用实参、不落任何 static，所以这条检查在新写法下依旧干净。
+     * _ONCE 系列没有额外讲究：调用点只传 (fmt, 实参)，直接转发即可。
      */
 #undef KLOG_ERROR_ONCE
-#define KLOG_ERROR_ONCE(fmt, ...) \
-    do { \
-    } while (0)
+#define KLOG_ERROR_ONCE(fmt, ...) KLOG__DROP(fmt, ##__VA_ARGS__)
 
+#undef KLOG_WARN_ONCE
+#define KLOG_WARN_ONCE(fmt, ...) KLOG__DROP(fmt, ##__VA_ARGS__)
+
+#undef KLOG_INFO_ONCE
+#define KLOG_INFO_ONCE(fmt, ...) KLOG__DROP(fmt, ##__VA_ARGS__)
+
+#undef KLOG_DEBUG_ONCE
+#define KLOG_DEBUG_ONCE(fmt, ...) KLOG__DROP(fmt, ##__VA_ARGS__)
+
+#undef KLOG_MODULE_DEBUG_ONCE
+#define KLOG_MODULE_DEBUG_ONCE(module, fmt, ...) KLOG__DROP(fmt, ##__VA_ARGS__)
+
+/*
+     * _SAMPLE 系列多一道手续：调用点会在**实参表里**写 `_klog_seq_`
+     *     KLOG_WARN_SAMPLE("[PLIC] unhandled irq=%u count=%llu\n", irq,
+     *                      _klog_seq_);
+     * 那个名字是宏体自己声明的局部变量。以前宏体是空的，实参被整个丢弃，
+     * 所以从没被展开过、也就从没报错；现在 KLOG__DROP 要引用实参了，
+     * **必须在这里先把 `_klog_seq_` 声明出来**，否则调用点直接
+     * "‘_klog_seq_’ undeclared" 编译失败。
+     * （宏参数的替换只发生在宏体用到它的地方 —— 这正是过去它能编译的原因。）
+     *
+     * 加 UNUSED 是因为调用点可以不传它（不引用 _klog_seq_ 的 SAMPLE 调用），
+     * 那样它就真的没人用了。
+     */
 #undef KLOG_ERROR_SAMPLE
 #define KLOG_ERROR_SAMPLE(fmt, ...) \
     do { \
-    } while (0)
-
-#undef KLOG_WARN_ONCE
-#define KLOG_WARN_ONCE(fmt, ...) \
-    do { \
+        uint32_t _klog_seq_ UNUSED = 0U; \
+        KLOG__DROP(fmt, ##__VA_ARGS__); \
     } while (0)
 
 #undef KLOG_WARN_SAMPLE
 #define KLOG_WARN_SAMPLE(fmt, ...) \
     do { \
-    } while (0)
-
-#undef KLOG_INFO_ONCE
-#define KLOG_INFO_ONCE(fmt, ...) \
-    do { \
+        uint32_t _klog_seq_ UNUSED = 0U; \
+        KLOG__DROP(fmt, ##__VA_ARGS__); \
     } while (0)
 
 #undef KLOG_INFO_SAMPLE
 #define KLOG_INFO_SAMPLE(fmt, ...) \
     do { \
-    } while (0)
-
-#undef KLOG_DEBUG_ONCE
-#define KLOG_DEBUG_ONCE(fmt, ...) \
-    do { \
+        uint32_t _klog_seq_ UNUSED = 0U; \
+        KLOG__DROP(fmt, ##__VA_ARGS__); \
     } while (0)
 
 #undef KLOG_DEBUG_SAMPLE
 #define KLOG_DEBUG_SAMPLE(fmt, ...) \
     do { \
-    } while (0)
-
-#undef KLOG_MODULE_DEBUG_ONCE
-#define KLOG_MODULE_DEBUG_ONCE(module, fmt, ...) \
-    do { \
+        uint32_t _klog_seq_ UNUSED = 0U; \
+        KLOG__DROP(fmt, ##__VA_ARGS__); \
     } while (0)
 
 #undef KLOG_MODULE_DEBUG_SAMPLE
 #define KLOG_MODULE_DEBUG_SAMPLE(module, fmt, ...) \
     do { \
+        uint32_t _klog_seq_ UNUSED = 0U; \
+        KLOG__DROP(fmt, ##__VA_ARGS__); \
     } while (0)
 #endif
 

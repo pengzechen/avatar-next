@@ -94,7 +94,6 @@ void openat_handler(uint64_t regs[6], task_t *current)
         return;
     }
 
-    fd_obj_t *obj = &g_fd_pool[pool];
     fd_obj_attach_vfs(pool, vf);
 
     int fd = task_alloc_fd(current, pool);

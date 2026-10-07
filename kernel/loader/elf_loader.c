@@ -127,7 +127,7 @@ static int load_from_file_depth(const char *pathname, char **argv, char **envp,
 {
     ext4_file file;
     int rc;
-    size_t fsize, rcnt;
+    size_t fsize;
     uint8_t *file_data;
     uint64_t file_size;
     char path_buf[256];

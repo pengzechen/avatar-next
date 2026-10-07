@@ -32,11 +32,13 @@ void fstat_handler(uint64_t regs[6], task_t *current)
 
     fd_obj_t *obj = task_get_fd(current, fd);
     if (trace_heavy_task(current)) {
-        KLOG_SYSCALL("[vfsstat] pid=%u fstat fd=%d st=0x%llx path=%s kind=%d\n",
-                     current->id, fd, (uint64_t)st,
-                     (obj && fd_obj_file(obj)) ? fd_obj_file(obj)->path
-                                               : "<none>",
-                     (obj && fd_obj_file(obj)) ? fd_obj_file(obj)->kind : -1);
+        /* (int)：kind 是**无符号**枚举，两臂不统一时 ?: 的结果会被推成无符号，
+         * -1 这个"没有"哨兵于是触发 -Wsign-compare。 */
+        KLOG_SYSCALL(
+            "[vfsstat] pid=%u fstat fd=%d st=0x%llx path=%s kind=%d\n",
+            current->id, fd, (uint64_t)st,
+            (obj && fd_obj_file(obj)) ? fd_obj_file(obj)->path : "<none>",
+            (obj && fd_obj_file(obj)) ? (int)fd_obj_file(obj)->kind : -1);
     }
     if (fd == 0 || fd == 1 || fd == 2 || (obj && !fd_obj_file(obj))) {
         memset(st, 0, sizeof(*st));
@@ -73,7 +75,7 @@ void newfstatat_handler(uint64_t regs[6], task_t *current)
                 "[vfsstat] pid=%u newfstatat empty dirfd=%d st=0x%llx path=%s kind=%d\n",
                 current->id, dirfd, (uint64_t)st,
                 (obj && fd_obj_file(obj)) ? fd_obj_file(obj)->path : "<none>",
-                (obj && fd_obj_file(obj)) ? fd_obj_file(obj)->kind : -1);
+                (obj && fd_obj_file(obj)) ? (int)fd_obj_file(obj)->kind : -1);
         }
         if (!obj) {
             regs[0] = (uint64_t)(int64_t)-EBADF;

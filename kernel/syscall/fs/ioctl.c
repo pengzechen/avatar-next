@@ -31,8 +31,9 @@ void ioctl_handler(uint64_t regs[6], task_t *current)
             current->id, ioctl_fd, request, (uint64_t)argp,
             (ioctl_obj && fd_obj_file(ioctl_obj)) ? fd_obj_file(ioctl_obj)->path
                                                   : "<none>",
-            (ioctl_obj && fd_obj_file(ioctl_obj)) ? fd_obj_file(ioctl_obj)->kind
-                                                  : -1);
+            (ioctl_obj && fd_obj_file(ioctl_obj))
+                ? (int)fd_obj_file(ioctl_obj)->kind
+                : -1);
     }
 
     if (request == FIONBIO) {

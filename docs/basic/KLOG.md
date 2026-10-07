@@ -37,7 +37,18 @@ make PLATFORM=qemu-virt-aarch64 kernel LOG=none
 | `debug` | 4 | 蓝 |
 | `trace` | 5 | 灰 |
 
-**只有 `LOG=none` 是编译期抹除**：宏体整个变成 `do {} while (0)`，参数不求值、格式串也不进 `.rodata`。
+**只有 `LOG=none` 是编译期抹除**：宏体整个变成 `do { if (0) { kprintf(...); } } while (0)`（`include/klog.h` 的 `KLOG__DROP`），
+不生成任何代码、参数不求值、格式串也不进 `.rodata`。
+
+> 宏体之所以**不是**空的 `do {} while (0)`，是为了让实参在语法上被引用一次：
+> 日志的实参常是"只为打印而存在"的局部变量/形参，宏体一空它们就变成
+> `-Wunused-variable` / `-Wunused-but-set-variable` / `-Wunused-parameter`
+> （LOG=none 构建实测 46 个）。而其中一大类**不能靠删变量解决** ——
+> GIC 寄存器、`VIRTIO_MMIO_QUEUE_READY` 这些 **读本身就是设备访问**，删变量等于删读。
+> `__attribute__((unused))` 帮不上忙：属性只能挂声明上，宏没法贴回调用方的变量。
+> 这是 Linux 内核 `no_printk` 的老办法，实测 -O0/-O2 都不生成代码、无 `.rodata` 残留、
+> 不引入任何 `_klog_` 静态符号（零开销的 nm 检查依旧成立），且保住 `-Wformat` 检查。
+> 代价是它同样静音"真忘了用变量"那一类警告，所以**只有 none 这一个分支**这么写。
 
 其余级别（error/warn/info/debug/trace）只是把 `g_log_level` 的**初值**设成该级别，调用点仍然带着"读 `g_log_level` + 比较 + 分支"——实测默认 info 构建下每个 `KLOG_DEBUG` 调用点都是：
 

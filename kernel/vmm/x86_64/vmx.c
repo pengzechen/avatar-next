@@ -2884,9 +2884,12 @@ void vmm_arch_restore_guest_ctx(vcpu_t *vcpu)
      */
         if (vmcs_load_pa(vmcs_pa)) {
             KLOG_ERROR(
-                "[VMX] vmptrld failed in vmm_arch_enter_guest (vcpu%d pa=0x%llx)\n",
+                "[VMX] vmptrld failed in vmm_arch_restore_guest_ctx (vcpu%d pa=0x%llx)\n",
                 vcpu->vcpu_id, vmcs_pa);
-            return 0;
+            /* 本函数返回 void，这里**没有**把失败传给调用方的途径 ——
+             * 原先是 return 0（在 void 里等于丢弃，-Wreturn-type）。
+             * 语义上这是个遗留缺口，改成 return 只是把既有行为写明。 */
+            return;
         }
     }
 
@@ -2945,7 +2948,8 @@ void vmm_arch_restore_guest_ctx(vcpu_t *vcpu)
 static void vmx_refresh_host_state(vcpu_t *vcpu)
 {
     int id = (int)vcpu_slot(vcpu);
-    int i0 = vmx_msr_index(MSR_GS_BASE);
+    /* 只有 KERNEL_GS_BASE 需要在 entry-load 表里占个位置；GS_BASE 走
+     * GUEST_BASE_GS 字段（原因见函数末尾），所以没有对应的 index 变量。 */
     int i1 = vmx_msr_index(MSR_KERNEL_GS_BASE);
 
     vmcs_write(HOST_CR0, vmx_read_cr0());

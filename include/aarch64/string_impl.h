@@ -28,6 +28,24 @@
  * 版本要求 src/dest 两边同时 16 字节对齐，一旦两者奇偶不同（比如网络
  * 缓冲区拷进对齐的堆块），对齐循环永不退出，整个拷贝退化成逐字节。
  */
+/*
+ * GCC 11 的 VRP 在把本函数内联进某些调用点之后，会算错循环归纳变量 i 的值域，
+ * 报出这种**假阳性**：
+ *     string_impl.h:54: warning: array subscript [241, 255] is outside
+ *     array bounds of 'char[128]' [-Warray-bounds]
+ *     kernel/loader/elf_loader.c:284: note: while referencing 'ipath'
+ *
+ * 已确认是编译器的账、不是本函数的账：-O1 / -fno-inline / -fno-tree-vrp
+ * 下警告都消失，只有 -O2 出现（触发点在 elf_loader.c 的 PT_INTERP 路径）。
+ * 而越界在语义上不可能 —— 调用点传进来的 n 已被夹到
+ * sizeof(目的缓冲区) - 1，且下面三个循环（对齐 / NEON / 收尾）都保证
+ * i < n 才写 d[i]。
+ *
+ * 所以定点屏蔽，而不是去改一个本来就正确的循环。
+ */
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Warray-bounds"
+
 static inline void *memcpy_neon(void *dest, const void *src, size_t n)
 {
     size_t i = 0;
@@ -56,6 +74,8 @@ static inline void *memcpy_neon(void *dest, const void *src, size_t n)
 
     return dest;
 }
+
+#pragma GCC diagnostic pop
 
 /**
  * memset_neon - ARM NEON 优化版本
