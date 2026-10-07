@@ -18,6 +18,12 @@
 #include "pmm.h"
 #include "uart/uart.h"
 #include "task/task.h"
+#if DRIVER_DMA_BUF
+#include "dma_buf.h" /* dma_heap_dev_ioctl（/dev/dma_heap/ 各节点）*/
+#endif
+#if DRIVER_NPU_RKNPU
+#include "rknpu_drm.h" /* rknpu_drm_ioctl_file（/dev/dri/renderD128）*/
+#endif
 #include "task/cpu.h" /* g_cpus / g_num_cpus / AVATAR_MAX_CPUS（/proc/uptime 的 idle 列）*/
 #include "timer/timer.h"      /* timer_get_ns / TIMER_FREQUENCY_HZ */
 #include "syscall/io/epoll.h" /* EPOLLIN/EPOLLOUT：pseudo_poll 的兜底返回值 */
@@ -146,6 +152,27 @@ static int version_read(int nid, uint64_t off, void *buf, size_t len)
         "(gcc version 12.0) #1 SMP\n";
     return pfs_copy_out(off, buf, len, content, sizeof(content) - 1);
 }
+
+#if DRIVER_NPU_RKNPU
+/*
+ * /proc/dri/N/name —— DRM 的传统 /proc 接口。
+ *
+ * librknnrt 实测会依次读 /proc/dri/0/name … /proc/dri/7/name 来认设备
+ * （内核 trace 抓到的，见 docs/npu/RK3588_NPU_DRIVER.md §8）。
+ * 格式与 Linux 一致：
+ *     <驱动名> <major>.<minor>.<patch> <date> <desc>
+ *
+ * ⚠️ 驱动名必须是 **rknpu** —— 它按名字匹配，写别的（比如我们 DRM 节点上
+ * 用的 "rknpu-avatar"）会被当成"不是 RKNPU 设备"。
+ */
+static int dri_name_read(int nid, uint64_t off, void *buf, size_t len)
+{
+    (void)nid;
+    static const char content[] =
+        "rknpu 1.0.0 20260101 Avatar OS RK3588 NPU (DRM-compat shim)\n";
+    return pfs_copy_out(off, buf, len, content, sizeof(content) - 1);
+}
+#endif
 
 /* /proc/uptime */
 
@@ -335,71 +362,133 @@ static int backtrace_read(int nid, uint64_t off, void *buf, size_t len)
 
 static const pseudo_node_t g_nodes[] = {
     /* ── 目录 ──────────────────────────────────────────── */
-    { "/dev", PSEUDO_DIR, MODE_DIR, 0, NULL, NULL, NULL, NULL, NULL },
-    { "/proc", PSEUDO_DIR, MODE_DIR, 0, NULL, NULL, NULL, NULL, NULL },
-    { "/proc/self", PSEUDO_DIR, MODE_DIR, 0, NULL, NULL, NULL, NULL, NULL },
-    { "/proc/self/fd", PSEUDO_DIR, MODE_DIR, 0, NULL, NULL, NULL, NULL, NULL },
-    { "/proc/sys", PSEUDO_DIR, MODE_DIR, 0, NULL, NULL, NULL, NULL, NULL },
-    { "/proc/sys/kernel", PSEUDO_DIR, MODE_DIR, 0, NULL, NULL, NULL, NULL,
+    { "/dev", PSEUDO_DIR, MODE_DIR, 0, NULL, NULL, NULL, NULL, NULL, NULL,
       NULL },
-    { "/sys", PSEUDO_DIR, MODE_DIR, 0, NULL, NULL, NULL, NULL, NULL },
+    { "/proc", PSEUDO_DIR, MODE_DIR, 0, NULL, NULL, NULL, NULL, NULL, NULL,
+      NULL },
+    { "/proc/self", PSEUDO_DIR, MODE_DIR, 0, NULL, NULL, NULL, NULL, NULL, NULL,
+      NULL },
+    { "/proc/self/fd", PSEUDO_DIR, MODE_DIR, 0, NULL, NULL, NULL, NULL, NULL,
+      NULL, NULL },
+    { "/proc/sys", PSEUDO_DIR, MODE_DIR, 0, NULL, NULL, NULL, NULL, NULL, NULL,
+      NULL },
+    { "/proc/sys/kernel", PSEUDO_DIR, MODE_DIR, 0, NULL, NULL, NULL, NULL, NULL,
+      NULL, NULL },
+    { "/sys", PSEUDO_DIR, MODE_DIR, 0, NULL, NULL, NULL, NULL, NULL, NULL,
+      NULL },
+#if DRIVER_DMA_BUF
+    /* dma-heap 在 Linux 上是个目录，运行时 open 里面的某个堆 */
+    { "/dev/dma_heap", PSEUDO_DIR, MODE_DIR, 0, NULL, NULL, NULL, NULL, NULL,
+      NULL, NULL },
+#endif
+#if DRIVER_NPU_RKNPU
+    /* librknnrt 实测扫的是 card0..card15（不是 renderD*），两个都要有 */
+    { "/dev/dri", PSEUDO_DIR, MODE_DIR, 0, NULL, NULL, NULL, NULL, NULL, NULL,
+      NULL },
+    /* DRM 的传统 /proc 接口，librknnrt 靠它认驱动名（必须是 "rknpu"）*/
+    { "/proc/dri", PSEUDO_DIR, MODE_DIR, 0, NULL, NULL, NULL, NULL, NULL, NULL,
+      NULL },
+    { "/proc/dri/0", PSEUDO_DIR, MODE_DIR, 0, NULL, NULL, NULL, NULL, NULL,
+      NULL, NULL },
+    { "/proc/dri/0/name", PSEUDO_REG, MODE_REG, 0, dri_name_read, NULL, NULL,
+      NULL, NULL, NULL, NULL },
+#endif
 
     /* ── /dev 字符设备 ─────────────────────────────────── */
     { "/dev/null", PSEUDO_CHR, MODE_CHRW, (1U << 8) | 3U, null_read, null_write,
-      NULL, NULL, NULL },
+      NULL, NULL, NULL, NULL, NULL },
     { "/dev/zero", PSEUDO_CHR, MODE_CHRW, (1U << 8) | 5U, zero_read, null_write,
-      NULL, NULL, NULL },
+      NULL, NULL, NULL, NULL, NULL },
     { "/dev/tty", PSEUDO_CHR, MODE_CHRW, (5U << 8) | 0U, tty_read, tty_write,
-      NULL, NULL, NULL },
+      NULL, NULL, NULL, NULL, NULL },
     { "/dev/console", PSEUDO_CHR, MODE_CHRW, (5U << 8) | 1U, tty_read,
-      tty_write, NULL, NULL, NULL },
+      tty_write, NULL, NULL, NULL, NULL, NULL },
     { "/dev/urandom", PSEUDO_CHR, MODE_CHRW, (1U << 8) | 9U, rand_read,
-      null_write, NULL, NULL, NULL },
+      null_write, NULL, NULL, NULL, NULL, NULL },
     { "/dev/random", PSEUDO_CHR, MODE_CHRW, (1U << 8) | 8U, rand_read,
-      null_write, NULL, NULL, NULL },
+      null_write, NULL, NULL, NULL, NULL, NULL },
     /* 加速器设备 */
     { "/dev/cvi-tpu0", PSEUDO_CHR, MODE_CHRW, (240U << 8) | 0U, NULL,
-      null_write, tpu_dev_ioctl, NULL, NULL },
+      null_write, tpu_dev_ioctl, NULL, NULL, NULL, NULL },
     { "/dev/ion", PSEUDO_CHR, MODE_CHRW, (10U << 8) | 56U, NULL, null_write,
-      ion_dev_ioctl, NULL, NULL },
+      ion_dev_ioctl, NULL, NULL, NULL, NULL },
     { "/dev/npu", PSEUDO_CHR, MODE_CHRW, (10U << 8) | 242U, NULL, null_write,
-      npu_dev_ioctl, NULL, NULL },
+      npu_dev_ioctl, NULL, NULL, NULL, NULL },
+#if DRIVER_DMA_BUF
+    /*
+     * dma-heap：官方 librknnrt 从这里分配**每一块**缓冲区
+     * （DMA_HEAP_IOCTL_ALLOC），再以 dmabuf fd 的形式流转。详见
+     * docs/npu/RK3588_NPU_DRIVER.md §2。
+     *
+     * 两个名字指向同一个堆：运行时是按名字找的，而不同版本找的名字不同
+     * —— Linux 通用堆叫 "system"，Rockchip 的 CMA 堆是 "rk-dma-heap-cma"。
+     * 多挂一个别名的代价只是 g_nodes[] 里多一行，比"名字对不上导致
+     * open 失败"好查得多。
+     */
+    { "/dev/dma_heap/system", PSEUDO_CHR, MODE_CHRW, (10U << 8) | 243U, NULL,
+      null_write, dma_heap_dev_ioctl, NULL, NULL, NULL, NULL },
+    { "/dev/dma_heap/cma", PSEUDO_CHR, MODE_CHRW, (10U << 8) | 244U, NULL,
+      null_write, dma_heap_dev_ioctl, NULL, NULL, NULL, NULL },
+#endif
+#if DRIVER_NPU_RKNPU
+    /*
+     * DRM 节点。
+     *
+     * ⚠️ **card0 是主路径，不是 renderD128**：内核 trace 抓到 librknnrt
+     *    依次开 /dev/rknpu、/dev/dri/card0..card15、/proc/dri/N/name，
+     *    而**从没试过 renderD128**（虽然它的字符串表里有 renderD）。
+     *    光挂 renderD128 的话它连 open 都不会走到我们这儿。
+     *
+     * rdev 用真实的 DRM 主设备号 226：card* 是次设备号 0..，renderD* 从 128 起。
+     *
+     * 用的是**按文件**的那对回调（末尾两个字段）：GEM handle 按 drm_file
+     * 隔离，见 pseudofs_internal.h 里的说明。前面的 ioctl_fn/close_fn 留
+     * NULL，自动退回老路径的节点不受影响。
+     */
+    { "/dev/dri/card0", PSEUDO_CHR, MODE_CHRW, (226U << 8) | 0U, NULL,
+      null_write, NULL, NULL, NULL, rknpu_drm_ioctl_file,
+      rknpu_drm_close_file },
+    { "/dev/dri/renderD128", PSEUDO_CHR, MODE_CHRW, (226U << 8) | 128U, NULL,
+      null_write, NULL, NULL, NULL, rknpu_drm_ioctl_file,
+      rknpu_drm_close_file },
+#endif
     { "/dev/video0", PSEUDO_CHR, MODE_CHRW, (81U << 8) | 0U, video0_read,
-      null_write, video0_ioctl, NULL, NULL },
+      null_write, video0_ioctl, NULL, NULL, NULL, NULL },
 /* guest 控制设备：宿主 shell 里的 /bin/vmm-run 打开它来启动/驱动 guest。
      * 只有「已实现 Linux guest 启动」的架构才有这个节点（判据同
      * include/vmm/vmm.h 的 VMM_GUEST_LINUX_SUPPORTED）。 */
 #if VMM_GUEST_LINUX_SUPPORTED
     { "/dev/vmm", PSEUDO_CHR, MODE_CHRW, (10U << 8) | 200U, vmm_dev_read,
-      vmm_dev_write, vmm_dev_ioctl, vmm_dev_poll, vmm_dev_close },
+      vmm_dev_write, vmm_dev_ioctl, vmm_dev_poll, vmm_dev_close, NULL, NULL },
 #endif
 
     /* ── /proc 条目 ────────────────────────────────────── */
-    { "/proc/self/exe", PSEUDO_LNK, MODE_LNK, 0, NULL, NULL, NULL, NULL, NULL },
-    { "/proc/self/maps", PSEUDO_REG, MODE_REG, 0, maps_read, NULL, NULL, NULL,
-      NULL },
-    { "/proc/self/stat", PSEUDO_REG, MODE_REG, 0, stat_read, NULL, NULL, NULL,
-      NULL },
-    { "/proc/self/status", PSEUDO_REG, MODE_REG, 0, status_read, NULL, NULL,
+    { "/proc/self/exe", PSEUDO_LNK, MODE_LNK, 0, NULL, NULL, NULL, NULL, NULL,
       NULL, NULL },
+    { "/proc/self/maps", PSEUDO_REG, MODE_REG, 0, maps_read, NULL, NULL, NULL,
+      NULL, NULL, NULL },
+    { "/proc/self/stat", PSEUDO_REG, MODE_REG, 0, stat_read, NULL, NULL, NULL,
+      NULL, NULL, NULL },
+    { "/proc/self/status", PSEUDO_REG, MODE_REG, 0, status_read, NULL, NULL,
+      NULL, NULL, NULL, NULL },
     { "/proc/version", PSEUDO_REG, MODE_REG, 0, version_read, NULL, NULL, NULL,
-      NULL },
+      NULL, NULL, NULL },
     { "/proc/uptime", PSEUDO_REG, MODE_REG, 0, uptime_read, NULL, NULL, NULL,
-      NULL },
+      NULL, NULL, NULL },
     { "/proc/mounts", PSEUDO_REG, MODE_REG, 0, mounts_read, NULL, NULL, NULL,
-      NULL },
+      NULL, NULL, NULL },
     /* 最近走过的 syscall。崩了先 cat 这个 —— 不需要重编、不需要事先开开关。 */
     { "/proc/syscalls", PSEUDO_REG, MODE_REG, 0, syscalls_read, NULL, NULL,
-      NULL, NULL },
+      NULL, NULL, NULL, NULL },
     /* 当前任务的调用栈。同上，常开。 */
     { "/proc/backtrace", PSEUDO_REG, MODE_REG, 0, backtrace_read, NULL, NULL,
-      NULL, NULL },
+      NULL, NULL, NULL, NULL },
     { "/proc/meminfo", PSEUDO_REG, MODE_REG, 0, meminfo_read, NULL, NULL, NULL,
-      NULL },
-    { "/proc/cpuinfo", PSEUDO_REG, MODE_REG, 0, cpuinfo_read, NULL, NULL, NULL,
-      NULL },
-    { "/proc/sys/kernel/pid_max", PSEUDO_REG, MODE_REG, 0, pid_max_read, NULL,
       NULL, NULL, NULL },
+    { "/proc/cpuinfo", PSEUDO_REG, MODE_REG, 0, cpuinfo_read, NULL, NULL, NULL,
+      NULL, NULL, NULL },
+    { "/proc/sys/kernel/pid_max", PSEUDO_REG, MODE_REG, 0, pid_max_read, NULL,
+      NULL, NULL, NULL, NULL, NULL },
 };
 
 #define NODE_COUNT ((int)(sizeof(g_nodes) / sizeof(g_nodes[0])))
@@ -538,6 +627,37 @@ int pseudo_close(int nid)
     if (nid < 0 || nid >= NODE_COUNT)
         return 0;
     const pseudo_node_t *n = &g_nodes[nid];
+    if (!n->close_fn)
+        return 0;
+    return n->close_fn(nid);
+}
+
+/*
+ * 「按打开的文件」版本的 ioctl / close。见 pseudofs_internal.h 里
+ * ioctl_file_fn 的说明 —— 只有需要 per-open 状态的节点（DRM 渲染节点）
+ * 才实现 *_file_fn，其余节点自动退回上面那对老回调。
+ */
+int pseudo_ioctl_file(void *file, int nid, uint64_t req, void *argp)
+{
+    if (nid < 0 || nid >= NODE_COUNT)
+        return -PFS_EINVAL;
+    const pseudo_node_t *n = &g_nodes[nid];
+    /* 同样截 32 位 —— 理由见 kernel/syscall/fs/ioctl.c 里那段说明。
+     * syscall 层已经截过一次，这里是防别的调用者直接进来。 */
+    if (n->ioctl_file_fn)
+        return n->ioctl_file_fn(file, (uint32_t)req, argp);
+    if (!n->ioctl_fn)
+        return -PFS_ENOSYS;
+    return n->ioctl_fn(nid, (uint32_t)req, argp);
+}
+
+int pseudo_close_file(void *file, int nid)
+{
+    if (nid < 0 || nid >= NODE_COUNT)
+        return 0;
+    const pseudo_node_t *n = &g_nodes[nid];
+    if (n->close_file_fn)
+        return n->close_file_fn(file);
     if (!n->close_fn)
         return 0;
     return n->close_fn(nid);

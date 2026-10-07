@@ -13,6 +13,7 @@ extern void memory_free_page(void *page_dir, uint64_t addr);
 extern int32_t memory_copy_uvm_4level(void *dst_pgd, void *src_pgd);
 extern uint64_t memory_get_pte_raw(void *page_dir, uint64_t vaddr);
 extern void memory_set_pte_nofree(void *page_dir, uint64_t vaddr);
+extern void memory_set_pte_keep(void *page_dir, uint64_t vaddr);
 
 /* copydata_to_uvm: 将 src_paddr 处的数据拷贝到 pgd 对应用户地址空间的 user_vaddr */
 extern void copydata_to_uvm(void *page_dir, uint64_t vaddr, uint64_t paddr,
@@ -39,6 +40,16 @@ static inline void mm_vm_copy_to_uva(void *pgd, uint64_t user_vaddr,
                                      uint64_t src_paddr, uint64_t size)
 {
     copydata_to_uvm(pgd, user_vaddr, src_paddr, size);
+}
+
+/*
+ * 把一页标成"设备缓冲"：unmap 时只拆映射，不释放页也不碰引用计数。
+ * 用于把 dma_buf / ION 的缓冲区映射进用户态 —— 页归句柄所有，不归映射。
+ * 语义与 NOFREE 的区别见 mmu.h 里 PTE_KEEP 的说明。
+ */
+static inline void mm_vm_set_pte_keep(void *pgd, uint64_t vaddr)
+{
+    memory_set_pte_keep(pgd, vaddr);
 }
 
 #endif /* AARCH64_MM_VM_H */

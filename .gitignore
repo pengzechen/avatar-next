@@ -21,5 +21,17 @@ __pycache__/
 # LTP：完整源码树不入库
 /third_party/ltp/
 
+# ─── NPU 运行时（第三方预编译二进制，不入库）─────────────────
+# 19 MB，全是 Rockchip / glibc 的现成产物（librknnrt.so、glibc 运行时、
+# 预编译的 rknpu2 demo），我们不产出也不修改它们。
+# **只留 README**：那是唯一记录来源（上游 URL）和 glibc/musl 冲突说明的地方，
+# 丢了就没法重建 rootfs。写法与上面 dropbear 那条一致。
+/apps/rknn-aarch64/*
+!/apps/rknn-aarch64/README.md
+
+# NPU rootfs 镜像：纯产物，tools/make_npu_rootfs.sh 从 imgs/rootfs-aarch64.img
+# + 上面的运行时重建，没必要入库（128 MiB）。
+/imgs/rootfs-aarch64-npu.img
+
 # ─── 测试产物 ────────────────────────────────────────────────
 /tests/ltp/bin/

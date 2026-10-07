@@ -11,6 +11,7 @@
 #define PFS_EMFILE 24
 #define PFS_EAGAIN 11
 #define PFS_EBUSY  16
+#define PFS_ENOMEM 12
 
 #define DYNC_PID_DIR_BASE   2000
 #define DYNC_PID_STAT_BASE  3000
@@ -31,11 +32,14 @@ typedef enum {
 /*
  * 节点操作表。
  *
- * poll_fn / close_fn 是后加的（/dev/vmm 需要），**追加在末尾**：
- * g_nodes[] 用的是位置初始化，补零即可让老节点保持 NULL，不用改表里每一行。
+ * ⚠️ 新字段**追加在末尾**，同时**必须把 g_nodes[] 里每一行都补上对应的
+ * NULL**：那张表用的是位置初始化，而 -Wextra 带 -Wmissing-field-initializers
+ * —— 少补一行就是一条警告（曾经以为"补零即可、不用改表"，实测会报 35 条）。
+ * 只有确实需要新钩子的那一行填真函数。
  *
  *   poll_fn  — 返回 EPOLL* 位。NULL 表示「总是可读可写」（老行为）。
  *   close_fn — 最后一个引用关闭时调用。NULL 表示无需清理。
+ *   ioctl_file_fn / close_file_fn — 见下面各自的说明。
  */
 typedef struct {
     const char *path;
@@ -47,6 +51,20 @@ typedef struct {
     int (*ioctl_fn)(int nid, uint64_t req, void *argp);
     uint32_t (*poll_fn)(int nid);
     int (*close_fn)(int nid);
+
+    /*
+     * 「按**打开的文件**」版本的回调（同样追加在末尾，老节点补零即可）。
+     *
+     * 只有少数节点需要：DRM 渲染节点的 GEM handle 是**按 drm_file** 隔离的
+     * （两个进程各开一次就得各有一张表），而上面那对回调只拿得到 nid ——
+     * 一个节点号分不出是哪个 open。用全局表的话两个进程的 handle 会串号。
+     *
+     * 为 NULL 时自动退回上面那对老回调，所以现存节点一行都不用改。
+     * 参数是 vfs_file_t*，但 pseudofs 不 include vfs.h（会拖进 ext4.h），
+     * 所以走 void*，由实现自己转。
+     */
+    int (*ioctl_file_fn)(void *file, uint64_t req, void *argp);
+    int (*close_file_fn)(void *file);
 } pseudo_node_t;
 
 size_t pfs_strlen(const char *s);
@@ -74,6 +92,8 @@ int pfs_getdents_node(int nid, uint64_t *off, void *buf, size_t bufsz);
 
 int ion_dev_ioctl(int nid, uint64_t req, void *argp);
 int tpu_dev_ioctl(int nid, uint64_t req, void *argp);
+/* /dev/dma_heap/ 各节点 —— 原型在 include/dma_buf.h，这里只做个索引注释 */
+int dma_heap_dev_ioctl(int nid, uint64_t req, void *argp);
 
 /* /dev/vmm —— 宿主 shell 里控制 guest 的字符设备（vmm_dev.c）*/
 int vmm_dev_write(int nid, const void *buf, size_t len);

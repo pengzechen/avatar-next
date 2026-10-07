@@ -533,7 +533,14 @@ endif
 # 用法：make PLATFORM=rk3588-aarch64 NPU=rknpu kernel
 NPU ?= $(DEV_NPU_TYPE)
 ifeq ($(NPU),rknpu)
-    DRIVER_NPU_SRCS := driver/npu/rknpu.c driver/npu/rkpm.c
+    # rknpu_drm.c 把 GEM 对象建在 dma-buf 上（librknnrt 的缓冲区都从
+    # dma_heap 来），所以 DMA=1 是硬依赖。少了它链接期才会炸，且报错指向
+    # 一堆 dma_buf_* 未定义 —— 在这里拦住。
+    ifeq ($(DMA),0)
+        $(error NPU=rknpu 需要 DMA=1（dma-buf/dma-heap）；见 Makefile §6e-1b)
+    endif
+    DRIVER_NPU_SRCS := driver/npu/rknpu.c driver/npu/rkpm.c \
+                       driver/npu/rknpu_drm.c
     CFLAGS          += -DDRIVER_NPU_RKNPU=1
 else
     DRIVER_NPU_SRCS :=
@@ -593,6 +600,18 @@ ifeq ($(ION),1)
     DRIVER_ION_SRCS  := driver/ion/ion.c
 endif
 
+# ── §6e-1b  dma-buf / dma-heap ─────────────────────────────────────────────────
+# 官方 librknnrt 的**每一块**缓冲区都从 /dev/dma_heap/* 分配、以 dmabuf fd
+# 流转（见 docs/npu/RK3588_NPU_DRIVER.md §2），所以 NPU=rknpu 时自动启用。
+# 它与 NPU 完全解耦，也可以单独打开做验收测试：
+#     make PLATFORM=qemu-virt-aarch64 DMA=1 kernel
+DMA ?= $(if $(filter rknpu,$(NPU)),1,0)
+DRIVER_DMA_SRCS :=
+ifeq ($(DMA),1)
+    CFLAGS           += -DDRIVER_DMA_BUF=1
+    DRIVER_DMA_SRCS  := driver/dma/dma_buf.c driver/dma/dma_heap.c
+endif
+
 # ramblk 始终构建（rootfs 的 ramblk0 块设备）；SG2002 真机另加 SD 卡块设备。
 DRIVER_BLK_SRCS := driver/blk/ramblk.c
 ifeq ($(PLATFORM),sg2002-riscv64)
@@ -607,10 +626,11 @@ DRIVER_SRCS_CFLAGS := $(DRIVER_UART_SRC) $(DRIVER_IRQ_SRC) $(DRIVER_TIMER_SRC) \
 DRIVER_SRCS_PLIC   := $(if $(filter riscv64,$(ARCH)),driver/irq/plic.c)
 DRIVER_SRCS_TPU    := $(DRIVER_TPU_SRCS)
 DRIVER_SRCS_ION    := $(DRIVER_ION_SRCS)
+DRIVER_SRCS_DMA    := $(DRIVER_DMA_SRCS)
 DRIVER_SRCS_BLK    := $(DRIVER_BLK_SRCS)
 
 DRIVER_SRCS := $(strip $(DRIVER_SRCS_CFLAGS) $(DRIVER_SRCS_PLIC) $(DRIVER_SRCS_TPU) \
-                       $(DRIVER_SRCS_ION) $(DRIVER_SRCS_BLK))
+                       $(DRIVER_SRCS_ION) $(DRIVER_SRCS_DMA) $(DRIVER_SRCS_BLK))
 DRIVER_OBJECTS := $(foreach f,$(DRIVER_SRCS),$(call _drv_obj,$(f)))
 
 CFLAGS  += -MMD -MP
@@ -857,6 +877,24 @@ endif
 RACETEST_CC      := $(ARCH)-linux-musl-gcc
 RACETEST_BIN     := $(BUILD_DIR)/racetest
 
+# dmatest：dma-buf / dma-heap（P0）的验收程序。纯 ioctl + mmap，与架构无关。
+# 只在 DMA=1 时构建/安装 —— 否则节点根本不存在，装了也是白装。
+DMATEST_CC       := $(ARCH)-linux-musl-gcc
+ifeq ($(DMA),1)
+DMATEST_BIN      := $(BUILD_DIR)/dmatest
+else
+DMATEST_BIN      :=
+endif
+
+# drmtest：DRM 渲染节点 + GEM 层（P2+P4）的验收。需要渲染节点（NPU=rknpu）
+# 和 dma-heap（DMA=1，由 NPU=rknpu 自动带上）。
+DRMTEST_CC       := $(ARCH)-linux-musl-gcc
+ifeq ($(NPU),rknpu)
+DRMTEST_BIN      := $(BUILD_DIR)/drmtest
+else
+DRMTEST_BIN      :=
+endif
+
 # vmm-run：宿主 shell 里启动/驱动 guest 的用户态 helper（对标 kvmm-run）。
 # 只给「已实现 Linux guest 启动」的架构构建与安装（与 include/vmm/vmm.h 的
 # VMM_GUEST_LINUX_SUPPORTED 保持一致）。helper 本身是纯 C + ioctl，
@@ -1033,6 +1071,7 @@ $(foreach f,$(DRIVER_SRCS_CFLAGS),$(eval $(call DRIVER_RULE,$(f),$$(CFLAGS))))
 $(foreach f,$(DRIVER_SRCS_PLIC),  $(eval $(call DRIVER_RULE,$(f),$$(CFLAGS) -Idriver)))
 $(foreach f,$(DRIVER_SRCS_TPU),   $(eval $(call DRIVER_RULE,$(f),$$(CFLAGS) -Idriver/tpu)))
 $(foreach f,$(DRIVER_SRCS_ION),   $(eval $(call DRIVER_RULE,$(f),$$(CFLAGS) -Idriver/ion -Ikernel/mm)))
+$(foreach f,$(DRIVER_SRCS_DMA),   $(eval $(call DRIVER_RULE,$(f),$$(CFLAGS) -Idriver/dma -Ikernel/mm)))
 $(foreach f,$(DRIVER_SRCS_BLK),   $(eval $(call DRIVER_RULE,$(f),$$(LWEXT4_CFLAGS) -Idriver)))
 
 $(BUILD_DIR)/exception_asm.o: $(BOOT_DIR)/aarch64/exception.S | $(BUILD_DIR)
@@ -1142,6 +1181,29 @@ $(RACETEST_BIN): apps/c/racetest.c
 $(VMM_RUN_BIN): apps/c/vmm_run.c
 	$(ARCH)-linux-musl-gcc -O2 -Wall -Wextra -static $< -o $@
 	@echo "vmm-run helper created: $@"
+
+# dmatest（仅 DMA=1 时有用例）
+ifneq ($(DMATEST_BIN),)
+$(DMATEST_BIN): apps/c/dmatest.c
+	$(DMATEST_CC) -O2 -Wall -Wextra -static $< -o $@
+	@echo "dmatest created: $@"
+dmatest: $(DMATEST_BIN)
+else
+dmatest:
+	@echo "dmatest 需要 DMA=1（见 Makefile §6e-1b）"
+	@exit 1
+endif
+
+ifneq ($(DRMTEST_BIN),)
+$(DRMTEST_BIN): apps/c/drmtest.c
+	$(DRMTEST_CC) -O2 -Wall -Wextra -static $< -o $@
+	@echo "drmtest created: $@"
+drmtest: $(DRMTEST_BIN)
+else
+drmtest:
+	@echo "drmtest 需要 NPU=rknpu（见 Makefile §6b）"
+	@exit 1
+endif
 
 # ── §11d  测试 / 库对象规则 ────────────────────────────────────────────────────
 
@@ -1307,7 +1369,7 @@ test-epoll-perf: epoll-perf kernel $(ROOTFS_IMG)
 # 创建 ext4 rootfs 镜像（无需 sudo）
 # 依赖：Host 已安装 e2fsprogs（mkfs.ext4 >= 1.43 支持 -d 选项）
 # 每次 apps 变动时自动重建；切换架构直接使用各自的镜像文件，无需 make clean
-$(ROOTFS_IMG): Makefile $(APPS_BINS) $(APPS_C_ELFS) $(LTP_BINS) $(EPOLL_PERF_BIN) $(RACETEST_BIN) $(VMM_RUN_BIN) $(NGINX_BIN) $(GUEST_LINUX_FILES) $(GUEST_GIC_STAMP) | $(BUILD_DIR)
+$(ROOTFS_IMG): Makefile $(APPS_BINS) $(APPS_C_ELFS) $(LTP_BINS) $(EPOLL_PERF_BIN) $(RACETEST_BIN) $(DMATEST_BIN) $(DRMTEST_BIN) $(VMM_RUN_BIN) $(NGINX_BIN) $(GUEST_LINUX_FILES) $(GUEST_GIC_STAMP) | $(BUILD_DIR)
 	@echo "=== Building rootfs for $(ARCH): $(ROOTFS_IMG) ==="
 	@rm -rf $(ROOTFS_STAGE)
 	@mkdir -p $(ROOTFS_STAGE)/bin
@@ -1371,6 +1433,18 @@ $(ROOTFS_IMG): Makefile $(APPS_BINS) $(APPS_C_ELFS) $(LTP_BINS) $(EPOLL_PERF_BIN
 		cp $(RACETEST_BIN) $(ROOTFS_STAGE)/bin/racetest; \
 		chmod +x $(ROOTFS_STAGE)/bin/racetest; \
 		echo "  [racetest installed → /bin/racetest]"; \
+	fi
+	@if [ -n "$(DMATEST_BIN)" ] && [ -f "$(DMATEST_BIN)" ]; then \
+		mkdir -p $(ROOTFS_STAGE)/bin; \
+		cp $(DMATEST_BIN) $(ROOTFS_STAGE)/bin/dmatest; \
+		chmod +x $(ROOTFS_STAGE)/bin/dmatest; \
+		echo "  [dmatest installed → /bin/dmatest]"; \
+	fi
+	@if [ -n "$(DRMTEST_BIN)" ] && [ -f "$(DRMTEST_BIN)" ]; then \
+		mkdir -p $(ROOTFS_STAGE)/bin; \
+		cp $(DRMTEST_BIN) $(ROOTFS_STAGE)/bin/drmtest; \
+		chmod +x $(ROOTFS_STAGE)/bin/drmtest; \
+		echo "  [drmtest installed → /bin/drmtest]"; \
 	fi
 	@# 安装 nginx（如果存在对应架构的静态 musl 构建）
 	@if [ -f "$(NGINX_BIN)" ]; then \

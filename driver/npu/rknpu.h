@@ -14,6 +14,12 @@
 
 #include "types.h"
 
+/*
+ * NPU 核数。rk3588 是 3 —— 三个核各有独立的 MMIO 窗口和中断线，
+ * 但**共享同一套 PC 侧寄存器偏移**（每个核内相对偏移都一样）。
+ */
+#define RKNPU_MAX_CORES 3
+
 /* ── 硬件基地址（与平台配置的 npu.base0/1/2 一致）──────────────────────── */
 #define RKNPU_NPU0_BASE 0xFDAB0000UL
 #define RKNPU_NPU1_BASE 0xFDAC0000UL
@@ -41,11 +47,28 @@
 #define RKNPU_PC_DMA_BASE_ADDR 0x0034 /* DMA 基址 */
 #define RKNPU_PC_TASK_STATUS   0x003C /* 任务执行状态 */
 
+/*
+ * 各计算单元的"单寄存器组指针"（S_POINTER）。提交前要写 0xe 切到第 0 组。
+ * ⚠️ vendor 驱动（rknpu-0.9.8）把 0xe 当**基址**去算偏移，参考项目
+ * testos-reflector 实测是把 0xe 写进**这两个偏移**才对的 —— 后者在
+ * RK3588 真机上跑通过 conv2d/matmul/pool 一批用例。
+ */
+#define RKNPU_CNA_S_POINTER   0x1004 /* CNA 单寄存器组指针 */
+#define RKNPU_CORE_S_POINTER  0x3004 /* CORE 单寄存器组指针 */
+#define RKNPU_S_POINTER_GROUP 0xE    /* 指向第 0 组 */
+
 /* 版本魔数 "FIRE" */
 #define RKNPU_VERSION_MAGIC 0x46495245UL
 
 /* 中断状态清除值（清除所有 17 位）*/
 #define RKNPU_INT_CLEAR_ALL 0x1FFFFU
+
+/*
+ * PC_DATA_AMOUNT 的固定附加量。算法（来自 vendor 驱动）：
+ *     amount = (regcfg_amount + EXTRA + scale - 1) / scale - 1
+ * 其中 scale = rknpu_config_t.pc_data_amount_scale = 2。
+ */
+#define RKNPU_PC_DATA_EXTRA_AMOUNT 4U
 
 /* ── 任务描述符 ──────────────────────────────────────────────────────────── */
 typedef struct __attribute__((packed)) {
@@ -83,9 +106,29 @@ typedef struct {
 void rknpu_init(void);
 
 /**
- * rknpu_validate_version - 打印并校验 NPU 版本寄存器
+ * rknpu_validate_version - 打印并校验某个核的版本寄存器
+ * @core: 核号 0..RKNPU_MAX_CORES-1
  * 返回 true 表示版本匹配（0x46495245 = "FIRE"）
  */
-bool rknpu_validate_version(void);
+bool rknpu_validate_version(int core);
+
+/* 完整定义见 rknpu_drm.h（那是用户态 ABI 头）*/
+struct rknpu_submit;
+
+/**
+ * rknpu_submit_task - 把一条作业交给 NPU0 并等它完成（阻塞）
+ *
+ * @task_base:  任务描述符数组的**内核虚拟地址**
+ * @task_bytes: 该缓冲区的大小（用来卡 task_start/task_number 越界）
+ * @s:          用户态提交参数（见 rknpu_drm.h 的 struct rknpu_submit）
+ *
+ * 返回 0 成功；负 errno 失败（-EINVAL 参数/越界，-EIO 超时或中断状态不匹配，
+ * -ENODEV 驱动未初始化）。
+ *
+ * 注意是**阻塞**的：内部按参考项目那样 1us 步进轮询完成标志，上限
+ * s->timeout 毫秒。作业在微秒级完成，正常路径几乎不占时间。
+ */
+int rknpu_submit_task(void *task_base, size_t task_bytes,
+                      const struct rknpu_submit *s);
 
 #endif /* __RKNPU_H__ */

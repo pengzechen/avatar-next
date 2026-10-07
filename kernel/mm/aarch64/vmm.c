@@ -258,12 +258,38 @@ void memory_free_page(void *page_dir, uint64_t addr)
     if (!pte || ((pte->pte & PTE_VALID) == 0) || ((pte->pte & PTE_TABLE) == 0))
         return;
 
+    /*
+     * PTE_KEEP：设备缓冲（ION / dma-buf）映射。页归**句柄**所有，不是这个
+     * 映射的 —— 所以 unmap 只拆页表项，既不释放也不碰 shared_page 计数。
+     *
+     * 少了这一条：munmap 会把 dma_buf 底下的物理页释放回 PMM，而 dma_buf
+     * 仍然指着它；随后 close(fd) → dma_heap_free() 再释放一次（双重释放），
+     * 中间那段窗口里这些页随时会被分配给别的用途 —— 对 NPU 缓冲区来说
+     * 就是"设备往别人的内存里写"。实测症状是满屏
+     * `PMM: partial free detected: requested=N, actually_freed=0`。
+     */
+    if ((pte->pte & PTE_KEEP) != 0) {
+        pte->pte = 0;
+        return;
+    }
+
     if ((pte->pte & PTE_NOFREE) == 0)
         pmm_free_pages(g_pmm, (pte->l3_page.pfn << 12), 1);
     else
         shared_page_unref(pte->l3_page.pfn << 12);
 
     pte->pte = 0;
+}
+
+/*
+ * 把某页标成 PTE_KEEP（设备缓冲）。与 memory_set_pte_nofree 同构，
+ * 区别见 include/aarch64/mmu.h 里 PTE_KEEP 的说明。
+ */
+void memory_set_pte_keep(void *page_dir, uint64_t vaddr)
+{
+    pte_t *pte = find_pte((pte_t *)page_dir, vaddr, 0);
+    if (pte)
+        pte->pte |= PTE_KEEP;
 }
 
 pte_t *create_uvm(void)
@@ -341,10 +367,19 @@ void _destroy_page_table_vm(pte_t *table, int32_t level)
             if (!((page_phys >= start && page_phys < end) ||
                   (page_phys >= DEVICE_MEM_START &&
                    page_phys < DEVICE_MEM_END))) {
-                if (!(entry->pte & PTE_NOFREE))
+                /*
+                 * ⚠️ 这里是**进程退出**销毁地址空间的路径，与 munmap 走的
+                 * memory_free_page() 是**两趟不同的遍历**。只修那一边的话，
+                 * 子进程退出时照样会把设备缓冲的页释放掉（实测：fork 用例
+                 * 里恰好冒出 1 条 partial free）。两处都要认 PTE_KEEP。
+                 */
+                if ((entry->pte & PTE_KEEP) != 0) {
+                    /* 设备缓冲：页归 dma_buf / ION 句柄所有，这里只拆表 */
+                } else if (!(entry->pte & PTE_NOFREE)) {
                     pmm_free_pages(g_pmm, page_phys, 1);
-                else
+                } else {
                     shared_page_unref(page_phys);
+                }
             }
 
             entry->pte = 0;
@@ -422,8 +457,10 @@ bool _copy_page_table(pte_t *src_table, pte_t *dst_table, int32_t level)
 
             if ((src_phys >= start && src_phys <= end) ||
                 (src_phys >= DEVICE_MEM_START && src_phys <= DEVICE_MEM_END) ||
-                (src_entry->pte & PTE_NOFREE)) {
+                (src_entry->pte & (PTE_NOFREE | PTE_KEEP))) {
                 dst_table[i].pte = src_entry->pte;
+                /* 只有 NOFREE（共享页）要加引用；KEEP（设备缓冲）页归句柄
+                 * 所有，复制一份映射不产生新的持有者。 */
                 if (src_entry->pte & PTE_NOFREE)
                     shared_page_ref(src_phys);
                 continue;

@@ -15,6 +15,9 @@
 #if DRIVER_ION
 #include "ion/ion.h"
 #endif
+#if DRIVER_DMA_BUF
+#include "dma_buf.h" /* dma_buf_put_index（fd 关闭路径）*/
+#endif
 
 /*
  * 池和 fd 表的并发保护。
@@ -108,6 +111,13 @@ void fd_obj_close(int idx)
 #if DRIVER_ION
     else if (obj->type == FDT_ION) {
         ion_free((ion_handle_t)obj->ion.handle);
+    }
+#endif
+#if DRIVER_DMA_BUF
+    else if (obj->type == FDT_DMABUF) {
+        /* fd 在 dma_buf_alloc_fd_current() 里 get 过一份引用，这里对称地还回去；
+         * 引用归零时 dma_buf_put 内部会把内存还给堆。 */
+        dma_buf_put_index(obj->dmabuf.idx);
     }
 #endif
 }
@@ -240,6 +250,45 @@ int task_get_ion_handle(task_t *task, int fd, uint32_t *handle)
     if (!obj || obj->type != FDT_ION || !handle)
         return -1;
     *handle = obj->ion.handle;
+    return 0;
+}
+
+int task_alloc_dmabuf_fd(task_t *task, uint32_t idx)
+{
+    if (!task)
+        return -1;
+
+    int pool = fd_pool_alloc();
+    if (pool < 0)
+        return -1;
+
+    fd_obj_t *obj = &g_fd_pool[pool];
+    obj->type = FDT_DMABUF;
+    obj->flags = 0;
+    obj->dmabuf.idx = idx;
+
+    const char *path = "/dev/dmabuf";
+    int k = 0;
+    while (path[k] && k < (int)sizeof(obj->path) - 1) {
+        obj->path[k] = path[k];
+        k++;
+    }
+    obj->path[k] = '\0';
+
+    int fd = task_alloc_fd(task, pool);
+    if (fd < 0) {
+        fd_pool_free(pool);
+        return -1;
+    }
+    return fd;
+}
+
+int task_get_dmabuf_idx(task_t *task, int fd, uint32_t *idx)
+{
+    fd_obj_t *obj = task_get_fd(task, fd);
+    if (!obj || obj->type != FDT_DMABUF || !idx)
+        return -1;
+    *idx = obj->dmabuf.idx;
     return 0;
 }
 

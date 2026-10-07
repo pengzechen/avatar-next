@@ -75,6 +75,39 @@
     } while (0)
 #endif
 
+/*
+ * PTE_KEEP（设备缓冲：ION / dma-buf）在 fork 时的处理。
+ *
+ * 认不出来会怎样：下面的 "共享页" 判断只看 NOFREE，KEEP 页会被当成普通
+ * 私有页**复制一份**给子进程 —— 内存是安全的（各释放各的），但语义是错的：
+ * 父子从此看着**两块不同的内存**，而 NPU 缓冲区的语义是"同一块"。
+ * 这种错误不会崩，只会让结果对不上，事后极难定位。
+ *
+ * 与 NOFREE 的关键差别：**不调 shared_page_ref**。KEEP 页归句柄所有，
+ * 父子都只是映射者，谁 unmap 都不释放（见 include/aarch64/mmu.h 的说明）。
+ */
+#if ARCH_RISCV64
+#define CLONE_CHECK_KEEP(pgd, va, out) \
+    do { \
+        uint64_t _pte = mm_vm_get_pte(pgd, va); \
+        (out) = ((_pte & RV_PTE_KEEP) != 0); \
+    } while (0)
+#elif ARCH_X86_64
+#define CLONE_CHECK_KEEP(pgd, va, out) \
+    do { \
+        uint64_t *_p = x86_walk_pt(pgd, va, false); \
+        (out) = (_p && (*_p & PTE_KEEP)); \
+    } while (0)
+#elif ARCH_AARCH64
+#define CLONE_CHECK_KEEP(pgd, va, out) \
+    do { \
+        uint64_t _raw = memory_get_pte_raw(pgd, va); \
+        (out) = ((_raw & PTE_KEEP) != 0); \
+    } while (0)
+#endif
+/* 打标这一步三个架构统一 —— mm_vm_set_pte_keep 在各自的 mm_vm.h 里 */
+#define CLONE_MARK_KEEP(pgd, va) mm_vm_set_pte_keep(pgd, va)
+
 /* 任务池（定义在 kernel/task/task.c） */
 extern task_t g_task_pool[TASK_MAX];
 extern uint8_t g_stack_used[TASK_MAX];
@@ -412,6 +445,16 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
             uint64_t src_pa = mm_vm_get_paddr(parent_pgd_virt, va); \
             if (src_pa == 0) \
                 continue; \
+            bool is_keep = false; \
+            CLONE_CHECK_KEEP(parent_pgd_virt, va, is_keep); \
+            if (is_keep) { \
+                if (mm_vm_map_pages(child_pgd_virt, va, src_pa, 1, 0) != 0) { \
+                    clone_copy_ok = false; \
+                    break; \
+                } \
+                CLONE_MARK_KEEP(child_pgd_virt, va); \
+                continue; \
+            } \
             bool is_shared = false; \
             CLONE_CHECK_SHARED(parent_pgd_virt, va, is_shared); \
             if (is_shared) { \

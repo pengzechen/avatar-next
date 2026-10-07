@@ -80,6 +80,17 @@ unsigned platform_get_uint(const char *block, const char *key);
  */
 uintptr_t platform_get_mmio(const char *block, const char *key);
 
+/*
+ * platform_mmio_needs_vma - 本平台是否要求 MMIO 经 KERNEL_VMA 访问
+ * （即 platform.conf 里的 mmio_vma）。
+ *
+ * 给**硬编码的 MMIO 地址回退值**用：那些地址同样要按这个规则换算，否则会
+ * 出现"启动阶段读得到、用户进程一跑就 translation fault"——因为 boot 页表
+ * 有恒等映射，用户进程的页表没有。rk3588 上 NPU 驱动踩过，见
+ * docs/npu/RK3588_NPU_DRIVER.md。
+ */
+bool platform_mmio_needs_vma(void);
+
 /* ── logger_* 兼容宏（与旧 driver_cfg.h 保持兼容）─────────────────────── */
 
 #include "klog.h"

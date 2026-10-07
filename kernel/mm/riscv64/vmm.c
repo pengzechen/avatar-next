@@ -120,9 +120,11 @@ static int rv_copy_pt_recursive(uint64_t *src, uint64_t *dst, int level)
             continue;
 
         if (rv_pte_is_leaf(pte)) {
-            if (pte & RV_PTE_NOFREE) {
+            /* KEEP（设备缓冲）同样原样复制，但**不加引用** —— 页归句柄所有 */
+            if (pte & (RV_PTE_NOFREE | RV_PTE_KEEP)) {
                 dst[i] = pte;
-                shared_page_ref(rv_pte_to_pa(pte));
+                if (pte & RV_PTE_NOFREE)
+                    shared_page_ref(rv_pte_to_pa(pte));
                 continue;
             }
             uint64_t src_pa = rv_pte_to_pa(pte);

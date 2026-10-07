@@ -23,6 +23,9 @@ typedef enum {
     FDT_VFS,
     FDT_ION,
     FDT_EPOLL,
+    /* dma-buf：一个 fd 就是一个缓冲区句柄，ioctl/mmap 都打在它自身上。
+     * 追加在末尾 —— 这些值是内存里的枚举，不与任何持久化格式绑定。 */
+    FDT_DMABUF,
 } fd_type_t;
 
 typedef struct {
@@ -37,6 +40,11 @@ typedef struct {
         struct {
             int16_t ep_idx;
         } epoll;
+        struct {
+            /* dma_buf 表的**下标**，不是指针 —— 表项在 put 时会清零，
+             * 存指针容易变成悬垂；存下标每次经 dma_buf_from_index 校验。 */
+            uint32_t idx;
+        } dmabuf;
     };
     fd_waitqueue_t wq;
 } fd_obj_t;
@@ -53,6 +61,9 @@ void fd_obj_attach_vfs(int idx, vfs_file_t *file);
 /* ── 任务级 fd 表操作 ─────────────────────────────────────────── */
 int task_alloc_ion_fd(task_t *task, uint32_t handle);
 int task_get_ion_handle(task_t *task, int fd, uint32_t *handle);
+/* dma-buf fd：与 ion 同构，但存的是 dma_buf 表下标 */
+int task_alloc_dmabuf_fd(task_t *task, uint32_t idx);
+int task_get_dmabuf_idx(task_t *task, int fd, uint32_t *idx);
 int task_alloc_fd(task_t *task, int pool_idx);
 int task_take_fd(task_t *task, int fd);
 fd_obj_t *task_get_fd(task_t *task, int fd);

@@ -75,6 +75,11 @@ uintptr_t platform_get_mmio(const char *block, const char *key)
     return g_mmio_needs_vma ? addr + KERNEL_VMA : addr;
 }
 
+bool platform_mmio_needs_vma(void)
+{
+    return g_mmio_needs_vma != 0;
+}
+
 void platform_conf_scan(void)
 {
     g_mem_ram_base = platform_get_uintptr("memory.ram", "base");

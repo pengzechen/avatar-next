@@ -26,6 +26,24 @@
 #define PTE_PXN    (1ULL << 53) /* Privileged Execute Never */
 #define PTE_UXN    (1ULL << 54) /* Unprivileged Execute Never */
 #define PTE_NOFREE (1ULL << 55) /* SW: shared page, don't free on unmap */
+/*
+ * PTE_KEEP —— 设备缓冲区（ION / dma-buf）映射进用户态时标这一位。
+ *
+ * 与 NOFREE 的区别（这个区别是本位存在的全部理由）：
+ *   NOFREE 意为"**这个映射**是共享页，别在这里释放，交给 shared_page 引用
+ *          计数去决定"—— 最后一个 unref 的人负责真正释放。
+ *   KEEP   意为"这一页**根本不属于这个映射**，归 dma_buf / ION 句柄所有"。
+ *           所以 unmap 只拆页表项：不释放、也不碰引用计数 —— 释放是
+ *           dma_heap_free() 的事。
+ *
+ * 用 NOFREE 顶替会错两次：shared_page 表只有 256 项（一个 1 MiB 缓冲区
+ * 就塞满），而且 shared_page_unref() 在表里找不到记录时会直接
+ * pmm_free_pages() —— 等于没保护。
+ *
+ * 位 56：ARMv8 的 4KB stage-1 描述符里 55~58 是软件保留位（Linux arm64
+ * 也是这么用的：55=DIRTY、56=SPECIAL），硬件忽略。
+ */
+#define PTE_KEEP (1ULL << 56) /* SW: 设备缓冲，unmap 只拆映射不释放页 */
 
 /* 共享性定义 */
 #define PTE_SH (0b11 << 8) /* Inner Shareable（SMP 系统） */

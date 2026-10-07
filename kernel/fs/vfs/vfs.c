@@ -172,7 +172,8 @@ static int pseudo_file_write(vfs_file_t *file, const void *buf, size_t len)
 
 static int pseudo_file_ioctl(vfs_file_t *file, uint64_t req, void *argp)
 {
-    return pseudo_ioctl(file->u.pseudo.node_id, req, argp);
+    /* 带 file —— DRM 渲染节点的 GEM handle 要按打开的文件隔离 */
+    return pseudo_ioctl_file(file, file->u.pseudo.node_id, req, argp);
 }
 
 static uint32_t pseudo_file_poll(vfs_file_t *file, int pool_idx)
@@ -183,7 +184,7 @@ static uint32_t pseudo_file_poll(vfs_file_t *file, int pool_idx)
 
 static int pseudo_file_close(vfs_file_t *file)
 {
-    return pseudo_close(file->u.pseudo.node_id);
+    return pseudo_close_file(file, file->u.pseudo.node_id);
 }
 
 static int pseudo_file_getdents(vfs_file_t *file, void *buf, size_t bufsz)

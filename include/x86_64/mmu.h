@@ -47,6 +47,12 @@
 #define PTE_SW_BIT2 (1ULL << 10) /* Available for software */
 #define PTE_SW_BIT3 (1ULL << 11) /* Available for software */
 #define PTE_NOFREE  PTE_SW_BIT1  /* Shared page: don't free on unmap */
+/*
+ * PTE_KEEP —— 设备缓冲（ION / dma-buf）映射进用户态时标这一位。
+ * unmap 只拆页表项：不释放、也不碰 shared_page 引用计数
+ * （NOFREE 与 KEEP 的区别见 include/aarch64/mmu.h 里那段说明）。
+ */
+#define PTE_KEEP PTE_SW_BIT2 /* Device buffer: unmap 不释放页 */
 
 /* NX（No eXecute）标志 - 位 63 */
 #define PTE_NX (1ULL << 63) /* Execute Disable (XD/NX) */

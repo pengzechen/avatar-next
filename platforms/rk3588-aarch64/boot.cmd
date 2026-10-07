@@ -15,3 +15,5 @@ tftp 0x10000000 rootfs-aarch64.img
 
 echo "Starting Avatar OS..."
 go 0x400000
+
+fatload mmc 1:1 0x400000 kernel_aarch64.bin;fatload mmc 1:1 0x10000000 rootfs-aarch64.img;go 0x400000

@@ -10,6 +10,9 @@
 #include "task/task.h"
 #include "klog.h"
 #include "vfs.h"
+#if DRIVER_DMA_BUF
+#include "dma_buf.h"
+#endif
 
 static bool trace_heavy_task(task_t *current)
 {
@@ -20,7 +23,21 @@ static bool trace_heavy_task(task_t *current)
 void ioctl_handler(uint64_t regs[6], task_t *current)
 {
     int ioctl_fd = (int)regs[0];
-    uint64_t request = regs[1];
+    /*
+     * ⚠️ 必须**截成 32 位**。Linux 的 `SYSCALL_DEFINE3(ioctl, ..., unsigned int,
+     *    cmd, ...)` 就是 32 位，这里照做。
+     *
+     * 不截会怎样：musl 的声明是 `int ioctl(int, int, ...)`（glibc 是
+     * `unsigned long`），于是 `0xc0406400` 这种最高位为 1 的号在用户态被当成
+     * **负数**，符号扩展到 `0xffffffffc0406400` 才进内核。内核拿它去和 32 位
+     * 的 _IOC 常量比对，永远不等 —— 症状是"所有带 'd'/'T' 这类高位 magic 的
+     * ioctl 全部走进 default 分支"，而 glibc 编的程序完全正常。
+     * 实测：drmtest（musl）报 `未实现的 DRM ioctl req=0xffffffffc0406400`。
+     *
+     * 下面那个 `(uint32_t)req` 的强转在 pseudo_ioctl 里本来就有 —— 说明这个
+     * 坑以前被踩过，只是当时只补了一条路径。
+     */
+    uint32_t request = (uint32_t)regs[1];
     void *argp = (void *)regs[2];
 
     /* 查找 fd 对象（任何 fd，包括 0/1/2） */
@@ -68,6 +85,20 @@ void ioctl_handler(uint64_t regs[6], task_t *current)
             return;
         }
     }
+
+#if DRIVER_DMA_BUF
+    /*
+     * dma-buf fd 没有 vfs_file —— 它不是一个文件，是一个缓冲区句柄，
+     * 所以走不到上面那条 VFS 分派。而 DMA_BUF_IOCTL_SYNC 恰恰是**打在这个
+     * fd 自己身上**的（librknnrt 就这么发）：少了这一条，它的每次 CPU 访问
+     * 都拿不到缓存维护，症状是模型输出随机出错。
+     */
+    if (ioctl_obj && ioctl_obj->type == FDT_DMABUF) {
+        int rc = dma_buf_fd_ioctl(ioctl_obj->dmabuf.idx, request, argp);
+        regs[0] = (rc < 0) ? (uint64_t)(int64_t)rc : 0;
+        return;
+    }
+#endif
 
     /* 非默认 UART fd 不支持全局终端 ioctl fallback。 */
     if (ioctl_obj && fd_obj_file(ioctl_obj)) {

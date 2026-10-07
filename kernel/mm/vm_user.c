@@ -35,10 +35,13 @@ static void rv_destroy_table(uint64_t *table, int level, bool free_leaf_pages)
 
         if (rv_pte_is_leaf(pte)) {
             if (free_leaf_pages) {
-                if ((pte & RV_PTE_NOFREE) == 0)
+                if ((pte & RV_PTE_KEEP) != 0) {
+                    /* 设备缓冲：页归 dma_buf/ION 句柄所有，只拆表 */
+                } else if ((pte & RV_PTE_NOFREE) == 0) {
                     pmm_free_pages(g_pmm, rv_pte_to_pa(pte), 1);
-                else
+                } else {
                     shared_page_unref(rv_pte_to_pa(pte));
+                }
             }
             table[i] = 0;
             continue;
@@ -61,10 +64,13 @@ static void x86_destroy_table(uint64_t *table, int level)
             continue;
 
         if (level == 1 || (level > 1 && (pte & PTE_HUGE))) {
-            if ((pte & PTE_NOFREE) == 0)
+            if ((pte & PTE_KEEP) != 0) {
+                /* 设备缓冲：页归 dma_buf/ION 句柄所有，只拆表 */
+            } else if ((pte & PTE_NOFREE) == 0) {
                 pmm_free_pages(g_pmm, x86_pte_to_pa(pte), 1);
-            else
+            } else {
                 shared_page_unref(x86_pte_to_pa(pte));
+            }
             table[i] = 0;
             continue;
         }
@@ -266,20 +272,26 @@ uint64_t vm_unmap_user_range(uint64_t pgd_phys, uint64_t vaddr, uint64_t size)
 #elif ARCH_RISCV64
         uint64_t *pte = rv_walk_l0_pte(pgd, va, false);
         if (pte && ((*pte & RV_PTE_V) != 0) && rv_pte_is_leaf(*pte)) {
-            if ((*pte & RV_PTE_NOFREE) == 0)
+            if ((*pte & RV_PTE_KEEP) != 0) {
+                /* 设备缓冲：页归 dma_buf/ION 句柄所有，只拆映射 */
+            } else if ((*pte & RV_PTE_NOFREE) == 0) {
                 pmm_free_pages(g_pmm, rv_pte_to_pa(*pte), 1);
-            else
+            } else {
                 shared_page_unref(rv_pte_to_pa(*pte));
+            }
             *pte = 0;
             freed++;
         }
 #elif ARCH_X86_64
         uint64_t *pte = x86_walk_pt(pgd, va, false);
         if (pte && ((*pte & PTE_PRESENT) != 0)) {
-            if ((*pte & PTE_NOFREE) == 0)
+            if ((*pte & PTE_KEEP) != 0) {
+                /* 设备缓冲：页归 dma_buf/ION 句柄所有，只拆映射 */
+            } else if ((*pte & PTE_NOFREE) == 0) {
                 pmm_free_pages(g_pmm, x86_pte_to_pa(*pte), 1);
-            else
+            } else {
                 shared_page_unref(x86_pte_to_pa(*pte));
+            }
             *pte = 0;
             flush_tlb_single(va);
             freed++;

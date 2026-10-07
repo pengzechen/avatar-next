@@ -16,6 +16,12 @@
 #include "user_layout.h"
 #include "shared_page.h"
 #include "vfs.h"
+#if DRIVER_DMA_BUF
+#include "dma_buf.h"
+#endif
+#if DRIVER_NPU_RKNPU
+#include "rknpu_drm.h"
+#endif
 
 #if DRIVER_ION
 #include "ion/ion.h"
@@ -86,6 +92,8 @@ uint64_t sys_munmap(uint64_t addr, uint64_t len)
         return (uint64_t)(int64_t)-EINVAL;
 
     uint64_t size = ALIGN_UP(len, PAGE_SIZE);
+    /* vm_unmap_user_range 的**副作用**是必须的，只是返回值目前只有下面那条
+     * 被注释掉的调试日志在用 —— 所以标 UNUSED 而不是删掉整个调用。 */
     uint64_t freed UNUSED =
         vm_unmap_user_range((uint64_t)current->pgd, addr, size);
 
@@ -123,6 +131,64 @@ uint64_t sys_munmap(uint64_t addr, uint64_t len)
 
     return 0;
 }
+
+/*
+ * ⚠️ 只在 ION 或 dma-buf 至少开一个时才有调用者（两处调用都在各自的
+ *    `#if` 里）。少了这个守卫，riscv64/x86_64 这种两个都关的平台上它会
+ *    变成 -Wunused-function —— 而本项目是零告警的，所以必须包起来。
+ */
+#if DRIVER_ION || DRIVER_DMA_BUF
+
+/*
+ * 把一段**物理连续**的缓冲区逐页映射进用户地址空间。
+ *
+ * ION 与 dma-buf 的句柄不同（一个是 ion handle，一个是 dma_buf 表下标），
+ * 但"逐页 mmap"这一段逐字节相同 —— 抽出来共用。尤其 riscv 那个 PTE_NOFREE
+ * 位：漏掉一处就会出现「能读、但页随时会被回收」的怪象，两处各写一遍迟早漏一个。
+ *
+ * 返回 0 表示映射完成；否则返回**要原样交给用户态的负 errno**。
+ * 注意 -1 与 MMAP_FAILED 是同一个值（syscall_internal.h:179），
+ * 所以调用方 `return (uint64_t)(int64_t)rc;` 对两种情况都对。
+ */
+static int map_contiguous_buf(task_t *current, void *pgd, uint64_t map_addr,
+                              uint64_t map_size, uint64_t pa, uint64_t flags,
+                              const char *tag, int fd, uint64_t handle)
+{
+    for (uint64_t page_off = 0; page_off < map_size; page_off += PAGE_SIZE) {
+        uint64_t va = map_addr + page_off;
+        uint64_t page_pa = pa + page_off;
+
+        if ((flags & MAP_FIXED) != 0 && mm_vm_get_paddr(pgd, va) != 0)
+            vm_unmap_user_range((uint64_t)current->pgd, va, PAGE_SIZE);
+        if (mm_vm_map_pages(pgd, va, page_pa, 1, 0) != 0) {
+            KLOG_WARN(
+                "[mmap] %s map failed: fd=%d handle=%llu va=0x%llx pa=0x%llx\n",
+                tag, fd, (unsigned long long)handle, (unsigned long long)va,
+                (unsigned long long)page_pa);
+            return -1;
+        }
+        /*
+         * 标成"设备缓冲"：这一页归 dma_buf / ION 的**句柄**所有，不归这个映射。
+         *
+         * 不标的话 munmap 会把它释放回 PMM，而句柄仍然指着它 —— 随后
+         * close(fd) 再释放一次（双重释放），中间那段时间这些页随时会被
+         * 分配给别的用途：对 NPU 缓冲区来说就是"设备往别人的内存里写"。
+         * 实测症状是满屏 `PMM: partial free detected: ... actually_freed=0`。
+         *
+         * 这里**不能**用 NOFREE 顶替：那是"共享页"语义，交给 shared_page
+         * 引用计数去决定何时释放，而那张表只有 256 项（1 MiB 缓冲区就塞满），
+         * 且找不到记录时会直接 pmm_free_pages —— 等于没保护。
+         * 详见 include/aarch64/mmu.h 里 PTE_KEEP 的说明。
+         */
+        mm_vm_set_pte_keep(pgd, va);
+    }
+
+    if ((flags & MAP_FIXED) == 0)
+        sync_shared_mmap_next(current, map_addr + map_size);
+    return 0;
+}
+
+#endif /* DRIVER_ION || DRIVER_DMA_BUF */
 
 uint64_t sys_mmap(uint64_t addr, uint64_t len, int prot, int flags, int fd,
                   uint64_t offset)
@@ -188,33 +254,87 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, int prot, int flags, int fd,
                 return (uint64_t)(int64_t)-EINVAL;
             }
 
-            for (uint64_t page_off = 0; page_off < map_size;
-                 page_off += PAGE_SIZE) {
-                uint64_t va = map_addr + page_off;
-                uint64_t pa = ion_pa + page_off;
+            int rc =
+                map_contiguous_buf(current, pgd, map_addr, map_size, ion_pa,
+                                   flags, "ion", fd, (uint64_t)handle);
+            if (rc != 0)
+                return (uint64_t)(int64_t)rc;
 
-                if ((flags & MAP_FIXED) != 0 && mm_vm_get_paddr(pgd, va) != 0)
-                    vm_unmap_user_range((uint64_t)current->pgd, va, PAGE_SIZE);
-                if (mm_vm_map_pages(pgd, va, pa, 1, 0) != 0) {
-                    KLOG_WARN(
-                        "[mmap] ion map failed: fd=%d handle=%u va=0x%llx pa=0x%llx\n",
-                        fd, handle, va, pa);
-                    return MMAP_FAILED;
-                }
-#if ARCH_RISCV64
-                uint64_t *pte = rv_walk_l0_pte(pgd, va, false);
-                if (pte)
-                    *pte |= RV_PTE_NOFREE;
-#endif
-            }
-
-            if ((flags & MAP_FIXED) == 0)
-                sync_shared_mmap_next(current, map_addr + map_size);
             KLOG_SYSCALL(
                 "[mmap] ion fd=%d handle=%u pa=0x%llx va=0x%llx req=0x%llx 0x%llx-0x%llx prot=0x%x flags=0x%x\n",
                 fd, handle, ion_pa, (unsigned long long)(uintptr_t)ion_va, addr,
                 map_addr, map_addr + map_size, prot, flags);
             return map_addr;
+        }
+#endif
+
+#if DRIVER_DMA_BUF
+        /*
+         * dma-buf fd：一个 fd 就是一个缓冲区句柄，句柄里存的是 dma_buf 表下标。
+         * 设备地址一律经 dma_buf_dev_addr() 取 —— 那是全系统唯一出口，
+         * 将来上 IOMMU 只改它（见 include/dma_buf.h）。
+         */
+        if (fobj && fobj->type == FDT_DMABUF) {
+            dma_buf_t *dbuf = dma_buf_from_index(fobj->dmabuf.idx);
+            if (!dbuf || offset != 0) {
+                KLOG_WARN(
+                    "[mmap] dmabuf fd=%d idx=%u invalid (offset=0x%llx)\n", fd,
+                    fobj ? fobj->dmabuf.idx : 0U, (unsigned long long)offset);
+                return MMAP_FAILED;
+            }
+            uint64_t db_size =
+                ALIGN_UP((uint64_t)dma_buf_size(dbuf), PAGE_SIZE);
+            if (map_size > db_size) {
+                KLOG_WARN(
+                    "[mmap] dmabuf fd=%d len=0x%llx exceeds size=0x%llx\n", fd,
+                    (unsigned long long)map_size, (unsigned long long)db_size);
+                return (uint64_t)(int64_t)-EINVAL;
+            }
+
+            uint64_t db_pa = dma_buf_dev_addr(dbuf);
+            int rc = map_contiguous_buf(current, pgd, map_addr, map_size, db_pa,
+                                        flags, "dmabuf", fd,
+                                        (uint64_t)fobj->dmabuf.idx);
+            if (rc != 0)
+                return (uint64_t)(int64_t)rc;
+
+            KLOG_SYSCALL(
+                "[mmap] dmabuf fd=%d idx=%u pa=0x%llx 0x%llx-0x%llx prot=0x%x flags=0x%x\n",
+                fd, fobj->dmabuf.idx, (unsigned long long)db_pa,
+                (unsigned long long)map_addr,
+                (unsigned long long)(map_addr + map_size), prot, flags);
+            return map_addr;
+        }
+#endif
+
+#if DRIVER_NPU_RKNPU
+        /*
+         * DRM 渲染节点的**假偏移**：RKNPU_MEM_MAP 回一个不透明的 offset，
+         * 用户态拿它 mmap(fd, ..., offset)。这是 DRM GEM 的老约定
+         * （offset 不是文件偏移，是驱动自定义的令牌）。
+         *
+         * 只有 offset 非 0 才走这里 —— offset 0 落回下面"不是普通文件"的
+         * 拒绝路径，语义不变。
+         */
+        if (offset != 0 && fobj && fobj->type == FDT_VFS && fd_obj_file(fobj) &&
+            fd_obj_file(fobj)->kind == VFS_FILE_PSEUDO) {
+            uint64_t dpa = 0;
+            uint64_t dsz = 0;
+            if (rknpu_drm_mmap_lookup((void *)fd_obj_file(fobj), offset, &dpa,
+                                      &dsz) == 0) {
+                if (map_size > ALIGN_UP(dsz, PAGE_SIZE)) {
+                    KLOG_WARN(
+                        "[mmap] rknpu off=0x%llx len=0x%llx exceeds size=0x%llx\n",
+                        (unsigned long long)offset,
+                        (unsigned long long)map_size, (unsigned long long)dsz);
+                    return (uint64_t)(int64_t)-EINVAL;
+                }
+                int rc = map_contiguous_buf(current, pgd, map_addr, map_size,
+                                            dpa, flags, "rknpu", fd, offset);
+                if (rc != 0)
+                    return (uint64_t)(int64_t)rc;
+                return map_addr;
+            }
         }
 #endif
 

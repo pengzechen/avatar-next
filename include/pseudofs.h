@@ -247,6 +247,16 @@ int pseudo_write(int nid, const void *buf, size_t len);
 int pseudo_ioctl(int nid, uint64_t req, void *argp);
 
 /*
+ * 「按打开的文件」版本的 ioctl / close。
+ *
+ * 只有需要 per-open 状态的节点才走这里（目前只有 DRM 渲染节点：GEM handle
+ * 按 drm_file 隔离）。file 是 vfs_file_t*（本头不 include vfs.h，故为 void*）；
+ * 节点没实现 *_file_fn 时自动退回上面的 nid 版本，行为不变。
+ */
+int pseudo_ioctl_file(void *file, int nid, uint64_t req, void *argp);
+int pseudo_close_file(void *file, int nid);
+
+/*
  * pseudo_poll: 查询节点 nid 的就绪状态，返回 EPOLL* 位掩码。
  * 未实现 poll_fn 的节点按老行为返回 EPOLLIN|EPOLLOUT（永远就绪）。
  */
