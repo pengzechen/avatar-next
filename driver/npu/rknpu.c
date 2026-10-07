@@ -44,6 +44,9 @@
 static uintptr_t g_npu_base[RKNPU_MAX_CORES];
 static int g_npu_irq[RKNPU_MAX_CORES];
 static volatile int g_irq_count[RKNPU_MAX_CORES];
+/* ISR 在**中断那一刻**读到的 task_counter（硬件完成数）—— 事后读 PC_TASK_STATUS
+ * 会得到 0，因为硬件随完成一起清了。见 rknpu_irq_common()。 */
+static volatile uint32_t g_core_done[RKNPU_MAX_CORES];
 /* platform.conf 里真正配了基址的核数（没配的核基址是 0）*/
 static int g_npu_cores = 0;
 /* 初始化完成前拒绝提交（提交会写寄存器，基址可能是 0）*/
@@ -198,6 +201,14 @@ static void rknpu_irq_common(int core)
     uint32_t fuzz = rknpu_fuzz_status(status);
 
     g_irq_count[core]++;
+    /*
+     * 把**中断那一刻**的 task_counter 存下来。
+     *
+     * 不能在提交方那边事后读 PC_TASK_STATUS —— 实测作业跑完之后它回读是
+     * **0**（硬件随完成一起清掉了），于是"完成"那行会打成 done=0/N，看着
+     * 像没干活。中断时刻的值才是这一刻硬件真实报出来的完成数。
+     */
+    g_core_done[core] = task_count;
 
     if (fuzz != g_core_expect[core]) {
         g_core_state[core] = -1;
@@ -629,12 +640,32 @@ int rknpu_submit_task(void *task_base, size_t task_bytes,
                                 ? 1U
                                 : (uint32_t)ncores;
 
-    uint32_t total_end = s->task_start + s->task_number;
     size_t max_tasks = task_bytes / sizeof(rknpu_task_t);
 
     uint32_t start[RKNPU_MAX_CORES];
     uint32_t number[RKNPU_MAX_CORES];
 
+    /*
+     * ⚠️ **不要**拿 task_start/task_number 去校验切片范围 —— 这是我之前
+     *    自己发明的规则，真机上证明是错的。
+     *
+     * 一度以为 `subcore_task[i]` 是"job 范围内的一个子区间"，于是写了
+     * "切片必须落在 [task_start, task_start+task_number)" 的校验。真机上
+     * 直接把正确的切片判成了非法，退回单核完整范围，然后作业跑一半卡死：
+     *
+     *     job 范围 = [676, 688)
+     *     subcore_task[0..4] = 672+4, 923+4, 672+4, 923+4, 998+4
+     *
+     * 注意 4+4+4 = 12 正好等于该 job 的 task_number —— **每个核的任务片被
+     * 放在任务数组里各自的区域**，并不落在 task_start 起的那个区间内。
+     * vendor 对此**不做任何校验**（rknpu_job_subcore_commit_pc 直接取值），
+     * 照抄它就对了。
+     *
+     * 唯一保留的是**缓冲区边界**检查：切片描述符是要真解引用的，用户态给个
+     * start=1000000 不能变成内核读越界。这一条是内核自己的安全底线，不是
+     * 对 librknnrt 语义的猜测。不合法就**直接失败**而不是硬凑 —— 硬凑出来
+     * 的作业会把 NPU 卡在半路，比当场报错难查得多。
+     */
     for (int i = 0; i < ncores; i++) {
         uint32_t core = (uint32_t)cores[i];
         uint32_t slice = (use_core_num == 3) ? core + 2U : core;
@@ -642,25 +673,12 @@ int rknpu_submit_task(void *task_base, size_t task_bytes,
         start[i] = s->subcore_task[slice].task_start;
         number[i] = s->subcore_task[slice].task_number;
 
-        /*
-         * 自检后再用：切片来自用户态，取值完全可能不合常理（全 0、越界）。
-         * 不检查就采信的话，失败现场会从"跑一半"变成"提交 0 个任务"，
-         * 两者都很像硬件问题，反而更难查。校验不过就退回"完整范围 + 只跑
-         * core0"并**明确报错** —— 报错本身就是我们要的数据。
-         */
-        if (number[i] == 0U || start[i] >= total_end ||
-            (uint64_t)start[i] + number[i] > total_end ||
+        if (number[i] == 0U ||
             (size_t)start[i] + number[i] > max_tasks) {
-            KLOG_ERROR("[rknpu] subcore_task[%u] 不可用 (start=%u number=%u "
-                       "范围=[%u,%u) max=%zu core_mask=0x%x) —— 退回单核完整"
-                       "范围\n",
-                       slice, start[i], number[i], s->task_start, total_end,
-                       max_tasks, s->core_mask);
-            ncores = 1;
-            cores[0] = 0;
-            start[0] = s->task_start;
-            number[0] = s->task_number;
-            break;
+            KLOG_ERROR("[rknpu] subcore_task[%u] 越界 (start=%u number=%u "
+                       "max=%zu core_mask=0x%x) —— 拒绝提交\n",
+                       slice, start[i], number[i], max_tasks, s->core_mask);
+            return -22;
         }
     }
 
@@ -672,36 +690,45 @@ int rknpu_submit_task(void *task_base, size_t task_bytes,
      */
     rknpu_task_t *tasks = (rknpu_task_t *)task_base;
 
-    /*
-     * 越界兜底：上面逐片校验过，但**退回分支**用的是 args 给的完整范围，
-     * 那一段没经过校验。描述符是真要解引用的，卡在缓冲区里是底线 ——
-     * 用户态给个 start=1000000 不能变成内核读越界。
-     */
-    for (int i = 0; i < ncores; i++) {
-        if ((size_t)start[i] + number[i] > max_tasks) {
-            KLOG_ERROR("[rknpu] submit 越界: core%d start=%u number=%u max=%zu"
-                       "\n",
-                       cores[i], start[i], number[i], max_tasks);
-            return -22;
-        }
-    }
-
     uint32_t expect[RKNPU_MAX_CORES];
     for (int i = 0; i < ncores; i++)
         expect[i] = tasks[start[i] + number[i] - 1].int_mask;
 
     /*
-     * ⚠️ 这一行必须是 DEBUG，不能是 INFO。
+     * ⚠️ 这一行落在**被计时的窗口里** —— 应用侧的 `start.elapsed()` 把整个
+     * SUBMIT 系统调用都算进去，而 UART 是最贵的一环：实测板子跑 1.5 Mbaud，
+     * 每字符约 6.7µs。真机上曾经因为多打约 770 字符让 MobileNetV1 从 2.57ms
+     * 涨到 7.10ms —— **日志本身就是 4~5ms**，比推理还慢。
      *
-     * 它落在**被计时的窗口里** —— 应用侧的 `start.elapsed()` 把整个 SUBMIT
-     * 系统调用都算进去，而 UART 输出是最贵的一环：实测板子跑 1.5 Mbaud，
-     * 每个字符约 6.7µs。真机上曾经因为加了两行 INFO（外加一次误报的
-     * ERROR 五连打，合计约 770 字符）让 MobileNetV1 的耗时从 2.57ms 涨到
-     * 7.10ms —— **日志本身就是 4~5ms**，比推理还慢。
-     *
-     * 要看就 `LOG=debug LOG_MODULES=driver`：core_mask 是判断 librknnrt
-     * 到底用几个核的唯一直接证据（实测这个 demo 给的是 0x0 = AUTO = 单核）。
+     * 所以这里只在**多核**时出声：单核（AUTO，实测 librknnrt 给的就是 0x0）
+     * 是常态，没什么可看的；多核是新路径，每次提交都值得一行。
      */
+    if (ncores > 1) {
+        KLOG_INFO("[rknpu] 多核提交 core_mask=0x%x -> %d 核:", s->core_mask,
+                  ncores);
+        for (int i = 0; i < ncores; i++)
+            kprintf(" c%d[%u+%u]", cores[i], start[i], number[i]);
+        kprintf(" use_core_num=%u\n", use_core_num);
+        /*
+         * 原始值一并打出来。切片的语义只能从 librknnrt **实际填的东西**
+         * 反推，别靠猜 —— 第一次就是猜错了方向（以为切片必定落在 job
+         * 范围内），白跑一趟真机还顺带把 core0 卡住了。
+         */
+        KLOG_MODULE_DEBUG(LOG_MODULE_DRIVER,
+                  "[rknpu]   job=[%u,%u) subcore_task: [0]=%u+%u [1]=%u+%u "
+                  "[2]=%u+%u [3]=%u+%u [4]=%u+%u\n",
+                  s->task_start, s->task_start + s->task_number,
+                  s->subcore_task[0].task_start,
+                  s->subcore_task[0].task_number,
+                  s->subcore_task[1].task_start,
+                  s->subcore_task[1].task_number,
+                  s->subcore_task[2].task_start,
+                  s->subcore_task[2].task_number,
+                  s->subcore_task[3].task_start,
+                  s->subcore_task[3].task_number,
+                  s->subcore_task[4].task_start,
+                  s->subcore_task[4].task_number);
+    }
     KLOG_MODULE_DEBUG(LOG_MODULE_DRIVER,
                       "[rknpu] submit flags=0x%x core_mask=0x%x -> %d core(s), "
                       "use_core_num=%u, core0 tasks[%u..%u] (%u 条) expect=0x%x\n",
@@ -723,6 +750,10 @@ int rknpu_submit_task(void *task_base, size_t task_bytes,
     for (int i = 0; i < ncores; i++) {
         g_core_expect[cores[i]] = expect[i];
         g_core_state[cores[i]] = 0;
+        /* 归零，让"多核完成"那行报的是**本次作业**的数字而不是上次的 ——
+         * 累计值没法证明哪个核刚刚干过活。 */
+        g_irq_count[cores[i]] = 0;
+        g_core_done[cores[i]] = 0;
     }
     for (int i = 0; i < ncores; i++)
         rknpu_job_commit(cores[i], task_base, start[i], number[i], s->flags);
@@ -745,8 +776,34 @@ int rknpu_submit_task(void *task_base, size_t task_bytes,
             if (st == 0)
                 all_done = false;
         }
-        if (all_done)
+        if (all_done) {
+            /*
+             * ── 多核取证：证明**三个核真的都在工作**，而不是我们只写了
+             *    寄存器、硬件其实只跑了一个。
+             *
+             * 两列数字都是从**每个核自己的寄存器/中断线**读来的，不是我们
+             * 写下去的回显 —— 这才是证据：
+             *
+             *   irq  : 该核**独立中断线**（142/143/144）上的中断次数，由
+             *          各自的 ISR 累加。core1/core2 的 IRQ 响了，就说明它们
+             *          各自跑完了自己的活。
+             *   done : 该核 PC_TASK_STATUS 低 12 位 = 它自己完成的任务数，
+             *          由硬件递增。
+             *
+             * 单核时这两列没什么信息量，所以只在多核时打 —— 这样常态不花
+             * UART 时间（见上面 KLOG_INFO 那段关于 6.7µs/字符的说明）。
+             */
+            if (ncores > 1) {
+                KLOG_INFO("[rknpu] 多核完成:");
+                for (int i = 0; i < ncores; i++) {
+                    int c = cores[i];
+                    kprintf(" c%d[irq=%d hw_done=%u/%u]", c, g_irq_count[c],
+                            g_core_done[c], number[i]);
+                }
+                kprintf("\n");
+            }
             return 0;
+        }
         timer_delay_us(1);
     }
 
