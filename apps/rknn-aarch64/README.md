@@ -78,3 +78,79 @@ DMA_BUF_IOCTL_SYNC       打在 dmabuf fd 上
 ```
 
 内核侧对应 `DMA=1` + `NPU=rknpu`（`NPU=rknpu` 会自动带上 `DMA=1`）。
+
+---
+
+## YOLOv8 demo（`yolo/`）
+
+`yolo/` 下是 **rknn_model_zoo** 的 YOLOv8 C++ 例子（RK3588 上跑 YOLO 的规范做法）
+交叉编译出来的产物，配合 `/bin/yolo` 使用。同样**是二进制，不入库**。
+
+### 怎么编出来的
+
+```bash
+# 1) 工具链（必须是 glibc —— librknnrt.so 是 glibc 的，musl 链不出可用的东西）
+sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu cmake
+
+# 2) 源码
+git clone --depth 1 https://github.com/airockchip/rknn_model_zoo.git
+cd rknn_model_zoo
+
+# 3) 编译。两个关掉的关键开关：
+#    -r  禁用 RGA —— 它要 /dev/rga，本内核没有，用它会在板上直接失败
+#    -j  禁用 turbojpeg —— 省一个依赖；代价是 .jpg/.jpeg 读不了（见下）
+bash ./build-linux.sh -t rk3588 -a aarch64 -d yolov8 -r -j
+# 产物 install/rk3588_linux_aarch64/rknn_yolov8_demo/rknn_yolov8_demo
+```
+
+**不用 OpenCV** —— 新版的例子用仓库自带的 `utils/`（`image_utils.c` 等）做图像 I/O。
+
+### 模型
+
+例子自带的 `download_model.sh` 下的是 **ONNX**（不是 .rknn），要用
+`rknn-toolkit2` 转：
+
+```bash
+wget -O yolov8n.onnx https://ftrg.zbox.filez.com/v2/delivery/data/\
+95f00b0fc900458ba134f8b180b3f7a1/examples/yolov8/yolov8n.onnx
+python3 convert.py yolov8n.onnx rk3588 i8 yolov8n.rknn   # 见 examples/yolov8/python/
+```
+
+`rknn-toolkit2==2.3.2` 必须和板上 `librknnrt` 的版本一致（实测 2.3.2）。
+装它有一串版本坑，都踩过了：torch 从 PyPI 下是 797 MB（捆了 CUDA），换
+`--index-url https://download.pytorch.org/whl/cpu` 省 4 倍；`scipy` 会把
+numpy 顶到 2.x 而 toolkit 要 `<=1.26.4`；**新版 setuptools（≥81）删了
+`pkg_resources`**，要钉 `<81`；**onnx ≥1.17 删了 `onnx.mapping`**，要钉 1.16.1。
+
+### ⚠️ 为什么要自带一套 glibc（`/usr/lib/rknn-yolo/`）
+
+两套运行时**需求不同**：
+
+| | 提供到 | demo 要 |
+|---|---|---|
+| `lib/`（上游运行时，`rknpu2` 用） | `GLIBC_2.30` / `GLIBCXX_3.4.28` | — |
+| YOLOv8 demo（ubuntu 交叉链编的） | — | **`GLIBC_2.34` / `GLIBCXX_3.4.29`** |
+
+老的那套**满足不了**新 demo（硬放进去是加载即失败）；把新版塞进
+`/usr/lib/rknn/` 又会动到已经真机验证过的 `rknpu2` 那条路。
+所以**各带一套、互不干扰** —— `rknpu2` 那条路一个字节都没变。
+
+板上是靠内核那句"未知 syscall 返回 `-ENOSYS`"让 glibc 2.39 的
+`clone3`/`rseq`/`futex_waitv` 回退路径生效的。
+
+### 用法
+
+```
+~ # yolo                  # 自带模型 + 自带测试图
+~ # yolo /usr/lib/rknn-yolo/yolov8n.rknn /tmp/你的图.png
+```
+
+检测结果打到 stdout（`名字 @ (x1 y1 x2 y2) 置信度`），带框的图写到
+`/tmp/yolo/out.png`。
+
+**图片格式要用 `.png` / `.bmp`** —— 例子把 `.jpg`/`.jpeg` 交给 turbojpeg
+（我们 `-j` 把它关了），其它扩展名才走内置的 stb_image。
+
+> demo 里类别名是**相对路径** `./model/coco_80_labels_list.txt`
+> （`postprocess.cc:26`），结果图也写当前目录 —— 所以 `/bin/yolo` 会在
+> `/tmp/yolo/` 下拼一个工作目录再启动，而不是直接 `cd` 到只读的安装目录。
