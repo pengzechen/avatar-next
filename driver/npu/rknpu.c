@@ -20,6 +20,7 @@
  */
 
 #include "rknpu.h"
+#include "npu/npu_mmu.h"
 #include "rkpm.h"
 #include "rknpu_drm.h" /* struct rknpu_submit（用户态 ABI） */
 
@@ -409,6 +410,11 @@ void rknpu_init(void)
      *     "作业不启动"最像的就是核心/AXI 时钟还关着。见 rknpu_dump_cru()。
      *     三个核共用一组门控，看一次就够。 */
     rknpu_dump_cru();
+
+    /* 记下 NPU IOMMU 的四组寄存器位置。**只记位置、不开翻译** ——
+     * 宿主自己驱动 NPU 时走的是物理地址，翻译必须关着；
+     * 等 guest 接管时 vnpu_init 才调 npu_mmu_enable()。*/
+    (void)npu_mmu_init();
 
     g_npu_ready = true;
     KLOG_INFO("rknpu: init done\n");

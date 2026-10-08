@@ -541,7 +541,7 @@ ifeq ($(NPU),rknpu)
         $(error NPU=rknpu 需要 DMA=1（dma-buf/dma-heap）；见 Makefile §6e-1b)
     endif
     DRIVER_NPU_SRCS := driver/npu/rknpu.c driver/npu/rkpm.c \
-                       driver/npu/rknpu_drm.c
+                       driver/npu/rknpu_drm.c driver/npu/npu_mmu.c
     CFLAGS          += -DDRIVER_NPU_RKNPU=1
 else
     DRIVER_NPU_SRCS :=

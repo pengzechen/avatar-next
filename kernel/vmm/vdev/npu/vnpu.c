@@ -30,7 +30,26 @@
  */
 #if DRIVER_NPU_RKNPU
 #include "npu/rknpu.h"
+#include "npu/npu_mmu.h" /* 宿主独占的 NPU IOMMU */
 #endif
+
+/*
+ * NPU 的 IOMMU 寄存器块 —— 落在**本透传窗口之内**，必须摘掉不能转发。
+ *
+ * vendor DTS 给的四个块（0xFDAB9000 / 0xFDABA000 / 0xFDACA000 / 0xFDADA000）
+ * 换算到本窗口的偏移就是下面这四个。RK3588 的 MMU 是 Rockchip 自研的**单级**
+ * IOMMU：一张表，谁写谁说了算 —— guest 要是够得着，它就能把任意物理地址
+ * 映射进来，宿主好不容易拿到的隔离立刻归零。
+ *
+ * 窗口内偏移：核0+0x9000、核0+0xA000、核1+0xA000、核2+0xA000。
+ */
+static inline bool vnpu_is_mmu_reg(uint64_t off)
+{
+    uint64_t page = off & ~0xFFULL;
+
+    return page == 0x9000ULL || page == 0xA000ULL || page == 0x1A000ULL ||
+           page == 0x2A000ULL;
+}
 
 /* 宿主侧 NPU 寄存器基址（platform_get_mmio 的返回值，已含 KERNEL_VMA）。
  * 只在 vnpu_init 里写一次；= 0 表示本平台没有 NPU。 */
@@ -98,6 +117,20 @@ static inline bool vnpu_key_off(uint64_t off)
     return off == 0x08 || off == 0x10 || off == 0x14 || off == 0x34;
 }
 
+/* guest 碰 MMU 寄存器 —— 只报一次，然后静默忽略（不是致命错，但它意味着
+ * guest 的 DTB 里写了 iommus，而我们是按"guest 没有 IOMMU"设计的）*/
+static void vnpu_mmu_touched(const char *what, uint64_t off)
+{
+    static bool once;
+
+    if (!once) {
+        once = true;
+        KLOG_ERROR("[vnpu] ⚠ guest %s NPU 的 MMU 寄存器 (offset=0x%llx) —— "
+                   "已忽略。宿主要独占它，见 include/npu/npu_mmu.h\n",
+                   what, (unsigned long long)off);
+    }
+}
+
 static inline volatile void *vnpu_reg(uint64_t offset)
 {
     return (volatile void *)(g_vnpu_host_base + offset);
@@ -109,6 +142,11 @@ static uint64_t vnpu_read(mmio_device_t *dev, uint64_t offset, uint8_t size)
 
     if (offset + size > VNPU_SIZE)
         return 0;
+
+    if (vnpu_is_mmu_reg(offset)) {
+        vnpu_mmu_touched("读", offset);
+        return 0;
+    }
 
     if (++g_vnpu_accesses == 1) {
         KLOG_INFO("[vnpu] guest 首次访问 NPU 寄存器 (offset=0x%llx size=%u) "
@@ -137,6 +175,21 @@ static void vnpu_write(mmio_device_t *dev, uint64_t offset, uint8_t size,
 
     if (offset + size > VNPU_SIZE)
         return;
+
+    if (vnpu_is_mmu_reg(offset)) {
+        vnpu_mmu_touched("写", offset);
+        return;
+    }
+
+    /*
+     * 提交点：guest 写 PC_OP_EN(0x08) = 1，NPU 马上要开始 DMA。
+     * 在这之前把 stage-2 的映射镜像进 NPU 的 IOMMU 表 —— 这是"NPU 能看到的
+     * 内存"的唯一权威来源，也是窗口外缓冲不再出错的原因。
+     */
+#if DRIVER_NPU_RKNPU
+    if (offset == RKNPU_PC_OP_EN && (value & 1U) && dev->priv)
+        (void)npu_mmu_sync((vm_t *)dev->priv);
+#endif
 
     if (++g_vnpu_accesses == 1) {
         KLOG_INFO("[vnpu] guest 首次访问 NPU 寄存器 (offset=0x%llx size=%u) "
@@ -297,7 +350,8 @@ int vnpu_init(vm_t *vm, mmio_bus_t *bus, uintptr_t host_base)
      * （先 dev.ops = ... 再 register），照它来。
      */
     vm->vnpu_dev.ops = &g_vnpu_ops;
-    vm->vnpu_dev.priv = NULL;
+    /* sync 要查这个 VM 的 stage-2，而 vnpu_write 只拿得到 dev */
+    vm->vnpu_dev.priv = vm;
     g_vnpu_host_base = host_base;
 
     if (mmio_bus_register(bus, &vm->vnpu_dev) != 0) {
@@ -316,6 +370,12 @@ int vnpu_init(vm_t *vm, mmio_bus_t *bus, uintptr_t host_base)
      */
 #if DRIVER_NPU_RKNPU
     rknpu_host_release();
+    /*
+     * 把 NPU 的地址翻译接管过来：guest 交给 NPU 的是 IPA，由宿主的表
+     * 翻到真实物理页 —— 这样它给什么缓冲都行，不再受恒等窗口限制。
+     */
+    if (npu_mmu_init() == 0)
+        (void)npu_mmu_enable(vm->cfg.mem_base, vm->cfg.mem_size);
 #endif
     g_vnpu_owned = true;
     g_vnpu_owner_vmid = vm->vmid;
@@ -336,6 +396,8 @@ void vnpu_destroy(vm_t *vm)
     /* 交还给宿主 —— 这样停掉 VM 之后还能再起一个（vmm_helper_regress.sh
      * 的 --restart 正是走这条路），宿主自己也能接着跑 NPU 作业。*/
 #if DRIVER_NPU_RKNPU
+    /* ⚠️ 关翻译在前：宿主 reclaim 之后自己驱动 NPU 用的是物理地址 */
+    npu_mmu_disable();
     rknpu_host_reclaim();
 #endif
 }
