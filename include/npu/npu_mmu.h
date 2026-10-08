@@ -161,6 +161,9 @@ void npu_mmu_clear_fault(void);
 /* 诊断：翻译开了没有 / 表里填了多少项 */
 void npu_mmu_dump(void);
 
+/* 有没有哪一组 bank 正处于缺页。调用方用它决定要不要打诊断。 */
+bool npu_mmu_any_fault(void);
+
 /* 诊断：拿一个具体 IPA 对账 —— 我的表 vs stage-2 各翻到哪个物理页 */
 void npu_mmu_probe(struct vm *vm, uint64_t ipa);
 

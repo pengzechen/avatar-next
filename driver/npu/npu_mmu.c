@@ -485,6 +485,18 @@ void npu_mmu_clear_fault(void)
     mmu_cmd_all(NPU_MMU_CMD_DISABLE_STALL);
 }
 
+bool npu_mmu_any_fault(void)
+{
+    if (!g_mmu_ready)
+        return false;
+
+    for (int i = 0; i < NPU_MMU_BANKS; i++) {
+        if (mmu_read(i, NPU_MMU_STATUS) & NPU_MMU_STATUS_PAGE_FAULT_ACTIVE)
+            return true;
+    }
+    return false;
+}
+
 void npu_mmu_dump(void)
 {
     if (!g_mmu_ready) {

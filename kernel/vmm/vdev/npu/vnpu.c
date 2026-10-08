@@ -217,8 +217,21 @@ static void vnpu_write(mmio_device_t *dev, uint64_t offset, uint8_t size,
     if (g_vnpu_pending_probe == 2) {
         g_vnpu_pending_probe = 0;
         if (dev->priv) {
-            npu_mmu_probe((vm_t *)dev->priv, g_vnpu_last_desc);
-            npu_mmu_dump();
+            /*
+             * ⚠️ **只在出问题时打**。
+             *
+             * 探针一开始每次都打，是为了验"我建的表对不对" —— 那个问题已经
+             * 有答案了（真机上跑出了 100 多行"两者一致 ✓"、零缺页）。
+             * 再每次都打，就是每提交一次刷上百行，把后面真正有用的东西
+             * 淹没掉。
+             *
+             * 判据：**任何一组 bank 缺页**。没有缺页就不打 —— 缺页才是
+             * "NPU 读不到它要的东西"的唯一直接证据。
+             */
+            if (npu_mmu_any_fault()) {
+                npu_mmu_probe((vm_t *)dev->priv, g_vnpu_last_desc);
+                npu_mmu_dump();
+            }
         }
     }
 #endif
