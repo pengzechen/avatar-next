@@ -345,6 +345,50 @@ int npu_mmu_sync(vm_t *vm)
     return added;
 }
 
+/*
+ * npu_mmu_probe — 拿一个具体地址对账：**我的表**翻到哪 vs **stage-2** 翻到哪。
+ *
+ * 为什么需要它：池那块内存本来就是恒等映射的（PA == IPA），所以 NPU 的表里
+ * 那条翻译**应当和 stage-2 一模一样**，开 MMU 对 regcmd 应当是个 no-op。
+ * 真机上开了之后反而从"能跑"（0xc0000151）掉回"什么都没干"（0xc0000000）——
+ * 说明这条翻译**不是恒等的**，我表里那个地址翻到别处去了。
+ *
+ *   stage2 与 PTE 指向同一个页  → 表是对的，NPU 的访问没走这个 MMU
+ *   两者不同                    → 表错了，对着两个 PA 就能定位是哪一步
+ */
+void npu_mmu_probe(vm_t *vm, uint64_t ipa)
+{
+    uint64_t s2pa = 0;
+    uint32_t di, pi, dte, pte;
+
+    if (!g_mmu_ready || !vm || !g_mmu_ipa_end)
+        return;
+    if (ipa < g_mmu_ipa_base || ipa >= g_mmu_ipa_end) {
+        KLOG_WARN("npu_mmu: 探针 ipa=0x%llx 落在表区间外 [0x%llx, 0x%llx)\n",
+                  (unsigned long long)ipa,
+                  (unsigned long long)g_mmu_ipa_base,
+                  (unsigned long long)g_mmu_ipa_end);
+        return;
+    }
+
+    int hit = stage2_lookup(&vm->s2, ipa, &s2pa);
+    di = (uint32_t)(ipa >> 22);
+    pi = (uint32_t)((ipa >> 12) & 0x3FF);
+    dte = g_mmu_dir[di];
+    pte = g_mmu_pt[di].pt ? g_mmu_pt[di].pt[pi] : 0;
+
+    KLOG_INFO("npu_mmu 探针: ipa=0x%llx\n", (unsigned long long)ipa);
+    KLOG_INFO("npu_mmu   stage-2: %s pa=0x%llx\n", hit ? "命中" : "**未映射**",
+              (unsigned long long)s2pa);
+    KLOG_INFO("npu_mmu   我的表: DTE[%u]=0x%08x  PTE[%u]=0x%08x  -> pa=0x%llx%s\n",
+              di, dte, pi, pte, (unsigned long long)(pte & 0xFFFFF000ULL),
+              (pte & 1U) ? "" : "  **无效项**");
+    KLOG_INFO("npu_mmu   结论: %s\n",
+              (pte & 1U) && (pte & 0xFFFFF000ULL) == (s2pa & 0xFFFFF000ULL)
+                  ? "两者一致 ✓ 表是对的 —— 那 NPU 的访问就没走这个 MMU"
+                  : "**两者不一致** —— 表错了");
+}
+
 void npu_mmu_dump(void)
 {
     if (!g_mmu_ready) {

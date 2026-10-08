@@ -152,5 +152,8 @@ int npu_mmu_sync(struct vm *vm);
 /* 诊断：翻译开了没有 / 表里填了多少项 */
 void npu_mmu_dump(void);
 
+/* 诊断：拿一个具体 IPA 对账 —— 我的表 vs stage-2 各翻到哪个物理页 */
+void npu_mmu_probe(struct vm *vm, uint64_t ipa);
+
 #endif /* ARCH_AARCH64 */
 #endif /* NPU_MMU_H */

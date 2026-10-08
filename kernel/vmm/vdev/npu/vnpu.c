@@ -216,6 +216,9 @@ static void vnpu_write(mmio_device_t *dev, uint64_t offset, uint8_t size,
         uint64_t base = GUEST_LINUX_NPU_DMA_GPA;
         uint64_t lim = base + GUEST_LINUX_NPU_DMA_SIZE;
 
+        /* 拿 guest 刚写下的那个描述符地址，对一次账 */
+        npu_mmu_probe((vm_t *)dev->priv, value);
+
         if (value < base || value >= lim) {
             KLOG_ERROR("[vnpu] ⚠ guest 把描述符地址写在 0x%llx，"
                        "不在 NPU 恒等窗口 [0x%llx, 0x%llx) 里 —— "
