@@ -441,6 +441,18 @@ void npu_mmu_clear_fault(void)
      */
     mmu_cmd_all(NPU_MMU_CMD_ZAP_CACHE);
     mmu_cmd_all(NPU_MMU_CMD_PAGE_FAULT_DONE);
+
+    /*
+     * ⚠️ 还要**解除 stall**：缺页会把 MMU 置于 stall，而分页在 stall 期间
+     *    是停着的。mainline 的 DISABLE_STALL 注释就是 "Stop stall re-enables
+     *    paging" —— 清了故障不解除 stall，分页仍然不动。
+     *
+     *    真机实测的两个现象合起来指向这里：把清故障修对之后，缺页地址**动了**
+     *    （0x79711540 → 0x79711840），说明 MMU 确实往前走了；但新地址仍然缺页，
+     *    而它和旧地址**在同一个 4 KiB 页里**，那一页探针刚确认映射正确。
+     *    → 缺的不是翻译，是"它还在 stall 里没恢复"。
+     */
+    mmu_cmd_all(NPU_MMU_CMD_DISABLE_STALL);
 }
 
 void npu_mmu_dump(void)
