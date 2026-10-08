@@ -287,6 +287,7 @@ int npu_mmu_sync(vm_t *vm)
 {
     int added = 0;
     int alloced = 0;
+    int mapped = 0; /* 为 NPU 补进 stage-2 的页数 */
 
     if (!g_mmu_ready || !g_mmu_ipa_end || !vm)
         return 0;
@@ -303,8 +304,31 @@ int npu_mmu_sync(vm_t *vm)
          *    0xc0000000）。而日志里只是**少了一行**，从别处完全看不出来。
          *    el2_run.c 那边不看返回值、只查 pa，所以没暴露过这个问题。
          */
-        if (!stage2_lookup(&vm->s2, ipa, &pa) || pa == 0)
-            continue; /* 这个页 guest 还没映射过，NPU 也不该能访问 */
+        /*
+         * NPU 要读的页，guest 的 CPU **未必碰过**：没写过的输出缓冲、
+         * 由 DMA 填进去的权重，都是驱动分配完就直接交给硬件的。
+         *
+         * 这种页在 stage-2 里还没有映射。MMU 关着时这不成问题 —— NPU 按
+         * 物理地址硬读，读到垃圾但访问"成功"，作业照跑（这也是为什么
+         * 之前 raw status 是 0xc0000151）。开了 MMU 之后同样的访问变成
+         * **硬缺页**，作业当场挂（0xc0000000）。真机实测抓到了：
+         *
+         *     bank1 STATUS=0x0000018b  翻译开 **缺页**(读)
+         *
+         * 所以这里给它补上。⚠️ **补进 stage-2，不是补进我这张表** ——
+         * stage-2 是唯一的真值：我这张表要是自己分配页，guest 之后自己
+         * 缺页时会拿到**另一个**页，两边永久不一致，而且两边都不报错。
+         */
+        if (!stage2_lookup(&vm->s2, ipa, &pa) || pa == 0) {
+            (void)stage2_map_page(&vm->s2, ipa, 1 /* 清零：NPU 读之前不该有内容 */);
+
+            /* 重新查一次拿 PA —— 不看 stage2_map_page 的返回值，
+             * 它的约定和上面 stage2_lookup 那个坑是同一类。*/
+            pa = 0;
+            if (!stage2_lookup(&vm->s2, ipa, &pa) || pa == 0)
+                continue; /* 补不上（PMM 不够），这一页只能让 NPU 缺页 */
+            mapped++;
+        }
 
         int had = (g_mmu_pt[ipa >> 22].pt != NULL);
         idx = pt_for(ipa, 1);
@@ -336,8 +360,9 @@ int npu_mmu_sync(vm_t *vm)
      */
     if (g_mmu_sync_logs < 2) {
         g_mmu_sync_logs++;
-        KLOG_INFO("npu_mmu: 同步 +%d 页（新表 %d 张），本次扫描 %llu 页\n",
-                  added, alloced,
+        KLOG_INFO("npu_mmu: 同步 +%d 页（新表 %d 张，为 NPU 补映射 %d 页），"
+                  "本次扫描 %llu 页\n",
+                  added, alloced, mapped,
                   (unsigned long long)((g_mmu_ipa_end - g_mmu_ipa_base) >> 12));
     } else if (added || alloced) {
         KLOG_INFO("npu_mmu: 同步 +%d 页（新表 %d 张）\n", added, alloced);
