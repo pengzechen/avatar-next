@@ -70,6 +70,7 @@ static npu_pt_t g_mmu_pt[NPU_MMU_DIR_ENTRIES];
 static uint64_t g_mmu_ipa_base;
 static uint64_t g_mmu_ipa_end;
 static int g_mmu_dirty; /* 有改动、还没发 ZAP_CACHE */
+static int g_mmu_sync_logs;
 
 static inline volatile void *bank_reg(int bank, uint32_t off)
 {
@@ -258,7 +259,15 @@ int npu_mmu_sync(vm_t *vm)
         uint64_t pa = 0;
         int idx;
 
-        if (stage2_lookup(&vm->s2, ipa, &pa) != 0 || pa == 0)
+        /*
+         * ⚠️ stage2_lookup **命中返回 1**、未映射返回 0（见它的声明）——
+         *    不是"0 表示成功"。我按后者写过一版，结果把所有**已映射**的页
+         *    全跳过了，表一个项都没填，NPU 连 regcmd 都读不到
+         *    （raw status 从"跑完了"的 0xc0000151 掉回"什么都没干"的
+         *    0xc0000000）。而日志里只是**少了一行**，从别处完全看不出来。
+         *    el2_run.c 那边不看返回值、只查 pa，所以没暴露过这个问题。
+         */
+        if (!stage2_lookup(&vm->s2, ipa, &pa) || pa == 0)
             continue; /* 这个页 guest 还没映射过，NPU 也不该能访问 */
 
         int had = (g_mmu_pt[ipa >> 22].pt != NULL);
@@ -283,10 +292,20 @@ int npu_mmu_sync(vm_t *vm)
         g_mmu_dirty = 0;
     }
 
-    if (added || alloced)
-        KLOG_INFO("npu_mmu: 同步 +%d 页（新表 %d 张）—— 现在 NPU 能看到 guest "
-                  "RAM 里所有已映射的页\n",
-                  added, alloced);
+    /*
+     * **每次都报**（前两次），而不是"有变化才报"。
+     *
+     * 上面那个反向判断的 bug，症状就是"日志里少一行" —— 而"少一行"和
+     * "还没跑到"在日志上长得一模一样。把计数打出来，0 就是 0。
+     */
+    if (g_mmu_sync_logs < 2) {
+        g_mmu_sync_logs++;
+        KLOG_INFO("npu_mmu: 同步 +%d 页（新表 %d 张），本次扫描 %llu 页\n",
+                  added, alloced,
+                  (unsigned long long)((g_mmu_ipa_end - g_mmu_ipa_base) >> 12));
+    } else if (added || alloced) {
+        KLOG_INFO("npu_mmu: 同步 +%d 页（新表 %d 张）\n", added, alloced);
+    }
     return added;
 }
 
