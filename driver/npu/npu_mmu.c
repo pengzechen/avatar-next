@@ -423,10 +423,24 @@ void npu_mmu_clear_fault(void)
     if (!g_mmu_ready)
         return;
 
-    for (int i = 0; i < NPU_MMU_BANKS; i++) {
-        if (mmu_read(i, NPU_MMU_STATUS) & NPU_MMU_STATUS_PAGE_FAULT_ACTIVE)
-            mmu_write(i, NPU_MMU_COMMAND, NPU_MMU_CMD_PAGE_FAULT_DONE);
-    }
+    /*
+     * ⚠️ **顺序不能反：先冲 IOTLB，再清故障。**
+     *
+     * mainline 在缺页中断里就是这两行、这个顺序（rockchip-iommu.c:655-656），
+     * 上面那句注释写得很直白：
+     *     "we always zap cache and clear the page fault anyway"
+     *
+     * 因为 IOTLB 里**缓存着那次失败的翻译**。只清故障状态的话，那条失败的
+     * 表项还在，MMU 立刻照着它重新报同一个缺页 —— 表里明明已经补好了也没用。
+     *
+     * 真机实测就是这个症状：缺页地址**始终是同一个** 0x79711540，
+     * 而我的表里那条翻译是对的（PTE=0x79711007 -> pa=0x79711000，
+     * 和 stage-2 一致）。清一次、冲一次，它才肯重新查表。
+     *
+     * 我第一版只写了 PAGE_FAULT_DONE，而且放在同步**之前** —— 顺序正好颠倒。
+     */
+    mmu_cmd_all(NPU_MMU_CMD_ZAP_CACHE);
+    mmu_cmd_all(NPU_MMU_CMD_PAGE_FAULT_DONE);
 }
 
 void npu_mmu_dump(void)
