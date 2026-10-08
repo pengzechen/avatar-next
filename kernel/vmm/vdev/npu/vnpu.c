@@ -110,6 +110,9 @@ static int g_vnpu_nwrote;
 static int g_vnpu_nkey;
 #if DRIVER_NPU_RKNPU
 static int g_vnpu_dumped; /* regcmd 只 dump 一次（只用在上面的 #if 块里）*/
+/* 0=无 1=已提交待探 2=待在下一次寄存器访问时 dump */
+static int g_vnpu_pending_probe;
+static uint64_t g_vnpu_last_desc; /* guest 最后写进 PC_DATA_ADDR 的真地址 */
 #endif
 
 static inline bool vnpu_key_off(uint64_t off)
@@ -187,8 +190,37 @@ static void vnpu_write(mmio_device_t *dev, uint64_t offset, uint8_t size,
      * 内存"的唯一权威来源，也是窗口外缓冲不再出错的原因。
      */
 #if DRIVER_NPU_RKNPU
-    if (offset == RKNPU_PC_OP_EN && (value & 1U) && dev->priv)
-        (void)npu_mmu_sync((vm_t *)dev->priv);
+    if (offset == RKNPU_PC_OP_EN && dev->priv) {
+        vm_t *vm = (vm_t *)dev->priv;
+
+        if (value & 1U) {
+            (void)npu_mmu_sync(vm);
+            /* 表填完了才对账 —— 探针放在 PC_DATA_ADDR 那一步会看到一张
+             * 还没填的空表（真机上就是这么误报了一次"表错了"）。
+             * PC_DATA_ADDR 的值此刻还在 —— 它就在下面那行 key trace 里。*/
+            g_vnpu_pending_probe = 1;
+        } else if (g_vnpu_pending_probe) {
+            /* 提交完成，记下这次要探的地址（下一次 NPU 寄存器访问时打） */
+            g_vnpu_pending_probe = 2;
+        }
+    }
+
+    /*
+     * 作业失败后的第一次 NPU 寄存器访问 —— 通常是驱动超时后做的
+     * `RKNPU: soft reset`。作业期间 guest 一个寄存器都不写，所以这个
+     * 触发点很干净。
+     *
+     * 这时候 dump 才看得到**失败时刻**的 MMU 状态，尤其是
+     * PAGE_FAULT_ADDR —— 它会直接给出翻译不过去的那个 IPA。
+     * 之前那次 dump 是在 enable 时打的（作业还没开始），页错误位必然是空的。
+     */
+    if (g_vnpu_pending_probe == 2) {
+        g_vnpu_pending_probe = 0;
+        if (dev->priv) {
+            npu_mmu_probe((vm_t *)dev->priv, g_vnpu_last_desc);
+            npu_mmu_dump();
+        }
+    }
 #endif
 
     if (++g_vnpu_accesses == 1) {
@@ -211,13 +243,14 @@ static void vnpu_write(mmio_device_t *dev, uint64_t offset, uint8_t size,
      * guest 侧驱动只管写下去，NPU 那边只是跑不出结果。
      */
 #if DRIVER_NPU_RKNPU
+    if (offset == RKNPU_PC_DATA_ADDR && value > 1) {
+        g_vnpu_last_desc = value;
+    }
+
     if (offset == RKNPU_PC_DATA_ADDR && value > 1 &&
         GUEST_LINUX_NPU_DMA_SIZE != 0) {
         uint64_t base = GUEST_LINUX_NPU_DMA_GPA;
         uint64_t lim = base + GUEST_LINUX_NPU_DMA_SIZE;
-
-        /* 拿 guest 刚写下的那个描述符地址，对一次账 */
-        npu_mmu_probe((vm_t *)dev->priv, value);
 
         if (value < base || value >= lim) {
             KLOG_ERROR("[vnpu] ⚠ guest 把描述符地址写在 0x%llx，"
