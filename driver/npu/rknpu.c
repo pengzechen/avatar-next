@@ -9,7 +9,8 @@
  *   4. 向 GICv3 注册 NPU0 IRQ 处理程序并使能中断
  *
  * 中断处理：
- *   读 INT_STATUS → 解析任务计数 → 清 INT_CLEAR
+ *   读本核 INT_STATUS → 与期望的 fuzz 掩码比对 → 记下 PC_TASK_STATUS 的完成数
+ *   → 清本核 INT_CLEAR。三个核各有独立中断线（142/143/144）。
  *
  * 框架集成：
  *   - 通过 platform_get_mmio("npu", "base0") 获取 MMIO 基地址
@@ -44,13 +45,30 @@
 static uintptr_t g_npu_base[RKNPU_MAX_CORES];
 static int g_npu_irq[RKNPU_MAX_CORES];
 static volatile int g_irq_count[RKNPU_MAX_CORES];
-/* ISR 在**中断那一刻**读到的 task_counter（硬件完成数）—— 事后读 PC_TASK_STATUS
- * 会得到 0，因为硬件随完成一起清了。见 rknpu_irq_common()。 */
-static volatile uint32_t g_core_done[RKNPU_MAX_CORES];
+/*
+ * ISR 在**中断那一刻**读到的本核 INT_STATUS 原值。
+ *
+ * 为什么不报"这个核跑了几个任务"：**这个数拿不到**。实测两条路都不通 ——
+ *   - PC_TASK_STATUS(0x3C)：作业**完成时被硬件清零**，中断时刻读必然是 0
+ *     （它只在作业跑到一半时有意义，比如卡死那次读到的 completed=44）；
+ *   - INT_STATUS(0x28) 的低 12 位**不是计数**，是状态位（实测 1024/2048 =
+ *     0x400/0x800），我一度把它当计数器用，打出过"2 个任务完成 1024 个"。
+ *
+ * 所以报**真的读得到的东西**：本核 INT_STATUS 的原值 + 它是否匹配期望掩码。
+ * 见 rknpu_irq_common() 里的比对。
+ */
+static volatile uint32_t g_core_status[RKNPU_MAX_CORES];
+/*
+ * "本核第一次收到中断"标志 —— 一次启动只报一次，3 行，用来**直接看到**
+ * 三个核各自的中断线都响了。不能直接用 KLOG_*_ONCE：那是按调用点去重的，
+ * 而这里三个核走的是同一个函数，用 ONCE 只会报第一个核。
+ */
+static bool g_irq_seen[RKNPU_MAX_CORES];
 /* platform.conf 里真正配了基址的核数（没配的核基址是 0）*/
 static int g_npu_cores = 0;
 /* 初始化完成前拒绝提交（提交会写寄存器，基址可能是 0）*/
 static bool g_npu_ready = false;
+static bool g_rknpu_regcmd_dumped; /* 见 rknpu_job_commit 里的说明 */
 
 /* ── RK3588 NPU 配置 ─────────────────────────────────────────────────────── */
 static const rknpu_config_t rk3588_cfg = {
@@ -140,12 +158,17 @@ static inline void npu_write(int core, uint32_t val, uint32_t off)
  * rknpu_fuzz_status —— 把状态**按 2 位一组取饱和**：每对位里只要有一个非零，
  * 就把这对位整体置满，其余位丢掉。
  *
- * 为什么需要它：中断状态里混着任务计数（低 12 位会随已完成的 task 数变化），
- * 而我们要比的是"哪些块报了中断"。直接拿 status 去比 int_mask 会因为计数
- * 不同而永远不等 —— 症状是"作业明显跑完了，却报 invalid irq status"，
- * 而日志完全不指向真因。
+ * 为什么需要它：我们比的是"哪些块报了中断"，不是状态的原始位。低 12 位里
+ * 含有会随作业进度变化的部分，直接拿 status 去比 int_mask 会永远不等 ——
+ * 症状是"作业明显跑完了，却报 invalid irq status"，日志完全不指向真因。
+ * 按 2 位一组取饱和就等于只看"这一组有没有报"，把变化的部分吸收掉。
  *
  * 与参考项目 testos-reflector/src/npu/rknpu.c 的实现逐行一致（真机验证过）。
+ *
+ * ⚠️ 参考项目注释里说低 12 位是"任务计数" —— **这个说法在本内核上没有验证过**，
+ *    而且和实测矛盾：INT_MASK 只放行 bit8/9，若 status 真带 bit10/11，fuzz 会
+ *    变成 0xF00、与 expect=0x300 不等而报错，但真机上从不报错。所以别把低 12 位
+ *    当计数器用（要用完成数请读 PC_TASK_STATUS = 0x3C）。
  */
 static inline uint32_t rknpu_fuzz_status(uint32_t status)
 {
@@ -197,18 +220,30 @@ static spinlock_t g_job_lock = SPINLOCK_INIT;
 static void rknpu_irq_common(int core)
 {
     uint32_t status = npu_read(core, RKNPU_INT_STATUS);
-    uint32_t task_count = status & rk3588_cfg.pc_task_number_mask;
+    /* ⚠️ INT_STATUS 的低 12 位是**状态位**，不是完成计数 —— 别当计数器用。
+     *    （想拿完成数得读 PC_TASK_STATUS=0x3C，但它作业一完成就被硬件清零，
+     *    只有作业卡住时才有值。详见 g_core_status 的说明。） */
+    uint32_t int_lo12 = status & rk3588_cfg.pc_task_number_mask;
     uint32_t fuzz = rknpu_fuzz_status(status);
 
     g_irq_count[core]++;
+    /* 存本核 INT_STATUS 原值 —— 这是"这个核报了中断"的直接证据。
+     * 不报任务完成数：那个数在作业完成后读不到，理由见 g_core_status 的说明。 */
+    g_core_status[core] = status;
+
     /*
-     * 把**中断那一刻**的 task_counter 存下来。
+     * 每个核**第一次**收到中断时报一行（一次启动共 3 行）。
      *
-     * 不能在提交方那边事后读 PC_TASK_STATUS —— 实测作业跑完之后它回读是
-     * **0**（硬件随完成一起清掉了），于是"完成"那行会打成 done=0/N，看着
-     * 像没干活。中断时刻的值才是这一刻硬件真实报出来的完成数。
+     * 这是"三个核都在工作"最直白的证据：中断号是**那个核专属的 GIC SPI**
+     * （142/143/144），跑的是**它自己的 handler**，status 是**从它自己的
+     * INT_STATUS 读的**。core1/core2 这两行出现，就说明它们各自跑完了活、
+     * 拉起了自己的中断线 —— 而不是"我们写了寄存器、硬件其实没动"。
      */
-    g_core_done[core] = task_count;
+    if (!g_irq_seen[core]) {
+        g_irq_seen[core] = true;
+        KLOG_INFO("[rknpu] core%d 首次收到中断: IRQ %d, status=0x%x\n", core,
+                  g_npu_irq[core], status);
+    }
 
     if (fuzz != g_core_expect[core]) {
         g_core_state[core] = -1;
@@ -217,13 +252,15 @@ static void rknpu_irq_common(int core)
                    "expect=0x%x)\n",
                    core, status, fuzz, g_core_expect[core]);
         KLOG_ERROR("[rknpu]   core%d raw=0x%x task_counter=%u\n", core,
-                   npu_read(core, RKNPU_INT_RAW_STATUS), task_count);
+                   npu_read(core, RKNPU_INT_RAW_STATUS),
+                   npu_read(core, RKNPU_PC_TASK_STATUS) &
+                       rk3588_cfg.pc_task_number_mask);
     } else {
         g_core_state[core] = 1;
         KLOG_MODULE_DEBUG_SAMPLE(LOG_MODULE_DRIVER,
                                  "rknpu: core%d IRQ #%d status=0x%x "
-                                 "task_count=%u\n",
-                                 core, g_irq_count[core], status, task_count);
+                                 "int_status_lo12=0x%x\n",
+                                 core, g_irq_count[core], status, int_lo12);
     }
 
     /* 清除**本核**的中断位 */
@@ -377,6 +414,84 @@ void rknpu_init(void)
     KLOG_INFO("rknpu: init done\n");
 }
 
+/*
+ * rknpu_host_release —— 把 NPU 让给 guest（VMM 透传用）。
+ *
+ * 为什么必须做：本驱动在 boot 时装了 142/143/144 的 ISR 并**在 GIC 里使能**
+ * 了它们。guest 提交作业 → NPU 拉高物理线 → 那条线是**宿主**的 GIC 在监视，
+ * 于是宿主的 ISR 抢先跑掉，而它的正常收尾就是写 INT_CLEAR —— guest 的中断
+ * 还没进 vGIC 就被擦掉了。症状是 guest 里驱动一路 probe 正常、任务提交也
+ * 正常，然后**永远等不到中断**直到超时，且日志里一行错误都没有。
+ *
+ * 这是"两个驱动等同一个中断"的经典局面，谁先 ack 谁赢，没有仲裁。
+ * 所以让者主动退出：**关掉宿主 GIC 上这三条线**（线还挂着，只是不再投递给
+ * 宿主 CPU），再把寄存器留给 guest。中断之后由 VMM 在每次进入 guest 前
+ * 轮询 INT_STATUS 并按电平语义注入 vGIC（见 vmm_vnpu.h / el2_run.c）。
+ *
+ * g_npu_ready 也一并置回 false：宿主侧 rknpu_submit_task 从此拒绝作业。
+ * 这不是保守 —— guest 在写同一组寄存器，两边同时提交必然是互相破坏，
+ * 而拒绝是可诊断的，静默破坏不是。
+ *
+ * 幂等；未初始化（无 NPU）时是空操作。
+ */
+void rknpu_host_release(void)
+{
+    if (!g_npu_ready)
+        return;
+
+    for (int i = 0; i < RKNPU_MAX_CORES; i++) {
+        if (g_npu_base[i] == 0)
+            continue;
+
+        /* 用 gicv3_enable_int 而不是 irq_disable_irq：与上面 init 里的
+         * enable 成对，且 gicv3.h 在本文件已经（间接）可见。*/
+        if (g_npu_irq[i] > 0)
+            gicv3_enable_int(g_npu_irq[i], false);
+
+        /* 给 guest 一个干净的起点：状态位全清、不屏蔽任何位。
+         * INT_MASK 交给 guest 自己配（它会按任务描述符写掩码）。*/
+        npu_write(i, RKNPU_INT_CLEAR_ALL, RKNPU_INT_CLEAR);
+        npu_write(i, 0, RKNPU_INT_MASK);
+    }
+
+    g_npu_ready = false;
+    KLOG_INFO("rknpu: 已让出 NPU 给 guest（宿主 IRQ 142/143/144 关闭，"
+              "改由 VMM 轮询注入）\n");
+}
+
+/*
+ * rknpu_host_reclaim —— 从 guest 手里收回 NPU（vmm_arch_vm_destroy 时）。
+ *
+ * 与 rknpu_host_release 严格逆序：先清状态位**再**开中断线。顺序不能反 ——
+ * guest 退出时 NPU 可能还挂着一个没被清的中断，先开线的话宿主 ISR 会在
+ * enable 的那一刻立刻被拉起来（电平语义），虽然只是白跑一次 ISR，但
+ * "开线的瞬间执行了一次中断处理"对排障很不友好。先清掉就没有这个窗口。
+ *
+ * 只回收**当初确实初始化过的核**（g_npu_cores>0）：QEMU 之类没有 NPU 的
+ * 平台上 rknpu_init 早就 return 了，这里必须是彻底的 no-op，尤其不能把
+ * g_npu_ready 置成 true —— 那会让 rknpu_submit_task 以为硬件可用。
+ *
+ * 幂等；与 release 配对使用。
+ */
+void rknpu_host_reclaim(void)
+{
+    if (g_npu_cores == 0 || g_npu_ready)
+        return;
+
+    for (int i = 0; i < RKNPU_MAX_CORES; i++) {
+        if (g_npu_base[i] == 0)
+            continue;
+
+        npu_write(i, RKNPU_INT_CLEAR_ALL, RKNPU_INT_CLEAR);
+
+        if (g_npu_irq[i] > 0)
+            gicv3_enable_int(g_npu_irq[i], true);
+    }
+
+    g_npu_ready = true;
+    KLOG_INFO("rknpu: 已从 guest 收回 NPU（宿主 IRQ 恢复）\n");
+}
+
 /* ── 作业提交 ────────────────────────────────────────────────────────────── */
 
 /*
@@ -422,6 +537,59 @@ static void rknpu_job_commit(int core, void *task_base, uint32_t task_start,
 
     /* regcmd 地址 + 数据量（+EXTRA 再按 scale 向上取整）*/
     npu_write(core, first->regcmd_addr, RKNPU_PC_DATA_ADDR);
+
+    /*
+     * 一次性把 regcmd 头几个字打出来 —— 用来和 **guest 侧**的同一份 dump 对比。
+     *
+     * 为什么要这个：guest 里跑 NPU 时，宿主侧已经验过"描述符地址在恒等窗口里、
+     * 内容非零"，但作业仍然不完成；而 guest 的 librknnrt 会多打一条宿主上
+     * 从没见过的 `REGTASK: The bit width of field value exceeds the limit`。
+     * 两边跑的是同一个模型、同一个 librknnrt —— 那么 regcmd 该逐字节相同。
+     * 不同就说明问题在 librknnrt 生成 regcmd 的那条路上（模型/版本/环境），
+     * 相同就说明问题在 NPU 的执行环境里。这一行日志就是那个判据。
+     *
+     * 只打一次：提交路径在热路径上，不能每次都刷。
+     */
+    if (!g_rknpu_regcmd_dumped) {
+        const uint32_t *w = (const uint32_t *)(uintptr_t)
+            phys_to_virt(first->regcmd_addr);
+
+        g_rknpu_regcmd_dumped = true;
+        KLOG_INFO("[rknpu] regcmd@0x%x 头 8 字: %08x %08x %08x %08x "
+                  "%08x %08x %08x %08x\n",
+                  first->regcmd_addr, w[0], w[1], w[2], w[3], w[4], w[5], w[6],
+                  w[7]);
+
+        /*
+         * 和 **guest 侧**同样的扫描（见 kernel/vmm/vdev/npu/vnpu.c）。
+         *
+         * 判据是一次 A/B：guest 报出 regcmd[126] = 0x78015044 是个
+         * "窗口外地址"，但扫描是启发式的（任何落在 0x70000000..0x7FFFFFFF
+         * 的值都会被拎出来），一个**常量**也可能碰巧长这样。
+         *
+         *   · 宿主这里 regcmd[126] **也是** 0x78015044 → 它是数据常量，
+         *     guest 那条报警是误报，得换个方向查
+         *   · 宿主这里是**别的**地址（宿主的 RAM 某处）→ 它是真的缓冲区地址，
+         *     guest 的报警成立 —— 那个缓冲没从预留池里出
+         *
+         * 模型和 librknnrt 两边完全相同，所以这个对比是干净的。
+         */
+        {
+            int bad = 0;
+
+            for (uint32_t i = 0; i < 2048U; i++) {
+                uint32_t v = w[i];
+
+                if (v < 0x70000000U || v > 0x7FFFFFFFU)
+                    continue;
+                if (bad < 4)
+                    KLOG_INFO("[rknpu]   宿主 regcmd[%u] = 0x%08x\n", i, v);
+                bad++;
+            }
+            KLOG_INFO("[rknpu]   宿主 regcmd 里 0x7xxxxxxx 形状的值共 %d 个\n",
+                      bad);
+        }
+    }
     uint32_t amount =
         (first->regcfg_amount + RKNPU_PC_DATA_EXTRA_AMOUNT + scale - 1) /
             scale -
@@ -753,7 +921,7 @@ int rknpu_submit_task(void *task_base, size_t task_bytes,
         /* 归零，让"多核完成"那行报的是**本次作业**的数字而不是上次的 ——
          * 累计值没法证明哪个核刚刚干过活。 */
         g_irq_count[cores[i]] = 0;
-        g_core_done[cores[i]] = 0;
+        g_core_status[cores[i]] = 0;
     }
     for (int i = 0; i < ncores; i++)
         rknpu_job_commit(cores[i], task_base, start[i], number[i], s->flags);
@@ -797,8 +965,8 @@ int rknpu_submit_task(void *task_base, size_t task_bytes,
                 KLOG_INFO("[rknpu] 多核完成:");
                 for (int i = 0; i < ncores; i++) {
                     int c = cores[i];
-                    kprintf(" c%d[irq=%d hw_done=%u/%u]", c, g_irq_count[c],
-                            g_core_done[c], number[i]);
+                    kprintf(" c%d[irq%d=%d status=0x%x]", c, g_npu_irq[c],
+                            g_irq_count[c], g_core_status[c]);
                 }
                 kprintf("\n");
             }

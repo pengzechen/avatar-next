@@ -528,6 +528,12 @@ typedef struct vm {
     mmio_device_t vgic3d_dev;
     mmio_device_t vgic3r_dev;
 #endif
+
+    /*
+     * NPU 寄存器透传设备（RK3588）。平台没有 NPU 时不注册，ops 保持 NULL。
+     * 见 include/vmm/vmm_vnpu.h。
+     */
+    mmio_device_t vnpu_dev;
 #endif /* ARCH_AARCH64 */
 } vm_t;
 

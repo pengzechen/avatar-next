@@ -77,8 +77,22 @@ static inline virq_t virq_line(uint32_t line)
  *    表，VMM 不决定。
  */
 #if ARCH_AARCH64
-#define VIRQ_CONSOLE 33u /* vPL011 → SPI 1 → INTID 33 */
+#define VIRQ_CONSOLE 33u /* vPL011 → SPI 1 → INTID 33  */
 #define VIRQ_VTIMER  27u /* guest 虚拟定时器 → PPI 27  */
+/*
+ * RK3588 NPU 三核 → SPI 110/111/112 → INTID 142/143/144。
+ *
+ * ⚠️ 这三个 INTID 与**宿主** GIC 上 NPU 的中断号相同（见
+ *    driver/npu/rknpu.h 的 RKNPU_NPU0_IRQ），那是巧合也是必须的：
+ *    guest 的 DTS 写的就是 `<0 110 4>`，guest 内核 +32 得到 142，
+ *    所以 vGIC 侧必须按 INTID 142 投递才对得上。
+ *    但两者属于**不同的号空间**（宿主 GIC vs 某 VM 的 vGIC），
+ *    别把宿主的 g_npu_irq[] 直接当这里的值用 —— 现在数值相同，
+ *    将来 INTID 偏移一变就会**静默**投到错误的线上。
+ */
+#define VIRQ_NPU0 142u /* NPU core0 → SPI 110 + 32 */
+#define VIRQ_NPU1 143u /* NPU core1 → SPI 111 + 32 */
+#define VIRQ_NPU2 144u /* NPU core2 → SPI 112 + 32 */
 #elif ARCH_RISCV64
 #define VIRQ_CONSOLE 10u /* vuart16550 → PLIC source 10 */
 #elif ARCH_X86_64

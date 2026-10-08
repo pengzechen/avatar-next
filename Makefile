@@ -168,6 +168,7 @@ _KERNEL_VGIC_SRCS   := $(if $(filter v3,$(GIC_VER)),\
 ifeq ($(ARCH),aarch64)
     _KERNEL_VDEV_SRCS     := $(KERNEL_DIR)/vmm/vdev/console/vpl011.c \
                              $(KERNEL_DIR)/vmm/vdev/irq_route.c \
+                             $(KERNEL_DIR)/vmm/vdev/npu/vnpu.c \
                              $(_KERNEL_VGIC_SRCS)
     _KERNEL_ARCHONLY_SRCS := $(KERNEL_DIR)/vmm/guest_loader.c
     # guest_test.S: embedded guest program (linked into kernel binary)
@@ -909,7 +910,32 @@ NGINX_BIN        := $(wildcard apps/nginx-$(ARCH))
 # arm,cortex-a15-gic（GICD + GICC 两段 reg），GICv3 的是 arm,gic-v3
 # （GICD + GICR，且 CPU interface 走系统寄存器）。装错版本 guest 会在
 # GIC 初始化阶段直接卡死。
-GUEST_LINUX_DTB_SRC := $(if $(filter v3,$(GIC)),imgs/guests/aarch64/linux-gicv3.dtb,imgs/guests/aarch64/linux.dtb)
+#
+# GUEST_NPU=1 换成带 NPU 节点的那一版（多 npu@fdab0000 + 48 MiB
+# reserved-memory）。**默认关**，理由有两条：
+#   ① reserved-memory 会从 guest RAM 顶部挖走 0x79000000..0x7C000000 给
+#      NPU DMA 用 —— 在没有 NPU 的平台上（QEMU）这块地址纯属白挖，
+#      而 guest 的 npu 驱动还会 probe 一个不存在的设备、刷一屏报错。
+#   ② 那条 window 要求宿主 stage-2 做**恒等映射**，而恒等映射只在
+#      PLATFORM_RK3588 下打开（见 include/guest_loader.h 的
+#      GUEST_LINUX_NPU_DMA_GPA）。不匹配时 guest 拿到的"物理地址"
+#      在宿主侧指向别的内存 —— 结果是 NPU 读到垃圾，不报错。
+# 完整的链路与三处地址的一致性见 docs/vmm/AARCH64_GUEST_NPU.md。
+ifeq ($(GUEST_NPU),1)
+  # 判据是**平台**（MEM_PLATFORM_DEFINE 由 build/$(PLATFORM)/platform.mk 生成，
+  # 正是喂给 -DPLATFORM_RK3588 的那个），不是 GIC 版本。
+  # ⚠️ 别把这条写成"GIC 必须是 v3"：QEMU 的 aarch64 也是 v3，那样写 QEMU
+  #    会一路放行 —— 而 QEMU 上宿主 PA 0x79000000 根本不是 RAM，
+  #    guest 的每次 NPU DMA 都会撞到不存在的物理地址。
+  ifneq ($(MEM_PLATFORM_DEFINE),RK3588)
+    $(error GUEST_NPU=1 只对 RK3588 有效：那个 DTB 的 reserved-memory 要靠\
+宿主 stage-2 做恒等映射，而恒等窗口只在 PLATFORM_RK3588 下打开)
+  endif
+  ifneq ($(filter v3,$(GIC_VER)),v3)
+    $(error GUEST_NPU=1 需要 GIC=v3：NPU 的 guest DTB 只做了 GICv3 版)
+  endif
+endif
+GUEST_LINUX_DTB_SRC := $(if $(GUEST_NPU),imgs/guests/aarch64/linux-gicv3-npu.dtb,$(if $(filter v3,$(GIC)),imgs/guests/aarch64/linux-gicv3.dtb,imgs/guests/aarch64/linux.dtb))
 
 ifneq ($(filter $(ARCH),aarch64 riscv64 x86_64),)
 ifeq ($(ARCH),x86_64)
@@ -927,12 +953,16 @@ else
 GUEST_LINUX_FILES :=
 endif
 
-# 切换 GIC=v2|v3 时 $(GUEST_LINUX_DTB_SRC) 会换文件，但换个更旧的文件
-# 不会让 rootfs 的 mtime 落后，make 就不会重建镜像 —— 于是 rootfs 里留着
-# 上一版的 DTB。用带版本后缀的戳文件把这个变化显式暴露给 make。
-GUEST_GIC_STAMP := $(BUILD_DIR)/.guest-gic-$(if $(filter v3,$(GIC)),v3,v2)
+# 切换 GIC=v2|v3 或 GUEST_NPU=0|1 时 $(GUEST_LINUX_DTB_SRC) 会换文件，但换个更旧
+# 的文件不会让 rootfs 的 mtime 落后，make 就不会重建镜像 —— 于是 rootfs 里留着
+# 上一版的 DTB。用带变体后缀的戳文件把这个变化显式暴露给 make。
+#
+# GUEST_NPU 也必须进变体名：两版的 DTB 大小只差 629 字节，装错的那一版
+# 会让 guest 要么没有 npu 节点（跑不了 NPU），要么白挖 48 MiB RAM，
+# 而 rootfs 本身看起来完全正常。
+GUEST_GIC_STAMP := $(BUILD_DIR)/.guest-gic-$(if $(filter v3,$(GIC_VER)),v3,v2)$(if $(GUEST_NPU),-npu,)
 $(GUEST_GIC_STAMP):
-	@rm -f $(BUILD_DIR)/.guest-gic-v2 $(BUILD_DIR)/.guest-gic-v3
+	@rm -f $(BUILD_DIR)/.guest-gic-*
 	@touch $@
 # ROOTFS_SIZE_MB / ROOTFS_PHYS_ADDR 来自自动生成的 $(MEM_LAYOUT_MK)
 QEMU_ROOTFS_FLAGS = -device loader,file=$(ROOTFS_IMG),addr=$(ROOTFS_PHYS_ADDR),force-raw=on

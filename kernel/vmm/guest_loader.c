@@ -9,6 +9,7 @@
 
 #include "guest_loader.h"
 #include "klog.h"
+#include "vfs.h" /* vfs_open / vfs_stat_file：initrd 加载前的大小检查 */
 #include "string.h"
 #include "task/task.h"
 #include "vmm/vmm.h"
@@ -205,6 +206,41 @@ int guest_loader_run_linux(vm_t *vm)
     }
 
     /* 3. 加载 initrd */
+    /*
+     * ⚠️ 先查大小，**再**加载 —— 顺序不能反。
+     *
+     * guest_loader_load_file() 是边读边把页映射进 stage-2 的，等加载完再
+     * 发现越界时，越界那一段 IPA 已经被 initrd 的宿主页覆盖了。而 RK3588 上
+     * initrd 后面的那块地址正是 NPU 的恒等窗口 —— 后果不是"initrd 被截断"
+     * 这种看得见的症状，而是 guest 驱动拿着一个"物理地址"去做 DMA、NPU 读到
+     * initramfs 的内容。**全程没有任何一处报错**，只是推理结果不对。
+     */
+    {
+        struct kernel_stat st;
+        vfs_file_t *probe = NULL;
+
+        if (vfs_open(GUEST_LINUX_INITRD_PATH, 0, 0, &probe) == 0 && probe) {
+            uint64_t avail =
+                GUEST_LINUX_INITRD_LIMIT - GUEST_LINUX_INITRD_GPA;
+
+            if (vfs_stat_file(probe, &st) == 0 && st.st_size > 0 &&
+                (uint64_t)st.st_size > avail) {
+                KLOG_ERROR(
+                    "[guest] initrd %lld 字节 > 可用 %llu 字节"
+                    "（0x%llx..0x%llx）—— 会盖到 0x%llx。"
+                    "把 initrd 做小，或挪 GUEST_LINUX_INITRD_GPA。\n",
+                    (long long)st.st_size, (unsigned long long)avail,
+                    (unsigned long long)GUEST_LINUX_INITRD_GPA,
+                    (unsigned long long)GUEST_LINUX_INITRD_LIMIT,
+                    (unsigned long long)GUEST_LINUX_INITRD_LIMIT);
+                vfs_close(probe);
+                return -1;
+            }
+            vfs_close(probe);
+        }
+        /* 打不开就不在这里报错 —— 下面 load_file 会报一条更具体的 */
+    }
+
     int ilen = guest_loader_load_file(vm, GUEST_LINUX_INITRD_PATH,
                                       GUEST_LINUX_INITRD_GPA);
     if (ilen <= 0)
@@ -237,6 +273,56 @@ int guest_loader_run_linux(vm_t *vm)
     if (guest_loader_write_guest(vm, GUEST_LINUX_DTB_GPA, dtb_buf,
                                  (size_t)dlen) != 0)
         return -1;
+
+    /*
+     * ── NPU 预留池的 `no-map` 自检 ─────────────────────────────────
+     *
+     * 只在真机上会出事，而症状**完全不在 DTB 上**：guest 里 rknpu 照样 probe
+     * 成功（`[drm] Initialized rknpu ...`），只是作业永远超时、
+     * `task counter: 0`。真实链条是
+     *
+     *   DTB 少了 no-map → 那块内存仍是 System RAM
+     *   → dma_init_coherent_memory() 写死的 memremap(WC) 对 System RAM
+     *     告警并 return NULL（kernel/iomem.c:106）
+     *   → of_reserved_mem_device_init() 失败，NPU 拿不到预留池
+     *   → 驱动退回默认池，而那不在恒等窗口里
+     *   → NPU 按物理地址读到垃圾 regcmd → 作业跑不起来
+     *
+     * 这个坑在真机上**连着卡了三轮**，每轮都要从 guest 的一条 WARNING 往回推。
+     * 而 DTB 就在宿主手里 —— 所以在这儿一次性喊出来。
+     *
+     * 判据：no-map 是**零长度属性**，它的名字只会在 strings 块里出现一次，
+     * 而且只有用到它的节点才会把它带进来。所以"strings 块里没有 no-map"
+     * 就等价于"这份 DTB 里没有任何节点声明 no-map" —— 对本项目来说就是
+     * NPU 池那份丢了。
+     */
+    /* #if ARCH_AARCH64：GUEST_LINUX_NPU_DMA_SIZE 只有 aarch64 定义，
+     * 而 NPU 透传本身就是 aarch64/RK3588 专有的。*/
+#if ARCH_AARCH64
+    if (GUEST_LINUX_NPU_DMA_SIZE != 0) {
+        int nm = guest_loader_dtb_node_has_prop(dtb_buf, (uint32_t)dlen,
+                                                "npu-pool@79000000", "no-map");
+        int dc = guest_loader_dtb_node_has_prop(dtb_buf, (uint32_t)dlen,
+                                                "npu@fdab0000",
+                                                "dma-coherent");
+
+        if (nm == 0 || dc == 0) {
+            KLOG_ERROR(
+                "[guest] ⚠ NPU 的 DTB 属性不全（no-map=%d dma-coherent=%d，"
+                "两个都该是 1）。\n", nm, dc);
+            if (nm == 0)
+                KLOG_ERROR("[guest]   缺 no-map：guest 里 rknpu 照样 probe 成功，"
+                           "但作业永远超时（池建不起来）。\n");
+            if (dc == 0)
+                KLOG_ERROR("[guest]   缺 dma-coherent：一跑 yolo 就 guest 内核 "
+                           "Oops（dcache_clean_poc 撞未映射的 VA）。\n");
+            KLOG_ERROR("[guest]   成因：rootfs 是旧的（重烧 "
+                       "imgs/rootfs-aarch64.img），或这份 DTB 不是 NPU 版"
+                       "（要用 GUEST_NPU=1 构建）。\n"
+                       "[guest]   自检：tools/guest_npu_qemu_test.sh\n");
+        }
+    }
+#endif
 
     /*
    * 5. 配置 vCPU 的入口状态

@@ -1,0 +1,194 @@
+diff -ruN '--exclude=*.o' '--exclude=*.ko' '--exclude=*.mod*' '--exclude=.*.cmd' '--exclude=Module.symvers' '--exclude=modules.order' '--exclude=*.cmd' a/include/linux/version_compat_defs.h b/include/linux/version_compat_defs.h
+--- a/include/linux/version_compat_defs.h	1970-01-01 08:00:00.000000000 +0800
++++ b/include/linux/version_compat_defs.h	2026-10-07 23:22:16.752461449 +0800
+@@ -0,0 +1,41 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++/*
++ * include/linux/version_compat_defs.h —— **最小**的版本兼容层
++ *
++ * 这不是 Rockchip BSP 里那个 524 行的原文件（那份是从 ARM Mali 驱动搬来的，
++ * 覆盖一大堆版本差异，其中绝大多数我们用不到）。这里只补 mainline 6.2.15
++ * 真正缺的那几个符号 —— 用到哪个补哪个，保持可审计。
++ *
++ * 放在模块自己的 include/ 下（Makefile 里 -I$(src)/include 在系统头之前），
++ * 所以 `#include <linux/version_compat_defs.h>` 命中的是这一份。
++ */
++#ifndef _RKNPU_VERSION_COMPAT_DEFS_H_
++#define _RKNPU_VERSION_COMPAT_DEFS_H_
++
++#include <linux/version.h>
++#include <linux/mm.h>
++
++/*
++ * vm_flags_set() / vm_flags_clear() —— Linux **6.3** 引入。
++ *
++ * 6.3 之前 vma->vm_flags 就是个普通字段，调用方（持 mmap_lock）直接改；
++ * 6.3 之后出现了 per-VMA 锁，必须走 helper 做带锁修改。这里的目标内核是
++ * 6.2.15，所以按旧语义实现，行为与当时的直接赋值完全一致。
++ *
++ * rknpu_gem.c 用了两处：
++ *   rknpu_gem_mmap_pages()  —— vm_flags_set(vma, VM_MIXEDMAP)
++ *   rknpu_gem_mmap_buffer() —— vm_flags_clear(vma, VM_PFNMAP)
++ */
++#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 3, 0)
++static inline void vm_flags_set(struct vm_area_struct *vma, vm_flags_t flags)
++{
++	vma->vm_flags |= flags;
++}
++
++static inline void vm_flags_clear(struct vm_area_struct *vma, vm_flags_t flags)
++{
++	vma->vm_flags &= ~flags;
++}
++#endif /* < 6.3 */
++
++#endif /* _RKNPU_VERSION_COMPAT_DEFS_H_ */
+diff -ruN '--exclude=*.o' '--exclude=*.ko' '--exclude=*.mod*' '--exclude=.*.cmd' '--exclude=Module.symvers' '--exclude=modules.order' '--exclude=*.cmd' a/include/rockchip_iommu.h b/include/rockchip_iommu.h
+--- a/include/rockchip_iommu.h	2026-10-06 11:39:57.895931488 +0800
++++ b/include/rockchip_iommu.h	2026-10-07 23:23:03.874527824 +0800
+@@ -7,7 +7,19 @@
+ 
+ struct device;
+ 
+-#if IS_REACHABLE(CONFIG_ROCKCHIP_IOMMU)
++/*
++ * ⚠️ 这里原本是 `#if IS_REACHABLE(CONFIG_ROCKCHIP_IOMMU)` —— 在 mainline 上是个
++ *    **同名陷阱**：mainline 也有 CONFIG_ROCKCHIP_IOMMU（drivers/iommu/ 里那个，
++ *    给 rk3288/rk3399 显示通路用的），而 arm64 defconfig 默认打开它。但它的
++ *    API 是标准 IOMMU 框架的，**没有** rockchip_iommu_is_enabled() /
++ *    _mask_irq() 这些 Rockchip BSP 专有函数。于是守卫为真、声明走 extern 分支、
++ *    链接期一片 undefined（实测在 6.2.15 上就是这样）。
++ *
++ *    本模块面向的场景是"没有 IOMMU"（guest 里根本不透传 SMMU，驱动走
++ *    非 IOMMU 模式），这些函数一次都不会被真正调用，所以直接走下面的
++ *    static inline 兜底。
++ */
++#if 0 /* 原: IS_REACHABLE(CONFIG_ROCKCHIP_IOMMU) —— 见上 */
+ int rockchip_iommu_enable(struct device *dev);
+ int rockchip_iommu_disable(struct device *dev);
+ int rockchip_pagefault_done(struct device *master_dev);
+diff -ruN '--exclude=*.o' '--exclude=*.ko' '--exclude=*.mod*' '--exclude=.*.cmd' '--exclude=Module.symvers' '--exclude=modules.order' '--exclude=*.cmd' a/Makefile b/Makefile
+--- a/Makefile	2026-10-06 11:39:57.895630090 +0800
++++ b/Makefile	2026-10-07 23:23:03.879572682 +0800
+@@ -1,30 +1,44 @@
+ # SPDX-License-Identifier: GPL-2.0
++#
++# 改编自 bmilde/rknpu-driver-dkms 的 DKMS Makefile，为**仓库外**编译到
++# mainline 6.2.15 做了三处调整（每一处都有具体原因，见下）。
++#
++# 用法：
++#   make -C /home/ajax/kbuild/linux-guest-arm64 M=$PWD \
++#        ARCH=arm64 CROSS_COMPILE=aarch64-linux-musl- modules
+ 
+-# Define KERNEL_SRC to locate the kernel source for DKMS builds
+-KERNEL_SRC ?= /lib/modules/$(shell uname -r)/build
+ obj-m += rknpu.o
+ 
+-# Include directory for headers
+-ccflags-y += -I$(srctree)/$(src)/include
+ ccflags-y += -I$(src)/include
+-ccflags-y += -Werror
+ 
+-# Object files for the rknpu module
++# ── 调整 1：去掉 -Werror ────────────────────────────────────────────────
++# 驱动是为 5.10 时代内核写的，6.2 会多出新告警；-Werror 会让构建直接失败。
++# （原 Makefile 有 -Werror）
++
++# ── 调整 2：不编 rknpu_devfreq.o ────────────────────────────────────────
++# 它用 Rockchip 专有的 OPP API（rockchip_opp_info / rockchip_opp_dvfs_lock /
++# rockchip_system_monitor_register…），mainline 6.2.15 没有 —— 必然编不过。
++# DVFS 只影响调频，去掉后 NPU 跑在 bootloader 设的频率上（宿主驱动也是这样，
++# 从来不管 devfreq）。
++# 配套：编译时把 CONFIG_PM_DEVFREQ 去掉，让 rknpu_devfreq.h 走 static inline
++# 空实现那一支，否则调用点会引用不存在的符号。
++ccflags-y += -UCONFIG_PM_DEVFREQ
++# （原 Makefile: rknpu-$(CONFIG_PM_DEVFREQ) += rknpu_devfreq.o）
++
++# ── 调整 3：显式打开 DRM_GEM 路径 ───────────────────────────────────────
++# 仓库外编译时 .config 里没有这些 CONFIG_ROCKCHIP_RKNPU_*，默认全关 →
++# Makefile 的条件行不会把 rknpu_gem.o 加进来。而 librknnrt 走的正是 DRM 路径
++# （/dev/dri/renderD128），必须开。
++ccflags-y += -DCONFIG_ROCKCHIP_RKNPU=1
++ccflags-y += -DCONFIG_ROCKCHIP_RKNPU_DRM_GEM=1
++ccflags-y += -DCONFIG_ROCKCHIP_RKNPU_DEBUG_FS=1
++ccflags-y += -DCONFIG_ROCKCHIP_RKNPU_PROC_FS=1
++# 不开：ROCKCHIP_RKNPU_DMA_HEAP（走 DRM 路径就够）、SRAM、FENCE
++
+ rknpu-y += rknpu_drv.o
+ rknpu-y += rknpu_reset.o
+ rknpu-y += rknpu_job.o
+ rknpu-y += rknpu_debugger.o
+ rknpu-y += rknpu_iommu.o
+-rknpu-$(CONFIG_PM_DEVFREQ) += rknpu_devfreq.o
+-rknpu-$(CONFIG_ROCKCHIP_RKNPU_SRAM) += rknpu_mm.o
+-rknpu-$(CONFIG_ROCKCHIP_RKNPU_FENCE) += rknpu_fence.o
+-rknpu-$(CONFIG_ROCKCHIP_RKNPU_DRM_GEM) += rknpu_gem.o
+-rknpu-$(CONFIG_ROCKCHIP_RKNPU_DMA_HEAP) += rknpu_mem.o
+-
+-# Build and clean targets for DKMS compatibility
+-all:
+-	$(MAKE) -C $(KERNEL_SRC) M=$(PWD) modules
+-
+-clean:
+-	$(MAKE) -C $(KERNEL_SRC) M=$(PWD) clean
+-
++rknpu-y += rknpu_devfreq_stub.o
++rknpu-y += rknpu_gem.o
+diff -ruN '--exclude=*.o' '--exclude=*.ko' '--exclude=*.mod*' '--exclude=.*.cmd' '--exclude=Module.symvers' '--exclude=modules.order' '--exclude=*.cmd' a/rknpu_devfreq_stub.c b/rknpu_devfreq_stub.c
+--- a/rknpu_devfreq_stub.c	1970-01-01 08:00:00.000000000 +0800
++++ b/rknpu_devfreq_stub.c	2026-10-07 23:23:03.877355596 +0800
+@@ -0,0 +1,54 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * rknpu_devfreq_stub.c —— 替掉 rknpu_devfreq.c
++ *
++ * 为什么需要它：驱动原本的 rknpu_devfreq.c 用 Rockchip 专有的 OPP API
++ * （rockchip_opp_info / rockchip_opp_dvfs_lock / rockchip_system_monitor_register…），
++ * mainline 6.2.15 没有，编不过。
++ *
++ * 而 rknpu_devfreq.h 是按 `#ifdef CONFIG_PM_DEVFREQ` 分派的，我们的目标内核
++ * defconfig 恰好开了 CONFIG_PM_DEVFREQ —— 头文件于是声明真函数、调用点引用
++ * 它们，链接期就是一片 undefined。
++ *
++ * 试过在模块的 ccflags 里 `-UCONFIG_PM_DEVFREQ`，**不生效**：kbuild 把
++ * `-include include/generated/autoconf.h` 放在我们的 flags 之后，那个
++ * `#define CONFIG_PM_DEVFREQ 1` 又把它定义回来了。
++ *
++ * 所以走"提供空实现"这条路：行为上等价于关掉 DVFS —— NPU 跑在 bootloader
++ * 设好的频率上。宿主侧的驱动也从没碰过 devfreq，一样跑得好好的。
++ */
++#include <linux/kernel.h>
++#include "rknpu_drv.h"
++
++void rknpu_devfreq_lock(struct rknpu_device *rknpu_dev)
++{
++	(void)rknpu_dev;
++}
++
++void rknpu_devfreq_unlock(struct rknpu_device *rknpu_dev)
++{
++	(void)rknpu_dev;
++}
++
++int rknpu_devfreq_init(struct rknpu_device *rknpu_dev)
++{
++	(void)rknpu_dev;
++	return 0;
++}
++
++void rknpu_devfreq_remove(struct rknpu_device *rknpu_dev)
++{
++	(void)rknpu_dev;
++}
++
++int rknpu_devfreq_runtime_suspend(struct device *dev)
++{
++	(void)dev;
++	return 0;
++}
++
++int rknpu_devfreq_runtime_resume(struct device *dev)
++{
++	(void)dev;
++	return 0;
++}

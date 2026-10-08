@@ -15,6 +15,9 @@
 #include "klog.h"
 #include "string.h"
 #include "aarch64/stage2.h"
+#include "guest_loader.h" /* GUEST_LINUX_NPU_DMA_*：NPU 恒等窗口的布局 */
+#include "vmm/vmm_vnpu.h"
+#include "platform_cfg.h" /* platform_get_mmio */
 #include "vmm/vmm_vpl011.h"
 #if DRIVER_GIC_V3
 #include "vmm/vmm_vgicv3.h"
@@ -49,6 +52,14 @@ int vmm_arch_vm_init(vm_t *vm)
     stage2_vm_init(&vm->s2, (uint32_t)vm->slot, vm->vmid, vm->cfg.mem_base,
                    vm->cfg.mem_size);
 
+    /*
+     * NPU 透传用的恒等窗口。非 RK3588 平台上这两个宏是 0，窗口即关闭
+     * （stage2_set_npu_dma_window 用 size==0 表示"没有"）。
+     * 为什么必须恒等、以及三处地址为什么要一致，见 include/guest_loader.h。
+     */
+    stage2_set_npu_dma_window(&vm->s2, GUEST_LINUX_NPU_DMA_GPA,
+                              GUEST_LINUX_NPU_DMA_SIZE);
+
     mmio_bus_init(&vm->mmio_bus_storage);
 
     /* 建立 MMIO 总线并注册虚拟设备（虚拟 PL011 控制台）*/
@@ -59,6 +70,19 @@ int vmm_arch_vm_init(vm_t *vm)
     if (vmm_vgic_init(&vm->vgic, (uint32_t)nr) != 0)
         return -1;
 #endif
+
+    /*
+     * NPU 寄存器透传（0xFDAB0000..0xFDAE0000）。
+     *
+     * 平台没有 NPU 时 vnpu_init 直接返回 0 且不注册 —— 不是错误。
+     * 有 NPU 但注册失败要**让建 VM 失败**，理由同下面 vpl011 那段注释：
+     * 静默死设备的症状是 guest 里驱动读到全 0，日志上看不出异常。
+     */
+    if (vnpu_init(vm, &vm->mmio_bus_storage,
+                  platform_get_mmio("npu", "base0")) != 0) {
+        KLOG_ERROR("[vmm] vnpu registration failed\n");
+        return -1;
+    }
 
     if (vpl011_init(vm, &vm->mmio_bus_storage) != 0) {
         /*
@@ -140,4 +164,7 @@ int vmm_arch_vm_init(vm_t *vm)
 void vmm_arch_vm_destroy(vm_t *vm)
 {
     vpl011_destroy(vm);
+    /* 把 NPU 还给宿主驱动 —— 不做的话停掉 VM 之后宿主 NPU 就永久废了，
+     * 而且再起一个 VM 会撞上 vnpu 的占用守卫。见 vmm_vnpu.h。*/
+    vnpu_destroy(vm);
 }

@@ -222,6 +222,18 @@ avatar/
   会话 owner 守卫（纯查询不能停 VM）、`console_owned` 是"归 helper"而不是
   "谁是前台"、以及 helper 收到 EPOLLHUP 必须收尾（否则原地死循环且退不出来）。
 - **裸跑 guest 作基线对照**: `docs/vmm/GUEST_NATIVE_QEMU.md`
+- **RK3588 NPU 透传给 aarch64 guest**: `docs/vmm/AARCH64_GUEST_NPU.md` ——
+  在 guest Linux 里跑 YOLOv8。**动 `kernel/vmm/vdev/npu/*`、
+  `include/vmm/vmm_vnpu.h`、`include/guest_loader.h` 的
+  `GUEST_LINUX_INITRD_*` / `GUEST_LINUX_NPU_DMA_*`、或
+  `tools/make_npu_rootfs.sh` 之前必读**。三条反直觉约定：
+  ① NPU 寄存器走 MMIO **转发**（不是 stage-2 直通），所以那段窗口在 stage-2 里
+  **必须保持无映射**；② NPU 是无 IOMMU 的物理设备，DMA 窗口必须 IPA==PA，
+  且 **guest DTS / guest_loader.h / platform.conf 三处地址必须一致**；
+  ③ guest 中断由 VMM **轮询** `INT_STATUS` 注入，**不许**装宿主 ISR
+  （宿主会抢先把 guest 的中断 ack 掉，且电平线会把宿主机卡死在 ISR 里）。
+  另外 initrd 只有 16 MiB 可用（`0x78000000..0x79000000`，上面是 NPU 窗口、
+  下面是内核自挑的 CMA），超了会在加载前被拒。
 
 **使用方式**: 用 Read tool 读取文档，了解 API 和最佳实践后再实现。
 

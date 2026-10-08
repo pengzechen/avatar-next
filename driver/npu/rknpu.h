@@ -106,6 +106,25 @@ typedef struct {
 void rknpu_init(void);
 
 /**
+ * rknpu_host_release - 把 NPU 让给 guest（VMM 透传用）
+ *
+ * 关掉宿主 GIC 上 NPU 的三条中断线，并让 rknpu_submit_task 从此拒绝作业。
+ * 不这么做的话，宿主 ISR 会抢在 VMM 注入之前把 INT_STATUS 清掉，guest
+ * 永远等不到中断 —— 而且宿主侧一行错误日志都不会有。
+ *
+ * 幂等；无 NPU 或未初始化时是空操作。由 vnpu_init() 在建 VM 时调用。
+ */
+void rknpu_host_release(void);
+
+/**
+ * rknpu_host_reclaim - 从 guest 手里收回 NPU
+ *
+ * 与 rknpu_host_release 严格逆序（先清状态位再开中断线），VM 销毁时调用。
+ * 幂等；无 NPU 时是空操作。
+ */
+void rknpu_host_reclaim(void);
+
+/**
  * rknpu_validate_version - 打印并校验某个核的版本寄存器
  * @core: 核号 0..RKNPU_MAX_CORES-1
  * 返回 true 表示版本匹配（0x46495245 = "FIRE"）

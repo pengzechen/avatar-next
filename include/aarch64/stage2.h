@@ -92,6 +92,22 @@ typedef struct s2_ctx {
     uint64_t *l3_tbl[S2_MAX_L3_TABLES]; /* +1 = 该 2MiB 块已有表；动态分配 */
     uint64_t nr_premap;                 /* 统计：加载期预映射页数           */
     uint64_t nr_fault;                  /* 统计：按需缺页分配页数           */
+
+    /*
+     * NPU DMA 恒等映射窗口（IPA 区间），size==0 表示没有。
+     *
+     * ★ 这一段**绝不按需分配宿主页** —— 必须 IPA == PA。
+     *
+     * 原因：RK3588 的 NPU 是**没有 IOMMU 的物理设备**，驱动把缓冲区的
+     * 物理地址直接写进寄存器，设备就照那个地址 DMA。而 guest 的普通 RAM
+     * 是逐页从 PMM 现分配的（物理不连续、PA 与 IPA 无关），NPU 拿着 guest
+     * 的 IPA 去 DMA 会写到随机的宿主页 —— 不报错，只是数据全错。
+     *
+     * 配套：宿主 platform.conf 的 reserves 把同一段物理内存钉住，保证
+     * PMM 不会把它分给别人（否则 guest 和宿主会同时写同一片内存）。
+     */
+    uint64_t npu_dma_base;
+    uint64_t npu_dma_end;
 } s2_ctx_t;
 
 /* ── 生命周期 ───────────────────────────────────────────── */
@@ -126,6 +142,23 @@ void stage2_activate(const s2_ctx_t *s2);
 
 /* IPA 是否落在本 VM 的 RAM 窗口内（缺页处理用它区分 RAM 与 MMIO）。*/
 int stage2_ipa_is_ram(const s2_ctx_t *s2, uint64_t ipa);
+
+/*
+ * NPU DMA 恒等映射窗口。
+ *
+ * stage2_set_npu_dma_window — 设定窗口（base/size 都是 IPA；size==0 关闭）。
+ *                             由 vmm_arch_vm_init() 按 guest 布局传进来。
+ * stage2_ipa_is_npu_dma     — 判定某 IPA 是否落在窗口内。
+ * stage2_map_identity_block — 把 ipa 所在的 2 MiB 块**恒等映射**（PA = IPA），
+ *                             不分配任何宿主页。已映射的项跳过（幂等）。
+ *                             返回本次新装的页数。
+ *
+ * 为什么用 2 MiB 块：和 stage2_map_block 同一个理由 —— 每次 EL2 往返代价高，
+ * 而 NPU 驱动的缓冲区是连续访问的。
+ */
+void stage2_set_npu_dma_window(s2_ctx_t *s2, uint64_t base, uint64_t size);
+int stage2_ipa_is_npu_dma(const s2_ctx_t *s2, uint64_t ipa);
+uint64_t stage2_map_identity_block(s2_ctx_t *s2, uint64_t ipa);
 
 /*
  * stage2_map_page — 为 ipa 分配一个宿主物理页并装上 4 KiB 映射

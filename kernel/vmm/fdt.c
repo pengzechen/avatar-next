@@ -145,6 +145,114 @@ int guest_loader_patch_dtb_initrd(uint8_t *dtb, uint32_t dtb_size,
  * 改写 /memory 节点的 reg（base/size），使 guest 看到我们实际提供的大小。
  * cells 数取根节点 #address-cells/#size-cells（arm64 通常 2/2）。
  */
+/*
+ * ── NPU 透传的启动自检（见 include/guest_loader.h 的声明）──────────────
+ *
+ * 为什么查 **strings 块**就够：FDT 里属性名是去重后存在 strings 块的，
+ * 每个用到的名字在那儿恰好一份。`no-map` 是**零长度属性**（没有值，
+ * 只有名字），所以"某个节点带 no-map" ⇔ "strings 块里有 'no-map' 这个名字"。
+ * 不用真去遍历结构块找那个节点 —— 那要处理 NOP 过的子树、深度嵌套，
+ * 代码量是这里的十倍，而判据完全等价。
+ *
+ * 误判风险：将来若**别的**设备也声明 no-map，这里会误报"通过"。所以它只
+ * 用来抓"整份 DTB 里一个 no-map 都没有"这个最常见的错法，不做精确校验 ——
+ * 精确校验的代价（遍历 + 节点匹配）和收益不成比例，而且漏报的后果只是
+ * 退回今天这种"要人工从 guest 的 WARNING 往回推"。
+ */
+/* 结构块里跳过节点名（NUL 结尾）后的对齐位置 */
+static uint32_t skip_name(const uint8_t *dtb, uint32_t pos, uint32_t end)
+{
+    while (pos < end && dtb[pos] != 0)
+        pos++;
+    return (pos + 4) & ~3u;
+}
+
+/*
+ * 在结构块里找到根下的 node 节点，看它自己有没有 prop 属性。
+ *
+ * ⚠️ 单层循环，**不要**写成"内层循环扫属性" —— 那样内外两层都会去消费
+ *    token，`pos` 被推进两次，第二个节点开始就全乱了。第一版就是这么写的，
+ *    结果对**所有** DTB 都返回 0（包括明明有属性的那份）—— 一个永远返回
+ *    "没有"的检查会让人去改本来正确的东西。所以这里用 hit 标记当前是否
+ *    正处在目标节点的属性区里，全部在一个循环里推进。
+ *
+ * FDT_NOP 要显式跳过：guest_loader_nop_dtb_nodes() 会把整个节点换成 NOP，
+ * 跳过之后才能继续扫后面的兄弟节点。
+ */
+int guest_loader_dtb_node_has_prop(const uint8_t *dtb, uint32_t dtb_size,
+                                   const char *node, const char *prop)
+{
+    uint32_t off_struct, size_struct, off_strings, size_strings;
+    uint32_t pos, end, nlen;
+    const char *node_name = node;
+    int depth = 0;
+    int hit = 0;      /* 已经命中目标节点 */
+    int hit_depth = 0; /* 命中时所在深度（属性要在这个深度上才算它的）*/
+
+    if (!dtb || dtb_size < 40 || be32(dtb, 0) != FDT_MAGIC)
+        return -1;
+
+    off_struct = be32(dtb, 8);
+    size_struct = be32(dtb, 36);
+    off_strings = be32(dtb, 12);
+    size_strings = be32(dtb, 32);
+
+    if (off_struct + size_struct > dtb_size ||
+        off_strings + size_strings > dtb_size)
+        return -1;
+
+    pos = off_struct;
+    end = off_struct + size_struct;
+    nlen = (uint32_t)strlen(node_name);
+
+    while (pos + 4 <= end) {
+        uint32_t tok = be32(dtb, pos);
+
+        pos += 4;
+
+        if (tok == FDT_BEGIN_NODE) {
+            depth++;
+            /*
+             * 匹配**任意深度** —— 要查的两个节点不在同一层：
+             * npu@fdab0000 是根的直接子节点（depth 2），而
+             * npu-pool@79000000 嵌在 /reserved-memory/ 里（depth 3）。
+             * 这两个名字本身唯一，所以不用限定层级。
+             * （第一版限定 depth==2，于是 no-map 那条永远是 0 —— 又一个
+             *  "看起来在查、其实查不到"的假阴性。）
+             * 名字要完全相等：npu@fdab0000 不能命中 npu@fdab0001。
+             */
+            if (!hit &&
+                strncmp((const char *)dtb + pos, node_name, nlen) == 0 &&
+                ((const char *)dtb)[pos + nlen] == 0) {
+                hit = 1;
+                hit_depth = depth;
+            }
+            pos = skip_name(dtb, pos, end);
+        } else if (tok == FDT_END_NODE) {
+            if (hit && depth == hit_depth)
+                return 0; /* 目标节点的属性区看完了，没有 */
+            depth--;
+        } else if (tok == FDT_PROP) {
+            uint32_t len, noff;
+
+            if (pos + 8 > end)
+                return -1;
+            len = be32(dtb, pos);
+            noff = be32(dtb, pos + 4);
+            if (hit && depth == hit_depth && noff < size_strings &&
+                strcmp((const char *)dtb + off_strings + noff, prop) == 0)
+                return 1;
+            pos += 8 + len;
+            pos = (pos + 3) & ~3u;
+        } else if (tok == FDT_NOP) {
+            continue;
+        } else {
+            break; /* FDT_END 或结构块损坏 */
+        }
+    }
+    return 0;
+}
+
 int guest_loader_patch_dtb_memory(uint8_t *dtb, uint32_t dtb_size,
                                   uint64_t mem_base, uint64_t mem_size)
 {

@@ -25,6 +25,17 @@ mount -t devtmpfs dev  /dev  2>/dev/null
 [ -e /dev/ttyS0 ]   || mknod /dev/ttyS0   c 4  64
 [ -e /dev/ttyAMA0 ] || mknod /dev/ttyAMA0 c 204 64
 
+# RK3588 NPU 驱动（rknpu.ko）。只有「带 NPU 透传的 aarch64 包」里才有这个文件
+# —— x86_64 / rv64 的包里没有，QEMU 上也没有 NPU 硬件。所以**必须判存在**：
+# 少了这个判断，另外两个架构的 guest 每次启动都会多一行 insmod 报错。
+#
+# insmod 放在 mount 之后：驱动 probe 时要 /sys 和 /dev（devtmpfs 负责
+# /dev/dri/renderD128、/dev/dma_heap/* 这些节点的出现）。
+#
+# 失败**不中断启动** —— 落到 shell 里 `dmesg | tail` 比停在半路有用得多。
+# 真机上 NPU 起不来时的第一现场就是这里那行 insmod 的报错。
+[ -f /lib/modules/rknpu.ko ] && insmod /lib/modules/rknpu.ko
+
 uname -a
 
 # PID 1 天生没有控制终端，busybox sh 起来会跟着打一行

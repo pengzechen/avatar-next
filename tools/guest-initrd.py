@@ -21,6 +21,12 @@
     python3 tools/guest-initrd.py aarch64 --strip     # 顺便 strip 掉搬运过来的 busybox
     python3 tools/guest-initrd.py rv64 --show         # 只打印源 init，不动产物
 
+--extra <dir>：把一棵**外部目录树**合并进 initrd（相对路径原样保留，父目录自动补）。
+用于给 guest 装 NPU 运行时（glibc + librknnrt + demo + 模型，约 13 MB）——
+那些是二进制产物，按仓库惯例不进 git（同 apps/rknn-aarch64/），所以要能外挂：
+
+    python3 tools/guest-initrd.py aarch64 --extra /path/to/guest-npu-tree
+
 压缩策略是**全裸 cpio**（三个包一致，guest 侧不解压）。老包里 gzip 过的那个会被
 自动写成裸 cpio 并提示。要改回 gzip 加 --gzip。
 
@@ -155,8 +161,19 @@ def collect_src(src_dir):
 
 
 def main():
-    args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    opts = {a for a in sys.argv[1:] if a.startswith("--")}
+    argv = sys.argv[1:]
+    args = [a for a in argv if not a.startswith("--")]
+    opts = {a for a in argv if a.startswith("--")}
+    # --extra <dir> 带一个参数，所以要单独取出来，别让它污染 args
+    extra_dir = None
+    if "--extra" in argv:
+        i = argv.index("--extra")
+        if i + 1 >= len(argv):
+            raise SystemExit("--extra 后面要跟一个目录")
+        extra_dir = argv[i + 1]
+        args = [a for a in args if a != extra_dir]
+        if not os.path.isdir(extra_dir):
+            raise SystemExit("--extra 目录不存在: %s" % extra_dir)
     if len(args) != 1 or args[0] not in TARGETS:
         raise SystemExit("用法: %s {%s} [--strip] [--gzip] [--show]"
                          % (sys.argv[0], "|".join(TARGETS)))
@@ -200,6 +217,45 @@ def main():
         out.append(build("./" + c["name"], S_IFREG | 0o755, c["data"],
                          mtime=c["mtime"], ino=len(DIRS) + i + 1))
         names.append(c["name"])
+    # 2b) --extra：外部目录树。父目录自动补成目录项（已存在的跳过），
+    #     顺序排在源目录文件之前，保持"目录在前"的约定。
+    extra_items, extra_dirs = [], []
+    if extra_dir:
+        base = os.path.abspath(extra_dir)
+        need_dirs = set()
+        for root, _d, fns in os.walk(base):
+            rel_root = norm(os.path.relpath(root, base))
+            if rel_root != ".":
+                need_dirs.add(rel_root)
+            # 父链也要补
+            parts = rel_root.split("/")
+            for k in range(1, len(parts)):
+                need_dirs.add("/".join(parts[:k]))
+            for fn in fns:
+                p2 = os.path.join(root, fn)
+                rel = norm(os.path.relpath(p2, base))
+                need_dirs.add(os.path.dirname(rel))
+                extra_items.append((rel, p2))
+        # 只要不在固定 DIRS 里、也不是 "." 的，都要建
+        extra_dirs = sorted(d for d in need_dirs if d and d != "." and d not in DIRS)
+        extra_items.sort()
+
+    for i, d in enumerate(extra_dirs):
+        out.append(build("./" + d, S_IFDIR | 0o755, b"",
+                         ino=len(DIRS) + len(carry) + i + 1))
+        names.append(d)
+    for i, (rel, path) in enumerate(extra_items):
+        st = os.lstat(path)
+        if os.path.islink(path):
+            out.append(build("./" + rel, S_IFLNK | 0o777,
+                             os.readlink(path).encode(), mtime=int(st.st_mtime),
+                             ino=len(DIRS) + len(carry) + len(extra_dirs) + i + 1))
+        else:
+            out.append(build("./" + rel, S_IFREG | (st.st_mode & 0o7777),
+                             open(path, "rb").read(), mtime=int(st.st_mtime),
+                             ino=len(DIRS) + len(carry) + len(extra_dirs) + i + 1))
+        names.append(rel)
+
     for i, (rel, path) in enumerate(collect_src(src)):
         st = os.lstat(path)
         if os.path.islink(path):
@@ -214,10 +270,15 @@ def main():
     out.append(build("TRAILER!!!", 0, b""))
 
     new = b"".join(out)
-    if "--gzip" in opts:
-        new = gzip.compress(new, 9)
 
     # 3) 校验：条目集合必须**正好**是 DIRS+CARRY+源文件；init 内容必须等于源文件
+    #
+    # ⚠️ 这一段必须跑在**压缩之前**：下面每一步都是按 newc 流解析 new 的，
+    #    先 gzip 再解析会让 parse() 在 offset 0 直接抛
+    #    「不是 newc 头 b'\x1f\x8b...'」。
+    #    这个顺序原本是反的 —— 自从加上这段校验，--gzip 模式就一直是坏的，
+    #    而默认路径是全裸 cpio，所以只有显式加 --gzip 才会撞上。
+    #    （aarch64 的 NPU 包要用 gzip 压 21 MiB -> 8 MiB，这才碰到。）
     new_snap, old_snap = snapshot(new), snapshot(old)
     if sorted(new_snap) != sorted(names):
         raise SystemExit("!! 重打包后的条目对不上：%s" % sorted(set(new_snap) ^ set(names)))
@@ -232,6 +293,10 @@ def main():
             raise SystemExit("!! %s 空掉了" % c["name"])
     if os.readlink(os.path.join(src, "bin/sh")) != "busybox":
         raise SystemExit("!! %s/bin/sh 应该是指向 busybox 的软链接" % SRC)
+
+    # 校验过了，这时才压缩（见上面那段为什么不能提前）
+    if "--gzip" in opts:
+        new = gzip.compress(new, 9)
 
     tmp = img + ".new"
     open(tmp, "wb").write(new)

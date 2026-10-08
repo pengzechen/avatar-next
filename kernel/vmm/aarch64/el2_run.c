@@ -20,6 +20,7 @@
 #include "vmm/vmm_mmio.h"      /* MMIO 总线分发 */
 #include "vmm/vmm_irq_route.h" /* 宿主 IRQ → vCPU 任务唤醒 */
 #include "vmm/vmm_vpl011.h"    /* 虚拟 PL011 RX 中断线 */
+#include "vmm/vmm_vnpu.h"      /* NPU 中断线（RK3588 透传）*/
 #if DRIVER_GIC_V3
 #include "vmm/vmm_vgicv3.h" /* vGICv3 中断注入（ICH_LR<n>_EL2）*/
 #else
@@ -42,6 +43,37 @@ extern void handle_irq_exception(uint64_t *stack_pointer);
 static void el2_advance_pc(vcpu_t *vcpu, uint64_t esr)
 {
     vcpu->elr += ((esr >> 25) & 1) ? 4 : 2;
+}
+
+/*
+ * vcpu_gpr_xzr — 按 SRT 取 guest 通用寄存器，**SRT==31 视作 XZR（恒零）**
+ *
+ * ⚠️ 为什么要有这个助手，而不是在调用点写个三元表达式：
+ *
+ *   aarch64 的 `vcpu_t.r[]` 只有 **31 格**（x0–x30）—— x31 在架构上就是 XZR，
+ *   没有对应的存储。所以 `vcpu->r[srt]` 在 srt==31 时是**越界访问**，
+ *   在 C 里是 UB。
+ *
+ *   实测（aarch64-linux-musl-gcc 11.2.1，-O2）：UB 一旦形成，GCC 就把
+ *   "srt==31 时 val 为 0" 这半支优化没了 —— 反汇编里 `b.eq` 直接跳到
+ *   `mov x4, x21`，而 x21 在整个函数里从没被清过，于是取到调用者留下的野值。
+ *   我在调用点改成"先判 srt<31 再索引"**同样没用**（反汇编一模一样）；
+ *   隔离出来的最小复现反而是正确的 —— 也就是说这个函数里的某种上下文
+ *   放大了它。**别再试图用别的写法绕，直接跨函数边界**：
+ *   这里 noinline，且索引表达式在界内，编译器没有可利用的 UB。
+ *
+ * 代价是提交路径上多一次函数调用 —— 那本来就是一次 EL2 往返，可以忽略。
+ *
+ * 真机症状（这个 bug 造成的）：写 `PC_OP_EN=0`（`str wzr`）时把调用者的
+ * 一个指针写进了 NPU 寄存器，作业永远不完成、task counter 恒 0，
+ * 而寄存器回读、regcmd 内容、DMA 地址**全都正常** —— 从任何一处都看不出来。
+ */
+__attribute__((noinline)) static uint64_t vcpu_gpr_xzr(const vcpu_t *vcpu,
+                                                       uint32_t srt)
+{
+    if (srt < 31)
+        return vcpu->r[srt];
+    return 0; /* x31 == XZR */
 }
 
 /* ── Trapped AArch64 system-register access ───────────────────────────
@@ -269,6 +301,40 @@ static int handle_dabt(vcpu_t *vcpu, uint64_t esr)
      *
      * 判定用 ipa_page（页对齐）—— HPFAR 给的就是页基址。
      */
+    /*
+     * 0a) ── NPU DMA 窗口：**恒等映射**，不分配宿主页 ────────────────
+     *
+     * ⚠️ 必须在上面那条"RAM 按需分配"**之前**。这块地址落在 guest RAM 窗口
+     * 内（它是 RAM 顶部的 48 MiB），如果先走 RAM 分支，就会被 pmm_alloc_pages
+     * 分到一段与 IPA 无关的宿主页 —— 而 NPU 是无 IOMMU 的物理设备，它照
+     * 寄存器里的物理地址 DMA，于是写进别人的内存。**不报错，只是数据全错。**
+     *
+     * 恒等的意义：guest 里 librknnrt 拿到的"设备地址"就是驱动从这块预留池
+     * 分配出来的物理地址，只有 IPA == PA 时它在两边指的是同一块内存。
+     * 详见 include/aarch64/stage2.h 里 s2_ctx_t.npu_dma_base。
+     */
+    if (vcpu->vm && stage2_ipa_is_npu_dma(&vcpu->vm->s2, ipa_page)) {
+        vm_t *vm = vcpu->vm;
+        uint64_t n = stage2_map_identity_block(&vm->s2, ipa_page);
+        uint64_t npa = 0;
+
+        (void)stage2_lookup(&vm->s2, ipa_page, &npa);
+
+        if (!npa) {
+            KLOG_ERROR("[vmm] vm%u: NPU DMA 恒等映射失败 ipa=0x%llx\n",
+                       vm->vmid, (unsigned long long)ipa_page);
+            return EL2_EXIT;
+        }
+
+        vm->s2.nr_fault++;
+        if (n)
+            KLOG_DEBUG("[vmm] vm%u: NPU DMA 恒等映射 ipa=0x%llx -> pa=0x%llx "
+                       "(+%llu 页)\n",
+                       vm->vmid, (unsigned long long)ipa_page,
+                       (unsigned long long)npa, (unsigned long long)n);
+        return EL2_RESUME; /* 不推进 PC：让 guest 重试那条指令 */
+    }
+
     if (vcpu->vm && stage2_ipa_is_ram(&vcpu->vm->s2, ipa_page)) {
         vm_t *vm = vcpu->vm;
         /*
@@ -312,11 +378,26 @@ static int handle_dabt(vcpu_t *vcpu, uint64_t esr)
         uint64_t out = 0;
         /* 访问宽度：ESR.ISS.SAS[23:22]（0=byte,1=half,2=word,3=dword）*/
         uint8_t size = (uint8_t)(1u << ((esr >> 22) & 3));
-        /* 写数据：从 ISS.SRT[20:16] 指定的通用寄存器取 */
+        /*
+         * 写数据：从 ISS.SRT[20:16] 指定的通用寄存器取。
+         *
+         * ⚠️ **SRT == 31 是 XZR（恒零寄存器），必须当 0 处理。**
+         *    `str wzr, [x1]`（存零）的 SRT 就是 31，而 vcpu->r[31] 是个
+         *    **没人清过的数组槽** —— 直接取它会拿到上一次留下的野值。
+         *
+         *    漏掉这个判断的后果不是"写错一个值"，而是**静默**把随机数据
+         *    写进设备寄存器。真机上撞的是 NPU 提交路径里唯一那次写零
+         *    （`REG_WRITE(0x0, PC_OP_EN)`）：NPU 收到的"开始/停止"位
+         *    是个内核指针，于是作业怎么都不完成、task counter 恒 0，
+         *    而寄存器回读、regcmd 内容、DMA 地址全都正常。
+         *
+         *    下面读路径那句 `if (srt != 31)` 一直是对的 —— 写路径漏了它，
+         *    两条路本该对称。
+         */
         uint64_t val = 0;
         if (wnr) {
             uint32_t srt = (uint32_t)((esr >> 16) & 0x1F);
-            val = vcpu->r[srt];
+            val = vcpu_gpr_xzr(vcpu, srt);
         }
 
         if (mmio_bus_handle(vcpu->vm->mmio_bus, ipa, wnr, size, val,
@@ -617,6 +698,56 @@ static void aarch64_check_vpl011_rx(vcpu_t *vcpu)
     vmm_arch_irq_raise(vcpu, virq_line(VIRQ_CONSOLE));
 }
 
+/* NPU 三核中断线的上一轮电平 —— 用来取上升沿，见 aarch64_check_vnpu()。
+ * 全局而非每 VM：同一时刻只有一个 VM 持有 NPU（vnpu 的占用守卫）。*/
+static bool g_vnpu_prev[VNPU_CORES];
+static uint32_t g_vnpu_injects[VNPU_CORES];
+
+/*
+ * ── 虚拟 NPU 中断投递（RK3588 三核透传）───────────────────────
+ *
+ * 与 vPL011 RX 同构，理由也一样：NPU 的中断是**电平**触发 —— 核里的
+ * INT_STATUS 一直有效到 guest 写 INT_CLEAR。只在事件发生那一刻置一次
+ * pending 是**边沿**做法，guest 应答时 vGIC 会把 pending 清掉，剩下的
+ * 状态位（三个核先后完成、或一个核里多个块）就再也没人来取了。
+ * 所以放在每次入口重拉。
+ *
+ * ⚠️ 为什么是轮询，而不是像 GICv2 的 vtimer 那样装宿主 ISR：
+ *    宿主 ISR 在 guest 运行时是在 EL2 **就地处理完直接 eret 回 guest** 的
+ *    （不经过 vCPU 主循环，拿不到 lr_switch_in 那次同步），而且它的正常
+ *    收尾就是写 INT_CLEAR —— 等于把 guest 的中断吃掉，两边都不报错。
+ *    更糟的是电平线在宿主 ack 之后立刻重触发（状态位还在），宿主会卡死
+ *    在 ISR 里，guest 永远拿不到 CPU。轮询把这三个问题一次绕开，
+ *    代价只是每次入口多读 6 个寄存器（三核各 INT_STATUS/INT_MASK），
+ *    相对一次 EL2 往返可以忽略。
+ *
+ * 三核**各投各的**，不是"任一核有效就投三条"：单核掩码的作业只有一个核
+ * 会完成，多核作业三核完成时刻也差几微秒，混在一起会让 guest 收到
+ * 不属于它的中断（drivers 侧表现为 "irq but no task"）。
+ */
+static void aarch64_check_vnpu(vcpu_t *vcpu)
+{
+    for (uint32_t c = 0; c < VNPU_CORES; c++) {
+        bool now = vnpu_irq_asserted(vcpu->vm, c);
+
+        /* 只在**上升沿**记一次，这样这个计数就是"注入了几次中断"，
+         * 而不是"重拉了几次"（后者是入口次数，没有意义）。
+         * 真机验证时看 core1/core2 两行是否都出现，就知道三核都报过中断。*/
+        if (now && !g_vnpu_prev[c]) {
+            g_vnpu_injects[c]++;
+            if (g_vnpu_injects[c] == 1) {
+                KLOG_INFO("[vnpu] 首次向 guest 注入 NPU core%u 中断 "
+                          "(INTID %u)\n",
+                          c, VIRQ_NPU0 + c);
+            }
+        }
+        g_vnpu_prev[c] = now;
+
+        if (now)
+            vmm_arch_irq_raise(vcpu, virq_line(VIRQ_NPU0 + c));
+    }
+}
+
 void vmm_arch_restore_guest_ctx(vcpu_t *vcpu)
 {
     uint64_t vmpidr = (1ULL << 31) | (uint64_t)vcpu->vcpu_id;
@@ -632,6 +763,7 @@ void vmm_arch_restore_guest_ctx(vcpu_t *vcpu)
     vmm_irq_route_publish_vgic(&vcpu->vm->vgic);
     aarch64_check_vtimer(vcpu);
     aarch64_check_vpl011_rx(vcpu);
+    aarch64_check_vnpu(vcpu);
 
     /* vIRQ：把可投递中断排入 LR，让 GIC 向 guest 产生虚拟 IRQ。
      * GICv2 走 GICH_LR（MMIO），GICv3 走 ICH_LR<n>_EL2（系统寄存器）。*/

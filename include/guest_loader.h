@@ -45,7 +45,73 @@
 #define GUEST_LINUX_MEM_SIZE   0x0C000000ULL /* 192 MiB，与 DTS 一致 */
 #define GUEST_LINUX_KERNEL_GPA 0x70200000ULL
 #define GUEST_LINUX_DTB_GPA    0x74000000ULL
-#define GUEST_LINUX_INITRD_GPA 0x78000000ULL
+/*
+ * initrd 落点。**上下都挨着别人的地盘，所以只有 16 MiB 可用**：
+ *
+ *   0x76000000 ┌──────────────────────────┐
+ *              │ CMA（32 MiB，内核自己挑的）│  ← DTB 里没有 linux,cma，
+ *   0x78000000 ├──────────────────────────┤     是 dma_contiguous_reserve()
+ *              │ initrd（16 MiB 上限）      │     找的洞，正好落在这里
+ *   0x79000000 ├──────────────────────────┤
+ *              │ NPU 恒等窗口（48 MiB）     │
+ *   0x7C000000 └──────────────────────────┘
+ *
+ * 往**上**越过 0x79000000 不会报错 —— initrd 的页会直接把 NPU 窗口那段 IPA
+ * 覆盖掉，之后 guest 驱动拿到的"物理地址"在 NPU 眼里是 initramfs 的内容。
+ * 往**下**则是撞进 CMA。两边都不安全，所以只有 16 MiB。
+ *
+ * 挡越界的是 guest_loader.c 里那个**加载前**的大小检查（不能放到加载后，
+ * 那时页已经映射进去了）。带 NPU 的 initramfs 现在 9.2 MiB（gzip 后），
+ * 余量 7 MiB。
+ *
+ * ⚠️ 想把 initrd 做大，得**先在 guest DTS 里把 linux,cma 显式钉在一个
+ *    确定的位置**，再把这里挪过去 —— 不能只改这一个常量。否则 CMA 会被
+ *    挤到别处，或者和 initrd 抢同一段内存，而两者都不报错。
+ */
+#define GUEST_LINUX_INITRD_GPA   0x78000000ULL
+
+/*
+ * ── NPU DMA 恒等窗口（IPA）───────────────────────────────────────────────
+ *
+ * RK3588 真机上把 NPU 透传给 guest 时，这块内存必须 **IPA == PA**：
+ * NPU 是没有 IOMMU 的物理设备，只认物理地址，而 guest 的普通 RAM 是逐页
+ * 从 PMM 现分配的（物理不连续、PA 与 IPA 无关）。详见
+ * include/aarch64/stage2.h 里 s2_ctx_t.npu_dma_base 的说明。
+ *
+ * 三处必须一致，缺一个 NPU 就会写到随机的宿主页：
+ *   1. guest DTS 的 reserved-memory（NPU 节点的 memory-region 指向它）
+ *   2. 这里 —— VMM 用它建立 stage-2 的恒等映射
+ *   3. platforms/rk3588-aarch64/platform.conf 的 reserves —— 把同一段
+ *      **物理**内存从宿主 PMM 里摘出来，否则宿主会把页分给别人
+ *
+ * ⚠️ 只在 RK3588 上启用。QEMU 上没有 NPU，而且宿主 PA 0x79000000 根本不是
+ * RAM —— 设了反而会把 guest 的正常访问映射到不存在的物理内存上。
+ */
+#if PLATFORM_RK3588
+#define GUEST_LINUX_NPU_DMA_GPA  0x79000000ULL /* guest RAM 顶部 48 MiB */
+#define GUEST_LINUX_NPU_DMA_SIZE 0x03000000ULL
+#else
+#define GUEST_LINUX_NPU_DMA_GPA  0ULL
+#define GUEST_LINUX_NPU_DMA_SIZE 0ULL
+#endif
+
+/*
+ * initrd 的**上界**（不含）：从 GUEST_LINUX_INITRD_GPA 起还能用多少。
+ *
+ * 取「下一个被固定占用的 guest 地址」而不是 RAM 末尾 —— 有 NPU 时那个地址
+ * 是恒等窗口的起点，initrd 越过它就会把窗口的 IPA 覆盖掉（不报错，见
+ * GUEST_LINUX_INITRD_GPA 的注释）。没有 NPU 时窗口大小为 0，上界自然落到
+ * RAM 末尾。
+ *
+ * 注：**下界那边（CMA）不用管** —— CMA 在 initrd 下方，initrd 只会往上长。
+ * 但那也正是 initrd 不能再往下挪的原因，见 GUEST_LINUX_INITRD_GPA。
+ *
+ * ⚠️ 放在 NPU 那两个宏**之后**：它依赖它们。挪到前面会静默拿到全 0，
+ *    于是每次启动都在"initrd 太大"上失败 —— 而且看起来像镜像坏了。
+ */
+#define GUEST_LINUX_INITRD_LIMIT                                               \
+    ((GUEST_LINUX_NPU_DMA_GPA) ? (GUEST_LINUX_NPU_DMA_GPA)                     \
+                               : (GUEST_LINUX_MEM_BASE + GUEST_LINUX_MEM_SIZE))
 
 /* guest 镜像在 rootfs 中的路径 */
 #define GUEST_LINUX_KERNEL_PATH "/guests/linux/linux.bin"
@@ -116,6 +182,11 @@ extern volatile uint64_t g_guest_entry_x0;
 #define GUEST_LINUX_STACK_GPA      0x0BE00000ULL /* 190 MiB */
 #define GUEST_LINUX_STACK_SIZE     0x1000ULL
 #define GUEST_LINUX_INITRD_GPA     0x06000000ULL /* 96 MiB 处 */
+/* initrd 上界：本架构没有"后面还要用"的固定区域，所以就是 RAM 末尾。
+ * 为什么要有这个上界、以及 aarch64 上它为什么不是 RAM 末尾，见该架构块里
+ * GUEST_LINUX_INITRD_LIMIT 的说明（guest_loader.c 用它做加载前检查）。*/
+#define GUEST_LINUX_INITRD_LIMIT                                               \
+    (GUEST_LINUX_MEM_BASE + GUEST_LINUX_MEM_SIZE)
 
 #define GUEST_LINUX_KERNEL_PATH "/guests/x86_64/bzImage"
 #define GUEST_LINUX_INITRD_PATH "/guests/x86_64/initrd"
@@ -152,6 +223,10 @@ extern volatile uint64_t g_guest_entry_x0;
 #define GUEST_LINUX_KERNEL_GPA 0xA0200000ULL /* +2   MiB */
 #define GUEST_LINUX_DTB_GPA    0xA4000000ULL /* +64  MiB */
 #define GUEST_LINUX_INITRD_GPA 0xA8000000ULL /* +128 MiB */
+/* initrd 上界 —— 同 x86_64：本架构后面没有固定区域，就是 RAM 末尾。
+ * aarch64 那份为什么不是 RAM 末尾，见该架构块的 GUEST_LINUX_INITRD_LIMIT。*/
+#define GUEST_LINUX_INITRD_LIMIT                                               \
+    (GUEST_LINUX_MEM_BASE + GUEST_LINUX_MEM_SIZE)
 
 #define GUEST_LINUX_KERNEL_PATH "/guests/rv64/linux.bin"
 #define GUEST_LINUX_DTB_PATH    "/guests/rv64/linux.dtb"
@@ -237,6 +312,28 @@ int guest_loader_patch_dtb_bootargs(uint8_t *dtb, uint32_t dtb_size,
  */
 int guest_loader_nop_dtb_nodes(uint8_t *dtb, uint32_t dtb_size,
                                const char *const *names, int nr_names);
+
+/*
+ * guest_loader_dtb_node_has_prop — 某个**节点**上有没有某个属性
+ *
+ * 加它只有一个原因：NPU 透传要的两个 DTB 属性，真机上**分别**踩过一次 ——
+ *
+ *   缺 `no-map`        → 池建不起来（memremap(WC) 打在 System RAM 上 return NULL）
+ *                        症状：guest 里驱动 probe 成功，作业永远超时
+ *   缺 `dma-coherent`  → 一跑就 guest 内核 Oops（dma_sync_* 拿 phys_to_virt
+ *                        去 dcache clean，而 no-map 区没有线性映射）
+ *
+ * 两个症状都不指向 DTB，都耗掉一轮真机。DTB 就在宿主手里，所以在这儿查。
+ *
+ * ⚠️ **必须按节点查，不能只查属性名在不在。** 第一版就是查 strings 块，
+ *    结果 `dma-coherent` 在 QEMU 的 fw-cfg / virtio_mmio / pcie 三个节点上
+ *    本来就有 —— 判据永远通过，等于没查。真踩过这个假阳性。
+ *
+ * node 要写完整节点名（如 "npu@fdab0000"），只匹配根下的直接子节点。
+ * 返回 1 = 有，0 = 没有（或没这个节点），-1 = 不是合法 FDT。
+ */
+int guest_loader_dtb_node_has_prop(const uint8_t *dtb, uint32_t dtb_size,
+                                   const char *node, const char *prop);
 
 /*
  * guest_loader_gpa_ptr — guest 物理地址 → 宿主内核可直接读写 的指针

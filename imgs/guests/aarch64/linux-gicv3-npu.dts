@@ -1,0 +1,295 @@
+/dts-v1/;
+
+/ {
+	interrupt-parent = <0x8002>;
+	model = "linux,dummy-virt";
+	#size-cells = <0x02>;
+	#address-cells = <0x02>;
+	compatible = "linux,dummy-virt";
+
+	psci {
+		migrate = <0xc4000005>;
+		cpu_on = <0xc4000003>;
+		cpu_off = <0x84000002>;
+		cpu_suspend = <0xc4000001>;
+		method = "smc";
+		compatible = "arm,psci-0.2\0arm,psci";
+	};
+
+	memory@70000000 {
+		reg = <0x00 0x70000000 0x00 0xc000000>;
+		device_type = "memory";
+	};
+
+	platform-bus@c000000 {
+		interrupt-parent = <0x8002>;
+		ranges = <0x00 0x00 0xc000000 0x2000000>;
+		#address-cells = <0x01>;
+		#size-cells = <0x01>;
+		compatible = "qemu,platform\0simple-bus";
+	};
+
+	fw-cfg@9020000 {
+		dma-coherent;
+		reg = <0x00 0x9020000 0x00 0x18>;
+		compatible = "qemu,fw-cfg-mmio";
+	};
+
+	virtio_mmio@a000000 {
+		dma-coherent;
+		interrupts = <0x00 0x10 0x01>;
+		reg = <0x00 0xa000000 0x00 0x1000>;
+		compatible = "virtio,mmio";
+	};
+
+	gpio-keys {
+		compatible = "gpio-keys";
+
+		poweroff {
+			gpios = <0x8004 0x03 0x00>;
+			linux,code = <0x74>;
+			label = "GPIO Key Poweroff";
+		};
+	};
+
+	pl061@9030000 {
+		phandle = <0x8004>;
+		clock-names = "apb_pclk";
+		clocks = <0x8000>;
+		interrupts = <0x00 0x07 0x04>;
+		gpio-controller;
+		#gpio-cells = <0x02>;
+		compatible = "arm,pl061\0arm,primecell";
+		reg = <0x00 0x9030000 0x00 0x1000>;
+	};
+
+	pcie@10000000 {
+		interrupt-map-mask = <0x1800 0x00 0x00 0x07>;
+		interrupt-map = <0x00 0x00 0x00 0x01 0x8002 0x00 0x00 0x00 0x03 0x04 0x00 0x00 0x00 0x02 0x8002 0x00 0x00 0x00 0x04 0x04 0x00 0x00 0x00 0x03 0x8002 0x00 0x00 0x00 0x05 0x04 0x00 0x00 0x00 0x04 0x8002 0x00 0x00 0x00 0x06 0x04 0x800 0x00 0x00 0x01 0x8002 0x00 0x00 0x00 0x04 0x04 0x800 0x00 0x00 0x02 0x8002 0x00 0x00 0x00 0x05 0x04 0x800 0x00 0x00 0x03 0x8002 0x00 0x00 0x00 0x06 0x04 0x800 0x00 0x00 0x04 0x8002 0x00 0x00 0x00 0x03 0x04 0x1000 0x00 0x00 0x01 0x8002 0x00 0x00 0x00 0x05 0x04 0x1000 0x00 0x00 0x02 0x8002 0x00 0x00 0x00 0x06 0x04 0x1000 0x00 0x00 0x03 0x8002 0x00 0x00 0x00 0x03 0x04 0x1000 0x00 0x00 0x04 0x8002 0x00 0x00 0x00 0x04 0x04 0x1800 0x00 0x00 0x01 0x8002 0x00 0x00 0x00 0x06 0x04 0x1800 0x00 0x00 0x02 0x8002 0x00 0x00 0x00 0x03 0x04 0x1800 0x00 0x00 0x03 0x8002 0x00 0x00 0x00 0x04 0x04 0x1800 0x00 0x00 0x04 0x8002 0x00 0x00 0x00 0x05 0x04>;
+		#interrupt-cells = <0x01>;
+		ranges = <0x1000000 0x00 0x00 0x00 0x3eff0000 0x00 0x10000 0x2000000 0x00 0x10000000 0x00 0x10000000 0x00 0x2eff0000 0x3000000 0x80 0x00 0x80 0x00 0x80 0x00>;
+		reg = <0x40 0x10000000 0x00 0x10000000>;
+		dma-coherent;
+		bus-range = <0x00 0xff>;
+		linux,pci-domain = <0x00>;
+		#size-cells = <0x02>;
+		#address-cells = <0x03>;
+		device_type = "pci";
+		compatible = "pci-host-ecam-generic";
+	};
+
+	pl031@9010000 {
+		clock-names = "apb_pclk";
+		clocks = <0x8000>;
+		interrupts = <0x00 0x02 0x04>;
+		reg = <0x00 0x9010000 0x00 0x1000>;
+		compatible = "arm,pl031\0arm,primecell";
+	};
+
+	pl011@9000000 {
+		clock-names = "uartclk\0apb_pclk";
+		clocks = <0x8000 0x8000>;
+		interrupts = <0x00 0x01 0x04>;
+		reg = <0x00 0x9000000 0x00 0x1000>;
+		compatible = "arm,pl011\0arm,primecell";
+	};
+
+	pmu {
+		interrupts = <0x01 0x07 0x104>;
+		compatible = "arm,armv8-pmuv3";
+	};
+
+	intc@8000000 {
+		phandle = <0x8002>;
+		/*
+		 * GICv3：reg[0] = Distributor（只管 SPI），
+		 * reg[1] = Redistributor 区（每核 128KB：RD 帧 + SGI 帧），
+		 * 由 #redistributor-regions 指定 reg[1..] 里有几段。
+		 * 地址必须与 platforms/qemu-virt-aarch64/platform.conf 的
+		 * irq.gicd / irq.gicr 以及 vmm_vgicv3.h 的 VGIC3D_BASE /
+		 * VGIC3R_BASE 完全一致。
+		 *
+		 * 没有 v2m 子节点（GICv3 没有 GICv2M 帧），PPI 9 是维护中断，
+		 * 与 QEMU 自己的 virt GICv3 DTB 一致。
+		 */
+		reg = <0x00 0x8000000 0x00 0x10000 0x00 0x80a0000 0x00 0x20000>;
+		#redistributor-regions = <0x01>;
+		interrupts = <0x01 0x09 0x04>;
+		compatible = "arm,gic-v3";
+		ranges;
+		#size-cells = <0x02>;
+		#address-cells = <0x02>;
+		interrupt-controller;
+		#interrupt-cells = <0x03>;
+	};
+
+	flash@0 {
+		bank-width = <0x04>;
+		reg = <0x00 0x00 0x00 0x4000000 0x00 0x4000000 0x00 0x4000000>;
+		compatible = "cfi-flash";
+	};
+
+	cpus {
+		#size-cells = <0x00>;
+		#address-cells = <0x01>;
+
+		cpu-map {
+
+			socket0 {
+
+				cluster0 {
+
+					core0 {
+						cpu = <0x8001>;
+					};
+				};
+			};
+		};
+
+		cpu@0 {
+			phandle = <0x8001>;
+			reg = <0x00>;
+			compatible = "arm,cortex-a72";
+			device_type = "cpu";
+			enable-method = "psci";
+		};
+	};
+
+	timer {
+		interrupts = <0x01 0x0d 0x104 0x01 0x0e 0x104 0x01 0x0b 0x104 0x01 0x0a 0x104>;
+		always-on;
+		compatible = "arm,armv8-timer\0arm,armv7-timer";
+	};
+
+	apb-pclk {
+		phandle = <0x8000>;
+		clock-output-names = "clk24mhz";
+		clock-frequency = <0x16e3600>;
+		#clock-cells = <0x00>;
+		compatible = "fixed-clock";
+	};
+
+	/*
+	 * ── NPU 透传（RK3588）─────────────────────────────────────────────
+	 *
+	 * 对照 OrangePi 5 Plus 的 arch/arm64/boot/dts/rockchip/rk3588s.dtsi
+	 * 里的 rknpu 节点，砍掉所有本内核/本场景用不到的部分：
+	 *
+	 *   保留：3 个 MMIO 窗口、3 条中断（GIC_SPI 110/111/112 = 宿主 142/143/144）
+	 *   省略 iommus         → 驱动走【非 IOMMU】模式，直接用物理地址。
+	 *                         这正是我们要的：NPU 是物理设备、没有 SMMU。
+	 *                         rknpu_drv.c 里 of_reserved_mem_device_init()
+	 *                         只在非 IOMMU 分支被调用，所以下面那个
+	 *                         memory-region 才会生效。
+	 *   省略 power-domains  → 驱动里是 dev_pm_domain_attach_by_name()，
+	 *                         拿不到就跳过（宿主已经上电，guest 不用管）
+	 *   省略 resets         → rknpu_reset_get() 的返回值被忽略，只影响软复位恢复
+	 *   省略 operating-points-v2 → 关掉 DVFS，跑 bootloader 设的频率
+	 *   时钟只给一个 dummy   → devm_clk_bulk_get_all() 要求 >=1 个；
+	 *                         clk_bulk_prepare_enable() 对 fixed-clock 是空操作；
+	 *                         clk_get_rate() 只用来给 RKNPU_GET_FREQ 报个数。
+	 */
+	npu_clk: npu-clk {
+		compatible = "fixed-clock";
+		#clock-cells = <0x00>;
+		clock-frequency = <0x0bebc200>;	/* 200 MHz，仅用于上报，不真的调频 */
+		clock-output-names = "clk_npu";
+	};
+
+	npu: npu@fdab0000 {
+		compatible = "rockchip,rk3588-rknpu";
+		reg = <0x00 0xfdab0000 0x00 0x10000>,
+		      <0x00 0xfdac0000 0x00 0x10000>,
+		      <0x00 0xfdad0000 0x00 0x10000>;
+		interrupt-parent = <0x8002>;
+		interrupts = <0x00 0x6e 0x04>,	/* SPI 110 = 宿主 142 */
+			     <0x00 0x6f 0x04>,	/* SPI 111 = 宿主 143 */
+			     <0x00 0x70 0x04>;	/* SPI 112 = 宿主 144 */
+		interrupt-names = "npu0_irq", "npu1_irq", "npu2_irq";
+		clocks = <&npu_clk>;
+		clock-names = "clk_npu";
+		memory-region = <&npu_pool>;
+
+		/*
+		 * ⚠️ dma-coherent 与池的 no-map 是**一套**，少一个就崩。
+		 *
+		 * 内核在 dma_sync_* 里这么写（kernel/dma/direct.c:422）：
+		 *
+		 *     if (!dev_is_dma_coherent(dev))
+		 *             arch_sync_dma_for_device(paddr, len, dir);
+		 *
+		 * 而 arm64 的 arch_sync_dma_for_device() 是
+		 *     dcache_clean_poc(phys_to_virt(paddr), ...)
+		 * —— 走**线性映射**。池声明了 no-map，内核就**不给它建线性映射**，
+		 * 于是对未映射的 VA 做 DC CVAC → level 2 translation fault →
+		 * guest 内核 Oops（真机上第一次跑 yolo 就崩在这儿）。
+		 *
+		 * 声明 coherent 之后 dev_is_dma_coherent() 为真，上面那句直接跳过，
+		 * 不做 cache 维护 —— 这也正是 no-map 池的**设计前提**：CPU 侧走
+		 * ioremap_wc（非缓存），写出去就到内存，本来就不需要维护缓存。
+		 *
+		 * 反过来若只删 no-map、留非 coherent：memremap(WC) 打在 System RAM 上
+		 * 会 return NULL，池根本建不起来（见上面 reserved-memory 那段）。
+		 * **两者必须同时在。**
+		 */
+		dma-coherent;
+
+		status = "okay";
+	};
+
+	/*
+	 * NPU 的 DMA 区。
+	 *
+	 * ★ 这一块必须满足两个条件，否则 NPU 会写到随机的宿主页：
+	 *   (a) 宿主侧这块物理内存被**预留**、且恒等映射进 guest
+	 *       （IPA == PA —— 见 kernel/vmm 的 stage-2 改动）
+	 *   (b) guest 把它当 reserved-memory 从 buddy 里摘掉
+	 *
+	 * compatible = "shared-dma-pool" 且**不给 reusable**：专用池，
+	 * 由 NPU 节点的 memory-region 引用，通过
+	 * of_reserved_mem_device_init() 挂到设备上。这样 librknnrt 每次
+	 * RKNPU_MEM_CREATE 的 dma_alloc_attrs() 都是从这块里出。
+	 *
+	 * 大小 48 MiB：实测 YOLOv8n 跑一次要一个 ~4.2 MiB 的 regcmd 缓冲 +
+	 * 若干输入输出缓冲，量级在 10~20 MiB。
+	 *
+	 * ⚠️ **no-map 不能省。** 没有它这块内存仍是 System RAM，而
+	 *    dma_init_coherent_memory() 是写死 `memremap(..., MEMREMAP_WC)` 的
+	 *    （kernel/dma/coherent.c:48），memremap 对 System RAM 用 WC 会
+	 *    **告警并返回 NULL**（kernel/iomem.c:106）→ of_reserved_mem_device_init
+	 *    失败 → NPU 一个字节的 DMA 池都拿不到。
+	 *    真机上第一次启动就是这个症状，日志只有一行：
+	 *        memremap attempted on ram 0x0000000079000000 size: 0x3000000
+	 *        WARNING: CPU: 0 PID: 47 at kernel/iomem.c:107 memremap+0x1d0/0x220
+	 *    它**带 WARNING 字样，看起来像无害的啰嗦**，但那个分支是 return NULL。
+	 *
+	 *    加了 no-map 之后，arm64 的 request_standard_resources() 会把这个区
+	 *    标成 IORESOURCE_MEM 而不是 IORESOURCE_SYSTEM_RAM
+	 *    （arch/arm64/kernel/setup.c:241），is_ram 变 false，memremap 这才
+	 *    会去走 ioremap_wc。
+	 *
+	 *    语义上也对：这块内存是**给设备专用**的，内核的线性映射不该直接
+	 *    碰它 —— CPU 要访问得走 dma_alloc_coherent 拿回的映射。
+	 */
+	reserved-memory {
+		#address-cells = <0x02>;
+		#size-cells = <0x02>;
+		ranges;
+
+		npu_pool: npu-pool@79000000 {
+			compatible = "shared-dma-pool";
+			reg = <0x00 0x79000000 0x00 0x3000000>;
+			no-map;
+			status = "okay";
+		};
+	};
+
+	chosen {
+		linux,initrd-end = <0x78736355>;
+		linux,initrd-start = <0x78000000>;
+		bootargs = "root=/dev/vda rootfstype=ext4 rw console=ttyAMA0 earlycon=pl011,mmio,0x9000000";
+		stdout-path = "/pl011@9000000";
+		rng-seed = <0x2042ef85 0x7359a362 0xa80384fa 0x494effd2 0xd1e13e05 0xb6fae544 0xd3a19513 0x1cebc2c8>;
+		kaslr-seed = <0x9cdbc23d 0x3256a986>;
+	};
+};

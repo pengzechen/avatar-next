@@ -126,6 +126,11 @@ void stage2_vm_init(s2_ctx_t *s2, uint32_t slot, uint32_t vmid,
     memset(s2, 0, sizeof(*s2));
     s2->slot = slot;
     s2->vmid = vmid & 0xFF;
+    /* 默认没有 NPU 恒等窗口；需要时由 vmm_arch_vm_init() 显式设定。
+     * 不清零的话静态表在 VM 复用时会带着上一个 VM 的窗口。 */
+    s2->npu_dma_base = 0;
+    s2->npu_dma_end = 0;
+
     s2->ram_base = ram_base;
     s2->ram_size = ram_size;
     s2->ram_end = ram_base + ram_size;
@@ -219,6 +224,60 @@ void stage2_activate(const s2_ctx_t *s2)
 int stage2_ipa_is_ram(const s2_ctx_t *s2, uint64_t ipa)
 {
     return (ipa >= s2->ram_base && ipa < s2->ram_end);
+}
+
+void stage2_set_npu_dma_window(s2_ctx_t *s2, uint64_t base, uint64_t size)
+{
+    s2->npu_dma_base = base;
+    s2->npu_dma_end = size ? (base + size) : base;
+}
+
+int stage2_ipa_is_npu_dma(const s2_ctx_t *s2, uint64_t ipa)
+{
+    return (s2->npu_dma_end > s2->npu_dma_base && ipa >= s2->npu_dma_base &&
+            ipa < s2->npu_dma_end);
+}
+
+/*
+ * stage2_map_identity_block — 把 ipa 所在的 2 MiB 块**恒等**映射（PA = IPA）。
+ *
+ * 与 stage2_map_block 的唯一区别：**不调 pmm_alloc_pages**，PA 直接用 IPA。
+ * 这一段的物理内存由宿主 platform.conf 的 reserves 钉住，所以 IPA 一定是
+ * 一段真实存在、且没人会拿去复用的物理地址。
+ *
+ * 为什么必须恒等：RK3588 NPU 无 IOMMU，它只认物理地址。guest 里 librknnrt
+ * 拿到的"设备地址"是驱动从 CMA/预留池分配出来的物理地址，NPU 就照着那个
+ * 地址去读写 —— 只有 IPA == PA 时，这个地址在 guest 和宿主两边指的是同一块
+ * 内存。（详见 include/aarch64/stage2.h 里 s2_ctx_t.npu_dma_base 的说明。）
+ *
+ * 属性用 Normal（不是 Device）：这是普通内存，NPU 要用 AXI 正常访问它；
+ * 且 guest 侧 CPU 也要读写（拷输入、读结果），用 Device 属性会慢得离谱。
+ *
+ * 已映射的项跳过（幂等）—— 缺页重试、以及加载期预映射都会走到。
+ * 返回本次新装的页数。
+ */
+uint64_t stage2_map_identity_block(s2_ctx_t *s2, uint64_t ipa)
+{
+    uint64_t base = ipa & ~(S2_BLOCK_SIZE - 1);
+    uint64_t *t = l3_ensure(s2, base);
+    uint64_t n = 0;
+    int i;
+
+    if (!t)
+        return 0;
+
+    for (i = 0; i < S2_L3_ENTRIES; i++) {
+        uint64_t page_ipa;
+
+        if (t[i] & LPAE_VALID)
+            continue; /* 已经映射过 */
+
+        page_ipa = base + (uint64_t)i * S2_PAGE_SIZE;
+        t[i] = (page_ipa & ~0xFFFULL) | LPAE_PAGE | LPAE_AF | LPAE_SH_IS |
+               LPAE_MATTR_NORM | LPAE_S2AP_RW;
+        n++;
+    }
+    return n;
 }
 
 uint64_t stage2_map_page(s2_ctx_t *s2, uint64_t ipa, int zero)
