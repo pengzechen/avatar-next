@@ -211,9 +211,45 @@ int npu_mmu_enable(uint64_t ipa_base, uint64_t ipa_size)
     mmu_cmd_all(NPU_MMU_CMD_ZAP_CACHE);
     g_mmu_dirty = 0;
 
+    /*
+     * ⚠️ **必须回读 STATUS 确认翻译真的开了。**
+     *
+     * mainline 的 rk_iommu_enable_paging() 发完命令就 `readx_poll_timeout`
+     * 等 PAGING_ENABLED 置位，超时报错 —— 说明这个命令**可能不生效**。
+     * 而"没生效"和"生效了"从外面看一模一样：MMU 关着时 NPU 按**物理地址**
+     * 访问，我们把 IPA→PA 的表建得再对也没用，它照样什么都读不到
+     * （真机实测 raw status = 0xc0000000，和"NPU 没开工"完全一致）。
+     *
+     * 第一版就是发完命令就走，于是连"到底是表错了还是根本没开翻译"
+     * 都分不出来。
+     */
+    {
+        int all_on = 0;
+
+        for (int t = 0; t < 100000 && !all_on; t++) {
+            all_on = 1;
+            for (int i = 0; i < NPU_MMU_BANKS; i++) {
+                if (!(mmu_read(i, NPU_MMU_STATUS) &
+                      NPU_MMU_STATUS_PAGING_ENABLED)) {
+                    all_on = 0;
+                    break;
+                }
+            }
+        }
+
+        if (!all_on)
+            KLOG_ERROR("npu_mmu: ⚠ ENABLE_PAGING 没生效 —— STATUS 里 "
+                       "PAGING_ENABLED 一直不置位。NPU 会按**物理地址**访问，"
+                       "全部对不上。\n");
+    }
+
     KLOG_INFO("npu_mmu: 翻译已开 ipa=[0x%llx, 0x%llx) dir=0x%llx\n",
               (unsigned long long)ipa_base, (unsigned long long)g_mmu_ipa_end,
               (unsigned long long)dir_pa);
+
+    /* 把四组寄存器的实际状态打出来 —— 这一行本来就有，只是一直没被调用过。
+     * 它就是"翻译到底开没开、有没有缺页"的直接判据。*/
+    npu_mmu_dump();
     return 0;
 }
 
