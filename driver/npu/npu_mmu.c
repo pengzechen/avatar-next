@@ -18,6 +18,8 @@
 #include "mmio.h"
 #include "klog.h"
 #include "mm_vm.h" /* phys_to_virt / KERNEL_VMA */
+#include "cache.h"    /* clean_dcache_range：表页必须冲缓存，见 npu_mmu_sync */
+#include "barrier.h"  /* barrier_sync：冲完要 dsb，否则 NPU 仍可能先读到 */
 #include "pmm.h"
 #include "platform_cfg.h"
 #include "string.h"
@@ -343,6 +345,34 @@ int npu_mmu_sync(vm_t *vm)
             pte_set(t, ipa, pa);
             added++;
         }
+    }
+
+    /*
+     * ⚠️⚠️ **表页必须冲缓存 —— 这是整件事最关键的一步。**
+     *
+     * `g_mmu_dir` 和 PT 都是**普通可缓存内存**，CPU 写它们走的是 cache。
+     * 而 NPU 的 MMU 是**从内存里取表**的（设备的总线读不会来看 CPU 的
+     * cache）—— 不冲的话它看到的是**写之前**的内容。
+     *
+     * 这正是 dma_alloc_coherent 存在的理由，也是这类设备驱动里最容易漏的
+     * 一步。真机症状极具迷惑性：
+     *
+     *   · 缺页地址在**同一页内漂移**（0x79711540 → 0x79711840 → 0x79711640，
+     *     三次是三个不同的值）。缓存里哪些行碰巧被回写了，每次不同 →
+     *     MMU 能解出来的项也不同 → 缺的地址就乱跳。
+     *   · 探针说"表是对的"，硬件说"缺页" —— 因为**探针读的是缓存里的新值**，
+     *     硬件读的是内存里的旧值。两边都没撒谎，它们看的不是同一份东西。
+     *
+     * 顺序：先冲表（让 MMU 能看到），再 ZAP（让 IOTLB 忘掉旧的），后清故障。
+     */
+    if (added) {
+        clean_dcache_range(g_mmu_dir, sizeof(g_mmu_dir));
+        for (int i = 0; i < NPU_MMU_DIR_ENTRIES; i++) {
+            if (g_mmu_pt[i].pt)
+                clean_dcache_range(g_mmu_pt[i].pt, 4096);
+        }
+        /* dsb：确保真的落到内存 —— 只 clean 不屏障，NPU 仍可能先读到 */
+        barrier_sync();
     }
 
     if (added) {
