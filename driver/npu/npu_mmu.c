@@ -414,6 +414,21 @@ void npu_mmu_probe(vm_t *vm, uint64_t ipa)
                   : "**两者不一致** —— 表错了");
 }
 
+/*
+ * 清掉粘住的缺页（写 PAGE_FAULT_DONE）。四组都要清 —— 缺页是按 bank 记的。
+ * mainline 在缺页中断处理里就是这么收尾的。
+ */
+void npu_mmu_clear_fault(void)
+{
+    if (!g_mmu_ready)
+        return;
+
+    for (int i = 0; i < NPU_MMU_BANKS; i++) {
+        if (mmu_read(i, NPU_MMU_STATUS) & NPU_MMU_STATUS_PAGE_FAULT_ACTIVE)
+            mmu_write(i, NPU_MMU_COMMAND, NPU_MMU_CMD_PAGE_FAULT_DONE);
+    }
+}
+
 void npu_mmu_dump(void)
 {
     if (!g_mmu_ready) {
@@ -436,6 +451,21 @@ void npu_mmu_dump(void)
                       ? ((st & NPU_MMU_STATUS_PAGE_FAULT_IS_WRITE) ? "(写)"
                                                                     : "(读)")
                       : "");
+
+        /*
+         * ⚠️ 这个寄存器一直只定义、没读过 —— 而它直接记着**出错的那个地址**。
+         * 表全填满之后仍然报缺页，那缺的地址就一定在 guest RAM 之外，
+         * 读出来就知道 NPU 到底在要什么。
+         */
+        if (st & NPU_MMU_STATUS_PAGE_FAULT_ACTIVE)
+            KLOG_ERROR("npu_mmu:   bank%d 缺页地址 = 0x%08x %s guest RAM "
+                       "[0x70000000, 0x7c000000) —— **那不在我们给的任何"
+                       "缓冲里**\n",
+                       bank, mmu_read(bank, NPU_MMU_PAGE_FAULT_ADDR),
+                       (mmu_read(bank, NPU_MMU_PAGE_FAULT_ADDR) < 0x70000000U ||
+                        mmu_read(bank, NPU_MMU_PAGE_FAULT_ADDR) >= 0x7C000000U)
+                           ? "在"
+                           : "**仍在**");
     }
 }
 

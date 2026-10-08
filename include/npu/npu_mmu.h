@@ -149,6 +149,15 @@ void npu_mmu_disable(void);
 struct vm;
 int npu_mmu_sync(struct vm *vm);
 
+/*
+ * npu_mmu_clear_fault — 清掉粘住的缺页。
+ *
+ * ⚠️ 缺页是**粘的**：PAGE_FAULT_ACTIVE 一旦立起来，MMU 就停摆，直到有人写
+ * PAGE_FAULT_DONE。我们不处理缺页中断，所以早期某次撞击会让它永远停在那儿 ——
+ * 表填得再全也没用，因为翻译根本不发生了。每次提交前先清一遍。
+ */
+void npu_mmu_clear_fault(void);
+
 /* 诊断：翻译开了没有 / 表里填了多少项 */
 void npu_mmu_dump(void);
 
