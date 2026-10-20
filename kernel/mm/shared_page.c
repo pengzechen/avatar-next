@@ -50,11 +50,11 @@ void shared_page_unref(uint64_t paddr)
             g_shared_pages[i].refcount--;
             if (g_shared_pages[i].refcount == 0) {
                 g_shared_pages[i].paddr = 0;
-                pmm_free_pages(g_pmm, paddr, 1);
+                pmm_free_pages(&g_pmm, paddr, 1);
             }
             return;
         }
     }
 
-    pmm_free_pages(g_pmm, paddr, 1);
+    pmm_free_pages(&g_pmm, paddr, 1);
 }

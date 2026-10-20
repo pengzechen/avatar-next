@@ -146,7 +146,7 @@ static int pt_for(uint64_t ipa, int alloc)
     if (!alloc)
         return -1;
 
-    uint64_t pa = pmm_alloc_pages(g_pmm, 1);
+    uint64_t pa = pmm_alloc_pages(&g_pmm, 1);
     if (pa == 0)
         return -1;
 
@@ -176,7 +176,7 @@ int npu_mmu_enable(uint64_t ipa_base, uint64_t ipa_size)
      * 上一轮的 PT 留着会把已经不属于本 VM 的物理页继续映射着。*/
     for (int i = 0; i < NPU_MMU_DIR_ENTRIES; i++) {
         if (g_mmu_pt[i].pt) {
-            pmm_free_pages(g_pmm, g_mmu_pt[i].pa, 1);
+            pmm_free_pages(&g_pmm, g_mmu_pt[i].pa, 1);
             g_mmu_pt[i].pt = NULL;
         }
         g_mmu_dir[i] = 0;
@@ -266,7 +266,7 @@ void npu_mmu_disable(void)
 
     for (int i = 0; i < NPU_MMU_DIR_ENTRIES; i++) {
         if (g_mmu_pt[i].pt) {
-            pmm_free_pages(g_pmm, g_mmu_pt[i].pa, 1);
+            pmm_free_pages(&g_pmm, g_mmu_pt[i].pa, 1);
             g_mmu_pt[i].pt = NULL;
         }
         g_mmu_dir[i] = 0;

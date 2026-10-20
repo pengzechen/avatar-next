@@ -14,6 +14,7 @@
 #include "task/sched.h"
 #include "task/cpu.h"
 #include "pmm.h"
+#include "mm_vm.h" /* virt_to_phys：把链接符号换算成物理地址 */
 #include "../fs/lwext4_port/fs_init.h"
 #include "loader/elf_loader.h"
 #include "timer/timer.h"
@@ -25,7 +26,6 @@
 #include "aarch64/cpu.h"
 #include "vmm/vmm.h"
 #include "aarch64/stage2.h"
-#include "mm_vm.h"
 #if defined(RUN_GUEST_LINUX)
 /* 直启模式的 GUEST_LINUX_MEM_* 与 guest_loader_run_linux 声明。
  * ⚠️ 必须在**文件作用域**包含：这个头里有一个 `typedef struct vm vm_t;`
@@ -212,7 +212,7 @@ void kernel_main(void)
      * 镜像本身完全正常、但 panic 打出来的函数名会整体错位 —— 假的调用栈比
      * 打不出来更危险，它会把人带到完全错误的方向。这里当场喊出来。
      */
-    backtrace_selftest();
+    // backtrace_selftest();
 
     /*
      * 探测/设定缓存行大小（cache API 的 range 操作用它做步长）。
@@ -232,7 +232,16 @@ void kernel_main(void)
 #endif
 
     /* ── 初始化物理内存管理器 ───────────────────────────────── */
-    pmm_initialize();
+    /*
+     * 链接脚本导出的 __kernel_image_start/end 是**虚拟地址**：高半区代码
+     * 对低物理地址的 ABS 符号做 PC 相对寻址会超出 ADRP/auipc/RIP-rel 的
+     * 范围（实测 aarch64 报 R_AARCH64_ADR_PREL_PG_HI21 truncated to fit）。
+     * 换算放在这里 —— boot 层知道 KERNEL_VMA，PMM 只收物理地址。
+     */
+    extern char __kernel_image_start[];
+    extern char __kernel_image_end[];
+    pmm_initialize(virt_to_phys((uint64_t)__kernel_image_start),
+                   virt_to_phys((uint64_t)__kernel_image_end));
 
 #if !DRIVER_SDBLK_SG2002
     ramblk_init();

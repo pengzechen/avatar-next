@@ -993,9 +993,9 @@ void syscall_handler(trap_frame_t *frame)
 
         memset(&si, 0, sizeof(si));
         si.uptime = (int64_t)(timer_get_uptime_ms() / 1000ULL);
-        if (g_pmm) {
-            si.totalram = pmm_get_total_pages(g_pmm);
-            si.freeram = pmm_get_free_pages(g_pmm);
+        if (pmm_is_initialized()) {
+            si.totalram = pmm_get_total_pages(&g_pmm);
+            si.freeram = pmm_get_free_pages(&g_pmm);
         }
         si.mem_unit = PAGE_SIZE;
 

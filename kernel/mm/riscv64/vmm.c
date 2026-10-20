@@ -24,7 +24,7 @@ uint64_t *rv_walk_l0_pte(void *page_dir, uint64_t vaddr, bool alloc)
     if ((l2[idx2] & RV_PTE_V) == 0) {
         if (!alloc)
             return NULL;
-        uint64_t pa = pmm_alloc_pages(g_pmm, 1);
+        uint64_t pa = pmm_alloc_pages(&g_pmm, 1);
         if (pa == 0)
             return NULL;
         memset(rv_pa_to_kva(pa), 0, RV_PAGE_SIZE);
@@ -37,7 +37,7 @@ uint64_t *rv_walk_l0_pte(void *page_dir, uint64_t vaddr, bool alloc)
     if ((l1[idx1] & RV_PTE_V) == 0) {
         if (!alloc)
             return NULL;
-        uint64_t pa = pmm_alloc_pages(g_pmm, 1);
+        uint64_t pa = pmm_alloc_pages(&g_pmm, 1);
         if (pa == 0)
             return NULL;
         memset(rv_pa_to_kva(pa), 0, RV_PAGE_SIZE);
@@ -128,7 +128,7 @@ static int rv_copy_pt_recursive(uint64_t *src, uint64_t *dst, int level)
                 continue;
             }
             uint64_t src_pa = rv_pte_to_pa(pte);
-            uint64_t dst_pa = pmm_alloc_pages(g_pmm, 1);
+            uint64_t dst_pa = pmm_alloc_pages(&g_pmm, 1);
             if (dst_pa == 0)
                 return -1;
             memcpy(rv_pa_to_kva(dst_pa), rv_pa_to_kva(src_pa), RV_PAGE_SIZE);
@@ -136,7 +136,7 @@ static int rv_copy_pt_recursive(uint64_t *src, uint64_t *dst, int level)
             continue;
         }
 
-        uint64_t new_child = pmm_alloc_pages(g_pmm, 1);
+        uint64_t new_child = pmm_alloc_pages(&g_pmm, 1);
         if (new_child == 0)
             return -1;
         memset(rv_pa_to_kva(new_child), 0, RV_PAGE_SIZE);

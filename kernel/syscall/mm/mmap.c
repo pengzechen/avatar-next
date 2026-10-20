@@ -361,20 +361,20 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, int prot, int flags, int fd,
             if ((flags & MAP_FIXED) != 0) {
                 pa = mm_vm_get_paddr(pgd, va);
                 if (pa == 0) {
-                    pa = pmm_alloc_pages(g_pmm, 1);
+                    pa = pmm_alloc_pages(&g_pmm, 1);
                     if (pa == 0)
                         return MMAP_FAILED;
                     if (mm_vm_map_pages(pgd, va, pa, 1, 0) != 0) {
-                        pmm_free_pages(g_pmm, pa, 1);
+                        pmm_free_pages(&g_pmm, pa, 1);
                         return MMAP_FAILED;
                     }
                 }
             } else {
-                pa = pmm_alloc_pages(g_pmm, 1);
+                pa = pmm_alloc_pages(&g_pmm, 1);
                 if (pa == 0)
                     return MMAP_FAILED;
                 if (mm_vm_map_pages(pgd, va, pa, 1, 0) != 0) {
-                    pmm_free_pages(g_pmm, pa, 1);
+                    pmm_free_pages(&g_pmm, pa, 1);
                     return MMAP_FAILED;
                 }
             }
@@ -457,7 +457,7 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, int prot, int flags, int fd,
             }
         }
         KLOG_WARN("[mmap] anon gap-search failed: len=0x%llx free_pg=%llu\n",
-                  len, pmm_get_free_pages(g_pmm));
+                  len, pmm_get_free_pages(&g_pmm));
         return (uint64_t)(int64_t)-ENOMEM;
     found:;
     }
@@ -491,7 +491,7 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, int prot, int flags, int fd,
             }
         }
 
-        uint64_t pa = pmm_alloc_pages(g_pmm, 1);
+        uint64_t pa = pmm_alloc_pages(&g_pmm, 1);
         if (pa == 0) {
             KLOG_ERROR("[mmap] Out of memory at va=0x%llx\n", va);
             return MMAP_FAILED;
@@ -499,7 +499,7 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, int prot, int flags, int fd,
         memset(phys_to_virt(pa), 0, PAGE_SIZE);
         if (mm_vm_map_pages(pgd, va, pa, 1, 0) != 0) {
             KLOG_WARN("[mmap] map failed: va=0x%llx flags=0x%x\n", va, flags);
-            pmm_free_pages(g_pmm, pa, 1);
+            pmm_free_pages(&g_pmm, pa, 1);
             return MMAP_FAILED;
         }
 #if ARCH_RISCV64
@@ -536,7 +536,7 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, int prot, int flags, int fd,
                 }
             }
 
-            uint64_t pa = pmm_alloc_pages(g_pmm, 1);
+            uint64_t pa = pmm_alloc_pages(&g_pmm, 1);
             if (pa == 0) {
                 KLOG_ERROR("[mmap] Out of memory at va=0x%llx\n", va);
                 return MMAP_FAILED;
@@ -545,7 +545,7 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, int prot, int flags, int fd,
             if (mm_vm_map_pages(pgd, va, pa, 1, 0) != 0) {
                 KLOG_WARN("[mmap] map failed: va=0x%llx flags=0x%x\n", va,
                           flags);
-                pmm_free_pages(g_pmm, pa, 1);
+                pmm_free_pages(&g_pmm, pa, 1);
                 return MMAP_FAILED;
             }
             if (flags & MAP_SHARED) {

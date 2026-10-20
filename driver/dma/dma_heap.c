@@ -19,7 +19,7 @@ int dma_heap_alloc(size_t size, uint64_t *paddr_out, void **kva_out,
     if (size == 0U || !paddr_out || !kva_out || !size_out)
         return -1;
 
-    if (!g_pmm) {
+    if (!pmm_is_initialized()) {
         KLOG_ERROR("[dma_heap] g_pmm not initialized\n");
         return -1;
     }
@@ -31,7 +31,7 @@ int dma_heap_alloc(size_t size, uint64_t *paddr_out, void **kva_out,
      * pmm_alloc_pages 返回的是**物理连续**的一段 —— 这正是无 IOMMU 的前提，
      * 也是这里不能用 kalloc_pages 之外任何"逐页拼"分配器的原因。
      */
-    uint64_t pa = pmm_alloc_pages(g_pmm, (uint32_t)pages);
+    uint64_t pa = pmm_alloc_pages(&g_pmm, (uint32_t)pages);
     if (pa == 0U) {
         KLOG_ERROR("[dma_heap] contiguous alloc failed: size=%zu pages=%zu\n",
                    size, pages);
@@ -56,8 +56,8 @@ void dma_heap_free(uint64_t paddr, size_t size)
     if (paddr == 0U || size == 0U)
         return;
 
-    if (!g_pmm)
+    if (!pmm_is_initialized())
         return;
 
-    pmm_free_pages(g_pmm, paddr, (uint32_t)(size / DMA_HEAP_PAGE_SIZE));
+    pmm_free_pages(&g_pmm, paddr, (uint32_t)(size / DMA_HEAP_PAGE_SIZE));
 }

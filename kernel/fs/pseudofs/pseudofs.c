@@ -246,9 +246,9 @@ static int meminfo_read(int nid, uint64_t off, void *buf, size_t len)
     size_t pos = 0;
 
     uint64_t total_kb = 0, free_kb = 0;
-    if (g_pmm) {
-        total_kb = (g_pmm->total_pages * g_pmm->page_size) / 1024ULL;
-        free_kb = (g_pmm->free_pages * g_pmm->page_size) / 1024ULL;
+    if (pmm_is_initialized()) {
+        total_kb = (g_pmm.total_pages * g_pmm.page_size) / 1024ULL;
+        free_kb = (g_pmm.free_pages * g_pmm.page_size) / 1024ULL;
     }
 
     char nbuf[24];

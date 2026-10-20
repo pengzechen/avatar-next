@@ -38,7 +38,7 @@ static void rv_destroy_table(uint64_t *table, int level, bool free_leaf_pages)
                 if ((pte & RV_PTE_KEEP) != 0) {
                     /* 设备缓冲：页归 dma_buf/ION 句柄所有，只拆表 */
                 } else if ((pte & RV_PTE_NOFREE) == 0) {
-                    pmm_free_pages(g_pmm, rv_pte_to_pa(pte), 1);
+                    pmm_free_pages(&g_pmm, rv_pte_to_pa(pte), 1);
                 } else {
                     shared_page_unref(rv_pte_to_pa(pte));
                 }
@@ -49,7 +49,7 @@ static void rv_destroy_table(uint64_t *table, int level, bool free_leaf_pages)
 
         uint64_t child_pa = rv_pte_to_pa(pte);
         rv_destroy_table((uint64_t *)phys_to_virt(child_pa), level - 1, true);
-        pmm_free_pages(g_pmm, child_pa, 1);
+        pmm_free_pages(&g_pmm, child_pa, 1);
         table[i] = 0;
     }
 }
@@ -67,7 +67,7 @@ static void x86_destroy_table(uint64_t *table, int level)
             if ((pte & PTE_KEEP) != 0) {
                 /* 设备缓冲：页归 dma_buf/ION 句柄所有，只拆表 */
             } else if ((pte & PTE_NOFREE) == 0) {
-                pmm_free_pages(g_pmm, x86_pte_to_pa(pte), 1);
+                pmm_free_pages(&g_pmm, x86_pte_to_pa(pte), 1);
             } else {
                 shared_page_unref(x86_pte_to_pa(pte));
             }
@@ -77,7 +77,7 @@ static void x86_destroy_table(uint64_t *table, int level)
 
         uint64_t child_pa = x86_pte_to_pa(pte);
         x86_destroy_table((uint64_t *)phys_to_virt(child_pa), level - 1);
-        pmm_free_pages(g_pmm, child_pa, 1);
+        pmm_free_pages(&g_pmm, child_pa, 1);
         table[i] = 0;
     }
 }
@@ -91,7 +91,7 @@ uint64_t vm_create_user_process(uint64_t user_code_vaddr,
                                 uint64_t user_stack_size)
 {
     /* 分配并清零页目录（PGD） */
-    uint64_t pgd_phys = pmm_alloc_pages(g_pmm, 1);
+    uint64_t pgd_phys = pmm_alloc_pages(&g_pmm, 1);
     if (pgd_phys == 0) {
         KLOG_ERROR("[vm_user] Failed to allocate PGD\n");
         return 0;
@@ -140,14 +140,14 @@ uint64_t vm_create_user_process(uint64_t user_code_vaddr,
                code_vaddr, code_end);
 
     for (uint64_t vaddr = code_vaddr; vaddr < code_end; vaddr += PAGE_SIZE) {
-        uint64_t new_paddr = pmm_alloc_pages(g_pmm, 1);
+        uint64_t new_paddr = pmm_alloc_pages(&g_pmm, 1);
         if (new_paddr == 0) {
             KLOG_ERROR("[vm_user] Failed to allocate code page\n");
             goto error;
         }
         if (mm_vm_map_pages(pgd, vaddr, new_paddr, 1, 0) != 0) {
             KLOG_ERROR("[vm_user] Failed to map user code at 0x%llx\n", vaddr);
-            pmm_free_pages(g_pmm, new_paddr, 1);
+            pmm_free_pages(&g_pmm, new_paddr, 1);
             goto error;
         }
         KLOG_DEBUG("[vm_user]   code mapped: vaddr=0x%llx -> paddr=0x%llx\n",
@@ -162,7 +162,7 @@ uint64_t vm_create_user_process(uint64_t user_code_vaddr,
                    stack_bottom, user_stack_top);
         for (uint64_t vaddr = stack_bottom; vaddr < user_stack_top;
              vaddr += PAGE_SIZE) {
-            uint64_t stack_page = pmm_alloc_pages(g_pmm, 1);
+            uint64_t stack_page = pmm_alloc_pages(&g_pmm, 1);
             if (stack_page == 0) {
                 KLOG_ERROR("[vm_user] Failed to allocate stack page\n");
                 goto error;
@@ -170,7 +170,7 @@ uint64_t vm_create_user_process(uint64_t user_code_vaddr,
             if (mm_vm_map_pages(pgd, vaddr, stack_page, 1, 0) != 0) {
                 KLOG_ERROR("[vm_user] Failed to map user stack at 0x%llx\n",
                            vaddr);
-                pmm_free_pages(g_pmm, stack_page, 1);
+                pmm_free_pages(&g_pmm, stack_page, 1);
                 goto error;
             }
         }
@@ -202,7 +202,7 @@ uint64_t vm_create_user_process(uint64_t user_code_vaddr,
 
 error:
     KLOG_ERROR("[vm_user] Failed to create user page table\n");
-    pmm_free_pages(g_pmm, pgd_phys, 1);
+    pmm_free_pages(&g_pmm, pgd_phys, 1);
     return 0;
 }
 
@@ -225,13 +225,13 @@ void vm_destroy_user_process(uint64_t pgd_phys)
         if ((pte & RV_PTE_V) == 0)
             continue;
         if (rv_pte_is_leaf(pte)) {
-            pmm_free_pages(g_pmm, rv_pte_to_pa(pte), 1);
+            pmm_free_pages(&g_pmm, rv_pte_to_pa(pte), 1);
             root[i] = 0;
             continue;
         }
         uint64_t child_pa = rv_pte_to_pa(pte);
         rv_destroy_table((uint64_t *)phys_to_virt(child_pa), 1, true);
-        pmm_free_pages(g_pmm, child_pa, 1);
+        pmm_free_pages(&g_pmm, child_pa, 1);
         root[i] = 0;
     }
 #elif ARCH_X86_64
@@ -242,12 +242,12 @@ void vm_destroy_user_process(uint64_t pgd_phys)
             continue;
         uint64_t child_pa = x86_pte_to_pa(pte);
         x86_destroy_table((uint64_t *)phys_to_virt(child_pa), 3);
-        pmm_free_pages(g_pmm, child_pa, 1);
+        pmm_free_pages(&g_pmm, child_pa, 1);
         pml4[i] = 0;
     }
 #endif
 
-    pmm_free_pages(g_pmm, pgd_phys, 1);
+    pmm_free_pages(&g_pmm, pgd_phys, 1);
 }
 
 uint64_t vm_unmap_user_range(uint64_t pgd_phys, uint64_t vaddr, uint64_t size)
@@ -275,7 +275,7 @@ uint64_t vm_unmap_user_range(uint64_t pgd_phys, uint64_t vaddr, uint64_t size)
             if ((*pte & RV_PTE_KEEP) != 0) {
                 /* 设备缓冲：页归 dma_buf/ION 句柄所有，只拆映射 */
             } else if ((*pte & RV_PTE_NOFREE) == 0) {
-                pmm_free_pages(g_pmm, rv_pte_to_pa(*pte), 1);
+                pmm_free_pages(&g_pmm, rv_pte_to_pa(*pte), 1);
             } else {
                 shared_page_unref(rv_pte_to_pa(*pte));
             }
@@ -288,7 +288,7 @@ uint64_t vm_unmap_user_range(uint64_t pgd_phys, uint64_t vaddr, uint64_t size)
             if ((*pte & PTE_KEEP) != 0) {
                 /* 设备缓冲：页归 dma_buf/ION 句柄所有，只拆映射 */
             } else if ((*pte & PTE_NOFREE) == 0) {
-                pmm_free_pages(g_pmm, x86_pte_to_pa(*pte), 1);
+                pmm_free_pages(&g_pmm, x86_pte_to_pa(*pte), 1);
             } else {
                 shared_page_unref(x86_pte_to_pa(*pte));
             }

@@ -411,7 +411,7 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
 
     } else {
         /* ── fork 路径 ── */
-        uint64_t child_pgd_phys = pmm_alloc_pages(g_pmm, 1);
+        uint64_t child_pgd_phys = pmm_alloc_pages(&g_pmm, 1);
         if (child_pgd_phys == 0) {
             KLOG_ERROR("[clone] no memory for child pgd\n");
             g_stack_used[child - g_task_pool] = 0;
@@ -466,14 +466,14 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
                 shared_page_ref(src_pa); \
                 continue; \
             } \
-            uint64_t dst_pa = pmm_alloc_pages(g_pmm, 1); \
+            uint64_t dst_pa = pmm_alloc_pages(&g_pmm, 1); \
             if (dst_pa == 0) { \
                 clone_copy_ok = false; \
                 break; \
             } \
             memcpy(phys_to_virt(dst_pa), phys_to_virt(src_pa), PAGE_SIZE); \
             if (mm_vm_map_pages(child_pgd_virt, va, dst_pa, 1, 0) != 0) { \
-                pmm_free_pages(g_pmm, dst_pa, 1); \
+                pmm_free_pages(&g_pmm, dst_pa, 1); \
                 clone_copy_ok = false; \
                 break; \
             } \
@@ -551,7 +551,7 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
         if (!clone_copy_ok) {
             KLOG_ERROR("[clone] failed to copy user address space\n");
             g_stack_used[child - g_task_pool] = 0;
-            pmm_free_pages(g_pmm, child_pgd_phys, 1);
+            pmm_free_pages(&g_pmm, child_pgd_phys, 1);
             regs[0] = (uint64_t)(int64_t)-ENOMEM;
             return;
         }

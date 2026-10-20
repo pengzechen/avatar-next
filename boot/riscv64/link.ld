@@ -114,6 +114,19 @@ SECTIONS
     PROVIDE(__kernel_load_start = __kernel_start - KERNEL_VMA_OFF);
     PROVIDE(__kernel_load_end   = __kernel_end   - KERNEL_VMA_OFF);
 
+    /*
+     * 内核镜像区间（半开），供 boot 层换算成物理地址后交给 PMM 预留。
+     *
+     * 这里是**虚拟地址**（高半区代码对低物理地址的 ABS 符号没法做
+     * PC 相对寻址），换算在 main.c 做。起点必须是 KERNEL_LOAD_BASE 的
+     * 高半区别名而不是 __kernel_start：本架构的 .text.boot/.data.boot/
+     * .bss.boot 在 0x80200000，__kernel_start 的 LMA 已经是主体段的起点
+     * （当前 0x80206000）。用后者会把 boot 段漏在 PMM 的可分配区里，而
+     * boot 段里的栈/页表一旦被分配出去就是随机崩溃。
+     */
+    PROVIDE(__kernel_image_start = KERNEL_LOAD_BASE + KERNEL_VMA_OFF);
+    PROVIDE(__kernel_image_end   = __kernel_end);
+
     /* 低地址别名：供 .text.boot 在 MMU 切换阶段使用 */
     PROVIDE(__bss_start_phys        = __bss_start        - KERNEL_VMA_OFF);
     PROVIDE(__bss_end_phys          = __bss_end          - KERNEL_VMA_OFF);

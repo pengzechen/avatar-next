@@ -30,7 +30,7 @@ extern int g_mmio_needs_vma;
 typedef struct {
     char tag[32];
     uint64_t start;
-    uint64_t end;
+    uint64_t end; /* 闭区间（platform.conf 的 stop）；pmm_initialize 转成半开 */
 } pmm_resv_t;
 
 typedef struct {

@@ -56,7 +56,7 @@ static void exec_free_loader_buffer(const void *data, uint64_t size)
         return;
 
     uint32_t pages = (uint32_t)(ALIGN_UP(size, PAGE_SIZE) / PAGE_SIZE);
-    pmm_free_pages(g_pmm, virt_to_phys((uint64_t)data), pages);
+    pmm_free_pages(&g_pmm, virt_to_phys((uint64_t)data), pages);
 }
 
 #if ARCH_X86_64
@@ -67,8 +67,6 @@ static void exec_free_loader_buffer(const void *data, uint64_t size)
 #endif
 
 #include "user_layout.h"
-
-extern pmm_t *g_pmm;
 
 /* USER_STACK_TOP / USER_STACK_SIZE / USER_MMAP_BASE_PIE / USER_MMAP_BASE_EXEC
  * 均来自 include/user_layout.h */
@@ -223,7 +221,7 @@ int task_execve(const char *pathname, uint8_t *file_data, uint64_t file_size,
     int rc;
 
     /* 1. 分配并清零用户页表 */
-    pgd_phys = pmm_alloc_pages(g_pmm, 1);
+    pgd_phys = pmm_alloc_pages(&g_pmm, 1);
     if (pgd_phys == 0) {
         KLOG_ERROR("[exec] Failed to allocate PGD\n");
         return -1;
@@ -295,7 +293,7 @@ int task_execve(const char *pathname, uint8_t *file_data, uint64_t file_size,
     uint64_t stack_bottom =
         ALIGN_DOWN(USER_STACK_TOP - USER_STACK_SIZE, PAGE_SIZE);
     uint64_t stack_pages = (USER_STACK_TOP - stack_bottom) / PAGE_SIZE;
-    uint64_t stack_base_paddr = pmm_alloc_pages(g_pmm, (uint32_t)stack_pages);
+    uint64_t stack_base_paddr = pmm_alloc_pages(&g_pmm, (uint32_t)stack_pages);
     if (stack_base_paddr == 0) {
         KLOG_ERROR("[exec] Failed to allocate %llu stack pages\n", stack_pages);
         return -2;
@@ -307,14 +305,14 @@ int task_execve(const char *pathname, uint8_t *file_data, uint64_t file_size,
                         (int32_t)stack_pages, 0) != 0) {
         KLOG_ERROR("[exec] Failed to map user stack: vaddr=0x%llx pages=%llu\n",
                    stack_bottom, stack_pages);
-        pmm_free_pages(g_pmm, stack_base_paddr, (uint32_t)stack_pages);
+        pmm_free_pages(&g_pmm, stack_base_paddr, (uint32_t)stack_pages);
         return -3;
     }
 
     /* 4b. 映射信号返回蹦床页（x86_64 用户栈 NX，不能放 trampoline 在栈上） */
 #if ARCH_X86_64
     {
-        uint64_t sigret_pa = pmm_alloc_pages(g_pmm, 1);
+        uint64_t sigret_pa = pmm_alloc_pages(&g_pmm, 1);
         if (sigret_pa) {
             uint8_t *p = (uint8_t *)phys_to_virt(sigret_pa);
             memset(p, 0xcc, PAGE_SIZE); /* int3 填充（安全兜底） */

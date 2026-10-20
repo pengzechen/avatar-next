@@ -87,6 +87,18 @@ SECTIONS
     /* 物理地址别名：供 MMU 开启前的 boot.S 使用，避免截断高 VA。 */
     PROVIDE(__kernel_load_start = __kernel_start - KERNEL_VMA_OFF);
     PROVIDE(__kernel_load_end   = __kernel_end   - KERNEL_VMA_OFF);
+
+    /*
+     * 内核镜像区间（半开），供 boot 层换算成物理地址后交给 PMM 预留。
+     *
+     * 注意这里是**虚拟地址**，不是物理地址：高半区代码取低物理地址的
+     * ABS 符号地址会生成超出 ADRP 范围的 PC 相对寻址（链接直接报
+     * R_AARCH64_ADR_PREL_PG_HI21 truncated to fit）。换算在 main.c 做。
+     * 三个架构统一用 __kernel_image_* 这个名字：RISC-V 的镜像不从
+     * __kernel_start 开始（前面还有低地址 boot 段），那边两个值不同。
+     */
+    PROVIDE(__kernel_image_start = __kernel_start);
+    PROVIDE(__kernel_image_end   = __kernel_end);
     PROVIDE(__bss_start_phys    = __bss_start    - KERNEL_VMA_OFF);
     PROVIDE(__bss_end_phys      = __bss_end      - KERNEL_VMA_OFF);
     PROVIDE(stack_top_phys      = stack_top      - KERNEL_VMA_OFF);

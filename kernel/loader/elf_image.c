@@ -16,8 +16,6 @@
 #include "user_layout.h"
 #include "platform_ops.h" /* platform_panic()，仅 PANIC_TEST=1 时用到 */
 
-extern pmm_t *g_pmm;
-
 /* ── 段加载 ─────────────────────────────────────────────────────── */
 
 /**
@@ -42,7 +40,7 @@ static int elf_load_segment(void *pgd, elf64_phdr_t *phdr, uint8_t *file_data)
 
     uint64_t perm = 0; /* 默认：用户可读写可执行 */
 
-    seg_base_paddr = pmm_alloc_pages(g_pmm, (uint32_t)total_pages);
+    seg_base_paddr = pmm_alloc_pages(&g_pmm, (uint32_t)total_pages);
     if (seg_base_paddr == 0) {
         KLOG_ERROR("[elf] Failed to allocate %llu contiguous pages\n",
                    total_pages);
@@ -53,7 +51,7 @@ static int elf_load_segment(void *pgd, elf64_phdr_t *phdr, uint8_t *file_data)
                         perm) != 0) {
         KLOG_ERROR("[elf] Failed to map segment pages at 0x%llx (count=%llu)\n",
                    vaddr_start, total_pages);
-        pmm_free_pages(g_pmm, seg_base_paddr, (uint32_t)total_pages);
+        pmm_free_pages(&g_pmm, seg_base_paddr, (uint32_t)total_pages);
         return -2;
     }
 

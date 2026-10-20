@@ -735,7 +735,7 @@ static int handle_ram_fault(vcpu_t *vcpu, uint64_t gpa, uint64_t code)
         KLOG_ERROR("[HEXT] vcpu%d: RAM fault at gpa=0x%llx but PMM is out "
                    "of pages (free=%llu), stopping vm%u\n",
                    vcpu->vcpu_id, (unsigned long long)gpa,
-                   (unsigned long long)pmm_get_free_pages(g_pmm), vm->vmid);
+                   (unsigned long long)pmm_get_free_pages(&g_pmm), vm->vmid);
         return EL2_EXIT;
     }
 

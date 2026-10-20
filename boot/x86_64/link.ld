@@ -97,6 +97,15 @@ SECTIONS
      */
     __kernel_end = .;
 
+    /*
+     * 内核镜像区间（半开），供 boot 层换算成物理地址后交给 PMM 预留。
+     * 这里是**虚拟地址**（高半区代码没法直接对低物理地址的 ABS 符号做
+     * RIP 相对寻址），换算在 main.c 做。
+     * 与 aarch64/riscv64 用同一个名字，PMM 不需要认识任何 KERNEL_VMA。
+     */
+    PROVIDE(__kernel_image_start = __kernel_start);
+    PROVIDE(__kernel_image_end   = __kernel_end);
+
     _ekernel = .;
 
     /DISCARD/ : {

@@ -2086,7 +2086,7 @@ static int vmx_exit_handler(vcpu_t *vcpu)
                 KLOG_ERROR("[VMX] vcpu%d: RAM fault at gpa=0x%llx but PMM is "
                            "out of pages (free=%llu), stopping vm%u\n",
                            vcpu->vcpu_id, (unsigned long long)gpa,
-                           (unsigned long long)pmm_get_free_pages(g_pmm),
+                           (unsigned long long)pmm_get_free_pages(&g_pmm),
                            vcpu->vm->vmid);
                 return EL2_EXIT;
             }

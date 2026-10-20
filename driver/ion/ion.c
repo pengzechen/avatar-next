@@ -1,7 +1,7 @@
 /* driver/ion/ion.c — 裸机 Ion 内存分配器实现
  *
  * 原理：
- *   · 底层通过 pmm_alloc_pages(g_pmm, n) 分配物理连续页
+ *   · 底层通过 pmm_alloc_pages(&g_pmm, n) 分配物理连续页
  *   · 通过 phys_to_virt(pa) 获得内核虚拟地址（sv39 直接映射）
  *   · 用固定大小的表（ION_MAX_BUFS 项）追踪 handle → (pa, size)
  *   · handle = 表中下标 + 1（0 为无效哨兵）
@@ -60,12 +60,12 @@ int ion_alloc(size_t size, void **vaddr, uint64_t *paddr, ion_handle_t *handle)
         return -1;
 
     /* 分配物理内存 */
-    if (!g_pmm) {
+    if (!pmm_is_initialized()) {
         KLOG_ERROR("ion_alloc: g_pmm not initialized\n");
         return -1;
     }
 
-    uint64_t pa = pmm_alloc_pages(g_pmm, pages);
+    uint64_t pa = pmm_alloc_pages(&g_pmm, pages);
     if (pa == 0U) {
         KLOG_ERROR("ion_alloc: pmm_alloc_pages(%u) failed\n", pages);
         return -1;
@@ -82,7 +82,7 @@ int ion_alloc(size_t size, void **vaddr, uint64_t *paddr, ion_handle_t *handle)
     }
     if (slot < 0) {
         spin_unlock(&g_ion_lock);
-        pmm_free_pages(g_pmm, pa, pages);
+        pmm_free_pages(&g_pmm, pa, pages);
         KLOG_ERROR("ion_alloc: table full (max %u buffers)\n", ION_MAX_BUFS);
         return -1;
     }
@@ -139,7 +139,7 @@ int ion_free(ion_handle_t handle)
     memset(&g_ion_table[idx], 0, sizeof(ion_entry_t));
     spin_unlock(&g_ion_lock);
 
-    pmm_free_pages(g_pmm, pa, pages);
+    pmm_free_pages(&g_pmm, pa, pages);
     KLOG_DEBUG("ion_free: handle=%u pa=0x%llx pages=%u\n", handle,
                (unsigned long long)pa, pages);
     return 0;

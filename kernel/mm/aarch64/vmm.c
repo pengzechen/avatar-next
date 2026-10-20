@@ -53,7 +53,7 @@ pte_t *find_pte(pte_t *page_dir, // 虚拟地址
     if (!pgd->table.is_valid) {
         if (!alloc)
             return NULL;
-        uint64_t pud_phys = pmm_alloc_pages(g_pmm, 1);
+        uint64_t pud_phys = pmm_alloc_pages(&g_pmm, 1);
         if (!pud_phys)
             return NULL;
 
@@ -71,7 +71,7 @@ pte_t *find_pte(pte_t *page_dir, // 虚拟地址
     if (!pud_entry->table.is_valid) {
         if (!alloc)
             return NULL;
-        uint64_t pmd_phys = pmm_alloc_pages(g_pmm, 1);
+        uint64_t pmd_phys = pmm_alloc_pages(&g_pmm, 1);
         if (!pmd_phys)
             return NULL;
 
@@ -89,7 +89,7 @@ pte_t *find_pte(pte_t *page_dir, // 虚拟地址
     if (!pmd_entry->table.is_valid) {
         if (!alloc)
             return NULL;
-        uint64_t pt_phys = pmm_alloc_pages(g_pmm, 1);
+        uint64_t pt_phys = pmm_alloc_pages(&g_pmm, 1);
         if (!pt_phys)
             return NULL;
 
@@ -231,7 +231,7 @@ uint64_t memory_alloc_page(void *page_dir, // 虚拟地址
     // 逐页分配内存，然后建立映射关系
     for (int32_t i = 0; i < page_count; i++) {
         // 分配需要的内存
-        uint64_t paddr = pmm_alloc_pages(g_pmm, 1);
+        uint64_t paddr = pmm_alloc_pages(&g_pmm, 1);
         if (paddr == 0) {
             KLOG_ERROR("mem alloc failed. no memory\n");
             return -1;
@@ -242,7 +242,7 @@ uint64_t memory_alloc_page(void *page_dir, // 虚拟地址
             memory_create_map((pte_t *)page_dir, curr_vaddr, paddr, 1, perm);
         if (err < 0) {
             KLOG_ERROR("create memory map failed. err = %d\n", err);
-            pmm_free_pages(g_pmm, vaddr, i + 1);
+            pmm_free_pages(&g_pmm, vaddr, i + 1);
             return -1;
         }
 
@@ -274,7 +274,7 @@ void memory_free_page(void *page_dir, uint64_t addr)
     }
 
     if ((pte->pte & PTE_NOFREE) == 0)
-        pmm_free_pages(g_pmm, (pte->l3_page.pfn << 12), 1);
+        pmm_free_pages(&g_pmm, (pte->l3_page.pfn << 12), 1);
     else
         shared_page_unref(pte->l3_page.pfn << 12);
 
@@ -297,7 +297,7 @@ pte_t *create_uvm(void)
     extern char __kernel_start[];
     // extern char __kernel_end[];
 
-    pte_t *page_dir = (pte_t *)phys_to_virt(pmm_alloc_pages(g_pmm, 1));
+    pte_t *page_dir = (pte_t *)phys_to_virt(pmm_alloc_pages(&g_pmm, 1));
     if (page_dir == 0) {
         return 0;
     }
@@ -376,7 +376,7 @@ void _destroy_page_table_vm(pte_t *table, int32_t level)
                 if ((entry->pte & PTE_KEEP) != 0) {
                     /* 设备缓冲：页归 dma_buf / ION 句柄所有，这里只拆表 */
                 } else if (!(entry->pte & PTE_NOFREE)) {
-                    pmm_free_pages(g_pmm, page_phys, 1);
+                    pmm_free_pages(&g_pmm, page_phys, 1);
                 } else {
                     shared_page_unref(page_phys);
                 }
@@ -392,7 +392,7 @@ void _destroy_page_table_vm(pte_t *table, int32_t level)
         uint64_t next_table_phys = entry->table.next_table_addr << 12;
         _destroy_page_table_vm((pte_t *)phys_to_virt(next_table_phys),
                                level + 1);
-        pmm_free_pages(g_pmm, next_table_phys, 1);
+        pmm_free_pages(&g_pmm, next_table_phys, 1);
         entry->pte = 0;
     }
 }
@@ -427,7 +427,7 @@ void _destroy_page_table(pte_t *table, int32_t level)
 
         // 释放当前这一级的页表页
         if (entry->l3_page.is_table == 1) {
-            pmm_free_pages(g_pmm, next_table_phys, 1);
+            pmm_free_pages(&g_pmm, next_table_phys, 1);
         }
     }
 }
@@ -466,7 +466,7 @@ bool _copy_page_table(pte_t *src_table, pte_t *dst_table, int32_t level)
                 continue;
             }
 
-            uint64_t dst_phys = pmm_alloc_pages(g_pmm, 1);
+            uint64_t dst_phys = pmm_alloc_pages(&g_pmm, 1);
             if (!dst_phys)
                 return false;
 
@@ -481,7 +481,7 @@ bool _copy_page_table(pte_t *src_table, pte_t *dst_table, int32_t level)
             uint64_t src_next_phys = src_entry->table.next_table_addr << 12;
             pte_t *src_next = (pte_t *)phys_to_virt(src_next_phys);
 
-            uint64_t dst_next_phys = pmm_alloc_pages(g_pmm, 1);
+            uint64_t dst_next_phys = pmm_alloc_pages(&g_pmm, 1);
             if (!dst_next_phys)
                 return false;
 
@@ -505,14 +505,14 @@ void destroy_uvm_4level(pte_t *page_dir)
 {
     // level: 0 = PGD, 1 = PUD, 2 = PMD, 3 = PTE
     _destroy_page_table_vm(page_dir, 0);
-    pmm_free_pages(g_pmm, virt_to_phys(page_dir), 1); // 最后释放 PGD 自身
+    pmm_free_pages(&g_pmm, virt_to_phys(page_dir), 1); // 最后释放 PGD 自身
 }
 
 void destory_4level(pte_t *page_dir)
 {
     // level: 0 = PGD, 1 = PUD, 2 = PMD, 3 = PTE
     _destroy_page_table(page_dir, 0);
-    pmm_free_pages(g_pmm, virt_to_phys(page_dir), 1); // 最后释放 PGD 自身
+    pmm_free_pages(&g_pmm, virt_to_phys(page_dir), 1); // 最后释放 PGD 自身
 }
 
 // 内核将数据拷贝到指定进程空间下

@@ -94,7 +94,7 @@ void *sys_brk(void *addr)
     void *pgd = phys_to_virt((uint64_t)current->pgd);
 
     for (uint64_t va = old_page_end; va < new_page_end; va += PAGE_SIZE) {
-        uint64_t pa = pmm_alloc_pages(g_pmm, 1);
+        uint64_t pa = pmm_alloc_pages(&g_pmm, 1);
         if (pa == 0) {
             KLOG_ERROR("[brk] Out of memory at va=0x%llx\n", va);
             return (void *)current_brk; /* 返回旧地址表示失败 */
@@ -102,7 +102,7 @@ void *sys_brk(void *addr)
         memset(phys_to_virt(pa), 0, PAGE_SIZE);
         if (mm_vm_map_pages(pgd, va, pa, 1, 0) != 0) {
             /* Page already mapped (e.g. BSS last page overlap) — skip */
-            pmm_free_pages(g_pmm, pa, 1);
+            pmm_free_pages(&g_pmm, pa, 1);
             continue;
         }
     }
@@ -114,14 +114,14 @@ void *sys_brk(void *addr)
         void *pgd = phys_to_virt((uint64_t)current->pgd);
 
         for (uint64_t va = old_page_end; va < new_page_end; va += PAGE_SIZE) {
-            uint64_t pa = pmm_alloc_pages(g_pmm, 1);
+            uint64_t pa = pmm_alloc_pages(&g_pmm, 1);
             if (pa == 0) {
                 KLOG_ERROR("[brk] Out of memory at va=0x%llx\n", va);
                 return (void *)current_brk;
             }
             memset(phys_to_virt(pa), 0, PAGE_SIZE);
             if (mm_vm_map_pages(pgd, va, pa, 1, 0) != 0) {
-                pmm_free_pages(g_pmm, pa, 1);
+                pmm_free_pages(&g_pmm, pa, 1);
                 continue; /* 已映射：跳过 */
             }
         }

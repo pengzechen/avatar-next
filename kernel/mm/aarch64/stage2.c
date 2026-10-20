@@ -98,7 +98,7 @@ static uint64_t *l3_ensure(s2_ctx_t *s2, uint64_t ipa)
     if (s2->l3_tbl[idx])
         return s2->l3_tbl[idx];
 
-    pa = pmm_alloc_pages(g_pmm, 1);
+    pa = pmm_alloc_pages(&g_pmm, 1);
     if (!pa)
         return NULL;
     t = (uint64_t *)phys_to_virt(pa);
@@ -180,12 +180,12 @@ void stage2_vm_destroy(s2_ctx_t *s2)
 
         for (j = 0; j < S2_L3_ENTRIES; j++) {
             if (t[j] & LPAE_VALID) {
-                pmm_free_pages(g_pmm, t[j] & ~0xFFFULL, 1);
+                pmm_free_pages(&g_pmm, t[j] & ~0xFFFULL, 1);
                 t[j] = 0;
                 freed++;
             }
         }
-        pmm_free_pages(g_pmm, virt_to_phys(t) & ~0xFFFULL, 1); /* 表页本身 */
+        pmm_free_pages(&g_pmm, virt_to_phys(t) & ~0xFFFULL, 1); /* 表页本身 */
         s2->l3_tbl[i] = NULL;
     }
 
@@ -199,7 +199,7 @@ void stage2_vm_destroy(s2_ctx_t *s2)
         "premap=%llu fault=%llu, pmm free=%llu MB\n",
         s2->vmid, (unsigned long long)freed, (unsigned long long)(freed * 4),
         (unsigned long long)s2->nr_premap, (unsigned long long)s2->nr_fault,
-        (unsigned long long)(pmm_get_free_pages(g_pmm) * 4 / 1024));
+        (unsigned long long)(pmm_get_free_pages(&g_pmm) * 4 / 1024));
 
     memset(s2, 0, sizeof(*s2));
 }
@@ -295,7 +295,7 @@ uint64_t stage2_map_page(s2_ctx_t *s2, uint64_t ipa, int zero)
     if (t[i3] & LPAE_VALID)
         return t[i3] & ~0xFFFULL;
 
-    pa = pmm_alloc_pages(g_pmm, 1);
+    pa = pmm_alloc_pages(&g_pmm, 1);
     if (!pa)
         return 0; /* ⚠️ 调用方必须处理，不能当成功继续 */
 
@@ -338,7 +338,7 @@ uint64_t stage2_map_block(s2_ctx_t *s2, uint64_t ipa, int zero)
         if (t[i] & LPAE_VALID)
             continue; /* 已经映射过 */
 
-        pa = pmm_alloc_pages(g_pmm, 1);
+        pa = pmm_alloc_pages(&g_pmm, 1);
         if (!pa)
             break; /* PMM 没页：装多少算多少 */
 
@@ -363,7 +363,7 @@ uint64_t stage2_map_range(s2_ctx_t *s2, uint64_t ipa, uint64_t size, int zero)
                        "(+0x%llx of 0x%llx), pmm free=%llu pages\n",
                        (unsigned long long)ipa, (unsigned long long)off,
                        (unsigned long long)size,
-                       (unsigned long long)pmm_get_free_pages(g_pmm));
+                       (unsigned long long)pmm_get_free_pages(&g_pmm));
             return n;
         }
         n++;

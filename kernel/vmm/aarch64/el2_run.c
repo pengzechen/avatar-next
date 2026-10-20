@@ -351,7 +351,7 @@ static int handle_dabt(vcpu_t *vcpu, uint64_t esr)
             KLOG_ERROR("[vmm] vm%u: stage-2 fault ipa=0x%llx but PMM exhausted "
                        "(free=%llu pages)\n",
                        vm->vmid, (unsigned long long)ipa_page,
-                       (unsigned long long)pmm_get_free_pages(g_pmm));
+                       (unsigned long long)pmm_get_free_pages(&g_pmm));
             return EL2_EXIT;
         }
 
@@ -448,7 +448,7 @@ static int handle_iabt(vcpu_t *vcpu, uint64_t esr)
             KLOG_ERROR("[vmm] vm%u: ifetch fault ipa=0x%llx but PMM exhausted "
                        "(free=%llu pages)\n",
                        vm->vmid, (unsigned long long)ipa_page,
-                       (unsigned long long)pmm_get_free_pages(g_pmm));
+                       (unsigned long long)pmm_get_free_pages(&g_pmm));
             return EL2_EXIT;
         }
 

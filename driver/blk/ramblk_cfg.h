@@ -16,8 +16,7 @@
 /* ── 区域大小与块参数 ─────────────────────────────────────────── */
 #define RAMBLK_SECTOR_SZ 512u
 
-/* PMM 标记函数使用闭区间，因此 END 为最后一个字节地址。 */
+/* PMM 预留使用半开区间 [base, end_excl)，END_EXCL 是区域后第一个字节。 */
 #define RAMBLK_PHYS_END_EXCL (RAMBLK_PHYS_BASE + RAMBLK_SIZE)
-#define RAMBLK_PHYS_END      (RAMBLK_PHYS_END_EXCL - 1UL)
 
 #endif /* __RAMBLK_CFG_H__ */
