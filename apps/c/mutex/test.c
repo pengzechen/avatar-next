@@ -407,10 +407,16 @@ static void *t5_worker(void *arg)
     (void)arg;
     for (int i = 0; i < LOOP_COUNT; i++) {
         if (umutex_trylock(&t5_mutex)) {
-            t5_acquired++;
+            /*
+             * 计数器是**跨线程共享**的，普通 ++ 在 SMP>1 下会丢更新
+             * （实测 4 线程 × 20000 次时 acquired+failed < total，被
+             * 测试框架当成内核失败）。这里只要求最终计数准确，用
+             * relaxed 原子加即可。
+             */
+            __atomic_fetch_add(&t5_acquired, 1, __ATOMIC_RELAXED);
             umutex_unlock(&t5_mutex);
         } else {
-            t5_failed++;
+            __atomic_fetch_add(&t5_failed, 1, __ATOMIC_RELAXED);
         }
     }
     return NULL;

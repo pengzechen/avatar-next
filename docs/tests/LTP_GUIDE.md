@@ -1,5 +1,10 @@
 # LTP 测例管理指南
 
+> **自动化入口**（推荐）：`make -C tests ltp-smoke` / `ltp-mm` / `ltp-full`。
+> `run_ltp.sh` 现在每个测例输出一行 `LTP-CASE: <name> PASS|FAIL|SKIP|BROK`，
+> 框架据此做逐例判定，并用 `tests/ltp/expected_failures.txt` 管理已知失败。
+> 子集通过 `LTP_TESTS="..."`（或 `/tmp/ltp.list`）传给脚本。
+
 如何为 Avatar OS 添加、编译和运行 LTP 测例。
 
 ## 目录结构

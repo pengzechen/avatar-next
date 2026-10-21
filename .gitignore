@@ -35,3 +35,7 @@ __pycache__/
 
 # ─── 测试产物 ────────────────────────────────────────────────
 /tests/ltp/bin/
+/tests/.artifacts/
+
+# apps/c 编译产物（build.sh 生成，不入库）
+/apps/c/*_test-*

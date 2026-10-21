@@ -71,6 +71,7 @@ rebuild_img() {
     local arch="$1"
     local staging="$ROOT_DIR/apps/${arch}/rootfs"
     local img="$ROOT_DIR/imgs/rootfs-${arch}.img"
+    local tmpdir
 
     info "[$arch] 重建 $img ..."
 
@@ -79,8 +80,38 @@ rebuild_img() {
         return 1
     fi
 
+    tmpdir=$(mktemp -d)
+
+    # 以现有 imgs/rootfs-<arch>.img 为基底，只覆盖新编出来的测试。
+    # staging 里**只有** pthread_test/mutex_test，直接 mkfs 会把镜像
+    # 变成没有 /busybox 的 4.5M 空壳（2026-10-21 实测踩过：宿主 shell
+    # 起不来，所有测试超时）。
+    if [[ -f "$img" ]]; then
+        debugfs -R "rdump / $tmpdir" "$img" >/dev/null 2>&1 || true
+    fi
+
+    if [[ ! -x "$tmpdir/busybox" && ! -x "$tmpdir/bin/busybox" ]]; then
+        # 基底不可用：只有在 staging 本身就是完整 rootfs 时才允许继续。
+        if [[ ! -x "$staging/bin/busybox" ]]; then
+            err "[$arch] 既没有可用的 $img，staging 也缺 busybox"
+            err "        拒绝生成无法启动的镜像，保留现有文件。"
+            rm -rf "$tmpdir"
+            return 1
+        fi
+        cp -a "$staging/." "$tmpdir/"
+    fi
+
+    mkdir -p "$tmpdir/bin"
+    for bin in pthread_test mutex_test; do
+        if [[ -f "$staging/bin/$bin" ]]; then
+            cp -f "$staging/bin/$bin" "$tmpdir/bin/$bin"
+            chmod 755 "$tmpdir/bin/$bin"
+        fi
+    done
+
     dd if=/dev/zero of="$img" bs=1M count=64 status=none
-    mkfs.ext4 -q -b 1024 -L "avatarfs" -d "$staging" "$img" 2>/dev/null
+    mkfs.ext4 -q -b 1024 -L "avatarfs" -d "$tmpdir" "$img" 2>/dev/null
+    rm -rf "$tmpdir"
     ok "[$arch] 镜像重建完成: $img ($(du -h "$img" | cut -f1))"
 }
 

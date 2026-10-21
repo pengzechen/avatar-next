@@ -1,0 +1,13 @@
+# 内存重构专用子集：PMM/VM 改动的直接回归面。
+brk01
+brk02
+mmap01
+mmap02
+munmap01
+munmap03
+fork01
+wait401
+wait402
+clone06
+exit01
+exit02

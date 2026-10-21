@@ -43,6 +43,7 @@
 #if ARCH_AARCH64
 #include "aarch64/stage2.h"
 #include "mm_vm.h"
+#include "guest_loader.h" /* guest_loader_write_guest：按需分页下把 guest 代码写进去 */
 extern void guest_test_entry(void); /* apps/aarch64/guest_test.S */
 extern void el0_loop_program(void); /* apps/aarch64/el0_loop.S   */
 
@@ -127,7 +128,27 @@ void run_vmm_test(void)
     g_test_vm.cfg.nr_vcpus = 1;
     if (vm_create(&g_test_vm) == 0) {
         vcpu_t *vcpu = &g_test_vm.vcpus[0];
-        vcpu->elr = virt_to_phys(guest_test_entry);
+        uint64_t guest_ipa = virt_to_phys(guest_test_entry);
+
+        /*
+         * 每 VM 一份 stage-2 之后，guest RAM 是**空表 + 按需分页**：
+         * vcpu 第一次取指只会得到一张新分配的、清零的宿主页，并不会
+         * 自动指向内核镜像里的 guest_test_entry。必须像生产 guest_loader
+         * 那样把程序逐页写进 guest 物理内存。
+         *
+         * 老实现是 identity map，IPA==PA，所以这一步是隐式的；改成
+         * 按需分页后漏掉它的症状是：guest 从一张全 0 的页取指 →
+         * 同步异常 → VBAR=0 的 0x200 向量 → 再取指 ipa=0 → VMM 退出。
+         */
+        if (guest_loader_write_guest(&g_test_vm, guest_ipa,
+                                     (const void *)guest_test_entry,
+                                     0x100) != 0) {
+            KLOG_ERROR("failed to copy guest_test_entry into guest RAM\n");
+            vm_free(&g_test_vm);
+            return;
+        }
+
+        vcpu->elr = guest_ipa;
         vcpu->spsr = 0x5ULL | (0xFULL << 6); /* EL1h, DAIF masked */
         vcpu->sp_el1 = GUEST_RAM_BASE + GUEST_RAM_SIZE - 0x1000;
 

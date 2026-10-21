@@ -1,0 +1,14 @@
+# LTP smoke 子集：PR 门禁用，要求快、依赖少。
+getpid01
+getpid02
+getuid01
+uname01
+write01
+read01
+brk01
+mmap01
+munmap01
+fork01
+wait401
+getcwd01
+sched_yield01

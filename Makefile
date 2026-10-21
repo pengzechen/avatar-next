@@ -668,6 +668,18 @@ ifeq ($(STRING_TEST),1)
     _BUILD_VARIANT := $(_BUILD_VARIANT)+string_test
 endif
 
+# PMM_TEST=1：定义 RUN_PMM_TESTS，kernel_main 在 fs_init 之后跑
+# tests/pmm_test.c 并关机。只影响 kernel_main.o（调用点），
+# 所以并在 _BUILD_VARIANT 里即可（_VARIANT_OBJS 已包含它）。
+#
+# 以前这个宏只能"手动加 CFLAGS"，测试框架（tests/Makefile）没法稳定地
+# 编出 PMM 测试变体。现在它是一个正式变体。
+PMM_TEST ?= 0
+ifeq ($(PMM_TEST),1)
+    CFLAGS += -DRUN_PMM_TESTS=1
+    _BUILD_VARIANT := $(_BUILD_VARIANT)+pmm_test
+endif
+
 # PANIC_TEST=1：定义 RUN_PANIC_TEST，在 ELF 解析路径上**故意 panic 一次**，
 # 用来看调用栈回溯长什么样（kernel/loader/elf_image.c、docs/basic/BACKTRACE.md）。
 # 和 STRING_TEST 一样与上面三个变体正交，只影响 elf_image.o 一个对象。

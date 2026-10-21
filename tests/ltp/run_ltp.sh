@@ -20,6 +20,13 @@
 #   实测受影响：pipe2_02、getrusage03、openat02
 cd /ltp || exit 1
 
+# 测试框架用文件传递子集：宿主的串口控制台会把过长的
+# `LTP_TESTS="..."` 命令行折行/丢字节，变量经常根本没生效。
+# 每行一个测例名，框架用多条短 echo 写进来。
+if [ -z "${LTP_TESTS:-}" ] && [ -f /tmp/ltp.list ]; then
+    LTP_TESTS="$(cat /tmp/ltp.list)"
+fi
+
 PASS=0
 FAIL=0
 SKIP=0
@@ -40,16 +47,27 @@ for test in /ltp/*; do
     esac
     [ -x "$test" ] || continue
 
+    # 子集模式：LTP_TESTS="brk01 mmap01" /ltp/run_ltp.sh
+    # 空值 = 跑全部。用空格定界，避免子串误匹配（read01 vs read010）。
+    if [ -n "${LTP_TESTS:-}" ]; then
+        case " $LTP_TESTS " in
+            *" $name "*) ;;
+            *) continue ;;
+        esac
+    fi
+
     TOTAL=$((TOTAL + 1))
     echo "--- [$TOTAL] $name ---"
     "$test"
     ret=$?
     case $ret in
-        0)  PASS=$((PASS + 1)) ;;
-        32) SKIP=$((SKIP + 1)); echo "  => SKIPPED (TCONF)" ;;
-        2)  BROK=$((BROK + 1)); echo "  => BROKEN" ;;
-        *)  FAIL=$((FAIL + 1)); echo "  => FAILED (exit=$ret)" ;;
+        0)  status=PASS; PASS=$((PASS + 1)) ;;
+        32) status=SKIP; SKIP=$((SKIP + 1)); echo "  => SKIPPED (TCONF)" ;;
+        2)  status=BROK; BROK=$((BROK + 1)); echo "  => BROKEN" ;;
+        *)  status=FAIL; FAIL=$((FAIL + 1)); echo "  => FAILED (exit=$ret)" ;;
     esac
+    # 测试框架的机器可读行；不要改格式（framework/ltp.py 依赖它）。
+    echo "LTP-CASE: $name $status"
     echo ""
 done
 

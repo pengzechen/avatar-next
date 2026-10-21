@@ -1,5 +1,15 @@
 # Avatar OS 测试指南
 
+> **统一测试框架已迁移到 `tests/`**：入口是 `tests/Makefile` 和
+> `tests/run.py`，说明见 `tests/README.md`。常用门禁：
+>
+> ```bash
+> make -C tests check       # 构建 + 启动 + 内核自测（三架构）
+> make -C tests check-mm    # 内存重构专用：再加 LTP mm + VMM guest
+> ```
+>
+> 本文档保留各模块的细节说明；新增测试优先按 `tests/README.md` 的框架接入。
+
 本文档描述项目的测试体系、各类测试的运行方式，以及如何添加新测试。
 
 ---
@@ -130,7 +140,7 @@ Makefile 里有对应的变体追踪机制：**切换变体时自动强制重编
 | `make ARCH=xxx test-pthread` | —（默认）| busybox shell + pthread_test rootfs |
 | `make ARCH=xxx VMM_TEST=1 kernel` | `RUN_VMM_TEST` | VMM 三线程上下文切换 |
 | `make ARCH=xxx test-vmm` | `RUN_VMM_TEST`（自动）| 同上，一步完成 |
-| `make ARCH=xxx RUN_PMM_TESTS=1 kernel`（需手动加 CFLAGS） | `RUN_PMM_TESTS` | PMM 测试后关机 |
+| `make PLATFORM=xxx PMM_TEST=1 kernel` | `RUN_PMM_TESTS` | PMM 测试后关机（测试框架的 `kernel/pmm` 用这个变体） |
 
 ### 添加新构建变体测试
 

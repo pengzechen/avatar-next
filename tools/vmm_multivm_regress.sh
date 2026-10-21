@@ -36,14 +36,14 @@ cd "$(dirname "$0")/.." || exit 1
 ARCH=${1:-aarch64}; SMPV=${2:-1}
 case "$ARCH" in
   aarch64) Q="qemu-system-aarch64 -cpu cortex-a76 -M virt,virtualization=on,gic-version=3"
-           K=build/qemu-virt-aarch64/kernel_aarch64.bin
-           R=build/qemu-virt-aarch64/rootfs-aarch64.img; RA=0x5fe00000 ;;
+           K=${KERNEL_BIN:-build/qemu-virt-aarch64/kernel_aarch64.bin}
+           R=${ROOTFS_IMG:-build/qemu-virt-aarch64/rootfs-aarch64.img}; RA=0x5fe00000 ;;
   riscv64) Q="qemu-system-riscv64 -M virt -bios default"
-           K=build/qemu-virt-riscv64/kernel_riscv64.bin
-           R=build/qemu-virt-riscv64/rootfs-riscv64.img; RA=0x88000000 ;;
+           K=${KERNEL_BIN:-build/qemu-virt-riscv64/kernel_riscv64.bin}
+           R=${ROOTFS_IMG:-build/qemu-virt-riscv64/rootfs-riscv64.img}; RA=0x88000000 ;;
   x86_64)  Q="qemu-system-x86_64 -machine q35 -enable-kvm -cpu host"
-           K=build/qemu-virt-x86_64/kernel_x86_64.bin
-           R=build/qemu-virt-x86_64/rootfs-x86_64.img; RA=0x4000000 ;;
+           K=${KERNEL_BIN:-build/qemu-virt-x86_64/kernel_x86_64.bin}
+           R=${ROOTFS_IMG:-build/qemu-virt-x86_64/rootfs-x86_64.img}; RA=0x4000000 ;;
   *) echo "用法: $0 <aarch64|riscv64|x86_64> [smp]"; exit 1 ;;
 esac
 
