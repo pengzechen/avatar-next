@@ -597,7 +597,7 @@ static int ext4_mount_open(const vfs_mount_t *mnt, const char *path, int flags,
             *out = file;
             return 0;
         }
-        kfree(file, sizeof(*file));
+        kfree(file);
     }
 
     vfs_file_t *dir = vfs_alloc_file();
@@ -608,7 +608,7 @@ static int ext4_mount_open(const vfs_mount_t *mnt, const char *path, int flags,
         if (ext4_mode_get(path, &mode_bits) == EOK &&
             (mode_bits & 0170000) != 0040000) {
             ext4_dir_close(&dir->u.ext4_dir);
-            kfree(dir, sizeof(*dir));
+            kfree(dir);
             return -VFS_ENOTDIR;
         }
         dir->kind = VFS_FILE_EXT4_DIR;
@@ -618,7 +618,7 @@ static int ext4_mount_open(const vfs_mount_t *mnt, const char *path, int flags,
         *out = dir;
         return 0;
     }
-    kfree(dir, sizeof(*dir));
+    kfree(dir);
 
     if (flags & O_DIRECTORY_AVATAR) {
         ext4_file tmp;
@@ -717,14 +717,14 @@ int vfs_close(vfs_file_t *file)
         return 0;
     if (file->ops && file->ops->close)
         rc = file->ops->close(file);
-    kfree(file, sizeof(*file));
+    kfree(file);
     return rc;
 }
 
 void vfs_discard_unopened(vfs_file_t *file)
 {
     if (file)
-        kfree(file, sizeof(*file));
+        kfree(file);
 }
 
 int vfs_read(vfs_file_t *file, void *buf, size_t len)

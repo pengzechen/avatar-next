@@ -11,7 +11,7 @@
 #include "types.h"
 
 /*
- * kalloc_pages — 分配 n 个连续物理页，返回已清零的内核虚拟地址
+ * kalloc_pages — 分配 n 个连续物理页，返回已清零的、**页对齐**的内核虚拟地址
  * 失败返回 NULL。
  */
 void *kalloc_pages(uint32_t pages);
@@ -24,16 +24,21 @@ void *kalloc_pages(uint32_t pages);
 void kfree_pages(void *addr, uint32_t pages);
 
 /*
- * kmalloc — 分配至少 size 字节的内核内存（页对齐，已清零）
+ * kmalloc — 分配至少 size 字节的内核内存（**16 字节对齐**，已清零）
+ *
+ * 返回地址由页内 16 字节 header 管理，调用者不要回退/改写它。
+ * 需要页对齐（DMA、页表等）的调用者请用 kalloc_pages()。
  * 失败返回 NULL。
  */
 void *kmalloc(size_t size);
 
 /*
  * kfree — 释放 kmalloc 分配的内存
- * @ptr:  kmalloc 返回的指针
- * @size: 分配时的 size
+ * @ptr: kmalloc 原样返回的指针
+ *
+ * 不需要再传 size：页数记录在分配头里。ptr 不是 kmalloc 返回的指针
+ * （包括 kalloc_pages 的页对齐指针）会被拒绝并打日志。
  */
-void kfree(void *ptr, size_t size);
+void kfree(void *ptr);
 
 #endif /* KMALLOC_H */

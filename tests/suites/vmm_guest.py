@@ -43,6 +43,9 @@ FORBIDDEN = (
     rb"panic:",
     rb"Unable to handle",
     rb"PMM: double free",
+    rb"kfree: not a kmalloc pointer",
+    rb"kfree: bad magic",
+    rb"kfree: corrupt header",
     rb"\[exception\] sync:",
     rb"=== BACKTRACE \(fault\)",
 )

@@ -723,7 +723,7 @@ static void cvitek_free_allocs(struct cvitek_eth_nic *nic)
         kfree_pages((void *)nic->rx_descs, CVITEK_RX_DESC_PAGES);
     if (nic->tx_descs)
         kfree_pages((void *)nic->tx_descs, CVITEK_TX_DESC_PAGES);
-    kfree(nic, sizeof(*nic));
+    kfree(nic);
 }
 
 static int cvitek_eth_init(uintptr_t base)

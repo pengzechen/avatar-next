@@ -7,6 +7,8 @@
 #include "assert.h"
 #include "mm_vm.h"
 #include "shared_page.h"
+#include "kmalloc.h"
+#include "string.h"
 
 #define PMM_PAGE_SIZE 4096 /* 4KB */
 
@@ -169,6 +171,52 @@ static void test_pmm_double_free(void)
 }
 
 /**
+ * test_kmalloc_kfree - kmalloc 头部记账测试
+ *
+ * 验证：
+ *   - 返回地址 16 字节对齐，且页内 offset 是 header 大小；
+ *   - kfree 不再需要 size，单页/跨页分配都能完整还给 PMM；
+ *   - kalloc_pages 的页对齐指针传给 kfree 必须被拒绝（offset 检查）。
+ */
+static void test_kmalloc_kfree(void)
+{
+    KLOG_INFO("=== kmalloc/kfree Test ===\n");
+
+    uint64_t free_before = pmm_get_free_pages(&g_pmm);
+
+    void *small = kmalloc(1);
+    assert(small != NULL);
+    assert(((uintptr_t)small & 0xF) == 0);
+    assert(((uintptr_t)small & (PAGE_SIZE - 1)) == 16);
+    memset(small, 0xA5, 1);
+    kfree(small);
+    assert(pmm_get_free_pages(&g_pmm) == free_before);
+
+    size_t big_size = PAGE_SIZE * 2 + 100;
+    void *big = kmalloc(big_size);
+    assert(big != NULL);
+    assert(((uintptr_t)big & 0xF) == 0);
+    memset(big, 0x5A, big_size);
+    kfree(big);
+    assert(pmm_get_free_pages(&g_pmm) == free_before);
+
+    /*
+     * kalloc_pages 返回页对齐指针（offset 0），不是 kmalloc 指针。
+     * kfree 必须拒绝，而且不能动 free_pages。
+     */
+    void *raw = kalloc_pages(1);
+    assert(raw != NULL);
+    uint64_t raw_free = pmm_get_free_pages(&g_pmm);
+    kfree(raw);
+    assert(pmm_get_free_pages(&g_pmm) == raw_free);
+    kfree_pages(raw, 1);
+
+    kfree(NULL);
+
+    KLOG_INFO("✓ kmalloc/kfree test passed\n");
+}
+
+/**
  * test_shared_page_refcount - MAP_SHARED 引用计数测试
  *
  * 验证最后一个 unref 才释放物理页，以及非法 paddr 被拒绝。
@@ -281,6 +329,7 @@ void run_pmm_tests(void)
     test_pmm_fragmentation();
     test_pmm_reserved();
     test_pmm_double_free();
+    test_kmalloc_kfree();
     test_shared_page_refcount();
     test_pmm_stress();
     test_pmm_boundary();

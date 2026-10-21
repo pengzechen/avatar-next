@@ -25,6 +25,9 @@ FORBIDDEN = (
     rb"PMM: invalid free",
     rb"PMM: double free",
     rb"refusing to free reserved",
+    rb"kfree: not a kmalloc pointer",
+    rb"kfree: bad magic",
+    rb"kfree: corrupt header",
     rb"\[exception\] sync:",
     rb"=== BACKTRACE \(fault\)",
 )
