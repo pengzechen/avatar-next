@@ -45,10 +45,10 @@ else
     [ -n "${GITHUB_ENV:-}" ] && printf 'AVATAR_TEST_NO_KVM=1\n' >> "$GITHUB_ENV"
 fi
 
-if [ -d third_party/ltp ]; then
-    info "LTP source present: third_party/ltp"
+if [ -d tests/ltp/src ]; then
+    info "LTP source present: tests/ltp/src"
 else
-    info "LTP source missing: LTP suites will SKIP (tests/ltp/build.sh needs third_party/ltp)"
+    info "LTP source missing: run 'make env' (LTP suites will SKIP until then)"
 fi
 if [ -d tests/ltp/bin/aarch64 ]; then
     info "LTP binaries present"

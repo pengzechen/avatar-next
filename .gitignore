@@ -18,7 +18,9 @@ __pycache__/
 /third_party/dropbear-2024.86/*
 !/third_party/dropbear-2024.86/dropbearmulti-aarch64
 
-# LTP：完整源码树不入库
+# LTP：完整源码树不入库（make env 拉取到 tests/ltp/src）
+/tests/ltp/src/
+# 旧路径保留，方便还没迁移的本地工作树
 /third_party/ltp/
 
 # ─── NPU 运行时（第三方预编译二进制，不入库）─────────────────

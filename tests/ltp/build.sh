@@ -4,15 +4,22 @@
 # 用法:  bash tests/ltp/build.sh [ARCH]
 #        ARCH 默认 riscv64，也支持 aarch64 / x86_64
 #
-# 前提:  third_party/ltp/ 下已有 LTP release tarball 解压后的源码
+# 前提:  tests/ltp/src/ 下已有 LTP 源码（make env 拉取）
 # 产物:  tests/ltp/bin/<arch>/ 下的静态 ELF 二进制
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
-LTP_DIR="$ROOT_DIR/third_party/ltp"
+# LTP 源码由 `make env` 拉到 tests/ltp/src（不再放 third_party/）。
+LTP_DIR="$SCRIPT_DIR/src"
 TESTCASES_LIST="$SCRIPT_DIR/testcases.list"
+
+if [ ! -f "$LTP_DIR/VERSION" ]; then
+    echo "ERROR: LTP source not found at $LTP_DIR"
+    echo "       Run: make env"
+    exit 1
+fi
 
 ARCH="${1:-riscv64}"
 

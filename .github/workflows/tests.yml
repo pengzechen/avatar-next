@@ -71,7 +71,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # 保留 runner 上已经准备好的 third_party/ltp 和 tests/ltp/bin
+          # 保留 runner 上已经准备好的 tests/ltp/src 和 tests/ltp/bin
           clean: false
 
       - name: Toolchain / KVM self-check
@@ -80,12 +80,15 @@ jobs:
       - name: Build apps/c dynamic rootfs
         run: bash apps/c/build.sh
 
-      - name: LTP build (only if source exists and binaries are missing)
+      - name: Fetch LTP source
+        run: make env
+
+      - name: LTP build (only if binaries are missing)
         run: |
-          if [ -d third_party/ltp ] && [ ! -d tests/ltp/bin/aarch64 ]; then
+          if [ -d tests/ltp/src ] && [ ! -d tests/ltp/bin/aarch64 ]; then
               make -C tests ltp-build
           else
-              echo "skip LTP build (source/bins already present or source missing)"
+              echo "skip LTP build (bins already present or source missing)"
           fi
 
       - name: make -C tests check-mm (SMP=1)

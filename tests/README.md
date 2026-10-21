@@ -7,6 +7,9 @@
 ```bash
 make -C tests help
 
+# 首次：拉 LTP 源码 → tests/ltp/src（434MB，不入库；ltp-build 会自动先跑）
+make env
+
 # 快速门禁：三架构构建 + 启动冒烟 + 内核自测 + apps/c 用户态测试
 make -C tests check
 
@@ -54,11 +57,13 @@ tests/
 │   ├── ltp.py            # LTP
 │   └── vmm_guest.py      # 直启 / helper / 多 VM
 ├── ltp/
-│   ├── build.sh          # 交叉编译（原有）
+│   ├── fetch.sh          # make env：拉 LTP 源码到 src/
+│   ├── build.sh          # 交叉编译（需要 src/）
 │   ├── run_ltp.sh        # 新增 LTP-CASE 机器可读行
 │   ├── smoke.list        # PR 门禁子集
 │   ├── mm.list           # 内存重构子集
-│   └── expected_failures.txt
+│   ├── expected_failures.txt
+│   └── src/              # LTP 源码（make env 拉取；gitignored）
 └── .artifacts/           # 构建产物 + 运行日志（gitignored）
 ```
 
@@ -151,8 +156,9 @@ vCPU 任务钉在单核上，机器被压满时 guest 时钟会慢到看起来�
 - **apps/c**：新增用户态测试后先跑 `bash apps/c/build.sh` 生成动态 rootfs；
   `tests/suites/apps.py` 使用 `imgs/rootfs-<arch>.img`（pthread/mutex）和
   框架 normal rootfs（racetest）。
-- **LTP**：把测例加进 `tests/ltp/testcases.list`，然后
-  `make -C tests ltp-build`（三架构都要重编，否则会静默用旧产物）。
+- **LTP**：先把测例加进 `tests/ltp/testcases.list`；源码由 `make env`
+  拉到 `tests/ltp/src/`，然后 `make -C tests ltp-build`（会自动先跑 env；
+  三架构都要重编，否则会静默用旧产物）。
 - **新的 QEMU 场景**：在 `suites/` 里加一个 `run(ctx, report, arches)`，
   在 `run.py` 的 `SUITE_NAMES` 里登记，Makefile 加一个 target。
 
@@ -199,9 +205,10 @@ vCPU 任务钉在单核上，机器被压满时 guest 时钟会慢到看起来�
 1. 注册带 `self-hosted, linux, x64` 标签的 runner，确保有
    `/dev/kvm`、`aarch64/riscv64/x86_64-linux-musl-gcc`、QEMU、e2fsprogs；
 2. 仓库 Settings → Variables 增加 `AVATAR_SELF_HOSTED=true`；
-3. （可选）把 `third_party/ltp` 源码和 `tests/ltp/bin/<arch>` 留在 runner
-   工作区；workflow 用 `actions/checkout` 的 `clean: false` 保留它们。
-   没有 LTP 时 LTP suite 会 SKIP，不会误报通过。
+3. （可选）把 `tests/ltp/src` 源码和 `tests/ltp/bin/<arch>` 留在 runner
+   工作区；workflow 用 `actions/checkout` 的 `clean: false` 保留它们，
+   并在需要时执行 `make env` 拉取源码。没有 LTP 时 LTP suite 会 SKIP，
+   不会误报通过。
 
 `hosted-smoke` 会自动下载 musl 工具链并缓存到 `~/.avatar-toolchains`；
 `self-hosted-full` 的 `tools/ci_selfhosted_env.sh` 会检查工具链/KVM 并把

@@ -37,13 +37,17 @@ TIMEOUT_SCALE ?= 1.0
 ARTIFACTS ?= $(CURDIR)/.artifacts
 N       ?= 10
 
+# LTP 源码 / 选定测例。源码不入库：`make env` 拉取到 tests/ltp/src。
+LTP_VERSION ?= 20260529
+LTP_SRC     ?= $(CURDIR)/ltp/src
+
 RUN = $(PYTHON) $(CURDIR)/run.py \
       --artifacts $(ARTIFACTS) \
       --log $(LOG) --smp $(SMP) --jobs $(JOBS) \
       --timeout-scale $(TIMEOUT_SCALE) \
       --arch $(ARCHES)
 
-.PHONY: help list check check-fast check-full check-mm check-smp check-mm-smp \
+.PHONY: help list env check check-fast check-full check-mm check-smp check-mm-smp \
         build boot kernel apps racetest \
         ltp-build ltp-smoke ltp-mm ltp-full \
         vmm-direct vmm-helper vmm-guest vmm-multivm soak \
@@ -62,7 +66,8 @@ help:
 	@echo "  make -C tests kernel        # PMM / string / VMM_TEST"
 	@echo "  make -C tests apps          # apps/c：pthread / mutex"
 	@echo "  make -C tests racetest      # apps/c：SMP 竞争压力（需 SMP>1）"
-	@echo "  make -C tests ltp-build     # 交叉编译 LTP"
+	@echo "  make -C tests env           # 拉取 LTP 源码 → tests/ltp/src"
+	@echo "  make -C tests ltp-build     # 交叉编译 LTP（自动先跑 env）"
 	@echo "  make -C tests ltp-smoke     # LTP smoke"
 	@echo "  make -C tests ltp-mm        # LTP 内存子集"
 	@echo "  make -C tests ltp-full      # LTP 全量"
@@ -111,7 +116,10 @@ apps:
 racetest:
 	$(RUN) --suite racetest
 
-ltp-build:
+env:
+	@bash $(CURDIR)/ltp/fetch.sh "$(LTP_SRC)" "$(LTP_VERSION)"
+
+ltp-build: env
 	@for a in $(ARCHES); do \
 		echo "== LTP build $$a =="; \
 		bash $(CURDIR)/ltp/build.sh $$a || exit 1; \

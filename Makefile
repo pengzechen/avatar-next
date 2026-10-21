@@ -1034,7 +1034,7 @@ check-submodules:
 	fi
 
 # ─── §10  顶层目标声明 ───────────────────────────────────────────────────────────
-.PHONY: all clean clean-all help klog kernel run run-net rootfs run-fs test-pthread test-mutex test-vmm test-guest-linux test-ltp epoll-perf test-epoll-perf format format-check submodules check-submodules
+.PHONY: all clean clean-all help klog kernel run run-net rootfs run-fs test-pthread test-mutex test-vmm test-guest-linux test-ltp env epoll-perf test-epoll-perf format format-check submodules check-submodules
 
 all: klog
 
@@ -1691,6 +1691,17 @@ endif
 	@echo "  提示：guest 串口直接打在本终端；Ctrl-A X 退出 QEMU。"
 	$(QEMU) $(QEMU_FLAGS) $(QEMU_ROOTFS_FLAGS)
 
+# env: 拉取测试依赖（LTP 源码 → tests/ltp/src）。
+#
+# 全新 clone 里没有 LTP 源码（434MB，不入库），必须先跑这个，之后
+# `make -C tests ltp-build` 才能交叉编译 LTP 测例；`make -C tests ltp-build`
+# 也会自动先跑 env。
+#
+# 用法: make env
+#       make -C tests env LTP_VERSION=20260529
+env:
+	$(MAKE) -C tests env
+
 # test-ltp: 编译 LTP 测例并启动带 rootfs 的 QEMU
 #   前提: bash tests/ltp/build.sh [ARCH]  已编译测例到 tests/ltp/bin/<arch>/
 #   用法: make ARCH=riscv64 test-ltp LOG=warn
@@ -1803,6 +1814,7 @@ help:
 	@echo "  test-pthread  Copy dynamic rootfs from imgs/ and run pthread_test"
 	@echo "  test-mutex    Copy dynamic rootfs from imgs/ and run mutex_test (futex-based)"
 	@echo "  test-vmm      Build with VMM_TEST=1 and run VMM 3-thread switch test"
+	@echo "  env           Fetch LTP source → tests/ltp/src (needed by tests/ltp/build.sh)"
 	@echo "  test-panic    Build with PANIC_TEST=1: panic on purpose in the ELF"
 	@echo "  test-guest-linux  - 启动 Linux guest（aarch64/riscv64/x86_64）"
 	@echo "                parser, to see what a backtrace looks like"

@@ -4,6 +4,9 @@
 > `run_ltp.sh` 现在每个测例输出一行 `LTP-CASE: <name> PASS|FAIL|SKIP|BROK`，
 > 框架据此做逐例判定，并用 `tests/ltp/expected_failures.txt` 管理已知失败。
 > 子集通过 `LTP_TESTS="..."`（或 `/tmp/ltp.list`）传给脚本。
+>
+> **全新 clone 先跑 `make env`**：LTP 源码（434 MB）不入库，会拉到
+> `tests/ltp/src/`。`make -C tests ltp-build` 会自动先跑 env。
 
 如何为 Avatar OS 添加、编译和运行 LTP 测例。
 
@@ -12,11 +15,11 @@
 ```
 tests/ltp/
 ├── build.sh          # 交叉编译脚本
+├── fetch.sh          # make env：拉取 LTP 源码到 src/
 ├── run_ltp.sh        # 目标板运行脚本（会被复制到 rootfs）
 ├── testcases.list    # 选定的测例清单
-└── bin/<arch>/       # 编译产物（git ignored）
-
-third_party/ltp/      # LTP 源码（release tarball 解压）
+├── bin/<arch>/       # 编译产物（git ignored）
+└── src/              # LTP 源码（make env 拉取；git ignored）
 └── testcases/kernel/syscalls/
     ├── read/
     │   ├── read01.c
@@ -31,7 +34,7 @@ third_party/ltp/      # LTP 源码（release tarball 解压）
 
 ### 1. 选择测例
 
-浏览 `third_party/ltp/testcases/kernel/syscalls/` 下的目录，
+浏览 `tests/ltp/src/testcases/kernel/syscalls/` 下的目录，
 找到要测试的 syscall。每个目录下通常有多个编号的测例（01、02、03...），
 难度和覆盖范围递增。
 
@@ -42,10 +45,10 @@ third_party/ltp/      # LTP 源码（release tarball 解压）
 
 ```bash
 # 查看某个测例的源码
-cat third_party/ltp/testcases/kernel/syscalls/readv/readv01.c
+cat tests/ltp/src/testcases/kernel/syscalls/readv/readv01.c
 
 # 快速检查依赖的 syscall
-grep -h 'syscall\|SYS_' third_party/ltp/testcases/kernel/syscalls/readv/readv01.c
+grep -h 'syscall\|SYS_' tests/ltp/src/testcases/kernel/syscalls/readv/readv01.c
 ```
 
 ### 2. 编辑 testcases.list
@@ -60,17 +63,23 @@ readv/readv01
 二进制名通常与目录名加编号一致，但不总是。确认方法：
 
 ```bash
-ls third_party/ltp/testcases/kernel/syscalls/readv/
+ls tests/ltp/src/testcases/kernel/syscalls/readv/
 # 看 Makefile 或 .c 文件名确认最终二进制名
 ```
 
-### 3. 编译
+### 3. 拉源码并编译
 
 ```bash
+# 首次：拉 LTP 源码到 tests/ltp/src（默认固定 20260529）
+make env
+
 # 编译指定架构（默认 riscv64）
 bash tests/ltp/build.sh riscv64
 bash tests/ltp/build.sh aarch64
 bash tests/ltp/build.sh x86_64
+
+# 或一条命令（ltp-build 会自动先跑 env）：
+make -C tests ltp-build ARCHES='aarch64 riscv64 x86_64'
 ```
 
 脚本会：
@@ -122,7 +131,7 @@ LTP configure 已处理大部分，但偶尔有遗漏。
 
 ```bash
 # 查看 config.h 中已定义的宏
-grep HAVE third_party/ltp/include/config.h
+grep HAVE tests/ltp/src/include/config.h
 ```
 
 **依赖其他 LTP 库**: 部分测例依赖 `lib/` 之外的库
@@ -163,7 +172,7 @@ x86_64 使用旧式 syscall 号（与 aarch64/riscv64 不同），
 
 ```bash
 # 查看测例用了哪些 syscall
-grep -E 'SYS_|__NR_' third_party/ltp/testcases/kernel/syscalls/xxx/xxx01.c
+grep -E 'SYS_|__NR_' tests/ltp/src/testcases/kernel/syscalls/xxx/xxx01.c
 
 # x86_64 syscall 号查询
 grep -w 'xxx' /usr/include/asm/unistd_64.h  # 或查 Linux 源码
