@@ -28,21 +28,28 @@ static spinlock_t g_futex_lock = SPINLOCK_INIT;
 
 int futex_do_wake(uintptr_t uaddr, int count)
 {
+    task_t *wake[FUTEX_TABLE_SIZE];
     int woken = 0;
     uint64_t flags;
+
     spin_lock_irqsave(&g_futex_lock, &flags);
     for (int i = 0; i < FUTEX_TABLE_SIZE && woken < count; i++) {
         if (g_futex_table[i].uaddr == uaddr &&
             g_futex_table[i].waiter != NULL) {
-            task_t *t = g_futex_table[i].waiter;
+            wake[woken++] = g_futex_table[i].waiter;
             g_futex_table[i].uaddr = 0;
             g_futex_table[i].waiter = NULL;
-            t->state = TASK_READY;
-            sched_enqueue(t);
-            woken++;
         }
     }
     spin_unlock_irqrestore(&g_futex_lock, flags);
+
+    /*
+     * 唤醒放在锁外，走与 pipe/completion 同一条 sched_unblock()：
+     * 等待者可能还在这颗核上（已置 BLOCKED、尚未切出），不能直接
+     * state=READY + sched_enqueue，否则会被另一颗核重复执行。
+     */
+    for (int i = 0; i < woken; i++)
+        sched_unblock(wake[i]);
     return woken;
 }
 

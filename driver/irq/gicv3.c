@@ -518,7 +518,22 @@ uint32_t cpu_num(void)
     return GICD_TYPER_CPU_NUM(read32((void *)GICD_TYPER));
 }
 
-/* GICv3 用 ICC_SGI1R_EL1 生成 SGI（GICv2 的 GICD_SGIR 已废弃）*/
+/*
+ * GICv3 用 ICC_SGI1R_EL1 生成 SGI（GICv2 的 GICD_SGIR 已废弃）
+ *
+ * ICC_SGI1R_EL1 字段（ARM IHI 0069）：
+ *   [15:0]  TargetList —— Aff0 位图（RS=0 时）
+ *   [23:16] Aff1
+ *   [27:24] INTID      —— SGI 号，0..15
+ *   [39:32] Aff2
+ *   [40]    IRM        —— 0 = 只投 TargetList
+ *   [47:44] RS         —— 0 = 单个 target list（不按范围选择）
+ *   [55:48] Aff3
+ *
+ * ⚠️ 历史 bug：旧实现写成 `irq | (1 << (16 + cpu))` —— 把 INTID 放进了
+ * TargetList、把 Aff0 放进了 Aff1，结果 SGI 根本投不出去（之前没有调用者，
+ * 所以一直没暴露）。多核 resched IPI 是第一个用户。
+ */
 void gicv3_ipi_send_single(int32_t irq, int32_t cpu)
 {
     if (irq < 0 || irq > 15 || cpu < 0 || cpu >= 16) {
@@ -526,7 +541,7 @@ void gicv3_ipi_send_single(int32_t irq, int32_t cpu)
         return;
     }
 
-    uint64_t sgi = ((uint64_t)irq & 0xFu) |
-                   ((uint64_t)1 << (16 + cpu)); /* TargetList: Aff0 位图 */
+    uint64_t sgi = ((uint64_t)irq << 24) | /* INTID [27:24] */
+                   ((uint64_t)1 << cpu);   /* TargetList [15:0] */
     ICC_WRITE(ICC_SGI1R_EL1, sgi);
 }

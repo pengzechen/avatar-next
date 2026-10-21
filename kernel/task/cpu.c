@@ -68,8 +68,10 @@ static void resched_ipi_handler(uint64_t *frame)
 static void resched_ipi_handler(void *frame)
 #endif
 {
+    cpu_t *c = cpu_current();
+
     (void)frame;
-    cpu_current()->need_resched = true;
+    c->need_resched = true;
 
 #if ARCH_RISCV64
     CSR_CLEAR(sip, SIE_SSIE); /* bit1 = SSIP */

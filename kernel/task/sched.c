@@ -397,6 +397,14 @@ void sched_schedule(void)
             prev->wake_pending = false;
             prev->state = TASK_READY;
             list_insert_last(&c->run_queue, &prev->run_node);
+            /*
+             * 这次唤醒是在 prev 还 on_cpu 时发生的，waker 没有发 IPI
+             * （`sched_unblock` 的 enqueued=false 分支）。现在 prev 已经
+             * 入队，但接下来要切到的可能是 idle —— 不置 need_resched 的话
+             * idle 会直接 wfi/hlt，任务要等下一次 tick 才被看到；tick 若
+             * 异常就是永久睡死。本核自己入队，不需要 IPI。
+             */
+            c->need_resched = true;
         }
 
         /* state/on_cpu 也在同一把锁下发布，避免 waker 看到中间态 */
