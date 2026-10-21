@@ -29,6 +29,45 @@
 #include "syscall/fs/fd_pool.h"
 #include "syscall/fs/path.h"
 
+#ifdef TASK_INFRA_TEST
+#include "spinlock.h"
+#include "task/completion.h"
+
+/*
+ * TASK_TEST=1 的 completion 测试池。
+ *
+ * 用户任务通过伪 syscall 直接阻塞在 completion_t 上：
+ *   WAIT(id)     → completion_wait()
+ *   COMPLETE(id) → completion_complete_all()
+ *   RESET(id)    → completion_reset()
+ *
+ * 只在测试变体里编译；正常内核没有这三个入口。等待不可被信号打断
+ * （completion_wait 本身没有 TASK_INTERRUPTIBLE 语义），测试程序自己
+ * 控制超时。
+ */
+#define TASK_TEST_COMPLETIONS 8
+static completion_t g_test_completion[TASK_TEST_COMPLETIONS];
+static spinlock_t g_test_completion_lock = SPINLOCK_INIT;
+static bool g_test_completion_ready;
+
+static completion_t *test_completion_get(uint64_t id)
+{
+    uint64_t flags;
+
+    if (id >= TASK_TEST_COMPLETIONS)
+        return NULL;
+
+    spin_lock_irqsave(&g_test_completion_lock, &flags);
+    if (!g_test_completion_ready) {
+        for (int i = 0; i < TASK_TEST_COMPLETIONS; i++)
+            completion_init(&g_test_completion[i]);
+        g_test_completion_ready = true;
+    }
+    spin_unlock_irqrestore(&g_test_completion_lock, flags);
+    return &g_test_completion[id];
+}
+#endif /* TASK_INFRA_TEST */
+
 /* ─────────────────────────────────────────────────────────────────
  * Unblock parent waiting for a specific child (or any child)
  * ───────────────────────────────────────────────────────────────── */
@@ -1050,6 +1089,38 @@ void syscall_handler(trap_frame_t *frame)
         regs[0] = 0;
         break;
     }
+
+#ifdef TASK_INFRA_TEST
+    case AVATAR_SYS_COMPLETION_WAIT: {
+        completion_t *c = test_completion_get(regs[0]);
+        if (!c) {
+            regs[0] = (uint64_t)(int64_t)-EINVAL;
+            break;
+        }
+        completion_wait(c);
+        regs[0] = 0;
+        break;
+    }
+    case AVATAR_SYS_COMPLETION_COMPLETE: {
+        completion_t *c = test_completion_get(regs[0]);
+        if (!c) {
+            regs[0] = (uint64_t)(int64_t)-EINVAL;
+            break;
+        }
+        completion_complete_all(c);
+        regs[0] = 0;
+        break;
+    }
+    case AVATAR_SYS_COMPLETION_RESET: {
+        completion_t *c = test_completion_get(regs[0]);
+        if (!c) {
+            regs[0] = (uint64_t)(int64_t)-EINVAL;
+            break;
+        }
+        regs[0] = (completion_reset(c) == 0) ? 0 : (uint64_t)(int64_t)-EBUSY;
+        break;
+    }
+#endif /* TASK_INFRA_TEST */
 
     case LINUX_SYS_NANOSLEEP:
         nanosleep_handler(regs);

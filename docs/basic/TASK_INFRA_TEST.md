@@ -93,7 +93,38 @@ aarch64 的这个测试抓到了两个真问题：
 
 SBI IPI 路径生效；基线同样是一个 tick。
 
-## 4. 结论与边界
+## 4. completion 模块的 A/B
+
+completion 没有正式的用户态接口，所以加了一组**只在 `TASK_TEST=1` 时编译**的
+测试 syscall（`AVATAR_SYS_COMPLETION_WAIT/COMPLETE/RESET`，见
+`kernel/syscall/syscall_internal.h`）。用户任务直接阻塞在 `completion_t` 上，
+测试程序是 `apps/c/task_completion_test.c`，入口脚本
+`tools/task_completion_test.sh`。
+
+```bash
+make PLATFORM=qemu-virt-x86_64 SMP=2 TASK_TEST=1 clean
+make PLATFORM=qemu-virt-x86_64 SMP=2 TASK_TEST=1 kernel rootfs
+tools/task_completion_test.sh x86_64 2
+```
+
+`broadcast <n> <attempts>`：每轮 fork n 个等待者，全部 armed 后父进程调用
+COMPLETE，子进程记录被唤醒时刻。基线 worktree 使用**同样的 syscall 号**
+但内部是裸 `state=READY + task_unblock()`（无 completion、无 IPI）。
+
+| 内核 | x86_64 max_us | aarch64 max_us | riscv64 max_us |
+|---|---|---|---|
+| 新（completion） | 200 ~ 245 | 582 ~ 871（首轮 3653） | 508 ~ 1333 |
+| 基线（裸 wait/wake） | 4980 ~ 4990 | 4154 ~ 5372 | 1982 ~ 4898 |
+
+`ready_cpu0=4 ready_cpu1=4` 在所有轮次都成立：等待者确实分布在不同核上。
+新内核的 COMPLETE 对每个远端等待者走 `sched_unblock()` + resched IPI；
+基线只入队、不发 IPI，所以跨核等待者要等目标核的下一次 tick。
+
+注意：
+- 测试 syscall 只在 `TASK_TEST=1` 变体里存在；正常内核调用会得到 ENOSYS。
+- `completion_wait()` 不可被信号打断；测试程序自己控制轮次，不依赖超时。
+
+## 5. 结论与边界
 
 - `dist` 证明 SMP 下任务确实按 round-robin 摊到两颗核。
 - `ping` 跨核证明 `sched_unblock() → sched_resched_cpu() → IPI` 真的

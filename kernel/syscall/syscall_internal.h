@@ -190,6 +190,7 @@ typedef struct task task_t;
 #define ENOENT        2
 #define ENOMEM        12
 #define EAGAIN        11
+#define EBUSY         16
 #define EINTR         4
 #define EFAULT        14
 #define ERANGE        34
@@ -440,5 +441,22 @@ void getsockopt_handler(uint64_t regs[6], task_t *current);
 void getpeername_handler(uint64_t regs[6], task_t *current);
 void getsockname_handler(uint64_t regs[6], task_t *current);
 void shutdown_handler(uint64_t regs[6], task_t *current);
+
+/*
+ * ── TASK_TEST=1 专用测试 syscall（仅 TASK_INFRA_TEST 编译）────────
+ *
+ * 内核没有「用户态 completion」这种正式接口；为了从用户态直接压
+ * completion_wait()/completion_complete_all()，在测试变体里加三个
+ * 伪号。它们不在 Linux 号空间里，也不经过 x86 号翻译（> 1000）。
+ *
+ * 用户态程序 apps/c/task_completion_test.c 里手抄同样的值。
+ *
+ * ⚠️ 这段放在文件末尾、与上面的标准号块用空行隔开：clang-format 的
+ *    AlignConsecutiveMacros 会把连续的宏按最长名字对齐，把 0x7FFF...
+ *    插进标准号块会重排上百行。
+ */
+#define AVATAR_SYS_COMPLETION_WAIT     0x7FFF1000ULL
+#define AVATAR_SYS_COMPLETION_COMPLETE 0x7FFF1001ULL
+#define AVATAR_SYS_COMPLETION_RESET    0x7FFF1002ULL
 
 #endif /* KERNEL_SYSCALL_INTERNAL_H */
