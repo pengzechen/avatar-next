@@ -1,0 +1,114 @@
+name: tests
+
+# 两档：
+#   hosted-smoke      GitHub 托管 runner：build/boot/kernel/apps（无 KVM，
+#                     x86 VMM/guest 自动 SKIP；不含 LTP/VMM guest）
+#   self-hosted-full  自托管 runner（需 KVM + musl 工具链 + LTP 源码）：
+#                     check-mm SMP=1/4，包含 LTP mm 与三架构 VMM guest
+#
+# 启用 full job：仓库 Settings → Variables 增加 AVATAR_SELF_HOSTED=true，
+# 并注册带 [self-hosted, linux, x64] 标签的 runner。
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      ltp_full:
+        description: "self-hosted: also run LTP full"
+        type: boolean
+        default: false
+  schedule:
+    # 每晚跑一次完整的 self-hosted job（含 LTP full）
+    - cron: "23 3 * * *"
+
+concurrency:
+  group: avatar-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  hosted-smoke:
+    name: hosted smoke (build/boot/kernel/apps)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache musl toolchains
+        uses: actions/cache@v4
+        with:
+          path: ~/.avatar-toolchains
+          key: avatar-musl-toolchains-v1
+
+      - name: Setup QEMU + musl toolchains
+        run: bash tools/ci_setup_hosted.sh
+
+      - name: Build apps/c dynamic rootfs
+        run: bash apps/c/build.sh
+
+      - name: make -C tests check (SMP=1)
+        env:
+          TIMEOUT_SCALE: "2.0"
+        run: make -C tests check
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hosted-smoke-report
+          path: tests/.artifacts/runs/**/report.*
+          if-no-files-found: ignore
+          retention-days: 14
+
+  self-hosted-full:
+    name: self-hosted full (SMP=1/4, LTP, VMM guest)
+    if: vars.AVATAR_SELF_HOSTED == 'true'
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 180
+    concurrency:
+      group: avatar-self-hosted-tests
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # 保留 runner 上已经准备好的 third_party/ltp 和 tests/ltp/bin
+          clean: false
+
+      - name: Toolchain / KVM self-check
+        run: bash tools/ci_selfhosted_env.sh
+
+      - name: Build apps/c dynamic rootfs
+        run: bash apps/c/build.sh
+
+      - name: LTP build (only if source exists and binaries are missing)
+        run: |
+          if [ -d third_party/ltp ] && [ ! -d tests/ltp/bin/aarch64 ]; then
+              make -C tests ltp-build
+          else
+              echo "skip LTP build (source/bins already present or source missing)"
+          fi
+
+      - name: make -C tests check-mm (SMP=1)
+        run: make -C tests check-mm
+
+      - name: make -C tests check-mm-smp (SMP=4)
+        run: make -C tests check-mm-smp
+
+      - name: racetest (SMP=4, diagnostic; known riscv64 flake)
+        continue-on-error: true
+        run: make -C tests racetest SMP=4
+
+      - name: LTP full (nightly / manual opt-in)
+        if: github.event_name == 'schedule' || github.event.inputs.ltp_full == 'true'
+        run: make -C tests ltp-full
+
+      - name: Upload reports and failure logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: self-hosted-report
+          path: |
+            tests/.artifacts/runs/**/report.*
+            tests/.artifacts/runs/**/logs/**
+          if-no-files-found: ignore
+          retention-days: 14

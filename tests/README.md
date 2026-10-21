@@ -185,6 +185,28 @@ vCPU 任务钉在单核上，机器被压满时 guest 时钟会慢到看起来�
   `busybox`，没有就拒绝重建 —— 否则会把完整动态 rootfs 覆盖成只有
   `/bin/{pthread,mutex}_test` 的 4.5M 镜像，宿主 shell 都起不来。
 
+## CI
+
+`.github/workflows/tests.yml` 有两档：
+
+| job | runner | 内容 |
+|---|---|---|
+| `hosted-smoke` | `ubuntu-latest` | `make -C tests check`（build/boot/kernel/apps）。无 KVM，x86 VMM/guest 自动 SKIP；不跑 LTP/VMM guest |
+| `self-hosted-full` | `[self-hosted, linux, x64]` | `check-mm` SMP=1/4（含 LTP mm + 三架构 VMM guest）、`racetest`（诊断，允许已知 flake）、nightly LTP full |
+
+启用 full job：
+
+1. 注册带 `self-hosted, linux, x64` 标签的 runner，确保有
+   `/dev/kvm`、`aarch64/riscv64/x86_64-linux-musl-gcc`、QEMU、e2fsprogs；
+2. 仓库 Settings → Variables 增加 `AVATAR_SELF_HOSTED=true`；
+3. （可选）把 `third_party/ltp` 源码和 `tests/ltp/bin/<arch>` 留在 runner
+   工作区；workflow 用 `actions/checkout` 的 `clean: false` 保留它们。
+   没有 LTP 时 LTP suite 会 SKIP，不会误报通过。
+
+`hosted-smoke` 会自动下载 musl 工具链并缓存到 `~/.avatar-toolchains`；
+`self-hosted-full` 的 `tools/ci_selfhosted_env.sh` 会检查工具链/KVM 并把
+常见本地工具链目录（`Desktop/Software/compiler/*/bin` 等）加入 PATH。
+
 ## 与旧脚本的关系
 
 `tools/boot_regress.sh`、`tools/vmm_helper_regress.sh`、
