@@ -99,10 +99,79 @@ VCPU_STATE_OFFLINE → VCPU_STATE_RUNNING → VCPU_STATE_STOPPED
 
 | 位置 | 旧行为 | 现在 |
 |---|---|---|
-| `vcpu_task_create()` 亲和性 | `vm->slot % ncpus`：同一 VM 的兄弟全挤一颗核 | `(vm->slot * MAX_VCPUS + vcpu_id) % ncpus` |
+| `vcpu_task_create()` 亲和性 | `vm->slot % ncpus`：同一 VM 的兄弟全挤一颗核 | `(vm->slot + vcpu_id) % ncpus`（兄弟优先分散，单 vCPU 的 VM 按 slot 交替） |
 | `vmm_console_pump()` | 每颗 vCPU 退出都抢宿主 UART RX FIFO | 只由 BSP 泵（单消费者资源） |
 | `vlapic_*` 运行时访问 | 固定取 vcpu0（`vlapic_cur`） | 所有 API 显式收 `vcpu_id` |
 | `vm->state = RUNNING/DYING` | 绕过池锁直接写 | `vm_state_set()` / last-one-out 统一管理 |
+
+## 4a. Task 基础设施：跨核唤醒、抢占与次序
+
+多 vCPU 之后，一颗 vCPU 在 VM-exit 里经常需要操作另一颗核上的兄弟。
+下面这组原语就是为此补的，**不要**再用「直接改 task->state」或
+「等下一次 timer tick」这类单核写法。
+
+### 4a.1 跨核 kick
+
+```
+vmm_vcpu_kick(vcpu)
+  → sched_resched_cpu(host_cpu)
+      → cpu_send_ipi(cpu)
+          AArch64: GIC SGI 15（GICv2/GICv3 各走 irq_send_ipi）
+          RISC-V : SBI send_ipi → 目标 hart 的 SSIP
+          x86_64 : LAPIC fixed-delivery IPI，IDT 向量 0xF0
+```
+
+目标核收到 IPI 只置 `need_resched`，真正的切换发生在：
+
+- 宿主任务：中断返回路径 `sched_check_and_yield_from_trap()`；
+- guest：IPI 被硬件转成一次 VM-exit / HS trap，VMM 主循环顶部
+  `sched_check_and_yield()`。
+
+因此 `vmm_vcpu_kick()` 对「宿主任务」和「guest 里的 vCPU」是同一套语义。
+`vm_request_stop()` 现在会遍历所有 vCPU 逐个 kick —— 停止不再依赖
+「兄弟恰好自己退出」。
+
+### 4a.2 SMP 安全的阻塞/唤醒
+
+`task_t` 新增 `on_cpu` / `wake_pending`，`sched_unblock()` 在目标核
+`rq_lock` 下判定：
+
+- 任务仍在 `on_cpu`（已置 BLOCKED、尚未切出）→ 只置 `wake_pending`；
+  本核 `sched_schedule()` 在切出时补入队列；
+- 已切出 → 直接入队，并在远端核上发 resched IPI。
+
+这修掉了旧 `task_block()` 的 lost-wakeup / 「同一任务既在跑又在队列」
+窗口。**新的等待逻辑请用 `completion_t`**（见 `kernel/task/completion.h`）：
+它把 done 条件、等待队列和锁封在一起，天然避开这个窗口；AP 启动闸门
+就应该建在它上面。
+
+### 4a.3 中断注入的次序
+
+所有 **VMM 侧**对某颗 vCPU 的注入统一走：
+
+```c
+vmm_vcpu_inject_irq(target, virq_line(...));
+```
+
+它做三件事，顺序不能换：
+
+1. 取 `target->irq_lock`；
+2. 调架构后端写 pending；
+3. 释放锁（release 屏障）→ `vmm_vcpu_kick(target)`。
+
+目标的 `vmm_arch_restore_guest_ctx()` / `save_guest_ctx()` 也持同一把
+`irq_lock`，所以：
+
+- 两次注入对同一 vCPU 有全序，不会互相覆盖 pending；
+- 注入不会插进「LR 扫描/回读」的中间，状态要么本轮 entry 看到、要么
+  被 kick 后下一轮看到；
+- GICv2 的宿主 vtimer ISR 也改成持同一把锁注入。
+
+**边界**：这把锁只覆盖 VMM 侧注入与 entry/exit 同步。guest 自己通过
+GICD/vLAPIC MMIO 改 pending 发生在 exit handler 里（可能睡眠/让出），
+不在锁内；它与远端注入的竞争按「下次 entry 的同步快照」收敛，不承诺
+寄存器级的实时一致。若将来要把 guest MMIO 也纳入同一顺序域，需要把
+pending 位图改成原子操作或给控制器加锁。
 
 ## 5. 尚未做：真正启用多 vCPU 的前置条件
 
@@ -111,8 +180,9 @@ VCPU_STATE_OFFLINE → VCPU_STATE_RUNNING → VCPU_STATE_STOPPED
 1. **AP 启动闸门。**
    `guest_loader_run_linux()` 目前只配置并创建 `vcpu[0]`。启用多 vCPU
    需要为非 BSP 创建任务，但**任务必须先在闸门处等待**，不能直接跳进
-   guest 入口。需要一个可睡眠的 mailbox（`start_pending` + 等待队列）；
-   注意 `task_block()` 的 lost-wakeup 窗口，不能只靠「查标志 + task_block」。
+   guest 入口。`completion_t` 已经提供了正确的睡眠原语；还缺的是：
+   vcpu_t 里嵌一个 `start_completion`、AP 任务入口先 `completion_wait`、
+   各架构 CPU_ON 路径在填好入口状态后 `completion_complete_all`。
 
 2. **每架构的 AP 入口。**
    - AArch64：PSCI `CPU_ON`（现在 `el2_run.c` 直接返回 `NOT_SUPPORTED`）；
@@ -131,11 +201,12 @@ VCPU_STATE_OFFLINE → VCPU_STATE_RUNNING → VCPU_STATE_STOPPED
    - x86：ICR 目前只处理「发给自己」（`vlapic.c` 的 `reg_write`），
      需要按 destination 字段寻址到目标 vLAPIC。
 
-4. **跨 CPU 写入的原子性。**
-   `vmm_vgic{,3}_set_pending()` 是普通 `|=`，`vlapic_raise_irq()` 也没有锁。
-   单 vCPU 时写入者只可能是「即将进入 guest 的那颗核」，所以安全；
-   多 vCPU 后，一颗 vCPU 在别的核上给兄弟置 pending 会与目标的
-   sync/take 并发。启用前必须把这些位图改成原子操作（或加控制器锁）。
+4. **跨 CPU 写入的原子性（VMM 侧已收口，guest MMIO 侧未收口）。**
+   VMM 侧注入现在由 `target->irq_lock` 串行化，并与 entry/exit 同步互斥，
+   所以「远端注入 vs 目标同步」不再各写一半。仍未覆盖的是 guest 自己
+   写 GICD/vLAPIC 的 MMIO 路径（见 4a.3 的边界说明）：启用多 vCPU 前，
+   若要保证这类写入与远端注入的严格顺序，需要把控制器 pending 位图
+   改成原子操作或加控制器锁。
 
 5. **guest 侧的 CPU 描述。**
    `nr_vcpus > 1` 时，aarch64/riscv 的 DTB 要有对应 `cpu@N` 节点与
@@ -154,6 +225,9 @@ VCPU_STATE_OFFLINE → VCPU_STATE_RUNNING → VCPU_STATE_STOPPED
   - `tools/vmm_helper_regress.sh x86_64 1 1`
   - `tools/vmm_helper_regress.sh aarch64 1 1`
   - `tools/vmm_helper_regress.sh riscv64 1 1`
+- 跨核路径（**必须 SMP>=2**，否则 IPI/摊核根本不执行）：
+  - `tools/vmm_helper_regress.sh <arch> 1 2 --restart`
+  - `tools/vmm_multivm_regress.sh <arch> 2` —— 两个 VM 应分别落在 cpu0/cpu1
 - 启用多 vCPU 后追加：
   - `tools/vmm_helper_regress.sh <arch> [N] [smp] --restart`
   - `tools/vmm_multivm_regress.sh <arch> [smp]`

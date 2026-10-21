@@ -18,9 +18,48 @@
 #include "task/sched.h" /* sched_check_and_yield：主循环顶部主动让出 CPU */
 #include "task/cpu.h"   /* g_num_cpus：vCPU 摊核时用 */
 #if ARCH_AARCH64
-#include "aarch64/stage2.h"    /* stage2_activate：每轮进 guest 前重写 VTTBR */
-#include "vmm/vmm_irq_route.h" /* vmm_irq_route_clear_owner */
+#include "aarch64/stage2.h" /* stage2_activate：每轮进 guest 前重写 VTTBR */
 #endif
+#include "barrier.h" /* smp_wmb：注入发布后再 kick */
+
+/* ── 目标 vCPU 的中断注入 / kick ─────────────────────────── */
+
+void vmm_vcpu_inject_irq(vcpu_t *target, virq_t irq)
+{
+    uint64_t flags;
+
+    if (!target)
+        return;
+
+    /*
+     * 写 pending 与目标的 entry/exit 同步互斥。锁的 release/acquire 同时
+     * 保证：后一次注入不会在前一次还没被同步看到时被覆盖成「只有后者」。
+     */
+    spin_lock_irqsave(&target->irq_lock, &flags);
+    vmm_arch_irq_raise(target, irq);
+    spin_unlock_irqrestore(&target->irq_lock, flags);
+
+    /*
+     * 发布之后再 kick：目标若在别的核上跑 guest，会先退出、再在下一轮
+     * entry 里看到这一步写入的 pending。顺序不能反。
+     */
+    vmm_vcpu_kick(target);
+}
+
+void vmm_vcpu_kick(vcpu_t *vcpu)
+{
+    if (!vcpu || vcpu->state != VCPU_STATE_RUNNING)
+        return;
+    if (vcpu->host_cpu < 0)
+        return;
+
+    /*
+     * 不直接改 task 状态 —— 只让那颗核进入调度。目标在 guest 里时，
+     * resched IPI 会被硬件转成一次 VM-exit / HS trap，主循环顶部
+     * sched_check_and_yield() 自然把 CPU 让出来。
+     */
+    sched_resched_cpu((uint32_t)vcpu->host_cpu);
+}
 
 /* ── VMM 主循环（架构无关）────────────────────────────────── */
 /*
@@ -83,8 +122,16 @@ int vmm_run_vcpu(vcpu_t *vcpu)
         stage2_activate(&vcpu->vm->s2);
 #endif
 
-        /* 恢复 guest 上下文（AArch64: EL1 sysregs；x86: no-op）*/
+        /*
+         * 恢复 guest 上下文（AArch64: EL1 sysregs；x86: no-op）。
+         *
+         * 持本 vCPU 的 irq_lock：这一步既会读 pending/active 快照，也会
+         * 由架构入口钩子重拉电平线（vtimer/console/NPU）。远端 vCPU 的
+         * 注入必须等它完成，否则会出现「set_pending 与 LR 扫描各写一半」。
+         */
+        spin_lock(&vcpu->irq_lock);
         vmm_arch_restore_guest_ctx(vcpu);
+        spin_unlock(&vcpu->irq_lock);
 
         /* 进入 guest（AArch64: eret; x86: vmlaunch/vmresume）*/
         int ok = vmm_arch_enter_guest(vcpu);
@@ -95,8 +142,14 @@ int vmm_run_vcpu(vcpu_t *vcpu)
         }
         vcpu->launched = 1;
 
-        /* 保存 guest 上下文，再处理可能会阻塞/调度/打印的 VM-exit。*/
+        /*
+         * 保存 guest 上下文，再处理可能会阻塞/调度/打印的 VM-exit。
+         * 同样持锁：GICv3 的 sync_exit 会回读 LR 并清 active/pending，
+         * 远端注入不能插在中间。
+         */
+        spin_lock(&vcpu->irq_lock);
         vmm_arch_save_guest_ctx(vcpu);
+        spin_unlock(&vcpu->irq_lock);
 
         arch_irq_restore(irq_flags);
 
@@ -172,20 +225,6 @@ static void vcpu_task_fn(void *arg)
         KLOG_INFO("[vmm] vcpu%d exited normally\n", vcpu->vcpu_id);
     else
         KLOG_ERROR("[vmm] vcpu%d exited with error %d\n", vcpu->vcpu_id, rc);
-
-    /*
-     * 摘掉「本 pCPU 的 vCPU 承载任务」登记。
-     *
-     * GICv3 下宿主 vtimer 不由 ISR 注入（见 irq_route.c 的说明），所以这纯
-     * 属清账；但 GICv2 路径会用它，而这张表是按任务指针匹配的 —— 任务退出
-     * 后指针会被复用，留着旧值就可能让 ISR 去 unblock / 注入一个已经不是
-     * vCPU 的任务。
-     *
-     * irq_route.c 只在 aarch64 的 vdev 列表里，其它架构没有这个符号。
-     */
-#if ARCH_AARCH64
-    vmm_irq_route_clear_owner();
-#endif
 
     /*
      * 本颗 vCPU 退场，由**最后一个**退出的兄弟负责回收 VM 槽位
@@ -312,19 +351,22 @@ struct task *vcpu_task_create(vcpu_t *vcpu, uint8_t priority)
      * 复现：`VMN=3 /tmp/three_vm.sh x86_64 2`（或见 docs/vmm/X86_GUEST_LINUX.md §11.5）。
      */
     /*
-     * ── 摊到哪颗核：按「VM 槽位 × MAX_VCPUS + vCPU 编号」轮转 ──────
+     * ── 摊到哪颗核：按「VM 槽位 + vCPU 编号」轮转 ──────────────────
      *
      * 从前是 `vm->slot % ncpus` —— 单 vCPU 时没问题，多 vCPU 时同一 VM 的
      * 所有兄弟会**全部落在同一颗核**，等于自己把自己串行化了，而且
      * 「每颗 vCPU 在哪颗核」这个视角也就没有意义了。
      *
-     * slot*MAX_VCPUS + vcpu_id 保证同一 VM 的兄弟优先分散（只要核数够），
-     * 不同 VM 之间再按槽位错开。调度器没有负载均衡，所以这就是最终落点。
+     * 用 (slot + vcpu_id) 而不是 (slot*MAX_VCPUS + vcpu_id)：后者在两核
+     * 机器上会让 slot0 与 slot1 的 vcpu0 都落到 cpu0（MAX_VCPUS=4 是偶数），
+     * 多 VM 仍然串行。加法形式同时兼顾两个维度：
+     *   - 同一 VM 的兄弟 vcpu_id 不同 → 优先分散；
+     *   - 单 vCPU 的多个 VM（vcpu_id=0）按 slot 交替。
+     * 调度器没有负载均衡，所以这就是最终落点。
      */
     uint32_t ncpu = g_num_cpus ? g_num_cpus : 1U;
-    uint32_t want = (uint32_t)(((uint32_t)vcpu->vm->slot * MAX_VCPUS) +
-                               (uint32_t)vcpu->vcpu_id) %
-                    ncpu;
+    uint32_t want =
+        (uint32_t)(((uint32_t)vcpu->vm->slot + (uint32_t)vcpu->vcpu_id) % ncpu);
 
     /*
      * **先记账、再建任务**：新任务可能在 task_create 返回前就在另一颗核上

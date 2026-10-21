@@ -280,6 +280,19 @@ void lapic_send_sipi(uint32_t apic_id, uint8_t vector)
     lapic_wait_icr_idle();
 }
 
+void lapic_send_ipi(uint32_t apic_id, uint8_t vector)
+{
+    lapic_wait_icr_idle();
+    lapic_write(LAPIC_REG_ICR_HIGH, apic_id << 24);
+    /*
+     * fixed delivery(000) | physical destination(0) | level assert(bit14)
+     * | edge trigger(bit15=0) | vector。bit14 必须置：QEMU 对电平断言位
+     * 检查得比真机严格，不置时固定投递可能被静默丢弃。
+     */
+    lapic_write(LAPIC_REG_ICR_LOW, (1u << 14) | (uint32_t)vector);
+    lapic_wait_icr_idle();
+}
+
 /* ── lapic_timer_init ───────────────────────────────────────── */
 
 void lapic_timer_init(uint8_t vector)

@@ -17,30 +17,9 @@ extern void syscall_handler(trap_frame_t *frame);
 
 irq_handler_t g_handler_vec[MAX_IRQ_VECTORS] = { 0 };
 
-/*
- * 「guest 持有」的中断位图：这类物理中断的结束由 guest 负责。
- * vGIC 用 HW=1 的 list register 把物理中断映射成 guest 的虚拟中断，
- * guest 在 GICV 上写 EOIR 时硬件才 deactivate 物理中断。
- * 详见 handle_irq_exception() 里对 GICC_DIR 的处理。
- */
-static uint8_t g_irq_guest_owned[MAX_IRQ_VECTORS / 8];
-
 void irq_install(int vector, void (*h)(uint64_t *))
 {
     g_handler_vec[vector] = h;
-}
-
-void irq_mark_guest_owned(int vector)
-{
-    if (vector >= 0 && vector < MAX_IRQ_VECTORS)
-        g_irq_guest_owned[vector >> 3] |= (uint8_t)(1u << (vector & 7));
-}
-
-int irq_is_guest_owned(int vector)
-{
-    if (vector < 0 || vector >= MAX_IRQ_VECTORS)
-        return 0;
-    return (g_irq_guest_owned[vector >> 3] >> (vector & 7)) & 1;
 }
 
 void handle_sync_exception(uint64_t *stack_pointer)
@@ -149,22 +128,14 @@ void handle_irq_exception(uint64_t *stack_pointer)
         KLOG_WARN("No handler for IRQ %d\n", vector);
 
     /*
-   * End of interrupt.
-   *
-   * 普通中断：EOIR 做优先级下降 + DIR 做 deactivate。
-   *
-   * 「guest 持有」的中断（目前是 vtimer 的 PPI 27）**不能写 DIR**：
-   * vGIC 给 guest 的 list register 置了 HW=1，硬件把它和物理 27 绑定，
-   * 由 guest 在 GICV 上写 EOIR 时才 deactivate 物理中断。宿主若先写
-   * DIR，物理中断在 guest 收到之前就被清成非活跃：
-   *   - guest 的虚拟 EOI 找不到对应的活跃物理中断，虚拟中断投不进去；
-   *   - PPI 27 是电平触发（guest 重装 CNTV_CVAL 之前一直有效），DIR 后
-   *     立刻重新 pending → 宿主在异常入口死循环，vCPU 任务拿不到 CPU。
-   * 所以这类中断这里只做优先级下降。
-   */
+     * End of interrupt：EOIR 做优先级下降，DIR 做 deactivate。
+     *
+     * 宿主不再把任何物理中断「借给」guest（vGIC 不用 HW=1 的 LR，宿主
+     * PPI 27 也不再注册），所以这里可以无条件写 DIR。曾经的 guest-owned
+     * 位图只服务于那条已删除的 irq_route 路径。
+     */
     irq_eoi(iar);
-    if (!irq_is_guest_owned(vector))
-        gic_write_dir(iar);
+    gic_write_dir(iar);
 
     cpu->irq_depth--;
 }

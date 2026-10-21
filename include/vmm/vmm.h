@@ -22,6 +22,7 @@
 
 #include "types.h"
 #include "arch.h"
+#include "spinlock.h" /* vcpu_t.irq_lock：中断注入与 entry/exit 同步互斥 */
 #include "vmm_mmio.h"
 #include "vmm_virq.h" /* virq_t：设备中断线的架构无关命名 */
 
@@ -164,6 +165,20 @@ typedef struct vcpu {
     int host_cpu;      /* 最近一次进/出 guest 的宿主 CPU；-1 = 未运行 */
     int state;         /* VCPU_STATE_OFFLINE / RUNNING / STOPPED      */
     struct task *task; /* 承载本 vCPU 的内核任务                     */
+
+    /*
+     * 中断注入的次序域（per-vCPU）。
+     *
+     * 所有**来自 VMM 侧**的注入都走 vmm_vcpu_inject_irq()，它持这把锁把
+     * pending 写进本 vCPU 的控制器视图；而本 vCPU 的 entry/exit 同步
+     * （vmm_arch_restore_guest_ctx / save_guest_ctx）也持同一把锁。于是：
+     *   - 注入与同步不会各写一半（set_pending 不会被 LR 扫描踩掉）；
+     *   - 两次注入之间有一个全序（锁的 acquire/release）；
+     *   - 解锁后再 kick，保证目标先看到 pending，再被要求退出 guest。
+     * 它**不**决定硬件的投递优先级（GIC INTID / LAPIC vector 各有优先级），
+     * 只保证状态完整、可观测。
+     */
+    spinlock_noirq_t irq_lock;
 } vcpu_t;
 
 #elif ARCH_X86_64
@@ -278,6 +293,20 @@ typedef struct vcpu {
     int host_cpu;      /* 最近一次进/出 guest 的宿主 CPU；-1 = 未运行 */
     int state;         /* VCPU_STATE_OFFLINE / RUNNING / STOPPED      */
     struct task *task; /* 承载本 vCPU 的内核任务                     */
+
+    /*
+     * 中断注入的次序域（per-vCPU）。
+     *
+     * 所有**来自 VMM 侧**的注入都走 vmm_vcpu_inject_irq()，它持这把锁把
+     * pending 写进本 vCPU 的控制器视图；而本 vCPU 的 entry/exit 同步
+     * （vmm_arch_restore_guest_ctx / save_guest_ctx）也持同一把锁。于是：
+     *   - 注入与同步不会各写一半（set_pending 不会被 LR 扫描踩掉）；
+     *   - 两次注入之间有一个全序（锁的 acquire/release）；
+     *   - 解锁后再 kick，保证目标先看到 pending，再被要求退出 guest。
+     * 它**不**决定硬件的投递优先级（GIC INTID / LAPIC vector 各有优先级），
+     * 只保证状态完整、可观测。
+     */
+    spinlock_noirq_t irq_lock;
 } vcpu_t;
 
 /*
@@ -378,6 +407,20 @@ typedef struct vcpu {
     int host_cpu;      /* 最近一次进/出 guest 的宿主 CPU；-1 = 未运行 */
     int state;         /* VCPU_STATE_OFFLINE / RUNNING / STOPPED      */
     struct task *task; /* 承载本 vCPU 的内核任务                     */
+
+    /*
+     * 中断注入的次序域（per-vCPU）。
+     *
+     * 所有**来自 VMM 侧**的注入都走 vmm_vcpu_inject_irq()，它持这把锁把
+     * pending 写进本 vCPU 的控制器视图；而本 vCPU 的 entry/exit 同步
+     * （vmm_arch_restore_guest_ctx / save_guest_ctx）也持同一把锁。于是：
+     *   - 注入与同步不会各写一半（set_pending 不会被 LR 扫描踩掉）；
+     *   - 两次注入之间有一个全序（锁的 acquire/release）；
+     *   - 解锁后再 kick，保证目标先看到 pending，再被要求退出 guest。
+     * 它**不**决定硬件的投递优先级（GIC INTID / LAPIC vector 各有优先级），
+     * 只保证状态完整、可观测。
+     */
+    spinlock_noirq_t irq_lock;
 } vcpu_t;
 
 /*
@@ -738,17 +781,38 @@ void vmm_arch_vm_destroy(vm_t *vm);
 void vmm_arch_irq_raise(vcpu_t *vcpu, virq_t irq);
 
 /*
- * vmm_vcpu_inject_irq — 从一个明确的 vCPU 视角给目标 vCPU 拉一根线
+ * vmm_vcpu_inject_irq — 从一个明确的 vCPU 视角给**目标 vCPU** 拉一根线
  *
- * 就是 vmm_arch_irq_raise 的语义别名。单独给个名字是为了让 exit handler
- * 里的代码读起来是「谁给谁注入」，而不是「谁在 raise」：
+ * 与 vmm_arch_irq_raise 的区别只有两件事，但都是多 vCPU 必需的：
  *
- *     vmm_vcpu_inject_irq(vmm_vcpu_sibling(vcpu, 1), virq_line(VIRQ_IPI));
+ *   1. 持 target->irq_lock 覆盖「写 pending」这一段 —— 所有 VMM 侧注入
+ *      对同一目标 vCPU 形成一个全序，并且与目标 vCPU 的 entry/exit 同步
+ *      （restore/save_guest_ctx）互斥，不会出现「置 pending 与 LR 扫描
+ *      各写一半」。
+ *   2. 解锁后再 kick 目标 vCPU：如果它正在另一颗核上跑 guest，resched
+ *      IPI 会把它踢成一次 VM-exit，主循环顶部看到 need_resched 后让出
+ *      CPU，下一次 entry 才会真正把中断投进 LR/IRR。
+ *
+ * **顺序语义**：先进锁 → 写 pending → 释放屏障 → 再 kick。目标要么在本轮
+ * entry 的同步里看到 pending，要么被 kick 出来、下一轮看到；不存在
+ * 「kick 到了但 pending 还不可见」的窗口。
+ *
+ * ⚠️ 设备侧/架构入口侧**自己**给当前 vCPU 拉线时可以直接调
+ * vmm_arch_irq_raise()（例如每次 entry 重拉电平线）：那条路径本来就处在
+ * 目标的次序域里（restore_guest_ctx 外层已持 irq_lock），再套一层会死锁。
  */
-static inline void vmm_vcpu_inject_irq(vcpu_t *target, virq_t irq)
-{
-    vmm_arch_irq_raise(target, irq);
-}
+void vmm_vcpu_inject_irq(vcpu_t *target, virq_t irq);
+
+/*
+ * vmm_vcpu_kick — 让一颗正在运行的 vCPU 立刻退出 guest / 重新调度
+ *
+ * 只对 VCPU_STATE_RUNNING 且 host_cpu >= 0 的 vCPU 有效；未运行（OFFLINE/
+ * STOPPED）的 vCPU 不需要 kick。它走 task_kick() → sched_resched_cpu()，
+ * 因此对「宿主任务」和「guest 里的 vCPU」是同一条路径。
+ *
+ * vm_request_stop() 用它把停止请求从「等下次自然 exit」缩短到「立刻退出」。
+ */
+void vmm_vcpu_kick(vcpu_t *vcpu);
 
 int vmm_run_vcpu(vcpu_t *vcpu);
 

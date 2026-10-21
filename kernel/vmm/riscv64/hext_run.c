@@ -24,6 +24,7 @@
 #include "klog.h"
 #include "string.h"
 #include "task/task.h"
+#include "task/cpu.h" /* CPU_RESCHED_IPI_CAUSE */
 #include "riscv64/hext.h"
 #include "riscv64/sysreg.h"
 #include "riscv64/gstage.h"
@@ -204,6 +205,7 @@ int vmm_arch_vm_init(vm_t *vm)
         vcpu->host_cpu = -1; /* 还没跑过：0 是合法 CPU，不能拿 0 当"未运行" */
         vcpu->state = VCPU_STATE_OFFLINE;
         vcpu->task = NULL;
+        spinlock_irq_init(&vcpu->irq_lock);
 
         /*
          * hstatus_save 是「上次陷入时的 hstatus」快照，入口靠它还原
@@ -980,7 +982,19 @@ int vmm_arch_exit_handler(vcpu_t *vcpu)
          * 宿主自己（HS 侧）的中断，比如宿主时钟。 */
         KLOG_DEBUG("[HEXT] vcpu%d host interrupt: code=%llu\n", vcpu->vcpu_id,
                    (unsigned long long)code);
-        /* 直接 yield，让 kernel 的 timer handler 运行 */
+
+        /*
+         * 跨核 resched IPI（SBI send_ipi 置的 SSIP）必须在这里显式清掉。
+         *
+         * guest 运行期间走的是 hext_trap_vector，它**不经过**宿主的通用
+         * 陷阱分发器，所以 task/cpu.c 里 irq_install() 注册的 handler 不会
+         * 被调用。SSIP 是电平型 pending 位，不清就返回 guest 的话，下一秒
+         * 会再次陷入 —— 表现为 IPI 风暴，宿主 vCPU 任务永远退不出去。
+         */
+        if (code == CPU_RESCHED_IPI_CAUSE)
+            CSR_CLEAR(sip, SIE_SSIE);
+
+        /* 直接 yield，让 kernel 的 timer handler 运行；也是 IPI 的抢占点 */
         task_yield();
         return EL2_RESUME;
     }

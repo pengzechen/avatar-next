@@ -3,7 +3,6 @@
  */
 
 #include "vmm/vmm_vgicd.h"
-#include "vmm/vmm_irq_route.h"
 #include "klog.h"
 #include "string.h"
 
@@ -134,16 +133,12 @@ static void vgicd_write_for_vcpu(mmio_device_t *dev, uint64_t off, uint8_t size,
         for (uint32_t bit = 0; bit < 32; bit++)
             if (value32 & (1u << bit))
                 vmm_vgic_set_enabled(vgic, vcpu_id, word * 32 + bit, 1);
-        if (word == 0 && (value32 & (1u << VIRQ_VTIMER)))
-            vmm_irq_route_set_vtimer_enabled(1);
         return;
     }
     if (word_index(off, GICD_ICENABLER, &word)) {
         for (uint32_t bit = 0; bit < 32; bit++)
             if (value32 & (1u << bit))
                 vmm_vgic_set_enabled(vgic, vcpu_id, word * 32 + bit, 0);
-        if (word == 0 && (value32 & (1u << VIRQ_VTIMER)))
-            vmm_irq_route_set_vtimer_enabled(0);
         return;
     }
     if (word_index(off, GICD_ISPENDR, &word)) {

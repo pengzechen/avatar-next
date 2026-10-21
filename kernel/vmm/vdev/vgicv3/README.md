@@ -41,8 +41,9 @@ vgicr3.c   GICR（Redistributor）MMIO 模拟 —— 每核的 SGI/PPI
   （从前这四处写在 `kernel/vmm/vmm.c` 里，那个文件已按对象拆掉。）
 - `kernel/vmm/aarch64/el2_run.c` —— 进 guest 前 `vmm_vgic3_sync_entry()`，退出后
   `vmm_vgic3_sync_exit()`，定时器到期时 `vmm_vgic3_set_pending(PPI 27)`。
-- `kernel/vmm/vdev/irq_route.c` —— GICv3 下**故意不注册**宿主 PPI 27，注入完全靠
-  轮询 `CNTV`（原因见该文件注释）。
+- 宿主侧**不注册** PPI 27（原 `irq_route.c` 已整个删除）。注入完全靠每次
+  入口轮询 `CNTV`：`aarch64_check_vtimer()` → `vmm_vgic3_set_pending(PPI 27)`
+  → `sync_entry` 排进 LR。少了一层「宿主物理中断 → 唤醒 vCPU」的耦合。
 
 ## 3. 已实现 **且已实测可工作**
 
@@ -91,8 +92,8 @@ guest 是 Linux 6.2.15 + initrd。判定标准：guest 打印 `Run /init as init
 - **LPI 与 ITS**：`GICD_TYPER.LPIS=0`、`ESPI=0`、`GICR_TYPER.PLPIS/VLPIS=0`，
   也没有 ITS 设备。guest 因此不会去碰 `PROPBASER`/`PENDBASER`。
 - **HW=1 的 LR（物理中断直通）**：`vgic3_lr_value()` 从不置 `ICH_LR_HW`，
-  `vmm_irq_route_host_hwirq_for_guest_irq()` 恒返回 0。宿主 PPI 27 不使能，
-  所以不存在「物理中断需要由 guest EOI 来 deactivate」的场景。
+  宿主也不把任何物理中断借给 guest（PPI 27 不使能），所以不存在
+  「物理中断需要由 guest EOI 来 deactivate」的场景。
 - **维护中断**：`ICH_HCR_EL2` 只置 `En`，`EOIEn`/`VGrp*IE` 全 0。改成在**每次 VM exit
   主动轮询** `ICH_ELRSR_EL2` + LR.State。代价见第 6 节第二条。
 - **`GICD_ITARGETSR`**：ARE 模式下按规范读 0、写忽略。

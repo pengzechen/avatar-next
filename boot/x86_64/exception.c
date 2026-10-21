@@ -37,6 +37,7 @@ extern void *isr_stub_table[]; /* 前 33 个 stub 地址 */
 
 /* 各存根的 extern 声明 */
 extern void isr_stub_32(void);  /* LAPIC Timer                    */
+extern void isr_stub_240(void); /* 跨核 resched IPI               */
 extern void isr_stub_255(void); /* LAPIC Spurious                 */
 
 static void exception_setup_idt(void);
@@ -148,6 +149,10 @@ static void exception_setup_idt(void)
 
     /* 安装向量 32（LAPIC Timer）*/
     idt_set_gate(IDT_LAPIC_TIMER_VEC, isr_stub_32, KERNEL_CS_SEL,
+                 IDT_ATTR_KERNEL_INT);
+
+    /* 安装向量 0xF0（跨核 resched IPI）*/
+    idt_set_gate(IDT_RESCHED_IPI_VEC, isr_stub_240, KERNEL_CS_SEL,
                  IDT_ATTR_KERNEL_INT);
 
     /* 安装向量 255（LAPIC Spurious）*/

@@ -33,6 +33,30 @@ void sched_enqueue(task_t *task);
 void sched_dequeue(task_t *task);
 
 /**
+ * sched_unblock - 把 BLOCKED 任务唤醒并（按需）入队
+ *
+ * 与旧的 task_unblock 内联实现相比，本函数：
+ *   - 在目标核 rq_lock 下检查 state/on_cpu，消除「任务还在跑就入队」；
+ *   - 若任务仍在 on_cpu，只置 wake_pending，由它自己的调度器在切出时入队；
+ *   - 真正入队到远端核时立刻发 resched IPI，不等下一次 tick。
+ *
+ * 可在任务/中断上下文调用。
+ */
+void sched_unblock(task_t *task);
+
+/**
+ * sched_resched_cpu - 请求某颗核重新调度
+ * @cpu_id: 逻辑 CPU 编号
+ *
+ * 置目标核的 need_resched，并向远端核发 resched IPI。目标核可能正在：
+ *   - 跑宿主任务/内核线程 → 中断返回路径上调度；
+ *   - 跑 guest → IPI 被硬件路由为一次 VM-exit/HS trap，VMM 主循环顶部
+ *     调 sched_check_and_yield() 让出 CPU。
+ * 因此它同时是「跨核抢占 vCPU 任务」的入口。
+ */
+void sched_resched_cpu(uint32_t cpu_id);
+
+/**
  * sched_schedule - 执行一次调度
  *
  * 将当前任务（若仍 RUNNING）重新入队尾部，

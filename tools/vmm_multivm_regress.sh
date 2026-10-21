@@ -224,11 +224,13 @@ FG_AFTER=$(printf '%s' "$NEW" | grep -a '\*' | head -1 | awk '{print $1}')
                       || bad "Ctrl+T 2 没切换前台（拿到 '$FG_AFTER'，期望 2）"
 
 echo "7) 两个 VM 各自的分配/销毁记录："
-grep -aE 'vm[0-9]+ allocated|vm[0-9]+ freed|task created' "$LOG" \
+grep -aE 'vm[0-9]+ allocated|vm[0-9]+ freed|task started' "$LOG" \
     | sed 's/\x1b\[[0-9;]*[a-zA-Z]//g' | tr -d '\r' | tail -8 | sed 's/^/   /'
 
 N_GST=$(grep -acF "$GST" "$LOG")
-N_TASK=$(grep -ac 'vcpu0 task created' "$LOG")
+# 判据是「任务真正开始运行」，不是「创建成功」——旧日志在 task_create 之后打，
+# 多 vCPU 下那个任务可能已经在另一颗核上跑起来甚至退出，日志本身不安全。
+N_TASK=$(grep -ac 'vcpu0 task started' "$LOG")
 echo "8) 终端上 uname 出现 $N_GST 次（要 >= 2）"
 [ "$N_GST" -ge 2 ] && ok "两个 guest 都在跑" || bad "只有 $N_GST 个 guest"
 echo "9) 宿主侧 vcpu0 任务数 $N_TASK（要 == 2）"

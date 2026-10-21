@@ -254,8 +254,20 @@ int vm_count_used(void)
 
 void vm_request_stop(vm_t *vm)
 {
-    if (vm)
-        vm->stop_req = 1;
+    if (!vm)
+        return;
+
+    vm->stop_req = 1;
+
+    /*
+     * 把「等下一次自然 exit」缩短到「现在退出」。
+     *
+     * 单 vCPU 时这只是省一次等待；多 vCPU 时它是必需的：停在 guest 里的
+     * 兄弟 vCPU 可能正跑一个长时间不陷入的循环，只置标志会让整个 VM
+     * 迟迟收不齐、槽位也回收不了。kick 走 resched IPI，目标在 guest 里
+     * 会被硬件转成一次 VM-exit，主循环顶部看到 stop_req 后返回。
+     */
+    vmm_vm_for_each_vcpu(vm, vcpu) vmm_vcpu_kick(vcpu);
 }
 
 /*

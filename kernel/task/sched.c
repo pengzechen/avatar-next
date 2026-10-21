@@ -82,6 +82,47 @@ void sched_init(task_t *idle_task)
     cpu_t *c = cpu_current();
     c->idle_task = idle_task;
     c->current_task = idle_task;
+    idle_task->on_cpu = true;
+}
+
+/* ── 跨核 resched ────────────────────────────────────────── */
+
+/*
+ * sched_resched_cpu — 让目标核立刻重新调度
+ *
+ * 只置标志 + 发 IPI，不直接操作目标核的队列：真正的切换由目标核在
+ * 「中断返回路径」或「vCPU 主循环顶部」完成。目标正在跑 guest 时，
+ * IPI 会被硬件路由成一次 VM-exit / HS trap，VMM 退出后自然回到
+ * sched_check_and_yield()。
+ *
+ * 这是「一颗核让另一颗核上的 vCPU 任务停下来」的唯一正确姿势 ——
+ * 不要从远端直接改 task->state 或调用 task_exit()。
+ */
+void sched_resched_cpu(uint32_t cpu_id)
+{
+    cpu_t *c;
+
+    if (cpu_id >= g_num_cpus || cpu_id >= AVATAR_MAX_CPUS)
+        return;
+
+    c = &g_cpus[cpu_id];
+    if (!c->online)
+        return;
+
+    c->need_resched = true;
+    smp_wmb(); /* 标志必须先于 IPI 对目标核可见 */
+
+    if (cpu_id != get_current_cpu_id())
+        cpu_send_ipi(cpu_id);
+}
+
+void task_kick(task_t *task)
+{
+    if (!task || task->state != TASK_RUNNING)
+        return;
+    if (task->cpu_affinity >= g_num_cpus)
+        return;
+    sched_resched_cpu(task->cpu_affinity);
 }
 
 /* ── sched_enqueue ───────────────────────────────────────── */
@@ -143,11 +184,103 @@ void sched_enqueue(task_t *task)
         return;
     }
 
-    /* 跨核入队：持目标核 rq_lock（spin_lock_irqsave 内部关本核 IRQ）。 */
+    /*
+     * 跨核入队：持目标核 rq_lock。
+     *
+     * 中断上下文里**不要**用 spin_lock_irqsave：RISC-V 的 arch_irq_save/
+     * restore 是整字写 sstatus，在 ISR 里写回会破坏中断状态（见本函数
+     * 单核分支的注释）。中断本来就已经关了，用裸 spin_lock 即可。
+     */
     uint64_t flags;
-    spin_lock_irqsave(&tc->rq_lock, &flags);
+    bool irq_ctx = in_irq_context();
+    if (irq_ctx)
+        spin_lock(&tc->rq_lock);
+    else
+        spin_lock_irqsave(&tc->rq_lock, &flags);
     list_insert_last(&tc->run_queue, &task->run_node);
-    spin_unlock_irqrestore(&tc->rq_lock, flags);
+    if (irq_ctx)
+        spin_unlock(&tc->rq_lock);
+    else
+        spin_unlock_irqrestore(&tc->rq_lock, flags);
+
+    /*
+     * 远端入队后立刻 kick。没有这一步，任务要等目标核下一次 timer tick
+     * （最长 10ms）才被看到；对 vCPU 的唤醒/停止来说这个延迟不可接受。
+     */
+    sched_resched_cpu(target);
+}
+
+/* ── sched_unblock ───────────────────────────────────────── */
+
+/*
+ * sched_unblock — 唤醒 BLOCKED 任务，且保证「同一任务不会同时在跑又在队列」
+ *
+ * 旧实现是 `state = READY; sched_enqueue()`。SMP 下有一个真实窗口：
+ * 目标任务在另一颗核上刚置了 BLOCKED、还没执行到 sched_schedule 的切出点；
+ * 此时唤醒方把它入队，第三颗核就可能把它挑走 —— 同一个任务被两颗核执行。
+ *
+ * 现在的规则：
+ *   - on_cpu == true  → 只置 READY + wake_pending，由它自己的调度器在切出
+ *                       的那一刻补入队列；
+ *   - on_cpu == false → 直接入队；
+ *   - 入队到远端核时发 resched IPI。
+ *
+ * 调用方必须保证目标任务确实在等待（例如已挂在 wait queue 上），否则
+ * state 检查会让这次唤醒变成 no-op。
+ */
+void sched_unblock(task_t *task)
+{
+    uint32_t n, target;
+    cpu_t *tc;
+    uint64_t flags;
+    bool enqueued = false;
+
+    if (!task)
+        return;
+
+    n = g_num_cpus ? g_num_cpus : 1U;
+    target = (task->cpu_affinity < n) ? task->cpu_affinity : 0U;
+    tc = &g_cpus[target];
+
+    bool irq_ctx = in_irq_context();
+
+    if (irq_ctx) {
+        /* 中断上下文：本核 IRQ 已关，不能动 sstatus */
+        spin_lock(&tc->rq_lock);
+    } else if (n == 1U) {
+        flags = arch_irq_save();
+    } else {
+        spin_lock_irqsave(&tc->rq_lock, &flags);
+    }
+
+    if (task->state != TASK_BLOCKED) {
+        if (irq_ctx)
+            spin_unlock(&tc->rq_lock);
+        else if (n == 1U)
+            arch_irq_restore(flags);
+        else
+            spin_unlock_irqrestore(&tc->rq_lock, flags);
+        return;
+    }
+
+    task->state = TASK_READY;
+    if (task->on_cpu) {
+        /* 还在目标核上：切出时由 sched_schedule() 补入队列 */
+        task->wake_pending = true;
+    } else {
+        list_insert_last(&tc->run_queue, &task->run_node);
+        enqueued = true;
+    }
+
+    if (irq_ctx)
+        spin_unlock(&tc->rq_lock);
+    else if (n == 1U)
+        arch_irq_restore(flags);
+    else
+        spin_unlock_irqrestore(&tc->rq_lock, flags);
+
+    if (enqueued && n > 1U)
+        sched_resched_cpu(target);
 }
 
 /* ── sched_dequeue ───────────────────────────────────────── */
@@ -250,6 +383,27 @@ void sched_schedule(void)
 
     task_t *next = pick_next(c);
 
+    /*
+     * 切出 prev 之前收口「on_cpu 期间被唤醒」的窗口。
+     *
+     * waker 看到 on_cpu=true 时只置 wake_pending，不会入队（否则任务会
+     * 被第二颗核抢走）。这里在 rq_lock 下把 on_cpu 清掉，并兑现那次唤醒。
+     * 之后 waker 再看到的就是 on_cpu=false，会直接入队 —— 两边持同一把
+     * 锁，不存在「清了 on_cpu 但没人入队」的缝隙。
+     */
+    if (next != prev) {
+        prev->on_cpu = false;
+        if (prev->wake_pending) {
+            prev->wake_pending = false;
+            prev->state = TASK_READY;
+            list_insert_last(&c->run_queue, &prev->run_node);
+        }
+
+        /* state/on_cpu 也在同一把锁下发布，避免 waker 看到中间态 */
+        next->state = TASK_RUNNING;
+        next->on_cpu = true;
+    }
+
     if (use_rq_lock)
         spin_unlock(&c->rq_lock);
 
@@ -259,8 +413,6 @@ void sched_schedule(void)
         arch_irq_restore(flags);
         return;
     }
-
-    next->state = TASK_RUNNING;
 
     barrier_compiler();     // 确保 state 在 current_task 之前完成
     c->current_task = next; /* Phase 1：per-CPU 主存储 */

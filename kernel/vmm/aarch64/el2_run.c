@@ -17,10 +17,9 @@
 #include "aarch64/sysreg.h"
 #include "task/task.h"
 #include "task/switch.h"
-#include "vmm/vmm_mmio.h"      /* MMIO 总线分发 */
-#include "vmm/vmm_irq_route.h" /* 宿主 IRQ → vCPU 任务唤醒 */
-#include "vmm/vmm_vpl011.h"    /* 虚拟 PL011 RX 中断线 */
-#include "vmm/vmm_vnpu.h"      /* NPU 中断线（RK3588 透传）*/
+#include "vmm/vmm_mmio.h"   /* MMIO 总线分发 */
+#include "vmm/vmm_vpl011.h" /* 虚拟 PL011 RX 中断线 */
+#include "vmm/vmm_vnpu.h"   /* NPU 中断线（RK3588 透传）*/
 #if DRIVER_GIC_V3
 #include "vmm/vmm_vgicv3.h" /* vGICv3 中断注入（ICH_LR<n>_EL2）*/
 #else
@@ -755,12 +754,7 @@ void vmm_arch_restore_guest_ctx(vcpu_t *vcpu)
 
     restore_sysregs_el12(vcpu->sysregs);
 
-    /* 对标 kvmm HostVtimerHook::on_entry：先登记「本 pCPU 的 vCPU 承载任务 /
-     * vCPU id」，这样宿主 vtimer 中断到来时 ISR 能直接注入虚拟中断；
-     * 再检查定时器到期并同步 vGIC。*/
-    vmm_irq_route_publish_owner();
-    vmm_irq_route_publish_vcpu((uint32_t)vcpu->vcpu_id);
-    vmm_irq_route_publish_vgic(&vcpu->vm->vgic);
+    /* 每次入口按设备/定时器状态重拉虚拟中断，再同步进 vGIC。*/
     aarch64_check_vtimer(vcpu);
     aarch64_check_vpl011_rx(vcpu);
     aarch64_check_vnpu(vcpu);

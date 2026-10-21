@@ -485,8 +485,8 @@ task_t *process_create(const char *name, uint64_t user_entry,
     task->ctid_ptr = 0;
 
     /* 创建独立的用户页表；内核映射注入在 vm_create_user_process 内部完成 */
-    uint64_t pgd_phys = vm_create_user_process(
-        user_entry, user_code_size, user_sp, task->user_stack_size);
+    uint64_t pgd_phys = vm_create_user_process(user_entry, user_code_size,
+                                               user_sp, task->user_stack_size);
     if (pgd_phys == 0) {
         KLOG_ERROR("[task] Failed to create user page table for '%s'\n", name);
         free_task_slot(task);
@@ -871,11 +871,12 @@ void task_block(list_t *wait_queue)
 
 void task_unblock(task_t *task)
 {
-    if (task->state != TASK_BLOCKED)
-        return;
-
-    task->state = TASK_READY;
-    sched_enqueue(task);
+    /*
+     * 真正的唤醒逻辑在 sched_unblock()：它要在目标核 rq_lock 下判断
+     * on_cpu，避免把「还在这颗核上跑、只是已经置了 BLOCKED」的任务
+     * 同时挂进运行队列（SMP 下会被另一颗核重复执行）。
+     */
+    sched_unblock(task);
 }
 
 /* ── 前台进程组（全局）────────────────────────────────────── */

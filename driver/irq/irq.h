@@ -32,6 +32,10 @@
 #define irq_enable_irq(n)    gic_enable_int((int32_t)(n), 1)
 #define irq_disable_irq(n)   gic_enable_int((int32_t)(n), 0)
 
+/* 向指定逻辑 CPU 发一个 SGI（GICv2 的 GICD_SGIR 路径）*/
+#define irq_send_ipi(irq, cpu) \
+    gic_ipi_send_single((int32_t)(irq), (int32_t)(cpu))
+
 /* GICv2：通过 MMIO 读 GICC_IAR / 写 GICC_EOIR */
 static inline uint32_t irq_ack(void)
 {
@@ -59,6 +63,10 @@ static inline void irq_eoi(uint32_t irq)
 #define irq_init_secondary() gicv3_init_secondary()
 #define irq_enable_irq(n)    gicv3_enable_int((int)(n), true)
 #define irq_disable_irq(n)   gicv3_enable_int((int)(n), false)
+
+/* 向指定逻辑 CPU 发一个 SGI（GICv3 的 ICC_SGI1R_EL1 路径）*/
+#define irq_send_ipi(irq, cpu) \
+    gicv3_ipi_send_single((int32_t)(irq), (int32_t)(cpu))
 
 /* GICv3：通过系统寄存器读 ICC_IAR1_EL1 / 写 ICC_EOIR1_EL1 */
 static inline uint32_t irq_ack(void)

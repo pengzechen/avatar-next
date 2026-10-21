@@ -91,6 +91,9 @@ ISR_NOERR 45
 ISR_NOERR 46
 ISR_NOERR 47
 
+/* ── 跨核 resched IPI（0xF0）────────────────────────────────── */
+ISR_NOERR 240
+
 /* ── Spurious（255）─────────────────────────────────────────── */
 ISR_NOERR 255   /* LAPIC Spurious               */
 

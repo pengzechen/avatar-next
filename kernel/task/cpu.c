@@ -44,6 +44,74 @@ extern void x86_tss_init_cpu(uint32_t cpu_id, uint64_t rsp0);
 cpu_t g_cpus[AVATAR_MAX_CPUS];
 uint32_t g_num_cpus = 1; /* Phase 0：恒为 1；Phase 2 起会增长 */
 
+#if ARCH_RISCV64
+/* 定义在下面的 RISC-V 块里；cpu_send_ipi 要用 */
+static long sbi_send_ipi(uint64_t hartid);
+#endif
+
+/* ── 跨核 resched IPI ───────────────────────────────────── */
+
+/*
+ * resched_ipi_handler — 收到 IPI 只做一件事：置本核 need_resched
+ *
+ * 真正的切换发生在中断返回路径（sched_check_and_yield_from_trap）或
+ * vCPU 主循环顶部（sched_check_and_yield）。在 ISR 里直接切任务是禁止的，
+ * 见 docs/INTERRUPT_CONTEXT_SWITCH.md。
+ *
+ * RISC-V 必须显式清 SSIP：它是电平型 pending 位，不清会在返回后立刻
+ * 再次陷入，表现为 IPI 风暴 + 宿主被拖死。
+ * x86 必须 EOI：LAPIC 的 in-service 位不清，后续同向量中断全被挡住。
+ */
+#if ARCH_AARCH64
+static void resched_ipi_handler(uint64_t *frame)
+#else
+static void resched_ipi_handler(void *frame)
+#endif
+{
+    (void)frame;
+    cpu_current()->need_resched = true;
+
+#if ARCH_RISCV64
+    CSR_CLEAR(sip, SIE_SSIE); /* bit1 = SSIP */
+#elif ARCH_X86_64
+    lapic_eoi();
+#endif
+}
+
+void cpu_ipi_init(void)
+{
+#if ARCH_AARCH64
+    irq_install(CPU_RESCHED_IPI, resched_ipi_handler);
+    irq_enable_irq(CPU_RESCHED_IPI);
+#elif ARCH_RISCV64
+    irq_install(CPU_RESCHED_IPI_CAUSE, resched_ipi_handler);
+    SET_SIE(SIE_SSIE); /* 打开 S 模式软件中断 */
+#elif ARCH_X86_64
+    /* IDT 门由 exception_setup_idt() 装好（IDT_RESCHED_IPI_VEC）*/
+    irq_install(CPU_RESCHED_IPI_VECTOR, resched_ipi_handler);
+#endif
+}
+
+void cpu_send_ipi(uint32_t cpu_id)
+{
+    if (cpu_id >= g_num_cpus || cpu_id >= AVATAR_MAX_CPUS)
+        return;
+
+#if ARCH_AARCH64
+    /*
+     * ⚠️ gicv3_ipi_send_single 目前把 cpu_id 当作 Aff0 写进 TargetList。
+     * QEMU virt 上逻辑 CPU 编号 == Aff0，成立；多 cluster 平台（RK3588）
+     * 需要按 MPIDR 的 Aff1/Aff2/Aff3 填 ICC_SGI1R_EL1。这是已知限制，
+     * 在扩展多 cluster IPI 之前不要假定它对。
+     */
+    irq_send_ipi(CPU_RESCHED_IPI, cpu_id);
+#elif ARCH_RISCV64
+    sbi_send_ipi(g_cpus[cpu_id].hw_id);
+#elif ARCH_X86_64
+    lapic_send_ipi((uint32_t)g_cpus[cpu_id].hw_id, CPU_RESCHED_IPI_VECTOR);
+#endif
+}
+
 /*
  * klog_cpu_id - 给 klog.h 宏使用，返回当前逻辑 CPU 编号。
  *
@@ -83,6 +151,9 @@ void cpu_init_bsp(void)
     arch_cpu_self_set(c);
 
     g_num_cpus = 1;
+
+    /* 本核的 resched IPI 就绪；必须在任何跨核 kick 之前完成。 */
+    cpu_ipi_init();
 
     KLOG_SMP("[cpu] BSP initialized: cpu_id=0 hw_id=0x%llx\n",
              (unsigned long long)c->hw_id);
@@ -165,6 +236,7 @@ static void setup_secondary_idle_task(cpu_t *c)
     memset(idle, 0, sizeof(*idle));
 
     idle->state = TASK_RUNNING;
+    idle->on_cpu = true;                /* 次级核此刻就在 idle 上执行 */
     idle->id = 0xFFFF0000U | c->cpu_id; /* 用高位段避免与 g_task_id_cnt 冲突 */
     idle->priority = 255;
     idle->stack_base = &secondary_boot_stacks[c->cpu_id * SECONDARY_STACK_SIZE];
@@ -245,6 +317,9 @@ void cpu_secondary_bootstrap(uint32_t cpu_id)
 
     /* Phase 3.3：启用本地 timer PPI（CNTP_TVAL/CTL 与 GICD ISENABLER0）。*/
     timer_init_secondary();
+
+    /* resched IPI：必须在 online 之前装好，否则 BSP 发来的 kick 会丢。 */
+    cpu_ipi_init();
 
     /* 通知 BSP 本核就绪。wmb 确保前面所有写对其他核可见。 */
     wmb();
@@ -383,6 +458,9 @@ void cpu_secondary_bootstrap(uint32_t cpu_id)
     setup_secondary_idle_task(c);
     timer_init_secondary();
 
+    /* resched IPI：必须在 online 之前装好，否则 BSP 发来的 kick 会丢。 */
+    cpu_ipi_init();
+
     wmb();
     c->online = true;
 
@@ -487,6 +565,9 @@ void cpu_secondary_bootstrap(uint32_t cpu_id)
         (uint64_t)(uintptr_t)&secondary_boot_stacks[(cpu_id + 1U) *
                                                     SECONDARY_STACK_SIZE]);
     timer_init_secondary();
+
+    /* resched IPI：必须在 online 之前装好，否则 BSP 发来的 kick 会丢。 */
+    cpu_ipi_init();
 
     wmb();
     c->online = true;

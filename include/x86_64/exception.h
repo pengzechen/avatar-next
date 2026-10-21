@@ -23,6 +23,7 @@
 #define IDT_IRQ_BASE        0x20u /* 外部/本地中断起始向量         */
 #define IDT_LAPIC_TIMER_VEC 0x20u /* LAPIC timer 使用的 IDT 向量  */
 #define IDT_LAPIC_SPURIOUS  0xFFu /* LAPIC 伪中断向量              */
+#define IDT_RESCHED_IPI_VEC 0xF0u /* 跨核 resched IPI（见 task/cpu.c）*/
 #define IDT_MAX_ENTRIES     256u
 
 /* ── trap_frame ─────────────────────────────────────────────────

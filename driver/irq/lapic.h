@@ -90,4 +90,12 @@ uint32_t lapic_id(void);
 void lapic_send_init(uint32_t apic_id);
 void lapic_send_sipi(uint32_t apic_id, uint8_t vector);
 
+/*
+ * lapic_send_ipi — 向目标 LAPIC 发一个 fixed-delivery 中断
+ *
+ * 用于跨核 resched（向量由 task/cpu.c 决定）。与 INIT/SIPI 一样走
+ * ICR_HIGH + ICR_LOW，发完等 ICR 的 delivery-status 位清零。
+ */
+void lapic_send_ipi(uint32_t apic_id, uint8_t vector);
+
 #endif /* LAPIC_H */

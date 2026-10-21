@@ -167,7 +167,6 @@ _KERNEL_VGIC_SRCS   := $(if $(filter v3,$(GIC_VER)),\
 # vdev 下按文件选架构；loader/ 下的 guest_loader.c 按架构显式加入（见下方列表）。
 ifeq ($(ARCH),aarch64)
     _KERNEL_VDEV_SRCS     := $(KERNEL_DIR)/vmm/vdev/console/vpl011.c \
-                             $(KERNEL_DIR)/vmm/vdev/irq_route.c \
                              $(KERNEL_DIR)/vmm/vdev/npu/vnpu.c \
                              $(_KERNEL_VGIC_SRCS)
     _KERNEL_ARCHONLY_SRCS := $(KERNEL_DIR)/vmm/loader/guest_loader.c

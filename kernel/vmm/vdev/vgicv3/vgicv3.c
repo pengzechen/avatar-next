@@ -12,7 +12,6 @@
  */
 
 #include "vmm/vmm_vgicv3.h"
-#include "vmm/vmm_irq_route.h"
 #include "irq/gicv3.h"
 #include "klog.h"
 #include "string.h"
@@ -352,8 +351,9 @@ static void ich_write_vmcr(uint64_t v)
  * （guest 收到不属于它的 IRQ），要么因为槽位被占满而排不进自己的中断
  * （guest 卡死等不到 tick）。两种症状都极其难查。
  *
- * 做法照抄 irq_route.c 的 per-pCPU 数组模式（那边管的是"哪颗核跑哪个
- * vCPU"，这里管的是"哪颗核的 LR 归谁"）。
+ * 这里用 per-pCPU 数组记录「哪颗核的 LR 当前归哪个 vgic/vCPU」；切换
+ * 归属时必须先回收上一个的 LR 状态，再清空、再装当前 vCPU 的。表很小
+ * （最多 8 核），查找是常数时间。
  */
 #define VGIC3_MAX_LR_CPUS 8
 static vgic3_t *g_lr_owner_vgic[VGIC3_MAX_LR_CPUS];

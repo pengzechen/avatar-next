@@ -191,6 +191,26 @@ typedef struct task {
 
     /* === 内核抢占控制 === */
     uint32_t preempt_count; /* >0 时 S-mode timer 不抢占该任务             */
+
+    /*
+     * === SMP 唤醒状态（跨核唤醒的正确性）=========================
+     *
+     * on_cpu：本任务正由某颗核执行。它从调度器选中开始，到
+     *   sched_schedule() 真正切出（arch_task_switch 之前）为止都是 true ——
+     *   **包括** task_block() 已置 BLOCKED、但尚未切出的那个窗口。
+     *
+     * wake_pending：在 on_cpu 期间被 task_unblock() 唤醒。此时**不能**直接
+     *   入队：任务还在另一颗核上跑，队列里的同一任务会被第二颗核再挑一次。
+     *   调度器在切出时看到这个标志，才把它补进目标核的运行队列。
+     *
+     * 没有这两个字段时，SMP 下的唤醒有真实竞态：
+     *   CPU0: task_block() 置 BLOCKED → (窗口)
+     *   CPU1: task_unblock() 看到 BLOCKED → READY + sched_enqueue()
+     *   CPU0: sched_schedule() 切出 → CPU2 从队列挑走它
+     *   → 同一个任务同时在 CPU0 的切换路径和 CPU2 的执行路径上。
+     */
+    volatile bool on_cpu;
+    volatile bool wake_pending;
 } task_t;
 
 /* 前台进程组 ID（0 = 无前台进程）*/
@@ -378,6 +398,15 @@ void task_block(list_t *wait_queue);
  * 如果任务在等待队列中，调用者应先将其从等待队列移除。
  */
 void task_unblock(task_t *task);
+
+/**
+ * task_kick - 让正在某颗核上运行的任务重新进入调度
+ *
+ * 只对 TASK_RUNNING 的任务有效：向它所在的核发一个 resched IPI。
+ * 用途：跨核停止 vCPU（vm_request_stop）、以及「有更高优先级的活
+ * 要它立刻处理」的场景。任务不在运行时由 task_unblock()/completion 负责。
+ */
+void task_kick(task_t *task);
 
 /**
  * task_find_by_id - 按 ID 查找非 DEAD 任务
