@@ -96,6 +96,11 @@
 /* ── 最大 vCPU 数量 ────────────────────────────────────────── */
 #define MAX_VCPUS 4
 
+/* vCPU 运行期状态（vcpu_task_create / vmm_run_vcpu / vcpu_task_fn 维护）*/
+#define VCPU_STATE_OFFLINE 0 /* 未运行（任务未创建，或 AP 尚未被 CPU_ON）*/
+#define VCPU_STATE_RUNNING 1 /* 承载任务已创建，已进入/即将进入 guest */
+#define VCPU_STATE_STOPPED 2 /* 承载任务已退出                       */
+
 /* ── 同一个内核里最多几个 VM ──────────────────────────────────
  *
  * 每个 VM 的 vm_t 里嵌着 vGIC（GICv3 时约 70 KB，含 64 KB 的 dist_regs）、
@@ -113,7 +118,7 @@
 #define VM_LOADING   1 /* 正在加载镜像、建 stage-2        */
 #define VM_RUNNING   2 /* vCPU 任务在跑                   */
 #define VM_SUSPENDED 3 /* vCPU 任务被 park，状态完整保留  */
-#define VM_DYING     4 /* 已请求销毁，等 vCPU 任务收拾完  */
+#define VM_DYING     4 /* 最后一颗 vCPU 退出，正在拆、尚未归还槽位 */
 
 /*
  * 哪些架构已经实现「从 rootfs 加载并启动 Linux guest」（kernel/vmm/loader/guest_loader.c）。
@@ -154,6 +159,11 @@ typedef struct vcpu {
     int launched;             /* 已进入 guest 至少一次？         */
     uint64_t page_table_base; /* VTTBR_EL2 (VMID:PGD)           */
     struct vm *vm;            /* 所属 VM 反向指针                */
+
+    /* ── 多 vCPU 运行期视角（三架构同名，与架构无关）────────── */
+    int host_cpu;      /* 最近一次进/出 guest 的宿主 CPU；-1 = 未运行 */
+    int state;         /* VCPU_STATE_OFFLINE / RUNNING / STOPPED      */
+    struct task *task; /* 承载本 vCPU 的内核任务                     */
 } vcpu_t;
 
 #elif ARCH_X86_64
@@ -263,6 +273,11 @@ typedef struct vcpu {
      * 字段放末尾 —— vmx_run.S 硬编码了 launched@0x84 等偏移，不能动前面。
      */
     int vmcs_ready;
+
+    /* ── 多 vCPU 运行期视角（三架构同名，与架构无关）────────── */
+    int host_cpu;      /* 最近一次进/出 guest 的宿主 CPU；-1 = 未运行 */
+    int state;         /* VCPU_STATE_OFFLINE / RUNNING / STOPPED      */
+    struct task *task; /* 承载本 vCPU 的内核任务                     */
 } vcpu_t;
 
 /*
@@ -358,6 +373,11 @@ typedef struct vcpu {
     struct vm *vm;
     uint64_t
         timer_deadline; /* guest SBI 定时器截止（guest time 单位），0=未设置 */
+
+    /* ── 多 vCPU 运行期视角（三架构同名，与架构无关）────────── */
+    int host_cpu;      /* 最近一次进/出 guest 的宿主 CPU；-1 = 未运行 */
+    int state;         /* VCPU_STATE_OFFLINE / RUNNING / STOPPED      */
+    struct task *task; /* 承载本 vCPU 的内核任务                     */
 } vcpu_t;
 
 /*
@@ -411,6 +431,13 @@ typedef struct vm {
     vm_cfg_t cfg;
     vcpu_t vcpus[MAX_VCPUS]; /* 静态嵌入，不动态分配 */
     int nr_vcpus;
+
+    /*
+     * 仍存活的 vCPU 任务数。**VM 的销毁由最后一个退出的 vCPU 负责** ——
+     * 单 vCPU 时等价于「退出即销毁」，多 vCPU 时第一个退出不能拆掉还有
+     * 兄弟在跑的 VM。计数在 vm.c 的池锁下维护。
+     */
+    int nr_vcpu_alive;
 
     /* ── VM 身份与生命周期（vm.c 的静态池管理）───────────────── */
     uint32_t vmid;         /* 1..255，同时写进 VTTBR_EL2 的 VMID 域 */
@@ -554,6 +581,73 @@ _Static_assert(MAX_VMS <= EPT_MAX_VMS, "MAX_VMS > EPT_MAX_VMS");
 _Static_assert(MAX_VCPUS <= VLAPIC_MAX_VCPUS, "MAX_VCPUS > VLAPIC_MAX_VCPUS");
 #endif
 
+/* ── vCPU 运行期视角 ──────────────────────────────────────────
+ *
+ * VM-exit 时拿到的**永远是发生这次退出的那颗 vCPU**（各架构的
+ * vmm_arch_exit_handler(vcpu)）。多 vCPU 之后，处理一次 exit 经常需要回答
+ * 三个问题，所以统一收在这里，别在设备代码里各自摸 vm->vcpus[]：
+ *
+ *   我是谁            vmm_vcpu_id() / vmm_vcpu_is_bsp()
+ *   我属于哪个 VM      vmm_vcpu_vm()
+ *   这个 VM 还有谁     vmm_vm_for_each_vcpu() / vmm_vm_vcpu()
+ *   每颗 vCPU 在哪     vmm_vcpu_host_cpu()（-1 = 未运行）
+ *
+ * host_cpu 由 vmm_run_vcpu() 在**每次进 guest 前**用 get_current_cpu_id()
+ * 刷新。调度器不做运行期迁移（任务入队即粘核，见 vcpu_task_create 的说明），
+ * 所以它同时也是「这颗 vCPU 当前被钉在哪颗核」。
+ */
+static inline vm_t *vmm_vcpu_vm(const vcpu_t *vcpu)
+{
+    return vcpu ? vcpu->vm : NULL;
+}
+
+static inline int vmm_vcpu_id(const vcpu_t *vcpu)
+{
+    return vcpu ? vcpu->vcpu_id : -1;
+}
+
+static inline bool vmm_vcpu_is_bsp(const vcpu_t *vcpu)
+{
+    return vcpu && vcpu->vcpu_id == 0;
+}
+
+/* 最近一次进/出 guest 的宿主 CPU；-1 = 还没跑过（或已退出）*/
+static inline int vmm_vcpu_host_cpu(const vcpu_t *vcpu)
+{
+    return vcpu ? vcpu->host_cpu : -1;
+}
+
+static inline struct task *vmm_vcpu_task(const vcpu_t *vcpu)
+{
+    return vcpu ? vcpu->task : NULL;
+}
+
+/* 按 VM 内部编号取 vCPU（越界返回 NULL）*/
+static inline vcpu_t *vmm_vm_vcpu(vm_t *vm, int vcpu_id)
+{
+    if (!vm || vcpu_id < 0 || vcpu_id >= vm->nr_vcpus)
+        return NULL;
+    return &vm->vcpus[vcpu_id];
+}
+
+/* 取「同一个 VM 里的另一颗 vCPU」—— 跨 VM 返回 NULL */
+static inline vcpu_t *vmm_vcpu_sibling(const vcpu_t *vcpu, int vcpu_id)
+{
+    if (!vcpu || !vcpu->vm)
+        return NULL;
+    return vmm_vm_vcpu(vcpu->vm, vcpu_id);
+}
+
+/*
+ * 遍历一个 VM 的全部 vCPU。
+ *
+ * ⚠️ 只能在 VM 建好之后用（nr_vcpus 由 vmm_arch_vm_init 设置）；在
+ * vm_create() 之前 vm->nr_vcpus 还是 0，循环体不会执行。
+ */
+#define vmm_vm_for_each_vcpu(vm, vcpu) \
+    for (vcpu_t *vcpu = (vm)->vcpus; vcpu < (vm)->vcpus + (vm)->nr_vcpus; \
+         vcpu++)
+
 /* ── AArch64 专用汇编接口（仅 aarch64 编译时可见）──────────── */
 #if ARCH_AARCH64
 
@@ -624,18 +718,37 @@ int vmm_arch_vm_init(vm_t *vm);
 void vmm_arch_vm_destroy(vm_t *vm);
 
 /*
- * vmm_arch_irq_raise — 把一个设备的中断线接到本架构的投递机制上
+ * vmm_arch_irq_raise — 把一个设备的中断线接到**目标 vCPU** 的投递机制上
  *
  * 这是「设备 → 线」的唯一出口。线的**含义由架构决定**（见 include/vmm/vmm_virq.h）：
- *   aarch64 → vmm_vgic{,3}_set_pending(&vm->vgic{,3}, vcpu_id, irq.line)
- *   riscv64 → vplic_set_pending(vm, irq.line)        （PLIC 没有 vcpu_id 这个维度）
- *   x86_64  → 查 guest 编的 IO-APIC 重定向表拿 vector → vlapic_raise_irq
+ *   aarch64 → vmm_vgic{,3}_set_pending(&vm->vgic{,3}, vcpu->vcpu_id, irq.line)
+ *   riscv64 → vplic_set_pending(vm, irq.line)   （PLIC pending 是源级全局的，
+ *             没有「投给某颗 vCPU」这个维度；由各 context 自行 claim）
+ *   x86_64  → 查 guest 编的 IO-APIC 重定向表拿 vector
+ *             → vlapic_raise_irq(vm, vcpu->vcpu_id, vector)
+ *
+ * ⚠️ 参数是**目标 vCPU**，不要求是当前正在运行的 vCPU —— 多 vCPU 之后，
+ * 一颗 vCPU 在 exit 处理里给兄弟 vCPU 注入中断是常规操作（IPI、定时器等）。
+ * 「当前正在跑的是谁」由调用方自己知道；本函数的语义只由 target 决定。
  *
  * ⚠️ **三个实现里不允许出现任何使能/门控判据**。LAPIC 在 raise 那一刻就判
  * SVR 门控、GIC/PLIC 在投递时才判 enabled —— 这个差异是**可观测行为**
  * （控制器关闭期间的拉线是否被记住），抽接口时不许拍平。
  */
 void vmm_arch_irq_raise(vcpu_t *vcpu, virq_t irq);
+
+/*
+ * vmm_vcpu_inject_irq — 从一个明确的 vCPU 视角给目标 vCPU 拉一根线
+ *
+ * 就是 vmm_arch_irq_raise 的语义别名。单独给个名字是为了让 exit handler
+ * 里的代码读起来是「谁给谁注入」，而不是「谁在 raise」：
+ *
+ *     vmm_vcpu_inject_irq(vmm_vcpu_sibling(vcpu, 1), virq_line(VIRQ_IPI));
+ */
+static inline void vmm_vcpu_inject_irq(vcpu_t *target, virq_t irq)
+{
+    vmm_arch_irq_raise(target, irq);
+}
 
 int vmm_run_vcpu(vcpu_t *vcpu);
 
@@ -650,8 +763,25 @@ int vm_create(vm_t *vm);
  */
 vm_t *vm_alloc(void); /* 取一个空闲槽位（state=LOADING）；满了返回 NULL */
 vm_t *vm_get(uint32_t vmid); /* 按 vmid 查；不存在或已释放返回 NULL     */
-void vm_free(vm_t *vm);      /* **只能由该 VM 的 vCPU 任务自己调**      */
+void vm_free(vm_t *vm);      /* 仅在 nr_vcpu_alive == 0 时拆；幂等      */
 int vm_count_used(void);     /* 池里非 FREE 的槽位数                    */
+
+/*
+ * ── 每 vCPU 的生命周期记账（多 vCPU 的 last-one-out）──────────
+ *
+ * 规则：**VM 的销毁由最后一颗退出的 vCPU 负责**。vcpu_task_create() 在建
+ * 任务之前先 vm_vcpu_started()（必须先加计数，否则新任务可能先退出）；
+ * 建任务失败用 vm_vcpu_start_abort() 回滚（不回滚到 vm_free —— 调用方
+ * 还要用这个 vm 走错误路径）。vcpu_task_fn() 退出时调 vm_vcpu_stopped()，
+ * 它只在计数归零时销毁 VM。
+ *
+ * 单 vCPU 时行为与从前完全相同；多 vCPU 时第一个退出不会拆掉还有兄弟在跑
+ * 的 stage-2/设备。**不要把 vm_vcpu_stopped() 换成直接 vm_free()。**
+ */
+void vm_state_set(vm_t *vm, int state);
+void vm_vcpu_started(vm_t *vm);
+void vm_vcpu_start_abort(vm_t *vm);
+void vm_vcpu_stopped(vm_t *vm);
 
 /* ── 宿主侧 guest 生命周期（/dev/vmm 用）──────────────────────── */
 /*

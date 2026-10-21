@@ -182,7 +182,8 @@ static void vmx_inject_pending(vcpu_t *vcpu)
 
     /* 记进 vLAPIC 的 ISR：guest 处理完写 EOI 时要能退掉它 */
     if ((info & 0x700) == VMX_INTR_TYPE_EXTINT)
-        vlapic_accept_interrupt(vcpu->vm, (uint32_t)(info & 0xff), 0);
+        vlapic_accept_interrupt(vcpu->vm, (uint32_t)vcpu->vcpu_id,
+                                (uint32_t)(info & 0xff), 0);
 
     vmcs_write(VM_ENTRY_INTR_INFO, info);
     vmcs_write(VM_ENTRY_EXC_ERRCODE,
@@ -432,7 +433,8 @@ static int msr_emulate_write_1(vcpu_t *vcpu, uint32_t msr, uint64_t val)
          * 第一版只做 xAPIC，所以 EXTD 一律清掉 —— Linux 探测到
          *「x2APIC 不可用」就会安心走 MMIO 路径。*/
         vcpu->apic_base = val & ~APIC_BASE_X2APIC;
-        vlapic_set_apic_base(vcpu->vm, vcpu->apic_base);
+        vlapic_set_apic_base(vcpu->vm, (uint32_t)vcpu->vcpu_id,
+                             vcpu->apic_base);
         return 1;
     default:
         return 0; /* 未知 MSR：写忽略 */
@@ -2186,8 +2188,9 @@ static int vmx_exit_handler(vcpu_t *vcpu)
                 if (gpa >= VLAPIC_MMIO_BASE &&
                     gpa < VLAPIC_MMIO_BASE + VLAPIC_MMIO_SIZE) {
                     uint64_t lval = acc.is_write ? val : 0;
-                    if (vlapic_mmio_handle(vcpu->vm, gpa, acc.is_write,
-                                           acc.size, &lval)) {
+                    if (vlapic_mmio_handle(vcpu->vm, (uint32_t)vcpu->vcpu_id,
+                                           gpa, acc.is_write, acc.size,
+                                           &lval)) {
                         if (!acc.is_write) {
                             uint64_t *dst = x86_gpr_ptr(vcpu, acc.reg);
                             if (dst)
@@ -2667,6 +2670,9 @@ int vmm_arch_vm_init(vm_t *vm)
         vcpu->vcpu_id = i;
         vcpu->launched = 0;
         vcpu->vm = vm;
+        vcpu->host_cpu = -1; /* 还没跑过：0 是合法 CPU，不能拿 0 当"未运行" */
+        vcpu->state = VCPU_STATE_OFFLINE;
+        vcpu->task = NULL;
     }
     vm->nr_vcpus = nr;
 
@@ -2792,7 +2798,7 @@ void vmm_arch_irq_raise(vcpu_t *vcpu, virq_t irq)
         return; /* 0-15 是异常向量，不能当普通中断投 */
 
     /* 不做 SVR 门控：那是 vlapic_raise_irq 自己的事（它在 raise 时刻判）*/
-    vlapic_raise_irq(vcpu->vm, vec);
+    vlapic_raise_irq(vcpu->vm, (uint32_t)vcpu->vcpu_id, vec);
 }
 
 static void x86_console_irq_on_entry(vcpu_t *vcpu)
@@ -2903,14 +2909,15 @@ void vmm_arch_restore_guest_ctx(vcpu_t *vcpu)
      * 轮询节拍由 PIN_EXTINT 提供 —— 宿主 100Hz 时钟本身就让 guest
      * 每 10ms 退出来一次，不需要额外的宿主定时器基础设施。
      */
-    vlapic_timer_poll(vcpu->vm);
+    vlapic_timer_poll(vcpu->vm, (uint32_t)vcpu->vcpu_id);
 
     /* 控制台：电平触发，每次入口按设备状态重拉（见上面 x86_console_irq_on_entry）*/
     x86_console_irq_on_entry(vcpu);
 
     if (!vcpu->pending_event) {
         uint32_t vec;
-        if (vlapic_sw_enabled(vcpu->vm) && vlapic_take_pending(vcpu->vm, &vec))
+        if (vlapic_sw_enabled(vcpu->vm, (uint32_t)vcpu->vcpu_id) &&
+            vlapic_take_pending(vcpu->vm, (uint32_t)vcpu->vcpu_id, &vec))
             vcpu->pending_event =
                 VMX_INTR_VALID | VMX_INTR_TYPE_EXTINT | VMX_INTR_VECTOR(vec);
     }

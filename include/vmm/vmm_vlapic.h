@@ -64,9 +64,9 @@
  *
  * 另一个坑：原来所有运行时访问器都硬编码 `&g_vlapic[0]`（只有 init 按
  * vcpu_id 取槽），所以单 vCPU 时看着是对的，多 vCPU 就会串台。
- * ⚠️ 这个坑**至今仍在**：vlapic.c 的 `vlapic_cur(vm)` 仍固定取 vcpu 0
- * （本 VMM 的 nr_vcpus 恒为 1，所以现在无害）。修它要先改掉那 8 个不接
- * vcpu_id 的公开 API。
+ * 现在**所有**公开 API 都显式收 vcpu_id —— 与 vGIC/vPLIC 的接口保持一致，
+ * 也让 VM-exit 处理里从 `vcpu_t *` 直接寻址成为唯一写法。新增 API 时
+ * 不要图省事再从 vm 里摸「当前 vCPU」。
  */
 typedef struct vlapic_state {
     uint32_t r[VLAPIC_REG_COUNT]; /* 按 (addr >> 4) 索引，与 MMIO 布局一致 */
@@ -94,33 +94,37 @@ typedef struct vm vm_t;
 void vlapic_init(vm_t *vm, uint32_t vcpu_id);
 /* 归还本 VM 的全部 LAPIC 槽位（由 vmm_arch_vm_destroy → vm_free 调用）。幂等。*/
 void vlapic_destroy(vm_t *vm);
-int vlapic_mmio_handle(vm_t *vm, uint64_t addr, int is_write, uint8_t size,
-                       uint64_t *val);
+int vlapic_mmio_handle(vm_t *vm, uint32_t vcpu_id, uint64_t addr, int is_write,
+                       uint8_t size, uint64_t *val);
 
 /* 定时器：每次进 guest 前轮询；返回 1 表示产生了待注入的中断 */
-int vlapic_timer_poll(vm_t *vm);
+int vlapic_timer_poll(vm_t *vm, uint32_t vcpu_id);
 
 /* 待注入向量：取走 IRR 里编号最大的那个（返回 1 = 取到）*/
-int vlapic_take_pending(vm_t *vm, uint32_t *vec);
+int vlapic_take_pending(vm_t *vm, uint32_t vcpu_id, uint32_t *vec);
 
 /*
- * vlapic_raise_irq — 设备侧拉高中断线（电平触发语义）
+ * vlapic_raise_irq — 设备侧拉高**某颗 vCPU** 的中断线（电平触发语义）
+ *
+ * vcpu_id 是**目标 vCPU**，不要求是当前运行的那颗 —— 多 vCPU 之后，
+ * 从一颗 vCPU 的 exit handler 给兄弟注入是常规操作。
  *
  * 调用方应在**每次进入 guest 前**按设备状态重新调用；APIC 被软件关闭
  * （SVR.EN=0）时丢弃。定时器、ICR 自发中断、外部设备（vUART 等）都经由
  * 这里进 IRR —— 取走时才清位，所以「只在 push 时置一次」会丢中断。
  */
-void vlapic_raise_irq(vm_t *vm, uint32_t vector);
+void vlapic_raise_irq(vm_t *vm, uint32_t vcpu_id, uint32_t vector);
 
 /* 中断已投递进 guest（填 ISR/TMR，EOI 靠它工作）*/
-void vlapic_accept_interrupt(vm_t *vm, uint32_t vector, int level_triggered);
+void vlapic_accept_interrupt(vm_t *vm, uint32_t vcpu_id, uint32_t vector,
+                             int level_triggered);
 
 /* APIC 软件使能位（SVR bit8）；关掉时一切中断都不投 */
-int vlapic_sw_enabled(vm_t *vm);
+int vlapic_sw_enabled(vm_t *vm, uint32_t vcpu_id);
 
 /* IA32_APIC_BASE 的读写（guest 由 MSR 影子路径进来）*/
-uint64_t vlapic_apic_base(vm_t *vm);
-void vlapic_set_apic_base(vm_t *vm, uint64_t val);
+uint64_t vlapic_apic_base(vm_t *vm, uint32_t vcpu_id);
+void vlapic_set_apic_base(vm_t *vm, uint32_t vcpu_id, uint64_t val);
 
 /* 宿主单调纳秒（TSC 标定后换算）。与具体 VM 无关，所以不收 vm。*/
 uint64_t vlapic_now_ns(void);

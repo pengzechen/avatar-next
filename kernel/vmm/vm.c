@@ -106,8 +106,86 @@ vm_t *vm_get(uint32_t vmid)
     return found;
 }
 
+/* ── 每 vCPU 的生命周期记账 ─────────────────────────────────── */
+
+void vm_state_set(vm_t *vm, int state)
+{
+    uint64_t flags;
+
+    if (!vm)
+        return;
+
+    spin_lock_irqsave(&g_vm_pool_lock, &flags);
+    if (vm->state != VM_FREE && vm->state != VM_DYING)
+        vm->state = state;
+    spin_unlock_irqrestore(&g_vm_pool_lock, flags);
+}
+
 /*
- * vm_free — 由该 VM 的 vCPU 任务在退出前调用（见上面的并发规则）
+ * vm_vcpu_started — vcpu_task_create() 在 task_create 之前调用
+ *
+ * **必须先加计数再建任务**：新任务可能立刻在另一颗核上跑起来并退出，
+ * 若先建任务再加计数，那次 vm_vcpu_stopped() 会把计数减成负数、并误判
+ * 「我可以销毁 VM」。
+ */
+void vm_vcpu_started(vm_t *vm)
+{
+    uint64_t flags;
+
+    if (!vm)
+        return;
+
+    spin_lock_irqsave(&g_vm_pool_lock, &flags);
+    if (vm->state != VM_FREE && vm->state != VM_DYING)
+        vm->nr_vcpu_alive++;
+    spin_unlock_irqrestore(&g_vm_pool_lock, flags);
+}
+
+/* 任务创建失败时回滚 vm_vcpu_started()。**不销毁 VM** —— 调用方还在用。 */
+void vm_vcpu_start_abort(vm_t *vm)
+{
+    uint64_t flags;
+
+    if (!vm)
+        return;
+
+    spin_lock_irqsave(&g_vm_pool_lock, &flags);
+    if (vm->nr_vcpu_alive > 0)
+        vm->nr_vcpu_alive--;
+    spin_unlock_irqrestore(&g_vm_pool_lock, flags);
+}
+
+/*
+ * vm_vcpu_stopped — vCPU 任务退出时调用（由 vcpu_task_fn 收尾）
+ *
+ * 只有**最后一个**退出的 vCPU 才触发 vm_free()。多 vCPU 时第一个退出
+ * 不能拆 stage-2 —— 兄弟 vCPU 还在用。
+ */
+void vm_vcpu_stopped(vm_t *vm)
+{
+    uint64_t flags;
+    int last = 0;
+
+    if (!vm)
+        return;
+
+    spin_lock_irqsave(&g_vm_pool_lock, &flags);
+    if (vm->state != VM_FREE) {
+        if (vm->nr_vcpu_alive > 0)
+            vm->nr_vcpu_alive--;
+        last = (vm->nr_vcpu_alive == 0);
+    }
+    spin_unlock_irqrestore(&g_vm_pool_lock, flags);
+
+    if (last)
+        vm_free(vm);
+}
+
+/*
+ * vm_free — 拆一个已经没有任何存活 vCPU 的 VM
+ *
+ * 正常路径由 vm_vcpu_stopped() 在最后一颗 vCPU 退出时调用；错误路径
+ * （vm_create/装载失败，一个任务都没建）由调用方直接调用。
  *
  * 目前只回收 stage-2（连同它按需分配的那些物理页）。vGIC / vpl011 的状态
  * 都是 vm_t 的一部分，跟着槽位一起被 vm_alloc 的 memset 清掉。
@@ -116,8 +194,23 @@ void vm_free(vm_t *vm)
 {
     uint64_t flags;
 
-    if (!vm || vm->state == VM_FREE)
+    if (!vm)
         return;
+
+    /*
+     * state = DYING 同时充当「销毁进行中」的排他标记：
+     *   - nr_vcpu_alive != 0：还有 vCPU 在跑，绝不能拆；
+     *   - 已经是 DYING/FREE：另一个调用者已经/正在拆，重复调用直接返回。
+     * 拆完之前不把槽位置成 FREE —— 否则 vm_alloc 会立刻把它分给别人。
+     */
+    spin_lock_irqsave(&g_vm_pool_lock, &flags);
+    if (vm->state == VM_FREE || vm->state == VM_DYING ||
+        vm->nr_vcpu_alive != 0) {
+        spin_unlock_irqrestore(&g_vm_pool_lock, flags);
+        return;
+    }
+    vm->state = VM_DYING;
+    spin_unlock_irqrestore(&g_vm_pool_lock, flags);
 
 #if ARCH_AARCH64
     stage2_vm_destroy(&vm->s2); /* 释放按需页 + L3 表 */

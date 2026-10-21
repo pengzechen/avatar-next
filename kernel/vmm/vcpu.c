@@ -64,6 +64,16 @@ int vmm_run_vcpu(vcpu_t *vcpu)
          */
         sched_check_and_yield();
 
+        /*
+         * 记录本颗 vCPU 当前所在的宿主 CPU（多 vCPU 视角）。
+         *
+         * 每次进 guest 前刷新：调度器不做运行期迁移（任务入队即粘核），
+         * 所以这里读到的值就是「这颗 vCPU 被钉在哪颗核」，exit handler 里
+         * 通过 vmm_vcpu_host_cpu() 能直接拿到。同时也覆盖了「任务第一次
+         * 被调度」——到这一刻 host_cpu 才第一次有真实值。
+         */
+        vcpu->host_cpu = (int)get_current_cpu_id();
+
         uint64_t irq_flags = arch_irq_save();
 
 #if ARCH_AARCH64
@@ -91,8 +101,17 @@ int vmm_run_vcpu(vcpu_t *vcpu)
         arch_irq_restore(irq_flags);
 
 #if VMM_GUEST_LINUX_SUPPORTED
-        /* 每次回到宿主都顺手收一次控制台输入（见 vmm_console_pump）*/
-        vmm_console_pump(vcpu->vm);
+        /*
+         * 每次回到宿主都顺手收一次控制台输入（见 vmm_console_pump）。
+         *
+         * ⚠️ 只让 BSP 泵。宿主真实 UART 的 RX FIFO 是**单消费者**资源：
+         * 多 vCPU 各自从自己的任务里调 uart_rx_ready()/uart_getc()，同一个
+         * 字节会被其中一颗抢走、另一颗看到空 —— 输入会随机丢。跨 vCPU 的
+         * 串行化本来就要有（锁或单一 owner），BSP-only 是最简单且与
+         * 「控制台属于 VM、不属于某颗 vCPU」的语义一致的做法。
+         */
+        if (vmm_vcpu_is_bsp(vcpu))
+            vmm_console_pump(vcpu->vm);
 #endif
 
         /* 处理 VM exit */
@@ -122,20 +141,32 @@ int vmm_run_vcpu(vcpu_t *vcpu)
 static void vcpu_task_fn(void *arg)
 {
     vcpu_t *vcpu = (vcpu_t *)arg;
+    vm_t *vm = vcpu->vm;
 
-    KLOG_INFO("[vmm] vcpu%d task started\n", vcpu->vcpu_id);
+    /*
+     * 任务真正跑起来之后才发布 task/state/host_cpu —— 创建者（可能在
+     * task_create 返回前就与本任务并发）不写这些字段，避免和本任务竞争。
+     */
+    vcpu->task = task_current();
+    vcpu->state = VCPU_STATE_RUNNING;
+    vcpu->host_cpu = (int)get_current_cpu_id();
+
+    KLOG_INFO("[vmm] vm%u vcpu%d task started (id=%u) on cpu%u\n", vm->vmid,
+              vcpu->vcpu_id, task_current()->id, get_current_cpu_id());
 
     int rc = vmm_run_vcpu(vcpu);
 
     /*
-     * 先把状态推到 DYING，再走收尾。
+     * 本颗 vCPU 退出 = 整个 VM 该收了。
      *
-     * /dev/vmm 的 bootlinux 靠 state 判断"旧 guest 是否已收尾"（从前是一个
-     * 全局 running 标志）。标记成 DYING 之后才做那些可能阻塞/打印的清理，
-     * 这样外部不会在收尾中途看到"还活着"的假象。
+     * 正常关机（HVC_DONE / SBI shutdown）与错误退出都走这里：置 VM 级的
+     * stop_req，让兄弟 vCPU 在循环顶部看到后各自退出。多 vCPU 下**不能**
+     * 只让自己退出 —— 否则 VM 永远等不齐最后一颗、槽位也回收不了。
      */
-    vm_t *vm = vcpu->vm;
-    vm->state = VM_DYING;
+    vcpu->state = VCPU_STATE_STOPPED;
+    vcpu->host_cpu = -1;
+    vcpu->task = NULL;
+    vm_request_stop(vm);
 
     if (rc == 0)
         KLOG_INFO("[vmm] vcpu%d exited normally\n", vcpu->vcpu_id);
@@ -157,11 +188,13 @@ static void vcpu_task_fn(void *arg)
 #endif
 
     /*
-     * 回收这个 VM 的槽位（连同它的 stage-2 按需页）。
+     * 本颗 vCPU 退场，由**最后一个**退出的兄弟负责回收 VM 槽位
+     * （连同 stage-2 按需页与设备槽位）。
      *
-     * **必须由 vCPU 任务自己调、而且必须在 task_exit() 之前** —— 池的并发
-     * 规则是"跨任务只传 vmid"，谁也不能在任务还活着的时候把这个槽位清掉；
-     * 而 task_exit() 之后本任务就没了，再没人能安全地做这件事。
+     * **必须在 task_exit() 之前调**：池的并发规则是"跨任务只传 vmid"，
+     * 谁也不能在任务还活着的时候清槽位；task_exit() 之后本任务就没了，
+     * 再没人能安全地做这件事。多 vCPU 下直接 vm_free() 会在第一个退出时
+     * 拆掉还有兄弟在跑的 stage-2 —— 必须走 vm_vcpu_stopped()。
      */
     /*
      * 打印这个 vCPU 任务的内核栈高水位 —— 定 TASK_STACK_SIZE 的依据就是它。
@@ -174,7 +207,7 @@ static void vcpu_task_fn(void *arg)
                   vcpu->vcpu_id, used, (unsigned)TASK_STACK_SIZE);
     }
 
-    vm_free(vm);
+    vm_vcpu_stopped(vm);
 
     task_exit();
 }
@@ -278,26 +311,47 @@ struct task *vcpu_task_create(vcpu_t *vcpu, uint8_t priority)
      *
      * 复现：`VMN=3 /tmp/three_vm.sh x86_64 2`（或见 docs/vmm/X86_GUEST_LINUX.md §11.5）。
      */
-    uint32_t want = (uint32_t)vcpu->vm->slot % (g_num_cpus ? g_num_cpus : 1U);
+    /*
+     * ── 摊到哪颗核：按「VM 槽位 × MAX_VCPUS + vCPU 编号」轮转 ──────
+     *
+     * 从前是 `vm->slot % ncpus` —— 单 vCPU 时没问题，多 vCPU 时同一 VM 的
+     * 所有兄弟会**全部落在同一颗核**，等于自己把自己串行化了，而且
+     * 「每颗 vCPU 在哪颗核」这个视角也就没有意义了。
+     *
+     * slot*MAX_VCPUS + vcpu_id 保证同一 VM 的兄弟优先分散（只要核数够），
+     * 不同 VM 之间再按槽位错开。调度器没有负载均衡，所以这就是最终落点。
+     */
+    uint32_t ncpu = g_num_cpus ? g_num_cpus : 1U;
+    uint32_t want = (uint32_t)(((uint32_t)vcpu->vm->slot * MAX_VCPUS) +
+                               (uint32_t)vcpu->vcpu_id) %
+                    ncpu;
+
+    /*
+     * **先记账、再建任务**：新任务可能在 task_create 返回前就在另一颗核上
+     * 跑完并退出，先建任务会让那次 vm_vcpu_stopped() 看到计数为 0、误判
+     * 自己是最后一颗。state 也提前推到 RUNNING，避免新任务看到 LOADING。
+     */
+    vm_vcpu_started(vcpu->vm);
+    vm_state_set(vcpu->vm, VM_RUNNING);
 
     struct task *t =
         task_create_affinity(name, vcpu_task_fn, vcpu, priority, want);
-    if (t) {
-        /*
-         * 从这里起就算「这个 VM 在跑」：/dev/vmm 的 write/poll 会立刻看到，
-         * 不必等任务真正被调度上 CPU。
-         *
-         * ⚠️ 从前这里还有一句 `g_vmm_stop_requested = 0` —— 那在多 VM 下是
-         * 个真 bug：起第二个 VM 会把第一个 VM 尚未被消费的停止请求清掉。
-         * 现在停止请求是 per-VM 的（vm->stop_req），创建时就随 vm_alloc 的
-         * memset 归零，不需要在这里动别人的。
-         */
-        vcpu->vm->state = VM_RUNNING;
-
-        KLOG_INFO("[vmm] vcpu%d task created (id=%u) on cpu%u/%u\n",
-                  vcpu->vcpu_id, t->id, t->cpu_affinity, g_num_cpus);
-    } else {
+    if (!t) {
+        /* 回滚计数，但**不销毁 VM** —— 调用方还要走它自己的错误路径 */
+        vm_vcpu_start_abort(vcpu->vm);
         KLOG_ERROR("[vmm] failed to create vcpu%d task\n", vcpu->vcpu_id);
+        return NULL;
     }
+
+    /*
+     * 不再在这里写 vcpu->task/state 或打日志 —— 本任务可能已经在另一颗核
+     * 上跑起来（甚至退出并回收了 VM）。这些字段由 vcpu_task_fn 自己发布，
+     * 日志也在那里打。
+     *
+     * ⚠️ 从前这里还有一句 `g_vmm_stop_requested = 0` —— 那在多 VM 下是
+     * 个真 bug：起第二个 VM 会把第一个 VM 尚未被消费的停止请求清掉。
+     * 现在停止请求是 per-VM 的（vm->stop_req），创建时就随 vm_alloc 的
+     * memset 归零，不需要在这里动别人的。
+     */
     return t;
 }

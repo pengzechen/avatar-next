@@ -117,15 +117,6 @@ static vlapic_state_t *vlapic_of(const vm_t *vm, uint32_t vcpu_id)
     return &d->st;
 }
 
-/*
- * 运行期访问统一落在 vcpu0：本 VMM 的 INIT/SIPI 是空实现（见文件头），
- * guest DTB 里也只有一个 cpu@0，所以 nr_vcpus 恒为 1。
- */
-static inline vlapic_state_t *vlapic_cur(vm_t *vm)
-{
-    return vlapic_of(vm, 0);
-}
-
 /* ── 时间源 ─────────────────────────────────────────────────
  *
  * 用宿主已标定的 TSC（g_tsc_freq_hz，由 lapic_timer_init 经 PIT 测出）
@@ -184,9 +175,10 @@ static void update_ppr(vlapic_state_t *v)
     v->r[VLAPIC_REG_PPR] = (tpr > isrv) ? tpr : isrv;
 }
 
-void vlapic_accept_interrupt(vm_t *vm, uint32_t vector, int level_triggered)
+void vlapic_accept_interrupt(vm_t *vm, uint32_t vcpu_id, uint32_t vector,
+                             int level_triggered)
 {
-    vlapic_state_t *v = vlapic_cur(vm);
+    vlapic_state_t *v = vlapic_of(vm, vcpu_id);
 
     if (!v || vector == 0 || vector > 255)
         return;
@@ -263,12 +255,12 @@ static void timer_stop(vlapic_state_t *v)
     v->t_active = 0;
 }
 
-/* 定时器到点 → 排一个待注入向量 */
-static void timer_fire(vm_t *vm, vlapic_state_t *v)
+/* 定时器到点 → 排一个待注入向量（投给拥有这个定时器的那颗 vCPU）*/
+static void timer_fire(vm_t *vm, uint32_t vcpu_id, vlapic_state_t *v)
 {
     uint32_t vec = LVT_VECTOR(v->r[VLAPIC_REG_LVT_TIMER]);
 
-    vlapic_raise_irq(vm, vec); /* 向量合法性（≥16）在内部把关 */
+    vlapic_raise_irq(vm, vcpu_id, vec); /* 向量合法性（≥16）在内部把关 */
 
     if (v->t_periodic) {
         /* 追赶：落后多个周期时不要补发一堆，直接跳到未来的第一个点 */
@@ -286,9 +278,9 @@ static void timer_fire(vm_t *vm, vlapic_state_t *v)
  *
  * 返回 1 表示这次轮询产生了待注入的定时器中断。
  */
-int vlapic_timer_poll(vm_t *vm)
+int vlapic_timer_poll(vm_t *vm, uint32_t vcpu_id)
 {
-    vlapic_state_t *v = vlapic_cur(vm);
+    vlapic_state_t *v = vlapic_of(vm, vcpu_id);
     int fired = 0;
 
     if (!v)
@@ -299,7 +291,7 @@ int vlapic_timer_poll(vm_t *vm)
         return 0;
 
     while (v->t_active && vlapic_now_ns() >= v->t_deadline_ns) {
-        timer_fire(vm, v);
+        timer_fire(vm, vcpu_id, v);
         fired = 1;
     }
     return fired;
@@ -362,16 +354,16 @@ void vlapic_destroy(vm_t *vm)
     }
 }
 
-uint64_t vlapic_apic_base(vm_t *vm)
+uint64_t vlapic_apic_base(vm_t *vm, uint32_t vcpu_id)
 {
-    vlapic_state_t *v = vlapic_cur(vm);
+    vlapic_state_t *v = vlapic_of(vm, vcpu_id);
 
     return v ? v->apic_base : 0;
 }
 
-void vlapic_set_apic_base(vm_t *vm, uint64_t val)
+void vlapic_set_apic_base(vm_t *vm, uint32_t vcpu_id, uint64_t val)
 {
-    vlapic_state_t *v = vlapic_cur(vm);
+    vlapic_state_t *v = vlapic_of(vm, vcpu_id);
 
     if (v)
         v->apic_base = val;
@@ -389,9 +381,9 @@ void vlapic_set_apic_base(vm_t *vm, uint64_t val)
  * FIFO 里还有字节）必须每次入口重新拉一次，与 vPLIC/vGIC 侧的约定一致
  * （见 vmm_console_irq_asserted 的注释）。
  */
-void vlapic_raise_irq(vm_t *vm, uint32_t vector)
+void vlapic_raise_irq(vm_t *vm, uint32_t vcpu_id, uint32_t vector)
 {
-    vlapic_state_t *v = vlapic_cur(vm);
+    vlapic_state_t *v = vlapic_of(vm, vcpu_id);
 
     if (!v)
         return;
@@ -420,9 +412,9 @@ void vlapic_raise_irq(vm_t *vm, uint32_t vector)
  * 的前提是 guest 一定会 EOI（Linux 的中断处理开头就 EOI）。若某个向量投出去
  * 而 guest 从不 EOI，它会被永久挡住 —— 这是有意的：真硬件也是这个行为。
  */
-int vlapic_take_pending(vm_t *vm, uint32_t *vec)
+int vlapic_take_pending(vm_t *vm, uint32_t vcpu_id, uint32_t *vec)
 {
-    vlapic_state_t *v = vlapic_cur(vm);
+    vlapic_state_t *v = vlapic_of(vm, vcpu_id);
 
     if (!v)
         return 0;
@@ -439,9 +431,9 @@ int vlapic_take_pending(vm_t *vm, uint32_t *vec)
     return 0;
 }
 
-int vlapic_sw_enabled(vm_t *vm)
+int vlapic_sw_enabled(vm_t *vm, uint32_t vcpu_id)
 {
-    vlapic_state_t *v = vlapic_cur(vm);
+    vlapic_state_t *v = vlapic_of(vm, vcpu_id);
 
     return v && v->enabled && (v->r[VLAPIC_REG_SVR] & SVR_ENABLE) != 0;
 }
@@ -508,7 +500,8 @@ static uint32_t reg_read(vlapic_state_t *v, uint32_t idx)
     }
 }
 
-static void reg_write(vm_t *vm, vlapic_state_t *v, uint32_t idx, uint32_t val)
+static void reg_write(vm_t *vm, uint32_t vcpu_id, vlapic_state_t *v,
+                      uint32_t idx, uint32_t val)
 {
     switch (idx) {
     case VLAPIC_REG_ID:
@@ -560,7 +553,7 @@ static void reg_write(vm_t *vm, vlapic_state_t *v, uint32_t idx, uint32_t val)
         /* 单 vCPU：只有「发给自己」是有意义的 */
         if (dest == ICR_DEST_SELF || dest == ICR_DEST_ALL ||
             dest == ICR_DEST_ALL_BUT_SELF)
-            vlapic_raise_irq(vm, LVT_VECTOR(val));
+            vlapic_raise_irq(vm, vcpu_id, LVT_VECTOR(val));
         return;
     }
 
@@ -594,10 +587,10 @@ static void reg_write(vm_t *vm, vlapic_state_t *v, uint32_t idx, uint32_t val)
  *
  * 返回 1 = 已处理。addr 是 guest 物理地址（0xFEE00000 起）。
  */
-int vlapic_mmio_handle(vm_t *vm, uint64_t addr, int is_write, uint8_t size,
-                       uint64_t *val)
+int vlapic_mmio_handle(vm_t *vm, uint32_t vcpu_id, uint64_t addr, int is_write,
+                       uint8_t size, uint64_t *val)
 {
-    vlapic_state_t *v = vlapic_cur(vm);
+    vlapic_state_t *v = vlapic_of(vm, vcpu_id);
     uint32_t off = (uint32_t)(addr & 0xfff);
     uint32_t idx = off >> 4; /* 16 字节步长 → 寄存器编号 */
 
@@ -613,7 +606,7 @@ int vlapic_mmio_handle(vm_t *vm, uint64_t addr, int is_write, uint8_t size,
         return 1; /* 保留区：静默吞掉，读 0 */
 
     if (is_write)
-        reg_write(vm, v, idx, (uint32_t)*val);
+        reg_write(vm, vcpu_id, v, idx, (uint32_t)*val);
     else
         *val = reg_read(v, idx);
 

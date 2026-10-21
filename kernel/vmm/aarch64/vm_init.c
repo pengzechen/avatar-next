@@ -147,6 +147,9 @@ int vmm_arch_vm_init(vm_t *vm)
         vcpu->vcpu_id = i;
         vcpu->launched = 0;
         vcpu->vm = vm;
+        vcpu->host_cpu = -1; /* 还没跑过：0 是合法 CPU，不能拿 0 当"未运行" */
+        vcpu->state = VCPU_STATE_OFFLINE;
+        vcpu->task = NULL;
     }
     vm->nr_vcpus = nr;
 
