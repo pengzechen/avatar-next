@@ -229,6 +229,8 @@ pending 位图改成原子操作或给控制器加锁。
 - 跨核路径（**必须 SMP>=2**，否则 IPI/摊核根本不执行）：
   - `tools/vmm_helper_regress.sh <arch> 1 2 --restart`
   - `tools/vmm_multivm_regress.sh <arch> 2` —— 两个 VM 应分别落在 cpu0/cpu1
+  - `tools/task_infra_test.sh <arch> 2` —— 用户态 dist/ping，验证跨核唤醒
+    延迟与摊核；A/B 方法与实测结果见 `docs/basic/TASK_INFRA_TEST.md`
 - 启用多 vCPU 后追加：
   - `tools/vmm_helper_regress.sh <arch> [N] [smp] --restart`
   - `tools/vmm_multivm_regress.sh <arch> [smp]`

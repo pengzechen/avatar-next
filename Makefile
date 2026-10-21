@@ -913,6 +913,12 @@ endif
 RACETEST_CC      := $(ARCH)-linux-musl-gcc
 RACETEST_BIN     := $(BUILD_DIR)/racetest
 
+# task-ipc：task 基础设施的用户态验收（apps/c/task_ipc_test.c）。
+# 三架构都编；用 getcpu/clock_gettime 量化「跨核唤醒有没有立即生效」。
+# 跑法见文件头。产物同样只落在 $(BUILD_DIR)/。
+TASKIPC_CC       := $(ARCH)-linux-musl-gcc
+TASKIPC_BIN      := $(BUILD_DIR)/task-ipc
+
 # dmatest：dma-buf / dma-heap（P0）的验收程序。纯 ioctl + mmap，与架构无关。
 # 只在 DMA=1 时构建/安装 —— 否则节点根本不存在，装了也是白装。
 DMATEST_CC       := $(ARCH)-linux-musl-gcc
@@ -1242,6 +1248,13 @@ $(RACETEST_BIN): apps/c/racetest.c
 	$(RACETEST_CC) -O2 -Wall -Wextra -static $< -o $@
 	@echo "racetest app created: $@"
 
+# §11c-2  task-ipc：跨核唤醒/分发的用户态验收，静态链接
+task-ipc: $(TASKIPC_BIN)
+
+$(TASKIPC_BIN): apps/c/task_ipc_test.c
+	$(TASKIPC_CC) -O2 -Wall -Wextra -static $< -o $@
+	@echo "task-ipc app created: $@"
+
 # §11c-2  vmm-run：静态链接，免得还依赖 rootfs 里的动态 loader
 $(VMM_RUN_BIN): apps/c/vmm_run.c
 	$(ARCH)-linux-musl-gcc -O2 -Wall -Wextra -static $< -o $@
@@ -1434,7 +1447,7 @@ test-epoll-perf: epoll-perf kernel $(ROOTFS_IMG)
 # 创建 ext4 rootfs 镜像（无需 sudo）
 # 依赖：Host 已安装 e2fsprogs（mkfs.ext4 >= 1.43 支持 -d 选项）
 # 每次 apps 变动时自动重建；切换架构直接使用各自的镜像文件，无需 make clean
-$(ROOTFS_IMG): Makefile $(APPS_BINS) $(APPS_C_ELFS) $(LTP_BINS) $(EPOLL_PERF_BIN) $(RACETEST_BIN) $(DMATEST_BIN) $(DRMTEST_BIN) $(VMM_RUN_BIN) $(NGINX_BIN) $(GUEST_LINUX_FILES) $(GUEST_GIC_STAMP) | $(BUILD_DIR)
+$(ROOTFS_IMG): Makefile $(APPS_BINS) $(APPS_C_ELFS) $(LTP_BINS) $(EPOLL_PERF_BIN) $(RACETEST_BIN) $(TASKIPC_BIN) $(DMATEST_BIN) $(DRMTEST_BIN) $(VMM_RUN_BIN) $(NGINX_BIN) $(GUEST_LINUX_FILES) $(GUEST_GIC_STAMP) | $(BUILD_DIR)
 	@echo "=== Building rootfs for $(ARCH): $(ROOTFS_IMG) ==="
 	@rm -rf $(ROOTFS_STAGE)
 	@mkdir -p $(ROOTFS_STAGE)/bin
@@ -1498,6 +1511,12 @@ $(ROOTFS_IMG): Makefile $(APPS_BINS) $(APPS_C_ELFS) $(LTP_BINS) $(EPOLL_PERF_BIN
 		cp $(RACETEST_BIN) $(ROOTFS_STAGE)/bin/racetest; \
 		chmod +x $(ROOTFS_STAGE)/bin/racetest; \
 		echo "  [racetest installed → /bin/racetest]"; \
+	fi
+	@if [ -f "$(TASKIPC_BIN)" ]; then \
+		mkdir -p $(ROOTFS_STAGE)/bin; \
+		cp $(TASKIPC_BIN) $(ROOTFS_STAGE)/bin/task-ipc; \
+		chmod +x $(ROOTFS_STAGE)/bin/task-ipc; \
+		echo "  [task-ipc installed → /bin/task-ipc]"; \
 	fi
 	@if [ -n "$(DMATEST_BIN)" ] && [ -f "$(DMATEST_BIN)" ]; then \
 		mkdir -p $(ROOTFS_STAGE)/bin; \

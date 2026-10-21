@@ -59,6 +59,7 @@ typedef struct task task_t;
 #define LINUX_SYS_SET_ROBUST_LIST 99
 #define LINUX_SYS_NANOSLEEP       101
 #define LINUX_SYS_CLOCK_GETTIME   113
+#define LINUX_SYS_GETCPU          168
 #define LINUX_SYS_SCHED_YIELD     124
 #define LINUX_SYS_KILL            129
 #define LINUX_SYS_TKILL           130

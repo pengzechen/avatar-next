@@ -7,6 +7,7 @@
 #include "loader/elf_loader.h"
 #include "klog.h"
 #include "task/task.h"
+#include "task/cpu.h" /* get_current_cpu_id（getcpu）*/
 #include "task/itimer.h"
 #include "user_layout.h"
 #include "task/sched.h"
@@ -492,6 +493,9 @@ static void x86_translate_syscall(uint64_t *nr, uint64_t regs[9])
     case 231:
         *nr = LINUX_SYS_EXIT_GROUP;
         break; /* exit_group */
+    case 309:  /* x86_64 __NR_getcpu → 通用号 168 */
+        *nr = LINUX_SYS_GETCPU;
+        break;
     case 232: /* epoll_wait(epfd,events,max,timeout) → epoll_pwait(sigmask=NULL) */
         regs[4] = 0;
         regs[5] = 0;
@@ -1008,6 +1012,31 @@ void syscall_handler(trap_frame_t *frame)
         regs[0] = (copy_to_user_bytes(&si, (void *)regs[0], sizeof(si)) >= 0)
                       ? 0
                       : (uint64_t)(int64_t)-EFAULT;
+        break;
+    }
+
+    /*
+     * getcpu(cpu*, node*, tcache) —— 用户态观测当前任务落在哪颗逻辑 CPU。
+     *
+     * musl 的 sched_getcpu() 就是这条；也是 task 基础设施回归（多核分发、
+     * 跨核唤醒）唯一不依赖内核日志的判据。node 恒 0（本内核无 NUMA）。
+     */
+    case LINUX_SYS_GETCPU: {
+        uint64_t ucpu = regs[0];
+        uint64_t unode = regs[1];
+        uint32_t cpu = get_current_cpu_id();
+        uint32_t node = 0;
+
+        if (ucpu && copy_to_user_bytes(&cpu, (void *)ucpu, sizeof(cpu)) < 0) {
+            regs[0] = (uint64_t)(int64_t)-EFAULT;
+            break;
+        }
+        if (unode &&
+            copy_to_user_bytes(&node, (void *)unode, sizeof(node)) < 0) {
+            regs[0] = (uint64_t)(int64_t)-EFAULT;
+            break;
+        }
+        regs[0] = 0;
         break;
     }
 
