@@ -24,6 +24,7 @@
 #include "user_layout.h"
 #include "mm_vm.h"
 #include "pmm.h"
+#include "vm_user.h"
 #include "string.h"
 #include "klog.h"
 #include "arch.h"
@@ -463,7 +464,10 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
                     break; \
                 } \
                 CLONE_MARK_NOFREE(child_pgd_virt, va); \
-                shared_page_ref(src_pa); \
+                if (!shared_page_ref(src_pa)) { \
+                    clone_copy_ok = false; \
+                    break; \
+                } \
                 continue; \
             } \
             uint64_t dst_pa = pmm_alloc_pages(&g_pmm, 1); \
@@ -551,7 +555,13 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
         if (!clone_copy_ok) {
             KLOG_ERROR("[clone] failed to copy user address space\n");
             g_stack_used[child - g_task_pool] = 0;
-            pmm_free_pages(&g_pmm, child_pgd_phys, 1);
+            /*
+             * 不能只 free 根页表：mm_vm_map_pages 已经建好的中间页表、
+             * 已复制的私有页、已 ref 的共享页（NOFREE）都挂在树上。
+             * vm_destroy_user_process() 会整棵回收，并按 KEEP/NOFREE
+             * 的规则处理 leaf。
+             */
+            vm_destroy_user_process(child_pgd_phys);
             regs[0] = (uint64_t)(int64_t)-ENOMEM;
             return;
         }

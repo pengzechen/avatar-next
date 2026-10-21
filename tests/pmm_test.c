@@ -6,6 +6,7 @@
 #include "klog.h"
 #include "assert.h"
 #include "mm_vm.h"
+#include "shared_page.h"
 
 #define PMM_PAGE_SIZE 4096 /* 4KB */
 
@@ -131,12 +132,71 @@ static void test_pmm_reserved(void)
 
     KLOG_INFO("Trying to free reserved region '%s' at 0x%llx\n", resv->tag,
               resv->start);
-    pmm_free_pages(&g_pmm, resv->start, 1);
+    assert(!pmm_free_pages(&g_pmm, resv->start, 1));
 
     assert(pmm_get_free_pages(&g_pmm) == free_before);
     assert(bitmap_test(&g_pmm.bitmap, index));
 
     KLOG_INFO("✓ Reserved region test passed\n");
+}
+
+/**
+ * test_pmm_double_free - 位图容量 + double free 拒绝测试
+ *
+ * 两件事必须同时成立：
+ *   - bitmap 的逻辑容量等于 total_pages（多出来的尾部位会让 next-fit
+ *     把 RAM 之外的页发出去）；
+ *   - 第二次 free 同一页必须整笔拒绝，free_pages 不变。
+ */
+static void test_pmm_double_free(void)
+{
+    KLOG_INFO("=== PMM Double Free Test ===\n");
+
+    assert(g_pmm.bitmap.size == g_pmm.total_pages);
+
+    uint64_t pa = pmm_alloc_pages(&g_pmm, 1);
+    assert(pa != 0);
+    uint64_t free_before = pmm_get_free_pages(&g_pmm);
+
+    assert(pmm_free_pages(&g_pmm, pa, 1));
+    assert(pmm_get_free_pages(&g_pmm) == free_before + 1);
+
+    KLOG_INFO("Testing double free (expecting error message)...\n");
+    assert(!pmm_free_pages(&g_pmm, pa, 1));
+    assert(pmm_get_free_pages(&g_pmm) == free_before + 1);
+
+    KLOG_INFO("✓ Double free rejection test passed\n");
+}
+
+/**
+ * test_shared_page_refcount - MAP_SHARED 引用计数测试
+ *
+ * 验证最后一个 unref 才释放物理页，以及非法 paddr 被拒绝。
+ * 并发场景由 fork/mmap 的回归用例覆盖；这里只验证账本本身。
+ */
+static void test_shared_page_refcount(void)
+{
+    KLOG_INFO("=== Shared Page Refcount Test ===\n");
+
+    uint64_t pa = pmm_alloc_pages(&g_pmm, 1);
+    assert(pa != 0);
+    uint64_t free_before = pmm_get_free_pages(&g_pmm);
+
+    assert(shared_page_ref(pa));
+    assert(shared_page_ref(pa));
+
+    /* 还有一个持有者：页不能回到分配器 */
+    shared_page_unref(pa);
+    assert(pmm_get_free_pages(&g_pmm) == free_before);
+
+    /* 最后一个持有者退出：页释放 */
+    shared_page_unref(pa);
+    assert(pmm_get_free_pages(&g_pmm) == free_before + 1);
+
+    /* 0 不是合法物理页，不能被记账 */
+    assert(!shared_page_ref(0));
+
+    KLOG_INFO("✓ Shared page refcount test passed\n");
 }
 
 /**
@@ -197,10 +257,10 @@ static void test_pmm_boundary(void)
 
     pmm_free_pages(&g_pmm, page1, 1);
 
-    /* 测试无效释放（应该被优雅处理） */
+    /* 测试无效释放（必须被拒绝，且不能动 free_pages） */
     KLOG_INFO("Testing invalid free (expecting error message)...\n");
-    pmm_free_pages(&g_pmm, 0x0, 1);           /* 无效地址 */
-    pmm_free_pages(&g_pmm, 0xFFFFFFFFULL, 1); /* 超出范围 */
+    assert(!pmm_free_pages(&g_pmm, 0x0, 1));           /* 无效地址 */
+    assert(!pmm_free_pages(&g_pmm, 0xFFFFFFFFULL, 1)); /* 未对齐/超出范围 */
 
     KLOG_INFO("✓ Boundary test passed\n");
 }
@@ -220,6 +280,8 @@ void run_pmm_tests(void)
     test_pmm_large_allocation();
     test_pmm_fragmentation();
     test_pmm_reserved();
+    test_pmm_double_free();
+    test_shared_page_refcount();
     test_pmm_stress();
     test_pmm_boundary();
 

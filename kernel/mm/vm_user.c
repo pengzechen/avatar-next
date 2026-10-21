@@ -202,7 +202,11 @@ uint64_t vm_create_user_process(uint64_t user_code_vaddr,
 
 error:
     KLOG_ERROR("[vm_user] Failed to create user page table\n");
-    pmm_free_pages(&g_pmm, pgd_phys, 1);
+    /*
+     * 失败时可能已经映射了代码/栈的一部分，甚至已经分配了中间页表。
+     * 只 free PGD 会把这些页全部泄漏；走完整的销毁路径。
+     */
+    vm_destroy_user_process(pgd_phys);
     return 0;
 }
 

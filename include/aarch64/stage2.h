@@ -46,6 +46,25 @@
 #define LPAE_S2AP_RW    (3ULL << 6)   /* Stage-2 AP: read/write    */
 #define LPAE_S2AP_RO    (1ULL << 6)   /* Stage-2 AP: read-only     */
 
+/*
+ * L3 page descriptor 的软件所有权位：只有本 stage-2 从 PMM 分配的 leaf
+ * 才置位；NPU DMA 的 identity 映射和 device MMIO 映射不置位。
+ *
+ * destroy 只释放 owner=1 的表项。不能靠"地址是否落在 NPU 窗口/设备范围"
+ * 判断 —— 那种写法每新增一种非 PMM 映射就会漏一次，而漏掉的后果是把
+ * 别人的活页还给分配器。
+ *
+ * stage-2 4KB page descriptor 的 bits[58:55] 是软件保留位（硬件忽略，
+ * Linux KVM 也在这几位存软件状态），这里取 bit 55。
+ */
+#define LPAE_SW_OWNED (1ULL << 55)
+
+/*
+ * 输出地址字段 bits[47:12]。不能简单用 ~0xFFF：那会把 bit 55 的 owner
+ * 位一起当成物理地址的一部分。
+ */
+#define LPAE_PA_MASK 0x0000FFFFFFFFF000ULL
+
 /* ── 页表层级尺寸 ─────────────────────────────────────────── */
 /* T0SZ=32: IPA[31:30]=L1(4 entry), IPA[29:21]=L2(512 entry/L1) */
 #define S2_L1_ENTRIES 4

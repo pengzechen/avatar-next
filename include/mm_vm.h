@@ -9,6 +9,7 @@
  */
 
 #include "arch.h"
+#include "page.h"
 #include "types.h"
 
 /* ── 内核虚拟地址偏移（架构特定） ───────────────────────────────── */
@@ -30,10 +31,7 @@
 #define phys_to_virt(pa) ((void *)((uint64_t)(pa) + KERNEL_VMA))
 #define virt_to_phys(va) ((uint64_t)(va) - KERNEL_VMA)
 
-/* 页大小配置（必须在架构特定头文件之前定义） */
-#define PAGE_SIZE  4096
-#define PAGE_SHIFT 12
-#define PAGE_MASK  (~(PAGE_SIZE - 1))
+/* 页大小配置见 page.h（必须在架构特定头文件之前可用） */
 
 #if ARCH_AARCH64
 #include "aarch64/mm_vm.h"

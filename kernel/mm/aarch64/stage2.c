@@ -171,6 +171,7 @@ void stage2_vm_init(s2_ctx_t *s2, uint32_t slot, uint32_t vmid,
 void stage2_vm_destroy(s2_ctx_t *s2)
 {
     uint64_t freed = 0;
+    uint64_t kept = 0;
     int i, j;
 
     for (i = 0; i < S2_MAX_L3_TABLES; i++) {
@@ -180,9 +181,14 @@ void stage2_vm_destroy(s2_ctx_t *s2)
 
         for (j = 0; j < S2_L3_ENTRIES; j++) {
             if (t[j] & LPAE_VALID) {
-                pmm_free_pages(&g_pmm, t[j] & ~0xFFFULL, 1);
+                if (t[j] & LPAE_SW_OWNED) {
+                    pmm_free_pages(&g_pmm, t[j] & LPAE_PA_MASK, 1);
+                    freed++;
+                } else {
+                    /* NPU DMA identity / device MMIO：页不归 PMM */
+                    kept++;
+                }
                 t[j] = 0;
-                freed++;
             }
         }
         pmm_free_pages(&g_pmm, virt_to_phys(t) & ~0xFFFULL, 1); /* 表页本身 */
@@ -196,9 +202,10 @@ void stage2_vm_destroy(s2_ctx_t *s2)
 
     KLOG_INFO(
         "[stage2] vm%u destroyed: %llu pages (%llu KB) reclaimed, "
-        "premap=%llu fault=%llu, pmm free=%llu MB\n",
+        "%llu external mappings kept, premap=%llu fault=%llu, pmm free=%llu MB\n",
         s2->vmid, (unsigned long long)freed, (unsigned long long)(freed * 4),
-        (unsigned long long)s2->nr_premap, (unsigned long long)s2->nr_fault,
+        (unsigned long long)kept, (unsigned long long)s2->nr_premap,
+        (unsigned long long)s2->nr_fault,
         (unsigned long long)(pmm_get_free_pages(&g_pmm) * 4 / 1024));
 
     memset(s2, 0, sizeof(*s2));
@@ -273,7 +280,8 @@ uint64_t stage2_map_identity_block(s2_ctx_t *s2, uint64_t ipa)
             continue; /* 已经映射过 */
 
         page_ipa = base + (uint64_t)i * S2_PAGE_SIZE;
-        t[i] = (page_ipa & ~0xFFFULL) | LPAE_PAGE | LPAE_AF | LPAE_SH_IS |
+        /* identity 映射：IPA == PA，页由 platform reserves 钉住，不归 PMM */
+        t[i] = (page_ipa & LPAE_PA_MASK) | LPAE_PAGE | LPAE_AF | LPAE_SH_IS |
                LPAE_MATTR_NORM | LPAE_S2AP_RW;
         n++;
     }
@@ -293,7 +301,7 @@ uint64_t stage2_map_page(s2_ctx_t *s2, uint64_t ipa, int zero)
 
     /* 已映射：幂等（缺页重试、以及"先 map_range 后 fault"都会走到）*/
     if (t[i3] & LPAE_VALID)
-        return t[i3] & ~0xFFFULL;
+        return t[i3] & LPAE_PA_MASK;
 
     pa = pmm_alloc_pages(&g_pmm, 1);
     if (!pa)
@@ -302,8 +310,8 @@ uint64_t stage2_map_page(s2_ctx_t *s2, uint64_t ipa, int zero)
     if (zero)
         memset(phys_to_virt(pa), 0, S2_PAGE_SIZE);
 
-    t[i3] = (pa & ~0xFFFULL) | LPAE_PAGE | LPAE_AF | LPAE_SH_IS |
-            LPAE_MATTR_NORM | LPAE_S2AP_RW;
+    t[i3] = (pa & LPAE_PA_MASK) | LPAE_PAGE | LPAE_AF | LPAE_SH_IS |
+            LPAE_MATTR_NORM | LPAE_S2AP_RW | LPAE_SW_OWNED;
     return pa;
 }
 
@@ -345,8 +353,8 @@ uint64_t stage2_map_block(s2_ctx_t *s2, uint64_t ipa, int zero)
         if (zero)
             memset(phys_to_virt(pa), 0, S2_PAGE_SIZE);
 
-        t[i] = (pa & ~0xFFFULL) | LPAE_PAGE | LPAE_AF | LPAE_SH_IS |
-               LPAE_MATTR_NORM | LPAE_S2AP_RW;
+        t[i] = (pa & LPAE_PA_MASK) | LPAE_PAGE | LPAE_AF | LPAE_SH_IS |
+               LPAE_MATTR_NORM | LPAE_S2AP_RW | LPAE_SW_OWNED;
         n++;
     }
     return n;
@@ -397,7 +405,7 @@ int stage2_lookup(const s2_ctx_t *s2, uint64_t ipa, uint64_t *pa_out)
         return 0;
 
     if (pa_out)
-        *pa_out = (e & ~0xFFFULL) | (ipa & 0xFFF);
+        *pa_out = (e & LPAE_PA_MASK) | (ipa & 0xFFF);
     return 1;
 }
 
@@ -413,7 +421,8 @@ void stage2_map_device_region(s2_ctx_t *s2, uint64_t ipa, uint64_t pa,
         if (!t)
             return;
         ipa_idx(ipa + off, &i1, &i2, &i3);
-        t[i3] = ((pa + off) & ~0xFFFULL) | LPAE_PAGE | LPAE_AF |
+        /* device MMIO：PA 属于设备，不归 PMM，不要置 owner 位 */
+        t[i3] = ((pa + off) & LPAE_PA_MASK) | LPAE_PAGE | LPAE_AF |
                 LPAE_MATTR_DEV | LPAE_S2AP_RW | LPAE_XN;
     }
     stage2_tlb_flush_vm(s2);

@@ -199,9 +199,14 @@ uint64_t memory_get_paddr(void *page_dir, uint64_t vaddr) // 返回物理地址
 {
     pte_t *pte = find_pte((pte_t *)page_dir, vaddr, 0);
 
-    if (pte == (pte_t *)0) {
+    /*
+     * find_pte(alloc=0) 在页表路径存在时，即使 leaf 无效也会返回指针。
+     * 这里必须自己确认它确实是有效的 page descriptor（L3 的 bit[1:0]=11），
+     * 否则会把垃圾 pfn 当成物理地址返回。当前调用点都传页对齐地址，所以
+     * 只是"恰好"没炸；下一次改动踩中就是随机物理页。
+     */
+    if (pte == NULL || !(pte->pte & PTE_VALID) || !(pte->pte & PTE_TABLE))
         return 0;
-    }
 
     return (pte->l3_page.pfn << 12) + (vaddr & (PAGE_SIZE - 1));
 }
@@ -226,7 +231,8 @@ uint64_t memory_alloc_page(void *page_dir, // 虚拟地址
 {
     uint64_t curr_vaddr = vaddr;
     int32_t page_count = ALIGN_UP(size, PAGE_SIZE) / PAGE_SIZE;
-    vaddr = DOWN2(vaddr, PAGE_SIZE);
+    uint64_t start_vaddr = DOWN2(vaddr, PAGE_SIZE);
+    uint64_t mapped_end = start_vaddr;
 
     // 逐页分配内存，然后建立映射关系
     for (int32_t i = 0; i < page_count; i++) {
@@ -234,7 +240,7 @@ uint64_t memory_alloc_page(void *page_dir, // 虚拟地址
         uint64_t paddr = pmm_alloc_pages(&g_pmm, 1);
         if (paddr == 0) {
             KLOG_ERROR("mem alloc failed. no memory\n");
-            return -1;
+            goto rollback;
         }
 
         // 建立分配的内存与指定地址的关联
@@ -242,14 +248,26 @@ uint64_t memory_alloc_page(void *page_dir, // 虚拟地址
             memory_create_map((pte_t *)page_dir, curr_vaddr, paddr, 1, perm);
         if (err < 0) {
             KLOG_ERROR("create memory map failed. err = %d\n", err);
-            pmm_free_pages(&g_pmm, vaddr, i + 1);
-            return -1;
+            /* 这一页还没进页表，单独还回去 */
+            pmm_free_pages(&g_pmm, paddr, 1);
+            goto rollback;
         }
 
         curr_vaddr += PAGE_SIZE;
+        mapped_end += PAGE_SIZE;
     }
 
     return 0;
+
+rollback:
+    /*
+     * 失败时把本次已经映射的页逐个拆掉。以前这里写的是
+     * pmm_free_pages(vaddr, i + 1) —— vaddr 是用户虚拟地址，不是刚分配的
+     * 物理地址；PMM 会按非法地址拒绝，于是已分配的页全部泄漏。
+     */
+    for (uint64_t va = start_vaddr; va < mapped_end; va += PAGE_SIZE)
+        memory_free_page(page_dir, va);
+    return -1;
 }
 
 void memory_free_page(void *page_dir, uint64_t addr)
@@ -461,8 +479,9 @@ bool _copy_page_table(pte_t *src_table, pte_t *dst_table, int32_t level)
                 dst_table[i].pte = src_entry->pte;
                 /* 只有 NOFREE（共享页）要加引用；KEEP（设备缓冲）页归句柄
                  * 所有，复制一份映射不产生新的持有者。 */
-                if (src_entry->pte & PTE_NOFREE)
-                    shared_page_ref(src_phys);
+                if ((src_entry->pte & PTE_NOFREE) &&
+                    !shared_page_ref(src_phys))
+                    return false;
                 continue;
             }
 

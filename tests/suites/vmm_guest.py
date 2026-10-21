@@ -42,6 +42,7 @@ FORBIDDEN = (
     rb"Kernel panic",
     rb"panic:",
     rb"Unable to handle",
+    rb"PMM: double free",
     rb"\[exception\] sync:",
     rb"=== BACKTRACE \(fault\)",
 )

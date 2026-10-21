@@ -110,8 +110,13 @@ uint64_t pmm_alloc_pages(pmm_t *pmm, uint32_t page_count);
  * @page_count: 页面数
  *
  * 释放之前分配的物理页面。
+ *
+ * 返回：true 成功；false 拒绝。拒绝的情况包括地址非法、命中保留区，
+ * 以及区间里有一页本来就是空闲的（double free）。最后一种整笔拒绝、
+ * 一个 bit 都不动 —— PMM 是最底层的分配器，宁可早报错，也不要让
+ * free_pages 的账悄悄漂移。
  */
-void pmm_free_pages(pmm_t *pmm, uint64_t paddr, uint32_t page_count);
+bool pmm_free_pages(pmm_t *pmm, uint64_t paddr, uint32_t page_count);
 
 /**
  * pmm_reserve - 预留一段物理内存

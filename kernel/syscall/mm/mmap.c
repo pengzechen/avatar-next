@@ -175,10 +175,9 @@ static int map_contiguous_buf(task_t *current, void *pgd, uint64_t map_addr,
          * 分配给别的用途：对 NPU 缓冲区来说就是"设备往别人的内存里写"。
          * 实测症状是满屏 `PMM: partial free detected: ... actually_freed=0`。
          *
-         * 这里**不能**用 NOFREE 顶替：那是"共享页"语义，交给 shared_page
-         * 引用计数去决定何时释放，而那张表只有 256 项（1 MiB 缓冲区就塞满），
-         * 且找不到记录时会直接 pmm_free_pages —— 等于没保护。
-         * 详见 include/aarch64/mmu.h 里 PTE_KEEP 的说明。
+         * 这里**不能**用 NOFREE 顶替：NOFREE 的语义是"最后一个映射退出
+         * 就释放"，而设备缓冲归句柄所有 —— 只要句柄还开着，任何映射退出
+         * 都不该释放。详见 include/aarch64/mmu.h 里 PTE_KEEP 的说明。
          */
         mm_vm_set_pte_keep(pgd, va);
     }
@@ -358,23 +357,36 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, int prot, int flags, int fd,
                     current->id, va, map_addr, map_size, fobj->path, flags);
             }
 
+            bool new_page = false;
             if ((flags & MAP_FIXED) != 0) {
                 pa = mm_vm_get_paddr(pgd, va);
-                if (pa == 0) {
-                    pa = pmm_alloc_pages(&g_pmm, 1);
-                    if (pa == 0)
-                        return MMAP_FAILED;
-                    if (mm_vm_map_pages(pgd, va, pa, 1, 0) != 0) {
-                        pmm_free_pages(&g_pmm, pa, 1);
-                        return MMAP_FAILED;
-                    }
-                }
+                if (pa == 0)
+                    new_page = true;
             } else {
+                new_page = true;
+            }
+
+            if (new_page) {
                 pa = pmm_alloc_pages(&g_pmm, 1);
                 if (pa == 0)
                     return MMAP_FAILED;
-                if (mm_vm_map_pages(pgd, va, pa, 1, 0) != 0) {
+
+                /*
+                 * 先 ref 再映射：ref 失败（共享页表满）时，这次映射必须
+                 * 在页表里留下零个 NOFREE 痕迹，否则 unmap 找不到账本。
+                 */
+                if ((flags & MAP_SHARED) && !shared_page_ref(pa)) {
+                    KLOG_ERROR(
+                        "[mmap] shared page table full: pid=%d va=0x%llx pa=0x%llx\n",
+                        current->id, va, pa);
                     pmm_free_pages(&g_pmm, pa, 1);
+                    return MMAP_FAILED;
+                }
+                if (mm_vm_map_pages(pgd, va, pa, 1, 0) != 0) {
+                    if (flags & MAP_SHARED)
+                        shared_page_unref(pa);
+                    else
+                        pmm_free_pages(&g_pmm, pa, 1);
                     return MMAP_FAILED;
                 }
             }
@@ -392,6 +404,16 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, int prot, int flags, int fd,
             }
 
             if (flags & MAP_SHARED) {
+                /*
+                 * 新页在映射前已经 ref 过；MAP_FIXED 复用旧页时才在这里
+                 * 补一次。ref 失败时不要改 PTE —— 旧映射保持原样。
+                 */
+                if (!new_page && !shared_page_ref(pa)) {
+                    KLOG_ERROR(
+                        "[mmap] shared page table full: pid=%d va=0x%llx pa=0x%llx\n",
+                        current->id, va, pa);
+                    return MMAP_FAILED;
+                }
 #if ARCH_RISCV64
                 uint64_t *pte = rv_walk_l0_pte(pgd, va, false);
                 if (pte)
@@ -403,7 +425,6 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, int prot, int flags, int fd,
                 if (pte)
                     *pte |= PTE_NOFREE;
 #endif
-                shared_page_ref(pa);
             }
         }
 
@@ -497,9 +518,21 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, int prot, int flags, int fd,
             return MMAP_FAILED;
         }
         memset(phys_to_virt(pa), 0, PAGE_SIZE);
+
+        /* 先 ref 再映射：失败时页表里不能出现没有账本的 NOFREE 页。 */
+        if ((flags & MAP_SHARED) && !shared_page_ref(pa)) {
+            KLOG_ERROR(
+                "[mmap] shared page table full: pid=%d va=0x%llx pa=0x%llx\n",
+                current->id, va, pa);
+            pmm_free_pages(&g_pmm, pa, 1);
+            return MMAP_FAILED;
+        }
         if (mm_vm_map_pages(pgd, va, pa, 1, 0) != 0) {
             KLOG_WARN("[mmap] map failed: va=0x%llx flags=0x%x\n", va, flags);
-            pmm_free_pages(&g_pmm, pa, 1);
+            if (flags & MAP_SHARED)
+                shared_page_unref(pa);
+            else
+                pmm_free_pages(&g_pmm, pa, 1);
             return MMAP_FAILED;
         }
 #if ARCH_RISCV64
@@ -507,13 +540,10 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, int prot, int flags, int fd,
             uint64_t *pte = rv_walk_l0_pte(pgd, va, false);
             if (pte)
                 *pte |= RV_PTE_NOFREE;
-            shared_page_ref(pa);
         }
 #elif ARCH_AARCH64
-        if (flags & MAP_SHARED) {
+        if (flags & MAP_SHARED)
             memory_set_pte_nofree(pgd, va);
-            shared_page_ref(pa);
-        }
 #endif
     }
 #elif ARCH_X86_64
@@ -542,17 +572,28 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, int prot, int flags, int fd,
                 return MMAP_FAILED;
             }
             memset(phys_to_virt(pa), 0, PAGE_SIZE);
+
+            /* 先 ref 再映射：失败时页表里不能出现没有账本的 NOFREE 页。 */
+            if ((flags & MAP_SHARED) && !shared_page_ref(pa)) {
+                KLOG_ERROR(
+                    "[mmap] shared page table full: pid=%d va=0x%llx pa=0x%llx\n",
+                    current->id, va, pa);
+                pmm_free_pages(&g_pmm, pa, 1);
+                return MMAP_FAILED;
+            }
             if (mm_vm_map_pages(pgd, va, pa, 1, 0) != 0) {
                 KLOG_WARN("[mmap] map failed: va=0x%llx flags=0x%x\n", va,
                           flags);
-                pmm_free_pages(&g_pmm, pa, 1);
+                if (flags & MAP_SHARED)
+                    shared_page_unref(pa);
+                else
+                    pmm_free_pages(&g_pmm, pa, 1);
                 return MMAP_FAILED;
             }
             if (flags & MAP_SHARED) {
                 uint64_t *pte = x86_walk_pt(pgd, va, false);
                 if (pte)
                     *pte |= PTE_NOFREE;
-                shared_page_ref(pa);
             }
         }
     }

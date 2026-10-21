@@ -135,8 +135,9 @@ static int x86_copy_pt_recursive(uint64_t *src, uint64_t *dst, int level)
             /* KEEP（设备缓冲）同样原样复制，但**不加引用** —— 页归句柄所有 */
             if (pte & (PTE_NOFREE | PTE_KEEP)) {
                 dst[i] = pte;
-                if (pte & PTE_NOFREE)
-                    shared_page_ref(x86_pte_to_pa(pte));
+                if ((pte & PTE_NOFREE) &&
+                    !shared_page_ref(x86_pte_to_pa(pte)))
+                    return -1;
                 continue;
             }
             uint64_t src_pa = x86_pte_to_pa(pte);

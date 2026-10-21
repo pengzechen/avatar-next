@@ -36,9 +36,9 @@
  *           所以 unmap 只拆页表项：不释放、也不碰引用计数 —— 释放是
  *           dma_heap_free() 的事。
  *
- * 用 NOFREE 顶替会错两次：shared_page 表只有 256 项（一个 1 MiB 缓冲区
- * 就塞满），而且 shared_page_unref() 在表里找不到记录时会直接
- * pmm_free_pages() —— 等于没保护。
+ * 用 NOFREE 顶替会错两次：NOFREE 的语义是"最后一个映射退出就释放"，
+ * 而设备缓冲归句柄所有 —— 只要句柄还开着，任何映射退出都不该释放；
+ * 另外 shared_page 只给 NOFREE 页记账，设备页根本不该进那张表。
  *
  * 位 56：ARMv8 的 4KB stage-1 描述符里 55~58 是软件保留位（Linux arm64
  * 也是这么用的：55=DIRTY、56=SPECIAL），硬件忽略。
