@@ -165,7 +165,8 @@ vmm_vcpu_inject_irq(target, virq_line(...));
 - 两次注入对同一 vCPU 有全序，不会互相覆盖 pending；
 - 注入不会插进「LR 扫描/回读」的中间，状态要么本轮 entry 看到、要么
   被 kick 后下一轮看到；
-- GICv2 的宿主 vtimer ISR 也改成持同一把锁注入。
+- 宿主侧不再有「物理 vtimer ISR 直接注入」这条路径（`irq_route` 已删除）；
+  vtimer 统一在每次 entry 由 `aarch64_check_vtimer()` 重新拉线。
 
 **边界**：这把锁只覆盖 VMM 侧注入与 entry/exit 同步。guest 自己通过
 GICD/vLAPIC MMIO 改 pending 发生在 exit handler 里（可能睡眠/让出），
