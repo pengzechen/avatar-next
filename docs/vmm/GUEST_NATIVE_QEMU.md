@@ -154,7 +154,7 @@ data abort → **一次完整 VM exit**（世界切换：128 字节系统寄存�
 
 ## 7. 降低 guest 控制台开销
 
-**Avatar 侧已经默认开了 `quiet`**，定义在 `kernel/vmm/guest_loader.c` 的
+**Avatar 侧已经默认开了 `quiet`**，定义在 `kernel/vmm/loader/guest_loader.c` 的
 `GUEST_LINUX_BOOTARGS`：
 
 ```c
@@ -181,5 +181,5 @@ data abort → **一次完整 VM exit**（世界切换：128 字节系统寄存�
 ## 8. 相关
 
 - 两种运行模式、`/dev/vmm` 协议、Ctrl+T 前缀键语义：`docs/vmm/GUEST_CONSOLE.md`
-- 命令行的长度约束与取舍理由：`kernel/vmm/guest_loader.c` 的
+- 命令行的长度约束与取舍理由：`kernel/vmm/loader/guest_loader.c` 的
   `GUEST_LINUX_BOOTARGS` 注释

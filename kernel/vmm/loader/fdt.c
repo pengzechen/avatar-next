@@ -1,5 +1,5 @@
 /*
- * kernel/vmm/fdt.c — FDT/DTB 的字节级工具与补丁
+ * kernel/vmm/loader/fdt.c — FDT/DTB 的字节级工具与补丁
  *
  * 从 guest_loader.c 拆出来的。这一组的特点是**入参就是宿主缓冲**
  * （`uint8_t *dtb, uint32_t dtb_size`），一处不碰 vm_t、也不碰 stage-2 ——

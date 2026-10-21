@@ -28,7 +28,7 @@
  *    所以这里故意留了详细日志那一版（90 字节）；运行时换成带 quiet 的
  *    短版本（58 字节）一定放得下。想恢复详细启动日志就把补丁去掉。
  *
- * ⚠️ memory 节点的地址必须与 kernel/vmm/guest_loader.c 里的
+ * ⚠️ memory 节点的地址必须与 kernel/vmm/loader/guest_loader.c 里的
  *    GUEST_LINUX_MEM_BASE 一致（当前 0xA0000000）。运行期
  *    guest_loader_patch_dtb_memory() 会按实际参数改写 reg，所以改了那边
  *    不改这边也能跑；这里保持一致只是为了让本文件单独看也说得通。

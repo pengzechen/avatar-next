@@ -1,6 +1,6 @@
 # fdt_host_test —— 把项目里那份 `fdt.c` 编到宿主上跑
 
-`kernel/vmm/fdt.c` 是纯字节操作（入参就是宿主缓冲，不碰 `vm_t`、不碰 stage-2），
+`kernel/vmm/loader/fdt.c` 是纯字节操作（入参就是宿主缓冲，不碰 `vm_t`、不碰 stage-2），
 所以可以**原样**编到宿主上、拿真实 DTB 当输入跑 —— 不需要板子、不需要 QEMU。
 
 存在的理由：`guest_loader_dtb_node_has_prop()`（那个"DTB 里有没有 `no-map`
@@ -22,7 +22,7 @@
 # 1) 编译（⚠️ -I 顺序有讲究，见下）
 gcc -c -o /tmp/fdt_host.o fdt_host.c \
   -I$(pwd)/fdtshim \
-  -I../../kernel/vmm -I../../include -I../../include/aarch64 \
+  -I../../kernel/vmm/loader -I../../include -I../../include/aarch64 \
   -I../../include/libc -DARCH_AARCH64=1 -DLOG_LEVEL=0
 
 # 2) 跑：查某个 DTB 的某节点有没有某属性

@@ -164,20 +164,20 @@ _KERNEL_VGIC_SRCS   := $(if $(filter v3,$(GIC_VER)),\
                           $(wildcard $(KERNEL_DIR)/vmm/vdev/vgicv3/*.c),\
                           $(wildcard $(KERNEL_DIR)/vmm/vdev/vgic/*.c))
 
-# vdev 下按文件选架构；guest_loader.c 位于共享目录但只有 aarch64 编译它。
+# vdev 下按文件选架构；loader/ 下的 guest_loader.c 按架构显式加入（见下方列表）。
 ifeq ($(ARCH),aarch64)
     _KERNEL_VDEV_SRCS     := $(KERNEL_DIR)/vmm/vdev/console/vpl011.c \
                              $(KERNEL_DIR)/vmm/vdev/irq_route.c \
                              $(KERNEL_DIR)/vmm/vdev/npu/vnpu.c \
                              $(_KERNEL_VGIC_SRCS)
-    _KERNEL_ARCHONLY_SRCS := $(KERNEL_DIR)/vmm/guest_loader.c
+    _KERNEL_ARCHONLY_SRCS := $(KERNEL_DIR)/vmm/loader/guest_loader.c
     # guest_test.S: embedded guest program (linked into kernel binary)
     GUEST_TEST_OBJ        := $(BUILD_DIR)/apps_guest_test.o \
                              $(BUILD_DIR)/apps_el0_loop.o
 else ifeq ($(ARCH),riscv64)
     _KERNEL_VDEV_SRCS     := $(KERNEL_DIR)/vmm/vdev/console/vuart16550.c \
                              $(KERNEL_DIR)/vmm/vdev/vplic.c
-    _KERNEL_ARCHONLY_SRCS := $(KERNEL_DIR)/vmm/guest_loader.c
+    _KERNEL_ARCHONLY_SRCS := $(KERNEL_DIR)/vmm/loader/guest_loader.c
     # RISC-V VS-mode guest test program (linked into kernel binary)
     GUEST_TEST_OBJ        := $(BUILD_DIR)/apps_riscv_guest_test.o
 else ifeq ($(ARCH),x86_64)
@@ -186,7 +186,7 @@ else ifeq ($(ARCH),x86_64)
     # guest_loader.c 被 KERNEL_SRCS 的 filter-out 排除了，必须在这里加回来；
     # 它的编译分组另见 KERNEL_LWEXT4_SRCS。两处都要有 —— 少一处，
     # 下面的「分组完整性断言」会当场报 67 vs 68。
-    _KERNEL_ARCHONLY_SRCS := $(KERNEL_DIR)/vmm/guest_loader.c
+    _KERNEL_ARCHONLY_SRCS := $(KERNEL_DIR)/vmm/loader/guest_loader.c
     # x86_64 guest test program (linked into kernel binary)
     GUEST_TEST_OBJ        := $(BUILD_DIR)/apps_x86_guest_test.o
 else
@@ -195,7 +195,7 @@ else
     GUEST_TEST_OBJ        :=
 endif
 
-KERNEL_SRCS := $(filter-out $(_KERNEL_EXCLUDE_PAT) $(KERNEL_DIR)/vmm/guest_loader.c,$(_KERNEL_FOUND))
+KERNEL_SRCS := $(filter-out $(_KERNEL_EXCLUDE_PAT) $(KERNEL_DIR)/vmm/loader/guest_loader.c,$(_KERNEL_FOUND))
 KERNEL_SRCS += $(_KERNEL_VDEV_SRCS) $(_KERNEL_ARCHONLY_SRCS)
 
 # 源路径 → 扁平对象名：kernel/mm/pmm.c → $(BUILD_DIR)/kernel_mm_pmm.o
@@ -231,7 +231,7 @@ KERNEL_LWEXT4_SRCS := \
     $(KERNEL_DIR)/syscall/io/epoll.c \
     $(KERNEL_DIR)/syscall/mm/mmap.c
 
-# guest_loader.c 位于共享目录但只给「已实现 Linux guest 启动」的架构编译
+# loader/guest_loader.c 只给「已实现 Linux guest 启动」的架构编译
 # （见 §4a 白名单与 include/vmm/vmm.h 的 VMM_GUEST_LINUX_SUPPORTED），且引用 lwext4。
 #
 # ⚠️ image_load.c 是 2026-09 从 guest_loader.c 拆出来的装载通路（VFS 读 + 逐块
@@ -239,8 +239,8 @@ KERNEL_LWEXT4_SRCS := \
 # 少了这一条，编译会以 "include/vfs.h:14:10: fatal error: ext4.h: No such file" 失败，
 # 而且因为 §236 的 filter-out，它同时还会触发下面的「分组完整性断言」。
 ifneq ($(filter $(ARCH),aarch64 riscv64 x86_64),)
-KERNEL_LWEXT4_SRCS += $(KERNEL_DIR)/vmm/guest_loader.c \
-                      $(KERNEL_DIR)/vmm/image_load.c
+KERNEL_LWEXT4_SRCS += $(KERNEL_DIR)/vmm/loader/guest_loader.c \
+                      $(KERNEL_DIR)/vmm/loader/image_load.c
 endif
 
 # kernel/net/** 全部引用 lwIP，按目录自动派生，将来新增文件不会漏。

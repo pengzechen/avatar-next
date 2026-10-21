@@ -1,5 +1,5 @@
 /*
- * kernel/vmm/vmm_mmio.c — VMM MMIO 设备总线实现
+ * kernel/vmm/mmio_bus.c — VMM MMIO 设备总线实现
  *
  * 移植自 x-kernel: virt/vdev/core/src/lib.rs (MmioBus)。
  * 线性查找：设备数很少（<= MMIO_MAX_DEVICES），无需哈希。

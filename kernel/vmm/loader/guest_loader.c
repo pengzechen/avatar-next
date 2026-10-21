@@ -1,5 +1,5 @@
 /*
- * kernel/vmm/guest_loader.c — guest 镜像加载与启动
+ * kernel/vmm/loader/guest_loader.c — guest 镜像加载与启动
  *
  * 移植自 x-kernel: virt/kvmm-api/src/loader.rs，适配 Avatar OS：
  *   - kvfs → avatar 的 vfs_open / vfs_read_to_phys

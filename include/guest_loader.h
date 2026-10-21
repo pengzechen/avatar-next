@@ -307,7 +307,7 @@ int guest_loader_patch_dtb_memory(uint8_t *dtb, uint32_t dtb_size,
  * 原地改写、**不支持加长**：新串（含结尾 NUL）比 DTB 里现有的属性长就失败，
  * 并打一条 WARN。失败时 guest 会用 DTB 自带的那句命令行照常启动 —— 表现和
  * 成功一模一样，所以每个架构都配了一条 _Static_assert 把常见的手滑挡在
- * 编译期（见 kernel/vmm/guest_loader.c 顶部的 GUEST_LINUX_BOOTARGS）。
+ * 编译期（见 kernel/vmm/loader/guest_loader.c 顶部的 GUEST_LINUX_BOOTARGS）。
  *
  * 返回 0 成功。
  */

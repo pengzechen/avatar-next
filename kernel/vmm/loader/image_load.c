@@ -1,5 +1,5 @@
 /*
- * kernel/vmm/image_load.c — 从 rootfs 往 guest 内存装载文件/区间
+ * kernel/vmm/loader/image_load.c — 从 rootfs 往 guest 内存装载文件/区间
  *
  * 从 guest_loader.c 拆出来的。它是「VFS 读 → 逐块写 guest 内存」这条通路，
  * 与 DTB 补丁无关；DTB 那部分在 fdt.c。

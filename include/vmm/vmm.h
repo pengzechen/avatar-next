@@ -116,7 +116,7 @@
 #define VM_DYING     4 /* 已请求销毁，等 vCPU 任务收拾完  */
 
 /*
- * 哪些架构已经实现「从 rootfs 加载并启动 Linux guest」（kernel/vmm/guest_loader.c）。
+ * 哪些架构已经实现「从 rootfs 加载并启动 Linux guest」（kernel/vmm/loader/guest_loader.c）。
  * 用一个宏而不是到处写 #if ARCH_AARCH64：/dev/vmm、kernel_main 的直启分支
  * 都要按它开关，散落的架构判断会在加架构时漏掉一处。
  */

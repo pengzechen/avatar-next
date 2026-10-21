@@ -87,7 +87,7 @@ RISC-V 不一样：**基座 ISA 里没有 CMO**，标准扩展 Zicbom 是可选�
 
 只有两个文件用这个 API：
 - `kernel/fs/pseudofs/dev.c` —— TPU/ION 的 DMA 缓冲（ioctl 驱动的 flush/invalidate）；
-- `kernel/vmm/guest_loader.c` —— host 写好 guest 内存后 `clean_dcache_range`。
+- `kernel/vmm/loader/guest_loader.c` —— host 写好 guest 内存后 `clean_dcache_range`。
 
 `sync_icache_all()` 目前没有 C 调用者；`exec`/`fork` 返回路径的 I-cache 同步在 `.S` 里
 （汇编用不了 C 接口），语义与这里一致，见 `kernel/task/riscv64/switch.S` 与

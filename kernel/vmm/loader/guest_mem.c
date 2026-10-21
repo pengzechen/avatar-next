@@ -1,5 +1,5 @@
 /*
- * kernel/vmm/guest_mem.c — 宿主访问 guest 内存的唯一入口
+ * kernel/vmm/loader/guest_mem.c — 宿主访问 guest 内存的唯一入口
  *
  * 从 guest_loader.c 拆出来的。按需分页之后，guest RAM 在宿主侧不再是
  * identity 映射的一段连续内存，所以**任何**按 GPA 的读写都必须经这里现算
