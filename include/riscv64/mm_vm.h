@@ -46,4 +46,12 @@ static inline void mm_vm_set_pte_keep(void *pgd, uint64_t vaddr)
         *pte |= RV_PTE_KEEP;
 }
 
+/* ── 用户地址空间生命周期钩子（实现在 kernel/mm/riscv64/vmm.c）────── */
+
+/* RISC-V 用户 PGD 必须包含内核高半区映射，否则 trap 时 stvec 不可达。 */
+extern void mm_vm_init_user_pgd(void *pgd, uint64_t pgd_phys);
+extern void mm_vm_destroy_user_space(uint64_t pgd_phys);
+extern int mm_vm_unmap_page(void *pgd, uint64_t vaddr);
+extern void mm_vm_flush_tlb_user(void);
+
 #endif /* RISCV64_MM_VM_H */

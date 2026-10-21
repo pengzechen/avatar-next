@@ -6,82 +6,12 @@
  */
 
 #include "vm_user.h"
-#include "barrier.h"
 #include "klog.h"
 #include "mm_vm.h"
 #include "pmm.h"
 #include "string.h"
 #include "types.h"
 #include "user_layout.h"
-#include "shared_page.h"
-#if ARCH_RISCV64
-#include "riscv64/satp_utils.h"
-#endif
-#if ARCH_X86_64
-#include "x86_64/mmu.h"
-#endif
-
-#if ARCH_AARCH64
-extern void destroy_uvm_4level(void *page_dir);
-#endif
-
-#if ARCH_RISCV64
-static void rv_destroy_table(uint64_t *table, int level, bool free_leaf_pages)
-{
-    for (uint32_t i = 0; i < 512U; i++) {
-        uint64_t pte = table[i];
-        if ((pte & RV_PTE_V) == 0)
-            continue;
-
-        if (rv_pte_is_leaf(pte)) {
-            if (free_leaf_pages) {
-                if ((pte & RV_PTE_KEEP) != 0) {
-                    /* 设备缓冲：页归 dma_buf/ION 句柄所有，只拆表 */
-                } else if ((pte & RV_PTE_NOFREE) == 0) {
-                    pmm_free_pages(&g_pmm, rv_pte_to_pa(pte), 1);
-                } else {
-                    shared_page_unref(rv_pte_to_pa(pte));
-                }
-            }
-            table[i] = 0;
-            continue;
-        }
-
-        uint64_t child_pa = rv_pte_to_pa(pte);
-        rv_destroy_table((uint64_t *)phys_to_virt(child_pa), level - 1, true);
-        pmm_free_pages(&g_pmm, child_pa, 1);
-        table[i] = 0;
-    }
-}
-#endif
-
-#if ARCH_X86_64
-static void x86_destroy_table(uint64_t *table, int level)
-{
-    for (uint32_t i = 0; i < 512U; i++) {
-        uint64_t pte = table[i];
-        if ((pte & PTE_PRESENT) == 0)
-            continue;
-
-        if (level == 1 || (level > 1 && (pte & PTE_HUGE))) {
-            if ((pte & PTE_KEEP) != 0) {
-                /* 设备缓冲：页归 dma_buf/ION 句柄所有，只拆表 */
-            } else if ((pte & PTE_NOFREE) == 0) {
-                pmm_free_pages(&g_pmm, x86_pte_to_pa(pte), 1);
-            } else {
-                shared_page_unref(x86_pte_to_pa(pte));
-            }
-            table[i] = 0;
-            continue;
-        }
-
-        uint64_t child_pa = x86_pte_to_pa(pte);
-        x86_destroy_table((uint64_t *)phys_to_virt(child_pa), level - 1);
-        pmm_free_pages(&g_pmm, child_pa, 1);
-        table[i] = 0;
-    }
-}
-#endif
 
 /* ── 创建用户进程页表 ──────────────────────────────────────────── */
 
@@ -99,30 +29,11 @@ uint64_t vm_create_user_process(uint64_t user_code_vaddr,
     memset(phys_to_virt(pgd_phys), 0, PAGE_SIZE);
     void *pgd = phys_to_virt(pgd_phys);
 
-#if ARCH_RISCV64
     /*
-   * RISC-V: 用户页表必须包含内核高半区映射，否则从 U 态陷入（ecall/中断/异常）
-   * 时 stvec（高地址）不可达，会在陷入路径中失联。
-   *
-   * RISC-V Sv39 虚拟地址布局：
-   *   - 内核空间起始地址 KERNEL_VMA = 0xffffffc000000000
-   *   - VA[38:30] = L1 index = (0xffffffc000000000 >> 30) & 0x1ff = 0x100 = 256
-   *
-   * 从当前内核根页表复制高半区映射（1GB 大页叶子）：
-   *   - L1[0x100]: KERNEL_VMA + 0x00000000..0x3fffffff (MMIO 高别名)
-   *   - L1[0x102]: KERNEL_VMA + 0x80000000..0xbfffffff (RAM
-   * 高别名，含内核代码/数据)
-   */
-    uint64_t *kernel_l1 = (uint64_t *)phys_to_virt(satp_read_pgd_phys());
-    uint64_t *user_l1 = (uint64_t *)pgd;
-    riscv64_copy_kernel_mappings(user_l1, kernel_l1);
-    KLOG_DEBUG(
-        "[vm_user] RISC-V kernel mappings: l1[0x%x]=0x%llx "
-        "l1[0x%x]=0x%llx l1[0x%x]=0x%llx\n",
-        RISCV64_KERNEL_L1_MMIO0_IDX, user_l1[RISCV64_KERNEL_L1_MMIO0_IDX],
-        RISCV64_KERNEL_L1_MMIO1_IDX, user_l1[RISCV64_KERNEL_L1_MMIO1_IDX],
-        RISCV64_KERNEL_L1_RAM_IDX, user_l1[RISCV64_KERNEL_L1_RAM_IDX]);
-#endif
+     * 架构要求的内核映射注入（RISC-V/x86 复制内核高半区，AArch64 为空操作）。
+     * 具体实现在 kernel/mm/<arch>/vmm.c，根目录不出现架构条件编译。
+     */
+    mm_vm_init_user_pgd(pgd, pgd_phys);
 
     KLOG_DEBUG("[vm_user] Creating user process page table:\n");
     KLOG_DEBUG("[vm_user]   code (kernel): 0x%llx - 0x%llx (size=0x%llx)\n",
@@ -217,41 +128,8 @@ void vm_destroy_user_process(uint64_t pgd_phys)
     KLOG_DEBUG("[vm_user] Destroying user process page table: PGD=0x%llx\n",
                pgd_phys);
 
-#if ARCH_AARCH64
-    destroy_uvm_4level(phys_to_virt(pgd_phys));
-    return;
-#elif ARCH_RISCV64
-    uint64_t *root = (uint64_t *)phys_to_virt(pgd_phys);
-
-    /* 只释放用户半区。高半区 L1[0x100..] 是从内核页表复制的共享映射。 */
-    for (uint32_t i = 0; i < RISCV64_KERNEL_L1_MMIO0_IDX; i++) {
-        uint64_t pte = root[i];
-        if ((pte & RV_PTE_V) == 0)
-            continue;
-        if (rv_pte_is_leaf(pte)) {
-            pmm_free_pages(&g_pmm, rv_pte_to_pa(pte), 1);
-            root[i] = 0;
-            continue;
-        }
-        uint64_t child_pa = rv_pte_to_pa(pte);
-        rv_destroy_table((uint64_t *)phys_to_virt(child_pa), 1, true);
-        pmm_free_pages(&g_pmm, child_pa, 1);
-        root[i] = 0;
-    }
-#elif ARCH_X86_64
-    uint64_t *pml4 = (uint64_t *)phys_to_virt(pgd_phys);
-    for (uint32_t i = 0; i < X86_PML4_KERNEL_START; i++) {
-        uint64_t pte = pml4[i];
-        if ((pte & PTE_PRESENT) == 0)
-            continue;
-        uint64_t child_pa = x86_pte_to_pa(pte);
-        x86_destroy_table((uint64_t *)phys_to_virt(child_pa), 3);
-        pmm_free_pages(&g_pmm, child_pa, 1);
-        pml4[i] = 0;
-    }
-#endif
-
-    pmm_free_pages(&g_pmm, pgd_phys, 1);
+    /* 整棵页表、leaf 页与共享引用都由架构钩子回收（含 PGD 自身）。 */
+    mm_vm_destroy_user_space(pgd_phys);
 }
 
 uint64_t vm_unmap_user_range(uint64_t pgd_phys, uint64_t vaddr, uint64_t size)
@@ -268,53 +146,12 @@ uint64_t vm_unmap_user_range(uint64_t pgd_phys, uint64_t vaddr, uint64_t size)
     void *pgd = phys_to_virt(pgd_phys);
 
     for (uint64_t va = start; va < end; va += PAGE_SIZE) {
-#if ARCH_AARCH64
-        if (mm_vm_get_paddr(pgd, va) != 0) {
-            memory_free_page(pgd, va);
+        if (mm_vm_unmap_page(pgd, va))
             freed++;
-        }
-#elif ARCH_RISCV64
-        uint64_t *pte = rv_walk_l0_pte(pgd, va, false);
-        if (pte && ((*pte & RV_PTE_V) != 0) && rv_pte_is_leaf(*pte)) {
-            if ((*pte & RV_PTE_KEEP) != 0) {
-                /* 设备缓冲：页归 dma_buf/ION 句柄所有，只拆映射 */
-            } else if ((*pte & RV_PTE_NOFREE) == 0) {
-                pmm_free_pages(&g_pmm, rv_pte_to_pa(*pte), 1);
-            } else {
-                shared_page_unref(rv_pte_to_pa(*pte));
-            }
-            *pte = 0;
-            freed++;
-        }
-#elif ARCH_X86_64
-        uint64_t *pte = x86_walk_pt(pgd, va, false);
-        if (pte && ((*pte & PTE_PRESENT) != 0)) {
-            if ((*pte & PTE_KEEP) != 0) {
-                /* 设备缓冲：页归 dma_buf/ION 句柄所有，只拆映射 */
-            } else if ((*pte & PTE_NOFREE) == 0) {
-                pmm_free_pages(&g_pmm, x86_pte_to_pa(*pte), 1);
-            } else {
-                shared_page_unref(x86_pte_to_pa(*pte));
-            }
-            *pte = 0;
-            flush_tlb_single(va);
-            freed++;
-        }
-#else
-        (void)va;
-#endif
     }
 
-#if ARCH_RISCV64
-    __asm__ volatile("sfence.vma" ::: "memory");
-#elif ARCH_AARCH64
-    /* 页表写 → TLBI → 同步。dsb 用 barrier_sync()（全系统同步），
-   * tlbi 本身是架构 TLB 失效指令，barrier API 里没有对应物。 */
-    barrier_sync(); /* 原 dsb ishst */
-    __asm__ volatile("tlbi vmalle1is" ::: "memory");
-    barrier_sync();       /* 原 dsb ish   */
-    barrier_instr_full(); /* 原 isb       */
-#endif
+    if (freed)
+        mm_vm_flush_tlb_user();
 
     return freed;
 }

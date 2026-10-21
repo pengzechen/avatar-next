@@ -229,30 +229,8 @@ int task_execve(const char *pathname, uint8_t *file_data, uint64_t file_size,
     pgd = phys_to_virt(pgd_phys);
     memset(pgd, 0, PAGE_SIZE);
 
-    /* 2. 复制内核高半区映射（架构特定） */
-#if ARCH_X86_64
-    {
-        extern uint64_t g_kernel_pgd_phys;
-        uint64_t *kernel_pml4 = (uint64_t *)phys_to_virt(g_kernel_pgd_phys);
-        x86_copy_kernel_mappings((uint64_t *)pgd, kernel_pml4);
-        KLOG_DEBUG(
-            "[exec] x86_64 copied kernel PML4[%u..%u] to user PGD=0x%llx\n",
-            X86_PML4_KERNEL_START, X86_PML4_ENTRIES - 1U, pgd_phys);
-    }
-#endif
-#if ARCH_RISCV64
-    {
-        uint64_t *kernel_l1 = (uint64_t *)phys_to_virt(satp_read_pgd_phys());
-        uint64_t *user_l1 = (uint64_t *)pgd;
-        riscv64_copy_kernel_mappings(user_l1, kernel_l1);
-        KLOG_DEBUG(
-            "[exec] RISC-V kernel mappings: l1[0x%x]=0x%llx l1[0x%x]=0x%llx l1[0x%x]=0x%llx\n",
-            RISCV64_KERNEL_L1_MMIO0_IDX, user_l1[RISCV64_KERNEL_L1_MMIO0_IDX],
-            RISCV64_KERNEL_L1_MMIO1_IDX, user_l1[RISCV64_KERNEL_L1_MMIO1_IDX],
-            RISCV64_KERNEL_L1_RAM_IDX, user_l1[RISCV64_KERNEL_L1_RAM_IDX]);
-    }
-#endif
-    /* AArch64: TTBR0/TTBR1 硬件分割，无需复制内核映射 */
+    /* 2. 注入架构要求的内核映射（AArch64 为空操作） */
+    mm_vm_init_user_pgd(pgd, pgd_phys);
 
     /* 3. 加载主程序 ELF 段 + RELA 重定位 */
     rc = elf_image_load(file_data, file_size, pgd, &info);

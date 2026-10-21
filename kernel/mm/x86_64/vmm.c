@@ -194,3 +194,89 @@ void mm_vm_copy_to_uva(void *pgd, uint64_t user_vaddr, uint64_t src_paddr,
         left -= copy_size;
     }
 }
+
+/* ── 用户地址空间生命周期（架构无关层经 mm_vm.h 调用）────────────── */
+
+extern uint64_t g_kernel_pgd_phys;
+
+static void x86_destroy_table(uint64_t *table, int level)
+{
+    for (uint32_t i = 0; i < 512U; i++) {
+        uint64_t pte = table[i];
+        if ((pte & PTE_PRESENT) == 0)
+            continue;
+
+        if (level == 1 || (level > 1 && (pte & PTE_HUGE))) {
+            if ((pte & PTE_KEEP) != 0) {
+                /* 设备缓冲：页归 dma_buf/ION 句柄所有，只拆表 */
+            } else if ((pte & PTE_NOFREE) == 0) {
+                pmm_free_pages(&g_pmm, x86_pte_to_pa(pte), 1);
+            } else {
+                shared_page_unref(x86_pte_to_pa(pte));
+            }
+            table[i] = 0;
+            continue;
+        }
+
+        uint64_t child_pa = x86_pte_to_pa(pte);
+        x86_destroy_table((uint64_t *)phys_to_virt(child_pa), level - 1);
+        pmm_free_pages(&g_pmm, child_pa, 1);
+        table[i] = 0;
+    }
+}
+
+void mm_vm_init_user_pgd(void *pgd, uint64_t pgd_phys)
+{
+    if (g_kernel_pgd_phys == 0) {
+        KLOG_ERROR("[vm_user] g_kernel_pgd_phys is not initialized\n");
+        return;
+    }
+
+    uint64_t *kernel_pml4 = (uint64_t *)phys_to_virt(g_kernel_pgd_phys);
+    x86_copy_kernel_mappings((uint64_t *)pgd, kernel_pml4);
+    KLOG_DEBUG(
+        "[vm_user] x86_64 copied kernel PML4[%u..%u] to user PGD=0x%llx\n",
+        X86_PML4_KERNEL_START, X86_PML4_ENTRIES - 1U, pgd_phys);
+}
+
+void mm_vm_destroy_user_space(uint64_t pgd_phys)
+{
+    if (pgd_phys == 0)
+        return;
+
+    uint64_t *pml4 = (uint64_t *)phys_to_virt(pgd_phys);
+    for (uint32_t i = 0; i < X86_PML4_KERNEL_START; i++) {
+        uint64_t pte = pml4[i];
+        if ((pte & PTE_PRESENT) == 0)
+            continue;
+        uint64_t child_pa = x86_pte_to_pa(pte);
+        x86_destroy_table((uint64_t *)phys_to_virt(child_pa), 3);
+        pmm_free_pages(&g_pmm, child_pa, 1);
+        pml4[i] = 0;
+    }
+
+    pmm_free_pages(&g_pmm, pgd_phys, 1);
+}
+
+int mm_vm_unmap_page(void *pgd, uint64_t vaddr)
+{
+    uint64_t *pte = x86_walk_pt(pgd, vaddr, false);
+    if (!pte || ((*pte & PTE_PRESENT) == 0))
+        return 0;
+
+    if ((*pte & PTE_KEEP) != 0) {
+        /* 设备缓冲：页归 dma_buf/ION 句柄所有，只拆映射 */
+    } else if ((*pte & PTE_NOFREE) == 0) {
+        pmm_free_pages(&g_pmm, x86_pte_to_pa(*pte), 1);
+    } else {
+        shared_page_unref(x86_pte_to_pa(*pte));
+    }
+    *pte = 0;
+    flush_tlb_single(vaddr);
+    return 1;
+}
+
+void mm_vm_flush_tlb_user(void)
+{
+    /* mm_vm_unmap_page() 已经逐页 invlpg，不需要额外的全刷。 */
+}

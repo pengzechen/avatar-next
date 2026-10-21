@@ -423,18 +423,8 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
         void *parent_pgd_virt = phys_to_virt((uint64_t)parent->pgd);
         memset(child_pgd_virt, 0, PAGE_SIZE);
 
-#if ARCH_X86_64
-        x86_copy_kernel_mappings((uint64_t *)child_pgd_virt,
-                                 (uint64_t *)parent_pgd_virt);
-#endif
-#if ARCH_RISCV64
-        {
-            uint64_t *child_l1 = (uint64_t *)child_pgd_virt;
-            uint64_t *kernel_l1 =
-                (uint64_t *)phys_to_virt(satp_read_pgd_phys());
-            riscv64_copy_kernel_mappings(child_l1, kernel_l1);
-        }
-#endif
+        /* 子进程 PGD 同样需要架构要求的内核映射。 */
+        mm_vm_init_user_pgd(child_pgd_virt, child_pgd_phys);
 
         bool clone_copy_ok = true;
 

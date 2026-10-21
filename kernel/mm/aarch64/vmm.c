@@ -2,6 +2,7 @@
 #include "types.h"
 #include "klog.h"
 #include "assert.h"
+#include "barrier.h"
 #include "pmm.h"
 #include "mm_vm.h"
 #include "aarch64/mmu.h"
@@ -584,4 +585,38 @@ int32_t memory_copy_uvm_4level(void *dst_pgd, void *src_pgd)
     }
 
     return 0;
+}
+
+/* ── 用户地址空间生命周期（架构无关层经 mm_vm.h 调用）────────────── */
+
+void mm_vm_init_user_pgd(void *pgd, uint64_t pgd_phys)
+{
+    (void)pgd;
+    (void)pgd_phys;
+    /* TTBR0/TTBR1 硬件分割：用户页表不包含内核映射。 */
+}
+
+void mm_vm_destroy_user_space(uint64_t pgd_phys)
+{
+    if (pgd_phys == 0)
+        return;
+    destroy_uvm_4level(phys_to_virt(pgd_phys));
+}
+
+int mm_vm_unmap_page(void *pgd, uint64_t vaddr)
+{
+    if (mm_vm_get_paddr(pgd, vaddr) == 0)
+        return 0;
+
+    memory_free_page(pgd, vaddr);
+    return 1;
+}
+
+void mm_vm_flush_tlb_user(void)
+{
+    /* 页表写 → TLBI → 同步。tlbi 是架构指令，barrier API 里没有对应物。 */
+    barrier_sync(); /* 原 dsb ishst */
+    __asm__ volatile("tlbi vmalle1is" ::: "memory");
+    barrier_sync();       /* 原 dsb ish   */
+    barrier_instr_full(); /* 原 isb       */
 }

@@ -14,6 +14,9 @@
  * @user_stack_top: 用户栈顶虚拟地址
  * @user_stack_size: 用户栈大小（字节）
  *
+ * 架构要求的用户 PGD 内核映射（RISC-V/x86 高半区、AArch64 无）由
+ * mm_vm_init_user_pgd() 在内部注入；调用方不要再自己复制。
+ *
  * 返回：页表基址（物理地址），失败返回 0
  */
 uint64_t vm_create_user_process(uint64_t user_code_start,
@@ -24,6 +27,9 @@ uint64_t vm_create_user_process(uint64_t user_code_start,
 /**
  * vm_destroy_user_process - 销毁用户进程页表
  * @pgd_phys: 页表基址（物理地址）
+ *
+ * 整棵页表、leaf 页和共享页引用由架构钩子 mm_vm_destroy_user_space()
+ * 回收，包括 PGD 自身。
  */
 void vm_destroy_user_process(uint64_t pgd_phys);
 

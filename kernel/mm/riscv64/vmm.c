@@ -181,3 +181,104 @@ void mm_vm_copy_to_uva(void *pgd, uint64_t user_vaddr, uint64_t src_paddr,
         left -= chunk;
     }
 }
+
+/* ── 用户地址空间生命周期（架构无关层经 mm_vm.h 调用）────────────── */
+
+static void rv_destroy_table(uint64_t *table, int level, bool free_leaf_pages)
+{
+    for (uint32_t i = 0; i < 512U; i++) {
+        uint64_t pte = table[i];
+        if ((pte & RV_PTE_V) == 0)
+            continue;
+
+        if (rv_pte_is_leaf(pte)) {
+            if (free_leaf_pages) {
+                if ((pte & RV_PTE_KEEP) != 0) {
+                    /* 设备缓冲：页归 dma_buf/ION 句柄所有，只拆表 */
+                } else if ((pte & RV_PTE_NOFREE) == 0) {
+                    pmm_free_pages(&g_pmm, rv_pte_to_pa(pte), 1);
+                } else {
+                    shared_page_unref(rv_pte_to_pa(pte));
+                }
+            }
+            table[i] = 0;
+            continue;
+        }
+
+        uint64_t child_pa = rv_pte_to_pa(pte);
+        rv_destroy_table((uint64_t *)phys_to_virt(child_pa), level - 1, true);
+        pmm_free_pages(&g_pmm, child_pa, 1);
+        table[i] = 0;
+    }
+}
+
+void mm_vm_init_user_pgd(void *pgd, uint64_t pgd_phys)
+{
+    (void)pgd_phys;
+
+    /*
+     * 用户页表必须包含内核高半区映射，否则从 U 态陷入（ecall/中断/异常）
+     * 时 stvec（高地址）不可达，会在陷入路径中失联。
+     *
+     * 从当前内核根页表复制高半区 L1（1GB 大页叶子）：
+     *   L1[0x100]: KERNEL_VMA + 0x00000000..0x3fffffff (MMIO 高别名)
+     *   L1[0x102]: KERNEL_VMA + 0x80000000..0xbfffffff (RAM 高别名)
+     */
+    uint64_t *kernel_l1 = (uint64_t *)phys_to_virt(satp_read_pgd_phys());
+    uint64_t *user_l1 = (uint64_t *)pgd;
+    riscv64_copy_kernel_mappings(user_l1, kernel_l1);
+    KLOG_DEBUG(
+        "[vm_user] RISC-V kernel mappings: l1[0x%x]=0x%llx "
+        "l1[0x%x]=0x%llx l1[0x%x]=0x%llx\n",
+        RISCV64_KERNEL_L1_MMIO0_IDX, user_l1[RISCV64_KERNEL_L1_MMIO0_IDX],
+        RISCV64_KERNEL_L1_MMIO1_IDX, user_l1[RISCV64_KERNEL_L1_MMIO1_IDX],
+        RISCV64_KERNEL_L1_RAM_IDX, user_l1[RISCV64_KERNEL_L1_RAM_IDX]);
+}
+
+void mm_vm_destroy_user_space(uint64_t pgd_phys)
+{
+    if (pgd_phys == 0)
+        return;
+
+    uint64_t *root = (uint64_t *)phys_to_virt(pgd_phys);
+
+    /* 只释放用户半区。高半区 L1[0x100..] 是从内核页表复制的共享映射。 */
+    for (uint32_t i = 0; i < RISCV64_KERNEL_L1_MMIO0_IDX; i++) {
+        uint64_t pte = root[i];
+        if ((pte & RV_PTE_V) == 0)
+            continue;
+        if (rv_pte_is_leaf(pte)) {
+            pmm_free_pages(&g_pmm, rv_pte_to_pa(pte), 1);
+            root[i] = 0;
+            continue;
+        }
+        uint64_t child_pa = rv_pte_to_pa(pte);
+        rv_destroy_table((uint64_t *)phys_to_virt(child_pa), 1, true);
+        pmm_free_pages(&g_pmm, child_pa, 1);
+        root[i] = 0;
+    }
+
+    pmm_free_pages(&g_pmm, pgd_phys, 1);
+}
+
+int mm_vm_unmap_page(void *pgd, uint64_t vaddr)
+{
+    uint64_t *pte = rv_walk_l0_pte(pgd, vaddr, false);
+    if (!pte || ((*pte & RV_PTE_V) == 0) || !rv_pte_is_leaf(*pte))
+        return 0;
+
+    if ((*pte & RV_PTE_KEEP) != 0) {
+        /* 设备缓冲：页归 dma_buf/ION 句柄所有，只拆映射 */
+    } else if ((*pte & RV_PTE_NOFREE) == 0) {
+        pmm_free_pages(&g_pmm, rv_pte_to_pa(*pte), 1);
+    } else {
+        shared_page_unref(rv_pte_to_pa(*pte));
+    }
+    *pte = 0;
+    return 1;
+}
+
+void mm_vm_flush_tlb_user(void)
+{
+    __asm__ volatile("sfence.vma" ::: "memory");
+}

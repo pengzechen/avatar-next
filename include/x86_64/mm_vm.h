@@ -45,4 +45,12 @@ static inline void mm_vm_set_pte_keep(void *pgd, uint64_t vaddr)
         *pte |= PTE_KEEP;
 }
 
+/* ── 用户地址空间生命周期钩子（实现在 kernel/mm/x86_64/vmm.c）────── */
+
+/* x86 用户 PML4 必须包含内核高半区映射，否则 SYSCALL/中断会三重错误。 */
+extern void mm_vm_init_user_pgd(void *pgd, uint64_t pgd_phys);
+extern void mm_vm_destroy_user_space(uint64_t pgd_phys);
+extern int mm_vm_unmap_page(void *pgd, uint64_t vaddr);
+extern void mm_vm_flush_tlb_user(void);
+
 #endif /* X86_64_MM_VM_H */

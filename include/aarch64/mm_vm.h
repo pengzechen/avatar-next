@@ -52,4 +52,12 @@ static inline void mm_vm_set_pte_keep(void *pgd, uint64_t vaddr)
     memory_set_pte_keep(pgd, vaddr);
 }
 
+/* ── 用户地址空间生命周期钩子（实现在 kernel/mm/aarch64/vmm.c）────── */
+
+/* AArch64 用 TTBR0/TTBR1 硬件分割内核/用户空间，无需复制内核映射。 */
+extern void mm_vm_init_user_pgd(void *pgd, uint64_t pgd_phys);
+extern void mm_vm_destroy_user_space(uint64_t pgd_phys);
+extern int mm_vm_unmap_page(void *pgd, uint64_t vaddr);
+extern void mm_vm_flush_tlb_user(void);
+
 #endif /* AARCH64_MM_VM_H */

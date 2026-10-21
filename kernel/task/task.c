@@ -484,80 +484,17 @@ task_t *process_create(const char *name, uint64_t user_entry,
     task->fs_base = 0;
     task->ctid_ptr = 0;
 
-    /* 创建独立的用户页表 */
-#if ARCH_AARCH64
-    task->pgd = (uint64_t *)vm_create_user_process(
+    /* 创建独立的用户页表；内核映射注入在 vm_create_user_process 内部完成 */
+    uint64_t pgd_phys = vm_create_user_process(
         user_entry, user_code_size, user_sp, task->user_stack_size);
-    if (task->pgd == NULL) {
+    if (pgd_phys == 0) {
         KLOG_ERROR("[task] Failed to create user page table for '%s'\n", name);
         free_task_slot(task);
         return NULL;
     }
-
-    /* 设置用户入口地址为用户虚拟地址（USER_CODE_BASE） */
+    task->pgd = (uint64_t *)pgd_phys;
     task->user_entry = USER_CODE_BASE;
-
-    KLOG_DEBUG("[task] Created page table for '%s': PGD=0x%llx\n", name,
-               (uint64_t)task->pgd);
-#elif ARCH_RISCV64
-    {
-        uint64_t pgd_phys = vm_create_user_process(
-            user_entry, user_code_size, user_sp, task->user_stack_size);
-        if (pgd_phys == 0) {
-            KLOG_ERROR("[task] Failed to create user page table for '%s'\n",
-                       name);
-            free_task_slot(task);
-            return NULL;
-        }
-
-        /*
-     * 将内核高地址别名的 L2 条目（[0x100] 和 [0x102]）移植到用户 PGD。
-     * 这样 sret 到用户模式后，发生 trap 时 CPU 仍可通过
-     *   stvec = 0xffffffc0xxxxxxxx → L2[0x102]（1GB giga-page，无 PTE_U）
-     * 到达内核异常向量，而用户无法访问该区域（PTE_U=0）。
-     */
-        uint64_t *new_pgd = (uint64_t *)phys_to_virt(pgd_phys);
-        uint64_t *kern_pgd = (uint64_t *)phys_to_virt(g_kernel_pgd_phys);
-        riscv64_copy_kernel_mappings(new_pgd, kern_pgd);
-
-        task->pgd = (uint64_t *)pgd_phys;
-        task->user_entry = USER_CODE_BASE;
-
-        KLOG_DEBUG("[task] Created RISC-V user PGD=0x%llx for '%s'\n", pgd_phys,
-                   name);
-    }
-#elif ARCH_X86_64
-    {
-        uint64_t pgd_phys = vm_create_user_process(
-            user_entry, user_code_size, user_sp, task->user_stack_size);
-        if (pgd_phys == 0) {
-            KLOG_ERROR("[task] Failed to create user page table for '%s'\n",
-                       name);
-            free_task_slot(task);
-            return NULL;
-        }
-
-        /*
-     * 将内核高半区 PML4[256..511] 复制到用户页表。
-     * 用户态触发 SYSCALL/中断时 CPU 沿内核虚拟地址跳转，
-     * 若用户 PML4 中无对应映射则立即触发三重错误。
-     */
-        uint64_t *kernel_pml4 = (uint64_t *)phys_to_virt(g_kernel_pgd_phys);
-        uint64_t *user_pml4 = (uint64_t *)phys_to_virt(pgd_phys);
-        x86_copy_kernel_mappings(user_pml4, kernel_pml4);
-
-        task->pgd = (uint64_t *)pgd_phys;
-        task->user_entry = USER_CODE_BASE;
-
-        KLOG_DEBUG("[task] Created x86_64 user PGD=0x%llx for '%s'\n", pgd_phys,
-                   name);
-    }
-#else
-    /* 其他架构暂时使用共享内核页表 */
-    task->pgd = NULL;
-    task->user_entry = user_entry;
-    KLOG_DEBUG("[task] Using shared kernel page table for '%s'\n", name);
-#endif
+    KLOG_DEBUG("[task] Created user PGD=0x%llx for '%s'\n", pgd_phys, name);
 
     list_node_init(&task->run_node);
     list_node_init(&task->wait_node);
