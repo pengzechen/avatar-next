@@ -29,7 +29,9 @@ concurrency:
 jobs:
   hosted-smoke:
     name: hosted smoke (build/boot/kernel/apps)
-    runs-on: ubuntu-latest
+    # 固定 24.04：ubuntu-latest 从 2026-10-19 起开始迁到 Ubuntu 26，
+    # 包名/工具链行为可能变；CI 需要可复现的镜像版本。
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
