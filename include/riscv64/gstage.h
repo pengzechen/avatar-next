@@ -34,20 +34,27 @@
 #ifndef RISCV64_GSTAGE_H
 #define RISCV64_GSTAGE_H
 
+#include "guest_loader.h" /* GUEST_LINUX_MEM_BASE/SIZE */
+#include "pte.h"
 #include "types.h"
 
 /* ── Sv39x4 页表几何 ──────────────────────────────────────── */
-#define GSTAGE_ROOT_ENTRIES 2048 /* 16 KiB / 8：每项覆盖 1 GiB  */
-#define GSTAGE_L1_ENTRIES   512  /* 每项覆盖 2 MiB              */
-#define GSTAGE_L0_ENTRIES   512  /* 每项覆盖 4 KiB              */
+/* hgatp 要求根表 16 KiB 对齐；PPN[1:0] 被硬件忽略，表必须真是 16 KiB。 */
+#define GSTAGE_ROOT_SIZE    (PAGE_SIZE * 4)
+#define GSTAGE_ROOT_ENTRIES (GSTAGE_ROOT_SIZE / 8) /* 每项覆盖 1 GiB */
+#define GSTAGE_L1_ENTRIES   RV_PT_ENTRIES          /* 每项覆盖 2 MiB */
+#define GSTAGE_L0_ENTRIES   RV_PT_ENTRIES          /* 每项覆盖 4 KiB */
 
-#define GSTAGE_PAGE_SIZE  4096ULL
-#define GSTAGE_BLOCK_SIZE (2ULL * 1024 * 1024) /* 一张 L0 表覆盖的粒度 */
+/* 低 4GiB 需要 4 张 L1 表；root[0..GSTAGE_L1_TABLES-1]。 */
+#define GSTAGE_L1_TABLES 4
 
-/* hgatp 字段（MODE=8 即 Sv39x4；数值形式，见下方警告）*/
-#define HGATP_MODE_SV39X4 (8ULL << 60)
-#define HGATP_VMID_SHIFT  44
-#define HGATP_PPN_MASK    ((1ULL << 44) - 1)
+#define GSTAGE_PAGE_SIZE  PAGE_SIZE
+#define GSTAGE_BLOCK_SIZE RV_LEVEL_SIZE(1) /* 一张 L0 表覆盖 2 MiB */
+
+/* hgatp 字段（MODE=8 即 Sv39x4；CSR 访问必须用数值，见 riscv64/csr.h）*/
+#define HGATP_MODE_SV39X4 RV_HGATP_MODE_SV39X4
+#define HGATP_VMID_SHIFT  RV_HGATP_VMID_SHIFT
+#define HGATP_PPN_MASK    RV_HGATP_PPN_MASK
 
 /* ── 多 VM 上限 ───────────────────────────────────────────── */
 /* 静态表按 slot 索引；include/vmm/vmm.h 里有 _Static_assert(MAX_VMS <= GSTAGE_MAX_VMS) */
@@ -55,17 +62,27 @@
 
 /*
  * 每 VM 最多几张 L0 表 = guest RAM 窗口 / 2 MiB。
- * 192 MiB / 2 MiB = 96 —— 与 GUEST_LINUX_MEM_SIZE 对应，
- * guest_loader 那边有 _Static_assert 钉住这个关系（与 aarch64 同款）。
+ * 直接从 guest 布局算（192 MiB / 2 MiB = 96），guest 尺寸变了不用再手改。
+ * 转 int 是为了让 gstage.c 里的 `for (int i = 0; i < ...; i++)` 不触发
+ * -Wsign-compare。
  */
-#define GSTAGE_MAX_L0_TABLES 96
+#define GSTAGE_MAX_L0_TABLES \
+    ((int)(GUEST_LINUX_MEM_SIZE / GSTAGE_BLOCK_SIZE))
 
-/*
- * ⚠️ hgatp 一律用**数值** CSR 地址 0x680 访问（本文件只定义常量，实际读写
- * 在 gstage.c 里用内联汇编）。原因见 hext.h 顶部：-march=rv64gc 下汇编器
- * 会把 `hgatp` 这个名字静默映射到 VS 级的编号，编译全绿、运行期才炸。
- */
-#define CSR_HGATP_NUM 0x680
+_Static_assert(GSTAGE_ROOT_SIZE % PAGE_SIZE == 0,
+               "Sv39x4 根表必须按 4KiB 页对齐");
+_Static_assert(GSTAGE_ROOT_ENTRIES == 2048,
+               "Sv39x4 根表应为 16KiB / 8B = 2048 项");
+_Static_assert(GSTAGE_MAX_L0_TABLES * GSTAGE_BLOCK_SIZE ==
+                   GUEST_LINUX_MEM_SIZE,
+               "G-stage L0 表数量必须正好覆盖 guest RAM 窗口");
+_Static_assert(GUEST_LINUX_MEM_BASE % GSTAGE_BLOCK_SIZE == 0,
+               "guest RAM 基址必须按 2MiB 对齐（ram_blk_index 的前提）");
+_Static_assert(GUEST_LINUX_MEM_SIZE % GSTAGE_BLOCK_SIZE == 0,
+               "guest RAM 大小必须是 2MiB 的整数倍");
+_Static_assert(GUEST_LINUX_MEM_BASE + GUEST_LINUX_MEM_SIZE <=
+                   (uint64_t)GSTAGE_L1_TABLES * RV_LEVEL_SIZE(2),
+               "guest RAM 必须落在 G-stage 覆盖的低 4GiB 内");
 
 /* ── 每 VM 的 G-stage 上下文 ───────────────────────────────── */
 typedef struct gstage_ctx {
@@ -75,8 +92,8 @@ typedef struct gstage_ctx {
     uint64_t ram_size;
     uint64_t ram_end; /* = ram_base + ram_size           */
     uint64_t hgatp;   /* hgatp 的值（MODE|VMID|root_ppn）*/
-    uint64_t *root;   /* → 静态 g_gstage_root[slot]      */
-    uint64_t *l1[4];  /* → 静态 g_gstage_l1[slot][i]     */
+    uint64_t *root; /* → 静态 g_gstage_root[slot]      */
+    uint64_t *l1[GSTAGE_L1_TABLES]; /* → 静态 g_gstage_l1[slot][i] */
     uint64_t
         *l0_tbl[GSTAGE_MAX_L0_TABLES]; /* +1 = 该 2MiB 块已有表；动态分配 */
     uint64_t nr_premap;                /* 统计：加载期预映射页数           */

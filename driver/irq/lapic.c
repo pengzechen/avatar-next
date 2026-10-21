@@ -12,15 +12,15 @@
 
 #include "lapic.h"
 #include "x86_64/io.h"
+#include "x86_64/mem_layout.h" /* X86_KERNEL_VMA_OFF（高半区偏移唯一来源）*/
 #include "klog.h"
 #include "../timer/timer.h" /* TIMER_FREQUENCY_HZ = g_timer_cfg_freq_hz */
 
 /* ── LAPIC 虚拟基址 ─────────────────────────────────────────────
  * boot.S 建立了 identity + high-half 两份映射（1GB huge page），
- * 物理 0xFEE00000 对应虚拟 PHYS_OFFSET + 0xFEE00000。
+ * 物理 0xFEE00000 对应虚拟 X86_KERNEL_VMA_OFF + 0xFEE00000。
  */
-#define PHYS_OFFSET 0xffff800000000000UL
-#define LAPIC_VIRT  (PHYS_OFFSET + LAPIC_BASE_PHYS)
+#define LAPIC_VIRT (X86_KERNEL_VMA_OFF + LAPIC_BASE_PHYS)
 
 /* ── 寄存器访问 ──────────────────────────────────────────────── */
 

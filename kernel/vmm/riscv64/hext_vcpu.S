@@ -38,6 +38,8 @@
  *     sd    t0, r[10](a0)  → 保存 guest a0
  */
 
+#include "riscv64/csr.h"
+
 /* vcpu_t 字段偏移 */
 #define VCPU_R0         0
 #define VCPU_VSEPC      256
@@ -58,16 +60,7 @@
 
 /* host_ctx 字段偏移（VCPU_HOSTCTX = 344，host_ctx[0..15]）*/
 
-/* H-extension CSR 数值地址（-march=rv64gc 汇编器不识别符号名） */
-#define CSR_HSTATUS     0x600
-#define CSR_VSSTATUS    0x200
-#define CSR_VSIE        0x204
-#define CSR_VSTVEC      0x205
-#define CSR_VSSCRATCH   0x240
-#define CSR_VSEPC       0x241
-#define CSR_VSATP       0x280
-#define CSR_HTVAL       0x643
-#define CSR_HTINST      0x64a   /* 触发陷阱的那条指令（htval 是 GPA！）*/
+/* H-extension CSR 数值地址见 riscv64/csr.h（汇编器不识别符号名） */
 #define HCTX_RA         344
 #define HCTX_S0         352
 #define HCTX_S1         360

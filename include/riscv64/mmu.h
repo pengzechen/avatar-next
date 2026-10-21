@@ -1,57 +1,24 @@
 #ifndef RISCV64_MMU_H
 #define RISCV64_MMU_H
 
+#include "pte.h"
 #include "types.h"
 
-/* ── 页表常量 ───────────────────────────────────────────────────── */
-
-#define RV_PAGE_SIZE  4096ULL
-#define RV_PT_ENTRIES 512ULL
-
-/* ── Sv39 PTE 标志位 ───────────────────────────────────────────── */
-
-#define RV_PTE_V      (1ULL << 0) /* Valid */
-#define RV_PTE_R      (1ULL << 1) /* Read */
-#define RV_PTE_W      (1ULL << 2) /* Write */
-#define RV_PTE_X      (1ULL << 3) /* Execute */
-#define RV_PTE_U      (1ULL << 4) /* User */
-#define RV_PTE_A      (1ULL << 6) /* Accessed */
-#define RV_PTE_D      (1ULL << 7) /* Dirty */
-#define RV_PTE_NOFREE (1ULL << 8) /* RSW: leaf maps external memory */
-/*
- * RV_PTE_KEEP —— 设备缓冲（ION / dma-buf）映射进用户态时标这一位。
- * unmap 只拆页表项：不释放、也不碰 shared_page 引用计数
- * （NOFREE 与 KEEP 的区别见 include/aarch64/mmu.h 里那段说明）。
- * RSW 两位（8、9）由 RISC-V 规范保留给软件，硬件忽略。
- */
-#define RV_PTE_KEEP     (1ULL << 9) /* RSW: 设备缓冲，unmap 不释放页 */
-#define RV_PTE_PPN_MASK ((1ULL << 44) - 1ULL)
-
-/* ── 平台特定 PTE 内存属性 ─────────────────────────────────────── */
-
-#if defined(PLATFORM_SG2002)
-#define RV_PTE_ATTR_NORMAL  ((7ULL << 60))
-#define RV_PTE_ATTR_IOREMAP ((1ULL << 63) | (1ULL << 60))
-#else
-#define RV_PTE_ATTR_NORMAL  0ULL
-#define RV_PTE_ATTR_IOREMAP 0ULL
-#endif
-
-/* ── PTE 工具函数（纯位运算，无外部依赖）──────────────────────── */
+/* ── PTE 工具函数（定义在 pte.h；这里保留兼容包装）──────────────── */
 
 static inline uint64_t rv_pte_to_pa(uint64_t pte)
 {
-    return ((pte >> 10) & RV_PTE_PPN_MASK) << 12;
+    return RV_PTE_TO_PA(pte);
 }
 
 static inline uint64_t rv_make_table_pte(uint64_t pa)
 {
-    return ((pa >> 12) << 10) | RV_PTE_V;
+    return RV_PTE_FROM_PA(pa, RV_PTE_V);
 }
 
 static inline bool rv_pte_is_leaf(uint64_t pte)
 {
-    return (pte & (RV_PTE_R | RV_PTE_W | RV_PTE_X)) != 0;
+    return RV_PTE_IS_LEAF(pte);
 }
 
 /* ── MMU 初始化（在 mmu.S 中实现）───────────────────────────────── */

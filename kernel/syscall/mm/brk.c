@@ -100,7 +100,7 @@ void *sys_brk(void *addr)
             return (void *)current_brk; /* 返回旧地址表示失败 */
         }
         memset(phys_to_virt(pa), 0, PAGE_SIZE);
-        if (mm_vm_map_pages(pgd, va, pa, 1, 0) != 0) {
+        if (mm_vm_map_pages(pgd, va, pa, 1, VM_PERM_USER) != 0) {
             /* Page already mapped (e.g. BSS last page overlap) — skip */
             pmm_free_pages(&g_pmm, pa, 1);
             continue;
@@ -120,7 +120,7 @@ void *sys_brk(void *addr)
                 return (void *)current_brk;
             }
             memset(phys_to_virt(pa), 0, PAGE_SIZE);
-            if (mm_vm_map_pages(pgd, va, pa, 1, 0) != 0) {
+            if (mm_vm_map_pages(pgd, va, pa, 1, VM_PERM_USER) != 0) {
                 pmm_free_pages(&g_pmm, pa, 1);
                 continue; /* 已映射：跳过 */
             }

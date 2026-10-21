@@ -69,13 +69,13 @@ uint64_t *x86_walk_pt(void *page_dir, uint64_t vaddr, bool alloc)
 
 /* ── 权限转换 ───────────────────────────────────────────────────── */
 
-uint64_t x86_perm_to_flags(uint64_t perm)
+uint64_t x86_perm_to_flags(vm_perm_t perm)
 {
-    if (perm == 1) {
+    if (perm == VM_PERM_KERNEL) {
         return PTE_PRESENT | PTE_WRITABLE | PTE_GLOBAL | PTE_NX | PTE_ACCESSED |
                PTE_DIRTY;
     }
-    if (perm == 2) {
+    if (perm == VM_PERM_KERNEL_MMIO) {
         return PTE_PRESENT | PTE_WRITABLE | PTE_PCD | PTE_PWT | PTE_NX |
                PTE_ACCESSED | PTE_DIRTY;
     }
@@ -85,7 +85,7 @@ uint64_t x86_perm_to_flags(uint64_t perm)
 /* ── 页表映射 ───────────────────────────────────────────────────── */
 
 int32_t mm_vm_map_pages(void *page_dir, uint64_t vaddr, uint64_t paddr,
-                        int32_t count, uint64_t perm)
+                        int32_t count, vm_perm_t perm)
 {
     uint64_t va = vaddr;
     uint64_t pa = paddr;

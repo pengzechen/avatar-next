@@ -1,4 +1,5 @@
 #include "asm.h"
+#include "riscv64/mem_layout.h"
 
 .section .text.boot
 
@@ -6,9 +7,9 @@
 .extern cpu_secondary_bootstrap
 .extern riscv64_boot_hartid_phys
 
-.equ RISCV64_KERNEL_VMA_OFF, 0xffffffc000000000
-.equ RISCV64_SATP_MODE_SV39, (8 << 60)
-.equ RISCV64_SECONDARY_STACK_SIZE, 16384
+.equ RISCV64_BOOT_STACK_SIZE,      0x4000
+.equ RISCV64_SECONDARY_STACK_SIZE, 0x4000
+.equ RISCV64_KERNEL_STACK_SIZE,    0x10000
 
 FUNCS(_start)
     /* OpenSBI may choose any boot hart. The first hart reaching _start becomes
@@ -39,7 +40,7 @@ FUNCS(_start)
     call    mmu_init
 
     /* 高半区偏移（与 link.ld 保持一致） */
-    li      t2, RISCV64_KERNEL_VMA_OFF
+    li      t2, RV_KERNEL_VMA_OFF
 
     /* 先清理 BSS（通过低地址别名访问物理加载区） */
     call    clear_bss
@@ -110,13 +111,13 @@ FUNCS(_riscv64_secondary_start)
     /* Reuse the BSP-built boot page table. */
     la      t0, rv_l2_root
     srli    t0, t0, 12
-    li      t1, RISCV64_SATP_MODE_SV39
+    li      t1, RV_SATP_MODE_SV39
     or      t0, t0, t1
     csrw    satp, t0
     sfence.vma
     fence.i
 
-    li      t3, RISCV64_KERNEL_VMA_OFF
+    li      t3, RV_KERNEL_VMA_OFF
 
     .option push
     .option norelax
@@ -162,7 +163,7 @@ LFUNCE(clear_bss)
 .global boot_stack_top
 
 boot_stack_bottom:
-    .space 0x4000
+    .space RISCV64_BOOT_STACK_SIZE
 boot_stack_top:
 
 .section .bss
@@ -172,13 +173,15 @@ boot_stack_top:
 .global stack_top
 
 stack_bottom:
-    .space 0x10000
+    .space RISCV64_KERNEL_STACK_SIZE
 stack_top:
 
+/* 每个从核一张栈；数量跟编译期 CONFIG_SMP_CPUS 走（cpu.c 的 bringup
+ * 循环同样以它为上限），不再写死 8 张。 */
 .align 12
 .global secondary_boot_stacks
 secondary_boot_stacks:
-    .space (8 * RISCV64_SECONDARY_STACK_SIZE)
+    .space (CONFIG_SMP_CPUS * RISCV64_SECONDARY_STACK_SIZE)
 
 .section .rodata
 .align 3

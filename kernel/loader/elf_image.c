@@ -38,7 +38,7 @@ static int elf_load_segment(void *pgd, elf64_phdr_t *phdr, uint8_t *file_data)
     KLOG_DEBUG("[elf]   vaddr: 0x%llx - 0x%llx\n", vaddr_start, vaddr_end);
     KLOG_DEBUG("[elf]   filesz: 0x%llx, memsz: 0x%llx\n", filesz, memsz);
 
-    uint64_t perm = 0; /* 默认：用户可读写可执行 */
+    vm_perm_t perm = VM_PERM_USER; /* 默认：用户可读写可执行 */
 
     seg_base_paddr = pmm_alloc_pages(&g_pmm, (uint32_t)total_pages);
     if (seg_base_paddr == 0) {

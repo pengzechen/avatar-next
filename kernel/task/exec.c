@@ -280,7 +280,7 @@ int task_execve(const char *pathname, uint8_t *file_data, uint64_t file_size,
     memset(phys_to_virt(stack_base_paddr), 0, stack_pages * PAGE_SIZE);
 
     if (mm_vm_map_pages(pgd, stack_bottom, stack_base_paddr,
-                        (int32_t)stack_pages, 0) != 0) {
+                        (int32_t)stack_pages, VM_PERM_USER) != 0) {
         KLOG_ERROR("[exec] Failed to map user stack: vaddr=0x%llx pages=%llu\n",
                    stack_bottom, stack_pages);
         pmm_free_pages(&g_pmm, stack_base_paddr, (uint32_t)stack_pages);
@@ -302,7 +302,8 @@ int task_execve(const char *pathname, uint8_t *file_data, uint64_t file_size,
             p[4] = 0x00;
             p[5] = 0x0f;
             p[6] = 0x05;
-            mm_vm_map_pages(pgd, USER_SIGRET_PAGE, sigret_pa, 1, 0);
+            mm_vm_map_pages(pgd, USER_SIGRET_PAGE, sigret_pa, 1,
+                            VM_PERM_USER);
         }
     }
 #endif

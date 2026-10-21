@@ -501,23 +501,20 @@ static int guest_read_u16(vcpu_t *vcpu, uint64_t gpa, uint16_t *out)
 /* guest 虚拟地址 → guest 物理地址（软件遍历 vsatp 指向的 Sv39/Sv48 页表）*/
 static int guest_va_to_gpa(vcpu_t *vcpu, uint64_t va, uint64_t *gpa_out)
 {
-    const uint64_t PTE_V = 1u << 0, PTE_R = 1u << 1, PTE_W = 1u << 2,
-                   PTE_X = 1u << 3;
-
     uint64_t satp = vcpu->vsatp;
     uint64_t mode = satp >> 60;
     int levels;
 
     switch (mode) {
-    case 8:
+    case RV_SATP_MODE_SV39_NUM:
         levels = 3;
-        break; /* Sv39 */
-    case 9:
+        break;
+    case RV_SATP_MODE_SV48_NUM:
         levels = 4;
-        break; /* Sv48 */
-    case 10:
+        break;
+    case RV_SATP_MODE_SV57_NUM:
         levels = 5;
-        break; /* Sv57 */
+        break;
     default:
         *gpa_out = va; /* 无页表：VA 即 GPA（bare 模式）*/
         return 1;
@@ -528,27 +525,26 @@ static int guest_va_to_gpa(vcpu_t *vcpu, uint64_t va, uint64_t *gpa_out)
         return 1;
     }
 
-    uint64_t table_gpa = (satp & ((1ULL << 44) - 1)) << 12;
+    uint64_t table_gpa = (satp & RV_SATP_PPN_MASK) << PAGE_SHIFT;
 
     for (int level = levels - 1; level >= 0; level--) {
-        uint64_t vpn = (va >> (12 + level * 9)) & 0x1FF;
+        uint64_t vpn = RV_PTE_INDEX(va, level);
         uint64_t pte;
 
         if (!guest_read_u64(vcpu, table_gpa + vpn * 8, &pte))
             return 0;
-        if ((pte & PTE_V) == 0)
+        if ((pte & RV_PTE_V) == 0)
             return 0;
-        if ((pte & PTE_W) && !(pte & PTE_R))
+        if ((pte & RV_PTE_W) && !(pte & RV_PTE_R))
             return 0; /* 保留组合 */
 
-        if (pte & (PTE_R | PTE_X)) {
+        if (pte & (RV_PTE_R | RV_PTE_X)) {
             /* 叶项：4KiB(level0) / 2MiB / 1GiB */
-            uint64_t ppn = (pte >> 10) & ((1ULL << 44) - 1);
-            uint64_t page_mask = (1ULL << (12 + level * 9)) - 1;
-            *gpa_out = (ppn << 12) | (va & page_mask);
+            uint64_t ppn = (pte >> RV_PTE_PPN_SHIFT) & RV_PTE_PPN_MASK;
+            *gpa_out = (ppn << PAGE_SHIFT) | (va & RV_LEVEL_MASK(level));
             return 1;
         }
-        table_gpa = ((pte >> 10) & ((1ULL << 44) - 1)) << 12;
+        table_gpa = RV_PTE_TO_PA(pte);
     }
     return 0;
 }
@@ -704,7 +700,8 @@ static int mmio_instruction(vcpu_t *vcpu, uint64_t *inst_out)
  */
 static inline uint64_t gstage_fault_gpa(const vcpu_t *vcpu)
 {
-    return (vcpu->htval_save << 2) | (vcpu->stval_save & 0xFFF);
+    return (vcpu->htval_save << RV_GSTAGE_HTVAL_SHIFT) |
+           (vcpu->stval_save & RV_PAGE_OFFSET_MASK);
 }
 
 /*

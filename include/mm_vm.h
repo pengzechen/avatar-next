@@ -12,17 +12,29 @@
 #include "page.h"
 #include "types.h"
 
+/*
+ * 页映射权限。三架构的 mm_vm_map_pages() 共用这套取值，禁止再传裸 0/1/2。
+ */
+typedef enum {
+    VM_PERM_USER = 0,        /* 用户态：RWX + 普通内存       */
+    VM_PERM_KERNEL = 1,      /* 内核态：RWX + 普通内存       */
+    VM_PERM_KERNEL_MMIO = 2, /* 内核态：RW + 设备/非缓存内存 */
+} vm_perm_t;
+
 /* ── 内核虚拟地址偏移（架构特定） ───────────────────────────────── */
 
 #if ARCH_AARCH64
-/* AArch64 TTBR1 高半地址 */
-#define KERNEL_VMA 0xffff000000000000ULL
+/* AArch64 TTBR1 高半地址：唯一定义在 aarch64/mem_layout.h */
+#include "aarch64/mem_layout.h"
+#define KERNEL_VMA AARCH64_KERNEL_VMA_OFF
 #elif ARCH_X86_64
-/* x86_64 高半地址空间 */
-#define KERNEL_VMA 0xffff800000000000ULL
+/* x86_64 高半地址空间：唯一定义在 x86_64/mem_layout.h */
+#include "x86_64/mem_layout.h"
+#define KERNEL_VMA X86_KERNEL_VMA_OFF
 #elif ARCH_RISCV64
-/* RISC-V Sv39 高半区内核偏移 */
-#define KERNEL_VMA 0xffffffc000000000ULL
+/* RISC-V Sv39 高半区内核偏移：唯一定义在 riscv64/mem_layout.h */
+#include "riscv64/mem_layout.h"
+#define KERNEL_VMA RV_KERNEL_VMA_OFF
 #else
 #define KERNEL_VMA 0ULL
 #endif

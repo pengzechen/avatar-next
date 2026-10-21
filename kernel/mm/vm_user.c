@@ -56,7 +56,7 @@ uint64_t vm_create_user_process(uint64_t user_code_vaddr,
             KLOG_ERROR("[vm_user] Failed to allocate code page\n");
             goto error;
         }
-        if (mm_vm_map_pages(pgd, vaddr, new_paddr, 1, 0) != 0) {
+        if (mm_vm_map_pages(pgd, vaddr, new_paddr, 1, VM_PERM_USER) != 0) {
             KLOG_ERROR("[vm_user] Failed to map user code at 0x%llx\n", vaddr);
             pmm_free_pages(&g_pmm, new_paddr, 1);
             goto error;
@@ -78,7 +78,7 @@ uint64_t vm_create_user_process(uint64_t user_code_vaddr,
                 KLOG_ERROR("[vm_user] Failed to allocate stack page\n");
                 goto error;
             }
-            if (mm_vm_map_pages(pgd, vaddr, stack_page, 1, 0) != 0) {
+            if (mm_vm_map_pages(pgd, vaddr, stack_page, 1, VM_PERM_USER) != 0) {
                 KLOG_ERROR("[vm_user] Failed to map user stack at 0x%llx\n",
                            vaddr);
                 pmm_free_pages(&g_pmm, stack_page, 1);

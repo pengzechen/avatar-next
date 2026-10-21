@@ -1,11 +1,11 @@
 /*
  * x86_64 linker script for QEMU Q35 machine
  *
- * Memory layout
+ * Memory layout（数值由 Makefile 通过 --defsym 传入）
  * -------------
- *   Physical base : 0x00200000  (loaded here by multiboot)
- *   Virtual  base : 0xffff800000200000  (high half)
- *   Offset        : 0xffff800000000000
+ *   Physical base : KERNEL_LOAD_PHYS（默认 0x00200000）
+ *   Offset        : KERNEL_VMA_OFF  （默认 0xffff800000000000）
+ *   Virtual  base : KERNEL_VMA_OFF + KERNEL_LOAD_PHYS
  *
  * The multiboot header (bit 16 set) provides the physical load
  * addresses, so the ELF program-header virtual addresses are
@@ -23,8 +23,8 @@ ENTRY(_start)
 
 SECTIONS
 {
-    /* Virtual base (= physical 0x200000 + PHYS_OFFSET) */
-    . = 0xffff800000200000;
+    /* 虚拟基址 = 物理加载基址 + 高半区偏移（两者均来自 Makefile） */
+    . = KERNEL_VMA_OFF + KERNEL_LOAD_PHYS;
     _skernel = .;
 
     /* 导出内核符号供 C 代码使用 */

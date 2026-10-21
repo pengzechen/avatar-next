@@ -439,7 +439,7 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
             bool is_keep = false; \
             CLONE_CHECK_KEEP(parent_pgd_virt, va, is_keep); \
             if (is_keep) { \
-                if (mm_vm_map_pages(child_pgd_virt, va, src_pa, 1, 0) != 0) { \
+                if (mm_vm_map_pages(child_pgd_virt, va, src_pa, 1, VM_PERM_USER) != 0) { \
                     clone_copy_ok = false; \
                     break; \
                 } \
@@ -449,7 +449,7 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
             bool is_shared = false; \
             CLONE_CHECK_SHARED(parent_pgd_virt, va, is_shared); \
             if (is_shared) { \
-                if (mm_vm_map_pages(child_pgd_virt, va, src_pa, 1, 0) != 0) { \
+                if (mm_vm_map_pages(child_pgd_virt, va, src_pa, 1, VM_PERM_USER) != 0) { \
                     clone_copy_ok = false; \
                     break; \
                 } \
@@ -466,7 +466,7 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
                 break; \
             } \
             memcpy(phys_to_virt(dst_pa), phys_to_virt(src_pa), PAGE_SIZE); \
-            if (mm_vm_map_pages(child_pgd_virt, va, dst_pa, 1, 0) != 0) { \
+            if (mm_vm_map_pages(child_pgd_virt, va, dst_pa, 1, VM_PERM_USER) != 0) { \
                 pmm_free_pages(&g_pmm, dst_pa, 1); \
                 clone_copy_ok = false; \
                 break; \

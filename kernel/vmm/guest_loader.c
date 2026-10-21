@@ -37,6 +37,18 @@ _Static_assert(GUEST_LINUX_MEM_SIZE / S2_BLOCK_SIZE <= S2_MAX_L3_TABLES,
 #elif ARCH_RISCV64
 _Static_assert(GUEST_LINUX_MEM_SIZE / GSTAGE_BLOCK_SIZE <= GSTAGE_MAX_L0_TABLES,
                "GUEST_LINUX_MEM_SIZE 超出 GSTAGE_MAX_L0_TABLES 覆盖范围");
+_Static_assert(GUEST_LINUX_KERNEL_GPA >= GUEST_LINUX_MEM_BASE &&
+                   GUEST_LINUX_KERNEL_GPA + 0x200000 <=
+                       GUEST_LINUX_MEM_BASE + GUEST_LINUX_MEM_SIZE,
+               "RISC-V guest kernel 映像越出 guest RAM 窗口");
+_Static_assert(GUEST_LINUX_DTB_GPA >= GUEST_LINUX_MEM_BASE &&
+                   GUEST_LINUX_DTB_GPA + PAGE_SIZE <=
+                       GUEST_LINUX_MEM_BASE + GUEST_LINUX_MEM_SIZE,
+               "RISC-V guest DTB 越出 guest RAM 窗口");
+_Static_assert(GUEST_LINUX_INITRD_GPA >= GUEST_LINUX_MEM_BASE &&
+                   GUEST_LINUX_INITRD_LIMIT <=
+                       GUEST_LINUX_MEM_BASE + GUEST_LINUX_MEM_SIZE,
+               "RISC-V guest initrd 上界越出 guest RAM 窗口");
 #elif ARCH_X86_64
 _Static_assert(GUEST_LINUX_MEM_SIZE / EPT_BLOCK_SIZE <= EPT_MAX_PT_TABLES,
                "GUEST_LINUX_MEM_SIZE 超出 EPT_MAX_PT_TABLES 覆盖范围");
@@ -340,7 +352,7 @@ int guest_loader_run_linux(vm_t *vm)
    */
     vcpu->elr = GUEST_LINUX_KERNEL_GPA;
     vcpu->spsr = 0x5ULL | (0xFULL << 6); /* EL1h, DAIF 屏蔽 */
-    vcpu->sp_el1 = GUEST_LINUX_MEM_BASE + GUEST_LINUX_MEM_SIZE - 0x1000;
+    vcpu->sp_el1 = GUEST_LINUX_STACK_TOP;
     vcpu->r[0] = GUEST_LINUX_DTB_GPA;
     g_guest_entry_x0 = GUEST_LINUX_DTB_GPA;
 
@@ -373,7 +385,7 @@ int guest_loader_run_linux(vm_t *vm)
     vcpu->vstvec = 0;
     vcpu->vsie = 0;
     vcpu->vsscratch = 0;
-    vcpu->r[2] = GUEST_LINUX_MEM_BASE + GUEST_LINUX_MEM_SIZE - 0x1000;
+    vcpu->r[2] = GUEST_LINUX_STACK_TOP;
     vcpu->r[10] = GUEST_LINUX_BOOT_HARTID; /* a0 */
     vcpu->r[11] = GUEST_LINUX_DTB_GPA;     /* a1 */
 

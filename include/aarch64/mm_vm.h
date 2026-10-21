@@ -21,7 +21,7 @@ extern void copydata_to_uvm(void *page_dir, uint64_t vaddr, uint64_t paddr,
 
 static inline int32_t mm_vm_map_pages(void *page_dir, uint64_t vaddr,
                                       uint64_t paddr, int32_t count,
-                                      uint64_t perm)
+                                      vm_perm_t perm)
 {
     return memory_create_map(page_dir, vaddr, paddr, count, perm);
 }

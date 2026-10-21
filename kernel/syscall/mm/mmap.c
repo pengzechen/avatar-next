@@ -160,7 +160,7 @@ static int map_contiguous_buf(task_t *current, void *pgd, uint64_t map_addr,
 
         if ((flags & MAP_FIXED) != 0 && mm_vm_get_paddr(pgd, va) != 0)
             vm_unmap_user_range((uint64_t)current->pgd, va, PAGE_SIZE);
-        if (mm_vm_map_pages(pgd, va, page_pa, 1, 0) != 0) {
+        if (mm_vm_map_pages(pgd, va, page_pa, 1, VM_PERM_USER) != 0) {
             KLOG_WARN(
                 "[mmap] %s map failed: fd=%d handle=%llu va=0x%llx pa=0x%llx\n",
                 tag, fd, (unsigned long long)handle, (unsigned long long)va,
@@ -382,7 +382,7 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, int prot, int flags, int fd,
                     pmm_free_pages(&g_pmm, pa, 1);
                     return MMAP_FAILED;
                 }
-                if (mm_vm_map_pages(pgd, va, pa, 1, 0) != 0) {
+                if (mm_vm_map_pages(pgd, va, pa, 1, VM_PERM_USER) != 0) {
                     if (flags & MAP_SHARED)
                         shared_page_unref(pa);
                     else
@@ -527,7 +527,7 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, int prot, int flags, int fd,
             pmm_free_pages(&g_pmm, pa, 1);
             return MMAP_FAILED;
         }
-        if (mm_vm_map_pages(pgd, va, pa, 1, 0) != 0) {
+        if (mm_vm_map_pages(pgd, va, pa, 1, VM_PERM_USER) != 0) {
             KLOG_WARN("[mmap] map failed: va=0x%llx flags=0x%x\n", va, flags);
             if (flags & MAP_SHARED)
                 shared_page_unref(pa);
@@ -581,7 +581,7 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, int prot, int flags, int fd,
                 pmm_free_pages(&g_pmm, pa, 1);
                 return MMAP_FAILED;
             }
-            if (mm_vm_map_pages(pgd, va, pa, 1, 0) != 0) {
+            if (mm_vm_map_pages(pgd, va, pa, 1, VM_PERM_USER) != 0) {
                 KLOG_WARN("[mmap] map failed: va=0x%llx flags=0x%x\n", va,
                           flags);
                 if (flags & MAP_SHARED)

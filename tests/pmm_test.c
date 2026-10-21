@@ -313,6 +313,34 @@ static void test_pmm_boundary(void)
     KLOG_INFO("✓ Boundary test passed\n");
 }
 
+#if ARCH_RISCV64
+/*
+ * PTE 打包/解包与 Sv39 下标的运行时校验。
+ *
+ * 这些关系在 pte.h 里已有 _Static_assert；这里再从"目标平台实际宏值"
+ * 走一遍，专门防住 -D 覆盖（RV_KERNEL_VMA_OFF）与平台配置不一致。
+ */
+static void test_riscv_pte_geometry(void)
+{
+    const uint64_t pa = 0x12345000ULL;
+    uint64_t pte = RV_PTE_FROM_PA(pa, RV_PTE_V | RV_PTE_R | RV_PTE_W);
+
+    KLOG_INFO("=== RISC-V PTE Geometry Test ===\n");
+
+    assert(RV_PTE_TO_PA(pte) == pa);
+    assert(RV_PTE_IS_LEAF(pte));
+    assert(!RV_PTE_IS_LEAF(RV_PTE_V)); /* 非叶项 */
+
+    assert(RV_PTE_INDEX(0xffffffc000000000ULL, 2) == 0x100);
+    assert(RV_PTE_INDEX(0x80200000ULL, 2) == 2);
+    assert(RV_PTE_INDEX(0x80200000ULL, 1) == 1);
+    assert(RV_PTE_INDEX(0x80201000ULL, 0) == 1);
+    assert(RV_PAGE_OFFSET(0x80201abcULL) == 0xabc);
+
+    KLOG_INFO("✓ RISC-V PTE geometry test passed\n");
+}
+#endif
+
 /* ── PMM 测试入口 ─────────────────────────────────────────────── */
 
 /**
@@ -333,6 +361,9 @@ void run_pmm_tests(void)
     test_shared_page_refcount();
     test_pmm_stress();
     test_pmm_boundary();
+#if ARCH_RISCV64
+    test_riscv_pte_geometry();
+#endif
 
     KLOG_INFO("=== All PMM Tests Passed ===\n");
 }

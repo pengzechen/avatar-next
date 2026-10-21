@@ -19,13 +19,15 @@ ENTRY(_start)
 
 SECTIONS
 {
-    KERNEL_VMA_OFF = 0xffff000000000000;
-
     /*
-     * 平台相关链接地址，由 Makefile 通过 --defsym 传入。
-     * 默认值保留 QEMU virt 的加载地址，避免裸 ld 调用时没有符号。
+     * KERNEL_VMA_OFF 由 Makefile 通过 --defsym 传入（与
+     * include/aarch64/mem_layout.h 同源），不在本文件重复定义。
+     *
+     * 平台相关链接地址，由 Makefile 通过 --defsym 传入
+     * （QEMU virt: 0xffff000040080000；RK3588: 0xffff000000400000）。
+     * 本文件不再保留默认值，避免与 Makefile 各写一份。
      */
-    . = DEFINED(KERNEL_LINK_ADDR) ? KERNEL_LINK_ADDR : 0xffff000040080000;
+    . = KERNEL_LINK_ADDR;
 
     /* 导出内核符号供 C 代码使用 */
     PROVIDE(__kernel_start = .);

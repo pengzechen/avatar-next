@@ -1,6 +1,7 @@
 #ifndef X86_64_MMU_H
 #define X86_64_MMU_H
 
+#include "mem_layout.h"
 #include "types.h"
 
 /* ══════════════════════════════════════════════════════════════════
@@ -223,8 +224,8 @@ static inline void flush_tlb_single(uint64_t vaddr)
  * 此处不再重复定义以避免警告
  */
 
-/* 内核虚拟地址偏移（用于参考） */
-#define KERNEL_VMA_OFFSET 0xffff800000000000ULL
+/* 内核虚拟地址偏移（唯一定义见 x86_64/mem_layout.h） */
+#define KERNEL_VMA_OFFSET X86_KERNEL_VMA_OFF
 
 /* 检查是否是内核虚拟地址 */
 #define is_kernel_vaddr(vaddr) ((uint64_t)(vaddr) >= KERNEL_VMA_OFFSET)
@@ -249,13 +250,14 @@ static inline void flush_tlb_single(uint64_t vaddr)
 
 /*
  * 内核高半区 PML4 起始索引，由 KERNEL_VMA_OFFSET 严格派生：
- *   KERNEL_VMA_OFFSET = 0xffff800000000000
- *   PML4_idx = (KERNEL_VMA_OFFSET >> 39) & 0x1ff = 0x100 = 256
+ *   PML4_idx = (KERNEL_VMA_OFFSET >> 39) & 0x1ff
+ * 默认偏移 0xffff800000000000 时等于 256。
  *
  * 用户页表必须包含 PML4[X86_PML4_KERNEL_START..511] 的内核映射，
  * 否则 SYSCALL / 中断时内核高半区不可达 → 三重错误 → 重启。
  */
-#define X86_PML4_KERNEL_START 256U /* (KERNEL_VMA_OFFSET >> 39) & 0x1ff */
+#define X86_PML4_KERNEL_START \
+    ((uint32_t)((KERNEL_VMA_OFFSET >> 39) & 0x1FF))
 #define X86_PML4_ENTRIES      512U
 
 /**

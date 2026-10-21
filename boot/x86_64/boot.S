@@ -17,9 +17,7 @@
  */
 
 #include "asm.h"
-
-/* Physical-to-virtual offset */
-.set PHYS_OFFSET,   0xffff800000000000
+#include "x86_64/mem_layout.h"
 
 /* Multiboot1 constants */
 .set MB_MAGIC,      0x1BADB002
@@ -74,11 +72,11 @@ multiboot_header:
     .long   MB_FLAGS
     .long   MB_CKSUM
     /* Address fields required by bit 16 -- all PHYSICAL */
-    .long   multiboot_header  - PHYS_OFFSET     /* header_addr  */
-    .long   _skernel          - PHYS_OFFSET     /* load_addr    */
-    .long   _edata            - PHYS_OFFSET     /* load_end_addr*/
-    .long   _ebss             - PHYS_OFFSET     /* bss_end_addr */
-    .long   _start            - PHYS_OFFSET     /* entry_addr   */
+    .long   multiboot_header  - X86_PHYS_OFFSET     /* header_addr  */
+    .long   _skernel          - X86_PHYS_OFFSET     /* load_addr    */
+    .long   _edata            - X86_PHYS_OFFSET     /* load_end_addr*/
+    .long   _ebss             - X86_PHYS_OFFSET     /* bss_end_addr */
+    .long   _start            - X86_PHYS_OFFSET     /* entry_addr   */
 
 /* ----------------------------------------------------------
  * 32-bit setup: GDT -> page tables -> long mode -> far jump
@@ -88,7 +86,7 @@ boot32_entry:
     cli
 
     /* Load our GDT FIRST (physical address) */
-    movl    $(boot_gdt_desc - PHYS_OFFSET), %eax
+    movl    $(boot_gdt_desc - X86_PHYS_OFFSET), %eax
     lgdt    (%eax)
 
     /* Now reload data segment registers with our GDT data selector */
@@ -104,7 +102,7 @@ boot32_entry:
     mov     %eax, %cr4
 
     /* Load page-table root (physical address into CR3) */
-    movl    $(boot_pml4 - PHYS_OFFSET), %eax
+    movl    $(boot_pml4 - X86_PHYS_OFFSET), %eax
     mov     %eax, %cr3
 
     /* Enable SYSCALL (SCE), long mode (LME) and NX (NXE) in IA32_EFER */
@@ -120,7 +118,7 @@ boot32_entry:
     mov     %eax, %cr0
 
     /* Far jump into 64-bit code segment (GDT selector 0x10) */
-    ljmp    $0x10, $(boot64_entry - PHYS_OFFSET)
+    ljmp    $0x10, $(boot64_entry - X86_PHYS_OFFSET)
 
 FUNCE(_start)
 
@@ -205,7 +203,7 @@ ap_pm32:
 
     movl    $(CR4_PAE | CR4_PGE | CR4_OSFXSR | CR4_OSXMMEXCPT), %eax
     movl    %eax, %cr4
-    movl    $(boot_pml4 - PHYS_OFFSET), %eax
+    movl    $(boot_pml4 - X86_PHYS_OFFSET), %eax
     movl    %eax, %cr3
 
     movl    $EFER_MSR, %ecx
@@ -228,7 +226,7 @@ ap_long64:
     movw    %ax, %fs
     movw    %ax, %gs
 
-    lgdt    (boot_gdt_desc64 - PHYS_OFFSET)
+    lgdt    (boot_gdt_desc64 - X86_PHYS_OFFSET)
     pushq   $0x10
     movabs  $ap_long64_reload_cs, %rax
     pushq   %rax
@@ -296,7 +294,7 @@ boot_gdt_end:
 .align 4
 boot_gdt_desc:
     .word   boot_gdt_end - boot_gdt - 1   /* limit                          */
-    .long   boot_gdt - PHYS_OFFSET        /* base  (32-bit physical address) */
+    .long   boot_gdt - X86_PHYS_OFFSET        /* base  (32-bit physical address) */
 
 /* 64-bit GDTR 描述符：base 使用高半区虚拟地址 */
 .align 8
@@ -315,9 +313,9 @@ boot_gdt_desc64:
  * ---------------------------------------------------------- */
 .align 4096
 boot_pml4:
-    .quad   (boot_pdpt_low  - PHYS_OFFSET) + 0x3    /* entry  0: lower half */
+    .quad   (boot_pdpt_low  - X86_PHYS_OFFSET) + 0x3    /* entry  0: lower half */
     .zero   8 * 255
-    .quad   (boot_pdpt_high - PHYS_OFFSET) + 0x3    /* entry 256: upper half */
+    .quad   (boot_pdpt_high - X86_PHYS_OFFSET) + 0x3    /* entry 256: upper half */
     .zero   8 * 255
 
 .align 4096

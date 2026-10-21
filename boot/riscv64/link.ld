@@ -10,8 +10,11 @@ ENTRY(_start)
 
 SECTIONS
 {
-    KERNEL_LOAD_BASE = 0x80200000;
-    KERNEL_VMA_OFF   = 0xffffffc000000000;
+    /* KERNEL_LOAD_BASE / KERNEL_VMA_OFF 由 Makefile 通过 --defsym 传入：
+     *   KERNEL_LOAD_BASE = PLATFORM_MEM_RAM_BASE + OpenSBI 保留区
+     *   KERNEL_VMA_OFF   = 内核高半区偏移（mem_layout.h 同源）
+     * 链接脚本不能 include C 头，也不能跑 C 预处理器，所以不在本文件
+     * 重复写这两组常量。 */
 
     /* ── 低地址引导段（MMU 前） ───────────────────────────── */
     . = KERNEL_LOAD_BASE;

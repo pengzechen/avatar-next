@@ -363,8 +363,19 @@ ifeq ($(ARCH),x86_64)
     CFLAGS  += -ffreestanding -fno-builtin
     CFLAGS  += -mcmodel=large -mno-red-zone
     CFLAGS  += -mno-mmx -mno-sse
+    # 内核高半区偏移与物理加载基址只在这里定义一次：C/汇编经 -D 拿到，
+    # link.ld 经 --defsym 拿到。物理基址 = RAM 基址 + lowmem 保留区
+    # （platform.conf 的 lowmem_1m_2m）。
+    X86_KERNEL_VMA_OFF        ?= 0xffff800000000000
+    X86_LOWMEM_RESERVE_SIZE   ?= 0x100000
+    X86_KERNEL_LOAD_PHYS := $(shell printf '0x%x' \
+        $$(( $(MEM_RAM_BASE) + $(X86_LOWMEM_RESERVE_SIZE) )))
+    CFLAGS  += -DX86_KERNEL_VMA_OFF=$(X86_KERNEL_VMA_OFF)
+    CFLAGS  += -DX86_KERNEL_LOAD_PHYS=$(X86_KERNEL_LOAD_PHYS)
     LDFLAGS := -nostdlib -nostartfiles -nodefaultlibs -no-pie
     LDFLAGS += -Wl,-z,max-page-size=0x1000
+    LDFLAGS += -Wl,--defsym=KERNEL_VMA_OFF=$(X86_KERNEL_VMA_OFF)
+    LDFLAGS += -Wl,--defsym=KERNEL_LOAD_PHYS=$(X86_KERNEL_LOAD_PHYS)
     KLOG_TARGET := $(BUILD_DIR)/libklog_x86_64.a
     KERNEL_TARGET := $(BUILD_DIR)/kernel_x86_64.elf
     KERNEL_BIN    := $(BUILD_DIR)/kernel_x86_64.bin
@@ -397,8 +408,12 @@ else ifeq ($(ARCH),aarch64)
     KLOG_TARGET := $(BUILD_DIR)/libklog_aarch64.a
     KERNEL_TARGET := $(BUILD_DIR)/kernel_aarch64.elf
     KERNEL_BIN    := $(BUILD_DIR)/kernel_aarch64.bin
+    # 高半区偏移只在这里定义一次；link.ld 与 mem_layout.h 都从这里取。
+    AARCH64_KERNEL_VMA_OFF ?= 0xffff000000000000
+    CFLAGS  += -DAARCH64_KERNEL_VMA_OFF=$(AARCH64_KERNEL_VMA_OFF)
     KERNEL_LINK_ADDR ?= 0xffff000040080000
     LDFLAGS += -Wl,--defsym=KERNEL_LINK_ADDR=$(KERNEL_LINK_ADDR)
+    LDFLAGS += -Wl,--defsym=KERNEL_VMA_OFF=$(AARCH64_KERNEL_VMA_OFF)
     QEMU          := qemu-system-aarch64
     # QEMU virt 默认 gic-version=2（`-machine virt,dumpdtb=…` 实测确认）。
     # 内核按 GIC=v3 编译时物理 GIC 也必须是 v3：guest DTB 声明的是
@@ -425,9 +440,18 @@ else ifeq ($(ARCH),riscv64)
     CFLAGS  += -mcmodel=medany
     CFLAGS  += -fno-pic -fno-pie
     CFLAGS  += -ffreestanding -fno-builtin
+    # 内核高半区基址只在这里定义一次：C/汇编经 -D 拿到，link.ld 经
+    # --defsym 拿到。mem_layout.h 里的 fallback 仅为单独包含该头的场合。
+    RV_KERNEL_VMA_OFF     ?= 0xffffffc000000000
+    RV_OPENSBI_RESERVE_SIZE ?= 0x200000
+    RV_KERNEL_LOAD_BASE := $(shell printf '0x%x' \
+        $$(( $(MEM_RAM_BASE) + $(RV_OPENSBI_RESERVE_SIZE) )))
+    CFLAGS  += -DRV_KERNEL_VMA_OFF=$(RV_KERNEL_VMA_OFF)
     # -no-pie：让链接器输出非 PIE 静态可执行文件，避免生成
     # R_RISCV_RELATIVE 重定位条目（裸机内核无动态链接器处理它们）
     LDFLAGS := -no-pie
+    LDFLAGS += -Wl,--defsym=KERNEL_LOAD_BASE=$(RV_KERNEL_LOAD_BASE)
+    LDFLAGS += -Wl,--defsym=KERNEL_VMA_OFF=$(RV_KERNEL_VMA_OFF)
     KLOG_TARGET := $(BUILD_DIR)/libklog_riscv64.a
     KERNEL_TARGET := $(BUILD_DIR)/kernel_riscv64.elf
     KERNEL_BIN    := $(BUILD_DIR)/kernel_riscv64.bin

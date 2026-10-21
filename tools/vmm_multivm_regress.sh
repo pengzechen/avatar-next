@@ -151,7 +151,12 @@ fi
 #
 # ⚠️ 判据必须是 banner 里的 vmid，不能只看"接上了没有" —— 接到 vm1 也算接上。
 echo "5c) 裸 vmm-run 应接回上次离开的 vm2（不是最小 vmid 的 vm1）..."
-VM2=$(grep -aoE '\(vm[0-9]+\)' "$LOG" | sed -n 2p | tr -dc '0-9')
+# 取宿主侧 "[vmm] vmN allocated" 行，而不是 helper 的
+# "guest started (vmN)"：SMP=4 的 x86 上后者会和内核日志交织成
+# "(vm1<日志>…)"，闭合括号不在同一行，按 "(vmN)" 匹配会漏掉 vm1 ——
+# 于是 VM1 被解析成后面 attach 出现的 vm2，6b 的期望值整体错位。
+VM2=$(grep -aoE '\[vmm\] vm[0-9]+ allocated' "$LOG" | sed -n 2p |
+      grep -oE 'vm[0-9]+' | tr -dc '0-9')
 [ -n "$VM2" ] || VM2=2
 OFF=$(wc -c < "$LOG"); printf 'vmm-run\n' >&3
 sleep 5
@@ -183,7 +188,8 @@ sleep 1
 #    它的控制台即便在 bug 复现时也是好的。用它当探针等于把这条回归作废。
 #    vm1 的 vmid 从 helper 自己打的 banner（`guest started (vmN)`）里取，
 #    不写死 1（vmid 会回绕，虽然这里是全新启动的 QEMU）。
-VM1=$(grep -aoE '\(vm[0-9]+\)' "$LOG" | head -1 | tr -dc '0-9')
+VM1=$(grep -aoE '\[vmm\] vm[0-9]+ allocated' "$LOG" | head -1 |
+      grep -oE 'vm[0-9]+' | tr -dc '0-9')
 [ -n "$VM1" ] || VM1=1
 echo "6) vmm-run -a $VM1（附着回**先启动的**那个 VM）..."
 printf 'vmm-run -a %s\n' "$VM1" >&3

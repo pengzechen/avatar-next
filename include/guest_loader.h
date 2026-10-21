@@ -35,6 +35,7 @@
 #ifndef GUEST_LOADER_H
 #define GUEST_LOADER_H
 
+#include "page.h"
 #include "types.h"
 #include "arch.h"
 
@@ -236,6 +237,15 @@ extern volatile uint64_t g_guest_entry_x0;
 #define GUEST_LINUX_BOOT_HARTID 0ULL
 
 #endif /* ARCH_* */
+
+/*
+ * aarch64 / riscv 的 guest 初始 SP：RAM 窗口最后一页的起始地址
+ * （与历史实现一致；栈向下增长）。这两个架构的 loader 都用它填
+ * sp_el1 / a2，不再各自写 `... - 0x1000`。
+ * （x86 的初始栈由 boot protocol / 自身布局管理，不使用本宏。）
+ */
+#define GUEST_LINUX_STACK_TOP \
+    (GUEST_LINUX_MEM_BASE + GUEST_LINUX_MEM_SIZE - PAGE_SIZE)
 
 /*
  * guest 必须从 DTB 里摘掉的、VMM 没有模拟的设备节点。

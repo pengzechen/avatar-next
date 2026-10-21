@@ -151,21 +151,21 @@ int32_t memory_create_map(void *page_dir, uint64_t vaddr, uint64_t paddr,
             (paddr >> 12) & 0xFFFFFFFFF; // 36 bits PFN Page Frame Number
 
         // 设置权限
-        if (perm == 0) {
+        if (perm == VM_PERM_USER) {
             pte_entry->l3_page.AF = 1;
             pte_entry->l3_page.SH = 3; // Inner shareable
             pte_entry->l3_page.AP = 1;
             pte_entry->l3_page.UXN = 0;
             pte_entry->l3_page.PXN = 1;
             pte_entry->l3_page.attr_index = 1; // Normal memory
-        } else if (perm == 1) {
+        } else if (perm == VM_PERM_KERNEL) {
             pte_entry->l3_page.AF = 1;
             pte_entry->l3_page.SH = 3; // Inner shareable
             pte_entry->l3_page.AP = 0;
             pte_entry->l3_page.UXN = 0;
             pte_entry->l3_page.PXN = 0;
             pte_entry->l3_page.attr_index = 1; // Normal memory
-        } else if (perm == 2) {
+        } else if (perm == VM_PERM_KERNEL_MMIO) {
             pte_entry->l3_page.AF = 1;
             pte_entry->l3_page.SH = 3; // Inner shareable
             pte_entry->l3_page.AP = 0;

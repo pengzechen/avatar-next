@@ -195,6 +195,12 @@ void kernel_main(void)
     /* Initialize platform (UART, etc.) */
     platform_init();
 
+#if ARCH_RISCV64
+    /* mmu.S 建立的 1GiB 内核映射必须与 RV_KERNEL_MAP_LIST 完全一致；
+     * 缺一条就 panic 在启动期，而不是等 syscall 期间 Store PF。 */
+    mm_vm_verify_kernel_mappings();
+#endif
+
     /*
      * 应用编译期模块白名单（Makefile 的 LOG_MODULES=）并打印生效配置。
      * 必须在 UART 可用之后、任何模块日志之前。
