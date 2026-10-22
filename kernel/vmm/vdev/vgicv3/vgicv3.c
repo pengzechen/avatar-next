@@ -161,8 +161,13 @@ void vmm_vgic3_hw_init(void)
     uint64_t hcr = gicv3_read_hcr();
 
     /* En=1；维护中断相关位保持 0 —— 我们在每次 VM exit 主动轮询
-     * ICH_ELRSR_EL2/ICH_EISR_EL2，不需要 guest EOI 时打断自己。*/
-    hcr |= ICH_HCR_EN;
+     * ICH_ELRSR_EL2/ICH_EISR_EL2，不需要 guest EOI 时打断自己。
+     *
+     * TDIR=1：guest 的 ICC_DIR_EL1/ICV_DIR_EL1（split EOI 模式的
+     * deactivate）必须陷入。active 中断在 vCPU 切换时会被移出 LR，硬件
+     * DIR 找不到 LR 就会把这次 deactivation 丢掉，guest 无法恢复。
+     * 由 vmm_vgic3_deactivate() 在软件里收口。*/
+    hcr |= ICH_HCR_EN | ICH_HCR_TDIR;
     hcr &= ~(uint64_t)ICH_HCR_UIEN;
     gicv3_write_hcr(hcr);
 
@@ -202,6 +207,58 @@ void vmm_vgic3_set_sgi_pending(vgic3_t *vgic, uint32_t vcpu_id,
 
     vgic->vcpu[vcpu_id].sgi_sources[irq] |= (uint16_t)(1u << source_vcpu);
     vgic->vcpu[vcpu_id].pending0 |= irq_bit(irq);
+}
+
+static void clear_active(vgic3_t *vgic, uint32_t vcpu_id, uint32_t irq);
+
+void vmm_vgic3_deactivate(vgic3_t *vgic, uint32_t vcpu_id, uint32_t irq)
+{
+    if (!vgic || !valid_irq(irq) || !valid_vcpu(vgic, vcpu_id))
+        return;
+
+    vgic3_vcpu_t *vcpu = &vgic->vcpu[vcpu_id];
+    uint32_t n = _gicv3.nr_lrs > VGIC3_MAX_LRS ? VGIC3_MAX_LRS : _gicv3.nr_lrs;
+
+    /*
+     * DIR 的语义：Active -> Invalid；Active+Pending -> Pending。
+     * LR 里没有对应 INTID 时（active 状态此前被移到软件位），硬件什么
+     * 也不做（只增加 EOICount），所以下面无论如何都要清软件 active。
+     */
+    for (uint32_t i = 0; i < n; i++) {
+        uint64_t lr = vcpu->lr[i];
+
+        if (!lr || lr_vintid(lr) != irq)
+            continue;
+
+        uint32_t st = lr_state(lr);
+        if (!(st & ICH_LR_ST_ACTIVE))
+            continue; /* Pending 上的 DIR 是 UNPREDICTABLE，忽略 */
+
+        if (st & ICH_LR_ST_PENDING) {
+            lr = (lr & ~ICH_LR_STATE_MASK) |
+                 ((uint64_t)ICH_LR_ST_PENDING << ICH_LR_STATE_SHIFT);
+            vcpu->lr[i] = lr;
+            gicv3_write_lr(i, lr);
+            /* 软硬件都记着：DIR 后它仍然 pending。 */
+            if (irq < 32)
+                vcpu->pending0 |= irq_bit(irq);
+            else
+                vgic->spi_pending[vcpu_id][irq / 32] |= irq_bit(irq);
+        } else {
+            vcpu->lr[i] = 0;
+            gicv3_write_lr(i, 0);
+        }
+        clear_active(vgic, vcpu_id, irq);
+        return;
+    }
+
+    /*
+     * LR 里没有：这正是 split EOI 模式下 vCPU 切换造成的情况 ——
+     * active 中断已经被移到 active0/spi_active。清掉软件 active 位。
+     * 如果同一个 INTID 在 active 期间又来了新边沿，pending 位保持不动，
+     * 下一次 sync_entry 会重新注入。
+     */
+    clear_active(vgic, vcpu_id, irq);
 }
 
 void vmm_vgic3_set_pending(vgic3_t *vgic, uint32_t vcpu_id, uint32_t irq)

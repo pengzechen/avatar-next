@@ -204,9 +204,13 @@ pending 位图改成原子操作或给控制器加锁。
 - **宿主摊核**：vCPU 任务 `(slot + vcpu_id) % ncpus`；宿主 SMP=2 时
   4/8 个 vCPU 落在 cpu0/1。**`cpu_bring_up_all()` 必须在创建 vCPU 任务
   之前**（否则 g_num_cpus=1，任务全钉 cpu0）。
-- **WFI/WFE 主动让出**：`HCR_EL2.TWI/TWE=1` 会把 guest 空闲的 WFI 和
-  qspinlock 里的 WFE 都变成 VM-exit；`handle_wfi()` 在推进 PC 后
-  `task_yield()`。没有这一步，超配时空闲 vCPU 会和正在启动的 BSP 抢核。
+- **WFI 立刻让出、WFE 限频让出**：`HCR_EL2.TWI/TWE=1` 会把 guest 空闲的
+  WFI 和 qspinlock 里的 WFE 都变成 VM-exit。WFI（真 idle）必须每次
+  `task_yield()`，否则空闲 vCPU 会和正在启动的 BSP 抢核。
+  WFE 是自旋等待：**每次 WFE 都切任务**会形成上下文切换风暴，锁持有者
+  拿不到稳定 CPU 时间（实测 1-2% 启动停滞）；**完全不让出**又会在 waiter
+  屏蔽 IRQ 时让锁持有者等宿主 tick 等到 40s 以上。现在按 `ESR.ISS[0]`
+  区分，WFE 最多每 1ms `task_yield()` 一次。
 
 ### 5.2 vGIC 的硬件状态必须按 vCPU 保存
 
@@ -233,6 +237,15 @@ vCPU 越多越容易命中，实测表现是 vtimer 的 LR 卡在 Active、guest
 - guest ack 时**不能**清 SGI 的 pending —— 否则 active 期间新到的同号
   IPI 会被抹掉，表现为跨核唤醒随机丢失、RCU/启动卡死。
 - PPI/SPI 保持电平语义：pending 保留到 ack，设备侧每轮 entry 重新拉线。
+
+**EOImode 与 DIR（中断取消/去激活）**：GICv3 有 deactivate 语义。
+EOImode=0 时 `ICC_EOIR1` 一步完成 priority drop + deactivate；EOImode=1
+时 EOI 只降优先级，另由 `ICC_DIR` 去激活。Linux guest 在 EL1 下
+`is_hyp_mode_available()==false`，会关闭 split EOI/Deactivate 模式，
+所以**当前 guest 用 EOImode=0，不会写 DIR**。代码仍设置
+`ICH_HCR_EL2.TDIR=1` 并实现 `vmm_vgic3_deactivate()`，覆盖未来
+EOImode=1 的 guest（active 中断可能已不在 LR 里，硬件 DIR 会丢，
+必须由 VMM 清软件 active 位）；对当前 Linux guest 是 no-op。
 
 ## 6. aarch64 多 vCPU guest 实测
 
@@ -266,7 +279,7 @@ SMP: Total of 8 processors activated.
 | 宿主 SMP | GUEST_VCPUS | 运行次数 | 结果 |
 |---|---|---|---|
 | 2 | 4 | 50 | 50/50 |
-| 2 | 8 | 100 | 100/100 |
+| 2 | 8 | 200 | **200/200**（WFI/WFE 限频修复后） |
 | 4 | 8 | 30 | 30/30 |
 | 4 | 12 | 30 | 30/30 |
 
@@ -275,9 +288,11 @@ SMP: Total of 8 processors activated.
 - LTP：aarch64 / riscv64 / x86_64 各 **63/63 PASS**（0 FAIL / 0 BROK）。
 - 原 `VMM_TEST=1` 测试：三架构都能启动并创建三个线程，持续运行到超时。
 
-> 历史坑：只按 VM 保存 `ich_vmcr`、SGI pending 在注入时不清/在 ack 时
-> 乱清，以及缺少 WFI/WFE 让出，都会让 2 分 8 出现约 20% 的启动停滞；
-> 修复后 2 分 8 连续 100 次通过。
+> 历史坑：
+> 1. 只按 VM 保存 `ich_vmcr`、SGI pending 在注入时不清/在 ack 时乱清 ——
+>    2 分 8 约 20% 启动停滞，vGIC 按 vCPU 保存/恢复后降到 1-2%。
+> 2. WFE 的让出策略：每次让出会形成切换风暴；完全不让出会出现 42s 的
+>    极端慢启动。改成 1ms 限频后，2 分 8 连续 200 次通过。
 
 ## 7. 回归门禁
 

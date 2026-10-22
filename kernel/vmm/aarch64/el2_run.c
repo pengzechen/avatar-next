@@ -272,6 +272,22 @@ static int handle_sysreg(vcpu_t *vcpu, uint64_t esr)
         el2_advance_pc(vcpu, esr);
         return EL2_RESUME;
     }
+
+    /*
+     * ICC_DIR_EL1 / ICV_DIR_EL1 = S3_0_C12_C11_1，写。
+     * ICH_HCR_EL2.TDIR=1，所以 split EOI 模式的 deactivate 会到这里。
+     */
+    if (!dir && op0 == 3 && op1 == 0 && crn == 12 && crm == 11 && op2 == 1) {
+        uint64_t val = (rt == 31) ? 0 : vcpu->r[rt];
+        uint64_t flags;
+
+        spin_lock_irqsave(&vcpu->irq_lock, &flags);
+        vmm_vgic3_deactivate(&vcpu->vm->vgic3, (uint32_t)vcpu->vcpu_id,
+                            (uint32_t)(val & 0xFFFFFFu));
+        spin_unlock_irqrestore(&vcpu->irq_lock, flags);
+        el2_advance_pc(vcpu, esr);
+        return EL2_RESUME;
+    }
 #endif
 
     KLOG_WARN(
@@ -282,6 +298,9 @@ static int handle_sysreg(vcpu_t *vcpu, uint64_t esr)
 }
 
 /* ── Test 1: WFI/WFE 陷入 ─────────────────────────────────── */
+/* WFE 限频让出的下次时间戳（按 vCPU 编号；同号跨 VM 共用只会多让出一次）*/
+static uint64_t wfe_next_yield[MAX_VCPUS];
+
 static int handle_wfi(vcpu_t *vcpu, uint64_t esr)
 {
     /* WFI 在网络/定时器驱动的 guest 里会高频触发（guest 空闲时几乎持续
@@ -301,18 +320,36 @@ static int handle_wfi(vcpu_t *vcpu, uint64_t esr)
     el2_advance_pc(vcpu, esr);
 
     /*
-     * 让出宿主 CPU，而不是立刻重新进入 guest。
+     * WFI（真 idle）立刻让出；WFE（自旋等待）**限频**让出。
      *
-     * guest 空闲时几乎一直执行 WFI，而 TWI=1 把它变成一次 VM-exit：若这里
-     * 直接 resume，一颗**空闲** vCPU 也会在宿主上满速空转。单 vCPU 时只是
-     * 浪费一点电；vCPU 数多于宿主核数时（例如 8 个 vCPU 跑在 SMP=2 上），
-     * 7 颗空闲 AP 会和正在启动的 BSP 抢核，实测 guest 启动从几秒退化到
-     * 40 秒都进不了 shell。
+     * ESR_EL2.ISS[0] 是 TI：0 = WFI，1 = WFE。guest 的 qspinlock 等待循环
+     * 就是 `sevl; wfe; ldxr ...`；TWE=1 会把每次 WFE 变成 VM-exit。
      *
-     * 这里在 exit handler 里，IRQ 已由主循环恢复，且不在 IRQ 上下文，
-     * 可以直接切任务。被重新调度回来时再进 guest；如果仍然空闲，就再让出。
+     * 两种情况都实测过：
+     *   - 每次 WFE 都 task_yield()：8 vCPU 挤少量宿主核时形成上下文切换
+     *     风暴，锁持有者拿不到稳定的 CPU 时间，实测偶发 1-2% 启动停滞；
+     *   - WFE 完全不让出：如果 waiter 在 guest 里屏蔽了 IRQ，宿主 tick
+     *     可能长时间进不来，锁持有者被 waiter 堵在 runqueue 里，实测出现
+     *     42s 才启动完成的极端慢启动。
+     *
+     * 折中：WFE 最多每 1ms 让出一次。既把切换频率限制在毫秒级，又保证
+     * 锁持有者不会无限期等宿主 tick。WFI 仍然每次立刻让出，否则空闲
+     * vCPU 会占着核满速空转，饿死同核其它 vCPU。
      */
-    task_yield();
+    if ((esr & 1u) == 0) { /* TI=0: WFI */
+        task_yield();
+        return EL2_RESUME;
+    }
+
+    uint32_t id = (uint32_t)vcpu->vcpu_id;
+    uint64_t now = READ_CNTPCT_EL0();
+    uint64_t freq = READ_CNTFRQ_EL0();
+    uint64_t period = freq ? (freq / 1000u) : 10000u; /* 1ms */
+
+    if (id < MAX_VCPUS && now >= wfe_next_yield[id]) {
+        wfe_next_yield[id] = now + period;
+        task_yield();
+    }
     return EL2_RESUME;
 }
 

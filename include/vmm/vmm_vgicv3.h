@@ -110,6 +110,14 @@ int vmm_vgic3_init(vgic3_t *vgic, uint32_t nr_vcpus);
 void vmm_vgic3_set_pending(vgic3_t *vgic, uint32_t vcpu_id, uint32_t irq);
 void vmm_vgic3_set_sgi_pending(vgic3_t *vgic, uint32_t vcpu_id,
                                uint32_t source_vcpu, uint32_t irq);
+/*
+ * 处理 guest 的 ICC_DIR_EL1（EOImode=1 的去激活）。
+ *
+ * active 中断可能已经不在 LR 里（vCPU 切走时我们把它移到了软件 active
+ * 位），此时硬件 DIR 找不到匹配 LR，deactivation 会丢；必须由 VMM 清掉
+ * 软件 active 状态，否则该 INTID 会被永久堵死。
+ */
+void vmm_vgic3_deactivate(vgic3_t *vgic, uint32_t vcpu_id, uint32_t irq);
 void vmm_vgic3_set_enabled(vgic3_t *vgic, uint32_t vcpu_id, uint32_t irq,
                            int enabled);
 

@@ -126,11 +126,12 @@ extern uintptr_t gicv3_gicr_base;
 #define ICH_VMCR_EL2  "S3_4_C12_C11_7"
 
 /* ICH_HCR_EL2 bits */
-#define ICH_HCR_EN           (1u << 0)
-#define ICH_HCR_UIEN         (1u << 1)
-#define ICH_HCR_EOI_COUNT_EN (1u << 2)
+#define ICH_HCR_EN       (1u << 0)
+#define ICH_HCR_UIEN     (1u << 1)
+#define ICH_HCR_TALL1    (1u << 12) /* 陷入 EL1 对 ICC_*/ICV_* 的 Group1 访问 */
+#define ICH_HCR_TDIR     (1u << 14) /* 陷入 EL1 对 ICC_DIR/ICV_DIR 的写 */
 #define ICH_HCR_VGRP1_DIE \
-    (1u << 8) /* guest EOI 一个 Group1 中断时产生维护中断 */
+    (1u << 7) /* guest 关闭 Group1 时产生维护中断（当前未使用） */
 
 /* ICH_MISR_EL2 bits */
 #define ICH_MISR_EOI (1u << 0)
