@@ -168,6 +168,12 @@ int guest_loader_run_linux(vm_t *vm)
     );
 
     /*
+     * 本构建里 guest 要几个 vCPU。必须在 vm_create() 之前定下来：vGIC、
+     * GICR 窗口和 vcpu 数组都是按 nr_vcpus 初始化的。
+     */
+    vm->cfg.nr_vcpus = GUEST_LINUX_NR_VCPUS;
+
+    /*
    * ── 建立 VM（**必须**在加载映像之前）──────────────────────────
    *
    * stage-2 是在 vm_create() 里初始化的 —— 一张**空表**。而加载映像要往
@@ -394,13 +400,29 @@ int guest_loader_run_linux(vm_t *vm)
               (unsigned long long)vcpu->r[11]);
 #endif
 
-    /* 6. 创建 vCPU 任务 */
+    /*
+     * 6. 创建 vCPU 任务
+     *
+     * AP 任务先建：它们一启动就睡在 vcpu->start 这个 completion 上，
+     * 等 guest 通过 PSCI CPU_ON 放行。BSP 最后建并立刻进入 guest。
+     * 这样 Linux 在 BSP 上开始跑的时候，CPU_ON 要唤醒的任务已经存在。
+     */
+    for (int i = 1; i < vm->nr_vcpus; i++) {
+        if (!vcpu_task_create(&vm->vcpus[i], 5)) {
+            KLOG_ERROR("[guest] vcpu%d task create failed\n", i);
+            vm_request_stop(vm);
+            return -1;
+        }
+    }
+
     task_t *vt = vcpu_task_create(vcpu, 5);
     if (!vt) {
         KLOG_ERROR("[guest] vcpu_task_create failed\n");
+        vm_request_stop(vm);
         return -1;
     }
-    KLOG_INFO("[guest] Linux vCPU task id=%u running\n", vt->id);
+    KLOG_INFO("[guest] Linux vCPU task id=%u running (%d vCPU(s))\n", vt->id,
+              vm->nr_vcpus);
     return 0;
 #endif /* !ARCH_X86_64 */
 }

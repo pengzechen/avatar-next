@@ -39,6 +39,18 @@
 #include "types.h"
 #include "arch.h"
 
+/*
+ * guest 的 vCPU 数量。由 Makefile 的 GUEST_VCPUS= 经
+ * -DGUEST_LINUX_NR_VCPUS=N 传入；直接编某个文件时缺省为 1。
+ *
+ * 这个值必须与 rootfs 里安装的 guest DTB 的 cpu@N 节点数一致：
+ * GUEST_VCPUS=4 选 linux-gicv3-smp4.dtb，否则 guest 会按 DTB 去 CPU_ON
+ * 一个 VMM 根本没准备的 vCPU。
+ */
+#ifndef GUEST_LINUX_NR_VCPUS
+#define GUEST_LINUX_NR_VCPUS 1
+#endif
+
 #if ARCH_AARCH64
 
 /* guest 物理内存布局 */

@@ -23,6 +23,7 @@
 #include "types.h"
 #include "arch.h"
 #include "spinlock.h" /* vcpu_t.irq_lock：中断注入与 entry/exit 同步互斥 */
+#include "task/completion.h" /* vcpu_t.start：AP 启动闸门 */
 #include "vmm_mmio.h"
 #include "vmm_virq.h" /* virq_t：设备中断线的架构无关命名 */
 
@@ -94,8 +95,14 @@
 #define HVC_DONE  0
 #define HVC_PRINT 1
 
-/* ── 最大 vCPU 数量 ────────────────────────────────────────── */
-#define MAX_VCPUS 4
+/* ── 最大 vCPU 数量 ──────────────────────────────────────────
+ *
+ * 12 是 aarch64 guest 实测过的上限（宿主 SMP=4 GUEST_VCPUS=12）。
+ * vm_t 里的 vcpu[] 与 guest_stack[] 都按它静态开，改大要同时看
+ * VGIC3_MAX_VCPUS / VLAPIC_MAX_VCPUS 的静态断言与 vmx.c 的
+ * MAX_VMS*MAX_VCPUS 池（BSS 线性增长）。
+ */
+#define MAX_VCPUS 12
 
 /* vCPU 运行期状态（vcpu_task_create / vmm_run_vcpu / vcpu_task_fn 维护）*/
 #define VCPU_STATE_OFFLINE 0 /* 未运行（任务未创建，或 AP 尚未被 CPU_ON）*/
@@ -179,6 +186,17 @@ typedef struct vcpu {
      * 只保证状态完整、可观测。
      */
     spinlock_noirq_t irq_lock;
+
+    /*
+     * AP 启动闸门。
+     *
+     * 非 BSP 的 vCPU 任务创建后先 completion_wait(&start) 睡下，等 guest
+     * 通过 PSCI CPU_ON 把入口状态填好再放行。不能用「查标志 + task_block
+     * 裸写」：那有 lost-wakeup 窗口（见 kernel/task/completion.h）。
+     *
+     * 放在结构体末尾：前面 asm 直接寻址的固定偏移不受影响。
+     */
+    completion_t start;
 } vcpu_t;
 
 #elif ARCH_X86_64
@@ -307,6 +325,17 @@ typedef struct vcpu {
      * 只保证状态完整、可观测。
      */
     spinlock_noirq_t irq_lock;
+
+    /*
+     * AP 启动闸门。
+     *
+     * 非 BSP 的 vCPU 任务创建后先 completion_wait(&start) 睡下，等 guest
+     * 通过 PSCI CPU_ON 把入口状态填好再放行。不能用「查标志 + task_block
+     * 裸写」：那有 lost-wakeup 窗口（见 kernel/task/completion.h）。
+     *
+     * 放在结构体末尾：前面 asm 直接寻址的固定偏移不受影响。
+     */
+    completion_t start;
 } vcpu_t;
 
 /*
@@ -421,6 +450,17 @@ typedef struct vcpu {
      * 只保证状态完整、可观测。
      */
     spinlock_noirq_t irq_lock;
+
+    /*
+     * AP 启动闸门。
+     *
+     * 非 BSP 的 vCPU 任务创建后先 completion_wait(&start) 睡下，等 guest
+     * 通过 PSCI CPU_ON 把入口状态填好再放行。不能用「查标志 + task_block
+     * 裸写」：那有 lost-wakeup 窗口（见 kernel/task/completion.h）。
+     *
+     * 放在结构体末尾：前面 asm 直接寻址的固定偏移不受影响。
+     */
+    completion_t start;
 } vcpu_t;
 
 /*
@@ -813,6 +853,26 @@ void vmm_vcpu_inject_irq(vcpu_t *target, virq_t irq);
  * vm_request_stop() 用它把停止请求从「等下次自然 exit」缩短到「立刻退出」。
  */
 void vmm_vcpu_kick(vcpu_t *vcpu);
+
+/*
+ * vmm_vcpu_start — PSCI CPU_ON 的落点：给一颗 OFFLINE 的 AP 填入口状态并放行
+ *
+ * @entry:      guest 物理入口（Linux secondary_entry，MMU 仍关闭）
+ * @context_id: PSCI context_id（Linux 传 0，落到 AP 的 x0）
+ *
+ * 只允许 OFFLINE → RUNNING 一次。AP 的 sysregs 清零（SCTLR_EL1=0 等），
+ * SP_EL1 置 0 —— Linux 的 secondary 入口自己从 secondary_data 取栈。
+ * 放行动作走 completion_complete_all()，由 AP 任务自己在新核上恢复执行。
+ *
+ * 返回 0 成功；-1 表示目标不在 OFFLINE（已启动/已停止）。
+ */
+int vmm_vcpu_start(vcpu_t *vcpu, uint64_t entry, uint64_t context_id);
+
+/* AP 是否已经启动过（PSCI AFFINITY_INFO 用）*/
+static inline int vmm_vcpu_is_online(const vcpu_t *vcpu)
+{
+    return vcpu && vcpu->state != VCPU_STATE_OFFLINE;
+}
 
 int vmm_run_vcpu(vcpu_t *vcpu);
 

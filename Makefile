@@ -24,6 +24,17 @@ ifeq ($(filter $(SMP),1 2 3 4 5 6 7 8),)
 $(error Invalid SMP value '$(SMP)'. Use SMP=1..8)
 endif
 
+# guest 的 vCPU 数量（aarch64）。
+#   GUEST_VCPUS=1：默认单 vCPU。
+#   GUEST_VCPUS=2/4/8/12：选对应 CPU 数的 DTB（linux-gicv3-smpN.dtb），并让
+#                  guest_loader 建 N 个 vCPU 任务。宿主 SMP 可以小于它
+#                  （比如 SMP=2 + GUEST_VCPUS=8），vCPU 任务在宿主核上分时。
+# 它改变 CFLAGS 和 rootfs 里的 DTB，纳入 _CFG_SIG 强制全量重编。
+GUEST_VCPUS ?= 1
+ifeq ($(filter $(GUEST_VCPUS),1 2 4 8 12),)
+$(error Invalid GUEST_VCPUS '$(GUEST_VCPUS)'. Use 1, 2, 4, 8 or 12)
+endif
+
 # 帧指针（backtrace 用）：FP=1 加 -fno-omit-frame-pointer，FP=0 不加。
 #
 # panic / 内核异常时的调用栈靠帧指针链走出来（kernel/debug/backtrace.c）。
@@ -461,6 +472,13 @@ else
     $(error Unsupported architecture: $(ARCH). Use ARCH=x86_64, aarch64 or riscv64)
 endif
 
+# ⚠️ 必须加在架构块之后、§8 (`LWEXT4_CFLAGS := $(CFLAGS)`) 之前：
+#   - 架构块里是 `CFLAGS := ...`，会覆盖掉更早 append 的内容；
+#   - guest_loader.c 走 LWEXT4_CFLAGS，而那个变量是对 CFLAGS 的快照，
+#     晚于它 append 的宏不会进 guest_loader.c 的编译命令（实测 nr_vcpus
+#     仍是 1）。
+CFLAGS += -DGUEST_LINUX_NR_VCPUS=$(GUEST_VCPUS)
+
 # 内嵌函数符号表（kallsyms）的产物路径。三架构同名不同目录，所以规则只在
 # §11g 写一份。用途和两趟链接的理由见 §11g 顶部注释。
 KERNEL_STAGE1 := $(KERNEL_TARGET:.elf=.stage1.elf)
@@ -790,7 +808,7 @@ _VARIANT_CHECK := $(shell \
 # _VARIANT_CHECK 的细粒度处理：只删 _VARIANT_OBJS 里列的那几个 .o，
 # 不为此整包重编。新增变体时记得把受影响的对象加进那个列表。
 _CFG_STAMP_FILE := $(BUILD_DIR)/.build-cfg
-_CFG_SIG        := $(GIC_VER)/smp$(SMP)/log$(LOG)/mods$(LOG_MODULES)/fp$(FP)
+_CFG_SIG        := $(GIC_VER)/smp$(SMP)/vcpus$(GUEST_VCPUS)/log$(LOG)/mods$(LOG_MODULES)/fp$(FP)
 _CFG_CHECK := $(shell \
     mkdir -p $(BUILD_DIR) 2>/dev/null; \
     rm -f $(BUILD_DIR)/.gic-last; \
@@ -991,7 +1009,17 @@ ifeq ($(GUEST_NPU),1)
     $(error GUEST_NPU=1 需要 GIC=v3：NPU 的 guest DTB 只做了 GICv3 版)
   endif
 endif
-GUEST_LINUX_DTB_SRC := $(if $(GUEST_NPU),imgs/guests/aarch64/linux-gicv3-npu.dtb,$(if $(filter v3,$(GIC)),imgs/guests/aarch64/linux-gicv3.dtb,imgs/guests/aarch64/linux.dtb))
+ifneq ($(GUEST_VCPUS),1)
+  ifneq ($(filter v3,$(GIC_VER)),v3)
+    $(error GUEST_VCPUS=$(GUEST_VCPUS) 需要 GIC=v3：多 CPU 的 guest DTB 只做了 GICv3 版)
+  endif
+  ifneq ($(GUEST_NPU),)
+    $(error GUEST_VCPUS>1 与 GUEST_NPU=1 不兼容：NPU guest DTB 只做了单 vCPU)
+  endif
+  GUEST_LINUX_DTB_SRC := imgs/guests/aarch64/linux-gicv3-smp$(GUEST_VCPUS).dtb
+else
+  GUEST_LINUX_DTB_SRC := $(if $(GUEST_NPU),imgs/guests/aarch64/linux-gicv3-npu.dtb,$(if $(filter v3,$(GIC)),imgs/guests/aarch64/linux-gicv3.dtb,imgs/guests/aarch64/linux.dtb))
+endif
 
 ifneq ($(filter $(ARCH),aarch64 riscv64 x86_64),)
 ifeq ($(ARCH),x86_64)
@@ -1009,14 +1037,14 @@ else
 GUEST_LINUX_FILES :=
 endif
 
-# 切换 GIC=v2|v3 或 GUEST_NPU=0|1 时 $(GUEST_LINUX_DTB_SRC) 会换文件，但换个更旧
+# 切换 GIC=v2|v3、GUEST_NPU=0|1 或 GUEST_VCPUS 时 $(GUEST_LINUX_DTB_SRC) 会换文件，但换个更旧
 # 的文件不会让 rootfs 的 mtime 落后，make 就不会重建镜像 —— 于是 rootfs 里留着
 # 上一版的 DTB。用带变体后缀的戳文件把这个变化显式暴露给 make。
 #
 # GUEST_NPU 也必须进变体名：两版的 DTB 大小只差 629 字节，装错的那一版
 # 会让 guest 要么没有 npu 节点（跑不了 NPU），要么白挖 48 MiB RAM，
 # 而 rootfs 本身看起来完全正常。
-GUEST_GIC_STAMP := $(BUILD_DIR)/.guest-gic-$(if $(filter v3,$(GIC_VER)),v3,v2)$(if $(GUEST_NPU),-npu,)
+GUEST_GIC_STAMP := $(BUILD_DIR)/.guest-gic-$(if $(filter v3,$(GIC_VER)),v3,v2)$(if $(GUEST_NPU),-npu,)$(if $(filter-out 1,$(GUEST_VCPUS)),-vcpus$(GUEST_VCPUS),)
 $(GUEST_GIC_STAMP):
 	@rm -f $(BUILD_DIR)/.guest-gic-*
 	@touch $@

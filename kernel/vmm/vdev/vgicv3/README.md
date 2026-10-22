@@ -81,7 +81,7 @@ guest 是 Linux 6.2.15 + initrd。判定标准：guest 打印 `Run /init as init
   `GICD_ICACTIVER` 以及 GICR SGI 帧的同名寄存器。写进去了但没观察过效果。
 - **`GICD_IROUTER`**：原样存进字节后备存储，**没有**参与路由决策（没有 SPI，也就没验证过）。
 - **`GICD_ICFGR` / `GICR_ICFGR0/1`（边沿/电平）**：只做字节存取，不改变任何行为。
-- **多 vCPU**：`vgic3_t` 的数组按 `VGIC3_MAX_VCPUS=8` 开，GICR 按偏移分核，但
+- **多 vCPU**：`vgic3_t` 的数组按 `VGIC3_MAX_VCPUS=12` 开，GICR 按偏移分核，但
   `vm_cfg.nr_vcpus` 一直是 1，且 `vpsci` 的 `PSCI_CPU_ON` 直接返回 NOT_SUPPORTED。
 - **LR 满时的行为**：`sync_entry()` 在 `lr_empty_slot() < 0` 时直接返回，剩下的中断
   等下一次 exit 再排。4 个 LR 从没被用满过。

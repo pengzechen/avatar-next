@@ -267,7 +267,17 @@ void vm_request_stop(vm_t *vm)
      * 迟迟收不齐、槽位也回收不了。kick 走 resched IPI，目标在 guest 里
      * 会被硬件转成一次 VM-exit，主循环顶部看到 stop_req 后返回。
      */
-    vmm_vm_for_each_vcpu(vm, vcpu) vmm_vcpu_kick(vcpu);
+    vmm_vm_for_each_vcpu(vm, vcpu) {
+        /*
+         * 还没被 CPU_ON 放行的 AP 任务睡在 start completion 上，kick 对
+         * 它无效（state 还是 OFFLINE）。必须完成闸门把它叫醒，让它在
+         * vmm_run_vcpu 顶部看到 stop_req 后退出；否则 VM 永远等不齐所有
+         * vCPU，槽位也回收不了。
+         */
+        if (vcpu->state == VCPU_STATE_OFFLINE && vcpu->task)
+            completion_complete_all(&vcpu->start);
+        vmm_vcpu_kick(vcpu);
+    }
 }
 
 /*

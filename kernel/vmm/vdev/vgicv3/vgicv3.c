@@ -11,6 +11,7 @@
  * 「写入 LR + 回读状态」的硬件辅助模型。
  */
 
+#include "vmm/vmm.h" /* vcpu_t：LR 归属切换要拿上一个 vCPU 的 irq_lock */
 #include "vmm/vmm_vgicv3.h"
 #include "irq/gicv3.h"
 #include "klog.h"
@@ -108,18 +109,6 @@ int vmm_vgic3_init(vgic3_t *vgic, uint32_t nr_vcpus)
 
     memset(vgic, 0, sizeof(*vgic));
     vgic->nr_vcpus = nr_vcpus;
-    /*
-     * ICH_VMCR_EL2 的 per-VM 初值。
-     *
-     * ⚠️ 不能全 0：VPMR（bit[31:24]，guest 的 ICC_PMR_EL1）在 ARM 里是
-     * **优先级屏蔽**，值 0 表示"屏蔽一切优先级"—— 全 0 的初值会让 guest
-     * 在写下自己的 PMR 之前一个中断都收不到，于是 vm1 直接卡在启动早期
-     * （实测：改成全 0 后连单 VM 都起不来）。
-     *
-     * 全放行 = VPMR=0xFF（最低优先级）、VENG1=1（Group1 使能）、VBPR1=0。
-     */
-    vgic->ich_vmcr = (0xFFULL << 24) | (1ULL << 1);
-
     for (uint32_t i = 0; i < VGIC3_MAX_VCPUS; i++) {
         /* SGIs 永远使能（GICv3 下 SGI 的使能位同样是 banked 的，但 Linux
          * 从不单独使能 SGI，GICD_TYPER 也不报告它们）；PPI 初始为禁止。*/
@@ -127,6 +116,19 @@ int vmm_vgic3_init(vgic3_t *vgic, uint32_t nr_vcpus)
         memset(vgic->vcpu[i].prio0, VGIC3_DEFAULT_PRIO, 32);
         vgic->vcpu[i].sgi_igroupr0 = 0xFFFFFFFFu;
         vgic->vcpu[i].rd_waker = GICR_WAKER_PROCESSOR_SLEEP;
+
+        /*
+         * ICH_VMCR_EL2 的初值（每个 vCPU 一份）。
+         *
+         * ⚠️ 不能全 0：VPMR（bit[31:24]，guest 的 ICC_PMR_EL1）在 ARM 里
+         * 是**优先级屏蔽**，值 0 表示"屏蔽一切优先级"—— 全 0 的初值会让
+         * guest 在写下自己的 PMR 之前一个中断都收不到，于是 vm1 直接卡在
+         * 启动早期（实测：改成全 0 后连单 VM 都起不来）。
+         *
+         * 全放行 = VPMR=0xFF（最低优先级）、VENG1=1（Group1 使能）。
+         */
+        vgic->vcpu[i].ich_vmcr = (0xFFULL << 24) | (1ULL << 1);
+        vgic->vcpu[i].ich_ap1r0 = 0;
     }
 
     KLOG_INFO("[vgicv3] VM vGIC ready (%u vCPU, %u IRQs, %u LR)\n", nr_vcpus,
@@ -320,12 +322,15 @@ static void clear_pending(vgic3_t *vgic, uint32_t vcpu_id, uint32_t irq)
     }
 }
 
-/* ── per-CPU 的 ICH_*_EL2 访问（见 vgic3_t 里 ich_vmcr 的注释）─────────
+/* ── per-CPU 的 ICH_*_EL2 访问（见 vgic3_vcpu_t 里 ich_vmcr 的注释）─────
  *
- * ⚠️ 只碰 ICH_VMCR_EL2。**不要**去读写 ICH_AP1R1/2/3_EL2 —— 实测在 QEMU 上
- * 那几条 mrs/msr 直接触发 EL1 的 "Unknown reason" 异常（EC=0x0），崩在
- * vmm_vgic3_lr_switch_in+0xf0，连单 VM 都起不来。AP1R0 在头文件里有编码，
- * 但既然 AP1R 只影响 active priority（我们不做优先级分组），不值得为它冒险。
+ * VMCR 和 AP1R0 都是 per-pCPU 硬件，但内容属于**当前在上面跑的 vCPU**，
+ * 所以按 vCPU 保存/恢复。实测只按 VM 存一份时，同 VM 的 vCPU 轮转会把
+ * 对方的 PMR/IGRPEN/active priority 覆盖掉：vtimer 的 LR 卡在 Active，
+ * guest idle 后再也醒不过来 —— vCPU 越多（2 分 8）越容易命中。
+ *
+ * ⚠️ 只碰 AP1R0。ICH_AP1R1/2/3_EL2 在 QEMU 上实测会触发 "Unknown reason"
+ * （EC=0x0），连单 VM 都起不来；当前优先级位数下 AP1R0 已覆盖。
  */
 
 static uint64_t ich_read_vmcr(void)
@@ -338,6 +343,18 @@ static uint64_t ich_read_vmcr(void)
 static void ich_write_vmcr(uint64_t v)
 {
     __asm__ volatile("msr " ICH_VMCR_EL2 ", %0" ::"r"(v) : "memory");
+}
+
+static uint64_t ich_read_ap1r0(void)
+{
+    uint64_t v;
+    __asm__ volatile("mrs %0, " ICH_AP1R0_EL2 : "=r"(v));
+    return v;
+}
+
+static void ich_write_ap1r0(uint64_t v)
+{
+    __asm__ volatile("msr " ICH_AP1R0_EL2 ", %0" ::"r"(v) : "memory");
 }
 
 /* ── 进入 guest 前：把可投递中断写进空 LR ───────────────────── */
@@ -356,8 +373,7 @@ static void ich_write_vmcr(uint64_t v)
  * （最多 8 核），查找是常数时间。
  */
 #define VGIC3_MAX_LR_CPUS 8
-static vgic3_t *g_lr_owner_vgic[VGIC3_MAX_LR_CPUS];
-static uint32_t g_lr_owner_vcpu[VGIC3_MAX_LR_CPUS];
+static vcpu_t *g_lr_owner_vcpu[VGIC3_MAX_LR_CPUS];
 
 /*
  * vmm_vgic3_lr_switch_in — 进入 guest 前调用：确保本核的 LR 属于给定的
@@ -371,37 +387,73 @@ static uint32_t g_lr_owner_vcpu[VGIC3_MAX_LR_CPUS];
  *
  * 反过来（先清再 sync_exit）会把上一个 VM 尚未 EOI 的中断状态直接抹掉。
  */
-void vmm_vgic3_lr_switch_in(vgic3_t *vgic, uint32_t vcpu_id)
+void vmm_vgic3_lr_switch_in(vgic3_t *vgic, vcpu_t *vcpu)
 {
     uint32_t cpu = get_current_cpu_id();
+    uint32_t vcpu_id = (uint32_t)vcpu->vcpu_id;
 
-    if (cpu < VGIC3_MAX_LR_CPUS &&
-        (g_lr_owner_vgic[cpu] != vgic || g_lr_owner_vcpu[cpu] != vcpu_id)) {
-        if (g_lr_owner_vgic[cpu]) {
-            vgic3_t *prev = g_lr_owner_vgic[cpu];
+    if (cpu < VGIC3_MAX_LR_CPUS && g_lr_owner_vcpu[cpu] != vcpu) {
+        vcpu_t *prev = g_lr_owner_vcpu[cpu];
+
+        if (prev) {
+            vgic3_t *prev_vgic = &prev->vm->vgic3;
+            vgic3_vcpu_t *prev_state =
+                &prev_vgic->vcpu[(uint32_t)prev->vcpu_id];
             uint32_t n =
                 _gicv3.nr_lrs > VGIC3_MAX_LRS ? VGIC3_MAX_LRS : _gicv3.nr_lrs;
 
-            vmm_vgic3_sync_exit(prev, g_lr_owner_vcpu[cpu]);
+            /*
+             * 持上一个 vCPU 的 irq_lock。
+             *
+             * 它的 exit 路径已经 sync 过一次，但这里还要再同步：远端 CPU
+             * 可能正对着它调用 vmm_vcpu_inject_irq（SGI/控制台/NPU），而
+             * sync_exit 会对 active 的 LR 执行 clear_pending。不加锁的话，
+             * 刚置上的 pending 会被这次"补同步"抹掉 —— 表现是 guest 丢了
+             * 一次 IPI，SMP 启动或 RCU 握手随机卡死。
+             */
+            spin_lock(&prev->irq_lock);
+            vmm_vgic3_sync_exit(prev_vgic, (uint32_t)prev->vcpu_id);
 
             /*
-             * 把本 CPU 的 ICH_*_EL2 硬件状态**存回上一个 VM**，
+             * 把本 CPU 的 ICH_*_EL2 硬件状态**存回上一个 vCPU 自己**，
              * 稍后它被调度回来时再装回去（见下面的 restore）。
              * 顺序：先 sync_exit（回收 LR 语义）→ 再存 ICH → 再清 LR。
              */
-            prev->ich_vmcr = ich_read_vmcr();
+            prev_state->ich_vmcr = ich_read_vmcr();
+            prev_state->ich_ap1r0 = ich_read_ap1r0();
+
+            /*
+             * 接下来要清空本核硬件 LR。对**仍在 LR 里、还没被 guest ack**
+             * 的边沿 SGI，镜像里只有它、软件 pending 已经在注入时消费掉了；
+             * 把 pending 位放回软件状态，切回来才能重新投递。
+             *
+             * 必须放在这里（确定要切走时），不能放在 sync_exit：同一个
+             * vCPU 正常退出再进入时不会清 LR，那时重放 pending 会让同一个
+             * SGI 在 EOI 后被重复投一次。
+             */
+            for (uint32_t i = 0; i < n; i++) {
+                uint64_t lr = prev_state->lr[i];
+
+                if (!lr)
+                    continue;
+                uint32_t irq = lr_vintid(lr);
+                if (irq < 16 && (lr_state(lr) & ICH_LR_ST_PENDING) &&
+                    !(lr_state(lr) & ICH_LR_ST_ACTIVE))
+                    prev_state->pending0 |= irq_bit(irq);
+            }
 
             for (uint32_t i = 0; i < n; i++)
                 gicv3_write_lr(i, 0);
             barrier_sync();
+            spin_unlock(&prev->irq_lock);
         }
 
-        /* 装入当前 VM 的 ICH 状态（首次进入时是 init 给的默认值）*/
-        ich_write_vmcr(vgic->ich_vmcr);
+        /* 装入当前 vCPU 的 ICH 状态（首次进入时是 init 给的默认值）*/
+        ich_write_vmcr(vgic->vcpu[vcpu_id].ich_vmcr);
+        ich_write_ap1r0(vgic->vcpu[vcpu_id].ich_ap1r0);
         barrier_sync();
 
-        g_lr_owner_vgic[cpu] = vgic;
-        g_lr_owner_vcpu[cpu] = vcpu_id;
+        g_lr_owner_vcpu[cpu] = vcpu;
     }
 
     vmm_vgic3_sync_entry(vgic, vcpu_id);
@@ -507,6 +559,19 @@ void vmm_vgic3_sync_entry(vgic3_t *vgic, uint32_t vcpu_id)
             uint64_t value = vgic3_lr_value(vgic, vcpu_id, irq);
             vcpu->lr[slot] = value;
             gicv3_write_lr(slot, value);
+
+            /*
+             * SGI 是边沿触发：这个 pending 位在写进 LR 的这一刻就被
+             * 「消费」了。必须现在清掉，之后 guest 再发同一 INTID 的 SGI
+             * 才能重新把 pending 置起来（否则两次 IPI 会被合并成一次）。
+             *
+             * PPI/SPI 不走这条：它们是电平语义，pending 要保留到 guest
+             * ack（sync_exit 里清），设备侧每轮 entry 会重新拉线。
+             */
+            if (irq < 16) {
+                vcpu->pending0 &= ~irq_bit(irq);
+                vcpu->sgi_sources[irq] = 0;
+            }
         }
     }
 }
@@ -553,8 +618,16 @@ void vmm_vgic3_sync_exit(vgic3_t *vgic, uint32_t vcpu_id)
         uint32_t irq = lr_vintid(prev);
 
         if (lr_state(hw) & ICH_LR_ST_ACTIVE) {
-            /* guest 已应答：挂起位交给 active 记帐，避免重复投递 */
-            clear_pending(vgic, vcpu_id, irq);
+            /*
+             * guest 已应答。
+             *
+             * PPI/SPI（电平）：挂起位转 active 记帐，避免重复投递。
+             * SGI（边沿）：**不能**清 pending —— 注入时已经清过一次，
+             * 这里再清会把「active 期间新到的同号 IPI」抹掉，guest 就会
+             * 丢一次跨核唤醒（SMP 启动/RCU 握手随机卡死的经典来源）。
+             */
+            if (irq >= 16)
+                clear_pending(vgic, vcpu_id, irq);
             set_active(vgic, vcpu_id, irq);
         }
         vcpu->lr[i] = hw;

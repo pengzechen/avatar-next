@@ -1,7 +1,9 @@
 # 多 vCPU：VM-exit 视角与设计准备
 
-> 状态：**地基已落地，尚未启用 `nr_vcpus > 1`**。
-> 当前所有调用方仍传 `nr_vcpus = 1`，现有行为与单 vCPU 完全一致。
+> 状态：**aarch64 已支持 2/4/8/12 vCPU**，宿主 SMP 可以小于 guest vCPU
+> 数（已用 2 宿主 / 8 guest、4 宿主 / 8 guest、4 宿主 / 12 guest 做
+> 40s 启动门禁）。riscv64 / x86_64 的 AP 入口仍未实现，只支持单 vCPU。
+> 默认构建仍是 `nr_vcpus=1`；多 vCPU 由 `GUEST_VCPUS=N` 显式开启。
 
 ## 1. 核心模型
 
@@ -174,54 +176,117 @@ GICD/vLAPIC MMIO 改 pending 发生在 exit handler 里（可能睡眠/让出）
 寄存器级的实时一致。若将来要把 guest MMIO 也纳入同一顺序域，需要把
 pending 位图改成原子操作或给控制器加锁。
 
-## 5. 尚未做：真正启用多 vCPU 的前置条件
+## 5. 各架构启用状态
 
-按建议实现顺序：
+| 前置条件 | aarch64 | riscv64 | x86_64 |
+|---|---|---|---|
+| AP 启动闸门（`completion_t`） | ✅ | 结构已备，未接 SBI HSM | 结构已备，未接 SIPI |
+| AP 入口（CPU_ON / HSM / SIPI） | ✅ PSCI `CPU_ON`/`AFFINITY_INFO` | ❌ | ❌ |
+| guest IPI（SGI / IPI / ICR） | ✅ `ICC_SGI1R_EL1` 陷入 → pending + kick | ❌ | ❌ |
+| guest CPU 描述 | ✅ `linux-gicv3-smp{2,4,8,12}.dtb`（GICR = N×0x20000） | ❌ | ❌ |
+| vGIC per-vCPU 状态（VMCR/AP1R0、SGI 边沿 pending） | ✅ 见 5.2 | — | — |
+| VMM 侧注入与 entry/exit 互斥 | ✅ `vcpu->irq_lock` | ✅ | ✅ |
+| guest 自己写 GICD/vLAPIC 与远端注入的严格顺序 | ⚠️ 未收口（见 4a.3） | ⚠️ | ⚠️ |
+| VM 级全量启动/回滚 | ⚠️ 逐 vCPU 创建；失败置 stop_req | 同左 | 同左 |
 
-1. **AP 启动闸门。**
-   `guest_loader_run_linux()` 目前只配置并创建 `vcpu[0]`。启用多 vCPU
-   需要为非 BSP 创建任务，但**任务必须先在闸门处等待**，不能直接跳进
-   guest 入口。`completion_t` 已经提供了正确的睡眠原语；还缺的是：
-   vcpu_t 里嵌一个 `start_completion`、AP 任务入口先 `completion_wait`、
-   各架构 CPU_ON 路径在填好入口状态后 `completion_complete_all`。
+### 5.1 aarch64 的实现要点
 
-2. **每架构的 AP 入口。**
-   - AArch64：PSCI `CPU_ON`（现在 `el2_run.c` 直接返回 `NOT_SUPPORTED`）；
-     `context_id` / entry 要落到目标 vCPU 的 `elr/spsr/r[0]`。
-   - RISC-V：SBI HSM `hart_start`（现在未实现，见 `hext_run.c` 的注释）；
-     hartid ↔ vcpu_id 映射要固定。
-   - x86：INIT/SIPI（现在 `vlapic.c` 明确忽略）。SIPI 的 vector 就是 AP
-     入口页，需要先把 trampoline 写进 guest 低端内存。
+- **AP 任务先建、闸门后放行**：`guest_loader_run_linux()` 为 `vcpu[1..N-1]`
+  建任务，它们启动后睡在 `vcpu->start`（completion）上；BSP 最后建。
+- **PSCI CPU_ON**（`el2_run.c`）：按 DT `reg`（= vMPIDR 的 Aff0）找目标
+  vCPU，`vmm_vcpu_start()` 清零 sysregs（SCTLR_EL1=0）、置 `elr/spsr/x0`，
+  再 `completion_complete_all()`。AP 在另一颗宿主核上被 resched IPI 唤醒。
+- **PSCI AFFINITY_INFO**：OFFLINE → 1（OFF），其余 → 0（ON）。
+- **SGI**：guest 写 `ICC_SGI1R_EL1` 会陷入 EL2（EC=0x18）。`handle_sgi1r()`
+  解析 TargetList/IRM/INTID，对每个目标 `vmm_vgic3_set_sgi_pending()`，
+  再 `vmm_vcpu_kick()` 强制它退出 guest；下一次 entry 的 `sync_entry` 把
+  SGI 排进 LR。
+- **宿主摊核**：vCPU 任务 `(slot + vcpu_id) % ncpus`；宿主 SMP=2 时
+  4/8 个 vCPU 落在 cpu0/1。**`cpu_bring_up_all()` 必须在创建 vCPU 任务
+  之前**（否则 g_num_cpus=1，任务全钉 cpu0）。
+- **WFI/WFE 主动让出**：`HCR_EL2.TWI/TWE=1` 会把 guest 空闲的 WFI 和
+  qspinlock 里的 WFE 都变成 VM-exit；`handle_wfi()` 在推进 PC 后
+  `task_yield()`。没有这一步，超配时空闲 vCPU 会和正在启动的 BSP 抢核。
 
-3. **IPI / SGI 的跨 vCPU 语义。**
-   - AArch64：`vmm_vgic3_set_sgi_pending()` 记录源核位图，但 GICv3 的 LR
-     没有「SGI 源核」字段；真正跑起来需要 `ICC_SGI1R_EL1` 陷入与按目标
-     vCPU 分发。
-   - RISC-V：vPLIC 的 pending 是源级全局的，没有 per-hart pending；
-     SBI IPI 需要单独实现。
-   - x86：ICR 目前只处理「发给自己」（`vlapic.c` 的 `reg_write`），
-     需要按 destination 字段寻址到目标 vLAPIC。
+### 5.2 vGIC 的硬件状态必须按 vCPU 保存
 
-4. **跨 CPU 写入的原子性（VMM 侧已收口，guest MMIO 侧未收口）。**
-   VMM 侧注入现在由 `target->irq_lock` 串行化，并与 entry/exit 同步互斥，
-   所以「远端注入 vs 目标同步」不再各写一半。仍未覆盖的是 guest 自己
-   写 GICD/vLAPIC 的 MMIO 路径（见 4a.3 的边界说明）：启用多 vCPU 前，
-   若要保证这类写入与远端注入的严格顺序，需要把控制器 pending 位图
-   改成原子操作或加控制器锁。
+`ICH_VMCR_EL2` 和 `ICH_AP1R0_EL2` 是 **per-pCPU 硬件**，但内容属于当前
+在上面跑的 vCPU。同一 VM 的多个 vCPU 会在同一颗宿主核上分时跑，所以
+它们必须和 `ICH_LR<n>_EL2` 一样按 vCPU 保存/恢复，不能只按 VM 存一份。
+少存这两项时，vCPU A 的 PMR/IGRPEN/active priority 会被 vCPU B 覆盖；
+vCPU 越多越容易命中，实测表现是 vtimer 的 LR 卡在 Active、guest idle
+后再也醒不过来（宿主侧 vtimer 注入计数一直涨）。
 
-5. **guest 侧的 CPU 描述。**
-   `nr_vcpus > 1` 时，aarch64/riscv 的 DTB 要有对应 `cpu@N` 节点与
-   `enable-method`，x86 的 MP 表要有对应处理器项；否则 guest 根本不会
-   去启动 AP。
+当前实现：
 
-6. **VM 级全量启动/回滚。**
-   现在每个 vCPU 各自 `vcpu_task_create()`。多 vCPU 应提供
-   `vm_start_vcpus(vm)`：全部创建成功才算启动；中途失败要置 `stop_req`
-   并等待已创建的 vCPU 退出（不能直接 `vm_free()`，计数不为 0）。
+- `vgic3_vcpu_t` 里保存 `ich_vmcr`、`ich_ap1r0` 和 16 个 `lr[]`；
+- `vmm_vgic3_lr_switch_in()` 在 LR 归属切换时先保存上一个 vCPU 的
+  VMCR/AP1R0，再装入当前 vCPU 的副本；
+- `ICH_AP1R1/2/3_EL2` 不碰：QEMU 上实测会触发 "Unknown reason"，
+  当前优先级位数下 AP1R0 已覆盖。
 
-## 6. 回归门禁
+**SGI 是边沿触发，pending 生命周期与 PPI/SPI 不同**：
+
+- 写进 LR 的那一刻消费软件 pending，之后同一 INTID 的新 SGI 才能再置位；
+- 如果 vCPU 在 LR 仍 Pending 时被切走（硬件 LR 马上要清空），把 pending
+  放回软件状态，切回来再注入；
+- guest ack 时**不能**清 SGI 的 pending —— 否则 active 期间新到的同号
+  IPI 会被抹掉，表现为跨核唤醒随机丢失、RCU/启动卡死。
+- PPI/SPI 保持电平语义：pending 保留到 ack，设备侧每轮 entry 重新拉线。
+
+## 6. aarch64 多 vCPU guest 实测
+
+```bash
+# 2 宿主核 / 8 guest vCPU；其余组合只改 SMP/GUEST_VCPUS
+make PLATFORM=qemu-virt-aarch64 SMP=2 GUEST_VCPUS=8 GUEST_LINUX=1 clean
+make PLATFORM=qemu-virt-aarch64 SMP=2 GUEST_VCPUS=8 GUEST_LINUX=1 kernel rootfs
+timeout 40 make PLATFORM=qemu-virt-aarch64 SMP=2 GUEST_VCPUS=8 \
+    GUEST_LINUX=1 LOG=info test-guest-linux
+```
+
+判据（8 vCPU 实测输出）：
+
+```
+smp: Bringing up secondary CPUs ...
+CPU1: Booted secondary processor 0x0000000001
+...
+CPU7: Booted secondary processor 0x0000000007
+smp: Brought up 1 node, 8 CPUs
+SMP: Total of 8 processors activated.
+~ #
+```
+
+宿主侧能看到 8 个 `vm1 vcpuN task started`，在 cpu0/cpu1 上各 4 个。
+`GUEST_VCPUS=N` 会自动选 `imgs/guests/aarch64/linux-gicv3-smpN.dtb`
+（N 个 cpu@N、GICR 区 N×0x20000），并把 `GUEST_LINUX_NR_VCPUS=N`
+传给 guest_loader。
+
+启动稳定性矩阵（QEMU 超时 40s，干净构建）：
+
+| 宿主 SMP | GUEST_VCPUS | 运行次数 | 结果 |
+|---|---|---|---|
+| 2 | 4 | 50 | 50/50 |
+| 2 | 8 | 100 | 100/100 |
+| 4 | 8 | 30 | 30/30 |
+| 4 | 12 | 30 | 30/30 |
+
+三架构回归（同一提交）：
+
+- LTP：aarch64 / riscv64 / x86_64 各 **63/63 PASS**（0 FAIL / 0 BROK）。
+- 原 `VMM_TEST=1` 测试：三架构都能启动并创建三个线程，持续运行到超时。
+
+> 历史坑：只按 VM 保存 `ich_vmcr`、SGI pending 在注入时不清/在 ack 时
+> 乱清，以及缺少 WFI/WFE 让出，都会让 2 分 8 出现约 20% 的启动停滞；
+> 修复后 2 分 8 连续 100 次通过。
+
+## 7. 回归门禁
 
 - 三架构 `make PLATFORM=<p> clean && make PLATFORM=<p> kernel`
+- 三架构 LTP（自动化）：
+  `python3 tests/ltp/run_qemu_ltp.py $(make PLATFORM=<p> -n test-ltp | ...)`
+  —— 当前基线 63/63 PASS
+- 三架构原 VMM 测试：`make PLATFORM=<p> VMM_TEST=1 run` —— 应看到
+  `=== Avatar OS: ... VMM Test ===`、Thread 1/2/3 创建并持续打印
 - 单 vCPU 行为不变：
   - `tools/vmm_helper_regress.sh x86_64 1 1`
   - `tools/vmm_helper_regress.sh aarch64 1 1`

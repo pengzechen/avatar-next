@@ -29,7 +29,7 @@
 
 /* 最大跟踪中断数 */
 #define VGICD_MAX_IRQS  1024
-#define VGICD_MAX_VCPUS 8
+#define VGICD_MAX_VCPUS 12
 
 /*
  * guest 虚拟定时器中断 = PPI 27。从前这里有一份独立的 `VGICD_VTIMER_IRQ 27`

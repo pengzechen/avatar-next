@@ -206,6 +206,7 @@ int vmm_arch_vm_init(vm_t *vm)
         vcpu->state = VCPU_STATE_OFFLINE;
         vcpu->task = NULL;
         spinlock_irq_init(&vcpu->irq_lock);
+        completion_init(&vcpu->start);
 
         /*
          * hstatus_save 是「上次陷入时的 hstatus」快照，入口靠它还原

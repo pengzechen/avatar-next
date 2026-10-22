@@ -51,7 +51,7 @@
 
 /* 本内核最多几个 vCPU（与 vmm.h 的 MAX_VCPUS 一致；这里不用包含 vmm.h，
  * 因为 vmm.h 反过来要包含本头）。*/
-#define VLAPIC_MAX_VCPUS 4
+#define VLAPIC_MAX_VCPUS 12
 
 /* ── 设备私有状态 ─────────────────────────────────────────────
  *

@@ -14,6 +14,7 @@
 #include "vmm/vmm.h"
 #include "vmm/vmm_console.h" /* vmm_console_pump（直启模式的输入桥）*/
 #include "klog.h"
+#include "string.h" /* memset：AP 初始状态清零 */
 #include "task/task.h"
 #include "task/sched.h" /* sched_check_and_yield：主循环顶部主动让出 CPU */
 #include "task/cpu.h"   /* g_num_cpus：vCPU 摊核时用 */
@@ -21,6 +22,61 @@
 #include "aarch64/stage2.h" /* stage2_activate：每轮进 guest 前重写 VTTBR */
 #endif
 #include "barrier.h" /* smp_wmb：注入发布后再 kick */
+
+/* ── AP 启动闸门（PSCI CPU_ON 的落点）───────────────────── */
+
+int vmm_vcpu_start(vcpu_t *vcpu, uint64_t entry, uint64_t context_id)
+{
+#if !ARCH_AARCH64
+    /*
+     * AP 入口目前只有 aarch64 实现（PSCI CPU_ON）；riscv64 的 SBI HSM、
+     * x86_64 的 INIT/SIPI 都还没有。vcpu_t 的入口状态字段也是架构私有的
+     * （AArch64 是 elr/spsr/sp_el1/cntv_*，另外两个架构没有这些成员），
+     * 所以这里必须按架构收口，否则 riscv64/x86_64 连内核都编不过。
+     */
+    (void)vcpu;
+    (void)entry;
+    (void)context_id;
+    return -1;
+#else
+    if (!vcpu || !vcpu->vm || entry == 0)
+        return -1;
+    if (vcpu->state != VCPU_STATE_OFFLINE)
+        return -1;
+
+    /*
+     * AP 的初始状态：EL1h、DAIF 全屏蔽；x0 = context_id。
+     * sysregs 清零 => SCTLR_EL1=0（MMU 关闭），正是 Linux secondary_entry
+     * 期望的状态；SP_EL1 置 0，Linux 会从 secondary_data 自己取栈。
+     */
+    memset(vcpu->r, 0, sizeof(vcpu->r));
+    memset(vcpu->sysregs, 0, sizeof(vcpu->sysregs));
+    vcpu->r[0] = context_id;
+    vcpu->elr = entry;
+    vcpu->spsr = 0x5ULL | (0xFULL << 6); /* EL1h, DAIF masked */
+    vcpu->sp_el1 = 0;
+    vcpu->launched = 0;
+    vcpu->exit_type = 0;
+    vcpu->esr = 0;
+    vcpu->far = 0;
+    vcpu->hpfar = 0;
+    vcpu->cntv_ctl = 0;
+    vcpu->cntv_cval = 0;
+
+    smp_wmb();
+    vcpu->state = VCPU_STATE_RUNNING;
+
+    /*
+     * 放行 AP 任务。它可能睡在另一颗核上：completion 的唤醒走
+     * sched_unblock() → 远端 resched IPI，正是多 vCPU 需要的那条路。
+     */
+    completion_complete_all(&vcpu->start);
+    KLOG_INFO("[vmm] vcpu%d started: entry=0x%llx context=0x%llx\n",
+              vcpu->vcpu_id, (unsigned long long)entry,
+              (unsigned long long)context_id);
+    return 0;
+#endif
+}
 
 /* ── 目标 vCPU 的中断注入 / kick ─────────────────────────── */
 
@@ -201,13 +257,26 @@ static void vcpu_task_fn(void *arg)
      * task_create 返回前就与本任务并发）不写这些字段，避免和本任务竞争。
      */
     vcpu->task = task_current();
-    vcpu->state = VCPU_STATE_RUNNING;
     vcpu->host_cpu = (int)get_current_cpu_id();
+    int rc = 0;
 
     KLOG_INFO("[vmm] vm%u vcpu%d task started (id=%u) on cpu%u\n", vm->vmid,
               vcpu->vcpu_id, task_current()->id, get_current_cpu_id());
 
-    int rc = vmm_run_vcpu(vcpu);
+    /*
+     * 非 BSP 在 AP 闸门处等 PSCI CPU_ON。等的时候 state 保持 OFFLINE ——
+     * AFFINITY_INFO 要据此回答 OFF。BSP 直接进入 guest。
+     */
+    if (!vmm_vcpu_is_bsp(vcpu)) {
+        completion_wait(&vcpu->start);
+        if (vm->stop_req)
+            goto out;
+    }
+
+    vcpu->state = VCPU_STATE_RUNNING;
+    rc = vmm_run_vcpu(vcpu);
+
+out:
 
     /*
      * 本颗 vCPU 退出 = 整个 VM 该收了。

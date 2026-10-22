@@ -177,6 +177,75 @@ static uint64_t aarch64_vcpu_idreg_read(uint32_t key)
     }
 }
 
+#if DRIVER_GIC_V3
+/*
+ * ICC_SGI1R_EL1 写入 —— guest 发 SGI（Linux 的 IPI）。
+ *
+ * 这个寄存器**没有**被硬件虚拟化：guest 写它必然陷入 EL2（EC=0x18），
+ * 由 VMM 按目标 vCPU 置 vGIC 的 SGI pending。之前这里直接按"未处理
+ * sysreg"跳过，于是 Linux AP bring-up / reschedule IPI 全部丢失 ——
+ * 表现是 4 个 vCPU 都起来了，但 guest 的 smp bring-up 停在半路。
+ *
+ * 字段（ARM IHI 0069）：
+ *   [15:0]  TargetList（Aff0 位图）
+ *   [23:16] Aff1
+ *   [27:24] INTID
+ *   [39:32] Aff2
+ *   [40]    IRM：1 = 除自己外所有 PEs
+ *   [47:44] RS：非 0 时按范围选择，本 VMM 不支持
+ *   [55:48] Aff3
+ *
+ * 本 VMM 的 vMPIDR_EL2 = vcpu_id、DTB cpu@N reg = N，所以只支持 Aff0、
+ * Aff1/2/3=0、RS=0。投递走 vmm_vgic3_set_sgi_pending()，然后 kick 目标
+ * vCPU —— 它若正在 guest 里，resched IPI 会把它踹出来，下一次 entry 的
+ * sync_entry 才会把 SGI 排进 LR。
+ */
+static void handle_sgi1r(vcpu_t *vcpu, uint64_t val)
+{
+    vm_t *vm = vcpu->vm;
+    uint32_t intid = (uint32_t)((val >> 24) & 0xFu);
+    uint32_t tlist = (uint32_t)(val & 0xFFFFu);
+    uint32_t aff1 = (uint32_t)((val >> 16) & 0xFFu);
+    uint32_t aff2 = (uint32_t)((val >> 32) & 0xFFu);
+    uint32_t aff3 = (uint32_t)((val >> 48) & 0xFFu);
+    int irm = (int)((val >> 40) & 1u);
+    uint32_t rs = (uint32_t)((val >> 44) & 0xFu);
+
+    if (!vm || intid >= 16)
+        return;
+
+    if (aff1 || aff2 || aff3 || rs) {
+        KLOG_DEBUG("[vpsci] SGI1R unsupported aff/rs val=0x%llx\n",
+                   (unsigned long long)val);
+        return;
+    }
+
+    for (int i = 0; i < vm->nr_vcpus; i++) {
+        uint64_t flags;
+        int target;
+
+        if (irm)
+            target = (i != vcpu->vcpu_id);
+        else
+            target = (tlist >> i) & 1u;
+        if (!target)
+            continue;
+
+        /*
+         * 与目标的 entry/exit 同步互斥：sync_exit 会对 active 的 LR 执行
+         * clear_pending，裸写 pending 会被它抹掉（丢一次 IPI，SMP 启动/
+         * RCU 握手随机卡死）。锁内只写 pending，kick 放到锁外 —— 顺序是
+         * "先发布、再要求退出"。
+         */
+        spin_lock_irqsave(&vm->vcpus[i].irq_lock, &flags);
+        vmm_vgic3_set_sgi_pending(&vm->vgic3, (uint32_t)i,
+                                  (uint32_t)vcpu->vcpu_id, intid);
+        spin_unlock_irqrestore(&vm->vcpus[i].irq_lock, flags);
+        vmm_vcpu_kick(&vm->vcpus[i]);
+    }
+}
+#endif /* DRIVER_GIC_V3 */
+
 static int handle_sysreg(vcpu_t *vcpu, uint64_t esr)
 {
     uint32_t op0 = (uint32_t)((esr >> 20) & 0x3);
@@ -194,6 +263,16 @@ static int handle_sysreg(vcpu_t *vcpu, uint64_t esr)
         el2_advance_pc(vcpu, esr);
         return EL2_RESUME;
     }
+
+#if DRIVER_GIC_V3
+    /* ICC_SGI1R_EL1 = S3_0_C12_C11_5，写 */
+    if (!dir && op0 == 3 && op1 == 0 && crn == 12 && crm == 11 && op2 == 5) {
+        uint64_t val = (rt == 31) ? 0 : vcpu->r[rt];
+        handle_sgi1r(vcpu, val);
+        el2_advance_pc(vcpu, esr);
+        return EL2_RESUME;
+    }
+#endif
 
     KLOG_WARN(
         "[VMM] Unhandled sysreg %s op0=%u op1=%u crn=%u crm=%u op2=%u rt=%u\n",
@@ -220,6 +299,20 @@ static int handle_wfi(vcpu_t *vcpu, uint64_t esr)
     }
 
     el2_advance_pc(vcpu, esr);
+
+    /*
+     * 让出宿主 CPU，而不是立刻重新进入 guest。
+     *
+     * guest 空闲时几乎一直执行 WFI，而 TWI=1 把它变成一次 VM-exit：若这里
+     * 直接 resume，一颗**空闲** vCPU 也会在宿主上满速空转。单 vCPU 时只是
+     * 浪费一点电；vCPU 数多于宿主核数时（例如 8 个 vCPU 跑在 SMP=2 上），
+     * 7 颗空闲 AP 会和正在启动的 BSP 抢核，实测 guest 启动从几秒退化到
+     * 40 秒都进不了 shell。
+     *
+     * 这里在 exit handler 里，IRQ 已由主循环恢复，且不在 IRQ 上下文，
+     * 可以直接切任务。被重新调度回来时再进 guest；如果仍然空闲，就再让出。
+     */
+    task_yield();
     return EL2_RESUME;
 }
 
@@ -473,11 +566,13 @@ static int handle_iabt(vcpu_t *vcpu, uint64_t esr)
  * 返回 EL2_RESUME（继续）或 EL2_VMEXIT（SYSTEM_OFF/RESET）。
  */
 #define PSCI_VERSION_FID  0x84000000ULL
-#define PSCI_CPU_ON_32    0x84000003ULL
-#define PSCI_CPU_ON_64    0xC4000003ULL
-#define PSCI_SYSTEM_OFF   0x84000008ULL
-#define PSCI_SYSTEM_RESET 0x84000009ULL
-#define PSCI_FEATURES_FID 0x8400000AULL
+#define PSCI_CPU_ON_32        0x84000003ULL
+#define PSCI_CPU_ON_64        0xC4000003ULL
+#define PSCI_AFFINITY_INFO_32 0x84000004ULL
+#define PSCI_AFFINITY_INFO_64 0xC4000004ULL
+#define PSCI_SYSTEM_OFF       0x84000008ULL
+#define PSCI_SYSTEM_RESET     0x84000009ULL
+#define PSCI_FEATURES_FID     0x8400000AULL
 
 #define PSCI_RET_SUCCESS        0ULL
 #define PSCI_RET_NOT_SUPPORTED  ((uint64_t)-1)
@@ -490,6 +585,8 @@ static int psci_fid_supported(uint64_t fid)
     case PSCI_VERSION_FID:
     case PSCI_CPU_ON_32:
     case PSCI_CPU_ON_64:
+    case PSCI_AFFINITY_INFO_32:
+    case PSCI_AFFINITY_INFO_64:
     case PSCI_SYSTEM_OFF:
     case PSCI_SYSTEM_RESET:
     case PSCI_FEATURES_FID:
@@ -514,14 +611,52 @@ static int handle_psci(vcpu_t *vcpu)
         return EL2_RESUME;
 
     case PSCI_CPU_ON_32:
-    case PSCI_CPU_ON_64:
-        /* 多 vCPU guest 拉起：当前单 vCPU 模型未支持，忠实记录后返回。
-         * TODO(Phase 3): 为 target_cpu 创建第二个 vcpu_task。 */
-        KLOG_WARN(
-            "[vpsci] CPU_ON target=0x%llx entry=0x%llx not supported (single vCPU)\n",
-            (unsigned long long)vcpu->r[1], (unsigned long long)vcpu->r[2]);
-        vcpu->r[0] = PSCI_RET_NOT_SUPPORTED;
+    case PSCI_CPU_ON_64: {
+        /*
+         * Linux 的 cpu_psci_cpu_boot() 传 target_cpu = DT cpu@N 的 reg
+         * （也就是 MPIDR）。本 VMM 的 vMPIDR_EL2 = vcpu_id，DTB 的
+         * cpu@N reg = N，所以 Aff0 就是 vcpu_id；Aff1/2/3 必须为 0。
+         */
+        uint64_t target = vcpu->r[1];
+        uint64_t entry = vcpu->r[2];
+        uint64_t context = vcpu->r[3];
+        vm_t *vm = vcpu->vm;
+
+        if (!vm || (target & ~0xFFULL) ||
+            (target & 0xFF) >= (uint64_t)vm->nr_vcpus) {
+            KLOG_WARN("[vpsci] CPU_ON bad target=0x%llx (nr_vcpus=%d)\n",
+                      (unsigned long long)target, vm ? vm->nr_vcpus : -1);
+            vcpu->r[0] = PSCI_RET_INVALID_PARAMS;
+            return EL2_RESUME;
+        }
+
+        vcpu_t *t = &vm->vcpus[target & 0xFF];
+        if (t->state != VCPU_STATE_OFFLINE) {
+            vcpu->r[0] = PSCI_RET_ALREADY_ON;
+            return EL2_RESUME;
+        }
+        if (vmm_vcpu_start(t, entry, context) != 0) {
+            vcpu->r[0] = PSCI_RET_INVALID_PARAMS;
+            return EL2_RESUME;
+        }
+        vcpu->r[0] = PSCI_RET_SUCCESS;
         return EL2_RESUME;
+    }
+
+    case PSCI_AFFINITY_INFO_32:
+    case PSCI_AFFINITY_INFO_64: {
+        uint64_t target = vcpu->r[1];
+        vm_t *vm = vcpu->vm;
+
+        if (!vm || (target & ~0xFFULL) ||
+            (target & 0xFF) >= (uint64_t)vm->nr_vcpus) {
+            vcpu->r[0] = PSCI_RET_INVALID_PARAMS;
+            return EL2_RESUME;
+        }
+        /* 0 = ON，1 = OFF（Linux 的 psci_affinity_info 约定）*/
+        vcpu->r[0] = vmm_vcpu_is_online(&vm->vcpus[target & 0xFF]) ? 0ULL : 1ULL;
+        return EL2_RESUME;
+    }
 
     case PSCI_SYSTEM_OFF:
     case PSCI_SYSTEM_RESET:
@@ -771,7 +906,7 @@ void vmm_arch_restore_guest_ctx(vcpu_t *vcpu)
     vmm_vgic3_hw_init();
     /* ⚠️ 用 switch_in 而不是直接 sync_entry：LR 是 per-pCPU 硬件，本核
      * 可能刚跑过**别的 VM** 的 vCPU 任务，直接 sync 会串味（见其注释）。*/
-    vmm_vgic3_lr_switch_in(&vcpu->vm->vgic3, (uint32_t)vcpu->vcpu_id);
+    vmm_vgic3_lr_switch_in(&vcpu->vm->vgic3, vcpu);
 #else
     vmm_vgic_sync_entry(&vcpu->vm->vgic, (uint32_t)vcpu->vcpu_id);
 #endif

@@ -12,7 +12,7 @@
 
 #define VGIC_MAX_IRQS  1024
 #define VGIC_MAX_WORDS (VGIC_MAX_IRQS / 32)
-#define VGIC_MAX_VCPUS 8
+#define VGIC_MAX_VCPUS 12
 #define VGIC_MAX_LRS   4
 #define VGICD_REG_SIZE 0x1000
 

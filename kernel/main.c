@@ -280,6 +280,17 @@ void kernel_main(void)
 #endif
     task_init();
 
+    /*
+     * 先把 AP 拉起来，再创建任何可能被摊核的任务。
+     *
+     * vCPU 任务的亲和性在创建时就算好了（(slot + vcpu_id) % g_num_cpus）。
+     * 从前这一步在模式分支之后，直启 guest 时 g_num_cpus 还是 1，于是
+     * **4 个 vCPU 全被钉在 cpu0** —— guest 侧看是 4 核，宿主只有一颗核在
+     * 分时，AP bring-up 和 IPI 都会被拖死。放到任务创建之前，任何模式
+     * （直启 guest / busybox / 网络）都能按真实核数摊开。
+     */
+    cpu_bring_up_all();
+
 #if DRIVER_ETH_VIRTIO && !defined(RUN_GUEST_LINUX)
     KLOG_NET("Initializing virtio ethernet driver...\n");
     virtio_net_init_from_platform();
@@ -357,13 +368,6 @@ void kernel_main(void)
     else
         KLOG_ERROR("Failed to create busybox loader task!\n");
 #endif
-
-    /*
-     * Phase 3：所有初始任务必须在开启抢占前创建完成。boot/main 执行流
-     * 不是普通 task；一旦 timer 调度启动，后续启动逻辑不应依赖它继续
-     * 运行，否则后续初始化任务可能互相阻塞。
-     */
-    cpu_bring_up_all();
 
     /*
      * SMP 结果打一条 **INFO**。

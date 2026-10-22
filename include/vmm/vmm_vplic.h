@@ -27,7 +27,7 @@
 #define VPLIC_SIZE 0x400000ULL
 
 #define VPLIC_MAX_IRQS  64
-#define VPLIC_MAX_VCPUS 8
+#define VPLIC_MAX_VCPUS 12
 
 /* ── 设备私有状态 ─────────────────────────────────────────────
  *

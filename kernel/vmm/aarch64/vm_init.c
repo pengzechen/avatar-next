@@ -151,6 +151,7 @@ int vmm_arch_vm_init(vm_t *vm)
         vcpu->state = VCPU_STATE_OFFLINE;
         vcpu->task = NULL;
         spinlock_irq_init(&vcpu->irq_lock);
+        completion_init(&vcpu->start);
     }
     vm->nr_vcpus = nr;
 

@@ -111,7 +111,7 @@ static vlapic_state_t *vlapic_of(const vm_t *vm, uint32_t vcpu_id)
 
     if (!vm || (unsigned)vm->slot >= (unsigned)MAX_VMS)
         return NULL;
-    d = &g_vlapic[vm->slot][vcpu_id & (VLAPIC_MAX_VCPUS - 1)];
+    d = &g_vlapic[vm->slot][vcpu_id % VLAPIC_MAX_VCPUS];
     if (d->owner != vm)
         return NULL;
     return &d->st;
@@ -307,7 +307,7 @@ void vlapic_init(vm_t *vm, uint32_t vcpu_id)
     if (!vm || (unsigned)vm->slot >= (unsigned)MAX_VMS)
         return;
     /* 直接取槽位：of() 要校验 owner，而 owner 正是本函数要写的 */
-    d = &g_vlapic[vm->slot][vcpu_id & (VLAPIC_MAX_VCPUS - 1)];
+    d = &g_vlapic[vm->slot][vcpu_id % VLAPIC_MAX_VCPUS];
     d->owner = vm;
     v = &d->st;
 
