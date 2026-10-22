@@ -24,6 +24,7 @@
 #define AARCH64_STAGE2_H
 
 #include "types.h"
+#include "spinlock.h"
 
 /* ── Guest 物理内存默认布局（QEMU virt）──────────────────────
  * 历史遗留：实际用的是 guest_loader.h 的 GUEST_LINUX_MEM_BASE/SIZE。
@@ -111,6 +112,20 @@ typedef struct s2_ctx {
     uint64_t *l3_tbl[S2_MAX_L3_TABLES]; /* +1 = 该 2MiB 块已有表；动态分配 */
     uint64_t nr_premap;                 /* 统计：加载期预映射页数           */
     uint64_t nr_fault;                  /* 统计：按需缺页分配页数           */
+
+    /*
+     * 按需映射串行化。
+     *
+     * l3_ensure()/stage2_map_page()/stage2_map_block() 都是
+     * 「检查未映射 → 从 PMM 分配 → 写表项」，没有任何原子性；同一 VM 的
+     * 多个 vCPU 同时缺页时会各分配一套页/L3 表并互相覆盖。被覆盖的那组页
+     * 从 guest 视角看等于内存被换成了另一组清零页 —— 实测表现为所有 vCPU
+     * 排在同一把 qspinlock 上，但锁 owner 已经"消失"，启动永久卡死。
+     *
+     * 缺页处理、NPU 恒等映射和取指缺页都在这把锁下做「映射 + 复查」。
+     * 加载期的 stage2_map_range() 在 vCPU 任务创建之前执行，不需要锁。
+     */
+    spinlock_noirq_t map_lock;
 
     /*
      * NPU DMA 恒等映射窗口（IPA 区间），size==0 表示没有。

@@ -444,10 +444,15 @@ static int handle_dabt(vcpu_t *vcpu, uint64_t esr)
      */
     if (vcpu->vm && stage2_ipa_is_npu_dma(&vcpu->vm->s2, ipa_page)) {
         vm_t *vm = vcpu->vm;
-        uint64_t n = stage2_map_identity_block(&vm->s2, ipa_page);
+        uint64_t n;
         uint64_t npa = 0;
+        uint64_t flags;
 
+        /* 与普通 RAM 缺页共用 map_lock：同一 2 MiB 块的 L2/L3 写入必须串行 */
+        spin_lock_irqsave(&vm->s2.map_lock, &flags);
+        n = stage2_map_identity_block(&vm->s2, ipa_page);
         (void)stage2_lookup(&vm->s2, ipa_page, &npa);
+        spin_unlock_irqrestore(&vm->s2.map_lock, flags);
 
         if (!npa) {
             KLOG_ERROR("[vmm] vm%u: NPU DMA 恒等映射失败 ipa=0x%llx\n",
@@ -471,12 +476,25 @@ static int handle_dabt(vcpu_t *vcpu, uint64_t esr)
          * Linux 启动期缺页密集，单页映射每次都要一次 EL2 往返（TCG 下约
          * 1.2ms），1447 次就是 1.7 秒。
          */
-        uint64_t npg = stage2_map_block(&vm->s2, ipa_page, 1 /*zero*/);
         uint64_t pa = 0;
+        uint64_t flags;
 
-        (void)stage2_lookup(&vm->s2, ipa_page, &pa); /* 块装好后必然命中 */
+        /*
+         * 同一 VM 的多个 vCPU 会并发缺页。整段「映射 + 复查」必须在
+         * map_lock 下串行，否则两个 vCPU 会各自分配 L3 表/物理页并互相
+         * 覆盖，被覆盖的页从 guest 看就是"内存被换掉/清零"。
+         */
+        spin_lock_irqsave(&vm->s2.map_lock, &flags);
+        (void)stage2_map_block(&vm->s2, ipa_page, 1 /*zero*/);
+        (void)stage2_lookup(&vm->s2, ipa_page, &pa);
+        spin_unlock_irqrestore(&vm->s2.map_lock, flags);
 
-        if (!npg || !pa) {
+        /*
+         * ⚠️ 判据是 pa，不是 map_block 的返回值：块已经被别的 vCPU 装好时
+         * stage2_map_block() 返回 0，但 lookup 会命中 —— 这是成功，不能
+         * 当成 "PMM exhausted" 退出 VM。
+         */
+        if (!pa) {
             KLOG_ERROR("[vmm] vm%u: stage-2 fault ipa=0x%llx but PMM exhausted "
                        "(free=%llu pages)\n",
                        vm->vmid, (unsigned long long)ipa_page,
@@ -571,7 +589,12 @@ static int handle_iabt(vcpu_t *vcpu, uint64_t esr)
 
     if (vcpu->vm && stage2_ipa_is_ram(&vcpu->vm->s2, ipa_page)) {
         vm_t *vm = vcpu->vm;
-        uint64_t pa = stage2_map_page(&vm->s2, ipa_page, 1 /*zero*/);
+        uint64_t pa;
+        uint64_t flags;
+
+        spin_lock_irqsave(&vm->s2.map_lock, &flags);
+        pa = stage2_map_page(&vm->s2, ipa_page, 1 /*zero*/);
+        spin_unlock_irqrestore(&vm->s2.map_lock, flags);
 
         if (!pa) {
             KLOG_ERROR("[vmm] vm%u: ifetch fault ipa=0x%llx but PMM exhausted "

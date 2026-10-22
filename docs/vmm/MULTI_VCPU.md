@@ -247,6 +247,27 @@ EOImode=0 时 `ICC_EOIR1` 一步完成 priority drop + deactivate；EOImode=1
 EOImode=1 的 guest（active 中断可能已不在 LR 里，硬件 DIR 会丢，
 必须由 VMM 清软件 active 位）；对当前 Linux guest 是 no-op。
 
+### 5.3 stage-2 按需分页必须串行
+
+guest 锁/内存缺页会由多个 vCPU 并发触发。`l3_ensure()` /
+`stage2_map_page()` / `stage2_map_block()` 是「检查未映射 → PMM 分配 →
+写 L2/L3 表项」，没有任何原子性；两个 vCPU 同时缺页会各自分配一套页或
+L3 表并互相覆盖。被覆盖的那组页从 guest 视角看就是**内存被替换成了
+另一组清零页**。
+
+实测症状极具迷惑性：所有 vCPU 的 x3 指向同一个 qspinlock，全部停在
+`queued_spin_lock_slowpath`，但没有任何一个 vCPU 在临界区里 —— 锁的
+owner "消失"了。2 分 8 约 1-2% 启动停滞，vGIC/WFE 修复都消不掉。
+
+修复：
+
+- `s2_ctx_t.map_lock` 串行化缺页路径的「映射 + 复查」；
+- 缺页成功的判据用 `stage2_lookup()` 得到的 `pa`，**不是**
+  `stage2_map_block()` 的返回值：块已被另一个 vCPU 装好时它返回 0，
+  但 lookup 命中，这是成功，不能当 PMM exhausted 退出 VM。
+
+修复后 2 分 8 连续 200 次通过。
+
 ## 6. aarch64 多 vCPU guest 实测
 
 ```bash
@@ -279,7 +300,7 @@ SMP: Total of 8 processors activated.
 | 宿主 SMP | GUEST_VCPUS | 运行次数 | 结果 |
 |---|---|---|---|
 | 2 | 4 | 50 | 50/50 |
-| 2 | 8 | 200 | **200/200**（WFI/WFE 限频修复后） |
+| 2 | 8 | 200 | **200/200**（最终版：stage-2 map_lock + WFE 限频） |
 | 4 | 8 | 30 | 30/30 |
 | 4 | 12 | 30 | 30/30 |
 
@@ -292,7 +313,10 @@ SMP: Total of 8 processors activated.
 > 1. 只按 VM 保存 `ich_vmcr`、SGI pending 在注入时不清/在 ack 时乱清 ——
 >    2 分 8 约 20% 启动停滞，vGIC 按 vCPU 保存/恢复后降到 1-2%。
 > 2. WFE 的让出策略：每次让出会形成切换风暴；完全不让出会出现 42s 的
->    极端慢启动。改成 1ms 限频后，2 分 8 连续 200 次通过。
+>    极端慢启动。改成 1ms 限频。
+> 3. stage-2 缺页并发覆盖：所有 vCPU 排在同一把 qspinlock 上、owner
+>    却不存在。`map_lock` 串行化 + 用 lookup 的 pa 判定成功后，2 分 8
+>    连续 200 次通过。
 
 ## 7. 回归门禁
 

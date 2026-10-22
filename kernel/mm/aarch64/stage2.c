@@ -124,6 +124,7 @@ void stage2_vm_init(s2_ctx_t *s2, uint32_t slot, uint32_t vmid,
     }
 
     memset(s2, 0, sizeof(*s2));
+    spinlock_irq_init(&s2->map_lock);
     s2->slot = slot;
     s2->vmid = vmid & 0xFF;
     /* 默认没有 NPU 恒等窗口；需要时由 vmm_arch_vm_init() 显式设定。
