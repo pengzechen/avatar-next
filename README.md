@@ -249,7 +249,7 @@ if (!test_boot_skip_net()) {          // guest 直启 / VMM 自测跳过网络
     drivers_init(DRV_PHASE_NET);
 }
 if (test_boot_active()) {
-    test_boot_run();                  // 由 tests/boot/boot_*.c 实现
+    test_boot_run();                  // 由 tests/unit-test/{guest_test,vcpu_thread_test}.c 实现
 } else {
     task_create("busybox", demo_load_busybox, ...);  // 默认
 }
@@ -262,7 +262,8 @@ while (1) { task_yield(); /* wfe/hlt/wfi */ }
 
 普通模式不需要额外对象：`main.c` 里的同名 weak 实现就是 busybox 路径
 （函数加了 `noinline`，防止 -O2 把调用折成常量）。测试变体只决定链接
-`boot_guest.c`（`GUEST_LINUX=1`）或 `boot_vmm.c`（`VMM_TEST=1`），
+`tests/unit-test/guest_test.c`（`GUEST_LINUX=1`）或
+`tests/unit-test/vcpu_thread_test.c`（`VMM_TEST=1`），
 强定义在链接时覆盖 weak。切换变体时 `_VARIANT_OBJS` 会自动清掉旧的
 `test_boot.o`，不需要手动 clean。
 
@@ -447,7 +448,7 @@ VMM_TEST=1    # 编译 VMM 三线程切换测试（跳过 busybox）
 ```
 
 > **说明**：切换 `VMM_TEST` / `GUEST_LINUX` 时，Makefile 会自动删掉旧的
-> `test_boot.o` 并重新链接对应的 `tests/boot/boot_*.c`，无需手动 `make clean`。
+> `test_boot.o` 并重新链接对应的 `tests/unit-test/{guest_test,vcpu_thread_test}.c`，无需手动 `make clean`。
 
 ## 🛠️ 开发环境
 

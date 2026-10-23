@@ -5,7 +5,7 @@
 */
 
 /*
-   tests/mutex_stress_test.c — Mutex 压力测试
+   tests/unit-test/mutex_stress_test.c — Mutex 压力测试
 
    测试内容：
     1. 多任务竞争同一把锁(10个任务)

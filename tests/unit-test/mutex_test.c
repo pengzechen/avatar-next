@@ -5,7 +5,7 @@
 */
 
 /*
-   tests/mutex_test.c — Mutex 测试程序
+   tests/unit-test/mutex_test.c — Mutex 测试程序
 */
 
 #include "task/task.h"

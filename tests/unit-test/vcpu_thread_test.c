@@ -6,7 +6,7 @@
 
 /*
    VMM_TEST=1：三线程上下文切换自测。
-   run_vmm_test() 在 tests/vmm_test.c 里，始终参与内核链接。
+   run_vmm_test() 在 tests/unit-test/vmm_test.c 里，始终参与内核链接。
 */
 
 #include "../boot_mode.h"

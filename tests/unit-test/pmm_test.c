@@ -5,7 +5,7 @@
 */
 
 /*
-   tests/pmm_test.c - 物理内存管理器测试
+   tests/unit-test/pmm_test.c - 物理内存管理器测试
 */
 
 #include "pmm.h"

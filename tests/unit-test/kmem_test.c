@@ -5,7 +5,7 @@
 */
 
 /*
-   tests/kmem_test.c — AArch64 内核内存管理测试
+   tests/unit-test/kmem_test.c — AArch64 内核内存管理测试
 
    从 kernel/mm/aarch64/vmm.c 中分离出的测试函数。
    仅在 AArch64 架构下编译。

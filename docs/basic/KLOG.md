@@ -243,8 +243,8 @@ SMP 安全靠 `__atomic_*`（RELAXED），不碰 `g_klog_lock`。
 |---|---|---|
 | `[vmmdev] boot: starting guest` | `kernel/fs/pseudofs/vmm_dev.c` | `docs/vmm/GUEST_NATIVE_QEMU.md` 用 `grep` 轮询它测启动耗时 |
 | `[klog] level=%u modules=%s` | `lib/klog.c` | 本文档开头"日志不见了先看这行" |
-| `=== STRING TEST: PASS (N cases) ===` | `tests/string_test.c` | `make test-string` 的成功判据（见 `docs/basic/STRING.md`） |
-| VMM 测例 transcript | `tests/vmm_test.c`、`kernel/vmm/{aarch64/el2_run.c,x86_64/vmx.c,riscv64/hext_run.c}` | `readme.md` 用 `LOG=info` 跑 `test-vmm`，这些行就是通过证据 |
+| `=== STRING TEST: PASS (N cases) ===` | `tests/unit-test/string_test.c` | `make test-string` 的成功判据（见 `docs/basic/STRING.md`） |
+| VMM 测例 transcript | `tests/unit-test/vmm_test.c`、`kernel/vmm/{aarch64/el2_run.c,x86_64/vmx.c,riscv64/hext_run.c}` | `readme.md` 用 `LOG=info` 跑 `test-vmm`，这些行就是通过证据 |
 | `=== Launching busybox shell ===` 等启动进度标记 | `kernel/main.c` | "到底起来没有"的事实信号 |
 
 > VMM 那几行是**最容易改错的地方**：它们不能降级，只能改成采样 ——
@@ -332,4 +332,4 @@ syscall 名字表。
 
 ## 测试
 
-`tests/klog_test.c` 里有级别/模块/动态切换的用例，但 `run_klog_tests()` **目前没有任何调用者**（和之前 `tests/string_test.c` 一样是死代码）。要跑起来需要在 `kernel_main` 里显式调用；字符串那套自检已经用 `make ... test-string` 接通了（见 `docs/basic/STRING.md`），klog 这套还没接。
+`tests/unit-test/klog_test.c` 里有级别/模块/动态切换的用例，但 `run_klog_tests()` **目前没有任何调用者**（和之前 `tests/unit-test/string_test.c` 一样是死代码）。要跑起来需要在 `kernel_main` 里显式调用；字符串那套自检已经用 `make ... test-string` 接通了（见 `docs/basic/STRING.md`），klog 这套还没接。

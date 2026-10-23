@@ -185,9 +185,9 @@ static_assert(sizeof(struct task_control_block) == 256,
 
 ## 测试
 
-测试代码在 [`tests/assert_test.c`](../tests/assert_test.c)。
+测试代码在 [`tests/unit-test/assert_test.c`](../tests/unit-test/assert_test.c)。
 
-`tests/*.c` 会由 Makefile 自动编译链接进内核（见 `TESTS_SOURCES`），
+`tests/unit-test/*.c` 会由 Makefile 自动编译链接进内核（见 `TESTS_SOURCES`），
 但**不会自动运行**——需要在 `kernel/main.c` 的 `task_init()` 之后手动调用入口：
 
 ```c

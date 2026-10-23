@@ -5,7 +5,7 @@
 */
 
 /*
-   tests/vmm_test.c — 三架构 VMM 三线程并发测试
+   tests/unit-test/vmm_test.c — 三架构 VMM 三线程并发测试
 
    测试目标：验证 VMM(虚拟机监控器)能正确创建并调度三类并发线程：
      Thread 1: 宿主内核监控循环(EL2 / HS-mode / VMX root)

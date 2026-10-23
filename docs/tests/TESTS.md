@@ -40,39 +40,43 @@ make ARCH=aarch64 test-vmm LOG=info
 
 ```
 Avatar OS 测试
-├── 1. 内核单元测试        tests/*.c         编译进内核，启动时运行
-├── 2. 构建变体测试        tests/boot/       链接不同的 boot_*.c
+├── 1. 内核单元测试        tests/unit-test/*.c  编译进内核；开机自检走 unit_test.c
+├── 2. 构建变体测试        tests/unit-test/      链接 guest/vcpu 启动钩子
 │   ├── PMM_TESTS=1        （仍走 kernel/main.c 的 RUN_PMM_TESTS）
-│   ├── VMM_TEST=1         tests/boot/boot_vmm.c
-│   └── GUEST_LINUX=1      tests/boot/boot_guest.c
+│   ├── VMM_TEST=1         tests/unit-test/vcpu_thread_test.c
+│   └── GUEST_LINUX=1      tests/unit-test/guest_test.c
 ├── 3. apps/ 汇编小程序    apps/<arch>/*.S   三种加载方式（见下节）
 └── 4. 用户态 pthread 测试 apps/c/           动态链接 musl，完整 Linux ABI
 ```
 
 ---
 
-## 一、内核单元测试（`tests/`）
+## 一、内核单元测试（`tests/unit-test/`）
 
 ### 已有测试文件
 
 | 文件 | 入口函数 | 测试内容 |
 |------|----------|----------|
-| `tests/arch_test.c` | `run_arch_tests()` | 架构检测宏验证 |
-| `tests/assert_test.c` | `run_assert_tests()` | 断言系统 |
-| `tests/klog_test.c` | `run_klog_tests()` | 日志级别和格式化 |
-| `tests/list_test.c` | `run_list_tests()` | 双向链表操作 |
-| `tests/string_test.c` | — | 字符串函数 |
-| `tests/spinlock_test.c` | — | 自旋锁 |
-| `tests/mutex_test.c` | `run_mutex_tests()` | 基础互斥锁 |
-| `tests/mutex_stress_test.c` | `run_mutex_stress_test()` | 互斥锁压力测试 |
-| `tests/mutex_comparison_test.c` | `run_mutex_comparison_test()` | 有锁/无锁对比 |
-| `tests/pmm_test.c` | `run_pmm_tests()` | 物理内存管理器 |
-| `tests/vmm_test.c` | `run_vmm_test()` | VMM 三线程切换（见第二节）|
+| `tests/unit-test/arch_test.c` | `run_arch_tests()` | 架构检测宏验证 |
+| `tests/unit-test/assert_test.c` | `run_assert_tests()` | 断言系统 |
+| `tests/unit-test/klog_test.c` | `run_klog_tests()` | 日志级别和格式化 |
+| `tests/unit-test/list_test.c` | `run_list_tests()` | 双向链表操作 |
+| `tests/unit-test/string_test.c` | — | 字符串函数 |
+| `tests/unit-test/spinlock_test.c` | — | 自旋锁 |
+| `tests/unit-test/mutex_test.c` | `run_mutex_tests()` | 基础互斥锁 |
+| `tests/unit-test/mutex_stress_test.c` | `run_mutex_stress_test()` | 互斥锁压力测试 |
+| `tests/unit-test/mutex_comparison_test.c` | `run_mutex_comparison_test()` | 有锁/无锁对比 |
+| `tests/unit-test/pmm_test.c` | `run_pmm_tests()` | 物理内存管理器 |
+| `tests/unit-test/vmm_test.c` | `run_vmm_test()` | VMM 三线程切换（见第二节）|
 
 ### 运行方式
 
-所有 `tests/*.c` 文件**已自动编译链接进内核**，不需要额外 Makefile 操作。
-要运行某个测试，在 `kernel/main.c` 的 `task_init()` 之后调用对应函数即可：
+所有 `tests/unit-test/*.c` 文件**已自动编译链接进内核**，不需要额外 Makefile 操作。
+
+默认启动路径上的自检统一从 `tests/unit-test/unit_test.c` 的 `run_unit_tests()`
+进入：`kernel/main.c` 只调用这一个入口，不关心架构和具体测试（目前 AArch64
+下会跑 `kmem_test()`）。其余测试要运行，在 `kernel/main.c` 的 `task_init()`
+之后调用对应函数即可：
 
 ```c
 // kernel/main.c，task_init() 之后，模式选择 #if 块之前
@@ -85,10 +89,10 @@ run_mutex_tests();
 
 ### 添加新内核单元测试
 
-1. 在 `tests/` 目录新建 `foo_test.c`：
+1. 在 `tests/unit-test/` 目录新建 `foo_test.c`：
 
 ```c
-// tests/foo_test.c
+// tests/unit-test/foo_test.c
 #include "klog.h"
 
 void run_foo_tests(void) {
@@ -105,11 +109,12 @@ extern void run_foo_tests(void);
 run_foo_tests();
 ```
 
-无需修改 Makefile —— `TESTS_OBJECTS` 规则会自动扫描 `tests/*.c`。
+无需修改 Makefile —— `TESTS_OBJECTS` 规则会自动扫描 `tests/unit-test/*.c`。
+（唯独启动变体钩子例外：见第二节，它们要从自动扫描里排除。）
 
 ---
 
-## 二、构建变体测试（`tests/boot` 钩子）
+## 二、构建变体测试（`tests/unit-test` 启动钩子）
 
 ### 工作原理
 
@@ -134,13 +139,13 @@ task_switch_to_idle_stack();
 while (1) { task_yield(); wfe/wfi/hlt; }
 ```
 
-Makefile 的变体只决定链接哪个 `tests/boot/boot_*.c`：
+Makefile 的变体只决定链接哪个 `tests/unit-test/{guest_test,vcpu_thread_test}.c`：
 
 | 变体 | 链接的 boot 对象 |
 |------|------------------|
 | 默认 | 无额外对象，`main.c` 的 weak 默认实现 |
-| `GUEST_LINUX=1` | `tests/boot/boot_guest.c` |
-| `VMM_TEST=1` | `tests/boot/boot_vmm.c` |
+| `GUEST_LINUX=1` | `tests/unit-test/guest_test.c` |
+| `VMM_TEST=1` | `tests/unit-test/vcpu_thread_test.c` |
 
 切换变体时 `_VARIANT_OBJS` 会自动删掉旧的 `test_boot.o`，无需手动 clean。
 
@@ -162,12 +167,16 @@ Makefile 的变体只决定链接哪个 `tests/boot/boot_*.c`：
 ```makefile
 FOO_TEST ?= 0
 ifeq ($(FOO_TEST),1)
-    TEST_BOOT_SRC := $(TESTS_DIR)/boot/boot_foo.c
+    TEST_BOOT_SRC := $(UNIT_TEST_DIR)/foo_test.c
     _BUILD_VARIANT := foo_test   # ← 修改此处唯一标识
 endif
 ```
 
-**步骤二：新建 `tests/boot/boot_foo.c`**，实现 `test_boot_active()` /
+同时把 `tests/unit-test/foo_test.c` 加进 `TEST_BOOT_HOOKS`（定义在
+`TESTS_SOURCES` 上方）——钩子文件里是 `test_boot_*` 强定义，不能同时被
+单元测试的 wildcard 编成普通 `tests_*.o`，否则链接期重复定义。
+
+**步骤二：新建 `tests/unit-test/foo_test.c`**，实现 `test_boot_active()` /
 `test_boot_skip_net()` / `test_boot_run()`；main.c 不需要改。
 
 **步骤三：添加便捷 Makefile target**（仿 `test-vmm`）：
@@ -383,7 +392,7 @@ ALL TESTS PASSED
 
 
 
-## 五、VMM 三线程上下文切换测试（`tests/vmm_test.c`）详解
+## 五、VMM 三线程上下文切换测试（`tests/unit-test/vmm_test.c`）详解
 
 测试目标：验证调度器能在三类不同特权级的线程之间正确切换。
 

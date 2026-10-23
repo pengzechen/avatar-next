@@ -172,7 +172,7 @@ vCPU 任务钉在单核上，机器被压满时 guest 时钟会慢到看起来�
   （`echo` → `cho`、`__AVATAR` 少一个下划线）。框架对交互命令统一用
   `Qemu.send_slow()` 分块慢速写。
 - **VMM_TEST 的 aarch64 guest 代码需要显式写进 guest RAM**：per-VM
-  stage-2 是空表 + 按需分页，不再 identity map。`tests/vmm_test.c` 已
+  stage-2 是空表 + 按需分页，不再 identity map。`tests/unit-test/vmm_test.c` 已
   改用 `guest_loader_write_guest()` 预拷贝，否则 guest 从全 0 页取指 →
   VBAR=0 → VMM 退出。
 - **x86 直启模式的 guest 输入在 SMP=4 下会丢字节**（vpl011 输入路径）。

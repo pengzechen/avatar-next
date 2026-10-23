@@ -5,7 +5,7 @@
 */
 
 /*
-   tests/mutex_comparison_test.c — Mutex 对比测试
+   tests/unit-test/mutex_comparison_test.c — Mutex 对比测试
 
    目的：对比无锁和有锁情况下的行为差异
 

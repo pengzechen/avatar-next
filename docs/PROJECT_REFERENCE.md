@@ -214,7 +214,7 @@ Makefile
     ↓
 2. 选择工具链和编译标志
     ↓
-3. 编译源文件（tests/*.c, lib/*.c）
+3. 编译源文件（tests/unit-test/*.c, lib/*.c）
     ↓
 4. 生成静态库（.a 文件）
     ↓

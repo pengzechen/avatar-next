@@ -59,6 +59,7 @@ BOOT_DIR        := boot
 KERNEL_DIR      := kernel
 PLATFORM_DIR    := platforms
 TESTS_DIR       := tests
+UNIT_TEST_DIR   := $(TESTS_DIR)/unit-test
 TOOLS_DIR       := tools
 FS_DIR          := fs
 THIRD_PARTY_DIR := third_party
@@ -283,9 +284,16 @@ TASK_USER_HELLO_OBJ :=
 TASK_USER_TESTEXECVE_OBJ :=
 endif
 
-# 测试源文件
-TESTS_SOURCES := $(filter-out $(TESTS_DIR)/pmm_test.c,$(wildcard $(TESTS_DIR)/*.c))
-TESTS_OBJECTS := $(TESTS_SOURCES:$(TESTS_DIR)/%.c=$(BUILD_DIR)/tests_%.o)
+# 启动变体钩子：这些文件提供 test_boot_* 强定义，由 TEST_BOOT_SRC 按
+# GUEST_LINUX / VMM_TEST 选一个链接。它们也在 unit-test/ 下，必须从自动
+# 扫描里排除，否则会同时编成普通的 tests_*.o，链接期重复定义（且每个变体
+# 都会链进不属于自己的钩子）。新增变体时把钩子文件加到这里。
+TEST_BOOT_HOOKS := $(UNIT_TEST_DIR)/guest_test.c $(UNIT_TEST_DIR)/vcpu_thread_test.c
+
+# 测试源文件（tests/unit-test/）。pmm 单独编译，其余自动链接进内核。
+TESTS_SOURCES := $(filter-out $(UNIT_TEST_DIR)/pmm_test.c $(TEST_BOOT_HOOKS), \
+                 $(wildcard $(UNIT_TEST_DIR)/*.c))
+TESTS_OBJECTS := $(TESTS_SOURCES:$(UNIT_TEST_DIR)/%.c=$(BUILD_DIR)/tests_%.o)
 
 # 用户应用程序源文件（按架构子目录组织）
 APPS_DIR := apps/$(ARCH)
@@ -542,8 +550,8 @@ CFLAGS  += -MMD -MP
 
 # ─── §7  构建变体 ─────────────────────────────────────────────────────────────
 # 三个变体互斥，优先级 GUEST_LINUX > VMM_TEST > NGINX_TEST > normal：
-#   VMM_TEST=1    ：链接 tests/boot/boot_vmm.c，运行三线程切换测试
-#   GUEST_LINUX=1 ：链接 tests/boot/boot_guest.c，从 rootfs 直启 Linux guest
+#   VMM_TEST=1    ：链接 tests/unit-test/vcpu_thread_test.c，运行三线程切换测试
+#   GUEST_LINUX=1 ：链接 tests/unit-test/guest_test.c，从 rootfs 直启 Linux guest
 #   NGINX_TEST=1  ：定义 RUN_NGINX_TEST，网络栈专供 nginx 压测（无对应 target）
 # 新增测试时仿照此模式，同时在 _BUILD_VARIANT 里加一个唯一标识。
 #
@@ -554,10 +562,10 @@ VMM_TEST ?= 0
 NGINX_TEST ?= 0
 GUEST_LINUX ?= 0
 ifeq ($(GUEST_LINUX),1)
-    TEST_BOOT_SRC := $(TESTS_DIR)/boot/boot_guest.c
+    TEST_BOOT_SRC := $(UNIT_TEST_DIR)/guest_test.c
     _BUILD_VARIANT := guest_linux
 else ifeq ($(VMM_TEST),1)
-    TEST_BOOT_SRC := $(TESTS_DIR)/boot/boot_vmm.c
+    TEST_BOOT_SRC := $(UNIT_TEST_DIR)/vcpu_thread_test.c
     _BUILD_VARIANT := vmm_test
 else ifeq ($(NGINX_TEST),1)
     CFLAGS += -DRUN_NGINX_TEST=1
@@ -569,7 +577,7 @@ else
 endif
 TEST_BOOT_OBJ := $(if $(TEST_BOOT_SRC),$(BUILD_DIR)/test_boot.o)
 
-# STRING_TEST=1：定义 RUN_STRING_TEST，kernel_main 早期跑 tests/string_test.c 自检
+# STRING_TEST=1：定义 RUN_STRING_TEST，kernel_main 早期跑 tests/unit-test/string_test.c 自检
 # （与上面三个变体正交：自检跑完继续正常启动）。标志只影响 kernel_main.o，
 # 所以并入 _BUILD_VARIANT 让变体机制在开关变化时清掉那一个对象即可。
 STRING_TEST ?= 0
@@ -589,7 +597,7 @@ ifeq ($(TASK_TEST),1)
 endif
 
 # PMM_TEST=1：定义 RUN_PMM_TESTS，kernel_main 在 fs_init 之后跑
-# tests/pmm_test.c 并关机。只影响 kernel_main.o（调用点），
+# tests/unit-test/pmm_test.c 并关机。只影响 kernel_main.o（调用点），
 # 所以并在 _BUILD_VARIANT 里即可（_VARIANT_OBJS 已包含它）。
 #
 # 以前这个宏只能"手动加 CFLAGS"，测试框架（tests/Makefile）没法稳定地
@@ -1053,7 +1061,7 @@ $(foreach f,$(KERNEL_LWEXT4_SRCS),$(eval $(call KERNEL_RULE,$(f),$$(LWEXT4_CFLAG
 $(foreach f,$(KERNEL_LWIP_SRCS),$(eval $(call KERNEL_RULE,$(f),$$(LWIP_CFLAGS))))
 $(foreach f,$(KERNEL_LWIPX_SRCS),$(eval $(call KERNEL_RULE,$(f),$$(LWIP_CFLAGS) -I$$(LWEXT4_DIR)/include -I$$(LWEXT4_PORT_DIR))))
 
-$(BUILD_DIR)/tests_%.o: $(TESTS_DIR)/%.c | $(BUILD_DIR)
+$(BUILD_DIR)/tests_%.o: $(UNIT_TEST_DIR)/%.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # 启动变体对象：GUEST_LINUX / VMM_TEST 选择不同类型；main.c 只认通用钩子。
@@ -1240,7 +1248,7 @@ endif
 # PMM 测试（唯一来自 tests/ 却参与内核链接的源文件，不在 §4a 的 find 范围内）
 PMM_TEST_OBJECT := $(BUILD_DIR)/kernel_mm_pmm_test.o
 
-$(BUILD_DIR)/kernel_mm_pmm_test.o: $(TESTS_DIR)/pmm_test.c | $(BUILD_DIR)
+$(BUILD_DIR)/kernel_mm_pmm_test.o: $(UNIT_TEST_DIR)/pmm_test.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/bitmap.o: $(LIB_DIR)/bitmap.c | $(BUILD_DIR)
@@ -1628,7 +1636,7 @@ test-mutex: kernel
 test-vmm:
 	$(MAKE) ARCH=$(ARCH) LOG=$(LOG) VMM_TEST=1 kernel
 
-# test-string: 字符串/内存函数自检（tests/string_test.c）
+# test-string: 字符串/内存函数自检（tests/unit-test/string_test.c）
 #              长度 × 源对齐 × 目的对齐 全组合，跨过 NEON 阈值两侧，
 #              跑完打印 "=== STRING TEST: PASS (N cases) ===" 后继续正常启动。
 #   用法: make PLATFORM=qemu-virt-aarch64 test-string

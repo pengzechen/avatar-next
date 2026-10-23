@@ -8,11 +8,11 @@
    tests/boot_mode.h — 内核测试启动模式的通用钩子
 
    kernel/main.c 只调用这三个函数，不包含任何 guest/VMM 测试细节。
-   具体变体链接不同的 tests/boot/boot_*.c：
+   具体变体链接不同的 tests/unit-test/{guest_test,vcpu_thread_test}.c：
 
-     默认实现  在 kernel/main.c 里，以 weak 符号提供（正常 busybox）
-     boot_guest.c   GUEST_LINUX=1  直启 Linux guest
-     boot_vmm.c     VMM_TEST=1     VMM 三线程自测
+     默认实现            在 kernel/main.c 里，以 weak 符号提供（正常 busybox）
+     guest_test.c        GUEST_LINUX=1  直启 Linux guest
+     vcpu_thread_test.c  VMM_TEST=1     VMM 三线程自测
 
    变体由 Makefile 的 GUEST_LINUX= / VMM_TEST= 选择链接哪个 boot 对象；
    强定义在链接时覆盖 main.c 的 weak 默认实现，main.c 里没有 RUN_* 宏。

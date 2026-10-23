@@ -5,7 +5,7 @@
 */
 
 /*
-   tests/string_test.c — 字符串/内存函数自检
+   tests/unit-test/string_test.c — 字符串/内存函数自检
 
    覆盖 memcpy / memset / memmove 的长度 × 源对齐 × 目的对齐组合,
    用参考实现(逐字节)逐字节比对, 并检查拷贝区间之外的守卫字节没被踩。

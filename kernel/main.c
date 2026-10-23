@@ -28,10 +28,11 @@
 #include "../fs/lwext4_port/fs_init.h"
 
 /*
-   测试变体（GUEST_LINUX=1 / VMM_TEST=1）的启动钩子。具体实现由
-   tests/boot/boot_*.c 提供，main.c 不包含 guest/VMM 细节。
+   测试相关接口。boot_mode.h 是启动变体钩子；unit_test.h 是默认启动路径上的
+   自检入口。具体实现都在 tests/unit-test/，main.c 不包含测试细节。
 */
 #include "../tests/boot_mode.h"
+#include "../tests/unit_test.h"
 
 /*
    架构专属头。x86_64 没有额外需要: exception_init 走通用 exception.h。
@@ -42,11 +43,9 @@
 
 #include "driver/driver.h"
 
-extern void kmem_test(void); /* kernel/mm/aarch64/vmm.c */
-
 /*
    默认启动模式：正常 busybox。测试变体（GUEST_LINUX=1 / VMM_TEST=1）链接的
-   tests/boot/boot_*.c 提供同名强定义，链接时自动覆盖这里的 weak 版本。
+   tests/unit-test/{guest_test,vcpu_thread_test}.c 提供同名强定义，链接时自动覆盖这里的 weak 版本。
 
    必须 noinline：weak 函数可被 interpose，但 GCC 在 -O2 下仍可能把同 TU 的
    调用内联成常量；内联后就看不到测试变体的强定义了。
@@ -64,7 +63,7 @@ __attribute__((weak, noinline)) bool test_boot_skip_net(void)
 __attribute__((weak, noinline)) void test_boot_run(void)
 {}
 
-static void demo_load_busybox(void *arg)
+static void load_busybox(void *arg)
 {
     (void)arg;
 
@@ -168,7 +167,7 @@ void kernel_main(void)
 
     /* ── 字符串/内存函数自检(STRING_TEST=1, 跑完继续启动)──────── */
 #ifdef RUN_STRING_TEST
-    extern void test_string_functions(void); /* tests/string_test.c */
+    extern void test_string_functions(void); /* tests/unit-test/string_test.c */
     test_string_functions();
 #endif
 
@@ -203,12 +202,8 @@ void kernel_main(void)
     platform_shutdown(); /* PMM 测试完成后关机, 避免后续测试干扰 PMM 状态 */
 #endif
 
-#if ARCH_AARCH64
-    /* 开机自检脚手架：仍然执行, 但默认等级下不再占行 */
-    KLOG_INIT("=== Running VMM Tests ===\n");
-    kmem_test();
-    KLOG_INIT("VMM tests completed\n");
-#endif
+    /* 默认启动路径上的内核自检（具体内容和架构判断在 tests/unit-test/unit_test.c）。 */
+    run_unit_tests();
 
     /* 驱动阶段（二）：DMA/ION/NPU/TPU */
     drivers_init(DRV_PHASE_CORE);
@@ -250,8 +245,8 @@ void kernel_main(void)
     /*
        选择启动模式：
          默认 / 普通 shell      → busybox
-         GUEST_LINUX=1          → tests/boot/boot_guest.c
-         VMM_TEST=1             → tests/boot/boot_vmm.c
+         GUEST_LINUX=1          → tests/unit-test/guest_test.c
+         VMM_TEST=1             → tests/unit-test/vcpu_thread_test.c
     */
     if (test_boot_active()) {
         test_boot_run();
@@ -268,8 +263,7 @@ void kernel_main(void)
         }
 
         /* SMP 检查完成, 现在才启动 busybox 交互 shell */
-        KLOG_INFO("\n=== Launching busybox shell ===\n");
-        task_t *bb_task = task_create("busybox", demo_load_busybox, NULL, 5);
+        task_t *bb_task = task_create("busybox_loader", load_busybox, NULL, 5);
         arch_irq_restore(startup_task_irq_flags);
         if (bb_task)
             KLOG_TASK("busybox loader task created: id=%u\n", bb_task->id);
@@ -298,9 +292,7 @@ void kernel_main(void)
        ────────────────────────────────────────────────────
     */
     timer_set_tick_cb(sched_tick);
-    // #if ARCH_RISCV64
-    //     riscv_kernel_interrupt_enable();
-    // #endif
+
     KLOG_INFO("Preemptive scheduling enabled\n");
 
     /* SMP 健康检查：抢占启用后立刻验证所有核 timer 都在 tick。 */

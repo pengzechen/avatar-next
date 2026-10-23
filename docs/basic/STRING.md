@@ -67,7 +67,7 @@ AArch64 的 NEON 版本没有这个问题，因为 `ld1/st1` 是按字节访问�
 
 ## 自检
 
-`tests/string_test.c` 覆盖 `memcpy`/`memset`/`memmove` 的**长度 × 源对齐 × 目的对齐**全组合
+`tests/unit-test/string_test.c` 覆盖 `memcpy`/`memset`/`memmove` 的**长度 × 源对齐 × 目的对齐**全组合
 （长度矩阵跨过 128 字节阈值两侧），用逐字节参考实现比对，并检查拷贝区间之外的守卫字节没被踩：
 
 ```bash

@@ -206,7 +206,7 @@ int guest_loader_check_vcpus(int nr)
 /* ── 启动 Linux guest ─────────────────────────────────────── */
 /*
    调用者两种：
-     - kernel_main(GUEST_LINUX=1 直启, tests/boot/boot_guest.c)：开机直接进 guest, 没有宿主 shell；
+     - kernel_main(GUEST_LINUX=1 直启, tests/unit-test/guest_test.c)：开机直接进 guest, 没有宿主 shell；
      - /dev/vmm 的 bootlinux(宿主 shell 里跑 /bin/vmm-run)。
 
    两个调用者靠 vm_t 是函数静态变量天然互斥, 这里再加一道显式闸门：

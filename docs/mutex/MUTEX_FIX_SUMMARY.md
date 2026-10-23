@@ -298,7 +298,7 @@ Difference: 0 ✓
    - g_current_task 更新处添加内存屏障
    - 添加 #include "barrier.h"
 
-4. **tests/mutex_comparison_test.c**
+4. **tests/unit-test/mutex_comparison_test.c**
    - 修正验证逻辑（% 50 而不是 % 100）
    - 修正预期余额计算
    - 增强错误检测（三种类型）
