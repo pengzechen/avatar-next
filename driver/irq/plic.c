@@ -10,6 +10,8 @@
 #include "mmio.h"
 #include "platform_cfg.h"
 #include "riscv64/sysreg.h"
+#include "driver/driver.h"
+#include "driver/irq.h"
 
 #define PLIC_MAX_IRQS   128U
 #define PLIC_CONTEXT_S0 1U
@@ -130,3 +132,18 @@ void plic_install(uint32_t irq, plic_irq_handler_t handler, void *ctx)
     g_plic_handlers[irq].handler = handler;
     g_plic_handlers[irq].ctx = ctx;
 }
+
+static int plic_probe(const device_t *dev)
+{
+    (void)dev; /* 阶段 1：plic_init() 仍直接读平台配置 */
+    plic_init();
+    return 0;
+}
+
+DRIVER_ENTRY(driver_plic) = {
+    .name = "plic",
+    .cls = DRV_IRQ,
+    .phase = DRV_PHASE_IRQ,
+    .start_phase = DRV_PHASE_COUNT,
+    .probe = plic_probe,
+};

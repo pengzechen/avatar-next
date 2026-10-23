@@ -58,6 +58,8 @@
 #include "irq/plic.h" /* plic_install / plic_enable_irq */
 #include "net/netdev.h"
 #include "timer/timer.h"
+#include "driver/driver.h"
+#include "driver/net.h"
 
 #if !ARCH_RISCV64
 #error "cvitek_eth 目前仅支持 riscv64（见 Makefile §6c）"
@@ -836,7 +838,7 @@ static int cvitek_eth_init(uintptr_t base)
          3. 最后打开 DMA 侧的 RIE|NIE, 让 GMAC 真正拉高中断线。
 
        前提是 plic_init() 已经跑过(kernel/main.c 的
-       platform_init_runtime_drivers)—— 它负责挂上 S 模式外部中断的
+       DRV_PHASE_IRQ 的 PLIC 驱动)—— 它负责挂上 S 模式外部中断的
        trap handler 并置 sie.SEIE, 缺了它这里配了也送不达。
     */
     plic_install(CVITEK_IRQ_GMAC, cvitek_eth_isr, nic);
@@ -895,6 +897,21 @@ void cvitek_eth_init_from_platform(void)
 
     cvitek_eth_init(base);
 }
+
+static int cvitek_eth_probe(const device_t *dev)
+{
+    (void)dev; /* 阶段 1：仍用 platform_get_mmio；阶段 2 改读 net_cfg_t */
+    cvitek_eth_init_from_platform();
+    return 0;
+}
+
+DRIVER_ENTRY(driver_cvitek_eth) = {
+    .name = "cvitek-eth",
+    .cls = DRV_NET,
+    .phase = DRV_PHASE_NET,
+    .start_phase = DRV_PHASE_COUNT,
+    .probe = cvitek_eth_probe,
+};
 
 void cvitek_eth_send_probe(void)
 {

@@ -17,6 +17,8 @@
 
 #include "blk/sdblk.h"
 #include "platform_cfg.h" /* platform_get_mmio / platform_get_uintptr */
+#include "driver/driver.h"
+#include "driver/block.h"
 
 #include "types.h"
 #include "mmio.h"
@@ -537,9 +539,15 @@ uint64_t sdblk_capacity_blocks(void)
 
 static int sdblk_bdev_open(struct ext4_blockdev *bdev)
 {
-    int r = sdblk_init();
-    if (r != SDBLK_OK)
-        return (r == SDBLK_NOCARD) ? ENODEV : EIO;
+    /*
+       正常路径下 STORAGE probe 已经初始化过卡；这里只在直接调用 bdev
+       的场景（测试/旧路径）补一次，避免重复 CMD0/ACMD41 把已挂载的卡复位。
+    */
+    if (!g_sdblk.initialized) {
+        int r = sdblk_init();
+        if (r != SDBLK_OK)
+            return (r == SDBLK_NOCARD) ? ENODEV : EIO;
+    }
     bdev->bdif->ph_bcnt = sdblk_capacity_blocks();
     bdev->part_size = sdblk_capacity_bytes();
     return EOK;
@@ -573,3 +581,19 @@ struct ext4_blockdev *sdblk_get_bdev(void)
 {
     return &g_sdblk_bdev;
 }
+
+static int sdblk_probe(const device_t *dev)
+{
+    (void)dev; /* 阶段 1：sdblk_init() 仍直接读平台配置 */
+    if (sdblk_init() != SDBLK_OK)
+        return -1;
+    return block_register_root_mbr(sdblk_get_bdev());
+}
+
+DRIVER_ENTRY(driver_sdblk) = {
+    .name = "sdblk",
+    .cls = DRV_STORAGE,
+    .phase = DRV_PHASE_STORAGE,
+    .start_phase = DRV_PHASE_COUNT,
+    .probe = sdblk_probe,
+};

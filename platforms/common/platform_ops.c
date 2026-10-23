@@ -17,7 +17,8 @@
 #include "arch.h"
 #include "exception.h"       /* arch_irq_disable()(统一的中断屏蔽原语) */
 #include "platform_cfg.h"    /* platform_conf_scan */
-#include "uart/uart.h"       /* 统一 UART 驱动, 根据架构自动选择 */
+#include "uart/uart.h"       /* uart_putc/uart_puts：阶段 1 仍由 uart.h 选择后端 */
+#include "driver/driver.h"   /* drivers_init(DRV_PHASE_EARLY) */
 #include "debug/backtrace.h" /* platform_panic() 里打调用栈 */
 #include "klog.h"            /* klog_panic_begin() */
 #if ARCH_X86_64
@@ -145,7 +146,12 @@ void platform_conf_init(void)
 */
 void platform_early_init(void)
 {
-    uart_init();
+    /*
+       最早的一步：串口驱动 probe。klog 依赖 uart_putchar，所以必须发生在
+       任何 KLOG 之前。具体后端由 driver/ 的构建选择决定，这里不再知道
+       pl011/dw/x86 的任何细节。
+    */
+    drivers_init(DRV_PHASE_EARLY);
 }
 
 /*

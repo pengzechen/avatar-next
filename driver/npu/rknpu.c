@@ -40,6 +40,8 @@
 #include "irq/gicv3.h"
 #include "spinlock.h"
 #include "timer/timer.h"
+#include "driver/driver.h"
+#include "driver/npu.h"
 
 /* ── 运行时状态 ──────────────────────────────────────────────────────────── */
 
@@ -996,3 +998,18 @@ int rknpu_submit_task(void *task_base, size_t task_bytes, const struct rknpu_sub
 
     return -5;
 }
+
+static int rknpu_probe(const device_t *dev)
+{
+    (void)dev; /* 阶段 1：rknpu_init() 仍直接读平台配置 */
+    rknpu_init();
+    return 0;
+}
+
+DRIVER_ENTRY(driver_rknpu) = {
+    .name = "rknpu",
+    .cls = DRV_NPU,
+    .phase = DRV_PHASE_CORE,
+    .start_phase = DRV_PHASE_COUNT,
+    .probe = rknpu_probe,
+};

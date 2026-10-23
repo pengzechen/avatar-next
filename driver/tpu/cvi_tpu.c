@@ -20,6 +20,8 @@
 #include "mmio.h"
 #include "klog.h"
 #include "platform_cfg.h"
+#include "driver/driver.h"
+#include "driver/tpu.h"
 
 /* ── 驱动状态 ───────────────────────────────────────────────────────────── */
 static struct {
@@ -321,3 +323,18 @@ int cvi_tpu_run_dmabuf(void *dmabuf_v, uint64_t dmabuf_p)
     KLOG_DEBUG("cvi_tpu: run_dmabuf done\n");
     return 0;
 }
+
+static int cvi_tpu_probe(const device_t *dev)
+{
+    (void)dev; /* 阶段 1：cvi_tpu_init() 仍直接读平台配置 */
+    cvi_tpu_init();
+    return 0;
+}
+
+DRIVER_ENTRY(driver_cvi_tpu) = {
+    .name = "cvi-tpu",
+    .cls = DRV_TPU,
+    .phase = DRV_PHASE_CORE,
+    .start_phase = DRV_PHASE_COUNT,
+    .probe = cvi_tpu_probe,
+};

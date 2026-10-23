@@ -25,6 +25,8 @@
 #include "klog.h"
 #include "timer/timer.h"
 #include "aarch64/sysreg.h" /* SYSREG_READ / SYSREG_WRITE */
+#include "driver/driver.h"
+#include "driver/irq.h"
 
 /* GICv3 模块内基地址 */
 uintptr_t gicv3_gicd_base = 0;
@@ -539,3 +541,18 @@ void gicv3_ipi_send_single(int32_t irq, int32_t cpu)
                    ((uint64_t)1 << cpu);   /* TargetList [15:0] */
     ICC_WRITE(ICC_SGI1R_EL1, sgi);
 }
+
+static int gicv3_probe(const device_t *dev)
+{
+    (void)dev; /* 阶段 1：gicv3_init() 仍直接读平台配置 */
+    gicv3_init();
+    return 0;
+}
+
+DRIVER_ENTRY(driver_gicv3) = {
+    .name = "gicv3",
+    .cls = DRV_IRQ,
+    .phase = DRV_PHASE_IRQ,
+    .start_phase = DRV_PHASE_COUNT,
+    .probe = gicv3_probe,
+};

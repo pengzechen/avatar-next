@@ -16,6 +16,8 @@
 #include "string.h"
 #include "task/task.h"
 #include "timer/timer.h"
+#include "driver/driver.h"
+#include "driver/net.h"
 
 #define VIRTIO_MMIO_MAGIC_VALUE         0x000U
 #define VIRTIO_MMIO_VERSION             0x004U
@@ -669,6 +671,21 @@ static void virtio_net_send_probe(struct virtio_net_nic *nic)
     /* bring-up 探针：默认等级下不该占一行 */
     KLOG_DEBUG("[virtio-net] probe tx rc=%d len=%zu\n", rc, sizeof(pkt));
 }
+
+static int virtio_net_probe(const device_t *dev)
+{
+    (void)dev; /* 阶段 1：仍用 DEVICE_ETH_BASE_RAW；阶段 2 改读 net_cfg_t */
+    virtio_net_init_from_platform();
+    return 0;
+}
+
+DRIVER_ENTRY(driver_virtio_net) = {
+    .name = "virtio-net",
+    .cls = DRV_NET,
+    .phase = DRV_PHASE_NET,
+    .start_phase = DRV_PHASE_COUNT,
+    .probe = virtio_net_probe,
+};
 
 void virtio_net_poll_demo_task(void *arg)
 {

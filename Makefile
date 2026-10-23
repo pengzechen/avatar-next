@@ -329,11 +329,7 @@ ifeq ($(wildcard $(PLATFORM_SOURCES)),)
 $(error Missing platform source: $(PLATFORM_SOURCES))
 endif
 
-# 驱动基础源文件（来自 platform.mk，后续由 §6 选择块覆盖/追加）
-DRIVER_UART_SRC  := $(DEV_UART_SRC)
-DRIVER_IRQ_SRC   := $(DEV_IRQ_SRC)
-DRIVER_TIMER_SRC := $(DEV_TIMER_SRC)
-# 注意：DRIVER_OBJECTS 在 §6 驱动选择块之后统一组装
+# 驱动源文件由 driver/drivers.mk 选择，DRIVER_OBJECTS 在 §6 统一组装。
 
 # 启动汇编源文件
 BOOT_SOURCES := $(BOOT_DIR)/$(ARCH)/boot.S
@@ -514,161 +510,29 @@ CFLAGS  += -DDEVICE_UART_REG_SHIFT=$(DEV_UART_REG_SHIFT)
 CFLAGS  += -DDEVICE_ETH_BASE_RAW=$(DEV_ETH_BASE)
 
 # ─── §6  驱动选择 ────────────────────────────────────────────────────────────────
-# 所有驱动默认值来自 platform.conf → gen_platform.py → platform.mk。
-# 可在命令行覆盖，例如：make PLATFORM=sg2002-riscv64 ETH=none kernel
-
-# ── §6a  基础设备驱动（UART / GIC / 定时器）──────────────────────────────────
-UART ?= $(DEV_DEFAULT_UART)
-ifeq ($(UART),pl011)
-	DRIVER_UART_SRC := driver/uart/uart_pl011.c
-    CFLAGS  += -DDRIVER_UART_PL011=1
-else ifeq ($(UART),dw)
-	DRIVER_UART_SRC := driver/uart/uart_dw.c
-    CFLAGS  += -DDRIVER_UART_DW=1
-else ifeq ($(UART),x86)
-	DRIVER_UART_SRC := driver/uart/uart_x86.c
-	CFLAGS  += -DDRIVER_UART_X86=1
-else ifneq ($(UART),)
-	$(error Invalid UART. Use: pl011, dw or x86)
-endif
-
-# GIC 版本选择
-# 用法：make ARCH=aarch64 PLATFORM=qemu GIC=v3 kernel
-# 非 GIC 平台建议设为 none；不指定时取设备画像默认值
-GIC ?= $(DEV_DEFAULT_GIC)
-ifeq ($(GIC),v3)
-	DRIVER_IRQ_SRC := driver/irq/gicv3.c
-    CFLAGS  += -DDRIVER_GIC_V3=1
-else ifeq ($(GIC),v2)
-	DRIVER_IRQ_SRC := driver/irq/gicv2.c
-    CFLAGS  += -DDRIVER_GIC_V2=1
-else ifeq ($(GIC),none)
-	DRIVER_IRQ_SRC :=
-else ifneq ($(GIC),)
-	$(error Invalid GIC. Use: v2, v3 or none)
-endif
-
-ifneq ($(ARCH),aarch64)
-ifneq ($(GIC),none)
-$(error GIC is only valid on aarch64. Use GIC=none for ARCH=$(ARCH))
-endif
-endif
-
-ifneq ($(ARCH),x86_64)
-ifeq ($(UART),x86)
-$(error UART=x86 is only valid on x86_64)
-endif
-endif
-
-ifneq ($(ARCH),aarch64)
-ifeq ($(UART),pl011)
-$(error UART=pl011 is only valid on aarch64)
-endif
-endif
-
-# ── §6b  加速器驱动（NPU / TPU）───────────────────────────────────────────────
-# NPU 驱动选择
-# 用法：make PLATFORM=rk3588-aarch64 NPU=rknpu kernel
-NPU ?= $(DEV_NPU_TYPE)
-ifeq ($(NPU),rknpu)
-    # rknpu_drm.c 把 GEM 对象建在 dma-buf 上（librknnrt 的缓冲区都从
-    # dma_heap 来），所以 DMA=1 是硬依赖。少了它链接期才会炸，且报错指向
-    # 一堆 dma_buf_* 未定义 —— 在这里拦住。
-    ifeq ($(DMA),0)
-        $(error NPU=rknpu requires DMA=1 (dma-buf/dma-heap); see Makefile section 6e-1b)
-    endif
-    DRIVER_NPU_SRCS := driver/npu/rknpu.c driver/npu/rkpm.c \
-                       driver/npu/rknpu_drm.c driver/npu/npu_mmu.c
-    CFLAGS          += -DDRIVER_NPU_RKNPU=1
-else
-    DRIVER_NPU_SRCS :=
-endif
-
-TPU ?= $(DEV_TPU_TYPE)
-ifeq ($(TPU),cvitpu)
-    DRIVER_TPU_SRCS := driver/tpu/cvi_tpu.c
-    CFLAGS          += -DDRIVER_TPU_CVITPU=1
-else
-    DRIVER_TPU_SRCS :=
-endif
-
-# ── §6c  网络驱动（ETH）─────────────────────────────────────────────────────────
-# 以太网驱动（由 platform.conf 的 eth.driver 自动推导；也可命令行覆盖：
-# ETH=none / ETH=virtio / ETH=cvitek）
-ETH ?= $(DEV_ETH_TYPE)
-ifeq ($(ETH),virtio)
-    ifeq ($(filter $(ARCH),riscv64 aarch64 x86_64),)
-        $(error ETH=virtio currently supports ARCH=riscv64, ARCH=aarch64 or ARCH=x86_64)
-    endif
-    CFLAGS          += -DDRIVER_ETH_VIRTIO=1
-    DRIVER_ETH_SRCS := driver/eth/virtio_net.c
-else ifeq ($(ETH),cvitek)
-    # SG2002/CV1812H 板载 DWMAC 3.70a + 内部 EPHY。驱动里用到 virt_to_phys
-    # 和 C906 的 CMO 指令，只有 riscv64 有意义。
-    ifeq ($(ARCH),riscv64)
-        CFLAGS          += -DDRIVER_ETH_CVITEK=1
-        DRIVER_ETH_SRCS := driver/eth/cvitek_eth.c
-    else
-        $(error ETH=cvitek is only supported on ARCH=riscv64)
-    endif
-else ifeq ($(ETH),none)
-    DRIVER_ETH_SRCS :=
-else ifeq ($(ETH),)
-    DRIVER_ETH_SRCS :=
-else
-    $(error Invalid ETH. Use: none, virtio or cvitek)
-endif
-
-# ── §6e  DRIVER_OBJECTS 最终组装 ────────────────────────────────────────────────
-# 在所有驱动选择块执行完毕后，按「源文件 → $(BUILD_DIR)/driver/<文件名>.o」统一
-# 映射。原先三套命名混用（drv_uart/x.o、gicv2.o、drv_npu_x.o），现在只有一个
-# 平铺的 driver/ 目录。driver/ 下各文件名互不重复，展平不会碰撞。
+# 选择逻辑下沉到 driver/drivers.mk 与各 class 的片段。顶层只负责把源文件
+# 映射成 build/<platform>/driver/<basename>.o（driver/ 下文件名互不重复）。
 #
-# 注意 pattern rule 做不到展平：GNU Make 的 '%' 会匹配 '/'，
-# $(BUILD_DIR)/driver/%.o: driver/%.c 会把 driver/irq/gicv2.c 映射成
-# driver/irq/gicv2.o（子目录被原样带过去）。规则由 §11c 用 $(eval) 逐文件生成。
+# 默认值来自 platform.conf → gen_platform.py → platform.mk；仍可用命令行覆盖：
+# UART=、GIC=/IRQ=、ETH=、NPU=、TPU=、DMA=、ION=、BLOCK=。
+
+DRIVER_SRCS_CORE   := driver/core/driver.c driver/core/device.c driver/blk/block.c
+DRIVER_SRCS_CFLAGS :=
+DRIVER_SRCS_PLIC   :=
+DRIVER_SRCS_TPU    :=
+DRIVER_SRCS_ION    :=
+DRIVER_SRCS_DMA    :=
+DRIVER_SRCS_BLK    :=
+
+include driver/drivers.mk
+
+DRIVER_SRCS := $(strip $(DRIVER_SRCS_CORE) $(DRIVER_SRCS_CFLAGS) $(DRIVER_SRCS_PLIC) \
+                       $(DRIVER_SRCS_TPU) $(DRIVER_SRCS_ION) $(DRIVER_SRCS_DMA) \
+                       $(DRIVER_SRCS_BLK))
+
+# 源文件 → $(BUILD_DIR)/driver/<basename>.o。
+# GNU Make 的 '%' 会匹配 '/'，pattern rule 做不到展平，所以由 §11c 逐文件 eval。
 _drv_obj = $(BUILD_DIR)/driver/$(notdir $(basename $(1))).o
-
-# ── §6e-1  辅助驱动（ION / SDMMC）──────────────────────────────────────────────
-# Ion 内存分配器（当 TPU=cvitpu 时自动启用；也可独立启用 ION=1）
-ION ?= $(if $(filter cvitpu,$(TPU)),1,0)
-DRIVER_ION_SRCS :=
-ifeq ($(ION),1)
-    CFLAGS           += -DDRIVER_ION=1
-    DRIVER_ION_SRCS  := driver/ion/ion.c
-endif
-
-# ── §6e-1b  dma-buf / dma-heap ─────────────────────────────────────────────────
-# 官方 librknnrt 的**每一块**缓冲区都从 /dev/dma_heap/* 分配、以 dmabuf fd
-# 流转（见 docs/npu/RK3588_NPU_DRIVER.md §2），所以 NPU=rknpu 时自动启用。
-# 它与 NPU 完全解耦，也可以单独打开做验收测试：
-#     make PLATFORM=qemu-virt-aarch64 DMA=1 kernel
-DMA ?= $(if $(filter rknpu,$(NPU)),1,0)
-DRIVER_DMA_SRCS :=
-ifeq ($(DMA),1)
-    CFLAGS           += -DDRIVER_DMA_BUF=1
-    DRIVER_DMA_SRCS  := driver/dma/dma_buf.c driver/dma/dma_heap.c
-endif
-
-# ramblk 始终构建（rootfs 的 ramblk0 块设备）；SG2002 真机另加 SD 卡块设备。
-DRIVER_BLK_SRCS := driver/blk/ramblk.c
-ifeq ($(PLATFORM),sg2002-riscv64)
-    CFLAGS              += -DDRIVER_SDBLK_SG2002=1
-    DRIVER_BLK_SRCS     += driver/blk/sdblk.c
-endif
-
-# ── §6e-2  按编译标志分组（各组标志与重组前逐字一致）─────────────────────────
-DRIVER_SRCS_CFLAGS := $(DRIVER_UART_SRC) $(DRIVER_IRQ_SRC) $(DRIVER_TIMER_SRC) \
-                      $(DRIVER_NPU_SRCS) $(DRIVER_ETH_SRCS) \
-                      $(if $(filter 1,$(DEV_NEED_LAPIC)),driver/irq/lapic.c)
-DRIVER_SRCS_PLIC   := $(if $(filter riscv64,$(ARCH)),driver/irq/plic.c)
-DRIVER_SRCS_TPU    := $(DRIVER_TPU_SRCS)
-DRIVER_SRCS_ION    := $(DRIVER_ION_SRCS)
-DRIVER_SRCS_DMA    := $(DRIVER_DMA_SRCS)
-DRIVER_SRCS_BLK    := $(DRIVER_BLK_SRCS)
-
-DRIVER_SRCS := $(strip $(DRIVER_SRCS_CFLAGS) $(DRIVER_SRCS_PLIC) $(DRIVER_SRCS_TPU) \
-                       $(DRIVER_SRCS_ION) $(DRIVER_SRCS_DMA) $(DRIVER_SRCS_BLK))
 DRIVER_OBJECTS := $(foreach f,$(DRIVER_SRCS),$(call _drv_obj,$(f)))
 
 CFLAGS  += -MMD -MP
@@ -1201,6 +1065,7 @@ $(call _drv_obj,$(1)): $(1) | $(BUILD_DIR)/driver
 	$$(CC) $(2) -c $$< -o $$@
 endef
 
+$(foreach f,$(DRIVER_SRCS_CORE),  $(eval $(call DRIVER_RULE,$(f),$$(CFLAGS))))
 $(foreach f,$(DRIVER_SRCS_CFLAGS),$(eval $(call DRIVER_RULE,$(f),$$(CFLAGS))))
 $(foreach f,$(DRIVER_SRCS_PLIC),  $(eval $(call DRIVER_RULE,$(f),$$(CFLAGS) -Idriver)))
 $(foreach f,$(DRIVER_SRCS_TPU),   $(eval $(call DRIVER_RULE,$(f),$$(CFLAGS) -Idriver/tpu)))

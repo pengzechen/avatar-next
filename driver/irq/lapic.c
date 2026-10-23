@@ -21,6 +21,8 @@
 #include "x86_64/mem_layout.h" /* X86_KERNEL_VMA_OFF(高半区偏移唯一来源) */
 #include "klog.h"
 #include "../timer/timer.h" /* TIMER_FREQUENCY_HZ = g_timer_cfg_freq_hz */
+#include "driver/driver.h"
+#include "driver/irq.h"
 
 /* ── LAPIC 虚拟基址 ─────────────────────────────────────────────
    boot.S 建立了 identity + high-half 两份映射(1GB huge page),
@@ -377,3 +379,18 @@ void lapic_timer_stop(void)
 {
     lapic_write(LAPIC_REG_LVT_TIMER, LAPIC_TIMER_MASKED);
 }
+
+static int lapic_probe(const device_t *dev)
+{
+    (void)dev; /* LAPIC 基址固定；exception_init() 里已做过一次软件使能 */
+    lapic_init();
+    return 0;
+}
+
+DRIVER_ENTRY(driver_lapic) = {
+    .name = "lapic",
+    .cls = DRV_IRQ,
+    .phase = DRV_PHASE_IRQ,
+    .start_phase = DRV_PHASE_COUNT,
+    .probe = lapic_probe,
+};

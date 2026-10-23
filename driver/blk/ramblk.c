@@ -19,6 +19,8 @@
 #include "klog.h"
 #include "string.h" /* memcpy */
 #include "mm_vm.h"  /* phys_to_virt */
+#include "driver/driver.h"
+#include "driver/block.h"
 
 /* ── 内部 I/O 回调 ──────────────────────────────────────────────── */
 
@@ -76,3 +78,18 @@ void ramblk_init(void)
     KLOG_INFO("[ramblk] RAM block device: base=0x%llx size=%lluMB sectors=%llu x %u\n", (uint64_t)RAMBLK_PHYS_BASE,
               (uint64_t)(RAMBLK_SIZE >> 20), sector_cnt, RAMBLK_SECTOR_SZ);
 }
+
+static int ramblk_probe(const device_t *dev)
+{
+    (void)dev; /* 阶段 1：ramblk 使用运行时 g_mem_rootfs_* */
+    ramblk_init();
+    return block_register_root(ramblk_get_bdev());
+}
+
+DRIVER_ENTRY(driver_ramblk) = {
+    .name = "ramblk",
+    .cls = DRV_STORAGE,
+    .phase = DRV_PHASE_STORAGE,
+    .start_phase = DRV_PHASE_COUNT,
+    .probe = ramblk_probe,
+};

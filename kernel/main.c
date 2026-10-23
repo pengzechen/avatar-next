@@ -45,94 +45,14 @@
 */
 #if ARCH_AARCH64
 #include "aarch64/cpu.h" /* aarch64_enable_neon() */
-#elif ARCH_RISCV64
-#include "irq/plic.h" /* plic_init：外部中断控制器 */
 #endif
 
-#if !DRIVER_SDBLK_SG2002
-#include "../driver/blk/ramblk.h"
-#endif
-
-#if DRIVER_ETH_VIRTIO
-#include "eth/virtio_net.h"
-#elif DRIVER_ETH_CVITEK
-#include "eth/cvitek_eth.h"
-#endif
-
-#if DRIVER_UART_DW
-#include "uart/uart_dw.h"
-#endif
-
-#if DRIVER_GIC_V2
-#include "irq/gicv2.h"
-#endif
-
-#if DRIVER_GIC_V3
-#include "irq/gicv3.h"
-#endif
-
-#if DRIVER_TPU_CVITPU
-#include "tpu/cvi_tpu.h"
-#endif
-
-#if DRIVER_NPU_RKNPU
-#include "npu/rknpu.h"
-#endif
-
-#if DRIVER_SDBLK_SG2002
-#include "blk/sdblk.h"
-#endif
+#include "driver/driver.h"
 
 extern void run_vmm_test(void); /* tests/vmm_test.c */
 extern void kmem_test(void);    /* kernel/mm/aarch64/vmm.c */
 
-static void platform_init_runtime_drivers(void)
-{
-    /* "即将做 X" 不是状态迁移 —— 子系统自己会打完成行 */
-    KLOG_INIT("Initializing platform runtime drivers...\n");
-
-#if DRIVER_UART_DW && (defined(PLATFORM_RK3588) || defined(PLATFORM_SG2002))
-    dw_uart_init();
-#endif
-
-#if DRIVER_GIC_V2
-    gic_virtual_init();
-#endif
-
-#if DRIVER_GIC_V3
-    gicv3_init();
-#endif
-
-#if ARCH_RISCV64
-    /*
-       PLIC 必须在这里显式初始化 —— 它不会自己跑起来。
-       plic_init() 做两件缺一不可的事：
-         1. irq_install(CAUSE_SUPERVISOR_EXTERNAL, plic_external_irq)
-            没有它, S 模式外部中断会落进 boot/riscv64/exception.c 的空分支,
-            从不在 PLIC claim/complete, level 触发的中断源会反复重触发,
-            直接把系统拖进无限陷入。
-         2. SET_SIE(SIE_SEIE) —— 全树唯一开关外部中断的地方。
-       在此之前没有任何源被 enable, 所以这一步本身不会引入中断。
-    */
-    plic_init();
-#endif
-
-    timer_init();
-    timer_enable();
-
-#if DRIVER_TPU_CVITPU
-    cvi_tpu_init();
-#endif
-
-#if DRIVER_SDBLK_SG2002
-    sdblk_init();
-#endif
-
-#if DRIVER_NPU_RKNPU
-    rknpu_init();
-#endif
-}
-
+#if !defined(RUN_VMM_TEST) && !defined(RUN_GUEST_LINUX)
 static void demo_load_busybox(void *arg)
 {
     (void)arg;
@@ -162,6 +82,7 @@ static void demo_load_busybox(void *arg)
     KLOG_INIT("[busybox_loader] Exiting...\n");
     task_exit();
 }
+#endif /* !RUN_VMM_TEST && !RUN_GUEST_LINUX */
 
 void kernel_main(void)
 {
@@ -252,9 +173,16 @@ void kernel_main(void)
     extern char __kernel_image_end[];
     pmm_initialize(virt_to_phys((uint64_t)__kernel_image_start), virt_to_phys((uint64_t)__kernel_image_end));
 
-#if !DRIVER_SDBLK_SG2002
-    ramblk_init();
-#endif
+    /*
+       驱动阶段（一）：中断控制器、时间基准、根块设备。
+
+       IRQ/TIME 不依赖文件系统，提前初始化；STORAGE 必须先于 fs_init()，
+       由 ramblk/sdblk 在 probe 里注册根块设备。
+    */
+    drivers_init(DRV_PHASE_IRQ);
+    drivers_init(DRV_PHASE_TIME);
+    drivers_init(DRV_PHASE_STORAGE);
+
     KLOG_FS("Initializing filesystem...\n");
     fs_init();
 
@@ -272,7 +200,8 @@ void kernel_main(void)
     KLOG_INIT("VMM tests completed\n");
 #endif
 
-    platform_init_runtime_drivers();
+    /* 驱动阶段（二）：DMA/ION/NPU/TPU */
+    drivers_init(DRV_PHASE_CORE);
 
     /* ── 初始化任务子系统 ───────────────────────────────── */
     KLOG_TASK("Initializing task subsystem...\n");
@@ -294,14 +223,13 @@ void kernel_main(void)
     */
     cpu_bring_up_all();
 
-#if DRIVER_ETH_VIRTIO && !defined(RUN_GUEST_LINUX)
-    KLOG_NET("Initializing virtio ethernet driver...\n");
-    virtio_net_init_from_platform();
-    net_init();
-#elif DRIVER_ETH_CVITEK && !defined(RUN_GUEST_LINUX)
-    KLOG_NET("Initializing cvitek ethernet driver...\n");
-    cvitek_eth_init_from_platform();
-    net_init();
+#if !defined(RUN_GUEST_LINUX)
+    /* 驱动阶段（三）：网卡；net_init() 需要驱动先注册 netdev */
+    drivers_init(DRV_PHASE_NET);
+    if (driver_present(DRV_NET)) {
+        KLOG_NET("Initializing network stack...\n");
+        net_init();
+    }
 #endif
 
     /* ── 选择启动模式 ────────────────────────────────────
@@ -354,21 +282,19 @@ void kernel_main(void)
 #endif
 
 #if !defined(RUN_VMM_TEST) && !defined(RUN_GUEST_LINUX)
-#if DRIVER_ETH_VIRTIO || DRIVER_ETH_CVITEK
-    KLOG_NET("Starting network polling task...\n");
     uint64_t startup_task_irq_flags = arch_irq_save();
-    task_t *eth_task = task_create("net-poll", net_poll_task, NULL, 20);
-    if (eth_task)
-        KLOG_TASK("network task created: id=%u\n", eth_task->id);
-    else
-        KLOG_ERROR("Failed to create network task!\n");
-#endif
+
+    if (driver_present(DRV_NET)) {
+        KLOG_NET("Starting network polling task...\n");
+        task_t *eth_task = task_create("net-poll", net_poll_task, NULL, 20);
+        if (eth_task)
+            KLOG_TASK("network task created: id=%u\n", eth_task->id);
+        else
+            KLOG_ERROR("Failed to create network task!\n");
+    }
 
     /* SMP 检查完成, 现在才启动 busybox 交互 shell */
     KLOG_INFO("\n=== Launching busybox shell ===\n");
-#if !DRIVER_ETH_VIRTIO && !DRIVER_ETH_CVITEK
-    uint64_t startup_task_irq_flags = arch_irq_save();
-#endif
     task_t *bb_task = task_create("busybox", demo_load_busybox, NULL, 5);
     arch_irq_restore(startup_task_irq_flags);
     if (bb_task)

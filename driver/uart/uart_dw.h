@@ -12,7 +12,7 @@
 #include "uart_16550.h" /* 共享 16550 寄存器偏移与位定义 */
 
 /*
-   DesignWare UART 基地址(由 dw_uart_early_init() 从 platform_get_mmio 填充)
+   DesignWare UART 基地址(由驱动 probe 从设备表设置)
 
    QEMU virt 机器的 ns16550 UART 使用字节寻址(reg-shift=0),
    寄存器偏移与标准 16550 PIO 布局相同：0,1,2,3,4,5,6,7。

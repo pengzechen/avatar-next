@@ -8,8 +8,10 @@
    fs/lwext4_port/fs_init.c - 根文件系统初始化
 
    将块设备注册到 lwext4, 挂载 ext4 分区到 "/"。
-   - DRIVER_SDBLK_SG2002: 从 SD 卡读取 MBR, 挂载第 2 分区
-   - 默认: 使用 RAM 块设备(QEMU -device loader 预加载的 ext4 镜像)
+
+   根块设备由驱动框架提供：ramblk/sdblk 在 DRV_PHASE_STORAGE 注册自己，
+   fs_init() 只问 block_root_device()，不再按平台/驱动 #if 选择。
+   SD 卡需要在注册前扫描 MBR（取第 2 分区），由 block_root_needs_mbr() 区分。
 
    编译要求：使用 LWEXT4_CFLAGS(包含 third_party/lwext4/include 和 lwext4_port/libc_shim)。
 */
@@ -19,19 +21,16 @@
 #include <ext4_errno.h>
 #include <ext4_config.h>
 #include <ext4_misc.h>
+#include <ext4_mbr.h>
 #include <ext4_super.h>
 #include <ext4_types.h>
 #include "klog.h"
 #include "fs_init.h"
+#include "driver/block.h"
 
-#if DRIVER_SDBLK_SG2002
-#include <ext4_mbr.h>
-
-struct ext4_blockdev;
-extern struct ext4_blockdev *sdblk_get_bdev(void);
-
-#define BDEV_NAME "sdblk0p2"
-#define ROOTFS_MP "/"
+#define ROOTFS_MP     "/"
+#define BDEV_NAME_RAM "ramblk0"
+#define BDEV_NAME_SD  "sdblk0p2"
 
 static struct ext4_mbr_bdevs g_mbr_bdevs;
 
@@ -72,10 +71,63 @@ static void fs_log_ext4_features(struct ext4_blockdev *bdev)
     ext4_block_fini(bdev);
 }
 
+static void fs_dump_root_dir(void)
+{
+    ext4_dir dir;
+    int rc = ext4_dir_open(&dir, ROOTFS_MP);
+    if (rc != EOK)
+        return;
+
+    const ext4_direntry *de;
+    /* 目录项数量由镜像内容决定 —— 逐项一行, 只能采样, 不能留在 INFO */
+    KLOG_MODULE_DEBUG(LOG_MODULE_FS, "[fs] Root directory entries:\n");
+    while ((de = ext4_dir_entry_next(&dir)) != NULL)
+        KLOG_MODULE_DEBUG_SAMPLE(LOG_MODULE_FS, "[fs]   %s\n", de->name);
+    ext4_dir_close(&dir);
+}
+
+static int fs_mount_bdev(struct ext4_blockdev *bdev, const char *name, int sd_path)
+{
+    int rc;
+
+    KLOG_FS("[fs] Registering block device '%s'...\n", name);
+    rc = ext4_device_register(bdev, name);
+    if (rc != EOK) {
+        KLOG_ERROR("[fs] ext4_device_register failed: %d\n", rc);
+        return -rc;
+    }
+
+    KLOG_FS("[fs] Mounting '%s' at '%s'...\n", name, ROOTFS_MP);
+    rc = ext4_mount(name, ROOTFS_MP, false);
+    if (rc != EOK) {
+        KLOG_ERROR("[fs] ext4_mount failed: %d\n", rc);
+        if (sd_path) {
+            fs_log_ext4_features(bdev);
+        } else {
+            KLOG_ERROR("[fs] Make sure rootfs.img was loaded by QEMU at the correct address.\n");
+            KLOG_ERROR("[fs] Run: make ARCH=... run-fs\n");
+        }
+        ext4_device_unregister(name);
+        return -rc;
+    }
+
+    KLOG_INFO("[fs] Root filesystem mounted successfully at '%s'\n", ROOTFS_MP);
+    fs_dump_root_dir();
+    return 0;
+}
+
 int fs_init(void)
 {
     int rc;
-    struct ext4_blockdev *raw = sdblk_get_bdev();
+    struct ext4_blockdev *raw = block_root_device();
+
+    if (!raw) {
+        KLOG_ERROR("[fs] no root block device registered\n");
+        return -ENODEV;
+    }
+
+    if (!block_root_needs_mbr())
+        return fs_mount_bdev(raw, BDEV_NAME_RAM, 0);
 
     KLOG_FS("[fs] Scanning MBR on SD card...\n");
     rc = ext4_mbr_scan(raw, &g_mbr_bdevs);
@@ -92,81 +144,5 @@ int fs_init(void)
     KLOG_FS("[fs] Found partition 2: offset=%llu size=%llu MiB\n", (unsigned long long)part->part_offset,
             (unsigned long long)(part->part_size >> 20));
 
-    KLOG_FS("[fs] Registering block device '%s'...\n", BDEV_NAME);
-    rc = ext4_device_register(part, BDEV_NAME);
-    if (rc != EOK) {
-        KLOG_ERROR("[fs] ext4_device_register failed: %d\n", rc);
-        return -rc;
-    }
-
-    KLOG_FS("[fs] Mounting '%s' at '%s'...\n", BDEV_NAME, ROOTFS_MP);
-    rc = ext4_mount(BDEV_NAME, ROOTFS_MP, false);
-    if (rc != EOK) {
-        KLOG_ERROR("[fs] ext4_mount failed: %d\n", rc);
-        fs_log_ext4_features(part);
-        ext4_device_unregister(BDEV_NAME);
-        return -rc;
-    }
-
-    KLOG_INFO("[fs] Root filesystem mounted successfully at '%s'\n", ROOTFS_MP);
-
-    ext4_dir dir;
-    rc = ext4_dir_open(&dir, ROOTFS_MP);
-    if (rc == EOK) {
-        const ext4_direntry *de;
-        /* 目录项数量由镜像内容决定 —— 逐项一行, 只能采样, 不能留在 INFO */
-        KLOG_MODULE_DEBUG(LOG_MODULE_FS, "[fs] Root directory entries:\n");
-        while ((de = ext4_dir_entry_next(&dir)) != NULL)
-            KLOG_MODULE_DEBUG_SAMPLE(LOG_MODULE_FS, "[fs]   %s\n", de->name);
-        ext4_dir_close(&dir);
-    }
-
-    return 0;
+    return fs_mount_bdev(part, BDEV_NAME_SD, 1);
 }
-
-#else /* ramblk path */
-
-struct ext4_blockdev;
-extern struct ext4_blockdev *ramblk_get_bdev(void);
-
-#define BDEV_NAME "ramblk0"
-#define ROOTFS_MP "/"
-
-int fs_init(void)
-{
-    int rc;
-
-    KLOG_FS("[fs] Registering block device '%s'...\n", BDEV_NAME);
-    rc = ext4_device_register(ramblk_get_bdev(), BDEV_NAME);
-    if (rc != EOK) {
-        KLOG_ERROR("[fs] ext4_device_register failed: %d\n", rc);
-        return -rc;
-    }
-
-    KLOG_FS("[fs] Mounting '%s' at '%s'...\n", BDEV_NAME, ROOTFS_MP);
-    rc = ext4_mount(BDEV_NAME, ROOTFS_MP, false);
-    if (rc != EOK) {
-        KLOG_ERROR("[fs] ext4_mount failed: %d\n", rc);
-        KLOG_ERROR("[fs] Make sure rootfs.img was loaded by QEMU at the correct address.\n");
-        KLOG_ERROR("[fs] Run: make ARCH=... run-fs\n");
-        ext4_device_unregister(BDEV_NAME);
-        return -rc;
-    }
-
-    KLOG_INFO("[fs] Root filesystem mounted successfully at '%s'\n", ROOTFS_MP);
-
-    ext4_dir dir;
-    rc = ext4_dir_open(&dir, ROOTFS_MP);
-    if (rc == EOK) {
-        const ext4_direntry *de;
-        /* 目录项数量由镜像内容决定 —— 逐项一行, 只能采样, 不能留在 INFO */
-        KLOG_MODULE_DEBUG(LOG_MODULE_FS, "[fs] Root directory entries:\n");
-        while ((de = ext4_dir_entry_next(&dir)) != NULL)
-            KLOG_MODULE_DEBUG_SAMPLE(LOG_MODULE_FS, "[fs]   %s\n", de->name);
-        ext4_dir_close(&dir);
-    }
-
-    return 0;
-}
-
-#endif /* DRIVER_SDBLK_SG2002 */

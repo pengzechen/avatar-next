@@ -7,6 +7,8 @@
 #include "timer.h"
 #include "klog.h"
 #include "platform_cfg.h"
+#include "driver/driver.h"
+#include "driver/time.h"
 
 /*
    ============================================================
@@ -313,3 +315,26 @@ void timer_dump_info(void)
     KLOG_TIMER("  Total schedules: %llu\n", g_timer_stats.total_schedules);
     KLOG_TIMER("  Total seconds: %llu\n", g_timer_stats.total_seconds);
 }
+
+static int timer_probe(const device_t *dev)
+{
+    (void)dev; /* 阶段 1：timer_init() 仍直接读平台配置 */
+    timer_init();
+    return 0;
+}
+
+static int timer_start(const device_t *dev)
+{
+    (void)dev;
+    timer_enable();
+    return 0;
+}
+
+DRIVER_ENTRY(driver_timer) = {
+    .name = "timer",
+    .cls = DRV_TIME,
+    .phase = DRV_PHASE_TIME,
+    .start_phase = DRV_PHASE_TIME,
+    .probe = timer_probe,
+    .start = timer_start,
+};

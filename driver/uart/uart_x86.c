@@ -14,6 +14,8 @@
 #include "uart_x86.h"
 #include "x86_64/io.h"
 #include "types.h"
+#include "driver/driver.h"
+#include "driver/serial.h"
 
 /* 等待 TX 寄存器空 */
 static inline int uart_x86_tx_ready(void)
@@ -85,3 +87,18 @@ bool uart_x86_rx_available(void)
 {
     return (inb(UART_X86_LSR) & UART16550_LSR_DR) != 0;
 }
+
+static int uart_x86_probe(const device_t *dev)
+{
+    (void)dev; /* COM1 是固定端口，不需要平台 MMIO 配置 */
+    uart_x86_early_init();
+    return 0;
+}
+
+DRIVER_ENTRY(driver_uart_x86) = {
+    .name = "uart-x86",
+    .cls = DRV_SERIAL,
+    .phase = DRV_PHASE_EARLY,
+    .start_phase = DRV_PHASE_COUNT,
+    .probe = uart_x86_probe,
+};

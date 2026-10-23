@@ -22,6 +22,7 @@
 #include "spinlock.h"
 #include "klog.h"
 #include "string.h"
+#include "driver/driver.h"
 
 /* ── 内部条目 ───────────────────────────────────────────────────────────── */
 typedef struct {
@@ -219,3 +220,17 @@ size_t ion_get_size(ion_handle_t handle)
     spin_unlock(&g_ion_lock);
     return sz;
 }
+
+static int ion_probe(const device_t *dev)
+{
+    (void)dev; /* service：无设备；表在首次分配时惰性初始化 */
+    return 0;
+}
+
+DRIVER_ENTRY(driver_ion) = {
+    .name = "ion",
+    .cls = DRV_ION,
+    .phase = DRV_PHASE_CORE,
+    .start_phase = DRV_PHASE_COUNT,
+    .probe = ion_probe,
+};

@@ -22,6 +22,7 @@
 #include "spinlock.h"
 #include "string.h"
 #include "task/task.h"
+#include "driver/driver.h"
 
 /*
    fd 池的两个入口用 extern 局部声明, 不 include fd_pool.h：
@@ -288,3 +289,17 @@ dma_buf_t *dma_buf_from_user_fd(int fd)
         return NULL;
     return dma_buf_from_index(idx);
 }
+
+static int dma_buf_probe(const device_t *dev)
+{
+    (void)dev; /* service：无设备；分配在首次调用时惰性完成 */
+    return 0;
+}
+
+DRIVER_ENTRY(driver_dma_buf) = {
+    .name = "dma-buf",
+    .cls = DRV_DMA,
+    .phase = DRV_PHASE_CORE,
+    .start_phase = DRV_PHASE_COUNT,
+    .probe = dma_buf_probe,
+};

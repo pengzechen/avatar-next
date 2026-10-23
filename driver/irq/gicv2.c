@@ -6,6 +6,8 @@
 
 #include "mmio.h"
 #include "gicv2.h"
+#include "driver/driver.h"
+#include "driver/irq.h"
 
 /* GICv2 模块内基地址 */
 uintptr_t gicv2_gicd_base = 0;
@@ -470,3 +472,18 @@ void gic_clear_np_int(void)
     write32(read32((void *)GICH_HCR) & ~(1 << 3), (void *)GICH_HCR);
     logger_gic_debug("GIC: Disabled non-priority interrupts in hypervisor\n");
 }
+
+static int gicv2_probe(const device_t *dev)
+{
+    (void)dev; /* 阶段 1：gic_virtual_init() 仍直接读平台配置 */
+    gic_virtual_init();
+    return 0;
+}
+
+DRIVER_ENTRY(driver_gicv2) = {
+    .name = "gicv2",
+    .cls = DRV_IRQ,
+    .phase = DRV_PHASE_IRQ,
+    .start_phase = DRV_PHASE_COUNT,
+    .probe = gicv2_probe,
+};

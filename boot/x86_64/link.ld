@@ -42,6 +42,12 @@ SECTIONS
     /* ---- read-only data ---- */
     .rodata : ALIGN(4K) {
         *(.rodata .rodata.*)
+
+        /* 驱动注册表：driver/core/driver.c 用 __start/__stop 遍历 */
+        . = ALIGN(8);
+        __start_drivers = .;
+        KEEP(*(.drivers))
+        __stop_drivers = .;
     }
 
     . = ALIGN(4K);

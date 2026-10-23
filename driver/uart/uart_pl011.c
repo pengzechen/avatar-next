@@ -18,11 +18,13 @@
 #include "timer/timer.h"
 /* #include "irq.h" */
 #include "spinlock.h"
+#include "driver/driver.h"
+#include "driver/serial.h"
 
 /*
    UART 基地址运行时变量
    初始值为物理地址, 供 MMU 开启前的早期 boot 使用。
-   kernel_main() 开始处会更新为 KERNEL_VMA + 0x09000000。
+   驱动 probe 会按设备表把它更新为 KERNEL_VMA + 0x09000000。
 */
 volatile uintptr_t g_pl011_base = 0x09000000UL;
 
@@ -170,8 +172,7 @@ void pl011_init(void)
         return;
     }
 
-    /* MMU 已开启后用 platform_get_mmio 更新为正确的虚拟地址 */
-    g_pl011_base = platform_get_mmio("uart", "base");
+    /* 基址由 probe 从设备表设置（device_mmio 已按平台规则换算） */
 
     /* Initialize buffers */
     spinlock_irq_init(&tx_buffer.lock);
@@ -214,6 +215,23 @@ void pl011_init(void)
 
     KLOG_UART("UART interrupt driver initialized\n");
 }
+
+static int pl011_probe(const device_t *dev)
+{
+    const serial_cfg_t *cfg = dev->cfg;
+
+    g_pl011_base = device_mmio(cfg->base);
+    pl011_init();
+    return 0;
+}
+
+DRIVER_ENTRY(driver_pl011) = {
+    .name = "pl011",
+    .cls = DRV_SERIAL,
+    .phase = DRV_PHASE_EARLY,
+    .start_phase = DRV_PHASE_COUNT,
+    .probe = pl011_probe,
+};
 
 /* Non-blocking character output */
 bool pl011_putchar_nb(char c)

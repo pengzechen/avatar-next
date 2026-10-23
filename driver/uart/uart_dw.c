@@ -12,6 +12,8 @@
 #include "spinlock.h"
 #include "klog.h"
 #include "timer/timer.h"
+#include "driver/driver.h"
+#include "driver/serial.h"
 
 #ifndef DEVICE_UART_BASE_RAW
 #define DEVICE_UART_BASE_RAW 0x10000000UL
@@ -40,7 +42,7 @@ static inline void sg2002_dbg_putc(char c)
 }
 #endif
 
-/* DW UART 模块内基地址(dw_uart_early_init() 从 platform_get_mmio 填充) */
+/* DW UART 模块内基地址（probe 从设备表设置；早期 boot 可能先设为物理地址） */
 uintptr_t dw_uart_base = DEVICE_UART_BASE_RAW + (DEVICE_MMIO_NEEDS_VMA ? KERNEL_VMA : 0UL);
 uint8_t dw_uart_reg_shift = DEVICE_UART_REG_SHIFT; /* 0=字节寻址(QEMU); 2=4字节MMIO(SG2002) */
 
@@ -217,8 +219,7 @@ static void dw_uart_wait_idle(void)
 
 void dw_uart_early_init(void)
 {
-    dw_uart_reg_shift = DEVICE_UART_REG_SHIFT;
-    dw_uart_base = DEVICE_UART_BASE_RAW + (DEVICE_MMIO_NEEDS_VMA ? KERNEL_VMA : 0UL);
+    /* 基址/reg_shift 由 probe 从设备表设置（或 vm_early 的早期覆盖） */
 
     /*
        OpenSBI (或 QEMU) 已经完成波特率和帧格式的配置,
@@ -281,6 +282,35 @@ void dw_uart_init(void)
 
     logger_info("DWC UART interrupt driver initialized\n");
 }
+
+static int dw_uart_probe(const device_t *dev)
+{
+    const serial_cfg_t *cfg = dev->cfg;
+
+    dw_uart_base = device_mmio(cfg->base);
+    dw_uart_reg_shift = (uint8_t)cfg->reg_shift;
+    dw_uart_early_init();
+    return 0;
+}
+
+static int dw_uart_start(const device_t *dev)
+{
+    const serial_cfg_t *cfg = dev->cfg;
+
+    if (!cfg->irq_mode)
+        return 0;
+    dw_uart_init();
+    return 0;
+}
+
+DRIVER_ENTRY(driver_dw_uart) = {
+    .name = "dw-uart",
+    .cls = DRV_SERIAL,
+    .phase = DRV_PHASE_EARLY,
+    .start_phase = DRV_PHASE_IRQ,
+    .probe = dw_uart_probe,
+    .start = dw_uart_start,
+};
 
 bool dw_uart_putchar_nb(char c)
 {
