@@ -1,3 +1,9 @@
+/*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
 #ifndef AARCH64_MM_VM_H
 #define AARCH64_MM_VM_H
 

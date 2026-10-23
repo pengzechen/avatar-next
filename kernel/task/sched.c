@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    kernel/task/sched.c — 内核轮转调度器
 
    设计：

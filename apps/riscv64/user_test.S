@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
  * apps/riscv64/user_test.S - 用户态测试程序（RISC-V 64 位）
  *
  * 测试系统调用功能：

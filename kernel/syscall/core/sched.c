@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    core/sched.c - 调度相关 syscall(sched_yield, nanosleep)
 
    从 kernel/syscall/syscall.c 抽出。

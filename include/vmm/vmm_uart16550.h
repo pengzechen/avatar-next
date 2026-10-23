@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    include/vmm/vmm_uart16550.h — 虚拟 16550A UART 设备(riscv64/x86_64 guest 控制台)
 
    移植自 x-kernel: virt/vdev/uart16550/src/lib.rs

@@ -1,3 +1,9 @@
+/*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
 #ifndef _FREESTANDING_LIMITS_H
 #define _FREESTANDING_LIMITS_H
 

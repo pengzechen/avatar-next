@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    fs/file_io.c - read / write / writev / lseek / sendfile / fsync / fdatasync
 
    由 kernel/syscall/syscall.c 拆出。

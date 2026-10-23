@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    kernel/vmm/x86_64/vmx.c — Intel VMX 初始化, VMCS 管理与架构钩子
 
    对标 AArch64 的 el2_run.c + stage2.c；实现 vmm.h 中声明的四个架构钩子。

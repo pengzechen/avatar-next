@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    fs/tty.h - 终端状态 + UART 输入环形缓冲区
 
    包含全局 termios 状态, UART RX ring buffer 与若干 tty 辅助接口。

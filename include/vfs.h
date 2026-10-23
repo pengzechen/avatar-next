@@ -1,3 +1,9 @@
+/*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
 #ifndef VFS_H
 #define VFS_H
 

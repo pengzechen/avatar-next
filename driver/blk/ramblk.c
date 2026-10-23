@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    driver/blk/ramblk.c - 基于物理内存区域的 RAM 块设备
 
    将固定的物理内存区域(由 QEMU -device loader 预加载 ext4 镜像)

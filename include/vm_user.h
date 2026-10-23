@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    include/vm_user.h - 用户进程虚拟内存管理(架构无关接口)
 */
 

@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    racetest.c — 并发竞争态复现工具(用户态, 静态链接)
 
    用途：把内核里几处「已定位但没复现」的时序竞争打成可观察的失败。

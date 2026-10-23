@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    kernel/syscall/trace.c — 系统调用环形缓冲的实现
 
    设计要点见 trace.h。这里只补充三个实现上的选择：

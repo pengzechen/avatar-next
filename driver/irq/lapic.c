@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    driver/irq/lapic.c — x86_64 Local APIC 驱动实现
 
    使用 PIT Channel 2 作为参考时钟来校准 LAPIC timer 频率：

@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    driver/uart/uart_x86.c — x86 COM1 (16550 Port I/O) UART 驱动实现
 
    使用纯轮询模式, 不依赖中断。QEMU 会预先初始化 COM1,

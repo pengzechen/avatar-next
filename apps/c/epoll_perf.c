@@ -1,3 +1,9 @@
+/*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
 #define _GNU_SOURCE
 #include <errno.h>
 #include <stdint.h>

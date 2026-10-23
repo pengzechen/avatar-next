@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    io/epoll.h — epoll 子系统数据结构与 API
 
    提供 Linux 兼容的 epoll_create1/epoll_ctl/epoll_pwait 语义。

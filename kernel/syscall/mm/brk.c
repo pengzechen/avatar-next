@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    mm/brk.c - sys_brk 实现
 
    从 kernel/syscall/syscall.c 抽出。语义同 Linux brk(2)：

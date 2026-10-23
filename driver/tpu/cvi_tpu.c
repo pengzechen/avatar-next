@@ -1,3 +1,9 @@
+/*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
 /* driver/tpu/cvi_tpu.c — SOPHGO/Cvitek TPU 裸机驱动
 
    改写自 ref/tpu-ana/hal/mars/tpu_platform.c

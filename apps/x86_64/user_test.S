@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
  * apps/x86_64/user_test.S - x86_64 用户态测试程序（Ring 3）
  *
  * 测试：

@@ -1,3 +1,9 @@
+/*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
 #ifndef DRIVER_IRQ_PLIC_H
 #define DRIVER_IRQ_PLIC_H
 

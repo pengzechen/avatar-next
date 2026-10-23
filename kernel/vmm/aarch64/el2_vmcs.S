@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
  * kernel/vmm/aarch64/el2_vmcs.S — AArch64 VHE "VMCS" 等价汇编模块
  *
  * 与 ref/bare-vm/arch/aarch64/el2_vmcs.S 的对应关系：

@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    kernel/mm/x86_64/vmm.c — x86_64 4 级页表操作实现
 
    提供 PML4 → PDPT → PD → PT 四级页表的遍历, 映射, 复制等操作。

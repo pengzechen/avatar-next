@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
  * apps/test_exec.S - 从文件系统加载的测试程序
  *
  * 这是一个简单的用户程序，用于测试 execve 系统调用。

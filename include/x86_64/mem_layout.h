@@ -1,3 +1,9 @@
+/*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
 #ifndef X86_64_MEM_LAYOUT_H
 #define X86_64_MEM_LAYOUT_H
 

@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
  * apps/aarch64/el0_loop.S — EL0 用户态无限 yield 循环
  *
  * 每 50 次 yield 打印一条消息，其余时间调 SYS_YIELD 让出 CPU。

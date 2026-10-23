@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    include/vmm/vmm_virq.h — guest 中断「线」的架构无关命名
 
    只统一到「设备拉哪条线」这一层。线的号码空间由架构决定, 线的投递

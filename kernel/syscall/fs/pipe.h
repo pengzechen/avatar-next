@@ -1,3 +1,9 @@
+/*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
 #ifndef KERNEL_SYSCALL_FS_PIPE_H
 #define KERNEL_SYSCALL_FS_PIPE_H
 

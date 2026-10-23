@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    include/vmm/vmm_vlapic.h — x86_64 虚拟 LAPIC(xAPIC / MMIO)
 
    对标 include/vmm/vmm_vgic.h(aarch64 的 vGIC)与 vmm_vplic.h(riscv64)。

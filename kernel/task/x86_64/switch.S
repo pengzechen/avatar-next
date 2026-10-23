@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
  * kernel/task/x86_64/switch.S — x86-64 内核上下文切换
  *
  * void arch_task_switch(uintptr_t *prev_sp, uintptr_t next_sp)

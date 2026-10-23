@@ -1,3 +1,9 @@
+/*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
 /* driver/npu/rknpu.c
 
    Rockchip RK3588 NPU 驱动

@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    kernel/vmm/aarch64/vm_init.c — AArch64 的 VM 初始化
 
    从 vmm.c 搬过来的：那是「架构无关」的文件, 却装着本架构 124 行的完整初始化

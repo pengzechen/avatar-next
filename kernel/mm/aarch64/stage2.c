@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    kernel/mm/aarch64/stage2.c — AArch64 Stage-2 MMU 实现(每 VM 一份 + 按需分页)
 
    老的实现是一组全局页表 + identity map + "init 后把非 RAM 清成无效"。

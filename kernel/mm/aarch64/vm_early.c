@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    kernel/mm/vm.c - AArch64 虚拟内存管理
 
    参考：ref/Avatar/kernel/boot/earlypage.c

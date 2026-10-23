@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    fs/lwext4_port/fs_init.h - 文件系统初始化公开接口
 
    此头文件不依赖任何 lwext4 类型, 可被普通内核代码直接包含。

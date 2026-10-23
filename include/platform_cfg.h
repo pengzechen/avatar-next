@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    include/platform_cfg.h — 运行时平台配置
 
    替代 device_profile.h / mem_layout.h / pmm_reserve.h / driver_cfg.h。

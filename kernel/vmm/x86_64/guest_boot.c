@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    kernel/vmm/x86_64/guest_boot.c — x86_64 guest Linux 引导(bzImage / 64 位入口)
 
    与 arm64/riscv 的差别很大：那两个架构是「把 Image 拷到内存 + 传 DTB」,

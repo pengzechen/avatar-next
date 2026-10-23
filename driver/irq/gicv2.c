@@ -1,3 +1,8 @@
+/*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
 
 #include "mmio.h"
 #include "gicv2.h"

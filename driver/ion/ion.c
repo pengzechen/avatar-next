@@ -1,3 +1,9 @@
+/*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
 /* driver/ion/ion.c — 裸机 Ion 内存分配器实现
 
    原理：

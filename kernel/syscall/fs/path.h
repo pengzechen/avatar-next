@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    fs/path.h - 路径规范化与用户/内核字符串拷贝辅助
 
    仅供 kernel/syscall/fs/ 目录下的 .c 内部使用(除 resolve_path /

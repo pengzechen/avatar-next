@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    task_completion_test.c — completion 模块的用户态 A/B 验收
 
    需要 TASK_TEST=1 的内核(暴露三个测试 syscall, 见

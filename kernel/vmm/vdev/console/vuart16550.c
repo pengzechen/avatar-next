@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    kernel/vmm/vdev/vuart16550.c — 虚拟 16550A UART 实现(riscv64/x86_64)
 
    移植自 x-kernel: virt/vdev/uart16550/src/lib.rs, 适配 Avatar OS：

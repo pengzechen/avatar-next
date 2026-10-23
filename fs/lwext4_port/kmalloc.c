@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    fs/lwext4_port/kmalloc.c - lwext4 内存分配器
 
    为 lwext4 提供 ext4_user_malloc / ext4_user_free / ext4_user_calloc /

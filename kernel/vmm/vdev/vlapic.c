@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    kernel/vmm/vdev/vlapic.c — x86_64 虚拟 LAPIC(xAPIC / MMIO 模式)
 
    移植自 tgoskits `virtualization/x86_vlapic`(Rust, ~4400 行), 只取

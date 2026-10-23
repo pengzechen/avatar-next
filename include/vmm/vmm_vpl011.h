@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    include/vmm_vpl011.h — 虚拟 PL011 UART 设备(guest 控制台)
 
    移植自 x-kernel: virt/vdev/vpl011/src/lib.rs

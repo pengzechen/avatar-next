@@ -1,3 +1,9 @@
+/*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
 #ifndef RISCV64_HALT_ARCH_H_
 #define RISCV64_HALT_ARCH_H_
 

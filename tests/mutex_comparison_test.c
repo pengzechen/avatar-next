@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    tests/mutex_comparison_test.c — Mutex 对比测试
 
    目的：对比无锁和有锁情况下的行为差异

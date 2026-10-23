@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    kernel/loader/elf_loader.c — ELF 程序加载器(文件 I/O 层)
 
    职责：从 ext4 文件系统读取 ELF 文件, 然后交由 task_execve 处理。

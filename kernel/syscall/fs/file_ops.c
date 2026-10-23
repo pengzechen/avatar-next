@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    fs/file_ops.c - openat / close / dup3 / fcntl / pipe2
 
    由 kernel/syscall/syscall.c 拆出。

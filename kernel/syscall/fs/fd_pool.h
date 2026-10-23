@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    fd_pool.h - 全局 fd 对象池声明
 
    类型, 池数组与池/任务级 fd 操作函数声明。

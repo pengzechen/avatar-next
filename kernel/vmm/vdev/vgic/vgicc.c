@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    kernel/vmm/vdev/vgic/vgicc.c - per-vCPU GICC and GICH state.
 */
 

@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    include/dma_buf.h — dma-buf / dma-heap
 
    背景：官方 `librknnrt.so` 的每个缓冲区都走这条路 ——

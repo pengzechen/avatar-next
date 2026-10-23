@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    smp_thread_test.c — Phase 4a 验证：多线程跨核分发
 
    思路：

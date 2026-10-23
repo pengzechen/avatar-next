@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    include/vmm_vgicd.h — 虚拟 GICv2 分发器(GICD)模拟
 
    移植自 x-kernel: virt/vkvmm/src/vdev/aarch64/vgicd.rs

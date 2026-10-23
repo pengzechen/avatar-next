@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    kernel/task/itimer.c — 每任务 ITIMER_REAL(alarm / setitimer)
 
    语义与设计见 task/itimer.h。这里只记实现上的两个关键点：

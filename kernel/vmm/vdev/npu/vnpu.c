@@ -1,3 +1,9 @@
+/*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
 /* kernel/vmm/vdev/npu/vnpu.c
 
    RK3588 NPU 寄存器透传 —— 见 include/vmm/vmm_vnpu.h 顶上那段说明。

@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    kernel/syscall/trace.h — 系统调用环形缓冲(strace 式事后回看)
 
    解决的问题：用户态程序崩了, 想按 syscall 调用顺序定位, 但逐条打日志

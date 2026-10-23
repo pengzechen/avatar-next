@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    kernel/mm/vm_user.c - 用户进程虚拟内存管理
 
    架构无关实现, 依赖 mm_vm.h 提供的抽象接口。

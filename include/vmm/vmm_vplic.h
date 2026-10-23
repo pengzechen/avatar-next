@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    include/vmm_vplic.h — 虚拟 RISC-V PLIC(中断控制器)
 
    移植自 x-kernel: virt/kvmm/src/vdev/riscv64/irq.rs

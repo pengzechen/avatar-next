@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
  * boot/x86_64/exception.S — x86_64 IDT 中断/异常入口存根
  *
  * 每个 IDT 向量对应一个存根（stub），负责：

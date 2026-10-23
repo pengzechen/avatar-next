@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    Platform abstraction layer
    Allows support for multiple platforms (QEMU, real hardware, etc.)
 */

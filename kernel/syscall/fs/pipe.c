@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    fs/pipe.c - kernel pipe implementation
 
    Ring buffer pipe with blocking read/write via task_block/task_unblock.

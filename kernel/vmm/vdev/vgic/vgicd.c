@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    kernel/vmm/vdev/vgic/vgicd.c - VM-owned virtual GICv2 distributor.
 */
 

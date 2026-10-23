@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    include/vmm_vgicc.h — per-vCPU virtual CPU interface / GICH state.
 
    guest visible GICC registers are MMIO-emulated here. The same per-vCPU

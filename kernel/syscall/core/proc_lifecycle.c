@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    core/proc_lifecycle.c - 进程/线程生命周期 syscall
 
    从 kernel/syscall/syscall.c 抽出, 覆盖：

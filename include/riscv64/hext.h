@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    include/riscv64/hext.h — RISC-V Hypervisor Extension (H-ext) CSR 定义
 
    RISC-V Privileged Spec 1.12 §19-20 (H-extension)

@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    kernel/task/completion.c — SMP 安全的一次性事件等待
 
    关键点(也是它存在的理由)：

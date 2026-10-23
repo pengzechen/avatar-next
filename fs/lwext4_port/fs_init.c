@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    fs/lwext4_port/fs_init.c - 根文件系统初始化
 
    将块设备注册到 lwext4, 挂载 ext4 分区到 "/"。

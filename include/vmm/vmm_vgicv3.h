@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    include/vmm_vgicv3.h — 虚拟 GICv3(GICv3 vGIC)
 
    与 GICv2 vGIC(vmm_vgic.h / vmm_vgicd.h / vmm_vgicc.h)的关系：

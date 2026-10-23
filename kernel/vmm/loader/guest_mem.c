@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    kernel/vmm/loader/guest_mem.c — 宿主访问 guest 内存的唯一入口
 
    从 guest_loader.c 拆出来的。按需分页之后, guest RAM 在宿主侧不再是

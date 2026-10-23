@@ -1,3 +1,9 @@
+/*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
 #include <stdio.h>
 int guest_loader_dtb_node_has_prop(const unsigned char *dtb, unsigned size,
                                    const char *node, const char *prop);

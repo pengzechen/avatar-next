@@ -1,3 +1,9 @@
+/*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
 #include "irq/plic.h"
 #include "exception.h"
 #include "klog.h"

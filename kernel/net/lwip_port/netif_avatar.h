@@ -1,3 +1,9 @@
+/*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
 #ifndef NET_LWIP_PORT_NETIF_AVATAR_H
 #define NET_LWIP_PORT_NETIF_AVATAR_H
 

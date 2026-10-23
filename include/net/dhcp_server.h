@@ -1,3 +1,9 @@
+/*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
 #ifndef NET_DHCP_SERVER_H
 #define NET_DHCP_SERVER_H
 

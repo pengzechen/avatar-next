@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    driver/irq/gicv3.c — 宿主 GICv3 驱动(AArch64 @ EL2 / VHE)
 
    与 gicv2.c 的分工差异：

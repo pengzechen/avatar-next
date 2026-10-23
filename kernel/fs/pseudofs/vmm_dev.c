@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    kernel/fs/pseudofs/vmm_dev.c — /dev/vmm：从宿主 shell 里控制 guest 的字符设备
 
    移植自 x-kernel: virt/kvmm-api/src/device.rs(chardev /dev/kvmm-vm)。

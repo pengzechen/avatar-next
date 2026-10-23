@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
  * apps/riscv64/hello.S - 简单用户态 Hello 程序（RISC-V 64 位）
  *
  * 最小化测试：只做一次 write + exit，验证 ecall 最短路径可用。

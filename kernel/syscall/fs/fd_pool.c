@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    fd_pool.c - 全局文件描述符对象池实现
 
    从 kernel/syscall/syscall.c 抽出。

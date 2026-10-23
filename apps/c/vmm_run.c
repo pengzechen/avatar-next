@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    vmm_run.c — 在宿主 shell 里启动 / 接入 / 管理 Linux guest
 
    移植自 x-kernel: uapps/kvmm-run/kvmm-run.c

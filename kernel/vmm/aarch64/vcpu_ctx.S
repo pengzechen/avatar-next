@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
  * kernel/vmm/aarch64/vcpu_ctx.S — guest EL1 系统寄存器保存/恢复（VHE 版）
  *
  * VHE（E2H=1）差异：

@@ -1,3 +1,9 @@
+/*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
 #include "task/preempt.h"
 #include "arch.h"
 #include "task/task.h"

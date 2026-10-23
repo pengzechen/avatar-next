@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    include/vmm/vmm_vnpu.h — RK3588 NPU 寄存器透传给 guest
 
    guest 访问 0xFDAB0000..0xFDAE0000 时, VMM 把这些访问原样转发到真实的

@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    driver/uart/uart_x86.h — x86 COM1 (16550 Port I/O) UART 驱动
 
    x86 COM1 与 DesignWare 16550 是同一硬件系列, 但访问方式不同：

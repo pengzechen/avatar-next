@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    kernel/vmm/vmm_console.c — 直启模式下的宿主控制台轮询泵
 
    从 vmm.c 拆出来的。只有直启模式(GUEST_LINUX=1, 没有宿主 shell)需要它：

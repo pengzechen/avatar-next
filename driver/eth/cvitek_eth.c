@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    driver/eth/cvitek_eth.c — SG2002 / CV1812H 板载以太网驱动(C 实现)
 
    硬件：Synopsys DesignWare MAC 3.70a(DWMAC)+ 内部 EPHY

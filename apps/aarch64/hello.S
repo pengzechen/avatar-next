@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
  * apps/hello.S - 第二个用户态测试程序
  *
  * 与 user_test.S 不同，这个程序：

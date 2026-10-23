@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
  * kernel/task/user_test.S - 用户态测试程序（带系统调用）
  *
  * 测试系统调用功能：

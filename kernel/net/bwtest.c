@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    kernel/net/bwtest.c — 以太网带宽测试：UDP 丢弃式接收端 + 每秒速率统计
 
    ── 为什么用 UDP 而不是 TCP ──────────────────────────────────────────────

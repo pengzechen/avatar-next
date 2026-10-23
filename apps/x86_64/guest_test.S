@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
  * apps/x86_64/guest_test.S — x86_64 VMX non-root guest 测试程序
  *
  * 协议（对标 AArch64 guest_test.S）：

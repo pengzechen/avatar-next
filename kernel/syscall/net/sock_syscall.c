@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    net/sock_syscall.c - socket syscall handlers
 
    Translates Linux syscall ABI (sockaddr_in, etc.) into

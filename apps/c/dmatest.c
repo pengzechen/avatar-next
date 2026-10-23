@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    dmatest.c — dma-buf / dma-heap(P0)的用户态验收程序
 
    跑法：

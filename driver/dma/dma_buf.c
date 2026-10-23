@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    driver/dma/dma_buf.c — dma-buf 缓冲区对象
 
    一个 dma_buf 就是「一段物理连续内存 + 一个引用计数」, 用户态通过 fd 持有它。

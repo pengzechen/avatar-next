@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    kernel/vmm/vdev/vpl011.c — 虚拟 PL011 UART 设备实现
 
    移植自 x-kernel: virt/vdev/vpl011/src/lib.rs, 适配 Avatar OS：

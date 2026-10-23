@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    fs/file_stat.c - fstat / newfstatat / readlinkat / faccessat / getdents64
 
    由 kernel/syscall/syscall.c 拆出。

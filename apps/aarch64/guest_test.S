@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
  * apps/aarch64/guest_test.S — Phase 2 VMM Guest 程序（无限循环版）
  *
  * 运行在 guest EL1（EL1 MMU 关，Stage-2 identity map）。

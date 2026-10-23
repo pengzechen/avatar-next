@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    kernel/vmm/aarch64/el2_run.c — VMM 主循环与 VM exit 分发
 
    对标 ref/bare-vm/arch/aarch64/el2_run.c, 适配 Avatar OS。

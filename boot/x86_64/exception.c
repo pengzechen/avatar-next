@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    boot/x86_64/exception.c — x86_64 IDT 初始化与中断分发
 
    提供：

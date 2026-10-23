@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    signal.c - 内核信号子系统(投递 + 三个 syscall 处理器)
 
    从 kernel/syscall/syscall.c 抽出。包含：

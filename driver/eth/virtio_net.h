@@ -1,3 +1,9 @@
+/*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
 #ifndef __DRIVER_ETH_VIRTIO_NET_H__
 #define __DRIVER_ETH_VIRTIO_NET_H__
 

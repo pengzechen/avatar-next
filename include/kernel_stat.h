@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    include/kernel_stat.h — Linux ABI struct stat + dirent64 定义
 
    从 kernel/syscall/syscall.c 提取, 供 syscall.c 和 pseudofs.c 共用。

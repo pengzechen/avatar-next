@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    tests/mutex_stress_test.c — Mutex 压力测试
 
    测试内容：

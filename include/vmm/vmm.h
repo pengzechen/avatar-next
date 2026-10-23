@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    include/vmm.h — VMM 类型和公共 API
 
    架构模型：vCPU = task, VM = process(虚拟进程)

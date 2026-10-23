@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    kernel/mm/pmm.c - 物理内存管理器实现
 
    参考：ref/Avatar/kernel/mem/pmm.c

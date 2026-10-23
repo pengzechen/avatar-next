@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    io/poll.c - poll / ppoll 处理器
 
    使用 fd_poll() 统一接口查询 fd 就绪状态。

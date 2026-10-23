@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    kernel/vmm/vdev/vgicv3/vgicr3.c — 虚拟 GICv3 Redistributor(GICR)模拟
 
    GICv3 里每个核有一个 128KB 的 Redistributor, 分成两个 64KB 帧：

@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    include/aarch64/sysreg.h  —  AArch64 系统寄存器访问宏
 
    为 driver/timer_aarch64.h 及其他需要访问 ARM 系统寄存器的模块提供

@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    断言系统测试
    编译: gcc -D__x86_64__ -I../include -c assert_test.c
 */

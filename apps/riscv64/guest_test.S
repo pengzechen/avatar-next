@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
  * apps/riscv64/guest_test.S — VS-mode guest 测试程序
  *
  * 运行在 RISC-V H-extension VS-mode 下。

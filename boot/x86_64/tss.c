@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    boot/x86_64/tss.c — x86_64 Task State Segment (TSS) 初始化
 
    TSS 在 x86_64 中用于：

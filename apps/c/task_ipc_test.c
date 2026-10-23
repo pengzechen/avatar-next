@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    task_ipc_test.c — task 基础设施的用户态验收(A/B 对比用)
 
    目的：证明「有新的跨核唤醒/抢占基础设施」和「没有」是可观测地不同的。

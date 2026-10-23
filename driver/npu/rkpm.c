@@ -1,3 +1,9 @@
+/*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
 /* driver/npu/rkpm.c
 
    Rockchip RK3588 电源域管理实现

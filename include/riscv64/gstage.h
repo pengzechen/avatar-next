@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    include/riscv64/gstage.h — RISC-V H-extension G-stage (Stage-2) MMU
 
    移植自 x-kernel: virt/kvmm/src/mm/gstage.rs

@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    syscall_internal.h - 内核 syscall 实现内部共享头
 
    仅供 kernel/syscall 目录下的 C 文件使用。包含：

@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
  * boot/aarch64/exception.S — AArch64 异常/中断入口
  *
  * trap_frame_t 布局（TRAP_FRAME_SIZE = 816 字节，定义见

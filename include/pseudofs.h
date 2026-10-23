@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    include/pseudofs.h — 虚拟文件系统 API
 
    为 /dev, /proc, /sys 提供内核内建的虚拟路径。

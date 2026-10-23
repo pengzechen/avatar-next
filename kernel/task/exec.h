@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    kernel/task/exec.h — execve 进程语义接口
 
    职责：Linux ABI 初始栈构建 + 用户页表初始化(含内核映射) +

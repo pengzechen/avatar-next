@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    driver/uart/uart.h  —  统一 UART 接口
 
    根据 driver_cfg.h 中的驱动选择, 通过宏别名统一 API：

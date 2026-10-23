@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    kernel/mm/riscv64/vmm.c — RISC-V Sv39 页表操作实现
 
    提供 Sv39 三级页表(L2→L1→L0)的遍历, 映射与用户地址空间生命周期操作。

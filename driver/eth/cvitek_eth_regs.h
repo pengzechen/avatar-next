@@ -1,3 +1,9 @@
+/*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
 #ifndef CVITEK_ETH_REGS_H
 #define CVITEK_ETH_REGS_H
 

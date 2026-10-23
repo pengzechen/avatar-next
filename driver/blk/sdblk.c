@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    driver/blk/sdblk.c — SG2002 / CV1811 SDMMC (SDHCI) 块设备驱动
    设计：
      - 纯 PIO 轮询模式(无 DMA / 无中断)

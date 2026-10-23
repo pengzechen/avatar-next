@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    kernel/mm/kmalloc.c — 内核内存分配器
 
    在 PMM 之上提供返回虚拟地址的分配接口。

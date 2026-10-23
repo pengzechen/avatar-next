@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    futex.h - 内核 futex 实现接口
 
    仅供 kernel/syscall 目录下的 C 文件使用。

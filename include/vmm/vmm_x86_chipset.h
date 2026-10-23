@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    include/vmm/vmm_x86_chipset.h — x86_64 传统芯片组桩的每 VM 状态
 
    guest Linux 会去摸一堆 PC 兼容硬件：8259 PIC(端口 0x20/0xA0), 8254 PIT

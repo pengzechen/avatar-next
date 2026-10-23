@@ -1,3 +1,9 @@
+/*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
 /* driver/tpu/cvi_tpu.h — SOPHGO/Cvitek TPU (TDMA + TIU) 裸机驱动接口
 
    改写自 ref/tpu-ana/hal/mars/, 移除所有 Linux 内核依赖。

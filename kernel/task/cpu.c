@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    kernel/task/cpu.c — Per-CPU 控制块 + BSP / 二级核启动骨架
 
    Phase 0：仅 BSP 初始化。

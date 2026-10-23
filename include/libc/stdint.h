@@ -1,3 +1,9 @@
+/*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
 #ifndef _FREESTANDING_STDINT_H
 #define _FREESTANDING_STDINT_H
 

@@ -1,3 +1,9 @@
+/*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
 #include "fdt.c"
 /* 把宿主侧的四个补丁按 guest_loader.c 的调用顺序跑一遍 */
 int host_patch_all(unsigned char *buf, unsigned len)

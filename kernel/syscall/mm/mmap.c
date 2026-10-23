@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    mm/mmap.c - sys_mmap 实现(包含匿名映射与文件映射)
 
    从 kernel/syscall/syscall.c 迁出。文件映射通过 VFS 读取文件内容。

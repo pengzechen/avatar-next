@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    kernel/vmm/vdev/vgicv3/vgicd3.c — 虚拟 GICv3 分发器(GICD)模拟
 
    guest 通过 MMIO 配置 GICD。GICv3 打开 ARE 之后 GICD 只管 SPI

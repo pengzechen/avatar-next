@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    fs/lwext4_port/fs_lock.h - lwext4 全局串行化锁的跨模块接口
 
    每次 lwext4 API 调用那层锁由 `-Wl,--wrap` 自动加上(见 fs_lock.c),

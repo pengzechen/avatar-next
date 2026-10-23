@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    net/ksocket.c - kernel socket layer over lwIP raw API
 
    Provides blocking socket semantics using task_block/task_unblock.

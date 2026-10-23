@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    driver/blk/sdblk.h — SG2002 / CV1811 SDMMC (SDHCI) 块设备公开接口
 
    支持：

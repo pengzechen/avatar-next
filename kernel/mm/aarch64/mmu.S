@@ -1,3 +1,9 @@
+/*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
 #include "../../../include/aarch64/tcr.h"
 #include "../../../include/aarch64/mair.h"
 

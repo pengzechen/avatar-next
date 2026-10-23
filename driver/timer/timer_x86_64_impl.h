@@ -1,3 +1,9 @@
+/*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
 #ifndef __TIMER_X86_64_IMPL_H__
 #define __TIMER_X86_64_IMPL_H__
 

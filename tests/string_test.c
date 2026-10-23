@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    tests/string_test.c — 字符串/内存函数自检
 
    覆盖 memcpy / memset / memmove 的长度 × 源对齐 × 目的对齐组合,

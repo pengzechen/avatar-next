@@ -1,3 +1,9 @@
+/*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
 #include "platform_cfg.h"
 #include "uart/uart_dw.h"
 #include "types.h"

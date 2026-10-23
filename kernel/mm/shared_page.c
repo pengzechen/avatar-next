@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    kernel/mm/shared_page.c - MAP_SHARED 物理页引用计数
 
    这张表会被 mmap, fork, munmap, 进程退出四条路径, 多个 CPU 并发访问,

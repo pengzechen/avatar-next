@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    fs/ioctl.c - ioctl 系统调用
 
    由 kernel/syscall/syscall.c 拆出。优先派发给 pseudofs 设备节点；

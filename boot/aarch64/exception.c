@@ -1,3 +1,8 @@
+/*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
 
 #include "exception.h"
 #include "aarch64/sysreg.h" /* READ_ESR_EL1, READ_ELR_EL1 等 */

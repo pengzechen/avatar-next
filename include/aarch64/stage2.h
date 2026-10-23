@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    include/aarch64/stage2.h — AArch64 Stage-2 MMU(IPA→PA)API
 
    移植自 ref/bare-vm/arch/aarch64/include/stage2.h, 适配 Avatar OS。

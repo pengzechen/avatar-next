@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    boot/x86_64/tss.h — x86_64 TSS(Task State Segment)声明
 */
 

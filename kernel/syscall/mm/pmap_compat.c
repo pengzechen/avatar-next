@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    mm/pmap_compat.c - 进程地址空间相关的兼容/小型 syscall 处理器
 
    - arch_prctl_handler  (x86 only) — ARCH_SET_FS / ARCH_GET_FS

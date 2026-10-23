@@ -1,3 +1,9 @@
+/*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
 /* driver/ion/ion.h — 裸机 Ion 内存分配器接口
 
    参考：Android ION + ref: rcore-os/tgoskits sg2002-tpu/src/ion/

@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    kernel/vmm/vdev/vplic.c — 虚拟 RISC-V PLIC 实现
 
    移植自 x-kernel: virt/kvmm/src/vdev/riscv64/irq.rs, 适配 Avatar OS：

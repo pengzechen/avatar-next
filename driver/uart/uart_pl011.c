@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    UART interrupt-driven driver for PL011
 
    This implements interrupt-based UART communication to replace

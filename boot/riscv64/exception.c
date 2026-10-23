@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    boot/riscv64/exception.c — RISC-V 64-bit S-mode 异常/中断 C 分发器
 
    提供：

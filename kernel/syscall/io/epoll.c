@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    io/epoll.c — epoll 子系统实现
 
    事件驱动 I/O 多路复用。核心机制：

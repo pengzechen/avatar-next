@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    kernel/debug/backtrace.c — 内核调用栈回溯
 
    实现在这里, 用法和设计取舍见 debug/backtrace.h 与 docs/basic/BACKTRACE.md。

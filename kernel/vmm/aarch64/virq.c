@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    kernel/vmm/aarch64/virq.c — AArch64 的「拉线」适配器
 
    把一根 virq_t(号码是 GIC INTID)接到 vGIC 后端。见 include/vmm/vmm_virq.h

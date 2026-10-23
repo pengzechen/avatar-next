@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    futex.c - 简易 futex 实现(fixed-size 表, 无哈希)
 
    仅支持 FUTEX_WAIT / FUTEX_WAKE 基本语义, 足以让 musl pthread mutex / cond 工作。

@@ -1,3 +1,9 @@
+/*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
 #ifndef NET_WEBCAM_HTTPD_H
 #define NET_WEBCAM_HTTPD_H
 

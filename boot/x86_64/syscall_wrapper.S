@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
  * boot/x86_64/syscall_wrapper.S — x86_64 快速系统调用入口
  *
  * 使用 SYSCALL/SYSRET 指令（比 INT 0x80 快得多）

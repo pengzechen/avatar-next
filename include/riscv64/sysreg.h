@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    include/riscv64/sysreg.h  —  RISC-V 64 CSR 访问宏
 
    为 driver/timer_rv.h 及其他需要访问 RISC-V 控制状态寄存器的模块提供

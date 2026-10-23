@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    tests/kmem_test.c — AArch64 内核内存管理测试
 
    从 kernel/mm/aarch64/vmm.c 中分离出的测试函数。

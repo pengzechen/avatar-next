@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    kernel/mm/riscv64/gstage.c — RISC-V H-extension G-stage (Stage-2) 实现
 
    每 VM 一份 + 按需分页。老实现是一组全局页表 + identity map("先把 4 GiB

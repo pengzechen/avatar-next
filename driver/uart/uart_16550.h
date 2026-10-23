@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    driver/uart/uart_16550.h — NS16550A / 8250 UART 共享寄存器定义
 
    两种地址布局：

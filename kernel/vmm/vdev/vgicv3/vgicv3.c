@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    kernel/vmm/vdev/vgicv3/vgicv3.c — VM 级虚拟 GICv3 核心
 
    职责划分(对应 GICv2 版的 vgic.c + vgicc.c 的 LR 部分)：

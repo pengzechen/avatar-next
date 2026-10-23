@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    include/vmm_vgic.h - VM-owned virtual GICv2 state and core operations.
 
    The VM owns one vgic_t. Distributor state is shared by the VM, while SGI,

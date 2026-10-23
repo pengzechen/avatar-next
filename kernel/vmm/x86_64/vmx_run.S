@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
  * kernel/vmm/x86_64/vmx_run.S — VMX guest 入口/出口汇编
  *
  * vmx_enter_guest(vcpu_t *vcpu) — 执行一次 VMLAUNCH 或 VMRESUME

@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    fs/lwext4_port/fs_lock.c — lwext4 的全局串行化
 
    为什么需要：lwext4 是个单线程用户态库, 它的全局缓冲缓存(一棵红黑树)

@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    include/x86_64/vmx.h — Intel VMX 常量, VMCS 字段编码与辅助类型
 
    对标 ref/bare-vm/arch/x86_64/include/vmx.h, 精简适配 Avatar OS。

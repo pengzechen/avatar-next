@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    driver/irq.h  —  统一中断控制器接口(aarch64 only)
 
    根据 DRIVER_GIC_VERSION(默认 2)选择 GICv2 或 GICv3。

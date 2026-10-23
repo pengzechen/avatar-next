@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    driver/npu/rknpu_drm.c — RK3588 NPU 的 DRM 渲染节点(兼容 shim)
 
    注意： 这不是 DRM。我们只实现 librknnrt 用到的那一小撮 ioctl 与 GEM 语义,

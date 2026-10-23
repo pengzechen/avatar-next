@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    include/vmm/vmm_console.h — guest 控制台 vdev 的架构无关入口
 
    每个架构的 guest 控制台是不同型号的 UART, 但两者对宿主暴露的语义

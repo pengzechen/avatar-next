@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    drmtest.c — DRM 渲染节点 + GEM 层(P2+P4)的用户态验收
 
    跑法：

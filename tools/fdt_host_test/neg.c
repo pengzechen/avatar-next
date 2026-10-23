@@ -1,3 +1,9 @@
+/*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
 #include <stdio.h>
 int guest_loader_dtb_node_has_prop(const unsigned char*, unsigned, const char*, const char*);
 int main(int c, char**v){ static unsigned char b[16384]; FILE*f=fopen(v[1],"rb");

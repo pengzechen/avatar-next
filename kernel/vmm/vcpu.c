@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    kernel/vmm/vcpu.c — vCPU：执行主循环 + 内核任务
 
    从 vmm.c 拆出来的(那边混了 VM 池, 主循环, 控制台泵和一个架构的初始化)。

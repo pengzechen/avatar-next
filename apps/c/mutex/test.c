@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    apps/c/mutex/test.c — 基于 futex 的用户态 mutex 实现与测试
 
    展示如何用内核 futex 系统调用(FUTEX_WAIT / FUTEX_WAKE)从零实现 mutex,

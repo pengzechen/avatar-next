@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    fs/pty.c - pseudo-terminal (PTY) implementation
 
    Provides /dev/ptmx (master) and /dev/pts/N (slave) pairs.

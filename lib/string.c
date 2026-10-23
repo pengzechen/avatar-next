@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    lib/string.c — 字符串/内存函数的外部符号版本
 
    绝大多数调用点是 include/string.h 里的 static inline 版本(会被内联,

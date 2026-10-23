@@ -1,3 +1,9 @@
+/*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
 #ifndef SHIM_CACHE_H
 #define SHIM_CACHE_H
 #include <stddef.h>

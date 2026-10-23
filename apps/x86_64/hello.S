@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
  * apps/x86_64/hello.S - 第二个 x86_64 用户态测试程序（Ring 3）
  *
  * 与 user_test.S 不同，这个程序：

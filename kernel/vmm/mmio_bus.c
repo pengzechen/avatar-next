@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    kernel/vmm/mmio_bus.c — VMM MMIO 设备总线实现
 
    移植自 x-kernel: virt/vdev/core/src/lib.rs (MmioBus)。

@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    driver/dma/dma_heap.c — 堆后端实现(P0：全局 PMM)
 
    见 dma_heap.h 里为什么这一层只有两个函数。

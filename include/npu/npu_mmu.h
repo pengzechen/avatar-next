@@ -1,3 +1,9 @@
+/*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
 /* include/npu/npu_mmu.h
 
    RK3588 NPU 的 IOMMU(`rockchip,iommu-v2`)—— 宿主独占的那一半。

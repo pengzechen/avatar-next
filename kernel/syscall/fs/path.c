@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    fs/path.c - 路径规范化, 用户/内核字符串拷贝, stat 填充
 
    由 kernel/syscall/syscall.c 拆出。

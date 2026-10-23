@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    driver/dma/dma_heap.h — 堆后端(内存从哪来)
 
    这一层故意只有两个函数：它是 P0 与 P1 之间的接缝。

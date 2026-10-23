@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    内核日志系统测试
    编译: gcc -D__x86_64__ -I../include -c klog_test.c
 */

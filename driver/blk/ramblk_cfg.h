@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    driver/blk/ramblk_cfg.h - RAM 块设备物理内存区域配置
 
    rootfs 地址来自运行时 platform_cfg.h(由 platform_conf_scan() 从平台配置提取)。

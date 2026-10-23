@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    tests/vmm_test.c — 三架构 VMM 三线程并发测试
 
    测试目标：验证 VMM(虚拟机监控器)能正确创建并调度三类并发线程：

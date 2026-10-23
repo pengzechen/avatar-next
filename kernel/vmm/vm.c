@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    kernel/vmm/vm.c — VM 对象：池, 生命周期, 创建
 
    从 vmm.c 拆出来的。这里只管「一个 guest VM 这个对象本身」：

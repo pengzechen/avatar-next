@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    fs/dir.c - getcwd / chdir / renameat / unlinkat
 
    由 kernel/syscall/syscall.c 拆出。

@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    generated/ext4_config.h - Avatar OS lwext4 裸机移植配置
 
    此文件在 CONFIG_USE_DEFAULT_CFG=0 时被 ext4_config.h 自动包含。

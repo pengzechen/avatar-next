@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    include/vmm_mmio.h — VMM MMIO 设备总线与设备接口
 
    移植自 x-kernel: virt/vdev/core/src/lib.rs (MmioDevice / MmioBus)

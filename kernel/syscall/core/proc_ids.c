@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    core/proc_ids.c - 进程身份 / 进程组 / 会话相关 syscall
 
    从 kernel/syscall/syscall.c 抽出。覆盖：

@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    kernel/vmm/loader/guest_loader.c — guest 镜像加载与启动
 
    移植自 x-kernel: virt/kvmm-api/src/loader.rs, 适配 Avatar OS：

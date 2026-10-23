@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    fs/tty.c - 终端状态 + UART 输入环形缓冲区 + signal_check_uart
 
    由 kernel/syscall/syscall.c 拆出。

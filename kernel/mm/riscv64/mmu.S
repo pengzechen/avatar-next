@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
  * kernel/mm/riscv64/mmu.S
  *
  * 最小 Sv39 初始化。内核低地址恒等映射与 KERNEL_VMA 高半区别名

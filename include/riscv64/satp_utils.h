@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    include/riscv64/satp_utils.h - RISC-V Sv39 satp 操作工具
 
    统一封装 satp 寄存器读写, PGD 物理地址转换以及用户页表内核映射复制。

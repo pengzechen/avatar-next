@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
  * apps/x86_64/test_execve.S - 测试 execve 系统调用
  *
  * 这个程序测试 execve 系统调用，尝试执行 /hello

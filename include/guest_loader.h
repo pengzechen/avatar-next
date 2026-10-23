@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    include/guest_loader.h — guest 镜像加载(内核 / DTB / initrd → guest 物理内存)
 
    移植自 x-kernel: virt/kvmm-api/src/loader.rs

@@ -1,3 +1,9 @@
+/*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
 #include <stdio.h>
 #include <string.h>
 int host_patch_all(unsigned char *buf, unsigned len);

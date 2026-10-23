@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    kernel/vmm/riscv64/hext_run.c — RISC-V H-extension 架构钩子实现
 
    实现 vmm.h 声明的四个架构钩子：

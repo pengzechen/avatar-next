@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
  * kernel/task/riscv64/switch.S — RISC-V 64-bit 内核上下文切换
  *
  * void arch_task_switch(uintptr_t *prev_sp, uintptr_t next_sp)

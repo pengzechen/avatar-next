@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
  * x86_64 boot code for QEMU Q35 machine
  *
  * Boot protocol: Multiboot1

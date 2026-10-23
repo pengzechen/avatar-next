@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    kernel/loader/elf_image.h — ELF 镜像加载接口
 
    职责：ELF 格式校验 + PT_LOAD 段加载 + RELA 重定位

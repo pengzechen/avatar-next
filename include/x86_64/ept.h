@@ -1,4 +1,10 @@
 /*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
    include/x86_64/ept.h — x86_64 EPT (Extended Page Table) 二级地址翻译
 
    移植自 x-kernel: virt/kvmm/src/mm/ept.rs

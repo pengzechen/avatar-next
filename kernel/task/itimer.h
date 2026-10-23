@@ -1,3 +1,9 @@
+/*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
 #ifndef KERNEL_TASK_ITIMER_H
 #define KERNEL_TASK_ITIMER_H
 
