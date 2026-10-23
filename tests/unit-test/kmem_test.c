@@ -287,7 +287,7 @@ void test_memory_copy_uvm_4level()
 
 void kmem_test()
 {
-    KLOG_MM("\n=========copy uvm to uvm tests: =========\n");
+    KLOG_MM("=========copy uvm to uvm tests: =========\n");
     test_memory_copy_uvm_4level();
 }
 

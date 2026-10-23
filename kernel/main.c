@@ -195,14 +195,10 @@ void kernel_main(void)
     KLOG_FS("Initializing filesystem...\n");
     fs_init();
 
-/* ── 运行 PMM 测试 ───────────────────────────────────────── */
-/* 测试时解开下面两行注释 */
-#ifdef RUN_PMM_TESTS
-    run_pmm_tests();
-    platform_shutdown(); /* PMM 测试完成后关机, 避免后续测试干扰 PMM 状态 */
-#endif
-
-    /* 默认启动路径上的内核自检（具体内容和架构判断在 tests/unit-test/unit_test.c）。 */
+    /*
+       测试入口：普通启动在这里什么都不跑；只有 PMM_TEST=1 / KMEM_TEST=1
+       等测试变体才会执行对应测试（具体内容在 tests/unit-test/unit_test.c）。
+    */
     run_unit_tests();
 
     /* 驱动阶段（二）：DMA/ION/NPU/TPU */

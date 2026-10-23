@@ -596,9 +596,8 @@ ifeq ($(TASK_TEST),1)
     _BUILD_VARIANT := $(_BUILD_VARIANT)+task_test
 endif
 
-# PMM_TEST=1：定义 RUN_PMM_TESTS，kernel_main 在 fs_init 之后跑
-# tests/unit-test/pmm_test.c 并关机。只影响 kernel_main.o（调用点），
-# 所以并在 _BUILD_VARIANT 里即可（_VARIANT_OBJS 已包含它）。
+# PMM_TEST=1：定义 RUN_PMM_TESTS，在 fs_init 之后跑 tests/unit-test/pmm_test.c
+# 并关机。调用点在 tests/unit-test/unit_test.c，main.c 不含测试细节。
 #
 # 以前这个宏只能"手动加 CFLAGS"，测试框架（tests/Makefile）没法稳定地
 # 编出 PMM 测试变体。现在它是一个正式变体。
@@ -606,6 +605,14 @@ PMM_TEST ?= 0
 ifeq ($(PMM_TEST),1)
     CFLAGS += -DRUN_PMM_TESTS=1
     _BUILD_VARIANT := $(_BUILD_VARIANT)+pmm_test
+endif
+
+# KMEM_TEST=1：定义 RUN_KMEM_TEST，在 fs_init 之后跑 tests/unit-test/kmem_test.c
+# （仅 AArch64 有实现），跑完继续正常启动。普通启动不会跑这个测试。
+KMEM_TEST ?= 0
+ifeq ($(KMEM_TEST),1)
+    CFLAGS += -DRUN_KMEM_TEST=1
+    _BUILD_VARIANT := $(_BUILD_VARIANT)+kmem_test
 endif
 
 # PANIC_TEST=1：定义 RUN_PANIC_TEST，在 ELF 解析路径上**故意 panic 一次**，
@@ -650,6 +657,7 @@ _VARIANT_FILE := $(BUILD_DIR)/.build_variant
 _VARIANT_OBJS := $(BUILD_DIR)/kernel_main.o \
                  $(BUILD_DIR)/kernel_loader_elf_image.o \
                  $(BUILD_DIR)/kernel_syscall_syscall.o \
+                 $(BUILD_DIR)/tests_unit_test.o \
                  $(TEST_BOOT_OBJ)
 _VARIANT_CHECK := $(shell \
     mkdir -p $(BUILD_DIR) 2>/dev/null; \

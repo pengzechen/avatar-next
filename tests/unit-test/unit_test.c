@@ -5,28 +5,36 @@
 */
 
 /*
-   tests/unit-test/unit_test.c — 默认启动路径上的内核自检入口
+   tests/unit-test/unit_test.c — 内核测试的统一入口
 
-   这里只放"每次正常启动都应该跑、失败即说明内核坏了"的自检。会改变机器状态、
-   需要专门 rootfs、或只在排障时想跑的测试，由各自的构建变体/手动调用负责，
-   不要加到 run_unit_tests()。
+   普通启动什么测试都不跑。只有选中对应的构建变体时，才在固定的启动点执行
+   该测试：
+     PMM_TEST=1   → RUN_PMM_TESTS，跑完 PMM 测试后关机
+     KMEM_TEST=1  → RUN_KMEM_TEST，跑完后继续启动（仅 AArch64 有实现）
 
-   具体测试和架构判断都收在 UT 内，kernel/main.c 只认 run_unit_tests()。
+   kernel/main.c 只调用 run_unit_tests()，具体测试、架构判断和测试后的动作
+   都收在这里，不再散落在 main.c 的 #ifdef 里。
 */
 
 #include "arch.h"
 #include "klog.h"
+#include "pmm.h"             /* run_pmm_tests() */
+#include "platform_ops.h"    /* platform_shutdown() */
 
-#if ARCH_AARCH64
+#if defined(RUN_KMEM_TEST) && ARCH_AARCH64
 extern void kmem_test(void); /* tests/unit-test/kmem_test.c */
 #endif
 
 void run_unit_tests(void)
 {
-#if ARCH_AARCH64
-    /* 开机自检脚手架：仍然执行, 但默认等级下不再占行 */
-    KLOG_INIT("=== Running VMM Tests ===\n");
+#ifdef RUN_PMM_TESTS
+    run_pmm_tests();
+    platform_shutdown(); /* 避免后续启动继续改写 PMM 状态 */
+#endif
+
+#if defined(RUN_KMEM_TEST) && ARCH_AARCH64
+    KLOG_INFO("=== KMEM TEST ===\n");
     kmem_test();
-    KLOG_INIT("VMM tests completed\n");
+    KLOG_INFO("=== KMEM TEST: PASS ===\n");
 #endif
 }

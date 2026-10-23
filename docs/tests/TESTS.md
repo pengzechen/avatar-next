@@ -40,9 +40,10 @@ make ARCH=aarch64 test-vmm LOG=info
 
 ```
 Avatar OS 测试
-├── 1. 内核单元测试        tests/unit-test/*.c  编译进内核；开机自检走 unit_test.c
+├── 1. 内核单元测试        tests/unit-test/*.c  编译进内核，默认不运行
 ├── 2. 构建变体测试        tests/unit-test/      链接 guest/vcpu 启动钩子
-│   ├── PMM_TESTS=1        （仍走 kernel/main.c 的 RUN_PMM_TESTS）
+│   ├── PMM_TEST=1         tests/unit-test/pmm_test.c（跑完关机）
+│   ├── KMEM_TEST=1        tests/unit-test/kmem_test.c（仅 AArch64）
 │   ├── VMM_TEST=1         tests/unit-test/vcpu_thread_test.c
 │   └── GUEST_LINUX=1      tests/unit-test/guest_test.c
 ├── 3. apps/ 汇编小程序    apps/<arch>/*.S   三种加载方式（见下节）
@@ -67,16 +68,18 @@ Avatar OS 测试
 | `tests/unit-test/mutex_stress_test.c` | `run_mutex_stress_test()` | 互斥锁压力测试 |
 | `tests/unit-test/mutex_comparison_test.c` | `run_mutex_comparison_test()` | 有锁/无锁对比 |
 | `tests/unit-test/pmm_test.c` | `run_pmm_tests()` | 物理内存管理器 |
+| `tests/unit-test/kmem_test.c` | `kmem_test()` | AArch64 页表/UVM 拷贝（见第二节）|
 | `tests/unit-test/vmm_test.c` | `run_vmm_test()` | VMM 三线程切换（见第二节）|
 
 ### 运行方式
 
-所有 `tests/unit-test/*.c` 文件**已自动编译链接进内核**，不需要额外 Makefile 操作。
+所有 `tests/unit-test/*.c` 文件**已自动编译链接进内核**，不需要额外 Makefile 操作，
+但**普通启动不会运行任何测试**。
 
-默认启动路径上的自检统一从 `tests/unit-test/unit_test.c` 的 `run_unit_tests()`
-进入：`kernel/main.c` 只调用这一个入口，不关心架构和具体测试（目前 AArch64
-下会跑 `kmem_test()`）。其余测试要运行，在 `kernel/main.c` 的 `task_init()`
-之后调用对应函数即可：
+启动期测试统一从 `tests/unit-test/unit_test.c` 的 `run_unit_tests()` 进入：
+`kernel/main.c` 只调用这一个入口，测试内容和架构判断都在 UT 里。只有选中
+`PMM_TEST=1` / `KMEM_TEST=1` 等测试变体时，`run_unit_tests()` 才会执行对应
+测试。其余测试要运行，在 `kernel/main.c` 的 `task_init()` 之后调用对应函数即可：
 
 ```c
 // kernel/main.c，task_init() 之后，模式选择 #if 块之前
@@ -159,6 +162,7 @@ Makefile 的变体只决定链接哪个 `tests/unit-test/{guest_test,vcpu_thread
 | `make ARCH=xxx test-vmm` | 同上，一步完成 |
 | `make ARCH=xxx GUEST_LINUX=1 kernel` + rootfs | 直启 Linux guest |
 | `make PLATFORM=xxx PMM_TEST=1 kernel` | PMM 测试后关机 |
+| `make PLATFORM=qemu-virt-aarch64 KMEM_TEST=1 run-fs` | KMEM 测试后继续启动 |
 
 ### 添加新构建变体测试
 
