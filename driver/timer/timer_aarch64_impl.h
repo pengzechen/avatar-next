@@ -7,7 +7,7 @@
 #ifndef __TIMER_AARCH64_IMPL_H__
 #define __TIMER_AARCH64_IMPL_H__
 
-#include "timer.h"
+#include "driver/time.h"
 #include "sysreg.h"
 #include "mmio.h"
 #include "irq/irq.h"

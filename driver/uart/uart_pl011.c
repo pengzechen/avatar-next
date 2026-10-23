@@ -15,7 +15,7 @@
 #include "types.h"
 #include "mmio.h"
 #include "klog.h"
-#include "timer/timer.h"
+#include "driver/time.h"
 /* #include "irq.h" */
 #include "spinlock.h"
 #include "driver/driver.h"
@@ -216,11 +216,20 @@ void pl011_init(void)
     KLOG_UART("UART interrupt driver initialized\n");
 }
 
+static const serial_ops_t pl011_serial_ops = {
+    .putc = pl011_putchar,
+    .puts = pl011_putstr,
+    .getc = pl011_getchar,
+    .getc_nb = pl011_getchar_nb,
+    .rx_ready = pl011_rx_available,
+};
+
 static int pl011_probe(const device_t *dev)
 {
     const serial_cfg_t *cfg = dev->cfg;
 
     g_pl011_base = device_mmio(cfg->base);
+    serial_bind(&pl011_serial_ops);
     pl011_init();
     return 0;
 }

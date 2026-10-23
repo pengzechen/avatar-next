@@ -57,7 +57,7 @@
 #include "string.h"
 #include "irq/plic.h" /* plic_install / plic_enable_irq */
 #include "net/netdev.h"
-#include "timer/timer.h"
+#include "driver/time.h"
 #include "driver/driver.h"
 #include "driver/net.h"
 

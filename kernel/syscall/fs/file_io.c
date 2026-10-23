@@ -16,7 +16,6 @@
 #include "task/task.h"
 #include "task/sched.h"
 #include "klog.h"
-#include "uart/uart.h"
 #include "vfs.h"
 
 #define IOV_MAX_AVATAR 1024

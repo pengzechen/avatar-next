@@ -13,7 +13,7 @@
 #include "syscall/syscall_internal.h"
 #include "task/task.h"
 #include "spinlock.h"
-#include "uart/uart.h"
+#include "driver/serial.h"
 
 #define UART_RINGBUF_SIZE 64u
 static volatile uint8_t g_uart_rb[UART_RINGBUF_SIZE];
@@ -87,8 +87,8 @@ void signal_check_uart(void)
     */
     uint64_t flags;
     spin_lock_irqsave(&g_uart_hw_lock, &flags);
-    while (n < (int)sizeof(buf) && uart_rx_ready())
-        buf[n++] = uart_getc();
+    while (n < (int)sizeof(buf) && serial_rx_ready())
+        buf[n++] = serial_getc();
     spin_unlock_irqrestore(&g_uart_hw_lock, flags);
 
     for (int i = 0; i < n; i++) {

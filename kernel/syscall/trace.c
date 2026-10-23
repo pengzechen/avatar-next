@@ -25,7 +25,7 @@
 #include "klog.h"
 #include "string.h"
 #include "arg.h"
-#include "timer/timer.h"
+#include "driver/time.h"
 #include "task/cpu.h" /* AVATAR_MAX_CPUS */
 
 /* my_vsnprintf 取 va_list(和 lib/klog.c 用法一致), 这里包一层变参入口。

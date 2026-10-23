@@ -9,7 +9,7 @@
 #include "klog.h"
 #include "string.h"
 #include "arg.h"
-#include "timer/timer.h"
+#include "driver/time.h"
 
 #include "lwip/tcp.h"
 

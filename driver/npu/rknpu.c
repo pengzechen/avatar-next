@@ -39,7 +39,7 @@
 #include "exception.h"
 #include "irq/gicv3.h"
 #include "spinlock.h"
-#include "timer/timer.h"
+#include "driver/time.h"
 #include "driver/driver.h"
 #include "driver/npu.h"
 

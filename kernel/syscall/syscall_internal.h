@@ -319,7 +319,7 @@ struct kernel_sysinfo {
 */
 
 /* ── 硬件单调时钟(arch 无关接口)─────────────────────────────── */
-#include "timer/timer.h"
+#include "driver/time.h"
 
 static inline uint64_t kernel_get_ns(void)
 {

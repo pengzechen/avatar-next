@@ -17,7 +17,7 @@
    由 timer.c #include 本文件来获得定义。
 */
 
-#include "timer.h"
+#include "driver/time.h"
 #include "klog.h"
 #include "exception.h" /* irq_install, IDT_LAPIC_TIMER_VEC */
 #include "irq/lapic.h" /* lapic_timer_init, lapic_eoi */

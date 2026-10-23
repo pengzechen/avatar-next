@@ -17,7 +17,7 @@
 */
 
 #include "vmm/vmm_console.h"
-#include "uart/uart.h" /* uart_rx_ready / uart_getc */
+#include "driver/serial.h" /* serial_rx_ready / serial_getc */
 
 #if VMM_GUEST_LINUX_SUPPORTED
 /*
@@ -52,7 +52,7 @@ void vmm_console_pump(vm_t *vm)
     if (vmm_console_tx_channel_enabled(vm))
         return;
 
-    while (uart_rx_ready())
-        vmm_console_push_rx(vm, (uint8_t)uart_getc());
+    while (serial_rx_ready())
+        vmm_console_push_rx(vm, (uint8_t)serial_getc());
 }
 #endif /* VMM_GUEST_LINUX_SUPPORTED */

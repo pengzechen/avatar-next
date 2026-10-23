@@ -22,7 +22,7 @@
 #include "task/cpu.h"
 #include "pmm.h"
 #include "mm_vm.h" /* virt_to_phys：把链接符号换算成物理地址 */
-#include "timer/timer.h"
+#include "driver/time.h"
 #include "net/net.h"
 #include "loader/elf_loader.h"
 #include "../fs/lwext4_port/fs_init.h"

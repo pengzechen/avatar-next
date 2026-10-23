@@ -6,7 +6,7 @@
 
 #include "pseudofs_internal.h"
 #include "task/task.h"
-#include "timer/timer.h"
+#include "driver/time.h"
 #include "string.h"
 
 extern task_t g_task_pool[TASK_MAX];

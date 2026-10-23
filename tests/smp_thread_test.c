@@ -21,7 +21,7 @@
 #include "task/task.h"
 #include "task/sched.h"
 #include "task/cpu.h"
-#include "timer/timer.h"
+#include "driver/time.h"
 #include "klog.h"
 
 static volatile uint64_t s_hits[AVATAR_MAX_CPUS];

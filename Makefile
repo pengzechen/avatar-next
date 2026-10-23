@@ -516,7 +516,8 @@ CFLAGS  += -DDEVICE_ETH_BASE_RAW=$(DEV_ETH_BASE)
 # 默认值来自 platform.conf → gen_platform.py → platform.mk；仍可用命令行覆盖：
 # UART=、GIC=/IRQ=、ETH=、NPU=、TPU=、DMA=、ION=、BLOCK=。
 
-DRIVER_SRCS_CORE   := driver/core/driver.c driver/core/device.c driver/blk/block.c
+DRIVER_SRCS_CORE   := driver/core/driver.c driver/core/device.c driver/blk/block.c \
+                      driver/serial/serial.c
 DRIVER_SRCS_CFLAGS :=
 DRIVER_SRCS_PLIC   :=
 DRIVER_SRCS_TPU    :=

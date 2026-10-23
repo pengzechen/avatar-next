@@ -23,7 +23,7 @@
 #include "types.h"
 #include "mmio.h"
 #include "klog.h"
-#include "timer/timer.h"
+#include "driver/time.h"
 
 /* ── SDMMC 寄存器偏移(相对 sd_base) ───────────────────────── */
 #define R_SDMA_SYSADDR  0x00

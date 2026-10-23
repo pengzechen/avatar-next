@@ -15,7 +15,7 @@
 #include "assert.h"
 #include "string.h"
 #include "page.h"
-#include "../../driver/blk/ramblk_cfg.h" /* RAMBLK_PHYS_BASE / RAMBLK_PHYS_END_EXCL */
+#include "platform_cfg.h" /* g_mem_rootfs_base / g_mem_rootfs_size */
 
 /* 全局 PMM 状态 — 位图缓冲区使用编译期最大值(PMM_BITMAP_MAX_BYTES = 128KB = 4GB/4KB/8bit) */
 static uint8_t g_pmm_bitmap_buffer[PMM_BITMAP_MAX_BYTES];
@@ -305,9 +305,11 @@ void pmm_initialize(uint64_t kernel_start_phys, uint64_t kernel_end_phys)
             KLOG_ERROR("PMM: failed to reserve platform region '%s'\n", g_pmm_reserves[i].tag);
     }
 
-    /* 预留 rootfs 物理区域, 防止 PMM 将其分配出去 */
-    KLOG_MM("Reserving rootfs region: 0x%llx - 0x%llx\n", (uint64_t)RAMBLK_PHYS_BASE, (uint64_t)RAMBLK_PHYS_END_EXCL);
-    if (!pmm_reserve(&g_pmm, RAMBLK_PHYS_BASE, RAMBLK_PHYS_END_EXCL, "rootfs"))
+    /* 预留 rootfs 物理区域, 防止 PMM 将其分配出去（平台内存布局，与具体块驱动无关） */
+    uintptr_t rootfs_start = g_mem_rootfs_base;
+    uintptr_t rootfs_end = g_mem_rootfs_base + g_mem_rootfs_size;
+    KLOG_MM("Reserving rootfs region: 0x%llx - 0x%llx\n", (uint64_t)rootfs_start, (uint64_t)rootfs_end);
+    if (!pmm_reserve(&g_pmm, rootfs_start, rootfs_end, "rootfs"))
         KLOG_ERROR("PMM: failed to reserve rootfs region\n");
 
     /* 一行说清最终账目：内核/rootfs/平台保留一共占了多少, 还剩多少 */

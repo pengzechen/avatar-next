@@ -25,7 +25,7 @@
 #include "task/switch.h"
 #include "loader/elf_image.h"
 #include "task/exec.h"
-#include "timer/timer.h"
+#include "driver/time.h"
 #include "user_layout.h"
 
 /*

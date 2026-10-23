@@ -16,9 +16,9 @@
 #include "types.h"
 #include "arch.h"
 #include "exception.h"       /* arch_irq_disable()(统一的中断屏蔽原语) */
-#include "platform_cfg.h"    /* platform_conf_scan */
-#include "uart/uart.h"       /* uart_putc/uart_puts：阶段 1 仍由 uart.h 选择后端 */
-#include "driver/driver.h"   /* drivers_init(DRV_PHASE_EARLY) */
+#include "platform_cfg.h"  /* platform_conf_scan */
+#include "driver/driver.h" /* drivers_init(DRV_PHASE_EARLY) */
+#include "driver/serial.h" /* serial_putc/serial_puts */
 #include "debug/backtrace.h" /* platform_panic() 里打调用栈 */
 #include "klog.h"            /* klog_panic_begin() */
 #if ARCH_X86_64
@@ -28,13 +28,13 @@
 /* Transmit a single character */
 static void platform_uart_putc(char c)
 {
-    uart_putc(c);
+    serial_putc(c);
 }
 
 /* Transmit a null-terminated string */
 static void platform_uart_puts(const char *s)
 {
-    uart_puts(s);
+    serial_puts(s);
 }
 
 /*

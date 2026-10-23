@@ -155,7 +155,7 @@ static inline void vmm_console_rx_flush(vm_t *vm)
    helper 模式下宿主 tty 层独占真实 UART, 它会在归属检查处直接让位。
 
    不是 static inline：它有一段循环, 且要用 uart_rx_ready()/uart_getc(),
-   不做转发, 也不该把 uart/uart.h 拖进每个包含本头的 TU。
+   不做转发, 也不该把 driver/serial.h 拖进每个包含本头的 TU。
 */
 #if VMM_GUEST_LINUX_SUPPORTED
 void vmm_console_pump(vm_t *vm);

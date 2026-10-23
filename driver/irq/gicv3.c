@@ -23,7 +23,7 @@
 #include "mmio.h"
 #include "barrier.h"
 #include "klog.h"
-#include "timer/timer.h"
+#include "driver/time.h"
 #include "aarch64/sysreg.h" /* SYSREG_READ / SYSREG_WRITE */
 #include "driver/driver.h"
 #include "driver/irq.h"

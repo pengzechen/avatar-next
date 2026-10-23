@@ -24,7 +24,6 @@
 #include "arch.h"
 #include "exception.h"
 #include "syscall_abi.h"
-#include "uart/uart.h"
 #include "vfs.h"
 #include <ext4.h>
 #include <ext4_errno.h>

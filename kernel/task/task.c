@@ -25,7 +25,7 @@
 #include "task/preempt.h"
 #include "task/sched.h"
 #include "task/switch.h"
-#include "timer/timer.h"
+#include "driver/time.h"
 
 static inline uint64_t task_get_ns(void)
 {

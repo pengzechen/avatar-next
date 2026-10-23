@@ -31,7 +31,7 @@
 
 #include "task/itimer.h"
 
-#include "timer/timer.h" /* timer_get_ns */
+#include "driver/time.h" /* timer_get_ns */
 
 extern task_t g_task_pool[]; /* 定义在 task.c */
 extern uint8_t g_stack_used[TASK_MAX];

@@ -24,7 +24,7 @@
 #include "string.h"
 #include "arch.h"
 #include "barrier.h"
-#include "timer/timer.h" /* timer_delay_ms (供 SMP 自检使用, 所有架构通用) */
+#include "driver/time.h" /* timer_delay_ms (供 SMP 自检使用, 所有架构通用) */
 
 #if ARCH_AARCH64
 #include "mm_vm.h"       /* KERNEL_VMA / virt_to_phys */

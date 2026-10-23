@@ -7,7 +7,7 @@
 #ifndef __TIMER_RISCV64_IMPL_H__
 #define __TIMER_RISCV64_IMPL_H__
 
-#include "timer.h"
+#include "driver/time.h"
 #include "sysreg.h"
 #include "klog.h"
 #include "exception.h" /* irq_install, CAUSE_SUPERVISOR_TIMER */

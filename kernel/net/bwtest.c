@@ -57,7 +57,7 @@
 
 #include "klog.h" /* kprintf */
 #include "string.h"
-#include "timer/timer.h"
+#include "driver/time.h"
 
 #include "lwip/udp.h"
 

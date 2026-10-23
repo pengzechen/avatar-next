@@ -4,11 +4,10 @@
    Copyright (c) 2026 Avatar OS project
 */
 
-#include "timer.h"
+#include "driver/time.h"
 #include "klog.h"
 #include "platform_cfg.h"
 #include "driver/driver.h"
-#include "driver/time.h"
 
 /*
    ============================================================

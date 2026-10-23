@@ -11,7 +11,7 @@
 #include "mm_vm.h"
 #include "spinlock.h"
 #include "klog.h"
-#include "timer/timer.h"
+#include "driver/time.h"
 #include "driver/driver.h"
 #include "driver/serial.h"
 
@@ -283,12 +283,21 @@ void dw_uart_init(void)
     logger_info("DWC UART interrupt driver initialized\n");
 }
 
+static const serial_ops_t dw_uart_serial_ops = {
+    .putc = dw_uart_putchar,
+    .puts = dw_uart_putstr,
+    .getc = dw_uart_getchar,
+    .getc_nb = dw_uart_getchar_nb,
+    .rx_ready = dw_uart_rx_available,
+};
+
 static int dw_uart_probe(const device_t *dev)
 {
     const serial_cfg_t *cfg = dev->cfg;
 
     dw_uart_base = device_mmio(cfg->base);
     dw_uart_reg_shift = (uint8_t)cfg->reg_shift;
+    serial_bind(&dw_uart_serial_ops);
     dw_uart_early_init();
     return 0;
 }

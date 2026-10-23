@@ -22,7 +22,6 @@
 #include "klog.h"
 #include "string.h"
 #include "pmm.h"
-#include "uart/uart.h"
 #include "task/task.h"
 #if DRIVER_DMA_BUF
 #include "dma_buf.h" /* dma_heap_dev_ioctl(/dev/dma_heap/ 各节点) */
@@ -31,7 +30,7 @@
 #include "rknpu_drm.h" /* rknpu_drm_ioctl_file(/dev/dri/renderD128) */
 #endif
 #include "task/cpu.h"         /* g_cpus / g_num_cpus / AVATAR_MAX_CPUS(/proc/uptime 的 idle 列) */
-#include "timer/timer.h"      /* timer_get_ns / TIMER_FREQUENCY_HZ */
+#include "driver/time.h"      /* timer_get_ns / TIMER_FREQUENCY_HZ */
 #include "syscall/io/epoll.h" /* EPOLLIN/EPOLLOUT：pseudo_poll 的兜底返回值 */
 #include "syscall/trace.h"    /* /proc/syscalls */
 #include "debug/backtrace.h"  /* /proc/backtrace */

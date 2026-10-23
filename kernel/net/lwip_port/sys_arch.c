@@ -6,7 +6,7 @@
 
 #include "lwip/sys.h"
 
-#include "timer/timer.h"
+#include "driver/time.h"
 
 u32_t sys_now(void)
 {

@@ -88,9 +88,18 @@ bool uart_x86_rx_available(void)
     return (inb(UART_X86_LSR) & UART16550_LSR_DR) != 0;
 }
 
+static const serial_ops_t uart_x86_serial_ops = {
+    .putc = uart_x86_putchar,
+    .puts = uart_x86_putstr,
+    .getc = uart_x86_getchar,
+    .getc_nb = uart_x86_getchar_nb,
+    .rx_ready = uart_x86_rx_available,
+};
+
 static int uart_x86_probe(const device_t *dev)
 {
     (void)dev; /* COM1 是固定端口，不需要平台 MMIO 配置 */
+    serial_bind(&uart_x86_serial_ops);
     uart_x86_early_init();
     return 0;
 }

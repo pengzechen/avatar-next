@@ -15,7 +15,7 @@
 #include "pmm.h"
 #include "string.h"
 #include "task/task.h"
-#include "timer/timer.h"
+#include "driver/time.h"
 #include "driver/driver.h"
 #include "driver/net.h"
 
