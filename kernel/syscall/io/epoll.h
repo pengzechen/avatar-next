@@ -1,10 +1,10 @@
 /*
- * io/epoll.h — epoll 子系统数据结构与 API
- *
- * 提供 Linux 兼容的 epoll_create1/epoll_ctl/epoll_pwait 语义。
- * 核心设计：每个 fd_obj_t 持有一个 fd_waitqueue_t，fd 状态变化时
- * 通过 fd_notify_waiters() 主动唤醒所有监听该 fd 的 epoll 实例。
- */
+   io/epoll.h — epoll 子系统数据结构与 API
+
+   提供 Linux 兼容的 epoll_create1/epoll_ctl/epoll_pwait 语义。
+   核心设计：每个 fd_obj_t 持有一个 fd_waitqueue_t, fd 状态变化时
+   通过 fd_notify_waiters() 主动唤醒所有监听该 fd 的 epoll 实例。
+*/
 #ifndef KERNEL_SYSCALL_IO_EPOLL_H
 #define KERNEL_SYSCALL_IO_EPOLL_H
 
@@ -70,7 +70,7 @@ typedef struct epoll_instance {
     task_t *blocked_task;
 } epoll_instance_t;
 
-/* ── 用户空间 epoll_event 布局（与 Linux ABI 兼容）─────────────── */
+/* ── 用户空间 epoll_event 布局(与 Linux ABI 兼容)─────────────── */
 
 struct epoll_event {
     uint32_t events;

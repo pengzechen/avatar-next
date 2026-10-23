@@ -1,14 +1,14 @@
 /*
- * kernel/task/completion.c — SMP 安全的一次性事件等待
- *
- * 关键点（也是它存在的理由）：
- *
- *   1. 条件检查与入等待队列在同一把锁下完成 —— 唤醒方不可能落在
- *      「检查完、还没挂上」的缝隙里。
- *   2. 唤醒走 task_unblock() → sched_unblock()：如果等待者还在这颗核上
- *      执行（已置 BLOCKED、尚未切出），只置 wake_pending，绝不提前入队。
- *   3. done 先置位再唤醒；等待者醒来重新检查 done，因此不会丢事件。
- */
+   kernel/task/completion.c — SMP 安全的一次性事件等待
+
+   关键点(也是它存在的理由)：
+
+     1. 条件检查与入等待队列在同一把锁下完成 —— 唤醒方不可能落在
+        「检查完, 还没挂上」的缝隙里。
+     2. 唤醒走 task_unblock() → sched_unblock()：如果等待者还在这颗核上
+        执行(已置 BLOCKED, 尚未切出), 只置 wake_pending, 绝不提前入队。
+     3. done 先置位再唤醒；等待者醒来重新检查 done, 因此不会丢事件。
+*/
 
 #include "task/completion.h"
 #include "task/sched.h"
@@ -46,9 +46,9 @@ void completion_wait(completion_t *c)
         spin_unlock_irqrestore(&c->lock, flags);
 
         /*
-         * 等待者可能在这一刻被 complete：sched_unblock() 看到 on_cpu=true，
-         * 只置 READY+wake_pending；本核的 sched_schedule() 在切出时兑现。
-         */
+           等待者可能在这一刻被 complete：sched_unblock() 看到 on_cpu=true,
+           只置 READY+wake_pending；本核的 sched_schedule() 在切出时兑现。
+        */
         sched_schedule();
 
         spin_lock_irqsave(&c->lock, &flags);
@@ -71,9 +71,9 @@ void completion_complete_all(completion_t *c)
         task_t *waiter = container_of(node, task_t, wait_node);
 
         /*
-         * 锁序：completion.lock → 目标核 rq_lock。反方向不存在
-         * （sched_schedule / sched_unblock 都不会回头拿 completion.lock）。
-         */
+           锁序：completion.lock → 目标核 rq_lock。反方向不存在
+           (sched_schedule / sched_unblock 都不会回头拿 completion.lock)。
+        */
         task_unblock(waiter);
     }
     spin_unlock_irqrestore(&c->lock, flags);

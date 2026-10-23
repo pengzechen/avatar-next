@@ -1,9 +1,9 @@
 /*
- * futex.c - 简易 futex 实现（fixed-size 表，无哈希）
- *
- * 仅支持 FUTEX_WAIT / FUTEX_WAKE 基本语义，足以让 musl pthread mutex / cond 工作。
- * 派生自 kernel/syscall/syscall.c，作为大重构的第一步抽出。
- */
+   futex.c - 简易 futex 实现(fixed-size 表, 无哈希)
+
+   仅支持 FUTEX_WAIT / FUTEX_WAKE 基本语义, 足以让 musl pthread mutex / cond 工作。
+   派生自 kernel/syscall/syscall.c, 作为大重构的第一步抽出。
+*/
 #include "syscall/core/futex.h"
 #include "syscall/syscall_internal.h"
 #include "task/task.h"
@@ -20,10 +20,10 @@ static struct {
 } g_futex_table[FUTEX_TABLE_SIZE];
 
 /*
- * 保护上面这张**全局**表。
- * 以前只用 arch_irq_save()（仅关本核中断）——两颗 CPU 同时进来就会把表写坏，
- * 而 futex syscall 在任何 CPU 上都能并发进入。改用真正的自旋锁。
- */
+   保护上面这张全局表。
+   以前只用 arch_irq_save()(仅关本核中断)——两颗 CPU 同时进来就会把表写坏,
+   而 futex syscall 在任何 CPU 上都能并发进入。改用真正的自旋锁。
+*/
 static spinlock_t g_futex_lock = SPINLOCK_INIT;
 
 int futex_do_wake(uintptr_t uaddr, int count)
@@ -34,8 +34,7 @@ int futex_do_wake(uintptr_t uaddr, int count)
 
     spin_lock_irqsave(&g_futex_lock, &flags);
     for (int i = 0; i < FUTEX_TABLE_SIZE && woken < count; i++) {
-        if (g_futex_table[i].uaddr == uaddr &&
-            g_futex_table[i].waiter != NULL) {
+        if (g_futex_table[i].uaddr == uaddr && g_futex_table[i].waiter != NULL) {
             wake[woken++] = g_futex_table[i].waiter;
             g_futex_table[i].uaddr = 0;
             g_futex_table[i].waiter = NULL;
@@ -44,10 +43,10 @@ int futex_do_wake(uintptr_t uaddr, int count)
     spin_unlock_irqrestore(&g_futex_lock, flags);
 
     /*
-     * 唤醒放在锁外，走与 pipe/completion 同一条 sched_unblock()：
-     * 等待者可能还在这颗核上（已置 BLOCKED、尚未切出），不能直接
-     * state=READY + sched_enqueue，否则会被另一颗核重复执行。
-     */
+       唤醒放在锁外, 走与 pipe/completion 同一条 sched_unblock()：
+       等待者可能还在这颗核上(已置 BLOCKED, 尚未切出), 不能直接
+       state=READY + sched_enqueue, 否则会被另一颗核重复执行。
+    */
     for (int i = 0; i < woken; i++)
         sched_unblock(wake[i]);
     return woken;
@@ -59,16 +58,16 @@ int sys_futex_wait(uint32_t *uaddr, uint32_t val)
     uint64_t flags;
 
     /*
-     * 用户指针一律经 copy_from_user_bytes 读：这是来自 syscall 参数的地址，
-     * 裸解引用（原来的 *(volatile uint32_t *)uaddr）遇到坏地址就是内核态
-     * 数据中止 → 整机挂死。见 CLAUDE.md 的用户指针规则。
-     */
+       用户指针一律经 copy_from_user_bytes 读：这是来自 syscall 参数的地址,
+       裸解引用(原来的 *(volatile uint32_t *)uaddr)遇到坏地址就是内核态
+       数据中止 → 整机挂死。见 CLAUDE.md 的用户指针规则。
+    */
     if (copy_from_user_bytes(uaddr, &cur_val, sizeof(cur_val)) < 0)
         return -EFAULT;
 
     spin_lock_irqsave(&g_futex_lock, &flags);
 
-    /* 原子检查：若 *uaddr != val，立即返回 EAGAIN */
+    /* 原子检查：若 *uaddr != val, 立即返回 EAGAIN */
     if (cur_val != val) {
         spin_unlock_irqrestore(&g_futex_lock, flags);
         return -EAGAIN;
@@ -100,8 +99,9 @@ int sys_futex_wait(uint32_t *uaddr, uint32_t val)
 }
 
 /* ────────────────────────────────────────────────────────────
- * futex syscall 派发：仅支持 FUTEX_WAIT / FUTEX_WAKE 基本语义
- * ──────────────────────────────────────────────────────────── */
+   futex syscall 派发：仅支持 FUTEX_WAIT / FUTEX_WAKE 基本语义
+   ────────────────────────────────────────────────────────────
+*/
 void futex_handler(uint64_t regs[6])
 {
     uint32_t *uaddr = (uint32_t *)regs[0];

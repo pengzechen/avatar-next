@@ -8,8 +8,7 @@ extern uint8_t g_stack_used[TASK_MAX];
 
 bool pfs_task_alive(uint32_t slot)
 {
-    return slot < TASK_MAX && g_stack_used[slot] &&
-           g_task_pool[slot].state != TASK_DEAD;
+    return slot < TASK_MAX && g_stack_used[slot] && g_task_pool[slot].state != TASK_DEAD;
 }
 
 uint32_t pfs_task_pid(uint32_t slot)
@@ -17,8 +16,7 @@ uint32_t pfs_task_pid(uint32_t slot)
     return g_task_pool[slot].id;
 }
 
-bool pfs_parse_proc_pid(const char *path, uint32_t *pid_out,
-                        const char **rest_out)
+bool pfs_parse_proc_pid(const char *path, uint32_t *pid_out, const char **rest_out)
 {
     if (pfs_strncmp(path, "/proc/", 6) != 0)
         return false;
@@ -176,9 +174,7 @@ static int stat_read_task(task_t *t, uint64_t off, void *buf, size_t len)
     pos += (size_t)pfs_puts(tmp, pos, sizeof(tmp), nbuf);
     pos += (size_t)pfs_puts(tmp, pos, sizeof(tmp), " 0 0 20 0 1 0 0");
     pos += (size_t)pfs_puts(tmp, pos, sizeof(tmp), " 0 0");
-    pos += (size_t)pfs_puts(
-        tmp, pos, sizeof(tmp),
-        " 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0\n");
+    pos += (size_t)pfs_puts(tmp, pos, sizeof(tmp), " 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0\n");
 
     return pfs_copy_out(off, buf, len, tmp, pos);
 }

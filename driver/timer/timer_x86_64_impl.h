@@ -2,39 +2,39 @@
 #define __TIMER_X86_64_IMPL_H__
 
 /*
- * x86_64 定时器实现 — 使用 LAPIC Timer (Periodic 模式)
- *
- * 频率校准：lapic_timer_init 内部用 PIT Channel 2 校准 LAPIC bus 频率，
- * 对外只需指定目标中断频率（TIMER_FREQUENCY_HZ，来自 driver_cfg.h）。
- *
- * 函数签名与 AArch64/RISC-V impl 一致（无 static inline），
- * 由 timer.c #include 本文件来获得定义。
- */
+   x86_64 定时器实现 — 使用 LAPIC Timer (Periodic 模式)
+
+   频率校准：lapic_timer_init 内部用 PIT Channel 2 校准 LAPIC bus 频率,
+   对外只需指定目标中断频率(TIMER_FREQUENCY_HZ, 来自 driver_cfg.h)。
+
+   函数签名与 AArch64/RISC-V impl 一致(无 static inline),
+   由 timer.c #include 本文件来获得定义。
+*/
 
 #include "timer.h"
 #include "klog.h"
 #include "exception.h" /* irq_install, IDT_LAPIC_TIMER_VEC */
-#include "irq/lapic.h" /* lapic_timer_init, lapic_eoi      */
+#include "irq/lapic.h" /* lapic_timer_init, lapic_eoi */
 
 /* ── x86_64 特定全局变量 ────────────────────────────────────── */
 
 volatile uint64_t g_x86_uptime_seconds = 0;
 static uint32_t g_x86_tick_counter = 0;
 
-/* 前向声明（定义在本文件末尾）*/
+/* 前向声明(定义在本文件末尾) */
 void timer_handler(void *frame);
 
 /* ── 架构特定操作实现 ────────────────────────────────────────── */
 
 void timer_arch_init(void)
 {
-    /* x86_64 上 LAPIC 是计时源，实际频率由校准决定；
-     * g_timer_frequency 设一个占位值（校准后 lapic.c 内部使用）*/
+    /* x86_64 上 LAPIC 是计时源, 实际频率由校准决定；
+       g_timer_frequency 设一个占位值(校准后 lapic.c 内部使用)
+    */
     g_timer_frequency = 0; /* 将由 lapic_timer_init 校准 */
 
     /* 时钟配错是经典 bug 来源 —— 值得一行；原来是三行 */
-    KLOG_INFO("Timer: x86_64 LAPIC tick=%dHz (%dms)\n", TIMER_FREQUENCY_HZ,
-              TIMER_TICK_MS);
+    KLOG_INFO("Timer: x86_64 LAPIC tick=%dHz (%dms)\n", TIMER_FREQUENCY_HZ, TIMER_TICK_MS);
 
     timer_reset_stats();
 
@@ -57,11 +57,11 @@ void timer_arch_disable(void)
 
 void timer_arch_set_next_interrupt(uint64_t ticks_from_now)
 {
-    /* LAPIC Periodic 模式硬件自动重载，无需软件干预 */
+    /* LAPIC Periodic 模式硬件自动重载, 无需软件干预 */
     (void)ticks_from_now;
 }
 
-/* 扫描 UART，向前台进程组发 SIGINT（来自 syscall.c） */
+/* 扫描 UART, 向前台进程组发 SIGINT(来自 syscall.c) */
 extern void signal_check_uart(void);
 
 /* ── 定时器中断处理函数 ──────────────────────────────────────── */
@@ -70,7 +70,7 @@ void timer_handler(void *frame)
 {
     (void)frame;
 
-    /* 每个 tick 排空 UART 输入，确保 Ctrl+C 能及时被检测 */
+    /* 每个 tick 排空 UART 输入, 确保 Ctrl+C 能及时被检测 */
     signal_check_uart();
 
     g_system_ticks++;
@@ -91,7 +91,7 @@ void timer_handler(void *frame)
     /* LAPIC 必须手动发 EOI */
     lapic_eoi();
 
-    // 调用 tick 回调（调度器 sched_tick）
+    /* 调用 tick 回调(调度器 sched_tick) */
     if (g_tick_cb) {
         g_tick_cb();
     }

@@ -1,22 +1,22 @@
 /* driver/npu/rkpm.c
- *
- * Rockchip RK3588 电源域管理实现
- *
- * 仅实现 NPU 所需的上电路径（PD_NPU / PD_NPUTOP / PD_NPU1 / PD_NPU2）。
- * 遵循 PMU1 的写掩码寄存器协议：高 16 位为写使能掩码，低 16 位为数据。
- */
+
+   Rockchip RK3588 电源域管理实现
+
+   仅实现 NPU 所需的上电路径(PD_NPU / PD_NPUTOP / PD_NPU1 / PD_NPU2)。
+   遵循 PMU1 的写掩码寄存器协议：高 16 位为写使能掩码, 低 16 位为数据。
+*/
 
 #include "rkpm.h"
 #include "klog.h"
 
 /* ── RK3588 电源域描述符表 ───────────────────────────────────────────────── *
- *
- * 来源：Linux kernel drivers/soc/rockchip/pm_domains.c rk3588_pm_domains[]
- *   PD_NPU    pwr=BIT(1) status=BIT(1) → PWR 寄存器写掩码
- *   PD_NPUTOP pwr=BIT(3) idle=BIT(1)   repair_status=BIT(2)
- *   PD_NPU1   pwr=BIT(4) idle=BIT(2)   repair_status=BIT(3)
- *   PD_NPU2   pwr=BIT(5) idle=BIT(3)   repair_status=BIT(4)
- */
+
+   来源：Linux kernel drivers/soc/rockchip/pm_domains.c rk3588_pm_domains[]
+     PD_NPU    pwr=BIT(1) status=BIT(1) → PWR 寄存器写掩码
+     PD_NPUTOP pwr=BIT(3) idle=BIT(1)   repair_status=BIT(2)
+     PD_NPU1   pwr=BIT(4) idle=BIT(2)   repair_status=BIT(3)
+     PD_NPU2   pwr=BIT(5) idle=BIT(3)   repair_status=BIT(4)
+*/
 static const rkpm_domain_t rk3588_npu_domains[] = {
     /* PD_NPU */
     {
@@ -60,28 +60,28 @@ static const rkpm_domain_t rk3588_npu_domains[] = {
     },
 };
 
-#define NUM_NPU_DOMAINS \
-    (sizeof(rk3588_npu_domains) / sizeof(rk3588_npu_domains[0]))
+#define NUM_NPU_DOMAINS (sizeof(rk3588_npu_domains) / sizeof(rk3588_npu_domains[0]))
 
 /* ── 内部：等待域上电稳定 ────────────────────────────────────────────────── */
 static int rkpm_wait_on(rkpm_t *pm, const rkpm_domain_t *d)
 {
     int i;
 
-    /* 优先用 repair_status（有则等待对应位置 1 表示就绪）*/
+    /* 优先用 repair_status(有则等待对应位置 1 表示就绪) */
     if (d->repair_status_mask) {
         for (i = 0; i < RKPM_MAX_WAIT; i++) {
             uint32_t v = rkpm_read(pm, PMU_REPAIR_STATUS_OFF);
             if (v & d->repair_status_mask)
                 return 0;
         }
-        /* 轮询超时是"降级但继续"：调用方拿到错误码自行决定，内核没有坏。
-         * 同一类超时在 rknpu.c 的调用点用的是 WARN —— 统一到 WARN。 */
+        /* 轮询超时是"降级但继续"：调用方拿到错误码自行决定, 内核没有坏。
+           同一类超时在 rknpu.c 的调用点用的是 WARN —— 统一到 WARN。
+        */
         KLOG_WARN("rkpm: timeout waiting repair_status for %s\n", d->name);
         return RKPM_ERR_TIMEOUT;
     }
 
-    /* 无 repair_status：用 status_mask（0 表示上电完成）*/
+    /* 无 repair_status：用 status_mask(0 表示上电完成) */
     if (d->status_mask) {
         for (i = 0; i < RKPM_MAX_WAIT; i++) {
             uint32_t v = rkpm_read(pm, PMU_STATUS_OFFSET);
@@ -116,11 +116,11 @@ int rkpm_power_on(rkpm_t *pm, uint32_t id)
     KLOG_DEBUG("rkpm: powering on %s\n", d->name);
 
     /*
-     * 写掩码协议：高 16 位置 1 表示允许写对应低位。
-     * 上电 = 清零 pwr_mask 位，同时写使能 pwr_w_mask（高16位）。
-     */
+       写掩码协议：高 16 位置 1 表示允许写对应低位。
+       上电 = 清零 pwr_mask 位, 同时写使能 pwr_w_mask(高16位)。
+    */
     if (d->pwr_w_mask) {
-        /* 写入 "高16位=pwr_w_mask 低16位=0"（清除 pwr 位 = 上电）*/
+        /* 写入 "高16位=pwr_w_mask 低16位=0"(清除 pwr 位 = 上电) */
         rkpm_write(pm, PMU_PWR_OFFSET, d->pwr_w_mask);
     } else {
         /* 无写掩码：读改写 */

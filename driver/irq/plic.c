@@ -49,20 +49,18 @@ static void plic_external_irq(void *frame)
 
     g_plic_irq_count++;
     /* 走公共采样器；g_plic_irq_count 仍是消息内容里的真实计数 */
-    KLOG_WARN_SAMPLE(
-        "[PLIC] external IRQ #%llu claim=%u handled=%u\n", g_plic_irq_count,
-        irq, (irq < PLIC_MAX_IRQS && g_plic_handlers[irq].handler) ? 1U : 0U);
+    KLOG_WARN_SAMPLE("[PLIC] external IRQ #%llu claim=%u handled=%u\n", g_plic_irq_count, irq,
+                     (irq < PLIC_MAX_IRQS && g_plic_handlers[irq].handler) ? 1U : 0U);
 
     if (irq < PLIC_MAX_IRQS && g_plic_handlers[irq].handler) {
         g_plic_handlers[irq].handler(irq, g_plic_handlers[irq].ctx);
     } else {
         /*
-         * 未处理中断同样要采样：中断风暴时每个中断打一行会把串口
-         * 彻底堵死（这里在 ISR 上下文，还会一直占着 CPU 轮询 UART）。
-         * 与上面那条各自独立计数 —— 它们是两件不同的事。
-         */
-        KLOG_WARN_SAMPLE("[PLIC] unhandled irq=%u count=%llu\n", irq,
-                         g_plic_irq_count);
+           未处理中断同样要采样：中断风暴时每个中断打一行会把串口
+           彻底堵死(这里在 ISR 上下文, 还会一直占着 CPU 轮询 UART)。
+           与上面那条各自独立计数 —— 它们是两件不同的事。
+        */
+        KLOG_WARN_SAMPLE("[PLIC] unhandled irq=%u count=%llu\n", irq, g_plic_irq_count);
     }
 
     plic_write32(plic_context_base() + PLIC_CLAIM_OFF, irq);
@@ -75,8 +73,9 @@ void plic_init(void)
 
     g_plic_base = platform_get_mmio("irq", "plic");
     if (g_plic_base == 0) {
-        /* 平台事实、一次性，而且它回答了"为什么没有外部中断" —— 这是操作者
-         * 需要看到的信息，不是警告。 */
+        /* 平台事实, 一次性, 而且它回答了"为什么没有外部中断" —— 这是操作者
+           需要看到的信息, 不是警告。
+        */
         KLOG_INFO("[PLIC] base is 0, external IRQ disabled\n");
         return;
     }
@@ -85,8 +84,7 @@ void plic_init(void)
     irq_install(CAUSE_SUPERVISOR_EXTERNAL, plic_external_irq);
     SET_SIE(SIE_SEIE);
 
-    KLOG_INFO("[PLIC] initialized base=0x%lx context=%u SEIE enabled\n",
-              (unsigned long)g_plic_base, PLIC_CONTEXT_S0);
+    KLOG_INFO("[PLIC] initialized base=0x%lx context=%u SEIE enabled\n", (unsigned long)g_plic_base, PLIC_CONTEXT_S0);
 }
 
 void plic_enable_irq(uint32_t irq, uint32_t priority)
@@ -100,14 +98,12 @@ void plic_enable_irq(uint32_t irq, uint32_t priority)
 
     plic_write32(PLIC_PRIORITY_BASE + irq * 4UL, priority);
 
-    uintptr_t off = PLIC_ENABLE_BASE + PLIC_ENABLE_STRIDE * PLIC_CONTEXT_S0 +
-                    (irq / 32U) * 4UL;
+    uintptr_t off = PLIC_ENABLE_BASE + PLIC_ENABLE_STRIDE * PLIC_CONTEXT_S0 + (irq / 32U) * 4UL;
     uint32_t val = plic_read32(off);
     val |= (1U << (irq % 32U));
     plic_write32(off, val);
 
-    KLOG_INFO("[PLIC] enabled irq=%u priority=%u enable=0x%08x\n", irq,
-              priority, plic_read32(off));
+    KLOG_INFO("[PLIC] enabled irq=%u priority=%u enable=0x%08x\n", irq, priority, plic_read32(off));
 }
 
 void plic_disable_irq(uint32_t irq)
@@ -115,8 +111,7 @@ void plic_disable_irq(uint32_t irq)
     if (g_plic_base == 0 || irq == 0 || irq >= PLIC_MAX_IRQS)
         return;
 
-    uintptr_t off = PLIC_ENABLE_BASE + PLIC_ENABLE_STRIDE * PLIC_CONTEXT_S0 +
-                    (irq / 32U) * 4UL;
+    uintptr_t off = PLIC_ENABLE_BASE + PLIC_ENABLE_STRIDE * PLIC_CONTEXT_S0 + (irq / 32U) * 4UL;
     uint32_t val = plic_read32(off);
     val &= ~(1U << (irq % 32U));
     plic_write32(off, val);

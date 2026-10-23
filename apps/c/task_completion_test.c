@@ -1,26 +1,26 @@
 /*
- * task_completion_test.c — completion 模块的用户态 A/B 验收
- *
- * 需要 TASK_TEST=1 的内核（暴露三个测试 syscall，见
- * kernel/syscall/syscall.c 的 TASK_INFRA_TEST 段）。
- *
- *   task-completion broadcast <n> <attempts>
- *
- * 每轮 fork n 个子进程，每个阻塞在同一个 completion 上；父进程等它们
- * 全部 armed 后，记录 t0，调用 COMPLETE 唤醒全部，子进程各自记录被唤醒
- * 的时刻。输出：
- *   - ready_cpu0/1：等待者分布在哪些核
- *   - total_us / max_us：COMPLETE 到最后一个等待者醒来的墙钟/最大延迟
- *
- * 判据：
- *   - 新内核 completion 唤醒走 sched_unblock() + resched IPI，跨核等待者
- *     应在几十~几百 us 内全醒；
- *   - 基线内核（同样的测试 syscall，但内部是裸 state=READY+sched_enqueue）
- *     跨核等待者要等目标核下一次 tick（100Hz = 10ms）。
- *
- * 用户态程序里手抄的伪 syscall 号必须与 kernel/syscall/syscall_internal.h
- * 的 AVATAR_SYS_COMPLETION_* 一致。
- */
+   task_completion_test.c — completion 模块的用户态 A/B 验收
+
+   需要 TASK_TEST=1 的内核(暴露三个测试 syscall, 见
+   kernel/syscall/syscall.c 的 TASK_INFRA_TEST 段)。
+
+     task-completion broadcast <n> <attempts>
+
+   每轮 fork n 个子进程, 每个阻塞在同一个 completion 上；父进程等它们
+   全部 armed 后, 记录 t0, 调用 COMPLETE 唤醒全部, 子进程各自记录被唤醒
+   的时刻。输出：
+     - ready_cpu0/1：等待者分布在哪些核
+     - total_us / max_us：COMPLETE 到最后一个等待者醒来的墙钟/最大延迟
+
+   判据：
+     - 新内核 completion 唤醒走 sched_unblock() + resched IPI, 跨核等待者
+       应在几十~几百 us 内全醒；
+     - 基线内核(同样的测试 syscall, 但内部是裸 state=READY+sched_enqueue)
+       跨核等待者要等目标核下一次 tick(100Hz = 10ms)。
+
+   用户态程序里手抄的伪 syscall 号必须与 kernel/syscall/syscall_internal.h
+   的 AVATAR_SYS_COMPLETION_* 一致。
+*/
 #define _GNU_SOURCE
 #include <errno.h>
 #include <sched.h>
@@ -44,7 +44,7 @@ static int cpu_now(void)
 {
     unsigned cpu = 0;
 
-    /* getcpu：x86_64 = 309，aarch64/riscv = 168（通用号）*/
+    /* getcpu：x86_64 = 309, aarch64/riscv = 168(通用号) */
 #if defined(__x86_64__)
 #define SYS_getcpu_local 309
 #else
@@ -102,8 +102,7 @@ static int broadcast_once(int n, int attempt)
 
     memset(hist, 0, sizeof(hist));
 
-    shm = mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS,
-               -1, 0);
+    shm = mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
     if (shm == MAP_FAILED) {
         perror("mmap");
         return 1;
@@ -155,9 +154,9 @@ static int broadcast_once(int n, int attempt)
         if (c >= 0 && c < (int)(sizeof(hist) / sizeof(hist[0])))
             hist[c]++;
         /*
-         * 唤醒时所在 CPU 不一定等于就绪时；这里不再取一次 getcpu（子进程
-         * 已经退出），只用时间戳判延迟。
-         */
+           唤醒时所在 CPU 不一定等于就绪时；这里不再取一次 getcpu(子进程
+           已经退出), 只用时间戳判延迟。
+        */
         if (d > max_ns)
             max_ns = d;
         sum_ns += d;
@@ -167,8 +166,8 @@ static int broadcast_once(int n, int attempt)
 
     printf("TASKCOMP broadcast attempt=%d n=%d ready_cpu0=%d ready_cpu1=%d "
            "total_us=%.1f avg_us=%.1f max_us=%.1f\n",
-           attempt, n, hist[0], hist[1], (double)(t1 - t0) / 1000.0,
-           (double)sum_ns / 1000.0 / (double)n, (double)max_ns / 1000.0);
+           attempt, n, hist[0], hist[1], (double)(t1 - t0) / 1000.0, (double)sum_ns / 1000.0 / (double)n,
+           (double)max_ns / 1000.0);
     munmap(shm, 4096);
     return 0;
 }

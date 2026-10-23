@@ -1,22 +1,22 @@
 /*
- * syscall_internal.h - 内核 syscall 实现内部共享头
- *
- * 仅供 kernel/syscall 目录下的 C 文件使用。包含：
- *   - Linux/x86 syscall 号常量
- *   - ioctl request 码
- *   - POSIX errno 值
- *   - 与 musl/glibc 用户空间对齐的 kernel-side struct
- *   - CLONE/FUTEX/MAP/SIG_* 标志
- *
- * 不要在驱动或用户接口中包含。
- */
+   syscall_internal.h - 内核 syscall 实现内部共享头
+
+   仅供 kernel/syscall 目录下的 C 文件使用。包含：
+     - Linux/x86 syscall 号常量
+     - ioctl request 码
+     - POSIX errno 值
+     - 与 musl/glibc 用户空间对齐的 kernel-side struct
+     - CLONE/FUTEX/MAP/SIG_* 标志
+
+   不要在驱动或用户接口中包含。
+*/
 #ifndef KERNEL_SYSCALL_INTERNAL_H
 #define KERNEL_SYSCALL_INTERNAL_H
 
 #include "types.h"
 #include "arch.h"
 
-/* 前向声明（避免拉入 task/task.h 的整套依赖） */
+/* 前向声明(避免拉入 task/task.h 的整套依赖) */
 struct task;
 typedef struct task task_t;
 
@@ -128,7 +128,7 @@ typedef struct task task_t;
 #define LINUX_SYS_EPOLL_CTL     21
 #define LINUX_SYS_EPOLL_PWAIT   22
 
-/* x86_64 专属或翻译后的伪号（使用顶部空段避免与 Linux 号冲突） */
+/* x86_64 专属或翻译后的伪号(使用顶部空段避免与 Linux 号冲突) */
 #define X86_SYS_ARCH_PRCTL 0x7FFFFFFDULL
 #define X86_SYS_RSEQ       0x7FFFFFFCULL
 #define X86_SYS_POLL       0x7FFFFFFBULL
@@ -238,11 +238,11 @@ struct kernel_termios {
     uint8_t c_cc[19];
 };
 
-/* ── 内核侧 sigaction 布局（与 musl/glibc 用户空间对齐）─────────── */
+/* ── 内核侧 sigaction 布局(与 musl/glibc 用户空间对齐)─────────── */
 struct kernel_sigaction {
     uint64_t sa_handler;   /* SIG_DFL(0) / SIG_IGN(1) / 用户 handler 地址 */
     uint64_t sa_flags;     /* SA_RESTORER 等标志 */
-    uint64_t sa_restorer;  /* rt_sigreturn 蹦床（SA_RESTORER 置位时有效）*/
+    uint64_t sa_restorer;  /* rt_sigreturn 蹦床(SA_RESTORER 置位时有效) */
     uint64_t sa_mask;      /* handler 执行期间额外屏蔽的信号位图 (8 bytes) */
     uint8_t _pad[128 - 8]; /* musl sigset_t 占 128 bytes, 内核只用前 8 */
 };
@@ -290,7 +290,7 @@ struct kernel_rlimit {
     uint64_t rlim_max;
 };
 
-/* ── sysinfo 输出（Linux 64-bit ABI）──────────────────────────────── */
+/* ── sysinfo 输出(Linux 64-bit ABI)──────────────────────────────── */
 struct kernel_sysinfo {
     int64_t uptime;
     uint64_t loads[3];
@@ -308,10 +308,11 @@ struct kernel_sysinfo {
 };
 
 /* ═══════════════════════════════════════════════════════════════════
- * 内部共享 helper：跨多个 syscall 子模块使用
- * ═══════════════════════════════════════════════════════════════════ */
+   内部共享 helper：跨多个 syscall 子模块使用
+   ═══════════════════════════════════════════════════════════════════
+*/
 
-/* ── 硬件单调时钟（arch 无关接口）─────────────────────────────── */
+/* ── 硬件单调时钟(arch 无关接口)─────────────────────────────── */
 #include "timer/timer.h"
 
 static inline uint64_t kernel_get_ns(void)
@@ -319,21 +320,22 @@ static inline uint64_t kernel_get_ns(void)
     return timer_get_ns();
 }
 
-/* ── 由 fs/tty.c 提供，跨模块可见 ─────────────────────────────── */
+/* ── 由 fs/tty.c 提供, 跨模块可见 ─────────────────────────────── */
 void signal_check_uart(void);
 int uart_ringbuf_empty(void);
 
-/* syscall 入口次数计数（早期调试日志使用）*/
+/* syscall 入口次数计数(早期调试日志使用) */
 extern volatile uint32_t g_syscall_entry_count;
 
 #if ARCH_X86_64
-/* 由 mm/pmap_compat.c 提供，由 task switch / arch_prctl 调用 */
+/* 由 mm/pmap_compat.c 提供, 由 task switch / arch_prctl 调用 */
 void x86_write_fs_base(uint64_t fs_base);
 #endif
 
 /* ── syscall case 处理器：在 syscall.c 的 switch 中以一行调用形式分派
- *    每个 handler 将结果写回 regs[0]
- * ─────────────────────────────────────────────────────────────── */
+      每个 handler 将结果写回 regs[0]
+   ───────────────────────────────────────────────────────────────
+*/
 void poll_handler(uint64_t regs[6], uint64_t syscall_num, task_t *current);
 void select_handler(uint64_t regs[6], uint64_t syscall_num, task_t *current);
 void epoll_create1_handler(uint64_t regs[6], task_t *current);
@@ -344,9 +346,10 @@ void getrandom_handler(uint64_t regs[6]);
 void arch_prctl_handler(uint64_t regs[6], task_t *current);
 #endif
 
-/* ── 信号子系统（kernel/syscall/core/signal.c）─────────────────────── */
+/* ── 信号子系统(kernel/syscall/core/signal.c)─────────────────────── */
 /* trap_frame_t 在各架构 include/<arch>/exception.h 中定义为匿名 struct
- * 的 typedef，无法前向声明，因此这里直接 include。 */
+   的 typedef, 无法前向声明, 因此这里直接 include。
+*/
 #include "exception.h"
 
 void deliver_pending_signals(task_t *t, trap_frame_t *frame);
@@ -360,24 +363,24 @@ void tkill_handler(uint64_t regs[6]);
 void tgkill_handler(uint64_t regs[6]);
 
 /* ── core/ 子系统：进程/线程/调度 ─────────────────────────────── */
-/* 进程生命周期（core/proc_lifecycle.c） */
+/* 进程生命周期(core/proc_lifecycle.c) */
 void exit_handler(uint64_t regs[6]) __attribute__((noreturn));
 void exit_group_handler(uint64_t regs[6]) __attribute__((noreturn));
 void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame);
 void execve_handler(uint64_t regs[6]);
 void wait_handler(uint64_t regs[6], task_t *me);
 
-/* 进程身份/进程组/会话（core/proc_ids.c） */
+/* 进程身份/进程组/会话(core/proc_ids.c) */
 void proc_ids_handler(uint64_t syscall_num, uint64_t regs[6], task_t *current);
 
-/* 调度（core/sched.c） */
+/* 调度(core/sched.c) */
 void sched_yield_handler(uint64_t regs[6]);
 void nanosleep_handler(uint64_t regs[6]);
 
-/* futex 派发（core/futex.c） */
+/* futex 派发(core/futex.c) */
 void futex_handler(uint64_t regs[6]);
 
-/* ── 路径/字符串辅助（fs/path.c，核心模块共享） ────────────────── */
+/* ── 路径/字符串辅助(fs/path.c, 核心模块共享) ────────────────── */
 void resolve_path(const char *cwd, const char *path, char *out, int outlen);
 int copy_string_from_user(const char *ustr, char *kbuf, int maxlen);
 int copy_string_to_user(const char *kstr, char *ubuf, int maxlen);
@@ -385,15 +388,15 @@ int copy_from_user_bytes(const void *usrc, void *kdst, uint64_t len);
 int copy_to_user_bytes(const void *ksrc, void *udst, uint64_t len);
 
 /*
- * 用户地址是否"范围合法**且每一页都映射着**"。copy_*_user_bytes 内部就是用它。
- * 需要自己校验用户指针时（例如 copy_iov_from_user）也应当用这个，而不是
- * 只查范围的 user_range_ok —— 只查范围挡不住"合法但已 munmap"的地址，
- * 那种地址会让后续裸拷贝变成内核态 #PF。见 fs/path.c 里的详细说明。
- */
+   用户地址是否"范围合法且每一页都映射着"。copy_*_user_bytes 内部就是用它。
+   需要自己校验用户指针时(例如 copy_iov_from_user)也应当用这个, 而不是
+   只查范围的 user_range_ok —— 只查范围挡不住"合法但已 munmap"的地址,
+   那种地址会让后续裸拷贝变成内核态 #PF。见 fs/path.c 里的详细说明。
+*/
 bool user_range_accessible(const void *ptr, uint64_t len);
 
 /* ── fs/ 子系统：文件 / 目录 / TTY ─────────────────────────────── */
-/* 文件 I/O（fs/file_io.c）*/
+/* 文件 I/O(fs/file_io.c) */
 void read_handler(uint64_t regs[6], task_t *current);
 void readv_handler(uint64_t regs[6], task_t *current);
 void pread64_handler(uint64_t regs[6], task_t *current);
@@ -403,7 +406,7 @@ void pwrite64_handler(uint64_t regs[6], task_t *current);
 void lseek_handler(uint64_t regs[6], task_t *current);
 void sendfile_handler(uint64_t regs[6], task_t *current);
 
-/* 文件操作（fs/file_ops.c）*/
+/* 文件操作(fs/file_ops.c) */
 void openat_handler(uint64_t regs[6], task_t *current);
 void close_handler(uint64_t regs[6], task_t *current);
 void dup_handler(uint64_t regs[6], task_t *current);
@@ -411,24 +414,24 @@ void dup3_handler(uint64_t regs[6], task_t *current);
 void fcntl_handler(uint64_t regs[6], task_t *current);
 void pipe2_handler(uint64_t regs[6], task_t *current);
 
-/* stat / 目录读取（fs/file_stat.c）*/
+/* stat / 目录读取(fs/file_stat.c) */
 void fstat_handler(uint64_t regs[6], task_t *current);
 void newfstatat_handler(uint64_t regs[6], task_t *current);
 void readlinkat_handler(uint64_t regs[6], task_t *current);
 void faccessat_handler(uint64_t regs[6], task_t *current);
 void getdents64_handler(uint64_t regs[6], task_t *current);
 
-/* 目录与命名（fs/dir.c）*/
+/* 目录与命名(fs/dir.c) */
 void getcwd_handler(uint64_t regs[6], task_t *current);
 void chdir_handler(uint64_t regs[6], task_t *current);
 void renameat_handler(uint64_t regs[6], task_t *current);
 void renameat2_handler(uint64_t regs[6], task_t *current);
 void unlinkat_handler(uint64_t regs[6], task_t *current);
 
-/* ioctl（fs/ioctl.c）*/
+/* ioctl(fs/ioctl.c) */
 void ioctl_handler(uint64_t regs[6], task_t *current);
 
-/* 网络 socket（net/sock_syscall.c）*/
+/* 网络 socket(net/sock_syscall.c) */
 void socket_handler(uint64_t regs[6], task_t *current);
 void bind_handler(uint64_t regs[6], task_t *current);
 void listen_handler(uint64_t regs[6], task_t *current);
@@ -443,18 +446,18 @@ void getsockname_handler(uint64_t regs[6], task_t *current);
 void shutdown_handler(uint64_t regs[6], task_t *current);
 
 /*
- * ── TASK_TEST=1 专用测试 syscall（仅 TASK_INFRA_TEST 编译）────────
- *
- * 内核没有「用户态 completion」这种正式接口；为了从用户态直接压
- * completion_wait()/completion_complete_all()，在测试变体里加三个
- * 伪号。它们不在 Linux 号空间里，也不经过 x86 号翻译（> 1000）。
- *
- * 用户态程序 apps/c/task_completion_test.c 里手抄同样的值。
- *
- * ⚠️ 这段放在文件末尾、与上面的标准号块用空行隔开：clang-format 的
- *    AlignConsecutiveMacros 会把连续的宏按最长名字对齐，把 0x7FFF...
- *    插进标准号块会重排上百行。
- */
+   ── TASK_TEST=1 专用测试 syscall(仅 TASK_INFRA_TEST 编译)────────
+
+   内核没有「用户态 completion」这种正式接口；为了从用户态直接压
+   completion_wait()/completion_complete_all(), 在测试变体里加三个
+   伪号。它们不在 Linux 号空间里, 也不经过 x86 号翻译(> 1000)。
+
+   用户态程序 apps/c/task_completion_test.c 里手抄同样的值。
+
+   注意： 这段放在文件末尾, 与上面的标准号块用空行隔开：clang-format 的
+      AlignConsecutiveMacros 会把连续的宏按最长名字对齐, 把 0x7FFF...
+      插进标准号块会重排上百行。
+*/
 #define AVATAR_SYS_COMPLETION_WAIT     0x7FFF1000ULL
 #define AVATAR_SYS_COMPLETION_COMPLETE 0x7FFF1001ULL
 #define AVATAR_SYS_COMPLETION_RESET    0x7FFF1002ULL

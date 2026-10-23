@@ -1,18 +1,18 @@
 /*
- * kernel/syscall/trace.c — 系统调用环形缓冲的实现
- *
- * 设计要点见 trace.h。这里只补充三个实现上的选择：
- *
- * 1. **一条 syscall 只占一个槽位**：入口写满参数、返回值留哨兵，出口回填。
- *    如果入口/出口各写一条，环形缓冲的有效深度直接减半，而且崩在 syscall
- *    中间时会剩一个配不上对的孤立入口行 —— 那正是最需要看清楚的情况。
- *
- * 2. **无锁**：syscall 路径本来就关中断、且不迁移，所以同一个 CPU 只有
- *    它自己在写自己的环。跨 CPU 的先后顺序靠 at_ms + seq 在 dump 时归并。
- *
- * 3. **抓路径走 copy_string_from_user()**：来自 regs[] 的用户指针禁止裸解引用
- *    （用户传个非法地址就会让内核态读到坏地址 → #PF → 整机挂死，LTP 实测过）。
- */
+   kernel/syscall/trace.c — 系统调用环形缓冲的实现
+
+   设计要点见 trace.h。这里只补充三个实现上的选择：
+
+   1. 一条 syscall 只占一个槽位：入口写满参数, 返回值留哨兵, 出口回填。
+      如果入口/出口各写一条, 环形缓冲的有效深度直接减半, 而且崩在 syscall
+      中间时会剩一个配不上对的孤立入口行 —— 那正是最需要看清楚的情况。
+
+   2. 无锁：syscall 路径本来就关中断, 且不迁移, 所以同一个 CPU 只有
+      它自己在写自己的环。跨 CPU 的先后顺序靠 at_ms + seq 在 dump 时归并。
+
+   3. 抓路径走 copy_string_from_user()：来自 regs[] 的用户指针禁止裸解引用
+      (用户传个非法地址就会让内核态读到坏地址 → #PF → 整机挂死, LTP 实测过)。
+*/
 
 #include "syscall/trace.h"
 #include "syscall/syscall_internal.h" /* LINUX_SYS_*, copy_string_from_user */
@@ -22,8 +22,9 @@
 #include "timer/timer.h"
 #include "task/cpu.h" /* AVATAR_MAX_CPUS */
 
-/* my_vsnprintf 取 va_list（和 lib/klog.c 用法一致），这里包一层变参入口。
- * 语义是 C99 snprintf：截断时返回"本该写多长"，所以调用方必须自己 clamp。 */
+/* my_vsnprintf 取 va_list(和 lib/klog.c 用法一致), 这里包一层变参入口。
+   语义是 C99 snprintf：截断时返回"本该写多长", 所以调用方必须自己 clamp。
+*/
 extern int my_vsnprintf(char *buf, int size, const char *fmt, va_list va);
 
 static int trace_snprintf(char *buf, int size, const char *fmt, ...)
@@ -257,13 +258,13 @@ const char *syscall_trace_name(uint32_t nr)
 }
 
 /*
- * 路径型 syscall：哪个参数是用户态路径串。
- * 判断错的后果是往环里存一段无意义的字节，所以宁可少认几个，不要乱认。
- */
+   路径型 syscall：哪个参数是用户态路径串。
+   判断错的后果是往环里存一段无意义的字节, 所以宁可少认几个, 不要乱认。
+*/
 static const char *path_arg_of(uint32_t nr, const uint64_t *a)
 {
     switch (nr) {
-    /* *at 家族：a0 是 dirfd，路径在 a1 */
+    /* at 家族：a0 是 dirfd, 路径在 a1 */
     case LINUX_SYS_OPENAT:
     case LINUX_SYS_NEWFSTATAT:
     case LINUX_SYS_READLINKAT:
@@ -287,8 +288,7 @@ static const char *path_arg_of(uint32_t nr, const uint64_t *a)
 
 /* ── 记录 ───────────────────────────────────────────────────────── */
 
-void syscall_trace_enter(uint16_t pid, uint32_t nr, uint64_t a0, uint64_t a1,
-                         uint64_t a2)
+void syscall_trace_enter(uint16_t pid, uint32_t nr, uint64_t a0, uint64_t a1, uint64_t a2)
 {
     uint32_t c = trace_cpu();
     uint32_t slot = s_head[c];
@@ -308,8 +308,7 @@ void syscall_trace_enter(uint16_t pid, uint32_t nr, uint64_t a0, uint64_t a1,
     r->path[0] = '\0';
 
     const char *upath = path_arg_of(nr, args);
-    if (upath != NULL &&
-        copy_string_from_user(upath, r->path, SYSCALL_TRACE_PATH_MAX) > 0) {
+    if (upath != NULL && copy_string_from_user(upath, r->path, SYSCALL_TRACE_PATH_MAX) > 0) {
         r->path[SYSCALL_TRACE_PATH_MAX - 1] = '\0';
         r->flags |= SYSCALL_TRACE_F_PATH;
     }
@@ -335,15 +334,15 @@ void syscall_trace_exit(int64_t ret)
 /* ── 渲染 ───────────────────────────────────────────────────────── */
 
 /*
- * 归并各 CPU 的环，按时间序输出**最近的** max 条。
- *
- * 每个 CPU 的环本身按 seq 递增（环形覆盖，旧的被新的顶掉）。这里对每个 CPU
- * 维护一个游标，每轮从各 CPU 的"下一条"里挑 (at_ms, seq) 最小的输出 —— 也就是
- * 按时间序取最近 max 条。不需要临时数组，状态只有每 CPU 一个游标。
- *
- * at_ms 只有 10ms 分辨率，同毫秒内的跨 CPU 顺序由 seq 兜底；真正的全局顺序
- * 需要一个全局原子计数，那会在热路径上加一条争用的 cache line，不值得。
- */
+   归并各 CPU 的环, 按时间序输出最近的 max 条。
+
+   每个 CPU 的环本身按 seq 递增(环形覆盖, 旧的被新的顶掉)。这里对每个 CPU
+   维护一个游标, 每轮从各 CPU 的"下一条"里挑 (at_ms, seq) 最小的输出 —— 也就是
+   按时间序取最近 max 条。不需要临时数组, 状态只有每 CPU 一个游标。
+
+   at_ms 只有 10ms 分辨率, 同毫秒内的跨 CPU 顺序由 seq 兜底；真正的全局顺序
+   需要一个全局原子计数, 那会在热路径上加一条争用的 cache line, 不值得。
+*/
 typedef struct {
     uint32_t cur;  /* 当前可读槽位 */
     uint32_t left; /* 本 CPU 还剩多少条没输出 */
@@ -357,17 +356,13 @@ static int render_one(char *out, int len, const syscall_trace_rec_t *r)
     const char *name = syscall_trace_name(r->nr);
 
     if (r->flags & SYSCALL_TRACE_F_PATH)
-        n = trace_snprintf(
-            out, len, "pid=%u t=%ums %s \"%s\" (0x%llx, 0x%llx, 0x%llx) = ",
-            (unsigned)r->pid, (unsigned)r->at_ms, name, r->path,
-            (unsigned long long)r->a0, (unsigned long long)r->a1,
-            (unsigned long long)r->a2);
+        n = trace_snprintf(out, len, "pid=%u t=%ums %s \"%s\" (0x%llx, 0x%llx, 0x%llx) = ", (unsigned)r->pid,
+                           (unsigned)r->at_ms, name, r->path, (unsigned long long)r->a0, (unsigned long long)r->a1,
+                           (unsigned long long)r->a2);
     else
-        n = trace_snprintf(
-            out, len,
-            "pid=%u t=%ums %s (0x%llx, 0x%llx, 0x%llx) = ", (unsigned)r->pid,
-            (unsigned)r->at_ms, name, (unsigned long long)r->a0,
-            (unsigned long long)r->a1, (unsigned long long)r->a2);
+        n = trace_snprintf(out, len, "pid=%u t=%ums %s (0x%llx, 0x%llx, 0x%llx) = ", (unsigned)r->pid,
+                           (unsigned)r->at_ms, name, (unsigned long long)r->a0, (unsigned long long)r->a1,
+                           (unsigned long long)r->a2);
 
     if (n < 0)
         n = 0;
@@ -378,11 +373,9 @@ static int render_one(char *out, int len, const syscall_trace_rec_t *r)
     if (r->ret == (int64_t)SYSCALL_TRACE_PENDING)
         m = trace_snprintf(out + n, len - n, "? (没有返回)\n");
     else if (r->ret < 0)
-        m = trace_snprintf(out + n, len - n, "0x%llx (%lld)\n",
-                           (unsigned long long)r->ret, (long long)r->ret);
+        m = trace_snprintf(out + n, len - n, "0x%llx (%lld)\n", (unsigned long long)r->ret, (long long)r->ret);
     else
-        m = trace_snprintf(out + n, len - n, "0x%llx (%lld)\n",
-                           (unsigned long long)r->ret, (long long)r->ret);
+        m = trace_snprintf(out + n, len - n, "0x%llx (%lld)\n", (unsigned long long)r->ret, (long long)r->ret);
 
     if (m < 0)
         m = 0;
@@ -401,7 +394,7 @@ int syscall_trace_render(uint16_t pid_filter, uint32_t max, char *out, int len)
 
     out[0] = '\0';
 
-    /* 初始化每个 CPU 的游标：指向它自己"最近 DEPTH 条"里**最旧**的那条 */
+    /* 初始化每个 CPU 的游标：指向它自己"最近 DEPTH 条"里最旧的那条 */
     for (uint32_t c = 0; c < AVATAR_MAX_CPUS; c++) {
         uint64_t cnt = s_seq[c];
         if (cnt > SYSCALL_TRACE_DEPTH)
@@ -423,15 +416,14 @@ int syscall_trace_render(uint16_t pid_filter, uint32_t max, char *out, int len)
             const syscall_trace_rec_t *r = &s_ring[c][cur[c].cur];
 
             if (pid_filter != 0U && r->pid != pid_filter) {
-                /* 被过滤掉的也要推进游标，否则死循环 */
+                /* 被过滤掉的也要推进游标, 否则死循环 */
                 cur[c].cur = (cur[c].cur + 1U) % SYSCALL_TRACE_DEPTH;
                 cur[c].left--;
                 c--; /* 重新看这个 CPU 的下一条 */
                 continue;
             }
 
-            if (pick < 0 || r->at_ms < best_ms ||
-                (r->at_ms == best_ms && r->seq < best_seq)) {
+            if (pick < 0 || r->at_ms < best_ms || (r->at_ms == best_ms && r->seq < best_seq)) {
                 pick = (int)c;
                 best_ms = r->at_ms;
                 best_seq = r->seq;
@@ -463,20 +455,20 @@ void syscall_trace_dump(uint16_t pid_filter, uint32_t max)
     if (n <= 0)
         return;
 
-    /* 报**实际**条数而不是 max —— 程序只跑了 3 个 syscall 时，
-     * 说"最后 48 条"会让人以为中间丢了记录。 */
+    /* 报实际条数而不是 max —— 程序只跑了 3 个 syscall 时,
+       说"最后 48 条"会让人以为中间丢了记录。
+    */
     uint32_t lines = 0;
     for (const char *q = buf; *q; q++)
         if (*q == '\n')
             lines++;
 
     if (pid_filter != 0U)
-        KLOG_WARN("[SYSCALL] pid=%u 崩溃前的最近 %u 条系统调用：\n",
-                  (unsigned)pid_filter, (unsigned)lines);
+        KLOG_WARN("[SYSCALL] pid=%u: last %u syscalls before crash:\n", (unsigned)pid_filter, (unsigned)lines);
     else
-        KLOG_WARN("[SYSCALL] 最近的 %u 条系统调用：\n", (unsigned)lines);
+        KLOG_WARN("[SYSCALL] last %u syscalls:\n", (unsigned)lines);
 
-    /* buf 里已经是多行文本；逐行走 klog，让每行都带上级别前缀和 cpu/文件信息 */
+    /* buf 里已经是多行文本；逐行走 klog, 让每行都带上级别前缀和 cpu/文件信息 */
     char *p = buf;
     while (*p) {
         char *nl = strchr(p, '\n');

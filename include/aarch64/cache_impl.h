@@ -4,9 +4,9 @@
 #include "barrier.h" /* 使用 barrier.h 的内存屏障 */
 
 /*
- * AArch64 缓存操作底层实现
- * 架构特定的单个缓存行操作
- */
+   AArch64 缓存操作底层实现
+   架构特定的单个缓存行操作
+*/
 
 /* AArch64 系统寄存器定义 */
 #define CTR_EL0_DMINLINE_SHIFT 16
@@ -24,28 +24,28 @@ static size_t g_cache_line_size = 64; /* 默认 64 字节 */
 
 /* ===== 底层缓存操作指令 ===== */
 
-/**
- * __clean_dcache_one - 清理单个缓存行
- * @addr: 缓存行对齐的地址
- */
+/*
+   __clean_dcache_one - 清理单个缓存行
+   @addr: 缓存行对齐的地址
+*/
 static inline void __clean_dcache_one(const void *addr)
 {
     asm volatile("dc cvac, %0" : : "r"(addr) : "memory");
 }
 
-/**
- * __invalidate_dcache_one - 使单个缓存行失效
- * @addr: 缓存行对齐的地址
- */
+/*
+   __invalidate_dcache_one - 使单个缓存行失效
+   @addr: 缓存行对齐的地址
+*/
 static inline void __invalidate_dcache_one(const void *addr)
 {
     asm volatile("dc ivac, %0" : : "r"(addr) : "memory");
 }
 
-/**
- * __clean_and_invalidate_dcache_one - 清理并使单个缓存行失效
- * @addr: 缓存行对齐的地址
- */
+/*
+   __clean_and_invalidate_dcache_one - 清理并使单个缓存行失效
+   @addr: 缓存行对齐的地址
+*/
 static inline void __clean_and_invalidate_dcache_one(const void *addr)
 {
     asm volatile("dc civac, %0" : : "r"(addr) : "memory");
@@ -53,17 +53,17 @@ static inline void __clean_and_invalidate_dcache_one(const void *addr)
 
 /* ===== 缓存行大小管理 ===== */
 
-/**
- * get_cache_line_size - 获取缓存行大小
- */
+/*
+   get_cache_line_size - 获取缓存行大小
+*/
 static inline size_t get_cache_line_size(void)
 {
     return g_cache_line_size;
 }
 
-/**
- * init_cache - 初始化缓存子系统
- */
+/*
+   init_cache - 初始化缓存子系统
+*/
 static inline void init_cache(void)
 {
     uint64_t ctr_el0;
@@ -81,24 +81,24 @@ static inline void init_cache(void)
 
     /* 验证缓存行大小的合理性 */
     if (cache_size < MIN_CACHELINE_SIZE || cache_size > MAX_CACHELINE_SIZE) {
-        /* 无效的缓存行大小，使用默认值 */
+        /* 无效的缓存行大小, 使用默认值 */
         cache_size = 64;
     }
 
     g_cache_line_size = cache_size;
 }
 
-/**
- * sync_caches - 同步缓存操作
- *
- * 使用 barrier.h 的数据屏障
- */
-/**
- * sync_icache_all - 让刚写入的指令对本核可见
- *
- * `ic iallu` 使本核 I-cache 全失效（另一颗核要看到得用 ialluis），
- * dsb 保证失效完成，isb 保证后续取指看到新指令 —— 三者缺一不可。
- */
+/*
+   sync_caches - 同步缓存操作
+
+   使用 barrier.h 的数据屏障
+*/
+/*
+   sync_icache_all - 让刚写入的指令对本核可见
+
+   `ic iallu` 使本核 I-cache 全失效(另一颗核要看到得用 ialluis),
+   dsb 保证失效完成, isb 保证后续取指看到新指令 —— 三者缺一不可。
+*/
 static inline void sync_icache_all(void)
 {
     __asm__ volatile("ic iallu\n\tdsb ish\n\tisb" ::: "memory");

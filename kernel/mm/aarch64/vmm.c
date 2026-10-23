@@ -9,16 +9,16 @@
 #include "string.h"
 #include "shared_page.h"
 
-/* 兼容性定义（替换参考项目中的符号） */
+/* 兼容性定义(替换参考项目中的符号) */
 #ifndef HEAP_OFFSET
 #define HEAP_OFFSET 0
 #endif
 
-/* __heap_flag 的默认值（使用 __kernel_end 作为替代） */
+/* __heap_flag 的默认值(使用 __kernel_end 作为替代) */
 extern char __kernel_end[];
 extern char __heap_flag[];
 
-/* 设备内存范围定义（AArch64 QEMU virt） */
+/* 设备内存范围定义(AArch64 QEMU virt) */
 #define DEVICE_MEM_START 0x8000000
 #define DEVICE_MEM_END   0xa000000
 
@@ -39,18 +39,17 @@ static inline uint64_t read_ttbr0_el1(void)
     return value;
 }
 
-// ============= 用户程序内存分配释放 =================
+/* ============= 用户程序内存分配释放 ================= */
 
-pte_t *find_pte(pte_t *page_dir, // 虚拟地址
-                uint64_t vaddr,
-                int32_t alloc) // 返回虚拟地址
+pte_t *find_pte(pte_t *page_dir,               /* 虚拟地址 */
+                uint64_t vaddr, int32_t alloc) /* 返回虚拟地址 */
 {
     KLOG_MODULE_TRACE(LOG_MODULE_MM, "find_pte: vaddr=0x%llx\n", vaddr);
 
-    // 获取PGD索引
+    /* 获取PGD索引 */
     pte_t *pgd = &page_dir[GET_PGD_INDEX(vaddr)];
 
-    // 分配 PUD
+    /* 分配 PUD */
     if (!pgd->table.is_valid) {
         if (!alloc)
             return NULL;
@@ -58,17 +57,16 @@ pte_t *find_pte(pte_t *page_dir, // 虚拟地址
         if (!pud_phys)
             return NULL;
 
-        pgd->pte = (pud_phys >> 12) << 12 | 0x3; // valid + table
+        pgd->pte = (pud_phys >> 12) << 12 | 0x3; /* valid + table */
         memset(phys_to_virt(pud_phys), 0, 0x1000);
     }
 
-    // 获取PUD表项
-    pte_t *pud = (pte_t *)phys_to_virt(
-        (uint64_t)((pgd->table.next_table_addr) << 12ULL));
+    /* 获取PUD表项 */
+    pte_t *pud = (pte_t *)phys_to_virt((uint64_t)((pgd->table.next_table_addr) << 12ULL));
 
     pte_t *pud_entry = &pud[GET_PUD_INDEX(vaddr)];
 
-    // 分配 PMD
+    /* 分配 PMD */
     if (!pud_entry->table.is_valid) {
         if (!alloc)
             return NULL;
@@ -80,13 +78,12 @@ pte_t *find_pte(pte_t *page_dir, // 虚拟地址
         memset(phys_to_virt(pmd_phys), 0, 0x1000);
     }
 
-    // 获取PMD表项
-    pte_t *pmd = (pte_t *)phys_to_virt(
-        (uint64_t)((pud_entry->table.next_table_addr) << 12ULL));
+    /* 获取PMD表项 */
+    pte_t *pmd = (pte_t *)phys_to_virt((uint64_t)((pud_entry->table.next_table_addr) << 12ULL));
 
     pte_t *pmd_entry = &pmd[GET_PMD_INDEX(vaddr)];
 
-    // 分配 Page Table
+    /* 分配 Page Table */
     if (!pmd_entry->table.is_valid) {
         if (!alloc)
             return NULL;
@@ -98,92 +95,83 @@ pte_t *find_pte(pte_t *page_dir, // 虚拟地址
         memset(phys_to_virt(pt_phys), 0, 0x1000);
     }
 
-    // 获取PTE表项
-    pte_t *pte_base = (pte_t *)phys_to_virt(
-        (uint64_t)((pmd_entry->table.next_table_addr) << 12ULL));
-    KLOG_MODULE_TRACE(LOG_MODULE_MM, "  PTE[%d] = 0x%llx\n",
-                      GET_PTE_INDEX(vaddr), pte_base[GET_PTE_INDEX(vaddr)].pte);
+    /* 获取PTE表项 */
+    pte_t *pte_base = (pte_t *)phys_to_virt((uint64_t)((pmd_entry->table.next_table_addr) << 12ULL));
+    KLOG_MODULE_TRACE(LOG_MODULE_MM, "  PTE[%d] = 0x%llx\n", GET_PTE_INDEX(vaddr), pte_base[GET_PTE_INDEX(vaddr)].pte);
 
     return &pte_base[GET_PTE_INDEX(vaddr)];
 }
 
-int32_t memory_create_map(void *page_dir, uint64_t vaddr, uint64_t paddr,
-                          int32_t count, uint64_t perm)
+int32_t memory_create_map(void *page_dir, uint64_t vaddr, uint64_t paddr, int32_t count, uint64_t perm)
 {
     extern char __kernel_start[];
-    // extern char __kernel_end[];
+    /* extern char __kernel_end[]; */
 
     uint64_t start = (uint64_t)(void *)__kernel_start;
     uint64_t end = (uint64_t)(void *)__heap_flag + HEAP_OFFSET;
-    // 如果 heap_start 不是页对齐的，将其向上对齐
+    /* 如果 heap_start 不是页对齐的, 将其向上对齐 */
     end = ALIGN_UP(end, PAGE_SIZE);
-    // 这里start和end计算出来的都是物理地址
+    /* 这里start和end计算出来的都是物理地址 */
     if (start > KERNEL_VMA)
         start -= KERNEL_VMA;
     if (end > KERNEL_VMA)
         end -= KERNEL_VMA;
 
     for (int32_t i = 0; i < count; i++) {
-        // 获取对应的 PTE
+        /* 获取对应的 PTE */
         pte_t *pte_entry = find_pte((pte_t *)page_dir, vaddr, 1);
         if (pte_entry == NULL) {
-            /* 映射失败，调用方拿不到它要的地址空间 —— 真错误 */
-            KLOG_ERROR(
-                "memory_create_map: Failed to find or allocate PTE for vaddr 0x%llx\n",
-                vaddr);
+            /* 映射失败, 调用方拿不到它要的地址空间 —— 真错误 */
+            KLOG_ERROR("memory_create_map: Failed to find or allocate PTE for vaddr 0x%llx\n", vaddr);
             return -1;
         }
 
         if (pte_entry->l3_page.is_valid) {
-            /* 重复映射是调用方的约定违反：降级但继续，且每个调用点只说一次
-             * （循环调用的调用方会让它反复触发）。两个 return 都在循环体内，
-             * 所以单次调用最多触发一次。 */
-            KLOG_WARN_ONCE(
-                "memory_create_map: vaddr 0x%llx is already mapped to pfn 0x%llx\n",
-                vaddr, pte_entry->l3_page.pfn);
+            /* 重复映射是调用方的约定违反：降级但继续, 且每个调用点只说一次
+               (循环调用的调用方会让它反复触发)。两个 return 都在循环体内,
+               所以单次调用最多触发一次。
+            */
+            KLOG_WARN_ONCE("memory_create_map: vaddr 0x%llx is already mapped to pfn 0x%llx\n", vaddr,
+                           pte_entry->l3_page.pfn);
             return -1;
         }
 
-        // 设置 PTE 为有效并设置物理地址
+        /* 设置 PTE 为有效并设置物理地址 */
         pte_entry->l3_page.is_valid = 1;
         pte_entry->l3_page.is_table = 1;
-        pte_entry->l3_page.pfn =
-            (paddr >> 12) & 0xFFFFFFFFF; // 36 bits PFN Page Frame Number
+        pte_entry->l3_page.pfn = (paddr >> 12) & 0xFFFFFFFFF; /* 36 bits PFN Page Frame Number */
 
-        // 设置权限
+        /* 设置权限 */
         if (perm == VM_PERM_USER) {
             pte_entry->l3_page.AF = 1;
-            pte_entry->l3_page.SH = 3; // Inner shareable
+            pte_entry->l3_page.SH = 3; /* Inner shareable */
             pte_entry->l3_page.AP = 1;
             pte_entry->l3_page.UXN = 0;
             pte_entry->l3_page.PXN = 1;
-            pte_entry->l3_page.attr_index = 1; // Normal memory
+            pte_entry->l3_page.attr_index = 1; /* Normal memory */
         } else if (perm == VM_PERM_KERNEL) {
             pte_entry->l3_page.AF = 1;
-            pte_entry->l3_page.SH = 3; // Inner shareable
+            pte_entry->l3_page.SH = 3; /* Inner shareable */
             pte_entry->l3_page.AP = 0;
             pte_entry->l3_page.UXN = 0;
             pte_entry->l3_page.PXN = 0;
-            pte_entry->l3_page.attr_index = 1; // Normal memory
+            pte_entry->l3_page.attr_index = 1; /* Normal memory */
         } else if (perm == VM_PERM_KERNEL_MMIO) {
             pte_entry->l3_page.AF = 1;
-            pte_entry->l3_page.SH = 3; // Inner shareable
+            pte_entry->l3_page.SH = 3; /* Inner shareable */
             pte_entry->l3_page.AP = 0;
             pte_entry->l3_page.UXN = 0;
             pte_entry->l3_page.PXN = 0;
-            pte_entry->l3_page.attr_index = 0; // device memory
+            pte_entry->l3_page.attr_index = 0; /* device memory */
         }
 
-        /* 映射结果：页表遍历的落点，排查"映射对不对"时最想要的一条 */
-        KLOG_MODULE_TRACE(
-            LOG_MODULE_MM,
-            "  mapped: valid=%d pfn=0x%llx AF=%d SH=%d AP=%d UXN=%d PXN=%d attr=%d\n",
-            pte_entry->l3_page.is_valid, pte_entry->l3_page.pfn,
-            pte_entry->l3_page.AF, pte_entry->l3_page.SH, pte_entry->l3_page.AP,
-            pte_entry->l3_page.UXN, pte_entry->l3_page.PXN,
-            pte_entry->l3_page.attr_index);
+        /* 映射结果：页表遍历的落点, 排查"映射对不对"时最想要的一条 */
+        KLOG_MODULE_TRACE(LOG_MODULE_MM, "  mapped: valid=%d pfn=0x%llx AF=%d SH=%d AP=%d UXN=%d PXN=%d attr=%d\n",
+                          pte_entry->l3_page.is_valid, pte_entry->l3_page.pfn, pte_entry->l3_page.AF,
+                          pte_entry->l3_page.SH, pte_entry->l3_page.AP, pte_entry->l3_page.UXN, pte_entry->l3_page.PXN,
+                          pte_entry->l3_page.attr_index);
 
-        // 更新虚拟地址和物理地址
+        /* 更新虚拟地址和物理地址 */
         vaddr += PAGE_SIZE;
         paddr += PAGE_SIZE;
     }
@@ -191,21 +179,21 @@ int32_t memory_create_map(void *page_dir, uint64_t vaddr, uint64_t paddr,
     return 0;
 }
 
-pte_t *current_page_dir() // 返回物理地址
+pte_t *current_page_dir() /* 返回物理地址 */
 {
     return (pte_t *)read_ttbr0_el1();
 }
 
-uint64_t memory_get_paddr(void *page_dir, uint64_t vaddr) // 返回物理地址
+uint64_t memory_get_paddr(void *page_dir, uint64_t vaddr) /* 返回物理地址 */
 {
     pte_t *pte = find_pte((pte_t *)page_dir, vaddr, 0);
 
     /*
-     * find_pte(alloc=0) 在页表路径存在时，即使 leaf 无效也会返回指针。
-     * 这里必须自己确认它确实是有效的 page descriptor（L3 的 bit[1:0]=11），
-     * 否则会把垃圾 pfn 当成物理地址返回。当前调用点都传页对齐地址，所以
-     * 只是"恰好"没炸；下一次改动踩中就是随机物理页。
-     */
+       find_pte(alloc=0) 在页表路径存在时, 即使 leaf 无效也会返回指针。
+       这里必须自己确认它确实是有效的 page descriptor(L3 的 bit[1:0]=11),
+       否则会把垃圾 pfn 当成物理地址返回。当前调用点都传页对齐地址, 所以
+       只是"恰好"没炸；下一次改动踩中就是随机物理页。
+    */
     if (pte == NULL || !(pte->pte & PTE_VALID) || !(pte->pte & PTE_TABLE))
         return 0;
 
@@ -227,7 +215,7 @@ void memory_set_pte_nofree(void *page_dir, uint64_t vaddr)
         pte->pte |= PTE_NOFREE;
 }
 
-uint64_t memory_alloc_page(void *page_dir, // 虚拟地址
+uint64_t memory_alloc_page(void *page_dir, /* 虚拟地址 */
                            uint64_t vaddr, uint64_t size, int32_t perm)
 {
     uint64_t curr_vaddr = vaddr;
@@ -235,21 +223,20 @@ uint64_t memory_alloc_page(void *page_dir, // 虚拟地址
     uint64_t start_vaddr = DOWN2(vaddr, PAGE_SIZE);
     uint64_t mapped_end = start_vaddr;
 
-    // 逐页分配内存，然后建立映射关系
+    /* 逐页分配内存, 然后建立映射关系 */
     for (int32_t i = 0; i < page_count; i++) {
-        // 分配需要的内存
+        /* 分配需要的内存 */
         uint64_t paddr = pmm_alloc_pages(&g_pmm, 1);
         if (paddr == 0) {
             KLOG_ERROR("mem alloc failed. no memory\n");
             goto rollback;
         }
 
-        // 建立分配的内存与指定地址的关联
-        int32_t err =
-            memory_create_map((pte_t *)page_dir, curr_vaddr, paddr, 1, perm);
+        /* 建立分配的内存与指定地址的关联 */
+        int32_t err = memory_create_map((pte_t *)page_dir, curr_vaddr, paddr, 1, perm);
         if (err < 0) {
             KLOG_ERROR("create memory map failed. err = %d\n", err);
-            /* 这一页还没进页表，单独还回去 */
+            /* 这一页还没进页表, 单独还回去 */
             pmm_free_pages(&g_pmm, paddr, 1);
             goto rollback;
         }
@@ -262,10 +249,10 @@ uint64_t memory_alloc_page(void *page_dir, // 虚拟地址
 
 rollback:
     /*
-     * 失败时把本次已经映射的页逐个拆掉。以前这里写的是
-     * pmm_free_pages(vaddr, i + 1) —— vaddr 是用户虚拟地址，不是刚分配的
-     * 物理地址；PMM 会按非法地址拒绝，于是已分配的页全部泄漏。
-     */
+       失败时把本次已经映射的页逐个拆掉。以前这里写的是
+       pmm_free_pages(vaddr, i + 1) —— vaddr 是用户虚拟地址, 不是刚分配的
+       物理地址；PMM 会按非法地址拒绝, 于是已分配的页全部泄漏。
+    */
     for (uint64_t va = start_vaddr; va < mapped_end; va += PAGE_SIZE)
         memory_free_page(page_dir, va);
     return -1;
@@ -278,15 +265,15 @@ void memory_free_page(void *page_dir, uint64_t addr)
         return;
 
     /*
-     * PTE_KEEP：设备缓冲（ION / dma-buf）映射。页归**句柄**所有，不是这个
-     * 映射的 —— 所以 unmap 只拆页表项，既不释放也不碰 shared_page 计数。
-     *
-     * 少了这一条：munmap 会把 dma_buf 底下的物理页释放回 PMM，而 dma_buf
-     * 仍然指着它；随后 close(fd) → dma_heap_free() 再释放一次（双重释放），
-     * 中间那段窗口里这些页随时会被分配给别的用途 —— 对 NPU 缓冲区来说
-     * 就是"设备往别人的内存里写"。实测症状是满屏
-     * `PMM: partial free detected: requested=N, actually_freed=0`。
-     */
+       PTE_KEEP：设备缓冲(ION / dma-buf)映射。页归句柄所有, 不是这个
+       映射的 —— 所以 unmap 只拆页表项, 既不释放也不碰 shared_page 计数。
+
+       少了这一条：munmap 会把 dma_buf 底下的物理页释放回 PMM, 而 dma_buf
+       仍然指着它；随后 close(fd) → dma_heap_free() 再释放一次(双重释放),
+       中间那段窗口里这些页随时会被分配给别的用途 —— 对 NPU 缓冲区来说
+       就是"设备往别人的内存里写"。实测症状是满屏
+       `PMM: partial free detected: requested=N, actually_freed=0`。
+    */
     if ((pte->pte & PTE_KEEP) != 0) {
         pte->pte = 0;
         return;
@@ -301,9 +288,9 @@ void memory_free_page(void *page_dir, uint64_t addr)
 }
 
 /*
- * 把某页标成 PTE_KEEP（设备缓冲）。与 memory_set_pte_nofree 同构，
- * 区别见 include/aarch64/mmu.h 里 PTE_KEEP 的说明。
- */
+   把某页标成 PTE_KEEP(设备缓冲)。与 memory_set_pte_nofree 同构,
+   区别见 include/aarch64/mmu.h 里 PTE_KEEP 的说明。
+*/
 void memory_set_pte_keep(void *page_dir, uint64_t vaddr)
 {
     pte_t *pte = find_pte((pte_t *)page_dir, vaddr, 0);
@@ -314,7 +301,7 @@ void memory_set_pte_keep(void *page_dir, uint64_t vaddr)
 pte_t *create_uvm(void)
 {
     extern char __kernel_start[];
-    // extern char __kernel_end[];
+    /* extern char __kernel_end[]; */
 
     pte_t *page_dir = (pte_t *)phys_to_virt(pmm_alloc_pages(&g_pmm, 1));
     if (page_dir == 0) {
@@ -324,9 +311,9 @@ pte_t *create_uvm(void)
 
     uint64_t start = (uint64_t)(void *)__kernel_start;
     uint64_t end = (uint64_t)(void *)__heap_flag + 0x900000ULL;
-    // 如果 heap_start 不是页对齐的，将其向上对齐
+    /* 如果 heap_start 不是页对齐的, 将其向上对齐 */
     end = ALIGN_UP(end, PAGE_SIZE);
-    // 这里start和end计算出来的都是物理地址
+    /* 这里start和end计算出来的都是物理地址 */
 
     KLOG_MM("map kernel start: 0x%llx, end: 0x%llx\n", start, end);
     if (start > KERNEL_VMA)
@@ -334,17 +321,17 @@ pte_t *create_uvm(void)
     if (end > KERNEL_VMA)
         end -= KERNEL_VMA;
 
-    // TODO: 这个地方需要让el0进程共享内核空间
-    // TODO: 这个地方原理上并不需要映射，因为内核应该使用 FFFF_0000_0000_0000 之后的地址
+    /*
+       TODO: 这个地方需要让el0进程共享内核空间
+       TODO: 这个地方原理上并不需要映射, 因为内核应该使用 FFFF_0000_0000_0000 之后的地址
+    */
     for (uint64_t addr = start; addr < end; addr += PAGE_SIZE) {
-        memory_create_map(page_dir, addr, addr, 1, 1); // 内核空间先恒等映射
+        memory_create_map(page_dir, addr, addr, 1, 1); /* 内核空间先恒等映射 */
     }
-    KLOG_MM("map device memory start: 0x%llx, end: 0x%llx\n", DEVICE_MEM_START,
-            DEVICE_MEM_END);
+    KLOG_MM("map device memory start: 0x%llx, end: 0x%llx\n", DEVICE_MEM_START, DEVICE_MEM_END);
 
-    for (uint64_t addr = DEVICE_MEM_START; addr < DEVICE_MEM_END;
-         addr += PAGE_SIZE) {
-        memory_create_map(page_dir, addr, addr, 1, 2); // 设备内存恒等映射
+    for (uint64_t addr = DEVICE_MEM_START; addr < DEVICE_MEM_END; addr += PAGE_SIZE) {
+        memory_create_map(page_dir, addr, addr, 1, 2); /* 设备内存恒等映射 */
     }
     return page_dir;
 }
@@ -356,10 +343,8 @@ void _destroy_page_table_vm(pte_t *table, int32_t level)
     if (level >= 4)
         return;
 
-    static const int32_t max_entries[] = { PAGE_TABLE_MAX_ENTRIES_L0,
-                                           PAGE_TABLE_MAX_ENTRIES_L1,
-                                           PAGE_TABLE_MAX_ENTRIES_L2,
-                                           PAGE_TABLE_MAX_ENTRIES_L3 };
+    static const int32_t max_entries[] = { PAGE_TABLE_MAX_ENTRIES_L0, PAGE_TABLE_MAX_ENTRIES_L1,
+                                           PAGE_TABLE_MAX_ENTRIES_L2, PAGE_TABLE_MAX_ENTRIES_L3 };
     int32_t entry_count = max_entries[level];
 
     for (int32_t i = 0; i < entry_count; i++) {
@@ -384,16 +369,15 @@ void _destroy_page_table_vm(pte_t *table, int32_t level)
                 end -= KERNEL_VMA;
 
             if (!((page_phys >= start && page_phys < end) ||
-                  (page_phys >= DEVICE_MEM_START &&
-                   page_phys < DEVICE_MEM_END))) {
+                  (page_phys >= DEVICE_MEM_START && page_phys < DEVICE_MEM_END))) {
                 /*
-                 * ⚠️ 这里是**进程退出**销毁地址空间的路径，与 munmap 走的
-                 * memory_free_page() 是**两趟不同的遍历**。只修那一边的话，
-                 * 子进程退出时照样会把设备缓冲的页释放掉（实测：fork 用例
-                 * 里恰好冒出 1 条 partial free）。两处都要认 PTE_KEEP。
-                 */
+                   注意： 这里是进程退出销毁地址空间的路径, 与 munmap 走的
+                   memory_free_page() 是两趟不同的遍历。只修那一边的话,
+                   子进程退出时照样会把设备缓冲的页释放掉(实测：fork 用例
+                   里恰好冒出 1 条 partial free)。两处都要认 PTE_KEEP。
+                */
                 if ((entry->pte & PTE_KEEP) != 0) {
-                    /* 设备缓冲：页归 dma_buf / ION 句柄所有，这里只拆表 */
+                    /* 设备缓冲：页归 dma_buf / ION 句柄所有, 这里只拆表 */
                 } else if (!(entry->pte & PTE_NOFREE)) {
                     pmm_free_pages(&g_pmm, page_phys, 1);
                 } else {
@@ -409,8 +393,7 @@ void _destroy_page_table_vm(pte_t *table, int32_t level)
             continue;
 
         uint64_t next_table_phys = entry->table.next_table_addr << 12;
-        _destroy_page_table_vm((pte_t *)phys_to_virt(next_table_phys),
-                               level + 1);
+        _destroy_page_table_vm((pte_t *)phys_to_virt(next_table_phys), level + 1);
         pmm_free_pages(&g_pmm, next_table_phys, 1);
         entry->pte = 0;
     }
@@ -418,18 +401,17 @@ void _destroy_page_table_vm(pte_t *table, int32_t level)
 
 void _destroy_page_table(pte_t *table, int32_t level)
 {
-    // 输出当前正在处理的层级
+    /* 输出当前正在处理的层级 */
 
     if (level >= 3)
         return;
 
-    // 各级页表的最大项数（按实际情况调整）
-    static const int32_t max_entries[] = { PAGE_TABLE_MAX_ENTRIES_L0, 8,
-                                           PAGE_TABLE_MAX_ENTRIES_L2,
+    /* 各级页表的最大项数(按实际情况调整) */
+    static const int32_t max_entries[] = { PAGE_TABLE_MAX_ENTRIES_L0, 8, PAGE_TABLE_MAX_ENTRIES_L2,
                                            PAGE_TABLE_MAX_ENTRIES_L3 };
     int32_t entry_count = max_entries[level];
 
-    // 遍历当前层级的所有页表项
+    /* 遍历当前层级的所有页表项 */
     for (int32_t i = 0; i < entry_count; i++) {
         pte_t *entry = &table[i];
 
@@ -439,12 +421,12 @@ void _destroy_page_table(pte_t *table, int32_t level)
         uint64_t next_table_phys = entry->table.next_table_addr << 12;
         void *next_table = phys_to_virt(next_table_phys);
 
-        // 输出当前页表项的信息
+        /* 输出当前页表项的信息 */
 
-        // 递归释放下一层页表
+        /* 递归释放下一层页表 */
         _destroy_page_table((pte_t *)next_table, level + 1);
 
-        // 释放当前这一级的页表页
+        /* 释放当前这一级的页表页 */
         if (entry->l3_page.is_table == 1) {
             pmm_free_pages(&g_pmm, next_table_phys, 1);
         }
@@ -454,7 +436,7 @@ void _destroy_page_table(pte_t *table, int32_t level)
 bool _copy_page_table(pte_t *src_table, pte_t *dst_table, int32_t level)
 {
     extern char __kernel_start[];
-    // extern char __kernel_end[];
+    /* extern char __kernel_end[]; */
 
     for (int32_t i = 0; i < 512; i++) {
         pte_t *src_entry = &src_table[i];
@@ -462,7 +444,7 @@ bool _copy_page_table(pte_t *src_table, pte_t *dst_table, int32_t level)
             continue;
 
         if (level == 3) {
-            // 第4级页表：实际映射的物理页
+            /* 第4级页表：实际映射的物理页 */
             uint64_t src_phys = src_entry->l3_page.pfn << 12;
 
             uint64_t start = (uint64_t)(void *)__kernel_start;
@@ -478,10 +460,10 @@ bool _copy_page_table(pte_t *src_table, pte_t *dst_table, int32_t level)
                 (src_phys >= DEVICE_MEM_START && src_phys <= DEVICE_MEM_END) ||
                 (src_entry->pte & (PTE_NOFREE | PTE_KEEP))) {
                 dst_table[i].pte = src_entry->pte;
-                /* 只有 NOFREE（共享页）要加引用；KEEP（设备缓冲）页归句柄
-                 * 所有，复制一份映射不产生新的持有者。 */
-                if ((src_entry->pte & PTE_NOFREE) &&
-                    !shared_page_ref(src_phys))
+                /* 只有 NOFREE(共享页)要加引用；KEEP(设备缓冲)页归句柄
+                   所有, 复制一份映射不产生新的持有者。
+                */
+                if ((src_entry->pte & PTE_NOFREE) && !shared_page_ref(src_phys))
                     return false;
                 continue;
             }
@@ -490,14 +472,13 @@ bool _copy_page_table(pte_t *src_table, pte_t *dst_table, int32_t level)
             if (!dst_phys)
                 return false;
 
-            // 拷贝页内容
+            /* 拷贝页内容 */
             memcpy(phys_to_virt(dst_phys), phys_to_virt(src_phys), PAGE_SIZE);
 
-            // 设置目标页表项
-            dst_table[i].pte =
-                (dst_phys >> 12 << 12) | (src_entry->pte & 0xFFF);
+            /* 设置目标页表项 */
+            dst_table[i].pte = (dst_phys >> 12 << 12) | (src_entry->pte & 0xFFF);
         } else {
-            // 中间层级：创建目标子表并递归拷贝
+            /* 中间层级：创建目标子表并递归拷贝 */
             uint64_t src_next_phys = src_entry->table.next_table_addr << 12;
             pte_t *src_next = (pte_t *)phys_to_virt(src_next_phys);
 
@@ -508,12 +489,10 @@ bool _copy_page_table(pte_t *src_table, pte_t *dst_table, int32_t level)
             pte_t *dst_next = (pte_t *)phys_to_virt(dst_next_phys);
             memset(dst_next, 0, PAGE_SIZE);
 
-            // 设置当前页表项指向新分配的页表
-            dst_table[i].pte =
-                (dst_next_phys >> 12 << 12) | (src_entry->pte & 0xFFF);
-            KLOG_MODULE_TRACE(LOG_MODULE_MM,
-                              "  copy: src=0x%llx dst=0x%llx level=%d\n",
-                              src_next_phys, dst_next_phys, level);
+            /* 设置当前页表项指向新分配的页表 */
+            dst_table[i].pte = (dst_next_phys >> 12 << 12) | (src_entry->pte & 0xFFF);
+            KLOG_MODULE_TRACE(LOG_MODULE_MM, "  copy: src=0x%llx dst=0x%llx level=%d\n", src_next_phys, dst_next_phys,
+                              level);
             if (!_copy_page_table(src_next, dst_next, level + 1))
                 return false;
         }
@@ -523,60 +502,58 @@ bool _copy_page_table(pte_t *src_table, pte_t *dst_table, int32_t level)
 
 void destroy_uvm_4level(pte_t *page_dir)
 {
-    // level: 0 = PGD, 1 = PUD, 2 = PMD, 3 = PTE
+    /* level: 0 = PGD, 1 = PUD, 2 = PMD, 3 = PTE */
     _destroy_page_table_vm(page_dir, 0);
-    pmm_free_pages(&g_pmm, virt_to_phys(page_dir), 1); // 最后释放 PGD 自身
+    pmm_free_pages(&g_pmm, virt_to_phys(page_dir), 1); /* 最后释放 PGD 自身 */
 }
 
 void destory_4level(pte_t *page_dir)
 {
-    // level: 0 = PGD, 1 = PUD, 2 = PMD, 3 = PTE
+    /* level: 0 = PGD, 1 = PUD, 2 = PMD, 3 = PTE */
     _destroy_page_table(page_dir, 0);
-    pmm_free_pages(&g_pmm, virt_to_phys(page_dir), 1); // 最后释放 PGD 自身
+    pmm_free_pages(&g_pmm, virt_to_phys(page_dir), 1); /* 最后释放 PGD 自身 */
 }
 
-// 内核将数据拷贝到指定进程空间下
-void copydata_to_uvm(void *page_dir, uint64_t vaddr, uint64_t paddr,
-                     uint64_t size)
+/* 内核将数据拷贝到指定进程空间下 */
+void copydata_to_uvm(void *page_dir, uint64_t vaddr, uint64_t paddr, uint64_t size)
 {
     uint64_t offset = 0;
     while (offset < size) {
         uint64_t curr_vaddr = vaddr + offset;
 
-        // 获取页表项
+        /* 获取页表项 */
         pte_t *pte = find_pte((pte_t *)page_dir, curr_vaddr, 0);
         if (!pte || pte->l3_page.is_valid == 0) {
-            /* 页未映射 —— 拷贝会被**静默截断**，数据已经不一致了。
-             * 循环体内但紧跟 return，所以每次调用最多一次，不需要采样。 */
-            KLOG_ERROR("copydata_to_uvm: no valid mapping for vaddr 0x%llx\n",
-                       curr_vaddr);
+            /* 页未映射 —— 拷贝会被静默截断, 数据已经不一致了。
+               循环体内但紧跟 return, 所以每次调用最多一次, 不需要采样。
+            */
+            KLOG_ERROR("copydata_to_uvm: no valid mapping for vaddr 0x%llx\n", curr_vaddr);
             return;
         }
 
-        // 获取物理页帧号（PFN），并计算出物理地址
+        /* 获取物理页帧号(PFN), 并计算出物理地址 */
         uint64_t page_pfn = pte->l3_page.pfn;
         uint64_t page_paddr = page_pfn << 12;
 
-        // 虚拟页起始地址（用于写入）
+        /* 虚拟页起始地址(用于写入) */
         uint8_t *dest = (uint8_t *)phys_to_virt(page_paddr);
 
-        // 当前页剩余空间
+        /* 当前页剩余空间 */
         uint64_t page_offset = curr_vaddr & (PAGE_SIZE - 1);
         uint64_t page_remain = PAGE_SIZE - page_offset;
-        uint64_t copy_len =
-            (size - offset > page_remain) ? page_remain : (size - offset);
+        uint64_t copy_len = (size - offset > page_remain) ? page_remain : (size - offset);
 
-        // 源地址
+        /* 源地址 */
         uint8_t *src = (uint8_t *)phys_to_virt(paddr + offset);
 
-        // 拷贝数据
+        /* 拷贝数据 */
         memcpy(dest + page_offset, src, copy_len);
 
         offset += copy_len;
     }
 }
 
-// 复制某个进程空间的所有内存到另一个进程空间下
+/* 复制某个进程空间的所有内存到另一个进程空间下 */
 int32_t memory_copy_uvm_4level(void *dst_pgd, void *src_pgd)
 {
     if (!_copy_page_table((pte_t *)src_pgd, (pte_t *)dst_pgd, 0)) {
@@ -587,7 +564,7 @@ int32_t memory_copy_uvm_4level(void *dst_pgd, void *src_pgd)
     return 0;
 }
 
-/* ── 用户地址空间生命周期（架构无关层经 mm_vm.h 调用）────────────── */
+/* ── 用户地址空间生命周期(架构无关层经 mm_vm.h 调用)────────────── */
 
 void mm_vm_init_user_pgd(void *pgd, uint64_t pgd_phys)
 {
@@ -614,9 +591,9 @@ int mm_vm_unmap_page(void *pgd, uint64_t vaddr)
 
 void mm_vm_flush_tlb_user(void)
 {
-    /* 页表写 → TLBI → 同步。tlbi 是架构指令，barrier API 里没有对应物。 */
+    /* 页表写 → TLBI → 同步。tlbi 是架构指令, barrier API 里没有对应物。 */
     barrier_sync(); /* 原 dsb ishst */
     __asm__ volatile("tlbi vmalle1is" ::: "memory");
-    barrier_sync();       /* 原 dsb ish   */
-    barrier_instr_full(); /* 原 isb       */
+    barrier_sync();       /* 原 dsb ish */
+    barrier_instr_full(); /* 原 isb */
 }

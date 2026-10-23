@@ -1,12 +1,12 @@
 /*
- * driver/dma/dma_buf.c — dma-buf 缓冲区对象
- *
- * 一个 dma_buf 就是「一段物理连续内存 + 一个引用计数」，用户态通过 fd 持有它。
- * 内存来源全部交给 dma_heap.c（见那里的说明），本文件不碰 PMM。
- *
- * 本文件**不接触用户指针** —— ABI 层在 kernel/fs/pseudofs/dev.c，
- * 那边负责 copy_from/to_user_bytes。这样 driver/ 不需要依赖 syscall 层。
- */
+   driver/dma/dma_buf.c — dma-buf 缓冲区对象
+
+   一个 dma_buf 就是「一段物理连续内存 + 一个引用计数」, 用户态通过 fd 持有它。
+   内存来源全部交给 dma_heap.c(见那里的说明), 本文件不碰 PMM。
+
+   本文件不接触用户指针 —— ABI 层在 kernel/fs/pseudofs/dev.c,
+   那边负责 copy_from/to_user_bytes。这样 driver/ 不需要依赖 syscall 层。
+*/
 #include "dma_buf.h"
 
 #include "dma_heap.h" /* 同目录 */
@@ -18,20 +18,20 @@
 #include "task/task.h"
 
 /*
- * fd 池的两个入口用 extern 局部声明，**不 include fd_pool.h**：
- * 后者会拉进 vfs.h → ext4.h，而 driver/dma 的编译规则只有
- * `-Idriver/dma -Ikernel/mm`，没有 lwext4 的 -I，include 进去直接编不过。
- * （kernel/fs/pseudofs/dev.c 里对 task_alloc_ion_fd 也是同样的写法。）
- */
+   fd 池的两个入口用 extern 局部声明, 不 include fd_pool.h：
+   后者会拉进 vfs.h → ext4.h, 而 driver/dma 的编译规则只有
+   `-Idriver/dma -Ikernel/mm`, 没有 lwext4 的 -I, include 进去直接编不过。
+   (kernel/fs/pseudofs/dev.c 里对 task_alloc_ion_fd 也是同样的写法。)
+*/
 extern int task_alloc_dmabuf_fd(task_t *task, uint32_t idx);
 extern int task_get_dmabuf_idx(task_t *task, int fd, uint32_t *idx);
 
 struct dma_buf {
     bool used;
     uint32_t refcount;
-    uint64_t paddr;     /* 物理基址（页对齐）*/
-    size_t bytes;       /* 实际大小（页对齐）*/
-    size_t size;        /* 请求大小（原样返回给用户）*/
+    uint64_t paddr;     /* 物理基址(页对齐) */
+    size_t bytes;       /* 实际大小(页对齐) */
+    size_t size;        /* 请求大小(原样返回给用户) */
     uint32_t owner_pid; /* 调试用 */
 };
 
@@ -51,7 +51,7 @@ dma_buf_t *dma_buf_from_index(uint32_t idx)
 uint32_t dma_buf_index(const dma_buf_t *buf)
 {
     if (!buf)
-        return DMA_BUF_MAX; /* 哨兵：越界值，from_index 会拒 */
+        return DMA_BUF_MAX; /* 哨兵：越界值, from_index 会拒 */
     return (uint32_t)(buf - g_dma_bufs);
 }
 
@@ -95,8 +95,7 @@ dma_buf_t *dma_buf_alloc(size_t size)
 
     spin_unlock(&g_dma_buf_lock);
 
-    KLOG_DEBUG("[dma_buf] alloc idx=%d size=%zu bytes=%zu pa=0x%llx\n", slot,
-               size, bytes, (unsigned long long)pa);
+    KLOG_DEBUG("[dma_buf] alloc idx=%d size=%zu bytes=%zu pa=0x%llx\n", slot, size, bytes, (unsigned long long)pa);
     return buf;
 }
 
@@ -120,8 +119,9 @@ void dma_buf_put(dma_buf_t *buf)
 
     spin_lock(&g_dma_buf_lock);
     if (!buf->used) {
-        /* 重复 put：表项已被释放。当错误吞掉比跟着崩好 —— 这不是内存安全问题，
-         * 只是引用计数纪律被破坏，日志足够定位。 */
+        /* 重复 put：表项已被释放。当错误吞掉比跟着崩好 —— 这不是内存安全问题,
+           只是引用计数纪律被破坏, 日志足够定位。
+        */
         spin_unlock(&g_dma_buf_lock);
         KLOG_ERROR("[dma_buf] put on unused slot (double put?)\n");
         return;
@@ -140,15 +140,15 @@ void dma_buf_put(dma_buf_t *buf)
 }
 
 /*
- * 按物理地址反查缓冲区 —— 排障专用。
- *
- * 用途：用户态（librknnrt）在任务描述符里填的是**设备地址**，我们只拿到
- * 那个数字，没法直接读它指向的内容。但它通常指向我们自己发出去的某个
- * dma-buf；查出来就能把内容 dump 出来，否则只能看着一个裸地址猜。
- *
- * 返回命中的缓冲区（**不增加引用计数** —— 只在调用方持锁或用完即走的
- * 排障路径上使用），并把页内偏移写回 *off。
- */
+   按物理地址反查缓冲区 —— 排障专用。
+
+   用途：用户态(librknnrt)在任务描述符里填的是设备地址, 我们只拿到
+   那个数字, 没法直接读它指向的内容。但它通常指向我们自己发出去的某个
+   dma-buf；查出来就能把内容 dump 出来, 否则只能看着一个裸地址猜。
+
+   返回命中的缓冲区(不增加引用计数 —— 只在调用方持锁或用完即走的
+   排障路径上使用), 并把页内偏移写回 *off。
+*/
 dma_buf_t *dma_buf_find_by_phys(uint64_t pa, uint64_t *off)
 {
     dma_buf_t *hit = NULL;
@@ -184,10 +184,10 @@ void dma_buf_put_index(uint32_t idx)
 uint64_t dma_buf_dev_addr(const dma_buf_t *buf)
 {
     /*
-     * ★ 全系统唯一的「缓冲区 → 设备地址」出口（见 dma_buf.h 文件头）。
-     *   现在无 IOMMU，设备看到的就是物理地址；将来接上 SMMU 之后，
-     *   这里改成返回 IOVA，上层一行都不用动。
-     */
+       全系统唯一的「缓冲区 → 设备地址」出口(见 dma_buf.h 文件头)。
+         现在无 IOMMU, 设备看到的就是物理地址；将来接上 SMMU 之后,
+         这里改成返回 IOVA, 上层一行都不用动。
+    */
     return buf ? buf->paddr : 0U;
 }
 
@@ -203,15 +203,14 @@ size_t dma_buf_size(const dma_buf_t *buf)
 
 /* ── 缓存维护 ──────────────────────────────────────────────────────────── */
 
-void dma_buf_sync_region(dma_buf_t *buf, uint64_t off, uint64_t len,
-                         bool to_device)
+void dma_buf_sync_region(dma_buf_t *buf, uint64_t off, uint64_t len, bool to_device)
 {
     if (!buf || !buf->used || len == 0U)
         return;
     if (off >= buf->bytes)
         return;
     if (len > buf->bytes - off)
-        len = buf->bytes - off; /* 夹一次，调用方算错也不越界 */
+        len = buf->bytes - off; /* 夹一次, 调用方算错也不越界 */
 
     uint8_t *base = (uint8_t *)phys_to_virt(buf->paddr);
     if (to_device)
@@ -227,30 +226,29 @@ int dma_buf_apply_sync(uint32_t idx, uint64_t flags)
         return -1;
 
     /*
-     * 语义照 Linux 的 dma_buf_sync：
-     *
-     *   START|READ   CPU 要读设备写的数据 → **invalidate**（丢掉 CPU 里的旧行）
-     *   END|WRITE    CPU 写完了要给设备看 → **clean**（写回内存）
-     *
-     * 另外两种组合（START|WRITE / END|READ）是**空操作**，这是对的：
-     *   - CPU 要写，不需要先把设备的数据拉进来（整块会被覆盖）；
-     *   - CPU 读完了，不需要回写（就算有脏行，它们本来就该回写，
-     *     但那由「CPU 写过」那条路径负责）。
-     *
-     * ⚠️ 把这里实现成空操作 = **静默数据损坏**：模型输出会随机出错，
-     *    而且复现不了。这是本阶段最不能省的一行。
-     */
+       语义照 Linux 的 dma_buf_sync：
+
+         START|READ   CPU 要读设备写的数据 → invalidate(丢掉 CPU 里的旧行)
+         END|WRITE    CPU 写完了要给设备看 → clean(写回内存)
+
+       另外两种组合(START|WRITE / END|READ)是空操作, 这是对的：
+         - CPU 要写, 不需要先把设备的数据拉进来(整块会被覆盖)；
+         - CPU 读完了, 不需要回写(就算有脏行, 它们本来就该回写,
+           但那由「CPU 写过」那条路径负责)。
+
+       注意： 把这里实现成空操作 = 静默数据损坏：模型输出会随机出错,
+          而且复现不了。这是本阶段最不能省的一行。
+    */
     uint64_t op = flags & DMA_BUF_SYNC_RW;
     uint64_t phase = flags & DMA_BUF_SYNC_END;
 
     if (phase == DMA_BUF_SYNC_START && (op & DMA_BUF_SYNC_READ))
-        dma_buf_sync_region(buf, 0, buf->bytes, false /*invalidate*/);
+        dma_buf_sync_region(buf, 0, buf->bytes, false /* invalidate */);
     else if (phase == DMA_BUF_SYNC_END && (op & DMA_BUF_SYNC_WRITE))
-        dma_buf_sync_region(buf, 0, buf->bytes, true /*clean*/);
+        dma_buf_sync_region(buf, 0, buf->bytes, true /* clean */);
 
-    KLOG_DEBUG("[dma_buf] sync idx=%u flags=0x%llx (op=%llu phase=%llu)\n", idx,
-               (unsigned long long)flags, (unsigned long long)op,
-               (unsigned long long)phase);
+    KLOG_DEBUG("[dma_buf] sync idx=%u flags=0x%llx (op=%llu phase=%llu)\n", idx, (unsigned long long)flags,
+               (unsigned long long)op, (unsigned long long)phase);
     return 0;
 }
 
@@ -268,7 +266,7 @@ int dma_buf_alloc_fd_current(dma_buf_t *buf)
     if (fd < 0)
         return -1;
 
-    /* fd 自己持有一份引用；fd 关闭时（fd_obj_close）还回来。 */
+    /* fd 自己持有一份引用；fd 关闭时(fd_obj_close)还回来。 */
     dma_buf_get(buf);
     return fd;
 }

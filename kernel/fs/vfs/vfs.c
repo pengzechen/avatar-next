@@ -1,6 +1,6 @@
 /*
- * kernel/fs/vfs/vfs.c - small VFS dispatch layer
- */
+   kernel/fs/vfs/vfs.c - small VFS dispatch layer
+*/
 
 #include "vfs.h"
 #include "pseudofs.h"
@@ -11,9 +11,9 @@
 #include "syscall/net/ksocket.h"
 #include "kmalloc.h"
 #include "string.h"
-#include <ext4.h> /* ext4_readlink（ext4_errno.h 由它带入） */
+#include <ext4.h> /* ext4_readlink(ext4_errno.h 由它带入) */
 #include <ext4_errno.h>
-/* 跨多次 lwext4 调用的临界区（目录迭代）；单次调用那层由 --wrap 自动加 */
+/* 跨多次 lwext4 调用的临界区(目录迭代)；单次调用那层由 --wrap 自动加 */
 #include "../../../fs/lwext4_port/fs_lock.h"
 
 #define VFS_ENOENT  2
@@ -32,8 +32,9 @@
 #define O_TRUNC_AVATAR     0001000
 #define O_APPEND_AVATAR    0002000
 #define O_DIRECTORY_AVATAR 0200000
-/* O_NONBLOCK 由 fcntl(F_SETFL) 存进 fd_obj/vfs_file 的 flags（见
- * syscall/fs/file_ops.c）。管道读写要**读**这个位，否则非阻塞语义不成立。 */
+/* O_NONBLOCK 由 fcntl(F_SETFL) 存进 fd_obj/vfs_file 的 flags(见
+   syscall/fs/file_ops.c)。管道读写要读这个位, 否则非阻塞语义不成立。
+*/
 #define O_NONBLOCK_AVATAR 04000
 #define SEEK_SET_AVATAR   0
 #define SEEK_CUR_AVATAR   1
@@ -42,12 +43,9 @@
 typedef struct vfs_mount vfs_mount_t;
 
 typedef struct {
-    int (*open)(const vfs_mount_t *mnt, const char *path, int flags, int mode,
-                vfs_file_t **out);
-    int (*stat)(const vfs_mount_t *mnt, const char *path,
-                struct kernel_stat *st);
-    int (*readlink)(const vfs_mount_t *mnt, const char *path, char *buf,
-                    size_t bufsz);
+    int (*open)(const vfs_mount_t *mnt, const char *path, int flags, int mode, vfs_file_t **out);
+    int (*stat)(const vfs_mount_t *mnt, const char *path, struct kernel_stat *st);
+    int (*readlink)(const vfs_mount_t *mnt, const char *path, char *buf, size_t bufsz);
 } vfs_mount_ops_t;
 
 struct vfs_mount {
@@ -55,18 +53,12 @@ struct vfs_mount {
     const vfs_mount_ops_t *ops;
 };
 
-static int pseudo_mount_open(const vfs_mount_t *mnt, const char *path,
-                             int flags, int mode, vfs_file_t **out);
-static int pseudo_mount_stat(const vfs_mount_t *mnt, const char *path,
-                             struct kernel_stat *st);
-static int pseudo_mount_readlink(const vfs_mount_t *mnt, const char *path,
-                                 char *buf, size_t bufsz);
-static int ext4_mount_open(const vfs_mount_t *mnt, const char *path, int flags,
-                           int mode, vfs_file_t **out);
-static int ext4_mount_stat(const vfs_mount_t *mnt, const char *path,
-                           struct kernel_stat *st);
-static int ext4_mount_readlink(const vfs_mount_t *mnt, const char *path,
-                               char *buf, size_t bufsz);
+static int pseudo_mount_open(const vfs_mount_t *mnt, const char *path, int flags, int mode, vfs_file_t **out);
+static int pseudo_mount_stat(const vfs_mount_t *mnt, const char *path, struct kernel_stat *st);
+static int pseudo_mount_readlink(const vfs_mount_t *mnt, const char *path, char *buf, size_t bufsz);
+static int ext4_mount_open(const vfs_mount_t *mnt, const char *path, int flags, int mode, vfs_file_t **out);
+static int ext4_mount_stat(const vfs_mount_t *mnt, const char *path, struct kernel_stat *st);
+static int ext4_mount_readlink(const vfs_mount_t *mnt, const char *path, char *buf, size_t bufsz);
 
 static const vfs_mount_ops_t pseudo_mount_ops = {
     .open = pseudo_mount_open,
@@ -192,8 +184,7 @@ static int pseudo_file_getdents(vfs_file_t *file, void *buf, size_t bufsz)
     return pseudo_getdents(file->u.pseudo.node_id, &file->offset, buf, bufsz);
 }
 
-static int pseudo_file_seek(vfs_file_t *file, int64_t offset, int whence,
-                            uint64_t *new_off)
+static int pseudo_file_seek(vfs_file_t *file, int64_t offset, int whence, uint64_t *new_off)
 {
     if (!new_off)
         return -VFS_EINVAL;
@@ -247,8 +238,7 @@ static int ext4_file_write(vfs_file_t *file, const void *buf, size_t len)
         uint64_t target = (uint64_t)pos;
         uint64_t gap = target - size;
 
-        if (ext4_fseek(&file->u.ext4_file, (int64_t)size, SEEK_SET_AVATAR) !=
-            EOK)
+        if (ext4_fseek(&file->u.ext4_file, (int64_t)size, SEEK_SET_AVATAR) != EOK)
             return -VFS_EIO;
 
         while (gap > 0) {
@@ -260,8 +250,7 @@ static int ext4_file_write(vfs_file_t *file, const void *buf, size_t len)
             gap -= chunk;
         }
 
-        if (ext4_fseek(&file->u.ext4_file, (int64_t)target, SEEK_SET_AVATAR) !=
-            EOK)
+        if (ext4_fseek(&file->u.ext4_file, (int64_t)target, SEEK_SET_AVATAR) != EOK)
             return -VFS_EIO;
     }
 
@@ -275,8 +264,7 @@ static int ext4_file_write(vfs_file_t *file, const void *buf, size_t len)
     return -VFS_EIO;
 }
 
-static int ext4_file_seek(vfs_file_t *file, int64_t offset, int whence,
-                          uint64_t *new_off)
+static int ext4_file_seek(vfs_file_t *file, int64_t offset, int whence, uint64_t *new_off)
 {
     if (!new_off)
         return -VFS_EINVAL;
@@ -325,11 +313,11 @@ static int ext4_dir_getdents(vfs_file_t *file, void *buf, size_t bufsz)
     char *dst = (char *)buf;
 
     /*
-     * 整个迭代圈进一个临界区：ext4_dir_entry_next 把条目拷进 ext4_dir
-     * （内联在本对象里）并返回它的地址，循环里要一直拿着它用。只靠 --wrap
-     * 那层"每次调用"的锁不够 —— 两次调用之间另一个核可以对同一个目录对象
-     * 做操作。锁是可重入的，里面的 __wrap_* 照常嵌套。
-     */
+       整个迭代圈进一个临界区：ext4_dir_entry_next 把条目拷进 ext4_dir
+       (内联在本对象里)并返回它的地址, 循环里要一直拿着它用。只靠 --wrap
+       那层"每次调用"的锁不够 —— 两次调用之间另一个核可以对同一个目录对象
+       做操作。锁是可重入的, 里面的 __wrap_* 照常嵌套。
+    */
     fs_lwext4_lock();
 
     while (written + 32 < bufsz) {
@@ -385,16 +373,14 @@ static int pipe_file_read(vfs_file_t *file, void *buf, size_t len)
 {
     if (file->u.pipe.is_write_end)
         return -VFS_EBADF;
-    return pipe_read_endpoint(file->u.pipe.pipe_idx, buf, len,
-                              (file->flags & O_NONBLOCK_AVATAR) != 0);
+    return pipe_read_endpoint(file->u.pipe.pipe_idx, buf, len, (file->flags & O_NONBLOCK_AVATAR) != 0);
 }
 
 static int pipe_file_write(vfs_file_t *file, const void *buf, size_t len)
 {
     if (!file->u.pipe.is_write_end)
         return -VFS_EBADF;
-    return pipe_write_endpoint(file->u.pipe.pipe_idx, buf, len,
-                               (file->flags & O_NONBLOCK_AVATAR) != 0);
+    return pipe_write_endpoint(file->u.pipe.pipe_idx, buf, len, (file->flags & O_NONBLOCK_AVATAR) != 0);
 }
 
 static int pipe_file_close(vfs_file_t *file)
@@ -435,21 +421,17 @@ static int pty_file_write(vfs_file_t *file, const void *buf, size_t len)
 
 static int pty_file_ioctl(vfs_file_t *file, uint64_t req, void *argp)
 {
-    return pty_ioctl(file->u.pty.pty_idx, file->u.pty.is_master, (uint32_t)req,
-                     argp);
+    return pty_ioctl(file->u.pty.pty_idx, file->u.pty.is_master, (uint32_t)req, argp);
 }
 
 static int pty_file_stat(vfs_file_t *file, struct kernel_stat *st)
 {
     memset(st, 0, sizeof(*st));
     st->st_dev = 5;
-    st->st_ino =
-        file->u.pty.is_master ? 128U : 256U + (uint32_t)file->u.pty.pty_idx;
+    st->st_ino = file->u.pty.is_master ? 128U : 256U + (uint32_t)file->u.pty.pty_idx;
     st->st_mode = 0020620;
     st->st_nlink = 1;
-    st->st_rdev = file->u.pty.is_master
-                      ? ((uint64_t)5 << 8) | 2
-                      : ((uint64_t)136 << 8) | (uint32_t)file->u.pty.pty_idx;
+    st->st_rdev = file->u.pty.is_master ? ((uint64_t)5 << 8) | 2 : ((uint64_t)136 << 8) | (uint32_t)file->u.pty.pty_idx;
     st->st_blksize = 4096;
     return 0;
 }
@@ -514,7 +496,7 @@ static const vfs_file_ops_t pseudo_ops = {
     .getdents = pseudo_file_getdents,
     .seek = pseudo_file_seek,
     .stat = pseudo_file_stat,
-    /* poll/close 只有少数节点（/dev/vmm）真正实现，其余走兜底（见 pseudo_poll）*/
+    /* poll/close 只有少数节点(/dev/vmm)真正实现, 其余走兜底(见 pseudo_poll) */
     .poll = pseudo_file_poll,
     .close = pseudo_file_close,
 };
@@ -557,8 +539,7 @@ static const vfs_file_ops_t socket_ops = {
     .close = socket_file_close,
 };
 
-static int pseudo_mount_open(const vfs_mount_t *mnt, const char *path,
-                             int flags, int mode, vfs_file_t **out)
+static int pseudo_mount_open(const vfs_mount_t *mnt, const char *path, int flags, int mode, vfs_file_t **out)
 {
     (void)mnt;
     (void)mode;
@@ -578,8 +559,7 @@ static int pseudo_mount_open(const vfs_mount_t *mnt, const char *path,
     return 0;
 }
 
-static int ext4_mount_open(const vfs_mount_t *mnt, const char *path, int flags,
-                           int mode, vfs_file_t **out)
+static int ext4_mount_open(const vfs_mount_t *mnt, const char *path, int flags, int mode, vfs_file_t **out)
 {
     (void)mnt;
     (void)mode;
@@ -605,8 +585,7 @@ static int ext4_mount_open(const vfs_mount_t *mnt, const char *path, int flags,
         return -VFS_EMFILE;
     if (ext4_dir_open(&dir->u.ext4_dir, path) == EOK) {
         uint32_t mode_bits = 0;
-        if (ext4_mode_get(path, &mode_bits) == EOK &&
-            (mode_bits & 0170000) != 0040000) {
+        if (ext4_mode_get(path, &mode_bits) == EOK && (mode_bits & 0170000) != 0040000) {
             ext4_dir_close(&dir->u.ext4_dir);
             kfree(dir);
             return -VFS_ENOTDIR;
@@ -642,8 +621,7 @@ int vfs_open(const char *path, int flags, int mode, vfs_file_t **out)
     return mnt->ops->open(mnt, path, flags, mode, out);
 }
 
-int vfs_create_pipe_file(int pipe_idx, bool is_write_end, int flags,
-                         vfs_file_t **out)
+int vfs_create_pipe_file(int pipe_idx, bool is_write_end, int flags, vfs_file_t **out)
 {
     if (!out)
         return -VFS_EINVAL;
@@ -660,8 +638,7 @@ int vfs_create_pipe_file(int pipe_idx, bool is_write_end, int flags,
     return 0;
 }
 
-int vfs_create_pty_file(int pty_idx, bool is_master, int flags,
-                        const char *path, vfs_file_t **out)
+int vfs_create_pty_file(int pty_idx, bool is_master, int flags, const char *path, vfs_file_t **out)
 {
     if (!out)
         return -VFS_EINVAL;
@@ -696,12 +673,12 @@ int vfs_create_socket_file(int sock_idx, int flags, vfs_file_t **out)
 }
 
 /*
- * refcnt 必须原子：fork / dup 之后同一个 vfs_file_t 会被多个任务同时持有，
- * 两边的 ref++ / ref-- 撞在一起就是丢更新 —— 计数偏小的一方会提前 kfree，
- * 另一方接着用的是已经还给 kmalloc 的对象（"文件内容看起来是乱码"这类
- * 症状）。用 sub_fetch 的返回值判断归零，顺带把"读 refcnt 再减"那个窗口
- * 去掉了。
- */
+   refcnt 必须原子：fork / dup 之后同一个 vfs_file_t 会被多个任务同时持有,
+   两边的 ref++ / ref-- 撞在一起就是丢更新 —— 计数偏小的一方会提前 kfree,
+   另一方接着用的是已经还给 kmalloc 的对象("文件内容看起来是乱码"这类
+   症状)。用 sub_fetch 的返回值判断归零, 顺带把"读 refcnt 再减"那个窗口
+   去掉了。
+*/
 void vfs_ref(vfs_file_t *file)
 {
     if (file)
@@ -785,8 +762,7 @@ int vfs_pread(vfs_file_t *file, void *buf, size_t len, int64_t offset)
     if (offset < 0)
         return -VFS_EINVAL;
     int64_t saved = ext4_ftell(&file->u.ext4_file);
-    if (saved < 0 ||
-        ext4_fseek(&file->u.ext4_file, offset, SEEK_SET_AVATAR) != EOK)
+    if (saved < 0 || ext4_fseek(&file->u.ext4_file, offset, SEEK_SET_AVATAR) != EOK)
         return -VFS_EIO;
     size_t rcnt = 0;
     int rc = ext4_fread(&file->u.ext4_file, buf, len, &rcnt);
@@ -801,8 +777,7 @@ int vfs_pwrite(vfs_file_t *file, const void *buf, size_t len, int64_t offset)
     if (offset < 0)
         return -VFS_EINVAL;
     int64_t saved = ext4_ftell(&file->u.ext4_file);
-    if (saved < 0 ||
-        ext4_fseek(&file->u.ext4_file, offset, SEEK_SET_AVATAR) != EOK)
+    if (saved < 0 || ext4_fseek(&file->u.ext4_file, offset, SEEK_SET_AVATAR) != EOK)
         return -VFS_EIO;
     size_t wcnt = 0;
     int rc = ext4_fwrite(&file->u.ext4_file, buf, len, &wcnt);
@@ -826,14 +801,12 @@ int vfs_socket_index(vfs_file_t *file)
 
 bool vfs_file_matches_socket(vfs_file_t *file, int sock_idx)
 {
-    return file && file->kind == VFS_FILE_SOCKET &&
-           file->u.sock.sock_idx == sock_idx;
+    return file && file->kind == VFS_FILE_SOCKET && file->u.sock.sock_idx == sock_idx;
 }
 
 bool vfs_file_matches_pty(vfs_file_t *file, int pty_idx, bool is_master)
 {
-    return file && file->kind == VFS_FILE_PTY &&
-           file->u.pty.pty_idx == pty_idx && file->u.pty.is_master == is_master;
+    return file && file->kind == VFS_FILE_PTY && file->u.pty.pty_idx == pty_idx && file->u.pty.is_master == is_master;
 }
 
 int vfs_proc_fd_target(vfs_file_t *file, char *buf, size_t bufsz)
@@ -894,15 +867,13 @@ int vfs_read_to_phys(vfs_file_t *file, uint64_t offset, void *buf, size_t len)
     return rc == EOK ? (int)got : -VFS_EIO;
 }
 
-static int pseudo_mount_stat(const vfs_mount_t *mnt, const char *path,
-                             struct kernel_stat *st)
+static int pseudo_mount_stat(const vfs_mount_t *mnt, const char *path, struct kernel_stat *st)
 {
     (void)mnt;
     return pseudo_stat_path(path, st);
 }
 
-static int ext4_mount_stat(const vfs_mount_t *mnt, const char *path,
-                           struct kernel_stat *st)
+static int ext4_mount_stat(const vfs_mount_t *mnt, const char *path, struct kernel_stat *st)
 {
     (void)mnt;
     return fill_stat_from_ext4(st, path);
@@ -919,27 +890,25 @@ int vfs_stat_path(const char *path, struct kernel_stat *st)
     return mnt->ops->stat(mnt, path, st);
 }
 
-static int pseudo_mount_readlink(const vfs_mount_t *mnt, const char *path,
-                                 char *buf, size_t bufsz)
+static int pseudo_mount_readlink(const vfs_mount_t *mnt, const char *path, char *buf, size_t bufsz)
 {
     (void)mnt;
     return pseudo_readlink(path, buf, bufsz);
 }
 
 /*
- * ext4 的 readlink。原先是 `return -VFS_ENOENT;` 的桩，于是根文件系统上
- * 任何 readlink 都失败 —— 症状是 `ls` 能列目录（只读目录项），而
- * `ls -l` / `ls -ls` 报 "cannot read link: No such file or directory"
- * （长格式要 readlink 才能显示 `linuxrc -> xxx`）。
- *
- * 实现在 lwext4 里是现成的，path.c 的 follow_symlinks() 一直在用，
- * 只是没接到 VFS 这一层。注意 ext4_readlink() 内部以 EXT4_DE_SYMLINK
- * 打开，**不会跟随**最后一级链接 —— 这正是 readlink 要的语义。
- *
- * 返回值：成功时是写入 buf 的字节数（>0），失败时是负 errno。
- */
-static int ext4_mount_readlink(const vfs_mount_t *mnt, const char *path,
-                               char *buf, size_t bufsz)
+   ext4 的 readlink。原先是 `return -VFS_ENOENT;` 的桩, 于是根文件系统上
+   任何 readlink 都失败 —— 症状是 `ls` 能列目录(只读目录项), 而
+   `ls -l` / `ls -ls` 报 "cannot read link: No such file or directory"
+   (长格式要 readlink 才能显示 `linuxrc -> xxx`)。
+
+   实现在 lwext4 里是现成的, path.c 的 follow_symlinks() 一直在用,
+   只是没接到 VFS 这一层。注意 ext4_readlink() 内部以 EXT4_DE_SYMLINK
+   打开, 不会跟随最后一级链接 —— 这正是 readlink 要的语义。
+
+   返回值：成功时是写入 buf 的字节数(>0), 失败时是负 errno。
+*/
+static int ext4_mount_readlink(const vfs_mount_t *mnt, const char *path, char *buf, size_t bufsz)
 {
     (void)mnt;
 

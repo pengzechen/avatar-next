@@ -1,8 +1,8 @@
 /*
- * fs/dir.c - getcwd / chdir / renameat / unlinkat
- *
- * 由 kernel/syscall/syscall.c 拆出。
- */
+   fs/dir.c - getcwd / chdir / renameat / unlinkat
+
+   由 kernel/syscall/syscall.c 拆出。
+*/
 #include "syscall/syscall_internal.h"
 #include "syscall/fs/path.h"
 #include "task/task.h"
@@ -83,15 +83,13 @@ void renameat_handler(uint64_t regs[6], task_t *current)
     char oldabs[128];
     char newabs[128];
 
-    int ro =
-        resolve_path_at(current, olddirfd, oldpath, oldabs, sizeof(oldabs));
+    int ro = resolve_path_at(current, olddirfd, oldpath, oldabs, sizeof(oldabs));
     if (ro < 0) {
         regs[0] = (uint64_t)(int64_t)ro;
         return;
     }
 
-    int rn =
-        resolve_path_at(current, newdirfd, newpath, newabs, sizeof(newabs));
+    int rn = resolve_path_at(current, newdirfd, newpath, newabs, sizeof(newabs));
     if (rn < 0) {
         regs[0] = (uint64_t)(int64_t)rn;
         return;
@@ -122,8 +120,7 @@ void unlinkat_handler(uint64_t regs[6], task_t *current)
     }
 
     char abspath[128];
-    int rpa =
-        resolve_path_at(current, dirfd, pathname, abspath, sizeof(abspath));
+    int rpa = resolve_path_at(current, dirfd, pathname, abspath, sizeof(abspath));
     if (rpa < 0) {
         regs[0] = (uint64_t)(int64_t)rpa;
         return;

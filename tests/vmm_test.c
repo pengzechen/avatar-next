@@ -1,39 +1,39 @@
 /*
- * tests/vmm_test.c — 三架构 VMM 三线程并发测试
- *
- * 测试目标：验证 VMM（虚拟机监控器）能正确创建并调度三类并发线程：
- *   Thread 1: 宿主内核监控循环（EL2 / HS-mode / VMX root）
- *   Thread 2: vCPU guest 线程（EL1 guest / VS-mode / VMX non-root）
- *   Thread 3: 普通用户进程（EL0 / U-mode / Ring3）
- *
- * ── 前置条件（调用 run_vmm_test 前必须已完成初始化）────────────────
- *
- *   [所有架构]
- *     pmm_initialize()          物理内存管理器
- *     task_init()               任务子系统 + idle 任务
- *     timer_init() + enable     定时器（调度 tick 依赖）
- *
- *   [AArch64]
- *     irq_init()                GICv2 中断控制器
- *     aarch64_enable_neon()     EL0 FP/SIMD（musl/busybox 需要）
- *     exception 由 boot.S 设置  向量表已在 boot 阶段装载
- *
- *   [RISC-V64]
- *     exception_init()          stvec 异常向量（必须在 fs_init 之前）
- *
- *   [x86_64]
- *     exception_init()          IDT
- *     x86_tss_init()            TSS（特权级切换）
- *
- * ── 调用方式（在 task_init 之后、timer_set_tick_cb 之前调用）────────
- *
- *   run_vmm_test();
- *
- * ── 注意事项 ──────────────────────────────────────────────────────
- *   - 本测试创建的任务在 task_yield 循环中永久运行，不会自动退出
- *   - RISC-V Thread 2（VS-mode）默认启用，如需调试可将 #if 1 改为 #if 0
- *   - x86_64 VMX 需要 QEMU 开启 `-cpu host,+vmx` 或 `-cpu qemu64,+vmx`
- */
+   tests/vmm_test.c — 三架构 VMM 三线程并发测试
+
+   测试目标：验证 VMM(虚拟机监控器)能正确创建并调度三类并发线程：
+     Thread 1: 宿主内核监控循环(EL2 / HS-mode / VMX root)
+     Thread 2: vCPU guest 线程(EL1 guest / VS-mode / VMX non-root)
+     Thread 3: 普通用户进程(EL0 / U-mode / Ring3)
+
+   ── 前置条件(调用 run_vmm_test 前必须已完成初始化)────────────────
+
+     [所有架构]
+       pmm_initialize()          物理内存管理器
+       task_init()               任务子系统 + idle 任务
+       timer_init() + enable     定时器(调度 tick 依赖)
+
+     [AArch64]
+       irq_init()                GICv2 中断控制器
+       aarch64_enable_neon()     EL0 FP/SIMD(musl/busybox 需要)
+       exception 由 boot.S 设置  向量表已在 boot 阶段装载
+
+     [RISC-V64]
+       exception_init()          stvec 异常向量(必须在 fs_init 之前)
+
+     [x86_64]
+       exception_init()          IDT
+       x86_tss_init()            TSS(特权级切换)
+
+   ── 调用方式(在 task_init 之后, timer_set_tick_cb 之前调用)────────
+
+     run_vmm_test();
+
+   ── 注意事项 ──────────────────────────────────────────────────────
+     - 本测试创建的任务在 task_yield 循环中永久运行, 不会自动退出
+     - RISC-V Thread 2(VS-mode)默认启用, 如需调试可将 #if 1 改为 #if 0
+     - x86_64 VMX 需要 QEMU 开启 `-cpu host,+vmx` 或 `-cpu qemu64,+vmx`
+*/
 
 #include "arch.h"
 #include "klog.h"
@@ -43,9 +43,9 @@
 #if ARCH_AARCH64
 #include "aarch64/stage2.h"
 #include "mm_vm.h"
-#include "guest_loader.h" /* guest_loader_write_guest：按需分页下把 guest 代码写进去 */
+#include "guest_loader.h"           /* guest_loader_write_guest：按需分页下把 guest 代码写进去 */
 extern void guest_test_entry(void); /* apps/aarch64/guest_test.S */
-extern void el0_loop_program(void); /* apps/aarch64/el0_loop.S   */
+extern void el0_loop_program(void); /* apps/aarch64/el0_loop.S */
 
 static vm_t g_test_vm;
 
@@ -55,8 +55,9 @@ static void el2_loop_thread(void *arg)
     uint32_t n = 0;
     while (1) {
         n++;
-        /* 这行是 test-vmm 在 LOG=info 下的通过证据，必须留 INFO；改用公共
-         * 采样器抽稀（原来的 n % 20 仍随运行时长无界增长）。 */
+        /* 这行是 test-vmm 在 LOG=info 下的通过证据, 必须留 INFO；改用公共
+           采样器抽稀(原来的 n % 20 仍随运行时长无界增长)。
+        */
         KLOG_INFO_SAMPLE("[el2_loop] tick=%u (EL2 kernel)\n", n);
         task_yield();
     }
@@ -65,7 +66,7 @@ static void el2_loop_thread(void *arg)
 
 #if ARCH_RISCV64
 extern void rv_guest_test_entry(void); /* apps/riscv64/guest_test.S */
-extern void user_test_program(void);   /* apps/riscv64/user_test.S  */
+extern void user_test_program(void);   /* apps/riscv64/user_test.S */
 extern int hext_vcpu_setup(vcpu_t *vcpu, void (*entry)(void));
 
 static vm_t g_rv_vm;
@@ -84,7 +85,7 @@ static void rv_host_loop(void *arg)
 
 #if ARCH_X86_64
 extern void x86_guest_test_entry(void); /* apps/x86_64/guest_test.S */
-extern void user_test_program(void);    /* apps/x86_64/user_test.S  */
+extern void user_test_program(void);    /* apps/x86_64/user_test.S */
 extern int vmx_vcpu_setup(vcpu_t *vcpu, void (*entry)(void));
 
 static vm_t g_x86_vm;
@@ -106,10 +107,11 @@ void run_vmm_test(void)
 {
 #if ARCH_AARCH64
     /* ── AArch64 VHE VMM 三线程测试 ────────────────────────────────
-     *   Thread 1: el2_loop   — EL2 host 内核监控循环
-     *   Thread 2: vcpu0      — EL1 guest 无限循环（通过 stage2 隔离）
-     *   Thread 3: el0_loop   — EL0 用户态无限 svc 循环
-     * ─────────────────────────────────────────────────────────────── */
+         Thread 1: el2_loop   — EL2 host 内核监控循环
+         Thread 2: vcpu0      — EL1 guest 无限循环(通过 stage2 隔离)
+         Thread 3: el0_loop   — EL0 用户态无限 svc 循环
+       ───────────────────────────────────────────────────────────────
+    */
     KLOG_INFO("\n=== Avatar OS: AArch64 VHE VMM Test ===\n");
 
     /* Thread 1: EL2 kernel loop */
@@ -120,8 +122,7 @@ void run_vmm_test(void)
         KLOG_ERROR("Failed to create EL2 loop thread!\n");
 
     /* Thread 2: EL1 guest vCPU */
-    KLOG_INFO("guest_test_entry phys=0x%llx\n",
-              (uint64_t)virt_to_phys(guest_test_entry));
+    KLOG_INFO("guest_test_entry phys=0x%llx\n", (uint64_t)virt_to_phys(guest_test_entry));
 
     g_test_vm.cfg.mem_base = GUEST_RAM_BASE;
     g_test_vm.cfg.mem_size = GUEST_RAM_SIZE;
@@ -131,18 +132,16 @@ void run_vmm_test(void)
         uint64_t guest_ipa = virt_to_phys(guest_test_entry);
 
         /*
-         * 每 VM 一份 stage-2 之后，guest RAM 是**空表 + 按需分页**：
-         * vcpu 第一次取指只会得到一张新分配的、清零的宿主页，并不会
-         * 自动指向内核镜像里的 guest_test_entry。必须像生产 guest_loader
-         * 那样把程序逐页写进 guest 物理内存。
-         *
-         * 老实现是 identity map，IPA==PA，所以这一步是隐式的；改成
-         * 按需分页后漏掉它的症状是：guest 从一张全 0 的页取指 →
-         * 同步异常 → VBAR=0 的 0x200 向量 → 再取指 ipa=0 → VMM 退出。
-         */
-        if (guest_loader_write_guest(&g_test_vm, guest_ipa,
-                                     (const void *)guest_test_entry,
-                                     0x100) != 0) {
+           每 VM 一份 stage-2 之后, guest RAM 是空表 + 按需分页：
+           vcpu 第一次取指只会得到一张新分配的, 清零的宿主页, 并不会
+           自动指向内核镜像里的 guest_test_entry。必须像生产 guest_loader
+           那样把程序逐页写进 guest 物理内存。
+
+           老实现是 identity map, IPA==PA, 所以这一步是隐式的；改成
+           按需分页后漏掉它的症状是：guest 从一张全 0 的页取指 →
+           同步异常 → VBAR=0 的 0x200 向量 → 再取指 ipa=0 → VMM 退出。
+        */
+        if (guest_loader_write_guest(&g_test_vm, guest_ipa, (const void *)guest_test_entry, 0x100) != 0) {
             KLOG_ERROR("failed to copy guest_test_entry into guest RAM\n");
             vm_free(&g_test_vm);
             return;
@@ -154,8 +153,7 @@ void run_vmm_test(void)
 
         task_t *vt = vcpu_task_create(vcpu, 5);
         if (vt)
-            KLOG_INFO("Thread 2 [EL1 guest/vcpu]: id=%u entry=0x%llx\n", vt->id,
-                      vcpu->elr);
+            KLOG_INFO("Thread 2 [EL1 guest/vcpu]: id=%u entry=0x%llx\n", vt->id, vcpu->elr);
         else
             KLOG_ERROR("vcpu_task_create failed!\n");
     } else {
@@ -164,21 +162,20 @@ void run_vmm_test(void)
 
     /* Thread 3: EL0 user process */
     task_t *el0_task =
-        process_create("el0_loop", (uint64_t)el0_loop_program,
-                       0x4000, /* 16KB，覆盖 el0_loop_program 代码 */
+        process_create("el0_loop", (uint64_t)el0_loop_program, 0x4000, /* 16KB, 覆盖 el0_loop_program 代码 */
                        0x200000, 5);
     if (el0_task)
-        KLOG_INFO("Thread 3 [EL0 user]:       id=%u entry=0x%llx\n",
-                  el0_task->id, (uint64_t)el0_loop_program);
+        KLOG_INFO("Thread 3 [EL0 user]:       id=%u entry=0x%llx\n", el0_task->id, (uint64_t)el0_loop_program);
     else
         KLOG_ERROR("Failed to create EL0 user thread!\n");
 
 #elif ARCH_RISCV64
     /* ── RISC-V H-ext VMM 三线程测试 ───────────────────────────────
-     *   Thread 1: rv_host   — HS-mode 内核监控循环
-     *   Thread 2: vcpu0     — VS-mode guest（WFI + ecall 循环）
-     *   Thread 3: u_loop    — U-mode 用户进程
-     * ─────────────────────────────────────────────────────────────── */
+         Thread 1: rv_host   — HS-mode 内核监控循环
+         Thread 2: vcpu0     — VS-mode guest(WFI + ecall 循环)
+         Thread 3: u_loop    — U-mode 用户进程
+       ───────────────────────────────────────────────────────────────
+    */
     KLOG_INFO("\n=== Avatar OS: RISC-V H-ext VMM Test ===\n");
 
     /* Thread 1: HS-mode kernel loop */
@@ -188,18 +185,17 @@ void run_vmm_test(void)
     else
         KLOG_ERROR("Failed to create rv_host_loop thread!\n");
 
-    /* Thread 2: VS-mode guest vCPU（调试时可将 #if 1 改为 #if 0 禁用）*/
+    /* Thread 2: VS-mode guest vCPU(调试时可将 #if 1 改为 #if 0 禁用) */
 #if 1
     g_rv_vm.cfg.mem_base = 0;
-    g_rv_vm.cfg.mem_size = 0; /* 无 hgatp，guest 共享 host 地址空间 */
+    g_rv_vm.cfg.mem_size = 0; /* 无 hgatp, guest 共享 host 地址空间 */
     g_rv_vm.cfg.nr_vcpus = 1;
     if (vm_create(&g_rv_vm) == 0) {
         vcpu_t *vcpu = &g_rv_vm.vcpus[0];
         if (hext_vcpu_setup(vcpu, rv_guest_test_entry) == 0) {
             task_t *vcpu_task = vcpu_task_create(vcpu, 5);
             if (vcpu_task)
-                KLOG_INFO("Thread 2 [VS-mode]:   id=%u entry=%p\n",
-                          vcpu_task->id, (void *)rv_guest_test_entry);
+                KLOG_INFO("Thread 2 [VS-mode]:   id=%u entry=%p\n", vcpu_task->id, (void *)rv_guest_test_entry);
             else
                 KLOG_ERROR("Failed to create vCPU task!\n");
         } else {
@@ -212,21 +208,20 @@ void run_vmm_test(void)
 
     /* Thread 3: U-mode user process */
     task_t *u_task_rv =
-        process_create("u_loop", (uint64_t)user_test_program,
-                       0x4000, /* 16KB，覆盖 user_test_program 代码 */
+        process_create("u_loop", (uint64_t)user_test_program, 0x4000, /* 16KB, 覆盖 user_test_program 代码 */
                        0x200000, 5);
     if (u_task_rv)
-        KLOG_INFO("Thread 3 [U-mode]:    id=%u entry=%p\n", u_task_rv->id,
-                  (void *)user_test_program);
+        KLOG_INFO("Thread 3 [U-mode]:    id=%u entry=%p\n", u_task_rv->id, (void *)user_test_program);
     else
         KLOG_ERROR("Failed to create user loop thread!\n");
 
 #elif ARCH_X86_64
     /* ── x86_64 VMX VMM 三线程测试 ─────────────────────────────────
-     *   Thread 1: x86_host  — VMX root 内核无限循环
-     *   Thread 2: vcpu0     — VMX non-root guest（HLT + VMCALL）
-     *   Thread 3: u_loop    — Ring3 用户进程
-     * ─────────────────────────────────────────────────────────────── */
+         Thread 1: x86_host  — VMX root 内核无限循环
+         Thread 2: vcpu0     — VMX non-root guest(HLT + VMCALL)
+         Thread 3: u_loop    — Ring3 用户进程
+       ───────────────────────────────────────────────────────────────
+    */
     KLOG_INFO("\n=== Avatar OS: x86_64 VMX VMM Test ===\n");
 
     /* Thread 1: VMX root kernel loop */
@@ -245,8 +240,7 @@ void run_vmm_test(void)
         if (vmx_vcpu_setup(vcpu, x86_guest_test_entry) == 0) {
             task_t *vcpu_task = vcpu_task_create(vcpu, 5);
             if (vcpu_task)
-                KLOG_INFO("Thread 2 [VMX guest]: id=%u entry=%p\n",
-                          vcpu_task->id, (void *)x86_guest_test_entry);
+                KLOG_INFO("Thread 2 [VMX guest]: id=%u entry=%p\n", vcpu_task->id, (void *)x86_guest_test_entry);
             else
                 KLOG_ERROR("Failed to create vCPU task!\n");
         } else {
@@ -258,12 +252,10 @@ void run_vmm_test(void)
 
     /* Thread 3: Ring3 user process */
     task_t *u_task =
-        process_create("u_loop", (uint64_t)user_test_program,
-                       0x4000, /* 16KB，覆盖 user_test_program 代码 */
+        process_create("u_loop", (uint64_t)user_test_program, 0x4000, /* 16KB, 覆盖 user_test_program 代码 */
                        0x200000, 5);
     if (u_task)
-        KLOG_INFO("Thread 3 [user]:      id=%u entry=%p\n", u_task->id,
-                  (void *)user_test_program);
+        KLOG_INFO("Thread 3 [user]:      id=%u entry=%p\n", u_task->id, (void *)user_test_program);
     else
         KLOG_ERROR("Failed to create user loop thread!\n");
 

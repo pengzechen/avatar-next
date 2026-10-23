@@ -1,12 +1,12 @@
 /*
- * mm/brk.c - sys_brk 实现
- *
- * 从 kernel/syscall/syscall.c 抽出。语义同 Linux brk(2)：
- *   addr == 0 -> 查询当前堆末尾
- *   addr <  current_brk -> 收缩
- *   addr >  current_brk -> 按页扩展（分配并清零物理页）
- * 失败返回 current_brk（旧值）。
- */
+   mm/brk.c - sys_brk 实现
+
+   从 kernel/syscall/syscall.c 抽出。语义同 Linux brk(2)：
+     addr == 0 -> 查询当前堆末尾
+     addr <  current_brk -> 收缩
+     addr >  current_brk -> 按页扩展(分配并清零物理页)
+   失败返回 current_brk(旧值)。
+*/
 #include "syscall/syscall.h"
 #include "syscall/syscall_internal.h"
 #include "klog.h"
@@ -26,8 +26,7 @@ static uint64_t shared_heap_end(task_t *current)
 
     for (uint32_t i = 0; i < TASK_MAX; i++) {
         task_t *task = &g_task_pool[i];
-        if (!g_stack_used[i] || !task->is_user_process ||
-            task->state == TASK_DEAD)
+        if (!g_stack_used[i] || !task->is_user_process || task->state == TASK_DEAD)
             continue;
         if (task->pgd == current->pgd && task->heap_end > heap_end)
             heap_end = task->heap_end;
@@ -40,8 +39,7 @@ static void sync_shared_heap_end(task_t *current, uint64_t heap_end)
 {
     for (uint32_t i = 0; i < TASK_MAX; i++) {
         task_t *task = &g_task_pool[i];
-        if (!g_stack_used[i] || !task->is_user_process ||
-            task->state == TASK_DEAD)
+        if (!g_stack_used[i] || !task->is_user_process || task->state == TASK_DEAD)
             continue;
         if (task->pgd == current->pgd)
             task->heap_end = heap_end;
@@ -78,8 +76,7 @@ void *sys_brk(void *addr)
         uint64_t old_page_end = ALIGN_UP(current_brk, PAGE_SIZE);
         uint64_t new_page_end = ALIGN_UP(new_brk, PAGE_SIZE);
         if (new_page_end < old_page_end)
-            vm_unmap_user_range((uint64_t)current->pgd, new_page_end,
-                                old_page_end - new_page_end);
+            vm_unmap_user_range((uint64_t)current->pgd, new_page_end, old_page_end - new_page_end);
         sync_shared_heap_end(current, new_brk);
         if (g_syscall_entry_count <= 16) {
             KLOG_SYSCALL("[brk] shrink/no-grow -> 0x%llx\n", new_brk);
@@ -107,7 +104,7 @@ void *sys_brk(void *addr)
         }
     }
 #elif ARCH_X86_64
-    /* x86_64：扩展堆，使用 g_pmm */
+    /* x86_64：扩展堆, 使用 g_pmm */
     {
         uint64_t old_page_end = ALIGN_UP(current_brk, PAGE_SIZE);
         uint64_t new_page_end = ALIGN_UP(new_brk, PAGE_SIZE);
@@ -138,8 +135,8 @@ void *sys_brk(void *addr)
 void *sys_sbrk(int64_t increment)
 {
     /* 简单实现：维护一个简单的堆指针
-     * TODO: 实现真正的堆管理器
-     */
+       TODO: 实现真正的堆管理器
+    */
     static uint64_t heap_end = 0x50000000;
     void *old_brk = (void *)heap_end;
 

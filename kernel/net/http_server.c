@@ -19,51 +19,50 @@ static int snfmt(char *buf, int size, const char *fmt, ...)
     return n;
 }
 
-static const char INDEX_HTML[] =
-    "<!DOCTYPE html><html><head>"
-    "<meta charset=\"utf-8\">"
-    "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
-    "<title>Avatar OS</title>"
-    "<style>"
-    "*{margin:0;padding:0;box-sizing:border-box}"
-    "body{background:#0a0a0a;color:#e0e0e0;font-family:'Courier New',monospace;"
-    "display:flex;justify-content:center;align-items:center;min-height:100vh}"
-    ".c{text-align:center;padding:2em}"
-    "h1{font-size:3em;color:#00ff88;text-shadow:0 0 20px #00ff8844;margin-bottom:.2em}"
-    ".sub{color:#888;font-size:1.1em;margin-bottom:2em}"
-    ".box{background:#141414;border:1px solid #333;border-radius:12px;"
-    "padding:2em;max-width:480px;margin:0 auto}"
-    ".row{display:flex;justify-content:space-between;padding:.5em 0;"
-    "border-bottom:1px solid #222}"
-    ".row:last-child{border:none}"
-    ".k{color:#888}.v{color:#00cc66}"
-    ".foot{margin-top:2em;color:#555;font-size:.85em}"
-    "</style></head><body>"
-    "<div class=\"c\">"
-    "<h1>&gt;_ Avatar OS</h1>"
-    "<p class=\"sub\">A 64-bit Operating System Kernel</p>"
-    "<div class=\"box\">"
-    "<div class=\"row\"><span class=\"k\">Status</span>"
-    "<span class=\"v\">Running</span></div>"
-    "<div class=\"row\"><span class=\"k\">Architecture</span>"
+static const char INDEX_HTML[] = "<!DOCTYPE html><html><head>"
+                                 "<meta charset=\"utf-8\">"
+                                 "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+                                 "<title>Avatar OS</title>"
+                                 "<style>"
+                                 "*{margin:0;padding:0;box-sizing:border-box}"
+                                 "body{background:#0a0a0a;color:#e0e0e0;font-family:'Courier New',monospace;"
+                                 "display:flex;justify-content:center;align-items:center;min-height:100vh}"
+                                 ".c{text-align:center;padding:2em}"
+                                 "h1{font-size:3em;color:#00ff88;text-shadow:0 0 20px #00ff8844;margin-bottom:.2em}"
+                                 ".sub{color:#888;font-size:1.1em;margin-bottom:2em}"
+                                 ".box{background:#141414;border:1px solid #333;border-radius:12px;"
+                                 "padding:2em;max-width:480px;margin:0 auto}"
+                                 ".row{display:flex;justify-content:space-between;padding:.5em 0;"
+                                 "border-bottom:1px solid #222}"
+                                 ".row:last-child{border:none}"
+                                 ".k{color:#888}.v{color:#00cc66}"
+                                 ".foot{margin-top:2em;color:#555;font-size:.85em}"
+                                 "</style></head><body>"
+                                 "<div class=\"c\">"
+                                 "<h1>&gt;_ Avatar OS</h1>"
+                                 "<p class=\"sub\">A 64-bit Operating System Kernel</p>"
+                                 "<div class=\"box\">"
+                                 "<div class=\"row\"><span class=\"k\">Status</span>"
+                                 "<span class=\"v\">Running</span></div>"
+                                 "<div class=\"row\"><span class=\"k\">Architecture</span>"
 #if defined(__aarch64__)
-    "<span class=\"v\">AArch64</span></div>"
+                                 "<span class=\"v\">AArch64</span></div>"
 #elif defined(__riscv)
-    "<span class=\"v\">RISC-V 64</span></div>"
+                                 "<span class=\"v\">RISC-V 64</span></div>"
 #elif defined(__x86_64__)
-    "<span class=\"v\">x86_64</span></div>"
+                                 "<span class=\"v\">x86_64</span></div>"
 #else
-    "<span class=\"v\">Unknown</span></div>"
+                                 "<span class=\"v\">Unknown</span></div>"
 #endif
-    "<div class=\"row\"><span class=\"k\">Network</span>"
-    "<span class=\"v\">lwIP / virtio-net</span></div>"
-    "<div class=\"row\"><span class=\"k\">TCP Echo</span>"
-    "<span class=\"v\">Port 1234</span></div>"
-    "<div class=\"row\"><span class=\"k\">HTTP</span>"
-    "<span class=\"v\">Port 80</span></div>"
-    "</div>"
-    "<p class=\"foot\">Served directly from the kernel &middot; No userspace</p>"
-    "</div></body></html>";
+                                 "<div class=\"row\"><span class=\"k\">Network</span>"
+                                 "<span class=\"v\">lwIP / virtio-net</span></div>"
+                                 "<div class=\"row\"><span class=\"k\">TCP Echo</span>"
+                                 "<span class=\"v\">Port 1234</span></div>"
+                                 "<div class=\"row\"><span class=\"k\">HTTP</span>"
+                                 "<span class=\"v\">Port 80</span></div>"
+                                 "</div>"
+                                 "<p class=\"foot\">Served directly from the kernel &middot; No userspace</p>"
+                                 "</div></body></html>";
 
 /* ── Per-connection state ─────────────────────────────────────────────── */
 
@@ -119,8 +118,7 @@ static void conn_try_send(struct tcp_pcb *tpcb, http_conn_t *c)
             uint16_t chunk = remain < space ? remain : space;
             if (chunk == 0)
                 return;
-            rc = tcp_write(tpcb, c->hdr_buf + c->hdr_sent, chunk,
-                           TCP_WRITE_FLAG_COPY);
+            rc = tcp_write(tpcb, c->hdr_buf + c->hdr_sent, chunk, TCP_WRITE_FLAG_COPY);
             if (rc != ERR_OK)
                 return;
             c->hdr_sent += chunk;
@@ -136,8 +134,7 @@ static void conn_try_send(struct tcp_pcb *tpcb, http_conn_t *c)
                 break;
             uint32_t remain = c->body_len - c->body_sent;
             uint16_t chunk = (remain > space) ? space : (uint16_t)remain;
-            rc = tcp_write(tpcb, c->body + c->body_sent, chunk,
-                           TCP_WRITE_FLAG_COPY);
+            rc = tcp_write(tpcb, c->body + c->body_sent, chunk, TCP_WRITE_FLAG_COPY);
             if (rc != ERR_OK)
                 break;
             c->body_sent += chunk;
@@ -172,8 +169,7 @@ static err_t http_sent(void *arg, struct tcp_pcb *tpcb, u16_t len)
     return ERR_OK;
 }
 
-static err_t http_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p,
-                       err_t err)
+static err_t http_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err)
 {
     http_conn_t *c = (http_conn_t *)arg;
 

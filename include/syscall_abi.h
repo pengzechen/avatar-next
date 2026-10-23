@@ -2,11 +2,11 @@
 #define SYSCALL_ABI_H
 
 /*
- * include/syscall_abi.h — 系统调用寄存器访问公共接口
- *
- * 将 trap_frame 的架构差异封装在各架构子目录，
- * 让 kernel/syscall 代码只依赖统一 ABI 访问函数。
- */
+   include/syscall_abi.h — 系统调用寄存器访问公共接口
+
+   将 trap_frame 的架构差异封装在各架构子目录,
+   让 kernel/syscall 代码只依赖统一 ABI 访问函数。
+*/
 
 #include "arch.h"
 #include "exception.h"

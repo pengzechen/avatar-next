@@ -1,9 +1,9 @@
 /*
- * net/sock_syscall.c - socket syscall handlers
- *
- * Translates Linux syscall ABI (sockaddr_in, etc.) into
- * kernel socket API (ksocket.h) calls.
- */
+   net/sock_syscall.c - socket syscall handlers
+
+   Translates Linux syscall ABI (sockaddr_in, etc.) into
+   kernel socket API (ksocket.h) calls.
+*/
 #include "syscall/syscall_internal.h"
 #include "syscall/fs/fd_pool.h"
 #include "syscall/net/ksocket.h"
@@ -139,9 +139,8 @@ void accept_handler(uint64_t regs[6], task_t *current)
     uint32_t out_addr;
     uint16_t out_port;
     int new_si = ksock_accept(si, &out_addr, &out_port, kflags);
-    KLOG_SYSCALL(
-        "[sock] accept fd=%d listen_flags=0x%x accept_flags=0x%x kflags=0x%x rc=%d\n",
-        fd, listen_obj->flags, accept_flags, kflags, new_si);
+    KLOG_SYSCALL("[sock] accept fd=%d listen_flags=0x%x accept_flags=0x%x kflags=0x%x rc=%d\n", fd, listen_obj->flags,
+                 accept_flags, kflags, new_si);
     if (new_si < 0) {
         regs[0] = (uint64_t)(int64_t)new_si;
         return;
@@ -221,8 +220,7 @@ void sendto_handler(uint64_t regs[6], task_t *current)
 
     int rc;
     if (dest) {
-        rc = ksock_sendto(si, buf, len, flags, dest->sin_addr,
-                          ntohs_val(dest->sin_port));
+        rc = ksock_sendto(si, buf, len, flags, dest->sin_addr, ntohs_val(dest->sin_port));
     } else {
         rc = ksock_send(si, buf, len, flags);
     }

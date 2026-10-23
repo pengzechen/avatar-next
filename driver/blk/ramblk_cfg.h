@@ -1,9 +1,9 @@
 /*
- * driver/blk/ramblk_cfg.h - RAM 块设备物理内存区域配置
- *
- * rootfs 地址来自运行时 platform_cfg.h（由 platform_conf_scan() 从平台配置提取）。
- * RAMBLK 使用与 rootfs 相同的固定物理窗口，并在 PMM 初始化时预留。
- */
+   driver/blk/ramblk_cfg.h - RAM 块设备物理内存区域配置
+
+   rootfs 地址来自运行时 platform_cfg.h(由 platform_conf_scan() 从平台配置提取)。
+   RAMBLK 使用与 rootfs 相同的固定物理窗口, 并在 PMM 初始化时预留。
+*/
 #ifndef __RAMBLK_CFG_H__
 #define __RAMBLK_CFG_H__
 
@@ -16,7 +16,7 @@
 /* ── 区域大小与块参数 ─────────────────────────────────────────── */
 #define RAMBLK_SECTOR_SZ 512u
 
-/* PMM 预留使用半开区间 [base, end_excl)，END_EXCL 是区域后第一个字节。 */
+/* PMM 预留使用半开区间 [base, end_excl), END_EXCL 是区域后第一个字节。 */
 #define RAMBLK_PHYS_END_EXCL (RAMBLK_PHYS_BASE + RAMBLK_SIZE)
 
 #endif /* __RAMBLK_CFG_H__ */

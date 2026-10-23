@@ -1,9 +1,9 @@
 /*
- * core/sched.c - 调度相关 syscall（sched_yield, nanosleep）
- *
- * 从 kernel/syscall/syscall.c 抽出。
- * 当前 nanosleep 是简化实现：仅 yield 一次返回 0。
- */
+   core/sched.c - 调度相关 syscall(sched_yield, nanosleep)
+
+   从 kernel/syscall/syscall.c 抽出。
+   当前 nanosleep 是简化实现：仅 yield 一次返回 0。
+*/
 #include "syscall/syscall_internal.h"
 #include "task/task.h"
 #include "task/sched.h"

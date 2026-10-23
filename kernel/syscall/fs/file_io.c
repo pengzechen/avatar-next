@@ -1,8 +1,8 @@
 /*
- * fs/file_io.c - read / write / writev / lseek / sendfile / fsync / fdatasync
- *
- * 由 kernel/syscall/syscall.c 拆出。
- */
+   fs/file_io.c - read / write / writev / lseek / sendfile / fsync / fdatasync
+
+   由 kernel/syscall/syscall.c 拆出。
+*/
 #include "syscall/syscall.h"
 #include "syscall/syscall_internal.h"
 #include "syscall/fs/fd_pool.h"
@@ -17,23 +17,23 @@
 #define IOV_COPY_MAX   16
 #define USER_PTR_LIMIT 0x80000000ULL
 
-/* write_handler 往内核搬用户数据的块大小。取小值是为了直接在栈上开，
- * 不为此引入一次 kmalloc/free（write 是最高频的 syscall 之一）。
- * 内核栈 16 KB，2 KB 的局部数组在 syscall 调用链深度下是安全的。 */
+/* write_handler 往内核搬用户数据的块大小。取小值是为了直接在栈上开,
+   不为此引入一次 kmalloc/free(write 是最高频的 syscall 之一)。
+   内核栈 16 KB, 2 KB 的局部数组在 syscall 调用链深度下是安全的。
+*/
 #define WRITE_USER_CHUNK 2048
 
-/* 本地这份曾经只查范围，现在统一走 syscall/fs/path.c 的 user_range_accessible：
- * 范围 + **每页映射**。理由见那里的注释（writev02 用"合法但已 munmap"的地址
- * 让 copy_*_bytes 里的裸拷贝踩空 → 内核态 #PF → 停机）。 */
+/* 本地这份曾经只查范围, 现在统一走 syscall/fs/path.c 的 user_range_accessible：
+   范围 + 每页映射。理由见那里的注释(writev02 用"合法但已 munmap"的地址
+   让 copy_*_bytes 里的裸拷贝踩空 → 内核态 #PF → 停机)。
+*/
 
 static bool trace_heavy_task(task_t *current)
 {
-    return current && current->is_user_process &&
-           current->heap_end >= 0x3000000ULL;
+    return current && current->is_user_process && current->heap_end >= 0x3000000ULL;
 }
 
-static int copy_iov_from_user(struct kernel_iovec *dst,
-                              const struct kernel_iovec *uiov, int iovcnt)
+static int copy_iov_from_user(struct kernel_iovec *dst, const struct kernel_iovec *uiov, int iovcnt)
 {
     if (!uiov || iovcnt < 0 || iovcnt > IOV_MAX_AVATAR || iovcnt > IOV_COPY_MAX)
         return -EINVAL;
@@ -46,9 +46,7 @@ static int copy_iov_from_user(struct kernel_iovec *dst,
         dst[i] = uiov[i];
         if (dst[i].iov_len > (1ULL << 31))
             return -EINVAL;
-        if (dst[i].iov_len != 0 &&
-            !user_range_accessible((const void *)(uintptr_t)dst[i].iov_base,
-                                   dst[i].iov_len))
+        if (dst[i].iov_len != 0 && !user_range_accessible((const void *)(uintptr_t)dst[i].iov_base, dst[i].iov_len))
             return -EFAULT;
     }
     return 0;
@@ -67,26 +65,24 @@ void read_handler(uint64_t regs[6], task_t *current)
     fd_obj_t *obj = task_get_fd(current, fd);
     if (obj && fd_obj_file(obj)) {
         /*
-         * read 侧和 write 侧是**同一个洞**：vfs_read 会直接往用户缓冲里写
-         * （ext4_fread → memcpy），未映射的地址就是内核态 #PF → 停机。
-         * write 侧现在把数据先搬进内核缓冲；read 侧方向相反，代价最小的做法
-         * 是先验"这一段每一页都映射着"。校验通过后当前页表就是该进程的
-         * 用户页表（syscall 期间 CR3 未切走），直接写是安全的。
-         */
+           read 侧和 write 侧是同一个洞：vfs_read 会直接往用户缓冲里写
+           (ext4_fread → memcpy), 未映射的地址就是内核态 #PF → 停机。
+           write 侧现在把数据先搬进内核缓冲；read 侧方向相反, 代价最小的做法
+           是先验"这一段每一页都映射着"。校验通过后当前页表就是该进程的
+           用户页表(syscall 期间 CR3 未切走), 直接写是安全的。
+        */
         if (!user_range_accessible(buf, count)) {
             regs[0] = (uint64_t)(int64_t)-EFAULT;
             return;
         }
         if (trace_heavy_task(current)) {
-            KLOG_SYSCALL(
-                "[vfsio] pid=%u read fd=%d path=%s buf=0x%llx count=0x%llx off=0x%llx\n",
-                current->id, fd, fd_obj_file(obj)->path, (uint64_t)buf, count,
-                fd_obj_file(obj)->offset);
+            KLOG_SYSCALL("[vfsio] pid=%u read fd=%d path=%s buf=0x%llx count=0x%llx off=0x%llx\n", current->id, fd,
+                         fd_obj_file(obj)->path, (uint64_t)buf, count, fd_obj_file(obj)->offset);
         }
         int rc = vfs_read(fd_obj_file(obj), buf, (size_t)count);
         if (trace_heavy_task(current)) {
-            KLOG_SYSCALL("[vfsio] pid=%u read fd=%d rc=%d new_off=0x%llx\n",
-                         current->id, fd, rc, fd_obj_file(obj)->offset);
+            KLOG_SYSCALL("[vfsio] pid=%u read fd=%d rc=%d new_off=0x%llx\n", current->id, fd, rc,
+                         fd_obj_file(obj)->offset);
         }
         regs[0] = rc >= 0 ? (uint64_t)rc : (uint64_t)(int64_t)rc;
         return;
@@ -150,10 +146,8 @@ void pread64_handler(uint64_t regs[6], task_t *current)
     }
 
     if (trace_heavy_task(current)) {
-        KLOG_SYSCALL(
-            "[vfsio] pid=%u pread fd=%d path=%s buf=0x%llx count=0x%llx off=0x%llx\n",
-            current->id, fd, fd_obj_file(obj)->path, (uint64_t)buf, count,
-            (uint64_t)offset);
+        KLOG_SYSCALL("[vfsio] pid=%u pread fd=%d path=%s buf=0x%llx count=0x%llx off=0x%llx\n", current->id, fd,
+                     fd_obj_file(obj)->path, (uint64_t)buf, count, (uint64_t)offset);
     }
     int rc = vfs_pread(fd_obj_file(obj), buf, (size_t)count, offset);
     if (trace_heavy_task(current)) {
@@ -175,22 +169,22 @@ void write_handler(uint64_t regs[6], task_t *current)
     fd_obj_t *wobj = task_get_fd(current, fd);
     if (wobj && fd_obj_file(wobj)) {
         /*
-         * ⚠️ 用户缓冲必须先落进内核，再把**内核地址**交给 VFS/ext4/块设备。
-         *
-         * 这里以前是把 buf（用户指针）裸传给 vfs_write，于是一路穿到
-         * ramblk_bwrite 的 `memcpy(dst, buf, n)` —— 用户给个不在页表里的
-         * 地址就是**内核态 #PF → platform_panic → 整机停机**。
-         *
-         * LTP writev02 正是冲着这个来的，它的 iovec 第一项就是
-         * `{(caddr_t)-1, 8192}`：期望内核返回 EFAULT，而不是崩。
-         * 实测崩溃现场：CR2=0x50002000、U=0、
-         *   #0 ramblk_bwrite #2 ext4_fwrite #5 write_handler #6 writev_handler
-         *
-         * 用分块而不是一次 kmalloc 整块：count 是用户给的，可以大到离谱，
-         * 先分配再校验等于让用户决定内核分配多少；分块则天然有界，第一块
-         * 拷不动就直接 EFAULT（copy_from_user_bytes 内部走 user_range_ok）。
-         * 与 Linux 的"部分写"语义也一致：已经写成功的字节数照常返回。
-         */
+           注意： 用户缓冲必须先落进内核, 再把内核地址交给 VFS/ext4/块设备。
+
+           这里以前是把 buf(用户指针)裸传给 vfs_write, 于是一路穿到
+           ramblk_bwrite 的 `memcpy(dst, buf, n)` —— 用户给个不在页表里的
+           地址就是内核态 #PF → platform_panic → 整机停机。
+
+           LTP writev02 正是冲着这个来的, 它的 iovec 第一项就是
+           `{(caddr_t)-1, 8192}`：期望内核返回 EFAULT, 而不是崩。
+           实测崩溃现场：CR2=0x50002000, U=0,
+             #0 ramblk_bwrite #2 ext4_fwrite #5 write_handler #6 writev_handler
+
+           用分块而不是一次 kmalloc 整块：count 是用户给的, 可以大到离谱,
+           先分配再校验等于让用户决定内核分配多少；分块则天然有界, 第一块
+           拷不动就直接 EFAULT(copy_from_user_bytes 内部走 user_range_ok)。
+           与 Linux 的"部分写"语义也一致：已经写成功的字节数照常返回。
+        */
         char kbuf[WRITE_USER_CHUNK];
         uint64_t done = 0;
 
@@ -212,7 +206,7 @@ void write_handler(uint64_t regs[6], task_t *current)
             }
             done += (uint64_t)rc;
             if ((size_t)rc < n)
-                break; /* 后端短写，别硬凑 */
+                break; /* 后端短写, 别硬凑 */
         }
 
         regs[0] = done;
@@ -332,9 +326,7 @@ void writev_handler(uint64_t regs[6], task_t *current)
     for (int i = 0; i < iovcnt; i++) {
         if (!iov[i].iov_base || iov[i].iov_len == 0)
             continue;
-        uint64_t wregs[6] = {
-            (uint64_t)fd, iov[i].iov_base, iov[i].iov_len, 0, 0, 0
-        };
+        uint64_t wregs[6] = { (uint64_t)fd, iov[i].iov_base, iov[i].iov_len, 0, 0, 0 };
         write_handler(wregs, current);
         int64_t ret = (int64_t)wregs[0];
         if (ret < 0) {
@@ -403,10 +395,10 @@ void sendfile_handler(uint64_t regs[6], task_t *current)
 
         if (out_fd == 0 || out_fd == 1 || out_fd == 2) {
             /*
-             * sbuf 是**内核**缓冲（上面 vfs_read 填的），整段交给
-             * klog_write —— 它是往物理 UART 写的唯一入口，整段持锁，
-             * 所以这一块不会与别的核的日志逐字符插花。
-             */
+               sbuf 是内核缓冲(上面 vfs_read 填的), 整段交给
+               klog_write —— 它是往物理 UART 写的唯一入口, 整段持锁,
+               所以这一块不会与别的核的日志逐字符插花。
+            */
             klog_write(sbuf, (size_t)nr);
         } else if (out_obj && fd_obj_file(out_obj)) {
             vfs_write(fd_obj_file(out_obj), sbuf, (size_t)nr);

@@ -1,6 +1,6 @@
 /*
- * Simple vsnprintf implementation for freestanding environment
- */
+   Simple vsnprintf implementation for freestanding environment
+*/
 
 #include "types.h"
 #include "arg.h"
@@ -17,10 +17,9 @@ typedef struct strprops {
     char pad;
     int npad;
     bool alternate;
-} strprops_t; //__attribute__((aligned(8)));
+} strprops_t; /* __attribute__((aligned(8))); */
 
-static char digits[16] = { '0', '1', '2', '3', '4', '5', '6', '7',
-                           '8', '9', 'a', 'b', 'c', 'd', 'e', 'f' };
+static char digits[16] = { '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f' };
 
 static void addchar(pstream_t *p, char c)
 {
@@ -91,8 +90,7 @@ static void print_int(pstream_t *ps, long long n, int base, strprops_t props)
     print_str(ps, buf, props);
 }
 
-static void print_unsigned(pstream_t *ps, unsigned long long n, int base,
-                           strprops_t props)
+static void print_unsigned(pstream_t *ps, unsigned long long n, int base, strprops_t props)
 {
     char buf[sizeof(long) * 3 + 3], *p = buf;
     int i;
@@ -194,10 +192,10 @@ int my_vsnprintf(char *buf, int size, const char *fmt, va_list va)
         case 't':
         case 'z':
             /* Here we only care that sizeof(size_t) == sizeof(long).
-	     * On a 32-bit platform it doesn't matter that size_t is
-	     * typedef'ed to int or long; va_arg will work either way.
-	     * Same for ptrdiff_t (%td).
-	     */
+	       On a 32-bit platform it doesn't matter that size_t is
+	       typedef'ed to int or long; va_arg will work either way.
+	       Same for ptrdiff_t (%td).
+            */
             nlong = 1;
             goto morefmt;
         case 'd':

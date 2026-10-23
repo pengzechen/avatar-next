@@ -1,12 +1,12 @@
 /*
- * fs/file_stat.c - fstat / newfstatat / readlinkat / faccessat / getdents64
- *
- * 由 kernel/syscall/syscall.c 拆出。
- */
+   fs/file_stat.c - fstat / newfstatat / readlinkat / faccessat / getdents64
+
+   由 kernel/syscall/syscall.c 拆出。
+*/
 #include "syscall/syscall_internal.h"
 #include "syscall/fs/fd_pool.h"
 #include "syscall/fs/path.h"
-#include "syscall/fs/pty.h" /* pty_match_pts_path（漏了会退化成隐式声明）*/
+#include "syscall/fs/pty.h" /* pty_match_pts_path(漏了会退化成隐式声明) */
 #include "task/task.h"
 #include "kernel_stat.h"
 #include "string.h"
@@ -17,8 +17,7 @@
 
 static bool trace_heavy_task(task_t *current)
 {
-    return current && current->is_user_process &&
-           current->heap_end >= 0x3000000ULL;
+    return current && current->is_user_process && current->heap_end >= 0x3000000ULL;
 }
 
 void fstat_handler(uint64_t regs[6], task_t *current)
@@ -32,13 +31,12 @@ void fstat_handler(uint64_t regs[6], task_t *current)
 
     fd_obj_t *obj = task_get_fd(current, fd);
     if (trace_heavy_task(current)) {
-        /* (int)：kind 是**无符号**枚举，两臂不统一时 ?: 的结果会被推成无符号，
-         * -1 这个"没有"哨兵于是触发 -Wsign-compare。 */
-        KLOG_SYSCALL(
-            "[vfsstat] pid=%u fstat fd=%d st=0x%llx path=%s kind=%d\n",
-            current->id, fd, (uint64_t)st,
-            (obj && fd_obj_file(obj)) ? fd_obj_file(obj)->path : "<none>",
-            (obj && fd_obj_file(obj)) ? (int)fd_obj_file(obj)->kind : -1);
+        /* (int)：kind 是无符号枚举, 两臂不统一时 ?: 的结果会被推成无符号,
+           -1 这个"没有"哨兵于是触发 -Wsign-compare。
+        */
+        KLOG_SYSCALL("[vfsstat] pid=%u fstat fd=%d st=0x%llx path=%s kind=%d\n", current->id, fd, (uint64_t)st,
+                     (obj && fd_obj_file(obj)) ? fd_obj_file(obj)->path : "<none>",
+                     (obj && fd_obj_file(obj)) ? (int)fd_obj_file(obj)->kind : -1);
     }
     if (fd == 0 || fd == 1 || fd == 2 || (obj && !fd_obj_file(obj))) {
         memset(st, 0, sizeof(*st));
@@ -71,11 +69,9 @@ void newfstatat_handler(uint64_t regs[6], task_t *current)
     if (!pathname || pathname[0] == '\0') {
         fd_obj_t *obj = task_get_fd(current, dirfd);
         if (trace_heavy_task(current)) {
-            KLOG_SYSCALL(
-                "[vfsstat] pid=%u newfstatat empty dirfd=%d st=0x%llx path=%s kind=%d\n",
-                current->id, dirfd, (uint64_t)st,
-                (obj && fd_obj_file(obj)) ? fd_obj_file(obj)->path : "<none>",
-                (obj && fd_obj_file(obj)) ? (int)fd_obj_file(obj)->kind : -1);
+            KLOG_SYSCALL("[vfsstat] pid=%u newfstatat empty dirfd=%d st=0x%llx path=%s kind=%d\n", current->id, dirfd,
+                         (uint64_t)st, (obj && fd_obj_file(obj)) ? fd_obj_file(obj)->path : "<none>",
+                         (obj && fd_obj_file(obj)) ? (int)fd_obj_file(obj)->kind : -1);
         }
         if (!obj) {
             regs[0] = (uint64_t)(int64_t)-EBADF;
@@ -90,13 +86,11 @@ void newfstatat_handler(uint64_t regs[6], task_t *current)
         return;
     }
     char abspath[128];
-    int rpa =
-        resolve_path_at(current, dirfd, pathname, abspath, sizeof(abspath));
+    int rpa = resolve_path_at(current, dirfd, pathname, abspath, sizeof(abspath));
     if (rpa < 0) {
         if (trace_heavy_task(current)) {
-            KLOG_SYSCALL(
-                "[vfsstat] pid=%u newfstatat path=%s st=0x%llx rc=%d\n",
-                current->id, pathname, (uint64_t)st, rpa);
+            KLOG_SYSCALL("[vfsstat] pid=%u newfstatat path=%s st=0x%llx rc=%d\n", current->id, pathname, (uint64_t)st,
+                         rpa);
         }
         regs[0] = (uint64_t)(int64_t)rpa;
         return;
@@ -105,9 +99,8 @@ void newfstatat_handler(uint64_t regs[6], task_t *current)
     if (!(regs[3] & 0x100))
         follow_symlinks(abspath, sizeof(abspath));
     if (trace_heavy_task(current)) {
-        KLOG_SYSCALL(
-            "[vfsstat] pid=%u newfstatat path=%s resolved=%s st=0x%llx flags=0x%llx\n",
-            current->id, pathname, abspath, (uint64_t)st, regs[3]);
+        KLOG_SYSCALL("[vfsstat] pid=%u newfstatat path=%s resolved=%s st=0x%llx flags=0x%llx\n", current->id, pathname,
+                     abspath, (uint64_t)st, regs[3]);
     }
 
     if (vfs_stat_path(abspath, st) == 0) {
@@ -145,8 +138,7 @@ void newfstatat_handler(uint64_t regs[6], task_t *current)
     regs[0] = 0;
 }
 
-static int proc_self_fd_readlink(task_t *current, int fdnum, char *buf,
-                                 size_t bufsz)
+static int proc_self_fd_readlink(task_t *current, int fdnum, char *buf, size_t bufsz)
 {
     fd_obj_t *obj = task_get_fd(current, fdnum);
     if (!obj)
@@ -159,7 +151,7 @@ void readlinkat_handler(uint64_t regs[6], task_t *current)
 {
     int dirfd = (int)regs[0];
     const char *pathname = (const char *)regs[1];
-    char *lbuf = (char *)regs[2]; /* **用户指针** */
+    char *lbuf = (char *)regs[2]; /* 用户指针 */
     uint64_t lbufsz = regs[3];
     if (!pathname || !lbuf) {
         regs[0] = (uint64_t)(int64_t)-EFAULT;
@@ -167,33 +159,30 @@ void readlinkat_handler(uint64_t regs[6], task_t *current)
     }
     char abspath[128];
     /*
-     * 必须接返回值：resolve_path_at() 在 dirfd 非法时返回 -EBADF 且**根本不写
-     * abspath**，忽略它就等于拿未初始化的栈去 vfs_find_mount()。
-     * （本文件其它几处都写了 `int rpa = ...`，只有这里漏了。）
-     */
-    int rpa =
-        resolve_path_at(current, dirfd, pathname, abspath, sizeof(abspath));
+       必须接返回值：resolve_path_at() 在 dirfd 非法时返回 -EBADF 且根本不写
+       abspath**, 忽略它就等于拿未初始化的栈去 vfs_find_mount()。
+       (本文件其它几处都写了 `int rpa = ...`, 只有这里漏了。)
+    */
+    int rpa = resolve_path_at(current, dirfd, pathname, abspath, sizeof(abspath));
     if (rpa < 0) {
         regs[0] = (uint64_t)(int64_t)rpa;
         return;
     }
     if (trace_heavy_task(current)) {
-        KLOG_SYSCALL(
-            "[vfsstat] pid=%u readlinkat path=%s resolved=%s buf=0x%llx size=0x%llx\n",
-            current->id, pathname, abspath, (uint64_t)lbuf, lbufsz);
+        KLOG_SYSCALL("[vfsstat] pid=%u readlinkat path=%s resolved=%s buf=0x%llx size=0x%llx\n", current->id, pathname,
+                     abspath, (uint64_t)lbuf, lbufsz);
     }
 
     /*
-     * 链目标先读进内核缓冲，最后一次性拷回用户态。
-     *
-     * 原先直接把 lbuf（用户指针）交给 vfs_readlink → pseudo_readlink /
-     * ext4_readlink，由它们 memcpy 进去。用户传个非法地址就是**内核态写坏
-     * 地址** → 内核缺页 → handle_exception 的 platform_shutdown() → 整机挂死。
-     * 这是 CLAUDE.md 里那条规则的又一个漏网处。
-     */
+       链目标先读进内核缓冲, 最后一次性拷回用户态。
+
+       原先直接把 lbuf(用户指针)交给 vfs_readlink → pseudo_readlink /
+       ext4_readlink, 由它们 memcpy 进去。用户传个非法地址就是内核态写坏
+       地址 → 内核缺页 → handle_exception 的 platform_shutdown() → 整机挂死。
+       这是 CLAUDE.md 里那条规则的又一个漏网处。
+    */
     char klbuf[256];
-    size_t want =
-        ((size_t)lbufsz < sizeof(klbuf)) ? (size_t)lbufsz : sizeof(klbuf);
+    size_t want = ((size_t)lbufsz < sizeof(klbuf)) ? (size_t)lbufsz : sizeof(klbuf);
     if (want == 0) {
         regs[0] = (uint64_t)(int64_t)-EINVAL;
         return;
@@ -221,9 +210,9 @@ copy_out:
         return;
     }
     /*
-     * copy_to_user_bytes() 内部用 user_range_ok() 校验；地址非法时返回负值
-     * 而不是让内核去踩它。返回 EFAULT 是 readlink(2) 的正确语义。
-     */
+       copy_to_user_bytes() 内部用 user_range_ok() 校验；地址非法时返回负值
+       而不是让内核去踩它。返回 EFAULT 是 readlink(2) 的正确语义。
+    */
     if (copy_to_user_bytes(klbuf, lbuf, (uint64_t)rc) < 0) {
         regs[0] = (uint64_t)(int64_t)-EFAULT;
         return;
@@ -244,8 +233,7 @@ void faccessat_handler(uint64_t regs[6], task_t *current)
     }
 
     char abspath[128];
-    int rpa =
-        resolve_path_at(current, dirfd, pathname, abspath, sizeof(abspath));
+    int rpa = resolve_path_at(current, dirfd, pathname, abspath, sizeof(abspath));
     if (rpa < 0) {
         regs[0] = (uint64_t)(int64_t)rpa;
         return;

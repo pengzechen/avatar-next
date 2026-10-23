@@ -1,25 +1,25 @@
 /*
- * apps/c/mutex/test.c — 基于 futex 的用户态 mutex 实现与测试
- *
- * 展示如何用内核 futex 系统调用（FUTEX_WAIT / FUTEX_WAKE）从零实现 mutex，
- * 这正是 pthread_mutex 的底层机制。
- *
- * 实现了两种 mutex：
- *   umutex_t    — 不可重入的高效 futex mutex（三态：0=空闲 1=锁定无等待者 2=锁定有等待者）
- *   rmutex_t    — 基于 umutex_t 的可重入（递归）mutex
- *
- * 测试项：
- *   Test 0  无锁竞争演示（对照组，证明竞争确实发生）
- *   Test 1  umutex 基础单线程 lock / unlock / trylock
- *   Test 2  umutex 多线程计数器（等价于 pthread Test 2）
- *   Test 3  rmutex 单线程递归加锁（lock 3 次 → unlock 3 次）
- *   Test 4  rmutex 多线程 + 递归深度 2
- *   Test 5  umutex trylock 竞争场景
- */
+   apps/c/mutex/test.c — 基于 futex 的用户态 mutex 实现与测试
+
+   展示如何用内核 futex 系统调用(FUTEX_WAIT / FUTEX_WAKE)从零实现 mutex,
+   这正是 pthread_mutex 的底层机制。
+
+   实现了两种 mutex：
+     umutex_t    — 不可重入的高效 futex mutex(三态：0=空闲 1=锁定无等待者 2=锁定有等待者)
+     rmutex_t    — 基于 umutex_t 的可重入(递归)mutex
+
+   测试项：
+     Test 0  无锁竞争演示(对照组, 证明竞争确实发生)
+     Test 1  umutex 基础单线程 lock / unlock / trylock
+     Test 2  umutex 多线程计数器(等价于 pthread Test 2)
+     Test 3  rmutex 单线程递归加锁(lock 3 次 → unlock 3 次)
+     Test 4  rmutex 多线程 + 递归深度 2
+     Test 5  umutex trylock 竞争场景
+*/
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <pthread.h> /* 仅用于线程创建（pthread_create / join） */
+#include <pthread.h> /* 仅用于线程创建(pthread_create / join) */
 #include <stdatomic.h>
 #include <unistd.h>
 #include <sys/syscall.h>
@@ -27,7 +27,7 @@
 #include <string.h>
 #include <sched.h>
 
-/* ─── futex 系统调用号（如果 musl 没有定义则自行补充） ──────────── */
+/* ─── futex 系统调用号(如果 musl 没有定义则自行补充) ──────────── */
 #ifndef SYS_futex
 #if defined(__aarch64__) || defined(__riscv)
 #define SYS_futex 98
@@ -50,12 +50,13 @@ static inline long futex(atomic_int *addr, int op, int val)
 }
 
 /* ═══════════════════════════════════════════════════════════════════
- * umutex_t — 不可重入 futex mutex
- *
- * state = 0: 未锁定
- * state = 1: 已锁定，无等待者
- * state = 2: 已锁定，有等待者
- * ═══════════════════════════════════════════════════════════════════ */
+   umutex_t — 不可重入 futex mutex
+
+   state = 0: 未锁定
+   state = 1: 已锁定, 无等待者
+   state = 2: 已锁定, 有等待者
+   ═══════════════════════════════════════════════════════════════════
+*/
 
 typedef struct {
     atomic_int state;
@@ -72,32 +73,28 @@ static void umutex_lock(umutex_t *m)
 {
     int c;
 
-    /* 快速路径：0 → 1（无竞争）*/
+    /* 快速路径：0 → 1(无竞争) */
     c = 0;
-    if (atomic_compare_exchange_strong_explicit(
-            &m->state, &c, 1, memory_order_acquire, memory_order_relaxed))
+    if (atomic_compare_exchange_strong_explicit(&m->state, &c, 1, memory_order_acquire, memory_order_relaxed))
         return;
 
-    /* 慢速路径：有竞争，设置 state=2 后进入 futex 睡眠 */
+    /* 慢速路径：有竞争, 设置 state=2 后进入 futex 睡眠 */
     do {
-        /* 若当前 state=1 或 state=2，先确保 state=2（通知 unlock 要唤醒） */
+        /* 若当前 state=1 或 state=2, 先确保 state=2(通知 unlock 要唤醒) */
         if (c == 2 ||
-            atomic_compare_exchange_strong_explicit(
-                &m->state, &c, 2, memory_order_acquire, memory_order_relaxed)) {
+            atomic_compare_exchange_strong_explicit(&m->state, &c, 2, memory_order_acquire, memory_order_relaxed)) {
             /* 睡眠直到 state != 2 */
             futex(&m->state, FUTEX_WAIT_PRIVATE, 2);
         }
-        /* 尝试以 state=2 方式获取（保留"有等待者"信息）*/
+        /* 尝试以 state=2 方式获取(保留"有等待者"信息) */
         c = 0;
-    } while (!atomic_compare_exchange_strong_explicit(
-        &m->state, &c, 2, memory_order_acquire, memory_order_relaxed));
+    } while (!atomic_compare_exchange_strong_explicit(&m->state, &c, 2, memory_order_acquire, memory_order_relaxed));
 }
 
 static int umutex_trylock(umutex_t *m)
 {
     int c = 0;
-    return atomic_compare_exchange_strong_explicit(
-        &m->state, &c, 1, memory_order_acquire, memory_order_relaxed);
+    return atomic_compare_exchange_strong_explicit(&m->state, &c, 1, memory_order_acquire, memory_order_relaxed);
 }
 
 static void umutex_unlock(umutex_t *m)
@@ -110,20 +107,20 @@ static void umutex_unlock(umutex_t *m)
 }
 
 /* ═══════════════════════════════════════════════════════════════════
- * rmutex_t — 可重入（递归）futex mutex
- *
- * 基于 umutex_t，增加 owner 和 count 字段。
- * 同一线程多次 lock 只递增 count；unlock 递减，count=0 时真正释放。
- * ═══════════════════════════════════════════════════════════════════ */
+   rmutex_t — 可重入(递归)futex mutex
+
+   基于 umutex_t, 增加 owner 和 count 字段。
+   同一线程多次 lock 只递增 count；unlock 递减, count=0 时真正释放。
+   ═══════════════════════════════════════════════════════════════════
+*/
 
 typedef struct {
     umutex_t base;
-    atomic_size_t owner; /* pthread_t 转 size_t，0 表示无持有者 */
-    int count;           /* 重入深度（仅由持有线程访问） */
+    atomic_size_t owner; /* pthread_t 转 size_t, 0 表示无持有者 */
+    int count;           /* 重入深度(仅由持有线程访问) */
 } rmutex_t;
 
-#define RMUTEX_INIT \
-    { .base = UMUTEX_INIT, .owner = ATOMIC_VAR_INIT(0), .count = 0 }
+#define RMUTEX_INIT { .base = UMUTEX_INIT, .owner = ATOMIC_VAR_INIT(0), .count = 0 }
 
 static void rmutex_init(rmutex_t *m)
 {
@@ -136,7 +133,7 @@ static void rmutex_lock(rmutex_t *m)
 {
     size_t self = (size_t)pthread_self();
 
-    /* 重入检测：已是持有者，直接递增计数 */
+    /* 重入检测：已是持有者, 直接递增计数 */
     if (atomic_load_explicit(&m->owner, memory_order_relaxed) == self) {
         m->count++;
         return;
@@ -144,7 +141,7 @@ static void rmutex_lock(rmutex_t *m)
 
     /* 非持有者：获取底层锁 */
     umutex_lock(&m->base);
-    /* 设置 owner（此时我们已独占锁，安全写入）*/
+    /* 设置 owner(此时我们已独占锁, 安全写入) */
     atomic_store_explicit(&m->owner, self, memory_order_relaxed);
     m->count = 1;
 }
@@ -176,8 +173,9 @@ static void fail(const char *name, const char *reason)
 }
 
 /* ═══════════════════════════════════════════════════════════════════
- * Test 0: 无锁竞争演示
- * ═══════════════════════════════════════════════════════════════════ */
+   Test 0: 无锁竞争演示
+   ═══════════════════════════════════════════════════════════════════
+*/
 
 static volatile long t0_counter = 0;
 
@@ -216,8 +214,9 @@ static void test0_race_demo(void)
 }
 
 /* ═══════════════════════════════════════════════════════════════════
- * Test 1: umutex 基础单线程
- * ═══════════════════════════════════════════════════════════════════ */
+   Test 1: umutex 基础单线程
+   ═══════════════════════════════════════════════════════════════════
+*/
 
 static void test1_umutex_basic(void)
 {
@@ -235,17 +234,16 @@ static void test1_umutex_basic(void)
         return;
     }
 
-    /* trylock（空闲 → 成功）*/
+    /* trylock(空闲 → 成功) */
     if (!umutex_trylock(&m)) {
         fail("umutex_basic", "trylock on free mutex should succeed");
         return;
     }
-    /* trylock 已持有时（不可重入，应失败）*/
+    /* trylock 已持有时(不可重入, 应失败) */
     if (umutex_trylock(&m)) {
         umutex_unlock(&m);
         umutex_unlock(&m);
-        fail("umutex_basic",
-             "trylock on held mutex should fail (non-reentrant)");
+        fail("umutex_basic", "trylock on held mutex should fail (non-reentrant)");
         return;
     }
     umutex_unlock(&m);
@@ -254,8 +252,9 @@ static void test1_umutex_basic(void)
 }
 
 /* ═══════════════════════════════════════════════════════════════════
- * Test 2: umutex 多线程计数器
- * ═══════════════════════════════════════════════════════════════════ */
+   Test 2: umutex 多线程计数器
+   ═══════════════════════════════════════════════════════════════════
+*/
 
 static umutex_t t2_mutex = UMUTEX_INIT;
 static volatile long t2_counter = 0;
@@ -287,15 +286,15 @@ static void test2_umutex_counter(void)
         pass("umutex_counter");
     else {
         char buf[64];
-        snprintf(buf, sizeof(buf), "expected %ld got %ld", expected,
-                 t2_counter);
+        snprintf(buf, sizeof(buf), "expected %ld got %ld", expected, t2_counter);
         fail("umutex_counter", buf);
     }
 }
 
 /* ═══════════════════════════════════════════════════════════════════
- * Test 3: rmutex 单线程递归加锁
- * ═══════════════════════════════════════════════════════════════════ */
+   Test 3: rmutex 单线程递归加锁
+   ═══════════════════════════════════════════════════════════════════
+*/
 
 static void test3_rmutex_recursive(void)
 {
@@ -327,8 +326,7 @@ static void test3_rmutex_recursive(void)
         return;
     }
     if (atomic_load(&m.base.state) == 0) {
-        fail("rmutex_recursive",
-             "lock should still be held after partial unlock");
+        fail("rmutex_recursive", "lock should still be held after partial unlock");
         return;
     }
 
@@ -352,22 +350,23 @@ static void test3_rmutex_recursive(void)
 }
 
 /* ═══════════════════════════════════════════════════════════════════
- * Test 4: rmutex 多线程 + 递归深度 2
- * ═══════════════════════════════════════════════════════════════════ */
+   Test 4: rmutex 多线程 + 递归深度 2
+   ═══════════════════════════════════════════════════════════════════
+*/
 
 static rmutex_t t4_mutex = RMUTEX_INIT;
 static volatile long t4_counter = 0;
 
-/* 每个线程加锁两次（递归深度 2），递增计数器，再解锁两次 */
+/* 每个线程加锁两次(递归深度 2), 递增计数器, 再解锁两次 */
 static void *t4_worker(void *arg)
 {
     (void)arg;
     for (int i = 0; i < LOOP_COUNT; i++) {
         rmutex_lock(&t4_mutex); /* 第 1 次 */
-        rmutex_lock(&t4_mutex); /* 第 2 次（重入）*/
+        rmutex_lock(&t4_mutex); /* 第 2 次(重入) */
         t4_counter++;
         rmutex_unlock(&t4_mutex); /* 释放第 2 次 */
-        rmutex_unlock(&t4_mutex); /* 释放第 1 次（真正释放）*/
+        rmutex_unlock(&t4_mutex); /* 释放第 1 次(真正释放) */
     }
     return NULL;
 }
@@ -388,15 +387,15 @@ static void test4_rmutex_threaded(void)
         pass("rmutex_threaded");
     else {
         char buf[64];
-        snprintf(buf, sizeof(buf), "expected %ld got %ld", expected,
-                 t4_counter);
+        snprintf(buf, sizeof(buf), "expected %ld got %ld", expected, t4_counter);
         fail("rmutex_threaded", buf);
     }
 }
 
 /* ═══════════════════════════════════════════════════════════════════
- * Test 5: umutex trylock 竞争场景
- * ═══════════════════════════════════════════════════════════════════ */
+   Test 5: umutex trylock 竞争场景
+   ═══════════════════════════════════════════════════════════════════
+*/
 
 static umutex_t t5_mutex = UMUTEX_INIT;
 static volatile long t5_acquired = 0;
@@ -408,11 +407,11 @@ static void *t5_worker(void *arg)
     for (int i = 0; i < LOOP_COUNT; i++) {
         if (umutex_trylock(&t5_mutex)) {
             /*
-             * 计数器是**跨线程共享**的，普通 ++ 在 SMP>1 下会丢更新
-             * （实测 4 线程 × 20000 次时 acquired+failed < total，被
-             * 测试框架当成内核失败）。这里只要求最终计数准确，用
-             * relaxed 原子加即可。
-             */
+               计数器是跨线程共享的, 普通 ++ 在 SMP>1 下会丢更新
+               (实测 4 线程 × 20000 次时 acquired+failed < total, 被
+               测试框架当成内核失败)。这里只要求最终计数准确, 用
+               relaxed 原子加即可。
+            */
             __atomic_fetch_add(&t5_acquired, 1, __ATOMIC_RELAXED);
             umutex_unlock(&t5_mutex);
         } else {
@@ -435,8 +434,7 @@ static void test5_trylock_race(void)
         pthread_join(tids[i], NULL);
 
     long total = (long)NUM_THREADS * LOOP_COUNT;
-    printf("  trylock acquired=%ld failed=%ld total=%ld\n", t5_acquired,
-           t5_failed, total);
+    printf("  trylock acquired=%ld failed=%ld total=%ld\n", t5_acquired, t5_failed, total);
 
     /* 所有尝试之和 = 成功 + 失败 */
     if (t5_acquired + t5_failed == total)
@@ -446,8 +444,9 @@ static void test5_trylock_race(void)
 }
 
 /* ═══════════════════════════════════════════════════════════════════
- * main
- * ═══════════════════════════════════════════════════════════════════ */
+   main
+   ═══════════════════════════════════════════════════════════════════
+*/
 
 int main(void)
 {

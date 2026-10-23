@@ -1,40 +1,42 @@
 /*
- * Copyright (c) 2024 Avatar Project
- *
- * Licensed under the MIT License.
- * See LICENSE file in the project root for full license information.
- *
- * @file tcr.h
- * @brief Implementation of tcr.h
- * @author Avatar Project Team
- * @date 2024
- */
+   Copyright (c) 2024 Avatar Project
+
+   Licensed under the MIT License.
+   See LICENSE file in the project root for full license information.
+
+   @file tcr.h
+   @brief Implementation of tcr.h
+   @author Avatar Project Team
+   @date 2024
+*/
 
 #ifndef __TCR_H__
 #define __TCR_H__
 
-// =====================  TCR 寄存器 ============================
-// ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-// ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-// ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+/*
+   =====================  TCR 寄存器 ============================
+   ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+   ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+   ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+*/
 
 /* TCR_EL1 寄存器字段宏定义 */
 
-/* 低地址空间（TTBR0_EL1）翻译控制 */
+/* 低地址空间(TTBR0_EL1)翻译控制 */
 #define TCR_T0SZ(x)  ((x) & 0x3F)        /* 低地址空间的区域大小 (6 位) */
 #define TCR_IRGN0(x) (((x) & 0x3) << 8)  /* 低地址空间的内部缓存属性 (2 位) */
 #define TCR_ORGN0(x) (((x) & 0x3) << 10) /* 低地址空间的外部缓存属性 (2 位) */
 #define TCR_SH0(x)   (((x) & 0x3) << 12) /* 低地址空间的共享属性 (2 位) */
 #define TCR_TG0(x)   (((x) & 0x3) << 14) /* 低地址空间的翻译粒度 (2 位) */
 
-/* 高地址空间（TTBR1_EL1）翻译控制 */
+/* 高地址空间(TTBR1_EL1)翻译控制 */
 #define TCR_T1SZ(x)  (((x) & 0x3F) << 16) /* 高地址空间的区域大小 (6 位) */
-#define TCR_A1       (1 << 22) /* 选择 TTBR0_EL1 或 TTBR1_EL1 作为 ASID 选择 */
-#define TCR_EPD1     (1 << 23) /* 禁用 TTBR1_EL1 表项 */
-#define TCR_IRGN1(x) (((x) & 0x3) << 24) /* 高地址空间的内部缓存属性 (2 位) */
-#define TCR_ORGN1(x) (((x) & 0x3) << 26) /* 高地址空间的外部缓存属性 (2 位) */
-#define TCR_SH1(x)   (((x) & 0x3) << 28) /* 高地址空间的共享属性 (2 位) */
-#define TCR_TG1(x)   (((x) & 0x3) << 30) /* 高地址空间的翻译粒度 (2 位) */
+#define TCR_A1       (1 << 22)            /* 选择 TTBR0_EL1 或 TTBR1_EL1 作为 ASID 选择 */
+#define TCR_EPD1     (1 << 23)            /* 禁用 TTBR1_EL1 表项 */
+#define TCR_IRGN1(x) (((x) & 0x3) << 24)  /* 高地址空间的内部缓存属性 (2 位) */
+#define TCR_ORGN1(x) (((x) & 0x3) << 26)  /* 高地址空间的外部缓存属性 (2 位) */
+#define TCR_SH1(x)   (((x) & 0x3) << 28)  /* 高地址空间的共享属性 (2 位) */
+#define TCR_TG1(x)   (((x) & 0x3) << 30)  /* 高地址空间的翻译粒度 (2 位) */
 
 /* 物理地址大小 */
 #define TCR_IPS(x) (((x) & 0x7) << 32) /* 物理地址大小 (3 位) */
@@ -45,21 +47,19 @@
 #define TCR_TBI1 (1ULL << 38) /* 高地址空间的地址标签 */
 
 /*
- * IRGN/ORGN = 1: Inner/Outer cacheable, Write-Back Read-Allocate
- * SH = 3: Inner Shareable
- *
- * 必须设置，否则页表 Walker 做 non-cacheable 读，
- * 绕过 D-cache 直接读 RAM。若 C 代码写的页表项仍在
- * dirty cache line 中（U-Boot 开启了 D-cache），Walker
- * 读到全 0 → Level-0 translation fault。
- */
+   IRGN/ORGN = 1: Inner/Outer cacheable, Write-Back Read-Allocate
+   SH = 3: Inner Shareable
+
+   必须设置, 否则页表 Walker 做 non-cacheable 读,
+   绕过 D-cache 直接读 RAM。若 C 代码写的页表项仍在
+   dirty cache line 中(U-Boot 开启了 D-cache), Walker
+   读到全 0 → Level-0 translation fault。
+*/
 #define TCR_EL1 \
-    (TCR_T0SZ(64 - 48) | TCR_T1SZ(64 - 48) | TCR_TG0(0) | TCR_TG1(2) | \
-     TCR_IRGN0(1) | TCR_ORGN0(1) | TCR_SH0(3) | TCR_IRGN1(1) | TCR_ORGN1(1) | \
-     TCR_SH1(3))
+    (TCR_T0SZ(64 - 48) | TCR_T1SZ(64 - 48) | TCR_TG0(0) | TCR_TG1(2) | TCR_IRGN0(1) | TCR_ORGN0(1) | TCR_SH0(3) | \
+     TCR_IRGN1(1) | TCR_ORGN1(1) | TCR_SH1(3))
 
 /* el2 的设置可能不同 */
-#define TCR_EL2 \
-    (TCR_T0SZ(64 - 48) | TCR_TG0(0) | TCR_IRGN0(1) | TCR_ORGN0(1) | TCR_SH0(3))
+#define TCR_EL2 (TCR_T0SZ(64 - 48) | TCR_TG0(0) | TCR_IRGN0(1) | TCR_ORGN0(1) | TCR_SH0(3))
 
 #endif /* __TCR_H__ */

@@ -1,14 +1,14 @@
 /*
- * Copyright (c) 2024 Avatar Project
- *
- * Licensed under the MIT License.
- * See LICENSE file in the project root for full license information.
- *
- * @file gic.h
- * @brief Implementation of gic.h
- * @author Avatar Project Team
- * @date 2024
- */
+   Copyright (c) 2024 Avatar Project
+
+   Licensed under the MIT License.
+   See LICENSE file in the project root for full license information.
+
+   @file gic.h
+   @brief Implementation of gic.h
+   @author Avatar Project Team
+   @date 2024
+*/
 
 #ifndef __GIC_H__
 #define __GIC_H__
@@ -16,7 +16,7 @@
 #include "types.h"
 #include "platform_cfg.h"
 
-/* GICv2 模块内基地址（由 gic_init() 从 platform_get_mmio 填充） */
+/* GICv2 模块内基地址(由 gic_init() 从 platform_get_mmio 填充) */
 extern uintptr_t gicv2_gicd_base;
 extern uintptr_t gicv2_gicc_base;
 extern uintptr_t gicv2_gich_base;
@@ -29,14 +29,14 @@ extern uintptr_t gicv2_gich_base;
 #define PPI_ID_MAX 32
 
 /* Distributor registers */
-#define GICD_CTLR  (gicv2_gicd_base + 0x000) // rw
-#define GICD_TYPER (gicv2_gicd_base + 0x004) // ro
-#define GICD_IIDR  (gicv2_gicd_base + 0x008) // ro
+#define GICD_CTLR  (gicv2_gicd_base + 0x000) /* rw */
+#define GICD_TYPER (gicv2_gicd_base + 0x004) /* ro */
+#define GICD_IIDR  (gicv2_gicd_base + 0x008) /* ro */
 
 #define GICD_IGROUPR(x) (gicv2_gicd_base + (0x080 + 0x004 * (x)))
 
-#define GICD_ISENABLER(x) (gicv2_gicd_base + (0x100 + 0x004 * (x))) // enable
-#define GICD_ICENABLER(x) (gicv2_gicd_base + (0x180 + 0x004 * (x))) // disable
+#define GICD_ISENABLER(x) (gicv2_gicd_base + (0x100 + 0x004 * (x))) /* enable */
+#define GICD_ICENABLER(x) (gicv2_gicd_base + (0x180 + 0x004 * (x))) /* disable */
 
 #define GICD_ISPENDER(x) (gicv2_gicd_base + (0x200 + 0x004 * (x)))
 #define GICD_ICPENDER(x) (gicv2_gicd_base + (0x280 + 0x004 * (x)))
@@ -47,19 +47,16 @@ extern uintptr_t gicv2_gich_base;
 #define GICD_IPRIORITYR(x) (gicv2_gicd_base + (0x400 + 0x004 * (x)))
 #define GICD_ITARGETSR(x)  (gicv2_gicd_base + (0x800 + 0x004 * (x)))
 #define GICD_ICFGR(x) \
-    (gicv2_gicd_base + \
-     (0xc00 + \
-      0x004 * \
-          (x))) // 00	边沿触发（Edge-triggered） 10	电平触发（Level-triggered）
+    (gicv2_gicd_base + (0xc00 + 0x004 * (x))) /* 00	边沿触发(Edge-triggered) 10	电平触发(Level-triggered) */
 
 #define GICD_SGIR (gicv2_gicd_base + 0xf00)
 
-// ro 查看当前 CPU 的中断 pending 状态。 通常用于调试，实际系统里使用 GICC 的 IAR（Interrupt Acknowledge Register）来拿中断号更常见。
+/* ro 查看当前 CPU 的中断 pending 状态。 通常用于调试, 实际系统里使用 GICC 的 IAR(Interrupt Acknowledge Register)来拿中断号更常见。 */
 #define GICD_PPISR (gicv2_gicd_base + 0xd00)
-// ro 查看中断的 Pending 状态，主要是 SGI 和 PPI（中断号 0–31）部分。
+/* ro 查看中断的 Pending 状态, 主要是 SGI 和 PPI(中断号 0–31)部分。 */
 #define GICD_SPISR(x) (gicv2_gicd_base + (0xd04 + 0x004 * (x)))
 
-// SGI 挂起寄存器 GICD_SPENDSGIR 和 GICD_CPENDSGIR 每个 SGI 用8个位，每个位对应一个 CPU。
+/* SGI 挂起寄存器 GICD_SPENDSGIR 和 GICD_CPENDSGIR 每个 SGI 用8个位, 每个位对应一个 CPU。 */
 #define GICD_CPENDSGIR(x) (gicv2_gicd_base + (0xf10 + 0x004 * (x)))
 #define GICD_SPENDSGIR(x) (gicv2_gicd_base + (0xf20 + 0x004 * (x)))
 
@@ -104,23 +101,23 @@ extern uintptr_t gicv2_gich_base;
 #define GICH_LR_NUM       4
 #define GICH_LR_PID_SHIFT 10
 
-/*  GICD 操作掩码 */
+/* GICD 操作掩码 */
 
-#define GICD_CTRL_ENABLE_GROUP0    (1 << 0)  // 启用组0中断
-#define GICD_CTRL_ENABLE_GROUP1    (1 << 1)  // 启用组1中断
-#define GICD_CTRL_ENABLE_GROUP1_NS (1 << 2)  // 启用非安全组1中断
-#define GICD_CTRL_DS               (1 << 31) // 区分安全和非安全状态行为
+#define GICD_CTRL_ENABLE_GROUP0    (1 << 0)  /* 启用组0中断 */
+#define GICD_CTRL_ENABLE_GROUP1    (1 << 1)  /* 启用组1中断 */
+#define GICD_CTRL_ENABLE_GROUP1_NS (1 << 2)  /* 启用非安全组1中断 */
+#define GICD_CTRL_DS               (1 << 31) /* 区分安全和非安全状态行为 */
 
 /* GICC 操作掩码 */
 
-#define GICC_CTRL_ENABLE_GROUP0 (1 << 0) // 启用GIC CPU接口
-#define GICC_CTRL_ENABLE_GROUP1 (1 << 1) // 启用GIC CPU接口
+#define GICC_CTRL_ENABLE_GROUP0 (1 << 0) /* 启用GIC CPU接口 */
+#define GICC_CTRL_ENABLE_GROUP1 (1 << 1) /* 启用GIC CPU接口 */
 
-#define GICC_CTRL_FIQEN     (1 << 1)  // 启用快速中断（FIQ）模式
-#define GICC_CTRL_ACKCTL    (1 << 2)  // 控制中断确认机制
-#define GICC_CTRL_SBPR      (1 << 3)  // 启用安全中断的优先级分离
-#define GICC_CTRL_EOIMODE   (1 << 4)  // 控制中断结束模式
-#define GICC_CTRL_EOIMODENS (1 << 31) // 控制非安全状态的结束中断处理模式
+#define GICC_CTRL_FIQEN     (1 << 1)  /* 启用快速中断(FIQ)模式 */
+#define GICC_CTRL_ACKCTL    (1 << 2)  /* 控制中断确认机制 */
+#define GICC_CTRL_SBPR      (1 << 3)  /* 启用安全中断的优先级分离 */
+#define GICC_CTRL_EOIMODE   (1 << 4)  /* 控制中断结束模式 */
+#define GICC_CTRL_EOIMODENS (1 << 31) /* 控制非安全状态的结束中断处理模式 */
 
 #define GICC_IAR_INT_ID_MASK 0x3ff
 
@@ -139,8 +136,9 @@ extern struct gic_t _gicv2;
 #define gicv2_cpu_base()  (_gicv2.cpu_base)
 
 /* CPU 级中断开关 / DAIF 读取：统一用 include/aarch64/exception_impl.h 的
- * arch_irq_enable/disable() 与 arch_irq_flags()（此处原有的
- * get_daif/enable_interrupts/disable_interrupts 是第 4 份副本，已删）。 */
+   arch_irq_enable/disable() 与 arch_irq_flags()(此处原有的
+   get_daif/enable_interrupts/disable_interrupts 是第 4 份副本, 已删)。
+*/
 
 void gic_init();
 void gic_init_secondary(void);
@@ -171,12 +169,9 @@ void gic_set_target(int32_t int_id, uint8_t target);
 int32_t gic_get_target(int32_t int_id);
 void gic_set_icfgr(int32_t int_id, uint8_t cfg);
 
-uint32_t gic_make_virtual_hardware_interrupt(uint32_t vector, uint32_t pintvec,
-                                             int32_t pri, bool grp1);
-uint32_t gic_make_virtual_software_interrupt(uint32_t vector, int32_t pri,
-                                             bool grp1);
-uint32_t gic_make_virtual_software_sgi(uint32_t vector, int32_t cpu_id,
-                                       int32_t pri, bool grp1);
+uint32_t gic_make_virtual_hardware_interrupt(uint32_t vector, uint32_t pintvec, int32_t pri, bool grp1);
+uint32_t gic_make_virtual_software_interrupt(uint32_t vector, int32_t pri, bool grp1);
+uint32_t gic_make_virtual_software_sgi(uint32_t vector, int32_t cpu_id, int32_t pri, bool grp1);
 
 uint32_t gic_read_lr(int32_t n);
 int32_t gic_lr_read_pri(uint32_t lr_value);
@@ -189,4 +184,4 @@ uint32_t gic_apr();
 uint32_t gic_elsr0();
 uint32_t gic_elsr1();
 
-#endif // __GIC_H__
+#endif /* __GIC_H__ */

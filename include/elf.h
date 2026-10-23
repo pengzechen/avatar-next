@@ -1,6 +1,6 @@
 /*
- * include/elf.h - ELF 文件格式定义
- */
+   include/elf.h - ELF 文件格式定义
+*/
 
 #ifndef ELF_H
 #define ELF_H
@@ -55,13 +55,13 @@
 #define R_AARCH64_GLOB_DAT  1025 /* 0x401: GOT entry */
 
 /* RISC-V 重定位类型 */
-#define R_RISCV_64        2 /* 64-bit 绝对地址，sym=0 时等价于 RELATIVE */
+#define R_RISCV_64        2 /* 64-bit 绝对地址, sym=0 时等价于 RELATIVE */
 #define R_RISCV_RELATIVE  3
 #define R_RISCV_JUMP_SLOT 5
 #define R_RISCV_GLOB_DAT  6
 
 /* x86_64 重定位类型 */
-#define R_X86_64_COPY      5 /* 从共享库复制符号，需符号解析，由 ld.so 处理 */
+#define R_X86_64_COPY      5 /* 从共享库复制符号, 需符号解析, 由 ld.so 处理 */
 #define R_X86_64_GLOB_DAT  6
 #define R_X86_64_JUMP_SLOT 7
 #define R_X86_64_RELATIVE  8
@@ -88,7 +88,7 @@ typedef struct {
     uint8_t st_info;   /* 类型和绑定 */
     uint8_t st_other;  /* 可见性 */
     uint16_t st_shndx; /* 所在节索引 */
-    uint64_t st_value; /* 符号值（地址） */
+    uint64_t st_value; /* 符号值(地址) */
     uint64_t st_size;  /* 符号大小 */
 } elf64_sym_t;
 
@@ -119,7 +119,7 @@ typedef struct {
     uint32_t p_flags;  /* 段标志 */
     uint64_t p_offset; /* 段在文件中的偏移 */
     uint64_t p_vaddr;  /* 段的虚拟地址 */
-    uint64_t p_paddr;  /* 段的物理地址（未使用） */
+    uint64_t p_paddr;  /* 段的物理地址(未使用) */
     uint64_t p_filesz; /* 段在文件中的大小 */
     uint64_t p_memsz;  /* 段在内存中的大小 */
     uint64_t p_align;  /* 段对齐 */
@@ -131,8 +131,7 @@ typedef struct {
 /* 工具函数 */
 static inline int elf_check_magic(elf64_ehdr_t *ehdr)
 {
-    return ehdr->e_ident[0] == 0x7f && ehdr->e_ident[1] == 'E' &&
-           ehdr->e_ident[2] == 'L' && ehdr->e_ident[3] == 'F';
+    return ehdr->e_ident[0] == 0x7f && ehdr->e_ident[1] == 'E' && ehdr->e_ident[2] == 'L' && ehdr->e_ident[3] == 'F';
 }
 
 static inline int elf_check_class(elf64_ehdr_t *ehdr)

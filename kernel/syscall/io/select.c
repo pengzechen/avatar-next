@@ -1,8 +1,8 @@
 /*
- * io/select.c - select / pselect6 处理器
- *
- * 使用 fd_poll() 统一接口查询 fd 就绪状态。
- */
+   io/select.c - select / pselect6 处理器
+
+   使用 fd_poll() 统一接口查询 fd 就绪状态。
+*/
 #include "syscall/syscall_internal.h"
 #include "syscall/fs/fd_pool.h"
 #include "syscall/io/epoll.h"
@@ -78,8 +78,7 @@ void select_handler(uint64_t regs[6], uint64_t syscall_num, task_t *current)
             int w = fd >> 6, b = fd & 63;
             unsigned long mask = 1UL << b;
             uint32_t poll_ev = 0;
-            bool need =
-                (r_in[w] & mask) || (w_in[w] & mask) || (e_in[w] & mask);
+            bool need = (r_in[w] & mask) || (w_in[w] & mask) || (e_in[w] & mask);
             if (need)
                 poll_ev = fd_poll(current, fd);
 

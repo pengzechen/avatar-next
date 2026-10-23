@@ -1,9 +1,9 @@
 /*
- * tests/kmem_test.c — AArch64 内核内存管理测试
- *
- * 从 kernel/mm/aarch64/vmm.c 中分离出的测试函数。
- * 仅在 AArch64 架构下编译。
- */
+   tests/kmem_test.c — AArch64 内核内存管理测试
+
+   从 kernel/mm/aarch64/vmm.c 中分离出的测试函数。
+   仅在 AArch64 架构下编译。
+*/
 
 #include "arch.h"
 
@@ -19,17 +19,14 @@
 
 extern pte_t *create_uvm(void);
 extern pte_t *find_pte(pte_t *page_dir, uint64_t vaddr, int32_t alloc);
-extern int32_t memory_create_map(void *page_dir, uint64_t vaddr, uint64_t paddr,
-                                 int32_t count, uint64_t perm);
+extern int32_t memory_create_map(void *page_dir, uint64_t vaddr, uint64_t paddr, int32_t count, uint64_t perm);
 extern uint64_t memory_get_paddr(void *page_dir, uint64_t vaddr);
 extern void memory_free_page(void *page_dir, uint64_t addr);
 extern void destory_4level(pte_t *page_dir);
 extern void destroy_uvm_4level(pte_t *page_dir);
 extern int32_t memory_copy_uvm_4level(void *dst_pgd, void *src_pgd);
-extern void copydata_to_uvm(void *page_dir, uint64_t vaddr, uint64_t paddr,
-                            uint64_t size);
-extern uint64_t memory_alloc_page(void *page_dir, uint64_t vaddr, uint64_t size,
-                                  int32_t perm);
+extern void copydata_to_uvm(void *page_dir, uint64_t vaddr, uint64_t paddr, uint64_t size);
+extern uint64_t memory_alloc_page(void *page_dir, uint64_t vaddr, uint64_t size, int32_t perm);
 
 extern char __heap_flag[];
 
@@ -116,8 +113,7 @@ void test_find_contiguous_free_pages()
     assert(free_page != (size_t)-1);
 
     for (int32_t i = 0; i < 4; i++) {
-        assert_bitmap_state(
-            (free_page + i) * g_pmm.page_size + g_pmm.start_addr, 0);
+        assert_bitmap_state((free_page + i) * g_pmm.page_size + g_pmm.start_addr, 0);
     }
 
     pmm_free_pages(&g_pmm, addr, 4);
@@ -268,8 +264,7 @@ void test_memory_copy_uvm_4level()
 
     uint64_t dst_phys = memory_get_paddr(dst_pgd, 0x1000);
     KLOG_MM("src: %llx, dest: %llx\n", src_phys, dst_phys);
-    assert(memcmp(phys_to_virt(src_phys), phys_to_virt(dst_phys), data_len) ==
-           0);
+    assert(memcmp(phys_to_virt(src_phys), phys_to_virt(dst_phys), data_len) == 0);
 
     memory_free_page(src_pgd, 0x1000);
     memory_free_page(dst_pgd, 0x1000);

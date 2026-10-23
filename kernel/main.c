@@ -1,7 +1,7 @@
 /*
- * Kernel main entry point
- * Called from architecture-specific boot code
- */
+   Kernel main entry point
+   Called from architecture-specific boot code
+*/
 
 #include "../boot/common/boot.h"
 #include "../boot/common/platform_ops.h"
@@ -28,9 +28,10 @@
 #include "aarch64/stage2.h"
 #if defined(RUN_GUEST_LINUX)
 /* 直启模式的 GUEST_LINUX_MEM_* 与 guest_loader_run_linux 声明。
- * ⚠️ 必须在**文件作用域**包含：这个头里有一个 `typedef struct vm vm_t;`
- * 前置声明，若在函数体内展开，它会遮蔽掉 vmm.h 里那个完整的 vm_t，
- * 后面所有 `vm->cfg` 之类的访问都会报 "invalid use of incomplete typedef"。*/
+   注意： 必须在文件作用域包含：这个头里有一个 `typedef struct vm vm_t;`
+   前置声明, 若在函数体内展开, 它会遮蔽掉 vmm.h 里那个完整的 vm_t,
+   后面所有 `vm->cfg` 之类的访问都会报 "invalid use of incomplete typedef"。
+*/
 #include "guest_loader.h"
 #endif
 #elif ARCH_RISCV64
@@ -38,18 +39,19 @@
 #include "irq/plic.h" /* plic_init：外部中断控制器 */
 #include "vmm/vmm.h"
 #if defined(RUN_GUEST_LINUX)
-/* 与 aarch64 分支同理（见上）：直启模式要用 GUEST_LINUX_MEM_* 和
- * guest_loader_run_linux 的声明，且必须在文件作用域包含。
- * 漏了这段的症状是 `implicit declaration of function
- * 'guest_loader_run_linux'` —— 现代 GCC 把隐式声明当**错误**，
- * 所以 riscv 的 GUEST_LINUX 变体直接编不过。*/
+/* 与 aarch64 分支同理(见上)：直启模式要用 GUEST_LINUX_MEM_* 和
+   guest_loader_run_linux 的声明, 且必须在文件作用域包含。
+   漏了这段的症状是 `implicit declaration of function
+   'guest_loader_run_linux'` —— 现代 GCC 把隐式声明当错误,
+   所以 riscv 的 GUEST_LINUX 变体直接编不过。
+*/
 #include "guest_loader.h"
 #endif
 #elif ARCH_X86_64
 #include "exception.h"
 #include "vmm/vmm.h"
 #if defined(RUN_GUEST_LINUX)
-/* 同上：直启变体要 guest_loader_run_linux 的声明。*/
+/* 同上：直启变体要 guest_loader_run_linux 的声明。 */
 #include "guest_loader.h"
 #endif
 #endif
@@ -110,15 +112,15 @@ static void platform_init_runtime_drivers(void)
 
 #if ARCH_RISCV64
     /*
-     * PLIC 必须在这里显式初始化 —— 它不会自己跑起来。
-     * plic_init() 做两件缺一不可的事：
-     *   1. irq_install(CAUSE_SUPERVISOR_EXTERNAL, plic_external_irq)
-     *      没有它，S 模式外部中断会落进 boot/riscv64/exception.c 的空分支、
-     *      从不在 PLIC claim/complete，level 触发的中断源会反复重触发，
-     *      直接把系统拖进无限陷入。
-     *   2. SET_SIE(SIE_SEIE) —— 全树唯一开关外部中断的地方。
-     * 在此之前没有任何源被 enable，所以这一步本身不会引入中断。
-     */
+       PLIC 必须在这里显式初始化 —— 它不会自己跑起来。
+       plic_init() 做两件缺一不可的事：
+         1. irq_install(CAUSE_SUPERVISOR_EXTERNAL, plic_external_irq)
+            没有它, S 模式外部中断会落进 boot/riscv64/exception.c 的空分支,
+            从不在 PLIC claim/complete, level 触发的中断源会反复重触发,
+            直接把系统拖进无限陷入。
+         2. SET_SIE(SIE_SEIE) —— 全树唯一开关外部中断的地方。
+       在此之前没有任何源被 enable, 所以这一步本身不会引入中断。
+    */
     plic_init();
 #endif
 
@@ -152,8 +154,7 @@ static void demo_load_busybox(void *arg)
 
     /* 以 busybox 的 sh applet 进入交互 shell */
     char *bb_argv[] = { "sh", "-i", NULL };
-    char *bb_envp[] = { "PATH=/bin:/usr/bin:/sbin:/usr/sbin", "HOME=/root",
-                        "TERM=vt100", NULL };
+    char *bb_envp[] = { "PATH=/bin:/usr/bin:/sbin:/usr/sbin", "HOME=/root", "TERM=vt100", NULL };
 
     /* 调用 ELF 加载器执行 /busybox */
     const char *path = "/busybox";
@@ -180,14 +181,15 @@ void kernel_main(void)
     KLOG_INIT("Initializing IDT + LAPIC...\n");
     exception_init();
     /*
-     * TSS（特权级切换用）在 cpu_init_bsp() 之后初始化：TSS.RSP0 要同步进
-     * cpu_t::kernel_rsp0，而 cpu_init_bsp() 会把 g_cpus[0] 整个 memset 掉。
-     * IDT 不使用 IST（ist=0），所以这里晚一点设置不影响异常处理。
-     */
+       TSS(特权级切换用)在 cpu_init_bsp() 之后初始化：TSS.RSP0 要同步进
+       cpu_t::kernel_rsp0, 而 cpu_init_bsp() 会把 g_cpus[0] 整个 memset 掉。
+       IDT 不使用 IST(ist=0), 所以这里晚一点设置不影响异常处理。
+    */
 #endif
 #if ARCH_RISCV64
-    /* 必须在 fs_init() 之前设置 stvec，否则 ext4_mount 中的任何
-     * CPU 异常都会落到 M-mode (OpenSBI)，导致 hart 被重置 */
+    /* 必须在 fs_init() 之前设置 stvec, 否则 ext4_mount 中的任何
+       CPU 异常都会落到 M-mode (OpenSBI), 导致 hart 被重置
+    */
     KLOG_INIT("Initializing exception handler...\n");
     exception_init();
 #endif
@@ -197,41 +199,41 @@ void kernel_main(void)
 
 #if ARCH_RISCV64
     /* mmu.S 建立的 1GiB 内核映射必须与 RV_KERNEL_MAP_LIST 完全一致；
-     * 缺一条就 panic 在启动期，而不是等 syscall 期间 Store PF。 */
+       缺一条就 panic 在启动期, 而不是等 syscall 期间 Store PF。
+    */
     mm_vm_verify_kernel_mappings();
 #endif
 
     /*
-     * 应用编译期模块白名单（Makefile 的 LOG_MODULES=）并打印生效配置。
-     * 必须在 UART 可用之后、任何模块日志之前。
-     */
+       应用编译期模块白名单(Makefile 的 LOG_MODULES=)并打印生效配置。
+       必须在 UART 可用之后, 任何模块日志之前。
+    */
     klog_init();
 
     /*
-     * 调用栈回溯自检：造一条已知的调用链，验证"展开 + 符号化"整条路是通的。
-     *
-     * 放在这么早（任务系统、页表都还没起来）是有意的 —— 它只读栈和
-     * .kallsyms 表，两者在镜像加载完就都在了。正常时完全静默，检查失败
-     * 才用 kprintf 报错（不受 LOG= 影响）。
-     *
-     * 为什么值得每次开机都跑：kallsyms 表是两步链接生成的，一旦段序被挪动，
-     * 镜像本身完全正常、但 panic 打出来的函数名会整体错位 —— 假的调用栈比
-     * 打不出来更危险，它会把人带到完全错误的方向。这里当场喊出来。
-     */
-    // backtrace_selftest();
+       调用栈回溯自检：造一条已知的调用链, 验证"展开 + 符号化"整条路是通的。
+
+       放在这么早(任务系统, 页表都还没起来)是有意的 —— 它只读栈和
+       .kallsyms 表, 两者在镜像加载完就都在了。正常时完全静默, 检查失败
+       才用 kprintf 报错(不受 LOG= 影响)。
+
+       为什么值得每次开机都跑：kallsyms 表是两步链接生成的, 一旦段序被挪动,
+       镜像本身完全正常, 但 panic 打出来的函数名会整体错位 —— 假的调用栈比
+       打不出来更危险, 它会把人带到完全错误的方向。这里当场喊出来。
+    */
+    /* backtrace_selftest(); */
 
     /*
-     * 探测/设定缓存行大小（cache API 的 range 操作用它做步长）。
-     * 以前从来没人调用，于是所有架构都吃硬编码的 64。
-     */
+       探测/设定缓存行大小(cache API 的 range 操作用它做步长)。
+       以前从来没人调用, 于是所有架构都吃硬编码的 64。
+    */
     init_cache();
 
     /* Print welcome message */
     /* 一条事实一行 —— 拆成三行没有多出任何信息 */
-    KLOG_INFO("=== Avatar OS Kernel " ARCH_NAME " build " __DATE__ " " __TIME__
-              " ===\n");
+    KLOG_INFO("=== Avatar OS Kernel " ARCH_NAME " build " __DATE__ " " __TIME__ " ===\n");
 
-    /* ── 字符串/内存函数自检（STRING_TEST=1，跑完继续启动）──────── */
+    /* ── 字符串/内存函数自检(STRING_TEST=1, 跑完继续启动)──────── */
 #ifdef RUN_STRING_TEST
     extern void test_string_functions(void); /* tests/string_test.c */
     test_string_functions();
@@ -239,15 +241,14 @@ void kernel_main(void)
 
     /* ── 初始化物理内存管理器 ───────────────────────────────── */
     /*
-     * 链接脚本导出的 __kernel_image_start/end 是**虚拟地址**：高半区代码
-     * 对低物理地址的 ABS 符号做 PC 相对寻址会超出 ADRP/auipc/RIP-rel 的
-     * 范围（实测 aarch64 报 R_AARCH64_ADR_PREL_PG_HI21 truncated to fit）。
-     * 换算放在这里 —— boot 层知道 KERNEL_VMA，PMM 只收物理地址。
-     */
+       链接脚本导出的 __kernel_image_start/end 是虚拟地址：高半区代码
+       对低物理地址的 ABS 符号做 PC 相对寻址会超出 ADRP/auipc/RIP-rel 的
+       范围(实测 aarch64 报 R_AARCH64_ADR_PREL_PG_HI21 truncated to fit)。
+       换算放在这里 —— boot 层知道 KERNEL_VMA, PMM 只收物理地址。
+    */
     extern char __kernel_image_start[];
     extern char __kernel_image_end[];
-    pmm_initialize(virt_to_phys((uint64_t)__kernel_image_start),
-                   virt_to_phys((uint64_t)__kernel_image_end));
+    pmm_initialize(virt_to_phys((uint64_t)__kernel_image_start), virt_to_phys((uint64_t)__kernel_image_end));
 
 #if !DRIVER_SDBLK_SG2002
     ramblk_init();
@@ -259,11 +260,11 @@ void kernel_main(void)
 /* 测试时解开下面两行注释 */
 #ifdef RUN_PMM_TESTS
     run_pmm_tests();
-    platform_shutdown(); /* PMM 测试完成后关机，避免后续测试干扰 PMM 状态 */
+    platform_shutdown(); /* PMM 测试完成后关机, 避免后续测试干扰 PMM 状态 */
 #endif
 
 #if ARCH_AARCH64
-    /* 开机自检脚手架：仍然执行，但默认等级下不再占行 */
+    /* 开机自检脚手架：仍然执行, 但默认等级下不再占行 */
     KLOG_INIT("=== Running VMM Tests ===\n");
     kmem_test();
     KLOG_INIT("VMM tests completed\n");
@@ -276,19 +277,19 @@ void kernel_main(void)
     cpu_init_bsp(); /* Phase 0：安装 BSP per-CPU 指针 */
 #if ARCH_X86_64
     extern void x86_tss_init(void);
-    x86_tss_init(); /* 必须在 cpu_init_bsp() 之后（见上方说明） */
+    x86_tss_init(); /* 必须在 cpu_init_bsp() 之后(见上方说明) */
 #endif
     task_init();
 
     /*
-     * 先把 AP 拉起来，再创建任何可能被摊核的任务。
-     *
-     * vCPU 任务的亲和性在创建时就算好了（(slot + vcpu_id) % g_num_cpus）。
-     * 从前这一步在模式分支之后，直启 guest 时 g_num_cpus 还是 1，于是
-     * **4 个 vCPU 全被钉在 cpu0** —— guest 侧看是 4 核，宿主只有一颗核在
-     * 分时，AP bring-up 和 IPI 都会被拖死。放到任务创建之前，任何模式
-     * （直启 guest / busybox / 网络）都能按真实核数摊开。
-     */
+       先把 AP 拉起来, 再创建任何可能被摊核的任务。
+
+       vCPU 任务的亲和性在创建时就算好了((slot + vcpu_id) % g_num_cpus)。
+       从前这一步在模式分支之后, 直启 guest 时 g_num_cpus 还是 1, 于是
+       4 个 vCPU 全被钉在 cpu0 —— guest 侧看是 4 核, 宿主只有一颗核在
+       分时, AP bring-up 和 IPI 都会被拖死。放到任务创建之前, 任何模式
+       (直启 guest / busybox / 网络)都能按真实核数摊开。
+    */
     cpu_bring_up_all();
 
 #if DRIVER_ETH_VIRTIO && !defined(RUN_GUEST_LINUX)
@@ -302,33 +303,34 @@ void kernel_main(void)
 #endif
 
     /* ── 选择启动模式 ────────────────────────────────────
-     *   默认 (run-fs):           启动 busybox 交互 shell
-     *   VMM_TEST=1:              VMM 三线程上下文切换测试
-     *   （新测试：在此处添加 #elif defined(RUN_XXX_TEST)）
-     * ──────────────────────────────────────────────────── */
+         默认 (run-fs):           启动 busybox 交互 shell
+         VMM_TEST=1:              VMM 三线程上下文切换测试
+         (新测试：在此处添加 #elif defined(RUN_XXX_TEST))
+       ────────────────────────────────────────────────────
+    */
 #if defined(RUN_GUEST_LINUX)
     /*
-     * 构建指纹 —— `make test-guest-linux` 靠它在产物里辨认 GUEST_LINUX 变体。
-     *
-     * ⚠️ 判据**不能**用下面那条 KLOG_INFO 里的字符串：`LOG=none` 会把整条
-     * KLOG 连同字符串一起编译掉，校验于是会在**完全正确的产物**上误报
-     * 「产物不是 GUEST_LINUX 变体」，把 `LOG=none` 变成一条走不通的路。
-     *
-     * 这里用 `used` 属性保证它一定落到 .rodata（链接没有 --gc-sections，
-     * 不会被回收），且**不依赖任何日志宏**。
-     * 用独立 token（而不是复用 KLOG 里那句 "GUEST_LINUX mode"）是因为
-     * Makefile 那边判的是「恰好出现 1 次」—— 复用的话 LOG!=none 时会数到 2 条。
-     */
-    __attribute__((used)) static const char g_build_tag_guest_linux[] =
-        "GUEST_LINUX_BUILD_TAG";
+       构建指纹 —— `make test-guest-linux` 靠它在产物里辨认 GUEST_LINUX 变体。
 
-    /* 从 rootfs 加载 Linux guest（kernel Image + DTB + initrd）并启动 */
+       注意： 判据不能用下面那条 KLOG_INFO 里的字符串：`LOG=none` 会把整条
+       KLOG 连同字符串一起编译掉, 校验于是会在完全正确的产物上误报
+       「产物不是 GUEST_LINUX 变体」, 把 `LOG=none` 变成一条走不通的路。
+
+       这里用 `used` 属性保证它一定落到 .rodata(链接没有 --gc-sections,
+       不会被回收), 且不依赖任何日志宏。
+       用独立 token(而不是复用 KLOG 里那句 "GUEST_LINUX mode")是因为
+       Makefile 那边判的是「恰好出现 1 次」—— 复用的话 LOG!=none 时会数到 2 条。
+    */
+    __attribute__((used)) static const char g_build_tag_guest_linux[] = "GUEST_LINUX_BUILD_TAG";
+
+    /* 从 rootfs 加载 Linux guest(kernel Image + DTB + initrd)并启动 */
     KLOG_INFO("=== GUEST_LINUX mode: booting Linux as EL1 guest ===\n");
     {
-        /* vmm.h / guest_loader.h 都在文件顶部包含（见那里的注释：
-         * 类型声明不能放在函数体内）*/
+        /* vmm.h / guest_loader.h 都在文件顶部包含(见那里的注释：
+           类型声明不能放在函数体内)
+        */
 
-        /* 直启模式：从 VM 池里取一个槽位（多 VM 之后直启也用同一条路径）*/
+        /* 直启模式：从 VM 池里取一个槽位(多 VM 之后直启也用同一条路径) */
         vm_t *vm = vm_alloc();
         if (!vm) {
             KLOG_ERROR("GUEST_LINUX: no free VM slot\n");
@@ -336,9 +338,9 @@ void kernel_main(void)
             vm->cfg.mem_base = GUEST_LINUX_MEM_BASE;
             vm->cfg.mem_size = GUEST_LINUX_MEM_SIZE;
             /*
-             * 直启没有命令行，沿用构建期的 GUEST_VCPUS。
-             * 运行期指定（vmm-run -c N）只在 /dev/vmm 那条路上。
-             */
+               直启没有命令行, 沿用构建期的 GUEST_VCPUS。
+               运行期指定(vmm-run -c N)只在 /dev/vmm 那条路上。
+            */
             vm->cfg.nr_vcpus = GUEST_LINUX_NR_VCPUS;
             if (guest_loader_run_linux(vm) != 0)
                 KLOG_ERROR("guest_loader_run_linux failed\n");
@@ -360,7 +362,7 @@ void kernel_main(void)
         KLOG_ERROR("Failed to create network task!\n");
 #endif
 
-    /* SMP 检查完成，现在才启动 busybox 交互 shell */
+    /* SMP 检查完成, 现在才启动 busybox 交互 shell */
     KLOG_INFO("\n=== Launching busybox shell ===\n");
 #if !DRIVER_ETH_VIRTIO && !DRIVER_ETH_CVITEK
     uint64_t startup_task_irq_flags = arch_irq_save();
@@ -374,25 +376,25 @@ void kernel_main(void)
 #endif
 
     /*
-     * SMP 结果打一条 **INFO**。
-     *
-     * cpu_bring_up_all() 内部逐核的 "cpuN online" 和收尾的
-     * "SMP bringup done: %u CPU(s) online" 都是 KLOG_SMP（== 模块 DEBUG），
-     * 于是 LOG=info 下**一条都看不见** —— 整个启动日志里就没有"这台机器到底
-     * 几个核在跑"这个事实，而它决定了后面所有的并发行为（调度器、per-CPU
-     * 状态、VMM 的核间竞态、GIC 投递）。实测在 rk3588 上就是这个症状。
-     *
-     * 两个数一起报：CONFIG_SMP_CPUS 是编译期**请求**的，g_num_cpus 是实际
-     * 上线的。两者不等（PSCI CPU_ON 失败、核被固件扣住）是最该一眼看出来的
-     * 情况，只报一个的话那种情况会伪装成一切正常。
-     */
-    KLOG_INFO("[cpu] SMP: %u/%u CPU(s) online\n", (unsigned)g_num_cpus,
-              (unsigned)CONFIG_SMP_CPUS);
+       SMP 结果打一条 INFO。
 
-    /* ── 启用抢占，进入 idle 循环（所有模式共用）─────────
-     * 在所有任务创建完成后启用，避免 tick 打断内核初始化路径。
-     * 切换到 idle 专用栈（防止 boot 栈在频繁中断下溢出）。
-     * ──────────────────────────────────────────────────── */
+       cpu_bring_up_all() 内部逐核的 "cpuN online" 和收尾的
+       "SMP bringup done: %u CPU(s) online" 都是 KLOG_SMP(== 模块 DEBUG),
+       于是 LOG=info 下一条都看不见 —— 整个启动日志里就没有"这台机器到底
+       几个核在跑"这个事实, 而它决定了后面所有的并发行为(调度器, per-CPU
+       状态, VMM 的核间竞态, GIC 投递)。实测在 rk3588 上就是这个症状。
+
+       两个数一起报：CONFIG_SMP_CPUS 是编译期请求的, g_num_cpus 是实际
+       上线的。两者不等(PSCI CPU_ON 失败, 核被固件扣住)是最该一眼看出来的
+       情况, 只报一个的话那种情况会伪装成一切正常。
+    */
+    KLOG_INFO("[cpu] SMP: %u/%u CPU(s) online\n", (unsigned)g_num_cpus, (unsigned)CONFIG_SMP_CPUS);
+
+    /* ── 启用抢占, 进入 idle 循环(所有模式共用)─────────
+       在所有任务创建完成后启用, 避免 tick 打断内核初始化路径。
+       切换到 idle 专用栈(防止 boot 栈在频繁中断下溢出)。
+       ────────────────────────────────────────────────────
+    */
     timer_set_tick_cb(sched_tick);
 #if ARCH_RISCV64
     riscv_kernel_interrupt_enable();
@@ -402,12 +404,15 @@ void kernel_main(void)
     /* SMP 健康检查：抢占启用后立刻验证所有核 timer 都在 tick。 */
     cpu_smp_timer_test(3, 100);
 
-    /* Phase 4a：多核线程分发自检。SMP=1 时也会跑（验证 round-robin
-     * 自身不破坏单核）。失败仅 KLOG_ERROR，不 panic，避免影响后续
-     * busybox / vmm 测试。 */
-    // extern void smp_thread_test_run(uint32_t, uint32_t, uint32_t);
-    // smp_thread_test_run(4, 200, 800);
+    /* Phase 4a：多核线程分发自检。SMP=1 时也会跑(验证 round-robin
+       自身不破坏单核)。失败仅 KLOG_ERROR, 不 panic, 避免影响后续
+       busybox / vmm 测试。
+    */
+    /*
+       extern void smp_thread_test_run(uint32_t, uint32_t, uint32_t);
+       smp_thread_test_run(4, 200, 800);
+    */
 
-    /* 切到 idle 栈并进入 idle 主循环（永不返回）。 */
+    /* 切到 idle 栈并进入 idle 主循环(永不返回)。 */
     task_switch_to_idle_stack();
 }

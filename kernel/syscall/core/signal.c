@@ -1,15 +1,15 @@
 /*
- * signal.c - 内核信号子系统（投递 + 三个 syscall 处理器）
- *
- * 从 kernel/syscall/syscall.c 抽出。包含：
- *   - deliver_pending_signals(): syscall 返回用户态前选取并投递一个信号
- *   - sigaction_handler():       rt_sigaction (Linux 13)
- *   - sigprocmask_handler():     rt_sigprocmask (Linux 14)
- *   - sigreturn_handler():       rt_sigreturn (Linux 15)
- *
- * 入口字符（Ctrl+C / 普通 stdin）的 UART → ringbuf 投递路径仍位于
- * syscall.c 中（signal_check_uart()），因其耦合 g_termios 全局状态。
- */
+   signal.c - 内核信号子系统(投递 + 三个 syscall 处理器)
+
+   从 kernel/syscall/syscall.c 抽出。包含：
+     - deliver_pending_signals(): syscall 返回用户态前选取并投递一个信号
+     - sigaction_handler():       rt_sigaction (Linux 13)
+     - sigprocmask_handler():     rt_sigprocmask (Linux 14)
+     - sigreturn_handler():       rt_sigreturn (Linux 15)
+
+   入口字符(Ctrl+C / 普通 stdin)的 UART → ringbuf 投递路径仍位于
+   syscall.c 中(signal_check_uart()), 因其耦合 g_termios 全局状态。
+*/
 #include "syscall/syscall.h"
 #include "syscall/syscall_internal.h"
 #include "klog.h"
@@ -20,10 +20,11 @@
 #include "user_layout.h"
 
 /* ── deliver_pending_signals ────────────────────────────────────
- * 在 syscall 即将返回用户态前调用（且 syscall_abi_set_ret 已执行）。
- * 选取最低编号的待投递信号，执行 SIG_DFL / SIG_IGN / 用户 handler。
- * 用户 handler 通过在用户栈上构建 sigframe 实现。
- * ─────────────────────────────────────────────────────────────── */
+   在 syscall 即将返回用户态前调用(且 syscall_abi_set_ret 已执行)。
+   选取最低编号的待投递信号, 执行 SIG_DFL / SIG_IGN / 用户 handler。
+   用户 handler 通过在用户栈上构建 sigframe 实现。
+   ───────────────────────────────────────────────────────────────
+*/
 void deliver_pending_signals(task_t *t, trap_frame_t *frame)
 {
     uint64_t unblocked = t->pending_sigs & ~t->blocked_sigs;
@@ -63,28 +64,25 @@ void deliver_pending_signals(task_t *t, trap_frame_t *frame)
         case SIGTSTP:
             return;
         default:
-            KLOG_INFO("[signal] pid=%u: SIG_DFL sig=%d → exit(%d)\n", t->id,
-                      sig, 128 + sig);
+            KLOG_INFO("[signal] pid=%u: SIG_DFL sig=%d → exit(%d)\n", t->id, sig, 128 + sig);
             t->exit_signal = sig;
             sys_exit(128 + sig);
             return; /* unreachable */
         }
     }
 
-    /* 在 handler 执行期间屏蔽本信号（+ sa_mask） */
+    /* 在 handler 执行期间屏蔽本信号(+ sa_mask) */
     t->sig_saved_blocked = t->blocked_sigs;
-    t->blocked_sigs |=
-        (1ULL << (sig - 1)) |
-        (sa_mask & ~((1ULL << (SIGKILL - 1)) | (1ULL << (SIGSTOP - 1))));
+    t->blocked_sigs |= (1ULL << (sig - 1)) | (sa_mask & ~((1ULL << (SIGKILL - 1)) | (1ULL << (SIGSTOP - 1))));
 
     /*
-     * 在用户栈上压入当前 trap_frame（已含 syscall 返回值），建立 sigframe。
-     *
-     * 用户栈地址一律经 copy_to_user_bytes 写（可能跨页、可能未映射）：
-     * 裸 memcpy 一旦踩到未映射页就是内核态数据中止 → 整机挂死。
-     * 写失败就 goto sigframe_fault 回滚：不设 sig_frame_sp、不改 trap_frame，
-     * 信号重新置回 pending 并恢复 blocked 掩码，等下次再投递。
-     */
+       在用户栈上压入当前 trap_frame(已含 syscall 返回值), 建立 sigframe。
+
+       用户栈地址一律经 copy_to_user_bytes 写(可能跨页, 可能未映射)：
+       裸 memcpy 一旦踩到未映射页就是内核态数据中止 → 整机挂死。
+       写失败就 goto sigframe_fault 回滚：不设 sig_frame_sp, 不改 trap_frame,
+       信号重新置回 pending 并恢复 blocked 掩码, 等下次再投递。
+    */
 #if ARCH_X86_64
     {
         sa_restorer = USER_SIGRET_PAGE;
@@ -106,11 +104,11 @@ void deliver_pending_signals(task_t *t, trap_frame_t *frame)
 #elif ARCH_AARCH64
     {
         uint64_t usp = frame->usp & ~15ULL;
-        /* 如果 sa_restorer == 0，在栈上放一个 rt_sigreturn 蹦床 */
+        /* 如果 sa_restorer == 0, 在栈上放一个 rt_sigreturn 蹦床 */
         if (sa_restorer == 0) {
             uint32_t tramp[2];
             tramp[0] = 0xd2801168u; /* mov x8, #139 */
-            tramp[1] = 0xd4000001u; /* svc #0       */
+            tramp[1] = 0xd4000001u; /* svc #0 */
             usp -= 8;
             if (copy_to_user_bytes(tramp, (void *)usp, sizeof(tramp)) < 0)
                 goto sigframe_fault;
@@ -128,11 +126,11 @@ void deliver_pending_signals(task_t *t, trap_frame_t *frame)
 #elif ARCH_RISCV64
     {
         uint64_t usp = frame->x[2] & ~15ULL;
-        /* 如果 sa_restorer == 0，在栈上放一个 rt_sigreturn 蹦床 */
+        /* 如果 sa_restorer == 0, 在栈上放一个 rt_sigreturn 蹦床 */
         if (sa_restorer == 0) {
             uint32_t tramp[2];
-            tramp[0] = 0x08b00893u; /* li a7, 139   */
-            tramp[1] = 0x00000073u; /* ecall         */
+            tramp[0] = 0x08b00893u; /* li a7, 139 */
+            tramp[1] = 0x00000073u; /* ecall */
             usp -= 8;
             if (copy_to_user_bytes(tramp, (void *)usp, sizeof(tramp)) < 0)
                 goto sigframe_fault;
@@ -149,31 +147,28 @@ void deliver_pending_signals(task_t *t, trap_frame_t *frame)
     }
 #endif
 
-    KLOG_SYSCALL(
-        "[signal] pid=%u: deliver sig=%d handler=0x%llx restorer=0x%llx\n",
-        t->id, sig, sa_handler, sa_restorer);
+    KLOG_SYSCALL("[signal] pid=%u: deliver sig=%d handler=0x%llx restorer=0x%llx\n", t->id, sig, sa_handler,
+                 sa_restorer);
     return;
 
 sigframe_fault:
     /*
-     * 用户栈不可写（地址被改坏 / 未映射 / 跨页）：回滚上面已做的状态改动，
-     * 让信号回到"待投递"，并且**不设** sig_frame_sp —— 否则 rt_sigreturn
-     * 会去读一段根本没写成功的垃圾。内核侧 trap_frame 保持原样，任务继续跑。
-     * 相比原来的裸 memcpy（踩到未映射页 = 内核态数据中止 = 整机挂死），
-     * 这里退化成"信号暂时投递不出去"。
-     */
+       用户栈不可写(地址被改坏 / 未映射 / 跨页)：回滚上面已做的状态改动,
+       让信号回到"待投递", 并且不设 sig_frame_sp —— 否则 rt_sigreturn
+       会去读一段根本没写成功的垃圾。内核侧 trap_frame 保持原样, 任务继续跑。
+       相比原来的裸 memcpy(踩到未映射页 = 内核态数据中止 = 整机挂死),
+       这里退化成"信号暂时投递不出去"。
+    */
     t->pending_sigs |= (1ULL << (sig - 1));
     t->blocked_sigs = t->sig_saved_blocked;
-    KLOG_WARN("[signal] pid=%u: sig=%d sigframe 写入用户栈失败，保持待投递\n",
-              t->id, sig);
+    KLOG_WARN("[signal] pid=%u: sig=%d failed to write sigframe to user stack, delivery left pending\n", t->id, sig);
 }
 
 /* ── rt_sigaction ─────────────────────────────────────────────── */
 void sigaction_handler(uint64_t regs[6], task_t *current)
 {
     int sig = (int)regs[0];
-    const struct kernel_sigaction *act =
-        (const struct kernel_sigaction *)regs[1];
+    const struct kernel_sigaction *act = (const struct kernel_sigaction *)regs[1];
     struct kernel_sigaction *old = (struct kernel_sigaction *)regs[2];
     size_t sigsetsize = (size_t)regs[3];
 
@@ -208,8 +203,7 @@ void sigprocmask_handler(uint64_t regs[6], task_t *current)
     const uint64_t *nset = (const uint64_t *)regs[1];
     uint64_t *oset = (uint64_t *)regs[2];
 
-    if (oset && copy_to_user_bytes(&current->blocked_sigs, oset,
-                                   sizeof(current->blocked_sigs)) < 0) {
+    if (oset && copy_to_user_bytes(&current->blocked_sigs, oset, sizeof(current->blocked_sigs)) < 0) {
         regs[0] = (uint64_t)(int64_t)-EFAULT;
         return;
     }
@@ -249,28 +243,26 @@ void sigpending_handler(uint64_t regs[6], task_t *current)
         regs[0] = (uint64_t)(int64_t)-EFAULT;
         return;
     }
-    regs[0] = (copy_to_user_bytes(&pending, uset, sizeof(pending)) >= 0)
-                  ? 0
-                  : (uint64_t)(int64_t)-EFAULT;
+    regs[0] = (copy_to_user_bytes(&pending, uset, sizeof(pending)) >= 0) ? 0 : (uint64_t)(int64_t)-EFAULT;
 }
 
 /*
- * signal_deliver_from_trap - 在 trap 返回用户态之前投递一个待处理信号
- *
- * 由各架构的异常/中断返回路径调用（AArch64 的 HANDLE_IRQ、
- * x86_64 与 RISC-V 的公共 stub）。
- *
- * 为什么必须有这一步：deliver_pending_signals() 的另一处调用点在 syscall
- * 返回路径上，而**纯用户态自旋、不发任何 syscall 的任务**永远不会经过那里。
- * LTP 的 setsid01 正是这种形态 ——
- *
- *     void do_child_2(void) { for (;;) ; }        // 子进程死循环
- *     父进程: setsid(); kill(pid, SIGKILL); wait(&status);   // 期望 status==9
- *
- * 没有 trap 返回路径上的投递，SIGKILL 永远不生效，子进程不死、父进程
- * wait() 永远等下去，整个测试卡死。只有从**用户态**陷入时才投递：
- * 内核态陷入时 frame 不是用户现场，改它没有意义。
- */
+   signal_deliver_from_trap - 在 trap 返回用户态之前投递一个待处理信号
+
+   由各架构的异常/中断返回路径调用(AArch64 的 HANDLE_IRQ,
+   x86_64 与 RISC-V 的公共 stub)。
+
+   为什么必须有这一步：deliver_pending_signals() 的另一处调用点在 syscall
+   返回路径上, 而纯用户态自旋, 不发任何 syscall 的任务永远不会经过那里。
+   LTP 的 setsid01 正是这种形态 ——
+
+       void do_child_2(void) { for (;;) ; }        // 子进程死循环
+       父进程: setsid(); kill(pid, SIGKILL); wait(&status);   // 期望 status==9
+
+   没有 trap 返回路径上的投递, SIGKILL 永远不生效, 子进程不死, 父进程
+   wait() 永远等下去, 整个测试卡死。只有从用户态陷入时才投递：
+   内核态陷入时 frame 不是用户现场, 改它没有意义。
+*/
 void signal_deliver_from_trap(void *frame_ptr)
 {
     task_t *current = task_current();
@@ -280,17 +272,17 @@ void signal_deliver_from_trap(void *frame_ptr)
 #if ARCH_AARCH64
     trap_frame_t *frame = (trap_frame_t *)frame_ptr;
     if ((frame->spsr & 0xfUL) != 0)
-        return; /* 来自 EL1，非用户现场 */
+        return; /* 来自 EL1, 非用户现场 */
     deliver_pending_signals(current, frame);
 #elif ARCH_X86_64
     trap_frame_t *frame = (trap_frame_t *)frame_ptr;
     if ((frame->cs & 3u) != 3u)
-        return; /* CS.RPL != 3，来自内核 */
+        return; /* CS.RPL != 3, 来自内核 */
     deliver_pending_signals(current, frame);
 #elif ARCH_RISCV64
     trap_frame_t *frame = (trap_frame_t *)frame_ptr;
     if (frame->sstatus & SSTATUS_SPP)
-        return; /* 来自 S 态，非用户现场 */
+        return; /* 来自 S 态, 非用户现场 */
     deliver_pending_signals(current, frame);
 #else
     (void)frame_ptr;
@@ -304,23 +296,23 @@ void sigreturn_handler(uint64_t regs[6], task_t *current, trap_frame_t *frame)
     if (current->sig_frame_sp) {
         trap_frame_t *saved = (trap_frame_t *)current->sig_frame_sp;
         /*
-         * sigframe 在用户栈上，且这是用户可控的地址（handler 里能改 sp、
-         * 也能 munmap 那段栈），必须经 copy_from_user_bytes 读：裸 memcpy
-         * 踩到坏地址就是内核态数据中止 → 整机挂死。
-         * 该接口先校验再拷贝，失败时 frame 不会被写坏半截。
-         */
+           sigframe 在用户栈上, 且这是用户可控的地址(handler 里能改 sp,
+           也能 munmap 那段栈), 必须经 copy_from_user_bytes 读：裸 memcpy
+           踩到坏地址就是内核态数据中止 → 整机挂死。
+           该接口先校验再拷贝, 失败时 frame 不会被写坏半截。
+        */
         if (copy_from_user_bytes(saved, frame, sizeof(trap_frame_t)) < 0) {
             /*
-             * 读不回来：不清 sig_frame_sp（用户修正栈指针后还能重试）、
-             * 不动 blocked_sigs、不改 trap_frame，直接返回 -EFAULT。
-             */
+               读不回来：不清 sig_frame_sp(用户修正栈指针后还能重试),
+               不动 blocked_sigs, 不改 trap_frame, 直接返回 -EFAULT。
+            */
             regs[0] = (uint64_t)(int64_t)-EFAULT;
             return;
         }
         current->sig_frame_sp = 0;
         /* 恢复信号投递前的 blocked_sigs */
         current->blocked_sigs = current->sig_saved_blocked;
-        /* 让 syscall_abi_set_ret 写入已恢复帧中的正确寄存器值（幂等）*/
+        /* 让 syscall_abi_set_ret 写入已恢复帧中的正确寄存器值(幂等) */
 #if ARCH_X86_64
         regs[0] = frame->rax;
 #elif ARCH_AARCH64
@@ -334,9 +326,10 @@ void sigreturn_handler(uint64_t regs[6], task_t *current, trap_frame_t *frame)
 }
 
 /* ── kill (Linux 129) ──────────────────────────────────────────
- * pid > 0 : 单进程; pid == 0 / -1 : 当前 pgid; pid < -1 : (-pid) pgid
- * sig == 0 : 仅做存在性检查
- * ────────────────────────────────────────────────────────────── */
+   pid > 0 : 单进程; pid == 0 / -1 : 当前 pgid; pid < -1 : (-pid) pgid
+   sig == 0 : 仅做存在性检查
+   ──────────────────────────────────────────────────────────────
+*/
 void kill_handler(uint64_t regs[6], task_t *current)
 {
     int pid = (int)(int32_t)regs[0];
@@ -382,8 +375,9 @@ void kill_handler(uint64_t regs[6], task_t *current)
 }
 
 /* ── tkill (Linux 130) ─────────────────────────────────────────
- * 旧接口：按 tid 向单个任务发送信号。
- * ────────────────────────────────────────────────────────────── */
+   旧接口：按 tid 向单个任务发送信号。
+   ──────────────────────────────────────────────────────────────
+*/
 void tkill_handler(uint64_t regs[6])
 {
     int tid = (int)(int32_t)regs[0];
@@ -404,8 +398,9 @@ void tkill_handler(uint64_t regs[6])
 }
 
 /* ── tgkill (Linux 131) ────────────────────────────────────────
- * tgid 是线程组 leader 的 PID（不是 pgid）。
- * ────────────────────────────────────────────────────────────── */
+   tgid 是线程组 leader 的 PID(不是 pgid)。
+   ──────────────────────────────────────────────────────────────
+*/
 void tgkill_handler(uint64_t regs[6])
 {
     int tgid = (int)(int32_t)regs[0];

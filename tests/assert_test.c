@@ -1,7 +1,7 @@
 /*
- * 断言系统测试
- * 编译: gcc -D__x86_64__ -I../include -c assert_test.c
- */
+   断言系统测试
+   编译: gcc -D__x86_64__ -I../include -c assert_test.c
+*/
 
 #include "assert.h"
 #include "types.h"
@@ -33,7 +33,7 @@ void test_assert_always(void)
 /* 测试编译时断言 */
 void test_static_assert(void)
 {
-    /* 编译时检查，如果失败则编译报错 */
+    /* 编译时检查, 如果失败则编译报错 */
     static_assert(sizeof(int) == 4, "int must be 4 bytes");
     static_assert(sizeof(long) == 8, "long must be 8 bytes on 64-bit");
     static_assert(sizeof(void *) == 8, "pointer must be 8 bytes on 64-bit");

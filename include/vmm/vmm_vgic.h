@@ -1,9 +1,9 @@
 /*
- * include/vmm_vgic.h - VM-owned virtual GICv2 state and core operations.
- *
- * The VM owns one vgic_t. Distributor state is shared by the VM, while SGI,
- * PPI, GICC and GICH state is banked per virtual CPU.
- */
+   include/vmm_vgic.h - VM-owned virtual GICv2 state and core operations.
+
+   The VM owns one vgic_t. Distributor state is shared by the VM, while SGI,
+   PPI, GICC and GICH state is banked per virtual CPU.
+*/
 #ifndef VMM_VGIC_H
 #define VMM_VGIC_H
 
@@ -58,24 +58,17 @@ typedef struct vgic {
 int vmm_vgic_init(vgic_t *vgic, uint32_t nr_vcpus);
 
 void vmm_vgic_set_pending(vgic_t *vgic, uint32_t vcpu_id, uint32_t irq);
-void vmm_vgic_set_sgi_pending(vgic_t *vgic, uint32_t vcpu_id,
-                              uint32_t source_vcpu, uint32_t irq);
-void vmm_vgic_set_enabled(vgic_t *vgic, uint32_t vcpu_id, uint32_t irq,
-                          int enabled);
+void vmm_vgic_set_sgi_pending(vgic_t *vgic, uint32_t vcpu_id, uint32_t source_vcpu, uint32_t irq);
+void vmm_vgic_set_enabled(vgic_t *vgic, uint32_t vcpu_id, uint32_t irq, int enabled);
 
 void vmm_vgic_set_dist_enabled(vgic_t *vgic, int enabled);
 int vmm_vgic_dist_enabled(const vgic_t *vgic);
 
-uint32_t vmm_vgic_enabled_word(const vgic_t *vgic, uint32_t vcpu_id,
-                               uint32_t word);
-uint32_t vmm_vgic_pending_word(const vgic_t *vgic, uint32_t vcpu_id,
-                               uint32_t word);
-uint32_t vmm_vgic_active_word(const vgic_t *vgic, uint32_t vcpu_id,
-                              uint32_t word);
-void vmm_vgic_clear_pending_word(vgic_t *vgic, uint32_t vcpu_id, uint32_t word,
-                                 uint32_t bits);
-void vmm_vgic_clear_active_word(vgic_t *vgic, uint32_t vcpu_id, uint32_t word,
-                                uint32_t bits);
+uint32_t vmm_vgic_enabled_word(const vgic_t *vgic, uint32_t vcpu_id, uint32_t word);
+uint32_t vmm_vgic_pending_word(const vgic_t *vgic, uint32_t vcpu_id, uint32_t word);
+uint32_t vmm_vgic_active_word(const vgic_t *vgic, uint32_t vcpu_id, uint32_t word);
+void vmm_vgic_clear_pending_word(vgic_t *vgic, uint32_t vcpu_id, uint32_t word, uint32_t bits);
+void vmm_vgic_clear_active_word(vgic_t *vgic, uint32_t vcpu_id, uint32_t word, uint32_t bits);
 
 void vmm_vgic_inject_timer(vgic_t *vgic, uint32_t vcpu_id);
 void vmm_vgic_sync_entry(vgic_t *vgic, uint32_t vcpu_id);

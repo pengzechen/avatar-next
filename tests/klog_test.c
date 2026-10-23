@@ -1,7 +1,7 @@
 /*
- * 内核日志系统测试
- * 编译: gcc -D__x86_64__ -I../include -c klog_test.c
- */
+   内核日志系统测试
+   编译: gcc -D__x86_64__ -I../include -c klog_test.c
+*/
 
 #include "klog.h"
 #include "types.h"
@@ -29,10 +29,10 @@ void test_log_levels(void)
 void test_module_logs(void)
 {
     /*
-     * 启用 INIT/UART/TIMER 三个模块的调试日志。
-     * 按名字设置（等价于编译期 LOG_MODULES=init,uart,timer），也演示了
-     * 白名单语义：没在名单里的模块不输出。
-     */
+       启用 INIT/UART/TIMER 三个模块的调试日志。
+       按名字设置(等价于编译期 LOG_MODULES=init,uart,timer), 也演示了
+       白名单语义：没在名单里的模块不输出。
+    */
     log_set_modules_by_name("init,uart,timer");
 
     /* 模块初始化日志 */

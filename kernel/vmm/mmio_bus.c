@@ -1,9 +1,9 @@
 /*
- * kernel/vmm/mmio_bus.c — VMM MMIO 设备总线实现
- *
- * 移植自 x-kernel: virt/vdev/core/src/lib.rs (MmioBus)。
- * 线性查找：设备数很少（<= MMIO_MAX_DEVICES），无需哈希。
- */
+   kernel/vmm/mmio_bus.c — VMM MMIO 设备总线实现
+
+   移植自 x-kernel: virt/vdev/core/src/lib.rs (MmioBus)。
+   线性查找：设备数很少(<= MMIO_MAX_DEVICES), 无需哈希。
+*/
 
 #include "vmm/vmm_mmio.h"
 #include "klog.h"
@@ -17,19 +17,17 @@ void mmio_bus_init(mmio_bus_t *bus)
 int mmio_bus_register(mmio_bus_t *bus, mmio_device_t *dev)
 {
     if (bus->nr >= MMIO_MAX_DEVICES) {
-        KLOG_ERROR("[mmio] bus full, cannot register '%s'\n",
-                   dev->ops ? dev->ops->name : "?");
+        KLOG_ERROR("[mmio] bus full, cannot register '%s'\n", dev->ops ? dev->ops->name : "?");
         return -1;
     }
     bus->devs[bus->nr++] = dev;
-    KLOG_INFO("[mmio] registered '%s' base=0x%llx size=0x%llx\n",
-              dev->ops->name, (unsigned long long)dev->ops->base,
+    KLOG_INFO("[mmio] registered '%s' base=0x%llx size=0x%llx\n", dev->ops->name, (unsigned long long)dev->ops->base,
               (unsigned long long)dev->ops->size);
     return 0;
 }
 
-int mmio_bus_handle(mmio_bus_t *bus, uint64_t gpa, int is_write, uint8_t size,
-                    uint64_t value, uint32_t vcpu_id, uint64_t *out)
+int mmio_bus_handle(mmio_bus_t *bus, uint64_t gpa, int is_write, uint8_t size, uint64_t value, uint32_t vcpu_id,
+                    uint64_t *out)
 {
     int i;
 

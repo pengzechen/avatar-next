@@ -579,7 +579,7 @@ ifeq ($(NPU),rknpu)
     # dma_heap 来），所以 DMA=1 是硬依赖。少了它链接期才会炸，且报错指向
     # 一堆 dma_buf_* 未定义 —— 在这里拦住。
     ifeq ($(DMA),0)
-        $(error NPU=rknpu 需要 DMA=1（dma-buf/dma-heap）；见 Makefile §6e-1b)
+        $(error NPU=rknpu requires DMA=1 (dma-buf/dma-heap); see Makefile section 6e-1b)
     endif
     DRIVER_NPU_SRCS := driver/npu/rknpu.c driver/npu/rkpm.c \
                        driver/npu/rknpu_drm.c driver/npu/npu_mmu.c
@@ -613,7 +613,7 @@ else ifeq ($(ETH),cvitek)
         CFLAGS          += -DDRIVER_ETH_CVITEK=1
         DRIVER_ETH_SRCS := driver/eth/cvitek_eth.c
     else
-        $(error ETH=cvitek 目前仅支持 ARCH=riscv64)
+        $(error ETH=cvitek is only supported on ARCH=riscv64)
     endif
 else ifeq ($(ETH),none)
     DRIVER_ETH_SRCS :=
@@ -1002,11 +1002,11 @@ ifeq ($(GUEST_NPU),1)
   #    会一路放行 —— 而 QEMU 上宿主 PA 0x79000000 根本不是 RAM，
   #    guest 的每次 NPU DMA 都会撞到不存在的物理地址。
   ifneq ($(MEM_PLATFORM_DEFINE),RK3588)
-    $(error GUEST_NPU=1 只对 RK3588 有效：那个 DTB 的 reserved-memory 要靠\
-宿主 stage-2 做恒等映射，而恒等窗口只在 PLATFORM_RK3588 下打开)
+    $(error GUEST_NPU=1 is only valid for RK3588: that DTB's reserved-memory needs an\
+identity mapping in host stage-2, and the identity window is only enabled with PLATFORM_RK3588)
   endif
   ifneq ($(filter v3,$(GIC_VER)),v3)
-    $(error GUEST_NPU=1 需要 GIC=v3：NPU 的 guest DTB 只做了 GICv3 版)
+    $(error GUEST_NPU=1 requires GIC=v3: the NPU guest DTB is GICv3-only)
   endif
 endif
 # 单核基础 DTB（NPU 版 / GICv3 版 / GICv2 版），与 GUEST_VCPUS 无关。
@@ -1015,10 +1015,10 @@ GUEST_LINUX_BASE_DTB_SRC := $(if $(GUEST_NPU),imgs/guests/aarch64/linux-gicv3-np
 
 ifneq ($(GUEST_VCPUS),1)
   ifneq ($(filter v3,$(GIC_VER)),v3)
-    $(error GUEST_VCPUS=$(GUEST_VCPUS) 需要 GIC=v3：多 CPU 的 guest DTB 只做了 GICv3 版)
+    $(error GUEST_VCPUS=$(GUEST_VCPUS) requires GIC=v3: multi-CPU guest DTBs are GICv3-only)
   endif
   ifneq ($(GUEST_NPU),)
-    $(error GUEST_VCPUS>1 与 GUEST_NPU=1 不兼容：NPU guest DTB 只做了单 vCPU)
+    $(error GUEST_VCPUS>1 is incompatible with GUEST_NPU=1: the NPU guest DTB is single-vCPU only)
   endif
   GUEST_LINUX_DTB_SRC := imgs/guests/aarch64/linux-gicv3-smp$(GUEST_VCPUS).dtb
 else
@@ -1103,7 +1103,7 @@ THIRD_PARTY_HEADERS := $(LWEXT4_DIR)/include/ext4.h \
 # 兼容旧命令：以前这一步是拉 submodule，现在源码随仓库一起 clone。
 # 保留目标只是别让旧脚本/旧文档里的 `make submodules` 直接报错。
 submodules:
-	@echo "third_party 源码已内嵌在仓库里，无需拉取 submodule。"
+	@echo "third_party sources are embedded in this repository; no submodule fetch is needed."
 
 check-submodules:
 	@missing=""; \
@@ -1113,16 +1113,16 @@ check-submodules:
 	if [ -n "$$missing" ]; then \
 	    echo ""; \
 	    echo "════════════════════════════════════════════════════════════════"; \
-	    echo " 第三方源码缺失（lwext4 与 lwIP 都已内嵌，正常情况下不会缺）。"; \
-	    echo " 说明工作树不完整，请重新 clone。缺少："; \
+	    echo " Third-party sources are missing (lwext4 and lwIP are embedded; this normally should not happen)."; \
+	    echo " The working tree is incomplete; please re-clone. Missing:"; \
 	    for h in $$missing; do echo "     $$h"; done; \
 	    echo ""; \
-	    echo " 修复（仓库根目录执行）："; \
-	    echo "     重新 clone"; \
-	    echo " 等价于："; \
+	    echo " Fix (run from the repository root):"; \
+	    echo "     re-clone the repository"; \
+	    echo " Equivalent to:"; \
 	    echo "     git submodule update --init --recursive --force"; \
 	    echo ""; \
-	    echo " 以后 clone 可以直接带子模块："; \
+	    echo " Future clones can include submodules directly:"; \
 	    echo "     git clone --recurse-submodules <url>"; \
 	    echo "════════════════════════════════════════════════════════════════"; \
 	    echo ""; \
@@ -1342,7 +1342,7 @@ $(DMATEST_BIN): apps/c/dmatest.c
 dmatest: $(DMATEST_BIN)
 else
 dmatest:
-	@echo "dmatest 需要 DMA=1（见 Makefile §6e-1b）"
+	@echo "dmatest requires DMA=1 (see Makefile section 6e-1b)"
 	@exit 1
 endif
 
@@ -1353,7 +1353,7 @@ $(DRMTEST_BIN): apps/c/drmtest.c
 drmtest: $(DRMTEST_BIN)
 else
 drmtest:
-	@echo "drmtest 需要 NPU=rknpu（见 Makefile §6b）"
+	@echo "drmtest requires NPU=rknpu (see Makefile section 6b)"
 	@exit 1
 endif
 
@@ -1781,7 +1781,7 @@ test-panic:
 	fi
 	$(MAKE) PLATFORM=$(PLATFORM) LOG=$(LOG) PANIC_TEST=1 kernel
 	@cp imgs/rootfs-$(ARCH).img $(ROOTFS_IMG)
-	@echo "Starting QEMU (PANIC_TEST: 在 ELF 解析路径上故意 panic，看 backtrace)..."
+	@echo "Starting QEMU (PANIC_TEST: panic on purpose in the ELF parser path to show a backtrace)..."
 	$(QEMU) $(QEMU_FLAGS) $(QEMU_ROOTFS_FLAGS)
 
 # test-guest-linux: 编译 GUEST_LINUX=1 内核并把 Linux 作为 EL1 guest 启动
@@ -1808,15 +1808,15 @@ ifeq ($(ARCH),x86_64)
 	@# **不是**任何 KLOG 字符串 —— LOG=none 会把 KLOG 全编译掉，
 	@# 拿它当判据会在正确的产物上误报。见 main.c 里的注释。
 	@if [ "$$(strings $(KERNEL_BIN) | grep -c 'GUEST_LINUX_BUILD_TAG')" != "1" ]; then \
-		echo "ERROR: 产物不是 GUEST_LINUX 变体（会被 make rootfs 覆盖）。"; \
-		echo "       请按 CLAUDE.md：同变体先 rootfs 再 kernel。"; \
+		echo "ERROR: the artifact is not a GUEST_LINUX variant (it will be overwritten by make rootfs)."; \
+		echo "       Follow CLAUDE.md: build rootfs first, then kernel, with the same variant."; \
 		exit 1; \
 	fi
 else
 	$(MAKE) PLATFORM=$(PLATFORM) LOG=$(LOG) GUEST_LINUX=1 kernel
 endif
 	@echo "Starting QEMU (guest Linux, $(ARCH))..."
-	@echo "  提示：guest 串口直接打在本终端；Ctrl-A X 退出 QEMU。"
+	@echo "  Note: the guest serial console is this terminal; press Ctrl-A X to exit QEMU."
 	$(QEMU) $(QEMU_FLAGS) $(QEMU_ROOTFS_FLAGS)
 
 # env: 拉取测试依赖（LTP 源码 → tests/ltp/src）。
@@ -1857,8 +1857,25 @@ clean-all:
 # （lwext4 / lwIP），人家有自己的风格，不归我们管；build/ 是产物。
 # 与 PLATFORM 无关，任何平台下跑结果都一样。
 FORMAT_DIRS  := boot driver fs include kernel lib platforms apps tests
-FORMAT_SRCS  := $(shell find $(FORMAT_DIRS) \( -name '*.c' -o -name '*.h' \) 2>/dev/null)
+# tests/ltp/src 是 `make env` 拉下来的 LTP 上游源码（约 5944 个 .c/.h），
+# tests/.artifacts 是跑测例生成的构建/运行目录，apps/rknn-aarch64/include
+# 是 RKNN 官方运行时头文件 —— 都不是本项目的代码，不能格式化（否则
+# `make format` 会改掉一整个第三方源码树）。
+FORMAT_EXCLUDES := tests/ltp/src tests/.artifacts apps/rknn-aarch64/include
+FORMAT_PRUNE    := $(foreach d,$(FORMAT_EXCLUDES),-path '$(d)' -prune -o)
+FORMAT_SRCS     := $(shell find $(FORMAT_DIRS) $(FORMAT_PRUNE) \
+    \( -name '*.c' -o -name '*.h' \) -print 2>/dev/null)
 CLANG_FORMAT ?= clang-format
+
+# 文件列表必须走文件 + xargs，**不能**把 $(FORMAT_SRCS) 直接展开进命令行：
+# 2026-10 已经到 6277 个文件（排除 LTP 后 ~333 个），一次展开超过 ARG_MAX，
+# shell 报
+#     make: /bin/sh: Argument list too long
+# 而 make 只把它显示成 Error 127，看起来像 clang-format 没装。用
+# `find -print0` 写一份 NUL 分隔的表，再让 xargs 分批喂给 cat / clang-format。
+# 列表只生成一次，保证每遍遍历顺序一致（cksum 的收敛判断依赖这一点）。
+FORMAT_FIND := find $(FORMAT_DIRS) $(FORMAT_PRUNE) \
+    \( -name '*.c' -o -name '*.h' \) -print0 2>/dev/null
 
 # 为什么是「跑到收敛」而不是「跑一遍」：
 # clang-format 不保证幂等，个别构造要两三遍才稳定。本项目实测命中一处 ——
@@ -1867,32 +1884,41 @@ CLANG_FORMAT ?= clang-format
 # `make format-check` 会报错，看起来像"格式化没生效"。
 format:
 	@command -v $(CLANG_FORMAT) >/dev/null 2>&1 || {                     \
-	    echo "找不到 $(CLANG_FORMAT)。装一个：";                          \
-	    echo "  pipx install clang-format     # 用户级，免 sudo";         \
+	    echo "Cannot find $(CLANG_FORMAT). Install it:"; \
+	    echo "  pipx install clang-format     # user-level, no sudo"; \
 	    echo "  sudo apt install clang-format";                           \
 	    exit 1; }
 	@echo "clang-format $$($(CLANG_FORMAT) --version | sed 's/.*version //')" \
-	      "—— 目标 $(words $(FORMAT_SRCS)) 个文件"
-	@prev=""; converged="";                                                    \
-	for pass in 1 2 3 4 5; do                                                 \
-	    cur=$$(cat $(FORMAT_SRCS) | cksum);                                    \
+	      "- $(words $(FORMAT_SRCS)) file(s)"
+	@list=$$(mktemp) || exit 1;                                                \
+	trap 'rm -f "$$list"' EXIT;                                                \
+	$(FORMAT_FIND) > "$$list";                                                 \
+	prev=""; converged="";                                                     \
+	for pass in 1 2 3 4 5; do                                                  \
+	    cur=$$(xargs -0 -r cat < "$$list" | cksum);                            \
 	    if [ "$$cur" = "$$prev" ]; then converged=$$((pass - 1)); break; fi;   \
-	    $(CLANG_FORMAT) -i $(FORMAT_SRCS);                                     \
+	    xargs -0 -r $(CLANG_FORMAT) -i < "$$list" || exit 1;                   \
 	    prev="$$cur";                                                          \
 	done;                                                                      \
-	if [ -n "$$converged" ]; then echo "  ✅ 第 $$converged 遍收敛";            \
-	else echo "  ⚠️  5 遍仍未收敛，请人工看一眼"; fi
-	@echo "⚠️  .h 被改过，构建不跟踪头文件 mtime —— 下次编译前先 make clean，"
-	@echo "    否则会用到布局不一致的旧 .o（见 CLAUDE.md 的「幽灵 bug」一节）。"
+	if [ -n "$$converged" ]; then echo "  converged after pass $$converged"; \
+	else echo "  WARNING: did not converge after 5 passes; please inspect manually"; fi
+	@echo "WARNING: .h files were changed but the build does not track header mtime -"
+	@echo "         run make clean before the next build (see the ghost bug section in CLAUDE.md)."
 
 # 注意：--dry-run 只做"再跑一遍会不会变"的判断，所以它隐含要求工作区已经处在
 # 不动点上 —— 这正是 format 跑到收敛的原因。CI 里直接用它即可。
 format-check:
 	@command -v $(CLANG_FORMAT) >/dev/null 2>&1 || {                     \
-	    echo "找不到 $(CLANG_FORMAT)（pipx install clang-format）"; exit 1; }
-	@$(CLANG_FORMAT) --dry-run --Werror $(FORMAT_SRCS) 2>&1 \
-	    && echo "✅ 格式检查通过（$(words $(FORMAT_SRCS)) 个文件）" \
-	    || { echo "❌ 上面的文件不符合 .clang-format，跑 make format 修正"; exit 1; }
+	    echo "Cannot find $(CLANG_FORMAT) (pipx install clang-format)"; exit 1; }
+	@list=$$(mktemp) || exit 1;                                                \
+	trap 'rm -f "$$list"' EXIT;                                                \
+	$(FORMAT_FIND) > "$$list";                                                 \
+	if xargs -0 -r $(CLANG_FORMAT) --dry-run --Werror < "$$list" 2>&1; then    \
+	    echo "format check passed ($(words $(FORMAT_SRCS)) files)"; \
+	else                                                                       \
+	    echo "the files above do not match .clang-format; run make format"; \
+	    exit 1;                                                                \
+	fi
 
 help:
 	@echo "Avatar OS Makefile"
@@ -1944,7 +1970,7 @@ help:
 	@echo "  test-vmm      Build with VMM_TEST=1 and run VMM 3-thread switch test"
 	@echo "  env           Fetch LTP source → tests/ltp/src (needed by tests/ltp/build.sh)"
 	@echo "  test-panic    Build with PANIC_TEST=1: panic on purpose in the ELF"
-	@echo "  test-guest-linux  - 启动 Linux guest（aarch64/riscv64/x86_64）"
+	@echo "  test-guest-linux  - boot a Linux guest (aarch64/riscv64/x86_64)"
 	@echo "                parser, to see what a backtrace looks like"
 	@echo "  submodules    Init/update third_party submodules (lwext4, lwIP)"
 	@echo "  clean         Remove build artifacts for current PLATFORM"
@@ -1959,9 +1985,9 @@ help:
 	@echo "  make PLATFORM=qemu-virt-x86_64 kernel LOG=warn"
 	@echo "  make PLATFORM=sg2002-riscv64 kernel LOG=info"
 	@echo "  make PLATFORM=qemu-virt-riscv64 clean"
-	@echo "  make PLATFORM=qemu-virt-riscv64 test-pthread LOG=warn    # pthread_test 一键测试"
-	@echo "  make PLATFORM=qemu-virt-aarch64 test-vmm LOG=info        # VMM 三线程切换测试"
-	@echo "  make PLATFORM=qemu-virt-aarch64 test-string              # 字符串/内存函数自检"
+	@echo "  make PLATFORM=qemu-virt-riscv64 test-pthread LOG=warn    # one-shot pthread_test"
+	@echo "  make PLATFORM=qemu-virt-aarch64 test-vmm LOG=info        # VMM 3-thread switch test"
+	@echo "  make PLATFORM=qemu-virt-aarch64 test-string              # string/memory function self-test"
 	@echo "  make ARCH=riscv64 kernel                                 # legacy alias for PLATFORM=qemu-virt-riscv64"
 	@echo "  make PLATFORM=qemu-virt-riscv64 run-net"
 	@echo "  make PLATFORM=qemu-virt-riscv64 run-net QEMU_NET_FLAGS='-netdev tap,id=net0,ifname=tap0,script=no,downscript=no -device virtio-net-device,netdev=net0,mac=52:54:00:12:34:56'"

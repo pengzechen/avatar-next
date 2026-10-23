@@ -1,10 +1,10 @@
 /*
- * fs/pipe.c - kernel pipe implementation
- *
- * Ring buffer pipe with blocking read/write via task_block/task_unblock.
- * Each pipe_alloc() creates one pipe_t and two fd_obj_t entries
- * (read end + write end).
- */
+   fs/pipe.c - kernel pipe implementation
+
+   Ring buffer pipe with blocking read/write via task_block/task_unblock.
+   Each pipe_alloc() creates one pipe_t and two fd_obj_t entries
+   (read end + write end).
+*/
 #include "syscall/fs/pipe.h"
 #include "syscall/fs/fd_pool.h"
 #include "syscall/io/epoll.h"
@@ -103,19 +103,19 @@ int pipe_alloc(task_t *task, int fds_out[2])
 }
 
 /*
- * pipe_interrupts - 这个任务现在会被信号打断吗？
- *
- * 判据必须比 "pending_sigs & ~blocked_sigs" 更严：那个式子会把**默认动作
- * 就是忽略**的信号也算进来（SIGCHLD 最典型）。shell 读管道时子进程退出会
- * 挂起 SIGCHLD，用它判就会让 read 平白返 EINTR —— Linux 不会
- * （prepare_signal() 对忽略类信号不置 TIF_SIGPENDING）。这里照
- * deliver_pending_signals() 的动作表来判，保证"会被打断"和"内核真会投递"
- * 是同一套判据。
- *
- * 为什么管道需要它：管道阻塞是真正的 task_block()（不是忙等），不检查信号
- * 就会在 SIGALRM 到达后重新睡下去 —— alarm() 打断阻塞 read 的语义就不成立。
- * LTP 每个测例都靠这个看门狗从卡死里脱身。
- */
+   pipe_interrupts - 这个任务现在会被信号打断吗？
+
+   判据必须比 "pending_sigs & ~blocked_sigs" 更严：那个式子会把默认动作
+   就是忽略的信号也算进来(SIGCHLD 最典型)。shell 读管道时子进程退出会
+   挂起 SIGCHLD, 用它判就会让 read 平白返 EINTR —— Linux 不会
+   (prepare_signal() 对忽略类信号不置 TIF_SIGPENDING)。这里照
+   deliver_pending_signals() 的动作表来判, 保证"会被打断"和"内核真会投递"
+   是同一套判据。
+
+   为什么管道需要它：管道阻塞是真正的 task_block()(不是忙等), 不检查信号
+   就会在 SIGALRM 到达后重新睡下去 —— alarm() 打断阻塞 read 的语义就不成立。
+   LTP 每个测例都靠这个看门狗从卡死里脱身。
+*/
 static bool pipe_interrupts(void)
 {
     task_t *t = task_current();
@@ -125,13 +125,13 @@ static bool pipe_interrupts(void)
     uint64_t unblocked = t->pending_sigs & ~t->blocked_sigs;
     while (unblocked) {
         /*
-         * 取最低置位的位序号。**不要**用 __builtin_ctzll：
-         * freestanding 构建下它会生成对 libgcc 的 __ctzdi2 调用，而
-         * rv64gc 没有 ctz 指令、链接里也没有 libgcc（-nodefaultlibs）
-         * → riscv64 `undefined reference to __ctzdi2`（x86_64/aarch64 能
-         * 内联成 bsf/rbit，所以只有 riscv64 暴露）。
-         * 与 vplic.c / hext_run.c 的写法保持一致。
-         */
+           取最低置位的位序号。不要用 __builtin_ctzll：
+           freestanding 构建下它会生成对 libgcc 的 __ctzdi2 调用, 而
+           rv64gc 没有 ctz 指令, 链接里也没有 libgcc(-nodefaultlibs)
+           → riscv64 `undefined reference to __ctzdi2`(x86_64/aarch64 能
+           内联成 bsf/rbit, 所以只有 riscv64 暴露)。
+           与 vplic.c / hext_run.c 的写法保持一致。
+        */
         uint64_t low = unblocked & (~unblocked + 1); /* 取最低置位 */
         int i = 0;
         while (low > 1) {
@@ -148,7 +148,7 @@ static bool pipe_interrupts(void)
         if (h != SIG_DFL)
             return true; /* 装了 handler → 一定会打断 */
 
-        /* SIG_DFL：默认动作是忽略的那几个不算，其余（多数是终止）算 */
+        /* SIG_DFL：默认动作是忽略的那几个不算, 其余(多数是终止)算 */
         switch (sig) {
         case SIGCHLD:
         case SIGCONT:
@@ -180,20 +180,22 @@ int pipe_read_endpoint(int pipe_idx, void *buf, size_t count, bool nonblock)
             p->rd++;
             p->count--;
         }
-        /* 已有数据就先返回数据 —— 信号和数据的优先级上，Linux 也是数据优先 */
+        /* 已有数据就先返回数据 —— 信号和数据的优先级上, Linux 也是数据优先 */
         if (total > 0)
             break;
         if (p->wr_refcount <= 0)
             return 0;
 
-        /* O_NONBLOCK：没数据立刻返回 EAGAIN，绝不睡。
-         * 放在 EINTR 判断之前：非阻塞本来就不睡，没有"被信号打断"可言；
-         * pending 信号仍会在本次 syscall 返回边界被投递。 */
+        /* O_NONBLOCK：没数据立刻返回 EAGAIN, 绝不睡。
+           放在 EINTR 判断之前：非阻塞本来就不睡, 没有"被信号打断"可言；
+           pending 信号仍会在本次 syscall 返回边界被投递。
+        */
         if (nonblock)
             return -11; /* -EAGAIN */
 
-        /* 别带着 pending 的信号睡下去：睡下去只能等下个事件才醒，
-         * 而信号本身不会唤醒它（除非 itimer 那条路显式 unblock）。 */
+        /* 别带着 pending 的信号睡下去：睡下去只能等下个事件才醒,
+           而信号本身不会唤醒它(除非 itimer 那条路显式 unblock)。
+        */
         if (pipe_interrupts())
             return -4; /* -EINTR */
 
@@ -213,8 +215,7 @@ int pipe_read_endpoint(int pipe_idx, void *buf, size_t count, bool nonblock)
     return (int)total;
 }
 
-int pipe_write_endpoint(int pipe_idx, const void *buf, size_t count,
-                        bool nonblock)
+int pipe_write_endpoint(int pipe_idx, const void *buf, size_t count, bool nonblock)
 {
     pipe_t *p = pipe_get_by_idx(pipe_idx);
     if (!p || p->wr_refcount <= 0)
@@ -250,7 +251,8 @@ int pipe_write_endpoint(int pipe_idx, const void *buf, size_t count,
             }
 
             /* O_NONBLOCK：缓冲区满时立刻返回。已经写进去一部分就先返回
-             * 那部分 —— Linux 对管道也是"部分写"语义，不是丢弃。 */
+               那部分 —— Linux 对管道也是"部分写"语义, 不是丢弃。
+            */
             if (nonblock)
                 return total > 0 ? (int)total : -11; /* -EAGAIN */
 

@@ -2,11 +2,11 @@
 #define RISCV64_CPU_IMPL_H
 
 /*
- * RISC-V 64 per-CPU 指针 / 硬件 ID 实现。
- *
- * 内核态用 tp 保存 cpu_t*。进入用户态前 switch.S 会恢复/清空用户 tp；
- * U->S trap 的 C 入口会根据 sscratch 中的内核栈恢复内核 tp。
- */
+   RISC-V 64 per-CPU 指针 / 硬件 ID 实现。
+
+   内核态用 tp 保存 cpu_t*。进入用户态前 switch.S 会恢复/清空用户 tp；
+   U->S trap 的 C 入口会根据 sscratch 中的内核栈恢复内核 tp。
+*/
 
 #include "types.h"
 

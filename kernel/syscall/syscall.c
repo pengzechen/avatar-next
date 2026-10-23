@@ -7,7 +7,7 @@
 #include "loader/elf_loader.h"
 #include "klog.h"
 #include "task/task.h"
-#include "task/cpu.h" /* get_current_cpu_id（getcpu）*/
+#include "task/cpu.h" /* get_current_cpu_id(getcpu) */
 #include "task/itimer.h"
 #include "user_layout.h"
 #include "task/sched.h"
@@ -34,17 +34,17 @@
 #include "task/completion.h"
 
 /*
- * TASK_TEST=1 的 completion 测试池。
- *
- * 用户任务通过伪 syscall 直接阻塞在 completion_t 上：
- *   WAIT(id)     → completion_wait()
- *   COMPLETE(id) → completion_complete_all()
- *   RESET(id)    → completion_reset()
- *
- * 只在测试变体里编译；正常内核没有这三个入口。等待不可被信号打断
- * （completion_wait 本身没有 TASK_INTERRUPTIBLE 语义），测试程序自己
- * 控制超时。
- */
+   TASK_TEST=1 的 completion 测试池。
+
+   用户任务通过伪 syscall 直接阻塞在 completion_t 上：
+     WAIT(id)     → completion_wait()
+     COMPLETE(id) → completion_complete_all()
+     RESET(id)    → completion_reset()
+
+   只在测试变体里编译；正常内核没有这三个入口。等待不可被信号打断
+   (completion_wait 本身没有 TASK_INTERRUPTIBLE 语义), 测试程序自己
+   控制超时。
+*/
 #define TASK_TEST_COMPLETIONS 8
 static completion_t g_test_completion[TASK_TEST_COMPLETIONS];
 static spinlock_t g_test_completion_lock = SPINLOCK_INIT;
@@ -69,17 +69,17 @@ static completion_t *test_completion_get(uint64_t id)
 #endif /* TASK_INFRA_TEST */
 
 /* ─────────────────────────────────────────────────────────────────
- * Unblock parent waiting for a specific child (or any child)
- * ───────────────────────────────────────────────────────────────── */
+   Unblock parent waiting for a specific child (or any child)
+   ─────────────────────────────────────────────────────────────────
+*/
 /* g_task_pool / g_stack_used defined as non-static in task.c */
 extern task_t g_task_pool[TASK_MAX];
 extern uint8_t g_stack_used[TASK_MAX];
 
 static void notify_parent_wait(task_t *child)
 {
-    KLOG_SYSCALL(
-        "[wait] child exit notify: child=%u parent=%u status=%d signal=%d\n",
-        child->id, child->parent_id, child->exit_status, child->exit_signal);
+    KLOG_SYSCALL("[wait] child exit notify: child=%u parent=%u status=%d signal=%d\n", child->id, child->parent_id,
+                 child->exit_status, child->exit_signal);
     for (uint32_t i = 0; i < TASK_MAX; i++) {
         if (!g_stack_used[i])
             continue;
@@ -90,9 +90,8 @@ static void notify_parent_wait(task_t *child)
             continue;
         if (t->wait_pid != (uint32_t)-1 && t->wait_pid != child->id)
             continue;
-        KLOG_SYSCALL(
-            "[wait] wake parent: parent=%u wait_pid=%u child=%u state=%d\n",
-            t->id, t->wait_pid, child->id, t->state);
+        KLOG_SYSCALL("[wait] wake parent: parent=%u wait_pid=%u child=%u state=%d\n", t->id, t->wait_pid, child->id,
+                     t->state);
         t->is_waiting = false;
         task_unblock(t);
         return;
@@ -102,15 +101,12 @@ static void notify_parent_wait(task_t *child)
             continue;
         task_t *t = &g_task_pool[i];
         if (t->id == child->parent_id) {
-            KLOG_SYSCALL(
-                "[wait] parent not waiting: child=%u parent=%u state=%d waiting=%d wait_pid=%u name='%s'\n",
-                child->id, child->parent_id, t->state, t->is_waiting,
-                t->wait_pid, t->name);
+            KLOG_SYSCALL("[wait] parent not waiting: child=%u parent=%u state=%d waiting=%d wait_pid=%u name='%s'\n",
+                         child->id, child->parent_id, t->state, t->is_waiting, t->wait_pid, t->name);
             return;
         }
     }
-    KLOG_SYSCALL("[wait] parent missing: child=%u parent=%u\n", child->id,
-                 child->parent_id);
+    KLOG_SYSCALL("[wait] parent missing: child=%u parent=%u\n", child->id, child->parent_id);
 }
 
 /* Called from task.c's task_exit() to notify waiting parent */
@@ -119,32 +115,34 @@ void notify_parent_wait_from_task(task_t *child)
     notify_parent_wait(child);
 }
 
-/* syscall entry counter（brk.c 等的调试日志会引用） */
+/* syscall entry counter(brk.c 等的调试日志会引用) */
 volatile uint32_t g_syscall_entry_count = 0;
 
 /*
- * 流式追踪（直接打 UART）现在只由 syscall 模块位控制：
- *     make ... LOG=debug LOG_MODULES=syscall
- *
- * 原来这里还有两道门 —— 一道是写死的堆阈值（heap_end >= 0x3000000，新程序
- * 根本够不到），一道是 syscall 号白名单。两道都删了：要筛什么用 LOG_MODULES，
- * 而不是在代码里猜。
- *
- * 注意流式追踪只在 DEBUG 级、且模块位放行时才输出；崩溃后回看请用环形缓冲
- * （kernel/syscall/trace.c），它常开、不受等级影响。
- */
-/* syscall 号 → 名字在 kernel/syscall/trace.c，环形缓冲和流式追踪共用一份，
- * 免得两边各维护一个迟早对不上的表。 */
+   流式追踪(直接打 UART)现在只由 syscall 模块位控制：
+       make ... LOG=debug LOG_MODULES=syscall
+
+   原来这里还有两道门 —— 一道是写死的堆阈值(heap_end >= 0x3000000, 新程序
+   根本够不到), 一道是 syscall 号白名单。两道都删了：要筛什么用 LOG_MODULES,
+   而不是在代码里猜。
+
+   注意流式追踪只在 DEBUG 级, 且模块位放行时才输出；崩溃后回看请用环形缓冲
+   (kernel/syscall/trace.c), 它常开, 不受等级影响。
+*/
+/* syscall 号 → 名字在 kernel/syscall/trace.c, 环形缓冲和流式追踪共用一份,
+   免得两边各维护一个迟早对不上的表。
+*/
 
 #if ARCH_X86_64
 /* ─────────────────────────────────────────────────────────────────
- * Linux x86_64 → 内部统一系统调用号翻译
- *
- * busybox-x86_64 使用 Linux x86_64 syscall 号，而下面的 switch 分支
- * 使用 AArch64/RISC-V 的通用 Linux syscall 号（两者已在 AARCH64/RISC-V
- * 上共享）。这个翻译层把 x86_64 号映射到对应分支，同时对参数布局不同
- * 的 syscall（open/stat/access/readlink 等）原地调整 regs[]。
- * ───────────────────────────────────────────────────────────────── */
+   Linux x86_64 → 内部统一系统调用号翻译
+
+   busybox-x86_64 使用 Linux x86_64 syscall 号, 而下面的 switch 分支
+   使用 AArch64/RISC-V 的通用 Linux syscall 号(两者已在 AARCH64/RISC-V
+   上共享)。这个翻译层把 x86_64 号映射到对应分支, 同时对参数布局不同
+   的 syscall(open/stat/access/readlink 等)原地调整 regs[]。
+   ─────────────────────────────────────────────────────────────────
+*/
 static void x86_translate_syscall(uint64_t *nr, uint64_t regs[9])
 {
     switch (*nr) {
@@ -240,9 +238,9 @@ static void x86_translate_syscall(uint64_t *nr, uint64_t regs[9])
     case 26:
         *nr = 0x7FFFFFFEULL;
         break; /* msync → stub 0 */
-    case 32:   /* dup(oldfd): x86_64. 不直接支持，返回 ENOSYS */
-        /* busybox sh 很少用裸 dup()，ENOSYS 不影响启动 */
-        break; /* *nr stays 32, hits default: → ENOSYS */
+    case 32:   /* dup(oldfd): x86_64. 不直接支持, 返回 ENOSYS */
+        /* busybox sh 很少用裸 dup(), ENOSYS 不影响启动 */
+        break; /* nr stays 32, hits default: → ENOSYS */
     case 33:   /* dup2(oldfd,newfd) → dup3(oldfd,newfd,0) */
         regs[2] = 0;
         *nr = LINUX_SYS_DUP3;
@@ -251,11 +249,11 @@ static void x86_translate_syscall(uint64_t *nr, uint64_t regs[9])
         *nr = LINUX_SYS_NANOSLEEP;
         break; /* nanosleep */
     /*
-     * getitimer(36) / setitimer(38)：x86_64 原来没有这两条翻译，于是落到
-     * default: 返回 ENOSYS —— 主 switch 里那个 case 103 桩对 x86_64 根本
-     * 不可达。转到内部编号（= aarch64/riscv64 的号）去交给同一份实现。
-     * alarm(37) 不映射：musl 的 alarm() 本身就是走 setitimer 实现的。
-     */
+       getitimer(36) / setitimer(38)：x86_64 原来没有这两条翻译, 于是落到
+       default: 返回 ENOSYS —— 主 switch 里那个 case 103 桩对 x86_64 根本
+       不可达。转到内部编号(= aarch64/riscv64 的号)去交给同一份实现。
+       alarm(37) 不映射：musl 的 alarm() 本身就是走 setitimer 实现的。
+    */
     case 36:
         *nr = 102;
         break; /* getitimer → 内部 __NR_getitimer */
@@ -318,7 +316,8 @@ static void x86_translate_syscall(uint64_t *nr, uint64_t regs[9])
         break; /* getsockopt */
     case 56:   /* clone: x86_64 ABI 顺序 flags,stack,ptid,ctid,tls
                         内部 ABI 顺序 flags,stack,ptid,tls,ctid
-                        需要交换 arg3↔arg4 */
+                        需要交换 arg3↔arg4
+               */
     {
         uint64_t tmp = regs[3];
         regs[3] = regs[4];
@@ -326,8 +325,9 @@ static void x86_translate_syscall(uint64_t *nr, uint64_t regs[9])
     }
         *nr = LINUX_SYS_CLONE;
         break;
-    case 57: /* fork(): musl 直接 syscall，不传参数 → rdi/rsi/... 是垃圾。
-                        必须显式构造 flags=SIGCHLD (17)，其余清零。 */
+    case 57:          /* fork(): musl 直接 syscall, 不传参数 → rdi/rsi/... 是垃圾。
+                        必须显式构造 flags=SIGCHLD (17), 其余清零。
+                      */
         regs[0] = 17; /* SIGCHLD */
         regs[1] = 0;
         regs[2] = 0;
@@ -336,10 +336,11 @@ static void x86_translate_syscall(uint64_t *nr, uint64_t regs[9])
         regs[5] = 0;
         *nr = LINUX_SYS_CLONE;
         break;
-    case 58: /* vfork(): 同理，构造 CLONE_VM|CLONE_VFORK|SIGCHLD。
-                        但当前内核把 CLONE_VM 当线程走，会出错。
-                        为兼容 busybox sh 的 fork+exec，这里退化为普通 fork。 */
-        regs[0] = 17; /* SIGCHLD: 走 fork 路径（拷贝地址空间） */
+    case 58:          /* vfork(): 同理, 构造 CLONE_VM|CLONE_VFORK|SIGCHLD。
+                        但当前内核把 CLONE_VM 当线程走, 会出错。
+                        为兼容 busybox sh 的 fork+exec, 这里退化为普通 fork。
+                      */
+        regs[0] = 17; /* SIGCHLD: 走 fork 路径(拷贝地址空间) */
         regs[1] = 0;
         regs[2] = 0;
         regs[3] = 0;
@@ -427,7 +428,7 @@ static void x86_translate_syscall(uint64_t *nr, uint64_t regs[9])
     case 93:
         *nr = 0x7FFFFFFEULL;
         break; /* fchown → stub 0 */
-    case 89: /* readlink(path,buf,bufsiz) → readlinkat(AT_FDCWD,path,buf,bufsiz) */
+    case 89:   /* readlink(path,buf,bufsiz) → readlinkat(AT_FDCWD,path,buf,bufsiz) */
         regs[3] = regs[2];
         regs[2] = regs[1];
         regs[1] = regs[0];
@@ -609,7 +610,7 @@ static void x86_translate_syscall(uint64_t *nr, uint64_t regs[9])
     case 334:
         *nr = X86_SYS_RSEQ;
         break; /* rseq */
-    /* 其他：保持原号（会落到 default: 返回 ENOSYS） */
+    /* 其他：保持原号(会落到 default: 返回 ENOSYS) */
     default:
         break;
     }
@@ -617,8 +618,9 @@ static void x86_translate_syscall(uint64_t *nr, uint64_t regs[9])
 #endif /* ARCH_X86_64 */
 
 /* ─────────────────────────────────────────────────────────────────
- * Main syscall dispatcher
- * ───────────────────────────────────────────────────────────────── */
+   Main syscall dispatcher
+   ─────────────────────────────────────────────────────────────────
+*/
 void syscall_handler(trap_frame_t *frame)
 {
     g_syscall_entry_count++;
@@ -629,18 +631,17 @@ void syscall_handler(trap_frame_t *frame)
     }
 
 #if ARCH_X86_64
-    /* 翻译**前**的原始号，只有下面那条 stub 日志要看 —— 所以声明也留在这个
-     * 块里。放外面的话，其它架构上它就是一条 -Wunused-variable。 */
+    /* 翻译前的原始号, 只有下面那条 stub 日志要看 —— 所以声明也留在这个
+       块里。放外面的话, 其它架构上它就是一条 -Wunused-variable。
+    */
     uint64_t raw_syscall_num = syscall_num;
     /* 将 Linux x86_64 syscall 号翻译为下方 switch 使用的内部编号 */
     x86_translate_syscall(&syscall_num, regs);
     /* 0x7FFFFFFEULL 是 stub 标记：直接返回 0 */
     if (syscall_num == 0x7FFFFFFEULL) {
         if (g_syscall_entry_count <= 16) {
-            KLOG_SYSCALL(
-                "[syscall:x86] raw=%llu -> stub0 args=[0x%llx,0x%llx,0x%llx,0x%llx,0x%llx,0x%llx]\n",
-                raw_syscall_num, regs[0], regs[1], regs[2], regs[3], regs[4],
-                regs[5]);
+            KLOG_SYSCALL("[syscall:x86] raw=%llu -> stub0 args=[0x%llx,0x%llx,0x%llx,0x%llx,0x%llx,0x%llx]\n",
+                         raw_syscall_num, regs[0], regs[1], regs[2], regs[3], regs[4], regs[5]);
         }
         syscall_abi_set_ret(frame, 0);
         return;
@@ -651,19 +652,17 @@ void syscall_handler(trap_frame_t *frame)
     bool trace_sc = (current != NULL && current->is_user_process);
 
     /*
-     * 常开记录：每条 syscall 往本 CPU 的环形缓冲写一条（入口填参数，出口回填
-     * 返回值）。不碰 UART、不加锁 —— 崩溃是事后才知道的，"补录"不成立，
-     * 所以这里不能做成开关。回看用 syscall_trace_dump() / /proc/syscalls。
-     */
-    syscall_trace_enter(current ? (uint16_t)current->id : 0U,
-                        (uint32_t)syscall_num, regs[0], regs[1], regs[2]);
+       常开记录：每条 syscall 往本 CPU 的环形缓冲写一条(入口填参数, 出口回填
+       返回值)。不碰 UART, 不加锁 —— 崩溃是事后才知道的, "补录"不成立,
+       所以这里不能做成开关。回看用 syscall_trace_dump() / /proc/syscalls。
+    */
+    syscall_trace_enter(current ? (uint16_t)current->id : 0U, (uint32_t)syscall_num, regs[0], regs[1], regs[2]);
 
     if (trace_sc) {
         KLOG_SYSCALL(
             "[strace] pid=%u %s(%llu) a0=0x%llx a1=0x%llx a2=0x%llx a3=0x%llx a4=0x%llx a5=0x%llx heap=0x%llx mmap_next=0x%llx\n",
-            current->id, syscall_trace_name(syscall_num), syscall_num, regs[0],
-            regs[1], regs[2], regs[3], regs[4], regs[5], current->heap_end,
-            current->mmap_next);
+            current->id, syscall_trace_name(syscall_num), syscall_num, regs[0], regs[1], regs[2], regs[3], regs[4],
+            regs[5], current->heap_end, current->mmap_next);
     }
 
     /* 每次 syscall 入口 poll UART：弥补关中断期间 timer 无法触发的窗口 */
@@ -674,10 +673,10 @@ void syscall_handler(trap_frame_t *frame)
         current->sc_entry_ns = kernel_get_ns();
 
     /* Dropbear 调试：pid>=7 所有 syscall 都打 */
-    // if (current && current->id >= 7)
+    /* if (current && current->id >= 7) */
 
     switch (syscall_num) {
-    /* ── 自定义系统调用（向后兼容）────────────────────────── */
+    /* ── 自定义系统调用(向后兼容)────────────────────────── */
     case SYS_EXIT:
         sys_exit((int)regs[0]);
         break;
@@ -753,16 +752,16 @@ void syscall_handler(trap_frame_t *frame)
 
     case LINUX_SYS_WAITID:
         /*
-         * waitid 与 wait4 的参数布局不同：
-         *   wait4 (pid,  status,  options, rusage)
-         *   waitid(idtype, id,    infop,   options, rusage)
-         * 以前两者共用 wait_handler，于是 wait_handler 把 waitid 的
-         * regs[1]（id，一个小整数）当成 int *wstatus 去写 —— 写地址 0x4
-         * → #PF → 异常处理死循环 → 整机挂死。
-         *
-         * 按 waitid 语义要填 siginfo_t，本内核未实现，这里明确返回
-         * ENOSYS。宁可"未实现"，也不要崩。
-         */
+           waitid 与 wait4 的参数布局不同：
+             wait4 (pid,  status,  options, rusage)
+             waitid(idtype, id,    infop,   options, rusage)
+           以前两者共用 wait_handler, 于是 wait_handler 把 waitid 的
+           regs[1](id, 一个小整数)当成 int *wstatus 去写 —— 写地址 0x4
+           → #PF → 异常处理死循环 → 整机挂死。
+
+           按 waitid 语义要填 siginfo_t, 本内核未实现, 这里明确返回
+           ENOSYS。宁可"未实现", 也不要崩。
+        */
         regs[0] = (uint64_t)(int64_t)-ENOSYS;
         break;
 
@@ -985,7 +984,7 @@ void syscall_handler(trap_frame_t *frame)
         epoll_pwait_handler(regs, current);
         break;
 
-    /* --- 信号系统（实现位于 kernel/syscall/signal.c）--- */
+    /* --- 信号系统(实现位于 kernel/syscall/signal.c)--- */
     case LINUX_SYS_RT_SIGACTION:
         sigaction_handler(regs, current);
         break;
@@ -1048,18 +1047,16 @@ void syscall_handler(trap_frame_t *frame)
         }
         si.procs = procs;
 
-        regs[0] = (copy_to_user_bytes(&si, (void *)regs[0], sizeof(si)) >= 0)
-                      ? 0
-                      : (uint64_t)(int64_t)-EFAULT;
+        regs[0] = (copy_to_user_bytes(&si, (void *)regs[0], sizeof(si)) >= 0) ? 0 : (uint64_t)(int64_t)-EFAULT;
         break;
     }
 
     /*
-     * getcpu(cpu*, node*, tcache) —— 用户态观测当前任务落在哪颗逻辑 CPU。
-     *
-     * musl 的 sched_getcpu() 就是这条；也是 task 基础设施回归（多核分发、
-     * 跨核唤醒）唯一不依赖内核日志的判据。node 恒 0（本内核无 NUMA）。
-     */
+       getcpu(cpu*, node*, tcache) —— 用户态观测当前任务落在哪颗逻辑 CPU。
+
+       musl 的 sched_getcpu() 就是这条；也是 task 基础设施回归(多核分发,
+       跨核唤醒)唯一不依赖内核日志的判据。node 恒 0(本内核无 NUMA)。
+    */
     case LINUX_SYS_GETCPU: {
         uint64_t ucpu = regs[0];
         uint64_t unode = regs[1];
@@ -1070,8 +1067,7 @@ void syscall_handler(trap_frame_t *frame)
             regs[0] = (uint64_t)(int64_t)-EFAULT;
             break;
         }
-        if (unode &&
-            copy_to_user_bytes(&node, (void *)unode, sizeof(node)) < 0) {
+        if (unode && copy_to_user_bytes(&node, (void *)unode, sizeof(node)) < 0) {
             regs[0] = (uint64_t)(int64_t)-EFAULT;
             break;
         }
@@ -1130,14 +1126,13 @@ void syscall_handler(trap_frame_t *frame)
     case LINUX_SYS_SETRLIMIT:
     case LINUX_SYS_PRLIMIT64: {
         /* Return unlimited for most resources */
-        if (syscall_num == LINUX_SYS_GETRLIMIT ||
-            syscall_num == LINUX_SYS_PRLIMIT64) {
+        if (syscall_num == LINUX_SYS_GETRLIMIT || syscall_num == LINUX_SYS_PRLIMIT64) {
             /*
-             * getrlimit(resource, rlim):                 rlim 在 arg1
-             * prlimit64(pid, resource, new, old):        old  在 arg3
-             *
-             * 用户指针必须经 copy_to_user_bytes，不能裸解引用。
-             */
+               getrlimit(resource, rlim):                 rlim 在 arg1
+               prlimit64(pid, resource, new, old):        old  在 arg3
+
+               用户指针必须经 copy_to_user_bytes, 不能裸解引用。
+            */
             uint64_t uptr = regs[(syscall_num == LINUX_SYS_PRLIMIT64) ? 3 : 1];
             if (uptr) {
                 struct kernel_rlimit rl = {
@@ -1156,7 +1151,7 @@ void syscall_handler(trap_frame_t *frame)
 
     case LINUX_SYS_GETRUSAGE:
         if (regs[1]) {
-            /* 用户指针必须经 copy_to_user_bytes，不能裸解引用 */
+            /* 用户指针必须经 copy_to_user_bytes, 不能裸解引用 */
             uint64_t ru[18]; /* sizeof(struct rusage) == 144 */
             memset(ru, 0, sizeof(ru));
             if (current && current->is_user_process) {
@@ -1252,15 +1247,15 @@ void syscall_handler(trap_frame_t *frame)
         break;
 
     case LINUX_SYS_MMAP: {
-        regs[0] = sys_mmap(regs[0], regs[1], (int)regs[2], (int)regs[3],
-                           (int)regs[4], regs[5]);
+        regs[0] = sys_mmap(regs[0], regs[1], (int)regs[2], (int)regs[3], (int)regs[4], regs[5]);
         break;
     }
 
     /* membarrier (283 on riscv64/aarch64, 324 on x86_64):
-     * musl calls MEMBARRIER_CMD_REGISTER_PRIVATE_EXPEDITED at pthread_create.
-     * We run on a simple uniprocessor kernel with coherent shared memory,
-     * so just acknowledge without doing anything. */
+       musl calls MEMBARRIER_CMD_REGISTER_PRIVATE_EXPEDITED at pthread_create.
+       We run on a simple uniprocessor kernel with coherent shared memory,
+       so just acknowledge without doing anything.
+    */
     case 81:  /* riscv64 / aarch64 __NR_sync */
     case 162: /* x86_64  __NR_sync */
     case 283: /* riscv64 / aarch64 __NR_membarrier */
@@ -1282,20 +1277,20 @@ void syscall_handler(trap_frame_t *frame)
     case 103:   /* riscv64/aarch64 __NR_setitimer */
     case 102: { /* riscv64/aarch64 __NR_getitimer */
         /*
-         * ITIMER_REAL（alarm/setitimer）。实现见 task/itimer.c。
-         *
-         * 以前这里是纯桩：把 old_value 清零、返回 0，从不真正装定时器。
-         * 后果不只是"少个功能"—— LTP 每个测例都用 alarm() 当看门狗来打断
-         * 阻塞 read，桩吃掉它之后**卡住的测例会永久挂死整个套件**。
-         *
-         * 参数：
-         *   setitimer(which, new_value, old_value)  regs[1]=new regs[2]=old
-         *   getitimer(which, curr_value)            regs[1]=curr
-         *
-         * struct itimerval 在 64 位下 32 字节：
-         *   [+0] it_interval.tv_sec   [+8]  it_interval.tv_usec
-         *   [+16] it_value.tv_sec     [+24] it_value.tv_usec
-         */
+           ITIMER_REAL(alarm/setitimer)。实现见 task/itimer.c。
+
+           以前这里是纯桩：把 old_value 清零, 返回 0, 从不真正装定时器。
+           后果不只是"少个功能"—— LTP 每个测例都用 alarm() 当看门狗来打断
+           阻塞 read, 桩吃掉它之后卡住的测例会永久挂死整个套件。
+
+           参数：
+             setitimer(which, new_value, old_value)  regs[1]=new regs[2]=old
+             getitimer(which, curr_value)            regs[1]=curr
+
+           struct itimerval 在 64 位下 32 字节：
+             [+0] it_interval.tv_sec   [+8]  it_interval.tv_usec
+             [+16] it_value.tv_sec     [+24] it_value.tv_usec
+        */
         const uint64_t NS_PER_SEC = 1000000000ULL;
         const uint64_t NS_PER_USEC = 1000ULL;
 
@@ -1305,8 +1300,9 @@ void syscall_handler(trap_frame_t *frame)
             break;
         }
 
-        /* 只支持 ITIMER_REAL：本内核没有虚拟/统计 CPU 时间。明确报 EINVAL，
-         * 不假装成功 —— 装一个永远不会响的定时器比报错更难查。 */
+        /* 只支持 ITIMER_REAL：本内核没有虚拟/统计 CPU 时间。明确报 EINVAL,
+           不假装成功 —— 装一个永远不会响的定时器比报错更难查。
+        */
         if ((int64_t)regs[0] != 0 /* ITIMER_REAL */) {
             regs[0] = (uint64_t)(int64_t)-EINVAL;
             break;
@@ -1315,12 +1311,12 @@ void syscall_handler(trap_frame_t *frame)
         bool is_set = (syscall_num == 103);
         uint64_t *oldp = (uint64_t *)(uintptr_t)regs[is_set ? 2 : 1];
 
-        /* setitimer：先读用户传的新值并装载，再回填旧值（Linux 语义：
-         * old_value 拿到的正是本次替换掉的那一份）。 */
+        /* setitimer：先读用户传的新值并装载, 再回填旧值(Linux 语义：
+           old_value 拿到的正是本次替换掉的那一份)。
+        */
         if (is_set && regs[1]) {
             uint64_t nv[4];
-            if (copy_from_user_bytes((const void *)(uintptr_t)regs[1], nv,
-                                     sizeof(nv)) < 0) {
+            if (copy_from_user_bytes((const void *)(uintptr_t)regs[1], nv, sizeof(nv)) < 0) {
                 regs[0] = (uint64_t)(int64_t)-EFAULT;
                 break;
             }
@@ -1328,7 +1324,7 @@ void syscall_handler(trap_frame_t *frame)
             uint64_t value = nv[2] * NS_PER_SEC + nv[3] * NS_PER_USEC;
             itimer_set(it_cur, value, interval);
         } else if (is_set) {
-            /* new_value == NULL：取消定时器（Linux 同样语义） */
+            /* new_value == NULL：取消定时器(Linux 同样语义) */
             itimer_set(it_cur, 0, 0);
         }
 
@@ -1340,7 +1336,7 @@ void syscall_handler(trap_frame_t *frame)
             ov[1] = (interval % NS_PER_SEC) / NS_PER_USEC;
             ov[2] = remain / NS_PER_SEC;
             ov[3] = (remain % NS_PER_SEC) / NS_PER_USEC;
-            /* 用户指针一律经 copy_to_user_bytes，禁止裸解引用（见 CLAUDE.md） */
+            /* 用户指针一律经 copy_to_user_bytes, 禁止裸解引用(见 CLAUDE.md) */
             if (copy_to_user_bytes(ov, (void *)oldp, sizeof(ov)) < 0) {
                 regs[0] = (uint64_t)(int64_t)-EFAULT;
                 break;
@@ -1384,10 +1380,7 @@ void syscall_handler(trap_frame_t *frame)
     case 44:    /* riscv64/aarch64 __NR_fstatfs */
     case 137:   /* x86_64 __NR_statfs */
     case 138: { /* x86_64 __NR_fstatfs */
-        uint64_t *buf =
-            (uint64_t *)((regs[0] && (syscall_num == 43 || syscall_num == 137))
-                             ? regs[1]
-                             : regs[1]);
+        uint64_t *buf = (uint64_t *)((regs[0] && (syscall_num == 43 || syscall_num == 137)) ? regs[1] : regs[1]);
         if (!buf) {
             regs[0] = (uint64_t)(int64_t)-EFAULT;
             break;
@@ -1408,42 +1401,43 @@ void syscall_handler(trap_frame_t *frame)
 
     default:
         /*
-         * 连分类都没有 —— 够得上 ERROR。但用户态探测（busybox 启动时会试一批
-         * 调号）会让它刷屏，所以只说一次。
-         */
+           连分类都没有 —— 够得上 ERROR。但用户态探测(busybox 启动时会试一批
+           调号)会让它刷屏, 所以只说一次。
+        */
         KLOG_ERROR_ONCE("[syscall] Unknown syscall: %llu\n", syscall_num);
         regs[0] = (uint64_t)(int64_t)-ENOSYS;
         break;
     }
 
-    /* 结束 syscall stime 计时（EXIT 类 syscall 不会到达这里） */
+    /* 结束 syscall stime 计时(EXIT 类 syscall 不会到达这里) */
     if (current && current->is_user_process && current->sc_entry_ns != 0) {
         current->stime_ns += kernel_get_ns() - current->sc_entry_ns;
         current->sc_entry_ns = 0;
     }
 
-    /* 回填环形缓冲里的返回值。不返回的 syscall（execve/exit）走不到这里，
-     * 那条记录会一直保持"待返回"哨兵 —— dump 时显示成 "= ?"，本身就是信息。 */
+    /* 回填环形缓冲里的返回值。不返回的 syscall(execve/exit)走不到这里,
+       那条记录会一直保持"待返回"哨兵 —— dump 时显示成 "= ?", 本身就是信息。
+    */
     syscall_trace_exit((int64_t)regs[0]);
 
     if (trace_sc) {
-        KLOG_SYSCALL("[strace] pid=%u %s => 0x%llx (%lld)\n", current->id,
-                     syscall_trace_name(syscall_num), regs[0],
+        KLOG_SYSCALL("[strace] pid=%u %s => 0x%llx (%lld)\n", current->id, syscall_trace_name(syscall_num), regs[0],
                      (int64_t)regs[0]);
     }
 
     syscall_abi_set_ret(frame, regs[0]);
 
     /* 在返回用户态前投递 pending 信号
-     * 注意：必须在 syscall_abi_set_ret 之后调用，
-     * 这样 sigframe 里保存的帧已含有正确的 syscall 返回值。 */
+       注意：必须在 syscall_abi_set_ret 之后调用,
+       这样 sigframe 里保存的帧已含有正确的 syscall 返回值。
+    */
     if (current && current->is_user_process)
         deliver_pending_signals(current, frame);
 }
 
 /* ── 具体系统调用实现 ──────────────────────────────────────────── */
 
-/* 一次 console write 最多搬多少字节到内核栈上（栈上缓冲，别开太大）*/
+/* 一次 console write 最多搬多少字节到内核栈上(栈上缓冲, 别开太大) */
 #define SYS_WRITE_MAX 512
 
 int64_t sys_write(const char *str, uint64_t len)
@@ -1456,14 +1450,14 @@ int64_t sys_write(const char *str, uint64_t len)
         len = SYS_WRITE_MAX;
 
     /*
-     * ⚠️ str 来自 regs[]，是**用户指针** —— 必须先经 copy_from_user_bytes
-     * 落进内核缓冲再输出，绝不能裸解引用（用户传个非法地址就是内核态
-     * #PF → 异常处理的 while(1) hlt → 整机挂死，LTP 实测踩过，
-     * 见 CLAUDE.md「用户指针」那条规则）。
-     *
-     * 输出走 klog_write()：它是往物理 UART 写的唯一入口，整段持锁，
-     * 所以这一整条 write 不会与别的核的日志逐字符插花。
-     */
+       注意： str 来自 regs[], 是用户指针 —— 必须先经 copy_from_user_bytes
+       落进内核缓冲再输出, 绝不能裸解引用(用户传个非法地址就是内核态
+       #PF → 异常处理的 while(1) hlt → 整机挂死, LTP 实测踩过,
+       见 CLAUDE.md「用户指针」那条规则)。
+
+       输出走 klog_write()：它是往物理 UART 写的唯一入口, 整段持锁,
+       所以这一整条 write 不会与别的核的日志逐字符插花。
+    */
     char kbuf[SYS_WRITE_MAX];
     if (copy_from_user_bytes(str, kbuf, len) < 0)
         return -1;
@@ -1505,8 +1499,9 @@ int64_t sys_open(const char *pathname, int flags, int mode)
 {
     (void)flags;
     (void)mode;
-    /* 返回失败是"未实现"的**正确行为**，不是错误；但"缺哪些"正是 bring-up
-     * 想知道的清单，而 shell 会高频调用它 —— 所以 WARN + 只说一次。 */
+    /* 返回失败是"未实现"的正确行为, 不是错误；但"缺哪些"正是 bring-up
+       想知道的清单, 而 shell 会高频调用它 —— 所以 WARN + 只说一次。
+    */
     KLOG_WARN_ONCE("[syscall] open('%s') not implemented\n", pathname);
     return -1;
 }

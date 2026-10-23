@@ -1,13 +1,13 @@
 /*
- * kernel/task/exec.c — execve 进程执行语义
- *
- * 职责：
- *   1. 用户页表初始化（PGD 分配 + 内核映射复制）
- *   2. Linux ABI 初始栈构建（argc/argv/envp/auxv）
- *   3. 用户栈物理页分配 + 映射
- *   4. 进程创建（process_create_with_pgd）
- *   5. execve 阻塞等待语义（等待子进程退出后以相同码退出）
- */
+   kernel/task/exec.c — execve 进程执行语义
+
+   职责：
+     1. 用户页表初始化(PGD 分配 + 内核映射复制)
+     2. Linux ABI 初始栈构建(argc/argv/envp/auxv)
+     3. 用户栈物理页分配 + 映射
+     4. 进程创建(process_create_with_pgd)
+     5. execve 阻塞等待语义(等待子进程退出后以相同码退出)
+*/
 
 #include "types.h"
 #include "klog.h"
@@ -23,11 +23,11 @@
 #include "user_layout.h"
 
 /*
- * fd 池接口在这里只能手写 extern：本文件用普通 CFLAGS 编译，没有 lwext4
- * 的头文件路径，而 syscall/fs/fd_pool.h -> vfs.h -> ext4.h 会直接爆
- * `ext4.h: No such file or directory`。签名以 fd_pool.h 为准，改那边时
- * 记得同步这三行。
- */
+   fd 池接口在这里只能手写 extern：本文件用普通 CFLAGS 编译, 没有 lwext4
+   的头文件路径, 而 syscall/fs/fd_pool.h -> vfs.h -> ext4.h 会直接爆
+   `ext4.h: No such file or directory`。签名以 fd_pool.h 为准, 改那边时
+   记得同步这三行。
+*/
 extern void fd_pool_free(int idx);
 extern void fd_obj_close(int idx);
 extern int task_take_fd(task_t *task, int fd);
@@ -40,8 +40,9 @@ static inline uint64_t exec_get_ns(void)
 static void exec_wrapper_close_fds(task_t *task)
 {
     for (int fd = 0; fd < (int)TASK_MAX_FD; fd++) {
-        /* 原子摘取；理由同 proc_lifecycle 的退出清理（上界由下面两个
-         * 函数各自兜底，本文件看不到 FD_POOL_SIZE）*/
+        /* 原子摘取；理由同 proc_lifecycle 的退出清理(上界由下面两个
+           函数各自兜底, 本文件看不到 FD_POOL_SIZE)
+        */
         int idx = task_take_fd(task, fd);
         if (idx < 0)
             continue;
@@ -69,36 +70,36 @@ static void exec_free_loader_buffer(const void *data, uint64_t size)
 #include "user_layout.h"
 
 /* USER_STACK_TOP / USER_STACK_SIZE / USER_MMAP_BASE_PIE / USER_MMAP_BASE_EXEC
- * 均来自 include/user_layout.h */
+   均来自 include/user_layout.h
+*/
 
 /* ── Linux ABI 初始栈构建 ─────────────────────────────────────── */
 
-/**
- * elf_setup_stack - 在用户栈最高页写入 Linux ABI 初始栈
- * @pgd:       用户页表（内核虚拟地址）
- * @stack_top: 用户栈顶（USER_STACK_TOP）
- * @entry:     ELF 入口点
- * @pathname:  程序路径名
- * @argv:      来自 execve 的 argv（可为 NULL）
- * @envp:      来自 execve 的 envp（可为 NULL）
- * @out_sp:    输出：新的用户栈指针
- * @phdr_uaddr: 程序头的用户虚拟地址（AT_PHDR auxv）
- * @phnum:     e_phnum
- * @phent:     e_phentsize
- *
- * 构建布局（从高地址向低）：
- *   strings (argv[0..n], envp[0..m])
- *   8-byte aligned
- *   auxv: AT_PHDR, AT_PHENT, AT_PHNUM, AT_ENTRY, AT_PAGESZ, AT_RANDOM, AT_NULL
- *   envp ptrs + NULL
- *   argv ptrs + NULL
- *   argc
- *   <- new sp
- */
-static int elf_setup_stack(void *pgd, uint64_t stack_top, uint64_t entry,
-                           const char *pathname, char **argv, char **envp,
-                           uint64_t *out_sp, uint64_t phdr_uaddr,
-                           uint16_t phnum, uint16_t phent, uint64_t at_base)
+/*
+   elf_setup_stack - 在用户栈最高页写入 Linux ABI 初始栈
+   @pgd:       用户页表(内核虚拟地址)
+   @stack_top: 用户栈顶(USER_STACK_TOP)
+   @entry:     ELF 入口点
+   @pathname:  程序路径名
+   @argv:      来自 execve 的 argv(可为 NULL)
+   @envp:      来自 execve 的 envp(可为 NULL)
+   @out_sp:    输出：新的用户栈指针
+   @phdr_uaddr: 程序头的用户虚拟地址(AT_PHDR auxv)
+   @phnum:     e_phnum
+   @phent:     e_phentsize
+
+   构建布局(从高地址向低)：
+     strings (argv[0..n], envp[0..m])
+     8-byte aligned
+     auxv: AT_PHDR, AT_PHENT, AT_PHNUM, AT_ENTRY, AT_PAGESZ, AT_RANDOM, AT_NULL
+     envp ptrs + NULL
+     argv ptrs + NULL
+     argc
+     <- new sp
+*/
+static int elf_setup_stack(void *pgd, uint64_t stack_top, uint64_t entry, const char *pathname, char **argv,
+                           char **envp, uint64_t *out_sp, uint64_t phdr_uaddr, uint16_t phnum, uint16_t phent,
+                           uint64_t at_base)
 {
     uint64_t top_page_uvaddr = stack_top - PAGE_SIZE; /* 0x6ffff000 */
     uint64_t top_page_paddr = mm_vm_get_paddr(pgd, top_page_uvaddr);
@@ -114,15 +115,12 @@ static int elf_setup_stack(void *pgd, uint64_t stack_top, uint64_t entry,
 
     const char *default_arg0 = pathname ? pathname : "/init";
     const char *default_argv[] = { NULL, NULL };
-    static const char *default_envp[] = { "PATH=/bin:/usr/bin:/sbin:/usr/sbin",
-                                          "HOME=/", "TERM=vt100", NULL };
+    static const char *default_envp[] = { "PATH=/bin:/usr/bin:/sbin:/usr/sbin", "HOME=/", "TERM=vt100", NULL };
 
     default_argv[0] = default_arg0;
 
-    const char **av =
-        (const char **)(argv ? (void *)argv : (void *)default_argv);
-    const char **ev =
-        (const char **)(envp ? (void *)envp : (void *)default_envp);
+    const char **av = (const char **)(argv ? (void *)argv : (void *)default_argv);
+    const char **ev = (const char **)(envp ? (void *)envp : (void *)default_envp);
 
     int argc = 0;
     while (av[argc])
@@ -153,7 +151,7 @@ static int elf_setup_stack(void *pgd, uint64_t stack_top, uint64_t entry,
         av_uaddr[i] = UADDR(ptr);
     }
 
-    /* AT_RANDOM 需要的 16 字节随机区（glibc/musl 启动必需） */
+    /* AT_RANDOM 需要的 16 字节随机区(glibc/musl 启动必需) */
     ptr -= 16;
     {
         uint64_t seed0 = 0x6d5a56da5a6d1234ULL ^ entry;
@@ -180,7 +178,7 @@ static int elf_setup_stack(void *pgd, uint64_t stack_top, uint64_t entry,
     PUSH64(9); /* AT_ENTRY */
     if (at_base) {
         PUSH64(at_base);
-        PUSH64(7); /* AT_BASE: interpreter 加载基址（静态连接时为 0） */
+        PUSH64(7); /* AT_BASE: interpreter 加载基址(静态连接时为 0) */
     }
     if (phdr_uaddr) {
         PUSH64(phnum);
@@ -211,9 +209,8 @@ static int elf_setup_stack(void *pgd, uint64_t stack_top, uint64_t entry,
 
 /* ── execve 主逻辑 ───────────────────────────────────────────────── */
 
-int task_execve(const char *pathname, uint8_t *file_data, uint64_t file_size,
-                uint8_t *interp_data, uint64_t interp_size, char **argv,
-                char **envp)
+int task_execve(const char *pathname, uint8_t *file_data, uint64_t file_size, uint8_t *interp_data,
+                uint64_t interp_size, char **argv, char **envp)
 {
     elf_image_info_t info;
     uint64_t pgd_phys;
@@ -229,7 +226,7 @@ int task_execve(const char *pathname, uint8_t *file_data, uint64_t file_size,
     pgd = phys_to_virt(pgd_phys);
     memset(pgd, 0, PAGE_SIZE);
 
-    /* 2. 注入架构要求的内核映射（AArch64 为空操作） */
+    /* 2. 注入架构要求的内核映射(AArch64 为空操作) */
     mm_vm_init_user_pgd(pgd, pgd_phys);
 
     /* 3. 加载主程序 ELF 段 + RELA 重定位 */
@@ -239,26 +236,24 @@ int task_execve(const char *pathname, uint8_t *file_data, uint64_t file_size,
         return rc;
     }
 
-    /* 3b. 加载动态连接器（如果有）——加载到同一 PGD 的独立地址区 */
+    /* 3b. 加载动态连接器(如果有)——加载到同一 PGD 的独立地址区 */
     uint64_t exec_entry = info.entry_point; /* 静态连接时：直接跳入主程序 */
     uint64_t at_base = 0;
     uint64_t loaded_end = info.max_vaddr;
     /*
-     * interp 区的末端，记到 task->interp_end 供 fork 复制用。
-     * 0 = 本进程是静态链接的（绝大多数程序），fork 时不必扫这一带。
-     */
+       interp 区的末端, 记到 task->interp_end 供 fork 复制用。
+       0 = 本进程是静态链接的(绝大多数程序), fork 时不必扫这一带。
+    */
     uint64_t interp_end = 0;
     if (interp_data && interp_size > 0) {
         elf_image_info_t interp_info;
-        rc = elf_image_load_at(interp_data, interp_size, pgd, USER_INTERP_BASE,
-                               &interp_info);
+        rc = elf_image_load_at(interp_data, interp_size, pgd, USER_INTERP_BASE, &interp_info);
         if (rc < 0) {
             KLOG_ERROR("[exec] Failed to load interpreter: %d\n", rc);
             return rc;
         }
         exec_entry = interp_info.entry_point; /* 动态连接：跳入 ld-musl */
-        at_base =
-            interp_info.min_vaddr; /* AT_BASE = interpreter 实际加载基址 */
+        at_base = interp_info.min_vaddr;      /* AT_BASE = interpreter 实际加载基址 */
         if (interp_info.max_vaddr > loaded_end)
             loaded_end = interp_info.max_vaddr;
         interp_end = ALIGN_UP(interp_info.max_vaddr, PAGE_SIZE);
@@ -268,8 +263,7 @@ int task_execve(const char *pathname, uint8_t *file_data, uint64_t file_size,
     }
 
     /* 4. 分配并映射用户栈 */
-    uint64_t stack_bottom =
-        ALIGN_DOWN(USER_STACK_TOP - USER_STACK_SIZE, PAGE_SIZE);
+    uint64_t stack_bottom = ALIGN_DOWN(USER_STACK_TOP - USER_STACK_SIZE, PAGE_SIZE);
     uint64_t stack_pages = (USER_STACK_TOP - stack_bottom) / PAGE_SIZE;
     uint64_t stack_base_paddr = pmm_alloc_pages(&g_pmm, (uint32_t)stack_pages);
     if (stack_base_paddr == 0) {
@@ -279,21 +273,19 @@ int task_execve(const char *pathname, uint8_t *file_data, uint64_t file_size,
 
     memset(phys_to_virt(stack_base_paddr), 0, stack_pages * PAGE_SIZE);
 
-    if (mm_vm_map_pages(pgd, stack_bottom, stack_base_paddr,
-                        (int32_t)stack_pages, VM_PERM_USER) != 0) {
-        KLOG_ERROR("[exec] Failed to map user stack: vaddr=0x%llx pages=%llu\n",
-                   stack_bottom, stack_pages);
+    if (mm_vm_map_pages(pgd, stack_bottom, stack_base_paddr, (int32_t)stack_pages, VM_PERM_USER) != 0) {
+        KLOG_ERROR("[exec] Failed to map user stack: vaddr=0x%llx pages=%llu\n", stack_bottom, stack_pages);
         pmm_free_pages(&g_pmm, stack_base_paddr, (uint32_t)stack_pages);
         return -3;
     }
 
-    /* 4b. 映射信号返回蹦床页（x86_64 用户栈 NX，不能放 trampoline 在栈上） */
+    /* 4b. 映射信号返回蹦床页(x86_64 用户栈 NX, 不能放 trampoline 在栈上) */
 #if ARCH_X86_64
     {
         uint64_t sigret_pa = pmm_alloc_pages(&g_pmm, 1);
         if (sigret_pa) {
             uint8_t *p = (uint8_t *)phys_to_virt(sigret_pa);
-            memset(p, 0xcc, PAGE_SIZE); /* int3 填充（安全兜底） */
+            memset(p, 0xcc, PAGE_SIZE); /* int3 填充(安全兜底) */
             /* mov $15, %eax; syscall  — rt_sigreturn on x86_64 */
             p[0] = 0xb8;
             p[1] = 0x0f;
@@ -302,35 +294,30 @@ int task_execve(const char *pathname, uint8_t *file_data, uint64_t file_size,
             p[4] = 0x00;
             p[5] = 0x0f;
             p[6] = 0x05;
-            mm_vm_map_pages(pgd, USER_SIGRET_PAGE, sigret_pa, 1,
-                            VM_PERM_USER);
+            mm_vm_map_pages(pgd, USER_SIGRET_PAGE, sigret_pa, 1, VM_PERM_USER);
         }
     }
 #endif
 
     /* 5. 构建 Linux ABI 初始栈 */
     uint64_t user_sp = USER_STACK_TOP;
-    if (elf_setup_stack(pgd, USER_STACK_TOP, info.entry_point, pathname, argv,
-                        envp, &user_sp, info.phdr_uaddr, info.phnum, info.phent,
-                        at_base) != 0) {
+    if (elf_setup_stack(pgd, USER_STACK_TOP, info.entry_point, pathname, argv, envp, &user_sp, info.phdr_uaddr,
+                        info.phnum, info.phent, at_base) != 0) {
         KLOG_ERROR("[exec] Failed to setup initial stack\n");
         return -4;
     }
 
     /* 6. 创建用户进程 */
     task_t *current = task_current();
-    uint64_t mmap_base = (info.min_vaddr == USER_CODE_BASE)
-                             ? USER_MMAP_BASE_PIE
-                             : USER_MMAP_BASE_EXEC;
+    uint64_t mmap_base = (info.min_vaddr == USER_CODE_BASE) ? USER_MMAP_BASE_PIE : USER_MMAP_BASE_EXEC;
     uint64_t loaded_end_aligned = ALIGN_UP(loaded_end, PAGE_SIZE);
     if (loaded_end_aligned > mmap_base)
         mmap_base = loaded_end_aligned;
 
     uint64_t exec_irq_flags = arch_irq_save();
 
-    task_t *new_task =
-        process_create_with_pgd(pathname, exec_entry, user_sp, 10, pgd_phys,
-                                ALIGN_UP(info.max_vaddr, PAGE_SIZE), mmap_base);
+    task_t *new_task = process_create_with_pgd(pathname, exec_entry, user_sp, 10, pgd_phys,
+                                               ALIGN_UP(info.max_vaddr, PAGE_SIZE), mmap_base);
 
     if (new_task == NULL) {
         arch_irq_restore(exec_irq_flags);
@@ -338,7 +325,7 @@ int task_execve(const char *pathname, uint8_t *file_data, uint64_t file_size,
         return -5;
     }
 
-    /* exec 新进程继承调用者的进程组 ID 和信号掩码（POSIX） */
+    /* exec 新进程继承调用者的进程组 ID 和信号掩码(POSIX) */
     new_task->pgid = current->pgid;
     new_task->sid = current->sid;
     new_task->uid = current->uid;
@@ -349,11 +336,11 @@ int task_execve(const char *pathname, uint8_t *file_data, uint64_t file_size,
     new_task->ctty_pty_idx = current->ctty_pty_idx;
     new_task->blocked_sigs = current->blocked_sigs;
     /*
-     * 记下 interp 区末端 —— fork 要照着它把这一带复制给子进程。
-     * 不在 process_create_with_pgd 的入参里传：那个签名已经有 7 个参数，
-     * 而"创建后再逐个赋字段"本来就是本文件对 pgid/sid/blocked_sigs 的既定写法
-     * （process_start 之前任务还没入队，不会被别的核看见）。
-     */
+       记下 interp 区末端 —— fork 要照着它把这一带复制给子进程。
+       不在 process_create_with_pgd 的入参里传：那个签名已经有 7 个参数,
+       而"创建后再逐个赋字段"本来就是本文件对 pgid/sid/blocked_sigs 的既定写法
+       (process_start 之前任务还没入队, 不会被别的核看见)。
+    */
     new_task->interp_end = interp_end;
 
     /* 继承 fd_table：深拷贝 fd 对象 + 增加引用计数 */
@@ -362,22 +349,21 @@ int task_execve(const char *pathname, uint8_t *file_data, uint64_t file_size,
     exec_wrapper_close_fds(current);
 
     /*
-     * 到这里新任务需要的状态才全部就位，可以放它上运行队列了。
-     * process_create_with_pgd 故意没有入队 —— 否则上面这些赋值和
-     * fd_table_inherit 都可能被别的核抢在前面，新任务会带着
-     * "fd 0/1/2 = 控制台"的初值跑起来（管道失效 / 挂死）。
-     */
+       到这里新任务需要的状态才全部就位, 可以放它上运行队列了。
+       process_create_with_pgd 故意没有入队 —— 否则上面这些赋值和
+       fd_table_inherit 都可能被别的核抢在前面, 新任务会带着
+       "fd 0/1/2 = 控制台"的初值跑起来(管道失效 / 挂死)。
+    */
     process_start(new_task);
 
     uint32_t new_task_id = new_task->id;
-    KLOG_DEBUG("[exec] Process '%s' created, PID=%u, pgd=0x%llx, parent=%u\n",
-               pathname, new_task->id, pgd_phys, new_task->parent_id);
+    KLOG_DEBUG("[exec] Process '%s' created, PID=%u, pgd=0x%llx, parent=%u\n", pathname, new_task->id, pgd_phys,
+               new_task->parent_id);
 
-    /* 7. 阻塞当前进程，等待新进程退出 */
+    /* 7. 阻塞当前进程, 等待新进程退出 */
     current->is_waiting = true;
     current->wait_pid = new_task_id;
-    KLOG_DEBUG("[exec] wrapper wait: wrapper=%u child=%u state=%d\n",
-               current->id, new_task_id, current->state);
+    KLOG_DEBUG("[exec] wrapper wait: wrapper=%u child=%u state=%d\n", current->id, new_task_id, current->state);
     arch_irq_restore(exec_irq_flags);
 
     exec_free_loader_buffer(interp_data, interp_size);
@@ -385,12 +371,10 @@ int task_execve(const char *pathname, uint8_t *file_data, uint64_t file_size,
 
     task_block(NULL);
 
-    KLOG_DEBUG(
-        "[exec] wrapper resumed: wrapper=%u child=%u waiting=%d wait_pid=%u state=%d\n",
-        current->id, new_task_id, current->is_waiting, current->wait_pid,
-        current->state);
+    KLOG_DEBUG("[exec] wrapper resumed: wrapper=%u child=%u waiting=%d wait_pid=%u state=%d\n", current->id,
+               new_task_id, current->is_waiting, current->wait_pid, current->state);
 
-    /* 8. 新进程已退出：获取退出状态并释放槽位，然后以相同状态退出 */
+    /* 8. 新进程已退出：获取退出状态并释放槽位, 然后以相同状态退出 */
     {
         extern task_t g_task_pool[];
         extern uint8_t g_stack_used[];
@@ -399,15 +383,14 @@ int task_execve(const char *pathname, uint8_t *file_data, uint64_t file_size,
                 continue;
             if (g_task_pool[i].id == new_task_id) {
                 current->exit_status = g_task_pool[i].exit_status;
-                current->stime_ns +=
-                    g_task_pool[i].stime_ns; /* 继承子进程内核时间 */
+                current->stime_ns += g_task_pool[i].stime_ns; /* 继承子进程内核时间 */
                 task_reap_dead(&g_task_pool[i]);
                 break;
             }
         }
     }
 
-    /* 在 task_exit 前计算 utime： wall_time − stime（已包含子进程的 stime） */
+    /* 在 task_exit 前计算 utime： wall_time − stime(已包含子进程的 stime) */
     if (current->is_user_process) {
         uint64_t _now = exec_get_ns();
         if (current->sc_entry_ns != 0) {
@@ -416,8 +399,7 @@ int task_execve(const char *pathname, uint8_t *file_data, uint64_t file_size,
         }
         if (current->create_ns != 0) {
             uint64_t _wall = _now - current->create_ns;
-            current->utime_ns =
-                (_wall > current->stime_ns) ? _wall - current->stime_ns : 0;
+            current->utime_ns = (_wall > current->stime_ns) ? _wall - current->stime_ns : 0;
         }
     }
 

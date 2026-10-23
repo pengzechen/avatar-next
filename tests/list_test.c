@@ -1,7 +1,7 @@
 /*
- * 链表功能测试
- * 编译: gcc -D__x86_64__ -I../include -c list_test.c
- */
+   链表功能测试
+   编译: gcc -D__x86_64__ -I../include -c list_test.c
+*/
 
 #include "list.h"
 #include "types.h"
@@ -68,14 +68,12 @@ static void test_insert_first(void)
     TEST_ASSERT(list_count(&list) == 2, "count should be 2");
     TEST_ASSERT(list_first(&list) == &data2.node, "first should be data2");
     TEST_ASSERT(list_last(&list) == &data1.node, "last should be data1");
-    TEST_ASSERT(list_node_next(&data2.node) == &data1.node,
-                "data2.next should be data1");
+    TEST_ASSERT(list_node_next(&data2.node) == &data1.node, "data2.next should be data1");
 
     list_insert_first(&list, &data3.node);
     TEST_ASSERT(list_count(&list) == 3, "count should be 3");
     TEST_ASSERT(list_first(&list) == &data3.node, "first should be data3");
-    TEST_ASSERT(list_node_next(&data3.node) == &data2.node,
-                "data3.next should be data2");
+    TEST_ASSERT(list_node_next(&data3.node) == &data2.node, "data3.next should be data2");
 }
 
 /* 测试 4: 插入尾节点 */
@@ -117,8 +115,7 @@ static void test_delete_first(void)
     TEST_ASSERT(list_count(&list) == 2, "count should be 2");
     TEST_ASSERT(list_first(&list) == &data2.node, "new first should be data2");
     TEST_ASSERT(removed->pre == (list_node_t *)0, "removed.pre should be NULL");
-    TEST_ASSERT(removed->next == (list_node_t *)0,
-                "removed.next should be NULL");
+    TEST_ASSERT(removed->next == (list_node_t *)0, "removed.next should be NULL");
 }
 
 /* 测试 6: 删除指定节点 */
@@ -139,10 +136,8 @@ static void test_delete(void)
     list_node_t *removed = list_delete(&list, &data2.node);
     TEST_ASSERT(removed == &data2.node, "removed should be data2");
     TEST_ASSERT(list_count(&list) == 2, "count should be 2");
-    TEST_ASSERT(list_node_next(&data1.node) == &data3.node,
-                "data1.next should be data3");
-    TEST_ASSERT(list_node_pre(&data3.node) == &data1.node,
-                "data3.pre should be data1");
+    TEST_ASSERT(list_node_next(&data1.node) == &data3.node, "data1.next should be data3");
+    TEST_ASSERT(list_node_pre(&data3.node) == &data1.node, "data3.pre should be data1");
 }
 
 /* 测试 7: 空链表删除 */

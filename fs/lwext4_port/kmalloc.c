@@ -1,12 +1,12 @@
 /*
- * fs/lwext4_port/kmalloc.c - lwext4 内存分配器
- *
- * 为 lwext4 提供 ext4_user_malloc / ext4_user_free / ext4_user_calloc /
- * ext4_user_realloc 四个接口，通过一个静态堆上的 first-fit free-list
- * 分配器实现，不依赖任何操作系统服务。
- *
- * 堆大小默认 512KB，可通过编译选项 -DLWEXT4_HEAP_SIZE=<bytes> 调整。
- */
+   fs/lwext4_port/kmalloc.c - lwext4 内存分配器
+
+   为 lwext4 提供 ext4_user_malloc / ext4_user_free / ext4_user_calloc /
+   ext4_user_realloc 四个接口, 通过一个静态堆上的 first-fit free-list
+   分配器实现, 不依赖任何操作系统服务。
+
+   堆大小默认 512KB, 可通过编译选项 -DLWEXT4_HEAP_SIZE=<bytes> 调整。
+*/
 
 #include <types.h>
 #include <string.h>
@@ -21,16 +21,16 @@
 
 /* ── 块头 ───────────────────────────────────────────────────────── */
 typedef struct blk_hdr {
-    uint32_t size;        /* 可用数据区大小（不含 blk_hdr 自身） */
-    uint32_t free;        /* 1=空闲, 0=已分配                    */
-    struct blk_hdr *next; /* 链表中的下一个块                    */
+    uint32_t size;        /* 可用数据区大小(不含 blk_hdr 自身) */
+    uint32_t free;        /* 1=空闲, 0=已分配 */
+    struct blk_hdr *next; /* 链表中的下一个块 */
 } blk_hdr_t;
 
 /* ── 静态堆 ─────────────────────────────────────────────────────── */
 static uint8_t heap_mem[LWEXT4_HEAP_SIZE] __attribute__((aligned(ALIGN_SIZE)));
 static blk_hdr_t *heap_list = NULL;
 
-/* ── 堆初始化（懒初始化，第一次 malloc 时触发）─────────────────── */
+/* ── 堆初始化(懒初始化, 第一次 malloc 时触发)─────────────────── */
 static void heap_init(void)
 {
     heap_list = (blk_hdr_t *)heap_mem;
@@ -53,14 +53,11 @@ void *ext4_user_malloc(size_t size)
     blk_hdr_t *blk = heap_list;
     while (blk) {
         if (blk->free && blk->size >= (uint32_t)size) {
-            /* 若剩余空间足够容纳新的块头 + 最小分配单元，则分裂 */
-            uint32_t split_threshold =
-                (uint32_t)(sizeof(blk_hdr_t) + ALIGN_SIZE);
+            /* 若剩余空间足够容纳新的块头 + 最小分配单元, 则分裂 */
+            uint32_t split_threshold = (uint32_t)(sizeof(blk_hdr_t) + ALIGN_SIZE);
             if (blk->size >= (uint32_t)size + split_threshold) {
-                blk_hdr_t *next =
-                    (blk_hdr_t *)((uint8_t *)blk + sizeof(blk_hdr_t) + size);
-                next->size =
-                    blk->size - (uint32_t)size - (uint32_t)sizeof(blk_hdr_t);
+                blk_hdr_t *next = (blk_hdr_t *)((uint8_t *)blk + sizeof(blk_hdr_t) + size);
+                next->size = blk->size - (uint32_t)size - (uint32_t)sizeof(blk_hdr_t);
                 next->free = 1u;
                 next->next = blk->next;
                 blk->size = (uint32_t)size;
@@ -89,7 +86,7 @@ void ext4_user_free(void *ptr)
         if (cur->free && cur->next->free) {
             cur->size += (uint32_t)sizeof(blk_hdr_t) + cur->next->size;
             cur->next = cur->next->next;
-            /* 不前进 cur，继续尝试合并 */
+            /* 不前进 cur, 继续尝试合并 */
         } else {
             cur = cur->next;
         }
@@ -119,7 +116,7 @@ void *ext4_user_realloc(void *ptr, size_t size)
 
     blk_hdr_t *blk = (blk_hdr_t *)((uint8_t *)ptr - sizeof(blk_hdr_t));
 
-    /* 原块已足够大，直接返回 */
+    /* 原块已足够大, 直接返回 */
     if ((size_t)blk->size >= HEAP_ALIGN_UP(size))
         return ptr;
 

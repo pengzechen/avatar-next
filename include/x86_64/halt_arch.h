@@ -2,33 +2,33 @@
 #define X86_64_HALT_ARCH_H_
 
 /*
- * x86_64 架构特定的 halt 实现
- */
+   x86_64 架构特定的 halt 实现
+*/
 
 #include "barrier.h"
 #include "x86_64/exception_impl.h"
 
 /*
- * arch_halt - 停止 x86_64 处理器
- * 使用 HLT 指令停止处理器，直到收到中断
- * 在中断禁用的情况下，HLT 会永久停止
- */
+   arch_halt - 停止 x86_64 处理器
+   使用 HLT 指令停止处理器, 直到收到中断
+   在中断禁用的情况下, HLT 会永久停止
+*/
 static inline void arch_halt(void)
 {
-    /* 内存屏障，确保所有操作完成 */
+    /* 内存屏障, 确保所有操作完成 */
     barrier_data();
 
-    /* 禁用中断（统一接口） */
+    /* 禁用中断(统一接口) */
     arch_irq_disable();
 
     /* HLT - Halt Processor */
-    /* 在中断禁用的情况下，处理器会永久停止 */
+    /* 在中断禁用的情况下, 处理器会永久停止 */
     __asm__ volatile("hlt" ::: "memory");
 
-    /* 如果 HLT 被唤醒（不应该发生），死循环 */
+    /* 如果 HLT 被唤醒(不应该发生), 死循环 */
     while (1) {
         __asm__ volatile("hlt" ::: "memory");
     }
 }
 
-#endif // X86_64_HALT_ARCH_H_
+#endif /* X86_64_HALT_ARCH_H_ */

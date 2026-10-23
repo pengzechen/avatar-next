@@ -2,21 +2,21 @@
 #define KERNEL_TASK_TASK_H
 
 /*
- * kernel/task/task.h — 内核任务控制块与公共 API
- *
- * 设计：
- *  - 仅内核态多任务，无用户态
- *  - 静态任务池，最多 TASK_MAX 个并发任务
- *  - 调度器 (sched.c) 实现轮转调度 (round-robin)
- *  - 上下文切换由 arch_task_switch() 完成（仅保存被调用者保存寄存器）
- */
+   kernel/task/task.h — 内核任务控制块与公共 API
+
+   设计：
+    - 仅内核态多任务, 无用户态
+    - 静态任务池, 最多 TASK_MAX 个并发任务
+    - 调度器 (sched.c) 实现轮转调度 (round-robin)
+    - 上下文切换由 arch_task_switch() 完成(仅保存被调用者保存寄存器)
+*/
 
 #include "types.h"
 #include "list.h"
 
 /* ── 信号常量 ────────────────────────────────────────────── */
 #define NSIG    64
-#define SIG_DFL 0ULL /* 默认动作（终止） */
+#define SIG_DFL 0ULL /* 默认动作(终止) */
 #define SIG_IGN 1ULL /* 忽略 */
 
 #define SIGHUP   1
@@ -48,393 +48,388 @@
 /* ── 信号动作结构 ────────────────────────────────────────── */
 typedef struct {
     uint64_t sa_handler;  /* SIG_DFL / SIG_IGN / 用户 handler 地址 */
-    uint64_t sa_flags;    /* SA_RESTORER 等标志                     */
-    uint64_t sa_restorer; /* rt_sigreturn 蹦床地址                  */
-    uint64_t sa_mask;     /* handler 执行期间额外屏蔽的信号         */
+    uint64_t sa_flags;    /* SA_RESTORER 等标志 */
+    uint64_t sa_restorer; /* rt_sigreturn 蹦床地址 */
+    uint64_t sa_mask;     /* handler 执行期间额外屏蔽的信号 */
 } sig_action_t;
 
 /* ── Task states ─────────────────────────────────────────── */
 typedef enum {
-    TASK_ALLOCATING = -1, /* 槽位已占用，但 TCB 尚未完成初始化     */
-    TASK_READY = 0,       /* 在就绪队列中，等待调度               */
-    TASK_RUNNING = 1,     /* 当前正在 CPU 上运行                  */
-    TASK_BLOCKED = 2,     /* 等待事件，不在就绪队列中              */
-    TASK_DEAD = 3,        /* 已退出，资源待回收                   */
+    TASK_ALLOCATING = -1, /* 槽位已占用, 但 TCB 尚未完成初始化 */
+    TASK_READY = 0,       /* 在就绪队列中, 等待调度 */
+    TASK_RUNNING = 1,     /* 当前正在 CPU 上运行 */
+    TASK_BLOCKED = 2,     /* 等待事件, 不在就绪队列中 */
+    TASK_DEAD = 3,        /* 已退出, 资源待回收 */
 } task_state_t;
 
 /* ── Configuration ───────────────────────────────────────── */
 /*
- * 每个内核任务的栈大小。
- *
- * ⚠️ 16 KiB **不够**：vCPU 任务的调用链很深（vmm_run_vcpu → restore/enter_guest
- * → 退出处理 → MMIO 解码 → EPT 查表），而且**宿主中断会在这条链上嵌套**。
- * 实测（3 个 VM、vCPU 摊到两颗核上真正并发时）：16 KiB 溢出，把相邻任务
- * （宿主 busybox）的栈写坏，表现为"宿主 shell 莫名其妙 SIGSEGV、CR2≈0x1103"；
- * 而且只在并发时复现 —— 全挤在一颗核上串行跑就看不出来。
- * 32 KiB 下实测高水位见 vcpu_task_fn 的打印，留了足够余量。
- */
+   每个内核任务的栈大小。
+
+   注意： 16 KiB 不够：vCPU 任务的调用链很深(vmm_run_vcpu → restore/enter_guest
+   → 退出处理 → MMIO 解码 → EPT 查表), 而且宿主中断会在这条链上嵌套。
+   实测(3 个 VM, vCPU 摊到两颗核上真正并发时)：16 KiB 溢出, 把相邻任务
+   (宿主 busybox)的栈写坏, 表现为"宿主 shell 莫名其妙 SIGSEGV, CR2≈0x1103"；
+   而且只在并发时复现 —— 全挤在一颗核上串行跑就看不出来。
+   32 KiB 下实测高水位见 vcpu_task_fn 的打印, 留了足够余量。
+*/
 #define TASK_STACK_SIZE 16384u
 
-/* 栈高水位的标记图案（见 task_stack_used）*/
+/* 栈高水位的标记图案(见 task_stack_used) */
 #define TASK_STACK_MAGIC 0xA5u
-#define TASK_NAME_LEN    16u  /* 任务名最大长度（含 NUL）      */
-#define TASK_MAX         64u  /* 最大并发任务数（不含 idle）   */
-#define TASK_CWD_LEN     128u /* 当前工作目录最大长度          */
-#define TASK_EXE_LEN     128u /* 可执行文件路径最大长度        */
-#define TASK_MAX_FD      256u /* 每进程最大文件描述符数        */
+#define TASK_NAME_LEN    16u  /* 任务名最大长度(含 NUL) */
+#define TASK_MAX         64u  /* 最大并发任务数(不含 idle) */
+#define TASK_CWD_LEN     128u /* 当前工作目录最大长度 */
+#define TASK_EXE_LEN     128u /* 可执行文件路径最大长度 */
+#define TASK_MAX_FD      256u /* 每进程最大文件描述符数 */
 
 /* ── Task Control Block ──────────────────────────────────── */
 typedef struct task {
-    uintptr_t sp;             /* 保存的内核栈指针（上下文切换时填入） */
-    task_state_t state;       /* 任务状态                              */
-    uint32_t id;              /* 唯一任务 ID                           */
-    uint8_t priority;         /* 优先级（0 = 最高，255 = 最低）        */
-    char name[TASK_NAME_LEN]; /* 任务名称                              */
-    uint8_t *stack_base;      /* 内核栈底（低地址）；idle 为 NULL      */
-    void (*entry)(void *);    /* 任务入口函数                          */
-    void *arg;                /* 传给 entry 的参数                     */
-    list_node_t run_node;     /* 就绪队列节点                          */
-    list_node_t wait_node;    /* 等待队列节点（用于 mutex/semaphore）  */
+    uintptr_t sp;             /* 保存的内核栈指针(上下文切换时填入) */
+    task_state_t state;       /* 任务状态 */
+    uint32_t id;              /* 唯一任务 ID */
+    uint8_t priority;         /* 优先级(0 = 最高, 255 = 最低) */
+    char name[TASK_NAME_LEN]; /* 任务名称 */
+    uint8_t *stack_base;      /* 内核栈底(低地址)；idle 为 NULL */
+    void (*entry)(void *);    /* 任务入口函数 */
+    void *arg;                /* 传给 entry 的参数 */
+    list_node_t run_node;     /* 就绪队列节点 */
+    list_node_t wait_node;    /* 等待队列节点(用于 mutex/semaphore) */
 
-    /* === SMP 支持（Phase 0：仅占位，调度器在 Phase 1 开始读取） === */
+    /* === SMP 支持(Phase 0：仅占位, 调度器在 Phase 1 开始读取) === */
     uint32_t cpu_affinity; /* 绑定的逻辑 CPU 编号。0..N-1 为硬亲和性；
-                                          * CPU_AFFINITY_ANY 代表“任一”，
-                                          * 由 sched_enqueue 以 round-robin
-                                          * 选一个物理核。 */
+                                            CPU_AFFINITY_ANY 代表“任一”,
+                                            由 sched_enqueue 以 round-robin
+                                            选一个物理核。
+                           */
 
     /* === 用户态支持 === */
-    bool is_user_process;     /* true=用户进程, false=内核任务          */
-    bool user_started;        /* true=已至少进入过一次用户态            */
+    bool is_user_process;     /* true=用户进程, false=内核任务 */
+    bool user_started;        /* true=已至少进入过一次用户态 */
     bool is_thread;           /* true=线程(共享页表), false=独立进程 */
-    bool shares_pgd;          /* true=共享地址空间，不拥有 pgd 释放权 */
+    bool shares_pgd;          /* true=共享地址空间, 不拥有 pgd 释放权 */
     uint32_t tgid;            /* thread group id: getpid() 返回该值 */
-    uint64_t *pgd;            /* 页表基址（用户进程的TTBR0）            */
-    uint64_t user_entry;      /* 用户态入口点（虚拟地址）               */
-    uint64_t user_sp;         /* 用户栈指针（虚拟地址）                */
-    uint64_t user_stack_top;  /* 用户栈顶（虚拟地址）                  */
-    uint64_t user_stack_size; /* 用户栈大小                            */
-    uint64_t heap_end;        /* 进程堆当前末尾（brk 系统调用使用）    */
-    uint64_t mmap_next;       /* 下一个 mmap 分配的起始地址            */
+    uint64_t *pgd;            /* 页表基址(用户进程的TTBR0) */
+    uint64_t user_entry;      /* 用户态入口点(虚拟地址) */
+    uint64_t user_sp;         /* 用户栈指针(虚拟地址) */
+    uint64_t user_stack_top;  /* 用户栈顶(虚拟地址) */
+    uint64_t user_stack_size; /* 用户栈大小 */
+    uint64_t heap_end;        /* 进程堆当前末尾(brk 系统调用使用) */
+    uint64_t mmap_next;       /* 下一个 mmap 分配的起始地址 */
     /*
-     * mmap 区的**起始**地址（ET_DYN 用 0x50000000，ET_EXEC 用 0x30000000，
-     * 见 user_layout.h）。mmap_next 会一路涨上去，涨完就再也回不到初值，
-     * 所以基址必须单独存一份。
-     *
-     * 为什么需要它：fork 拷贝父进程地址空间时，mmap 区的扫描范围是
-     * [mmap_base, mmap_next)。以前这里写死 USER_MMAP_BASE_EXEC(0x30000000)，
-     * 而 PIE 进程的映射其实都在 0x50000000 以上 —— 于是每个 fork 都要
-     * 逐页空扫 512MB 的 VA 空洞（131,077 次四级页表遍历，白花 ~9ms）。
-     */
+       mmap 区的起始地址(ET_DYN 用 0x50000000, ET_EXEC 用 0x30000000,
+       见 user_layout.h)。mmap_next 会一路涨上去, 涨完就再也回不到初值,
+       所以基址必须单独存一份。
+
+       为什么需要它：fork 拷贝父进程地址空间时, mmap 区的扫描范围是
+       [mmap_base, mmap_next)。以前这里写死 USER_MMAP_BASE_EXEC(0x30000000),
+       而 PIE 进程的映射其实都在 0x50000000 以上 —— 于是每个 fork 都要
+       逐页空扫 512MB 的 VA 空洞(131,077 次四级页表遍历, 白花 ~9ms)。
+    */
     uint64_t mmap_base;
     /*
-     * 动态链接器（ld-musl 等）映射区的**末端**（不含），0 = 本进程没有 interp。
-     *
-     * interp 由 exec 加载在 USER_INTERP_BASE(0x40000000)（见 user_layout.h），
-     * 而 fork 拷贝地址空间时只扫 [0,heap_end) / [mmap_base,mmap_next) / 用户栈
-     * 三个区间 —— **没有一个覆盖 interp 那一带**。于是动态链接的程序 fork 出来
-     * 的子进程手里没有 interp：musl 的 fork() 正是在 ld-musl 内部调 clone 的，
-     * 子进程一从 syscall 返回就取指到 0x4003xxxx，而那一页不存在 →
-     * SIGSEGV（RISC-V 上是 code=12 指令页错误，判据是 stval == pc）。
-     *
-     * 默认 rootfs 装的是**静态** busybox（没有 interp），所以这个 bug 一直被
-     * 掩盖着 —— 只有跑动态链接的程序才会撞上（实测 SG2002 上跑动态 busybox，
-     * 一个 fork 就炸）。
-     *
-     * 存末端而不是让 fork 去扫一个固定的大区间，是为了保住 mmap_base 那条
-     * 注释里的性能性质：静态程序这里恒为 0，fork 一次空扫都不做。
-     */
+       动态链接器(ld-musl 等)映射区的末端(不含), 0 = 本进程没有 interp。
+
+       interp 由 exec 加载在 USER_INTERP_BASE(0x40000000)(见 user_layout.h),
+       而 fork 拷贝地址空间时只扫 [0,heap_end) / [mmap_base,mmap_next) / 用户栈
+       三个区间 —— 没有一个覆盖 interp 那一带。于是动态链接的程序 fork 出来
+       的子进程手里没有 interp：musl 的 fork() 正是在 ld-musl 内部调 clone 的,
+       子进程一从 syscall 返回就取指到 0x4003xxxx, 而那一页不存在 →
+       SIGSEGV(RISC-V 上是 code=12 指令页错误, 判据是 stval == pc)。
+
+       默认 rootfs 装的是静态 busybox(没有 interp), 所以这个 bug 一直被
+       掩盖着 —— 只有跑动态链接的程序才会撞上(实测 SG2002 上跑动态 busybox,
+       一个 fork 就炸)。
+
+       存末端而不是让 fork 去扫一个固定的大区间, 是为了保住 mmap_base 那条
+       注释里的性能性质：静态程序这里恒为 0, fork 一次空扫都不做。
+    */
     uint64_t interp_end;
-    uint64_t fs_base;  /* x86_64 TLS: IA32_FS_BASE              */
-    uint64_t ctid_ptr; /* CLONE_CHILD_CLEARTID 地址 (0=无)       */
+    uint64_t fs_base;  /* x86_64 TLS: IA32_FS_BASE */
+    uint64_t ctid_ptr; /* CLONE_CHILD_CLEARTID 地址 (0=无) */
 
     /* === 进程/文件系统支持 === */
-    char cwd[TASK_CWD_LEN];        /* 当前工作目录（用户进程）               */
-    char exe_path[TASK_EXE_LEN];   /* 可执行文件路径（/proc/self/exe）   */
-    int16_t fd_table[TASK_MAX_FD]; /* FD → g_fd_pool 索引，-1=未打开     */
-    uint8_t fd_cloexec[TASK_MAX_FD / 8]; /* FD_CLOEXEC 位图              */
-    uint32_t parent_id; /* 父进程 ID                              */
-    uint32_t uid;       /* real user ID                           */
-    uint32_t euid;      /* effective user ID                      */
-    uint32_t gid;       /* real group ID                          */
-    uint32_t egid;      /* effective group ID                     */
-    int exit_status;    /* 退出状态（wait4 使用）                 */
-    int exit_signal;    /* 被信号杀死时的信号号（0=正常退出）     */
-    bool is_waiting;    /* 正在 wait4 子进程                      */
-    uint32_t wait_pid;  /* 等待的子进程 PID（-1=任意）            */
+    char cwd[TASK_CWD_LEN];              /* 当前工作目录(用户进程) */
+    char exe_path[TASK_EXE_LEN];         /* 可执行文件路径(/proc/self/exe) */
+    int16_t fd_table[TASK_MAX_FD];       /* FD → g_fd_pool 索引, -1=未打开 */
+    uint8_t fd_cloexec[TASK_MAX_FD / 8]; /* FD_CLOEXEC 位图 */
+    uint32_t parent_id;                  /* 父进程 ID */
+    uint32_t uid;                        /* real user ID */
+    uint32_t euid;                       /* effective user ID */
+    uint32_t gid;                        /* real group ID */
+    uint32_t egid;                       /* effective group ID */
+    int exit_status;                     /* 退出状态(wait4 使用) */
+    int exit_signal;                     /* 被信号杀死时的信号号(0=正常退出) */
+    bool is_waiting;                     /* 正在 wait4 子进程 */
+    uint32_t wait_pid;                   /* 等待的子进程 PID(-1=任意) */
 
     /* === CPU 时间统计 === */
-    uint64_t utime_ns;    /* 用户态 CPU 时间（纳秒），task_exit 前计算  */
-    uint64_t stime_ns;    /* 内核态 CPU 时间（纳秒），syscall 路径累积  */
-    uint64_t sc_entry_ns; /* 当前 syscall 入口时间戳（0=不在 syscall）  */
-    uint64_t create_ns;   /* 进程创建时间戳（用于 utime = wall−stime）  */
+    uint64_t utime_ns;    /* 用户态 CPU 时间(纳秒), task_exit 前计算 */
+    uint64_t stime_ns;    /* 内核态 CPU 时间(纳秒), syscall 路径累积 */
+    uint64_t sc_entry_ns; /* 当前 syscall 入口时间戳(0=不在 syscall) */
+    uint64_t create_ns;   /* 进程创建时间戳(用于 utime = wall−stime) */
 
     /* === 信号系统 === */
-    uint64_t pending_sigs; /* 待投递信号位图，bit(N-1) = 信号 N           */
-    uint64_t blocked_sigs; /* 被阻塞信号位图（sigprocmask）               */
-    uint64_t
-        sig_saved_blocked; /* signal 投递前保存的 blocked_sigs            */
-    uint32_t pgid;         /* 进程组 ID                                   */
-    uint32_t sid;          /* 会话 ID (session leader = sid == id)         */
-    int16_t ctty_pty_idx;  /* controlling tty PTY index, -1 if detached    */
-    uint64_t sig_frame_sp; /* sigframe 在用户栈上的起始地址（rt_sigreturn）*/
-    sig_action_t
-        sig_actions[NSIG]; /* 每信号的 action（下标 0 对应信号 1）        */
+    uint64_t pending_sigs;          /* 待投递信号位图, bit(N-1) = 信号 N */
+    uint64_t blocked_sigs;          /* 被阻塞信号位图(sigprocmask) */
+    uint64_t sig_saved_blocked;     /* signal 投递前保存的 blocked_sigs */
+    uint32_t pgid;                  /* 进程组 ID */
+    uint32_t sid;                   /* 会话 ID (session leader = sid == id) */
+    int16_t ctty_pty_idx;           /* controlling tty PTY index, -1 if detached */
+    uint64_t sig_frame_sp;          /* sigframe 在用户栈上的起始地址(rt_sigreturn) */
+    sig_action_t sig_actions[NSIG]; /* 每信号的 action(下标 0 对应信号 1) */
 
-    /* === ITIMER_REAL（alarm / setitimer）=========================
-     *
-     * 到期由 tick 驱动，投 SIGALRM 并唤醒阻塞中的任务。见 task/itimer.c。
-     * expire_ns == 0 表示未装（与 interval 无关：一次性定时器触发后 expire
-     * 归零，但 interval 保留，便于 getitimer 报告）。
-     */
-    uint64_t itimer_expire_ns;   /* 绝对到期时刻；0 = 未装                */
-    uint64_t itimer_interval_ns; /* 周期；0 = 一次性                      */
+    /* === ITIMER_REAL(alarm / setitimer)=========================
+
+       到期由 tick 驱动, 投 SIGALRM 并唤醒阻塞中的任务。见 task/itimer.c。
+       expire_ns == 0 表示未装(与 interval 无关：一次性定时器触发后 expire
+       归零, 但 interval 保留, 便于 getitimer 报告)。
+    */
+    uint64_t itimer_expire_ns;   /* 绝对到期时刻；0 = 未装 */
+    uint64_t itimer_interval_ns; /* 周期；0 = 一次性 */
 
     /* === 内核抢占控制 === */
-    uint32_t preempt_count; /* >0 时 S-mode timer 不抢占该任务             */
+    uint32_t preempt_count; /* >0 时 S-mode timer 不抢占该任务 */
 
     /*
-     * === SMP 唤醒状态（跨核唤醒的正确性）=========================
-     *
-     * on_cpu：本任务正由某颗核执行。它从调度器选中开始，到
-     *   sched_schedule() 真正切出（arch_task_switch 之前）为止都是 true ——
-     *   **包括** task_block() 已置 BLOCKED、但尚未切出的那个窗口。
-     *
-     * wake_pending：在 on_cpu 期间被 task_unblock() 唤醒。此时**不能**直接
-     *   入队：任务还在另一颗核上跑，队列里的同一任务会被第二颗核再挑一次。
-     *   调度器在切出时看到这个标志，才把它补进目标核的运行队列。
-     *
-     * 没有这两个字段时，SMP 下的唤醒有真实竞态：
-     *   CPU0: task_block() 置 BLOCKED → (窗口)
-     *   CPU1: task_unblock() 看到 BLOCKED → READY + sched_enqueue()
-     *   CPU0: sched_schedule() 切出 → CPU2 从队列挑走它
-     *   → 同一个任务同时在 CPU0 的切换路径和 CPU2 的执行路径上。
-     */
+       === SMP 唤醒状态(跨核唤醒的正确性)=========================
+
+       on_cpu：本任务正由某颗核执行。它从调度器选中开始, 到
+         sched_schedule() 真正切出(arch_task_switch 之前)为止都是 true ——
+         包括 task_block() 已置 BLOCKED, 但尚未切出的那个窗口。
+
+       wake_pending：在 on_cpu 期间被 task_unblock() 唤醒。此时不能直接
+         入队：任务还在另一颗核上跑, 队列里的同一任务会被第二颗核再挑一次。
+         调度器在切出时看到这个标志, 才把它补进目标核的运行队列。
+
+       没有这两个字段时, SMP 下的唤醒有真实竞态：
+         CPU0: task_block() 置 BLOCKED → (窗口)
+         CPU1: task_unblock() 看到 BLOCKED → READY + sched_enqueue()
+         CPU0: sched_schedule() 切出 → CPU2 从队列挑走它
+         → 同一个任务同时在 CPU0 的切换路径和 CPU2 的执行路径上。
+    */
     volatile bool on_cpu;
     volatile bool wake_pending;
 } task_t;
 
-/* 前台进程组 ID（0 = 无前台进程）*/
+/* 前台进程组 ID(0 = 无前台进程) */
 extern volatile uint32_t g_fg_pgid;
 
 /* ── SMP 调度亲和性 ──────────────────────────────────────────── */
 /* "任一核"哨兵值； sched_enqueue 看到后会用 round-robin 选目标。 */
 #define CPU_AFFINITY_ANY ((uint32_t)-1)
 
-/**
- * task_set_cpu_affinity - 将任务迁移到指定逻辑 CPU
- * @task:    目标任务（仅允许在任务还未开始运行、还在某核
- *           run_queue 的状态下调用；如从 task_create 返回后、
- *           任务首次被 schedule 之前）
- * @cpu_id:  目标逻辑 CPU（0..g_num_cpus-1）或 CPU_AFFINITY_ANY
- *
- * 原子地从当前所在核 rq 中取出（若仍在队）并重新入队到目标核。
- * VCPU 任务请绑 cpu_id=0：per-CPU 虚拟化状态（GICH list regs / vtimer /
- * VMCS）尚未跨核迁移。
- */
+/*
+   task_set_cpu_affinity - 将任务迁移到指定逻辑 CPU
+   @task:    目标任务(仅允许在任务还未开始运行, 还在某核
+             run_queue 的状态下调用；如从 task_create 返回后,
+             任务首次被 schedule 之前)
+   @cpu_id:  目标逻辑 CPU(0..g_num_cpus-1)或 CPU_AFFINITY_ANY
+
+   原子地从当前所在核 rq 中取出(若仍在队)并重新入队到目标核。
+   VCPU 任务请绑 cpu_id=0：per-CPU 虚拟化状态(GICH list regs / vtimer /
+   VMCS)尚未跨核迁移。
+*/
 void task_set_cpu_affinity(task_t *task, uint32_t cpu_id);
 
 /*
- * task_stack_used — 该任务内核栈的高水位（字节）
- *
- * 任务的栈在创建时被刷成 TASK_STACK_MAGIC，这里从栈底往上找第一处非图案的
- * 字节，量出峰值用量。**只用于诊断**（O(栈大小)，别放热路径）。
- * 用途：定 TASK_STACK_SIZE。栈是静态数组挨着放的，溢出先踩坏邻居任务，
- * 所以"崩没崩"不可靠，这个数字可靠。
- */
+   task_stack_used — 该任务内核栈的高水位(字节)
+
+   任务的栈在创建时被刷成 TASK_STACK_MAGIC, 这里从栈底往上找第一处非图案的
+   字节, 量出峰值用量。只用于诊断(O(栈大小), 别放热路径)。
+   用途：定 TASK_STACK_SIZE。栈是静态数组挨着放的, 溢出先踩坏邻居任务,
+   所以"崩没崩"不可靠, 这个数字可靠。
+*/
 size_t task_stack_used(const task_t *task);
 
 /* ── Public API ──────────────────────────────────────────── */
 
-/**
- * task_init - 初始化任务子系统
- *
- * 将当前执行上下文（boot 线程）注册为 idle 任务，
- * 并初始化调度器。必须在调用其他 task_* 函数前调用。
- */
+/*
+   task_init - 初始化任务子系统
+
+   将当前执行上下文(boot 线程)注册为 idle 任务,
+   并初始化调度器。必须在调用其他 task_* 函数前调用。
+*/
 void task_init(void);
 
-/**
- * task_switch_to_idle_stack - 切换到 idle 专用栈并进入 idle 循环
- *
- * 必须在 task_init() 返回后调用。切换栈后**永不返回**，直接进入
- * idle 主循环（task_yield + wfi/wfe/hlt）。
- * 这样可以避免切栈后走 C 函数 epilogue 时从未初始化的新栈读 LR/RBP
- * 导致跳到 0（ELR=0 异常）。
- * 防止频繁中断导致 boot 栈溢出。
- */
+/*
+   task_switch_to_idle_stack - 切换到 idle 专用栈并进入 idle 循环
+
+   必须在 task_init() 返回后调用。切换栈后永不返回, 直接进入
+   idle 主循环(task_yield + wfi/wfe/hlt)。
+   这样可以避免切栈后走 C 函数 epilogue 时从未初始化的新栈读 LR/RBP
+   导致跳到 0(ELR=0 异常)。
+   防止频繁中断导致 boot 栈溢出。
+*/
 void task_switch_to_idle_stack(void) __attribute__((noreturn));
 
-/**
- * task_create - 创建内核任务
- * @name:     任务名称（最长 TASK_NAME_LEN-1 字节）
- * @entry:    任务入口函数
- * @arg:      传给 entry 的参数
- * @priority: 优先级（0 = 最高，255 = 最低）
- *
- * 成功返回 task_t*，任务池已满时返回 NULL。
- * 新任务立即加入就绪队列，下次调度时开始运行。
- */
-task_t *task_create(const char *name, void (*entry)(void *), void *arg,
-                    uint8_t priority);
+/*
+   task_create - 创建内核任务
+   @name:     任务名称(最长 TASK_NAME_LEN-1 字节)
+   @entry:    任务入口函数
+   @arg:      传给 entry 的参数
+   @priority: 优先级(0 = 最高, 255 = 最低)
 
-/**
- * task_create_affinity - 创建内核任务并**在入队前**指定它跑在哪颗核上
- * @cpu_affinity: 目标逻辑 CPU（0..g_num_cpus-1）或 CPU_AFFINITY_ANY
- *
- * 需要把任务钉在某个核上的调用者（vcpu 就是）必须用这个，而不是
- * task_create() + task_set_cpu_affinity()：后者有窗口 —— 新任务可能在两次
- * 调用之间就被别的核挑走执行，于是既在跑又被塞进指定核的队列，
- * 会被两个核同时执行（详见 task.c 里 task_create_affinity 的注释）。
- */
-task_t *task_create_affinity(const char *name, void (*entry)(void *), void *arg,
-                             uint8_t priority, uint32_t cpu_affinity);
+   成功返回 task_t*, 任务池已满时返回 NULL。
+   新任务立即加入就绪队列, 下次调度时开始运行。
+*/
+task_t *task_create(const char *name, void (*entry)(void *), void *arg, uint8_t priority);
 
-/**
- * process_create - 创建用户进程
- * @name:       进程名称（最长 TASK_NAME_LEN-1 字节）
- * @user_entry: 用户态入口点（虚拟地址）
- * @user_sp:    用户栈指针（虚拟地址）
- * @priority:   优先级（0 = 最高，255 = 最低）
- *
- * 成功返回 task_t*，任务池已满时返回 NULL。
- * 新进程立即加入就绪队列，首次调度时跳转到用户态执行。
- *
- * 注意：当前版本使用共享内核页表，后续扩展为独立地址空间。
- */
-task_t *process_create(const char *name, uint64_t user_entry,
-                       uint64_t user_code_size, uint64_t user_sp,
+/*
+   task_create_affinity - 创建内核任务并在入队前指定它跑在哪颗核上
+   @cpu_affinity: 目标逻辑 CPU(0..g_num_cpus-1)或 CPU_AFFINITY_ANY
+
+   需要把任务钉在某个核上的调用者(vcpu 就是)必须用这个, 而不是
+   task_create() + task_set_cpu_affinity()：后者有窗口 —— 新任务可能在两次
+   调用之间就被别的核挑走执行, 于是既在跑又被塞进指定核的队列,
+   会被两个核同时执行(详见 task.c 里 task_create_affinity 的注释)。
+*/
+task_t *task_create_affinity(const char *name, void (*entry)(void *), void *arg, uint8_t priority,
+                             uint32_t cpu_affinity);
+
+/*
+   process_create - 创建用户进程
+   @name:       进程名称(最长 TASK_NAME_LEN-1 字节)
+   @user_entry: 用户态入口点(虚拟地址)
+   @user_sp:    用户栈指针(虚拟地址)
+   @priority:   优先级(0 = 最高, 255 = 最低)
+
+   成功返回 task_t*, 任务池已满时返回 NULL。
+   新进程立即加入就绪队列, 首次调度时跳转到用户态执行。
+
+   注意：当前版本使用共享内核页表, 后续扩展为独立地址空间。
+*/
+task_t *process_create(const char *name, uint64_t user_entry, uint64_t user_code_size, uint64_t user_sp,
                        uint8_t priority);
 
-/**
- * process_create_with_pgd - 使用已有用户页表创建用户进程
- * @name:       进程名称（最长 TASK_NAME_LEN-1 字节）
- * @user_entry: 用户态入口点（用户虚拟地址，直接使用，不做转换）
- * @user_sp:    用户栈指针（虚拟地址）
- * @priority:   优先级（0 = 最高，255 = 最低）
- * @pgd_phys:   已创建好的用户页表物理地址
- *
- * 与 process_create 不同，跳过 vm_create_user_process，
- * 直接使用调用方已准备好的页表。用于 ELF 加载器等自行管理地址空间的场景。
- *
- * ⚠️ 返回的任务**还没有入运行队列**（state 停在 TASK_ALLOCATING）。
- * 调用方必须先把所有"新任务跑起来之前就该就位"的状态填完
- * （fd 表、pgid/sid/uid、信号掩码……），再调 process_start() 放行。
- * 不这么做的话，SMP 下别的核会抢先调度到它，让它带着初值跑 ——
- * fd_table 的初值是 -1，即 fd 0/1/2 退回控制台，
- * 症状是管道重定向失效 / 挂死（详见 task.c 里 process_create_with_pgd 的注释）。
- */
-task_t *process_create_with_pgd(const char *name, uint64_t user_entry,
-                                uint64_t user_sp, uint8_t priority,
-                                uint64_t pgd_phys, uint64_t heap_end,
-                                uint64_t mmap_next);
+/*
+   process_create_with_pgd - 使用已有用户页表创建用户进程
+   @name:       进程名称(最长 TASK_NAME_LEN-1 字节)
+   @user_entry: 用户态入口点(用户虚拟地址, 直接使用, 不做转换)
+   @user_sp:    用户栈指针(虚拟地址)
+   @priority:   优先级(0 = 最高, 255 = 最低)
+   @pgd_phys:   已创建好的用户页表物理地址
 
-/**
- * process_start - 把 process_create_with_pgd 建好的进程挂进运行队列
- */
+   与 process_create 不同, 跳过 vm_create_user_process,
+   直接使用调用方已准备好的页表。用于 ELF 加载器等自行管理地址空间的场景。
+
+   注意： 返回的任务还没有入运行队列(state 停在 TASK_ALLOCATING)。
+   调用方必须先把所有"新任务跑起来之前就该就位"的状态填完
+   (fd 表, pgid/sid/uid, 信号掩码……), 再调 process_start() 放行。
+   不这么做的话, SMP 下别的核会抢先调度到它, 让它带着初值跑 ——
+   fd_table 的初值是 -1, 即 fd 0/1/2 退回控制台,
+   症状是管道重定向失效 / 挂死(详见 task.c 里 process_create_with_pgd 的注释)。
+*/
+task_t *process_create_with_pgd(const char *name, uint64_t user_entry, uint64_t user_sp, uint8_t priority,
+                                uint64_t pgd_phys, uint64_t heap_end, uint64_t mmap_next);
+
+/*
+   process_start - 把 process_create_with_pgd 建好的进程挂进运行队列
+*/
 void process_start(task_t *task);
 
-/**
- * task_yield - 主动让出 CPU
- *
- * 调用者进入就绪队列尾部，调度器切换到下一个就绪任务。
- */
+/*
+   task_yield - 主动让出 CPU
+
+   调用者进入就绪队列尾部, 调度器切换到下一个就绪任务。
+*/
 void task_yield(void);
 
-/**
- * task_exit - 终止当前任务（调用后不会返回）
- *
- * 将任务标记为 DEAD，从就绪队列移除，回收栈，
- * 然后切换到下一个任务。
- */
+/*
+   task_exit - 终止当前任务(调用后不会返回)
+
+   将任务标记为 DEAD, 从就绪队列移除, 回收栈,
+   然后切换到下一个任务。
+*/
 void task_exit(void) __attribute__((noreturn));
 
-/**
- * task_reap_dead - 回收已退出任务的延迟释放资源
- * @task: state 必须为 TASK_DEAD 的任务
- *
- * 只能在该任务已经离开 CPU 后调用。会释放独立用户页表/用户物理页和静态任务槽。
- */
+/*
+   task_reap_dead - 回收已退出任务的延迟释放资源
+   @task: state 必须为 TASK_DEAD 的任务
+
+   只能在该任务已经离开 CPU 后调用。会释放独立用户页表/用户物理页和静态任务槽。
+*/
 void task_reap_dead(task_t *task);
 
-/**
- * task_alloc_slot - 认领一个空闲任务槽（已清零、栈已刷图案）
- *
- * 返回的 TCB 里 state = TASK_ALLOCATING、cpu_affinity = CPU_AFFINITY_ANY、
- * stack_base 指向本槽的静态栈。**调用方拿到的是一块干净 TCB** ——
- * 以前 fork 路径自己抄了一份认领循环且不清零，于是子进程继承了上一个
- * 占位者的残值（cpu_affinity / preempt_count）。
- *
- * 失败（池满）返回 NULL；池满时会先回收一轮"没人会再来 wait"的僵尸槽。
- */
+/*
+   task_alloc_slot - 认领一个空闲任务槽(已清零, 栈已刷图案)
+
+   返回的 TCB 里 state = TASK_ALLOCATING, cpu_affinity = CPU_AFFINITY_ANY,
+   stack_base 指向本槽的静态栈。调用方拿到的是一块干净 TCB ——
+   以前 fork 路径自己抄了一份认领循环且不清零, 于是子进程继承了上一个
+   占位者的残值(cpu_affinity / preempt_count)。
+
+   失败(池满)返回 NULL；池满时会先回收一轮"没人会再来 wait"的僵尸槽。
+*/
 task_t *task_alloc_slot(void);
 
-/**
- * task_alloc_id - 原子分配一个任务 id
- *
- * 裸的 `g_task_id_cnt++` 在两核同时 fork 时会撞 id —— 而 wait4、信号、
- * /proc 全靠 id 找人。
- */
+/*
+   task_alloc_id - 原子分配一个任务 id
+
+   裸的 `g_task_id_cnt++` 在两核同时 fork 时会撞 id —— 而 wait4, 信号,
+   /proc 全靠 id 找人。
+*/
 uint32_t task_alloc_id(void);
 
-/**
- * task_current - 返回当前正在运行的任务指针
- */
+/*
+   task_current - 返回当前正在运行的任务指针
+*/
 task_t *task_current(void);
 
-/**
- * task_block - 阻塞当前任务
- * @wait_queue: 等待队列（如果为 NULL，则不从队列移除）
- *
- * 将当前任务设置为 BLOCKED 状态，并触发调度。
- * 如果 wait_queue 非 NULL，将任务加入该队列。
- */
+/*
+   task_block - 阻塞当前任务
+   @wait_queue: 等待队列(如果为 NULL, 则不从队列移除)
+
+   将当前任务设置为 BLOCKED 状态, 并触发调度。
+   如果 wait_queue 非 NULL, 将任务加入该队列。
+*/
 void task_block(list_t *wait_queue);
 
-/**
- * task_unblock - 唤醒一个被阻塞的任务
- * @task: 要唤醒的任务
- *
- * 将任务从 BLOCKED 状态改为 READY，并加入就绪队列。
- * 如果任务在等待队列中，调用者应先将其从等待队列移除。
- */
+/*
+   task_unblock - 唤醒一个被阻塞的任务
+   @task: 要唤醒的任务
+
+   将任务从 BLOCKED 状态改为 READY, 并加入就绪队列。
+   如果任务在等待队列中, 调用者应先将其从等待队列移除。
+*/
 void task_unblock(task_t *task);
 
-/**
- * task_kick - 让正在某颗核上运行的任务重新进入调度
- *
- * 只对 TASK_RUNNING 的任务有效：向它所在的核发一个 resched IPI。
- * 用途：跨核停止 vCPU（vm_request_stop）、以及「有更高优先级的活
- * 要它立刻处理」的场景。任务不在运行时由 task_unblock()/completion 负责。
- */
+/*
+   task_kick - 让正在某颗核上运行的任务重新进入调度
+
+   只对 TASK_RUNNING 的任务有效：向它所在的核发一个 resched IPI。
+   用途：跨核停止 vCPU(vm_request_stop), 以及「有更高优先级的活
+   要它立刻处理」的场景。任务不在运行时由 task_unblock()/completion 负责。
+*/
 void task_kick(task_t *task);
 
-/**
- * task_find_by_id - 按 ID 查找非 DEAD 任务
- * @id: 任务 ID
- * 返回 task_t* 或 NULL
- */
+/*
+   task_find_by_id - 按 ID 查找非 DEAD 任务
+   @id: 任务 ID
+   返回 task_t* 或 NULL
+*/
 task_t *task_find_by_id(uint32_t id);
 
-/**
- * task_send_signal - 向任务投递信号（可在中断上下文调用）
- * @t: 目标任务（NULL 则忽略）
- * @sig: 信号号 (1..NSIG)
- */
+/*
+   task_send_signal - 向任务投递信号(可在中断上下文调用)
+   @t: 目标任务(NULL 则忽略)
+   @sig: 信号号 (1..NSIG)
+*/
 void task_send_signal(task_t *t, int sig);
 
-/**
- * task_send_signal_to_pgid - 向进程组内所有用户态任务投递信号
- * @pgid: 进程组 ID（0 无效）
- * @sig:  信号号
- * @return: 收到信号的进程数量
- */
+/*
+   task_send_signal_to_pgid - 向进程组内所有用户态任务投递信号
+   @pgid: 进程组 ID(0 无效)
+   @sig:  信号号
+   @return: 收到信号的进程数量
+*/
 int task_send_signal_to_pgid(uint32_t pgid, int sig);
 
-/**
- * signal_check_uart - 扫描 UART 输入，
- * 将普通字符存入环形缓冲区，Ctrl+C 发 SIGINT 给前台进程组。
- * 可在中断和任务上下文中调用。
- */
+/*
+   signal_check_uart - 扫描 UART 输入,
+   将普通字符存入环形缓冲区, Ctrl+C 发 SIGINT 给前台进程组。
+   可在中断和任务上下文中调用。
+*/
 void signal_check_uart(void);
 
 #endif /* KERNEL_TASK_TASK_H */

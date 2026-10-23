@@ -1,28 +1,28 @@
 /*
- * task_ipc_test.c — task 基础设施的用户态验收（A/B 对比用）
- *
- * 目的：证明「有新的跨核唤醒/抢占基础设施」和「没有」是**可观测地不同**的。
- * 只用标准 syscall（fork/mmap/getcpu/futex/clock_gettime），因此同一份
- * 二进制可以同时跑在新内核和旧内核上做对照。
- *
- * 用法：
- *   task-ipc dist <n>
- *       创建 n 个子进程，每个报告自己落在哪颗 CPU。验证 SMP 下任务确实
- *       按 round-robin 摊开（两核时两边都应该 >0）。
- *
- *   task-ipc ping <iters> <attempts>
- *       父/子用 MAP_SHARED 内存 + futex 乒乓。若两者在**不同核**上，且
- *       内核没有「远端唤醒立即 kick」/ IPI，被唤醒方要等自己那颗核的
- *       下一次 timer tick（本内核 100Hz = 10ms）。新内核用 resched IPI
- *       立即唤醒。每次 attempt 打印两端 CPU 和平均往返延迟（us）。
- *
- * 为什么不用 pipe：pipe 的 blocked_reader/blocked_writer 是无锁检查，
- * 存在已知的 lost-wakeup（见 apps/c/racetest.c 的 pipe 子命令）。用它
- * 测 task 基础设施，失败时无法区分是 IPI 坏了还是 pipe 丢了唤醒。
- * futex 的 wait/wake 有全局锁，且新内核里唤醒统一走 sched_unblock()。
- *
- * 输出统一带 "TASKIPC " 前缀，方便脚本 grep 和 A/B 对账。
- */
+   task_ipc_test.c — task 基础设施的用户态验收(A/B 对比用)
+
+   目的：证明「有新的跨核唤醒/抢占基础设施」和「没有」是可观测地不同的。
+   只用标准 syscall(fork/mmap/getcpu/futex/clock_gettime), 因此同一份
+   二进制可以同时跑在新内核和旧内核上做对照。
+
+   用法：
+     task-ipc dist <n>
+         创建 n 个子进程, 每个报告自己落在哪颗 CPU。验证 SMP 下任务确实
+         按 round-robin 摊开(两核时两边都应该 >0)。
+
+     task-ipc ping <iters> <attempts>
+         父/子用 MAP_SHARED 内存 + futex 乒乓。若两者在不同核上, 且
+         内核没有「远端唤醒立即 kick」/ IPI, 被唤醒方要等自己那颗核的
+         下一次 timer tick(本内核 100Hz = 10ms)。新内核用 resched IPI
+         立即唤醒。每次 attempt 打印两端 CPU 和平均往返延迟(us)。
+
+   为什么不用 pipe：pipe 的 blocked_reader/blocked_writer 是无锁检查,
+   存在已知的 lost-wakeup(见 apps/c/racetest.c 的 pipe 子命令)。用它
+   测 task 基础设施, 失败时无法区分是 IPI 坏了还是 pipe 丢了唤醒。
+   futex 的 wait/wake 有全局锁, 且新内核里唤醒统一走 sched_unblock()。
+
+   输出统一带 "TASKIPC " 前缀, 方便脚本 grep 和 A/B 对账。
+*/
 #define _GNU_SOURCE
 #include <errno.h>
 #include <stdint.h>
@@ -79,8 +79,7 @@ static void busy_wait_ns(uint64_t ns)
 
 static int futex_wait(volatile int *uaddr, int val)
 {
-    return (int)syscall(SYS_futex, (int *)uaddr, FUTEX_WAIT, val, NULL, NULL,
-                        0);
+    return (int)syscall(SYS_futex, (int *)uaddr, FUTEX_WAIT, val, NULL, NULL, 0);
 }
 
 static int futex_wake(volatile int *uaddr, int n)
@@ -118,8 +117,7 @@ static int mode_dist(int n)
         n = 8;
     memset(hist, 0, sizeof(hist));
 
-    shm = mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS,
-               -1, 0);
+    shm = mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
     if (shm == MAP_FAILED) {
         perror("mmap");
         return 1;
@@ -163,7 +161,7 @@ static int mode_dist(int n)
     return 0;
 }
 
-/* ── ping：跨核唤醒延迟（futex 乒乓）──────────────────────────── */
+/* ── ping：跨核唤醒延迟(futex 乒乓)──────────────────────────── */
 
 struct ping_shm {
     volatile int ready;
@@ -181,8 +179,7 @@ static int ping_once(int iters, int attempt)
     uint64_t t0, t1, total = 0;
     double avg_us;
 
-    shm = mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS,
-               -1, 0);
+    shm = mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
     if (shm == MAP_FAILED) {
         perror("mmap");
         return 1;
@@ -221,9 +218,9 @@ static int ping_once(int iters, int attempt)
     pcpu = cpu_now();
 
     /*
-     * 让子进程真正进入 futex_wait 再开始。否则第一批 ping 可能在它睡下
-     * 之前就到达，测到的是「根本没睡」。5ms 足够覆盖双核调度。
-     */
+       让子进程真正进入 futex_wait 再开始。否则第一批 ping 可能在它睡下
+       之前就到达, 测到的是「根本没睡」。5ms 足够覆盖双核调度。
+    */
     busy_wait_ns(5000000ULL);
 
     for (int r = 1; r <= iters; r++) {

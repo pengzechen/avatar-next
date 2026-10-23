@@ -1,12 +1,12 @@
 /*
- * io/epoll.c — epoll 子系统实现
- *
- * 事件驱动 I/O 多路复用。核心机制：
- *   1. epoll_ctl(ADD) 时在目标 fd 的 wq 上注册 waiter
- *   2. fd 状态变化时（pipe write、socket recv 等）调用 fd_notify_waiters()
- *   3. fd_notify_waiters() 将对应 epoll_item 标记为 ready 并唤醒 blocked task
- *   4. epoll_wait 收集就绪项返回用户空间
- */
+   io/epoll.c — epoll 子系统实现
+
+   事件驱动 I/O 多路复用。核心机制：
+     1. epoll_ctl(ADD) 时在目标 fd 的 wq 上注册 waiter
+     2. fd 状态变化时(pipe write, socket recv 等)调用 fd_notify_waiters()
+     3. fd_notify_waiters() 将对应 epoll_item 标记为 ready 并唤醒 blocked task
+     4. epoll_wait 收集就绪项返回用户空间
+*/
 #include "syscall/io/epoll.h"
 #include "syscall/fs/fd_pool.h"
 #include "syscall/syscall_internal.h"
@@ -59,8 +59,7 @@ static int wq_register(fd_waitqueue_t *wq, epoll_instance_t *ep, int item_idx)
     return 0;
 }
 
-static void wq_unregister(fd_waitqueue_t *wq, epoll_instance_t *ep,
-                          int item_idx)
+static void wq_unregister(fd_waitqueue_t *wq, epoll_instance_t *ep, int item_idx)
 {
     for (int i = 0; i < wq->waiter_count; i++) {
         if (wq->waiters[i].ep == ep && wq->waiters[i].item_idx == item_idx) {
@@ -213,8 +212,7 @@ void epoll_create1_handler(uint64_t regs[6], task_t *current)
     if (flags & EPOLL_CLOEXEC)
         current->fd_cloexec[fd / 8] |= (1 << (fd % 8));
 
-    KLOG_SYSCALL("[epoll] create1: pid=%u fd=%d ep_idx=%d\n", current->id, fd,
-                 ep_idx);
+    KLOG_SYSCALL("[epoll] create1: pid=%u fd=%d ep_idx=%d\n", current->id, fd, ep_idx);
     regs[0] = (uint64_t)fd;
 }
 
@@ -292,8 +290,7 @@ void epoll_ctl_handler(uint64_t regs[6], task_t *current)
             }
         }
 
-        KLOG_SYSCALL("[epoll] ctl ADD: ep=%d fd=%d events=0x%x\n",
-                     ep_obj->epoll.ep_idx, fd, ev->events);
+        KLOG_SYSCALL("[epoll] ctl ADD: ep=%d fd=%d events=0x%x\n", ep_obj->epoll.ep_idx, fd, ev->events);
         regs[0] = 0;
         break;
     }
@@ -325,8 +322,7 @@ void epoll_ctl_handler(uint64_t regs[6], task_t *current)
         }
         ep->item_count--;
 
-        KLOG_SYSCALL("[epoll] ctl DEL: ep=%d fd=%d\n", ep_obj->epoll.ep_idx,
-                     fd);
+        KLOG_SYSCALL("[epoll] ctl DEL: ep=%d fd=%d\n", ep_obj->epoll.ep_idx, fd);
         regs[0] = 0;
         break;
     }
@@ -460,7 +456,7 @@ void epoll_pwait_handler(uint64_t regs[6], task_t *current)
     }
 }
 
-/* ── epoll 实例销毁（close(epfd) 时调用）────────────────────────── */
+/* ── epoll 实例销毁(close(epfd) 时调用)────────────────────────── */
 
 void epoll_destroy(int ep_idx)
 {

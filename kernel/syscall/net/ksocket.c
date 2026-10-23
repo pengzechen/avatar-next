@@ -1,10 +1,10 @@
 /*
- * net/ksocket.c - kernel socket layer over lwIP raw API
- *
- * Provides blocking socket semantics using task_block/task_unblock.
- * lwIP runs in NO_SYS=1 mode (no OS integration); all lwIP calls
- * happen from the net-poll task context via callbacks.
- */
+   net/ksocket.c - kernel socket layer over lwIP raw API
+
+   Provides blocking socket semantics using task_block/task_unblock.
+   lwIP runs in NO_SYS=1 mode (no OS integration); all lwIP calls
+   happen from the net-poll task context via callbacks.
+*/
 #include "syscall/net/ksocket.h"
 #include "syscall/fs/fd_pool.h"
 #include "syscall/io/epoll.h"
@@ -106,15 +106,13 @@ static void ksock_notify_epoll(int si, uint32_t events)
 
 /* ── lwIP TCP callbacks ──────────────────────────────────────── */
 
-static err_t ksock_tcp_recv_cb(void *arg, struct tcp_pcb *tpcb, struct pbuf *p,
-                               err_t err);
+static err_t ksock_tcp_recv_cb(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err);
 static err_t ksock_tcp_accept_cb(void *arg, struct tcp_pcb *newpcb, err_t err);
 static err_t ksock_tcp_connected_cb(void *arg, struct tcp_pcb *tpcb, err_t err);
 static void ksock_tcp_err_cb(void *arg, err_t err);
 static err_t ksock_tcp_sent_cb(void *arg, struct tcp_pcb *tpcb, u16_t len);
 
-static err_t ksock_tcp_recv_cb(void *arg, struct tcp_pcb *tpcb, struct pbuf *p,
-                               err_t err)
+static err_t ksock_tcp_recv_cb(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err)
 {
     (void)tpcb;
     ksock_t *sk = (ksock_t *)arg;
@@ -141,9 +139,8 @@ static err_t ksock_tcp_recv_cb(void *arg, struct tcp_pcb *tpcb, struct pbuf *p,
         return ERR_MEM;
     }
 
-    KLOG_SYSCALL("[tcp_recv_cb] si=%d plen=%u tot=%u cur_off=%u cur_tot=%u\n",
-                 (int)(sk - g_ksocks), p->len, p->tot_len, sk->recv_offset,
-                 sk->recv_head ? sk->recv_head->tot_len : 0);
+    KLOG_SYSCALL("[tcp_recv_cb] si=%d plen=%u tot=%u cur_off=%u cur_tot=%u\n", (int)(sk - g_ksocks), p->len, p->tot_len,
+                 sk->recv_offset, sk->recv_head ? sk->recv_head->tot_len : 0);
 
     if (sk->recv_head)
         pbuf_cat(sk->recv_head, p);
@@ -216,8 +213,7 @@ static err_t ksock_tcp_connected_cb(void *arg, struct tcp_pcb *tpcb, err_t err)
         sk->last_err = -111; /* ECONNREFUSED */
     }
     ksock_unblock(sk);
-    ksock_notify_epoll((int)(sk - g_ksocks),
-                       err == ERR_OK ? EPOLLOUT : EPOLLERR);
+    ksock_notify_epoll((int)(sk - g_ksocks), err == ERR_OK ? EPOLLOUT : EPOLLERR);
     return ERR_OK;
 }
 
@@ -258,8 +254,7 @@ static err_t ksock_tcp_sent_cb(void *arg, struct tcp_pcb *tpcb, u16_t len)
 
 /* ── lwIP UDP callback ───────────────────────────────────────── */
 
-static void ksock_udp_recv_cb(void *arg, struct udp_pcb *pcb, struct pbuf *p,
-                              const ip_addr_t *addr, u16_t port)
+static void ksock_udp_recv_cb(void *arg, struct udp_pcb *pcb, struct pbuf *p, const ip_addr_t *addr, u16_t port)
 {
     (void)pcb;
     ksock_t *sk = (ksock_t *)arg;
@@ -350,8 +345,7 @@ int ksock_bind(int si, uint32_t addr, uint16_t port)
     if (rc == ERR_USE)
         return -98; /* EADDRINUSE */
     if (rc != ERR_OK) {
-        KLOG_WARN("[ksock] bind failed si=%d addr=0x%x port=%u rc=%d\n", si,
-                  addr, port, rc);
+        KLOG_WARN("[ksock] bind failed si=%d addr=0x%x port=%u rc=%d\n", si, addr, port, rc);
         return -22; /* EINVAL */
     }
 
@@ -377,11 +371,9 @@ int ksock_listen(int si, int backlog)
         backlog = 255;
 
     err_t err = ERR_OK;
-    struct tcp_pcb *lpcb =
-        tcp_listen_with_backlog_and_err(sk->tcp_pcb, (u8_t)backlog, &err);
+    struct tcp_pcb *lpcb = tcp_listen_with_backlog_and_err(sk->tcp_pcb, (u8_t)backlog, &err);
     if (!lpcb) {
-        KLOG_WARN("[ksock] listen failed si=%d port=%u backlog=%d rc=%d\n", si,
-                  sk->local_port, backlog, err);
+        KLOG_WARN("[ksock] listen failed si=%d port=%u backlog=%d rc=%d\n", si, sk->local_port, backlog, err);
         if (err == ERR_USE)
             return -98; /* EADDRINUSE */
         if (err == ERR_MEM)
@@ -406,8 +398,7 @@ int ksock_accept(int si, uint32_t *out_addr, uint16_t *out_port, int flags)
 
     while (sk->accept_count == 0) {
         if (nonblock) {
-            KLOG_SYSCALL("[ksock] accept would block si=%d flags=0x%x\n", si,
-                         flags);
+            KLOG_SYSCALL("[ksock] accept would block si=%d flags=0x%x\n", si, flags);
             return -11; /* EAGAIN */
         }
         sk->blocked_task = task_current();
@@ -450,8 +441,7 @@ int ksock_connect(int si, uint32_t addr, uint16_t port)
         sk->state = KSOCK_CONNECTING;
         sk->last_err = 0;
 
-        err_t rc =
-            tcp_connect(sk->tcp_pcb, &dest, port, ksock_tcp_connected_cb);
+        err_t rc = tcp_connect(sk->tcp_pcb, &dest, port, ksock_tcp_connected_cb);
         if (rc != ERR_OK)
             return -101; /* ENETUNREACH */
 
@@ -502,10 +492,8 @@ int ksock_send(int si, const void *buf, size_t len, int flags)
                 continue;
             }
 
-            u16_t chunk =
-                (u16_t)((len - sent) < sndbuf ? (len - sent) : sndbuf);
-            err_t rc = tcp_write(sk->tcp_pcb, (const uint8_t *)buf + sent,
-                                 chunk, TCP_WRITE_FLAG_COPY);
+            u16_t chunk = (u16_t)((len - sent) < sndbuf ? (len - sent) : sndbuf);
+            err_t rc = tcp_write(sk->tcp_pcb, (const uint8_t *)buf + sent, chunk, TCP_WRITE_FLAG_COPY);
             if (rc != ERR_OK) {
                 tcp_output(sk->tcp_pcb);
                 return sent > 0 ? (int)sent : -105;
@@ -515,8 +503,7 @@ int ksock_send(int si, const void *buf, size_t len, int flags)
         tcp_output(sk->tcp_pcb);
         return (int)sent;
     } else {
-        return ksock_sendto(si, buf, len, flags, sk->remote_addr,
-                            sk->remote_port);
+        return ksock_sendto(si, buf, len, flags, sk->remote_addr, sk->remote_port);
     }
 }
 
@@ -543,8 +530,7 @@ int ksock_recv(int si, void *buf, size_t len, int flags)
 
         uint16_t avail = sk->recv_head->tot_len - sk->recv_offset;
         uint16_t to_copy = (uint16_t)((len < avail) ? len : avail);
-        uint16_t copied =
-            pbuf_copy_partial(sk->recv_head, buf, to_copy, sk->recv_offset);
+        uint16_t copied = pbuf_copy_partial(sk->recv_head, buf, to_copy, sk->recv_offset);
         sk->recv_offset += copied;
 
         /* DEBUG: 显示读取的字节 (仅对1字节读取打印前32次) */
@@ -552,10 +538,8 @@ int ksock_recv(int si, void *buf, size_t len, int flags)
             static int dbg_cnt = 0;
             if (len == 1 && dbg_cnt < 64) {
                 unsigned char c = ((unsigned char *)buf)[0];
-                KLOG_SYSCALL(
-                    "[ksock_recv] si=%d off=%u tot=%u byte=0x%02x '%c'\n", si,
-                    sk->recv_offset, sk->recv_head ? sk->recv_head->tot_len : 0,
-                    c, (c >= 0x20 && c < 0x7f) ? c : '.');
+                KLOG_SYSCALL("[ksock_recv] si=%d off=%u tot=%u byte=0x%02x '%c'\n", si, sk->recv_offset,
+                             sk->recv_head ? sk->recv_head->tot_len : 0, c, (c >= 0x20 && c < 0x7f) ? c : '.');
                 dbg_cnt++;
             }
         }
@@ -576,8 +560,7 @@ int ksock_recv(int si, void *buf, size_t len, int flags)
     }
 }
 
-int ksock_sendto(int si, const void *buf, size_t len, int flags, uint32_t addr,
-                 uint16_t port)
+int ksock_sendto(int si, const void *buf, size_t len, int flags, uint32_t addr, uint16_t port)
 {
     (void)flags;
     ksock_t *sk = ksock_get(si);
@@ -600,8 +583,7 @@ int ksock_sendto(int si, const void *buf, size_t len, int flags, uint32_t addr,
     return rc == ERR_OK ? (int)len : -105;
 }
 
-int ksock_recvfrom(int si, void *buf, size_t len, int flags, uint32_t *out_addr,
-                   uint16_t *out_port)
+int ksock_recvfrom(int si, void *buf, size_t len, int flags, uint32_t *out_addr, uint16_t *out_port)
 {
     ksock_t *sk = ksock_get(si);
     if (!sk)
@@ -696,15 +678,13 @@ int ksock_shutdown(int si, int how)
     return 0;
 }
 
-int ksock_setsockopt(int si, int level, int optname, const void *optval,
-                     uint32_t optlen)
+int ksock_setsockopt(int si, int level, int optname, const void *optval, uint32_t optlen)
 {
     ksock_t *sk = ksock_get(si);
     if (!sk)
         return -9;
 
-    if (sk->proto == KSOCK_TCP && level == KSOCK_IPPROTO_TCP &&
-        optname == KSOCK_TCP_NODELAY) {
+    if (sk->proto == KSOCK_TCP && level == KSOCK_IPPROTO_TCP && optname == KSOCK_TCP_NODELAY) {
         if (!optval || optlen < sizeof(int))
             return -22; /* EINVAL */
 
@@ -715,8 +695,7 @@ int ksock_setsockopt(int si, int level, int optname, const void *optval,
             else
                 tcp_nagle_enable(sk->tcp_pcb);
         }
-        KLOG_SYSCALL("[ksock] TCP_NODELAY si=%d enabled=%d\n", si,
-                     enabled != 0);
+        KLOG_SYSCALL("[ksock] TCP_NODELAY si=%d enabled=%d\n", si, enabled != 0);
         return 0;
     }
 
@@ -727,8 +706,7 @@ int ksock_setsockopt(int si, int level, int optname, const void *optval,
     return 0;
 }
 
-int ksock_getsockopt(int si, int level, int optname, void *optval,
-                     uint32_t *optlen)
+int ksock_getsockopt(int si, int level, int optname, void *optval, uint32_t *optlen)
 {
     (void)level;
     (void)optname;

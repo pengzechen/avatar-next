@@ -49,9 +49,7 @@ static int webcam_grab_frame(void)
     } else {
         g_fail_streak++;
         if (g_fail_streak >= MAX_FAIL_STREAK)
-            KLOG_WARN(
-                "[webcam] USB capture failed %u times, serving cached frame\n",
-                g_fail_streak);
+            KLOG_WARN("[webcam] USB capture failed %u times, serving cached frame\n", g_fail_streak);
     }
     if (n <= 0 && g_cached_len > 0)
         return (int)g_cached_len;
@@ -60,33 +58,32 @@ static int webcam_grab_frame(void)
 
 /* ── HTML page ─────────────────────────────────────────────────────────── */
 
-static const char INDEX_HTML[] =
-    "<!DOCTYPE html><html><head>"
-    "<title>Avatar OS WebCam</title>"
-    "<style>"
-    "body{background:#111;color:#eee;font-family:monospace;text-align:center;margin:2em}"
-    "img{max-width:100%;border:2px solid #444;border-radius:8px}"
-    "h1{color:#0f0}"
-    "</style></head><body>"
-    "<h1>Avatar OS &mdash; WebCam</h1>"
-    "<img id=\"cam\">"
-    "<p id=\"st\">loading...</p>"
-    "<script>"
-    "var img=document.getElementById('cam'),"
-    "st=document.getElementById('st'),"
-    "n=0;"
-    "function grab(){"
-    "var t=new Image();"
-    "t.onload=function(){"
-    "img.src=t.src;n++;"
-    "st.textContent='frame #'+n+' '+t.naturalWidth+'x'+t.naturalHeight;"
-    "setTimeout(grab,100);"
-    "};"
-    "t.onerror=function(){st.textContent='error';setTimeout(grab,1000);};"
-    "t.src='/frame.jpg?'+Date.now();"
-    "}"
-    "grab();"
-    "</script></body></html>";
+static const char INDEX_HTML[] = "<!DOCTYPE html><html><head>"
+                                 "<title>Avatar OS WebCam</title>"
+                                 "<style>"
+                                 "body{background:#111;color:#eee;font-family:monospace;text-align:center;margin:2em}"
+                                 "img{max-width:100%;border:2px solid #444;border-radius:8px}"
+                                 "h1{color:#0f0}"
+                                 "</style></head><body>"
+                                 "<h1>Avatar OS &mdash; WebCam</h1>"
+                                 "<img id=\"cam\">"
+                                 "<p id=\"st\">loading...</p>"
+                                 "<script>"
+                                 "var img=document.getElementById('cam'),"
+                                 "st=document.getElementById('st'),"
+                                 "n=0;"
+                                 "function grab(){"
+                                 "var t=new Image();"
+                                 "t.onload=function(){"
+                                 "img.src=t.src;n++;"
+                                 "st.textContent='frame #'+n+' '+t.naturalWidth+'x'+t.naturalHeight;"
+                                 "setTimeout(grab,100);"
+                                 "};"
+                                 "t.onerror=function(){st.textContent='error';setTimeout(grab,1000);};"
+                                 "t.src='/frame.jpg?'+Date.now();"
+                                 "}"
+                                 "grab();"
+                                 "</script></body></html>";
 
 /* ── Per-connection state ──────────────────────────────────────────────── */
 
@@ -115,8 +112,7 @@ static void conn_free(webcam_conn_t *c);
 
 /* ── Request parsing ───────────────────────────────────────────────────── */
 
-static int match_path(const char *req, uint16_t len, const char *path,
-                      size_t plen)
+static int match_path(const char *req, uint16_t len, const char *path, size_t plen)
 {
     const char *p = req;
     const char *end = req + len;
@@ -126,8 +122,7 @@ static int match_path(const char *req, uint16_t len, const char *path,
     p += 4;
     if ((size_t)(end - p) < plen)
         return 0;
-    return memcmp(p, path, plen) == 0 &&
-           (p[plen] == ' ' || p[plen] == '?' || p[plen] == '\r');
+    return memcmp(p, path, plen) == 0 && (p[plen] == ' ' || p[plen] == '?' || p[plen] == '\r');
 }
 
 static int build_response(webcam_conn_t *c, const char *req, uint16_t len)
@@ -192,8 +187,7 @@ static void conn_try_send(struct tcp_pcb *tpcb, webcam_conn_t *c)
             uint16_t chunk = remain < space ? remain : space;
             if (chunk == 0)
                 return;
-            rc = tcp_write(tpcb, c->hdr_buf + c->hdr_sent, chunk,
-                           TCP_WRITE_FLAG_COPY);
+            rc = tcp_write(tpcb, c->hdr_buf + c->hdr_sent, chunk, TCP_WRITE_FLAG_COPY);
             if (rc != ERR_OK)
                 return;
             c->hdr_sent += chunk;
@@ -252,8 +246,7 @@ static err_t webcam_sent(void *arg, struct tcp_pcb *tpcb, u16_t len)
     return ERR_OK;
 }
 
-static err_t webcam_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p,
-                         err_t err)
+static err_t webcam_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err)
 {
     webcam_conn_t *c = (webcam_conn_t *)arg;
 

@@ -1,10 +1,10 @@
 /* driver/tpu/cvi_tpu.h — SOPHGO/Cvitek TPU (TDMA + TIU) 裸机驱动接口
- *
- * 改写自 ref/tpu-ana/hal/mars/，移除所有 Linux 内核依赖。
- * 硬件：SG2002 / CV1800B
- *   TDMA (Tensor DMA)              : 0x0C100000
- *   TIU  (Tensor Instruction Unit) : 0x0C101000  (BD_CTRL@+0x100 = 0x0C101100)
- */
+
+   改写自 ref/tpu-ana/hal/mars/, 移除所有 Linux 内核依赖。
+   硬件：SG2002 / CV1800B
+     TDMA (Tensor DMA)              : 0x0C100000
+     TIU  (Tensor Instruction Unit) : 0x0C101000  (BD_CTRL@+0x100 = 0x0C101100)
+*/
 #ifndef DRIVER_TPU_CVI_TPU_H
 #define DRIVER_TPU_CVI_TPU_H
 
@@ -41,7 +41,7 @@
 #define TDMA_CTRL_INTRA_CMD_OFF    13U
 #define TDMA_CTRL_DESNUM_BIT       16U
 
-/* TDMA INT_MASK 状态（高16位右移后的值） */
+/* TDMA INT_MASK 状态(高16位右移后的值) */
 #define TDMA_MASK_INIT 0x20U   /* 忽略 nchw/stride=0 错误 */
 #define TDMA_INT_EOD   0x01U   /* End-of-descriptor */
 #define TDMA_INT_EOPMU 0x8000U /* End-of-PMU */
@@ -54,7 +54,7 @@
 #define BD_DES_ADDR_VLD 30U
 #define BD_INTR_ENABLE  31U
 
-/* ── DMA 缓冲头结构（128 字节，来自 cvi_tpu_interface.h） ─────────────── */
+/* ── DMA 缓冲头结构(128 字节, 来自 cvi_tpu_interface.h) ─────────────── */
 #define TPU_DMABUF_HEADER_M 0xB5B5U
 
 struct cvi_tpu_dma_hdr {
@@ -86,7 +86,7 @@ struct cvi_tpu_dma_hdr {
     uint32_t reserve[8];
 } __attribute__((packed));
 
-/* CPU 同步描述符（来自 cvi_regcpu.h） */
+/* CPU 同步描述符(来自 cvi_regcpu.h) */
 struct cvi_tpu_cpu_sync_desc {
     uint32_t op_type;
     uint32_t num_bd;

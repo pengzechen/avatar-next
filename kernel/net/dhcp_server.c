@@ -56,8 +56,8 @@ static void put_be32(uint8_t *p, uint32_t v)
 static uint32_t ip4_to_be32(const ip4_addr_t *ip)
 {
     uint32_t v = ip4_addr_get_u32(ip);
-    return ((v & 0x000000ffUL) << 24) | ((v & 0x0000ff00UL) << 8) |
-           ((v & 0x00ff0000UL) >> 8) | ((v & 0xff000000UL) >> 24);
+    return ((v & 0x000000ffUL) << 24) | ((v & 0x0000ff00UL) << 8) | ((v & 0x00ff0000UL) >> 8) |
+           ((v & 0xff000000UL) >> 24);
 }
 
 static void put_ip(uint8_t *p, const ip4_addr_t *ip)
@@ -72,8 +72,7 @@ static void add_opt_u8(uint8_t *buf, size_t *off, uint8_t opt, uint8_t val)
     buf[(*off)++] = val;
 }
 
-static void add_opt_ip(uint8_t *buf, size_t *off, uint8_t opt,
-                       const ip4_addr_t *ip)
+static void add_opt_ip(uint8_t *buf, size_t *off, uint8_t opt, const ip4_addr_t *ip)
 {
     buf[(*off)++] = opt;
     buf[(*off)++] = 4;
@@ -112,8 +111,7 @@ static uint8_t dhcp_get_msg_type(const uint8_t *pkt, size_t len)
     return 0;
 }
 
-static void dhcp_send_reply(const uint8_t *req, size_t req_len,
-                            uint8_t msg_type)
+static void dhcp_send_reply(const uint8_t *req, size_t req_len, uint8_t msg_type)
 {
     uint8_t reply[DHCP_REPLY_LEN];
     memset(reply, 0, sizeof(reply));
@@ -157,8 +155,7 @@ static void dhcp_send_reply(const uint8_t *req, size_t req_len,
     pbuf_free(p);
 
     if (err == ERR_OK) {
-        KLOG_INFO("[dhcpd] sent %s lease=192.168.7.2\n",
-                  msg_type == DHCP_OFFER ? "OFFER" : "ACK");
+        KLOG_INFO("[dhcpd] sent %s lease=192.168.7.2\n", msg_type == DHCP_OFFER ? "OFFER" : "ACK");
     } else {
         KLOG_WARN("[dhcpd] send reply failed err=%d\n", err);
     }
@@ -166,8 +163,7 @@ static void dhcp_send_reply(const uint8_t *req, size_t req_len,
     (void)req_len;
 }
 
-static void dhcp_recv(void *arg, struct udp_pcb *pcb, struct pbuf *p,
-                      const ip_addr_t *addr, u16_t port)
+static void dhcp_recv(void *arg, struct udp_pcb *pcb, struct pbuf *p, const ip_addr_t *addr, u16_t port)
 {
     (void)arg;
     (void)pcb;
@@ -184,29 +180,28 @@ static void dhcp_recv(void *arg, struct udp_pcb *pcb, struct pbuf *p,
     pbuf_copy_partial(p, pkt, (u16_t)len, 0);
     pbuf_free(p);
 
-    if (len < DHCP_MIN_PACKET_LEN || pkt[0] != DHCP_OP_BOOTREQUEST ||
-        pkt[1] != DHCP_HTYPE_ETHERNET || pkt[2] != DHCP_HLEN_ETHERNET)
+    if (len < DHCP_MIN_PACKET_LEN || pkt[0] != DHCP_OP_BOOTREQUEST || pkt[1] != DHCP_HTYPE_ETHERNET ||
+        pkt[2] != DHCP_HLEN_ETHERNET)
         return;
 
-    uint32_t magic = ((uint32_t)pkt[236] << 24) | ((uint32_t)pkt[237] << 16) |
-                     ((uint32_t)pkt[238] << 8) | (uint32_t)pkt[239];
+    uint32_t magic =
+        ((uint32_t)pkt[236] << 24) | ((uint32_t)pkt[237] << 16) | ((uint32_t)pkt[238] << 8) | (uint32_t)pkt[239];
     if (magic != DHCP_MAGIC_COOKIE)
         return;
 
     uint8_t type = dhcp_get_msg_type(pkt, len);
     if (type == DHCP_DISCOVER) {
-        KLOG_INFO("[dhcpd] DISCOVER from %02x:%02x:%02x:%02x:%02x:%02x\n",
-                  pkt[28], pkt[29], pkt[30], pkt[31], pkt[32], pkt[33]);
+        KLOG_INFO("[dhcpd] DISCOVER from %02x:%02x:%02x:%02x:%02x:%02x\n", pkt[28], pkt[29], pkt[30], pkt[31], pkt[32],
+                  pkt[33]);
         dhcp_send_reply(pkt, len, DHCP_OFFER);
     } else if (type == DHCP_REQUEST) {
-        KLOG_INFO("[dhcpd] REQUEST from %02x:%02x:%02x:%02x:%02x:%02x\n",
-                  pkt[28], pkt[29], pkt[30], pkt[31], pkt[32], pkt[33]);
+        KLOG_INFO("[dhcpd] REQUEST from %02x:%02x:%02x:%02x:%02x:%02x\n", pkt[28], pkt[29], pkt[30], pkt[31], pkt[32],
+                  pkt[33]);
         dhcp_send_reply(pkt, len, DHCP_ACK);
     }
 }
 
-void dhcp_server_init(const ip4_addr_t *server_ip, const ip4_addr_t *netmask,
-                      const ip4_addr_t *lease_ip)
+void dhcp_server_init(const ip4_addr_t *server_ip, const ip4_addr_t *netmask, const ip4_addr_t *lease_ip)
 {
     if (g_dhcp_pcb)
         return;

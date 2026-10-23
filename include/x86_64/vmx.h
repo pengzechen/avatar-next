@@ -1,13 +1,13 @@
 /*
- * include/x86_64/vmx.h — Intel VMX 常量、VMCS 字段编码与辅助类型
- *
- * 对标 ref/bare-vm/arch/x86_64/include/vmx.h，精简适配 Avatar OS。
- */
+   include/x86_64/vmx.h — Intel VMX 常量, VMCS 字段编码与辅助类型
+
+   对标 ref/bare-vm/arch/x86_64/include/vmx.h, 精简适配 Avatar OS。
+*/
 #ifndef X86_64_VMX_H
 #define X86_64_VMX_H
 
 #include "types.h"
-#include "x86_64/exception_impl.h" /* arch_irq_flags()（引号包含会先命中同目录的 exception.h）*/
+#include "x86_64/exception_impl.h" /* arch_irq_flags()(引号包含会先命中同目录的 exception.h) */
 
 /* ── CR 位定义 ───────────────────────────────────────────── */
 #define X86_CR0_PE    0x00000001UL
@@ -61,14 +61,14 @@ typedef union {
 } vmx_ctrl_msr_t;
 
 /* ── Pin-based 控制位 ─────────────────────────────────────── */
-#define PIN_EXTINT   (1u << 0) /* 外部中断退出到 VMM（否则走 guest IDT）*/
+#define PIN_EXTINT   (1u << 0) /* 外部中断退出到 VMM(否则走 guest IDT) */
 #define PIN_NMI      (1u << 3)
 #define PIN_VIRT_NMI (1u << 5)
 
 /* ── Primary CPU-based 控制位 ────────────────────────────── */
-#define CPU_INTR_WINDOW     (1u << 2) /* guest 开中断的瞬间 exit（投递时机）*/
+#define CPU_INTR_WINDOW     (1u << 2) /* guest 开中断的瞬间 exit(投递时机) */
 #define CPU_HLT             (1u << 7) /* HLT 陷入 VMM */
-#define CPU_VMCALL          0         /* VMCALL 总是退出，无需显式使能 */
+#define CPU_VMCALL          0         /* VMCALL 总是退出, 无需显式使能 */
 #define CPU_CR3_LOAD_STORE  (1u << 15)
 #define CPU_MOV_DR          (1u << 23)
 #define CPU_IO_BITMAPS      (1u << 25) /* 用 I/O bitmap 决定哪些端口陷入 */
@@ -78,7 +78,7 @@ typedef union {
 /* ── Secondary CPU-based 控制位 ─────────────────────────── */
 #define CPU_EPT                 (1u << 1)
 #define CPU_VPID                (1u << 5)
-#define CPU2_UNRESTRICTED_GUEST (1u << 7) /* 放宽段/特权检查，Linux 少踩 #GP */
+#define CPU2_UNRESTRICTED_GUEST (1u << 7) /* 放宽段/特权检查, Linux 少踩 #GP */
 
 /* ── VM-Exit 控制位 ──────────────────────────────────────── */
 #define EXI_HOST_64   (1u << 9) /* host 为 64-bit */
@@ -111,17 +111,16 @@ typedef enum {
     HOST_SEL_GS = 0x0c0a,
     HOST_SEL_TR = 0x0c0c,
     /* 64-bit control */
-    IO_BITMAP_A = 0x2000, /* 端口 0x0000-0x7FFF，1 bit/端口 */
-    IO_BITMAP_B = 0x2002, /* 端口 0x8000-0xFFFF            */
+    IO_BITMAP_A = 0x2000, /* 端口 0x0000-0x7FFF, 1 bit/端口 */
+    IO_BITMAP_B = 0x2002, /* 端口 0x8000-0xFFFF */
     MSR_BITMAP = 0x2004,  /* 4 KiB：读 1K + 写 1K + 读写 1K */
     TSC_OFFSET = 0x2010,
     VMCS_LINK_PTR = 0x2800,
     VMCS_LINK_PTR_HI = 0x2801,
     EPT_POINTER = 0x201a, /* EPTP：EPT 根页表 + 页走行长度 + 内存类型 */
-    /* MSR 自动换入换出区（进出 guest 时硬件负责装/卸，见 vmx.c）*/
-    VM_EXIT_MSR_LOAD_ADDR = 0x2008, /* 权威值见 Linux vmx.h */
-    VM_EXIT_MSR_STORE_ADDR =
-        0x2006, /* 退出时把 guest 的 MSR 存回内存（swapgs 往返用）*/
+    /* MSR 自动换入换出区(进出 guest 时硬件负责装/卸, 见 vmx.c) */
+    VM_EXIT_MSR_LOAD_ADDR = 0x2008,  /* 权威值见 Linux vmx.h */
+    VM_EXIT_MSR_STORE_ADDR = 0x2006, /* 退出时把 guest 的 MSR 存回内存(swapgs 往返用) */
     VM_ENTRY_MSR_LOAD_ADDR = 0x200a,
     /* 64-bit guest */
     GUEST_DEBUGCTL = 0x2802,
@@ -137,7 +136,7 @@ typedef enum {
     CR3_TARGET_COUNT = 0x400a,
     EXI_CONTROLS = 0x400c,
     ENT_CONTROLS = 0x4012,
-    /* VM-entry 事件注入三件套（中断/异常注入的唯一通道）*/
+    /* VM-entry 事件注入三件套(中断/异常注入的唯一通道) */
     VM_EXIT_MSR_LOAD_COUNT = 0x4010,
     VM_EXIT_MSR_STORE_COUNT = 0x400e,
     VM_ENTRY_MSR_LOAD_COUNT = 0x4014,
@@ -234,36 +233,36 @@ typedef struct {
 #define VMX_REASON_EXC_NMI      0
 #define VMX_REASON_EXTINT       1
 #define VMX_REASON_TRIPLE_FAULT 2
-#define VMX_REASON_INTR_WINDOW  7 /* guest 中断解除屏蔽的瞬间      */
+#define VMX_REASON_INTR_WINDOW  7 /* guest 中断解除屏蔽的瞬间 */
 #define VMX_REASON_CPUID        10
 #define VMX_REASON_HLT          12
 #define VMX_REASON_VMCALL       18
 #define VMX_REASON_CR           28
-#define VMX_REASON_IO           30 /* IN/OUT（I/O bitmap 命中）    */
+#define VMX_REASON_IO           30 /* IN/OUT(I/O bitmap 命中) */
 #define VMX_REASON_MSR_READ     31
 #define VMX_REASON_MSR_WRITE    32
 #define VMX_REASON_EPT_VIOL     48
 #define VMX_ENTRY_FAILURE       (1u << 31)
 
 /*
- * ── VM-entry interruption-information（0x4016）─────────────────
- *
- * 这是把中断/异常送进 guest 的**唯一**通道：VMM 在 VM-entry 前写好，
- * 硬件在进入 guest 时投递。被 VMM 拦截下来的 guest 中断/异常都靠它回去。
- */
+   ── VM-entry interruption-information(0x4016)─────────────────
+
+   这是把中断/异常送进 guest 的唯一通道：VMM 在 VM-entry 前写好,
+   硬件在进入 guest 时投递。被 VMM 拦截下来的 guest 中断/异常都靠它回去。
+*/
 #define VMX_INTR_VALID         (1u << 31)
-#define VMX_INTR_TYPE_EXTINT   (0u << 8) /* 外部中断（含 LAPIC timer）*/
+#define VMX_INTR_TYPE_EXTINT   (0u << 8) /* 外部中断(含 LAPIC timer) */
 #define VMX_INTR_TYPE_NMI      (2u << 8)
-#define VMX_INTR_TYPE_HWEXC    (3u << 8)  /* 硬件异常（带 vector）      */
-#define VMX_INTR_TYPE_SWINT    (4u << 8)  /* INT n                      */
-#define VMX_INTR_TYPE_SWEXC    (6u << 8)  /* 软件异常（UD2/INT3 等）    */
-#define VMX_INTR_ERRCODE_VALID (1u << 11) /* 附带 error code            */
+#define VMX_INTR_TYPE_HWEXC    (3u << 8)  /* 硬件异常(带 vector) */
+#define VMX_INTR_TYPE_SWINT    (4u << 8)  /* INT n */
+#define VMX_INTR_TYPE_SWEXC    (6u << 8)  /* 软件异常(UD2/INT3 等) */
+#define VMX_INTR_ERRCODE_VALID (1u << 11) /* 附带 error code */
 #define VMX_INTR_VECTOR(v)     ((uint64_t)((v) & 0xff))
 
-/* ── I/O exit 的 qualification（EXI_QUALIFICATION）────────── */
+/* ── I/O exit 的 qualification(EXI_QUALIFICATION)────────── */
 #define VMX_IO_QUAL_SIZE(q) (uint32_t)((q) & 0x7) /* 0=1B 1=2B 3=4B */
-#define VMX_IO_QUAL_IN      (1u << 3)             /* 1=IN 0=OUT     */
-#define VMX_IO_QUAL_STR     (1u << 4)             /* 串操作         */
+#define VMX_IO_QUAL_IN      (1u << 3)             /* 1=IN 0=OUT */
+#define VMX_IO_QUAL_STR     (1u << 4)             /* 串操作 */
 #define VMX_IO_QUAL_REP     (1u << 5)
 #define VMX_IO_QUAL_PORT(q) (uint32_t)(((q) >> 16) & 0xffff)
 
@@ -280,17 +279,17 @@ typedef struct {
 
 /* IA32_APIC_BASE 的位 */
 #define APIC_BASE_ENABLE    (1ULL << 11) /* APIC 全局使能 */
-#define APIC_BASE_X2APIC    (1ULL << 10) /* x2APIC 模式   */
+#define APIC_BASE_X2APIC    (1ULL << 10) /* x2APIC 模式 */
 #define APIC_BASE_ADDR_MASK 0x000FFFFFFFFFF000ULL
 
 /* ── VMCS guest 活动状态 ─────────────────────────────────── */
 #define ACTV_ACTIVE 0
 
-/* ── Hypercall 编号（与 guest_test.S 保持一致）────────────── */
-#define VMX_HYPERCALL_DONE  0 /* guest 正常结束（对标 HVC_DONE）  */
-#define VMX_HYPERCALL_PRINT 1 /* 打印迭代计数（对标 HVC_PRINT）   */
+/* ── Hypercall 编号(与 guest_test.S 保持一致)────────────── */
+#define VMX_HYPERCALL_DONE  0 /* guest 正常结束(对标 HVC_DONE) */
+#define VMX_HYPERCALL_PRINT 1 /* 打印迭代计数(对标 HVC_PRINT) */
 
-/* ── GDT 选择子（与 boot/x86_64/boot.S 一致）────────────── */
+/* ── GDT 选择子(与 boot/x86_64/boot.S 一致)────────────── */
 #define X86_SEL_CODE64 0x10 /* GDT[2]: 64-bit code DPL=0 */
 #define X86_SEL_DATA   0x18 /* GDT[3]: data       DPL=0 */
 #define X86_SEL_TSS    0x30 /* GDT[6+7]: TSS (16B) */
@@ -305,8 +304,7 @@ static inline uint64_t vmx_rdmsr(uint32_t idx)
 
 static inline void vmx_wrmsr(uint32_t idx, uint64_t val)
 {
-    __asm__ volatile("wrmsr" ::"c"(idx), "a"((uint32_t)val),
-                     "d"((uint32_t)(val >> 32)));
+    __asm__ volatile("wrmsr" ::"c"(idx), "a"((uint32_t)val), "d"((uint32_t)(val >> 32)));
 }
 
 static inline uint64_t vmx_read_cr0(void)
@@ -335,20 +333,16 @@ static inline void vmx_write_cr4(uint64_t v)
 {
     __asm__ volatile("mov %0,%%cr4" ::"r"(v) : "memory");
 }
-/* 读 RFLAGS：与 arch_irq_flags() 是同一条指令，直接转调，不重复写汇编 */
+/* 读 RFLAGS：与 arch_irq_flags() 是同一条指令, 直接转调, 不重复写汇编 */
 static inline uint64_t vmx_read_rflags(void)
 {
     return arch_irq_flags();
 }
-static inline void vmx_cpuid(uint32_t op, uint32_t *eax, uint32_t *ebx,
-                             uint32_t *ecx, uint32_t *edx)
+static inline void vmx_cpuid(uint32_t op, uint32_t *eax, uint32_t *ebx, uint32_t *ecx, uint32_t *edx)
 {
     *eax = op;
     *ecx = 0;
-    __asm__ volatile("cpuid"
-                     : "=a"(*eax), "=b"(*ebx), "=c"(*ecx), "=d"(*edx)
-                     : "0"(*eax), "2"(*ecx)
-                     : "memory");
+    __asm__ volatile("cpuid" : "=a"(*eax), "=b"(*ebx), "=c"(*ecx), "=d"(*edx) : "0"(*eax), "2"(*ecx) : "memory");
 }
 
 /* ── VMCS 读写内联函数 ───────────────────────────────────── */
@@ -362,10 +356,7 @@ static inline uint64_t vmcs_read(vmcs_field_t enc)
 static inline int vmcs_write(vmcs_field_t enc, uint64_t val)
 {
     uint8_t ret;
-    __asm__ volatile("vmwrite %1,%2; setbe %0"
-                     : "=qm"(ret)
-                     : "rm"(val), "r"((uint64_t)enc)
-                     : "cc");
+    __asm__ volatile("vmwrite %1,%2; setbe %0" : "=qm"(ret) : "rm"(val), "r"((uint64_t)enc) : "cc");
     return ret;
 }
 

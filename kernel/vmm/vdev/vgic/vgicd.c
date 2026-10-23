@@ -1,6 +1,6 @@
 /*
- * kernel/vmm/vdev/vgic/vgicd.c - VM-owned virtual GICv2 distributor.
- */
+   kernel/vmm/vdev/vgic/vgicd.c - VM-owned virtual GICv2 distributor.
+*/
 
 #include "vmm/vmm_vgicd.h"
 #include "klog.h"
@@ -54,8 +54,7 @@ int vgicd_is_enabled(const vgic_t *vgic, uint32_t vcpu_id, uint32_t irq)
 {
     if (!vgic || irq >= VGICD_MAX_IRQS)
         return 0;
-    return (vmm_vgic_enabled_word(vgic, vcpu_id, irq / 32) &
-            (1u << (irq & 31))) != 0;
+    return (vmm_vgic_enabled_word(vgic, vcpu_id, irq / 32) & (1u << (irq & 31))) != 0;
 }
 
 static void handle_sgir(vgic_t *vgic, uint32_t value, uint32_t source_vcpu)
@@ -84,8 +83,7 @@ static void handle_sgir(vgic_t *vgic, uint32_t value, uint32_t source_vcpu)
             vmm_vgic_set_sgi_pending(vgic, cpu, source_vcpu, irq);
 }
 
-static uint64_t vgicd_read_for_vcpu(mmio_device_t *dev, uint64_t off,
-                                    uint8_t size, uint32_t vcpu_id)
+static uint64_t vgicd_read_for_vcpu(mmio_device_t *dev, uint64_t off, uint8_t size, uint32_t vcpu_id)
 {
     vgic_t *vgic = (vgic_t *)dev->priv;
     uint32_t word;
@@ -98,14 +96,11 @@ static uint64_t vgicd_read_for_vcpu(mmio_device_t *dev, uint64_t off,
         return (((uint64_t)(vgic->nr_vcpus - 1) & 0x7) << 5) | 0x3;
     if (off == GICD_IIDR)
         return 0;
-    if (word_index(off, GICD_ISENABLER, &word) ||
-        word_index(off, GICD_ICENABLER, &word))
+    if (word_index(off, GICD_ISENABLER, &word) || word_index(off, GICD_ICENABLER, &word))
         return vmm_vgic_enabled_word(vgic, vcpu_id, word);
-    if (word_index(off, GICD_ISPENDR, &word) ||
-        word_index(off, GICD_ICPENDR, &word))
+    if (word_index(off, GICD_ISPENDR, &word) || word_index(off, GICD_ICPENDR, &word))
         return vmm_vgic_pending_word(vgic, vcpu_id, word);
-    if (word_index(off, GICD_ISACTIVER, &word) ||
-        word_index(off, GICD_ICACTIVER, &word))
+    if (word_index(off, GICD_ISACTIVER, &word) || word_index(off, GICD_ICACTIVER, &word))
         return vmm_vgic_active_word(vgic, vcpu_id, word);
 
     if (off >= GICD_ITARGETSR && off < GICD_ITARGETSR + 0x20) {
@@ -115,8 +110,7 @@ static uint64_t vgicd_read_for_vcpu(mmio_device_t *dev, uint64_t off,
     return reg_read(vgic, (uint32_t)off, size);
 }
 
-static void vgicd_write_for_vcpu(mmio_device_t *dev, uint64_t off, uint8_t size,
-                                 uint64_t value, uint32_t vcpu_id)
+static void vgicd_write_for_vcpu(mmio_device_t *dev, uint64_t off, uint8_t size, uint64_t value, uint32_t vcpu_id)
 {
     vgic_t *vgic = (vgic_t *)dev->priv;
     uint32_t word;

@@ -1,9 +1,9 @@
 /*
- * io/poll.c - poll / ppoll 处理器
- *
- * 使用 fd_poll() 统一接口查询 fd 就绪状态。
- * 阻塞模式下使用 task_yield() 让出 CPU。
- */
+   io/poll.c - poll / ppoll 处理器
+
+   使用 fd_poll() 统一接口查询 fd 就绪状态。
+   阻塞模式下使用 task_yield() 让出 CPU。
+*/
 #include "syscall/syscall_internal.h"
 #include "syscall/fs/fd_pool.h"
 #include "syscall/io/epoll.h"

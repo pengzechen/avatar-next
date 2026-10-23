@@ -9,8 +9,7 @@ int atoi(const char *s)
     if (!s)
         return 0;
 
-    while (*s == ' ' || *s == '\t' || *s == '\n' || *s == '\r' || *s == '\f' ||
-           *s == '\v')
+    while (*s == ' ' || *s == '\t' || *s == '\n' || *s == '\r' || *s == '\f' || *s == '\v')
         s++;
 
     if (*s == '-') {
@@ -28,8 +27,7 @@ int atoi(const char *s)
     return sign * value;
 }
 
-void qsort(void *base, size_t nmemb, size_t size,
-           int (*compar)(const void *, const void *))
+void qsort(void *base, size_t nmemb, size_t size, int (*compar)(const void *, const void *))
 {
     if (nmemb <= 1u || size == 0u)
         return;

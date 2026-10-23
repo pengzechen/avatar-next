@@ -1,11 +1,11 @@
 /*
- * driver/blk/ramblk.c - 基于物理内存区域的 RAM 块设备
- *
- * 将固定的物理内存区域（由 QEMU -device loader 预加载 ext4 镜像）
- * 封装为 lwext4 的 ext4_blockdev 接口。
- *
- * 编译要求：使用 LWEXT4_CFLAGS（包含 third_party/lwext4/include 和 lwext4_port/libc_shim）。
- */
+   driver/blk/ramblk.c - 基于物理内存区域的 RAM 块设备
+
+   将固定的物理内存区域(由 QEMU -device loader 预加载 ext4 镜像)
+   封装为 lwext4 的 ext4_blockdev 接口。
+
+   编译要求：使用 LWEXT4_CFLAGS(包含 third_party/lwext4/include 和 lwext4_port/libc_shim)。
+*/
 
 #include <ext4_blockdev.h>
 #include <ext4_errno.h>
@@ -19,12 +19,11 @@
 static int ramblk_open(struct ext4_blockdev *bdev)
 {
     (void)bdev;
-    /* 设备是内存映射的，无需实际打开操作 */
+    /* 设备是内存映射的, 无需实际打开操作 */
     return EOK;
 }
 
-static int ramblk_bread(struct ext4_blockdev *bdev, void *buf, uint64_t blk_id,
-                        uint32_t blk_cnt)
+static int ramblk_bread(struct ext4_blockdev *bdev, void *buf, uint64_t blk_id, uint32_t blk_cnt)
 {
     uint32_t bsize = bdev->bdif->ph_bsize;
     uint8_t *src = (uint8_t *)phys_to_virt(RAMBLK_PHYS_BASE) + blk_id * bsize;
@@ -32,8 +31,7 @@ static int ramblk_bread(struct ext4_blockdev *bdev, void *buf, uint64_t blk_id,
     return EOK;
 }
 
-static int ramblk_bwrite(struct ext4_blockdev *bdev, const void *buf,
-                         uint64_t blk_id, uint32_t blk_cnt)
+static int ramblk_bwrite(struct ext4_blockdev *bdev, const void *buf, uint64_t blk_id, uint32_t blk_cnt)
 {
     uint32_t bsize = bdev->bdif->ph_bsize;
     uint8_t *dst = (uint8_t *)phys_to_virt(RAMBLK_PHYS_BASE) + blk_id * bsize;
@@ -47,14 +45,11 @@ static int ramblk_close(struct ext4_blockdev *bdev)
     return EOK;
 }
 
-/* ── 静态块设备实例（由 lwext4 宏生成）─────────────────────────── */
+/* ── 静态块设备实例(由 lwext4 宏生成)─────────────────────────── */
 
-EXT4_BLOCKDEV_STATIC_INSTANCE(
-    g_ramblk, RAMBLK_SECTOR_SZ,
-    0, /* ph_bcnt 在 ramblk_init() 中从运行时全局变量赋值 */
-    ramblk_open, ramblk_bread, ramblk_bwrite, ramblk_close,
-    NULL, /* lock   - 单核暂不需要 */
-    NULL  /* unlock */
+EXT4_BLOCKDEV_STATIC_INSTANCE(g_ramblk, RAMBLK_SECTOR_SZ, 0, /* ph_bcnt 在 ramblk_init() 中从运行时全局变量赋值 */
+                              ramblk_open, ramblk_bread, ramblk_bwrite, ramblk_close, NULL, /* lock   - 单核暂不需要 */
+                              NULL                                                          /* unlock */
 );
 
 /* ── 公开接口 ───────────────────────────────────────────────────── */
@@ -66,14 +61,12 @@ struct ext4_blockdev *ramblk_get_bdev(void)
 
 void ramblk_init(void)
 {
-    /* 从运行时全局变量设置扇区数和分区大小（platform_conf_scan() 已填充）*/
+    /* 从运行时全局变量设置扇区数和分区大小(platform_conf_scan() 已填充) */
     uint64_t sector_cnt = RAMBLK_SIZE / RAMBLK_SECTOR_SZ;
     g_ramblk.bdif->ph_bcnt = sector_cnt;
     g_ramblk.part_size = RAMBLK_SIZE;
 
-    /* 四行合并成一行 —— 它回答的是"rootfs 在哪"，一句话就够 */
-    KLOG_INFO(
-        "[ramblk] RAM block device: base=0x%llx size=%lluMB sectors=%llu x %u\n",
-        (uint64_t)RAMBLK_PHYS_BASE, (uint64_t)(RAMBLK_SIZE >> 20), sector_cnt,
-        RAMBLK_SECTOR_SZ);
+    /* 四行合并成一行 —— 它回答的是"rootfs 在哪", 一句话就够 */
+    KLOG_INFO("[ramblk] RAM block device: base=0x%llx size=%lluMB sectors=%llu x %u\n", (uint64_t)RAMBLK_PHYS_BASE,
+              (uint64_t)(RAMBLK_SIZE >> 20), sector_cnt, RAMBLK_SECTOR_SZ);
 }

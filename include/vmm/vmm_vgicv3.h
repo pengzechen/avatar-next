@@ -1,25 +1,25 @@
 /*
- * include/vmm_vgicv3.h — 虚拟 GICv3（GICv3 vGIC）
- *
- * 与 GICv2 vGIC（vmm_vgic.h / vmm_vgicd.h / vmm_vgicc.h）的关系：
- *   中断生命周期状态机（pending / enabled / active 位图）沿用同一套模型，
- *   差异在「投递后端」和「guest 可见的寄存器」：
- *
- *     GICv2                                  GICv3
- *     ────────────────────────────────       ────────────────────────────────
- *     GICC MMIO（0x08010000）由 VMM 陷入    CPU interface 是 ICV_* 系统寄存器，
- *     软件模拟 IAR/EOIR                      由 GIC 硬件直接服务（VMM 无法陷入）
- *     GICH_LR<n>（32 位，MMIO）              ICH_LR<n>_EL2（64 位，系统寄存器）
- *     SGI/PPI 在 GICD（banked）              SGI/PPI 在 GICR（0x080A0000/核）
- *
- * 因此 GICv3 下 VMM 不再「替 guest 应答中断」，而是：
- *   进入 guest 前  sync_entry：把 pending&enabled&!active 的中断写进空 LR
- *   guest 运行中   硬件负责 ack/EOI，并自动改 LR 的 State 字段
- *   退出 guest 后  sync_exit ：读 ICH_ELRSR_EL2 / LR.State 回推软件状态
- *
- * 注意：HCR_EL2.IMO=1 是前提 —— guest 在 EL1 访问 ICC_*_EL1 才会被重定向到
- * ICV_*（虚拟 CPU interface），否则 guest 会直接操作物理 GIC。
- */
+   include/vmm_vgicv3.h — 虚拟 GICv3(GICv3 vGIC)
+
+   与 GICv2 vGIC(vmm_vgic.h / vmm_vgicd.h / vmm_vgicc.h)的关系：
+     中断生命周期状态机(pending / enabled / active 位图)沿用同一套模型,
+     差异在「投递后端」和「guest 可见的寄存器」：
+
+       GICv2                                  GICv3
+       ────────────────────────────────       ────────────────────────────────
+       GICC MMIO(0x08010000)由 VMM 陷入    CPU interface 是 ICV_* 系统寄存器,
+       软件模拟 IAR/EOIR                      由 GIC 硬件直接服务(VMM 无法陷入)
+       GICH_LR<n>(32 位, MMIO)              ICH_LR<n>_EL2(64 位, 系统寄存器)
+       SGI/PPI 在 GICD(banked)              SGI/PPI 在 GICR(0x080A0000/核)
+
+   因此 GICv3 下 VMM 不再「替 guest 应答中断」, 而是：
+     进入 guest 前  sync_entry：把 pending&enabled&!active 的中断写进空 LR
+     guest 运行中   硬件负责 ack/EOI, 并自动改 LR 的 State 字段
+     退出 guest 后  sync_exit ：读 ICH_ELRSR_EL2 / LR.State 回推软件状态
+
+   注意：HCR_EL2.IMO=1 是前提 —— guest 在 EL1 访问 ICC_*_EL1 才会被重定向到
+   ICV_*(虚拟 CPU interface), 否则 guest 会直接操作物理 GIC。
+*/
 #ifndef VMM_VGICV3_H
 #define VMM_VGICV3_H
 
@@ -35,14 +35,14 @@
 #define VGIC3D_REG_SIZE 0x10000 /* GICD 窗口 64KB */
 #define VGIC3R_REG_SIZE 0x20000 /* 每核 Redistributor：RD 64KB + SGI 64KB */
 
-/* ── guest 看到的地址（必须与 imgs/guests/aarch64/linux-gicv3.dts 一致）── */
+/* ── guest 看到的地址(必须与 imgs/guests/aarch64/linux-gicv3.dts 一致)── */
 #define VGIC3D_BASE    0x08000000ULL
 #define VGIC3D_SIZE    0x10000ULL
 #define VGIC3R_BASE    0x080A0000ULL
 #define VGIC3R_STRIDE  0x20000ULL
 #define VGIC3R_SGI_OFF 0x10000ULL
 
-/* guest 虚拟定时器 PPI 27 —— 统一用 VIRQ_VTIMER（见 include/vmm/vmm_virq.h）*/
+/* guest 虚拟定时器 PPI 27 —— 统一用 VIRQ_VTIMER(见 include/vmm/vmm_virq.h) */
 
 /* 默认优先级：与 Linux 给 PPI/SGI 设的 0xA0 一致 */
 #define VGIC3_DEFAULT_PRIO 0xA0
@@ -67,18 +67,18 @@ typedef struct vgic3_vcpu {
     uint32_t sgi_igrpmodr0;
     uint32_t sgi_icfgr[2];
 
-    /* 硬件 LR 槽位的镜像：0 = 空，否则为我们写进去的 LR 值 */
+    /* 硬件 LR 槽位的镜像：0 = 空, 否则为我们写进去的 LR 值 */
     uint64_t lr[VGIC3_MAX_LRS];
 
     /*
-     * per-pCPU 虚拟 CPU interface 状态的**该 vCPU 副本**。
-     *
-     * ICH_VMCR_EL2 装的是 guest 通过 ICC_PMR/ICC_IGRPEN/ICC_CTLR 写的
-     * PMR/组使能/EOImode；ICH_AP1R0_EL2 是 active priority。两者都是
-     * per-pCPU 硬件，而同一 VM 的多个 vCPU 会在同一颗宿主核上分时跑。
-     * 只按 VM 存一份会让 vCPU A 的 PMR/AP1R 被 vCPU B 覆盖 —— 实测表现
-     * 就是 vtimer 的 LR 卡在 Active、guest idle 后再也醒不过来。
-     */
+       per-pCPU 虚拟 CPU interface 状态的该 vCPU 副本。
+
+       ICH_VMCR_EL2 装的是 guest 通过 ICC_PMR/ICC_IGRPEN/ICC_CTLR 写的
+       PMR/组使能/EOImode；ICH_AP1R0_EL2 是 active priority。两者都是
+       per-pCPU 硬件, 而同一 VM 的多个 vCPU 会在同一颗宿主核上分时跑。
+       只按 VM 存一份会让 vCPU A 的 PMR/AP1R 被 vCPU B 覆盖 —— 实测表现
+       就是 vtimer 的 LR 卡在 Active, guest idle 后再也醒不过来。
+    */
     uint64_t ich_vmcr;
     uint64_t ich_ap1r0;
 } vgic3_vcpu_t;
@@ -88,17 +88,18 @@ typedef struct vgic3 {
     int dist_enabled;
 
     /*
-     * per-CPU 硬件的 ICH_VMCR/AP1R 副本在 vgic3_vcpu_t 里（见上）——
-     * 同一 VM 的多个 vCPU 也要各自保存，不能只按 VM 存一份。
-     */
+       per-CPU 硬件的 ICH_VMCR/AP1R 副本在 vgic3_vcpu_t 里(见上)——
+       同一 VM 的多个 vCPU 也要各自保存, 不能只按 VM 存一份。
+    */
 
-    /* Distributor 侧（SPI，INTID >= 32）*/
+    /* Distributor 侧(SPI, INTID >= 32) */
     uint32_t enabled[VGIC3_MAX_WORDS];
     uint32_t spi_pending[VGIC3_MAX_VCPUS][VGIC3_MAX_WORDS];
     uint32_t spi_active[VGIC3_MAX_VCPUS][VGIC3_MAX_WORDS];
 
     /* GICD 字节可寻址后备存储：保证 guest 探测 IGROUPR/IPRIORITYR/
-     * ICFGR/PIDR… 时读回合理值 */
+       ICFGR/PIDR… 时读回合理值
+    */
     uint8_t dist_regs[VGIC3D_REG_SIZE];
 
     vgic3_vcpu_t vcpu[VGIC3_MAX_VCPUS];
@@ -108,47 +109,40 @@ typedef struct vgic3 {
 int vmm_vgic3_init(vgic3_t *vgic, uint32_t nr_vcpus);
 
 void vmm_vgic3_set_pending(vgic3_t *vgic, uint32_t vcpu_id, uint32_t irq);
-void vmm_vgic3_set_sgi_pending(vgic3_t *vgic, uint32_t vcpu_id,
-                               uint32_t source_vcpu, uint32_t irq);
+void vmm_vgic3_set_sgi_pending(vgic3_t *vgic, uint32_t vcpu_id, uint32_t source_vcpu, uint32_t irq);
 /*
- * 处理 guest 的 ICC_DIR_EL1（EOImode=1 的去激活）。
- *
- * active 中断可能已经不在 LR 里（vCPU 切走时我们把它移到了软件 active
- * 位），此时硬件 DIR 找不到匹配 LR，deactivation 会丢；必须由 VMM 清掉
- * 软件 active 状态，否则该 INTID 会被永久堵死。
- */
+   处理 guest 的 ICC_DIR_EL1(EOImode=1 的去激活)。
+
+   active 中断可能已经不在 LR 里(vCPU 切走时我们把它移到了软件 active
+   位), 此时硬件 DIR 找不到匹配 LR, deactivation 会丢；必须由 VMM 清掉
+   软件 active 状态, 否则该 INTID 会被永久堵死。
+*/
 void vmm_vgic3_deactivate(vgic3_t *vgic, uint32_t vcpu_id, uint32_t irq);
-void vmm_vgic3_set_enabled(vgic3_t *vgic, uint32_t vcpu_id, uint32_t irq,
-                           int enabled);
+void vmm_vgic3_set_enabled(vgic3_t *vgic, uint32_t vcpu_id, uint32_t irq, int enabled);
 
 void vmm_vgic3_set_dist_enabled(vgic3_t *vgic, int enabled);
 int vmm_vgic3_dist_enabled(const vgic3_t *vgic);
 
-uint32_t vmm_vgic3_enabled_word(const vgic3_t *vgic, uint32_t vcpu_id,
-                                uint32_t word);
-uint32_t vmm_vgic3_pending_word(const vgic3_t *vgic, uint32_t vcpu_id,
-                                uint32_t word);
-uint32_t vmm_vgic3_active_word(const vgic3_t *vgic, uint32_t vcpu_id,
-                               uint32_t word);
-void vmm_vgic3_clear_pending_word(vgic3_t *vgic, uint32_t vcpu_id,
-                                  uint32_t word, uint32_t bits);
-void vmm_vgic3_clear_active_word(vgic3_t *vgic, uint32_t vcpu_id, uint32_t word,
-                                 uint32_t bits);
+uint32_t vmm_vgic3_enabled_word(const vgic3_t *vgic, uint32_t vcpu_id, uint32_t word);
+uint32_t vmm_vgic3_pending_word(const vgic3_t *vgic, uint32_t vcpu_id, uint32_t word);
+uint32_t vmm_vgic3_active_word(const vgic3_t *vgic, uint32_t vcpu_id, uint32_t word);
+void vmm_vgic3_clear_pending_word(vgic3_t *vgic, uint32_t vcpu_id, uint32_t word, uint32_t bits);
+void vmm_vgic3_clear_active_word(vgic3_t *vgic, uint32_t vcpu_id, uint32_t word, uint32_t bits);
 
-/* ── 硬件（ICH_*_EL2）侧 ────────────────────────────────────── */
+/* ── 硬件(ICH_*_EL2)侧 ────────────────────────────────────── */
 void vmm_vgic3_hw_init(void);
 struct vcpu;
 /*
- * vmm_vgic3_lr_switch_in — 进入 guest 前调用：确保**本 pCPU** 的
- * ICH_LR<n>_EL2 属于给定的 vCPU，再把可投递中断排进去。
- *
- * LR 是 per-pCPU 硬件，多个 VM 的 vCPU 在同一核上分时跑时会互相看到对方
- * 的残留中断。本函数处理归属切换（先回收上一个 VM 的状态、再清空硬件、
- * 最后排入当前 VM 的），替代直接调用 vmm_vgic3_sync_entry()。
- *
- * 收 vcpu_t 而不是 vgic+id：切换时要拿**上一个 vCPU** 的 irq_lock
- * （远端注入可能正写它的 pending），仅凭 id 找不到锁。
- */
+   vmm_vgic3_lr_switch_in — 进入 guest 前调用：确保本 pCPU 的
+   ICH_LR<n>_EL2 属于给定的 vCPU, 再把可投递中断排进去。
+
+   LR 是 per-pCPU 硬件, 多个 VM 的 vCPU 在同一核上分时跑时会互相看到对方
+   的残留中断。本函数处理归属切换(先回收上一个 VM 的状态, 再清空硬件,
+   最后排入当前 VM 的), 替代直接调用 vmm_vgic3_sync_entry()。
+
+   收 vcpu_t 而不是 vgic+id：切换时要拿上一个 vCPU 的 irq_lock
+   (远端注入可能正写它的 pending), 仅凭 id 找不到锁。
+*/
 void vmm_vgic3_lr_switch_in(vgic3_t *vgic, struct vcpu *vcpu);
 
 void vmm_vgic3_sync_entry(vgic3_t *vgic, uint32_t vcpu_id);

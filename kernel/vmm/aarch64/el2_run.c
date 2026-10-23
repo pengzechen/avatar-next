@@ -1,14 +1,14 @@
 /*
- * kernel/vmm/aarch64/el2_run.c — VMM 主循环与 VM exit 分发
- *
- * 对标 ref/bare-vm/arch/aarch64/el2_run.c，适配 Avatar OS。
- *
- * Phase 2 支持的 exit 类型（ESR_EL2.EC）：
- *   0x01 — WFI/WFE trap（HCR_EL2.TWI=1）：跳过指令，resume
- *   0x16 — HVC 超级调用：dispatcher 处理 HVC_DONE / HVC_PRINT
- *   0x24 — Stage-2 Data Abort：权限故障处理
- *   其余 — 未处理，打印诊断信息后退出
- */
+   kernel/vmm/aarch64/el2_run.c — VMM 主循环与 VM exit 分发
+
+   对标 ref/bare-vm/arch/aarch64/el2_run.c, 适配 Avatar OS。
+
+   Phase 2 支持的 exit 类型(ESR_EL2.EC)：
+     0x01 — WFI/WFE trap(HCR_EL2.TWI=1)：跳过指令, resume
+     0x16 — HVC 超级调用：dispatcher 处理 HVC_DONE / HVC_PRINT
+     0x24 — Stage-2 Data Abort：权限故障处理
+     其余 — 未处理, 打印诊断信息后退出
+*/
 
 #include "vmm/vmm.h"
 #include "klog.h"
@@ -19,11 +19,11 @@
 #include "task/switch.h"
 #include "vmm/vmm_mmio.h"   /* MMIO 总线分发 */
 #include "vmm/vmm_vpl011.h" /* 虚拟 PL011 RX 中断线 */
-#include "vmm/vmm_vnpu.h"   /* NPU 中断线（RK3588 透传）*/
+#include "vmm/vmm_vnpu.h"   /* NPU 中断线(RK3588 透传) */
 #if DRIVER_GIC_V3
-#include "vmm/vmm_vgicv3.h" /* vGICv3 中断注入（ICH_LR<n>_EL2）*/
+#include "vmm/vmm_vgicv3.h" /* vGICv3 中断注入(ICH_LR<n>_EL2) */
 #else
-#include "vmm/vmm_vgic.h" /* vGICv2 中断注入（GICH_LR）*/
+#include "vmm/vmm_vgic.h" /* vGICv2 中断注入(GICH_LR) */
 #endif
 
 /* ── 读取 ESR / ELR / FAR / HPFAR ────────────────────────── */
@@ -35,40 +35,39 @@ extern void handle_irq_exception(uint64_t *stack_pointer);
 
 /* ── 步进 guest PC 越过陷入指令 ───────────────────────────── */
 /*
- * el2_advance_pc — 使 vcpu->elr 跳过当前陷入指令
- * AArch64: ESR.IL(bit 25)=1 → 32-bit 指令(+4), =0 → 16-bit(+2, Thumb)
- * 注意：HVC 陷入时 ELR_EL2 硬件已指向 HVC 下一条，无需调用此函数。
- */
+   el2_advance_pc — 使 vcpu->elr 跳过当前陷入指令
+   AArch64: ESR.IL(bit 25)=1 → 32-bit 指令(+4), =0 → 16-bit(+2, Thumb)
+   注意：HVC 陷入时 ELR_EL2 硬件已指向 HVC 下一条, 无需调用此函数。
+*/
 static void el2_advance_pc(vcpu_t *vcpu, uint64_t esr)
 {
     vcpu->elr += ((esr >> 25) & 1) ? 4 : 2;
 }
 
 /*
- * vcpu_gpr_xzr — 按 SRT 取 guest 通用寄存器，**SRT==31 视作 XZR（恒零）**
- *
- * ⚠️ 为什么要有这个助手，而不是在调用点写个三元表达式：
- *
- *   aarch64 的 `vcpu_t.r[]` 只有 **31 格**（x0–x30）—— x31 在架构上就是 XZR，
- *   没有对应的存储。所以 `vcpu->r[srt]` 在 srt==31 时是**越界访问**，
- *   在 C 里是 UB。
- *
- *   实测（aarch64-linux-musl-gcc 11.2.1，-O2）：UB 一旦形成，GCC 就把
- *   "srt==31 时 val 为 0" 这半支优化没了 —— 反汇编里 `b.eq` 直接跳到
- *   `mov x4, x21`，而 x21 在整个函数里从没被清过，于是取到调用者留下的野值。
- *   我在调用点改成"先判 srt<31 再索引"**同样没用**（反汇编一模一样）；
- *   隔离出来的最小复现反而是正确的 —— 也就是说这个函数里的某种上下文
- *   放大了它。**别再试图用别的写法绕，直接跨函数边界**：
- *   这里 noinline，且索引表达式在界内，编译器没有可利用的 UB。
- *
- * 代价是提交路径上多一次函数调用 —— 那本来就是一次 EL2 往返，可以忽略。
- *
- * 真机症状（这个 bug 造成的）：写 `PC_OP_EN=0`（`str wzr`）时把调用者的
- * 一个指针写进了 NPU 寄存器，作业永远不完成、task counter 恒 0，
- * 而寄存器回读、regcmd 内容、DMA 地址**全都正常** —— 从任何一处都看不出来。
- */
-__attribute__((noinline)) static uint64_t vcpu_gpr_xzr(const vcpu_t *vcpu,
-                                                       uint32_t srt)
+   vcpu_gpr_xzr — 按 SRT 取 guest 通用寄存器, SRT==31 视作 XZR(恒零)
+
+   注意： 为什么要有这个助手, 而不是在调用点写个三元表达式：
+
+     aarch64 的 `vcpu_t.r[]` 只有 31 格(x0–x30)—— x31 在架构上就是 XZR,
+     没有对应的存储。所以 `vcpu->r[srt]` 在 srt==31 时是越界访问,
+     在 C 里是 UB。
+
+     实测(aarch64-linux-musl-gcc 11.2.1, -O2)：UB 一旦形成, GCC 就把
+     "srt==31 时 val 为 0" 这半支优化没了 —— 反汇编里 `b.eq` 直接跳到
+     `mov x4, x21`, 而 x21 在整个函数里从没被清过, 于是取到调用者留下的野值。
+     我在调用点改成"先判 srt<31 再索引"同样没用(反汇编一模一样)；
+     隔离出来的最小复现反而是正确的 —— 也就是说这个函数里的某种上下文
+     放大了它。别再试图用别的写法绕, 直接跨函数边界：
+     这里 noinline, 且索引表达式在界内, 编译器没有可利用的 UB。
+
+   代价是提交路径上多一次函数调用 —— 那本来就是一次 EL2 往返, 可以忽略。
+
+   真机症状(这个 bug 造成的)：写 `PC_OP_EN=0`(`str wzr`)时把调用者的
+   一个指针写进了 NPU 寄存器, 作业永远不完成, task counter 恒 0,
+   而寄存器回读, regcmd 内容, DMA 地址全都正常 —— 从任何一处都看不出来。
+*/
+__attribute__((noinline)) static uint64_t vcpu_gpr_xzr(const vcpu_t *vcpu, uint32_t srt)
 {
     if (srt < 31)
         return vcpu->r[srt];
@@ -76,13 +75,13 @@ __attribute__((noinline)) static uint64_t vcpu_gpr_xzr(const vcpu_t *vcpu,
 }
 
 /* ── Trapped AArch64 system-register access ───────────────────────────
- * HCR_EL2.TID3 traps EL1 reads of ID registers. Do not expose the host
- * CPU feature matrix directly: Linux combines many ID fields into arm64
- * capabilities, and QEMU/host values can advertise duplicate or unsupported
- * virtual features. Present a small, coherent ARMv8.0 profile instead. */
+   HCR_EL2.TID3 traps EL1 reads of ID registers. Do not expose the host
+   CPU feature matrix directly: Linux combines many ID fields into arm64
+   capabilities, and QEMU/host values can advertise duplicate or unsupported
+   virtual features. Present a small, coherent ARMv8.0 profile instead.
+*/
 #define SYSREG_ID(op0, op1, crn, crm, op2) \
-    ((((op0) & 3u) << 14) | (((op1) & 7u) << 11) | (((crn) & 15u) << 7) | \
-     (((crm) & 15u) << 3) | ((op2) & 7u))
+    ((((op0) & 3u) << 14) | (((op1) & 7u) << 11) | (((crn) & 15u) << 7) | (((crm) & 15u) << 3) | ((op2) & 7u))
 
 #define ID_AA64PFR0_FP_SIMD ((0ULL << 16) | (0ULL << 20))
 #define ID_AA64PFR0_ELS     ((1ULL << 0) | (1ULL << 4))
@@ -179,27 +178,27 @@ static uint64_t aarch64_vcpu_idreg_read(uint32_t key)
 
 #if DRIVER_GIC_V3
 /*
- * ICC_SGI1R_EL1 写入 —— guest 发 SGI（Linux 的 IPI）。
- *
- * 这个寄存器**没有**被硬件虚拟化：guest 写它必然陷入 EL2（EC=0x18），
- * 由 VMM 按目标 vCPU 置 vGIC 的 SGI pending。之前这里直接按"未处理
- * sysreg"跳过，于是 Linux AP bring-up / reschedule IPI 全部丢失 ——
- * 表现是 4 个 vCPU 都起来了，但 guest 的 smp bring-up 停在半路。
- *
- * 字段（ARM IHI 0069）：
- *   [15:0]  TargetList（Aff0 位图）
- *   [23:16] Aff1
- *   [27:24] INTID
- *   [39:32] Aff2
- *   [40]    IRM：1 = 除自己外所有 PEs
- *   [47:44] RS：非 0 时按范围选择，本 VMM 不支持
- *   [55:48] Aff3
- *
- * 本 VMM 的 vMPIDR_EL2 = vcpu_id、DTB cpu@N reg = N，所以只支持 Aff0、
- * Aff1/2/3=0、RS=0。投递走 vmm_vgic3_set_sgi_pending()，然后 kick 目标
- * vCPU —— 它若正在 guest 里，resched IPI 会把它踹出来，下一次 entry 的
- * sync_entry 才会把 SGI 排进 LR。
- */
+   ICC_SGI1R_EL1 写入 —— guest 发 SGI(Linux 的 IPI)。
+
+   这个寄存器没有被硬件虚拟化：guest 写它必然陷入 EL2(EC=0x18),
+   由 VMM 按目标 vCPU 置 vGIC 的 SGI pending。之前这里直接按"未处理
+   sysreg"跳过, 于是 Linux AP bring-up / reschedule IPI 全部丢失 ——
+   表现是 4 个 vCPU 都起来了, 但 guest 的 smp bring-up 停在半路。
+
+   字段(ARM IHI 0069)：
+     [15:0]  TargetList(Aff0 位图)
+     [23:16] Aff1
+     [27:24] INTID
+     [39:32] Aff2
+     [40]    IRM：1 = 除自己外所有 PEs
+     [47:44] RS：非 0 时按范围选择, 本 VMM 不支持
+     [55:48] Aff3
+
+   本 VMM 的 vMPIDR_EL2 = vcpu_id, DTB cpu@N reg = N, 所以只支持 Aff0,
+   Aff1/2/3=0, RS=0。投递走 vmm_vgic3_set_sgi_pending(), 然后 kick 目标
+   vCPU —— 它若正在 guest 里, resched IPI 会把它踹出来, 下一次 entry 的
+   sync_entry 才会把 SGI 排进 LR。
+*/
 static void handle_sgi1r(vcpu_t *vcpu, uint64_t val)
 {
     vm_t *vm = vcpu->vm;
@@ -215,8 +214,7 @@ static void handle_sgi1r(vcpu_t *vcpu, uint64_t val)
         return;
 
     if (aff1 || aff2 || aff3 || rs) {
-        KLOG_DEBUG("[vpsci] SGI1R unsupported aff/rs val=0x%llx\n",
-                   (unsigned long long)val);
+        KLOG_DEBUG("[vpsci] SGI1R unsupported aff/rs val=0x%llx\n", (unsigned long long)val);
         return;
     }
 
@@ -232,14 +230,13 @@ static void handle_sgi1r(vcpu_t *vcpu, uint64_t val)
             continue;
 
         /*
-         * 与目标的 entry/exit 同步互斥：sync_exit 会对 active 的 LR 执行
-         * clear_pending，裸写 pending 会被它抹掉（丢一次 IPI，SMP 启动/
-         * RCU 握手随机卡死）。锁内只写 pending，kick 放到锁外 —— 顺序是
-         * "先发布、再要求退出"。
-         */
+           与目标的 entry/exit 同步互斥：sync_exit 会对 active 的 LR 执行
+           clear_pending, 裸写 pending 会被它抹掉(丢一次 IPI, SMP 启动/
+           RCU 握手随机卡死)。锁内只写 pending, kick 放到锁外 —— 顺序是
+           "先发布, 再要求退出"。
+        */
         spin_lock_irqsave(&vm->vcpus[i].irq_lock, &flags);
-        vmm_vgic3_set_sgi_pending(&vm->vgic3, (uint32_t)i,
-                                  (uint32_t)vcpu->vcpu_id, intid);
+        vmm_vgic3_set_sgi_pending(&vm->vgic3, (uint32_t)i, (uint32_t)vcpu->vcpu_id, intid);
         spin_unlock_irqrestore(&vm->vcpus[i].irq_lock, flags);
         vmm_vcpu_kick(&vm->vcpus[i]);
     }
@@ -265,7 +262,7 @@ static int handle_sysreg(vcpu_t *vcpu, uint64_t esr)
     }
 
 #if DRIVER_GIC_V3
-    /* ICC_SGI1R_EL1 = S3_0_C12_C11_5，写 */
+    /* ICC_SGI1R_EL1 = S3_0_C12_C11_5, 写 */
     if (!dir && op0 == 3 && op1 == 0 && crn == 12 && crm == 11 && op2 == 5) {
         uint64_t val = (rt == 31) ? 0 : vcpu->r[rt];
         handle_sgi1r(vcpu, val);
@@ -274,68 +271,66 @@ static int handle_sysreg(vcpu_t *vcpu, uint64_t esr)
     }
 
     /*
-     * ICC_DIR_EL1 / ICV_DIR_EL1 = S3_0_C12_C11_1，写。
-     * ICH_HCR_EL2.TDIR=1，所以 split EOI 模式的 deactivate 会到这里。
-     */
+       ICC_DIR_EL1 / ICV_DIR_EL1 = S3_0_C12_C11_1, 写。
+       ICH_HCR_EL2.TDIR=1, 所以 split EOI 模式的 deactivate 会到这里。
+    */
     if (!dir && op0 == 3 && op1 == 0 && crn == 12 && crm == 11 && op2 == 1) {
         uint64_t val = (rt == 31) ? 0 : vcpu->r[rt];
         uint64_t flags;
 
         spin_lock_irqsave(&vcpu->irq_lock, &flags);
-        vmm_vgic3_deactivate(&vcpu->vm->vgic3, (uint32_t)vcpu->vcpu_id,
-                            (uint32_t)(val & 0xFFFFFFu));
+        vmm_vgic3_deactivate(&vcpu->vm->vgic3, (uint32_t)vcpu->vcpu_id, (uint32_t)(val & 0xFFFFFFu));
         spin_unlock_irqrestore(&vcpu->irq_lock, flags);
         el2_advance_pc(vcpu, esr);
         return EL2_RESUME;
     }
 #endif
 
-    KLOG_WARN(
-        "[VMM] Unhandled sysreg %s op0=%u op1=%u crn=%u crm=%u op2=%u rt=%u\n",
-        dir ? "read" : "write", op0, op1, crn, crm, op2, rt);
+    KLOG_WARN("[VMM] Unhandled sysreg %s op0=%u op1=%u crn=%u crm=%u op2=%u rt=%u\n", dir ? "read" : "write", op0, op1,
+              crn, crm, op2, rt);
     el2_advance_pc(vcpu, esr);
     return EL2_RESUME;
 }
 
 /* ── Test 1: WFI/WFE 陷入 ─────────────────────────────────── */
-/* WFE 限频让出的下次时间戳（按 vCPU 编号；同号跨 VM 共用只会多让出一次）*/
+/* WFE 限频让出的下次时间戳(按 vCPU 编号；同号跨 VM 共用只会多让出一次) */
 static uint64_t wfe_next_yield[MAX_VCPUS];
 
 static int handle_wfi(vcpu_t *vcpu, uint64_t esr)
 {
-    /* WFI 在网络/定时器驱动的 guest 里会高频触发（guest 空闲时几乎持续
-     * 执行 WFI）。之前每条都打 INFO 日志，实测 25 秒产生 30 万行，会把
-     * guest 控制台输出彻底淹没，故降为 DEBUG。
-     *
-     * 保留计数而不是整段删掉：它是判断「guest 还活着 / 陷入频率」最直接
-     * 的探针，交互式控制台的输入延迟上限也由这个频率决定。*/
+    /* WFI 在网络/定时器驱动的 guest 里会高频触发(guest 空闲时几乎持续
+       执行 WFI)。之前每条都打 INFO 日志, 实测 25 秒产生 30 万行, 会把
+       guest 控制台输出彻底淹没, 故降为 DEBUG。
+
+       保留计数而不是整段删掉：它是判断「guest 还活着 / 陷入频率」最直接
+       的探针, 交互式控制台的输入延迟上限也由这个频率决定。
+    */
     static uint64_t wfi_count;
 
     if ((++wfi_count & 0x3FFFF) == 1) {
-        KLOG_DEBUG("[VMM] guest idle heartbeat: wfi=%llu ELR=0x%llx (vcpu%d)\n",
-                   (unsigned long long)wfi_count, (unsigned long long)vcpu->elr,
-                   vcpu->vcpu_id);
+        KLOG_DEBUG("[VMM] guest idle heartbeat: wfi=%llu ELR=0x%llx (vcpu%d)\n", (unsigned long long)wfi_count,
+                   (unsigned long long)vcpu->elr, vcpu->vcpu_id);
     }
 
     el2_advance_pc(vcpu, esr);
 
     /*
-     * WFI（真 idle）立刻让出；WFE（自旋等待）**限频**让出。
-     *
-     * ESR_EL2.ISS[0] 是 TI：0 = WFI，1 = WFE。guest 的 qspinlock 等待循环
-     * 就是 `sevl; wfe; ldxr ...`；TWE=1 会把每次 WFE 变成 VM-exit。
-     *
-     * 两种情况都实测过：
-     *   - 每次 WFE 都 task_yield()：8 vCPU 挤少量宿主核时形成上下文切换
-     *     风暴，锁持有者拿不到稳定的 CPU 时间，实测偶发 1-2% 启动停滞；
-     *   - WFE 完全不让出：如果 waiter 在 guest 里屏蔽了 IRQ，宿主 tick
-     *     可能长时间进不来，锁持有者被 waiter 堵在 runqueue 里，实测出现
-     *     42s 才启动完成的极端慢启动。
-     *
-     * 折中：WFE 最多每 1ms 让出一次。既把切换频率限制在毫秒级，又保证
-     * 锁持有者不会无限期等宿主 tick。WFI 仍然每次立刻让出，否则空闲
-     * vCPU 会占着核满速空转，饿死同核其它 vCPU。
-     */
+       WFI(真 idle)立刻让出；WFE(自旋等待)限频让出。
+
+       ESR_EL2.ISS[0] 是 TI：0 = WFI, 1 = WFE。guest 的 qspinlock 等待循环
+       就是 `sevl; wfe; ldxr ...`；TWE=1 会把每次 WFE 变成 VM-exit。
+
+       两种情况都实测过：
+         - 每次 WFE 都 task_yield()：8 vCPU 挤少量宿主核时形成上下文切换
+           风暴, 锁持有者拿不到稳定的 CPU 时间, 实测偶发 1-2% 启动停滞；
+         - WFE 完全不让出：如果 waiter 在 guest 里屏蔽了 IRQ, 宿主 tick
+           可能长时间进不来, 锁持有者被 waiter 堵在 runqueue 里, 实测出现
+           42s 才启动完成的极端慢启动。
+
+       折中：WFE 最多每 1ms 让出一次。既把切换频率限制在毫秒级, 又保证
+       锁持有者不会无限期等宿主 tick。WFI 仍然每次立刻让出, 否则空闲
+       vCPU 会占着核满速空转, 饿死同核其它 vCPU。
+    */
     if ((esr & 1u) == 0) { /* TI=0: WFI */
         task_yield();
         return EL2_RESUME;
@@ -354,30 +349,29 @@ static int handle_wfi(vcpu_t *vcpu, uint64_t esr)
 }
 
 /* ── Stage-2 Data Abort ──────────────────────────────────────
- *
- * 三种来源（判别顺序就是下面的顺序）：
- *   0) **guest RAM 缺页**：按需分页下 RAM 不预先映射，首次访问某页才在这里
- *      现分配一个宿主物理页并补上 stage-2 映射，然后**不推进 PC** 让 guest
- *      重试那条指令。必须放最前面 —— 见下面那段注释。
- *   1) 设备 MMIO：空表让非 RAM 区间天然无效，guest 访问设备 → 分发到 MMIO
- *      总线（移植自 kvmm stage2.rs + el2 的 data-abort 处理）。
- *   2) 权限故障：Stage-2 页被 stage2_set_ro() 设为只读，写触发故障 →
- *      恢复写权限让 guest 重试（既有行为，保持不变）。
- *
- * Data Abort 陷入时 ELR_EL2 指向**出错指令**（需步进）。
- */
+
+   三种来源(判别顺序就是下面的顺序)：
+     0) guest RAM 缺页：按需分页下 RAM 不预先映射, 首次访问某页才在这里
+        现分配一个宿主物理页并补上 stage-2 映射, 然后不推进 PC 让 guest
+        重试那条指令。必须放最前面 —— 见下面那段注释。
+     1) 设备 MMIO：空表让非 RAM 区间天然无效, guest 访问设备 → 分发到 MMIO
+        总线(移植自 kvmm stage2.rs + el2 的 data-abort 处理)。
+     2) 权限故障：Stage-2 页被 stage2_set_ro() 设为只读, 写触发故障 →
+        恢复写权限让 guest 重试(既有行为, 保持不变)。
+
+   Data Abort 陷入时 ELR_EL2 指向出错指令(需步进)。
+*/
 
 /*
- * 诊断：打印硬件 VTTBR_EL2/VTCR_EL2 与软件值的对比。
- *
- * 用来区分两种"映射加了但 guest 看不到"的故障：
- *   MATCH    — 硬件确实在用本 VM 的表 ⇒ 问题在表内容/属性
- *   MISMATCH — 硬件用的是**别人的**表 ⇒ 缺页处理把映射加到了 A 表，
- *              而 guest 走 B 表（永远 fault，且 stage2_map_page 第二次
- *              就能命中自己那张表，看起来"完全正常"）
- */
-static void dump_vttbr_diag(vm_t *vm, const char *what, uint64_t ipa,
-                            uint64_t pa, uint64_t esr)
+   诊断：打印硬件 VTTBR_EL2/VTCR_EL2 与软件值的对比。
+
+   用来区分两种"映射加了但 guest 看不到"的故障：
+     MATCH    — 硬件确实在用本 VM 的表 ⇒ 问题在表内容/属性
+     MISMATCH — 硬件用的是别人的表 ⇒ 缺页处理把映射加到了 A 表,
+                而 guest 走 B 表(永远 fault, 且 stage2_map_page 第二次
+                就能命中自己那张表, 看起来"完全正常")
+*/
+static void dump_vttbr_diag(vm_t *vm, const char *what, uint64_t ipa, uint64_t pa, uint64_t esr)
 {
     uint64_t hw_vttbr = 0, hw_vtcr = 0, hw_hcr = 0, look = 0;
     int fsc = (int)(esr & 0x3F); /* ISS.FSC：故障类型 */
@@ -389,19 +383,16 @@ static void dump_vttbr_diag(vm_t *vm, const char *what, uint64_t ipa,
     __asm__ volatile("mrs %0, hcr_el2" : "=r"(hw_hcr));
 
     /*
-     * FSC 是这里最关键的信息：
-     *   0x04/0x05/0x06/0x07 = translation fault (L0..L3)  ⇒ 表里真的没有
-     *   0x0D/0x0E/0x0F      = permission fault            ⇒ 表项在、属性不对
-     *   0x09/0x0A/0x0B      = access flag fault            ⇒ AF 位没置
-     */
+       FSC 是这里最关键的信息：
+         0x04/0x05/0x06/0x07 = translation fault (L0..L3)  ⇒ 表里真的没有
+         0x0D/0x0E/0x0F      = permission fault            ⇒ 表项在, 属性不对
+         0x09/0x0A/0x0B      = access flag fault            ⇒ AF 位没置
+    */
     KLOG_INFO("[vmm] vm%u %s ipa=0x%llx pa=0x%llx esr=0x%llx FSC=0x%x s1ptw=%d "
               "| sw_lookup=%s(pa=0x%llx) | VTTBR %s | VTCR %s | HCR.VM=%d\n",
-              vm->vmid, what, (unsigned long long)ipa, (unsigned long long)pa,
-              (unsigned long long)esr, fsc, s1ptw, found ? "HIT" : "MISS",
-              (unsigned long long)look,
-              (hw_vttbr == vm->s2.vttbr) ? "MATCH" : "MISMATCH",
-              (hw_vtcr == vm->s2.vtcr) ? "MATCH" : "MISMATCH",
-              (int)((hw_hcr >> 0) & 1));
+              vm->vmid, what, (unsigned long long)ipa, (unsigned long long)pa, (unsigned long long)esr, fsc, s1ptw,
+              found ? "HIT" : "MISS", (unsigned long long)look, (hw_vttbr == vm->s2.vttbr) ? "MATCH" : "MISMATCH",
+              (hw_vtcr == vm->s2.vtcr) ? "MATCH" : "MISMATCH", (int)((hw_hcr >> 0) & 1));
 }
 
 static int handle_dabt(vcpu_t *vcpu, uint64_t esr)
@@ -412,36 +403,36 @@ static int handle_dabt(vcpu_t *vcpu, uint64_t esr)
     int wnr = (int)((esr >> 6) & 1);
 
     /*
-     * HPFAR[39:4] = IPA[47:12] → IPA_base = hpfar << 8（**总是页对齐的**）。
-     *
-     * ⚠️ 页内偏移只在**数据访问**（S1PTW=0）时能从 FAR 拿到；S1PTW=1 表示
-     * 这次故障是 guest 的 stage-1 页表遍历引起的，此时 FAR_EL2 是 UNKNOWN
-     * （实测装的是 guest 的虚拟地址），把它的低 12 位并进来是错的。
-     */
+       HPFAR[39:4] = IPA[47:12] → IPA_base = hpfar << 8(总是页对齐的)。
+
+       注意： 页内偏移只在数据访问(S1PTW=0)时能从 FAR 拿到；S1PTW=1 表示
+       这次故障是 guest 的 stage-1 页表遍历引起的, 此时 FAR_EL2 是 UNKNOWN
+       (实测装的是 guest 的虚拟地址), 把它的低 12 位并进来是错的。
+    */
     uint64_t ipa_page = hpfar << 8;
     uint64_t ipa = ipa_page | (s1ptw ? 0 : (far & 0xFFFULL));
 
     /*
-     * 0) ── RAM 缺页：按需分配一个物理页 ──────────────────────────
-     *
-     * ⚠️ 这一段必须在最前面。下面那条「没有匹配设备就返回 0 并推进 PC」的
-     * 兜底（x-kernel 的语义）会**静默吞掉**未映射的 RAM 访问：读回 0、写丢
-     * 进黑洞、guest 带着垃圾数据继续跑。那比直接崩掉难查得多。
-     *
-     * 判定用 ipa_page（页对齐）—— HPFAR 给的就是页基址。
-     */
+       0) ── RAM 缺页：按需分配一个物理页 ──────────────────────────
+
+       注意： 这一段必须在最前面。下面那条「没有匹配设备就返回 0 并推进 PC」的
+       兜底(x-kernel 的语义)会静默吞掉未映射的 RAM 访问：读回 0, 写丢
+       进黑洞, guest 带着垃圾数据继续跑。那比直接崩掉难查得多。
+
+       判定用 ipa_page(页对齐)—— HPFAR 给的就是页基址。
+    */
     /*
-     * 0a) ── NPU DMA 窗口：**恒等映射**，不分配宿主页 ────────────────
-     *
-     * ⚠️ 必须在上面那条"RAM 按需分配"**之前**。这块地址落在 guest RAM 窗口
-     * 内（它是 RAM 顶部的 48 MiB），如果先走 RAM 分支，就会被 pmm_alloc_pages
-     * 分到一段与 IPA 无关的宿主页 —— 而 NPU 是无 IOMMU 的物理设备，它照
-     * 寄存器里的物理地址 DMA，于是写进别人的内存。**不报错，只是数据全错。**
-     *
-     * 恒等的意义：guest 里 librknnrt 拿到的"设备地址"就是驱动从这块预留池
-     * 分配出来的物理地址，只有 IPA == PA 时它在两边指的是同一块内存。
-     * 详见 include/aarch64/stage2.h 里 s2_ctx_t.npu_dma_base。
-     */
+       0a) ── NPU DMA 窗口：恒等映射, 不分配宿主页 ────────────────
+
+       注意： 必须在上面那条"RAM 按需分配"之前。这块地址落在 guest RAM 窗口
+       内(它是 RAM 顶部的 48 MiB), 如果先走 RAM 分支, 就会被 pmm_alloc_pages
+       分到一段与 IPA 无关的宿主页 —— 而 NPU 是无 IOMMU 的物理设备, 它照
+       寄存器里的物理地址 DMA, 于是写进别人的内存。不报错, 只是数据全错。
+
+       恒等的意义：guest 里 librknnrt 拿到的"设备地址"就是驱动从这块预留池
+       分配出来的物理地址, 只有 IPA == PA 时它在两边指的是同一块内存。
+       详见 include/aarch64/stage2.h 里 s2_ctx_t.npu_dma_base。
+    */
     if (vcpu->vm && stage2_ipa_is_npu_dma(&vcpu->vm->s2, ipa_page)) {
         vm_t *vm = vcpu->vm;
         uint64_t n;
@@ -455,50 +446,47 @@ static int handle_dabt(vcpu_t *vcpu, uint64_t esr)
         spin_unlock_irqrestore(&vm->s2.map_lock, flags);
 
         if (!npa) {
-            KLOG_ERROR("[vmm] vm%u: NPU DMA 恒等映射失败 ipa=0x%llx\n",
-                       vm->vmid, (unsigned long long)ipa_page);
+            KLOG_ERROR("[vmm] vm%u: NPU DMA identity mapping failed ipa=0x%llx\n", vm->vmid,
+                       (unsigned long long)ipa_page);
             return EL2_EXIT;
         }
 
         vm->s2.nr_fault++;
         if (n)
-            KLOG_DEBUG("[vmm] vm%u: NPU DMA 恒等映射 ipa=0x%llx -> pa=0x%llx "
-                       "(+%llu 页)\n",
-                       vm->vmid, (unsigned long long)ipa_page,
-                       (unsigned long long)npa, (unsigned long long)n);
+            KLOG_DEBUG("[vmm] vm%u: NPU DMA identity mapping ipa=0x%llx -> pa=0x%llx (+%llu pages)\n", vm->vmid,
+                       (unsigned long long)ipa_page, (unsigned long long)npa, (unsigned long long)n);
         return EL2_RESUME; /* 不推进 PC：让 guest 重试那条指令 */
     }
 
     if (vcpu->vm && stage2_ipa_is_ram(&vcpu->vm->s2, ipa_page)) {
         vm_t *vm = vcpu->vm;
         /*
-         * 一次装整个 2 MiB 块，而不是一页 —— 见 stage2_map_block 的注释：
-         * Linux 启动期缺页密集，单页映射每次都要一次 EL2 往返（TCG 下约
-         * 1.2ms），1447 次就是 1.7 秒。
-         */
+           一次装整个 2 MiB 块, 而不是一页 —— 见 stage2_map_block 的注释：
+           Linux 启动期缺页密集, 单页映射每次都要一次 EL2 往返(TCG 下约
+           1.2ms), 1447 次就是 1.7 秒。
+        */
         uint64_t pa = 0;
         uint64_t flags;
 
         /*
-         * 同一 VM 的多个 vCPU 会并发缺页。整段「映射 + 复查」必须在
-         * map_lock 下串行，否则两个 vCPU 会各自分配 L3 表/物理页并互相
-         * 覆盖，被覆盖的页从 guest 看就是"内存被换掉/清零"。
-         */
+           同一 VM 的多个 vCPU 会并发缺页。整段「映射 + 复查」必须在
+           map_lock 下串行, 否则两个 vCPU 会各自分配 L3 表/物理页并互相
+           覆盖, 被覆盖的页从 guest 看就是"内存被换掉/清零"。
+        */
         spin_lock_irqsave(&vm->s2.map_lock, &flags);
-        (void)stage2_map_block(&vm->s2, ipa_page, 1 /*zero*/);
+        (void)stage2_map_block(&vm->s2, ipa_page, 1 /* zero */);
         (void)stage2_lookup(&vm->s2, ipa_page, &pa);
         spin_unlock_irqrestore(&vm->s2.map_lock, flags);
 
         /*
-         * ⚠️ 判据是 pa，不是 map_block 的返回值：块已经被别的 vCPU 装好时
-         * stage2_map_block() 返回 0，但 lookup 会命中 —— 这是成功，不能
-         * 当成 "PMM exhausted" 退出 VM。
-         */
+           注意： 判据是 pa, 不是 map_block 的返回值：块已经被别的 vCPU 装好时
+           stage2_map_block() 返回 0, 但 lookup 会命中 —— 这是成功, 不能
+           当成 "PMM exhausted" 退出 VM。
+        */
         if (!pa) {
             KLOG_ERROR("[vmm] vm%u: stage-2 fault ipa=0x%llx but PMM exhausted "
                        "(free=%llu pages)\n",
-                       vm->vmid, (unsigned long long)ipa_page,
-                       (unsigned long long)pmm_get_free_pages(&g_pmm));
+                       vm->vmid, (unsigned long long)ipa_page, (unsigned long long)pmm_get_free_pages(&g_pmm));
             return EL2_EXIT;
         }
 
@@ -506,49 +494,48 @@ static int handle_dabt(vcpu_t *vcpu, uint64_t esr)
         if (vm->s2.nr_fault <= 4)
             dump_vttbr_diag(vm, "dfault", ipa_page, pa, esr);
         /*
-         * ⚠️ 这里**故意不做 TLB 维护**。
-         *
-         * 缺页意味着这个 IPA 之前没有有效映射 —— TLB 里不可能有它的翻译
-         * （ARM 也不要求实现缓存"无效"结果，QEMU/KVM 不缓存）。所以刚装上的
-         * 表项立即可见，不需要 tlbi。
-         *
-         * 反过来代价极大：stage2_tlb_flush_ipa() 里有两道 barrier_sync()
-         * （dsb ish），TCG 下要同步所有 vCPU —— 每次缺页都做的话，guest
-         * 启动时几千次缺页能白白多花一秒多。对照：加载期的批量映射
-         * stage2_map_range() 也是只在末尾刷一次。
-         */
-        return EL2_RESUME; /* ⚠️ 不推进 PC：让 guest 重试那条指令 */
+           注意： 这里故意不做 TLB 维护。
+
+           缺页意味着这个 IPA 之前没有有效映射 —— TLB 里不可能有它的翻译
+           (ARM 也不要求实现缓存"无效"结果, QEMU/KVM 不缓存)。所以刚装上的
+           表项立即可见, 不需要 tlbi。
+
+           反过来代价极大：stage2_tlb_flush_ipa() 里有两道 barrier_sync()
+           (dsb ish), TCG 下要同步所有 vCPU —— 每次缺页都做的话, guest
+           启动时几千次缺页能白白多花一秒多。对照：加载期的批量映射
+           stage2_map_range() 也是只在末尾刷一次。
+        */
+        return EL2_RESUME; /* 注意： 不推进 PC：让 guest 重试那条指令 */
     }
 
     /* 1) 先尝试 MMIO 设备分发 */
     if (vcpu->vm && vcpu->vm->mmio_bus) {
         uint64_t out = 0;
-        /* 访问宽度：ESR.ISS.SAS[23:22]（0=byte,1=half,2=word,3=dword）*/
+        /* 访问宽度：ESR.ISS.SAS[23:22](0=byte,1=half,2=word,3=dword) */
         uint8_t size = (uint8_t)(1u << ((esr >> 22) & 3));
         /*
-         * 写数据：从 ISS.SRT[20:16] 指定的通用寄存器取。
-         *
-         * ⚠️ **SRT == 31 是 XZR（恒零寄存器），必须当 0 处理。**
-         *    `str wzr, [x1]`（存零）的 SRT 就是 31，而 vcpu->r[31] 是个
-         *    **没人清过的数组槽** —— 直接取它会拿到上一次留下的野值。
-         *
-         *    漏掉这个判断的后果不是"写错一个值"，而是**静默**把随机数据
-         *    写进设备寄存器。真机上撞的是 NPU 提交路径里唯一那次写零
-         *    （`REG_WRITE(0x0, PC_OP_EN)`）：NPU 收到的"开始/停止"位
-         *    是个内核指针，于是作业怎么都不完成、task counter 恒 0，
-         *    而寄存器回读、regcmd 内容、DMA 地址全都正常。
-         *
-         *    下面读路径那句 `if (srt != 31)` 一直是对的 —— 写路径漏了它，
-         *    两条路本该对称。
-         */
+           写数据：从 ISS.SRT[20:16] 指定的通用寄存器取。
+
+           注意： SRT == 31 是 XZR(恒零寄存器), 必须当 0 处理。
+              `str wzr, [x1]`(存零)的 SRT 就是 31, 而 vcpu->r[31] 是个
+              没人清过的数组槽 —— 直接取它会拿到上一次留下的野值。
+
+              漏掉这个判断的后果不是"写错一个值", 而是静默把随机数据
+              写进设备寄存器。真机上撞的是 NPU 提交路径里唯一那次写零
+              (`REG_WRITE(0x0, PC_OP_EN)`)：NPU 收到的"开始/停止"位
+              是个内核指针, 于是作业怎么都不完成, task counter 恒 0,
+              而寄存器回读, regcmd 内容, DMA 地址全都正常。
+
+              下面读路径那句 `if (srt != 31)` 一直是对的 —— 写路径漏了它,
+              两条路本该对称。
+        */
         uint64_t val = 0;
         if (wnr) {
             uint32_t srt = (uint32_t)((esr >> 16) & 0x1F);
             val = vcpu_gpr_xzr(vcpu, srt);
         }
 
-        if (mmio_bus_handle(vcpu->vm->mmio_bus, ipa, wnr, size, val,
-                            (uint32_t)vcpu->vcpu_id, &out)) {
+        if (mmio_bus_handle(vcpu->vm->mmio_bus, ipa, wnr, size, val, (uint32_t)vcpu->vcpu_id, &out)) {
             if (!wnr) {
                 uint32_t srt = (uint32_t)((esr >> 16) & 0x1F);
                 if (srt != 31) /* XZR 丢弃 */
@@ -560,8 +547,9 @@ static int handle_dabt(vcpu_t *vcpu, uint64_t esr)
     }
 
     /* x-kernel behavior: unmapped MMIO reads return 0 and writes are ignored.
-     * Linux probes optional devices early; retrying a non-emulated IPA would
-     * fault forever. */
+       Linux probes optional devices early; retrying a non-emulated IPA would
+       fault forever.
+    */
     if (!wnr) {
         uint32_t srt = (uint32_t)((esr >> 16) & 0x1F);
         if (srt != 31)
@@ -571,16 +559,16 @@ static int handle_dabt(vcpu_t *vcpu, uint64_t esr)
     return EL2_RESUME;
 }
 
-/* ── Stage-2 Instruction Abort（EC=0x20）─────────────────────
- *
- * 按需分页之前这条路径基本不会出现；现在**必然**会被触发：
- *   - guest 的 stage-1 页表遍历要为取指服务 → S1PTW=1 的 instruction abort；
- *   - guest 关 MMU 的早期阶段，取指也会变成 stage-2 fault。
- *
- * ⚠️ 不能像 data abort 那样在"没命中设备"时走「返回 0 并推进 PC」的兜底 ——
- * 取指没有"返回 0"这回事，静默推进 PC 只会让 guest 跑到垃圾地址上。所以
- * 非 RAM 的取指一律报错停 VM。
- */
+/* ── Stage-2 Instruction Abort(EC=0x20)─────────────────────
+
+   按需分页之前这条路径基本不会出现；现在必然会被触发：
+     - guest 的 stage-1 页表遍历要为取指服务 → S1PTW=1 的 instruction abort；
+     - guest 关 MMU 的早期阶段, 取指也会变成 stage-2 fault。
+
+   注意： 不能像 data abort 那样在"没命中设备"时走「返回 0 并推进 PC」的兜底 ——
+   取指没有"返回 0"这回事, 静默推进 PC 只会让 guest 跑到垃圾地址上。所以
+   非 RAM 的取指一律报错停 VM。
+*/
 static int handle_iabt(vcpu_t *vcpu, uint64_t esr)
 {
     uint64_t hpfar = vcpu->hpfar;
@@ -593,14 +581,13 @@ static int handle_iabt(vcpu_t *vcpu, uint64_t esr)
         uint64_t flags;
 
         spin_lock_irqsave(&vm->s2.map_lock, &flags);
-        pa = stage2_map_page(&vm->s2, ipa_page, 1 /*zero*/);
+        pa = stage2_map_page(&vm->s2, ipa_page, 1 /* zero */);
         spin_unlock_irqrestore(&vm->s2.map_lock, flags);
 
         if (!pa) {
             KLOG_ERROR("[vmm] vm%u: ifetch fault ipa=0x%llx but PMM exhausted "
                        "(free=%llu pages)\n",
-                       vm->vmid, (unsigned long long)ipa_page,
-                       (unsigned long long)pmm_get_free_pages(&g_pmm));
+                       vm->vmid, (unsigned long long)ipa_page, (unsigned long long)pmm_get_free_pages(&g_pmm));
             return EL2_EXIT;
         }
 
@@ -611,21 +598,20 @@ static int handle_iabt(vcpu_t *vcpu, uint64_t esr)
         return EL2_RESUME; /* 不推进 PC：重试这次取指 */
     }
 
-    KLOG_ERROR(
-        "[VMM] vm%u: instruction abort at ipa=0x%llx — outside guest RAM "
-        "(s1ptw=%d elr=0x%llx esr=0x%llx)\n",
-        vcpu->vm ? vcpu->vm->vmid : 0, (unsigned long long)ipa_page, s1ptw,
-        (unsigned long long)vcpu->elr, (unsigned long long)esr);
+    KLOG_ERROR("[VMM] vm%u: instruction abort at ipa=0x%llx — outside guest RAM "
+               "(s1ptw=%d elr=0x%llx esr=0x%llx)\n",
+               vcpu->vm ? vcpu->vm->vmid : 0, (unsigned long long)ipa_page, s1ptw, (unsigned long long)vcpu->elr,
+               (unsigned long long)esr);
     return EL2_EXIT;
 }
 
-/* ── 虚拟 PSCI（guest CPU/电源管理）───────────────────────────
- *
- * 移植自 x-kernel vdev/aarch64/vpsci.rs。guest 通过 HVC 或 SMC 发起 PSCI 调用，
- * x0=function ID（0x8400_00xx=32 位调用约定 / 0xC400_00xx=64 位）。
- * 返回 EL2_RESUME（继续）或 EL2_VMEXIT（SYSTEM_OFF/RESET）。
- */
-#define PSCI_VERSION_FID  0x84000000ULL
+/* ── 虚拟 PSCI(guest CPU/电源管理)───────────────────────────
+
+   移植自 x-kernel vdev/aarch64/vpsci.rs。guest 通过 HVC 或 SMC 发起 PSCI 调用,
+   x0=function ID(0x8400_00xx=32 位调用约定 / 0xC400_00xx=64 位)。
+   返回 EL2_RESUME(继续)或 EL2_VMEXIT(SYSTEM_OFF/RESET)。
+*/
+#define PSCI_VERSION_FID      0x84000000ULL
 #define PSCI_CPU_ON_32        0x84000003ULL
 #define PSCI_CPU_ON_64        0xC4000003ULL
 #define PSCI_AFFINITY_INFO_32 0x84000004ULL
@@ -656,7 +642,7 @@ static int psci_fid_supported(uint64_t fid)
     }
 }
 
-/* 返回 EL2_RESUME / EL2_VMEXIT；非 PSCI（前缀不符）时返回 -1 表示未处理 */
+/* 返回 EL2_RESUME / EL2_VMEXIT；非 PSCI(前缀不符)时返回 -1 表示未处理 */
 static int handle_psci(vcpu_t *vcpu)
 {
     uint64_t fid = vcpu->r[0];
@@ -673,19 +659,18 @@ static int handle_psci(vcpu_t *vcpu)
     case PSCI_CPU_ON_32:
     case PSCI_CPU_ON_64: {
         /*
-         * Linux 的 cpu_psci_cpu_boot() 传 target_cpu = DT cpu@N 的 reg
-         * （也就是 MPIDR）。本 VMM 的 vMPIDR_EL2 = vcpu_id，DTB 的
-         * cpu@N reg = N，所以 Aff0 就是 vcpu_id；Aff1/2/3 必须为 0。
-         */
+           Linux 的 cpu_psci_cpu_boot() 传 target_cpu = DT cpu@N 的 reg
+           (也就是 MPIDR)。本 VMM 的 vMPIDR_EL2 = vcpu_id, DTB 的
+           cpu@N reg = N, 所以 Aff0 就是 vcpu_id；Aff1/2/3 必须为 0。
+        */
         uint64_t target = vcpu->r[1];
         uint64_t entry = vcpu->r[2];
         uint64_t context = vcpu->r[3];
         vm_t *vm = vcpu->vm;
 
-        if (!vm || (target & ~0xFFULL) ||
-            (target & 0xFF) >= (uint64_t)vm->nr_vcpus) {
-            KLOG_WARN("[vpsci] CPU_ON bad target=0x%llx (nr_vcpus=%d)\n",
-                      (unsigned long long)target, vm ? vm->nr_vcpus : -1);
+        if (!vm || (target & ~0xFFULL) || (target & 0xFF) >= (uint64_t)vm->nr_vcpus) {
+            KLOG_WARN("[vpsci] CPU_ON bad target=0x%llx (nr_vcpus=%d)\n", (unsigned long long)target,
+                      vm ? vm->nr_vcpus : -1);
             vcpu->r[0] = PSCI_RET_INVALID_PARAMS;
             return EL2_RESUME;
         }
@@ -708,30 +693,26 @@ static int handle_psci(vcpu_t *vcpu)
         uint64_t target = vcpu->r[1];
         vm_t *vm = vcpu->vm;
 
-        if (!vm || (target & ~0xFFULL) ||
-            (target & 0xFF) >= (uint64_t)vm->nr_vcpus) {
+        if (!vm || (target & ~0xFFULL) || (target & 0xFF) >= (uint64_t)vm->nr_vcpus) {
             vcpu->r[0] = PSCI_RET_INVALID_PARAMS;
             return EL2_RESUME;
         }
-        /* 0 = ON，1 = OFF（Linux 的 psci_affinity_info 约定）*/
+        /* 0 = ON, 1 = OFF(Linux 的 psci_affinity_info 约定) */
         vcpu->r[0] = vmm_vcpu_is_online(&vm->vcpus[target & 0xFF]) ? 0ULL : 1ULL;
         return EL2_RESUME;
     }
 
     case PSCI_SYSTEM_OFF:
     case PSCI_SYSTEM_RESET:
-        KLOG_INFO("[vpsci] guest shutdown fid=0x%llx (vcpu%d)\n",
-                  (unsigned long long)fid, vcpu->vcpu_id);
+        KLOG_INFO("[vpsci] guest shutdown fid=0x%llx (vcpu%d)\n", (unsigned long long)fid, vcpu->vcpu_id);
         return EL2_VMEXIT;
 
     case PSCI_FEATURES_FID:
-        vcpu->r[0] = psci_fid_supported(vcpu->r[1]) ? PSCI_RET_SUCCESS
-                                                    : PSCI_RET_NOT_SUPPORTED;
+        vcpu->r[0] = psci_fid_supported(vcpu->r[1]) ? PSCI_RET_SUCCESS : PSCI_RET_NOT_SUPPORTED;
         return EL2_RESUME;
 
     default:
-        KLOG_DEBUG("[vpsci] unsupported function 0x%llx\n",
-                   (unsigned long long)fid);
+        KLOG_DEBUG("[vpsci] unsupported function 0x%llx\n", (unsigned long long)fid);
         vcpu->r[0] = PSCI_RET_NOT_SUPPORTED;
         return EL2_RESUME;
     }
@@ -743,7 +724,7 @@ static int handle_hvc(vcpu_t *vcpu, uint64_t esr)
     (void)esr;
     uint64_t no = vcpu->r[0]; /* HVC number from guest x0 */
 
-    /* 先尝试 PSCI（function ID 前缀 0x84/0xC4，与 HVC_PRINT/DONE 不冲突）*/
+    /* 先尝试 PSCI(function ID 前缀 0x84/0xC4, 与 HVC_PRINT/DONE 不冲突) */
     int psci = handle_psci(vcpu);
     if (psci != -1)
         return psci;
@@ -751,10 +732,10 @@ static int handle_hvc(vcpu_t *vcpu, uint64_t esr)
     switch (no) {
     case HVC_PRINT: {
         uint64_t iter = vcpu->r[1];
-        /* 必须留在 INFO：readme.md 用 LOG=info 跑 test-vmm，这行就是通过证据。
-         * 但原来的 iter % 100 仍随迭代无界增长 —— 改用公共采样器抽稀成有界。 */
-        KLOG_INFO_SAMPLE("[VMM] HVC_PRINT: iter=%llu (vcpu%d)\n", iter,
-                         vcpu->vcpu_id);
+        /* 必须留在 INFO：readme.md 用 LOG=info 跑 test-vmm, 这行就是通过证据。
+           但原来的 iter % 100 仍随迭代无界增长 —— 改用公共采样器抽稀成有界。
+        */
+        KLOG_INFO_SAMPLE("[VMM] HVC_PRINT: iter=%llu (vcpu%d)\n", iter, vcpu->vcpu_id);
         /* 主动 yield：让出 CPU 给其他线程 */
         task_yield();
         return EL2_RESUME;
@@ -762,8 +743,7 @@ static int handle_hvc(vcpu_t *vcpu, uint64_t esr)
 
     case HVC_DONE: {
         uint64_t tests = vcpu->r[1];
-        KLOG_INFO("[VMM] HVC_DONE: vcpu%d reports %llu tests complete\n",
-                  vcpu->vcpu_id, tests);
+        KLOG_INFO("[VMM] HVC_DONE: vcpu%d reports %llu tests complete\n", vcpu->vcpu_id, tests);
         return EL2_VMEXIT;
     }
 
@@ -782,26 +762,24 @@ static int vmm_exit_handler(vcpu_t *vcpu)
     if ((vcpu->exit_type & 0xFF) != 0) {
         static uint64_t async_count;
         if (((++async_count) & 0xFFFF) == 1) {
-            KLOG_INFO("[VMM] async exit type=%llu count=%llu ELR=0x%llx\n",
-                      (unsigned long long)vcpu->exit_type,
-                      (unsigned long long)async_count,
-                      (unsigned long long)vcpu->elr);
+            KLOG_INFO("[VMM] async exit type=%llu count=%llu ELR=0x%llx\n", (unsigned long long)vcpu->exit_type,
+                      (unsigned long long)async_count, (unsigned long long)vcpu->elr);
         }
         return EL2_RESUME;
     }
 
     switch (ec) {
     case 0x01:
-        return handle_wfi(vcpu, esr); /* WFI/WFE            */
+        return handle_wfi(vcpu, esr); /* WFI/WFE */
     case 0x16:
-        return handle_hvc(vcpu, esr); /* HVC                */
+        return handle_hvc(vcpu, esr); /* HVC */
     case 0x17: {                      /* SMC (PSCI conduit) */
-        /* SMC 陷入时 ELR_EL2 指向 SMC 指令本身，需手动步进；
-         * 而 HVC 陷入时硬件已指向下一条。 */
+        /* SMC 陷入时 ELR_EL2 指向 SMC 指令本身, 需手动步进；
+           而 HVC 陷入时硬件已指向下一条。
+        */
         int r = handle_psci(vcpu);
         if (r == -1) {
-            KLOG_WARN("[VMM] Unhandled SMC fid=0x%llx (vcpu%d)\n",
-                      (unsigned long long)vcpu->r[0], vcpu->vcpu_id);
+            KLOG_WARN("[VMM] Unhandled SMC fid=0x%llx (vcpu%d)\n", (unsigned long long)vcpu->r[0], vcpu->vcpu_id);
             vcpu->r[0] = PSCI_RET_NOT_SUPPORTED;
             r = EL2_RESUME;
         }
@@ -810,20 +788,18 @@ static int vmm_exit_handler(vcpu_t *vcpu)
         return r;
     }
     case 0x18:
-        return handle_sysreg(vcpu, esr); /* trapped sysreg     */
+        return handle_sysreg(vcpu, esr); /* trapped sysreg */
     case 0x24:
         return handle_dabt(vcpu, esr); /* Stage-2 Data Abort */
     case 0x20:
         return handle_iabt(vcpu, esr); /* Stage-2 Instruction Abort
-                                                  * —— 按需分页后必然触发
-                                                  * （取指缺页 / S1PTW）*/
+                                                    —— 按需分页后必然触发
+                                                    (取指缺页 / S1PTW)
+                                       */
     default:
-        KLOG_ERROR(
-            "[VMM] Unhandled exit: EC=0x%x ESR=0x%llx ELR=0x%llx SPSR=0x%llx\n",
-            ec, esr, vcpu->elr, vcpu->spsr);
+        KLOG_ERROR("[VMM] Unhandled exit: EC=0x%x ESR=0x%llx ELR=0x%llx SPSR=0x%llx\n", ec, esr, vcpu->elr, vcpu->spsr);
         for (int i = 0; i < 8; i += 2)
-            KLOG_ERROR("  x%d=0x%llx  x%d=0x%llx\n", i, vcpu->r[i], i + 1,
-                       vcpu->r[i + 1]);
+            KLOG_ERROR("  x%d=0x%llx  x%d=0x%llx\n", i, vcpu->r[i], i + 1, vcpu->r[i + 1]);
         return EL2_EXIT;
     }
 }
@@ -831,18 +807,18 @@ static int vmm_exit_handler(vcpu_t *vcpu)
 /* ── AArch64 VMM 架构钩子实现 ───────────────────────────────── */
 
 /*
- * ── guest 虚拟定时器（vtimer）投递 ──────────────────────────
- *
- * 移植自 x-kernel vdev/aarch64/vtimer.rs 的 check_vtimer：
- *   1. 读 guest 的 CNTV_CTL，未使能或被屏蔽（IMASK）则无到期
- *   2. 到期判据：CNTPCT_EL0 >= CNTV_CVAL + CNTVOFF_EL2
- *      （CVAL 在虚拟计数域，加偏移换算到物理计数域）
- *   3. 到期则把 PPI 27 注入 guest（经 vGIC）
- *
- * 注：kvmm 在**世界切换出口存根**里保存 CNTV_CTL/CVAL 到 vcpu，此处直接
- * 读当前寄存器——在单 vCPU、且 VMM 与 guest 同核运行的 avatar 模型下等价。
- * 若将来支持 vCPU 跨核迁移，需改为在 vcpu_t 中保存/恢复这两个值。
- */
+   ── guest 虚拟定时器(vtimer)投递 ──────────────────────────
+
+   移植自 x-kernel vdev/aarch64/vtimer.rs 的 check_vtimer：
+     1. 读 guest 的 CNTV_CTL, 未使能或被屏蔽(IMASK)则无到期
+     2. 到期判据：CNTPCT_EL0 >= CNTV_CVAL + CNTVOFF_EL2
+        (CVAL 在虚拟计数域, 加偏移换算到物理计数域)
+     3. 到期则把 PPI 27 注入 guest(经 vGIC)
+
+   注：kvmm 在世界切换出口存根里保存 CNTV_CTL/CVAL 到 vcpu, 此处直接
+   读当前寄存器——在单 vCPU, 且 VMM 与 guest 同核运行的 avatar 模型下等价。
+   若将来支持 vCPU 跨核迁移, 需改为在 vcpu_t 中保存/恢复这两个值。
+*/
 #define CNTV_CTL_ENABLE (1ULL << 0)
 #define CNTV_CTL_IMASK  (1ULL << 1)
 
@@ -862,28 +838,26 @@ static void aarch64_check_vtimer(vcpu_t *vcpu)
         if (((++inject_count) & 0xFFFF) == 1) {
             KLOG_INFO("[VMM] inject vtimer count=%llu ctl=0x%llx cval=0x%llx "
                       "now=0x%llx off=0x%llx | vm%u faults=%llu wfi=%llu\n",
-                      (unsigned long long)inject_count, (unsigned long long)ctl,
-                      (unsigned long long)cval, (unsigned long long)now,
-                      (unsigned long long)off, vcpu->vm->vmid,
-                      (unsigned long long)vcpu->vm->s2.nr_fault,
-                      (unsigned long long)vcpu->vm->s2.nr_premap);
+                      (unsigned long long)inject_count, (unsigned long long)ctl, (unsigned long long)cval,
+                      (unsigned long long)now, (unsigned long long)off, vcpu->vm->vmid,
+                      (unsigned long long)vcpu->vm->s2.nr_fault, (unsigned long long)vcpu->vm->s2.nr_premap);
             if (inject_count > 0x10000)
-                (void)0; /* vGIC 分层 dump 已收（排查完了，见 git 历史）*/
+                (void)0; /* vGIC 分层 dump 已收(排查完了, 见 git 历史) */
         }
         vmm_arch_irq_raise(vcpu, virq_line(VIRQ_VTIMER));
     }
 }
 
 /*
- * ── 虚拟 PL011 RX 中断投递 ──────────────────────────────────
- *
- * 与 vtimer 同理，在进入 guest 前把「设备侧已就绪」的中断同步给 vGIC。
- *
- * RX 中断是**电平触发**：只要 RX FIFO 里还有数据、且 guest 在 UARTIMSC
- * 里开着 RX 位，就必须保持 pending。只在 push 时置一次不行 —— guest
- * 应答时 vGIC 会把 pending 位清掉（见 vmm_vgic3_sync_exit 的 clear_pending），
- * FIFO 里剩余的字节会因此再也没人来取。所以放在每次入口处重拉。
- */
+   ── 虚拟 PL011 RX 中断投递 ──────────────────────────────────
+
+   与 vtimer 同理, 在进入 guest 前把「设备侧已就绪」的中断同步给 vGIC。
+
+   RX 中断是电平触发：只要 RX FIFO 里还有数据, 且 guest 在 UARTIMSC
+   里开着 RX 位, 就必须保持 pending。只在 push 时置一次不行 —— guest
+   应答时 vGIC 会把 pending 位清掉(见 vmm_vgic3_sync_exit 的 clear_pending),
+   FIFO 里剩余的字节会因此再也没人来取。所以放在每次入口处重拉。
+*/
 static void aarch64_check_vpl011_rx(vcpu_t *vcpu)
 {
     if (!vpl011_rx_irq_asserted(vcpu->vm))
@@ -892,47 +866,48 @@ static void aarch64_check_vpl011_rx(vcpu_t *vcpu)
     vmm_arch_irq_raise(vcpu, virq_line(VIRQ_CONSOLE));
 }
 
-/* NPU 三核中断线的上一轮电平 —— 用来取上升沿，见 aarch64_check_vnpu()。
- * 全局而非每 VM：同一时刻只有一个 VM 持有 NPU（vnpu 的占用守卫）。*/
+/* NPU 三核中断线的上一轮电平 —— 用来取上升沿, 见 aarch64_check_vnpu()。
+   全局而非每 VM：同一时刻只有一个 VM 持有 NPU(vnpu 的占用守卫)。
+*/
 static bool g_vnpu_prev[VNPU_CORES];
 static uint32_t g_vnpu_injects[VNPU_CORES];
 
 /*
- * ── 虚拟 NPU 中断投递（RK3588 三核透传）───────────────────────
- *
- * 与 vPL011 RX 同构，理由也一样：NPU 的中断是**电平**触发 —— 核里的
- * INT_STATUS 一直有效到 guest 写 INT_CLEAR。只在事件发生那一刻置一次
- * pending 是**边沿**做法，guest 应答时 vGIC 会把 pending 清掉，剩下的
- * 状态位（三个核先后完成、或一个核里多个块）就再也没人来取了。
- * 所以放在每次入口重拉。
- *
- * ⚠️ 为什么是轮询，而不是像 GICv2 的 vtimer 那样装宿主 ISR：
- *    宿主 ISR 在 guest 运行时是在 EL2 **就地处理完直接 eret 回 guest** 的
- *    （不经过 vCPU 主循环，拿不到 lr_switch_in 那次同步），而且它的正常
- *    收尾就是写 INT_CLEAR —— 等于把 guest 的中断吃掉，两边都不报错。
- *    更糟的是电平线在宿主 ack 之后立刻重触发（状态位还在），宿主会卡死
- *    在 ISR 里，guest 永远拿不到 CPU。轮询把这三个问题一次绕开，
- *    代价只是每次入口多读 6 个寄存器（三核各 INT_STATUS/INT_MASK），
- *    相对一次 EL2 往返可以忽略。
- *
- * 三核**各投各的**，不是"任一核有效就投三条"：单核掩码的作业只有一个核
- * 会完成，多核作业三核完成时刻也差几微秒，混在一起会让 guest 收到
- * 不属于它的中断（drivers 侧表现为 "irq but no task"）。
- */
+   ── 虚拟 NPU 中断投递(RK3588 三核透传)───────────────────────
+
+   与 vPL011 RX 同构, 理由也一样：NPU 的中断是电平触发 —— 核里的
+   INT_STATUS 一直有效到 guest 写 INT_CLEAR。只在事件发生那一刻置一次
+   pending 是边沿做法, guest 应答时 vGIC 会把 pending 清掉, 剩下的
+   状态位(三个核先后完成, 或一个核里多个块)就再也没人来取了。
+   所以放在每次入口重拉。
+
+   注意： 为什么是轮询, 而不是像 GICv2 的 vtimer 那样装宿主 ISR：
+      宿主 ISR 在 guest 运行时是在 EL2 就地处理完直接 eret 回 guest 的
+      (不经过 vCPU 主循环, 拿不到 lr_switch_in 那次同步), 而且它的正常
+      收尾就是写 INT_CLEAR —— 等于把 guest 的中断吃掉, 两边都不报错。
+      更糟的是电平线在宿主 ack 之后立刻重触发(状态位还在), 宿主会卡死
+      在 ISR 里, guest 永远拿不到 CPU。轮询把这三个问题一次绕开,
+      代价只是每次入口多读 6 个寄存器(三核各 INT_STATUS/INT_MASK),
+      相对一次 EL2 往返可以忽略。
+
+   三核各投各的, 不是"任一核有效就投三条"：单核掩码的作业只有一个核
+   会完成, 多核作业三核完成时刻也差几微秒, 混在一起会让 guest 收到
+   不属于它的中断(drivers 侧表现为 "irq but no task")。
+*/
 static void aarch64_check_vnpu(vcpu_t *vcpu)
 {
     for (uint32_t c = 0; c < VNPU_CORES; c++) {
         bool now = vnpu_irq_asserted(vcpu->vm, c);
 
-        /* 只在**上升沿**记一次，这样这个计数就是"注入了几次中断"，
-         * 而不是"重拉了几次"（后者是入口次数，没有意义）。
-         * 真机验证时看 core1/core2 两行是否都出现，就知道三核都报过中断。*/
+        /* 只在上升沿记一次, 这样这个计数就是"注入了几次中断",
+           而不是"重拉了几次"(后者是入口次数, 没有意义)。
+           真机验证时看 core1/core2 两行是否都出现, 就知道三核都报过中断。
+        */
         if (now && !g_vnpu_prev[c]) {
             g_vnpu_injects[c]++;
             if (g_vnpu_injects[c] == 1) {
-                KLOG_INFO("[vnpu] 首次向 guest 注入 NPU core%u 中断 "
-                          "(INTID %u)\n",
-                          c, VIRQ_NPU0 + c);
+                KLOG_INFO("[vnpu] injecting NPU core%u interrupt into guest for the first time (INTID %u)\n", c,
+                          VIRQ_NPU0 + c);
             }
         }
         g_vnpu_prev[c] = now;
@@ -949,23 +924,25 @@ void vmm_arch_restore_guest_ctx(vcpu_t *vcpu)
 
     restore_sysregs_el12(vcpu->sysregs);
 
-    /* 每次入口按设备/定时器状态重拉虚拟中断，再同步进 vGIC。*/
+    /* 每次入口按设备/定时器状态重拉虚拟中断, 再同步进 vGIC。 */
     aarch64_check_vtimer(vcpu);
     aarch64_check_vpl011_rx(vcpu);
     aarch64_check_vnpu(vcpu);
 
-    /* vIRQ：把可投递中断排入 LR，让 GIC 向 guest 产生虚拟 IRQ。
-     * GICv2 走 GICH_LR（MMIO），GICv3 走 ICH_LR<n>_EL2（系统寄存器）。*/
+    /* vIRQ：把可投递中断排入 LR, 让 GIC 向 guest 产生虚拟 IRQ。
+       GICv2 走 GICH_LR(MMIO), GICv3 走 ICH_LR<n>_EL2(系统寄存器)。
+    */
 #if DRIVER_GIC_V3
     /*
-     * 每 CPU 的 ICH_HCR_EL2.En 必须**在这里**开，不能只在 vm_create() 里开一次：
-     * vm_create 跑在调用者的核上，而 vCPU 任务是钉在 CPU0 的，SMP>1 时两者可能
-     * 不是同一个核 —— 那会让 guest 一个虚拟中断都收不到（详见
-     * vmm_vgic3_hw_init 的注释）。同一个核重复写是幂等的。
-     */
+       每 CPU 的 ICH_HCR_EL2.En 必须在这里开, 不能只在 vm_create() 里开一次：
+       vm_create 跑在调用者的核上, 而 vCPU 任务是钉在 CPU0 的, SMP>1 时两者可能
+       不是同一个核 —— 那会让 guest 一个虚拟中断都收不到(详见
+       vmm_vgic3_hw_init 的注释)。同一个核重复写是幂等的。
+    */
     vmm_vgic3_hw_init();
-    /* ⚠️ 用 switch_in 而不是直接 sync_entry：LR 是 per-pCPU 硬件，本核
-     * 可能刚跑过**别的 VM** 的 vCPU 任务，直接 sync 会串味（见其注释）。*/
+    /* 注意： 用 switch_in 而不是直接 sync_entry：LR 是 per-pCPU 硬件, 本核
+       可能刚跑过别的 VM 的 vCPU 任务, 直接 sync 会串味(见其注释)。
+    */
     vmm_vgic3_lr_switch_in(&vcpu->vm->vgic3, vcpu);
 #else
     vmm_vgic_sync_entry(&vcpu->vm->vgic, (uint32_t)vcpu->vcpu_id);
@@ -975,7 +952,7 @@ void vmm_arch_restore_guest_ctx(vcpu_t *vcpu)
 int vmm_arch_enter_guest(vcpu_t *vcpu)
 {
     el2_enter_guest(vcpu);
-    return 1; /* el2_enter_guest 总是成功返回（否则直接崩溃）*/
+    return 1; /* el2_enter_guest 总是成功返回(否则直接崩溃) */
 }
 
 int vmm_arch_exit_handler(vcpu_t *vcpu)
@@ -987,8 +964,9 @@ void vmm_arch_save_guest_ctx(vcpu_t *vcpu)
 {
     save_sysregs_el12(vcpu->sysregs);
 #if DRIVER_GIC_V3
-    /* GICv3：guest 的 ack/EOI 由硬件直接服务，只能在这里回读 LR 状态，
-     * 把 guest 已经 EOI 掉的中断从软件 active 记帐里摘掉。*/
+    /* GICv3：guest 的 ack/EOI 由硬件直接服务, 只能在这里回读 LR 状态,
+       把 guest 已经 EOI 掉的中断从软件 active 记帐里摘掉。
+    */
     vmm_vgic3_sync_exit(&vcpu->vm->vgic3, (uint32_t)vcpu->vcpu_id);
 #else
     vmm_vgic_sync_exit(&vcpu->vm->vgic, (uint32_t)vcpu->vcpu_id);

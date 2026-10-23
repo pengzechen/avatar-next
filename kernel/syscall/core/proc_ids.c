@@ -1,15 +1,15 @@
 /*
- * core/proc_ids.c - 进程身份 / 进程组 / 会话相关 syscall
- *
- * 从 kernel/syscall/syscall.c 抽出。覆盖：
- *   getpid / getppid / gettid / set_tid_address
- *   getuid / geteuid / getgid / getegid / setuid / setgid
- *   getresuid / getresgid / setresuid / setresgid
- *   getpgid / setpgid / getsid / setsid
- *   getgroups / setgroups
- *
- * 当前模型：root 可任意 setuid/setgid；不做权限检查。
- */
+   core/proc_ids.c - 进程身份 / 进程组 / 会话相关 syscall
+
+   从 kernel/syscall/syscall.c 抽出。覆盖：
+     getpid / getppid / gettid / set_tid_address
+     getuid / geteuid / getgid / getegid / setuid / setgid
+     getresuid / getresgid / setresuid / setresgid
+     getpgid / setpgid / getsid / setsid
+     getgroups / setgroups
+
+   当前模型：root 可任意 setuid/setgid；不做权限检查。
+*/
 #include "syscall/syscall_internal.h"
 #include "syscall/syscall.h"
 #include "task/task.h"
@@ -22,8 +22,7 @@ static bool process_group_exists(uint32_t pgid)
     for (uint32_t i = 0; i < TASK_MAX; i++) {
         if (!g_stack_used[i])
             continue;
-        if (g_task_pool[i].state == TASK_DEAD ||
-            g_task_pool[i].state == TASK_ALLOCATING)
+        if (g_task_pool[i].state == TASK_DEAD || g_task_pool[i].state == TASK_ALLOCATING)
             continue;
         if (g_task_pool[i].pgid == pgid)
             return true;

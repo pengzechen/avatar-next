@@ -1,14 +1,14 @@
 /*
- * core/proc_lifecycle.c - 进程/线程生命周期 syscall
- *
- * 从 kernel/syscall/syscall.c 抽出，覆盖：
- *   exit / exit_group        → sys_exit() + exit_handler()
- *   clone (fork + thread)    → clone_handler()
- *   execve                   → sys_execve() + execve_handler()
- *   wait4 / waitid           → wait_handler()
- *
- * sys_exit / sys_execve 在 syscall.h 中已有 public 声明。
- */
+   core/proc_lifecycle.c - 进程/线程生命周期 syscall
+
+   从 kernel/syscall/syscall.c 抽出, 覆盖：
+     exit / exit_group        → sys_exit() + exit_handler()
+     clone (fork + thread)    → clone_handler()
+     execve                   → sys_execve() + execve_handler()
+     wait4 / waitid           → wait_handler()
+
+   sys_exit / sys_execve 在 syscall.h 中已有 public 声明。
+*/
 #include "syscall/syscall.h"
 #include "syscall/syscall_internal.h"
 #include "syscall/fs/fd_pool.h"
@@ -18,7 +18,7 @@
 #include "syscall/fs/pty.h"
 #include "loader/elf_loader.h"
 #include "task/task.h"
-#include "task/cpu.h" /* get_current_cpu_id / AVATAR_MAX_CPUS（execve argv 副本按 CPU 分行）*/
+#include "task/cpu.h" /* get_current_cpu_id / AVATAR_MAX_CPUS(execve argv 副本按 CPU 分行) */
 #include "task/sched.h"
 #include "task/switch.h"
 #include "user_layout.h"
@@ -77,16 +77,16 @@
 #endif
 
 /*
- * PTE_KEEP（设备缓冲：ION / dma-buf）在 fork 时的处理。
- *
- * 认不出来会怎样：下面的 "共享页" 判断只看 NOFREE，KEEP 页会被当成普通
- * 私有页**复制一份**给子进程 —— 内存是安全的（各释放各的），但语义是错的：
- * 父子从此看着**两块不同的内存**，而 NPU 缓冲区的语义是"同一块"。
- * 这种错误不会崩，只会让结果对不上，事后极难定位。
- *
- * 与 NOFREE 的关键差别：**不调 shared_page_ref**。KEEP 页归句柄所有，
- * 父子都只是映射者，谁 unmap 都不释放（见 include/aarch64/mmu.h 的说明）。
- */
+   PTE_KEEP(设备缓冲：ION / dma-buf)在 fork 时的处理。
+
+   认不出来会怎样：下面的 "共享页" 判断只看 NOFREE, KEEP 页会被当成普通
+   私有页复制一份给子进程 —— 内存是安全的(各释放各的), 但语义是错的：
+   父子从此看着两块不同的内存, 而 NPU 缓冲区的语义是"同一块"。
+   这种错误不会崩, 只会让结果对不上, 事后极难定位。
+
+   与 NOFREE 的关键差别：不调 shared_page_ref。KEEP 页归句柄所有,
+   父子都只是映射者, 谁 unmap 都不释放(见 include/aarch64/mmu.h 的说明)。
+*/
 #if ARCH_RISCV64
 #define CLONE_CHECK_KEEP(pgd, va, out) \
     do { \
@@ -109,7 +109,7 @@
 /* 打标这一步三个架构统一 —— mm_vm_set_pte_keep 在各自的 mm_vm.h 里 */
 #define CLONE_MARK_KEEP(pgd, va) mm_vm_set_pte_keep(pgd, va)
 
-/* 任务池（定义在 kernel/task/task.c） */
+/* 任务池(定义在 kernel/task/task.c) */
 extern task_t g_task_pool[TASK_MAX];
 extern uint8_t g_stack_used[TASK_MAX];
 extern uint8_t g_task_stacks[TASK_MAX][TASK_STACK_SIZE];
@@ -119,33 +119,33 @@ extern uint32_t g_task_id_cnt;
 #define EXEC_MAX_ARGLEN 256
 
 /*
- * execve 的 argv 内核副本，**必须按 CPU 分行**。
- *
- * 曾经是两个全局数组，后果（busybox 管道场景实测）：SMP 下 shell fork 出
- * 两个 wrapper 并发 execve，`ls` 侧刚把 argv 拷进来，`grep` 侧就把**同一块**
- * 全局缓冲覆写成自己的 argv —— 两个新任务拿到同一份参数。/bin/ls 和
- * /bin/grep 是同一个 busybox 的拷贝、applet 由 argv[0] 决定，于是**两个
- * 任务跑的是同一个程序**：grep 侧（fd1=控制台）跑了 ls → 完整目录列表
- * 不经过滤直接上屏；ls 侧往管道里写却没人读 → SIGPIPE → exit(141)。
- * 表现为"管道没生效/结果不对"，极易误判成竞态锁问题。
- *
- * 安全性依据：syscall 路径本核关中断（见 docs/INTERRUPT_CONTROL_COMPARISON.md
- * 的分野 —— EL0 任务的内核侧关中断），同核不会重入；跨核走不同行。
- * 缓冲从拷入到消费（elf_setup_stack 把字符串写进新任务栈）全程同步，
- * 不跨 task_block。
- */
+   execve 的 argv 内核副本, 必须按 CPU 分行。
+
+   曾经是两个全局数组, 后果(busybox 管道场景实测)：SMP 下 shell fork 出
+   两个 wrapper 并发 execve, `ls` 侧刚把 argv 拷进来, `grep` 侧就把同一块
+   全局缓冲覆写成自己的 argv —— 两个新任务拿到同一份参数。/bin/ls 和
+   /bin/grep 是同一个 busybox 的拷贝, applet 由 argv[0] 决定, 于是两个
+   任务跑的是同一个程序：grep 侧(fd1=控制台)跑了 ls → 完整目录列表
+   不经过滤直接上屏；ls 侧往管道里写却没人读 → SIGPIPE → exit(141)。
+   表现为"管道没生效/结果不对", 极易误判成竞态锁问题。
+
+   安全性依据：syscall 路径本核关中断(见 docs/INTERRUPT_CONTROL_COMPARISON.md
+   的分野 —— EL0 任务的内核侧关中断), 同核不会重入；跨核走不同行。
+   缓冲从拷入到消费(elf_setup_stack 把字符串写进新任务栈)全程同步,
+   不跨 task_block。
+*/
 static char g_exec_arg_store[AVATAR_MAX_CPUS][EXEC_MAX_ARGC][EXEC_MAX_ARGLEN];
 static char *g_exec_argv_ptrs[AVATAR_MAX_CPUS][EXEC_MAX_ARGC + 1];
 
 /* ───────────────────────────────────────────────────────────────
- *  sys_exit
- * ─────────────────────────────────────────────────────────────── */
+    sys_exit
+   ───────────────────────────────────────────────────────────────
+*/
 void sys_exit(int status)
 {
     task_t *current = task_current();
 
-    KLOG_SYSCALL("[syscall] process '%s' (id=%u) exiting with status %d\n",
-                 current->name, current->id, status);
+    KLOG_SYSCALL("[syscall] process '%s' (id=%u) exiting with status %d\n", current->name, current->id, status);
 
     current->exit_status = status;
 
@@ -158,8 +158,9 @@ void sys_exit(int status)
     /* CLONE_VM/CLONE_FILES threads share fd objects with the process. */
     if (!current->is_thread) {
         for (int _fd = 0; _fd < (int)TASK_MAX_FD; _fd++) {
-            /* 摘表项要原子：进程退出时可能还有别的线程在 close 同一个 fd，
-             * 两边都拿到同一个 idx 就会把同一个槽归还两次。 */
+            /* 摘表项要原子：进程退出时可能还有别的线程在 close 同一个 fd,
+               两边都拿到同一个 idx 就会把同一个槽归还两次。
+            */
             int _idx = task_take_fd(current, _fd);
             if (_idx < 0 || _idx >= FD_POOL_SIZE)
                 continue;
@@ -177,8 +178,7 @@ void sys_exit(int status)
         }
         if (current->create_ns != 0) {
             uint64_t _wall = _now - current->create_ns;
-            current->utime_ns =
-                (_wall > current->stime_ns) ? _wall - current->stime_ns : 0;
+            current->utime_ns = (_wall > current->stime_ns) ? _wall - current->stime_ns : 0;
         }
     }
 
@@ -218,8 +218,9 @@ void exit_group_handler(uint64_t regs[6])
 }
 
 /* ───────────────────────────────────────────────────────────────
- *  sys_execve
- * ─────────────────────────────────────────────────────────────── */
+    sys_execve
+   ───────────────────────────────────────────────────────────────
+*/
 int64_t sys_execve(const char *pathname, char **argv, char **envp)
 {
     (void)envp;
@@ -229,7 +230,7 @@ int64_t sys_execve(const char *pathname, char **argv, char **envp)
     KLOG_SYSCALL("[syscall] execve called\n");
 
     task_t *current = task_current();
-    /* 记录可执行文件路径（/proc/self/exe 使用） */
+    /* 记录可执行文件路径(/proc/self/exe 使用) */
     {
         int k = 0;
         while (pathname[k] && k < (int)TASK_EXE_LEN - 1) {
@@ -239,11 +240,12 @@ int64_t sys_execve(const char *pathname, char **argv, char **envp)
         current->exe_path[k] = '\0';
     }
 
-    /* execve: fd 继承由 task_execve → process_create_with_pgd 处理，
-     * 这里不关闭 fd，让新进程继承连接 socket 等。
-     * CLOEXEC 标记的 fd 在新进程创建后才关闭。 */
+    /* execve: fd 继承由 task_execve → process_create_with_pgd 处理,
+       这里不关闭 fd, 让新进程继承连接 socket 等。
+       CLOEXEC 标记的 fd 在新进程创建后才关闭。
+    */
 
-    /* 从 userspace 复制 argv（按 CPU 取行，理由见 g_exec_arg_store 的注释） */
+    /* 从 userspace 复制 argv(按 CPU 取行, 理由见 g_exec_arg_store 的注释) */
     char **kern_argv = NULL;
 
     if (argv) {
@@ -259,18 +261,15 @@ int64_t sys_execve(const char *pathname, char **argv, char **envp)
             char *uarg = uav[n];
             if (!uarg)
                 break;
-            copy_string_from_user(uarg, store + (size_t)n * EXEC_MAX_ARGLEN,
-                                  EXEC_MAX_ARGLEN);
+            copy_string_from_user(uarg, store + (size_t)n * EXEC_MAX_ARGLEN, EXEC_MAX_ARGLEN);
             ptrs[n] = store + (size_t)n * EXEC_MAX_ARGLEN;
             n++;
         }
         ptrs[n] = NULL;
         kern_argv = ptrs;
         if (n == EXEC_MAX_ARGC)
-            KLOG_SYSCALL("[execve] argv truncated path=%s max_argc=%d\n",
-                         pathname, EXEC_MAX_ARGC);
-        KLOG_SYSCALL("[execve] path=%s argc=%d argv0=%s\n", pathname, n,
-                     n > 0 ? ptrs[0] : "");
+            KLOG_SYSCALL("[execve] argv truncated path=%s max_argc=%d\n", pathname, EXEC_MAX_ARGC);
+        KLOG_SYSCALL("[execve] path=%s argc=%d argv0=%s\n", pathname, n, n > 0 ? ptrs[0] : "");
     }
 
     /* 将相对路径转为绝对路径 */
@@ -291,8 +290,9 @@ void execve_handler(uint64_t regs[6])
 }
 
 /* ───────────────────────────────────────────────────────────────
- *  clone (fork + thread)
- * ─────────────────────────────────────────────────────────────── */
+    clone (fork + thread)
+   ───────────────────────────────────────────────────────────────
+*/
 void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
 {
     uint64_t flags = regs[0];
@@ -302,16 +302,16 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
     uint32_t *child_tidptr = (uint32_t *)regs[4];
 
     /*
-     * 分配子任务槽。走和 task_create 同一条路（task_alloc_slot）——
-     * 以前这里内联抄了一份自己的认领循环，三个问题：
-     *   1. 无锁：两核同时 fork 会认领到同一个槽（共用 TCB + 栈）；
-     *   2. 不清零 TCB：子进程继承上一个占位者的 cpu_affinity /
-     *      preempt_count 等残值（preempt_count 非 0 = 永久不可抢占）；
-     *   3. 回收循环只判 state == TASK_DEAD、不判 parent_id：
-     *      A 进程的 fork 会把 B 进程还没 wait 的僵尸收走，B 的
-     *      waitpid 于是拿到 ECHILD（实测 SMP=4 下约 72%）。
-     * task_alloc_slot 内部已经处理了这三条。
-     */
+       分配子任务槽。走和 task_create 同一条路(task_alloc_slot)——
+       以前这里内联抄了一份自己的认领循环, 三个问题：
+         1. 无锁：两核同时 fork 会认领到同一个槽(共用 TCB + 栈)；
+         2. 不清零 TCB：子进程继承上一个占位者的 cpu_affinity /
+            preempt_count 等残值(preempt_count 非 0 = 永久不可抢占)；
+         3. 回收循环只判 state == TASK_DEAD, 不判 parent_id：
+            A 进程的 fork 会把 B 进程还没 wait 的僵尸收走, B 的
+            waitpid 于是拿到 ECHILD(实测 SMP=4 下约 72%)。
+       task_alloc_slot 内部已经处理了这三条。
+    */
     task_t *child = task_alloc_slot();
     if (!child) {
         KLOG_ERROR("[clone] no free task slots\n");
@@ -344,19 +344,15 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
     bool is_thread_clone = (flags & CLONE_THREAD) != 0;
 
     if ((flags & CLONE_VM) && !is_thread_clone) {
-        KLOG_SYSCALL("[clone/vfork] parent=%u flags=0x%llx: degrade to fork\n",
-                     parent->id, flags);
-        flags &= ~(CLONE_VM | CLONE_VFORK | CLONE_SETTLS | CLONE_PARENT_SETTID |
-                   CLONE_CHILD_CLEARTID);
+        KLOG_SYSCALL("[clone/vfork] parent=%u flags=0x%llx: degrade to fork\n", parent->id, flags);
+        flags &= ~(CLONE_VM | CLONE_VFORK | CLONE_SETTLS | CLONE_PARENT_SETTID | CLONE_CHILD_CLEARTID);
     }
 
     if (flags & CLONE_VM) {
-        /* ── 共享地址空间路径：pthread 才是同一 thread group，vfork 仍是子进程。 ── */
+        /* ── 共享地址空间路径：pthread 才是同一 thread group, vfork 仍是子进程。 ── */
         child->is_thread = is_thread_clone;
         child->shares_pgd = true;
-        child->tgid = is_thread_clone
-                          ? (parent->tgid ? parent->tgid : parent->id)
-                          : child->id;
+        child->tgid = is_thread_clone ? (parent->tgid ? parent->tgid : parent->id) : child->id;
         child->pgd = parent->pgd;
         child->user_entry = parent->user_entry;
         child->user_sp = child_stack;
@@ -365,7 +361,7 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
         child->heap_end = parent->heap_end;
         child->mmap_next = parent->mmap_next;
         child->mmap_base = parent->mmap_base;
-        child->interp_end = parent->interp_end; /* 共享 pgd，不复制只继承 */
+        child->interp_end = parent->interp_end; /* 共享 pgd, 不复制只继承 */
         child->fs_base = (flags & CLONE_SETTLS) ? tls : parent->fs_base;
         child->parent_id = parent->id;
 
@@ -385,8 +381,7 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
         if (is_thread_clone) {
             for (uint32_t k = 0; k < TASK_MAX_FD; k++)
                 child->fd_table[k] = parent->fd_table[k];
-            memcpy(child->fd_cloexec, parent->fd_cloexec,
-                   sizeof(parent->fd_cloexec));
+            memcpy(child->fd_cloexec, parent->fd_cloexec, sizeof(parent->fd_cloexec));
         } else {
             fd_table_inherit(child, parent);
         }
@@ -402,13 +397,11 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
         list_node_init(&child->run_node);
         list_node_init(&child->wait_node);
 
-        child->sp = arch_init_fork_child_stack(
-            child->stack_base, TASK_STACK_SIZE, frame, child_stack,
-            (flags & CLONE_SETTLS) ? tls : 0);
+        child->sp = arch_init_fork_child_stack(child->stack_base, TASK_STACK_SIZE, frame, child_stack,
+                                               (flags & CLONE_SETTLS) ? tls : 0);
 
-        KLOG_SYSCALL(
-            "[clone/thread] parent=%u child=%u flags=0x%llx tls=0x%llx usp=0x%llx ctid=%p\n",
-            parent->id, child->id, flags, tls, child_stack, child_tidptr);
+        KLOG_SYSCALL("[clone/thread] parent=%u child=%u flags=0x%llx tls=0x%llx usp=0x%llx ctid=%p\n", parent->id,
+                     child->id, flags, tls, child_stack, child_tidptr);
 
     } else {
         /* ── fork 路径 ── */
@@ -476,67 +469,66 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
 
         CLONE_COPY_RANGE(0x0, parent->heap_end);
         /*
-         * mmap 区从**本进程真实的**基址扫起，不是写死的 USER_MMAP_BASE_EXEC。
-         * PIE 进程的基址是 0x50000000，用 0x30000000 当起点会逐页空扫
-         * 512MB 的 VA 空洞（实测每次 fork 131,077 次四级页表遍历、约 9ms）。
-         * 下界取 mmap_base 是安全的：mmap_next 是递增高水位，且 munmap 的
-         * 回退下限也是 mmap_base（见 mmap.c），所以 [mmap_base, mmap_next)
-         * 必然覆盖该进程全部的 mmap 映射。
-         */
+           mmap 区从本进程真实的基址扫起, 不是写死的 USER_MMAP_BASE_EXEC。
+           PIE 进程的基址是 0x50000000, 用 0x30000000 当起点会逐页空扫
+           512MB 的 VA 空洞(实测每次 fork 131,077 次四级页表遍历, 约 9ms)。
+           下界取 mmap_base 是安全的：mmap_next 是递增高水位, 且 munmap 的
+           回退下限也是 mmap_base(见 mmap.c), 所以 [mmap_base, mmap_next)
+           必然覆盖该进程全部的 mmap 映射。
+        */
         if (clone_copy_ok && parent->mmap_next > parent->mmap_base)
             CLONE_COPY_RANGE(parent->mmap_base, parent->mmap_next);
         if (clone_copy_ok)
-            CLONE_COPY_RANGE(parent->user_stack_top - parent->user_stack_size,
-                             parent->user_stack_top);
+            CLONE_COPY_RANGE(parent->user_stack_top - parent->user_stack_size, parent->user_stack_top);
 
         /*
-         * 动态链接器（ld-musl）那一带必须单独复制。
-         *
-         * exec 把 interp 加载在 USER_INTERP_BASE(0x40000000)，而上面三个区间
-         * 一个都不覆盖它（[0,heap_end) 只到主程序末端，对动态 busybox 就是
-         * 0x10E000）。**而 musl 的 fork() 正是在 ld-musl 内部调 clone 的** ——
-         * 子进程从 syscall 返回时 PC 就在 0x4003xxxx，那一页不存在 →
-         * 取指页错误，子进程一启动就 SIGSEGV。
-         *
-         * 实测（SG2002 上跑动态链接的 busybox，一条 fork 就中）：
-         *   [clone/fork] parent=3 child=4 elr=0x4003d892 usp=0x6ffff690
-         *   [exception] sync: code=12 pc=0x4003d892 stval=0x4003d892
-         * 判据是 code=12（RISC-V 指令页错误）且 stval == pc —— 和 x86_64 那个
-         * sigret 缺失（RIP==CR2、I/D=1）是同一类指纹：**跳到未映射页执行**。
-         *
-         * 为什么一直没被发现：默认 rootfs 装的是**静态** busybox，没有 interp，
-         * interp_end 恒为 0，下面这行是空操作。只有跑动态链接的程序才会撞上。
-         *
-         * 为什么不干脆扫 [USER_INTERP_BASE, USER_MMAP_BASE_PIE)：那是 256MB 的
-         * 空洞，每个 fork 白扫 65536 页 —— 正是 mmap_base 那条注释里抱怨过的
-         * 那种浪费。interp_end 只覆盖真正映射过的部分（ld-musl 约几十页）。
-         */
+           动态链接器(ld-musl)那一带必须单独复制。
+
+           exec 把 interp 加载在 USER_INTERP_BASE(0x40000000), 而上面三个区间
+           一个都不覆盖它([0,heap_end) 只到主程序末端, 对动态 busybox 就是
+           0x10E000)。而 musl 的 fork() 正是在 ld-musl 内部调 clone 的 ——
+           子进程从 syscall 返回时 PC 就在 0x4003xxxx, 那一页不存在 →
+           取指页错误, 子进程一启动就 SIGSEGV。
+
+           实测(SG2002 上跑动态链接的 busybox, 一条 fork 就中)：
+             [clone/fork] parent=3 child=4 elr=0x4003d892 usp=0x6ffff690
+             [exception] sync: code=12 pc=0x4003d892 stval=0x4003d892
+           判据是 code=12(RISC-V 指令页错误)且 stval == pc —— 和 x86_64 那个
+           sigret 缺失(RIP==CR2, I/D=1)是同一类指纹：跳到未映射页执行。
+
+           为什么一直没被发现：默认 rootfs 装的是静态 busybox, 没有 interp,
+           interp_end 恒为 0, 下面这行是空操作。只有跑动态链接的程序才会撞上。
+
+           为什么不干脆扫 [USER_INTERP_BASE, USER_MMAP_BASE_PIE)：那是 256MB 的
+           空洞, 每个 fork 白扫 65536 页 —— 正是 mmap_base 那条注释里抱怨过的
+           那种浪费。interp_end 只覆盖真正映射过的部分(ld-musl 约几十页)。
+        */
         if (clone_copy_ok && parent->interp_end > USER_INTERP_BASE)
             CLONE_COPY_RANGE(USER_INTERP_BASE, parent->interp_end);
 
 #if ARCH_X86_64
         /*
-         * x86_64 的信号返回蹦床页，必须单独补一页。
-         *
-         * USER_SIGRET_PAGE = 0x70001000，比用户栈顶 USER_STACK_TOP = 0x70000000
-         * **还高 0x1000** —— 上面三个区间一个都不覆盖它。它由 exec 映射
-         * （kernel/task/exec.c 的 4b），fork 却从来没复制过，于是：
-         *
-         *   fork 出来的子进程 → 用户态装了 handler → 收到信号 → handler 返回时
-         *   `ret` 到 sa_restorer = USER_SIGRET_PAGE → 该页不存在 → 取指页故障。
-         *
-         * 实测（LTP kill02）：
-         *   User exception #14 at RIP=0x70001000
-         *   User PF CR2=0x70001000, bits: P=0 W=0 U=1 R=0 I=1   ← RIP==CR2 且 I/D=1
-         * RIP 等于 CR2 且是取指，正是「跳到未映射页执行」的指纹。
-         *
-         * 为什么只有 x86_64 需要：aarch64/riscv64 在 sa_restorer == 0 时是
-         * 在用户栈上写一个 rt_sigreturn 蹦床（见 signal.c），不依赖固定页。
-         * x86_64 不能用这招 —— 用户栈是 NX 的，栈上蹦床取不了指。
-         *
-         * 宏内部对未映射页有 `src_pa == 0 → continue` 的保护，父进程若也没有
-         * 这一页（例如父进程自己就是修复前 fork 出来的），这里是安全的空操作。
-         */
+           x86_64 的信号返回蹦床页, 必须单独补一页。
+
+           USER_SIGRET_PAGE = 0x70001000, 比用户栈顶 USER_STACK_TOP = 0x70000000
+           还高 0x1000 —— 上面三个区间一个都不覆盖它。它由 exec 映射
+           (kernel/task/exec.c 的 4b), fork 却从来没复制过, 于是：
+
+             fork 出来的子进程 → 用户态装了 handler → 收到信号 → handler 返回时
+             `ret` 到 sa_restorer = USER_SIGRET_PAGE → 该页不存在 → 取指页故障。
+
+           实测(LTP kill02)：
+             User exception #14 at RIP=0x70001000
+             User PF CR2=0x70001000, bits: P=0 W=0 U=1 R=0 I=1   ← RIP==CR2 且 I/D=1
+           RIP 等于 CR2 且是取指, 正是「跳到未映射页执行」的指纹。
+
+           为什么只有 x86_64 需要：aarch64/riscv64 在 sa_restorer == 0 时是
+           在用户栈上写一个 rt_sigreturn 蹦床(见 signal.c), 不依赖固定页。
+           x86_64 不能用这招 —— 用户栈是 NX 的, 栈上蹦床取不了指。
+
+           宏内部对未映射页有 `src_pa == 0 → continue` 的保护, 父进程若也没有
+           这一页(例如父进程自己就是修复前 fork 出来的), 这里是安全的空操作。
+        */
         if (clone_copy_ok)
             CLONE_COPY_RANGE(USER_SIGRET_PAGE, USER_SIGRET_PAGE + PAGE_SIZE);
 #endif
@@ -546,11 +538,11 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
             KLOG_ERROR("[clone] failed to copy user address space\n");
             g_stack_used[child - g_task_pool] = 0;
             /*
-             * 不能只 free 根页表：mm_vm_map_pages 已经建好的中间页表、
-             * 已复制的私有页、已 ref 的共享页（NOFREE）都挂在树上。
-             * vm_destroy_user_process() 会整棵回收，并按 KEEP/NOFREE
-             * 的规则处理 leaf。
-             */
+               不能只 free 根页表：mm_vm_map_pages 已经建好的中间页表,
+               已复制的私有页, 已 ref 的共享页(NOFREE)都挂在树上。
+               vm_destroy_user_process() 会整棵回收, 并按 KEEP/NOFREE
+               的规则处理 leaf。
+            */
             vm_destroy_user_process(child_pgd_phys);
             regs[0] = (uint64_t)(int64_t)-ENOMEM;
             return;
@@ -566,7 +558,7 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
         child->heap_end = parent->heap_end;
         child->mmap_next = parent->mmap_next;
         child->mmap_base = parent->mmap_base;
-        /* 上面已按 [USER_INTERP_BASE, interp_end) 复制过，子进程同样要记住 */
+        /* 上面已按 [USER_INTERP_BASE, interp_end) 复制过, 子进程同样要记住 */
         child->interp_end = parent->interp_end;
         child->fs_base = parent->fs_base;
         child->parent_id = parent->id;
@@ -602,8 +594,7 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
             fd_obj_ref(new_idx);
             child->fd_table[k] = (int16_t)new_idx;
         }
-        memcpy(child->fd_cloexec, parent->fd_cloexec,
-               sizeof(parent->fd_cloexec));
+        memcpy(child->fd_cloexec, parent->fd_cloexec, sizeof(parent->fd_cloexec));
         {
             int k = 0;
             while (parent->name[k] && k < (int)TASK_NAME_LEN - 1) {
@@ -616,12 +607,10 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
         list_node_init(&child->run_node);
         list_node_init(&child->wait_node);
 
-        child->sp = arch_init_fork_child_stack(
-            child->stack_base, TASK_STACK_SIZE, frame, child_stack, 0);
+        child->sp = arch_init_fork_child_stack(child->stack_base, TASK_STACK_SIZE, frame, child_stack, 0);
 
-        KLOG_SYSCALL("[clone/fork] parent=%u child=%u elr=0x%llx usp=0x%llx\n",
-                     parent->id, child->id, syscall_abi_ip(frame),
-                     syscall_abi_user_sp(frame));
+        KLOG_SYSCALL("[clone/fork] parent=%u child=%u elr=0x%llx usp=0x%llx\n", parent->id, child->id,
+                     syscall_abi_ip(frame), syscall_abi_user_sp(frame));
     }
 
     /* 信号继承 */
@@ -643,24 +632,22 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
 }
 
 /* ───────────────────────────────────────────────────────────────
- *  wait4 / waitid
- * ─────────────────────────────────────────────────────────────── */
+    wait4 / waitid
+   ───────────────────────────────────────────────────────────────
+*/
 /*
- * wait_write_result - 把 wait 的结果写回用户空间
- *
- * ustatus / urusage 是用户给的指针（可为 NULL）。必须走 copy_to_user_bytes：
- * 以前这里直接 `*wstatus = ...`，用户传一个非法地址（例如 (void*)-1）就会
- * 让内核态写到坏地址、触发 #PF 后落进异常处理的死循环，整个系统挂死。
- *
- * 返回 false 表示用户指针非法（调用者应回 -EFAULT）。
- */
-static bool wait_write_result(uint64_t ustatus, uint64_t urusage,
-                              const task_t *child)
+   wait_write_result - 把 wait 的结果写回用户空间
+
+   ustatus / urusage 是用户给的指针(可为 NULL)。必须走 copy_to_user_bytes：
+   以前这里直接 `*wstatus = ...`, 用户传一个非法地址(例如 (void*)-1)就会
+   让内核态写到坏地址, 触发 #PF 后落进异常处理的死循环, 整个系统挂死。
+
+   返回 false 表示用户指针非法(调用者应回 -EFAULT)。
+*/
+static bool wait_write_result(uint64_t ustatus, uint64_t urusage, const task_t *child)
 {
     if (ustatus) {
-        int status = child->exit_signal
-                         ? (int)(child->exit_signal & 0x7F)
-                         : (int)((child->exit_status & 0xFF) << 8);
+        int status = child->exit_signal ? (int)(child->exit_signal & 0x7F) : (int)((child->exit_status & 0xFF) << 8);
         if (copy_to_user_bytes(&status, (void *)ustatus, sizeof(status)) < 0)
             return false;
     }
@@ -686,9 +673,8 @@ void wait_handler(uint64_t regs[6], task_t *me)
 
     const int WNOHANG = 1;
 
-    KLOG_SYSCALL(
-        "[wait] enter: pid=%u wait_pid=%d wstatus=0x%llx options=0x%x rusage=0x%llx\n",
-        me->id, wait_pid, regs[1], options, regs[3]);
+    KLOG_SYSCALL("[wait] enter: pid=%u wait_pid=%d wstatus=0x%llx options=0x%x rusage=0x%llx\n", me->id, wait_pid,
+                 regs[1], options, regs[3]);
 
     /* 先判断是否存在匹配的子进程 */
     bool has_matching_child = false;
@@ -707,8 +693,7 @@ void wait_handler(uint64_t regs[6], task_t *me)
     }
 
     if (!has_matching_child) {
-        KLOG_SYSCALL("[wait] pid=%u no matching child for wait_pid=%d\n",
-                     me->id, wait_pid);
+        KLOG_SYSCALL("[wait] pid=%u no matching child for wait_pid=%d\n", me->id, wait_pid);
         regs[0] = (uint64_t)(int64_t)-ECHILD;
         return;
     }
@@ -732,9 +717,8 @@ void wait_handler(uint64_t regs[6], task_t *me)
     }
 
     if (found) {
-        KLOG_SYSCALL(
-            "[wait] pid=%u reap immediately child=%u status=%d signal=%d\n",
-            me->id, found->id, found->exit_status, found->exit_signal);
+        KLOG_SYSCALL("[wait] pid=%u reap immediately child=%u status=%d signal=%d\n", me->id, found->id,
+                     found->exit_status, found->exit_signal);
         if (!wait_write_result(regs[1], regs[3], found)) {
             regs[0] = (uint64_t)(int64_t)-EFAULT;
             return;
@@ -775,9 +759,8 @@ void wait_handler(uint64_t regs[6], task_t *me)
         }
     }
     if (found) {
-        KLOG_SYSCALL(
-            "[wait] pid=%u reap after wake child=%u status=%d signal=%d\n",
-            me->id, found->id, found->exit_status, found->exit_signal);
+        KLOG_SYSCALL("[wait] pid=%u reap after wake child=%u status=%d signal=%d\n", me->id, found->id,
+                     found->exit_status, found->exit_signal);
         if (!wait_write_result(regs[1], regs[3], found)) {
             regs[0] = (uint64_t)(int64_t)-EFAULT;
             return;
@@ -785,9 +768,7 @@ void wait_handler(uint64_t regs[6], task_t *me)
         regs[0] = (uint64_t)found->id;
         task_reap_dead(found);
     } else {
-        KLOG_SYSCALL(
-            "[wait] pid=%u resumed but no dead child for wait_pid=%d\n", me->id,
-            wait_pid);
+        KLOG_SYSCALL("[wait] pid=%u resumed but no dead child for wait_pid=%d\n", me->id, wait_pid);
         regs[0] = (uint64_t)(int64_t)-ECHILD;
     }
 }

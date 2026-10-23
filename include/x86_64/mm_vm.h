@@ -2,11 +2,11 @@
 #define X86_64_MM_VM_H
 
 /*
- * x86_64 页表操作接口
- *
- * 本头文件由 mm_vm.h 包含，phys_to_virt/virt_to_phys 已在包含前定义。
- * 实现位于 kernel/mm/x86_64/vmm.c。
- */
+   x86_64 页表操作接口
+
+   本头文件由 mm_vm.h 包含, phys_to_virt/virt_to_phys 已在包含前定义。
+   实现位于 kernel/mm/x86_64/vmm.c。
+*/
 
 #include "mmu.h"
 
@@ -22,22 +22,20 @@ static inline uint64_t *x86_next_level(uint64_t pte)
     return (uint64_t *)x86_pa_to_kva(x86_pte_to_pa(pte));
 }
 
-/* ── 页表操作（实现在 kernel/mm/x86_64/vmm.c）──────────────────── */
+/* ── 页表操作(实现在 kernel/mm/x86_64/vmm.c)──────────────────── */
 
 extern uint64_t *x86_walk_pt(void *page_dir, uint64_t vaddr, bool alloc);
 extern uint64_t x86_perm_to_flags(vm_perm_t perm);
-extern int32_t mm_vm_map_pages(void *page_dir, uint64_t vaddr, uint64_t paddr,
-                               int32_t count, vm_perm_t perm);
+extern int32_t mm_vm_map_pages(void *page_dir, uint64_t vaddr, uint64_t paddr, int32_t count, vm_perm_t perm);
 extern uint64_t mm_vm_get_paddr(void *page_dir, uint64_t vaddr);
 extern int32_t mm_vm_copy_user_space(void *dst_pgd, void *src_pgd);
-extern void mm_vm_copy_to_uva(void *pgd, uint64_t user_vaddr,
-                              uint64_t src_paddr, uint64_t size);
+extern void mm_vm_copy_to_uva(void *pgd, uint64_t user_vaddr, uint64_t src_paddr, uint64_t size);
 
 /*
- * 把一页标成"设备缓冲"：unmap 时只拆映射，不释放页也不碰引用计数。
- * 用于把 dma_buf / ION 的缓冲区映射进用户态 —— 页归句柄所有，不归映射。
- * 语义与 PTE_NOFREE 的区别见 mmu.h 里 PTE_KEEP 的说明。
- */
+   把一页标成"设备缓冲"：unmap 时只拆映射, 不释放页也不碰引用计数。
+   用于把 dma_buf / ION 的缓冲区映射进用户态 —— 页归句柄所有, 不归映射。
+   语义与 PTE_NOFREE 的区别见 mmu.h 里 PTE_KEEP 的说明。
+*/
 static inline void mm_vm_set_pte_keep(void *pgd, uint64_t vaddr)
 {
     uint64_t *pte = x86_walk_pt(pgd, vaddr, false);
@@ -45,9 +43,9 @@ static inline void mm_vm_set_pte_keep(void *pgd, uint64_t vaddr)
         *pte |= PTE_KEEP;
 }
 
-/* ── 用户地址空间生命周期钩子（实现在 kernel/mm/x86_64/vmm.c）────── */
+/* ── 用户地址空间生命周期钩子(实现在 kernel/mm/x86_64/vmm.c)────── */
 
-/* x86 用户 PML4 必须包含内核高半区映射，否则 SYSCALL/中断会三重错误。 */
+/* x86 用户 PML4 必须包含内核高半区映射, 否则 SYSCALL/中断会三重错误。 */
 extern void mm_vm_init_user_pgd(void *pgd, uint64_t pgd_phys);
 extern void mm_vm_destroy_user_space(uint64_t pgd_phys);
 extern int mm_vm_unmap_page(void *pgd, uint64_t vaddr);

@@ -1,6 +1,6 @@
 /*
- * tests/mutex_test.c — Mutex 测试程序
- */
+   tests/mutex_test.c — Mutex 测试程序
+*/
 
 #include "task/task.h"
 #include "task/mutex.h"
@@ -118,7 +118,7 @@ void run_mutex_tests(void)
     if (mutex_is_locked(&g_mutex)) {
         KLOG_ERROR("[mutex_test] mutex should not be locked initially\n");
     } else {
-        KLOG_INFO("[mutex_test] mutex initial state: unlocked ✓\n");
+        KLOG_INFO("[mutex_test] mutex initial state: unlocked\n");
     }
 
     KLOG_INFO("[mutex_test] creating tasks...\n");
@@ -128,7 +128,7 @@ void run_mutex_tests(void)
     task_create("task_b", mutex_task_b, NULL, 1);
     task_create("task_c", mutex_task_c, NULL, 1);
 
-    /* 等待所有任务完成（通过 yield 让出 CPU） */
+    /* 等待所有任务完成(通过 yield 让出 CPU) */
     /* 注意：这里我们假设 idle 任务会持续 yield */
     KLOG_INFO("[mutex_test] tasks created, idle yielding...\n");
 

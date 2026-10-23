@@ -2,11 +2,11 @@
 #define RISCV64_MM_VM_H
 
 /*
- * RISC-V Sv39 页表操作接口
- *
- * 本头文件由 mm_vm.h 包含，phys_to_virt/virt_to_phys 已在包含前定义。
- * 实现位于 kernel/mm/riscv64/vmm.c。
- */
+   RISC-V Sv39 页表操作接口
+
+   本头文件由 mm_vm.h 包含, phys_to_virt/virt_to_phys 已在包含前定义。
+   实现位于 kernel/mm/riscv64/vmm.c。
+*/
 
 #include "mmu.h"
 
@@ -22,22 +22,20 @@ static inline uint64_t *rv_next_level(uint64_t pte)
     return (uint64_t *)rv_pa_to_kva(rv_pte_to_pa(pte));
 }
 
-/* ── 页表操作（实现在 kernel/mm/riscv64/vmm.c）──────────────────── */
+/* ── 页表操作(实现在 kernel/mm/riscv64/vmm.c)──────────────────── */
 
 extern uint64_t *rv_walk_l0_pte(void *page_dir, uint64_t vaddr, bool alloc);
 extern uint64_t rv_perm_to_flags(vm_perm_t perm);
 extern uint64_t mm_vm_get_pte(void *page_dir, uint64_t vaddr);
-extern int32_t mm_vm_map_pages(void *page_dir, uint64_t vaddr, uint64_t paddr,
-                               int32_t count, vm_perm_t perm);
+extern int32_t mm_vm_map_pages(void *page_dir, uint64_t vaddr, uint64_t paddr, int32_t count, vm_perm_t perm);
 extern uint64_t mm_vm_get_paddr(void *page_dir, uint64_t vaddr);
-extern void mm_vm_copy_to_uva(void *pgd, uint64_t user_vaddr,
-                              uint64_t src_paddr, uint64_t size);
+extern void mm_vm_copy_to_uva(void *pgd, uint64_t user_vaddr, uint64_t src_paddr, uint64_t size);
 
 /*
- * 把一页标成"设备缓冲"：unmap 时只拆映射，不释放页也不碰引用计数。
- * 用于把 dma_buf / ION 的缓冲区映射进用户态 —— 页归句柄所有，不归映射。
- * 语义与 RV_PTE_NOFREE 的区别见 mmu.h 里 RV_PTE_KEEP 的说明。
- */
+   把一页标成"设备缓冲"：unmap 时只拆映射, 不释放页也不碰引用计数。
+   用于把 dma_buf / ION 的缓冲区映射进用户态 —— 页归句柄所有, 不归映射。
+   语义与 RV_PTE_NOFREE 的区别见 mmu.h 里 RV_PTE_KEEP 的说明。
+*/
 static inline void mm_vm_set_pte_keep(void *pgd, uint64_t vaddr)
 {
     uint64_t *pte = rv_walk_l0_pte(pgd, vaddr, false);
@@ -45,12 +43,12 @@ static inline void mm_vm_set_pte_keep(void *pgd, uint64_t vaddr)
         *pte |= RV_PTE_KEEP;
 }
 
-/* ── 用户地址空间生命周期钩子（实现在 kernel/mm/riscv64/vmm.c）────── */
+/* ── 用户地址空间生命周期钩子(实现在 kernel/mm/riscv64/vmm.c)────── */
 
 /* 启动自检：RV_KERNEL_MAP_LIST 里的内核高半区映射必须全部有效。 */
 extern void mm_vm_verify_kernel_mappings(void);
 
-/* RISC-V 用户 PGD 必须包含内核高半区映射，否则 trap 时 stvec 不可达。 */
+/* RISC-V 用户 PGD 必须包含内核高半区映射, 否则 trap 时 stvec 不可达。 */
 extern void mm_vm_init_user_pgd(void *pgd, uint64_t pgd_phys);
 extern void mm_vm_destroy_user_space(uint64_t pgd_phys);
 extern int mm_vm_unmap_page(void *pgd, uint64_t vaddr);

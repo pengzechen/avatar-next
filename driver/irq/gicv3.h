@@ -5,27 +5,28 @@
 #include "platform_cfg.h"
 
 /* ============================================================
- * GICv3 宿主驱动（EL2 / VHE）
- *
- * GICv3 与 GICv2 的根本差异：
- *   - CPU interface 不再是 MMIO，而是系统寄存器 ICC_*_EL1。
- *     VHE（E2H=1）下 EL2 访问 ICC_*_EL1 就落在物理 CPU interface 上，
- *     所以宿主用的是和普通 EL1 内核一样的寄存器名。
- *   - SGI/PPI 是 per-CPU 的，住在 GICR（Redistributor）里；
- *     GICD 只管 SPI。GICv2 那套「GICD 管一切 + ITARGETSR」不存在了。
- *   - vGIC 用 ICH_*_EL2 系统寄存器（ICH_LR<n>_EL2），
- *     不再是 GICH/GICV 的 MMIO。
- * ============================================================ */
+   GICv3 宿主驱动(EL2 / VHE)
 
-/* ── 模块内基地址（由 gicv3_init() 从 platform_get_mmio 填充）────── */
+   GICv3 与 GICv2 的根本差异：
+     - CPU interface 不再是 MMIO, 而是系统寄存器 ICC_*_EL1。
+       VHE(E2H=1)下 EL2 访问 ICC_*_EL1 就落在物理 CPU interface 上,
+       所以宿主用的是和普通 EL1 内核一样的寄存器名。
+     - SGI/PPI 是 per-CPU 的, 住在 GICR(Redistributor)里；
+       GICD 只管 SPI。GICv2 那套「GICD 管一切 + ITARGETSR」不存在了。
+     - vGIC 用 ICH_*_EL2 系统寄存器(ICH_LR<n>_EL2),
+       不再是 GICH/GICV 的 MMIO。
+   ============================================================
+*/
+
+/* ── 模块内基地址(由 gicv3_init() 从 platform_get_mmio 填充)────── */
 extern uintptr_t gicv3_gicd_base;
 extern uintptr_t gicv3_gicr_base;
 
-/* 每个 Redistributor 占 2 个 64KB 帧：RD_base（0x00000）+ SGI_base（0x10000） */
+/* 每个 Redistributor 占 2 个 64KB 帧：RD_base(0x00000)+ SGI_base(0x10000) */
 #define GICR_STRIDE     0x20000UL
 #define GICR_SGI_OFFSET 0x10000UL
 
-/* ── Distributor（GICD）：ARE 开启后只负责 SPI ────────────────── */
+/* ── Distributor(GICD)：ARE 开启后只负责 SPI ────────────────── */
 #define GICD_CTLR         (gicv3_gicd_base + 0x0000)
 #define GICD_TYPER        (gicv3_gicd_base + 0x0004)
 #define GICD_IIDR         (gicv3_gicd_base + 0x0008)
@@ -42,7 +43,7 @@ extern uintptr_t gicv3_gicr_base;
 #define GICD_IROUTER(n)   (gicv3_gicd_base + 0x6000 + 8 * (n))
 #define GICD_PIDR2        (gicv3_gicd_base + 0xffe8)
 
-/* GICD_CTLR bits（单安全态视图） */
+/* GICD_CTLR bits(单安全态视图) */
 #define GICD_CTLR_ENABLE_G1NS_BIT (1u << 0)
 #define GICD_CTLR_ENABLE_G1A_BIT  (1u << 1)
 #define GICD_CTLR_ARE_S_BIT       (1u << 4)
@@ -53,7 +54,7 @@ extern uintptr_t gicv3_gicr_base;
 #define GICD_TYPER_IRQS(typer)    ((((typer) & 0x1fu) + 1u) * 32u)
 #define GICD_TYPER_CPU_NUM(typer) ((((typer) >> 5) & 0x7u) + 1u)
 
-/* ── Redistributor（GICR）RD_base 帧 ─────────────────────────── */
+/* ── Redistributor(GICR)RD_base 帧 ─────────────────────────── */
 #define GICR_CTLR      (gicv3_gicr_base + 0x0000)
 #define GICR_IIDR      (gicv3_gicr_base + 0x0004)
 #define GICR_TYPER     (gicv3_gicr_base + 0x0008)
@@ -67,9 +68,8 @@ extern uintptr_t gicv3_gicr_base;
 #define GICR_WAKER_PROCESSOR_SLEEP (1u << 1)
 #define GICR_WAKER_CHILDREN_ASLEEP (1u << 2)
 
-/* ── Redistributor SGI_base 帧（per-CPU 的 SGI/PPI）──────────── */
-#define GICR_SGI_BASE(cpu) \
-    (gicv3_gicr_base + GICR_STRIDE * (cpu) + GICR_SGI_OFFSET)
+/* ── Redistributor SGI_base 帧(per-CPU 的 SGI/PPI)──────────── */
+#define GICR_SGI_BASE(cpu)   (gicv3_gicr_base + GICR_STRIDE * (cpu) + GICR_SGI_OFFSET)
 #define GICR_IGROUPR0(cpu)   (GICR_SGI_BASE(cpu) + 0x0080)
 #define GICR_ISENABLER0(cpu) (GICR_SGI_BASE(cpu) + 0x0100)
 #define GICR_ICENABLER0(cpu) (GICR_SGI_BASE(cpu) + 0x0180)
@@ -83,12 +83,12 @@ extern uintptr_t gicv3_gicr_base;
 
 /* ── CPU interface 系统寄存器编码 ────────────────────────────── */
 /*
- * 注意：**没有 ICC_SRE_EL2 的编码宏**。
- * VHE（HCR_EL2.E2H=1）下 ICC_SRE_EL2 不可单独访问 —— 用它的 EL2 编码
- * `S3_4_C12_C12_5` 会 UNDEFINED（实测 EC=0x0）。此时 EL2 的 GIC 寄存器
- * 统一走 ICC_*_EL1 名字：ICC_SRE_EL1 即 ICC_SRE_EL2 的别名，
- * Enable 位在 bit[3]（见 ICC_SRE_EL2_ENABLE）。
- */
+   注意：没有 ICC_SRE_EL2 的编码宏。
+   VHE(HCR_EL2.E2H=1)下 ICC_SRE_EL2 不可单独访问 —— 用它的 EL2 编码
+   `S3_4_C12_C12_5` 会 UNDEFINED(实测 EC=0x0)。此时 EL2 的 GIC 寄存器
+   统一走 ICC_*_EL1 名字：ICC_SRE_EL1 即 ICC_SRE_EL2 的别名,
+   Enable 位在 bit[3](见 ICC_SRE_EL2_ENABLE)。
+*/
 #define ICC_SRE_EL1     "S3_0_C12_C12_5"
 #define ICC_PMR_EL1     "S3_0_C4_C6_0"
 #define ICC_IAR1_EL1    "S3_0_C12_C12_0"
@@ -112,7 +112,7 @@ extern uintptr_t gicv3_gicr_base;
 #define ICC_IAR_INTID_MASK 0xFFFFFFu
 #define ICC_INTID_SPURIOUS 1023u
 
-/* ── Hypervisor（vGIC）系统寄存器编码，仅 EL2 可访问 ─────────── */
+/* ── Hypervisor(vGIC)系统寄存器编码, 仅 EL2 可访问 ─────────── */
 #define ICH_AP0R0_EL2 "S3_4_C12_C8_0"
 #define ICH_AP1R0_EL2 "S3_4_C12_C9_0"
 #define ICH_AP1R1_EL2 "S3_4_C12_C9_1"
@@ -126,27 +126,26 @@ extern uintptr_t gicv3_gicr_base;
 #define ICH_VMCR_EL2  "S3_4_C12_C11_7"
 
 /* ICH_HCR_EL2 bits */
-#define ICH_HCR_EN       (1u << 0)
-#define ICH_HCR_UIEN     (1u << 1)
-#define ICH_HCR_TALL1    (1u << 12) /* 陷入 EL1 对 ICC_*/ICV_* 的 Group1 访问 */
-#define ICH_HCR_TDIR     (1u << 14) /* 陷入 EL1 对 ICC_DIR/ICV_DIR 的写 */
-#define ICH_HCR_VGRP1_DIE \
-    (1u << 7) /* guest 关闭 Group1 时产生维护中断（当前未使用） */
+#define ICH_HCR_EN        (1u << 0)
+#define ICH_HCR_UIEN      (1u << 1)
+#define ICH_HCR_TALL1     (1u << 12) /* 陷入 EL1 对 ICC_ */ ICV_ *的 Group1 访问     */
+#define ICH_HCR_TDIR      (1u << 14) /* 陷入 EL1 对 ICC_DIR/ICV_DIR 的写 */
+#define ICH_HCR_VGRP1_DIE (1u << 7)  /* guest 关闭 Group1 时产生维护中断(当前未使用) */
 
 /* ICH_MISR_EL2 bits */
 #define ICH_MISR_EOI (1u << 0)
 
-/* ICH_LR<n>_EL2 位域（GICv3，64 位 LR）
- *
- * 注意 ICH_LR_ST_* 是**状态字段的取值**（写 LR 时左移 ICH_LR_STATE_SHIFT），
- * 不是可直接 AND 的位掩码；回读判定写成
- *   ((lr >> ICH_LR_STATE_SHIFT) & 3u) & ICH_LR_ST_ACTIVE
- */
+/* ICH_LR<n>_EL2 位域(GICv3, 64 位 LR)
+
+   注意 ICH_LR_ST_* 是状态字段的取值(写 LR 时左移 ICH_LR_STATE_SHIFT),
+   不是可直接 AND 的位掩码；回读判定写成
+     ((lr >> ICH_LR_STATE_SHIFT) & 3u) & ICH_LR_ST_ACTIVE
+*/
 #define ICH_LR_STATE_SHIFT       62
 #define ICH_LR_STATE_MASK        (3ULL << ICH_LR_STATE_SHIFT)
 #define ICH_LR_ST_INVALID        0u
-#define ICH_LR_ST_PENDING        1u /* 已排入，guest 未应答   */
-#define ICH_LR_ST_ACTIVE         2u /* guest 已应答，未 EOI  */
+#define ICH_LR_ST_PENDING        1u /* 已排入, guest 未应答 */
+#define ICH_LR_ST_ACTIVE         2u /* guest 已应答, 未 EOI */
 #define ICH_LR_ST_ACTIVE_PENDING 3u
 #define ICH_LR_HW                (1ULL << 61)
 #define ICH_LR_GROUP1            (1ULL << 60)
@@ -158,7 +157,7 @@ extern uintptr_t gicv3_gicr_base;
 
 typedef struct gicv3_t {
     unsigned int irq_nr; /* GICD_TYPER 报告的 SPI+32 总数 */
-    unsigned int nr_lrs; /* ICH_VTR_EL2.ListRegs + 1，上限 GICV3_MAX_LRS */
+    unsigned int nr_lrs; /* ICH_VTR_EL2.ListRegs + 1, 上限 GICV3_MAX_LRS */
 } gicv3_t;
 
 extern struct gicv3_t _gicv3;
@@ -178,7 +177,7 @@ uint32_t gicv3_read_iar(void);
 uint32_t gicv3_iar_irqnr(uint32_t iar);
 void gicv3_write_eoir(uint32_t irqstat);
 
-/* ── 兼容 GICv2 命名（timer / exception 以 extern 直接调用）──── */
+/* ── 兼容 GICv2 命名(timer / exception 以 extern 直接调用)──── */
 void gic_set_ipriority(uint32_t int_id, uint32_t priority);
 void gic_write_dir(uint32_t irqstat);
 
@@ -198,4 +197,4 @@ uint32_t gicv3_get_iidr(void);
 uint32_t cpu_num(void);
 void gicv3_ipi_send_single(int32_t irq, int32_t cpu);
 
-#endif // __GICV3_H__
+#endif /* __GICV3_H__ */

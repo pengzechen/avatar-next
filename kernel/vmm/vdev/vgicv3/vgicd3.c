@@ -1,17 +1,17 @@
 /*
- * kernel/vmm/vdev/vgicv3/vgicd3.c — 虚拟 GICv3 分发器（GICD）模拟
- *
- * guest 通过 MMIO 配置 GICD。GICv3 打开 ARE 之后 GICD **只管 SPI**
- * （INTID >= 32），SGI/PPI 全在 GICR（见 vgicr3.c），ITARGETSR 变成 RES0，
- * SPI 目标改用 IROUTER。
- *
- * 三个必须读回正确值的地方（否则 guest 的探测会卡住）：
- *   - GICD_CTLR.RWP(bit31)：ARE 生效的握手位，必须读回 0
- *   - GICD_TYPER：ITLinesNumber / CPUNumber / LPIS=0 决定 guest 分配多少 IRQ
- *   - IGROUPR / IPRIORITYR / ICFGR：字节可寻址后备存储，读回写进去的值
- *
- * 真实的宿主 GIC 分发器永不触碰。
- */
+   kernel/vmm/vdev/vgicv3/vgicd3.c — 虚拟 GICv3 分发器(GICD)模拟
+
+   guest 通过 MMIO 配置 GICD。GICv3 打开 ARE 之后 GICD 只管 SPI
+   (INTID >= 32), SGI/PPI 全在 GICR(见 vgicr3.c), ITARGETSR 变成 RES0,
+   SPI 目标改用 IROUTER。
+
+   三个必须读回正确值的地方(否则 guest 的探测会卡住)：
+     - GICD_CTLR.RWP(bit31)：ARE 生效的握手位, 必须读回 0
+     - GICD_TYPER：ITLinesNumber / CPUNumber / LPIS=0 决定 guest 分配多少 IRQ
+     - IGROUPR / IPRIORITYR / ICFGR：字节可寻址后备存储, 读回写进去的值
+
+   真实的宿主 GIC 分发器永不触碰。
+*/
 
 #include "vmm/vmm_vgicv3.h"
 #include "klog.h"
@@ -65,8 +65,7 @@ static void reg_write(vgic3_t *vgic, uint32_t off, uint8_t size, uint64_t value)
             vgic->dist_regs[off + i] = (uint8_t)(value >> (8 * i));
 }
 
-static uint64_t vgic3d_read(mmio_device_t *dev, uint64_t off, uint8_t size,
-                            uint32_t vcpu_id)
+static uint64_t vgic3d_read(mmio_device_t *dev, uint64_t off, uint8_t size, uint32_t vcpu_id)
 {
     vgic3_t *vgic = (vgic3_t *)dev->priv;
     uint32_t word;
@@ -80,10 +79,11 @@ static uint64_t vgic3d_read(mmio_device_t *dev, uint64_t off, uint8_t size,
 
     if (off == GICD_TYPER) {
         /* ITLinesNumber=31 → 1024 个 INTID；CPUNumber=nr_vcpus-1；
-         * LPIS/ESPI/安全扩展全 0（没有 LPI，也没有 SPI 之外的扩展）；
-         * IDbits=15 → 16 位 INTID，与 QEMU virt 的 GICv3 一致。*/
-        return ((uint64_t)(VGIC3_MAX_IRQS / 32 - 1) & 0x1fu) |
-               (((uint64_t)(vgic->nr_vcpus - 1) & 0x7u) << 5) | (0xFu << 19);
+           LPIS/ESPI/安全扩展全 0(没有 LPI, 也没有 SPI 之外的扩展)；
+           IDbits=15 → 16 位 INTID, 与 QEMU virt 的 GICv3 一致。
+        */
+        return ((uint64_t)(VGIC3_MAX_IRQS / 32 - 1) & 0x1fu) | (((uint64_t)(vgic->nr_vcpus - 1) & 0x7u) << 5) |
+               (0xFu << 19);
     }
 
     if (off == GICD_IIDR)
@@ -92,28 +92,25 @@ static uint64_t vgic3d_read(mmio_device_t *dev, uint64_t off, uint8_t size,
     if (off == GICD_PIDR2)
         return 0x30u; /* 架构修订 = GICv3 */
 
-    if (word_index(off, GICD_ISENABLER, &word) ||
-        word_index(off, GICD_ICENABLER, &word))
+    if (word_index(off, GICD_ISENABLER, &word) || word_index(off, GICD_ICENABLER, &word))
         return vmm_vgic3_enabled_word(vgic, vcpu_id, word);
 
-    if (word_index(off, GICD_ISPENDR, &word) ||
-        word_index(off, GICD_ICPENDR, &word))
+    if (word_index(off, GICD_ISPENDR, &word) || word_index(off, GICD_ICPENDR, &word))
         return vmm_vgic3_pending_word(vgic, vcpu_id, word);
 
-    if (word_index(off, GICD_ISACTIVER, &word) ||
-        word_index(off, GICD_ICACTIVER, &word))
+    if (word_index(off, GICD_ISACTIVER, &word) || word_index(off, GICD_ICACTIVER, &word))
         return vmm_vgic3_active_word(vgic, vcpu_id, word);
 
-    /* ARE 模式下 ITARGETSR 是 RES0 —— guest 读它只会得到 0，
-     * CPU 目标改从 IROUTER 读。*/
+    /* ARE 模式下 ITARGETSR 是 RES0 —— guest 读它只会得到 0,
+       CPU 目标改从 IROUTER 读。
+    */
     if (off >= GICD_ITARGETSR && off < GICD_ITARGETSR + 0x400u)
         return 0;
 
     return reg_read(vgic, (uint32_t)off, size);
 }
 
-static void vgic3d_write(mmio_device_t *dev, uint64_t off, uint8_t size,
-                         uint64_t value, uint32_t vcpu_id)
+static void vgic3d_write(mmio_device_t *dev, uint64_t off, uint8_t size, uint64_t value, uint32_t vcpu_id)
 {
     vgic3_t *vgic = (vgic3_t *)dev->priv;
     uint32_t word;
@@ -162,7 +159,7 @@ static void vgic3d_write(mmio_device_t *dev, uint64_t off, uint8_t size,
     }
 
     if (word_index(off, GICD_ISACTIVER, &word)) {
-        /* guest 手工置 active：只做记录，不影响投递 */
+        /* guest 手工置 active：只做记录, 不影响投递 */
         for (uint32_t bit = 0; bit < 32; bit++)
             if (value32 & (1u << bit))
                 vgic->spi_active[vcpu_id][word] |= (1u << bit);
@@ -172,7 +169,7 @@ static void vgic3d_write(mmio_device_t *dev, uint64_t off, uint8_t size,
     if (off >= GICD_ITARGETSR && off < GICD_ITARGETSR + 0x400u)
         return; /* ARE: RES0 */
 
-    /* IROUTER：8 字节/SPI，直接存进后备存储即可（本 VM 没有 SPI）*/
+    /* IROUTER：8 字节/SPI, 直接存进后备存储即可(本 VM 没有 SPI) */
     reg_write(vgic, (uint32_t)off, size, value);
 }
 

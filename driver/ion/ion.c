@@ -1,14 +1,14 @@
 /* driver/ion/ion.c — 裸机 Ion 内存分配器实现
- *
- * 原理：
- *   · 底层通过 pmm_alloc_pages(&g_pmm, n) 分配物理连续页
- *   · 通过 phys_to_virt(pa) 获得内核虚拟地址（sv39 直接映射）
- *   · 用固定大小的表（ION_MAX_BUFS 项）追踪 handle → (pa, size)
- *   · handle = 表中下标 + 1（0 为无效哨兵）
- *   · 线程安全：用 spinlock 保护分配表
- *
- * 对应 ref: rcore-os/tgoskits 中的 IonHeapManager + IonBufferManager。
- */
+
+   原理：
+     · 底层通过 pmm_alloc_pages(&g_pmm, n) 分配物理连续页
+     · 通过 phys_to_virt(pa) 获得内核虚拟地址(sv39 直接映射)
+     · 用固定大小的表(ION_MAX_BUFS 项)追踪 handle → (pa, size)
+     · handle = 表中下标 + 1(0 为无效哨兵)
+     · 线程安全：用 spinlock 保护分配表
+
+   对应 ref: rcore-os/tgoskits 中的 IonHeapManager + IonBufferManager。
+*/
 #include "ion.h"
 #include "types.h"
 #include "mm_vm.h"
@@ -19,11 +19,11 @@
 
 /* ── 内部条目 ───────────────────────────────────────────────────────────── */
 typedef struct {
-    uint64_t paddr;      /* 物理地址（PMM 分配起始） */
-    uint32_t page_count; /* 分配的页数               */
-    uint32_t ref_count;  /* fd/handle 引用计数       */
-    size_t size;         /* 用户请求大小（字节）      */
-    bool used;           /* 是否被占用               */
+    uint64_t paddr;      /* 物理地址(PMM 分配起始) */
+    uint32_t page_count; /* 分配的页数 */
+    uint32_t ref_count;  /* fd/handle 引用计数 */
+    size_t size;         /* 用户请求大小(字节) */
+    bool used;           /* 是否被占用 */
 } ion_entry_t;
 
 static ion_entry_t g_ion_table[ION_MAX_BUFS];
@@ -32,7 +32,7 @@ static bool g_ion_initialized = false;
 
 #define PAGE_SIZE_4K 4096U
 
-/* ── 初始化（懒初始化，第一次调用时触发） ─────────────────────────────── */
+/* ── 初始化(懒初始化, 第一次调用时触发) ─────────────────────────────── */
 static void ion_init_once(void)
 {
     if (g_ion_initialized)
@@ -94,7 +94,7 @@ int ion_alloc(size_t size, void **vaddr, uint64_t *paddr, ion_handle_t *handle)
     g_ion_table[slot].used = true;
     spin_unlock(&g_ion_lock);
 
-    /* 清零缓冲区（DMA coherent 语义） */
+    /* 清零缓冲区(DMA coherent 语义) */
     void *va = phys_to_virt(pa);
     memset(va, 0, pages * PAGE_SIZE_4K);
 
@@ -102,8 +102,7 @@ int ion_alloc(size_t size, void **vaddr, uint64_t *paddr, ion_handle_t *handle)
     *paddr = pa;
     *handle = (ion_handle_t)(slot + 1U);
 
-    KLOG_DEBUG("ion_alloc: size=%zu pages=%u pa=0x%llx handle=%u\n", size,
-               pages, (unsigned long long)pa, *handle);
+    KLOG_DEBUG("ion_alloc: size=%zu pages=%u pa=0x%llx handle=%u\n", size, pages, (unsigned long long)pa, *handle);
     return 0;
 }
 
@@ -140,8 +139,7 @@ int ion_free(ion_handle_t handle)
     spin_unlock(&g_ion_lock);
 
     pmm_free_pages(&g_pmm, pa, pages);
-    KLOG_DEBUG("ion_free: handle=%u pa=0x%llx pages=%u\n", handle,
-               (unsigned long long)pa, pages);
+    KLOG_DEBUG("ion_free: handle=%u pa=0x%llx pages=%u\n", handle, (unsigned long long)pa, pages);
     return 0;
 }
 

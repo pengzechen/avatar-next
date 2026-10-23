@@ -1,8 +1,8 @@
 /*
- * kernel/mm/x86_64/vmm.c — x86_64 4 级页表操作实现
- *
- * 提供 PML4 → PDPT → PD → PT 四级页表的遍历、映射、复制等操作。
- */
+   kernel/mm/x86_64/vmm.c — x86_64 4 级页表操作实现
+
+   提供 PML4 → PDPT → PD → PT 四级页表的遍历, 映射, 复制等操作。
+*/
 
 #include "klog.h"
 #include "mm_vm.h"
@@ -72,20 +72,17 @@ uint64_t *x86_walk_pt(void *page_dir, uint64_t vaddr, bool alloc)
 uint64_t x86_perm_to_flags(vm_perm_t perm)
 {
     if (perm == VM_PERM_KERNEL) {
-        return PTE_PRESENT | PTE_WRITABLE | PTE_GLOBAL | PTE_NX | PTE_ACCESSED |
-               PTE_DIRTY;
+        return PTE_PRESENT | PTE_WRITABLE | PTE_GLOBAL | PTE_NX | PTE_ACCESSED | PTE_DIRTY;
     }
     if (perm == VM_PERM_KERNEL_MMIO) {
-        return PTE_PRESENT | PTE_WRITABLE | PTE_PCD | PTE_PWT | PTE_NX |
-               PTE_ACCESSED | PTE_DIRTY;
+        return PTE_PRESENT | PTE_WRITABLE | PTE_PCD | PTE_PWT | PTE_NX | PTE_ACCESSED | PTE_DIRTY;
     }
     return PTE_PRESENT | PTE_WRITABLE | PTE_USER | PTE_ACCESSED | PTE_DIRTY;
 }
 
 /* ── 页表映射 ───────────────────────────────────────────────────── */
 
-int32_t mm_vm_map_pages(void *page_dir, uint64_t vaddr, uint64_t paddr,
-                        int32_t count, vm_perm_t perm)
+int32_t mm_vm_map_pages(void *page_dir, uint64_t vaddr, uint64_t paddr, int32_t count, vm_perm_t perm)
 {
     uint64_t va = vaddr;
     uint64_t pa = paddr;
@@ -115,7 +112,7 @@ uint64_t mm_vm_get_paddr(void *page_dir, uint64_t vaddr)
     return x86_pte_to_pa(*pte) + GET_PAGE_OFFSET(vaddr);
 }
 
-/* ── 用户地址空间复制（递归遍历页表树）──────────────────────────── */
+/* ── 用户地址空间复制(递归遍历页表树)──────────────────────────── */
 
 static int x86_copy_pt_recursive(uint64_t *src, uint64_t *dst, int level)
 {
@@ -132,11 +129,10 @@ static int x86_copy_pt_recursive(uint64_t *src, uint64_t *dst, int level)
         }
 
         if (level == 1) {
-            /* KEEP（设备缓冲）同样原样复制，但**不加引用** —— 页归句柄所有 */
+            /* KEEP(设备缓冲)同样原样复制, 但不加引用 —— 页归句柄所有 */
             if (pte & (PTE_NOFREE | PTE_KEEP)) {
                 dst[i] = pte;
-                if ((pte & PTE_NOFREE) &&
-                    !shared_page_ref(x86_pte_to_pa(pte)))
+                if ((pte & PTE_NOFREE) && !shared_page_ref(x86_pte_to_pa(pte)))
                     return -1;
                 continue;
             }
@@ -155,9 +151,7 @@ static int x86_copy_pt_recursive(uint64_t *src, uint64_t *dst, int level)
         memset(x86_pa_to_kva(new_child), 0, PAGE_SIZE);
         dst[i] = x86_make_table_pte(new_child);
 
-        if (x86_copy_pt_recursive(x86_next_level(pte),
-                                  (uint64_t *)x86_pa_to_kva(new_child),
-                                  level - 1) != 0)
+        if (x86_copy_pt_recursive(x86_next_level(pte), (uint64_t *)x86_pa_to_kva(new_child), level - 1) != 0)
             return -1;
     }
     return 0;
@@ -170,8 +164,7 @@ int32_t mm_vm_copy_user_space(void *dst_pgd, void *src_pgd)
 
 /* ── 数据拷贝到用户虚拟地址 ─────────────────────────────────────── */
 
-void mm_vm_copy_to_uva(void *pgd, uint64_t user_vaddr, uint64_t src_paddr,
-                       uint64_t size)
+void mm_vm_copy_to_uva(void *pgd, uint64_t user_vaddr, uint64_t src_paddr, uint64_t size)
 {
     uint64_t src = src_paddr;
     uint64_t dst_va = user_vaddr;
@@ -195,7 +188,7 @@ void mm_vm_copy_to_uva(void *pgd, uint64_t user_vaddr, uint64_t src_paddr,
     }
 }
 
-/* ── 用户地址空间生命周期（架构无关层经 mm_vm.h 调用）────────────── */
+/* ── 用户地址空间生命周期(架构无关层经 mm_vm.h 调用)────────────── */
 
 extern uint64_t g_kernel_pgd_phys;
 
@@ -208,7 +201,7 @@ static void x86_destroy_table(uint64_t *table, int level)
 
         if (level == 1 || (level > 1 && (pte & PTE_HUGE))) {
             if ((pte & PTE_KEEP) != 0) {
-                /* 设备缓冲：页归 dma_buf/ION 句柄所有，只拆表 */
+                /* 设备缓冲：页归 dma_buf/ION 句柄所有, 只拆表 */
             } else if ((pte & PTE_NOFREE) == 0) {
                 pmm_free_pages(&g_pmm, x86_pte_to_pa(pte), 1);
             } else {
@@ -234,9 +227,8 @@ void mm_vm_init_user_pgd(void *pgd, uint64_t pgd_phys)
 
     uint64_t *kernel_pml4 = (uint64_t *)phys_to_virt(g_kernel_pgd_phys);
     x86_copy_kernel_mappings((uint64_t *)pgd, kernel_pml4);
-    KLOG_DEBUG(
-        "[vm_user] x86_64 copied kernel PML4[%u..%u] to user PGD=0x%llx\n",
-        X86_PML4_KERNEL_START, X86_PML4_ENTRIES - 1U, pgd_phys);
+    KLOG_DEBUG("[vm_user] x86_64 copied kernel PML4[%u..%u] to user PGD=0x%llx\n", X86_PML4_KERNEL_START,
+               X86_PML4_ENTRIES - 1U, pgd_phys);
 }
 
 void mm_vm_destroy_user_space(uint64_t pgd_phys)
@@ -265,7 +257,7 @@ int mm_vm_unmap_page(void *pgd, uint64_t vaddr)
         return 0;
 
     if ((*pte & PTE_KEEP) != 0) {
-        /* 设备缓冲：页归 dma_buf/ION 句柄所有，只拆映射 */
+        /* 设备缓冲：页归 dma_buf/ION 句柄所有, 只拆映射 */
     } else if ((*pte & PTE_NOFREE) == 0) {
         pmm_free_pages(&g_pmm, x86_pte_to_pa(*pte), 1);
     } else {
@@ -278,5 +270,5 @@ int mm_vm_unmap_page(void *pgd, uint64_t vaddr)
 
 void mm_vm_flush_tlb_user(void)
 {
-    /* mm_vm_unmap_page() 已经逐页 invlpg，不需要额外的全刷。 */
+    /* mm_vm_unmap_page() 已经逐页 invlpg, 不需要额外的全刷。 */
 }

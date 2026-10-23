@@ -1,12 +1,12 @@
 /*
- * fs/lwext4_port/fs_init.c - 根文件系统初始化
- *
- * 将块设备注册到 lwext4，挂载 ext4 分区到 "/"。
- * - DRIVER_SDBLK_SG2002: 从 SD 卡读取 MBR，挂载第 2 分区
- * - 默认: 使用 RAM 块设备（QEMU -device loader 预加载的 ext4 镜像）
- *
- * 编译要求：使用 LWEXT4_CFLAGS（包含 third_party/lwext4/include 和 lwext4_port/libc_shim）。
- */
+   fs/lwext4_port/fs_init.c - 根文件系统初始化
+
+   将块设备注册到 lwext4, 挂载 ext4 分区到 "/"。
+   - DRIVER_SDBLK_SG2002: 从 SD 卡读取 MBR, 挂载第 2 分区
+   - 默认: 使用 RAM 块设备(QEMU -device loader 预加载的 ext4 镜像)
+
+   编译要求：使用 LWEXT4_CFLAGS(包含 third_party/lwext4/include 和 lwext4_port/libc_shim)。
+*/
 
 #include <ext4.h>
 #include <ext4_blockdev.h>
@@ -48,20 +48,17 @@ static void fs_log_ext4_features(struct ext4_blockdev *bdev)
     uint32_t fcom = ext4_get32(&sb, features_compatible);
     uint32_t fincom = ext4_get32(&sb, features_incompatible);
     uint32_t fro = ext4_get32(&sb, features_read_only);
-    /* 成功读到了超级块 —— 这是"生效配置"，不是错误。 */
-    KLOG_INFO(
-        "[fs] superblock features: compat=0x%08x incompat=0x%08x ro=0x%08x\n",
-        fcom, fincom, fro);
+    /* 成功读到了超级块 —— 这是"生效配置", 不是错误。 */
+    KLOG_INFO("[fs] superblock features: compat=0x%08x incompat=0x%08x ro=0x%08x\n", fcom, fincom, fro);
 
     /*
-     * 只在**确实存在**不支持的位时才 WARN：非零意味着我们在静默忽略磁盘上的
-     * 语义，那是真该被看见的；全零是正常情况，不该占 WARN 的注意力。
-     */
+       只在确实存在不支持的位时才 WARN：非零意味着我们在静默忽略磁盘上的
+       语义, 那是真该被看见的；全零是正常情况, 不该占 WARN 的注意力。
+    */
     uint32_t unsup_incom = fincom & ~CONFIG_SUPPORTED_FINCOM;
     uint32_t unsup_ro = fro & ~CONFIG_SUPPORTED_FRO_COM;
     if (unsup_incom || unsup_ro) {
-        KLOG_WARN("[fs] unsupported features: incompat=0x%08x ro=0x%08x\n",
-                  unsup_incom, unsup_ro);
+        KLOG_WARN("[fs] unsupported features: incompat=0x%08x ro=0x%08x\n", unsup_incom, unsup_ro);
     } else {
         KLOG_DEBUG("[fs] superblock: no unsupported feature bits\n");
     }
@@ -86,8 +83,7 @@ int fs_init(void)
         KLOG_ERROR("[fs] SD partition 2 not found in MBR\n");
         return -ENODEV;
     }
-    KLOG_FS("[fs] Found partition 2: offset=%llu size=%llu MiB\n",
-            (unsigned long long)part->part_offset,
+    KLOG_FS("[fs] Found partition 2: offset=%llu size=%llu MiB\n", (unsigned long long)part->part_offset,
             (unsigned long long)(part->part_size >> 20));
 
     KLOG_FS("[fs] Registering block device '%s'...\n", BDEV_NAME);
@@ -112,7 +108,7 @@ int fs_init(void)
     rc = ext4_dir_open(&dir, ROOTFS_MP);
     if (rc == EOK) {
         const ext4_direntry *de;
-        /* 目录项数量由镜像内容决定 —— 逐项一行，只能采样，不能留在 INFO */
+        /* 目录项数量由镜像内容决定 —— 逐项一行, 只能采样, 不能留在 INFO */
         KLOG_MODULE_DEBUG(LOG_MODULE_FS, "[fs] Root directory entries:\n");
         while ((de = ext4_dir_entry_next(&dir)) != NULL)
             KLOG_MODULE_DEBUG_SAMPLE(LOG_MODULE_FS, "[fs]   %s\n", de->name);
@@ -145,8 +141,7 @@ int fs_init(void)
     rc = ext4_mount(BDEV_NAME, ROOTFS_MP, false);
     if (rc != EOK) {
         KLOG_ERROR("[fs] ext4_mount failed: %d\n", rc);
-        KLOG_ERROR(
-            "[fs] Make sure rootfs.img was loaded by QEMU at the correct address.\n");
+        KLOG_ERROR("[fs] Make sure rootfs.img was loaded by QEMU at the correct address.\n");
         KLOG_ERROR("[fs] Run: make ARCH=... run-fs\n");
         ext4_device_unregister(BDEV_NAME);
         return -rc;
@@ -158,7 +153,7 @@ int fs_init(void)
     rc = ext4_dir_open(&dir, ROOTFS_MP);
     if (rc == EOK) {
         const ext4_direntry *de;
-        /* 目录项数量由镜像内容决定 —— 逐项一行，只能采样，不能留在 INFO */
+        /* 目录项数量由镜像内容决定 —— 逐项一行, 只能采样, 不能留在 INFO */
         KLOG_MODULE_DEBUG(LOG_MODULE_FS, "[fs] Root directory entries:\n");
         while ((de = ext4_dir_entry_next(&dir)) != NULL)
             KLOG_MODULE_DEBUG_SAMPLE(LOG_MODULE_FS, "[fs]   %s\n", de->name);

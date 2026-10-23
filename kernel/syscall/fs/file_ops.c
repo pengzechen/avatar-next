@@ -1,8 +1,8 @@
 /*
- * fs/file_ops.c - openat / close / dup3 / fcntl / pipe2
- *
- * 由 kernel/syscall/syscall.c 拆出。
- */
+   fs/file_ops.c - openat / close / dup3 / fcntl / pipe2
+
+   由 kernel/syscall/syscall.c 拆出。
+*/
 #include "syscall/syscall_internal.h"
 #include "syscall/fs/fd_pool.h"
 #include "syscall/fs/path.h"
@@ -22,8 +22,7 @@
 
 static bool trace_heavy_task(task_t *current)
 {
-    return current && current->is_user_process &&
-           current->heap_end >= 0x3000000ULL;
+    return current && current->is_user_process && current->heap_end >= 0x3000000ULL;
 }
 
 void openat_handler(uint64_t regs[6], task_t *current)
@@ -37,23 +36,20 @@ void openat_handler(uint64_t regs[6], task_t *current)
     }
 
     char abspath[128];
-    int rpa =
-        resolve_path_at(current, dirfd, pathname, abspath, sizeof(abspath));
+    int rpa = resolve_path_at(current, dirfd, pathname, abspath, sizeof(abspath));
     if (rpa < 0) {
         if (trace_heavy_task(current)) {
-            KLOG_SYSCALL("[vfsop] pid=%u openat path=%s flags=0x%x rc=%d\n",
-                         current->id, pathname, flags, rpa);
+            KLOG_SYSCALL("[vfsop] pid=%u openat path=%s flags=0x%x rc=%d\n", current->id, pathname, flags, rpa);
         }
         regs[0] = (uint64_t)(int64_t)rpa;
         return;
     }
     follow_symlinks(abspath, sizeof(abspath));
     if (trace_heavy_task(current)) {
-        KLOG_SYSCALL("[vfsop] pid=%u openat path=%s resolved=%s flags=0x%x\n",
-                     current->id, pathname, abspath, flags);
+        KLOG_SYSCALL("[vfsop] pid=%u openat path=%s resolved=%s flags=0x%x\n", current->id, pathname, abspath, flags);
     }
 
-    /* ── PTY: /dev/ptmx 和 /dev/pts/N（不需要 fd pool 预分配）── */
+    /* ── PTY: /dev/ptmx 和 /dev/pts/N(不需要 fd pool 预分配)── */
     if (strcmp(abspath, "/dev/tty") == 0) {
         if (current->ctty_pty_idx < 0) {
             regs[0] = (uint64_t)(int64_t)-ENXIO;
@@ -73,8 +69,7 @@ void openat_handler(uint64_t regs[6], task_t *current)
         if (pts_idx >= 0) {
             int fd = pty_open_slave(current, pts_idx);
             if (fd < 0)
-                KLOG_WARN("[pty] open_slave(%d) failed: %d path=%s\n", pts_idx,
-                          fd, abspath);
+                KLOG_WARN("[pty] open_slave(%d) failed: %d path=%s\n", pts_idx, fd, abspath);
             regs[0] = fd >= 0 ? (uint64_t)fd : (uint64_t)(int64_t)fd;
             return;
         }
@@ -104,8 +99,8 @@ void openat_handler(uint64_t regs[6], task_t *current)
         return;
     }
     if (trace_heavy_task(current)) {
-        KLOG_SYSCALL("[vfsop] pid=%u openat fd=%d pool=%d path=%s kind=%d\n",
-                     current->id, fd, pool, vf->path, vf->kind);
+        KLOG_SYSCALL("[vfsop] pid=%u openat fd=%d pool=%d path=%s kind=%d\n", current->id, fd, pool, vf->path,
+                     vf->kind);
     }
     regs[0] = (uint64_t)fd;
 }
@@ -118,19 +113,18 @@ void close_handler(uint64_t regs[6], task_t *current)
         return;
     }
     /*
-     * 一次原子摘取同时解决三件事：fd 0/1/2 默认 UART（fd_table 是 -1，
-     * close 直接成功）、把表项置回 -1、以及保证同一个 fd 只会有**一个**
-     * 线程拿到 idx（否则两个线程都关同一个槽，第二次归还时槽可能已经被
-     * 别的 open 拿走）。详见 task_take_fd 的注释。
-     */
+       一次原子摘取同时解决三件事：fd 0/1/2 默认 UART(fd_table 是 -1,
+       close 直接成功), 把表项置回 -1, 以及保证同一个 fd 只会有一个
+       线程拿到 idx(否则两个线程都关同一个槽, 第二次归还时槽可能已经被
+       别的 open 拿走)。详见 task_take_fd 的注释。
+    */
     int idx = task_take_fd(current, fd);
     if (idx < 0 || idx >= FD_POOL_SIZE) {
         regs[0] = 0;
         return;
     }
     fd_obj_t *obj = &g_fd_pool[idx];
-    KLOG_SYSCALL("[fd] close: pid=%u fd=%d pool_idx=%d type=%d\n", current->id,
-                 fd, idx, obj->type);
+    KLOG_SYSCALL("[fd] close: pid=%u fd=%d pool_idx=%d type=%d\n", current->id, fd, idx, obj->type);
     fd_close_notify(idx);
     fd_obj_close(idx);
     fd_pool_free(idx);
@@ -169,8 +163,7 @@ static int dup_to_fd(task_t *current, int oldfd, int newfd, int flags)
         if (new_idx < 0)
             return -EMFILE;
 #if DRIVER_ION
-        if (src->type == FDT_ION &&
-            ion_ref((ion_handle_t)src->ion.handle) != 0) {
+        if (src->type == FDT_ION && ion_ref((ion_handle_t)src->ion.handle) != 0) {
             fd_pool_free(new_idx);
             return -EBADF;
         }
@@ -236,7 +229,7 @@ void fcntl_handler(uint64_t regs[6], task_t *current)
         return;
     }
 
-    /* fd 0-2 默认是 UART，但也可能已被 dup2() 重定向到 PTY/pipe/socket。 */
+    /* fd 0-2 默认是 UART, 但也可能已被 dup2() 重定向到 PTY/pipe/socket。 */
     fd_obj_t *obj = task_get_fd(current, fd);
     if (!obj && fd >= 3) {
         regs[0] = (uint64_t)(int64_t)-EBADF;
@@ -310,11 +303,9 @@ void fcntl_handler(uint64_t regs[6], task_t *current)
                     g_fd_pool[uart_idx].path[0] = '\0';
                     current->fd_table[nf] = (int16_t)uart_idx;
                     if (cmd == F_DUPFD_CLOEXEC)
-                        current->fd_cloexec[nf / 8] |=
-                            (uint8_t)(1u << (nf % 8));
+                        current->fd_cloexec[nf / 8] |= (uint8_t)(1u << (nf % 8));
                     else
-                        current->fd_cloexec[nf / 8] &=
-                            (uint8_t)~(1u << (nf % 8));
+                        current->fd_cloexec[nf / 8] &= (uint8_t)~(1u << (nf % 8));
                     regs[0] = (uint64_t)nf;
                     return;
                 }

@@ -1,9 +1,9 @@
 /*
- * fs/pty.c - pseudo-terminal (PTY) implementation
- *
- * Provides /dev/ptmx (master) and /dev/pts/N (slave) pairs.
- * Dropbear SSH opens ptmx, forks, child opens pts/N, exec shell.
- */
+   fs/pty.c - pseudo-terminal (PTY) implementation
+
+   Provides /dev/ptmx (master) and /dev/pts/N (slave) pairs.
+   Dropbear SSH opens ptmx, forks, child opens pts/N, exec shell.
+*/
 #include "syscall/fs/pty.h"
 #include "syscall/fs/fd_pool.h"
 #include "syscall/io/epoll.h"
@@ -53,9 +53,8 @@ int pty_match_pts_path(const char *path)
     if (!path)
         return -1;
     /* /dev/pts/0 .. /dev/pts/7 */
-    if (path[0] == '/' && path[1] == 'd' && path[2] == 'e' && path[3] == 'v' &&
-        path[4] == '/' && path[5] == 'p' && path[6] == 't' && path[7] == 's' &&
-        path[8] == '/') {
+    if (path[0] == '/' && path[1] == 'd' && path[2] == 'e' && path[3] == 'v' && path[4] == '/' && path[5] == 'p' &&
+        path[6] == 't' && path[7] == 's' && path[8] == '/') {
         int idx = 0;
         for (int i = 9; path[i]; i++) {
             if (path[i] < '0' || path[i] > '9')
@@ -92,8 +91,7 @@ int pty_alloc_master(task_t *task)
     p->locked = true;
     p->ws_row = 24;
     p->ws_col = 80;
-    p->c_lflag =
-        0x8A3B; /* ECHO|ECHOE|ECHOK|ECHOCTL|ECHOKE|ICANON|ISIG|IEXTEN */
+    p->c_lflag = 0x8A3B; /* ECHO|ECHOE|ECHOK|ECHOCTL|ECHOKE|ICANON|ISIG|IEXTEN */
     p->c_iflag = 0x0500; /* ICRNL|IXON */
     p->c_oflag = 0x0005; /* OPOST|ONLCR */
     p->c_cflag = 0x00BF; /* CS8|CREAD|HUPCL|B38400 */
@@ -367,11 +365,11 @@ void pty_close_slave(int pty_idx)
 }
 
 /*
- * 注意：下面所有 argp 都是【用户指针】，必须经 copy_to/from_user_bytes
- * 访问。以前是裸解引用（`*(uint32_t *)argp = ...`），用户传非法地址
- * （例如 ioctl(fd, TIOCGPTN, (void*)-1)）就会让内核态写坏地址 → #PF →
- * 异常处理死循环 → 整机挂死。copy_*_bytes 内部用 user_range_ok() 校验。
- */
+   注意：下面所有 argp 都是【用户指针】, 必须经 copy_to/from_user_bytes
+   访问。以前是裸解引用(`*(uint32_t *)argp = ...`), 用户传非法地址
+   (例如 ioctl(fd, TIOCGPTN, (void*)-1))就会让内核态写坏地址 → #PF →
+   异常处理死循环 → 整机挂死。copy_*_bytes 内部用 user_range_ok() 校验。
+*/
 int pty_ioctl(int pty_idx, bool is_master, uint32_t req, void *argp)
 {
     (void)is_master;

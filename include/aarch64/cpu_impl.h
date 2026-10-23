@@ -2,10 +2,10 @@
 #define AARCH64_CPU_IMPL_H
 
 /*
- * AArch64 per-CPU 指针 / 硬件 ID 实现
- *
- * 在 VHE 下 TPIDR_EL1 别名为 TPIDR_EL2，与 EL2 host 内核透明兼容。
- */
+   AArch64 per-CPU 指针 / 硬件 ID 实现
+
+   在 VHE 下 TPIDR_EL1 别名为 TPIDR_EL2, 与 EL2 host 内核透明兼容。
+*/
 
 #include "types.h"
 

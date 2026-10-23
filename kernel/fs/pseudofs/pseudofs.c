@@ -1,12 +1,12 @@
 /*
- * kernel/fs/pseudofs/pseudofs.c — 虚拟文件系统实现
- *
- * 节点表（g_pseudo_nodes[]）将路径映射到内容生成器回调。
- * syscall.c 通过 API 函数在各系统调用处集成此模块。
- *
- * 依赖（均已在全局 CFLAGS 中）：
- *   -Iinclude  -Idriver  -Ikernel  -Ikernel/mm
- */
+   kernel/fs/pseudofs/pseudofs.c — 虚拟文件系统实现
+
+   节点表(g_pseudo_nodes[])将路径映射到内容生成器回调。
+   syscall.c 通过 API 函数在各系统调用处集成此模块。
+
+   依赖(均已在全局 CFLAGS 中)：
+     -Iinclude  -Idriver  -Ikernel  -Ikernel/mm
+*/
 
 #include "pseudofs.h"
 #include "pseudofs_internal.h"
@@ -19,12 +19,12 @@
 #include "uart/uart.h"
 #include "task/task.h"
 #if DRIVER_DMA_BUF
-#include "dma_buf.h" /* dma_heap_dev_ioctl（/dev/dma_heap/ 各节点）*/
+#include "dma_buf.h" /* dma_heap_dev_ioctl(/dev/dma_heap/ 各节点) */
 #endif
 #if DRIVER_NPU_RKNPU
-#include "rknpu_drm.h" /* rknpu_drm_ioctl_file（/dev/dri/renderD128）*/
+#include "rknpu_drm.h" /* rknpu_drm_ioctl_file(/dev/dri/renderD128) */
 #endif
-#include "task/cpu.h" /* g_cpus / g_num_cpus / AVATAR_MAX_CPUS（/proc/uptime 的 idle 列）*/
+#include "task/cpu.h"         /* g_cpus / g_num_cpus / AVATAR_MAX_CPUS(/proc/uptime 的 idle 列) */
 #include "timer/timer.h"      /* timer_get_ns / TIMER_FREQUENCY_HZ */
 #include "syscall/io/epoll.h" /* EPOLLIN/EPOLLOUT：pseudo_poll 的兜底返回值 */
 #include "syscall/trace.h"    /* /proc/syscalls */
@@ -100,11 +100,11 @@ static int tty_write(int nid, const void *buf, size_t len)
     (void)nid;
     const char *src = (const char *)buf;
     /*
-     * 逐字符走 klog_write，而不是整段 —— 因为 src 可能是**用户指针**
-     * （vfs_write 的 buf 一路来自 syscall 的 regs[]），整段输出会把裸访问
-     * 的爆炸半径从 1 字节放大到 len 字节。逐字符至少保证单字符不被撕裂，
-     * 且不绕过那把锁。用户指针校验在 syscall 入口那一层补。
-     */
+       逐字符走 klog_write, 而不是整段 —— 因为 src 可能是用户指针
+       (vfs_write 的 buf 一路来自 syscall 的 regs[]), 整段输出会把裸访问
+       的爆炸半径从 1 字节放大到 len 字节。逐字符至少保证单字符不被撕裂,
+       且不绕过那把锁。用户指针校验在 syscall 入口那一层补。
+    */
     for (size_t i = 0; i < len; i++)
         klog_write(&src[i], 1);
     return (int)len;
@@ -121,7 +121,7 @@ static int rand_read(int nid, uint64_t off, void *buf, size_t len)
     return (int)len;
 }
 
-/* /proc/self/maps — musl 启动时读取，空文件即可 */
+/* /proc/self/maps — musl 启动时读取, 空文件即可 */
 static int maps_read(int nid, uint64_t off, void *buf, size_t len)
 {
     (void)nid;
@@ -147,40 +147,38 @@ static int stat_read(int nid, uint64_t off, void *buf, size_t len)
 static int version_read(int nid, uint64_t off, void *buf, size_t len)
 {
     (void)nid;
-    static const char content[] =
-        "Linux version 6.1.0-avatar (kernel@avatarOS) "
-        "(gcc version 12.0) #1 SMP\n";
+    static const char content[] = "Linux version 6.1.0-avatar (kernel@avatarOS) "
+                                  "(gcc version 12.0) #1 SMP\n";
     return pfs_copy_out(off, buf, len, content, sizeof(content) - 1);
 }
 
 #if DRIVER_NPU_RKNPU
 /*
- * /proc/dri/N/name —— DRM 的传统 /proc 接口。
- *
- * librknnrt 实测会依次读 /proc/dri/0/name … /proc/dri/7/name 来认设备
- * （内核 trace 抓到的，见 docs/npu/RK3588_NPU_DRIVER.md §8）。
- * 格式与 Linux 一致：
- *     <驱动名> <major>.<minor>.<patch> <date> <desc>
- *
- * ⚠️ 驱动名必须是 **rknpu** —— 它按名字匹配，写别的（比如我们 DRM 节点上
- * 用的 "rknpu-avatar"）会被当成"不是 RKNPU 设备"。
- */
+   /proc/dri/N/name —— DRM 的传统 /proc 接口。
+
+   librknnrt 实测会依次读 /proc/dri/0/name … /proc/dri/7/name 来认设备
+   (内核 trace 抓到的, 见 docs/npu/RK3588_NPU_DRIVER.md §8)。
+   格式与 Linux 一致：
+       <驱动名> <major>.<minor>.<patch> <date> <desc>
+
+   注意： 驱动名必须是 rknpu —— 它按名字匹配, 写别的(比如我们 DRM 节点上
+   用的 "rknpu-avatar")会被当成"不是 RKNPU 设备"。
+*/
 static int dri_name_read(int nid, uint64_t off, void *buf, size_t len)
 {
     (void)nid;
-    static const char content[] =
-        "rknpu 1.0.0 20260101 Avatar OS RK3588 NPU (DRM-compat shim)\n";
+    static const char content[] = "rknpu 1.0.0 20260101 Avatar OS RK3588 NPU (DRM-compat shim)\n";
     return pfs_copy_out(off, buf, len, content, sizeof(content) - 1);
 }
 #endif
 
 /* /proc/uptime */
 
-/* 把"百分之一秒"写成 "S.CC"，返回写入字节数 */
+/* 把"百分之一秒"写成 "S.CC", 返回写入字节数 */
 static size_t uptime_put_secs(char *dst, size_t pos, size_t cap, uint64_t cs)
 {
     char nbuf[24];
-    /* u64_to_dec 是"填 buf、返回长度"，不是返回指针 —— 别拿它的返回值当字符串 */
+    /* u64_to_dec 是"填 buf, 返回长度", 不是返回指针 —— 别拿它的返回值当字符串 */
     (void)u64_to_dec(nbuf, cs / 100);
     pos += (size_t)pfs_puts(dst, pos, cap, nbuf);
     pos += (size_t)pfs_puts(dst, pos, cap, ".");
@@ -192,12 +190,12 @@ static size_t uptime_put_secs(char *dst, size_t pos, size_t cap, uint64_t cs)
 }
 
 /*
- * 格式与 Linux 一致："<uptime秒> <idle秒>"，各两位小数。
- *
- * 这里以前是写死的静态字符串 "0.00 0.00" —— 跑多久都纹丝不动（用户实测
- * `cat /proc/uptime` 恒为 0.00 0.00）。硬编码本身不算错，错在它看起来
- * 像"系统刚起来"，会把人往错误方向带。
- */
+   格式与 Linux 一致："<uptime秒> <idle秒>", 各两位小数。
+
+   这里以前是写死的静态字符串 "0.00 0.00" —— 跑多久都纹丝不动(用户实测
+   `cat /proc/uptime` 恒为 0.00 0.00)。硬编码本身不算错, 错在它看起来
+   像"系统刚起来", 会把人往错误方向带。
+*/
 static int uptime_read(int nid, uint64_t off, void *buf, size_t len)
 {
     (void)nid;
@@ -205,13 +203,15 @@ static int uptime_read(int nid, uint64_t off, void *buf, size_t len)
     size_t pos = 0;
 
     /* 上电以来的单调时间。用 timer_get_ns() 而不是 g_system_ticks：
-     * 后者是 100 Hz 的 tick 计数，先除成秒再乘回百分秒会丢精度，
-     * 而且 tick 在中断关闭的窗口里不一定在走。 */
+       后者是 100 Hz 的 tick 计数, 先除成秒再乘回百分秒会丢精度,
+       而且 tick 在中断关闭的窗口里不一定在走。
+    */
     uint64_t up_cs = timer_get_ns() / 10000000ULL; /* 纳秒 → 百分之一秒 */
 
-    /* idle：**所有核**在 idle 任务上累计的 tick 数 ÷ tick 频率。
-     * 求和而不是只看本核 —— Linux 的 /proc/uptime 第二列就是各 CPU 之和。
-     * 记账在 sched_tick() 里（见 cpu.h 的 idle_ticks）。 */
+    /* idle：所有核在 idle 任务上累计的 tick 数 ÷ tick 频率。
+       求和而不是只看本核 —— Linux 的 /proc/uptime 第二列就是各 CPU 之和。
+       记账在 sched_tick() 里(见 cpu.h 的 idle_ticks)。
+    */
     uint64_t idle_ticks = 0;
     for (uint32_t i = 0; i < g_num_cpus && i < AVATAR_MAX_CPUS; i++)
         idle_ticks += g_cpus[i].idle_ticks;
@@ -282,18 +282,13 @@ static int cpuinfo_read(int nid, uint64_t off, void *buf, size_t len)
     (void)nid;
     char tmp[512];
     size_t pos = 0;
-    pos += (size_t)pfs_puts(tmp, pos, sizeof(tmp),
-                            "processor\t: 0\nBogoMIPS\t: 100.00\n");
+    pos += (size_t)pfs_puts(tmp, pos, sizeof(tmp), "processor\t: 0\nBogoMIPS\t: 100.00\n");
 #if ARCH_AARCH64
-    pos += (size_t)pfs_puts(
-        tmp, pos, sizeof(tmp),
-        "CPU architecture: AArch64\nHardware\t: ARM Cortex-A\n");
+    pos += (size_t)pfs_puts(tmp, pos, sizeof(tmp), "CPU architecture: AArch64\nHardware\t: ARM Cortex-A\n");
 #elif ARCH_RISCV64
-    pos += (size_t)pfs_puts(tmp, pos, sizeof(tmp),
-                            "CPU architecture: riscv64\nHardware\t: RISC-V\n");
+    pos += (size_t)pfs_puts(tmp, pos, sizeof(tmp), "CPU architecture: riscv64\nHardware\t: RISC-V\n");
 #else
-    pos += (size_t)pfs_puts(tmp, pos, sizeof(tmp),
-                            "CPU architecture: x86_64\nHardware\t: x86_64\n");
+    pos += (size_t)pfs_puts(tmp, pos, sizeof(tmp), "CPU architecture: x86_64\nHardware\t: x86_64\n");
 #endif
     return pfs_copy_out(off, buf, len, tmp, pos);
 }
@@ -315,21 +310,21 @@ static int pid_max_read(int nid, uint64_t off, void *buf, size_t len)
 }
 
 /*
- * 列：path, type, mode, rdev, read_fn, write_fn, ioctl_fn, poll_fn, close_fn
- *
- * 最后两列绝大多数节点是 NULL（poll 走「总是就绪」兜底、close 无事可做），
- * 但照样显式写出来：这张表用的是位置初始化，漏写会触发
- * -Wmissing-field-initializers，而且列对齐之后哪一行特殊一眼可见。
- */
+   列：path, type, mode, rdev, read_fn, write_fn, ioctl_fn, poll_fn, close_fn
+
+   最后两列绝大多数节点是 NULL(poll 走「总是就绪」兜底, close 无事可做),
+   但照样显式写出来：这张表用的是位置初始化, 漏写会触发
+   -Wmissing-field-initializers, 而且列对齐之后哪一行特殊一眼可见。
+*/
 /*
- * /proc/syscalls — 最近走过的系统调用（环形缓冲，见 kernel/syscall/trace.c）。
- *
- * 和逐条打 UART 的 [strace] 不同，这个**不受 LOG= 等级影响**：环形缓冲是常开的，
- * 所以不需要为了看它去重编一个 LOG=debug 内核 —— 用户态程序崩了当场就能看。
- *
- * 内容是"渲染那一刻"的快照，且和 /proc/meminfo 一样每次 read 都重新生成，
- * 所以分多次 read 的 `cat` 可能拼到两个不同时刻的快照。调试用途，可接受。
- */
+   /proc/syscalls — 最近走过的系统调用(环形缓冲, 见 kernel/syscall/trace.c)。
+
+   和逐条打 UART 的 [strace] 不同, 这个不受 LOG= 等级影响：环形缓冲是常开的,
+   所以不需要为了看它去重编一个 LOG=debug 内核 —— 用户态程序崩了当场就能看。
+
+   内容是"渲染那一刻"的快照, 且和 /proc/meminfo 一样每次 read 都重新生成,
+   所以分多次 read 的 `cat` 可能拼到两个不同时刻的快照。调试用途, 可接受。
+*/
 #define SYSCALLS_PROC_LINES 128
 static int syscalls_read(int nid, uint64_t off, void *buf, size_t len)
 {
@@ -342,14 +337,14 @@ static int syscalls_read(int nid, uint64_t off, void *buf, size_t len)
 }
 
 /*
- * /proc/backtrace — 当前任务的调用栈（kernel/debug/backtrace.c）。
- *
- * 和 /proc/syscalls 一样**不受 LOG= 等级影响**，也不需要重编：怀疑哪里
- * 卡住了，cat 一下就能看到这条路径是怎么调下来的。
- *
- * 最上面几帧必然是 backtrace_read → vfs → syscall 入口那一串 ——
- * 那条路径**就是**这个任务此刻的内核栈，不是噪声。往下才是调用者。
- */
+   /proc/backtrace — 当前任务的调用栈(kernel/debug/backtrace.c)。
+
+   和 /proc/syscalls 一样不受 LOG= 等级影响, 也不需要重编：怀疑哪里
+   卡住了, cat 一下就能看到这条路径是怎么调下来的。
+
+   最上面几帧必然是 backtrace_read → vfs → syscall 入口那一串 ——
+   那条路径就是这个任务此刻的内核栈, 不是噪声。往下才是调用者。
+*/
 static int backtrace_read(int nid, uint64_t off, void *buf, size_t len)
 {
     static char tmp[4096];
@@ -362,133 +357,100 @@ static int backtrace_read(int nid, uint64_t off, void *buf, size_t len)
 
 static const pseudo_node_t g_nodes[] = {
     /* ── 目录 ──────────────────────────────────────────── */
-    { "/dev", PSEUDO_DIR, MODE_DIR, 0, NULL, NULL, NULL, NULL, NULL, NULL,
-      NULL },
-    { "/proc", PSEUDO_DIR, MODE_DIR, 0, NULL, NULL, NULL, NULL, NULL, NULL,
-      NULL },
-    { "/proc/self", PSEUDO_DIR, MODE_DIR, 0, NULL, NULL, NULL, NULL, NULL, NULL,
-      NULL },
-    { "/proc/self/fd", PSEUDO_DIR, MODE_DIR, 0, NULL, NULL, NULL, NULL, NULL,
-      NULL, NULL },
-    { "/proc/sys", PSEUDO_DIR, MODE_DIR, 0, NULL, NULL, NULL, NULL, NULL, NULL,
-      NULL },
-    { "/proc/sys/kernel", PSEUDO_DIR, MODE_DIR, 0, NULL, NULL, NULL, NULL, NULL,
-      NULL, NULL },
-    { "/sys", PSEUDO_DIR, MODE_DIR, 0, NULL, NULL, NULL, NULL, NULL, NULL,
-      NULL },
+    { "/dev", PSEUDO_DIR, MODE_DIR, 0, NULL, NULL, NULL, NULL, NULL, NULL, NULL },
+    { "/proc", PSEUDO_DIR, MODE_DIR, 0, NULL, NULL, NULL, NULL, NULL, NULL, NULL },
+    { "/proc/self", PSEUDO_DIR, MODE_DIR, 0, NULL, NULL, NULL, NULL, NULL, NULL, NULL },
+    { "/proc/self/fd", PSEUDO_DIR, MODE_DIR, 0, NULL, NULL, NULL, NULL, NULL, NULL, NULL },
+    { "/proc/sys", PSEUDO_DIR, MODE_DIR, 0, NULL, NULL, NULL, NULL, NULL, NULL, NULL },
+    { "/proc/sys/kernel", PSEUDO_DIR, MODE_DIR, 0, NULL, NULL, NULL, NULL, NULL, NULL, NULL },
+    { "/sys", PSEUDO_DIR, MODE_DIR, 0, NULL, NULL, NULL, NULL, NULL, NULL, NULL },
 #if DRIVER_DMA_BUF
-    /* dma-heap 在 Linux 上是个目录，运行时 open 里面的某个堆 */
-    { "/dev/dma_heap", PSEUDO_DIR, MODE_DIR, 0, NULL, NULL, NULL, NULL, NULL,
-      NULL, NULL },
+    /* dma-heap 在 Linux 上是个目录, 运行时 open 里面的某个堆 */
+    { "/dev/dma_heap", PSEUDO_DIR, MODE_DIR, 0, NULL, NULL, NULL, NULL, NULL, NULL, NULL },
 #endif
 #if DRIVER_NPU_RKNPU
-    /* librknnrt 实测扫的是 card0..card15（不是 renderD*），两个都要有 */
-    { "/dev/dri", PSEUDO_DIR, MODE_DIR, 0, NULL, NULL, NULL, NULL, NULL, NULL,
-      NULL },
-    /* DRM 的传统 /proc 接口，librknnrt 靠它认驱动名（必须是 "rknpu"）*/
-    { "/proc/dri", PSEUDO_DIR, MODE_DIR, 0, NULL, NULL, NULL, NULL, NULL, NULL,
-      NULL },
-    { "/proc/dri/0", PSEUDO_DIR, MODE_DIR, 0, NULL, NULL, NULL, NULL, NULL,
-      NULL, NULL },
-    { "/proc/dri/0/name", PSEUDO_REG, MODE_REG, 0, dri_name_read, NULL, NULL,
-      NULL, NULL, NULL, NULL },
+    /* librknnrt 实测扫的是 card0..card15(不是 renderD*), 两个都要有 */
+    { "/dev/dri", PSEUDO_DIR, MODE_DIR, 0, NULL, NULL, NULL, NULL, NULL, NULL, NULL },
+    /* DRM 的传统 /proc 接口, librknnrt 靠它认驱动名(必须是 "rknpu") */
+    { "/proc/dri", PSEUDO_DIR, MODE_DIR, 0, NULL, NULL, NULL, NULL, NULL, NULL, NULL },
+    { "/proc/dri/0", PSEUDO_DIR, MODE_DIR, 0, NULL, NULL, NULL, NULL, NULL, NULL, NULL },
+    { "/proc/dri/0/name", PSEUDO_REG, MODE_REG, 0, dri_name_read, NULL, NULL, NULL, NULL, NULL, NULL },
 #endif
 
     /* ── /dev 字符设备 ─────────────────────────────────── */
-    { "/dev/null", PSEUDO_CHR, MODE_CHRW, (1U << 8) | 3U, null_read, null_write,
-      NULL, NULL, NULL, NULL, NULL },
-    { "/dev/zero", PSEUDO_CHR, MODE_CHRW, (1U << 8) | 5U, zero_read, null_write,
-      NULL, NULL, NULL, NULL, NULL },
-    { "/dev/tty", PSEUDO_CHR, MODE_CHRW, (5U << 8) | 0U, tty_read, tty_write,
-      NULL, NULL, NULL, NULL, NULL },
-    { "/dev/console", PSEUDO_CHR, MODE_CHRW, (5U << 8) | 1U, tty_read,
-      tty_write, NULL, NULL, NULL, NULL, NULL },
-    { "/dev/urandom", PSEUDO_CHR, MODE_CHRW, (1U << 8) | 9U, rand_read,
-      null_write, NULL, NULL, NULL, NULL, NULL },
-    { "/dev/random", PSEUDO_CHR, MODE_CHRW, (1U << 8) | 8U, rand_read,
-      null_write, NULL, NULL, NULL, NULL, NULL },
+    { "/dev/null", PSEUDO_CHR, MODE_CHRW, (1U << 8) | 3U, null_read, null_write, NULL, NULL, NULL, NULL, NULL },
+    { "/dev/zero", PSEUDO_CHR, MODE_CHRW, (1U << 8) | 5U, zero_read, null_write, NULL, NULL, NULL, NULL, NULL },
+    { "/dev/tty", PSEUDO_CHR, MODE_CHRW, (5U << 8) | 0U, tty_read, tty_write, NULL, NULL, NULL, NULL, NULL },
+    { "/dev/console", PSEUDO_CHR, MODE_CHRW, (5U << 8) | 1U, tty_read, tty_write, NULL, NULL, NULL, NULL, NULL },
+    { "/dev/urandom", PSEUDO_CHR, MODE_CHRW, (1U << 8) | 9U, rand_read, null_write, NULL, NULL, NULL, NULL, NULL },
+    { "/dev/random", PSEUDO_CHR, MODE_CHRW, (1U << 8) | 8U, rand_read, null_write, NULL, NULL, NULL, NULL, NULL },
     /* 加速器设备 */
-    { "/dev/cvi-tpu0", PSEUDO_CHR, MODE_CHRW, (240U << 8) | 0U, NULL,
-      null_write, tpu_dev_ioctl, NULL, NULL, NULL, NULL },
-    { "/dev/ion", PSEUDO_CHR, MODE_CHRW, (10U << 8) | 56U, NULL, null_write,
-      ion_dev_ioctl, NULL, NULL, NULL, NULL },
-    { "/dev/npu", PSEUDO_CHR, MODE_CHRW, (10U << 8) | 242U, NULL, null_write,
-      npu_dev_ioctl, NULL, NULL, NULL, NULL },
+    { "/dev/cvi-tpu0", PSEUDO_CHR, MODE_CHRW, (240U << 8) | 0U, NULL, null_write, tpu_dev_ioctl, NULL, NULL, NULL,
+      NULL },
+    { "/dev/ion", PSEUDO_CHR, MODE_CHRW, (10U << 8) | 56U, NULL, null_write, ion_dev_ioctl, NULL, NULL, NULL, NULL },
+    { "/dev/npu", PSEUDO_CHR, MODE_CHRW, (10U << 8) | 242U, NULL, null_write, npu_dev_ioctl, NULL, NULL, NULL, NULL },
 #if DRIVER_DMA_BUF
     /*
-     * dma-heap：官方 librknnrt 从这里分配**每一块**缓冲区
-     * （DMA_HEAP_IOCTL_ALLOC），再以 dmabuf fd 的形式流转。详见
-     * docs/npu/RK3588_NPU_DRIVER.md §2。
-     *
-     * 两个名字指向同一个堆：运行时是按名字找的，而不同版本找的名字不同
-     * —— Linux 通用堆叫 "system"，Rockchip 的 CMA 堆是 "rk-dma-heap-cma"。
-     * 多挂一个别名的代价只是 g_nodes[] 里多一行，比"名字对不上导致
-     * open 失败"好查得多。
-     */
-    { "/dev/dma_heap/system", PSEUDO_CHR, MODE_CHRW, (10U << 8) | 243U, NULL,
-      null_write, dma_heap_dev_ioctl, NULL, NULL, NULL, NULL },
-    { "/dev/dma_heap/cma", PSEUDO_CHR, MODE_CHRW, (10U << 8) | 244U, NULL,
-      null_write, dma_heap_dev_ioctl, NULL, NULL, NULL, NULL },
+       dma-heap：官方 librknnrt 从这里分配每一块缓冲区
+       (DMA_HEAP_IOCTL_ALLOC), 再以 dmabuf fd 的形式流转。详见
+       docs/npu/RK3588_NPU_DRIVER.md §2。
+
+       两个名字指向同一个堆：运行时是按名字找的, 而不同版本找的名字不同
+       —— Linux 通用堆叫 "system", Rockchip 的 CMA 堆是 "rk-dma-heap-cma"。
+       多挂一个别名的代价只是 g_nodes[] 里多一行, 比"名字对不上导致
+       open 失败"好查得多。
+    */
+    { "/dev/dma_heap/system", PSEUDO_CHR, MODE_CHRW, (10U << 8) | 243U, NULL, null_write, dma_heap_dev_ioctl, NULL,
+      NULL, NULL, NULL },
+    { "/dev/dma_heap/cma", PSEUDO_CHR, MODE_CHRW, (10U << 8) | 244U, NULL, null_write, dma_heap_dev_ioctl, NULL, NULL,
+      NULL, NULL },
 #endif
 #if DRIVER_NPU_RKNPU
     /*
-     * DRM 节点。
-     *
-     * ⚠️ **card0 是主路径，不是 renderD128**：内核 trace 抓到 librknnrt
-     *    依次开 /dev/rknpu、/dev/dri/card0..card15、/proc/dri/N/name，
-     *    而**从没试过 renderD128**（虽然它的字符串表里有 renderD）。
-     *    光挂 renderD128 的话它连 open 都不会走到我们这儿。
-     *
-     * rdev 用真实的 DRM 主设备号 226：card* 是次设备号 0..，renderD* 从 128 起。
-     *
-     * 用的是**按文件**的那对回调（末尾两个字段）：GEM handle 按 drm_file
-     * 隔离，见 pseudofs_internal.h 里的说明。前面的 ioctl_fn/close_fn 留
-     * NULL，自动退回老路径的节点不受影响。
-     */
-    { "/dev/dri/card0", PSEUDO_CHR, MODE_CHRW, (226U << 8) | 0U, NULL,
-      null_write, NULL, NULL, NULL, rknpu_drm_ioctl_file,
-      rknpu_drm_close_file },
-    { "/dev/dri/renderD128", PSEUDO_CHR, MODE_CHRW, (226U << 8) | 128U, NULL,
-      null_write, NULL, NULL, NULL, rknpu_drm_ioctl_file,
-      rknpu_drm_close_file },
+       DRM 节点。
+
+       注意： card0 是主路径, 不是 renderD128：内核 trace 抓到 librknnrt
+          依次开 /dev/rknpu, /dev/dri/card0..card15, /proc/dri/N/name,
+          而从没试过 renderD128(虽然它的字符串表里有 renderD)。
+          光挂 renderD128 的话它连 open 都不会走到我们这儿。
+
+       rdev 用真实的 DRM 主设备号 226：card* 是次设备号 0.., renderD* 从 128 起。
+
+       用的是按文件的那对回调(末尾两个字段)：GEM handle 按 drm_file
+       隔离, 见 pseudofs_internal.h 里的说明。前面的 ioctl_fn/close_fn 留
+       NULL, 自动退回老路径的节点不受影响。
+    */
+    { "/dev/dri/card0", PSEUDO_CHR, MODE_CHRW, (226U << 8) | 0U, NULL, null_write, NULL, NULL, NULL,
+      rknpu_drm_ioctl_file, rknpu_drm_close_file },
+    { "/dev/dri/renderD128", PSEUDO_CHR, MODE_CHRW, (226U << 8) | 128U, NULL, null_write, NULL, NULL, NULL,
+      rknpu_drm_ioctl_file, rknpu_drm_close_file },
 #endif
-    { "/dev/video0", PSEUDO_CHR, MODE_CHRW, (81U << 8) | 0U, video0_read,
-      null_write, video0_ioctl, NULL, NULL, NULL, NULL },
+    { "/dev/video0", PSEUDO_CHR, MODE_CHRW, (81U << 8) | 0U, video0_read, null_write, video0_ioctl, NULL, NULL, NULL,
+      NULL },
 /* guest 控制设备：宿主 shell 里的 /bin/vmm-run 打开它来启动/驱动 guest。
-     * 只有「已实现 Linux guest 启动」的架构才有这个节点（判据同
-     * include/vmm/vmm.h 的 VMM_GUEST_LINUX_SUPPORTED）。 */
+       只有「已实现 Linux guest 启动」的架构才有这个节点(判据同
+       include/vmm/vmm.h 的 VMM_GUEST_LINUX_SUPPORTED)。
+*/
 #if VMM_GUEST_LINUX_SUPPORTED
-    { "/dev/vmm", PSEUDO_CHR, MODE_CHRW, (10U << 8) | 200U, vmm_dev_read,
-      vmm_dev_write, vmm_dev_ioctl, vmm_dev_poll, vmm_dev_close, NULL, NULL },
+    { "/dev/vmm", PSEUDO_CHR, MODE_CHRW, (10U << 8) | 200U, vmm_dev_read, vmm_dev_write, vmm_dev_ioctl, vmm_dev_poll,
+      vmm_dev_close, NULL, NULL },
 #endif
 
     /* ── /proc 条目 ────────────────────────────────────── */
-    { "/proc/self/exe", PSEUDO_LNK, MODE_LNK, 0, NULL, NULL, NULL, NULL, NULL,
-      NULL, NULL },
-    { "/proc/self/maps", PSEUDO_REG, MODE_REG, 0, maps_read, NULL, NULL, NULL,
-      NULL, NULL, NULL },
-    { "/proc/self/stat", PSEUDO_REG, MODE_REG, 0, stat_read, NULL, NULL, NULL,
-      NULL, NULL, NULL },
-    { "/proc/self/status", PSEUDO_REG, MODE_REG, 0, status_read, NULL, NULL,
-      NULL, NULL, NULL, NULL },
-    { "/proc/version", PSEUDO_REG, MODE_REG, 0, version_read, NULL, NULL, NULL,
-      NULL, NULL, NULL },
-    { "/proc/uptime", PSEUDO_REG, MODE_REG, 0, uptime_read, NULL, NULL, NULL,
-      NULL, NULL, NULL },
-    { "/proc/mounts", PSEUDO_REG, MODE_REG, 0, mounts_read, NULL, NULL, NULL,
-      NULL, NULL, NULL },
-    /* 最近走过的 syscall。崩了先 cat 这个 —— 不需要重编、不需要事先开开关。 */
-    { "/proc/syscalls", PSEUDO_REG, MODE_REG, 0, syscalls_read, NULL, NULL,
-      NULL, NULL, NULL, NULL },
-    /* 当前任务的调用栈。同上，常开。 */
-    { "/proc/backtrace", PSEUDO_REG, MODE_REG, 0, backtrace_read, NULL, NULL,
-      NULL, NULL, NULL, NULL },
-    { "/proc/meminfo", PSEUDO_REG, MODE_REG, 0, meminfo_read, NULL, NULL, NULL,
-      NULL, NULL, NULL },
-    { "/proc/cpuinfo", PSEUDO_REG, MODE_REG, 0, cpuinfo_read, NULL, NULL, NULL,
-      NULL, NULL, NULL },
-    { "/proc/sys/kernel/pid_max", PSEUDO_REG, MODE_REG, 0, pid_max_read, NULL,
-      NULL, NULL, NULL, NULL, NULL },
+    { "/proc/self/exe", PSEUDO_LNK, MODE_LNK, 0, NULL, NULL, NULL, NULL, NULL, NULL, NULL },
+    { "/proc/self/maps", PSEUDO_REG, MODE_REG, 0, maps_read, NULL, NULL, NULL, NULL, NULL, NULL },
+    { "/proc/self/stat", PSEUDO_REG, MODE_REG, 0, stat_read, NULL, NULL, NULL, NULL, NULL, NULL },
+    { "/proc/self/status", PSEUDO_REG, MODE_REG, 0, status_read, NULL, NULL, NULL, NULL, NULL, NULL },
+    { "/proc/version", PSEUDO_REG, MODE_REG, 0, version_read, NULL, NULL, NULL, NULL, NULL, NULL },
+    { "/proc/uptime", PSEUDO_REG, MODE_REG, 0, uptime_read, NULL, NULL, NULL, NULL, NULL, NULL },
+    { "/proc/mounts", PSEUDO_REG, MODE_REG, 0, mounts_read, NULL, NULL, NULL, NULL, NULL, NULL },
+    /* 最近走过的 syscall。崩了先 cat 这个 —— 不需要重编, 不需要事先开开关。 */
+    { "/proc/syscalls", PSEUDO_REG, MODE_REG, 0, syscalls_read, NULL, NULL, NULL, NULL, NULL, NULL },
+    /* 当前任务的调用栈。同上, 常开。 */
+    { "/proc/backtrace", PSEUDO_REG, MODE_REG, 0, backtrace_read, NULL, NULL, NULL, NULL, NULL, NULL },
+    { "/proc/meminfo", PSEUDO_REG, MODE_REG, 0, meminfo_read, NULL, NULL, NULL, NULL, NULL, NULL },
+    { "/proc/cpuinfo", PSEUDO_REG, MODE_REG, 0, cpuinfo_read, NULL, NULL, NULL, NULL, NULL, NULL },
+    { "/proc/sys/kernel/pid_max", PSEUDO_REG, MODE_REG, 0, pid_max_read, NULL, NULL, NULL, NULL, NULL, NULL },
 };
 
 #define NODE_COUNT ((int)(sizeof(g_nodes) / sizeof(g_nodes[0])))
@@ -516,7 +478,7 @@ static int find_node(const char *path)
     return -1;
 }
 
-/* 节点路径的最后一个分量（即名称）*/
+/* 节点路径的最后一个分量(即名称) */
 const char *pfs_node_name(const pseudo_node_t *n)
 {
     const char *p = n->path, *last = n->path;
@@ -613,7 +575,8 @@ int pseudo_ioctl(int nid, uint64_t req, void *argp)
 uint32_t pseudo_poll(int nid)
 {
     /* 无 poll_fn 的节点保持老行为：永远可读可写。
-     * 这与 vfs_poll() 在没有 ops->poll 时的兜底一致。 */
+       这与 vfs_poll() 在没有 ops->poll 时的兜底一致。
+    */
     if (nid < 0 || nid >= NODE_COUNT)
         return EPOLLIN | EPOLLOUT;
     const pseudo_node_t *n = &g_nodes[nid];
@@ -633,17 +596,18 @@ int pseudo_close(int nid)
 }
 
 /*
- * 「按打开的文件」版本的 ioctl / close。见 pseudofs_internal.h 里
- * ioctl_file_fn 的说明 —— 只有需要 per-open 状态的节点（DRM 渲染节点）
- * 才实现 *_file_fn，其余节点自动退回上面那对老回调。
- */
+   「按打开的文件」版本的 ioctl / close。见 pseudofs_internal.h 里
+   ioctl_file_fn 的说明 —— 只有需要 per-open 状态的节点(DRM 渲染节点)
+   才实现 *_file_fn, 其余节点自动退回上面那对老回调。
+*/
 int pseudo_ioctl_file(void *file, int nid, uint64_t req, void *argp)
 {
     if (nid < 0 || nid >= NODE_COUNT)
         return -PFS_EINVAL;
     const pseudo_node_t *n = &g_nodes[nid];
     /* 同样截 32 位 —— 理由见 kernel/syscall/fs/ioctl.c 里那段说明。
-     * syscall 层已经截过一次，这里是防别的调用者直接进来。 */
+       syscall 层已经截过一次, 这里是防别的调用者直接进来。
+    */
     if (n->ioctl_file_fn)
         return n->ioctl_file_fn(file, (uint32_t)req, argp);
     if (!n->ioctl_fn)
@@ -724,7 +688,7 @@ int pseudo_readlink(const char *abspath, char *buf, size_t bufsz)
         return (int)copy;
     }
 
-    /* /proc/self/fd/<N> → 合成路径（仅 0/1/2） */
+    /* /proc/self/fd/<N> → 合成路径(仅 0/1/2) */
     if (pfs_strncmp(abspath, "/proc/self/fd/", 14) == 0) {
         int fdnum = 0;
         const char *p = abspath + 14;

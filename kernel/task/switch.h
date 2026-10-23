@@ -2,24 +2,24 @@
 #define KERNEL_TASK_SWITCH_H
 
 /*
- * kernel/task/switch.h — 架构抽象：上下文切换
- *
- * 提供：
- *   arch_task_switch()      — 在 .S 文件中实现，保存/恢复被调用者寄存器
- *   arch_init_task_stack()  — 为新任务构造初始切换帧
- *
- * 中断屏蔽（arch_irq_save/restore/enable/disable/flags/is_enabled）已统一到
- * include/<arch>/exception_impl.h，由本文件顶部 include 的 exception.h 暴露。
- *
- * 上下文切换原理：
- *   仅保存"被调用者保存寄存器"（callee-saved registers）。
- *   调用者保存寄存器由 C 调用约定在调用 sched_schedule() 前
- *   自动保存到栈帧，arch_task_switch() 无需额外处理。
- *
- * 新任务初始化：
- *   arch_init_task_stack() 在新任务的栈顶构造一个伪造的切换帧，
- *   使首次 arch_task_switch() "返回"时跳转到 task_trampoline()。
- */
+   kernel/task/switch.h — 架构抽象：上下文切换
+
+   提供：
+     arch_task_switch()      — 在 .S 文件中实现, 保存/恢复被调用者寄存器
+     arch_init_task_stack()  — 为新任务构造初始切换帧
+
+   中断屏蔽(arch_irq_save/restore/enable/disable/flags/is_enabled)已统一到
+   include/<arch>/exception_impl.h, 由本文件顶部 include 的 exception.h 暴露。
+
+   上下文切换原理：
+     仅保存"被调用者保存寄存器"(callee-saved registers)。
+     调用者保存寄存器由 C 调用约定在调用 sched_schedule() 前
+     自动保存到栈帧, arch_task_switch() 无需额外处理。
+
+   新任务初始化：
+     arch_init_task_stack() 在新任务的栈顶构造一个伪造的切换帧,
+     使首次 arch_task_switch() "返回"时跳转到 task_trampoline()。
+*/
 
 #include "types.h"
 #include "arch.h"
@@ -28,88 +28,85 @@
 /* 前向声明：task_trampoline 在 task.c 中实现 */
 void task_trampoline(void);
 
-/* 前向声明：task_trampoline_user 在 switch.S 中实现（汇编） */
+/* 前向声明：task_trampoline_user 在 switch.S 中实现(汇编) */
 void task_trampoline_user(void);
 
-/* ── 架构特定：上下文切换（在 .S 文件中实现）─────────────── */
+/* ── 架构特定：上下文切换(在 .S 文件中实现)─────────────── */
 
-/**
- * arch_task_switch - 保存当前任务上下文并切换到下一任务
- * @prev_sp: 输出 — 将当前 SP 写入 *prev_sp
- * @next_sp: 输入 — 要加载的下一任务 SP
- * @prev_pgd_ptr: 输出 — 将当前 TTBR0_EL1 写入 *prev_pgd_ptr（可为NULL）
- * @next_pgd: 输入 — 下一任务的页表基址（NULL表示不切换）
- *
- * 执行流程：
- *   1. 将被调用者保存寄存器压栈
- *   2. 将 SP 写入 *prev_sp
- *   3. 将 SP 设为 next_sp
- *   4. 如果 prev_pgd_ptr != NULL，将当前 TTBR0_EL1 保存到 *prev_pgd_ptr
- *   5. 如果 next_pgd != NULL，切换 TTBR0_EL1 到 next_pgd
- *   6. 弹出被调用者保存寄存器
- *   7. ret（跳转到 next_sp 帧中保存的返回地址）
- */
-void arch_task_switch(uintptr_t *prev_sp, uintptr_t next_sp,
-                      uint64_t **prev_pgd_ptr, uint64_t *next_pgd);
+/*
+   arch_task_switch - 保存当前任务上下文并切换到下一任务
+   @prev_sp: 输出 — 将当前 SP 写入 *prev_sp
+   @next_sp: 输入 — 要加载的下一任务 SP
+   @prev_pgd_ptr: 输出 — 将当前 TTBR0_EL1 写入 *prev_pgd_ptr(可为NULL)
+   @next_pgd: 输入 — 下一任务的页表基址(NULL表示不切换)
 
-/**
- * arch_switch_to_user - 从内核跳转到用户态
- * @user_entry: 用户态入口点（虚拟地址）
- * @user_sp: 用户栈指针（虚拟地址）
- * @user_pgd: 用户页表物理地址（首次进入用户态时用于切换 satp）
- * @kernel_sp: 内核栈指针（物理地址）
- *
- * 执行流程：
- *   1. 设置异常返回地址到 user_entry
- *   2. 设置用户栈指针到 user_sp
- *   3. 设置 SPSR 到 EL0t（用户态）
- *   4. 保存内核栈指针到 SP_EL0
- *   5. 执行 eret 跳转到用户态
- *
- * 注意：此函数不返回，会跳转到用户态执行。
- */
-void arch_switch_to_user(uint64_t user_entry, uint64_t user_sp,
-                         uint64_t kernel_sp) __attribute__((noreturn));
+   执行流程：
+     1. 将被调用者保存寄存器压栈
+     2. 将 SP 写入 *prev_sp
+     3. 将 SP 设为 next_sp
+     4. 如果 prev_pgd_ptr != NULL, 将当前 TTBR0_EL1 保存到 *prev_pgd_ptr
+     5. 如果 next_pgd != NULL, 切换 TTBR0_EL1 到 next_pgd
+     6. 弹出被调用者保存寄存器
+     7. ret(跳转到 next_sp 帧中保存的返回地址)
+*/
+void arch_task_switch(uintptr_t *prev_sp, uintptr_t next_sp, uint64_t **prev_pgd_ptr, uint64_t *next_pgd);
+
+/*
+   arch_switch_to_user - 从内核跳转到用户态
+   @user_entry: 用户态入口点(虚拟地址)
+   @user_sp: 用户栈指针(虚拟地址)
+   @user_pgd: 用户页表物理地址(首次进入用户态时用于切换 satp)
+   @kernel_sp: 内核栈指针(物理地址)
+
+   执行流程：
+     1. 设置异常返回地址到 user_entry
+     2. 设置用户栈指针到 user_sp
+     3. 设置 SPSR 到 EL0t(用户态)
+     4. 保存内核栈指针到 SP_EL0
+     5. 执行 eret 跳转到用户态
+
+   注意：此函数不返回, 会跳转到用户态执行。
+*/
+void arch_switch_to_user(uint64_t user_entry, uint64_t user_sp, uint64_t kernel_sp) __attribute__((noreturn));
 
 /* ── 中断控制 ────────────────────────────────────────────── */
 /*
- * 中断屏蔽原语已统一到 include/<arch>/exception_impl.h，由 include/exception.h
- * 暴露（arch_irq_save/restore/enable/disable/flags/is_enabled）。这里不再保留
- * 副本 —— 以前 switch.h 和各架构的 spin_lock_impl.h 各有一份同名实现。
- */
+   中断屏蔽原语已统一到 include/<arch>/exception_impl.h, 由 include/exception.h
+   暴露(arch_irq_save/restore/enable/disable/flags/is_enabled)。这里不再保留
+   副本 —— 以前 switch.h 和各架构的 spin_lock_impl.h 各有一份同名实现。
+*/
 /* ── 新任务栈初始化 ───────────────────────────────────────── */
 
-/**
- * arch_init_task_stack - 在新任务的栈上构造伪切换帧
- * @stack_base: 栈底（低地址）
- * @stack_size: 栈大小（字节）
- *
- * 返回：应写入 task->sp 的初始值。
- *
- * 构造的帧与 arch_task_switch() 保存的帧格式完全一致，
- * 使得首次调度到该任务时 arch_task_switch 的 "ret"
- * 跳转到 task_trampoline()。
- */
-static inline uintptr_t arch_init_task_stack(uint8_t *stack_base,
-                                             uint32_t stack_size)
+/*
+   arch_init_task_stack - 在新任务的栈上构造伪切换帧
+   @stack_base: 栈底(低地址)
+   @stack_size: 栈大小(字节)
+
+   返回：应写入 task->sp 的初始值。
+
+   构造的帧与 arch_task_switch() 保存的帧格式完全一致,
+   使得首次调度到该任务时 arch_task_switch 的 "ret"
+   跳转到 task_trampoline()。
+*/
+static inline uintptr_t arch_init_task_stack(uint8_t *stack_base, uint32_t stack_size)
 {
     uint64_t *sp = (uint64_t *)((uintptr_t)(stack_base + stack_size));
 
 #if ARCH_AARCH64
     /*
-     * arch_task_switch 保存顺序（stp x19,x20 [sp,#-176]! ... stp x9,x10 [sp,#160]）：
-     * saved_sp + 0  = x19,  saved_sp + 8  = x20
-     * saved_sp + 16 = x21,  saved_sp + 24 = x22
-     * saved_sp + 32 = x23,  saved_sp + 40 = x24
-     * saved_sp + 48 = x25,  saved_sp + 56 = x26
-     * saved_sp + 64 = x27,  saved_sp + 72 = x28
-     * saved_sp + 80 = x29,  saved_sp + 88 = x30 (LR)  ← ret 目标
-     * saved_sp + 96 .. 152 = d8-d15
-     * saved_sp + 160 = fpcr, saved_sp + 168 = fpsr
-     * 共 22 × 8 = 176 字节
-     *
-     * 全部清零：新内核线程以干净的 FP 状态开始（FPCR/FPSR = 0，d8-d15 = 0）。
-     */
+       arch_task_switch 保存顺序(stp x19,x20 [sp,#-176]! ... stp x9,x10 [sp,#160])：
+       saved_sp + 0  = x19,  saved_sp + 8  = x20
+       saved_sp + 16 = x21,  saved_sp + 24 = x22
+       saved_sp + 32 = x23,  saved_sp + 40 = x24
+       saved_sp + 48 = x25,  saved_sp + 56 = x26
+       saved_sp + 64 = x27,  saved_sp + 72 = x28
+       saved_sp + 80 = x29,  saved_sp + 88 = x30 (LR)  ← ret 目标
+       saved_sp + 96 .. 152 = d8-d15
+       saved_sp + 160 = fpcr, saved_sp + 168 = fpsr
+       共 22 × 8 = 176 字节
+
+       全部清零：新内核线程以干净的 FP 状态开始(FPCR/FPSR = 0, d8-d15 = 0)。
+    */
     sp -= 22;
     for (int i = 0; i < 22; i++)
         sp[i] = 0;
@@ -117,15 +114,15 @@ static inline uintptr_t arch_init_task_stack(uint8_t *stack_base,
 
 #elif ARCH_RISCV64
     /*
-     * arch_task_switch 保存顺序（sd ra 0(sp) ... sd s11 96(sp), fsd fs0..fs11, fcsr）：
-     * saved_sp + 0  = ra    ← ret 目标
-     * saved_sp + 8  = s0,  saved_sp + 16 = s1
-     * ...
-     * saved_sp + 96 = s11
-     * saved_sp + 104 = fs0 .. saved_sp + 192 = fs11
-     * saved_sp + 200 = fcsr
-     * 共 26 × 8 = 208 字节
-     */
+       arch_task_switch 保存顺序(sd ra 0(sp) ... sd s11 96(sp), fsd fs0..fs11, fcsr)：
+       saved_sp + 0  = ra    ← ret 目标
+       saved_sp + 8  = s0,  saved_sp + 16 = s1
+       ...
+       saved_sp + 96 = s11
+       saved_sp + 104 = fs0 .. saved_sp + 192 = fs11
+       saved_sp + 200 = fcsr
+       共 26 × 8 = 208 字节
+    */
     sp -= 26;
     sp[0] = (uint64_t)task_trampoline; /* ra */
     for (int i = 1; i < 26; i++)
@@ -133,17 +130,17 @@ static inline uintptr_t arch_init_task_stack(uint8_t *stack_base,
 
 #elif ARCH_X86_64
     /*
-     * arch_task_switch 保存顺序（pushq rbx, rbp, r12, r13, r14, r15）：
-     * 恢复顺序（popq r15, r14, r13, r12, rbp, rbx, ret）：
-     * saved_sp + 0  = r15
-     * saved_sp + 8  = r14
-     * saved_sp + 16 = r13
-     * saved_sp + 24 = r12
-     * saved_sp + 32 = rbp
-     * saved_sp + 40 = rbx
-     * saved_sp + 48 = 返回地址  ← ret 目标
-     * 共 7 × 8 = 56 字节
-     */
+       arch_task_switch 保存顺序(pushq rbx, rbp, r12, r13, r14, r15)：
+       恢复顺序(popq r15, r14, r13, r12, rbp, rbx, ret)：
+       saved_sp + 0  = r15
+       saved_sp + 8  = r14
+       saved_sp + 16 = r13
+       saved_sp + 24 = r12
+       saved_sp + 32 = rbp
+       saved_sp + 40 = rbx
+       saved_sp + 48 = 返回地址  ← ret 目标
+       共 7 × 8 = 56 字节
+    */
     sp -= 7;
     for (int i = 0; i < 6; i++)
         sp[i] = 0;
@@ -156,40 +153,39 @@ static inline uintptr_t arch_init_task_stack(uint8_t *stack_base,
 
 /* ── 用户进程栈初始化 ───────────────────────────────────────── */
 
-/**
- * arch_init_user_stack - 为用户进程初始化内核栈（首次跳转用）
- * @stack_base: 内核栈底（低地址）
- * @stack_size: 内核栈大小（字节）
- * @user_entry: 用户态入口点（虚拟地址）
- * @user_sp: 用户栈指针（虚拟地址）
- *
- * 返回：应写入 task->sp 的初始内核栈指针。
- *
- * 构造的帧使得首次调度时跳转到 task_trampoline_user，
- * 然后调用 arch_switch_to_user 跳转到用户态。
- */
-static inline uintptr_t
-arch_init_user_stack(uint8_t *stack_base, uint32_t stack_size,
-                     uint64_t user_entry, uint64_t user_sp, uint64_t user_pgd)
+/*
+   arch_init_user_stack - 为用户进程初始化内核栈(首次跳转用)
+   @stack_base: 内核栈底(低地址)
+   @stack_size: 内核栈大小(字节)
+   @user_entry: 用户态入口点(虚拟地址)
+   @user_sp: 用户栈指针(虚拟地址)
+
+   返回：应写入 task->sp 的初始内核栈指针。
+
+   构造的帧使得首次调度时跳转到 task_trampoline_user,
+   然后调用 arch_switch_to_user 跳转到用户态。
+*/
+static inline uintptr_t arch_init_user_stack(uint8_t *stack_base, uint32_t stack_size, uint64_t user_entry,
+                                             uint64_t user_sp, uint64_t user_pgd)
 {
     uint64_t *sp = (uint64_t *)((uintptr_t)(stack_base + stack_size));
 
 #if ARCH_AARCH64
     (void)user_pgd;
     /*
-     * 保存22个被调用者寄存器（176 字节，含 FP 保存区）
-     * 布局：
-     *   [0]   x19=user_entry  [8]   x20=user_sp
-     *   [16]  x21=unused       [24]  x22
-     *   [32]  x23              [40]  x24
-     *   [48]  x25              [56]  x26
-     *   [64]  x27              [72]  x28
-     *   [80]  x29              [88]  x30 (LR) → task_trampoline_user
-     *   [96..152] d8-d15, [160] fpcr, [168] fpsr
-     *
-     * FP 区清零：新进程首次进 EL0 时 FPCR/FPSR 与 d8-d15 都是干净的，
-     * 不会把内核残留的 FP 值泄漏给用户态。
-     */
+       保存22个被调用者寄存器(176 字节, 含 FP 保存区)
+       布局：
+         [0]   x19=user_entry  [8]   x20=user_sp
+         [16]  x21=unused       [24]  x22
+         [32]  x23              [40]  x24
+         [48]  x25              [56]  x26
+         [64]  x27              [72]  x28
+         [80]  x29              [88]  x30 (LR) → task_trampoline_user
+         [96..152] d8-d15, [160] fpcr, [168] fpsr
+
+       FP 区清零：新进程首次进 EL0 时 FPCR/FPSR 与 d8-d15 都是干净的,
+       不会把内核残留的 FP 值泄漏给用户态。
+    */
     sp -= 22;
     sp[0] = user_entry; /* x19 = 用户入口 */
     sp[1] = user_sp;    /* x20 = 用户栈 */
@@ -199,10 +195,10 @@ arch_init_user_stack(uint8_t *stack_base, uint32_t stack_size,
 
 #elif ARCH_RISCV64
     /*
-     * 保存26个被调用者寄存器（208字节）：
-     * [0]=ra [1]=s0 [2]=s1 ... [12]=s11 [13..24]=fs0..fs11 [25]=fcsr
-     * task_trampoline_user 约定：s0=user_entry, s1=user_sp, s2=user_pgd
-     */
+       保存26个被调用者寄存器(208字节)：
+       [0]=ra [1]=s0 [2]=s1 ... [12]=s11 [13..24]=fs0..fs11 [25]=fcsr
+       task_trampoline_user 约定：s0=user_entry, s1=user_sp, s2=user_pgd
+    */
     sp -= 26;
     sp[0] = (uint64_t)task_trampoline_user; /* ra */
     sp[1] = user_entry;                     /* s0 */
@@ -213,22 +209,22 @@ arch_init_user_stack(uint8_t *stack_base, uint32_t stack_size,
 
 #elif ARCH_X86_64
     /*
-     * x86_64 栈布局（arch_task_switch 恢复时）：
-     * 
-     * [高地址]
-     *   user_sp         <- 会被 task_trampoline_user popq 到 rsi
-     *   user_entry      <- 会被 task_trampoline_user popq 到 rdi
-     *   返回地址 (LR)   <- 会被 ret 弹出，跳转到 task_trampoline_user
-     *   r15
-     *   r14
-     *   r13
-     *   r12
-     *   rbp
-     *   rbx             <- sp 指向这里
-     * [低地址]
-     * 
-     * 保存6个被调用者寄存器 + 返回地址 + 2个参数 = 9 个 uint64_t
-     */
+       x86_64 栈布局(arch_task_switch 恢复时)：
+
+       [高地址]
+         user_sp         <- 会被 task_trampoline_user popq 到 rsi
+         user_entry      <- 会被 task_trampoline_user popq 到 rdi
+         返回地址 (LR)   <- 会被 ret 弹出, 跳转到 task_trampoline_user
+         r15
+         r14
+         r13
+         r12
+         rbp
+         rbx             <- sp 指向这里
+       [低地址]
+
+       保存6个被调用者寄存器 + 返回地址 + 2个参数 = 9 个 uint64_t
+    */
     sp -= 9;
     sp[0] = 0;                              /* rbx */
     sp[1] = 0;                              /* rbp */
@@ -246,30 +242,27 @@ arch_init_user_stack(uint8_t *stack_base, uint32_t stack_size,
     return (uintptr_t)sp;
 }
 
-/* ── 前向声明：用户进程trampoline（汇编实现）──────────────────── */
+/* ── 前向声明：用户进程trampoline(汇编实现)──────────────────── */
 void task_trampoline_user(void);
 
-/* ── 前向声明：fork 子进程 trampoline（汇编实现）────────────── */
+/* ── 前向声明：fork 子进程 trampoline(汇编实现)────────────── */
 void arch_fork_resume_user(void);
 
-/**
- * arch_init_fork_child_stack - 为 fork/线程子进程初始化内核栈
- * @stack_base:      内核栈底（低地址）
- * @stack_size:      内核栈大小（字节）
- * @frame:           父进程的完整 trap_frame_t
- * @child_stack:     子进程/线程的用户栈指针（0 = 继承父进程）
- * @tls:             线程本地存储指针（0 = 继承父进程）
- *
- * fork：child_stack=0, tls=0
- * 线程（CLONE_VM+CLONE_SETTLS）：child_stack=新栈, tls=TLS指针
- *
- * 返回：应写入 task->sp 的初始值。
- */
-static inline uintptr_t arch_init_fork_child_stack(uint8_t *stack_base,
-                                                   uint32_t stack_size,
-                                                   trap_frame_t *frame,
-                                                   uint64_t child_stack,
-                                                   uint64_t tls)
+/*
+   arch_init_fork_child_stack - 为 fork/线程子进程初始化内核栈
+   @stack_base:      内核栈底(低地址)
+   @stack_size:      内核栈大小(字节)
+   @frame:           父进程的完整 trap_frame_t
+   @child_stack:     子进程/线程的用户栈指针(0 = 继承父进程)
+   @tls:             线程本地存储指针(0 = 继承父进程)
+
+   fork：child_stack=0, tls=0
+   线程(CLONE_VM+CLONE_SETTLS)：child_stack=新栈, tls=TLS指针
+
+   返回：应写入 task->sp 的初始值。
+*/
+static inline uintptr_t arch_init_fork_child_stack(uint8_t *stack_base, uint32_t stack_size, trap_frame_t *frame,
+                                                   uint64_t child_stack, uint64_t tls)
 {
     uint64_t *sp = (uint64_t *)((uintptr_t)(stack_base + stack_size));
 
@@ -278,17 +271,17 @@ static inline uintptr_t arch_init_fork_child_stack(uint8_t *stack_base,
     sp = (uint64_t *)((uintptr_t)sp - sizeof(trap_frame_t));
     trap_frame_t *child_frame = (trap_frame_t *)sp;
     /*
-     * 整体拷贝：r[]/usp/elr/spsr/tpidr_el0 与 FP 状态（q0-q31/fpcr/fpsr）
-     * 全部继承父进程 —— 子进程的 FP 状态在 fork 时必须与父进程一致。
-     * （早先这里逐字段拷贝，扩 FP 时容易漏字段。）
-     */
+       整体拷贝：r[]/usp/elr/spsr/tpidr_el0 与 FP 状态(q0-q31/fpcr/fpsr)
+       全部继承父进程 —— 子进程的 FP 状态在 fork 时必须与父进程一致。
+       (早先这里逐字段拷贝, 扩 FP 时容易漏字段。)
+    */
     *child_frame = *frame;
     child_frame->usp = child_stack ? child_stack : frame->usp;
     child_frame->tpidr_el0 = tls ? tls : frame->tpidr_el0;
     /* 子进程 fork/线程 返回 0 */
     child_frame->r[0] = 0;
 
-    /* 再放 22 个被调用者寄存器（含 FP 保存区），x30(LR)→arch_fork_resume_user */
+    /* 再放 22 个被调用者寄存器(含 FP 保存区), x30(LR)→arch_fork_resume_user */
     sp -= 22;
     sp[0] = (uint64_t)(uintptr_t)child_frame; /* x19 = &child_frame */
     for (int i = 1; i < 22; i++)
@@ -317,14 +310,14 @@ static inline uintptr_t arch_init_fork_child_stack(uint8_t *stack_base,
     if (tls)
         child_frame->x[4] = tls; /* tp */
 
-    /* 再放 26 个被调用者寄存器（含 FP），ra->arch_fork_resume_user，s0->child_frame */
+    /* 再放 26 个被调用者寄存器(含 FP), ra->arch_fork_resume_user, s0->child_frame */
     sp -= 26;
     sp[0] = (uint64_t)arch_fork_resume_user;  /* ra */
     sp[1] = (uint64_t)(uintptr_t)child_frame; /* s0 = &child_frame */
     for (int i = 2; i < 26; i++)
         sp[i] = 0;
 #else
-    /* x86_64: 在内核栈上放 trap_frame，再放 arch_task_switch 的被调用者寄存器帧 */
+    /* x86_64: 在内核栈上放 trap_frame, 再放 arch_task_switch 的被调用者寄存器帧 */
     (void)tls;
     sp = (uint64_t *)((uintptr_t)sp - sizeof(trap_frame_t));
     trap_frame_t *child_frame = (trap_frame_t *)sp;
@@ -335,11 +328,11 @@ static inline uintptr_t arch_init_fork_child_stack(uint8_t *stack_base,
     /* x86_64 TLS (fs_base) 在 clone 调用者处通过 task->fs_base 设置 */
 
     /*
-     * arch_task_switch 保存/恢复顺序（低地址→高地址）：
-     *   [sp+0] r15  [sp+8] r14  [sp+16] r13  [sp+24] r12
-     *   [sp+32] rbp [sp+40] rbx [sp+48] 返回地址
-     * rbx 恢复后值为 &child_frame，ret 后跳 arch_fork_resume_user。
-     */
+       arch_task_switch 保存/恢复顺序(低地址→高地址)：
+         [sp+0] r15  [sp+8] r14  [sp+16] r13  [sp+24] r12
+         [sp+32] rbp [sp+40] rbx [sp+48] 返回地址
+       rbx 恢复后值为 &child_frame, ret 后跳 arch_fork_resume_user。
+    */
     sp -= 7;
     sp[0] = 0;                                /* r15 */
     sp[1] = 0;                                /* r14 */

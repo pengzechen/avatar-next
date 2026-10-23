@@ -1,6 +1,6 @@
 /*
- * kernel/vmm/vdev/vgic/vgicc.c - per-vCPU GICC and GICH state.
- */
+   kernel/vmm/vdev/vgic/vgicc.c - per-vCPU GICC and GICH state.
+*/
 
 #include "vmm/vmm_vgicc.h"
 #include "klog.h"
@@ -17,8 +17,7 @@ static int valid_vcpu(const vgic_t *vgic, uint32_t vcpu_id)
     return vgic && vcpu_id < vgic->nr_vcpus;
 }
 
-static uint64_t vgicc_read_for_vcpu(mmio_device_t *dev, uint64_t off,
-                                    uint8_t size, uint32_t vcpu_id)
+static uint64_t vgicc_read_for_vcpu(mmio_device_t *dev, uint64_t off, uint8_t size, uint32_t vcpu_id)
 {
     (void)size;
     vgic_t *vgic = (vgic_t *)dev->priv;
@@ -42,8 +41,7 @@ static uint64_t vgicc_read_for_vcpu(mmio_device_t *dev, uint64_t off,
     }
 }
 
-static void vgicc_write_for_vcpu(mmio_device_t *dev, uint64_t off, uint8_t size,
-                                 uint64_t value, uint32_t vcpu_id)
+static void vgicc_write_for_vcpu(mmio_device_t *dev, uint64_t off, uint8_t size, uint64_t value, uint32_t vcpu_id)
 {
     (void)size;
     vgic_t *vgic = (vgic_t *)dev->priv;
@@ -96,9 +94,8 @@ int vgicc_init(mmio_device_t *dev, mmio_bus_t *bus, vgic_t *vgic)
     if (mmio_bus_register(bus, dev) != 0)
         return -1;
 
-    KLOG_INFO("[vgicc] VM CPU interface ready (%u vCPU, IPA 0x%llx, %u LR)\n",
-              vgic->nr_vcpus, (unsigned long long)VGICC_BASE,
-              (unsigned)VGIC_MAX_LRS);
+    KLOG_INFO("[vgicc] VM CPU interface ready (%u vCPU, IPA 0x%llx, %u LR)\n", vgic->nr_vcpus,
+              (unsigned long long)VGICC_BASE, (unsigned)VGIC_MAX_LRS);
     return 0;
 }
 
@@ -108,8 +105,7 @@ int vgicc_lr_has_irq(vgic_t *vgic, uint32_t vcpu_id, uint32_t irq)
         return 0;
     vgic_vcpu_state_t *vcpu = &vgic->vcpu[vcpu_id];
     for (uint32_t i = 0; i < VGIC_MAX_LRS; i++)
-        if ((vcpu->lr[i] & LR_STATE_MASK) &&
-            ((vcpu->lr[i] & LR_VINTID_MASK) == (irq & LR_VINTID_MASK)))
+        if ((vcpu->lr[i] & LR_STATE_MASK) && ((vcpu->lr[i] & LR_VINTID_MASK) == (irq & LR_VINTID_MASK)))
             return 1;
     return 0;
 }
@@ -124,8 +120,7 @@ int vgicc_lr_empty_slot(vgic_t *vgic, uint32_t vcpu_id)
     return -1;
 }
 
-void vgicc_write_lr(vgic_t *vgic, uint32_t vcpu_id, uint32_t slot,
-                    uint32_t value)
+void vgicc_write_lr(vgic_t *vgic, uint32_t vcpu_id, uint32_t slot, uint32_t value)
 {
     if (!valid_vcpu(vgic, vcpu_id) || slot >= VGIC_MAX_LRS)
         return;
@@ -139,8 +134,7 @@ void vgicc_clear_lr_irq(vgic_t *vgic, uint32_t vcpu_id, uint32_t irq)
         return;
     for (uint32_t i = 0; i < VGIC_MAX_LRS; i++) {
         uint32_t *lr = &vgic->vcpu[vcpu_id].lr[i];
-        if ((*lr & LR_STATE_MASK) &&
-            ((*lr & LR_VINTID_MASK) == (irq & LR_VINTID_MASK))) {
+        if ((*lr & LR_STATE_MASK) && ((*lr & LR_VINTID_MASK) == (irq & LR_VINTID_MASK))) {
             *lr = 0;
             gic_write_lr((int32_t)i, 0);
         }

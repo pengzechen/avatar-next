@@ -1,26 +1,26 @@
 /*
- * dmatest.c — dma-buf / dma-heap（P0）的用户态验收程序
- *
- * 跑法：
- *     make PLATFORM=qemu-virt-aarch64 DMA=1 rootfs
- *     make PLATFORM=qemu-virt-aarch64 DMA=1 run-fs
- *     ~ # /bin/dmatest
- *
- * 验收目标（对应 docs/npu/RK3588_NPU_DRIVER.md §5 的 P0）：
- *     open(/dev/dma_heap/...) → DMA_HEAP_IOCTL_ALLOC → mmap → 读写一致，
- *     并且**反复分配/关闭不泄漏**（fd 池和缓冲区表都只有 128 个槽，
- *     漏一个跑 128 轮就会现形）。
- *
- * ⚠️ **本程序不碰 NPU**，所以它能证明的只有"管路通"：
- *    缓存维护那两条（DMA_BUF_IOCTL_SYNC）只会被执行、不会产生可观测差异
- *    —— 同一个 CPU 自己写的自己读，cache 天然一致。真正的正确性要等
- *    P3 有设备 DMA 进来才验得了。这里只能确认"ioctl 返回 0、不报错"。
- *
- * ⚠️ 下面的结构体与 ioctl 号是**手抄**的（用户态不能包含内核头）。
- *    _IOC 把 sizeof 编进了操作码，所以尺寸写错不是"参数错位"而是**换成
- *    另一个 ioctl 号** —— 内核那边会走到 default 分支返回 -ENOSYS，
- *    是响亮的失败，不是静默损坏。内核侧同名定义见 include/dma_buf.h。
- */
+   dmatest.c — dma-buf / dma-heap(P0)的用户态验收程序
+
+   跑法：
+       make PLATFORM=qemu-virt-aarch64 DMA=1 rootfs
+       make PLATFORM=qemu-virt-aarch64 DMA=1 run-fs
+       ~ # /bin/dmatest
+
+   验收目标(对应 docs/npu/RK3588_NPU_DRIVER.md §5 的 P0)：
+       open(/dev/dma_heap/...) → DMA_HEAP_IOCTL_ALLOC → mmap → 读写一致,
+       并且反复分配/关闭不泄漏(fd 池和缓冲区表都只有 128 个槽,
+       漏一个跑 128 轮就会现形)。
+
+   注意： 本程序不碰 NPU, 所以它能证明的只有"管路通"：
+      缓存维护那两条(DMA_BUF_IOCTL_SYNC)只会被执行, 不会产生可观测差异
+      —— 同一个 CPU 自己写的自己读, cache 天然一致。真正的正确性要等
+      P3 有设备 DMA 进来才验得了。这里只能确认"ioctl 返回 0, 不报错"。
+
+   注意： 下面的结构体与 ioctl 号是手抄的(用户态不能包含内核头)。
+      _IOC 把 sizeof 编进了操作码, 所以尺寸写错不是"参数错位"而是换成
+      另一个 ioctl 号 —— 内核那边会走到 default 分支返回 -ENOSYS,
+      是响亮的失败, 不是静默损坏。内核侧同名定义见 include/dma_buf.h。
+*/
 #define _GNU_SOURCE
 #include <errno.h>
 #include <fcntl.h>
@@ -77,8 +77,7 @@ static int roundtrip(int heap_fd, size_t len, uint8_t seed, const char *tag)
     args.fd_flags = O_RDWR;
 
     if (ioctl(heap_fd, DMA_HEAP_IOCTL_ALLOC, &args) < 0) {
-        printf("  [FAIL] %s: alloc(%zu) ioctl 失败: %s\n", tag, len,
-               strerror(errno));
+        printf("  [FAIL] %s: alloc(%zu) ioctl 失败: %s\n", tag, len, strerror(errno));
         g_fail++;
         return -1;
     }
@@ -91,18 +90,17 @@ static int roundtrip(int heap_fd, size_t len, uint8_t seed, const char *tag)
     int bfd = (int)args.fd;
     uint8_t *p = mmap(NULL, len, PROT_READ | PROT_WRITE, MAP_SHARED, bfd, 0);
     if (p == MAP_FAILED) {
-        printf("  [FAIL] %s: mmap(len=%zu) 失败: %s\n", tag, len,
-               strerror(errno));
+        printf("  [FAIL] %s: mmap(len=%zu) 失败: %s\n", tag, len, strerror(errno));
         g_fail++;
         close(bfd);
         return -1;
     }
 
-    /* 写一个可校验的花纹（seed 让不同缓冲区互不相同）*/
+    /* 写一个可校验的花纹(seed 让不同缓冲区互不相同) */
     for (size_t i = 0; i < len; i++)
         p[i] = (uint8_t)(seed + i * 7U);
 
-    /* CPU 写完了要交给"设备"看 → END|WRITE（clean）*/
+    /* CPU 写完了要交给"设备"看 → END|WRITE(clean) */
     struct dma_buf_sync s;
     s.flags = DMA_BUF_SYNC_END | DMA_BUF_SYNC_WRITE;
     if (ioctl(bfd, DMA_BUF_IOCTL_SYNC, &s) < 0) {
@@ -110,11 +108,10 @@ static int roundtrip(int heap_fd, size_t len, uint8_t seed, const char *tag)
         g_fail++;
     }
 
-    /* "设备"写完了 CPU 要读 → START|READ（invalidate），再读回来校验 */
+    /* "设备"写完了 CPU 要读 → START|READ(invalidate), 再读回来校验 */
     s.flags = DMA_BUF_SYNC_START | DMA_BUF_SYNC_READ;
     if (ioctl(bfd, DMA_BUF_IOCTL_SYNC, &s) < 0) {
-        printf("  [FAIL] %s: SYNC(START|READ) 失败: %s\n", tag,
-               strerror(errno));
+        printf("  [FAIL] %s: SYNC(START|READ) 失败: %s\n", tag, strerror(errno));
         g_fail++;
     }
 
@@ -126,8 +123,8 @@ static int roundtrip(int heap_fd, size_t len, uint8_t seed, const char *tag)
         }
     }
     if (bad_at != len) {
-        printf("  [FAIL] %s: 读回校验不一致 @%zu (期望 0x%02x 实得 0x%02x)\n",
-               tag, bad_at, (uint8_t)(seed + bad_at * 7U), p[bad_at]);
+        printf("  [FAIL] %s: 读回校验不一致 @%zu (期望 0x%02x 实得 0x%02x)\n", tag, bad_at,
+               (uint8_t)(seed + bad_at * 7U), p[bad_at]);
         g_fail++;
     }
 
@@ -152,8 +149,7 @@ int main(void)
         }
     }
     if (heap_fd < 0) {
-        printf("[FAIL] 打不开任何 dma-heap (试过 %s / %s): %s\n", names[0],
-               names[1], strerror(errno));
+        printf("[FAIL] 打不开任何 dma-heap (试过 %s / %s): %s\n", names[0], names[1], strerror(errno));
         return 1;
     }
     printf("堆: %s (fd=%d)\n", heap_name, heap_fd);
@@ -183,8 +179,7 @@ int main(void)
             if (ioctl(heap_fd, DMA_HEAP_IOCTL_ALLOC, &a) < 0)
                 break;
             fds[i] = (int)a.fd;
-            maps[i] =
-                mmap(NULL, L, PROT_READ | PROT_WRITE, MAP_SHARED, fds[i], 0);
+            maps[i] = mmap(NULL, L, PROT_READ | PROT_WRITE, MAP_SHARED, fds[i], 0);
             if (maps[i] == MAP_FAILED) {
                 close(fds[i]);
                 break;
@@ -222,9 +217,9 @@ int main(void)
     printf("\n-- 泄漏检查（300 轮）--\n");
     {
         /*
-         * fd 池和 dma_buf 表**都只有 128 个槽**。若 close 路径漏还引用
-         * （fd_obj_close 没走到 dma_buf_put_index），这里 128 轮内必然失败。
-         */
+           fd 池和 dma_buf 表都只有 128 个槽。若 close 路径漏还引用
+           (fd_obj_close 没走到 dma_buf_put_index), 这里 128 轮内必然失败。
+        */
         int fail_at = -1;
         for (int i = 0; i < 300; i++) {
             if (roundtrip(heap_fd, 4096, (uint8_t)i, "") != 0) {
@@ -246,8 +241,7 @@ int main(void)
         a.len = 4096;
         if (ioctl(heap_fd, DMA_HEAP_IOCTL_ALLOC, &a) == 0) {
             int bfd = (int)a.fd;
-            void *p =
-                mmap(NULL, 8192, PROT_READ | PROT_WRITE, MAP_SHARED, bfd, 0);
+            void *p = mmap(NULL, 8192, PROT_READ | PROT_WRITE, MAP_SHARED, bfd, 0);
             if (p == MAP_FAILED)
                 ok("超出缓冲区大小的 mmap 被拒绝");
             else {
@@ -270,21 +264,20 @@ int main(void)
             bad("fork 用例准备", "alloc 失败");
         } else {
             int bfd = (int)a.fd;
-            uint32_t *p =
-                mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_SHARED, bfd, 0);
+            uint32_t *p = mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_SHARED, bfd, 0);
             if (p == MAP_FAILED) {
                 bad("fork 用例准备", "mmap 失败");
                 close(bfd);
             } else {
                 /*
-                 * 打的是 PTE_KEEP 的 clone 分支：认不出这一位的实现会把设备
-                 * 缓冲当成普通私有页**复制一份**给子进程 —— 内存是安全的，
-                 * 但父子从此看着两块不同的内存。这种错不崩、只让结果对不上。
-                 */
+                   打的是 PTE_KEEP 的 clone 分支：认不出这一位的实现会把设备
+                   缓冲当成普通私有页复制一份给子进程 —— 内存是安全的,
+                   但父子从此看着两块不同的内存。这种错不崩, 只让结果对不上。
+                */
                 p[0] = 0xAAAA0001U;
                 pid_t pid = fork();
                 if (pid == 0) {
-                    /* 子进程：必须看到父进程写的值（同一块内存，不是副本）*/
+                    /* 子进程：必须看到父进程写的值(同一块内存, 不是副本) */
                     if (p[0] != 0xAAAA0001U)
                         _exit(2);
                     p[0] = 0xBBBB0002U;
@@ -299,8 +292,7 @@ int main(void)
                 else if (!WIFEXITED(st))
                     bad("子进程正常退出", "被信号杀死");
                 else if (WEXITSTATUS(st) == 2)
-                    bad("子进程看到父进程的写入",
-                        "读到的是副本 —— 设备缓冲被当成私有页复制了");
+                    bad("子进程看到父进程的写入", "读到的是副本 —— 设备缓冲被当成私有页复制了");
                 else if (WEXITSTATUS(st) != 0)
                     bad("子进程正常退出", "退出码非 0");
                 else if (p[0] != 0xBBBB0002U)

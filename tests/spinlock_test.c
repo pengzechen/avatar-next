@@ -1,10 +1,10 @@
 /*
- * Spinlock 跨架构使用示例
- *
- * 编译方式:
- *   AArch64:  gcc -D__aarch64__ -I../include -c spinlock_test.c
- *   RISC-V64: gcc -D__riscv -march=rv64gc -I../include -c spinlock_test.c
- */
+   Spinlock 跨架构使用示例
+
+   编译方式:
+     AArch64:  gcc -D__aarch64__ -I../include -c spinlock_test.c
+     RISC-V64: gcc -D__riscv -march=rv64gc -I../include -c spinlock_test.c
+*/
 
 #include "spinlock.h"
 
@@ -16,8 +16,8 @@ static spinlock_noirq_t irq_lock = SPINLOCK_NOIRQ_INIT;
 static int shared_counter = 0;
 
 /*
- * 基本自旋锁使用示例
- */
+   基本自旋锁使用示例
+*/
 void example_basic_lock(void)
 {
     spin_lock(&global_lock);
@@ -29,23 +29,23 @@ void example_basic_lock(void)
 }
 
 /*
- * 带中断保护的自旋锁使用示例
- * 在中断处理程序中也可能访问的共享数据必须使用这种锁
- */
+   带中断保护的自旋锁使用示例
+   在中断处理程序中也可能访问的共享数据必须使用这种锁
+*/
 void example_lock_with_irq(void)
 {
     uint64_t flags;
     spin_lock_irqsave(&irq_lock, &flags);
 
-    /* 临界区 - 中断已禁用，安全访问共享数据 */
+    /* 临界区 - 中断已禁用, 安全访问共享数据 */
     shared_counter++;
 
     spin_unlock_irqrestore(&irq_lock, flags);
 }
 
 /*
- * trylock 使用示例
- */
+   trylock 使用示例
+*/
 int example_trylock(void)
 {
     if (spin_trylock(&global_lock) == 0) {
@@ -54,20 +54,20 @@ int example_trylock(void)
         spin_unlock(&global_lock);
         return 0;
     } else {
-        /* 锁已被占用，执行其他操作 */
+        /* 锁已被占用, 执行其他操作 */
         return -1;
     }
 }
 
 /*
- * 嵌套锁使用示例（注意：避免死锁！）
- */
+   嵌套锁使用示例(注意：避免死锁！)
+*/
 void example_nested_locks(void)
 {
     spinlock_t lock1 = SPINLOCK_INIT;
     spinlock_t lock2 = SPINLOCK_INIT;
 
-    /* 始终按照相同顺序获取多个锁，避免死锁 */
+    /* 始终按照相同顺序获取多个锁, 避免死锁 */
     spin_lock(&lock1);
     spin_lock(&lock2);
 
@@ -80,8 +80,8 @@ void example_nested_locks(void)
 }
 
 /*
- * 初始化示例（动态分配的锁）
- */
+   初始化示例(动态分配的锁)
+*/
 void example_dynamic_lock(void)
 {
     /* 动态分配示例 */

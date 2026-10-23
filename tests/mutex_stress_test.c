@@ -1,13 +1,13 @@
 /*
- * tests/mutex_stress_test.c — Mutex 压力测试
- *
- * 测试内容：
- *  1. 多任务竞争同一把锁（10个任务）
- *  2. 共享链表的并发插入和删除
- *  3. 共享计数器的原子性验证
- *  4. 高频率锁操作
- *  5. 数据完整性验证
- */
+   tests/mutex_stress_test.c — Mutex 压力测试
+
+   测试内容：
+    1. 多任务竞争同一把锁(10个任务)
+    2. 共享链表的并发插入和删除
+    3. 共享计数器的原子性验证
+    4. 高频率锁操作
+    5. 数据完整性验证
+*/
 
 #include "task/task.h"
 #include "task/mutex.h"
@@ -79,8 +79,7 @@ static void counter_task(void *arg)
 
         /* 验证：递增后应该等于递增前 + 1 */
         if (g_shared_counter != old_value + 1) {
-            KLOG_ERROR("[stress] task_%u: counter corruption! old=%u new=%u\n",
-                       task_id, old_value, g_shared_counter);
+            KLOG_ERROR("[stress] task_%u: counter corruption! old=%u new=%u\n", task_id, old_value, g_shared_counter);
         }
 
         g_total_lock_operations++;
@@ -93,8 +92,7 @@ static void counter_task(void *arg)
         }
     }
 
-    KLOG_INFO("[stress] task_%u: completed %u increments\n", task_id,
-              local_count);
+    KLOG_INFO("[stress] task_%u: completed %u increments\n", task_id, local_count);
     task_exit();
 }
 
@@ -156,9 +154,8 @@ static void list_task(void *arg)
         /* 验证链表长度 */
         uint32_t actual_length = list_verify_length();
         if (actual_length != g_list_length) {
-            KLOG_ERROR(
-                "[stress] task_%u: list length mismatch! expected=%u actual=%u\n",
-                task_id, g_list_length, actual_length);
+            KLOG_ERROR("[stress] task_%u: list length mismatch! expected=%u actual=%u\n", task_id, g_list_length,
+                       actual_length);
         }
 
         g_total_lock_operations++;
@@ -170,8 +167,7 @@ static void list_task(void *arg)
         }
     }
 
-    KLOG_INFO("[stress] task_%u: %u inserts, %u deletes\n", task_id,
-              insert_count, delete_count);
+    KLOG_INFO("[stress] task_%u: %u inserts, %u deletes\n", task_id, insert_count, delete_count);
     task_exit();
 }
 
@@ -212,7 +208,7 @@ static void mixed_task(void *arg)
             g_total_lock_operations++;
             mutex_unlock(&g_stress_mutex);
         } else {
-            /* 锁被占用，记录竞争 */
+            /* 锁被占用, 记录竞争 */
             g_total_contentions++;
         }
 
@@ -252,19 +248,17 @@ static void verify_task(void *arg)
     /* 验证链表一致性 */
     uint32_t actual_length = list_verify_length();
     if (actual_length != g_list_length) {
-        KLOG_ERROR("[stress] LIST CORRUPTION! expected=%u actual=%u\n",
-                   g_list_length, actual_length);
+        KLOG_ERROR("[stress] LIST CORRUPTION! expected=%u actual=%u\n", g_list_length, actual_length);
     } else {
-        KLOG_INFO("[stress] List verification: PASSED ✓\n");
+        KLOG_INFO("[stress] List verification: PASSED\n");
     }
 
     /* 验证计数器合理性 */
     uint32_t expected_min = STRESS_NUM_TASKS * STRESS_ITERATIONS / 2;
     if (g_shared_counter < expected_min) {
-        KLOG_WARN("[stress] Counter lower than expected: %u < %u\n",
-                  g_shared_counter, expected_min);
+        KLOG_WARN("[stress] Counter lower than expected: %u < %u\n", g_shared_counter, expected_min);
     } else {
-        KLOG_INFO("[stress] Counter verification: PASSED ✓\n");
+        KLOG_INFO("[stress] Counter verification: PASSED\n");
     }
 
     mutex_unlock(&g_stress_mutex);
@@ -303,7 +297,7 @@ void run_mutex_stress_test(void)
     /* 创建测试任务 */
     KLOG_INFO("[stress] Creating stress test tasks...\n");
 
-    /* 创建计数器任务（前半部分） */
+    /* 创建计数器任务(前半部分) */
     for (uint32_t i = 0; i < STRESS_NUM_TASKS / 3; i++) {
         g_task_ids[i] = i;
         char name[16];
@@ -314,7 +308,7 @@ void run_mutex_stress_test(void)
         task_create(name, counter_task, &g_task_ids[i], 1);
     }
 
-    /* 创建链表操作任务（中间部分） */
+    /* 创建链表操作任务(中间部分) */
     for (uint32_t i = STRESS_NUM_TASKS / 3; i < 2 * STRESS_NUM_TASKS / 3; i++) {
         g_task_ids[i] = i;
         char name[16];
@@ -325,7 +319,7 @@ void run_mutex_stress_test(void)
         task_create(name, list_task, &g_task_ids[i], 1);
     }
 
-    /* 创建混合操作任务（后半部分） */
+    /* 创建混合操作任务(后半部分) */
     for (uint32_t i = 2 * STRESS_NUM_TASKS / 3; i < STRESS_NUM_TASKS; i++) {
         g_task_ids[i] = i;
         char name[16];

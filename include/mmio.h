@@ -5,32 +5,32 @@
 #include "barrier.h"
 
 /*
- * MMIO (Memory-Mapped I/O) 操作
- * 提供带内存屏障和不带屏障的 MMIO 访问函数
- */
+   MMIO (Memory-Mapped I/O) 操作
+   提供带内存屏障和不带屏障的 MMIO 访问函数
+*/
 
-/* ===== 不带屏障的 MMIO 操作（Relaxed） ===== */
+/* ===== 不带屏障的 MMIO 操作(Relaxed) ===== */
 
-/**
- * read8_relaxed - 读取 8 位 MMIO 寄存器（无屏障）
- * @addr: MMIO 地址
- *
- * 返回值: 读取的值
- *
- * 注意：不保证内存排序，仅在明确不需要屏障时使用
- */
+/*
+   read8_relaxed - 读取 8 位 MMIO 寄存器(无屏障)
+   @addr: MMIO 地址
+
+   返回值: 读取的值
+
+   注意：不保证内存排序, 仅在明确不需要屏障时使用
+*/
 static inline uint8_t read8_relaxed(const volatile void *addr)
 {
     return *(const volatile uint8_t *)addr;
 }
 
-/**
- * write8_relaxed - 写入 8 位 MMIO 寄存器（无屏障）
- * @value: 要写入的值
- * @addr: MMIO 地址
- *
- * 注意：不保证内存排序和写入可见性
- */
+/*
+   write8_relaxed - 写入 8 位 MMIO 寄存器(无屏障)
+   @value: 要写入的值
+   @addr: MMIO 地址
+
+   注意：不保证内存排序和写入可见性
+*/
 static inline void write8_relaxed(uint8_t value, volatile void *addr)
 {
     *(volatile uint8_t *)addr = value;
@@ -68,14 +68,14 @@ static inline void write64_relaxed(uint64_t value, volatile void *addr)
 
 /* ===== 带完整屏障的 MMIO 操作 ===== */
 
-/**
- * read8 - 读取 8 位 MMIO 寄存器（带屏障）
- * @addr: MMIO 地址
- *
- * 返回值: 读取的值
- *
- * 确保读取操作完成，且后续操作不会被重排到读取之前
- */
+/*
+   read8 - 读取 8 位 MMIO 寄存器(带屏障)
+   @addr: MMIO 地址
+
+   返回值: 读取的值
+
+   确保读取操作完成, 且后续操作不会被重排到读取之前
+*/
 static inline uint8_t read8(const volatile void *addr)
 {
     uint8_t value;
@@ -85,13 +85,13 @@ static inline uint8_t read8(const volatile void *addr)
     return value;
 }
 
-/**
- * write8 - 写入 8 位 MMIO 寄存器（带屏障）
- * @value: 要写入的值
- * @addr: MMIO 地址
- *
- * 确保之前的操作完成，且写入立即对设备可见
- */
+/*
+   write8 - 写入 8 位 MMIO 寄存器(带屏障)
+   @value: 要写入的值
+   @addr: MMIO 地址
+
+   确保之前的操作完成, 且写入立即对设备可见
+*/
 static inline void write8(uint8_t value, volatile void *addr)
 {
     barrier_data();
@@ -147,16 +147,16 @@ static inline void write64(uint64_t value, volatile void *addr)
     barrier_data();
 }
 
-/* ===== 优化的 MMIO 操作（仅写屏障） ===== */
+/* ===== 优化的 MMIO 操作(仅写屏障) ===== */
 
-/**
- * write8_post - 写入 8 位 MMIO 寄存器（仅后屏障）
- * @value: 要写入的值
- * @addr: MMIO 地址
- *
- * 只在写入后添加屏障，确保写入对设备可见
- * 适用于：写入后立即需要设备响应的场景
- */
+/*
+   write8_post - 写入 8 位 MMIO 寄存器(仅后屏障)
+   @value: 要写入的值
+   @addr: MMIO 地址
+
+   只在写入后添加屏障, 确保写入对设备可见
+   适用于：写入后立即需要设备响应的场景
+*/
 static inline void write8_post(uint8_t value, volatile void *addr)
 {
     *(volatile uint8_t *)addr = value;
@@ -183,14 +183,14 @@ static inline void write64_post(uint64_t value, volatile void *addr)
 
 /* ===== 设备特定的访问宏 ===== */
 
-/**
- * mmio_readb - 读取 8 位寄存器（带屏障）
- * mmio_readw - 读取 16 位寄存器（带屏障）
- * mmio_readl - 读取 32 位寄存器（带屏障）
- * mmio_writeb - 写入 8 位寄存器（带屏障）
- * mmio_writew - 写入 16 位寄存器（带屏障）
- * mmio_writel - 写入 32 位寄存器（带屏障）
- */
+/*
+   mmio_readb - 读取 8 位寄存器(带屏障)
+   mmio_readw - 读取 16 位寄存器(带屏障)
+   mmio_readl - 读取 32 位寄存器(带屏障)
+   mmio_writeb - 写入 8 位寄存器(带屏障)
+   mmio_writew - 写入 16 位寄存器(带屏障)
+   mmio_writel - 写入 32 位寄存器(带屏障)
+*/
 #define mmio_readb(addr)       read8(addr)
 #define mmio_readw(addr)       read16(addr)
 #define mmio_readl(addr)       read32(addr)
@@ -198,7 +198,7 @@ static inline void write64_post(uint64_t value, volatile void *addr)
 #define mmio_writew(val, addr) write16(val, addr)
 #define mmio_writel(val, addr) write32(val, addr)
 
-/* ===== Relaxed 版本（无屏障）===== */
+/* ===== Relaxed 版本(无屏障)===== */
 #define mmio_readb_relaxed(addr)       read8_relaxed(addr)
 #define mmio_readw_relaxed(addr)       read16_relaxed(addr)
 #define mmio_readl_relaxed(addr)       read32_relaxed(addr)

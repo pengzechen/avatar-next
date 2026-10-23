@@ -7,45 +7,50 @@
 #include "irq/irq.h"
 #include "klog.h"
 
-// ============================================================
-// 定时器寄存器访问宏
-// ============================================================
+/*
+   ============================================================
+   定时器寄存器访问宏
+   ============================================================
+*/
 #define CNTFRQ_EL0_READ()        READ_CNTFRQ_EL0()
 #define CNTPCT_EL0_READ()        READ_CNTPCT_EL0()
 #define CNTP_CTL_EL0_READ()      READ_CNTP_CTL_EL0()
 #define CNTP_CTL_EL0_WRITE(val)  WRITE_CNTP_CTL_EL0(val)
 #define CNTP_TVAL_EL0_WRITE(val) WRITE_CNTP_TVAL_EL0(val)
 
-// 定时器控制寄存器位定义
-#define CNTV_CTL_ENABLE  (1 << 0) // 使能定时器
-#define CNTV_CTL_IMASK   (1 << 1) // 中断屏蔽
-#define CNTV_CTL_ISTATUS (1 << 2) // 中断状态
+/* 定时器控制寄存器位定义 */
+#define CNTV_CTL_ENABLE  (1 << 0) /* 使能定时器 */
+#define CNTV_CTL_IMASK   (1 << 1) /* 中断屏蔽 */
+#define CNTV_CTL_ISTATUS (1 << 2) /* 中断状态 */
 
-// ============================================================
-// 架构特定操作实现
-// ============================================================
+/*
+   ============================================================
+   架构特定操作实现
+   ============================================================
+*/
 
 void timer_arch_init(void)
 {
-    // 读取定时器频率
+    /* 读取定时器频率 */
     g_timer_frequency = CNTFRQ_EL0_READ();
 
     /* 时钟配错是经典 bug 来源 —— 值得一行；原来是四行 */
-    KLOG_INFO("Timer: aarch64 freq=%lluHz tick=%dHz (%dms)\n",
-              g_timer_frequency, TIMER_FREQUENCY_HZ, TIMER_TICK_MS);
+    KLOG_INFO("Timer: aarch64 freq=%lluHz tick=%dHz (%dms)\n", g_timer_frequency, TIMER_FREQUENCY_HZ, TIMER_TICK_MS);
 
-    // 禁用定时器
+    /* 禁用定时器 */
     timer_disable();
 
-    // 清零统计信息
+    /* 清零统计信息 */
     timer_reset_stats();
 
-    // 配置 GIC 中断
-    // PPI (Private Peripheral Interrupt) 需要设置优先级
+    /*
+       配置 GIC 中断
+       PPI (Private Peripheral Interrupt) 需要设置优先级
+    */
     extern void gic_set_ipriority(uint32_t, uint32_t);
-    gic_set_ipriority(CNTP_TIMER, 0x00); // 设置优先级
+    gic_set_ipriority(CNTP_TIMER, 0x00); /* 设置优先级 */
 
-    // 安装定时器中断处理函数
+    /* 安装定时器中断处理函数 */
     extern void irq_install(int, void (*)(uint64_t *));
     irq_install(CNTP_TIMER, timer_handler);
     irq_enable_irq(CNTP_TIMER);
@@ -55,24 +60,22 @@ void timer_arch_init(void)
 
 void timer_arch_enable(void)
 {
-    // 计算下一次中断的时间
+    /* 计算下一次中断的时间 */
     uint64_t ticks_per_interrupt = g_timer_frequency / TIMER_FREQUENCY_HZ;
 
-    // 设置定时器值
+    /* 设置定时器值 */
     CNTP_TVAL_EL0_WRITE(ticks_per_interrupt);
 
-    // 启用定时器，不屏蔽中断
+    /* 启用定时器, 不屏蔽中断 */
     CNTP_CTL_EL0_WRITE(CNTV_CTL_ENABLE);
 
-    KLOG_TIMER("Timer enabled with %llu ticks per interrupt\n",
-               ticks_per_interrupt);
-    KLOG_TIMER("Timer CTL: 0x%x, TVAL: %llu\n", CNTP_CTL_EL0_READ(),
-               ticks_per_interrupt);
+    KLOG_TIMER("Timer enabled with %llu ticks per interrupt\n", ticks_per_interrupt);
+    KLOG_TIMER("Timer CTL: 0x%x, TVAL: %llu\n", CNTP_CTL_EL0_READ(), ticks_per_interrupt);
 }
 
 void timer_arch_disable(void)
 {
-    // 禁用定时器并屏蔽中断
+    /* 禁用定时器并屏蔽中断 */
     CNTP_CTL_EL0_WRITE(CNTV_CTL_IMASK);
 
     KLOG_TIMER("Timer disabled\n");
@@ -83,44 +86,48 @@ void timer_arch_set_next_interrupt(uint64_t ticks_from_now)
     CNTP_TVAL_EL0_WRITE(ticks_from_now);
 }
 
-// ============================================================
-// 定时器中断处理函数
-// ============================================================
+/*
+   ============================================================
+   定时器中断处理函数
+   ============================================================
+*/
 
-/* 扫描 UART，向前台进程组发 SIGINT（来自 syscall.c） */
+/* 扫描 UART, 向前台进程组发 SIGINT(来自 syscall.c) */
 extern void signal_check_uart(void);
 
 void timer_handler(uint64_t *stack_pointer)
 {
-    (void)stack_pointer; // Suppress unused parameter warning
+    (void)stack_pointer; /* Suppress unused parameter warning */
 
-    /* 每个 tick 排空 UART，确保 Ctrl+C 能及时被检测 */
+    /* 每个 tick 排空 UART, 确保 Ctrl+C 能及时被检测 */
     signal_check_uart();
 
-    // 更新系统tick计数（全核共享，存在轻微竞争但不影响功能）
+    /* 更新系统tick计数(全核共享, 存在轻微竞争但不影响功能) */
     g_system_ticks++;
 
-    /* 每核独立 tick 计数（SMP 健康检查） */
+    /* 每核独立 tick 计数(SMP 健康检查) */
     extern struct cpu *cpu_current(void);
     /* cpu_t 完整定义在 task/cpu.h；handler 早期可能在 task/cpu.h 引入之前
-     * 被编译进 timer_aarch64_impl.h，故用本地 forward + 偏移 0 字段不可行。
-     * 直接 include cpu.h 即可（无循环依赖）。
-     */
+       被编译进 timer_aarch64_impl.h, 故用本地 forward + 偏移 0 字段不可行。
+       直接 include cpu.h 即可(无循环依赖)。
+    */
     {
         extern void cpu_bump_local_ticks(void);
         cpu_bump_local_ticks();
     }
 
-    // 更新统计信息
+    /* 更新统计信息 */
     g_timer_stats.total_interrupts++;
     g_timer_stats.last_interrupt_time = timer_get_uptime_ms();
 
-    // 调度下一个tick
+    /* 调度下一个tick */
     timer_schedule_next_tick();
 
-    // 调用 tick 回调（调度器 sched_tick）
-    // 注意SMP 启动期间 secondary timer 可能在 g_tick_cb 被设之前就已触发
-    // 中断。这里 silent skip，避免刷屏 ERROR。
+    /*
+       调用 tick 回调(调度器 sched_tick)
+       注意SMP 启动期间 secondary timer 可能在 g_tick_cb 被设之前就已触发
+       中断。这里 silent skip, 避免刷屏 ERROR。
+    */
     if (g_tick_cb) {
         g_tick_cb();
     }

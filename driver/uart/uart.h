@@ -1,17 +1,17 @@
 /*
- * driver/uart/uart.h  —  统一 UART 接口
- *
- * 根据 driver_cfg.h 中的驱动选择，通过宏别名统一 API：
- *   uart_init()      初始化 UART
- *   uart_putc(c)     发送一个字符
- *   uart_puts(s)     发送字符串
- *   uart_getc()      阻塞读取一个字符
- *
- * 三架构映射：
- *   DRIVER_UART_PL011  (aarch64)  → pl011_*()
- *   DRIVER_UART_DW     (riscv64)  → dw_uart_*()
- *   DRIVER_UART_X86    (x86_64)   → uart_x86_*()
- */
+   driver/uart/uart.h  —  统一 UART 接口
+
+   根据 driver_cfg.h 中的驱动选择, 通过宏别名统一 API：
+     uart_init()      初始化 UART
+     uart_putc(c)     发送一个字符
+     uart_puts(s)     发送字符串
+     uart_getc()      阻塞读取一个字符
+
+   三架构映射：
+     DRIVER_UART_PL011  (aarch64)  → pl011_*()
+     DRIVER_UART_DW     (riscv64)  → dw_uart_*()
+     DRIVER_UART_X86    (x86_64)   → uart_x86_*()
+*/
 
 #ifndef DRIVER_UART_H
 #define DRIVER_UART_H
@@ -19,8 +19,9 @@
 #include "platform_cfg.h"
 
 /* ============================================================
- * PL011（aarch64）
- * ============================================================ */
+   PL011(aarch64)
+   ============================================================
+*/
 #if DRIVER_UART_PL011
 
 #include "uart_pl011.h"
@@ -33,8 +34,9 @@
 #define uart_rx_ready() pl011_rx_available()
 
 /* ============================================================
- * DesignWare 16550（riscv64）
- * ============================================================ */
+   DesignWare 16550(riscv64)
+   ============================================================
+*/
 #elif DRIVER_UART_DW
 
 #include "uart_dw.h"
@@ -47,8 +49,9 @@
 #define uart_rx_ready() dw_uart_rx_available()
 
 /* ============================================================
- * x86 COM1 16550 Port I/O（x86_64）
- * ============================================================ */
+   x86 COM1 16550 Port I/O(x86_64)
+   ============================================================
+*/
 #elif DRIVER_UART_X86
 
 #include "uart_x86.h"
@@ -58,7 +61,7 @@
 #define uart_puts(s)    uart_x86_putstr(s)
 #define uart_getc()     uart_x86_getchar()
 #define uart_getc_nb(c) uart_x86_getchar_nb(c)
-/* x86: 直接检查 LSR 数据就绪位，不消费字符 */
+/* x86: 直接检查 LSR 数据就绪位, 不消费字符 */
 #define uart_rx_ready() uart_x86_rx_available()
 
 #endif /* DRIVER_UART_* */

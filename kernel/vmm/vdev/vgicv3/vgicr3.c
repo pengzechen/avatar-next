@@ -1,18 +1,18 @@
 /*
- * kernel/vmm/vdev/vgicv3/vgicr3.c — 虚拟 GICv3 Redistributor（GICR）模拟
- *
- * GICv3 里每个核有一个 128KB 的 Redistributor，分成两个 64KB 帧：
- *   RD_base  (0x00000)：GICR_CTLR / TYPER / WAKER / PROPBASER …
- *   SGI_base (0x10000)：这个核的 SGI 和 PPI（INTID 0..31）
- *
- * GICv2 把这些放在 GICD 的 banked 寄存器里，所以这是 GICv3 新增的一块。
- * 关键点：
- *   - GICR_WAKER.ChildrenAsleep 必须读回 0，否则 guest 的
- *     gic_enable_redist() 会一直等下去
- *   - GICR_TYPER.PLPIS/VLPIS 必须为 0（我们不实现 LPI），
- *     Last 置位表示这是最后一个 redistributor
- *   - guest 使能 PPI 27（虚拟定时器）时要把宿主侧的定时器注入路由打开
- */
+   kernel/vmm/vdev/vgicv3/vgicr3.c — 虚拟 GICv3 Redistributor(GICR)模拟
+
+   GICv3 里每个核有一个 128KB 的 Redistributor, 分成两个 64KB 帧：
+     RD_base  (0x00000)：GICR_CTLR / TYPER / WAKER / PROPBASER …
+     SGI_base (0x10000)：这个核的 SGI 和 PPI(INTID 0..31)
+
+   GICv2 把这些放在 GICD 的 banked 寄存器里, 所以这是 GICv3 新增的一块。
+   关键点：
+     - GICR_WAKER.ChildrenAsleep 必须读回 0, 否则 guest 的
+       gic_enable_redist() 会一直等下去
+     - GICR_TYPER.PLPIS/VLPIS 必须为 0(我们不实现 LPI),
+       Last 置位表示这是最后一个 redistributor
+     - guest 使能 PPI 27(虚拟定时器)时要把宿主侧的定时器注入路由打开
+*/
 
 #include "vmm/vmm_vgicv3.h"
 #include "irq/gicv3.h" /* GICR_WAKER_* 等 GICv3 寄存器位定义 */
@@ -20,12 +20,12 @@
 #include "string.h"
 
 /*
- * 下面这些是**本核 redistributor 窗口内的偏移**，不是宿主 GIC 的 MMIO 地址，
- * 所以统一加 VGIC3R_ 前缀 —— driver/irq/gicv3.h 里的 GICR_* 是宿主地址宏，
- * 同名会互相覆盖（编译会报 "redefined"）。
- *
- * SGI 帧的寄存器在下面 switch 里直接用 0x100xx 字面量，语义一目了然。
- */
+   下面这些是本核 redistributor 窗口内的偏移, 不是宿主 GIC 的 MMIO 地址,
+   所以统一加 VGIC3R_ 前缀 —— driver/irq/gicv3.h 里的 GICR_* 是宿主地址宏,
+   同名会互相覆盖(编译会报 "redefined")。
+
+   SGI 帧的寄存器在下面 switch 里直接用 0x100xx 字面量, 语义一目了然。
+*/
 #define VGIC3R_RD_CTLR      0x00000
 #define VGIC3R_RD_IIDR      0x00004
 #define VGIC3R_RD_TYPER     0x00008
@@ -50,13 +50,13 @@ static int redist_cpu(uint64_t off, const vgic3_t *vgic, uint32_t vcpu_id)
     return 0;
 }
 
-static uint64_t vgic3r_read(mmio_device_t *dev, uint64_t off, uint8_t size,
-                            uint32_t vcpu_id)
+static uint64_t vgic3r_read(mmio_device_t *dev, uint64_t off, uint8_t size, uint32_t vcpu_id)
 {
     vgic3_t *vgic = (vgic3_t *)dev->priv;
-    /* 本核窗口内的偏移（0x00000..0x1ffff），不能只取低 16 位 ——
-     * 那会把 SGI 帧的 0x10000 选择位一起掩掉，所有 SGI/PPI 访问都会
-     * 落进 RD 帧分支被静默丢弃。*/
+    /* 本核窗口内的偏移(0x00000..0x1ffff), 不能只取低 16 位 ——
+       那会把 SGI 帧的 0x10000 选择位一起掩掉, 所有 SGI/PPI 访问都会
+       落进 RD 帧分支被静默丢弃。
+    */
     uint32_t word = (uint32_t)(off & (VGIC3R_STRIDE - 1u));
 
     (void)size;
@@ -111,23 +111,26 @@ static uint64_t vgic3r_read(mmio_device_t *dev, uint64_t off, uint8_t size,
     /* ── RD_base 帧 ── */
     switch (word) {
     case VGIC3R_RD_CTLR:
-        /* EnableLPIs(bit0) 强制读回 0 —— 本模型不支持 LPI（GICR_TYPER.PLPIS=0、
-         * GICD_TYPER.LPIS=0），按规范这一位就是 RAZ/WI。
-         * RWP(bit31) 恒 0：所有写立即生效。 */
+        /* EnableLPIs(bit0) 强制读回 0 —— 本模型不支持 LPI(GICR_TYPER.PLPIS=0,
+           GICD_TYPER.LPIS=0), 按规范这一位就是 RAZ/WI。
+           RWP(bit31) 恒 0：所有写立即生效。
+        */
         return vcpu->rd_ctlr & ~(uint64_t)(GICR_CTLR_RWP | 1u);
 
     case VGIC3R_RD_IIDR:
         return 0x0202043Bu;
 
     case VGIC3R_RD_TYPER:
-        /* [4]=Last（每个核一个 redistributor，最后一个是自己）；
-         * PLPIS/VLPIS=0；ProcessorNumber/位图放在 [31:8]/[63:32]。*/
+        /* [4]=Last(每个核一个 redistributor, 最后一个是自己)；
+           PLPIS/VLPIS=0；ProcessorNumber/位图放在 [31:8]/[63:32]。
+        */
         return ((uint64_t)cpu << 8) | (((uint64_t)cpu) << 32) |
                (((uint32_t)cpu == vgic->nr_vcpus - 1u) ? (1ULL << 4) : 0ULL);
 
     case VGIC3R_RD_WAKER:
-        /* ChildrenAsleep(bit2) 恒 0：唤醒立即完成（背后没有真实硬件）。
-         * ProcessorSleep 按 guest 写进去的值回读，语义与硬件一致。*/
+        /* ChildrenAsleep(bit2) 恒 0：唤醒立即完成(背后没有真实硬件)。
+           ProcessorSleep 按 guest 写进去的值回读, 语义与硬件一致。
+        */
         return vcpu->rd_waker & GICR_WAKER_PROCESSOR_SLEEP;
 
     case VGIC3R_RD_PROPBASER:
@@ -146,8 +149,7 @@ static uint64_t vgic3r_read(mmio_device_t *dev, uint64_t off, uint8_t size,
     }
 }
 
-static void vgic3r_write(mmio_device_t *dev, uint64_t off, uint8_t size,
-                         uint64_t value, uint32_t vcpu_id)
+static void vgic3r_write(mmio_device_t *dev, uint64_t off, uint8_t size, uint64_t value, uint32_t vcpu_id)
 {
     vgic3_t *vgic = (vgic3_t *)dev->priv;
     uint32_t word = (uint32_t)(off & (VGIC3R_STRIDE - 1u));
@@ -234,7 +236,7 @@ static void vgic3r_write(mmio_device_t *dev, uint64_t off, uint8_t size,
         return;
 
     case VGIC3R_RD_WAKER:
-        /* 只跟踪 ProcessorSleep；写 0 表示唤醒，之后 ChildrenAsleep 读到 0 */
+        /* 只跟踪 ProcessorSleep；写 0 表示唤醒, 之后 ChildrenAsleep 读到 0 */
         vcpu->rd_waker = value32 & GICR_WAKER_PROCESSOR_SLEEP;
         return;
 
@@ -272,7 +274,7 @@ int vgic3r_init(mmio_device_t *dev, mmio_bus_t *bus, vgic3_t *vgic)
     if (mmio_bus_register(bus, dev) != 0)
         return -1;
 
-    KLOG_INFO("[vgic3r] VM redistributors ready (%u vCPU, IPA 0x%llx)\n",
-              vgic->nr_vcpus, (unsigned long long)VGIC3R_BASE);
+    KLOG_INFO("[vgic3r] VM redistributors ready (%u vCPU, IPA 0x%llx)\n", vgic->nr_vcpus,
+              (unsigned long long)VGIC3R_BASE);
     return 0;
 }

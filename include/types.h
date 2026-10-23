@@ -2,9 +2,9 @@
 #define TYPES_H_
 
 /*
- * 基础类型定义
- * 仅支持 64 位架构：AArch64, RISC-V 64, x86_64
- */
+   基础类型定义
+   仅支持 64 位架构：AArch64, RISC-V 64, x86_64
+*/
 
 /* ===== 整数类型 ===== */
 
@@ -76,14 +76,14 @@ typedef uint64_t paddr_t; /* 物理地址 */
 /* 获取结构体成员偏移 */
 #define offsetof(type, member) __builtin_offsetof(type, member)
 
-/* 获取结构体指针（通过成员指针） */
+/* 获取结构体指针(通过成员指针) */
 #define container_of(ptr, type, member) \
     __extension__({ \
         const __typeof__(((type *)0)->member) *__mptr = (ptr); \
         (type *)((char *)__mptr - offsetof(type, member)); \
     })
 
-/* 类型安全的 MIN/MAX 宏（避免多次求值） */
+/* 类型安全的 MIN/MAX 宏(避免多次求值) */
 #define MIN(a, b) \
     __extension__({ \
         __typeof__(a) _a = (a); \
@@ -121,7 +121,7 @@ typedef uint64_t paddr_t; /* 物理地址 */
 /* 向上取整除法 */
 #define DIV_ROUND_UP(n, d) (((n) + (d) - 1) / (d))
 
-/* 编译时断言请用 assert.h 的 static_assert()（C11 _Static_assert） */
+/* 编译时断言请用 assert.h 的 static_assert()(C11 _Static_assert) */
 
 /* ===== 属性宏 ===== */
 
@@ -132,4 +132,4 @@ typedef uint64_t paddr_t; /* 物理地址 */
 #define WEAK         __attribute__((weak))
 #define ALIAS(alias) __attribute__((alias(#alias)))
 
-#endif // TYPES_H_
+#endif /* TYPES_H_ */

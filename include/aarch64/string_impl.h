@@ -5,44 +5,44 @@
 #include "aarch64/cpu.h"
 
 /*
- * AArch64 架构的字符串函数优化实现（NEON）
- *
- * 本文件只提供**具名实现**（memcpy_neon / memset_neon）与架构分派
- * （memcpy_arch / memset_arch）。公开的 memcpy/memset 名字在 string.h，
- * 外部符号在 lib/string.c —— 两者都转发到这里，见 string_internal.h 顶部。
- *
- * 前置条件：CPACR.FPEN 已打开。boot/aarch64/boot.S 的 init_el2_vhe 在
- * 装向量表之前就打开了，早于任何 C 代码，所以正常路径无需关心。
- */
+   AArch64 架构的字符串函数优化实现(NEON)
 
-/**
- * memcpy_neon - ARM NEON 优化版本
- * @dest: 目标地址
- * @src: 源地址
- * @n: 拷贝字节数
- *
- * 使用 NEON 128-bit 寄存器进行批量拷贝。
- *
- * 只把**目的地址**对齐到 16 字节就够：ld1/st1 的 {v0.16b} 变体是按字节
- * 访问的，架构上不要求 16 字节对齐（这点与 ldr q/ldp q 不同）。原来的
- * 版本要求 src/dest 两边同时 16 字节对齐，一旦两者奇偶不同（比如网络
- * 缓冲区拷进对齐的堆块），对齐循环永不退出，整个拷贝退化成逐字节。
- */
+   本文件只提供具名实现(memcpy_neon / memset_neon)与架构分派
+   (memcpy_arch / memset_arch)。公开的 memcpy/memset 名字在 string.h,
+   外部符号在 lib/string.c —— 两者都转发到这里, 见 string_internal.h 顶部。
+
+   前置条件：CPACR.FPEN 已打开。boot/aarch64/boot.S 的 init_el2_vhe 在
+   装向量表之前就打开了, 早于任何 C 代码, 所以正常路径无需关心。
+*/
+
 /*
- * GCC 11 的 VRP 在把本函数内联进某些调用点之后，会算错循环归纳变量 i 的值域，
- * 报出这种**假阳性**：
- *     string_impl.h:54: warning: array subscript [241, 255] is outside
- *     array bounds of 'char[128]' [-Warray-bounds]
- *     kernel/loader/elf_loader.c:284: note: while referencing 'ipath'
- *
- * 已确认是编译器的账、不是本函数的账：-O1 / -fno-inline / -fno-tree-vrp
- * 下警告都消失，只有 -O2 出现（触发点在 elf_loader.c 的 PT_INTERP 路径）。
- * 而越界在语义上不可能 —— 调用点传进来的 n 已被夹到
- * sizeof(目的缓冲区) - 1，且下面三个循环（对齐 / NEON / 收尾）都保证
- * i < n 才写 d[i]。
- *
- * 所以定点屏蔽，而不是去改一个本来就正确的循环。
- */
+   memcpy_neon - ARM NEON 优化版本
+   @dest: 目标地址
+   @src: 源地址
+   @n: 拷贝字节数
+
+   使用 NEON 128-bit 寄存器进行批量拷贝。
+
+   只把目的地址对齐到 16 字节就够：ld1/st1 的 {v0.16b} 变体是按字节
+   访问的, 架构上不要求 16 字节对齐(这点与 ldr q/ldp q 不同)。原来的
+   版本要求 src/dest 两边同时 16 字节对齐, 一旦两者奇偶不同(比如网络
+   缓冲区拷进对齐的堆块), 对齐循环永不退出, 整个拷贝退化成逐字节。
+*/
+/*
+   GCC 11 的 VRP 在把本函数内联进某些调用点之后, 会算错循环归纳变量 i 的值域,
+   报出这种假阳性：
+       string_impl.h:54: warning: array subscript [241, 255] is outside
+       array bounds of 'char[128]' [-Warray-bounds]
+       kernel/loader/elf_loader.c:284: note: while referencing 'ipath'
+
+   已确认是编译器的账, 不是本函数的账：-O1 / -fno-inline / -fno-tree-vrp
+   下警告都消失, 只有 -O2 出现(触发点在 elf_loader.c 的 PT_INTERP 路径)。
+   而越界在语义上不可能 —— 调用点传进来的 n 已被夹到
+   sizeof(目的缓冲区) - 1, 且下面三个循环(对齐 / NEON / 收尾)都保证
+   i < n 才写 d[i]。
+
+   所以定点屏蔽, 而不是去改一个本来就正确的循环。
+*/
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Warray-bounds"
 
@@ -52,7 +52,7 @@ static inline void *memcpy_neon(void *dest, const void *src, size_t n)
     uint8_t *d = (uint8_t *)dest;
     const uint8_t *s = (const uint8_t *)src;
 
-    /* 1. 先把目的地址推到 16 字节边界（最多 15 字节） */
+    /* 1. 先把目的地址推到 16 字节边界(最多 15 字节) */
     while (i < n && ((uint64_t)(d + i) % 16 != 0)) {
         d[i] = s[i];
         i++;
@@ -77,15 +77,15 @@ static inline void *memcpy_neon(void *dest, const void *src, size_t n)
 
 #pragma GCC diagnostic pop
 
-/**
- * memset_neon - ARM NEON 优化版本
- * @s: 目标地址
- * @c: 填充字节
- * @n: 填充字节数
- *
- * dup 把字节广播到 16 个 lane，再用 st1 一次写 16 字节。
- * 与 memcpy_neon 同理，st1 {v0.16b} 按字节访问，只需目的地址对齐。
- */
+/*
+   memset_neon - ARM NEON 优化版本
+   @s: 目标地址
+   @c: 填充字节
+   @n: 填充字节数
+
+   dup 把字节广播到 16 个 lane, 再用 st1 一次写 16 字节。
+   与 memcpy_neon 同理, st1 {v0.16b} 按字节访问, 只需目的地址对齐。
+*/
 static inline void *memset_neon(void *s, int c, size_t n)
 {
     size_t i = 0;
@@ -113,13 +113,13 @@ static inline void *memset_neon(void *s, int c, size_t n)
 }
 
 /*
- * 分派阈值：大于 128 字节走 NEON，否则走通用实现。
- * （小块用 NEON 要付对齐 + 分支的开销，不划算。）
- *
- * NEON 版本会写 v0 —— caller-saved，且内核有陷阱帧（exception.S 无条件保存
- * q0-q31）与任务切换帧（switch.S 保存 d8-d15）两层保护，用户态与内核态的 FP
- * 状态都不会因此丢失。详见 docs/arch/aarch64/FP_SIMD_CONTEXT.md。
- */
+   分派阈值：大于 128 字节走 NEON, 否则走通用实现。
+   (小块用 NEON 要付对齐 + 分支的开销, 不划算。)
+
+   NEON 版本会写 v0 —— caller-saved, 且内核有陷阱帧(exception.S 无条件保存
+   q0-q31)与任务切换帧(switch.S 保存 d8-d15)两层保护, 用户态与内核态的 FP
+   状态都不会因此丢失。详见 docs/arch/aarch64/FP_SIMD_CONTEXT.md。
+*/
 #define MEMCPY_NEON_THRESHOLD 128u
 #define MEMSET_NEON_THRESHOLD 128u
 

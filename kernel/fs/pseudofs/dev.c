@@ -17,19 +17,19 @@
 
 #if DRIVER_DMA_BUF
 /*
- * 出错时把**刚刚**分配给用户的 fd 收回来。
- *
- * 为什么需要：ALLOC 是「分配缓冲区 → 拿 fd → 把 fd 写回用户态」三步，
- * 最后一步会失败（用户传个可读不可写、或已 munmap 的地址）。失败时不收回，
- * 缓冲区内存**和** fd 池槽位就一起泄漏 —— 而且每次调用漏一个。
- *
- * 必须走完整的 close 序列（take → close → free）：只调 fd_pool_free 会让
- * dma_buf 的引用计数少还一份，内存永不释放。
- *
- * 用 extern 局部声明而不是 include fd_pool.h：后者会拉进 vfs.h → ext4.h，
- * 而 pseudofs 的编译规则没有 lwext4 的 -I（本文件上面 ion_alloc_fd_for_current
- * 也是同样的写法）。越界检查由 fd_obj_close / fd_pool_free 自己兜。
- */
+   出错时把刚刚分配给用户的 fd 收回来。
+
+   为什么需要：ALLOC 是「分配缓冲区 → 拿 fd → 把 fd 写回用户态」三步,
+   最后一步会失败(用户传个可读不可写, 或已 munmap 的地址)。失败时不收回,
+   缓冲区内存和 fd 池槽位就一起泄漏 —— 而且每次调用漏一个。
+
+   必须走完整的 close 序列(take → close → free)：只调 fd_pool_free 会让
+   dma_buf 的引用计数少还一份, 内存永不释放。
+
+   用 extern 局部声明而不是 include fd_pool.h：后者会拉进 vfs.h → ext4.h,
+   而 pseudofs 的编译规则没有 lwext4 的 -I(本文件上面 ion_alloc_fd_for_current
+   也是同样的写法)。越界检查由 fd_obj_close / fd_pool_free 自己兜。
+*/
 static void dmabuf_close_fresh_fd(int fd)
 {
     extern int task_take_fd(task_t * task, int fd);
@@ -47,13 +47,13 @@ static void dmabuf_close_fresh_fd(int fd)
 }
 
 /*
- * /dev/dma_heap/<name> —— 官方 librknnrt 的**每一块**缓冲区都从这里分配，
- * 见 docs/npu/RK3588_NPU_DRIVER.md §2。
- *
- * ⚠️ 用户指针一律走 copy_*_user（CLAUDE.md 铁律）。本文件里既有的
- *    ion_dev_ioctl 是**裸解引用**（`r->size = ...` 直接写用户内存），
- *    用户传非法地址就是内核态写坏地址 → #PF → 整机挂死。别照抄那一段。
- */
+   /dev/dma_heap/<name> —— 官方 librknnrt 的每一块缓冲区都从这里分配,
+   见 docs/npu/RK3588_NPU_DRIVER.md §2。
+
+   注意： 用户指针一律走 copy_*_user(CLAUDE.md 铁律)。本文件里既有的
+      ion_dev_ioctl 是裸解引用(`r->size = ...` 直接写用户内存),
+      用户传非法地址就是内核态写坏地址 → #PF → 整机挂死。别照抄那一段。
+*/
 int dma_heap_dev_ioctl(int nid, uint64_t req, void *argp)
 {
     (void)nid;
@@ -74,12 +74,12 @@ int dma_heap_dev_ioctl(int nid, uint64_t req, void *argp)
     size_t size = dma_buf_size(buf);
 
     /*
-     * 引用计数走法（对齐 ion 的写法）：
-     *   dma_buf_alloc            → 1（"创建"那份）
-     *   dma_buf_alloc_fd_current → 2（fd 拿走一份）
-     *   dma_buf_put（下面那句）  → 1 —— 只剩 fd 那份
-     *   fd 关闭时 fd_obj_close    → 0 → 内存还给堆
-     */
+       引用计数走法(对齐 ion 的写法)：
+         dma_buf_alloc            → 1("创建"那份)
+         dma_buf_alloc_fd_current → 2(fd 拿走一份)
+         dma_buf_put(下面那句)  → 1 —— 只剩 fd 那份
+         fd 关闭时 fd_obj_close    → 0 → 内存还给堆
+    */
     int fd = dma_buf_alloc_fd_current(buf);
     if (fd < 0) {
         dma_buf_put(buf);
@@ -94,16 +94,15 @@ int dma_heap_dev_ioctl(int nid, uint64_t req, void *argp)
         return -PFS_EINVAL;
     }
 
-    KLOG_DEBUG("[dma_heap] alloc len=%llu -> fd=%d\n", (unsigned long long)size,
-               fd);
+    KLOG_DEBUG("[dma_heap] alloc len=%llu -> fd=%d\n", (unsigned long long)size, fd);
     return 0;
 }
 
 /*
- * 打在 **dmabuf fd 自身** 上的 ioctl。librknnrt 的 DMA_BUF_IOCTL_SYNC 就是这么
- * 发的 —— 它不走 /dev/ 节点，所以必须由 ioctl_handler 按 fd 类型分派过来
- * （见 kernel/syscall/fs/ioctl.c 里的 FDT_DMABUF 分支）。
- */
+   打在 dmabuf fd 自身 上的 ioctl。librknnrt 的 DMA_BUF_IOCTL_SYNC 就是这么
+   发的 —— 它不走 /dev/ 节点, 所以必须由 ioctl_handler 按 fd 类型分派过来
+   (见 kernel/syscall/fs/ioctl.c 里的 FDT_DMABUF 分支)。
+*/
 int dma_buf_fd_ioctl(uint32_t idx, uint64_t req, void *argp)
 {
     if (req != DMA_BUF_IOCTL_SYNC)
@@ -157,15 +156,12 @@ static int tpu_cache_fd_op(int32_t fd, int invalidate)
     else
         clean_and_invalidate_dcache_range(va, sz);
 
-    KLOG_DEBUG(
-        "[pseudofs] cvi-tpu0 cache_%s fd=%d h=%u pa=0x%llx size=0x%llx\n",
-        invalidate ? "invld" : "flush", fd, handle, (unsigned long long)pa,
-        (unsigned long long)sz);
+    KLOG_DEBUG("[pseudofs] cvi-tpu0 cache_%s fd=%d h=%u pa=0x%llx size=0x%llx\n", invalidate ? "invld" : "flush", fd,
+               handle, (unsigned long long)pa, (unsigned long long)sz);
     return 0;
 }
 
-static int tpu_cache_range_op(const struct cvitpu_legacy_cache_op_arg *op,
-                              int invalidate)
+static int tpu_cache_range_op(const struct cvitpu_legacy_cache_op_arg *op, int invalidate)
 {
     if (!op || op->size == 0)
         return -PFS_EINVAL;
@@ -193,10 +189,9 @@ static int tpu_cache_range_op(const struct cvitpu_legacy_cache_op_arg *op,
     else
         clean_and_invalidate_dcache_range(va, (size_t)op->size);
 
-    KLOG_DEBUG(
-        "[pseudofs] cvi-tpu0 cache_%s_range fd=%d h=%u pa=0x%llx va=%p size=0x%llx\n",
-        invalidate ? "invld" : "flush", op->fd, handle, (unsigned long long)pa,
-        va, (unsigned long long)op->size);
+    KLOG_DEBUG("[pseudofs] cvi-tpu0 cache_%s_range fd=%d h=%u pa=0x%llx va=%p size=0x%llx\n",
+               invalidate ? "invld" : "flush", op->fd, handle, (unsigned long long)pa, va,
+               (unsigned long long)op->size);
     return 0;
 }
 #endif
@@ -222,8 +217,8 @@ int ion_dev_ioctl(int nid, uint64_t req, void *argp)
         r->size = (uint64_t)ion_get_size(h);
         r->fd = fd;
         r->paddr = pa;
-        KLOG_DEBUG("[pseudofs] /dev/ion alloc size=%llu pa=0x%llx fd=%d h=%u\n",
-                   (unsigned long long)r->size, (unsigned long long)pa, fd, h);
+        KLOG_DEBUG("[pseudofs] /dev/ion alloc size=%llu pa=0x%llx fd=%d h=%u\n", (unsigned long long)r->size,
+                   (unsigned long long)pa, fd, h);
         return 0;
     }
     if (req == ION_IOC_FREE) {
@@ -285,16 +280,14 @@ int ion_dev_ioctl(int nid, uint64_t req, void *argp)
         };
         uint32_t n = (q->cnt < 3) ? q->cnt : 3;
         if (q->heaps && n > 0) {
-            struct ion_heap_data *dst =
-                (struct ion_heap_data *)(uintptr_t)q->heaps;
+            struct ion_heap_data *dst = (struct ion_heap_data *)(uintptr_t)q->heaps;
             for (uint32_t i = 0; i < n; i++)
                 dst[i] = heaps[i];
         }
         q->cnt = 3;
         return 0;
     }
-    KLOG_WARN("[pseudofs] /dev/ion unsupported ioctl req=0x%llx\n",
-              (unsigned long long)req);
+    KLOG_WARN("[pseudofs] /dev/ion unsupported ioctl req=0x%llx\n", (unsigned long long)req);
     return -PFS_ENOSYS;
 #else
     (void)req;
@@ -316,8 +309,8 @@ int tpu_dev_ioctl(int nid, uint64_t req, void *argp)
         ion_handle_t handle = ion_handle_from_user_fd(r->fd);
         if (ion_get_buf(handle, &va, &pa) != 0)
             return -PFS_EINVAL;
-        KLOG_DEBUG("[pseudofs] cvi-tpu0 submit fd=%d h=%u seq=%u pa=0x%llx\n",
-                   r->fd, handle, r->seq_no, (unsigned long long)pa);
+        KLOG_DEBUG("[pseudofs] cvi-tpu0 submit fd=%d h=%u seq=%u pa=0x%llx\n", r->fd, handle, r->seq_no,
+                   (unsigned long long)pa);
         return cvi_tpu_run_dmabuf(va, pa);
     }
     if (req == CVITPU_WAIT_DMABUF || req == CVITPU_LEGACY_WAIT_DMABUF) {
@@ -331,16 +324,14 @@ int tpu_dev_ioctl(int nid, uint64_t req, void *argp)
         struct cvitpu_cache_op_arg *r = (struct cvitpu_cache_op_arg *)argp;
         if (!r)
             return -PFS_EINVAL;
-        clean_and_invalidate_dcache_range((const void *)(uintptr_t)r->paddr,
-                                          (size_t)r->size);
+        clean_and_invalidate_dcache_range((const void *)(uintptr_t)r->paddr, (size_t)r->size);
         return 0;
     }
     if (req == CVITPU_DMABUF_INVLD) {
         struct cvitpu_cache_op_arg *r = (struct cvitpu_cache_op_arg *)argp;
         if (!r)
             return -PFS_EINVAL;
-        invalidate_dcache_range((const void *)(uintptr_t)r->paddr,
-                                (size_t)r->size);
+        invalidate_dcache_range((const void *)(uintptr_t)r->paddr, (size_t)r->size);
         return 0;
     }
     if (req == CVITPU_DMABUF_FLUSH_FD || req == CVITPU_LEGACY_DMABUF_FLUSH_FD) {
@@ -354,11 +345,9 @@ int tpu_dev_ioctl(int nid, uint64_t req, void *argp)
         return tpu_cache_fd_op(*(int32_t *)argp, 1);
     }
     if (req == CVITPU_LEGACY_DMABUF_FLUSH)
-        return tpu_cache_range_op(
-            (const struct cvitpu_legacy_cache_op_arg *)argp, 0);
+        return tpu_cache_range_op((const struct cvitpu_legacy_cache_op_arg *)argp, 0);
     if (req == CVITPU_LEGACY_DMABUF_INVLD)
-        return tpu_cache_range_op(
-            (const struct cvitpu_legacy_cache_op_arg *)argp, 1);
+        return tpu_cache_range_op((const struct cvitpu_legacy_cache_op_arg *)argp, 1);
     if (req == CVITPU_PIO_MODE)
         return 0;
     return -PFS_ENOSYS;

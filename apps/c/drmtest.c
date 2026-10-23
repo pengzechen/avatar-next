@@ -1,21 +1,21 @@
 /*
- * drmtest.c — DRM 渲染节点 + GEM 层（P2+P4）的用户态验收
- *
- * 跑法：
- *     make PLATFORM=qemu-virt-aarch64 LOG=info NPU=rknpu rootfs
- *     make PLATFORM=qemu-virt-aarch64 LOG=info NPU=rknpu run-fs
- *     ~ # /bin/drmtest
- *
- * ⚠️ **QEMU 上没有 NPU**，所以只有 SUBMIT 会失败（-ENODEV，这是预期的）。
- *    其余全部可验 —— 因为 GEM/PRIME/MEM_* 这些根本不碰硬件，它们只是把
- *    dma-buf 包装成 handle。所以这个程序能证明「librknnrt 连上来之后的
- *    内存路径是通的」，证明不了「算子算得对」（那要真机 + P3）。
- *
- * ⚠️ 下面的结构体与 ioctl 号是**手抄**的（用户态不能包含内核头）。
- *    _IOC 把 sizeof 编进操作码，所以尺寸写错不是"参数错位"而是**换成另一个
- *    ioctl 号**，内核会走到 default 分支回 -EINVAL —— 是响亮的失败。
- *    内核侧同名定义见 include/rknpu_drm.h，两边靠这里的 _Static_assert 对齐。
- */
+   drmtest.c — DRM 渲染节点 + GEM 层(P2+P4)的用户态验收
+
+   跑法：
+       make PLATFORM=qemu-virt-aarch64 LOG=info NPU=rknpu rootfs
+       make PLATFORM=qemu-virt-aarch64 LOG=info NPU=rknpu run-fs
+       ~ # /bin/drmtest
+
+   注意： QEMU 上没有 NPU, 所以只有 SUBMIT 会失败(-ENODEV, 这是预期的)。
+      其余全部可验 —— 因为 GEM/PRIME/MEM_* 这些根本不碰硬件, 它们只是把
+      dma-buf 包装成 handle。所以这个程序能证明「librknnrt 连上来之后的
+      内存路径是通的」, 证明不了「算子算得对」(那要真机 + P3)。
+
+   注意： 下面的结构体与 ioctl 号是手抄的(用户态不能包含内核头)。
+      _IOC 把 sizeof 编进操作码, 所以尺寸写错不是"参数错位"而是换成另一个
+      ioctl 号, 内核会走到 default 分支回 -EINVAL —— 是响亮的失败。
+      内核侧同名定义见 include/rknpu_drm.h, 两边靠这里的 _Static_assert 对齐。
+*/
 #define _GNU_SOURCE
 #include <errno.h>
 #include <fcntl.h>
@@ -105,18 +105,12 @@ struct rknpu_action {
 #define RKNPU_MEM_DESTROY 0x04
 #define RKNPU_MEM_SYNC    0x05
 
-#define DRM_IOCTL_RKNPU_ACTION \
-    _IOWR('d', 0x40 + RKNPU_ACTION, struct rknpu_action)
-#define DRM_IOCTL_RKNPU_SUBMIT \
-    _IOWR('d', 0x40 + RKNPU_SUBMIT, struct rknpu_submit)
-#define DRM_IOCTL_RKNPU_MEM_CREATE \
-    _IOWR('d', 0x40 + RKNPU_MEM_CREATE, struct rknpu_mem_create)
-#define DRM_IOCTL_RKNPU_MEM_MAP \
-    _IOWR('d', 0x40 + RKNPU_MEM_MAP, struct rknpu_mem_map)
-#define DRM_IOCTL_RKNPU_MEM_DESTROY \
-    _IOWR('d', 0x40 + RKNPU_MEM_DESTROY, struct rknpu_mem_destroy)
-#define DRM_IOCTL_RKNPU_MEM_SYNC \
-    _IOWR('d', 0x40 + RKNPU_MEM_SYNC, struct rknpu_mem_sync)
+#define DRM_IOCTL_RKNPU_ACTION      _IOWR('d', 0x40 + RKNPU_ACTION, struct rknpu_action)
+#define DRM_IOCTL_RKNPU_SUBMIT      _IOWR('d', 0x40 + RKNPU_SUBMIT, struct rknpu_submit)
+#define DRM_IOCTL_RKNPU_MEM_CREATE  _IOWR('d', 0x40 + RKNPU_MEM_CREATE, struct rknpu_mem_create)
+#define DRM_IOCTL_RKNPU_MEM_MAP     _IOWR('d', 0x40 + RKNPU_MEM_MAP, struct rknpu_mem_map)
+#define DRM_IOCTL_RKNPU_MEM_DESTROY _IOWR('d', 0x40 + RKNPU_MEM_DESTROY, struct rknpu_mem_destroy)
+#define DRM_IOCTL_RKNPU_MEM_SYNC    _IOWR('d', 0x40 + RKNPU_MEM_SYNC, struct rknpu_mem_sync)
 
 _Static_assert(sizeof(struct rknpu_submit) == 104, "submit 必须 104 字节");
 _Static_assert(sizeof(struct rknpu_mem_create) == 48, "mem_create 必须 48");
@@ -128,7 +122,7 @@ _Static_assert(DRM_IOCTL_RKNPU_MEM_CREATE == 0xc0306442U, "与实测不符");
 #define RKNPU_MEM_SYNC_TO_DEVICE   (1U << 0)
 #define RKNPU_MEM_SYNC_FROM_DEVICE (1U << 1)
 
-/* ── dma-heap（与 dma_buf.h 一致）─────────────────────────────────────── */
+/* ── dma-heap(与 dma_buf.h 一致)─────────────────────────────────────── */
 struct dma_heap_allocation_data {
     uint64_t len;
     uint32_t fd;
@@ -176,17 +170,15 @@ int main(void)
         v.desc = desc;
         v.desc_len = sizeof(desc);
         if (ioctl(drm, DRM_IOCTL_VERSION, &v) == 0)
-            printf("  驱动: %s %d.%d.%d  (%s)\n", name, v.version_major,
-                   v.version_minor, v.version_patchlevel, desc);
+            printf("  驱动: %s %d.%d.%d  (%s)\n", name, v.version_major, v.version_minor, v.version_patchlevel, desc);
         else
             bad("DRM_IOCTL_VERSION", strerror(errno));
 
         /*
-         * ⚠️ 名字必须是 **rknpu** —— librknnrt 按它做身份匹配。
-         * （最初起的是 "rknpu-avatar"，librknnrt 认不出，空指针崩。）
-         */
-        if (ioctl(drm, DRM_IOCTL_VERSION, &v) == 0 &&
-            strcmp(name, "rknpu") == 0)
+           注意： 名字必须是 rknpu —— librknnrt 按它做身份匹配。
+           (最初起的是 "rknpu-avatar", librknnrt 认不出, 空指针崩。)
+        */
+        if (ioctl(drm, DRM_IOCTL_VERSION, &v) == 0 && strcmp(name, "rknpu") == 0)
             ok("DRM_IOCTL_VERSION 返回驱动名 rknpu（librknnrt 靠它匹配）");
         else
             bad("DRM_IOCTL_VERSION", "名字不是 rknpu");
@@ -198,24 +190,22 @@ int main(void)
             bad("DRM_IOCTL_GET_MAGIC", strerror(errno));
 
         /* librknnrt 会发这两个做探测；渲染节点上 setmaster 语义上就该成功 */
-        if (ioctl(drm, DRM_IOCTL_SET_MASTER) == 0 &&
-            ioctl(drm, DRM_IOCTL_DROP_MASTER) == 0)
+        if (ioctl(drm, DRM_IOCTL_SET_MASTER) == 0 && ioctl(drm, DRM_IOCTL_DROP_MASTER) == 0)
             ok("SET_MASTER / DROP_MASTER（渲染节点，直接成功）");
         else
             bad("SET_MASTER / DROP_MASTER", strerror(errno));
 
-        /* AGP 是更老的东西，我们确实没有 —— 明确 -EINVAL 才是对的 */
+        /* AGP 是更老的东西, 我们确实没有 —— 明确 -EINVAL 才是对的 */
         if (ioctl(drm, DRM_IOCTL_AGP_ACQUIRE) < 0 && errno == EINVAL)
             ok("AGP_ACQUIRE 正确地被拒（-EINVAL）");
         else
             bad("AGP_ACQUIRE", "应当回 -EINVAL");
     }
 
-    /* ── 3. ACTION：IOMMU 查询（librknnrt 的决策依据）──────────────── */
+    /* ── 3. ACTION：IOMMU 查询(librknnrt 的决策依据)──────────────── */
     printf("\n-- RKNPU ACTION --\n");
     {
-        struct rknpu_action a = { .flags = RKNPU_GET_IOMMU_EN,
-                                  .value = 0xdead };
+        struct rknpu_action a = { .flags = RKNPU_GET_IOMMU_EN, .value = 0xdead };
         if (ioctl(drm, DRM_IOCTL_RKNPU_ACTION, &a) == 0 && a.value == 0)
             ok("GET_IOMMU_EN 回 0（无 IOMMU —— librknnrt 据此选连续内存）");
         else
@@ -246,7 +236,7 @@ int main(void)
                     uint32_t h = p.handle;
                     ok("PRIME_FD_TO_HANDLE");
 
-                    /* 再换回一个 fd，应当指向**同一块**内存 */
+                    /* 再换回一个 fd, 应当指向同一块内存 */
                     struct drm_prime_handle q;
                     memset(&q, 0, sizeof(q));
                     q.handle = h;
@@ -255,10 +245,8 @@ int main(void)
                     } else {
                         ok("PRIME_HANDLE_TO_FD");
                         /* 两个 fd 映射到同一块内存才说明往返没走丢 */
-                        uint8_t *m1 = mmap(NULL, 4096, PROT_READ | PROT_WRITE,
-                                           MAP_SHARED, bfd, 0);
-                        uint8_t *m2 = mmap(NULL, 4096, PROT_READ | PROT_WRITE,
-                                           MAP_SHARED, q.fd, 0);
+                        uint8_t *m1 = mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_SHARED, bfd, 0);
+                        uint8_t *m2 = mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_SHARED, q.fd, 0);
                         if (m1 == MAP_FAILED || m2 == MAP_FAILED) {
                             bad("往返后两个 fd 指向同一块内存", "mmap 失败");
                         } else {
@@ -267,17 +255,15 @@ int main(void)
                             if (same)
                                 ok("往返后两个 fd 指向同一块内存");
                             else
-                                bad("往返后两个 fd 指向同一块内存",
-                                    "两边内容不一致");
+                                bad("往返后两个 fd 指向同一块内存", "两边内容不一致");
                             munmap(m1, 4096);
                             munmap(m2, 4096);
                         }
                         close(q.fd);
                     }
-                    /* GEM_FLINK 我们明确不支持，应当 -EINVAL 而不是假成功 */
+                    /* GEM_FLINK 我们明确不支持, 应当 -EINVAL 而不是假成功 */
                     struct drm_gem_flink f = { .handle = h };
-                    if (ioctl(drm, DRM_IOCTL_GEM_FLINK, &f) < 0 &&
-                        errno == EINVAL)
+                    if (ioctl(drm, DRM_IOCTL_GEM_FLINK, &f) < 0 && errno == EINVAL)
                         ok("GEM_FLINK 明确回 -EINVAL（不编假名字）");
                     else
                         bad("GEM_FLINK", "应当回 -EINVAL");
@@ -304,8 +290,7 @@ int main(void)
         if (ioctl(drm, DRM_IOCTL_RKNPU_MEM_CREATE, &m) != 0) {
             bad("MEM_CREATE", strerror(errno));
         } else {
-            printf("  handle=%u obj=0x%llx dma=0x%llx\n", m.handle,
-                   (unsigned long long)m.obj_addr,
+            printf("  handle=%u obj=0x%llx dma=0x%llx\n", m.handle, (unsigned long long)m.obj_addr,
                    (unsigned long long)m.dma_addr);
             ok("MEM_CREATE");
 
@@ -314,13 +299,12 @@ int main(void)
             else
                 bad("MEM_CREATE 回过设备地址", "dma_addr 是 0");
 
-            /* 非连续缓冲必须被拒（无 IOMMU）*/
+            /* 非连续缓冲必须被拒(无 IOMMU) */
             struct rknpu_mem_create nc;
             memset(&nc, 0, sizeof(nc));
             nc.size = 4096;
             nc.flags = 1U << 0; /* RKNPU_MEM_NON_CONTIGUOUS */
-            if (ioctl(drm, DRM_IOCTL_RKNPU_MEM_CREATE, &nc) < 0 &&
-                errno == EINVAL)
+            if (ioctl(drm, DRM_IOCTL_RKNPU_MEM_CREATE, &nc) < 0 && errno == EINVAL)
                 ok("无 IOMMU 时非连续分配被拒（不静默降级）");
             else
                 bad("非连续分配被拒", "竟然成功了");
@@ -331,8 +315,7 @@ int main(void)
                 bad("MEM_MAP", strerror(errno));
             } else {
                 ok("MEM_MAP 回了假偏移");
-                void *p = mmap(NULL, 8192, PROT_READ | PROT_WRITE, MAP_SHARED,
-                               drm, mm.offset);
+                void *p = mmap(NULL, 8192, PROT_READ | PROT_WRITE, MAP_SHARED, drm, mm.offset);
                 if (p == MAP_FAILED) {
                     bad("用假偏移 mmap 渲染节点", strerror(errno));
                 } else {
@@ -366,7 +349,7 @@ int main(void)
         }
     }
 
-    /* ── 6. SUBMIT：QEMU 上没有 NPU，预期 -ENODEV ──────────────────── */
+    /* ── 6. SUBMIT：QEMU 上没有 NPU, 预期 -ENODEV ──────────────────── */
     printf("\n-- SUBMIT --\n");
     {
         struct rknpu_mem_create m;
@@ -387,8 +370,7 @@ int main(void)
             else if (errno == EIO)
                 bad("SUBMIT", "超时/中断状态不匹配 —— 有 NPU 但作业没跑完");
             else
-                printf("  [note] SUBMIT 回 %s（QEMU 上预期是 ENODEV）\n",
-                       strerror(errno));
+                printf("  [note] SUBMIT 回 %s（QEMU 上预期是 ENODEV）\n", strerror(errno));
 
             struct rknpu_mem_destroy d = { .handle = m.handle };
             ioctl(drm, DRM_IOCTL_RKNPU_MEM_DESTROY, &d);
@@ -397,7 +379,7 @@ int main(void)
         }
     }
 
-    /* ── 7. 未实现的 ioctl 应当被响亮拒绝（不是静默）───────────────── */
+    /* ── 7. 未实现的 ioctl 应当被响亮拒绝(不是静默)───────────────── */
     printf("\n-- 未知 ioctl --\n");
     {
         /* 0xc0106418 是反汇编里还原出来但没定性的一个号 */

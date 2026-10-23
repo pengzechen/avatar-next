@@ -1,9 +1,9 @@
 /*
- * kernel/loader/elf_loader.c — ELF 程序加载器（文件 I/O 层）
- *
- * 职责：从 ext4 文件系统读取 ELF 文件，然后交由 task_execve 处理。
- * ELF 格式解析、段加载和进程创建逻辑分别在 elf_image.c 和 task/exec.c 中。
- */
+   kernel/loader/elf_loader.c — ELF 程序加载器(文件 I/O 层)
+
+   职责：从 ext4 文件系统读取 ELF 文件, 然后交由 task_execve 处理。
+   ELF 格式解析, 段加载和进程创建逻辑分别在 elf_image.c 和 task/exec.c 中。
+*/
 
 #include "loader/bin_loader.h"
 #include "elf.h"
@@ -24,15 +24,12 @@ static int read_file_fully(ext4_file *file, uint8_t *buf, uint64_t size)
     uint64_t off = 0;
 
     while (off < size) {
-        size_t chunk = (size - off > ELF_READ_CHUNK) ? ELF_READ_CHUNK
-                                                     : (size_t)(size - off);
+        size_t chunk = (size - off > ELF_READ_CHUNK) ? ELF_READ_CHUNK : (size_t)(size - off);
         size_t got = 0;
         int rc = ext4_fread(file, buf + off, chunk, &got);
 
         if (rc != EOK || got != chunk) {
-            KLOG_ERROR(
-                "[elf_loader] Read failed: rc=%d off=%llu want=%zu got=%zu\n",
-                rc, off, chunk, got);
+            KLOG_ERROR("[elf_loader] Read failed: rc=%d off=%llu want=%zu got=%zu\n", rc, off, chunk, got);
             return -EIO;
         }
         off += got;
@@ -41,12 +38,12 @@ static int read_file_fully(ext4_file *file, uint8_t *buf, uint64_t size)
     return 0;
 }
 
-/**
- * resolve_symlink - 跟随符号链接，最多 8 层，将最终真实路径写入 out。
- * 若路径不是符号链接，直接把 path 复制到 out 返回 0。
- * 支持相对符号链接（相对于当前目录）和绝对符号链接。
- * 返回 0 表示成功，-1 表示循环太深。
- */
+/*
+   resolve_symlink - 跟随符号链接, 最多 8 层, 将最终真实路径写入 out。
+   若路径不是符号链接, 直接把 path 复制到 out 返回 0。
+   支持相对符号链接(相对于当前目录)和绝对符号链接。
+   返回 0 表示成功, -1 表示循环太深。
+*/
 static int resolve_symlink(const char *path, char *out, size_t outsz)
 {
     char cur[256];
@@ -62,7 +59,7 @@ static int resolve_symlink(const char *path, char *out, size_t outsz)
         size_t rcnt = 0;
         int rc = ext4_readlink(cur, target, sizeof(target) - 1, &rcnt);
         if (rc != EOK) {
-            /* 不是符号链接（或 readlink 失败）：cur 就是最终路径 */
+            /* 不是符号链接(或 readlink 失败)：cur 就是最终路径 */
             n = 0;
             while (cur[n] && n < (int)outsz - 1) {
                 out[n] = cur[n];
@@ -91,15 +88,14 @@ static int resolve_symlink(const char *path, char *out, size_t outsz)
                     slash = i;
             n = 0;
             if (slash >= 0) {
-                for (int i = 0; i <= slash && n < (int)sizeof(next) - 1;
-                     i++, n++)
+                for (int i = 0; i <= slash && n < (int)sizeof(next) - 1; i++, n++)
                     next[n] = cur[i];
             }
             for (int i = 0; target[i] && n < (int)sizeof(next) - 1; i++, n++)
                 next[n] = target[i];
             next[n] = '\0';
         }
-        /* next → cur，进入下一轮 */
+        /* next → cur, 进入下一轮 */
         n = 0;
         while (next[n] && n < (int)sizeof(cur) - 1) {
             cur[n] = next[n];
@@ -111,19 +107,17 @@ static int resolve_symlink(const char *path, char *out, size_t outsz)
     return -1;
 }
 
-static int load_from_file_depth(const char *pathname, char **argv, char **envp,
-                                int depth);
+static int load_from_file_depth(const char *pathname, char **argv, char **envp, int depth);
 
-/**
- * elf_loader_load_from_file - 从文件系统加载并执行 ELF 程序
- */
+/*
+   elf_loader_load_from_file - 从文件系统加载并执行 ELF 程序
+*/
 int elf_loader_load_from_file(const char *pathname, char **argv, char **envp)
 {
     return load_from_file_depth(pathname, argv, envp, 0);
 }
 
-static int load_from_file_depth(const char *pathname, char **argv, char **envp,
-                                int depth)
+static int load_from_file_depth(const char *pathname, char **argv, char **envp, int depth)
 {
     ext4_file file;
     int rc;
@@ -143,13 +137,11 @@ static int load_from_file_depth(const char *pathname, char **argv, char **envp,
 
     KLOG_DEBUG("[elf_loader] Loading: %s\n", path_buf);
 
-    /* 解析符号链接（busybox applet 等均为 symlink） */
+    /* 解析符号链接(busybox applet 等均为 symlink) */
     char resolved[256];
     if (resolve_symlink(path_buf, resolved, sizeof(resolved)) == 0) {
-        if (resolved[0] != path_buf[0] ||
-            memcmp(resolved, path_buf, sizeof(path_buf)) != 0)
-            KLOG_DEBUG("[elf_loader] Resolved '%s' -> '%s'\n", path_buf,
-                       resolved);
+        if (resolved[0] != path_buf[0] || memcmp(resolved, path_buf, sizeof(path_buf)) != 0)
+            KLOG_DEBUG("[elf_loader] Resolved '%s' -> '%s'\n", path_buf, resolved);
     } else {
         KLOG_WARN("[elf_loader] Symlink depth exceeded for '%s'\n", path_buf);
         memcpy(resolved, path_buf, sizeof(resolved));
@@ -184,8 +176,7 @@ static int load_from_file_depth(const char *pathname, char **argv, char **envp,
         return -12; /* -ENOMEM */
     }
 
-    KLOG_DEBUG("[elf_loader] file_data=0x%llx pages=%u\n", (uint64_t)file_data,
-               page_count);
+    KLOG_DEBUG("[elf_loader] file_data=0x%llx pages=%u\n", (uint64_t)file_data, page_count);
 
     /* 读取文件 */
     rc = read_file_fully(&file, file_data, file_size);
@@ -203,8 +194,7 @@ static int load_from_file_depth(const char *pathname, char **argv, char **envp,
     if (file_size >= 2 && file_data[0] == '#' && file_data[1] == '!') {
         if (depth >= SHEBANG_MAX_DEPTH) {
             kfree_pages(file_data, page_count);
-            KLOG_ERROR("[elf_loader] Shebang recursion too deep for '%s'\n",
-                       path_buf);
+            KLOG_ERROR("[elf_loader] Shebang recursion too deep for '%s'\n", path_buf);
             return -8; /* -ENOEXEC */
         }
 
@@ -217,8 +207,8 @@ static int load_from_file_depth(const char *pathname, char **argv, char **envp,
 
         char interp_path[128];
         int ip = 0;
-        while (p < hdr_len && file_data[p] != ' ' && file_data[p] != '\t' &&
-               file_data[p] != '\n' && file_data[p] != '\r') {
+        while (p < hdr_len && file_data[p] != ' ' && file_data[p] != '\t' && file_data[p] != '\n' &&
+               file_data[p] != '\r') {
             if (ip < (int)sizeof(interp_path) - 1)
                 interp_path[ip++] = (char)file_data[p];
             p++;
@@ -227,12 +217,11 @@ static int load_from_file_depth(const char *pathname, char **argv, char **envp,
 
         if (ip == 0) {
             kfree_pages(file_data, page_count);
-            KLOG_ERROR("[elf_loader] Empty shebang interpreter in '%s'\n",
-                       path_buf);
+            KLOG_ERROR("[elf_loader] Empty shebang interpreter in '%s'\n", path_buf);
             return -8; /* -ENOEXEC */
         }
 
-        /* 可选参数（如 "#!/usr/bin/env sh" 中的 "sh"） */
+        /* 可选参数(如 "#!/usr/bin/env sh" 中的 "sh") */
         while (p < hdr_len && (file_data[p] == ' ' || file_data[p] == '\t'))
             p++;
 
@@ -243,15 +232,13 @@ static int load_from_file_depth(const char *pathname, char **argv, char **envp,
                 interp_arg[ia++] = (char)file_data[p];
             p++;
         }
-        while (ia > 0 &&
-               (interp_arg[ia - 1] == ' ' || interp_arg[ia - 1] == '\t'))
+        while (ia > 0 && (interp_arg[ia - 1] == ' ' || interp_arg[ia - 1] == '\t'))
             ia--;
         interp_arg[ia] = '\0';
 
         kfree_pages(file_data, page_count);
 
-        KLOG_DEBUG("[elf_loader] Shebang: interp='%s' arg='%s' script='%s'\n",
-                   interp_path, interp_arg, path_buf);
+        KLOG_DEBUG("[elf_loader] Shebang: interp='%s' arg='%s' script='%s'\n", interp_path, interp_arg, path_buf);
 
         /* 构建新 argv: [interp, interp_arg?, script_path, original_argv[1..], NULL] */
 #define SHEBANG_MAX_ARGC 32
@@ -271,7 +258,7 @@ static int load_from_file_depth(const char *pathname, char **argv, char **envp,
         return load_from_file_depth(interp_path, new_argv, envp, depth + 1);
     }
 
-    /* ── 检查 PT_INTERP（动态连接器路径）───────────────────────────── */
+    /* ── 检查 PT_INTERP(动态连接器路径)───────────────────────────── */
     uint8_t *interp_data = NULL;
     uint64_t interp_size = 0;
     uint32_t interp_pages = 0;
@@ -291,16 +278,13 @@ static int load_from_file_depth(const char *pathname, char **argv, char **envp,
 
                     /* interpreter 路径也可能是符号链接 */
                     char iresolved[256];
-                    if (resolve_symlink(ipath, iresolved, sizeof(iresolved)) !=
-                        0)
+                    if (resolve_symlink(ipath, iresolved, sizeof(iresolved)) != 0)
                         memcpy(iresolved, ipath, sizeof(iresolved));
 
                     ext4_file ifile;
                     int irc = ext4_fopen(&ifile, iresolved, "r");
                     if (irc != EOK) {
-                        KLOG_ERROR(
-                            "[elf_loader] Cannot open interpreter '%s': %d\n",
-                            iresolved, irc);
+                        KLOG_ERROR("[elf_loader] Cannot open interpreter '%s': %d\n", iresolved, irc);
                         break;
                     }
                     ext4_fseek(&ifile, 0, SEEK_END);
@@ -314,13 +298,9 @@ static int load_from_file_depth(const char *pathname, char **argv, char **envp,
                             irc = read_file_fully(&ifile, interp_data, isz);
                             if (irc == 0) {
                                 interp_size = (uint64_t)isz;
-                                KLOG_DEBUG(
-                                    "[elf_loader] Interpreter loaded: %zu bytes\n",
-                                    isz);
+                                KLOG_DEBUG("[elf_loader] Interpreter loaded: %zu bytes\n", isz);
                             } else {
-                                KLOG_ERROR(
-                                    "[elf_loader] Interpreter read failed rc=%d\n",
-                                    irc);
+                                KLOG_ERROR("[elf_loader] Interpreter read failed rc=%d\n", irc);
                                 kfree_pages(interp_data, interp_pages);
                                 interp_data = NULL;
                                 interp_pages = 0;
@@ -329,9 +309,7 @@ static int load_from_file_depth(const char *pathname, char **argv, char **envp,
                             KLOG_ERROR("[elf_loader] OOM for interpreter\n");
                         }
                     } else {
-                        KLOG_WARN(
-                            "[elf_loader] Interpreter size invalid: %zu\n",
-                            isz);
+                        KLOG_WARN("[elf_loader] Interpreter size invalid: %zu\n", isz);
                     }
                     ext4_fclose(&ifile);
                     break;
@@ -340,9 +318,8 @@ static int load_from_file_depth(const char *pathname, char **argv, char **envp,
         }
     }
 
-    /* 加载并执行 ELF（成功时不返回） */
-    rc = task_execve(path_buf, file_data, file_size, interp_data, interp_size,
-                     argv, envp);
+    /* 加载并执行 ELF(成功时不返回) */
+    rc = task_execve(path_buf, file_data, file_size, interp_data, interp_size, argv, envp);
 
     if (interp_data)
         kfree_pages(interp_data, interp_pages);

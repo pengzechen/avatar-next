@@ -1,6 +1,6 @@
 /*
- * kernel/loader/bin_loader.c - 二进制程序加载器实现
- */
+   kernel/loader/bin_loader.c - 二进制程序加载器实现
+*/
 
 #include "loader/bin_loader.h"
 #include "syscall/syscall.h"
@@ -14,9 +14,9 @@
 
 #define MAX_FILE_SIZE (1024 * 1024) /* 最大程序大小 1MB */
 
-/**
- * bin_loader_load_from_file - 从文件系统加载并执行程序
- */
+/*
+   bin_loader_load_from_file - 从文件系统加载并执行程序
+*/
 int bin_loader_load_from_file(const char *pathname, char **argv, char **envp)
 {
     ext4_file file;
@@ -25,13 +25,13 @@ int bin_loader_load_from_file(const char *pathname, char **argv, char **envp)
     uint8_t *code_buffer;
     uint64_t file_size;
     task_t *new_task;
-    char path_buf[256]; /* 内核缓冲区，用于存储路径名 */
+    char path_buf[256]; /* 内核缓冲区, 用于存储路径名 */
 
     (void)argv; /* 暂未使用参数 */
     (void)envp; /* 暂未使用环境变量 */
 
     /* 从用户空间复制路径名到内核缓冲区 */
-    /* 简单实现：假设当前使用共享页表，可以直接访问 */
+    /* 简单实现：假设当前使用共享页表, 可以直接访问 */
     /* TODO: 实现真正的 copy_from_user */
     uint64_t i = 0;
     while (pathname[i] && i < sizeof(path_buf) - 1) {
@@ -40,8 +40,9 @@ int bin_loader_load_from_file(const char *pathname, char **argv, char **envp)
     }
     path_buf[i] = '\0';
 
-    /* 与 elf_loader.c 的同类事件统一到 DEBUG：装载是逐次 exec 的操作，
-     * busybox 每条命令都会走一遍，不该占 INFO。 */
+    /* 与 elf_loader.c 的同类事件统一到 DEBUG：装载是逐次 exec 的操作,
+       busybox 每条命令都会走一遍, 不该占 INFO。
+    */
     KLOG_DEBUG("[loader] Loading program: %s\n", path_buf);
 
     /* 打开文件 */
@@ -93,22 +94,20 @@ int bin_loader_load_from_file(const char *pathname, char **argv, char **envp)
     KLOG_DEBUG("[loader] Program loaded: virt=0x%llx\n", (uint64_t)code_buffer);
 
     /* 创建用户进程
-     * process_create 的 user_entry 参数在 AArch64 下是代码的内核虚拟地址，
-     * vm_create_user_process 会从该地址拷贝代码到新的用户页表中。
-     * 进程实际入口固定为用户虚拟地址 0x10000。
-     */
-    new_task = process_create(path_buf, (uint64_t)code_buffer, file_size,
-                              USER_STACK_TOP, USER_PROCESS_PRIO);
+       process_create 的 user_entry 参数在 AArch64 下是代码的内核虚拟地址,
+       vm_create_user_process 会从该地址拷贝代码到新的用户页表中。
+       进程实际入口固定为用户虚拟地址 0x10000。
+    */
+    new_task = process_create(path_buf, (uint64_t)code_buffer, file_size, USER_STACK_TOP, USER_PROCESS_PRIO);
     if (new_task == NULL) {
         KLOG_ERROR("[loader] Failed to create process for '%s'\n", path_buf);
         kfree_pages(code_buffer, page_count);
         return -5;
     }
 
-    KLOG_DEBUG("[loader] Process '%s' created successfully, PID=%u\n", path_buf,
-               new_task->id);
+    KLOG_DEBUG("[loader] Process '%s' created successfully, PID=%u\n", path_buf, new_task->id);
 
-    /* 退出当前进程，让新进程运行 */
+    /* 退出当前进程, 让新进程运行 */
     task_exit();
 
     /* 不应该到达这里 */

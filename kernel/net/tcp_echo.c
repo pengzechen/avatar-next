@@ -4,8 +4,7 @@
 
 #include "lwip/tcp.h"
 
-static err_t echo_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p,
-                       err_t err)
+static err_t echo_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err)
 {
     (void)arg;
 
@@ -25,8 +24,7 @@ static err_t echo_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p,
     for (struct pbuf *q = p; q != NULL; q = q->next) {
         err_t wr = tcp_write(tpcb, q->payload, q->len, TCP_WRITE_FLAG_COPY);
         if (wr != ERR_OK) {
-            KLOG_WARN("[tcp-echo] tcp_write failed rc=%d len=%u\n", wr,
-                      (unsigned)q->len);
+            KLOG_WARN("[tcp-echo] tcp_write failed rc=%d len=%u\n", wr, (unsigned)q->len);
             break;
         }
         if (q->tot_len == q->len)
