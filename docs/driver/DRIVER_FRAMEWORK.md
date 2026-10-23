@@ -383,7 +383,7 @@ bool driver_present(drv_class_t cls)
 
 | 驱动 | class | phase | start_phase | probe 做什么 |
 |------|-------|-------|-------------|--------------|
-| uart_pl011 | SERIAL | EARLY | none | `pl011_init(cfg)`（保持现状：早期一次完成） |
+| uart_pl011 | SERIAL | EARLY | IRQ（仅 `cfg->irq_mode`） | `pl011_init(cfg)`：早期只配置硬件、屏蔽中断；start 里注册 RX IRQ |
 | uart_dw | SERIAL | EARLY | IRQ（仅 `cfg->irq_mode`） | `dw_uart_early_init(cfg)` |
 | uart_x86 | SERIAL | EARLY | none | `uart_x86_early_init(cfg)` |
 | gicv3 | IRQ | IRQ | none | `gicv3_init(cfg)` |
@@ -402,7 +402,7 @@ bool driver_present(drv_class_t cls)
 
 说明：
 
-- **UART 的 `irq_mode`** 用来替代 `#if DRIVER_UART_DW && (PLATFORM_RK3588 || PLATFORM_SG2002)`。qemu-riscv 的 `irq_mode=false`，rk3588/sg2002 为 true（保持当前调用 `dw_uart_init()` 的行为）。PL011 没有独立的后期 init，start_phase 留空。
+- **UART 的 `irq_mode`** 用来替代 `#if DRIVER_UART_DW && (PLATFORM_RK3588 || PLATFORM_SG2002)`。qemu-riscv 的 `irq_mode=false`，rk3588/sg2002 为 true（保持当前调用 `dw_uart_init()` 的行为）。PL011 在 `irq_mode=true` 时由 IRQ 阶段的 start 注册 RX 中断；TX 始终同步轮询，不依赖中断（klog/panic 要求）。
 - **sdblk**：阶段 1 顺手改成“只初始化一次”。当前 `fs_init()` → `sdblk_bdev_open()` → `sdblk_init()`，随后 main 又调一次；框架改为 STORAGE probe 初始化一次，`sdblk_bdev_open()` 检测到已初始化直接返回。
 - **lapic**：x86 的 `exception_init()` 为了 IDT/早期中断仍需调用 `lapic_init()`；IRQ 阶段的 probe 再调用一次（写 TPR/SVR，幂等）。如果不想重复，可加 `g_lapic_ready` 守卫。
 
@@ -425,8 +425,8 @@ uart = {
     driver    = "pl011" | "dw" | "x86",
     base      = ...,
     reg_shift = 0 | 2,
-    irq       = 0,          # 0 = 暂不接中断；完成 UART IRQ 后填真实值
-    irq_mode  = false,      # true 时在 DRV_PHASE_IRQ 调 start
+    irq       = 33,         # 0 = 不接中断；GIC INTID / PLIC source
+    irq_mode  = true,       # true 时在 DRV_PHASE_IRQ 调 start（PL011 RX IRQ）
 }
 
 block = { driver = "ramblk" | "sdblk" }
@@ -438,7 +438,7 @@ eth = { driver = "virtio" | "cvitek" | "none", base = ..., irq = 0 }
 
 | platform | irq.driver | block.driver | uart.irq_mode |
 |----------|------------|--------------|---------------|
-| qemu-virt-aarch64 | gicv3 | ramblk | false |
+| qemu-virt-aarch64 | gicv3 | ramblk | true |
 | qemu-virt-riscv64 | plic | ramblk | false |
 | qemu-virt-x86_64 | lapic | ramblk | false |
 | rk3588-aarch64 | gicv3 | ramblk | true |
@@ -459,8 +459,8 @@ eth = { driver = "virtio" | "cvitek" | "none", base = ..., irq = 0 }
 #include "driver/tpu.h"
 
 static const serial_cfg_t g_serial_cfg = {
-    .base = 0x09000000, .reg_shift = 0, .irq = 0,
-    .irq_mode = false, .compatible = "arm,pl011",
+    .base = 0x09000000, .reg_shift = 0, .irq = 33,
+    .irq_mode = true, .compatible = "arm,pl011",
 };
 static const irq_cfg_t g_irq_cfg = {
     .gicd = 0x08000000, .gicr = 0x080A0000, .virt = true,

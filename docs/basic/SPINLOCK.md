@@ -60,15 +60,15 @@ spin_unlock_irqrestore(&lock, flags);
 | `kernel/task/sched.c` | `rq_lock`：run_queue；跨核用 irqsave，本核临界区用 `spin_lock`（外层已关中断） |
 | `kernel/syscall/fs/tty.c` | 环形缓冲 + 硬件 FIFO 两把锁，从不嵌套持有 |
 | `driver/uart/uart_dw.c` | TX/RX 缓冲，ISR 与线程都取 → 全部 irqsave |
-| `driver/uart/uart_pl011.c` | 同上（**同一子系统两个驱动两套做法的问题已修**） |
+| `driver/uart/uart_pl011.c` | RX 环：ISR 与线程都取 → irqsave；TX 同步轮询、不取锁 |
 | `driver/ion/ion.c` | `g_ion_lock`，日志同样放在解锁后 |
 | `kernel/syscall/core/futex.c` | `g_futex_lock` 保护全局等待表（原来只用本核关中断，SMP 下会写坏） |
 
 ## 必须遵守的几条
 
 1. **ISR 里取的锁必须是 irqsave 变体**。线程持普通 `spin_lock` 时被同核中断打断，
-   ISR 再去取同一把锁 → 自旋到死。`uart_pl011.c` 曾经就是这样（ISR 注册被注释掉才
-   没炸）；对照 `uart_dw.c` 的正确写法。
+   ISR 再去取同一把锁 → 自旋到死。`uart_pl011.c` 的 RX ISR 与线程路径都使用
+   irqsave；TX 路径不取锁。对照 `uart_dw.c` 的正确写法。
 2. **锁对象里不放任何"调用者状态"**（flags、任务指针……）。这类状态一律放调用点
    的局部变量或 per-CPU 结构。上面的 `irq_flags` 就是反例。
 3. **不要在持锁（尤其关中断）期间打日志**。klog 会持自己的锁把整条消息逐字符轮询

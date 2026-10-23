@@ -14,7 +14,7 @@ guest 侧看不出来：
 | 怎么进 | `make PLATFORM=qemu-virt-aarch64 GIC=v3 test-guest-linux` | `make PLATFORM=qemu-virt-aarch64 GIC=v3 run-fs`，然后在 shell 里敲 `/bin/vmm-run` |
 | x86_64 对应命令 | `make PLATFORM=qemu-virt-x86_64 GUEST_LINUX=1 test-guest-linux` | `make PLATFORM=qemu-virt-x86_64 run-fs`，然后在 shell 里敲 `/bin/vmm-run` |
 | 宿主 shell | 没有（`GUEST_LINUX=1` 变体与 busybox 互斥） | 有，guest 停掉后立刻可用 |
-| guest 输入从哪来 | `vmm_console_pump()` 在 vCPU 退出路径直接轮询真实 PL011 | 用户态 helper 读自己的 stdin 再 write 到 `/dev/vmm` |
+| guest 输入从哪来 | `vmm_console_pump()` 在 vCPU 退出路径直接轮询真实 PL011（宿主有 RX 中断，但运行 guest 时宿主中断关闭，pump 仍走硬件 drain） | 用户态 helper 读自己的 stdin 再 write 到 `/dev/vmm` |
 | guest 输出到哪去 | 逐字节直打宿主控制台 | 进 vpl011 的 TX 环形缓冲，helper 读走再写自己的 stdout |
 | 怎么停 guest | 只能等 guest 自己 poweroff | Ctrl+T k → helper 退出 → 内核停止 guest |
 

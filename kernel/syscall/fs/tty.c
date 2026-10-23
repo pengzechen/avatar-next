@@ -84,11 +84,23 @@ void signal_check_uart(void)
 
     /* 在锁内一次性把硬件 FIFO 抽干到本地缓冲, 缩短临界区并避免与
        环形缓冲锁/信号投递产生锁嵌套。剩余字节留待下次调用处理。
+
+       优先用非阻塞接口：ready() 返回 true 后，另一个消费者仍可能抢走
+       最后一个字节，此时阻塞版 getc() 会在关中断持锁的状态下一直等。
+       DW 的 getc_nb 在未初始化时返回 false，保留 ready()+getc() 回退。
     */
     uint64_t flags;
     spin_lock_irqsave(&g_uart_hw_lock, &flags);
-    while (n < (int)sizeof(buf) && serial_rx_ready())
+    while (n < (int)sizeof(buf)) {
+        char c;
+        if (serial_getc_nb(&c)) {
+            buf[n++] = c;
+            continue;
+        }
+        if (!serial_rx_ready())
+            break;
         buf[n++] = serial_getc();
+    }
     spin_unlock_irqrestore(&g_uart_hw_lock, flags);
 
     for (int i = 0; i < n; i++) {

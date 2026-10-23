@@ -52,7 +52,19 @@ void vmm_console_pump(vm_t *vm)
     if (vmm_console_tx_channel_enabled(vm))
         return;
 
-    while (serial_rx_ready())
+    /*
+       优先非阻塞取字节；ready() 与 getc() 之间可能被另一个宿主消费者
+       插进来，阻塞版 getc() 会一直等。DW 的 getc_nb 未实现时保留旧回退。
+    */
+    for (;;) {
+        char c;
+        if (serial_getc_nb(&c)) {
+            vmm_console_push_rx(vm, (uint8_t)c);
+            continue;
+        }
+        if (!serial_rx_ready())
+            break;
         vmm_console_push_rx(vm, (uint8_t)serial_getc());
+    }
 }
 #endif /* VMM_GUEST_LINUX_SUPPORTED */

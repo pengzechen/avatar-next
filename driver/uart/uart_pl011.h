@@ -54,6 +54,9 @@ extern volatile uintptr_t g_pl011_base;
 
 /* -----------------------------------------------------------------------
    函数声明(均以 pl011_ 为前缀, 避免与 platform 层的 uart_putchar 冲突)
+
+   TX 始终同步轮询；RX 在 DRV_PHASE_IRQ 的 start 里按 cfg->irq_mode 切换
+   到中断模式（见 uart_pl011.c）。
    -----------------------------------------------------------------------
 */
 void pl011_init(void);
@@ -63,7 +66,6 @@ bool pl011_putchar_nb(char c);
 char pl011_getchar(void);
 bool pl011_getchar_nb(char *c);
 bool pl011_rx_available(void);
-uint32_t pl011_tx_buffer_usage(void);
 uint64_t pl011_tx_dropped(void); /* 阻塞发送超时被丢弃的字符数 */
 
 #endif /* __T_UART_PL011_H__ */
