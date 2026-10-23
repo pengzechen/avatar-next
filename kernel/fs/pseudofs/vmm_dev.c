@@ -12,6 +12,8 @@
  *   open("/dev/vmm", O_RDWR)         打开设备
  *   ioctl(fd, VMM_IOC_BOOT)          启动 guest；已在跑则接入它
  *   ioctl(fd, VMM_IOC_BOOT_EX)       强制新建一个 VM，出参回填 vmid
+ *   ioctl(fd, VMM_IOC_BOOT_CFG)      带参数启动/新建：vCPU 数 + 新建标志，
+ *                                    出参回填实际 vmid / 实际核数（vmm-run -c N）
  *   ioctl(fd, VMM_IOC_LIST)          出参：所有 VM 的 {vmid,state} + 前台 vmid
  *   ioctl(fd, VMM_IOC_ATTACH)        入参 vmid：把它设为前台（不必重新 boot）
  *   ioctl(fd, VMM_IOC_STOP_VM)       入参 vmid：停指定的那个，**不要求先接入**
@@ -122,7 +124,22 @@ static void vmm_dev_claim(void)
 
 /* ── 启动 / 接入 ──────────────────────────────────────────── */
 #if VMM_GUEST_LINUX_SUPPORTED
-static int vmm_dev_boot(int force_new)
+/*
+ * 出参统一从这里填：调用方要的是**本次实际选中/创建**的 VM，而不是
+ * 函数返回后再去读 g_vmm_fg_vmid —— 那时前台可能已经被别的 helper
+ * 改掉了（多 VM 下这不是理论问题）。
+ */
+static void vmm_dev_boot_result(uint32_t *out_vmid, uint32_t *out_nr,
+                                uint32_t vmid, uint32_t nr_vcpus)
+{
+    if (out_vmid)
+        *out_vmid = vmid;
+    if (out_nr)
+        *out_nr = nr_vcpus;
+}
+
+static int vmm_dev_boot(int force_new, uint32_t want_vcpus,
+                        uint32_t *out_vmid, uint32_t *out_nr)
 {
     /*
      * 每次会话从这里开始，先清掉上一次可能残留的「分离」意图。
@@ -130,6 +147,13 @@ static int vmm_dev_boot(int force_new)
      * guest 就永远停不掉了。
      */
     g_vmm_detached = 0;
+
+    /* 先挡住明显越界的值，避免下面 cast 成 int 后失去符号 */
+    if (want_vcpus > (uint32_t)MAX_VCPUS) {
+        KLOG_ERROR("[vmmdev] boot: %u vCPU(s) requested, max is %d\n",
+                   want_vcpus, MAX_VCPUS);
+        return -PFS_EINVAL;
+    }
 
     /*
      * 已经有一个 guest 在跑（典型场景：上一次 Ctrl+T d 把它留在后台了）
@@ -176,12 +200,27 @@ static int vmm_dev_boot(int force_new)
             return -PFS_EBUSY;
         }
 
+        /*
+         * 运行中的 VM 改不了核数：调用方显式指定了数量且对不上时必须
+         * 报错，不能静默接入一个核数不同的 guest（调用方 -c 隐含新建，
+         * 正常走不到这里；这是给直接撕 ioctl 的人兜底）。
+         */
+        if (want_vcpus != 0 && (uint32_t)fg->nr_vcpus != want_vcpus) {
+            KLOG_WARN("[vmmdev] boot: vm%u runs %d vCPU(s), cannot attach "
+                      "with %u — use VMM_BOOT_F_NEW to create another VM\n",
+                      fg->vmid, fg->nr_vcpus, want_vcpus);
+            return -PFS_EINVAL;
+        }
+
         g_vmm_fg_vmid = (int)fg->vmid;
         vmm_dev_claim(); /* 这个任务从此是本次会话的主人（见 g_vmm_owner_pid）*/
-        KLOG_INFO("[vmmdev] boot: attaching to vm%u\n", fg->vmid);
+        KLOG_INFO("[vmmdev] boot: attaching to vm%u (%d vCPU(s))\n", fg->vmid,
+                  fg->nr_vcpus);
 
         /* 通道应当是开着的；分离期间没关过，这里只是兜底 */
         vmm_console_tx_set_enabled(fg, 1);
+        vmm_dev_boot_result(out_vmid, out_nr, fg->vmid,
+                            (uint32_t)fg->nr_vcpus);
         return 0;
     }
 
@@ -190,7 +229,16 @@ static int vmm_dev_boot(int force_new)
      * 才退出，满载时最坏一个宿主 tick ≈ 10ms）。这里不等，让调用方重试 ——
      * 内核里做定时等待要么引 timer 依赖，要么就是个没上界的自旋循环。
      */
-    KLOG_INFO("[vmmdev] boot: starting guest\n");
+    int nr_vcpus = want_vcpus ? (int)want_vcpus : GUEST_LINUX_NR_VCPUS;
+
+    /*
+     * 在建 VM 之前校验，失败时**什么都没动**（槽位、控制台都还没碰），
+     * 调用方可以安全地把它当成配置错误（EINVAL）而非瞬态错误重试。
+     */
+    if (guest_loader_check_vcpus(nr_vcpus) != 0)
+        return -PFS_EINVAL;
+
+    KLOG_INFO("[vmmdev] boot: starting guest (%d vCPU(s))\n", nr_vcpus);
 
     /*
      * 先把控制台切到「通道模式」，再启动 guest。
@@ -217,7 +265,7 @@ static int vmm_dev_boot(int force_new)
 
     vm->cfg.mem_base = GUEST_LINUX_MEM_BASE;
     vm->cfg.mem_size = GUEST_LINUX_MEM_SIZE;
-    vm->cfg.nr_vcpus = 1;
+    vm->cfg.nr_vcpus = nr_vcpus;
 
     /*
      * 先把控制台切到「通道模式」，再启动 guest。
@@ -238,6 +286,7 @@ static int vmm_dev_boot(int force_new)
 
     g_vmm_fg_vmid = (int)vm->vmid;
     vmm_dev_claim(); /* 这个任务从此是本次会话的主人（见 g_vmm_owner_pid）*/
+    vmm_dev_boot_result(out_vmid, out_nr, vm->vmid, (uint32_t)vm->nr_vcpus);
 
     return 0;
 }
@@ -303,11 +352,13 @@ int vmm_dev_ioctl(int nid, uint64_t req, void *argp)
 #else
     switch (req) {
     case VMM_IOC_BOOT:
-        return vmm_dev_boot(0 /*有在跑的就接入*/);
+        return vmm_dev_boot(0 /*有在跑的就接入*/, 0 /*构建默认核数*/,
+                            NULL, NULL);
 
     case VMM_IOC_BOOT_EX: {
         /* 强制新建一个 VM；出参回填它分到的 vmid（多 VM 的入口）*/
         uint32_t want = 0;
+        uint32_t vmid = 0;
         int rc;
 
         if (!argp)
@@ -315,12 +366,42 @@ int vmm_dev_ioctl(int nid, uint64_t req, void *argp)
         if (copy_from_user_bytes(argp, &want, sizeof(want)) < 0)
             return -PFS_EINVAL;
 
-        rc = vmm_dev_boot(1 /*总是新建*/);
+        rc = vmm_dev_boot(1 /*总是新建*/, 0 /*构建默认核数*/, &vmid, NULL);
         if (rc != 0)
             return rc;
 
-        want = (uint32_t)g_vmm_fg_vmid;
-        if (copy_to_user_bytes(&want, argp, sizeof(want)) < 0)
+        if (copy_to_user_bytes(&vmid, argp, sizeof(vmid)) < 0)
+            return -PFS_EINVAL;
+        return 0;
+    }
+
+    case VMM_IOC_BOOT_CFG: {
+        /*
+         * 带参数启动（运行期 vCPU 数）。flags 只有 NEW；nr_vcpus == 0
+         * 表示沿用构建默认。出参回填实际 vmid / 实际核数。
+         */
+        struct vmm_boot_req breq;
+        uint32_t vmid = 0;
+        uint32_t nr = 0;
+        int rc;
+
+        if (!argp)
+            return -PFS_EINVAL;
+        if (copy_from_user_bytes(argp, &breq, sizeof(breq)) < 0)
+            return -PFS_EINVAL;
+        if (breq._rsv != 0 || (breq.flags & ~VMM_BOOT_F_NEW) != 0)
+            return -PFS_EINVAL;
+
+        rc = vmm_dev_boot((breq.flags & VMM_BOOT_F_NEW) != 0, breq.nr_vcpus,
+                          &vmid, &nr);
+        if (rc != 0)
+            return rc;
+
+        breq.vmid = vmid;
+        breq.nr_vcpus = nr;
+        breq.flags = 0;
+        breq._rsv = 0;
+        if (copy_to_user_bytes(&breq, argp, sizeof(breq)) < 0)
             return -PFS_EINVAL;
         return 0;
     }

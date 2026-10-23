@@ -115,6 +115,96 @@ _Static_assert(sizeof(GUEST_LINUX_BOOTARGS) - 1 <= 90,
                "imgs/guests/rv64/linux.dts 的注释（槽位由那句自带命令行决定）");
 #endif
 
+/* ── 运行期 vCPU 数与 DTB 选择 ─────────────────────────────── */
+
+/*
+ * 每个支持的 vCPU 数对应 rootfs 里的哪份 DTB。
+ *
+ * smpDTB 只做了 GICv3 版（见 Makefile 的 GUEST_VCPUS 校验），所以这张表
+ * 只在 aarch64 上使用；riscv64 只有单核 DTB，x86 没有 DTB。
+ *
+ * nr==1 要特别小心：linux.dtb 是“构建默认”那一份，GUEST_VCPUS=8 的构建里
+ * 它是 8 核 DTB。那种构建的 rootfs 另外装了 linux-1cpu.dtb，必须用它。
+ */
+#if ARCH_AARCH64
+static const char *guest_loader_dtb_path(int nr)
+{
+    static const char *const smp_dtb[MAX_VCPUS + 1] = {
+        [2] = "/guests/linux/linux-gicv3-smp2.dtb",
+        [4] = "/guests/linux/linux-gicv3-smp4.dtb",
+        [8] = "/guests/linux/linux-gicv3-smp8.dtb",
+        [12] = "/guests/linux/linux-gicv3-smp12.dtb",
+    };
+
+    if (nr == 1)
+        return (GUEST_LINUX_NR_VCPUS == 1) ? GUEST_LINUX_DTB_PATH
+                                           : GUEST_LINUX_DTB_PATH_1CPU;
+    if (nr > 0 && nr <= MAX_VCPUS)
+        return smp_dtb[nr];
+    return NULL;
+}
+#elif ARCH_RISCV64
+static const char *guest_loader_dtb_path(int nr)
+{
+    (void)nr;
+    return GUEST_LINUX_DTB_PATH;
+}
+#endif
+
+int guest_loader_check_vcpus(int nr)
+{
+    if (nr < 1 || nr > MAX_VCPUS) {
+        KLOG_ERROR("[guest] invalid vCPU count %d (supported: 1..%d)\n", nr,
+                   MAX_VCPUS);
+        return -1;
+    }
+
+#if !ARCH_AARCH64
+    /*
+     * AP 入口只有 aarch64 做了 PSCI CPU_ON；x86 的 INIT/SIPI 与 RISC-V 的
+     * SBI HSM 都还没实现（见 kernel/vmm/vcpu.c 的 vmm_vcpu_start()）。
+     * 这里必须显式拒绝：vm_init 本身只校验 1..MAX_VCPUS，不拦多核。
+     */
+    if (nr != 1) {
+        KLOG_ERROR("[guest] %d vCPU(s) requested, but this architecture only "
+                   "supports 1 (AP entry not implemented yet)\n",
+                   nr);
+        return -1;
+    }
+    return 0;
+#else
+    if (nr > 1) {
+#if !DRIVER_GIC_V3
+        KLOG_ERROR("[guest] %d vCPU(s) requested, but this build has no GICv3 "
+                   "guest support (multi-vCPU DTBs are GICv3-only; rebuild "
+                   "with GIC=v3)\n",
+                   nr);
+        return -1;
+#endif
+        if (nr != 2 && nr != 4 && nr != 8 && nr != 12) {
+            KLOG_ERROR("[guest] %d vCPU(s) is not supported: guest DTBs exist "
+                       "only for 1, 2, 4, 8 and 12\n",
+                       nr);
+            return -1;
+        }
+    }
+
+    /*
+     * DTB 必须真的在 rootfs 里。这一步让“旧 rootfs + 新内核”在启动前就以
+     * 明确原因失败（vmm_dev 返回 EINVAL），而不是加载到一半才发现缺文件、
+     * 再让 helper 把 EIO 当成瞬态错误重试 2000 次。
+     */
+    const char *dtb = guest_loader_dtb_path(nr);
+    if (!dtb || guest_loader_file_size(dtb) <= 0) {
+        KLOG_ERROR("[guest] %d vCPU(s): guest DTB '%s' missing from rootfs — "
+                   "rebuild it (make PLATFORM=<p> rootfs)\n",
+                   nr, dtb ? dtb : "(none)");
+        return -1;
+    }
+    return 0;
+#endif
+}
+
 /* ── 启动 Linux guest ─────────────────────────────────────── */
 /*
  * 调用者两种：
@@ -141,6 +231,19 @@ extern int x86_guest_boot(vm_t *vm);
 
 int guest_loader_run_linux(vm_t *vm)
 {
+    if (!vm)
+        return -1;
+
+    /*
+     * vCPU 数必须在 vm_create() 之前定下来：vGIC、GICR 窗口和 vcpu 数组都是
+     * 按 nr_vcpus 初始化的。调用方（/dev/vmm 的 BOOT_CFG 或直启路径）可以
+     * 显式指定；<=0 表示用本构建的默认值 GUEST_LINUX_NR_VCPUS。
+     */
+    if (vm->cfg.nr_vcpus <= 0)
+        vm->cfg.nr_vcpus = GUEST_LINUX_NR_VCPUS;
+    if (guest_loader_check_vcpus(vm->cfg.nr_vcpus) != 0)
+        return -1;
+
 #if ARCH_X86_64
     return x86_guest_boot(vm);
 #else
@@ -151,7 +254,7 @@ int guest_loader_run_linux(vm_t *vm)
    * 置成 LOADING，这里只需确认它可用。（从前是一个全局 "guest 在跑吗"，
    * 那在多 VM 下会拦住第二个 VM。）
    */
-    if (!vm || vm->state != VM_LOADING) {
+    if (vm->state != VM_LOADING) {
         KLOG_WARN(
             "[guest] run_linux: vm slot not in LOADING state, refusing\n");
         return -1;
@@ -166,12 +269,6 @@ int guest_loader_run_linux(vm_t *vm)
               "unknown"
 #endif
     );
-
-    /*
-     * 本构建里 guest 要几个 vCPU。必须在 vm_create() 之前定下来：vGIC、
-     * GICR 窗口和 vcpu 数组都是按 nr_vcpus 初始化的。
-     */
-    vm->cfg.nr_vcpus = GUEST_LINUX_NR_VCPUS;
 
     /*
    * ── 建立 VM（**必须**在加载映像之前）──────────────────────────
@@ -207,11 +304,16 @@ int guest_loader_run_linux(vm_t *vm)
    * 而按需分页下 4 KB 的 DTB 可能落在不连续的物理页上 —— 越过页边界继续
    * 线性索引就会写到宿主或别的 VM 的内存里。
    */
+    const char *dtb_path = guest_loader_dtb_path(vm->cfg.nr_vcpus);
     static uint8_t dtb_buf[8192];
     int dlen =
-        guest_loader_read_file(GUEST_LINUX_DTB_PATH, dtb_buf, sizeof(dtb_buf));
-    if (dlen <= 0)
+        guest_loader_read_file(dtb_path, dtb_buf, sizeof(dtb_buf));
+    if (dlen <= 0) {
+        KLOG_ERROR("[guest] 读取 guest DTB '%s' 失败（%d vCPU）—— rootfs 里"
+                   "没有这份 DTB，重建 rootfs 再试\n",
+                   dtb_path ? dtb_path : "(none)", vm->cfg.nr_vcpus);
         return -1;
+    }
 
     guest_loader_patch_dtb_memory(dtb_buf, (uint32_t)dlen, GUEST_LINUX_MEM_BASE,
                                   GUEST_LINUX_MEM_SIZE);

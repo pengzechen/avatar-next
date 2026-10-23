@@ -243,8 +243,19 @@ else
 fi
 
 cp "$GUEST_DTB" "$STAGE/guests/linux/linux.dtb"
+# 运行期 `vmm-run -c 1` 在“构建默认是多核”的内核上要用固定的单核 DTB。
+# NPU DTB 本身就是单核，直接复用（构建默认是单核时 linux.dtb 也走它）。
+cp "$GUEST_DTB" "$STAGE/guests/linux/linux-1cpu.dtb"
+# 运行期 `vmm-run -c N`（N>1）用的 GICv3 多核 DTB。这些 DTB 没有 NPU 节点，
+# 该 VM 不做 NPU 透传 —— 与 Makefile 里 GUEST_VCPUS>1 的限制一致。
+for n in 2 4 8 12; do
+    if [ -f "$GUESTS/linux-gicv3-smp$n.dtb" ]; then
+        cp "$GUESTS/linux-gicv3-smp$n.dtb" "$STAGE/guests/linux/"
+    fi
+done
 cp "$GUESTS/initrd.gz" "$STAGE/guests/linux/initrd.gz"
 say "  linux.dtb     ($(stat -c%s "$GUEST_DTB") 字节，带 npu 节点)"
+say "  linux-1cpu.dtb / linux-gicv3-smp{2,4,8,12}.dtb（运行期选核）"
 say "  initrd.gz     ($(stat -c%s "$GUESTS/initrd.gz") 字节)"
 
 if [ -f "$ROOT/apps/vmm-run-aarch64" ]; then

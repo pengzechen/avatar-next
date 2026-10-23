@@ -11,6 +11,9 @@
 #
 # 用法：
 #   tools/vmm_helper_regress.sh <x86_64|aarch64|riscv64> [轮数] [smp] [--restart]
+#   VCPUS=8 tools/vmm_helper_regress.sh aarch64 3 2
+#     —— 发送 `/bin/vmm-run -c 8`，并额外断言宿主日志出现
+#        `running (8 vCPU(s))`（只在 aarch64 的 GICv3 构建上有效）。
 # 产物：/tmp/helper_rep_<arch>/smp<N>_<i>.log
 #   --restart：每轮「启动 → Ctrl+T k 停 → 再启动」，要求 guest 起来两次
 #
@@ -38,6 +41,12 @@ if command -v flock >/dev/null 2>&1 && ! flock -n 9; then
 fi
 
 ARCH=${1:-x86_64}; N=${2:-6}; SMPV=${3:-2}; RESTART=${4:-}
+VCPUS=${VCPUS:-}
+if [ -n "$VCPUS" ]; then
+    VMMCMD="/bin/vmm-run -c $VCPUS"
+else
+    VMMCMD="/bin/vmm-run"
+fi
 case "$ARCH" in
   x86_64)  Q="qemu-system-x86_64 -machine microvm -enable-kvm -cpu host"
            K=${KERNEL_BIN:-build/qemu-virt-x86_64/kernel_x86_64.bin}
@@ -132,7 +141,7 @@ for i in $(seq 1 "$N"); do
         unreal=$((unreal + 1))
         echo "  #$i 宿主 shell 未就绪（不作数，建议降载重跑）"
     else
-        printf '/bin/vmm-run\n' >&3
+        printf '%s\n' "$VMMCMD" >&3
         if [ "$RESTART" = "--restart" ]; then
             wait_count "$log" "$GST" 1 "$GUEST_WAIT" F
             off=$(wc -c < "$log" 2>/dev/null); case "$off" in ''|*[!0-9]*) off=0 ;; esac
@@ -147,7 +156,7 @@ for i in $(seq 1 "$N"); do
             # offset **之后**重新出现（= shell 回来了）再喂。
             wait_count_from "$log" "$off" 'stop requested|guest stopping' 1 "$STOP_WAIT"
             wait_count_from "$log" "$off" "$HOSTPROMPT" 1 "$STOP_WAIT" || sleep 2
-            printf '/bin/vmm-run\n' >&3
+            printf '%s\n' "$VMMCMD" >&3
             wait_count "$log" "$GST" 2 "$GUEST_WAIT" F
             n=$(grep -acF -- "$GST" "$log" 2>/dev/null); case "$n" in ''|*[!0-9]*) n=0 ;; esac
         else
@@ -155,8 +164,15 @@ for i in $(seq 1 "$N"); do
             n=$(grep -acF -- "$GST" "$log" 2>/dev/null); case "$n" in ''|*[!0-9]*) n=0 ;; esac
         fi
         want=1; [ "$RESTART" = "--restart" ] && want=2
-        if [ "$n" -ge "$want" ]; then pass=$((pass+1))
-        else fail=$((fail+1)); echo "  #$i FAIL：guest 启动 $n 次（要 $want 次）"; fi
+        # 带 VCPUS 时额外要求每次启动都留下“实际建了 N 个 vCPU”的宿主日志。
+        # 这条判据来自 guest_loader.c 的 KLOG_INFO，默认 LOG=info 就能看到。
+        vn=$want
+        if [ -n "$VCPUS" ]; then
+            vn=$(grep -acF -- "running ($VCPUS vCPU(s))" "$log" 2>/dev/null)
+            case "$vn" in ''|*[!0-9]*) vn=0 ;; esac
+        fi
+        if [ "$n" -ge "$want" ] && [ "$vn" -ge "$want" ]; then pass=$((pass+1))
+        else fail=$((fail+1)); echo "  #$i FAIL：guest 启动 $n 次（要 $want 次）${VCPUS:+，${VCPUS} vCPU 标记 $vn 次}"; fi
     fi
 
     exec 3>&-; kill "$qpid" 2>/dev/null; wait "$qpid" 2>/dev/null
@@ -165,6 +181,6 @@ for i in $(seq 1 "$N"); do
 done
 rm -f "$FIFO"
 echo
-echo "=== $ARCH SMP=$SMPV $([ "$RESTART" = "--restart" ] && echo '(含重启)' || echo ''): 通过 $pass / 失败 $fail / 未就绪 $unreal ==="
+echo "=== $ARCH SMP=$SMPV${VCPUS:+ guest-vCPUs=$VCPUS} $([ "$RESTART" = "--restart" ] && echo '(含重启)' || echo ''): 通过 $pass / 失败 $fail / 未就绪 $unreal ==="
 echo "日志：$OUT"
 [ "$fail" = 0 ] && [ "$unreal" = 0 ]

@@ -115,6 +115,40 @@ _Static_assert(sizeof(struct vmm_list_req) == 272,
 #define VMM_IOC_ATTACH  _IOW('V', 6, uint32_t) /* 入参 vmid：设为前台 */
 #define VMM_IOC_STOP_VM _IOW('V', 7, uint32_t) /* 入参 vmid：停指定 VM */
 
+/*
+ * ── VMM_IOC_BOOT_CFG — 带参数的启动（运行期指定 vCPU 数）────────
+ *
+ * 在此之前 vCPU 数只能由构建期 GUEST_VCPUS= 决定（guest_loader 里无条件
+ * 覆盖 vm->cfg.nr_vcpus）。本号让 helper 能在启动时指定数量：
+ *
+ *     vmm-run -c 8
+ *
+ * 语义：
+ *   - nr_vcpus == 0   → 用本构建的默认值（GUEST_LINUX_NR_VCPUS）；
+ *   - flags & VMM_BOOT_F_NEW → 总是新建（等价 BOOT_EX）；否则沿用 BOOT 的
+ *     “有在跑的就接入”语义（此时 nr_vcpus 非 0 必须与运行中 VM 一致，
+ *     否则 EINVAL —— 运行中的 VM 改不了核数）；
+ *   - 出参 vmid / nr_vcpus 回填**实际**选中/创建的值。
+ *
+ * 为什么不直接扩 BOOT_EX 的 uint32_t 入参：_IOC 把 sizeof 编进了操作码，
+ * 改尺寸等于换一个 ioctl 号，旧 helper 会收到 ENOTTY。新增编号可以让
+ * 旧 helper 继续走 BOOT/BOOT_EX，只有带 -c 的新 helper 才用本号。
+ *
+ * ⚠️ struct 必须与 apps/c/vmm_run.c 里那份逐字节一致（见上面的 ABI 说明）。
+ */
+struct vmm_boot_req {
+    uint32_t vmid;      /* [out] 实际 vmid（入参忽略）              */
+    uint32_t nr_vcpus;  /* [in] 0 = 构建默认；[out] 实际值          */
+    uint32_t flags;     /* [in] VMM_BOOT_F_*                       */
+    uint32_t _rsv;      /* [in] 必须为 0（保留）                    */
+};
+#define VMM_BOOT_F_NEW 1u /* 总是新建一个 VM（即使已有在跑的）        */
+
+_Static_assert(sizeof(struct vmm_boot_req) == 16,
+               "vmm_boot_req 尺寸变了 —— apps/c/vmm_run.c 里那份要同步");
+
+#define VMM_IOC_BOOT_CFG _IOWR('V', 8, struct vmm_boot_req) /* 带 vCPU 数的启动/新建 */
+
 /* ── /dev/ion ioctl 结构体 & 请求码 ──────────────────────────── */
 struct ion_alloc_req {
     uint64_t size;         /* [in/out] requested/actual allocation size */

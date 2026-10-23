@@ -335,7 +335,11 @@ void kernel_main(void)
         } else {
             vm->cfg.mem_base = GUEST_LINUX_MEM_BASE;
             vm->cfg.mem_size = GUEST_LINUX_MEM_SIZE;
-            vm->cfg.nr_vcpus = 1;
+            /*
+             * 直启没有命令行，沿用构建期的 GUEST_VCPUS。
+             * 运行期指定（vmm-run -c N）只在 /dev/vmm 那条路上。
+             */
+            vm->cfg.nr_vcpus = GUEST_LINUX_NR_VCPUS;
             if (guest_loader_run_linux(vm) != 0)
                 KLOG_ERROR("guest_loader_run_linux failed\n");
         }

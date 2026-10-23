@@ -1009,6 +1009,10 @@ ifeq ($(GUEST_NPU),1)
     $(error GUEST_NPU=1 需要 GIC=v3：NPU 的 guest DTB 只做了 GICv3 版)
   endif
 endif
+# 单核基础 DTB（NPU 版 / GICv3 版 / GICv2 版），与 GUEST_VCPUS 无关。
+# 运行期 `vmm-run -c 1` 在“构建默认是多核”的机器上就靠它。
+GUEST_LINUX_BASE_DTB_SRC := $(if $(GUEST_NPU),imgs/guests/aarch64/linux-gicv3-npu.dtb,$(if $(filter v3,$(GIC_VER)),imgs/guests/aarch64/linux-gicv3.dtb,imgs/guests/aarch64/linux.dtb))
+
 ifneq ($(GUEST_VCPUS),1)
   ifneq ($(filter v3,$(GIC_VER)),v3)
     $(error GUEST_VCPUS=$(GUEST_VCPUS) 需要 GIC=v3：多 CPU 的 guest DTB 只做了 GICv3 版)
@@ -1018,7 +1022,25 @@ ifneq ($(GUEST_VCPUS),1)
   endif
   GUEST_LINUX_DTB_SRC := imgs/guests/aarch64/linux-gicv3-smp$(GUEST_VCPUS).dtb
 else
-  GUEST_LINUX_DTB_SRC := $(if $(GUEST_NPU),imgs/guests/aarch64/linux-gicv3-npu.dtb,$(if $(filter v3,$(GIC)),imgs/guests/aarch64/linux-gicv3.dtb,imgs/guests/aarch64/linux.dtb))
+  GUEST_LINUX_DTB_SRC := $(GUEST_LINUX_BASE_DTB_SRC)
+endif
+
+# 运行期按 vCPU 数选 DTB（vmm-run -c N）时用的两份额外资源：
+#
+#   linux-1cpu.dtb   真正的单核 DTB。GUEST_VCPUS=8 的构建里 linux.dtb 是
+#                    8 核版本，`-c 1` 拿它会让 guest 去 CPU_ON 不存在的核。
+#   smp2/4/8/12      N>1 的候选；只有 GICv3 版（GIC=v2 构建不装，内核的
+#                    guest_loader_check_vcpus() 也会拒绝 N>1）。
+#
+# 注意 GUEST_LINUX_BASE_DTB_SRC 在 GUEST_VCPUS=1 时与 DTB_SRC 相同，rootfs
+# 里会装两份同名内容的单核 DTB —— 4 KB 级别，换来运行期选核的确定性。
+ifneq ($(filter v3,$(GIC_VER)),v3)
+  GUEST_LINUX_MULTI_DTBS :=
+else
+  GUEST_LINUX_MULTI_DTBS := imgs/guests/aarch64/linux-gicv3-smp2.dtb \
+                            imgs/guests/aarch64/linux-gicv3-smp4.dtb \
+                            imgs/guests/aarch64/linux-gicv3-smp8.dtb \
+                            imgs/guests/aarch64/linux-gicv3-smp12.dtb
 endif
 
 ifneq ($(filter $(ARCH),aarch64 riscv64 x86_64),)
@@ -1028,7 +1050,9 @@ ifeq ($(ARCH),x86_64)
 # rootfs 里仍落名 initrd —— 必须和 guest_loader.h 的 GUEST_LINUX_INITRD_PATH 一致。
 GUEST_LINUX_FILES := imgs/guests/x86_64/bzImage imgs/guests/x86_64/initrd.gz
 else ifeq ($(ARCH),aarch64)
-GUEST_LINUX_FILES := imgs/guests/aarch64/linux.bin $(GUEST_LINUX_DTB_SRC) imgs/guests/aarch64/initrd.gz
+GUEST_LINUX_FILES := imgs/guests/aarch64/linux.bin $(GUEST_LINUX_DTB_SRC) \
+                     $(GUEST_LINUX_BASE_DTB_SRC) $(GUEST_LINUX_MULTI_DTBS) \
+                     imgs/guests/aarch64/initrd.gz
 else
 # RISC-V 的 guest 镜像（DTB 是 imgs/guests/rv64/linux.dts 用 dtc 生成的，见该文件头）
 GUEST_LINUX_FILES := imgs/guests/rv64/linux.bin imgs/guests/rv64/linux.dtb imgs/guests/rv64/initrd.gz
@@ -1634,15 +1658,21 @@ $(ROOTFS_IMG): Makefile $(APPS_BINS) $(APPS_C_ELFS) $(LTP_BINS) $(EPOLL_PERF_BIN
 	fi
 	@if [ "$(ARCH)" = "aarch64" ]; then \
 		missing=0; \
-		for f in imgs/guests/aarch64/linux.bin $(GUEST_LINUX_DTB_SRC) imgs/guests/aarch64/initrd.gz; do \
+		for f in imgs/guests/aarch64/linux.bin $(GUEST_LINUX_DTB_SRC) \
+		         $(GUEST_LINUX_BASE_DTB_SRC) $(GUEST_LINUX_MULTI_DTBS) \
+		         imgs/guests/aarch64/initrd.gz; do \
 			if [ ! -f "$$f" ]; then echo "ERROR: missing guest image $$f"; missing=1; fi; \
 		done; \
 		if [ "$$missing" -ne 0 ]; then exit 1; fi; \
 		mkdir -p $(ROOTFS_STAGE)/guests/linux; \
 		cp imgs/guests/aarch64/linux.bin $(ROOTFS_STAGE)/guests/linux/linux.bin; \
 		cp $(GUEST_LINUX_DTB_SRC) $(ROOTFS_STAGE)/guests/linux/linux.dtb; \
+		cp $(GUEST_LINUX_BASE_DTB_SRC) $(ROOTFS_STAGE)/guests/linux/linux-1cpu.dtb; \
+		if [ -n "$(GUEST_LINUX_MULTI_DTBS)" ]; then \
+			cp $(GUEST_LINUX_MULTI_DTBS) $(ROOTFS_STAGE)/guests/linux/; \
+		fi; \
 		cp imgs/guests/aarch64/initrd.gz $(ROOTFS_STAGE)/guests/linux/initrd.gz; \
-		echo "  [AArch64 Linux guest installed → /guests/linux ($(GUEST_LINUX_DTB_SRC))]"; \
+		echo "  [AArch64 Linux guest installed → /guests/linux ($(GUEST_LINUX_DTB_SRC); runtime: 1cpu + $(if $(GUEST_LINUX_MULTI_DTBS),smp DTBs,no smp))]"; \
 	fi
 	@# 安装 Dropbear SSH 服务器
 	@DROPBEAR_MULTI=third_party/dropbear-2024.86/dropbearmulti-$(ARCH); \

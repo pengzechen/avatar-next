@@ -40,12 +40,20 @@
 #include "arch.h"
 
 /*
- * guest 的 vCPU 数量。由 Makefile 的 GUEST_VCPUS= 经
+ * guest 的**默认** vCPU 数量。由 Makefile 的 GUEST_VCPUS= 经
  * -DGUEST_LINUX_NR_VCPUS=N 传入；直接编某个文件时缺省为 1。
  *
- * 这个值必须与 rootfs 里安装的 guest DTB 的 cpu@N 节点数一致：
- * GUEST_VCPUS=4 选 linux-gicv3-smp4.dtb，否则 guest 会按 DTB 去 CPU_ON
- * 一个 VMM 根本没准备的 vCPU。
+ * ⚠️ 它只是“调用方没有指定数量时的默认值”，不再是运行期权威：
+ *   - /dev/vmm 的 VMM_IOC_BOOT_CFG（vmm-run -c N）会把它替换成调用方给的值；
+ *   - 直启路径（main.c）仍用它，所以 `make ... GUEST_VCPUS=N GUEST_LINUX=1`
+ *     的行为不变；
+ *   - guest_loader_run_linux() 里 vm->cfg.nr_vcpus <= 0 时才回退到它。
+ *
+ * 运行期支持的数量与 rootfs 里安装的 DTB 一一对应：
+ *   1 → linux.dtb（构建默认就是单核时）/ linux-1cpu.dtb（构建默认是多核时）
+ *   2/4/8/12 → linux-gicv3-smpN.dtb
+ * 数量与 DTB 的 cpu@N 节点数不一致时，guest 会去 CPU_ON 一个 VMM 根本没准备
+ * 的 vCPU —— 所以 guest_loader_check_vcpus() 会在启动前同时校验数量和 DTB。
  */
 #ifndef GUEST_LINUX_NR_VCPUS
 #define GUEST_LINUX_NR_VCPUS 1
@@ -129,7 +137,15 @@
 /* guest 镜像在 rootfs 中的路径 */
 #define GUEST_LINUX_KERNEL_PATH "/guests/linux/linux.bin"
 #define GUEST_LINUX_DTB_PATH    "/guests/linux/linux.dtb"
-#define GUEST_LINUX_INITRD_PATH "/guests/linux/initrd.gz"
+/*
+ * 单核 DTB 的**固定**路径。
+ *
+ * linux.dtb 是“构建默认”那一份：GUEST_VCPUS=8 的构建里它其实是 8 核 DTB，
+ * 不能拿来跑 `vmm-run -c 1`（guest 会去 CPU_ON 1..7）。所以 rootfs 另外
+ * 安装一份真正的单核 DTB 到这里，运行期 N==1 而构建默认 !=1 时用它。
+ */
+#define GUEST_LINUX_DTB_PATH_1CPU "/guests/linux/linux-1cpu.dtb"
+#define GUEST_LINUX_INITRD_PATH   "/guests/linux/initrd.gz"
 
 /* vCPU 入口参数：guest 的 x0（ARM64 boot 约定 = DTB 物理地址）*/
 extern volatile uint64_t g_guest_entry_x0;
@@ -414,8 +430,24 @@ int guest_loader_file_size(const char *path);
 int guest_loader_read_file(const char *path, uint8_t *buf, size_t cap);
 
 /*
+ * guest_loader_check_vcpus — 本构建/本架构能否跑 nr 个 vCPU
+ *
+ * 返回 0 可以；-1 不支持（并已用 KLOG_ERROR 说明原因）。规则：
+ *   - 1..MAX_VCPUS；
+ *   - 非 aarch64 只允许 1（AP 入口/SIPI/HSM 尚未实现）；
+ *   - aarch64：N>1 需要 GICv3，且 N ∈ {2,4,8,12}（仓库里只有这些 DTB）；
+ *   - 选中路径的 DTB 必须真的在 rootfs 里（缺失通常意味着 rootfs 是旧的）。
+ *
+ * vmm_dev 在 vm_alloc() 之前调用它来尽早返回 EINVAL；loader 自己也会再调
+ * 一次，覆盖绕过 /dev/vmm 的直启路径。
+ */
+int guest_loader_check_vcpus(int nr);
+
+/*
  * guest_loader_run_linux — 加载并启动 Linux guest（BSP 侧调用）
  * 返回 0 表示已成功建立 VM 并创建 vCPU 任务。
+ *
+ * vm->cfg.nr_vcpus <= 0 表示使用构建默认 GUEST_LINUX_NR_VCPUS。
  */
 int guest_loader_run_linux(vm_t *vm);
 

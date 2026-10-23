@@ -5,6 +5,7 @@
  *
  * 用法（宿主 busybox shell 里）：
  *     /bin/vmm-run              启动一个 guest；已有在跑的就接入它
+ *     /bin/vmm-run -c <N>       新建一个 N vCPU 的 guest（隐含 -n）
  *     /bin/vmm-run -a <vmid>    接入指定的那个 VM（不新建）
  *     /bin/vmm-run -n           强制新建一个 VM，即使已经有在跑
  *     /bin/vmm-run -l           列出所有 VM，不接管控制台
@@ -142,6 +143,21 @@ struct vmm_list_req {
 #define VMM_IOC_ATTACH  _IOW('V', 6, uint32_t) /* 入参 vmid：设为前台  */
 #define VMM_IOC_STOP_VM _IOW('V', 7, uint32_t) /* 入参 vmid：停指定 VM */
 
+/*
+ * 带参数的启动（运行期指定 vCPU 数）—— 必须与 include/pseudofs.h 里那份
+ * 逐字节一致。nr_vcpus == 0 表示用构建默认值；VMM_BOOT_F_NEW 等价 -n。
+ * 出参回填实际 vmid / 实际核数。
+ */
+struct vmm_boot_req {
+    uint32_t vmid;      /* [out] 实际 vmid（入参忽略）     */
+    uint32_t nr_vcpus;  /* [in] 0 = 构建默认；[out] 实际值 */
+    uint32_t flags;     /* [in] VMM_BOOT_F_*              */
+    uint32_t _rsv;      /* [in] 必须为 0                  */
+};
+#define VMM_BOOT_F_NEW 1u
+
+#define VMM_IOC_BOOT_CFG _IOWR('V', 8, struct vmm_boot_req)
+
 static struct termios g_saved_tty;
 static int g_tty_saved;
 
@@ -239,7 +255,9 @@ static void ioctl_failed(const char *what)
                 "vmm-run: %s: %s\r\n"
                 "         内核不认这个 ioctl —— 多半是内核与 helper 版本"
                 "不一致（rootfs 里的 /bin/vmm-run 是旧的），\r\n"
-                "         或者 vmm_list_req 两边的结构体尺寸对不上。\r\n",
+                "         或者 vmm_list_req / vmm_boot_req 两边的结构体尺寸"
+                "对不上。\r\n"
+                "         带 -c 时还可能是内核太旧、没有 VMM_IOC_BOOT_CFG。\r\n",
                 what, strerror(errno));
     else
         fprintf(stderr, "vmm-run: %s: %s\r\n", what, strerror(errno));
@@ -482,8 +500,10 @@ static int cmd_kill(int fd, int have_vmid, uint32_t vmid)
 static void usage(void)
 {
     fprintf(stderr,
-            "usage: vmm-run [-n] [-a vmid] [-l] [-k [vmid]]\r\n"
+            "usage: vmm-run [-c vcpus] [-n] [-a vmid] [-l] [-k [vmid]]\r\n"
             "  (no args)  boot a guest, or attach to the running one\r\n"
+            "  -c vcpus   boot a NEW guest with that many vCPUs (implies -n);\r\n"
+            "             aarch64: 1, 2, 4, 8 or 12; x86_64/riscv64: 1 only\r\n"
             "  -a vmid    attach to that VM (do not boot)\r\n"
             "  -n         always create another VM\r\n"
             "  -l         list VMs, do not take the console\r\n"
@@ -498,8 +518,10 @@ int main(int argc, char **argv)
     int list_only = 0;
     int have_attach = 0;
     int have_kill_vmid = 0;
+    int have_vcpus = 0;
     uint32_t attach_vmid = 0;
     uint32_t kill_vmid = 0;
+    uint32_t want_vcpus = 0;
 
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "-k") || !strcmp(argv[i], "--kill")) {
@@ -509,6 +531,15 @@ int main(int argc, char **argv)
                 have_kill_vmid = 1;
                 i++;
             }
+        } else if (!strcmp(argv[i], "-c") || !strcmp(argv[i], "--vcpus")) {
+            if (i + 1 >= argc ||
+                parse_u32(argv[i + 1], &want_vcpus) != 0 || want_vcpus == 0) {
+                fprintf(stderr,
+                        "vmm-run: -c needs a positive vCPU count\r\n");
+                return 2;
+            }
+            have_vcpus = 1;
+            i++;
         } else if (!strcmp(argv[i], "-n") || !strcmp(argv[i], "--new")) {
             force_new = 1; /* 已有 VM 在跑时也再起一个，而不是接入 */
         } else if (!strcmp(argv[i], "-l") || !strcmp(argv[i], "--list")) {
@@ -529,6 +560,20 @@ int main(int argc, char **argv)
             return 2;
         }
     }
+
+    /*
+     * -c 的语义是“新建一个 N vCPU 的 VM”（用户明确选择的行为）。它不能和
+     * 只读/接入/停止类选项混用：
+     *   -a 只改前台、-l 只查询、-k 只停止，都没有“新建”的含义。
+     * -n 与 -c 同义（-c 隐含 -n），允许同时给。
+     */
+    if (have_vcpus && (have_attach || list_only || kill_only)) {
+        fprintf(stderr, "vmm-run: -c cannot be combined with -a/-l/-k\r\n");
+        usage();
+        return 2;
+    }
+    if (have_vcpus)
+        force_new = 1;
 
     int fd = open(DEV_VMM, O_RDWR);
     if (fd < 0) {
@@ -556,6 +601,8 @@ int main(int argc, char **argv)
 
     /* ── 接入指定 VM，或启动/接入 ────────────────────────── */
     int attaching = 0;
+    uint32_t booted_vmid = 0;   /* 本次实际选中/创建的 VM（0 = 不知道）*/
+    uint32_t booted_vcpus = 0;  /* 实际核数；0 = 构建默认，不显示       */
 
     if (have_attach) {
         /*
@@ -573,6 +620,7 @@ int main(int argc, char **argv)
             return 1;
         }
         attaching = 1;
+        booted_vmid = attach_vmid;
     } else {
         uint32_t running = 0;
         int ok = 0;
@@ -583,9 +631,32 @@ int main(int argc, char **argv)
 
         for (int i = 0; i < BOOT_RETRIES; i++) {
             uint32_t vmid = 0;
-            int booted = force_new ? (ioctl(fd, VMM_IOC_BOOT_EX, &vmid) == 0)
+            uint32_t vcpus = 0;
+            int booted;
+
+            /*
+             * 带 -c 时走 VMM_IOC_BOOT_CFG（新内核才有）。不带 -c 时仍用
+             * BOOT/BOOT_EX —— 旧内核也能继续用，行为与从前完全一致。
+             */
+            if (have_vcpus) {
+                struct vmm_boot_req breq;
+
+                memset(&breq, 0, sizeof(breq));
+                breq.nr_vcpus = want_vcpus;
+                breq.flags = VMM_BOOT_F_NEW;
+                booted = ioctl(fd, VMM_IOC_BOOT_CFG, &breq) == 0;
+                if (booted) {
+                    vmid = breq.vmid;
+                    vcpus = breq.nr_vcpus;
+                }
+            } else {
+                booted = force_new ? (ioctl(fd, VMM_IOC_BOOT_EX, &vmid) == 0)
                                    : (ioctl(fd, VMM_IOC_BOOT, 0) == 0);
+            }
+
             if (booted) {
+                booted_vmid = vmid;
+                booted_vcpus = vcpus;
                 ok = 1;
                 break;
             }
@@ -602,6 +673,26 @@ int main(int argc, char **argv)
                 fprintf(stderr,
                         "vmm-run: no free VM slot (no free slot) — stop one "
                         "first (`vmm-run -l`, `vmm-run -k <vmid>`)\r\n");
+                close(fd);
+                return 1;
+            }
+            /*
+             * EINVAL 是配置错误（核数不支持 / rootfs 缺对应 DTB / 与运行中
+             * VM 的核数不符），重试没有意义；而且内核每次都会打日志，
+             * 2000 次重试 = 十几秒的关中断自旋。直接认输。
+             */
+            if (errno == EINVAL) {
+                if (have_vcpus)
+                    fprintf(stderr,
+                            "vmm-run: %u vCPU(s) rejected — see the host kernel "
+                            "log.\r\n"
+                            "         aarch64: 1/2/4/8/12 on a GICv3 build; "
+                            "x86_64/riscv64: 1 only.\r\n"
+                            "         A stale rootfs without the matching DTB "
+                            "is rejected here too.\r\n",
+                            want_vcpus);
+                else
+                    ioctl_failed("boot");
                 close(fd);
                 return 1;
             }
@@ -637,7 +728,18 @@ int main(int argc, char **argv)
                            : attaching ? "attached"
                                        : "guest started";
 
-        if (fetch_list(fd, &req) == 0 && req.fg_vmid != 0)
+        /*
+         * 优先用 ioctl 的出参：多 VM 下 g_vmm_fg_vmid 可能在 boot 返回后
+         * 被另一个 helper 改掉，回读列表反而可能报错号码。出参不在
+         * （-a 以外的旧路径）时才退回查列表。
+         */
+        if (booted_vmid != 0 && booted_vcpus != 0)
+            printf("\r\n[vmm-run] %s (vm%u, %u vCPU) — Ctrl+T ? for help\r\n",
+                   what, booted_vmid, booted_vcpus);
+        else if (booted_vmid != 0)
+            printf("\r\n[vmm-run] %s (vm%u) — Ctrl+T ? for help\r\n", what,
+                   booted_vmid);
+        else if (fetch_list(fd, &req) == 0 && req.fg_vmid != 0)
             printf("\r\n[vmm-run] %s (vm%u) — Ctrl+T ? for help\r\n", what,
                    req.fg_vmid);
         else

@@ -3,7 +3,10 @@
 > 状态：**aarch64 已支持 2/4/8/12 vCPU**，宿主 SMP 可以小于 guest vCPU
 > 数（已用 2 宿主 / 8 guest、4 宿主 / 8 guest、4 宿主 / 12 guest 做
 > 40s 启动门禁）。riscv64 / x86_64 的 AP 入口仍未实现，只支持单 vCPU。
-> 默认构建仍是 `nr_vcpus=1`；多 vCPU 由 `GUEST_VCPUS=N` 显式开启。
+> 默认构建仍是 `nr_vcpus=1`。两种开启方式：
+>   - **运行期**（推荐）：宿主 shell 里 `/bin/vmm-run -c N`，不需要重编内核；
+>   - **构建期**：`GUEST_VCPUS=N`，它是“未指定 `-c` 时的默认值”，也是
+>     `GUEST_LINUX=1` 直启使用的值。
 
 ## 1. 核心模型
 
@@ -296,6 +299,50 @@ guest 在 EL0 用户态大量使用 NEON（静态 busybox 里有 1600+ 条 SIMD 
 
 ## 6. aarch64 多 vCPU guest 实测
 
+### 6.1 运行期指定（helper 模式，推荐）
+
+不需要为核数重编内核：用默认单核构建即可，rootfs 里预装了全部候选 DTB。
+
+```bash
+# 默认 GUEST_VCPUS=1 的 helper 模式内核（不是 GUEST_LINUX=1 直启变体）
+make PLATFORM=qemu-virt-aarch64 SMP=2 clean
+make PLATFORM=qemu-virt-aarch64 SMP=2 LOG=info kernel rootfs
+
+# 按 tools/vmm_helper_regress.sh 的方式起 QEMU，或直接：
+make PLATFORM=qemu-virt-aarch64 SMP=2 LOG=info run-fs
+
+# 宿主 shell 里：
+/bin/vmm-run -c 8
+```
+
+判据：
+
+- helper 打印 `new VM (vmN, 8 vCPU)`；
+- 宿主日志有 `[vmmdev] boot: starting guest (8 vCPU(s))`、
+  `[vmm] vm_create: 8 vCPU(s) initialized`、8 条 `vmN vcpuX task started`；
+- guest 里 `grep -c ^processor /proc/cpuinfo` = 8，
+  `dmesg | grep "Brought up"` 含 8 CPUs，最后出现 `~ #`。
+
+`-c` **隐含 `-n`**：已有 guest 时总是再新建一个，旧 guest 留在后台继续跑
+（运行中的 VM 改不了核数）。不带 `-c` 时使用构建期 `GUEST_VCPUS` 的默认值。
+支持的计数：aarch64 的 `1/2/4/8/12`（要求 GICv3 构建）；x86_64/riscv64 只有
+`1`，`-c 2` 会立即返回 `EINVAL`。
+
+DTB 按**实际核数**选择（rootfs 预装，见 Makefile 的
+`GUEST_LINUX_BASE_DTB_SRC` / `GUEST_LINUX_MULTI_DTBS`）：
+
+| 实际 vCPU | 使用的 DTB |
+|---|---|
+| 1（构建默认也是 1） | `/guests/linux/linux.dtb` |
+| 1（构建默认是多核） | `/guests/linux/linux-1cpu.dtb` |
+| 2/4/8/12 | `/guests/linux/linux-gicv3-smpN.dtb` |
+
+> NPU 构建（`GUEST_NPU=1`）只有单核 DTB。`-c N>1` 会选无 NPU 节点的 smp
+> DTB —— 该 VM **不做 NPU 透传**（与构建期 `GUEST_VCPUS>1` 的限制一致）；
+> 单核仍使用带 NPU 节点的 `linux.dtb`。
+
+### 6.2 构建期（直启）
+
 ```bash
 # 2 宿主核 / 8 guest vCPU；其余组合只改 SMP/GUEST_VCPUS
 make PLATFORM=qemu-virt-aarch64 SMP=2 GUEST_VCPUS=8 GUEST_LINUX=1 clean
@@ -364,6 +411,9 @@ SMP: Total of 8 processors activated.
   - `make ... TASK_TEST=1 kernel rootfs` +
     `tools/task_completion_test.sh <arch> 2` —— completion 广播的用户态 A/B
 - 启用多 vCPU 后追加：
+  - `VCPUS=8 tools/vmm_helper_regress.sh aarch64 [N] [smp] --restart`
+    —— 脚本会发送 `/bin/vmm-run -c 8`，并断言宿主日志里的
+    `running (8 vCPU(s))`；
   - `tools/vmm_helper_regress.sh <arch> [N] [smp] --restart`
   - `tools/vmm_multivm_regress.sh <arch> [smp]`
   - x86 直启门禁 `tools/boot_regress.sh [N]`

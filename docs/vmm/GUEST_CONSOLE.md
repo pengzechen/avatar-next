@@ -55,6 +55,8 @@ guest 侧看不出来：
 open("/dev/vmm", O_RDWR)
 ioctl(fd, VMM_IOC_BOOT)       启动 guest；已经有在跑的就接入它
 ioctl(fd, VMM_IOC_BOOT_EX)    强制新建一个 VM，出参回填 vmid
+ioctl(fd, VMM_IOC_BOOT_CFG)   带参数启动/新建：入参 vCPU 数 + 新建标志，
+                              出参回填实际 vmid / 实际核数（vmm-run -c N）
 ioctl(fd, VMM_IOC_LIST)       出参：所有 VM 的 {vmid,state} + 前台 vmid
 ioctl(fd, VMM_IOC_ATTACH)     入参 vmid：把它设为前台（不必重新 boot）
 ioctl(fd, VMM_IOC_STOP_VM)    入参 vmid：停指定的那个，**不要求先接入**
@@ -100,15 +102,22 @@ helper 发的 `bootlinux` 会被当成输入推进 guest，guest 把它回显出
 | `Ctrl+T ?` | 帮助 |
 | `Ctrl+T Ctrl+T` | 把 `Ctrl+T` 本身发给 guest |
 
-宿主 shell 里另有四个开关：
+宿主 shell 里另有几个开关：
 
 ```bash
 vmm-run                启动 guest；已有在跑的就接入它
+vmm-run -c <N>         新建一个 N vCPU 的 guest（隐含 -n）
 vmm-run -a <vmid>      接入指定的那个 VM（不新建）
 vmm-run -n             强制新建一个 VM
 vmm-run -l             列出所有 VM，不接管控制台
 vmm-run -k [vmid]      停止 VM，不接管控制台；不带 vmid 停全部
 ```
+
+`-c` 会**总是新建**（旧 guest 留在后台继续跑，新 VM 成为前台），因为运行中
+的 VM 改不了核数。aarch64 支持 `1/2/4/8/12`（要求 GICv3 构建、rootfs 里有
+对应 DTB）；x86_64/riscv64 目前只支持 1（AP 入口未实现），`-c 2` 会立即
+返回 `EINVAL`。不带 `-c` 时沿用构建期 `GUEST_VCPUS=` 的默认值。详见
+`docs/vmm/MULTI_VCPU.md` §6。
 
 `-l` 的输出（`*` 是当前前台，第 1 列是给 `Ctrl+T <n>` 用的序号）：
 
