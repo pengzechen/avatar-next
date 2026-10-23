@@ -44,6 +44,26 @@
 
 extern void kmem_test(void); /* kernel/mm/aarch64/vmm.c */
 
+/*
+   默认启动模式：正常 busybox。测试变体（GUEST_LINUX=1 / VMM_TEST=1）链接的
+   tests/boot/boot_*.c 提供同名强定义，链接时自动覆盖这里的 weak 版本。
+
+   必须 noinline：weak 函数可被 interpose，但 GCC 在 -O2 下仍可能把同 TU 的
+   调用内联成常量；内联后就看不到测试变体的强定义了。
+*/
+__attribute__((weak, noinline)) bool test_boot_active(void)
+{
+    return false;
+}
+
+__attribute__((weak, noinline)) bool test_boot_skip_net(void)
+{
+    return false;
+}
+
+__attribute__((weak, noinline)) void test_boot_run(void)
+{}
+
 static void demo_load_busybox(void *arg)
 {
     (void)arg;
@@ -278,9 +298,9 @@ void kernel_main(void)
        ────────────────────────────────────────────────────
     */
     timer_set_tick_cb(sched_tick);
-// #if ARCH_RISCV64
-//     riscv_kernel_interrupt_enable();
-// #endif
+    // #if ARCH_RISCV64
+    //     riscv_kernel_interrupt_enable();
+    // #endif
     KLOG_INFO("Preemptive scheduling enabled\n");
 
     /* SMP 健康检查：抢占启用后立刻验证所有核 timer 都在 tick。 */

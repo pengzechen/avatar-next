@@ -138,7 +138,7 @@ Makefile 的变体只决定链接哪个 `tests/boot/boot_*.c`：
 
 | 变体 | 链接的 boot 对象 |
 |------|------------------|
-| 默认 | `tests/boot/boot_normal.c` |
+| 默认 | 无额外对象，`main.c` 的 weak 默认实现 |
 | `GUEST_LINUX=1` | `tests/boot/boot_guest.c` |
 | `VMM_TEST=1` | `tests/boot/boot_vmm.c` |
 

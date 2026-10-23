@@ -548,7 +548,8 @@ CFLAGS  += -MMD -MP
 # 新增测试时仿照此模式，同时在 _BUILD_VARIANT 里加一个唯一标识。
 #
 # guest/VMM 不再定义 RUN_* 宏：变体只决定链接哪个 boot 对象，main.c 调用
-# tests/boot_mode.h 的通用钩子（active / skip_net / run）。
+# tests/boot_mode.h 的通用钩子（active / skip_net / run）。正常模式没有
+# 额外对象：main.c 里的 weak 默认实现就是 busybox 路径。
 VMM_TEST ?= 0
 NGINX_TEST ?= 0
 GUEST_LINUX ?= 0
@@ -560,13 +561,13 @@ else ifeq ($(VMM_TEST),1)
     _BUILD_VARIANT := vmm_test
 else ifeq ($(NGINX_TEST),1)
     CFLAGS += -DRUN_NGINX_TEST=1
-    TEST_BOOT_SRC := $(TESTS_DIR)/boot/boot_normal.c
+    TEST_BOOT_SRC :=
     _BUILD_VARIANT := nginx_test
 else
-    TEST_BOOT_SRC := $(TESTS_DIR)/boot/boot_normal.c
+    TEST_BOOT_SRC :=
     _BUILD_VARIANT := normal
 endif
-TEST_BOOT_OBJ := $(BUILD_DIR)/test_boot.o
+TEST_BOOT_OBJ := $(if $(TEST_BOOT_SRC),$(BUILD_DIR)/test_boot.o)
 
 # STRING_TEST=1：定义 RUN_STRING_TEST，kernel_main 早期跑 tests/string_test.c 自检
 # （与上面三个变体正交：自检跑完继续正常启动）。标志只影响 kernel_main.o，
@@ -1056,8 +1057,11 @@ $(BUILD_DIR)/tests_%.o: $(TESTS_DIR)/%.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # 启动变体对象：GUEST_LINUX / VMM_TEST 选择不同类型；main.c 只认通用钩子。
+# 正常模式没有这个对象，main.c 的 weak 默认实现生效。
+ifneq ($(TEST_BOOT_OBJ),)
 $(TEST_BOOT_OBJ): $(TEST_BOOT_SRC) | $(BUILD_DIR) check-submodules
 	$(CC) $(CFLAGS) -c $< -o $@
+endif
 
 $(BUILD_DIR)/platform_%.o: $(PLATFORM_DIR)/%.c | $(BUILD_DIR)
 	@mkdir -p $(dir $@)

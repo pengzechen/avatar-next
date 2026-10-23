@@ -10,12 +10,12 @@
    kernel/main.c 只调用这三个函数，不包含任何 guest/VMM 测试细节。
    具体变体链接不同的 tests/boot/boot_*.c：
 
-     boot_normal.c  正常启动（busybox）
+     默认实现  在 kernel/main.c 里，以 weak 符号提供（正常 busybox）
      boot_guest.c   GUEST_LINUX=1  直启 Linux guest
      boot_vmm.c     VMM_TEST=1     VMM 三线程自测
 
-   变体仍由 Makefile 的 GUEST_LINUX= / VMM_TEST= 选择，编译期决定；
-   但 main.c 里不再出现 RUN_* 宏，测试代码全部留在 tests/。
+   变体由 Makefile 的 GUEST_LINUX= / VMM_TEST= 选择链接哪个 boot 对象；
+   强定义在链接时覆盖 main.c 的 weak 默认实现，main.c 里没有 RUN_* 宏。
 */
 
 #ifndef TESTS_BOOT_MODE_H

@@ -260,9 +260,11 @@ task_switch_to_idle_stack();
 while (1) { task_yield(); /* wfe/hlt/wfi */ }
 ```
 
-Makefile 变体只决定链接哪个 boot 对象：`boot_normal.c` / `boot_guest.c`
-（`GUEST_LINUX=1`）/ `boot_vmm.c`（`VMM_TEST=1`）。切换变体时
-`_VARIANT_OBJS` 会自动清掉旧的 `test_boot.o`，不需要手动 clean。
+普通模式不需要额外对象：`main.c` 里的同名 weak 实现就是 busybox 路径
+（函数加了 `noinline`，防止 -O2 把调用折成常量）。测试变体只决定链接
+`boot_guest.c`（`GUEST_LINUX=1`）或 `boot_vmm.c`（`VMM_TEST=1`），
+强定义在链接时覆盖 weak。切换变体时 `_VARIANT_OBJS` 会自动清掉旧的
+`test_boot.o`，不需要手动 clean。
 
 对应 Makefile 变体（切换时自动强制重新编译 `kernel/main.c`）：
 
