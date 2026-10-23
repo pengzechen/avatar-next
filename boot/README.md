@@ -8,9 +8,6 @@
 
 ```
 boot/
-├── common/
-│   ├── boot.h              # 跨架构公共声明（kernel_main, platform_init, run_all_tests）
-│   └── platform_ops.h      # 平台抽象接口（platform_panic, platform_shutdown）
 ├── aarch64/
 │   ├── boot.S              # BSP/AP 启动入口、EL2 VHE 初始化、MMU 跳板
 │   ├── exception.S          # 异常向量表（VBAR_EL1）、寄存器保存/恢复宏
@@ -92,10 +89,13 @@ AArch64 额外支持 **多核启动**：`_secondary_start` 由 PSCI CPU_ON 进�
 - `__bss_start` / `__bss_end`（BSS 清零范围）
 - 物理地址别名符号（`*_phys`，供 MMU 开启前使用）
 
-### 6. 平台抽象（common/）
+### 6. 平台抽象（include/platform_ops.h）
 
-`platform_ops.h` 声明平台接口，由 `platforms/` 下各平台实现：
-- `platform_init()` — 初始化 UART 等硬件
+`include/platform_ops.h` 声明平台接口，实现在 `platforms/common/platform_ops.c`
+（所有平台共用）；`platforms/<platform>/platform.c` 只放该板的差异。
+
+- `platform_conf_init()` — 载入平台配置（纯数据，不碰硬件）
+- `platform_early_init()` — 初始化 UART（必须早于任何 KLOG）
 - `platform_panic()` — 致命错误停机
 - `platform_shutdown()` — 关机/断电
 
@@ -117,7 +117,7 @@ AArch64 额外支持 **多核启动**：`_secondary_start` 由 PSCI CPU_ON 进�
 | `task/cpu.h` | `cpu_t`、`cpu_current()` |
 | `syscall/syscall.h` | `syscall_handler()` |
 | `mm_vm.h` | `mm_vm_get_paddr()` |
-| `platform_ops.h` | `platform_panic()`、`platform_shutdown()` |
+| `include/platform_ops.h` | `platform_panic()`、`platform_shutdown()` |
 
 ## 调用的外部函数
 

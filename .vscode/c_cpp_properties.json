@@ -7,7 +7,6 @@
                 "${workspaceFolder}/include/x86_64",
                 "${workspaceFolder}/driver",
                 "${workspaceFolder}/driver/uart",
-                "${workspaceFolder}/boot/common",
                 "${workspaceFolder}/kernel",
                 "${workspaceFolder}/third_party/lwext4/include",
                 "${workspaceFolder}/fs/lwext4_port"
@@ -28,7 +27,6 @@
                 "${workspaceFolder}/include/aarch64",
                 "${workspaceFolder}/driver",
                 "${workspaceFolder}/driver/uart",
-                "${workspaceFolder}/boot/common",
                 "${workspaceFolder}/kernel",
                 "${workspaceFolder}/third_party/lwext4/include",
                 "${workspaceFolder}/fs/lwext4_port"
@@ -48,7 +46,6 @@
                 "${workspaceFolder}/include/riscv64",
                 "${workspaceFolder}/driver",
                 "${workspaceFolder}/driver/uart",
-                "${workspaceFolder}/boot/common",
                 "${workspaceFolder}/kernel",
                 "${workspaceFolder}/third_party/lwext4/include",
                 "${workspaceFolder}/fs/lwext4_port",

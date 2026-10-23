@@ -54,7 +54,7 @@ void platform_panic(void)
 }
 ```
 
-当前实现在 `platforms/qemu/qemu_platform.c`。
+当前实现在 `platforms/common/platform_ops.c`。
 
 ## 文件结构
 
@@ -62,8 +62,8 @@ void platform_panic(void)
 include/
   assert.h                      # 断言宏 + platform_panic 声明
 
-platforms/qemu/
-  qemu_platform.c               # platform_panic() 实现
+platforms/common/
+  platform_ops.c                # platform_panic() 实现（所有平台共用）
 
 tests/
   assert_test.c                 # 断言系统测试

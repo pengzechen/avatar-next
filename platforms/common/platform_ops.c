@@ -5,11 +5,14 @@
 */
 
 /*
-   QEMU platform implementation
-   Provides UART output for QEMU virt machines
+   platforms/common/platform_ops.c — 所有平台共用的平台实现
+
+   QEMU virt / RK3588 / SG2002 都链接本文件: klog 的物理 UART 输出、
+   panic 停机与关机。平台差异只体现在 arch.h 以及下面按架构的
+   PSCI / SBI / ACPI 分支里。
 */
 
-#include "../../boot/common/platform_ops.h"
+#include "platform_ops.h"
 #include "types.h"
 #include "arch.h"
 #include "exception.h"       /* arch_irq_disable()(统一的中断屏蔽原语) */
@@ -22,13 +25,13 @@
 #endif
 
 /* Transmit a single character */
-static void qemu_uart_putc(char c)
+static void platform_uart_putc(char c)
 {
     uart_putc(c);
 }
 
 /* Transmit a null-terminated string */
-static void qemu_uart_puts(const char *s)
+static void platform_uart_puts(const char *s)
 {
     uart_puts(s);
 }
@@ -38,18 +41,18 @@ static void qemu_uart_puts(const char *s)
 */
 void uart_putchar(char c)
 {
-    qemu_uart_putc(c);
+    platform_uart_putc(c);
 }
 
 void uart_putstr(const char *s)
 {
-    qemu_uart_puts(s);
+    platform_uart_puts(s);
 }
 
 /* Platform panic - hang forever */
-static void qemu_panic(void) __attribute__((noreturn));
+static void platform_panic_impl(void) __attribute__((noreturn));
 
-static void qemu_panic(void)
+static void platform_panic_impl(void)
 {
     /*
        关中断：统一用 arch_irq_disable()(include/<arch>/exception_impl.h)。
@@ -73,10 +76,10 @@ static void qemu_panic(void)
     __builtin_unreachable();
 }
 
-/* Platform shutdown - ask QEMU to exit */
-static void qemu_shutdown(void) __attribute__((noreturn));
+/* Platform shutdown - 走固件接口(PSCI/SBI)或 x86 ACPI */
+static void platform_shutdown_impl(void) __attribute__((noreturn));
 
-static void qemu_shutdown(void)
+static void platform_shutdown_impl(void)
 {
 #if ARCH_AARCH64 || ARCH_RISCV64
     /*
@@ -124,9 +127,24 @@ static void qemu_shutdown(void)
     __builtin_unreachable();
 }
 
-void platform_init(void)
+/*
+   platform_conf_init — 从生成的静态表提取内存布局和 PMM 保留区。
+
+   纯数据操作, 不碰硬件; 但必须在 platform_early_init() 之前跑, 因为
+   UART 驱动通过 platform_get_mmio() 查自己的基址。
+*/
+void platform_conf_init(void)
 {
-    platform_conf_scan(); /* 从平台配置提取内存布局和 PMM 保留区 */
+    platform_conf_scan();
+}
+
+/*
+   platform_early_init — 配置最早需要的设备(UART)。
+
+   必须在任何 KLOG_* 之前调用; 此时异常向量/中断控制器可以尚未初始化。
+*/
+void platform_early_init(void)
+{
     uart_init();
 }
 
@@ -150,10 +168,10 @@ void platform_panic(void)
     backtrace_panic_enter();
     backtrace_print();
 
-    qemu_panic();
+    platform_panic_impl();
 }
 
 void platform_shutdown(void)
 {
-    qemu_shutdown();
+    platform_shutdown_impl();
 }

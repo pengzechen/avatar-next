@@ -4,5 +4,5 @@
    Copyright (c) 2026 Avatar OS project
 */
 
-/* RK3588 reuses the shared platform operations in platforms/qemu/qemu_platform.c. */
+/* RK3588 reuses the shared platform operations in platforms/common/platform_ops.c. */
 static const char platform_marker[] __attribute__((unused)) = "rk3588-aarch64";

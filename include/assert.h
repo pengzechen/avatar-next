@@ -24,7 +24,7 @@
 /*
    platform_panic - 平台 panic 处理函数, 由平台层实现
 
-   当前实现见 platforms/qemu/qemu_platform.c：关中断后死循环停机, 不会返回。
+   当前实现见 platforms/common/platform_ops.c：关中断后死循环停机, 不会返回。
 */
 extern void platform_panic(void);
 

@@ -69,31 +69,34 @@ static_assert(sizeof(void *) == 8, "must be 64-bit");
    [ERROR] Assertion failed: ptr != NULL, file kernel/mm/pmm.c, line 35
    ```
 
-2. **调用 `platform_panic()`** —— 定义在 `platforms/qemu/qemu_platform.c`，
-   实现为 `qemu_panic()`
+2. **调用 `platform_panic()`** —— 定义在 `platforms/common/platform_ops.c`，
+   实现为 `platform_panic_impl()`
 
-3. **`qemu_panic()` 关中断后死循环停机**
+3. **`platform_panic_impl()` 关中断后死循环停机**
 
-   | 架构 | 关中断 | 停机指令 |
-   |---|---|---|
-   | AArch64 | `msr daifset, #0xF` | `wfe` |
-   | RISC-V | `csrw sie, zero` / `csrw sip, zero` | `wfi` |
-   | x86_64 | `cli` | `hlt` |
+   关中断统一走 `arch_irq_disable()`（见 `docs/basic/INTERRUPT_MASKING.md`），
+   之后按架构停机：
+
+   | 架构 | 停机指令 |
+   |---|---|
+   | AArch64 | `wfe` |
+   | RISC-V | `wfi` |
+   | x86_64 | `hlt` |
 
 ## 平台集成
 
 平台层只需提供 `platform_panic()`：
 
 ```c
-/* platforms/qemu/qemu_platform.c */
+/* platforms/common/platform_ops.c */
 void platform_panic(void)
 {
-    qemu_panic();   /* 关中断 + 死循环 */
+    platform_panic_impl();   /* 关中断 + 死循环 */
 }
 ```
 
 > 注意：`include/{aarch64,riscv64,x86_64}/halt_arch.h` 里的 `arch_halt()`
-> 目前**没有任何调用点**，`qemu_panic()` 用的是自己的内联汇编。这些头文件
+> 目前**没有任何调用点**，`platform_panic_impl()` 用的是自己的内联汇编。这些头文件
 > 是历史遗留，实际不参与 panic 路径。
 
 ## 使用示例

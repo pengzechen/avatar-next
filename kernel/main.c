@@ -9,57 +9,44 @@
    Called from architecture-specific boot code
 */
 
-#include "../boot/common/boot.h"
-#include "../boot/common/platform_ops.h"
+#include "boot.h"
+#include "platform_ops.h"
 #include "arch.h"
 #include "klog.h"
 #include "debug/backtrace.h" /* backtrace_selftest() */
 #include "cache.h"
 #include "string.h"
+#include "exception.h" /* exception_init / arch_irq_*：三个架构统一接口 */
 #include "task/task.h"
 #include "task/sched.h"
 #include "task/cpu.h"
 #include "pmm.h"
 #include "mm_vm.h" /* virt_to_phys：把链接符号换算成物理地址 */
-#include "../fs/lwext4_port/fs_init.h"
-#include "loader/elf_loader.h"
 #include "timer/timer.h"
-#include "task/switch.h" /* arch_irq_enable */
 #include "net/net.h"
+#include "loader/elf_loader.h"
+#include "../fs/lwext4_port/fs_init.h"
 
+/*
+   直启 guest 模式需要的 VM 类型与 loader 声明。
+
+   两个头都必须在文件作用域包含: guest_loader.h 里有
+   `typedef struct vm vm_t;` 前置声明, 若在函数体内展开, 它会遮蔽
+   vmm.h 里那个完整的 vm_t, 之后所有 `vm->cfg` 访问都会报
+   "invalid use of incomplete typedef"。
+*/
+#if defined(RUN_GUEST_LINUX)
+#include "vmm/vmm.h"
+#include "guest_loader.h"
+#endif
+
+/*
+   架构专属头。x86_64 没有额外需要: exception_init 走通用 exception.h。
+*/
 #if ARCH_AARCH64
-#include "irq/irq.h"
-#include "aarch64/cpu.h"
-#include "vmm/vmm.h"
-#include "aarch64/stage2.h"
-#if defined(RUN_GUEST_LINUX)
-/* 直启模式的 GUEST_LINUX_MEM_* 与 guest_loader_run_linux 声明。
-   注意： 必须在文件作用域包含：这个头里有一个 `typedef struct vm vm_t;`
-   前置声明, 若在函数体内展开, 它会遮蔽掉 vmm.h 里那个完整的 vm_t,
-   后面所有 `vm->cfg` 之类的访问都会报 "invalid use of incomplete typedef"。
-*/
-#include "guest_loader.h"
-#endif
+#include "aarch64/cpu.h" /* aarch64_enable_neon() */
 #elif ARCH_RISCV64
-#include "exception.h"
 #include "irq/plic.h" /* plic_init：外部中断控制器 */
-#include "vmm/vmm.h"
-#if defined(RUN_GUEST_LINUX)
-/* 与 aarch64 分支同理(见上)：直启模式要用 GUEST_LINUX_MEM_* 和
-   guest_loader_run_linux 的声明, 且必须在文件作用域包含。
-   漏了这段的症状是 `implicit declaration of function
-   'guest_loader_run_linux'` —— 现代 GCC 把隐式声明当错误,
-   所以 riscv 的 GUEST_LINUX 变体直接编不过。
-*/
-#include "guest_loader.h"
-#endif
-#elif ARCH_X86_64
-#include "exception.h"
-#include "vmm/vmm.h"
-#if defined(RUN_GUEST_LINUX)
-/* 同上：直启变体要 guest_loader_run_linux 的声明。 */
-#include "guest_loader.h"
-#endif
 #endif
 
 #if !DRIVER_SDBLK_SG2002
@@ -178,6 +165,18 @@ static void demo_load_busybox(void *arg)
 
 void kernel_main(void)
 {
+    /*
+       平台配置是纯数据(来自 build/<platform>/platform_static.c), 不碰硬件;
+       UART 驱动要用它查 MMIO 基址, 所以必须先跑。
+    */
+    platform_conf_init();
+
+    /*
+       UART 必须早于任何 KLOG —— 下面架构初始化里就有日志。此时异常向量/
+       中断控制器可以尚未初始化, 本步只做轮询模式的串口配置。
+    */
+    platform_early_init();
+
 #if ARCH_AARCH64
     /* Keep NEON enabled for AArch64 code paths that require it. */
     aarch64_enable_neon();
@@ -199,9 +198,6 @@ void kernel_main(void)
     KLOG_INIT("Initializing exception handler...\n");
     exception_init();
 #endif
-
-    /* Initialize platform (UART, etc.) */
-    platform_init();
 
 #if ARCH_RISCV64
     /* mmu.S 建立的 1GiB 内核映射必须与 RV_KERNEL_MAP_LIST 完全一致；

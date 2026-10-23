@@ -125,13 +125,11 @@ KLOG_SOURCES := $(LIB_DIR)/klog.c
 VSNPRINTF_SOURCES := $(LIB_DIR)/vsnprintf.c
 STRING_SOURCES := $(LIB_DIR)/string.c
 BITMAP_SOURCES := $(LIB_DIR)/bitmap.c
-PLATFORM_CFG_SOURCES := $(LIB_DIR)/platform_cfg.c
 KLOG_OBJECT         := $(BUILD_DIR)/klog.o
 VSNPRINTF_OBJECT    := $(BUILD_DIR)/vsnprintf.o
 STRING_OBJECT       := $(BUILD_DIR)/string.o
 BITMAP_OBJECT       := $(BUILD_DIR)/bitmap.o
 LIBC_OBJECT         := $(BUILD_DIR)/libc.o
-PLATFORM_CFG_OBJECT := $(BUILD_DIR)/platform_cfg.o
 PLATFORM_STATIC_OBJECT := $(BUILD_DIR)/platform_static.o
 
 # ── §4a  内核源文件自动发现 ────────────────────────────────────────────────────
@@ -320,9 +318,10 @@ else ifeq ($(ARCH),x86_64)
 endif
 
 # ── §4b  平台 / 驱动基础源文件 ──────────────────────────────────────────────────
-PLATFORM_SOURCES := $(PLATFORM_DIR)/$(PLATFORM)/platform.c
+PLATFORM_SOURCES := $(PLATFORM_DIR)/$(PLATFORM)/platform.c \
+                    $(PLATFORM_DIR)/common/platform_cfg.c
 ifneq ($(filter qemu-virt-% rk3588-aarch64 sg2002-riscv64,$(PLATFORM)),)
-    PLATFORM_SOURCES += $(PLATFORM_DIR)/qemu/qemu_platform.c
+    PLATFORM_SOURCES += $(PLATFORM_DIR)/common/platform_ops.c
 endif
 PLATFORM_OBJECTS := $(PLATFORM_SOURCES:$(PLATFORM_DIR)/%.c=$(BUILD_DIR)/platform_%.o)
 
@@ -367,7 +366,6 @@ ifeq ($(ARCH),x86_64)
 	CFLAGS  += -DARCH_X86_64=1
     CFLAGS  += -I$(INCLUDE_DIR)
     CFLAGS  += -I$(INCLUDE_DIR)/x86_64
-    CFLAGS  += -I$(BOOT_DIR)/common
     CFLAGS  += $(LOG_DEFINE)
     CFLAGS  += -fno-pie -fno-stack-protector -fno-stack-clash-protection -U_FORTIFY_SOURCE
     CFLAGS  += -ffreestanding -fno-builtin
@@ -403,7 +401,6 @@ else ifeq ($(ARCH),aarch64)
 	CFLAGS  += -DARCH_AARCH64=1
     CFLAGS  += -I$(INCLUDE_DIR)
     CFLAGS  += -I$(INCLUDE_DIR)/aarch64
-    CFLAGS  += -I$(BOOT_DIR)/common
     CFLAGS  += $(LOG_DEFINE)
     CFLAGS  += -fno-pie
     # 允许 GCC 生成 FP/SIMD（NEON）指令（riscv64 靠 -march=rv64gc -mabi=lp64d 达
@@ -445,7 +442,6 @@ else ifeq ($(ARCH),riscv64)
 	CFLAGS  += -DARCH_RISCV64=1
     CFLAGS  += -I$(INCLUDE_DIR)
     CFLAGS  += -I$(INCLUDE_DIR)/riscv64
-    CFLAGS  += -I$(BOOT_DIR)/common
     CFLAGS  += $(LOG_DEFINE)
     CFLAGS  += -mcmodel=medany
     CFLAGS  += -fno-pic -fno-pie
@@ -1248,7 +1244,7 @@ $(PMM_TEST_OBJECT) \
 $(TASK_USER_TEST_OBJ) $(TASK_USER_HELLO_OBJ) $(TASK_USER_TESTEXECVE_OBJ) \
 $(GUEST_TEST_OBJ) $(TESTS_OBJECTS) $(PLATFORM_OBJECTS) $(DRIVER_OBJECTS) \
 $(EXCEPTION_OBJECTS) $(KLOG_OBJECT) $(VSNPRINTF_OBJECT) $(STRING_OBJECT) \
-$(LIBC_OBJECT) $(BITMAP_OBJECT) $(PLATFORM_CFG_OBJECT) $(PLATFORM_STATIC_OBJECT) $(LWEXT4_OBJS) $(LWEXT4_PORT_OBJS) \
+$(LIBC_OBJECT) $(BITMAP_OBJECT) $(PLATFORM_STATIC_OBJECT) $(LWEXT4_OBJS) $(LWEXT4_PORT_OBJS) \
 $(LWIP_OBJS): $(PLATFORM_CONFIG_DEPS)
 
 
@@ -1368,9 +1364,6 @@ $(BUILD_DIR)/kernel_mm_pmm_test.o: $(TESTS_DIR)/pmm_test.c | $(BUILD_DIR)
 $(BUILD_DIR)/bitmap.o: $(LIB_DIR)/bitmap.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/platform_cfg.o: $(LIB_DIR)/platform_cfg.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
-
 $(BUILD_DIR)/platform_static.c: $(_PLATFORM_CONF) $(TOOLS_DIR)/gen_platform.py | $(BUILD_DIR)
 	python3 $(TOOLS_DIR)/gen_platform.py $(_PLATFORM_CONF) $(PLATFORM_MK) $(INCLUDE_DIR)
 
@@ -1456,7 +1449,7 @@ endif
 # boot/x86_64/link.ld 里的长注释），新增这一段不移动任何函数；表里也只收
 # STT_FUNC。--verify 是给这条不变量兜底的 —— 一旦有人挪动段序，构建当场
 # 失败，而不是产出二进制正常、函数名整体错位的镜像。
-KERNEL_LINK_OBJS := $(BOOT_OBJECTS) $(KERNEL_OBJECTS) $(PMM_TEST_OBJECT) $(LWIP_OBJS) $(TASK_USER_TEST_OBJ) $(TASK_USER_HELLO_OBJ) $(TASK_USER_TESTEXECVE_OBJ) $(GUEST_TEST_OBJ) $(TESTS_OBJECTS) $(PLATFORM_OBJECTS) $(DRIVER_OBJECTS) $(EXCEPTION_OBJECTS) $(KLOG_OBJECT) $(VSNPRINTF_OBJECT) $(STRING_OBJECT) $(LIBC_OBJECT) $(BITMAP_OBJECT) $(PLATFORM_CFG_OBJECT) $(PLATFORM_STATIC_OBJECT) $(LWEXT4_OBJS) $(LWEXT4_PORT_OBJS)
+KERNEL_LINK_OBJS := $(BOOT_OBJECTS) $(KERNEL_OBJECTS) $(PMM_TEST_OBJECT) $(LWIP_OBJS) $(TASK_USER_TEST_OBJ) $(TASK_USER_HELLO_OBJ) $(TASK_USER_TESTEXECVE_OBJ) $(GUEST_TEST_OBJ) $(TESTS_OBJECTS) $(PLATFORM_OBJECTS) $(DRIVER_OBJECTS) $(EXCEPTION_OBJECTS) $(KLOG_OBJECT) $(VSNPRINTF_OBJECT) $(STRING_OBJECT) $(LIBC_OBJECT) $(BITMAP_OBJECT) $(PLATFORM_STATIC_OBJECT) $(LWEXT4_OBJS) $(LWEXT4_PORT_OBJS)
 
 # 第一趟：链一个**空**符号表桩，只为拿到各函数的最终地址。
 # 桩不是可有可无的：.text 里的代码要引用 __kallsyms_*，两趟必须解析到

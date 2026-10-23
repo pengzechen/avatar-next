@@ -67,7 +67,7 @@ arch_irq_disable();
 | `kernel/task/switch.h` 的 `arch_irq_*` | 唯一的正式 API，31 处使用 → **已迁到 exception_impl.h** |
 | `include/<arch>/spin_lock_impl.h` 里的 `aarch64_irq_save` / `riscv_irq_save` / `x86_64_irq_save` | 三个私有副本，外部调用者 0 → **已删**，改调 `arch_irq_*` |
 | `driver/irq/irq.h` 的 `enable_irqs/disable_irqs`、`driver/irq/gicv2.h` 的 `enable_interrupts/disable_interrupts/get_daif` | 调用者 0 的死代码，第四份 `msr daif*` → **已删** |
-| `platforms/qemu/qemu_platform.c` 的 `qemu_panic()` | 按架构各写一遍（aarch64 还写成 `#0xF`，掩得比 `#2` 多） → **已改调 `arch_irq_disable()`** |
+| `platforms/common/platform_ops.c` 的 `platform_panic_impl()` | 按架构各写一遍（aarch64 还写成 `#0xF`，掩得比 `#2` 多） → **已改调 `arch_irq_disable()`** |
 | `kernel/task/preempt.c`（三个架构各一份）+ `kernel/task/cpu.c` + `include/x86_64/vmx.h` 的状态读取 | 逐字节重复 → **已改调 `arch_irq_is_enabled()` / `arch_irq_flags()`** |
 
 删除这些副本不只是整洁问题：`arch_irq_save/restore` 的语义很容易写错

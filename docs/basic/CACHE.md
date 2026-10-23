@@ -15,7 +15,7 @@ clean_and_invalidate_dcache_range(addr, size);   /* 写回并失效 */
 sync_caches();          /* 等待之前的 cache 操作完成（CMO 之后的完成屏障） */
 sync_icache_all();      /* 让刚写入的指令可见（加载器打补丁 / 自改码 / JIT）*/
 get_cache_line_size();  /* 缓存行大小（range 操作的步长）*/
-init_cache();           /* 探测/设定行大小；由 kernel_main 在 platform_init 之后调用 */
+init_cache();           /* 探测/设定行大小；由 kernel_main 在 platform_early_init 之后调用 */
 ```
 
 区间动词的首尾**非整行**部分会自动做 clean+invalidate（`invalidate_dcache_range`
