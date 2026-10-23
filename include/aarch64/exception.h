@@ -170,8 +170,6 @@ typedef struct _ept_violation_info_t {
 typedef void (*irq_handler_t)(uint64_t *);
 
 /* AArch64 专用：访问全局 GIC handler 向量表 */
-irq_handler_t *get_g_handler_vec(void);
-
 /* exception_init 由 boot/aarch64/exception.c 提供 */
 void exception_init(void);
 

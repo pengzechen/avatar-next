@@ -907,3 +907,76 @@ DRIVER_EXTRA_FLAGS_driver_dma_dma_buf.c  := -Idriver/dma -Ikernel/mm
 - `KLOG_INIT("[drv] ... ready")` 属于模块 DEBUG，`LOG=info` 下不可见；需要观察驱动绑定请用 `LOG=debug`；
 - `errno`/平台条件（`cpu.c`、`vm_early.c`、`guest_loader.h`、`uart_dw.c`）留待阶段 3 数据化；
 - 网络 probe 失败仍返回 0（保持旧行为），阶段 2 改为返回错误并让 `driver_present(NET)` 为假。
+
+---
+
+## 17. 阶段 2a/2b 实现记录（2026-10-23）
+
+### 17.1 串口 / 时间 / 块设备公共接口（2a）
+
+- 删除 `driver/uart/uart.h`、`driver/timer/timer.h`：
+  - 串口：`include/driver/serial.h` 提供 `serial_ops_t` 与
+    `serial_putc/puts/getc/getc_nb/rx_ready`；三个 UART 驱动的 probe 里
+    `serial_bind()`，内核不再知道具体是 PL011/DW/16550。
+  - 时间：完整 timer API（tick、delay、counter、stats、tick callback）
+    收敛到 `include/driver/time.h`；`timer.c` 只 include 公共头。
+  - 块：`driver/blk/block.c` 维护根块设备，`fs_init` 用
+    `block_root_device()`/`block_root_needs_mbr()`，不再 `#if DRIVER_SDBLK_*`。
+- `kernel/mm/pmm.c` 不再 include 驱动私有 `ramblk_cfg.h`，rootfs 保留区
+  改读 `platform_cfg.h` 的 `g_mem_rootfs_*`。
+
+### 17.2 IRQ 公共接口（2b）
+
+- 新增 `driver/irq/irq.c` + 扩展 `include/driver/irq.h`：
+  - 统一处理器签名 `irq_handler_fn(void *frame, void *ctx)`；
+  - `irq_register()/irq_enable()/irq_set_priority()`：设备中断线；
+  - `irq_register_ipi()/irq_send_ipi(hw_id)`：resched IPI，号由后端决定；
+  - `irq_register_timer()/irq_timer_enable()`：本地定时器；
+  - `irq_secondary_init()/irq_cpu_hw_id()/irq_debug_dump()`；
+  - `irq_dispatch_frame()`：架构异常入口唯一回调，后端完成
+    ack → handler → EOI/complete；
+  - `irq_virt_supported()`：给 VMM 的运行期能力查询（尚未替换 vGIC 的
+    `#if DRIVER_GIC_V3`，见待办）。
+- 四个后端各自 `irq_bind(&ops)`：
+  - GICv3：ICC_IAR1/EOIR1；SGI 按完整 MPIDR 亲和性编码（修复 RK3588
+    多 cluster IPI 只写 Aff0 的限制）；timer/IPI 注册进核心表；virt=true。
+  - GICv2：IAR 原值写 EOIR/DIR；timer/IPI；virt=false。
+  - PLIC：claim → 核心分发表 → complete；SBI IPI；SSIP 由后端清除；
+    timer/IPI 走 scause 钩子。
+  - LAPIC：按 trap frame 向量分发并在返回后 EOI；timer/IPI 注册进核心表。
+- 迁移调用点：
+  - `boot/aarch64/exception.c` 不再维护 `g_handler_vec`/`irq_install`，
+    只调 `irq_dispatch_frame()`；
+  - x86 删掉 `irq_handlers[]`/`irq_install()`，IRQ 向量交给 LAPIC 后端；
+  - `kernel/task/cpu.c` 的 IPI 收发、次级核控制器初始化、SMP 自检
+    GIC dump 全部改走公共接口；
+  - `driver/timer/*` 通过 `irq_register_timer()` 注册；
+  - `rknpu`、`cvitek_eth` 改 `irq_register()/irq_enable()/irq_set_priority()`，
+    不再 include `irq/gicv3.h`/`irq/plic.h`；
+  - `driver/irq/irq.h` 删除。
+- `platforms/qemu-virt-aarch64/platform.conf` 补上 GICv2 的
+  `gicc=0x08010000`/`gich=0x08020000`。此前 `GIC=v2` 时 GICC 基址为 0，
+  PMR/CTLR 写进 RAM，表现为“所有中断都不来、SMP 自检 timer stuck”；
+  GICv3 构建忽略这两个字段。
+
+### 17.3 验证
+
+- 5 个平台 clean build 零告警：qemu-aarch64（GICv3/GICv2）、
+  qemu-riscv64（PLIC）、qemu-x86_64（LAPIC）、rk3588-aarch64 SMP=8、
+  sg2002-riscv64（PLIC + cvitek-eth）。
+- 三架构实际启动到 `/ #`，`uname -a`、`/proc/uptime`（约 7s 后 6.9s）
+  正常；aarch64/x86 SMP=2 启动到 2/2 CPU online 并执行 busybox 命令。
+- `GUEST_LINUX=1` aarch64：Linux 6.2.15 guest 启动到 `~ #` shell。
+- `clang-format --dry-run --Werror` 对全部改动文件通过。
+
+### 17.4 阶段 2c/2d 待办
+
+- DMA/ION/TPU/NPU 的弱符号兜底（`dma_buf_present()`/`ion_present()`/
+  `tpu_present()`/`npu_present()`），替换 `kernel/syscall/*`、
+  `kernel/fs/pseudofs/*`、`kernel/vmm/vdev/npu/vnpu.c` 的 `#if DRIVER_*`；
+- VMM 的 `DRIVER_GIC_V3` 仍是编译期布局/实现选择（`include/vmm/vmm.h`
+  的字段、`virq.c`/`el2_run.c`/`vm_init.c` 的 vGIC 调用），需要先给
+  vGICv3 模型加弱符号桩，再用 `irq_virt_supported()` 在 VM 创建处拒绝；
+- 移除全局 `-Idriver`，把 `irq/lapic.h`（x86 AP 启动、
+  `g_tsc_freq_hz`）和 `irq/gicv3.h`（vGIC 寄存器定义）剩余用户收敛到
+  公共/架构头，并启用分层检查。

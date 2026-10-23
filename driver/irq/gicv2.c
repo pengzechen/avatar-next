@@ -8,6 +8,7 @@
 #include "gicv2.h"
 #include "driver/driver.h"
 #include "driver/irq.h"
+#include "driver/time.h" /* CNTP_TIMER */
 
 /* GICv2 模块内基地址 */
 uintptr_t gicv2_gicd_base = 0;
@@ -473,9 +474,131 @@ void gic_clear_np_int(void)
     logger_gic_debug("GIC: Disabled non-priority interrupts in hypervisor\n");
 }
 
+/* ── 公共 IRQ 接口实现 ───────────────────────────────────────── */
+
+#define GICV2_RESCHED_SGI 15u
+
+static void gicv2_dispatch(void *frame)
+{
+    uint32_t iar = gic_read_iar();
+    uint32_t irq = gic_iar_irqnr(iar);
+
+    if (irq >= 1020u)
+        return;
+
+    irq_dispatch(irq, frame);
+
+    /* GICC_EOIR 期望 IAR 原值(含 CPUID)；GICC_DIR 在 EOImode=1 时做 deactivate */
+    gic_write_eoir(iar);
+    gic_write_dir(iar);
+}
+
+static int gicv2_enable_api(unsigned irq, bool on)
+{
+    if (irq >= 1020u)
+        return -2;
+    gic_enable_int((int32_t)irq, on ? 1 : 0);
+    return 0;
+}
+
+static int gicv2_set_priority_api(unsigned irq, unsigned prio)
+{
+    if (irq >= 1020u)
+        return -2;
+    gic_set_ipriority(irq, prio & 0xFFu);
+    return 0;
+}
+
+static int gicv2_secondary_init_api(void)
+{
+    gic_init_secondary();
+    return 0;
+}
+
+static int gicv2_send_ipi_api(uint32_t hw_id)
+{
+    uint32_t aff0 = hw_id & 0xFFu;
+    if (aff0 >= 8u) /* GICD_SGIR 的 TargetList 只有 8 位 */
+        return -2;
+    gic_ipi_send_single(GICV2_RESCHED_SGI, (int32_t)aff0);
+    return 0;
+}
+
+static int gicv2_register_ipi_api(irq_handler_fn fn, void *ctx)
+{
+    int rc = irq_register(GICV2_RESCHED_SGI, fn, ctx);
+    if (rc != 0)
+        return rc;
+
+    gic_set_ipriority(GICV2_RESCHED_SGI, 0);
+    gic_enable_int(GICV2_RESCHED_SGI, 1);
+    return 0;
+}
+
+static int gicv2_register_timer_api(irq_handler_fn fn, void *ctx)
+{
+    if (CNTP_TIMER == 0 || gicv2_gicd_base == 0 || gicv2_gicc_base == 0)
+        return -1;
+
+    int rc = irq_register(CNTP_TIMER, fn, ctx);
+    if (rc != 0)
+        return rc;
+
+    gic_set_ipriority(CNTP_TIMER, 0);
+    gic_enable_int((int32_t)CNTP_TIMER, 1);
+    return 0;
+}
+
+static int gicv2_timer_enable_api(void)
+{
+    if (CNTP_TIMER == 0)
+        return -1;
+    gic_enable_int((int32_t)CNTP_TIMER, 1);
+    return 0;
+}
+
+static uint64_t gicv2_cpu_hw_id_api(void)
+{
+    uint64_t mpidr;
+    __asm__ volatile("mrs %0, mpidr_el1" : "=r"(mpidr));
+    return mpidr & 0xFFFFFFULL;
+}
+
+static void gicv2_debug_dump_api(void)
+{
+    KLOG_SMP("[smp-test] GIC base: gicd=0x%llx gicc=0x%llx\n", (unsigned long long)gicv2_gicd_base,
+             (unsigned long long)gicv2_gicc_base);
+    uint32_t gicd_ctlr = read32((void *)(gicv2_gicd_base + 0x000));
+    uint32_t gicd_isen0 = read32((void *)(gicv2_gicd_base + 0x100));
+    uint32_t gicd_ispend = read32((void *)(gicv2_gicd_base + 0x200));
+    uint32_t gicd_pri26 = read32((void *)(gicv2_gicd_base + 0x400 + (26 / 4) * 4));
+    uint32_t gicc_ctlr = read32((void *)(gicv2_gicc_base + 0x000));
+    uint32_t gicc_pmr = read32((void *)(gicv2_gicc_base + 0x004));
+    uint32_t gicc_hppir = read32((void *)(gicv2_gicc_base + 0x018));
+    uint32_t gicc_rpr = read32((void *)(gicv2_gicc_base + 0x014));
+    KLOG_SMP("[smp-test] GICD CTLR=0x%x ISENABLER0=0x%x ISPENDR0=0x%x IPRIORITY[26..]=0x%x\n", gicd_ctlr, gicd_isen0,
+             gicd_ispend, gicd_pri26);
+    KLOG_SMP("[smp-test] GICC CTLR=0x%x PMR=0x%x HPPIR=0x%x RPR=0x%x\n", gicc_ctlr, gicc_pmr, gicc_hppir, gicc_rpr);
+}
+
+static const irq_ops_t gicv2_irq_ops = {
+    .dispatch = gicv2_dispatch,
+    .enable = gicv2_enable_api,
+    .set_priority = gicv2_set_priority_api,
+    .secondary_init = gicv2_secondary_init_api,
+    .send_ipi = gicv2_send_ipi_api,
+    .register_ipi = gicv2_register_ipi_api,
+    .register_timer = gicv2_register_timer_api,
+    .timer_enable = gicv2_timer_enable_api,
+    .cpu_hw_id = gicv2_cpu_hw_id_api,
+    .debug_dump = gicv2_debug_dump_api,
+    .virt_supported = false, /* vGICv2 接口未接入 VMM，GICv3 才有 vGIC 模型 */
+};
+
 static int gicv2_probe(const device_t *dev)
 {
     (void)dev; /* 阶段 1：gic_virtual_init() 仍直接读平台配置 */
+    irq_bind(&gicv2_irq_ops);
     gic_virtual_init();
     return 0;
 }

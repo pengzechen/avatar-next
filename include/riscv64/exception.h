@@ -41,6 +41,9 @@ typedef struct {
 
 typedef void (*irq_handler_t)(void *); /* frame 实际是 trap_frame_t * */
 
+/* scause 级钩子(仅 RISC-V)。设备中断请用 driver/irq.h 的 irq_register()。 */
+void irq_install(int cause, irq_handler_t h);
+
 /* ── scause 中断原因(bit63=1 时生效)────────────────────────────── */
 
 #define SCAUSE_INTERRUPT_BIT (1ULL << 63)

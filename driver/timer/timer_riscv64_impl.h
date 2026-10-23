@@ -8,9 +8,10 @@
 #define __TIMER_RISCV64_IMPL_H__
 
 #include "driver/time.h"
+#include "driver/irq.h"
 #include "sysreg.h"
 #include "klog.h"
-#include "exception.h" /* irq_install, CAUSE_SUPERVISOR_TIMER */
+#include "exception.h" /* trap_frame_t (handler 里读 sstatus) */
 
 /* SBI v0.2+ TIME extension and legacy timer extension IDs */
 #define SBI_EID_TIME         0x54494D45UL
@@ -42,6 +43,13 @@ extern volatile uint32_t g_tick_counter;   /* tick计数器, 用于计算秒 */
    ============================================================
 */
 
+/* 公共 IRQ 接口的处理器签名是 (frame, ctx)；定时器不使用 ctx */
+static void timer_irq_entry(void *frame, void *ctx)
+{
+    (void)ctx;
+    timer_handler(frame);
+}
+
 void timer_arch_init(void)
 {
     /* 设置定时器频率 */
@@ -56,8 +64,9 @@ void timer_arch_init(void)
     /* 清零统计信息 */
     timer_reset_stats();
 
-    /* 注册 Supervisor Timer 中断处理函数(scause=5) */
-    irq_install(CAUSE_SUPERVISOR_TIMER, (irq_handler_t)timer_handler);
+    /* 控制器负责把 handler 挂到 S 模式定时器中断(scause=5) */
+    if (irq_register_timer(timer_irq_entry, NULL) != 0)
+        KLOG_ERROR("Timer: failed to register timer IRQ (no interrupt controller?)\n");
 }
 
 /*

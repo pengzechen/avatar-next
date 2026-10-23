@@ -25,11 +25,11 @@
 #include "arch.h"
 #include "barrier.h"
 #include "driver/time.h" /* timer_delay_ms (供 SMP 自检使用, 所有架构通用) */
+#include "driver/irq.h"  /* resched IPI / 控制器 per-CPU 初始化 */
 
 #if ARCH_AARCH64
 #include "mm_vm.h"       /* KERNEL_VMA / virt_to_phys */
 #include "aarch64/cpu.h" /* aarch64_enable_neon (per-core CPACR_EL1.FPEN) */
-#include "irq/irq.h"     /* irq_init_secondary() */
 #endif
 
 #if ARCH_RISCV64
@@ -64,40 +64,23 @@ static long sbi_send_ipi(uint64_t hartid);
    vCPU 主循环顶部(sched_check_and_yield)。在 ISR 里直接切任务是禁止的,
    见 docs/INTERRUPT_CONTEXT_SWITCH.md。
 
-   RISC-V 必须显式清 SSIP：它是电平型 pending 位, 不清会在返回后立刻
-   再次陷入, 表现为 IPI 风暴 + 宿主被拖死。
-   x86 必须 EOI：LAPIC 的 in-service 位不清, 后续同向量中断全被挡住。
+   RISC-V 的 SSIP 是电平型 pending 位、x86 的 LAPIC 需要 EOI，两者都由
+   控制器后端的 dispatch 收尾(PLIC 清 SSIP / LAPIC 写 EOI)，这里只置位。
 */
-#if ARCH_AARCH64
-static void resched_ipi_handler(uint64_t *frame)
-#else
-static void resched_ipi_handler(void *frame)
-#endif
+static void resched_ipi_entry(void *frame, void *ctx)
 {
     cpu_t *c = cpu_current();
 
     (void)frame;
+    (void)ctx;
     c->need_resched = true;
-
-#if ARCH_RISCV64
-    CSR_CLEAR(sip, SIE_SSIE); /* bit1 = SSIP */
-#elif ARCH_X86_64
-    lapic_eoi();
-#endif
 }
 
 void cpu_ipi_init(void)
 {
-#if ARCH_AARCH64
-    irq_install(CPU_RESCHED_IPI, resched_ipi_handler);
-    irq_enable_irq(CPU_RESCHED_IPI);
-#elif ARCH_RISCV64
-    irq_install(CPU_RESCHED_IPI_CAUSE, resched_ipi_handler);
-    SET_SIE(SIE_SSIE); /* 打开 S 模式软件中断 */
-#elif ARCH_X86_64
-    /* IDT 门由 exception_setup_idt() 装好(IDT_RESCHED_IPI_VEC) */
-    irq_install(CPU_RESCHED_IPI_VECTOR, resched_ipi_handler);
-#endif
+    /* IPI 号/向量由控制器决定，内核不再关心 SGI 15 / scause 1 / 向量 0xF0 */
+    if (irq_register_ipi(resched_ipi_entry, NULL) != 0)
+        KLOG_WARN("[cpu] resched IPI registration failed\n");
 }
 
 void cpu_send_ipi(uint32_t cpu_id)
@@ -105,19 +88,8 @@ void cpu_send_ipi(uint32_t cpu_id)
     if (cpu_id >= g_num_cpus || cpu_id >= AVATAR_MAX_CPUS)
         return;
 
-#if ARCH_AARCH64
-    /*
-       注意： gicv3_ipi_send_single 目前把 cpu_id 当作 Aff0 写进 TargetList。
-       QEMU virt 上逻辑 CPU 编号 == Aff0, 成立；多 cluster 平台(RK3588)
-       需要按 MPIDR 的 Aff1/Aff2/Aff3 填 ICC_SGI1R_EL1。这是已知限制,
-       在扩展多 cluster IPI 之前不要假定它对。
-    */
-    irq_send_ipi(CPU_RESCHED_IPI, cpu_id);
-#elif ARCH_RISCV64
-    sbi_send_ipi(g_cpus[cpu_id].hw_id);
-#elif ARCH_X86_64
-    lapic_send_ipi((uint32_t)g_cpus[cpu_id].hw_id, CPU_RESCHED_IPI_VECTOR);
-#endif
+    /* hw_id: aarch64=MPIDR, riscv=hartid, x86=LAPIC ID */
+    irq_send_ipi((uint32_t)g_cpus[cpu_id].hw_id);
 }
 
 /*
@@ -310,8 +282,8 @@ void cpu_secondary_bootstrap(uint32_t cpu_id)
     arch_cpu_self_set(c);
     c->hw_id = arch_cpu_hw_id();
 
-    /* GIC CPU interface(PMR / CTLR / GICH 等, per-core 寄存器) */
-    irq_init_secondary();
+    /* 控制器 per-CPU 初始化(GIC: PMR/CTLR/GICR；PLIC/LAPIC: 无操作) */
+    irq_secondary_init();
 
     /*
        Phase 3.1/3.2：必须在开中断之前装好 current_task, 否则首个
@@ -542,7 +514,7 @@ void cpu_secondary_bootstrap(uint32_t cpu_id)
     cpu_t *c = &g_cpus[cpu_id];
 
     arch_cpu_self_set(c);
-    c->hw_id = lapic_id();
+    c->hw_id = irq_cpu_hw_id();
 
     exception_init_secondary();
     setup_secondary_idle_task(c);
@@ -679,46 +651,8 @@ void cpu_smp_timer_test(uint32_t rounds, uint32_t ms_per_round)
         KLOG_SMP("[smp-test] BSP DAIF=0x%llx CNTP_CTL=0x%llx CNTPCT=%llu\n", (unsigned long long)daif,
                  (unsigned long long)ctl, (unsigned long long)pct);
 
-        /* GIC 寄存器 dump：定位 IRQ 卡在哪一层 */
-#if DRIVER_GIC_V2
-        extern uintptr_t gicv2_gicd_base;
-        extern uintptr_t gicv2_gicc_base;
-        uintptr_t gicd_b = gicv2_gicd_base;
-        uintptr_t gicc_b = gicv2_gicc_base;
-        KLOG_SMP("[smp-test] GIC base: gicd=0x%llx gicc=0x%llx\n", (unsigned long long)gicd_b,
-                 (unsigned long long)gicc_b);
-        uint32_t gicd_ctlr = *(volatile uint32_t *)(gicd_b + 0x000);
-        uint32_t gicd_isen0 = *(volatile uint32_t *)(gicd_b + 0x100);
-        uint32_t gicd_ispend = *(volatile uint32_t *)(gicd_b + 0x200);
-        uint32_t gicd_pri26 = *(volatile uint32_t *)(gicd_b + 0x400 + (26 / 4) * 4);
-        uint32_t gicc_ctlr = *(volatile uint32_t *)(gicc_b + 0x000);
-        uint32_t gicc_pmr = *(volatile uint32_t *)(gicc_b + 0x004);
-        uint32_t gicc_hppir = *(volatile uint32_t *)(gicc_b + 0x018);
-        uint32_t gicc_rpr = *(volatile uint32_t *)(gicc_b + 0x014);
-        KLOG_SMP("[smp-test] GICD CTLR=0x%x ISENABLER0=0x%x ISPENDR0=0x%x IPRIORITY[26..]=0x%x\n", gicd_ctlr,
-                 gicd_isen0, gicd_ispend, gicd_pri26);
-        KLOG_SMP("[smp-test] GICC CTLR=0x%x PMR=0x%x HPPIR=0x%x RPR=0x%x\n", gicc_ctlr, gicc_pmr, gicc_hppir, gicc_rpr);
-#elif DRIVER_GIC_V3
-        extern uintptr_t gicv3_gicd_base;
-        extern uintptr_t gicv3_gicr_base;
-        KLOG_SMP("[smp-test] GIC base: gicd=0x%llx gicr=0x%llx (GICv3)\n", (unsigned long long)gicv3_gicd_base,
-                 (unsigned long long)gicv3_gicr_base);
-        uint32_t gicd_ctlr = *(volatile uint32_t *)(gicv3_gicd_base + 0x000);
-        uint32_t gicd_isen0 = *(volatile uint32_t *)(gicv3_gicd_base + 0x100);
-        KLOG_SMP("[smp-test] GICD CTLR=0x%x ISENABLER0=0x%x\n", gicd_ctlr, gicd_isen0);
-        /* PPI 实际开关 / 组配置 / 优先级在 GICR SGI frame, 不在 GICD */
-        uintptr_t sgi = gicv3_gicr_base + 0x10000ULL;
-        uint32_t r_isen0 = *(volatile uint32_t *)(sgi + 0x100);
-        uint32_t r_grp0 = *(volatile uint32_t *)(sgi + 0x080);
-        uint32_t r_pri_ppi26 = *(volatile uint32_t *)(sgi + 0x400 + (26 / 4) * 4);
-        uint64_t icc_pmr, icc_igrpen1, icc_ctlr;
-        __asm__ volatile("mrs %0, S3_0_C4_C6_0" : "=r"(icc_pmr));       /* ICC_PMR_EL1 */
-        __asm__ volatile("mrs %0, S3_0_C12_C12_7" : "=r"(icc_igrpen1)); /* ICC_IGRPEN1_EL1 */
-        __asm__ volatile("mrs %0, S3_0_C12_C12_4" : "=r"(icc_ctlr));    /* ICC_CTLR_EL1 */
-        KLOG_SMP("[smp-test] GICR SGI ISENABLER0=0x%x IGROUPR0=0x%x IPRI[26..29]=0x%x\n", r_isen0, r_grp0, r_pri_ppi26);
-        KLOG_SMP("[smp-test] ICC PMR=0x%llx IGRPEN1=0x%llx CTLR=0x%llx\n", (unsigned long long)icc_pmr,
-                 (unsigned long long)icc_igrpen1, (unsigned long long)icc_ctlr);
-#endif
+        /* 控制器相关的诊断寄存器由后端自己 dump，内核不再知道是 GICv2 还是 GICv3 */
+        irq_debug_dump();
     }
 #endif
 

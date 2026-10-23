@@ -542,9 +542,157 @@ void gicv3_ipi_send_single(int32_t irq, int32_t cpu)
     ICC_WRITE(ICC_SGI1R_EL1, sgi);
 }
 
+/* ── 公共 IRQ 接口实现 ───────────────────────────────────────── */
+
+#define GICV3_RESCHED_SGI 15u
+
+/*
+   gicv3_dispatch - 架构 IRQ 入口的完整一次中断
+
+   时序必须严格是 IAR → handler → EOIR(→ DIR)。EOImode=0 时 EOIR 同时
+   完成优先级下降和 deactivate；GICv3 没有 GICC_DIR, gic_write_dir 是空操作。
+   IAR 原值整个写回 EOIR(而不是只写 INTID)：GICv2 的 IAR 带 CPUID,
+   只写 INTID 在部分实现上不能正确匹配。
+*/
+static void gicv3_dispatch(void *frame)
+{
+    uint32_t iar = gicv3_read_iar();
+    uint32_t irq = gicv3_iar_irqnr(iar);
+
+    /* 1020..1023 是 spurious/特殊 INTID，不参与 EOI */
+    if (irq >= 1020u)
+        return;
+
+    irq_dispatch(irq, frame);
+
+    gicv3_write_eoir(iar);
+    gic_write_dir(iar);
+}
+
+static int gicv3_enable_api(unsigned irq, bool on)
+{
+    if (irq >= 1020u)
+        return -2;
+    gicv3_enable_int((int)irq, on);
+    return 0;
+}
+
+static int gicv3_set_priority_api(unsigned irq, unsigned prio)
+{
+    if (irq >= 1020u)
+        return -2;
+    gic_set_ipriority(irq, prio & 0xFFu);
+    return 0;
+}
+
+static int gicv3_secondary_init_api(void)
+{
+    gicv3_init_secondary();
+    return 0;
+}
+
+/*
+   GICv3 的 SGI 目标必须按完整亲和性编码。旧接口把逻辑 CPU 号当 Aff0
+   写 TargetList，QEMU virt 单簇下成立，RK3588 多簇上 IPI 会投错核。
+   hw_id 是 cpu_t.hw_id(MPIDR 低 24 位)，这里拆成 Aff1/Aff2 填进
+   ICC_SGI1R_EL1[23:16]/[39:32]。
+*/
+static int gicv3_send_ipi_api(uint32_t hw_id)
+{
+    uint32_t aff0 = hw_id & 0xFFu;
+    uint32_t aff1 = (hw_id >> 8) & 0xFFu;
+    uint32_t aff2 = (hw_id >> 16) & 0xFFu;
+
+    if (aff0 >= 16u)
+        return -2;
+
+    uint64_t sgi =
+        ((uint64_t)GICV3_RESCHED_SGI << 24) | ((uint64_t)aff1 << 16) | ((uint64_t)aff2 << 32) | (1ULL << aff0);
+    ICC_WRITE(ICC_SGI1R_EL1, sgi);
+    return 0;
+}
+
+static int gicv3_register_ipi_api(irq_handler_fn fn, void *ctx)
+{
+    int rc = irq_register(GICV3_RESCHED_SGI, fn, ctx);
+    if (rc != 0)
+        return rc;
+
+    gic_set_ipriority(GICV3_RESCHED_SGI, 0);
+    gicv3_enable_int(GICV3_RESCHED_SGI, true);
+    return 0;
+}
+
+static int gicv3_register_timer_api(irq_handler_fn fn, void *ctx)
+{
+    if (CNTP_TIMER == 0 || gicv3_gicd_base == 0 || gicv3_gicr_base == 0)
+        return -1;
+
+    int rc = irq_register(CNTP_TIMER, fn, ctx);
+    if (rc != 0)
+        return rc;
+
+    gic_set_ipriority(CNTP_TIMER, 0);
+    gicv3_enable_int((int)CNTP_TIMER, true);
+    return 0;
+}
+
+static int gicv3_timer_enable_api(void)
+{
+    if (CNTP_TIMER == 0)
+        return -1;
+    gicv3_enable_int((int)CNTP_TIMER, true);
+    return 0;
+}
+
+static uint64_t gicv3_cpu_hw_id_api(void)
+{
+    uint64_t mpidr;
+    __asm__ volatile("mrs %0, mpidr_el1" : "=r"(mpidr));
+    return mpidr & 0xFFFFFFULL;
+}
+
+/* SMP 自检用：把「中断卡在哪一层」需要看的寄存器集中在这里 */
+static void gicv3_debug_dump_api(void)
+{
+    uint32_t gicd_ctlr = read32((void *)(gicv3_gicd_base + 0x000));
+    uint32_t gicd_isen0 = read32((void *)(gicv3_gicd_base + 0x100));
+    KLOG_SMP("[smp-test] GIC base: gicd=0x%llx gicr=0x%llx (GICv3)\n", (unsigned long long)gicv3_gicd_base,
+             (unsigned long long)gicv3_gicr_base);
+    KLOG_SMP("[smp-test] GICD CTLR=0x%x ISENABLER0=0x%x\n", gicd_ctlr, gicd_isen0);
+
+    /* PPI 实际开关 / 组配置 / 优先级在 GICR SGI frame, 不在 GICD */
+    uintptr_t sgi = gicv3_gicr_base + 0x10000ULL;
+    uint32_t r_isen0 = read32((void *)(sgi + 0x100));
+    uint32_t r_grp0 = read32((void *)(sgi + 0x080));
+    uint32_t r_pri_ppi26 = read32((void *)(sgi + 0x400 + (26 / 4) * 4));
+    uint64_t icc_pmr, icc_igrpen1, icc_ctlr;
+    __asm__ volatile("mrs %0, S3_0_C4_C6_0" : "=r"(icc_pmr));       /* ICC_PMR_EL1 */
+    __asm__ volatile("mrs %0, S3_0_C12_C12_7" : "=r"(icc_igrpen1)); /* ICC_IGRPEN1_EL1 */
+    __asm__ volatile("mrs %0, S3_0_C12_C12_4" : "=r"(icc_ctlr));    /* ICC_CTLR_EL1 */
+    KLOG_SMP("[smp-test] GICR SGI ISENABLER0=0x%x IGROUPR0=0x%x IPRI[26..29]=0x%x\n", r_isen0, r_grp0, r_pri_ppi26);
+    KLOG_SMP("[smp-test] ICC PMR=0x%llx IGRPEN1=0x%llx CTLR=0x%llx\n", (unsigned long long)icc_pmr,
+             (unsigned long long)icc_igrpen1, (unsigned long long)icc_ctlr);
+}
+
+static const irq_ops_t gicv3_irq_ops = {
+    .dispatch = gicv3_dispatch,
+    .enable = gicv3_enable_api,
+    .set_priority = gicv3_set_priority_api,
+    .secondary_init = gicv3_secondary_init_api,
+    .send_ipi = gicv3_send_ipi_api,
+    .register_ipi = gicv3_register_ipi_api,
+    .register_timer = gicv3_register_timer_api,
+    .timer_enable = gicv3_timer_enable_api,
+    .cpu_hw_id = gicv3_cpu_hw_id_api,
+    .debug_dump = gicv3_debug_dump_api,
+    .virt_supported = true,
+};
+
 static int gicv3_probe(const device_t *dev)
 {
     (void)dev; /* 阶段 1：gicv3_init() 仍直接读平台配置 */
+    irq_bind(&gicv3_irq_ops);
     gicv3_init();
     return 0;
 }

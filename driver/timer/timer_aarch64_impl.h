@@ -8,9 +8,9 @@
 #define __TIMER_AARCH64_IMPL_H__
 
 #include "driver/time.h"
+#include "driver/irq.h"
 #include "sysreg.h"
 #include "mmio.h"
-#include "irq/irq.h"
 #include "klog.h"
 
 /*
@@ -35,6 +35,13 @@
    ============================================================
 */
 
+/* 公共 IRQ 接口的处理器签名是 (frame, ctx)；定时器不使用 ctx */
+static void timer_irq_entry(void *frame, void *ctx)
+{
+    (void)ctx;
+    timer_handler((uint64_t *)frame);
+}
+
 void timer_arch_init(void)
 {
     /* 读取定时器频率 */
@@ -49,19 +56,11 @@ void timer_arch_init(void)
     /* 清零统计信息 */
     timer_reset_stats();
 
-    /*
-       配置 GIC 中断
-       PPI (Private Peripheral Interrupt) 需要设置优先级
-    */
-    extern void gic_set_ipriority(uint32_t, uint32_t);
-    gic_set_ipriority(CNTP_TIMER, 0x00); /* 设置优先级 */
-
-    /* 安装定时器中断处理函数 */
-    extern void irq_install(int, void (*)(uint64_t *));
-    irq_install(CNTP_TIMER, timer_handler);
-    irq_enable_irq(CNTP_TIMER);
-
-    KLOG_TIMER("Timer IRQ %d installed and enabled\n", CNTP_TIMER);
+    /* 控制器负责优先级、注册与使能(PPI 26/30 由平台配置给出) */
+    if (irq_register_timer(timer_irq_entry, NULL) == 0)
+        KLOG_TIMER("Timer IRQ %u installed and enabled\n", CNTP_TIMER);
+    else
+        KLOG_ERROR("Timer: failed to register IRQ %u (no interrupt controller?)\n", CNTP_TIMER);
 }
 
 void timer_arch_enable(void)

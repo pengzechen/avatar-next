@@ -6,7 +6,7 @@
 
 #include "exception.h"
 #include "aarch64/sysreg.h" /* READ_ESR_EL1, READ_ELR_EL1 等 */
-#include "irq/irq.h"
+#include "driver/irq.h"
 #include "syscall/trace.h"
 #include "debug/backtrace.h"
 #include "klog.h"
@@ -17,15 +17,6 @@
 
 extern void deliver_pending_signals(task_t *t, trap_frame_t *frame);
 extern void syscall_handler(trap_frame_t *frame);
-
-#define MAX_IRQ_VECTORS 512
-
-irq_handler_t g_handler_vec[MAX_IRQ_VECTORS] = { 0 };
-
-void irq_install(int vector, void (*h)(uint64_t *))
-{
-    g_handler_vec[vector] = h;
-}
 
 void handle_sync_exception(uint64_t *stack_pointer)
 {
@@ -108,31 +99,15 @@ void handle_el0_sync_exception(uint64_t *stack_pointer)
 
 void handle_irq_exception(uint64_t *stack_pointer)
 {
-    trap_frame_t *el1_ctx = (trap_frame_t *)stack_pointer;
-    (void)el1_ctx; /* Suppress unused parameter warning */
     cpu_t *cpu = cpu_current();
 
     cpu->irq_depth++;
 
-    /* Read IAR to acknowledge the interrupt */
-    int iar = irq_ack();
-    int vector = iar & 0x3FF; /* Extract IRQ number */
-
-    /* Call the handler if registered */
-    if (vector < 512 && g_handler_vec[vector] != 0)
-        g_handler_vec[vector](stack_pointer);
-    else
-        KLOG_WARN("No handler for IRQ %d\n", vector);
-
     /*
-       End of interrupt：EOIR 做优先级下降, DIR 做 deactivate。
-
-       宿主不再把任何物理中断「借给」guest(vGIC 不用 HW=1 的 LR, 宿主
-       PPI 27 也不再注册), 所以这里可以无条件写 DIR。曾经的 guest-owned
-       位图只服务于那条已删除的 irq_route 路径。
+       ack → handler → EOI/complete 全部由中断控制器后端完成
+       (GICv2/GICv3 的 IAR/EOIR 时序差异不再泄漏到异常入口)。
     */
-    irq_eoi(iar);
-    gic_write_dir(iar);
+    irq_dispatch_frame(stack_pointer);
 
     cpu->irq_depth--;
 }

@@ -108,16 +108,14 @@ extern uint32_t g_num_cpus; /* 当前在线 CPU 数(Phase 0 = 1) */
 
 /* ── 跨核 IPI ─────────────────────────────────────────────
 
-   目前只有一种用途：resched(让目标核立刻重新调度)。三架构的「号空间」
-   不同, 所以这里只定义各自的中断号, 发送/接收由 cpu.c 统一封装：
+   目前只有一种用途：resched(让目标核立刻重新调度)。发送/接收已经收敛到
+   include/driver/irq.h 的 irq_register_ipi()/irq_send_ipi()，中断号由
+   控制器后端自己决定；下面这些常量只留给需要知道具体 cause 的架构代码
+   (例如 RISC-V 的 hext_run 判断 SSIP)。
 
-     AArch64: 物理 GIC SGI 15(GICv2/GICv3 都由 irq.h 的 irq_send_ipi 发)
+     AArch64: 物理 GIC SGI 15
      RISC-V : S 模式软件中断, scause = 1(SBI IPI 置 SSIP)
-     x86_64 : LAPIC fixed-delivery IPI, 向量 0xF0(IDT 里已装门)
-
-   注意： AArch64 的 GICv3 发送函数目前按 Aff0 寻址(QEMU virt 上 cpu_id ==
-      Aff0)。多 cluster 平台(如 RK3588)要按 MPIDR 的 Aff1/Aff2/Aff3
-      扩展 ICC_SGI1R_EL1；这条限制在 cpu_send_ipi 处有注释。
+     x86_64 : LAPIC fixed-delivery IPI, 向量 0xF0
 */
 #if ARCH_AARCH64
 #define CPU_RESCHED_IPI 15u /* SGI 15：避开常用的 SGI 0-7 */

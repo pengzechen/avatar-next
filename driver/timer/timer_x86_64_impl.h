@@ -18,9 +18,10 @@
 */
 
 #include "driver/time.h"
+#include "driver/irq.h"
 #include "klog.h"
-#include "exception.h" /* irq_install, IDT_LAPIC_TIMER_VEC */
-#include "irq/lapic.h" /* lapic_timer_init, lapic_eoi */
+#include "exception.h" /* IDT_LAPIC_TIMER_VEC */
+#include "irq/lapic.h" /* lapic_timer_init / lapic_timer_stop */
 
 /* ── x86_64 特定全局变量 ────────────────────────────────────── */
 
@@ -29,6 +30,13 @@ static uint32_t g_x86_tick_counter = 0;
 
 /* 前向声明(定义在本文件末尾) */
 void timer_handler(void *frame);
+
+/* 公共 IRQ 接口的处理器签名是 (frame, ctx)；定时器不使用 ctx */
+static void timer_irq_entry(void *frame, void *ctx)
+{
+    (void)ctx;
+    timer_handler(frame);
+}
 
 /* ── 架构特定操作实现 ────────────────────────────────────────── */
 
@@ -44,8 +52,9 @@ void timer_arch_init(void)
 
     timer_reset_stats();
 
-    /* 注册 LAPIC Timer 中断处理函数到 IDT 向量 0x20 */
-    irq_install(IDT_LAPIC_TIMER_VEC, (irq_handler_t)timer_handler);
+    /* 控制器负责把 handler 挂到 LAPIC timer 向量 */
+    if (irq_register_timer(timer_irq_entry, NULL) != 0)
+        KLOG_ERROR("Timer: failed to register LAPIC timer IRQ\n");
 }
 
 void timer_arch_enable(void)
@@ -94,8 +103,7 @@ void timer_handler(void *frame)
         g_timer_stats.total_seconds = g_x86_uptime_seconds;
     }
 
-    /* LAPIC 必须手动发 EOI */
-    lapic_eoi();
+    /* EOI 由 LAPIC dispatch 在 handler 返回后统一发出 */
 
     /* 调用 tick 回调(调度器 sched_tick) */
     if (g_tick_cb) {

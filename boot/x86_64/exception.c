@@ -9,8 +9,8 @@
 
    提供：
      exception_init()    — 建立 IDT, 加载 IDTR, 初始化 LAPIC, sti
-     irq_install()       — 注册向量对应的 C handler
-     handle_exception()  — 由 exception.S 调用, 分发到已注册的 handler
+     handle_exception()  — 由 exception.S 调用；IRQ 向量交给
+                           driver/irq 的 LAPIC 后端分发
      idt_set_gate()      — 填写单个 IDT 门描述符
 */
 
@@ -19,6 +19,7 @@
 #include "syscall/trace.h"
 #include "debug/backtrace.h"
 #include "assert.h" /* platform_panic() */
+#include "driver/irq.h"
 #include "irq/lapic.h"
 #include "x86_64/io.h" /* outb — 用于屏蔽 8259A PIC */
 #include "task/task.h"
@@ -32,10 +33,6 @@ extern void deliver_pending_signals(task_t *t, trap_frame_t *frame);
 
 static idt_entry_t idt[IDT_MAX_ENTRIES] __attribute__((aligned(16)));
 static idtr_t idtr;
-
-/* ── 中断处理函数表(256 个向量)──────────────────────────────── */
-
-static irq_handler_t irq_handlers[IDT_MAX_ENTRIES];
 
 /* ── ISR 存根地址表(来自 exception.S)────────────────────────── */
 
@@ -99,14 +96,6 @@ void idt_set_gate(uint8_t vec, void (*handler)(void), uint16_t sel, uint8_t attr
     idt[vec].offset_mid = (uint16_t)((base >> 16) & 0xFFFFu);
     idt[vec].offset_high = (uint32_t)((base >> 32) & 0xFFFFFFFFu);
     idt[vec].reserved = 0;
-}
-
-/* ── irq_install ────────────────────────────────────────────── */
-
-void irq_install(int vector, irq_handler_t h)
-{
-    if (vector >= 0 && vector < (int)IDT_MAX_ENTRIES)
-        irq_handlers[vector] = h;
 }
 
 /* ── exception_init ─────────────────────────────────────────── */
@@ -201,8 +190,9 @@ void handle_exception(void *frame_ptr)
     if (is_irq)
         cpu_current()->irq_depth++;
 
-    if (vec < IDT_MAX_ENTRIES && irq_handlers[vec]) {
-        irq_handlers[vec](frame_ptr);
+    if (is_irq) {
+        /* LAPIC 后端负责按向量查表、调用 handler 并写 EOI */
+        irq_dispatch_frame(frame_ptr);
     } else if (vec < 32) {
         bool from_user = ((frame->cs & 0x3ULL) == 0x3ULL);
 

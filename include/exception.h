@@ -37,11 +37,10 @@
 #endif
 
 /*
-   公共接口 — irq_handler_t 在各架构头中定义
-
-   AArch64:  void irq_install(int gic_vector, irq_handler_t h)
-   RISC-V:   void irq_install(int scause,     irq_handler_t h)
+   设备中断请用 include/driver/irq.h 的 irq_register()。
+   RISC-V 的 scause 级钩子(PLIC 外部中断/timer/IPI)仍由
+   include/riscv64/exception.h 里的 irq_install() 提供 —— 那属于异常入口,
+   不是设备驱动接口。
 */
-void irq_install(int vector, irq_handler_t h);
 
 #endif /* EXCEPTION_H */

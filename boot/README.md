@@ -62,9 +62,9 @@ AArch64 额外支持 **多核启动**：`_secondary_start` 由 PSCI CPU_ON 进�
 |------|---------|--------|--------|
 | 同步异常 | `handle_sync_exception`（EL1）<br>`handle_el0_sync_exception`（EL0） | `handle_exception` 中 `!INTERRUPT` 分支 | `handle_exception` 中 `vec < 32` |
 | 系统调用 | EC=0x15 → `syscall_handler()` | CAUSE_USER_ECALL → `syscall_handler()` | SYSCALL/SYSRET 快速路径（`syscall_wrapper.S`） |
-| 硬件中断 | `handle_irq_exception` → GIC IAR/EOI | scause 高位 → `interrupt_handlers[]` | `irq_handlers[vec]` 回调 |
+| 硬件中断 | `handle_irq_exception` → `irq_dispatch_frame()` | scause 高位 → `interrupt_handlers[]`（PLIC 再调 `irq_dispatch_frame()`） | `handle_exception` → `irq_dispatch_frame()` |
 | 页错误诊断 | ESR EC/DFSC 解析 | 命名常量 + 完整寄存器 dump | CR2 + error code 位解析 |
-| 中断注册 | `irq_install(vector, handler)` | `irq_install(cause, handler)` | `irq_install(vector, handler)` |
+| 中断注册 | `irq_register(irq, fn, ctx)` | 设备中断：`irq_register()`；scause 钩子：`irq_install(cause, handler)` | `irq_register(irq, fn, ctx)` |
 
 ### 3. 系统调用快速路径（x86_64）
 
@@ -110,7 +110,7 @@ AArch64 额外支持 **多核启动**：`_secondary_start` 由 PSCI CPU_ON 进�
 | `aarch64/sysreg.h` | `READ_ESR_EL1`、`READ_FAR_EL1` 等系统寄存器读写宏 |
 | `riscv64/sysreg.h` | `CSR_READ`、`CSR_SET`、`WRITE_STVEC` 等 CSR 操作宏 |
 | `x86_64/io.h` | `outb`（屏蔽 8259A PIC） |
-| `irq/irq.h` | `irq_ack()`、`irq_eoi()`、`gic_write_dir()`（GIC 操作） |
+| `driver/irq.h` | `irq_dispatch_frame()`、`irq_register()`、`irq_enable()`（控制器后端在 driver/irq/） |
 | `irq/lapic.h` | `lapic_init()`（LAPIC 初始化） |
 | `task/task.h` | `task_t`、`task_current()` |
 | `task/sched.h` | `sched_dequeue()`、`sched_tick()` |
@@ -140,7 +140,7 @@ AArch64 额外支持 **多核启动**：`_secondary_start` 由 PSCI CPU_ON 进�
 | `syscall_handler()` | kernel/syscall/ | 系统调用处理 |
 | `sched_check_and_yield_from_trap()` | kernel/task/sched.c | 异常返回前检查抢占 |
 | `sched_check_and_yield()` | kernel/task/sched.c | AArch64/x86_64 抢占检查 |
-| `irq_ack()` / `irq_eoi()` | driver/irq/ | GIC 中断确认/结束 |
+| `irq_dispatch_frame()` | driver/irq/ | 控制器后端完成 ack → handler → EOI/complete |
 | `lapic_init()` | driver/irq/ | LAPIC 初始化 |
 | `platform_panic()` / `platform_shutdown()` | platforms/ | 平台停机 |
 
@@ -164,7 +164,7 @@ AArch64 额外支持 **多核启动**：`_secondary_start` 由 PSCI CPU_ON 进�
 | 函数 | 架构 | 用途 |
 |------|------|------|
 | `exception_init()` | RISC-V / x86_64 | 初始化异常向量 |
-| `irq_install()` | 全部 | 注册中断回调 |
+| `irq_install()` | RISC-V | 注册 scause 级中断钩子（设备中断用 `irq_register()`） |
 | `idt_set_gate()` | x86_64 | 设置单个 IDT 门描述符 |
 | `x86_tss_init()` | x86_64 | 初始化 TSS |
 | `x86_tss_set_rsp0()` | x86_64 | 更新 TSS.RSP0（任务切换） |

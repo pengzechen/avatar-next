@@ -36,8 +36,7 @@
 #include "dma_buf.h" /* 排障：按物理地址反查缓冲区, dump regcmd */
 #include "klog.h"
 #include "platform_cfg.h"
-#include "exception.h"
-#include "irq/gicv3.h"
+#include "driver/irq.h"
 #include "spinlock.h"
 #include "driver/time.h"
 #include "driver/driver.h"
@@ -217,9 +216,8 @@ static spinlock_t g_job_lock = SPINLOCK_INIT;
 
 /*
    三个核的中断线是独立的(142/143/144), 各自的 ISR 只处理自己的核。
-   irq_install() 的签名是 void(*)(uint64_t *frame), frame 里没有"是哪条中断"
-   的信息, 所以只能写三个薄包装 —— 这也是 vendor 的做法
-   (rknpu_core0/1/2_irq_handler 三个函数都转调 rknpu_irq_handler(..., core))。
+   公共 IRQ 接口已经能带 ctx, 但 NPU 的核号在编译期固定、且每核 ISR 还会
+   打印自己的 IRQ 号, 保留三个薄包装比在 ctx 里塞核号更直白。
 */
 static void rknpu_irq_common(int core)
 {
@@ -272,25 +270,28 @@ static void rknpu_irq_common(int core)
     /* 通知 GICv3 完成(EOI 由异常框架在 irq_handler 返回后写入) */
 }
 
-static void rknpu_irq_handler0(uint64_t *frame)
+static void rknpu_irq_handler0(void *frame, void *ctx)
 {
     (void)frame;
+    (void)ctx;
     rknpu_irq_common(0);
 }
 
-static void rknpu_irq_handler1(uint64_t *frame)
+static void rknpu_irq_handler1(void *frame, void *ctx)
 {
     (void)frame;
+    (void)ctx;
     rknpu_irq_common(1);
 }
 
-static void rknpu_irq_handler2(uint64_t *frame)
+static void rknpu_irq_handler2(void *frame, void *ctx)
 {
     (void)frame;
+    (void)ctx;
     rknpu_irq_common(2);
 }
 
-static void (*const rknpu_irq_handlers[RKNPU_MAX_CORES])(uint64_t *) = {
+static irq_handler_fn const rknpu_irq_handlers[RKNPU_MAX_CORES] = {
     rknpu_irq_handler0,
     rknpu_irq_handler1,
     rknpu_irq_handler2,
@@ -395,8 +396,9 @@ void rknpu_init(void)
             KLOG_WARN("rknpu: core%d version check failed - this core is unusable\n", i);
 
         if (g_npu_irq[i] > 0) {
-            irq_install(g_npu_irq[i], rknpu_irq_handlers[i]);
-            gicv3_enable_int(g_npu_irq[i], true);
+            if (irq_register(g_npu_irq[i], rknpu_irq_handlers[i], NULL) != 0)
+                KLOG_ERROR("rknpu: core%d IRQ %d registration failed\n", i, g_npu_irq[i]);
+            irq_enable(g_npu_irq[i], true);
             KLOG_INFO("rknpu: core%d IRQ %d registered and enabled\n", i, g_npu_irq[i]);
         }
     }
@@ -446,11 +448,9 @@ void rknpu_host_release(void)
         if (g_npu_base[i] == 0)
             continue;
 
-        /* 用 gicv3_enable_int 而不是 irq_disable_irq：与上面 init 里的
-           enable 成对, 且 gicv3.h 在本文件已经(间接)可见。
-        */
+        /* 与 init 里的 irq_enable() 成对：线还挂着, 只是不再投递给宿主 CPU */
         if (g_npu_irq[i] > 0)
-            gicv3_enable_int(g_npu_irq[i], false);
+            irq_enable(g_npu_irq[i], false);
 
         /* 给 guest 一个干净的起点：状态位全清, 不屏蔽任何位。
            INT_MASK 交给 guest 自己配(它会按任务描述符写掩码)。
@@ -489,7 +489,7 @@ void rknpu_host_reclaim(void)
         npu_write(i, RKNPU_INT_CLEAR_ALL, RKNPU_INT_CLEAR);
 
         if (g_npu_irq[i] > 0)
-            gicv3_enable_int(g_npu_irq[i], true);
+            irq_enable(g_npu_irq[i], true);
     }
 
     g_npu_ready = true;

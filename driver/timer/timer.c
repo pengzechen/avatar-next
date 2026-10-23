@@ -5,6 +5,7 @@
 */
 
 #include "driver/time.h"
+#include "driver/irq.h"
 #include "klog.h"
 #include "platform_cfg.h"
 #include "driver/driver.h"
@@ -98,9 +99,9 @@ void timer_init_secondary(void)
 #if ARCH_AARCH64
     /*
        次级核需要独立 enable 本地 banked PPI(GICv2 GICD_ISENABLER0 每 CPU 独立)。
-       主核 timer_arch_init 已 irq_enable_irq(CNTP_TIMER), 但只对主核生效。
+       主核 timer_arch_init 注册时只对主核生效, 这里由控制器补本核的那一份。
     */
-    irq_enable_irq(CNTP_TIMER);
+    irq_timer_enable();
     uint64_t ticks_per_interrupt = g_timer_frequency / TIMER_FREQUENCY_HZ;
     WRITE_CNTP_TVAL_EL0(ticks_per_interrupt);
     WRITE_CNTP_CTL_EL0(1); /* enable, unmask */

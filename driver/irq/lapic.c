@@ -23,6 +23,7 @@
 #include "driver/time.h" /* TIMER_FREQUENCY_HZ = g_timer_cfg_freq_hz */
 #include "driver/driver.h"
 #include "driver/irq.h"
+#include "exception.h" /* trap_frame_t, IDT_LAPIC_TIMER_VEC */
 
 /* ── LAPIC 虚拟基址 ─────────────────────────────────────────────
    boot.S 建立了 identity + high-half 两份映射(1GB huge page),
@@ -380,9 +381,83 @@ void lapic_timer_stop(void)
     lapic_write(LAPIC_REG_LVT_TIMER, LAPIC_TIMER_MASKED);
 }
 
+/* ── 公共 IRQ 接口实现 ───────────────────────────────────────── */
+
+static void lapic_dispatch(void *frame)
+{
+    trap_frame_t *f = (trap_frame_t *)frame;
+    uint64_t vec = f->vector;
+
+    /* 0xFF = spurious：没有 in-service 位，不能写 EOI */
+    if (vec == 0xFFu)
+        return;
+
+    irq_dispatch((unsigned)vec, frame);
+    lapic_eoi();
+}
+
+static int lapic_enable_api(unsigned irq, bool on)
+{
+    /*
+       x86 的中断门在 IDT 里是常开的，没有逐向量的 mask 位
+       (LAPIC LVT 只影响本核 timer/LINT)。设备中断线目前未使用。
+    */
+    (void)irq;
+    (void)on;
+    return 0;
+}
+
+static int lapic_set_priority_api(unsigned irq, unsigned prio)
+{
+    (void)irq;
+    (void)prio;
+    return 0;
+}
+
+static int lapic_secondary_init_api(void)
+{
+    /* exception_init_secondary() 已经重建 IDT 并 lapic_init() */
+    return 0;
+}
+
+static int lapic_send_ipi_api(uint32_t hw_id)
+{
+    lapic_send_ipi(hw_id, (uint8_t)IDT_RESCHED_IPI_VEC);
+    return 0;
+}
+
+static int lapic_register_ipi_api(irq_handler_fn fn, void *ctx)
+{
+    /* IDT 门由 exception_setup_idt() 装好，这里只挂 C handler */
+    return irq_register(IDT_RESCHED_IPI_VEC, fn, ctx);
+}
+
+static int lapic_register_timer_api(irq_handler_fn fn, void *ctx)
+{
+    return irq_register(IDT_LAPIC_TIMER_VEC, fn, ctx);
+}
+
+static uint64_t lapic_cpu_hw_id_api(void)
+{
+    return lapic_id();
+}
+
+static const irq_ops_t lapic_irq_ops = {
+    .dispatch = lapic_dispatch,
+    .enable = lapic_enable_api,
+    .set_priority = lapic_set_priority_api,
+    .secondary_init = lapic_secondary_init_api,
+    .send_ipi = lapic_send_ipi_api,
+    .register_ipi = lapic_register_ipi_api,
+    .register_timer = lapic_register_timer_api,
+    .cpu_hw_id = lapic_cpu_hw_id_api,
+    .virt_supported = false,
+};
+
 static int lapic_probe(const device_t *dev)
 {
     (void)dev; /* LAPIC 基址固定；exception_init() 里已做过一次软件使能 */
+    irq_bind(&lapic_irq_ops);
     lapic_init();
     return 0;
 }

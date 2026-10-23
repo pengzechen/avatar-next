@@ -55,7 +55,7 @@
 #include "mmio.h"
 #include "platform_cfg.h" /* platform_get_mmio / g_mmio_needs_vma */
 #include "string.h"
-#include "irq/plic.h" /* plic_install / plic_enable_irq */
+#include "driver/irq.h" /* irq_register / irq_enable / irq_set_priority */
 #include "net/netdev.h"
 #include "driver/time.h"
 #include "driver/driver.h"
@@ -657,11 +657,11 @@ static int cvitek_netdev_recv(void *ctx, uint8_t *frame, size_t maxlen)
    level-high 的中断只要不 ack, PLIC 就会一直重触发, 那是比丢包严重得多的
    故障(整机卡死)。所以这里不检查 nic->ready 之类的条件。
 */
-static void cvitek_eth_isr(uint32_t irq, void *ctx)
+static void cvitek_eth_isr(void *frame, void *ctx)
 {
     struct cvitek_eth_nic *nic = (struct cvitek_eth_nic *)ctx;
 
-    (void)irq;
+    (void)frame;
 
     /*
        清中断源。这里必须只写 W1C 的那几位, 不能把读到的整字写回去：
@@ -841,8 +841,10 @@ static int cvitek_eth_init(uintptr_t base)
        DRV_PHASE_IRQ 的 PLIC 驱动)—— 它负责挂上 S 模式外部中断的
        trap handler 并置 sie.SEIE, 缺了它这里配了也送不达。
     */
-    plic_install(CVITEK_IRQ_GMAC, cvitek_eth_isr, nic);
-    plic_enable_irq(CVITEK_IRQ_GMAC, CVITEK_IRQ_PRIO);
+    if (irq_register(CVITEK_IRQ_GMAC, cvitek_eth_isr, nic) != 0)
+        KLOG_ERROR("[cvitek-eth] IRQ %u registration failed\n", CVITEK_IRQ_GMAC);
+    irq_set_priority(CVITEK_IRQ_GMAC, CVITEK_IRQ_PRIO);
+    irq_enable(CVITEK_IRQ_GMAC, true);
     cvitek_write(nic, CVITEK_DMA_INTR_ENA, CVITEK_DMAIE_RIE | CVITEK_DMAIE_NIE);
     KLOG_INFO("[cvitek-eth] RX IRQ on (PLIC source %u, level-high)\n", CVITEK_IRQ_GMAC);
 
