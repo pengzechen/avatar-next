@@ -36,7 +36,8 @@ typedef struct {
     uintptr_t gich;
     uintptr_t plic;
     uintptr_t clint;
-    bool virt; /* 是否提供虚拟中断接口（GICv3） */
+    uintptr_t ioapic; /* x86 IOAPIC MMIO 基址；0 = 未配置 */
+    bool virt;        /* 是否提供虚拟中断接口（GICv3） */
 } irq_cfg_t;
 
 typedef void (*irq_handler_fn)(void *frame, void *ctx);

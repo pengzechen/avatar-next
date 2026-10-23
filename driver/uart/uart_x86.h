@@ -11,7 +11,8 @@
      - COM1 使用 Port I/O (in/out 指令), 基地址 0x3F8
      - DW   使用 MMIO, 寄存器按 4 字节对齐
 
-   本文件提供纯轮询(polling)实现, 足够早期启动使用。
+   TX 始终同步轮询；RX 在 cfg->irq_mode 时由 DRV_PHASE_IRQ 的 start 注册
+   IRQ（COM1 IRQ4 -> IOAPIC GSI4 -> IDT 向量 0x24）。
 */
 
 #ifndef DRIVER_UART_X86_H
@@ -31,6 +32,7 @@
 #define UART_X86_IIR (UART_X86_BASE + UART16550_PIO_IIR)
 #define UART_X86_FCR (UART_X86_BASE + UART16550_PIO_FCR)
 #define UART_X86_LCR (UART_X86_BASE + UART16550_PIO_LCR)
+#define UART_X86_MCR (UART_X86_BASE + UART16550_PIO_MCR)
 #define UART_X86_LSR (UART_X86_BASE + UART16550_PIO_LSR)
 #define UART_X86_DLL (UART_X86_BASE + UART16550_PIO_DLL)
 #define UART_X86_DLM (UART_X86_BASE + UART16550_PIO_DLM)

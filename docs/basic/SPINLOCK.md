@@ -61,6 +61,7 @@ spin_unlock_irqrestore(&lock, flags);
 | `kernel/syscall/fs/tty.c` | 环形缓冲 + 硬件 FIFO 两把锁，从不嵌套持有 |
 | `driver/uart/uart_dw.c` | TX/RX 缓冲，ISR 与线程都取 → 全部 irqsave |
 | `driver/uart/uart_pl011.c` | RX 环：ISR 与线程都取 → irqsave；TX 同步轮询、不取锁 |
+| `driver/uart/uart_x86.c` | 同上：RX 环 irqsave；TX 同步轮询 |
 | `driver/ion/ion.c` | `g_ion_lock`，日志同样放在解锁后 |
 | `kernel/syscall/core/futex.c` | `g_futex_lock` 保护全局等待表（原来只用本核关中断，SMP 下会写坏） |
 

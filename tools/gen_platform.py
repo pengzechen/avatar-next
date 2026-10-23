@@ -69,7 +69,7 @@ def parse_platform_conf(path):
             mmio_vma = true/false,
             lapic    = true/false,
             uart  = { driver, base, reg_shift },
-            irq   = { driver, gicd, gicc, gich, gicr, plic, clint },
+            irq   = { driver, gicd, gicc, gich, gicr, plic, clint, ioapic },
             timer = { driver, tick_ms, freq_hz, cntp, counter_hz },
         }
     reserves 条目格式: { name="...", start=0x..., stop=0x... }
@@ -130,6 +130,7 @@ def parse_platform_conf(path):
     conf['DEV_GICR_BASE']  = _find_num(irq, 'gicr',  '0')
     conf['DEV_PLIC_BASE']  = _find_num(irq, 'plic',  '0')
     conf['DEV_CLINT_BASE'] = _find_num(irq, 'clint', '0')
+    conf['DEV_IOAPIC_BASE'] = _find_num(irq, 'ioapic', '0')
 
     # timer 块
     timer = _extract_block(text, 'timer')
@@ -284,6 +285,7 @@ def write_platform_static_c(conf, build_dir):
     add('irq', 'gicr', conf.get('DEV_GICR_BASE', '0'))
     add('irq', 'plic', conf.get('DEV_PLIC_BASE', '0'))
     add('irq', 'clint', conf.get('DEV_CLINT_BASE', '0'))
+    add('irq', 'ioapic', conf.get('DEV_IOAPIC_BASE', '0'))
     add('timer', 'freq_hz', conf.get('DEV_TIMER_FREQUENCY_HZ', '100'))
     add('timer', 'tick_ms', conf.get('DEV_TIMER_TICK_MS', '10'))
     add('timer', 'counter_hz', conf.get('DEV_TIMER_COUNTER_HZ', '0'))
@@ -371,6 +373,7 @@ def write_platform_static_c(conf, build_dir):
             f'    .gich = (uintptr_t)({conf.get("DEV_GICH_BASE", "0")}),\n',
             f'    .plic = (uintptr_t)({conf.get("DEV_PLIC_BASE", "0")}),\n',
             f'    .clint = (uintptr_t)({conf.get("DEV_CLINT_BASE", "0")}),\n',
+            f'    .ioapic = (uintptr_t)({conf.get("DEV_IOAPIC_BASE", "0")}),\n',
             f'    .virt = {"true" if irq_type == "gicv3" else "false"},\n',
             '};\n',
         ]

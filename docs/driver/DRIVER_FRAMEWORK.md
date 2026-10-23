@@ -385,7 +385,7 @@ bool driver_present(drv_class_t cls)
 |------|-------|-------|-------------|--------------|
 | uart_pl011 | SERIAL | EARLY | IRQ（仅 `cfg->irq_mode`） | `pl011_init(cfg)`：早期只配置硬件、屏蔽中断；start 里注册 RX IRQ |
 | uart_dw | SERIAL | EARLY | IRQ（仅 `cfg->irq_mode`） | `dw_uart_early_init(cfg)` |
-| uart_x86 | SERIAL | EARLY | none | `uart_x86_early_init(cfg)` |
+| uart_x86 | SERIAL | EARLY | IRQ（仅 `cfg->irq_mode`） | `uart_x86_early_init(cfg)`：早期配置 COM1、关闭中断；start 里注册 RX IRQ |
 | gicv3 | IRQ | IRQ | none | `gicv3_init(cfg)` |
 | gicv2 | IRQ | IRQ | none | `gic_virtual_init(cfg)` |
 | plic | IRQ | IRQ | none | `plic_init(cfg)` |
@@ -402,7 +402,8 @@ bool driver_present(drv_class_t cls)
 
 说明：
 
-- **UART 的 `irq_mode`** 用来替代 `#if DRIVER_UART_DW && (PLATFORM_RK3588 || PLATFORM_SG2002)`。qemu-riscv 的 `irq_mode=false`，rk3588/sg2002 为 true（保持当前调用 `dw_uart_init()` 的行为）。PL011 在 `irq_mode=true` 时由 IRQ 阶段的 start 注册 RX 中断；TX 始终同步轮询，不依赖中断（klog/panic 要求）。
+- **UART 的 `irq_mode`** 用来替代 `#if DRIVER_UART_DW && (PLATFORM_RK3588 || PLATFORM_SG2002)`。qemu-riscv 的 `irq_mode=false`，rk3588/sg2002 为 true（保持当前调用 `dw_uart_init()` 的行为）。PL011 和 x86 COM1 在 `irq_mode=true` 时由 IRQ 阶段的 start 注册 RX 中断；TX 始终同步轮询，不依赖中断（klog/panic 要求）。
+- **x86 外部中断号**：公共 IRQ 号空间是 IDT 向量。IOAPIC GSI n 映射到向量 `IDT_IRQ_BASE + n`（0x20+n）；0x20 已被 LAPIC timer 使用，所以外部线用 0x21-0x2F。COM1 是 ISA IRQ4 → GSI4 → 向量 0x24，`irq.ioapic` 提供 IOAPIC MMIO 基址（QEMU q35/microvm 均为 0xFEC00000）。当前只覆盖 QEMU 的“ISA IRQ 直连 GSI”模型；没有解析 ACPI/MADT，真机的中断源重映射需要另加。
 - **sdblk**：阶段 1 顺手改成“只初始化一次”。当前 `fs_init()` → `sdblk_bdev_open()` → `sdblk_init()`，随后 main 又调一次；框架改为 STORAGE probe 初始化一次，`sdblk_bdev_open()` 检测到已初始化直接返回。
 - **lapic**：x86 的 `exception_init()` 为了 IDT/早期中断仍需调用 `lapic_init()`；IRQ 阶段的 probe 再调用一次（写 TPR/SVR，幂等）。如果不想重复，可加 `g_lapic_ready` 守卫。
 
@@ -425,8 +426,13 @@ uart = {
     driver    = "pl011" | "dw" | "x86",
     base      = ...,
     reg_shift = 0 | 2,
-    irq       = 33,         # 0 = 不接中断；GIC INTID / PLIC source
-    irq_mode  = true,       # true 时在 DRV_PHASE_IRQ 调 start（PL011 RX IRQ）
+    irq       = 33,         # 0 = 不接中断；GIC INTID / PLIC source / IDT vector
+    irq_mode  = true,       # true 时在 DRV_PHASE_IRQ 调 start（PL011/x86 RX IRQ）
+}
+
+irq = {
+    ...
+    ioapic = 0xFEC00000,    # x86 IOAPIC MMIO 基址；其它架构为 0
 }
 
 block = { driver = "ramblk" | "sdblk" }
@@ -440,7 +446,7 @@ eth = { driver = "virtio" | "cvitek" | "none", base = ..., irq = 0 }
 |----------|------------|--------------|---------------|
 | qemu-virt-aarch64 | gicv3 | ramblk | true |
 | qemu-virt-riscv64 | plic | ramblk | false |
-| qemu-virt-x86_64 | lapic | ramblk | false |
+| qemu-virt-x86_64 | lapic | ramblk | true |
 | rk3588-aarch64 | gicv3 | ramblk | true |
 | sg2002-riscv64 | plic | sdblk | true |
 
@@ -463,7 +469,7 @@ static const serial_cfg_t g_serial_cfg = {
     .irq_mode = true, .compatible = "arm,pl011",
 };
 static const irq_cfg_t g_irq_cfg = {
-    .gicd = 0x08000000, .gicr = 0x080A0000, .virt = true,
+    .gicd = 0x08000000, .gicr = 0x080A0000, .ioapic = 0, .virt = true,
 };
 static const time_cfg_t g_time_cfg = {
     .freq_hz = 100, .tick_ms = 10, .cntp = 26, .counter_hz = 0,

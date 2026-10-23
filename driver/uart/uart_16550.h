@@ -70,6 +70,14 @@
 #define UART16550_IER_THRI (1U << 1) /* TX Holding Register Empty IRQ */
 
 /* -----------------------------------------------------------------------
+   MCR — Modem Control Register bits
+   -----------------------------------------------------------------------
+*/
+#define UART16550_MCR_DTR  (1U << 0) /* Data Terminal Ready */
+#define UART16550_MCR_RTS  (1U << 1) /* Request To Send */
+#define UART16550_MCR_OUT2 (1U << 3) /* OUT2：PC 兼容 16550 的中断输出门控 */
+
+/* -----------------------------------------------------------------------
    FCR — FIFO Control Register bits
    -----------------------------------------------------------------------
 */

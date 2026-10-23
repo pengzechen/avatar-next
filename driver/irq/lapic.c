@@ -23,7 +23,23 @@
 #include "driver/time.h" /* TIMER_FREQUENCY_HZ = g_timer_cfg_freq_hz */
 #include "driver/driver.h"
 #include "driver/irq.h"
-#include "exception.h" /* trap_frame_t, IDT_LAPIC_TIMER_VEC */
+#include "exception.h" /* trap_frame_t, IDT_LAPIC_TIMER_VEC, IDT_IRQ_BASE */
+#include "barrier.h"   /* IOAPIC MMIO 顺序 */
+
+/* ── IOAPIC ────────────────────────────────────────────────────
+   x86 外部设备线(ISA IRQ/GSI)通过 IOAPIC 重定向到某个 IDT 向量。
+   本内核约定：ISA IRQ n -> GSI n -> IDT 向量 (IDT_IRQ_BASE + n)，
+   n = 1..15（向量 0x20 已被 LAPIC timer 占用）。
+
+   QEMU q35 / microvm 的 IOAPIC 都在物理 0xFEC00000，由 platform.conf
+   的 irq.ioapic 提供；高半区映射同样覆盖这段物理地址。
+*/
+#define IOAPIC_REG_SEL      0x00u
+#define IOAPIC_REG_WIN      0x10u
+#define IOAPIC_REDTBL_BASE  0x10u
+#define IOAPIC_MAX_GSI      23u
+
+static uintptr_t g_ioapic_base;
 
 /* ── LAPIC 虚拟基址 ─────────────────────────────────────────────
    boot.S 建立了 identity + high-half 两份映射(1GB huge page),
@@ -43,6 +59,43 @@ static inline void lapic_write(uint32_t reg, uint32_t val)
 {
     volatile uint32_t *p = (volatile uint32_t *)(LAPIC_VIRT + reg);
     *p = val;
+}
+
+/* ── IOAPIC 寄存器访问 ──────────────────────────────────────────
+   间接寻址：先写 IOREGSEL，再写 IOWIN。
+*/
+static void ioapic_write(uint32_t reg, uint32_t val)
+{
+    volatile uint32_t *sel = (volatile uint32_t *)g_ioapic_base;
+    volatile uint32_t *win = (volatile uint32_t *)(g_ioapic_base + IOAPIC_REG_WIN);
+
+    *sel = reg;
+    barrier_data();
+    *win = val;
+    barrier_data();
+}
+
+/*
+   设置一条 GSI 的重定向表项。
+
+   ISA 串口是电平信号，但 ISA 总线按边沿触发上报；QEMU 的 isa-serial
+   也按 4-edge 工作（与 Linux 在 QEMU 上的 IOAPIC 配置一致）。因此这里
+   使用 fixed delivery / physical destination / active-high / edge。
+*/
+static int ioapic_set_redir(unsigned gsi, uint8_t vector, uint8_t dest, bool masked)
+{
+    if (!g_ioapic_base || gsi > IOAPIC_MAX_GSI)
+        return -1;
+
+    uint32_t reg = IOAPIC_REDTBL_BASE + 2u * gsi;
+    uint32_t low = (uint32_t)vector; /* fixed, physical, active-high, edge */
+    uint32_t high = (uint32_t)dest << 24;
+
+    /* 更新期间先屏蔽，避免写入一半的表项被投递 */
+    ioapic_write(reg, low | (1u << 16));
+    ioapic_write(reg + 1u, high);
+    ioapic_write(reg, masked ? (low | (1u << 16)) : low);
+    return 0;
 }
 
 /* ── PIT Channel 2 辅助(用于校准)─────────────────────────────
@@ -399,12 +452,21 @@ static void lapic_dispatch(void *frame)
 static int lapic_enable_api(unsigned irq, bool on)
 {
     /*
-       x86 的中断门在 IDT 里是常开的，没有逐向量的 mask 位
-       (LAPIC LVT 只影响本核 timer/LINT)。设备中断线目前未使用。
+       外部设备线：irq 是 IDT 向量，GSI = irq - IDT_IRQ_BASE。
+       向量 0x20 是 LAPIC timer，0x21-0x2F 对应 GSI 1-15。
+       LAPIC 自身的 timer/IPI 不需要走这里。
     */
-    (void)irq;
-    (void)on;
-    return 0;
+    if (irq <= IDT_IRQ_BASE || irq >= IDT_IRQ_BASE + 16)
+        return -2;
+
+    if (!g_ioapic_base)
+        return -1;
+
+    unsigned gsi = irq - IDT_IRQ_BASE;
+    if (gsi > IOAPIC_MAX_GSI)
+        return -2;
+
+    return ioapic_set_redir(gsi, (uint8_t)irq, (uint8_t)lapic_id(), !on);
 }
 
 static int lapic_set_priority_api(unsigned irq, unsigned prio)
@@ -456,7 +518,17 @@ static const irq_ops_t lapic_irq_ops = {
 
 static int lapic_probe(const device_t *dev)
 {
-    (void)dev; /* LAPIC 基址固定；exception_init() 里已做过一次软件使能 */
+    const irq_cfg_t *cfg = dev ? (const irq_cfg_t *)dev->cfg : NULL;
+
+    /*
+       LAPIC 基址固定（exception_init() 已使能）；IOAPIC 基址由平台配置
+       提供。没有 IOAPIC 的平台保持 0，irq_enable() 对外部线返回 -1。
+    */
+    if (cfg && cfg->ioapic)
+        g_ioapic_base = X86_KERNEL_VMA_OFF + cfg->ioapic;
+    else
+        g_ioapic_base = 0;
+
     irq_bind(&lapic_irq_ops);
     lapic_init();
     return 0;

@@ -36,10 +36,9 @@ static idtr_t idtr;
 
 /* ── ISR 存根地址表(来自 exception.S)────────────────────────── */
 
-extern void *isr_stub_table[]; /* 前 33 个 stub 地址 */
+extern void *isr_stub_table[]; /* 0..47 的 stub 地址（32-47 为外部 IRQ 向量） */
 
-/* 各存根的 extern 声明 */
-extern void isr_stub_32(void);  /* LAPIC Timer */
+/* 不在 isr_stub_table 里的特殊向量存根 */
 extern void isr_stub_240(void); /* 跨核 resched IPI */
 extern void isr_stub_255(void); /* LAPIC Spurious */
 
@@ -134,14 +133,15 @@ void exception_init_secondary(void)
 
 static void exception_setup_idt(void)
 {
-    /* 安装前 32 个 CPU 异常存根(来自 isr_stub_table) */
-    for (int i = 0; i < 32; i++) {
+    /*
+       0-31：CPU 异常；32：LAPIC timer；33-47：外部 IRQ 向量
+       （ISA IRQ n -> IOAPIC GSI n -> IDT 向量 0x20+n）。
+       32-47 的 stub 早已存在，只是以前没有把门装进 IDT。
+    */
+    for (int i = 0; i < 48; i++) {
         void (*stub)(void) = (void (*)(void))isr_stub_table[i];
         idt_set_gate((uint8_t)i, stub, KERNEL_CS_SEL, IDT_ATTR_KERNEL_INT);
     }
-
-    /* 安装向量 32(LAPIC Timer) */
-    idt_set_gate(IDT_LAPIC_TIMER_VEC, isr_stub_32, KERNEL_CS_SEL, IDT_ATTR_KERNEL_INT);
 
     /* 安装向量 0xF0(跨核 resched IPI) */
     idt_set_gate(IDT_RESCHED_IPI_VEC, isr_stub_240, KERNEL_CS_SEL, IDT_ATTR_KERNEL_INT);
