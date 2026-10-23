@@ -762,7 +762,7 @@ DRIVER_EXTRA_FLAGS_driver_dma_dma_buf.c  := -Idriver/dma -Ikernel/mm
 | `kernel/fs/pseudofs/dev.c` | `#if DRIVER_ION/TPU/DMA_BUF` | 运行时能力 + 弱符号 |
 | `kernel/fs/pseudofs/pseudofs.c` | `#if DRIVER_DMA_BUF/NPU` | 节点表按 `driver_present()` 动态注册 |
 | `kernel/vmm/aarch64/virq.c` | `#if DRIVER_GIC_V3` | `irq_virt_ops() != NULL` |
-| `kernel/vmm/vdev/npu/vnpu.c` | `#if DRIVER_NPU_RKNPU` | `npu_present()` + 弱符号 |
+| `kernel/vmm/vdev/npu/vnpu.c` | `#if DRIVER_NPU_RKNPU` | `npu_present()` + `g_npu_ops` |
 | `kernel/task/cpu.c` | `#if DRIVER_GIC_V2/V3` 调试 dump | `irq_debug_dump()`（可选 ops） |
 
 ### 11.3 阶段 3（平台数据化）
@@ -806,7 +806,7 @@ DRIVER_EXTRA_FLAGS_driver_dma_dma_buf.c  := -Idriver/dma -Ikernel/mm
 
 - 公共头迁移 + `serial/irq/block` ops；
 - 删除全局 `-Idriver`，开启 `driver-layering-check`；
-- 弱符号兜底，去掉 fs/syscall/pseudofs/VMM 的 `#if DRIVER_*`；
+- 服务 ops 注册（`*_bind()`），去掉 fs/syscall/pseudofs/VMM 的 `#if DRIVER_*`；
 - IRQ 分发统一（单独提交）。
 
 验收：`driver-layering-check` 干净；5 平台编译 + boot；LTP smoke；`vmm_helper_regress.sh` / `vmm_multivm_regress.sh` 通过。
@@ -971,8 +971,7 @@ DRIVER_EXTRA_FLAGS_driver_dma_dma_buf.c  := -Idriver/dma -Ikernel/mm
 
 ### 17.4 阶段 2c/2d 待办
 
-- DMA/ION/TPU/NPU 的弱符号兜底（`dma_buf_present()`/`ion_present()`/
-  `tpu_present()`/`npu_present()`），替换 `kernel/syscall/*`、
+- DMA/ION/TPU/NPU 的服务注册（`*_ops_t`/`*_bind()` + `*_present()`），替换 `kernel/syscall/*`、
   `kernel/fs/pseudofs/*`、`kernel/vmm/vdev/npu/vnpu.c` 的 `#if DRIVER_*`；
 - VMM 的 `DRIVER_GIC_V3` 仍是编译期布局/实现选择（`include/vmm/vmm.h`
   的字段、`virq.c`/`el2_run.c`/`vm_init.c` 的 vGIC 调用），需要先给
@@ -980,3 +979,66 @@ DRIVER_EXTRA_FLAGS_driver_dma_dma_buf.c  := -Idriver/dma -Ikernel/mm
 - 移除全局 `-Idriver`，把 `irq/lapic.h`（x86 AP 启动、
   `g_tsc_freq_hz`）和 `irq/gicv3.h`（vGIC 寄存器定义）剩余用户收敛到
   公共/架构头，并启用分层检查。
+
+---
+
+## 18. 阶段 2c 实现记录（2026-10-23）
+
+### 18.1 可选服务：ops 注册，不是弱符号
+
+服务是否可用由“驱动有没有 probe 并绑定 ops”决定，不再用逐函数弱符号：
+
+- 每类服务一个 `*_ops_t` + `g_*_ops` + `*_bind()`：
+  - ION：`include/driver/ion.h` + `driver/ion/ion_core.c`；
+  - dma-buf：`include/dma_buf.h` + `driver/dma/dma_core.c`；
+  - TPU：`include/driver/tpu.h` + `driver/tpu/tpu_core.c`；
+  - NPU：`include/driver/npu.h` + `driver/npu/npu_core.c`。
+- 公共头里的 `ion_alloc()` 等是同名 `static inline` 包装：`g_*_ops == NULL`
+  时统一返回失败/空，不再链接任何 stub 符号。
+- 驱动 probe 调 `*_bind(&driver_ops)`；服务缺失时指针保持 NULL。
+- NPU 的 DRM 入口（`rknpu_drm_ioctl_file/close_file/mmap_lookup`）也走
+  `g_npu_ops`，pseudofs 节点表和 `sys_mmap` 直接引用内联包装。
+- 删除了 `ion/dma/tpu/npu_stubs.c` 及 Makefile 里对应的兜底源文件。
+
+### 18.2 fd 操作表（对应 Linux 的 file_operations）
+
+`fd_obj_t` 增加 `const fd_ops_t *ops` 和 `void *priv`（`include/driver/fd_ops.h`）：
+
+- ION / dma-buf 创建 fd 时由驱动填入自己的 ops；
+- `sys_mmap` 不再有 ION/dma-buf 分支，统一调 `ops->get_phys(priv, &pa, &size)`
+  再走公共逐页映射；
+- `dup`/`fd_table_inherit` 调 `ops->dup`，`close` 调 `ops->close`；
+- dma-buf 的 `DMA_BUF_IOCTL_SYNC` 仍在 `kernel/fs/pseudofs/dev.c` 处理
+  用户指针（copy_from_user），ioctl 核心只按 `FDT_DMABUF` 分派一次。
+
+### 18.3 去掉 kernel 里的 `#if DRIVER_*`
+
+- `kernel/syscall/fs/{file_ops,fd_pool,ioctl}.c`、`kernel/syscall/mm/mmap.c`
+  和 `kernel/fs/pseudofs/dev.c` 无条件引用服务包装。
+- `/dev/ion`、`/dev/cvi-tpu0`、`/dev/dma_heap/*`、`/dev/dri/*`、
+  `/proc/dri/*` 保留在固定节点表中，`pfs_node_available()` 按 `g_*_ops`
+  过滤；节点 nid 语义不变。
+- `kernel/vmm/vdev/npu/vnpu.c` 的 NPU 透传模型无条件编译，经
+  `g_npu_ops` 调用；`host_base==0` 时仍然不注册设备。
+
+### 18.4 验证
+
+- 5 个平台 clean build 零告警：qemu-aarch64、qemu-riscv64、
+  qemu-x86_64、rk3588 SMP=8（NPU+DMA）、sg2002（ION+TPU）。
+- 默认 qemu-aarch64（无服务）：`/dev` 里没有 ion/cvi-tpu0/dma_heap/dri，
+  `/proc/dri` 不存在；`/proc/uptime` 正常。
+- `qemu-virt-aarch64 DMA=1` + `/bin/dmatest`：5/5 通过
+  （alloc → mmap → sync → fork 共享 → 300 轮分配/关闭无泄漏）。
+- `qemu-virt-riscv64 TPU=cvitpu ION=1`：`/dev/ion` 可见并正常启动。
+- 没有对应硬件设备时（QEMU 的 NPU/TPU 节点），驱动 probe 被跳过，
+  `g_*_ops` 为 NULL，相关节点隐藏；rk3588/sg2002 的设备表里有 npu0/tpu
+  设备，probe 时绑定。
+- `clang-format --dry-run --Werror` 通过。
+
+### 18.5 剩余（阶段 2d）
+
+- `-Idriver` 仍在全局 CFLAGS；`kernel/task/cpu.c`、`boot/x86_64/exception.c`、
+  VMM 的 `irq/lapic.h`/`irq/gicv3.h` 私有 include 需要先收敛。
+- VMM 的 `DRIVER_GIC_V3` 仍是编译期布局/实现选择（`include/vmm/vmm.h`、
+  `virq.c`、`el2_run.c`、`vm_init.c`、`guest_loader.c`）。
+- 分层检查脚本（禁止 kernel/ 引用 driver/ 私有头）尚未加入构建。

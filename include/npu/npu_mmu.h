@@ -119,7 +119,9 @@ static inline uint32_t npu_mmu_mk_pte(uint64_t pa, int writable)
     return pte;
 }
 
-/* ── 宿主侧 API ──────────────────────────────────────────────────────── */
+/* ── 宿主侧 API ────────────────────────────────────────────────────────
+   函数原型统一在 include/driver/npu.h（经 g_npu_ops 分发）；本头只定义
+   寄存器/页表格式。 */
 
 /*
    npu_mmu_init — 上电时调用一次：记下四个 MMU 寄存器块的位置。
@@ -129,7 +131,6 @@ static inline uint32_t npu_mmu_mk_pte(uint64_t pa, int writable)
 
    返回 0 成功；平台没有 NPU 时返回 -1(调用方忽略即可)。
 */
-int npu_mmu_init(void);
 
 /*
    npu_mmu_enable — 把 NPU 的地址翻译接管过来(guest 拿到 NPU 时调用)。
@@ -137,14 +138,12 @@ int npu_mmu_init(void);
    建一张覆盖 guest RAM 的表, 写 DTE_ADDR, 开 ENABLE_PAGING。
    表一开始是空的 —— 具体映射由 npu_mmu_sync() 在提交时填。
 */
-int npu_mmu_enable(uint64_t ipa_base, uint64_t ipa_size);
 
 /*
    npu_mmu_disable — 关掉翻译(guest 交还 NPU 时调用)。
 
    注意： 必须关：宿主自己驱动 NPU 时用的是物理地址, 翻译开着会全部对不上。
 */
-void npu_mmu_disable(void);
 
 /*
    npu_mmu_sync — 把 stage-2 的 IPA→PA 镜像进这张表(提交前调用)。
@@ -153,7 +152,6 @@ void npu_mmu_disable(void);
    有变化才发 ZAP_CACHE。返回本次新填的页数。
 */
 struct vm;
-int npu_mmu_sync(struct vm *vm);
 
 /*
    npu_mmu_clear_fault — 清掉粘住的缺页。
@@ -162,16 +160,12 @@ int npu_mmu_sync(struct vm *vm);
    PAGE_FAULT_DONE。我们不处理缺页中断, 所以早期某次撞击会让它永远停在那儿 ——
    表填得再全也没用, 因为翻译根本不发生了。每次提交前先清一遍。
 */
-void npu_mmu_clear_fault(void);
 
 /* 诊断：翻译开了没有 / 表里填了多少项 */
-void npu_mmu_dump(void);
 
 /* 有没有哪一组 bank 正处于缺页。调用方用它决定要不要打诊断。 */
-bool npu_mmu_any_fault(void);
 
 /* 诊断：拿一个具体 IPA 对账 —— 我的表 vs stage-2 各翻到哪个物理页 */
-void npu_mmu_probe(struct vm *vm, uint64_t ipa);
 
 #endif /* ARCH_AARCH64 */
 #endif /* NPU_MMU_H */

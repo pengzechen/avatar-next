@@ -125,7 +125,7 @@ int pfs_getdents_node(int nid, uint64_t *off, void *buf, size_t bufsz)
     int count = pfs_node_count();
     for (int i = 0; i < count; i++) {
         const pseudo_node_t *child = pfs_node_at(i);
-        if (!child || child == dir || !is_direct_child(dir->path, child->path))
+        if (!child || child == dir || !pfs_node_available(child) || !is_direct_child(dir->path, child->path))
             continue;
         if (idx < *off) {
             idx++;

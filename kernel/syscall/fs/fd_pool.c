@@ -18,13 +18,6 @@
 #include "klog.h"
 #include "task/task.h"
 
-#if DRIVER_ION
-#include "ion/ion.h"
-#endif
-#if DRIVER_DMA_BUF
-#include "dma_buf.h" /* dma_buf_put_index(fd 关闭路径) */
-#endif
-
 /*
    池和 fd 表的并发保护。
 
@@ -78,6 +71,8 @@ void fd_pool_free(int idx)
     spin_lock(&g_fd_pool_lock);
     g_fd_pool[idx].wq.waiter_count = 0;
     g_fd_pool[idx].vfs_file = NULL;
+    g_fd_pool[idx].ops = NULL;
+    g_fd_pool[idx].priv = NULL;
     g_fd_pool[idx].type = FDT_FREE;
     spin_unlock(&g_fd_pool_lock);
     arch_irq_restore(flags);
@@ -85,17 +80,22 @@ void fd_pool_free(int idx)
     KLOG_SYSCALL("[fd] pool_free: freeing slot %d\n", idx);
 }
 
-void fd_obj_ref(int idx)
+int fd_obj_ref(int idx)
 {
     if (idx < 0 || idx >= FD_POOL_SIZE)
-        return;
+        return -1;
 
     fd_obj_t *obj = &g_fd_pool[idx];
     if (obj->type == FDT_FREE)
-        return;
+        return -1;
 
-    if (obj->vfs_file)
+    if (obj->vfs_file) {
         vfs_ref(obj->vfs_file);
+        return 0;
+    }
+    if (obj->ops && obj->ops->dup)
+        return obj->ops->dup(obj->priv);
+    return 0;
 }
 
 void fd_obj_close(int idx)
@@ -112,20 +112,9 @@ void fd_obj_close(int idx)
         obj->vfs_file = NULL;
     } else if (obj->type == FDT_EPOLL) {
         epoll_destroy(obj->epoll.ep_idx);
+    } else if (obj->ops && obj->ops->close) {
+        obj->ops->close(obj->priv);
     }
-#if DRIVER_ION
-    else if (obj->type == FDT_ION) {
-        ion_free((ion_handle_t)obj->ion.handle);
-    }
-#endif
-#if DRIVER_DMA_BUF
-    else if (obj->type == FDT_DMABUF) {
-        /* fd 在 dma_buf_alloc_fd_current() 里 get 过一份引用, 这里对称地还回去；
-           引用归零时 dma_buf_put 内部会把内存还给堆。
-        */
-        dma_buf_put_index(obj->dmabuf.idx);
-    }
-#endif
 }
 
 void fd_obj_attach_vfs(int idx, vfs_file_t *file)
@@ -135,6 +124,8 @@ void fd_obj_attach_vfs(int idx, vfs_file_t *file)
 
     fd_obj_t *obj = &g_fd_pool[idx];
     obj->vfs_file = file;
+    obj->ops = NULL;
+    obj->priv = NULL;
     obj->flags = file->flags;
     obj->type = FDT_VFS;
     int k = 0;
@@ -215,7 +206,7 @@ fd_obj_t *task_get_fd(task_t *task, int fd)
     return &g_fd_pool[idx];
 }
 
-int task_alloc_ion_fd(task_t *task, uint32_t handle)
+int task_alloc_ion_fd(task_t *task, uint32_t handle, const fd_ops_t *ops, void *priv)
 {
     if (!task)
         return -1;
@@ -227,6 +218,8 @@ int task_alloc_ion_fd(task_t *task, uint32_t handle)
     fd_obj_t *obj = &g_fd_pool[pool];
     obj->type = FDT_ION;
     obj->flags = 0;
+    obj->ops = ops;
+    obj->priv = priv;
     obj->ion.handle = handle;
 
     const char *path = "/dev/ion_buffer";
@@ -254,7 +247,7 @@ int task_get_ion_handle(task_t *task, int fd, uint32_t *handle)
     return 0;
 }
 
-int task_alloc_dmabuf_fd(task_t *task, uint32_t idx)
+int task_alloc_dmabuf_fd(task_t *task, uint32_t idx, const fd_ops_t *ops, void *priv)
 {
     if (!task)
         return -1;
@@ -266,6 +259,8 @@ int task_alloc_dmabuf_fd(task_t *task, uint32_t idx)
     fd_obj_t *obj = &g_fd_pool[pool];
     obj->type = FDT_DMABUF;
     obj->flags = 0;
+    obj->ops = ops;
+    obj->priv = priv;
     obj->dmabuf.idx = idx;
 
     const char *path = "/dev/dmabuf";
@@ -331,7 +326,11 @@ void fd_table_inherit(task_t *child, task_t *parent)
         }
         g_fd_pool[new_idx] = *src;
         g_fd_pool[new_idx].wq.waiter_count = 0;
-        fd_obj_ref(new_idx);
+        if (fd_obj_ref(new_idx) != 0) {
+            fd_pool_free(new_idx);
+            child->fd_table[fd] = -1;
+            continue;
+        }
         child->fd_table[fd] = (int16_t)new_idx;
     }
 }

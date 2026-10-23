@@ -16,6 +16,7 @@
 #include "types.h"
 #include "vfs.h"
 #include "syscall/io/epoll.h"
+#include "driver/fd_ops.h"
 
 /* 前向声明 task_t, 避免本头文件强制拉入 task/task.h */
 struct task;
@@ -40,6 +41,9 @@ typedef struct {
     int flags;
     char path[128];
     vfs_file_t *vfs_file;
+    /* 可选服务 fd（ION / dma-buf）的操作表与私有数据。NULL = 普通 fd。 */
+    const fd_ops_t *ops;
+    void *priv;
     union {
         struct {
             uint32_t handle;
@@ -62,15 +66,15 @@ extern fd_obj_t g_fd_pool[FD_POOL_SIZE];
 /* ── fd 池槽位分配 / 释放 ─────────────────────────────────────── */
 int fd_pool_alloc(void);
 void fd_pool_free(int idx);
-void fd_obj_ref(int idx);
+int fd_obj_ref(int idx);
 void fd_obj_close(int idx);
 void fd_obj_attach_vfs(int idx, vfs_file_t *file);
 
 /* ── 任务级 fd 表操作 ─────────────────────────────────────────── */
-int task_alloc_ion_fd(task_t *task, uint32_t handle);
+int task_alloc_ion_fd(task_t *task, uint32_t handle, const fd_ops_t *ops, void *priv);
 int task_get_ion_handle(task_t *task, int fd, uint32_t *handle);
 /* dma-buf fd：与 ion 同构, 但存的是 dma_buf 表下标 */
-int task_alloc_dmabuf_fd(task_t *task, uint32_t idx);
+int task_alloc_dmabuf_fd(task_t *task, uint32_t idx, const fd_ops_t *ops, void *priv);
 int task_get_dmabuf_idx(task_t *task, int fd, uint32_t *idx);
 int task_alloc_fd(task_t *task, int pool_idx);
 int task_take_fd(task_t *task, int fd);

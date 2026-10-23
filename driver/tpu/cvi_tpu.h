@@ -15,6 +15,7 @@
 #define DRIVER_TPU_CVI_TPU_H
 
 #include "types.h"
+#include "driver/tpu.h"
 
 /* ── TDMA 寄存器偏移 ──────────────────────────────────────────────────── */
 #define TDMA_CTRL         0x00U
@@ -102,10 +103,5 @@ struct cvi_tpu_cpu_sync_desc {
     uint32_t reserved[2];
     char str[196]; /* (56 - 7) * 4 bytes */
 };
-
-/* ── 公开 API ──────────────────────────────────────────────────────────── */
-void cvi_tpu_init(void);
-int cvi_tpu_run_dmabuf(void *dmabuf_v, uint64_t dmabuf_p);
-bool cvi_tpu_is_ready(void);
 
 #endif /* DRIVER_TPU_CVI_TPU_H */

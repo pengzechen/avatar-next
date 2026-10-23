@@ -23,12 +23,10 @@
 #include "string.h"
 #include "pmm.h"
 #include "task/task.h"
-#if DRIVER_DMA_BUF
-#include "dma_buf.h" /* dma_heap_dev_ioctl(/dev/dma_heap/ 各节点) */
-#endif
-#if DRIVER_NPU_RKNPU
-#include "rknpu_drm.h" /* rknpu_drm_ioctl_file(/dev/dri/renderD128) */
-#endif
+#include "dma_buf.h"          /* dma_heap_dev_ioctl / dma_buf_present */
+#include "driver/ion.h"       /* ion_present */
+#include "driver/tpu.h"       /* tpu_present */
+#include "driver/npu.h"       /* npu_present */
 #include "task/cpu.h"         /* g_cpus / g_num_cpus / AVATAR_MAX_CPUS(/proc/uptime 的 idle 列) */
 #include "driver/time.h"      /* timer_get_ns / TIMER_FREQUENCY_HZ */
 #include "syscall/io/epoll.h" /* EPOLLIN/EPOLLOUT：pseudo_poll 的兜底返回值 */
@@ -157,7 +155,6 @@ static int version_read(int nid, uint64_t off, void *buf, size_t len)
     return pfs_copy_out(off, buf, len, content, sizeof(content) - 1);
 }
 
-#if DRIVER_NPU_RKNPU
 /*
    /proc/dri/N/name —— DRM 的传统 /proc 接口。
 
@@ -175,7 +172,6 @@ static int dri_name_read(int nid, uint64_t off, void *buf, size_t len)
     static const char content[] = "rknpu 1.0.0 20260101 Avatar OS RK3588 NPU (DRM-compat shim)\n";
     return pfs_copy_out(off, buf, len, content, sizeof(content) - 1);
 }
-#endif
 
 /* /proc/uptime */
 
@@ -369,18 +365,14 @@ static const pseudo_node_t g_nodes[] = {
     { "/proc/sys", PSEUDO_DIR, MODE_DIR, 0, NULL, NULL, NULL, NULL, NULL, NULL, NULL },
     { "/proc/sys/kernel", PSEUDO_DIR, MODE_DIR, 0, NULL, NULL, NULL, NULL, NULL, NULL, NULL },
     { "/sys", PSEUDO_DIR, MODE_DIR, 0, NULL, NULL, NULL, NULL, NULL, NULL, NULL },
-#if DRIVER_DMA_BUF
     /* dma-heap 在 Linux 上是个目录, 运行时 open 里面的某个堆 */
     { "/dev/dma_heap", PSEUDO_DIR, MODE_DIR, 0, NULL, NULL, NULL, NULL, NULL, NULL, NULL },
-#endif
-#if DRIVER_NPU_RKNPU
     /* librknnrt 实测扫的是 card0..card15(不是 renderD*), 两个都要有 */
     { "/dev/dri", PSEUDO_DIR, MODE_DIR, 0, NULL, NULL, NULL, NULL, NULL, NULL, NULL },
     /* DRM 的传统 /proc 接口, librknnrt 靠它认驱动名(必须是 "rknpu") */
     { "/proc/dri", PSEUDO_DIR, MODE_DIR, 0, NULL, NULL, NULL, NULL, NULL, NULL, NULL },
     { "/proc/dri/0", PSEUDO_DIR, MODE_DIR, 0, NULL, NULL, NULL, NULL, NULL, NULL, NULL },
     { "/proc/dri/0/name", PSEUDO_REG, MODE_REG, 0, dri_name_read, NULL, NULL, NULL, NULL, NULL, NULL },
-#endif
 
     /* ── /dev 字符设备 ─────────────────────────────────── */
     { "/dev/null", PSEUDO_CHR, MODE_CHRW, (1U << 8) | 3U, null_read, null_write, NULL, NULL, NULL, NULL, NULL },
@@ -394,7 +386,6 @@ static const pseudo_node_t g_nodes[] = {
       NULL },
     { "/dev/ion", PSEUDO_CHR, MODE_CHRW, (10U << 8) | 56U, NULL, null_write, ion_dev_ioctl, NULL, NULL, NULL, NULL },
     { "/dev/npu", PSEUDO_CHR, MODE_CHRW, (10U << 8) | 242U, NULL, null_write, npu_dev_ioctl, NULL, NULL, NULL, NULL },
-#if DRIVER_DMA_BUF
     /*
        dma-heap：官方 librknnrt 从这里分配每一块缓冲区
        (DMA_HEAP_IOCTL_ALLOC), 再以 dmabuf fd 的形式流转。详见
@@ -409,8 +400,6 @@ static const pseudo_node_t g_nodes[] = {
       NULL, NULL, NULL },
     { "/dev/dma_heap/cma", PSEUDO_CHR, MODE_CHRW, (10U << 8) | 244U, NULL, null_write, dma_heap_dev_ioctl, NULL, NULL,
       NULL, NULL },
-#endif
-#if DRIVER_NPU_RKNPU
     /*
        DRM 节点。
 
@@ -429,7 +418,6 @@ static const pseudo_node_t g_nodes[] = {
       rknpu_drm_ioctl_file, rknpu_drm_close_file },
     { "/dev/dri/renderD128", PSEUDO_CHR, MODE_CHRW, (226U << 8) | 128U, NULL, null_write, NULL, NULL, NULL,
       rknpu_drm_ioctl_file, rknpu_drm_close_file },
-#endif
     { "/dev/video0", PSEUDO_CHR, MODE_CHRW, (81U << 8) | 0U, video0_read, null_write, video0_ioctl, NULL, NULL, NULL,
       NULL },
 /* guest 控制设备：宿主 shell 里的 /bin/vmm-run 打开它来启动/驱动 guest。
@@ -472,11 +460,37 @@ const pseudo_node_t *pfs_node_at(int nid)
     return &g_nodes[nid];
 }
 
+/*
+   可选服务节点是否可见。节点表本身保持编译期固定(nid 就是表下标,
+   open/read/ioctl 全都直接用它), 只在查找和目录枚举时过滤 —— 这样
+   移除 #if DRIVER_* 不会改变 nid 的含义。
+*/
+bool pfs_node_available(const pseudo_node_t *node)
+{
+    if (node == NULL)
+        return false;
+
+    const char *p = node->path;
+    if (pfs_strncmp(p, "/dev/dma_heap", 13) == 0)
+        return dma_buf_present();
+    if (pfs_strncmp(p, "/dev/dri", 8) == 0)
+        return npu_present();
+    if (pfs_strncmp(p, "/proc/dri", 9) == 0)
+        return npu_present();
+    if (pfs_strcmp(p, "/dev/ion") == 0)
+        return ion_present();
+    if (pfs_strcmp(p, "/dev/cvi-tpu0") == 0)
+        return tpu_present();
+    return true;
+}
+
 /* ── 内部辅助 ─────────────────────────────────────────────────── */
 
 static int find_node(const char *path)
 {
     for (int i = 0; i < NODE_COUNT; i++) {
+        if (!pfs_node_available(&g_nodes[i]))
+            continue;
         if (pfs_strcmp(g_nodes[i].path, path) == 0)
             return i;
     }

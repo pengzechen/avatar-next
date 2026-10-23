@@ -257,21 +257,10 @@ _Static_assert(DRM_IOCTL_RKNPU_MEM_SYNC == 0xc0206445U, "与实测不符");
 #define RKNPU_MEM_SYNC_TO_DEVICE   (1U << 0)
 #define RKNPU_MEM_SYNC_FROM_DEVICE (1U << 1)
 
-/* ── 内核侧入口(实现在 driver/npu/rknpu_drm.c)────────────────────────── */
-
-/* /dev/dri/renderD128 节点的 per-file 回调(见 pseudofs_internal.h 的说明) */
-int rknpu_drm_ioctl_file(void *file, uint64_t req, void *argp);
-int rknpu_drm_close_file(void *file);
-
 /*
-   把 MEM_MAP 返回的假偏移解析成 (物理地址, 长度), 供 sys_mmap 用。
-   不是本驱动的偏移返回 -1。
-
-   注意： 名字必须与 driver/npu/rknpu_drm.c 里的定义逐字一致：写错了就是
-   隐式声明 —— 编译器按 "返回 int 的未知函数" 处理, 调用点不报错只报
-   -Wimplicit-function-declaration, 而这类问题在 aarch64 上出过指针被
-   当成 32 位的真实故障(见本仓库 memory：隐式声明 + aarch64 = 截断)。
+   内核侧入口(rknpu_drm_ioctl_file / rknpu_drm_close_file /
+   rknpu_drm_mmap_lookup)现在由 include/driver/npu.h 以内联包装暴露，
+   经 g_npu_ops 分发；本头只保留用户态 ABI。
 */
-int rknpu_drm_mmap_lookup(void *file, uint64_t offset, uint64_t *paddr_out, uint64_t *size_out);
 
 #endif /* RKNPU_DRM_H */

@@ -517,7 +517,9 @@ CFLAGS  += -DDEVICE_ETH_BASE_RAW=$(DEV_ETH_BASE)
 # UART=、GIC=/IRQ=、ETH=、NPU=、TPU=、DMA=、ION=、BLOCK=。
 
 DRIVER_SRCS_CORE   := driver/core/driver.c driver/core/device.c driver/blk/block.c \
-                      driver/serial/serial.c driver/irq/irq.c
+                      driver/serial/serial.c driver/irq/irq.c \
+                      driver/ion/ion_core.c driver/dma/dma_core.c \
+                      driver/tpu/tpu_core.c driver/npu/npu_core.c
 DRIVER_SRCS_CFLAGS :=
 DRIVER_SRCS_PLIC   :=
 DRIVER_SRCS_TPU    :=

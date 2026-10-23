@@ -199,7 +199,7 @@ static int poll_tiu_done(uint32_t bd_cmd_id)
 /*
    cvi_tpu_init — 从 platform_cfg 读取 MMIO 基地址, 完成 TPU 基本初始化
 */
-void cvi_tpu_init(void)
+static void cvi_tpu_impl_init(void)
 {
     g_tpu.tdma_base = platform_get_mmio("tpu", "tdma_base");
     g_tpu.tiu_base = platform_get_mmio("tpu", "tiu_base");
@@ -220,7 +220,7 @@ void cvi_tpu_init(void)
     KLOG_INFO("cvi_tpu: initialized\n");
 }
 
-bool cvi_tpu_is_ready(void)
+static bool cvi_tpu_impl_is_ready(void)
 {
     return g_tpu.initialized != 0;
 }
@@ -233,7 +233,7 @@ bool cvi_tpu_is_ready(void)
 
    改写自 platform_run_dmabuf(), 直接同步等待替代 wait_for_completion。
 */
-int cvi_tpu_run_dmabuf(void *dmabuf_v, uint64_t dmabuf_p)
+static int cvi_tpu_impl_run_dmabuf(void *dmabuf_v, uint64_t dmabuf_p)
 {
     uint32_t i;
     int ret;
@@ -324,10 +324,17 @@ int cvi_tpu_run_dmabuf(void *dmabuf_v, uint64_t dmabuf_p)
     return 0;
 }
 
+static const tpu_ops_t tpu_driver_ops = {
+    .init = cvi_tpu_impl_init,
+    .is_ready = cvi_tpu_impl_is_ready,
+    .run_dmabuf = cvi_tpu_impl_run_dmabuf,
+};
+
 static int cvi_tpu_probe(const device_t *dev)
 {
-    (void)dev; /* 阶段 1：cvi_tpu_init() 仍直接读平台配置 */
-    cvi_tpu_init();
+    (void)dev; /* 阶段 1：cvi_tpu_impl_init() 仍直接读平台配置 */
+    tpu_bind(&tpu_driver_ops);
+    cvi_tpu_impl_init();
     return 0;
 }
 

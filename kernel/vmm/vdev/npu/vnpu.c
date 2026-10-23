@@ -22,22 +22,12 @@
 #include "mm_vm.h"        /* phys_to_virt：dump 恒等窗口里的 regcmd */
 #include "types.h"
 /*
-   注意： 本文件对宿主 NPU 驱动的依赖是编译期的：寄存器偏移复用
-      driver/npu/rknpu.h, 让出/收回要调 rknpu_host_release/reclaim。
-      而 rknpu.c 只在 NPU=rknpu 时才进构建(Makefile §6b),
-      别的平台上直接链接失败——现象是
-        `undefined reference to rknpu_host_release`
-      指向这个 VMM 文件, 而根因在构建配置里。
-
-      所以整段用 DRIVER_NPU_RKNPU 包起来：那种平台上本文件退化成
-      「只转发, 不注入」, 而 vnpu_init 本来也会因为 host_base==0 提前返回
-      (QEMU 的 platform.conf 里没有 npu 段)。两层都留着 —— 前者是编译期
-      的硬边界, 后者是运行期的。
+   对宿主 NPU 驱动的依赖走 include/driver/npu.h：寄存器偏移、让出/收回、
+   NPU IOMMU 都在那里有公共声明，经 g_npu_ops 分发。没有 NPU 的构建里
+   g_npu_ops 为 NULL，本文件照常编译；vnpu_init() 看到 host_base==0 会直接
+   返回(QEMU 的 platform.conf 里没有 npu 段)。
 */
-#if DRIVER_NPU_RKNPU
-#include "npu/rknpu.h"
-#include "npu/npu_mmu.h" /* 宿主独占的 NPU IOMMU */
-#endif
+#include "driver/npu.h"
 
 /*
    NPU 的 IOMMU 寄存器块 —— 落在本透传窗口之内, 必须摘掉不能转发。
@@ -114,12 +104,10 @@ static int g_vnpu_nwrote;
 */
 #define VNPU_KEY_MAX 16
 static int g_vnpu_nkey;
-#if DRIVER_NPU_RKNPU
-static int g_vnpu_dumped; /* regcmd 只 dump 一次(只用在上面的 #if 块里) */
+static int g_vnpu_dumped; /* regcmd 只 dump 一次 */
 /* 0=无 1=已提交待探 2=待在下一次寄存器访问时 dump */
 static int g_vnpu_pending_probe;
 static uint64_t g_vnpu_last_desc; /* guest 最后写进 PC_DATA_ADDR 的真地址 */
-#endif
 
 static inline bool vnpu_key_off(uint64_t off)
 {
@@ -195,7 +183,6 @@ static void vnpu_write(mmio_device_t *dev, uint64_t offset, uint8_t size, uint64
        在这之前把 stage-2 的映射镜像进 NPU 的 IOMMU 表 —— 这是"NPU 能看到的
        内存"的唯一权威来源, 也是窗口外缓冲不再出错的原因。
     */
-#if DRIVER_NPU_RKNPU
     if (offset == RKNPU_PC_OP_EN && dev->priv) {
         vm_t *vm = (vm_t *)dev->priv;
 
@@ -241,7 +228,6 @@ static void vnpu_write(mmio_device_t *dev, uint64_t offset, uint8_t size, uint64
             }
         }
     }
-#endif
 
     if (++g_vnpu_accesses == 1) {
         KLOG_INFO("[vnpu] guest first access to NPU register (offset=0x%llx size=%u) - passthrough active\n",
@@ -261,7 +247,6 @@ static void vnpu_write(mmio_device_t *dev, uint64_t offset, uint8_t size, uint64
        恒等窗口里, 否则 NPU 按物理地址去读会读到别处的东西, 而两边都不报错：
        guest 侧驱动只管写下去, NPU 那边只是跑不出结果。
     */
-#if DRIVER_NPU_RKNPU
     if (offset == RKNPU_PC_DATA_ADDR && value > 1) {
         g_vnpu_last_desc = value;
     }
@@ -328,7 +313,6 @@ static void vnpu_write(mmio_device_t *dev, uint64_t offset, uint8_t size, uint64
                 KLOG_INFO("[vnpu] all addresses in regcmd are inside the window\n");
         }
     }
-#endif
 
     /* 其余偏移每个只记一次(见 g_vnpu_wrote 的说明) */
     if (g_vnpu_nwrote < VNPU_TRACE_MAX) {
@@ -418,7 +402,6 @@ int vnpu_init(vm_t *vm, mmio_bus_t *bus, uintptr_t host_base)
        放在注册成功之后：万一上面失败, 建 VM 半途而废, 宿主手里还拿着
        NPU, 不会出现"谁都没有 NPU"的空窗。
     */
-#if DRIVER_NPU_RKNPU
     rknpu_host_release();
     /*
        把 NPU 的地址翻译接管过来：guest 交给 NPU 的是 IPA, 由宿主的表
@@ -426,7 +409,6 @@ int vnpu_init(vm_t *vm, mmio_bus_t *bus, uintptr_t host_base)
     */
     if (npu_mmu_init() == 0)
         (void)npu_mmu_enable(vm->cfg.mem_base, vm->cfg.mem_size);
-#endif
     g_vnpu_owned = true;
     g_vnpu_owner_vmid = vm->vmid;
 
@@ -444,11 +426,9 @@ void vnpu_destroy(vm_t *vm)
     /* 交还给宿主 —— 这样停掉 VM 之后还能再起一个(vmm_helper_regress.sh
        的 --restart 正是走这条路), 宿主自己也能接着跑 NPU 作业。
     */
-#if DRIVER_NPU_RKNPU
     /* 注意： 关翻译在前：宿主 reclaim 之后自己驱动 NPU 用的是物理地址 */
     npu_mmu_disable();
     rknpu_host_reclaim();
-#endif
 }
 
 /*
@@ -478,13 +458,6 @@ bool vnpu_irq_asserted(vm_t *vm, uint32_t core)
 {
     (void)vm; /* 目前三核全局唯一；留参数是为了将来能按 VM 区分 */
 
-#if !DRIVER_NPU_RKNPU
-    /* 本构建里没有宿主 NPU 驱动(NPU≠rknpu)—— 连寄存器偏移都没有,
-       也就无从谈透传。见文件顶上那段。
-    */
-    (void)core;
-    return false;
-#else
     uintptr_t base;
     uint32_t status, mask;
 
@@ -496,5 +469,4 @@ bool vnpu_irq_asserted(vm_t *vm, uint32_t core)
     mask = read32((volatile void *)(base + RKNPU_INT_MASK));
 
     return (status & mask) != 0;
-#endif
 }

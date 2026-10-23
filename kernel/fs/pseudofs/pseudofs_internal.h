@@ -91,6 +91,8 @@ uint32_t pfs_task_pid(uint32_t slot);
 
 int pfs_node_count(void);
 const pseudo_node_t *pfs_node_at(int nid);
+/* 该节点对应的可选服务(DMA/ION/TPU/NPU)是否在本构建中；目录枚举/查找跳过不可用节点 */
+bool pfs_node_available(const pseudo_node_t *node);
 const char *pfs_node_name(const pseudo_node_t *node);
 int pfs_getdents_node(int nid, uint64_t *off, void *buf, size_t bufsz);
 

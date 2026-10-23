@@ -23,6 +23,7 @@
    我们只管把 fd 换成 handle, 再换回来, 内存本身归 dma_buf 层。
 */
 #include "rknpu_drm.h"
+#include "npu_impl.h"
 
 #include "rknpu.h" /* rknpu_submit_task(作业引擎在 rknpu.c) */
 #include "dma_buf.h"
@@ -96,7 +97,7 @@ static rknpu_drm_file_t *drm_file_get_or_create(void *file)
     return NULL;
 }
 
-int rknpu_drm_close_file(void *file)
+int rknpu_drm_impl_close_file(void *file)
 {
     spin_lock(&g_drm_lock);
     rknpu_drm_file_t *ctx = drm_file_find(file);
@@ -464,7 +465,7 @@ static int rknpu_ioctl_mem_map(void *file, void *argp)
 
     /*
        DRM 的约定：这里回一个不透明偏移, 用户态拿它去
-       mmap(fd, ..., offset)。sys_mmap 再经 rknpu_drm_mmap_lookup() 解回来。
+       mmap(fd, ..., offset)。sys_mmap 再经 rknpu_drm_impl_mmap_lookup() 解回来。
        页粒度是硬要求, 见 RKNPU_MMAP_BASE 的说明。
     */
     m.offset = RKNPU_MMAP_BASE + (id << RKNPU_MMAP_SHIFT);
@@ -574,7 +575,7 @@ static int rknpu_ioctl_submit(void *file, void *argp)
 
 /* ── mmap 假偏移解析 ───────────────────────────────────────────────────── */
 
-int rknpu_drm_mmap_lookup(void *file, uint64_t offset, uint64_t *paddr_out, uint64_t *size_out)
+int rknpu_drm_impl_mmap_lookup(void *file, uint64_t offset, uint64_t *paddr_out, uint64_t *size_out)
 {
     if (!paddr_out || !size_out || offset < RKNPU_MMAP_BASE)
         return -1;
@@ -601,7 +602,7 @@ int rknpu_drm_mmap_lookup(void *file, uint64_t offset, uint64_t *paddr_out, uint
 
 /* ── ioctl 总入口 ──────────────────────────────────────────────────────── */
 
-int rknpu_drm_ioctl_file(void *file, uint64_t req, void *argp)
+int rknpu_drm_impl_ioctl_file(void *file, uint64_t req, void *argp)
 {
     switch (req) {
     case DRM_IOCTL_VERSION:

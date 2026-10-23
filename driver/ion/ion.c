@@ -15,7 +15,7 @@
 
    对应 ref: rcore-os/tgoskits 中的 IonHeapManager + IonBufferManager。
 */
-#include "ion.h"
+#include "driver/ion.h"
 #include "types.h"
 #include "mm_vm.h"
 #include "pmm.h"
@@ -55,7 +55,7 @@ static inline uint32_t size_to_pages(size_t size)
 }
 
 /* ── ion_alloc ─────────────────────────────────────────────────────────── */
-int ion_alloc(size_t size, void **vaddr, uint64_t *paddr, ion_handle_t *handle)
+static int ion_impl_alloc(size_t size, void **vaddr, uint64_t *paddr, ion_handle_t *handle)
 {
     if (!size || !vaddr || !paddr || !handle)
         return -1;
@@ -114,7 +114,7 @@ int ion_alloc(size_t size, void **vaddr, uint64_t *paddr, ion_handle_t *handle)
 }
 
 /* ── ion_free ──────────────────────────────────────────────────────────── */
-int ion_free(ion_handle_t handle)
+static int ion_impl_free(ion_handle_t handle)
 {
     if (handle == ION_HANDLE_INVALID)
         return -1;
@@ -151,7 +151,7 @@ int ion_free(ion_handle_t handle)
 }
 
 /* ── ion_ref ───────────────────────────────────────────────────────────── */
-int ion_ref(ion_handle_t handle)
+static int ion_impl_ref(ion_handle_t handle)
 {
     if (handle == ION_HANDLE_INVALID)
         return -1;
@@ -176,7 +176,7 @@ int ion_ref(ion_handle_t handle)
 }
 
 /* ── ion_get_buf ───────────────────────────────────────────────────────── */
-int ion_get_buf(ion_handle_t handle, void **vaddr, uint64_t *paddr)
+static int ion_impl_get_buf(ion_handle_t handle, void **vaddr, uint64_t *paddr)
 {
     if (handle == ION_HANDLE_INVALID)
         return -1;
@@ -204,7 +204,7 @@ int ion_get_buf(ion_handle_t handle, void **vaddr, uint64_t *paddr)
 }
 
 /* ── ion_get_size ──────────────────────────────────────────────────────── */
-size_t ion_get_size(ion_handle_t handle)
+static size_t ion_impl_get_size(ion_handle_t handle)
 {
     if (handle == ION_HANDLE_INVALID)
         return 0U;
@@ -221,9 +221,48 @@ size_t ion_get_size(ion_handle_t handle)
     return sz;
 }
 
+/* ── fd 操作表 ──────────────────────────────────────────────────────────── */
+
+static int ion_fd_get_phys(void *priv, uint64_t *paddr, uint64_t *size)
+{
+    ion_handle_t handle = (ion_handle_t)(uintptr_t)priv;
+
+    if (ion_impl_get_buf(handle, NULL, paddr) != 0)
+        return -1;
+    *size = ion_impl_get_size(handle);
+    return (*size != 0U) ? 0 : -1;
+}
+
+static int ion_fd_dup(void *priv)
+{
+    return ion_impl_ref((ion_handle_t)(uintptr_t)priv);
+}
+
+static void ion_fd_close(void *priv)
+{
+    (void)ion_impl_free((ion_handle_t)(uintptr_t)priv);
+}
+
+static const fd_ops_t ion_fd_ops = {
+    .name = "ion",
+    .get_phys = ion_fd_get_phys,
+    .dup = ion_fd_dup,
+    .close = ion_fd_close,
+};
+
+static const ion_ops_t ion_driver_ops = {
+    .alloc = ion_impl_alloc,
+    .free = ion_impl_free,
+    .ref = ion_impl_ref,
+    .get_buf = ion_impl_get_buf,
+    .get_size = ion_impl_get_size,
+    .fd_ops = &ion_fd_ops,
+};
+
 static int ion_probe(const device_t *dev)
 {
     (void)dev; /* service：无设备；表在首次分配时惰性初始化 */
+    ion_bind(&ion_driver_ops);
     return 0;
 }
 

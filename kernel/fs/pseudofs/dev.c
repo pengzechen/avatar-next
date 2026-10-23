@@ -10,18 +10,11 @@
 #include "klog.h"
 #include "task/task.h"
 
-#if DRIVER_ION
-#include "ion/ion.h"
-#endif
-#if DRIVER_TPU_CVITPU
-#include "tpu/cvi_tpu.h"
-#endif
-#if DRIVER_DMA_BUF
+#include "driver/ion.h"
+#include "driver/tpu.h"
 #include "dma_buf.h"
 #include "syscall/syscall_internal.h" /* copy_from/to_user_bytes */
-#endif
 
-#if DRIVER_DMA_BUF
 /*
    出错时把刚刚分配给用户的 fd 收回来。
 
@@ -63,6 +56,9 @@ static void dmabuf_close_fresh_fd(int fd)
 int dma_heap_dev_ioctl(int nid, uint64_t req, void *argp)
 {
     (void)nid;
+
+    if (!dma_buf_present())
+        return -PFS_ENOSYS;
 
     if (req != DMA_HEAP_IOCTL_ALLOC)
         return -PFS_ENOSYS;
@@ -122,17 +118,16 @@ int dma_buf_fd_ioctl(uint32_t idx, uint64_t req, void *argp)
         return -PFS_EINVAL;
     return 0;
 }
-#endif /* DRIVER_DMA_BUF */
 
-#if DRIVER_ION
 static int ion_alloc_fd_for_current(ion_handle_t handle)
 {
-    extern int task_alloc_ion_fd(task_t * task, uint32_t handle);
+    extern int task_alloc_ion_fd(task_t * task, uint32_t handle, const fd_ops_t *ops, void *priv);
 
     task_t *current = task_current();
-    if (!current)
+    if (!current || !g_ion_ops || !g_ion_ops->fd_ops)
         return -PFS_EINVAL;
-    int fd = task_alloc_ion_fd(current, (uint32_t)handle);
+
+    int fd = task_alloc_ion_fd(current, (uint32_t)handle, g_ion_ops->fd_ops, (void *)(uintptr_t)handle);
     return fd >= 0 ? fd : -PFS_EMFILE;
 }
 
@@ -200,12 +195,14 @@ static int tpu_cache_range_op(const struct cvitpu_legacy_cache_op_arg *op, int i
                (unsigned long long)op->size);
     return 0;
 }
-#endif
 
 int ion_dev_ioctl(int nid, uint64_t req, void *argp)
 {
     (void)nid;
-#if DRIVER_ION
+
+    if (!ion_present())
+        return -PFS_ENOSYS;
+
     if (req == ION_IOC_ALLOC || req == ION_IOC_CVI_ALLOC) {
         struct ion_alloc_req *r = (struct ion_alloc_req *)argp;
         if (!r)
@@ -295,17 +292,15 @@ int ion_dev_ioctl(int nid, uint64_t req, void *argp)
     }
     KLOG_WARN("[pseudofs] /dev/ion unsupported ioctl req=0x%llx\n", (unsigned long long)req);
     return -PFS_ENOSYS;
-#else
-    (void)req;
-    (void)argp;
-    return -PFS_ENOSYS;
-#endif
 }
 
 int tpu_dev_ioctl(int nid, uint64_t req, void *argp)
 {
     (void)nid;
-#if DRIVER_TPU_CVITPU
+
+    if (!tpu_present())
+        return -PFS_ENOSYS;
+
     if (req == CVITPU_SUBMIT_DMABUF || req == CVITPU_LEGACY_SUBMIT_DMABUF) {
         struct cvitpu_submit_dma_arg *r = (struct cvitpu_submit_dma_arg *)argp;
         if (!r)
@@ -357,11 +352,6 @@ int tpu_dev_ioctl(int nid, uint64_t req, void *argp)
     if (req == CVITPU_PIO_MODE)
         return 0;
     return -PFS_ENOSYS;
-#else
-    (void)req;
-    (void)argp;
-    return -PFS_ENOSYS;
-#endif
 }
 
 int npu_dev_ioctl(int nid, uint64_t req, void *argp)

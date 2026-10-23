@@ -16,9 +16,7 @@
 #include "task/task.h"
 #include "klog.h"
 #include "vfs.h"
-#if DRIVER_DMA_BUF
 #include "dma_buf.h"
-#endif
 
 static bool trace_heavy_task(task_t *current)
 {
@@ -86,19 +84,16 @@ void ioctl_handler(uint64_t regs[6], task_t *current)
         }
     }
 
-#if DRIVER_DMA_BUF
     /*
-       dma-buf fd 没有 vfs_file —— 它不是一个文件, 是一个缓冲区句柄,
-       所以走不到上面那条 VFS 分派。而 DMA_BUF_IOCTL_SYNC 恰恰是打在这个
-       fd 自己身上的(librknnrt 就这么发)：少了这一条, 它的每次 CPU 访问
-       都拿不到缓存维护, 症状是模型输出随机出错。
+       dma-buf fd 没有 vfs_file —— 它不是一个文件, 是一个缓冲区句柄。
+       DMA_BUF_IOCTL_SYNC 打在 fd 自己身上(librknnrt 实测)；参数里的用户
+       指针由 dev.c 的 dma_buf_fd_ioctl 统一走 copy_from_user。
     */
     if (ioctl_obj && ioctl_obj->type == FDT_DMABUF) {
         int rc = dma_buf_fd_ioctl(ioctl_obj->dmabuf.idx, request, argp);
         regs[0] = (rc < 0) ? (uint64_t)(int64_t)rc : 0;
         return;
     }
-#endif
 
     /* 非默认 UART fd 不支持全局终端 ioctl fallback。 */
     if (ioctl_obj && fd_obj_file(ioctl_obj)) {

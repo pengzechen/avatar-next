@@ -30,6 +30,7 @@
 #define DMA_BUF_H
 
 #include "types.h"
+#include "driver/fd_ops.h"
 
 /* ── 并发缓冲区上限 ──────────────────────────────────────────────────────
    与 FD_POOL_SIZE(128) 对齐：fd 池装不下的在这里也放不下。
@@ -39,81 +40,128 @@
 /* ── 内核侧对象句柄(不透明；外部只拿指针, fd 只存索引)──────────────── */
 typedef struct dma_buf dma_buf_t;
 
+/* ── 服务操作表 ──────────────────────────────────────────────────────────
+   driver/dma/dma_buf.c 在 probe 时 dma_buf_bind(&ops)。未编译 DMA 时
+   指针为 NULL，下面所有包装统一返回失败/空；内核据此决定 /dev/dma_heap
+   是否可见。
+*/
+typedef struct {
+    dma_buf_t *(*alloc)(size_t size);
+    void (*get)(dma_buf_t *buf);
+    void (*put)(dma_buf_t *buf);
+    uint64_t (*dev_addr)(const dma_buf_t *buf);
+    void *(*kva)(const dma_buf_t *buf);
+    size_t (*size)(const dma_buf_t *buf);
+    dma_buf_t *(*find_by_phys)(uint64_t pa, uint64_t *off);
+    dma_buf_t *(*from_index)(uint32_t idx);
+    uint32_t (*index)(const dma_buf_t *buf);
+    void (*get_index)(uint32_t idx);
+    void (*put_index)(uint32_t idx);
+    void (*sync_region)(dma_buf_t *buf, uint64_t off, uint64_t len, bool to_device);
+    int (*alloc_fd_current)(dma_buf_t *buf);
+    dma_buf_t *(*from_user_fd)(int fd);
+    int (*apply_sync)(uint32_t idx, uint64_t flags);
+} dma_buf_ops_t;
+
+extern const dma_buf_ops_t *g_dma_buf_ops;
+void dma_buf_bind(const dma_buf_ops_t *ops);
+
+static inline bool dma_buf_present(void)
+{
+    return g_dma_buf_ops != NULL;
+}
+
 /* ── 分配 / 引用 ───────────────────────────────────────────────────────── */
 
-/* 从默认堆分配一块物理连续的缓冲区；失败返回 NULL。 */
-dma_buf_t *dma_buf_alloc(size_t size);
+static inline dma_buf_t *dma_buf_alloc(size_t size)
+{
+    return g_dma_buf_ops ? g_dma_buf_ops->alloc(size) : NULL;
+}
 
-/* 引用计数 +1 / -1。归零时归还内存并释放表项。 */
-void dma_buf_get(dma_buf_t *buf);
-void dma_buf_put(dma_buf_t *buf);
+static inline void dma_buf_get(dma_buf_t *buf)
+{
+    if (g_dma_buf_ops)
+        g_dma_buf_ops->get(buf);
+}
+
+static inline void dma_buf_put(dma_buf_t *buf)
+{
+    if (g_dma_buf_ops)
+        g_dma_buf_ops->put(buf);
+}
 
 /* ── 属性 ──────────────────────────────────────────────────────────────── */
 
-/*
-   设备可见地址 —— 全系统唯一出口, 见文件头。
-   无 IOMMU 时即物理地址；缓冲区为连续分配, 所以一个基址就够,
-   不需要 sg_table 那套。
-*/
-uint64_t dma_buf_dev_addr(const dma_buf_t *buf);
+static inline uint64_t dma_buf_dev_addr(const dma_buf_t *buf)
+{
+    return g_dma_buf_ops ? g_dma_buf_ops->dev_addr(buf) : 0;
+}
 
-/* 内核虚拟地址(phys_to_virt 直接映射) */
-void *dma_buf_kva(const dma_buf_t *buf);
+static inline void *dma_buf_kva(const dma_buf_t *buf)
+{
+    return g_dma_buf_ops ? g_dma_buf_ops->kva(buf) : NULL;
+}
 
-/* 分配时请求的字节数(不是页对齐后的值) */
-size_t dma_buf_size(const dma_buf_t *buf);
+static inline size_t dma_buf_size(const dma_buf_t *buf)
+{
+    return g_dma_buf_ops ? g_dma_buf_ops->size(buf) : 0;
+}
 
-/*
-   按物理地址反查缓冲区(排障用)：用户态填在描述符里的是设备地址,
-   拿它查一下就能 dump 出内容, 否则只能对着一个裸地址猜。
-   命中时把页内偏移写回 *off。不增加引用计数 —— 只给诊断路径用。
-*/
-dma_buf_t *dma_buf_find_by_phys(uint64_t pa, uint64_t *off);
+static inline dma_buf_t *dma_buf_find_by_phys(uint64_t pa, uint64_t *off)
+{
+    return g_dma_buf_ops ? g_dma_buf_ops->find_by_phys(pa, off) : NULL;
+}
 
 /* ── 索引 ↔ 指针(fd 里存的是索引, 不是指针)────────────────────────── */
-dma_buf_t *dma_buf_from_index(uint32_t idx);
-uint32_t dma_buf_index(const dma_buf_t *buf);
-/* 按索引增减引用(fd 关闭 / GEM 对象持有等路径用；会重做索引校验) */
-void dma_buf_get_index(uint32_t idx);
-void dma_buf_put_index(uint32_t idx);
+static inline dma_buf_t *dma_buf_from_index(uint32_t idx)
+{
+    return g_dma_buf_ops ? g_dma_buf_ops->from_index(idx) : NULL;
+}
+
+static inline uint32_t dma_buf_index(const dma_buf_t *buf)
+{
+    return g_dma_buf_ops ? g_dma_buf_ops->index(buf) : DMA_BUF_MAX;
+}
+
+static inline void dma_buf_get_index(uint32_t idx)
+{
+    if (g_dma_buf_ops)
+        g_dma_buf_ops->get_index(idx);
+}
+
+static inline void dma_buf_put_index(uint32_t idx)
+{
+    if (g_dma_buf_ops)
+        g_dma_buf_ops->put_index(idx);
+}
 
 /* ── 缓存维护 ──────────────────────────────────────────────────────────── */
 
-/*
-   to_device=true  → CPU 写完, 交给设备前清理(clean)
-   to_device=false → 设备写完, CPU 读之前作废(invalidate)
-
-   off/len 由调用方保证在缓冲区范围内(内部仍会夹一次)。
-*/
-void dma_buf_sync_region(dma_buf_t *buf, uint64_t off, uint64_t len, bool to_device);
+static inline void dma_buf_sync_region(dma_buf_t *buf, uint64_t off, uint64_t len, bool to_device)
+{
+    if (g_dma_buf_ops)
+        g_dma_buf_ops->sync_region(buf, off, len, to_device);
+}
 
 /* ── fd ────────────────────────────────────────────────────────────────── */
 
-/* 给当前任务分配一个引用 buf 的 fd；失败返回负 errno。 */
-int dma_buf_alloc_fd_current(dma_buf_t *buf);
+static inline int dma_buf_alloc_fd_current(dma_buf_t *buf)
+{
+    return g_dma_buf_ops ? g_dma_buf_ops->alloc_fd_current(buf) : -1;
+}
 
-/* fd → buf(按当前任务解析)；不是 dma-buf fd 返回 NULL。 */
-dma_buf_t *dma_buf_from_user_fd(int fd);
+static inline dma_buf_t *dma_buf_from_user_fd(int fd)
+{
+    return g_dma_buf_ops ? g_dma_buf_ops->from_user_fd(fd) : NULL;
+}
 
-/*
-   执行一次整块 DMA_BUF_SYNC。flags 是已经从用户态拷好的值。
-   返回 0 成功, -1 索引无效。
-*/
-int dma_buf_apply_sync(uint32_t idx, uint64_t flags);
+static inline int dma_buf_apply_sync(uint32_t idx, uint64_t flags)
+{
+    return g_dma_buf_ops ? g_dma_buf_ops->apply_sync(idx, flags) : -1;
+}
 
-/* ── ABI 入口 ────────────────────────────────────────────────────────────
-
-   实现放在 kernel/fs/pseudofs/dev.c —— 本项目所有设备 ioctl 都在那儿,
-   而且只有那一层碰用户指针(CLAUDE.md 的 copy_*_user 规则)。
-*/
-
-/* /dev/dma_heap/ 下各节点的 ioctl_fn。
-   (写这个注释时踩过 CLAUDE.md 记的坑：路径里的"斜杠加星号"会提前
-     开一层嵌套注释, -Wcomment 就是这么来的。)
-*/
+/* ── ABI 入口（实现在 kernel/fs/pseudofs/dev.c）──────────────────────── */
 int dma_heap_dev_ioctl(int nid, uint64_t req, void *argp);
-
-/* 打在 dmabuf fd 本身 上的 ioctl(DMA_BUF_IOCTL_SYNC 就是这么发的) */
 int dma_buf_fd_ioctl(uint32_t idx, uint64_t req, void *argp);
 
 /* ── 用户态 ABI ──────────────────────────────────────────────────────────

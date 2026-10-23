@@ -20,9 +20,6 @@
 #include "syscall/net/ksocket.h"
 #include "syscall/fs/pty.h"
 #include "vfs.h"
-#if DRIVER_ION
-#include "ion/ion.h"
-#endif
 #include <ext4.h>
 #include <ext4_errno.h>
 
@@ -168,15 +165,13 @@ static int dup_to_fd(task_t *current, int oldfd, int newfd, int flags)
         int new_idx = fd_pool_alloc();
         if (new_idx < 0)
             return -EMFILE;
-#if DRIVER_ION
-        if (src->type == FDT_ION && ion_ref((ion_handle_t)src->ion.handle) != 0) {
+        g_fd_pool[new_idx] = *src;
+        g_fd_pool[new_idx].wq.waiter_count = 0;
+        /* vfs_file 走 vfs_ref；ION/dma-buf 走各自 fd_ops->dup */
+        if (fd_obj_ref(new_idx) != 0) {
             fd_pool_free(new_idx);
             return -EBADF;
         }
-#endif
-        g_fd_pool[new_idx] = *src;
-        g_fd_pool[new_idx].wq.waiter_count = 0;
-        fd_obj_ref(new_idx);
         current->fd_table[newfd] = new_idx;
     }
     if (flags & 0x80000)

@@ -41,6 +41,7 @@
 #include "driver/time.h"
 #include "driver/driver.h"
 #include "driver/npu.h"
+#include "npu_impl.h"
 
 /* ── 运行时状态 ──────────────────────────────────────────────────────────── */
 
@@ -420,7 +421,7 @@ void rknpu_init(void)
 }
 
 /*
-   rknpu_host_release —— 把 NPU 让给 guest(VMM 透传用)。
+   rknpu_impl_host_release —— 把 NPU 让给 guest(VMM 透传用)。
 
    为什么必须做：本驱动在 boot 时装了 142/143/144 的 ISR 并在 GIC 里使能
    了它们。guest 提交作业 → NPU 拉高物理线 → 那条线是宿主的 GIC 在监视,
@@ -439,7 +440,7 @@ void rknpu_init(void)
 
    幂等；未初始化(无 NPU)时是空操作。
 */
-void rknpu_host_release(void)
+void rknpu_impl_host_release(void)
 {
     if (!g_npu_ready)
         return;
@@ -464,9 +465,9 @@ void rknpu_host_release(void)
 }
 
 /*
-   rknpu_host_reclaim —— 从 guest 手里收回 NPU(vmm_arch_vm_destroy 时)。
+   rknpu_impl_host_reclaim —— 从 guest 手里收回 NPU(vmm_arch_vm_destroy 时)。
 
-   与 rknpu_host_release 严格逆序：先清状态位再开中断线。顺序不能反 ——
+   与 rknpu_impl_host_release 严格逆序：先清状态位再开中断线。顺序不能反 ——
    guest 退出时 NPU 可能还挂着一个没被清的中断, 先开线的话宿主 ISR 会在
    enable 的那一刻立刻被拉起来(电平语义), 虽然只是白跑一次 ISR, 但
    "开线的瞬间执行了一次中断处理"对排障很不友好。先清掉就没有这个窗口。
@@ -477,7 +478,7 @@ void rknpu_host_release(void)
 
    幂等；与 release 配对使用。
 */
-void rknpu_host_reclaim(void)
+void rknpu_impl_host_reclaim(void)
 {
     if (g_npu_cores == 0 || g_npu_ready)
         return;
@@ -999,9 +1000,26 @@ int rknpu_submit_task(void *task_base, size_t task_bytes, const struct rknpu_sub
     return -5;
 }
 
+static const npu_ops_t npu_driver_ops = {
+    .host_release = rknpu_impl_host_release,
+    .host_reclaim = rknpu_impl_host_reclaim,
+    .mmu_init = npu_mmu_impl_init,
+    .mmu_enable = npu_mmu_impl_enable,
+    .mmu_disable = npu_mmu_impl_disable,
+    .mmu_sync = npu_mmu_impl_sync,
+    .mmu_clear_fault = npu_mmu_impl_clear_fault,
+    .mmu_dump = npu_mmu_impl_dump,
+    .mmu_any_fault = npu_mmu_impl_any_fault,
+    .mmu_probe = npu_mmu_impl_probe,
+    .drm_ioctl_file = rknpu_drm_impl_ioctl_file,
+    .drm_close_file = rknpu_drm_impl_close_file,
+    .drm_mmap_lookup = rknpu_drm_impl_mmap_lookup,
+};
+
 static int rknpu_probe(const device_t *dev)
 {
     (void)dev; /* 阶段 1：rknpu_init() 仍直接读平台配置 */
+    npu_bind(&npu_driver_ops);
     rknpu_init();
     return 0;
 }

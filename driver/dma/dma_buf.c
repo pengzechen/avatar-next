@@ -30,7 +30,7 @@
    `-Idriver/dma -Ikernel/mm`, 没有 lwext4 的 -I, include 进去直接编不过。
    (kernel/fs/pseudofs/dev.c 里对 task_alloc_ion_fd 也是同样的写法。)
 */
-extern int task_alloc_dmabuf_fd(task_t *task, uint32_t idx);
+extern int task_alloc_dmabuf_fd(task_t *task, uint32_t idx, const fd_ops_t *ops, void *priv);
 extern int task_get_dmabuf_idx(task_t *task, int fd, uint32_t *idx);
 
 struct dma_buf {
@@ -47,7 +47,7 @@ static spinlock_t g_dma_buf_lock = SPINLOCK_INIT;
 
 /* ── 表操作 ────────────────────────────────────────────────────────────── */
 
-dma_buf_t *dma_buf_from_index(uint32_t idx)
+dma_buf_t *dma_buf_impl_from_index(uint32_t idx)
 {
     if (idx >= DMA_BUF_MAX)
         return NULL;
@@ -55,7 +55,7 @@ dma_buf_t *dma_buf_from_index(uint32_t idx)
     return buf->used ? buf : NULL;
 }
 
-uint32_t dma_buf_index(const dma_buf_t *buf)
+uint32_t dma_buf_impl_index(const dma_buf_t *buf)
 {
     if (!buf)
         return DMA_BUF_MAX; /* 哨兵：越界值, from_index 会拒 */
@@ -64,7 +64,7 @@ uint32_t dma_buf_index(const dma_buf_t *buf)
 
 /* ── 分配 / 引用计数 ───────────────────────────────────────────────────── */
 
-dma_buf_t *dma_buf_alloc(size_t size)
+dma_buf_t *dma_buf_impl_alloc(size_t size)
 {
     if (size == 0U)
         return NULL;
@@ -106,7 +106,7 @@ dma_buf_t *dma_buf_alloc(size_t size)
     return buf;
 }
 
-void dma_buf_get(dma_buf_t *buf)
+void dma_buf_impl_get(dma_buf_t *buf)
 {
     if (!buf)
         return;
@@ -116,7 +116,7 @@ void dma_buf_get(dma_buf_t *buf)
     spin_unlock(&g_dma_buf_lock);
 }
 
-void dma_buf_put(dma_buf_t *buf)
+void dma_buf_impl_put(dma_buf_t *buf)
 {
     if (!buf)
         return;
@@ -156,7 +156,7 @@ void dma_buf_put(dma_buf_t *buf)
    返回命中的缓冲区(不增加引用计数 —— 只在调用方持锁或用完即走的
    排障路径上使用), 并把页内偏移写回 *off。
 */
-dma_buf_t *dma_buf_find_by_phys(uint64_t pa, uint64_t *off)
+dma_buf_t *dma_buf_impl_find_by_phys(uint64_t pa, uint64_t *off)
 {
     dma_buf_t *hit = NULL;
 
@@ -176,19 +176,19 @@ dma_buf_t *dma_buf_find_by_phys(uint64_t pa, uint64_t *off)
     return hit;
 }
 
-void dma_buf_get_index(uint32_t idx)
+void dma_buf_impl_get_index(uint32_t idx)
 {
-    dma_buf_get(dma_buf_from_index(idx));
+    dma_buf_impl_get(dma_buf_impl_from_index(idx));
 }
 
-void dma_buf_put_index(uint32_t idx)
+void dma_buf_impl_put_index(uint32_t idx)
 {
-    dma_buf_put(dma_buf_from_index(idx));
+    dma_buf_impl_put(dma_buf_impl_from_index(idx));
 }
 
 /* ── 属性 ──────────────────────────────────────────────────────────────── */
 
-uint64_t dma_buf_dev_addr(const dma_buf_t *buf)
+uint64_t dma_buf_impl_dev_addr(const dma_buf_t *buf)
 {
     /*
        全系统唯一的「缓冲区 → 设备地址」出口(见 dma_buf.h 文件头)。
@@ -198,19 +198,19 @@ uint64_t dma_buf_dev_addr(const dma_buf_t *buf)
     return buf ? buf->paddr : 0U;
 }
 
-void *dma_buf_kva(const dma_buf_t *buf)
+void *dma_buf_impl_kva(const dma_buf_t *buf)
 {
     return buf ? phys_to_virt(buf->paddr) : NULL;
 }
 
-size_t dma_buf_size(const dma_buf_t *buf)
+size_t dma_buf_impl_size(const dma_buf_t *buf)
 {
     return buf ? buf->size : 0U;
 }
 
 /* ── 缓存维护 ──────────────────────────────────────────────────────────── */
 
-void dma_buf_sync_region(dma_buf_t *buf, uint64_t off, uint64_t len, bool to_device)
+void dma_buf_impl_sync_region(dma_buf_t *buf, uint64_t off, uint64_t len, bool to_device)
 {
     if (!buf || !buf->used || len == 0U)
         return;
@@ -226,9 +226,9 @@ void dma_buf_sync_region(dma_buf_t *buf, uint64_t off, uint64_t len, bool to_dev
         invalidate_dcache_range(base + off, (size_t)len);
 }
 
-int dma_buf_apply_sync(uint32_t idx, uint64_t flags)
+int dma_buf_impl_apply_sync(uint32_t idx, uint64_t flags)
 {
-    dma_buf_t *buf = dma_buf_from_index(idx);
+    dma_buf_t *buf = dma_buf_impl_from_index(idx);
     if (!buf)
         return -1;
 
@@ -250,18 +250,48 @@ int dma_buf_apply_sync(uint32_t idx, uint64_t flags)
     uint64_t phase = flags & DMA_BUF_SYNC_END;
 
     if (phase == DMA_BUF_SYNC_START && (op & DMA_BUF_SYNC_READ))
-        dma_buf_sync_region(buf, 0, buf->bytes, false /* invalidate */);
+        dma_buf_impl_sync_region(buf, 0, buf->bytes, false /* invalidate */);
     else if (phase == DMA_BUF_SYNC_END && (op & DMA_BUF_SYNC_WRITE))
-        dma_buf_sync_region(buf, 0, buf->bytes, true /* clean */);
+        dma_buf_impl_sync_region(buf, 0, buf->bytes, true /* clean */);
 
     KLOG_DEBUG("[dma_buf] sync idx=%u flags=0x%llx (op=%llu phase=%llu)\n", idx, (unsigned long long)flags,
                (unsigned long long)op, (unsigned long long)phase);
     return 0;
 }
 
+/* ── fd 操作表 ──────────────────────────────────────────────────────────── */
+
+static int dma_buf_fd_get_phys(void *priv, uint64_t *paddr, uint64_t *size)
+{
+    dma_buf_t *buf = dma_buf_impl_from_index((uint32_t)(uintptr_t)priv);
+    if (!buf)
+        return -1;
+    *paddr = dma_buf_impl_dev_addr(buf);
+    *size = dma_buf_impl_size(buf);
+    return 0;
+}
+
+static int dma_buf_fd_dup_cb(void *priv)
+{
+    dma_buf_impl_get_index((uint32_t)(uintptr_t)priv);
+    return 0;
+}
+
+static void dma_buf_fd_close_cb(void *priv)
+{
+    dma_buf_impl_put_index((uint32_t)(uintptr_t)priv);
+}
+
+static const fd_ops_t dma_buf_fd_ops = {
+    .name = "dmabuf",
+    .get_phys = dma_buf_fd_get_phys,
+    .dup = dma_buf_fd_dup_cb,
+    .close = dma_buf_fd_close_cb,
+};
+
 /* ── fd 绑定 ───────────────────────────────────────────────────────────── */
 
-int dma_buf_alloc_fd_current(dma_buf_t *buf)
+int dma_buf_impl_alloc_fd_current(dma_buf_t *buf)
 {
     if (!buf)
         return -1;
@@ -269,16 +299,17 @@ int dma_buf_alloc_fd_current(dma_buf_t *buf)
     if (!cur)
         return -1;
 
-    int fd = task_alloc_dmabuf_fd(cur, dma_buf_index(buf));
+    uint32_t idx = dma_buf_impl_index(buf);
+    int fd = task_alloc_dmabuf_fd(cur, idx, &dma_buf_fd_ops, (void *)(uintptr_t)idx);
     if (fd < 0)
         return -1;
 
     /* fd 自己持有一份引用；fd 关闭时(fd_obj_close)还回来。 */
-    dma_buf_get(buf);
+    dma_buf_impl_get(buf);
     return fd;
 }
 
-dma_buf_t *dma_buf_from_user_fd(int fd)
+dma_buf_t *dma_buf_impl_from_user_fd(int fd)
 {
     task_t *cur = task_current();
     if (!cur)
@@ -287,12 +318,31 @@ dma_buf_t *dma_buf_from_user_fd(int fd)
     uint32_t idx = 0;
     if (task_get_dmabuf_idx(cur, fd, &idx) != 0)
         return NULL;
-    return dma_buf_from_index(idx);
+    return dma_buf_impl_from_index(idx);
 }
+
+static const dma_buf_ops_t dma_buf_driver_ops = {
+    .alloc = dma_buf_impl_alloc,
+    .get = dma_buf_impl_get,
+    .put = dma_buf_impl_put,
+    .dev_addr = dma_buf_impl_dev_addr,
+    .kva = dma_buf_impl_kva,
+    .size = dma_buf_impl_size,
+    .find_by_phys = dma_buf_impl_find_by_phys,
+    .from_index = dma_buf_impl_from_index,
+    .index = dma_buf_impl_index,
+    .get_index = dma_buf_impl_get_index,
+    .put_index = dma_buf_impl_put_index,
+    .sync_region = dma_buf_impl_sync_region,
+    .alloc_fd_current = dma_buf_impl_alloc_fd_current,
+    .from_user_fd = dma_buf_impl_from_user_fd,
+    .apply_sync = dma_buf_impl_apply_sync,
+};
 
 static int dma_buf_probe(const device_t *dev)
 {
     (void)dev; /* service：无设备；分配在首次调用时惰性完成 */
+    dma_buf_bind(&dma_buf_driver_ops);
     return 0;
 }
 

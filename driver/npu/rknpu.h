@@ -19,12 +19,7 @@
 #define __RKNPU_H__
 
 #include "types.h"
-
-/*
-   NPU 核数。rk3588 是 3 —— 三个核各有独立的 MMIO 窗口和中断线,
-   但共享同一套 PC 侧寄存器偏移(每个核内相对偏移都一样)。
-*/
-#define RKNPU_MAX_CORES 3
+#include "driver/npu.h" /* RKNPU_MAX_CORES / 寄存器偏移 / 公共 API */
 
 /* ── 硬件基地址(与平台配置的 npu.base0/1/2 一致)──────────────────────── */
 #define RKNPU_NPU0_BASE 0xFDAB0000UL
@@ -39,20 +34,6 @@
 /* PMU1(电源域控制)基地址 */
 #define RKNPU_PMU1_BASE 0xFD8D8000UL
 
-/* ── 寄存器偏移量(每个核心内相对偏移)──────────────────────────────────── */
-#define RKNPU_VERSION          0x0000 /* 版本魔数, 应为 0x46495245 */
-#define RKNPU_VERSION_NUM      0x0004 /* 子版本号 */
-#define RKNPU_PC_OP_EN         0x0008 /* 写 1 提交, 写 0 清除 */
-#define RKNPU_PC_DATA_ADDR     0x0010 /* DMA 描述符地址 */
-#define RKNPU_PC_DATA_AMOUNT   0x0014 /* 描述符数量 */
-#define RKNPU_INT_MASK         0x0020 /* 中断掩码 */
-#define RKNPU_INT_CLEAR        0x0024 /* 写 1 清除中断 */
-#define RKNPU_INT_STATUS       0x0028 /* 中断状态(含任务计数) */
-#define RKNPU_INT_RAW_STATUS   0x002C /* 原始中断状态 */
-#define RKNPU_PC_TASK_CONTROL  0x0030 /* 任务控制寄存器 */
-#define RKNPU_PC_DMA_BASE_ADDR 0x0034 /* DMA 基址 */
-#define RKNPU_PC_TASK_STATUS   0x003C /* 任务执行状态 */
-
 /*
    各计算单元的"单寄存器组指针"(S_POINTER)。提交前要写 0xe 切到第 0 组。
    注意： vendor 驱动(rknpu-0.9.8)把 0xe 当基址去算偏移, 参考项目
@@ -62,19 +43,6 @@
 #define RKNPU_CNA_S_POINTER   0x1004 /* CNA 单寄存器组指针 */
 #define RKNPU_CORE_S_POINTER  0x3004 /* CORE 单寄存器组指针 */
 #define RKNPU_S_POINTER_GROUP 0xE    /* 指向第 0 组 */
-
-/* 版本魔数 "FIRE" */
-#define RKNPU_VERSION_MAGIC 0x46495245UL
-
-/* 中断状态清除值(清除所有 17 位) */
-#define RKNPU_INT_CLEAR_ALL 0x1FFFFU
-
-/*
-   PC_DATA_AMOUNT 的固定附加量。算法(来自 vendor 驱动)：
-       amount = (regcfg_amount + EXTRA + scale - 1) / scale - 1
-   其中 scale = rknpu_config_t.pc_data_amount_scale = 2。
-*/
-#define RKNPU_PC_DATA_EXTRA_AMOUNT 4U
 
 /* ── 任务描述符 ──────────────────────────────────────────────────────────── */
 typedef struct __attribute__((packed)) {
@@ -110,25 +78,6 @@ typedef struct {
      4. 注册 GICv3 中断处理程序
 */
 void rknpu_init(void);
-
-/*
-   rknpu_host_release - 把 NPU 让给 guest(VMM 透传用)
-
-   关掉宿主 GIC 上 NPU 的三条中断线, 并让 rknpu_submit_task 从此拒绝作业。
-   不这么做的话, 宿主 ISR 会抢在 VMM 注入之前把 INT_STATUS 清掉, guest
-   永远等不到中断 —— 而且宿主侧一行错误日志都不会有。
-
-   幂等；无 NPU 或未初始化时是空操作。由 vnpu_init() 在建 VM 时调用。
-*/
-void rknpu_host_release(void);
-
-/*
-   rknpu_host_reclaim - 从 guest 手里收回 NPU
-
-   与 rknpu_host_release 严格逆序(先清状态位再开中断线), VM 销毁时调用。
-   幂等；无 NPU 时是空操作。
-*/
-void rknpu_host_reclaim(void);
 
 /*
    rknpu_validate_version - 打印并校验某个核的版本寄存器

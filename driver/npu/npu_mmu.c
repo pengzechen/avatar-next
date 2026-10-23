@@ -14,17 +14,18 @@
    没有 domain 抽象, 没有缺页中断处理, 没有 stall。
 
    缺页为什么不处理：提交前我们会把整段 guest RAM 里已被 stage-2 映射的页
-   全部填进去(npu_mmu_sync), 所以 NPU 会碰到的页都已经在了。真出现缺页说明
+   全部填进去(npu_mmu_impl_sync), 所以 NPU 会碰到的页都已经在了。真出现缺页说明
    它访问了一个 guest 压根没映射过的地址 —— 那是 guest 那边的问题, 宁可让它
    翻译失败(表里无效项 → 硬件报 BUS_ERROR), 也不要宿主替它猜。
 */
 
 #include "npu/npu_mmu.h"
-#include "npu/rknpu.h" /* RKNPU_MAX_CORES：从核基址推 MMU 块位置 */
+#include "npu/rknpu.h"
+#include "npu_impl.h" /* 本文件实现的 npu_mmu_impl_* 原型 */
 #include "mmio.h"
 #include "klog.h"
 #include "mm_vm.h"   /* phys_to_virt / KERNEL_VMA */
-#include "cache.h"   /* clean_dcache_range：表页必须冲缓存, 见 npu_mmu_sync */
+#include "cache.h"   /* clean_dcache_range：表页必须冲缓存, 见 npu_mmu_impl_sync */
 #include "barrier.h" /* barrier_sync：冲完要 dsb, 否则 NPU 仍可能先读到 */
 #include "pmm.h"
 #include "platform_cfg.h"
@@ -102,7 +103,7 @@ static void mmu_cmd_all(uint32_t cmd)
         mmu_write(i, NPU_MMU_COMMAND, cmd);
 }
 
-int npu_mmu_init(void)
+int npu_mmu_impl_init(void)
 {
     static const struct {
         int core;
@@ -171,7 +172,7 @@ static inline void pte_set(npu_pt_t *t, uint64_t ipa, uint64_t pa)
     t->pt[i] = npu_mmu_mk_pte(pa, 1 /* 可写：NPU 要把结果写回去 */);
 }
 
-int npu_mmu_enable(uint64_t ipa_base, uint64_t ipa_size)
+int npu_mmu_impl_enable(uint64_t ipa_base, uint64_t ipa_size)
 {
     if (!g_mmu_ready)
         return -1;
@@ -256,11 +257,11 @@ int npu_mmu_enable(uint64_t ipa_base, uint64_t ipa_size)
     /* 把四组寄存器的实际状态打出来 —— 这一行本来就有, 只是一直没被调用过。
        它就是"翻译到底开没开, 有没有缺页"的直接判据。
     */
-    npu_mmu_dump();
+    npu_mmu_impl_dump();
     return 0;
 }
 
-void npu_mmu_disable(void)
+void npu_mmu_impl_disable(void)
 {
     if (!g_mmu_ready || !g_mmu_ipa_end)
         return;
@@ -291,7 +292,7 @@ void npu_mmu_disable(void)
    只填 stage-2 里确实存在的项：guest 没碰过的页本来就不该让 NPU 访问到。
    一次 192 MiB 的 guest RAM 是 49152 次 stage2_lookup, 微秒量级, 可以接受。
 */
-int npu_mmu_sync(vm_t *vm)
+int npu_mmu_impl_sync(vm_t *vm)
 {
     int added = 0;
     int alloced = 0;
@@ -407,7 +408,7 @@ int npu_mmu_sync(vm_t *vm)
 }
 
 /*
-   npu_mmu_probe — 拿一个具体地址对账：我的表翻到哪 vs stage-2 翻到哪。
+   npu_mmu_impl_probe — 拿一个具体地址对账：我的表翻到哪 vs stage-2 翻到哪。
 
    为什么需要它：池那块内存本来就是恒等映射的(PA == IPA), 所以 NPU 的表里
    那条翻译应当和 stage-2 一模一样, 开 MMU 对 regcmd 应当是个 no-op。
@@ -417,7 +418,7 @@ int npu_mmu_sync(vm_t *vm)
      stage2 与 PTE 指向同一个页  → 表是对的, NPU 的访问没走这个 MMU
      两者不同                    → 表错了, 对着两个 PA 就能定位是哪一步
 */
-void npu_mmu_probe(vm_t *vm, uint64_t ipa)
+void npu_mmu_impl_probe(vm_t *vm, uint64_t ipa)
 {
     uint64_t s2pa = 0;
     uint32_t di, pi, dte, pte;
@@ -450,7 +451,7 @@ void npu_mmu_probe(vm_t *vm, uint64_t ipa)
    清掉粘住的缺页(写 PAGE_FAULT_DONE)。四组都要清 —— 缺页是按 bank 记的。
    mainline 在缺页中断处理里就是这么收尾的。
 */
-void npu_mmu_clear_fault(void)
+void npu_mmu_impl_clear_fault(void)
 {
     if (!g_mmu_ready)
         return;
@@ -487,7 +488,7 @@ void npu_mmu_clear_fault(void)
     mmu_cmd_all(NPU_MMU_CMD_DISABLE_STALL);
 }
 
-bool npu_mmu_any_fault(void)
+bool npu_mmu_impl_any_fault(void)
 {
     if (!g_mmu_ready)
         return false;
@@ -499,7 +500,7 @@ bool npu_mmu_any_fault(void)
     return false;
 }
 
-void npu_mmu_dump(void)
+void npu_mmu_impl_dump(void)
 {
     if (!g_mmu_ready) {
         KLOG_INFO("npu_mmu: not initialized\n");
