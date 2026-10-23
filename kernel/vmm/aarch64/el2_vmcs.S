@@ -27,6 +27,8 @@
  *   Offset 544 : hpfar        8 B
  *   Offset 552 : cntv_ctl     8 B
  *   Offset 560 : cntv_cval    8 B
+ *   Offset 568 : fp_pad       8 B      （16 B 对齐填充）
+ *   Offset 576 : fpsimd[66]   528 B    q0-q31 + FPCR/FPSR
  *
  * 控制流：
  *   C → el2_enter_guest(vcpu)
@@ -108,6 +110,24 @@ guest_vec_table:
 .global el2_enter_guest
 .type el2_enter_guest, @function
 el2_enter_guest:
+    /*
+     * 保存宿主 C 调用约定要求本函数保留的 FP 状态（d8-d15 + FPCR/FPSR）。
+     *
+     * guest 会无条件覆盖 q0-q31（用户态 NEON），所以 el2_enter_guest 作为
+     * 一个被 C 调用的函数，必须自己守住 AAPCS64 的 callee-saved 部分。
+     * 帧就建在宿主栈上；guest exit 路径从同一栈帧恢复后再 ret。
+     * SP 入函数时 16 B 对齐，96 是 16 的倍数，stp d 不要求 16 B 对齐，
+     * 但保持对齐便于后续扩展 q 寄存器。
+     */
+    sub  sp, sp, #96
+    stp  d8,  d9,  [sp, #0]
+    stp  d10, d11, [sp, #16]
+    stp  d12, d13, [sp, #32]
+    stp  d14, d15, [sp, #48]
+    mrs  x9, fpcr
+    mrs  x10, fpsr
+    stp  x9, x10, [sp, #64]
+
     /*
      * Mask host IRQs during the VHE world-switch window. With E2H=1,
      * tpidr_el1/tpidr_el2 alias while TGE=1; after writing the vCPU pointer,
@@ -224,6 +244,35 @@ el2_enter_guest:
     isb
 
     /*
+     * 6c. 恢复 guest FP/SIMD 现场（q0-q31 + FPCR/FPSR）。
+     *
+     * 必须在加载 guest GPR 之前：这里只用 x1/x2/x3 做基址和中转，它们
+     * 随后会被第 7 步的 guest 值覆盖。宿主自己的 FP 状态已在函数入口
+     * 存到栈上，所以现在覆盖 q 寄存器是安全的。
+     */
+    add  x1, x0, #576
+    ldr  x2, [x1, #512]        /* FPCR */
+    ldr  x3, [x1, #520]        /* FPSR */
+    msr  fpcr, x2
+    msr  fpsr, x3
+    ldp  q0,  q1,  [x1, #0]
+    ldp  q2,  q3,  [x1, #32]
+    ldp  q4,  q5,  [x1, #64]
+    ldp  q6,  q7,  [x1, #96]
+    ldp  q8,  q9,  [x1, #128]
+    ldp  q10, q11, [x1, #160]
+    ldp  q12, q13, [x1, #192]
+    ldp  q14, q15, [x1, #224]
+    ldp  q16, q17, [x1, #256]
+    ldp  q18, q19, [x1, #288]
+    ldp  q20, q21, [x1, #320]
+    ldp  q22, q23, [x1, #352]
+    ldp  q24, q25, [x1, #384]
+    ldp  q26, q27, [x1, #416]
+    ldp  q28, q29, [x1, #448]
+    ldp  q30, q31, [x1, #480]
+
+    /*
      * 7. 加载 guest GPR x1-x30（x0 暂时保持 vcpu 基址）
      */
     ldr  x1,       [x0, #8]
@@ -288,6 +337,35 @@ el2_trap_exit:
     stp  x26, x27, [x0, #208]
     stp  x28, x29, [x0, #224]
     str  x30,      [x0, #240]
+
+    /*
+     * 保存 guest FP/SIMD 现场（q0-q31 + FPCR/FPSR）。
+     *
+     * 这是 guest 退出后第一批 FP 访问：guest_vec_table 入口只用了
+     * x0/x1，没碰 FP，所以此刻 q 寄存器仍是 guest 的原值。x1 是 guest
+     * 值（已由向量入口压在栈上），x2/x3 也已在上面保存，可安全借用。
+     */
+    add  x1, x0, #576
+    stp  q0,  q1,  [x1, #0]
+    stp  q2,  q3,  [x1, #32]
+    stp  q4,  q5,  [x1, #64]
+    stp  q6,  q7,  [x1, #96]
+    stp  q8,  q9,  [x1, #128]
+    stp  q10, q11, [x1, #160]
+    stp  q12, q13, [x1, #192]
+    stp  q14, q15, [x1, #224]
+    stp  q16, q17, [x1, #256]
+    stp  q18, q19, [x1, #288]
+    stp  q20, q21, [x1, #320]
+    stp  q22, q23, [x1, #352]
+    stp  q24, q25, [x1, #384]
+    stp  q26, q27, [x1, #416]
+    stp  q28, q29, [x1, #448]
+    stp  q30, q31, [x1, #480]
+    mrs  x2, fpcr
+    mrs  x3, fpsr
+    str  x2, [x1, #512]        /* FPCR */
+    str  x3, [x1, #520]        /* FPSR */
 
     /* 从栈恢复 guest x0, x1 并保存到 vcpu */
     ldp  x1, x2, [sp, #0]
@@ -372,6 +450,19 @@ el2_trap_exit:
     ldp  x29, x30, [x1, #80]   /* fp, lr */
     ldr  x2,       [x1, #96]
     mov  sp, x2
+
+    /*
+     * 恢复宿主 C 代码的 FP 状态（el2_enter_guest 入口存的 96 B 帧）。
+     * FPCR/FPSR 先于 d8-d15，与本文件其它恢复顺序一致。
+     */
+    ldp  x9, x10, [sp, #64]
+    msr  fpcr, x9
+    msr  fpsr, x10
+    ldp  d8,  d9,  [sp, #0]
+    ldp  d10, d11, [sp, #16]
+    ldp  d12, d13, [sp, #32]
+    ldp  d14, d15, [sp, #48]
+    add  sp, sp, #96
 
     /* ret → el2_enter_guest 的 C 调用者（vmm_run_vcpu 的主循环）*/
     ret

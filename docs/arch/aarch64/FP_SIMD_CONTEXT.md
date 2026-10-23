@@ -71,7 +71,7 @@ Error: attempt to move .org backwards
 
 ---
 
-## 三、现在的四层保存点
+## 三、现在的五层保存点
 
 ### 1. 早期打开 FPEN —— `boot/aarch64/boot.S` 的 `init_el2_vhe`
 
@@ -152,6 +152,37 @@ x19@0 / x30@88 的偏移刻意保持不变，这样 `switch.h` 的 `sp[0]=&child
 继承父进程 FP 状态）。顺带修了一个老 bug：它恢复了 x1-x8、x10-x30、x0、tpidr_el0，
 **唯独漏了 r[9]**，fork 子进程会带着内核地址（`&trap_frame`）回到 EL0。
 
+### 5. VMM guest 世界切换 —— `kernel/vmm/aarch64/el2_vmcs.S`
+
+guest 运行在 EL1/EL0 时，`q0-q31 + FPCR/FPSR` 是**同一组物理寄存器**；
+`guest_vec_table` 的入口只用了 x0/x1，不经过 `SAVE_REGS`，所以宿主必须在
+每次 guest exit/entry 两端自己保存/恢复：
+
+| 时机 | 位置 | 动作 |
+|---|---|---|
+| 进入 guest | `el2_enter_guest` 入口 | 宿主 `d8-d15 + FPCR/FPSR` 压宿主栈（96 B 帧）|
+| 进入 guest | `el2_enter_guest` 6c 步 | 从 `vcpu->fpsimd` 恢复 guest `q0-q31 + FPCR/FPSR` |
+| guest 退出 | `el2_trap_exit` 保存 x2-x30 之后 | 把 guest `q0-q31 + FPCR/FPSR` 存进 `vcpu->fpsimd` |
+| 回到宿主 | `el2_trap_exit` 的 `ret` 之前 | 从 96 B 栈帧恢复宿主 FP 状态 |
+
+`vcpu_t.fpsimd[66]` 固定在 offset 576（q0-q31 共 512 B，随后 FPCR/FPSR；
+`_Static_assert` 钉死偏移和 16 B 对齐）。AP 在 `vmm_vcpu_start()` 里清零，
+BSP 由 `vm_init` 的 `memset(vcpu, 0, ...)` 清零。
+
+> ⚠️ **FPCR/FPSR 没有 EL 银行**（汇编器也没有 `fpcr_el1/el2` 编码）：
+> guest 用户态、guest 内核、宿主内核用的是同一份。以前本文写过「guest 的
+> FPCR/FPSR 是 bank 的」，那是错的；本次一并按 vCPU 保存/恢复。
+> 宿主自己的 `d8-d15 + FPCR/FPSR` 也必须由 `el2_enter_guest` 这个普通 C
+> 函数守住（AAPCS64 callee-saved）。
+
+**验证（不依赖随机复现）**：用一个 freestanding 的 EL0 测试程序，8 个进程
+（guest 8 vCPU）各自把 q0-q31 填成 pid 相关图案，延迟后回存比对，反复循环：
+
+- 修复前（`build-2x8`）：数秒内出现 `MISMATCH pid=1 count=1..6`，init
+  最终被内核杀掉；与用户观察到的
+  `Attempted to kill init! exitcode=0x00000004`（SIGILL）同一类数据损坏。
+- 修复后（`build-fp2`，同 rootfs/8 vCPU）：35 s 运行 **0 MISMATCH**。
+
 ---
 
 ## 四、验证方法
@@ -183,22 +214,16 @@ make PLATFORM=qemu-virt-aarch64 test-ltp       # fork/clone/signal 路径
 
 ## 五、残留风险与限制
 
-1. **VMM guest 的 v0-v31 没有保存点**。guest 陷入走 `guest_vec_table`
-   （`kernel/vmm/aarch64/el2_vmcs.S`，TGE=0 时 `vbar_el2` 被改指），不经过
-   `SAVE_REGS`；宿主内核现在可能用 FP 寄存器，会破坏 guest 的 NEON 状态。
-   guest 的 FPCR/FPSR 是 bank 的（EL1 那份），宿主在 EL2 读写的是 EL2 那份，
-   不会被串扰；受害的只有 V0-V31 这组共享物理寄存器。
-   → **`test-guest-linux` 在 VMM 侧补上保存之前不应再作为通过标准。**
-2. **二级核 idle 栈只有 4096 字节**（`kernel/task/cpu.c`）。陷阱帧 816 + 切换帧
+1. **二级核 idle 栈只有 4096 字节**（`kernel/task/cpu.c`）。陷阱帧 816 + 切换帧
    176 + 处理函数调用链，单层嵌套下约 1.2-2KB，余量偏紧。全树没有栈 canary，
    溢出是静默的。
-3. **内核浮点只能用 `float`/`double`**。没有链接 libgcc，`long double`（aarch64 上
+2. **内核浮点只能用 `float`/`double`**。没有链接 libgcc，`long double`（aarch64 上
    是 128 位）的运算会引出 `__addtf3`/`__divtf3` 等帮助函数，链接期报未定义符号。
-4. **`sigreturn`/信号投递的 sigframe 拷贝**已从裸 `memcpy` 改成
+3. **`sigreturn`/信号投递的 sigframe 拷贝**已从裸 `memcpy` 改成
    `copy_to_user_bytes`/`copy_from_user_bytes`（帧涨到 816 字节后跨页概率大增，
    裸 memcpy 踩到坏地址 = 内核态数据中止 = 整机挂死）。注意这两个接口内部只做
    `user_range_ok()`（地址范围 + 回绕）校验，**不查页表是否映射**：传一个落在
    用户地址范围内但未映射的地址仍会中止。
-5. FPCR/FPSR 的 bank 语义依赖 `TGE=1`（宿主常态）。宿主在 EL2 用 `mrs fpcr` 读到的
-   正是 EL0 用户态生效的那一份；guest 进出时 TGE 会被清零，那时 EL1 侧的那份
-   属于 guest，不在本次范围内。
+4. VMM 的 FP 保存/恢复只在 aarch64 EL2 世界切换里实现；riscv64/x86_64 的
+   guest 世界切换目前仍是单 vCPU，若后续加多 vCPU/FP 透传，需要同样的按
+   vCPU 现场（各自架构的向量/浮点寄存器 + fcsr/MXCSR）。

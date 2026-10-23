@@ -51,6 +51,8 @@ int vmm_vcpu_start(vcpu_t *vcpu, uint64_t entry, uint64_t context_id)
      */
     memset(vcpu->r, 0, sizeof(vcpu->r));
     memset(vcpu->sysregs, 0, sizeof(vcpu->sysregs));
+    /* AP 的 FP/SIMD 初始现场：q0-q31/FPCR/FPSR 全零（架构复位值）*/
+    memset(vcpu->fpsimd, 0, sizeof(vcpu->fpsimd));
     vcpu->r[0] = context_id;
     vcpu->elr = entry;
     vcpu->spsr = 0x5ULL | (0xFULL << 6); /* EL1h, DAIF masked */

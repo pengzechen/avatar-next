@@ -268,6 +268,32 @@ owner "消失"了。2 分 8 约 1-2% 启动停滞，vGIC/WFE 修复都消不掉�
 
 修复后 2 分 8 连续 200 次通过。
 
+### 5.4 guest 的 FP/SIMD 现场必须按 vCPU 保存
+
+`q0-q31 + FPCR/FPSR` 是**每 PCPU 一份**的物理状态，不属于某个 vCPU。
+guest 在 EL0 用户态大量使用 NEON（静态 busybox 里有 1600+ 条 SIMD 指令），
+而宿主 C 代码也被允许生成 SIMD；更关键的是同一 VM 的多颗 vCPU 会在同一
+颗宿主核上分时跑。少保存这一组现场时：
+
+- 宿主在 guest exit 后执行的 C 代码可以直接覆盖 guest 的 q 寄存器；
+- vCPU A 被换下、vCPU B 的 guest 用户态跑一段 NEON 后再换回 A，
+  A 的 NEON 现场已经全是 B 的值。
+
+实测（8 个 EL0 进程 / 8 guest vCPU，每个进程把 q0-q31 填成 pid 相关图案、
+延迟后回存比对）：
+
+- 修复前：数秒内 `MISMATCH pid=1 count=1..6`，init 随后被内核杀掉
+  （SIGILL，`Attempted to kill init! exitcode=0x00000004`）；
+- 修复后：35 s 运行 0 MISMATCH。
+
+实现见 `kernel/vmm/aarch64/el2_vmcs.S`：`vcpu_t.fpsimd[66]`（offset 576）
+在 `el2_trap_exit` 保存、在 `el2_enter_guest` 恢复；宿主自己的
+`d8-d15 + FPCR/FPSR` 由 `el2_enter_guest` 的 96 B 栈帧守住（AAPCS64）。
+细节和验证方法见 `docs/arch/aarch64/FP_SIMD_CONTEXT.md` §三.5。
+
+> 注意：FPCR/FPSR **没有 EL 银行**（汇编器没有 `fpcr_el1/el2` 编码），
+> guest 用户态/内核和宿主共用同一份，所以这三组现场必须一起保存。
+
 ## 6. aarch64 多 vCPU guest 实测
 
 ```bash
@@ -300,7 +326,7 @@ SMP: Total of 8 processors activated.
 | 宿主 SMP | GUEST_VCPUS | 运行次数 | 结果 |
 |---|---|---|---|
 | 2 | 4 | 50 | 50/50 |
-| 2 | 8 | 200 | **200/200**（最终版：stage-2 map_lock + WFE 限频） |
+| 2 | 8 | 200 | 198/200（stage-2 map_lock + WFE 限频版；失败的 2 次是 FP/SIMD 现场缺失，见 §5.4） |
 | 4 | 8 | 30 | 30/30 |
 | 4 | 12 | 30 | 30/30 |
 

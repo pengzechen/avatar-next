@@ -14,6 +14,8 @@
  *   Offset 376 : host_vbar     = 8 B               host VBAR_EL2
  *   Offset 384 : host_tpidr    = 8 B               host per-CPU pointer
  *   Offset 392 : sysregs[128]  = 128 B             (guest EL1 系统寄存器)
+ *   Offset 568 : fp_pad        = 8 B               对齐填充
+ *   Offset 576 : fpsimd[66]    = 528 B             guest q0-q31 + FPCR/FPSR
  *
  * 以上偏移由下方 VCPU_* 宏固化，请勿在 C 侧调整字段顺序。
  */
@@ -80,6 +82,19 @@
 #define VCPU_HPFAR      544
 #define VCPU_CNTV_CTL   552
 #define VCPU_CNTV_CVAL  560
+/*
+ * 568: 填充到 16 B 边界；576 起是 guest 的 FP/SIMD 现场。
+ * q0-q31 共 512 B，随后是 FPCR/FPSR。
+ *
+ * ⚠️ 这组寄存器**没有** EL 银行：guest 用户态/内核、宿主内核用的是同一组
+ * 物理 q0-q31 和 FPCR/FPSR。宿主 C 代码允许生成 SIMD（见 Makefile），
+ * 且 vCPU 任务之间会时间片轮转，所以必须在每次 guest exit/entry 两端都
+ * 保存/恢复 —— 否则 guest 的 NEON 状态会被宿主或另一颗 vCPU 静默破坏。
+ */
+#define VCPU_FPSIMD        576
+#define VCPU_FPSIMD_SIZE   528 /* 32*16 + 8 + 8 */
+#define VCPU_FPSIMD_FPCR   512 /* 相对 VCPU_FPSIMD 的偏移 */
+#define VCPU_FPSIMD_FPSR   520
 
 /* sysregs 缓冲区：保存 guest EL1 系统寄存器，128 B 足够覆盖 Phase 2 用到的子集 */
 #define VCPU_SYSREGS_SIZE 128
@@ -161,6 +176,9 @@ typedef struct vcpu {
     uint64_t hpfar;                     /* HPFAR_EL2 captured on guest exit*/
     uint64_t cntv_ctl;                  /* guest virtual timer control     */
     uint64_t cntv_cval;                 /* guest virtual timer compare     */
+    uint64_t fp_pad;                    /* 对齐填充，勿删（offset=568）    */
+    uint64_t fpsimd[66] __attribute__((aligned(16)));
+                                        /* q0-q31 + FPCR + FPSR offset=576 */
 
     /* ── C-only 字段 ──────────────────────────────────── */
     int vcpu_id;              /* vCPU 编号                       */
@@ -198,6 +216,17 @@ typedef struct vcpu {
      */
     completion_t start;
 } vcpu_t;
+
+/*
+ * el2_vmcs.S 用字面量偏移寻址 fpsimd；布局被 C 侧无意改掉时必须编译期失败，
+ * 否则运行期表现是 guest NEON 状态随机损坏（或 stp q 未对齐直接 abort）。
+ */
+_Static_assert(offsetof(vcpu_t, fpsimd) == VCPU_FPSIMD,
+               "el2_vmcs.S fpsimd @576");
+_Static_assert((offsetof(vcpu_t, fpsimd) & 15) == 0,
+               "fpsimd must stay 16-byte aligned for stp q");
+_Static_assert(sizeof(((vcpu_t *)0)->fpsimd) == VCPU_FPSIMD_SIZE,
+               "fpsimd array must cover q0-q31 + FPCR + FPSR");
 
 #elif ARCH_X86_64
 /*
