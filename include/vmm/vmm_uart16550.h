@@ -18,7 +18,7 @@
      - IIR 按 16550 优先级报「RX 有数据」>「THR 空」>「无中断」
 
    输出通路(对标 kvmm 的 TxChannel, 与 vpl011 完全一致, 两种模式由宿主决定)：
-     - 通道关闭(默认)：逐字节直打宿主控制台。RUN_GUEST_LINUX 直启模式用 ——
+     - 通道关闭(默认)：逐字节直打宿主控制台。GUEST_LINUX=1 直启模式用 ——
        guest 独占终端, 没有宿主 shell 与它抢。
      - 通道打开：字节进 TX 环形缓冲, 由 uart16550_tx_pop() 取走交给用户态
        helper(/bin/vmm-run)再写到自己 stdout。宿主 tty 层保持对真实 UART

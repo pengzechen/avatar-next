@@ -242,22 +242,27 @@ avatar/
 
 ### 内核启动模式
 
-`kernel/main.c` 末尾通过条件编译选择启动模式，**共用一套 idle 尾部代码**（无重复）：
+`kernel/main.c` 只调用 `tests/boot_mode.h` 的通用钩子，**测试细节不在 main**：
 
 ```c
-#if defined(RUN_VMM_TEST)
-    run_vmm_test();          // VMM 三线程切换测试
-#elif defined(RUN_XXX_TEST)
-    run_xxx_test();          // 未来新测试加在这里
-#else
-    task_create("busybox", demo_load_busybox, ...);  // 默认：busybox shell
-#endif
+if (!test_boot_skip_net()) {          // guest 直启 / VMM 自测跳过网络
+    drivers_init(DRV_PHASE_NET);
+}
+if (test_boot_active()) {
+    test_boot_run();                  // 由 tests/boot/boot_*.c 实现
+} else {
+    task_create("busybox", demo_load_busybox, ...);  // 默认
+}
 
 // 所有模式共用：启用抢占 → 切换 idle 栈 → 进入 wfe/wfi/hlt 循环
 timer_set_tick_cb(sched_tick);
 task_switch_to_idle_stack();
 while (1) { task_yield(); /* wfe/hlt/wfi */ }
 ```
+
+Makefile 变体只决定链接哪个 boot 对象：`boot_normal.c` / `boot_guest.c`
+（`GUEST_LINUX=1`）/ `boot_vmm.c`（`VMM_TEST=1`）。切换变体时
+`_VARIANT_OBJS` 会自动清掉旧的 `test_boot.o`，不需要手动 clean。
 
 对应 Makefile 变体（切换时自动强制重新编译 `kernel/main.c`）：
 
@@ -439,7 +444,8 @@ VMM_TEST=1    # 编译 VMM 三线程切换测试（跳过 busybox）
               # 推荐使用 make ARCH=xxx test-vmm（自动传入此标志）
 ```
 
-> **说明**：切换 `VMM_TEST` 时，Makefile 会自动检测并强制重新编译 `kernel/main.c`，无需手动 `make clean`。
+> **说明**：切换 `VMM_TEST` / `GUEST_LINUX` 时，Makefile 会自动删掉旧的
+> `test_boot.o` 并重新链接对应的 `tests/boot/boot_*.c`，无需手动 `make clean`。
 
 ## 🛠️ 开发环境
 

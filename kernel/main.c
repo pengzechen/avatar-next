@@ -28,17 +28,10 @@
 #include "../fs/lwext4_port/fs_init.h"
 
 /*
-   直启 guest 模式需要的 VM 类型与 loader 声明。
-
-   两个头都必须在文件作用域包含: guest_loader.h 里有
-   `typedef struct vm vm_t;` 前置声明, 若在函数体内展开, 它会遮蔽
-   vmm.h 里那个完整的 vm_t, 之后所有 `vm->cfg` 访问都会报
-   "invalid use of incomplete typedef"。
+   测试变体（GUEST_LINUX=1 / VMM_TEST=1）的启动钩子。具体实现由
+   tests/boot/boot_*.c 提供，main.c 不包含 guest/VMM 细节。
 */
-#if defined(RUN_GUEST_LINUX)
-#include "vmm/vmm.h"
-#include "guest_loader.h"
-#endif
+#include "../tests/boot_mode.h"
 
 /*
    架构专属头。x86_64 没有额外需要: exception_init 走通用 exception.h。
@@ -49,10 +42,8 @@
 
 #include "driver/driver.h"
 
-extern void run_vmm_test(void); /* tests/vmm_test.c */
-extern void kmem_test(void);    /* kernel/mm/aarch64/vmm.c */
+extern void kmem_test(void); /* kernel/mm/aarch64/vmm.c */
 
-#if !defined(RUN_VMM_TEST) && !defined(RUN_GUEST_LINUX)
 static void demo_load_busybox(void *arg)
 {
     (void)arg;
@@ -82,7 +73,6 @@ static void demo_load_busybox(void *arg)
     KLOG_INIT("[busybox_loader] Exiting...\n");
     task_exit();
 }
-#endif /* !RUN_VMM_TEST && !RUN_GUEST_LINUX */
 
 void kernel_main(void)
 {
@@ -206,10 +196,12 @@ void kernel_main(void)
     /* ── 初始化任务子系统 ───────────────────────────────── */
     KLOG_TASK("Initializing task subsystem...\n");
     cpu_init_bsp(); /* Phase 0：安装 BSP per-CPU 指针 */
+
 #if ARCH_X86_64
     extern void x86_tss_init(void);
     x86_tss_init(); /* 必须在 cpu_init_bsp() 之后(见上方说明) */
 #endif
+
     task_init();
 
     /*
@@ -223,85 +215,47 @@ void kernel_main(void)
     */
     cpu_bring_up_all();
 
-#if !defined(RUN_GUEST_LINUX)
-    /* 驱动阶段（三）：网卡；net_init() 需要驱动先注册 netdev */
-    drivers_init(DRV_PHASE_NET);
-    if (driver_present(DRV_NET)) {
-        KLOG_NET("Initializing network stack...\n");
-        net_init();
-    }
-#endif
-
-    /* ── 选择启动模式 ────────────────────────────────────
-         默认 (run-fs):           启动 busybox 交互 shell
-         VMM_TEST=1:              VMM 三线程上下文切换测试
-         (新测试：在此处添加 #elif defined(RUN_XXX_TEST))
-       ────────────────────────────────────────────────────
-    */
-#if defined(RUN_GUEST_LINUX)
     /*
-       构建指纹 —— `make test-guest-linux` 靠它在产物里辨认 GUEST_LINUX 变体。
-
-       注意： 判据不能用下面那条 KLOG_INFO 里的字符串：`LOG=none` 会把整条
-       KLOG 连同字符串一起编译掉, 校验于是会在完全正确的产物上误报
-       「产物不是 GUEST_LINUX 变体」, 把 `LOG=none` 变成一条走不通的路。
-
-       这里用 `used` 属性保证它一定落到 .rodata(链接没有 --gc-sections,
-       不会被回收), 且不依赖任何日志宏。
-       用独立 token(而不是复用 KLOG 里那句 "GUEST_LINUX mode")是因为
-       Makefile 那边判的是「恰好出现 1 次」—— 复用的话 LOG!=none 时会数到 2 条。
+       驱动阶段（三）：网卡；net_init() 需要驱动先注册 netdev。
+       guest 直启和 VMM 自测不需要网络，由测试变体的 boot 对象声明跳过。
     */
-    __attribute__((used)) static const char g_build_tag_guest_linux[] = "GUEST_LINUX_BUILD_TAG";
-
-    /* 从 rootfs 加载 Linux guest(kernel Image + DTB + initrd)并启动 */
-    KLOG_INFO("=== GUEST_LINUX mode: booting Linux as EL1 guest ===\n");
-    {
-        /* vmm.h / guest_loader.h 都在文件顶部包含(见那里的注释：
-           类型声明不能放在函数体内)
-        */
-
-        /* 直启模式：从 VM 池里取一个槽位(多 VM 之后直启也用同一条路径) */
-        vm_t *vm = vm_alloc();
-        if (!vm) {
-            KLOG_ERROR("GUEST_LINUX: no free VM slot\n");
-        } else {
-            vm->cfg.mem_base = GUEST_LINUX_MEM_BASE;
-            vm->cfg.mem_size = GUEST_LINUX_MEM_SIZE;
-            /*
-               直启没有命令行, 沿用构建期的 GUEST_VCPUS。
-               运行期指定(vmm-run -c N)只在 /dev/vmm 那条路上。
-            */
-            vm->cfg.nr_vcpus = GUEST_LINUX_NR_VCPUS;
-            if (guest_loader_run_linux(vm) != 0)
-                KLOG_ERROR("guest_loader_run_linux failed\n");
+    if (!test_boot_skip_net()) {
+        drivers_init(DRV_PHASE_NET);
+        if (driver_present(DRV_NET)) {
+            KLOG_NET("Initializing network stack...\n");
+            net_init();
         }
     }
-#elif defined(RUN_VMM_TEST)
-    KLOG_INFO("=== VMM_TEST mode: 3-thread context switch test ===\n");
-    run_vmm_test();
-#endif
 
-#if !defined(RUN_VMM_TEST) && !defined(RUN_GUEST_LINUX)
-    uint64_t startup_task_irq_flags = arch_irq_save();
+    /*
+       选择启动模式：
+         默认 / 普通 shell      → busybox
+         GUEST_LINUX=1          → tests/boot/boot_guest.c
+         VMM_TEST=1             → tests/boot/boot_vmm.c
+    */
+    if (test_boot_active()) {
+        test_boot_run();
+    } else {
+        uint64_t startup_task_irq_flags = arch_irq_save();
 
-    if (driver_present(DRV_NET)) {
-        KLOG_NET("Starting network polling task...\n");
-        task_t *eth_task = task_create("net-poll", net_poll_task, NULL, 20);
-        if (eth_task)
-            KLOG_TASK("network task created: id=%u\n", eth_task->id);
+        if (driver_present(DRV_NET)) {
+            KLOG_NET("Starting network polling task...\n");
+            task_t *eth_task = task_create("net-poll", net_poll_task, NULL, 20);
+            if (eth_task)
+                KLOG_TASK("network task created: id=%u\n", eth_task->id);
+            else
+                KLOG_ERROR("Failed to create network task!\n");
+        }
+
+        /* SMP 检查完成, 现在才启动 busybox 交互 shell */
+        KLOG_INFO("\n=== Launching busybox shell ===\n");
+        task_t *bb_task = task_create("busybox", demo_load_busybox, NULL, 5);
+        arch_irq_restore(startup_task_irq_flags);
+        if (bb_task)
+            KLOG_TASK("busybox loader task created: id=%u\n", bb_task->id);
         else
-            KLOG_ERROR("Failed to create network task!\n");
+            KLOG_ERROR("Failed to create busybox loader task!\n");
     }
-
-    /* SMP 检查完成, 现在才启动 busybox 交互 shell */
-    KLOG_INFO("\n=== Launching busybox shell ===\n");
-    task_t *bb_task = task_create("busybox", demo_load_busybox, NULL, 5);
-    arch_irq_restore(startup_task_irq_flags);
-    if (bb_task)
-        KLOG_TASK("busybox loader task created: id=%u\n", bb_task->id);
-    else
-        KLOG_ERROR("Failed to create busybox loader task!\n");
-#endif
 
     /*
        SMP 结果打一条 INFO。
@@ -324,9 +278,9 @@ void kernel_main(void)
        ────────────────────────────────────────────────────
     */
     timer_set_tick_cb(sched_tick);
-#if ARCH_RISCV64
-    riscv_kernel_interrupt_enable();
-#endif
+// #if ARCH_RISCV64
+//     riscv_kernel_interrupt_enable();
+// #endif
     KLOG_INFO("Preemptive scheduling enabled\n");
 
     /* SMP 健康检查：抢占启用后立刻验证所有核 timer 都在 tick。 */

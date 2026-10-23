@@ -41,9 +41,10 @@ make ARCH=aarch64 test-vmm LOG=info
 ```
 Avatar OS 测试
 ├── 1. 内核单元测试        tests/*.c         编译进内核，启动时运行
-├── 2. 构建变体测试        kernel/main.c     通过 #ifdef RUN_XXX_TEST 切换
-│   ├── PMM_TESTS=1        物理内存分配器
-│   └── VMM_TEST=1         VMM 三线程上下文切换
+├── 2. 构建变体测试        tests/boot/       链接不同的 boot_*.c
+│   ├── PMM_TESTS=1        （仍走 kernel/main.c 的 RUN_PMM_TESTS）
+│   ├── VMM_TEST=1         tests/boot/boot_vmm.c
+│   └── GUEST_LINUX=1      tests/boot/boot_guest.c
 ├── 3. apps/ 汇编小程序    apps/<arch>/*.S   三种加载方式（见下节）
 └── 4. 用户态 pthread 测试 apps/c/           动态链接 musl，完整 Linux ABI
 ```
@@ -108,39 +109,51 @@ run_foo_tests();
 
 ---
 
-## 二、构建变体测试（`kernel/main.c` 模式切换）
+## 二、构建变体测试（`tests/boot` 钩子）
 
 ### 工作原理
 
-`kernel/main.c` 末尾用 `#if defined(RUN_XXX)` 选择启动模式，**所有模式共用同一套 idle 尾部**（抢占使能 → 切换 idle 栈 → wfe/wfi/hlt 循环）：
+`kernel/main.c` 不再包含 guest/VMM 的细节，只调用通用钩子：
 
 ```c
-task_init();
+#include "../tests/boot_mode.h"
 
-#if defined(RUN_VMM_TEST)
-    run_vmm_test();
-#elif defined(RUN_FOO_TEST)   // ← 新测试加在这里
-    run_foo_test();
-#else
-    task_create("busybox", demo_load_busybox, NULL, 5);  // 默认
-#endif
+if (!test_boot_skip_net()) {          // guest 直启 / VMM 自测跳过网络
+    drivers_init(DRV_PHASE_NET);
+    ...
+}
 
-timer_set_tick_cb(sched_tick);   // 共用
-task_switch_to_idle_stack();     // 共用
+if (test_boot_active()) {             // 测试变体接管启动流程
+    test_boot_run();
+} else {
+    task_create("busybox", demo_load_busybox, ...);  // 默认
+}
+
+timer_set_tick_cb(sched_tick);        // 所有模式共用
+task_switch_to_idle_stack();
 while (1) { task_yield(); wfe/wfi/hlt; }
 ```
 
-Makefile 里有对应的变体追踪机制：**切换变体时自动强制重编 `kernel/main.c`**，无需手动 `make clean`。
+Makefile 的变体只决定链接哪个 `tests/boot/boot_*.c`：
+
+| 变体 | 链接的 boot 对象 |
+|------|------------------|
+| 默认 | `tests/boot/boot_normal.c` |
+| `GUEST_LINUX=1` | `tests/boot/boot_guest.c` |
+| `VMM_TEST=1` | `tests/boot/boot_vmm.c` |
+
+切换变体时 `_VARIANT_OBJS` 会自动删掉旧的 `test_boot.o`，无需手动 clean。
 
 ### 现有构建变体
 
-| 命令 | 宏定义 | 启动模式 |
-|------|--------|----------|
-| `make ARCH=xxx run-fs` | —（默认）| busybox 交互 shell |
-| `make ARCH=xxx test-pthread` | —（默认）| busybox shell + pthread_test rootfs |
-| `make ARCH=xxx VMM_TEST=1 kernel` | `RUN_VMM_TEST` | VMM 三线程上下文切换 |
-| `make ARCH=xxx test-vmm` | `RUN_VMM_TEST`（自动）| 同上，一步完成 |
-| `make PLATFORM=xxx PMM_TEST=1 kernel` | `RUN_PMM_TESTS` | PMM 测试后关机（测试框架的 `kernel/pmm` 用这个变体） |
+| 命令 | 启动模式 |
+|------|----------|
+| `make ARCH=xxx run-fs` | busybox 交互 shell |
+| `make ARCH=xxx test-pthread` | busybox shell + pthread_test rootfs |
+| `make ARCH=xxx VMM_TEST=1 kernel` | VMM 三线程上下文切换 |
+| `make ARCH=xxx test-vmm` | 同上，一步完成 |
+| `make ARCH=xxx GUEST_LINUX=1 kernel` + rootfs | 直启 Linux guest |
+| `make PLATFORM=xxx PMM_TEST=1 kernel` | PMM 测试后关机 |
 
 ### 添加新构建变体测试
 
@@ -149,18 +162,13 @@ Makefile 里有对应的变体追踪机制：**切换变体时自动强制重编
 ```makefile
 FOO_TEST ?= 0
 ifeq ($(FOO_TEST),1)
-    CFLAGS += -DRUN_FOO_TEST=1
+    TEST_BOOT_SRC := $(TESTS_DIR)/boot/boot_foo.c
     _BUILD_VARIANT := foo_test   # ← 修改此处唯一标识
 endif
 ```
 
-**步骤二：`kernel/main.c` 加 `#elif` 分支**：
-
-```c
-#elif defined(RUN_FOO_TEST)
-    extern void run_foo_test(void);
-    run_foo_test();
-```
+**步骤二：新建 `tests/boot/boot_foo.c`**，实现 `test_boot_active()` /
+`test_boot_skip_net()` / `test_boot_run()`；main.c 不需要改。
 
 **步骤三：添加便捷 Makefile target**（仿 `test-vmm`）：
 

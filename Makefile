@@ -542,26 +542,31 @@ CFLAGS  += -MMD -MP
 
 # ─── §7  构建变体 ─────────────────────────────────────────────────────────────
 # 三个变体互斥，优先级 GUEST_LINUX > VMM_TEST > NGINX_TEST > normal：
-#   VMM_TEST=1    ：定义 RUN_VMM_TEST，跳过 busybox，运行三线程切换测试
-#   GUEST_LINUX=1 ：定义 RUN_GUEST_LINUX，从 rootfs 加载并启动 Linux guest
+#   VMM_TEST=1    ：链接 tests/boot/boot_vmm.c，运行三线程切换测试
+#   GUEST_LINUX=1 ：链接 tests/boot/boot_guest.c，从 rootfs 直启 Linux guest
 #   NGINX_TEST=1  ：定义 RUN_NGINX_TEST，网络栈专供 nginx 压测（无对应 target）
 # 新增测试时仿照此模式，同时在 _BUILD_VARIANT 里加一个唯一标识。
+#
+# guest/VMM 不再定义 RUN_* 宏：变体只决定链接哪个 boot 对象，main.c 调用
+# tests/boot_mode.h 的通用钩子（active / skip_net / run）。
 VMM_TEST ?= 0
 NGINX_TEST ?= 0
-# GUEST_LINUX=1：编译 RUN_GUEST_LINUX，从 rootfs 加载并启动 Linux guest
 GUEST_LINUX ?= 0
 ifeq ($(GUEST_LINUX),1)
-    CFLAGS += -DRUN_GUEST_LINUX=1
+    TEST_BOOT_SRC := $(TESTS_DIR)/boot/boot_guest.c
     _BUILD_VARIANT := guest_linux
 else ifeq ($(VMM_TEST),1)
-    CFLAGS += -DRUN_VMM_TEST=1
+    TEST_BOOT_SRC := $(TESTS_DIR)/boot/boot_vmm.c
     _BUILD_VARIANT := vmm_test
 else ifeq ($(NGINX_TEST),1)
     CFLAGS += -DRUN_NGINX_TEST=1
+    TEST_BOOT_SRC := $(TESTS_DIR)/boot/boot_normal.c
     _BUILD_VARIANT := nginx_test
 else
+    TEST_BOOT_SRC := $(TESTS_DIR)/boot/boot_normal.c
     _BUILD_VARIANT := normal
 endif
+TEST_BOOT_OBJ := $(BUILD_DIR)/test_boot.o
 
 # STRING_TEST=1：定义 RUN_STRING_TEST，kernel_main 早期跑 tests/string_test.c 自检
 # （与上面三个变体正交：自检跑完继续正常启动）。标志只影响 kernel_main.o，
@@ -635,7 +640,8 @@ endif
 _VARIANT_FILE := $(BUILD_DIR)/.build_variant
 _VARIANT_OBJS := $(BUILD_DIR)/kernel_main.o \
                  $(BUILD_DIR)/kernel_loader_elf_image.o \
-                 $(BUILD_DIR)/kernel_syscall_syscall.o
+                 $(BUILD_DIR)/kernel_syscall_syscall.o \
+                 $(TEST_BOOT_OBJ)
 _VARIANT_CHECK := $(shell \
     mkdir -p $(BUILD_DIR) 2>/dev/null; \
     if [ "$$(cat $(_VARIANT_FILE) 2>/dev/null)" != "$(_BUILD_VARIANT)" ]; then \
@@ -1049,6 +1055,10 @@ $(foreach f,$(KERNEL_LWIPX_SRCS),$(eval $(call KERNEL_RULE,$(f),$$(LWIP_CFLAGS) 
 $(BUILD_DIR)/tests_%.o: $(TESTS_DIR)/%.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
+# 启动变体对象：GUEST_LINUX / VMM_TEST 选择不同类型；main.c 只认通用钩子。
+$(TEST_BOOT_OBJ): $(TEST_BOOT_SRC) | $(BUILD_DIR) check-submodules
+	$(CC) $(CFLAGS) -c $< -o $@
+
 $(BUILD_DIR)/platform_%.o: $(PLATFORM_DIR)/%.c | $(BUILD_DIR)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -1110,7 +1120,7 @@ PLATFORM_CONFIG_DEPS := $(PLATFORM_MK) $(_PLATFORM_CONF)
 $(BOOT_OBJECTS) $(KERNEL_OBJECTS) \
 $(PMM_TEST_OBJECT) \
 $(TASK_USER_TEST_OBJ) $(TASK_USER_HELLO_OBJ) $(TASK_USER_TESTEXECVE_OBJ) \
-$(GUEST_TEST_OBJ) $(TESTS_OBJECTS) $(PLATFORM_OBJECTS) $(DRIVER_OBJECTS) \
+$(GUEST_TEST_OBJ) $(TEST_BOOT_OBJ) $(TESTS_OBJECTS) $(PLATFORM_OBJECTS) $(DRIVER_OBJECTS) \
 $(EXCEPTION_OBJECTS) $(KLOG_OBJECT) $(VSNPRINTF_OBJECT) $(STRING_OBJECT) \
 $(LIBC_OBJECT) $(BITMAP_OBJECT) $(PLATFORM_STATIC_OBJECT) $(LWEXT4_OBJS) $(LWEXT4_PORT_OBJS) \
 $(LWIP_OBJS): $(PLATFORM_CONFIG_DEPS)
@@ -1317,7 +1327,7 @@ endif
 # boot/x86_64/link.ld 里的长注释），新增这一段不移动任何函数；表里也只收
 # STT_FUNC。--verify 是给这条不变量兜底的 —— 一旦有人挪动段序，构建当场
 # 失败，而不是产出二进制正常、函数名整体错位的镜像。
-KERNEL_LINK_OBJS := $(BOOT_OBJECTS) $(KERNEL_OBJECTS) $(PMM_TEST_OBJECT) $(LWIP_OBJS) $(TASK_USER_TEST_OBJ) $(TASK_USER_HELLO_OBJ) $(TASK_USER_TESTEXECVE_OBJ) $(GUEST_TEST_OBJ) $(TESTS_OBJECTS) $(PLATFORM_OBJECTS) $(DRIVER_OBJECTS) $(EXCEPTION_OBJECTS) $(KLOG_OBJECT) $(VSNPRINTF_OBJECT) $(STRING_OBJECT) $(LIBC_OBJECT) $(BITMAP_OBJECT) $(PLATFORM_STATIC_OBJECT) $(LWEXT4_OBJS) $(LWEXT4_PORT_OBJS)
+KERNEL_LINK_OBJS := $(BOOT_OBJECTS) $(KERNEL_OBJECTS) $(PMM_TEST_OBJECT) $(LWIP_OBJS) $(TASK_USER_TEST_OBJ) $(TASK_USER_HELLO_OBJ) $(TASK_USER_TESTEXECVE_OBJ) $(GUEST_TEST_OBJ) $(TEST_BOOT_OBJ) $(TESTS_OBJECTS) $(PLATFORM_OBJECTS) $(DRIVER_OBJECTS) $(EXCEPTION_OBJECTS) $(KLOG_OBJECT) $(VSNPRINTF_OBJECT) $(STRING_OBJECT) $(LIBC_OBJECT) $(BITMAP_OBJECT) $(PLATFORM_STATIC_OBJECT) $(LWEXT4_OBJS) $(LWEXT4_PORT_OBJS)
 
 # 第一趟：链一个**空**符号表桩，只为拿到各函数的最终地址。
 # 桩不是可有可无的：.text 里的代码要引用 __kallsyms_*，两趟必须解析到
@@ -1492,7 +1502,7 @@ $(ROOTFS_IMG): Makefile $(APPS_BINS) $(APPS_C_ELFS) $(LTP_BINS) $(EPOLL_PERF_BIN
 		printf '%s\n' '<html><body><h1>Avatar nginx</h1></body></html>' > $(ROOTFS_STAGE)/www/index.html; \
 		echo "  [nginx installed → /bin/nginx]"; \
 	fi
-	@# 安装 guest Linux 镜像（供 RUN_GUEST_LINUX / vmm-run 从 rootfs 加载）
+	@# 安装 guest Linux 镜像（供 GUEST_LINUX 直启 / vmm-run 从 rootfs 加载）
 	@# 目录名与 include/guest_loader.h 的 GUEST_LINUX_*_PATH 必须一致。
 	@if [ "$(ARCH)" = "riscv64" ]; then \
 		missing=0; \

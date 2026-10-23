@@ -15,7 +15,7 @@
      - UARTFR/UARTCR/UARTIMSC/UARTRIS/UARTMIS/ID 寄存器按 PL011 语义返回
 
    输出通路(对标 kvmm 的 TxChannel, 两种模式由宿主决定)：
-     - 通道关闭(默认)：逐字节直打到宿主控制台。这是 RUN_GUEST_LINUX
+     - 通道关闭(默认)：逐字节直打到宿主控制台。这是 GUEST_LINUX=1
        直启模式用的 —— guest 独占终端, 没有宿主 shell 与它抢。
      - 通道打开：字节进 TX 环形缓冲, 由 vpl011_tx_pop() 取走交给用户态
        helper(/bin/vmm-run)再写到自己 stdout。宿主 tty 层保持对真实

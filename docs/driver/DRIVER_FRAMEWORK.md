@@ -566,7 +566,7 @@ void kernel_main(void)
 - `platform_early_init()` 的实现从 `uart_init()` 改成 `drivers_init(DRV_PHASE_EARLY)`；`platform_ops.h` 的契约不变。
 - `#if ARCH_*` 只剩异常向量这种真正的架构启动代码；`#if DRIVER_*`/`#if PLATFORM_*` 不再出现在驱动初始化里。
 - 启动日志顺序会变化（IRQ/TIME 提前到 fs 之前）。唯一的语义变化是 sdblk 不再重复初始化；这一点单独在评审中确认。
-- guest 变体下不跑 `DRV_PHASE_NET`（保持当前行为），用现有 `RUN_GUEST_LINUX` 条件包住即可；这不是平台判断。
+- guest 变体下不跑 `DRV_PHASE_NET`（保持当前行为），用 `test_boot_skip_net()`（tests/boot 钩子）包住即可；这不是平台判断。
 
 ---
 
