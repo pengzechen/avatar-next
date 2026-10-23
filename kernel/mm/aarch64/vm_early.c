@@ -100,11 +100,24 @@ uint64_t vm_get_boot_pgtable(void)
 */
 uint64_t vm_init(void)
 {
+    /*
+       ⚠️ 本函数由 boot.S 在 **MMU 打开之前**调用, 因此这里绝对不能出现
+       KLOG_* / kprintf / 任何间接调用的输出路径。
+
+       原因：uart_putchar() 经 g_serial_ops 间接调用, 而 g_serial_ops 里存的是
+       链接期的**高虚拟地址**函数指针。代码本身能靠 PC 相对寻址在物理地址上
+       跑, 但解引用这个指针时 MMU 还没开 → data abort。此时 VBAR_EL2 尚未
+       设置, 异常落到 0x200, 紧接着是未定义指令的原地死循环 —— 表现为
+       "LOG=debug 一个字符都没有, info/warn 正常"。
+
+       LOG=debug 曾经在这里打 KLOG_MM，正好踩中。要输出早期信息只能等
+       kernel_main 的 platform_early_init() 之后。
+    */
 #ifdef PLATFORM_RK3588
     /*
        platform_conf_scan() 在 kernel_main 中才运行, 现在 dw_uart_base / reg_shift
        仍是编译期默认值(RISC-V QEMU：base=0x10000000, reg_shift=0)。
-       在此直接覆写为 RK3588 物理值, 使后续 KLOG_INFO 能在 MMU 启用前写到真实串口：
+       在此直接覆写为 RK3588 物理值, 供后续(MMU 打开后)使用：
          reg_shift=2 → 寄存器步长 4 字节(LSR = base + 0x14 = 0xFEB50014)
          reg_shift=0 会导致 LSR 地址=0xFEB50005(错！THRE 永远读不到 → 死循环)
     */
@@ -113,7 +126,6 @@ uint64_t vm_init(void)
     dw_uart_base = 0xFEB50000UL;
     dw_uart_reg_shift = 2;
 #endif
-    KLOG_MM("Initializing VM...\n");
 
     /* 清空所有页表 */
     memset(kernel_pt0, 0, sizeof(kernel_pt0));
@@ -177,9 +189,6 @@ uint64_t vm_init(void)
     set_block_entry(&boot_pt1[1], 0x40000000ULL, PTE_NORMAL_MEMORY); /* 普通内存(0x40000000 - 0x7fffffff) */
     set_block_entry(&boot_pt1[2], 0x80000000ULL, PTE_NORMAL_MEMORY); /* 普通内存(0x80000000 - 0xbfffffff) */
 #endif
-
-    KLOG_MM("VM page tables initialized\n");
-    KLOG_MM("TTBR0 base: 0x%llx  TTBR1 base: 0x%llx\n", (uint64_t)boot_pt0, (uint64_t)kernel_pt0);
 
     return (uint64_t)kernel_pt0;
 }

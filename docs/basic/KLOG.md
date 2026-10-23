@@ -329,6 +329,7 @@ syscall 名字表。
 6. **不要在被 klog 依赖的路径里打日志**：UART 驱动的"发送缓冲满、重试超时"分支里有 `logger_warn`，而它是在 klog 持锁逐字符输出的过程中被调用的 —— 一旦该分支可达就是同核自死锁。目前 UART 的缓冲/中断发送路径整体未启用（`uart_initialized` 永远是 false，初始化赋值被注释掉了），所以不可达；**启用那条路径前必须先解决这个重入**。同理，PL011 的 TX 缓冲锁用的是非 IRQ-safe 的 `spin_lock`。
 7. **`LOG_MODULES=` 消费得太晚，挡不住最早的几行**：`klog_init()` 由 `kernel/main.c` 调用，而 x86_64 / riscv64 在它**之前**就有架构初始化行打出（x86 的 `Initializing IDT + LAPIC...`、riscv 的 `Initializing exception handler...`）。`log_set_modules_by_name()` 是**整体赋值**（白名单而非合并），所以那几行是在默认全 1 掩码下输出的，不受 `LOG_MODULES=` 约束。目前已知并接受；UART 本身已在 `kernel_main` 开头的 `platform_early_init()` 就绪（所以这些行能正常输出），要真正按 `LOG_MODULES=` 过滤它们，得把 `log_set_modules_by_name()` 也提前到架构初始化之前。
 8. **改了 `include/klog.h` 之后必须 `make clean`**：Makefile 的 `_CFG_SIG` 只跟踪 `GIC=/SMP=/LOG=/LOG_MODULES=`，**不跟踪头文件 mtime**（`-MMD` 的 `.d` 从未被 `-include`）。后果不是编译失败，而是部分 TU 用旧宏、部分用新宏 —— 输出看起来完全合理，只是行数和采样都是错的。验证这类改动时要按行数比对，所以这个坑特别容易骗过验收。
+9. **MMU 打开之前禁止任何 KLOG**：`kernel/mm/aarch64/vm_early.c` 的 `vm_init()` 由 `boot.S` 在 `mmu_init()` **之前**调用。`uart_putchar()` 经 `g_serial_ops` 间接调用，而该指针存的是链接期**高虚拟地址**；代码本身能靠 PC 相对寻址在物理地址上运行，但解引用这个指针时 MMU 还没开 → data abort。此时 `VBAR_EL2` 尚未设置，异常落到 `0x200`，随后是未定义指令原地死循环。症状极具迷惑性：**`LOG=debug` 一个字符都不输出，`info`/`warn` 却正常**，因为只有 DEBUG 级宏会在 `vm_init()` 里执行。早期信息只能等 `kernel_main` 的 `platform_early_init()` 之后再打。
 
 ## 测试
 
