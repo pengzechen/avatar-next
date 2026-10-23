@@ -184,6 +184,50 @@ def artifacts_ready(
     return True
 
 
+# 根 Makefile 不跟踪头文件依赖（见 CLAUDE.md / Makefile 的说明）：只改 .h
+# 时 make 不会重编引用它的 .o，产物里会混用新旧结构体布局。测试框架必须
+# 自己发现这种情况并先 clean，否则会把“旧 .o + 新 .o”误报成内核回归。
+_HEADER_SCAN_DIRS = (
+    "include",
+    "kernel",
+    "driver",
+    "platforms",
+    "boot",
+    "fs",
+    "third_party",
+)
+_HEADER_SCAN_FILES = ("Makefile",)
+
+
+def _headers_newer_than(kernel: pathlib.Path) -> bool:
+    if not kernel.is_file():
+        return False
+    try:
+        kernel_mtime = kernel.stat().st_mtime
+    except OSError:
+        return False
+
+    for name in _HEADER_SCAN_DIRS:
+        root = REPO_ROOT / name
+        if not root.is_dir():
+            continue
+        for header in root.rglob("*.h"):
+            try:
+                if header.stat().st_mtime > kernel_mtime:
+                    return True
+            except OSError:
+                continue
+
+    for name in _HEADER_SCAN_FILES:
+        path = REPO_ROOT / name
+        try:
+            if path.is_file() and path.stat().st_mtime > kernel_mtime:
+                return True
+        except OSError:
+            continue
+    return False
+
+
 def _run_make(
     arch: Arch,
     variant: Variant,
@@ -241,9 +285,22 @@ def ensure_build(
 ) -> None:
     """按变体构建内核（以及 rootfs），产物落在该变体独立的 BUILD_ROOT。"""
     variant = VARIANTS[variant_name]
-    if not force and artifacts_ready(artifacts, arch, variant, smp):
+    kernel = kernel_path(artifacts, arch, variant.name, smp)
+    stale_headers = _headers_newer_than(kernel)
+
+    if not force and not stale_headers and artifacts_ready(artifacts, arch, variant, smp):
         return
+
     jobs = jobs or max(1, os.cpu_count() or 1)
+
+    if stale_headers:
+        print(
+            f"       {arch.name}: source headers are newer than the kernel; "
+            "cleaning stale objects before build",
+            flush=True,
+        )
+        _run_make(arch, variant, artifacts, log, smp, jobs, ("clean",))
+
     for targets in variant.targets:
         _run_make(arch, variant, artifacts, log, smp, jobs, targets)
 
