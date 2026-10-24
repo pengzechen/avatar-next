@@ -664,8 +664,7 @@ static void reg_write(vm_t *vm, uint32_t vcpu_id, vlapic_state_t *v, uint32_t id
                     vcpu_t *target = vmm_vm_vcpu(vm, (int)targets[k]);
 
                     if (target && vmm_vcpu_start(target, (uint64_t)vec << 12, 0) == 0)
-                        KLOG_INFO("[vlapic] vcpu%u: SIPI -> vcpu%u (cs base=0x%x)\n", vcpu_id, targets[k],
-                                  vec << 12);
+                        KLOG_INFO("[vlapic] vcpu%u: SIPI -> vcpu%u (cs base=0x%x)\n", vcpu_id, targets[k], vec << 12);
                 }
             }
             return;

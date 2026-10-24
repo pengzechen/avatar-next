@@ -543,8 +543,7 @@ static int vcpu_wfi_has_work(vcpu_t *vcpu)
            截止时间。这里把「控制台有数据 / vPLIC 有可投递中断」也算作事件，
            由宿主 tick 把 vCPU 叫醒后立刻回入口注入。
         */
-        if (vmm_console_irq_asserted(vcpu->vm) ||
-            vplic_next_deliverable(vcpu->vm, (uint32_t)vcpu->vcpu_id) != 0)
+        if (vmm_console_irq_asserted(vcpu->vm) || vplic_next_deliverable(vcpu->vm, (uint32_t)vcpu->vcpu_id) != 0)
             return 1;
     }
     return 0;
@@ -1476,8 +1475,7 @@ void vmm_arch_save_guest_ctx(vcpu_t *vcpu)
     if (!vcpu)
         return;
 
-    if (vcpu->ipi_injected && vcpu->ipi_seq == vcpu->ipi_seq_at_entry &&
-        !(hext_read_hvip() & HVIP_VSSIP))
+    if (vcpu->ipi_injected && vcpu->ipi_seq == vcpu->ipi_seq_at_entry && !(hext_read_hvip() & HVIP_VSSIP))
         vcpu->ipi_pending = 0;
 
     vcpu->ipi_injected = 0;

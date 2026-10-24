@@ -50,7 +50,9 @@
                 "${workspaceFolder}/third_party/lwext4/include",
                 "${workspaceFolder}/fs/lwext4_port",
                 "${workspaceFolder}/third_party/lwip/src/include",
-                "${workspaceFolder}/kernel/net/lwip_port"
+                "${workspaceFolder}/kernel/net/lwip_port",
+                "${workspaceFolder}/third_party/fatfs/source",
+                "${workspaceFolder}/fs"
             ],
             "defines": [
                 "__riscv",

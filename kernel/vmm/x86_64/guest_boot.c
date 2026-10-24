@@ -193,11 +193,11 @@ static void build_mptable(vm_t *vm)
     */
     for (int i = 0; i < nr_cpu; i++) {
         t[o] = 0;
-        t[o + 1] = (uint8_t)i;                                         /* APIC ID */
-        t[o + 2] = 0x14;                                               /* APIC version */
-        t[o + 3] = (uint8_t)(0x01 | (i == 0 ? 0x02 : 0x00));           /* enabled; BSP */
-        mp_w(t, o + 4, VMM_X86_GUEST_CPUID1_EAX, 4);                   /* CPUID signature */
-        mp_w(t, o + 8, VMM_X86_GUEST_CPUID1_EDX, 4);                   /* feature flags */
+        t[o + 1] = (uint8_t)i;                               /* APIC ID */
+        t[o + 2] = 0x14;                                     /* APIC version */
+        t[o + 3] = (uint8_t)(0x01 | (i == 0 ? 0x02 : 0x00)); /* enabled; BSP */
+        mp_w(t, o + 4, VMM_X86_GUEST_CPUID1_EAX, 4);         /* CPUID signature */
+        mp_w(t, o + 8, VMM_X86_GUEST_CPUID1_EDX, 4);         /* feature flags */
         o += 20;
         nent++;
     }
@@ -249,8 +249,8 @@ static void build_mptable(vm_t *vm)
     if (guest_loader_write_guest(vm, MP_TABLE_GPA, mpbuf, 0x800) != 0)
         return;
 
-    KLOG_INFO("[x86boot] MP table @0x%llx: %u entries (%d CPU(s)) / %u bytes\n",
-              (unsigned long long)MP_TABLE_GPA, (unsigned)nent, nr_cpu, (unsigned)o);
+    KLOG_INFO("[x86boot] MP table @0x%llx: %u entries (%d CPU(s)) / %u bytes\n", (unsigned long long)MP_TABLE_GPA,
+              (unsigned)nent, nr_cpu, (unsigned)o);
 }
 
 /*

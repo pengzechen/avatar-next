@@ -428,28 +428,28 @@ _Static_assert(offsetof(vcpu_t, launched) == 0x84, "vmx_run.S launched @0x84");
 */
 
 /* ── asm 可见的固定偏移 ──────────────────────────────────────── */
-#define VCPU_RV_R0        0   /* x0-x31, 32×8 bytes */
-#define VCPU_RV_VSEPC     256 /* 32*8 */
-#define VCPU_RV_VSSTATUS  264
-#define VCPU_RV_VSTVEC    272
-#define VCPU_RV_VSSCRATCH 280
-#define VCPU_RV_VSATP     288
-#define VCPU_RV_VSIE      296
-#define VCPU_RV_SCAUSE    304
-#define VCPU_RV_STVAL     312
-#define VCPU_RV_HTVAL     320
-#define VCPU_RV_HSTATUS   328            /* 陷阱时的 hstatus(含 SPVP) */
-#define VCPU_RV_PC        336            /* 恢复 PC(HS sepc) */
-#define VCPU_RV_HOSTCTX   344            /* host_ctx[16] = 128 B */
-#define VCPU_RV_HOSTSTVEC (344 + 14 * 8) /* = 456: 原主 stvec (host_ctx[14]) */
-#define VCPU_RV_HTINST    (344 + 16 * 8) /* = 472: htinst(在 host_ctx 之后) */
+#define VCPU_RV_R0           0   /* x0-x31, 32×8 bytes */
+#define VCPU_RV_VSEPC        256 /* 32*8 */
+#define VCPU_RV_VSSTATUS     264
+#define VCPU_RV_VSTVEC       272
+#define VCPU_RV_VSSCRATCH    280
+#define VCPU_RV_VSATP        288
+#define VCPU_RV_VSIE         296
+#define VCPU_RV_SCAUSE       304
+#define VCPU_RV_STVAL        312
+#define VCPU_RV_HTVAL        320
+#define VCPU_RV_HSTATUS      328            /* 陷阱时的 hstatus(含 SPVP) */
+#define VCPU_RV_PC           336            /* 恢复 PC(HS sepc) */
+#define VCPU_RV_HOSTCTX      344            /* host_ctx[16] = 128 B */
+#define VCPU_RV_HOSTSTVEC    (344 + 14 * 8) /* = 456: 原主 stvec (host_ctx[14]) */
+#define VCPU_RV_HTINST       (344 + 16 * 8) /* = 472: htinst(在 host_ctx 之后) */
 
 /*
    远端 fence 请求位(vcpu->remote_fence)。只区分「要不要执行哪条失效
    指令」；地址/ASID/VMA 一律忽略(全刷), 语义上永远安全。
 */
-#define RV_REMOTE_FENCE_I    (1u << 0) /* remote fence.i    → fence.i */
-#define RV_REMOTE_SFENCE_VMA (1u << 1) /* remote sfence.vma → hfence.vvma(all) */
+#define RV_REMOTE_FENCE_I    (1u << 0)      /* remote fence.i    → fence.i */
+#define RV_REMOTE_SFENCE_VMA (1u << 1)      /* remote sfence.vma → hfence.vvma(all) */
 
 typedef struct vcpu {
     /* ── asm-accessible(勿改动顺序)────────────────────── */
@@ -501,9 +501,9 @@ typedef struct vcpu {
        序号代替: 入口记下 ipi_seq, exit 时只有序号没变且 VSSIP 已被清,
        才认为那次注入被消费了。
     */
-    uint64_t ipi_seq;         /* 每次 send_ipi 自增(写侧持 irq_lock) */
-    uint64_t ipi_seq_at_entry;/* 入口注入时的快照 */
-    int ipi_injected;         /* 本次 guest 运行开始时是否置了 VSSIP */
+    uint64_t ipi_seq;          /* 每次 send_ipi 自增(写侧持 irq_lock) */
+    uint64_t ipi_seq_at_entry; /* 入口注入时的快照 */
+    int ipi_injected;          /* 本次 guest 运行开始时是否置了 VSSIP */
 
     /*
        远端 fence 请求(RV_REMOTE_*)。SBI RFENCE 的目标 hart 必须自己执行
@@ -578,7 +578,7 @@ _Static_assert(offsetof(vcpu_t, host_ctx) == VCPU_RV_HOSTCTX, "hext_vcpu.S HCTX_
 /* host_ctx[15] 必须正好是 tp 槽 —— 漏掉它宿主的 per-CPU 指针就被 guest 覆盖 */
 _Static_assert(offsetof(vcpu_t, host_ctx) + 15 * 8 == VCPU_RV_HOSTCTX + 15 * 8, "hext_vcpu.S HCTX_TP");
 _Static_assert(offsetof(vcpu_t, htinst_save) == VCPU_RV_HTINST, "hext_vcpu.S VCPU_HTINST");
-#endif                                   /* ARCH_* */
+#endif                                      /* ARCH_* */
 
 /* ── VM 配置 ─────────────────────────────────────────────────── */
 typedef struct vm_cfg {

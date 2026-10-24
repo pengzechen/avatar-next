@@ -16,9 +16,9 @@
 #include "types.h"
 #include "arch.h"
 #include "exception.h"       /* arch_irq_disable()(统一的中断屏蔽原语) */
-#include "platform_cfg.h"  /* platform_conf_scan */
-#include "driver/driver.h" /* drivers_init(DRV_PHASE_EARLY) */
-#include "driver/serial.h" /* serial_putc/serial_puts */
+#include "platform_cfg.h"    /* platform_conf_scan */
+#include "driver/driver.h"   /* drivers_init(DRV_PHASE_EARLY) */
+#include "driver/serial.h"   /* serial_putc/serial_puts */
 #include "debug/backtrace.h" /* platform_panic() 里打调用栈 */
 #include "klog.h"            /* klog_panic_begin() */
 #if ARCH_X86_64

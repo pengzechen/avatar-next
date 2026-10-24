@@ -32,7 +32,7 @@
 #include "vmm/vmm_uart16550.h"
 #include "vmm/vmm_console.h" /* vmm_console_irq_asserted：控制台中断线(电平触发) */
 #include "vmm/vmm_vlapic.h"
-#include "irq/lapic.h"   /* g_tsc_freq_hz：宿主标定出的 TSC 频率(CPUID 0x15/0x16 要报给 guest) */
+#include "irq/lapic.h" /* g_tsc_freq_hz：宿主标定出的 TSC 频率(CPUID 0x15/0x16 要报给 guest) */
 
 /* guest RAM 的宿主物理窗口(定义在 guest_boot.c) */
 #include "mm_vm.h" /* virt_to_phys */

@@ -18,8 +18,8 @@
 
 #include "arch.h"
 #include "klog.h"
-#include "pmm.h"             /* run_pmm_tests() */
-#include "platform_ops.h"    /* platform_shutdown() */
+#include "pmm.h"          /* run_pmm_tests() */
+#include "platform_ops.h" /* platform_shutdown() */
 
 #if defined(RUN_KMEM_TEST) && ARCH_AARCH64
 extern void kmem_test(void); /* tests/unit-test/kmem_test.c */

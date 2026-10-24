@@ -144,10 +144,10 @@ void handle_exception(void *frame_ptr)
 
         if (irq != CAUSE_SUPERVISOR_TIMER) {
             /* ISR 上下文 + 逐中断一行, 必须采样 */
-            KLOG_WARN_SAMPLE(
-                "[riscv irq] non-timer IRQ #%llu cause=%llu mode=%c sepc=0x%lx sstatus=0x%lx stval=0x%lx\n",
-                (unsigned long long)++g_rv_non_timer_irq_count, irq, (frame->sstatus & SSTATUS_SPP) ? 'S' : 'U',
-                frame->sepc, frame->sstatus, frame->stval);
+            // KLOG_WARN_SAMPLE(
+            //     "[riscv irq] non-timer IRQ #%llu cause=%llu mode=%c sepc=0x%lx sstatus=0x%lx stval=0x%lx\n",
+            //     (unsigned long long)++g_rv_non_timer_irq_count, irq, (frame->sstatus & SSTATUS_SPP) ? 'S' : 'U',
+            //     frame->sepc, frame->sstatus, frame->stval);
         }
 
         if (frame->sstatus & SSTATUS_SPP) {

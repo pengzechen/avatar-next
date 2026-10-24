@@ -34,10 +34,10 @@
    QEMU q35 / microvm 的 IOAPIC 都在物理 0xFEC00000，由 platform.conf
    的 irq.ioapic 提供；高半区映射同样覆盖这段物理地址。
 */
-#define IOAPIC_REG_SEL      0x00u
-#define IOAPIC_REG_WIN      0x10u
-#define IOAPIC_REDTBL_BASE  0x10u
-#define IOAPIC_MAX_GSI      23u
+#define IOAPIC_REG_SEL     0x00u
+#define IOAPIC_REG_WIN     0x10u
+#define IOAPIC_REDTBL_BASE 0x10u
+#define IOAPIC_MAX_GSI     23u
 
 static uintptr_t g_ioapic_base;
 

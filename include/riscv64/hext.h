@@ -117,41 +117,41 @@
 #define SBI_ERR_ALREADY_AVAILABLE ((uint64_t)(-6))
 
 /* 现代扩展(a7=EID, a6=FID) */
-#define SBI_EXT_BASE                    0x10
-#define SBI_BASE_GET_SPEC_VERSION       0
-#define SBI_BASE_GET_IMPL_ID            1
-#define SBI_BASE_GET_IMPL_VERSION       2
-#define SBI_BASE_PROBE_EXTENSION        3
-#define SBI_BASE_GET_MVENDORID          4
-#define SBI_BASE_GET_MARCHID            5
-#define SBI_BASE_GET_MIMPID             6
-#define SBI_EXT_TIME                    0x54494d45UL /* "TIME" */
-#define SBI_EXT_RFENCE                  0x52464e43UL /* "RFNC" */
-#define SBI_EXT_IPI                     0x735049UL   /* "sPI" */
-#define SBI_EXT_HSM                     0x48534dUL   /* "HSM" */
-#define SBI_EXT_SRST                    0x53525354UL /* "SRST" */
-#define SBI_TIME_SET_TIMER              0
-#define SBI_IPI_SEND_IPI                0
-#define SBI_HSM_HART_START              0
-#define SBI_HSM_HART_STOP               1
-#define SBI_HSM_HART_GET_STATUS         2
+#define SBI_EXT_BASE              0x10
+#define SBI_BASE_GET_SPEC_VERSION 0
+#define SBI_BASE_GET_IMPL_ID      1
+#define SBI_BASE_GET_IMPL_VERSION 2
+#define SBI_BASE_PROBE_EXTENSION  3
+#define SBI_BASE_GET_MVENDORID    4
+#define SBI_BASE_GET_MARCHID      5
+#define SBI_BASE_GET_MIMPID       6
+#define SBI_EXT_TIME              0x54494d45UL /* "TIME" */
+#define SBI_EXT_RFENCE            0x52464e43UL /* "RFNC" */
+#define SBI_EXT_IPI               0x735049UL   /* "sPI" */
+#define SBI_EXT_HSM               0x48534dUL   /* "HSM" */
+#define SBI_EXT_SRST              0x53525354UL /* "SRST" */
+#define SBI_TIME_SET_TIMER        0
+#define SBI_IPI_SEND_IPI          0
+#define SBI_HSM_HART_START        0
+#define SBI_HSM_HART_STOP         1
+#define SBI_HSM_HART_GET_STATUS   2
 /* HSM 状态(hart_get_status 的 a1)。SUSPENDED 用不到, 不定义。 */
-#define SBI_HSM_STATE_STARTED           0
-#define SBI_HSM_STATE_STOPPED           1
-#define SBI_HSM_STATE_STARTING          2
-#define SBI_HSM_STATE_STOPPING          3
+#define SBI_HSM_STATE_STARTED  0
+#define SBI_HSM_STATE_STOPPED  1
+#define SBI_HSM_STATE_STARTING 2
+#define SBI_HSM_STATE_STOPPING 3
 /* RFENCE FID(a6) */
-#define SBI_RFENCE_REMOTE_FENCE_I        0
-#define SBI_RFENCE_REMOTE_SFENCE_VMA     1
-#define SBI_RFENCE_REMOTE_SFENCE_VMA_ASID 2
-#define SBI_RFENCE_REMOTE_HFENCE_GVMA    3
+#define SBI_RFENCE_REMOTE_FENCE_I          0
+#define SBI_RFENCE_REMOTE_SFENCE_VMA       1
+#define SBI_RFENCE_REMOTE_SFENCE_VMA_ASID  2
+#define SBI_RFENCE_REMOTE_HFENCE_GVMA      3
 #define SBI_RFENCE_REMOTE_HFENCE_GVMA_VMID 4
-#define SBI_RFENCE_REMOTE_HFENCE_VVMA    5
+#define SBI_RFENCE_REMOTE_HFENCE_VVMA      5
 #define SBI_RFENCE_REMOTE_HFENCE_VVMA_ASID 6
-#define SBI_SRST_RESET                  0
-#define SBI_SRST_RESET_TYPE_SHUTDOWN    0
-#define SBI_SRST_RESET_TYPE_COLD_REBOOT 1
-#define SBI_SRST_RESET_REASON_NONE      0
+#define SBI_SRST_RESET                     0
+#define SBI_SRST_RESET_TYPE_SHUTDOWN       0
+#define SBI_SRST_RESET_TYPE_COLD_REBOOT    1
+#define SBI_SRST_RESET_REASON_NONE         0
 
 /* ================================================================
    H-extension CSR 访问宏

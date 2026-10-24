@@ -117,7 +117,7 @@ _Static_assert(sizeof(GUEST_LINUX_BOOTARGS) - 1 <= 78, "GUEST_LINUX_BOOTARGS 超
    linux.dts 里写的正是详细日志那一版 —— 所以「补丁静默失败」在这边表现得
    不是「少打日志」而是「日志变多」, 反过来更好发现。
 */
-#define GUEST_LINUX_BOOTARGS "quiet console=ttyS0 rdinit=/init panic_on_warn=0 oops=panic"
+#define GUEST_LINUX_BOOTARGS       "quiet console=ttyS0 rdinit=/init panic_on_warn=0 oops=panic"
 
 /*
    ── 超分(guest vCPU 数 > 宿主 CPU 数)专用 bootargs ────────────────
@@ -149,8 +149,7 @@ _Static_assert(sizeof(GUEST_LINUX_BOOTARGS_OVERC) - 1 <= 90,
                "GUEST_LINUX_BOOTARGS_OVERC 超出 DTB 的 /chosen/bootargs 槽位");
 
 /* 按本 VM 的 vCPU 数选择；其它架构没有超分参数，直接返回默认串。 */
-#define GUEST_LINUX_SELECT_BOOTARGS(nr) \
-    (((nr) > (int)g_num_cpus) ? GUEST_LINUX_BOOTARGS_OVERC : GUEST_LINUX_BOOTARGS)
+#define GUEST_LINUX_SELECT_BOOTARGS(nr) (((nr) > (int)g_num_cpus) ? GUEST_LINUX_BOOTARGS_OVERC : GUEST_LINUX_BOOTARGS)
 #else
 #define GUEST_LINUX_SELECT_BOOTARGS(nr) (GUEST_LINUX_BOOTARGS)
 #endif

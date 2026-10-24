@@ -86,8 +86,8 @@ int vmm_vcpu_start(vcpu_t *vcpu, uint64_t entry, uint64_t context_id)
 
     /* 放行睡在 start completion 上的 AP 任务(可能被唤醒到另一颗宿主核) */
     completion_complete_all(&vcpu->start);
-    KLOG_INFO("[vmm] riscv vcpu%d started: pc=0x%llx a1(opaque)=0x%llx\n", vcpu->vcpu_id,
-              (unsigned long long)entry, (unsigned long long)context_id);
+    KLOG_INFO("[vmm] riscv vcpu%d started: pc=0x%llx a1(opaque)=0x%llx\n", vcpu->vcpu_id, (unsigned long long)entry,
+              (unsigned long long)context_id);
     return 0;
 #elif ARCH_X86_64
     /*
