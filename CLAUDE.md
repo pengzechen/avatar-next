@@ -154,6 +154,20 @@ avatar/
 - **字符串操作**: `docs/basic/STRING.md` - string.h 字符串和内存操作
 - **MMIO**: `docs/basic/MMIO.md` - mmio.h 内存映射 I/O
 
+### 文件系统（VFS / FAT）
+
+- **FAT 双分区挂载**: `docs/fs/FAT_MOUNT.md` - MBR 盘 p1 FAT + p2 ext4：
+  `/` 挂 ext4，`/boot` 挂可写 FAT12/16/32（FatFs R0.15）。动
+  `kernel/fs/init.c` 的 MBR 解析、`kernel/fs/vfs/fat_vfs.c`、
+  `fs/fatfs_port/*` 或 `FAT_MOUNT_POINT=` 前必读。要点：
+  ① `ext4_mbr_scan()` 只保留 0x83，FAT 分区必须自己解析；
+  ② SG2002(sdblk) 写入真正落盘，QEMU/RK3588(ramblk) 只改内存副本；
+  ③ FAT 上不能执行 ELF，也没有符号链接/权限位；
+  ④ 改 `FAT_MOUNT_POINT` 之后必须 `make clean`。
+  回归：`make PLATFORM=qemu-virt-x86_64 ROOTFS_MBR=1 LOG=info test-fat`
+- **lwext4 集成**: `docs/LWEXT4.md` - ext2/3/4 的移植层、块设备接口和镜像制作。
+  改 `fs/lwext4_port/*` 或 `driver/blk/*` 前读；`include/vfs.h` 直接包含 `<ext4.h>`。
+
 ### 架构特定
 
 - **AArch64**: `docs/arch/aarch64/NEON_USAGE.md` - NEON 优化

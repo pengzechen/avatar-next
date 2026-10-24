@@ -646,7 +646,7 @@ struct ext4_blockdev *block_root_device(void);
 ```
 
 - `ramblk/sdblk` probe 调用 `block_register_root()`。
-- `fs/lwext4_port/fs_init.c` 只问 `block_root_device()`；删除 `#if DRIVER_SDBLK` 和 `ramblk_get_bdev/sdblk_get_bdev`。
+- `kernel/fs/init.c`（原 `fs/lwext4_port/fs_init.c`）只问 `block_root_device()`；删除 `#if DRIVER_SDBLK` 和 `ramblk_get_bdev/sdblk_get_bdev`。
 - `kernel/mm/pmm.c` 不再 include `driver/blk/ramblk_cfg.h`；rootfs 保留区改用 `platform_cfg.h` 的 `g_mem_rootfs_*`。
 
 ### 9.5 网络

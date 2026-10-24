@@ -549,7 +549,14 @@ static int sdblk_bdev_open(struct ext4_blockdev *bdev)
             return (r == SDBLK_NOCARD) ? ENODEV : EIO;
     }
     bdev->bdif->ph_bcnt = sdblk_capacity_blocks();
-    bdev->part_size = sdblk_capacity_bytes();
+    /*
+       分区 bdev 的 part_size 是 MBR 扫描时设好的，不能被整盘容量覆盖 ——
+       FatFs 的 GET_SECTOR_COUNT 和 lwext4 的边界检查都靠它。只有 parent
+       （part_size 还是 0）或明显越界的值才回填整盘容量。
+    */
+    uint64_t capacity = sdblk_capacity_bytes();
+    if (!bdev->part_size || bdev->part_size > capacity)
+        bdev->part_size = capacity;
     return EOK;
 }
 

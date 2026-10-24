@@ -183,6 +183,19 @@ int resolve_path_at(task_t *task, int dirfd, const char *pathname, char *abspath
     return 0;
 }
 
+/* /dev、/proc、/sys 交给 pseudofs；不要在 open 时把 /proc/self/fd/N
+   之类的“伪链接”解析成目标路径（那会改变现有语义）。 */
+static bool path_is_pseudo(const char *path)
+{
+    static const char *const prefixes[] = { "/dev", "/proc", "/sys" };
+    for (unsigned i = 0; i < sizeof(prefixes) / sizeof(prefixes[0]); i++) {
+        size_t len = strlen(prefixes[i]);
+        if (strncmp(path, prefixes[i], len) == 0 && (path[len] == '\0' || path[len] == '/'))
+            return true;
+    }
+    return false;
+}
+
 void follow_symlinks(char *out, size_t outsz)
 {
     char cur[128];
@@ -195,9 +208,15 @@ void follow_symlinks(char *out, size_t outsz)
 
     for (int depth = 0; depth < 8; depth++) {
         char target[128];
-        size_t rcnt = 0;
-        if (ext4_readlink(cur, target, sizeof(target) - 1, &rcnt) != EOK)
+        if (path_is_pseudo(cur))
             break;
+
+        /* 按挂载点分发：ext4 走 ext4_readlink，FAT 返回 EINVAL 即停止。
+           不能直接调 ext4_readlink，否则 /boot 下的路径会去查 ext4 根。 */
+        int r = vfs_readlink(cur, target, sizeof(target) - 1);
+        if (r <= 0)
+            break;
+        size_t rcnt = (size_t)r;
         target[rcnt] = '\0';
 
         if (target[0] == '/') {

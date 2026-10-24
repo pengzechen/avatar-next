@@ -252,6 +252,11 @@ KERNEL_LWEXT4_SRCS += $(KERNEL_DIR)/vmm/loader/guest_loader.c \
                       $(KERNEL_DIR)/vmm/loader/image_load.c
 endif
 
+# 文件系统总入口和 FAT 的 VFS 胶水都需要 FatFs 头（ff.h）和 lwext4 头
+# （vfs.h → ext4.h），单独一组，避免把 FatFs include 路径灌给所有 lwext4 组文件。
+KERNEL_FS_SRCS := $(KERNEL_DIR)/fs/init.c \
+                  $(KERNEL_DIR)/fs/vfs/fat_vfs.c
+
 # kernel/net/** 全部引用 lwIP，按目录自动派生，将来新增文件不会漏。
 KERNEL_LWIP_SRCS := $(filter $(KERNEL_DIR)/net/%,$(KERNEL_SRCS))
 
@@ -260,11 +265,11 @@ KERNEL_LWIP_SRCS := $(filter $(KERNEL_DIR)/net/%,$(KERNEL_SRCS))
 KERNEL_LWIPX_SRCS := $(KERNEL_DIR)/syscall/net/ksocket.c \
                      $(KERNEL_DIR)/syscall/net/sock_syscall.c
 
-KERNEL_PLAIN_SRCS := $(filter-out $(KERNEL_LWEXT4_SRCS) $(KERNEL_LWIP_SRCS) $(KERNEL_LWIPX_SRCS),$(KERNEL_SRCS))
+KERNEL_PLAIN_SRCS := $(filter-out $(KERNEL_FS_SRCS) $(KERNEL_LWEXT4_SRCS) $(KERNEL_LWIP_SRCS) $(KERNEL_LWIPX_SRCS),$(KERNEL_SRCS))
 
 # 分组完整性断言：漏一个或重一个都当场报错，而不是静默少编一个文件。
-ifneq ($(words $(KERNEL_SRCS)),$(words $(KERNEL_PLAIN_SRCS) $(KERNEL_LWEXT4_SRCS) $(KERNEL_LWIP_SRCS) $(KERNEL_LWIPX_SRCS)))
-$(error kernel source grouping mismatch: $(words $(KERNEL_SRCS)) sources vs $(words $(KERNEL_PLAIN_SRCS) $(KERNEL_LWEXT4_SRCS) $(KERNEL_LWIP_SRCS) $(KERNEL_LWIPX_SRCS)) grouped. Check KERNEL_LWEXT4_SRCS / KERNEL_LWIP*_SRCS)
+ifneq ($(words $(KERNEL_SRCS)),$(words $(KERNEL_PLAIN_SRCS) $(KERNEL_FS_SRCS) $(KERNEL_LWEXT4_SRCS) $(KERNEL_LWIP_SRCS) $(KERNEL_LWIPX_SRCS)))
+$(error kernel source grouping mismatch: $(words $(KERNEL_SRCS)) sources vs $(words $(KERNEL_PLAIN_SRCS) $(KERNEL_FS_SRCS) $(KERNEL_LWEXT4_SRCS) $(KERNEL_LWIP_SRCS) $(KERNEL_LWIPX_SRCS)) grouped. Check KERNEL_FS_SRCS / KERNEL_LWEXT4_SRCS / KERNEL_LWIP*_SRCS)
 endif
 ifeq ($(ARCH),aarch64)
 TASK_USER_TEST_OBJ := $(BUILD_DIR)/user_test.o
@@ -506,6 +511,18 @@ CFLAGS  += -Ikernel
 CFLAGS  += -Ikernel/mm
 CFLAGS  += -Iinclude/net
 CFLAGS  += -DAVATAR_HAS_FILESYSTEM
+
+# ── FAT 分区挂载点（MBR 盘上的 FAT 分区挂到这里）───────────────────────────
+# 必须在本行之后、§7 的 _CFG_SIG 之前定义，并且 CFLAGS 要早于 §8 的
+# LWEXT4_CFLAGS 快照；改这个值会触发全量重编。
+FAT_MOUNT_POINT ?= /boot
+$(if $(filter /%,$(FAT_MOUNT_POINT)),,$(error FAT_MOUNT_POINT must be an absolute path))
+$(if $(filter /,$(FAT_MOUNT_POINT)),$(error FAT_MOUNT_POINT must not be /))
+$(if $(filter %/,$(FAT_MOUNT_POINT)),$(error FAT_MOUNT_POINT must not end with /))
+$(if $(filter /dev /dev/% /proc /proc/% /sys /sys/%,$(FAT_MOUNT_POINT)),\
+    $(error FAT_MOUNT_POINT must not be under /dev, /proc or /sys))
+CFLAGS  += -DFAT_MOUNT_POINT=\"$(FAT_MOUNT_POINT)\"
+
 CFLAGS  += -DCONFIG_SMP_CPUS=$(SMP)
 CFLAGS  += -DPLATFORM_$(MEM_PLATFORM_DEFINE)=1
 CFLAGS  += -DPLATFORM_MEM_RAM_BASE=$(MEM_RAM_BASE)
@@ -694,7 +711,7 @@ _VARIANT_CHECK := $(shell \
 # _VARIANT_CHECK 的细粒度处理：只删 _VARIANT_OBJS 里列的那几个 .o，
 # 不为此整包重编。新增变体时记得把受影响的对象加进那个列表。
 _CFG_STAMP_FILE := $(BUILD_DIR)/.build-cfg
-_CFG_SIG        := $(GIC_VER)/smp$(SMP)/vcpus$(GUEST_VCPUS)/log$(LOG)/mods$(LOG_MODULES)/fp$(FP)
+_CFG_SIG        := $(GIC_VER)/smp$(SMP)/vcpus$(GUEST_VCPUS)/log$(LOG)/mods$(LOG_MODULES)/fp$(FP)/fatmp$(FAT_MOUNT_POINT)
 _CFG_CHECK := $(shell \
     mkdir -p $(BUILD_DIR) 2>/dev/null; \
     rm -f $(BUILD_DIR)/.gic-last; \
@@ -757,7 +774,6 @@ LWEXT4_OBJS     := $(patsubst $(LWEXT4_DIR)/src/%.c,$(THIRD_PARTY_BUILD_DIR)/lwe
 # lwext4 移植胶水代码（属于本项目，使用 LWEXT4_CFLAGS）
 # 注：driver/blk/ramblk.c 也是同一组标志，但它是驱动，归 §6e 的 DRIVER_OBJECTS。
 LWEXT4_PORT_OBJS := $(BUILD_DIR)/lwext4_port_kmalloc.o \
-                   $(BUILD_DIR)/lwext4_port_fs_init.o \
                    $(BUILD_DIR)/lwext4_port_fs_lock.o
 
 # lwext4 的全局串行化（详见 fs/lwext4_port/fs_lock.c）。
@@ -779,7 +795,7 @@ LWEXT4_WRAP_SYMS := \
     ext4_dir_close ext4_dir_entry_next ext4_dir_mk ext4_dir_open ext4_dir_rm \
     ext4_fclose ext4_fopen ext4_fopen2 ext4_fread ext4_fremove ext4_frename \
     ext4_fseek ext4_fsize ext4_ftell ext4_ftruncate ext4_fwrite \
-    ext4_inode_exist ext4_mbr_scan ext4_mode_get ext4_mount \
+    ext4_inode_exist ext4_mode_get ext4_mount \
     ext4_raw_inode_fill ext4_readlink ext4_sb_read
 
 LDFLAGS += $(foreach s,$(LWEXT4_WRAP_SYMS),-Wl,--wrap=$(s))
@@ -804,9 +820,32 @@ LWEXT4_CFLAGS  += -DCONFIG_USE_USER_MALLOC=1
 # "确定性崩溃"（详见 fs/lwext4_port/fs_lock.c 顶部注释）。
 LWEXT4_THIRD_PARTY_CFLAGS := $(LWEXT4_CFLAGS) -w
 
+# ─── §8b  第三方库：FatFs（FAT12/16/32）─────────────────────────────────────────
+# 上游源码在 third_party/fatfs/source（唯一 vendor patch 是 ffconf.h wrapper），
+# 真正的配置在 fs/fatfs_port/ffconf.h，diskio 也在 fs/fatfs_port/。
+FATFS_DIR      := $(THIRD_PARTY_DIR)/fatfs
+FATFS_PORT_DIR := $(FS_DIR)/fatfs_port
+FATFS_SRCS     := $(FATFS_DIR)/source/ff.c $(FATFS_DIR)/source/ffunicode.c
+FATFS_OBJS     := $(patsubst $(FATFS_DIR)/source/%.c,$(THIRD_PARTY_BUILD_DIR)/fatfs_%.o,$(FATFS_SRCS))
+FATFS_PORT_OBJS := $(BUILD_DIR)/fatfs_port_diskio.o
+# FatFs 胶水需要 lwext4 的 ext4_blockdev 类型（共享 bdif），所以基于 LWEXT4_CFLAGS。
+FATFS_CFLAGS   := $(LWEXT4_CFLAGS) -I$(FATFS_DIR)/source -I$(FATFS_PORT_DIR) -I$(FS_DIR)
+FATFS_THIRD_PARTY_CFLAGS := $(FATFS_CFLAGS) -w
+
 # ─── §9  Rootfs 配置 ────────────────────────────────────────────────────────────
 # 每个平台独立一个 build/<platform>/ 目录，切换平台无需 make clean。
-ROOTFS_IMG       := $(BUILD_DIR)/rootfs-$(ARCH).img
+# ROOTFS_MBR=1 生成 p1 FAT + p2 ext4 的 MBR 镜像（默认仍是裸 ext4）。
+# 用独立文件名，避免和默认镜像互相覆盖（变体标志的坑见 CLAUDE.md）。
+ROOTFS_MBR       ?= 0
+ifeq ($(filter $(ROOTFS_MBR),0 1),)
+$(error Invalid ROOTFS_MBR '$(ROOTFS_MBR)'. Use 0 or 1)
+endif
+# 16 MiB 用 FAT16；FAT32 的最小卷约 33 MiB。aarch64 的 rootfs 内容较大，
+# 测试镜像给 FAT 留 16 MiB、其余全给 ext4。
+# ⚠️ 改 FAT_PART_MB 不会让已存在的 rootfs-mbr-*.img 过期（make 不跟踪变量值）：
+#    改完先 `rm -f $(BUILD_DIR)/rootfs-mbr-*.img` 或 `make clean`。
+FAT_PART_MB      ?= 16
+ROOTFS_IMG       := $(BUILD_DIR)/rootfs$(if $(filter 1,$(ROOTFS_MBR)),-mbr,)-$(ARCH).img
 ROOTFS_STAGE     := $(BUILD_DIR)/rootfs-stage-$(ARCH)
 LTP_BIN_DIR      := tests/ltp/bin/$(ARCH)
 LTP_BINS         := $(wildcard $(LTP_BIN_DIR)/*)
@@ -1003,7 +1042,8 @@ QEMU_ROOTFS_FLAGS = -device loader,file=$(ROOTFS_IMG),addr=$(ROOTFS_PHYS_ADDR),f
 # 挂载点选在 KERNEL_RULE（见 §11b）而不是顶层的 kernel 目标：那样只能保证
 # **链接前**检查，各 .o 的编译（也就是真正报 ext4.h 的地方）早就先炸了。
 THIRD_PARTY_HEADERS := $(LWEXT4_DIR)/include/ext4.h \
-                       $(LWIP_DIR)/src/include/lwip/init.h
+                       $(LWIP_DIR)/src/include/lwip/init.h \
+                       $(FATFS_DIR)/source/ff.h
 
 # 兼容旧命令：以前这一步是拉 submodule，现在源码随仓库一起 clone。
 # 保留目标只是别让旧脚本/旧文档里的 `make submodules` 直接报错。
@@ -1035,7 +1075,7 @@ check-submodules:
 	fi
 
 # ─── §10  顶层目标声明 ───────────────────────────────────────────────────────────
-.PHONY: all clean clean-all help klog kernel run run-net rootfs run-fs test-pthread test-mutex test-vmm test-guest-linux test-ltp env epoll-perf test-epoll-perf format format-check submodules check-submodules
+.PHONY: all clean clean-all help klog kernel run run-net rootfs run-fs run-fs-mbr test-fat test-pthread test-mutex test-vmm test-guest-linux test-ltp env epoll-perf test-epoll-perf format format-check submodules check-submodules
 
 all: klog
 
@@ -1084,6 +1124,7 @@ $(call kobj,$(1)): $(1) | $(BUILD_DIR) check-submodules
 endef
 
 $(foreach f,$(KERNEL_PLAIN_SRCS),$(eval $(call KERNEL_RULE,$(f),$$(CFLAGS))))
+$(foreach f,$(KERNEL_FS_SRCS),$(eval $(call KERNEL_RULE,$(f),$$(FATFS_CFLAGS))))
 $(foreach f,$(KERNEL_LWEXT4_SRCS),$(eval $(call KERNEL_RULE,$(f),$$(LWEXT4_CFLAGS))))
 $(foreach f,$(KERNEL_LWIP_SRCS),$(eval $(call KERNEL_RULE,$(f),$$(LWIP_CFLAGS))))
 $(foreach f,$(KERNEL_LWIPX_SRCS),$(eval $(call KERNEL_RULE,$(f),$$(LWIP_CFLAGS) -I$$(LWEXT4_DIR)/include -I$$(LWEXT4_PORT_DIR))))
@@ -1311,13 +1352,18 @@ $(THIRD_PARTY_BUILD_DIR)/lwip_netif_%.o: $(LWIP_DIR)/src/netif/%.c | $(BUILD_DIR
 $(BUILD_DIR)/lwext4_port_kmalloc.o: $(LWEXT4_PORT_DIR)/kmalloc.c | $(BUILD_DIR) check-submodules
 	$(CC) $(CFLAGS) -c $< -o $@
 
-# FS 初始化需要 lwext4 头文件，用 LWEXT4_CFLAGS
-$(BUILD_DIR)/lwext4_port_fs_init.o: $(LWEXT4_PORT_DIR)/fs_init.c | $(BUILD_DIR) check-submodules
-	$(CC) $(LWEXT4_CFLAGS) -I$(LWEXT4_PORT_DIR) -c $< -o $@
-
 # lwext4 全局串行化的包装层（要 lwext4 的头文件才能写对签名）
 $(BUILD_DIR)/lwext4_port_fs_lock.o: $(LWEXT4_PORT_DIR)/fs_lock.c | $(BUILD_DIR) check-submodules
 	$(CC) $(LWEXT4_CFLAGS) -I$(LWEXT4_PORT_DIR) -c $< -o $@
+
+# ── §11e-2  FatFs 第三方源码 / 移植胶水 ────────────────────────────────────────
+$(THIRD_PARTY_BUILD_DIR)/fatfs_%.o: $(FATFS_DIR)/source/%.c | $(BUILD_DIR) check-submodules
+	@mkdir -p $(dir $@)
+	$(CC) $(FATFS_THIRD_PARTY_CFLAGS) -c $< -o $@
+
+# diskio.c 是本项目的胶水，警告必须可见（不加 -w）
+$(BUILD_DIR)/fatfs_port_diskio.o: $(FATFS_PORT_DIR)/diskio.c | $(BUILD_DIR) check-submodules
+	$(CC) $(FATFS_CFLAGS) -c $< -o $@
 
 
 # ── §11f  内嵌 guest 测试程序（链接进内核镜像）─────────────────────────────────
@@ -1366,7 +1412,7 @@ endif
 # boot/x86_64/link.ld 里的长注释），新增这一段不移动任何函数；表里也只收
 # STT_FUNC。--verify 是给这条不变量兜底的 —— 一旦有人挪动段序，构建当场
 # 失败，而不是产出二进制正常、函数名整体错位的镜像。
-KERNEL_LINK_OBJS := $(BOOT_OBJECTS) $(KERNEL_OBJECTS) $(PMM_TEST_OBJECT) $(LWIP_OBJS) $(TASK_USER_TEST_OBJ) $(TASK_USER_HELLO_OBJ) $(TASK_USER_TESTEXECVE_OBJ) $(GUEST_TEST_OBJ) $(TEST_BOOT_OBJ) $(TESTS_OBJECTS) $(PLATFORM_OBJECTS) $(DRIVER_OBJECTS) $(EXCEPTION_OBJECTS) $(KLOG_OBJECT) $(VSNPRINTF_OBJECT) $(STRING_OBJECT) $(LIBC_OBJECT) $(BITMAP_OBJECT) $(PLATFORM_STATIC_OBJECT) $(LWEXT4_OBJS) $(LWEXT4_PORT_OBJS)
+KERNEL_LINK_OBJS := $(BOOT_OBJECTS) $(KERNEL_OBJECTS) $(PMM_TEST_OBJECT) $(LWIP_OBJS) $(TASK_USER_TEST_OBJ) $(TASK_USER_HELLO_OBJ) $(TASK_USER_TESTEXECVE_OBJ) $(GUEST_TEST_OBJ) $(TEST_BOOT_OBJ) $(TESTS_OBJECTS) $(PLATFORM_OBJECTS) $(DRIVER_OBJECTS) $(EXCEPTION_OBJECTS) $(KLOG_OBJECT) $(VSNPRINTF_OBJECT) $(STRING_OBJECT) $(LIBC_OBJECT) $(BITMAP_OBJECT) $(PLATFORM_STATIC_OBJECT) $(LWEXT4_OBJS) $(LWEXT4_PORT_OBJS) $(FATFS_OBJS) $(FATFS_PORT_OBJS)
 
 # 第一趟：链一个**空**符号表桩，只为拿到各函数的最终地址。
 # 桩不是可有可无的：.text 里的代码要引用 __kallsyms_*，两趟必须解析到
@@ -1437,6 +1483,8 @@ $(ROOTFS_IMG): Makefile $(APPS_BINS) $(APPS_C_ELFS) $(LTP_BINS) $(EPOLL_PERF_BIN
 	@mkdir -p $(ROOTFS_STAGE)/bin
 	@# 虚拟文件系统挂载点（pseudofs 在内核侧拦截，ext4 只需目录项存在）
 	@mkdir -p $(ROOTFS_STAGE)/dev $(ROOTFS_STAGE)/proc $(ROOTFS_STAGE)/sys
+	@# FAT 挂载点（默认 /boot）在 ext4 里也要有目录项，这样 `ls /` 看得到
+	@mkdir -p $(ROOTFS_STAGE)$(FAT_MOUNT_POINT)
 	@mkdir -p $(ROOTFS_STAGE)/root $(ROOTFS_STAGE)/tmp $(ROOTFS_STAGE)/etc
 	@# 安装 busybox
 	@if [ -f apps/busybox-$(ARCH) ]; then \
@@ -1614,8 +1662,12 @@ $(ROOTFS_IMG): Makefile $(APPS_BINS) $(APPS_C_ELFS) $(LTP_BINS) $(EPOLL_PERF_BIN
 	@printf 'root:x:0:\nnogroup:x:65534:\n' > $(ROOTFS_STAGE)/etc/group
 	@echo "  [/etc/passwd + group created]"
 	@# 用 staging 目录直接构建 ext4 镜像，无需挂载
-	dd if=/dev/zero of=$@ bs=1M count=$(ROOTFS_SIZE_MB) status=none
-	mkfs.ext4 -q -b 1024 -L "avatarfs" -d $(ROOTFS_STAGE) $@
+	@if [ "$(ROOTFS_MBR)" = "1" ]; then \
+	    tools/make_mbr_image.sh "$(ROOTFS_STAGE)" "$@" "$(ROOTFS_SIZE_MB)" "$(FAT_PART_MB)"; \
+	else \
+	    dd if=/dev/zero of=$@ bs=1M count=$(ROOTFS_SIZE_MB) status=none; \
+	    mkfs.ext4 -q -b 1024 -L "avatarfs" -d $(ROOTFS_STAGE) $@; \
+	fi
 	@rm -rf $(ROOTFS_STAGE)
 	@echo "Rootfs ready: $@"
 
@@ -1626,6 +1678,23 @@ rootfs: $(ROOTFS_IMG)
 run-fs: kernel $(ROOTFS_IMG)
 	@echo "Starting QEMU for $(ARCH) with rootfs at $(ROOTFS_PHYS_ADDR)..."
 	$(QEMU) $(QEMU_FLAGS) $(QEMU_ROOTFS_FLAGS)
+
+# 用 MBR 测试镜像启动（p1 FAT + p2 ext4），给手工验证用
+run-fs-mbr: kernel $(ROOTFS_IMG)
+	@if [ "$(ROOTFS_MBR)" != "1" ]; then \
+	    echo "ERROR: use ROOTFS_MBR=1 (this target uses the MBR test image)."; exit 1; \
+	fi
+	$(QEMU) $(QEMU_FLAGS) $(QEMU_ROOTFS_FLAGS)
+
+# test-fat: 自动构建 MBR 镜像并跑 FAT 读写/目录操作回归（x86_64 最快）
+test-fat: kernel $(ROOTFS_IMG)
+	@if [ "$(ROOTFS_MBR)" != "1" ]; then \
+	    echo "ERROR: use ROOTFS_MBR=1, e.g."; \
+	    echo "  make PLATFORM=qemu-virt-x86_64 ROOTFS_MBR=1 LOG=info test-fat"; \
+	    exit 1; \
+	fi
+	KERNEL_BIN=$(KERNEL_BIN) ROOTFS_IMG=$(ROOTFS_IMG) ROOTFS_ADDR=$(ROOTFS_PHYS_ADDR) \
+	    tools/fat_regress.sh $(ARCH)
 
 # ── 便捷测试目标 ─────────────────────────────────────────────────────
 #
@@ -1877,6 +1946,10 @@ help:
 	@echo "  run           Build and run kernel in QEMU (no rootfs)"
 	@echo "  run-net       Build and run QEMU with rootfs and virtio-net"
 	@echo "  run-fs        Build and run kernel with rootfs (busybox shell)"
+	@echo "  run-fs-mbr    Like run-fs, but with an MBR p1=FAT + p2=ext4 test image"
+	@echo "                (requires ROOTFS_MBR=1)"
+	@echo "  test-fat      Automated FAT read/write/mkdir/rm regression on the MBR image"
+	@echo "                e.g. make PLATFORM=qemu-virt-x86_64 ROOTFS_MBR=1 LOG=info test-fat"
 	@echo "  test-pthread  Copy dynamic rootfs from imgs/ and run pthread_test"
 	@echo "  test-mutex    Copy dynamic rootfs from imgs/ and run mutex_test (futex-based)"
 	@echo "  test-vmm      Build with VMM_TEST=1 and run VMM 3-thread switch test"

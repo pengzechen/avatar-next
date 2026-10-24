@@ -603,6 +603,12 @@ static void x86_translate_syscall(uint64_t *nr, uint64_t regs[9])
     case 291:
         *nr = LINUX_SYS_EPOLL_CREATE1;
         break; /* epoll_create1 */
+    case 280:
+        /* utimensat(dirfd,path,times,flags)：内部 88 是现有的 0 值桩。
+           busybox mv 的跨文件系统回退会调它；不映射会在日志里刷
+           "Unknown syscall: 280"。 */
+        *nr = 88;
+        break;
     case 281:
         *nr = LINUX_SYS_EPOLL_PWAIT;
         break; /* epoll_pwait */
@@ -881,8 +887,9 @@ void syscall_handler(trap_frame_t *frame)
         }
         char abs[256];
         resolve_path(current->cwd, upath, abs, (int)sizeof(abs));
-        int rc = ext4_dir_mk(abs);
-        regs[0] = (rc == EOK) ? 0 : (uint64_t)(int64_t)-rc;
+        /* 走 VFS 分发：/boot 下的路径属于 FAT，不能再直接调 ext4_dir_mk */
+        int rc = vfs_mkdir(abs, (int)regs[2]);
+        regs[0] = rc < 0 ? (uint64_t)(int64_t)rc : 0;
         break;
     }
 
@@ -927,9 +934,19 @@ void syscall_handler(trap_frame_t *frame)
         break;
 
     case LINUX_SYS_FSYNC:
-    case LINUX_SYS_FDATASYNC:
-        regs[0] = 0;
+    case LINUX_SYS_FDATASYNC: {
+        int fd = (int)regs[0];
+        fd_obj_t *obj = (fd >= 0 && fd < (int)TASK_MAX_FD) ? task_get_fd(current, fd) : NULL;
+        int rc;
+        if (!obj)
+            rc = -EBADF;
+        else if (fd_obj_file(obj))
+            rc = vfs_sync(fd_obj_file(obj));
+        else
+            rc = 0; /* ION/dma-buf 等非 VFS fd：维持原来的“成功”语义 */
+        regs[0] = rc < 0 ? (uint64_t)(int64_t)rc : 0;
         break;
+    }
 
     case LINUX_SYS_FTRUNCATE: {
         int fd = (int)regs[0];

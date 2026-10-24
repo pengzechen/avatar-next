@@ -16,6 +16,13 @@ Current packages:
 
 - `third_party/lwext4` with port code in `fs/lwext4_port`
 - `third_party/lwip` with port code in `kernel/net/lwip_port`
+- `third_party/fatfs` with port code in `fs/fatfs_port`
+
+`third_party/fatfs` carries one deliberate vendor patch: `source/ffconf.h` is a
+one-line wrapper that includes the real Avatar configuration from
+`fs/fatfs_port/ffconf.h` (FatFs uses a quoted `#include "ffconf.h"`, so the
+upstream directory wins over `-I`). The README in that package records how to
+re-apply it when upgrading.
 
 ## Libc shim design
 

@@ -49,6 +49,7 @@
 #include "spinlock.h"
 #include "klog.h"
 #include "task/cpu.h"
+#include "fs_lock.h"
 
 #include <ext4.h>
 #include <ext4_mbr.h>
@@ -101,15 +102,19 @@ static inline void fs_unlock(void)
    `ext4_dir` 是内联在 `vfs_file_t` 里的, `de` 就在同一个对象里)。如果只锁
    单次调用, 两次调用之间另一个核可以对同一个目录对象做别的事。
 
+   FatFs 也有同样的需求（f_stat+f_open、f_lseek+f_truncate、整个 f_readdir
+   循环），而且它和 lwext4 共用同一个块设备接口。所以这对函数已经不再只属于
+   lwext4，统一叫 fs_global_lock/fs_global_unlock（见 include/fs_lock.h）。
+
    这类地方要把整个序列圈进一个临界区。锁是可重入的, 所以外面加一层
    粗锁, 里面每次调用那层细锁照常嵌套, 不会死锁。
 */
-void fs_lwext4_lock(void)
+void fs_global_lock(void)
 {
     fs_lock();
 }
 
-void fs_lwext4_unlock(void)
+void fs_global_unlock(void)
 {
     fs_unlock();
 }
@@ -178,9 +183,6 @@ FS_WRAP(int, ext4_fwrite,
         (ext4_file *file, const void *buf, size_t size, size_t *wcnt),
         (file, buf, size, wcnt))
 FS_WRAP(int, ext4_inode_exist, (const char *path, int type), (path, type))
-FS_WRAP(int, ext4_mbr_scan,
-        (struct ext4_blockdev *parent, struct ext4_mbr_bdevs *bdevs),
-        (parent, bdevs))
 FS_WRAP(int, ext4_mode_get, (const char *path, uint32_t *mode), (path, mode))
 FS_WRAP(int, ext4_mount,
         (const char *dev_name, const char *mount_point, bool read_only),

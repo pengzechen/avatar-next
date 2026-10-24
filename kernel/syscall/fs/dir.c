@@ -101,8 +101,9 @@ void renameat_handler(uint64_t regs[6], task_t *current)
         return;
     }
 
-    int rc = ext4_frename(oldabs, newabs);
-    regs[0] = (rc == EOK) ? 0 : (uint64_t)(int64_t)-ENOENT;
+    /* 走 VFS：同一挂载内 rename；跨挂载返回 -EXDEV，让 busybox 走 copy+unlink */
+    int rc = vfs_rename(oldabs, newabs);
+    regs[0] = rc < 0 ? (uint64_t)(int64_t)rc : 0;
 }
 
 void renameat2_handler(uint64_t regs[6], task_t *current)
@@ -132,11 +133,6 @@ void unlinkat_handler(uint64_t regs[6], task_t *current)
         return;
     }
 
-    int rc;
-    if (flags & AT_REMOVEDIR) {
-        rc = ext4_dir_rm(abspath);
-    } else {
-        rc = ext4_fremove(abspath);
-    }
-    regs[0] = (rc == EOK) ? 0 : (uint64_t)(int64_t)-ENOENT;
+    int rc = vfs_unlink(abspath, (flags & AT_REMOVEDIR) != 0);
+    regs[0] = rc < 0 ? (uint64_t)(int64_t)rc : 0;
 }

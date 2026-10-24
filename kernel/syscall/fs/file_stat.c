@@ -136,12 +136,9 @@ void newfstatat_handler(uint64_t regs[6], task_t *current)
         regs[0] = 0;
         return;
     }
-    int rc = fill_stat_from_ext4(st, abspath);
-    if (rc < 0) {
-        regs[0] = (uint64_t)(int64_t)rc;
-        return;
-    }
-    regs[0] = 0;
+    /* vfs_stat_path 已按挂载点分发（ext4/pseudofs/FAT）；不能再回退到 ext4，
+       否则 FAT 路径会被错误地拿去查 ext4 根 */
+    regs[0] = (uint64_t)(int64_t)-ENOENT;
 }
 
 static int proc_self_fd_readlink(task_t *current, int fdnum, char *buf, size_t bufsz)
@@ -252,8 +249,8 @@ void faccessat_handler(uint64_t regs[6], task_t *current)
         return;
     }
 
-    int rc = ext4_inode_exist(abspath, EXT4_DE_UNKNOWN);
-    regs[0] = (rc == EOK) ? 0 : (uint64_t)(int64_t)-ENOENT;
+    /* 不再回退到 ext4_inode_exist：FAT 路径必须走上面的 VFS 分发 */
+    regs[0] = (uint64_t)(int64_t)-ENOENT;
 }
 
 void getdents64_handler(uint64_t regs[6], task_t *current)

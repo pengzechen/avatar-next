@@ -9,6 +9,7 @@
 */
 
 #include "vfs.h"
+#include "vfs_internal.h"
 #include "pseudofs.h"
 #include "syscall/fs/path.h"
 #include "syscall/fs/pipe.h"
@@ -19,45 +20,10 @@
 #include "string.h"
 #include <ext4.h> /* ext4_readlink(ext4_errno.h 由它带入) */
 #include <ext4_errno.h>
-/* 跨多次 lwext4 调用的临界区(目录迭代)；单次调用那层由 --wrap 自动加 */
-#include "../../../fs/lwext4_port/fs_lock.h"
+/* 跨多次 FS 调用的临界区(目录迭代)；单次 lwext4 调用那层由 --wrap 自动加 */
+#include "fs_lock.h"
 
-#define VFS_ENOENT  2
-#define VFS_EIO     5
-#define VFS_EBADF   9
-#define VFS_EINVAL  22
-#define VFS_ENOTDIR 20
-#define VFS_EMFILE  24
-#define VFS_ENOSYS  38
-#define VFS_ESPIPE  29
-
-#define O_ACCMODE_AVATAR   0000003
-#define O_WRONLY_AVATAR    0000001
-#define O_RDWR_AVATAR      0000002
-#define O_CREAT_AVATAR     0000100
-#define O_TRUNC_AVATAR     0001000
-#define O_APPEND_AVATAR    0002000
-#define O_DIRECTORY_AVATAR 0200000
-/* O_NONBLOCK 由 fcntl(F_SETFL) 存进 fd_obj/vfs_file 的 flags(见
-   syscall/fs/file_ops.c)。管道读写要读这个位, 否则非阻塞语义不成立。
-*/
-#define O_NONBLOCK_AVATAR 04000
-#define SEEK_SET_AVATAR   0
-#define SEEK_CUR_AVATAR   1
-#define SEEK_END_AVATAR   2
-
-typedef struct vfs_mount vfs_mount_t;
-
-typedef struct {
-    int (*open)(const vfs_mount_t *mnt, const char *path, int flags, int mode, vfs_file_t **out);
-    int (*stat)(const vfs_mount_t *mnt, const char *path, struct kernel_stat *st);
-    int (*readlink)(const vfs_mount_t *mnt, const char *path, char *buf, size_t bufsz);
-} vfs_mount_ops_t;
-
-struct vfs_mount {
-    const char *path;
-    const vfs_mount_ops_t *ops;
-};
+#define VFS_MAX_MOUNTS 8
 
 static int pseudo_mount_open(const vfs_mount_t *mnt, const char *path, int flags, int mode, vfs_file_t **out);
 static int pseudo_mount_stat(const vfs_mount_t *mnt, const char *path, struct kernel_stat *st);
@@ -65,6 +31,9 @@ static int pseudo_mount_readlink(const vfs_mount_t *mnt, const char *path, char 
 static int ext4_mount_open(const vfs_mount_t *mnt, const char *path, int flags, int mode, vfs_file_t **out);
 static int ext4_mount_stat(const vfs_mount_t *mnt, const char *path, struct kernel_stat *st);
 static int ext4_mount_readlink(const vfs_mount_t *mnt, const char *path, char *buf, size_t bufsz);
+static int ext4_mount_unlink(const vfs_mount_t *mnt, const char *path, bool is_dir);
+static int ext4_mount_mkdir(const vfs_mount_t *mnt, const char *path, int mode);
+static int ext4_mount_rename(const vfs_mount_t *mnt, const char *oldpath, const char *newpath);
 
 static const vfs_mount_ops_t pseudo_mount_ops = {
     .open = pseudo_mount_open,
@@ -76,14 +45,22 @@ static const vfs_mount_ops_t ext4_mount_ops = {
     .open = ext4_mount_open,
     .stat = ext4_mount_stat,
     .readlink = ext4_mount_readlink,
+    .unlink = ext4_mount_unlink,
+    .mkdir = ext4_mount_mkdir,
+    .rename = ext4_mount_rename,
 };
 
-static const vfs_mount_t g_mounts[] = {
+/*
+   boot 期可追加一张 FAT 挂载项（vfs_register_fat_mount），其余项仍是静态的。
+   path 必须是静态生命周期（fs_init 传的是 FAT_MOUNT_POINT 宏的字面量）。
+*/
+static vfs_mount_t g_mounts[VFS_MAX_MOUNTS] = {
     { "/dev", &pseudo_mount_ops },
     { "/proc", &pseudo_mount_ops },
     { "/sys", &pseudo_mount_ops },
     { "/", &ext4_mount_ops },
 };
+static uint32_t g_mount_count = 4;
 
 static bool mount_path_matches(const char *mnt, const char *path)
 {
@@ -101,7 +78,7 @@ static const vfs_mount_t *vfs_find_mount(const char *path)
     const vfs_mount_t *best = NULL;
     size_t best_len = 0;
 
-    for (uint32_t i = 0; i < sizeof(g_mounts) / sizeof(g_mounts[0]); i++) {
+    for (uint32_t i = 0; i < g_mount_count; i++) {
         const char *mnt_path = g_mounts[i].path;
         size_t len = strlen(mnt_path);
         if (len >= best_len && mount_path_matches(mnt_path, path)) {
@@ -112,7 +89,7 @@ static const vfs_mount_t *vfs_find_mount(const char *path)
     return best;
 }
 
-static void vfs_copy_path(vfs_file_t *file, const char *path)
+void vfs_copy_path(vfs_file_t *file, const char *path)
 {
     int i = 0;
     while (path && path[i] && i < (int)sizeof(file->path) - 1) {
@@ -122,7 +99,7 @@ static void vfs_copy_path(vfs_file_t *file, const char *path)
     file->path[i] = '\0';
 }
 
-static vfs_file_t *vfs_alloc_file(void)
+vfs_file_t *vfs_alloc_file(void)
 {
     vfs_file_t *file = (vfs_file_t *)kmalloc(sizeof(*file));
     if (!file)
@@ -130,6 +107,32 @@ static vfs_file_t *vfs_alloc_file(void)
     memset(file, 0, sizeof(*file));
     file->refcnt = 1;
     return file;
+}
+
+/*
+   vfs_register_fat_mount - 把一个已成功 f_mount 的 FAT 卷接到 VFS 前缀表
+
+   只在 fs_init() 阶段调用（此时还没有任务，不需要锁）。path 必须指向
+   静态存储，且不能与现有挂载点重复。
+*/
+int vfs_register_fat_mount(const char *path)
+{
+    if (!path || path[0] != '/' || strcmp(path, "/") == 0)
+        return -VFS_EINVAL;
+    if (path[strlen(path) - 1] == '/')
+        return -VFS_EINVAL;
+
+    for (uint32_t i = 0; i < g_mount_count; i++) {
+        if (strcmp(g_mounts[i].path, path) == 0)
+            return -VFS_EEXIST;
+    }
+    if (g_mount_count >= VFS_MAX_MOUNTS)
+        return -VFS_ENOSPC;
+
+    g_mounts[g_mount_count].path = path;
+    g_mounts[g_mount_count].ops = &fat_mount_ops;
+    g_mount_count++;
+    return 0;
 }
 
 static int ext4_open_flags_from_linux(int flags)
@@ -308,6 +311,43 @@ static int ext4_file_truncate(vfs_file_t *file, uint64_t length)
     return rc == EOK ? 0 : -rc;
 }
 
+static int ext4_file_pread(vfs_file_t *file, void *buf, size_t len, int64_t offset)
+{
+    if (!buf || offset < 0)
+        return -VFS_EINVAL;
+
+    int64_t saved = ext4_ftell(&file->u.ext4_file);
+    if (saved < 0 || ext4_fseek(&file->u.ext4_file, offset, SEEK_SET_AVATAR) != EOK)
+        return -VFS_EIO;
+
+    size_t rcnt = 0;
+    int rc = ext4_fread(&file->u.ext4_file, buf, len, &rcnt);
+    int seek_rc = ext4_fseek(&file->u.ext4_file, saved, SEEK_SET_AVATAR);
+    return rc == EOK && seek_rc == EOK ? (int)rcnt : -VFS_EIO;
+}
+
+static int ext4_file_pwrite(vfs_file_t *file, const void *buf, size_t len, int64_t offset)
+{
+    if (!buf || offset < 0)
+        return -VFS_EINVAL;
+
+    int64_t saved = ext4_ftell(&file->u.ext4_file);
+    if (saved < 0 || ext4_fseek(&file->u.ext4_file, offset, SEEK_SET_AVATAR) != EOK)
+        return -VFS_EIO;
+
+    size_t wcnt = 0;
+    int rc = ext4_fwrite(&file->u.ext4_file, buf, len, &wcnt);
+    int seek_rc = ext4_fseek(&file->u.ext4_file, saved, SEEK_SET_AVATAR);
+    return rc == EOK && seek_rc == EOK ? (int)wcnt : -VFS_EIO;
+}
+
+static int ext4_file_sync(vfs_file_t *file)
+{
+    (void)file;
+    /* fsync 在 ext4 上仍是空操作（现状），FatFs 才真正 f_sync */
+    return 0;
+}
+
 static int ext4_regular_close(vfs_file_t *file)
 {
     return ext4_fclose(&file->u.ext4_file) == EOK ? 0 : -VFS_EIO;
@@ -324,7 +364,7 @@ static int ext4_dir_getdents(vfs_file_t *file, void *buf, size_t bufsz)
        那层"每次调用"的锁不够 —— 两次调用之间另一个核可以对同一个目录对象
        做操作。锁是可重入的, 里面的 __wrap_* 照常嵌套。
     */
-    fs_lwext4_lock();
+    fs_global_lock();
 
     while (written + 32 < bufsz) {
         const ext4_direntry *de = ext4_dir_entry_next(&file->u.ext4_dir);
@@ -361,7 +401,7 @@ static int ext4_dir_getdents(vfs_file_t *file, void *buf, size_t bufsz)
         written += reclen;
         file->offset++;
     }
-    fs_lwext4_unlock();
+    fs_global_unlock();
     return (int)written;
 }
 
@@ -510,9 +550,12 @@ static const vfs_file_ops_t pseudo_ops = {
 static const vfs_file_ops_t ext4_file_ops = {
     .read = ext4_file_read,
     .write = ext4_file_write,
+    .pread = ext4_file_pread,
+    .pwrite = ext4_file_pwrite,
     .seek = ext4_file_seek,
     .stat = ext4_file_stat,
     .truncate = ext4_file_truncate,
+    .sync = ext4_file_sync,
     .close = ext4_regular_close,
 };
 
@@ -767,13 +810,9 @@ int vfs_pread(vfs_file_t *file, void *buf, size_t len, int64_t offset)
         return -VFS_EBADF;
     if (offset < 0)
         return -VFS_EINVAL;
-    int64_t saved = ext4_ftell(&file->u.ext4_file);
-    if (saved < 0 || ext4_fseek(&file->u.ext4_file, offset, SEEK_SET_AVATAR) != EOK)
-        return -VFS_EIO;
-    size_t rcnt = 0;
-    int rc = ext4_fread(&file->u.ext4_file, buf, len, &rcnt);
-    int seek_rc = ext4_fseek(&file->u.ext4_file, saved, SEEK_SET_AVATAR);
-    return rc == EOK && seek_rc == EOK ? (int)rcnt : -VFS_EIO;
+    if (!file->ops || !file->ops->pread)
+        return -VFS_EBADF;
+    return file->ops->pread(file, buf, len, offset);
 }
 
 int vfs_pwrite(vfs_file_t *file, const void *buf, size_t len, int64_t offset)
@@ -782,13 +821,9 @@ int vfs_pwrite(vfs_file_t *file, const void *buf, size_t len, int64_t offset)
         return -VFS_EBADF;
     if (offset < 0)
         return -VFS_EINVAL;
-    int64_t saved = ext4_ftell(&file->u.ext4_file);
-    if (saved < 0 || ext4_fseek(&file->u.ext4_file, offset, SEEK_SET_AVATAR) != EOK)
-        return -VFS_EIO;
-    size_t wcnt = 0;
-    int rc = ext4_fwrite(&file->u.ext4_file, buf, len, &wcnt);
-    int seek_rc = ext4_fseek(&file->u.ext4_file, saved, SEEK_SET_AVATAR);
-    return rc == EOK && seek_rc == EOK ? (int)wcnt : -VFS_EIO;
+    if (!file->ops || !file->ops->pwrite)
+        return -VFS_EBADF;
+    return file->ops->pwrite(file, buf, len, offset);
 }
 
 int vfs_truncate(vfs_file_t *file, uint64_t length)
@@ -796,6 +831,15 @@ int vfs_truncate(vfs_file_t *file, uint64_t length)
     if (!file || !file->ops || !file->ops->truncate)
         return -VFS_EBADF;
     return file->ops->truncate(file, length);
+}
+
+int vfs_sync(vfs_file_t *file)
+{
+    if (!file)
+        return -VFS_EBADF;
+    if (file->ops && file->ops->sync)
+        return file->ops->sync(file);
+    return 0;
 }
 
 int vfs_socket_index(vfs_file_t *file)
@@ -864,13 +908,7 @@ int vfs_proc_fd_target(vfs_file_t *file, char *buf, size_t bufsz)
 
 int vfs_read_to_phys(vfs_file_t *file, uint64_t offset, void *buf, size_t len)
 {
-    if (!vfs_file_is_regular(file) || !buf)
-        return -VFS_EBADF;
-    if (ext4_fseek(&file->u.ext4_file, (int64_t)offset, SEEK_SET_AVATAR) != EOK)
-        return -VFS_EIO;
-    size_t got = 0;
-    int rc = ext4_fread(&file->u.ext4_file, buf, len, &got);
-    return rc == EOK ? (int)got : -VFS_EIO;
+    return vfs_pread(file, buf, len, (int64_t)offset);
 }
 
 static int pseudo_mount_stat(const vfs_mount_t *mnt, const char *path, struct kernel_stat *st)
@@ -885,6 +923,34 @@ static int ext4_mount_stat(const vfs_mount_t *mnt, const char *path, struct kern
     return fill_stat_from_ext4(st, path);
 }
 
+static int ext4_mount_unlink(const vfs_mount_t *mnt, const char *path, bool is_dir)
+{
+    (void)mnt;
+    if (!path)
+        return -VFS_EINVAL;
+    int rc = is_dir ? ext4_dir_rm(path) : ext4_fremove(path);
+    return rc == EOK ? 0 : -rc;
+}
+
+static int ext4_mount_mkdir(const vfs_mount_t *mnt, const char *path, int mode)
+{
+    (void)mnt;
+    (void)mode;
+    if (!path)
+        return -VFS_EINVAL;
+    int rc = ext4_dir_mk(path);
+    return rc == EOK ? 0 : -rc;
+}
+
+static int ext4_mount_rename(const vfs_mount_t *mnt, const char *oldpath, const char *newpath)
+{
+    (void)mnt;
+    if (!oldpath || !newpath)
+        return -VFS_EINVAL;
+    int rc = ext4_frename(oldpath, newpath);
+    return rc == EOK ? 0 : -rc;
+}
+
 int vfs_stat_path(const char *path, struct kernel_stat *st)
 {
     if (!path || !st)
@@ -894,6 +960,48 @@ int vfs_stat_path(const char *path, struct kernel_stat *st)
     if (!mnt || !mnt->ops || !mnt->ops->stat)
         return -VFS_ENOENT;
     return mnt->ops->stat(mnt, path, st);
+}
+
+int vfs_mkdir(const char *path, int mode)
+{
+    if (!path)
+        return -VFS_EINVAL;
+
+    const vfs_mount_t *mnt = vfs_find_mount(path);
+    if (!mnt || !mnt->ops)
+        return -VFS_ENOENT;
+    if (!mnt->ops->mkdir)
+        return -VFS_EROFS;
+    return mnt->ops->mkdir(mnt, path, mode);
+}
+
+int vfs_unlink(const char *path, bool is_dir)
+{
+    if (!path)
+        return -VFS_EINVAL;
+
+    const vfs_mount_t *mnt = vfs_find_mount(path);
+    if (!mnt || !mnt->ops)
+        return -VFS_ENOENT;
+    if (!mnt->ops->unlink)
+        return -VFS_EROFS;
+    return mnt->ops->unlink(mnt, path, is_dir);
+}
+
+int vfs_rename(const char *oldpath, const char *newpath)
+{
+    if (!oldpath || !newpath)
+        return -VFS_EINVAL;
+
+    const vfs_mount_t *omnt = vfs_find_mount(oldpath);
+    const vfs_mount_t *nmnt = vfs_find_mount(newpath);
+    if (!omnt || !nmnt || !omnt->ops || !nmnt->ops)
+        return -VFS_ENOENT;
+    if (omnt != nmnt)
+        return -VFS_EXDEV;
+    if (!omnt->ops->rename)
+        return -VFS_EROFS;
+    return omnt->ops->rename(omnt, oldpath, newpath);
 }
 
 static int pseudo_mount_readlink(const vfs_mount_t *mnt, const char *path, char *buf, size_t bufsz)

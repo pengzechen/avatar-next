@@ -11,8 +11,9 @@
    include/vfs.h - small kernel VFS layer
 
    First-stage VFS abstraction: fd objects point at struct vfs_file, and
-   operations dispatch through file_ops. Path routing uses a small static
-   mount table: /dev, /proc and /sys route to pseudofs, while / routes to ext4.
+   operations dispatch through file_ops. Path routing uses a small mount table:
+   /dev, /proc and /sys route to pseudofs, / routes to ext4, and an optional
+   MBR FAT partition can be registered at FAT_MOUNT_POINT (default /boot).
 */
 
 #include "types.h"
@@ -23,6 +24,8 @@ typedef enum {
     VFS_FILE_NONE = 0,
     VFS_FILE_EXT4_FILE,
     VFS_FILE_EXT4_DIR,
+    VFS_FILE_FAT_FILE,
+    VFS_FILE_FAT_DIR,
     VFS_FILE_PSEUDO,
     VFS_FILE_PIPE,
     VFS_FILE_PTY,
@@ -34,12 +37,15 @@ struct vfs_file;
 typedef struct {
     int (*read)(struct vfs_file *file, void *buf, size_t len);
     int (*write)(struct vfs_file *file, const void *buf, size_t len);
+    int (*pread)(struct vfs_file *file, void *buf, size_t len, int64_t offset);
+    int (*pwrite)(struct vfs_file *file, const void *buf, size_t len, int64_t offset);
     int (*ioctl)(struct vfs_file *file, uint64_t req, void *argp);
     int (*getdents)(struct vfs_file *file, void *buf, size_t bufsz);
     int (*seek)(struct vfs_file *file, int64_t offset, int whence, uint64_t *new_off);
     int (*stat)(struct vfs_file *file, struct kernel_stat *st);
     uint32_t (*poll)(struct vfs_file *file, int pool_idx);
     int (*truncate)(struct vfs_file *file, uint64_t length);
+    int (*sync)(struct vfs_file *file);
     int (*close)(struct vfs_file *file);
 } vfs_file_ops_t;
 
@@ -53,6 +59,10 @@ typedef struct vfs_file {
     union {
         ext4_file ext4_file;
         ext4_dir ext4_dir;
+        /* FatFs 的 FIL/DIR 藏在 fs/fatfs_port 里，VFS 头不引入 ff.h */
+        struct {
+            void *handle;
+        } fat;
         struct {
             int32_t node_id;
         } pseudo;
@@ -88,6 +98,11 @@ uint32_t vfs_poll(vfs_file_t *file, int pool_idx);
 int vfs_pread(vfs_file_t *file, void *buf, size_t len, int64_t offset);
 int vfs_pwrite(vfs_file_t *file, const void *buf, size_t len, int64_t offset);
 int vfs_truncate(vfs_file_t *file, uint64_t length);
+int vfs_sync(vfs_file_t *file);
+int vfs_mkdir(const char *path, int mode);
+int vfs_unlink(const char *path, bool is_dir);
+int vfs_rename(const char *oldpath, const char *newpath);
+int vfs_register_fat_mount(const char *path);
 int vfs_socket_index(vfs_file_t *file);
 bool vfs_file_matches_socket(vfs_file_t *file, int sock_idx);
 bool vfs_file_matches_pty(vfs_file_t *file, int pty_idx, bool is_master);
@@ -98,12 +113,12 @@ int vfs_readlink(const char *path, char *buf, size_t bufsz);
 
 static inline bool vfs_file_is_regular(const vfs_file_t *file)
 {
-    return file && file->kind == VFS_FILE_EXT4_FILE;
+    return file && (file->kind == VFS_FILE_EXT4_FILE || file->kind == VFS_FILE_FAT_FILE);
 }
 
 static inline bool vfs_file_is_dir(const vfs_file_t *file)
 {
-    return file && (file->kind == VFS_FILE_EXT4_DIR || file->kind == VFS_FILE_PSEUDO);
+    return file && (file->kind == VFS_FILE_EXT4_DIR || file->kind == VFS_FILE_FAT_DIR || file->kind == VFS_FILE_PSEUDO);
 }
 
 #endif /* VFS_H */

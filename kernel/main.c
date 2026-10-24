@@ -25,7 +25,7 @@
 #include "driver/time.h"
 #include "net/net.h"
 #include "loader/elf_loader.h"
-#include "../fs/lwext4_port/fs_init.h"
+#include "fs_init.h"
 
 /*
    测试相关接口。boot_mode.h 是启动变体钩子；unit_test.h 是默认启动路径上的
