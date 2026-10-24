@@ -89,7 +89,8 @@ static uint32_t vplic_next_deliverable_locked(const vplic_state_t *s, uint32_t v
     if (vcpu_id >= s->nr_vcpus || vcpu_id >= VPLIC_MAX_VCPUS)
         return 0;
 
-    uint64_t candidates = s->pending[vcpu_id] & s->enable[vcpu_id] & ~s->active[vcpu_id] & VALID_IRQ_MASK;
+    /* pending 是源级的(全局), 本 context 只用 enable/active/threshold 过滤 */
+    uint64_t candidates = s->pending & s->enable[vcpu_id] & ~s->active[vcpu_id] & VALID_IRQ_MASK;
 
     uint32_t threshold = s->threshold[vcpu_id];
     uint32_t best_irq = 0;
@@ -129,7 +130,11 @@ static uint32_t vplic_claim_locked(vplic_state_t *s, uint32_t vcpu_id)
     if (irq == 0)
         return 0;
 
-    s->pending[vcpu_id] &= ~(1ULL << irq);
+    /*
+       claim 清的是**全局**挂起位：这是 PLIC 的 claim 语义(对全体 context
+       生效), 也是多 vCPU 下同一个源不会被两个 context 各领一次的关键。
+    */
+    s->pending &= ~(1ULL << irq);
     s->active[vcpu_id] |= (1ULL << irq);
     return irq;
 }
@@ -155,9 +160,8 @@ void vplic_set_pending(vm_t *vm, uint32_t irq)
 
     s = &d->st;
     spin_lock_irqsave(&d->lock, &flags);
-    /* 挂起是全局的(源级), 每个 context 各自判断是否可见 */
-    for (uint32_t i = 0; i < s->nr_vcpus && i < VPLIC_MAX_VCPUS; i++)
-        s->pending[i] |= (1ULL << irq);
+    /* 源级挂起：置一次, 所有 context 可见(可见性由各自的 enable 决定) */
+    s->pending |= (1ULL << irq);
     spin_unlock_irqrestore(&d->lock, flags);
 }
 
@@ -224,14 +228,11 @@ static uint64_t vplic_read(mmio_device_t *dev, uint64_t off, uint8_t size)
     /* pending：每 32 源 1 字 */
     if (off >= PENDING_OFFSET && off < PENDING_OFFSET + 8) {
         uint32_t word = (uint32_t)((off - PENDING_OFFSET) / 4);
-        uint64_t all = 0;
         if (word >= 2) {
             ret = 0;
             goto out;
         }
-        for (uint32_t i = 0; i < s->nr_vcpus && i < VPLIC_MAX_VCPUS; i++)
-            all |= s->pending[i];
-        ret = (all >> (word * 32)) & 0xFFFFFFFFu;
+        ret = (s->pending >> (word * 32)) & 0xFFFFFFFFu;
         goto out;
     }
 

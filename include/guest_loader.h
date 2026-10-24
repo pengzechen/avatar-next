@@ -56,8 +56,11 @@
      - guest_loader_run_linux() 里 vm->cfg.nr_vcpus <= 0 时才回退到它。
 
    运行期支持的数量与 rootfs 里安装的 DTB 一一对应：
-     1 → linux.dtb(构建默认就是单核时)/ linux-1cpu.dtb(构建默认是多核时)
-     2/4/8/12 → linux-gicv3-smpN.dtb
+     aarch64  1 → linux.dtb(构建默认就是单核时)/ linux-1cpu.dtb(构建默认是多核时)
+              2/4/8/12 → linux-gicv3-smpN.dtb
+     riscv64  1 → linux.dtb；2/4/8/12 → linux-smpN.dtb
+               (由 tools/gen_rv64_smp_dtb.py 生成, N 个 cpu@i + N 个 PLIC context)
+     x86_64   1..12(AP 由 MP 表 + INIT/SIPI 驱动, 无 DTB)
    数量与 DTB 的 cpu@N 节点数不一致时, guest 会去 CPU_ON 一个 VMM 根本没准备
    的 vCPU —— 所以 guest_loader_check_vcpus() 会在启动前同时校验数量和 DTB。
 */
@@ -432,11 +435,13 @@ int guest_loader_read_file(const char *path, uint8_t *buf, size_t cap);
 
    返回 0 可以；-1 不支持(并已用 KLOG_ERROR 说明原因)。规则：
      - 1..MAX_VCPUS；
-     - riscv64 只允许 1(SBI HSM 尚未实现)；
+     - riscv64：N ∈ {1,2,4,8,12}(AP 入口 = SBI HSM hart_start, 由 guest
+       按 DTB 的 cpu 节点逐个启动)；
      - x86_64：1..MAX_VCPUS(AP 入口 = guest 写 ICR 发 INIT/SIPI,
        由 vLAPIC + MP 表驱动, 没有 DTB 依赖)；
      - aarch64：N>1 需要 GICv3, 且 N ∈ {2,4,8,12}(仓库里只有这些 DTB)；
-     - aarch64 选中路径的 DTB 必须真的在 rootfs 里(缺失通常意味着 rootfs 是旧的)。
+     - aarch64 / riscv64 选中路径的 DTB 必须真的在 rootfs 里
+       (缺失通常意味着 rootfs 是旧的)。
 
    vmm_dev 在 vm_alloc() 之前调用它来尽早返回 EINVAL；loader 自己也会再调
    一次, 覆盖绕过 /dev/vmm 的直启路径。

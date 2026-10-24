@@ -107,15 +107,20 @@ guest 内存布局在 `include/guest_loader.h`（按架构挑选），DTB 修补
 
 | 扩展 | 行为 |
 |---|---|
-| BASE | spec 0.2 / impl id `"AVTR"` / probe 支持 TIME、RFENCE、SRST、legacy 0x00 0x01 0x02 0x08 |
+| BASE | spec 0.2 / impl id `"AVTR"` / probe 支持 TIME、RFENCE、IPI、HSM、SRST、legacy 0x00 0x01 0x02 0x08 |
 | TIME `set_timer` | 记 `vcpu->timer_deadline`，入口处按它置 `hvip.VSTIP` |
-| RFENCE | 单 vCPU，直接回成功 |
+| IPI `send_ipi` | 按 hart mask 给目标 vCPU 置 `ipi_pending` 并 kick；目标下次入口置 `hvip.VSSIP`，exit 时按 `hvip.VSSIP` 是否被 guest 清掉来同步软件 pending（`ipi_seq` 防丢新 IPI） |
+| HSM `hart_start` / `hart_get_status` | `vmm_vcpu_start()`：sepc=入口、satp=0、a0=hartid、a1=opaque；AP 任务在 `start` completion 上等待 |
+| HSM `hart_stop` | 回 `SBI_ERR_NOT_SUPPORTED`（CPU 热插拔用；正常启动/关机不走它，关机走 SRST） |
+| RFENCE | 记到目标 vCPU 的 `remote_fence`，由目标下一次进 guest 前执行 `fence.i` / `hfence.vvma`（地址/ASID 一律全刷，保守但安全）；HFENCE_* 是嵌套虚拟化用的，按 KVM 做法 NOP 成功 |
 | SRST | 回成功后 `EL2_VMEXIT`（guest 里 `poweroff` 就走到这） |
 | legacy 0x01/0x02 | console putchar/getchar |
-| **IPI / HSM** | **明确回「不支持」** —— 只有 vCPU0 一个 hart，报支持会让 guest 去启从核然后永远等不到 |
 
 未实现的扩展一律回 `SBI_ERR_NOT_SUPPORTED`（不是崩溃），新版 Linux 探测
 DBCN/CPPC/PMU 时会安静地换别的路径。
+
+多 vCPU 的完整链路（每 N 一份 DTB、主机 vCPU 摊核、WFI 睡眠、超分注意
+事项）见 `docs/vmm/MULTI_VCPU.md` §5.6。
 
 ## 6. 移植时踩过的坑（都写进代码注释了，这里给索引）
 
@@ -429,7 +434,54 @@ VM 的 hgatp 之间来回切 —— 那行 `hgatp=... activated` 若是 INFO，�
 整个日志的 **81%**（670/825 行）。已经降成 DEBUG
 （klog 规范里「INFO 不得进循环体」的典型案例）。
 
-## 9. 相关
+## 9. 多 vCPU
+
+实现细节集中在 `docs/vmm/MULTI_VCPU.md` §5.6（SBI HSM/IPI/RFENCE 的契约、
+`hvip.VSSIP` 的消费判定、WFI 睡眠、vPLIC pending 语义、G-stage 锁）。这里只
+给运行方式和排障索引。
+
+**guest DTB**：`tools/gen_rv64_smp_dtb.py` 生成
+`linux-smp{2,4,8,12}.dtb`。N 个 `cpu@i`，PLIC 的 `interrupts-extended`
+按 cpu0..cpuN-1 顺序列 N 个 S-mode context。生成脚本会回读 dtb 自检；
+改完不要手改产物，改脚本再生成。
+
+**运行**（helper 模式，rootfs 已含 smp DTB）：
+
+```bash
+# 2 宿主核 / 4 guest vCPU：
+VCPUS=4 tools/vmm_helper_regress.sh riscv64 1 2 --restart
+# 2 宿主核 / 8 guest vCPU（超分路径）：
+VCPUS=8 tools/vmm_helper_regress.sh riscv64 1 2
+# 多 VM（每 VM 默认 1 vCPU）：
+tools/vmm_multivm_regress.sh riscv64 2
+```
+
+`-c` 的合法值：1/2/4/8/12。AP 入口是 guest 自己发 SBI HSM `hart_start`，
+所以 **guest DTB 的 cpu 节点数、rootfs 里的 DTB、`-c N` 三者必须一致**；
+`guest_loader_check_vcpus()` 在启动前同时校验数量和 DTB 是否存在。
+
+**超分（guest vCPU > 宿主 hart）**：
+
+- `hvip` 是每 hart 的 CSR，远端 vCPU 发 IPI 只能置目标的软件 pending，真正
+  的 `HVIP_VSSIP` 要等目标下一次入口。exit 时区分"guest 消费掉了"与"运行
+  期间又来了新 IPI"靠 `ipi_seq` 快照（见 §5.6 / `hext_run.c` 注释）。
+- VS-mode 的 WFI 由 VMM 用 completion 挂起，kick 与宿主 tick 唤醒；BSP 每
+  tick 回一次主循环，保证直启模式的控制台输入泵不被睡死。
+- guest 内核的 `stop_machine`（clocksource 切换等）要求**每颗 CPU 都跑到
+  stopper 并 ack**。超分时若 guest 是非抢占内核，跨 CPU 的 kthread 等待
+  （`wait_task_inactive`）可能让某颗 vCPU 长时间不回 ack，表现为启动卡
+  几十秒。仓库里的 `imgs/guests/rv64/linux.bin` 已按
+  `CONFIG_PREEMPT=y` 重建：配置从原镜像的 IKCONFIG(`/proc/config.gz`)
+  提取，只把 `PREEMPT_NONE` 改成 `PREEMPT`，`make ARCH=riscv
+  CROSS_COMPILE=riscv64-linux-musl- Image`。镜像里的 `uname -a` 应带
+  `PREEMPT`。改 guest 镜像后必须重跑上面的 4/2、8/2 门禁。
+- 仅有抢占还不够：`guest_loader.c` 在 `nr_vcpus > g_num_cpus` 时会把
+  bootargs 换成带 `clocksource=jiffies` 的版本，直接跳过 guest 启动期
+  那次时钟源切换 `stop_machine`。代价是 guest 时间分辨率 4ms（HZ=250），
+  `rdtime` 和 delay 循环不受影响；不超分时仍用 `riscv_clocksource`。
+  两处都到位后 2 宿主核 / 4、8 guest vCPU 才能稳定在数秒到二十几秒启动。
+
+## 10. 相关
 
 - 两种运行模式、`/dev/vmm` 协议、Ctrl+T 前缀键语义：`docs/vmm/GUEST_CONSOLE.md`
 - 裸跑基线怎么做：`docs/vmm/GUEST_NATIVE_QEMU.md`

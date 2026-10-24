@@ -27,6 +27,9 @@
 #if ARCH_AARCH64
 #include "aarch64/stage2.h" /* stage2_activate：每轮进 guest 前重写 VTTBR */
 #endif
+#if ARCH_RISCV64
+#include "riscv64/hext.h" /* HSTATUS_SPVP：AP 首次 sret 必须落回 VS-mode */
+#endif
 #include "barrier.h" /* smp_wmb：注入发布后再 kick */
 
 /* ── AP 启动闸门(PSCI CPU_ON 的落点)───────────────────── */
@@ -35,14 +38,57 @@ int vmm_vcpu_start(vcpu_t *vcpu, uint64_t entry, uint64_t context_id)
 {
 #if ARCH_RISCV64
     /*
-       RISC-V 的 SBI HSM 还没有实现。vcpu_t 的入口状态字段也是架构私有的
-       (aarch64 是 elr/spsr/sp_el1/cntv_*, x86 是 VMCS 里的 guest 状态),
-       所以这里必须按架构收口, 否则 riscv64 连内核都编不过。
+       RISC-V 的 AP 入口：guest 在 BSP 上执行 SBI HSM hart_start(hartid,
+       start_addr, opaque), handle_vs_ecall 转到这里。
+
+       SBI HSM 规定的复位现场(与 KVM 的 kvm_sbi_hsm 一致)：
+         sepc = a1(start_addr)   satp = 0(bare)
+         a0   = hartid           a1 = opaque(对 Linux 是 DTB 物理地址)
+         sstatus.SIE = 0, 其余 VS-CSR 全零
+       our vcpu 里 pc/vsepc 分开存(c 是 HS sret 目标, vsepc 是 guest 自己的
+       sepc), 两个都填入口地址。hstatus_save 必须预置 SPVP=1, 否则第一次
+       sret 会落到 VU-mode(见 vmm_arch_vm_init 里同一句的说明)。
     */
-    (void)vcpu;
-    (void)entry;
-    (void)context_id;
-    return -1;
+    if (!vcpu || !vcpu->vm || entry == 0)
+        return -1;
+    if (vcpu->state != VCPU_STATE_OFFLINE)
+        return -1;
+
+    memset(vcpu->r, 0, sizeof(vcpu->r));
+    vcpu->vsepc = entry;
+    vcpu->vsstatus = 0; /* SPP=0(VS), SIE=0 */
+    vcpu->vstvec = 0;   /* Linux 在 head.S 里自己写 */
+    vcpu->vsscratch = 0;
+    vcpu->vsatp = 0; /* bare：guest 从 head.S 开始建自己的页表 */
+    vcpu->vsie = 0;
+    vcpu->scause_save = 0;
+    vcpu->stval_save = 0;
+    vcpu->htval_save = 0;
+    vcpu->htinst_save = 0;
+    vcpu->hstatus_save = HSTATUS_SPVP;
+    vcpu->pc = entry;
+
+    /* r[2](sp) 留 0：SBI HSM 复位现场不含 sp, Linux 的 secondary_start_sbi
+       会在碰栈之前自己设好。a0/a1 才是约定里的两个参数。 */
+    vcpu->r[10] = (uint64_t)vcpu->vcpu_id; /* a0 = hartid */
+    vcpu->r[11] = context_id;              /* a1 = opaque(Linux: DTB PA) */
+
+    vcpu->launched = 0;
+    vcpu->timer_deadline = 0;
+    vcpu->ipi_pending = 0;
+    vcpu->ipi_seq = 0;
+    vcpu->ipi_seq_at_entry = 0;
+    vcpu->ipi_injected = 0;
+    vcpu->remote_fence = 0;
+
+    smp_wmb();
+    vcpu->state = VCPU_STATE_RUNNING;
+
+    /* 放行睡在 start completion 上的 AP 任务(可能被唤醒到另一颗宿主核) */
+    completion_complete_all(&vcpu->start);
+    KLOG_INFO("[vmm] riscv vcpu%d started: pc=0x%llx a1(opaque)=0x%llx\n", vcpu->vcpu_id,
+              (unsigned long long)entry, (unsigned long long)context_id);
+    return 0;
 #elif ARCH_X86_64
     /*
        x86 的 AP 入口：guest 在 BSP 上往 ICR 写 SIPI, vLAPIC 转到这里。
@@ -178,6 +224,22 @@ void vmm_vcpu_kick(vcpu_t *vcpu)
 {
     if (!vcpu || vcpu->state != VCPU_STATE_RUNNING)
         return;
+
+#if ARCH_RISCV64
+    /*
+       RISC-V 的 VS-mode WFI 会把 vCPU 任务挂在 wfi_wake completion 上
+       (见 hext_run.c 的 handle_wfi)。SBI IPI / 设备注入 / stop 请求都可能
+       是让它"有活干"的唯一信号 —— 只置 need_resched 不会唤醒一个已经
+       completion_wait 睡下的任务，所以必须先把它从 WFI 里叫起来；它醒来
+       后会在主循环里看到 ipi_pending 并重新进 guest。
+
+       重复 complete 是幂等的（done 保持 1），completion 会在下次 WFI 前
+       reset。
+    */
+    if (vcpu->in_wfi)
+        completion_complete_all(&vcpu->wfi_wake);
+#endif
+
     if (vcpu->host_cpu < 0)
         return;
 

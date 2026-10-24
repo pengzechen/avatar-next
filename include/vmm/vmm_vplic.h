@@ -51,7 +51,19 @@ typedef struct vplic_state {
     struct vm *owner;
 
     uint32_t priority[VPLIC_MAX_IRQS];
-    uint64_t pending[VPLIC_MAX_VCPUS];
+
+    /*
+       pending 是**源级全局**的, 不是每 context 一份 —— 这是 PLIC 的真实
+       语义：网关(设备)把源置为挂起, 任何一个 context claim 都会把该源的
+       挂起位清掉(claim 对全体 context 生效)；各 context 只用 enable /
+       active / threshold 决定「自己能不能看到/还能不能再看到」。
+
+       老实现是 `pending[context]`, set_pending 时复制到所有 context。
+       单 vCPU 看不出差别, 多 vCPU 却会把一个 UART 中断同时投给两颗核：
+       context0 与 context1 各看到一份挂起, 各自 claim 一次, 8250 的
+       RX 字节只够一个消费者, 另一个拿到的是空 FIFO —— 表现为随机丢输入。
+    */
+    uint64_t pending;
     uint64_t active[VPLIC_MAX_VCPUS];
     uint64_t enable[VPLIC_MAX_VCPUS];
     uint32_t threshold[VPLIC_MAX_VCPUS];

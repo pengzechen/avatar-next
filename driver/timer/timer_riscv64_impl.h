@@ -226,6 +226,18 @@ void timer_handler(void *frame)
     if (g_tick_cb) {
         g_tick_cb();
     }
+
+    /*
+       VMM 的 VS-mode WFI 唤醒钩子。
+
+       guest 在 VS-mode 执行 WFI 后，vCPU 任务挂在自己的 completion 上；
+       它的虚拟定时器截止时间没有宿主中断可用，只能靠这个 10ms 的宿主
+       tick 兜底唤醒、重新检查 deadline。没有 VMM（未链接 hext_run.o）
+       时是弱符号 NULL，这里什么都不做。
+    */
+    extern void vmm_riscv_host_tick(void) __attribute__((weak));
+    if (vmm_riscv_host_tick)
+        vmm_riscv_host_tick();
 }
 
 #endif /* __TIMER_RISCV64_IMPL_H__ */

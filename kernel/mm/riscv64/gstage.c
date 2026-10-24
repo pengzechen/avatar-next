@@ -154,6 +154,7 @@ void rv_gstage_vm_init(gstage_ctx_t *g, uint32_t slot, uint32_t vmid, uint64_t r
     }
 
     memset(g, 0, sizeof(*g));
+    spinlock_irq_init(&g->map_lock); /* memset 之后: 锁对象不能被清零 */
     g->slot = slot;
     g->vmid = vmid & 0x3FFF; /* hgatp.VMID 是 14 位 */
     g->ram_base = ram_base;
@@ -271,25 +272,38 @@ int rv_gstage_ipa_is_ram(const gstage_ctx_t *g, uint64_t gpa)
 
 uint64_t rv_gstage_map_page(gstage_ctx_t *g, uint64_t gpa, int zero)
 {
-    uint64_t *t = l0_ensure(g, gpa);
-    int li = l0_index(gpa);
+    uint64_t *t;
+    uint64_t flags;
     uint64_t pa;
+    int li = l0_index(gpa);
 
-    if (!t)
+    spin_lock_irqsave(&g->map_lock, &flags);
+
+    t = l0_ensure(g, gpa);
+    if (!t) {
+        spin_unlock_irqrestore(&g->map_lock, flags);
         return 0;
+    }
 
     /* 已映射：幂等(缺页重试, 以及"先 map_range 后 fault"都会走到) */
-    if (t[li] & RV_PTE_V)
-        return RV_PTE_TO_PA(t[li]);
+    if (t[li] & RV_PTE_V) {
+        pa = RV_PTE_TO_PA(t[li]);
+        spin_unlock_irqrestore(&g->map_lock, flags);
+        return pa;
+    }
 
     pa = pmm_alloc_pages(&g_pmm, 1);
-    if (!pa)
+    if (!pa) {
+        spin_unlock_irqrestore(&g->map_lock, flags);
         return 0; /* 注意： 调用方必须处理, 不能当成功继续 */
+    }
 
     if (zero)
         memset(phys_to_virt(pa), 0, GSTAGE_PAGE_SIZE);
 
     t[li] = RV_PTE_FROM_PA(pa, GSTAGE_RAM_FLAGS);
+
+    spin_unlock_irqrestore(&g->map_lock, flags);
     return pa;
 }
 
@@ -307,12 +321,24 @@ uint64_t rv_gstage_map_page(gstage_ctx_t *g, uint64_t gpa, int zero)
 uint64_t rv_gstage_map_block(gstage_ctx_t *g, uint64_t gpa, int zero)
 {
     uint64_t base = gpa & ~(GSTAGE_BLOCK_SIZE - 1);
-    uint64_t *t = l0_ensure(g, base);
+    uint64_t *t;
+    uint64_t flags;
     uint64_t n = 0;
     int i;
 
-    if (!t)
+    /*
+       整块映射持锁完成：两个 vCPU 同时缺同一块时, 后者会看到前者装好的
+       表项而直接跳过 —— 不能出现「两边各建一张 L0 表」或「同一页两个 HPA」。
+       PMM 分配与 512 页清零都在锁内, 时间上确实偏长, 但这是缺页路径且
+       每个 2 MiB 块只发生一次(后续块内访问全是命中)。
+    */
+    spin_lock_irqsave(&g->map_lock, &flags);
+
+    t = l0_ensure(g, base);
+    if (!t) {
+        spin_unlock_irqrestore(&g->map_lock, flags);
         return 0;
+    }
 
     for (i = 0; i < GSTAGE_L0_ENTRIES; i++) {
         uint64_t pa;
@@ -330,6 +356,8 @@ uint64_t rv_gstage_map_block(gstage_ctx_t *g, uint64_t gpa, int zero)
         t[i] = RV_PTE_FROM_PA(pa, GSTAGE_RAM_FLAGS);
         n++;
     }
+
+    spin_unlock_irqrestore(&g->map_lock, flags);
     return n;
 }
 
@@ -355,30 +383,38 @@ uint64_t rv_gstage_map_range(gstage_ctx_t *g, uint64_t gpa, uint64_t size, int z
     return n;
 }
 
-int rv_gstage_lookup(const gstage_ctx_t *g, uint64_t gpa, uint64_t *pa_out)
+int rv_gstage_lookup(gstage_ctx_t *g, uint64_t gpa, uint64_t *pa_out)
 {
     uint64_t *t;
+    uint64_t flags;
     int idx;
     uint64_t e;
+    int ok = 0;
 
     if (!rv_gstage_ipa_is_ram(g, gpa))
         return 0;
 
+    spin_lock_irqsave(&g->map_lock, &flags);
+
     idx = ram_blk_index(g, gpa);
     if (idx < 0)
-        return 0;
+        goto out;
 
     t = g->l0_tbl[idx];
     if (!t)
-        return 0;
+        goto out;
 
     e = t[l0_index(gpa)];
     if (!(e & RV_PTE_V) || !(e & (RV_PTE_R | RV_PTE_W | RV_PTE_X)))
-        return 0; /* 未映射, 或不是叶项 */
+        goto out; /* 未映射, 或不是叶项 */
 
     if (pa_out)
         *pa_out = RV_PTE_TO_PA(e) | RV_PAGE_OFFSET(gpa);
-    return 1;
+    ok = 1;
+
+out:
+    spin_unlock_irqrestore(&g->map_lock, flags);
+    return ok;
 }
 
 /* ── TLB 维护 ─────────────────────────────────────────────── */

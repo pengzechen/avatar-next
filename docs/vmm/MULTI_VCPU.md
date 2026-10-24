@@ -4,7 +4,11 @@
 > 数（已用 2 宿主 / 8 guest、4 宿主 / 8 guest、4 宿主 / 12 guest 做
 > 40s 启动门禁）。**x86_64 已支持 1..12 vCPU**（AP 入口 = guest 写 ICR 发
 > SIPI；实测 2/1、4/2、4/4、8/4、12/4 宿主/guest 组合，以及两个 4-vCPU
-> VM 同时运行）。riscv64 的 AP 入口仍未实现，只支持单 vCPU。
+> VM 同时运行）。**riscv64 已支持 1/2/4/8/12 vCPU**（SBI HSM `hart_start`
+> 启动 AP、SBI IPI 注入 `hvip.VSSIP`、SBI RFENCE 在目标入口执行；实测
+> 2 宿主 / 2、4、8 guest，以及两个 4-vCPU VM 同时运行）。超分配置要求
+> guest 镜像是 `CONFIG_PREEMPT=y` 且 bootargs 带 `clocksource=jiffies`
+> （见 §5.6）。
 > 默认构建仍是 `nr_vcpus=1`。两种开启方式：
 >   - **运行期**（推荐）：宿主 shell 里 `/bin/vmm-run -c N`，不需要重编内核；
 >   - **构建期**：`GUEST_VCPUS=N`，它是“未指定 `-c` 时的默认值”，也是
@@ -185,12 +189,12 @@ pending 位图改成原子操作或给控制器加锁。
 
 | 前置条件 | aarch64 | riscv64 | x86_64 |
 |---|---|---|---|
-| AP 启动闸门（`completion_t`） | ✅ | 结构已备，未接 SBI HSM | ✅ `completion_wait(&start)` |
-| AP 入口（CPU_ON / HSM / SIPI） | ✅ PSCI `CPU_ON`/`AFFINITY_INFO` | ❌ | ✅ ICR SIPI → `vmm_vcpu_start()` |
-| guest IPI（SGI / IPI / ICR） | ✅ `ICC_SGI1R_EL1` 陷入 → pending + kick | ❌ | ✅ ICR fixed/lowest，physical/logical flat/shorthand |
-| guest CPU 描述 | ✅ `linux-gicv3-smp{2,4,8,12}.dtb`（GICR = N×0x20000） | ❌ | ✅ MP 表每 vCPU 一条 type-0（APIC ID == vcpu_id） |
-| 控制器 per-vCPU 状态 | ✅ vGIC（VMCR/AP1R0、SGI 边沿 pending），见 5.2 | — | ✅ vLAPIC（ID/LDR/ISR/IRR/定时器） |
-| VMM 侧注入与 entry/exit 互斥 | ✅ `vcpu->irq_lock` | ✅ | ✅ |
+| AP 启动闸门（`completion_t`） | ✅ | ✅ `completion_wait(&start)` | ✅ `completion_wait(&start)` |
+| AP 入口（CPU_ON / HSM / SIPI） | ✅ PSCI `CPU_ON`/`AFFINITY_INFO` | ✅ SBI HSM `hart_start` / `hart_get_status` | ✅ ICR SIPI → `vmm_vcpu_start()` |
+| guest IPI（SGI / IPI / ICR） | ✅ `ICC_SGI1R_EL1` 陷入 → pending + kick | ✅ SBI `send_ipi` → pending + kick → 入口 `hvip.VSSIP` | ✅ ICR fixed/lowest，physical/logical flat/shorthand |
+| guest CPU 描述 | ✅ `linux-gicv3-smp{2,4,8,12}.dtb`（GICR = N×0x20000） | ✅ `linux-smp{2,4,8,12}.dtb`（N 个 cpu@i + PLIC 的 N 个 S-mode context） | ✅ MP 表每 vCPU 一条 type-0（APIC ID == vcpu_id） |
+| 控制器 per-vCPU 状态 | ✅ vGIC（VMCR/AP1R0、SGI 边沿 pending），见 5.2 | ✅ vPLIC（每 context enable/active/threshold；**pending 是源级全局**） | ✅ vLAPIC（ID/LDR/ISR/IRR/定时器） |
+| VMM 侧注入与 entry/exit 互斥 | ✅ `vcpu->irq_lock` | ✅ `vcpu->irq_lock` | ✅ |
 | guest 自己写 GICD/vLAPIC 与远端注入的严格顺序 | ⚠️ 未收口（见 4a.3） | ⚠️ | ⚠️ |
 | VM 级全量启动/回滚 | ⚠️ 逐 vCPU 创建；失败置 stop_req | 同左 | 同左 |
 
@@ -339,6 +343,47 @@ Linux 从 MP 表发现 CPU，BSP 写 ICR 发 INIT（deassert）→ SIPI，AP 从
 等 SIPI）；对已 RUNNING 的 vCPU 的 INIT（关机/热插拔）不复位 VMCS。正常
 启动流程只用 INIT(deassert)+SIPI 拉起从未运行过的 AP，够用。
 
+### 5.6 riscv64 的实现要点（SBI HSM + IPI + RFENCE）
+
+Linux RISC-V 的 SMP 路径完全走 SBI：从 DTB 的 `cpu@i` 发现 hart，BSP 逐个
+`SBI HSM hart_start(hartid, start_addr, opaque)`。VMM 侧对应四块：
+
+1. **AP 入口**（`handle_vs_ecall` → `sbi_hsm_handler` → `vmm_vcpu_start`）：
+   SBI HSM 规定的复位现场是 sepc=start_addr、satp=0、sstatus.SIE=0、
+   a0=hartid、a1=opaque（Linux 传的是 per-CPU 的 `sbi_hart_boot_data`，
+   不是 DTB）。`hstatus_save` 预置 SPVP=1，否则第一次 sret 会落到 VU-mode。
+   AP 任务仍然是先建、睡在 `vcpu->start`。
+   `hart_stop`（CPU 热插拔）回 `NOT_SUPPORTED`，避免把 vCPU 任务退出误当成
+   整个 VM 停机；正常关机走 SRST。
+2. **IPI**：`SBI send_ipi(a0=mask, a1=base)` 只给目标 vCPU 置
+   `ipi_pending`/`ipi_seq` 并 kick；**hvip 是每 hart 的 CSR**，远端写不到，
+   真正置 `HVIP_VSSIP` 必须等目标下一次入口（`vcpu_software_irq_on_entry`）。
+   退出时怎么判断"这次 IPI 被 guest 消费了"是这里唯一的难点：
+   guest 清 `sip.SSIP` 会连带清掉 `hvip.VSSIP`（两者是同一个挂起位的两个
+   视图），但 guest 运行期间**新来的** IPI 也会让 VSSIP 保持 0（远端碰不到
+   本 hart 的 hvip）。只看 VSSIP 会误清新 IPI → IPI 风暴。这里用
+   `ipi_seq` 快照：入口记 seq，exit 时序号没变且 VSSIP 已被清，才清 pending
+   （KVM 用 `irqs_pending_mask` 解决同一问题）。
+3. **RFENCE**：SBI 要求目标 hart 自己执行 `fence.i` / `sfence.vma`；vCPU 是
+   分时任务，没法当场代执行，于是记到目标的 `remote_fence`，由它下一次进
+   guest 前在 `vcpu_remote_fence_on_entry()` 执行。地址/ASID 一律忽略、全刷，
+   语义永远安全；HFENCE_*（嵌套虚拟化）按 KVM 做法 NOP 成功。
+4. **guest CPU 描述**：`tools/gen_rv64_smp_dtb.py` 生成
+   `linux-smp{2,4,8,12}.dtb`，N 个 `cpu@i` + `cpuN_intc`，PLIC 的
+   `interrupts-extended` 按 **cpu0..cpuN-1 的顺序** 列 N 个 S-mode context。
+   这个顺序必须和 vPLIC 的「context N == vCPU N」严格一致；写反的症状是
+   某颗核永远收不到外部中断，且没有任何报错。生成脚本自带回读自检。
+
+多 vCPU 顺带修掉/加固的东西：
+
+| 项 | 症状 | 修法 |
+|---|---|---|
+| vPLIC 的 pending 曾是每 context 一份 | 同一个 UART 中断同时投给两颗核，各 claim 一次，8250 RX 只有一个消费者 → 随机丢输入 | 改成源级全局 pending + 每 context 的 enable/active/threshold（claim 清全局挂起位，PLIC 语义） |
+| G-stage 表操作无锁；`map_block()==0` 当 PMM 耗尽 | 两个 vCPU 同缺一个 2 MiB 块会重复建表/双映射；兄弟已装好时返回 0 被误判成 OOM 停 VM | `gstage_ctx_t.map_lock` 串行化；成功判据改成 `rv_gstage_lookup()` |
+| 每次入口按 map_gen 全刷 G-stage TLB | 4 vCPU 并行启动时几乎每轮都刷，启动从秒级退化到几十秒 | 删掉代际刷。RISC-V 允许缓存「不可翻译」，负缓存只会再 fault，缺页路径会本地刷；映射建立后不改指向 |
+| guest 运行期间宿主定时器 trap 不经过宿主通用陷阱分发器 | `timer_handler` 不执行 → STIP 不再重装；多 vCPU 分时后表现为启动无声卡死 | `vmm_arch_exit_handler` 里用合成 trap_frame 调 `riscv_dispatch_host_irq()` |
+| WFI 只做 yield 后立刻重进 guest | 空闲 vCPU 变成 WFI exit/entry 忙循环，超分时 CPU 被吃光 | WFI 挂到 per-vCPU `wfi_wake` completion；kick 与宿主 tick 唤醒。BSP 每 tick 回主循环一次，保住直启模式的宿主控制台输入泵 |
+
 ## 6. aarch64 多 vCPU guest 实测
 
 ### 6.1 运行期指定（helper 模式，推荐）
@@ -479,6 +524,26 @@ Launching busybox shell
 > 用墙钟时，只要宿主核数少于 vCPU 总数，guest 的 CPU bring-up 就会卡在
 > `cpu_callout_mask` 握手（BSP 被 tick 风暴困在 ISR 里，一条普通指令都跑不了）。
 
+### 6.4 riscv64 实测（helper 模式，运行期 `-c`）
+
+| 宿主 SMP | guest vCPU | 场景 | 结果 |
+|---|---|---|---|
+| 2 | 2 | 基线（不超分） | 1/1，约 4s |
+| 2 | 4 | 超售 2× + `--restart` | 1/1，约 13s（两次启动） |
+| 2 | 8 | 超售 4× | 1/1，约 23s |
+| 2 | 4 + 4 | 两个 4-vCPU VM 同时运行 | 两个 guest 都到 uname，两个 `vcpu0 task started` |
+| 2 | 4 / 8 | 稳定性连跑 | 4/2 6/6、8/2 6/6（3.3–16.5s） |
+
+前提（缺一不可）：
+
+- `imgs/guests/rv64/linux.bin` 是 `CONFIG_PREEMPT=y` 的（由原镜像的
+  IKCONFIG 提取配置、只改抢占模型重建；镜像里的 `uname -a` 应带 `PREEMPT`）。
+  非抢占 guest 在超分时会在 `stop_machine` 等跨 CPU 握手上偶发卡几十秒。
+- guest vCPU 数 > 宿主 CPU 数时，`guest_loader.c` 自动把 bootargs 换成带
+  `clocksource=jiffies` 的那一版，跳过 guest 启动期的时钟源切换
+  `stop_machine`（§5.6 表格最后一行）。`guest vCPU <= 宿主 CPU` 时仍用
+  `riscv_clocksource` 的高分辨率时间。
+
 ## 7. 回归门禁
 
 - 三架构 `make PLATFORM=<p> clean && make PLATFORM=<p> kernel`
@@ -510,6 +575,12 @@ Launching busybox shell
     - 多 VM + 多 vCPU：两个 `/bin/vmm-run -c 4` 各自跑到 uname，
       `vmm-run -l` 两行 RUNNING（`tools/vmm_multivm_regress.sh` 只覆盖
       1-vCPU VM，多 vCPU 组合按 §6.3 手动跑）
+  - riscv64 多 vCPU（SBI HSM/IPI/RFENCE）：
+    - `VCPUS=4 tools/vmm_helper_regress.sh riscv64 [N] 2 --restart`
+      （超售：2 宿主核 / 4 guest vCPU）
+    - `VCPUS=8 tools/vmm_helper_regress.sh riscv64 [N] 2`
+      （超售：2 宿主核 / 8 guest vCPU）
+    - `tools/vmm_multivm_regress.sh riscv64 2`
   - `tools/vmm_helper_regress.sh <arch> [N] [smp] --restart`
   - `tools/vmm_multivm_regress.sh <arch> [smp]`
   - x86 直启门禁 `tools/boot_regress.sh [N]`

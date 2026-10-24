@@ -131,9 +131,23 @@
 #define SBI_EXT_HSM                     0x48534dUL   /* "HSM" */
 #define SBI_EXT_SRST                    0x53525354UL /* "SRST" */
 #define SBI_TIME_SET_TIMER              0
+#define SBI_IPI_SEND_IPI                0
 #define SBI_HSM_HART_START              0
 #define SBI_HSM_HART_STOP               1
 #define SBI_HSM_HART_GET_STATUS         2
+/* HSM 状态(hart_get_status 的 a1)。SUSPENDED 用不到, 不定义。 */
+#define SBI_HSM_STATE_STARTED           0
+#define SBI_HSM_STATE_STOPPED           1
+#define SBI_HSM_STATE_STARTING          2
+#define SBI_HSM_STATE_STOPPING          3
+/* RFENCE FID(a6) */
+#define SBI_RFENCE_REMOTE_FENCE_I        0
+#define SBI_RFENCE_REMOTE_SFENCE_VMA     1
+#define SBI_RFENCE_REMOTE_SFENCE_VMA_ASID 2
+#define SBI_RFENCE_REMOTE_HFENCE_GVMA    3
+#define SBI_RFENCE_REMOTE_HFENCE_GVMA_VMID 4
+#define SBI_RFENCE_REMOTE_HFENCE_VVMA    5
+#define SBI_RFENCE_REMOTE_HFENCE_VVMA_ASID 6
 #define SBI_SRST_RESET                  0
 #define SBI_SRST_RESET_TYPE_SHUTDOWN    0
 #define SBI_SRST_RESET_TYPE_COLD_REBOOT 1
@@ -258,8 +272,10 @@
      从而实现「不依赖 vPLIC/vGIC 的定时器与外部中断注入」。
    ================================================================
 */
+#define HVIP_VSSIP (1UL << 2)  /* VS software 中断挂起(SBI send_ipi) */
 #define HVIP_VSTIP (1UL << 6)  /* VS timer 中断挂起 */
 #define HVIP_VSEIP (1UL << 10) /* VS external 中断挂起 */
+#define HIE_VSSIE  (1UL << 2)  /* VS software 中断使能 */
 #define HIE_VSTIE  (1UL << 6)  /* VS timer 中断使能 */
 #define HIE_VSEIE  (1UL << 10) /* VS external 中断使能 */
 
@@ -290,6 +306,23 @@ static inline void hext_set_hie_bits(uint64_t bits)
     __asm__ volatile("csrs 0x604, %0" ::"r"(bits) : "memory");
 }
 
+/*
+   设置/清除 VS 软件中断挂起(SBI IPI 的落点)。
+
+   与 vsip.SSIP 的关系(见 docs/vmm/RISCV64_GUEST_LINUX.md「多 vCPU」一节)：
+     - HS-mode 置 hvip.VSSIP ⇒ VS-mode 的 sip.SSIP 读到 1；
+     - guest 在 VS-mode 清 sip.SSIP 会**同时清掉 hvip.VSSIP**(两者是同一个
+       挂起位的两个视图)，所以 VMM 必须在每次 exit 时回读 hvip 来同步自己的
+       软件 pending —— 只清不清软件状态会导致 IPI 永远重投(IPI 风暴)。
+*/
+static inline void hext_set_vs_software_irq(int pending)
+{
+    if (pending)
+        hext_set_hvip_bits(HVIP_VSSIP);
+    else
+        hext_clear_hvip_bits(HVIP_VSSIP);
+}
+
 /* 设置/清除 VS 定时器中断挂起 */
 static inline void hext_set_vs_timer_irq(int pending)
 {
@@ -306,6 +339,31 @@ static inline void hext_set_vs_external_irq(int pending)
         hext_set_hvip_bits(HVIP_VSEIP);
     else
         hext_clear_hvip_bits(HVIP_VSEIP);
+}
+
+/* ================================================================
+   远端 fence 的「执行端」(SBI RFENCE 的落点)
+
+   SBI 的 remote fence.i / remote sfence.vma 要求**目标 hart**执行对应的
+   失效指令。本 VMM 的 vCPU 是宿主 hart 上分时运行的内核任务，没法在
+   收到请求的瞬间替对方执行，所以请求先记在目标 vCPU 上(remote_fence),
+   由它下一次进 guest 前在这里补执行 —— 那一刻 hgatp 已经切到本 VM
+   (见 hext_run.c 的 hext_per_hart_csrs_ensure), hfence.vvma 才有正确
+   的 VMID 上下文。
+
+   hfence.vvma 的助记符在 -march=rv64gc 下不被汇编器识别, 与 hfence.gvma
+   一样用 .insn 数值编码：funct7=0x11, funct3=0, rd/rs1/rs2=x0(全刷)。
+   这里做了「忽略地址/ASID, 一律全刷」的保守简化 —— 语义上永远安全,
+   代价只是 guest 换页时的 TLB 命中率。
+   ================================================================ */
+static inline void hext_fence_i(void)
+{
+    __asm__ volatile("fence.i" ::: "memory");
+}
+
+static inline void hext_hfence_vvma_all(void)
+{
+    __asm__ volatile(".insn r 0x73, 0, 0x11, x0, x0, x0\n" ::: "memory");
 }
 
 #endif /* RISCV64_HEXT_H */

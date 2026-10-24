@@ -190,6 +190,14 @@ avatar/
   PPN，`pte & ~0xFFF` 拿到的是 `pa>>2`**，与 ARM 的 LPAE 正相反）会让宿主
   从错误的物理页取指、并满屏 `PMM: invalid free address`，两个症状都不指向
   "翻译错了"。
+  **§9 是「多 vCPU」**（SBI HSM/IPI/RFENCE，1/2/4/8/12，宿主核可少于 guest
+  核）。动 `hext_run.c` 的 SBI/IPI/WFI 或 vPLIC 的 pending 语义前必读
+  `docs/vmm/MULTI_VCPU.md` §5.6。超分配置依赖两件事：guest 镜像是
+  `CONFIG_PREEMPT=y`（`imgs/guests/rv64/linux.bin`），且 `guest_loader.c`
+  在超分时自动加 `clocksource=jiffies` 跳过 guest 的时钟源切换
+  `stop_machine`。门禁：`VCPUS=4 tools/vmm_helper_regress.sh riscv64 1 2
+  --restart`、`VCPUS=8 ... riscv64 1 2`、`tools/vmm_multivm_regress.sh
+  riscv64 2`。
 - **x86_64 guest Linux（已跑通到 shell）**: `docs/vmm/X86_GUEST_LINUX.md` ——
   VMX/EPT + vLAPIC + IO-APIC/PIT/PIC 桩 + PIO 串口，guest Linux 6.2.15
   已能启动到**交互式 busybox shell**（`make PLATFORM=qemu-virt-x86_64

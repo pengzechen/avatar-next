@@ -37,6 +37,19 @@ void irq_install(int cause, irq_handler_t h)
         interrupt_handlers[cause] = h;
 }
 
+/*
+   riscv_dispatch_host_irq — 给 VMM 的 guest 陷阱向量复用宿主中断分派
+
+   见 include/riscv64/exception.h 的说明。等价于 handle_exception 里
+   `interrupt_handlers[irq](frame_ptr)` 那一行, 只是不经过 trap_frame
+   的保存/恢复(现场已在 hext_trap_vector 里保存)。
+*/
+void riscv_dispatch_host_irq(uint64_t cause, void *frame)
+{
+    if (cause < MAX_IRQ_CAUSES && interrupt_handlers[cause])
+        interrupt_handlers[cause](frame);
+}
+
 /* ── exception_init ─────────────────────────────────────────────── */
 
 /* Debug counters */

@@ -895,6 +895,10 @@ identity mapping in host stage-2, and the identity window is only enabled with P
     $(error GUEST_NPU=1 requires GIC=v3: the NPU guest DTB is GICv3-only)
   endif
 endif
+# aarch64 的 guest DTB 选择。GICv3/NPU 这两条校验是 aarch64 专属的：
+# riscv64 没有 GIC，多核 DTB 是 linux-smpN.dtb（见下面的 RISCV_GUEST_DTBS），
+# 不能被这里的 `GUEST_VCPUS>1 requires GIC=v3` 误伤。
+ifeq ($(ARCH),aarch64)
 # 单核基础 DTB（NPU 版 / GICv3 版 / GICv2 版），与 GUEST_VCPUS 无关。
 # 运行期 `vmm-run -c 1` 在“构建默认是多核”的机器上就靠它。
 GUEST_LINUX_BASE_DTB_SRC := $(if $(GUEST_NPU),imgs/guests/aarch64/linux-gicv3-npu.dtb,$(if $(filter v3,$(GIC_VER)),imgs/guests/aarch64/linux-gicv3.dtb,imgs/guests/aarch64/linux.dtb))
@@ -928,6 +932,19 @@ else
                             imgs/guests/aarch64/linux-gicv3-smp8.dtb \
                             imgs/guests/aarch64/linux-gicv3-smp12.dtb
 endif
+else
+GUEST_LINUX_BASE_DTB_SRC :=
+GUEST_LINUX_DTB_SRC :=
+GUEST_LINUX_MULTI_DTBS :=
+endif
+
+# RISC-V 多核 DTB。由 tools/gen_rv64_smp_dtb.py 从 linux.dts 的同一份模板
+# 生成（N 个 cpu@i + PLIC 的 N 个 S-mode context），已签入仓库。
+# 运行期选核规则见 guest_loader.c 的 guest_loader_dtb_path()。
+RISCV_GUEST_SMP_DTBS := imgs/guests/rv64/linux-smp2.dtb \
+                        imgs/guests/rv64/linux-smp4.dtb \
+                        imgs/guests/rv64/linux-smp8.dtb \
+                        imgs/guests/rv64/linux-smp12.dtb
 
 ifneq ($(filter $(ARCH),aarch64 riscv64 x86_64),)
 ifeq ($(ARCH),x86_64)
@@ -940,8 +957,10 @@ GUEST_LINUX_FILES := imgs/guests/aarch64/linux.bin $(GUEST_LINUX_DTB_SRC) \
                      $(GUEST_LINUX_BASE_DTB_SRC) $(GUEST_LINUX_MULTI_DTBS) \
                      imgs/guests/aarch64/initrd.gz
 else
-# RISC-V 的 guest 镜像（DTB 是 imgs/guests/rv64/linux.dts 用 dtc 生成的，见该文件头）
-GUEST_LINUX_FILES := imgs/guests/rv64/linux.bin imgs/guests/rv64/linux.dtb imgs/guests/rv64/initrd.gz
+# RISC-V 的 guest 镜像（DTB 是 imgs/guests/rv64/linux.dts 用 dtc 生成的，见该文件头；
+# linux-smpN.dtb 由 tools/gen_rv64_smp_dtb.py 生成，运行期 -c N 按 N 选）
+GUEST_LINUX_FILES := imgs/guests/rv64/linux.bin imgs/guests/rv64/linux.dtb \
+                     $(RISCV_GUEST_SMP_DTBS) imgs/guests/rv64/initrd.gz
 endif
 else
 GUEST_LINUX_FILES :=
@@ -1526,15 +1545,17 @@ $(ROOTFS_IMG): Makefile $(APPS_BINS) $(APPS_C_ELFS) $(LTP_BINS) $(EPOLL_PERF_BIN
 	@# 目录名与 include/guest_loader.h 的 GUEST_LINUX_*_PATH 必须一致。
 	@if [ "$(ARCH)" = "riscv64" ]; then \
 		missing=0; \
-		for f in imgs/guests/rv64/linux.bin imgs/guests/rv64/linux.dtb imgs/guests/rv64/initrd.gz; do \
+		for f in imgs/guests/rv64/linux.bin imgs/guests/rv64/linux.dtb \
+		         $(RISCV_GUEST_SMP_DTBS) imgs/guests/rv64/initrd.gz; do \
 			if [ ! -f "$$f" ]; then echo "ERROR: missing guest image $$f"; missing=1; fi; \
 		done; \
 		if [ "$$missing" -ne 0 ]; then exit 1; fi; \
 		mkdir -p $(ROOTFS_STAGE)/guests/rv64; \
 		cp imgs/guests/rv64/linux.bin $(ROOTFS_STAGE)/guests/rv64/linux.bin; \
 		cp imgs/guests/rv64/linux.dtb $(ROOTFS_STAGE)/guests/rv64/linux.dtb; \
+		cp $(RISCV_GUEST_SMP_DTBS) $(ROOTFS_STAGE)/guests/rv64/; \
 		cp imgs/guests/rv64/initrd.gz $(ROOTFS_STAGE)/guests/rv64/initrd.gz; \
-		echo "  [RISC-V Linux guest installed → /guests/rv64]"; \
+		echo "  [RISC-V Linux guest installed → /guests/rv64 (1cpu + smp DTBs)]"; \
 	fi
 	@if [ "$(ARCH)" = "x86_64" ]; then \
 		missing=0; \

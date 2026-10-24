@@ -42,6 +42,7 @@
 
 #include "guest_loader.h" /* GUEST_LINUX_MEM_BASE/SIZE */
 #include "pte.h"
+#include "spinlock.h"
 #include "types.h"
 
 /* ── Sv39x4 页表几何 ──────────────────────────────────────── */
@@ -96,6 +97,25 @@ typedef struct gstage_ctx {
     uint64_t *l0_tbl[GSTAGE_MAX_L0_TABLES]; /* +1 = 该 2MiB 块已有表；动态分配 */
     uint64_t nr_premap;                     /* 统计：加载期预映射页数 */
     uint64_t nr_fault;                      /* 统计：按需缺页分配页数 */
+
+    /*
+       ── 多 vCPU 的并发 ──────────────────────────────────────────
+
+       同一 VM 的多个 vCPU 会在不同宿主 hart 上同时缺页, 装的是同一套
+       G-stage 表, 所以表操作必须串行化 —— 否则两个 vCPU 可能同时给
+       同一个 2 MiB 块建 L0 表(后写的覆盖先写的, 先写的那张表和其中
+       已分配的 512 个页全部泄漏), 或同时给同一个 GPA 分配两个不同的
+       HPA(两边都查表命中自己那页, guest 看到的内存取决于谁最后写)。
+
+       远端 hart 的 G-stage TLB 不需要额外的「代际刷」机制：RISC-V 允许
+       缓存「不可翻译」的结果, 那种缓存只会让访问再次 fault, 而缺页处理
+       在本 hart 上装映射时会顺手 rv_gstage_tlb_flush()。映射一旦建立就
+       不会改指向(销毁发生在本 VM 的所有 vCPU 退出之后), 因此不存在
+       「远端缓存着一个仍然有效但已经过时的正翻译」这种需要主动失效的
+       情况。曾经在每次入口按 map_gen 全刷, 4 个 vCPU 并行启动时等于
+       每轮都刷掉所有翻译, 启动时间从秒级退化到几十秒。
+    */
+    spinlock_noirq_t map_lock;
 } gstage_ctx_t;
 
 /* ── 生命周期 ─────────────────────────────────────────────── */
@@ -154,8 +174,14 @@ uint64_t rv_gstage_map_block(gstage_ctx_t *g, uint64_t gpa, int zero);
 /* 批量版：从 gpa 起 size 字节逐页映射, 末尾只做一次 TLB 刷新。 */
 uint64_t rv_gstage_map_range(gstage_ctx_t *g, uint64_t gpa, uint64_t size, int zero);
 
-/* 查映射：命中返回 1 并填 *pa_out, 未映射返回 0。 */
-int rv_gstage_lookup(const gstage_ctx_t *g, uint64_t gpa, uint64_t *pa_out);
+/*
+   查映射：命中返回 1 并填 *pa_out, 未映射返回 0。
+
+   内部持 map_lock：多 vCPU 下查表可能与另一颗 hart 上的装表并发, 而
+   L0 表的发布顺序在弱序架构上没有保证 —— 不能靠「指针非空就万事大吉」。
+   @g 因此不再是 const。
+*/
+int rv_gstage_lookup(gstage_ctx_t *g, uint64_t gpa, uint64_t *pa_out);
 
 /* ── TLB 维护 ─────────────────────────────────────────────── */
 

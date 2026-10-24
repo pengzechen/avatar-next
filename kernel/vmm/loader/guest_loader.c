@@ -18,6 +18,7 @@
 #include "vfs.h" /* vfs_open / vfs_stat_file：initrd 加载前的大小检查 */
 #include "string.h"
 #include "task/task.h"
+#include "task/cpu.h" /* g_num_cpus：RISC-V 超分启动参数的选择 */
 #include "vmm/vmm.h"
 
 #if ARCH_AARCH64
@@ -87,6 +88,9 @@ _Static_assert(GUEST_LINUX_MEM_SIZE / EPT_BLOCK_SIZE <= EPT_MAX_PT_TABLES,
 _Static_assert(sizeof(GUEST_LINUX_BOOTARGS) - 1 <= 78, "GUEST_LINUX_BOOTARGS 超出 DTB 的 /chosen/bootargs 槽位"
                                                        "（79 字节含结尾 NUL），补丁会静默失败");
 
+/* aarch64 没有超分专用参数：永远用构建的这一串。 */
+#define GUEST_LINUX_SELECT_BOOTARGS(nr) (GUEST_LINUX_BOOTARGS)
+
 #elif ARCH_RISCV64
 /*
    RISC-V 侧同一个套路, 但槽位大得多：imgs/guests/rv64/linux.dts 里
@@ -100,9 +104,14 @@ _Static_assert(sizeof(GUEST_LINUX_BOOTARGS) - 1 <= 78, "GUEST_LINUX_BOOTARGS 超
      rdinit=/init   显式指定 init, 不依赖内核回退。
      panic_on_warn=0 / oops=panic  调试用：警告不停机, oops 停。
 
-   想恢复完整启动日志：去掉 "quiet "(还剩 32 字节, 仍在预算内), 想连
-   8250 驱动接管之前的部分也看到就再加
-   `earlycon=uart8250,mmio,0x10000000`(代价是每条早期消息打两遍)。
+   多 vCPU 的 idle 调度不依赖这里：VS-mode 的 WFI 由 VMM 用
+   completion 真正挂起, 由 kick 和宿主 tick 唤醒（见 hext_run.c 的
+   handle_wfi / vmm_riscv_host_tick）。所以 guest 的 CONFIG_NO_HZ_IDLE
+   保持默认即可, 不需要 nohz=off。
+
+   想恢复完整启动日志：去掉 "quiet "(仍有富余)，想连 8250 驱动接管
+   之前的部分也看到就再加 `earlycon=uart8250,mmio,0x10000000` ——
+   全加会超过 90 字节的槽位，需要先删掉别的选项。
 
    注意：补丁失败时会退回 DTB 里那句自带命令行, 而 imgs/guests/rv64/
    linux.dts 里写的正是详细日志那一版 —— 所以「补丁静默失败」在这边表现得
@@ -110,9 +119,40 @@ _Static_assert(sizeof(GUEST_LINUX_BOOTARGS) - 1 <= 78, "GUEST_LINUX_BOOTARGS 超
 */
 #define GUEST_LINUX_BOOTARGS "quiet console=ttyS0 rdinit=/init panic_on_warn=0 oops=panic"
 
+/*
+   ── 超分(guest vCPU 数 > 宿主 CPU 数)专用 bootargs ────────────────
+
+   多出来的 clocksource=jiffies 是为了绕开 guest 启动期的
+   `clocksource_done_booting → timekeeping_notify → stop_machine`
+   这一次时钟源切换。stop_machine 要求**每颗 CPU 的 migration/N stopper
+   都跑起来并 ack**；超分时一颗 vCPU 可能长时间轮不到宿主执行，
+   stop_machine 的状态机会长时间停在 PREPARE（实测 2 宿主核 + 4/8
+   guest vCPU 时偶发卡几十秒）。强制 guest 用 jiffies 作 clocksource 后，
+   timekeeping 当前时钟源没有被替换，timekeeping_notify() 直接返回，
+   不再触发这次 stop_machine。jiffies 的分辨率是 4ms(HZ=250)，对
+   guest 的定时器/调度足够；rdtime 仍走 time CSR，delay 循环不受影响。
+
+   仓库里的 RISC-V guest 镜像是 CONFIG_PREEMPT=y 的（由原镜像 IKCONFIG
+   提取配置、只改抢占模型重建），它显著降低了超分时的停顿，但不足以让
+   这次 stop_machine 在 2 宿主核下稳定通过 —— 所以 jiffies 仍然保留。
+   两个都改过之后，2/2、4/2、8/2 的启动门禁才稳定。
+
+   只对超分配置启用：正常配置(guest vCPU <= 宿主 CPU)保留
+   riscv_clocksource 的高分辨率时间。
+*/
+#define GUEST_LINUX_BOOTARGS_OVERC "quiet console=ttyS0 rdinit=/init clocksource=jiffies panic_on_warn=0 oops=panic"
+
 _Static_assert(sizeof(GUEST_LINUX_BOOTARGS) - 1 <= 90, "GUEST_LINUX_BOOTARGS 超出 DTB 的 /chosen/bootargs 槽位"
                                                        "（91 字节含结尾 NUL），补丁会静默失败 —— 详见 "
                                                        "imgs/guests/rv64/linux.dts 的注释（槽位由那句自带命令行决定）");
+_Static_assert(sizeof(GUEST_LINUX_BOOTARGS_OVERC) - 1 <= 90,
+               "GUEST_LINUX_BOOTARGS_OVERC 超出 DTB 的 /chosen/bootargs 槽位");
+
+/* 按本 VM 的 vCPU 数选择；其它架构没有超分参数，直接返回默认串。 */
+#define GUEST_LINUX_SELECT_BOOTARGS(nr) \
+    (((nr) > (int)g_num_cpus) ? GUEST_LINUX_BOOTARGS_OVERC : GUEST_LINUX_BOOTARGS)
+#else
+#define GUEST_LINUX_SELECT_BOOTARGS(nr) (GUEST_LINUX_BOOTARGS)
 #endif
 
 /* ── 运行期 vCPU 数与 DTB 选择 ─────────────────────────────── */
@@ -120,11 +160,14 @@ _Static_assert(sizeof(GUEST_LINUX_BOOTARGS) - 1 <= 90, "GUEST_LINUX_BOOTARGS 超
 /*
    每个支持的 vCPU 数对应 rootfs 里的哪份 DTB。
 
-   smpDTB 只做了 GICv3 版(见 Makefile 的 GUEST_VCPUS 校验), 所以这张表
-   只在 aarch64 上使用；riscv64 只有单核 DTB, x86 没有 DTB。
+   aarch64 的 smpDTB 只做了 GICv3 版(见 Makefile 的 GUEST_VCPUS 校验)；
+   riscv64 的 smpDTB 由 tools/gen_rv64_smp_dtb.py 生成(每核一个 cpu@i
+   和 PLIC context)；x86 没有 DTB。
 
-   nr==1 要特别小心：linux.dtb 是“构建默认”那一份, GUEST_VCPUS=8 的构建里
-   它是 8 核 DTB。那种构建的 rootfs 另外装了 linux-1cpu.dtb, 必须用它。
+   aarch64 nr==1 要特别小心：linux.dtb 是“构建默认”那一份, GUEST_VCPUS=8
+   的构建里它是 8 核 DTB。那种构建的 rootfs 另外装了 linux-1cpu.dtb, 必须
+   用它。riscv64 的 linux.dtb 始终是单核(生成脚本只产出 linux-smpN.dtb),
+   所以 nr==1 直接用它。
 */
 #if ARCH_AARCH64
 static const char *guest_loader_dtb_path(int nr)
@@ -145,8 +188,18 @@ static const char *guest_loader_dtb_path(int nr)
 #elif ARCH_RISCV64
 static const char *guest_loader_dtb_path(int nr)
 {
-    (void)nr;
-    return GUEST_LINUX_DTB_PATH;
+    static const char *const smp_dtb[MAX_VCPUS + 1] = {
+        [2] = "/guests/rv64/linux-smp2.dtb",
+        [4] = "/guests/rv64/linux-smp4.dtb",
+        [8] = "/guests/rv64/linux-smp8.dtb",
+        [12] = "/guests/rv64/linux-smp12.dtb",
+    };
+
+    if (nr == 1)
+        return GUEST_LINUX_DTB_PATH;
+    if (nr > 0 && nr <= MAX_VCPUS)
+        return smp_dtb[nr];
+    return NULL;
 }
 #endif
 
@@ -166,13 +219,26 @@ int guest_loader_check_vcpus(int nr)
     return 0;
 #elif ARCH_RISCV64
     /*
-       RISC-V 的 SBI HSM 还没实现(见 kernel/vmm/vcpu.c 的 vmm_vcpu_start())。
-       这里必须显式拒绝：vm_init 本身只校验 1..MAX_VCPUS, 不拦多核。
+       AP 入口由 SBI HSM hart_start 决定(guest 从 DTB 里看到 N 个 cpu,
+       Linux 逐个 hart_start)。DTB 与 vCPU 数必须一一对应 —— 仓库里只
+       生成了 1/2/4/8/12 这几档。
     */
-    if (nr != 1) {
-        KLOG_ERROR("[guest] %d vCPU(s) requested, but this architecture only "
-                   "supports 1 (AP entry not implemented yet)\n",
+    if (nr != 1 && nr != 2 && nr != 4 && nr != 8 && nr != 12) {
+        KLOG_ERROR("[guest] %d vCPU(s) is not supported: RISC-V guest DTBs exist "
+                   "only for 1, 2, 4, 8 and 12\n",
                    nr);
+        return -1;
+    }
+
+    /*
+       DTB 必须真的在 rootfs 里(同 aarch64)：缺失通常意味着 rootfs 是旧的,
+       在这里明确失败比让 guest 的 CPU_ON 等一个不存在的 hart 好查得多。
+    */
+    const char *dtb = guest_loader_dtb_path(nr);
+    if (!dtb || guest_loader_file_size(dtb) <= 0) {
+        KLOG_ERROR("[guest] %d vCPU(s): guest DTB '%s' missing from rootfs — "
+                   "rebuild it (make PLATFORM=<p> rootfs)\n",
+                   nr, dtb ? dtb : "(none)");
         return -1;
     }
     return 0;
@@ -318,7 +384,7 @@ int guest_loader_run_linux(vm_t *vm)
 
     guest_loader_patch_dtb_memory(dtb_buf, (uint32_t)dlen, GUEST_LINUX_MEM_BASE, GUEST_LINUX_MEM_SIZE);
 
-    if (guest_loader_patch_dtb_bootargs(dtb_buf, (uint32_t)dlen, GUEST_LINUX_BOOTARGS) != 0) {
+    if (guest_loader_patch_dtb_bootargs(dtb_buf, (uint32_t)dlen, GUEST_LINUX_SELECT_BOOTARGS(vm->cfg.nr_vcpus)) != 0) {
         KLOG_ERROR("[guest] bootargs patch failed: guest will use the DTB's built-in command line and "
                    "GUEST_LINUX_BOOTARGS will not apply (see the preceding WARN)\n");
     }

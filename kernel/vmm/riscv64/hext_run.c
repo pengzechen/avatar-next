@@ -29,6 +29,7 @@
 #include "vmm/vmm_console.h"
 #include "klog.h"
 #include "string.h"
+#include "exception.h" /* trap_frame_t / SSTATUS_SPP：分派宿主中断 */
 #include "task/task.h"
 #include "task/cpu.h" /* CPU_RESCHED_IPI_CAUSE */
 #include "riscv64/hext.h"
@@ -36,11 +37,50 @@
 #include "riscv64/gstage.h"
 #include "vmm/vmm_mmio.h"
 #include "vmm/vmm_vplic.h"
-#include "mm_vm.h" /* phys_to_virt */
-#include "pmm.h"   /* pmm_get_free_pages(缺页失败时的诊断) */
+#include "mm_vm.h"   /* phys_to_virt */
+#include "pmm.h"     /* pmm_get_free_pages(缺页失败时的诊断) */
+#include "barrier.h" /* smp_mb：WFI 睡眠/唤醒的次序 */
 
 /* ── 汇编入口声明 ─────────────────────────────────────────── */
 extern int hext_enter_guest(vcpu_t *vcpu); /* hext_vcpu.S */
+
+/*
+   ── VS-mode WFI 的睡眠登记表 ─────────────────────────────────
+
+   guest 的 idle CPU 会反复执行 WFI。VMM 既不能在 HS 下真睡（醒了也未必
+   对应 guest 事件），也不能 yield 一次就立刻回 guest 空转 —— 后者在
+   4/8 个 vCPU 挤 2 个宿主 hart 时会把 CPU 吃光，SMP 启动期的
+   stop_machine 甚至会因为某颗 vCPU 得不到调度而卡住几十秒。
+
+   所以 WFI 把 vCPU 任务挂在自己的 wfi_wake completion 上，由两类事件
+   唤醒：
+     - vmm_vcpu_kick()（SBI IPI / 设备注入 / stop 请求）
+     - 宿主 tick：vmm_riscv_host_tick()（10ms 一次，重查 guest 定时器）
+   表按 (vm slot, vcpu id) 登记；tick 钩子只对 in_wfi 的 vCPU 做
+   complete，避免对 384 个槽位无条件唤醒。
+*/
+static vcpu_t *g_wfi_vcpus[MAX_VMS][MAX_VCPUS];
+
+/*
+   vmm_riscv_host_tick — 宿主 tick 钩子（由 RISC-V timer ISR 弱调用）
+
+   唤醒所有正在 WFI 的 vCPU，让它们重新检查 guest 定时器截止时间。
+   频率就是宿主 tick(100Hz)，足够覆盖 guest 的 250Hz 虚拟定时器吗？
+   不够精确，但 WFI 只在 guest 明确"没事可做"时发生；real 截止时间
+   由下一次宿主 tick 补上，最坏 10ms 的唤醒延迟。要更细可以把它改成
+   按 deadline 定时，但当前代价/收益不划算。
+*/
+void vmm_riscv_host_tick(void)
+{
+    for (int slot = 0; slot < MAX_VMS; slot++) {
+        for (int i = 0; i < MAX_VCPUS; i++) {
+            vcpu_t *v = g_wfi_vcpus[slot][i];
+
+            if (v && v->in_wfi)
+                completion_complete_all(&v->wfi_wake);
+        }
+    }
+}
 
 /* ── H-extension 支持检测 ─────────────────────────────────── */
 /*
@@ -210,8 +250,11 @@ int vmm_arch_vm_init(vm_t *vm)
         vcpu->host_cpu = -1; /* 还没跑过：0 是合法 CPU, 不能拿 0 当"未运行" */
         vcpu->state = VCPU_STATE_OFFLINE;
         vcpu->task = NULL;
+        vcpu->in_wfi = 0;
         spinlock_irq_init(&vcpu->irq_lock);
         completion_init(&vcpu->start);
+        completion_init(&vcpu->wfi_wake);
+        g_wfi_vcpus[vm->slot][i] = vcpu;
 
         /*
            hstatus_save 是「上次陷入时的 hstatus」快照, 入口靠它还原
@@ -273,6 +316,12 @@ int vmm_arch_vm_init(vm_t *vm)
 */
 void vmm_arch_vm_destroy(vm_t *vm)
 {
+    /* 先摘掉 WFI 登记：tick 钩子可能还在别的 hart 上跑 */
+    if (vm && (unsigned)vm->slot < (unsigned)MAX_VMS) {
+        for (int i = 0; i < MAX_VCPUS; i++)
+            g_wfi_vcpus[vm->slot][i] = NULL;
+    }
+
     vplic_destroy(vm);
     uart16550_destroy(vm);
 }
@@ -319,6 +368,54 @@ static void vcpu_external_irq_on_entry(vcpu_t *vcpu)
 
     uint32_t irq = vplic_next_deliverable(vcpu->vm, (uint32_t)vcpu->vcpu_id);
     hext_set_vs_external_irq(irq != 0);
+}
+
+/*
+   vcpu_software_irq_on_entry — 把软件 pending(SBI send_ipi)同步成 hvip.VSSIP
+
+   hvip 是**每 hart 一份**的 HS CSR：远端 vCPU 发 IPI 时只能写目标 vCPU
+   的软件状态, 真正写进硬件必须等目标自己下一次入口 —— 这就是「先置
+   pending, 再 kick, 目标退出后重新入口时注入」那条链的最后一环。
+
+   同时记下 ipi_seq 的入口快照与「本次是否注入过」, 供 exit 时区分
+   「guest 消费掉了」与「运行期间又来了新 IPI」(见 vmm_arch_save_guest_ctx)。
+   本函数与发送侧共用 vcpu->irq_lock(vmm_run_vcpu 已持锁调用)。
+*/
+static void vcpu_software_irq_on_entry(vcpu_t *vcpu)
+{
+    int pending = (vcpu->ipi_pending != 0);
+
+    hext_set_vs_software_irq(pending);
+    vcpu->ipi_seq_at_entry = vcpu->ipi_seq;
+    vcpu->ipi_injected = pending;
+}
+
+/*
+   vcpu_remote_fence_on_entry — 执行 SBI RFENCE 记下的远端失效
+
+   必须在 hext_per_hart_csrs_ensure() 之后：hfence.vvma 刷的是「当前
+   hgatp.VMID 的 G-stage 对 VS-stage 翻译的缓存」, hgatp 没切到本 VM 时
+   刷的是别人。也必须在 sret 进 guest 之前 —— 否则 guest 可能带着旧
+   翻译跑过整个时间片。
+*/
+static void vcpu_remote_fence_on_entry(vcpu_t *vcpu)
+{
+    uint32_t req = vcpu->remote_fence;
+
+    if (!req)
+        return;
+
+    if (req & RV_REMOTE_FENCE_I)
+        hext_fence_i();
+    if (req & RV_REMOTE_SFENCE_VMA)
+        hext_hfence_vvma_all();
+
+    /*
+       本函数在 vcpu->irq_lock 下运行(与发送侧同一把锁), 所以这里可以
+       直接清位。若发送恰好发生在执行之后, 它会在 unlock 后置新位并 kick,
+       下一次入口再执行一次 —— 只会多刷, 不会漏刷。
+    */
+    vcpu->remote_fence &= ~req;
 }
 
 /*
@@ -375,6 +472,15 @@ static void hext_per_hart_csrs_ensure(vcpu_t *vcpu)
     */
     if (vcpu->vm)
         rv_gstage_activate(&vcpu->vm->gstage);
+
+    /*
+       这里**不做**「按映射代数全刷」。兄弟 vCPU 刚在别的 hart 上装的映射
+       不需要本 hart 主动失效：RISC-V 允许缓存「不可翻译」结果, 而那种缓存
+       只会让本 hart 再 fault 一次, 缺页处理里的 rv_gstage_tlb_flush() 会
+       在本地刷掉。映射建立后不会改指向, 所以不存在「仍有效但过时的正翻译」。
+       (曾按代数每轮入口全刷: 4 vCPU 并行启动时几乎每轮都命中, 启动从
+       秒级退化到几十秒 —— 这是实测数据, 别再把它加回来。)
+    */
 }
 
 void vmm_arch_restore_guest_ctx(vcpu_t *vcpu)
@@ -387,8 +493,12 @@ void vmm_arch_restore_guest_ctx(vcpu_t *vcpu)
     */
     hext_per_hart_csrs_ensure(vcpu);
 
+    /* 远端 SBI RFENCE 必须在 hgatp 切好之后、进 guest 之前落地 */
+    vcpu_remote_fence_on_entry(vcpu);
+
     vcpu_timer_irq_on_entry(vcpu);
     vcpu_external_irq_on_entry(vcpu);
+    vcpu_software_irq_on_entry(vcpu);
 }
 
 /* enter_guest：执行一次 sret → VS-mode, 等到 guest 陷入后返回 */
@@ -414,6 +524,32 @@ int vmm_arch_enter_guest(vcpu_t *vcpu)
    定时器截止且已到期, 直接 resume；否则让出 CPU。avatar 无
    interruptible_sleep_until, 用 task_yield 近似(定时器中断会周期性唤醒)。
 */
+/* WFI 睡眠期间是否有“该醒”的事件；由 handle_wfi 的睡眠循环调用 */
+static int vcpu_wfi_has_work(vcpu_t *vcpu)
+{
+    if (vcpu->timer_deadline != 0 && READ_TIME() >= vcpu->timer_deadline)
+        return 1;
+    if (vcpu->ipi_pending || vcpu->remote_fence)
+        return 1;
+
+    if (vcpu->vm) {
+        if (vcpu->vm->stop_req)
+            return 1;
+
+        /*
+           外部中断不能漏：控制台输入走 /dev/vmm 的 push_rx，它只把字节放进
+           16550 的 RX 环，不 kick；vPLIC 的 pending 要等入口才注入。如果
+           WFI 循环只看定时器/IPI，输入到达后 guest 会一直睡到下一个定时器
+           截止时间。这里把「控制台有数据 / vPLIC 有可投递中断」也算作事件，
+           由宿主 tick 把 vCPU 叫醒后立刻回入口注入。
+        */
+        if (vmm_console_irq_asserted(vcpu->vm) ||
+            vplic_next_deliverable(vcpu->vm, (uint32_t)vcpu->vcpu_id) != 0)
+            return 1;
+    }
+    return 0;
+}
+
 static int handle_wfi(vcpu_t *vcpu)
 {
     /*
@@ -435,12 +571,50 @@ static int handle_wfi(vcpu_t *vcpu)
     /* 步进 guest PC 越过 WFI 指令(4 字节) */
     vcpu->pc += 4;
 
-    uint64_t now = READ_TIME();
-    if (vcpu->timer_deadline != 0 && now >= vcpu->timer_deadline)
-        return EL2_RESUME; /* 定时器已到期, 立即继续 guest */
+    /*
+       ── 真正的「睡到有事件」：挂在自己的 wfi_wake completion 上 ─────
 
-    /* 让出 CPU, 等价 AArch64 WFI→yield */
-    task_yield();
+       不能在 HS 下执行宿主 wfi（醒来未必对应 guest 事件，而且会挡住
+       同 hart 的兄弟 vCPU）；也不能 yield 一次就立刻重进 guest —— 空闲
+       vCPU 会变成 WFI exit/entry 忙循环，4/8 个 vCPU 挤 2 个 hart 时
+       把 CPU 吃光，SMP 启动期的 stop_machine 会因某颗 vCPU 长期得不到
+       调度而卡住（实测 state 停在 PREPARE、3/4 ack，几十秒不前进）。
+
+       唤醒源见 vmm_riscv_host_tick() 的说明：kick（IPI/设备/stop）立即
+       唤醒，宿主 tick 兜底重查 guest 定时器/外部中断。
+    */
+    for (;;) {
+        if (vcpu_wfi_has_work(vcpu))
+            break;
+
+        /*
+           先 reset 再置 in_wfi：
+             - kick 在 reset 之前到达 → 事件位已置，下面的复查看得到；
+             - kick 在置位之后到达   → vmm_vcpu_kick 看到 in_wfi 并 complete；
+             - tick 钩子在两者之间   → 大不了多等一个 10ms tick。
+        */
+        completion_reset(&vcpu->wfi_wake);
+        smp_mb();
+        vcpu->in_wfi = 1;
+        smp_mb();
+
+        if (vcpu_wfi_has_work(vcpu)) {
+            vcpu->in_wfi = 0;
+            break;
+        }
+
+        completion_wait(&vcpu->wfi_wake);
+        vcpu->in_wfi = 0;
+
+        /*
+           BSP 每个 tick 都回一次主循环：直启模式没有 helper，宿主控制台
+           的输入要靠 vmm_run_vcpu 顶部的 vmm_console_pump() 搬进 guest；
+           BSP 一直睡在 WFI 里就没人泵了。helper 模式下这只是每 10ms
+           一次的空转，可以接受。
+        */
+        if (vmm_vcpu_is_bsp(vcpu))
+            break;
+    }
     return EL2_RESUME;
 }
 
@@ -737,13 +911,24 @@ static int handle_ram_fault(vcpu_t *vcpu, uint64_t gpa, uint64_t code)
 
     n = rv_gstage_map_block(&vm->gstage, gpa, 1 /* 清零, 防跨 VM 数据泄漏 */);
     if (n == 0) {
-        KLOG_ERROR("[HEXT] vcpu%d: RAM fault at gpa=0x%llx but PMM is out "
-                   "of pages (free=%llu), stopping vm%u\n",
-                   vcpu->vcpu_id, (unsigned long long)gpa, (unsigned long long)pmm_get_free_pages(&g_pmm), vm->vmid);
-        return EL2_EXIT;
+        /*
+           多 vCPU 下 n==0 有两种含义, 不能一律当「PMM 没页」：
+             a) 这个 2 MiB 块已经被**兄弟 vCPU** 装好了(它先缺页),
+                此时查表命中, 这就是成功；
+             b) PMM 真的没页了。
+           判据只能是查表 —— 拿 n 判会把正常的并发缺页误判成 OOM, 直接
+           把整个 VM 停掉(症状: 两核 guest 随机在启动中途消失)。
+        */
+        if (!rv_gstage_lookup(&vm->gstage, gpa, NULL)) {
+            KLOG_ERROR("[HEXT] vcpu%d: RAM fault at gpa=0x%llx but PMM is out "
+                       "of pages (free=%llu), stopping vm%u\n",
+                       vcpu->vcpu_id, (unsigned long long)gpa, (unsigned long long)pmm_get_free_pages(&g_pmm),
+                       vm->vmid);
+            return EL2_EXIT;
+        }
+    } else {
+        vm->gstage.nr_fault += n;
     }
-
-    vm->gstage.nr_fault += n;
 
     /*
        装完必须刷 G-stage TLB。
@@ -804,13 +989,178 @@ static int handle_gstage_fault(vcpu_t *vcpu, uint64_t code)
     return EL2_EXIT;
 }
 
+/* ── SBI 多 hart 辅助：掩码展开与「发给某颗 vCPU」──────────── */
+
+/*
+   SBI 的 hart mask 约定：a0 = mask, a1 = base；base == -1 表示全体。
+   其余情况第 i 位对应 hartid = base + i(只用到低 64 位)。
+*/
+static int sbi_hart_in_mask(uint64_t mask, uint64_t base, uint32_t hart)
+{
+    uint64_t bit;
+
+    if (base == (uint64_t)-1)
+        return 1;
+    if ((uint64_t)hart < base)
+        return 0;
+    bit = (uint64_t)hart - base;
+    if (bit >= 64)
+        return 0;
+    return (int)((mask >> bit) & 1);
+}
+
+/*
+   给目标 vCPU 记一个软件中断并 kick。
+
+   状态写在 target->irq_lock 下, 与目标自己的 entry/exit 同步互斥；
+   unlock 之后再 kick —— 目标可能正在别的 hart 上跑 guest, 先让它退出,
+   下一次入口才看得到 pending(见 vcpu_software_irq_on_entry)。顺序反了
+   就是「被叫醒了但什么都没看见」。
+*/
+static void sbi_send_ipi_to(vm_t *vm, uint32_t hart)
+{
+    vcpu_t *target = &vm->vcpus[hart];
+    uint64_t flags;
+
+    spin_lock_irqsave(&target->irq_lock, &flags);
+    target->ipi_pending = 1;
+    target->ipi_seq++;
+    spin_unlock_irqrestore(&target->irq_lock, flags);
+
+    vmm_vcpu_kick(target);
+}
+
+/*
+   给目标 vCPU 记一个远端 fence 请求并 kick。
+
+   SBI 要求目标 hart 自己执行 fence.i / sfence.vma；本 VMM 的 vCPU 是分时
+   运行的任务, 只能在目标下一次入口前补执行(见 vcpu_remote_fence_on_entry)。
+   调用者(发起 fence 的 vCPU)也在掩码里时同样走这条路：ecall 返回后它
+   自己下一轮 restore 就会执行, 不必在内核态里同步插一条。
+*/
+static void sbi_request_fence_to(vm_t *vm, uint32_t hart, uint32_t req)
+{
+    vcpu_t *target = &vm->vcpus[hart];
+    uint64_t flags;
+
+    spin_lock_irqsave(&target->irq_lock, &flags);
+    target->remote_fence |= req;
+    spin_unlock_irqrestore(&target->irq_lock, flags);
+
+    vmm_vcpu_kick(target);
+}
+
+/*
+   SBI HSM(0x48534d)。Linux 的 CPU bring-up 只用 hart_start / get_status：
+     - hart_start(a0=hartid, a1=start_addr, a2=opaque)
+     - hart_get_status(a0=hartid) → a1 = STARTED/STOPPED
+   hart_stop 暂时回 NOT_SUPPORTED(CPU 热插拔用；正常启动/关机不会走它,
+   关机走 SRST)。不把「停止」半实现成退出任务 —— 那会让 vm_request_stop
+   把整个 VM 拆掉(见 vcpu_task_fn 的收尾)。
+*/
+static uint64_t sbi_hsm_handler(vcpu_t *vcpu, uint64_t func, uint64_t hartid, uint64_t start, uint64_t opaque,
+                                uint64_t *out)
+{
+    vm_t *vm = vcpu->vm;
+
+    *out = 0;
+    if (!vm)
+        return SBI_ERR_FAILED;
+    if (hartid >= (uint64_t)vm->nr_vcpus)
+        return SBI_ERR_INVALID_PARAM;
+
+    switch (func) {
+    case SBI_HSM_HART_START: {
+        vcpu_t *target;
+
+        /* 启动自己 = 它已经在运行(SBI 规定返回 ALREADY_AVAILABLE) */
+        if (hartid == (uint64_t)vcpu->vcpu_id)
+            return SBI_ERR_ALREADY_AVAILABLE;
+
+        target = &vm->vcpus[hartid];
+        if (target->state != VCPU_STATE_OFFLINE)
+            return SBI_ERR_ALREADY_AVAILABLE;
+        if (vmm_vcpu_start(target, start, opaque) != 0)
+            return SBI_ERR_FAILED;
+        return SBI_SUCCESS;
+    }
+
+    case SBI_HSM_HART_STOP:
+        return SBI_ERR_NOT_SUPPORTED;
+
+    case SBI_HSM_HART_GET_STATUS:
+        *out = (vm->vcpus[hartid].state == VCPU_STATE_OFFLINE) ? SBI_HSM_STATE_STOPPED : SBI_HSM_STATE_STARTED;
+        return SBI_SUCCESS;
+
+    default:
+        return SBI_ERR_NOT_SUPPORTED;
+    }
+}
+
+/* SBI IPI(0x735049)：a0=mask, a1=base → 给每颗目标置 ipi_pending */
+static uint64_t sbi_ipi_handler(vcpu_t *vcpu, uint64_t func, uint64_t mask, uint64_t base)
+{
+    vm_t *vm = vcpu->vm;
+
+    if (func != SBI_IPI_SEND_IPI)
+        return SBI_ERR_NOT_SUPPORTED;
+    if (!vm)
+        return SBI_ERR_FAILED;
+
+    for (uint32_t i = 0; i < (uint32_t)vm->nr_vcpus; i++) {
+        if (sbi_hart_in_mask(mask, base, i))
+            sbi_send_ipi_to(vm, i);
+    }
+    return SBI_SUCCESS;
+}
+
+/*
+   SBI RFENCE(0x52464e43)：a0=mask, a1=base, a2=start, a3=size, a4=asid
+
+   地址/大小/ASID 一律忽略, 转成「目标 hart 全刷」—— 语义上永远安全,
+   只是保守。HFENCE_* 系列是给嵌套 hypervisor 用的, 本 VMM 没有嵌套
+   guest, 按 KVM 的做法当 NOP 成功返回。
+*/
+static uint64_t sbi_rfence_handler(vcpu_t *vcpu, uint64_t func, uint64_t mask, uint64_t base)
+{
+    vm_t *vm = vcpu->vm;
+    uint32_t req;
+
+    if (!vm)
+        return SBI_ERR_FAILED;
+
+    switch (func) {
+    case SBI_RFENCE_REMOTE_FENCE_I:
+        req = RV_REMOTE_FENCE_I;
+        break;
+    case SBI_RFENCE_REMOTE_SFENCE_VMA:
+    case SBI_RFENCE_REMOTE_SFENCE_VMA_ASID:
+        req = RV_REMOTE_SFENCE_VMA;
+        break;
+    case SBI_RFENCE_REMOTE_HFENCE_GVMA:
+    case SBI_RFENCE_REMOTE_HFENCE_GVMA_VMID:
+    case SBI_RFENCE_REMOTE_HFENCE_VVMA:
+    case SBI_RFENCE_REMOTE_HFENCE_VVMA_ASID:
+        return SBI_SUCCESS; /* 无嵌套 guest */
+    default:
+        return SBI_ERR_NOT_SUPPORTED;
+    }
+
+    for (uint32_t i = 0; i < (uint32_t)vm->nr_vcpus; i++) {
+        if (sbi_hart_in_mask(mask, base, i))
+            sbi_request_fence_to(vm, i, req);
+    }
+    return SBI_SUCCESS;
+}
+
 /* ── VS-mode ecall 处理(scause=10)─────────────────────────
 
    移植自 x-kernel arch/riscv64/mod.rs handle_vs_ecall：
      - guest 测试魔数 PRINT/DONE
      - SBI legacy：set_timer / console_putchar / console_getchar
      - SBI base：spec version / impl id / probe extension
-     - SBI TIME.set_timer / RFENCE(单 vCPU 下为 no-op 成功)
+     - SBI TIME.set_timer
+     - SBI IPI.send_ipi / HSM.hart_start|get_status / RFENCE(多 vCPU)
 */
 static int handle_vs_ecall(vcpu_t *vcpu)
 {
@@ -871,6 +1221,8 @@ static int handle_vs_ecall(vcpu_t *vcpu)
             case SBI_EXT_BASE:
             case SBI_EXT_TIME:
             case SBI_EXT_RFENCE:
+            case SBI_EXT_IPI:
+            case SBI_EXT_HSM:
             case SBI_EXT_SRST:
             case SBI_LEGACY_SET_TIMER:
             case SBI_LEGACY_CONSOLE_PUTCHAR:
@@ -878,14 +1230,6 @@ static int handle_vs_ecall(vcpu_t *vcpu)
             case SBI_LEGACY_SHUTDOWN:
                 value = 1;
                 break;
-            /*
-               IPI / HSM 明确报「不支持」。
-
-               本 VMM 只有 vCPU0 一个 hart(guest DTB 里也只有一个 cpu@0),
-               没有 hart_start 的实现, 报支持会让 guest 在 SMP 初始化时
-               真的去启从核, 然后永远等不到它上线 —— 那种挂起比「不支持」
-               难查得多。单核 guest 不探测这两个扩展也能正常启动。
-            */
             default:
                 value = 0;
                 break;
@@ -916,9 +1260,28 @@ static int handle_vs_ecall(vcpu_t *vcpu)
         vcpu->r[11] = 0;
         return EL2_RESUME;
 
+    case SBI_EXT_IPI:
+        /*
+           SBI send_ipi：只置目标 vCPU 的软件 pending(实际注入在目标下一次
+           入口), 不在这里碰 hvip —— hvip 是每 hart 的, 而这里可能跑在
+           另一颗 hart 上。
+        */
+        vcpu->r[10] = sbi_ipi_handler(vcpu, func, vcpu->r[10], vcpu->r[11]);
+        vcpu->r[11] = 0;
+        return EL2_RESUME;
+
+    case SBI_EXT_HSM: {
+        uint64_t out = 0;
+        uint64_t err = sbi_hsm_handler(vcpu, func, vcpu->r[10], vcpu->r[11], vcpu->r[12], &out);
+
+        vcpu->r[10] = err;
+        vcpu->r[11] = out;
+        return EL2_RESUME;
+    }
+
     case SBI_EXT_RFENCE:
-        /* 单 vCPU 无远端 hart 需同步；报告成功以兼容会探测 RFENCE 的 guest。 */
-        vcpu->r[10] = SBI_SUCCESS;
+        /* 远端 fence 记到目标 vCPU, 由它下一次进 guest 前执行 */
+        vcpu->r[10] = sbi_rfence_handler(vcpu, func, vcpu->r[10], vcpu->r[11]);
         vcpu->r[11] = 0;
         return EL2_RESUME;
 
@@ -969,6 +1332,7 @@ int vmm_arch_exit_handler(vcpu_t *vcpu)
     */
     hext_set_vs_timer_irq(0);
     hext_set_vs_external_irq(0);
+    hext_set_vs_software_irq(0);
 
     if (is_int) {
         /* 中断(定时器/外部)陷入 HS-mode：短暂让给宿主内核处理, 然后
@@ -981,17 +1345,37 @@ int vmm_arch_exit_handler(vcpu_t *vcpu)
         KLOG_DEBUG("[HEXT] vcpu%d host interrupt: code=%llu\n", vcpu->vcpu_id, (unsigned long long)code);
 
         /*
-           跨核 resched IPI(SBI send_ipi 置的 SSIP)必须在这里显式清掉。
+           ── 必须在这里补一次宿主中断分派 ─────────────────────────────
 
-           guest 运行期间走的是 hext_trap_vector, 它不经过宿主的通用
-           陷阱分发器, 所以 task/cpu.c 里 irq_install() 注册的 handler 不会
-           被调用。SSIP 是电平型 pending 位, 不清就返回 guest 的话, 下一秒
-           会再次陷入 —— 表现为 IPI 风暴, 宿主 vCPU 任务永远退不出去。
+           guest 运行期间走的是 hext_trap_vector, 不经过宿主的通用陷阱分发器,
+           所以 irq_install() 注册的 handler 一个都不会被调用。后果最重的是
+           宿主定时器: timer_handler 里的「重新装载下一次 tick」不会执行,
+           STIP 永远挂着。SMP=1/guest vCPU<=宿主核数时看不出来(反正没有别的
+           vCPU 要抢); SMP=2 + 4 个 guest vCPU 时, 同一颗 hart 上的两颗 vCPU
+           会互相把对方从 guest 里打出来, 却谁也回不到宿主 S 模式去补 tick
+           —— 表现为启动无声卡死, 且没有任何错误日志。
+
+           合成 frame 里把 SPP 置 1(宿主内核态): timer_handler 用这一位决定
+           要不要扫描宿主 UART 发 SIGINT, guest 时间片里不该做那件事。
+        */
+        {
+            trap_frame_t host_frame;
+
+            memset(&host_frame, 0, sizeof(host_frame));
+            host_frame.sstatus = SSTATUS_SPP;
+            host_frame.scause = cause;
+            host_frame.sepc = vcpu->pc;
+            riscv_dispatch_host_irq(code, &host_frame);
+        }
+
+        /*
+           兜底清 SSIP：正常路径上 plic_ipi_entry 已经清过, 但若该 handler
+           尚未注册(早期启动), 电平型的 SSIP 会让这里变成 IPI 风暴。
         */
         if (code == CPU_RESCHED_IPI_CAUSE)
             CSR_CLEAR(sip, SIE_SSIE);
 
-        /* 直接 yield, 让 kernel 的 timer handler 运行；也是 IPI 的抢占点 */
+        /* 让出 CPU：宿主 handler 里置的 need_resched 在这里兑现 */
         task_yield();
         return EL2_RESUME;
     }
@@ -1070,8 +1454,31 @@ int vmm_arch_exit_handler(vcpu_t *vcpu)
     }
 }
 
-/* save_guest_ctx：guest 退出后保存上下文(当前无额外操作) */
+/*
+   save_guest_ctx：guest 退出后与硬件同步 VS 中断状态
+
+   只同步**软件中断**：vsip.SSIP 与 hvip.VSSIP 是同一个挂起位的两个视图,
+   guest 在 VS-mode 清 sip.SSIP 会把 hvip.VSSIP 一起清掉。若 VMM 不回读,
+   软件 pending 永远为 1, 每次入口都重新注入 —— guest 表现为 IPI 风暴,
+   一个核被自己的软件中断占满。
+
+   判定「这次注入被消费」的三个条件, 缺一不可：
+     1. 入口确实注入过(ipi_injected)；
+     2. 序号没变 —— 运行期间没有别的 vCPU 发来新 IPI。新 IPI 到来时
+        VSSIP 本来就是 0(远端写不到本 hart 的 hvip), 只看条件 3 会把
+        新 IPI 误清掉, 这正是 KVM 用 irqs_pending_mask 防的那个竞态；
+     3. 硬件 hvip.VSSIP 已被清 —— guest 真的消费了。
+
+   本函数由 vmm_run_vcpu 在持有 vcpu->irq_lock 时调用, 与发送侧互斥。
+*/
 void vmm_arch_save_guest_ctx(vcpu_t *vcpu)
 {
-    (void)vcpu;
+    if (!vcpu)
+        return;
+
+    if (vcpu->ipi_injected && vcpu->ipi_seq == vcpu->ipi_seq_at_entry &&
+        !(hext_read_hvip() & HVIP_VSSIP))
+        vcpu->ipi_pending = 0;
+
+    vcpu->ipi_injected = 0;
 }

@@ -444,6 +444,13 @@ _Static_assert(offsetof(vcpu_t, launched) == 0x84, "vmx_run.S launched @0x84");
 #define VCPU_RV_HOSTSTVEC (344 + 14 * 8) /* = 456: 原主 stvec (host_ctx[14]) */
 #define VCPU_RV_HTINST    (344 + 16 * 8) /* = 472: htinst(在 host_ctx 之后) */
 
+/*
+   远端 fence 请求位(vcpu->remote_fence)。只区分「要不要执行哪条失效
+   指令」；地址/ASID/VMA 一律忽略(全刷), 语义上永远安全。
+*/
+#define RV_REMOTE_FENCE_I    (1u << 0) /* remote fence.i    → fence.i */
+#define RV_REMOTE_SFENCE_VMA (1u << 1) /* remote sfence.vma → hfence.vvma(all) */
+
 typedef struct vcpu {
     /* ── asm-accessible(勿改动顺序)────────────────────── */
     uint64_t r[32];        /* x0-x31 guest GPRs    offset=0 */
@@ -475,6 +482,48 @@ typedef struct vcpu {
     int launched;
     struct vm *vm;
     uint64_t timer_deadline; /* guest SBI 定时器截止(guest time 单位), 0=未设置 */
+
+    /*
+       SBI IPI 的软件挂起位：远端 vCPU 调 send_ipi 置 1, 本 vCPU 每次进
+       guest 前据此置 hvip.VSSIP。guest 清 sip.SSIP 会连带清掉 hvip.VSSIP,
+       所以每次 exit 要回读 hvip 把这一位同步掉(见 hext_run.c)。
+    */
+    uint64_t ipi_pending;
+
+    /*
+       IPI 的「注入记号」, 用来区分「guest 消费掉了这次 IPI」与「guest 运行
+       期间又来了一个新的 IPI」。
+
+       hvip.VSSIP 是 HS 写的, guest 清 sip.SSIP 会把它一起清掉。exit 时若
+       只看「VSSIP 已清」就把软件 pending 清掉, 会误伤在 guest 运行期间由
+       别的 vCPU 新发来的 IPI(那时 VSSIP 本来就是 0 —— 远端的写碰不到本
+       hart 的 hvip)。KVM 用 irqs_pending_mask 解决同一问题; 这里用一个
+       序号代替: 入口记下 ipi_seq, exit 时只有序号没变且 VSSIP 已被清,
+       才认为那次注入被消费了。
+    */
+    uint64_t ipi_seq;         /* 每次 send_ipi 自增(写侧持 irq_lock) */
+    uint64_t ipi_seq_at_entry;/* 入口注入时的快照 */
+    int ipi_injected;         /* 本次 guest 运行开始时是否置了 VSSIP */
+
+    /*
+       远端 fence 请求(RV_REMOTE_*)。SBI RFENCE 的目标 hart 必须自己执行
+       fence.i / sfence.vma；这里只记请求, 由目标 vCPU 下一次进 guest 前
+       补执行(见 hext_run.c 的 vmm_arch_restore_guest_ctx)。
+    */
+    uint32_t remote_fence;
+
+    /*
+       ── VS-mode WFI 的宿主阻塞 ────────────────────────────────
+       guest 在 VS-mode 执行 WFI 时, VMM 不能真的让 hart 睡在一个与
+       guest 中断无关的宿主 wfi 上, 也不能 yield 一次就立刻回 guest 空转。
+       这里用 completion 把 vCPU 任务真正挂起:
+         - SBI IPI / 设备注入 / stop 请求 → vmm_vcpu_kick() 唤醒；
+         - 宿主 tick(10ms) → vmm_riscv_host_tick() 唤醒，重查 guest
+           定时器截止时间。
+       被唤醒后 vmm_arch_exit_handler 返回 EL2_RESUME, 重新进 guest。
+    */
+    volatile int in_wfi;
+    completion_t wfi_wake;
 
     /* ── 多 vCPU 运行期视角(三架构同名, 与架构无关)────────── */
     int host_cpu;      /* 最近一次进/出 guest 的宿主 CPU；-1 = 未运行 */

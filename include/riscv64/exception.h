@@ -44,6 +44,19 @@ typedef void (*irq_handler_t)(void *); /* frame 实际是 trap_frame_t * */
 /* scause 级钩子(仅 RISC-V)。设备中断请用 driver/irq.h 的 irq_register()。 */
 void irq_install(int cause, irq_handler_t h);
 
+/*
+   riscv_dispatch_host_irq — 从 VMM 的 guest 陷阱向量分派**宿主**中断
+
+   guest 运行期间走的是 hext_vcpu.S 的专属陷阱向量, 不经过宿主通用陷阱
+   分发器; 因此 HS 级中断(定时器/外部/IPI)虽然会陷进来, 却没人调用
+   irq_install() 注册的 handler。必须在 VMM 的 exit handler 里显式补一次,
+   否则宿主定时器永远不再重新装载 —— 多 vCPU 时间片轮转时就是死锁：
+   两颗 vCPU 互相抢占却谁也回不到宿主的 S 模式去补 tick。
+
+   @frame 由调用方构造(至少填 sstatus; 处理函数用它区分 U/S 上下文)。
+*/
+void riscv_dispatch_host_irq(uint64_t cause, void *frame);
+
 /* ── scause 中断原因(bit63=1 时生效)────────────────────────────── */
 
 #define SCAUSE_INTERRUPT_BIT (1ULL << 63)
