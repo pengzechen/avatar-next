@@ -978,38 +978,12 @@ extern void vmx_return(void);
 /* ── VMLAUNCH/VMRESUME 汇编入口 ─────────────────────────── */
 extern int vmx_enter_guest(vcpu_t *vcpu); /* vmx_run.S */
 
-/* ── VMXON / VMCS 内联操作 ──────────────────────────────────────────────
-   vmxon / vmclear / vmptrld 的 m64 操作数是存放「物理地址」的内存位置。
-   内核运行在 0xffff800000000000 偏移的高半区, 必须用 virt_to_phys 转换。
+/* ── VMXON / VMCS 操作 ──────────────────────────────────────────────────
+   vmxon / vmclear / vmptrld 是 include/x86_64/vmx.h 里的 static inline。
+   它们的 m64 操作数是存放「物理地址」的内存位置；内核运行在
+   0xffff800000000000 偏移的高半区, 调用方必须先 virt_to_phys。
    ───────────────────────────────────────────────────────────────────────
 */
-
-/* vmxon: pa 是 VMXON 区域的物理地址(64 位值) */
-static inline int vmx_on(uint64_t pa)
-{
-    uint8_t ret;
-    uint64_t fl = vmx_read_rflags() | X86_EFLAGS_CF | X86_EFLAGS_ZF;
-    __asm__ volatile("pushq %1; popfq; vmxon %2; setbe %0\n\t" : "=qm"(ret) : "q"(fl), "m"(pa) : "cc");
-    return ret;
-}
-
-/* vmclear: pa 是 VMCS 的物理地址 */
-static inline int vmcs_clear_pa(uint64_t pa)
-{
-    uint8_t ret;
-    uint64_t fl = vmx_read_rflags() | X86_EFLAGS_CF | X86_EFLAGS_ZF;
-    __asm__ volatile("pushq %1; popfq; vmclear %2; setbe %0" : "=qm"(ret) : "q"(fl), "m"(pa) : "cc");
-    return ret;
-}
-
-/* vmptrld: pa 是 VMCS 的物理地址 */
-static inline int vmcs_load_pa(uint64_t pa)
-{
-    uint8_t ret;
-    uint64_t fl = vmx_read_rflags() | X86_EFLAGS_CF | X86_EFLAGS_ZF;
-    __asm__ volatile("pushq %1; popfq; vmptrld %2; setbe %0" : "=qm"(ret) : "q"(fl), "m"(pa) : "cc");
-    return ret;
-}
 
 /* ── VMX 支持检测 ────────────────────────────────────────── */
 static int vmx_check_support(void)
@@ -1229,12 +1203,9 @@ static void vmcs_init_ctrl(int want_ept)
 static void vmcs_init_host(void)
 {
     /* 读取当前 GDTR / IDTR */
-    struct {
-        uint16_t limit;
-        uint64_t base;
-    } __attribute__((packed)) gdt_desc, idt_desc;
-    __asm__ volatile("sgdt %0" : "=m"(gdt_desc));
-    __asm__ volatile("sidt %0" : "=m"(idt_desc));
+    vmx_desc_ptr_t gdt_desc, idt_desc;
+    vmx_sgdt(&gdt_desc);
+    vmx_sidt(&idt_desc);
 
     /*
        宿主 TR 必须是本核的 TSS。
@@ -1327,12 +1298,9 @@ static void vmcs_init_guest(vcpu_t *vcpu, void (*entry)(void))
     vmcs_write(GUEST_BASE_LDTR, 0);
 
     /* TSS base(与 host 相同) */
-    struct {
-        uint16_t limit;
-        uint64_t base;
-    } __attribute__((packed)) gdt_desc, idt_desc;
-    __asm__ volatile("sgdt %0" : "=m"(gdt_desc));
-    __asm__ volatile("sidt %0" : "=m"(idt_desc));
+    vmx_desc_ptr_t gdt_desc, idt_desc;
+    vmx_sgdt(&gdt_desc);
+    vmx_sidt(&idt_desc);
     uint64_t *gdt = (uint64_t *)gdt_desc.base;
     uint64_t tss_lo = gdt[6];
     uint64_t tss_hi = gdt[7];
@@ -2492,7 +2460,7 @@ static int vmx_exit_handler(vcpu_t *vcpu)
         uint64_t intr_info = vmcs_read(EXI_INTR_INFO);
         uint8_t vector = (uint8_t)(intr_info & 0xFF);
         uint64_t cr2;
-        __asm__ volatile("mov %%cr2, %0" : "=r"(cr2));
+        cr2 = vmx_read_cr2();
 
         /*
            诊断：guest 的 #PF(异常位图只开了 bit14)。CR2 此刻还是 guest
@@ -3182,7 +3150,7 @@ int vmm_arch_exit_handler(vcpu_t *vcpu)
 
         if (cid >= AVATAR_MAX_CPUS)
             cid = 0;
-        __asm__ volatile("str %0" : "=r"(tr));
+        tr = vmx_read_tr();
         /* 期望值走"纯编码"那条路, 不走写入用的 x86_tss_current() */
         want = x86_tss_sel_of_cpu(cid);
         if (tr != want && !warned[cid]) {

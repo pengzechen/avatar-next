@@ -381,4 +381,84 @@ static inline int vmcs_write(vmcs_field_t enc, uint64_t val)
     return ret;
 }
 
+/* ── VMXON / VMCLEAR / VMPTRLD 与描述符/特权寄存器读取 ──────────────
+
+   这些指令原来以 static inline 的形式散落在 vmx.c 里；按本项目的习惯，
+   头文件里的辅助函数一律 static inline，集中放在这里与 rdmsr/vmread 同处。
+
+   vmxon / vmclear / vmptrld 的 m64 操作数是存放「物理地址」的内存位置。
+   内核运行在 0xffff800000000000 偏移的高半区, 调用方必须先 virt_to_phys。
+
+   失败判定：先把 RFLAGS.CF/ZF 置 1 再执行指令, 成功后 CPU 把它们清零,
+   失败则保持 1 —— `setbe` 取的就是 CF|ZF。
+*/
+typedef struct {
+    uint16_t limit;
+    uint64_t base;
+} __attribute__((packed)) vmx_desc_ptr_t;
+
+/* 返回 0 = 成功；非 0 = 指令失败(CF/ZF) */
+static inline int vmx_on(uint64_t pa)
+{
+    uint8_t ret;
+    uint64_t fl = vmx_read_rflags() | X86_EFLAGS_CF | X86_EFLAGS_ZF;
+
+    __asm__ volatile("pushq %1; popfq; vmxon %2; setbe %0\n\t" : "=qm"(ret) : "q"(fl), "m"(pa) : "cc");
+    return ret;
+}
+
+static inline int vmcs_clear_pa(uint64_t pa)
+{
+    uint8_t ret;
+    uint64_t fl = vmx_read_rflags() | X86_EFLAGS_CF | X86_EFLAGS_ZF;
+
+    __asm__ volatile("pushq %1; popfq; vmclear %2; setbe %0" : "=qm"(ret) : "q"(fl), "m"(pa) : "cc");
+    return ret;
+}
+
+static inline int vmcs_load_pa(uint64_t pa)
+{
+    uint8_t ret;
+    uint64_t fl = vmx_read_rflags() | X86_EFLAGS_CF | X86_EFLAGS_ZF;
+
+    __asm__ volatile("pushq %1; popfq; vmptrld %2; setbe %0" : "=qm"(ret) : "q"(fl), "m"(pa) : "cc");
+    return ret;
+}
+
+/*
+   SGDT/SIDT 写 10 字节：2 字节 limit + 8 字节 base。
+   描述符结构必须 packed —— 默认对齐会让 base 落在 offset 8, 指令却按
+   offset 2 写, 读出来就错位了。
+*/
+static inline void vmx_sgdt(vmx_desc_ptr_t *desc)
+{
+    __asm__ volatile("sgdt %0" : "=m"(*desc));
+}
+
+static inline void vmx_sidt(vmx_desc_ptr_t *desc)
+{
+    __asm__ volatile("sidt %0" : "=m"(*desc));
+}
+
+/*
+   读 CR2。VM-exit 不保存/恢复 CR2, 所以 guest 缺页后退出到 VMM 时这里读到的
+   仍是 guest 的缺页地址 —— 这是诊断 #PF 的唯一窗口(见 vmx.c 的 EXC_NMI 分支)。
+*/
+static inline uint64_t vmx_read_cr2(void)
+{
+    uint64_t cr2;
+
+    __asm__ volatile("mov %%cr2, %0" : "=r"(cr2));
+    return cr2;
+}
+
+/* 读 TR 选择子。用来校验 VM-exit 装回来的 TSS 是不是本核的(见 vmx.c)。 */
+static inline uint16_t vmx_read_tr(void)
+{
+    uint16_t tr;
+
+    __asm__ volatile("str %0" : "=r"(tr));
+    return tr;
+}
+
 #endif /* X86_64_VMX_H */
