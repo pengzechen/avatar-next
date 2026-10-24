@@ -432,9 +432,11 @@ int guest_loader_read_file(const char *path, uint8_t *buf, size_t cap);
 
    返回 0 可以；-1 不支持(并已用 KLOG_ERROR 说明原因)。规则：
      - 1..MAX_VCPUS；
-     - 非 aarch64 只允许 1(AP 入口/SIPI/HSM 尚未实现)；
+     - riscv64 只允许 1(SBI HSM 尚未实现)；
+     - x86_64：1..MAX_VCPUS(AP 入口 = guest 写 ICR 发 INIT/SIPI,
+       由 vLAPIC + MP 表驱动, 没有 DTB 依赖)；
      - aarch64：N>1 需要 GICv3, 且 N ∈ {2,4,8,12}(仓库里只有这些 DTB)；
-     - 选中路径的 DTB 必须真的在 rootfs 里(缺失通常意味着 rootfs 是旧的)。
+     - aarch64 选中路径的 DTB 必须真的在 rootfs 里(缺失通常意味着 rootfs 是旧的)。
 
    vmm_dev 在 vm_alloc() 之前调用它来尽早返回 EINVAL；loader 自己也会再调
    一次, 覆盖绕过 /dev/vmm 的直启路径。

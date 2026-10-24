@@ -21,10 +21,18 @@
      因为开了 PIN_EXTINT, 宿主 100Hz 的时钟中断本身就会让 guest 每 10ms
      退出来一次 —— 这个频率正好充当轮询节拍, 不需要额外的定时器基础设施。
 
+   多 vCPU（x86 SMP guest）：
+     - INIT/SIPI 由 guest 写 ICR 触发, SIPI 经 vmm_vcpu_start() 放行
+       睡在 completion 上的 AP 任务(实模式 CS base = vector << 12)；
+     - fixed/lowest IPI 按 physical、logical flat 与 shorthand 解析目标,
+       经 vmm_vcpu_inject_vector() 投递(持目标 irq_lock 后 kick)；
+     - 每个 vCPU 一份 LAPIC 状态(ID/LDR/IRR/ISR/定时器), 由 vlapic_of()
+       按 (slot, vcpu_id) 取。
+
    有意没做的(第一版不需要)：
      - x2APIC：APIC base MSR 的 EXTD 位一律清掉, Linux 探测到之后会
        安心走 MMIO 路径(tgoskits 的官方 Linux 配置也是 `nox2apic`)。
-     - INIT/SIPI：空实现 → 必须保持单 vCPU, SMP 启动流程没做。
+     - 对已 RUNNING 的 vCPU 的 INIT(复位/热插拔)：不复位 VMCS。
      - TPR/PPR 门控：IRR → 投递这一步不看 TPR/PPR(上游也不看), 只按
        向量编号取最大的。Linux 的 TPR 常为 0, 等价；真要做实时优先级, 得把
        update_ppr() 的结果接进 vlapic_take_pending()。
@@ -71,8 +79,10 @@
 /* ICR 位 */
 #define ICR_DELIVERY_MASK     (7u << 8)
 #define ICR_MODE_FIXED        (0u << 8)
+#define ICR_MODE_LOWEST       (1u << 8)
 #define ICR_MODE_INIT         (5u << 8)
 #define ICR_MODE_SIPI         (6u << 8)
+#define ICR_DEST_LOGICAL      (1u << 11) /* 0 = physical, 1 = logical */
 #define ICR_DEST_MASK         (7u << 18)
 #define ICR_DEST_SELF         (1u << 18)
 #define ICR_DEST_ALL          (2u << 18)
@@ -148,6 +158,18 @@ uint64_t vlapic_now_ns(void)
     return (tsc / mhz) * 1000ULL;
 }
 
+/*
+   Guest 执行时间累加。定时器的一切 "now" 都用这个时钟，不用墙钟 ——
+   原因见 vmm_vlapic.h 里 exec_ns 的说明。
+*/
+void vlapic_add_exec_ns(vm_t *vm, uint32_t vcpu_id, uint64_t ns)
+{
+    vlapic_state_t *v = vlapic_of(vm, vcpu_id);
+
+    if (v && ns)
+        v->exec_ns += ns;
+}
+
 /* ── ISR / 优先级 ─────────────────────────────────────────── */
 
 /* 在 256 位位图里找编号最大的置位向量(-1 = 一个都没有) */
@@ -206,26 +228,34 @@ static void process_eoi(vlapic_state_t *v)
 
 /* ── 定时器 ───────────────────────────────────────────────── */
 
-/* DCR 编码 → 分频指数(Intel SDM 表 11-19) */
+/* DCR 编码 → 分频指数(Intel SDM Vol 3A 表 11-19)
+ *
+ * 注意：这张表曾经整体错位一格(0x3 当成 ÷8)，于是 Linux 按 ÷16 算出来的
+ * INIT 值在这里被当成 ÷8 执行 —— guest 的 tick 快一倍，jiffies 也快一倍。
+ * 单 vCPU 时只是"有点怪"，多 vCPU 共享宿主核时会把 CPU 全吃在 tick /
+ * softirq 上，guest 的 CPU bring-up 迟迟推进不了。编码 0xB 是 ÷1。
+ */
 static uint32_t dcr_to_shift(uint32_t dcr)
 {
     switch (dcr & 0xb) {
     case 0x0:
         return 1; /* ÷2 */
     case 0x1:
-        return 0; /* ÷1 */
-    case 0x2:
         return 2; /* ÷4 */
-    case 0x3:
+    case 0x2:
         return 3; /* ÷8 */
-    case 0x8:
+    case 0x3:
         return 4; /* ÷16 */
-    case 0x9:
+    case 0x8:
         return 5; /* ÷32 */
-    case 0xa:
+    case 0x9:
         return 6; /* ÷64 */
-    default:
+    case 0xa:
         return 7; /* ÷128 */
+    case 0xb:
+        return 0; /* ÷1 */
+    default:
+        return 0; /* 保留编码：按 ÷1 */
     }
 }
 
@@ -251,7 +281,7 @@ static void timer_start(vlapic_state_t *v)
         ticks = VLAPIC_PERIODIC_MIN_NS; /* 周期模式的下限, 照抄 KVM */
 
     v->t_interval_ns = ticks;
-    v->t_deadline_ns = vlapic_now_ns() + ticks;
+    v->t_deadline_ns = v->exec_ns + ticks;
     v->t_active = 1;
 }
 
@@ -269,10 +299,9 @@ static void timer_fire(vm_t *vm, uint32_t vcpu_id, vlapic_state_t *v)
 
     if (v->t_periodic) {
         /* 追赶：落后多个周期时不要补发一堆, 直接跳到未来的第一个点 */
-        uint64_t now = vlapic_now_ns();
         do {
             v->t_deadline_ns += v->t_interval_ns;
-        } while (v->t_deadline_ns <= now);
+        } while (v->t_deadline_ns <= v->exec_ns);
     } else {
         v->t_active = 0;
     }
@@ -295,7 +324,7 @@ int vlapic_timer_poll(vm_t *vm, uint32_t vcpu_id)
     if (!v->t_active)
         return 0;
 
-    while (v->t_active && vlapic_now_ns() >= v->t_deadline_ns) {
+    while (v->t_active && v->exec_ns >= v->t_deadline_ns) {
         timer_fire(vm, vcpu_id, v);
         fired = 1;
     }
@@ -318,7 +347,8 @@ void vlapic_init(vm_t *vm, uint32_t vcpu_id)
 
     memset(v, 0, sizeof(*v));
 
-    /* ID：Linux 用它做拓扑/自检。tgoskits 放的是 vcpu_id << 24。
+    /* ID：Linux 用它做拓扑/自检。我们的 APIC ID 约定等于 vcpu_id
+       (MP 表、CPUID.1.EBX[31:24] 与这里必须是同一个值)。
        注意 ID 寄存器只读 —— 写它必须被忽略, 否则 Linux 会认为
        「APIC ID 可写」而走进不该走的分支。
     */
@@ -329,13 +359,25 @@ void vlapic_init(vm_t *vm, uint32_t vcpu_id)
     */
     v->r[VLAPIC_REG_VERSION] = 0x14 | (6u << 16);
 
+    /*
+       ── 逻辑 destination（flat 模型）─────────────────────────────
+
+       Linux 在核数 <= 8 时用 apic_flat：IPI 走 logical 模式, ICR 高 8 位
+       是「CPU 位图」, 目标 CPU 的 LDR 在同一个位上。原来的 0x01000000 把
+       所有 vCPU 的逻辑 ID 都设成 0 —— 单核没事, 多核时每一条 logical IPI
+       都会投给所有 vCPU(或只投给 vcpu0)，而且目标是靠 guest 自己写 LDR
+       纠正的, 早期 IPI 会丢。
+       guest 之后会自己写 LDR, 这里给的是与 APIC ID 一致的默认值。
+    */
     v->r[VLAPIC_REG_DFR] = 0xf0000000u; /* flat 模型 */
-    v->r[VLAPIC_REG_LDR] = 0x01000000u;
+    v->r[VLAPIC_REG_LDR] = (vcpu_id < 8) ? (1u << (24 + vcpu_id)) : 0;
 
     /* 上电默认值：基址 0xFEE00000 | EN(11) | BSP(8)。EXT D 位恒 0 —— 本
        实现不做 x2APIC, Linux 探测到之后会安心走 MMIO 路径。
+       BSP 位只有 0 号 vCPU 置位：AP 的 IA32_APIC_BASE 里这一位是只读的
+       拓扑信息, 全置 1 会让 Linux 认为每颗 CPU 都是 boot CPU。
     */
-    v->apic_base = VLAPIC_MMIO_BASE | VLAPIC_BASE_ENABLE | (1ULL << 8);
+    v->apic_base = VLAPIC_MMIO_BASE | VLAPIC_BASE_ENABLE | (vcpu_id == 0 ? (1ULL << 8) : 0);
 
     update_ppr(v);
     v->enabled = 1;
@@ -494,8 +536,7 @@ static uint32_t reg_read(vlapic_state_t *v, uint32_t idx)
         return v->irr[idx - VLAPIC_REG_IRR];
     case VLAPIC_REG_TIMER_CUR: {
         /* 当前计数 = 剩余纳秒 >> shift(与写入时的换算互逆) */
-        uint64_t now = vlapic_now_ns();
-        uint64_t left = (v->t_active && v->t_deadline_ns > now) ? (v->t_deadline_ns - now) : 0;
+        uint64_t left = (v->t_active && v->t_deadline_ns > v->exec_ns) ? (v->t_deadline_ns - v->exec_ns) : 0;
         return (uint32_t)(left >> v->t_shift);
     }
     default:
@@ -504,6 +545,61 @@ static uint32_t reg_read(vlapic_state_t *v, uint32_t idx)
             return v->r[idx];
         return 0;
     }
+}
+
+/* ── ICR：目标 vCPU 解析 ──────────────────────────────────────
+
+   把一次 ICR 写翻译成「要投给哪些 vCPU」。APIC ID 约定等于 vcpu_id,
+   所以物理 destination 直接当 vCPU 编号用。
+
+   覆盖 Linux 实际会用到的三种形态：
+     - shorthand：self / all / all-but-self（IPI 广播、self-IPI）
+     - physical destination：apic_physflat（>8 核）与 INIT/SIPI 的目标
+     - logical flat：apic_flat（<=8 核）的 IPI，ICR[31:24] 是 CPU 位图
+
+   返回目标个数(0 = 没有匹配)。
+*/
+static int icr_collect_targets(vm_t *vm, uint32_t src, uint32_t lo, uint32_t hi, uint32_t *out, int max)
+{
+    uint32_t shorthand = lo & ICR_DEST_MASK;
+    int n = 0;
+
+    if (!vm)
+        return 0;
+
+    if (shorthand == ICR_DEST_SELF) {
+        out[n++] = src;
+        return n;
+    }
+    if (shorthand == ICR_DEST_ALL || shorthand == ICR_DEST_ALL_BUT_SELF) {
+        for (int i = 0; i < vm->nr_vcpus && n < max; i++) {
+            if (shorthand == ICR_DEST_ALL_BUT_SELF && (uint32_t)i == src)
+                continue;
+            out[n++] = (uint32_t)i;
+        }
+        return n;
+    }
+    if (shorthand != 0)
+        return 0; /* 保留编码 */
+
+    uint32_t dest = (hi >> 24) & 0xff;
+
+    if (lo & ICR_DEST_LOGICAL) {
+        /* flat 模型：LDR[31:24] 的每一位对应一个逻辑 ID */
+        for (int i = 0; i < vm->nr_vcpus && n < max; i++) {
+            vlapic_state_t *t = vlapic_of(vm, (uint32_t)i);
+
+            if (t && ((t->r[VLAPIC_REG_LDR] >> 24) & dest))
+                out[n++] = (uint32_t)i;
+        }
+    } else if (dest == 0xff) {
+        /* 物理广播：xAPIC 里 0xFF 是「所有 CPU」 */
+        for (int i = 0; i < vm->nr_vcpus && n < max; i++)
+            out[n++] = (uint32_t)i;
+    } else if (dest < (uint32_t)vm->nr_vcpus) {
+        out[n++] = dest;
+    }
+    return n;
 }
 
 static void reg_write(vm_t *vm, uint32_t vcpu_id, vlapic_state_t *v, uint32_t idx, uint32_t val)
@@ -542,21 +638,62 @@ static void reg_write(vm_t *vm, uint32_t vcpu_id, vlapic_state_t *v, uint32_t id
 
     case VLAPIC_REG_ICR_LO: {
         uint32_t mode = val & ICR_DELIVERY_MASK;
-        uint32_t dest = val & ICR_DEST_MASK;
+        uint32_t vec = LVT_VECTOR(val);
+        uint32_t targets[VLAPIC_MAX_VCPUS];
+        int nt;
 
         v->r[VLAPIC_REG_ICR_LO] = val;
 
+        /*
+           ── INIT / SIPI：AP 启动 ──────────────────────────────────
+
+           写 ICR 的永远是 guest 的某颗 vCPU(这里就是 vcpu_id)。目标按
+           destination/shorthand 解析, 与 IPI 同一套规则。
+
+           INIT 在本实现里只起「把目标置于 wait-for-SIPI」的语义 —— 而
+           AP 任务本来就在 completion 上睡到 SIPI, 所以对 OFFLINE 的 AP
+           什么都不用做。对已 RUNNING 的 vCPU 的 INIT(关机/热插拔)不复位,
+           真机语义需要重新初始化 VMCS, 当前不需要。
+           SIPI 才是真正放行 AP 的那一步：vmm_vcpu_start 填实模式入口并
+           完成 completion。第二次 SIPI(目标已 RUNNING)返回 -1, 忽略。
+        */
         if (mode == ICR_MODE_INIT || mode == ICR_MODE_SIPI) {
-            /* INIT/SIPI 会启从核 —— 本 VMM 单 vCPU, 明确不支持 */
-            KLOG_WARN_ONCE("[vlapic] INIT/SIPI ignored (single vCPU only)\n");
+            nt = icr_collect_targets(vm, vcpu_id, val, v->r[VLAPIC_REG_ICR_HI], targets, VLAPIC_MAX_VCPUS);
+            if (mode == ICR_MODE_SIPI) {
+                for (int k = 0; k < nt; k++) {
+                    vcpu_t *target = vmm_vm_vcpu(vm, (int)targets[k]);
+
+                    if (target && vmm_vcpu_start(target, (uint64_t)vec << 12, 0) == 0)
+                        KLOG_INFO("[vlapic] vcpu%u: SIPI -> vcpu%u (cs base=0x%x)\n", vcpu_id, targets[k],
+                                  vec << 12);
+                }
+            }
             return;
         }
-        if (mode != ICR_MODE_FIXED)
-            return; /* lowest-priority 等：忽略(上游会 panic) */
+        if (mode != ICR_MODE_FIXED && mode != ICR_MODE_LOWEST)
+            return; /* SMI/NMI/ExtINT 等：未实现(上游会 panic) */
 
-        /* 单 vCPU：只有「发给自己」是有意义的 */
-        if (dest == ICR_DEST_SELF || dest == ICR_DEST_ALL || dest == ICR_DEST_ALL_BUT_SELF)
-            vlapic_raise_irq(vm, vcpu_id, LVT_VECTOR(val));
+        nt = icr_collect_targets(vm, vcpu_id, val, v->r[VLAPIC_REG_ICR_HI], targets, VLAPIC_MAX_VCPUS);
+
+        /*
+           lowest-priority 的语义是「在候选里挑优先级最低的一颗」; 本实现
+           不做 PPR 仲裁, 简化为投给第一个候选。Linux 的 flat/physflat
+           驱动都走 fixed, 这条只是兜底。
+        */
+        if (mode == ICR_MODE_LOWEST && nt > 1)
+            nt = 1;
+
+        for (int k = 0; k < nt; k++) {
+            vcpu_t *target = vmm_vm_vcpu(vm, (int)targets[k]);
+
+            /*
+               走 vmm_vcpu_inject_vector 而不是直接 vlapic_raise_irq：
+               目标可能在另一颗宿主核上跑 guest, 必须持它的 irq_lock
+               写 IRR 再 kick, 否则 IPI 要等它下次自然退出才被看见。
+            */
+            if (target)
+                vmm_vcpu_inject_vector(target, vec);
+        }
         return;
     }
 

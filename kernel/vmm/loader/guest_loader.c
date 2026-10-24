@@ -157,10 +157,16 @@ int guest_loader_check_vcpus(int nr)
         return -1;
     }
 
-#if !ARCH_AARCH64
+#if ARCH_X86_64
     /*
-       AP 入口只有 aarch64 做了 PSCI CPU_ON；x86 的 INIT/SIPI 与 RISC-V 的
-       SBI HSM 都还没实现(见 kernel/vmm/vcpu.c 的 vmm_vcpu_start())。
+       x86 的 AP 入口是 guest 自己写 ICR 发 INIT/SIPI, VMM 侧在 vLAPIC
+       里实现(vmm_vcpu_start + MP 表), 不依赖 DTB/固件数据, 1..MAX_VCPUS
+       都可以。真正的上限由 MAX_VCPUS 与 vLAPIC 静态池共同决定。
+    */
+    return 0;
+#elif ARCH_RISCV64
+    /*
+       RISC-V 的 SBI HSM 还没实现(见 kernel/vmm/vcpu.c 的 vmm_vcpu_start())。
        这里必须显式拒绝：vm_init 本身只校验 1..MAX_VCPUS, 不拦多核。
     */
     if (nr != 1) {

@@ -505,7 +505,7 @@ static void usage(void)
     fprintf(stderr, "usage: vmm-run [-c vcpus] [-n] [-a vmid] [-l] [-k [vmid]]\r\n"
                     "  (no args)  boot a guest, or attach to the running one\r\n"
                     "  -c vcpus   boot a NEW guest with that many vCPUs (implies -n);\r\n"
-                    "             aarch64: 1, 2, 4, 8 or 12; x86_64/riscv64: 1 only\r\n"
+                    "             aarch64: 1, 2, 4, 8 or 12; x86_64: 1..12; riscv64: 1 only\r\n"
                     "  -a vmid    attach to that VM (do not boot)\r\n"
                     "  -n         always create another VM\r\n"
                     "  -l         list VMs, do not take the console\r\n"
@@ -684,7 +684,7 @@ int main(int argc, char **argv)
                             "vmm-run: %u vCPU(s) rejected — see the host kernel "
                             "log.\r\n"
                             "         aarch64: 1/2/4/8/12 on a GICv3 build; "
-                            "x86_64/riscv64: 1 only.\r\n"
+                            "x86_64: 1..12; riscv64: 1 only.\r\n"
                             "         A stale rootfs without the matching DTB "
                             "is rejected here too.\r\n",
                             want_vcpus);

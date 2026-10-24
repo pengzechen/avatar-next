@@ -166,17 +166,41 @@ static void build_mptable(vm_t *vm)
     uint8_t *f = mpbuf + 0x400;
     uint32_t o = 44; /* 条目紧跟在 44 字节头之后 */
     uint16_t nent = 0;
+    int nr_cpu = vm->cfg.nr_vcpus;
     static const uint8_t irq[5] = { 0, 1, 3, 4, 14 };
+
+    if (nr_cpu < 1)
+        nr_cpu = 1;
 
     memset(t, 0, 0x800);
     memset(f, 0, 16);
 
-    t[o] = 0;
-    t[o + 1] = 0;
-    t[o + 2] = 0x14;
-    t[o + 3] = 0x03; /* type0 处理器：id0, enabled|BSP */
-    o += 20;
-    nent++;
+    /*
+       ── type-0 处理器条目：每颗 vCPU 一条 ──────────────────────
+
+       这是 Linux 发现 AP 的唯一来源(没有 ACPI MADT)。entry 的字段
+       (Intel MP Spec 1.4, 20 字节)：
+         [0]    type = 0
+         [1]    local APIC ID —— 约定 == vcpu_id, 必须与 vLAPIC 的
+                ID 寄存器、CPUID.1.EBX[31:24] 三处一致
+         [2]    local APIC version(0x14 = 集成 APIC; <0x10 会被当成
+                82489DX 外置 APIC, 走另一套启动路径)
+         [3]    CPU flags: bit0 enabled, bit1 BSP(只能有一个)
+         [4..7] CPUID signature(EAX of leaf 1)
+         [8..11] feature flags(EDX of leaf 1)
+       0x800 的缓冲区在 12 颗 CPU 时用 44 + 12*20 + 24 = 308 字节,
+       离 +0x400 的浮点指针结构还远。
+    */
+    for (int i = 0; i < nr_cpu; i++) {
+        t[o] = 0;
+        t[o + 1] = (uint8_t)i;                                         /* APIC ID */
+        t[o + 2] = 0x14;                                               /* APIC version */
+        t[o + 3] = (uint8_t)(0x01 | (i == 0 ? 0x02 : 0x00));           /* enabled; BSP */
+        mp_w(t, o + 4, VMM_X86_GUEST_CPUID1_EAX, 4);                   /* CPUID signature */
+        mp_w(t, o + 8, VMM_X86_GUEST_CPUID1_EDX, 4);                   /* feature flags */
+        o += 20;
+        nent++;
+    }
     t[o] = 1;
     t[o + 1] = 0;
     memcpy(t + o + 2, "ISA   ", 6);
@@ -225,8 +249,8 @@ static void build_mptable(vm_t *vm)
     if (guest_loader_write_guest(vm, MP_TABLE_GPA, mpbuf, 0x800) != 0)
         return;
 
-    KLOG_INFO("[x86boot] MP table @0x%llx: %u entries / %u bytes\n", (unsigned long long)MP_TABLE_GPA, (unsigned)nent,
-              (unsigned)o);
+    KLOG_INFO("[x86boot] MP table @0x%llx: %u entries (%d CPU(s)) / %u bytes\n",
+              (unsigned long long)MP_TABLE_GPA, (unsigned)nent, nr_cpu, (unsigned)o);
 }
 
 /*
@@ -889,14 +913,33 @@ int x86_guest_boot(vm_t *vm)
         return -1;
     }
 
-    /* ── 10. 交给 vCPU 任务 ── */
+    /* ── 10. 交给 vCPU 任务 ──
+       AP 任务先建：它们启动后睡在 vcpu->start(completion)上, 等 guest
+       在 BSP 上写 ICR 发 SIPI 时由 vmm_vcpu_start() 放行。BSP 最后建并
+       立刻进 guest —— 这样 Linux 在 BSP 上开始跑的时候, SIPI 要唤醒的
+       任务已经存在(aarch64/riscv 的 guest_loader 是同一顺序)。
+
+       注意：AP 的 VMCS 不在这里建 —— 必须在承载它的宿主核上建(见
+       vmm_arch_restore_guest_ctx() 的 vmcs_ready 段)。这里只把架构无关的
+       标志置上, 让第一次 entry 走 Linux 路径的初始化。
+    */
+    for (int i = 1; i < vm->nr_vcpus; i++) {
+        vm->vcpus[i].g_boot_linux = 1;
+        if (!vcpu_task_create(&vm->vcpus[i], 5)) {
+            KLOG_ERROR("[x86boot] vcpu%d task create failed\n", i);
+            vm_request_stop(vm);
+            return -1;
+        }
+    }
+
     {
         task_t *vt = vcpu_task_create(&vm->vcpus[0], 5);
         if (!vt) {
             KLOG_ERROR("[x86boot] vcpu_task_create failed\n");
+            vm_request_stop(vm);
             return -1;
         }
-        KLOG_INFO("[x86boot] Linux vCPU task id=%u running\n", vt->id);
+        KLOG_INFO("[x86boot] Linux vCPU task id=%u running (%d vCPU(s))\n", vt->id, vm->nr_vcpus);
     }
     return 0;
 }

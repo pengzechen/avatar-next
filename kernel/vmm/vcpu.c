@@ -33,17 +33,61 @@
 
 int vmm_vcpu_start(vcpu_t *vcpu, uint64_t entry, uint64_t context_id)
 {
-#if !ARCH_AARCH64
+#if ARCH_RISCV64
     /*
-       AP 入口目前只有 aarch64 实现(PSCI CPU_ON)；riscv64 的 SBI HSM,
-       x86_64 的 INIT/SIPI 都还没有。vcpu_t 的入口状态字段也是架构私有的
-       (AArch64 是 elr/spsr/sp_el1/cntv_*, 另外两个架构没有这些成员),
-       所以这里必须按架构收口, 否则 riscv64/x86_64 连内核都编不过。
+       RISC-V 的 SBI HSM 还没有实现。vcpu_t 的入口状态字段也是架构私有的
+       (aarch64 是 elr/spsr/sp_el1/cntv_*, x86 是 VMCS 里的 guest 状态),
+       所以这里必须按架构收口, 否则 riscv64 连内核都编不过。
     */
     (void)vcpu;
     (void)entry;
     (void)context_id;
     return -1;
+#elif ARCH_X86_64
+    /*
+       x86 的 AP 入口：guest 在 BSP 上往 ICR 写 SIPI, vLAPIC 转到这里。
+       SIPI 的语义是「目标 CPU 从实模式 vector<<12:0 开始执行」, 所以
+       entry 就是 CS 基址(必须是 4 KiB 对齐、落在 1 MiB 以下)。
+    */
+    if (!vcpu || !vcpu->vm || entry == 0)
+        return -1;
+    if ((entry & 0xFFF) != 0 || entry >= 0x100000ULL)
+        return -1;
+    if (vcpu->state != VCPU_STATE_OFFLINE)
+        return -1;
+    (void)context_id; /* SIPI 没有 context 参数 */
+
+    /*
+       AP 的初始现场。VMCS 不在这里建 —— 必须在**承载这颗 vCPU 的宿主核**
+       上建(见 vmm_arch_restore_guest_ctx() 里 vmcs_ready 那段说明)。
+       这里只填 vcpu 里的入口描述, 由 AP 任务第一次进 guest 前构造 VMCS：
+         g_ap_reset = 1 → vmcs_init_guest 走 16 位实模式分支
+         g_rip      = CS 基址(vector << 12)，GUEST_RIP 固定为 0
+       实模式的 CR0/段/EFER 由 vmcs_init_guest 填, 这里不重复。
+    */
+    vcpu->g_ap_reset = 1;
+    vcpu->g_boot_linux = 1;
+    vcpu->g_rip = entry; /* SIPI：CS base = vector << 12 */
+    vcpu->g_rsp = 0;
+    vcpu->g_cr3 = 0;
+    vcpu->g_gdt_base = 0;
+    vcpu->g_gdt_limit = 0xFFFF;
+    memset(&vcpu->regs, 0, sizeof(vcpu->regs));
+    vcpu->regs.rflags = 0x2; /* IF=0，与真机 SIPI 后一致 */
+    vcpu->launched = 0;
+    /* 让 AP 任务在自己的宿主核上重做 VMCLEAR→VMPTRLD→写字段 */
+    vcpu->vmcs_ready = 0;
+    vcpu->pending_event = 0;
+    vcpu->pending_errcode = 0;
+    vcpu->intr_window = 0;
+
+    smp_wmb();
+    vcpu->state = VCPU_STATE_RUNNING;
+
+    /* 放行睡在 start completion 上的 AP 任务(可能被唤醒到另一颗宿主核) */
+    completion_complete_all(&vcpu->start);
+    KLOG_INFO("[vmm] x86 vcpu%d started: sipi cs_base=0x%llx\n", vcpu->vcpu_id, (unsigned long long)entry);
+    return 0;
 #else
     if (!vcpu || !vcpu->vm || entry == 0)
         return -1;
@@ -108,6 +152,27 @@ void vmm_vcpu_inject_irq(vcpu_t *target, virq_t irq)
     */
     vmm_vcpu_kick(target);
 }
+
+#if ARCH_X86_64
+/*
+   x86 guest IPI：向量已经由 guest 的 ICR 写确定, 不需要再过 IO-APIC
+   重定向表(ICR 直接携带 vector)。次序域与 vmm_vcpu_inject_irq 相同：
+   持 target->irq_lock 写 IRR, 释放后再 kick。
+*/
+void vmm_vcpu_inject_vector(vcpu_t *target, uint32_t vector)
+{
+    uint64_t flags;
+
+    if (!target || !target->vm)
+        return;
+
+    spin_lock_irqsave(&target->irq_lock, &flags);
+    vlapic_raise_irq(target->vm, (uint32_t)target->vcpu_id, vector);
+    spin_unlock_irqrestore(&target->irq_lock, flags);
+
+    vmm_vcpu_kick(target);
+}
+#endif
 
 void vmm_vcpu_kick(vcpu_t *vcpu)
 {
@@ -196,8 +261,22 @@ int vmm_run_vcpu(vcpu_t *vcpu)
         vmm_arch_restore_guest_ctx(vcpu);
         spin_unlock(&vcpu->irq_lock);
 
-        /* 进入 guest(AArch64: eret; x86: vmlaunch/vmresume) */
+        /*
+           进入 guest(AArch64: eret; x86: vmlaunch/vmresume)。
+
+           x86 的 vLAPIC 定时器按「guest 实际执行时间」计时(见 vmm_vlapic.h
+           的 exec_ns)：这里量一次 entry→exit 的墙钟差累加进去。不这么做,
+           宿主核被多个 vCPU 分时时, 一个 guest ISR 跨过好几个 tick 周期,
+           每次 entry 都会立刻再到期 —— guest 被 tick 风暴饿死, 连
+           CPU bring-up 的握手都执行不了。
+        */
+#if ARCH_X86_64
+        uint64_t exec_t0 = vlapic_now_ns();
+#endif
         int ok = vmm_arch_enter_guest(vcpu);
+#if ARCH_X86_64
+        vlapic_add_exec_ns(vcpu->vm, (uint32_t)vcpu->vcpu_id, vlapic_now_ns() - exec_t0);
+#endif
         if (!ok) {
             arch_irq_restore(irq_flags);
             KLOG_ERROR("[VMM] vcpu%d: guest entry failed\n", vcpu->vcpu_id);

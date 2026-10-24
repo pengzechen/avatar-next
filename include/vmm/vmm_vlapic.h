@@ -81,7 +81,20 @@ typedef struct vlapic_state {
     uint32_t tmr[8];              /* 256 位 TMR(触发方式, 只读回) */
     uint32_t irr[8];              /* 256 位 IRR：已拉高, 待注入的向量 */
 
-    /* 定时器 */
+    /*
+       ── 虚拟时钟：只累计「这颗 vCPU 真正在 guest 里执行」的时间 ──
+
+       不能用宿主的墙钟(TSC)给 guest 定时器计时：宿主核被多个 vCPU 分时
+       时，一个 guest ISR 从注入到 EOI 之间会被切出去好几次，墙钟早已超过
+       整个 tick 周期，于是每次 VM-entry 都又到期一次 —— guest 永远在
+       处理中断，一条普通指令都执行不了（2 vCPU / 1 宿主核实测：BSP 的
+       cpu_callout 握手永远走不到）。
+
+       所以定时器的 "now" 用 exec_ns：vmm_run_vcpu 在每次 entry 前后
+       量 TSC 差、累加到这里。代价是 vCPU 被调度出去的时间不计入 guest
+       定时器（时间膨胀），这正是超售 vCPU 下期望的语义。
+    */
+    uint64_t exec_ns; /* 累计 guest 执行时间(纳秒) */
     uint64_t t_deadline_ns;
     uint64_t t_interval_ns;
     uint32_t t_shift; /* DCR → 分频指数 */
@@ -133,5 +146,14 @@ void vlapic_set_apic_base(vm_t *vm, uint32_t vcpu_id, uint64_t val);
 
 /* 宿主单调纳秒(TSC 标定后换算)。与具体 VM 无关, 所以不收 vm。 */
 uint64_t vlapic_now_ns(void);
+
+/*
+   vlapic_add_exec_ns — 给某颗 vCPU 的虚拟时钟累加 guest 执行时间
+
+   由 vmm_run_vcpu() 在每次 guest 入口前后测量 TSC 差后调用。vLAPIC 定时器
+   的 deadline/current-count 全部基于这个时钟，避免「宿主分时导致 guest
+   被 tick 风暴饿死」。
+*/
+void vlapic_add_exec_ns(vm_t *vm, uint32_t vcpu_id, uint64_t ns);
 
 #endif /* VMM_VLAPIC_H */

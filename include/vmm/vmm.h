@@ -326,6 +326,16 @@ typedef struct vcpu {
     int g_boot_linux; /* 1 = Linux 引导路径 */
 
     /*
+       AP 的入口形态(INIT/SIPI 之后)：1 = 16 位实模式起点。
+
+       BSP 走 Linux 引导协议(32 位保护模式), AP 由 guest 的 ICR 写 SIPI
+       启动 —— 两者 VMCS 的段/CR/EFER 布局完全不同, 所以不能只看
+       g_boot_linux。置位时 g_rip 存的是 SIPI 的 CS 基址(vector << 12),
+       GUEST_RIP 恒为 0(实模式 EIP)。见 vmcs_init_guest 的实模式分支。
+    */
+    int g_ap_reset;
+
+    /*
        VMCS 是否已在跑 vCPU 的这颗核上初始化过(每个 VM 生命周期一次)。
 
        不能沿用 vmx_vcpu_setup() 在 /bin/vmm-run 所在核上的初始化：
@@ -863,6 +873,38 @@ void vmm_arch_irq_raise(vcpu_t *vcpu, virq_t irq);
 */
 void vmm_vcpu_inject_irq(vcpu_t *target, virq_t irq);
 
+#if ARCH_X86_64
+/*
+   vmm_vcpu_inject_vector — 给目标 vCPU 的 vLAPIC 投一个已确定的向量
+
+   与 vmm_vcpu_inject_irq 的区别只在「线的语义」：x86 的 guest IPI
+   (ICR 写)在 ICC/IO-APIC 之外直接携带向量号, 不走 GSI → 重定向表。
+   INIT/SIPI 也归 ICR 管, 但它们不是中断投递(见 vlapic.c 的 reg_write)。
+
+   语义与 vmm_vcpu_inject_irq 相同：持 target->irq_lock 写 pending,
+   解锁后 kick —— 目标在别的核上跑 guest 时会被 resched IPI 踢出来,
+   下一轮 entry 由 vlapic_take_pending 取走。
+*/
+void vmm_vcpu_inject_vector(vcpu_t *target, uint32_t vector);
+#endif
+
+/*
+   vmm_vcpu_start — 启动一颗 OFFLINE 的 AP，把入口状态填好并放行
+
+   @entry:      AP 的入口
+                aarch64: PSCI CPU_ON 的 guest 物理入口(Linux secondary_entry)
+                x86_64 : SIPI 向量 << 12(实模式 CS 基址)
+   @context_id: aarch64 的 PSCI context_id(Linux 传 0, 落到 AP 的 x0)；
+                x86_64 不使用(传 0)
+
+   只允许 OFFLINE → RUNNING 一次。aarch64 的 AP 任务睡在 vcpu->start 上,
+   等 PSCI CPU_ON 放行；x86 的 AP 任务同样睡在 vcpu->start 上, 等 guest
+   写 ICR 发 SIPI。放行动作都是 completion_complete_all()。
+
+   返回 0 成功；-1 表示目标不在 OFFLINE(已启动/已停止)或参数非法。
+*/
+int vmm_vcpu_start(vcpu_t *vcpu, uint64_t entry, uint64_t context_id);
+
 /*
    vmm_vcpu_kick — 让一颗正在运行的 vCPU 立刻退出 guest / 重新调度
 
@@ -874,21 +916,7 @@ void vmm_vcpu_inject_irq(vcpu_t *target, virq_t irq);
 */
 void vmm_vcpu_kick(vcpu_t *vcpu);
 
-/*
-   vmm_vcpu_start — PSCI CPU_ON 的落点：给一颗 OFFLINE 的 AP 填入口状态并放行
-
-   @entry:      guest 物理入口(Linux secondary_entry, MMU 仍关闭)
-   @context_id: PSCI context_id(Linux 传 0, 落到 AP 的 x0)
-
-   只允许 OFFLINE → RUNNING 一次。AP 的 sysregs 清零(SCTLR_EL1=0 等),
-   SP_EL1 置 0 —— Linux 的 secondary 入口自己从 secondary_data 取栈。
-   放行动作走 completion_complete_all(), 由 AP 任务自己在新核上恢复执行。
-
-   返回 0 成功；-1 表示目标不在 OFFLINE(已启动/已停止)。
-*/
-int vmm_vcpu_start(vcpu_t *vcpu, uint64_t entry, uint64_t context_id);
-
-/* AP 是否已经启动过(PSCI AFFINITY_INFO 用) */
+/* AP 是否已经启动过(PSCI AFFINITY_INFO / 诊断用) */
 static inline int vmm_vcpu_is_online(const vcpu_t *vcpu)
 {
     return vcpu && vcpu->state != VCPU_STATE_OFFLINE;

@@ -204,6 +204,11 @@ avatar/
   两条**都不报错、只是数据错位**的坑：`guest_loader_gpa_ptr()` 在新映射那条路上
   漏了页内偏移（页对齐顺序装载时看不出来，MP 表这种非页对齐的一次性写入就中招），
   以及别对它的返回值做跨页指针算术（identity 时代成立，按需分页之后不成立）。
+  **§12 是「多 vCPU」（x86 SMP guest，1..12，宿主核可少于 guest 核）**：
+  MP 表 / ICR INIT-SIPI / AP 实模式 VMCS / vLAPIC IPI / 按 guest 执行时间计时的
+  vLAPIC 定时器。动 `vlapic.c` 的定时器、`vmcs_init_guest` 的实模式分支或
+  `vmm_vcpu_start()` 前必读 —— 「定时器不能用墙钟」「实模式 CR0 必须带 NE」
+  两个坑都只在多核 / 宿主超售时现形（症状都在 guest 的 CPU bring-up 握手上）。
   **回归门禁（三条路各一个，别只跑一个）**：
   - **直启 + SMP=1**：`tools/boot_regress.sh [次数]` —— 连续启动 N 次、每次都要出
     `~ #`（§9.9 那个间歇性卡死就是它抓出来的，修复后 500/500 通过）。
@@ -211,7 +216,9 @@ avatar/
     `run-net` 起宿主 shell 再敲 `/bin/vmm-run`；`--restart` 额外验证「Ctrl+T k 停掉
     之后还能再启动」。**SMP>1 下的坑几乎都只在这条路上出现**（VM setup 跑在 helper
     的核上、vCPU 钉在另一颗核上），根因清单见 `docs/bugfix/SMP_HELPER_MODE_BUGFIX.md`
-    与 `docs/vmm/X86_GUEST_LINUX.md` §9.10~§9.12。
+    与 `docs/vmm/X86_GUEST_LINUX.md` §9.10~§9.12。多 vCPU 追加
+    `VCPUS=4 tools/vmm_helper_regress.sh x86_64 [N] 2 --restart`（超售路径）
+    与 `VCPUS=12 ... 4`（>8 核走 physflat）。
   - **多 VM**：`tools/vmm_multivm_regress.sh <arch> [smp]` —— `vmm-run` 起 vm1 →
     `Ctrl+T d`（0x14 0x64）detach → `vmm-run -n` 新建 vm2，要求两个 guest 各自跑到
     `uname`、宿主侧留下两个 `vcpu0 task created`。改 VM 池 / 设备 per-VM 化 /

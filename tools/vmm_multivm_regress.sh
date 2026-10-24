@@ -82,7 +82,11 @@ wait_count() {
 
 # 判据里有括号，必须用 -F（-E 下 "(none)" 是分组，永远匹配不上 —— 踩过）
 GST='Linux (none) 6.2.15'
-HOST='Launching busybox shell'
+# 宿主 busybox 提示符。原来等的是 "Launching busybox shell" 这句 banner，
+# 但它已经从内核里删掉了（grep 不到任何打印点），脚本会一直误报「宿主没起来」。
+# 与 vmm_helper_regress.sh 用同一条判据：提示符可能是 `~ #` 也可能是 `/ #`，
+# 且不一定带换行，所以用正则 + 行尾锚点。
+HOST='[~/] # $'
 PASS=0; FAIL=0
 ok()   { echo "   ✓ $*"; PASS=$((PASS + 1)); }
 bad()  { echo "   ❌ $*"; FAIL=$((FAIL + 1)); }
@@ -92,7 +96,7 @@ trap cleanup EXIT
 echo "== $ARCH 多 VM 回归（SMP=$SMPV）=="
 
 echo "1) 等宿主 shell..."
-wait_count "$HOST" 1 180 F && ok "宿主就绪" || { bad "宿主没起来"; exit 1; }
+wait_count "$HOST" 1 180 E && ok "宿主就绪" || { bad "宿主没起来"; exit 1; }
 
 echo "2) 启动 vm1..."
 printf 'vmm-run\n' >&3

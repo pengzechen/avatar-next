@@ -154,6 +154,7 @@ void x86_ept_vm_init(ept_ctx_t *e, uint32_t slot, uint64_t ram_base, uint64_t ra
     }
 
     memset(e, 0, sizeof(*e));
+    spinlock_irq_init(&e->map_lock);
     e->slot = slot;
     e->ram_base = ram_base;
     e->ram_size = ram_size;
@@ -245,37 +246,60 @@ int x86_ept_ipa_is_ram(const ept_ctx_t *e, uint64_t gpa)
 
 uint64_t x86_ept_map_page(ept_ctx_t *e, uint64_t gpa, int zero)
 {
-    uint64_t *t = pt_ensure(e, gpa);
+    uint64_t flags;
+    uint64_t *t;
     int ti = pt_index(gpa);
     uint64_t pa;
 
-    if (!t)
+    spin_lock_irqsave(&e->map_lock, &flags);
+    t = pt_ensure(e, gpa);
+    if (!t) {
+        spin_unlock_irqrestore(&e->map_lock, flags);
         return 0;
+    }
 
     /* 已映射：幂等(缺页重试, 以及"先 map_range 后 fault"都会走到) */
-    if (t[ti] & EPT_READ)
-        return t[ti] & EPT_ADDR_MASK;
+    if (t[ti] & EPT_READ) {
+        pa = t[ti] & EPT_ADDR_MASK;
+        spin_unlock_irqrestore(&e->map_lock, flags);
+        return pa;
+    }
 
     pa = pmm_alloc_pages(&g_pmm, 1);
-    if (!pa)
+    if (!pa) {
+        spin_unlock_irqrestore(&e->map_lock, flags);
         return 0; /* 注意： 调用方必须处理, 不能当成功继续 */
+    }
 
     if (zero)
         memset(phys_to_virt(pa), 0, EPT_PAGE_SIZE);
 
     t[ti] = ept_leaf(pa);
+    spin_unlock_irqrestore(&e->map_lock, flags);
     return pa;
 }
 
 uint64_t x86_ept_map_block(ept_ctx_t *e, uint64_t gpa, int zero)
 {
     uint64_t base = gpa & ~(EPT_BLOCK_SIZE - 1);
-    uint64_t *t = pt_ensure(e, base);
+    uint64_t flags;
+    uint64_t *t;
     uint64_t n = 0;
     int i;
 
-    if (!t)
+    /*
+       整个「确保 PT → 装 512 个叶项」必须在 map_lock 下完成：两颗 vCPU
+       同时缺页到同一个 2 MiB 块时, 都看到 pt_tbl[idx]==NULL → 各建一张
+       PT、各装一套页, 后者覆盖前者的 PD 项。被覆盖的那组页从 guest
+       视角看就是内存被换成另一组清零页(aarch64 上实测表现为 qspinlock
+       owner "消失", 见 MULTI_VCPU.md §5.3)。
+    */
+    spin_lock_irqsave(&e->map_lock, &flags);
+    t = pt_ensure(e, base);
+    if (!t) {
+        spin_unlock_irqrestore(&e->map_lock, flags);
         return 0;
+    }
 
     for (i = 0; i < EPT_PT_ENTRIES; i++) {
         uint64_t pa;
@@ -293,6 +317,7 @@ uint64_t x86_ept_map_block(ept_ctx_t *e, uint64_t gpa, int zero)
         t[i] = ept_leaf(pa);
         n++;
     }
+    spin_unlock_irqrestore(&e->map_lock, flags);
     return n;
 }
 

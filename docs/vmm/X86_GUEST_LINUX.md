@@ -3,7 +3,7 @@
 > 最后更新：2026-09-25
 > 状态：**已跑通**。guest Linux 6.2.15 在 avatar 的 x86_64 VMM 下启动到
 >      交互式 shell（busybox ash），串口控制台可用、时钟正常、无 watchdog 告警。
->      实测会话见 §7。
+>      实测会话见 §7。**多 vCPU（1..12，宿主 SMP 可小于 guest 核数）见 §12。**
 > 对标实现：`docs/vmm/RISCV64_GUEST_LINUX.md`、`docs/vmm/GUEST_CONSOLE.md`
 
 ## 1. 怎么跑
@@ -1112,7 +1112,58 @@ cpu0 的 TSS 复现旧行为）：
 计数停住 = 真卡了。这次就是靠它一眼看出 guest 在 `reason=12`（HLT）里打转 —— 
 即"内核起来了但拿不到 tick"，方向立刻从"EPT 坏了"转到"时钟/MP 表"。
 
-## 12. 相关
+## 12. 多 vCPU（SMP guest）
+
+**已支持 1..12 个 guest vCPU**，宿主核数可以少于 guest vCPU 总数（实测
+2 vCPU / 1 宿主核、4 vCPU / 2 宿主核、12 vCPU / 4 宿主核，以及同内核两个
+4-vCPU VM 同时运行）。运行方式与实测矩阵见 `docs/vmm/MULTI_VCPU.md` §6.3。
+
+```bash
+make PLATFORM=qemu-virt-x86_64 SMP=2 LOG=info clean
+make PLATFORM=qemu-virt-x86_64 SMP=2 LOG=info kernel rootfs
+VCPUS=4 tools/vmm_helper_regress.sh x86_64 1 2
+```
+
+与 aarch64 的 PSCI 不同，x86 的 AP 完全由 **guest 自己**通过 ICR 启动：
+
+1. `guest_boot.c` 的 MP 表给每个 vCPU 一条 type-0 条目（APIC ID ==
+   `vcpu_id`；CPUID.1.EBX[31:24]、vLAPIC ID 寄存器三处一致）。
+2. `x86_guest_boot()` 先建全部 AP 任务（睡在 `vcpu->start` 上），最后建 BSP。
+3. guest 写 ICR 发 INIT(deassert) → SIPI；`vlapic.c` 解析目标后调
+   `vmm_vcpu_start(target, vector << 12, 0)`。
+4. AP 第一次 entry 时在**自己那颗宿主核**上构造实模式 VMCS
+   （`g_ap_reset` 分支）：`CS.base = vector<<12`、`RIP = 0`、`CR0 = ET|NE`
+   （PE=PG=0）、`EFER = 0`、清 `ENT_GUEST_64`、TR=0x8b、LDTR unusable。
+   前提是 `CPU2_UNRESTRICTED_GUEST` 已启用。
+5. IPI：ICR fixed/lowest，覆盖 physical、logical flat（≤8 核，LDR 每位一个
+   逻辑 ID）与 self/all/all-but-self shorthand；投递走
+   `vmm_vcpu_inject_vector()`（持目标 `irq_lock` 写 IRR，再 kick）。
+
+### 12.1 四个只在多核下现形的坑
+
+| 坑 | 症状 | 修法 |
+|---|---|---|
+| 实模式 `GUEST_CR0` 照抄 reset 值 `0x60000010`（NE=0） | VM-entry `reason 33`（invalid guest state），`inst_error` 读成 0，寄存器快照完全合法 | `CR0 = ET\|NE = 0x30`。VMX 的 `IA32_VMX_CR0_FIXED0` 在 unrestricted guest 下只放宽 PE/PG，**NE 仍必须为 1** |
+| vLAPIC 定时器用墙钟（TSC）计时 | 宿主核少于 guest vCPU 时，一个 guest ISR 跨过多个 tick；每次 entry 都再次到期 → guest 永远在 timer ISR/softirq 里打转。典型现场：BSP 的 `current` 是 PID1，但 RIP 永远在 `__do_softirq`/`native_apic_mem_write`，`cpu_callout_mask` 永远不置位，AP 卡在 `cpu_init` | 定时器改用 per-vCPU 的 `exec_ns`（只累计 guest 真正执行的时间，由 `vmm_run_vcpu()` 在 entry/exit 前后量 TSC 差）。vCPU 被调度出去的时间不计入 —— 超售下的时间膨胀是预期语义 |
+| DCR 分频表整体错位一格（0x3 当 ÷8，实际 ÷16；0xB 是 ÷1） | guest tick 快一倍，jiffies 快一倍 | 按 SDM Vol 3A 表 11-19 重写 |
+| EPT 缺页无锁；且把 `x86_ept_map_block()==0` 当 PMM 耗尽 | 两 vCPU 同时缺页到同一 2 MiB 块 → 各建一张 PT、互相覆盖；兄弟已装好时返回 0 → 误判失败、停 VM | `ept_ctx_t.map_lock` 串行化；成功判据改为 `x86_ept_lookup()` 命中 |
+
+另外三处：
+
+- `vmm_arch_irq_raise()` 按 IO-APIC 重定向表的目的地过滤，避免只路由给
+  CPU0 的串口中断在每颗 vCPU 上各投一次；
+- `guest_va_to_gpa()` 只取物理地址 bit 12-51（原来会把 NX 位带进 GPA，
+  栈/数据页翻译出 `0x800000000_xxxxxxxx` 这种假地址）；
+- `CPUID.1.EBX[31:24]` 与 `IA32_APIC_BASE.BSP` 按 vCPU 分别填。
+
+### 12.2 已知边界
+
+- 对已 RUNNING 的 vCPU 发 INIT（关机/热插拔）不复位 VMCS；启动路径只用
+  INIT(deassert)+SIPI 拉起从未运行过的 AP，够用。
+- 仍不做 x2APIC；guest CPU 数 >8 时 Linux 自动切 `apic_physflat`（物理目标
+  IPI），已实测 12 vCPU。
+
+## 13. 相关
 
 - 另两个架构的同类文档：`docs/vmm/RISCV64_GUEST_LINUX.md`、`docs/vmm/X86_VMX_GUIDE.md`（旧的玩具 guest 说明）
 - 两种运行模式与 `/dev/vmm` 协议：`docs/vmm/GUEST_CONSOLE.md`

@@ -272,6 +272,21 @@ typedef struct {
 #define VMX_IO_QUAL_REP     (1u << 5)
 #define VMX_IO_QUAL_PORT(q) (uint32_t)(((q) >> 16) & 0xffff)
 
+/*
+   ── guest 看到的 CPUID.1 值 ─────────────────────────────────
+
+   两处必须一致, 所以收在头文件里：
+     - vmx.c 的 vmx_cpuid_emulate()(guest 执行 CPUID 时)
+     - guest_boot.c 的 MP 表 type-0 处理器条目(内核用 CPUID signature /
+       feature flags 描述每颗 CPU)
+   两者不一致时 Linux 会画出「MP 表说支持、CPUID 说没有」的混合视图,
+   identify_cpu 的行为随解析顺序变 —— 别让它们漂移。
+*/
+#define VMM_X86_GUEST_CPUID1_EAX 0x000006f2u /* family 6 / model 6 / stepping 2 */
+#define VMM_X86_GUEST_CPUID1_EDX                                                                            \
+    ((1u << 0) | (1u << 3) | (1u << 4) | (1u << 5) | (1u << 6) | (1u << 8) | (1u << 9) | (1u << 11) |       \
+     (1u << 13) | (1u << 15) | (1u << 16) | (1u << 19) | (1u << 23) | (1u << 24) | (1u << 25) | (1u << 26))
+
 /* ── 需要 VMM 接管的 MSR ─────────────────────────────────── */
 #define MSR_IA32_APIC_BASE 0x0000001b
 #define MSR_IA32_PAT       0x00000277

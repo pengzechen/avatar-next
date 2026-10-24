@@ -2,7 +2,9 @@
 
 > 状态：**aarch64 已支持 2/4/8/12 vCPU**，宿主 SMP 可以小于 guest vCPU
 > 数（已用 2 宿主 / 8 guest、4 宿主 / 8 guest、4 宿主 / 12 guest 做
-> 40s 启动门禁）。riscv64 / x86_64 的 AP 入口仍未实现，只支持单 vCPU。
+> 40s 启动门禁）。**x86_64 已支持 1..12 vCPU**（AP 入口 = guest 写 ICR 发
+> SIPI；实测 2/1、4/2、4/4、8/4、12/4 宿主/guest 组合，以及两个 4-vCPU
+> VM 同时运行）。riscv64 的 AP 入口仍未实现，只支持单 vCPU。
 > 默认构建仍是 `nr_vcpus=1`。两种开启方式：
 >   - **运行期**（推荐）：宿主 shell 里 `/bin/vmm-run -c N`，不需要重编内核；
 >   - **构建期**：`GUEST_VCPUS=N`，它是“未指定 `-c` 时的默认值”，也是
@@ -183,11 +185,11 @@ pending 位图改成原子操作或给控制器加锁。
 
 | 前置条件 | aarch64 | riscv64 | x86_64 |
 |---|---|---|---|
-| AP 启动闸门（`completion_t`） | ✅ | 结构已备，未接 SBI HSM | 结构已备，未接 SIPI |
-| AP 入口（CPU_ON / HSM / SIPI） | ✅ PSCI `CPU_ON`/`AFFINITY_INFO` | ❌ | ❌ |
-| guest IPI（SGI / IPI / ICR） | ✅ `ICC_SGI1R_EL1` 陷入 → pending + kick | ❌ | ❌ |
-| guest CPU 描述 | ✅ `linux-gicv3-smp{2,4,8,12}.dtb`（GICR = N×0x20000） | ❌ | ❌ |
-| vGIC per-vCPU 状态（VMCR/AP1R0、SGI 边沿 pending） | ✅ 见 5.2 | — | — |
+| AP 启动闸门（`completion_t`） | ✅ | 结构已备，未接 SBI HSM | ✅ `completion_wait(&start)` |
+| AP 入口（CPU_ON / HSM / SIPI） | ✅ PSCI `CPU_ON`/`AFFINITY_INFO` | ❌ | ✅ ICR SIPI → `vmm_vcpu_start()` |
+| guest IPI（SGI / IPI / ICR） | ✅ `ICC_SGI1R_EL1` 陷入 → pending + kick | ❌ | ✅ ICR fixed/lowest，physical/logical flat/shorthand |
+| guest CPU 描述 | ✅ `linux-gicv3-smp{2,4,8,12}.dtb`（GICR = N×0x20000） | ❌ | ✅ MP 表每 vCPU 一条 type-0（APIC ID == vcpu_id） |
+| 控制器 per-vCPU 状态 | ✅ vGIC（VMCR/AP1R0、SGI 边沿 pending），见 5.2 | — | ✅ vLAPIC（ID/LDR/ISR/IRR/定时器） |
 | VMM 侧注入与 entry/exit 互斥 | ✅ `vcpu->irq_lock` | ✅ | ✅ |
 | guest 自己写 GICD/vLAPIC 与远端注入的严格顺序 | ⚠️ 未收口（见 4a.3） | ⚠️ | ⚠️ |
 | VM 级全量启动/回滚 | ⚠️ 逐 vCPU 创建；失败置 stop_req | 同左 | 同左 |
@@ -297,6 +299,46 @@ guest 在 EL0 用户态大量使用 NEON（静态 busybox 里有 1600+ 条 SIMD 
 > 注意：FPCR/FPSR **没有 EL 银行**（汇编器没有 `fpcr_el1/el2` 编码），
 > guest 用户态/内核和宿主共用同一份，所以这三组现场必须一起保存。
 
+### 5.5 x86_64 的实现要点（INIT/SIPI + vLAPIC IPI）
+
+与 aarch64 的 PSCI 模型不同，x86 的 AP 是 **guest 自己**通过写 ICR 启动的：
+Linux 从 MP 表发现 CPU，BSP 写 ICR 发 INIT（deassert）→ SIPI，AP 从实模式
+`vector << 12` 开始执行，再自己切到保护/长模式。VMM 要做的是四件事：
+
+1. **描述 CPU**：`guest_boot.c` 的 MP 表每个 vCPU 一条 type-0 条目，
+   APIC ID 约定 == `vcpu_id`。三处必须一致：MP 表、`CPUID.1.EBX[31:24]`、
+   vLAPIC 的 ID 寄存器。`IA32_APIC_BASE` 的 BSP 位只有 0 号 vCPU 置位。
+2. **建 AP 任务**：与 aarch64 相同，AP 任务先建、睡在 `vcpu->start` 上；
+   BSP 最后建。AP 的 VMCS 不在装载期建，由第一次 entry 在**自己那颗宿主核**
+   上建（`vmcs_ready` 守卫）。
+3. **SIPI → 实模式 VMCS**：`vlapic.c` 的 ICR 写处理解析目标后调
+   `vmm_vcpu_start(target, vector << 12, 0)`；`vmcs_init_guest()` 走
+   `g_ap_reset` 分支，构造 16 位实模式现场（详见 X86_GUEST_LINUX.md §12）。
+4. **IPI**：ICR fixed/lowest 的 destination 解析覆盖 physical、logical flat
+   与 self/all/all-but-self shorthand，经 `vmm_vcpu_inject_vector()` 持目标
+   `irq_lock` 投递再 kick。
+
+多 vCPU 顺带修掉的四个坑（每个都只在多核下才现形）：
+
+| 坑 | 症状 | 修法 |
+|---|---|---|
+| AP 实模式 `GUEST_CR0` 用了架构 reset 值 0x60000010（NE=0） | VM-entry reason 33，`inst_error` 读成 0，寄存器快照看着全合法 | `CR0 = ET\|NE = 0x30`（VMX fixed0 去掉 PE/PG 后仍要求 NE=1） |
+| vLAPIC 定时器按**墙钟**计时 | 宿主核被多个 vCPU 分时（1 核 2 guest 核）时，guest ISR 跨过多个 tick；每次 entry 都再次到期 → 永远在处理中断，CPU bring-up 的 callout 握手都执行不到 | 定时器改用 `exec_ns`（只累计 guest 真正执行的时间），由 `vmm_run_vcpu()` 在 entry/exit 前后量 TSC 差累加 |
+| DCR 分频表整体错位一格（0x3 当 ÷8，实际 ÷16） | guest tick 快一倍，jiffies 也快一倍 | 按 SDM 表 11-19 重写（0xB = ÷1） |
+| EPT 缺页路径无锁；且把 `map_block()==0` 当 PMM 耗尽 | 两个 vCPU 同时缺页到同一 2 MiB 块会互相覆盖；兄弟已装好时返回 0 会被误判为失败并停 VM | `ept_ctx_t.map_lock` 串行化；成功判据改成 `x86_ept_lookup()` |
+
+另外两条较小的：
+
+- `vmm_arch_irq_raise()`（IO-APIC 设备的电平线）现在按重定向表的目的地
+  过滤，否则一条只路由给 CPU0 的串口中断会在每颗 vCPU 上各投一次；
+- `guest_va_to_gpa()` 取物理地址时只保留 bit 12-51 —— 原来 `e & ~0xFFF`
+  会把 NX(bit 63) 带进 GPA，栈/数据页（PTE 带 NX）的翻译结果会变成
+  `0x800000000_xxxxxxxx`，用它查 EPT 必然失败。
+
+**x86 的 INIT 语义是"不完整"的**：对 OFFLINE 的 AP 什么都不做（它本来就在
+等 SIPI）；对已 RUNNING 的 vCPU 的 INIT（关机/热插拔）不复位 VMCS。正常
+启动流程只用 INIT(deassert)+SIPI 拉起从未运行过的 AP，够用。
+
 ## 6. aarch64 多 vCPU guest 实测
 
 ### 6.1 运行期指定（helper 模式，推荐）
@@ -391,6 +433,52 @@ SMP: Total of 8 processors activated.
 >    却不存在。`map_lock` 串行化 + 用 lookup 的 pa 判定成功后，2 分 8
 >    连续 200 次通过。
 
+### 6.3 x86_64 实测（helper 模式，运行期 `-c`）
+
+不需要 DTB，也不需要为核数重编内核（默认 `GUEST_VCPUS=1` 的 helper 构建即可）：
+
+```bash
+make PLATFORM=qemu-virt-x86_64 SMP=2 clean
+make PLATFORM=qemu-virt-x86_64 SMP=2 LOG=info kernel rootfs
+
+# 4 vCPU / 2 宿主核（故意超售）
+VCPUS=4 tools/vmm_helper_regress.sh x86_64 1 2
+
+# 含 Ctrl+T k 停止 + 重启
+VCPUS=4 tools/vmm_helper_regress.sh x86_64 2 2 --restart
+```
+
+判据：
+
+- 宿主日志：`Linux vCPU task id=... running (4 vCPU(s))` + 4 条
+  `vm1 vcpuX task started`（`(slot + vcpu_id) % ncpu` 摊到宿主核上）；
+- 4 次 `SIPI -> vcpuN`；
+- guest 里 `grep -c ^processor /proc/cpuinfo` = 4，最后出现 `~ #`。
+
+**多个 4-vCPU VM 同时跑**（q35 / 宿主 2 核实测）：
+
+```
+Launching busybox shell
+/ # /bin/vmm-run -c 4        → guest uname + grep -c ^processor = 4
+~ # Ctrl+T d                 → 回宿主，vm1 留在后台
+/ # /bin/vmm-run -c 4        → 第二个 VM，同样 4 vCPU
+/ # /bin/vmm-run -l          → 两行 RUNNING（vm1 / vm2）
+```
+
+实测矩阵（QEMU/KVM 嵌套，helper 模式）：
+
+| 宿主 SMP | guest vCPU | 场景 | 结果 |
+|---|---|---|---|
+| 2 | 1 | 单 vCPU 基线（2 轮） | 2/2 |
+| 1 | 2 | 一个宿主核跑两个 vCPU | 1/1 |
+| 2 | 4 | 超售 2× + `--restart` | 2/2 |
+| 4 | 4 / 8 / 12 | 独立核、flat 与 physflat IPI | 各 1/1 |
+| 2 | 4 + 4 | 两个 4-vCPU VM 同时运行 | 两个 guest 都到 shell，`-l` 两行 RUNNING |
+
+> 关键前提是 §5.5 表格第二行：vLAPIC 定时器必须按 **guest 执行时间** 计时。
+> 用墙钟时，只要宿主核数少于 vCPU 总数，guest 的 CPU bring-up 就会卡在
+> `cpu_callout_mask` 握手（BSP 被 tick 风暴困在 ISR 里，一条普通指令都跑不了）。
+
 ## 7. 回归门禁
 
 - 三架构 `make PLATFORM=<p> clean && make PLATFORM=<p> kernel`
@@ -414,6 +502,14 @@ SMP: Total of 8 processors activated.
   - `VCPUS=8 tools/vmm_helper_regress.sh aarch64 [N] [smp] --restart`
     —— 脚本会发送 `/bin/vmm-run -c 8`，并断言宿主日志里的
     `running (8 vCPU(s))`；
+  - x86_64 多 vCPU：
+    - `VCPUS=4 tools/vmm_helper_regress.sh x86_64 [N] 2 --restart`
+      （超售路径，必须跑；1 核 2 vCPU 也应当通过）
+    - `VCPUS=12 tools/vmm_helper_regress.sh x86_64 [N] 4`
+      （>8 核走 physflat 物理目标 IPI）
+    - 多 VM + 多 vCPU：两个 `/bin/vmm-run -c 4` 各自跑到 uname，
+      `vmm-run -l` 两行 RUNNING（`tools/vmm_multivm_regress.sh` 只覆盖
+      1-vCPU VM，多 vCPU 组合按 §6.3 手动跑）
   - `tools/vmm_helper_regress.sh <arch> [N] [smp] --restart`
   - `tools/vmm_multivm_regress.sh <arch> [smp]`
   - x86 直启门禁 `tools/boot_regress.sh [N]`

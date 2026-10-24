@@ -32,7 +32,7 @@
 #include "vmm/vmm_uart16550.h"
 #include "vmm/vmm_console.h" /* vmm_console_irq_asserted：控制台中断线(电平触发) */
 #include "vmm/vmm_vlapic.h"
-#include "irq/lapic.h" /* g_tsc_freq_hz：宿主标定出的 TSC 频率(CPUID 0x15/0x16 要报给 guest) */
+#include "irq/lapic.h"   /* g_tsc_freq_hz：宿主标定出的 TSC 频率(CPUID 0x15/0x16 要报给 guest) */
 
 /* guest RAM 的宿主物理窗口(定义在 guest_boot.c) */
 #include "mm_vm.h" /* virt_to_phys */
@@ -452,10 +452,17 @@ static int msr_emulate_write_1(vcpu_t *vcpu, uint32_t msr, uint64_t val)
    没有 XSAVE/AVX/VMX, 但有 APIC/TSC/PAE/NX/SYSCALL。
    ================================================================
 */
-static void vmx_cpuid_emulate(uint32_t leaf, uint32_t sub, uint32_t *eax, uint32_t *ebx, uint32_t *ecx, uint32_t *edx)
+static void vmx_cpuid_emulate(const vcpu_t *vcpu, uint32_t leaf, uint32_t sub, uint32_t *eax, uint32_t *ebx,
+                              uint32_t *ecx, uint32_t *edx)
 {
     (void)sub;
     *eax = *ebx = *ecx = *edx = 0;
+
+    /* 本 vCPU 的 APIC ID（约定 == vcpu_id）。多 vCPU 下每颗核执行
+       CPUID.1 都必须报自己的 ID：Linux 用它交叉校验 MP 表/APIC_ID
+       寄存器, 全报 0 会让 topology 与 IPI 目标全错。
+    */
+    uint32_t apic_id = vcpu ? (uint32_t)(vcpu->vcpu_id & 0xff) : 0;
 
     switch (leaf) {
     case 0x00000000:
@@ -475,12 +482,11 @@ static void vmx_cpuid_emulate(uint32_t leaf, uint32_t sub, uint32_t *eax, uint32
         return;
 
     case 0x00000001:
-        *eax = 0x000006f2; /* family 6 / model 6 / stepping 2 */
+        *eax = VMM_X86_GUEST_CPUID1_EAX; /* family 6 / model 6 / stepping 2 */
         /* EDX：FPU PSE TSC MSR PAE CX8 APIC SEP PGE CMOV PAT CLFSH
-                MMX FXSR SSE SSE2  —— 只放行这些
+                MMX FXSR SSE SSE2  —— 只放行这些 (值与 MP 表共用)
         */
-        *edx = (1u << 0) | (1u << 3) | (1u << 4) | (1u << 5) | (1u << 6) | (1u << 8) | (1u << 9) | (1u << 11) |
-               (1u << 13) | (1u << 15) | (1u << 16) | (1u << 19) | (1u << 23) | (1u << 24) | (1u << 25) | (1u << 26);
+        *edx = VMM_X86_GUEST_CPUID1_EDX;
         /* ECX 全 0：特别是 VMX(5), XSAVE(26), OSXSAVE(27), AVX(28) */
         *ecx = 0;
         /*
@@ -489,8 +495,11 @@ static void vmx_cpuid_emulate(uint32_t leaf, uint32_t sub, uint32_t *eax, uint32
            于是 smpboot 报 "Boot CPU (id 129) not listed by BIOS",
            CPU/中断拓扑错乱 ⇒ 后期 "Attempted to kill the idle task!" panic。
            [15:8] = CLFLUSH 行大小(8), [7:0] = brand index(0)。
+
+           多 vCPU：APIC ID 必须逐 vCPU —— 本 VMM 的约定是 APIC ID ==
+           vcpu_id(MP 表、vLAPIC ID 寄存器、这里三处一致)。
         */
-        *ebx = (8u << 8);
+        *ebx = (8u << 8) | (apic_id << 24);
         return;
 
     /*
@@ -709,14 +718,20 @@ static int guest_va_to_gpa(const vcpu_t *vcpu, uint64_t va, uint64_t *gpa)
         if (!(e & 1))
             return 0;                 /* P=0：这一级没映射 */
         if (lvl == 1 && (e & 0x80)) { /* PDPT 项指向 1 GiB 大页 */
-            *gpa = (e & ~((1ULL << 30) - 1)) | (va & ((1ULL << 30) - 1));
+            *gpa = (e & 0x000FFFFFC0000000ULL) | (va & ((1ULL << 30) - 1));
             return 1;
         }
         if (lvl == 2 && (e & 0x80)) { /* PD 项指向 2 MiB 大页 */
-            *gpa = (e & ~((1ULL << 21) - 1)) | (va & ((1ULL << 21) - 1));
+            *gpa = (e & 0x000FFFFFFFE00000ULL) | (va & ((1ULL << 21) - 1));
             return 1;
         }
-        tbl = e & ~0xFFFULL;
+        /*
+           注意：物理地址只取 bit 12-51。NX(bit 63)、软件位、PAT 等都在
+           高位/低位里 —— 原来写 `e & ~0xFFF` 会把 NX 一起带进 GPA,
+           得到形如 0x800000000_0359f000 的"物理地址", 用它查 EPT 必然失败
+           (最常命中的是栈/数据页, 它们的 PTE 带 NX)。
+        */
+        tbl = e & 0x000FFFFFFFFFF000ULL;
     }
     *gpa = tbl | (va & 0xFFF);
     return 1;
@@ -1432,7 +1447,93 @@ static void vmcs_init_guest(vcpu_t *vcpu, void (*entry)(void))
         vmcs_write(GUEST_LIMIT_LDTR, 0xFFFF);
         vmcs_write(GUEST_SEL_LDTR, 0);
 
-        if (vcpu->g_cr3 == 0) {
+        if (vcpu->g_ap_reset) {
+            /*
+               ── AP：SIPI 之后的 16 位实模式起点 ────────────────────
+
+               guest 在 BSP 上写 ICR 发 SIPI, vmm_vcpu_start() 记下
+               CS base = vector << 12 并放行 AP 任务; AP 任务第一次进
+               guest 前在这里构造 VMCS。现场必须与真机 SIPI 后一致：
+
+                 CS.base = vector << 12, RIP = 0, 其余段 base = 0
+                 CS/DS/... limit = 0xFFFF, 16 位代码/数据属性
+                 CR0 = ET|NE, PE=0, PG=0(实模式)
+                 EFER = 0, ENT_CONTROLS 清 IA-32e guest 位
+                 RFLAGS = 0x2(IF=0)
+
+               注意 CR0 里的 NE(bit5)：IA32_VMX_CR0_FIXED0 在去掉
+               PE/PG(unrestricted guest 才允许清这两位)之后**仍要求 NE=1**。
+               照抄架构 reset 值 0x60000010 会在 VM-entry 被拒(reason 33,
+               inst_error 不可靠地读成 0), 日志上只看到「invalid guest
+               state」和一行完全合法的寄存器快照。KVM 的做法是
+               GUEST_CR0 = (guest_cr0 & ~(CD|NW)) | NE —— 这里等价于 0x30。
+               去掉 CD/NW 无副作用：Linux 的 trampoline 本来就会重写 CR0。
+
+               CPU2_UNRESTRICTED_GUEST 是这条路的前提(见 vmcs_init_ctrl)：
+               没有它, CR0.PE=0 的 guest state 会被 VM-entry 以 reason 33
+               拒绝。Linux 的 trampoline 在这里从实模式自己切到保护/长模式,
+               与 QEMU/KVM 的 AP 启动路径一致。
+
+               注意：GDTR/IDTR 的 base 必须是 guest 物理空间内的值(全 0 合法,
+               实模式下 trampoline 会自己 lgdt/lidt)；TR 给 reset 默认的
+               32 位 busy TSS(AR=0x8b), LDTR 标成 unusable(AR bit16)。
+            */
+            uint64_t cs_sel = ((vcpu->g_rip >> 12) & 0xFFULL) << 8;
+
+            vmcs_write(GUEST_CR0, 0x30ULL); /* ET|NE, PE=0, PG=0 */
+            vmcs_write(GUEST_CR3, 0);
+            vmcs_write(GUEST_CR4, 0x2000ULL); /* VMXE(固定位), guest 不可见 */
+            vmcs_write(CR4_MASK, (1ULL << 13));
+            vmcs_write(CR4_READ_SHADOW, 0);
+            vmcs_write(GUEST_EFER, 0);
+            vmcs_write(ENT_CONTROLS, g_ctrl_enter & ~ENT_GUEST_64);
+
+            vmcs_write(GUEST_RIP, 0);
+            vmcs_write(GUEST_RSP, 0);
+
+            vmcs_write(GUEST_SEL_CS, cs_sel);
+            vmcs_write(GUEST_BASE_CS, vcpu->g_rip);
+            vmcs_write(GUEST_LIMIT_CS, 0xFFFF);
+            vmcs_write(GUEST_AR_CS, 0x9b);
+
+            vmcs_write(GUEST_SEL_SS, 0);
+            vmcs_write(GUEST_SEL_DS, 0);
+            vmcs_write(GUEST_SEL_ES, 0);
+            vmcs_write(GUEST_SEL_FS, 0);
+            vmcs_write(GUEST_SEL_GS, 0);
+            vmcs_write(GUEST_BASE_SS, 0);
+            vmcs_write(GUEST_BASE_DS, 0);
+            vmcs_write(GUEST_BASE_ES, 0);
+            vmcs_write(GUEST_BASE_FS, 0);
+            vmcs_write(GUEST_BASE_GS, 0);
+            vmcs_write(GUEST_LIMIT_SS, 0xFFFF);
+            vmcs_write(GUEST_LIMIT_DS, 0xFFFF);
+            vmcs_write(GUEST_LIMIT_ES, 0xFFFF);
+            vmcs_write(GUEST_LIMIT_FS, 0xFFFF);
+            vmcs_write(GUEST_LIMIT_GS, 0xFFFF);
+            vmcs_write(GUEST_AR_SS, 0x93);
+            vmcs_write(GUEST_AR_DS, 0x93);
+            vmcs_write(GUEST_AR_ES, 0x93);
+            vmcs_write(GUEST_AR_FS, 0x93);
+            vmcs_write(GUEST_AR_GS, 0x93);
+
+            vmcs_write(GUEST_BASE_GDTR, 0);
+            vmcs_write(GUEST_LIMIT_GDTR, 0xFFFF);
+            vmcs_write(GUEST_BASE_IDTR, 0);
+            vmcs_write(GUEST_LIMIT_IDTR, 0xFFFF);
+
+            vmcs_write(GUEST_SEL_TR, 0);
+            vmcs_write(GUEST_BASE_TR, 0);
+            vmcs_write(GUEST_LIMIT_TR, 0xFFFF);
+            vmcs_write(GUEST_AR_TR, 0x008b);
+            vmcs_write(GUEST_SEL_LDTR, 0);
+            vmcs_write(GUEST_BASE_LDTR, 0);
+            vmcs_write(GUEST_LIMIT_LDTR, 0xFFFF);
+            vmcs_write(GUEST_AR_LDTR, 0x00010000); /* unusable */
+
+            KLOG_INFO("[VMX] vcpu%d AP real-mode: cs_base=0x%llx sel=0x%llx\n", vcpu->vcpu_id,
+                      (unsigned long long)vcpu->g_rip, (unsigned long long)cs_sel);
+        } else if (vcpu->g_cr3 == 0) {
             /*
                ── 32 位保护模式 guest(Linux 传统引导协议)──
 
@@ -1510,7 +1611,11 @@ static int vcpu_vmcs_init(vcpu_t *vcpu, void (*entry)(void))
        APIC base 预置成上电默认值 0xFEE00900：EN(bit11)=1, BSP 位(bit8)=1,
        基址 0xFEE00000。vLAPIC 靠读它判断 guest 是否已经打开 APIC。
     */
-    vcpu->msr_efer = vmx_rdmsr(MSR_EFER);
+    /*
+       AP 由 SIPI 启动, 初始 EFER 必须为 0(实模式)：宿主的 EFER 带着
+       LME/LMA, 交给实模式 guest 会让 VM-entry 直接判非法。
+    */
+    vcpu->msr_efer = vcpu->g_ap_reset ? 0 : vmx_rdmsr(MSR_EFER);
     vcpu->msr_star = 0;
     vcpu->msr_lstar = 0;
     vcpu->msr_cstar = 0;
@@ -1519,7 +1624,8 @@ static int vcpu_vmcs_init(vcpu_t *vcpu, void (*entry)(void))
     vcpu->msr_gs_base = 0;
     vcpu->msr_kernel_gs_base = 0;
     vcpu->msr_pat = 0x0007040600070406ULL; /* 上电默认 PAT */
-    vcpu->apic_base = 0xFEE00900ULL;
+    /* IA32_APIC_BASE：BSP 位只有 0 号 vCPU 有(只读拓扑信息) */
+    vcpu->apic_base = VLAPIC_MMIO_BASE | VLAPIC_BASE_ENABLE | (vcpu->vcpu_id == 0 ? (1ULL << 8) : 0);
     vcpu->pending_event = 0;
     vcpu->pending_errcode = 0;
     vcpu->intr_window = 0;
@@ -1903,31 +2009,34 @@ int x86_pio_handle(vcpu_t *vcpu, uint32_t port, int is_in, uint32_t bytes, uint6
 
 unsigned g_reason_hist[64];
 
+/*
+   每 vCPU 的退出计数。
+
+   注意：原来这里是 `static unsigned n`(整机一个), 前 25 次退出才打印 ——
+   单 vCPU 时没问题, 多 vCPU 时 BSP 的启动早期就把配额用光了, AP 的退出
+   一条都看不见。排查 AP 启动必须按 vCPU 分别计数。
+*/
+static uint32_t g_exit_count[MAX_VMS * MAX_VCPUS];
+
 static int vmx_exit_handler(vcpu_t *vcpu)
 {
     uint32_t reason = (uint32_t)(vmcs_read(EXI_REASON) & 0xff);
 
-    /* TEMP-DBG：前 25 次退出打详细, 之后每 2000 次采一次 RIP + 原因直方图 */
     {
-        static unsigned n;
-        /*
-           诊断：每 20000 次退出采一次样(guest 在不在动, 卡在哪个 reason)。
-           需要时把这行的注释去掉即可 —— 排查「guest 看起来没动静」时很有用：
-           有采样 = 还在跑, 采样停住 = 真的卡了。
-        */
-        if (0 && (n % 20000) == 0) {
-            extern unsigned g_reason_hist[64];
-            KLOG_WARN("[RIP-SAMPLE] exit#%u rip=0x%llx | 1:%u 2:%u 7:%u "
-                      "10:%u 12:%u 28:%u 30:%u 31:%u 32:%u 48:%u\n",
-                      n, (unsigned long long)vmcs_read(GUEST_RIP), g_reason_hist[1], g_reason_hist[2], g_reason_hist[7],
-                      g_reason_hist[10], g_reason_hist[12], g_reason_hist[28], g_reason_hist[30], g_reason_hist[31],
-                      g_reason_hist[32], g_reason_hist[48]);
-        }
+        int id = (int)vcpu_slot(vcpu);
+        uint32_t ecount = ++g_exit_count[id];
+
         if (reason < 64)
             g_reason_hist[reason]++;
-        n++;
-        if (n <= 25) {
-            KLOG_INFO("[VMX-DBG] exit#%u reason=%u rip=0x%llx intr_info=0x%llx\n", n, reason,
+        /*
+           每颗 vCPU 的前 10 次退出打详细。
+
+           注意：原来这里是一个整机共享的 `static unsigned n`, 前 25 次退出
+           才打印 —— 多 vCPU 时 BSP 的启动早期就把配额用光了, AP 的退出
+           一条都看不见, 排查 AP 启动会完全瞎掉。
+        */
+        if (ecount <= 10) {
+            KLOG_INFO("[VMX-DBG] vcpu%d exit#%u reason=%u rip=0x%llx intr_info=0x%llx\n", vcpu->vcpu_id, ecount, reason,
                       (unsigned long long)vmcs_read(GUEST_RIP), (unsigned long long)vmcs_read(EXI_INTR_INFO));
         }
     }
@@ -2011,7 +2120,7 @@ static int vmx_exit_handler(vcpu_t *vcpu)
            (见 vmx_cpuid_emulate 的说明)。
         */
         uint32_t a, b, c, d;
-        vmx_cpuid_emulate((uint32_t)vcpu->regs.rax, (uint32_t)vcpu->regs.rcx, &a, &b, &c, &d);
+        vmx_cpuid_emulate(vcpu, (uint32_t)vcpu->regs.rax, (uint32_t)vcpu->regs.rcx, &a, &b, &c, &d);
         { /* TEMP-DBG：前 12 次 CPUID + 每次 0x15/0x16(TSC 频率) */
             static unsigned n;
             uint32_t leaf_now = (uint32_t)vcpu->regs.rax;
@@ -2064,9 +2173,17 @@ static int vmx_exit_handler(vcpu_t *vcpu)
            "死循环"和"跳过一条随机指令"。
         */
         if (vcpu->vm && x86_ept_ipa_is_ram(&vcpu->vm->ept, gpa)) {
+            uint64_t hpa = 0;
             uint64_t n = x86_ept_map_block(&vcpu->vm->ept, gpa, 1 /* zero */);
 
-            if (n == 0) {
+            /*
+               注意：n == 0 不一定失败。多 vCPU 下兄弟 vCPU 可能刚把同一个
+               2 MiB 块装好(map_block 幂等跳过 512 个已映射页 ⇒ 返回 0),
+               这时 lookup 命中就是成功。判据必须是 lookup 的结果, 不能是
+               map_block 的返回值 —— 否则「两个 vCPU 同时启动」会被误判成
+               PMM 耗尽, 直接把 VM 停掉。aarch64 上这条是 §5.3 的一部分。
+            */
+            if (n == 0 && !x86_ept_lookup(&vcpu->vm->ept, gpa, &hpa)) {
                 KLOG_ERROR("[VMX] vcpu%d: RAM fault at gpa=0x%llx but PMM is "
                            "out of pages (free=%llu), stopping vm%u\n",
                            vcpu->vcpu_id, (unsigned long long)gpa, (unsigned long long)pmm_get_free_pages(&g_pmm),
@@ -2617,6 +2734,7 @@ int vmm_arch_vm_init(vm_t *vm)
         memset(g_exit_trace[sl], 0, sizeof(g_exit_trace[sl]));
         g_exit_trace_n[sl] = 0;
         g_entry_dbg_n[sl] = 0;
+        g_exit_count[sl] = 0;
     }
 
     /*
@@ -2715,17 +2833,42 @@ int vmx_vcpu_setup(vcpu_t *vcpu, void (*entry)(void))
 */
 void vmm_arch_irq_raise(vcpu_t *vcpu, virq_t irq)
 {
-    uint32_t rt, vec;
+    x86_chipset_state_t *chip;
+    uint32_t rt, rt_hi, vec, dest;
 
     if (!vcpu || !vcpu->vm)
         return;
+    if (irq.line >= X86_IOAPIC_NENT)
+        return;
 
-    rt = chipset_of(vcpu)->ioapic_rt[irq.line * 2];
+    chip = chipset_of(vcpu);
+    rt = chip->ioapic_rt[irq.line * 2];
+    rt_hi = chip->ioapic_rt[irq.line * 2 + 1];
     if ((rt & IOAPIC_RT_MASKED) || (rt & 0x700) != 0)
         return; /* guest 还没 unmask / 非 fixed 模式 */
     vec = rt & 0xff;
     if (vec < 16)
         return; /* 0-15 是异常向量, 不能当普通中断投 */
+
+    /*
+       ── 目标 vCPU 过滤 ─────────────────────────────────────────
+
+       多 vCPU 之后每颗 vCPU 都会在入口处调这里重拉电平线; 不按 IO-APIC
+       重定向表的目的地过滤的话, 一条只路由给 CPU0 的串口中断会在每颗
+       vCPU 上各投一次 —— AP 收到本不属于它的中断, 白白进一次 ISR。
+
+       目的地编码与 ICR 相同：
+         bit11 = 1 → logical(flat), dest 是逻辑 ID 位图
+         bit11 = 0 → physical,      dest 是 APIC ID(0xFF = 广播)
+       本 VMM 的 APIC ID 约定等于 vcpu_id。
+    */
+    dest = (rt_hi >> 24) & 0xff;
+    if (rt & (1u << 11)) { /* logical */
+        if ((uint32_t)vcpu->vcpu_id >= 8 || !(dest & (1u << (uint32_t)vcpu->vcpu_id)))
+            return;
+    } else if (dest != 0xff && dest != (uint32_t)vcpu->vcpu_id) {
+        return;
+    }
 
     /* 不做 SVR 门控：那是 vlapic_raise_irq 自己的事(它在 raise 时刻判) */
     vlapic_raise_irq(vcpu->vm, (uint32_t)vcpu->vcpu_id, vec);

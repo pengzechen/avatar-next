@@ -44,6 +44,7 @@
 #define X86_64_EPT_H
 
 #include "types.h"
+#include "spinlock.h"
 
 /* ── 页表层级尺寸(4 级：PML4 → PDPT → PD → PT)────────────── */
 #define EPT_PDPT_ENTRIES 512
@@ -80,6 +81,20 @@ typedef struct ept_ctx {
     uint64_t *pt_tbl[EPT_MAX_PT_TABLES]; /* +1 = 该 2MiB 块已有表；动态分配 */
     uint64_t nr_premap;                  /* 统计：加载期预映射页数 */
     uint64_t nr_fault;                   /* 统计：按需缺页分配页数 */
+
+    /*
+       缺页路径的串行化(多 vCPU 必需)。
+
+       x86_ept_map_page/block 是「检查未映射 → PMM 分配 → 写叶项」,
+       没有任何原子性。同一 VM 的两颗 vCPU 同时缺页(guest 启动时几乎
+       必然发生)会各分配一套页并互相覆盖；被覆盖的那组从 guest 视角看
+       就是「内存被换成了另一组清零页」。aarch64 上用同样的 map_lock
+       修过(见 docs/vmm/MULTI_VCPU.md §5.3), 那是 2 分 8 启动卡死的根因。
+
+       锁在 map_page / map_block 内部取，不要求调用方持有 —— guest_loader
+       装载期与 VM-exit 缺页路径因此共用同一把锁。
+    */
+    spinlock_noirq_t map_lock;
 } ept_ctx_t;
 
 /* ── 生命周期 ─────────────────────────────────────────────── */
