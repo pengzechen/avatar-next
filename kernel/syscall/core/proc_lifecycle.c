@@ -123,6 +123,8 @@ extern uint32_t g_task_id_cnt;
 
 #define EXEC_MAX_ARGC   128
 #define EXEC_MAX_ARGLEN 256
+#define EXEC_MAX_ENVC   128
+#define EXEC_MAX_ENVLEN 256
 
 /*
    execve 的 argv 内核副本, 必须按 CPU 分行。
@@ -142,6 +144,8 @@ extern uint32_t g_task_id_cnt;
 */
 static char g_exec_arg_store[AVATAR_MAX_CPUS][EXEC_MAX_ARGC][EXEC_MAX_ARGLEN];
 static char *g_exec_argv_ptrs[AVATAR_MAX_CPUS][EXEC_MAX_ARGC + 1];
+static char g_exec_env_store[AVATAR_MAX_CPUS][EXEC_MAX_ENVC][EXEC_MAX_ENVLEN];
+static char *g_exec_envp_ptrs[AVATAR_MAX_CPUS][EXEC_MAX_ENVC + 1];
 
 /* ───────────────────────────────────────────────────────────────
     sys_exit
@@ -229,7 +233,6 @@ void exit_group_handler(uint64_t regs[6])
 */
 int64_t sys_execve(const char *pathname, char **argv, char **envp)
 {
-    (void)envp;
     if (pathname == NULL)
         return -1;
 
@@ -264,10 +267,13 @@ int64_t sys_execve(const char *pathname, char **argv, char **envp)
         char **uav = argv;
         int n = 0;
         while (n < EXEC_MAX_ARGC) {
-            char *uarg = uav[n];
+            char *uarg = NULL;
+            if (copy_from_user_bytes(&uav[n], &uarg, sizeof(uarg)) < 0)
+                return -EFAULT;
             if (!uarg)
                 break;
-            copy_string_from_user(uarg, store + (size_t)n * EXEC_MAX_ARGLEN, EXEC_MAX_ARGLEN);
+            if (copy_string_from_user(uarg, store + (size_t)n * EXEC_MAX_ARGLEN, EXEC_MAX_ARGLEN) < 0)
+                return -EFAULT;
             ptrs[n] = store + (size_t)n * EXEC_MAX_ARGLEN;
             n++;
         }
@@ -278,11 +284,36 @@ int64_t sys_execve(const char *pathname, char **argv, char **envp)
         KLOG_SYSCALL("[execve] path=%s argc=%d argv0=%s\n", pathname, n, n > 0 ? ptrs[0] : "");
     }
 
+    /* envp 也必须从用户空间拷进来；以前直接传 NULL，子进程拿不到任何环境变量 */
+    char **kern_envp = NULL;
+    if (envp) {
+        uint32_t cpu = get_current_cpu_id();
+        if (cpu >= AVATAR_MAX_CPUS)
+            cpu = 0;
+        char *store = &g_exec_env_store[cpu][0][0];
+        char **ptrs = g_exec_envp_ptrs[cpu];
+
+        int n = 0;
+        while (n < EXEC_MAX_ENVC) {
+            char *uarg = NULL;
+            if (copy_from_user_bytes(&envp[n], &uarg, sizeof(uarg)) < 0)
+                return -EFAULT;
+            if (!uarg)
+                break;
+            if (copy_string_from_user(uarg, store + (size_t)n * EXEC_MAX_ENVLEN, EXEC_MAX_ENVLEN) < 0)
+                return -EFAULT;
+            ptrs[n] = store + (size_t)n * EXEC_MAX_ENVLEN;
+            n++;
+        }
+        ptrs[n] = NULL;
+        kern_envp = ptrs;
+    }
+
     /* 将相对路径转为绝对路径 */
     char abs_path[256];
     resolve_path(current->cwd, pathname, abs_path, (int)sizeof(abs_path));
 
-    int rc = elf_loader_load_from_file(abs_path, kern_argv, NULL);
+    int rc = elf_loader_load_from_file(abs_path, kern_argv, kern_envp);
     /* 成功则不应返回到这里 */
     return rc;
 }

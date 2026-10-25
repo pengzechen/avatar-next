@@ -98,6 +98,15 @@ arch_task_switch:
     /* ── 加载下一任务的 SP（a1）──────────────────────────── */
     mv      sp, a1
 
+    /*
+       ── 标记 prev 已切出（a4 = &prev->switch_done）─────────
+       至此 prev 的栈和 satp 都已不再使用。fence w,w 是 release fence，
+       保证前面的保存先于这条 store 可见；wait4 侧用 acquire load 读取。
+    */
+    li      t0, 1
+    fence   w, w
+    sw      t0, 0(a4)
+
     /* ── 恢复被调用者保存寄存器 ──────────────────────────── */
     ld      ra,    0(sp)
     ld      s0,    8(sp)

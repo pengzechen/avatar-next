@@ -45,17 +45,24 @@ void task_trampoline_user(void);
    @next_sp: 输入 — 要加载的下一任务 SP
    @prev_pgd_ptr: 输出 — 将当前 TTBR0_EL1 写入 *prev_pgd_ptr(可为NULL)
    @next_pgd: 输入 — 下一任务的页表基址(NULL表示不切换)
+   @switch_done: 输出 — 真正换到 next 的栈/地址空间后置 1(release)
 
    执行流程：
      1. 将被调用者保存寄存器压栈
      2. 将 SP 写入 *prev_sp
-     3. 将 SP 设为 next_sp
-     4. 如果 prev_pgd_ptr != NULL, 将当前 TTBR0_EL1 保存到 *prev_pgd_ptr
-     5. 如果 next_pgd != NULL, 切换 TTBR0_EL1 到 next_pgd
-     6. 弹出被调用者保存寄存器
-     7. ret(跳转到 next_sp 帧中保存的返回地址)
+     3. 如果 prev_pgd_ptr != NULL, 保存当前页表
+     4. 如果 next_pgd != NULL, 切换页表
+     5. 将 SP 设为 next_sp（此刻 prev 的栈/地址空间都不再使用）
+     6. *switch_done = 1（release：保证上面的保存对其它核可见）
+     7. 弹出被调用者保存寄存器
+     8. ret(跳转到 next_sp 帧中保存的返回地址)
+
+   第 5 步之后 prev 的内核栈和页表都已经与其无关，wait4 可以安全地
+   销毁 pgd/回收栈槽；第 6 步是给 wait4 的完成信号（见 task.h 的
+   switch_done 注释）。
 */
-void arch_task_switch(uintptr_t *prev_sp, uintptr_t next_sp, uint64_t **prev_pgd_ptr, uint64_t *next_pgd);
+void arch_task_switch(uintptr_t *prev_sp, uintptr_t next_sp, uint64_t **prev_pgd_ptr, uint64_t *next_pgd,
+                      volatile uint32_t *switch_done);
 
 /*
    arch_switch_to_user - 从内核跳转到用户态

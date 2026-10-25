@@ -93,6 +93,14 @@ arch_task_switch:
     /* ── 加载下一任务的 SP 并恢复寄存器 ──────────────────── */
     mov     sp, x1
 
+    /*
+       ── 标记 prev 已切出（x4 = &prev->switch_done）─────────
+       至此 prev 的栈和 TTBR0 都已不再使用。stlr 是 release store，
+       保证前面的页表/SP 保存对 wait4 所在的核可见。
+    */
+    mov     w9, #1
+    stlr    w9, [x4]
+
     /* FP 状态先恢复（FPCR/FPSR 先于 d8-d15，对照 riscv64 的 fscsr 先于 fld） */
     ldp     x9, x10, [sp, #160]
     msr     fpcr, x9

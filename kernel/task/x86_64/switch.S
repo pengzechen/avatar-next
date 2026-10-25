@@ -43,6 +43,13 @@ arch_task_switch:
     /* ── 加载下一任务的 RSP（rsi）────────────────────────── */
     movq    %rsi, %rsp
 
+    /*
+       ── 标记 prev 已切出（r8 = &prev->switch_done）─────────
+       到这里 prev 的栈已经不再使用，页表也已在 C 侧切换到 next。
+       x86 TSO 保证前面的 SP 保存先于这条 store 可见。
+    */
+    movl    $1, (%r8)
+
     /* ── 恢复被调用者保存寄存器 ──────────────────────────── */
     popq    %r15
     popq    %r14

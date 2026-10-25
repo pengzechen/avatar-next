@@ -216,8 +216,11 @@ static void x86_translate_syscall(uint64_t *nr, uint64_t regs[9])
         *nr = LINUX_SYS_IOCTL;
         break; /* ioctl */
     case 17:
-        *nr = LINUX_SYS_READ;
-        break; /* pread64 → read(stub) */
+        *nr = LINUX_SYS_PREAD64;
+        break; /* pread64 */
+    case 18:
+        *nr = LINUX_SYS_PWRITE64;
+        break; /* pwrite64 */
     case 19:
         *nr = LINUX_SYS_READV;
         break; /* readv */
@@ -243,10 +246,10 @@ static void x86_translate_syscall(uint64_t *nr, uint64_t regs[9])
     case 26:
         *nr = 0x7FFFFFFEULL;
         break; /* msync → stub 0 */
-    case 32:   /* dup(oldfd): x86_64. 不直接支持, 返回 ENOSYS */
-        /* busybox sh 很少用裸 dup(), ENOSYS 不影响启动 */
-        break; /* nr stays 32, hits default: → ENOSYS */
-    case 33:   /* dup2(oldfd,newfd) → dup3(oldfd,newfd,0) */
+    case 32:   /* dup(oldfd): x86_64 → 内部 dup 实现（与 aarch64/riscv 的 23 同） */
+        *nr = LINUX_SYS_DUP;
+        break;
+    case 33: /* dup2(oldfd,newfd) → dup3(oldfd,newfd,0) */
         regs[2] = 0;
         *nr = LINUX_SYS_DUP3;
         break;
@@ -519,6 +522,9 @@ static void x86_translate_syscall(uint64_t *nr, uint64_t regs[9])
     case 186:
         *nr = LINUX_SYS_GETTID;
         break; /* gettid */
+    case 200:  /* x86_64 __NR_tkill；内部号 130（200 本身是 BIND，不能直落） */
+        *nr = LINUX_SYS_TKILL;
+        break;
     case 202:
         *nr = LINUX_SYS_FUTEX;
         break; /* futex */
@@ -956,11 +962,22 @@ void syscall_handler(trap_frame_t *frame)
             break;
         }
         fd_obj_t *obj = task_get_fd(current, fd);
-        if (!obj || !vfs_file_is_regular(fd_obj_file(obj))) {
+        vfs_file_t *f = obj ? fd_obj_file(obj) : NULL;
+        if (!f) {
             regs[0] = (uint64_t)(int64_t)-EBADF;
             break;
         }
-        int rc = vfs_truncate(fd_obj_file(obj), (uint64_t)length);
+        /*
+           Linux ftruncate 的错误语义：
+             - 负长度 / 非普通文件（目录、socket、pipe...）→ EINVAL
+             - 普通文件但 fd 是 O_RDONLY → EINVAL
+             - fd 无效 → EBADF（上面已处理）
+        */
+        if (length < 0 || !vfs_file_is_regular(f) || (f->flags & 3) == 0) {
+            regs[0] = (uint64_t)(int64_t)-EINVAL;
+            break;
+        }
+        int rc = vfs_truncate(f, (uint64_t)length);
         regs[0] = (rc == 0) ? 0 : (uint64_t)(int64_t)rc;
         break;
     }
@@ -1098,11 +1115,17 @@ void syscall_handler(trap_frame_t *frame)
     }
 
     case LINUX_SYS_CLOCK_GETTIME: {
-        struct kernel_timespec *ts = (struct kernel_timespec *)regs[1];
-        if (ts) {
+        if (regs[1]) {
+            struct kernel_timespec ts;
             uint64_t ns = kernel_get_ns();
-            ts->tv_sec = (int64_t)(ns / 1000000000ULL);
-            ts->tv_nsec = (int64_t)(ns % 1000000000ULL);
+            ts.tv_sec = (int64_t)(ns / 1000000000ULL);
+            ts.tv_nsec = (int64_t)(ns % 1000000000ULL);
+            /* 用户指针必须校验后再写；x86 上未映射的 raw syscall 号可能
+               误落到这里（例如 setreuid=113），直接 ts->tv_sec 会写坏地址。 */
+            if (copy_to_user_bytes(&ts, (void *)regs[1], sizeof(ts)) < 0) {
+                regs[0] = (uint64_t)(int64_t)-EFAULT;
+                break;
+            }
         }
         regs[0] = 0;
         break;

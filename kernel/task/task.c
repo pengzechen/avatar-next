@@ -103,6 +103,13 @@ static bool slot_is_reapable_orphan_locked(uint32_t idx)
     task_t *t = &g_task_pool[idx];
     if (!g_stack_used[idx] || t->state != TASK_DEAD)
         return false;
+    /*
+       DEAD 只代表“不在调度队列里”，不代表已经离开自己的内核栈/页表/TCB。
+       等 arch_task_switch 把 switch_done 置 1 之后才能收。没置位时先跳过，
+       以后某次 task_alloc_slot() 再看 —— 不能在这里等，调用方持有池锁。
+    */
+    if (!__atomic_load_n(&t->switch_done, __ATOMIC_ACQUIRE))
+        return false;
     if (t->parent_id == 0)
         return true;
 
@@ -224,12 +231,33 @@ void task_reap_dead(task_t *task)
     uint64_t flags;
     spin_lock_irqsave(&g_task_pool_lock, &flags);
     bool mine = (task->state == TASK_DEAD);
+    uint32_t id = task->id;
+    spin_unlock_irqrestore(&g_task_pool_lock, flags);
+    if (!mine)
+        return; /* 别人已经收过了 */
+
+    /*
+       DEAD 之后、arch_task_switch 完成之前，本任务还可能在使用
+       自己的 pgd / 内核栈 / TCB。必须等 switch_done（release store）
+       再销毁资源；否则 wait4 会把还在运行的退出任务连页表一起拆掉。
+
+       调用者是 wait4 / exec 包装进程，不在 IRQ 上下文，可以 yield。
+       等待期间任务 id 若变了说明槽已经被别人回收并复用（ABA），直接退出。
+    */
+    while (!__atomic_load_n(&task->switch_done, __ATOMIC_ACQUIRE)) {
+        if (task->id != id)
+            return;
+        task_yield();
+    }
+
+    spin_lock_irqsave(&g_task_pool_lock, &flags);
+    mine = (task->state == TASK_DEAD && task->id == id);
     if (mine)
         task->state = TASK_ALLOCATING; /* 占住, 防双重释放 */
     spin_unlock_irqrestore(&g_task_pool_lock, flags);
 
     if (!mine)
-        return; /* 别人已经收过了 */
+        return; /* 等的时候被别人收掉/复用了 */
 
     slot_take_and_free(idx);
 }
@@ -757,6 +785,23 @@ void task_yield(void)
 
 /* ── task_exit ───────────────────────────────────────────── */
 
+/*
+   退出流程跑在任务自己的内核栈上，不换栈。
+
+   “已经 DEAD” ≠ “已经离开内核栈/页表/TCB”：
+     notify 父进程之后，父进程可能立刻在另一颗核上 wait4 回收本任务。
+     此时本任务还要执行 sched_dequeue()/sched_schedule()，arch_task_switch
+     也还要在它的栈上保存上下文、并从它的页表切走。如果回收路径这时就
+     vm_destroy_user_process() + 复用栈槽/TCB，就会踩到正在使用的资源。
+
+   所以回收路径（task_reap_dead / 孤儿扫描）必须等 switch_done 置 1。
+   switch_done 由 arch_task_switch 在**真正换到 next 的栈和页表之后**写入
+   （release 语义），见 task.h / switch.h。
+
+   这与 Linux 的 do_exit → schedule → finish_task_switch 是同一个思路：
+   “逻辑死亡”和“栈/TCB 可以回收”是两个时刻。Linux 用 task_struct 引用
+   计数 + RCU 异步完成；本内核规模小，用一次性同步等待就够了。
+*/
 void task_exit(void)
 {
     task_t *cur = task_current();
@@ -786,24 +831,8 @@ void task_exit(void)
     sched_dequeue(cur);
 
     /*
-     注意：不在这里调用 free_task_slot()！
-
-     如果在这里释放栈槽(g_stack_used[i] = 0), 那么在接下来的
-     sched_schedule() 执行期间, 如果发生中断, 新的任务可能会被分配
-     到同一个栈槽, 导致两个任务使用同一个栈, 造成数据损坏。
-
-     正确的做法是：标记为 DEAD 后, 让栈槽保持"已占用"状态。
-     当后续创建新任务时, task_alloc_slot() 会回收"没人会再来 wait"的
-     僵尸槽(判据见 slot_is_reapable_orphan_locked)。父进程自己那一份
-     由 wait4 / exec wrapper 读完成码后调 task_reap_dead() 收。
-
-     这样可以确保在 task_exit() 执行期间和调度切换期间,
-     没有其他任务会重用这个栈。
-    */
-
-    /*
-     切换到下一个任务。sched_schedule 检测到 state == DEAD,
-     不会重新入队, 所以不会再次调度到本任务。
+     切换出去。sched_schedule 在 arch_task_switch 里把 switch_done 置 1
+     之后，本任务不会再被调度，父进程才可以安全回收。
     */
     sched_schedule();
 

@@ -1,26 +1,33 @@
 # tests/ltp/testcases.list
 # LTP 测例选择清单 — 每行格式: <syscall_dir>/<binary_name>
 #
-# 覆盖分类:
-#   进程管理: getpid, getppid, getuid, getgid, geteuid, getpgid, getsid, setsid,
+# 覆盖分类（2026-10，共 79 个；三架构均实测通过）:
+#   进程管理: getpid, getppid, getuid, getgid, geteuid, getegid, getpgid,
+#             getsid, setsid, setpgid, set_tid_address, gettid,
 #             exit, exit_group, fork, wait4, clone
-#   文件 I/O: write, read, readv, writev, close, dup3, pipe, lseek, fcntl, getcwd
+#   文件 I/O: open, close, read, write, readv, writev, pread64, pwrite64,
+#             lseek, ftruncate, fsync, fdatasync, dup, dup3, fcntl, pipe,
+#             getcwd, chdir, fstat, faccessat
 #   内存管理: brk, mmap, munmap
-#   信号:     kill, rt_sigaction
-#   系统信息: uname, clock_gettime, getrusage
+#   信号:     kill, tkill, rt_sigaction, sigaction, rt_sigprocmask
+#   系统信息: uname, clock_gettime, getrusage, getrandom
 #   调度:     sched_yield
+#   多路复用: poll, pselect6, epoll_create1, epoll_ctl, epoll_wait
 #
 # ── 选择原则 ────────────────────────────────────────────────────────────
 # 只覆盖内核【已经实现且行为正确】的功能，不靠测例倒逼新特性。
 #
 # 内核里是 stub / 硬编码的，**不要选**（选了就等于要求补功能）：
-#   fsync, fdatasync    → 直接返回 0
 #   mprotect, madvise   → 直接返回 0
 #   umask               → 恒返回 0022
 #   getrlimit/setrlimit → 恒返回 unlimited
-#   dup                 → x86_64 翻译表有意返回 ENOSYS（syscall.c case 32）
 #
 # 组/权限/cgroup 相关（setuid/setgid/setgroups/faccessat/...）按项目定位不做。
+#
+# 已不再属于“不要选”：
+#   fsync/fdatasync → 已接到 VFS sync（FAT 真正 f_sync，ext4 暂无操作），
+#                     fdatasync01 已加入并 PASS
+#   dup             → x86_64 已映射到内部 dup；dup01 已加入并 PASS
 #
 # ── 试过但过不了的，连同原因记在这里，避免以后重复踩 ────────────────────
 # LTP 对错误路径和边界语义要求很高，而本项目多数实现是"够 busybox 用"，
@@ -59,7 +66,6 @@
 #   pipe2_01     → pipe2 的 O_NONBLOCK 未反映到 fcntl(F_GETFL)
 #   prctl01      → PR_GET_PDEATHSIG 取不到 PR_SET_PDEATHSIG 设的值
 #   sendfile02   → sendfile 的 offset 与文件位置语义不符
-#   tkill01      → tkill 返回 EBADF，信号也未被捕获
 #   getrandom01  → 返回值语义不符
 #   nanosleep01  → 需要 tick 级精度（当前睡眠粒度受调度 tick 限制）
 #   ppoll01      → 测例自身 SIGSEGV
@@ -104,15 +110,14 @@
 #   epoll_ctl02   不支持 epoll 的 fd 应被拒；重复 ADD 应 EEXIST
 #   faccessat02   dirfd 指向非目录应 ENOTDIR，实返 EBADF（与已知 openat01 同源）
 #   fcntl05       F_GETLK / flock 未实现
-#   ftruncate03   ftruncate 语义（与已知 ftruncate01 同源）
 #   kill02        进程组信号未送达所有成员 —— kill(0, sig) 的广播不全
 #   nanosleep02   nanosleep 需可被信号打断并返 EINTR（当前是 yield 桩）
 #   read02        读目录应返 EISDIR
 #   pipe2_02      pipe2 的 O_CLOEXEC 未生效
 #
 # 【D 未实现的功能】
-#   pread01 / pwrite01 → pread64 / pwrite64 返回 ENOSYS
-#   sigpending02       → raise() 之后取 pending 失败
+#   sigpending02       → 基本用例已通过；剩下的是 PROT_NONE 坏地址未返回 EFAULT
+#                        （见 user_range_accessible 只查映射、不查权限位）
 #
 # 【E 疑似真 bug —— 不是"语义不够细"，是行为不对，值得单独查】
 #   mmap03    MAP_SHARED 的数据与父进程不一致（memcmp 非 0）
@@ -221,3 +226,68 @@ epoll_wait/epoll_wait04
 
 # ── 杂项 ──
 getrandom/getrandom02
+
+# ── 第三轮：覆盖既有 syscall（2026-10）────────────────────────────────────
+# 原则：只用已经实现的 syscall，不为测例补新功能。
+# 已跑通（x86_64）：
+open/open01
+pread/pread01
+pread/pread02
+pwrite/pwrite01
+pwrite/pwrite02
+ftruncate/ftruncate03
+fdatasync/fdatasync01
+dup/dup01
+set_tid_address/set_tid_address01
+gettid/gettid02
+setpgid/setpgid01
+tkill/tkill01
+
+# 本轮试跑（aarch64 / riscv64 / x86_64 均已验证通过）：
+fsync/fsync02
+open/open03
+pselect/pselect01
+dup/dup02
+
+# 试过但当前不可选（原因，避免重复踩）：
+#   open02        → 依赖 seteuid（未实现）
+#   mkdir02/mkdir04 → 依赖 setregid/setreuid（未实现）
+#                    （x86 上 raw 113 曾与内部 clock_gettime 撞号；clock_gettime
+#                     已改为 copy_to_user_bytes，不会再写坏地址，但仍无法满足测例）
+#   unlink05      → 依赖 mkfifo/mknod（未实现）
+#   getcpu01      → 依赖 sched_getaffinity（未实现）
+#   rename01/rename03/rename04/getdents02/fsync01 → 需要块设备 + mount
+#   ftruncate04   → 需要读取内核 .config
+#   execve01      → 依赖 MAP_SHARED 文件映射一致性（LTP_IPC_PATH bad magic）
+#   sigpending02/sysinfo02/getcpu02 → tst_get_bad_addr 是 PROT_NONE 页；
+#                    user_range_accessible() 只查“是否映射”，不查权限位
+#   tgkill02      → 需要信号队列满时返回 EAGAIN 的语义
+#   unlink07/08   → 暴露三处既有语义缺口：空路径被 resolve_path 当成 "/"；
+#                    非法 path 用户指针未先 copy_string_from_user；
+#                    ENAMETOOLONG/ENOTDIR/目录权限未做。先记录，避免误以为已覆盖
+#
+# 第三轮顺带修掉的既有 bug（都有测例兜底）：
+#   - x86_64 raw 17/18 (pread64/pwrite64) 未映射：17 当成了 read、18 落 ENOSYS；
+#     raw 32 (dup) 曾故意 ENOSYS；raw 200 (tkill) 与内部 BIND(200) 撞号 → EBADF。
+#   - clock_gettime 裸写用户指针：x86 上未映射的 setreuid(113) 会落到内部
+#     clock_gettime(113)，把 uid 当 timespec 指针写 → CR2=0x2 内核 #PF
+#     （mkdir04 实测）。改成 copy_to_user_bytes 后最坏返回 EFAULT。
+#   - pread/pwrite 的用户缓冲未先拷贝/校验；NULL buf 返回 0；fd 类型与访问
+#     模式错误码不对；ext4 pwrite 越过 EOF（lwext4 fseek 拒绝 offset>fsize）
+#     → 现在先补零再写。
+#   - open(O_CREAT) 忽略 mode（open01 的 sticky bit）；ftruncate 错误码；
+#     execve 完全忽略 envp（子进程拿不到环境变量）。
+#   - aarch64 的 open 标志 ABI 未翻译：O_DIRECTORY 在 aarch64 是 040000，
+#     内核按 asm-generic 的 0200000 解释，于是 open(file, O_DIRECTORY) 会
+#     成功返回普通文件。LTP 清理 tmpdir 时 fdopendir 才报 ENOTDIR，整个
+#     用例以 TWARN(exit=4) 计失败（fdatasync01 在 aarch64 上的根因）。
+#     现在 openat 入口按架构做双向翻译（F_GETFL 也翻回去）。
+#   - fstat/newfstatat/getresuid/getresgid/getrandom 仍在裸写用户指针；
+#     已统一改为内核缓冲 + copy_to_user_bytes，未映射地址返回 EFAULT。
+#   - SMP>1 下 task_exit 在切出 CPU 前唤醒父进程，父进程立即回收槽位，
+#     下一次 fork 把仍在使用的内核栈刷成 0xA5 → getpid01 几乎必挂。
+#     已改为用 task_t::switch_done 门控：arch_task_switch 真正切到 next
+#     的栈/页表后才置位，回收路径等待它再销毁资源。详见
+#     docs/bugfix/SMP_TASK_EXIT_STACK_REUSE.md。
+# 当前 aarch64 / riscv64 / x86_64（SMP=1）全量均 79/79 PASS；
+# x86_64 SMP=4 亦 79/79 PASS。

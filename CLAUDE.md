@@ -126,6 +126,9 @@ avatar/
 - **自旋锁**: `docs/basic/SPINLOCK.md` - spinlock.h。中断状态存**调用点的局部变量**
   （`spin_lock_irqsave(&l, &flags)`），不要存进锁对象 —— `irq_flags` 那个字段
   在 SMP 下会被别的 CPU 覆盖
+- **系统调用现状**: `docs/SYSCALL_IMPLEMENTATION.md` - 104 个具名 Linux 入口的
+  ⚠️完整/不完整/桩分类，以及裸号兼容项和历史 `SYS_*` ABI。改 syscall 前先看，
+  别把“静默返回 0”的桩当成已实现
 
 ### 调试和日志
 
@@ -189,6 +192,15 @@ avatar/
 
 - **中断开关策略**: `docs/INTERRUPT_CONTROL_COMPARISON.md` - AArch64/RISC-V 中断开关的核心约定。关键：中断策略按“EL1 里运行的是谁”区分——EL0 任务的内核侧（syscall/异常）关中断，独立内核线程（含 idle）开中断、可被抢占。含 `task_trampoline` vs `task_trampoline_user` 的分野与代码检查清单。
 - **延迟调度机制**: `docs/INTERRUPT_CONTEXT_SWITCH.md` - 为什么不能在 ISR 内切换任务，而是只置 `need_resched`、在异常返回路径（`sched_check_and_yield`）才切换。
+
+- **SMP 任务退出 / 栈复用**: `docs/bugfix/SMP_TASK_EXIT_STACK_REUSE.md` -
+  动 `task_exit()`、`task_alloc_slot()` 的栈回收、或 wait4 唤醒顺序前必读。
+  症状是内核栈被 `TASK_STACK_MAGIC(0xA5)` 整块刷掉，`sched_dequeue` 里
+  `call` 到 `0xa5a5...` 野地址后整机挂死；**只在 SMP>1 复现**（LTP
+  `getpid01` 的连续 fork/wait 是回归网）。要点：DEAD 不等于已经切出 CPU；
+  回收 pgd / 内核栈 / TCB 之前，必须等 `arch_task_switch` 在**真正换到
+  next 的栈和页表之后**置位的 `switch_done`（release store）。Linux 用
+  task_struct 引用计数 + RCU 达到同一目的。
 
 ### 虚拟化（VMM / guest）
 

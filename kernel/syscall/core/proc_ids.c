@@ -106,9 +106,13 @@ void proc_ids_handler(uint64_t syscall_num, uint64_t regs[6], task_t *current)
             regs[0] = (uint64_t)(int64_t)-EFAULT;
             break;
         }
-        *ruid = current->uid;
-        *euid = current->euid;
-        *suid = current->euid;
+        /* 用户指针必须经 copy_to_user_bytes；裸写会让未映射地址变成内核态 #PF */
+        uint32_t uid = current->uid, euid_v = current->euid;
+        if (copy_to_user_bytes(&uid, ruid, sizeof(uid)) < 0 || copy_to_user_bytes(&euid_v, euid, sizeof(euid_v)) < 0 ||
+            copy_to_user_bytes(&euid_v, suid, sizeof(euid_v)) < 0) {
+            regs[0] = (uint64_t)(int64_t)-EFAULT;
+            break;
+        }
         regs[0] = 0;
         break;
     }
@@ -132,9 +136,12 @@ void proc_ids_handler(uint64_t syscall_num, uint64_t regs[6], task_t *current)
             regs[0] = (uint64_t)(int64_t)-EFAULT;
             break;
         }
-        *rgid = current->gid;
-        *egid = current->egid;
-        *sgid = current->egid;
+        uint32_t gid = current->gid, egid_v = current->egid;
+        if (copy_to_user_bytes(&gid, rgid, sizeof(gid)) < 0 || copy_to_user_bytes(&egid_v, egid, sizeof(egid_v)) < 0 ||
+            copy_to_user_bytes(&egid_v, sgid, sizeof(egid_v)) < 0) {
+            regs[0] = (uint64_t)(int64_t)-EFAULT;
+            break;
+        }
         regs[0] = 0;
         break;
     }

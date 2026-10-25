@@ -54,17 +54,38 @@ void getrandom_handler(uint64_t regs[6])
 {
     char *buf = (char *)regs[0];
     uint64_t len = regs[1];
-    if (buf) {
-        /* LCG 伪随机, 以启动时间戳为种子。不是密码学安全的,
-           但每次调用输出不同序列, 满足 musl stack canary 等基本需求。
-        */
-        static uint64_t s_prng_state = 0;
-        if (s_prng_state == 0)
-            s_prng_state = kernel_get_ns() ^ 0x9e3779b97f4a7c15ULL;
-        for (uint64_t i = 0; i < len; i++) {
+    if (len == 0) {
+        regs[0] = 0;
+        return;
+    }
+    if (!buf) {
+        regs[0] = (uint64_t)(int64_t)-EFAULT;
+        return;
+    }
+
+    /* LCG 伪随机, 以启动时间戳为种子。不是密码学安全的,
+       但每次调用输出不同序列, 满足 musl stack canary 等基本需求。
+    */
+    static uint64_t s_prng_state = 0;
+    if (s_prng_state == 0)
+        s_prng_state = kernel_get_ns() ^ 0x9e3779b97f4a7c15ULL;
+
+    /* 不能把用户地址直接交给内核写：分块生成到栈上再 copy_to_user_bytes。 */
+    char kbuf[256];
+    uint64_t done = 0;
+    while (done < len) {
+        uint64_t n = len - done;
+        if (n > sizeof(kbuf))
+            n = sizeof(kbuf);
+        for (uint64_t i = 0; i < n; i++) {
             s_prng_state = s_prng_state * 6364136223846793005ULL + 1442695040888963407ULL;
-            buf[i] = (char)(s_prng_state >> 56);
+            kbuf[i] = (char)(s_prng_state >> 56);
         }
+        if (copy_to_user_bytes(kbuf, buf + done, n) < 0) {
+            regs[0] = done ? done : (uint64_t)(int64_t)-EFAULT;
+            return;
+        }
+        done += n;
     }
     regs[0] = len;
 }

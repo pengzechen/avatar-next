@@ -38,6 +38,33 @@ static bool trace_heavy_task(task_t *current)
     return current && current->is_user_process && current->heap_end >= 0x3000000ULL;
 }
 
+/*
+   pread/pwrite 的 fd 语义（Linux）：
+     - 目录：pread → EISDIR，pwrite → EBADF
+     - pipe/pty/socket 等非普通文件 → ESPIPE
+     - 普通文件但访问模式不匹配（pread 用 O_WRONLY / pwrite 用 O_RDONLY）
+       → EBADF
+*/
+#define ACCMODE_MASK_AVATAR 3
+#define ACC_WRONLY_AVATAR   1
+
+static int prw_fd_check(fd_obj_t *obj, bool is_write)
+{
+    if (!obj || !fd_obj_file(obj))
+        return -EBADF;
+
+    vfs_file_t *f = fd_obj_file(obj);
+    if (vfs_file_is_dir(f))
+        return is_write ? -EBADF : -EISDIR;
+    if (!vfs_file_is_regular(f))
+        return -ESPIPE;
+
+    int acc = f->flags & ACCMODE_MASK_AVATAR;
+    if (is_write ? (acc == 0) : (acc == ACC_WRONLY_AVATAR))
+        return -EBADF;
+    return 0;
+}
+
 static int copy_iov_from_user(struct kernel_iovec *dst, const struct kernel_iovec *uiov, int iovcnt)
 {
     if (!uiov || iovcnt < 0 || iovcnt > IOV_MAX_AVATAR || iovcnt > IOV_COPY_MAX)
@@ -62,8 +89,12 @@ void read_handler(uint64_t regs[6], task_t *current)
     int fd = (int)regs[0];
     char *buf = (char *)regs[1];
     uint64_t count = regs[2];
-    if (!buf || count == 0) {
+    if (count == 0) {
         regs[0] = 0;
+        return;
+    }
+    if (!buf) {
+        regs[0] = (uint64_t)(int64_t)-EFAULT;
         return;
     }
 
@@ -131,8 +162,12 @@ void pread64_handler(uint64_t regs[6], task_t *current)
     uint64_t count = regs[2];
     int64_t offset = (int64_t)regs[3];
 
-    if (!buf || count == 0) {
+    if (count == 0) {
         regs[0] = 0;
+        return;
+    }
+    if (!buf) {
+        regs[0] = (uint64_t)(int64_t)-EFAULT;
         return;
     }
     if (offset < 0) {
@@ -141,12 +176,13 @@ void pread64_handler(uint64_t regs[6], task_t *current)
     }
 
     fd_obj_t *obj = task_get_fd(current, fd);
-    if (!obj) {
-        regs[0] = (uint64_t)(int64_t)-EBADF;
+    int ferr = prw_fd_check(obj, false);
+    if (ferr < 0) {
+        regs[0] = (uint64_t)(int64_t)ferr;
         return;
     }
-    if (!vfs_file_is_regular(fd_obj_file(obj))) {
-        regs[0] = (uint64_t)(int64_t)-ESPIPE;
+    if (!user_range_accessible(buf, count)) {
+        regs[0] = (uint64_t)(int64_t)-EFAULT;
         return;
     }
 
@@ -166,8 +202,12 @@ void write_handler(uint64_t regs[6], task_t *current)
     int fd = (int)regs[0];
     const char *buf = (const char *)regs[1];
     uint64_t count = regs[2];
-    if (!buf) {
+    if (count == 0) {
         regs[0] = 0;
+        return;
+    }
+    if (!buf) {
+        regs[0] = (uint64_t)(int64_t)-EFAULT;
         return;
     }
 
@@ -232,8 +272,12 @@ void pwrite64_handler(uint64_t regs[6], task_t *current)
     uint64_t count = regs[2];
     int64_t offset = (int64_t)regs[3];
 
-    if (!buf || count == 0) {
+    if (count == 0) {
         regs[0] = 0;
+        return;
+    }
+    if (!buf) {
+        regs[0] = (uint64_t)(int64_t)-EFAULT;
         return;
     }
     if (offset < 0) {
@@ -242,17 +286,40 @@ void pwrite64_handler(uint64_t regs[6], task_t *current)
     }
 
     fd_obj_t *obj = task_get_fd(current, fd);
-    if (!obj) {
-        regs[0] = (uint64_t)(int64_t)-EBADF;
-        return;
-    }
-    if (!vfs_file_is_regular(fd_obj_file(obj))) {
-        regs[0] = (uint64_t)(int64_t)-ESPIPE;
+    int ferr = prw_fd_check(obj, true);
+    if (ferr < 0) {
+        regs[0] = (uint64_t)(int64_t)ferr;
         return;
     }
 
-    int rc = vfs_pwrite(fd_obj_file(obj), buf, (size_t)count, offset);
-    regs[0] = rc >= 0 ? (uint64_t)rc : (uint64_t)(int64_t)rc;
+    /*
+       和 write_handler 同样的理由：用户缓冲必须先拷到内核，不能把用户指针
+       一路交给 ext4_fwrite。分块上限由栈上的 kbuf 决定。
+    */
+    char kbuf[WRITE_USER_CHUNK];
+    uint64_t done = 0;
+    while (done < count) {
+        size_t n = (size_t)(count - done);
+        if (n > sizeof(kbuf))
+            n = sizeof(kbuf);
+        if (done > (uint64_t)(INT64_MAX - offset)) {
+            regs[0] = done ? done : (uint64_t)(int64_t)-EINVAL;
+            return;
+        }
+        if (copy_from_user_bytes(buf + done, kbuf, n) < 0) {
+            regs[0] = done ? done : (uint64_t)(int64_t)-EFAULT;
+            return;
+        }
+        int rc = vfs_pwrite(fd_obj_file(obj), kbuf, n, offset + (int64_t)done);
+        if (rc < 0) {
+            regs[0] = done ? done : (uint64_t)(int64_t)rc;
+            return;
+        }
+        done += (uint64_t)rc;
+        if ((size_t)rc < n)
+            break;
+    }
+    regs[0] = done;
 }
 
 void readv_handler(uint64_t regs[6], task_t *current)

@@ -91,8 +91,20 @@ typedef enum {
 
 /* ── Task Control Block ──────────────────────────────────── */
 typedef struct task {
-    uintptr_t sp;             /* 保存的内核栈指针(上下文切换时填入) */
-    task_state_t state;       /* 任务状态 */
+    uintptr_t sp;       /* 保存的内核栈指针(上下文切换时填入) */
+    task_state_t state; /* 任务状态 */
+    /*
+       switch_done：本任务上一次切出时，arch_task_switch 是否已经完成
+       "保存上下文 + 切换地址空间 + 换到 next 的栈"。
+
+       调度器在切入任务时清零；三个架构的 arch_task_switch 在真正换到
+       next 的栈之后置 1（release 语义）。wait4/reap 路径用它判断：
+       任务虽然已经 state=DEAD，但可能还站在自己的内核栈/页表上，
+       此时绝不能销毁 pgd、复用内核栈或复用 TCB。
+       （Linux 用 task_struct 引用计数 + RCU 达到同样的目的；我们这里
+        用一次性同步等待，见 task_reap_dead。）
+    */
+    volatile uint32_t switch_done;
     uint32_t id;              /* 唯一任务 ID */
     uint8_t priority;         /* 优先级(0 = 最高, 255 = 最低) */
     char name[TASK_NAME_LEN]; /* 任务名称 */

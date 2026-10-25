@@ -225,6 +225,13 @@ static int pseudo_file_stat(vfs_file_t *file, struct kernel_stat *st)
 
 static int ext4_file_read(vfs_file_t *file, void *buf, size_t len)
 {
+    /* lseek 允许把 fpos 放到 EOF 之后；ext4_fread 会做 fsize - fpos
+       (无符号下溢)，所以先截住。 */
+    if ((uint64_t)ext4_ftell(&file->u.ext4_file) >= ext4_fsize(&file->u.ext4_file)) {
+        file->offset = ext4_ftell(&file->u.ext4_file);
+        return 0;
+    }
+
     size_t rcnt = 0;
     int rc = ext4_fread(&file->u.ext4_file, buf, len, &rcnt);
     if (rc == EOK) {
@@ -311,19 +318,55 @@ static int ext4_file_truncate(vfs_file_t *file, uint64_t length)
     return rc == EOK ? 0 : -rc;
 }
 
+/*
+   lwext4 的 ext4_fseek(SEEK_SET) 拒绝 offset > fsize（EINVAL），所以
+   pwrite 到 EOF 之后不能直接 seek。这里先按 POSIX 语义把空洞补零：
+   从当前 EOF 起 fwrite 零块，直到 offset，再 fseek 到目标位置。
+*/
+static int ext4_zero_fill(ext4_file *f, uint64_t to)
+{
+    static const uint8_t zeros[64];
+    uint64_t pos = ext4_fsize(f);
+
+    if (pos >= to)
+        return 0;
+    if (ext4_fseek(f, (int64_t)pos, SEEK_SET_AVATAR) != EOK)
+        return -VFS_EIO;
+
+    while (pos < to) {
+        size_t chunk = (to - pos) > sizeof(zeros) ? sizeof(zeros) : (size_t)(to - pos);
+        size_t wcnt = 0;
+        if (ext4_fwrite(f, zeros, chunk, &wcnt) != EOK || wcnt != chunk)
+            return -VFS_EIO;
+        pos += chunk;
+    }
+    return 0;
+}
+
 static int ext4_file_pread(vfs_file_t *file, void *buf, size_t len, int64_t offset)
 {
     if (!buf || offset < 0)
         return -VFS_EINVAL;
 
-    int64_t saved = ext4_ftell(&file->u.ext4_file);
-    if (saved < 0 || ext4_fseek(&file->u.ext4_file, offset, SEEK_SET_AVATAR) != EOK)
-        return -VFS_EIO;
+    fs_global_lock();
+    uint64_t fsize = ext4_fsize(&file->u.ext4_file);
+    int rc;
 
-    size_t rcnt = 0;
-    int rc = ext4_fread(&file->u.ext4_file, buf, len, &rcnt);
-    int seek_rc = ext4_fseek(&file->u.ext4_file, saved, SEEK_SET_AVATAR);
-    return rc == EOK && seek_rc == EOK ? (int)rcnt : -VFS_EIO;
+    if ((uint64_t)offset >= fsize) {
+        rc = 0; /* POSIX: 从 EOF 之后读取返回 0 */
+    } else {
+        int64_t saved = ext4_ftell(&file->u.ext4_file);
+        if (saved < 0 || ext4_fseek(&file->u.ext4_file, offset, SEEK_SET_AVATAR) != EOK) {
+            rc = -VFS_EIO;
+        } else {
+            size_t rcnt = 0;
+            rc = ext4_fread(&file->u.ext4_file, buf, len, &rcnt) == EOK ? (int)rcnt : -VFS_EIO;
+            if (ext4_fseek(&file->u.ext4_file, saved, SEEK_SET_AVATAR) != EOK)
+                file->u.ext4_file.fpos = (uint64_t)saved;
+        }
+    }
+    fs_global_unlock();
+    return rc;
 }
 
 static int ext4_file_pwrite(vfs_file_t *file, const void *buf, size_t len, int64_t offset)
@@ -331,14 +374,29 @@ static int ext4_file_pwrite(vfs_file_t *file, const void *buf, size_t len, int64
     if (!buf || offset < 0)
         return -VFS_EINVAL;
 
+    fs_global_lock();
     int64_t saved = ext4_ftell(&file->u.ext4_file);
-    if (saved < 0 || ext4_fseek(&file->u.ext4_file, offset, SEEK_SET_AVATAR) != EOK)
-        return -VFS_EIO;
+    uint64_t fsize = ext4_fsize(&file->u.ext4_file);
+    int rc = 0;
 
-    size_t wcnt = 0;
-    int rc = ext4_fwrite(&file->u.ext4_file, buf, len, &wcnt);
-    int seek_rc = ext4_fseek(&file->u.ext4_file, saved, SEEK_SET_AVATAR);
-    return rc == EOK && seek_rc == EOK ? (int)wcnt : -VFS_EIO;
+    if ((uint64_t)offset > fsize)
+        rc = ext4_zero_fill(&file->u.ext4_file, (uint64_t)offset);
+
+    if (rc == 0) {
+        if (saved < 0 || ext4_fseek(&file->u.ext4_file, offset, SEEK_SET_AVATAR) != EOK) {
+            rc = -VFS_EIO;
+        } else {
+            size_t wcnt = 0;
+            rc = ext4_fwrite(&file->u.ext4_file, buf, len, &wcnt) == EOK ? (int)wcnt : -VFS_EIO;
+
+            /* pread/pwrite 不改变文件位置；只有原位置仍在新 EOF 之内才能恢复 */
+            uint64_t nsize = ext4_fsize(&file->u.ext4_file);
+            if (saved >= 0 && (uint64_t)saved <= nsize && ext4_fseek(&file->u.ext4_file, saved, SEEK_SET_AVATAR) != EOK)
+                file->u.ext4_file.fpos = (uint64_t)saved;
+        }
+    }
+    fs_global_unlock();
+    return rc;
 }
 
 static int ext4_file_sync(vfs_file_t *file)
@@ -611,14 +669,20 @@ static int pseudo_mount_open(const vfs_mount_t *mnt, const char *path, int flags
 static int ext4_mount_open(const vfs_mount_t *mnt, const char *path, int flags, int mode, vfs_file_t **out)
 {
     (void)mnt;
-    (void)mode;
     int ext4_flags = ext4_open_flags_from_linux(flags);
 
     if (!(flags & O_DIRECTORY_AVATAR)) {
+        /* O_CREAT 的 mode 只在新文件上生效；先记一下是否已存在 */
+        bool created = false;
+        if (flags & O_CREAT_AVATAR)
+            created = (ext4_inode_exist(path, EXT4_DE_UNKNOWN) != EOK);
+
         vfs_file_t *file = vfs_alloc_file();
         if (!file)
             return -VFS_EMFILE;
         if (ext4_fopen2(&file->u.ext4_file, path, ext4_flags) == EOK) {
+            if (created && (mode & 07777))
+                ext4_mode_set(path, (uint32_t)(mode & 07777));
             file->kind = VFS_FILE_EXT4_FILE;
             file->flags = flags;
             file->ops = &ext4_file_ops;

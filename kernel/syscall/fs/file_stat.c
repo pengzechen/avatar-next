@@ -26,6 +26,18 @@ static bool trace_heavy_task(task_t *current)
     return current && current->is_user_process && current->heap_end >= 0x3000000ULL;
 }
 
+/* 填好内核态 stat 后再一次性回写用户。绝不能把用户指针交给
+   vfs_stat_file/ext4_stat_file 直接写：用户传个未映射地址就是内核态 #PF，
+   异常处理会停机（和 waitid/ioctl 那几处是同一类问题）。
+*/
+static void stat_copy_out(const struct kernel_stat *kst, struct kernel_stat *ust, uint64_t regs[6])
+{
+    if (copy_to_user_bytes(kst, ust, sizeof(*kst)) < 0)
+        regs[0] = (uint64_t)(int64_t)-EFAULT;
+    else
+        regs[0] = 0;
+}
+
 void fstat_handler(uint64_t regs[6], task_t *current)
 {
     int fd = (int)regs[0];
@@ -44,23 +56,24 @@ void fstat_handler(uint64_t regs[6], task_t *current)
                      (obj && fd_obj_file(obj)) ? fd_obj_file(obj)->path : "<none>",
                      (obj && fd_obj_file(obj)) ? (int)fd_obj_file(obj)->kind : -1);
     }
+    struct kernel_stat kst;
     if (fd == 0 || fd == 1 || fd == 2 || (obj && !fd_obj_file(obj))) {
-        memset(st, 0, sizeof(*st));
-        st->st_mode = 0020666; /* character device */
-        st->st_rdev = (5 << 8) | (fd == 0 ? 0 : 1);
-        regs[0] = 0;
+        memset(&kst, 0, sizeof(kst));
+        kst.st_mode = 0020666; /* character device */
+        kst.st_rdev = (5 << 8) | (fd == 0 ? 0 : 1);
+        stat_copy_out(&kst, st, regs);
         return;
     }
     if (!obj) {
         regs[0] = (uint64_t)(int64_t)-EBADF;
         return;
     }
-    int rc = vfs_stat_file(fd_obj_file(obj), st);
+    int rc = vfs_stat_file(fd_obj_file(obj), &kst);
     if (rc < 0) {
         regs[0] = (uint64_t)(int64_t)rc;
         return;
     }
-    regs[0] = 0;
+    stat_copy_out(&kst, st, regs);
 }
 
 void newfstatat_handler(uint64_t regs[6], task_t *current)
@@ -83,12 +96,13 @@ void newfstatat_handler(uint64_t regs[6], task_t *current)
             regs[0] = (uint64_t)(int64_t)-EBADF;
             return;
         }
-        int rc = vfs_stat_file(fd_obj_file(obj), st);
+        struct kernel_stat kst;
+        int rc = vfs_stat_file(fd_obj_file(obj), &kst);
         if (rc < 0) {
             regs[0] = (uint64_t)(int64_t)rc;
             return;
         }
-        regs[0] = 0;
+        stat_copy_out(&kst, st, regs);
         return;
     }
     char abspath[128];
@@ -109,31 +123,32 @@ void newfstatat_handler(uint64_t regs[6], task_t *current)
                      abspath, (uint64_t)st, regs[3]);
     }
 
-    if (vfs_stat_path(abspath, st) == 0) {
-        regs[0] = 0;
+    struct kernel_stat kst;
+    if (vfs_stat_path(abspath, &kst) == 0) {
+        stat_copy_out(&kst, st, regs);
         return;
     }
     int pts_idx = pty_match_pts_path(abspath);
     if (pts_idx >= 0) {
-        memset(st, 0, sizeof(*st));
-        st->st_dev = 5;
-        st->st_ino = 256U + (uint32_t)pts_idx;
-        st->st_mode = 0020620;
-        st->st_nlink = 1;
-        st->st_rdev = ((uint64_t)136 << 8) | (uint32_t)pts_idx;
-        st->st_blksize = 4096;
-        regs[0] = 0;
+        memset(&kst, 0, sizeof(kst));
+        kst.st_dev = 5;
+        kst.st_ino = 256U + (uint32_t)pts_idx;
+        kst.st_mode = 0020620;
+        kst.st_nlink = 1;
+        kst.st_rdev = ((uint64_t)136 << 8) | (uint32_t)pts_idx;
+        kst.st_blksize = 4096;
+        stat_copy_out(&kst, st, regs);
         return;
     }
     if (strcmp(abspath, "/dev/ptmx") == 0) {
-        memset(st, 0, sizeof(*st));
-        st->st_dev = 5;
-        st->st_ino = 128U;
-        st->st_mode = 0020620;
-        st->st_nlink = 1;
-        st->st_rdev = ((uint64_t)5 << 8) | 2;
-        st->st_blksize = 4096;
-        regs[0] = 0;
+        memset(&kst, 0, sizeof(kst));
+        kst.st_dev = 5;
+        kst.st_ino = 128U;
+        kst.st_mode = 0020620;
+        kst.st_nlink = 1;
+        kst.st_rdev = ((uint64_t)5 << 8) | 2;
+        kst.st_blksize = 4096;
+        stat_copy_out(&kst, st, regs);
         return;
     }
     /* vfs_stat_path 已按挂载点分发（ext4/pseudofs/FAT）；不能再回退到 ext4，

@@ -19,7 +19,9 @@
 #include "syscall/io/epoll.h"
 #include "syscall/net/ksocket.h"
 #include "syscall/fs/pty.h"
+#include "arch.h"
 #include "vfs.h"
+#include "fs/vfs/vfs_internal.h"
 #include <ext4.h>
 #include <ext4_errno.h>
 
@@ -28,11 +30,54 @@ static bool trace_heavy_task(task_t *current)
     return current && current->is_user_process && current->heap_end >= 0x3000000ULL;
 }
 
+/*
+   open 标志的 ABI 翻译。
+
+   aarch64 的 fcntl 位布局与 asm-generic(x86_64/riscv64) 不同, 而内核内部
+   常量沿用 asm-generic 的数值:
+                     aarch64      内核内部(asm-generic)
+     O_DIRECTORY     040000       0200000
+     O_NOFOLLOW      0100000      0400000
+     O_DIRECT       0200000      040000
+   不翻译的后果是"错义"而不是报错: aarch64 上 open(file, O_DIRECTORY)
+   被当成普通 open 成功返回, 调用方直到 fdopendir 才发现 ENOTDIR
+   (LTP 的 rmobj 正是这样, tmpdir 清理变 TWARN, 测试进程以 4 退出);
+   反过来 O_DIRECT 会被误认成 O_DIRECTORY。
+   O_NOFOLLOW 内核本来就不实现, 保留原样即可。
+*/
+#define AARCH64_O_DIRECTORY 040000
+#define AARCH64_O_DIRECT    0200000
+
+static int open_flags_from_user(int flags)
+{
+#if ARCH_AARCH64
+    int out = flags & ~(AARCH64_O_DIRECTORY | AARCH64_O_DIRECT);
+    if (flags & AARCH64_O_DIRECTORY)
+        out |= O_DIRECTORY_AVATAR;
+    return out;
+#else
+    return flags;
+#endif
+}
+
+static int open_flags_to_user(int flags)
+{
+#if ARCH_AARCH64
+    int out = flags & ~O_DIRECTORY_AVATAR;
+    if (flags & O_DIRECTORY_AVATAR)
+        out |= AARCH64_O_DIRECTORY;
+    return out;
+#else
+    return flags;
+#endif
+}
+
 void openat_handler(uint64_t regs[6], task_t *current)
 {
     int dirfd = (int)regs[0];
     const char *pathname = (const char *)regs[1];
-    int flags = (int)regs[2];
+    int flags = open_flags_from_user((int)regs[2]);
+    int mode = (int)regs[3];
     if (!pathname) {
         regs[0] = (uint64_t)(int64_t)-ENOENT;
         return;
@@ -79,7 +124,7 @@ void openat_handler(uint64_t regs[6], task_t *current)
     }
 
     vfs_file_t *vf = NULL;
-    int rc = vfs_open(abspath, flags, 0, &vf);
+    int rc = vfs_open(abspath, flags, mode, &vf);
     if (rc < 0) {
         regs[0] = (uint64_t)(int64_t)rc;
         return;
@@ -266,7 +311,7 @@ void fcntl_handler(uint64_t regs[6], task_t *current)
         return;
     }
     case F_GETFL: {
-        regs[0] = obj ? (uint64_t)(uint32_t)obj->flags : 0;
+        regs[0] = obj ? (uint64_t)(uint32_t)open_flags_to_user(obj->flags) : 0;
         return;
     }
     case F_SETFL: {

@@ -416,6 +416,12 @@ void sched_schedule(void)
         /* state/on_cpu 也在同一把锁下发布, 避免 waker 看到中间态 */
         next->state = TASK_RUNNING;
         next->on_cpu = true;
+        /*
+           任务每次被切入时清掉上一次切出的完成标记。退出路径的
+           switch_done 只在任务真正下 CPU 后由 arch_task_switch 置 1，
+           所以不能残留上一轮的 1。
+        */
+        next->switch_done = 0;
     }
 
     if (use_rq_lock)
@@ -488,9 +494,9 @@ void sched_schedule(void)
        因此对用户进程传 NULL(跳过 satp 保存), 保持 pgd 不变。
     */
     uint64_t **prev_pgd_save = prev->is_user_process ? NULL : &prev->pgd;
-    arch_task_switch(&prev->sp, switch_sp, prev_pgd_save, next_pgd_for_switch);
+    arch_task_switch(&prev->sp, switch_sp, prev_pgd_save, next_pgd_for_switch, &prev->switch_done);
 #else
-    arch_task_switch(&prev->sp, switch_sp, &prev->pgd, next->pgd);
+    arch_task_switch(&prev->sp, switch_sp, &prev->pgd, next->pgd, &prev->switch_done);
 #endif
 
     /* prev 被恢复后恢复其中断状态 */
