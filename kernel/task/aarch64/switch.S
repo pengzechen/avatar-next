@@ -192,6 +192,20 @@ arch_switch_to_user:
     eret
 
 /*
+ * arch_enter_user - 内核任务 execve 原地替换后进入用户态
+ * x0 = user_entry, x1 = user_sp
+ *
+ * 页表已由 mm_vm_switch_user() 切好(内核映射在 TTBR1, 不受影响)。
+ * exec 不继承 TLS：TPIDR_EL0 清零后再复用 arch_switch_to_user 的
+ * eret 路径(其中会清 FP/SIMD 状态)。
+ */
+.global arch_enter_user
+arch_enter_user:
+    msr     tpidr_el0, xzr
+    mov     x2, sp           /* kernel_sp，arch_switch_to_user 未使用 */
+    b       arch_switch_to_user
+
+/*
  * task_trampoline_user - 用户进程首次调度时的跳转板
  *
  * 当 arch_task_switch "返回"到这个函数时：

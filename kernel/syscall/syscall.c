@@ -710,7 +710,7 @@ void syscall_handler(trap_frame_t *frame)
         const char *pathname = (const char *)regs[0];
         char **argv = (char **)regs[1];
         char **envp = (char **)regs[2];
-        regs[0] = sys_execve(pathname, argv, envp);
+        regs[0] = sys_execve(pathname, argv, envp, frame);
         break;
     }
     case SYS_BRK: {
@@ -760,7 +760,7 @@ void syscall_handler(trap_frame_t *frame)
         break;
 
     case LINUX_SYS_EXECVE:
-        execve_handler(regs);
+        execve_handler(regs, frame);
         break;
 
     case LINUX_SYS_WAIT4:

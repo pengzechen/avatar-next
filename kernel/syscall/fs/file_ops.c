@@ -146,6 +146,13 @@ void openat_handler(uint64_t regs[6], task_t *current)
         regs[0] = (uint64_t)(int64_t)-EMFILE;
         return;
     }
+    /*
+       open(O_CLOEXEC)：三架构的 O_CLOEXEC 都是 0x80000。
+       以前这里完全没记这位, 而 execve 现在按位图关闭 CLOEXEC fd —— 不记
+       就等于 O_CLOEXEC 被忽略, fd 会泄漏给 exec 后的新程序。
+    */
+    if (flags & 0x80000)
+        current->fd_cloexec[fd / 8] |= (uint8_t)(1u << (fd % 8));
     if (trace_heavy_task(current)) {
         KLOG_SYSCALL("[vfsop] pid=%u openat fd=%d pool=%d path=%s kind=%d\n", current->id, fd, pool, vf->path,
                      vf->kind);

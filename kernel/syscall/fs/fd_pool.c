@@ -151,6 +151,13 @@ int task_alloc_fd(task_t *task, int pool_idx)
         if (task->fd_table[i] == -1) {
             task->fd_table[i] = (int16_t)pool_idx;
             fd = i;
+            /*
+               新 fd 默认不是 CLOEXEC。必须在这里清掉上一个占位者留下的位：
+               close() 只把 fd_table 置 -1, 不动位图; 而 execve 现在会按位图
+               真正关闭 FD_CLOEXEC 的 fd —— 不清的话, 复用一个曾经标过
+               CLOEXEC 的 fd 号会让新 fd 在下次 exec 时被意外关掉。
+            */
+            task->fd_cloexec[i / 8] &= (uint8_t)~(1u << (i % 8));
             break;
         }
     }

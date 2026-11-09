@@ -57,4 +57,12 @@ extern void mm_vm_destroy_user_space(uint64_t pgd_phys);
 extern int mm_vm_unmap_page(void *pgd, uint64_t vaddr);
 extern void mm_vm_flush_tlb_user(void);
 
+/*
+   mm_vm_switch_user - 把本 CPU 当前用户地址空间切到 pgd_phys
+
+   给 execve 的原地替换用。用户 PML4 已包含内核高半区映射；没用 PCID，
+   写 CR3 即完成整 TLB 刷新。
+*/
+extern void mm_vm_switch_user(uint64_t pgd_phys);
+
 #endif /* X86_64_MM_VM_H */

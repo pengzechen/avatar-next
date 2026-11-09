@@ -463,6 +463,40 @@ __attribute__((noreturn)) void task_idle_loop(void)
     }
 }
 
+/* ── task_group_has_other_threads ───────────────────────────── */
+
+/*
+   只统计"活"的同组任务，跳过 DEAD / ALLOCATING 和内核任务。
+   持池锁扫描，避免与并发的 fork/exit 看到半更新的槽位。
+*/
+bool task_group_has_other_threads(task_t *task)
+{
+    if (!task)
+        return false;
+
+    uint32_t tgid = task->tgid ? task->tgid : task->id;
+    uint64_t flags;
+    bool found = false;
+
+    spin_lock_irqsave(&g_task_pool_lock, &flags);
+    for (uint32_t i = 0; i < TASK_MAX; i++) {
+        task_t *t = &g_task_pool[i];
+        if (!g_stack_used[i] || t == task)
+            continue;
+        if (!t->is_user_process)
+            continue;
+        if (t->state == TASK_DEAD || t->state == TASK_ALLOCATING)
+            continue;
+        if ((t->tgid ? t->tgid : t->id) == tgid) {
+            found = true;
+            break;
+        }
+    }
+    spin_unlock_irqrestore(&g_task_pool_lock, flags);
+
+    return found;
+}
+
 /* ── task_set_cpu_affinity ───────────────────────────────────
    把 task 移到指定 cpu 的运行队列。供 vcpu/EL2 等不能跨核迁移的
    任务在 enqueue 后立即重新绑定。

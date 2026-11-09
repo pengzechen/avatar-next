@@ -82,6 +82,20 @@ void arch_task_switch(uintptr_t *prev_sp, uintptr_t next_sp, uint64_t **prev_pgd
 */
 void arch_switch_to_user(uint64_t user_entry, uint64_t user_sp, uint64_t kernel_sp) __attribute__((noreturn));
 
+/*
+   arch_enter_user - 内核任务 execve 原地替换后直接进入用户态
+   @user_entry: 用户态入口点(虚拟地址)
+   @user_sp:    用户栈指针(虚拟地址)
+
+   调用前提：当前 CPU 的地址空间已经由 mm_vm_switch_user() 切到新进程的
+   页表，TSS.RSP0 / FS base(x86_64) 等已由调用方设置好。
+
+   只给"内核线程 exec"用(开机时的 busybox_loader)：它没有 trap frame，
+   不能走修改 trap_frame 返回的普通路径。普通用户进程的 execve 不调用
+   这个函数。本函数不返回。
+*/
+void arch_enter_user(uint64_t user_entry, uint64_t user_sp) __attribute__((noreturn));
+
 /* ── 中断控制 ────────────────────────────────────────────── */
 /*
    中断屏蔽原语已统一到 include/<arch>/exception_impl.h, 由 include/exception.h

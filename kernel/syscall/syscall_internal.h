@@ -373,7 +373,7 @@ void tgkill_handler(uint64_t regs[6]);
 void exit_handler(uint64_t regs[6]) __attribute__((noreturn));
 void exit_group_handler(uint64_t regs[6]) __attribute__((noreturn));
 void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame);
-void execve_handler(uint64_t regs[6]);
+void execve_handler(uint64_t regs[6], trap_frame_t *frame);
 void wait_handler(uint64_t regs[6], task_t *me);
 
 /* 进程身份/进程组/会话(core/proc_ids.c) */

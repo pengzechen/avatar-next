@@ -61,4 +61,13 @@ extern void mm_vm_destroy_user_space(uint64_t pgd_phys);
 extern int mm_vm_unmap_page(void *pgd, uint64_t vaddr);
 extern void mm_vm_flush_tlb_user(void);
 
+/*
+   mm_vm_switch_user - 把本 CPU 当前用户地址空间切到 pgd_phys
+
+   给 execve 的原地替换用：新映像在新页表里构建完成后，必须在销毁旧页表
+   之前先让本 CPU 真正跑在新页表上。AArch64 的内核映射在 TTBR1，切 TTBR0
+   不影响当前内核栈/代码。
+*/
+extern void mm_vm_switch_user(uint64_t pgd_phys);
+
 #endif /* AARCH64_MM_VM_H */

@@ -251,6 +251,14 @@ extern volatile uint32_t g_fg_pgid;
 void task_set_cpu_affinity(task_t *task, uint32_t cpu_id);
 
 /*
+   task_group_has_other_threads - 本任务所在的线程组里是否还有别的活任务
+
+   给 execve 判断旧页表能不能立刻回收用：还有兄弟线程时它们仍引用同一张
+   页表，销毁会 UAF。单线程进程(绝大多数)返回 false。
+*/
+bool task_group_has_other_threads(task_t *task);
+
+/*
    task_stack_used — 该任务内核栈的高水位(字节)
 
    任务的栈在创建时被刷成 TASK_STACK_MAGIC, 这里从栈底往上找第一处非图案的

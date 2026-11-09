@@ -278,3 +278,9 @@ void mm_vm_flush_tlb_user(void)
 {
     /* mm_vm_unmap_page() 已经逐页 invlpg, 不需要额外的全刷。 */
 }
+
+void mm_vm_switch_user(uint64_t pgd_phys)
+{
+    /* execve 原地换页表。没启用 PCID，写 CR3 就是整 TLB 刷新。 */
+    write_cr3(pgd_phys);
+}

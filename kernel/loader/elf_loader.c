@@ -113,17 +113,17 @@ static int resolve_symlink(const char *path, char *out, size_t outsz)
     return -1;
 }
 
-static int load_from_file_depth(const char *pathname, char **argv, char **envp, int depth);
+static int load_from_file_depth(const char *pathname, char **argv, char **envp, trap_frame_t *frame, int depth);
 
 /*
    elf_loader_load_from_file - 从文件系统加载并执行 ELF 程序
 */
-int elf_loader_load_from_file(const char *pathname, char **argv, char **envp)
+int elf_loader_load_from_file(const char *pathname, char **argv, char **envp, trap_frame_t *frame)
 {
-    return load_from_file_depth(pathname, argv, envp, 0);
+    return load_from_file_depth(pathname, argv, envp, frame, 0);
 }
 
-static int load_from_file_depth(const char *pathname, char **argv, char **envp, int depth)
+static int load_from_file_depth(const char *pathname, char **argv, char **envp, trap_frame_t *frame, int depth)
 {
     ext4_file file;
     int rc;
@@ -261,7 +261,7 @@ static int load_from_file_depth(const char *pathname, char **argv, char **envp, 
         new_argv[na] = NULL;
 #undef SHEBANG_MAX_ARGC
 
-        return load_from_file_depth(interp_path, new_argv, envp, depth + 1);
+        return load_from_file_depth(interp_path, new_argv, envp, frame, depth + 1);
     }
 
     /* ── 检查 PT_INTERP(动态连接器路径)───────────────────────────── */
@@ -324,11 +324,15 @@ static int load_from_file_depth(const char *pathname, char **argv, char **envp, 
         }
     }
 
-    /* 加载并执行 ELF(成功时不返回) */
-    rc = task_execve(path_buf, file_data, file_size, interp_data, interp_size, argv, envp);
+    /*
+       加载并执行 ELF(原地 exec)。
+       传 resolved 而不是 path_buf：/proc/self/exe 和 comm 用 Linux 语义的
+       真实可执行文件路径, 而不是用户给的、可能带符号链接的路径。
 
-    if (interp_data)
-        kfree_pages(interp_data, interp_pages);
-    kfree_pages(file_data, page_count);
+       缓冲区所有权从这里转交给 task_execve: 无论成功失败都由它释放,
+       本函数返回后不得再碰 file_data / interp_data(以前这里再 kfree 一次,
+       在原地 exec 语义下会 double free)。
+    */
+    rc = task_execve(resolved, file_data, file_size, interp_data, interp_size, argv, envp, frame);
     return rc;
 }

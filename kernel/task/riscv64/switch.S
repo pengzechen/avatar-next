@@ -245,6 +245,20 @@ arch_switch_to_user:
     sret
 
 /*
+ * arch_enter_user - 内核任务 execve 原地替换后进入用户态
+ * a0 = user_entry, a1 = user_sp
+ *
+ * 页表已由 mm_vm_switch_user() 切好，所以这里给 arch_switch_to_user
+ * 传 a3 = 0(保持当前 satp，不要再切一次)。其余流程与首次进入相同：
+ * 保存内核 tp 到 sscratch、清用户 tp、fence.i、sret。
+ */
+.global arch_enter_user
+arch_enter_user:
+    mv      a2, sp           /* kernel_sp */
+    li      a3, 0            /* 页表已经切好 */
+    j       arch_switch_to_user
+
+/*
  * arch_fork_resume_user - 子进程首次调度恢复 trap_frame 并返回用户态
  * 约定：s0 = trap_frame_t*
  */

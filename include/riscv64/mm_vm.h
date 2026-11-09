@@ -60,4 +60,14 @@ extern void mm_vm_destroy_user_space(uint64_t pgd_phys);
 extern int mm_vm_unmap_page(void *pgd, uint64_t vaddr);
 extern void mm_vm_flush_tlb_user(void);
 
+/*
+   mm_vm_switch_user - 把本 CPU 当前用户地址空间切到 pgd_phys
+
+   给 execve 的原地替换用。用户页表里已经复制了内核高半区映射，所以切
+   satp 后当前内核栈/代码仍然可达。新映像的代码页是刚写进去的，必须补
+   fence.i，否则可能取到旧指令（这一点以前由 arch_switch_to_user 的首次
+   进入路径负责，原地 exec 走的是 trap 返回路径）。
+*/
+extern void mm_vm_switch_user(uint64_t pgd_phys);
+
 #endif /* RISCV64_MM_VM_H */

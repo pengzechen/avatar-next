@@ -602,3 +602,21 @@ void mm_vm_flush_tlb_user(void)
     barrier_sync();       /* 原 dsb ish */
     barrier_instr_full(); /* 原 isb */
 }
+
+void mm_vm_switch_user(uint64_t pgd_phys)
+{
+    /*
+       execve 原地换页表。和 arch_task_switch 里的 TTBR0 切换保持同一序列：
+       写 TTBR0 → isb → 全量 TLBI → dsb → isb。
+
+       内核映射在 TTBR1，切 TTBR0 时当前内核栈/代码不受影响；但旧页表的
+       用户映射必须在新页表生效后才能销毁，所以调用点都严格按
+       switch → destroy 的顺序。
+    */
+    barrier_sync();
+    __asm__ volatile("msr ttbr0_el1, %0" ::"r"(pgd_phys) : "memory");
+    __asm__ volatile("isb" ::: "memory");
+    __asm__ volatile("tlbi vmalle1is" ::: "memory");
+    barrier_sync();
+    barrier_instr_full();
+}

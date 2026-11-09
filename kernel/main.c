@@ -79,9 +79,13 @@ static void load_busybox(void *arg)
     char *bb_argv[] = { "sh", "-i", NULL };
     char *bb_envp[] = { "PATH=/bin:/usr/bin:/sbin:/usr/sbin", "HOME=/root", "TERM=vt100", NULL };
 
-    /* 调用 ELF 加载器执行 /busybox */
+    /*
+       调用 ELF 加载器执行 /busybox。frame=NULL：这是内核线程，原地 exec
+       成功后由 arch_enter_user() 直接进入用户态，本任务(以及它的 PID)
+       就是 shell 本身，不再有 wrapper 残留在 ps 里。
+    */
     const char *path = "/busybox";
-    int rc = elf_loader_load_from_file(path, bb_argv, bb_envp);
+    int rc = elf_loader_load_from_file(path, bb_argv, bb_envp, NULL);
 
     if (rc != 0) {
         KLOG_ERROR("[busybox_loader] Failed to load /busybox: %d\n", rc);

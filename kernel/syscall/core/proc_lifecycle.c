@@ -231,7 +231,7 @@ void exit_group_handler(uint64_t regs[6])
     sys_execve
    ───────────────────────────────────────────────────────────────
 */
-int64_t sys_execve(const char *pathname, char **argv, char **envp)
+int64_t sys_execve(const char *pathname, char **argv, char **envp, trap_frame_t *frame)
 {
     if (pathname == NULL)
         return -1;
@@ -239,19 +239,9 @@ int64_t sys_execve(const char *pathname, char **argv, char **envp)
     KLOG_SYSCALL("[syscall] execve called\n");
 
     task_t *current = task_current();
-    /* 记录可执行文件路径(/proc/self/exe 使用) */
-    {
-        int k = 0;
-        while (pathname[k] && k < (int)TASK_EXE_LEN - 1) {
-            current->exe_path[k] = pathname[k];
-            k++;
-        }
-        current->exe_path[k] = '\0';
-    }
 
-    /* execve: fd 继承由 task_execve → process_create_with_pgd 处理,
-       这里不关闭 fd, 让新进程继承连接 socket 等。
-       CLOEXEC 标记的 fd 在新进程创建后才关闭。
+    /* execve 现在原地替换映像: fd 表保留, 只有 FD_CLOEXEC 项由
+       task_execve 关闭(Linux 语义)。连接 socket、控制台等不受影响。
     */
 
     /* 从 userspace 复制 argv(按 CPU 取行, 理由见 g_exec_arg_store 的注释) */
@@ -313,17 +303,21 @@ int64_t sys_execve(const char *pathname, char **argv, char **envp)
     char abs_path[256];
     resolve_path(current->cwd, pathname, abs_path, (int)sizeof(abs_path));
 
-    int rc = elf_loader_load_from_file(abs_path, kern_argv, kern_envp);
-    /* 成功则不应返回到这里 */
+    /*
+       成功时当前进程已被原地替换成新程序(PID 不变), 返回 0;
+       调用方的 syscall 返回路径会把控制权交给新入口。
+       失败时旧映像不变, 返回负错误码。
+    */
+    int rc = elf_loader_load_from_file(abs_path, kern_argv, kern_envp, frame);
     return rc;
 }
 
-void execve_handler(uint64_t regs[6])
+void execve_handler(uint64_t regs[6], trap_frame_t *frame)
 {
     const char *pathname = (const char *)regs[0];
     char **argv = (char **)regs[1];
     char **envp = (char **)regs[2];
-    regs[0] = sys_execve(pathname, argv, envp);
+    regs[0] = sys_execve(pathname, argv, envp, frame);
 }
 
 /* ───────────────────────────────────────────────────────────────

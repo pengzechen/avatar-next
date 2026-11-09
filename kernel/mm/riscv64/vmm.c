@@ -246,3 +246,21 @@ void mm_vm_flush_tlb_user(void)
 {
     __asm__ volatile("sfence.vma" ::: "memory");
 }
+
+void mm_vm_switch_user(uint64_t pgd_phys)
+{
+    uint64_t satp = pgd_phys_to_satp(pgd_phys);
+
+    /*
+       execve 原地换页表。用户根页表包含内核高半区映射，切 satp 后当前
+       内核栈/代码仍可达。
+
+       fence.i 是这里必须的：新映像的代码页是内核刚 memcpy 进去的，而
+       trap 返回路径(boot/riscv64/exception.S 的 sret)不会同步 I-cache。
+       以前每次 exec 都新建任务、首次进入走 arch_switch_to_user，那里有
+       fence.i；原地 exec 改走 trap 返回，必须自己补上。
+    */
+    __asm__ volatile("csrw satp, %0" ::"r"(satp) : "memory");
+    __asm__ volatile("sfence.vma" ::: "memory");
+    __asm__ volatile("fence.i" ::: "memory");
+}

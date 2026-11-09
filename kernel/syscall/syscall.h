@@ -137,7 +137,7 @@ int64_t sys_sleep(uint64_t ms);
 
    返回：成功不返回, 失败返回 -1
 */
-int64_t sys_execve(const char *pathname, char **argv, char **envp);
+int64_t sys_execve(const char *pathname, char **argv, char **envp, trap_frame_t *frame);
 
 /*
    sys_brk - 设置程序断点

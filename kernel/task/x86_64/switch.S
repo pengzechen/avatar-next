@@ -112,7 +112,48 @@ task_trampoline_user:
     
     /* 跳转到用户态（Ring 3）*/
     iretq
-    
+
+    /* 不会到达这里 */
+    ud2
+
+/*
+ * arch_enter_user - 内核任务 execve 原地替换后进入用户态（x86_64）
+ *
+ * rdi = user_entry, rsi = user_sp
+ *
+ * 调用前 C 侧已经完成：CR3 ← 新页表(mm_vm_switch_user)、
+ * TSS.RSP0/kernel_rsp0 ← 本任务内核栈顶、MSR_FS_BASE ← 0。
+ * 这里只负责构造 iretq 帧并清空通用寄存器，与 task_trampoline_user 的
+ * 首次进入路径保持一致（GS 两个 MSR 在本内核里都指向 cpu_t*，无需 swapgs）。
+ */
+.global arch_enter_user
+arch_enter_user:
+    /* iretq 帧（从高到低：SS, RSP, RFLAGS, CS, RIP）*/
+    pushq   $0x23               /* SS: 用户数据段 */
+    pushq   %rsi                /* RSP: 用户栈指针 */
+    pushq   $0x202              /* RFLAGS: IF=1, Reserved=1 */
+    pushq   $0x2B               /* CS: 用户代码段 */
+    pushq   %rdi                /* RIP: 用户入口点 */
+
+    /* 清空所有通用寄存器（防止信息泄露）*/
+    xorq    %rax, %rax
+    xorq    %rbx, %rbx
+    xorq    %rcx, %rcx
+    xorq    %rdx, %rdx
+    xorq    %rsi, %rsi
+    xorq    %rdi, %rdi
+    xorq    %rbp, %rbp
+    xorq    %r8,  %r8
+    xorq    %r9,  %r9
+    xorq    %r10, %r10
+    xorq    %r11, %r11
+    xorq    %r12, %r12
+    xorq    %r13, %r13
+    xorq    %r14, %r14
+    xorq    %r15, %r15
+
+    iretq
+
     /* 不会到达这里 */
     ud2
 
