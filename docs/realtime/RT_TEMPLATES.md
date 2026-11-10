@@ -125,6 +125,7 @@ __atomic_store_n(&s->input, 21, __ATOMIC_RELEASE); /* 内核下次周期读到 *
 | `RTW_IOC_STOP` | 置 stop 并唤醒；worker 在下一个周期边界退出 |
 | `RTW_IOC_DESTROY` | 释放 worker 和绑定设备；RUNNING 时返回 EBUSY |
 | `RTW_IOC_SET_IN` | 原子更新输入值 |
+| `RTW_IOC_POST` | 向事件环投递 u64 事件；环满返回 `-ENOSPC` |
 | `RTW_IOC_SET_PARAMS` | 运行期更新模板参数（seqlock，周期边界生效） |
 | `RTW_IOC_GET_OUT` | 读最近一次输出和序号 |
 | `RTW_IOC_STATS` | ticks/misses/overruns/exec_last/exec_max/... |
@@ -188,6 +189,36 @@ sleep 1
 rtctl get 2            # 999
 ```
 
+### `event`（事件驱动）
+
+参数与 `periodic_io` 相同（gain/offset/min/max），但**输入不是共享页的
+`input`，而是事件环里的 u64 事件**。worker 在环空时真正阻塞，不占 CPU：
+
+```sh
+# period=0：无限等待；params[0]=2.0
+rtctl create evt event 50 0 0 131072
+rtctl start 1
+rtctl post 1 21        # 投递一个事件
+rtctl post 1 22
+rtctl get 1            # value=44 seq=2
+rtctl stats 1
+# events_posted=2 events_processed=2 events_dropped=0
+```
+
+- `period_ns == 0`：无限等事件；`period_ns > 0`：作为最长等待/超时时间
+  （至少 1ms，无 oneshot 的架构要求 10ms 整数倍）。
+- 事件环在共享页偏移 `RTSHM_EVENT_OFFSET`（192），容量
+  `RTW_EVENT_RING_CAP`（64）：`head/tail` + `posted/dropped/processed/
+  last_value/ev[64]`。SPSC：内核生产者 `ev_lock` 串行化，RT worker 单消费者。
+- 环满采用 **drop-newest**：`RTW_IOC_POST` 返回 `-ENOSPC`，`dropped` +1；
+  RT 侧不背压、不等待。
+- `stop` 会置 `RTW_EVENT_BIT_STOP`，所以阻塞在无限等待里的 worker 也能退出。
+- 统计：`ticks` = 已处理事件数；`overruns` 仍按 `budget_ns`/事件计；
+  `events_*` 是环计数。`/proc/rtworkers` 增加 `EVENTS`/`DROPS` 两列。
+- 目前用户态直接写共享环不会唤醒 worker（没有门铃）。`rtctl post` 走
+  `RTW_IOC_POST`，既入环又唤醒；环本身对 supervisor 可读，用于观察和
+  将来的批量投递。
+
 ### 运行期参数
 
 ```sh
@@ -241,12 +272,16 @@ struct rtdev_ops {
   wake），supervisor 要等新输出只能轮询 `out_seq`。**RT 循环本身不做
   syscall**。
 - 没有真正的 GPIO/PWM/UART `rtdev`；V1 只有 `vout` 示例。
-- 模板数量：3（`periodic_io`、`pid`、`watchdog`）；`fsm/event` 未做。
+- 模板数量：4（`periodic_io`、`pid`、`watchdog`、`event`）；`fsm` 未做。
+- 事件环只有内核侧生产者（ioctl / 未来 rtdev ISR）。用户态直接写环
+  不会唤醒 worker；需要 `RTW_IOC_POST` 或后续的 kick 门铃。
 - `watchdog` 目前只输出安全值，不自动停止目标；自动动作留给 supervisor。
-- RT 任务在 `STOP` 后最多要等一个周期才退出。
+- RT 任务在 `STOP` 后最多要等一个周期/一次事件唤醒才退出。
 
 ## 八、下一步
 
-1. 真实 rtdev：GPIO/PWM/ADC 先做，UART 走预分配 TX 环 + NORMAL drainer。
-2. `fsm` / `event` 模板。
+1. 真实 rtdev：GPIO/PWM/ADC 先做，UART 走预分配 TX 环 + NORMAL drainer；
+   ISR 可以直接 `rt_worker_post_event()` 作为事件源。
+2. `fsm` 模板（迁移由 event 驱动）。
 3. `watchdog` 增加“自动停止目标/切安全输出”的动作。
+4. 事件环的用户态批量投递 + kick 门铃。

@@ -32,6 +32,7 @@
 /*
    周期下限 1ms。x86_64 用 TSC-deadline 时可到 1ms；没有 oneshot 的
    架构（aarch64/riscv64 当前）仍要求 10ms 的整数倍，由内核在 CREATE 时拒绝。
+   event 模板例外：period_ns=0 表示无限等待事件。
 */
 #define RTW_MIN_PERIOD_NS 1000000ULL
 
@@ -39,6 +40,7 @@ enum rtw_template_id {
     RTW_TPL_PERIODIC_IO = 1, /* 增益/偏置/限幅 */
     RTW_TPL_PID = 2,         /* 定点 PID */
     RTW_TPL_WATCHDOG = 3,    /* 监控另一个 worker 的进度 */
+    RTW_TPL_EVENT = 4,       /* 事件驱动：阻塞等事件，每个事件执行一次变换 */
 };
 
 enum rtw_state {
@@ -63,12 +65,13 @@ struct rtw_create_req {
     uint8_t _pad0[3];
     uint32_t cpu; /* 0..g_num_cpus-1 */
 
-    uint64_t period_ns;
+    uint64_t period_ns; /* event: 0 = 无限等待，>0 = 最长等待/超时 */
     uint64_t budget_ns; /* 0 = 不做超预算统计 */
 
     /*
        模板参数，定点整数（Q16 表示 1.0 = 65536）：
          periodic_io: [0]=gain_q16 [1]=offset [2]=min [3]=max
+         event:       同 periodic_io，输入来自事件环
          pid:         [0]=kp_q16 [1]=ki_q16 [2]=kd_q16
                       [3]=out_min [4]=out_max [5]=setpoint
                       [6]=integral_limit
@@ -88,7 +91,7 @@ struct rtw_io_req {
     uint32_t id;
     uint32_t _pad;
     uint64_t seq;   /* GET_OUT 出参：输出序号 */
-    uint64_t value; /* SET_IN 入参 / GET_OUT 出参 */
+    uint64_t value; /* SET_IN 入参 / POST 事件值 / GET_OUT 出参 */
 };
 
 struct rtw_params_req {
@@ -106,7 +109,7 @@ struct rtw_params_req {
    所以旧映射不会指向已归还 PMM 的内存；重新 create 同槽位会重新初始化。
 */
 #define RTSHM_MAGIC   0x52545753U /* "RTWS" */
-#define RTSHM_VERSION 1U
+#define RTSHM_VERSION 2U          /* v2: event ring at RTSHM_EVENT_OFFSET */
 
 struct rtw_shm {
     uint32_t magic;
@@ -134,6 +137,36 @@ struct rtw_shm {
 
 _Static_assert(sizeof(struct rtw_shm) == 176, "rtw_shm ABI mismatch");
 
+/*
+   事件环放在共享页的固定偏移，紧跟 rtw_shm，避免改动已有字段的偏移。
+   SPSC：生产者（控制面 / 驱动 ISR，内核侧用 ev_lock 串行化，未来也允许
+   用户写）递增 head；消费者（RT worker）递增 tail。容量固定 64，索引
+   自由回绕，用 head-tail 判满/空。
+*/
+#define RTSHM_EVENT_OFFSET 192U
+#define RTW_EVENT_RING_CAP 64U
+
+struct rtw_event_ring {
+    volatile uint32_t head; /* 生产者索引 */
+    volatile uint32_t tail; /* 消费者索引 */
+    uint32_t cap;           /* = RTW_EVENT_RING_CAP */
+    uint32_t _pad;
+
+    volatile uint64_t posted;    /* 成功入环总数 */
+    volatile uint64_t dropped;   /* 环满丢弃总数 */
+    volatile uint64_t processed; /* RT 侧已处理总数 */
+    volatile uint64_t last_value;
+
+    volatile uint64_t ev[RTW_EVENT_RING_CAP];
+};
+
+_Static_assert(sizeof(struct rtw_event_ring) == 560, "rtw_event_ring ABI mismatch");
+
+static inline struct rtw_event_ring *rtw_shm_events(struct rtw_shm *s)
+{
+    return (struct rtw_event_ring *)((uint8_t *)s + RTSHM_EVENT_OFFSET);
+}
+
 struct rtw_stats {
     uint32_t id;
     uint32_t state;
@@ -154,6 +187,9 @@ struct rtw_stats {
     uint64_t last_output;
     uint64_t out_seq;
     uint64_t dev_writes;
+    uint64_t events_posted;
+    uint64_t events_processed;
+    uint64_t events_dropped;
     char name[RTW_NAME_LEN];
     char dev[RTW_DEV_NAME_LEN];
 };
@@ -197,6 +233,7 @@ struct rtw_list_req {
 #define RTW_IOC_STATS      _IOWR('R', 7, struct rtw_stats)
 #define RTW_IOC_LIST       _IOWR('R', 8, struct rtw_list_req)
 #define RTW_IOC_SET_PARAMS _IOWR('R', 9, struct rtw_params_req)
+#define RTW_IOC_POST       _IOWR('R', 10, struct rtw_io_req)
 
 /* ── 内核内部 API ──────────────────────────────────────────── */
 
@@ -217,5 +254,12 @@ bool rt_worker_peek_progress(uint32_t id, uint64_t *seq, uint32_t *state);
 
 /* 共享页物理地址，供 /dev/rtctl mmap（offset = worker_id << PAGE_SHIFT）使用。 */
 int rt_worker_shm_lookup(uint32_t id, uint64_t *paddr, uint64_t *size);
+
+/*
+   向 worker 的事件环投递一个 u64 事件并唤醒它。
+   环满返回 -ENOSPC（事件被丢弃，dropped 计数 +1）。
+   可在 ISR 中调用（只做短临界区 + rt_event_set）。
+*/
+int rt_worker_post_event(uint32_t id, uint64_t value);
 
 #endif /* RT_WORKER_H */

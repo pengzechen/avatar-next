@@ -86,7 +86,42 @@ def _run_prebuilt(ctx, report, arch, name: str, cmd: str) -> None:
     )
 
 
+def _run_builtin(ctx, report, arch, name: str, cmd: str) -> None:
+    """跑 framework 自建 rootfs 里的程序（/bin/rt-event-test 等）。"""
+
+    def one(arch=arch):
+        ctx.ensure_build(arch, "normal")
+        q = ctx.qemu(
+            SUITE,
+            arch,
+            name,
+            variant="normal",
+            rootfs=True,
+            kvm=ctx.kvm if arch.name == "x86_64" else None,
+        )
+        log = ctx.log_path(SUITE, arch, name)
+        try:
+            q.wait_shell(ctx.timeout(180), desc=f"{arch.name} 宿主 shell")
+            since = q.mark()
+            q.send_slow(cmd.encode() + b"\n")
+            q.wait_for(
+                rb"=== Done ===",
+                ctx.timeout(180),
+                since=since,
+                forbidden=FORBIDDEN,
+                desc=f"{arch.name} {cmd}",
+            )
+        finally:
+            q.stop()
+        _check_fail_lines(log.read_bytes(), cmd)
+
+    ctx.case(
+        report, SUITE, arch, name, one, log=str(ctx.log_path(SUITE, arch, name))
+    )
+
+
 def run(ctx: TestContext, report: Report, arches) -> None:
     for arch in arches:
         _run_prebuilt(ctx, report, arch, "pthread", "/bin/pthread_test")
         _run_prebuilt(ctx, report, arch, "mutex", "/bin/mutex_test")
+        _run_builtin(ctx, report, arch, "rt-event", "/bin/rt-event-test")

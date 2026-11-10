@@ -29,6 +29,8 @@
 #define W_OVERRUNS 8
 #define W_EXEC_MAX 11
 #define W_WAKE_MAX 11
+#define W_EVENTS   10
+#define W_DROPS    6
 #define W_DEV      4
 
 static const char *rtw_state_name(uint32_t s)
@@ -56,6 +58,8 @@ static const char *rtw_tpl_name(uint32_t t)
         return "pid";
     case RTW_TPL_WATCHDOG:
         return "watchdog";
+    case RTW_TPL_EVENT:
+        return "event";
     default:
         return "?";
     }
@@ -125,6 +129,10 @@ int rtworkers_read(int nid, uint64_t off, void *buf, size_t len)
     pos = put_sep(tmp, pos, sizeof(tmp));
     pos = put_col(tmp, pos, sizeof(tmp), "WAKE_MAX_NS", W_WAKE_MAX, true);
     pos = put_sep(tmp, pos, sizeof(tmp));
+    pos = put_col(tmp, pos, sizeof(tmp), "EVENTS", W_EVENTS, true);
+    pos = put_sep(tmp, pos, sizeof(tmp));
+    pos = put_col(tmp, pos, sizeof(tmp), "DROPS", W_DROPS, true);
+    pos = put_sep(tmp, pos, sizeof(tmp));
     pos = put_col(tmp, pos, sizeof(tmp), "DEV", W_DEV, false);
     pos += (size_t)pfs_puts(tmp, pos, sizeof(tmp), "\n");
 
@@ -156,6 +164,10 @@ int rtworkers_read(int nid, uint64_t off, void *buf, size_t len)
         pos = put_num_col(tmp, pos, sizeof(tmp), st.exec_max_ns, W_EXEC_MAX);
         pos = put_sep(tmp, pos, sizeof(tmp));
         pos = put_num_col(tmp, pos, sizeof(tmp), st.wake_late_max_ns, W_WAKE_MAX);
+        pos = put_sep(tmp, pos, sizeof(tmp));
+        pos = put_num_col(tmp, pos, sizeof(tmp), st.events_processed, W_EVENTS);
+        pos = put_sep(tmp, pos, sizeof(tmp));
+        pos = put_num_col(tmp, pos, sizeof(tmp), st.events_dropped, W_DROPS);
         pos = put_sep(tmp, pos, sizeof(tmp));
         pos = put_col(tmp, pos, sizeof(tmp), st.dev[0] ? st.dev : "-", W_DEV, false);
         pos += (size_t)pfs_puts(tmp, pos, sizeof(tmp), "\n");

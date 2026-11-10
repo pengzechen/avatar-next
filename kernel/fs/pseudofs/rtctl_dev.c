@@ -73,6 +73,12 @@ int rtctl_dev_ioctl(int nid, uint64_t req, void *argp)
             return -RTCTL_EINVAL;
         return rt_worker_set_input(r.id, r.value);
     }
+    case RTW_IOC_POST: {
+        struct rtw_io_req r;
+        if (!argp || copy_from_user_bytes(argp, &r, sizeof(r)) < 0)
+            return -RTCTL_EINVAL;
+        return rt_worker_post_event(r.id, r.value);
+    }
     case RTW_IOC_GET_OUT: {
         struct rtw_io_req r;
         if (!argp || copy_from_user_bytes(argp, &r, sizeof(r)) < 0)

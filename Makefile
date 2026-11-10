@@ -911,6 +911,10 @@ RTPS_BIN         := $(BUILD_DIR)/rtps
 RTCTL_CC         := $(ARCH)-linux-musl-gcc
 RTCTL_BIN        := $(BUILD_DIR)/rtctl
 
+# rt-event-test：event 模板 + 共享事件环的用户态验收。
+RTEVENT_CC       := $(ARCH)-linux-musl-gcc
+RTEVENT_BIN      := $(BUILD_DIR)/rt-event-test
+
 # dmatest：dma-buf / dma-heap（P0）的验收程序。纯 ioctl + mmap，与架构无关。
 # 只在 DMA=1 时构建/安装 —— 否则节点根本不存在，装了也是白装。
 DMATEST_CC       := $(ARCH)-linux-musl-gcc
@@ -1327,9 +1331,14 @@ $(RTPS_BIN): apps/c/rtps.c
 # §11c-2  rtctl：/dev/rtctl 控制面，静态链接
 rtctl: $(RTCTL_BIN)
 
-$(RTCTL_BIN): apps/c/rtctl.c
+$(RTCTL_BIN): apps/c/rtctl.c apps/c/rtctl_abi.h
 	$(RTCTL_CC) -O2 -Wall -Wextra -static $< -o $@
 	@echo "rtctl app created: $@"
+
+# rt-event-test：静态链接，事件模板端到端验收
+$(RTEVENT_BIN): apps/c/rt_event_test.c apps/c/rtctl_abi.h
+	$(RTEVENT_CC) -O2 -Wall -Wextra -static $< -o $@
+	@echo "rt-event-test app created: $@"
 
 # §11c-2  vmm-run：静态链接，免得还依赖 rootfs 里的动态 loader
 $(VMM_RUN_BIN): apps/c/vmm_run.c
@@ -1525,7 +1534,7 @@ test-epoll-perf: epoll-perf kernel $(ROOTFS_IMG)
 # 创建 ext4 rootfs 镜像（无需 sudo）
 # 依赖：Host 已安装 e2fsprogs（mkfs.ext4 >= 1.43 支持 -d 选项）
 # 每次 apps 变动时自动重建；切换架构直接使用各自的镜像文件，无需 make clean
-$(ROOTFS_IMG): Makefile $(APPS_BINS) $(APPS_C_ELFS) $(LTP_BINS) $(EPOLL_PERF_BIN) $(RACETEST_BIN) $(TASKIPC_BIN) $(TASKCOMP_BIN) $(RTPS_BIN) $(RTCTL_BIN) $(DMATEST_BIN) $(DRMTEST_BIN) $(VMM_RUN_BIN) $(NGINX_BIN) $(GUEST_LINUX_FILES) $(GUEST_GIC_STAMP) | $(BUILD_DIR)
+$(ROOTFS_IMG): Makefile $(APPS_BINS) $(APPS_C_ELFS) $(LTP_BINS) $(EPOLL_PERF_BIN) $(RACETEST_BIN) $(TASKIPC_BIN) $(TASKCOMP_BIN) $(RTPS_BIN) $(RTCTL_BIN) $(RTEVENT_BIN) $(DMATEST_BIN) $(DRMTEST_BIN) $(VMM_RUN_BIN) $(NGINX_BIN) $(GUEST_LINUX_FILES) $(GUEST_GIC_STAMP) | $(BUILD_DIR)
 	@echo "=== Building rootfs for $(ARCH): $(ROOTFS_IMG) ==="
 	@rm -rf $(ROOTFS_STAGE)
 	@mkdir -p $(ROOTFS_STAGE)/bin
@@ -1603,6 +1612,12 @@ $(ROOTFS_IMG): Makefile $(APPS_BINS) $(APPS_C_ELFS) $(LTP_BINS) $(EPOLL_PERF_BIN
 		cp $(RTCTL_BIN) $(ROOTFS_STAGE)/bin/rtctl; \
 		chmod +x $(ROOTFS_STAGE)/bin/rtctl; \
 		echo "  [rtctl installed → /bin/rtctl]"; \
+	fi
+	@if [ -f "$(RTEVENT_BIN)" ]; then \
+		mkdir -p $(ROOTFS_STAGE)/bin; \
+		cp $(RTEVENT_BIN) $(ROOTFS_STAGE)/bin/rt-event-test; \
+		chmod +x $(ROOTFS_STAGE)/bin/rt-event-test; \
+		echo "  [rt-event-test installed → /bin/rt-event-test]"; \
 	fi
 	@if [ -f "$(TASKIPC_BIN)" ]; then \
 		mkdir -p $(ROOTFS_STAGE)/bin; \

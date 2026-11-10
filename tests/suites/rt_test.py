@@ -14,6 +14,9 @@ rt-test suite — RT 调度语义与唤醒/抢占延迟。
     场景 6：mutex 并发压力（18000 次临界区、检测同时持锁）与 rt_mutex
     直接优先级继承（owner 提升到 80、等待者按 80/60 顺序拿锁、中等
     优先级任务不得插队、释放后恢复 0）。
+    场景 7：rt_event any/all/mask 唤醒（含 x86 oneshot 超时）与 event
+    模板 + 共享事件环：容量 64，先投 100 再处理（64 入环/36 drop），
+    再补 20 条；最后验证阻塞在无限等事件的 worker 能被 stop 唤醒。
   - `RT_DEMO=1`（tests/unit-test/rt_demo.c）
     5000 轮 RT ping-pong + 50 轮 NORMAL→RT 抢占，输出 min/avg/max。
 
@@ -55,6 +58,10 @@ MUTEX_RE = re.compile(
     rb"=== RT MUTEX TEST: PASS mtx=(\d+) err=(\d+) boost=(\d+) "
     rb"after=(\d+) order=(\d+)/(\d+)/(\d+) ==="
 )
+EVENT_RE = re.compile(
+    rb"=== RT EVENT TEST: PASS timeout=(\d+) posted=(\d+) "
+    rb"processed=(\d+) dropped=(\d+) ==="
+)
 
 FORBIDDEN = (
     rb"\[ASSERT\]",
@@ -66,6 +73,7 @@ FORBIDDEN = (
     rb"=== RT SCHED TEST: FAIL",
     rb"=== RT WORKER TEST: FAIL",
     rb"=== RT MUTEX TEST: FAIL",
+    rb"=== RT EVENT TEST: FAIL",
     rb"RT DEMO: TIMEOUT",
     rb"RT DEMO: worker/waker create failed",
     rb"RT DEMO: probe/hog create failed",
@@ -110,6 +118,15 @@ def _rt(ctx: TestContext, report: Report, arch) -> None:
                 )
             )
 
+            event = _parse(
+                q.wait_for(
+                    EVENT_RE,
+                    ctx.timeout(180),
+                    forbidden=FORBIDDEN,
+                    desc=f"{arch.name} rt_event/event 模板自测",
+                )
+            )
+
             ping = _parse(
                 q.wait_for(
                     PING_RE,
@@ -147,6 +164,7 @@ def _rt(ctx: TestContext, report: Report, arch) -> None:
             low_order,
             med_order,
         ) = mutex
+        event_timeout, event_posted, event_processed, event_dropped = event
 
         print(
             f"         {arch.name}: ping-pong n={ping_n} "
@@ -156,7 +174,9 @@ def _rt(ctx: TestContext, report: Report, arch) -> None:
             f"ticks={worker_ticks} misses={worker_misses} "
             f"exec_max={worker_exec_max}ns; "
             f"mutex ops={mutex_ops} err={mutex_err} "
-            f"pi={mutex_boost}->{mutex_after} order={high_order}/{low_order}/{med_order}"
+            f"pi={mutex_boost}->{mutex_after} order={high_order}/{low_order}/{med_order}; "
+            f"event timeout={event_timeout} "
+            f"posted/processed/dropped={event_posted}/{event_processed}/{event_dropped}"
         )
 
         assert mutex_ops == 6 * 3000, f"mutex 临界区计数 {mutex_ops}，应为 18000"
@@ -168,6 +188,15 @@ def _rt(ctx: TestContext, report: Report, arch) -> None:
             f"{high_order}/{low_order}/{med_order}，应为 1/2/3"
             "（PI 失效时中等优先级任务会先完成）"
         )
+        assert (event_posted, event_processed, event_dropped) == (84, 84, 36), (
+            "event 环统计 "
+            f"{event_posted}/{event_processed}/{event_dropped}，应为 84/84/36"
+            "（容量 64，先投 100 再处理，之后补 20）"
+        )
+        if arch.name == "x86_64" and have_kvm():
+            assert event_timeout == 1, "x86 KVM 下 rt_event 超时测试没有执行"
+        else:
+            assert event_timeout == 0, "没有 oneshot 时不应声称执行了超时测试"
 
         if arch.name == "x86_64" and have_kvm():
             assert worker_periodic == 1, "x86 KVM 下 worker 没有走 oneshot 周期"

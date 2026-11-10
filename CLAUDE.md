@@ -212,6 +212,13 @@ avatar/
   暂回退到 100Hz tick（10ms 整数倍）。用户态工具 `/bin/rtctl`。
   动 `kernel/rt/*`、`include/rt_worker.h`、`include/rtdev.h`、
   `kernel/fs/pseudofs/rtctl_dev.c` 或 `apps/c/rtctl.c` 前必读。
+- **RT 事件**: `docs/realtime/RT_EVENTS.md` - `kernel/task/rt_event.h` 的
+  事件位等待队列（any/all/timeout/clear，set 可在 ISR 调用），以及
+  `event` 模板的共享页 SPSC 事件环（容量 64、drop-newest、
+  `RTW_IOC_POST`/`rtctl post`、`period_ns=0` 无限等待）。
+  动 `kernel/task/rt_event.c`、`include/rt_worker.h` 的 ring ABI、
+  `kernel/rt/rt_worker.c` 的 event 分支或 `apps/c/rtctl_abi.h` 前必读。
+  门禁：`make -C tests rt-test` 与 `/bin/rt-event-test`（apps suite）。
 - **RT 锁**: `docs/realtime/RT_LOCKS.md` - 普通 `mutex` 的 SMP 正确性修正
   （内部自旋锁 + 无丢唤醒），以及 `rt_mutex` 的直接优先级继承
   （`pi_priority`、按优先级排队、tick 不抢占被提升的持有者）。

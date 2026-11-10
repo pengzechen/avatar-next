@@ -88,6 +88,8 @@ RT 内核线程可以用内核 API，但必须遵守：
 - 数据交互走预分配共享内存、无锁队列、RT mutex、timer、中断/门铃；
   RT 任务之间需要睡眠的共享状态用 `rt_mutex`（有直接优先级继承），
   普通路径用 `mutex`（无 PI）；详见 `RT_LOCKS.md`；
+- 事件等待用 `rt_event`（位事件 + 等待队列，set 可在 ISR 调用），
+  `event` 模板把它和共享页 SPSC 事件环连起来；详见 `RT_EVENTS.md`；
 - 驱动/设备路径要 RT-safe：短临界区、无全局锁；
 - 用户面只保留**非 RT 控制面**（/dev ioctl、共享内存、event），RT 线程本身
   不执行 syscall。

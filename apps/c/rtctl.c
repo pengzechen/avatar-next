@@ -12,6 +12,7 @@
      rtctl stop <id>
      rtctl destroy <id>
      rtctl set <id> <value>
+     rtctl post <id> <value>     # 投递一个事件（event 模板）
      rtctl params <id> [p0..p7]
      rtctl get <id>
      rtctl stats <id>
@@ -22,6 +23,7 @@
      pid          p0=kp_q16 p1=ki_q16 p2=kd_q16 p3=out_min
                   p4=out_max p5=setpoint p6=integral_limit
      watchdog     p0=target_id p1=timeout_ns p2=safe_output
+     event        同 periodic_io；period_ms=0 表示无限等待事件
 */
 
 #include <errno.h>
@@ -34,151 +36,7 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
-#define RTW_NAME_LEN     16
-#define RTW_DEV_NAME_LEN 16
-#define RTW_MAX_WORKERS  8
-#define RTW_PARAM_MAX    8
-
-enum {
-    RTW_TPL_PERIODIC_IO = 1,
-    RTW_TPL_PID = 2,
-    RTW_TPL_WATCHDOG = 3
-};
-enum {
-    RTW_STATE_FREE = 0,
-    RTW_STATE_CREATED,
-    RTW_STATE_RUNNING,
-    RTW_STATE_STOPPED,
-    RTW_STATE_FAULTED
-};
-
-struct rtw_create_req {
-    uint32_t abi_version;
-    uint32_t template_id;
-    char name[RTW_NAME_LEN];
-    char dev[RTW_DEV_NAME_LEN];
-    uint8_t priority;
-    uint8_t _pad0[3];
-    uint32_t cpu;
-    uint64_t period_ns;
-    uint64_t budget_ns;
-    uint64_t params[RTW_PARAM_MAX];
-    uint32_t id;
-    uint32_t _pad1;
-};
-
-struct rtw_id_req {
-    uint32_t id;
-    uint32_t _pad;
-};
-
-struct rtw_io_req {
-    uint32_t id;
-    uint32_t _pad;
-    uint64_t seq;
-    uint64_t value;
-};
-
-struct rtw_params_req {
-    uint32_t id;
-    uint32_t _pad;
-    uint64_t params[RTW_PARAM_MAX];
-};
-
-#define RTSHM_MAGIC   0x52545753U
-#define RTSHM_VERSION 1U
-
-struct rtw_shm {
-    uint32_t magic;
-    uint32_t version;
-    volatile uint32_t state;
-    uint32_t _pad0;
-
-    volatile uint64_t input;
-    volatile uint64_t output;
-    volatile uint64_t out_seq;
-
-    volatile uint64_t params[RTW_PARAM_MAX];
-    volatile uint32_t params_seq;
-    uint32_t _pad1;
-
-    volatile uint64_t ticks;
-    volatile uint64_t misses;
-    volatile uint64_t overruns;
-    volatile uint64_t exec_last_ns;
-    volatile uint64_t exec_max_ns;
-    volatile uint64_t wake_late_last_ns;
-    volatile uint64_t wake_late_max_ns;
-    volatile uint64_t dev_writes;
-};
-
-struct rtw_stats {
-    uint32_t id;
-    uint32_t state;
-    uint32_t template_id;
-    uint32_t priority;
-    uint32_t cpu;
-    uint32_t _pad;
-    uint64_t period_ns;
-    uint64_t budget_ns;
-    uint64_t ticks;
-    uint64_t misses;
-    uint64_t overruns;
-    uint64_t exec_last_ns;
-    uint64_t exec_max_ns;
-    uint64_t wake_late_last_ns;
-    uint64_t wake_late_max_ns;
-    uint64_t last_input;
-    uint64_t last_output;
-    uint64_t out_seq;
-    uint64_t dev_writes;
-    char name[RTW_NAME_LEN];
-    char dev[RTW_DEV_NAME_LEN];
-};
-
-struct rtw_list_entry {
-    uint32_t id;
-    uint32_t state;
-    uint32_t template_id;
-    uint32_t priority;
-    uint32_t cpu;
-    uint32_t _pad;
-    uint64_t period_ns;
-    uint64_t ticks;
-    uint64_t misses;
-    char name[RTW_NAME_LEN];
-};
-
-struct rtw_list_req {
-    uint32_t count;
-    uint32_t capacity;
-    struct rtw_list_entry entries[RTW_MAX_WORKERS];
-};
-
-_Static_assert(sizeof(struct rtw_create_req) == 136, "rtw_create_req ABI mismatch");
-_Static_assert(sizeof(struct rtw_io_req) == 24, "rtw_io_req ABI mismatch");
-_Static_assert(sizeof(struct rtw_params_req) == 72, "rtw_params_req ABI mismatch");
-_Static_assert(sizeof(struct rtw_stats) == 160, "rtw_stats ABI mismatch");
-_Static_assert(sizeof(struct rtw_shm) == 176, "rtw_shm ABI mismatch");
-_Static_assert(sizeof(struct rtw_list_entry) == 64, "rtw_list_entry ABI mismatch");
-_Static_assert(sizeof(struct rtw_list_req) == 520, "rtw_list_req ABI mismatch");
-
-#ifndef _IOC
-#define _IOC(dir, t, nr, sz) (((uint32_t)(dir) << 30) | ((uint32_t)(t) << 8) | (uint32_t)(nr) | ((uint32_t)(sz) << 16))
-#define _IOC_WRITE           1U
-#define _IOC_READ            2U
-#define _IOWR(t, nr, T)      _IOC(_IOC_READ | _IOC_WRITE, (t), (nr), sizeof(T))
-#endif
-
-#define RTW_IOC_CREATE     _IOWR('R', 1, struct rtw_create_req)
-#define RTW_IOC_DESTROY    _IOWR('R', 2, struct rtw_id_req)
-#define RTW_IOC_START      _IOWR('R', 3, struct rtw_id_req)
-#define RTW_IOC_STOP       _IOWR('R', 4, struct rtw_id_req)
-#define RTW_IOC_SET_IN     _IOWR('R', 5, struct rtw_io_req)
-#define RTW_IOC_GET_OUT    _IOWR('R', 6, struct rtw_io_req)
-#define RTW_IOC_STATS      _IOWR('R', 7, struct rtw_stats)
-#define RTW_IOC_LIST       _IOWR('R', 8, struct rtw_list_req)
-#define RTW_IOC_SET_PARAMS _IOWR('R', 9, struct rtw_params_req)
+#include "rtctl_abi.h"
 
 static const char *tpl_name(uint32_t id)
 {
@@ -189,6 +47,8 @@ static const char *tpl_name(uint32_t id)
         return "pid";
     case RTW_TPL_WATCHDOG:
         return "watchdog";
+    case RTW_TPL_EVENT:
+        return "event";
     default:
         return "?";
     }
@@ -218,6 +78,8 @@ static uint32_t tpl_id(const char *s)
         return RTW_TPL_PID;
     if (!strcmp(s, "watchdog"))
         return RTW_TPL_WATCHDOG;
+    if (!strcmp(s, "event"))
+        return RTW_TPL_EVENT;
     return 0;
 }
 
@@ -263,8 +125,8 @@ static int cmd_create(int argc, char **argv)
         fprintf(stderr, "rtctl: bad prio/cpu/period\n");
         return 2;
     }
-    if (prio < 1 || prio > 99 || period_ms == 0) {
-        fprintf(stderr, "rtctl: prio 1..99 and period_ms > 0 required\n");
+    if (prio < 1 || prio > 99 || (period_ms == 0 && r.template_id != RTW_TPL_EVENT)) {
+        fprintf(stderr, "rtctl: prio 1..99 required; period_ms 0 is only valid for event\n");
         return 2;
     }
     r.priority = (uint8_t)prio;
@@ -357,6 +219,37 @@ static int cmd_set(int argc, char **argv)
     return 0;
 }
 
+static int cmd_post(int argc, char **argv)
+{
+    if (argc < 4) {
+        fprintf(stderr, "usage: rtctl post <id> <value>\n");
+        return 2;
+    }
+    struct rtw_io_req r;
+    memset(&r, 0, sizeof(r));
+    if (parse_u32(argv[2], &r.id)) {
+        fprintf(stderr, "rtctl: bad id\n");
+        return 2;
+    }
+    char *end = NULL;
+    r.value = (uint64_t)strtoull(argv[3], &end, 0);
+    if (!argv[3][0] || !end || *end) {
+        fprintf(stderr, "rtctl: bad value\n");
+        return 2;
+    }
+    int fd = open_dev();
+    if (fd < 0)
+        return 1;
+    if (ioctl(fd, RTW_IOC_POST, &r) < 0) {
+        fprintf(stderr, "rtctl: post: %s\n", strerror(errno));
+        close(fd);
+        return 1;
+    }
+    printf("post id=%u value=%llu: ok\n", r.id, (unsigned long long)r.value);
+    close(fd);
+    return 0;
+}
+
 static int cmd_params(int argc, char **argv)
 {
     if (argc < 3) {
@@ -439,6 +332,11 @@ static int cmd_shm(int argc, char **argv)
            (unsigned long long)s->exec_max_ns);
     printf("wake_late_last=%llu ns wake_late_max=%llu ns dev_writes=%llu\n", (unsigned long long)s->wake_late_last_ns,
            (unsigned long long)s->wake_late_max_ns, (unsigned long long)s->dev_writes);
+    struct rtw_event_ring *ev = (struct rtw_event_ring *)((char *)s + RTSHM_EVENT_OFFSET);
+    printf("events: posted=%llu processed=%llu dropped=%llu head=%u tail=%u last=%llu\n",
+           (unsigned long long)ev->posted, (unsigned long long)ev->processed, (unsigned long long)ev->dropped,
+           (unsigned)__atomic_load_n(&ev->head, __ATOMIC_ACQUIRE),
+           (unsigned)__atomic_load_n(&ev->tail, __ATOMIC_ACQUIRE), (unsigned long long)ev->last_value);
     munmap(s, 4096);
     close(fd);
     return 0;
@@ -531,6 +429,8 @@ static int cmd_stats(int argc, char **argv)
     printf("input=%lld output=%lld seq=%llu dev=%s dev_writes=%llu\n", (long long)st.last_input,
            (long long)st.last_output, (unsigned long long)st.out_seq, st.dev[0] ? st.dev : "-",
            (unsigned long long)st.dev_writes);
+    printf("events_posted=%llu events_processed=%llu events_dropped=%llu\n", (unsigned long long)st.events_posted,
+           (unsigned long long)st.events_processed, (unsigned long long)st.events_dropped);
     close(fd);
     return 0;
 }
@@ -565,13 +465,14 @@ static void usage(const char *argv0)
     printf("  %s create <name> <tpl> <prio> <cpu> <period_ms> [p0..p7] [dev:<name>]\n", argv0);
     printf("  %s start|stop|destroy <id>\n", argv0);
     printf("  %s set <id> <value>\n", argv0);
+    printf("  %s post <id> <value>    # push one event (event template)\n", argv0);
     printf("  %s params <id> [p0..p7]\n", argv0);
     printf("  %s shm <id>             # map shared page and dump\n", argv0);
     printf("  %s shmset <id> <value>  # write input via shared page\n", argv0);
     printf("  %s get <id>\n", argv0);
     printf("  %s stats <id>\n", argv0);
     printf("  %s list\n", argv0);
-    printf("templates: periodic_io, pid, watchdog\n");
+    printf("templates: periodic_io, pid, watchdog, event\n");
 }
 
 int main(int argc, char **argv)
@@ -590,6 +491,8 @@ int main(int argc, char **argv)
         return cmd_id_op("destroy", RTW_IOC_DESTROY, argc, argv);
     if (!strcmp(argv[1], "set"))
         return cmd_set(argc, argv);
+    if (!strcmp(argv[1], "post"))
+        return cmd_post(argc, argv);
     if (!strcmp(argv[1], "params"))
         return cmd_params(argc, argv);
     if (!strcmp(argv[1], "shm"))

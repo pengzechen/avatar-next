@@ -40,6 +40,11 @@ start → 运行期参数 → stop → destroy。有 oneshot 的架构（x86 KVM
 交接、中等优先级 50 不得插队、释放后恢复 0）。设计和已知限制见
 `docs/realtime/RT_LOCKS.md`。
 
+场景 7 是事件门禁：rt_event 的 any/all/clear/mask 过滤与 x86 oneshot
+超时；event 模板先投 100 条（环容量 64 → 64 入环、36 drop），再投
+20 条，验证处理计数、输出、共享页环计数，以及阻塞在无限等待的
+worker 能被 stop 唤醒。设计和已知限制见 `docs/realtime/RT_EVENTS.md`。
+
 采集环境：QEMU `q35 -enable-kvm -cpu host`，100 Hz tick，`LOG=info`。
 
 ## 观察 RT 任务
