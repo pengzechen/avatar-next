@@ -21,7 +21,9 @@
 
 #include "types.h"
 #include "list.h"
-#include "signal.h" /* 信号常量/sig_action_t/signal_struct_t（与 task 解耦） */
+#include "signal.h"     /* 信号常量/sig_action_t/signal_struct_t（与 task 解耦） */
+#include "process_fs.h" /* files_struct / fs_struct（fd 表与 cwd） */
+#include "mm_struct.h"  /* mm_struct（pgd/heap/mmap/interp/exe_path） */
 
 /* ── Task states ─────────────────────────────────────────── */
 typedef enum {
@@ -93,8 +95,6 @@ typedef struct task {
     uint8_t priority;           /* 优先级(0 = 最高, 255 = 最低) */
     bool is_user_process;       /* true=用户进程, false=内核任务 */
     bool user_started;          /* true=已至少进入过一次用户态 */
-    bool is_thread;             /* true=线程(共享页表), false=独立进程 */
-    bool shares_pgd;            /* true=共享地址空间, 不拥有 pgd 释放权 */
     bool is_waiting;            /* 正在 wait4 子进程 */
     uint8_t dumpable;           /* prctl(PR_SET_DUMPABLE) */
     uint8_t no_new_privs;       /* prctl(PR_SET_NO_NEW_PRIVS) */
@@ -121,44 +121,17 @@ typedef struct task {
     uint64_t itimer_interval_ns; /* 周期；0 = 一次性 */
     uint64_t sleep_expire_ns;    /* nanosleep 绝对到期时刻(0=未睡) */
 
-    /* === 用户地址空间 === */
-    uint64_t *pgd;            /* 页表基址(用户进程的TTBR0) */
+    /* === 地址空间 / 文件表 / cwd（进程级对象）=== */
+    mm_struct_t *mm;       /* pgd + heap/mmap/interp/exe_path；线程共享 */
+    files_struct_t *files; /* fd 表 + FD_CLOEXEC 位图 */
+    fs_struct_t *fs;       /* 当前工作目录 */
+
+    /* === 每线程的用户执行状态 === */
     uint64_t user_entry;      /* 用户态入口点(虚拟地址) */
     uint64_t user_sp;         /* 用户栈指针(虚拟地址) */
     uint64_t user_stack_top;  /* 用户栈顶(虚拟地址) */
     uint64_t user_stack_size; /* 用户栈大小 */
-    uint64_t heap_end;        /* 进程堆当前末尾(brk 系统调用使用) */
-    uint64_t mmap_next;       /* 下一个 mmap 分配的起始地址 */
-    /*
-       mmap 区的起始地址(ET_DYN 用 0x50000000, ET_EXEC 用 0x30000000,
-       见 user_layout.h)。mmap_next 会一路涨上去, 涨完就再也回不到初值,
-       所以基址必须单独存一份。
-
-       为什么需要它：fork 拷贝父进程地址空间时, mmap 区的扫描范围是
-       [mmap_base, mmap_next)。以前这里写死 USER_MMAP_BASE_EXEC(0x30000000),
-       而 PIE 进程的映射其实都在 0x50000000 以上 —— 于是每个 fork 都要
-       逐页空扫 512MB 的 VA 空洞(131,077 次四级页表遍历, 白花 ~9ms)。
-    */
-    uint64_t mmap_base;
-    /*
-       动态链接器(ld-musl 等)映射区的末端(不含), 0 = 本进程没有 interp。
-
-       interp 由 exec 加载在 USER_INTERP_BASE(0x40000000)(见 user_layout.h),
-       而 fork 拷贝地址空间时只扫 [0,heap_end) / [mmap_base,mmap_next) / 用户栈
-       三个区间 —— 没有一个覆盖 interp 那一带。于是动态链接的程序 fork 出来
-       的子进程手里没有 interp：musl 的 fork() 正是在 ld-musl 内部调 clone 的,
-       子进程一从 syscall 返回就取指到 0x4003xxxx, 而那一页不存在 →
-       SIGSEGV(RISC-V 上是 code=12 指令页错误, 判据是 stval == pc)。
-
-       默认 rootfs 装的是静态 busybox(没有 interp), 所以这个 bug 一直被
-       掩盖着 —— 只有跑动态链接的程序才会撞上(实测 SG2002 上跑动态 busybox,
-       一个 fork 就炸)。
-
-       存末端而不是让 fork 去扫一个固定的大区间, 是为了保住 mmap_base 那条
-       注释里的性能性质：静态程序这里恒为 0, fork 一次空扫都不做。
-    */
-    uint64_t interp_end;
-    uint64_t ctid_ptr; /* CLONE_CHILD_CLEARTID 地址 (0=无) */
+    uint64_t ctid_ptr;        /* CLONE_CHILD_CLEARTID 地址 (0=无) */
 
     /* === CPU 时间统计 === */
     uint64_t utime_ns;  /* 用户态 CPU 时间(纳秒), task_exit 前计算 */
@@ -198,14 +171,21 @@ typedef struct task {
     uint32_t wait_pid;      /* 等待的子进程 PID(-1=任意) */
 
     /* === 大数组/冷数据：放到结构体尾部，别挤占热区 === */
-    char cwd[TASK_CWD_LEN];                 /* 当前工作目录(用户进程) */
-    char exe_path[TASK_EXE_LEN];            /* 可执行文件路径(/proc/self/exe) */
-    int16_t fd_table[TASK_MAX_FD];          /* FD → g_fd_pool 索引, -1=未打开 */
-    uint8_t fd_cloexec[TASK_MAX_FD / 8];    /* FD_CLOEXEC 位图 */
     uint32_t groups[TASK_GROUPS_MAX];       /* 附加组列表(getgroups/setgroups) */
     uint64_t rlimit_cur[TASK_RLIMIT_COUNT]; /* getrlimit/setrlimit: 软限制 */
     uint64_t rlimit_max[TASK_RLIMIT_COUNT]; /* getrlimit/setrlimit: 硬限制 */
 } __attribute__((aligned(64))) task_t;
+
+/* 进程级对象池与 TCB 的尺寸常量必须一致（防止两处各改一个）。 */
+_Static_assert(FILES_FD_MAX == TASK_MAX_FD, "process_fs.h 与 task.h 的 fd 上限不一致");
+_Static_assert(FS_CWD_MAX == TASK_CWD_LEN, "process_fs.h 与 task.h 的 cwd 长度不一致");
+_Static_assert(MM_EXE_PATH_LEN == TASK_EXE_LEN, "mm_struct.h 与 task.h 的 exe 路径长度不一致");
+
+/* CLONE_THREAD 创建的任务：tgid 指向线程组首线程；exec 后 tgid 恢复为自身 id。 */
+static inline bool task_is_thread(const task_t *t)
+{
+    return t && t->tgid != t->id;
+}
 
 /*
    布局约束：task_t 必须独占 cacheline，且热字段必须落在首条 cacheline。
@@ -239,14 +219,6 @@ extern volatile uint32_t g_fg_pgid;
    VMCS)尚未跨核迁移。
 */
 void task_set_cpu_affinity(task_t *task, uint32_t cpu_id);
-
-/*
-   task_group_has_other_threads - 本任务所在的线程组里是否还有别的活任务
-
-   给 execve 判断旧页表能不能立刻回收用：还有兄弟线程时它们仍引用同一张
-   页表，销毁会 UAF。单线程进程(绝大多数)返回 false。
-*/
-bool task_group_has_other_threads(task_t *task);
 
 /*
    task_stack_used — 该任务内核栈的高水位(字节)
@@ -378,6 +350,22 @@ void task_reap_dead(task_t *task);
    失败(池满)返回 NULL；池满时会先回收一轮"没人会再来 wait"的僵尸槽。
 */
 task_t *task_alloc_slot(void);
+
+/*
+   task_objects_alloc - 为 TCB 分配 files/fs/mm（静态池，引用计数 1）
+
+   task_alloc_slot 内部会调用；idle 任务在自己的初始化路径里调用。
+   失败时已经分配的对象会被释放，返回 false。
+*/
+bool task_objects_alloc(task_t *t);
+
+/*
+   task_release_objects - 归还 signal/files/fs/mm 引用
+
+   TCB 回收（slot_take_and_free）和 clone 失败路径调用。mm 的最后一个
+   引用会在这里销毁用户页表，所以必须在池锁外调用。
+*/
+void task_release_objects(task_t *t);
 
 /*
    task_alloc_id - 原子分配一个任务 id

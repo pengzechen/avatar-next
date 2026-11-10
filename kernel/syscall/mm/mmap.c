@@ -47,14 +47,14 @@ static bool mmap_prot_is_none(int prot)
 
 static uint64_t shared_mmap_next(task_t *current)
 {
-    uint64_t next = current->mmap_next;
+    uint64_t next = current->mm->mmap_next;
 
     for (uint32_t i = 0; i < TASK_MAX; i++) {
         task_t *task = &g_task_pool[i];
         if (!g_stack_used[i] || !task->is_user_process || task->state == TASK_DEAD)
             continue;
-        if (task->pgd == current->pgd && task->mmap_next > next)
-            next = task->mmap_next;
+        if (task->mm->pgd == current->mm->pgd && task->mm->mmap_next > next)
+            next = task->mm->mmap_next;
     }
 
     return next;
@@ -66,8 +66,8 @@ static void sync_shared_mmap_next(task_t *current, uint64_t next)
         task_t *task = &g_task_pool[i];
         if (!g_stack_used[i] || !task->is_user_process || task->state == TASK_DEAD)
             continue;
-        if (task->pgd == current->pgd && task->mmap_next < next)
-            task->mmap_next = next;
+        if (task->mm->pgd == current->mm->pgd && task->mm->mmap_next < next)
+            task->mm->mmap_next = next;
     }
 }
 
@@ -90,15 +90,15 @@ static void sync_shared_mmap_next_to(task_t *current, uint64_t val)
         task_t *task = &g_task_pool[i];
         if (!g_stack_used[i] || !task->is_user_process || task->state == TASK_DEAD)
             continue;
-        if (task->pgd == current->pgd)
-            task->mmap_next = val;
+        if (task->mm->pgd == current->mm->pgd)
+            task->mm->mmap_next = val;
     }
 }
 
 uint64_t sys_munmap(uint64_t addr, uint64_t len)
 {
     task_t *current = task_current();
-    if (!current || !current->is_user_process || current->pgd == NULL)
+    if (!current || !current->is_user_process || current->mm->pgd == NULL)
         return (uint64_t)(int64_t)-EINVAL;
     if (len == 0 || (addr & (PAGE_SIZE - 1)) != 0)
         return (uint64_t)(int64_t)-EINVAL;
@@ -107,7 +107,7 @@ uint64_t sys_munmap(uint64_t addr, uint64_t len)
     /* vm_unmap_user_range 的副作用是必须的, 只是返回值目前只有下面那条
        被注释掉的调试日志在用 —— 所以标 UNUSED 而不是删掉整个调用。
     */
-    uint64_t freed UNUSED = vm_unmap_user_range((uint64_t)current->pgd, addr, size);
+    uint64_t freed UNUSED = vm_unmap_user_range((uint64_t)current->mm->pgd, addr, size);
 
     uint64_t top = addr + size;
     uint64_t next = shared_mmap_next(current);
@@ -115,7 +115,7 @@ uint64_t sys_munmap(uint64_t addr, uint64_t len)
                current->id, addr, len, size, top, next, freed);
     */
     if (top >= next) {
-        void *pgd = phys_to_virt((uint64_t)current->pgd);
+        void *pgd = phys_to_virt((uint64_t)current->mm->pgd);
         uint64_t new_next = addr;
         /*
            回退下限是本进程 mmap 区的基址, 不是 heap_end。
@@ -128,7 +128,7 @@ uint64_t sys_munmap(uint64_t addr, uint64_t len)
            顺带这也是 fork 拷贝 mmap 区的前提：[mmap_base, mmap_next) 要
            能覆盖该进程全部 mmap 映射, 就得保证 mmap_next 永不小于基址。
         */
-        uint64_t lo = current->mmap_base;
+        uint64_t lo = current->mm->mmap_base;
         int budget = 512;
         while (new_next > lo && budget-- > 0) {
             if (mm_vm_get_paddr(pgd, new_next - PAGE_SIZE) != 0)
@@ -166,7 +166,7 @@ static int map_contiguous_buf(task_t *current, void *pgd, uint64_t map_addr, uin
         uint64_t page_pa = pa + page_off;
 
         if ((flags & MAP_FIXED) != 0 && mm_vm_get_paddr(pgd, va) != 0)
-            vm_unmap_user_range((uint64_t)current->pgd, va, PAGE_SIZE);
+            vm_unmap_user_range((uint64_t)current->mm->pgd, va, PAGE_SIZE);
         if (mm_vm_map_pages(pgd, va, page_pa, 1, VM_PERM_USER) != 0) {
             KLOG_WARN("[mmap] %s map failed: fd=%d handle=%llu va=0x%llx pa=0x%llx\n", tag, fd,
                       (unsigned long long)handle, (unsigned long long)va, (unsigned long long)page_pa);
@@ -211,7 +211,7 @@ static int map_contiguous_buf(task_t *current, void *pgd, uint64_t map_addr, uin
 uint64_t sys_mprotect(uint64_t addr, uint64_t len, int prot)
 {
     task_t *current = task_current();
-    if (!current || !current->is_user_process || current->pgd == NULL)
+    if (!current || !current->is_user_process || current->mm->pgd == NULL)
         return (uint64_t)(int64_t)-EINVAL;
     if ((addr & (PAGE_SIZE - 1)) != 0)
         return (uint64_t)(int64_t)-EINVAL;
@@ -225,11 +225,11 @@ uint64_t sys_mprotect(uint64_t addr, uint64_t len, int prot)
         return (uint64_t)(int64_t)-ENOMEM;
 
     if (mmap_prot_is_none(prot)) {
-        vm_unmap_user_range((uint64_t)current->pgd, addr, size);
+        vm_unmap_user_range((uint64_t)current->mm->pgd, addr, size);
         return 0;
     }
 
-    void *pgd = phys_to_virt((uint64_t)current->pgd);
+    void *pgd = phys_to_virt((uint64_t)current->mm->pgd);
     for (uint64_t va = addr; va < addr + size; va += PAGE_SIZE) {
         if (mm_vm_get_paddr(pgd, va) != 0)
             continue;
@@ -264,7 +264,7 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, int prot, int flags, int fd, uint
         int16_t fidx = -1;
         fd_obj_t *fobj = NULL;
         if (fd >= 0 && fd < (int)TASK_MAX_FD) {
-            fidx = current->fd_table[fd];
+            fidx = current->files->fd_table[fd];
             if (fidx >= 0 && (int)fidx < FD_POOL_SIZE)
                 fobj = &g_fd_pool[fidx];
         }
@@ -285,12 +285,12 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, int prot, int flags, int fd, uint
             return (uint64_t)(int64_t)-ENOMEM;
         }
 
-        void *pgd = phys_to_virt((uint64_t)current->pgd);
+        void *pgd = phys_to_virt((uint64_t)current->mm->pgd);
 
         /* PROT_NONE：保留 VA 区间，不建映射（见文件头说明） */
         if (mmap_prot_is_none(prot)) {
             if ((flags & MAP_FIXED) != 0)
-                vm_unmap_user_range((uint64_t)current->pgd, map_addr, map_size);
+                vm_unmap_user_range((uint64_t)current->mm->pgd, map_addr, map_size);
             else
                 sync_shared_mmap_next(current, map_addr + map_size);
             return map_addr;
@@ -464,8 +464,8 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, int prot, int flags, int fd, uint
     size = ALIGN_UP(len + page_off, PAGE_SIZE);
 
     if (!(flags & MAP_FIXED) && !mmap_user_range_ok(map_addr, size)) {
-        void *pgd = phys_to_virt((uint64_t)current->pgd);
-        uint64_t lo = ALIGN_UP(current->heap_end, PAGE_SIZE);
+        void *pgd = phys_to_virt((uint64_t)current->mm->pgd);
+        uint64_t lo = ALIGN_UP(current->mm->heap_end, PAGE_SIZE);
         uint64_t hi = USER_STACK_TOP - USER_STACK_SIZE;
         uint64_t need = size / PAGE_SIZE;
         uint64_t run = 0;
@@ -500,20 +500,20 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, int prot, int flags, int fd, uint
     /* PROT_NONE 匿名映射：只占地址区间，不分配物理页/不建 PTE */
     if (mmap_prot_is_none(prot)) {
         if ((flags & MAP_FIXED) != 0)
-            vm_unmap_user_range((uint64_t)current->pgd, map_addr, size);
+            vm_unmap_user_range((uint64_t)current->mm->pgd, map_addr, size);
         else
             sync_shared_mmap_next(current, map_addr + size);
         return map_addr;
     }
 
 #if ARCH_AARCH64 || ARCH_RISCV64
-    void *pgd = phys_to_virt((uint64_t)current->pgd);
+    void *pgd = phys_to_virt((uint64_t)current->mm->pgd);
 
     for (uint64_t va = map_addr; va < map_addr + size; va += PAGE_SIZE) {
         if ((flags & MAP_FIXED) == 0 && mm_vm_get_paddr(pgd, va) != 0) {
             KLOG_WARN(
                 "[mmap] anon non-fixed overlaps existing PTE: pid=%d va=0x%llx base=0x%llx size=0x%llx flags=0x%x next=0x%llx heap=0x%llx\n",
-                current->id, va, map_addr, size, flags, shared_mmap_next(current), current->heap_end);
+                current->id, va, map_addr, size, flags, shared_mmap_next(current), current->mm->heap_end);
         }
 
         if ((flags & MAP_FIXED) != 0) {
@@ -558,13 +558,13 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, int prot, int flags, int fd, uint
     }
 #elif ARCH_X86_64
     {
-        void *pgd = phys_to_virt((uint64_t)current->pgd);
+        void *pgd = phys_to_virt((uint64_t)current->mm->pgd);
 
         for (uint64_t va = map_addr; va < map_addr + size; va += PAGE_SIZE) {
             if ((flags & MAP_FIXED) == 0 && mm_vm_get_paddr(pgd, va) != 0) {
                 KLOG_WARN(
                     "[mmap] anon non-fixed overlaps existing PTE: pid=%d va=0x%llx base=0x%llx size=0x%llx flags=0x%x next=0x%llx heap=0x%llx\n",
-                    current->id, va, map_addr, size, flags, shared_mmap_next(current), current->heap_end);
+                    current->id, va, map_addr, size, flags, shared_mmap_next(current), current->mm->heap_end);
             }
 
             if ((flags & MAP_FIXED) != 0) {

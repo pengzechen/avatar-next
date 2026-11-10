@@ -703,7 +703,7 @@ void syscall_handler(trap_frame_t *frame)
         KLOG_SYSCALL(
             "[strace] pid=%u %s(%llu) a0=0x%llx a1=0x%llx a2=0x%llx a3=0x%llx a4=0x%llx a5=0x%llx heap=0x%llx mmap_next=0x%llx\n",
             current->id, syscall_trace_name(syscall_num), syscall_num, regs[0], regs[1], regs[2], regs[3], regs[4],
-            regs[5], current->heap_end, current->mmap_next);
+            regs[5], current->mm->heap_end, current->mm->mmap_next);
     }
 
     /* 每次 syscall 入口 poll UART：弥补关中断期间 timer 无法触发的窗口 */

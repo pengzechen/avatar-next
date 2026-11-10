@@ -166,7 +166,7 @@ void sys_exit(int status)
     }
 
     /* CLONE_VM/CLONE_FILES threads share fd objects with the process. */
-    if (!current->is_thread) {
+    if (!task_is_thread(current)) {
         for (int _fd = 0; _fd < (int)TASK_MAX_FD; _fd++) {
             /* 摘表项要原子：进程退出时可能还有别的线程在 close 同一个 fd,
                两边都拿到同一个 idx 就会把同一个槽归还两次。
@@ -322,7 +322,7 @@ int64_t sys_execve(const char *pathname, char **argv, char **envp, trap_frame_t 
 
     /* 将相对路径转为绝对路径 */
     char abs_path[256];
-    resolve_path(current->cwd, pathname, abs_path, (int)sizeof(abs_path));
+    resolve_path(current->fs->cwd, pathname, abs_path, (int)sizeof(abs_path));
 
     /*
        成功时当前进程已被原地替换成新程序(PID 不变), 返回 0;
@@ -387,8 +387,6 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
     child->gid = parent->gid;
     child->egid = parent->egid;
     child->ctty_pty_idx = parent->ctty_pty_idx;
-    child->is_thread = false;
-    child->shares_pgd = false;
     child->utime_ns = 0;
     child->stime_ns = 0;
     child->sc_entry_ns = 0;
@@ -408,30 +406,31 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
     if (is_thread_clone && (flags & CLONE_VM)) {
         child->sig = task_signal_share(parent);
         if (!child->sig) {
+            task_release_objects(child);
             g_stack_used[child - g_task_pool] = 0;
             regs[0] = (uint64_t)(int64_t)-ENOMEM;
             return;
         }
     } else if (!task_signal_copy(parent, child)) {
+        task_release_objects(child);
         g_stack_used[child - g_task_pool] = 0;
         regs[0] = (uint64_t)(int64_t)-ENOMEM;
         return;
     }
 
     if (flags & CLONE_VM) {
-        /* ── 共享地址空间路径：pthread 才是同一 thread group, vfork 仍是子进程。 ── */
-        child->is_thread = is_thread_clone;
-        child->shares_pgd = true;
-        child->tgid = is_thread_clone ? (parent->tgid ? parent->tgid : parent->id) : child->id;
-        child->pgd = parent->pgd;
+        /*
+           ── 共享地址空间路径：pthread 才是同一 thread group, vfork 仍是子进程。 ──
+           task_alloc_slot 给每个任务分了一份空 mm；线程组改成共享父任务的
+           那一份（引用计数 +1），fork 路径则继续用自己那份新 mm。
+        */
+        mm_put(child->mm);
+        child->mm = mm_share(parent->mm);
+        child->tgid = parent->tgid ? parent->tgid : parent->id;
         child->user_entry = parent->user_entry;
         child->user_sp = child_stack;
         child->user_stack_top = child_stack;
         child->user_stack_size = parent->user_stack_size;
-        child->heap_end = parent->heap_end;
-        child->mmap_next = parent->mmap_next;
-        child->mmap_base = parent->mmap_base;
-        child->interp_end = parent->interp_end; /* 共享 pgd, 不复制只继承 */
         child->fs_base = (flags & CLONE_SETTLS) ? tls : parent->fs_base;
         child->parent_id = parent->id;
 
@@ -442,16 +441,16 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
 
         {
             int k = 0;
-            while (parent->cwd[k] && k < (int)TASK_CWD_LEN - 1) {
-                child->cwd[k] = parent->cwd[k];
+            while (parent->fs->cwd[k] && k < (int)TASK_CWD_LEN - 1) {
+                child->fs->cwd[k] = parent->fs->cwd[k];
                 k++;
             }
-            child->cwd[k] = '\0';
+            child->fs->cwd[k] = '\0';
         }
         if (is_thread_clone) {
             for (uint32_t k = 0; k < TASK_MAX_FD; k++)
-                child->fd_table[k] = parent->fd_table[k];
-            memcpy(child->fd_cloexec, parent->fd_cloexec, sizeof(parent->fd_cloexec));
+                child->files->fd_table[k] = parent->files->fd_table[k];
+            memcpy(child->files->fd_cloexec, parent->files->fd_cloexec, sizeof(parent->files->fd_cloexec));
         } else {
             fd_table_inherit(child, parent);
         }
@@ -478,13 +477,13 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
         uint64_t child_pgd_phys = pmm_alloc_pages(&g_pmm, 1);
         if (child_pgd_phys == 0) {
             KLOG_ERROR("[clone] no memory for child pgd\n");
-            task_signal_release(child); /* 上面 fork 路径已复制了一份 signal_struct */
+            task_release_objects(child); /* signal/files/fs/mm 都还没发布 */
             g_stack_used[child - g_task_pool] = 0;
             regs[0] = (uint64_t)(int64_t)-ENOMEM;
             return;
         }
         void *child_pgd_virt = phys_to_virt(child_pgd_phys);
-        void *parent_pgd_virt = phys_to_virt((uint64_t)parent->pgd);
+        void *parent_pgd_virt = phys_to_virt((uint64_t)parent->mm->pgd);
         memset(child_pgd_virt, 0, PAGE_SIZE);
 
         /* 子进程 PGD 同样需要架构要求的内核映射。 */
@@ -538,7 +537,7 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
         } \
     } while (0)
 
-        CLONE_COPY_RANGE(0x0, parent->heap_end);
+        CLONE_COPY_RANGE(0x0, parent->mm->heap_end);
         /*
            mmap 区从本进程真实的基址扫起, 不是写死的 USER_MMAP_BASE_EXEC。
            PIE 进程的基址是 0x50000000, 用 0x30000000 当起点会逐页空扫
@@ -547,8 +546,8 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
            回退下限也是 mmap_base(见 mmap.c), 所以 [mmap_base, mmap_next)
            必然覆盖该进程全部的 mmap 映射。
         */
-        if (clone_copy_ok && parent->mmap_next > parent->mmap_base)
-            CLONE_COPY_RANGE(parent->mmap_base, parent->mmap_next);
+        if (clone_copy_ok && parent->mm->mmap_next > parent->mm->mmap_base)
+            CLONE_COPY_RANGE(parent->mm->mmap_base, parent->mm->mmap_next);
         if (clone_copy_ok)
             CLONE_COPY_RANGE(parent->user_stack_top - parent->user_stack_size, parent->user_stack_top);
 
@@ -574,8 +573,8 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
            空洞, 每个 fork 白扫 65536 页 —— 正是 mmap_base 那条注释里抱怨过的
            那种浪费。interp_end 只覆盖真正映射过的部分(ld-musl 约几十页)。
         */
-        if (clone_copy_ok && parent->interp_end > USER_INTERP_BASE)
-            CLONE_COPY_RANGE(USER_INTERP_BASE, parent->interp_end);
+        if (clone_copy_ok && parent->mm->interp_end > USER_INTERP_BASE)
+            CLONE_COPY_RANGE(USER_INTERP_BASE, parent->mm->interp_end);
 
 #if ARCH_X86_64
         /*
@@ -607,7 +606,7 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
 
         if (!clone_copy_ok) {
             KLOG_ERROR("[clone] failed to copy user address space\n");
-            task_signal_release(child);
+            task_release_objects(child);
             g_stack_used[child - g_task_pool] = 0;
             /*
                不能只 free 根页表：mm_vm_map_pages 已经建好的中间页表,
@@ -620,53 +619,54 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
             return;
         }
 
-        child->pgd = (uint64_t *)child_pgd_phys;
-        child->shares_pgd = false;
+        child->mm->pgd = (uint64_t *)child_pgd_phys;
+        child->mm->owns_pgd = true;
         child->tgid = child->id;
         child->user_entry = parent->user_entry;
         child->user_sp = child_stack ? child_stack : parent->user_sp;
         child->user_stack_top = parent->user_stack_top;
         child->user_stack_size = parent->user_stack_size;
-        child->heap_end = parent->heap_end;
-        child->mmap_next = parent->mmap_next;
-        child->mmap_base = parent->mmap_base;
+        child->mm->heap_end = parent->mm->heap_end;
+        child->mm->mmap_next = parent->mm->mmap_next;
+        child->mm->mmap_base = parent->mm->mmap_base;
         /* 上面已按 [USER_INTERP_BASE, interp_end) 复制过, 子进程同样要记住 */
-        child->interp_end = parent->interp_end;
+        child->mm->interp_end = parent->mm->interp_end;
+        memcpy(child->mm->exe_path, parent->mm->exe_path, sizeof(child->mm->exe_path));
         child->fs_base = parent->fs_base;
         child->parent_id = parent->id;
 
         {
             int k = 0;
-            while (parent->cwd[k] && k < (int)TASK_CWD_LEN - 1) {
-                child->cwd[k] = parent->cwd[k];
+            while (parent->fs->cwd[k] && k < (int)TASK_CWD_LEN - 1) {
+                child->fs->cwd[k] = parent->fs->cwd[k];
                 k++;
             }
-            child->cwd[k] = '\0';
+            child->fs->cwd[k] = '\0';
         }
         /* 深拷贝 fd_table */
         for (uint32_t k = 0; k < TASK_MAX_FD; k++) {
-            int pidx = (int)parent->fd_table[k];
+            int pidx = (int)parent->files->fd_table[k];
             if (pidx < 0 || pidx >= FD_POOL_SIZE) {
-                child->fd_table[k] = -1;
+                child->files->fd_table[k] = -1;
                 continue;
             }
             fd_obj_t *src = &g_fd_pool[pidx];
             if (src->type == FDT_FREE) {
-                child->fd_table[k] = -1;
+                child->files->fd_table[k] = -1;
                 continue;
             }
             int new_idx = fd_pool_alloc();
             if (new_idx < 0) {
                 KLOG_ERROR("[clone/fork] fd pool full, fd=%u dropped\n", k);
-                child->fd_table[k] = -1;
+                child->files->fd_table[k] = -1;
                 continue;
             }
             g_fd_pool[new_idx] = *src;
             g_fd_pool[new_idx].wq.waiter_count = 0;
             fd_obj_ref(new_idx);
-            child->fd_table[k] = (int16_t)new_idx;
+            child->files->fd_table[k] = (int16_t)new_idx;
         }
-        memcpy(child->fd_cloexec, parent->fd_cloexec, sizeof(parent->fd_cloexec));
+        memcpy(child->files->fd_cloexec, parent->files->fd_cloexec, sizeof(parent->files->fd_cloexec));
         {
             int k = 0;
             while (parent->name[k] && k < (int)TASK_NAME_LEN - 1) {
@@ -782,7 +782,7 @@ void wait_handler(uint64_t regs[6], task_t *me)
         if (!g_stack_used[i])
             continue;
         task_t *t = &g_task_pool[i];
-        if (t->is_thread)
+        if (task_is_thread(t))
             continue;
         if (t->parent_id != me->id)
             continue;
@@ -804,7 +804,7 @@ void wait_handler(uint64_t regs[6], task_t *me)
         if (!g_stack_used[i])
             continue;
         task_t *t = &g_task_pool[i];
-        if (t->is_thread)
+        if (task_is_thread(t))
             continue;
         if (t->parent_id != me->id)
             continue;
@@ -847,7 +847,7 @@ void wait_handler(uint64_t regs[6], task_t *me)
         if (!g_stack_used[i])
             continue;
         task_t *t = &g_task_pool[i];
-        if (t->is_thread)
+        if (task_is_thread(t))
             continue;
         if (t->parent_id != me->id)
             continue;

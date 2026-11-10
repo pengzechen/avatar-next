@@ -20,6 +20,7 @@
 #include "task/task.h"
 #include "task/sched.h"
 #include "task/switch.h" /* arch_irq_enable */
+#include "assert.h"
 #include "klog.h"
 #include "string.h"
 #include "arch.h"
@@ -220,15 +221,14 @@ static void setup_secondary_idle_task(cpu_t *c)
     idle->cpu_affinity = c->cpu_id;
     idle->fs_base = 0;
     /*
-       注意： fd_table 必须显式填 -1：memset 归零后 0 是个合法的池槽位号,
-       于是这张表在 fd_table_inherit() 眼里就是「256 个都指向槽位 0 的 fd」,
-       一次继承会把 FD_POOL_SIZE(128) 个槽全部吃光 —— 之后宿主里任何进程
-       连 open() 都失败(实测 `[fd] pool_alloc: no free slots`, Ctrl+] 停 guest
-       后再启动 vmm-run 直接起不来)。CPU0 的 idle 走 task.c 的 g_idle_task,
-       那份是初始化过的；只有次级核这条路径漏了。
+       idle 也需要 files/fs/mm。files_alloc() 会把 fd 表显式填成 -1 ——
+       不能靠 memset 归零：0 是合法的 fd 池槽位号，fd_table_inherit()
+       会把它当成「256 个都指向槽位 0 的 fd」，一次继承就把
+       FD_POOL_SIZE(128) 个槽全部吃光（实测过：之后宿主里所有 open()
+       都失败）。CPU0 的 idle 走 task.c 的 g_idle_task，同样在
+       task_init() 里分配。
     */
-    for (uint32_t j = 0; j < TASK_MAX_FD; j++)
-        idle->fd_table[j] = -1;
+    assert_always(task_objects_alloc(idle));
     list_node_init(&idle->run_node);
     list_node_init(&idle->wait_node);
 

@@ -443,9 +443,9 @@ void sched_schedule(void)
        - 用户任务：切换到用户页表(已包含内核高半区映射)
        - 内核任务：切换回内核页表
     */
-    if (next->is_user_process && next->pgd != 0) {
+    if (next->is_user_process && next->mm->pgd != 0) {
         /* 切换到用户页表 */
-        write_cr3((uint64_t)next->pgd);
+        write_cr3((uint64_t)next->mm->pgd);
 
         /* 更新 TSS.RSP0 为当前任务的内核栈顶 */
         uint64_t kernel_stack_top = (uint64_t)next->stack_base + TASK_STACK_SIZE;
@@ -477,26 +477,26 @@ void sched_schedule(void)
     */
 
 #if ARCH_RISCV64
-    uint64_t *next_pgd_for_switch = next->pgd;
+    uint64_t *next_pgd_for_switch = next->mm->pgd;
     if (next->is_user_process && !next->user_started) {
         /* 首次进入用户进程：延迟satp切换到arch_switch_to_user */
         next_pgd_for_switch = NULL;
 
-    } else if (!next->is_user_process && next->pgd == NULL && g_kernel_pgd_phys != 0) {
+    } else if (!next->is_user_process && next->mm->pgd == NULL && g_kernel_pgd_phys != 0) {
         /* 切换到内核任务：恢复内核页表 */
         next_pgd_for_switch = (uint64_t *)g_kernel_pgd_phys;
     }
     /*
        RISC-V 用户进程：pgd 是创建时固定的物理地址, 不需要由 arch_task_switch
-       动态保存。若传 &prev->pgd, 当用户进程在 arch_switch_to_user 切换 satp
-       之前被抢占(satp 仍为内核页表)时, prev->pgd 会被覆写为内核页表地址,
+       动态保存。若传 &prev->mm->pgd, 当用户进程在 arch_switch_to_user 切换 satp
+       之前被抢占(satp 仍为内核页表)时, prev->mm->pgd 会被覆写为内核页表地址,
        导致下次调度回来时以错误的 satp 进入 U-mode → VA 0x10000 不在内核页表 → Inst PF。
        因此对用户进程传 NULL(跳过 satp 保存), 保持 pgd 不变。
     */
-    uint64_t **prev_pgd_save = prev->is_user_process ? NULL : &prev->pgd;
+    uint64_t **prev_pgd_save = prev->is_user_process ? NULL : &prev->mm->pgd;
     arch_task_switch(&prev->sp, switch_sp, prev_pgd_save, next_pgd_for_switch, &prev->switch_done);
 #else
-    arch_task_switch(&prev->sp, switch_sp, &prev->pgd, next->pgd, &prev->switch_done);
+    arch_task_switch(&prev->sp, switch_sp, &prev->mm->pgd, next->mm->pgd, &prev->switch_done);
 #endif
 
     /* prev 被恢复后恢复其中断状态 */

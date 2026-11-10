@@ -64,13 +64,13 @@ bool user_range_accessible(const void *ptr, uint64_t len)
         return true;
 
     task_t *t = task_current();
-    if (!t || !t->pgd)
+    if (!t || !t->mm->pgd)
         return true; /* 非用户进程上下文：维持旧行为, 只做范围检查 */
 
     uint64_t start = (uint64_t)ptr;
     uint64_t first = start & ~(uint64_t)(PAGE_SIZE - 1);
     uint64_t last = (start + len - 1) & ~(uint64_t)(PAGE_SIZE - 1);
-    void *pgd = phys_to_virt((uint64_t)t->pgd);
+    void *pgd = phys_to_virt((uint64_t)t->mm->pgd);
 
     for (uint64_t va = first;; va += PAGE_SIZE) {
         if (mm_vm_get_paddr(pgd, va) == 0)
@@ -166,12 +166,12 @@ int resolve_path_at(task_t *task, int dirfd, const char *pathname, char *abspath
         return -ENOENT;
 
     if (pathname[0] == '/') {
-        resolve_path(task->cwd, pathname, abspath, abspath_len);
+        resolve_path(task->fs->cwd, pathname, abspath, abspath_len);
         return 0;
     }
 
     if (dirfd == AT_FDCWD) {
-        resolve_path(task->cwd, pathname, abspath, abspath_len);
+        resolve_path(task->fs->cwd, pathname, abspath, abspath_len);
         return 0;
     }
 

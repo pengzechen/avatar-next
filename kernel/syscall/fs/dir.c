@@ -23,7 +23,7 @@ void getcwd_handler(uint64_t regs[6], task_t *current)
 {
     char *buf = (char *)regs[0];
     uint64_t size = regs[1];
-    uint64_t need = strlen(current->cwd) + 1;
+    uint64_t need = strlen(current->fs->cwd) + 1;
 
     if (size < need) {
         regs[0] = (uint64_t)(int64_t)-ERANGE;
@@ -33,7 +33,7 @@ void getcwd_handler(uint64_t regs[6], task_t *current)
         regs[0] = (uint64_t)(int64_t)-EFAULT;
         return;
     }
-    int n = copy_string_to_user(current->cwd, buf, (int)size);
+    int n = copy_string_to_user(current->fs->cwd, buf, (int)size);
     regs[0] = (n >= 0) ? (uint64_t)(n + 1) : (uint64_t)(int64_t)-EFAULT;
 }
 
@@ -176,7 +176,7 @@ void chdir_handler(uint64_t regs[6], task_t *current)
     }
 
     char abspath[128];
-    resolve_path(current->cwd, kpath, abspath, sizeof(abspath));
+    resolve_path(current->fs->cwd, kpath, abspath, sizeof(abspath));
 
     struct kernel_stat tmpst;
     if (vfs_stat_path(abspath, &tmpst) == 0) {
@@ -187,10 +187,10 @@ void chdir_handler(uint64_t regs[6], task_t *current)
         }
         int k = 0;
         while (abspath[k] && k < (int)TASK_CWD_LEN - 1) {
-            current->cwd[k] = abspath[k];
+            current->fs->cwd[k] = abspath[k];
             k++;
         }
-        current->cwd[k] = '\0';
+        current->fs->cwd[k] = '\0';
         regs[0] = 0;
         return;
     }
@@ -204,10 +204,10 @@ void chdir_handler(uint64_t regs[6], task_t *current)
 
     int k = 0;
     while (abspath[k] && k < (int)TASK_CWD_LEN - 1) {
-        current->cwd[k] = abspath[k];
+        current->fs->cwd[k] = abspath[k];
         k++;
     }
-    current->cwd[k] = '\0';
+    current->fs->cwd[k] = '\0';
     regs[0] = 0;
 }
 

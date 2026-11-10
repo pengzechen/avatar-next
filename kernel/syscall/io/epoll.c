@@ -165,7 +165,7 @@ uint32_t fd_poll(task_t *task, int fd)
     if (!obj)
         return 0;
 
-    int pool_idx = task->fd_table[fd];
+    int pool_idx = task->files->fd_table[fd];
 
     if (obj->type == FDT_EPOLL)
         return 0;
@@ -216,7 +216,7 @@ void epoll_create1_handler(uint64_t regs[6], task_t *current)
     ep->owner_pid = current->id;
 
     if (flags & EPOLL_CLOEXEC)
-        current->fd_cloexec[fd / 8] |= (1 << (fd % 8));
+        current->files->fd_cloexec[fd / 8] |= (1 << (fd % 8));
 
     KLOG_SYSCALL("[epoll] create1: pid=%u fd=%d ep_idx=%d\n", current->id, fd, ep_idx);
     regs[0] = (uint64_t)fd;
@@ -252,7 +252,7 @@ void epoll_ctl_handler(uint64_t regs[6], task_t *current)
         regs[0] = (uint64_t)(int64_t)-EBADF;
         return;
     }
-    int target_pool = current->fd_table[fd];
+    int target_pool = current->files->fd_table[fd];
 
     switch (op) {
     case EPOLL_CTL_ADD: {

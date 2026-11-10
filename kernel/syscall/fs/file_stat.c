@@ -23,7 +23,7 @@
 
 static bool trace_heavy_task(task_t *current)
 {
-    return current && current->is_user_process && current->heap_end >= 0x3000000ULL;
+    return current && current->is_user_process && current->mm->heap_end >= 0x3000000ULL;
 }
 
 /* 填好内核态 stat 后再一次性回写用户。绝不能把用户指针交给

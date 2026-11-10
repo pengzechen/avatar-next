@@ -93,7 +93,7 @@ int pipe_alloc(task_t *task, int fds_out[2])
     }
     int wr_fd = task_alloc_fd(task, wr_pool);
     if (wr_fd < 0) {
-        task->fd_table[rd_fd] = -1;
+        task->files->fd_table[rd_fd] = -1;
         vfs_discard_unopened(rd_vf);
         vfs_discard_unopened(wr_vf);
         fd_pool_free(rd_pool);

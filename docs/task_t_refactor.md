@@ -1,7 +1,11 @@
 # task_t 结构重构方案
 
-**状态**：P0/P1 已完成（2026-11-10）；P2~P5 待做
+**状态**：P0~P3 已完成（2026-11-10）；P4/P5 待做
 **对象**：`kernel/task/task.h` 的 `task_t`（任务控制块）
+
+**结果**：`sizeof(task_t)` **3624 → 1600（P1）→ 768 B（P3）**。
+fd 表/cwd/pgd 等进程级状态移到独立的 `files_struct` / `fs_struct` /
+`mm_struct` 静态池对象；调度热区仍在首条 cacheline。
 
 ## 一、现状
 
@@ -170,11 +174,15 @@ struct fs_struct {
 ```
 
 - fork 默认复制；未来支持 `CLONE_FILES` 时线程可直接共享。
-- 解决 `TASK_MAX_FD` 与 `RLIMIT_NOFILE` 不一致：按 rlimit 上限分配
-  表，或表可增长，至少让用户可观察到的上限一致。
-- `exe_path` 建议随 P3 放到 mm。
+- `TASK_MAX_FD` 与 `RLIMIT_NOFILE` 的不一致本轮未改：实际可达上限仍由
+  `TASK_MAX_FD`（256）和 `FD_POOL_SIZE`（128）共同决定；彻底对齐需要
+  动态/可增长的 fd 池，留作后续项。
+- `exe_path` 随 P3 放到 mm。
 
-预期：TCB 再减约 544 B。
+**实施结果**：`include/process_fs.h` 定义两个对象；
+`kernel/syscall/fs/process_fs.c` 实现静态池 + 引用计数（池大小
+`TASK_MAX + AVATAR_MAX_CPUS`，idle 任务也有一份）。TCB 从 1600 → 约
+1000 B。当前 clone 仍按旧行为复制（fork/线程各一份），为后续共享留好模型。
 
 ### P3：抽出 `mm_struct`（生命周期模型）
 
@@ -195,7 +203,14 @@ struct mm_struct {
 - fork：共享或复制 mm；exec：替换 mm；最后一个引用释放 pgd。
 - `task_group_has_other_threads()` 可退化成 `mm->refcount > 1`。
 
-### P4：cred / limits 外置（可选）
+**实施结果**：`include/mm_struct.h` + `kernel/mm/mm_struct.c`。所有任务
+（含 idle）创建时分配一份空 mm；`CLONE_VM + CLONE_THREAD` 共享父 mm，
+fork 使用自己的新 mm 并设置 `owns_pgd`；exec 在旧 mm 仅剩当前引用时
+复用，否则分配新 mm、旧 mm 留给线程组。`shares_pgd` 字段删除，
+`is_thread` 改为 `task_is_thread(t)`（`tgid != id`）；
+`task_group_has_other_threads()` 删除（exec 不再需要手工判断）。
+`pgid/sid/ctty` 仍留在 task_t（属于进程级但不在本轮范围）。
+最终 `sizeof(task_t)=768 B`。
 
 `uid/euid/gid/egid/groups/umask` + `rlimit_cur/max` 抽出引用计数对象，
 fork 复制、线程共享，集中化继承逻辑。
@@ -229,11 +244,11 @@ fork 复制、线程共享，集中化继承逻辑。
 
 ## 五、落地顺序
 
-1. P0 布局调整（零语义风险，先拿 cache 局部性）
-2. P1 `signal_struct`（去掉 58% 体积 + 修正线程信号语义）
-3. P2 `files/fs_struct`
-4. P3 `mm_struct`
-5. P4/P5 cred/limits 与冷字段收尾
+1. ✅ P0 布局调整（零语义风险，先拿 cache 局部性）
+2. ✅ P1 `signal_struct`（去掉 58% 体积 + 修正线程信号语义）
+3. ✅ P2 `files/fs_struct`
+4. ✅ P3 `mm_struct`
+5. ⬜ P4/P5 cred/limits 与冷字段收尾
 
 ## 六、验证记录
 
@@ -241,10 +256,10 @@ fork 复制、线程共享，集中化继承逻辑。
 
 - 三架构 `make PLATFORM=<p> clean && make PLATFORM=<p> kernel` 全部通过
   （x86_64 / aarch64 / riscv64）。
-- LTP 全量（103 例）：
-  - x86_64 SMP=1：103/103 PASS
-  - aarch64 SMP=1：103/103 PASS
-  - riscv64 SMP=1：103/103 PASS
+- LTP 全量（103 例），P1 后与 P2/P3 后各跑过一遍：
+  - x86_64 SMP=1：103/103 PASS（P1、P2/P3 各一次）
+  - aarch64 SMP=1：103/103 PASS（P1、P2/P3 各一次）
+  - riscv64 SMP=1：103/103 PASS（P1、P2/P3 各一次）
   - x86_64 SMP=4：103/103 PASS
   - aarch64 SMP=2：103/103 PASS
 - VMM helper/多 VM 回归：本轮未跑（构建目录里没有对应 rootfs 镜像；

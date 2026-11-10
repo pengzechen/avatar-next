@@ -700,7 +700,7 @@ int pseudo_readlink(const char *abspath, char *buf, size_t bufsz)
     /* /proc/self/exe → 当前进程的可执行路径 */
     if (pfs_strcmp(abspath, "/proc/self/exe") == 0) {
         task_t *t = task_current();
-        const char *exe = (t && t->exe_path[0]) ? t->exe_path : "/unknown";
+        const char *exe = (t && t->mm->exe_path[0]) ? t->mm->exe_path : "/unknown";
         size_t n = pfs_strlen(exe);
         size_t copy = n < bufsz ? n : bufsz;
         memcpy(buf, exe, copy);

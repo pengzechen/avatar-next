@@ -133,15 +133,14 @@ static void slot_take_and_free(uint32_t idx)
     task_t *task = &g_task_pool[idx];
     uint64_t flags;
 
-    KLOG_DEBUG("[task] Reaping dead task slot %u (id=%u, pgd=0x%llx)\n", idx, task->id, (uint64_t)task->pgd);
+    KLOG_DEBUG("[task] Reaping dead task slot %u (id=%u, pgd=0x%llx)\n", idx, task->id,
+               task->mm ? (uint64_t)task->mm->pgd : 0);
 
-    /* 锁外：释放用户页表(几百页, 不能占着全池的锁) */
-    if (task->is_user_process && !task->shares_pgd && task->pgd != NULL) {
-        vm_destroy_user_process((uint64_t)task->pgd);
-        task->pgd = NULL;
-    }
-    /* signal_struct 可能被线程组共享；只有最后一个引用会归还池槽位。 */
-    task_signal_release(task);
+    /*
+       锁外释放进程级对象：signal_struct 可能被线程组共享；mm 的最后一个
+       引用会销毁用户页表（几百页，不能占着全池的锁）。
+    */
+    task_release_objects(task);
 
     spin_lock_irqsave(&g_task_pool_lock, &flags);
     g_stack_used[idx] = 0;
@@ -225,6 +224,19 @@ task_t *task_alloc_slot(void)
            (见 vcpu_task_fn 里那段说明)。有数字才能定 size, 不然只能靠翻倍赌。
         */
         memset(task->stack_base, TASK_STACK_MAGIC, TASK_STACK_SIZE);
+        /*
+           进程级对象（fd 表 / cwd / mm / signal 由 task_signal_* 懒分配）。
+           静态池大小 = TASK_MAX + AVATAR_MAX_CPUS，认领到一个任务槽就
+           必然有一个对象槽；失败只可能是池管理 bug，按 ENOMEM 处理。
+        */
+        if (!task_objects_alloc(task)) {
+            KLOG_ERROR("[task] task_alloc_slot: no free process objects\n");
+            spin_lock_irqsave(&g_task_pool_lock, &flags);
+            g_stack_used[i] = 0;
+            task->stack_base = NULL;
+            spin_unlock_irqrestore(&g_task_pool_lock, flags);
+            return NULL;
+        }
         /* 默认 affinity = ANY：让 sched_enqueue round-robin 分发到所有核。
            调用方(如 vcpu_task_create)可在 enqueue 前覆盖。
         */
@@ -307,6 +319,9 @@ size_t task_stack_used(const task_t *task)
 */
 static void free_task_slot(task_t *task)
 {
+    /* 先把 files/fs/mm/signal 引用还掉；mm 销毁页表必须在池锁外。 */
+    task_release_objects(task);
+
     uint64_t flags;
     spin_lock_irqsave(&g_task_pool_lock, &flags);
     for (uint32_t i = 0; i < TASK_MAX; i++) {
@@ -318,6 +333,43 @@ static void free_task_slot(task_t *task)
         break;
     }
     spin_unlock_irqrestore(&g_task_pool_lock, flags);
+}
+
+/* ── 进程级对象分配/释放（files / fs / mm / signal）───────── */
+
+bool task_objects_alloc(task_t *t)
+{
+    if (!t)
+        return false;
+    t->files = files_alloc();
+    t->fs = fs_alloc();
+    t->mm = mm_alloc();
+    if (!t->files || !t->fs || !t->mm) {
+        task_release_objects(t);
+        return false;
+    }
+    return true;
+}
+
+void task_release_objects(task_t *t)
+{
+    if (!t)
+        return;
+
+    /* signal_struct 可能被线程组共享，只有最后一个引用归还池槽位。 */
+    task_signal_release(t);
+
+    files_struct_t *files = t->files;
+    t->files = NULL;
+    files_put(files);
+
+    fs_struct_t *fs = t->fs;
+    t->fs = NULL;
+    fs_put(fs);
+
+    mm_struct_t *mm = t->mm;
+    t->mm = NULL;
+    mm_put(mm);
 }
 
 /* ── task_trampoline ─────────────────────────────────────── */
@@ -397,6 +449,8 @@ void task_init(void)
     g_idle_task.entry = NULL;
     g_idle_task.arg = NULL;
     g_idle_task.fs_base = 0;
+    /* idle 也要一份空的 files/fs/mm（内核任务没有用户 pgd）。 */
+    assert_always(task_objects_alloc(&g_idle_task));
     list_node_init(&g_idle_task.run_node);
     list_node_init(&g_idle_task.wait_node);
 
@@ -485,40 +539,6 @@ __attribute__((noreturn)) void task_idle_loop(void)
     }
 }
 
-/* ── task_group_has_other_threads ───────────────────────────── */
-
-/*
-   只统计"活"的同组任务，跳过 DEAD / ALLOCATING 和内核任务。
-   持池锁扫描，避免与并发的 fork/exit 看到半更新的槽位。
-*/
-bool task_group_has_other_threads(task_t *task)
-{
-    if (!task)
-        return false;
-
-    uint32_t tgid = task->tgid ? task->tgid : task->id;
-    uint64_t flags;
-    bool found = false;
-
-    spin_lock_irqsave(&g_task_pool_lock, &flags);
-    for (uint32_t i = 0; i < TASK_MAX; i++) {
-        task_t *t = &g_task_pool[i];
-        if (!g_stack_used[i] || t == task)
-            continue;
-        if (!t->is_user_process)
-            continue;
-        if (t->state == TASK_DEAD || t->state == TASK_ALLOCATING)
-            continue;
-        if ((t->tgid ? t->tgid : t->id) == tgid) {
-            found = true;
-            break;
-        }
-    }
-    spin_unlock_irqrestore(&g_task_pool_lock, flags);
-
-    return found;
-}
-
 /* ── task_set_cpu_affinity ───────────────────────────────────
    把 task 移到指定 cpu 的运行队列。供 vcpu/EL2 等不能跨核迁移的
    任务在 enqueue 后立即重新绑定。
@@ -563,8 +583,6 @@ task_t *process_create(const char *name, uint64_t user_entry, uint64_t user_code
     /* 标记为用户进程 */
     task->is_user_process = true;
     task->user_started = false;
-    task->is_thread = false;
-    task->shares_pgd = false;
     task->tgid = task->id;
     task->user_entry = user_entry;
     task->user_sp = user_sp;
@@ -580,7 +598,8 @@ task_t *process_create(const char *name, uint64_t user_entry, uint64_t user_code
         free_task_slot(task);
         return NULL;
     }
-    task->pgd = (uint64_t *)pgd_phys;
+    task->mm->pgd = (uint64_t *)pgd_phys;
+    task->mm->owns_pgd = true;
     task->user_entry = USER_CODE_BASE;
     KLOG_DEBUG("[task] Created user PGD=0x%llx for '%s'\n", pgd_phys, name);
 
@@ -596,7 +615,8 @@ task_t *process_create(const char *name, uint64_t user_entry, uint64_t user_code
     task->name[i] = '\0';
 
     /* 使用用户进程专用的栈初始化函数(注意：使用调整后的虚拟地址) */
-    task->sp = arch_init_user_stack(task->stack_base, TASK_STACK_SIZE, task->user_entry, user_sp, (uint64_t)task->pgd);
+    task->sp =
+        arch_init_user_stack(task->stack_base, TASK_STACK_SIZE, task->user_entry, user_sp, (uint64_t)task->mm->pgd);
 
     /* 初始化完成后才发布为 READY, 避免查找/信号路径看到半初始化 TCB。 */
     task->state = TASK_READY;
@@ -606,7 +626,7 @@ task_t *process_create(const char *name, uint64_t user_entry, uint64_t user_code
 
     KLOG_DEBUG("[task] created user process '%s' id=%u prio=%u\n", task->name, task->id, (uint32_t)task->priority);
     KLOG_DEBUG("[task]   user_entry=0x%llx (adjusted), user_sp=0x%llx, pgd=0x%llx\n", task->user_entry, user_sp,
-               (uint64_t)task->pgd);
+               (uint64_t)task->mm->pgd);
 
     return task;
 }
@@ -634,32 +654,31 @@ task_t *process_create_with_pgd(const char *name, uint64_t user_entry, uint64_t 
     task->priority = priority;
     task->is_user_process = true;
     task->user_started = false;
-    task->is_thread = false;
-    task->shares_pgd = false;
     task->tgid = task->id;
     task->user_entry = user_entry;
     task->user_sp = user_sp;
     task->user_stack_top = user_sp;
     task->user_stack_size = USER_STACK_SIZE;
-    task->pgd = (uint64_t *)pgd_phys;
+    task->mm->pgd = (uint64_t *)pgd_phys;
+    task->mm->owns_pgd = true;
     task->fs_base = 0;
 
     /* 初始化进程文件系统相关字段(继承父进程 cwd) */
     task_t *parent = task_current();
     if (parent) {
         uint32_t c = 0;
-        while (parent->cwd[c] && c < (uint32_t)(TASK_CWD_LEN - 1)) {
-            task->cwd[c] = parent->cwd[c];
+        while (parent->fs->cwd[c] && c < (uint32_t)(TASK_CWD_LEN - 1)) {
+            task->fs->cwd[c] = parent->fs->cwd[c];
             c++;
         }
-        task->cwd[c] = '\0';
+        task->fs->cwd[c] = '\0';
     } else {
-        task->cwd[0] = '/';
-        task->cwd[1] = '\0';
+        task->fs->cwd[0] = '/';
+        task->fs->cwd[1] = '\0';
     }
     for (uint32_t j = 0; j < TASK_MAX_FD; j++)
-        task->fd_table[j] = -1;
-    memset(task->fd_cloexec, 0, sizeof(task->fd_cloexec));
+        task->files->fd_table[j] = -1;
+    memset(task->files->fd_cloexec, 0, sizeof(task->files->fd_cloexec));
 
     task->parent_id = parent ? parent->id : 0;
     task->uid = parent ? parent->uid : 0;
@@ -695,16 +714,17 @@ task_t *process_create_with_pgd(const char *name, uint64_t user_entry, uint64_t 
     task->name[i] = '\0';
 
     /* 在入队之前设置堆和 mmap 地址, 避免调度器过早切换到该任务时看到 0 */
-    task->heap_end = heap_end_val;
-    task->mmap_next = mmap_next_val;
+    task->mm->heap_end = heap_end_val;
+    task->mm->mmap_next = mmap_next_val;
     /*
        初值即基址：exec 传进来的 mmap_next_val 就是本进程 mmap 区的起点
        (task_execve 里算出来的 mmap_base)。fork 拷贝地址空间时用它当
        扫描下界, 见 task.h 里 mmap_base 的注释。
     */
-    task->mmap_base = mmap_next_val;
+    task->mm->mmap_base = mmap_next_val;
 
-    task->sp = arch_init_user_stack(task->stack_base, TASK_STACK_SIZE, task->user_entry, user_sp, (uint64_t)task->pgd);
+    task->sp =
+        arch_init_user_stack(task->stack_base, TASK_STACK_SIZE, task->user_entry, user_sp, (uint64_t)task->mm->pgd);
 
     /*
        这里故意不入队：调用方(execve)在新任务创建之后还要填 fd 表,
@@ -779,17 +799,15 @@ task_t *task_create_affinity(const char *name, void (*entry)(void *), void *arg,
     task->arg = arg;
     task->is_user_process = false;
     task->user_started = false;
-    task->is_thread = false;
-    task->shares_pgd = false;
     task->tgid = task->id;
-    task->pgd = NULL;
+    task->mm->pgd = NULL;
     task->fs_base = 0;
     task->ctid_ptr = 0;
-    task->cwd[0] = '/';
-    task->cwd[1] = '\0';
+    task->fs->cwd[0] = '/';
+    task->fs->cwd[1] = '\0';
     for (uint32_t j = 0; j < TASK_MAX_FD; j++)
-        task->fd_table[j] = -1;
-    memset(task->fd_cloexec, 0, sizeof(task->fd_cloexec));
+        task->files->fd_table[j] = -1;
+    memset(task->files->fd_cloexec, 0, sizeof(task->files->fd_cloexec));
     task->parent_id = 0;
     task->uid = 0;
     task->euid = 0;

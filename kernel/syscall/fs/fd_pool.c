@@ -156,8 +156,8 @@ int task_alloc_fd(task_t *task, int pool_idx)
     for (int i = 3; i < (int)TASK_MAX_FD; i++) {
         if ((uint64_t)i >= nofile_limit)
             break;
-        if (task->fd_table[i] == -1) {
-            task->fd_table[i] = (int16_t)pool_idx;
+        if (task->files->fd_table[i] == -1) {
+            task->files->fd_table[i] = (int16_t)pool_idx;
             fd = i;
             /*
                新 fd 默认不是 CLOEXEC。必须在这里清掉上一个占位者留下的位：
@@ -165,7 +165,7 @@ int task_alloc_fd(task_t *task, int pool_idx)
                真正关闭 FD_CLOEXEC 的 fd —— 不清的话, 复用一个曾经标过
                CLOEXEC 的 fd 号会让新 fd 在下次 exec 时被意外关掉。
             */
-            task->fd_cloexec[i / 8] &= (uint8_t)~(1u << (i % 8));
+            task->files->fd_cloexec[i / 8] &= (uint8_t)~(1u << (i % 8));
             break;
         }
     }
@@ -180,8 +180,9 @@ int task_alloc_fd(task_t *task, int pool_idx)
 
     /* 打印 fd_table 的前几个槽位用于调试 */
     KLOG_ERROR("[fd] task_alloc_fd: pid=%u no free fd (TASK_MAX_FD=%d)\n", task->id, TASK_MAX_FD);
-    KLOG_ERROR("[fd] fd_table dump: [0]=%d [1]=%d [2]=%d [3]=%d [4]=%d [5]=%d\n", task->fd_table[0], task->fd_table[1],
-               task->fd_table[2], task->fd_table[3], task->fd_table[4], task->fd_table[5]);
+    KLOG_ERROR("[fd] fd_table dump: [0]=%d [1]=%d [2]=%d [3]=%d [4]=%d [5]=%d\n", task->files->fd_table[0],
+               task->files->fd_table[1], task->files->fd_table[2], task->files->fd_table[3], task->files->fd_table[4],
+               task->files->fd_table[5]);
 
     return -1;
 }
@@ -201,8 +202,8 @@ int task_take_fd(task_t *task, int fd)
 
     uint64_t flags = arch_irq_save();
     spin_lock(&g_fd_pool_lock);
-    int idx = task->fd_table[fd];
-    task->fd_table[fd] = -1;
+    int idx = task->files->fd_table[fd];
+    task->files->fd_table[fd] = -1;
     spin_unlock(&g_fd_pool_lock);
     arch_irq_restore(flags);
 
@@ -213,7 +214,7 @@ fd_obj_t *task_get_fd(task_t *task, int fd)
 {
     if (fd < 0 || fd >= (int)TASK_MAX_FD)
         return NULL;
-    int idx = task->fd_table[fd];
+    int idx = task->files->fd_table[fd];
     if (idx < 0 || idx >= FD_POOL_SIZE)
         return NULL;
     if (g_fd_pool[idx].type == FDT_FREE)
@@ -314,38 +315,38 @@ void fd_table_inherit(task_t *child, task_t *parent)
     */
     if (!parent->is_user_process) {
         for (uint32_t fd = 0; fd < TASK_MAX_FD; fd++)
-            child->fd_table[fd] = -1;
+            child->files->fd_table[fd] = -1;
         return;
     }
 
     for (uint32_t fd = 0; fd < TASK_MAX_FD; fd++) {
         /* execve: FD_CLOEXEC 标记的 fd 不继承 */
-        if ((parent->fd_cloexec[fd / 8] >> (fd % 8)) & 1) {
-            child->fd_table[fd] = -1;
+        if ((parent->files->fd_cloexec[fd / 8] >> (fd % 8)) & 1) {
+            child->files->fd_table[fd] = -1;
             continue;
         }
-        int pidx = (int)parent->fd_table[fd];
+        int pidx = (int)parent->files->fd_table[fd];
         if (pidx < 0 || pidx >= FD_POOL_SIZE) {
-            child->fd_table[fd] = -1;
+            child->files->fd_table[fd] = -1;
             continue;
         }
         fd_obj_t *src = &g_fd_pool[pidx];
         if (src->type == FDT_FREE || src->type == FDT_EPOLL) {
-            child->fd_table[fd] = -1;
+            child->files->fd_table[fd] = -1;
             continue;
         }
         int new_idx = fd_pool_alloc();
         if (new_idx < 0) {
-            child->fd_table[fd] = -1;
+            child->files->fd_table[fd] = -1;
             continue;
         }
         g_fd_pool[new_idx] = *src;
         g_fd_pool[new_idx].wq.waiter_count = 0;
         if (fd_obj_ref(new_idx) != 0) {
             fd_pool_free(new_idx);
-            child->fd_table[fd] = -1;
+            child->files->fd_table[fd] = -1;
             continue;
         }
-        child->fd_table[fd] = (int16_t)new_idx;
+        child->files->fd_table[fd] = (int16_t)new_idx;
     }
 }

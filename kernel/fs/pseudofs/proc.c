@@ -114,8 +114,8 @@ static size_t format_status(char *tmp, size_t bufsz, task_t *t)
     if (t->is_user_process) {
         if (t->user_stack_size > 0)
             vm_size_kb += t->user_stack_size / 1024u;
-        if (t->heap_end > t->user_entry)
-            vm_size_kb += (t->heap_end - t->user_entry) / 1024u;
+        if (t->mm->heap_end > t->user_entry)
+            vm_size_kb += (t->mm->heap_end - t->user_entry) / 1024u;
     }
 
     pos += (size_t)pfs_puts(tmp, pos, bufsz, "\nVmSize:\t");

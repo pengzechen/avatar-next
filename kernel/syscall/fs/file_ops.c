@@ -27,7 +27,7 @@
 
 static bool trace_heavy_task(task_t *current)
 {
-    return current && current->is_user_process && current->heap_end >= 0x3000000ULL;
+    return current && current->is_user_process && current->mm->heap_end >= 0x3000000ULL;
 }
 
 /*
@@ -159,7 +159,7 @@ void openat_handler(uint64_t regs[6], task_t *current)
        就等于 O_CLOEXEC 被忽略, fd 会泄漏给 exec 后的新程序。
     */
     if (flags & 0x80000)
-        current->fd_cloexec[fd / 8] |= (uint8_t)(1u << (fd % 8));
+        current->files->fd_cloexec[fd / 8] |= (uint8_t)(1u << (fd % 8));
     if (trace_heavy_task(current)) {
         KLOG_SYSCALL("[vfsop] pid=%u openat fd=%d pool=%d path=%s kind=%d\n", current->id, fd, pool, vf->path,
                      vf->kind);
@@ -224,7 +224,7 @@ static int dup_to_fd(task_t *current, int oldfd, int newfd, int flags)
         g_fd_pool[uart_idx].flags = 0;
         g_fd_pool[uart_idx].vfs_file = NULL;
         g_fd_pool[uart_idx].path[0] = '\0';
-        current->fd_table[newfd] = uart_idx;
+        current->files->fd_table[newfd] = uart_idx;
     } else {
         int new_idx = fd_pool_alloc();
         if (new_idx < 0)
@@ -236,12 +236,12 @@ static int dup_to_fd(task_t *current, int oldfd, int newfd, int flags)
             fd_pool_free(new_idx);
             return -EBADF;
         }
-        current->fd_table[newfd] = new_idx;
+        current->files->fd_table[newfd] = new_idx;
     }
     if (flags & 0x80000)
-        current->fd_cloexec[newfd / 8] |= (uint8_t)(1u << (newfd % 8));
+        current->files->fd_cloexec[newfd / 8] |= (uint8_t)(1u << (newfd % 8));
     else
-        current->fd_cloexec[newfd / 8] &= (uint8_t)~(1u << (newfd % 8));
+        current->files->fd_cloexec[newfd / 8] &= (uint8_t)~(1u << (newfd % 8));
     return newfd;
 }
 
@@ -259,7 +259,7 @@ void dup_handler(uint64_t regs[6], task_t *current)
     }
 
     for (int newfd = 3; newfd < (int)TASK_MAX_FD; newfd++) {
-        if (current->fd_table[newfd] == -1) {
+        if (current->files->fd_table[newfd] == -1) {
             int ret = dup_to_fd(current, oldfd, newfd, 0);
             regs[0] = ret >= 0 ? (uint64_t)ret : (uint64_t)(int64_t)ret;
             return;
@@ -321,16 +321,16 @@ void fcntl_handler(uint64_t regs[6], task_t *current)
 
     switch (cmd) {
     case F_GETFD: {
-        int bit = (current->fd_cloexec[fd / 8] >> (fd % 8)) & 1;
+        int bit = (current->files->fd_cloexec[fd / 8] >> (fd % 8)) & 1;
         regs[0] = (uint64_t)bit;
         return;
     }
     case F_SETFD: {
         int val = (int)regs[2];
         if (val & FD_CLOEXEC)
-            current->fd_cloexec[fd / 8] |= (uint8_t)(1u << (fd % 8));
+            current->files->fd_cloexec[fd / 8] |= (uint8_t)(1u << (fd % 8));
         else
-            current->fd_cloexec[fd / 8] &= (uint8_t)~(1u << (fd % 8));
+            current->files->fd_cloexec[fd / 8] &= (uint8_t)~(1u << (fd % 8));
         regs[0] = 0;
         return;
     }
@@ -361,7 +361,7 @@ void fcntl_handler(uint64_t regs[6], task_t *current)
         if (!obj) {
             /* dup UART fd: create a real pool object so dup2(saved, 1) works. */
             for (int nf = minfd < 3 ? 3 : minfd; nf < (int)TASK_MAX_FD; nf++) {
-                if (current->fd_table[nf] == -1) {
+                if (current->files->fd_table[nf] == -1) {
                     int uart_idx = fd_pool_alloc();
                     if (uart_idx < 0) {
                         regs[0] = (uint64_t)(int64_t)-EMFILE;
@@ -371,11 +371,11 @@ void fcntl_handler(uint64_t regs[6], task_t *current)
                     g_fd_pool[uart_idx].flags = 0;
                     g_fd_pool[uart_idx].vfs_file = NULL;
                     g_fd_pool[uart_idx].path[0] = '\0';
-                    current->fd_table[nf] = (int16_t)uart_idx;
+                    current->files->fd_table[nf] = (int16_t)uart_idx;
                     if (cmd == F_DUPFD_CLOEXEC)
-                        current->fd_cloexec[nf / 8] |= (uint8_t)(1u << (nf % 8));
+                        current->files->fd_cloexec[nf / 8] |= (uint8_t)(1u << (nf % 8));
                     else
-                        current->fd_cloexec[nf / 8] &= (uint8_t)~(1u << (nf % 8));
+                        current->files->fd_cloexec[nf / 8] &= (uint8_t)~(1u << (nf % 8));
                     regs[0] = (uint64_t)nf;
                     return;
                 }
@@ -392,12 +392,12 @@ void fcntl_handler(uint64_t regs[6], task_t *current)
         g_fd_pool[new_idx].wq.waiter_count = 0;
         fd_obj_ref(new_idx);
         for (int nf = minfd < 3 ? 3 : minfd; nf < (int)TASK_MAX_FD; nf++) {
-            if (current->fd_table[nf] == -1) {
-                current->fd_table[nf] = (int16_t)new_idx;
+            if (current->files->fd_table[nf] == -1) {
+                current->files->fd_table[nf] = (int16_t)new_idx;
                 if (cmd == F_DUPFD_CLOEXEC)
-                    current->fd_cloexec[nf / 8] |= (uint8_t)(1u << (nf % 8));
+                    current->files->fd_cloexec[nf / 8] |= (uint8_t)(1u << (nf % 8));
                 else
-                    current->fd_cloexec[nf / 8] &= (uint8_t)~(1u << (nf % 8));
+                    current->files->fd_cloexec[nf / 8] &= (uint8_t)~(1u << (nf % 8));
                 regs[0] = (uint64_t)nf;
                 return;
             }
@@ -469,7 +469,7 @@ void pipe2_handler(uint64_t regs[6], task_t *current)
                 obj->vfs_file->flags = obj->flags;
         }
         if (flags & 0x80000)
-            current->fd_cloexec[fds[i] / 8] |= (uint8_t)(1u << (fds[i] % 8));
+            current->files->fd_cloexec[fds[i] / 8] |= (uint8_t)(1u << (fds[i] % 8));
     }
 
     /* 用户指针必须经 copy_to_user_bytes（CLAUDE.md 用户指针规则） */

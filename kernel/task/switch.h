@@ -263,7 +263,7 @@ static inline uintptr_t arch_init_user_stack(uint8_t *stack_base, uint32_t stack
     sp[7] = user_entry;                     /* 用户入口 */
     sp[8] = user_sp;                        /* 用户栈 */
 
-    (void)user_pgd; /* x86_64 页表通过 task->pgd 在调度时切换 CR3 */
+    (void)user_pgd; /* x86_64 页表通过 task->mm->pgd 在调度时切换 CR3 */
 #endif
 
     return (uintptr_t)sp;

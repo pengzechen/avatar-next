@@ -210,7 +210,7 @@ static void exec_free_loader_buffer(const void *data, uint64_t size)
 static void exec_close_cloexec_fds(task_t *t)
 {
     for (int fd = 0; fd < (int)TASK_MAX_FD; fd++) {
-        if (((t->fd_cloexec[fd / 8] >> (fd % 8)) & 1) == 0)
+        if (((t->files->fd_cloexec[fd / 8] >> (fd % 8)) & 1) == 0)
             continue;
 
         int idx = task_take_fd(t, fd);
@@ -219,7 +219,7 @@ static void exec_close_cloexec_fds(task_t *t)
         fd_obj_close(idx);
         fd_pool_free(idx);
     }
-    memset(t->fd_cloexec, 0, sizeof(t->fd_cloexec));
+    memset(t->files->fd_cloexec, 0, sizeof(t->files->fd_cloexec));
 }
 
 /*
@@ -246,7 +246,7 @@ static void exec_reset_signal_state(task_t *t)
    Linux 的 comm 是可执行文件的 basename(15 字节), /proc/self/exe 是
    解析过符号链接的绝对路径。以前两者都是加载时的原始入参。
 */
-static void exec_set_name(task_t *t, const char *pathname)
+static void exec_set_name(task_t *t, mm_struct_t *mm, const char *pathname)
 {
     const char *base = pathname;
     for (const char *p = pathname; *p; p++) {
@@ -265,10 +265,10 @@ static void exec_set_name(task_t *t, const char *pathname)
 
     i = 0;
     while (pathname[i] && i < TASK_EXE_LEN - 1) {
-        t->exe_path[i] = pathname[i];
+        mm->exe_path[i] = pathname[i];
         i++;
     }
-    t->exe_path[i] = '\0';
+    mm->exe_path[i] = '\0';
 }
 
 /* ── execve 主逻辑 ───────────────────────────────────────────────── */
@@ -291,6 +291,8 @@ int task_execve(const char *pathname, uint8_t *file_data, uint64_t file_size, ui
     void *pgd;
     int rc;
     task_t *current = task_current();
+    mm_struct_t *new_mm = NULL; /* 仅当旧 mm 仍被线程共享时才新分配 */
+    bool reuse_mm = false;
 
     if (current == NULL) {
         exec_free_loader_buffer(interp_data, interp_size);
@@ -324,7 +326,7 @@ int task_execve(const char *pathname, uint8_t *file_data, uint64_t file_size, ui
     uint64_t at_base = 0;
     uint64_t loaded_end = info.max_vaddr;
     /*
-       interp 区的末端, 记到 task->interp_end 供 fork 复制用。
+       interp 区的末端, 记到 task->mm->interp_end 供 fork 复制用。
        0 = 本进程是静态链接的(绝大多数程序), fork 时不必扫这一带。
     */
     uint64_t interp_end = 0;
@@ -408,45 +410,59 @@ int task_execve(const char *pathname, uint8_t *file_data, uint64_t file_size, ui
     exec_free_loader_buffer(file_data, file_size);
 
     /*
+       选出 exec 之后的 mm：
+         - 旧 mm 只被当前任务引用（refcount==1）→ 直接复用；
+         - 仍与其它线程共享 → 新分配一份，旧 mm 留给线程组。
+       新 mm 必须在关中断前准备好（mm_alloc 会拿池锁）；池大小保证
+       共享场景下一定有空槽（共享意味着 struct 数 < 任务数）。
+    */
+    mm_struct_t *old_mm = current->mm;
+    reuse_mm = (old_mm != NULL && old_mm->refcount == 1);
+    if (!reuse_mm) {
+        new_mm = mm_alloc();
+        if (!new_mm) {
+            KLOG_ERROR("[exec] no mm_struct available\n");
+            rc = -12;
+            goto fail;
+        }
+    } else {
+        new_mm = old_mm;
+    }
+
+    /*
        ── 提交点 ──────────────────────────────────────────────────
-       关中断的原因：改 task->pgd 与真正切换 MMU 之间如果被抢占,
+       关中断的原因：改 mm->pgd 与真正切换 MMU 之间如果被抢占,
        aarch64 的 arch_task_switch 会把"当前 TTBR0"(还是旧页表)存回
-       prev->pgd, 把刚写进去的新页表指针覆盖掉。
+       prev->mm->pgd, 把刚写进去的新页表指针覆盖掉。
     */
     uint64_t irq_flags = arch_irq_save();
 
-    uint64_t old_pgd_phys = 0;
-    bool old_pgd_owned = false;
-    if (current->is_user_process && current->pgd != NULL) {
-        old_pgd_phys = (uint64_t)current->pgd;
-        old_pgd_owned = !current->shares_pgd;
-    }
+    uint64_t old_pgd_phys = (old_mm && old_mm->owns_pgd && old_mm->pgd) ? (uint64_t)old_mm->pgd : 0;
 #if ARCH_X86_64
     bool was_user = current->is_user_process && current->user_started;
 #endif
-    bool other_threads = task_group_has_other_threads(current);
 
     exec_close_cloexec_fds(current);
     exec_reset_signal_state(current);
-    exec_set_name(current, pathname);
 
     /* 换映像。PID/tgid、parent_id、优先级、cwd、uid/gid、pgid/sid、
        blocked_sigs、累计 CPU 时间都保留(Linux 语义)。 */
-    current->pgd = (uint64_t *)pgd_phys;
+    current->mm = new_mm;
+    new_mm->pgd = (uint64_t *)pgd_phys;
+    new_mm->owns_pgd = true;
+    new_mm->heap_end = ALIGN_UP(info.max_vaddr, PAGE_SIZE);
+    new_mm->mmap_base = mmap_base;
+    new_mm->mmap_next = mmap_base;
+    new_mm->interp_end = interp_end;
+    exec_set_name(current, new_mm, pathname);
     current->is_user_process = true;
     current->user_started = true;
-    current->is_thread = false;
-    current->shares_pgd = false;
     current->tgid = current->id;
     current->ctid_ptr = 0;
     current->user_entry = exec_entry;
     current->user_sp = user_sp;
     current->user_stack_top = USER_STACK_TOP;
     current->user_stack_size = USER_STACK_SIZE;
-    current->heap_end = ALIGN_UP(info.max_vaddr, PAGE_SIZE);
-    current->mmap_base = mmap_base;
-    current->mmap_next = mmap_base;
-    current->interp_end = interp_end;
     current->fs_base = 0;
     /* exec 重置 robust_list（Linux 语义）；pdeathsig/umask/groups/rlimits 保留 */
     current->robust_list = 0;
@@ -478,30 +494,35 @@ int task_execve(const char *pathname, uint8_t *file_data, uint64_t file_size, ui
         syscall_abi_reset_frame_for_exec(frame, exec_entry, user_sp);
         arch_irq_restore(irq_flags);
 
-        if (old_pgd_phys != 0 && old_pgd_owned) {
-            if (!other_threads) {
+        /*
+           复用的 mm：旧 pgd 已经不在任何人的地址空间里，直接销毁。
+           新分配的 mm：旧 mm 仍归其它线程，mm_put 只在最后一个引用
+           退出时才销毁页表。
+        */
+        if (reuse_mm) {
+            if (old_pgd_phys)
                 vm_destroy_user_process(old_pgd_phys);
-            } else {
-                /*
-                   同一线程组还有别的活线程在共用旧页表, 不能销毁。
-                   Linux 会先 de_thread 杀掉其它线程; 本内核暂不支持从
-                   多线程进程 exec, 这里只把当前任务摘成独立进程, 旧页表
-                   留给线程组(最后一个引用者退出时才有机会回收)。
-                */
-                KLOG_WARN_ONCE("[exec] pid=%u exec with live threads: old pgd=0x%llx kept\n", current->id,
-                               old_pgd_phys);
-            }
+        } else {
+            if (old_pgd_phys)
+                KLOG_WARN_ONCE("[exec] pid=%u exec with live threads: old mm/pgd kept\n", current->id);
+            mm_put(old_mm);
         }
         return 0;
     }
 
-    /* 内核线程 exec：旧 pgd 为 NULL; 若将来有, 也只在线程组独占时销毁 */
-    if (old_pgd_phys != 0 && old_pgd_owned && !other_threads)
-        vm_destroy_user_process(old_pgd_phys);
+    /* 内核线程 exec：没有 trap frame，释放旧 mm 后直接进入用户态。 */
+    if (reuse_mm) {
+        if (old_pgd_phys)
+            vm_destroy_user_process(old_pgd_phys);
+    } else {
+        mm_put(old_mm);
+    }
 
     arch_enter_user(exec_entry, user_sp);
 
 fail:
+    if (new_mm && !reuse_mm)
+        mm_put(new_mm);
     vm_destroy_user_process(pgd_phys);
     exec_free_loader_buffer(interp_data, interp_size);
     exec_free_loader_buffer(file_data, file_size);

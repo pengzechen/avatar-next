@@ -20,7 +20,7 @@
 
 static bool trace_heavy_task(task_t *current)
 {
-    return current && current->is_user_process && current->heap_end >= 0x3000000ULL;
+    return current && current->is_user_process && current->mm->heap_end >= 0x3000000ULL;
 }
 
 void ioctl_handler(uint64_t regs[6], task_t *current)
