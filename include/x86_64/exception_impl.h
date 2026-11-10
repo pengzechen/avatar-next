@@ -8,6 +8,9 @@
 #define X86_64_EXCEPTION_IMPL_H
 
 #include "types.h"
+#ifdef RT_IRQ_TRACE
+#include "rt_latency.h"
+#endif
 
 /*
    x86_64 中断屏蔽原语 —— 全项目唯一的定义(汇编除外)。
@@ -46,12 +49,20 @@ static inline uint64_t arch_irq_save(void)
                      :
                      : "memory");
 
+#ifdef RT_IRQ_TRACE
+    if (flags & (1UL << 9))
+        rt_latency_irq_off_begin();
+#endif
     return flags;
 }
 
 /* 恢复到 arch_irq_save()/arch_irq_flags() 取到的状态(POPFQ 恢复 IF) */
 static inline void arch_irq_restore(uint64_t flags)
 {
+#ifdef RT_IRQ_TRACE
+    if (flags & (1UL << 9))
+        rt_latency_irq_off_end();
+#endif
     __asm__ volatile("pushq %0       \n"
                      "popfq          \n"
                      :
@@ -63,11 +74,17 @@ static inline void arch_irq_restore(uint64_t flags)
 static inline void arch_irq_disable(void)
 {
     __asm__ volatile("cli" ::: "memory");
+#ifdef RT_IRQ_TRACE
+    rt_latency_irq_off_begin();
+#endif
 }
 
 /* 无条件开中断(新任务首次运行时使用) */
 static inline void arch_irq_enable(void)
 {
+#ifdef RT_IRQ_TRACE
+    rt_latency_irq_off_end();
+#endif
     __asm__ volatile("sti" ::: "memory");
 }
 

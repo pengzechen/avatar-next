@@ -23,6 +23,7 @@
 #include "pmm.h"
 #include "mm_vm.h" /* virt_to_phys：把链接符号换算成物理地址 */
 #include "driver/time.h"
+#include "rt_latency.h"
 #include "net/net.h"
 #include "loader/elf_loader.h"
 #include "fs_init.h"
@@ -218,6 +219,12 @@ void kernel_main(void)
 #endif
 
     task_init();
+
+    /*
+       启动早期的 fs_init / ext4 装载等长临界区不污染运行时 RT 基线；
+       此时只有 BSP、没有用户任务/tick 回调，清空统计不会和别的核竞争。
+    */
+    rt_latency_reset();
 
     /*
        先把 AP 拉起来, 再创建任何可能被摊核的任务。

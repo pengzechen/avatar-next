@@ -8,6 +8,9 @@
 #define AARCH64_EXCEPTION_IMPL_H
 
 #include "types.h"
+#ifdef RT_IRQ_TRACE
+#include "rt_latency.h"
+#endif
 
 /*
    AArch64 中断屏蔽原语 —— 全项目唯一的定义(汇编除外)。
@@ -46,12 +49,20 @@ static inline uint64_t arch_irq_save(void)
                      :
                      : "memory");
 
+#ifdef RT_IRQ_TRACE
+    if (!(daif & (1UL << 7)))
+        rt_latency_irq_off_begin();
+#endif
     return daif;
 }
 
 /* 恢复到 arch_irq_save()/arch_irq_flags() 取到的状态 */
 static inline void arch_irq_restore(uint64_t flags)
 {
+#ifdef RT_IRQ_TRACE
+    if (!(flags & (1UL << 7)))
+        rt_latency_irq_off_end();
+#endif
     __asm__ volatile("msr daif, %0" : : "r"(flags) : "memory");
 }
 
@@ -59,11 +70,17 @@ static inline void arch_irq_restore(uint64_t flags)
 static inline void arch_irq_disable(void)
 {
     __asm__ volatile("msr daifset, #2" ::: "memory");
+#ifdef RT_IRQ_TRACE
+    rt_latency_irq_off_begin();
+#endif
 }
 
 /* 无条件开中断(新任务首次运行时使用) */
 static inline void arch_irq_enable(void)
 {
+#ifdef RT_IRQ_TRACE
+    rt_latency_irq_off_end();
+#endif
     __asm__ volatile("msr daifclr, #2" ::: "memory");
 }
 

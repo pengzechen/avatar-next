@@ -103,9 +103,23 @@ FUNCS(syscall_entry)
     
     /*
      * 3. 调用 C 系统调用处理函数
+     *
+     * SYSCALL 由 MSR_SFMASK 清 IF。现场此时已完整保存在 trap_frame 里，
+     * 可以重新打开中断：长 syscall（文件系统、等待 UART 等）不再把整颗核
+     * 的 IRQ 延迟拖到毫秒级。timer 中断只置 need_resched，不会在 syscall
+     * C 代码中间切换任务（sched_check_and_yield_from_trap 对
+     * is_user_process 的内核侧只做标记）。
      */
+    sti
     movq    %rsp, %rdi              /* 第一个参数：trap_frame_t * */
     call    syscall_handler
+
+    /*
+     * 恢复寄存器之前重新关中断：接下来的 sched_check_and_yield 和
+     * trap_frame 出栈必须在一个不可被中断打断的窗口里完成；用户态的
+     * IF 由 sysret 从 R11 恢复。
+     */
+    cli
 
     /* 返回值已在 RAX 中，会被恢复到用户态 */
 

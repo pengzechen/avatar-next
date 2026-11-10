@@ -8,6 +8,9 @@
 #define RISCV64_EXCEPTION_IMPL_H
 
 #include "types.h"
+#ifdef RT_IRQ_TRACE
+#include "rt_latency.h"
+#endif
 
 /*
    RISC-V 64 中断屏蔽原语 —— 全项目唯一的定义(汇编除外)。
@@ -43,12 +46,20 @@ static inline uint64_t arch_irq_save(void)
     /* csrrci: 读出旧值后清除 bit1 (SIE) */
     __asm__ volatile("csrrci %0, sstatus, 2" : "=r"(status) : : "memory");
 
+#ifdef RT_IRQ_TRACE
+    if (status & 2UL)
+        rt_latency_irq_off_begin();
+#endif
     return status;
 }
 
 /* 恢复到 arch_irq_save()/arch_irq_flags() 取到的状态 */
 static inline void arch_irq_restore(uint64_t flags)
 {
+#ifdef RT_IRQ_TRACE
+    if (flags & 2UL)
+        rt_latency_irq_off_end();
+#endif
     __asm__ volatile("csrw sstatus, %0" : : "r"(flags) : "memory");
 }
 
@@ -56,11 +67,17 @@ static inline void arch_irq_restore(uint64_t flags)
 static inline void arch_irq_disable(void)
 {
     __asm__ volatile("csrci sstatus, 2" ::: "memory");
+#ifdef RT_IRQ_TRACE
+    rt_latency_irq_off_begin();
+#endif
 }
 
 /* 无条件开中断(新任务首次运行时使用) */
 static inline void arch_irq_enable(void)
 {
+#ifdef RT_IRQ_TRACE
+    rt_latency_irq_off_end();
+#endif
     __asm__ volatile("csrsi sstatus, 2" ::: "memory");
 }
 

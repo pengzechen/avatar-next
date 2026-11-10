@@ -1,6 +1,6 @@
 # 实时、Linux syscall 兼容与虚拟化的统一任务/内存架构
 
-**状态**：架构定稿，R0/R1/R2 已完成（2026-11-10）；R3+ 待做
+**状态**：架构定稿，R0/R1/R2 已完成；R3 进行中（x86_64 syscall 路径已开中断）（2026-11-10）
 **目标分支**：`realtime`（从 `dev` 拉出，只承载实时化改造）
 
 ## 一、目标与非目标
@@ -102,7 +102,7 @@ RT 内核线程可以用内核 API，但必须遵守：
 | R0 | 延迟测量：wake→run / syscall / tick gap（IRQ-off 近似） | ✅ 已完成 |
 | R1 | task domain / sched policy / 创建接口（本文件） | ✅ 已完成 |
 | R2 | per-CPU RT 队列 + 优先级抢占 + FIFO/RR tick | ✅ 已完成 |
-| R3 | 内核可抢占：有界 IRQ-off、长锁拆分、ISR 减负 | 待做 |
+| R3 | 内核可抢占：有界 IRQ-off、长锁拆分、ISR 减负 | 进行中（x86_64 syscall IRQ 已开） |
 | R4 | mm VMA/mlock + stage-2 预填充 | 待做 |
 | R5 | vCPU RT 调度接口与 guest 内存钉住 | 待做 |
 | R6 | 仅在内核域增加 RT worker API；不做用户 RT syscall ABI | 约束 |
@@ -156,6 +156,28 @@ rtstat: per-CPU latency (ns)
 cpu wake_max wake_last wake_n syscall_max syscall_last syscall_n tick_gap_max tick_gap_last ticks
 cpu0 1008 788 2 33798673 285 312 35398811 10494224 1059
 ```
+
+## 十、R3 进展：x86_64 syscall 路径开中断
+
+- `boot/x86_64/syscall_wrapper.S`：现场保存完成后 `sti`，`syscall_handler`
+  返回后 `cli`，再走 `sched_check_and_yield_from_trap` 和寄存器出栈。
+  timer 中断只会置 `need_resched`，syscall 内核侧仍不在任意 C 代码点切换
+  任务（与 aarch64 模型一致）。
+- 新增 `RT_IRQ_TRACE=1` 诊断变体：在 `arch_irq_save/restore/disable/enable`
+  上记录真实 IRQ-off 区间，`/proc/rtstat` 增加
+  `irq_off_max/irq_off_last/irq_off_n/irq_off_pc` 列。
+- x86_64 实测（QEMU/KVM，SMP=1，启动后 shell）：
+  - 修改前：最长 syscall 约 11.2ms 全程 IRQ-off；tick_gap_max 约 12.4ms；
+  - 修改后：`irq_off_max ≈ 6.3µs`，`tick_gap_max ≈ 10.0ms`
+    （回到 tick 周期），最长 syscall 仍约 11.1ms（execve），但不再占着
+    中断。
+  - `irq_off_pc` 指向 `kernel_main` 建立启动任务时的短 `arch_irq_save`
+    区间（启动期，非运行时热点）。
+- 回归：x86_64 LTP 103/103（SMP=1/4）、RT_TEST PASS；aarch64/riscv64
+  LTP 与 RT_TEST 也保持全绿（本次只改 x86 入口）。
+
+**剩余 R3**：riscv64 syscall 内核侧仍保持 SIE=0；长锁/控制台/文件系统
+内的 IRQ-off 临界区还需逐个收敛，之后再谈 vCPU kick→run 延迟。
 
 **后续验收门禁**：VMM helper/多 VM 回归；R3 的有界 IRQ-off 后才对外
 宣称实时能力。

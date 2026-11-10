@@ -1545,7 +1545,7 @@ void syscall_handler(trap_frame_t *frame)
     if (current && current->is_user_process && current->sc_entry_ns != 0) {
         uint64_t now_ns = kernel_get_ns();
         uint64_t dur_ns = (now_ns > current->sc_entry_ns) ? (now_ns - current->sc_entry_ns) : 0;
-        rt_latency_syscall(dur_ns);
+        rt_latency_syscall(dur_ns, (uint32_t)syscall_num);
         current->stime_ns += dur_ns;
         current->sc_entry_ns = 0;
     }

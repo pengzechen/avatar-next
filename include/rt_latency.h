@@ -26,8 +26,18 @@ struct task;
 
 void rt_latency_wake(struct task *t);
 void rt_latency_run(struct task *t, uint64_t now_ns);
-void rt_latency_syscall(uint64_t duration_ns);
+void rt_latency_syscall(uint64_t duration_ns, uint32_t nr);
 void rt_latency_tick(uint32_t cpu_id, uint64_t now_ns);
+
+/* 清空统计（启动收尾时调用；之后是“运行时”基线，不含启动期长临界区）。 */
+void rt_latency_reset(void);
+
+/*
+   RT_IRQ_TRACE=1 时由 arch_irq_save/restore/disable/enable 调用：
+   记录“关中断区间”的起止。不是默认开启（会多一次函数调用）。
+*/
+void rt_latency_irq_off_begin(void);
+void rt_latency_irq_off_end(void);
 
 /* 生成 /proc/rtstat 的文本；返回写入长度（不含 NUL）。 */
 int rt_latency_snprintf(char *buf, size_t cap);

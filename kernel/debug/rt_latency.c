@@ -29,14 +29,24 @@ typedef struct {
     uint64_t syscall_max_ns;
     uint64_t syscall_last_ns;
     uint64_t syscall_count;
+    uint32_t syscall_max_id; /* 最长 syscall 的内部编号 */
 
     uint64_t tick_gap_max_ns;
     uint64_t tick_gap_last_ns;
     uint64_t tick_count;
     uint64_t last_tick_ns;
+
+    uint64_t irq_off_max_ns;
+    uint64_t irq_off_last_ns;
+    uint64_t irq_off_count;
+    uint64_t irq_off_start_ns;
+    uint64_t irq_off_start_pc;
+    uint64_t irq_off_max_pc;
+    bool irq_off_active;
 } rt_lat_cpu_t;
 
 static rt_lat_cpu_t g_rt_lat[AVATAR_MAX_CPUS];
+static bool g_rt_irq_trace_ready;
 
 static inline rt_lat_cpu_t *rt_lat_cpu(void)
 {
@@ -69,13 +79,66 @@ void rt_latency_run(task_t *t, uint64_t now_ns)
     s->wake_count++;
 }
 
-void rt_latency_syscall(uint64_t duration_ns)
+void rt_latency_syscall(uint64_t duration_ns, uint32_t nr)
 {
     rt_lat_cpu_t *s = rt_lat_cpu();
     s->syscall_last_ns = duration_ns;
-    if (duration_ns > s->syscall_max_ns)
+    if (duration_ns > s->syscall_max_ns) {
         s->syscall_max_ns = duration_ns;
+        s->syscall_max_id = nr;
+    }
     s->syscall_count++;
+}
+
+void rt_latency_reset(void)
+{
+    memset(g_rt_lat, 0, sizeof(g_rt_lat));
+    g_rt_irq_trace_ready = true;
+}
+
+void rt_latency_irq_off_begin(void)
+{
+    if (!g_rt_irq_trace_ready)
+        return;
+
+    uint32_t id = get_current_cpu_id();
+    if (id >= AVATAR_MAX_CPUS)
+        id = 0;
+    rt_lat_cpu_t *s = &g_rt_lat[id];
+    if (s->irq_off_active)
+        return; /* 嵌套关中断：只统计最外层区间 */
+
+    s->irq_off_active = true;
+    s->irq_off_start_ns = timer_get_ns();
+    s->irq_off_start_pc = (uint64_t)(uintptr_t)__builtin_return_address(0);
+}
+
+void rt_latency_irq_off_end(void)
+{
+    if (!g_rt_irq_trace_ready)
+        return;
+
+    uint32_t id = get_current_cpu_id();
+    if (id >= AVATAR_MAX_CPUS)
+        id = 0;
+    rt_lat_cpu_t *s = &g_rt_lat[id];
+    if (!s->irq_off_active)
+        return;
+
+    uint64_t now = timer_get_ns();
+    uint64_t start = s->irq_off_start_ns;
+    s->irq_off_active = false;
+    s->irq_off_count++;
+
+    if (now <= start)
+        return;
+    uint64_t delta = now - start;
+    s->irq_off_last_ns = delta;
+    if (delta > s->irq_off_max_ns) {
+        s->irq_off_max_ns = delta;
+        /* 最长区间起点对应的调用点（arch_irq_save/disable 的调用者）。 */
+        s->irq_off_max_pc = s->irq_off_start_pc;
+    }
 }
 
 void rt_latency_tick(uint32_t cpu_id, uint64_t now_ns)
@@ -124,6 +187,26 @@ static size_t lat_put_u64(char *buf, size_t cap, size_t pos, uint64_t v)
     return pos;
 }
 
+static size_t lat_put_hex(char *buf, size_t cap, size_t pos, uint64_t v)
+{
+    static const char digits[] = "0123456789abcdef";
+    char tmp[16];
+    int n = 0;
+    if (v == 0) {
+        tmp[n++] = '0';
+    } else {
+        while (v > 0 && n < (int)sizeof(tmp)) {
+            tmp[n++] = digits[v & 0xF];
+            v >>= 4;
+        }
+    }
+    while (n > 0 && pos + 1 < cap)
+        buf[pos++] = tmp[--n];
+    if (pos < cap)
+        buf[pos] = '\0';
+    return pos;
+}
+
 int rt_latency_snprintf(char *buf, size_t cap)
 {
     if (!buf || cap == 0)
@@ -131,9 +214,9 @@ int rt_latency_snprintf(char *buf, size_t cap)
 
     size_t pos = 0;
     pos = lat_puts(buf, cap, pos, "rtstat: per-CPU latency (ns)\n");
-    pos =
-        lat_puts(buf, cap, pos,
-                 "cpu wake_max wake_last wake_n syscall_max syscall_last syscall_n tick_gap_max tick_gap_last ticks\n");
+    pos = lat_puts(buf, cap, pos,
+                   "cpu wake_max wake_last wake_n syscall_max syscall_max_id syscall_last syscall_n tick_gap_max "
+                   "tick_gap_last ticks irq_off_max irq_off_last irq_off_n irq_off_pc\n");
 
     uint32_t n = g_num_cpus ? g_num_cpus : 1U;
     for (uint32_t i = 0; i < n && i < AVATAR_MAX_CPUS; i++) {
@@ -149,6 +232,8 @@ int rt_latency_snprintf(char *buf, size_t cap)
         pos = lat_puts(buf, cap, pos, " ");
         pos = lat_put_u64(buf, cap, pos, s->syscall_max_ns);
         pos = lat_puts(buf, cap, pos, " ");
+        pos = lat_put_u64(buf, cap, pos, s->syscall_max_id);
+        pos = lat_puts(buf, cap, pos, " ");
         pos = lat_put_u64(buf, cap, pos, s->syscall_last_ns);
         pos = lat_puts(buf, cap, pos, " ");
         pos = lat_put_u64(buf, cap, pos, s->syscall_count);
@@ -158,6 +243,14 @@ int rt_latency_snprintf(char *buf, size_t cap)
         pos = lat_put_u64(buf, cap, pos, s->tick_gap_last_ns);
         pos = lat_puts(buf, cap, pos, " ");
         pos = lat_put_u64(buf, cap, pos, s->tick_count);
+        pos = lat_puts(buf, cap, pos, " ");
+        pos = lat_put_u64(buf, cap, pos, s->irq_off_max_ns);
+        pos = lat_puts(buf, cap, pos, " ");
+        pos = lat_put_u64(buf, cap, pos, s->irq_off_last_ns);
+        pos = lat_puts(buf, cap, pos, " ");
+        pos = lat_put_u64(buf, cap, pos, s->irq_off_count);
+        pos = lat_puts(buf, cap, pos, " 0x");
+        pos = lat_put_hex(buf, cap, pos, s->irq_off_max_pc);
         pos = lat_puts(buf, cap, pos, "\n");
     }
 
