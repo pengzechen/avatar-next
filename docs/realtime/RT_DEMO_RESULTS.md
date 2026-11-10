@@ -19,7 +19,15 @@ make PLATFORM=qemu-virt-x86_64 RT_DEMO=1 LOG=info SMP=1 run
 # 带 rootfs 也可以（demo 在 fs 初始化之后、shell 之前运行）
 make PLATFORM=qemu-virt-x86_64 RT_DEMO=1 LOG=info SMP=1 \
      ROOTFS_IMG=tests/.artifacts/build/normal/smp1/qemu-virt-x86_64/rootfs-x86_64.img run-fs
+
+# 统一测试框架：三架构同时跑 RT_TEST + RT_DEMO，并检查延迟上限
+make -C tests rt-test
 ```
+
+`rt-test` 是回归门禁：`RT_TEST` 的场景 4 断言 NORMAL→RT 立即抢占
+平均 < 2ms（没有 self-IPI 时≈5ms），框架再对 demo 的 ping-pong 平均值
+设 1ms 上限、抢占平均值设 2ms 上限。具体数据仍看串口
+`=== RT DEMO ...` 行或 `tests/.artifacts/runs/<id>/logs/rt-test/`。
 
 采集环境：QEMU `q35 -enable-kvm -cpu host`，100 Hz tick，`LOG=info`。
 

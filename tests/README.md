@@ -13,6 +13,9 @@ make env
 # 快速门禁：三架构构建 + 启动冒烟 + 内核自测 + apps/c 用户态测试
 make -C tests check
 
+# RT 调度语义 + 唤醒/抢占延迟（RT_TEST + RT_DEMO，三架构，不需要 rootfs）
+make -C tests rt-test
+
 # SMP=4 矩阵（独立 BUILD_ROOT；check + racetest）
 make -C tests check-smp
 
@@ -54,6 +57,7 @@ tests/
 │   ├── build.py          # 构建矩阵
 │   ├── boot.py           # 启动冒烟
 │   ├── kernel.py         # PMM / string / VMM_TEST
+│   ├── rt_test.py        # RT 调度语义 + 唤醒/抢占延迟
 │   ├── ltp.py            # LTP
 │   └── vmm_guest.py      # 直启 / helper / 多 VM
 ├── ltp/
@@ -98,6 +102,7 @@ tests/.artifacts/runs/<run-id>/
 | `build` | 三架构 × normal/guest/vmm-test/string-test/pmm-test | 构建成功；guest 产物带 `GUEST_LINUX_BUILD_TAG` |
 | `boot` | 三架构不带 rootfs 启动 | 出现 `PMM: N reserved regions`；无 ASSERT/panic/invalid free |
 | `kernel` | `pmm-test` / `string-test` / `vmm-test` | 各自的 PASS 标记；三路线程标记齐全 |
+| `rt-test` | `rt-test` 变体（`RT_TEST=1 RT_DEMO=1`） | `RT SCHED TEST: PASS`；demo 样本数完整，ping-pong/NORMAL→RT 平均延迟低于上限（self-IPI 立即抢占的回归门禁） |
 | `apps` | `apps/c`：pthread / mutex | `[PASS]`/`[FAIL]` 行 |
 | `racetest` | `apps/c/racetest.c`：slot/pipe/wake | 需 `SMP>1`；要求输出 `DONE`；**诊断 suite** |
 | `ltp-smoke` | `smoke.list` | 无新增 FAIL/BROK；子集每项都有结果 |
