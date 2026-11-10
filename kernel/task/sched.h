@@ -106,4 +106,12 @@ bool sched_check_and_yield(void);
 */
 bool sched_check_and_yield_from_trap(void *frame_ptr);
 
+/*
+   sched_set_pi_boost - 设置任务的 rt_mutex 继承优先级（0 = 清除）
+
+   调用者不得持有 rq_lock。READY 任务会被就地重新入队；RUNNING/BLOCKED
+   任务只更新字段，下一次入队时生效。
+*/
+void sched_set_pi_boost(task_t *t, uint8_t prio);
+
 #endif /* KERNEL_TASK_SCHED_H */

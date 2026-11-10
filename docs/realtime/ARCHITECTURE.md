@@ -67,7 +67,9 @@ enum task_sched_policy {
   - FIFO：tick 不抢占；
   - RR：按时间片计数，片用完才置 `need_resched`；
   - idle：tick 时允许被任意就绪任务抢占。
-- 后续：oneshot 定时器/时间轮、优先级继承 mutex、RT throttling、CPU 隔离。
+- 已实现：`rt_mutex` 直接优先级继承（`pi_priority` + 按优先级排队，
+  见 `RT_LOCKS.md`）；tick 不会抢占被提升的持有者。
+- 后续：完整 PI 链/多锁传播、RT throttling、CPU 隔离。
 
 ## 四、mm 模块
 
@@ -84,6 +86,8 @@ RT 内核线程可以用内核 API，但必须遵守：
 
 - 不在 RT 循环里调用 VFS/ext4、控制台/KLOG、动态分配、可能长时间持锁的路径；
 - 数据交互走预分配共享内存、无锁队列、RT mutex、timer、中断/门铃；
+  RT 任务之间需要睡眠的共享状态用 `rt_mutex`（有直接优先级继承），
+  普通路径用 `mutex`（无 PI）；详见 `RT_LOCKS.md`；
 - 驱动/设备路径要 RT-safe：短临界区、无全局锁；
 - 用户面只保留**非 RT 控制面**（/dev ioctl、共享内存、event），RT 线程本身
   不执行 syscall。

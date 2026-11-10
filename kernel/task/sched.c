@@ -93,14 +93,10 @@ void sched_rq_init(cpu_t *c)
         c->rt_bitmap[w] = 0;
 }
 
+/* 有效 RT 优先级 = max(基础 RT 优先级, rt_mutex 继承优先级)。 */
 static inline uint32_t rt_prio_of(const task_t *t)
 {
-    uint32_t p = t->rt_priority;
-    if (p < TASK_RT_PRIO_MIN)
-        p = TASK_RT_PRIO_MIN;
-    if (p > TASK_RT_PRIO_MAX)
-        p = TASK_RT_PRIO_MAX;
-    return p;
+    return task_effective_rt_prio(t);
 }
 
 static inline void rt_bitmap_set(cpu_t *c, uint32_t p)
@@ -151,9 +147,10 @@ static int rt_highest_prio(cpu_t *c)
 /* 持 rq_lock 调用：按调度类插入就绪队列。 */
 static void rq_enqueue_locked(cpu_t *c, task_t *t)
 {
-    if (task_is_rt(t)) {
+    if (task_sched_is_rt(t)) {
         uint32_t p = rt_prio_of(t);
-        t->rt_priority = (uint8_t)p;
+        /* 注意：不要把有效优先级写回 rt_priority —— 那是基础优先级，
+           PI 提升期间写回会把临时值变成永久值。 */
         if (t->sched_policy == TASK_SCHED_RR && t->rt_slice == 0)
             t->rt_slice = TASK_RR_QUANTUM_TICKS;
         list_insert_last(&c->rt_queue[p], &t->run_node);
@@ -170,7 +167,7 @@ static bool rq_remove_locked(cpu_t *c, task_t *t)
         list_delete(&c->run_queue, &t->run_node);
         return true;
     }
-    if (task_is_rt(t)) {
+    if (task_sched_is_rt(t)) {
         uint32_t p = rt_prio_of(t);
         if (list_contains(&c->rt_queue[p], &t->run_node)) {
             list_delete(&c->rt_queue[p], &t->run_node);
@@ -236,15 +233,55 @@ static void sched_kick_after_enqueue(cpu_t *c, task_t *t)
         c->need_resched = true;
         return;
     }
-    if (!task_is_rt(t))
+    if (!task_sched_is_rt(t))
         return; /* NORMAL 任务不打断 NORMAL/RT；等 tick 或返回边界 */
-    if (task_is_rt(cur) && t->rt_priority <= cur->rt_priority)
+    if (task_sched_is_rt(cur) && task_effective_rt_prio(t) <= task_effective_rt_prio(cur))
         return;
 
     c->need_resched = true;
 
     if (!in_irq_context())
         cpu_send_ipi(c->cpu_id);
+}
+
+/*
+   sched_set_pi_boost — rt_mutex 优先级继承的调度侧入口
+
+   prio == 0 表示清除继承。调用者不得持有 rq_lock。
+   如果任务当前 READY 且不在 CPU 上，它已经在某个 RT/NORMAL 队列里，
+   必须在同一把 rq_lock 下先摘除、改优先级、再按新类/新优先级入队；
+   否则 rq_remove 会按新优先级去旧队列里找，找不到就泄漏一个节点。
+   RUNNING / BLOCKED 的任务不需要搬队列：后者下次 sched_unblock 时会按
+   新优先级入队。
+*/
+void sched_set_pi_boost(task_t *t, uint8_t prio)
+{
+    if (!t)
+        return;
+    if (prio > TASK_RT_PRIO_MAX)
+        prio = TASK_RT_PRIO_MAX;
+
+    uint32_t n = g_num_cpus ? g_num_cpus : 1U;
+    uint32_t target = (t->cpu_affinity < n) ? t->cpu_affinity : 0U;
+    cpu_t *tc = &g_cpus[target];
+    uint64_t flags;
+    bool requeued = false;
+
+    spin_lock_irqsave(&tc->rq_lock, &flags);
+    if (t->pi_priority == prio) {
+        spin_unlock_irqrestore(&tc->rq_lock, flags);
+        return;
+    }
+
+    if (t->state == TASK_READY && !t->on_cpu)
+        requeued = rq_remove_locked(tc, t);
+    t->pi_priority = prio;
+    if (requeued)
+        rq_enqueue_locked(tc, t);
+    spin_unlock_irqrestore(&tc->rq_lock, flags);
+
+    if (requeued)
+        sched_kick_after_enqueue(tc, t);
 }
 
 /* ── sched_init ──────────────────────────────────────────── */
@@ -692,8 +729,9 @@ void sched_tick(void)
 
     if (!cur || cur == c->idle_task) {
         c->need_resched = true;
-    } else if (cur->sched_policy == TASK_SCHED_FIFO) {
-        /* RT FIFO 不被 tick 抢占 */
+    } else if (cur->pi_priority != 0 || cur->sched_policy == TASK_SCHED_FIFO) {
+        /* 被 PI 提升的持有者按 FIFO 对待：tick 不能让中等优先级任务
+           抢走它，否则优先级继承白做了。 */
     } else if (cur->sched_policy == TASK_SCHED_RR) {
         if (cur->rt_slice > 0)
             cur->rt_slice--;

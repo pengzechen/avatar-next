@@ -120,6 +120,7 @@ typedef struct task {
     uint8_t domain;             /* task_domain_t */
     uint8_t sched_policy;       /* task_sched_policy_t */
     uint8_t rt_priority;        /* RT: 1..99，越大越高；NORMAL 为 0 */
+    uint8_t pi_priority;        /* rt_mutex 继承优先级：0 = 无；调度取 max(base, pi) */
     uint8_t rt_slice;           /* RR 剩余 tick 数 */
     bool is_user_process;       /* true=用户进程, false=内核任务(过渡期与 domain 并存) */
     bool user_started;          /* true=已至少进入过一次用户态 */
@@ -220,6 +221,33 @@ static inline bool task_is_thread(const task_t *t)
 static inline bool task_is_rt(const task_t *t)
 {
     return t && t->sched_policy != TASK_SCHED_NORMAL;
+}
+
+/*
+   调度器用的“有效 RT 属性”：基础 RT 调度类，或被 rt_mutex 临时提升的
+   NORMAL 任务。pi_priority 只由 sched_set_pi_boost() 写。
+*/
+static inline bool task_sched_is_rt(const task_t *t)
+{
+    return t && (t->sched_policy != TASK_SCHED_NORMAL || t->pi_priority != 0);
+}
+
+static inline uint8_t task_effective_rt_prio(const task_t *t)
+{
+    uint8_t p = 0;
+
+    if (!t)
+        return 0;
+    if (t->sched_policy != TASK_SCHED_NORMAL) {
+        p = t->rt_priority;
+        if (p < TASK_RT_PRIO_MIN)
+            p = TASK_RT_PRIO_MIN;
+        if (p > TASK_RT_PRIO_MAX)
+            p = TASK_RT_PRIO_MAX;
+    }
+    if (t->pi_priority > p)
+        p = t->pi_priority;
+    return p;
 }
 
 /*

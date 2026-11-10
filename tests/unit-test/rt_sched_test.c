@@ -395,6 +395,10 @@ void run_rt_sched_test(void)
 
     if (preempt_pass) {
         run_rt_worker_test();
+
+        extern void run_rt_mutex_tests(void);
+        run_rt_mutex_tests();
+
         KLOG_INFO("=== RT SCHED TEST: PASS ===\n");
     } else {
         KLOG_ERROR("=== RT SCHED TEST: FAIL (immediate preemption) ===\n");

@@ -11,6 +11,9 @@ rt-test suite — RT 调度语义与唤醒/抢占延迟。
     有 oneshot 的架构（x86 KVM）按 1ms 实跑，200ms 内至少完成 3/4
     理论周期；早期自测窗口里 tick 回调尚未启用，aarch64/riscv 只验
     生命周期与共享页，不验周期频率。
+    场景 6：mutex 并发压力（18000 次临界区、检测同时持锁）与 rt_mutex
+    直接优先级继承（owner 提升到 80、等待者按 80/60 顺序拿锁、中等
+    优先级任务不得插队、释放后恢复 0）。
   - `RT_DEMO=1`（tests/unit-test/rt_demo.c）
     5000 轮 RT ping-pong + 50 轮 NORMAL→RT 抢占，输出 min/avg/max。
 
@@ -48,6 +51,10 @@ WORKER_RE = re.compile(
     rb"=== RT WORKER TEST: PASS period=(\d+) periodic=(\d+) ticks=(\d+) "
     rb"misses=(\d+) exec_max=(\d+) ==="
 )
+MUTEX_RE = re.compile(
+    rb"=== RT MUTEX TEST: PASS mtx=(\d+) err=(\d+) boost=(\d+) "
+    rb"after=(\d+) order=(\d+)/(\d+)/(\d+) ==="
+)
 
 FORBIDDEN = (
     rb"\[ASSERT\]",
@@ -58,6 +65,7 @@ FORBIDDEN = (
     rb"=== BACKTRACE \(fault\)",
     rb"=== RT SCHED TEST: FAIL",
     rb"=== RT WORKER TEST: FAIL",
+    rb"=== RT MUTEX TEST: FAIL",
     rb"RT DEMO: TIMEOUT",
     rb"RT DEMO: worker/waker create failed",
     rb"RT DEMO: probe/hog create failed",
@@ -93,6 +101,15 @@ def _rt(ctx: TestContext, report: Report, arch) -> None:
                 )
             )
 
+            mutex = _parse(
+                q.wait_for(
+                    MUTEX_RE,
+                    ctx.timeout(180),
+                    forbidden=FORBIDDEN,
+                    desc=f"{arch.name} mutex/rt_mutex 自测",
+                )
+            )
+
             ping = _parse(
                 q.wait_for(
                     PING_RE,
@@ -121,6 +138,15 @@ def _rt(ctx: TestContext, report: Report, arch) -> None:
             worker_misses,
             worker_exec_max,
         ) = worker
+        (
+            mutex_ops,
+            mutex_err,
+            mutex_boost,
+            mutex_after,
+            high_order,
+            low_order,
+            med_order,
+        ) = mutex
 
         print(
             f"         {arch.name}: ping-pong n={ping_n} "
@@ -128,7 +154,19 @@ def _rt(ctx: TestContext, report: Report, arch) -> None:
             f"preempt n={pre_n} min/avg/max={pre_min}/{pre_avg}/{pre_max}ns; "
             f"worker period={worker_period}ns periodic={worker_periodic} "
             f"ticks={worker_ticks} misses={worker_misses} "
-            f"exec_max={worker_exec_max}ns"
+            f"exec_max={worker_exec_max}ns; "
+            f"mutex ops={mutex_ops} err={mutex_err} "
+            f"pi={mutex_boost}->{mutex_after} order={high_order}/{low_order}/{med_order}"
+        )
+
+        assert mutex_ops == 6 * 3000, f"mutex 临界区计数 {mutex_ops}，应为 18000"
+        assert mutex_err == 0, f"mutex 并发检查发现 {mutex_err} 次同时持锁"
+        assert mutex_boost == 80, f"rt_mutex owner 提升到 {mutex_boost}，应为 80"
+        assert mutex_after == 0, f"rt_mutex owner 释放后优先级 {mutex_after}，应为 0"
+        assert (high_order, low_order, med_order) == (1, 2, 3), (
+            "rt_mutex 等待者顺序 "
+            f"{high_order}/{low_order}/{med_order}，应为 1/2/3"
+            "（PI 失效时中等优先级任务会先完成）"
         )
 
         if arch.name == "x86_64" and have_kvm():

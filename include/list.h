@@ -157,6 +157,29 @@ static inline void list_insert_last(list_t *list, list_node_t *node)
 }
 
 /*
+   list_insert_before - 在指定节点前插入
+   @list: 链表指针
+   @pos: 插入位置；NULL 等价于 list_insert_last()
+   @node: 要插入的节点(必须已初始化, 且不在链表中)
+*/
+static inline void list_insert_before(list_t *list, list_node_t *pos, list_node_t *node)
+{
+    if (!pos) {
+        list_insert_last(list, node);
+        return;
+    }
+
+    node->next = pos;
+    node->pre = pos->pre;
+    if (pos->pre)
+        pos->pre->next = node;
+    else
+        list->first = node;
+    pos->pre = node;
+    list->count++;
+}
+
+/*
    list_delete_first - 删除链表首节点
    @list: 链表指针
 

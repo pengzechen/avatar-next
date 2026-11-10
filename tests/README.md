@@ -102,7 +102,7 @@ tests/.artifacts/runs/<run-id>/
 | `build` | 三架构 × normal/guest/vmm-test/string-test/pmm-test | 构建成功；guest 产物带 `GUEST_LINUX_BUILD_TAG` |
 | `boot` | 三架构不带 rootfs 启动 | 出现 `PMM: N reserved regions`；无 ASSERT/panic/invalid free |
 | `kernel` | `pmm-test` / `string-test` / `vmm-test` | 各自的 PASS 标记；三路线程标记齐全 |
-| `rt-test` | `rt-test` 变体（`RT_TEST=1 RT_DEMO=1`） | `RT SCHED TEST: PASS`；demo 样本数完整，ping-pong/NORMAL→RT 平均延迟低于上限（self-IPI 立即抢占的回归门禁） |
+| `rt-test` | `rt-test` 变体（`RT_TEST=1 RT_DEMO=1`） | `RT SCHED TEST: PASS`；worker 共享页；mutex 并发压力 + rt_mutex 优先级继承（`RT MUTEX TEST: PASS`）；demo 样本数完整，ping-pong/NORMAL→RT 平均延迟低于上限（self-IPI 立即抢占的回归门禁） |
 | `apps` | `apps/c`：pthread / mutex | `[PASS]`/`[FAIL]` 行 |
 | `racetest` | `apps/c/racetest.c`：slot/pipe/wake | 需 `SMP>1`；要求输出 `DONE`；**诊断 suite** |
 | `ltp-smoke` | `smoke.list` | 无新增 FAIL/BROK；子集每项都有结果 |

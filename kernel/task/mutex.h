@@ -12,13 +12,17 @@
 
    实现：
     - 基于任务阻塞的睡眠锁
-    - FIFO 等待队列(先等待先获取)
+    - FIFO 等待队列(先等待先获取；解锁后允许抢跑)
     - 可重入(同一任务重复获取递增计数, 对应次数 unlock 才真正释放)
-    - 支持超时(可选)
+    - SMP 安全：状态与等待队列由内部自旋锁保护，不会丢唤醒
+
+   这不是 RT 锁：没有优先级继承，持锁者被抢占时高优先级等待者仍会等。
+   RT 任务请用 task/rt_mutex.h（直接优先级继承）。
 */
 
 #include "types.h"
 #include "list.h"
+#include "spinlock.h"
 
 /* 前向声明 */
 typedef struct task task_t;
@@ -26,6 +30,7 @@ typedef struct task task_t;
 /* ── Mutex 结构 ──────────────────────────────────────────── */
 
 typedef struct mutex {
+    spinlock_t lock;      /* 保护下面所有字段与 wait_queue */
     volatile bool locked; /* 锁状态：true = 已锁定 */
     list_t wait_queue;    /* 等待队列(FIFO) */
     task_t *holder;       /* 当前持有锁的任务 */

@@ -212,6 +212,13 @@ avatar/
   暂回退到 100Hz tick（10ms 整数倍）。用户态工具 `/bin/rtctl`。
   动 `kernel/rt/*`、`include/rt_worker.h`、`include/rtdev.h`、
   `kernel/fs/pseudofs/rtctl_dev.c` 或 `apps/c/rtctl.c` 前必读。
+- **RT 锁**: `docs/realtime/RT_LOCKS.md` - 普通 `mutex` 的 SMP 正确性修正
+  （内部自旋锁 + 无丢唤醒），以及 `rt_mutex` 的直接优先级继承
+  （`pi_priority`、按优先级排队、tick 不抢占被提升的持有者）。
+  动 `kernel/task/mutex.c`、`kernel/task/rt_mutex.c`、
+  `sched_set_pi_boost()` 或 `task_t.pi_priority` 前必读；V1 没有完整
+  PI 链/多锁传播，文件中列了已知限制。门禁：`make -C tests rt-test`
+  （SMP=4 时验证 mutex 的真并发竞争）。
 - **架构与基线**: `docs/realtime/ARCHITECTURE.md`、`R0_BASELINE.md`、
   `RT_DEMO_RESULTS.md`（self-IPI 立即抢占前后数据）。
 

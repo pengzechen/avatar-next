@@ -20,6 +20,7 @@
 
 void mutex_init(mutex_t *mutex)
 {
+    spinlock_irq_init(&mutex->lock);
     mutex->locked = false;
     list_init(&mutex->wait_queue);
     mutex->holder = NULL;
@@ -28,57 +29,46 @@ void mutex_init(mutex_t *mutex)
 
 /* ── mutex_lock ──────────────────────────────────────────── */
 
+/*
+   条件检查、入等待队列与置 BLOCKED 全在 mutex->lock 下完成。
+   这是修掉旧实现丢唤醒的关键：旧代码先恢复中断、再 task_block()，
+   解锁如果落在两者之间，等待者会睡进一把已经释放的锁。
+*/
 void mutex_lock(mutex_t *mutex)
 {
     task_t *cur = task_current();
+    uint64_t flags;
 
-    /* 参数验证：mutex 必须是内核地址 */
-    /*
-       if ((uintptr_t)mutex < 0xffffffc000000000) {
-           KLOG_ERROR("[mutex_lock] FATAL: mutex=%p is user address!\n", mutex);
-           KLOG_ERROR("[mutex_lock]   task='%s' pid=%u\n", cur->name, cur->id);
-           platform_panic();
-       }
-    */
+    spin_lock_irqsave(&mutex->lock, &flags);
+    for (;;) {
+        if (!mutex->locked) {
+            mutex->locked = true;
+            mutex->holder = cur;
+            mutex->count = 1; /* 首次持有, 计数为 1 */
+            break;
+        }
 
-    /* 关中断, 保护临界区 */
-    uint64_t flags = arch_irq_save();
+        /* 可重入：同一任务再次加锁, 直接递增计数 */
+        if (mutex->holder == cur) {
+            mutex->count++;
+            break;
+        }
 
-    /* 可重入：同一任务再次加锁, 直接递增计数 */
-    if (mutex->holder == cur) {
-        mutex->count++;
-        arch_irq_restore(flags);
-        return;
+        cur->state = TASK_BLOCKED;
+        list_insert_last(&mutex->wait_queue, &cur->wait_node);
+        spin_unlock_irqrestore(&mutex->lock, flags);
+
+        /*
+           入队与 BLOCKED 已经发布，解锁方不会漏掉这次唤醒。
+           若在真正切出前就被唤醒，sched_unblock 只置 wake_pending，
+           由 sched_schedule() 在切出时补入队列（见 task/completion.c）。
+        */
+        sched_schedule();
+
+        spin_lock_irqsave(&mutex->lock, &flags);
+        /* 被唤醒后重新检查：可能已被别的任务抢到 */
     }
-
-    /* 如果锁已被持有, 进入等待队列 */
-    while (mutex->locked) {
-        barrier_compiler(); /* 防止编译器重排, 确保每次都重新读取 mutex->locked */
-
-        /* 等待队列中的任务不是持有者, 正常排队等待 */
-        KLOG_DEBUG("[mutex] task '%s' (id=%u) waiting for mutex\n", cur->name, cur->id);
-
-        /* 恢复中断, 允许调度器工作 */
-        arch_irq_restore(flags);
-        task_block(&mutex->wait_queue);
-        /* task_block 会切换到其他任务, 被唤醒后重新获取锁 */
-        flags = arch_irq_save();
-
-        /* 被唤醒后重新检查锁是否可用 */
-    }
-
-    /* 获取锁 */
-    mutex->locked = true;
-    barrier_compiler();
-    mutex->holder = cur;
-    mutex->count = 1; /* 首次持有, 计数为 1 */
-
-    arch_irq_restore(flags);
-
-    /*
-       KLOG_DEBUG("[mutex] task '%s' (id=%u) acquired mutex\n",
-                 cur->name, cur->id);
-    */
+    spin_unlock_irqrestore(&mutex->lock, flags);
 }
 
 /* ── mutex_unlock ────────────────────────────────────────── */
@@ -86,35 +76,28 @@ void mutex_lock(mutex_t *mutex)
 void mutex_unlock(mutex_t *mutex)
 {
     task_t *cur = task_current();
+    task_t *waiter = NULL;
+    uint64_t flags;
 
-    /* 关中断, 保护临界区 */
-    uint64_t flags = arch_irq_save();
+    spin_lock_irqsave(&mutex->lock, &flags);
 
     /* 检查是否是锁的持有者 */
     if (!mutex->locked || mutex->holder != cur) {
         KLOG_ERROR("[mutex] task '%s' (id=%u) trying to unlock unheld mutex!\n", cur->name, cur->id);
-        arch_irq_restore(flags);
+        spin_unlock_irqrestore(&mutex->lock, flags);
         return;
     }
 
     /* 可重入：计数仍大于 1, 只递减, 不真正释放 */
     if (--mutex->count > 0) {
-        arch_irq_restore(flags);
+        spin_unlock_irqrestore(&mutex->lock, flags);
         return;
     }
 
-    /*
-       KLOG_DEBUG("[mutex] task '%s' (id=%u) releasing mutex\n",
-                 cur->name, cur->id);
-    */
-
-    /* 先从等待队列中取出第一个任务(在锁释放前操作 wait_queue) */
-    task_t *waiter = NULL;
+    /* 先从等待队列中取出第一个任务 */
     if (!list_is_empty(&mutex->wait_queue)) {
         list_node_t *node = list_delete_first(&mutex->wait_queue);
         waiter = container_of(node, task_t, wait_node);
-
-        KLOG_DEBUG("[mutex] waking task '%s' (id=%u)\n", waiter->name, waiter->id);
     }
 
     /* 释放锁 */
@@ -122,13 +105,14 @@ void mutex_unlock(mutex_t *mutex)
     barrier_compiler();
     mutex->locked = false;
 
-    /* 恢复中断 */
-    arch_irq_restore(flags);
-
-    /* 最后唤醒等待的任务(锁已释放, 任务可以立即竞争) */
-    if (waiter != NULL) {
+    /*
+       锁序：mutex->lock → 目标核 rq_lock（task_unblock 内部）。
+       反方向不存在；completion.c 用同一顺序。
+    */
+    if (waiter != NULL)
         task_unblock(waiter);
-    }
+
+    spin_unlock_irqrestore(&mutex->lock, flags);
 }
 
 /* ── mutex_trylock ───────────────────────────────────────── */
@@ -137,30 +121,24 @@ bool mutex_trylock(mutex_t *mutex)
 {
     task_t *cur = task_current();
     bool success;
+    uint64_t flags;
 
-    /* 关中断, 保护临界区 */
-    uint64_t flags = arch_irq_save();
+    spin_lock_irqsave(&mutex->lock, &flags);
 
-    /* 如果锁未被持有, 获取它 */
     if (!mutex->locked) {
         mutex->locked = true;
         mutex->holder = cur;
         mutex->count = 1;
         success = true;
-
-        KLOG_DEBUG("[mutex] task '%s' (id=%u) trylock succeeded\n", cur->name, cur->id);
     } else if (mutex->holder == cur) {
         /* 可重入：已是持有者, 递增计数 */
         mutex->count++;
         success = true;
     } else {
         success = false;
-
-        KLOG_DEBUG("[mutex] task '%s' (id=%u) trylock failed\n", cur->name, cur->id);
     }
 
-    arch_irq_restore(flags);
-
+    spin_unlock_irqrestore(&mutex->lock, flags);
     return success;
 }
 
@@ -168,12 +146,24 @@ bool mutex_trylock(mutex_t *mutex)
 
 bool mutex_is_locked(mutex_t *mutex)
 {
-    return mutex->locked;
+    uint64_t flags;
+    bool locked;
+
+    spin_lock_irqsave(&mutex->lock, &flags);
+    locked = mutex->locked;
+    spin_unlock_irqrestore(&mutex->lock, flags);
+    return locked;
 }
 
 /* ── mutex_holder ────────────────────────────────────────── */
 
 task_t *mutex_holder(mutex_t *mutex)
 {
-    return mutex->holder;
+    uint64_t flags;
+    task_t *holder;
+
+    spin_lock_irqsave(&mutex->lock, &flags);
+    holder = mutex->holder;
+    spin_unlock_irqrestore(&mutex->lock, flags);
+    return holder;
 }

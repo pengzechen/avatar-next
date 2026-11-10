@@ -35,6 +35,11 @@ start → 运行期参数 → stop → destroy。有 oneshot 的架构（x86 KVM
 的早期自测窗口里 tick 回调尚未启用，只验生命周期与共享页（标记
 `periodic=0`）。
 
+场景 6 是锁门禁：普通 mutex 的 6 任务 × 3000 次临界区并发压力，
+以及 rt_mutex 直接优先级继承（owner 20 被等待者 80 提升、按 80→60
+交接、中等优先级 50 不得插队、释放后恢复 0）。设计和已知限制见
+`docs/realtime/RT_LOCKS.md`。
+
 采集环境：QEMU `q35 -enable-kvm -cpu host`，100 Hz tick，`LOG=info`。
 
 ## 观察 RT 任务
