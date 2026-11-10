@@ -101,6 +101,9 @@ int tpu_dev_ioctl(int nid, uint64_t req, void *argp);
 /* /dev/dma_heap/ 各节点 —— 原型在 include/dma_buf.h, 这里只做个索引注释 */
 int dma_heap_dev_ioctl(int nid, uint64_t req, void *argp);
 
+/* /dev/rtctl —— 用户态 RT worker 控制面(rtctl_dev.c) */
+int rtctl_dev_ioctl(int nid, uint64_t req, void *argp);
+
 /* /dev/vmm —— 宿主 shell 里控制 guest 的字符设备(vmm_dev.c) */
 int vmm_dev_write(int nid, const void *buf, size_t len);
 int vmm_dev_read(int nid, uint64_t off, void *buf, size_t len);

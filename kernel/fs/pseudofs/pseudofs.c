@@ -441,6 +441,14 @@ static const pseudo_node_t g_nodes[] = {
       vmm_dev_close, NULL, NULL },
 #endif
 
+    /*
+       /dev/rtctl：用户可配置 RT worker（模板）控制面。
+       read/write 不用；全部通过 ioctl（RTW_IOC_*）完成。
+    */
+    { "/dev/rtctl", PSEUDO_CHR, MODE_CHRW, (10U << 8) | 201U, NULL, null_write, rtctl_dev_ioctl, NULL, NULL, NULL,
+      NULL },
+
+
     /* ── /proc 条目 ────────────────────────────────────── */
     { "/proc/self/exe", PSEUDO_LNK, MODE_LNK, 0, NULL, NULL, NULL, NULL, NULL, NULL, NULL },
     { "/proc/self/maps", PSEUDO_REG, MODE_REG, 0, maps_read, NULL, NULL, NULL, NULL, NULL, NULL },
