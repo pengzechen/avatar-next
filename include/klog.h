@@ -187,6 +187,23 @@ extern void klog_write(const char *buf, size_t len);
 */
 extern void klog_putchar(char c);
 extern void klog_flush(void);
+
+/*
+   klog_async_start - 启动 klogd 内核线程，之后 klog_write 默认入环形缓冲
+
+   必须在任务子系统可用后调用（task_init 末尾）。启动前的日志仍同步写
+   UART；启动后由 klogd 在 IRQs 打开的状态下输出，避免整条日志持
+   IRQ-off 把实时延迟拖到毫秒级。
+*/
+extern void klog_async_start(void);
+
+/*
+   klog_async_enqueue - 尝试把日志放入异步环形缓冲
+
+   返回 true 表示已入队；false 表示异步未启动/缓冲满/处于 panic 路径，
+   调用方应退回同步输出。可在中断上下文调用（只做短 memcpy + 唤醒）。
+*/
+extern bool klog_async_enqueue(const char *buf, size_t len);
 extern int kvprintf(const char *fmt, va_list va);
 extern int kprintf(const char *fmt, ...);
 

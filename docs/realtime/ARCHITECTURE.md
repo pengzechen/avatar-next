@@ -173,22 +173,27 @@ cpu0 1008 788 2 33798673 285 312 35398811 10494224 1059
 
 **清理后的实测（QEMU，SMP=1，启动后 shell；RT_IRQ_TRACE 全量编译）**：
 
-| 架构 | syscall 路径 | IRQ-off 最长 | tick_gap_max | 说明 |
-|---|---|---:|---:|---|
-| x86_64 KVM | 已开中断 | ~2.5 ms | ~10.1 ms | 最长 IRQ-off 来自 `klog_write` 的 UART 输出 |
-| riscv64 TCG | 已开 SIE | ~8.9 ms | ~10.5~11.1 ms | 同样来自 `klog_write`（TCG 串口更慢） |
-| aarch64 TCG | 原本已开 | 未启用 trace | ~11 ms | 基线 |
+| 架构 | syscall 路径 | IRQ-off 最长（仅开中断） | 最终（异步 klog + fs mutex） | tick_gap_max |
+|---|---|---:|---:|---:|
+| x86_64 KVM | 已开中断 | ~2.5 ms | **~0.36 ms** | ~10.0 ms |
+| riscv64 TCG | 已开 SIE | ~8.9 ms | **~1.74 ms** | ~10.0~11.2 ms |
+| aarch64 TCG | 原本已开 | 未启用 trace | 未启用 trace | ~11 ms |
 
 - 之前一次“~6.3µs”的 x86 IRQ-off 读数是**新旧 .o 混编**导致的失真；
-  加入 `_CFG_SIG` 全量重编后才得到上面的 2.5ms。
-- 结论：kernel printk/console 的 `klog_write` 仍然整段持 `spin_lock_irqsave`
-  写 UART，是当前最大的 IRQ-off 源；下一步应做异步/分块 console
-  （或把 RT 核的日志彻底关掉/隔离）。
+  加入 `_CFG_SIG` 全量重编后才得到 2.5ms 的起点。
+- 异步 console：`klog_write` 现在只把消息拷进 64 KiB 环形缓冲（IRQ-off
+  几微秒），由最低 RT 优先级（FIFO 1）的 `klogd` 在中断打开状态下写 UART。
+  panic 和环形缓冲满时仍退回同步输出。
+- ext4/FatFs 全局锁：`task_init` 后从“自旋锁 + 关中断”切换为睡眠 mutex，
+  长文件系统操作不再把本核 IRQ 关掉；启动早期仍用自旋锁。
+- 当前剩余最长 IRQ-off：
+  - x86_64 ~0.36ms：`signal_check_uart()` 抽 UART FIFO 的临界区；
+  - riscv64 ~1.74ms：`task_execve` 里的短临界区（TCG 放大）。
 - syscall_max 仍显示 execve（id 221）的十几毫秒，但它已不再把整颗核的
   中断关掉。
 
-**剩余 R3**：klog/UART 的 IRQ-off、长锁/文件系统临界区；之后再谈
-vCPU kick→run 延迟。
+**剩余 R3**：`signal_check_uart` 的 UART FIFO 临界区、execve 内的短锁；
+之后再谈 vCPU kick→run 延迟。
 
 **后续验收门禁**：VMM helper/多 VM 回归；R3 的有界 IRQ-off 后才对外
 宣称实时能力。

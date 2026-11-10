@@ -15,7 +15,9 @@
    下面两个函数给**跨多次调用**的临界区用（例如 f_stat + f_open、f_lseek +
    f_truncate、整个 f_readdir 循环），FatFs 胶水也直接用它们。
 
-   锁可重入（按 CPU 记 owner + 深度），持锁期间关本核中断。不要在锁内打 KLOG
+   启动早期（fs_init 阶段，任务子系统还不存在）用自旋锁 + 关中断；
+   task_init() 调用 fs_lock_enable_sleeping() 后切换成睡眠 mutex，
+   长 ext4/FatFs 操作不再把本核 IRQ 关掉。不要在锁内打 KLOG
    （UART 锁与 FS 锁的获取顺序会引入跨核死锁风险）。
 */
 #ifndef FS_LOCK_H
@@ -23,5 +25,8 @@
 
 void fs_global_lock(void);
 void fs_global_unlock(void);
+
+/* task_init() 在调度器可用后调用；之后 fs 锁改为可睡眠的 mutex。 */
+void fs_lock_enable_sleeping(void);
 
 #endif /* FS_LOCK_H */

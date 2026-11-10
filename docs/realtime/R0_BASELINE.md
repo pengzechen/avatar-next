@@ -65,17 +65,19 @@ R3 后（x86 syscall 路径 `sti`/`cli`）：
 cpu0 2048 2048 1 15283923 221 315 274 13207498 10017080 746
 ```
 
-R3 后 + `RT_IRQ_TRACE=1`（**clean 全量重编**）：
+R3 后（异步 klog + fs mutex）+ `RT_IRQ_TRACE=1`（**clean 全量重编**）：
 
 ```text
-cpu0 2246 2246 1 12062394 221 365 221 10080188 10039357 568 2546465 3619 4317486 0xffff800000268a7c
+cpu0 11278548 419 20 10998971 221 543 127 10017963 10017377 363 361529 3341 2581598 0xffff80000022b0fc
 ```
 
-- `irq_off_max ≈ 2.5 ms`；PC 落在 `klog_write` 的 `arch_irq_save`
-  区间（UART 输出整段持 IRQ-off）。
-- 之前一次 `~6.3 µs` 的读数是新旧 `.o` 混编导致的失真：`RT_IRQ_TRACE`
-  现在已加入 `_CFG_SIG`，切换该开关会全量重编。
-- R3 前 `syscall_max ≈ 10.9 ms` 就是整段 IRQ-off；R3 后 syscall 本身仍
+- `irq_off_max ≈ 0.36 ms`；当前最长区间落在 `signal_check_uart()`。
+- 异步 klog 之前是 2.5ms（最长在 `klog_write` 的 UART 输出），
+  再之前“~6.3µs”的读数是新旧 `.o` 混编导致的失真；`RT_IRQ_TRACE`
+  已加入 `_CFG_SIG`，切换开关会全量重编。
+- `wake_max` 的十几毫秒包含启动期 klogd 第一次真正运行前的累计
+  等待；稳定后 `wake_last` 是亚微秒级。
+- R3 前 `syscall_max ≈ 10.9 ms` 就是整段 IRQ-off；现在 syscall 本身仍
   可到 11~15 ms（最长是 execve，221），但中断已打开，不再是 IRQ-off
   窗口。
 
@@ -87,14 +89,17 @@ cpu0 161680 161680 1 14341776 221 40160 218 11660720 10111152 621 0 0 0 0x0
 
 ### riscv64（TCG，SMP=1）
 
-R3 后（syscall 路径已开 SIE）+ `RT_IRQ_TRACE=1`（clean 全量重编）：
+R3 后（syscall 路径已开 SIE + 异步 klog + fs mutex）+
+`RT_IRQ_TRACE=1`（clean 全量重编）：
 
 ```text
-cpu0 211800 211800 1 58601400 221 8000 216 11088200 9877900 709 8863000 3400 1026050 0xffffffc0802482cc
+cpu0 61041800 7700 19 51851900 221 67700 124 11150500 10041800 500 1742800 1700 729515 0xffffffc080229186
 ```
 
-- `irq_off_max ≈ 8.9 ms`，同样落在 `klog_write` 的 UART 输出上（TCG
-  串口更慢）；`tick_gap_max` 已从 R3 前的 43ms 量级回到约 10~11ms。
+- `irq_off_max ≈ 1.74 ms`；当前最长区间落在 `task_execve`（TCG 放大）。
+  异步 klog 前是 8.9ms（最长在 `klog_write` 的 UART 输出），fs mutex
+  前是 3.8ms（最长在 ext4 wrap 锁）。
+- `tick_gap_max` 已从 R3 前的 43ms 量级回到约 10~11ms。
 - aarch64 本轮未启用 trace，`irq_off_*` 为 0。
 
 > riscv64/aarch64 的数百微秒级 wake 和较大的 tick_gap 主要来自 QEMU
@@ -117,11 +122,13 @@ cpu0 211800 211800 1 58601400 221 8000 216 11088200 9877900 709 8863000 3400 102
 - x86_64/riscv64 syscall 内核侧已开中断后，`tick_gap_max` 回到 10ms
   量级；`syscall_max` 仍会显示 execve 的 11~58ms（TCG），但它已不是
   IRQ-off 窗口。
-- 当前最大 IRQ-off 源是 `klog_write`：整条日志持 `spin_lock_irqsave`
-  写 UART，x86 ~2.5ms、riscv TCG ~8.9ms。下一步应做异步/分块 console，
-  或把 RT 核的日志隔离掉。
-- `wake_max` x86 KVM 约 1~2µs，已有 RT 调度效果；后续关注负载下的
-  p99/最坏值，以及 vCPU kick→run 延迟。
+- 异步 klog（64 KiB ring + FIFO 1 klogd）把 UART 输出移出 IRQ-off；
+  ext4/FatFs 在 task_init 后改用睡眠 mutex。IRQ-off 从 x86 2.5ms /
+  riscv 8.9ms 降到 **0.36ms / 1.74ms**。
+- 当前剩余最大 IRQ-off：x86 `signal_check_uart()` 抽 UART FIFO；
+  riscv `task_execve` 内的短锁。后续继续收敛。
+- `wake_last` x86 KVM 亚微秒级；`wake_max` 的十几毫秒包含启动期
+  klogd 首次运行前的累计等待，后续关注负载下 p99/最坏值。
 - R0.5 的真实 irq-off 采样由 `RT_IRQ_TRACE=1` 提供；该开关影响所有
   TU，已加入 `_CFG_SIG` 强制全量重编。默认关闭以避免热路径开销。
 

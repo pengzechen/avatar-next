@@ -20,6 +20,7 @@
 #include "assert.h"
 #include "barrier.h"
 #include "klog.h"
+#include "fs_lock.h"
 #include "string.h"
 #include "task/cpu.h"
 #include "task/preempt.h"
@@ -471,6 +472,15 @@ void task_init(void)
 
     /* 初始化调度器, 传入 idle 任务 */
     sched_init(&g_idle_task);
+
+    /*
+       fs_init 阶段已经过去；之后 ext4/FatFs 调用可以睡眠等待全局锁，
+       不再整段关本核 IRQ。
+    */
+    fs_lock_enable_sleeping();
+
+    /* 启动异步日志线程；此后 klog_write 不再整段持 IRQ-off 写 UART。 */
+    klog_async_start();
 
     KLOG_TASK("[task] subsystem initialized, idle task id=%u stack_base=%p\n", g_idle_task.id,
               (void *)g_idle_task.stack_base);

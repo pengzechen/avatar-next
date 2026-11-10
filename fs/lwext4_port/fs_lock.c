@@ -49,6 +49,7 @@
 #include "spinlock.h"
 #include "klog.h"
 #include "task/cpu.h"
+#include "task/mutex.h"
 #include "fs_lock.h"
 
 #include <ext4.h>
@@ -63,8 +64,26 @@ static volatile uint32_t g_fs_owner = FS_LOCK_NO_OWNER;
 static uint32_t g_fs_depth[AVATAR_MAX_CPUS];
 static uint64_t g_fs_flags[AVATAR_MAX_CPUS];
 
+/*
+   task_init() 之前的 fs 操作（fs_init / ext4_mount）没有调度器可睡眠，
+   继续用自旋锁；之后切换成 mutex，长 ext4/FatFs 操作不再关本核中断。
+*/
+static mutex_t g_fs_mutex;
+static volatile bool g_fs_sleeping;
+
+void fs_lock_enable_sleeping(void)
+{
+    mutex_init(&g_fs_mutex);
+    g_fs_sleeping = true;
+}
+
 static inline void fs_lock(void)
 {
+    if (g_fs_sleeping) {
+        mutex_lock(&g_fs_mutex);
+        return;
+    }
+
     uint32_t me = get_current_cpu_id();
     if (me >= AVATAR_MAX_CPUS)
         me = 0;
@@ -83,6 +102,11 @@ static inline void fs_lock(void)
 
 static inline void fs_unlock(void)
 {
+    if (g_fs_sleeping) {
+        mutex_unlock(&g_fs_mutex);
+        return;
+    }
+
     uint32_t me = get_current_cpu_id();
     if (me >= AVATAR_MAX_CPUS)
         me = 0;

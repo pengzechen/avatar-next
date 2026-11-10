@@ -76,6 +76,14 @@ void klog_write(const char *buf, size_t len)
         return;
     }
 
+    /*
+       异步路径：只把消息 memcpy 进环形缓冲（几微秒，持 IRQ-off），
+       UART 输出交给 klogd，在中断打开的状态下慢慢写。缓冲满/异步未启动
+       时退回下面的同步路径。
+    */
+    if (klog_async_enqueue(buf, len))
+        return;
+
     uint64_t flags;
     spin_lock_irqsave(&g_klog_lock, &flags);
     for (i = 0; i < len; i++)
