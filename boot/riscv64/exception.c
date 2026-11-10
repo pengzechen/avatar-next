@@ -168,7 +168,18 @@ void handle_exception(void *frame_ptr)
         if (code == CAUSE_USER_ECALL) {
             /* RISC-V ecall: sepc 指向 ecall 本身, 需手动前进到下一条 */
             frame->sepc += 4;
+
+            /*
+               现场已完整保存在 frame 里，可以打开 SIE：长 syscall
+               （文件系统/等待输入等）不再把整颗核的 IRQ 延迟拖到毫秒级。
+               timer 中断只置 need_resched；用户进程的内核侧不会在任意
+               C 代码点被抢占（trap_preempt_kernel_side 对
+               is_user_process 返回 false）。返回 trap_vector 前恢复
+               SIE=0，signal/调度检查和 sret 路径保持原有约定。
+            */
+            CSR_SET(sstatus, SSTATUS_SIE);
             syscall_handler(frame);
+            CSR_CLEAR(sstatus, SSTATUS_SIE);
             return;
         }
 

@@ -726,7 +726,10 @@ _VARIANT_CHECK := $(shell \
 # _VARIANT_CHECK 的细粒度处理：只删 _VARIANT_OBJS 里列的那几个 .o，
 # 不为此整包重编。新增变体时记得把受影响的对象加进那个列表。
 _CFG_STAMP_FILE := $(BUILD_DIR)/.build-cfg
-_CFG_SIG        := $(GIC_VER)/smp$(SMP)/vcpus$(GUEST_VCPUS)/log$(LOG)/mods$(LOG_MODULES)/fp$(FP)/fatmp$(FAT_MOUNT_POINT)
+# RT_IRQ_TRACE 会影响所有包含 exception_impl.h 的 TU（arch_irq_save/restore
+# 内联点遍布全内核），因此必须进 _CFG_SIG 触发全量重编，不能只靠
+# _VARIANT_OBJS 的细粒度清理。
+_CFG_SIG        := $(GIC_VER)/smp$(SMP)/vcpus$(GUEST_VCPUS)/log$(LOG)/mods$(LOG_MODULES)/fp$(FP)/fatmp$(FAT_MOUNT_POINT)/rtirq$(RT_IRQ_TRACE)
 _CFG_CHECK := $(shell \
     mkdir -p $(BUILD_DIR) 2>/dev/null; \
     rm -f $(BUILD_DIR)/.gic-last; \
