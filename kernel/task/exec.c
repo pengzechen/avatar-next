@@ -455,6 +455,7 @@ int task_execve(const char *pathname, uint8_t *file_data, uint64_t file_size, ui
     new_mm->mmap_next = mmap_base;
     new_mm->interp_end = interp_end;
     exec_set_name(current, new_mm, pathname);
+    current->domain = TASK_DOMAIN_USER;
     current->is_user_process = true;
     current->user_started = true;
     current->tgid = current->id;

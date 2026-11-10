@@ -579,6 +579,10 @@ task_t *process_create(const char *name, uint64_t user_entry, uint64_t user_code
     task->id = task_alloc_id();
     task->state = TASK_ALLOCATING;
     task->priority = priority;
+    task->domain = TASK_DOMAIN_USER;
+    task->sched_policy = TASK_SCHED_NORMAL;
+    task->rt_priority = 0;
+    task->rt_slice = 0;
 
     /* 标记为用户进程 */
     task->is_user_process = true;
@@ -652,6 +656,10 @@ task_t *process_create_with_pgd(const char *name, uint64_t user_entry, uint64_t 
     task->id = task_alloc_id();
     task->state = TASK_ALLOCATING;
     task->priority = priority;
+    task->domain = TASK_DOMAIN_USER;
+    task->sched_policy = TASK_SCHED_NORMAL;
+    task->rt_priority = 0;
+    task->rt_slice = 0;
     task->is_user_process = true;
     task->user_started = false;
     task->tgid = task->id;
@@ -767,9 +775,10 @@ task_t *task_create(const char *name, void (*entry)(void *), void *arg, uint8_t 
 }
 
 /*
-   task_create_affinity - 创建任务, 入队前就定好跑在哪颗核上
+   task_create_internal - 所有内核域任务创建的公共实现
+   （task_create_affinity / task_create_kernel_rt / task_create_vcpu 的底座）
 
-   与 task_create() 的区别只在 `cpu_affinity` 的设置时机, 但这正是关键：
+   `cpu_affinity` 必须在入队前指定，原因如下：
    先 task_create()(内部已经 sched_enqueue, round-robin 可能挑中别的核)
    再 task_set_cpu_affinity() 有窗口 —— 如果新任务在那两步之间已经被目标核
    挑走开始执行, sched_dequeue() 就找不到它(RUNNING 的任务不在任何队列里),
@@ -783,8 +792,18 @@ task_t *task_create(const char *name, void (*entry)(void *), void *arg, uint8_t 
      CPU exception #14 at RIP=sched_schedule+0xf2  (next->state = TASK_RUNNING)
      CR2 = 0xffffffffffffffc8                      ← pick_next() 拿到野指针
 */
-task_t *task_create_affinity(const char *name, void (*entry)(void *), void *arg, uint8_t priority,
-                             uint32_t cpu_affinity)
+static uint8_t task_rt_prio_clamp(uint8_t prio)
+{
+    if (prio < TASK_RT_PRIO_MIN)
+        return TASK_RT_PRIO_MIN;
+    if (prio > TASK_RT_PRIO_MAX)
+        return TASK_RT_PRIO_MAX;
+    return prio;
+}
+
+static task_t *task_create_internal(const char *name, void (*entry)(void *), void *arg, uint8_t priority,
+                                    uint32_t cpu_affinity, task_domain_t domain, task_sched_policy_t policy,
+                                    uint8_t rt_priority)
 {
     task_t *task = task_alloc_slot();
     if (!task) {
@@ -795,6 +814,10 @@ task_t *task_create_affinity(const char *name, void (*entry)(void *), void *arg,
     task->id = task_alloc_id();
     task->state = TASK_ALLOCATING;
     task->priority = priority;
+    task->domain = (uint8_t)domain;
+    task->sched_policy = (uint8_t)policy;
+    task->rt_priority = (policy == TASK_SCHED_NORMAL) ? 0 : task_rt_prio_clamp(rt_priority);
+    task->rt_slice = (policy == TASK_SCHED_RR) ? TASK_RR_QUANTUM_TICKS : 0;
     task->entry = entry;
     task->arg = arg;
     task->is_user_process = false;
@@ -840,9 +863,26 @@ task_t *task_create_affinity(const char *name, void (*entry)(void *), void *arg,
     /* 加入就绪队列, 等待调度 */
     sched_enqueue(task);
 
-    KLOG_TASK("[task] created '%s' id=%u prio=%u sp=0x%lx\n", task->name, task->id, (uint32_t)task->priority,
-              (unsigned long)task->sp);
+    KLOG_TASK("[task] created '%s' id=%u domain=%u policy=%u prio=%u sp=0x%lx\n", task->name, task->id,
+              (uint32_t)task->domain, (uint32_t)task->sched_policy, (uint32_t)task->priority, (unsigned long)task->sp);
     return task;
+}
+
+task_t *task_create_affinity(const char *name, void (*entry)(void *), void *arg, uint8_t priority,
+                             uint32_t cpu_affinity)
+{
+    return task_create_internal(name, entry, arg, priority, cpu_affinity, TASK_DOMAIN_KERNEL, TASK_SCHED_NORMAL, 0);
+}
+
+task_t *task_create_kernel_rt(const char *name, void (*entry)(void *), void *arg, uint8_t rt_priority,
+                              uint32_t cpu_affinity)
+{
+    return task_create_internal(name, entry, arg, 0, cpu_affinity, TASK_DOMAIN_KERNEL, TASK_SCHED_FIFO, rt_priority);
+}
+
+task_t *task_create_vcpu(const char *name, void (*entry)(void *), void *arg, uint8_t priority, uint32_t cpu_affinity)
+{
+    return task_create_internal(name, entry, arg, priority, cpu_affinity, TASK_DOMAIN_VCPU, TASK_SCHED_NORMAL, 0);
 }
 
 /* ── task_yield ──────────────────────────────────────────── */

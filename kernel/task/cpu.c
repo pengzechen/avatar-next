@@ -125,7 +125,7 @@ void cpu_init_bsp(void)
     c->current_task = NULL;
     c->idle_task = NULL;
     c->need_resched = false;
-    list_init(&c->run_queue);
+    sched_rq_init(c);
     spinlock_irq_init(&c->rq_lock);
 
     /* 安装 per-CPU 寄存器(TPIDR_EL1 / tp / GS_BASE) */
@@ -339,7 +339,7 @@ void cpu_bring_up_all(void)
         c->hw_id = i; /* QEMU virt: MPIDR.Aff0 = CPU 序号 */
 #endif
         c->online = false;
-        list_init(&c->run_queue);
+        sched_rq_init(c);
         spinlock_irq_init(&c->rq_lock);
 
         KLOG_SMP("[cpu] PSCI CPU_ON cpu=%u mpidr=0x%llx\n", i, (unsigned long long)c->hw_id);
@@ -462,7 +462,7 @@ void cpu_bring_up_all(void)
         c->cpu_id = i;
         c->hw_id = hartid;
         c->online = false;
-        list_init(&c->run_queue);
+        sched_rq_init(c);
         spinlock_irq_init(&c->rq_lock);
 
         KLOG_SMP("[cpu] start/release cpu=%u hart=%llu\n", i, (unsigned long long)c->hw_id);
@@ -558,7 +558,7 @@ void cpu_bring_up_all(void)
         c->cpu_id = i;
         c->hw_id = i;
         c->online = false;
-        list_init(&c->run_queue);
+        sched_rq_init(c);
         spinlock_irq_init(&c->rq_lock);
 
         *X86_AP_DATA_CPU_ID = i;

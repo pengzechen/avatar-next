@@ -10,13 +10,21 @@
 /*
    kernel/task/sched.h — 调度器接口
 
-   实现：简单轮转调度(Round-Robin)
-    - 就绪队列：FIFO 双向链表
+   实现：NORMAL 轮转 + RT 优先级调度
+    - run_queue：NORMAL 任务的 FIFO 双向链表
+    - rt_queue[100] + rt_bitmap：SCHED_FIFO/RR 任务
     - idle 任务作为空队列时的回退任务
-    - sched_tick() 由定时器 ISR 调用, 触发抢占
+    - sched_tick() 由定时器 ISR 调用, 触发 NORMAL/RR 抢占
 */
 
 #include "task/task.h"
+
+struct cpu;
+
+/*
+   sched_rq_init - 初始化一个 CPU 的 NORMAL + RT 就绪队列
+*/
+void sched_rq_init(struct cpu *c);
 
 /*
    sched_init - 初始化调度器

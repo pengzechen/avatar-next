@@ -34,6 +34,30 @@ typedef enum {
     TASK_DEAD = 3,        /* 已退出, 资源待回收 */
 } task_state_t;
 
+/*
+   执行域：决定任务“跑在哪里”。
+   RT 是调度类，不是域 —— 内核 RT 线程 = KERNEL + FIFO/RR。
+*/
+typedef enum {
+    TASK_DOMAIN_KERNEL = 0, /* 内核线程 */
+    TASK_DOMAIN_USER,       /* 用户进程/线程 */
+    TASK_DOMAIN_VCPU,       /* 宿主内核线程 + vcpu 扩展 */
+} task_domain_t;
+
+/*
+   调度类。RT 优先级 1..99，数值越大越高；NORMAL 用 priority 字段
+   （本轮尚未接入 normal 优先级排序，保持轮转）。
+*/
+typedef enum {
+    TASK_SCHED_NORMAL = 0,
+    TASK_SCHED_FIFO,
+    TASK_SCHED_RR,
+} task_sched_policy_t;
+
+#define TASK_RT_PRIO_MIN      1u
+#define TASK_RT_PRIO_MAX      99u
+#define TASK_RR_QUANTUM_TICKS 10u /* 100 Hz 下约 100 ms，后续随高精度定时器调整 */
+
 /* ── Configuration ───────────────────────────────────────── */
 /*
    每个内核任务的栈大小。
@@ -92,8 +116,12 @@ typedef struct task {
     uint32_t preempt_count;     /* >0 时 timer 不抢占该任务 */
     volatile bool on_cpu;       /* 正由某颗核执行(见下方 SMP 唤醒说明) */
     volatile bool wake_pending; /* on_cpu 期间被唤醒，切出时补入队列 */
-    uint8_t priority;           /* 优先级(0 = 最高, 255 = 最低) */
-    bool is_user_process;       /* true=用户进程, false=内核任务 */
+    uint8_t priority;           /* NORMAL 优先级(0 = 最高, 255 = 最低) */
+    uint8_t domain;             /* task_domain_t */
+    uint8_t sched_policy;       /* task_sched_policy_t */
+    uint8_t rt_priority;        /* RT: 1..99，越大越高；NORMAL 为 0 */
+    uint8_t rt_slice;           /* RR 剩余 tick 数 */
+    bool is_user_process;       /* true=用户进程, false=内核任务(过渡期与 domain 并存) */
     bool user_started;          /* true=已至少进入过一次用户态 */
     bool is_waiting;            /* 正在 wait4 子进程 */
     uint8_t dumpable;           /* prctl(PR_SET_DUMPABLE) */
@@ -187,6 +215,12 @@ static inline bool task_is_thread(const task_t *t)
     return t && t->tgid != t->id;
 }
 
+/* 是否 RT 调度类（FIFO/RR）。 */
+static inline bool task_is_rt(const task_t *t)
+{
+    return t && t->sched_policy != TASK_SCHED_NORMAL;
+}
+
 /*
    布局约束：task_t 必须独占 cacheline，且热字段必须落在首条 cacheline。
 
@@ -274,6 +308,25 @@ task_t *task_create(const char *name, void (*entry)(void *), void *arg, uint8_t 
 */
 task_t *task_create_affinity(const char *name, void (*entry)(void *), void *arg, uint8_t priority,
                              uint32_t cpu_affinity);
+
+/*
+   task_create_kernel_rt - 创建内核 RT 线程（KERNEL + SCHED_FIFO）
+
+   @rt_priority: 1..99，越大优先级越高
+   @cpu_affinity: 目标 CPU 或 CPU_AFFINITY_ANY
+
+   RT 线程不经过 Linux syscall 层；需要数据交互时使用预分配共享内存、
+   RT mutex、timer 或中断/门铃。
+*/
+task_t *task_create_kernel_rt(const char *name, void (*entry)(void *), void *arg, uint8_t rt_priority,
+                              uint32_t cpu_affinity);
+
+/*
+   task_create_vcpu - 创建 vCPU 线程（VCPU 域，宿主侧 mm == NULL 语义）
+
+   vCPU 状态/上下文由调用方通过 @arg 传入（通常是 struct vcpu *）。
+*/
+task_t *task_create_vcpu(const char *name, void (*entry)(void *), void *arg, uint8_t priority, uint32_t cpu_affinity);
 
 /*
    process_create - 创建用户进程

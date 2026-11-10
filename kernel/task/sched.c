@@ -80,6 +80,150 @@ static inline void x86_write_fs_base(uint64_t fs_base)
      足够互斥本核 ISR)。
 */
 
+/* ── RT 调度类辅助 ───────────────────────────────────────── */
+
+void sched_rq_init(cpu_t *c)
+{
+    list_init(&c->run_queue);
+    for (uint32_t p = 0; p < RT_PRIO_LEVELS; p++)
+        list_init(&c->rt_queue[p]);
+    for (uint32_t w = 0; w < (RT_PRIO_LEVELS + 63) / 64; w++)
+        c->rt_bitmap[w] = 0;
+}
+
+static inline uint32_t rt_prio_of(const task_t *t)
+{
+    uint32_t p = t->rt_priority;
+    if (p < TASK_RT_PRIO_MIN)
+        p = TASK_RT_PRIO_MIN;
+    if (p > TASK_RT_PRIO_MAX)
+        p = TASK_RT_PRIO_MAX;
+    return p;
+}
+
+static inline void rt_bitmap_set(cpu_t *c, uint32_t p)
+{
+    c->rt_bitmap[p / 64] |= (1ULL << (p % 64));
+}
+
+static inline void rt_bitmap_clear(cpu_t *c, uint32_t p)
+{
+    c->rt_bitmap[p / 64] &= ~(1ULL << (p % 64));
+}
+
+/* 最高非空 RT 优先级；没有返回 -1。RISC-V 上不用 __builtin_clzll（libgcc）。 */
+static int rt_highest_prio(cpu_t *c)
+{
+    for (int w = (int)((RT_PRIO_LEVELS + 63) / 64) - 1; w >= 0; w--) {
+        uint64_t x = c->rt_bitmap[w];
+        if (!x)
+            continue;
+        int bit = 0;
+        if (x & 0xFFFFFFFF00000000ULL) {
+            x >>= 32;
+            bit += 32;
+        }
+        if (x & 0xFFFF0000ULL) {
+            x >>= 16;
+            bit += 16;
+        }
+        if (x & 0xFF00ULL) {
+            x >>= 8;
+            bit += 8;
+        }
+        if (x & 0xF0ULL) {
+            x >>= 4;
+            bit += 4;
+        }
+        if (x & 0xCULL) {
+            x >>= 2;
+            bit += 2;
+        }
+        if (x & 0x2ULL)
+            bit += 1;
+        return w * 64 + bit;
+    }
+    return -1;
+}
+
+/* 持 rq_lock 调用：按调度类插入就绪队列。 */
+static void rq_enqueue_locked(cpu_t *c, task_t *t)
+{
+    if (task_is_rt(t)) {
+        uint32_t p = rt_prio_of(t);
+        t->rt_priority = (uint8_t)p;
+        if (t->sched_policy == TASK_SCHED_RR && t->rt_slice == 0)
+            t->rt_slice = TASK_RR_QUANTUM_TICKS;
+        list_insert_last(&c->rt_queue[p], &t->run_node);
+        rt_bitmap_set(c, p);
+        return;
+    }
+    list_insert_last(&c->run_queue, &t->run_node);
+}
+
+/* 持 rq_lock 调用：从 NORMAL/RT 队列摘除。 */
+static bool rq_remove_locked(cpu_t *c, task_t *t)
+{
+    if (list_contains(&c->run_queue, &t->run_node)) {
+        list_delete(&c->run_queue, &t->run_node);
+        return true;
+    }
+    if (task_is_rt(t)) {
+        uint32_t p = rt_prio_of(t);
+        if (list_contains(&c->rt_queue[p], &t->run_node)) {
+            list_delete(&c->rt_queue[p], &t->run_node);
+            if (list_is_empty(&c->rt_queue[p]))
+                rt_bitmap_clear(c, p);
+            return true;
+        }
+        /* policy 在排队期间被改过的兜底（当前不开放运行时改策略）。 */
+        for (uint32_t q = TASK_RT_PRIO_MIN; q <= TASK_RT_PRIO_MAX; q++) {
+            if (!list_contains(&c->rt_queue[q], &t->run_node))
+                continue;
+            list_delete(&c->rt_queue[q], &t->run_node);
+            if (list_is_empty(&c->rt_queue[q]))
+                rt_bitmap_clear(c, q);
+            return true;
+        }
+    }
+    return false;
+}
+
+static task_t *rq_node_to_task(cpu_t *c, list_node_t *node)
+{
+    extern task_t g_task_pool[];
+    task_t *task = container_of(node, task_t, run_node);
+    if (task < g_task_pool || task >= g_task_pool + TASK_MAX) {
+        KLOG_ERROR("[sched] CORRUPT runqueue on cpu%u: node=%p -> task=%p (out of pool) - skipped\n", c->cpu_id,
+                   (void *)node, (void *)task);
+        return NULL;
+    }
+    return task;
+}
+
+/*
+   入队后是否需要立刻抢占目标核。
+   - 远端：沿用旧行为，总发 resched IPI（唤醒延迟不依赖 tick）；
+   - 本核：只有更高优先级的 RT 任务（或当前是 idle）才置 need_resched。
+*/
+static void sched_kick_after_enqueue(cpu_t *c, task_t *t)
+{
+    if (c->cpu_id != get_current_cpu_id()) {
+        sched_resched_cpu(c->cpu_id);
+        return;
+    }
+
+    task_t *cur = c->current_task;
+    if (!cur || cur == c->idle_task) {
+        c->need_resched = true;
+        return;
+    }
+    if (!task_is_rt(t))
+        return; /* NORMAL 任务不打断 NORMAL/RT；等 tick 或返回边界 */
+    if (!task_is_rt(cur) || t->rt_priority > cur->rt_priority)
+        c->need_resched = true;
+}
+
 /* ── sched_init ──────────────────────────────────────────── */
 
 void sched_init(task_t *idle_task)
@@ -179,13 +323,15 @@ void sched_enqueue(task_t *task)
            而中断本来就是关的, 直接插队列即可, 不需要再动 sstatus。
         */
         if (in_irq_context()) {
-            list_insert_last(&tc->run_queue, &task->run_node);
+            rq_enqueue_locked(tc, task);
+            sched_kick_after_enqueue(tc, task);
             return;
         }
 
         uint64_t flags = arch_irq_save();
-        list_insert_last(&tc->run_queue, &task->run_node);
+        rq_enqueue_locked(tc, task);
         arch_irq_restore(flags);
+        sched_kick_after_enqueue(tc, task);
         return;
     }
 
@@ -202,17 +348,18 @@ void sched_enqueue(task_t *task)
         spin_lock(&tc->rq_lock);
     else
         spin_lock_irqsave(&tc->rq_lock, &flags);
-    list_insert_last(&tc->run_queue, &task->run_node);
+    rq_enqueue_locked(tc, task);
     if (irq_ctx)
         spin_unlock(&tc->rq_lock);
     else
         spin_unlock_irqrestore(&tc->rq_lock, flags);
 
     /*
-       远端入队后立刻 kick。没有这一步, 任务要等目标核下一次 timer tick
-       (最长 10ms)才被看到；对 vCPU 的唤醒/停止来说这个延迟不可接受。
+       远端入队后立刻 kick；本核只在更高优先级 RT 任务入队时置
+       need_resched。没有这一步, 任务要等目标核下一次 timer tick
+       (最长 10ms)才被看到；对 vCPU/RT 的唤醒来说这个延迟不可接受。
     */
-    sched_resched_cpu(target);
+    sched_kick_after_enqueue(tc, task);
 }
 
 /* ── sched_unblock ───────────────────────────────────────── */
@@ -273,7 +420,7 @@ void sched_unblock(task_t *task)
         /* 还在目标核上：切出时由 sched_schedule() 补入队列 */
         task->wake_pending = true;
     } else {
-        list_insert_last(&tc->run_queue, &task->run_node);
+        rq_enqueue_locked(tc, task);
         enqueued = true;
     }
 
@@ -284,8 +431,8 @@ void sched_unblock(task_t *task)
     else
         spin_unlock_irqrestore(&tc->rq_lock, flags);
 
-    if (enqueued && n > 1U)
-        sched_resched_cpu(target);
+    if (enqueued)
+        sched_kick_after_enqueue(tc, task);
 }
 
 /* ── sched_dequeue ───────────────────────────────────────── */
@@ -299,8 +446,7 @@ void sched_dequeue(task_t *task)
     if (n == 1U) {
         cpu_t *tc = &g_cpus[0];
         uint64_t flags = arch_irq_save();
-        if (list_contains(&tc->run_queue, &task->run_node))
-            list_delete(&tc->run_queue, &task->run_node);
+        rq_remove_locked(tc, task);
         arch_irq_restore(flags);
         return;
     }
@@ -309,8 +455,7 @@ void sched_dequeue(task_t *task)
         cpu_t *tc = &g_cpus[task->cpu_affinity];
         uint64_t flags;
         spin_lock_irqsave(&tc->rq_lock, &flags);
-        if (list_contains(&tc->run_queue, &task->run_node)) {
-            list_delete(&tc->run_queue, &task->run_node);
+        if (rq_remove_locked(tc, task)) {
             spin_unlock_irqrestore(&tc->rq_lock, flags);
             return;
         }
@@ -320,8 +465,7 @@ void sched_dequeue(task_t *task)
         cpu_t *tc = &g_cpus[i];
         uint64_t flags;
         spin_lock_irqsave(&tc->rq_lock, &flags);
-        if (list_contains(&tc->run_queue, &task->run_node)) {
-            list_delete(&tc->run_queue, &task->run_node);
+        if (rq_remove_locked(tc, task)) {
             spin_unlock_irqrestore(&tc->rq_lock, flags);
             return;
         }
@@ -333,24 +477,21 @@ void sched_dequeue(task_t *task)
 
 static task_t *pick_next(cpu_t *c)
 {
-    extern task_t g_task_pool[]; /* 定义在 task.c(非 static) */
+    /* 1. 最高优先级的 RT 队列 */
+    int p = rt_highest_prio(c);
+    if (p >= 0) {
+        list_node_t *node = list_delete_first(&c->rt_queue[p]);
+        if (list_is_empty(&c->rt_queue[p]))
+            rt_bitmap_clear(c, (uint32_t)p);
+        task_t *task = rq_node_to_task(c, node);
+        return task ? task : c->idle_task;
+    }
 
+    /* 2. NORMAL 轮转队列 */
     list_node_t *node = list_delete_first(&c->run_queue);
     if (node) {
-        task_t *task = container_of(node, task_t, run_node);
-
-        /*
-           队列里捡出来的指针必须落在任务池里。落到池外 = 运行队列已经被
-           写坏(历史上真出现过：CR2=0xffffffffffffffc8 的野指针)。
-           这时候不要继续用这个指针(一写就崩), 跳过它并让本核跑 idle ——
-           坏的是一个节点, 整机还能继续跑, 日志里也留下了现场。
-        */
-        if (task < g_task_pool || task >= g_task_pool + TASK_MAX) {
-            KLOG_ERROR("[sched] CORRUPT runqueue on cpu%u: node=%p -> task=%p (out of pool) - skipped\n", c->cpu_id,
-                       (void *)node, (void *)task);
-            return c->idle_task;
-        }
-        return task;
+        task_t *task = rq_node_to_task(c, node);
+        return task ? task : c->idle_task;
     }
     return c->idle_task; /* 队列为空, 回退到本核 idle */
 }
@@ -381,10 +522,10 @@ void sched_schedule(void)
     if (use_rq_lock)
         spin_lock(&c->rq_lock);
 
-    /* 若当前任务仍在运行且不是 idle, 则重新入队尾 */
+    /* 若当前任务仍在运行且不是 idle, 则按调度类重新入队 */
     if (prev->state == TASK_RUNNING && prev != c->idle_task) {
         prev->state = TASK_READY;
-        list_insert_last(&c->run_queue, &prev->run_node);
+        rq_enqueue_locked(c, prev);
     }
 
     task_t *next = pick_next(c);
@@ -402,7 +543,7 @@ void sched_schedule(void)
         if (prev->wake_pending) {
             prev->wake_pending = false;
             prev->state = TASK_READY;
-            list_insert_last(&c->run_queue, &prev->run_node);
+            rq_enqueue_locked(c, prev);
             /*
                这次唤醒是在 prev 还 on_cpu 时发生的, waker 没有发 IPI
                (`sched_unblock` 的 enqueued=false 分支)。现在 prev 已经
@@ -512,11 +653,26 @@ void sched_tick(void)
        只设置需要重调度的标志, 实际切换在异常返回前进行。
        这样可以避免在 IRQ 处理程序中直接切换上下文。
 
-       Phase 1：标志已是 per-CPU, 每核独立计数。
+       抢占语义按调度类区分：
+         - NORMAL / idle：tick 触发轮转；
+         - FIFO：tick 不抢占（只有更高优先级 RT 入队/阻塞事件才切）；
+         - RR：时间片用完才置 need_resched。
     */
     cpu_t *c = cpu_current();
+    task_t *cur = c->current_task;
 
-    c->need_resched = true;
+    if (!cur || cur == c->idle_task) {
+        c->need_resched = true;
+    } else if (cur->sched_policy == TASK_SCHED_FIFO) {
+        /* RT FIFO 不被 tick 抢占 */
+    } else if (cur->sched_policy == TASK_SCHED_RR) {
+        if (cur->rt_slice > 0)
+            cur->rt_slice--;
+        if (cur->rt_slice == 0)
+            c->need_resched = true;
+    } else {
+        c->need_resched = true;
+    }
 
     /*
        idle 记账。挂在 tick 上而不是各个 idle 循环里：g_tick_cb 每个核都会调,

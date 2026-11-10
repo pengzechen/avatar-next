@@ -613,6 +613,13 @@ ifeq ($(TASK_TEST),1)
     _BUILD_VARIANT := $(_BUILD_VARIANT)+task_test
 endif
 
+# RT_TEST=1：启动时跑 RT 调度类自测（tests/unit-test/rt_sched_test.c）
+RT_TEST ?= 0
+ifeq ($(RT_TEST),1)
+    CFLAGS += -DRUN_RT_SCHED_TEST=1
+    _BUILD_VARIANT := $(_BUILD_VARIANT)+rt_test
+endif
+
 # PMM_TEST=1：定义 RUN_PMM_TESTS，在 fs_init 之后跑 tests/unit-test/pmm_test.c
 # 并关机。调用点在 tests/unit-test/unit_test.c，main.c 不含测试细节。
 #

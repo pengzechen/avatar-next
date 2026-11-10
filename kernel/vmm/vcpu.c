@@ -606,7 +606,7 @@ struct task *vcpu_task_create(vcpu_t *vcpu, uint8_t priority)
     vm_vcpu_started(vcpu->vm);
     vm_state_set(vcpu->vm, VM_RUNNING);
 
-    struct task *t = task_create_affinity(name, vcpu_task_fn, vcpu, priority, want);
+    struct task *t = task_create_vcpu(name, vcpu_task_fn, vcpu, priority, want);
     if (!t) {
         /* 回滚计数, 但不销毁 VM —— 调用方还要走它自己的错误路径 */
         vm_vcpu_start_abort(vcpu->vm);

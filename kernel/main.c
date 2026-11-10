@@ -230,6 +230,15 @@ void kernel_main(void)
     */
     cpu_bring_up_all();
 
+#ifdef RUN_RT_SCHED_TEST
+    /*
+       放在创建 net-poll / busybox 之前：这些长期就绪任务会把 idle 任务
+       挤到队尾，测试的 boot 上下文（idle）在任务退出后不一定马上拿回 CPU。
+    */
+    extern void run_rt_sched_test(void);
+    run_rt_sched_test();
+#endif
+
     /*
        驱动阶段（三）：网卡；net_init() 需要驱动先注册 netdev。
        guest 直启和 VMM 自测不需要网络，由测试变体的 boot 对象声明跳过。

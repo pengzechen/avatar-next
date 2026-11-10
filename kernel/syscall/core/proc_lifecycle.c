@@ -374,6 +374,10 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
     child->id = task_alloc_id();
     child->state = TASK_ALLOCATING;
     child->priority = parent->priority;
+    child->domain = TASK_DOMAIN_USER;
+    child->sched_policy = parent->sched_policy; /* fork/线程继承调度策略 */
+    child->rt_priority = parent->rt_priority;
+    child->rt_slice = (parent->sched_policy == TASK_SCHED_RR) ? TASK_RR_QUANTUM_TICKS : 0;
     child->is_user_process = true;
     child->user_started = true;
     child->exit_status = 0;

@@ -44,6 +44,9 @@
 #define CONFIG_SMP_CPUS 1U
 #endif
 
+/* RT 调度类的优先级层数：0 保留，1..99 有效（与 Linux SCHED_FIFO 对齐）。 */
+#define RT_PRIO_LEVELS 100u
+
 /* 前向声明, 避免循环 include(task.h 也会 include cpu.h) */
 struct task;
 
@@ -90,6 +93,16 @@ typedef struct cpu {
        但更省事的做法就是加在最后。
     */
     uint64_t idle_ticks;
+
+    /*
+       ── RT 调度类（R2）────────────────────────────────────────
+       rt_queue[p]：RT 优先级 p（1..99）的 FIFO/RR 队列；
+       rt_bitmap：哪些优先级非空，pick_next() 用最高非空位选任务。
+       新字段一律加在 idle_ticks 之后：x86_64 的 scratch_rsp /
+       kernel_rsp0 偏移被 .S 硬编码，前面的字段不能动。
+    */
+    list_t rt_queue[RT_PRIO_LEVELS];
+    uint64_t rt_bitmap[(RT_PRIO_LEVELS + 63) / 64];
 } cpu_t;
 
 /*
