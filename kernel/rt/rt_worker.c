@@ -18,6 +18,7 @@
 
 #include "rt_worker.h"
 #include "rtdev.h"
+#include "hrtimer.h"
 #include "task/task.h"
 #include "task/cpu.h"
 #include "task/sched.h"
@@ -79,6 +80,8 @@ struct rt_worker {
     volatile uint64_t overruns;
     volatile uint64_t exec_last_ns;
     volatile uint64_t exec_max_ns;
+    volatile uint64_t wake_late_last_ns;
+    volatile uint64_t wake_late_max_ns;
     volatile uint64_t dev_writes;
 
     union {
@@ -220,8 +223,21 @@ static void rt_worker_entry(void *arg)
         return;
     }
 
-    while (rtw_sleep_until(w, next)) {
+    for (;;) {
+        if (hrtimer_oneshot_supported())
+            hrtimer_sleep_until(next);
+        else if (!rtw_sleep_until(w, next))
+            break; /* stop */
+        if (__atomic_load_n(&w->stop, __ATOMIC_ACQUIRE))
+            break;
+
         uint64_t t0 = timer_get_ns();
+        uint64_t late = (t0 > next) ? (t0 - next) : 0;
+        __atomic_store_n(&w->wake_late_last_ns, late, __ATOMIC_RELAXED);
+        uint64_t prev_late = __atomic_load_n(&w->wake_late_max_ns, __ATOMIC_RELAXED);
+        if (late > prev_late)
+            __atomic_store_n(&w->wake_late_max_ns, late, __ATOMIC_RELAXED);
+
         uint64_t in = __atomic_load_n(&w->input, __ATOMIC_RELAXED);
         uint64_t out = tpl->step(w, in);
         __atomic_store_n(&w->output, out, __ATOMIC_RELEASE);
@@ -244,10 +260,11 @@ static void rt_worker_entry(void *arg)
         next += w->period_ns;
         uint64_t now = timer_get_ns();
         /*
-           V1 由 100Hz tick 唤醒，相位可能让一次唤醒晚最多一个 tick；
-           超过一个 tick 才算 miss。这样 10ms 周期不会因为相位被误报。
+           oneshot 下唤醒精度是 µs 级，超过半个周期才算 miss；
+           退化为 tick 唤醒时，相位可能让一次唤醒晚最多一个 tick。
         */
-        if (now > next + RTW_TICK_NS) {
+        uint64_t tol = hrtimer_oneshot_supported() ? (w->period_ns / 2) : RTW_TICK_NS;
+        if (now > next + tol) {
             __atomic_add_fetch(&w->misses, 1, __ATOMIC_RELAXED);
             next = now + w->period_ns;
         }
@@ -300,8 +317,14 @@ int rt_worker_create(const struct rtw_create_req *cfg)
         return -RTW_EINVAL;
     if (cfg->cpu >= (g_num_cpus ? g_num_cpus : 1U))
         return -RTW_EINVAL;
-    if (cfg->period_ns < RTW_MIN_PERIOD_NS || (cfg->period_ns % RTW_MIN_PERIOD_NS) != 0)
+    if (cfg->period_ns < RTW_MIN_PERIOD_NS)
         return -RTW_EINVAL;
+    /* 目标核没有 oneshot 时只能按 100Hz tick 唤醒。 */
+    if (!hrtimer_cpu_oneshot_supported(cfg->cpu) && (cfg->period_ns % RTW_TICK_NS) != 0) {
+        KLOG_WARN("[rtw] cpu%u has no oneshot timer; period must be a multiple of %llu ns\n", cfg->cpu,
+                  (unsigned long long)RTW_TICK_NS);
+        return -RTW_EINVAL;
+    }
     if (cfg->budget_ns > cfg->period_ns)
         return -RTW_EINVAL;
 
@@ -496,6 +519,8 @@ int rt_worker_get_stats(uint32_t id, struct rtw_stats *out)
     out->overruns = __atomic_load_n(&w->overruns, __ATOMIC_RELAXED);
     out->exec_last_ns = __atomic_load_n(&w->exec_last_ns, __ATOMIC_RELAXED);
     out->exec_max_ns = __atomic_load_n(&w->exec_max_ns, __ATOMIC_RELAXED);
+    out->wake_late_last_ns = __atomic_load_n(&w->wake_late_last_ns, __ATOMIC_RELAXED);
+    out->wake_late_max_ns = __atomic_load_n(&w->wake_late_max_ns, __ATOMIC_RELAXED);
     out->last_input = __atomic_load_n(&w->input, __ATOMIC_RELAXED);
     out->last_output = __atomic_load_n(&w->output, __ATOMIC_RELAXED);
     out->out_seq = __atomic_load_n(&w->out_seq, __ATOMIC_RELAXED);

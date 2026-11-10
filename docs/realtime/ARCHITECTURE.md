@@ -1,6 +1,6 @@
 # 实时、Linux syscall 兼容与虚拟化的统一任务/内存架构
 
-**状态**：架构定稿，R0/R1/R2 已完成；R3 进行中（syscall 路径已开中断、异步 klog、self-IPI 立即抢占已完成；剩余 IRQ-off 长临界区收敛）（2026-11-10）
+**状态**：架构定稿，R0/R1/R2 已完成；R3 进行中（syscall 路径已开中断、异步 klog、self-IPI 立即抢占已完成；x86_64 hrtimer 支持 RT worker 1ms 周期；剩余 IRQ-off 长临界区收敛）（2026-11-10）
 **目标分支**：`realtime`（从 `dev` 拉出，只承载实时化改造）
 
 ## 一、目标与非目标
@@ -225,6 +225,14 @@ cpu0 1008 788 2 33798673 285 312 35398811 10494224 1059
 
 `RT_TEST=1` 增加场景 4：NORMAL 忙循环唤醒 RT probe，断言 10 轮平均
 延迟 < 2 ms（没有 self-IPI 时该值≈5 ms）。三架构均 PASS。
+
+**hrtimer / 1ms（x86_64）**：LAPIC Timer 切到 TSC-deadline oneshot，
+`kernel/time/hrtimer.c` 每核把 `min(下一个 100Hz tick, 最早
+sleep_expire_ns)` 写进 `IA32_TSC_DEADLINE`。RT 模板 worker 周期下限
+从 10ms 降到 **1ms**；aarch64/riscv64 仍回退到 100Hz tick。
+实测 x86_64 KVM：1ms worker 跑 10s，10005 ticks / 1 miss，step
+exec_max ~3.3µs；`wake_late_last` 安静时 3–6µs，宿主 KVM 抖动会把
+单次 max 拉到 ms 级（见 `RT_TEMPLATES.md`）。
 
 **后续验收门禁**：VMM helper/多 VM 回归；R3 的有界 IRQ-off 后才对外
 宣称实时能力。

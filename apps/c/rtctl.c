@@ -89,6 +89,8 @@ struct rtw_stats {
     uint64_t overruns;
     uint64_t exec_last_ns;
     uint64_t exec_max_ns;
+    uint64_t wake_late_last_ns;
+    uint64_t wake_late_max_ns;
     uint64_t last_input;
     uint64_t last_output;
     uint64_t out_seq;
@@ -118,7 +120,7 @@ struct rtw_list_req {
 
 _Static_assert(sizeof(struct rtw_create_req) == 136, "rtw_create_req ABI mismatch");
 _Static_assert(sizeof(struct rtw_io_req) == 24, "rtw_io_req ABI mismatch");
-_Static_assert(sizeof(struct rtw_stats) == 144, "rtw_stats ABI mismatch");
+_Static_assert(sizeof(struct rtw_stats) == 160, "rtw_stats ABI mismatch");
 _Static_assert(sizeof(struct rtw_list_entry) == 64, "rtw_list_entry ABI mismatch");
 _Static_assert(sizeof(struct rtw_list_req) == 520, "rtw_list_req ABI mismatch");
 
@@ -361,6 +363,8 @@ static int cmd_stats(int argc, char **argv)
     printf("ticks=%llu misses=%llu overruns=%llu exec_last=%llu ns exec_max=%llu ns\n", (unsigned long long)st.ticks,
            (unsigned long long)st.misses, (unsigned long long)st.overruns, (unsigned long long)st.exec_last_ns,
            (unsigned long long)st.exec_max_ns);
+    printf("wake_late_last=%llu ns wake_late_max=%llu ns\n", (unsigned long long)st.wake_late_last_ns,
+           (unsigned long long)st.wake_late_max_ns);
     printf("input=%lld output=%lld seq=%llu dev=%s dev_writes=%llu\n", (long long)st.last_input,
            (long long)st.last_output, (unsigned long long)st.out_seq, st.dev[0] ? st.dev : "-",
            (unsigned long long)st.dev_writes);

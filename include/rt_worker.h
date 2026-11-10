@@ -29,8 +29,11 @@
 #define RTW_MAX_WORKERS  8
 #define RTW_PARAM_MAX    8
 
-/* V1 的周期精度由 100Hz tick 决定；必须是 10ms 的整数倍。 */
-#define RTW_MIN_PERIOD_NS 10000000ULL
+/*
+   周期下限 1ms。x86_64 用 TSC-deadline 时可到 1ms；没有 oneshot 的
+   架构（aarch64/riscv64 当前）仍要求 10ms 的整数倍，由内核在 CREATE 时拒绝。
+*/
+#define RTW_MIN_PERIOD_NS 1000000ULL
 
 enum rtw_template_id {
     RTW_TPL_PERIODIC_IO = 1, /* 增益/偏置/限幅 */
@@ -101,6 +104,8 @@ struct rtw_stats {
     uint64_t overruns; /* step 执行超过 budget_ns 的次数 */
     uint64_t exec_last_ns;
     uint64_t exec_max_ns;
+    uint64_t wake_late_last_ns; /* 本次唤醒比 deadline 晚多少 */
+    uint64_t wake_late_max_ns;
     uint64_t last_input;
     uint64_t last_output;
     uint64_t out_seq;

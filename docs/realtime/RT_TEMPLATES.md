@@ -2,6 +2,7 @@
 
 **状态**：V1 已实现并通过 x86_64（KVM）+ aarch64/riscv64（TCG）构建验证；
 用户态工具 `/bin/rtctl` 可以创建、启动、停止、喂输入、读输出和统计。
+x86_64 已支持 **1ms 周期**（LAPIC TSC-deadline oneshot hrtimer）。
 
 ## 一、定位
 
@@ -12,9 +13,15 @@
 - **设备面**：模板输出可选绑定到一个 `rtdev`（`include/rtdev.h`）。
   设备在 CREATE 时独占绑定，STOP/DESTROY 时调用 `safe_state()`。
 
-V1 的周期由 100Hz tick 驱动（`task->sleep_expire_ns`），所以
-`period_ns` 必须是 **10ms 的整数倍**。要支持 1kHz，需要先实现 oneshot
-hrtimer（路线图 R3 后续）。
+周期由 **hrtimer** 驱动（`kernel/time/hrtimer.c`）：
+
+- **x86_64**：LAPIC Timer 切到 TSC-deadline oneshot 模式，每核把
+  `min(下一个 100Hz tick, 本核最早的 sleep_expire_ns)` 写进
+  `IA32_TSC_DEADLINE`。worker 最小周期 **1ms**（1000Hz）。
+- **aarch64/riscv64**：暂未接 oneshot，回退到 100Hz tick；
+  `period_ns` 仍必须是 10ms 的整数倍（CREATE 会拒绝其它值）。
+- 100Hz 的 tick 记账（`g_system_ticks`、`sched_tick`、`itimer_tick`）
+  仍然保留；hrtimer 只额外增加精确唤醒点。
 
 ## 二、使用
 
@@ -41,8 +48,31 @@ created id=1 name=demo tpl=periodic_io
 id=1 value=42 seq=200
 / # rtctl stats 1
 ticks=300 misses=0 overruns=0 exec_last=304 ns exec_max=1544 ns
+wake_late_last=... ns wake_late_max=... ns
 input=21 output=42 seq=300 dev=vout dev_writes=300
 ```
+
+### 1ms（x86_64）
+
+```sh
+rtctl create fast periodic_io 50 0 1 65536 0 0 0
+rtctl start 1
+sleep 10
+rtctl stats 1
+```
+
+实测（x86_64 KVM，10 秒）：
+
+```text
+ticks=10005 misses=1 overruns=0 exec_last=202 ns exec_max=3297 ns
+wake_late_last=260775 ns wake_late_max=1684160 ns
+```
+
+- 10005 个周期 ≈ 1ms/周期；1 次 miss（宿主 KVM 抖动把某次唤醒拖过半个周期）。
+- `wake_late_*` 是相对理论 deadline 的绝对延迟，包含启动相位和宿主 KVM
+  调度抖动；安静时（SMP=4 双 worker 测试）`wake_late_last` 在 **3–6 µs**。
+  判断“周期是否稳定”看 ticks 和 misses；判断“尾延迟”看 `wake_late_max`。
+- 同一路径也提高了用户态 `nanosleep` 的唤醒精度（`sleep_expire_ns`）。
 
 PID 模板：
 
@@ -121,7 +151,9 @@ struct rtdev_ops {
 
 ## 六、当前限制
 
-- 周期必须是 10ms 的整数倍（100Hz tick）；1kHz 需要 hrtimer。
+- x86_64 支持 1ms 周期；aarch64/riscv64 仍是 10ms 整数倍（未接 oneshot）。
+- hrtimer 是**每核**的：worker 的亲和性决定用哪颗核的 TSC-deadline；
+  目标核不支持 oneshot 时，CREATE 会拒绝非 10ms 整数倍的周期。
 - 输入/输出走 ioctl，还没有共享内存 mmap 快路径；用户 supervisor 的
   `set/get` 是 syscall，但 **RT 循环本身不做 syscall**。
 - 模板参数只在 CREATE 时生效，还没有运行期原子更新参数。

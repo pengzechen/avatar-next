@@ -8,10 +8,11 @@
 #define __TIMER_X86_64_IMPL_H__
 
 /*
-   x86_64 定时器实现 — 使用 LAPIC Timer (Periodic 模式)
+   x86_64 定时器实现 — LAPIC Timer
 
-   频率校准：lapic_timer_init 内部用 PIT Channel 2 校准 LAPIC bus 频率,
-   对外只需指定目标中断频率(TIMER_FREQUENCY_HZ, 来自 driver_cfg.h)。
+   优先使用 TSC-deadline oneshot 模式（CPUID.01H:ECX[24]），由
+   kernel/time/hrtimer.c 在“下一个 100Hz tick”和“最早 sleeper 截止时间”
+   之间取最小值编程；CPU/环境不支持时退回 Periodic 模式（由 PIT 校准）。
 
    函数签名与 AArch64/RISC-V impl 一致(无 static inline),
    由 timer.c #include 本文件来获得定义。
@@ -19,6 +20,7 @@
 
 #include "driver/time.h"
 #include "driver/irq.h"
+#include "hrtimer.h" /* hrtimer_cpu_init / hrtimer_isr / oneshot 钩子 */
 #include "klog.h"
 #include "exception.h" /* IDT_LAPIC_TIMER_VEC */
 #include "irq/lapic.h" /* lapic_timer_init / lapic_timer_stop */
@@ -59,9 +61,25 @@ void timer_arch_init(void)
 
 void timer_arch_enable(void)
 {
-    /* 校准 LAPIC 频率并启动 Periodic 模式 */
+    /*
+       lapic_timer_init 会优先把 LAPIC 切到 TSC-deadline oneshot 模式；
+       只有 CPU/环境不支持时才退回 Periodic。随后由 hrtimer 负责把
+       “下一个 100Hz tick”和本核最早的 sleep deadline 取最小值武装。
+    */
     lapic_timer_init(IDT_LAPIC_TIMER_VEC);
-    KLOG_TIMER("LAPIC timer started @ %d Hz\n", TIMER_FREQUENCY_HZ);
+    hrtimer_cpu_init();
+    KLOG_TIMER("LAPIC timer started: %s, tick=%d Hz\n", timer_arch_oneshot_supported() ? "TSC-deadline" : "periodic",
+               TIMER_FREQUENCY_HZ);
+}
+
+bool timer_arch_oneshot_supported(void)
+{
+    return lapic_timer_oneshot_supported();
+}
+
+void timer_arch_program_oneshot_ns(uint64_t deadline_ns)
+{
+    lapic_timer_program_ns(deadline_ns);
 }
 
 void timer_arch_disable(void)
@@ -84,6 +102,14 @@ extern void signal_check_uart(void);
 void timer_handler(void *frame)
 {
     (void)frame;
+
+    /*
+       TSC-deadline 模式下，这个向量同时服务“100Hz tick”和“hrtimer 到期”。
+       hrtimer_isr() 先判断 tick 是否到期并兑现 sleeper；只有 tick 到期时
+       才跑下面的 tick 记账/调度回调。
+    */
+    if (!hrtimer_isr())
+        return;
 
     /* 每个 tick 排空 UART 输入, 确保 Ctrl+C 能及时被检测 */
     signal_check_uart();

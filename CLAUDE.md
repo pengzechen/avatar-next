@@ -207,7 +207,8 @@ avatar/
 - **用户可配置 RT worker（模板）**: `docs/realtime/RT_TEMPLATES.md` -
   `/dev/rtctl` 的 ioctl ABI、`periodic_io`/`pid` 模板、`rtdev` 设备契约
   （`setup/safe_state` 在控制面，`write/read` 在 RT 面且必须无分配/无睡眠）。
-  V1 周期是 10ms 整数倍（100Hz tick），用户态工具 `/bin/rtctl`。
+  x86_64 用 LAPIC TSC-deadline hrtimer，支持 1ms 周期；aarch64/riscv64
+  暂回退到 100Hz tick（10ms 整数倍）。用户态工具 `/bin/rtctl`。
   动 `kernel/rt/*`、`include/rt_worker.h`、`include/rtdev.h`、
   `kernel/fs/pseudofs/rtctl_dev.c` 或 `apps/c/rtctl.c` 前必读。
 - **架构与基线**: `docs/realtime/ARCHITECTURE.md`、`R0_BASELINE.md`、

@@ -25,6 +25,7 @@
 #include "driver/irq.h"
 #include "exception.h" /* trap_frame_t, IDT_LAPIC_TIMER_VEC, IDT_IRQ_BASE */
 #include "barrier.h"   /* IOAPIC MMIO 顺序 */
+#include "task/cpu.h"  /* get_current_cpu_id / AVATAR_MAX_CPUS：oneshot 每核状态 */
 
 /* ── IOAPIC ────────────────────────────────────────────────────
    x86 外部设备线(ISA IRQ/GSI)通过 IOAPIC 重定向到某个 IDT 向量。
@@ -112,11 +113,27 @@ static bool pit_wait_10ms(void);
 /* TSC 频率(Hz), 由 lapic_timer_init 在 PIT 校准时同步测量 */
 volatile uint64_t g_tsc_freq_hz = 0;
 
+/* 每核是否成功切到了 TSC-deadline oneshot 模式 */
+static bool g_lapic_timer_oneshot[AVATAR_MAX_CPUS];
+
+static uint32_t lapic_cpu_index(void)
+{
+    uint32_t cpu = get_current_cpu_id();
+    return (cpu < AVATAR_MAX_CPUS) ? cpu : 0U;
+}
+
 static inline uint64_t _lapic_rdtsc(void)
 {
     uint32_t lo, hi;
     __asm__ volatile("rdtsc" : "=a"(lo), "=d"(hi));
     return ((uint64_t)hi << 32) | (uint64_t)lo;
+}
+
+static inline void _lapic_wrmsr(uint32_t msr, uint64_t val)
+{
+    uint32_t lo = (uint32_t)val;
+    uint32_t hi = (uint32_t)(val >> 32);
+    __asm__ volatile("wrmsr" ::"c"(msr), "a"(lo), "d"(hi));
 }
 
 /* PIT 输入时钟 1.193182 MHz；11932 count ≈ 10ms */
@@ -253,6 +270,14 @@ static inline void _lapic_cpuid(uint32_t leaf, uint32_t *a, uint32_t *b, uint32_
     __asm__ volatile("cpuid" : "=a"(*a), "=b"(*b), "=c"(*c), "=d"(*d) : "a"(leaf));
 }
 
+/* CPUID.01H:ECX.TSC_Deadline[bit 24]：LAPIC 能否用 IA32_TSC_DEADLINE */
+static bool tsc_deadline_supported(void)
+{
+    uint32_t a, b, c, d;
+    _lapic_cpuid(1, &a, &b, &c, &d);
+    return (c & (1u << 24)) != 0;
+}
+
 static bool tsc_freq_from_cpuid(uint64_t *out_hz)
 {
     uint32_t a, b, c, d, max_leaf;
@@ -382,6 +407,22 @@ void lapic_timer_init(uint8_t vector)
         KLOG_WARN("TSC frequency unknown; falling back to tick-granularity "
                   "monotonic clock (CLOCK_MONOTONIC resolution = 1 tick)\n");
 
+    /*
+       TSC-deadline 模式：不需要 LAPIC 计数器校准，直接用绝对 TSC 值武装。
+       定时器由 hrtimer 在 tick 和 sleep deadline 之间取最小值编程。
+    */
+    if (tsc_deadline_supported() && tsc_freq_hz != 0) {
+        g_lapic_timer_oneshot[lapic_cpu_index()] = true;
+        _lapic_wrmsr(MSR_IA32_TSC_DEADLINE, 0); /* 先解除武装 */
+        lapic_write(LAPIC_REG_LVT_TIMER, LAPIC_TIMER_TSC_DEADLINE | vector);
+        KLOG_TIMER("LAPIC timer: TSC-deadline oneshot mode\n");
+        return;
+    }
+
+    g_lapic_timer_oneshot[lapic_cpu_index()] = false;
+    if (tsc_deadline_supported())
+        KLOG_WARN("TSC-deadline supported but TSC frequency unknown; using periodic\n");
+
     /* ── 校准：测量 10ms 内 LAPIC 计数器减少了多少 ── */
     lapic_write(LAPIC_REG_TIMER_ICR, 0xFFFFFFFFu); /* 设置最大初始值开始倒计数 */
 
@@ -420,6 +461,34 @@ void lapic_timer_init(uint8_t vector)
     lapic_write(LAPIC_REG_LVT_TIMER, LAPIC_TIMER_PERIODIC | vector);
 }
 
+bool lapic_timer_oneshot_supported(void)
+{
+    return g_lapic_timer_oneshot[lapic_cpu_index()];
+}
+
+void lapic_timer_program_ns(uint64_t deadline_ns)
+{
+    if (!g_lapic_timer_oneshot[lapic_cpu_index()])
+        return;
+
+    if (deadline_ns == 0) {
+        _lapic_wrmsr(MSR_IA32_TSC_DEADLINE, 0);
+        return;
+    }
+
+    uint64_t now_ns = timer_get_ns();
+    uint64_t delta = (deadline_ns > now_ns) ? (deadline_ns - now_ns) : 0;
+    if (delta < 1000)
+        delta = 1000; /* 至少 1us，避免写进去时已经过期 */
+
+    uint64_t freq = g_tsc_freq_hz;
+    uint64_t ticks = (delta / 1000000000ULL) * freq + ((delta % 1000000000ULL) * freq) / 1000000000ULL;
+    if (ticks == 0)
+        ticks = 1;
+
+    _lapic_wrmsr(MSR_IA32_TSC_DEADLINE, _lapic_rdtsc() + ticks);
+}
+
 /* ── lapic_eoi ──────────────────────────────────────────────── */
 
 void lapic_eoi(void)
@@ -432,6 +501,8 @@ void lapic_eoi(void)
 void lapic_timer_stop(void)
 {
     lapic_write(LAPIC_REG_LVT_TIMER, LAPIC_TIMER_MASKED);
+    if (g_lapic_timer_oneshot[lapic_cpu_index()])
+        _lapic_wrmsr(MSR_IA32_TSC_DEADLINE, 0);
 }
 
 /* ── 公共 IRQ 接口实现 ───────────────────────────────────────── */
