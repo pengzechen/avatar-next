@@ -207,6 +207,22 @@ static task_t *rq_node_to_task(cpu_t *c, list_node_t *node)
    入队后是否需要立刻抢占目标核。
    - 远端：沿用旧行为，总发 resched IPI（唤醒延迟不依赖 tick）；
    - 本核：只有更高优先级的 RT 任务（或当前是 idle）才置 need_resched。
+
+   本核只置标志还不够：need_resched 只在 trap 返回点 / syscall 返回边界
+   被消费。正在跑纯计算循环的 NORMAL 内核线程没有任何返回点，只能等
+   下一次 timer tick（最长 10ms，RT_DEMO 实测平均 9.9ms）。所以本核在
+   "真实任务被更高优先级 RT 抢占"时再补一个 self-IPI：中断入口本身
+   就是 trap，它的返回路径会立刻消费 need_resched，把抢占延迟压到
+   µs 级（见 docs/realtime/RT_DEMO_RESULTS.md）。
+
+   注意：
+   - idle/boot 上下文不发：idle 不在就绪队列里，它自己的 trap/yield
+     路径会消费标志；boot 阶段发 IPI 还会提前打断内核初始化。
+   - 中断上下文里不发：本轮 ISR 的返回路径一定会消费 need_resched，
+     再发一个 IPI 只是多一次嵌套中断。
+   - 本核是用户进程时仍然发：用户态需要立即被打断；如果它正在
+     syscall 内核侧，trap_preempt_kernel_side() 会拒绝在这里切换，
+     延迟到 syscall 返回边界，代价只是多一次中断。
 */
 static void sched_kick_after_enqueue(cpu_t *c, task_t *t)
 {
@@ -222,8 +238,13 @@ static void sched_kick_after_enqueue(cpu_t *c, task_t *t)
     }
     if (!task_is_rt(t))
         return; /* NORMAL 任务不打断 NORMAL/RT；等 tick 或返回边界 */
-    if (!task_is_rt(cur) || t->rt_priority > cur->rt_priority)
-        c->need_resched = true;
+    if (task_is_rt(cur) && t->rt_priority <= cur->rt_priority)
+        return;
+
+    c->need_resched = true;
+
+    if (!in_irq_context())
+        cpu_send_ipi(c->cpu_id);
 }
 
 /* ── sched_init ──────────────────────────────────────────── */

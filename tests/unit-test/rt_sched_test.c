@@ -25,12 +25,23 @@
 
 #define RT_TEST_ITERS 100
 
+/* 场景 4：NORMAL → RT 立即抢占（self-IPI） */
+#define PREEMPT_TEST_ITERS      10
+#define PREEMPT_TEST_AVG_MAX_NS 2000000ULL /* 2ms；无 self-IPI 时均值≈tick 周期（10ms） */
+
 static volatile uint32_t s_high_count;
 static volatile uint32_t s_low_count;
 static volatile uint32_t s_normal_count;
 static volatile uint32_t s_done;
 static volatile bool s_high_saw_low_zero;
 static volatile bool s_low_saw_normal_zero;
+
+static task_t *s_preempt_probe;
+static volatile uint64_t s_preempt_wake;
+static volatile uint32_t s_preempt_done;
+static uint64_t s_preempt_min = ~0ULL;
+static uint64_t s_preempt_sum;
+static uint64_t s_preempt_max;
 
 static void rt_test_worker(void *arg)
 {
@@ -60,6 +71,52 @@ static void normal_test_worker(void *arg)
         s_normal_count++;
         task_yield();
     }
+    __atomic_fetch_add(&s_done, 1U, __ATOMIC_RELEASE);
+    task_exit();
+}
+
+/*
+   场景 4：NORMAL 任务唤醒更高优先级的 RT 任务后继续纯忙循环。
+   RT 任务必须靠 self-IPI 立即抢占；没有 self-IPI 时它只能等下一次
+   tick，10 轮的平均值会接近 tick 周期（10ms）。
+*/
+static void rt_preempt_probe_worker(void *arg)
+{
+    (void)arg;
+
+    for (uint32_t i = 0; i < PREEMPT_TEST_ITERS; i++) {
+        task_block(NULL); /* 等 NORMAL preemptor 唤醒 */
+
+        uint64_t now = timer_get_ns();
+        uint64_t wake = __atomic_load_n(&s_preempt_wake, __ATOMIC_ACQUIRE);
+        uint64_t lat = (now > wake) ? (now - wake) : 0;
+
+        if (lat < s_preempt_min)
+            s_preempt_min = lat;
+        if (lat > s_preempt_max)
+            s_preempt_max = lat;
+        s_preempt_sum += lat;
+
+        __atomic_store_n(&s_preempt_done, i + 1, __ATOMIC_RELEASE);
+    }
+
+    __atomic_fetch_add(&s_done, 1U, __ATOMIC_RELEASE);
+    task_exit();
+}
+
+static void normal_preemptor_worker(void *arg)
+{
+    (void)arg;
+
+    for (uint32_t i = 0; i < PREEMPT_TEST_ITERS; i++) {
+        __atomic_store_n(&s_preempt_wake, timer_get_ns(), __ATOMIC_RELEASE);
+        task_unblock(s_preempt_probe);
+
+        /* 纯忙循环：没有 syscall/返回边界，只能被中断或立即抢占打断 */
+        while (__atomic_load_n(&s_preempt_done, __ATOMIC_ACQUIRE) <= i)
+            __asm__ volatile("" ::: "memory");
+    }
+
     __atomic_fetch_add(&s_done, 1U, __ATOMIC_RELEASE);
     task_exit();
 }
@@ -96,10 +153,49 @@ void run_rt_sched_test(void)
     bool pass = s_done == 3 && s_high_count == RT_TEST_ITERS && s_low_count == RT_TEST_ITERS &&
                 s_normal_count == RT_TEST_ITERS && s_high_saw_low_zero && s_low_saw_normal_zero;
 
-    if (pass) {
-        KLOG_INFO("=== RT SCHED TEST: PASS ===\n");
-    } else {
+    if (!pass) {
         KLOG_ERROR("=== RT SCHED TEST: FAIL (done=%u high=%u low=%u normal=%u order=%d/%d) ===\n", s_done, s_high_count,
                    s_low_count, s_normal_count, (int)s_high_saw_low_zero, (int)s_low_saw_normal_zero);
+        return;
+    }
+
+    /*
+       场景 4 需要 tick 作为“没有 self-IPI 时的退路”，临时安装。
+       idle/boot 上下文的 tick 只会置 need_resched，不会抢走本函数
+       的执行；任务都结束后在这里摘掉，main 后面才正式安装。
+    */
+    timer_set_tick_cb(sched_tick);
+
+    s_done = 0;
+    s_preempt_done = 0;
+    s_preempt_min = ~0ULL;
+    s_preempt_sum = 0;
+    s_preempt_max = 0;
+
+    flags = arch_irq_save();
+    s_preempt_probe = task_create_kernel_rt("rt-pmp", rt_preempt_probe_worker, NULL, 60, 0);
+    task_t *preemptor = task_create_affinity("rt-pre", normal_preemptor_worker, NULL, 10, 0);
+    arch_irq_restore(flags);
+
+    bool preempt_pass = false;
+    if (!s_preempt_probe || !preemptor) {
+        KLOG_ERROR("=== RT SCHED TEST: FAIL (preempt task create) ===\n");
+    } else {
+        deadline = timer_get_ns() + 3000000000ULL; /* 3s */
+        while (__atomic_load_n(&s_done, __ATOMIC_ACQUIRE) < 2 && timer_get_ns() < deadline)
+            task_yield();
+
+        uint64_t avg = s_preempt_sum / PREEMPT_TEST_ITERS;
+        preempt_pass = s_done == 2 && avg < PREEMPT_TEST_AVG_MAX_NS;
+        KLOG_INFO("=== RT SCHED TEST: preempt min/avg/max = %llu/%llu/%llu ns (done=%u) ===\n", s_preempt_min, avg,
+                  s_preempt_max, s_done);
+    }
+
+    timer_set_tick_cb(NULL);
+
+    if (preempt_pass) {
+        KLOG_INFO("=== RT SCHED TEST: PASS ===\n");
+    } else {
+        KLOG_ERROR("=== RT SCHED TEST: FAIL (immediate preemption) ===\n");
     }
 }

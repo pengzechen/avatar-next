@@ -41,7 +41,7 @@ static const uint64_t g_hist_thresh[HIST_BUCKETS] = {
 };
 
 static const uint64_t g_preempt_thresh[PREEMPT_BUCKETS] = {
-    100000ULL, 250000ULL, 500000ULL, 1000000ULL, 2000000ULL, 5000000ULL, 9000000ULL, ~0ULL,
+    2000ULL, 5000ULL, 10000ULL, 20000ULL, 50000ULL, 100000ULL, 1000000ULL, ~0ULL,
 };
 
 static task_t *g_worker;
@@ -49,6 +49,7 @@ static task_t *g_waker;
 static task_t *g_probe;
 
 static volatile uint64_t g_ping_wake;
+static volatile uint32_t g_ping_done;
 static uint64_t g_lat_min = ~0ULL;
 static uint64_t g_lat_max;
 static uint64_t g_lat_sum;
@@ -104,7 +105,7 @@ static void rt_worker_fn(void *arg)
         uint64_t lat = (now > wake) ? (now - wake) : 0;
         demo_record(lat);
 
-        task_unblock(g_waker);
+        __atomic_store_n(&g_ping_done, i + 1, __ATOMIC_RELEASE);
     }
 
     KLOG_INFO("=== RT DEMO pingpong: n=%u min=%llu avg=%llu max=%llu ns ===\n", g_lat_n, g_lat_min,
@@ -184,7 +185,15 @@ static void rt_waker_fn(void *arg)
     for (uint32_t i = 0; i < DEMO_ITERS; i++) {
         __atomic_store_n(&g_ping_wake, timer_get_ns(), __ATOMIC_RELEASE);
         task_unblock(g_worker);
-        task_block(NULL); /* 等 worker 量完并唤醒自己 */
+
+        /*
+           不能在这里 task_block()：self-IPI 立即抢占后，worker 可能在
+           waker 真正睡下之前就运行并把 waker 标记成 READY，随后 waker
+           再把自己 BLOCKED，这次唤醒就丢了。用「计数 + 让出」等待，
+           对任意抢占时机都成立。
+        */
+        while (__atomic_load_n(&g_ping_done, __ATOMIC_ACQUIRE) <= i)
+            task_yield();
     }
 
     /*
@@ -211,6 +220,7 @@ void run_rt_demo(void)
 
     g_demo_done = false;
     g_probe_done = 0;
+    g_ping_done = 0;
     g_lat_min = ~0ULL;
     g_lat_max = 0;
     g_lat_sum = 0;

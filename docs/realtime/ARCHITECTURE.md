@@ -1,6 +1,6 @@
 # 实时、Linux syscall 兼容与虚拟化的统一任务/内存架构
 
-**状态**：架构定稿，R0/R1/R2 已完成；R3 进行中（x86_64/riscv64 syscall 路径已开中断；klog IRQ-off 待收敛）（2026-11-10）
+**状态**：架构定稿，R0/R1/R2 已完成；R3 进行中（syscall 路径已开中断、异步 klog、self-IPI 立即抢占已完成；剩余 IRQ-off 长临界区收敛）（2026-11-10）
 **目标分支**：`realtime`（从 `dev` 拉出，只承载实时化改造）
 
 ## 一、目标与非目标
@@ -195,20 +195,36 @@ cpu0 1008 788 2 33798673 285 312 35398811 10494224 1059
 **剩余 R3**：`signal_check_uart` 的 UART FIFO 临界区、execve 内的短锁；
 之后再谈 vCPU kick→run 延迟。
 
-## 十一、R3 实测：RT_DEMO
+## 十一、R3 实测：RT_DEMO 与 self-IPI 立即抢占
 
 `RT_DEMO=1`（`tests/unit-test/rt_demo.c`）在 x86_64 KVM 上的结果，
-完整数据与复现命令见 `docs/realtime/RT_DEMO_RESULTS.md`：
+完整数据与复现命令见 `docs/realtime/RT_DEMO_RESULTS.md`。
+
+改造前：
 
 - **RT→RT wake→run**：SMP=1 ~250 ns，SMP=4 ~400 ns（5000 轮，
   99.7%+ < 1 µs）。
 - **NORMAL→RT wake→run**：平均 ~9.9 ms，50 个样本里 49 个 ≥9 ms ——
   被唤醒的 RT 任务只能等下一次 100 Hz tick。`need_resched` 已置位，
   但正在跑内核代码的 NORMAL 任务没有返回边界去检查它。
-- 这条延迟与 RT 任务优先级无关，也不是 tick 频率问题（提高 tick 只会
-  线性降低均值，最坏值仍是一个周期）。下一步应在
-  `sched_kick_after_enqueue()` 的本核高优先级 RT 入队分支主动制造
-  调度点（self-IPI / 软件中断），把 NORMAL→RT 延迟压到微秒级。
+
+**self-IPI 立即抢占（已实现）**：`sched_kick_after_enqueue()` 在本核
+入队更高优先级 RT 任务时，除了置 `need_resched`，还向本核发一个
+重调度 IPI。中断入口本身就是 trap，返回路径立即消费标志。idle/boot
+上下文和中断上下文不发（它们本来就会有 trap 返回点）。
+
+改造后（x86_64 KVM）：
+
+- NORMAL→RT：**~2.1 µs**（平均），约 4600 倍改善；
+- RT→RT：~2.1 µs（原来是 ~250 ns 的直接调度极限，现在统一走
+  IPI 往返，多花 ~1.8 µs 换取任意上下文的有界唤醒）；
+- 三条唤醒路径（RT→RT、NORMAL→RT、用户态→RT）收敛到同一个
+  ~2 µs 量级，不再依赖 tick 相位。
+- aarch64 GICv3 / riscv64 SBI 的 self-IPI 也已验证（TCG 下
+  ~10 µs / ~20 µs，仅确认正确性）。
+
+`RT_TEST=1` 增加场景 4：NORMAL 忙循环唤醒 RT probe，断言 10 轮平均
+延迟 < 2 ms（没有 self-IPI 时该值≈5 ms）。三架构均 PASS。
 
 **后续验收门禁**：VMM helper/多 VM 回归；R3 的有界 IRQ-off 后才对外
 宣称实时能力。
