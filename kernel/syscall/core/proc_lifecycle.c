@@ -400,6 +400,24 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
         flags &= ~(CLONE_VM | CLONE_VFORK | CLONE_SETTLS | CLONE_PARENT_SETTID | CLONE_CHILD_CLEARTID);
     }
 
+    /*
+       信号处置继承：真正的线程组(CLONE_THREAD + CLONE_VM)共享
+       signal_struct，fork/vfork 复制一份。放在分支之前做，失败时
+       子任务还没分配页表，回收只需要释放槽位。
+    */
+    if (is_thread_clone && (flags & CLONE_VM)) {
+        child->sig = task_signal_share(parent);
+        if (!child->sig) {
+            g_stack_used[child - g_task_pool] = 0;
+            regs[0] = (uint64_t)(int64_t)-ENOMEM;
+            return;
+        }
+    } else if (!task_signal_copy(parent, child)) {
+        g_stack_used[child - g_task_pool] = 0;
+        regs[0] = (uint64_t)(int64_t)-ENOMEM;
+        return;
+    }
+
     if (flags & CLONE_VM) {
         /* ── 共享地址空间路径：pthread 才是同一 thread group, vfork 仍是子进程。 ── */
         child->is_thread = is_thread_clone;
@@ -460,6 +478,7 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
         uint64_t child_pgd_phys = pmm_alloc_pages(&g_pmm, 1);
         if (child_pgd_phys == 0) {
             KLOG_ERROR("[clone] no memory for child pgd\n");
+            task_signal_release(child); /* 上面 fork 路径已复制了一份 signal_struct */
             g_stack_used[child - g_task_pool] = 0;
             regs[0] = (uint64_t)(int64_t)-ENOMEM;
             return;
@@ -588,6 +607,7 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
 
         if (!clone_copy_ok) {
             KLOG_ERROR("[clone] failed to copy user address space\n");
+            task_signal_release(child);
             g_stack_used[child - g_task_pool] = 0;
             /*
                不能只 free 根页表：mm_vm_map_pages 已经建好的中间页表,
@@ -665,15 +685,13 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
                      syscall_abi_ip(frame), syscall_abi_user_sp(frame));
     }
 
-    /* 信号继承 */
+    /* 信号继承（signal_struct 已在进入分支前共享/复制） */
     child->pending_sigs = 0;
     child->sig_frame_sp = 0;
     child->sig_saved_blocked = 0;
     child->blocked_sigs = parent->blocked_sigs;
     child->pgid = parent->pgid;
     child->sid = parent->sid;
-    for (int _si = 0; _si < NSIG; _si++)
-        child->sig_actions[_si] = parent->sig_actions[_si];
 
     /*
        Linux fork 的进程属性继承：

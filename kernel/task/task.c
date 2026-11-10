@@ -140,6 +140,8 @@ static void slot_take_and_free(uint32_t idx)
         vm_destroy_user_process((uint64_t)task->pgd);
         task->pgd = NULL;
     }
+    /* signal_struct 可能被线程组共享；只有最后一个引用会归还池槽位。 */
+    task_signal_release(task);
 
     spin_lock_irqsave(&g_task_pool_lock, &flags);
     g_stack_used[idx] = 0;
@@ -680,12 +682,7 @@ task_t *process_create_with_pgd(const char *name, uint64_t user_entry, uint64_t 
     task->sid = task->id;  /* 默认：自成会话 */
     task->ctty_pty_idx = -1;
     task->sig_frame_sp = 0;
-    for (int _si = 0; _si < NSIG; _si++) {
-        task->sig_actions[_si].sa_handler = SIG_DFL;
-        task->sig_actions[_si].sa_flags = 0;
-        task->sig_actions[_si].sa_restorer = 0;
-        task->sig_actions[_si].sa_mask = 0;
-    }
+    /* task->sig == NULL 表示全部 SIG_DFL，无需初始化 2 KiB 的 action 表。 */
 
     list_node_init(&task->run_node);
     list_node_init(&task->wait_node);
@@ -1004,16 +1001,18 @@ bool task_signal_pending_effective(task_t *t)
             low >>= 1;
             sig++;
         }
-        int idx = sig; /* 下标 0 对应信号 1 */
+        int signo = sig + 1;
         unblocked &= unblocked - 1;
 
-        uint64_t h = t->sig_actions[idx].sa_handler;
+        sig_action_t act;
+        task_sigaction_get(t, signo, &act);
+        uint64_t h = act.sa_handler;
         if (h == SIG_IGN)
             continue;
         if (h != SIG_DFL)
             return true;
 
-        switch (sig + 1) {
+        switch (signo) {
         case SIGCHLD:
         case SIGCONT:
         case SIGURG:

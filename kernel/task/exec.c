@@ -234,14 +234,8 @@ static void exec_close_cloexec_fds(task_t *t)
 */
 static void exec_reset_signal_state(task_t *t)
 {
-    for (int i = 0; i < NSIG; i++) {
-        if (t->sig_actions[i].sa_handler == SIG_IGN)
-            continue;
-        t->sig_actions[i].sa_handler = SIG_DFL;
-        t->sig_actions[i].sa_flags = 0;
-        t->sig_actions[i].sa_restorer = 0;
-        t->sig_actions[i].sa_mask = 0;
-    }
+    /* signal_struct 可能被线程共享，exec 会先 unshare；SIG_IGN 保留。 */
+    task_signal_exec_reset(t);
     t->sig_frame_sp = 0;
     t->sig_saved_blocked = 0;
 }

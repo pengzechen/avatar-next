@@ -51,9 +51,12 @@ void deliver_pending_signals(task_t *t, trap_frame_t *frame)
     /* 清除待投递位 */
     t->pending_sigs &= ~(1ULL << (sig - 1));
 
-    uint64_t sa_handler = t->sig_actions[sig - 1].sa_handler;
-    uint64_t sa_restorer = t->sig_actions[sig - 1].sa_restorer;
-    uint64_t sa_mask = t->sig_actions[sig - 1].sa_mask;
+    /* NULL signal_struct 等价于全 SIG_DFL；helper 会填好默认值。 */
+    sig_action_t act;
+    task_sigaction_get(t, sig, &act);
+    uint64_t sa_handler = act.sa_handler;
+    uint64_t sa_restorer = act.sa_restorer;
+    uint64_t sa_mask = act.sa_mask;
 
     if (sa_handler == SIG_IGN)
         return; /* 忽略 */
@@ -188,16 +191,23 @@ void sigaction_handler(uint64_t regs[6], task_t *current)
         return;
     }
     if (old) {
-        old->sa_handler = current->sig_actions[sig - 1].sa_handler;
-        old->sa_flags = current->sig_actions[sig - 1].sa_flags;
-        old->sa_restorer = current->sig_actions[sig - 1].sa_restorer;
-        old->sa_mask = current->sig_actions[sig - 1].sa_mask;
+        sig_action_t prev;
+        task_sigaction_get(current, sig, &prev);
+        old->sa_handler = prev.sa_handler;
+        old->sa_flags = prev.sa_flags;
+        old->sa_restorer = prev.sa_restorer;
+        old->sa_mask = prev.sa_mask;
     }
     if (act) {
-        current->sig_actions[sig - 1].sa_handler = act->sa_handler;
-        current->sig_actions[sig - 1].sa_flags = act->sa_flags;
-        current->sig_actions[sig - 1].sa_restorer = act->sa_restorer;
-        current->sig_actions[sig - 1].sa_mask = act->sa_mask;
+        sig_action_t next;
+        next.sa_handler = act->sa_handler;
+        next.sa_flags = act->sa_flags;
+        next.sa_restorer = act->sa_restorer;
+        next.sa_mask = act->sa_mask;
+        if (task_sigaction_set(current, sig, &next) < 0) {
+            regs[0] = (uint64_t)(int64_t)-ENOMEM;
+            return;
+        }
     }
     regs[0] = 0;
 }

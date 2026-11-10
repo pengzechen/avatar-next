@@ -11,53 +11,17 @@
    kernel/task/task.h — 内核任务控制块与公共 API
 
    设计：
-    - 仅内核态多任务, 无用户态
+    - 内核任务 + 用户进程共用 TCB；用户进程的地址空间/文件/信号见各字段注释
     - 静态任务池, 最多 TASK_MAX 个并发任务
     - 调度器 (sched.c) 实现轮转调度 (round-robin)
     - 上下文切换由 arch_task_switch() 完成(仅保存被调用者保存寄存器)
+    - 字段按“切换/调度热区 → 用户状态 → 冷数据/大数组”排列，
+      并由文件末尾的 _Static_assert 锁住布局（见 docs/task_t_refactor.md）
 */
 
 #include "types.h"
 #include "list.h"
-
-/* ── 信号常量 ────────────────────────────────────────────── */
-#define NSIG    64
-#define SIG_DFL 0ULL /* 默认动作(终止) */
-#define SIG_IGN 1ULL /* 忽略 */
-
-#define SIGHUP   1
-#define SIGINT   2
-#define SIGQUIT  3
-#define SIGILL   4
-#define SIGTRAP  5
-#define SIGABRT  6
-#define SIGBUS   7
-#define SIGFPE   8
-#define SIGKILL  9
-#define SIGUSR1  10
-#define SIGSEGV  11
-#define SIGUSR2  12
-#define SIGPIPE  13
-#define SIGALRM  14
-#define SIGTERM  15
-#define SIGCHLD  17
-#define SIGCONT  18
-#define SIGSTOP  19
-#define SIGTSTP  20
-#define SIGTTIN  21
-#define SIGTTOU  22
-#define SIGURG   23
-#define SIGWINCH 28
-
-#define SA_RESTORER 0x04000000ULL
-
-/* ── 信号动作结构 ────────────────────────────────────────── */
-typedef struct {
-    uint64_t sa_handler;  /* SIG_DFL / SIG_IGN / 用户 handler 地址 */
-    uint64_t sa_flags;    /* SA_RESTORER 等标志 */
-    uint64_t sa_restorer; /* rt_sigreturn 蹦床地址 */
-    uint64_t sa_mask;     /* handler 执行期间额外屏蔽的信号 */
-} sig_action_t;
+#include "signal.h" /* 信号常量/sig_action_t/signal_struct_t（与 task 解耦） */
 
 /* ── Task states ─────────────────────────────────────────── */
 typedef enum {
@@ -99,9 +63,14 @@ typedef enum {
 
 /* ── Task Control Block ──────────────────────────────────── */
 typedef struct task {
-    uintptr_t sp;       /* 保存的内核栈指针(上下文切换时填入) */
-    task_state_t state; /* 任务状态 */
     /*
+       === 热区：上下文切换 / 调度 / 唤醒（前两条 cacheline）=======
+
+       sp/state/switch_done/on_cpu/wake_pending 在每次上下文切换和跨核
+       唤醒时都会读写；run_node/wait_node 由调度器和等待队列使用。
+       它们必须放在结构体最前面。task_t 按 64 字节对齐、sizeof 补到
+       64 的整数倍，避免相邻 TCB 落在同一条 cacheline（伪共享）。
+
        switch_done：本任务上一次切出时，arch_task_switch 是否已经完成
        "保存上下文 + 切换地址空间 + 换到 next 的栈"。
 
@@ -112,29 +81,47 @@ typedef struct task {
        （Linux 用 task_struct 引用计数 + RCU 达到同样的目的；我们这里
         用一次性同步等待，见 task_reap_dead。）
     */
+    uintptr_t sp;       /* 保存的内核栈指针(上下文切换时填入) */
+    task_state_t state; /* 任务状态 */
     volatile uint32_t switch_done;
-    uint32_t id;              /* 唯一任务 ID */
-    uint8_t priority;         /* 优先级(0 = 最高, 255 = 最低) */
-    char name[TASK_NAME_LEN]; /* 任务名称 */
-    uint8_t *stack_base;      /* 内核栈底(低地址)；idle 为 NULL */
-    void (*entry)(void *);    /* 任务入口函数 */
-    void *arg;                /* 传给 entry 的参数 */
-    list_node_t run_node;     /* 就绪队列节点 */
-    list_node_t wait_node;    /* 等待队列节点(用于 mutex/semaphore) */
+    uint32_t id;                /* 唯一任务 ID */
+    uint32_t tgid;              /* thread group id: getpid() 返回该值 */
+    uint32_t cpu_affinity;      /* 绑定 CPU：0..N-1；CPU_AFFINITY_ANY=任一 */
+    uint32_t preempt_count;     /* >0 时 timer 不抢占该任务 */
+    volatile bool on_cpu;       /* 正由某颗核执行(见下方 SMP 唤醒说明) */
+    volatile bool wake_pending; /* on_cpu 期间被唤醒，切出时补入队列 */
+    uint8_t priority;           /* 优先级(0 = 最高, 255 = 最低) */
+    bool is_user_process;       /* true=用户进程, false=内核任务 */
+    bool user_started;          /* true=已至少进入过一次用户态 */
+    bool is_thread;             /* true=线程(共享页表), false=独立进程 */
+    bool shares_pgd;            /* true=共享地址空间, 不拥有 pgd 释放权 */
+    bool is_waiting;            /* 正在 wait4 子进程 */
+    uint8_t dumpable;           /* prctl(PR_SET_DUMPABLE) */
+    uint8_t no_new_privs;       /* prctl(PR_SET_NO_NEW_PRIVS) */
+    list_node_t run_node;       /* 就绪队列节点 */
+    list_node_t wait_node;      /* 等待队列节点(用于 mutex/semaphore) */
+    char name[TASK_NAME_LEN];   /* 任务名称 */
+    uint8_t *stack_base;        /* 内核栈底(低地址)；idle 为 NULL */
+    void (*entry)(void *);      /* 任务入口函数 */
+    void *arg;                  /* 传给 entry 的参数 */
+    uint64_t fs_base;           /* x86_64 TLS: IA32_FS_BASE(每次切换写 MSR) */
+    uint64_t sc_entry_ns;       /* 当前 syscall 入口时间戳(0=不在 syscall) */
 
-    /* === SMP 支持(Phase 0：仅占位, 调度器在 Phase 1 开始读取) === */
-    uint32_t cpu_affinity; /* 绑定的逻辑 CPU 编号。0..N-1 为硬亲和性；
-                                            CPU_AFFINITY_ANY 代表“任一”,
-                                            由 sched_enqueue 以 round-robin
-                                            选一个物理核。
-                           */
+    /*
+       ITIMER_REAL(alarm / setitimer) + nanosleep 到期时刻。
 
-    /* === 用户态支持 === */
-    bool is_user_process;     /* true=用户进程, false=内核任务 */
-    bool user_started;        /* true=已至少进入过一次用户态 */
-    bool is_thread;           /* true=线程(共享页表), false=独立进程 */
-    bool shares_pgd;          /* true=共享地址空间, 不拥有 pgd 释放权 */
-    uint32_t tgid;            /* thread group id: getpid() 返回该值 */
+       到期由 tick 驱动, 投 SIGALRM / 唤醒睡眠任务。见 task/itimer.c。
+       expire_ns == 0 表示未装(与 interval 无关：一次性定时器触发后
+       expire 归零, 但 interval 保留, 便于 getitimer 报告)。
+
+       itimer_tick() 每 10ms 扫全池并读这几个字段，所以放在热区第二行，
+       避免扫描 64 个 TCB 时每次跳过整个 task_t。
+    */
+    uint64_t itimer_expire_ns;   /* 绝对到期时刻；0 = 未装 */
+    uint64_t itimer_interval_ns; /* 周期；0 = 一次性 */
+    uint64_t sleep_expire_ns;    /* nanosleep 绝对到期时刻(0=未睡) */
+
+    /* === 用户地址空间 === */
     uint64_t *pgd;            /* 页表基址(用户进程的TTBR0) */
     uint64_t user_entry;      /* 用户态入口点(虚拟地址) */
     uint64_t user_sp;         /* 用户栈指针(虚拟地址) */
@@ -171,90 +158,67 @@ typedef struct task {
        注释里的性能性质：静态程序这里恒为 0, fork 一次空扫都不做。
     */
     uint64_t interp_end;
-    uint64_t fs_base;  /* x86_64 TLS: IA32_FS_BASE */
     uint64_t ctid_ptr; /* CLONE_CHILD_CLEARTID 地址 (0=无) */
 
-    /* === 进程/文件系统支持 === */
-    char cwd[TASK_CWD_LEN];              /* 当前工作目录(用户进程) */
-    char exe_path[TASK_EXE_LEN];         /* 可执行文件路径(/proc/self/exe) */
-    int16_t fd_table[TASK_MAX_FD];       /* FD → g_fd_pool 索引, -1=未打开 */
-    uint8_t fd_cloexec[TASK_MAX_FD / 8]; /* FD_CLOEXEC 位图 */
-    uint32_t parent_id;                  /* 父进程 ID */
-    uint32_t uid;                        /* real user ID */
-    uint32_t euid;                       /* effective user ID */
-    uint32_t gid;                        /* real group ID */
-    uint32_t egid;                       /* effective group ID */
+    /* === CPU 时间统计 === */
+    uint64_t utime_ns;  /* 用户态 CPU 时间(纳秒), task_exit 前计算 */
+    uint64_t stime_ns;  /* 内核态 CPU 时间(纳秒), syscall 路径累积 */
+    uint64_t create_ns; /* 进程创建时间戳(用于 utime = wall−stime) */
+
+    /* === 信号系统（处置进程级；pending/blocked 每线程）=== */
+    signal_struct_t *sig;       /* NULL = 全部 SIG_DFL（懒分配） */
+    uint64_t pending_sigs;      /* 待投递信号位图, bit(N-1) = 信号 N */
+    uint64_t blocked_sigs;      /* 被阻塞信号位图(sigprocmask) */
+    uint64_t sig_saved_blocked; /* signal 投递前保存的 blocked_sigs */
+    uint32_t pgid;              /* 进程组 ID */
+    uint32_t sid;               /* 会话 ID (session leader = sid == id) */
+    int16_t ctty_pty_idx;       /* controlling tty PTY index, -1 if detached */
+    uint64_t sig_frame_sp;      /* sigframe 在用户栈上的起始地址(rt_sigreturn) */
+
+    /* === 身份/进程属性 === */
+    uint32_t parent_id; /* 父进程 ID */
+    uint32_t uid;       /* real user ID */
+    uint32_t euid;      /* effective user ID */
+    uint32_t gid;       /* real group ID */
+    uint32_t egid;      /* effective group ID */
     /*
        附加组 / 资源限制 / 文件创建掩码 / prctl 状态。
 
        这些是 Linux 进程属性：fork 继承（pdeathsig、robust_list 例外），
        exec 保留（robust_list 会被 reset）。见 clone_handler / task_execve。
     */
-    uint32_t umask;                         /* 文件创建掩码(Linux 默认 0022) */
-    int32_t ngroups;                        /* groups[] 中有效项数 */
+    uint32_t umask;         /* 文件创建掩码(Linux 默认 0022) */
+    int32_t ngroups;        /* groups[] 中有效项数 */
+    uint64_t pdeathsig;     /* prctl(PR_SET_PDEATHSIG) 的信号号 */
+    uint64_t robust_list;   /* set_robust_list 的用户指针 */
+    uint64_t affinity_mask; /* sched_setaffinity 的 CPU 掩码 */
+    uint32_t personality;   /* personality(2) 的 persona 位 */
+    int exit_status;        /* 退出状态(wait4 使用) */
+    int exit_signal;        /* 被信号杀死时的信号号(0=正常退出) */
+    uint32_t wait_pid;      /* 等待的子进程 PID(-1=任意) */
+
+    /* === 大数组/冷数据：放到结构体尾部，别挤占热区 === */
+    char cwd[TASK_CWD_LEN];                 /* 当前工作目录(用户进程) */
+    char exe_path[TASK_EXE_LEN];            /* 可执行文件路径(/proc/self/exe) */
+    int16_t fd_table[TASK_MAX_FD];          /* FD → g_fd_pool 索引, -1=未打开 */
+    uint8_t fd_cloexec[TASK_MAX_FD / 8];    /* FD_CLOEXEC 位图 */
     uint32_t groups[TASK_GROUPS_MAX];       /* 附加组列表(getgroups/setgroups) */
     uint64_t rlimit_cur[TASK_RLIMIT_COUNT]; /* getrlimit/setrlimit: 软限制 */
     uint64_t rlimit_max[TASK_RLIMIT_COUNT]; /* getrlimit/setrlimit: 硬限制 */
-    uint64_t pdeathsig;                     /* prctl(PR_SET_PDEATHSIG) 的信号号 */
-    uint64_t robust_list;                   /* set_robust_list 的用户指针 */
-    uint64_t sleep_expire_ns;               /* nanosleep 绝对到期时刻(0=未睡) */
-    uint64_t affinity_mask;                 /* sched_setaffinity 的 CPU 掩码 */
-    uint8_t dumpable;                       /* prctl(PR_SET_DUMPABLE) */
-    uint8_t no_new_privs;                   /* prctl(PR_SET_NO_NEW_PRIVS) */
-    uint32_t personality;                   /* personality(2) 的 persona 位 */
-    int exit_status;                        /* 退出状态(wait4 使用) */
-    int exit_signal;                        /* 被信号杀死时的信号号(0=正常退出) */
-    bool is_waiting;                        /* 正在 wait4 子进程 */
-    uint32_t wait_pid;                      /* 等待的子进程 PID(-1=任意) */
+} __attribute__((aligned(64))) task_t;
 
-    /* === CPU 时间统计 === */
-    uint64_t utime_ns;    /* 用户态 CPU 时间(纳秒), task_exit 前计算 */
-    uint64_t stime_ns;    /* 内核态 CPU 时间(纳秒), syscall 路径累积 */
-    uint64_t sc_entry_ns; /* 当前 syscall 入口时间戳(0=不在 syscall) */
-    uint64_t create_ns;   /* 进程创建时间戳(用于 utime = wall−stime) */
+/*
+   布局约束：task_t 必须独占 cacheline，且热字段必须落在首条 cacheline。
 
-    /* === 信号系统 === */
-    uint64_t pending_sigs;          /* 待投递信号位图, bit(N-1) = 信号 N */
-    uint64_t blocked_sigs;          /* 被阻塞信号位图(sigprocmask) */
-    uint64_t sig_saved_blocked;     /* signal 投递前保存的 blocked_sigs */
-    uint32_t pgid;                  /* 进程组 ID */
-    uint32_t sid;                   /* 会话 ID (session leader = sid == id) */
-    int16_t ctty_pty_idx;           /* controlling tty PTY index, -1 if detached */
-    uint64_t sig_frame_sp;          /* sigframe 在用户栈上的起始地址(rt_sigreturn) */
-    sig_action_t sig_actions[NSIG]; /* 每信号的 action(下标 0 对应信号 1) */
-
-    /* === ITIMER_REAL(alarm / setitimer)=========================
-
-       到期由 tick 驱动, 投 SIGALRM 并唤醒阻塞中的任务。见 task/itimer.c。
-       expire_ns == 0 表示未装(与 interval 无关：一次性定时器触发后 expire
-       归零, 但 interval 保留, 便于 getitimer 报告)。
-    */
-    uint64_t itimer_expire_ns;   /* 绝对到期时刻；0 = 未装 */
-    uint64_t itimer_interval_ns; /* 周期；0 = 一次性 */
-
-    /* === 内核抢占控制 === */
-    uint32_t preempt_count; /* >0 时 S-mode timer 不抢占该任务 */
-
-    /*
-       === SMP 唤醒状态(跨核唤醒的正确性)=========================
-
-       on_cpu：本任务正由某颗核执行。它从调度器选中开始, 到
-         sched_schedule() 真正切出(arch_task_switch 之前)为止都是 true ——
-         包括 task_block() 已置 BLOCKED, 但尚未切出的那个窗口。
-
-       wake_pending：在 on_cpu 期间被 task_unblock() 唤醒。此时不能直接
-         入队：任务还在另一颗核上跑, 队列里的同一任务会被第二颗核再挑一次。
-         调度器在切出时看到这个标志, 才把它补进目标核的运行队列。
-
-       没有这两个字段时, SMP 下的唤醒有真实竞态：
-         CPU0: task_block() 置 BLOCKED → (窗口)
-         CPU1: task_unblock() 看到 BLOCKED → READY + sched_enqueue()
-         CPU0: sched_schedule() 切出 → CPU2 从队列挑走它
-         → 同一个任务同时在 CPU0 的切换路径和 CPU2 的执行路径上。
-    */
-    volatile bool on_cpu;
-    volatile bool wake_pending;
-} task_t;
+   没有这两条断言时，一个字段被挪到尾部编译器不会报错；而相邻 TCB
+   共用一条 cacheline 引起的跨核弹跳，靠功能测试也测不出来。
+*/
+_Static_assert(sizeof(task_t) % 64 == 0, "task_t 必须按 cacheline 补齐，避免相邻 TCB 伪共享");
+_Static_assert(offsetof(task_t, sp) < 64, "sp 属于切换热路径");
+_Static_assert(offsetof(task_t, state) < 64, "state 属于调度热路径");
+_Static_assert(offsetof(task_t, switch_done) < 64, "switch_done 属于退出/回收热路径");
+_Static_assert(offsetof(task_t, on_cpu) < 64, "on_cpu 属于唤醒热路径");
+_Static_assert(offsetof(task_t, wake_pending) < 64, "wake_pending 属于唤醒热路径");
 
 /* 前台进程组 ID(0 = 无前台进程) */
 extern volatile uint32_t g_fg_pgid;

@@ -148,7 +148,9 @@ static bool pipe_interrupts(void)
 
         int sig = i + 1;
 
-        uint64_t h = t->sig_actions[i].sa_handler;
+        sig_action_t act;
+        task_sigaction_get(t, sig, &act);
+        uint64_t h = act.sa_handler;
         if (h == SIG_IGN)
             continue; /* 显式忽略 */
         if (h != SIG_DFL)
