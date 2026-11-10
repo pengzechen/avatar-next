@@ -435,20 +435,39 @@ void sendfile_handler(uint64_t regs[6], task_t *current)
 {
     int out_fd = (int)regs[0];
     int in_fd = (int)regs[1];
-    uint64_t *poff = (uint64_t *)regs[2];
+    uint64_t uoff = regs[2];
     size_t count = (size_t)regs[3];
 
-    fd_obj_t *in_obj = (in_fd >= 3) ? task_get_fd(current, in_fd) : NULL;
-    fd_obj_t *out_obj = (out_fd >= 3) ? task_get_fd(current, out_fd) : NULL;
-    if (in_fd >= 3 && !in_obj) {
+    fd_obj_t *in_obj = task_get_fd(current, in_fd);
+    vfs_file_t *in_file = in_obj ? fd_obj_file(in_obj) : NULL;
+
+    /*
+       Linux sendfile 的 in_fd 必须是"支持 mmap 的普通文件"；pipe/socket/控制台
+       不是。返回 EINVAL 而不是 0 很关键：
+         - busybox 的 bb_copyfd_eof() 第一次尝试 sendfile，拿到 EINVAL 才会
+           回退到 read/write；
+         - 以前这里对非文件 in_fd 返回 0（"EOF"），cat 便以为读完了 ——
+           `echo hi | cat` / `$(cat file)` 全部静默丢数据。
+    */
+    if (!in_file || !vfs_file_is_regular(in_file)) {
+        regs[0] = (uint64_t)(int64_t)-EINVAL;
+        return;
+    }
+
+    fd_obj_t *out_obj = task_get_fd(current, out_fd);
+    vfs_file_t *out_file = out_obj ? fd_obj_file(out_obj) : NULL;
+    if (out_fd >= 0 && out_fd <= 2) {
+        /* 0/1/2 可能被 dup2 到 pipe/pty/file；没有对象才是隐式控制台 */
+    } else if (!out_file) {
         regs[0] = (uint64_t)(int64_t)-EBADF;
         return;
     }
 
-    uint64_t saved_off = 0;
-    if (poff && in_obj && fd_obj_file(in_obj)) {
-        saved_off = fd_obj_file(in_obj)->offset;
-        fd_obj_file(in_obj)->offset = *poff;
+    uint64_t off = 0;
+    bool have_off = (uoff != 0);
+    if (have_off && copy_from_user_bytes((const void *)uoff, &off, sizeof(off)) < 0) {
+        regs[0] = (uint64_t)(int64_t)-EFAULT;
+        return;
     }
 
     char sbuf[1024];
@@ -458,29 +477,37 @@ void sendfile_handler(uint64_t regs[6], task_t *current)
         if (want > sizeof(sbuf))
             want = sizeof(sbuf);
 
-        int nr = 0;
-        if (in_obj && fd_obj_file(in_obj)) {
-            nr = vfs_read(fd_obj_file(in_obj), sbuf, want);
-        }
+        int nr;
+        if (have_off)
+            nr = vfs_pread(in_file, sbuf, want, (int64_t)off);
+        else
+            nr = vfs_read(in_file, sbuf, want);
         if (nr <= 0)
             break;
 
-        if (out_fd == 0 || out_fd == 1 || out_fd == 2) {
-            /*
-               sbuf 是内核缓冲(上面 vfs_read 填的), 整段交给
-               klog_write —— 它是往物理 UART 写的唯一入口, 整段持锁,
-               所以这一块不会与别的核的日志逐字符插花。
-            */
+        if (out_file) {
+            int wr = vfs_write(out_file, sbuf, (size_t)nr);
+            if (wr < 0) {
+                if (total == 0)
+                    total = (size_t)(int64_t)wr;
+                break;
+            }
+            total += (size_t)wr;
+            if (wr < nr)
+                break;
+        } else {
+            /* 隐式控制台：klog_write 是写物理 UART 的唯一入口(整段持锁) */
             klog_write(sbuf, (size_t)nr);
-        } else if (out_obj && fd_obj_file(out_obj)) {
-            vfs_write(fd_obj_file(out_obj), sbuf, (size_t)nr);
+            total += (size_t)nr;
         }
-        total += (size_t)nr;
+
+        if (have_off)
+            off += (uint64_t)nr;
     }
 
-    if (poff && in_obj && fd_obj_file(in_obj)) {
-        *poff = fd_obj_file(in_obj)->offset;
-        fd_obj_file(in_obj)->offset = saved_off;
+    if (have_off && copy_to_user_bytes(&off, (void *)uoff, sizeof(off)) < 0) {
+        regs[0] = (uint64_t)(int64_t)-EFAULT;
+        return;
     }
 
     regs[0] = (uint64_t)total;

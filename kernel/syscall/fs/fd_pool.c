@@ -146,8 +146,16 @@ int task_alloc_fd(task_t *task, int pool_idx)
     spin_lock(&g_fd_pool_lock);
 
     int fd = -1;
+    /*
+       RLIMIT_NOFILE(7) 是软限制：fd 号必须小于 rlim_cur。
+       默认 1024 > TASK_MAX_FD(256)，所以通常还是受静态表限制；
+       用户用 setrlimit 调小之后这里要真正生效(LTP setrlimit01 的 NOFILE 项)。
+    */
+    uint64_t nofile_limit = task->rlimit_cur[7];
     /* fd 0,1,2 reserved for stdin/stdout/stderr */
     for (int i = 3; i < (int)TASK_MAX_FD; i++) {
+        if ((uint64_t)i >= nofile_limit)
+            break;
         if (task->fd_table[i] == -1) {
             task->fd_table[i] = (int16_t)pool_idx;
             fd = i;

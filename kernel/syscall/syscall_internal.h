@@ -86,48 +86,55 @@ typedef struct task task_t;
 #define LINUX_SYS_SETSID          157
 #define LINUX_SYS_GETGROUPS       158
 #define LINUX_SYS_SETGROUPS       159
-#define LINUX_SYS_UNAME           160
-#define LINUX_SYS_GETRLIMIT       163
-#define LINUX_SYS_SETRLIMIT       164
-#define LINUX_SYS_GETRUSAGE       165
-#define LINUX_SYS_UMASK           166
-#define LINUX_SYS_PRCTL           167
-#define LINUX_SYS_GETPID          172
-#define LINUX_SYS_GETPPID         173
-#define LINUX_SYS_GETUID          174
-#define LINUX_SYS_GETEUID         175
-#define LINUX_SYS_GETGID          176
-#define LINUX_SYS_GETEGID         177
-#define LINUX_SYS_GETTID          178
-#define LINUX_SYS_SYSINFO         179
-#define LINUX_SYS_SOCKET          198
-#define LINUX_SYS_SOCKETPAIR      199
-#define LINUX_SYS_BIND            200
-#define LINUX_SYS_LISTEN          201
-#define LINUX_SYS_ACCEPT          202
-#define LINUX_SYS_CONNECT         203
-#define LINUX_SYS_GETSOCKNAME     204
-#define LINUX_SYS_GETPEERNAME     205
-#define LINUX_SYS_SENDTO          206
-#define LINUX_SYS_RECVFROM        207
-#define LINUX_SYS_SETSOCKOPT      208
-#define LINUX_SYS_GETSOCKOPT      209
-#define LINUX_SYS_SHUTDOWN        210
-#define LINUX_SYS_SENDMSG         211
-#define LINUX_SYS_RECVMSG         212
-#define LINUX_SYS_ACCEPT4         242
-#define LINUX_SYS_BRK             214
-#define LINUX_SYS_MUNMAP          215
-#define LINUX_SYS_CLONE           220
-#define LINUX_SYS_EXECVE          221
-#define LINUX_SYS_MMAP            222
-#define LINUX_SYS_MPROTECT        226
-#define LINUX_SYS_MADVISE         233
-#define LINUX_SYS_WAIT4           260
-#define LINUX_SYS_PRLIMIT64       261
-#define LINUX_SYS_RENAMEAT2       276
-#define LINUX_SYS_GETRANDOM       278
-#define LINUX_SYS_FACCESSAT2      439
+
+/* times(2)：x86_64 是 100，aarch64/riscv64 是 153；内部统一用 153。
+   x86_translate_syscall() 负责把 100 映射过来。 */
+#define LINUX_SYS_TIMES 153
+
+/* personality(2)：x86_64 是 135，aarch64/riscv64 是 92。 */
+#define LINUX_SYS_PERSONALITY 92
+#define LINUX_SYS_UNAME       160
+#define LINUX_SYS_GETRLIMIT   163
+#define LINUX_SYS_SETRLIMIT   164
+#define LINUX_SYS_GETRUSAGE   165
+#define LINUX_SYS_UMASK       166
+#define LINUX_SYS_PRCTL       167
+#define LINUX_SYS_GETPID      172
+#define LINUX_SYS_GETPPID     173
+#define LINUX_SYS_GETUID      174
+#define LINUX_SYS_GETEUID     175
+#define LINUX_SYS_GETGID      176
+#define LINUX_SYS_GETEGID     177
+#define LINUX_SYS_GETTID      178
+#define LINUX_SYS_SYSINFO     179
+#define LINUX_SYS_SOCKET      198
+#define LINUX_SYS_SOCKETPAIR  199
+#define LINUX_SYS_BIND        200
+#define LINUX_SYS_LISTEN      201
+#define LINUX_SYS_ACCEPT      202
+#define LINUX_SYS_CONNECT     203
+#define LINUX_SYS_GETSOCKNAME 204
+#define LINUX_SYS_GETPEERNAME 205
+#define LINUX_SYS_SENDTO      206
+#define LINUX_SYS_RECVFROM    207
+#define LINUX_SYS_SETSOCKOPT  208
+#define LINUX_SYS_GETSOCKOPT  209
+#define LINUX_SYS_SHUTDOWN    210
+#define LINUX_SYS_SENDMSG     211
+#define LINUX_SYS_RECVMSG     212
+#define LINUX_SYS_ACCEPT4     242
+#define LINUX_SYS_BRK         214
+#define LINUX_SYS_MUNMAP      215
+#define LINUX_SYS_CLONE       220
+#define LINUX_SYS_EXECVE      221
+#define LINUX_SYS_MMAP        222
+#define LINUX_SYS_MPROTECT    226
+#define LINUX_SYS_MADVISE     233
+#define LINUX_SYS_WAIT4       260
+#define LINUX_SYS_PRLIMIT64   261
+#define LINUX_SYS_RENAMEAT2   276
+#define LINUX_SYS_GETRANDOM   278
+#define LINUX_SYS_FACCESSAT2  439
 
 /* ── epoll (AArch64 / RISC-V 号) ─────────────────────────────────── */
 #define LINUX_SYS_EPOLL_CREATE1 20
@@ -203,6 +210,7 @@ typedef struct task task_t;
 #define ECHILD        10
 #define ENOTDIR       20
 #define EISDIR        21
+#define ENAMETOOLONG  36
 #define ENFILE        23
 #define EMFILE        24
 #define ENOTTY        25
@@ -411,6 +419,15 @@ void writev_handler(uint64_t regs[6], task_t *current);
 void pwrite64_handler(uint64_t regs[6], task_t *current);
 void lseek_handler(uint64_t regs[6], task_t *current);
 void sendfile_handler(uint64_t regs[6], task_t *current);
+
+/* 身份/资源/时间类(core/resource.c) */
+void syscall_groups_handler(uint64_t syscall_num, uint64_t regs[6], task_t *task);
+void syscall_rlimit_handler(uint64_t syscall_num, uint64_t regs[6], task_t *task);
+void syscall_umask_handler(uint64_t regs[6], task_t *task);
+void syscall_prctl_handler(uint64_t regs[6], task_t *task);
+void syscall_robust_list_handler(uint64_t regs[6], task_t *task);
+void syscall_times_handler(uint64_t regs[6], task_t *task);
+void syscall_personality_handler(uint64_t regs[6], task_t *task);
 
 /* 文件操作(fs/file_ops.c) */
 void openat_handler(uint64_t regs[6], task_t *current);

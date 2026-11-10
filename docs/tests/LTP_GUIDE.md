@@ -180,32 +180,32 @@ grep -w 'xxx' /usr/include/asm/unistd_64.h  # 或查 Linux 源码
 
 参考已有映射表（`syscall.c` 的 `x86_translate_syscall` 函数）。
 
-## 当前测例清单（79 个，2026-10）
+## 当前测例清单（103 个，2026-11）
 
-三架构（x86_64 / aarch64 / riscv64）均实测通过；x86_64 SMP=1 与 SMP=4 也各跑过一轮。
+三架构（x86_64 / aarch64 / riscv64）SMP=1 均实测通过（103/103）。
+SMP=4 只在上一轮 79 个用例时跑过，第四轮未重跑。
 
 | 分类 | 数量 | 测例 |
 |------|------|------|
-| 进程生命周期 / 身份 | 23 | getpid01/02, getppid01/02, getuid01, getgid01, geteuid01, getegid02, getpgid01/02, getsid01/02, setsid01, set_tid_address01, gettid02, setpgid01, exit01/02, exit_group01, fork01, wait401/402, clone06 |
-| 文件 I/O | 29 | open01/03, close01, read01, write01/02, readv01, writev01/02, pread01/02, pwrite01/02, lseek01, ftruncate03, fsync02, fdatasync01, dup01/02, dup3_01, fcntl01~04, pipe01, getcwd01, chdir02, fstat03, faccessat01 |
+| 进程生命周期 / 身份 | 27 | getpid01/02, getppid01/02, getuid01, getgid01, geteuid01, getegid02, getpgid01/02, getsid01/02, setsid01, set_tid_address01, gettid02, setpgid01, exit01/02, exit_group01, fork01, wait401/402, clone06, getgroups01, setgroups01/02/03 |
+| 文件 I/O | 36 | open01/03, openat01, close01/02, read01, write01/02, readv01, writev01/02, pread01/02, pwrite01/02, lseek01, ftruncate03, fsync02, fdatasync01, dup01/02, dup3_01/02, fcntl01~04, pipe01, pipe2_01/02, getcwd01, chdir02/04, fstat03, faccessat01/02 |
 | 信号 | 7 | kill03/06/08, tkill01, rt_sigaction01, sigaction02, rt_sigprocmask01 |
 | 内存 | 6 | brk01/02, mmap01/02, munmap01/03 |
 | I/O 多路复用 | 9 | poll01/02, pselect01, epoll_create1_01/02, epoll_ctl01/03, epoll_wait01/04 |
-| 系统信息 | 4 | uname01, clock_gettime01, getrusage01, getrandom02 |
+| 系统信息 | 17 | uname01/02/04, clock_gettime01, getrusage01/02, getrandom02, getrlimit01/02, setrlimit02/03/05, umask01, prctl01, nanosleep02, times01, set_robust_list01 |
 | 调度 | 1 | sched_yield01 |
 
-## 覆盖率（2026-10 统计）
+## 覆盖率（2026-11 统计）
 
-- **79 个用例覆盖 55 个 syscall 目录**（按 LTP 目录计）。
-- `kernel/syscall/syscall.c` 分发 **104 个 Linux syscall 入口**；扣除明确返回
-  `ENOSYS` / 空实现的 13 个（waitid、mprotect、madvise、umask、getrlimit、
-  setrlimit、prlimit64、set_robust_list、prctl、getgroups、setgroups、
-  nanosleep、socketpair），约 **91 个有实际实现**。
-- 因此已有 syscall 的**直接专测覆盖率约 55/91 ≈ 60%**。几乎所有用例还会
+- **103 个用例覆盖 66 个 syscall 目录**（按 LTP 目录计）。
+- `kernel/syscall/syscall.c` 分发 **106 个 Linux syscall 入口**；扣除明确返回
+  `ENOSYS` / 空实现的 5 个（waitid、sendmsg、recvmsg、socketpair、madvise），
+  约 **101 个有实际实现**。
+- 因此已有 syscall 的**直接专测覆盖率约 66/101 ≈ 65%**。几乎所有用例还会
   间接调用 openat/read/write/getpid/mmap 等，实际触达面高于这个数字。
 - 尚未直接覆盖的大块：socket 簇 15 个（ksocket 已实现，但没有 LTP 用例）、
   ioctl/pty、futex、sendfile、readlinkat、getdents64、renameat/unlinkat 的
-  完整语义、set*id 权限模型、prctl、nanosleep 精度等。
+  完整语义、set*id 权限模型、rlimit 的跨进程/硬上限细节等。
 
 **挑选原则与"试过但过不了"的逐条记录**（含 ioctl/waitid 两处内核崩溃）
 全部在 `tests/ltp/testcases.list` 的文件头注释里 —— 往清单里加测例前**先看一眼**，
@@ -223,9 +223,9 @@ grep -w 'xxx' /usr/include/asm/unistd_64.h  # 或查 Linux 源码
   sysinfo01/gettid01 需要 `/proc/loadavg`、`/proc/self/status`。
 - **依赖未实现 syscall**：open02 依赖 seteuid；mkdir02/04 依赖 setregid/setreuid；
   execve01 依赖 MAP_SHARED 文件映射一致性（LTP_IPC_PATH bad magic）。
-- **内核语义缺口**：PROT_NONE 坏地址（`tst_get_bad_addr`）未返回 EFAULT；
-  信号队列满时的 EAGAIN（tgkill02）；unlink07/08 的空路径 / 权限 /
-  ENAMETOOLONG 语义。
+- **内核语义缺口**：信号队列满时的 EAGAIN（tgkill02）；unlink07/08 的
+  空路径 / 权限 / ENAMETOOLONG 语义；mmap 的 `prot` 仍未生效（没有真正的
+  RO/RX 页权限位）。
 
 ## 本轮（2026-10）修掉的既有 bug
 
@@ -254,6 +254,39 @@ grep -w 'xxx' /usr/include/asm/unistd_64.h  # 或查 Linux 源码
   的栈/页表后置位；wait4 的回收路径等待它再销毁 pgd/复用栈槽/TCB。
   详见 `docs/bugfix/SMP_TASK_EXIT_STACK_REUSE.md`。
 
+## 本轮（2026-11）修掉的既有 bug
+
+第四轮扩容（79 → 103）把「静默成功型桩」按 Linux 语义落到实处；测例留作回归网：
+
+- **身份/资源状态原来没有地方存**：`getgroups/setgroups`、`getrlimit/setrlimit/
+  prlimit64`、`umask`、`prctl`、`set_robust_list`、`personality` 以前都是
+  返回 0 但不改任何状态。现在挂在 `task_t` 上，并在 fork 继承、exec 按
+  Linux 语义重置（robust_list 清空、dumpable 恢复 1、sleep 取消）。
+- **`nanosleep` 原来是 yield 桩**：现在用 `sleep_expire_ns` + tick 唤醒，
+  支持信号打断返回 EINTR 并回写剩余时间。
+- **`times` / `personality` 在 aarch64/riscv 上是 ENOSYS**：已补为正式入口
+  （x86_64 的 100/135 号做翻译）。
+- **`getrusage02`**：who 参数不校验；现在非法 who 返回 EINVAL，并填实时
+  utime/stime。
+- **`uname02`**：bad address 不返回 EFAULT；根因是对内核栈上的 struct 调
+  `copy_string_to_user`，被 `user_range_ok` 拒绝。改为直接 memcpy 各字段。
+- **`close02` / `dup3_02` / `pipe2_01/02`**：重复 close 返回 EBADF、dup3
+  只接受 O_CLOEXEC、pipe2 的 O_NONBLOCK/O_CLOEXEC 真正落到对象和 fd 位图。
+- **`openat01` / `faccessat02` / `chdir04`**：dirfd 指向普通文件时返回
+  ENOTDIR；chdir 改为流式规范化路径（合并 '/'、处理 '.'/'..'，组件 > 255
+  才报 ENAMETOOLONG）。
+- **`tst_get_bad_addr` 的 PROT_NONE 页**：mmap 的 PROT_NONE 现在只保留虚拟
+  地址、不建 PTE；mprotect 升级为可读写时补零页，降为 PROT_NONE 时 unmap。
+  这也让 musl pthread 的 guard page 路径可用（exit_group01/gettid02 曾
+  SIGSEGV）。
+- **`sendfile`**：in_fd 必须是普通文件（否则 EINVAL，busybox 会回落到
+  read/write）；out_fd 按 fd 对象分发到文件/管道/控制台；offset 经
+  copy_from/to_user。修复了 `echo hi | cat`、`$(cat file)` 丢数据。
+- **`open(O_CREAT)` 的 mode/umask**：建文件时总是同步 ext4 mode，mkdtemp
+  的 0700 之类不再被忽略。
+- **`setrlimit` 的 RLIMIT_NOFILE** 已真正约束 fd 分配；`prlimit64` 支持
+  跨进程查询/设置（root）。
+
 ## 回归命令
 
 ```sh
@@ -264,4 +297,4 @@ make -C tests ltp-full ARCHES='aarch64 riscv64 x86_64'
 make -C tests ltp-full ARCHES=x86_64 SMP=4
 ```
 
-`tests/ltp/expected_failures.txt` 目前为空：79 个用例全部 PASS。
+`tests/ltp/expected_failures.txt` 目前为空：103 个用例全部 PASS。

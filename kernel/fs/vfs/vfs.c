@@ -681,7 +681,12 @@ static int ext4_mount_open(const vfs_mount_t *mnt, const char *path, int flags, 
         if (!file)
             return -VFS_EMFILE;
         if (ext4_fopen2(&file->u.ext4_file, path, ext4_flags) == EOK) {
-            if (created && (mode & 07777))
+            /*
+               新建文件的 mode 一定要落盘 —— 包括 mode=0（umask 0777 时
+               umask01 会检查 0000 的权限位）。以前只有 (mode & 07777) 非零
+               才调用 ext4_mode_set，mode 0 会保留 lwext4 默认的 0666。
+            */
+            if (created)
                 ext4_mode_set(path, (uint32_t)(mode & 07777));
             file->kind = VFS_FILE_EXT4_FILE;
             file->flags = flags;

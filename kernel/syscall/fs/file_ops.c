@@ -82,6 +82,13 @@ void openat_handler(uint64_t regs[6], task_t *current)
         regs[0] = (uint64_t)(int64_t)-ENOENT;
         return;
     }
+    /*
+       O_CREAT 的 mode 要按进程 umask 去掉权限位（Linux 语义）。
+       O_CREAT 在三架构都是 0100。以前直接把 mode 透传，导致
+       umask()/umask01 与 fstat02 都不对。
+    */
+    if ((flags & 0100) && current)
+        mode &= ~(int)current->umask;
 
     char abspath[128];
     int rpa = resolve_path_at(current, dirfd, pathname, abspath, sizeof(abspath));
@@ -175,7 +182,12 @@ void close_handler(uint64_t regs[6], task_t *current)
     */
     int idx = task_take_fd(current, fd);
     if (idx < 0 || idx >= FD_POOL_SIZE) {
-        regs[0] = 0;
+        /*
+           fd 0/1/2 的 fd_table 初值就是 -1（隐式控制台），close 应当成功；
+           fd >= 3 从未打开过/已经关过一次 → Linux 返回 EBADF。
+           LTP close02 就是测重复 close。
+        */
+        regs[0] = (fd <= 2) ? 0 : (uint64_t)(int64_t)-EBADF;
         return;
     }
     fd_obj_t *obj = &g_fd_pool[idx];
@@ -263,6 +275,11 @@ void dup3_handler(uint64_t regs[6], task_t *current)
     int newfd = (int)regs[1];
     int flags = (int)regs[2];
 
+    /* dup3 只认 O_CLOEXEC；其它位（包括 -1）一律 EINVAL。LTP dup3_02 */
+    if (flags & ~0x80000) {
+        regs[0] = (uint64_t)(int64_t)-EINVAL;
+        return;
+    }
     if (oldfd == newfd) {
         regs[0] = (uint64_t)(int64_t)-EINVAL;
         return;
@@ -411,17 +428,62 @@ void fcntl_handler(uint64_t regs[6], task_t *current)
 void pipe2_handler(uint64_t regs[6], task_t *current)
 {
     int *user_fds = (int *)regs[0];
+    int flags = (int)regs[1];
+
     if (!user_fds) {
         regs[0] = (uint64_t)(int64_t)-EFAULT;
         return;
     }
+    /*
+       pipe2 认 O_CLOEXEC(0x80000)、O_NONBLOCK(0x800) 和 O_DIRECT。
+       O_DIRECT 是 Linux 3.4 起 pipe2 支持的包模式标志(LTP pipe2_01 覆盖)。
+       注意 O_DIRECT 的数值是**架构相关**的：
+         x86_64           0x4000
+         aarch64/riscv64  0x10000
+       本内核不区分包边界，但 F_GETFL 必须能把它读回来。
+    */
+#define PIPE2_GNORE_FLAGS (0x800u | 0x4000u | 0x10000u)
+    if (flags & ~(0x80000 | PIPE2_GNORE_FLAGS)) {
+        regs[0] = (uint64_t)(int64_t)-EINVAL;
+        return;
+    }
+
     int fds[2];
     int rc = pipe_alloc(current, fds);
     if (rc < 0) {
         regs[0] = (uint64_t)(int64_t)-EMFILE;
         return;
     }
-    user_fds[0] = fds[0];
-    user_fds[1] = fds[1];
+
+    /*
+       把 flags 落到 fd 对象上：
+         - O_NONBLOCK 必须进 obj->flags / vfs_file->flags，pipe_read/write
+           才会走非阻塞路径，fcntl(F_GETFL) 也要能看到它(LTP pipe2_01)
+         - O_CLOEXEC 记进 fd 位图，execve 时会关闭(LTP pipe2_02)
+    */
+    for (int i = 0; i < 2; i++) {
+        fd_obj_t *obj = task_get_fd(current, fds[i]);
+        if (obj) {
+            obj->flags = (obj->flags & ~PIPE2_GNORE_FLAGS) | (flags & PIPE2_GNORE_FLAGS);
+            if (obj->vfs_file)
+                obj->vfs_file->flags = obj->flags;
+        }
+        if (flags & 0x80000)
+            current->fd_cloexec[fds[i] / 8] |= (uint8_t)(1u << (fds[i] % 8));
+    }
+
+    /* 用户指针必须经 copy_to_user_bytes（CLAUDE.md 用户指针规则） */
+    if (copy_to_user_bytes(fds, user_fds, sizeof(fds)) < 0) {
+        for (int i = 0; i < 2; i++) {
+            int idx = task_take_fd(current, fds[i]);
+            if (idx >= 0) {
+                fd_obj_close(idx);
+                fd_pool_free(idx);
+            }
+        }
+        regs[0] = (uint64_t)(int64_t)-EFAULT;
+        return;
+    }
+#undef PIPE2_GNORE_FLAGS
     regs[0] = 0;
 }

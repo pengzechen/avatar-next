@@ -176,8 +176,11 @@ int resolve_path_at(task_t *task, int dirfd, const char *pathname, char *abspath
     }
 
     fd_obj_t *base = task_get_fd(task, dirfd);
-    if (!base || !vfs_file_is_dir(fd_obj_file(base)))
+    if (!base)
         return -EBADF;
+    /* dirfd 指向普通文件是 ENOTDIR，不是 EBADF（LTP openat01/faccessat02） */
+    if (!vfs_file_is_dir(fd_obj_file(base)))
+        return -ENOTDIR;
 
     resolve_path(base->path, pathname, abspath, abspath_len);
     return 0;

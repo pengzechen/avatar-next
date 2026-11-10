@@ -179,6 +179,27 @@ void sys_exit(int status)
         }
     }
 
+    /*
+       prctl(PR_SET_PDEATHSIG)：父进程退出时给仍然存活的子进程投递信号。
+       Linux 的语义是"父线程死亡"，所以 is_thread 的父任务退出也要发。
+    */
+    for (uint32_t _i = 0; _i < TASK_MAX; _i++) {
+        if (!g_stack_used[_i])
+            continue;
+        task_t *t = &g_task_pool[_i];
+        if (t == current || !t->is_user_process || t->pdeathsig == 0)
+            continue;
+        if (t->state == TASK_DEAD || t->state == TASK_ALLOCATING)
+            continue;
+        if (t->parent_id != current->id)
+            continue;
+
+        task_send_signal(t, (int)t->pdeathsig);
+        /* 被阻塞的子进程要能醒来看见信号（默认动作通常是终止） */
+        if (t->state == TASK_BLOCKED)
+            task_unblock(t);
+    }
+
     /* 在退出前计算 utime： wall_time − stime */
     if (current->is_user_process) {
         uint64_t _now = kernel_get_ns();
@@ -653,6 +674,36 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
     child->sid = parent->sid;
     for (int _si = 0; _si < NSIG; _si++)
         child->sig_actions[_si] = parent->sig_actions[_si];
+
+    /*
+       Linux fork 的进程属性继承：
+         - umask / 附加组 / rlimits / CPU 亲和性：继承
+         - PR_SET_PDEATHSIG：不继承（子进程清零）
+         - set_robust_list：不继承
+         - nanosleep 状态：清零
+    */
+    child->umask = parent->umask;
+    child->dumpable = parent->dumpable;
+    child->no_new_privs = parent->no_new_privs;
+    child->personality = parent->personality;
+    child->pdeathsig = 0;
+    child->robust_list = 0;
+    child->sleep_expire_ns = 0;
+    child->affinity_mask = parent->affinity_mask;
+    {
+        int32_t ng = parent->ngroups;
+        if (ng < 0)
+            ng = 0;
+        if (ng > (int32_t)TASK_GROUPS_MAX)
+            ng = (int32_t)TASK_GROUPS_MAX;
+        child->ngroups = ng;
+        for (int32_t _g = 0; _g < ng; _g++)
+            child->groups[_g] = parent->groups[_g];
+    }
+    for (uint32_t _r = 0; _r < TASK_RLIMIT_COUNT; _r++) {
+        child->rlimit_cur[_r] = parent->rlimit_cur[_r];
+        child->rlimit_max[_r] = parent->rlimit_max[_r];
+    }
 
     child->create_ns = kernel_get_ns();
     child->state = TASK_READY;

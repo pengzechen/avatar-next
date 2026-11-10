@@ -1,16 +1,17 @@
 # tests/ltp/testcases.list
 # LTP 测例选择清单 — 每行格式: <syscall_dir>/<binary_name>
 #
-# 覆盖分类（2026-10，共 79 个；三架构均实测通过）:
+# 覆盖分类（2026-11，共 103 个；三架构均实测通过）:
 #   进程管理: getpid, getppid, getuid, getgid, geteuid, getegid, getpgid,
 #             getsid, setsid, setpgid, set_tid_address, gettid,
-#             exit, exit_group, fork, wait4, clone
-#   文件 I/O: open, close, read, write, readv, writev, pread64, pwrite64,
-#             lseek, ftruncate, fsync, fdatasync, dup, dup3, fcntl, pipe,
+#             exit, exit_group, fork, wait4, clone, getgroups, setgroups
+#   文件 I/O: open, openat, close, read, write, readv, writev, pread64, pwrite64,
+#             lseek, ftruncate, fsync, fdatasync, dup, dup3, fcntl, pipe, pipe2,
 #             getcwd, chdir, fstat, faccessat
 #   内存管理: brk, mmap, munmap
 #   信号:     kill, tkill, rt_sigaction, sigaction, rt_sigprocmask
-#   系统信息: uname, clock_gettime, getrusage, getrandom
+#   系统信息: uname, clock_gettime, getrusage, getrandom, getrlimit, setrlimit,
+#             umask, prctl, set_robust_list, times, nanosleep
 #   调度:     sched_yield
 #   多路复用: poll, pselect6, epoll_create1, epoll_ctl, epoll_wait
 #
@@ -18,16 +19,21 @@
 # 只覆盖内核【已经实现且行为正确】的功能，不靠测例倒逼新特性。
 #
 # 内核里是 stub / 硬编码的，**不要选**（选了就等于要求补功能）：
-#   mprotect, madvise   → 直接返回 0
-#   umask               → 恒返回 0022
-#   getrlimit/setrlimit → 恒返回 unlimited
+#   madvise             → 直接返回 0
+#   mprotect            → 已能建 PROT_NONE 保留区、升级时补零页，但没有真正的
+#                         页权限位（RO/RX），mprotect01 之类仍不要选
 #
-# 组/权限/cgroup 相关（setuid/setgid/setgroups/faccessat/...）按项目定位不做。
+# 组/权限/cgroup 相关（setuid/setgid/faccessat 的权限位/...）按项目定位不做。
+# 例外：getgroups/setgroups 的组列表本身在第四轮已实现。
 #
 # 已不再属于“不要选”：
 #   fsync/fdatasync → 已接到 VFS sync（FAT 真正 f_sync，ext4 暂无操作），
 #                     fdatasync01 已加入并 PASS
 #   dup             → x86_64 已映射到内部 dup；dup01 已加入并 PASS
+#   umask / getrlimit / setrlimit / prlimit64 / prctl / set_robust_list /
+#   getgroups / setgroups / nanosleep / times
+#                   → 第四轮（2026-11）已把状态真正挂到 task_t 上，
+#                     对应测例见文件末尾
 #
 # ── 试过但过不了的，连同原因记在这里，避免以后重复踩 ────────────────────
 # LTP 对错误路径和边界语义要求很高，而本项目多数实现是"够 busybox 用"，
@@ -58,14 +64,14 @@
 #   epoll_pwait01        → 内核无 socketpair()
 #
 # 【错误语义 / 行为不符】
-#   mkdirat01    → mkdirat 忽略 dirfd，拍不出 ENOTDIR/EBADF
+#   mkdirat01    → dirfd 第四轮已支持，未复测（当时：忽略 dirfd）
 #   unlinkat01   → 2 个用例 errno 不符
-#   openat01     → 传 filefd 当 dirfd 应返回 ENOTDIR，实返 EBADF
-#   fstat02      → open 的 mode 参数未生效（0666 vs 0644）+ 无硬链接
+#   openat01     → ✅ 第四轮已修（dirfd 非目录返回 ENOTDIR）并加入清单
+#   fstat02      → open mode/umask 第四轮已修；仍缺硬链接
 #   ftruncate01  → 只支持缩小，不支持扩大
-#   pipe2_01     → pipe2 的 O_NONBLOCK 未反映到 fcntl(F_GETFL)
-#   prctl01      → PR_GET_PDEATHSIG 取不到 PR_SET_PDEATHSIG 设的值
-#   sendfile02   → sendfile 的 offset 与文件位置语义不符
+#   pipe2_01     → ✅ 第四轮已修（O_NONBLOCK 落到 fcntl(F_GETFL)）
+#   prctl01      → ✅ 第四轮已修（PDEATHSIG/DUMPABLE/NAME/NO_NEW_PRIVS）
+#   sendfile02   → offset/文件位置语义第四轮已重写，未复测
 #   getrandom01  → 返回值语义不符
 #   nanosleep01  → 需要 tick 级精度（当前睡眠粒度受调度 tick 限制）
 #   ppoll01      → 测例自身 SIGSEGV
@@ -94,26 +100,26 @@
 #   writev03            → 需要 ≥2 个在线 CPU（当前 SMP=1）
 #
 # 【B 参数校验缺失 —— 内核不拒绝非法参数；与"是否兼容 Linux"无关，是健壮性】
-#   getrusage02   getrusage(-2) 应失败却成功
-#   mkdirat02     mkdirat 应失败却成功
+#   getrusage02   ✅ 第四轮已修（who 参数校验）并加入清单
+#   mkdirat02     mkdirat 参数校验未复测
 #   readv02       readv 应失败却成功
 #   sendfile03    sendfile 的 out_fd=-1 应失败却成功
 #   setpgid02     setpgid(pid, -1) 应失败却成功
 #   sysinfo02     sysinfo(bad_info) 应失败却成功
 #   tkill02       tkill 参数非法应 EINVAL，实返 EBADF
-#   uname02       uname(bad_addr) 应 EFAULT 却成功
+#   uname02       ✅ 第四轮已修（bad_addr 返回 EFAULT）并加入清单
 #   write03       write 应失败却成功
 #
 # 【C 语义不符】
-#   close02       重复 close 同一 fd 应返 EBADF
-#   dup3_02       dup3 非法 flags 应 EINVAL，实返 EBADF
+#   close02       ✅ 第四轮已修（重复 close 返 EBADF）并加入清单
+#   dup3_02       ✅ 第四轮已修（非法 flags 只在 O_CLOEXEC 内合法）
 #   epoll_ctl02   不支持 epoll 的 fd 应被拒；重复 ADD 应 EEXIST
-#   faccessat02   dirfd 指向非目录应 ENOTDIR，实返 EBADF（与已知 openat01 同源）
+#   faccessat02   ✅ 第四轮已修（dirfd 非目录返回 ENOTDIR）并加入清单
 #   fcntl05       F_GETLK / flock 未实现
 #   kill02        进程组信号未送达所有成员 —— kill(0, sig) 的广播不全
-#   nanosleep02   nanosleep 需可被信号打断并返 EINTR（当前是 yield 桩）
+#   nanosleep02   ✅ 第四轮已修（真睡眠 + EINTR + remaining）并加入清单
 #   read02        读目录应返 EISDIR
-#   pipe2_02      pipe2 的 O_CLOEXEC 未生效
+#   pipe2_02      ✅ 第四轮已修（O_CLOEXEC 落到 fd 位图）并加入清单
 #
 # 【D 未实现的功能】
 #   sigpending02       → 基本用例已通过；剩下的是 PROT_NONE 坏地址未返回 EFAULT
@@ -289,5 +295,38 @@ dup/dup02
 #     已改为用 task_t::switch_done 门控：arch_task_switch 真正切到 next
 #     的栈/页表后才置位，回收路径等待它再销毁资源。详见
 #     docs/bugfix/SMP_TASK_EXIT_STACK_REUSE.md。
-# 当前 aarch64 / riscv64 / x86_64（SMP=1）全量均 79/79 PASS；
-# x86_64 SMP=4 亦 79/79 PASS。
+# 上一轮 aarch64 / riscv64 / x86_64（SMP=1）全量均 79/79 PASS；
+# x86_64 SMP=4 亦 79/79 PASS（当时用例数）。
+
+# ── 第四轮：补齐容易实现的 syscall 语义（2026-11）────────────────────────
+# 对应内核改动：getgroups/setgroups、getrlimit/setrlimit/prlimit64、
+# umask、prctl、nanosleep、times、set_robust_list、close/dup3/pipe2
+# 错误语义、uname EFAULT、getrusage 校验、chdir 路径校验、dirfd 错误语义。
+getgroups/getgroups01
+setgroups/setgroups01
+setgroups/setgroups02
+setgroups/setgroups03
+getrlimit/getrlimit01
+getrlimit/getrlimit02
+setrlimit/setrlimit02
+setrlimit/setrlimit03
+setrlimit/setrlimit05
+umask/umask01
+prctl/prctl01
+nanosleep/nanosleep02
+close/close02
+dup3/dup3_02
+pipe2/pipe2_01
+pipe2/pipe2_02
+uname/uname02
+uname/uname04
+getrusage/getrusage02
+times/times01
+set_robust_list/set_robust_list01
+chdir/chdir04
+openat/openat01
+faccessat/faccessat02
+
+# ── 第四轮回归结果（2026-11-10）──────────────────────────────────────────
+# aarch64 / riscv64 / x86_64（SMP=1）全量均 103/103 PASS。
+# 注意：本轮没有重跑 x86_64 SMP=4；上一轮的 SMP=4 结果只覆盖当时 79 个用例。

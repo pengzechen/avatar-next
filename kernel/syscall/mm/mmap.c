@@ -27,6 +27,24 @@
 extern task_t g_task_pool[];
 extern uint8_t g_stack_used[];
 
+/*
+   PROT_NONE 的语义：保留虚拟地址区间，但不建立任何可访问映射。
+   以前 mmap 完全忽略 prot，PROT_NONE 也映射成 RWX —— 以它当"坏地址"的
+   LTP 用例（tst_get_bad_addr）于是拿到一个可读写页，期望的 EFAULT 永远
+   不会出现（uname02/setrlimit05/chdir04 都栽在这里）。
+
+   真正的页权限模型(mprotect 改 PTE)仍未实现；这里只保证 PROT_NONE 的
+   区间确实不可访问，与 Linux 的 guard page 语义一致。
+*/
+#define PROT_READ_AVATAR  0x1
+#define PROT_WRITE_AVATAR 0x2
+#define PROT_EXEC_AVATAR  0x4
+
+static bool mmap_prot_is_none(int prot)
+{
+    return (prot & (PROT_READ_AVATAR | PROT_WRITE_AVATAR | PROT_EXEC_AVATAR)) == 0;
+}
+
 static uint64_t shared_mmap_next(task_t *current)
 {
     uint64_t next = current->mmap_next;
@@ -174,6 +192,60 @@ static int map_contiguous_buf(task_t *current, void *pgd, uint64_t map_addr, uin
     return 0;
 }
 
+/*
+   sys_mprotect - 够用的页保护实现
+
+   本内核没有完整的 VMA / PTE 权限模型，但两个真实用例必须支持：
+     1. musl 的 pthread 栈：mmap(PROT_NONE) 保留地址区间，然后
+        mprotect(栈区, PROT_READ|PROT_WRITE) —— 必须把中间那段补成可用
+        的零页，否则任何 pthread_create 都会在第一次写栈时 SIGSEGV。
+     2. 以 PROT_NONE 当"坏地址"的 EFAULT 检查（LTP tst_get_bad_addr）：
+        mmap 时就不建 PTE，mprotect 保持 PROT_NONE 时继续无映射。
+
+   语义边界：
+     - prot == PROT_NONE：解除映射（之后用户访问 fault，内核 copy_* 返回 EFAULT）
+     - prot 非 NONE：缺页补零页；已映射的页保持原样（不做真正的只读/可执行
+       细分，内核目前也没有权限位可改）
+     - 地址范围必须落在 mmap 区（沿用 mmap_user_range_ok 的检查）
+*/
+uint64_t sys_mprotect(uint64_t addr, uint64_t len, int prot)
+{
+    task_t *current = task_current();
+    if (!current || !current->is_user_process || current->pgd == NULL)
+        return (uint64_t)(int64_t)-EINVAL;
+    if ((addr & (PAGE_SIZE - 1)) != 0)
+        return (uint64_t)(int64_t)-EINVAL;
+    if (len == 0)
+        return 0;
+
+    uint64_t size = ALIGN_UP(len, PAGE_SIZE);
+    if (addr + size < addr)
+        return (uint64_t)(int64_t)-EINVAL;
+    if (!mmap_user_range_ok(addr, size))
+        return (uint64_t)(int64_t)-ENOMEM;
+
+    if (mmap_prot_is_none(prot)) {
+        vm_unmap_user_range((uint64_t)current->pgd, addr, size);
+        return 0;
+    }
+
+    void *pgd = phys_to_virt((uint64_t)current->pgd);
+    for (uint64_t va = addr; va < addr + size; va += PAGE_SIZE) {
+        if (mm_vm_get_paddr(pgd, va) != 0)
+            continue;
+        uint64_t pa = pmm_alloc_pages(&g_pmm, 1);
+        if (pa == 0)
+            return (uint64_t)(int64_t)-ENOMEM;
+        memset(phys_to_virt(pa), 0, PAGE_SIZE);
+        if (mm_vm_map_pages(pgd, va, pa, 1, VM_PERM_USER) != 0) {
+            pmm_free_pages(&g_pmm, pa, 1);
+            return (uint64_t)(int64_t)-ENOMEM;
+        }
+    }
+    mm_vm_flush_tlb_user();
+    return 0;
+}
+
 uint64_t sys_mmap(uint64_t addr, uint64_t len, int prot, int flags, int fd, uint64_t offset)
 {
     /* 保护属性本身尚未实现；prot 目前只用于调试日志。 */
@@ -214,6 +286,15 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, int prot, int flags, int fd, uint
         }
 
         void *pgd = phys_to_virt((uint64_t)current->pgd);
+
+        /* PROT_NONE：保留 VA 区间，不建映射（见文件头说明） */
+        if (mmap_prot_is_none(prot)) {
+            if ((flags & MAP_FIXED) != 0)
+                vm_unmap_user_range((uint64_t)current->pgd, map_addr, map_size);
+            else
+                sync_shared_mmap_next(current, map_addr + map_size);
+            return map_addr;
+        }
 
         if (fobj && fobj->ops && fobj->ops->get_phys) {
             uint64_t pa = 0;
@@ -415,6 +496,15 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, int prot, int flags, int fd, uint
     /* KLOG_SYSCALL("[mmap] req: addr=0x%llx len=0x%llx flags=0x%x fd=%d off=0x%llx -> base=0x%llx size=0x%llx\n",
                addr, len, flags, fd, offset, map_addr, size);
     */
+
+    /* PROT_NONE 匿名映射：只占地址区间，不分配物理页/不建 PTE */
+    if (mmap_prot_is_none(prot)) {
+        if ((flags & MAP_FIXED) != 0)
+            vm_unmap_user_range((uint64_t)current->pgd, map_addr, size);
+        else
+            sync_shared_mmap_next(current, map_addr + size);
+        return map_addr;
+    }
 
 #if ARCH_AARCH64 || ARCH_RISCV64
     void *pgd = phys_to_virt((uint64_t)current->pgd);

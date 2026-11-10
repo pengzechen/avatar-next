@@ -192,6 +192,26 @@ task_t *task_alloc_slot(void)
         memset(task, 0, sizeof(*task));
         task->state = TASK_ALLOCATING;
         task->stack_base = g_task_stacks[i];
+
+        /*
+           Linux 进程属性的默认值。clone_handler 会把父进程的
+           umask/groups/rlimits/affinity 覆盖成继承值。
+        */
+        task->umask = 0022;
+        task->dumpable = 1;
+        for (uint32_t r = 0; r < TASK_RLIMIT_COUNT; r++) {
+            task->rlimit_cur[r] = ~0ULL; /* RLIM_INFINITY */
+            task->rlimit_max[r] = ~0ULL;
+        }
+        /* 与 Linux 常见默认值一致；LTP 的 rlimit 用例依赖 NOFILE 的具体值 */
+        task->rlimit_cur[3] = 8ULL * 1024 * 1024; /* RLIMIT_STACK */
+        task->rlimit_cur[4] = 0;                  /* RLIMIT_CORE  */
+        task->rlimit_cur[7] = 1024;               /* RLIMIT_NOFILE */
+        task->rlimit_max[7] = 1024 * 1024;        /* 无 /proc/sys/fs/nr_open 时的上界 */
+        task->rlimit_cur[13] = 0;                 /* RLIMIT_NICE   */
+        task->rlimit_max[13] = 0;
+        task->rlimit_cur[14] = 0; /* RLIMIT_RTPRIO */
+        task->rlimit_max[14] = 0;
         /*
            把整块栈刷成已知图案：配合 task_stack_used() 量"这个任务实际用掉
            多少栈"。arch_init_task_stack() 稍后会在栈顶写好初始帧, 其余部分
@@ -955,6 +975,58 @@ void task_send_signal(task_t *t, int sig)
     if (!t || sig < 1 || sig > NSIG)
         return;
     t->pending_sigs |= (1ULL << (sig - 1));
+
+    /*
+       nanosleep 的睡眠点在 task_block() 里，只有信号能让它提前醒。
+       默认动作通常是终止，不唤醒就永远看不到这个信号。
+    */
+    if (t->sleep_expire_ns != 0 && t->state == TASK_BLOCKED)
+        task_unblock(t);
+}
+
+/*
+   task_signal_pending_effective - 有没有"真正会打断阻塞"的信号
+
+   判据必须和 deliver_pending_signals() 的动作表一致：
+   SIG_IGN、以及 SIG_DFL 本身就是忽略的几个信号(SIGCHLD 等)不算。
+   管道阻塞和 nanosleep 都用它，避免两处各写一份、慢慢漂移。
+*/
+bool task_signal_pending_effective(task_t *t)
+{
+    if (!t)
+        return false;
+
+    uint64_t unblocked = t->pending_sigs & ~t->blocked_sigs;
+    while (unblocked) {
+        uint64_t low = unblocked & (~unblocked + 1); /* 最低置位 */
+        int sig = 0;
+        while (low > 1) {
+            low >>= 1;
+            sig++;
+        }
+        int idx = sig; /* 下标 0 对应信号 1 */
+        unblocked &= unblocked - 1;
+
+        uint64_t h = t->sig_actions[idx].sa_handler;
+        if (h == SIG_IGN)
+            continue;
+        if (h != SIG_DFL)
+            return true;
+
+        switch (sig + 1) {
+        case SIGCHLD:
+        case SIGCONT:
+        case SIGURG:
+        case SIGWINCH:
+        case SIGTTIN:
+        case SIGTTOU:
+        case SIGTSTP:
+            continue;
+        default:
+            return true;
+        }
+    }
+    return false;
 }
 
 /* ── task_send_signal_to_pgid ────────────────────────────── */

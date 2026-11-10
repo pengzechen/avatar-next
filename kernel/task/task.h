@@ -89,6 +89,14 @@ typedef enum {
 #define TASK_EXE_LEN     128u /* 可执行文件路径最大长度 */
 #define TASK_MAX_FD      256u /* 每进程最大文件描述符数 */
 
+/*
+   附加组列表 / 资源限制的数量。
+   TASK_GROUPS_MAX 与 musl 的 NGROUPS(32) 对齐：LTP 的 setgroups 用例用
+   "NGROUPS + 1" 当越界值，内核这边的上限必须恰好也是 32 才能返回 EINVAL。
+*/
+#define TASK_GROUPS_MAX   32u
+#define TASK_RLIMIT_COUNT 16u
+
 /* ── Task Control Block ──────────────────────────────────── */
 typedef struct task {
     uintptr_t sp;       /* 保存的内核栈指针(上下文切换时填入) */
@@ -176,10 +184,28 @@ typedef struct task {
     uint32_t euid;                       /* effective user ID */
     uint32_t gid;                        /* real group ID */
     uint32_t egid;                       /* effective group ID */
-    int exit_status;                     /* 退出状态(wait4 使用) */
-    int exit_signal;                     /* 被信号杀死时的信号号(0=正常退出) */
-    bool is_waiting;                     /* 正在 wait4 子进程 */
-    uint32_t wait_pid;                   /* 等待的子进程 PID(-1=任意) */
+    /*
+       附加组 / 资源限制 / 文件创建掩码 / prctl 状态。
+
+       这些是 Linux 进程属性：fork 继承（pdeathsig、robust_list 例外），
+       exec 保留（robust_list 会被 reset）。见 clone_handler / task_execve。
+    */
+    uint32_t umask;                         /* 文件创建掩码(Linux 默认 0022) */
+    int32_t ngroups;                        /* groups[] 中有效项数 */
+    uint32_t groups[TASK_GROUPS_MAX];       /* 附加组列表(getgroups/setgroups) */
+    uint64_t rlimit_cur[TASK_RLIMIT_COUNT]; /* getrlimit/setrlimit: 软限制 */
+    uint64_t rlimit_max[TASK_RLIMIT_COUNT]; /* getrlimit/setrlimit: 硬限制 */
+    uint64_t pdeathsig;                     /* prctl(PR_SET_PDEATHSIG) 的信号号 */
+    uint64_t robust_list;                   /* set_robust_list 的用户指针 */
+    uint64_t sleep_expire_ns;               /* nanosleep 绝对到期时刻(0=未睡) */
+    uint64_t affinity_mask;                 /* sched_setaffinity 的 CPU 掩码 */
+    uint8_t dumpable;                       /* prctl(PR_SET_DUMPABLE) */
+    uint8_t no_new_privs;                   /* prctl(PR_SET_NO_NEW_PRIVS) */
+    uint32_t personality;                   /* personality(2) 的 persona 位 */
+    int exit_status;                        /* 退出状态(wait4 使用) */
+    int exit_signal;                        /* 被信号杀死时的信号号(0=正常退出) */
+    bool is_waiting;                        /* 正在 wait4 子进程 */
+    uint32_t wait_pid;                      /* 等待的子进程 PID(-1=任意) */
 
     /* === CPU 时间统计 === */
     uint64_t utime_ns;    /* 用户态 CPU 时间(纳秒), task_exit 前计算 */
@@ -442,6 +468,9 @@ task_t *task_find_by_id(uint32_t id);
    @sig: 信号号 (1..NSIG)
 */
 void task_send_signal(task_t *t, int sig);
+
+/* 是否有会真正打断阻塞的 pending 信号（忽略 SIG_IGN / 默认忽略类） */
+bool task_signal_pending_effective(task_t *t);
 
 /*
    task_send_signal_to_pgid - 向进程组内所有用户态任务投递信号

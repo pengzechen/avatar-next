@@ -75,8 +75,6 @@ void itimer_tick(void)
             continue;
 
         task_t *t = &g_task_pool[i];
-        if (t->itimer_expire_ns == 0 || now < t->itimer_expire_ns)
-            continue;
 
         /* 已死/正在分配的槽不该再收信号；顺手把残值清掉, 免得槽被复用后
            新任务莫名其妙挨一个 SIGALRM(复用的 TCB 会带着旧字段)。
@@ -84,8 +82,24 @@ void itimer_tick(void)
         if (t->state == TASK_DEAD || t->state == TASK_ALLOCATING) {
             t->itimer_expire_ns = 0;
             t->itimer_interval_ns = 0;
+            t->sleep_expire_ns = 0;
             continue;
         }
+
+        /*
+           nanosleep 到期：清标记并唤醒。
+           必须在 itimer 的早退判断**之前**处理 —— 睡眠任务通常没有
+           itimer_expire_ns，早退会把它们直接跳过，永远醒不来。
+        */
+        if (t->sleep_expire_ns != 0 && now >= t->sleep_expire_ns) {
+            t->sleep_expire_ns = 0;
+            if (t->state == TASK_BLOCKED)
+                task_unblock(t);
+        }
+
+        /* 下面只处理 ITIMER_REAL */
+        if (t->itimer_expire_ns == 0 || now < t->itimer_expire_ns)
+            continue;
 
         /* 先重装(周期)或清除(一次性), 再投信号 —— 见文件头第 1 点 */
         if (t->itimer_interval_ns)

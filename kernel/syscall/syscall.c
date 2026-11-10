@@ -235,8 +235,11 @@ static void x86_translate_syscall(uint64_t *nr, uint64_t regs[9])
         *nr = LINUX_SYS_FACCESSAT;
         break;
     case 22:
+        /* pipe(fds) → pipe2(fds, 0)。第二个寄存器是用户残留值，必须显式清零：
+           pipe2 现在会校验 flags，不清零会被当成非法 flags 返回 EINVAL。 */
+        regs[1] = 0;
         *nr = LINUX_SYS_PIPE2;
-        break; /* pipe → pipe2(flags=0) */
+        break;
     case 23:
         *nr = X86_SYS_SELECT;
         break; /* select(nfds,r,w,e,timeval*) */
@@ -456,8 +459,8 @@ static void x86_translate_syscall(uint64_t *nr, uint64_t regs[9])
         *nr = LINUX_SYS_SYSINFO;
         break; /* sysinfo */
     case 100:
-        *nr = 0x7FFFFFFEULL;
-        break; /* times → stub 0 */
+        *nr = LINUX_SYS_TIMES;
+        break; /* times */
     case 102:
         *nr = LINUX_SYS_GETUID;
         break; /* getuid */
@@ -495,12 +498,33 @@ static void x86_translate_syscall(uint64_t *nr, uint64_t regs[9])
     case 116:
         *nr = LINUX_SYS_SETGROUPS;
         break; /* setgroups */
+    /*
+       x86_64 的 setresuid/getresuid/setresgid/getresgid = 117..120，
+       内部用 aarch64/riscv64 的 147..150。之前没映射 →
+       musl 的 seteuid()/seteuid() 全落 ENOSYS（LTP setgroups03 在这里
+       TBROK）。
+    */
+    case 117:
+        *nr = LINUX_SYS_SETRESUID;
+        break; /* setresuid */
+    case 118:
+        *nr = LINUX_SYS_GETRESUID;
+        break; /* getresuid */
+    case 119:
+        *nr = LINUX_SYS_SETRESGID;
+        break; /* setresgid */
+    case 120:
+        *nr = LINUX_SYS_GETRESGID;
+        break; /* getresgid */
     case 121:
         *nr = LINUX_SYS_GETPGID;
         break; /* getpgid */
     case 124:
         *nr = LINUX_SYS_GETSID;
         break; /* getsid */
+    case 135:
+        *nr = LINUX_SYS_PERSONALITY;
+        break; /* personality */
     case 127:
         *nr = LINUX_SYS_RT_SIGPENDING;
         break; /* rt_sigpending */
@@ -800,9 +824,12 @@ void syscall_handler(trap_frame_t *frame)
     case LINUX_SYS_GETPGID:
     case LINUX_SYS_GETSID:
     case LINUX_SYS_SETSID:
+        proc_ids_handler(syscall_num, regs, current);
+        break;
+
     case LINUX_SYS_GETGROUPS:
     case LINUX_SYS_SETGROUPS:
-        proc_ids_handler(syscall_num, regs, current);
+        syscall_groups_handler(syscall_num, regs, current);
         break;
 
     case LINUX_SYS_FUTEX:
@@ -885,16 +912,39 @@ void syscall_handler(trap_frame_t *frame)
         break;
 
     case LINUX_SYS_MKDIRAT: {
-        /* mkdirat(dirfd, pathname, mode) — dirfd ignored, always absolute or CWD-relative */
+        /* mkdirat(dirfd, pathname, mode) */
+        int dirfd = (int)(int32_t)regs[0];
         const char *upath = (const char *)regs[1];
         if (!upath) {
             regs[0] = (uint64_t)(int64_t)-EFAULT;
             break;
         }
+
+        /* 用户指针先落进内核；resolve_path_at 会直接解引用 */
+        char kpath[TASK_CWD_LEN];
+        int n = copy_string_from_user(upath, kpath, (int)sizeof(kpath));
+        if (n < 0) {
+            regs[0] = (uint64_t)(int64_t)-EFAULT;
+            break;
+        }
+        if (n >= (int)sizeof(kpath) - 1) {
+            regs[0] = (uint64_t)(int64_t)-ENAMETOOLONG;
+            break;
+        }
+
         char abs[256];
-        resolve_path(current->cwd, upath, abs, (int)sizeof(abs));
-        /* 走 VFS 分发：/boot 下的路径属于 FAT，不能再直接调 ext4_dir_mk */
-        int rc = vfs_mkdir(abs, (int)regs[2]);
+        int rpa = resolve_path_at(current, dirfd, kpath, abs, (int)sizeof(abs));
+        if (rpa < 0) {
+            regs[0] = (uint64_t)(int64_t)rpa;
+            break;
+        }
+
+        /*
+           走 VFS 分发：/boot 下的路径属于 FAT，不能再直接调 ext4_dir_mk。
+           mode 按 umask 去掉权限位(Linux 语义)。
+        */
+        int mode = (int)regs[2] & 07777 & ~(int)current->umask;
+        int rc = vfs_mkdir(abs, mode);
         regs[0] = rc < 0 ? (uint64_t)(int64_t)rc : 0;
         break;
     }
@@ -1042,23 +1092,45 @@ void syscall_handler(trap_frame_t *frame)
 
     /* --- 系统信息 --- */
     case LINUX_SYS_UNAME: {
-        struct kernel_utsname *u = (struct kernel_utsname *)regs[0];
-        if (!u) {
+        /*
+           先在内核里构造完整结构再一次性 copy_to_user：
+             - 坏指针返回 EFAULT（以前逐个 copy_string_to_user 并忽略返回值，
+               uname((void*)-1) 会"成功"）
+             - 整个结构 memset 过，字段 NUL 之后的填充字节不会被泄漏
+               （LTP uname04 专门查这个）
+        */
+        struct kernel_utsname u;
+        memset(&u, 0, sizeof(u));
+        /*
+           注意：这里是**内核**结构体，不能再用 copy_string_to_user
+           （它把目标当用户指针做 user_range_ok 校验，内核栈地址会被
+           拒绝，字段保持全 0 —— uname01 于是报 sysname 不是 Linux）。
+        */
+#define UTS_SET(field, s) \
+    do { \
+        size_t _n = strlen(s); \
+        if (_n >= sizeof(u.field)) \
+            _n = sizeof(u.field) - 1; \
+        memcpy(u.field, (s), _n); \
+    } while (0)
+        UTS_SET(sysname, "Linux");
+        UTS_SET(nodename, "avatar");
+        UTS_SET(release, "5.15.0");
+        UTS_SET(version, "#1 SMP");
+#if ARCH_RISCV64
+        UTS_SET(machine, "riscv64");
+#elif ARCH_AARCH64
+        UTS_SET(machine, "aarch64");
+#else
+        UTS_SET(machine, "x86_64");
+#endif
+        UTS_SET(domainname, "");
+#undef UTS_SET
+
+        if (copy_to_user_bytes(&u, (void *)regs[0], sizeof(u)) < 0) {
             regs[0] = (uint64_t)(int64_t)-EFAULT;
             break;
         }
-        copy_string_to_user("Linux", u->sysname, sizeof(u->sysname));
-        copy_string_to_user("avatar", u->nodename, sizeof(u->nodename));
-        copy_string_to_user("5.15.0", u->release, sizeof(u->release));
-        copy_string_to_user("#1 SMP", u->version, sizeof(u->version));
-#if ARCH_RISCV64
-        copy_string_to_user("riscv64", u->machine, sizeof(u->machine));
-#elif ARCH_AARCH64
-        copy_string_to_user("aarch64", u->machine, sizeof(u->machine));
-#else
-        copy_string_to_user("x86_64", u->machine, sizeof(u->machine));
-#endif
-        copy_string_to_user("", u->domainname, sizeof(u->domainname));
         regs[0] = 0;
         break;
     }
@@ -1169,57 +1241,71 @@ void syscall_handler(trap_frame_t *frame)
 
     case LINUX_SYS_GETRLIMIT:
     case LINUX_SYS_SETRLIMIT:
-    case LINUX_SYS_PRLIMIT64: {
-        /* Return unlimited for most resources */
-        if (syscall_num == LINUX_SYS_GETRLIMIT || syscall_num == LINUX_SYS_PRLIMIT64) {
-            /*
-               getrlimit(resource, rlim):                 rlim 在 arg1
-               prlimit64(pid, resource, new, old):        old  在 arg3
+    case LINUX_SYS_PRLIMIT64:
+        syscall_rlimit_handler(syscall_num, regs, current);
+        break;
 
-               用户指针必须经 copy_to_user_bytes, 不能裸解引用。
-            */
-            uint64_t uptr = regs[(syscall_num == LINUX_SYS_PRLIMIT64) ? 3 : 1];
-            if (uptr) {
-                struct kernel_rlimit rl = {
-                    .rlim_cur = (uint64_t)-1,
-                    .rlim_max = (uint64_t)-1,
-                };
-                if (copy_to_user_bytes(&rl, (void *)uptr, sizeof(rl)) < 0) {
-                    regs[0] = (uint64_t)(int64_t)-EFAULT;
-                    break;
-                }
-            }
+    case LINUX_SYS_GETRUSAGE: {
+        int who = (int)(int32_t)regs[0];
+        /* RUSAGE_SELF=0 / RUSAGE_CHILDREN=-1 / RUSAGE_THREAD=1 */
+        if (who != 0 && who != -1 && who != 1) {
+            regs[0] = (uint64_t)(int64_t)-EINVAL;
+            break;
+        }
+        if (!regs[1]) {
+            regs[0] = (uint64_t)(int64_t)-EFAULT;
+            break;
+        }
+        /* 用户指针必须经 copy_to_user_bytes, 不能裸解引用 */
+        uint64_t ru[18]; /* sizeof(struct rusage) == 144 */
+        memset(ru, 0, sizeof(ru));
+        if (current && current->is_user_process && who != -1) {
+            /* 用与 /proc 统计一致的"墙钟 - 内核时间"算活着的 utime；
+               直接读 utime_ns 只有 task_exit 才会填。 */
+            uint64_t now = kernel_get_ns();
+            uint64_t stime = current->stime_ns;
+            if (current->sc_entry_ns != 0 && now > current->sc_entry_ns)
+                stime += now - current->sc_entry_ns;
+            uint64_t wall = (current->create_ns != 0 && now > current->create_ns) ? (now - current->create_ns) : 0;
+            uint64_t utime = (wall > stime) ? (wall - stime) : 0;
+
+            ru[0] = utime / 1000000000ULL;
+            ru[1] = (utime % 1000000000ULL) / 1000ULL;
+            ru[2] = stime / 1000000000ULL;
+            ru[3] = (stime % 1000000000ULL) / 1000ULL;
+        }
+        if (copy_to_user_bytes(ru, (void *)regs[1], sizeof(ru)) < 0) {
+            regs[0] = (uint64_t)(int64_t)-EFAULT;
+            break;
         }
         regs[0] = 0;
         break;
     }
 
-    case LINUX_SYS_GETRUSAGE:
-        if (regs[1]) {
-            /* 用户指针必须经 copy_to_user_bytes, 不能裸解引用 */
-            uint64_t ru[18]; /* sizeof(struct rusage) == 144 */
-            memset(ru, 0, sizeof(ru));
-            if (current && current->is_user_process) {
-                ru[0] = current->utime_ns / 1000000000ULL;
-                ru[1] = (current->utime_ns % 1000000000ULL) / 1000ULL;
-                ru[2] = current->stime_ns / 1000000000ULL;
-                ru[3] = (current->stime_ns % 1000000000ULL) / 1000ULL;
-            }
-            if (copy_to_user_bytes(ru, (void *)regs[1], sizeof(ru)) < 0) {
-                regs[0] = (uint64_t)(int64_t)-EFAULT;
-                break;
-            }
-        }
-        regs[0] = 0;
-        break;
-
     case LINUX_SYS_UMASK:
-        regs[0] = 0022;
+        syscall_umask_handler(regs, current);
         break;
 
     case LINUX_SYS_PRCTL:
+        syscall_prctl_handler(regs, current);
+        break;
+
     case LINUX_SYS_SET_ROBUST_LIST:
+        syscall_robust_list_handler(regs, current);
+        break;
+
+    case LINUX_SYS_TIMES:
+        syscall_times_handler(regs, current);
+        break;
+
+    case LINUX_SYS_PERSONALITY:
+        syscall_personality_handler(regs, current);
+        break;
+
     case LINUX_SYS_MPROTECT:
+        regs[0] = sys_mprotect(regs[0], regs[1], (int)regs[2]);
+        break;
+
     case LINUX_SYS_MADVISE:
         regs[0] = 0;
         break;

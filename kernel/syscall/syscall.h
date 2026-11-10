@@ -169,5 +169,6 @@ int64_t sys_gettimeofday(struct timeval *tv, void *tz);
 */
 uint64_t sys_mmap(uint64_t addr, uint64_t len, int prot, int flags, int fd, uint64_t offset);
 uint64_t sys_munmap(uint64_t addr, uint64_t len);
+uint64_t sys_mprotect(uint64_t addr, uint64_t len, int prot);
 
 #endif /* KERNEL_SYSCALL_SYSCALL_H */

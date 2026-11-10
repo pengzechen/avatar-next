@@ -454,6 +454,10 @@ int task_execve(const char *pathname, uint8_t *file_data, uint64_t file_size, ui
     current->mmap_next = mmap_base;
     current->interp_end = interp_end;
     current->fs_base = 0;
+    /* exec 重置 robust_list（Linux 语义）；pdeathsig/umask/groups/rlimits 保留 */
+    current->robust_list = 0;
+    current->sleep_expire_ns = 0;
+    current->dumpable = 1;
 
     /* 7. 把本 CPU 切到新页表; 必须早于销毁旧页表 */
     mm_vm_switch_user(pgd_phys);
