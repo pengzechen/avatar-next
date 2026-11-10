@@ -366,7 +366,7 @@ int rt_worker_start(uint32_t id)
         spin_unlock_irqrestore(&g_rtw_lock, flags);
         return -RTW_EBUSY;
     }
-    w->stop = false;
+    __atomic_store_n(&w->stop, false, __ATOMIC_RELEASE);
     w->state = RTW_STATE_RUNNING;
     spin_unlock_irqrestore(&g_rtw_lock, flags);
 
@@ -401,7 +401,7 @@ int rt_worker_stop(uint32_t id)
         spin_unlock_irqrestore(&g_rtw_lock, flags);
         return -RTW_EINVAL;
     }
-    w->stop = true;
+    __atomic_store_n(&w->stop, true, __ATOMIC_RELEASE);
     task_t *t = w->task;
     spin_unlock_irqrestore(&g_rtw_lock, flags);
 
