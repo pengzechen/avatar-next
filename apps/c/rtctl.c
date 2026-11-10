@@ -12,6 +12,7 @@
      rtctl stop <id>
      rtctl destroy <id>
      rtctl set <id> <value>
+     rtctl params <id> [p0..p7]
      rtctl get <id>
      rtctl stats <id>
      rtctl list
@@ -20,6 +21,7 @@
      periodic_io  p0=gain_q16 p1=offset p2=min p3=max
      pid          p0=kp_q16 p1=ki_q16 p2=kd_q16 p3=out_min
                   p4=out_max p5=setpoint p6=integral_limit
+     watchdog     p0=target_id p1=timeout_ns p2=safe_output
 */
 
 #include <errno.h>
@@ -38,7 +40,8 @@
 
 enum {
     RTW_TPL_PERIODIC_IO = 1,
-    RTW_TPL_PID = 2
+    RTW_TPL_PID = 2,
+    RTW_TPL_WATCHDOG = 3
 };
 enum {
     RTW_STATE_FREE = 0,
@@ -73,6 +76,12 @@ struct rtw_io_req {
     uint32_t _pad;
     uint64_t seq;
     uint64_t value;
+};
+
+struct rtw_params_req {
+    uint32_t id;
+    uint32_t _pad;
+    uint64_t params[RTW_PARAM_MAX];
 };
 
 struct rtw_stats {
@@ -120,6 +129,7 @@ struct rtw_list_req {
 
 _Static_assert(sizeof(struct rtw_create_req) == 136, "rtw_create_req ABI mismatch");
 _Static_assert(sizeof(struct rtw_io_req) == 24, "rtw_io_req ABI mismatch");
+_Static_assert(sizeof(struct rtw_params_req) == 72, "rtw_params_req ABI mismatch");
 _Static_assert(sizeof(struct rtw_stats) == 160, "rtw_stats ABI mismatch");
 _Static_assert(sizeof(struct rtw_list_entry) == 64, "rtw_list_entry ABI mismatch");
 _Static_assert(sizeof(struct rtw_list_req) == 520, "rtw_list_req ABI mismatch");
@@ -131,14 +141,15 @@ _Static_assert(sizeof(struct rtw_list_req) == 520, "rtw_list_req ABI mismatch");
 #define _IOWR(t, nr, T)      _IOC(_IOC_READ | _IOC_WRITE, (t), (nr), sizeof(T))
 #endif
 
-#define RTW_IOC_CREATE  _IOWR('R', 1, struct rtw_create_req)
-#define RTW_IOC_DESTROY _IOWR('R', 2, struct rtw_id_req)
-#define RTW_IOC_START   _IOWR('R', 3, struct rtw_id_req)
-#define RTW_IOC_STOP    _IOWR('R', 4, struct rtw_id_req)
-#define RTW_IOC_SET_IN  _IOWR('R', 5, struct rtw_io_req)
-#define RTW_IOC_GET_OUT _IOWR('R', 6, struct rtw_io_req)
-#define RTW_IOC_STATS   _IOWR('R', 7, struct rtw_stats)
-#define RTW_IOC_LIST    _IOWR('R', 8, struct rtw_list_req)
+#define RTW_IOC_CREATE     _IOWR('R', 1, struct rtw_create_req)
+#define RTW_IOC_DESTROY    _IOWR('R', 2, struct rtw_id_req)
+#define RTW_IOC_START      _IOWR('R', 3, struct rtw_id_req)
+#define RTW_IOC_STOP       _IOWR('R', 4, struct rtw_id_req)
+#define RTW_IOC_SET_IN     _IOWR('R', 5, struct rtw_io_req)
+#define RTW_IOC_GET_OUT    _IOWR('R', 6, struct rtw_io_req)
+#define RTW_IOC_STATS      _IOWR('R', 7, struct rtw_stats)
+#define RTW_IOC_LIST       _IOWR('R', 8, struct rtw_list_req)
+#define RTW_IOC_SET_PARAMS _IOWR('R', 9, struct rtw_params_req)
 
 static const char *tpl_name(uint32_t id)
 {
@@ -147,6 +158,8 @@ static const char *tpl_name(uint32_t id)
         return "periodic_io";
     case RTW_TPL_PID:
         return "pid";
+    case RTW_TPL_WATCHDOG:
+        return "watchdog";
     default:
         return "?";
     }
@@ -174,6 +187,8 @@ static uint32_t tpl_id(const char *s)
         return RTW_TPL_PERIODIC_IO;
     if (!strcmp(s, "pid"))
         return RTW_TPL_PID;
+    if (!strcmp(s, "watchdog"))
+        return RTW_TPL_WATCHDOG;
     return 0;
 }
 
@@ -313,6 +328,45 @@ static int cmd_set(int argc, char **argv)
     return 0;
 }
 
+static int cmd_params(int argc, char **argv)
+{
+    if (argc < 3) {
+        fprintf(stderr, "usage: rtctl params <id> [p0..p7]\n");
+        return 2;
+    }
+    struct rtw_params_req r;
+    memset(&r, 0, sizeof(r));
+    if (parse_u32(argv[2], &r.id)) {
+        fprintf(stderr, "rtctl: bad id\n");
+        return 2;
+    }
+    for (int i = 3; i < argc && i - 3 < RTW_PARAM_MAX; i++) {
+        char *end = NULL;
+        unsigned long long v = strtoull(argv[i], &end, 0);
+        if (!argv[i][0] || !end || *end) {
+            fprintf(stderr, "rtctl: bad param '%s'\n", argv[i]);
+            return 2;
+        }
+        r.params[i - 3] = (uint64_t)v;
+    }
+    if (argc - 3 > RTW_PARAM_MAX) {
+        fprintf(stderr, "rtctl: too many params (max %d)\n", RTW_PARAM_MAX);
+        return 2;
+    }
+
+    int fd = open_dev();
+    if (fd < 0)
+        return 1;
+    if (ioctl(fd, RTW_IOC_SET_PARAMS, &r) < 0) {
+        fprintf(stderr, "rtctl: params: %s\n", strerror(errno));
+        close(fd);
+        return 1;
+    }
+    printf("params id=%u: ok\n", r.id);
+    close(fd);
+    return 0;
+}
+
 static int cmd_get(int argc, char **argv)
 {
     if (argc < 3) {
@@ -402,10 +456,11 @@ static void usage(const char *argv0)
     printf("  %s create <name> <tpl> <prio> <cpu> <period_ms> [p0..p7] [dev:<name>]\n", argv0);
     printf("  %s start|stop|destroy <id>\n", argv0);
     printf("  %s set <id> <value>\n", argv0);
+    printf("  %s params <id> [p0..p7]\n", argv0);
     printf("  %s get <id>\n", argv0);
     printf("  %s stats <id>\n", argv0);
     printf("  %s list\n", argv0);
-    printf("templates: periodic_io, pid\n");
+    printf("templates: periodic_io, pid, watchdog\n");
 }
 
 int main(int argc, char **argv)
@@ -424,6 +479,8 @@ int main(int argc, char **argv)
         return cmd_id_op("destroy", RTW_IOC_DESTROY, argc, argv);
     if (!strcmp(argv[1], "set"))
         return cmd_set(argc, argv);
+    if (!strcmp(argv[1], "params"))
+        return cmd_params(argc, argv);
     if (!strcmp(argv[1], "get"))
         return cmd_get(argc, argv);
     if (!strcmp(argv[1], "stats"))

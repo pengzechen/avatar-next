@@ -38,6 +38,7 @@
 enum rtw_template_id {
     RTW_TPL_PERIODIC_IO = 1, /* 增益/偏置/限幅 */
     RTW_TPL_PID = 2,         /* 定点 PID */
+    RTW_TPL_WATCHDOG = 3,    /* 监控另一个 worker 的进度 */
 };
 
 enum rtw_state {
@@ -88,6 +89,12 @@ struct rtw_io_req {
     uint32_t _pad;
     uint64_t seq;   /* GET_OUT 出参：输出序号 */
     uint64_t value; /* SET_IN 入参 / GET_OUT 出参 */
+};
+
+struct rtw_params_req {
+    uint32_t id;
+    uint32_t _pad;
+    uint64_t params[RTW_PARAM_MAX];
 };
 
 struct rtw_stats {
@@ -144,14 +151,15 @@ struct rtw_list_req {
 #define _IOWR(t, nr, T)      _IOC(_IOC_READ | _IOC_WRITE, (t), (nr), sizeof(T))
 #endif
 
-#define RTW_IOC_CREATE  _IOWR('R', 1, struct rtw_create_req)
-#define RTW_IOC_DESTROY _IOWR('R', 2, struct rtw_id_req)
-#define RTW_IOC_START   _IOWR('R', 3, struct rtw_id_req)
-#define RTW_IOC_STOP    _IOWR('R', 4, struct rtw_id_req)
-#define RTW_IOC_SET_IN  _IOWR('R', 5, struct rtw_io_req)
-#define RTW_IOC_GET_OUT _IOWR('R', 6, struct rtw_io_req)
-#define RTW_IOC_STATS   _IOWR('R', 7, struct rtw_stats)
-#define RTW_IOC_LIST    _IOWR('R', 8, struct rtw_list_req)
+#define RTW_IOC_CREATE     _IOWR('R', 1, struct rtw_create_req)
+#define RTW_IOC_DESTROY    _IOWR('R', 2, struct rtw_id_req)
+#define RTW_IOC_START      _IOWR('R', 3, struct rtw_id_req)
+#define RTW_IOC_STOP       _IOWR('R', 4, struct rtw_id_req)
+#define RTW_IOC_SET_IN     _IOWR('R', 5, struct rtw_io_req)
+#define RTW_IOC_GET_OUT    _IOWR('R', 6, struct rtw_io_req)
+#define RTW_IOC_STATS      _IOWR('R', 7, struct rtw_stats)
+#define RTW_IOC_LIST       _IOWR('R', 8, struct rtw_list_req)
+#define RTW_IOC_SET_PARAMS _IOWR('R', 9, struct rtw_params_req)
 
 /* ── 内核内部 API ──────────────────────────────────────────── */
 
@@ -162,8 +170,12 @@ int rt_worker_destroy(uint32_t id);
 int rt_worker_start(uint32_t id);
 int rt_worker_stop(uint32_t id);
 int rt_worker_set_input(uint32_t id, uint64_t value);
+int rt_worker_set_params(uint32_t id, const uint64_t params[RTW_PARAM_MAX]);
 int rt_worker_get_output(uint32_t id, uint64_t *value, uint64_t *seq);
 int rt_worker_get_stats(uint32_t id, struct rtw_stats *out);
 int rt_worker_list(struct rtw_list_req *list);
+
+/* 供 watchdog 模板读目标 worker 的进度；返回 false 表示目标不存在。 */
+bool rt_worker_peek_progress(uint32_t id, uint64_t *seq, uint32_t *state);
 
 #endif /* RT_WORKER_H */

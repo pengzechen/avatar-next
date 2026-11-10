@@ -93,6 +93,7 @@ rtctl get 1            # (500-100)*1.0 = 400
 | `RTW_IOC_STOP` | 置 stop 并唤醒；worker 在下一个周期边界退出 |
 | `RTW_IOC_DESTROY` | 释放 worker 和绑定设备；RUNNING 时返回 EBUSY |
 | `RTW_IOC_SET_IN` | 原子更新输入值 |
+| `RTW_IOC_SET_PARAMS` | 运行期更新模板参数（seqlock，周期边界生效） |
 | `RTW_IOC_GET_OUT` | 读最近一次输出和序号 |
 | `RTW_IOC_STATS` | ticks/misses/overruns/exec_last/exec_max/... |
 | `RTW_IOC_LIST` | 列出所有 worker |
@@ -129,7 +130,52 @@ rtctl get 1            # (500-100)*1.0 = 400
 定点实现：积分限幅、微分取相邻周期误差差、输出限幅。输入/增益都有
 饱和限制，不会溢出 int64。
 
-## 五、rtdev 设备契约
+### `watchdog`
+
+参数：
+
+| 参数 | 含义 |
+|---|---|
+| `p0` | 被监控的 worker id |
+| `p1` | timeout_ns |
+| `p2` | 超时后的安全输出值 |
+
+目标 worker 的 `out_seq` 在 timeout 内没有变化 → 输出 `safe_output`；
+健康时输出 0。目标不存在或目标就是自己 → 直接输出安全值。watchdog
+自身的周期应明显小于 timeout。
+
+```sh
+# 监控 worker 1，50ms 没进展就输出 999，自己每 10ms 检查一次
+rtctl create wd watchdog 70 0 10 1 50000000 999
+rtctl start 2
+rtctl set 1 21
+rtctl get 2            # 目标在跑时 0
+rtctl stop 1
+sleep 1
+rtctl get 2            # 999
+```
+
+### 运行期参数
+
+```sh
+# 把 worker 1 的 gain 从 1.0 改成 2.0（其余参数清零）
+rtctl params 1 131072 0 0 1000
+```
+
+内核用 seqlock 保存参数：控制面写、RT worker 在周期开头取一致快照，
+不会读到半更新的一组参数。
+
+## 五、观察
+
+```sh
+cat /proc/rtworkers
+```
+
+输出每个 worker 的 `ID/NAME/STATE/TPL/PRIO/CPU/PERIOD/TICKS/MISSES/
+OVERRUNS/EXEC_MAX/WAKE_MAX/DEV`，不需要 ioctl。`rtps` 仍然显示它作为
+RT 内核任务；`rtctl list/stats` 提供更详细的信息。
+
+## 六、rtdev 设备契约
 
 ```c
 struct rtdev_ops {
@@ -149,25 +195,23 @@ struct rtdev_ops {
   `[rtdev] vout: N writes`。真实 GPIO/PWM/UART 驱动按同一契约注册即可；
   没有通过 RT 一致性要求的驱动不要注册 `rtdev_ops`。
 
-## 六、当前限制
+## 七、当前限制
 
 - x86_64 支持 1ms 周期；aarch64/riscv64 仍是 10ms 整数倍（未接 oneshot）。
 - hrtimer 是**每核**的：worker 的亲和性决定用哪颗核的 TSC-deadline；
   目标核不支持 oneshot 时，CREATE 会拒绝非 10ms 整数倍的周期。
 - 输入/输出走 ioctl，还没有共享内存 mmap 快路径；用户 supervisor 的
   `set/get` 是 syscall，但 **RT 循环本身不做 syscall**。
-- 模板参数只在 CREATE 时生效，还没有运行期原子更新参数。
-- 没有 `/proc/rtworkers`；用 `rtctl list` / `stats` 和 `rtps` 观察。
 - 没有真正的 GPIO/PWM/UART `rtdev`；V1 只有 `vout` 示例。
-- 模板数量：2（`periodic_io`、`pid`）；`fsm/event/watchdog` 是下一步。
+- 模板数量：3（`periodic_io`、`pid`、`watchdog`）；`fsm/event` 未做。
+- `watchdog` 目前只输出安全值，不自动停止目标；自动动作留给 supervisor。
 - RT 任务在 `STOP` 后最多要等一个周期才退出。
 
-## 七、下一步
+## 八、下一步
 
 1. 共享内存快路径：`/dev/rtctl` 增加 mmap 或复用 ION/dmabuf，把输入/输出
    放到用户态可映射的页里，消除 supervisor 的 ioctl 往返。
 2. 真实 rtdev：GPIO/PWM/ADC 先做，UART 走预分配 TX 环 + NORMAL drainer。
-3. `/proc/rtworkers` 与 rt-test 自动门禁。
-4. oneshot hrtimer，支持 1kHz。
-5. `fsm` / `event` / `watchdog` 模板。
-6. 运行期参数双缓冲更新。
+3. rt-test 增加模板/1ms 门禁。
+4. `fsm` / `event` 模板。
+5. `watchdog` 增加“自动停止目标/切安全输出”的动作。

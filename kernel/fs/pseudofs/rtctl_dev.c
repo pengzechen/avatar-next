@@ -109,6 +109,12 @@ int rtctl_dev_ioctl(int nid, uint64_t req, void *argp)
             return -RTCTL_EINVAL;
         return 0;
     }
+    case RTW_IOC_SET_PARAMS: {
+        struct rtw_params_req r;
+        if (!argp || copy_from_user_bytes(argp, &r, sizeof(r)) < 0)
+            return -RTCTL_EINVAL;
+        return rt_worker_set_params(r.id, r.params);
+    }
     default:
         return -RTCTL_EINVAL;
     }

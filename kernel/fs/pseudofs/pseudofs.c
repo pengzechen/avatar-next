@@ -448,7 +448,6 @@ static const pseudo_node_t g_nodes[] = {
     { "/dev/rtctl", PSEUDO_CHR, MODE_CHRW, (10U << 8) | 201U, NULL, null_write, rtctl_dev_ioctl, NULL, NULL, NULL,
       NULL },
 
-
     /* ── /proc 条目 ────────────────────────────────────── */
     { "/proc/self/exe", PSEUDO_LNK, MODE_LNK, 0, NULL, NULL, NULL, NULL, NULL, NULL, NULL },
     { "/proc/self/maps", PSEUDO_REG, MODE_REG, 0, maps_read, NULL, NULL, NULL, NULL, NULL, NULL },
@@ -457,6 +456,7 @@ static const pseudo_node_t g_nodes[] = {
     { "/proc/version", PSEUDO_REG, MODE_REG, 0, version_read, NULL, NULL, NULL, NULL, NULL, NULL },
     { "/proc/uptime", PSEUDO_REG, MODE_REG, 0, uptime_read, NULL, NULL, NULL, NULL, NULL, NULL },
     { "/proc/rtstat", PSEUDO_REG, MODE_REG, 0, rtstat_read, NULL, NULL, NULL, NULL, NULL, NULL },
+    { "/proc/rtworkers", PSEUDO_REG, MODE_REG, 0, rtworkers_read, NULL, NULL, NULL, NULL, NULL, NULL },
     { "/proc/mounts", PSEUDO_REG, MODE_REG, 0, mounts_read, NULL, NULL, NULL, NULL, NULL, NULL },
     /* 最近走过的 syscall。崩了先 cat 这个 —— 不需要重编, 不需要事先开开关。 */
     { "/proc/syscalls", PSEUDO_REG, MODE_REG, 0, syscalls_read, NULL, NULL, NULL, NULL, NULL, NULL },

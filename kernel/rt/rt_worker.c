@@ -45,12 +45,18 @@ struct rt_template_ops {
     const char *name;
     uint32_t id;
     void (*init)(struct rt_worker *w);
-    uint64_t (*step)(struct rt_worker *w, uint64_t in);
+    uint64_t (*step)(struct rt_worker *w, const uint64_t *params, uint64_t in);
 };
 
 struct rtw_pid_state {
     int64_t integ;
     int64_t prev_err;
+    bool initialized;
+};
+
+struct rtw_watchdog_state {
+    uint64_t last_seq;
+    uint64_t last_change_ns;
     bool initialized;
 };
 
@@ -62,6 +68,7 @@ struct rt_worker {
     uint64_t period_ns;
     uint64_t budget_ns;
     uint64_t params[RTW_PARAM_MAX];
+    volatile uint32_t params_seq; /* seqlock：偶数稳定，奇数更新中 */
 
     char name[RTW_NAME_LEN];
     char dev_name[RTW_DEV_NAME_LEN];
@@ -86,6 +93,7 @@ struct rt_worker {
 
     union {
         struct rtw_pid_state pid;
+        struct rtw_watchdog_state wd;
     } tpl;
 };
 
@@ -131,13 +139,14 @@ static void periodic_io_init(struct rt_worker *w)
     (void)w;
 }
 
-static uint64_t periodic_io_step(struct rt_worker *w, uint64_t in)
+static uint64_t periodic_io_step(struct rt_worker *w, const uint64_t *params, uint64_t in)
 {
+    (void)w;
     int64_t x = rtw_input((int64_t)in);
-    int64_t k = rtw_gain(w->params[0]);
+    int64_t k = rtw_gain(params[0]);
     int64_t y = (x * k) >> 16;
-    y = rtw_sat_add(y, (int64_t)w->params[1]);
-    y = rtw_clamp_i64(y, (int64_t)w->params[2], (int64_t)w->params[3]);
+    y = rtw_sat_add(y, (int64_t)params[1]);
+    y = rtw_clamp_i64(y, (int64_t)params[2], (int64_t)params[3]);
     return (uint64_t)y;
 }
 
@@ -150,17 +159,17 @@ static void pid_init(struct rt_worker *w)
     w->tpl.pid.initialized = false;
 }
 
-static uint64_t pid_step(struct rt_worker *w, uint64_t in)
+static uint64_t pid_step(struct rt_worker *w, const uint64_t *params, uint64_t in)
 {
-    int64_t sp = (int64_t)w->params[5];
+    int64_t sp = (int64_t)params[5];
     int64_t meas = rtw_input((int64_t)in);
     int64_t err = rtw_input(sp - meas);
-    int64_t kp = rtw_gain(w->params[0]);
-    int64_t ki = rtw_gain(w->params[1]);
-    int64_t kd = rtw_gain(w->params[2]);
-    int64_t out_min = (int64_t)w->params[3];
-    int64_t out_max = (int64_t)w->params[4];
-    int64_t ilim = (int64_t)w->params[6];
+    int64_t kp = rtw_gain(params[0]);
+    int64_t ki = rtw_gain(params[1]);
+    int64_t kd = rtw_gain(params[2]);
+    int64_t out_min = (int64_t)params[3];
+    int64_t out_max = (int64_t)params[4];
+    int64_t ilim = (int64_t)params[6];
 
     if (ilim <= 0)
         ilim = RTW_INPUT_LIMIT;
@@ -180,9 +189,59 @@ static uint64_t pid_step(struct rt_worker *w, uint64_t in)
     return (uint64_t)out;
 }
 
+/* ── 模板：watchdog ───────────────────────────────────────── */
+
+static void watchdog_init(struct rt_worker *w)
+{
+    w->tpl.wd.last_seq = 0;
+    w->tpl.wd.last_change_ns = 0;
+    w->tpl.wd.initialized = false;
+}
+
+/*
+   参数：[0]=target worker id [1]=timeout_ns [2]=safe_output
+   目标 worker 的 out_seq 在 timeout 内没有变化 → 输出 safe_output；
+   健康时输出 0。目标不存在/参数非法时直接输出 safe_output。
+*/
+static uint64_t watchdog_step(struct rt_worker *w, const uint64_t *params, uint64_t in)
+{
+    (void)in;
+
+    uint32_t target = (uint32_t)params[0];
+    uint64_t timeout = params[1];
+    uint64_t safe = params[2];
+    if (target == 0 || target == w->id)
+        return safe;
+
+    uint64_t seq = 0;
+    uint32_t state = RTW_STATE_FREE;
+    uint64_t now = timer_get_ns();
+    if (!rt_worker_peek_progress(target, &seq, &state))
+        return safe;
+    (void)state;
+
+    if (!w->tpl.wd.initialized) {
+        w->tpl.wd.last_seq = seq;
+        w->tpl.wd.last_change_ns = now;
+        w->tpl.wd.initialized = true;
+        return 0;
+    }
+
+    if (seq != w->tpl.wd.last_seq) {
+        w->tpl.wd.last_seq = seq;
+        w->tpl.wd.last_change_ns = now;
+        return 0;
+    }
+
+    if (timeout != 0 && now - w->tpl.wd.last_change_ns >= timeout)
+        return safe;
+    return 0;
+}
+
 static const struct rt_template_ops g_templates[] = {
     { "periodic_io", RTW_TPL_PERIODIC_IO, periodic_io_init, periodic_io_step },
     { "pid", RTW_TPL_PID, pid_init, pid_step },
+    { "watchdog", RTW_TPL_WATCHDOG, watchdog_init, watchdog_step },
 };
 
 static const struct rt_template_ops *rtw_template(uint32_t id)
@@ -209,6 +268,22 @@ static bool rtw_sleep_until(struct rt_worker *w, uint64_t deadline)
 }
 
 /* ── worker 主循环 ────────────────────────────────────────── */
+
+/* 周期开头取一份一致的参数快照；更新方用 seqlock（偶数稳定/奇数写入）。 */
+static void rtw_params_snapshot(struct rt_worker *w, uint64_t *out)
+{
+    for (;;) {
+        uint32_t s1 = __atomic_load_n(&w->params_seq, __ATOMIC_ACQUIRE);
+        if (s1 & 1U)
+            continue;
+        for (uint32_t i = 0; i < RTW_PARAM_MAX; i++)
+            out[i] = w->params[i];
+        __atomic_thread_fence(__ATOMIC_ACQUIRE);
+        uint32_t s2 = __atomic_load_n(&w->params_seq, __ATOMIC_ACQUIRE);
+        if (s1 == s2)
+            return;
+    }
+}
 
 static void rt_worker_entry(void *arg)
 {
@@ -239,7 +314,9 @@ static void rt_worker_entry(void *arg)
             __atomic_store_n(&w->wake_late_max_ns, late, __ATOMIC_RELAXED);
 
         uint64_t in = __atomic_load_n(&w->input, __ATOMIC_RELAXED);
-        uint64_t out = tpl->step(w, in);
+        uint64_t params[RTW_PARAM_MAX];
+        rtw_params_snapshot(w, params);
+        uint64_t out = tpl->step(w, params, in);
         __atomic_store_n(&w->output, out, __ATOMIC_RELEASE);
         __atomic_add_fetch(&w->out_seq, 1, __ATOMIC_RELEASE);
 
@@ -475,6 +552,47 @@ int rt_worker_set_input(uint32_t id, uint64_t value)
     __atomic_store_n(&w->input, value, __ATOMIC_RELEASE);
     spin_unlock_irqrestore(&g_rtw_lock, flags);
     return 0;
+}
+
+int rt_worker_set_params(uint32_t id, const uint64_t params[RTW_PARAM_MAX])
+{
+    if (!params)
+        return -RTW_EINVAL;
+
+    uint64_t flags;
+    spin_lock_irqsave(&g_rtw_lock, &flags);
+    struct rt_worker *w = rtw_get_locked(id);
+    if (!w) {
+        spin_unlock_irqrestore(&g_rtw_lock, flags);
+        return -RTW_ENOENT;
+    }
+
+    /* seqlock：奇数表示写入中；worker 在周期开头重试读取。 */
+    uint32_t seq = __atomic_load_n(&w->params_seq, __ATOMIC_RELAXED);
+    __atomic_store_n(&w->params_seq, seq + 1U, __ATOMIC_RELEASE);
+    for (uint32_t i = 0; i < RTW_PARAM_MAX; i++)
+        w->params[i] = params[i];
+    __atomic_store_n(&w->params_seq, seq + 2U, __ATOMIC_RELEASE);
+
+    spin_unlock_irqrestore(&g_rtw_lock, flags);
+    return 0;
+}
+
+bool rt_worker_peek_progress(uint32_t id, uint64_t *seq, uint32_t *state)
+{
+    uint64_t flags;
+    spin_lock_irqsave(&g_rtw_lock, &flags);
+    struct rt_worker *w = rtw_get_locked(id);
+    if (!w) {
+        spin_unlock_irqrestore(&g_rtw_lock, flags);
+        return false;
+    }
+    if (seq)
+        *seq = __atomic_load_n(&w->out_seq, __ATOMIC_RELAXED);
+    if (state)
+        *state = __atomic_load_n(&w->state, __ATOMIC_ACQUIRE);
+    spin_unlock_irqrestore(&g_rtw_lock, flags);
+    return true;
 }
 
 int rt_worker_get_output(uint32_t id, uint64_t *value, uint64_t *seq)

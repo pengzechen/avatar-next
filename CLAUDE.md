@@ -205,7 +205,8 @@ avatar/
 ### 实时（realtime）
 
 - **用户可配置 RT worker（模板）**: `docs/realtime/RT_TEMPLATES.md` -
-  `/dev/rtctl` 的 ioctl ABI、`periodic_io`/`pid` 模板、`rtdev` 设备契约
+  `/dev/rtctl` 的 ioctl ABI、`periodic_io`/`pid`/`watchdog` 模板、运行期
+  参数 seqlock 更新、`/proc/rtworkers`、`rtdev` 设备契约
   （`setup/safe_state` 在控制面，`write/read` 在 RT 面且必须无分配/无睡眠）。
   x86_64 用 LAPIC TSC-deadline hrtimer，支持 1ms 周期；aarch64/riscv64
   暂回退到 100Hz tick（10ms 整数倍）。用户态工具 `/bin/rtctl`。
