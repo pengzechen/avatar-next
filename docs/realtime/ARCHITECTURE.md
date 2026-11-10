@@ -1,6 +1,6 @@
 # 实时、Linux syscall 兼容与虚拟化的统一任务/内存架构
 
-**状态**：架构定稿，R1/R2 已完成（2026-11-10）；R0/R3+ 待做
+**状态**：架构定稿，R0/R1/R2 已完成（2026-11-10）；R3+ 待做
 **目标分支**：`realtime`（从 `dev` 拉出，只承载实时化改造）
 
 ## 一、目标与非目标
@@ -99,7 +99,7 @@ RT 内核线程可以用内核 API，但必须遵守：
 
 | 阶段 | 内容 | 状态 |
 |---|---|---|
-| R0 | 延迟测量：IRQ-off/preempt-off/唤醒延迟/VM-exit 延迟 | 待做 |
+| R0 | 延迟测量：wake→run / syscall / tick gap（IRQ-off 近似） | ✅ 已完成 |
 | R1 | task domain / sched policy / 创建接口（本文件） | ✅ 已完成 |
 | R2 | per-CPU RT 队列 + 优先级抢占 + FIFO/RR tick | ✅ 已完成 |
 | R3 | 内核可抢占：有界 IRQ-off、长锁拆分、ISR 减负 | 待做 |
@@ -131,5 +131,31 @@ RT 内核线程可以用内核 API，但必须遵守：
   `make PLATFORM=<p> RT_TEST=1 LOG=info run`，串口应出现
   `RT SCHED TEST: PASS`。
 
-**后续验收门禁**：R0 延迟指标；VMM helper/多 VM 回归；R3 的有界
-IRQ-off 后才对外宣称实时能力。
+## 九、实现与验证（R0）
+
+- `task_t` 增加 `wake_ns`；
+- 新增 `kernel/debug/rt_latency.c` + `include/rt_latency.h`：
+  - `wake→run`：`sched_unblock()` 记录唤醒时刻，`sched_schedule()`
+    切入时结算（wake_max / wake_last / wake_n）；
+  - `syscall`：用户 syscall 返回前结算内核执行时长，`task_yield()` 和
+    `task_block()` 期间的等待不计入；
+  - `tick_gap`：相邻 timer tick 间隔，作为“长关中断/长临界区”的近似
+    指标（正常约 10ms，明显变大说明 timer 被拖住）。
+- `/proc/rtstat` 输出每 CPU 的 `wake_* / syscall_* / tick_gap_*`。
+- 真正的 irq-off 起止 trace 仍留到 R0.5（需要在 arch_irq_* 原语上做
+  低开销采样）。
+
+**基线**：三架构数值与复跑方法见 `docs/realtime/R0_BASELINE.md`。
+
+**验证**：三架构 clean build；LTP 103/103（SMP=1 三架构）；
+`RT_TEST=1` 三架构 PASS；x86_64 启动 shell 后 `cat /proc/rtstat` 可读，
+示例（`tick_gap_max` 包含启动期长临界区）：
+
+```text
+rtstat: per-CPU latency (ns)
+cpu wake_max wake_last wake_n syscall_max syscall_last syscall_n tick_gap_max tick_gap_last ticks
+cpu0 1008 788 2 33798673 285 312 35398811 10494224 1059
+```
+
+**后续验收门禁**：VMM helper/多 VM 回归；R3 的有界 IRQ-off 后才对外
+宣称实时能力。

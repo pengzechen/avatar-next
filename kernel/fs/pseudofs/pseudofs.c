@@ -28,6 +28,7 @@
 #include "driver/tpu.h"       /* tpu_present */
 #include "driver/npu.h"       /* npu_present */
 #include "task/cpu.h"         /* g_cpus / g_num_cpus / AVATAR_MAX_CPUS(/proc/uptime 的 idle 列) */
+#include "rt_latency.h"       /* /proc/rtstat：R0 延迟统计 */
 #include "driver/time.h"      /* timer_get_ns / TIMER_FREQUENCY_HZ */
 #include "syscall/io/epoll.h" /* EPOLLIN/EPOLLOUT：pseudo_poll 的兜底返回值 */
 #include "syscall/trace.h"    /* /proc/syscalls */
@@ -226,6 +227,17 @@ static int uptime_read(int nid, uint64_t off, void *buf, size_t len)
     pos += (size_t)pfs_puts(tmp, pos, sizeof(tmp), "\n");
 
     return pfs_copy_out(off, buf, len, tmp, pos);
+}
+
+/* /proc/rtstat —— R0 延迟统计（wake→run / syscall / tick gap） */
+static int rtstat_read(int nid, uint64_t off, void *buf, size_t len)
+{
+    (void)nid;
+    char tmp[1024];
+    int n = rt_latency_snprintf(tmp, sizeof(tmp));
+    if (n <= 0)
+        return 0;
+    return pfs_copy_out(off, buf, len, tmp, (size_t)n);
 }
 
 /* /proc/mounts */
@@ -436,6 +448,7 @@ static const pseudo_node_t g_nodes[] = {
     { "/proc/self/status", PSEUDO_REG, MODE_REG, 0, status_read, NULL, NULL, NULL, NULL, NULL, NULL },
     { "/proc/version", PSEUDO_REG, MODE_REG, 0, version_read, NULL, NULL, NULL, NULL, NULL, NULL },
     { "/proc/uptime", PSEUDO_REG, MODE_REG, 0, uptime_read, NULL, NULL, NULL, NULL, NULL, NULL },
+    { "/proc/rtstat", PSEUDO_REG, MODE_REG, 0, rtstat_read, NULL, NULL, NULL, NULL, NULL, NULL },
     { "/proc/mounts", PSEUDO_REG, MODE_REG, 0, mounts_read, NULL, NULL, NULL, NULL, NULL, NULL },
     /* 最近走过的 syscall。崩了先 cat 这个 —— 不需要重编, 不需要事先开开关。 */
     { "/proc/syscalls", PSEUDO_REG, MODE_REG, 0, syscalls_read, NULL, NULL, NULL, NULL, NULL, NULL },

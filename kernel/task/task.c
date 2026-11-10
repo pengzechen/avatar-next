@@ -889,7 +889,24 @@ task_t *task_create_vcpu(const char *name, void (*entry)(void *), void *arg, uin
 
 void task_yield(void)
 {
+    task_t *cur = task_current();
+
+    /*
+       主动 yield 的这段时间不算 syscall 内核执行时长（与 task_block 一致）。
+       否则 tty 输入这类“syscall 里循环 task_yield 等待数据”会把等待时间
+       算进 syscall 延迟，/proc/rtstat 的 syscall_max 会被输入等待淹没。
+    */
+    if (cur && cur->is_user_process && cur->sc_entry_ns != 0) {
+        uint64_t now = task_get_ns();
+        if (now > cur->sc_entry_ns)
+            cur->stime_ns += now - cur->sc_entry_ns;
+        cur->sc_entry_ns = 0;
+    }
+
     sched_schedule();
+
+    if (cur && cur->is_user_process)
+        cur->sc_entry_ns = task_get_ns();
 }
 
 /* ── task_exit ───────────────────────────────────────────── */

@@ -24,6 +24,7 @@
 #include "arch.h"
 #include "exception.h"
 #include "syscall_abi.h"
+#include "rt_latency.h"
 #include "vfs.h"
 #include <ext4.h>
 #include <ext4_errno.h>
@@ -1542,7 +1543,10 @@ void syscall_handler(trap_frame_t *frame)
 
     /* 结束 syscall stime 计时(EXIT 类 syscall 不会到达这里) */
     if (current && current->is_user_process && current->sc_entry_ns != 0) {
-        current->stime_ns += kernel_get_ns() - current->sc_entry_ns;
+        uint64_t now_ns = kernel_get_ns();
+        uint64_t dur_ns = (now_ns > current->sc_entry_ns) ? (now_ns - current->sc_entry_ns) : 0;
+        rt_latency_syscall(dur_ns);
+        current->stime_ns += dur_ns;
         current->sc_entry_ns = 0;
     }
 

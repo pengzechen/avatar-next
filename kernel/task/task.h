@@ -161,10 +161,11 @@ typedef struct task {
     uint64_t user_stack_size; /* 用户栈大小 */
     uint64_t ctid_ptr;        /* CLONE_CHILD_CLEARTID 地址 (0=无) */
 
-    /* === CPU 时间统计 === */
+    /* === CPU 时间统计 / 延迟测量 === */
     uint64_t utime_ns;  /* 用户态 CPU 时间(纳秒), task_exit 前计算 */
     uint64_t stime_ns;  /* 内核态 CPU 时间(纳秒), syscall 路径累积 */
     uint64_t create_ns; /* 进程创建时间戳(用于 utime = wall−stime) */
+    uint64_t wake_ns;   /* 被唤醒时刻；调度器切入时算 wake→run 延迟 */
 
     /* === 信号系统（处置进程级；pending/blocked 每线程）=== */
     signal_struct_t *sig;       /* NULL = 全部 SIG_DFL（懒分配） */

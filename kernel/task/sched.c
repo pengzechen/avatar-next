@@ -39,6 +39,8 @@
 #include "assert.h"
 #include "task/preempt.h"
 #include "task/itimer.h"
+#include "driver/time.h"
+#include "rt_latency.h"
 #if ARCH_AARCH64 || ARCH_X86_64
 #include "exception.h"
 #endif
@@ -415,6 +417,7 @@ void sched_unblock(task_t *task)
         return;
     }
 
+    rt_latency_wake(task); /* 记录 wake→run 的起点 */
     task->state = TASK_READY;
     if (task->on_cpu) {
         /* 还在目标核上：切出时由 sched_schedule() 补入队列 */
@@ -568,6 +571,9 @@ void sched_schedule(void)
     if (use_rq_lock)
         spin_unlock(&c->rq_lock);
 
+    if (next != prev)
+        rt_latency_run(next, timer_get_ns());
+
     /* 无需切换(唯一任务或队空只有 idle) */
     if (next == prev) {
         prev->state = TASK_RUNNING;
@@ -660,6 +666,8 @@ void sched_tick(void)
     */
     cpu_t *c = cpu_current();
     task_t *cur = c->current_task;
+
+    rt_latency_tick(c->cpu_id, timer_get_ns());
 
     if (!cur || cur == c->idle_task) {
         c->need_resched = true;
