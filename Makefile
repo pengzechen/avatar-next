@@ -902,6 +902,11 @@ TASKIPC_BIN      := $(BUILD_DIR)/task-ipc
 TASKCOMP_CC      := $(ARCH)-linux-musl-gcc
 TASKCOMP_BIN     := $(BUILD_DIR)/task-completion
 
+# rtps：/proc/<pid>/status 的 RT 任务观察器（apps/c/rtps.c）。
+# 静态链接，装进 /bin/rtps；busybox ps 看不到 Policy/RtPrio，用这个看。
+RTPS_CC          := $(ARCH)-linux-musl-gcc
+RTPS_BIN         := $(BUILD_DIR)/rtps
+
 # dmatest：dma-buf / dma-heap（P0）的验收程序。纯 ioctl + mmap，与架构无关。
 # 只在 DMA=1 时构建/安装 —— 否则节点根本不存在，装了也是白装。
 DMATEST_CC       := $(ARCH)-linux-musl-gcc
@@ -1100,7 +1105,7 @@ check-submodules:
 	fi
 
 # ─── §10  顶层目标声明 ───────────────────────────────────────────────────────────
-.PHONY: all clean clean-all help klog kernel run run-net rootfs run-fs run-fs-mbr test-fat test-pthread test-mutex test-vmm test-guest-linux test-ltp env epoll-perf test-epoll-perf format format-check submodules check-submodules
+.PHONY: all clean clean-all help klog kernel run run-net rootfs run-fs run-fs-mbr test-fat test-pthread test-mutex test-vmm test-guest-linux test-ltp env epoll-perf test-epoll-perf rtps format format-check submodules check-submodules
 
 all: klog
 
@@ -1308,6 +1313,13 @@ $(TASKCOMP_BIN): apps/c/task_completion_test.c
 	$(TASKCOMP_CC) -O2 -Wall -Wextra -static $< -o $@
 	@echo "task-completion app created: $@"
 
+# §11c-2  rtps：/proc/<pid>/status 的 RT 任务观察器，静态链接
+rtps: $(RTPS_BIN)
+
+$(RTPS_BIN): apps/c/rtps.c
+	$(RTPS_CC) -O2 -Wall -Wextra -static $< -o $@
+	@echo "rtps app created: $@"
+
 # §11c-2  vmm-run：静态链接，免得还依赖 rootfs 里的动态 loader
 $(VMM_RUN_BIN): apps/c/vmm_run.c
 	$(ARCH)-linux-musl-gcc -O2 -Wall -Wextra -static $< -o $@
@@ -1502,7 +1514,7 @@ test-epoll-perf: epoll-perf kernel $(ROOTFS_IMG)
 # 创建 ext4 rootfs 镜像（无需 sudo）
 # 依赖：Host 已安装 e2fsprogs（mkfs.ext4 >= 1.43 支持 -d 选项）
 # 每次 apps 变动时自动重建；切换架构直接使用各自的镜像文件，无需 make clean
-$(ROOTFS_IMG): Makefile $(APPS_BINS) $(APPS_C_ELFS) $(LTP_BINS) $(EPOLL_PERF_BIN) $(RACETEST_BIN) $(TASKIPC_BIN) $(TASKCOMP_BIN) $(DMATEST_BIN) $(DRMTEST_BIN) $(VMM_RUN_BIN) $(NGINX_BIN) $(GUEST_LINUX_FILES) $(GUEST_GIC_STAMP) | $(BUILD_DIR)
+$(ROOTFS_IMG): Makefile $(APPS_BINS) $(APPS_C_ELFS) $(LTP_BINS) $(EPOLL_PERF_BIN) $(RACETEST_BIN) $(TASKIPC_BIN) $(TASKCOMP_BIN) $(RTPS_BIN) $(DMATEST_BIN) $(DRMTEST_BIN) $(VMM_RUN_BIN) $(NGINX_BIN) $(GUEST_LINUX_FILES) $(GUEST_GIC_STAMP) | $(BUILD_DIR)
 	@echo "=== Building rootfs for $(ARCH): $(ROOTFS_IMG) ==="
 	@rm -rf $(ROOTFS_STAGE)
 	@mkdir -p $(ROOTFS_STAGE)/bin
@@ -1568,6 +1580,12 @@ $(ROOTFS_IMG): Makefile $(APPS_BINS) $(APPS_C_ELFS) $(LTP_BINS) $(EPOLL_PERF_BIN
 		cp $(RACETEST_BIN) $(ROOTFS_STAGE)/bin/racetest; \
 		chmod +x $(ROOTFS_STAGE)/bin/racetest; \
 		echo "  [racetest installed → /bin/racetest]"; \
+	fi
+	@if [ -f "$(RTPS_BIN)" ]; then \
+		mkdir -p $(ROOTFS_STAGE)/bin; \
+		cp $(RTPS_BIN) $(ROOTFS_STAGE)/bin/rtps; \
+		chmod +x $(ROOTFS_STAGE)/bin/rtps; \
+		echo "  [rtps installed → /bin/rtps]"; \
 	fi
 	@if [ -f "$(TASKIPC_BIN)" ]; then \
 		mkdir -p $(ROOTFS_STAGE)/bin; \
@@ -1977,6 +1995,7 @@ help:
 	@echo "                e.g. make PLATFORM=qemu-virt-x86_64 ROOTFS_MBR=1 LOG=info test-fat"
 	@echo "  test-pthread  Copy dynamic rootfs from imgs/ and run pthread_test"
 	@echo "  test-mutex    Copy dynamic rootfs from imgs/ and run mutex_test (futex-based)"
+	@echo "  rtps          Build the userspace RT task viewer (installed as /bin/rtps)"
 	@echo "  test-vmm      Build with VMM_TEST=1 and run VMM 3-thread switch test"
 	@echo "  env           Fetch LTP source → tests/ltp/src (needed by tests/ltp/build.sh)"
 	@echo "  test-panic    Build with PANIC_TEST=1: panic on purpose in the ELF"

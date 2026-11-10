@@ -109,6 +109,32 @@ static size_t format_status(char *tmp, size_t bufsz, task_t *t)
     u64_to_dec(nbuf, t->parent_id);
     pos += (size_t)pfs_puts(tmp, pos, bufsz, nbuf);
 
+    /*
+       调度策略/RT 优先级。数值与 Linux 一致：0=SCHED_NORMAL,
+       1=SCHED_FIFO, 2=SCHED_RR，方便用户态工具按 Linux 习惯解析。
+       非 RT 任务的 RtPrio 恒为 0。
+    */
+    const char *pol_name;
+    switch (t->sched_policy) {
+    case TASK_SCHED_FIFO:
+        pol_name = "SCHED_FIFO";
+        break;
+    case TASK_SCHED_RR:
+        pol_name = "SCHED_RR";
+        break;
+    default:
+        pol_name = "SCHED_NORMAL";
+        break;
+    }
+    pos += (size_t)pfs_puts(tmp, pos, bufsz, "\nPolicy:\t");
+    u64_to_dec(nbuf, (uint64_t)t->sched_policy);
+    pos += (size_t)pfs_puts(tmp, pos, bufsz, nbuf);
+    pos += (size_t)pfs_puts(tmp, pos, bufsz, " (");
+    pos += (size_t)pfs_puts(tmp, pos, bufsz, pol_name);
+    pos += (size_t)pfs_puts(tmp, pos, bufsz, ")\nRtPrio:\t");
+    u64_to_dec(nbuf, (uint64_t)t->rt_priority);
+    pos += (size_t)pfs_puts(tmp, pos, bufsz, nbuf);
+
     uint64_t vm_stk_kb = TASK_STACK_SIZE / 1024u;
     uint64_t vm_size_kb = vm_stk_kb;
     if (t->is_user_process) {

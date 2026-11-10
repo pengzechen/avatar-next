@@ -31,6 +31,35 @@ make -C tests rt-test
 
 采集环境：QEMU `q35 -enable-kvm -cpu host`，100 Hz tick，`LOG=info`。
 
+## 观察 RT 任务
+
+`/proc/<pid>/status` 增加两个字段（数值与 Linux 一致：0=SCHED_NORMAL,
+1=SCHED_FIFO, 2=SCHED_RR）：
+
+```text
+Policy:	1 (SCHED_FIFO)
+RtPrio:	1
+```
+
+用户态工具 `/bin/rtps`（`apps/c/rtps.c`）按 PID 列出所有任务，RT 行尾
+标 `[RT]`；`rtps -r` 只看 RT：
+
+```text
+/ # rtps
+  PID  PPID POLICY        PRIO S NAME
+    1     0 SCHED_FIFO       1 S klogd  [RT]
+    2     0 SCHED_NORMAL     0 R net-poll
+    3     0 SCHED_NORMAL     0 S busybox
+
+/ # rtps -r
+  PID  PPID POLICY        PRIO S NAME
+    1     0 SCHED_FIFO       1 S klogd  [RT]
+```
+
+`rtps` 随 rootfs 自动安装（`make ... rootfs`）；只编它用
+`make PLATFORM=<p> rtps`。busybox `ps` 仍然只显示 PID/STATE/COMMAND，
+不显示调度策略。
+
 ## 改造前基线
 
 ### 场景一：RT ping-pong（wake→run）
