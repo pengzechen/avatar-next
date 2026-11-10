@@ -22,6 +22,10 @@
 #include "driver/time.h"
 #include "exception.h"
 #include "klog.h"
+#include "rt_worker.h"
+#include "hrtimer.h"
+#include "mm_vm.h"
+#include "string.h"
 
 #define RT_TEST_ITERS 100
 
@@ -121,6 +125,202 @@ static void normal_preemptor_worker(void *arg)
     task_exit();
 }
 
+/* ── 场景 5：模板 worker + 共享页（/dev/rtctl 的内核侧）──────── */
+
+#define RTW_TEST_WAIT_NS   2000000000ULL /* 单个阶段的最长等待 */
+#define RTW_TEST_WINDOW_NS 200000000ULL  /* 周期频率统计窗口 */
+
+static bool rtw_test_wait_seq(volatile struct rtw_shm *shm, uint64_t want, uint64_t timeout_ns)
+{
+    uint64_t deadline = timer_get_ns() + timeout_ns;
+
+    while (__atomic_load_n(&shm->out_seq, __ATOMIC_ACQUIRE) < want) {
+        if (timer_get_ns() >= deadline)
+            return false;
+        task_yield();
+    }
+    return true;
+}
+
+static bool rtw_test_wait_state(uint32_t id, uint32_t want, uint64_t timeout_ns)
+{
+    uint64_t deadline = timer_get_ns() + timeout_ns;
+
+    for (;;) {
+        struct rtw_stats st;
+        if (rt_worker_get_stats(id, &st) == 0 && st.state == want)
+            return true;
+        if (timer_get_ns() >= deadline)
+            return false;
+        task_yield();
+    }
+}
+
+/*
+   验证：create → 共享页 → start → 1ms/10ms 周期 → 运行期参数 →
+   stop → destroy。x86 oneshot 可用时按 1ms 跑，否则按 10ms tick 跑。
+   共享页在 destroy 后仍可读（页不归还 PMM），但 magic 必须清零。
+*/
+static void run_rt_worker_test(void)
+{
+    bool ok = true;
+    bool started = false;
+    const char *phase = "create";
+    uint32_t id = 0;
+    volatile struct rtw_shm *shm = NULL;
+    uint64_t last_ticks = 0;
+    uint64_t last_exec_max = 0;
+    uint64_t last_misses = 0;
+    /*
+       只有 oneshot 能在这个早期自测窗口里兑现周期睡眠：tick 回调要到
+       kernel_main 末尾（所有任务创建完之后）才启用，aarch64/riscv 这段
+       窗口里 g_system_ticks 还是 0。没有 oneshot 的架构只验证
+       create/共享页/start/stop/destroy 的生命周期，不验证周期频率。
+    */
+    bool periodic = hrtimer_cpu_oneshot_supported(0);
+    uint64_t period = periodic ? 1000000ULL : 10000000ULL;
+
+    timer_set_tick_cb(sched_tick);
+
+    struct rtw_create_req cfg;
+    memset(&cfg, 0, sizeof(cfg));
+    cfg.abi_version = RTW_ABI_VERSION;
+    cfg.template_id = RTW_TPL_PERIODIC_IO;
+    memcpy(cfg.name, "rtw-gate", 9);
+    cfg.priority = 50;
+    cfg.cpu = 0;
+    cfg.period_ns = period;
+    cfg.budget_ns = period / 2;
+    cfg.params[0] = 131072; /* gain = 2.0 */
+
+    int rc = rt_worker_create(&cfg);
+    if (rc <= 0) {
+        ok = false;
+        goto out;
+    }
+    id = (uint32_t)rc;
+
+    uint64_t shm_pa = 0;
+    uint64_t shm_size = 0;
+    phase = "shm";
+    if (rt_worker_shm_lookup(id, &shm_pa, &shm_size) < 0 || shm_size != PAGE_SIZE) {
+        ok = false;
+        goto out;
+    }
+    shm = phys_to_virt(shm_pa);
+    if (shm->magic != RTSHM_MAGIC || shm->version != RTSHM_VERSION || shm->params[0] != 131072) {
+        ok = false;
+        goto out;
+    }
+    __atomic_store_n(&shm->input, 21, __ATOMIC_RELEASE);
+
+    phase = "start";
+    if (rt_worker_start(id) != 0) {
+        ok = false;
+        goto out;
+    }
+    started = true;
+
+    phase = "run";
+    struct rtw_stats st;
+    if (periodic) {
+        if (!rtw_test_wait_seq(shm, 5, RTW_TEST_WAIT_NS) || __atomic_load_n(&shm->output, __ATOMIC_ACQUIRE) != 42) {
+            ok = false;
+            goto out;
+        }
+        if (rt_worker_get_stats(id, &st) < 0 || st.state != RTW_STATE_RUNNING || st.ticks < 5) {
+            ok = false;
+            goto out;
+        }
+    } else if (rt_worker_get_stats(id, &st) < 0 || st.state != RTW_STATE_RUNNING ||
+               __atomic_load_n(&shm->state, __ATOMIC_ACQUIRE) != RTW_STATE_RUNNING) {
+        ok = false;
+        goto out;
+    }
+
+    /* 运行期参数：gain 2.0 → 3.0，共享页镜像必须同步。 */
+    phase = "params";
+    uint64_t params[RTW_PARAM_MAX];
+    memset(params, 0, sizeof(params));
+    params[0] = 196608;
+    if (rt_worker_set_params(id, params) != 0 || __atomic_load_n(&shm->params[0], __ATOMIC_ACQUIRE) != 196608 ||
+        (__atomic_load_n(&shm->params_seq, __ATOMIC_ACQUIRE) & 1U) != 0) {
+        ok = false;
+        goto out;
+    }
+
+    if (periodic) {
+        /* 新参数在下一个周期生效：输入 21 × gain 3.0 = 63。 */
+        uint64_t base = __atomic_load_n(&shm->out_seq, __ATOMIC_ACQUIRE);
+        if (!rtw_test_wait_seq(shm, base + 3, RTW_TEST_WAIT_NS) ||
+            __atomic_load_n(&shm->output, __ATOMIC_ACQUIRE) != 63) {
+            ok = false;
+            goto out;
+        }
+
+        /* 频率门禁：一个窗口内至少完成理论周期的 3/4。 */
+        phase = "rate";
+        uint64_t win_start = timer_get_ns();
+        uint64_t tick_start = __atomic_load_n(&shm->ticks, __ATOMIC_ACQUIRE);
+        while (timer_get_ns() - win_start < RTW_TEST_WINDOW_NS)
+            task_yield();
+        uint64_t win_ns = timer_get_ns() - win_start;
+        uint64_t win_ticks = __atomic_load_n(&shm->ticks, __ATOMIC_ACQUIRE) - tick_start;
+        if (win_ticks < (win_ns / period) * 3 / 4) {
+            KLOG_ERROR("=== RT WORKER TEST: rate %llu ticks in %llu ns (period %llu) ===\n",
+                       (unsigned long long)win_ticks, (unsigned long long)win_ns, (unsigned long long)period);
+            ok = false;
+            goto out;
+        }
+    }
+
+    last_ticks = __atomic_load_n(&shm->ticks, __ATOMIC_ACQUIRE);
+    last_exec_max = __atomic_load_n(&shm->exec_max_ns, __ATOMIC_ACQUIRE);
+    last_misses = __atomic_load_n(&shm->misses, __ATOMIC_ACQUIRE);
+
+    phase = "stop";
+    if (rt_worker_stop(id) != 0 || !rtw_test_wait_state(id, RTW_STATE_STOPPED, RTW_TEST_WAIT_NS) ||
+        __atomic_load_n(&shm->state, __ATOMIC_ACQUIRE) != RTW_STATE_STOPPED) {
+        ok = false;
+        goto out;
+    }
+    started = false;
+
+    phase = "destroy";
+    if (rt_worker_destroy(id) != 0) {
+        ok = false;
+        goto out;
+    }
+    uint32_t destroyed_id = id;
+    id = 0;
+    uint64_t dummy_pa = 0;
+    uint64_t dummy_size = 0;
+    if (rt_worker_shm_lookup(destroyed_id, &dummy_pa, &dummy_size) >= 0 || shm->magic != 0 ||
+        __atomic_load_n(&shm->state, __ATOMIC_ACQUIRE) != RTW_STATE_FREE) {
+        ok = false;
+        goto out;
+    }
+
+out:
+    if (id != 0) {
+        if (started) {
+            rt_worker_stop(id);
+            rtw_test_wait_state(id, RTW_STATE_STOPPED, RTW_TEST_WAIT_NS);
+        }
+        rt_worker_destroy(id);
+    }
+
+    if (ok) {
+        KLOG_INFO("=== RT WORKER TEST: PASS period=%llu periodic=%d ticks=%llu misses=%llu exec_max=%llu ===\n",
+                  (unsigned long long)period, (int)periodic, (unsigned long long)last_ticks,
+                  (unsigned long long)last_misses, (unsigned long long)last_exec_max);
+    } else {
+        KLOG_ERROR("=== RT WORKER TEST: FAIL (%s) ===\n", phase);
+    }
+
+    timer_set_tick_cb(NULL);
+}
+
 void run_rt_sched_test(void)
 {
     KLOG_INFO("=== RT SCHED TEST ===\n");
@@ -194,6 +394,7 @@ void run_rt_sched_test(void)
     timer_set_tick_cb(NULL);
 
     if (preempt_pass) {
+        run_rt_worker_test();
         KLOG_INFO("=== RT SCHED TEST: PASS ===\n");
     } else {
         KLOG_ERROR("=== RT SCHED TEST: FAIL (immediate preemption) ===\n");

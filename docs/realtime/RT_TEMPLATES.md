@@ -208,6 +208,10 @@ cat /proc/rtworkers
 OVERRUNS/EXEC_MAX/WAKE_MAX/DEV`，不需要 ioctl。`rtps` 仍然显示它作为
 RT 内核任务；`rtctl list/stats` 提供更详细的信息。
 
+回归门禁：`make -C tests rt-test` 会跑模板 worker 的 create → 共享页 →
+start → 运行期参数 → stop → destroy，并在 x86 KVM 上断言 1ms 周期与
+频率（见 `tests/suites/rt_test.py` 的场景 5）。
+
 ## 六、rtdev 设备契约
 
 ```c
@@ -244,6 +248,5 @@ struct rtdev_ops {
 ## 八、下一步
 
 1. 真实 rtdev：GPIO/PWM/ADC 先做，UART 走预分配 TX 环 + NORMAL drainer。
-2. rt-test 增加模板/1ms 门禁。
-3. `fsm` / `event` 模板。
-4. `watchdog` 增加“自动停止目标/切安全输出”的动作。
+2. `fsm` / `event` 模板。
+3. `watchdog` 增加“自动停止目标/切安全输出”的动作。

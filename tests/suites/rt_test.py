@@ -6,7 +6,11 @@ rt-test suite — RT 调度语义与唤醒/抢占延迟。
   - `RT_TEST=1`（tests/unit-test/rt_sched_test.c）
     场景 1–3：RT 优先级顺序 / FIFO 不被 tick 轮转；
     场景 4：NORMAL 忙循环唤醒 RT probe，断言 10 轮平均延迟 < 2ms
-    （没有 self-IPI 立即抢占时该值≈tick 周期 5ms）。
+    （没有 self-IPI 立即抢占时该值≈tick 周期 5ms）；
+    场景 5：模板 worker 与共享页——create/start/运行期参数/stop/destroy。
+    有 oneshot 的架构（x86 KVM）按 1ms 实跑，200ms 内至少完成 3/4
+    理论周期；早期自测窗口里 tick 回调尚未启用，aarch64/riscv 只验
+    生命周期与共享页，不验周期频率。
   - `RT_DEMO=1`（tests/unit-test/rt_demo.c）
     5000 轮 RT ping-pong + 50 轮 NORMAL→RT 抢占，输出 min/avg/max。
 
@@ -23,6 +27,7 @@ from __future__ import annotations
 import re
 
 from framework.context import TestContext
+from framework.platforms import have_kvm
 from framework.report import Report
 
 SUITE = "rt-test"
@@ -39,6 +44,10 @@ PING_RE = re.compile(
 PREEMPT_RE = re.compile(
     rb"RT DEMO preempt: n=(\d+) min=(\d+) avg=(\d+) max=(\d+) ns"
 )
+WORKER_RE = re.compile(
+    rb"=== RT WORKER TEST: PASS period=(\d+) periodic=(\d+) ticks=(\d+) "
+    rb"misses=(\d+) exec_max=(\d+) ==="
+)
 
 FORBIDDEN = (
     rb"\[ASSERT\]",
@@ -48,6 +57,7 @@ FORBIDDEN = (
     rb"\[exception\] sync:",
     rb"=== BACKTRACE \(fault\)",
     rb"=== RT SCHED TEST: FAIL",
+    rb"=== RT WORKER TEST: FAIL",
     rb"RT DEMO: TIMEOUT",
     rb"RT DEMO: worker/waker create failed",
     rb"RT DEMO: probe/hog create failed",
@@ -74,6 +84,15 @@ def _rt(ctx: TestContext, report: Report, arch) -> None:
                 desc=f"{arch.name} RT 调度自测",
             )
 
+            worker = _parse(
+                q.wait_for(
+                    WORKER_RE,
+                    ctx.timeout(180),
+                    forbidden=FORBIDDEN,
+                    desc=f"{arch.name} 模板 worker 自测",
+                )
+            )
+
             ping = _parse(
                 q.wait_for(
                     PING_RE,
@@ -95,12 +114,35 @@ def _rt(ctx: TestContext, report: Report, arch) -> None:
 
         ping_n, ping_min, ping_avg, ping_max = ping
         pre_n, pre_min, pre_avg, pre_max = pre
+        (
+            worker_period,
+            worker_periodic,
+            worker_ticks,
+            worker_misses,
+            worker_exec_max,
+        ) = worker
 
         print(
             f"         {arch.name}: ping-pong n={ping_n} "
             f"min/avg/max={ping_min}/{ping_avg}/{ping_max}ns; "
-            f"preempt n={pre_n} min/avg/max={pre_min}/{pre_avg}/{pre_max}ns"
+            f"preempt n={pre_n} min/avg/max={pre_min}/{pre_avg}/{pre_max}ns; "
+            f"worker period={worker_period}ns periodic={worker_periodic} "
+            f"ticks={worker_ticks} misses={worker_misses} "
+            f"exec_max={worker_exec_max}ns"
         )
+
+        if arch.name == "x86_64" and have_kvm():
+            assert worker_periodic == 1, "x86 KVM 下 worker 没有走 oneshot 周期"
+            assert worker_period == 1_000_000, (
+                f"x86 KVM 下 worker 周期是 {worker_period}ns，不是 1ms"
+                "（TSC-deadline oneshot 失效？）"
+            )
+            assert worker_ticks > 0, "worker 没有完成任何周期"
+        else:
+            # 早期自测窗口里 tick 回调尚未启用，非 oneshot 架构不验周期。
+            assert worker_periodic == 0, (
+                f"{arch.name} 没有 oneshot，不应声称完成了周期"
+            )
 
         assert ping_n == PING_ITERS, (
             f"ping-pong 只完成 {ping_n}/{PING_ITERS} 轮"

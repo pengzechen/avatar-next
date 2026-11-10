@@ -29,6 +29,12 @@ make -C tests rt-test
 设 1ms 上限、抢占平均值设 2ms 上限。具体数据仍看串口
 `=== RT DEMO ...` 行或 `tests/.artifacts/runs/<id>/logs/rt-test/`。
 
+场景 5 是模板 worker + 共享页门禁：create → 共享页参数/输入 →
+start → 运行期参数 → stop → destroy。有 oneshot 的架构（x86 KVM）
+同时断言周期为 1ms、200ms 窗口内至少完成 3/4 理论周期；aarch64/riscv
+的早期自测窗口里 tick 回调尚未启用，只验生命周期与共享页（标记
+`periodic=0`）。
+
 采集环境：QEMU `q35 -enable-kvm -cpu host`，100 Hz tick，`LOG=info`。
 
 ## 观察 RT 任务
