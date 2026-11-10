@@ -219,6 +219,8 @@ avatar/
   动 `kernel/task/rt_event.c`、`include/rt_worker.h` 的 ring ABI、
   `kernel/rt/rt_worker.c` 的 event 分支或 `apps/c/rtctl_abi.h` 前必读。
   门禁：`make -C tests rt-test` 与 `/bin/rt-event-test`（apps suite）。
+  用户态演示 `/bin/rt-demo`（event + 1ms 周期 + watchdog + /proc），
+  跑法见 `docs/realtime/RT_USER_DEMO.md`。
 - **RT 锁**: `docs/realtime/RT_LOCKS.md` - 普通 `mutex` 的 SMP 正确性修正
   （内部自旋锁 + 无丢唤醒），以及 `rt_mutex` 的直接优先级继承
   （`pi_priority`、按优先级排队、tick 不抢占被提升的持有者）。

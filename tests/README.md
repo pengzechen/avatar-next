@@ -103,7 +103,7 @@ tests/.artifacts/runs/<run-id>/
 | `boot` | 三架构不带 rootfs 启动 | 出现 `PMM: N reserved regions`；无 ASSERT/panic/invalid free |
 | `kernel` | `pmm-test` / `string-test` / `vmm-test` | 各自的 PASS 标记；三路线程标记齐全 |
 | `rt-test` | `rt-test` 变体（`RT_TEST=1 RT_DEMO=1`） | `RT SCHED TEST: PASS`；worker 共享页；mutex 并发 + rt_mutex PI（`RT MUTEX TEST: PASS`）；rt_event/event 模板（`RT EVENT TEST: PASS`）；demo 样本数完整，ping-pong/NORMAL→RT 平均延迟低于上限（self-IPI 立即抢占的回归门禁） |
-| `apps` | `apps/c`：pthread / mutex / rt-event | `[PASS]`/`[FAIL]` 行；`/bin/rt-event-test` 是 event 模板的 ioctl/mmap 端到端用例 |
+| `apps` | `apps/c`：pthread / mutex / rt-event / rt-demo | `[PASS]`/`[FAIL]` 行；`/bin/rt-event-test` 是 event 模板的 ioctl/mmap 端到端用例；`/bin/rt-demo` 是完整用户态 RT 演示 |
 | `racetest` | `apps/c/racetest.c`：slot/pipe/wake | 需 `SMP>1`；要求输出 `DONE`；**诊断 suite** |
 | `ltp-smoke` | `smoke.list` | 无新增 FAIL/BROK；子集每项都有结果 |
 | `ltp-mm` | `mm.list` | 同上；内存重构专用 |

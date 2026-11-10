@@ -125,3 +125,4 @@ def run(ctx: TestContext, report: Report, arches) -> None:
         _run_prebuilt(ctx, report, arch, "pthread", "/bin/pthread_test")
         _run_prebuilt(ctx, report, arch, "mutex", "/bin/mutex_test")
         _run_builtin(ctx, report, arch, "rt-event", "/bin/rt-event-test")
+        _run_builtin(ctx, report, arch, "rt-demo", "/bin/rt-demo")
