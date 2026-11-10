@@ -23,6 +23,7 @@
 #include "shared_page.h"
 #include "vfs.h"
 #include "driver/npu.h"
+#include "rt_worker.h" /* /dev/rtctl 共享页：mmap offset = worker_id << PAGE_SHIFT */
 
 extern task_t g_task_pool[];
 extern uint8_t g_stack_used[];
@@ -332,6 +333,40 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, int prot, int flags, int fd, uint
         */
         if (offset != 0 && fobj && fobj->type == FDT_VFS && fd_obj_file(fobj) &&
             fd_obj_file(fobj)->kind == VFS_FILE_PSEUDO) {
+            /*
+               /dev/rtctl 的共享页：mmap(..., fd, worker_id << PAGE_SHIFT)。
+               页面归 worker 槽位长期持有（PTE_KEEP），worker destroy 不清
+               物理页，只把 magic/state 清掉；旧映射不会指向已归还 PMM 的页。
+            */
+            if (strcmp(fd_obj_file(fobj)->path, "/dev/rtctl") == 0) {
+                if (current->uid != 0)
+                    return (uint64_t)(int64_t)-EPERM;
+
+                /*
+                   offset 是页对齐的令牌：worker_id << PAGE_SHIFT。
+                   musl 的 mmap()  wrapper 会先检查 offset 页对齐，非对齐值
+                   连 syscall 都到不了，所以不能直接用 worker id。
+                */
+                if ((offset & (PAGE_SIZE - 1)) != 0)
+                    return (uint64_t)(int64_t)-EINVAL;
+                uint32_t wid = (uint32_t)(offset >> PAGE_SHIFT);
+
+                uint64_t rpa = 0;
+                uint64_t rsz = 0;
+                int rc = rt_worker_shm_lookup(wid, &rpa, &rsz);
+                if (rc < 0)
+                    return (uint64_t)(int64_t)rc;
+                if (map_size > rsz) {
+                    KLOG_WARN("[mmap] rtctl off=0x%llx len=0x%llx exceeds page size\n", (unsigned long long)offset,
+                              (unsigned long long)map_size);
+                    return (uint64_t)(int64_t)-EINVAL;
+                }
+                rc = map_contiguous_buf(current, pgd, map_addr, map_size, rpa, flags, "rtctl", fd, offset);
+                if (rc != 0)
+                    return (uint64_t)(int64_t)rc;
+                return map_addr;
+            }
+
             uint64_t dpa = 0;
             uint64_t dsz = 0;
             if (rknpu_drm_mmap_lookup((void *)fd_obj_file(fobj), offset, &dpa, &dsz) == 0) {

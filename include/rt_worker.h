@@ -97,6 +97,43 @@ struct rtw_params_req {
     uint64_t params[RTW_PARAM_MAX];
 };
 
+/*
+   共享内存页（每个 worker 槽位一页，mmap offset = worker_id << PAGE_SHIFT）。
+
+   用户态 supervisor 可以 mmap 这块页，直接读写 input/output/params/stats，
+   控制环不需要 ioctl。内核与用户都只使用 64-bit 对齐的原子访问。
+   这是“每槽位持久页”：worker destroy 时只清空内容，不释放物理页，
+   所以旧映射不会指向已归还 PMM 的内存；重新 create 同槽位会重新初始化。
+*/
+#define RTSHM_MAGIC   0x52545753U /* "RTWS" */
+#define RTSHM_VERSION 1U
+
+struct rtw_shm {
+    uint32_t magic;
+    uint32_t version;
+    volatile uint32_t state;
+    uint32_t _pad0;
+
+    volatile uint64_t input;
+    volatile uint64_t output;
+    volatile uint64_t out_seq;
+
+    volatile uint64_t params[RTW_PARAM_MAX];
+    volatile uint32_t params_seq; /* 奇数 = 正在更新 */
+    uint32_t _pad1;
+
+    volatile uint64_t ticks;
+    volatile uint64_t misses;
+    volatile uint64_t overruns;
+    volatile uint64_t exec_last_ns;
+    volatile uint64_t exec_max_ns;
+    volatile uint64_t wake_late_last_ns;
+    volatile uint64_t wake_late_max_ns;
+    volatile uint64_t dev_writes;
+};
+
+_Static_assert(sizeof(struct rtw_shm) == 176, "rtw_shm ABI mismatch");
+
 struct rtw_stats {
     uint32_t id;
     uint32_t state;
@@ -177,5 +214,8 @@ int rt_worker_list(struct rtw_list_req *list);
 
 /* 供 watchdog 模板读目标 worker 的进度；返回 false 表示目标不存在。 */
 bool rt_worker_peek_progress(uint32_t id, uint64_t *seq, uint32_t *state);
+
+/* 共享页物理地址，供 /dev/rtctl mmap（offset = worker_id << PAGE_SHIFT）使用。 */
+int rt_worker_shm_lookup(uint32_t id, uint64_t *paddr, uint64_t *size);
 
 #endif /* RT_WORKER_H */

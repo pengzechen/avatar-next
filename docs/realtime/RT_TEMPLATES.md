@@ -84,6 +84,38 @@ rtctl set 1 100        # 测量值
 rtctl get 1            # (500-100)*1.0 = 400
 ```
 
+### 共享内存快路径
+
+每个 worker 槽位有一页共享内存（`struct rtw_shm`，176 字节，见
+`include/rt_worker.h`）。supervisor 可以 `mmap(/dev/rtctl, offset =
+worker_id << PAGE_SHIFT)` 后直接读写它，控制环完全不需要 ioctl/syscall：
+
+```sh
+rtctl shm 1            # 映射并打印 input/output/seq/ticks/misses/...
+rtctl shmset 1 21      # 通过共享页写 input，等同于 rtctl set 1 21
+```
+
+```c
+struct rtw_shm *s = mmap(NULL, 4096, PROT_READ | PROT_WRITE,
+                         MAP_SHARED, fd, (off_t)(id << 12));
+__atomic_store_n(&s->input, 21, __ATOMIC_RELEASE); /* 内核下次周期读到 */
+```
+
+- **offset 必须是 `worker_id << 12`**：musl 的 `mmap()` wrapper 会先检查
+  页对齐，直接传 worker id 连 syscall 都到不了；内核再从
+  `offset >> PAGE_SHIFT` 取 id。
+- 只有 uid 0 可以映射；页内布局的 `_Static_assert` 在用户态
+  `apps/c/rtctl.c` 里也有一份，改结构体必须两边同步。
+- 字段都是 64-bit 对齐：`input/output/out_seq`、各项统计、`state` 用
+  原子读写；`params` 配 `params_seq`（奇数 = 正在更新）seqlock，与 ioctl
+  路径一致。
+- **生命周期**：每槽位一页由 worker 槽位长期持有，`DESTROY` 只把
+  `magic/version/state` 清零、不归还物理页。所以 destroy 之后旧映射仍指向
+  有效内存，但 `magic != RTSHM_MAGIC`，supervisor 应视为失效；重新
+  `CREATE` 同一槽位会重新初始化这页。
+- `rtctl shm` 在 worker 不存在/destroy 之后报 `ENOENT`（lookup 失败），
+  这是控制面的判定；已经映射在进程里的旧页不会因此缺页。
+
 ## 三、ABI（`include/rt_worker.h`）
 
 | ioctl | 作用 |
@@ -97,6 +129,7 @@ rtctl get 1            # (500-100)*1.0 = 400
 | `RTW_IOC_GET_OUT` | 读最近一次输出和序号 |
 | `RTW_IOC_STATS` | ticks/misses/overruns/exec_last/exec_max/... |
 | `RTW_IOC_LIST` | 列出所有 worker |
+| `mmap(offset = id << PAGE_SHIFT)` | 映射该 worker 的共享页（uid 0；见上文） |
 
 **权限**：V1 只允许 uid 0。调用者传入的用户指针一律经
 `copy_from_user_bytes` / `copy_to_user_bytes`，不做裸解引用。
@@ -200,8 +233,9 @@ struct rtdev_ops {
 - x86_64 支持 1ms 周期；aarch64/riscv64 仍是 10ms 整数倍（未接 oneshot）。
 - hrtimer 是**每核**的：worker 的亲和性决定用哪颗核的 TSC-deadline；
   目标核不支持 oneshot 时，CREATE 会拒绝非 10ms 整数倍的周期。
-- 输入/输出走 ioctl，还没有共享内存 mmap 快路径；用户 supervisor 的
-  `set/get` 是 syscall，但 **RT 循环本身不做 syscall**。
+- 共享页每槽位 1 页，只给 uid 0；没有跨进程通知原语（eventfd/futex 意义上的
+  wake），supervisor 要等新输出只能轮询 `out_seq`。**RT 循环本身不做
+  syscall**。
 - 没有真正的 GPIO/PWM/UART `rtdev`；V1 只有 `vout` 示例。
 - 模板数量：3（`periodic_io`、`pid`、`watchdog`）；`fsm/event` 未做。
 - `watchdog` 目前只输出安全值，不自动停止目标；自动动作留给 supervisor。
@@ -209,9 +243,7 @@ struct rtdev_ops {
 
 ## 八、下一步
 
-1. 共享内存快路径：`/dev/rtctl` 增加 mmap 或复用 ION/dmabuf，把输入/输出
-   放到用户态可映射的页里，消除 supervisor 的 ioctl 往返。
-2. 真实 rtdev：GPIO/PWM/ADC 先做，UART 走预分配 TX 环 + NORMAL drainer。
-3. rt-test 增加模板/1ms 门禁。
-4. `fsm` / `event` 模板。
-5. `watchdog` 增加“自动停止目标/切安全输出”的动作。
+1. 真实 rtdev：GPIO/PWM/ADC 先做，UART 走预分配 TX 环 + NORMAL drainer。
+2. rt-test 增加模板/1ms 门禁。
+3. `fsm` / `event` 模板。
+4. `watchdog` 增加“自动停止目标/切安全输出”的动作。

@@ -19,6 +19,8 @@
 #include "rt_worker.h"
 #include "rtdev.h"
 #include "hrtimer.h"
+#include "kmalloc.h" /* kalloc_pages：每槽位共享页 */
+#include "mm_vm.h"   /* virt_to_phys：共享页 mmap */
 #include "task/task.h"
 #include "task/cpu.h"
 #include "task/sched.h"
@@ -31,6 +33,7 @@
 #define RTW_ENOENT 2
 #define RTW_EBUSY  16
 #define RTW_ENODEV 19
+#define RTW_ENOMEM 12
 #define RTW_EPERM  1
 
 #define RTW_TICK_NS 10000000ULL /* 当前内核的 100Hz tick */
@@ -73,6 +76,7 @@ struct rt_worker {
     char name[RTW_NAME_LEN];
     char dev_name[RTW_DEV_NAME_LEN];
     struct rtdev *dev;
+    struct rtw_shm *shm; /* 每槽位持久共享页，可 mmap */
     task_t *task;
 
     volatile uint32_t state;
@@ -98,6 +102,8 @@ struct rt_worker {
 };
 
 static struct rt_worker g_workers[RTW_MAX_WORKERS];
+/* 每槽位一页，首次 create 分配，之后复用（不释放，避免悬空用户映射）。 */
+static struct rtw_shm *g_rtw_shm[RTW_MAX_WORKERS];
 static spinlock_t g_rtw_lock = SPINLOCK_INIT;
 static bool g_rtw_inited;
 
@@ -272,6 +278,26 @@ static bool rtw_sleep_until(struct rt_worker *w, uint64_t deadline)
 /* 周期开头取一份一致的参数快照；更新方用 seqlock（偶数稳定/奇数写入）。 */
 static void rtw_params_snapshot(struct rt_worker *w, uint64_t *out)
 {
+    if (w->shm) {
+        /*
+           共享页对 supervisor 是可写的，params_seq 也可能被写坏（比如永远
+           停在奇数）。RT 线程不能为此无限自旋，否则会以 RT 优先级占满一
+           整颗核；重试有限次后退回内核私有的 w->params —— 那份只有内核
+           写，seqlock 一定能收敛。
+        */
+        for (uint32_t tries = 0; tries < 1024; tries++) {
+            uint32_t s1 = __atomic_load_n(&w->shm->params_seq, __ATOMIC_ACQUIRE);
+            if (s1 & 1U)
+                continue;
+            for (uint32_t i = 0; i < RTW_PARAM_MAX; i++)
+                out[i] = w->shm->params[i];
+            __atomic_thread_fence(__ATOMIC_ACQUIRE);
+            uint32_t s2 = __atomic_load_n(&w->shm->params_seq, __ATOMIC_ACQUIRE);
+            if (s1 == s2)
+                return;
+        }
+    }
+
     for (;;) {
         uint32_t s1 = __atomic_load_n(&w->params_seq, __ATOMIC_ACQUIRE);
         if (s1 & 1U)
@@ -294,6 +320,8 @@ static void rt_worker_entry(void *arg)
     if (!tpl) {
         KLOG_ERROR("[rtw] worker '%s': template %u disappeared\n", w->name, w->template_id);
         __atomic_store_n(&w->state, RTW_STATE_FAULTED, __ATOMIC_RELEASE);
+        if (w->shm)
+            __atomic_store_n(&w->shm->state, RTW_STATE_FAULTED, __ATOMIC_RELEASE);
         task_exit();
         return;
     }
@@ -310,29 +338,54 @@ static void rt_worker_entry(void *arg)
         uint64_t late = (t0 > next) ? (t0 - next) : 0;
         __atomic_store_n(&w->wake_late_last_ns, late, __ATOMIC_RELAXED);
         uint64_t prev_late = __atomic_load_n(&w->wake_late_max_ns, __ATOMIC_RELAXED);
-        if (late > prev_late)
+        if (late > prev_late) {
             __atomic_store_n(&w->wake_late_max_ns, late, __ATOMIC_RELAXED);
+            prev_late = late;
+        }
+        if (w->shm) {
+            __atomic_store_n(&w->shm->wake_late_last_ns, late, __ATOMIC_RELAXED);
+            __atomic_store_n(&w->shm->wake_late_max_ns, prev_late, __ATOMIC_RELAXED);
+        }
 
-        uint64_t in = __atomic_load_n(&w->input, __ATOMIC_RELAXED);
+        uint64_t in =
+            w->shm ? __atomic_load_n(&w->shm->input, __ATOMIC_RELAXED) : __atomic_load_n(&w->input, __ATOMIC_RELAXED);
+        __atomic_store_n(&w->input, in, __ATOMIC_RELAXED);
         uint64_t params[RTW_PARAM_MAX];
         rtw_params_snapshot(w, params);
         uint64_t out = tpl->step(w, params, in);
         __atomic_store_n(&w->output, out, __ATOMIC_RELEASE);
-        __atomic_add_fetch(&w->out_seq, 1, __ATOMIC_RELEASE);
+        uint64_t seq = __atomic_add_fetch(&w->out_seq, 1, __ATOMIC_RELEASE);
+        if (w->shm) {
+            __atomic_store_n(&w->shm->output, out, __ATOMIC_RELEASE);
+            __atomic_store_n(&w->shm->out_seq, seq, __ATOMIC_RELEASE);
+        }
 
-        if (w->dev && rtdev_write(w->dev, &out, sizeof(out)) == 0)
-            __atomic_add_fetch(&w->dev_writes, 1, __ATOMIC_RELAXED);
+        if (w->dev && rtdev_write(w->dev, &out, sizeof(out)) == 0) {
+            uint64_t dw = __atomic_add_fetch(&w->dev_writes, 1, __ATOMIC_RELAXED);
+            if (w->shm)
+                __atomic_store_n(&w->shm->dev_writes, dw, __ATOMIC_RELAXED);
+        }
 
         uint64_t t1 = timer_get_ns();
         uint64_t exec = (t1 > t0) ? (t1 - t0) : 0;
         __atomic_store_n(&w->exec_last_ns, exec, __ATOMIC_RELAXED);
         uint64_t prev_max = __atomic_load_n(&w->exec_max_ns, __ATOMIC_RELAXED);
-        if (exec > prev_max)
+        if (exec > prev_max) {
             __atomic_store_n(&w->exec_max_ns, exec, __ATOMIC_RELAXED);
-        __atomic_add_fetch(&w->ticks, 1, __ATOMIC_RELAXED);
+            prev_max = exec;
+        }
+        uint64_t ticks = __atomic_add_fetch(&w->ticks, 1, __ATOMIC_RELAXED);
+        if (w->shm) {
+            __atomic_store_n(&w->shm->exec_last_ns, exec, __ATOMIC_RELAXED);
+            __atomic_store_n(&w->shm->exec_max_ns, prev_max, __ATOMIC_RELAXED);
+            __atomic_store_n(&w->shm->ticks, ticks, __ATOMIC_RELAXED);
+        }
 
-        if (w->budget_ns != 0 && exec > w->budget_ns)
-            __atomic_add_fetch(&w->overruns, 1, __ATOMIC_RELAXED);
+        if (w->budget_ns != 0 && exec > w->budget_ns) {
+            uint64_t ov = __atomic_add_fetch(&w->overruns, 1, __ATOMIC_RELAXED);
+            if (w->shm)
+                __atomic_store_n(&w->shm->overruns, ov, __ATOMIC_RELAXED);
+        }
 
         next += w->period_ns;
         uint64_t now = timer_get_ns();
@@ -342,7 +395,9 @@ static void rt_worker_entry(void *arg)
         */
         uint64_t tol = hrtimer_oneshot_supported() ? (w->period_ns / 2) : RTW_TICK_NS;
         if (now > next + tol) {
-            __atomic_add_fetch(&w->misses, 1, __ATOMIC_RELAXED);
+            uint64_t mi = __atomic_add_fetch(&w->misses, 1, __ATOMIC_RELAXED);
+            if (w->shm)
+                __atomic_store_n(&w->shm->misses, mi, __ATOMIC_RELAXED);
             next = now + w->period_ns;
         }
     }
@@ -350,6 +405,8 @@ static void rt_worker_entry(void *arg)
     if (w->dev)
         rtdev_safe_state(w->dev);
     __atomic_store_n(&w->state, RTW_STATE_STOPPED, __ATOMIC_RELEASE);
+    if (w->shm)
+        __atomic_store_n(&w->shm->state, RTW_STATE_STOPPED, __ATOMIC_RELEASE);
     task_exit();
 }
 
@@ -429,6 +486,25 @@ int rt_worker_create(const struct rtw_create_req *cfg)
         rtw_copy_name(w->name, cfg->name, sizeof(w->name));
         rtw_copy_name(w->dev_name, cfg->dev, sizeof(w->dev_name));
         w->state = RTW_STATE_CREATED;
+
+        /* 每槽位一页共享内存：首次分配，之后复用。 */
+        if (!g_rtw_shm[i]) {
+            g_rtw_shm[i] = kalloc_pages(1);
+            if (!g_rtw_shm[i]) {
+                /* 槽位刚标成 CREATED，失败时必须还回 FREE，否则永远分不到。 */
+                memset(w, 0, sizeof(*w));
+                spin_unlock_irqrestore(&g_rtw_lock, flags);
+                return -RTW_ENOMEM;
+            }
+        }
+        w->shm = g_rtw_shm[i];
+        memset(w->shm, 0, PAGE_SIZE);
+        w->shm->magic = RTSHM_MAGIC;
+        w->shm->version = RTSHM_VERSION;
+        w->shm->state = RTW_STATE_CREATED;
+        for (uint32_t p = 0; p < RTW_PARAM_MAX; p++)
+            w->shm->params[p] = cfg->params[p];
+
         rtw_template(w->template_id)->init(w);
         break;
     }
@@ -441,6 +517,10 @@ int rt_worker_create(const struct rtw_create_req *cfg)
         struct rtdev *dev = rtdev_claim(w->dev_name, id);
         if (!dev) {
             spin_lock_irqsave(&g_rtw_lock, &flags);
+            if (w->shm) {
+                w->shm->magic = 0;
+                w->shm->state = RTW_STATE_FREE;
+            }
             memset(w, 0, sizeof(*w));
             spin_unlock_irqrestore(&g_rtw_lock, flags);
             return -RTW_ENODEV;
@@ -468,6 +548,8 @@ int rt_worker_start(uint32_t id)
     }
     __atomic_store_n(&w->stop, false, __ATOMIC_RELEASE);
     w->state = RTW_STATE_RUNNING;
+    if (w->shm)
+        __atomic_store_n(&w->shm->state, RTW_STATE_RUNNING, __ATOMIC_RELEASE);
     spin_unlock_irqrestore(&g_rtw_lock, flags);
 
     /*
@@ -478,6 +560,8 @@ int rt_worker_start(uint32_t id)
     if (!t) {
         spin_lock_irqsave(&g_rtw_lock, &flags);
         w->state = RTW_STATE_CREATED;
+        if (w->shm)
+            __atomic_store_n(&w->shm->state, RTW_STATE_CREATED, __ATOMIC_RELEASE);
         spin_unlock_irqrestore(&g_rtw_lock, flags);
         return -RTW_EBUSY;
     }
@@ -532,6 +616,12 @@ int rt_worker_destroy(uint32_t id)
         return -RTW_EBUSY;
     }
     dev = w->dev;
+    if (w->shm) {
+        /* 页保留给同槽位下次 create；旧用户映射靠 magic=0 判断失效。 */
+        w->shm->magic = 0;
+        w->shm->version = 0;
+        w->shm->state = RTW_STATE_FREE;
+    }
     memset(w, 0, sizeof(*w));
     spin_unlock_irqrestore(&g_rtw_lock, flags);
 
@@ -550,6 +640,8 @@ int rt_worker_set_input(uint32_t id, uint64_t value)
         return -RTW_ENOENT;
     }
     __atomic_store_n(&w->input, value, __ATOMIC_RELEASE);
+    if (w->shm)
+        __atomic_store_n(&w->shm->input, value, __ATOMIC_RELEASE);
     spin_unlock_irqrestore(&g_rtw_lock, flags);
     return 0;
 }
@@ -574,6 +666,32 @@ int rt_worker_set_params(uint32_t id, const uint64_t params[RTW_PARAM_MAX])
         w->params[i] = params[i];
     __atomic_store_n(&w->params_seq, seq + 2U, __ATOMIC_RELEASE);
 
+    if (w->shm) {
+        uint32_t s = __atomic_load_n(&w->shm->params_seq, __ATOMIC_RELAXED);
+        __atomic_store_n(&w->shm->params_seq, s + 1U, __ATOMIC_RELEASE);
+        for (uint32_t i = 0; i < RTW_PARAM_MAX; i++)
+            w->shm->params[i] = params[i];
+        __atomic_store_n(&w->shm->params_seq, s + 2U, __ATOMIC_RELEASE);
+    }
+
+    spin_unlock_irqrestore(&g_rtw_lock, flags);
+    return 0;
+}
+
+int rt_worker_shm_lookup(uint32_t id, uint64_t *paddr, uint64_t *size)
+{
+    if (!paddr || !size)
+        return -RTW_EINVAL;
+
+    uint64_t flags;
+    spin_lock_irqsave(&g_rtw_lock, &flags);
+    struct rt_worker *w = rtw_get_locked(id);
+    if (!w || !w->shm) {
+        spin_unlock_irqrestore(&g_rtw_lock, flags);
+        return -RTW_ENOENT;
+    }
+    *paddr = virt_to_phys((uint64_t)(uintptr_t)w->shm);
+    *size = PAGE_SIZE;
     spin_unlock_irqrestore(&g_rtw_lock, flags);
     return 0;
 }

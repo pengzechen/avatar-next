@@ -31,6 +31,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <sys/mman.h>
 #include <unistd.h>
 
 #define RTW_NAME_LEN     16
@@ -84,6 +85,33 @@ struct rtw_params_req {
     uint64_t params[RTW_PARAM_MAX];
 };
 
+#define RTSHM_MAGIC   0x52545753U
+#define RTSHM_VERSION 1U
+
+struct rtw_shm {
+    uint32_t magic;
+    uint32_t version;
+    volatile uint32_t state;
+    uint32_t _pad0;
+
+    volatile uint64_t input;
+    volatile uint64_t output;
+    volatile uint64_t out_seq;
+
+    volatile uint64_t params[RTW_PARAM_MAX];
+    volatile uint32_t params_seq;
+    uint32_t _pad1;
+
+    volatile uint64_t ticks;
+    volatile uint64_t misses;
+    volatile uint64_t overruns;
+    volatile uint64_t exec_last_ns;
+    volatile uint64_t exec_max_ns;
+    volatile uint64_t wake_late_last_ns;
+    volatile uint64_t wake_late_max_ns;
+    volatile uint64_t dev_writes;
+};
+
 struct rtw_stats {
     uint32_t id;
     uint32_t state;
@@ -131,6 +159,7 @@ _Static_assert(sizeof(struct rtw_create_req) == 136, "rtw_create_req ABI mismatc
 _Static_assert(sizeof(struct rtw_io_req) == 24, "rtw_io_req ABI mismatch");
 _Static_assert(sizeof(struct rtw_params_req) == 72, "rtw_params_req ABI mismatch");
 _Static_assert(sizeof(struct rtw_stats) == 160, "rtw_stats ABI mismatch");
+_Static_assert(sizeof(struct rtw_shm) == 176, "rtw_shm ABI mismatch");
 _Static_assert(sizeof(struct rtw_list_entry) == 64, "rtw_list_entry ABI mismatch");
 _Static_assert(sizeof(struct rtw_list_req) == 520, "rtw_list_req ABI mismatch");
 
@@ -367,6 +396,86 @@ static int cmd_params(int argc, char **argv)
     return 0;
 }
 
+static struct rtw_shm *map_worker_shm(int fd, uint32_t id)
+{
+    /* 页对齐令牌：id << 12。musl 的 mmap wrapper 会拒绝非对齐 offset。 */
+    void *p = mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_SHARED, fd, (off_t)(id << 12));
+    if (p == MAP_FAILED) {
+        fprintf(stderr, "rtctl: mmap worker %u: %s\n", id, strerror(errno));
+        return NULL;
+    }
+    struct rtw_shm *s = (struct rtw_shm *)p;
+    if (s->magic != RTSHM_MAGIC || s->version != RTSHM_VERSION) {
+        fprintf(stderr, "rtctl: worker %u shared page invalid (magic=0x%x ver=%u)\n", id, s->magic, s->version);
+        munmap(p, 4096);
+        return NULL;
+    }
+    return s;
+}
+
+static int cmd_shm(int argc, char **argv)
+{
+    if (argc < 3) {
+        fprintf(stderr, "usage: rtctl shm <id>\n");
+        return 2;
+    }
+    uint32_t id;
+    if (parse_u32(argv[2], &id)) {
+        fprintf(stderr, "rtctl: bad id\n");
+        return 2;
+    }
+    int fd = open_dev();
+    if (fd < 0)
+        return 1;
+    struct rtw_shm *s = map_worker_shm(fd, id);
+    if (!s) {
+        close(fd);
+        return 1;
+    }
+    printf("id=%u state=%u input=%llu output=%llu seq=%llu\n", id, s->state, (unsigned long long)s->input,
+           (unsigned long long)s->output, (unsigned long long)s->out_seq);
+    printf("ticks=%llu misses=%llu overruns=%llu exec_last=%llu ns exec_max=%llu ns\n", (unsigned long long)s->ticks,
+           (unsigned long long)s->misses, (unsigned long long)s->overruns, (unsigned long long)s->exec_last_ns,
+           (unsigned long long)s->exec_max_ns);
+    printf("wake_late_last=%llu ns wake_late_max=%llu ns dev_writes=%llu\n", (unsigned long long)s->wake_late_last_ns,
+           (unsigned long long)s->wake_late_max_ns, (unsigned long long)s->dev_writes);
+    munmap(s, 4096);
+    close(fd);
+    return 0;
+}
+
+static int cmd_shmset(int argc, char **argv)
+{
+    if (argc < 4) {
+        fprintf(stderr, "usage: rtctl shmset <id> <value>\n");
+        return 2;
+    }
+    uint32_t id;
+    if (parse_u32(argv[2], &id)) {
+        fprintf(stderr, "rtctl: bad id\n");
+        return 2;
+    }
+    char *end = NULL;
+    uint64_t value = (uint64_t)strtoull(argv[3], &end, 0);
+    if (!argv[3][0] || !end || *end) {
+        fprintf(stderr, "rtctl: bad value\n");
+        return 2;
+    }
+    int fd = open_dev();
+    if (fd < 0)
+        return 1;
+    struct rtw_shm *s = map_worker_shm(fd, id);
+    if (!s) {
+        close(fd);
+        return 1;
+    }
+    __atomic_store_n(&s->input, value, __ATOMIC_RELEASE);
+    printf("shmset id=%u input=%llu (via mmap)\n", id, (unsigned long long)value);
+    munmap(s, 4096);
+    close(fd);
+    return 0;
+}
+
 static int cmd_get(int argc, char **argv)
 {
     if (argc < 3) {
@@ -457,6 +566,8 @@ static void usage(const char *argv0)
     printf("  %s start|stop|destroy <id>\n", argv0);
     printf("  %s set <id> <value>\n", argv0);
     printf("  %s params <id> [p0..p7]\n", argv0);
+    printf("  %s shm <id>             # map shared page and dump\n", argv0);
+    printf("  %s shmset <id> <value>  # write input via shared page\n", argv0);
     printf("  %s get <id>\n", argv0);
     printf("  %s stats <id>\n", argv0);
     printf("  %s list\n", argv0);
@@ -481,6 +592,10 @@ int main(int argc, char **argv)
         return cmd_set(argc, argv);
     if (!strcmp(argv[1], "params"))
         return cmd_params(argc, argv);
+    if (!strcmp(argv[1], "shm"))
+        return cmd_shm(argc, argv);
+    if (!strcmp(argv[1], "shmset"))
+        return cmd_shmset(argc, argv);
     if (!strcmp(argv[1], "get"))
         return cmd_get(argc, argv);
     if (!strcmp(argv[1], "stats"))
