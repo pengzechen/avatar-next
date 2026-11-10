@@ -620,6 +620,13 @@ ifeq ($(RT_TEST),1)
     _BUILD_VARIANT := $(_BUILD_VARIANT)+rt_test
 endif
 
+# RT_DEMO=1：启动后运行 RT 性能 demo（ping-pong 唤醒延迟 / 抢占延迟）
+RT_DEMO ?= 0
+ifeq ($(RT_DEMO),1)
+    CFLAGS += -DRT_DEMO=1
+    _BUILD_VARIANT := $(_BUILD_VARIANT)+rt_demo
+endif
+
 # RT_IRQ_TRACE=1：在 arch_irq_save/restore/disable/enable 上记录 IRQ-off 区间
 # （诊断变体；默认关闭，避免给每个关中断点增加函数调用开销）
 RT_IRQ_TRACE ?= 0

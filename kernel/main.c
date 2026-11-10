@@ -246,6 +246,17 @@ void kernel_main(void)
     run_rt_sched_test();
 #endif
 
+#ifdef RT_DEMO
+    /*
+       同样必须在创建 net-poll / busybox 之前运行：boot 上下文不是可调度
+       的 task（idle 永不入就绪队列）。一旦 net-poll 这种"永远 ready"的
+       NORMAL 任务存在，boot 被 tick 抢占后就不会再被调度回来，demo 的
+       调用点根本到不了。demo 自己临时安装 tick 回调，跑完摘掉。
+    */
+    extern void run_rt_demo(void);
+    run_rt_demo();
+#endif
+
     /*
        驱动阶段（三）：网卡；net_init() 需要驱动先注册 netdev。
        guest 直启和 VMM 自测不需要网络，由测试变体的 boot 对象声明跳过。

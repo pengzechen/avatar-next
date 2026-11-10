@@ -195,5 +195,20 @@ cpu0 1008 788 2 33798673 285 312 35398811 10494224 1059
 **剩余 R3**：`signal_check_uart` 的 UART FIFO 临界区、execve 内的短锁；
 之后再谈 vCPU kick→run 延迟。
 
+## 十一、R3 实测：RT_DEMO
+
+`RT_DEMO=1`（`tests/unit-test/rt_demo.c`）在 x86_64 KVM 上的结果，
+完整数据与复现命令见 `docs/realtime/RT_DEMO_RESULTS.md`：
+
+- **RT→RT wake→run**：SMP=1 ~250 ns，SMP=4 ~400 ns（5000 轮，
+  99.7%+ < 1 µs）。
+- **NORMAL→RT wake→run**：平均 ~9.9 ms，50 个样本里 49 个 ≥9 ms ——
+  被唤醒的 RT 任务只能等下一次 100 Hz tick。`need_resched` 已置位，
+  但正在跑内核代码的 NORMAL 任务没有返回边界去检查它。
+- 这条延迟与 RT 任务优先级无关，也不是 tick 频率问题（提高 tick 只会
+  线性降低均值，最坏值仍是一个周期）。下一步应在
+  `sched_kick_after_enqueue()` 的本核高优先级 RT 入队分支主动制造
+  调度点（self-IPI / 软件中断），把 NORMAL→RT 延迟压到微秒级。
+
 **后续验收门禁**：VMM helper/多 VM 回归；R3 的有界 IRQ-off 后才对外
 宣称实时能力。
