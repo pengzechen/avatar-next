@@ -240,6 +240,11 @@ avatar/
   FIFO 80 钉 CPU0 + NORMAL hog，1ms（x86 oneshot）/10ms（tick 回退）周期，
   输出 min/avg/p50/p99/p99.9/max/overrun；属于 `RT_TEST=1`，门禁在
   `tests/suites/rt_test.py`。改 hrtimer/调度/抢占路径后先看这里。
+- **RT 测试路线**: `docs/realtime/RT_TEST_ROADMAP.md` - T0–T5 测试路线：
+  现有 rt-test/cyclictest 覆盖、测试矩阵、KPI 和推进顺序（裸机延迟实验室
+  → 用户态 RT → 重载/虚拟化 → 72h soak → 安全/认证）。后续 RT 测试按此
+  文档推进；每次里程碑把结果补进 `CYCLICTEST.md`、`R0_BASELINE.md`、
+  `RT_DEMO_RESULTS.md`。
 
 ### 虚拟化（VMM / guest）
 
