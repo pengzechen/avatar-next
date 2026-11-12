@@ -129,6 +129,12 @@ avatar/
 - **系统调用现状**: `docs/SYSCALL_IMPLEMENTATION.md` - 104 个具名 Linux 入口的
   ⚠️完整/不完整/桩分类，以及裸号兼容项和历史 `SYS_*` ABI。改 syscall 前先看，
   别把“静默返回 0”的桩当成已实现
+- **C API 参考（自动生成）**: `docs/api/README.md` - `make apidoc` 扫描
+  kernel/driver/fs/lib/boot/platforms/apps/include/tools，从函数定义上方的
+  **Doxygen 兼容注释**（也兼容现有中文 `/* */`）生成 `docs/api/index.md`、
+  每个子系统一份 `.md`、`api.json` 和可搜索的 `html/index.html`。
+  `make apidoc-check` 供 CI 检查提取警告（可加 `--min-coverage` 做覆盖率门禁）。
+  改注释约定或 `tools/gen_apidoc.py` 前必读
 
 ### 调试和日志
 

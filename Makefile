@@ -1117,7 +1117,7 @@ check-submodules:
 	fi
 
 # ─── §10  顶层目标声明 ───────────────────────────────────────────────────────────
-.PHONY: all clean clean-all help klog kernel run run-net rootfs run-fs run-fs-mbr test-fat test-pthread test-mutex test-vmm test-guest-linux test-ltp env epoll-perf test-epoll-perf rtps rtctl format format-check submodules check-submodules
+.PHONY: all clean clean-all help klog kernel run run-net rootfs run-fs run-fs-mbr test-fat test-pthread test-mutex test-vmm test-guest-linux test-ltp env epoll-perf test-epoll-perf rtps rtctl format format-check apidoc apidoc-check submodules check-submodules
 
 all: klog
 
@@ -1990,6 +1990,19 @@ format-check:
 	    exit 1;                                                                \
 	fi
 
+# ─── C API 文档 ────────────────────────────────────────────────────────────
+# 扫描 kernel/driver/fs/lib/boot/platforms/apps/include/tools，取函数定义
+# 上方紧挨着的注释（Doxygen 标签或现有中文块注释均可），生成：
+#   docs/api/index.md + 每个子系统的 .md + api.json + html/index.html
+# 零第三方依赖，不要求安装 Doxygen。注释约定见 docs/api/README.md。
+APIDOC := python3 tools/gen_apidoc.py
+
+apidoc:
+	@$(APIDOC)
+
+apidoc-check:
+	@$(APIDOC) --check --strict
+
 help:
 	@echo "Avatar OS Makefile"
 	@echo ""
@@ -2053,6 +2066,8 @@ help:
 	@echo "  clean-all     Remove build artifacts for all platforms"
 	@echo "  format        Reformat all project .c/.h with clang-format (.clang-format)"
 	@echo "  format-check  Dry-run: exit non-zero if anything is not formatted (CI)"
+	@echo "  apidoc        Generate C API reference (docs/api/, rustdoc-style HTML)"
+	@echo "  apidoc-check  Check extraction warnings without writing files"
 	@echo "  help          Show this help message"
 	@echo ""
 	@echo "Examples:"
