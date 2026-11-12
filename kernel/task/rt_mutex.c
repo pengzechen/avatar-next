@@ -154,7 +154,12 @@ bool rt_mutex_unlock(rt_mutex_t *m)
 
     if (m->owner != cur) {
         spin_unlock_irqrestore(&m->lock, flags);
-        KLOG_ERROR("[rt_mutex] task '%s' unlock without ownership\n", cur->name);
+        /*
+           非 owner 解锁是 API 误用，但返回值 false 已经是契约的一部分；
+           不要用 KLOG_ERROR —— RT_TEST 的负向用例会故意走这条路径，
+           用户态误用也会把启动日志刷成“内核出错了”。DEBUG 留作诊断。
+        */
+        KLOG_DEBUG("[rt_mutex] task '%s' unlock without ownership\n", cur->name);
         return false;
     }
 

@@ -402,6 +402,17 @@ void run_rt_sched_test(void)
         extern void run_rt_event_tests(void);
         run_rt_event_tests();
 
+        /*
+           cyclictest 放在最后：它自己安装/摘除 tick 回调，并占用 CPU0
+           做 1ms/10ms 周期 + NORMAL hog 的测量。返回 false 只表示没跑完，
+           延迟阈值由 tests/suites/rt_test.py 按架构判。
+        */
+        extern bool run_cyclictest(void);
+        if (!run_cyclictest()) {
+            KLOG_ERROR("=== RT SCHED TEST: FAIL (cyclictest) ===\n");
+            return;
+        }
+
         KLOG_INFO("=== RT SCHED TEST: PASS ===\n");
     } else {
         KLOG_ERROR("=== RT SCHED TEST: FAIL (immediate preemption) ===\n");

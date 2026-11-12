@@ -42,6 +42,8 @@ rt_mutex_unlock(&m);
 语义：
 
 - **非递归**：同一任务重复加锁返回 `-RTM_EDEADLK`；
+- 非 owner 调用 `rt_mutex_unlock()` 返回 `false`（API 契约）；内核只打
+  `KLOG_DEBUG`，避免负向测试/误用刷出假的 ERROR。调用者必须检查返回值；
 - 等待者按有效 RT 优先级降序排队（同优先级 FIFO）；
 - 等待者入队时把 owner 的继承优先级提升到不低于自己的优先级；
 - 解锁时把锁交给队首（最高优先级）等待者，并把新 owner 的继承优先级

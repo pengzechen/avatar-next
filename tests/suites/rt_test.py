@@ -17,6 +17,10 @@ rt-test suite — RT 调度语义与唤醒/抢占延迟。
     场景 7：rt_event any/all/mask 唤醒（含 x86 oneshot 超时）与 event
     模板 + 共享事件环：容量 64，先投 100 再处理（64 入环/36 drop），
     再补 20 条；最后验证阻塞在无限等事件的 worker 能被 stop 唤醒。
+    场景 8：内核态 cyclictest——FIFO 80 钉 CPU0，1ms(x86 oneshot)/10ms
+    (tick 回退) 绝对 deadline 周期，加一个 NORMAL hog；记录
+    min/avg/p50/p99/p99.9/max、overrun、早醒次数，以及 hog_iters
+    （忙循环实际迭代数，>0 证明负载真的运行过）。
   - `RT_DEMO=1`（tests/unit-test/rt_demo.c）
     5000 轮 RT ping-pong + 50 轮 NORMAL→RT 抢占，输出 min/avg/max。
 
@@ -40,6 +44,8 @@ SUITE = "rt-test"
 
 PING_ITERS = 5000
 PREEMPT_ITERS = 50
+CYCLI_CYCLES = 2000
+CYCLI_WARMUP = 100
 # 有 self-IPI 时 x86 KVM ~2µs、TCG ~10–120µs；无 self-IPI 时≈5ms。
 PING_AVG_MAX_NS = 1_000_000
 PREEMPT_AVG_MAX_NS = 2_000_000
@@ -62,6 +68,11 @@ EVENT_RE = re.compile(
     rb"=== RT EVENT TEST: PASS timeout=(\d+) posted=(\d+) "
     rb"processed=(\d+) dropped=(\d+) ==="
 )
+CYCLI_RE = re.compile(
+    rb"=== CYCLICTEST: PASS period=(\d+) warmup=(\d+) cycles=(\d+) "
+    rb"samples=(\d+) min=(\d+) avg=(\d+) p50=(\d+) p99=(\d+) p999=(\d+) "
+    rb"max=(\d+) overruns=(\d+) early=(\d+) hog=(\d+) hog_iters=(\d+) ==="
+)
 
 FORBIDDEN = (
     rb"\[ASSERT\]",
@@ -74,6 +85,7 @@ FORBIDDEN = (
     rb"=== RT WORKER TEST: FAIL",
     rb"=== RT MUTEX TEST: FAIL",
     rb"=== RT EVENT TEST: FAIL",
+    rb"=== CYCLICTEST: FAIL",
     rb"RT DEMO: TIMEOUT",
     rb"RT DEMO: worker/waker create failed",
     rb"RT DEMO: probe/hog create failed",
@@ -127,6 +139,15 @@ def _rt(ctx: TestContext, report: Report, arch) -> None:
                 )
             )
 
+            cycli = _parse(
+                q.wait_for(
+                    CYCLI_RE,
+                    ctx.timeout(180),
+                    forbidden=FORBIDDEN,
+                    desc=f"{arch.name} cyclictest 结果",
+                )
+            )
+
             ping = _parse(
                 q.wait_for(
                     PING_RE,
@@ -165,6 +186,22 @@ def _rt(ctx: TestContext, report: Report, arch) -> None:
             med_order,
         ) = mutex
         event_timeout, event_posted, event_processed, event_dropped = event
+        (
+            cyc_period,
+            cyc_warmup,
+            cyc_cycles,
+            cyc_samples,
+            cyc_min,
+            cyc_avg,
+            cyc_p50,
+            cyc_p99,
+            cyc_p999,
+            cyc_max,
+            cyc_overruns,
+            cyc_early,
+            cyc_hog,
+            cyc_hog_iters,
+        ) = cycli
 
         print(
             f"         {arch.name}: ping-pong n={ping_n} "
@@ -176,7 +213,13 @@ def _rt(ctx: TestContext, report: Report, arch) -> None:
             f"mutex ops={mutex_ops} err={mutex_err} "
             f"pi={mutex_boost}->{mutex_after} order={high_order}/{low_order}/{med_order}; "
             f"event timeout={event_timeout} "
-            f"posted/processed/dropped={event_posted}/{event_processed}/{event_dropped}"
+            f"posted/processed/dropped={event_posted}/{event_processed}/{event_dropped}; "
+            f"cyclictest period={cyc_period}ns warmup={cyc_warmup} "
+            f"cycles={cyc_cycles} samples={cyc_samples} "
+            f"min/avg/p50/p99/p999/max="
+            f"{cyc_min}/{cyc_avg}/{cyc_p50}/{cyc_p99}/{cyc_p999}/{cyc_max}ns "
+            f"overruns={cyc_overruns} early={cyc_early} hog={cyc_hog} "
+            f"hog_iters={cyc_hog_iters}"
         )
 
         assert mutex_ops == 6 * 3000, f"mutex 临界区计数 {mutex_ops}，应为 18000"
@@ -197,6 +240,33 @@ def _rt(ctx: TestContext, report: Report, arch) -> None:
             assert event_timeout == 1, "x86 KVM 下 rt_event 超时测试没有执行"
         else:
             assert event_timeout == 0, "没有 oneshot 时不应声称执行了超时测试"
+
+        assert cyc_warmup == CYCLI_WARMUP, (
+            f"cyclictest warmup={cyc_warmup}，应为 {CYCLI_WARMUP}"
+        )
+        assert cyc_cycles == CYCLI_CYCLES, (
+            f"cyclictest 只完成 {cyc_cycles}/{CYCLI_CYCLES} 轮"
+        )
+        assert cyc_samples == CYCLI_CYCLES, (
+            f"cyclictest 样本数 {cyc_samples}，应为 {CYCLI_CYCLES}"
+        )
+        assert cyc_hog == 1, "cyclictest 没有运行 NORMAL hog 负载"
+        assert cyc_hog_iters > 0, (
+            "cyclictest 的 NORMAL hog 没有获得任何 CPU 时间（hog_iters=0）"
+        )
+        if arch.name == "x86_64" and have_kvm():
+            assert cyc_period == 1_000_000, (
+                f"x86 KVM 下 cyclictest 周期是 {cyc_period}ns，不是 1ms"
+                "（TSC-deadline oneshot 失效？）"
+            )
+            # KVM 下 hrtimer 唤醒应在 µs 级；1ms p99 / 5ms max 是回归门禁，
+            # 不是“软实时达标线”。真实硬件基线见 docs/realtime/CYCLICTEST.md。
+            assert cyc_p99 < 1_000_000, (
+                f"cyclictest p99={cyc_p99}ns 超过 1ms（x86 KVM）"
+            )
+            assert cyc_max < 5_000_000, (
+                f"cyclictest max={cyc_max}ns 超过 5ms（x86 KVM）"
+            )
 
         if arch.name == "x86_64" and have_kvm():
             assert worker_periodic == 1, "x86 KVM 下 worker 没有走 oneshot 周期"

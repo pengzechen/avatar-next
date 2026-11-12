@@ -236,6 +236,10 @@ avatar/
   （SMP=4 时验证 mutex 的真并发竞争）。
 - **架构与基线**: `docs/realtime/ARCHITECTURE.md`、`R0_BASELINE.md`、
   `RT_DEMO_RESULTS.md`（self-IPI 立即抢占前后数据）。
+- **cyclictest（绝对 deadline 唤醒延迟）**: `docs/realtime/CYCLICTEST.md` -
+  FIFO 80 钉 CPU0 + NORMAL hog，1ms（x86 oneshot）/10ms（tick 回退）周期，
+  输出 min/avg/p50/p99/p99.9/max/overrun；属于 `RT_TEST=1`，门禁在
+  `tests/suites/rt_test.py`。改 hrtimer/调度/抢占路径后先看这里。
 
 ### 虚拟化（VMM / guest）
 

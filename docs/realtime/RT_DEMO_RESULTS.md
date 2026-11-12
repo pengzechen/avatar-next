@@ -1,5 +1,8 @@
 # RT 调度性能实测（x86_64 KVM，2026-11-10）
 
+> 绝对 deadline 周期唤醒延迟（cyclictest 场景）见
+> [`CYCLICTEST.md`](CYCLICTEST.md)。
+
 `RT_DEMO=1` 启动自测（`tests/unit-test/rt_demo.c`）的实测结果。
 用于回答两个问题：
 
