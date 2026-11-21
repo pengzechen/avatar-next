@@ -8,7 +8,7 @@
    include/driver/time.h — 时间基准公共接口
 
    内核只依赖本头：tick/uptime/延时/硬件计数器读取都从这里取。
-   具体实现由 driver/timer/timer.c 按 ARCH 选择，驱动 probe 负责初始化。
+   具体实现由 driver/time/timer.c 按 ARCH 选择，驱动 probe 负责初始化。
 */
 
 #ifndef DRIVER_TIME_H

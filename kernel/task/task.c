@@ -21,21 +21,20 @@
 #include "barrier.h"
 #include "klog.h"
 #include "fs/fs_lock.h"
+#include "fs/process_fs.h"
 #include "string.h"
 #include "task/cpu.h"
 #include "task/preempt.h"
 #include "task/sched.h"
 #include "task/switch.h"
 #include "driver/time.h"
-
-static inline uint64_t task_get_ns(void)
-{
-    return timer_get_ns();
-}
+#include "libc/signal.h"
+#include "spinlock.h"
 
 #include "mm/mm_vm.h"
 #include "mm/user_layout.h"
 #include "mm/vm_user.h"
+
 #if ARCH_RISCV64
 #include "riscv64/satp_utils.h"
 #include "riscv64/sysreg.h"
@@ -50,6 +49,7 @@ task_t g_task_pool[TASK_MAX];
    每个栈独立分配, 互不重叠。
 */
 uint8_t g_task_stacks[TASK_MAX][TASK_STACK_SIZE] __attribute__((aligned(16)));
+
 uint8_t g_stack_used[TASK_MAX];
 
 uint32_t g_task_id_cnt = 0;
@@ -64,17 +64,8 @@ static task_t g_idle_task;
 static uint8_t g_idle_stack[TASK_STACK_SIZE] __attribute__((aligned(16)));
 
 /* ── 槽表的锁 ────────────────────────────────────────────── *
-
    保护 g_stack_used[], 各 TCB 里"这个槽归谁/还活着吗"那几个字段
    (state / parent_id / id), 以及 id 分配。
-
-   以前这三样全是裸奔的。后果有两类：
-     1. 两核同时扫到同一个 DEAD 槽 → 都调 task_reap_dead →
-        vm_destroy_user_process() 跑两遍(它不幂等, 第二次照样
-        pmm_free_pages)→ PMM 双重释放。
-     2. 两核同时读到 !g_stack_used[i] → 认领同一个槽 →
-        两个任务共用一个 task_t 和一块栈。
-
    锁内只做"改状态, 占位"这种 O(1) 的事；释放用户页表要走几百页,
    放到锁外做(先用 state = TASK_ALLOCATING 把槽占住, 别人就不会碰)。
 */
@@ -709,7 +700,7 @@ task_t *process_create_with_pgd(const char *name, uint64_t user_entry, uint64_t 
     task->utime_ns = 0;
     task->stime_ns = 0;
     task->sc_entry_ns = 0;
-    task->create_ns = task_get_ns();
+    task->create_ns = timer_get_ns();
 
     /* === 信号字段初始化 === */
     task->pending_sigs = 0;
@@ -907,7 +898,7 @@ void task_yield(void)
        算进 syscall 延迟，/proc/rtstat 的 syscall_max 会被输入等待淹没。
     */
     if (cur && cur->is_user_process && cur->sc_entry_ns != 0) {
-        uint64_t now = task_get_ns();
+        uint64_t now = timer_get_ns();
         if (now > cur->sc_entry_ns)
             cur->stime_ns += now - cur->sc_entry_ns;
         cur->sc_entry_ns = 0;
@@ -916,7 +907,7 @@ void task_yield(void)
     sched_schedule();
 
     if (cur && cur->is_user_process)
-        cur->sc_entry_ns = task_get_ns();
+        cur->sc_entry_ns = timer_get_ns();
 }
 
 /* ── task_exit ───────────────────────────────────────────── */
@@ -1005,7 +996,7 @@ void task_block(list_t *wait_queue)
 
     /* 暂停 syscall stime 计时(阻塞期间不计入 stime) */
     if (cur->is_user_process && cur->sc_entry_ns != 0) {
-        cur->stime_ns += task_get_ns() - cur->sc_entry_ns;
+        cur->stime_ns += timer_get_ns() - cur->sc_entry_ns;
         cur->sc_entry_ns = 0;
     }
 
@@ -1022,7 +1013,7 @@ void task_block(list_t *wait_queue)
 
     /* 恢复 stime 计时(从被唤醒时刻起重新开始) */
     if (cur->is_user_process)
-        cur->sc_entry_ns = task_get_ns();
+        cur->sc_entry_ns = timer_get_ns();
 }
 
 /* ── task_unblock ────────────────────────────────────────── */

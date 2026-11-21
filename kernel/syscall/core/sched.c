@@ -10,7 +10,7 @@
    从 kernel/syscall/syscall.c 抽出。
 
    nanosleep 现在是真睡眠：
-     - 截止时刻记在 task->sleep_expire_ns，由 100Hz tick(task/itimer.c)
+     - 截止时刻记在 task->sleep_expire_ns，由 100Hz tick(kernel/time/itimer.c)
        在到期时清标记并 task_unblock()；
      - 有会真正打断阻塞的信号(task_signal_pending_effective)时提前返回
        -EINTR，并把剩余时间写回 rem；

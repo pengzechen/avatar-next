@@ -1,6 +1,6 @@
 # include — C API
 
-[← 返回总览](index.md) · 349 个函数 · 说明覆盖率 100.0%
+[← 返回总览](index.md) · 362 个函数 · 说明覆盖率 90.1%
 
 <a id="mod-include-aarch64-barrier_impl.h"></a>
 
@@ -233,122 +233,6 @@ static inline void sync_caches(void)
 仅调用 barrier_data()，为缓存同步提供内存排序语义，不发具体缓存维护指令。
 
 **位置**：`include/aarch64/cache_impl.h:113`
-
-<a id="mod-include-aarch64-cpu.h"></a>
-
-## include/aarch64/cpu.h — aarch64_enable_neon - 启用 NEON/浮点指令
-
-`include/aarch64/cpu.h` · 4 个函数 · 4 个有说明 · 79 行
-
-在 CPACR_EL1 寄存器中设置 FPEN 位, 允许在 EL0 使用 NEON 和浮点指令。
-
-CPACR_EL1.FPEN [21:20]:
-- 0b00: 根据 CPACR_EL1.TTA 决定
-- 0b01: 执行 NEON/FP 时 Trap 到 EL1
-- 0b10: 执行 NEON/FP 时 Trap 到 EL2
-- 0b11: 允许在 EL0 使用 NEON/FP
-
-注意：必须在内核初始化时调用, 否则 NEON 指令会触发异常
-
-<a id="fn-include-aarch64-cpu.h-25"></a>
-
-### `aarch64_enable_neon`
-
-```c
-static inline void aarch64_enable_neon(void)
-```
-
-aarch64_enable_neon - 启用 NEON/浮点指令
-
-在 CPACR_EL1 寄存器中设置 FPEN 位, 允许在 EL0 使用 NEON 和浮点指令。
-
-CPACR_EL1.FPEN [21:20]:
-- 0b00: 根据 CPACR_EL1.TTA 决定
-- 0b01: 执行 NEON/FP 时 Trap 到 EL1
-- 0b10: 执行 NEON/FP 时 Trap 到 EL2
-- 0b11: 允许在 EL0 使用 NEON/FP
-
-注意：必须在内核初始化时调用, 否则 NEON 指令会触发异常
-
-<details>
-<summary>函数内备注（4 条）</summary>
-
-**第 28 行（行尾）**
-
-> 读取 CPACR_EL1
-
-**第 29 行（行尾）**
-
-> 设置 FPEN[21:20] = 0b11
-
-**第 30 行（行尾）**
-
-> 写回 CPACR_EL1
-
-**第 31 行（行尾）**
-
-> 指令同步屏障, 确保修改生效
-
-</details>
-
-**位置**：`include/aarch64/cpu.h:25`
-
-<a id="fn-include-aarch64-cpu.h-42"></a>
-
-### `aarch64_get_cpacr`
-
-```c
-static inline uint64_t aarch64_get_cpacr(void)
-```
-
-aarch64_get_cpacr - 读取 CPACR_EL1 寄存器
-
-返回值: CPACR_EL1 寄存器的当前值
-
-**位置**：`include/aarch64/cpu.h:42`
-
-<a id="fn-include-aarch64-cpu.h-54"></a>
-
-### `aarch64_is_neon_enabled`
-
-```c
-static inline int aarch64_is_neon_enabled(void)
-```
-
-aarch64_is_neon_enabled - 检查 NEON 是否已启用
-
-返回值: 1 表示已启用, 0 表示未启用
-
-**位置**：`include/aarch64/cpu.h:54`
-
-<a id="fn-include-aarch64-cpu.h-67"></a>
-
-### `aarch64_disable_neon`
-
-```c
-static inline void aarch64_disable_neon(void)
-```
-
-aarch64_disable_neon - 禁用 NEON/浮点指令
-
-将 CPACR_EL1.FPEN 设置为 0b01, 使 NEON/FP 指令触发异常
-
-警告：禁用后执行 NEON 指令会导致异常
-
-<details>
-<summary>函数内备注（2 条）</summary>
-
-**第 70 行（行尾）**
-
-> 清除 FPEN 位
-
-**第 71 行（行尾）**
-
-> 设置 FPEN = 0b01
-
-</details>
-
-**位置**：`include/aarch64/cpu.h:67`
 
 <a id="mod-include-aarch64-cpu_impl.h"></a>
 
@@ -596,6 +480,178 @@ static inline void mm_vm_set_pte_keep(void *pgd, uint64_t vaddr)
 语义与 NOFREE 的区别见 mmu.h 里 PTE_KEEP 的说明。
 
 **位置**：`include/aarch64/mm_vm.h:51`
+
+<a id="mod-include-aarch64-neon.h"></a>
+
+## include/aarch64/neon.h — aarch64_enable_neon - 启用 NEON/浮点指令
+
+`include/aarch64/neon.h` · 4 个函数 · 4 个有说明 · 79 行
+
+在 CPACR_EL1 寄存器中设置 FPEN 位, 允许在 EL0 使用 NEON 和浮点指令。
+
+CPACR_EL1.FPEN [21:20]:
+- 0b00: 根据 CPACR_EL1.TTA 决定
+- 0b01: 执行 NEON/FP 时 Trap 到 EL1
+- 0b10: 执行 NEON/FP 时 Trap 到 EL2
+- 0b11: 允许在 EL0 使用 NEON/FP
+
+注意：必须在内核初始化时调用, 否则 NEON 指令会触发异常
+
+<a id="fn-include-aarch64-neon.h-25"></a>
+
+### `aarch64_enable_neon`
+
+```c
+static inline void aarch64_enable_neon(void)
+```
+
+aarch64_enable_neon - 启用 NEON/浮点指令
+
+在 CPACR_EL1 寄存器中设置 FPEN 位, 允许在 EL0 使用 NEON 和浮点指令。
+
+CPACR_EL1.FPEN [21:20]:
+- 0b00: 根据 CPACR_EL1.TTA 决定
+- 0b01: 执行 NEON/FP 时 Trap 到 EL1
+- 0b10: 执行 NEON/FP 时 Trap 到 EL2
+- 0b11: 允许在 EL0 使用 NEON/FP
+
+注意：必须在内核初始化时调用, 否则 NEON 指令会触发异常
+
+<details>
+<summary>函数内备注（4 条）</summary>
+
+**第 28 行（行尾）**
+
+> 读取 CPACR_EL1
+
+**第 29 行（行尾）**
+
+> 设置 FPEN[21:20] = 0b11
+
+**第 30 行（行尾）**
+
+> 写回 CPACR_EL1
+
+**第 31 行（行尾）**
+
+> 指令同步屏障, 确保修改生效
+
+</details>
+
+**位置**：`include/aarch64/neon.h:25`
+
+<a id="fn-include-aarch64-neon.h-42"></a>
+
+### `aarch64_get_cpacr`
+
+```c
+static inline uint64_t aarch64_get_cpacr(void)
+```
+
+aarch64_get_cpacr - 读取 CPACR_EL1 寄存器
+
+返回值: CPACR_EL1 寄存器的当前值
+
+**位置**：`include/aarch64/neon.h:42`
+
+<a id="fn-include-aarch64-neon.h-54"></a>
+
+### `aarch64_is_neon_enabled`
+
+```c
+static inline int aarch64_is_neon_enabled(void)
+```
+
+aarch64_is_neon_enabled - 检查 NEON 是否已启用
+
+返回值: 1 表示已启用, 0 表示未启用
+
+**位置**：`include/aarch64/neon.h:54`
+
+<a id="fn-include-aarch64-neon.h-67"></a>
+
+### `aarch64_disable_neon`
+
+```c
+static inline void aarch64_disable_neon(void)
+```
+
+aarch64_disable_neon - 禁用 NEON/浮点指令
+
+将 CPACR_EL1.FPEN 设置为 0b01, 使 NEON/FP 指令触发异常
+
+警告：禁用后执行 NEON 指令会导致异常
+
+<details>
+<summary>函数内备注（2 条）</summary>
+
+**第 70 行（行尾）**
+
+> 清除 FPEN 位
+
+**第 71 行（行尾）**
+
+> 设置 FPEN = 0b01
+
+</details>
+
+**位置**：`include/aarch64/neon.h:67`
+
+<a id="mod-include-aarch64-psci.h"></a>
+
+## include/aarch64/psci.h — PSCI 0.2+ 调用封装(SMC64 conduit)
+
+`include/aarch64/psci.h` · 2 个函数 · 2 个有说明 · 76 行
+
+只提供 CPU bring-up 需要的两个功能:
+psci_cpu_on          拉起指定 MPIDR 的核
+psci_affinity_info   查询核当前状态(超时诊断用)
+
+为什么放在头文件里而不是 .c：两个调用都是"固定寄存器 + 一条 smc"的纯
+内联汇编, 没有任何全局状态, 和 arch_cpu_self_get() 一样按架构单独提供
+最自然; 放进 .c 只会让每个使用者各写一份 extern。
+
+conduit 约定：本内核用 SMC(EL2/VHE 下由 ATF 转发; QEMU virt 也是 SMC),
+功能号取 SMC64 的 0xC40000xx。若以后出现 HVC conduit 的平台, 在这里加
+一个 conduit 选择, 不要把 smc/hvc 散到调用点。
+
+<a id="fn-include-aarch64-psci.h-43"></a>
+
+### `psci_cpu_on`
+
+```c
+static inline int64_t psci_cpu_on(uint64_t mpidr, uint64_t entry_phys, uint64_t context_id)
+```
+
+psci_cpu_on - 拉起一颗核
+@mpidr:       目标核的 MPIDR
+@entry_phys:  入口的**物理**地址(PSCI 在目标核 MMU 打开前进入)
+@context_id:  透传给入口的 context_id(本内核用它传逻辑 CPU 号)
+
+返回: PSCI 返回码, 0 = 成功, 负数 = 错误
+
+**位置**：`include/aarch64/psci.h:43`
+
+<a id="fn-include-aarch64-psci.h-66"></a>
+
+### `psci_affinity_info`
+
+```c
+static inline int64_t psci_affinity_info(uint64_t mpidr)
+```
+
+psci_affinity_info - 查询核状态
+@mpidr: 目标核的 MPIDR
+
+返回:
+0   = ON
+1   = OFF
+2   = ON_PENDING
+<0  = 错误(例如 -2 INVALID_PARAMS 表示 ATF 不认该 mpidr)
+
+lowest_affinity_level 固定传 0：本内核按完整的 core 粒度查询。
+
+**位置**：`include/aarch64/psci.h:66`
 
 <a id="mod-include-aarch64-spin_lock_impl.h"></a>
 
@@ -1221,11 +1277,11 @@ clean_and_invalidate_dcache_range - 清理并使地址范围的缓存失效
 
 **位置**：`include/cache.h:159`
 
-<a id="mod-include-dma_buf.h"></a>
+<a id="mod-include-driver-dma_buf.h"></a>
 
-## include/dma_buf.h — dma-buf / dma-heap
+## include/driver/dma_buf.h — dma-buf / dma-heap
 
-`include/dma_buf.h` · 16 个函数 · 16 个有说明 · 217 行
+`include/driver/dma_buf.h` · 16 个函数 · 0 个有说明 · 217 行
 
 背景：官方 `librknnrt.so` 的每个缓冲区都走这条路 ——
 
@@ -1246,7 +1302,7 @@ kernel/fs/pseudofs/dev.c  ABI 处理(用户指针 ← 一律走 copy_*_user)
 上层(NPU 作业描述符, DMA 基址寄存器)一行都不用动。
 绕过它直接用 phys_to_virt / paddr 的地方, 将来都要改两遍。
 
-<a id="fn-include-dma_buf.h-69"></a>
+<a id="fn-include-driver-dma_buf.h-69"></a>
 
 ### `dma_buf_present`
 
@@ -1254,13 +1310,11 @@ kernel/fs/pseudofs/dev.c  ABI 处理(用户指针 ← 一律走 copy_*_user)
 static inline bool dma_buf_present(void)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-判断全局 dma_buf 操作表 g_dma_buf_ops 是否非空。
+**位置**：`include/driver/dma_buf.h:69`
 
-**位置**：`include/dma_buf.h:69`
-
-<a id="fn-include-dma_buf.h-76"></a>
+<a id="fn-include-driver-dma_buf.h-76"></a>
 
 ### `dma_buf_alloc`
 
@@ -1268,13 +1322,11 @@ static inline bool dma_buf_present(void)
 static inline dma_buf_t *dma_buf_alloc(size_t size)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-操作表存在时调用其 alloc 分配 dma_buf，否则返回 NULL。
+**位置**：`include/driver/dma_buf.h:76`
 
-**位置**：`include/dma_buf.h:76`
-
-<a id="fn-include-dma_buf.h-81"></a>
+<a id="fn-include-driver-dma_buf.h-81"></a>
 
 ### `dma_buf_get`
 
@@ -1282,13 +1334,11 @@ static inline dma_buf_t *dma_buf_alloc(size_t size)
 static inline void dma_buf_get(dma_buf_t *buf)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-操作表存在时转调其 get 回调处理缓冲区，否则不做任何事。
+**位置**：`include/driver/dma_buf.h:81`
 
-**位置**：`include/dma_buf.h:81`
-
-<a id="fn-include-dma_buf.h-87"></a>
+<a id="fn-include-driver-dma_buf.h-87"></a>
 
 ### `dma_buf_put`
 
@@ -1296,13 +1346,11 @@ static inline void dma_buf_get(dma_buf_t *buf)
 static inline void dma_buf_put(dma_buf_t *buf)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-操作表存在时转调其 put 回调处理缓冲区，否则不做任何事。
+**位置**：`include/driver/dma_buf.h:87`
 
-**位置**：`include/dma_buf.h:87`
-
-<a id="fn-include-dma_buf.h-95"></a>
+<a id="fn-include-driver-dma_buf.h-95"></a>
 
 ### `dma_buf_dev_addr`
 
@@ -1310,13 +1358,11 @@ static inline void dma_buf_put(dma_buf_t *buf)
 static inline uint64_t dma_buf_dev_addr(const dma_buf_t *buf)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-操作表存在时返回其 dev_addr 回调给出的设备地址，否则返回 0。
+**位置**：`include/driver/dma_buf.h:95`
 
-**位置**：`include/dma_buf.h:95`
-
-<a id="fn-include-dma_buf.h-100"></a>
+<a id="fn-include-driver-dma_buf.h-100"></a>
 
 ### `dma_buf_kva`
 
@@ -1324,13 +1370,11 @@ static inline uint64_t dma_buf_dev_addr(const dma_buf_t *buf)
 static inline void *dma_buf_kva(const dma_buf_t *buf)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-操作表存在时返回其 kva 回调给出的内核虚拟地址，否则返回 NULL。
+**位置**：`include/driver/dma_buf.h:100`
 
-**位置**：`include/dma_buf.h:100`
-
-<a id="fn-include-dma_buf.h-105"></a>
+<a id="fn-include-driver-dma_buf.h-105"></a>
 
 ### `dma_buf_size`
 
@@ -1338,13 +1382,11 @@ static inline void *dma_buf_kva(const dma_buf_t *buf)
 static inline size_t dma_buf_size(const dma_buf_t *buf)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-操作表存在时返回其 size 回调给出的缓冲区大小，否则返回 0。
+**位置**：`include/driver/dma_buf.h:105`
 
-**位置**：`include/dma_buf.h:105`
-
-<a id="fn-include-dma_buf.h-110"></a>
+<a id="fn-include-driver-dma_buf.h-110"></a>
 
 ### `dma_buf_find_by_phys`
 
@@ -1352,13 +1394,11 @@ static inline size_t dma_buf_size(const dma_buf_t *buf)
 static inline dma_buf_t *dma_buf_find_by_phys(uint64_t pa, uint64_t *off)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-操作表存在时通过 find_by_phys 查找物理地址所属缓冲区并输出偏移，否则返回 NULL。
+**位置**：`include/driver/dma_buf.h:110`
 
-**位置**：`include/dma_buf.h:110`
-
-<a id="fn-include-dma_buf.h-116"></a>
+<a id="fn-include-driver-dma_buf.h-116"></a>
 
 ### `dma_buf_from_index`
 
@@ -1366,13 +1406,11 @@ static inline dma_buf_t *dma_buf_find_by_phys(uint64_t pa, uint64_t *off)
 static inline dma_buf_t *dma_buf_from_index(uint32_t idx)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-操作表存在时通过 from_index 按索引取 dma_buf，否则返回 NULL。
+**位置**：`include/driver/dma_buf.h:116`
 
-**位置**：`include/dma_buf.h:116`
-
-<a id="fn-include-dma_buf.h-121"></a>
+<a id="fn-include-driver-dma_buf.h-121"></a>
 
 ### `dma_buf_index`
 
@@ -1380,13 +1418,11 @@ static inline dma_buf_t *dma_buf_from_index(uint32_t idx)
 static inline uint32_t dma_buf_index(const dma_buf_t *buf)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-操作表存在时返回 index 回调给出的缓冲区索引，否则返回 DMA_BUF_MAX。
+**位置**：`include/driver/dma_buf.h:121`
 
-**位置**：`include/dma_buf.h:121`
-
-<a id="fn-include-dma_buf.h-126"></a>
+<a id="fn-include-driver-dma_buf.h-126"></a>
 
 ### `dma_buf_get_index`
 
@@ -1394,13 +1430,11 @@ static inline uint32_t dma_buf_index(const dma_buf_t *buf)
 static inline void dma_buf_get_index(uint32_t idx)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-操作表存在时调用其 get_index 回调，否则不做任何事。
+**位置**：`include/driver/dma_buf.h:126`
 
-**位置**：`include/dma_buf.h:126`
-
-<a id="fn-include-dma_buf.h-132"></a>
+<a id="fn-include-driver-dma_buf.h-132"></a>
 
 ### `dma_buf_put_index`
 
@@ -1408,13 +1442,11 @@ static inline void dma_buf_get_index(uint32_t idx)
 static inline void dma_buf_put_index(uint32_t idx)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-操作表存在时调用其 put_index 回调，否则不做任何事。
+**位置**：`include/driver/dma_buf.h:132`
 
-**位置**：`include/dma_buf.h:132`
-
-<a id="fn-include-dma_buf.h-140"></a>
+<a id="fn-include-driver-dma_buf.h-140"></a>
 
 ### `dma_buf_sync_region`
 
@@ -1422,13 +1454,11 @@ static inline void dma_buf_put_index(uint32_t idx)
 static inline void dma_buf_sync_region(dma_buf_t *buf, uint64_t off, uint64_t len, bool to_device)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-操作表存在时把区域同步请求连同方向和偏移转给 sync_region 回调，否则忽略。
+**位置**：`include/driver/dma_buf.h:140`
 
-**位置**：`include/dma_buf.h:140`
-
-<a id="fn-include-dma_buf.h-148"></a>
+<a id="fn-include-driver-dma_buf.h-148"></a>
 
 ### `dma_buf_alloc_fd_current`
 
@@ -1436,13 +1466,11 @@ static inline void dma_buf_sync_region(dma_buf_t *buf, uint64_t off, uint64_t le
 static inline int dma_buf_alloc_fd_current(dma_buf_t *buf)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-操作表存在时调用 alloc_fd_current 为缓冲区分配当前进程 fd，否则返回 -1。
+**位置**：`include/driver/dma_buf.h:148`
 
-**位置**：`include/dma_buf.h:148`
-
-<a id="fn-include-dma_buf.h-153"></a>
+<a id="fn-include-driver-dma_buf.h-153"></a>
 
 ### `dma_buf_from_user_fd`
 
@@ -1450,13 +1478,11 @@ static inline int dma_buf_alloc_fd_current(dma_buf_t *buf)
 static inline dma_buf_t *dma_buf_from_user_fd(int fd)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-操作表存在时由用户 fd 反查 dma_buf，否则返回 NULL。
+**位置**：`include/driver/dma_buf.h:153`
 
-**位置**：`include/dma_buf.h:153`
-
-<a id="fn-include-dma_buf.h-158"></a>
+<a id="fn-include-driver-dma_buf.h-158"></a>
 
 ### `dma_buf_apply_sync`
 
@@ -1464,11 +1490,9 @@ static inline dma_buf_t *dma_buf_from_user_fd(int fd)
 static inline int dma_buf_apply_sync(uint32_t idx, uint64_t flags)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-操作表存在时按索引与标志执行 apply_sync 同步，否则返回 -1。
-
-**位置**：`include/dma_buf.h:158`
+**位置**：`include/driver/dma_buf.h:158`
 
 <a id="mod-include-driver-ion.h"></a>
 
@@ -1896,7 +1920,7 @@ static inline bool serial_rx_ready(void)
 `include/driver/time.h` · 1 个函数 · 1 个有说明 · 163 行
 
 内核只依赖本头：tick/uptime/延时/硬件计数器读取都从这里取。
-具体实现由 driver/timer/timer.c 按 ARCH 选择，驱动 probe 负责初始化。
+具体实现由 driver/time/timer.c 按 ARCH 选择，驱动 probe 负责初始化。
 
 <a id="fn-include-driver-time.h-158"></a>
 
@@ -2048,6 +2072,41 @@ static inline int elf_check_machine(elf64_ehdr_t *ehdr)
 
 **位置**：`include/elf.h:153`
 
+<a id="mod-include-fs-vfs.h"></a>
+
+## include/fs/vfs.h — small kernel VFS layer
+
+`include/fs/vfs.h` · 2 个函数 · 0 个有说明 · 124 行
+
+First-stage VFS abstraction: fd objects point at struct vfs_file, and
+operations dispatch through file_ops. Path routing uses a small mount table:
+/dev, /proc and /sys route to pseudofs, / routes to ext4, and an optional
+MBR FAT partition can be registered at FAT_MOUNT_POINT (default /boot).
+
+<a id="fn-include-fs-vfs.h-114"></a>
+
+### `vfs_file_is_regular`
+
+```c
+static inline bool vfs_file_is_regular(const vfs_file_t *file)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`include/fs/vfs.h:114`
+
+<a id="fn-include-fs-vfs.h-119"></a>
+
+### `vfs_file_is_dir`
+
+```c
+static inline bool vfs_file_is_dir(const vfs_file_t *file)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`include/fs/vfs.h:119`
+
 <a id="mod-include-klog.h"></a>
 
 ## include/klog.h — 内核日志系统
@@ -2163,6 +2222,333 @@ static inline int klog_sample_hit(uint32_t n)
 判断序号 n 是否命中采样：n 不超过 KLOG_SAMPLE_FIRST，或不超过上限且为 2 的幂。
 
 **位置**：`include/klog.h:152`
+
+<a id="mod-include-libc-string.h"></a>
+
+## include/libc/string.h — 实现层(memcpy_generic / memcpy_arch / memcpy_neon …)在这里。
+
+`include/libc/string.h` · 14 个函数 · 1 个有说明 · 166 行
+
+与公开 API 分开的原因见 string_internal.h 顶部：lib/string.c 要用同样的
+名字定义外部符号, 实现不能占用公开名字。
+
+<a id="fn-include-libc-string.h-22"></a>
+
+### `strlen`
+
+```c
+static inline size_t strlen(const char *buf)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`include/libc/string.h:22`
+
+<a id="fn-include-libc-string.h-30"></a>
+
+### `strcat`
+
+```c
+static inline char *strcat(char *dest, const char *src)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`include/libc/string.h:30`
+
+<a id="fn-include-libc-string.h-40"></a>
+
+### `strcpy`
+
+```c
+static inline char *strcpy(char *dest, const char *src)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`include/libc/string.h:40`
+
+<a id="fn-include-libc-string.h-48"></a>
+
+### `strncpy`
+
+```c
+static inline char *strncpy(char *dest, const char *src, size_t n)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`include/libc/string.h:48`
+
+<a id="fn-include-libc-string.h-58"></a>
+
+### `strncmp`
+
+```c
+static inline int strncmp(const char *a, const char *b, size_t n)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`include/libc/string.h:58`
+
+<a id="fn-include-libc-string.h-66"></a>
+
+### `strcmp`
+
+```c
+static inline int strcmp(const char *a, const char *b)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`include/libc/string.h:66`
+
+<a id="fn-include-libc-string.h-71"></a>
+
+### `strchr`
+
+```c
+static inline char *strchr(const char *s, int c)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`include/libc/string.h:71`
+
+<a id="fn-include-libc-string.h-79"></a>
+
+### `memcmp`
+
+```c
+static inline int memcmp(const void *s1, const void *s2, size_t n)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`include/libc/string.h:79`
+
+<a id="fn-include-libc-string.h-92"></a>
+
+### `strstr`
+
+```c
+static inline char *strstr(const char *s1, const char *s2)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`include/libc/string.h:92`
+
+<a id="fn-include-libc-string.h-108"></a>
+
+### `memset`
+
+```c
+static inline void *memset(void *s, int c, size_t n)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`include/libc/string.h:108`
+
+<a id="fn-include-libc-string.h-113"></a>
+
+### `memmove`
+
+```c
+static inline void *memmove(void *dest, const void *src, size_t n)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`include/libc/string.h:113`
+
+<a id="fn-include-libc-string.h-118"></a>
+
+### `memchr`
+
+```c
+static inline void *memchr(const void *s, int c, size_t n)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`include/libc/string.h:118`
+
+<a id="fn-include-libc-string.h-127"></a>
+
+### `atol`
+
+```c
+static inline long atol(const char *ptr)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`include/libc/string.h:127`
+
+<a id="fn-include-libc-string.h-161"></a>
+
+### `memcpy`
+
+```c
+static inline void *memcpy(void *dest, const void *src, size_t n)
+```
+
+公开 API 一律转发到实现层(string_internal.h 里的 *_arch)。
+lib/string.c 用同样的 *_arch 定义外部符号, 所以源码里的调用和编译器自动
+生成的调用(大结构体赋值, 循环→memcpy 变换)走的是同一份实现。
+
+**位置**：`include/libc/string.h:161`
+
+<a id="mod-include-libc-string_internal.h"></a>
+
+## include/libc/string_internal.h — 字符串/内存函数的实现层
+
+`include/libc/string_internal.h` · 5 个函数 · 4 个有说明 · 196 行
+
+为什么实现要和 string.h 分家：
+
+公开 API(string.h 里的 `static inline memcpy`/`memset`)占用了这两个名字,
+而且是内部链接。lib/string.c 必须把同样的名字定义成外部符号, 供编译器
+自动生成的调用使用(大结构体整体赋值, 循环→memcpy 变换等, GCC 会自己发
+`bl memcpy`)。同一个翻译单元里同名标识符既有内部链接又有外部链接是未定义
+行为(C11 6.2.2p7), 所以只能把"实现"和"公开名字"拆开：
+
+string_internal.h  实现：memcpy_generic / memcpy_arch / memcpy_neon …
+string.h           公开 API：static inline 转发到 *_arch
+lib/string.c       外部符号：同样转发到 *_arch
+
+这样"源码里写的 memcpy"和"编译器自己生成的 memcpy 调用"落到同一份实现。
+在此之前两者是分裂的：前者拿到内联的优化版本, 后者落到 lib/string.c 里那个
+逐字节循环(实测 fork/clone 路径的 816 字节 trap frame 拷贝就是后者)。
+
+架构约定 —— 每个架构在自己的 string_impl.h 里提供两个函数：
+memcpy_arch(dst, src, n)    本架构的 memcpy(可以是阈值分派, 也可以是通用实现)
+memset_arch(dst, c, n)      同上
+名字刻意不叫 memcpy/memset：那样又会和公开 API 撞名, 回到老问题。
+
+<a id="fn-include-libc-string_internal.h-53"></a>
+
+### `memcpy_generic`
+
+```c
+static inline void *memcpy_generic(void *dest, const void *src, size_t n)
+```
+
+memcpy_generic - 通用 memcpy
+
+为什么宽访问要求 src/dest 同时对齐：这里用的是普通 GPR 的 8/4/2 字节
+访问, 而不是 NEON 那种按字节访问的 ld1/st1。RISC-V(尤其 SG2002/C906 这类
+真实硬件)不保证支持非对齐访问, 所以只能两边都对齐才敢加宽。
+
+代价：src/dest 的奇偶不同时(相对偏移是奇数), 无论推进多少字节两者都
+不可能同时对齐 —— 这种情况会退化成逐字节拷贝。这是该约束下的必然结果, 不是
+缺陷；要再快就得做"两次对齐读取 + 移位拼合", 或者确认目标平台允许非对齐访问。
+(AArch64 的 memcpy_neon 没有这个问题：ld1/st1 {v0.16b} 按字节访问, 只需要
+对齐目的地址。)
+
+<details>
+<summary>函数内备注（5 条）</summary>
+
+**第 67 行**
+
+> 逐字节拷贝直到两边都 2 字节对齐
+
+**第 73 行**
+
+> 8 字节拷贝
+
+**第 82 行**
+
+> 4 字节拷贝
+
+**第 91 行**
+
+> 2 字节拷贝
+
+**第 100 行**
+
+> 剩余逐字节拷贝
+
+</details>
+
+**位置**：`include/libc/string_internal.h:53`
+
+<a id="fn-include-libc-string_internal.h-112"></a>
+
+### `memset_generic`
+
+```c
+static inline void *memset_generic(void *s, int c, size_t n)
+```
+
+memset_generic - 通用 memset(按字宽填充, 同样要求目的地址对齐后才加宽)
+
+<details>
+<summary>函数内备注（2 条）</summary>
+
+**第 124 行**
+
+> 先把目的地址推到 2 字节边界
+
+**第 128 行**
+
+> 8 字节填充(源是常量, 不存在&quot;两边对齐&quot;问题, 只需目的对齐)
+
+</details>
+
+**位置**：`include/libc/string_internal.h:112`
+
+<a id="fn-include-libc-string_internal.h-156"></a>
+
+### `memmove_generic`
+
+```c
+static inline void *memmove_generic(void *dest, const void *src, size_t n)
+```
+
+memmove_generic - 通用 memmove(重叠时反向拷贝)
+
+<details>
+<summary>函数内备注（2 条）</summary>
+
+**第 164 行**
+
+> 目的在源之前(或不相交)：正向拷贝, 可复用 memcpy 的加宽路径
+
+**第 168 行**
+
+> 目的在源之后：从尾部反向拷贝, 避免自己覆盖自己
+
+</details>
+
+**位置**：`include/libc/string_internal.h:156`
+
+<a id="fn-include-libc-string_internal.h-185"></a>
+
+### `memcpy_arch`
+
+```c
+static inline void *memcpy_arch(void *dest, const void *src, size_t n)
+```
+
+未知架构：直接用通用实现
+
+**位置**：`include/libc/string_internal.h:185`
+
+<a id="fn-include-libc-string_internal.h-190"></a>
+
+### `memset_arch`
+
+```c
+static inline void *memset_arch(void *s, int c, size_t n)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`include/libc/string_internal.h:190`
 
 <a id="mod-include-list.h"></a>
 
@@ -2377,6 +2763,57 @@ list_contains - 检查节点是否在链表中
 返回值: 1 表示在链表中, 0 表示不在
 
 **位置**：`include/list.h:243`
+
+<a id="mod-include-mm-pmm.h"></a>
+
+## include/mm/pmm.h — ── 物理内存配置 ─────────────────────────────────────────────────────
+
+`include/mm/pmm.h` · 3 个函数 · 3 个有说明 · 184 行
+
+<a id="fn-include-mm-pmm.h-83"></a>
+
+### `pmm_is_initialized`
+
+```c
+static inline bool pmm_is_initialized(void)
+```
+
+pmm_is_initialized - 全局 PMM 是否已完成 pmm_init()
+
+静态对象初值为 0；pmm_init() 断言 size > 0 并设置 total_pages,
+所以 total_pages 非 0 是可靠的"已初始化"判据。
+
+**位置**：`include/mm/pmm.h:83`
+
+<a id="fn-include-mm-pmm.h-146"></a>
+
+### `pmm_get_free_pages`
+
+```c
+static inline uint64_t pmm_get_free_pages(pmm_t *pmm)
+```
+
+pmm_get_free_pages - 获取空闲页面数
+@pmm: 物理内存管理器
+
+返回：空闲页面数
+
+**位置**：`include/mm/pmm.h:146`
+
+<a id="fn-include-mm-pmm.h-157"></a>
+
+### `pmm_get_total_pages`
+
+```c
+static inline uint64_t pmm_get_total_pages(pmm_t *pmm)
+```
+
+pmm_get_total_pages - 获取总页面数
+@pmm: 物理内存管理器
+
+返回：总页面数
+
+**位置**：`include/mm/pmm.h:157`
 
 <a id="mod-include-mmio.h"></a>
 
@@ -2762,57 +3199,6 @@ static inline uint32_t npu_mmu_mk_pte(uint64_t pa, int writable)
 在 DTE 基础上置 READABLE 位生成 PTE，writable 非零时再置 WRITABLE 位。
 
 **位置**：`include/npu/npu_mmu.h:113`
-
-<a id="mod-include-pmm.h"></a>
-
-## include/mm/pmm.h — ── 物理内存配置 ─────────────────────────────────────────────────────
-
-`include/mm/pmm.h` · 3 个函数 · 3 个有说明 · 184 行
-
-<a id="fn-include-pmm.h-83"></a>
-
-### `pmm_is_initialized`
-
-```c
-static inline bool pmm_is_initialized(void)
-```
-
-pmm_is_initialized - 全局 PMM 是否已完成 pmm_init()
-
-静态对象初值为 0；pmm_init() 断言 size > 0 并设置 total_pages,
-所以 total_pages 非 0 是可靠的"已初始化"判据。
-
-**位置**：`include/mm/pmm.h:83`
-
-<a id="fn-include-pmm.h-146"></a>
-
-### `pmm_get_free_pages`
-
-```c
-static inline uint64_t pmm_get_free_pages(pmm_t *pmm)
-```
-
-pmm_get_free_pages - 获取空闲页面数
-@pmm: 物理内存管理器
-
-返回：空闲页面数
-
-**位置**：`include/mm/pmm.h:146`
-
-<a id="fn-include-pmm.h-157"></a>
-
-### `pmm_get_total_pages`
-
-```c
-static inline uint64_t pmm_get_total_pages(pmm_t *pmm)
-```
-
-pmm_get_total_pages - 获取总页面数
-@pmm: 物理内存管理器
-
-返回：总页面数
-
-**位置**：`include/mm/pmm.h:157`
 
 <a id="mod-include-riscv64-barrier_impl.h"></a>
 
@@ -3218,7 +3604,7 @@ arch_halt - 停止 RISC-V 处理器
 
 ## include/riscv64/hext.h — RISC-V Hypervisor Extension (H-ext) CSR 定义
 
-`include/riscv64/hext.h` · 9 个函数 · 9 个有说明 · 369 行
+`include/riscv64/hext.h` · 9 个函数 · 9 个有说明 · 322 行
 
 RISC-V Privileged Spec 1.12 §19-20 (H-extension)
 当内核运行在 HS-mode 时, 使用这些 CSR 管理 VS-mode guest。
@@ -3229,7 +3615,7 @@ VS-mode  = Virtual Supervisor(guest OS 运行在此)
 VU-mode  = Virtual User(guest 用户进程)
 U-mode   = 普通用户进程(非虚拟化, 直接 ecall 到 HS-mode)
 
-<a id="fn-include-riscv64-hext.h-287"></a>
+<a id="fn-include-riscv64-hext.h-240"></a>
 
 ### `hext_read_hvip`
 
@@ -3240,9 +3626,9 @@ static inline uint64_t hext_read_hvip(void)
 注：本工具链(gcc/as)的 RISC-V 汇编器不识别 hvip/hie 的符号名
 (与 hgatp 同理), 必须用数值 CSR 地址 + 内联汇编；数值定义在 csr.h。
 
-**位置**：`include/riscv64/hext.h:287`
+**位置**：`include/riscv64/hext.h:240`
 
-<a id="fn-include-riscv64-hext.h-294"></a>
+<a id="fn-include-riscv64-hext.h-247"></a>
 
 ### `hext_set_hvip_bits`
 
@@ -3254,9 +3640,9 @@ static inline void hext_set_hvip_bits(uint64_t bits)
 
 用 csrs 指令向 0x645（HVIP）寄存器置位给定比特。
 
-**位置**：`include/riscv64/hext.h:294`
+**位置**：`include/riscv64/hext.h:247`
 
-<a id="fn-include-riscv64-hext.h-299"></a>
+<a id="fn-include-riscv64-hext.h-252"></a>
 
 ### `hext_clear_hvip_bits`
 
@@ -3268,9 +3654,9 @@ static inline void hext_clear_hvip_bits(uint64_t bits)
 
 用 csrc 指令清除 0x645（HVIP）寄存器中给定比特。
 
-**位置**：`include/riscv64/hext.h:299`
+**位置**：`include/riscv64/hext.h:252`
 
-<a id="fn-include-riscv64-hext.h-304"></a>
+<a id="fn-include-riscv64-hext.h-257"></a>
 
 ### `hext_set_hie_bits`
 
@@ -3282,9 +3668,9 @@ static inline void hext_set_hie_bits(uint64_t bits)
 
 用 csrs 指令置位 0x604（HIE）寄存器中给定比特。
 
-**位置**：`include/riscv64/hext.h:304`
+**位置**：`include/riscv64/hext.h:257`
 
-<a id="fn-include-riscv64-hext.h-318"></a>
+<a id="fn-include-riscv64-hext.h-271"></a>
 
 ### `hext_set_vs_software_irq`
 
@@ -3300,9 +3686,9 @@ static inline void hext_set_vs_software_irq(int pending)
 挂起位的两个视图)，所以 VMM 必须在每次 exit 时回读 hvip 来同步自己的
 软件 pending —— 只清不清软件状态会导致 IPI 永远重投(IPI 风暴)。
 
-**位置**：`include/riscv64/hext.h:318`
+**位置**：`include/riscv64/hext.h:271`
 
-<a id="fn-include-riscv64-hext.h-327"></a>
+<a id="fn-include-riscv64-hext.h-280"></a>
 
 ### `hext_set_vs_timer_irq`
 
@@ -3312,9 +3698,9 @@ static inline void hext_set_vs_timer_irq(int pending)
 
 设置/清除 VS 定时器中断挂起
 
-**位置**：`include/riscv64/hext.h:327`
+**位置**：`include/riscv64/hext.h:280`
 
-<a id="fn-include-riscv64-hext.h-336"></a>
+<a id="fn-include-riscv64-hext.h-289"></a>
 
 ### `hext_set_vs_external_irq`
 
@@ -3324,9 +3710,9 @@ static inline void hext_set_vs_external_irq(int pending)
 
 设置/清除 VS 外部中断挂起
 
-**位置**：`include/riscv64/hext.h:336`
+**位置**：`include/riscv64/hext.h:289`
 
-<a id="fn-include-riscv64-hext.h-359"></a>
+<a id="fn-include-riscv64-hext.h-312"></a>
 
 ### `hext_fence_i`
 
@@ -3348,9 +3734,9 @@ hfence.vvma 的助记符在 -march=rv64gc 下不被汇编器识别, 与 hfence.g
 这里做了「忽略地址/ASID, 一律全刷」的保守简化 —— 语义上永远安全,
 代价只是 guest 换页时的 TLB 命中率。
 
-**位置**：`include/riscv64/hext.h:359`
+**位置**：`include/riscv64/hext.h:312`
 
-<a id="fn-include-riscv64-hext.h-364"></a>
+<a id="fn-include-riscv64-hext.h-317"></a>
 
 ### `hext_hfence_vvma_all`
 
@@ -3362,7 +3748,7 @@ static inline void hext_hfence_vvma_all(void)
 
 发出 .insn 编码的 hfence.vvma 全刷指令并附 memory 屏障。
 
-**位置**：`include/riscv64/hext.h:364`
+**位置**：`include/riscv64/hext.h:317`
 
 <a id="mod-include-riscv64-mm_vm.h"></a>
 
@@ -3875,6 +4261,58 @@ mmu.S 的启动映射也用同一份列表, 避免两边漂移。
 
 **位置**：`include/riscv64/satp_utils.h:59`
 
+<a id="mod-include-riscv64-sbi.h"></a>
+
+## include/riscv64/sbi.h — SBI(Supervisor Binary Interface)常量 + 主机侧调用封装
+
+`include/riscv64/sbi.h` · 2 个函数 · 2 个有说明 · 130 行
+
+常量同时服务两类使用者:
+- 宿主 bring-up(kernel/task/cpu.c)：HSM/IPI 扩展走这里的内联封装;
+- VMM 的 guest 模拟(kernel/vmm/riscv64/hext_run.c)：guest 以
+a7=EID, a6=FID, a0..=参数 发 ecall, 宿主按同一组编号分派。
+
+以前这组常量写在 hext.h(那是 H-ext CSR 的头)里, 宿主侧又自己写了一份
+功能号 —— 和 csr.h 顶部记录的问题同源: 改一边漏一边不会报错。
+现在是唯一定义, hext.h 不再重复。
+
+调用约定: a7=扩展号(EID), a6=功能号(FID), a0..a5=参数; 返回值在 a0。
+
+<a id="fn-include-riscv64-sbi.h-95"></a>
+
+### `sbi_hart_start`
+
+```c
+static inline long sbi_hart_start(uint64_t hartid, uint64_t start_addr, uint64_t opaque)
+```
+
+sbi_hart_start - HSM 扩展: 启动指定 hart
+@hartid:      目标 hart 的硬件号(mhartid 在 S-mode 不可读, 由调用者保存)
+@start_addr:  入口的**物理**地址(SBI 在目标核的 MMU 配置前进入)
+@opaque:      透传给入口的 a1(本内核用它传逻辑 CPU 号)
+
+返回: SBI 返回码, 0 = 成功
+
+**位置**：`include/riscv64/sbi.h:95`
+
+<a id="fn-include-riscv64-sbi.h-116"></a>
+
+### `sbi_send_ipi`
+
+```c
+static inline long sbi_send_ipi(uint64_t hartid)
+```
+
+sbi_send_ipi - IPI 扩展: 向单个 hart 发软件中断
+@hartid: 目标 hart 的硬件号
+
+只支持 hartid < 64：这里把 "1 << hartid" 直接放在 a0(hart_mask 的低
+XLEN 位)。超过 64 个 hart 的平台需要改用 hart_mask_base + 稀疏掩码。
+
+返回: SBI 返回码, 0 = 成功, -1 = hartid 超出本封装范围
+
+**位置**：`include/riscv64/sbi.h:116`
+
 <a id="mod-include-riscv64-spin_lock_impl.h"></a>
 
 ## include/riscv64/spin_lock_impl.h — RISC-V 64位架构的spinlock实现
@@ -4225,23 +4663,23 @@ tp 也清零(exec 不继承 TLS)。x0 随后会被 syscall 返回值的回填覆
 
 **位置**：`include/riscv64/syscall_abi.h:47`
 
-<a id="mod-include-rt_worker.h"></a>
+<a id="mod-include-rt-rt_worker.h"></a>
 
-## include/rt_worker.h — 用户可配置的 RT worker（模板）控制面 ABI
+## include/rt/rt_worker.h — 用户可配置的 RT worker（模板）控制面 ABI
 
-`include/rt_worker.h` · 1 个函数 · 1 个有说明 · 265 行
+`include/rt/rt_worker.h` · 1 个函数 · 0 个有说明 · 265 行
 
 设计：
 - 数据面：内核 RT 任务，按 period_ns 周期调用一个模板的 step()。
 step 有界、无分配、无睡眠、无 VFS，只读写预分配状态和参数。
 - 控制面：用户态通过 /dev/rtctl 的 ioctl 创建/启动/停止/喂输入/取输出。
-- 设备：模板的输出可选绑定到一个 rtdev（见 include/rtdev.h）。
+- 设备：模板的输出可选绑定到一个 rtdev（见 include/rt/rtdev.h）。
 设备在 CREATE 时独占绑定，STOP/FAULT 时调用 safe_state()。
 
 注意：apps/c/rtctl.c 里有一份逐字节相同的 ABI 副本。改这里必须同步改
 用户态那份（结构体尺寸也被编进 ioctl 号，尺寸错了就是另一个命令）。
 
-<a id="fn-include-rt_worker.h-165"></a>
+<a id="fn-include-rt-rt_worker.h-165"></a>
 
 ### `rtw_shm_events`
 
@@ -4249,11 +4687,9 @@ step 有界、无分配、无睡眠、无 VFS，只读写预分配状态和参�
 static inline struct rtw_event_ring *rtw_shm_events(struct rtw_shm *s)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-以共享结构基址加 RTSHM_EVENT_OFFSET 偏移，返回其中事件环的指针。
-
-**位置**：`include/rt_worker.h:165`
+**位置**：`include/rt/rt_worker.h:165`
 
 <a id="mod-include-spinlock.h"></a>
 
@@ -4290,399 +4726,487 @@ static inline void spinlock_irq_init(spinlock_noirq_t *lock)
 
 **位置**：`include/spinlock.h:55`
 
-<a id="mod-include-string.h"></a>
+<a id="mod-include-task-cpu.h"></a>
 
-## include/string.h — 实现层(memcpy_generic / memcpy_arch / memcpy_neon …)在这里。
+## include/task/cpu.h — Per-CPU 控制块(SMP 抽象层)
 
-`include/string.h` · 14 个函数 · 14 个有说明 · 166 行
+`include/task/cpu.h` · 2 个函数 · 0 个有说明 · 208 行
 
-与公开 API 分开的原因见 string_internal.h 顶部：lib/string.c 要用同样的
-名字定义外部符号, 实现不能占用公开名字。
+Phase 0：仅提供数据结构 + BSP 初始化骨架, 行为等价于单核。
+- g_num_cpus 始终为 1, cpu_bring_up_all() 为 stub
+- cpu_current() 返回 &g_cpus[0](BSP 安装后从 per-CPU 寄存器读取)
 
-<a id="fn-include-string.h-22"></a>
+后续阶段：
+Phase 1: 调度器迁移到 cpu_t::run_queue / current_task / need_resched
+Phase 2: aarch64 PSCI 起多核 → cpu_secondary_bootstrap()
+Phase 4: IPI / 跨核唤醒
 
-### `strlen`
+<a id="fn-include-task-cpu.h-154"></a>
 
-```c
-static inline size_t strlen(const char *buf)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-逐字节扫描直到 NUL 为止，统计并返回字符串长度。
-
-**位置**：`include/string.h:22`
-
-<a id="fn-include-string.h-30"></a>
-
-### `strcat`
+### `cpu_current`
 
 ```c
-static inline char *strcat(char *dest, const char *src)
+static inline cpu_t *cpu_current(void)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-先定位 dest 末尾，再逐字节复制 src 含终止 NUL，返回 dest。
-
-**位置**：`include/string.h:30`
-
-<a id="fn-include-string.h-40"></a>
-
-### `strcpy`
-
-```c
-static inline char *strcpy(char *dest, const char *src)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-逐字节把 src 复制到 dest（含终止 NUL），返回 dest。
-
-**位置**：`include/string.h:40`
-
-<a id="fn-include-string.h-48"></a>
-
-### `strncpy`
-
-```c
-static inline char *strncpy(char *dest, const char *src, size_t n)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-最多复制 n 字节，源提前结束时用 NUL 填满剩余部分，返回 dest。
-
-**位置**：`include/string.h:48`
-
-<a id="fn-include-string.h-58"></a>
-
-### `strncmp`
-
-```c
-static inline int strncmp(const char *a, const char *b, size_t n)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-最多比较 n 字节，遇差异或 NUL 返回字符差值，否则返回 0。
-
-**位置**：`include/string.h:58`
-
-<a id="fn-include-string.h-66"></a>
-
-### `strcmp`
-
-```c
-static inline int strcmp(const char *a, const char *b)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-以 SIZE_MAX 为长度上限转调 strncmp 比较两个字符串。
-
-**位置**：`include/string.h:66`
-
-<a id="fn-include-string.h-71"></a>
-
-### `strchr`
-
-```c
-static inline char *strchr(const char *s, int c)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-逐字节查找字符 c，命中返回该处指针，先遇 NUL 则返回 NULL。
-
-**位置**：`include/string.h:71`
-
-<a id="fn-include-string.h-79"></a>
-
-### `memcmp`
-
-```c
-static inline int memcmp(const void *s1, const void *s2, size_t n)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-逐字节比较 n 字节，遇首个差异立即返回差值。
-
-**位置**：`include/string.h:79`
-
-<a id="fn-include-string.h-92"></a>
-
-### `strstr`
-
-```c
-static inline char *strstr(const char *s1, const char *s2)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-模式为空时直接返回 s1，否则在 s1 中滑动用 memcmp 匹配，找到返回指针否则 NULL。
-
-**位置**：`include/string.h:92`
-
-<a id="fn-include-string.h-108"></a>
-
-### `memset`
-
-```c
-static inline void *memset(void *s, int c, size_t n)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-转调 memset_arch 填充内存。
-
-**位置**：`include/string.h:108`
-
-<a id="fn-include-string.h-113"></a>
-
-### `memmove`
-
-```c
-static inline void *memmove(void *dest, const void *src, size_t n)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-转调 memmove_generic 执行可重叠区域的内存拷贝。
-
-**位置**：`include/string.h:113`
-
-<a id="fn-include-string.h-118"></a>
-
-### `memchr`
-
-```c
-static inline void *memchr(const void *s, int c, size_t n)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-在 n 字节范围内逐字节查找字符 c，命中返回该地址，否则返回 NULL。
-
-**位置**：`include/string.h:118`
-
-<a id="fn-include-string.h-127"></a>
-
-### `atol`
-
-```c
-static inline long atol(const char *ptr)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-跳过前导空白，解析可选正负号与连续数字得到 long，遇非数字即停。
-
-**位置**：`include/string.h:127`
-
-<a id="fn-include-string.h-161"></a>
-
-### `memcpy`
-
-```c
-static inline void *memcpy(void *dest, const void *src, size_t n)
-```
-
-公开 API 一律转发到实现层(string_internal.h 里的 *_arch)。
-lib/string.c 用同样的 *_arch 定义外部符号, 所以源码里的调用和编译器自动
-生成的调用(大结构体赋值, 循环→memcpy 变换)走的是同一份实现。
-
-**位置**：`include/string.h:161`
-
-<a id="mod-include-string_internal.h"></a>
-
-## include/string_internal.h — 字符串/内存函数的实现层
-
-`include/string_internal.h` · 5 个函数 · 5 个有说明 · 196 行
-
-为什么实现要和 string.h 分家：
-
-公开 API(string.h 里的 `static inline memcpy`/`memset`)占用了这两个名字,
-而且是内部链接。lib/string.c 必须把同样的名字定义成外部符号, 供编译器
-自动生成的调用使用(大结构体整体赋值, 循环→memcpy 变换等, GCC 会自己发
-`bl memcpy`)。同一个翻译单元里同名标识符既有内部链接又有外部链接是未定义
-行为(C11 6.2.2p7), 所以只能把"实现"和"公开名字"拆开：
-
-string_internal.h  实现：memcpy_generic / memcpy_arch / memcpy_neon …
-string.h           公开 API：static inline 转发到 *_arch
-lib/string.c       外部符号：同样转发到 *_arch
-
-这样"源码里写的 memcpy"和"编译器自己生成的 memcpy 调用"落到同一份实现。
-在此之前两者是分裂的：前者拿到内联的优化版本, 后者落到 lib/string.c 里那个
-逐字节循环(实测 fork/clone 路径的 816 字节 trap frame 拷贝就是后者)。
-
-架构约定 —— 每个架构在自己的 string_impl.h 里提供两个函数：
-memcpy_arch(dst, src, n)    本架构的 memcpy(可以是阈值分派, 也可以是通用实现)
-memset_arch(dst, c, n)      同上
-名字刻意不叫 memcpy/memset：那样又会和公开 API 撞名, 回到老问题。
-
-<a id="fn-include-string_internal.h-53"></a>
-
-### `memcpy_generic`
-
-```c
-static inline void *memcpy_generic(void *dest, const void *src, size_t n)
-```
-
-memcpy_generic - 通用 memcpy
-
-为什么宽访问要求 src/dest 同时对齐：这里用的是普通 GPR 的 8/4/2 字节
-访问, 而不是 NEON 那种按字节访问的 ld1/st1。RISC-V(尤其 SG2002/C906 这类
-真实硬件)不保证支持非对齐访问, 所以只能两边都对齐才敢加宽。
-
-代价：src/dest 的奇偶不同时(相对偏移是奇数), 无论推进多少字节两者都
-不可能同时对齐 —— 这种情况会退化成逐字节拷贝。这是该约束下的必然结果, 不是
-缺陷；要再快就得做"两次对齐读取 + 移位拼合", 或者确认目标平台允许非对齐访问。
-(AArch64 的 memcpy_neon 没有这个问题：ld1/st1 {v0.16b} 按字节访问, 只需要
-对齐目的地址。)
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
 <details>
-<summary>函数内备注（5 条）</summary>
+<summary>函数内备注（1 条）</summary>
 
-**第 67 行**
+**第 157 行**
 
-> 逐字节拷贝直到两边都 2 字节对齐
-
-**第 73 行**
-
-> 8 字节拷贝
-
-**第 82 行**
-
-> 4 字节拷贝
-
-**第 91 行**
-
-> 2 字节拷贝
-
-**第 100 行**
-
-> 剩余逐字节拷贝
+> 若 per-CPU 寄存器尚未安装(早期 boot 或测试代码), 回退 CPU0。
 
 </details>
 
-**位置**：`include/string_internal.h:53`
+**位置**：`include/task/cpu.h:154`
 
-<a id="fn-include-string_internal.h-112"></a>
+<a id="fn-include-task-cpu.h-161"></a>
 
-### `memset_generic`
+### `get_current_cpu_id`
 
 ```c
-static inline void *memset_generic(void *s, int c, size_t n)
+static inline uint32_t get_current_cpu_id(void)
 ```
 
-memset_generic - 通用 memset(按字宽填充, 同样要求目的地址对齐后才加宽)
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`include/task/cpu.h:161`
+
+<a id="mod-include-task-switch.h"></a>
+
+## include/task/switch.h — 架构抽象：上下文切换
+
+`include/task/switch.h` · 3 个函数 · 3 个有说明 · 376 行
+
+提供：
+arch_task_switch()      — 在 .S 文件中实现, 保存/恢复被调用者寄存器
+arch_init_task_stack()  — 为新任务构造初始切换帧
+
+中断屏蔽(arch_irq_save/restore/enable/disable/flags/is_enabled)已统一到
+include/<arch>/exception_impl.h, 由本文件顶部 include 的 exception.h 暴露。
+
+上下文切换原理：
+仅保存"被调用者保存寄存器"(callee-saved registers)。
+调用者保存寄存器由 C 调用约定在调用 sched_schedule() 前
+自动保存到栈帧, arch_task_switch() 无需额外处理。
+
+新任务初始化：
+arch_init_task_stack() 在新任务的栈顶构造一个伪造的切换帧,
+使首次 arch_task_switch() "返回"时跳转到 task_trampoline()。
+
+<a id="fn-include-task-switch.h-118"></a>
+
+### `arch_init_task_stack`
+
+```c
+static inline uintptr_t arch_init_task_stack(uint8_t *stack_base, uint32_t stack_size)
+```
+
+arch_init_task_stack - 在新任务的栈上构造伪切换帧
+@stack_base: 栈底(低地址)
+@stack_size: 栈大小(字节)
+
+返回：应写入 task->sp 的初始值。
+
+构造的帧与 arch_task_switch() 保存的帧格式完全一致,
+使得首次调度到该任务时 arch_task_switch 的 "ret"
+跳转到 task_trampoline()。
 
 <details>
-<summary>函数内备注（2 条）</summary>
+<summary>函数内备注（7 条）</summary>
 
-**第 124 行**
+**第 123 行**
 
-> 先把目的地址推到 2 字节边界
+> arch_task_switch 保存顺序(stp x19,x20 [sp,#-176]! ... stp x9,x10 [sp,#160])：
+> saved_sp + 0  = x19,  saved_sp + 8  = x20
+> saved_sp + 16 = x21,  saved_sp + 24 = x22
+> saved_sp + 32 = x23,  saved_sp + 40 = x24
+> saved_sp + 48 = x25,  saved_sp + 56 = x26
+> saved_sp + 64 = x27,  saved_sp + 72 = x28
+> saved_sp + 80 = x29,  saved_sp + 88 = x30 (LR)  ← ret 目标
+> saved_sp + 96 .. 152 = d8-d15
+> saved_sp + 160 = fpcr, saved_sp + 168 = fpsr
+> 共 22 × 8 = 176 字节
 
-**第 128 行**
+> 全部清零：新内核线程以干净的 FP 状态开始(FPCR/FPSR = 0, d8-d15 = 0)。
 
-> 8 字节填充(源是常量, 不存在&quot;两边对齐&quot;问题, 只需目的对齐)
+**第 140 行（行尾）**
+
+> x30 (LR)
+
+**第 143 行**
+
+> arch_task_switch 保存顺序(sd ra 0(sp) ... sd s11 96(sp), fsd fs0..fs11, fcsr)：
+> saved_sp + 0  = ra    ← ret 目标
+> saved_sp + 8  = s0,  saved_sp + 16 = s1
+> ...
+> saved_sp + 96 = s11
+> saved_sp + 104 = fs0 .. saved_sp + 192 = fs11
+> saved_sp + 200 = fcsr
+> 共 26 × 8 = 208 字节
+
+**第 154 行（行尾）**
+
+> ra
+
+**第 159 行**
+
+> arch_task_switch 保存顺序(pushq rbx, rbp, r12, r13, r14, r15)：
+> 恢复顺序(popq r15, r14, r13, r12, rbp, rbx, ret)：
+> saved_sp + 0  = r15
+> saved_sp + 8  = r14
+> saved_sp + 16 = r13
+> saved_sp + 24 = r12
+> saved_sp + 32 = rbp
+> saved_sp + 40 = rbx
+> saved_sp + 48 = 返回地址  ← ret 目标
+> 共 7 × 8 = 56 字节
+
+**第 174 行（行尾）**
+
+> return address
+
+**第 176 行（行尾）**
+
+> ARCH_*
 
 </details>
 
-**位置**：`include/string_internal.h:112`
+**位置**：`include/task/switch.h:118`
 
-<a id="fn-include-string_internal.h-156"></a>
+<a id="fn-include-task-switch.h-195"></a>
 
-### `memmove_generic`
+### `arch_init_user_stack`
 
 ```c
-static inline void *memmove_generic(void *dest, const void *src, size_t n)
+static inline uintptr_t arch_init_user_stack(uint8_t *stack_base, uint32_t stack_size, uint64_t user_entry, uint64_t user_sp, uint64_t user_pgd)
 ```
 
-memmove_generic - 通用 memmove(重叠时反向拷贝)
+arch_init_user_stack - 为用户进程初始化内核栈(首次跳转用)
+@stack_base: 内核栈底(低地址)
+@stack_size: 内核栈大小(字节)
+@user_entry: 用户态入口点(虚拟地址)
+@user_sp: 用户栈指针(虚拟地址)
+
+返回：应写入 task->sp 的初始内核栈指针。
+
+构造的帧使得首次调度时跳转到 task_trampoline_user,
+然后调用 arch_switch_to_user 跳转到用户态。
 
 <details>
-<summary>函数内备注（2 条）</summary>
+<summary>函数内备注（20 条）</summary>
 
-**第 164 行**
+**第 202 行**
 
-> 目的在源之前(或不相交)：正向拷贝, 可复用 memcpy 的加宽路径
+> 保存22个被调用者寄存器(176 字节, 含 FP 保存区)
+> 布局：
+> [0]   x19=user_entry  [8]   x20=user_sp
+> [16]  x21=unused       [24]  x22
+> [32]  x23              [40]  x24
+> [48]  x25              [56]  x26
+> [64]  x27              [72]  x28
+> [80]  x29              [88]  x30 (LR) → task_trampoline_user
+> [96..152] d8-d15, [160] fpcr, [168] fpsr
 
-**第 168 行**
+> FP 区清零：新进程首次进 EL0 时 FPCR/FPSR 与 d8-d15 都是干净的,
+> 不会把内核残留的 FP 值泄漏给用户态。
 
-> 目的在源之后：从尾部反向拷贝, 避免自己覆盖自己
+**第 217 行（行尾）**
+
+> x19 = 用户入口
+
+**第 218 行（行尾）**
+
+> x20 = 用户栈
+
+**第 221 行（行尾）**
+
+> x30 (LR)
+
+**第 224 行**
+
+> 保存26个被调用者寄存器(208字节)：
+> [0]=ra [1]=s0 [2]=s1 ... [12]=s11 [13..24]=fs0..fs11 [25]=fcsr
+> task_trampoline_user 约定：s0=user_entry, s1=user_sp, s2=user_pgd
+
+**第 230 行（行尾）**
+
+> ra
+
+**第 231 行（行尾）**
+
+> s0
+
+**第 232 行（行尾）**
+
+> s1
+
+**第 233 行（行尾）**
+
+> s2
+
+**第 238 行**
+
+> x86_64 栈布局(arch_task_switch 恢复时)：
+
+> [高地址]
+> user_sp         &lt;- 会被 task_trampoline_user popq 到 rsi
+> user_entry      &lt;- 会被 task_trampoline_user popq 到 rdi
+> 返回地址 (LR)   &lt;- 会被 ret 弹出, 跳转到 task_trampoline_user
+> r15
+> r14
+> r13
+> r12
+> rbp
+> rbx             &lt;- sp 指向这里
+> [低地址]
+
+> 保存6个被调用者寄存器 + 返回地址 + 2个参数 = 9 个 uint64_t
+
+**第 256 行（行尾）**
+
+> rbx
+
+**第 257 行（行尾）**
+
+> rbp
+
+**第 258 行（行尾）**
+
+> r12
+
+**第 259 行（行尾）**
+
+> r13
+
+**第 260 行（行尾）**
+
+> r14
+
+**第 261 行（行尾）**
+
+> r15
+
+**第 262 行（行尾）**
+
+> 返回地址 (LR)
+
+**第 263 行（行尾）**
+
+> 用户入口
+
+**第 264 行（行尾）**
+
+> 用户栈
+
+**第 266 行（行尾）**
+
+> x86_64 页表通过 task-&gt;mm-&gt;pgd 在调度时切换 CR3
 
 </details>
 
-**位置**：`include/string_internal.h:156`
+**位置**：`include/task/switch.h:195`
 
-<a id="fn-include-string_internal.h-185"></a>
+<a id="fn-include-task-switch.h-291"></a>
 
-### `memcpy_arch`
-
-```c
-static inline void *memcpy_arch(void *dest, const void *src, size_t n)
-```
-
-未知架构：直接用通用实现
-
-**位置**：`include/string_internal.h:185`
-
-<a id="fn-include-string_internal.h-190"></a>
-
-### `memset_arch`
+### `arch_init_fork_child_stack`
 
 ```c
-static inline void *memset_arch(void *s, int c, size_t n)
+static inline uintptr_t arch_init_fork_child_stack(uint8_t *stack_base, uint32_t stack_size, trap_frame_t *frame, uint64_t child_stack, uint64_t tls)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+arch_init_fork_child_stack - 为 fork/线程子进程初始化内核栈
+@stack_base:      内核栈底(低地址)
+@stack_size:      内核栈大小(字节)
+@frame:           父进程的完整 trap_frame_t
+@child_stack:     子进程/线程的用户栈指针(0 = 继承父进程)
+@tls:             线程本地存储指针(0 = 继承父进程)
 
-转调 memset_generic 实现内存填充。
+fork：child_stack=0, tls=0
+线程(CLONE_VM+CLONE_SETTLS)：child_stack=新栈, tls=TLS指针
 
-**位置**：`include/string_internal.h:190`
+返回：应写入 task->sp 的初始值。
 
-<a id="mod-include-vfs.h"></a>
+<details>
+<summary>函数内备注（26 条）</summary>
 
-## include/vfs.h — small kernel VFS layer
+**第 297 行**
 
-`include/vfs.h` · 2 个函数 · 2 个有说明 · 124 行
+> 先在内核栈顶放一份 trap_frame_t
 
-First-stage VFS abstraction: fd objects point at struct vfs_file, and
-operations dispatch through file_ops. Path routing uses a small mount table:
-/dev, /proc and /sys route to pseudofs, / routes to ext4, and an optional
-MBR FAT partition can be registered at FAT_MOUNT_POINT (default /boot).
+**第 300 行**
 
-<a id="fn-include-vfs.h-114"></a>
+> 整体拷贝：r[]/usp/elr/spsr/tpidr_el0 与 FP 状态(q0-q31/fpcr/fpsr)
+> 全部继承父进程 —— 子进程的 FP 状态在 fork 时必须与父进程一致。
+> (早先这里逐字段拷贝, 扩 FP 时容易漏字段。)
 
-### `vfs_file_is_regular`
+**第 308 行**
+
+> 子进程 fork/线程 返回 0
+
+**第 311 行**
+
+> 再放 22 个被调用者寄存器(含 FP 保存区), x30(LR)→arch_fork_resume_user
+
+**第 313 行（行尾）**
+
+> x19 = &amp;child_frame
+
+**第 316 行（行尾）**
+
+> x30 (LR)
+
+**第 318 行**
+
+> RISC-V trap_frame_t: x[0..31], sepc, scause, stval, sstatus, f[0..31], fcsr
+
+**第 332 行**
+
+> fork/线程返回值 = 0 (a0/x10)
+
+**第 334 行**
+
+> 覆盖用户栈 / TLS (tp = x4)
+
+**第 336 行（行尾）**
+
+> sp
+
+**第 338 行（行尾）**
+
+> tp
+
+**第 340 行**
+
+> 再放 26 个被调用者寄存器(含 FP), ra-&gt;arch_fork_resume_user, s0-&gt;child_frame
+
+**第 342 行（行尾）**
+
+> ra
+
+**第 343 行（行尾）**
+
+> s0 = &amp;child_frame
+
+**第 347 行**
+
+> x86_64: 在内核栈上放 trap_frame, 再放 arch_task_switch 的被调用者寄存器帧
+
+**第 352 行（行尾）**
+
+> fork/线程子进程返回 0
+
+**第 354 行（行尾）**
+
+> 覆盖用户栈
+
+**第 355 行**
+
+> x86_64 TLS (fs_base) 在 clone 调用者处通过 task-&gt;fs_base 设置
+
+**第 357 行**
+
+> arch_task_switch 保存/恢复顺序(低地址→高地址)：
+> [sp+0] r15  [sp+8] r14  [sp+16] r13  [sp+24] r12
+> [sp+32] rbp [sp+40] rbx [sp+48] 返回地址
+> rbx 恢复后值为 &amp;child_frame, ret 后跳 arch_fork_resume_user。
+
+**第 364 行（行尾）**
+
+> r15
+
+**第 365 行（行尾）**
+
+> r14
+
+**第 366 行（行尾）**
+
+> r13
+
+**第 367 行（行尾）**
+
+> r12
+
+**第 368 行（行尾）**
+
+> rbp
+
+**第 369 行（行尾）**
+
+> rbx = frame 指针
+
+**第 370 行（行尾）**
+
+> 返回地址
+
+</details>
+
+**位置**：`include/task/switch.h:291`
+
+<a id="mod-include-task-task.h"></a>
+
+## include/task/task.h — 内核任务控制块与公共 API
+
+`include/task/task.h` · 4 个函数 · 3 个有说明 · 524 行
+
+设计：
+- 内核任务 + 用户进程共用 TCB；用户进程的地址空间/文件/信号见各字段注释
+- 静态任务池, 最多 TASK_MAX 个并发任务
+- 调度器 (sched.c) 实现轮转调度 (round-robin)
+- 上下文切换由 arch_task_switch() 完成(仅保存被调用者保存寄存器)
+- 字段按“切换/调度热区 → 用户状态 → 冷数据/大数组”排列，
+并由文件末尾的 _Static_assert 锁住布局（见 docs/task_t_refactor.md）
+
+<a id="fn-include-task-task.h-215"></a>
+
+### `task_is_thread`
 
 ```c
-static inline bool vfs_file_is_regular(const vfs_file_t *file)
+static inline bool task_is_thread(const task_t *t)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+CLONE_THREAD 创建的任务：tgid 指向线程组首线程；exec 后 tgid 恢复为自身 id。
 
-判断 file 非空且 kind 为 ext4 普通文件或 FAT 普通文件。
+**位置**：`include/task/task.h:215`
 
-**位置**：`include/vfs.h:114`
+<a id="fn-include-task-task.h-221"></a>
 
-<a id="fn-include-vfs.h-119"></a>
-
-### `vfs_file_is_dir`
+### `task_is_rt`
 
 ```c
-static inline bool vfs_file_is_dir(const vfs_file_t *file)
+static inline bool task_is_rt(const task_t *t)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+是否 RT 调度类（FIFO/RR）。
 
-判断 file 非空且 kind 为 ext4 目录、FAT 目录或伪文件系统。
+**位置**：`include/task/task.h:221`
 
-**位置**：`include/vfs.h:119`
+<a id="fn-include-task-task.h-230"></a>
+
+### `task_sched_is_rt`
+
+```c
+static inline bool task_sched_is_rt(const task_t *t)
+```
+
+调度器用的“有效 RT 属性”：基础 RT 调度类，或被 rt_mutex 临时提升的
+NORMAL 任务。pi_priority 只由 sched_set_pi_boost() 写。
+
+**位置**：`include/task/task.h:230`
+
+<a id="fn-include-task-task.h-235"></a>
+
+### `task_effective_rt_prio`
+
+```c
+static inline uint8_t task_effective_rt_prio(const task_t *t)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`include/task/task.h:235`
 
 <a id="mod-include-vmm-vmm.h"></a>
 

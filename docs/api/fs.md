@@ -11,7 +11,7 @@
 FatFs 和 lwext4 共用同一个 struct ext4_blockdev（MBR 分区只是不同的
 part_offset/part_size，bdif 是同一个）。FAT 这边只做 512 字节对齐的整扇区
 I/O，直接走 bdif->bread/bwrite，不会碰 lwext4 的 ph_bbuf；两个文件系统的
-所有 API 调用由 include/fs_lock.h 的全局锁串行化。
+所有 API 调用由 include/fs/fs_lock.h 的全局锁串行化。
 
 编译要求：FATFS_CFLAGS（包含 lwext4 头 + FatFs 头 + fs/fatfs_port）。
 
@@ -318,7 +318,7 @@ void fs_global_lock(void)
 
 FatFs 也有同样的需求（f_stat+f_open、f_lseek+f_truncate、整个 f_readdir
 循环），而且它和 lwext4 共用同一个块设备接口。所以这对函数已经不再只属于
-lwext4，统一叫 fs_global_lock/fs_global_unlock（见 include/fs_lock.h）。
+lwext4，统一叫 fs_global_lock/fs_global_unlock（见 include/fs/fs_lock.h）。
 
 这类地方要把整个序列圈进一个临界区。锁是可重入的, 所以外面加一层
 粗锁, 里面每次调用那层细锁照常嵌套, 不会死锁。

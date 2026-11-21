@@ -50,7 +50,7 @@ while (1)
 ```
 
 **崩进去的 CPU 手里还攥着 `g_uart_hw_lock`，于是它永远不释放。** 另外三个核每个 tick 的
-timer ISR 都会调 `signal_check_uart()`（`driver/timer/timer_x86_64_impl.h:79`），
+timer ISR 都会调 `signal_check_uart()`（`driver/time/timer_x86_64_impl.h:79`），
 自然全堆在这把锁上 → 整机冻死。
 
 > **教训**：看到"锁被持有但持有者不在任何 CPU 上"，先去找**最近发生的那次异常/崩溃**，

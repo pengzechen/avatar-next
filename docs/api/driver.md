@@ -1,6 +1,6 @@
 # driver — C API
 
-[← 返回总览](index.md) · 485 个函数 · 说明覆盖率 100.0%
+[← 返回总览](index.md) · 486 个函数 · 说明覆盖率 94.2%
 
 <a id="mod-driver-blk-block.c"></a>
 
@@ -1301,7 +1301,7 @@ static int dma_buf_probe(const device_t *dev)
 `driver/dma/dma_core.c` · 1 个函数 · 1 个有说明 · 21 行
 
 永远参与构建。DMA=1 时 driver/dma/dma_buf.c 的 probe 调 dma_buf_bind()；
-否则 g_dma_buf_ops 保持 NULL，include/dma_buf.h 的内联包装统一返回失败。
+否则 g_dma_buf_ops 保持 NULL，include/driver/dma_buf.h 的内联包装统一返回失败。
 
 <a id="fn-driver-dma-dma_core.c-18"></a>
 
@@ -7632,13 +7632,13 @@ void serial_bind(const serial_ops_t *ops)
 
 **位置**：`driver/serial/serial.c:52`
 
-<a id="mod-driver-timer-timer.c"></a>
+<a id="mod-driver-time-timer.c"></a>
 
-## driver/timer/timer.c — 全局变量定义(在架构实现包含之前, 使 timer_handler 可见)
+## driver/time/timer.c — 全局变量定义(在架构实现包含之前, 使 timer_handler 可见)
 
-`driver/timer/timer.c` · 24 个函数 · 24 个有说明 · 340 行
+`driver/time/timer.c` · 25 个函数 · 14 个有说明 · 366 行
 
-<a id="fn-driver-timer-timer.c-31"></a>
+<a id="fn-driver-time-timer.c-32"></a>
 
 ### `timer_set_tick_cb`
 
@@ -7646,13 +7646,23 @@ void serial_bind(const serial_ops_t *ops)
 void timer_set_tick_cb(timer_tick_cb_t cb)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-把全局 tick 回调指针设为 cb。
+**位置**：`driver/time/timer.c:32`
 
-**位置**：`driver/timer/timer.c:31`
+<a id="fn-driver-time-timer.c-49"></a>
 
-<a id="fn-driver-timer-timer.c-61"></a>
+### `timer_tick_owner`
+
+```c
+static inline bool timer_tick_owner(void)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`driver/time/timer.c:49`
+
+<a id="fn-driver-time-timer.c-80"></a>
 
 ### `timer_delay_counter_frequency`
 
@@ -7660,13 +7670,11 @@ void timer_set_tick_cb(timer_tick_cb_t cb)
 static uint64_t timer_delay_counter_frequency(void)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-x86_64 返回标定得到的 TSC 频率，其它架构返回通用计数器频率。
+**位置**：`driver/time/timer.c:80`
 
-**位置**：`driver/timer/timer.c:61`
-
-<a id="fn-driver-timer-timer.c-77"></a>
+<a id="fn-driver-time-timer.c-96"></a>
 
 ### `timer_init`
 
@@ -7679,19 +7687,19 @@ void timer_init(void)
 <details>
 <summary>函数内备注（2 条）</summary>
 
-**第 79 行**
+**第 98 行**
 
 > 从平台配置中读取定时器参数
 
-**第 85 行**
+**第 104 行**
 
 > 调用架构特定的初始化
 
 </details>
 
-**位置**：`driver/timer/timer.c:77`
+**位置**：`driver/time/timer.c:96`
 
-<a id="fn-driver-timer-timer.c-92"></a>
+<a id="fn-driver-time-timer.c-111"></a>
 
 ### `timer_enable`
 
@@ -7701,9 +7709,9 @@ void timer_enable(void)
 
 启用定时器
 
-**位置**：`driver/timer/timer.c:92`
+**位置**：`driver/time/timer.c:111`
 
-<a id="fn-driver-timer-timer.c-97"></a>
+<a id="fn-driver-time-timer.c-116"></a>
 
 ### `timer_init_secondary`
 
@@ -7711,27 +7719,25 @@ void timer_enable(void)
 void timer_init_secondary(void)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-按架构在从核上使能定时器中断并装载周期值，aarch64 还写 CNTP TVAL 与 CTL。
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
 <details>
 <summary>函数内备注（2 条）</summary>
 
-**第 100 行**
+**第 119 行**
 
 > 次级核需要独立 enable 本地 banked PPI(GICv2 GICD_ISENABLER0 每 CPU 独立)。
 > 主核 timer_arch_init 注册时只对主核生效, 这里由控制器补本核的那一份。
 
-**第 107 行（行尾）**
+**第 126 行（行尾）**
 
 > enable, unmask
 
 </details>
 
-**位置**：`driver/timer/timer.c:97`
+**位置**：`driver/time/timer.c:116`
 
-<a id="fn-driver-timer-timer.c-116"></a>
+<a id="fn-driver-time-timer.c-135"></a>
 
 ### `timer_disable`
 
@@ -7741,9 +7747,9 @@ void timer_disable(void)
 
 禁用定时器
 
-**位置**：`driver/timer/timer.c:116`
+**位置**：`driver/time/timer.c:135`
 
-<a id="fn-driver-timer-timer.c-122"></a>
+<a id="fn-driver-time-timer.c-141"></a>
 
 ### `timer_set_next_interrupt`
 
@@ -7753,9 +7759,9 @@ void timer_set_next_interrupt(uint64_t ticks_from_now)
 
 设置下一次中断
 
-**位置**：`driver/timer/timer.c:122`
+**位置**：`driver/time/timer.c:141`
 
-<a id="fn-driver-timer-timer.c-128"></a>
+<a id="fn-driver-time-timer.c-147"></a>
 
 ### `timer_schedule_next_tick`
 
@@ -7765,9 +7771,9 @@ void timer_schedule_next_tick(void)
 
 调度下一个tick
 
-**位置**：`driver/timer/timer.c:128`
+**位置**：`driver/time/timer.c:147`
 
-<a id="fn-driver-timer-timer.c-140"></a>
+<a id="fn-driver-time-timer.c-159"></a>
 
 ### `timer_read_counter`
 
@@ -7777,9 +7783,9 @@ uint64_t timer_read_counter(void)
 
 时间相关函数
 
-**位置**：`driver/timer/timer.c:140`
+**位置**：`driver/time/timer.c:159`
 
-<a id="fn-driver-timer-timer.c-153"></a>
+<a id="fn-driver-time-timer.c-172"></a>
 
 ### `timer_counter_frequency`
 
@@ -7787,13 +7793,11 @@ uint64_t timer_read_counter(void)
 uint64_t timer_counter_frequency(void)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-x86_64 优先返回 TSC 频率否则退回按节拍毫秒推算，其它架构按已记录值、配置值或架构默认值返回。
+**位置**：`driver/time/timer.c:172`
 
-**位置**：`driver/timer/timer.c:153`
-
-<a id="fn-driver-timer-timer.c-173"></a>
+<a id="fn-driver-time-timer.c-192"></a>
 
 ### `timer_counter_to_ns`
 
@@ -7801,13 +7805,11 @@ x86_64 优先返回 TSC 频率否则退回按节拍毫秒推算，其它架构�
 uint64_t timer_counter_to_ns(uint64_t ticks)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-x86_64 未标定 TSC 时按系统 tick 数估算，否则用计数器频率把拍数换算成纳秒。
+**位置**：`driver/time/timer.c:192`
 
-**位置**：`driver/timer/timer.c:173`
-
-<a id="fn-driver-timer-timer.c-187"></a>
+<a id="fn-driver-time-timer.c-206"></a>
 
 ### `timer_spin`
 
@@ -7815,13 +7817,11 @@ x86_64 未标定 TSC 时按系统 tick 数估算，否则用计数器频率把�
 void timer_spin(uint32_t iterations)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-执行指定次数的 nop 空转作为忙等延时。
+**位置**：`driver/time/timer.c:206`
 
-**位置**：`driver/timer/timer.c:187`
-
-<a id="fn-driver-timer-timer.c-193"></a>
+<a id="fn-driver-time-timer.c-212"></a>
 
 ### `timer_poll_until`
 
@@ -7829,13 +7829,11 @@ void timer_spin(uint32_t iterations)
 int timer_poll_until(timer_poll_predicate_t pred, void *ctx, uint32_t max_polls, uint32_t relax_iters)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-反复调用谓词，命中返回 0，每轮后空转若干次，超过最大轮数返回 -1。
+**位置**：`driver/time/timer.c:212`
 
-**位置**：`driver/timer/timer.c:193`
-
-<a id="fn-driver-timer-timer.c-207"></a>
+<a id="fn-driver-time-timer.c-226"></a>
 
 ### `timer_poll_until_us`
 
@@ -7843,13 +7841,11 @@ int timer_poll_until(timer_poll_predicate_t pred, void *ctx, uint32_t max_polls,
 int timer_poll_until_us(timer_poll_predicate_t pred, void *ctx, uint64_t timeout_us, uint32_t relax_iters)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-用计数器频率把微秒超时换算成拍数轮询谓词，命中返回 0，计数器不可用时退回按轮数轮询，超时返回 -1。
+**位置**：`driver/time/timer.c:226`
 
-**位置**：`driver/timer/timer.c:207`
-
-<a id="fn-driver-timer-timer.c-229"></a>
+<a id="fn-driver-time-timer.c-248"></a>
 
 ### `timer_get_system_ticks`
 
@@ -7859,9 +7855,9 @@ uint64_t timer_get_system_ticks(void)
 
 获取系统tick数
 
-**位置**：`driver/timer/timer.c:229`
+**位置**：`driver/time/timer.c:248`
 
-<a id="fn-driver-timer-timer.c-235"></a>
+<a id="fn-driver-time-timer.c-254"></a>
 
 ### `timer_get_uptime_ms`
 
@@ -7871,9 +7867,22 @@ uint64_t timer_get_uptime_ms(void)
 
 获取系统运行时间(毫秒)
 
-**位置**：`driver/timer/timer.c:235`
+<details>
+<summary>函数内备注（1 条）</summary>
 
-<a id="fn-driver-timer-timer.c-241"></a>
+**第 256 行**
+
+> 用单调硬件计数，而不是 g_system_ticks * tick_ms：
+> - SMP 下全局 tick 只能由一个核算账，不能代表真实经过的时间；
+> - 即使 BSP 的 tick ISR 迟到，硬件计数也不受影响。
+> x86 未标定 TSC 时 timer_get_ns() 内部会退化到 g_system_ticks
+> (那时 tick 是唯一的时钟，见 timer_counter_to_ns)。
+
+</details>
+
+**位置**：`driver/time/timer.c:254`
+
+<a id="fn-driver-time-timer.c-267"></a>
 
 ### `timer_get_frequency`
 
@@ -7883,9 +7892,9 @@ uint64_t timer_get_frequency(void)
 
 获取定时器频率
 
-**位置**：`driver/timer/timer.c:241`
+**位置**：`driver/time/timer.c:267`
 
-<a id="fn-driver-timer-timer.c-247"></a>
+<a id="fn-driver-time-timer.c-273"></a>
 
 ### `timer_delay_ms`
 
@@ -7895,9 +7904,9 @@ void timer_delay_ms(uint32_t ms)
 
 毫秒延时(忙等待)
 
-**位置**：`driver/timer/timer.c:247`
+**位置**：`driver/time/timer.c:273`
 
-<a id="fn-driver-timer-timer.c-266"></a>
+<a id="fn-driver-time-timer.c-292"></a>
 
 ### `timer_delay_us`
 
@@ -7907,9 +7916,9 @@ void timer_delay_us(uint32_t us)
 
 微秒延时(忙等待)
 
-**位置**：`driver/timer/timer.c:266`
+**位置**：`driver/time/timer.c:292`
 
-<a id="fn-driver-timer-timer.c-289"></a>
+<a id="fn-driver-time-timer.c-315"></a>
 
 ### `timer_get_stats`
 
@@ -7919,9 +7928,9 @@ void timer_get_stats(timer_stats_t *stats)
 
 获取统计信息
 
-**位置**：`driver/timer/timer.c:289`
+**位置**：`driver/time/timer.c:315`
 
-<a id="fn-driver-timer-timer.c-297"></a>
+<a id="fn-driver-time-timer.c-323"></a>
 
 ### `timer_reset_stats`
 
@@ -7931,9 +7940,9 @@ void timer_reset_stats(void)
 
 重置统计信息
 
-**位置**：`driver/timer/timer.c:297`
+**位置**：`driver/time/timer.c:323`
 
-<a id="fn-driver-timer-timer.c-306"></a>
+<a id="fn-driver-time-timer.c-332"></a>
 
 ### `timer_dump_info`
 
@@ -7943,9 +7952,9 @@ void timer_dump_info(void)
 
 打印定时器信息
 
-**位置**：`driver/timer/timer.c:306`
+**位置**：`driver/time/timer.c:332`
 
-<a id="fn-driver-timer-timer.c-319"></a>
+<a id="fn-driver-time-timer.c-345"></a>
 
 ### `timer_probe`
 
@@ -7953,22 +7962,20 @@ void timer_dump_info(void)
 static int timer_probe(const device_t *dev)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-忽略设备参数，调用 timer_init() 完成定时器初始化并返回 0。
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
 <details>
 <summary>函数内备注（1 条）</summary>
 
-**第 321 行（行尾）**
+**第 347 行（行尾）**
 
 > 阶段 1：timer_init() 仍直接读平台配置
 
 </details>
 
-**位置**：`driver/timer/timer.c:319`
+**位置**：`driver/time/timer.c:345`
 
-<a id="fn-driver-timer-timer.c-326"></a>
+<a id="fn-driver-time-timer.c-352"></a>
 
 ### `timer_start`
 
@@ -7976,19 +7983,17 @@ static int timer_probe(const device_t *dev)
 static int timer_start(const device_t *dev)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-忽略设备参数，调用 timer_enable() 启动定时器并返回 0。
+**位置**：`driver/time/timer.c:352`
 
-**位置**：`driver/timer/timer.c:326`
+<a id="mod-driver-time-timer_aarch64_impl.h"></a>
 
-<a id="mod-driver-timer-timer_aarch64_impl.h"></a>
+## driver/time/timer_aarch64_impl.h — 定时器寄存器访问宏
 
-## driver/timer/timer_aarch64_impl.h — 定时器寄存器访问宏
+`driver/time/timer_aarch64_impl.h` · 6 个函数 · 1 个有说明 · 133 行
 
-`driver/timer/timer_aarch64_impl.h` · 6 个函数 · 6 个有说明 · 141 行
-
-<a id="fn-driver-timer-timer_aarch64_impl.h-39"></a>
+<a id="fn-driver-time-timer_aarch64_impl.h-39"></a>
 
 ### `timer_irq_entry`
 
@@ -7998,9 +8003,9 @@ static void timer_irq_entry(void *frame, void *ctx)
 
 公共 IRQ 接口的处理器签名是 (frame, ctx)；定时器不使用 ctx
 
-**位置**：`driver/timer/timer_aarch64_impl.h:39`
+**位置**：`driver/time/timer_aarch64_impl.h:39`
 
-<a id="fn-driver-timer-timer_aarch64_impl.h-45"></a>
+<a id="fn-driver-time-timer_aarch64_impl.h-45"></a>
 
 ### `timer_arch_init`
 
@@ -8008,9 +8013,7 @@ static void timer_irq_entry(void *frame, void *ctx)
 void timer_arch_init(void)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-读取 CNTFRQ 得到频率，禁用定时器、清统计，注册 CNTP 定时器中断并打印配置。
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
 <details>
 <summary>函数内备注（5 条）</summary>
@@ -8037,9 +8040,9 @@ void timer_arch_init(void)
 
 </details>
 
-**位置**：`driver/timer/timer_aarch64_impl.h:45`
+**位置**：`driver/time/timer_aarch64_impl.h:45`
 
-<a id="fn-driver-timer-timer_aarch64_impl.h-66"></a>
+<a id="fn-driver-time-timer_aarch64_impl.h-66"></a>
 
 ### `timer_arch_enable`
 
@@ -8047,9 +8050,7 @@ void timer_arch_init(void)
 void timer_arch_enable(void)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-按频率计算每周期拍数，写 CNTP_TVAL 并置 CNTP_CTL 为使能且不屏蔽中断。
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
 <details>
 <summary>函数内备注（3 条）</summary>
@@ -8068,9 +8069,9 @@ void timer_arch_enable(void)
 
 </details>
 
-**位置**：`driver/timer/timer_aarch64_impl.h:66`
+**位置**：`driver/time/timer_aarch64_impl.h:66`
 
-<a id="fn-driver-timer-timer_aarch64_impl.h-81"></a>
+<a id="fn-driver-time-timer_aarch64_impl.h-81"></a>
 
 ### `timer_arch_disable`
 
@@ -8078,9 +8079,7 @@ void timer_arch_enable(void)
 void timer_arch_disable(void)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-把 CNTP_CTL 写为 IMASK 屏蔽定时器中断并记日志。
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
 <details>
 <summary>函数内备注（1 条）</summary>
@@ -8091,9 +8090,9 @@ void timer_arch_disable(void)
 
 </details>
 
-**位置**：`driver/timer/timer_aarch64_impl.h:81`
+**位置**：`driver/time/timer_aarch64_impl.h:81`
 
-<a id="fn-driver-timer-timer_aarch64_impl.h-89"></a>
+<a id="fn-driver-time-timer_aarch64_impl.h-89"></a>
 
 ### `timer_arch_set_next_interrupt`
 
@@ -8101,13 +8100,11 @@ void timer_arch_disable(void)
 void timer_arch_set_next_interrupt(uint64_t ticks_from_now)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-把相对拍数写入 CNTP_TVAL_EL0 安排下一次定时中断。
+**位置**：`driver/time/timer_aarch64_impl.h:89`
 
-**位置**：`driver/timer/timer_aarch64_impl.h:89`
-
-<a id="fn-driver-timer-timer_aarch64_impl.h-103"></a>
+<a id="fn-driver-time-timer_aarch64_impl.h-103"></a>
 
 ### `timer_handler`
 
@@ -8115,12 +8112,10 @@ void timer_arch_set_next_interrupt(uint64_t ticks_from_now)
 void timer_handler(uint64_t *stack_pointer)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-每个 tick 排空 UART、递增全局与每核 tick、更新统计、安排下一 tick 并调用调度回调。
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
 <details>
-<summary>函数内备注（8 条）</summary>
+<summary>函数内备注（6 条）</summary>
 
 **第 105 行（行尾）**
 
@@ -8132,27 +8127,17 @@ void timer_handler(uint64_t *stack_pointer)
 
 **第 110 行**
 
-> 更新系统tick计数(全核共享, 存在轻微竞争但不影响功能)
+> 全局 tick 只由 BSP 推进；每核计数在 cpu_t::local_ticks
 
-**第 113 行**
-
-> 每核独立 tick 计数(SMP 健康检查)
-
-**第 115 行**
-
-> cpu_t 完整定义在 task/cpu.h；handler 早期可能在 task/cpu.h 引入之前
-> 被编译进 timer_aarch64_impl.h, 故用本地 forward + 偏移 0 字段不可行。
-> 直接 include cpu.h 即可(无循环依赖)。
-
-**第 124 行**
+**第 116 行**
 
 > 更新统计信息
 
-**第 128 行**
+**第 120 行**
 
 > 调度下一个tick
 
-**第 131 行**
+**第 123 行**
 
 > 调用 tick 回调(调度器 sched_tick)
 > 注意SMP 启动期间 secondary timer 可能在 g_tick_cb 被设之前就已触发
@@ -8160,15 +8145,15 @@ void timer_handler(uint64_t *stack_pointer)
 
 </details>
 
-**位置**：`driver/timer/timer_aarch64_impl.h:103`
+**位置**：`driver/time/timer_aarch64_impl.h:103`
 
-<a id="mod-driver-timer-timer_riscv64_impl.h"></a>
+<a id="mod-driver-time-timer_riscv64_impl.h"></a>
 
-## driver/timer/timer_riscv64_impl.h — SBI v0.2+ TIME extension and legacy timer extension IDs
+## driver/time/timer_riscv64_impl.h — SBI v0.2+ TIME extension and legacy timer extension IDs
 
-`driver/timer/timer_riscv64_impl.h` · 6 个函数 · 6 个有说明 · 243 行
+`driver/time/timer_riscv64_impl.h` · 6 个函数 · 1 个有说明 · 242 行
 
-<a id="fn-driver-timer-timer_riscv64_impl.h-47"></a>
+<a id="fn-driver-time-timer_riscv64_impl.h-47"></a>
 
 ### `timer_irq_entry`
 
@@ -8178,9 +8163,9 @@ static void timer_irq_entry(void *frame, void *ctx)
 
 公共 IRQ 接口的处理器签名是 (frame, ctx)；定时器不使用 ctx
 
-**位置**：`driver/timer/timer_riscv64_impl.h:47`
+**位置**：`driver/time/timer_riscv64_impl.h:47`
 
-<a id="fn-driver-timer-timer_riscv64_impl.h-53"></a>
+<a id="fn-driver-time-timer_riscv64_impl.h-53"></a>
 
 ### `timer_arch_init`
 
@@ -8188,9 +8173,7 @@ static void timer_irq_entry(void *frame, void *ctx)
 void timer_arch_init(void)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-设定计数器频率，禁用定时器并清统计，把定时器入口注册到 S 模式定时器中断。
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
 <details>
 <summary>函数内备注（5 条）</summary>
@@ -8217,9 +8200,9 @@ void timer_arch_init(void)
 
 </details>
 
-**位置**：`driver/timer/timer_riscv64_impl.h:53`
+**位置**：`driver/time/timer_riscv64_impl.h:53`
 
-<a id="fn-driver-timer-timer_riscv64_impl.h-94"></a>
+<a id="fn-driver-time-timer_riscv64_impl.h-94"></a>
 
 ### `timer_arch_enable`
 
@@ -8227,9 +8210,7 @@ void timer_arch_init(void)
 void timer_arch_enable(void)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-计算每周期拍数，以当前 tick 数反推时间原点，安排首次中断并置 sie.STIE 使能。
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
 <details>
 <summary>函数内备注（5 条）</summary>
@@ -8257,9 +8238,9 @@ void timer_arch_enable(void)
 
 </details>
 
-**位置**：`driver/timer/timer_riscv64_impl.h:94`
+**位置**：`driver/time/timer_riscv64_impl.h:94`
 
-<a id="fn-driver-timer-timer_riscv64_impl.h-119"></a>
+<a id="fn-driver-time-timer_riscv64_impl.h-119"></a>
 
 ### `timer_arch_disable`
 
@@ -8267,9 +8248,7 @@ void timer_arch_enable(void)
 void timer_arch_disable(void)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-清除 sie 的 STIE 位停用 S 模式定时器中断并记日志。
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
 <details>
 <summary>函数内备注（2 条）</summary>
@@ -8284,9 +8263,9 @@ void timer_arch_disable(void)
 
 </details>
 
-**位置**：`driver/timer/timer_riscv64_impl.h:119`
+**位置**：`driver/time/timer_riscv64_impl.h:119`
 
-<a id="fn-driver-timer-timer_riscv64_impl.h-129"></a>
+<a id="fn-driver-time-timer_riscv64_impl.h-129"></a>
 
 ### `timer_arch_set_next_interrupt`
 
@@ -8294,9 +8273,7 @@ void timer_arch_disable(void)
 void timer_arch_set_next_interrupt(uint64_t ticks_from_now)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-按时间原点加整数周期算绝对截止时间，经 SBI TIME 扩展设置 timer，失败则回退 legacy 调用。
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
 <details>
 <summary>函数内备注（4 条）</summary>
@@ -8322,9 +8299,9 @@ void timer_arch_set_next_interrupt(uint64_t ticks_from_now)
 
 </details>
 
-**位置**：`driver/timer/timer_riscv64_impl.h:129`
+**位置**：`driver/time/timer_riscv64_impl.h:129`
 
-<a id="fn-driver-timer-timer_riscv64_impl.h-177"></a>
+<a id="fn-driver-time-timer_riscv64_impl.h-177"></a>
 
 ### `timer_handler`
 
@@ -8332,9 +8309,7 @@ void timer_arch_set_next_interrupt(uint64_t ticks_from_now)
 void timer_handler(void *frame)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-用户态陷入时排空 UART；按真实时间推算 tick 数、更新统计、安排下一 tick 并调用调度回调与 VMM tick 钩子。
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
 <details>
 <summary>函数内备注（7 条）</summary>
@@ -8359,19 +8334,19 @@ void timer_handler(void *frame)
 
 > 兜底：频率未知, 退化成老行为
 
-**第 217 行**
+**第 216 行**
 
 > 更新统计信息
 
-**第 222 行**
+**第 221 行**
 
 > 调度下一个tick
 
-**第 225 行**
+**第 224 行**
 
 > 调用 tick 回调(调度器 sched_tick)
 
-**第 230 行**
+**第 229 行**
 
 > VMM 的 VS-mode WFI 唤醒钩子。
 
@@ -8382,13 +8357,13 @@ void timer_handler(void *frame)
 
 </details>
 
-**位置**：`driver/timer/timer_riscv64_impl.h:177`
+**位置**：`driver/time/timer_riscv64_impl.h:177`
 
-<a id="mod-driver-timer-timer_x86_64_impl.h"></a>
+<a id="mod-driver-time-timer_x86_64_impl.h"></a>
 
-## driver/timer/timer_x86_64_impl.h — x86_64 定时器实现 — LAPIC Timer
+## driver/time/timer_x86_64_impl.h — x86_64 定时器实现 — LAPIC Timer
 
-`driver/timer/timer_x86_64_impl.h` · 8 个函数 · 8 个有说明 · 140 行
+`driver/time/timer_x86_64_impl.h` · 8 个函数 · 1 个有说明 · 141 行
 
 优先使用 TSC-deadline oneshot 模式（CPUID.01H:ECX[24]），由
 kernel/time/hrtimer.c 在“下一个 100Hz tick”和“最早 sleeper 截止时间”
@@ -8397,7 +8372,7 @@ kernel/time/hrtimer.c 在“下一个 100Hz tick”和“最早 sleeper 截止�
 函数签名与 AArch64/RISC-V impl 一致(无 static inline),
 由 timer.c #include 本文件来获得定义。
 
-<a id="fn-driver-timer-timer_x86_64_impl.h-37"></a>
+<a id="fn-driver-time-timer_x86_64_impl.h-37"></a>
 
 ### `timer_irq_entry`
 
@@ -8407,9 +8382,9 @@ static void timer_irq_entry(void *frame, void *ctx)
 
 公共 IRQ 接口的处理器签名是 (frame, ctx)；定时器不使用 ctx
 
-**位置**：`driver/timer/timer_x86_64_impl.h:37`
+**位置**：`driver/time/timer_x86_64_impl.h:37`
 
-<a id="fn-driver-timer-timer_x86_64_impl.h-45"></a>
+<a id="fn-driver-time-timer_x86_64_impl.h-45"></a>
 
 ### `timer_arch_init`
 
@@ -8417,9 +8392,7 @@ static void timer_irq_entry(void *frame, void *ctx)
 void timer_arch_init(void)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-把定时器频率置 0 留待校准、清统计，并把处理入口注册到 LAPIC 定时器向量。
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
 <details>
 <summary>函数内备注（4 条）</summary>
@@ -8443,9 +8416,9 @@ void timer_arch_init(void)
 
 </details>
 
-**位置**：`driver/timer/timer_x86_64_impl.h:45`
+**位置**：`driver/time/timer_x86_64_impl.h:45`
 
-<a id="fn-driver-timer-timer_x86_64_impl.h-62"></a>
+<a id="fn-driver-time-timer_x86_64_impl.h-62"></a>
 
 ### `timer_arch_enable`
 
@@ -8453,9 +8426,7 @@ void timer_arch_init(void)
 void timer_arch_enable(void)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-初始化 LAPIC 定时器与 hrtimer，并打印当前处于 TSC-deadline 还是周期模式。
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
 <details>
 <summary>函数内备注（1 条）</summary>
@@ -8468,9 +8439,9 @@ void timer_arch_enable(void)
 
 </details>
 
-**位置**：`driver/timer/timer_x86_64_impl.h:62`
+**位置**：`driver/time/timer_x86_64_impl.h:62`
 
-<a id="fn-driver-timer-timer_x86_64_impl.h-75"></a>
+<a id="fn-driver-time-timer_x86_64_impl.h-75"></a>
 
 ### `timer_arch_oneshot_supported`
 
@@ -8478,13 +8449,11 @@ void timer_arch_enable(void)
 bool timer_arch_oneshot_supported(void)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-转发调用 LAPIC 模块判断定时器是否支持单次模式。
+**位置**：`driver/time/timer_x86_64_impl.h:75`
 
-**位置**：`driver/timer/timer_x86_64_impl.h:75`
-
-<a id="fn-driver-timer-timer_x86_64_impl.h-80"></a>
+<a id="fn-driver-time-timer_x86_64_impl.h-80"></a>
 
 ### `timer_arch_program_oneshot_ns`
 
@@ -8492,13 +8461,11 @@ bool timer_arch_oneshot_supported(void)
 void timer_arch_program_oneshot_ns(uint64_t deadline_ns)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-把纳秒截止时间转发给 lapic_timer_program_ns 编程单次定时器。
+**位置**：`driver/time/timer_x86_64_impl.h:80`
 
-**位置**：`driver/timer/timer_x86_64_impl.h:80`
-
-<a id="fn-driver-timer-timer_x86_64_impl.h-85"></a>
+<a id="fn-driver-time-timer_x86_64_impl.h-85"></a>
 
 ### `timer_arch_disable`
 
@@ -8506,13 +8473,11 @@ void timer_arch_program_oneshot_ns(uint64_t deadline_ns)
 void timer_arch_disable(void)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-调用 lapic_timer_stop() 停止 LAPIC 定时器并记日志。
+**位置**：`driver/time/timer_x86_64_impl.h:85`
 
-**位置**：`driver/timer/timer_x86_64_impl.h:85`
-
-<a id="fn-driver-timer-timer_x86_64_impl.h-91"></a>
+<a id="fn-driver-time-timer_x86_64_impl.h-91"></a>
 
 ### `timer_arch_set_next_interrupt`
 
@@ -8520,9 +8485,7 @@ void timer_arch_disable(void)
 void timer_arch_set_next_interrupt(uint64_t ticks_from_now)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-空实现，周期模式下硬件自动重载无需软件安排下一次中断。
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
 <details>
 <summary>函数内备注（1 条）</summary>
@@ -8533,9 +8496,9 @@ void timer_arch_set_next_interrupt(uint64_t ticks_from_now)
 
 </details>
 
-**位置**：`driver/timer/timer_x86_64_impl.h:91`
+**位置**：`driver/time/timer_x86_64_impl.h:91`
 
-<a id="fn-driver-timer-timer_x86_64_impl.h-102"></a>
+<a id="fn-driver-time-timer_x86_64_impl.h-102"></a>
 
 ### `timer_handler`
 
@@ -8543,12 +8506,10 @@ void timer_arch_set_next_interrupt(uint64_t ticks_from_now)
 void timer_handler(void *frame)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-先跑 hrtimer_isr，非 tick 到期即返回；tick 到期则排空 UART、累加 tick 与秒数、更新统计并调用调度回调。
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
 <details>
-<summary>函数内备注（4 条）</summary>
+<summary>函数内备注（5 条）</summary>
 
 **第 106 行**
 
@@ -8560,17 +8521,21 @@ void timer_handler(void *frame)
 
 > 每个 tick 排空 UART 输入, 确保 Ctrl+C 能及时被检测
 
-**第 132 行**
+**第 117 行**
+
+> 全局 tick / 秒计数只由 BSP 推进；每核计数在 cpu_t::local_ticks
+
+**第 133 行**
 
 > EOI 由 LAPIC dispatch 在 handler 返回后统一发出
 
-**第 134 行**
+**第 135 行**
 
 > 调用 tick 回调(调度器 sched_tick)
 
 </details>
 
-**位置**：`driver/timer/timer_x86_64_impl.h:102`
+**位置**：`driver/time/timer_x86_64_impl.h:102`
 
 <a id="mod-driver-tpu-cvi_tpu.c"></a>
 

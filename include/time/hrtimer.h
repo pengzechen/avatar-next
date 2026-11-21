@@ -39,7 +39,7 @@ bool hrtimer_cpu_oneshot_supported(uint32_t cpu); /* 指定逻辑 CPU */
 
 /*
    架构钩子：
-     x86_64 由 driver/timer/timer_x86_64_impl.h 实现；
+     x86_64 由 driver/time/timer_x86_64_impl.h 实现；
      其它架构在 hrtimer.c 里提供 false/no-op 版本。
 */
 bool timer_arch_oneshot_supported(void);

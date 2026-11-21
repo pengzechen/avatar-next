@@ -14,7 +14,7 @@
 #include "klog.h"
 #include "task/task.h"
 #include "task/cpu.h" /* get_current_cpu_id(getcpu) */
-#include "task/itimer.h"
+#include "time/itimer.h"
 #include "mm/user_layout.h"
 #include "task/sched.h"
 #include "task/switch.h"
@@ -1154,7 +1154,7 @@ void syscall_handler(trap_frame_t *frame)
         si.mem_unit = PAGE_SIZE;
 
         for (uint32_t i = 0; i < TASK_MAX; i++) {
-            if (g_stack_used[i] && g_task_pool[i].state != TASK_DEAD)
+            if (g_stack_used[i] && g_task_pool[i].state != TASK_DEAD && g_task_pool[i].state != TASK_ALLOCATING)
                 procs++;
         }
         si.procs = procs;
@@ -1650,10 +1650,20 @@ int64_t sys_close(int fd)
 int64_t sys_gettimeofday(struct timeval *tv, void *tz)
 {
     (void)tz;
-    if (!tv)
-        return -1;
-    uint64_t ns = kernel_get_ns();
-    tv->tv_sec = (long)(ns / 1000000000ULL);
-    tv->tv_usec = (long)((ns % 1000000000ULL) / 1000ULL);
+
+    /*
+       tv 是用户指针，必须经 copy_to_user_bytes 写回 —— 直接 tv->tv_sec
+       会让用户传 (void *)-1 时内核态 #PF，整机挂死(见 CLAUDE.md 的用户
+       指针规则)。tv == NULL 是合法调用(只查询时区)；本内核没有时区。
+    */
+    if (tv) {
+        uint64_t ns = kernel_get_ns();
+        struct timeval ktv;
+
+        ktv.tv_sec = (long)(ns / 1000000000ULL);
+        ktv.tv_usec = (long)((ns % 1000000000ULL) / 1000ULL);
+        if (copy_to_user_bytes(&ktv, tv, sizeof(ktv)) < 0)
+            return -EFAULT;
+    }
     return 0;
 }

@@ -114,20 +114,21 @@ void timer_handler(void *frame)
     /* 每个 tick 排空 UART 输入, 确保 Ctrl+C 能及时被检测 */
     signal_check_uart();
 
-    g_system_ticks++;
-    g_x86_tick_counter++;
+    /* 全局 tick / 秒计数只由 BSP 推进；每核计数在 cpu_t::local_ticks */
+    if (timer_tick_owner()) {
+        g_system_ticks++;
+        g_x86_tick_counter++;
+        if (g_x86_tick_counter >= (uint32_t)TIMER_FREQUENCY_HZ) {
+            g_x86_uptime_seconds++;
+            g_x86_tick_counter = 0;
+            g_timer_stats.total_seconds = g_x86_uptime_seconds;
+        }
+    }
 
-    extern void cpu_bump_local_ticks(void);
     cpu_bump_local_ticks();
 
     g_timer_stats.total_interrupts++;
     g_timer_stats.last_interrupt_time = timer_get_uptime_ms();
-
-    if (g_x86_tick_counter >= (uint32_t)TIMER_FREQUENCY_HZ) {
-        g_x86_uptime_seconds++;
-        g_x86_tick_counter = 0;
-        g_timer_stats.total_seconds = g_x86_uptime_seconds;
-    }
 
     /* EOI 由 LAPIC dispatch 在 handler 返回后统一发出 */
 

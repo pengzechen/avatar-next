@@ -26,7 +26,7 @@ P3 有设备 DMA 进来才验得了。这里只能确认"ioctl 返回 0, 不报�
 注意： 下面的结构体与 ioctl 号是手抄的(用户态不能包含内核头)。
 _IOC 把 sizeof 编进了操作码, 所以尺寸写错不是"参数错位"而是换成
 另一个 ioctl 号 —— 内核那边会走到 default 分支返回 -ENOSYS,
-是响亮的失败, 不是静默损坏。内核侧同名定义见 include/dma_buf.h。
+是响亮的失败, 不是静默损坏。内核侧同名定义见 include/driver/dma_buf.h。
 
 <a id="fn-apps-c-dmatest.c-65"></a>
 
@@ -168,7 +168,7 @@ dma-buf 包装成 handle。所以这个程序能证明「librknnrt 连上来之�
 注意： 下面的结构体与 ioctl 号是手抄的(用户态不能包含内核头)。
 _IOC 把 sizeof 编进操作码, 所以尺寸写错不是"参数错位"而是换成另一个
 ioctl 号, 内核会走到 default 分支回 -EINVAL —— 是响亮的失败。
-内核侧同名定义见 include/rknpu_drm.h, 两边靠这里的 _Static_assert 对齐。
+内核侧同名定义见 include/npu/rknpu_drm.h, 两边靠这里的 _Static_assert 对齐。
 
 <a id="fn-apps-c-drmtest.c-142"></a>
 
@@ -1981,7 +1981,7 @@ int main(void)
 
 `apps/c/rtctl.c` · 18 个函数 · 18 个有说明 · 514 行
 
-ABI 必须与 include/rt_worker.h 逐字节一致（结构体尺寸被编进 ioctl 号，
+ABI 必须与 include/rt/rt_worker.h 逐字节一致（结构体尺寸被编进 ioctl 号，
 尺寸不同就是另一个命令）。内核那份是权威定义；这里只做用户态副本。
 
 用法：
@@ -2266,7 +2266,7 @@ int main(int argc, char **argv)
 
 <a id="mod-apps-c-rtctl_abi.h"></a>
 
-## apps/c/rtctl_abi.h — /dev/rtctl 用户态 ABI（权威定义在 include/rt_worker.h）。
+## apps/c/rtctl_abi.h — /dev/rtctl 用户态 ABI（权威定义在 include/rt/rt_worker.h）。
 
 `apps/c/rtctl_abi.h` · 1 个函数 · 1 个有说明 · 189 行
 

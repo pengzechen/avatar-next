@@ -26,13 +26,13 @@
 
   boot/riscv64/exception.c:43 明确说不启用 sstatus.SIE，也就是说：
 
-  - sie.STIE 会在 driver/timer/timer_riscv64_impl.h:66 打开。
+  - sie.STIE 会在 driver/time/timer_riscv64_impl.h:66 打开。
   - 但 S-mode 全局中断 sstatus.SIE 在内核里保持 0。
   - 用户态通过 sret 的 SPIE -> SIE 机制启用中断，所以 timer 主要在用户态运行时生效。
 
   timer 路径：
 
-  driver/timer/timer_riscv64_impl.h:127 的 timer_handler() 会：
+  driver/time/timer_riscv64_impl.h:127 的 timer_handler() 会：
 
   - 调 signal_check_uart()。
   - 更新 tick 统计。
@@ -80,7 +80,7 @@
 
   5. timer handler 里做的事情偏多
 
-  driver/timer/timer_riscv64_impl.h:132 每 tick 调 signal_check_uart()。内核态中断打开后，这个函数会在任意内核位置运行。如果它触碰
+  driver/time/timer_riscv64_impl.h:132 每 tick 调 signal_check_uart()。内核态中断打开后，这个函数会在任意内核位置运行。如果它触碰
   TTY、进程、信号、锁或文件描述符结构，就扩大了 ISR 可重入面。
 
   第一阶段最好让 timer ISR 尽量短：更新时间、重装 timer、置 need_resched，把 UART/signal 检查延迟到安全点或软中断/底半部。
@@ -173,7 +173,7 @@
 
   5. 精简 timer ISR
 
-  建议第一阶段把 driver/timer/timer_riscv64_impl.h:132 的 signal_check_uart() 从 timer hardirq 中移出去，或者至少加条件：
+  建议第一阶段把 driver/time/timer_riscv64_impl.h:132 的 signal_check_uart() 从 timer hardirq 中移出去，或者至少加条件：
 
   - 如果 trap_from_kernel，不做 UART/signal 扫描。
   - 如果 trap_from_user，可以暂时保留。

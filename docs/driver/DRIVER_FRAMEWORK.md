@@ -86,7 +86,7 @@ kernel/mm/aarch64/vm_early.c
 include/vmm/guest_loader.h
 driver/uart/*.c         # 加 DRIVER_ENTRY + probe/start
 driver/irq/*.c
-driver/timer/timer.c
+driver/time/timer.c
 driver/blk/*.c
 driver/eth/*.c
 driver/npu/rknpu.c
@@ -103,7 +103,7 @@ Makefile                 # §6 下沉到 driver/*/drivers.mk
 
 ```
 driver/irq/irq.h                 # 私有身份改为 driver/irq/irq_priv.h 或合并
-driver/timer/timer.h             # 公共 API 移到 include/driver/time.h
+driver/time/timer.h             # 公共 API 移到 include/driver/time.h
 driver/uart/uart.h               # 公共 API 移到 include/driver/serial.h
 kernel/main.c 里的 #include "eth/..." / "npu/..." / "tpu/..." / "blk/..."
 ```
@@ -631,7 +631,7 @@ void irq_enable(unsigned irq, bool on);
 
 ### 9.3 时间
 
-- 公共 API 从 `driver/timer/timer.h` 移到 `include/driver/time.h`，函数名不变（`timer_*`）。
+- 公共 API 从 `driver/time/timer.h` 移到 `include/driver/time.h`，函数名不变（`timer_*`）。
 - 驱动 probe = `timer_init(cfg)`，start = `timer_enable()`。
 - `timer_read_counter()` 等热路径继续走 `include/<arch>/` 内联寄存器读，不引入每 tick 间接调用。
 - 次核初始化：`timer_init_secondary()` 保留，cpu.c 改为调用公共函数（不再 include 驱动私有头）。
@@ -920,7 +920,7 @@ DRIVER_EXTRA_FLAGS_driver_dma_dma_buf.c  := -Idriver/dma -Ikernel/mm
 
 ### 17.1 串口 / 时间 / 块设备公共接口（2a）
 
-- 删除 `driver/uart/uart.h`、`driver/timer/timer.h`：
+- 删除 `driver/uart/uart.h`、`driver/time/timer.h`：
   - 串口：`include/driver/serial.h` 提供 `serial_ops_t` 与
     `serial_putc/puts/getc/getc_nb/rx_ready`；三个 UART 驱动的 probe 里
     `serial_bind()`，内核不再知道具体是 PL011/DW/16550。
@@ -956,7 +956,7 @@ DRIVER_EXTRA_FLAGS_driver_dma_dma_buf.c  := -Idriver/dma -Ikernel/mm
   - x86 删掉 `irq_handlers[]`/`irq_install()`，IRQ 向量交给 LAPIC 后端；
   - `kernel/task/cpu.c` 的 IPI 收发、次级核控制器初始化、SMP 自检
     GIC dump 全部改走公共接口；
-  - `driver/timer/*` 通过 `irq_register_timer()` 注册；
+  - `driver/time/*` 通过 `irq_register_timer()` 注册；
   - `rknpu`、`cvitek_eth` 改 `irq_register()/irq_enable()/irq_set_priority()`，
     不再 include `irq/gicv3.h`/`irq/plic.h`；
   - `driver/irq/irq.h` 删除。

@@ -211,7 +211,6 @@ void timer_handler(void *frame)
         }
     }
 
-    extern void cpu_bump_local_ticks(void);
     cpu_bump_local_ticks();
 
     /* 更新统计信息 */

@@ -163,6 +163,14 @@ static inline uint32_t get_current_cpu_id(void)
     return cpu_current()->cpu_id;
 }
 
+/*
+   cpu_bump_local_ticks - 本核 timer ISR 每次调用, 让本核 tick 计数 +1
+
+   只用于诊断/SMP 健康检查；全局 tick(g_system_ticks)的记账规则见
+   driver/time/timer.c 的 timer_tick_owner()。
+*/
+void cpu_bump_local_ticks(void);
+
 /* ── 初始化 ─────────────────────────────────────────────── */
 
 /*

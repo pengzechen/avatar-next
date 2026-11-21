@@ -38,7 +38,7 @@
 #include "spinlock.h"
 #include "assert.h"
 #include "task/preempt.h"
-#include "task/itimer.h"
+#include "time/itimer.h"
 #include "driver/time.h"
 #include "rt/rt_latency.h"
 #if ARCH_AARCH64 || ARCH_X86_64

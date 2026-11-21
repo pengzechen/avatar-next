@@ -107,19 +107,11 @@ void timer_handler(uint64_t *stack_pointer)
     /* 每个 tick 排空 UART, 确保 Ctrl+C 能及时被检测 */
     signal_check_uart();
 
-    /* 更新系统tick计数(全核共享, 存在轻微竞争但不影响功能) */
-    g_system_ticks++;
+    /* 全局 tick 只由 BSP 推进；每核计数在 cpu_t::local_ticks */
+    if (timer_tick_owner())
+        g_system_ticks++;
 
-    /* 每核独立 tick 计数(SMP 健康检查) */
-    extern struct cpu *cpu_current(void);
-    /* cpu_t 完整定义在 task/cpu.h；handler 早期可能在 task/cpu.h 引入之前
-       被编译进 timer_aarch64_impl.h, 故用本地 forward + 偏移 0 字段不可行。
-       直接 include cpu.h 即可(无循环依赖)。
-    */
-    {
-        extern void cpu_bump_local_ticks(void);
-        cpu_bump_local_ticks();
-    }
+    cpu_bump_local_ticks();
 
     /* 更新统计信息 */
     g_timer_stats.total_interrupts++;

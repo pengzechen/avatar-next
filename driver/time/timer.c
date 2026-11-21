@@ -9,6 +9,7 @@
 #include "klog.h"
 #include "platform/platform_cfg.h"
 #include "driver/driver.h"
+#include "task/cpu.h" /* get_current_cpu_id：全局 tick 只由 BSP 记账 */
 
 /*
    ============================================================
@@ -32,6 +33,24 @@ void timer_set_tick_cb(timer_tick_cb_t cb)
 {
     g_tick_cb = cb;
 }
+
+/*
+   timer_tick_owner - 本核是否负责推进全局 tick
+
+   每颗核都有自己的 timer 中断和本核计数器(cpu_t::local_ticks，供调度
+   和 SMP 健康检查用)；但 g_system_ticks 是"全系统过了多少个 tick"，
+   只能由一个核记账 —— 否则 SMP=8 时它每秒会涨 800，所有由它换算的
+   uptime(以及 x86 未标定 TSC 时的 timer_get_ns)都会快 8 倍。
+
+   RISC-V 的实现直接按硬件时间赋值全局 tick，不需要这个助手；
+   aarch64 / x86 的 ISR 用它把全局计数限定在 BSP。
+*/
+#if !ARCH_RISCV64
+static inline bool timer_tick_owner(void)
+{
+    return get_current_cpu_id() == 0U;
+}
+#endif
 
 /* RISC-V 特定的全局变量 */
 #if ARCH_RISCV64
@@ -234,7 +253,14 @@ uint64_t timer_get_system_ticks(void)
 /* 获取系统运行时间(毫秒) */
 uint64_t timer_get_uptime_ms(void)
 {
-    return g_system_ticks * TIMER_TICK_MS;
+    /*
+       用单调硬件计数，而不是 g_system_ticks * tick_ms：
+         - SMP 下全局 tick 只能由一个核算账，不能代表真实经过的时间；
+         - 即使 BSP 的 tick ISR 迟到，硬件计数也不受影响。
+       x86 未标定 TSC 时 timer_get_ns() 内部会退化到 g_system_ticks
+       (那时 tick 是唯一的时钟，见 timer_counter_to_ns)。
+    */
+    return timer_get_ns() / 1000000ULL;
 }
 
 /* 获取定时器频率 */

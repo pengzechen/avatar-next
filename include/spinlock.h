@@ -32,7 +32,7 @@
        ...
        spin_unlock_irqrestore(&lock, flags);
 */
-typedef struct {
+typedef struct spinlock {
     volatile uint64_t lock;
 } spinlock_t;
 

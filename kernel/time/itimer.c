@@ -5,9 +5,9 @@
 */
 
 /*
-   kernel/task/itimer.c — 每任务 ITIMER_REAL(alarm / setitimer)
+   kernel/time/itimer.c — 每任务 ITIMER_REAL(alarm / setitimer)
 
-   语义与设计见 task/itimer.h。这里只记实现上的两个关键点：
+   语义与设计见 include/time/itimer.h。这里只记实现上的两个关键点：
 
    1. 到期后先重装再投信号。
       周期定时器在投 SIGALRM 之前就把 expire 推到下一个周期。这样用户 handler
@@ -29,8 +29,8 @@
       默认 SMP=1, 多核下若要求严格"一个周期一个信号", 再考虑加单核仲裁。
 */
 
-#include "task/itimer.h"
-
+#include "time/itimer.h"
+#include "libc/signal.h"
 #include "driver/time.h" /* timer_get_ns */
 
 extern task_t g_task_pool[]; /* 定义在 task.c */

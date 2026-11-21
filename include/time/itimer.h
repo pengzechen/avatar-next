@@ -4,11 +4,11 @@
    Copyright (c) 2026 Avatar OS project
 */
 
-#ifndef KERNEL_TASK_ITIMER_H
-#define KERNEL_TASK_ITIMER_H
+#ifndef TIME_ITIMER_H
+#define TIME_ITIMER_H
 
 /*
-   include/task/itimer.h — 每任务 ITIMER_REAL(alarm / setitimer)
+   include/time/itimer.h — 每任务 ITIMER_REAL(alarm / setitimer)
 
    为什么需要：LTP 的每个测例都用 alarm() 给自己装看门狗, 靠 SIGALRM 打断
    阻塞中的 read/poll 来从卡死里脱身。没有它, 任何卡住的测例都会把整个
@@ -50,4 +50,4 @@ void itimer_get(task_t *t, uint64_t *remain_ns, uint64_t *interval_ns);
 */
 void itimer_tick(void);
 
-#endif /* KERNEL_TASK_ITIMER_H */
+#endif /* TIME_ITIMER_H */
