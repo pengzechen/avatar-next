@@ -1933,7 +1933,7 @@ FORMAT_DIRS  := boot driver fs include kernel lib platforms apps tests
 # 是 RKNN 官方运行时头文件，fs/ext4/lwext4|fs/fat/fatfs 的核心源码保持上游风格 ——
 # 都不能格式化（否则 `make format` 会改掉一整个第三方源码树）。
 FORMAT_EXCLUDES := tests/ltp/src tests/.artifacts apps/rknn-aarch64/include \
-                   fs/ext4/lwext4/src fs/ext4/lwext4/include fs/fat/fatfs/source
+                   fs/ext4/lwext4/src fs/ext4/lwext4/include fs/fat/fatfs/source include/rbtree.h
 FORMAT_PRUNE    := $(foreach d,$(FORMAT_EXCLUDES),-path '$(d)' -prune -o)
 FORMAT_SRCS     := $(shell find $(FORMAT_DIRS) $(FORMAT_PRUNE) \
     \( -name '*.c' -o -name '*.h' \) -print 2>/dev/null)

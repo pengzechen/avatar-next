@@ -90,6 +90,7 @@ EXCLUDE_PREFIXES = (
     # 项目 API 文档；端口层（fs/ext4/port、fs/fat/port）仍会被扫描。
     "fs/ext4/lwext4/",
     "fs/fat/fatfs/",
+    "include/rbtree.h",  # 通用 BSD RB 宏头，保持上游风格
 )
 
 SOURCE_EXTS = (".c", ".h")

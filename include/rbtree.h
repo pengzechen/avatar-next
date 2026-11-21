@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: BSD-2-Clause */
 /*	$NetBSD: tree.h,v 1.8 2004/03/28 19:38:30 provos Exp $	*/
 /*	$OpenBSD: tree.h,v 1.7 2002/10/17 21:51:54 art Exp $	*/
 /* $FreeBSD$ */
@@ -27,274 +28,31 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef	_SYS_TREE_H_
-#define	_SYS_TREE_H_
-
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-#include "../ext4_config.h"
 
 /*
- * This file defines data structures for different types of trees:
- * splay trees and red-black trees.
- *
- * A splay tree is a self-organizing data structure.  Every operation
- * on the tree causes a splay to happen.  The splay moves the requested
- * node to the root of the tree and partly rebalances it.
- *
- * This has the benefit that request locality causes faster lookups as
- * the requested nodes move to the top of the tree.  On the other hand,
- * every lookup causes memory writes.
- *
- * The Balance Theorem bounds the total access time for m operations
- * and n inserts on an initially empty tree as O((m + n)lg n).  The
- * amortized cost for a sequence of m accesses to a splay tree is O(lg n);
- *
- * A red-black tree is a binary search tree with the node color as an
- * extra attribute.  It fulfills a set of conditions:
- *	- every search path from the root to a leaf consists of the
- *	  same number of black nodes,
- *	- each red node (except for the root) has a black parent,
- *	- each leaf node is black.
- *
- * Every operation on a red-black tree is bounded as O(lg n).
- * The maximum height of a red-black tree is 2lg (n+1).
- */
+   include/rbtree.h — 通用红黑树宏（RB_*）
 
-#define SPLAY_HEAD(name, type)						\
-struct name {								\
-	struct type *sph_root; /* root of the tree */			\
-}
+   来源：FreeBSD/OpenBSD sys/tree.h（Niels Provos），BSD-2-Clause。
+   lwext4 原先的 misc/tree.h 同时含 splay tree 和 RB；检查后 splay 部分
+   没有任何调用者，因此这里只保留 RB，splay 宏已移除。
 
-#define SPLAY_INITIALIZER(root)						\
-	{ NULL }
+   用法与原 BSD 宏一致：
+     RB_HEAD(name, type) / RB_ENTRY(type) / RB_GENERATE(name, type, field, cmp)
+     RB_INIT / RB_INSERT / RB_REMOVE / RB_FIND / RB_FOREACH / RB_MIN / RB_MAX ...
 
-#define SPLAY_INIT(root) do {						\
-	(root)->sph_root = NULL;					\
-} while (/*CONSTCOND*/ 0)
+   这是通用的内核数据结构头，放在这里（与 list.h / bitmap.h 同级），
+   不属于 lwext4。lwext4 通过 "rbtree.h" 引用的就是本文件。
+*/
+#ifndef RBTREE_H
+#define RBTREE_H
 
-#define SPLAY_ENTRY(type)						\
-struct {								\
-	struct type *spe_left; /* left element */			\
-	struct type *spe_right; /* right element */			\
-}
+#include "types.h" /* NULL */
 
-#define SPLAY_LEFT(elm, field)		(elm)->field.spe_left
-#define SPLAY_RIGHT(elm, field)		(elm)->field.spe_right
-#define SPLAY_ROOT(head)		(head)->sph_root
-#define SPLAY_EMPTY(head)		(SPLAY_ROOT(head) == NULL)
-
-/* SPLAY_ROTATE_{LEFT,RIGHT} expect that tmp hold SPLAY_{RIGHT,LEFT} */
-#define SPLAY_ROTATE_RIGHT(head, tmp, field) do {			\
-	SPLAY_LEFT((head)->sph_root, field) = SPLAY_RIGHT(tmp, field);	\
-	SPLAY_RIGHT(tmp, field) = (head)->sph_root;			\
-	(head)->sph_root = tmp;						\
-} while (/*CONSTCOND*/ 0)
-	
-#define SPLAY_ROTATE_LEFT(head, tmp, field) do {			\
-	SPLAY_RIGHT((head)->sph_root, field) = SPLAY_LEFT(tmp, field);	\
-	SPLAY_LEFT(tmp, field) = (head)->sph_root;			\
-	(head)->sph_root = tmp;						\
-} while (/*CONSTCOND*/ 0)
-
-#define SPLAY_LINKLEFT(head, tmp, field) do {				\
-	SPLAY_LEFT(tmp, field) = (head)->sph_root;			\
-	tmp = (head)->sph_root;						\
-	(head)->sph_root = SPLAY_LEFT((head)->sph_root, field);		\
-} while (/*CONSTCOND*/ 0)
-
-#define SPLAY_LINKRIGHT(head, tmp, field) do {				\
-	SPLAY_RIGHT(tmp, field) = (head)->sph_root;			\
-	tmp = (head)->sph_root;						\
-	(head)->sph_root = SPLAY_RIGHT((head)->sph_root, field);	\
-} while (/*CONSTCOND*/ 0)
-
-#define SPLAY_ASSEMBLE(head, node, left, right, field) do {		\
-	SPLAY_RIGHT(left, field) = SPLAY_LEFT((head)->sph_root, field);	\
-	SPLAY_LEFT(right, field) = SPLAY_RIGHT((head)->sph_root, field);\
-	SPLAY_LEFT((head)->sph_root, field) = SPLAY_RIGHT(node, field);	\
-	SPLAY_RIGHT((head)->sph_root, field) = SPLAY_LEFT(node, field);	\
-} while (/*CONSTCOND*/ 0)
-
-/* Generates prototypes and inline functions */
-
-#define SPLAY_PROTOTYPE(name, type, field, cmp)				\
-void name##_SPLAY(struct name *, struct type *);			\
-void name##_SPLAY_MINMAX(struct name *, int);				\
-struct type *name##_SPLAY_INSERT(struct name *, struct type *);		\
-struct type *name##_SPLAY_REMOVE(struct name *, struct type *);		\
-									\
-/* Finds the node with the same key as elm */				\
-static __inline struct type *						\
-name##_SPLAY_FIND(struct name *head, struct type *elm)			\
-{									\
-	if (SPLAY_EMPTY(head))						\
-		return(NULL);						\
-	name##_SPLAY(head, elm);					\
-	if ((cmp)(elm, (head)->sph_root) == 0)				\
-		return (head->sph_root);				\
-	return (NULL);							\
-}									\
-									\
-static __inline struct type *						\
-name##_SPLAY_NEXT(struct name *head, struct type *elm)			\
-{									\
-	name##_SPLAY(head, elm);					\
-	if (SPLAY_RIGHT(elm, field) != NULL) {				\
-		elm = SPLAY_RIGHT(elm, field);				\
-		while (SPLAY_LEFT(elm, field) != NULL) {		\
-			elm = SPLAY_LEFT(elm, field);			\
-		}							\
-	} else								\
-		elm = NULL;						\
-	return (elm);							\
-}									\
-									\
-static __inline struct type *						\
-name##_SPLAY_MIN_MAX(struct name *head, int val)			\
-{									\
-	name##_SPLAY_MINMAX(head, val);					\
-        return (SPLAY_ROOT(head));					\
-}
-
-/* Main splay operation.
- * Moves node close to the key of elm to top
- */
-#define SPLAY_GENERATE(name, type, field, cmp)				\
-struct type *								\
-name##_SPLAY_INSERT(struct name *head, struct type *elm)		\
-{									\
-    if (SPLAY_EMPTY(head)) {						\
-	    SPLAY_LEFT(elm, field) = SPLAY_RIGHT(elm, field) = NULL;	\
-    } else {								\
-	    int __comp;							\
-	    name##_SPLAY(head, elm);					\
-	    __comp = (cmp)(elm, (head)->sph_root);			\
-	    if(__comp < 0) {						\
-		    SPLAY_LEFT(elm, field) = SPLAY_LEFT((head)->sph_root, field);\
-		    SPLAY_RIGHT(elm, field) = (head)->sph_root;		\
-		    SPLAY_LEFT((head)->sph_root, field) = NULL;		\
-	    } else if (__comp > 0) {					\
-		    SPLAY_RIGHT(elm, field) = SPLAY_RIGHT((head)->sph_root, field);\
-		    SPLAY_LEFT(elm, field) = (head)->sph_root;		\
-		    SPLAY_RIGHT((head)->sph_root, field) = NULL;	\
-	    } else							\
-		    return ((head)->sph_root);				\
-    }									\
-    (head)->sph_root = (elm);						\
-    return (NULL);							\
-}									\
-									\
-struct type *								\
-name##_SPLAY_REMOVE(struct name *head, struct type *elm)		\
-{									\
-	struct type *__tmp;						\
-	if (SPLAY_EMPTY(head))						\
-		return (NULL);						\
-	name##_SPLAY(head, elm);					\
-	if ((cmp)(elm, (head)->sph_root) == 0) {			\
-		if (SPLAY_LEFT((head)->sph_root, field) == NULL) {	\
-			(head)->sph_root = SPLAY_RIGHT((head)->sph_root, field);\
-		} else {						\
-			__tmp = SPLAY_RIGHT((head)->sph_root, field);	\
-			(head)->sph_root = SPLAY_LEFT((head)->sph_root, field);\
-			name##_SPLAY(head, elm);			\
-			SPLAY_RIGHT((head)->sph_root, field) = __tmp;	\
-		}							\
-		return (elm);						\
-	}								\
-	return (NULL);							\
-}									\
-									\
-void									\
-name##_SPLAY(struct name *head, struct type *elm)			\
-{									\
-	struct type __node, *__left, *__right, *__tmp;			\
-	int __comp;							\
-\
-	SPLAY_LEFT(&__node, field) = SPLAY_RIGHT(&__node, field) = NULL;\
-	__left = __right = &__node;					\
-\
-	while ((__comp = (cmp)(elm, (head)->sph_root)) != 0) {		\
-		if (__comp < 0) {					\
-			__tmp = SPLAY_LEFT((head)->sph_root, field);	\
-			if (__tmp == NULL)				\
-				break;					\
-			if ((cmp)(elm, __tmp) < 0){			\
-				SPLAY_ROTATE_RIGHT(head, __tmp, field);	\
-				if (SPLAY_LEFT((head)->sph_root, field) == NULL)\
-					break;				\
-			}						\
-			SPLAY_LINKLEFT(head, __right, field);		\
-		} else if (__comp > 0) {				\
-			__tmp = SPLAY_RIGHT((head)->sph_root, field);	\
-			if (__tmp == NULL)				\
-				break;					\
-			if ((cmp)(elm, __tmp) > 0){			\
-				SPLAY_ROTATE_LEFT(head, __tmp, field);	\
-				if (SPLAY_RIGHT((head)->sph_root, field) == NULL)\
-					break;				\
-			}						\
-			SPLAY_LINKRIGHT(head, __left, field);		\
-		}							\
-	}								\
-	SPLAY_ASSEMBLE(head, &__node, __left, __right, field);		\
-}									\
-									\
-/* Splay with either the minimum or the maximum element			\
- * Used to find minimum or maximum element in tree.			\
- */									\
-void name##_SPLAY_MINMAX(struct name *head, int __comp) \
-{									\
-	struct type __node, *__left, *__right, *__tmp;			\
-\
-	SPLAY_LEFT(&__node, field) = SPLAY_RIGHT(&__node, field) = NULL;\
-	__left = __right = &__node;					\
-\
-	while (1) {							\
-		if (__comp < 0) {					\
-			__tmp = SPLAY_LEFT((head)->sph_root, field);	\
-			if (__tmp == NULL)				\
-				break;					\
-			if (__comp < 0){				\
-				SPLAY_ROTATE_RIGHT(head, __tmp, field);	\
-				if (SPLAY_LEFT((head)->sph_root, field) == NULL)\
-					break;				\
-			}						\
-			SPLAY_LINKLEFT(head, __right, field);		\
-		} else if (__comp > 0) {				\
-			__tmp = SPLAY_RIGHT((head)->sph_root, field);	\
-			if (__tmp == NULL)				\
-				break;					\
-			if (__comp > 0) {				\
-				SPLAY_ROTATE_LEFT(head, __tmp, field);	\
-				if (SPLAY_RIGHT((head)->sph_root, field) == NULL)\
-					break;				\
-			}						\
-			SPLAY_LINKRIGHT(head, __left, field);		\
-		}							\
-	}								\
-	SPLAY_ASSEMBLE(head, &__node, __left, __right, field);		\
-}
-
-#define SPLAY_NEGINF	-1
-#define SPLAY_INF	1
-
-#define SPLAY_INSERT(name, x, y)	name##_SPLAY_INSERT(x, y)
-#define SPLAY_REMOVE(name, x, y)	name##_SPLAY_REMOVE(x, y)
-#define SPLAY_FIND(name, x, y)		name##_SPLAY_FIND(x, y)
-#define SPLAY_NEXT(name, x, y)		name##_SPLAY_NEXT(x, y)
-#define SPLAY_MIN(name, x)		(SPLAY_EMPTY(x) ? NULL	\
-					: name##_SPLAY_MIN_MAX(x, SPLAY_NEGINF))
-#define SPLAY_MAX(name, x)		(SPLAY_EMPTY(x) ? NULL	\
-					: name##_SPLAY_MIN_MAX(x, SPLAY_INF))
-
-#define SPLAY_FOREACH(x, name, head)					\
-	for ((x) = SPLAY_MIN(name, head);				\
-	     (x) != NULL;						\
-	     (x) = SPLAY_NEXT(name, head, x))
+/* RB_PROTOTYPE_INTERNAL/RB_GENERATE_INTERNAL 用 __unused；lwext4 的
+   ext4_misc.h 也定义它，两边都用 #ifndef 保护，先包含哪个都可以。 */
+#ifndef __unused
+#define __unused __attribute__((__unused__))
+#endif
 
 /* Macros that define a red-black tree */
 #define RB_HEAD(name, type)						\
@@ -802,8 +560,4 @@ name##_RB_MINMAX(struct name *head, int val)				\
 	    ((x) != NULL) && ((y) = name##_RB_PREV(x), (x) != NULL);	\
 	     (x) = (y))
 
-#ifdef __cplusplus
-}
-#endif
-
-#endif	/* _SYS_TREE_H_ */
+#endif /* RBTREE_H */

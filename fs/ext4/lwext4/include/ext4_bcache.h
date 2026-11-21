@@ -45,7 +45,7 @@ extern "C" {
 
 #include <stdint.h>
 #include <stdbool.h>
-#include <misc/tree.h>
+#include "rbtree.h"
 #include <misc/queue.h>
 
 #define EXT4_BLOCK_ZERO() 	\

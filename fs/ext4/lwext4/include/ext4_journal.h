@@ -44,7 +44,7 @@ extern "C" {
 #include <ext4_config.h>
 #include <ext4_types.h>
 #include <misc/queue.h>
-#include <misc/tree.h>
+#include "rbtree.h"
 
 struct jbd_fs {
 	struct ext4_blockdev *bdev;
