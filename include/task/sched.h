@@ -90,8 +90,9 @@ void sched_tick(void);
 /*
    sched_check_and_yield - 检查并执行重调度
 
-   由异常返回路径调用。如果 g_need_resched 标志被设置,
-   则清除标志并执行 sched_schedule()。
+   由异常返回路径、AP idle 循环和 vCPU 主循环调用。如果本核的
+   need_resched(cpu_current()->need_resched)被置位, 则清除标志并
+   执行 sched_schedule()。
 
    返回：true 表示发生了任务切换, false 表示没有。
 */

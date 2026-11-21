@@ -9,17 +9,17 @@
 ```
 boot/
 ├── aarch64/
-│   ├── boot.S              # BSP/AP 启动入口、EL2 VHE 初始化、MMU 跳板
+│   ├── boot.S              # BSP/AP 启动入口（AP 走 PSCI）、EL2 VHE 初始化、MMU 跳板
 │   ├── exception.S          # 异常向量表（VBAR_EL1）、寄存器保存/恢复宏
 │   ├── exception.c          # 同步异常、IRQ、系统调用分发
 │   └── link.ld              # 链接脚本（高半区 VA、物理别名符号）
 ├── riscv64/
-│   ├── boot.S              # S-mode 启动、FPU 使能、MMU 跳板、BSS 清零
+│   ├── boot.S              # BSP/AP 启动入口（SBI HSM / release 表）、FPU 使能、MMU 跳板、BSS 清零
 │   ├── exception.S          # trap_vector 入口、sscratch 模式检测、FP 保存/恢复
 │   ├── exception.c          # scause 分发、ecall 处理、页错误诊断
 │   └── link.ld              # 双地址布局（低 .text.boot + 高 VMA 内核）
 └── x86_64/
-    ├── boot.S              # Multiboot1 头、32→64 位切换、内嵌页表
+    ├── boot.S              # Multiboot1 头、32→64 位切换、AP trampoline、内嵌页表
     ├── exception.S          # ISR 存根（IDT 0-31 + LAPIC）、isr_common_stub
     ├── exception.c          # IDT 初始化、SYSCALL MSR 配置、异常分发
     ├── syscall_wrapper.S    # SYSCALL/SYSRET 快速路径（per-CPU scratch）
@@ -36,17 +36,26 @@ boot/
 
 | 步骤 | AArch64 | RISC-V 64 | x86_64 |
 |------|---------|-----------|--------|
-| 特权级设置 | EL2 VHE 初始化（HCR_EL2、CPTR、GICv3） | S-mode（OpenSBI 已设置） | 32→64 位模式切换 |
+| 特权级设置 | EL2 VHE 初始化（HCR_EL2、CPTR；GICv3 时使能 ICC_SRE_EL2） | S-mode（OpenSBI 已设置） | 32→64 位模式切换 |
 | FPU 使能 | CPTR_EL2.TFP 清除 | sstatus.FS = Initial | — |
 | 栈设置 | BSS 中 32KB 栈 | 16KB boot 栈 → 64KB 内核栈 | BSS 中 16KB 栈 |
-| BSS 清零 | 8 字节循环（物理别名） | `clear_bss` 子程序 | Multiboot loader 保证 |
+| BSS 清零 | 8 字节循环（物理别名） | `clear_bss` 子程序 | boot.S 内 `clear_bss` 循环 |
 | 页表建立 | `vm_init()` | `mmu_init()` 内部建立 | boot.S 内嵌静态页表 |
 | MMU 启用 | `mmu_init(TTBR0, TTBR1)` | `mmu_init()` | boot.S 中 `cr0 \| PG` |
 | VA 跳板 | `ldr x0, =1f; br x0` | `la + add + jr` | 恒等映射消除需求 |
 | 异常向量 | `msr vbar_el1` | `WRITE_STVEC` | `lidt` |
 | 进入 C | `blr kernel_main` | `jr kernel_main` | `call kernel_main` |
 
-AArch64 额外支持 **多核启动**：`_secondary_start` 由 PSCI CPU_ON 进入，复用 BSP 页表，使用 `secondary_boot_stacks` 独立栈，最终调用 `cpu_secondary_bootstrap(cpu_id)`。
+三个架构都支持 **多核启动**，AP 入口与拉起方式不同：
+
+- **AArch64**：`_secondary_start`，由 PSCI CPU_ON 进入，复用 BSP 页表，使用
+  `secondary_boot_stacks` 中每核 16KB 的栈。
+- **RISC-V 64**：`_riscv64_secondary_start`，优先由 SBI HSM `hart_start` 进入；
+  没有 HSM 时走 release 表 + IPI。每核 16KB 栈。
+- **x86_64**：AP trampoline（INIT-SIPI），每核 16KB 栈。
+
+三条路径最终都调用 `cpu_secondary_bootstrap(cpu_id)`，由它建立本核 idle
+任务、timer 和 resched IPI 后进入 idle 循环。
 
 ### 2. 异常/中断处理（exception.S + exception.c）
 
@@ -84,7 +93,8 @@ AArch64 额外支持 **多核启动**：`_secondary_start` 由 PSCI CPU_ON 进�
 ### 5. 链接脚本（link.ld）
 
 各架构提供链接脚本，定义：
-- 内核虚拟地址基址（AArch64 `0xffff0000_00000000`、RISC-V `0xffffffc0_00000000`）
+- 内核虚拟地址基址（AArch64 `0xffff0000_00000000`、RISC-V `0xffffffc0_00000000`、
+  x86_64 `0xffff8000_00000000`）
 - `__kernel_start` / `__kernel_end`（PMM 保留区间）
 - `__bss_start` / `__bss_end`（BSS 清零范围）
 - 物理地址别名符号（`*_phys`，供 MMU 开启前使用）
@@ -116,7 +126,7 @@ AArch64 额外支持 **多核启动**：`_secondary_start` 由 PSCI CPU_ON 进�
 | `task/sched.h` | `sched_dequeue()`、`sched_tick()` |
 | `task/cpu.h` | `cpu_t`、`cpu_current()` |
 | `syscall/syscall.h` | `syscall_handler()` |
-| `mm_vm.h` | `mm_vm_get_paddr()` |
+| `mm/mm_vm.h` | `mm_vm_get_paddr()` |
 | `include/platform/platform_ops.h` | `platform_panic()`、`platform_shutdown()` |
 
 ## 调用的外部函数
@@ -130,7 +140,7 @@ AArch64 额外支持 **多核启动**：`_secondary_start` 由 PSCI CPU_ON 进�
 | `vm_get_kernel_pgtable()` | kernel/mm/ | 获取内核高半区页表（TTBR1） |
 | `mmu_init()` | kernel/mm/ | 启用 MMU |
 | `kernel_main()` | kernel/main.c | C 入口 |
-| `cpu_secondary_bootstrap()` | kernel/task/cpu.c | 次级核 C 入口（AArch64 SMP） |
+| `cpu_secondary_bootstrap()` | kernel/task/cpu.c | 次级核 C 入口（三架构 SMP） |
 
 ### 异常/中断路径调用
 
@@ -139,7 +149,7 @@ AArch64 额外支持 **多核启动**：`_secondary_start` 由 PSCI CPU_ON 进�
 | `handle_exception()` | boot/\*/exception.c | 汇编→C 异常分发 |
 | `syscall_handler()` | kernel/syscall/ | 系统调用处理 |
 | `sched_check_and_yield_from_trap()` | kernel/task/sched.c | 异常返回前检查抢占 |
-| `sched_check_and_yield()` | kernel/task/sched.c | AArch64/x86_64 抢占检查 |
+| `sched_check_and_yield()` | kernel/task/sched.c | AP idle 循环 / vCPU 主循环的抢占检查 |
 | `irq_dispatch_frame()` | driver/irq/ | 控制器后端完成 ack → handler → EOI/complete |
 | `lapic_init()` | driver/irq/ | LAPIC 初始化 |
 | `platform_panic()` / `platform_shutdown()` | platforms/ | 平台停机 |
@@ -151,13 +161,16 @@ AArch64 额外支持 **多核启动**：`_secondary_start` 由 PSCI CPU_ON 进�
 | 符号 | 架构 | 用途 |
 |------|------|------|
 | `_start` | 全部 | 内核入口点 |
-| `_secondary_start` | AArch64 | AP 核启动入口 |
+| `_secondary_start` | AArch64 | AP 核启动入口（PSCI） |
+| `_riscv64_secondary_start` | RISC-V | AP 核启动入口（SBI HSM / release 表） |
+| `x86_ap_trampoline_start` / `_end` | x86_64 | AP 实模式 trampoline 边界 |
 | `exception_vector_base` | AArch64 | VBAR_EL1 异常向量表 |
 | `trap_vector` | RISC-V | stvec 陷阱入口 |
 | `isr_stub_table` | x86_64 | IDT 存根地址数组 |
 | `syscall_entry` | x86_64 | SYSCALL 指令入口 |
-| `stack_top` / `stack_bottom` | 全部 | BSP 启动栈边界 |
-| `secondary_boot_stacks` | AArch64 | AP 核启动栈数组 |
+| `stack_top` / `stack_bottom` | AArch64 / RISC-V | BSP 栈边界（RISC-V 为 MMU 后的 64KB 内核栈） |
+| `boot_stack_top` / `boot_stack_bottom` | RISC-V / x86_64 | 早期 boot 栈边界 |
+| `secondary_boot_stacks` | 全部 | AP 核启动栈数组（每核 16KB） |
 
 ### C 导出
 

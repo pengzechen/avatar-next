@@ -214,9 +214,10 @@ make PLATFORM=qemu-virt-aarch64 test-ltp       # fork/clone/signal 路径
 
 ## 五、残留风险与限制
 
-1. **二级核 idle 栈只有 4096 字节**（`kernel/task/cpu.c`）。陷阱帧 816 + 切换帧
-   176 + 处理函数调用链，单层嵌套下约 1.2-2KB，余量偏紧。全树没有栈 canary，
-   溢出是静默的。
+1. **二级核 idle 栈为 16 KiB**（`kernel/task/cpu.c` 的 `SECONDARY_STACK_SIZE`，
+   与 `boot.S` 里 `secondary_boot_stacks` 的每核步长一致）。陷阱帧 816 + 切换帧
+   176 + 处理函数调用链，单层嵌套下约 1.2-2KB，目前余量充足。全树没有栈
+   canary，溢出是静默的。
 2. **内核浮点只能用 `float`/`double`**。没有链接 libgcc，`long double`（aarch64 上
    是 128 位）的运算会引出 `__addtf3`/`__divtf3` 等帮助函数，链接期报未定义符号。
 3. **`sigreturn`/信号投递的 sigframe 拷贝**已从裸 `memcpy` 改成
@@ -224,6 +225,8 @@ make PLATFORM=qemu-virt-aarch64 test-ltp       # fork/clone/signal 路径
    裸 memcpy 踩到坏地址 = 内核态数据中止 = 整机挂死）。注意这两个接口内部只做
    `user_range_ok()`（地址范围 + 回绕）校验，**不查页表是否映射**：传一个落在
    用户地址范围内但未映射的地址仍会中止。
-4. VMM 的 FP 保存/恢复只在 aarch64 EL2 世界切换里实现；riscv64/x86_64 的
-   guest 世界切换目前仍是单 vCPU，若后续加多 vCPU/FP 透传，需要同样的按
-   vCPU 现场（各自架构的向量/浮点寄存器 + fcsr/MXCSR）。
+4. VMM 的 guest FP/SIMD 保存/恢复只在 aarch64 EL2 世界切换里按 vCPU 实现
+   （`vcpu_t::fpsimd`）；riscv64/x86_64 的 guest 切换路径没有保存 guest FP
+   现场。多 vCPU 已经支持，但 FP 隔离尚未做：guest 在宿主 C 代码执行期间
+   使用 FP/SIMD 时，现场会互相覆盖。若后续补上，需要与 aarch64 一样按
+   vCPU 保存（各自架构的向量/浮点寄存器 + fcsr/MXCSR）。

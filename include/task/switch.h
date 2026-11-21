@@ -43,7 +43,7 @@ void task_trampoline_user(void);
    arch_task_switch - 保存当前任务上下文并切换到下一任务
    @prev_sp: 输出 — 将当前 SP 写入 *prev_sp
    @next_sp: 输入 — 要加载的下一任务 SP
-   @prev_pgd_ptr: 输出 — 将当前 TTBR0_EL1 写入 *prev_pgd_ptr(可为NULL)
+   @prev_pgd_ptr: 输出 — 将当前页表基址写入 *prev_pgd_ptr(可为NULL)
    @next_pgd: 输入 — 下一任务的页表基址(NULL表示不切换)
    @switch_done: 输出 — 真正换到 next 的栈/地址空间后置 1(release)
 
@@ -68,8 +68,10 @@ void arch_task_switch(uintptr_t *prev_sp, uintptr_t next_sp, uint64_t **prev_pgd
    arch_switch_to_user - 从内核跳转到用户态
    @user_entry: 用户态入口点(虚拟地址)
    @user_sp: 用户栈指针(虚拟地址)
-   @user_pgd: 用户页表物理地址(首次进入用户态时用于切换 satp)
    @kernel_sp: 内核栈指针(物理地址)
+
+   调用前地址空间必须已经切到用户页表(各架构由 mm_vm_switch_user() 完成；
+   RISC-V 在这里才写 satp 的路径见 arch_switch_to_user 的实现)。
 
    执行流程：
      1. 设置异常返回地址到 user_entry

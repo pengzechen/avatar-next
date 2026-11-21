@@ -379,7 +379,7 @@ void handle_exception(void *frame_ptr)
 
 ## boot/x86_64/exception.c — x86_64 IDT 初始化与中断分发
 
-`boot/x86_64/exception.c` · 8 个函数 · 8 个有说明 · 309 行
+`boot/x86_64/exception.c` · 8 个函数 · 8 个有说明 · 316 行
 
 提供：
 exception_init()    — 建立 IDT, 加载 IDTR, 初始化 LAPIC, sti
@@ -610,17 +610,22 @@ void handle_exception(void *frame_ptr)
 
 **第 270 行**
 
-> 请求在异常返回路径执行重调度
+> 请求在异常返回路径执行重调度。
 
-**第 275 行**
+> 只置本核 need_resched，不要调 sched_tick()：后者是真正的
+> timer tick 回调，会连带推进 RR 时间片、喂 rt_latency 统计
+> 并对全池跑 itimer_tick()。把这些副作用搬进异常处理路径，
+> 会让一个崩溃任务额外消耗时间片/触发定时器扫描。
+
+**第 282 行**
 
 > 未注册的 CPU 异常：打印详细信息
 
-**第 286 行**
+**第 293 行**
 
 > Page Fault: 打印 CR2(出错地址)
 
-**第 295 行**
+**第 302 行**
 
 > 用异常帧(不是处理程序自己的栈)打调用栈, 然后走统一的
 > platform_panic() 停机 —— 它比裸 while(1) hlt 多做两件事：
@@ -628,7 +633,7 @@ void handle_exception(void *frame_ptr)
 
 > 以前这里是 `while(1) hlt`：整机挂死在现场, 看不到&quot;是谁调过来的&quot;。
 
-**第 305 行**
+**第 312 行**
 
 > 其余未注册中断静默忽略(包括 spurious)
 

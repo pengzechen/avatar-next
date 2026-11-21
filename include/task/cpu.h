@@ -10,14 +10,15 @@
 /*
    include/task/cpu.h — Per-CPU 控制块(SMP 抽象层)
 
-   Phase 0：仅提供数据结构 + BSP 初始化骨架, 行为等价于单核。
-     - g_num_cpus 始终为 1, cpu_bring_up_all() 为 stub
-     - cpu_current() 返回 &g_cpus[0](BSP 安装后从 per-CPU 寄存器读取)
+   每个在线 CPU 一个 cpu_t，per-CPU 寄存器(TPIDR_EL1 / tp / GS_BASE)指向
+   本核实例。调度状态(run_queue / current_task / idle_task / need_resched)
+   全部放在 cpu_t 里，不再有全局就绪队列。
 
-   后续阶段：
-     Phase 1: 调度器迁移到 cpu_t::run_queue / current_task / need_resched
-     Phase 2: aarch64 PSCI 起多核 → cpu_secondary_bootstrap()
-     Phase 4: IPI / 跨核唤醒
+   三架构均已实现次级核拉起：
+     - aarch64: PSCI CPU_ON → boot/aarch64/boot.S:_secondary_start
+     - riscv64: SBI HSM hart_start；无 HSM 时回退到 release 表 + IPI
+     - x86_64 : INIT-SIPI + AP trampoline
+   跨核唤醒走 resched IPI(CPU_RESCHED_IPI* / irq_send_ipi)。
 */
 
 #include "types.h"
@@ -51,17 +52,15 @@
 struct task;
 
 /* ── Per-CPU 控制块 ──────────────────────────────────────────
-   Phase 0：仅占位字段；调度器迁移在 Phase 1 完成。
-
-   注意：当 Phase 1 接管 run_queue / current_task / need_resched 后,
-   任何跨 CPU 访问这些字段都必须持有 rq_lock。
+   run_queue / current_task / need_resched 由调度器直接使用；
+   任何跨 CPU 访问这些字段都必须持有目标核的 rq_lock。
 */
 typedef struct cpu {
-    uint32_t cpu_id;      /* 逻辑 CPU 编号(0..g_num_cpus-1) */
+    uint32_t cpu_id;      /* 逻辑 CPU 槽位(0..CONFIG_SMP_CPUS-1；不是所有槽位都能拉起成功) */
     uint64_t hw_id;       /* MPIDR / hartid / APIC ID */
     volatile bool online; /* 是否已通过 bootstrap(BSP 自旋等待, 必须 volatile) */
 
-    /* ── Phase 1 将迁入的调度器状态(现在仅占位)────────── */
+    /* ── 调度器状态 ─────────────────────────────────────── */
     struct task *current_task;       /* 本核当前任务 */
     struct task *idle_task;          /* 本核 idle 任务 */
     list_t run_queue;                /* 本核就绪队列 */
@@ -117,7 +116,7 @@ static_assert(offsetof(cpu_t, kernel_rsp0) == 104, "CPU_KERNEL_RSP0 in boot/x86_
 
 /* ── 全局 CPU 池 ────────────────────────────────────────── */
 extern cpu_t g_cpus[AVATAR_MAX_CPUS];
-extern uint32_t g_num_cpus; /* 当前在线 CPU 数(Phase 0 = 1) */
+extern uint32_t g_num_cpus; /* 已在线 CPU 数(BSP=1, 每成功拉起一个 AP +1) */
 
 /* ── 跨核 IPI ─────────────────────────────────────────────
 
@@ -181,27 +180,29 @@ void cpu_bump_local_ticks(void);
 void cpu_init_bsp(void);
 
 /*
-   cpu_bring_up_all - BSP 调用一次, 启动其他 CPU。
+   cpu_bring_up_all - BSP 调用一次, 启动 CPU1..CONFIG_SMP_CPUS-1。
 
-   Phase 0：stub(直接返回)。
-   Phase 2 起：aarch64 通过 PSCI CPU_ON 拉起 CPU1..N-1。
+   三架构均已实现：aarch64 用 PSCI CPU_ON；riscv64 优先 SBI HSM，
+   不支持的平台回退到 release 表 + IPI；x86_64 用 INIT-SIPI + AP trampoline。
+   拉起失败或超时的核会被跳过，g_num_cpus 只统计真正 online 的核。
 */
 void cpu_bring_up_all(void);
 
 /*
-   cpu_secondary_bootstrap - 次级核 C 入口(aarch64 Phase 2)。
+   cpu_secondary_bootstrap - 次级核 C 入口(三架构共用)
 
-   由 boot/aarch64/boot.S:_secondary_start 在 MMU + VBAR 就绪后调用,
-   入参 cpu_id 即 BSP 在 psci_cpu_on 中传入的 context_id。
-   riscv64 / x86_64 后续 Phase 复用同名 C 入口。
+   各架构 boot.S 在 MMU / 异常向量就绪后调用；入参 cpu_id 是 BSP 传入的
+   context_id(PSCI context_id / SBI hart_start 的 opaque / x86 AP 参数槽)。
+   函数不返回：装好 idle 任务和 timer 后进入 idle 循环。
 */
 void cpu_secondary_bootstrap(uint32_t cpu_id);
 
 /*
    cpu_smp_timer_test - SMP 健康检查：验证所有在线 CPU 的 timer ISR 都在动。
 
-   必须在 timer_set_tick_cb 之后调用。BSP 忙等 rounds*ms_per_round 毫秒,
-   每轮打印各核 local_ticks 增量。
+   在所有次级核 online、本地 timer 已启用之后调用。它只看 local_ticks 的
+   增长，不依赖 sched_tick 回调；主流程习惯放在 timer_set_tick_cb 之后。
+   BSP 忙等 rounds*ms_per_round 毫秒, 每轮打印各核 local_ticks 增量。
 */
 void cpu_smp_timer_test(uint32_t rounds, uint32_t ms_per_round);
 

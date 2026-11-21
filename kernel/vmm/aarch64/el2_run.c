@@ -9,7 +9,7 @@
 
    对标 ref/bare-vm/arch/aarch64/el2_run.c, 适配 Avatar OS。
 
-   Phase 2 支持的 exit 类型(ESR_EL2.EC)：
+   当前支持的 exit 类型(ESR_EL2.EC)：
      0x01 — WFI/WFE trap(HCR_EL2.TWI=1)：跳过指令, resume
      0x16 — HVC 超级调用：dispatcher 处理 HVC_DONE / HVC_PRINT
      0x24 — Stage-2 Data Abort：权限故障处理

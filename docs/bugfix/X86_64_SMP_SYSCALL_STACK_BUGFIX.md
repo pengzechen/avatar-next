@@ -204,12 +204,13 @@ if (++spins == 30000000ULL) { /* dump 所有核的 phase/rip/task/irq_depth 后 
 ## 附：本次调试中被绊到的构建陷阱（与 bug 本身无关，但会反复咬人）
 
 **本仓库的 Makefile 不跟踪头文件依赖。** 编译时用了 `-MMD -MP` 生成 `build/**.d`，
-但**没有 `-include` 它们**（见 `Makefile` 第 1188 行附近的注释，以及
+但**没有 `-include` 它们**（见 `Makefile` 第 2088 行附近的注释，以及
 `docs/PROJECT_REFERENCE.md` 第 241 行）。后果：
 
 - 修改任何 `.h` → **不会**触发依赖它的 `.c` 重编
 - 修改 `SMP=` / `LOG=` 等只进 CFLAGS 的量 → **不会**触发重编
-  （`CONFIG_SMP_CPUS` 只被 `kernel/task/cpu.c` 使用，其它文件无感知）
+  （`CONFIG_SMP_CPUS` 还会进入 `boot/aarch64/boot.S`、`boot/riscv64/boot.S`
+  的 AP 栈数组大小和 `kernel/task/cpu.c` 的拉起循环）
 
 本次实测：给 `cpu_t` 加字段后只跑 `make kernel`，`kernel_task_cpu.o` 没重编，
 `g_cpus[]` 仍按旧的 `sizeof(cpu_t)`=112 分配，在 BSS 里**和紧随其后的
@@ -234,8 +235,11 @@ ffff8000002f9b80 b g_secondary_idle  # ← 与 g_cpus 尾部重叠
    # 间距应等于 AVATAR_MAX_CPUS * sizeof(cpu_t)
    ```
 
-> 若要根治，可在 Makefile 里把所有目标的 `.d` 汇总成一个变量后 `-include`，
-> 并加一个 CFLAGS 戳文件让编译选项变化触发全量重编。（尚未实施）
+> CFLAGS 戳文件这一半已经实施：Makefile 的 `_CFG_CHECK` 把
+> `GIC/SMP/VCPUS/LOG/FP/FAT_MOUNT_POINT/RT_IRQ_TRACE` 编成 `_CFG_SIG`，
+> 与 `build/<p>/.build-cfg` 不一致时删除该目录下的 `.o` / `.elf` 后重编。
+> `.d` 仍未 `-include`，所以“改过任何 `.h` 必须先 `make clean`”这条规则
+> **依然有效**。
 
 ---
 

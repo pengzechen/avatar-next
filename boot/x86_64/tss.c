@@ -87,9 +87,9 @@ void x86_tss_init_cpu(uint32_t cpu_id, uint64_t rsp0)
     /* I/O 位图基址设为超出 TSS 末尾(禁用 I/O 权限检查) */
     tss->iomap_base = sizeof(tss_t);
 
-    KLOG_INFO("TSS setup: g_kernel_stack=0x%llx size=%lu top=0x%llx\n", (uint64_t)g_kernel_stack,
-              sizeof(g_kernel_stack), (uint64_t)g_kernel_stack + sizeof(g_kernel_stack));
-    KLOG_INFO("TSS setup: cpu=%u tss=0x%llx rsp0=0x%llx\n", cpu_id, (uint64_t)tss, tss->rsp0);
+    KLOG_DEBUG("TSS setup: g_kernel_stack=0x%llx size=%lu top=0x%llx\n", (uint64_t)g_kernel_stack,
+               sizeof(g_kernel_stack), (uint64_t)g_kernel_stack + sizeof(g_kernel_stack));
+    KLOG_DEBUG("TSS setup: cpu=%u tss=0x%llx rsp0=0x%llx\n", cpu_id, (uint64_t)tss, tss->rsp0);
 
     /* 获取当前 GDT 基址 */
     struct {
@@ -108,7 +108,7 @@ void x86_tss_init_cpu(uint32_t cpu_id, uint64_t rsp0)
     /* 加载 TR(Task Register)指向本 CPU 的 TSS selector */
     __asm__ volatile("ltr %w0" ::"r"(tss_sel));
 
-    KLOG_INFO("TSS initialized: cpu=%u base=0x%llx RSP0=0x%llx TR=0x%x\n", cpu_id, (uint64_t)tss, tss->rsp0, tss_sel);
+    KLOG_DEBUG("TSS initialized: cpu=%u base=0x%llx RSP0=0x%llx TR=0x%x\n", cpu_id, (uint64_t)tss, tss->rsp0, tss_sel);
 }
 
 /*

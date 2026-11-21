@@ -973,7 +973,7 @@ void task_exit(void)
 task_t *task_current(void)
 {
     /*
-     Phase 3：从 per-CPU 控制块读取, AP 上才能拿到正确的任务。
+     从 per-CPU 控制块读取, AP 上才能拿到正确的任务。
      cpu_current() 内部已有 NULL 回退到 g_cpus[0], 因此在 cpu_init_bsp
      之前的极早期路径也是安全的(会返回 g_cpus[0].current_task = NULL)。
     */

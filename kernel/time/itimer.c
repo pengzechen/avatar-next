@@ -22,11 +22,13 @@
       在 tick(ISR 上下文)里 unblock 是既有用法：sched_enqueue() 内部有
       in_irq_context() 分支, 设备 ISR 唤醒任务是常规操作。
 
-   3. SMP：每个核的 tick 都会调到这里, 所以同一个到期定时器可能被两个核同时
-      看到。不加锁是故意的 —— 三个动作都是幂等的：置同一个 pending 位,
-      把 expire 推到(近似)同一个新时刻, unblock 有 state != TASK_BLOCKED
-      的早退。代价是周期定时器在某些 tick 上可能多投一次 SIGALRM。
-      默认 SMP=1, 多核下若要求严格"一个周期一个信号", 再考虑加单核仲裁。
+   3. SMP：每个核的 tick 都会调到这里(sched_tick 是 per-CPU 回调), 所以同一个
+      到期定时器可能被两个核同时看到。不加锁是故意的 —— 大多数动作是幂等的,
+      但"先重装再投信号"不是原子的: 两个核可以同时通过 now >= expire 的检查,
+      各投一次 SIGALRM(周期定时器把 expire 推到相近的新时刻, 一次性定时器
+      都被清 0)。已知限制: 多核下 alarm 可能重复投递；若要严格"一个周期
+      一个信号", 需要原子 claim expiry(CAS)或让每个任务只由亲和核处理。
+      默认构建是 SMP=1, 但 LTP 门禁跑 SMP=4, 这条限制会被真实触发。
 */
 
 #include "time/itimer.h"

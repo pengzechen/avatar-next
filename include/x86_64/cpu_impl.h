@@ -44,8 +44,9 @@ static inline struct cpu *arch_cpu_self_get(void)
     return (struct cpu *)(uintptr_t)v;
 }
 
-/* LAPIC ID 需要 LAPIC 映射就绪后才能读；Phase 0 返回 0 占位,
-   后续 SMP 阶段改为 cpu_current()->hw_id(BSP 启动时存入)。
+/* x86 的硬件 ID 是 LAPIC ID，但本头文件不能依赖 LAPIC 映射，因此这里
+   只返回 0 占位。BSP 在 cpu_init_bsp()、AP 在 cpu_secondary_bootstrap()
+   中都改用 irq_cpu_hw_id() 读取真实值。
 */
 static inline uint64_t arch_cpu_hw_id(void)
 {

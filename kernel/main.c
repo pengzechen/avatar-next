@@ -211,7 +211,7 @@ void kernel_main(void)
 
     /* ── 初始化任务子系统 ───────────────────────────────── */
     KLOG_TASK("Initializing task subsystem...\n");
-    cpu_init_bsp(); /* Phase 0：安装 BSP per-CPU 指针 */
+    cpu_init_bsp(); /* 安装 BSP per-CPU 指针 */
 
 #if ARCH_X86_64
     extern void x86_tss_init(void);
@@ -325,9 +325,9 @@ void kernel_main(void)
     /* SMP 健康检查：抢占启用后立刻验证所有核 timer 都在 tick。 */
     cpu_smp_timer_test(3, 100);
 
-    /* Phase 4a：多核线程分发自检。SMP=1 时也会跑(验证 round-robin
-       自身不破坏单核)。失败仅 KLOG_ERROR, 不 panic, 避免影响后续
-       busybox / vmm 测试。
+    /* SMP 线程分发自检(当前默认关闭，测试变体可手工打开)。SMP=1 时也会跑,
+       验证 round-robin 自身不破坏单核。失败仅 KLOG_ERROR, 不 panic, 避免
+       影响后续 busybox / vmm 测试。
     */
     /*
        extern void smp_thread_test_run(uint32_t, uint32_t, uint32_t);

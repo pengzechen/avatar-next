@@ -77,8 +77,9 @@ CPU0 切任务 N、CPU1 跑任务 N+1 时会互相弹这条 cacheline。
 
 ### 4. 两个待确认的不一致
 
-- `TASK_STACK_SIZE` 注释写“16 KiB 不够、32 KiB 下实测高水位”，但定义仍是
-  `16384u`；`git log -S 32768` 显示 32 KiB 从未提交过。
+- ~~`TASK_STACK_SIZE` 注释写“16 KiB 不够、32 KiB 下实测高水位”，但定义仍是
+  `16384u`~~ 已修正（2026-11-22）：注释改为“16 KiB 实测足够（高水位约 1.7 KiB）；
+  曾加到 32 KiB 仍复现，根因是跨核竞态而非栈溢出”，与定义一致。
 - `TASK_MAX_FD = 256`，但 `RLIMIT_NOFILE` 默认 1024 且允许到 1M；
   `setrlimit(NOFILE, 1024)` 成功但 fd 分配仍被 256 卡住。
 

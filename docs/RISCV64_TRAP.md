@@ -1,3 +1,8 @@
+> 历史分析(2026 年，评估 RISC-V 内核态接收中断的方案)。文中行号和部分
+> 结论已经过时：`spinlock_noirq_t` 已去掉 `irq_flags`；`sched_tick()` 现在
+> 按调度类处理 NORMAL/RR/FIFO 并驱动 itimer。现行实现以
+> `kernel/task/sched.c`、`include/spinlock.h` 为准。
+
 • 结论
 
   当前 RISC-V 已经具备“从内核态进入 trap 后不破坏通用寄存器”的基础，真正阻止内核态接收中断的不是入口保存现场，而是 C 层的调度、锁和
@@ -71,12 +76,11 @@
 
   如果普通内核路径持有 spinlock_t 时被 timer/外设中断打断，而中断处理路径又间接碰到同一资源，就会在同一 CPU 上自旋等待自己释放锁。
 
-  4. spinlock_noirq_t 目前只有一个 irq_flags 字段，不能安全嵌套/并发
+  4. ~~spinlock_noirq_t 目前只有一个 irq_flags 字段，不能安全嵌套/并发~~
 
-  include/spinlock.h:21 的 spinlock_noirq_t 把 irq_flags 存在锁对象里。单 CPU、非嵌套时还能工作；但如果同一把锁被不同上下文竞争，或
-  者将来 SMP，锁对象里的 flags 会互相覆盖。更合理的 API 是 flags 由调用者栈变量保存，像 Linux 的 spin_lock_irqsave(lock, flags)。
-
-  短期可以不大改接口，但设计上必须知道这是后续隐患。
+  **已修复**：`spinlock_noirq_t` 现在与 `spinlock_t` 同布局，中断状态由调用点
+  的局部变量保存（Linux 风格 `spin_lock_irqsave(&lock, &flags)`）。当年“flags
+  存在锁对象里、SMP 下互相覆盖”的隐患已经消除。
 
   5. timer handler 里做的事情偏多
 

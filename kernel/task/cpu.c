@@ -5,15 +5,14 @@
 */
 
 /*
-   kernel/task/cpu.c — Per-CPU 控制块 + BSP / 二级核启动骨架
+   kernel/task/cpu.c — Per-CPU 控制块 + BSP / 次级核启动
 
-   Phase 0：仅 BSP 初始化。
-   Phase 2：aarch64 通过 PSCI CPU_ON 拉起次级核, 次级核进入
-            cpu_secondary_bootstrap() 后只完成 per-CPU 寄存器 +
-            GIC CPU interface 初始化, 然后 wfi idle(不参与调度,
-            调度集成留给 Phase 3+)。
-
-   x86_64 SMP 拉起在后续 Phase 实现, 本文件保留 stub。
+   三架构的次级核拉起都在这里收敛到 cpu_secondary_bootstrap()：
+     - aarch64: PSCI CPU_ON
+     - riscv64: SBI HSM hart_start(不支持的平台回退到 release 表 + IPI)
+     - x86_64 : INIT-SIPI + AP trampoline
+   每个次级核装好 per-CPU 寄存器、idle 任务和本地 timer 后开中断，
+   进入 idle 循环，与 BSP 一样参与调度和跨核唤醒。
 */
 
 #include "task/cpu.h"
@@ -51,7 +50,7 @@ extern void x86_tss_init_cpu(uint32_t cpu_id, uint64_t rsp0);
 
 /* ── 全局 CPU 池 ────────────────────────────────────────── */
 cpu_t g_cpus[AVATAR_MAX_CPUS];
-uint32_t g_num_cpus = 1; /* Phase 0：恒为 1；Phase 2 起会增长 */
+uint32_t g_num_cpus = 1; /* 已在线 CPU 数(BSP=1, 每成功拉起一个 AP +1) */
 
 /* ── 跨核 resched IPI ───────────────────────────────────── */
 
@@ -85,6 +84,8 @@ void cpu_send_ipi(uint32_t cpu_id)
 {
     if (cpu_id >= g_num_cpus || cpu_id >= AVATAR_MAX_CPUS)
         return;
+    if (!g_cpus[cpu_id].online)
+        return;
 
     /* hw_id: aarch64=MPIDR, riscv=hartid, x86=LAPIC ID */
     irq_send_ipi((uint32_t)g_cpus[cpu_id].hw_id);
@@ -117,8 +118,14 @@ void cpu_init_bsp(void)
     memset(c, 0, sizeof(*c));
 
     c->cpu_id = 0;
+#if ARCH_X86_64
+    /* x86 的 hw_id 是 LAPIC ID：arch_cpu_hw_id() 只返回 0 占位，BSP 也要
+       走控制器后端读真实值，否则真实硬件上 BSP 的 APIC ID != 0 时，
+       sched_resched_cpu(0) 会把 IPI 发到错误的核。 */
+    c->hw_id = irq_cpu_hw_id();
+#else
     c->hw_id = arch_cpu_hw_id();
-    c->online = true;
+#endif
     c->current_task = NULL;
     c->idle_task = NULL;
     c->need_resched = false;
@@ -130,8 +137,11 @@ void cpu_init_bsp(void)
 
     g_num_cpus = 1;
 
-    /* 本核的 resched IPI 就绪；必须在任何跨核 kick 之前完成。 */
+    /* 本核的 resched IPI 就绪；必须在 online 置位(任何人都可能开始 kick)之前完成。 */
     cpu_ipi_init();
+
+    wmb();
+    c->online = true;
 
     KLOG_SMP("[cpu] BSP initialized: cpu_id=0 hw_id=0x%llx\n", (unsigned long long)c->hw_id);
 }
@@ -216,14 +226,14 @@ static void setup_secondary_idle_task(cpu_t *c)
      - VBAR_EL1 已指向 exception_vector_base
      - DAIF.I 仍为关闭
 
-   Phase 3：
+   启动步骤：
      1. 安装 per-CPU 指针 + GIC CPU interface
      2. 建立本核 idle 任务(current_task = idle_task)
      3. 启用本地 timer PPI(CNTP_CTL_EL0)
-     4. 通知 BSP online, 开 IRQ, 进入 idle 循环(task_yield + wfi)
+     4. 通知 BSP online, 开 IRQ, 进入 idle 循环(sched_check_and_yield + wfi)
 
-   此阶段次级核的 run_queue 始终为空：sched_schedule 会一直 pick 到自己
-   的 idle, 行为退化为带 IRQ 的 WFI。跨核 enqueue / IPI 留给 Phase 4+。
+   run_queue 为空时 sched_schedule 会一直选回自己的 idle；跨核 enqueue
+   与 resched IPI 会把本核唤醒去跑别的任务。
 */
 void cpu_secondary_bootstrap(uint32_t cpu_id)
 {
@@ -245,12 +255,12 @@ void cpu_secondary_bootstrap(uint32_t cpu_id)
     irq_secondary_init();
 
     /*
-       Phase 3.1/3.2：必须在开中断之前装好 current_task, 否则首个
-       timer ISR 进入 sched_check_and_yield 会读到 NULL。
+       必须在开中断之前装好 current_task, 否则首个 timer ISR 进入
+       sched_check_and_yield 会读到 NULL。
     */
     setup_secondary_idle_task(c);
 
-    /* Phase 3.3：启用本地 timer PPI(CNTP_TVAL/CTL 与 GICD ISENABLER0)。 */
+    /* 启用本地 timer PPI(CNTP_TVAL/CTL 与 GICD ISENABLER0)。 */
     timer_init_secondary();
 
     /* resched IPI：必须在 online 之前装好, 否则 BSP 发来的 kick 会丢。 */
@@ -260,14 +270,13 @@ void cpu_secondary_bootstrap(uint32_t cpu_id)
     wmb();
     c->online = true;
 
-    /* Phase 3.4：开 IRQ；之后 timer 会驱动本核的 sched_check_and_yield。 */
+    /* 开 IRQ；之后 timer / resched IPI 会驱动本核的 sched_check_and_yield。 */
     arch_irq_enable();
 
     /*
        Idle 循环：主动 yield 一次再 wfi。yield 在 run_queue 空时是空操作
-       (sched_schedule 选回自己), 但为后续 Phase 4 跨核唤醒留好钩子：
-       那时 wake-up IPI 会先令 need_resched=true, wfi 被打断后 yield 即可
-       拿到 IPI 投放进来的任务。
+       (sched_schedule 选回自己)；远端入队会先置 need_resched 并打断 wfi，
+       下一轮循环即可拿到新任务。
     */
     for (;;) {
         sched_check_and_yield();
@@ -525,14 +534,13 @@ void cpu_bring_up_all(void)
    流程：BSP 用 timer_delay_ms 忙等若干轮(不依赖调度器), 每轮快照
    g_cpus[i].local_ticks, 对比上一轮 → 全核都增长则 PASS, 否则 FAIL。
 
-   必须在 timer_set_tick_cb 之后调用(次级核需要 g_tick_cb 才会进入
-   sched_check_and_yield, 但这里其实不依赖回调, 只看 local_ticks 增长,
-   所以严格来说 timer_init_secondary 完成即可)。
+   只依赖次级核的本地 timer 已经启用(timer_init_secondary 完成并 online),
+   不依赖 sched_tick 回调；主流程在 timer_set_tick_cb 之后调用。
 
    全核必须共享一致的时间基准；aarch64 是 CNTPCT_EL0, per-core 但同源
    振荡器, timer_delay_ms 在任何核上读数一致。
 */
-extern volatile uint64_t g_system_ticks; /* driver/timer/timer.c */
+extern volatile uint64_t g_system_ticks; /* driver/time/timer.c */
 
 #if ARCH_AARCH64
 /* 诊断：读 DAIF, CNTP_CTL_EL0, CNTPCT_EL0 */

@@ -1409,7 +1409,7 @@ void syscall_handler(trap_frame_t *frame)
     case 103:   /* riscv64/aarch64 __NR_setitimer */
     case 102: { /* riscv64/aarch64 __NR_getitimer */
         /*
-           ITIMER_REAL(alarm/setitimer)。实现见 task/itimer.c。
+           ITIMER_REAL(alarm/setitimer)。实现见 kernel/time/itimer.c。
 
            以前这里是纯桩：把 old_value 清零, 返回 0, 从不真正装定时器。
            后果不只是"少个功能"—— LTP 每个测例都用 alarm() 当看门狗来打断

@@ -5,12 +5,13 @@
 */
 
 /*
-   kernel/task/sched.c — 内核轮转调度器
+   kernel/task/sched.c — 内核调度器(per-CPU 轮转 + RT 优先级类)
 
    设计：
-     - 就绪队列(g_run_queue)：list_t, FIFO 顺序
-     - idle 任务(g_idle)：队列为空时的回退任务, 永不入队
+     - 每核一个就绪队列(cpu_t::run_queue / rt_queue)，FIFO 顺序
+     - 每核一个 idle 任务(cpu_t::idle_task)，队列为空时的回退任务, 永不入队
      - sched_schedule() 关中断保护调度决策和上下文切换
+     - 跨核入队/唤醒持目标核 rq_lock；必要时立刻发 resched IPI
 
    调度语义(以 sched_schedule 为核心)：
      1. 关中断, 保存当前中断标志(flags)
@@ -72,14 +73,13 @@ static inline void x86_write_fs_base(uint64_t fs_base)
 
 /* ── Scheduler state ─────────────────────────────────────── *
 
-   Phase 1: 调度状态全部迁入 cpu_t, 本文件不再持有全局变量。
+   调度状态全部在 cpu_t 里, 本文件不持有全局队列：
      - run_queue / idle_task / need_resched 都从 cpu_current() 读取
      - current_task 是 per-CPU 状态, 不再维护全局镜像
 
-   单核场景 cpu_current() 始终返回 &g_cpus[0], 行为与旧版本完全一致。
-   多核场景每个 CPU 独立持有自己的就绪队列；跨核入队需要持有目标核
-     的 rq_lock(Phase 2/4 启用, 本阶段单核暂不加锁, 因为关中断已经
-     足够互斥本核 ISR)。
+   单核(g_num_cpus == 1)时关中断即可互斥本核 ISR；多核场景每个 CPU
+   独立持有自己的就绪队列，跨核入队/唤醒必须持目标核的 rq_lock
+   (见 sched_enqueue / sched_unblock)。
 */
 
 /* ── RT 调度类辅助 ───────────────────────────────────────── */
@@ -207,7 +207,7 @@ static task_t *rq_node_to_task(cpu_t *c, list_node_t *node)
 
    本核只置标志还不够：need_resched 只在 trap 返回点 / syscall 返回边界
    被消费。正在跑纯计算循环的 NORMAL 内核线程没有任何返回点，只能等
-   下一次 timer tick（最长 10ms，RT_DEMO 实测平均 9.9ms）。所以本核在
+   下一次 timer tick（最长一个 tick，默认 10ms；RT_DEMO 在 100Hz 下实测平均 9.9ms）。所以本核在
    "真实任务被更高优先级 RT 抢占"时再补一个 self-IPI：中断入口本身
    就是 trap，它的返回路径会立刻消费 need_resched，把抢占延迟压到
    µs 级（见 docs/realtime/RT_DEMO_RESULTS.md）。
@@ -337,15 +337,15 @@ void task_kick(task_t *task)
 
 /* ── sched_enqueue ───────────────────────────────────────── */
 
-/* Phase 4a SMP 分发计数器：atomic round-robin。 */
+/* SMP 分发计数器：atomic round-robin，CPU_AFFINITY_ANY 的任务按它摊核。 */
 static uint32_t g_rr_counter;
 
 void sched_enqueue(task_t *task)
 {
     /*
        防御：正在运行的任务不在任何队列里, 把它再挂进队列会让它被两个核
-       同时执行(任务栈/状态互相踩)。合法的调用者只会入队 READY/BLOCKED
-       的任务 —— 走到这里说明有人破坏了「谁在哪」的不变量, 宁可漏入队
+       同时执行(任务栈/状态互相踩)。合法的调用者只会入队 READY 任务
+       —— 走到这里说明有人破坏了「谁在哪」的不变量, 宁可漏入队
        (任务下次被唤醒时还会再试)也不要写坏运行队列。
     */
     if (task->state == TASK_RUNNING) {
@@ -417,7 +417,7 @@ void sched_enqueue(task_t *task)
     /*
        远端入队后立刻 kick；本核只在更高优先级 RT 任务入队时置
        need_resched。没有这一步, 任务要等目标核下一次 timer tick
-       (最长 10ms)才被看到；对 vCPU/RT 的唤醒来说这个延迟不可接受。
+       (最长一个 tick，默认 10ms)才被看到；对 vCPU/RT 的唤醒来说这个延迟不可接受。
     */
     sched_kick_after_enqueue(tc, task);
 }
@@ -640,7 +640,7 @@ void sched_schedule(void)
     }
 
     barrier_compiler();     /* 确保 state 在 current_task 之前完成 */
-    c->current_task = next; /* Phase 1：per-CPU 主存储 */
+    c->current_task = next; /* per-CPU 主存储 */
     barrier_compiler();     /* 确保 current_task 在 arch_task_switch 之前完成 */
 
 #if ARCH_X86_64
@@ -750,11 +750,10 @@ void sched_tick(void)
         c->idle_ticks++;
 
     /*
-       每任务的 ITIMER_REAL 到期检查也挂在这个 tick 上(100 Hz)。
-       放在这里而不是另开一个回调：g_tick_cb 只有一个, 而 sched_tick 既被
-       timer 驱动经 timer_set_tick_cb 调用, 也被 x86_64 的 fallback 路径
-       (boot/x86_64/exception.c)直接调用 —— 挂在这里两条路都覆盖到。
-       见 task/itimer.c 顶部对"为什么需要它"的说明。
+       每任务的 ITIMER_REAL 到期检查也挂在这个 tick 上(周期由 timer.tick_ms
+       配置, 默认 10ms)。放在这里而不是另开一个回调：g_tick_cb 只有一个,
+       直接接在 sched_tick 后面即可。注意 sched_tick 是 per-CPU 回调，
+       多核下 itimer_tick 会被每个核各调一次(限制见 kernel/time/itimer.c)。
     */
     itimer_tick();
 }
@@ -762,7 +761,7 @@ void sched_tick(void)
 /* ── sched_check_and_yield ─────────────────────────────────── */
 
 /*
-   由异常返回路径调用, 检查是否需要重新调度。
+   由异常返回路径、AP idle 循环和 vCPU 主循环调用, 检查是否需要重新调度。
    如果需要, 执行任务切换。
    返回 true 表示发生了切换, false 表示没有。
 */

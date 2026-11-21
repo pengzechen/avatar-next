@@ -4730,18 +4730,19 @@ static inline void spinlock_irq_init(spinlock_noirq_t *lock)
 
 ## include/task/cpu.h — Per-CPU 控制块(SMP 抽象层)
 
-`include/task/cpu.h` · 2 个函数 · 0 个有说明 · 208 行
+`include/task/cpu.h` · 2 个函数 · 0 个有说明 · 209 行
 
-Phase 0：仅提供数据结构 + BSP 初始化骨架, 行为等价于单核。
-- g_num_cpus 始终为 1, cpu_bring_up_all() 为 stub
-- cpu_current() 返回 &g_cpus[0](BSP 安装后从 per-CPU 寄存器读取)
+每个在线 CPU 一个 cpu_t，per-CPU 寄存器(TPIDR_EL1 / tp / GS_BASE)指向
+本核实例。调度状态(run_queue / current_task / idle_task / need_resched)
+全部放在 cpu_t 里，不再有全局就绪队列。
 
-后续阶段：
-Phase 1: 调度器迁移到 cpu_t::run_queue / current_task / need_resched
-Phase 2: aarch64 PSCI 起多核 → cpu_secondary_bootstrap()
-Phase 4: IPI / 跨核唤醒
+三架构均已实现次级核拉起：
+- aarch64: PSCI CPU_ON → boot/aarch64/boot.S:_secondary_start
+- riscv64: SBI HSM hart_start；无 HSM 时回退到 release 表 + IPI
+- x86_64 : INIT-SIPI + AP trampoline
+跨核唤醒走 resched IPI(CPU_RESCHED_IPI* / irq_send_ipi)。
 
-<a id="fn-include-task-cpu.h-154"></a>
+<a id="fn-include-task-cpu.h-153"></a>
 
 ### `cpu_current`
 
@@ -4754,15 +4755,15 @@ static inline cpu_t *cpu_current(void)
 <details>
 <summary>函数内备注（1 条）</summary>
 
-**第 157 行**
+**第 156 行**
 
 > 若 per-CPU 寄存器尚未安装(早期 boot 或测试代码), 回退 CPU0。
 
 </details>
 
-**位置**：`include/task/cpu.h:154`
+**位置**：`include/task/cpu.h:153`
 
-<a id="fn-include-task-cpu.h-161"></a>
+<a id="fn-include-task-cpu.h-160"></a>
 
 ### `get_current_cpu_id`
 
@@ -4772,13 +4773,13 @@ static inline uint32_t get_current_cpu_id(void)
 
 > ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-**位置**：`include/task/cpu.h:161`
+**位置**：`include/task/cpu.h:160`
 
 <a id="mod-include-task-switch.h"></a>
 
 ## include/task/switch.h — 架构抽象：上下文切换
 
-`include/task/switch.h` · 3 个函数 · 3 个有说明 · 376 行
+`include/task/switch.h` · 3 个函数 · 3 个有说明 · 378 行
 
 提供：
 arch_task_switch()      — 在 .S 文件中实现, 保存/恢复被调用者寄存器
@@ -4796,7 +4797,7 @@ include/<arch>/exception_impl.h, 由本文件顶部 include 的 exception.h 暴�
 arch_init_task_stack() 在新任务的栈顶构造一个伪造的切换帧,
 使首次 arch_task_switch() "返回"时跳转到 task_trampoline()。
 
-<a id="fn-include-task-switch.h-118"></a>
+<a id="fn-include-task-switch.h-120"></a>
 
 ### `arch_init_task_stack`
 
@@ -4817,7 +4818,7 @@ arch_init_task_stack - 在新任务的栈上构造伪切换帧
 <details>
 <summary>函数内备注（7 条）</summary>
 
-**第 123 行**
+**第 125 行**
 
 > arch_task_switch 保存顺序(stp x19,x20 [sp,#-176]! ... stp x9,x10 [sp,#160])：
 > saved_sp + 0  = x19,  saved_sp + 8  = x20
@@ -4832,11 +4833,11 @@ arch_init_task_stack - 在新任务的栈上构造伪切换帧
 
 > 全部清零：新内核线程以干净的 FP 状态开始(FPCR/FPSR = 0, d8-d15 = 0)。
 
-**第 140 行（行尾）**
+**第 142 行（行尾）**
 
 > x30 (LR)
 
-**第 143 行**
+**第 145 行**
 
 > arch_task_switch 保存顺序(sd ra 0(sp) ... sd s11 96(sp), fsd fs0..fs11, fcsr)：
 > saved_sp + 0  = ra    ← ret 目标
@@ -4847,11 +4848,11 @@ arch_init_task_stack - 在新任务的栈上构造伪切换帧
 > saved_sp + 200 = fcsr
 > 共 26 × 8 = 208 字节
 
-**第 154 行（行尾）**
+**第 156 行（行尾）**
 
 > ra
 
-**第 159 行**
+**第 161 行**
 
 > arch_task_switch 保存顺序(pushq rbx, rbp, r12, r13, r14, r15)：
 > 恢复顺序(popq r15, r14, r13, r12, rbp, rbx, ret)：
@@ -4864,19 +4865,19 @@ arch_init_task_stack - 在新任务的栈上构造伪切换帧
 > saved_sp + 48 = 返回地址  ← ret 目标
 > 共 7 × 8 = 56 字节
 
-**第 174 行（行尾）**
+**第 176 行（行尾）**
 
 > return address
 
-**第 176 行（行尾）**
+**第 178 行（行尾）**
 
 > ARCH_*
 
 </details>
 
-**位置**：`include/task/switch.h:118`
+**位置**：`include/task/switch.h:120`
 
-<a id="fn-include-task-switch.h-195"></a>
+<a id="fn-include-task-switch.h-197"></a>
 
 ### `arch_init_user_stack`
 
@@ -4898,7 +4899,7 @@ arch_init_user_stack - 为用户进程初始化内核栈(首次跳转用)
 <details>
 <summary>函数内备注（20 条）</summary>
 
-**第 202 行**
+**第 204 行**
 
 > 保存22个被调用者寄存器(176 字节, 含 FP 保存区)
 > 布局：
@@ -4913,41 +4914,41 @@ arch_init_user_stack - 为用户进程初始化内核栈(首次跳转用)
 > FP 区清零：新进程首次进 EL0 时 FPCR/FPSR 与 d8-d15 都是干净的,
 > 不会把内核残留的 FP 值泄漏给用户态。
 
-**第 217 行（行尾）**
+**第 219 行（行尾）**
 
 > x19 = 用户入口
 
-**第 218 行（行尾）**
+**第 220 行（行尾）**
 
 > x20 = 用户栈
 
-**第 221 行（行尾）**
+**第 223 行（行尾）**
 
 > x30 (LR)
 
-**第 224 行**
+**第 226 行**
 
 > 保存26个被调用者寄存器(208字节)：
 > [0]=ra [1]=s0 [2]=s1 ... [12]=s11 [13..24]=fs0..fs11 [25]=fcsr
 > task_trampoline_user 约定：s0=user_entry, s1=user_sp, s2=user_pgd
 
-**第 230 行（行尾）**
+**第 232 行（行尾）**
 
 > ra
 
-**第 231 行（行尾）**
+**第 233 行（行尾）**
 
 > s0
 
-**第 232 行（行尾）**
+**第 234 行（行尾）**
 
 > s1
 
-**第 233 行（行尾）**
+**第 235 行（行尾）**
 
 > s2
 
-**第 238 行**
+**第 240 行**
 
 > x86_64 栈布局(arch_task_switch 恢复时)：
 
@@ -4965,51 +4966,51 @@ arch_init_user_stack - 为用户进程初始化内核栈(首次跳转用)
 
 > 保存6个被调用者寄存器 + 返回地址 + 2个参数 = 9 个 uint64_t
 
-**第 256 行（行尾）**
+**第 258 行（行尾）**
 
 > rbx
 
-**第 257 行（行尾）**
+**第 259 行（行尾）**
 
 > rbp
 
-**第 258 行（行尾）**
+**第 260 行（行尾）**
 
 > r12
 
-**第 259 行（行尾）**
+**第 261 行（行尾）**
 
 > r13
 
-**第 260 行（行尾）**
+**第 262 行（行尾）**
 
 > r14
 
-**第 261 行（行尾）**
+**第 263 行（行尾）**
 
 > r15
 
-**第 262 行（行尾）**
+**第 264 行（行尾）**
 
 > 返回地址 (LR)
 
-**第 263 行（行尾）**
+**第 265 行（行尾）**
 
 > 用户入口
 
-**第 264 行（行尾）**
+**第 266 行（行尾）**
 
 > 用户栈
 
-**第 266 行（行尾）**
+**第 268 行（行尾）**
 
 > x86_64 页表通过 task-&gt;mm-&gt;pgd 在调度时切换 CR3
 
 </details>
 
-**位置**：`include/task/switch.h:195`
+**位置**：`include/task/switch.h:197`
 
-<a id="fn-include-task-switch.h-291"></a>
+<a id="fn-include-task-switch.h-293"></a>
 
 ### `arch_init_fork_child_stack`
 
@@ -5032,134 +5033,134 @@ fork：child_stack=0, tls=0
 <details>
 <summary>函数内备注（26 条）</summary>
 
-**第 297 行**
+**第 299 行**
 
 > 先在内核栈顶放一份 trap_frame_t
 
-**第 300 行**
+**第 302 行**
 
 > 整体拷贝：r[]/usp/elr/spsr/tpidr_el0 与 FP 状态(q0-q31/fpcr/fpsr)
 > 全部继承父进程 —— 子进程的 FP 状态在 fork 时必须与父进程一致。
 > (早先这里逐字段拷贝, 扩 FP 时容易漏字段。)
 
-**第 308 行**
+**第 310 行**
 
 > 子进程 fork/线程 返回 0
 
-**第 311 行**
+**第 313 行**
 
 > 再放 22 个被调用者寄存器(含 FP 保存区), x30(LR)→arch_fork_resume_user
 
-**第 313 行（行尾）**
+**第 315 行（行尾）**
 
 > x19 = &amp;child_frame
 
-**第 316 行（行尾）**
+**第 318 行（行尾）**
 
 > x30 (LR)
 
-**第 318 行**
+**第 320 行**
 
 > RISC-V trap_frame_t: x[0..31], sepc, scause, stval, sstatus, f[0..31], fcsr
 
-**第 332 行**
+**第 334 行**
 
 > fork/线程返回值 = 0 (a0/x10)
 
-**第 334 行**
+**第 336 行**
 
 > 覆盖用户栈 / TLS (tp = x4)
 
-**第 336 行（行尾）**
+**第 338 行（行尾）**
 
 > sp
 
-**第 338 行（行尾）**
+**第 340 行（行尾）**
 
 > tp
 
-**第 340 行**
+**第 342 行**
 
 > 再放 26 个被调用者寄存器(含 FP), ra-&gt;arch_fork_resume_user, s0-&gt;child_frame
 
-**第 342 行（行尾）**
+**第 344 行（行尾）**
 
 > ra
 
-**第 343 行（行尾）**
+**第 345 行（行尾）**
 
 > s0 = &amp;child_frame
 
-**第 347 行**
+**第 349 行**
 
 > x86_64: 在内核栈上放 trap_frame, 再放 arch_task_switch 的被调用者寄存器帧
 
-**第 352 行（行尾）**
+**第 354 行（行尾）**
 
 > fork/线程子进程返回 0
 
-**第 354 行（行尾）**
+**第 356 行（行尾）**
 
 > 覆盖用户栈
 
-**第 355 行**
+**第 357 行**
 
 > x86_64 TLS (fs_base) 在 clone 调用者处通过 task-&gt;fs_base 设置
 
-**第 357 行**
+**第 359 行**
 
 > arch_task_switch 保存/恢复顺序(低地址→高地址)：
 > [sp+0] r15  [sp+8] r14  [sp+16] r13  [sp+24] r12
 > [sp+32] rbp [sp+40] rbx [sp+48] 返回地址
 > rbx 恢复后值为 &amp;child_frame, ret 后跳 arch_fork_resume_user。
 
-**第 364 行（行尾）**
+**第 366 行（行尾）**
 
 > r15
 
-**第 365 行（行尾）**
+**第 367 行（行尾）**
 
 > r14
 
-**第 366 行（行尾）**
+**第 368 行（行尾）**
 
 > r13
 
-**第 367 行（行尾）**
+**第 369 行（行尾）**
 
 > r12
 
-**第 368 行（行尾）**
+**第 370 行（行尾）**
 
 > rbp
 
-**第 369 行（行尾）**
+**第 371 行（行尾）**
 
 > rbx = frame 指针
 
-**第 370 行（行尾）**
+**第 372 行（行尾）**
 
 > 返回地址
 
 </details>
 
-**位置**：`include/task/switch.h:291`
+**位置**：`include/task/switch.h:293`
 
 <a id="mod-include-task-task.h"></a>
 
 ## include/task/task.h — 内核任务控制块与公共 API
 
-`include/task/task.h` · 5 个函数 · 4 个有说明 · 541 行
+`include/task/task.h` · 5 个函数 · 4 个有说明 · 546 行
 
 设计：
 - 内核任务 + 用户进程共用 TCB；用户进程的地址空间/文件/信号见各字段注释
 - 静态任务池, 最多 TASK_MAX 个并发任务
-- 调度器 (sched.c) 实现轮转调度 (round-robin)
+- 调度器 (sched.c) 每核一个就绪队列：NORMAL 轮转 + RT FIFO/RR 优先级类
 - 上下文切换由 arch_task_switch() 完成(仅保存被调用者保存寄存器)
 - 字段按“切换/调度热区 → 用户状态 → 冷数据/大数组”排列，
 并由文件末尾的 _Static_assert 锁住布局（见 docs/task_t_refactor.md）
 
-<a id="fn-include-task-task.h-215"></a>
+<a id="fn-include-task-task.h-218"></a>
 
 ### `task_is_thread`
 
@@ -5169,9 +5170,9 @@ static inline bool task_is_thread(const task_t *t)
 
 CLONE_THREAD 创建的任务：tgid 指向线程组首线程；exec 后 tgid 恢复为自身 id。
 
-**位置**：`include/task/task.h:215`
+**位置**：`include/task/task.h:218`
 
-<a id="fn-include-task-task.h-232"></a>
+<a id="fn-include-task-task.h-235"></a>
 
 ### `task_is_live_user`
 
@@ -5190,9 +5191,9 @@ task_release_objects() 把 mm 置 NULL，而 g_stack_used[] 要到更后面
 
 mm 非空是最后一道保险：任何扫描都别假设 is_user_process 为真就一定有 mm。
 
-**位置**：`include/task/task.h:232`
+**位置**：`include/task/task.h:235`
 
-<a id="fn-include-task-task.h-238"></a>
+<a id="fn-include-task-task.h-241"></a>
 
 ### `task_is_rt`
 
@@ -5202,9 +5203,9 @@ static inline bool task_is_rt(const task_t *t)
 
 是否 RT 调度类（FIFO/RR）。
 
-**位置**：`include/task/task.h:238`
+**位置**：`include/task/task.h:241`
 
-<a id="fn-include-task-task.h-247"></a>
+<a id="fn-include-task-task.h-250"></a>
 
 ### `task_sched_is_rt`
 
@@ -5215,9 +5216,9 @@ static inline bool task_sched_is_rt(const task_t *t)
 调度器用的“有效 RT 属性”：基础 RT 调度类，或被 rt_mutex 临时提升的
 NORMAL 任务。pi_priority 只由 sched_set_pi_boost() 写。
 
-**位置**：`include/task/task.h:247`
+**位置**：`include/task/task.h:250`
 
-<a id="fn-include-task-task.h-252"></a>
+<a id="fn-include-task-task.h-255"></a>
 
 ### `task_effective_rt_prio`
 
@@ -5227,7 +5228,7 @@ static inline uint8_t task_effective_rt_prio(const task_t *t)
 
 > ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-**位置**：`include/task/task.h:252`
+**位置**：`include/task/task.h:255`
 
 <a id="mod-include-vmm-vmm.h"></a>
 
@@ -5865,7 +5866,7 @@ static inline void sync_caches(void)
 
 ## include/x86_64/cpu_impl.h — x86_64 per-CPU 指针 / 硬件 ID 实现
 
-`include/x86_64/cpu_impl.h` · 3 个函数 · 3 个有说明 · 55 行
+`include/x86_64/cpu_impl.h` · 3 个函数 · 3 个有说明 · 56 行
 
 约定：
 IA32_GS_BASE        (MSR 0xC0000101) — 用户态运行时保存 cpu_t*
@@ -5904,7 +5905,7 @@ static inline struct cpu *arch_cpu_self_get(void)
 
 **位置**：`include/x86_64/cpu_impl.h:39`
 
-<a id="fn-include-x86_64-cpu_impl.h-50"></a>
+<a id="fn-include-x86_64-cpu_impl.h-51"></a>
 
 ### `arch_cpu_hw_id`
 
@@ -5912,10 +5913,11 @@ static inline struct cpu *arch_cpu_self_get(void)
 static inline uint64_t arch_cpu_hw_id(void)
 ```
 
-LAPIC ID 需要 LAPIC 映射就绪后才能读；Phase 0 返回 0 占位,
-后续 SMP 阶段改为 cpu_current()->hw_id(BSP 启动时存入)。
+x86 的硬件 ID 是 LAPIC ID，但本头文件不能依赖 LAPIC 映射，因此这里
+只返回 0 占位。BSP 在 cpu_init_bsp()、AP 在 cpu_secondary_bootstrap()
+中都改用 irq_cpu_hw_id() 读取真实值。
 
-**位置**：`include/x86_64/cpu_impl.h:50`
+**位置**：`include/x86_64/cpu_impl.h:51`
 
 <a id="mod-include-x86_64-exception_impl.h"></a>
 

@@ -13,7 +13,7 @@
    设计：
     - 内核任务 + 用户进程共用 TCB；用户进程的地址空间/文件/信号见各字段注释
     - 静态任务池, 最多 TASK_MAX 个并发任务
-    - 调度器 (sched.c) 实现轮转调度 (round-robin)
+    - 调度器 (sched.c) 每核一个就绪队列：NORMAL 轮转 + RT FIFO/RR 优先级类
     - 上下文切换由 arch_task_switch() 完成(仅保存被调用者保存寄存器)
     - 字段按“切换/调度热区 → 用户状态 → 冷数据/大数组”排列，
       并由文件末尾的 _Static_assert 锁住布局（见 docs/task_t_refactor.md）
@@ -45,8 +45,8 @@ typedef enum {
 } task_domain_t;
 
 /*
-   调度类。RT 优先级 1..99，数值越大越高；NORMAL 用 priority 字段
-   （本轮尚未接入 normal 优先级排序，保持轮转）。
+   调度类。RT 优先级 1..99，数值越大越高。
+   NORMAL 目前只用轮转(按入队顺序), priority 字段会记录但尚未参与排序。
 */
 typedef enum {
     TASK_SCHED_NORMAL = 0,
@@ -56,18 +56,20 @@ typedef enum {
 
 #define TASK_RT_PRIO_MIN      1u
 #define TASK_RT_PRIO_MAX      99u
-#define TASK_RR_QUANTUM_TICKS 10u /* 100 Hz 下约 100 ms，后续随高精度定时器调整 */
+#define TASK_RR_QUANTUM_TICKS 10u /* rt_slice 的单位是 tick；默认 10ms/tick 时约 100ms */
 
 /* ── Configuration ───────────────────────────────────────── */
 /*
    每个内核任务的栈大小。
 
-   注意： 16 KiB 不够：vCPU 任务的调用链很深(vmm_run_vcpu → restore/enter_guest
-   → 退出处理 → MMIO 解码 → EPT 查表), 而且宿主中断会在这条链上嵌套。
-   实测(3 个 VM, vCPU 摊到两颗核上真正并发时)：16 KiB 溢出, 把相邻任务
-   (宿主 busybox)的栈写坏, 表现为"宿主 shell 莫名其妙 SIGSEGV, CR2≈0x1103"；
-   而且只在并发时复现 —— 全挤在一颗核上串行跑就看不出来。
-   32 KiB 下实测高水位见 vcpu_task_fn 的打印, 留了足够余量。
+   16 KiB 是实测选定的值：task_stack_used() 在 vCPU 任务上量到的最高水位
+   约 1.7 KiB(vCPU 调用链 vmm_run_vcpu → restore/enter_guest → 退出处理 →
+   MMIO 解码 → EPT 查表, 且可能嵌套宿主中断)。
+
+   历史教训：3 VM 并发时曾出现宿主 busybox 被踩坏的故障, 一度按"vCPU 链深"
+   把栈加到 32 KiB, 但仍复现；高水位读数也没有增长, 最终定位为另一处跨核
+   竞态而非栈溢出。不要仅凭调用链深度就改大这个值 —— 用 task_stack_used()
+   重新量(高水位打印见 vcpu_task_fn)。
 */
 #define TASK_STACK_SIZE 16384u
 
@@ -116,7 +118,7 @@ typedef struct task {
     uint32_t preempt_count;     /* >0 时 timer 不抢占该任务 */
     volatile bool on_cpu;       /* 正由某颗核执行(见下方 SMP 唤醒说明) */
     volatile bool wake_pending; /* on_cpu 期间被唤醒，切出时补入队列 */
-    uint8_t priority;           /* NORMAL 优先级(0 = 最高, 255 = 最低) */
+    uint8_t priority;           /* NORMAL 优先级(0 = 最高, 255 = 最低)；目前只记录，不参与排序 */
     uint8_t domain;             /* task_domain_t */
     uint8_t sched_policy;       /* task_sched_policy_t */
     uint8_t rt_priority;        /* RT: 1..99，越大越高；NORMAL 为 0 */
@@ -128,27 +130,28 @@ typedef struct task {
     uint8_t dumpable;           /* prctl(PR_SET_DUMPABLE) */
     uint8_t no_new_privs;       /* prctl(PR_SET_NO_NEW_PRIVS) */
     list_node_t run_node;       /* 就绪队列节点 */
-    list_node_t wait_node;      /* 等待队列节点(用于 mutex/semaphore) */
+    list_node_t wait_node;      /* 等待队列节点(mutex/rt_mutex/completion/rt_event) */
     char name[TASK_NAME_LEN];   /* 任务名称 */
-    uint8_t *stack_base;        /* 内核栈底(低地址)；idle 为 NULL */
+    uint8_t *stack_base;        /* 内核栈底(低地址)；idle 也有专用栈, 不为 NULL */
     void (*entry)(void *);      /* 任务入口函数 */
     void *arg;                  /* 传给 entry 的参数 */
     uint64_t fs_base;           /* x86_64 TLS: IA32_FS_BASE(每次切换写 MSR) */
     uint64_t sc_entry_ns;       /* 当前 syscall 入口时间戳(0=不在 syscall) */
 
     /*
-       ITIMER_REAL(alarm / setitimer) + nanosleep 到期时刻。
+       ITIMER_REAL(alarm / setitimer) + 睡眠到期时刻。
 
-       到期由 tick 驱动, 投 SIGALRM / 唤醒睡眠任务。见 time/itimer.c。
+       到期由 tick 驱动, 投 SIGALRM / 唤醒睡眠任务。见 kernel/time/itimer.c。
        expire_ns == 0 表示未装(与 interval 无关：一次性定时器触发后
        expire 归零, 但 interval 保留, 便于 getitimer 报告)。
 
-       itimer_tick() 每 10ms 扫全池并读这几个字段，所以放在热区第二行，
-       避免扫描 64 个 TCB 时每次跳过整个 task_t。
+       itimer_tick() 每个 tick(默认 10ms, 由 timer.tick_ms 配置)扫全池并读
+       这几个字段，所以放在热区第二行，避免扫描 64 个 TCB 时每次跳过整个
+       task_t。
     */
     uint64_t itimer_expire_ns;   /* 绝对到期时刻；0 = 未装 */
     uint64_t itimer_interval_ns; /* 周期；0 = 一次性 */
-    uint64_t sleep_expire_ns;    /* nanosleep 绝对到期时刻(0=未睡) */
+    uint64_t sleep_expire_ns;    /* 绝对睡眠到期时刻(0=未睡)；nanosleep / rt_worker / hrtimer 共用 */
 
     /* === 地址空间 / 文件表 / cwd（进程级对象）=== */
     mm_struct_t *mm;       /* pgd + heap/mmap/interp/exe_path；线程共享 */
@@ -292,11 +295,13 @@ extern volatile uint32_t g_fg_pgid;
    @task:    目标任务(仅允许在任务还未开始运行, 还在某核
              run_queue 的状态下调用；如从 task_create 返回后,
              任务首次被 schedule 之前)
-   @cpu_id:  目标逻辑 CPU(0..g_num_cpus-1)或 CPU_AFFINITY_ANY
+   @cpu_id:  目标逻辑 CPU 槽位(0..CONFIG_SMP_CPUS-1，且必须 online)或 CPU_AFFINITY_ANY
 
    原子地从当前所在核 rq 中取出(若仍在队)并重新入队到目标核。
-   VCPU 任务请绑 cpu_id=0：per-CPU 虚拟化状态(GICH list regs / vtimer /
-   VMCS)尚未跨核迁移。
+
+   VCPU 任务创建时已按 (slot + vcpu_id) % g_num_cpus 摊到各核；不要
+   在运行中迁移它们：per-CPU 虚拟化状态(GICH list regs / vtimer / VMCS)
+   尚未跨核迁移。
 */
 void task_set_cpu_affinity(task_t *task, uint32_t cpu_id);
 
@@ -336,7 +341,7 @@ void task_switch_to_idle_stack(void) __attribute__((noreturn));
    @name:     任务名称(最长 TASK_NAME_LEN-1 字节)
    @entry:    任务入口函数
    @arg:      传给 entry 的参数
-   @priority: 优先级(0 = 最高, 255 = 最低)
+   @priority: 优先级(0 = 最高, 255 = 最低)；NORMAL 队列目前按轮转，不按它排序
 
    成功返回 task_t*, 任务池已满时返回 NULL。
    新任务立即加入就绪队列, 下次调度时开始运行。
@@ -345,7 +350,7 @@ task_t *task_create(const char *name, void (*entry)(void *), void *arg, uint8_t 
 
 /*
    task_create_affinity - 创建内核任务并在入队前指定它跑在哪颗核上
-   @cpu_affinity: 目标逻辑 CPU(0..g_num_cpus-1)或 CPU_AFFINITY_ANY
+   @cpu_affinity: 目标逻辑 CPU 槽位(0..CONFIG_SMP_CPUS-1，且必须 online)或 CPU_AFFINITY_ANY
 
    需要把任务钉在某个核上的调用者(vcpu 就是)必须用这个, 而不是
    task_create() + task_set_cpu_affinity()：后者有窗口 —— 新任务可能在两次
@@ -379,7 +384,7 @@ task_t *task_create_vcpu(const char *name, void (*entry)(void *), void *arg, uin
    @name:       进程名称(最长 TASK_NAME_LEN-1 字节)
    @user_entry: 用户态入口点(虚拟地址)
    @user_sp:    用户栈指针(虚拟地址)
-   @priority:   优先级(0 = 最高, 255 = 最低)
+   @priority:   优先级(0 = 最高, 255 = 最低)；NORMAL 队列目前按轮转，不按它排序
 
    成功返回 task_t*, 任务池已满时返回 NULL。
    新进程立即加入就绪队列, 首次调度时跳转到用户态执行。
@@ -394,7 +399,7 @@ task_t *process_create(const char *name, uint64_t user_entry, uint64_t user_code
    @name:       进程名称(最长 TASK_NAME_LEN-1 字节)
    @user_entry: 用户态入口点(用户虚拟地址, 直接使用, 不做转换)
    @user_sp:    用户栈指针(虚拟地址)
-   @priority:   优先级(0 = 最高, 255 = 最低)
+   @priority:   优先级(0 = 最高, 255 = 最低)；NORMAL 队列目前按轮转，不按它排序
    @pgd_phys:   已创建好的用户页表物理地址
 
    与 process_create 不同, 跳过 vm_create_user_process,
@@ -481,7 +486,7 @@ task_t *task_current(void);
 
 /*
    task_block - 阻塞当前任务
-   @wait_queue: 等待队列(如果为 NULL, 则不从队列移除)
+   @wait_queue: 等待队列；NULL 表示只阻塞、不挂任何队列
 
    将当前任务设置为 BLOCKED 状态, 并触发调度。
    如果 wait_queue 非 NULL, 将任务加入该队列。

@@ -1541,7 +1541,7 @@ void kernel_main(void)
 
 **第 214 行（行尾）**
 
-> Phase 0：安装 BSP per-CPU 指针
+> 安装 BSP per-CPU 指针
 
 **第 218 行（行尾）**
 
@@ -1616,9 +1616,9 @@ void kernel_main(void)
 
 **第 328 行**
 
-> Phase 4a：多核线程分发自检。SMP=1 时也会跑(验证 round-robin
-> 自身不破坏单核)。失败仅 KLOG_ERROR, 不 panic, 避免影响后续
-> busybox / vmm 测试。
+> SMP 线程分发自检(当前默认关闭，测试变体可手工打开)。SMP=1 时也会跑,
+> 验证 round-robin 自身不破坏单核。失败仅 KLOG_ERROR, 不 panic, 避免
+> 影响后续 busybox / vmm 测试。
 
 **第 332 行**
 
@@ -12997,7 +12997,7 @@ Main syscall dispatcher
 
 **第 1411 行**
 
-> ITIMER_REAL(alarm/setitimer)。实现见 task/itimer.c。
+> ITIMER_REAL(alarm/setitimer)。实现见 kernel/time/itimer.c。
 
 > 以前这里是纯桩：把 old_value 清零, 返回 0, 从不真正装定时器。
 > 后果不只是&quot;少个功能&quot;—— LTP 每个测例都用 alarm() 当看门狗来打断
@@ -13646,19 +13646,18 @@ int completion_reset(completion_t *c)
 
 <a id="mod-kernel-task-cpu.c"></a>
 
-## kernel/task/cpu.c — Per-CPU 控制块 + BSP / 二级核启动骨架
+## kernel/task/cpu.c — Per-CPU 控制块 + BSP / 次级核启动
 
-`kernel/task/cpu.c` · 16 个函数 · 16 个有说明 · 619 行
+`kernel/task/cpu.c` · 16 个函数 · 16 个有说明 · 627 行
 
-Phase 0：仅 BSP 初始化。
-Phase 2：aarch64 通过 PSCI CPU_ON 拉起次级核, 次级核进入
-cpu_secondary_bootstrap() 后只完成 per-CPU 寄存器 +
-GIC CPU interface 初始化, 然后 wfi idle(不参与调度,
-调度集成留给 Phase 3+)。
+三架构的次级核拉起都在这里收敛到 cpu_secondary_bootstrap()：
+- aarch64: PSCI CPU_ON
+- riscv64: SBI HSM hart_start(不支持的平台回退到 release 表 + IPI)
+- x86_64 : INIT-SIPI + AP trampoline
+每个次级核装好 per-CPU 寄存器、idle 任务和本地 timer 后开中断，
+进入 idle 循环，与 BSP 一样参与调度和跨核唤醒。
 
-x86_64 SMP 拉起在后续 Phase 实现, 本文件保留 stub。
-
-<a id="fn-kernel-task-cpu.c-68"></a>
+<a id="fn-kernel-task-cpu.c-67"></a>
 
 ### `resched_ipi_entry`
 
@@ -13675,9 +13674,9 @@ vCPU 主循环顶部(sched_check_and_yield)。在 ISR 里直接切任务是禁�
 RISC-V 的 SSIP 是电平型 pending 位、x86 的 LAPIC 需要 EOI，两者都由
 控制器后端的 dispatch 收尾(PLIC 清 SSIP / LAPIC 写 EOI)，这里只置位。
 
-**位置**：`kernel/task/cpu.c:68`
+**位置**：`kernel/task/cpu.c:67`
 
-<a id="fn-kernel-task-cpu.c-77"></a>
+<a id="fn-kernel-task-cpu.c-76"></a>
 
 ### `cpu_ipi_init`
 
@@ -13692,15 +13691,15 @@ void cpu_ipi_init(void)
 <details>
 <summary>函数内备注（1 条）</summary>
 
-**第 79 行**
+**第 78 行**
 
 > IPI 号/向量由控制器决定，内核不再关心 SGI 15 / scause 1 / 向量 0xF0
 
 </details>
 
-**位置**：`kernel/task/cpu.c:77`
+**位置**：`kernel/task/cpu.c:76`
 
-<a id="fn-kernel-task-cpu.c-84"></a>
+<a id="fn-kernel-task-cpu.c-83"></a>
 
 ### `cpu_send_ipi`
 
@@ -13715,15 +13714,15 @@ void cpu_send_ipi(uint32_t cpu_id)
 <details>
 <summary>函数内备注（1 条）</summary>
 
-**第 89 行**
+**第 90 行**
 
 > hw_id: aarch64=MPIDR, riscv=hartid, x86=LAPIC ID
 
 </details>
 
-**位置**：`kernel/task/cpu.c:84`
+**位置**：`kernel/task/cpu.c:83`
 
-<a id="fn-kernel-task-cpu.c-99"></a>
+<a id="fn-kernel-task-cpu.c-100"></a>
 
 ### `klog_cpu_id`
 
@@ -13736,9 +13735,9 @@ klog_cpu_id - 给 klog.h 宏使用, 返回当前逻辑 CPU 编号。
 早期 boot(BSP 还没装 per-CPU 寄存器)arch_cpu_self_get 返回 0,
 cpu_current() 退化到 &g_cpus[0], cpu_id=0(BSS 默认值), 正确。
 
-**位置**：`kernel/task/cpu.c:99`
+**位置**：`kernel/task/cpu.c:100`
 
-<a id="fn-kernel-task-cpu.c-108"></a>
+<a id="fn-kernel-task-cpu.c-109"></a>
 
 ### `cpu_bump_local_ticks`
 
@@ -13749,9 +13748,9 @@ void cpu_bump_local_ticks(void)
 cpu_bump_local_ticks - timer ISR 每次调用, 让本核累计 tick 计数器 +1。
 用于 SMP 健康检查：cpu_smp_timer_test 会读所有核的计数器, 确认都在动。
 
-**位置**：`kernel/task/cpu.c:108`
+**位置**：`kernel/task/cpu.c:109`
 
-<a id="fn-kernel-task-cpu.c-114"></a>
+<a id="fn-kernel-task-cpu.c-115"></a>
 
 ### `cpu_init_bsp`
 
@@ -13764,21 +13763,27 @@ void cpu_init_bsp(void)
 初始化 BSP 控制块与运行队列、安装 per-CPU 寄存器，把在线核数置一并注册 IPI。
 
 <details>
-<summary>函数内备注（2 条）</summary>
+<summary>函数内备注（3 条）</summary>
 
-**第 128 行**
+**第 122 行**
+
+> x86 的 hw_id 是 LAPIC ID：arch_cpu_hw_id() 只返回 0 占位，BSP 也要
+> 走控制器后端读真实值，否则真实硬件上 BSP 的 APIC ID != 0 时，
+> sched_resched_cpu(0) 会把 IPI 发到错误的核。
+
+**第 135 行**
 
 > 安装 per-CPU 寄存器(TPIDR_EL1 / tp / GS_BASE)
 
-**第 133 行**
+**第 140 行**
 
-> 本核的 resched IPI 就绪；必须在任何跨核 kick 之前完成。
+> 本核的 resched IPI 就绪；必须在 online 置位(任何人都可能开始 kick)之前完成。
 
 </details>
 
-**位置**：`kernel/task/cpu.c:114`
+**位置**：`kernel/task/cpu.c:115`
 
-<a id="fn-kernel-task-cpu.c-169"></a>
+<a id="fn-kernel-task-cpu.c-179"></a>
 
 ### `setup_secondary_idle_task`
 
@@ -13798,15 +13803,15 @@ setup_secondary_idle_task - 初始化次级核 idle 任务控制块
 <details>
 <summary>函数内备注（4 条）</summary>
 
-**第 175 行（行尾）**
+**第 185 行（行尾）**
 
 > 次级核此刻就在 idle 上执行
 
-**第 176 行（行尾）**
+**第 186 行（行尾）**
 
 > 用高位段避免与 g_task_id_cnt 冲突
 
-**第 183 行**
+**第 193 行**
 
 > idle 也需要 files/fs/mm。files_alloc() 会把 fd 表显式填成 -1 ——
 > 不能靠 memset 归零：0 是合法的 fd 池槽位号，fd_table_inherit()
@@ -13815,15 +13820,15 @@ setup_secondary_idle_task - 初始化次级核 idle 任务控制块
 > 都失败）。CPU0 的 idle 走 task.c 的 g_idle_task，同样在
 > task_init() 里分配。
 
-**第 195 行**
+**第 205 行**
 
 > 名字：&quot;idle/N&quot;
 
 </details>
 
-**位置**：`kernel/task/cpu.c:169`
+**位置**：`kernel/task/cpu.c:179`
 
-<a id="fn-kernel-task-cpu.c-228"></a>
+<a id="fn-kernel-task-cpu.c-238"></a>
 
 ### `cpu_secondary_bootstrap`
 
@@ -13839,65 +13844,64 @@ cpu_secondary_bootstrap - 次级核 C 入口
 - VBAR_EL1 已指向 exception_vector_base
 - DAIF.I 仍为关闭
 
-Phase 3：
+启动步骤：
 1. 安装 per-CPU 指针 + GIC CPU interface
 2. 建立本核 idle 任务(current_task = idle_task)
 3. 启用本地 timer PPI(CNTP_CTL_EL0)
-4. 通知 BSP online, 开 IRQ, 进入 idle 循环(task_yield + wfi)
+4. 通知 BSP online, 开 IRQ, 进入 idle 循环(sched_check_and_yield + wfi)
 
-此阶段次级核的 run_queue 始终为空：sched_schedule 会一直 pick 到自己
-的 idle, 行为退化为带 IRQ 的 WFI。跨核 enqueue / IPI 留给 Phase 4+。
+run_queue 为空时 sched_schedule 会一直选回自己的 idle；跨核 enqueue
+与 resched IPI 会把本核唤醒去跑别的任务。
 
 <details>
 <summary>函数内备注（9 条）</summary>
 
-**第 233 行**
+**第 243 行**
 
 > 每核独立寄存器：必须在跑任何 FP/SIMD 之前打开 CPACR_EL1.FPEN,
 > 否则 EL0 上 musl 启动早期访问 NEON 会触发 EC=0x7 trap。
 > BSP 在 kernel_main 入口已做同样操作；AP 必须在此处补上。
 
-**第 240 行**
+**第 250 行**
 
 > 安装 TPIDR_EL1, 使 cpu_current() 在本核返回正确指针
 
-**第 244 行**
+**第 254 行**
 
 > 控制器 per-CPU 初始化(GIC: PMR/CTLR/GICR；PLIC/LAPIC: 无操作)
 
-**第 247 行**
+**第 257 行**
 
-> Phase 3.1/3.2：必须在开中断之前装好 current_task, 否则首个
-> timer ISR 进入 sched_check_and_yield 会读到 NULL。
-
-**第 253 行**
-
-> Phase 3.3：启用本地 timer PPI(CNTP_TVAL/CTL 与 GICD ISENABLER0)。
-
-**第 256 行**
-
-> resched IPI：必须在 online 之前装好, 否则 BSP 发来的 kick 会丢。
-
-**第 259 行**
-
-> 通知 BSP 本核就绪。wmb 确保前面所有写对其他核可见。
+> 必须在开中断之前装好 current_task, 否则首个 timer ISR 进入
+> sched_check_and_yield 会读到 NULL。
 
 **第 263 行**
 
-> Phase 3.4：开 IRQ；之后 timer 会驱动本核的 sched_check_and_yield。
+> 启用本地 timer PPI(CNTP_TVAL/CTL 与 GICD ISENABLER0)。
 
 **第 266 行**
 
+> resched IPI：必须在 online 之前装好, 否则 BSP 发来的 kick 会丢。
+
+**第 269 行**
+
+> 通知 BSP 本核就绪。wmb 确保前面所有写对其他核可见。
+
+**第 273 行**
+
+> 开 IRQ；之后 timer / resched IPI 会驱动本核的 sched_check_and_yield。
+
+**第 276 行**
+
 > Idle 循环：主动 yield 一次再 wfi。yield 在 run_queue 空时是空操作
-> (sched_schedule 选回自己), 但为后续 Phase 4 跨核唤醒留好钩子：
-> 那时 wake-up IPI 会先令 need_resched=true, wfi 被打断后 yield 即可
-> 拿到 IPI 投放进来的任务。
+> (sched_schedule 选回自己)；远端入队会先置 need_resched 并打断 wfi，
+> 下一轮循环即可拿到新任务。
 
 </details>
 
-**位置**：`kernel/task/cpu.c:228`
+**位置**：`kernel/task/cpu.c:238`
 
-<a id="fn-kernel-task-cpu.c-278"></a>
+<a id="fn-kernel-task-cpu.c-287"></a>
 
 ### `cpu_bring_up_all`
 
@@ -13912,35 +13916,35 @@ void cpu_bring_up_all(void)
 <details>
 <summary>函数内备注（6 条）</summary>
 
-**第 284 行**
+**第 293 行**
 
 > _secondary_start 链接在高 VA；PSCI 需要物理入口地址。
 
-**第 295 行**
+**第 304 行**
 
 > RK3588: Aff0 恒为 0, 各核用 Aff1 区分, MPIDR = cpu_idx &lt;&lt; 8
 
-**第 298 行（行尾）**
+**第 307 行（行尾）**
 
 > QEMU virt: MPIDR.Aff0 = CPU 序号
 
-**第 306 行（行尾）**
+**第 315 行（行尾）**
 
 > mpidr=
 
-**第 307 行**
+**第 316 行**
 
 > context_id=
 
-**第 314 行**
+**第 323 行**
 
 > 自旋等待该核置 online；带超时避免死等无效 mpidr。
 
 </details>
 
-**位置**：`kernel/task/cpu.c:278`
+**位置**：`kernel/task/cpu.c:287`
 
-<a id="fn-kernel-task-cpu.c-344"></a>
+<a id="fn-kernel-task-cpu.c-353"></a>
 
 ### `cpu_secondary_bootstrap`
 
@@ -13953,19 +13957,19 @@ sbi_hart_start / sbi_send_ipi 在 include/riscv64/sbi.h(static inline)
 <details>
 <summary>函数内备注（2 条）</summary>
 
-**第 349 行（行尾）**
+**第 358 行（行尾）**
 
 > SUM
 
-**第 355 行**
+**第 364 行**
 
 > resched IPI：必须在 online 之前装好, 否则 BSP 发来的 kick 会丢。
 
 </details>
 
-**位置**：`kernel/task/cpu.c:344`
+**位置**：`kernel/task/cpu.c:353`
 
-<a id="fn-kernel-task-cpu.c-368"></a>
+<a id="fn-kernel-task-cpu.c-377"></a>
 
 ### `cpu_bring_up_all`
 
@@ -13977,9 +13981,9 @@ void cpu_bring_up_all(void)
 
 逐个用 PSCI 上电从核并初始化其控制块与运行队列，自旋等待上线，超时查询亲和状态报错。
 
-**位置**：`kernel/task/cpu.c:368`
+**位置**：`kernel/task/cpu.c:377`
 
-<a id="fn-kernel-task-cpu.c-441"></a>
+<a id="fn-kernel-task-cpu.c-450"></a>
 
 ### `cpu_secondary_bootstrap`
 
@@ -13994,15 +13998,15 @@ void cpu_secondary_bootstrap(uint32_t cpu_id)
 <details>
 <summary>函数内备注（1 条）</summary>
 
-**第 453 行**
+**第 462 行**
 
 > resched IPI：必须在 online 之前装好, 否则 BSP 发来的 kick 会丢。
 
 </details>
 
-**位置**：`kernel/task/cpu.c:441`
+**位置**：`kernel/task/cpu.c:450`
 
-<a id="fn-kernel-task-cpu.c-466"></a>
+<a id="fn-kernel-task-cpu.c-475"></a>
 
 ### `cpu_bring_up_all`
 
@@ -14014,9 +14018,9 @@ void cpu_bring_up_all(void)
 
 逐个用 PSCI 上电从核并初始化其控制块与运行队列，自旋等待上线，超时查询亲和状态报错。
 
-**位置**：`kernel/task/cpu.c:466`
+**位置**：`kernel/task/cpu.c:475`
 
-<a id="fn-kernel-task-cpu.c-539"></a>
+<a id="fn-kernel-task-cpu.c-547"></a>
 
 ### `dbg_read_cntp_ctl`
 
@@ -14026,9 +14030,9 @@ static inline uint64_t dbg_read_cntp_ctl(void)
 
 诊断：读 DAIF, CNTP_CTL_EL0, CNTPCT_EL0
 
-**位置**：`kernel/task/cpu.c:539`
+**位置**：`kernel/task/cpu.c:547`
 
-<a id="fn-kernel-task-cpu.c-545"></a>
+<a id="fn-kernel-task-cpu.c-553"></a>
 
 ### `dbg_read_cntpct`
 
@@ -14040,9 +14044,9 @@ static inline uint64_t dbg_read_cntpct(void)
 
 直接返回底层定时器计数器读数。
 
-**位置**：`kernel/task/cpu.c:545`
+**位置**：`kernel/task/cpu.c:553`
 
-<a id="fn-kernel-task-cpu.c-551"></a>
+<a id="fn-kernel-task-cpu.c-559"></a>
 
 ### `cpu_smp_timer_test`
 
@@ -14057,26 +14061,26 @@ void cpu_smp_timer_test(uint32_t rounds, uint32_t ms_per_round)
 <details>
 <summary>函数内备注（4 条）</summary>
 
-**第 553 行**
+**第 561 行**
 
 > 即使单核也跑诊断：先确认 BSP 自己的 timer 是否在 tick。
 
-**第 555 行**
+**第 563 行**
 
 > 该函数在 task_switch_to_idle_stack() 之前被调用, 此时 DAIF.I=1(IRQ 关)。
 > 不先开 IRQ, BSP 就永远收不到 timer 中断, local_ticks 一定为 0。
 
-**第 565 行（行尾）**
+**第 573 行（行尾）**
 
 > 统一的中断状态读取
 
-**第 571 行**
+**第 579 行**
 
 > 控制器相关的诊断寄存器由后端自己 dump，内核不再知道是 GICv2 还是 GICv3
 
 </details>
 
-**位置**：`kernel/task/cpu.c:551`
+**位置**：`kernel/task/cpu.c:559`
 
 <a id="mod-kernel-task-exec.c"></a>
 
@@ -14603,14 +14607,15 @@ bool in_irq_context(void)
 
 <a id="mod-kernel-task-sched.c"></a>
 
-## kernel/task/sched.c — 内核轮转调度器
+## kernel/task/sched.c — 内核调度器(per-CPU 轮转 + RT 优先级类)
 
-`kernel/task/sched.c` · 24 个函数 · 24 个有说明 · 851 行
+`kernel/task/sched.c` · 24 个函数 · 24 个有说明 · 850 行
 
 设计：
-- 就绪队列(g_run_queue)：list_t, FIFO 顺序
-- idle 任务(g_idle)：队列为空时的回退任务, 永不入队
+- 每核一个就绪队列(cpu_t::run_queue / rt_queue)，FIFO 顺序
+- 每核一个 idle 任务(cpu_t::idle_task)，队列为空时的回退任务, 永不入队
 - sched_schedule() 关中断保护调度决策和上下文切换
+- 跨核入队/唤醒持目标核 rq_lock；必要时立刻发 resched IPI
 
 调度语义(以 sched_schedule 为核心)：
 1. 关中断, 保存当前中断标志(flags)
@@ -14628,7 +14633,7 @@ bool in_irq_context(void)
 - 新任务(首次运行)：arch_task_switch 跳转到 task_trampoline,
 trampoline 调用 arch_irq_enable() 显式开中断。
 
-<a id="fn-kernel-task-sched.c-60"></a>
+<a id="fn-kernel-task-sched.c-61"></a>
 
 ### `x86_write_msr`
 
@@ -14640,9 +14645,9 @@ static inline void x86_write_msr(uint32_t msr, uint64_t value)
 
 把 64 位值拆成高低 32 位后执行 wrmsr 写 MSR。
 
-**位置**：`kernel/task/sched.c:60`
+**位置**：`kernel/task/sched.c:61`
 
-<a id="fn-kernel-task-sched.c-67"></a>
+<a id="fn-kernel-task-sched.c-68"></a>
 
 ### `x86_write_fs_base`
 
@@ -14654,7 +14659,7 @@ static inline void x86_write_fs_base(uint64_t fs_base)
 
 通过写 IA32_FS_BASE MSR 设置 FS 段基址。
 
-**位置**：`kernel/task/sched.c:67`
+**位置**：`kernel/task/sched.c:68`
 
 <a id="fn-kernel-task-sched.c-87"></a>
 
@@ -14666,14 +14671,13 @@ void sched_rq_init(cpu_t *c)
 
 ── Scheduler state ─────────────────────────────────────── *
 
-Phase 1: 调度状态全部迁入 cpu_t, 本文件不再持有全局变量。
+调度状态全部在 cpu_t 里, 本文件不持有全局队列：
 - run_queue / idle_task / need_resched 都从 cpu_current() 读取
 - current_task 是 per-CPU 状态, 不再维护全局镜像
 
-单核场景 cpu_current() 始终返回 &g_cpus[0], 行为与旧版本完全一致。
-多核场景每个 CPU 独立持有自己的就绪队列；跨核入队需要持有目标核
-的 rq_lock(Phase 2/4 启用, 本阶段单核暂不加锁, 因为关中断已经
-足够互斥本核 ISR)。
+单核(g_num_cpus == 1)时关中断即可互斥本核 ISR；多核场景每个 CPU
+独立持有自己的就绪队列，跨核入队/唤醒必须持目标核的 rq_lock
+(见 sched_enqueue / sched_unblock)。
 
 **位置**：`kernel/task/sched.c:87`
 
@@ -14800,7 +14804,7 @@ static void sched_kick_after_enqueue(cpu_t *c, task_t *t)
 
 本核只置标志还不够：need_resched 只在 trap 返回点 / syscall 返回边界
 被消费。正在跑纯计算循环的 NORMAL 内核线程没有任何返回点，只能等
-下一次 timer tick（最长 10ms，RT_DEMO 实测平均 9.9ms）。所以本核在
+下一次 timer tick（最长一个 tick，默认 10ms；RT_DEMO 在 100Hz 下实测平均 9.9ms）。所以本核在
 "真实任务被更高优先级 RT 抢占"时再补一个 self-IPI：中断入口本身
 就是 trap，它的返回路径会立刻消费 need_resched，把抢占延迟压到
 µs 级（见 docs/realtime/RT_DEMO_RESULTS.md）。
@@ -14928,8 +14932,8 @@ void sched_enqueue(task_t *task)
 **第 345 行**
 
 > 防御：正在运行的任务不在任何队列里, 把它再挂进队列会让它被两个核
-> 同时执行(任务栈/状态互相踩)。合法的调用者只会入队 READY/BLOCKED
-> 的任务 —— 走到这里说明有人破坏了「谁在哪」的不变量, 宁可漏入队
+> 同时执行(任务栈/状态互相踩)。合法的调用者只会入队 READY 任务
+> —— 走到这里说明有人破坏了「谁在哪」的不变量, 宁可漏入队
 > (任务下次被唤醒时还会再试)也不要写坏运行队列。
 
 **第 376 行**
@@ -14954,7 +14958,7 @@ void sched_enqueue(task_t *task)
 
 > 远端入队后立刻 kick；本核只在更高优先级 RT 任务入队时置
 > need_resched。没有这一步, 任务要等目标核下一次 timer tick
-> (最长 10ms)才被看到；对 vCPU/RT 的唤醒来说这个延迟不可接受。
+> (最长一个 tick，默认 10ms)才被看到；对 vCPU/RT 的唤醒来说这个延迟不可接受。
 
 </details>
 
@@ -15134,7 +15138,7 @@ void sched_schedule(void)
 
 **第 643 行（行尾）**
 
-> Phase 1：per-CPU 主存储
+> per-CPU 主存储
 
 **第 644 行（行尾）**
 
@@ -15244,17 +15248,16 @@ void sched_tick(void)
 
 **第 752 行**
 
-> 每任务的 ITIMER_REAL 到期检查也挂在这个 tick 上(100 Hz)。
-> 放在这里而不是另开一个回调：g_tick_cb 只有一个, 而 sched_tick 既被
-> timer 驱动经 timer_set_tick_cb 调用, 也被 x86_64 的 fallback 路径
-> (boot/x86_64/exception.c)直接调用 —— 挂在这里两条路都覆盖到。
-> 见 task/itimer.c 顶部对&quot;为什么需要它&quot;的说明。
+> 每任务的 ITIMER_REAL 到期检查也挂在这个 tick 上(周期由 timer.tick_ms
+> 配置, 默认 10ms)。放在这里而不是另开一个回调：g_tick_cb 只有一个,
+> 直接接在 sched_tick 后面即可。注意 sched_tick 是 per-CPU 回调，
+> 多核下 itimer_tick 会被每个核各调一次(限制见 kernel/time/itimer.c)。
 
 </details>
 
 **位置**：`kernel/task/sched.c:713`
 
-<a id="fn-kernel-task-sched.c-769"></a>
+<a id="fn-kernel-task-sched.c-768"></a>
 
 ### `sched_check_and_yield`
 
@@ -15262,14 +15265,14 @@ void sched_tick(void)
 bool sched_check_and_yield(void)
 ```
 
-由异常返回路径调用, 检查是否需要重新调度。
+由异常返回路径、AP idle 循环和 vCPU 主循环调用, 检查是否需要重新调度。
 如果需要, 执行任务切换。
 返回 true 表示发生了切换, false 表示没有。
 
 <details>
 <summary>函数内备注（1 条）</summary>
 
-**第 775 行**
+**第 774 行**
 
 > 注意：不再限制仅用户进程可被抢占。idle 任务(is_user_process=false)
 > 也需要被 timer 抢占, 以便在就绪队列中出现任务时立即切换。
@@ -15277,9 +15280,9 @@ bool sched_check_and_yield(void)
 
 </details>
 
-**位置**：`kernel/task/sched.c:769`
+**位置**：`kernel/task/sched.c:768`
 
-<a id="fn-kernel-task-sched.c-801"></a>
+<a id="fn-kernel-task-sched.c-800"></a>
 
 ### `trap_preempt_kernel_side`
 
@@ -15296,9 +15299,9 @@ trap_preempt_kernel_side - 从【内核态】陷入时的抢占判断
 
 preemptible() 内含 irq_depth == 0 判断, 嵌套中断里不会误切。
 
-**位置**：`kernel/task/sched.c:801`
+**位置**：`kernel/task/sched.c:800`
 
-<a id="fn-kernel-task-sched.c-833"></a>
+<a id="fn-kernel-task-sched.c-832"></a>
 
 ### `sched_check_and_yield_from_trap`
 
@@ -15321,7 +15324,7 @@ RISC-V    sstatus.SPP == 0       → 用户态
 注意：调用本函数时 handle_exception 已经做过 irq_depth--, 因此
 sched_schedule() 开头的 assert_always(!in_irq_context()) 不会触发。
 
-**位置**：`kernel/task/sched.c:833`
+**位置**：`kernel/task/sched.c:832`
 
 <a id="mod-kernel-task-task.c"></a>
 
@@ -16170,7 +16173,7 @@ task_t *task_current(void)
 
 **第 975 行**
 
-> Phase 3：从 per-CPU 控制块读取, AP 上才能拿到正确的任务。
+> 从 per-CPU 控制块读取, AP 上才能拿到正确的任务。
 > cpu_current() 内部已有 NULL 回退到 g_cpus[0], 因此在 cpu_init_bsp
 > 之前的极早期路径也是安全的(会返回 g_cpus[0].current_task = NULL)。
 
@@ -16537,7 +16540,7 @@ bool hrtimer_cpu_oneshot_supported(uint32_t cpu)
 
 ## kernel/time/itimer.c — 每任务 ITIMER_REAL(alarm / setitimer)
 
-`kernel/time/itimer.c` · 4 个函数 · 0 个有说明 · 116 行
+`kernel/time/itimer.c` · 4 个函数 · 0 个有说明 · 118 行
 
 语义与设计见 include/time/itimer.h。这里只记实现上的两个关键点：
 
@@ -16554,13 +16557,15 @@ task_send_signal() 只往 pending_sigs 里 OR 一个位, 不会把 TASK_BLOCKED
 在 tick(ISR 上下文)里 unblock 是既有用法：sched_enqueue() 内部有
 in_irq_context() 分支, 设备 ISR 唤醒任务是常规操作。
 
-3. SMP：每个核的 tick 都会调到这里, 所以同一个到期定时器可能被两个核同时
-看到。不加锁是故意的 —— 三个动作都是幂等的：置同一个 pending 位,
-把 expire 推到(近似)同一个新时刻, unblock 有 state != TASK_BLOCKED
-的早退。代价是周期定时器在某些 tick 上可能多投一次 SIGALRM。
-默认 SMP=1, 多核下若要求严格"一个周期一个信号", 再考虑加单核仲裁。
+3. SMP：每个核的 tick 都会调到这里(sched_tick 是 per-CPU 回调), 所以同一个
+到期定时器可能被两个核同时看到。不加锁是故意的 —— 大多数动作是幂等的,
+但"先重装再投信号"不是原子的: 两个核可以同时通过 now >= expire 的检查,
+各投一次 SIGALRM(周期定时器把 expire 推到相近的新时刻, 一次性定时器
+都被清 0)。已知限制: 多核下 alarm 可能重复投递；若要严格"一个周期
+一个信号", 需要原子 claim expiry(CAS)或让每个任务只由亲和核处理。
+默认构建是 SMP=1, 但 LTP 门禁跑 SMP=4, 这条限制会被真实触发。
 
-<a id="fn-kernel-time-itimer.c-39"></a>
+<a id="fn-kernel-time-itimer.c-41"></a>
 
 ### `itimer_now_ns`
 
@@ -16570,9 +16575,9 @@ static inline uint64_t itimer_now_ns(void)
 
 > ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-**位置**：`kernel/time/itimer.c:39`
+**位置**：`kernel/time/itimer.c:41`
 
-<a id="fn-kernel-time-itimer.c-44"></a>
+<a id="fn-kernel-time-itimer.c-46"></a>
 
 ### `itimer_set`
 
@@ -16582,9 +16587,9 @@ void itimer_set(task_t *t, uint64_t value_ns, uint64_t interval_ns)
 
 > ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-**位置**：`kernel/time/itimer.c:44`
+**位置**：`kernel/time/itimer.c:46`
 
-<a id="fn-kernel-time-itimer.c-53"></a>
+<a id="fn-kernel-time-itimer.c-55"></a>
 
 ### `itimer_get`
 
@@ -16594,9 +16599,9 @@ void itimer_get(task_t *t, uint64_t *remain_ns, uint64_t *interval_ns)
 
 > ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-**位置**：`kernel/time/itimer.c:53`
+**位置**：`kernel/time/itimer.c:55`
 
-<a id="fn-kernel-time-itimer.c-69"></a>
+<a id="fn-kernel-time-itimer.c-71"></a>
 
 ### `itimer_tick`
 
@@ -16609,32 +16614,32 @@ void itimer_tick(void)
 <details>
 <summary>函数内备注（5 条）</summary>
 
-**第 79 行**
+**第 81 行**
 
 > 已死/正在分配的槽不该再收信号；顺手把残值清掉, 免得槽被复用后
 > 新任务莫名其妙挨一个 SIGALRM(复用的 TCB 会带着旧字段)。
 
-**第 89 行**
+**第 91 行**
 
 > nanosleep 到期：清标记并唤醒。
 > 必须在 itimer 的早退判断**之前**处理 —— 睡眠任务通常没有
 > itimer_expire_ns，早退会把它们直接跳过，永远醒不来。
 
-**第 100 行**
+**第 102 行**
 
 > 下面只处理 ITIMER_REAL
 
-**第 104 行**
+**第 106 行**
 
 > 先重装(周期)或清除(一次性), 再投信号 —— 见文件头第 1 点
 
-**第 112 行**
+**第 114 行**
 
 > 见文件头第 2 点：不 unblock 就叫不醒阻塞中的任务
 
 </details>
 
-**位置**：`kernel/time/itimer.c:69`
+**位置**：`kernel/time/itimer.c:71`
 
 <a id="mod-kernel-vmm-aarch64-el2_run.c"></a>
 
@@ -16644,7 +16649,7 @@ void itimer_tick(void)
 
 对标 ref/bare-vm/arch/aarch64/el2_run.c, 适配 Avatar OS。
 
-Phase 2 支持的 exit 类型(ESR_EL2.EC)：
+当前支持的 exit 类型(ESR_EL2.EC)：
 0x01 — WFI/WFE trap(HCR_EL2.TWI=1)：跳过指令, resume
 0x16 — HVC 超级调用：dispatcher 处理 HVC_DONE / HVC_PRINT
 0x24 — Stage-2 Data Abort：权限故障处理
