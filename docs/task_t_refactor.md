@@ -203,7 +203,7 @@ struct mm_struct {
 - fork：共享或复制 mm；exec：替换 mm；最后一个引用释放 pgd。
 - `task_group_has_other_threads()` 可退化成 `mm->refcount > 1`。
 
-**实施结果**：`include/mm_struct.h` + `kernel/mm/mm_struct.c`。所有任务
+**实施结果**：`include/mm/mm_struct.h` + `kernel/mm/mm_struct.c`。所有任务
 （含 idle）创建时分配一份空 mm；`CLONE_VM + CLONE_THREAD` 共享父 mm，
 fork 使用自己的新 mm 并设置 `owns_pgd`；exec 在旧 mm 仅剩当前引用时
 复用，否则分配新 mm、旧 mm 留给线程组。`shares_pgd` 字段删除，

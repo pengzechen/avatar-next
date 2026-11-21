@@ -14,8 +14,8 @@
 #include "loader/bin_loader.h"
 #include "elf.h"
 #include "klog.h"
-#include "kmalloc.h"
-#include "mm_vm.h"
+#include "mm/kmalloc.h"
+#include "mm/mm_vm.h"
 #include "string.h"
 #include "task/exec.h"
 #include <ext4.h>

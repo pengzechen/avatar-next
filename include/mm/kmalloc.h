@@ -8,7 +8,7 @@
 #define KMALLOC_H
 
 /*
-   include/kmalloc.h — 内核内存分配接口
+   include/mm/kmalloc.h — 内核内存分配接口
 
    所有函数返回内核虚拟地址(高半区), 内部通过 PMM 分配物理页并转换。
    当前实现为页粒度分配, 将来可在此基础上叠加 slab。

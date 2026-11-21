@@ -8,7 +8,7 @@
 #define PAGE_H
 
 /*
-   include/page.h - 页大小的唯一定义
+   include/mm/page.h - 页大小的唯一定义
 
    以前 PAGE_SIZE / PAGE_SHIFT / PAGE_MASK 定义在 mm_vm.h 里, 于是 PMM
    只为了一个常量就得 include 整套用户虚拟内存 API(还会连带三架构页表头)。

@@ -40,8 +40,8 @@
 */
 
 #include "x86_64/ept.h"
-#include "pmm.h"
-#include "mm_vm.h"
+#include "mm/pmm.h"
+#include "mm/mm_vm.h"
 #include "klog.h"
 #include "string.h"
 

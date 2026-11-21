@@ -41,7 +41,7 @@
 #ifndef GUEST_LOADER_H
 #define GUEST_LOADER_H
 
-#include "page.h"
+#include "mm/page.h"
 #include "types.h"
 #include "arch.h"
 

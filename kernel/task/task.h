@@ -21,9 +21,9 @@
 
 #include "types.h"
 #include "list.h"
-#include "signal.h"     /* 信号常量/sig_action_t/signal_struct_t（与 task 解耦） */
-#include "process_fs.h" /* files_struct / fs_struct（fd 表与 cwd） */
-#include "mm_struct.h"  /* mm_struct（pgd/heap/mmap/interp/exe_path） */
+#include "signal.h"       /* 信号常量/sig_action_t/signal_struct_t（与 task 解耦） */
+#include "process_fs.h"   /* files_struct / fs_struct（fd 表与 cwd） */
+#include "mm/mm_struct.h" /* mm_struct（pgd/heap/mmap/interp/exe_path） */
 
 /* ── Task states ─────────────────────────────────────────── */
 typedef enum {

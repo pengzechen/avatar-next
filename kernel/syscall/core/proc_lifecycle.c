@@ -27,16 +27,16 @@
 #include "task/cpu.h" /* get_current_cpu_id / AVATAR_MAX_CPUS(execve argv 副本按 CPU 分行) */
 #include "task/sched.h"
 #include "task/switch.h"
-#include "user_layout.h"
-#include "mm_vm.h"
-#include "pmm.h"
-#include "vm_user.h"
+#include "mm/user_layout.h"
+#include "mm/mm_vm.h"
+#include "mm/pmm.h"
+#include "mm/vm_user.h"
 #include "string.h"
 #include "klog.h"
 #include "arch.h"
 #include "syscall_abi.h"
 #include "list.h"
-#include "shared_page.h"
+#include "mm/shared_page.h"
 #include <ext4.h>
 #if ARCH_RISCV64
 #include "riscv64/satp_utils.h"

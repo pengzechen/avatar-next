@@ -5,7 +5,7 @@
 */
 
 /*
-   include/vm_user.h - 用户进程虚拟内存管理(架构无关接口)
+   include/mm/vm_user.h - 用户进程虚拟内存管理(架构无关接口)
 */
 
 #ifndef VM_USER_H

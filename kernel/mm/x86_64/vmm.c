@@ -11,11 +11,11 @@
 */
 
 #include "klog.h"
-#include "mm_vm.h"
-#include "pmm.h"
+#include "mm/mm_vm.h"
+#include "mm/pmm.h"
 #include "string.h"
 #include "types.h"
-#include "shared_page.h"
+#include "mm/shared_page.h"
 
 /* ── 页表遍历 ───────────────────────────────────────────────────── */
 

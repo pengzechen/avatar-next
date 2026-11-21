@@ -20,7 +20,7 @@
 */
 
 #include "vmm/vmm.h"
-#include "pmm.h" /* pmm_get_free_pages(缺页失败时的诊断) */
+#include "mm/pmm.h" /* pmm_get_free_pages(缺页失败时的诊断) */
 #include "klog.h"
 #include "string.h"
 #include "task/task.h"
@@ -35,7 +35,7 @@
 #include "irq/lapic.h" /* g_tsc_freq_hz：宿主标定出的 TSC 频率(CPUID 0x15/0x16 要报给 guest) */
 
 /* guest RAM 的宿主物理窗口(定义在 guest_boot.c) */
-#include "mm_vm.h" /* virt_to_phys */
+#include "mm/mm_vm.h" /* virt_to_phys */
 
 /*
    boot/x86_64/tss.c —— 取本核 TSS 的选择子/基址。

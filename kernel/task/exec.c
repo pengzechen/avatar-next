@@ -23,8 +23,8 @@
 
 #include "types.h"
 #include "klog.h"
-#include "pmm.h"
-#include "mm_vm.h"
+#include "mm/pmm.h"
+#include "mm/mm_vm.h"
 #include "string.h"
 #include "arch.h"
 #include "exception.h"
@@ -33,8 +33,8 @@
 #include "task/switch.h"
 #include "loader/elf_image.h"
 #include "task/exec.h"
-#include "vm_user.h"
-#include "user_layout.h"
+#include "mm/vm_user.h"
+#include "mm/user_layout.h"
 
 /*
    fd 池接口在这里只能手写 extern：本文件用普通 CFLAGS 编译, 没有 lwext4
@@ -53,7 +53,7 @@ extern void x86_tss_set_rsp0(uint64_t rsp0);
 #endif
 
 /* USER_STACK_TOP / USER_STACK_SIZE / USER_MMAP_BASE_PIE / USER_MMAP_BASE_EXEC
-   均来自 include/user_layout.h
+   均来自 include/mm/user_layout.h
 */
 
 /* ── Linux ABI 初始栈构建 ─────────────────────────────────────── */

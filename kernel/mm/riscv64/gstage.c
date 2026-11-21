@@ -33,8 +33,8 @@
 
 #include "riscv64/gstage.h"
 #include "riscv64/hext.h" /* READ_HGATP/WRITE_HGATP(数值 CSR) */
-#include "pmm.h"
-#include "mm_vm.h"
+#include "mm/pmm.h"
+#include "mm/mm_vm.h"
 #include "klog.h"
 #include "string.h"
 

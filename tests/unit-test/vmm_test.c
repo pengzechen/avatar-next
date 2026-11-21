@@ -48,7 +48,7 @@
 
 #if ARCH_AARCH64
 #include "aarch64/stage2.h"
-#include "mm_vm.h"
+#include "mm/mm_vm.h"
 #include "guest_loader.h"           /* guest_loader_write_guest：按需分页下把 guest 代码写进去 */
 extern void guest_test_entry(void); /* apps/aarch64/guest_test.S */
 extern void el0_loop_program(void); /* apps/aarch64/el0_loop.S */

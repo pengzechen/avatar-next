@@ -8,11 +8,11 @@
 #include "klog.h"
 #include "assert.h"
 #include "barrier.h"
-#include "pmm.h"
-#include "mm_vm.h"
+#include "mm/pmm.h"
+#include "mm/mm_vm.h"
 #include "aarch64/mmu.h"
 #include "string.h"
-#include "shared_page.h"
+#include "mm/shared_page.h"
 
 /* 兼容性定义(替换参考项目中的符号) */
 #ifndef HEAP_OFFSET

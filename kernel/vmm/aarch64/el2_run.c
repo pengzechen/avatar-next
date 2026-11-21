@@ -19,7 +19,7 @@
 #include "vmm/vmm.h"
 #include "klog.h"
 #include "aarch64/stage2.h"
-#include "pmm.h" /* 按需分页：缺页时要从 PMM 现拿物理页 */
+#include "mm/pmm.h" /* 按需分页：缺页时要从 PMM 现拿物理页 */
 #include "aarch64/sysreg.h"
 #include "task/task.h"
 #include "task/switch.h"

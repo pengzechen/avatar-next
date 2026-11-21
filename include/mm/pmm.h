@@ -25,7 +25,7 @@
 #define PMM_MAX_RESERVED_RANGES 16U
 
 /*
-   include/pmm.h - 物理内存管理器
+   include/mm/pmm.h - 物理内存管理器
 
    提供物理页面的分配和释放功能, 独立于虚拟内存管理
 */

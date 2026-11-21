@@ -25,7 +25,7 @@
 #include "task/task.h"
 #include "task/sched.h"
 #include "task/cpu.h"
-#include "mm_vm.h"
+#include "mm/mm_vm.h"
 
 extern void deliver_pending_signals(task_t *t, trap_frame_t *frame);
 

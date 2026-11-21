@@ -17,7 +17,7 @@
        越过 EOF 的写由 fat_zero_fill() 补零。
 */
 #include "vfs_internal.h"
-#include "kmalloc.h"
+#include "mm/kmalloc.h"
 #include "string.h"
 #include "fs_lock.h"
 

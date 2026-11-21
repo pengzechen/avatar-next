@@ -14,12 +14,12 @@
 
 #include "elf.h"
 #include "klog.h"
-#include "pmm.h"
-#include "mm_vm.h"
+#include "mm/pmm.h"
+#include "mm/mm_vm.h"
 #include "string.h"
 #include "arch.h"
 #include "loader/elf_image.h"
-#include "user_layout.h"
+#include "mm/user_layout.h"
 #include "platform_ops.h" /* platform_panic(), 仅 PANIC_TEST=1 时用到 */
 
 /* ── 段加载 ─────────────────────────────────────────────────────── */

@@ -226,7 +226,7 @@ static inline void flush_tlb_single(uint64_t vaddr)
 /* ── 物理/虚拟地址转换 ───────────────────────────────────────────── */
 
 /*
-   注意：phys_to_virt 和 virt_to_phys 已在 include/mm_vm.h 中统一定义
+   注意：phys_to_virt 和 virt_to_phys 已在 include/mm/mm_vm.h 中统一定义
    此处不再重复定义以避免警告
 */
 
@@ -239,7 +239,7 @@ static inline void flush_tlb_single(uint64_t vaddr)
 /* ── 页对齐宏 ───────────────────────────────────────────────────── */
 
 /*
-   注意：PAGE_SIZE, PAGE_SHIFT, PAGE_MASK 已在 include/mm_vm.h 中统一定义
+   注意：PAGE_SIZE, PAGE_SHIFT, PAGE_MASK 已在 include/mm/mm_vm.h 中统一定义
    此处不再重复定义以避免警告
 */
 

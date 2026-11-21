@@ -2765,9 +2765,9 @@ static inline uint32_t npu_mmu_mk_pte(uint64_t pa, int writable)
 
 <a id="mod-include-pmm.h"></a>
 
-## include/pmm.h — ── 物理内存配置 ─────────────────────────────────────────────────────
+## include/mm/pmm.h — ── 物理内存配置 ─────────────────────────────────────────────────────
 
-`include/pmm.h` · 3 个函数 · 3 个有说明 · 184 行
+`include/mm/pmm.h` · 3 个函数 · 3 个有说明 · 184 行
 
 <a id="fn-include-pmm.h-83"></a>
 
@@ -2782,7 +2782,7 @@ pmm_is_initialized - 全局 PMM 是否已完成 pmm_init()
 静态对象初值为 0；pmm_init() 断言 size > 0 并设置 total_pages,
 所以 total_pages 非 0 是可靠的"已初始化"判据。
 
-**位置**：`include/pmm.h:83`
+**位置**：`include/mm/pmm.h:83`
 
 <a id="fn-include-pmm.h-146"></a>
 
@@ -2797,7 +2797,7 @@ pmm_get_free_pages - 获取空闲页面数
 
 返回：空闲页面数
 
-**位置**：`include/pmm.h:146`
+**位置**：`include/mm/pmm.h:146`
 
 <a id="fn-include-pmm.h-157"></a>
 
@@ -2812,7 +2812,7 @@ pmm_get_total_pages - 获取总页面数
 
 返回：总页面数
 
-**位置**：`include/pmm.h:157`
+**位置**：`include/mm/pmm.h:157`
 
 <a id="mod-include-riscv64-barrier_impl.h"></a>
 

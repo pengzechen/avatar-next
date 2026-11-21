@@ -10,11 +10,11 @@
    参考：ref/Avatar/kernel/mem/pmm.c
 */
 
-#include "pmm.h"
+#include "mm/pmm.h"
 #include "klog.h"
 #include "assert.h"
 #include "string.h"
-#include "page.h"
+#include "mm/page.h"
 #include "platform_cfg.h" /* g_mem_rootfs_base / g_mem_rootfs_size */
 
 /* 全局 PMM 状态 — 位图缓冲区使用编译期最大值(PMM_BITMAP_MAX_BYTES = 128KB = 4GB/4KB/8bit) */

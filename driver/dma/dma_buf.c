@@ -18,7 +18,7 @@
 #include "dma_heap.h" /* 同目录 */
 #include "cache.h"
 #include "klog.h"
-#include "mm_vm.h"
+#include "mm/mm_vm.h"
 #include "spinlock.h"
 #include "string.h"
 #include "task/task.h"

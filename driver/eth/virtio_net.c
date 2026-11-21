@@ -8,11 +8,11 @@
 
 #include "barrier.h"
 #include "klog.h"
-#include "kmalloc.h"
+#include "mm/kmalloc.h"
 #include "mmio.h"
-#include "mm_vm.h"
+#include "mm/mm_vm.h"
 #include "net/netdev.h"
-#include "pmm.h"
+#include "mm/pmm.h"
 #include "string.h"
 #include "task/task.h"
 #include "driver/time.h"
@@ -88,7 +88,7 @@
 #endif
 
 #if DEVICE_MMIO_NEEDS_VMA
-#include "mm_vm.h"
+#include "mm/mm_vm.h"
 #define VIRTIO_NET_PLATFORM_BASE ((uintptr_t)DEVICE_ETH_BASE_RAW + KERNEL_VMA)
 #else
 #define VIRTIO_NET_PLATFORM_BASE ((uintptr_t)DEVICE_ETH_BASE_RAW)

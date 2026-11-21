@@ -43,7 +43,7 @@
 | 版本校验 | ✅ 读魔数 `0x46495245`（"FIRE"） | `driver/npu/rknpu.c:90` |
 | 中断 | ⚠️ 只读 `INT_STATUS`、清 `INT_CLEAR`、**不跟踪作业** | `driver/npu/rknpu.c:60-80` |
 | 用户态接口 | ⚠️ `/dev/npu` 节点存在但是**桩**，直接返回 `-PFS_ENOSYS` | `pseudofs.c:365`、`dev.c:264` |
-| 连续物理内存 | ✅ `pmm_alloc_pages` / `kalloc_pages` / `kmalloc` | `include/pmm.h:69`、`include/kmalloc.h` |
+| 连续物理内存 | ✅ `pmm_alloc_pages` / `kalloc_pages` / `kmalloc` | `include/mm/pmm.h:69`、`include/mm/kmalloc.h` |
 | "DMA 缓冲"雏形 | ⚠️ ION 分配器 + `FDT_ION` fd，**已有逐页 mmap 进用户态的路径** | `driver/ion/ion.c`、`mmap.c:174-245` |
 | 缓存维护 | ✅ `clean/invalidate/clean_and_invalidate_dcache_range` | `include/cache.h:105-167` |
 | 内核线程 | ✅ `task_create(name, entry, arg, prio)` | `task/task.h:257` |

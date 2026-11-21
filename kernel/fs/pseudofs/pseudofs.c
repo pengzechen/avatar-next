@@ -21,7 +21,7 @@
 #include "vmm/vmm.h" /* VMM_GUEST_LINUX_SUPPORTED：决定 /dev/vmm 是否存在 */
 #include "klog.h"
 #include "string.h"
-#include "pmm.h"
+#include "mm/pmm.h"
 #include "task/task.h"
 #include "dma_buf.h"          /* dma_heap_dev_ioctl / dma_buf_present */
 #include "driver/ion.h"       /* ion_present */

@@ -18,7 +18,7 @@
    都只在运行期以"翻译到错误的物理页"这种形式暴露。
 */
 
-#include "page.h" /* PAGE_SIZE / PAGE_SHIFT / PAGE_MASK */
+#include "mm/page.h" /* PAGE_SIZE / PAGE_SHIFT / PAGE_MASK */
 
 /*
    下面这些常量会被 mmu.S / boot.S 直接展开, 而 GNU as 不认识 C 的

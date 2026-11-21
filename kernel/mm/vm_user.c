@@ -11,13 +11,13 @@
    各架构在其 include/<arch>/mm_vm.h 中提供具体实现或 stub。
 */
 
-#include "vm_user.h"
+#include "mm/vm_user.h"
 #include "klog.h"
-#include "mm_vm.h"
-#include "pmm.h"
+#include "mm/mm_vm.h"
+#include "mm/pmm.h"
 #include "string.h"
 #include "types.h"
-#include "user_layout.h"
+#include "mm/user_layout.h"
 
 /* ── 创建用户进程页表 ──────────────────────────────────────────── */
 

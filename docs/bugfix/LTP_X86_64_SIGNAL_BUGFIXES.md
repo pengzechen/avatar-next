@@ -146,7 +146,7 @@ syscall
   x86_64 因栈 NX 位无法使用同一方案
 
 **涉及文件**:
-- `include/user_layout.h` — 新增 `USER_SIGRET_PAGE` 常量
+- `include/mm/user_layout.h` — 新增 `USER_SIGRET_PAGE` 常量
 - `kernel/task/exec.c` — 映射蹦床页
 - `kernel/syscall/core/signal.c` — 使用蹦床页
 - `kernel/task/task.h` — 新增 `SA_RESTORER` 常量

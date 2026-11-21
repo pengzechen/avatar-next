@@ -17,8 +17,8 @@
 #include <ext4_errno.h>
 #include "blk/ramblk_cfg.h"
 #include "klog.h"
-#include "string.h" /* memcpy */
-#include "mm_vm.h"  /* phys_to_virt */
+#include "string.h"   /* memcpy */
+#include "mm/mm_vm.h" /* phys_to_virt */
 #include "driver/driver.h"
 #include "driver/block.h"
 

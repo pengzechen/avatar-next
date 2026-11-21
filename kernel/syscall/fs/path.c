@@ -14,7 +14,7 @@
 #include "syscall/syscall_internal.h"
 #include "kernel_stat.h"
 #include "string.h"
-#include "mm_vm.h" /* PAGE_SIZE / phys_to_virt / mm_vm_get_paddr */
+#include "mm/mm_vm.h" /* PAGE_SIZE / phys_to_virt / mm_vm_get_paddr */
 #include "vfs.h"
 #include <ext4.h>
 #include <ext4_errno.h>

@@ -19,8 +19,8 @@
 #include "rt_worker.h"
 #include "rtdev.h"
 #include "hrtimer.h"
-#include "kmalloc.h" /* kalloc_pages：每槽位共享页 */
-#include "mm_vm.h"   /* virt_to_phys：共享页 mmap */
+#include "mm/kmalloc.h" /* kalloc_pages：每槽位共享页 */
+#include "mm/mm_vm.h"   /* virt_to_phys：共享页 mmap */
 #include "task/task.h"
 #include "task/cpu.h"
 #include "task/sched.h"

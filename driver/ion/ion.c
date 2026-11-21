@@ -17,8 +17,8 @@
 */
 #include "driver/ion.h"
 #include "types.h"
-#include "mm_vm.h"
-#include "pmm.h"
+#include "mm/mm_vm.h"
+#include "mm/pmm.h"
 #include "spinlock.h"
 #include "klog.h"
 #include "string.h"

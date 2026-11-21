@@ -13,7 +13,7 @@
 */
 
 #include "platform_cfg.h"
-#include "mm_vm.h" /* KERNEL_VMA */
+#include "mm/mm_vm.h" /* KERNEL_VMA */
 #include "string.h"
 
 #ifndef PLATFORM_MEM_RAM_BASE

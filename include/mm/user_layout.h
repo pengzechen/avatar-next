@@ -8,7 +8,7 @@
 #define USER_LAYOUT_H
 
 /*
-   include/user_layout.h — 用户地址空间布局常量
+   include/mm/user_layout.h — 用户地址空间布局常量
 
    所有架构共用同一套用户虚拟地址布局：
 

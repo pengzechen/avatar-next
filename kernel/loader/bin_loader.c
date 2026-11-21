@@ -12,9 +12,9 @@
 #include "syscall/syscall.h"
 #include "klog.h"
 #include "task/task.h"
-#include "kmalloc.h"
-#include "mm_vm.h"
-#include "user_layout.h"
+#include "mm/kmalloc.h"
+#include "mm/mm_vm.h"
+#include "mm/user_layout.h"
 #include <ext4.h>
 #include <ext4_types.h>
 

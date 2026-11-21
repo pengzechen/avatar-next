@@ -19,7 +19,7 @@
 
 #include "guest_loader.h"
 #include "klog.h"
-#include "mm_vm.h" /* phys_to_virt */
+#include "mm/mm_vm.h" /* phys_to_virt */
 #include "string.h"
 #include "vmm/vmm.h"
 

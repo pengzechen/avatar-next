@@ -29,14 +29,14 @@
 #include "driver/irq.h"  /* resched IPI / 控制器 per-CPU 初始化 */
 
 #if ARCH_AARCH64
-#include "mm_vm.h"        /* KERNEL_VMA / virt_to_phys */
+#include "mm/mm_vm.h"     /* KERNEL_VMA / virt_to_phys */
 #include "aarch64/cpu.h"  /* aarch64_enable_neon (per-core CPACR_EL1.FPEN) */
 #include "aarch64/psci.h" /* psci_cpu_on / psci_affinity_info(SMC64) */
 #endif
 
 #if ARCH_RISCV64
 #include "exception.h"
-#include "mm_vm.h"
+#include "mm/mm_vm.h"
 #include "riscv64/sbi.h" /* sbi_hart_start / sbi_send_ipi(HSM/IPI) */
 #include "riscv64/sysreg.h"
 extern void trap_vector(void);

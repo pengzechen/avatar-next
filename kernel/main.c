@@ -20,8 +20,8 @@
 #include "task/task.h"
 #include "task/sched.h"
 #include "task/cpu.h"
-#include "pmm.h"
-#include "mm_vm.h" /* virt_to_phys：把链接符号换算成物理地址 */
+#include "mm/pmm.h"
+#include "mm/mm_vm.h" /* virt_to_phys：把链接符号换算成物理地址 */
 #include "driver/time.h"
 #include "rt_latency.h"
 #include "net/net.h"

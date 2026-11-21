@@ -24,7 +24,7 @@
 #include "klog.h"
 #include "rt_worker.h"
 #include "hrtimer.h"
-#include "mm_vm.h"
+#include "mm/mm_vm.h"
 #include "string.h"
 
 #define RT_TEST_ITERS 100

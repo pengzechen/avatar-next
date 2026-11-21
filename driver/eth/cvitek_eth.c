@@ -50,8 +50,8 @@
 #include "barrier.h"
 #include "cache.h"
 #include "klog.h"
-#include "kmalloc.h"
-#include "mm_vm.h" /* virt_to_phys / KERNEL_VMA */
+#include "mm/kmalloc.h"
+#include "mm/mm_vm.h" /* virt_to_phys / KERNEL_VMA */
 #include "mmio.h"
 #include "platform_cfg.h" /* platform_get_mmio / g_mmio_needs_vma */
 #include "string.h"

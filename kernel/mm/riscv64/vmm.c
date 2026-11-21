@@ -13,10 +13,10 @@
 #include "types.h"
 #include "assert.h"
 #include "klog.h"
-#include "pmm.h"
-#include "mm_vm.h"
+#include "mm/pmm.h"
+#include "mm/mm_vm.h"
 #include "string.h"
-#include "shared_page.h"
+#include "mm/shared_page.h"
 #include "riscv64/satp_utils.h"
 
 /* ── 页表遍历 ───────────────────────────────────────────────────── */

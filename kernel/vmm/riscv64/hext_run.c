@@ -38,9 +38,9 @@
 #include "riscv64/gstage.h"
 #include "vmm/vmm_mmio.h"
 #include "vmm/vmm_vplic.h"
-#include "mm_vm.h"   /* phys_to_virt */
-#include "pmm.h"     /* pmm_get_free_pages(缺页失败时的诊断) */
-#include "barrier.h" /* smp_mb：WFI 睡眠/唤醒的次序 */
+#include "mm/mm_vm.h" /* phys_to_virt */
+#include "mm/pmm.h"   /* pmm_get_free_pages(缺页失败时的诊断) */
+#include "barrier.h"  /* smp_mb：WFI 睡眠/唤醒的次序 */
 
 /* ── 汇编入口声明 ─────────────────────────────────────────── */
 extern int hext_enter_guest(vcpu_t *vcpu); /* hext_vcpu.S */

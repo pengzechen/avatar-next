@@ -33,9 +33,9 @@ static inline uint64_t task_get_ns(void)
     return timer_get_ns();
 }
 
-#include "mm_vm.h"
-#include "user_layout.h"
-#include "vm_user.h"
+#include "mm/mm_vm.h"
+#include "mm/user_layout.h"
+#include "mm/vm_user.h"
 #if ARCH_RISCV64
 #include "riscv64/satp_utils.h"
 #include "riscv64/sysreg.h"

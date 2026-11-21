@@ -17,11 +17,11 @@
 #include "syscall/syscall_internal.h"
 #include "klog.h"
 #include "task/task.h"
-#include "mm_vm.h"
-#include "pmm.h"
+#include "mm/mm_vm.h"
+#include "mm/pmm.h"
 #include "string.h"
 #include "arch.h"
-#include "vm_user.h"
+#include "mm/vm_user.h"
 
 extern task_t g_task_pool[];
 extern uint8_t g_stack_used[];

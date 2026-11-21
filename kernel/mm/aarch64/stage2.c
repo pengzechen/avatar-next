@@ -27,8 +27,8 @@
 */
 
 #include "aarch64/stage2.h"
-#include "pmm.h"
-#include "mm_vm.h"
+#include "mm/pmm.h"
+#include "mm/mm_vm.h"
 #include "cache.h"   /* clean_and_invalidate_dcache_range */
 #include "barrier.h" /* barrier_sync / barrier_instr_full */
 #include "klog.h"

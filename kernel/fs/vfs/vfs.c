@@ -16,7 +16,7 @@
 #include "syscall/fs/pty.h"
 #include "syscall/io/epoll.h"
 #include "syscall/net/ksocket.h"
-#include "kmalloc.h"
+#include "mm/kmalloc.h"
 #include "string.h"
 #include <ext4.h> /* ext4_readlink(ext4_errno.h 由它带入) */
 #include <ext4_errno.h>

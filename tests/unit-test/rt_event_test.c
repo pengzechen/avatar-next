@@ -25,7 +25,7 @@
 #include "task/rt_event.h"
 #include "rt_worker.h"
 #include "hrtimer.h"
-#include "mm_vm.h"
+#include "mm/mm_vm.h"
 #include "driver/time.h"
 #include "klog.h"
 #include "string.h"
