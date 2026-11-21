@@ -64,7 +64,7 @@ bool user_range_accessible(const void *ptr, uint64_t len)
         return true;
 
     task_t *t = task_current();
-    if (!t || !t->mm->pgd)
+    if (!t || !t->mm || !t->mm->pgd)
         return true; /* 非用户进程上下文：维持旧行为, 只做范围检查 */
 
     uint64_t start = (uint64_t)ptr;

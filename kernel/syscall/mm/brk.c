@@ -32,7 +32,7 @@ static uint64_t shared_heap_end(task_t *current)
 
     for (uint32_t i = 0; i < TASK_MAX; i++) {
         task_t *task = &g_task_pool[i];
-        if (!g_stack_used[i] || !task->is_user_process || task->state == TASK_DEAD)
+        if (!g_stack_used[i] || !task_is_live_user(task))
             continue;
         if (task->mm->pgd == current->mm->pgd && task->mm->heap_end > heap_end)
             heap_end = task->mm->heap_end;
@@ -45,7 +45,7 @@ static void sync_shared_heap_end(task_t *current, uint64_t heap_end)
 {
     for (uint32_t i = 0; i < TASK_MAX; i++) {
         task_t *task = &g_task_pool[i];
-        if (!g_stack_used[i] || !task->is_user_process || task->state == TASK_DEAD)
+        if (!g_stack_used[i] || !task_is_live_user(task))
             continue;
         if (task->mm->pgd == current->mm->pgd)
             task->mm->heap_end = heap_end;

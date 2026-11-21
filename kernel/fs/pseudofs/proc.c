@@ -14,7 +14,8 @@ extern uint8_t g_stack_used[TASK_MAX];
 
 bool pfs_task_alive(uint32_t slot)
 {
-    return slot < TASK_MAX && g_stack_used[slot] && g_task_pool[slot].state != TASK_DEAD;
+    return slot < TASK_MAX && g_stack_used[slot] && g_task_pool[slot].state != TASK_DEAD &&
+           g_task_pool[slot].state != TASK_ALLOCATING;
 }
 
 uint32_t pfs_task_pid(uint32_t slot)

@@ -139,7 +139,7 @@ typedef struct task {
     /*
        ITIMER_REAL(alarm / setitimer) + nanosleep 到期时刻。
 
-       到期由 tick 驱动, 投 SIGALRM / 唤醒睡眠任务。见 task/itimer.c。
+       到期由 tick 驱动, 投 SIGALRM / 唤醒睡眠任务。见 time/itimer.c。
        expire_ns == 0 表示未装(与 interval 无关：一次性定时器触发后
        expire 归零, 但 interval 保留, 便于 getitimer 报告)。
 
@@ -215,6 +215,23 @@ _Static_assert(MM_EXE_PATH_LEN == TASK_EXE_LEN, "mm_struct.h 与 task.h 的 exe 
 static inline bool task_is_thread(const task_t *t)
 {
     return t && t->tgid != t->id;
+}
+
+/*
+   task_is_live_user - 扫描任务池时，能否安全读取该任务的用户态字段
+
+   不能只判断 state != TASK_DEAD：回收路径 task_reap_dead() 先在池锁内
+   把 state 改成 TASK_ALLOCATING，随后 slot_take_and_free() 在锁外
+   task_release_objects() 把 mm 置 NULL，而 g_stack_used[] 要到更后面
+   才清零。中间这窗口里"槽还在 + 不是 DEAD + mm 已为 NULL"同时成立，
+   于是 task->mm->pgd 会读到 NULL+8(mm_struct 里 pgd 的偏移正好是 8)。
+   创建失败回滚(free_task_slot)同样是先释放对象再清槽。
+
+   mm 非空是最后一道保险：任何扫描都别假设 is_user_process 为真就一定有 mm。
+*/
+static inline bool task_is_live_user(const task_t *t)
+{
+    return t && t->is_user_process && t->mm && t->state != TASK_DEAD && t->state != TASK_ALLOCATING;
 }
 
 /* 是否 RT 调度类（FIFO/RR）。 */

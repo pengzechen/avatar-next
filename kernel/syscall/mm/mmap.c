@@ -52,7 +52,7 @@ static uint64_t shared_mmap_next(task_t *current)
 
     for (uint32_t i = 0; i < TASK_MAX; i++) {
         task_t *task = &g_task_pool[i];
-        if (!g_stack_used[i] || !task->is_user_process || task->state == TASK_DEAD)
+        if (!g_stack_used[i] || !task_is_live_user(task))
             continue;
         if (task->mm->pgd == current->mm->pgd && task->mm->mmap_next > next)
             next = task->mm->mmap_next;
@@ -65,7 +65,7 @@ static void sync_shared_mmap_next(task_t *current, uint64_t next)
 {
     for (uint32_t i = 0; i < TASK_MAX; i++) {
         task_t *task = &g_task_pool[i];
-        if (!g_stack_used[i] || !task->is_user_process || task->state == TASK_DEAD)
+        if (!g_stack_used[i] || !task_is_live_user(task))
             continue;
         if (task->mm->pgd == current->mm->pgd && task->mm->mmap_next < next)
             task->mm->mmap_next = next;
@@ -89,7 +89,7 @@ static void sync_shared_mmap_next_to(task_t *current, uint64_t val)
 {
     for (uint32_t i = 0; i < TASK_MAX; i++) {
         task_t *task = &g_task_pool[i];
-        if (!g_stack_used[i] || !task->is_user_process || task->state == TASK_DEAD)
+        if (!g_stack_used[i] || !task_is_live_user(task))
             continue;
         if (task->mm->pgd == current->mm->pgd)
             task->mm->mmap_next = val;
