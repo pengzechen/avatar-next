@@ -8,7 +8,7 @@
 #define KERNEL_TASK_RT_EVENT_H
 
 /*
-   kernel/task/rt_event.h — RT 事件位（wait/set）
+   include/task/rt_event.h — RT 事件位（wait/set）
 
    与 Linux eventfd 无关：这是内核任务之间的事件位，不涉及用户态 fd。
    用途：

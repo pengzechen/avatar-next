@@ -12,10 +12,10 @@
 #include "syscall/fs/path.h"
 #include "syscall/fs/fd_pool.h"
 #include "syscall/syscall_internal.h"
-#include "kernel_stat.h"
+#include "fs/kernel_stat.h"
 #include "string.h"
 #include "mm/mm_vm.h" /* PAGE_SIZE / phys_to_virt / mm_vm_get_paddr */
-#include "vfs.h"
+#include "fs/vfs.h"
 #include <ext4.h>
 #include <ext4_errno.h>
 

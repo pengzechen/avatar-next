@@ -4,7 +4,7 @@
 > `rt_mutex`；普通文件系统/内核路径用修好的 `mutex`。** 目前还没有
 > 用户态 PI futex，也没有完整的多锁 PI 链。
 
-## 一、普通 mutex（`kernel/task/mutex.h`）
+## 一、普通 mutex（`include/task/mutex.h`）
 
 用途：普通内核路径，当前唯一使用者是 lwext4/FatFs 的全局串行化
 （`fs/lwext4_port/fs_lock.c`）。
@@ -27,7 +27,7 @@
 锁序：`mutex->lock → 目标核 rq_lock`（`task_unblock` 内部）。没有反向
 路径，和 `completion.c` 一致。
 
-## 二、rt_mutex（`kernel/task/rt_mutex.h`）
+## 二、rt_mutex（`include/task/rt_mutex.h`）
 
 ```c
 #include "task/rt_mutex.h"

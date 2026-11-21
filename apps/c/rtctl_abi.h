@@ -8,7 +8,7 @@
 #define AVATAR_RTCTL_ABI_H
 
 /*
-   /dev/rtctl 用户态 ABI（权威定义在 include/rt_worker.h）。
+   /dev/rtctl 用户态 ABI（权威定义在 include/rt/rt_worker.h）。
    结构体尺寸被编进 ioctl 号，改了这里必须同步内核那份。
 */
 

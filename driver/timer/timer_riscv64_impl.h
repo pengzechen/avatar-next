@@ -9,7 +9,7 @@
 
 #include "driver/time.h"
 #include "driver/irq.h"
-#include "sysreg.h"
+#include "riscv64/sysreg.h"
 #include "klog.h"
 #include "exception.h" /* trap_frame_t (handler 里读 sstatus) */
 

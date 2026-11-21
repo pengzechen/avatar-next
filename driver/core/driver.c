@@ -17,7 +17,7 @@
 
 #include "driver/driver.h"
 #include "klog.h"
-#include "platform_ops.h" /* platform_panic() */
+#include "platform/platform_ops.h" /* platform_panic() */
 
 extern const driver_t __start_drivers[];
 extern const driver_t __stop_drivers[];

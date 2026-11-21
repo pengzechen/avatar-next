@@ -5,7 +5,7 @@
 */
 
 #include "pseudofs_internal.h"
-#include "kernel_stat.h"
+#include "fs/kernel_stat.h"
 #include "task/task.h"
 #include "string.h"
 

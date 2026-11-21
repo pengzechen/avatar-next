@@ -12,7 +12,7 @@
    drivers do not care whether the source is a static table or a future DTB.
 */
 
-#include "platform_cfg.h"
+#include "platform/platform_cfg.h"
 #include "mm/mm_vm.h" /* KERNEL_VMA */
 #include "string.h"
 

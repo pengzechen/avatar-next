@@ -21,7 +21,7 @@ Claude 会自动读取这个文件来了解项目上下文。
 `make submodules` 这一步了（那个目标保留着只是为了不让旧脚本报错）。
 
 （历史：曾经 `lwext4` 是 submodule，而 `.gitmodules` 指向上游、父仓库钉的却是
-我们 fork 的 commit —— 全新 clone 必然失败，且报错指向 `include/vfs.h` 这个
+我们 fork 的 commit —— 全新 clone 必然失败，且报错指向 `include/fs/vfs.h` 这个
 **我们自己的**头文件，极具误导性。改成内嵌后这个失败面就没了。
 `lwext4` 为什么 fork、`lwIP` 为什么原样内嵌，见各自的 `README.md`。）
 
@@ -175,14 +175,14 @@ avatar/
   ④ 改 `FAT_MOUNT_POINT` 之后必须 `make clean`。
   回归：`make PLATFORM=qemu-virt-x86_64 ROOTFS_MBR=1 LOG=info test-fat`
 - **lwext4 集成**: `docs/LWEXT4.md` - ext2/3/4 的移植层、块设备接口和镜像制作。
-  改 `fs/lwext4_port/*` 或 `driver/blk/*` 前读；`include/vfs.h` 直接包含 `<ext4.h>`。
+  改 `fs/lwext4_port/*` 或 `driver/blk/*` 前读；`include/fs/vfs.h` 直接包含 `<ext4.h>`。
 
 ### 架构特定
 
 - **AArch64**: `docs/arch/aarch64/NEON_USAGE.md` - NEON 优化
 - **AArch64 FP/SIMD 上下文**: `docs/arch/aarch64/FP_SIMD_CONTEXT.md` -
   改 `trap_frame_t` 布局、`boot/aarch64/exception.S`、`kernel/task/aarch64/switch.S`
-  或 `kernel/task/switch.h` 里三处伪帧前必读（含向量表 128 字节槽位预算的坑）
+  或 `include/task/switch.h` 里三处伪帧前必读（含向量表 128 字节槽位预算的坑）
 - **x86_64 SYSCALL / per-CPU 栈**: `docs/bugfix/X86_64_SMP_SYSCALL_STACK_BUGFIX.md` -
   改 `cpu_t` 布局或 SYSCALL 入口前必读（含 `%gs:` 偏移的 static_assert 约束与构建陷阱）
 - **x86_64 时间基准 / TSC 标定**: `docs/bugfix/X86_64_TIMEBASE_TSC_CALIBRATION_FIX.md` -
@@ -216,13 +216,13 @@ avatar/
   （`setup/safe_state` 在控制面，`write/read` 在 RT 面且必须无分配/无睡眠）。
   x86_64 用 LAPIC TSC-deadline hrtimer，支持 1ms 周期；aarch64/riscv64
   暂回退到 100Hz tick（10ms 整数倍）。用户态工具 `/bin/rtctl`。
-  动 `kernel/rt/*`、`include/rt_worker.h`、`include/rtdev.h`、
+  动 `kernel/rt/*`、`include/rt/rt_worker.h`、`include/rt/rtdev.h`、
   `kernel/fs/pseudofs/rtctl_dev.c` 或 `apps/c/rtctl.c` 前必读。
-- **RT 事件**: `docs/realtime/RT_EVENTS.md` - `kernel/task/rt_event.h` 的
+- **RT 事件**: `docs/realtime/RT_EVENTS.md` - `include/task/rt_event.h` 的
   事件位等待队列（any/all/timeout/clear，set 可在 ISR 调用），以及
   `event` 模板的共享页 SPSC 事件环（容量 64、drop-newest、
   `RTW_IOC_POST`/`rtctl post`、`period_ns=0` 无限等待）。
-  动 `kernel/task/rt_event.c`、`include/rt_worker.h` 的 ring ABI、
+  动 `kernel/rt/rt_event.c`、`include/rt/rt_worker.h` 的 ring ABI、
   `kernel/rt/rt_worker.c` 的 event 分支或 `apps/c/rtctl_abi.h` 前必读。
   门禁：`make -C tests rt-test` 与 `/bin/rt-event-test`（apps suite）。
   用户态演示 `/bin/rt-demo`（event + 1ms 周期 + watchdog + /proc），
@@ -230,7 +230,7 @@ avatar/
 - **RT 锁**: `docs/realtime/RT_LOCKS.md` - 普通 `mutex` 的 SMP 正确性修正
   （内部自旋锁 + 无丢唤醒），以及 `rt_mutex` 的直接优先级继承
   （`pi_priority`、按优先级排队、tick 不抢占被提升的持有者）。
-  动 `kernel/task/mutex.c`、`kernel/task/rt_mutex.c`、
+  动 `kernel/task/mutex.c`、`kernel/rt/rt_mutex.c`、
   `sched_set_pi_boost()` 或 `task_t.pi_priority` 前必读；V1 没有完整
   PI 链/多锁传播，文件中列了已知限制。门禁：`make -C tests rt-test`
   （SMP=4 时验证 mutex 的真并发竞争）。
@@ -251,7 +251,7 @@ avatar/
 - **RISC-V guest Linux**: `docs/vmm/RISCV64_GUEST_LINUX.md` - H-extension 下跑
   guest Linux 的整个链路（G-stage / sret 进出 / vPLIC / 16550A / SBI / DTB 布局），
   以及 7 条**移植时真踩过**的坑。**动 `kernel/vmm/riscv64/*`、
-  `include/riscv64/hext.h`、`include/guest_loader.h` 之前必读** ——
+  `include/riscv64/hext.h`、`include/vmm/guest_loader.h` 之前必读** ——
   其中第 1 条（binutils 把 hypervisor CSR 符号名静默映射到 VS 级编号，
   编译全绿、运行期才炸）尤其反直觉。该文档 §7 还登记了一个**尚未定性的
   间歇性 guest 用户态 SIGSEGV**。
@@ -309,7 +309,7 @@ avatar/
 - **裸跑 guest 作基线对照**: `docs/vmm/GUEST_NATIVE_QEMU.md`
 - **RK3588 NPU 透传给 aarch64 guest**: `docs/vmm/AARCH64_GUEST_NPU.md` ——
   在 guest Linux 里跑 YOLOv8。**动 `kernel/vmm/vdev/npu/*`、
-  `include/vmm/vmm_vnpu.h`、`include/guest_loader.h` 的
+  `include/vmm/vmm_vnpu.h`、`include/vmm/guest_loader.h` 的
   `GUEST_LINUX_INITRD_*` / `GUEST_LINUX_NPU_DMA_*`、或
   `tools/make_npu_rootfs.sh` 之前必读**。三条反直觉约定：
   ① NPU 寄存器走 MMIO **转发**（不是 stage-2 直通），所以那段窗口在 stage-2 里

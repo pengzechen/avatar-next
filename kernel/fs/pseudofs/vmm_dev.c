@@ -33,9 +33,9 @@
 
    后三个号(LIST/ATTACH/STOP_VM)是"按 vmid 寻址"那一组：在此之前要停某个
    VM 必须先接入它, 而接入路径又只挑最小 vmid —— vm1/vm2 同时跑时你
-   根本碰不到 vm2。详见 include/pseudofs.h 里那三个号上面的说明。
+   根本碰不到 vm2。详见 include/fs/pseudofs.h 里那三个号上面的说明。
 
-   控制全部走 ioctl, write 永远只是数据 —— 原因见 include/pseudofs.h 里
+   控制全部走 ioctl, write 永远只是数据 —— 原因见 include/fs/pseudofs.h 里
    VMM_IOC_* 上面的那段说明(「首次写是命令」在接入场景下有二义性, 实测
    会把 "bootlinux" 当成输入喂给 guest)。这也是与 kvmm 唯一的有意偏离：
    kvmm 只有 chardev 没有 ioctl, 只能用「首次写是命令」。
@@ -51,7 +51,7 @@
    进入 guest 前(电平触发, 见 vmm_console_irq_asserted 的注释)。
 */
 
-#include "pseudofs.h" /* VMM_IOC_* */
+#include "fs/pseudofs.h" /* VMM_IOC_* */
 #include "pseudofs_internal.h"
 #include "klog.h"
 #include "string.h"
@@ -63,7 +63,7 @@
 #include "vmm/vmm_console.h"
 
 #if VMM_GUEST_LINUX_SUPPORTED
-#include "guest_loader.h"
+#include "vmm/guest_loader.h"
 #endif
 
 /*

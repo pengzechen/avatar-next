@@ -39,7 +39,7 @@
 #include "task/sched.h"
 #include "driver/time.h"
 #include "exception.h"
-#include "hrtimer.h"
+#include "time/hrtimer.h"
 #include "klog.h"
 
 #define CYCLI_CYCLES 2000u

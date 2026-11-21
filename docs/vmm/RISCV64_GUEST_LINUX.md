@@ -55,7 +55,7 @@ kylin-x login:
 VMM 主循环（`vmm_console.c` 的 `vmm_console_pump`）只调这一组转发函数，不再写
 `#if ARCH_AARCH64`。加架构时改这一处即可。
 
-guest 内存布局在 `include/guest_loader.h`（按架构挑选），DTB 修补逻辑
+guest 内存布局在 `include/vmm/guest_loader.h`（按架构挑选），DTB 修补逻辑
 （`patch_dtb_memory` / `_initrd` / `_bootargs` / `nop_dtb_nodes`）两个架构共用。
 
 ## 3. guest 内存布局（RISC-V）

@@ -83,7 +83,7 @@ driver/drivers.mk       # 汇总各 class 的 drivers.mk
 kernel/main.c           # 初始化梯子 → drivers_init(phase)
 kernel/task/cpu.c       # 阶段 3：PLATFORM_* → platform.conf
 kernel/mm/aarch64/vm_early.c
-include/guest_loader.h
+include/vmm/guest_loader.h
 driver/uart/*.c         # 加 DRIVER_ENTRY + probe/start
 driver/irq/*.c
 driver/timer/timer.c
@@ -778,7 +778,7 @@ DRIVER_EXTRA_FLAGS_driver_dma_dma_buf.c  := -Idriver/dma -Ikernel/mm
 | `kernel/task/cpu.c:363` | `#if PLATFORM_RK3588` MPIDR 移位 | `platform.conf smp.mpidr_shift` |
 | `kernel/task/cpu.c:472` | `#if PLATFORM_SG2002` 关 SMP | `platform.conf smp.bringup` |
 | `kernel/mm/aarch64/vm_early.c:103/154/170` | `#ifdef PLATFORM_RK3588` 1GB 块布局 | `platform.conf mmu.blocks[]` 循环填表 |
-| `include/guest_loader.h:117` | `#if PLATFORM_RK3588` NPU DMA 窗口 | 生成的 `platform_guest.h`（值来自 `memory.reserves` 的 `npu-guest-dma`） |
+| `include/vmm/guest_loader.h:117` | `#if PLATFORM_RK3588` NPU DMA 窗口 | 生成的 `platform_guest.h`（值来自 `memory.reserves` 的 `npu-guest-dma`） |
 | `driver/uart/uart_dw.c:28/337` | `ARCH_RISCV64 && PLATFORM_SG2002` 调试口 | 设备 cfg 的 earlycon hook / 平台 board hook |
 
 允许保留 `PLATFORM_*` 的位置：`platforms/`、`include/<arch>/`（例如 `include/riscv64/pte.h` 的 SG2002 硬件怪癖）。规则：**通用 `kernel/`、`driver/`、`fs/` 里不允许出现 `PLATFORM_*`。**
@@ -996,7 +996,7 @@ DRIVER_EXTRA_FLAGS_driver_dma_dma_buf.c  := -Idriver/dma -Ikernel/mm
 
 - 每类服务一个 `*_ops_t` + `g_*_ops` + `*_bind()`：
   - ION：`include/driver/ion.h` + `driver/ion/ion_core.c`；
-  - dma-buf：`include/dma_buf.h` + `driver/dma/dma_core.c`；
+  - dma-buf：`include/driver/dma_buf.h` + `driver/dma/dma_core.c`；
   - TPU：`include/driver/tpu.h` + `driver/tpu/tpu_core.c`；
   - NPU：`include/driver/npu.h` + `driver/npu/npu_core.c`。
 - 公共头里的 `ion_alloc()` 等是同名 `static inline` 包装：`g_*_ops == NULL`

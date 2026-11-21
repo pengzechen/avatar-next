@@ -8,7 +8,7 @@
 #define __GICV3_H__
 
 #include "types.h"
-#include "platform_cfg.h"
+#include "platform/platform_cfg.h"
 
 /* ============================================================
    GICv3 宿主驱动(EL2 / VHE)

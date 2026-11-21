@@ -12,7 +12,7 @@
 */
 
 #include "driver/driver.h"
-#include "platform_cfg.h"
+#include "platform/platform_cfg.h"
 #include "mm/mm_vm.h" /* KERNEL_VMA */
 
 const device_t *driver_device(drv_class_t cls)

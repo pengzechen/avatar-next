@@ -191,7 +191,7 @@ static inline uint64_t npu_dev_addr(npu_buf_t *b);
 >
 > riscv64 / x86_64 只做到"能编译"，未跑过用例（与 §9 未决问题 3 相关）。
 
-* `include/dma_buf.h` + `driver/dma/dma_buf.c`
+* `include/driver/dma_buf.h` + `driver/dma/dma_buf.c`
   - `struct dma_buf { size, pa/kva, file, refcount, ops }`
   - fd 化：复用现有 fd 池机制，**把 `FDT_ION` 泛化成 `FDT_DMABUF`**
   - 实现 `DMA_BUF_IOCTL_SYNC`（`0x40086200`）→ 直接调 `clean_and_invalidate_dcache_range`
@@ -256,7 +256,7 @@ static inline uint64_t npu_dev_addr(npu_buf_t *b);
 
 ### P2/P3/P4 实现记录
 
-代码：`include/rknpu_drm.h`（ABI，每个号都钉了 `_Static_assert`）、
+代码：`include/npu/rknpu_drm.h`（ABI，每个号都钉了 `_Static_assert`）、
 `driver/npu/rknpu_drm.c`（GEM + ioctl）、`driver/npu/rknpu.c`（作业引擎）、
 验收程序 `apps/c/drmtest.c` + `tools/drmtest_p2p4.sh`。
 

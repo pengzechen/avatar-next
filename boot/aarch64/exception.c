@@ -10,7 +10,7 @@
 #include "syscall/trace.h"
 #include "debug/backtrace.h"
 #include "klog.h"
-#include "platform_ops.h"
+#include "platform/platform_ops.h"
 #include "types.h"
 #include "task/task.h"
 #include "task/cpu.h"

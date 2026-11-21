@@ -5,7 +5,7 @@
 */
 
 /*
-   kernel/task/rt_event.c — RT 事件位等待/置位
+   kernel/rt/rt_event.c — RT 事件位等待/置位
 
    等待队列与 bits 在同一把自旋锁下修改：检查条件、入队、置 BLOCKED
    与 set 方的置位、出队、唤醒不会互相落在对方的缝隙里。

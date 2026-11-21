@@ -21,7 +21,7 @@
 #include "riscv64/hext.h" /* READ_HSTATUS：必须走数值 CSR, 见该文件顶部的警告 */
 #include "syscall/syscall.h"
 #include "syscall/syscall_internal.h"
-#include "platform_ops.h"
+#include "platform/platform_ops.h"
 #include "task/cpu.h"
 #include "task/task.h"
 

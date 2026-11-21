@@ -8,7 +8,7 @@
 #define KERNEL_TASK_ITIMER_H
 
 /*
-   kernel/task/itimer.h — 每任务 ITIMER_REAL(alarm / setitimer)
+   include/task/itimer.h — 每任务 ITIMER_REAL(alarm / setitimer)
 
    为什么需要：LTP 的每个测例都用 alarm() 给自己装看门狗, 靠 SIGALRM 打断
    阻塞中的 read/poll 来从卡死里脱身。没有它, 任何卡住的测例都会把整个

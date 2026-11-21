@@ -20,7 +20,7 @@
 #include "assert.h"
 #include "barrier.h"
 #include "klog.h"
-#include "fs_lock.h"
+#include "fs/fs_lock.h"
 #include "string.h"
 #include "task/cpu.h"
 #include "task/preempt.h"

@@ -217,7 +217,7 @@ typedef struct vcpu {
 
        非 BSP 的 vCPU 任务创建后先 completion_wait(&start) 睡下, 等 guest
        通过 PSCI CPU_ON 把入口状态填好再放行。不能用「查标志 + task_block
-       裸写」：那有 lost-wakeup 窗口(见 kernel/task/completion.h)。
+       裸写」：那有 lost-wakeup 窗口(见 include/task/completion.h)。
 
        放在结构体末尾：前面 asm 直接寻址的固定偏移不受影响。
     */
@@ -374,7 +374,7 @@ typedef struct vcpu {
 
        非 BSP 的 vCPU 任务创建后先 completion_wait(&start) 睡下, 等 guest
        通过 PSCI CPU_ON 把入口状态填好再放行。不能用「查标志 + task_block
-       裸写」：那有 lost-wakeup 窗口(见 kernel/task/completion.h)。
+       裸写」：那有 lost-wakeup 窗口(见 include/task/completion.h)。
 
        放在结构体末尾：前面 asm 直接寻址的固定偏移不受影响。
     */
@@ -549,7 +549,7 @@ typedef struct vcpu {
 
        非 BSP 的 vCPU 任务创建后先 completion_wait(&start) 睡下, 等 guest
        通过 PSCI CPU_ON 把入口状态填好再放行。不能用「查标志 + task_block
-       裸写」：那有 lost-wakeup 窗口(见 kernel/task/completion.h)。
+       裸写」：那有 lost-wakeup 窗口(见 include/task/completion.h)。
 
        放在结构体末尾：前面 asm 直接寻址的固定偏移不受影响。
     */

@@ -5,7 +5,7 @@
 */
 
 /*
-   include/dma_buf.h — dma-buf / dma-heap
+   include/driver/dma_buf.h — dma-buf / dma-heap
 
    背景：官方 `librknnrt.so` 的每个缓冲区都走这条路 ——
 

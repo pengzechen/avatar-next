@@ -8,7 +8,7 @@
 #define VFS_H
 
 /*
-   include/vfs.h - small kernel VFS layer
+   include/fs/vfs.h - small kernel VFS layer
 
    First-stage VFS abstraction: fd objects point at struct vfs_file, and
    operations dispatch through file_ops. Path routing uses a small mount table:
@@ -17,7 +17,7 @@
 */
 
 #include "types.h"
-#include "kernel_stat.h"
+#include "fs/kernel_stat.h"
 #include <ext4.h>
 
 typedef enum {

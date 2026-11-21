@@ -8,7 +8,7 @@
 #define __STRING_INTERNAL_H
 
 /*
-   include/string_internal.h — 字符串/内存函数的实现层
+   include/libc/string_internal.h — 字符串/内存函数的实现层
 
    为什么实现要和 string.h 分家：
 

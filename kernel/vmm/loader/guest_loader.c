@@ -13,9 +13,9 @@
      - DTB 修补逻辑(initrd / memory)按 FDT 规范逐 token 走查
 */
 
-#include "guest_loader.h"
+#include "vmm/guest_loader.h"
 #include "klog.h"
-#include "vfs.h" /* vfs_open / vfs_stat_file：initrd 加载前的大小检查 */
+#include "fs/vfs.h" /* vfs_open / vfs_stat_file：initrd 加载前的大小检查 */
 #include "string.h"
 #include "task/task.h"
 #include "task/cpu.h" /* g_num_cpus：RISC-V 超分启动参数的选择 */

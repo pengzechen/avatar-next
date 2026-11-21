@@ -6,7 +6,7 @@
 
 ## 启用 NEON 工具函数
 
-在 [include/aarch64/cpu.h](../../../include/aarch64/cpu.h) 中提供了 NEON 控制接口。
+在 [include/aarch64/neon.h](../../../include/aarch64/neon.h) 中提供了 NEON 控制接口。
 
 ### API 说明
 

@@ -31,7 +31,7 @@
  *   [144] d14   [152] d15
  *   [160] fpcr  [168] fpsr
  *
- * ⚠️ 帧大小 176（22 个字）与布局被 kernel/task/switch.h 里三处构造伪帧的
+ * ⚠️ 帧大小 176（22 个字）与布局被 include/task/switch.h 里三处构造伪帧的
  * 代码硬编码引用：arch_init_task_stack / arch_init_user_stack /
  * arch_init_fork_child_stack。改这里必须同时改那三处，否则首次调度该任务
  * 时 SP 会落到内核栈顶之外。

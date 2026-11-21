@@ -14,10 +14,10 @@
    拆出来还顺带解开一个跨 TU 循环依赖：guest_loader.c 就地 extern 并调用
    x86_guest_boot(), 而 guest_boot.c 反过来依赖本文件的 guest_loader_write_guest()。
 
-   原型都在 include/guest_loader.h(公共头)。
+   原型都在 include/vmm/guest_loader.h(公共头)。
 */
 
-#include "guest_loader.h"
+#include "vmm/guest_loader.h"
 #include "klog.h"
 #include "mm/mm_vm.h" /* phys_to_virt */
 #include "string.h"

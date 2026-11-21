@@ -89,9 +89,9 @@ AArch64 额外支持 **多核启动**：`_secondary_start` 由 PSCI CPU_ON 进�
 - `__bss_start` / `__bss_end`（BSS 清零范围）
 - 物理地址别名符号（`*_phys`，供 MMU 开启前使用）
 
-### 6. 平台抽象（include/platform_ops.h）
+### 6. 平台抽象（include/platform/platform_ops.h）
 
-`include/platform_ops.h` 声明平台接口，实现在 `platforms/common/platform_ops.c`
+`include/platform/platform_ops.h` 声明平台接口，实现在 `platforms/common/platform_ops.c`
 （所有平台共用）；`platforms/<platform>/platform.c` 只放该板的差异。
 
 - `platform_conf_init()` — 载入平台配置（纯数据，不碰硬件）
@@ -117,7 +117,7 @@ AArch64 额外支持 **多核启动**：`_secondary_start` 由 PSCI CPU_ON 进�
 | `task/cpu.h` | `cpu_t`、`cpu_current()` |
 | `syscall/syscall.h` | `syscall_handler()` |
 | `mm_vm.h` | `mm_vm_get_paddr()` |
-| `include/platform_ops.h` | `platform_panic()`、`platform_shutdown()` |
+| `include/platform/platform_ops.h` | `platform_panic()`、`platform_shutdown()` |
 
 ## 调用的外部函数
 

@@ -55,7 +55,7 @@
 
   2. arch_irq_save/restore 只管硬件 SIE，没有 preempt nesting
 
-  kernel/task/switch.h:134 的 RISC-V arch_irq_save() 只是清 sstatus.SIE，没有记录“当前不允许抢占”的嵌套深度。这样调度器无法判断：
+  include/task/switch.h:134 的 RISC-V arch_irq_save() 只是清 sstatus.SIE，没有记录“当前不允许抢占”的嵌套深度。这样调度器无法判断：
 
   - 当前是否在中断上下文。
   - 当前是否在 irqsave 临界区。
@@ -205,7 +205,7 @@
 
   1. 在 cpu_t 中增加状态
 
-  建议在 kernel/task/cpu.h 的 cpu_t 增加：
+  建议在 include/task/cpu.h 的 cpu_t 增加：
 
   uint32_t irq_depth;
   uint32_t preempt_count;

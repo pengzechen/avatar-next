@@ -8,7 +8,7 @@
 #define KERNEL_TASK_MUTEX_H
 
 /*
-   kernel/task/mutex.h — 睡眠锁(Mutex)
+   include/task/mutex.h — 睡眠锁(Mutex)
 
    实现：
     - 基于任务阻塞的睡眠锁

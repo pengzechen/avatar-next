@@ -40,7 +40,7 @@
 #ifndef RISCV64_GSTAGE_H
 #define RISCV64_GSTAGE_H
 
-#include "guest_loader.h" /* GUEST_LINUX_MEM_BASE/SIZE */
+#include "vmm/guest_loader.h" /* GUEST_LINUX_MEM_BASE/SIZE */
 #include "pte.h"
 #include "spinlock.h"
 #include "types.h"

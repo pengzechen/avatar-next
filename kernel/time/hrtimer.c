@@ -14,7 +14,7 @@
    时间基准用 timer_get_ns()（x86 = TSC 换算）。
 */
 
-#include "hrtimer.h"
+#include "time/hrtimer.h"
 #include "arch.h"
 #include "driver/time.h"
 #include "exception.h" /* arch_irq_save/restore */

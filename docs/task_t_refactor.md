@@ -1,7 +1,7 @@
 # task_t 结构重构方案
 
 **状态**：P0~P3 已完成（2026-11-10）；P4/P5 待做
-**对象**：`kernel/task/task.h` 的 `task_t`（任务控制块）
+**对象**：`include/task/task.h` 的 `task_t`（任务控制块）
 
 **结果**：`sizeof(task_t)` **3624 → 1600（P1）→ 768 B（P3）**。
 fd 表/cwd/pgd 等进程级状态移到独立的 `files_struct` / `fs_struct` /
@@ -151,7 +151,7 @@ struct signal_struct {           /* 引用计数，CLONE_THREAD 共享 */
 
 **实施结果**：`sizeof(task_t) = 1600`（25 条 cacheline，3624 → 1600，-56%）。
 信号常量/`sig_action_t`/`signal_struct_t` 及处置 API 放在公共头
-`include/signal.h`；`sig_action_t[64]` 的静态池实现在
+`include/libc/signal.h`；`sig_action_t[64]` 的静态池实现在
 `kernel/syscall/core/signal_struct.c`（与 `signal.c` 放在一起，不再放在
 task 目录）；
 `sig == NULL` 表示全 SIG_DFL，`rt_sigaction` 首次写入或创建线程组时才分配。
@@ -179,7 +179,7 @@ struct fs_struct {
   动态/可增长的 fd 池，留作后续项。
 - `exe_path` 随 P3 放到 mm。
 
-**实施结果**：`include/process_fs.h` 定义两个对象；
+**实施结果**：`include/fs/process_fs.h` 定义两个对象；
 `kernel/syscall/fs/process_fs.c` 实现静态池 + 引用计数（池大小
 `TASK_MAX + AVATAR_MAX_CPUS`，idle 任务也有一份）。TCB 从 1600 → 约
 1000 B。当前 clone 仍按旧行为复制（fork/线程各一份），为后续共享留好模型。

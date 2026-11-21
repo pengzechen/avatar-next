@@ -8,7 +8,7 @@
 #define KERNEL_TASK_COMPLETION_H
 
 /*
-   kernel/task/completion.h — 一次性的「等待某个事件」原语
+   include/task/completion.h — 一次性的「等待某个事件」原语
 
    与 mutex 的区别：mutex 是「持有者释放后继续」, completion 是「事件发生
    后所有等待者继续」。它的第一个用户是多 vCPU 的 AP 启动闸门：

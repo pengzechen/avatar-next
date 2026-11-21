@@ -77,7 +77,7 @@ spin_unlock_irqrestore(&lock, flags);
    又回头调用了你手里的锁（UART 驱动的"TX 满"分支曾经 `logger_warn` → klog 重入
    同一把锁）就是同核自死锁。PMM 与 ion 的日志都已挪到解锁之后。
 4. **不要在持锁期间让出 CPU**（`sched_schedule()`、睡眠、等设备）。需要睡眠的用
-   `mutex_t`（`kernel/task/mutex.h`，另一套词汇，语义是睡眠锁）。
+   `mutex_t`（`include/task/mutex.h`，另一套词汇，语义是睡眠锁）。
 5. **锁顺序要一致**。目前没有发现嵌套持有多把锁的地方（`tty.c` 两把锁是先后取、
    不重叠），新增嵌套时请保持全局一致的顺序，并在注释里写明。
 6. **"关中断 + 加锁"用 `spin_lock_irqsave`**，不要手写成 `arch_irq_save()` +

@@ -16,7 +16,7 @@
 #include "task/task.h"
 #include "klog.h"
 #include "string.h"
-#include "vfs.h"
+#include "fs/vfs.h"
 
 /* Linux sockaddr_in layout */
 struct kernel_sockaddr_in {

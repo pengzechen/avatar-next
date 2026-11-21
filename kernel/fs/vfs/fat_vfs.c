@@ -9,7 +9,7 @@
 
    设计要点：
      - 绝对路径 /boot/foo 先转成 FatFs 的卷内路径 /foo（fat_relpath）。
-     - include/vfs.h 不引入 ff.h；FIL/DIR 放在 kmalloc 出来的 fat_handle_t 里，
+     - include/fs/vfs.h 不引入 ff.h；FIL/DIR 放在 kmalloc 出来的 fat_handle_t 里，
        vfs_file_t 只存一个 void *。
      - 所有 FatFs 调用都在 fs_global_lock() 内；和 lwext4 共用同一把锁。
      - file->offset 是权威的逻辑偏移。FatFs 的 f_lseek 在越过 EOF 时会扩展
@@ -19,7 +19,7 @@
 #include "vfs_internal.h"
 #include "mm/kmalloc.h"
 #include "string.h"
-#include "fs_lock.h"
+#include "fs/fs_lock.h"
 
 #include <ff.h>
 

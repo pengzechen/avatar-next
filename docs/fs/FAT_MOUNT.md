@@ -148,8 +148,8 @@ cat /boot/test.txt
 | `fs/fatfs_port/ffconf.h` | FatFs R0.15 配置（`FFCONF_DEF=80286`） |
 | `kernel/fs/vfs/fat_vfs.c` | 路径翻译、open/read/write/seek/truncate/getdents/stat/命名空间操作 |
 | `kernel/fs/vfs/vfs.c` | 动态 mount 表、命名空间分发、pread/pwrite/sync 分发 |
-| `include/vfs.h` + `kernel/fs/vfs/vfs_internal.h` | FAT 文件类型/不透明 handle、内部常量 |
-| `include/fs_lock.h` + `fs/lwext4_port/fs_lock.c` | lwext4 与 FatFs 共用的全局可重入锁 |
+| `include/fs/vfs.h` + `kernel/fs/vfs/vfs_internal.h` | FAT 文件类型/不透明 handle、内部常量 |
+| `include/fs/fs_lock.h` + `fs/lwext4_port/fs_lock.c` | lwext4 与 FatFs 共用的全局可重入锁 |
 | `third_party/fatfs/` | FatFs R0.15 上游源码（唯一 vendor patch 是 `ffconf.h` wrapper） |
 
 ### 锁与块设备共享

@@ -96,7 +96,7 @@ sched_dequeue() / sched_schedule()
 不再引用后释放”；本内核规模小，用一次同步等待实现同样的顺序。
 
 `switch_done` 的置位点在三个 `switch.S` 里，改上下文切换/伪帧布局时必须
-一起看 `kernel/task/task.h` 和 `kernel/task/switch.h` 的注释。
+一起看 `include/task/task.h` 和 `include/task/switch.h` 的注释。
 
 ## 四、验证
 

@@ -69,7 +69,7 @@ ioctl(fd, VMM_IOC_STOP)       停止前台 guest（Ctrl+T k）
 close(fd)                     默认停止 guest；DETACH 过则不停止
 ```
 
-ioctl 号定义在 `include/pseudofs.h`（内核侧）与 `apps/c/vmm_run.c`（用户侧，
+ioctl 号定义在 `include/fs/pseudofs.h`（内核侧）与 `apps/c/vmm_run.c`（用户侧，
 用 musl 的 `<sys/ioctl.h>` 宏独立写了一遍；两边都是标准 `_IOC` 编码）。
 
 guest 镜像路径是写死的 `/guests/linux/{linux.bin,linux.dtb,initrd.gz}`，

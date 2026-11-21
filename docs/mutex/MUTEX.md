@@ -14,7 +14,7 @@
 | **适用场景** | 短时间锁定、多核 | 长时间锁定、单核 |
 | **开销** | 高 CPU 占用 | 上下文切换开销 |
 | **中断安全** | 必须关中断 | 不能在中断处理中使用 |
-| **实现** | `include/spinlock.h` | `kernel/task/mutex.h` |
+| **实现** | `include/spinlock.h` | `include/task/mutex.h` |
 
 ### 2. FIFO 等待队列
 

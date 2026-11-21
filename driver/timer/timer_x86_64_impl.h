@@ -20,7 +20,7 @@
 
 #include "driver/time.h"
 #include "driver/irq.h"
-#include "hrtimer.h" /* hrtimer_cpu_init / hrtimer_isr / oneshot 钩子 */
+#include "time/hrtimer.h" /* hrtimer_cpu_init / hrtimer_isr / oneshot 钩子 */
 #include "klog.h"
 #include "exception.h" /* IDT_LAPIC_TIMER_VEC */
 #include "irq/lapic.h" /* lapic_timer_init / lapic_timer_stop */

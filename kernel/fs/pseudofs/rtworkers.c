@@ -15,7 +15,7 @@
 */
 
 #include "pseudofs_internal.h"
-#include "rt_worker.h"
+#include "rt/rt_worker.h"
 
 #define W_ID       2
 #define W_NAME     16

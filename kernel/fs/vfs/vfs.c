@@ -8,9 +8,9 @@
    kernel/fs/vfs/vfs.c - small VFS dispatch layer
 */
 
-#include "vfs.h"
+#include "fs/vfs.h"
 #include "vfs_internal.h"
-#include "pseudofs.h"
+#include "fs/pseudofs.h"
 #include "syscall/fs/path.h"
 #include "syscall/fs/pipe.h"
 #include "syscall/fs/pty.h"
@@ -21,7 +21,7 @@
 #include <ext4.h> /* ext4_readlink(ext4_errno.h 由它带入) */
 #include <ext4_errno.h>
 /* 跨多次 FS 调用的临界区(目录迭代)；单次 lwext4 调用那层由 --wrap 自动加 */
-#include "fs_lock.h"
+#include "fs/fs_lock.h"
 
 #define VFS_MAX_MOUNTS 8
 

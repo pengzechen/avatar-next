@@ -8,7 +8,7 @@
 #define KERNEL_TASK_CPU_H
 
 /*
-   kernel/task/cpu.h — Per-CPU 控制块(SMP 抽象层)
+   include/task/cpu.h — Per-CPU 控制块(SMP 抽象层)
 
    Phase 0：仅提供数据结构 + BSP 初始化骨架, 行为等价于单核。
      - g_num_cpus 始终为 1, cpu_bring_up_all() 为 stub

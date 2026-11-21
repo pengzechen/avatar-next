@@ -5,7 +5,7 @@
 */
 
 /*
-   include/fs_lock.h - 全局文件系统串行化锁
+   include/fs/fs_lock.h - 全局文件系统串行化锁
 
    lwext4 的全局缓冲缓存没有内部同步；FatFs 也不是线程安全的，而且两套文件系统
    共用同一个块设备接口（bdif）。所以任何 lwext4 / FatFs API 调用都要被同一把

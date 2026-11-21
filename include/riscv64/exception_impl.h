@@ -9,7 +9,7 @@
 
 #include "types.h"
 #ifdef RT_IRQ_TRACE
-#include "rt_latency.h"
+#include "rt/rt_latency.h"
 #endif
 
 /*

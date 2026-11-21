@@ -5,7 +5,7 @@
 */
 
 /*
-   include/kernel_stat.h — Linux ABI struct stat + dirent64 定义
+   include/fs/kernel_stat.h — Linux ABI struct stat + dirent64 定义
 
    从 kernel/syscall/syscall.c 提取, 供 syscall.c 和 pseudofs.c 共用。
    必须与 Linux 内核 ABI 完全匹配(用户态直接读取)。

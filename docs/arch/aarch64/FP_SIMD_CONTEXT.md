@@ -6,7 +6,7 @@
 **触发条件**: 内核代码或用户态执行任何 FP/SIMD 指令
 
 > **改 `trap_frame_t` 布局、`boot/aarch64/exception.S`、`kernel/task/aarch64/switch.S`
-> 或 `kernel/task/switch.h` 里三处伪帧构造之前，先读完本文。**
+> 或 `include/task/switch.h` 里三处伪帧构造之前，先读完本文。**
 
 ---
 
@@ -138,7 +138,7 @@ x19@0 / x30@88 的偏移刻意保持不变，这样 `switch.h` 的 `sp[0]=&child
 的 v0-v7/v16-v31 在调用点本来就是死的。分工是：
 **陷阱帧负责用户/guest 的完整 q0-q31，切换帧只负责内核 C 代码跨切换不丢值。**
 
-### 4. 三处伪帧构造 —— `kernel/task/switch.h`
+### 4. 三处伪帧构造 —— `include/task/switch.h`
 
 `arch_init_task_stack` / `arch_init_user_stack` / `arch_init_fork_child_stack`
 都要从 `sp -= 12` 改成 `sp -= 22`，并把新增的 10 个字（d8-d15/fpcr/fpsr）清零。

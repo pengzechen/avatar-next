@@ -50,7 +50,7 @@
 #include "klog.h"
 #include "task/cpu.h"
 #include "task/mutex.h"
-#include "fs_lock.h"
+#include "fs/fs_lock.h"
 
 #include <ext4.h>
 #include <ext4_mbr.h>
@@ -128,7 +128,7 @@ static inline void fs_unlock(void)
 
    FatFs 也有同样的需求（f_stat+f_open、f_lseek+f_truncate、整个 f_readdir
    循环），而且它和 lwext4 共用同一个块设备接口。所以这对函数已经不再只属于
-   lwext4，统一叫 fs_global_lock/fs_global_unlock（见 include/fs_lock.h）。
+   lwext4，统一叫 fs_global_lock/fs_global_unlock（见 include/fs/fs_lock.h）。
 
    这类地方要把整个序列圈进一个临界区。锁是可重入的, 所以外面加一层
    粗锁, 里面每次调用那层细锁照常嵌套, 不会死锁。

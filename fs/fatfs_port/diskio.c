@@ -10,13 +10,13 @@
    FatFs 和 lwext4 共用同一个 struct ext4_blockdev（MBR 分区只是不同的
    part_offset/part_size，bdif 是同一个）。FAT 这边只做 512 字节对齐的整扇区
    I/O，直接走 bdif->bread/bwrite，不会碰 lwext4 的 ph_bbuf；两个文件系统的
-   所有 API 调用由 include/fs_lock.h 的全局锁串行化。
+   所有 API 调用由 include/fs/fs_lock.h 的全局锁串行化。
 
    编译要求：FATFS_CFLAGS（包含 lwext4 头 + FatFs 头 + fs/fatfs_port）。
 */
 #include "types.h"
 #include "klog.h"
-#include "fs_lock.h"
+#include "fs/fs_lock.h"
 #include "fatfs_port.h"
 
 #include <ext4_blockdev.h>

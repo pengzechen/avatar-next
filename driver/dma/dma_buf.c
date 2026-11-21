@@ -13,7 +13,7 @@
    本文件不接触用户指针 —— ABI 层在 kernel/fs/pseudofs/dev.c,
    那边负责 copy_from/to_user_bytes。这样 driver/ 不需要依赖 syscall 层。
 */
-#include "dma_buf.h"
+#include "driver/dma_buf.h"
 
 #include "dma_heap.h" /* 同目录 */
 #include "cache.h"

@@ -194,6 +194,6 @@ python3 tools/plot_cyclictest.py ... --dark \
 - `tests/unit-test/cyclictest.c` —— 测试本体；
 - `tests/unit-test/rt_sched_test.c` —— 在 `RT_TEST=1` 的末尾调用；
 - `tests/suites/rt_test.py` —— 解析、打印、按架构判阈值；
-- `include/hrtimer.h` / `kernel/time/hrtimer.c` —— oneshot/回退睡眠；
+- `include/time/hrtimer.h` / `kernel/time/hrtimer.c` —— oneshot/回退睡眠；
 - `docs/realtime/RT_DEMO_RESULTS.md`、`R0_BASELINE.md` —— 相关调度/IRQ
   延迟基线。

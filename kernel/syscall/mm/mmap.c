@@ -21,9 +21,9 @@
 #include "mm/vm_user.h"
 #include "mm/user_layout.h"
 #include "mm/shared_page.h"
-#include "vfs.h"
+#include "fs/vfs.h"
 #include "driver/npu.h"
-#include "rt_worker.h" /* /dev/rtctl 共享页：mmap offset = worker_id << PAGE_SHIFT */
+#include "rt/rt_worker.h" /* /dev/rtctl 共享页：mmap offset = worker_id << PAGE_SHIFT */
 
 extern task_t g_task_pool[];
 extern uint8_t g_stack_used[];

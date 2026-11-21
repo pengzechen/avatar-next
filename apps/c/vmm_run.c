@@ -113,7 +113,7 @@
 #define BOOT_RETRIES 2000
 
 /*
-   /dev/vmm 的 ioctl 号 —— 必须与内核侧 include/pseudofs.h 里的一致。
+   /dev/vmm 的 ioctl 号 —— 必须与内核侧 include/fs/pseudofs.h 里的一致。
    这里不能包含那个头(内核头文件, 会拖进 types.h / kernel_stat.h), 所以
    独立定义了一遍；两边的 _IOC 编码都是标准 Linux 布局, 只要 type/nr/方向
    相同就对得上。改一边必须改另一边。
@@ -126,7 +126,7 @@
 #define VMM_IOC_BOOT_EX _IOWR('V', 4, uint32_t)
 
 /*
-   下面三个是「按 vmid 寻址」那一组, 必须与 include/pseudofs.h 里那份
+   下面三个是「按 vmid 寻址」那一组, 必须与 include/fs/pseudofs.h 里那份
    逐字节一致(含字段顺序和 info[] 容量)。内核侧有 _Static_assert
    钉着尺寸, 改了那边这里会因为 ioctl 号变了而在运行期失败 —— 反过来说
    改了这里那边什么都不会报, 只会在运行期变成下面 ENOTTY 那条排障提示。
@@ -150,7 +150,7 @@ struct vmm_list_req {
 #define VMM_IOC_STOP_VM _IOW('V', 7, uint32_t) /* 入参 vmid：停指定 VM */
 
 /*
-   带参数的启动(运行期指定 vCPU 数)—— 必须与 include/pseudofs.h 里那份
+   带参数的启动(运行期指定 vCPU 数)—— 必须与 include/fs/pseudofs.h 里那份
    逐字节一致。nr_vcpus == 0 表示用构建默认值；VMM_BOOT_F_NEW 等价 -n。
    出参回填实际 vmid / 实际核数。
 */

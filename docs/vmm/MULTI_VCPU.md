@@ -152,7 +152,7 @@ vmm_vcpu_kick(vcpu)
 - 已切出 → 直接入队，并在远端核上发 resched IPI。
 
 这修掉了旧 `task_block()` 的 lost-wakeup / 「同一任务既在跑又在队列」
-窗口。**新的等待逻辑请用 `completion_t`**（见 `kernel/task/completion.h`）：
+窗口。**新的等待逻辑请用 `completion_t`**（见 `include/task/completion.h`）：
 它把 done 条件、等待队列和锁封在一起，天然避开这个窗口；AP 启动闸门
 就应该建在它上面。
 

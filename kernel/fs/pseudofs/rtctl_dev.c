@@ -8,15 +8,15 @@
    kernel/fs/pseudofs/rtctl_dev.c — /dev/rtctl
 
    用户态控制面：创建/启动/停止/销毁 RT worker，更新输入、读取输出与统计。
-   数据面在 kernel/rt/rt_worker.c。ABI 见 include/rt_worker.h。
+   数据面在 kernel/rt/rt_worker.c。ABI 见 include/rt/rt_worker.h。
 
    权限：V1 只允许 root（uid 0）。RT 优先级和模板能力将来再细化为
    capability，不在这一版里假装已经做好。
 */
 
-#include "pseudofs.h"
+#include "fs/pseudofs.h"
 #include "pseudofs_internal.h"
-#include "rt_worker.h"
+#include "rt/rt_worker.h"
 #include "task/task.h"
 #include "syscall/syscall_internal.h" /* copy_from/to_user_bytes */
 

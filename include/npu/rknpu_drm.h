@@ -5,7 +5,7 @@
 */
 
 /*
-   include/rknpu_drm.h — RK3588 NPU 的 DRM 渲染节点用户态 ABI
+   include/npu/rknpu_drm.h — RK3588 NPU 的 DRM 渲染节点用户态 ABI
 
    目标：让未经修改的官方 librknnrt.so 能连上来。
 

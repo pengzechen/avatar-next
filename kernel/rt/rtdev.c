@@ -7,13 +7,13 @@
 /*
    kernel/rt/rtdev.c — RT 模板可用的设备契约与注册表
 
-   只有满足 rtdev_ops 约束的驱动才注册到这里。详见 include/rtdev.h。
+   只有满足 rtdev_ops 约束的驱动才注册到这里。详见 include/rt/rtdev.h。
    当前内置一个示例设备 "vout"：把每次写当成 u64 记录下来，用于验证
    “worker → rtdev → safe_state” 整条路径；真实 GPIO/PWM/UART 驱动按同一
    契约注册即可。
 */
 
-#include "rtdev.h"
+#include "rt/rtdev.h"
 #include "klog.h"
 #include "spinlock.h"
 #include "string.h"

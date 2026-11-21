@@ -19,7 +19,7 @@
 #include "types.h"
 #include "mmio.h"
 #include "klog.h"
-#include "platform_cfg.h"
+#include "platform/platform_cfg.h"
 #include "driver/driver.h"
 #include "driver/tpu.h"
 

@@ -28,7 +28,7 @@
 #include "cache.h"    /* clean_dcache_range：表页必须冲缓存, 见 npu_mmu_impl_sync */
 #include "barrier.h"  /* barrier_sync：冲完要 dsb, 否则 NPU 仍可能先读到 */
 #include "mm/pmm.h"
-#include "platform_cfg.h"
+#include "platform/platform_cfg.h"
 #include "string.h"
 #include "vmm/vmm.h" /* vm_t：sync 要查它的 stage-2 */
 #include "aarch64/stage2.h"

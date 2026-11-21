@@ -8,7 +8,7 @@
 #include "exception.h"
 #include "klog.h"
 #include "mmio.h"
-#include "platform_cfg.h"
+#include "platform/platform_cfg.h"
 #include "riscv64/sysreg.h"
 #include "driver/driver.h"
 #include "driver/irq.h"

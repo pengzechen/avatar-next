@@ -30,7 +30,7 @@
 
 #if ARCH_AARCH64
 #include "mm/mm_vm.h"     /* KERNEL_VMA / virt_to_phys */
-#include "aarch64/cpu.h"  /* aarch64_enable_neon (per-core CPACR_EL1.FPEN) */
+#include "aarch64/neon.h" /* aarch64_enable_neon (per-core CPACR_EL1.FPEN) */
 #include "aarch64/psci.h" /* psci_cpu_on / psci_affinity_info(SMC64) */
 #endif
 

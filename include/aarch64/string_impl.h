@@ -8,7 +8,7 @@
 #define AARCH64_STRING_IMPL_H
 
 #include "types.h"
-#include "aarch64/cpu.h"
+#include "aarch64/neon.h"
 
 /*
    AArch64 架构的字符串函数优化实现(NEON)

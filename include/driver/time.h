@@ -15,7 +15,7 @@
 #define DRIVER_TIME_H
 
 #include "types.h"
-#include "platform_cfg.h"
+#include "platform/platform_cfg.h"
 #include "arch.h"
 
 /* ── 平台配置（由 g_platform_devices[] 的 time_cfg_t 提供）────────────── */

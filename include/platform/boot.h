@@ -5,7 +5,7 @@
 */
 
 /*
-   include/boot.h — 架构引导代码与 C 内核入口之间的公共声明
+   include/platform/boot.h — 架构引导代码与 C 内核入口之间的公共声明
 */
 
 #ifndef BOOT_H

@@ -214,7 +214,7 @@ extern int kprintf(const char *fmt, ...);
    CPU 已经持锁的 klog 调用内部 —— 此时再取锁就是自旋到死, 现场一个字都
    打不出来。幂等, 单向(没有"退出 panic")。
 
-   调用点：include/assert.h 的 assert/assert_always, platform_panic()。
+   调用点：include/libc/assert.h 的 assert/assert_always, platform_panic()。
    详见 kernel/debug/backtrace.c 与 docs/basic/BACKTRACE.md。
 */
 extern void klog_panic_begin(void);

@@ -15,7 +15,7 @@
    数据经 /proc/rtstat 暴露。
 */
 
-#include "rt_latency.h"
+#include "rt/rt_latency.h"
 #include "task/task.h"
 #include "task/cpu.h"
 #include "driver/time.h"

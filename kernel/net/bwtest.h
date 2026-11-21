@@ -8,7 +8,7 @@
 #define NET_BWTEST_H
 
 /*
-   include/net/bwtest.h — 以太网带宽测试(UDP 丢弃式接收端 + 每秒速率统计)
+   kernel/net/bwtest.h — 以太网带宽测试(UDP 丢弃式接收端 + 每秒速率统计)
 
    用法：
      1. 用 LOG=none 构建(否则量到的是串口速度, 见 kernel/net/bwtest.c 说明)

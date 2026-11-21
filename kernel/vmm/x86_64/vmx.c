@@ -26,9 +26,9 @@
 #include "task/task.h"
 #include "task/cpu.h" /* get_current_cpu_id()：VMXON 是按 CPU 记的 */
 #include "x86_64/vmx.h"
-#include "x86_64/ept.h"   /* EPT 二级翻译 */
-#include "guest_loader.h" /* GUEST_LINUX_*_GPA(guest 描述符表要用) */
-#include "vmm/vmm_mmio.h" /* MMIO 总线 */
+#include "x86_64/ept.h"       /* EPT 二级翻译 */
+#include "vmm/guest_loader.h" /* GUEST_LINUX_*_GPA(guest 描述符表要用) */
+#include "vmm/vmm_mmio.h"     /* MMIO 总线 */
 #include "vmm/vmm_uart16550.h"
 #include "vmm/vmm_console.h" /* vmm_console_irq_asserted：控制台中断线(电平触发) */
 #include "vmm/vmm_vlapic.h"

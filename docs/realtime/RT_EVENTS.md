@@ -3,7 +3,7 @@
 > 一句话：**`rt_event` 让 RT 任务在没有事件时真正睡眠；`event` 模板把
 > 共享页里的 SPSC 事件环和它连起来，事件到达才执行 step。**
 
-## 一、`rt_event`（`kernel/task/rt_event.h`）
+## 一、`rt_event`（`include/task/rt_event.h`）
 
 ```c
 rt_event_t e;

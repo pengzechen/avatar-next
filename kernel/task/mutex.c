@@ -8,8 +8,8 @@
    kernel/task/mutex.c — 睡眠锁(Mutex)实现
 */
 
-#include "mutex.h"
-#include "task.h"
+#include "task/mutex.h"
+#include "task/task.h"
 #include "task/sched.h"
 #include "task/switch.h"
 #include "klog.h"

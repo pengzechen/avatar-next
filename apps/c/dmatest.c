@@ -25,7 +25,7 @@
    注意： 下面的结构体与 ioctl 号是手抄的(用户态不能包含内核头)。
       _IOC 把 sizeof 编进了操作码, 所以尺寸写错不是"参数错位"而是换成
       另一个 ioctl 号 —— 内核那边会走到 default 分支返回 -ENOSYS,
-      是响亮的失败, 不是静默损坏。内核侧同名定义见 include/dma_buf.h。
+      是响亮的失败, 不是静默损坏。内核侧同名定义见 include/driver/dma_buf.h。
 */
 #define _GNU_SOURCE
 #include <errno.h>
@@ -39,7 +39,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-/* ── 与 include/dma_buf.h 逐字节一致 ───────────────────────────────────── */
+/* ── 与 include/driver/dma_buf.h 逐字节一致 ───────────────────────────────────── */
 struct dma_heap_allocation_data {
     uint64_t len;
     uint32_t fd;

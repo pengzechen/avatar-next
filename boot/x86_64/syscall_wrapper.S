@@ -43,7 +43,7 @@
 .extern sched_check_and_yield_from_trap
 
 /*
- * cpu_t 字段偏移 — 必须与 kernel/task/cpu.h 一致。
+ * cpu_t 字段偏移 — 必须与 include/task/cpu.h 一致。
  * 该头文件里有 static_assert 把关：偏移写错会在编译期报错，
  * 而不是等到 SMP 下 SYSCALL 把 rq_lock 写坏才炸。
  */

@@ -4,8 +4,8 @@
    Copyright (c) 2026 Avatar OS project
 */
 
-#ifndef AARCH64_CPU_H
-#define AARCH64_CPU_H
+#ifndef AARCH64_NEON_H
+#define AARCH64_NEON_H
 
 #include "types.h"
 
@@ -76,4 +76,4 @@ static inline void aarch64_disable_neon(void)
                  : "memory");
 }
 
-#endif /* AARCH64_CPU_H */
+#endif /* AARCH64_NEON_H */

@@ -98,7 +98,7 @@ void x86_tss_set_rsp0(uint64_t rsp0) {
 `boot/x86_64/syscall_wrapper.S` 里手抄了 `cpu_t` 的字段偏移：
 
 ```asm
-/* offsetof(cpu_t, scratch_rsp) — must match kernel/task/cpu.h */
+/* offsetof(cpu_t, scratch_rsp) — must match include/task/cpu.h */
 .equ CPU_SCRATCH_RSP, 80
 ```
 
@@ -126,7 +126,7 @@ spin_unlock_irqrestore(&tc->rq_lock);
 
 | 文件 | 改动 |
 |------|------|
-| `kernel/task/cpu.h` | `cpu_t` 新增 `kernel_rsp0`（本核 TSS.RSP0 的镜像）；新增两条 `static_assert` 锁死 .S 可见的偏移 |
+| `include/task/cpu.h` | `cpu_t` 新增 `kernel_rsp0`（本核 TSS.RSP0 的镜像）；新增两条 `static_assert` 锁死 .S 可见的偏移 |
 | `boot/x86_64/syscall_wrapper.S` | `CPU_SCRATCH_RSP` 80→104；新增 `CPU_KERNEL_RSP0`=112；换栈改读 `%gs:CPU_KERNEL_RSP0` |
 | `boot/x86_64/tss.c` | 删除全局 `g_x86_tss_rsp0`；`x86_tss_init_cpu()` / `x86_tss_set_rsp0()` 同步写 per-CPU 的 `cpu_t::kernel_rsp0` |
 | `boot/x86_64/tss.h` | 删除 `g_x86_tss_rsp0` 声明 |
@@ -141,7 +141,7 @@ syscall 就会把 RSP 装成 0。IDT 不使用 IST（`idt[vec].ist = 0`），所
 构建会直接失败并指出要改哪一行：
 
 ```c
-/* kernel/task/cpu.h */
+/* include/task/cpu.h */
 #if ARCH_X86_64
 static_assert(offsetof(cpu_t, scratch_rsp) == 104,
               "CPU_SCRATCH_RSP in boot/x86_64/syscall_wrapper.S is stale");

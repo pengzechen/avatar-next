@@ -7,9 +7,9 @@
 #include "net/net.h"
 
 #include "klog.h"
-#include "net/bwtest.h"
-#include "net/dhcp_server.h"
-#include "net/tcp_echo.h"
+#include "bwtest.h"
+#include "dhcp_server.h"
+#include "tcp_echo.h"
 #include "task/task.h"
 
 #include "lwip/init.h"
@@ -20,7 +20,7 @@
 #include "netif/ethernet.h"
 #include "lwip_port/netif_avatar.h"
 
-#include "net/http_server.h"
+#include "http_server.h"
 
 static struct netif g_lwip_netif;
 static int g_net_ready;

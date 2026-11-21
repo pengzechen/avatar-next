@@ -7,15 +7,15 @@
 /*
    kernel/fs/vfs/vfs_internal.h - VFS 内部接口（vfs.c 与 fat_vfs.c 共用）
 
-   公开头 include/vfs.h 只暴露 fd 级 API；mount 分发表和路径操作常量放在
+   公开头 include/fs/vfs.h 只暴露 fd 级 API；mount 分发表和路径操作常量放在
    这里，避免把 FatFs 相关实现细节带进所有 VFS 使用者。
 */
 #ifndef VFS_INTERNAL_H
 #define VFS_INTERNAL_H
 
 #include "types.h"
-#include "kernel_stat.h"
-#include "vfs.h"
+#include "fs/kernel_stat.h"
+#include "fs/vfs.h"
 
 /* ── 内核内部 errno（与 Linux 数值一致，syscall 层直接透传）────────── */
 #define VFS_ENOENT    2

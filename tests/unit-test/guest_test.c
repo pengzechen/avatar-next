@@ -16,7 +16,7 @@
 #include "../boot_mode.h"
 #include "klog.h"
 #include "vmm/vmm.h"
-#include "guest_loader.h"
+#include "vmm/guest_loader.h"
 
 __attribute__((used)) static const char g_build_tag_guest_linux[] = "GUEST_LINUX_BUILD_TAG";
 

@@ -8,7 +8,7 @@
 #define KERNEL_TASK_RT_MUTEX_H
 
 /*
-   kernel/task/rt_mutex.h — 带优先级继承的睡眠锁
+   include/task/rt_mutex.h — 带优先级继承的睡眠锁
 
    与 task/mutex.h 的区别：
      - mutex：FIFO、可重入，没有优先级继承。适合普通内核/文件系统路径。

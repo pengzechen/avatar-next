@@ -20,7 +20,7 @@
 #define __GIC_H__
 
 #include "types.h"
-#include "platform_cfg.h"
+#include "platform/platform_cfg.h"
 
 /* GICv2 模块内基地址(由 gic_init() 从 platform_get_mmio 填充) */
 extern uintptr_t gicv2_gicd_base;

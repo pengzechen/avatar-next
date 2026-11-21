@@ -4,7 +4,7 @@
    Copyright (c) 2026 Avatar OS project
 */
 
-#include "kernel_stat.h"
+#include "fs/kernel_stat.h"
 #include "syscall/syscall.h"
 #include "syscall/syscall_internal.h"
 #include "syscall/trace.h"
@@ -24,8 +24,8 @@
 #include "arch.h"
 #include "exception.h"
 #include "syscall_abi.h"
-#include "rt_latency.h"
-#include "vfs.h"
+#include "rt/rt_latency.h"
+#include "fs/vfs.h"
 #include <ext4.h>
 #include <ext4_errno.h>
 #if ARCH_RISCV64

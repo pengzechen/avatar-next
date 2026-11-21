@@ -5,7 +5,7 @@
 */
 
 /*
-   include/pseudofs.h — 虚拟文件系统 API
+   include/fs/pseudofs.h — 虚拟文件系统 API
 
    为 /dev, /proc, /sys 提供内核内建的虚拟路径。
    syscall.c 在 openat/read/write/ioctl/stat/readlinkat/getdents64 中调用。
@@ -36,7 +36,7 @@
 #define PSEUDOFS_H
 
 #include "types.h"
-#include "kernel_stat.h"
+#include "fs/kernel_stat.h"
 
 /* ── _IOC 宏(freestanding 环境无 glibc) ────────────────────── */
 #ifndef _IOC

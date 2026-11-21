@@ -149,7 +149,7 @@ syscall
 - `include/mm/user_layout.h` — 新增 `USER_SIGRET_PAGE` 常量
 - `kernel/task/exec.c` — 映射蹦床页
 - `kernel/syscall/core/signal.c` — 使用蹦床页
-- `kernel/task/task.h` — 新增 `SA_RESTORER` 常量
+- `include/task/task.h` — 新增 `SA_RESTORER` 常量
 
 ---
 

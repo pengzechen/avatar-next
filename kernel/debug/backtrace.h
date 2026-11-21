@@ -72,7 +72,7 @@ int backtrace_collect_from(uintptr_t pc, uintptr_t fp, uintptr_t sp, uintptr_t r
 /*
    backtrace_print / backtrace_print_from - 把调用栈打到控制台
 
-   输出走 kprintf 而不是 KLOG_* 宏, 理由和 include/assert.h 里写的一样：
+   输出走 kprintf 而不是 KLOG_* 宏, 理由和 include/libc/assert.h 里写的一样：
    LOG=none 下 KLOG_ERROR 会变成空语句, 而崩溃信息必须任何构建配置下都
    看得见。一旦 backtrace_panic_enter() 置了 panic 模式, 输出还会绕开
    klog 的全局锁(见下)。

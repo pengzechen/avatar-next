@@ -17,7 +17,7 @@
      - no RTC -> fixed timestamps.
      - no exFAT, no mkfs, no fast-seek, no string API.
      - FF_FS_REENTRANT = 0: Avatar serializes every FatFs call with the
-       global FS lock (include/fs_lock.h); FatFs' own mutex hooks are unused.
+       global FS lock (include/fs/fs_lock.h); FatFs' own mutex hooks are unused.
 */
 #ifndef AVATAR_FFCONF_H
 #define AVATAR_FFCONF_H

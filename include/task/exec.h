@@ -5,7 +5,7 @@
 */
 
 /*
-   kernel/task/exec.h — execve 进程语义接口
+   include/task/exec.h — execve 进程语义接口
 
    职责：Linux ABI 初始栈构建 + 用户页表初始化(含内核映射) +
          进程创建 + execve 阻塞等待语义

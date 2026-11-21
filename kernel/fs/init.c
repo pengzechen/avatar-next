@@ -25,7 +25,7 @@
    __unused 宏（__attribute__((unused))），之后 kernel_stat.h 的
    `int64_t __unused[3]` 会被宏展开成语法错误。
 */
-#include "vfs.h"
+#include "fs/vfs.h"
 #include <ext4.h>
 #include <ext4_blockdev.h>
 #include <ext4_errno.h>
@@ -35,7 +35,7 @@
 #include <ext4_types.h>
 #include "klog.h"
 #include "string.h"
-#include "fs_init.h"
+#include "fs/fs_init.h"
 #include "fatfs_port.h"
 #include "driver/block.h"
 

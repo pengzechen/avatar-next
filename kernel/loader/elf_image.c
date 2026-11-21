@@ -20,7 +20,7 @@
 #include "arch.h"
 #include "loader/elf_image.h"
 #include "mm/user_layout.h"
-#include "platform_ops.h" /* platform_panic(), 仅 PANIC_TEST=1 时用到 */
+#include "platform/platform_ops.h" /* platform_panic(), 仅 PANIC_TEST=1 时用到 */
 
 /* ── 段加载 ─────────────────────────────────────────────────────── */
 

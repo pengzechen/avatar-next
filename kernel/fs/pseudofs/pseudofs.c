@@ -14,7 +14,7 @@
      -Iinclude  -Idriver  -Ikernel  -Ikernel/mm
 */
 
-#include "pseudofs.h"
+#include "fs/pseudofs.h"
 #include "pseudofs_internal.h"
 #include "types.h"
 #include "arch.h"
@@ -23,12 +23,12 @@
 #include "string.h"
 #include "mm/pmm.h"
 #include "task/task.h"
-#include "dma_buf.h"          /* dma_heap_dev_ioctl / dma_buf_present */
+#include "driver/dma_buf.h"   /* dma_heap_dev_ioctl / dma_buf_present */
 #include "driver/ion.h"       /* ion_present */
 #include "driver/tpu.h"       /* tpu_present */
 #include "driver/npu.h"       /* npu_present */
 #include "task/cpu.h"         /* g_cpus / g_num_cpus / AVATAR_MAX_CPUS(/proc/uptime 的 idle 列) */
-#include "rt_latency.h"       /* /proc/rtstat：R0 延迟统计 */
+#include "rt/rt_latency.h"    /* /proc/rtstat：R0 延迟统计 */
 #include "driver/time.h"      /* timer_get_ns / TIMER_FREQUENCY_HZ */
 #include "syscall/io/epoll.h" /* EPOLLIN/EPOLLOUT：pseudo_poll 的兜底返回值 */
 #include "syscall/trace.h"    /* /proc/syscalls */

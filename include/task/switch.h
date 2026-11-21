@@ -8,7 +8,7 @@
 #define KERNEL_TASK_SWITCH_H
 
 /*
-   kernel/task/switch.h — 架构抽象：上下文切换
+   include/task/switch.h — 架构抽象：上下文切换
 
    提供：
      arch_task_switch()      — 在 .S 文件中实现, 保存/恢复被调用者寄存器

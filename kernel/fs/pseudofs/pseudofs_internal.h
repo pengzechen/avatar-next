@@ -8,7 +8,7 @@
 #define KERNEL_FS_PSEUDOFS_INTERNAL_H
 
 #include "types.h"
-#include "kernel_stat.h"
+#include "fs/kernel_stat.h"
 
 #define PFS_EINVAL 22
 #define PFS_ENOENT 2
@@ -98,7 +98,7 @@ int pfs_getdents_node(int nid, uint64_t *off, void *buf, size_t bufsz);
 
 int ion_dev_ioctl(int nid, uint64_t req, void *argp);
 int tpu_dev_ioctl(int nid, uint64_t req, void *argp);
-/* /dev/dma_heap/ 各节点 —— 原型在 include/dma_buf.h, 这里只做个索引注释 */
+/* /dev/dma_heap/ 各节点 —— 原型在 include/driver/dma_buf.h, 这里只做个索引注释 */
 int dma_heap_dev_ioctl(int nid, uint64_t req, void *argp);
 
 /* /dev/rtctl —— 用户态 RT worker 控制面(rtctl_dev.c) */

@@ -18,7 +18,7 @@
    每个 CPU 的 idle 任务也需要一份。
 */
 
-#include "process_fs.h"
+#include "fs/process_fs.h"
 #include "task/task.h"
 #include "task/cpu.h"
 #include "spinlock.h"

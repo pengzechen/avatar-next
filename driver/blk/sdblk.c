@@ -16,7 +16,7 @@
 */
 
 #include "blk/sdblk.h"
-#include "platform_cfg.h" /* platform_get_mmio / platform_get_uintptr */
+#include "platform/platform_cfg.h" /* platform_get_mmio / platform_get_uintptr */
 #include "driver/driver.h"
 #include "driver/block.h"
 

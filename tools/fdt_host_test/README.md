@@ -41,7 +41,7 @@ gcc -o /tmp/fdtcheck fdt_check.c /tmp/fdt_host.o
    `include/stdio.h` 是个只声明不实现的 stub，会把系统头挡住 —— 不排前面的话
    `FILE` / `fopen` 全是未知类型。
 2. **`fdtshim/string.h` 里不能用 `#include_next`** —— 那会命中项目自己的
-   `include/string.h`（它会把 aarch64 的 NEON 内联汇编拉进来，宿主上编不过）。
+   `include/libc/string.h`（它会把 aarch64 的 NEON 内联汇编拉进来，宿主上编不过）。
    得写**绝对路径** `#include </usr/include/string.h>`。
 
 ## 这套东西的边界

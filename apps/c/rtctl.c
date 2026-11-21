@@ -3,7 +3,7 @@
 
    rtctl — /dev/rtctl 用户态控制面
 
-   ABI 必须与 include/rt_worker.h 逐字节一致（结构体尺寸被编进 ioctl 号，
+   ABI 必须与 include/rt/rt_worker.h 逐字节一致（结构体尺寸被编进 ioctl 号，
    尺寸不同就是另一个命令）。内核那份是权威定义；这里只做用户态副本。
 
    用法：

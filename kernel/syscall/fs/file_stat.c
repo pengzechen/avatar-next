@@ -14,10 +14,10 @@
 #include "syscall/fs/path.h"
 #include "syscall/fs/pty.h" /* pty_match_pts_path(漏了会退化成隐式声明) */
 #include "task/task.h"
-#include "kernel_stat.h"
+#include "fs/kernel_stat.h"
 #include "string.h"
 #include "klog.h"
-#include "vfs.h"
+#include "fs/vfs.h"
 #include <ext4.h>
 #include <ext4_errno.h>
 

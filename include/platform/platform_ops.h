@@ -5,7 +5,7 @@
 */
 
 /*
-   include/platform_ops.h — 平台抽象接口
+   include/platform/platform_ops.h — 平台抽象接口
 
    实现在 platforms/common/platform_ops.c, 所有平台共用。
    platforms/<platform>/platform.c 只放该板的差异(当前仅作为平台 marker)。

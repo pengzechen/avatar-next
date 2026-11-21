@@ -22,8 +22,8 @@
 #include "driver/time.h"
 #include "exception.h"
 #include "klog.h"
-#include "rt_worker.h"
-#include "hrtimer.h"
+#include "rt/rt_worker.h"
+#include "time/hrtimer.h"
 #include "mm/mm_vm.h"
 #include "string.h"
 

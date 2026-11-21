@@ -15,7 +15,7 @@
 
 #include "types.h"
 
-/* 前向声明：cpu_t 在 kernel/task/cpu.h 中定义 */
+/* 前向声明：cpu_t 在 include/task/cpu.h 中定义 */
 struct cpu;
 
 static inline void arch_cpu_self_set(struct cpu *self)

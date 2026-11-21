@@ -15,8 +15,8 @@
 #include "syscall/fs/tty.h"
 #include "task/task.h"
 #include "klog.h"
-#include "vfs.h"
-#include "dma_buf.h"
+#include "fs/vfs.h"
+#include "driver/dma_buf.h"
 
 static bool trace_heavy_task(task_t *current)
 {

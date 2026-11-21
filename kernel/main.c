@@ -9,8 +9,8 @@
    Called from architecture-specific boot code
 */
 
-#include "boot.h"
-#include "platform_ops.h"
+#include "platform/boot.h"
+#include "platform/platform_ops.h"
 #include "arch.h"
 #include "klog.h"
 #include "debug/backtrace.h" /* backtrace_selftest() */
@@ -23,10 +23,10 @@
 #include "mm/pmm.h"
 #include "mm/mm_vm.h" /* virt_to_phys：把链接符号换算成物理地址 */
 #include "driver/time.h"
-#include "rt_latency.h"
+#include "rt/rt_latency.h"
 #include "net/net.h"
 #include "loader/elf_loader.h"
-#include "fs_init.h"
+#include "fs/fs_init.h"
 
 /*
    测试相关接口。boot_mode.h 是启动变体钩子；unit_test.h 是默认启动路径上的
@@ -39,7 +39,7 @@
    架构专属头。x86_64 没有额外需要: exception_init 走通用 exception.h。
 */
 #if ARCH_AARCH64
-#include "aarch64/cpu.h" /* aarch64_enable_neon() */
+#include "aarch64/neon.h" /* aarch64_enable_neon() */
 #endif
 
 #include "driver/driver.h"

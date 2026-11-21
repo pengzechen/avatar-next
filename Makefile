@@ -114,7 +114,7 @@ else
     $(error Invalid LOG level. Use: none, error, warn, info, debug, or trace)
 endif
 
-# ASSERT 开关已移除：断言恒为启用（见 include/assert.h）。
+# ASSERT 开关已移除：断言恒为启用（见 include/libc/assert.h）。
 # 显式传入时直接报错，而不是静默忽略——否则调用方会以为断言被关掉了。
 ifneq ($(origin ASSERT),undefined)
     $(error ASSERT= is no longer supported; assertions are always enabled)
@@ -244,8 +244,8 @@ KERNEL_LWEXT4_SRCS := \
 # （见 §4a 白名单与 include/vmm/vmm.h 的 VMM_GUEST_LINUX_SUPPORTED），且引用 lwext4。
 #
 # ⚠️ image_load.c 是 2026-09 从 guest_loader.c 拆出来的装载通路（VFS 读 + 逐块
-# 写 guest 内存），它同样 #include "vfs.h"（→ <ext4.h>），所以**必须进同一组** ——
-# 少了这一条，编译会以 "include/vfs.h:14:10: fatal error: ext4.h: No such file" 失败，
+# 写 guest 内存），它同样 #include "fs/vfs.h"（→ <ext4.h>），所以**必须进同一组** ——
+# 少了这一条，编译会以 "include/fs/vfs.h:14:10: fatal error: ext4.h: No such file" 失败，
 # 而且因为 §236 的 filter-out，它同时还会触发下面的「分组完整性断言」。
 ifneq ($(filter $(ARCH),aarch64 riscv64 x86_64),)
 KERNEL_LWEXT4_SRCS += $(KERNEL_DIR)/vmm/loader/guest_loader.c \
@@ -261,7 +261,7 @@ KERNEL_FS_SRCS := $(KERNEL_DIR)/fs/init.c \
 KERNEL_LWIP_SRCS := $(filter $(KERNEL_DIR)/net/%,$(KERNEL_SRCS))
 
 # 这两个同时引用 lwIP 与 lwext4：
-# ksocket.c → syscall/fs/fd_pool.h → include/vfs.h:14 → #include <ext4.h>
+# ksocket.c → syscall/fs/fd_pool.h → include/fs/vfs.h:14 → #include <ext4.h>
 KERNEL_LWIPX_SRCS := $(KERNEL_DIR)/syscall/net/ksocket.c \
                      $(KERNEL_DIR)/syscall/net/sock_syscall.c
 
@@ -374,7 +374,6 @@ ifeq ($(ARCH),x86_64)
     CFLAGS  := -Wall -Wextra -O2 -g
 	CFLAGS  += -DARCH_X86_64=1
     CFLAGS  += -I$(INCLUDE_DIR)
-    CFLAGS  += -I$(INCLUDE_DIR)/x86_64
     CFLAGS  += $(LOG_DEFINE)
     CFLAGS  += -fno-pie -fno-stack-protector -fno-stack-clash-protection -U_FORTIFY_SOURCE
     CFLAGS  += -ffreestanding -fno-builtin
@@ -409,7 +408,6 @@ else ifeq ($(ARCH),aarch64)
     CFLAGS  := -Wall -Wextra -O2 -g
 	CFLAGS  += -DARCH_AARCH64=1
     CFLAGS  += -I$(INCLUDE_DIR)
-    CFLAGS  += -I$(INCLUDE_DIR)/aarch64
     CFLAGS  += $(LOG_DEFINE)
     CFLAGS  += -fno-pie
     # 允许 GCC 生成 FP/SIMD（NEON）指令（riscv64 靠 -march=rv64gc -mabi=lp64d 达
@@ -450,7 +448,6 @@ else ifeq ($(ARCH),riscv64)
     CFLAGS  += -march=rv64gc -mabi=lp64d
 	CFLAGS  += -DARCH_RISCV64=1
     CFLAGS  += -I$(INCLUDE_DIR)
-    CFLAGS  += -I$(INCLUDE_DIR)/riscv64
     CFLAGS  += $(LOG_DEFINE)
     CFLAGS  += -mcmodel=medany
     CFLAGS  += -fno-pic -fno-pie
@@ -509,7 +506,6 @@ CFLAGS  += -I$(INCLUDE_DIR)/libc
 CFLAGS  += -Idriver
 CFLAGS  += -Ikernel
 CFLAGS  += -Ikernel/mm
-CFLAGS  += -Iinclude/net
 CFLAGS  += -DAVATAR_HAS_FILESYSTEM
 
 # ── FAT 分区挂载点（MBR 盘上的 FAT 分区挂到这里）───────────────────────────
@@ -958,7 +954,7 @@ NGINX_BIN        := $(wildcard apps/nginx-$(ARCH))
 #      NPU DMA 用 —— 在没有 NPU 的平台上（QEMU）这块地址纯属白挖，
 #      而 guest 的 npu 驱动还会 probe 一个不存在的设备、刷一屏报错。
 #   ② 那条 window 要求宿主 stage-2 做**恒等映射**，而恒等映射只在
-#      PLATFORM_RK3588 下打开（见 include/guest_loader.h 的
+#      PLATFORM_RK3588 下打开（见 include/vmm/guest_loader.h 的
 #      GUEST_LINUX_NPU_DMA_GPA）。不匹配时 guest 拿到的"物理地址"
 #      在宿主侧指向别的内存 —— 结果是 NPU 读到垃圾，不报错。
 # 完整的链路与三处地址的一致性见 docs/vmm/AARCH64_GUEST_NPU.md。
@@ -1072,7 +1068,7 @@ QEMU_ROOTFS_FLAGS = -device loader,file=$(ROOTFS_IMG),addr=$(ROOTFS_PHYS_ADDR),f
 # 这个检查仍然保留：它现在挡的是**工作树不完整**（checkout 被中断、有人手工
 # 删过 third_party 里的东西）。那种情况下构建会死在一行极具误导性的错误上：
 #
-#     include/vfs.h:14:10: fatal error: ext4.h: No such file or directory
+#     include/fs/vfs.h:14:10: fatal error: ext4.h: No such file or directory
 #
 # 这行指向的是**我们自己的**头文件，和真正的原因看不出关系 —— 照着它去查
 # vfs.h 会白查很久。所以在任何编译发生之前先拦一道。
@@ -1159,7 +1155,7 @@ $(BUILD_DIR)/libc.o: $(LIB_DIR)/libc.c | $(BUILD_DIR)
 # 用单个 $ 会在本行展开时冻结成空字符串。
 # check-submodules 是 order-only 依赖：它必须在这个 .o 的编译**之前**跑完，
 # 但不该影响 .o 的新旧判断。挂了它才能保证"缺 submodule"时先看到 §9a 的
-# 提示，而不是各 .o 那行指向 include/vfs.h 的误导性 ext4.h 报错。
+# 提示，而不是各 .o 那行指向 include/fs/vfs.h 的误导性 ext4.h 报错。
 define KERNEL_RULE
 $(call kobj,$(1)): $(1) | $(BUILD_DIR) check-submodules
 	$$(CC) $(2) -c $$< -o $$@
@@ -1679,7 +1675,7 @@ $(ROOTFS_IMG): Makefile $(APPS_BINS) $(APPS_C_ELFS) $(LTP_BINS) $(EPOLL_PERF_BIN
 		echo "  [nginx installed → /bin/nginx]"; \
 	fi
 	@# 安装 guest Linux 镜像（供 GUEST_LINUX 直启 / vmm-run 从 rootfs 加载）
-	@# 目录名与 include/guest_loader.h 的 GUEST_LINUX_*_PATH 必须一致。
+	@# 目录名与 include/vmm/guest_loader.h 的 GUEST_LINUX_*_PATH 必须一致。
 	@if [ "$(ARCH)" = "riscv64" ]; then \
 		missing=0; \
 		for f in imgs/guests/rv64/linux.bin imgs/guests/rv64/linux.dtb \

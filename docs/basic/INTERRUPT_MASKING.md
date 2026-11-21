@@ -12,7 +12,7 @@
 
 实现在 `include/aarch64/exception_impl.h` / `include/riscv64/exception_impl.h` /
 `include/x86_64/exception_impl.h`，由 `include/exception.h` 按架构分发暴露
-（与 `barrier.h` / `cache.h` 同一种模式）。`kernel/task/switch.h` 顶部已经
+（与 `barrier.h` / `cache.h` 同一种模式）。`include/task/switch.h` 顶部已经
 include 了 `exception.h`，所以包含它的文件天然可用。
 
 | 接口 | 语义 |
@@ -64,7 +64,7 @@ arch_irq_disable();
 
 | 位置 | 状态 |
 |---|---|
-| `kernel/task/switch.h` 的 `arch_irq_*` | 唯一的正式 API，31 处使用 → **已迁到 exception_impl.h** |
+| `include/task/switch.h` 的 `arch_irq_*` | 唯一的正式 API，31 处使用 → **已迁到 exception_impl.h** |
 | `include/<arch>/spin_lock_impl.h` 里的 `aarch64_irq_save` / `riscv_irq_save` / `x86_64_irq_save` | 三个私有副本，外部调用者 0 → **已删**，改调 `arch_irq_*` |
 | `driver/irq/irq.h` 的 `enable_irqs/disable_irqs`、`driver/irq/gicv2.h` 的 `enable_interrupts/disable_interrupts/get_daif` | 调用者 0 的死代码，第四份 `msr daif*` → **已删** |
 | `platforms/common/platform_ops.c` 的 `platform_panic_impl()` | 按架构各写一遍（aarch64 还写成 `#0xF`，掩得比 `#2` 多） → **已改调 `arch_irq_disable()`** |

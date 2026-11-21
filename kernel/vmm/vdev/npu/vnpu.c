@@ -17,9 +17,9 @@
 #include "vmm/vmm_vnpu.h"
 #include "mmio.h"
 #include "klog.h"
-#include "platform_cfg.h"
-#include "guest_loader.h" /* GUEST_LINUX_NPU_DMA_*：描述符地址越界检查 */
-#include "mm/mm_vm.h"     /* phys_to_virt：dump 恒等窗口里的 regcmd */
+#include "platform/platform_cfg.h"
+#include "vmm/guest_loader.h" /* GUEST_LINUX_NPU_DMA_*：描述符地址越界检查 */
+#include "mm/mm_vm.h"         /* phys_to_virt：dump 恒等窗口里的 regcmd */
 #include "types.h"
 /*
    对宿主 NPU 驱动的依赖走 include/driver/npu.h：寄存器偏移、让出/收回、

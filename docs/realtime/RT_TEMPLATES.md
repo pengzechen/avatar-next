@@ -10,7 +10,7 @@ x86_64 已支持 **1ms 周期**（LAPIC TSC-deadline oneshot hrtimer）。
   `period_ns` 周期调用一个**模板**的 `step()`。`step()` 必须有界、无分配、
   无睡眠、无 VFS、不长时间持锁。
 - **控制面**：用户态通过 `/dev/rtctl` 的 ioctl 配置/控制 worker。
-- **设备面**：模板输出可选绑定到一个 `rtdev`（`include/rtdev.h`）。
+- **设备面**：模板输出可选绑定到一个 `rtdev`（`include/rt/rtdev.h`）。
   设备在 CREATE 时独占绑定，STOP/DESTROY 时调用 `safe_state()`。
 
 周期由 **hrtimer** 驱动（`kernel/time/hrtimer.c`）：
@@ -87,7 +87,7 @@ rtctl get 1            # (500-100)*1.0 = 400
 ### 共享内存快路径
 
 每个 worker 槽位有一页共享内存（`struct rtw_shm`，176 字节，见
-`include/rt_worker.h`）。supervisor 可以 `mmap(/dev/rtctl, offset =
+`include/rt/rt_worker.h`）。supervisor 可以 `mmap(/dev/rtctl, offset =
 worker_id << PAGE_SHIFT)` 后直接读写它，控制环完全不需要 ioctl/syscall：
 
 ```sh
@@ -116,7 +116,7 @@ __atomic_store_n(&s->input, 21, __ATOMIC_RELEASE); /* 内核下次周期读到 *
 - `rtctl shm` 在 worker 不存在/destroy 之后报 `ENOENT`（lookup 失败），
   这是控制面的判定；已经映射在进程里的旧页不会因此缺页。
 
-## 三、ABI（`include/rt_worker.h`）
+## 三、ABI（`include/rt/rt_worker.h`）
 
 | ioctl | 作用 |
 |---|---|

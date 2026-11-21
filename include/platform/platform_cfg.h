@@ -5,13 +5,13 @@
 */
 
 /*
-   include/platform_cfg.h — 运行时平台配置
+   include/platform/platform_cfg.h — 运行时平台配置
 
    替代 device_profile.h / mem_layout.h / pmm_reserve.h / driver_cfg.h。
    所有值由构建期生成的 platform_static.c 提供, 在 PMM 初始化之前即可调用。
 
    使用方式：
-     #include "platform_cfg.h"   (替代 driver_cfg.h / device_profile.h)
+     #include "platform/platform_cfg.h"   (替代 driver_cfg.h / device_profile.h)
 */
 
 #ifndef PLATFORM_CFG_H

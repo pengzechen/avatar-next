@@ -16,7 +16,7 @@
 #include "task/task.h"
 #include "task/sched.h"
 #include "klog.h"
-#include "vfs.h"
+#include "fs/vfs.h"
 
 #define IOV_MAX_AVATAR 1024
 #define IOV_COPY_MAX   16

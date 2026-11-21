@@ -8,7 +8,7 @@
 #define KERNEL_TASK_SCHED_H
 
 /*
-   kernel/task/sched.h — 调度器接口
+   include/task/sched.h — 调度器接口
 
    实现：NORMAL 轮转 + RT 优先级调度
     - run_queue：NORMAL 任务的 FIFO 双向链表

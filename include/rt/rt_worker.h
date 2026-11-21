@@ -16,7 +16,7 @@
      - 数据面：内核 RT 任务，按 period_ns 周期调用一个模板的 step()。
        step 有界、无分配、无睡眠、无 VFS，只读写预分配状态和参数。
      - 控制面：用户态通过 /dev/rtctl 的 ioctl 创建/启动/停止/喂输入/取输出。
-     - 设备：模板的输出可选绑定到一个 rtdev（见 include/rtdev.h）。
+     - 设备：模板的输出可选绑定到一个 rtdev（见 include/rt/rtdev.h）。
        设备在 CREATE 时独占绑定，STOP/FAULT 时调用 safe_state()。
 
    注意：apps/c/rtctl.c 里有一份逐字节相同的 ABI 副本。改这里必须同步改

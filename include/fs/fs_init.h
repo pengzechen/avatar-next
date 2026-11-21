@@ -5,7 +5,7 @@
 */
 
 /*
-   include/fs_init.h - 文件系统初始化公开接口
+   include/fs/fs_init.h - 文件系统初始化公开接口
 
    不依赖 lwext4 / FatFs 类型，普通内核代码（如 kernel/main.c）可直接包含。
 */

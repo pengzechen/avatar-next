@@ -15,7 +15,7 @@
 #include "assert.h"
 #include "string.h"
 #include "mm/page.h"
-#include "platform_cfg.h" /* g_mem_rootfs_base / g_mem_rootfs_size */
+#include "platform/platform_cfg.h" /* g_mem_rootfs_base / g_mem_rootfs_size */
 
 /* 全局 PMM 状态 — 位图缓冲区使用编译期最大值(PMM_BITMAP_MAX_BYTES = 128KB = 4GB/4KB/8bit) */
 static uint8_t g_pmm_bitmap_buffer[PMM_BITMAP_MAX_BYTES];

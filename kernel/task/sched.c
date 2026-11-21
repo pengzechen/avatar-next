@@ -40,7 +40,7 @@
 #include "task/preempt.h"
 #include "task/itimer.h"
 #include "driver/time.h"
-#include "rt_latency.h"
+#include "rt/rt_latency.h"
 #if ARCH_AARCH64 || ARCH_X86_64
 #include "exception.h"
 #endif
@@ -51,7 +51,7 @@ extern uint64_t g_kernel_pgd_phys;
 #endif
 
 #if ARCH_X86_64
-#include "mmu.h"
+#include "x86_64/mmu.h"
 #include "../../boot/x86_64/tss.h"
 extern uint64_t g_kernel_pgd_phys;
 

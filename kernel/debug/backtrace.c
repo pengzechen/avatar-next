@@ -743,7 +743,7 @@ void backtrace_selftest(void)
     /*
        这里必须用 kprintf 而不是 KLOG_ERROR：LOG=none 会把 KLOG_ERROR 编成
        空语句, 而"调用栈是假的"这件事任何构建配置下都得看得见 —— 假的栈比
-       打不出来更危险, 它会把人带到完全错误的方向去。理由同 include/assert.h。
+       打不出来更危险, 它会把人带到完全错误的方向去。理由同 include/libc/assert.h。
     */
     kprintf(KLOG_COLOR_RED "[bt] SELFTEST FAILED: 第 %d 帧应是 '%s'，实际是 '%s' (共 %d 帧)\n" KLOG_COLOR_RESET, bad,
             want[bad], (bad < n && e[bad].name != NULL) ? e[bad].name : "<no symbol>", n);

@@ -10,7 +10,7 @@
 #include "types.h"
 #include "bitmap.h"
 #include "spinlock.h"
-#include "platform_cfg.h"
+#include "platform/platform_cfg.h"
 
 /* ── 物理内存配置 ───────────────────────────────────────────────────── */
 

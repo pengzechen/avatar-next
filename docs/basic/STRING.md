@@ -4,8 +4,8 @@
 
 | 文件 | 角色 | 内容 |
 |---|---|---|
-| `include/string_internal.h` | **实现层** | `memcpy_generic` / `memset_generic` / `memmove_generic`，包含架构头，定义 `memcpy_arch` / `memset_arch` |
-| `include/string.h` | **公开 API** | `strlen`/`strcmp`/… 全套 `static inline`；`memcpy`/`memset`/`memmove` 转发到实现层 |
+| `include/libc/string_internal.h` | **实现层** | `memcpy_generic` / `memset_generic` / `memmove_generic`，包含架构头，定义 `memcpy_arch` / `memset_arch` |
+| `include/libc/string.h` | **公开 API** | `strlen`/`strcmp`/… 全套 `static inline`；`memcpy`/`memset`/`memmove` 转发到实现层 |
 | `lib/string.c` | **外部符号** | 把 `memcpy`/`memset`/`memmove` 定义成外部符号，同样转发到实现层 |
 | `include/{aarch64,riscv64,x86_64}/string_impl.h` | **架构实现** | 各自的 `memcpy_arch` / `memset_arch`（aarch64 是 NEON + 阈值分派） |
 

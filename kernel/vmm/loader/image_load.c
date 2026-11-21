@@ -13,12 +13,12 @@
    静态加载缓冲(LOAD_CHUNK / g_load_buf)只被这一组使用, 所以跟着搬过来 ——
    它本来也不该由 share 整个文件的那个 TU 持有。
 
-   原型都在 include/guest_loader.h(公共头)。
+   原型都在 include/vmm/guest_loader.h(公共头)。
 */
 
-#include "guest_loader.h"
+#include "vmm/guest_loader.h"
 #include "klog.h"
-#include "vfs.h" /* vfs_open / vfs_read_to_phys / vfs_seek / vfs_close */
+#include "fs/vfs.h" /* vfs_open / vfs_read_to_phys / vfs_seek / vfs_close */
 #include "vmm/vmm.h"
 
 /* 加载缓冲(静态, 避免大栈占用) */

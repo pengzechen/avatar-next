@@ -7,7 +7,7 @@
 #include "driver/time.h"
 #include "driver/irq.h"
 #include "klog.h"
-#include "platform_cfg.h"
+#include "platform/platform_cfg.h"
 #include "driver/driver.h"
 
 /*

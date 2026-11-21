@@ -4,7 +4,7 @@
    Copyright (c) 2026 Avatar OS project
 */
 
-#include "pseudofs.h"
+#include "fs/pseudofs.h"
 #include "pseudofs_internal.h"
 #include "cache.h"
 #include "klog.h"
@@ -12,7 +12,7 @@
 
 #include "driver/ion.h"
 #include "driver/tpu.h"
-#include "dma_buf.h"
+#include "driver/dma_buf.h"
 #include "syscall/syscall_internal.h" /* copy_from/to_user_bytes */
 
 /*
