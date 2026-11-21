@@ -11,7 +11,7 @@
    共用同一个块设备接口（bdif）。所以任何 lwext4 / FatFs API 调用都要被同一把
    可重入锁串起来。
 
-   lwext4 的“每次 API 调用”这一层由 fs/lwext4_port/fs_lock.c 的 --wrap 自动加上；
+   lwext4 的“每次 API 调用”这一层由 fs/ext4/port/fs_lock.c 的 --wrap 自动加上；
    下面两个函数给**跨多次调用**的临界区用（例如 f_stat + f_open、f_lseek +
    f_truncate、整个 f_readdir 循环），FatFs 胶水也直接用它们。
 

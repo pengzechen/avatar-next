@@ -5,7 +5,7 @@
 */
 
 /*
-   fs/lwext4_port/kmalloc.c - lwext4 内存分配器
+   fs/ext4/port/kmalloc.c - lwext4 内存分配器
 
    为 lwext4 提供 ext4_user_malloc / ext4_user_free / ext4_user_calloc /
    ext4_user_realloc 四个接口, 通过一个静态堆上的 first-fit free-list

@@ -7,7 +7,7 @@
 ## 一、普通 mutex（`include/task/mutex.h`）
 
 用途：普通内核路径，当前唯一使用者是 lwext4/FatFs 的全局串行化
-（`fs/lwext4_port/fs_lock.c`）。
+（`fs/ext4/port/fs_lock.c`）。
 
 语义：
 

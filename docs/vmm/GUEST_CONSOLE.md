@@ -1,7 +1,7 @@
 # Guest 控制台：两种运行模式与 /dev/vmm
 
 > 最后更新：2026-09-24
-> 相关代码：`kernel/vmm/vdev/vpl011.c`、`kernel/fs/pseudofs/vmm_dev.c`、
+> 相关代码：`kernel/vmm/vdev/vpl011.c`、`fs/pseudofs/vmm_dev.c`、
 > `apps/c/vmm_run.c`、`kernel/vmm/vmm_console.c`
 
 ## 1. 两种模式

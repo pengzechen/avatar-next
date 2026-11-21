@@ -5,7 +5,7 @@
 */
 
 /*
-   kernel/fs/vfs/fat_vfs.c - FatFs 的 VFS 胶水
+   fs/vfs/fat_vfs.c - FatFs 的 VFS 胶水
 
    设计要点：
      - 绝对路径 /boot/foo 先转成 FatFs 的卷内路径 /foo（fat_relpath）。

@@ -16,9 +16,9 @@ Claude 会自动读取这个文件来了解项目上下文。
 
 ### 第一步：源码布局（全部随仓库 clone，无 submodule）
 
-**lwext4 与 FatFs 已收编为 first-party**：核心源码分别在 `fs/lwext4/`
-（`src/` + `include/`，BSD-3-Clause）和 `fs/fatfs/`（`source/`），由本项目
-直接维护；对应的移植层仍在 `fs/lwext4_port/`、`fs/fatfs_port/`。
+**lwext4 与 FatFs 已收编为 first-party**：核心源码分别在 `fs/ext4/lwext4/`
+（`src/` + `include/`，BSD-3-Clause）和 `fs/fat/fatfs/`（`source/`），由本项目
+直接维护；对应的移植层仍在 `fs/ext4/port/`、`fs/fat/port/`。
 `third_party/` 只保留 **lwIP**（以及 dropbear 等原样内嵌的上游代码）。
 `git clone` 直接就能拿到全部源码，**不需要** `--recurse-submodules`，也没有
 `make submodules` 这一步了（那个目标保留着只是为了不让旧脚本报错）。
@@ -26,11 +26,11 @@ Claude 会自动读取这个文件来了解项目上下文。
 （历史：lwext4 曾是 submodule，`.gitmodules` 指向上游、父仓库钉的却是我们
 fork 的 commit —— 全新 clone 必然失败，且报错指向 `include/fs/vfs.h` 这个
 **我们自己的**头文件，极具误导性。后来先改为 `third_party/` 内嵌，现在进一步
-收编到 `fs/lwext4/`。lwext4 为什么 fork、lwIP 为什么原样内嵌，见各自的
+收编到 `fs/ext4/lwext4/`。lwext4 为什么 fork、lwIP 为什么原样内嵌，见各自的
 `README.md`。）
 
 lwext4/FatFs 的核心代码保持上游风格，**不参与 `make format`**；
-只格式化 `fs/lwext4_port/`、`fs/fatfs_port/` 和我们的补丁块。
+只格式化 `fs/ext4/port/`、`fs/fat/port/` 和我们的补丁块。
 
 如果构建报 `ext4.h: No such file or directory`（或 lwIP 的头），现在只有一个
 原因：**工作树不完整**，重新 clone 即可。`make` 会在编译任何东西之前先拦一道。
@@ -174,15 +174,15 @@ avatar/
 
 - **FAT 双分区挂载**: `docs/fs/FAT_MOUNT.md` - MBR 盘 p1 FAT + p2 ext4：
   `/` 挂 ext4，`/boot` 挂可写 FAT12/16/32（FatFs R0.15）。动
-  `kernel/fs/init.c` 的 MBR 解析、`kernel/fs/vfs/fat_vfs.c`、
-  `fs/fatfs_port/*` 或 `FAT_MOUNT_POINT=` 前必读。要点：
+  `fs/init.c` 的 MBR 解析、`fs/vfs/fat_vfs.c`、
+  `fs/fat/port/*` 或 `FAT_MOUNT_POINT=` 前必读。要点：
   ① `ext4_mbr_scan()` 只保留 0x83，FAT 分区必须自己解析；
   ② SG2002(sdblk) 写入真正落盘，QEMU/RK3588(ramblk) 只改内存副本；
   ③ FAT 上不能执行 ELF，也没有符号链接/权限位；
   ④ 改 `FAT_MOUNT_POINT` 之后必须 `make clean`。
   回归：`make PLATFORM=qemu-virt-x86_64 ROOTFS_MBR=1 LOG=info test-fat`
 - **lwext4 集成**: `docs/LWEXT4.md` - ext2/3/4 的移植层、块设备接口和镜像制作。
-  改 `fs/lwext4_port/*` 或 `driver/blk/*` 前读；`include/fs/vfs.h` 直接包含 `<ext4.h>`。
+  改 `fs/ext4/port/*` 或 `driver/blk/*` 前读；`include/fs/vfs.h` 直接包含 `<ext4.h>`。
 
 ### 架构特定
 
@@ -224,7 +224,7 @@ avatar/
   x86_64 用 LAPIC TSC-deadline hrtimer，支持 1ms 周期；aarch64/riscv64
   暂回退到 100Hz tick（10ms 整数倍）。用户态工具 `/bin/rtctl`。
   动 `kernel/rt/*`、`include/rt/rt_worker.h`、`include/rt/rtdev.h`、
-  `kernel/fs/pseudofs/rtctl_dev.c` 或 `apps/c/rtctl.c` 前必读。
+  `fs/pseudofs/rtctl_dev.c` 或 `apps/c/rtctl.c` 前必读。
 - **RT 事件**: `docs/realtime/RT_EVENTS.md` - `include/task/rt_event.h` 的
   事件位等待队列（any/all/timeout/clear，set 可在 ISR 调用），以及
   `event` 模板的共享页 SPSC 事件环（容量 64、drop-newest、
@@ -310,7 +310,7 @@ avatar/
     stage-2（G-stage）之后必须跑这条 —— 单 VM 的门禁**测不出**这类回归。
 - **两种运行模式、`/dev/vmm` 协议、控制台按键（Ctrl+T 前缀）与 `-a/-l/-k`**:
   `docs/vmm/GUEST_CONSOLE.md`。**动 `apps/c/vmm_run.c` 或
-  `kernel/fs/pseudofs/vmm_dev.c` 前必读** —— 里面有三条反直觉的约定：
+  `fs/pseudofs/vmm_dev.c` 前必读** —— 里面有三条反直觉的约定：
   会话 owner 守卫（纯查询不能停 VM）、`console_owned` 是"归 helper"而不是
   "谁是前台"、以及 helper 收到 EPOLLHUP 必须收尾（否则原地死循环且退不出来）。
 - **裸跑 guest 作基线对照**: `docs/vmm/GUEST_NATIVE_QEMU.md`

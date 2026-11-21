@@ -5,7 +5,7 @@
 */
 
 /*
-   kernel/fs/pseudofs/pseudofs.c — 虚拟文件系统实现
+   fs/pseudofs/pseudofs.c — 虚拟文件系统实现
 
    节点表(g_pseudo_nodes[])将路径映射到内容生成器回调。
    syscall.c 通过 API 函数在各系统调用处集成此模块。

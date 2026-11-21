@@ -10,7 +10,7 @@
    数据面：每个 worker 是一个 KERNEL + SCHED_FIFO 的内核任务，按
    period_ns 周期调用模板的 step()。step 必须：
      - 有界；无分配；无睡眠；无 VFS；不长时间持锁。
-   控制面：/dev/rtctl 的 ioctl（kernel/fs/pseudofs/rtctl_dev.c）。
+   控制面：/dev/rtctl 的 ioctl（fs/pseudofs/rtctl_dev.c）。
 
    V1 的周期由 100Hz tick 驱动（task->sleep_expire_ns），所以
    period_ns 必须是 10ms 的整数倍。要支持 1kHz，需要先有 oneshot hrtimer。

@@ -454,7 +454,7 @@ static int parse_u32(const char *s, uint32_t *out)
    -k：停止 VM, 不接管控制台。
 
    这里不需要再发 DETACH 兜底 —— 内核侧给 close 加了「会话 owner」守卫
-   (见 kernel/fs/pseudofs/vmm_dev.c 的 g_vmm_owner_pid)：只有做过
+   (见 fs/pseudofs/vmm_dev.c 的 g_vmm_owner_pid)：只有做过
    BOOT/BOOT_EX/ATTACH 的那个任务才有资格在 close 里停 VM, 而 `-k` 从没
    BOOT 过, 它的 close 天然什么都不做。
 

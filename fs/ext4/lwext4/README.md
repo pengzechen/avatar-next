@@ -2,7 +2,7 @@
 
 本目录已从 `third_party/` 收编为 **first-party**，由本仓库直接维护；
 **不再是 git submodule**。核心代码保持上游风格，不参与 `make format`；
-移植层在 `fs/lwext4_port/`。
+移植层在 `fs/ext4/port/`。
 之所以改成内嵌：我们 fork 并改动了 lwext4，而 `.gitmodules` 指向的却是上游
 URL —— 父仓库钉住的却是 fork 的 commit，导致全新 clone 必然失败
 （`did not contain <sha>. Direct fetching of that commit failed`）。
@@ -33,7 +33,7 @@ GPLv2 licensed.**」那会造成整个内核被 GPL 传染。因此我们处理�
 
 | 文件 | 处理 |
 |---|---|
-| `src/ext4_xattr.c` | **整块移除**。本内核不暴露 xattr API；`fs/lwext4_port/generated/ext4_config.h` 里 `CONFIG_XATTR_ENABLE` 置 0，`src/ext4.c` 里 4 个 xattr wrapper 用 `#if CONFIG_XATTR_ENABLE` 守卫。 |
+| `src/ext4_xattr.c` | **整块移除**。本内核不暴露 xattr API；`fs/ext4/port/generated/ext4_config.h` 里 `CONFIG_XATTR_ENABLE` 置 0，`src/ext4.c` 里 4 个 xattr wrapper 用 `#if CONFIG_XATTR_ENABLE` 守卫。 |
 | `src/ext4_extent.c` | **干净室重写**。按公开的 on-disk 格式规范独立实现，见文件头的完整声明。 |
 
 **校验方法**（换机器/换人接手时先跑一遍）：
@@ -99,7 +99,7 @@ cd fs/lwext4 && grep -rl "GNU General Public License" src/ include/
 
 ### 5. `CONFIG_XATTR_ENABLE = 0` 是硬性的
 
-`fs/lwext4_port/generated/ext4_config.h` 里置 0。改成 1 会链接失败
+`fs/ext4/port/generated/ext4_config.h` 里置 0。改成 1 会链接失败
 （`src/ext4_xattr.c` 已删）。要恢复 xattr 得把那个文件从 fork 取回来，
 但那样 GPL 就回来了。
 
@@ -111,7 +111,7 @@ cd fs/lwext4 && grep -rl "GNU General Public License" src/ include/
 
 ## 移植胶水在别处
 
-本目录只有上游源码。项目自己的适配在 **`fs/lwext4_port/`**：
+本目录只有上游源码。项目自己的适配在 **`fs/ext4/port/`**：
 
 - `fs_lock.c` —— 用 `-Wl,--wrap` 把 27 个 lwext4 API 全局串行化
   （lwext4 是单线程用户态库，块缓存的红黑树没有任何内部同步）

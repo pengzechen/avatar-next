@@ -5,7 +5,7 @@
 */
 
 /*
-   kernel/fs/pseudofs/rtctl_dev.c — /dev/rtctl
+   fs/pseudofs/rtctl_dev.c — /dev/rtctl
 
    用户态控制面：创建/启动/停止/销毁 RT worker，更新输入、读取输出与统计。
    数据面在 kernel/rt/rt_worker.c。ABI 见 include/rt/rt_worker.h。

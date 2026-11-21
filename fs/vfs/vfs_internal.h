@@ -5,7 +5,7 @@
 */
 
 /*
-   kernel/fs/vfs/vfs_internal.h - VFS 内部接口（vfs.c 与 fat_vfs.c 共用）
+   fs/vfs/vfs_internal.h - VFS 内部接口（vfs.c 与 fat_vfs.c 共用）
 
    公开头 include/fs/vfs.h 只暴露 fd 级 API；mount 分发表和路径操作常量放在
    这里，避免把 FatFs 相关实现细节带进所有 VFS 使用者。

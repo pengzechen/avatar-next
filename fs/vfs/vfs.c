@@ -5,7 +5,7 @@
 */
 
 /*
-   kernel/fs/vfs/vfs.c - small VFS dispatch layer
+   fs/vfs/vfs.c - small VFS dispatch layer
 */
 
 #include "fs/vfs.h"

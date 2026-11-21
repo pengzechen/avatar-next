@@ -21,7 +21,7 @@
 #include "syscall/fs/pty.h"
 #include "arch.h"
 #include "fs/vfs.h"
-#include "fs/vfs/vfs_internal.h"
+#include "vfs/vfs_internal.h"
 #include <ext4.h>
 #include <ext4_errno.h>
 

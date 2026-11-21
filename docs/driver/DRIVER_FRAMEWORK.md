@@ -646,7 +646,7 @@ struct ext4_blockdev *block_root_device(void);
 ```
 
 - `ramblk/sdblk` probe 调用 `block_register_root()`。
-- `kernel/fs/init.c`（原 `fs/lwext4_port/fs_init.c`）只问 `block_root_device()`；删除 `#if DRIVER_SDBLK` 和 `ramblk_get_bdev/sdblk_get_bdev`。
+- `fs/init.c`（原 `fs/ext4/port/fs_init.c`）只问 `block_root_device()`；删除 `#if DRIVER_SDBLK` 和 `ramblk_get_bdev/sdblk_get_bdev`。
 - `kernel/mm/pmm.c` 不再 include `driver/blk/ramblk_cfg.h`；rootfs 保留区改用 `platform_cfg.h` 的 `g_mem_rootfs_*`。
 
 ### 9.5 网络
@@ -765,8 +765,8 @@ DRIVER_EXTRA_FLAGS_driver_dma_dma_buf.c  := -Idriver/dma -Ikernel/mm
 | `kernel/syscall/fs/file_ops.c` | `#if DRIVER_ION` | `ion_available()` + 弱符号 |
 | `kernel/syscall/fs/fd_pool.c` | `#if DRIVER_ION/DMA_BUF` | 能力查询 + 弱符号 |
 | `kernel/syscall/mm/mmap.c` | `#if DRIVER_ION/DMA_BUF/NPU` | 运行时分支 + 弱符号 |
-| `kernel/fs/pseudofs/dev.c` | `#if DRIVER_ION/TPU/DMA_BUF` | 运行时能力 + 弱符号 |
-| `kernel/fs/pseudofs/pseudofs.c` | `#if DRIVER_DMA_BUF/NPU` | 节点表按 `driver_present()` 动态注册 |
+| `fs/pseudofs/dev.c` | `#if DRIVER_ION/TPU/DMA_BUF` | 运行时能力 + 弱符号 |
+| `fs/pseudofs/pseudofs.c` | `#if DRIVER_DMA_BUF/NPU` | 节点表按 `driver_present()` 动态注册 |
 | `kernel/vmm/aarch64/virq.c` | `#if DRIVER_GIC_V3` | `irq_virt_ops() != NULL` |
 | `kernel/vmm/vdev/npu/vnpu.c` | `#if DRIVER_NPU_RKNPU` | `npu_present()` + `g_npu_ops` |
 | `kernel/task/cpu.c` | `#if DRIVER_GIC_V2/V3` 调试 dump | `irq_debug_dump()`（可选 ops） |
@@ -978,7 +978,7 @@ DRIVER_EXTRA_FLAGS_driver_dma_dma_buf.c  := -Idriver/dma -Ikernel/mm
 ### 17.4 阶段 2c/2d 待办
 
 - DMA/ION/TPU/NPU 的服务注册（`*_ops_t`/`*_bind()` + `*_present()`），替换 `kernel/syscall/*`、
-  `kernel/fs/pseudofs/*`、`kernel/vmm/vdev/npu/vnpu.c` 的 `#if DRIVER_*`；
+  `fs/pseudofs/*`、`kernel/vmm/vdev/npu/vnpu.c` 的 `#if DRIVER_*`；
 - VMM 的 `DRIVER_GIC_V3` 仍是编译期布局/实现选择（`include/vmm/vmm.h`
   的字段、`virq.c`/`el2_run.c`/`vm_init.c` 的 vGIC 调用），需要先给
   vGICv3 模型加弱符号桩，再用 `irq_virt_supported()` 在 VM 创建处拒绝；
@@ -1014,13 +1014,13 @@ DRIVER_EXTRA_FLAGS_driver_dma_dma_buf.c  := -Idriver/dma -Ikernel/mm
 - `sys_mmap` 不再有 ION/dma-buf 分支，统一调 `ops->get_phys(priv, &pa, &size)`
   再走公共逐页映射；
 - `dup`/`fd_table_inherit` 调 `ops->dup`，`close` 调 `ops->close`；
-- dma-buf 的 `DMA_BUF_IOCTL_SYNC` 仍在 `kernel/fs/pseudofs/dev.c` 处理
+- dma-buf 的 `DMA_BUF_IOCTL_SYNC` 仍在 `fs/pseudofs/dev.c` 处理
   用户指针（copy_from_user），ioctl 核心只按 `FDT_DMABUF` 分派一次。
 
 ### 18.3 去掉 kernel 里的 `#if DRIVER_*`
 
 - `kernel/syscall/fs/{file_ops,fd_pool,ioctl}.c`、`kernel/syscall/mm/mmap.c`
-  和 `kernel/fs/pseudofs/dev.c` 无条件引用服务包装。
+  和 `fs/pseudofs/dev.c` 无条件引用服务包装。
 - `/dev/ion`、`/dev/cvi-tpu0`、`/dev/dma_heap/*`、`/dev/dri/*`、
   `/proc/dri/*` 保留在固定节点表中，`pfs_node_available()` 按 `g_*_ops`
   过滤；节点 nid 语义不变。

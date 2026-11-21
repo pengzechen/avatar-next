@@ -76,7 +76,7 @@ RISC-V 不一样：**基座 ISA 里没有 CMO**，标准扩展 Zicbom 是可选�
 | 设备 | DMA | 现状 |
 |---|---|---|
 | `driver/eth/virtio_net.c` | 是（描述符环 + 缓冲按物理地址交给设备） | **没有任何 cache 维护** —— QEMU 上没事（riscv64 是空操作、x86/aarch64 一致），**在 SG2002 这类非一致平台上就是 bug** |
-| `driver/tpu/cvi_tpu.c`（SG2002 TDMA） | 是 | 由 userspace 经 `/dev/cvi-tpu0` 的 ioctl 触发，落到 `kernel/fs/pseudofs/dev.c` → 本 API |
+| `driver/tpu/cvi_tpu.c`（SG2002 TDMA） | 是 | 由 userspace 经 `/dev/cvi-tpu0` 的 ioctl 触发，落到 `fs/pseudofs/dev.c` → 本 API |
 | `driver/blk/sdblk.c` | 否（纯 PIO） | 不需要 |
 | `driver/blk/ramblk.c` | 否（memcpy 到 RAM 窗口） | 不需要 |
 
@@ -86,7 +86,7 @@ RISC-V 不一样：**基座 ISA 里没有 CMO**，标准扩展 Zicbom 是可选�
 ## 调用点
 
 只有两个文件用这个 API：
-- `kernel/fs/pseudofs/dev.c` —— TPU/ION 的 DMA 缓冲（ioctl 驱动的 flush/invalidate）；
+- `fs/pseudofs/dev.c` —— TPU/ION 的 DMA 缓冲（ioctl 驱动的 flush/invalidate）；
 - `kernel/vmm/loader/guest_loader.c` —— host 写好 guest 内存后 `clean_dcache_range`。
 
 `sync_icache_all()` 目前没有 C 调用者；`exec`/`fork` 返回路径的 I-cache 同步在 `.S` 里

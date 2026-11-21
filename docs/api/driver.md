@@ -93,7 +93,7 @@ bool block_root_needs_mbr(void)
 将固定的物理内存区域(由 QEMU -device loader 预加载 ext4 镜像)
 封装为 lwext4 的 ext4_blockdev 接口。
 
-编译要求：使用 LWEXT4_CFLAGS(包含 fs/lwext4/include 和 lwext4_port/libc_shim)。
+编译要求：使用 LWEXT4_CFLAGS(包含 fs/ext4/lwext4/include 和 lwext4_port/libc_shim)。
 
 <a id="fn-driver-blk-ramblk.c-27"></a>
 
@@ -935,7 +935,7 @@ bool driver_present(drv_class_t cls)
 一个 dma_buf 就是「一段物理连续内存 + 一个引用计数」, 用户态通过 fd 持有它。
 内存来源全部交给 dma_heap.c(见那里的说明), 本文件不碰 PMM。
 
-本文件不接触用户指针 —— ABI 层在 kernel/fs/pseudofs/dev.c,
+本文件不接触用户指针 —— ABI 层在 fs/pseudofs/dev.c,
 那边负责 copy_from/to_user_bytes。这样 driver/ 不需要依赖 syscall 层。
 
 <a id="fn-driver-dma-dma_buf.c-50"></a>

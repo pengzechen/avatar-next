@@ -1294,7 +1294,7 @@ mmap(dmabuf fd)                                      → CPU 访问
 ── 分层(与本项目 ion 的写法一致)────────────────────────────────
 driver/dma/dma_heap.c   内存从哪来(P0: pmm_alloc_pages；P1: 预留区)
 driver/dma/dma_buf.c    缓冲区对象 · 引用计数 · 缓存维护 · fd 绑定
-kernel/fs/pseudofs/dev.c  ABI 处理(用户指针 ← 一律走 copy_*_user)
+fs/pseudofs/dev.c  ABI 处理(用户指针 ← 一律走 copy_*_user)
 
 ── 设备地址只有这一个出口 ────────────────────────────────────────
 `dma_buf_dev_addr()` 是全系统唯一把缓冲区变成"给设备看的地址"的地方。

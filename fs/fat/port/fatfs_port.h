@@ -5,7 +5,7 @@
 */
 
 /*
-   fs/fatfs_port/fatfs_port.h - FatFs port API
+   fs/fat/port/fatfs_port.h - FatFs port API
 
    这个头不包含 ff.h，普通内核代码（fs_init.c）可以直接包含。
 */

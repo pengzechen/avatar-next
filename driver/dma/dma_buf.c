@@ -10,7 +10,7 @@
    一个 dma_buf 就是「一段物理连续内存 + 一个引用计数」, 用户态通过 fd 持有它。
    内存来源全部交给 dma_heap.c(见那里的说明), 本文件不碰 PMM。
 
-   本文件不接触用户指针 —— ABI 层在 kernel/fs/pseudofs/dev.c,
+   本文件不接触用户指针 —— ABI 层在 fs/pseudofs/dev.c,
    那边负责 copy_from/to_user_bytes。这样 driver/ 不需要依赖 syscall 层。
 */
 #include "driver/dma_buf.h"
@@ -28,7 +28,7 @@
    fd 池的两个入口用 extern 局部声明, 不 include fd_pool.h：
    后者会拉进 vfs.h → ext4.h, 而 driver/dma 的编译规则只有
    `-Idriver/dma -Ikernel/mm`, 没有 lwext4 的 -I, include 进去直接编不过。
-   (kernel/fs/pseudofs/dev.c 里对 task_alloc_ion_fd 也是同样的写法。)
+   (fs/pseudofs/dev.c 里对 task_alloc_ion_fd 也是同样的写法。)
 */
 extern int task_alloc_dmabuf_fd(task_t *task, uint32_t idx, const fd_ops_t *ops, void *priv);
 extern int task_get_dmabuf_idx(task_t *task, int fd, uint32_t *idx);

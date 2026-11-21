@@ -18,7 +18,7 @@
    ── 分层(与本项目 ion 的写法一致)────────────────────────────────
      driver/dma/dma_heap.c   内存从哪来(P0: pmm_alloc_pages；P1: 预留区)
      driver/dma/dma_buf.c    缓冲区对象 · 引用计数 · 缓存维护 · fd 绑定
-     kernel/fs/pseudofs/dev.c  ABI 处理(用户指针 ← 一律走 copy_*_user)
+     fs/pseudofs/dev.c  ABI 处理(用户指针 ← 一律走 copy_*_user)
 
    ── 设备地址只有这一个出口 ────────────────────────────────────────
    `dma_buf_dev_addr()` 是全系统唯一把缓冲区变成"给设备看的地址"的地方。
@@ -160,7 +160,7 @@ static inline int dma_buf_apply_sync(uint32_t idx, uint64_t flags)
     return g_dma_buf_ops ? g_dma_buf_ops->apply_sync(idx, flags) : -1;
 }
 
-/* ── ABI 入口（实现在 kernel/fs/pseudofs/dev.c）──────────────────────── */
+/* ── ABI 入口（实现在 fs/pseudofs/dev.c）──────────────────────── */
 int dma_heap_dev_ioctl(int nid, uint64_t req, void *argp);
 int dma_buf_fd_ioctl(uint32_t idx, uint64_t req, void *argp);
 

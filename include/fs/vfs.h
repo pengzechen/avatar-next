@@ -59,7 +59,7 @@ typedef struct vfs_file {
     union {
         ext4_file ext4_file;
         ext4_dir ext4_dir;
-        /* FatFs 的 FIL/DIR 藏在 fs/fatfs_port 里，VFS 头不引入 ff.h */
+        /* FatFs 的 FIL/DIR 藏在 fs/fat/port 里，VFS 头不引入 ff.h */
         struct {
             void *handle;
         } fat;

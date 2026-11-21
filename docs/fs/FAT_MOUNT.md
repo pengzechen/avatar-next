@@ -2,7 +2,7 @@
 
 本文说明 Avatar 如何同时挂载 **p1 FAT + p2 ext4** 的 MBR 磁盘：
 ext4 挂 `/`，FAT 可写挂到 `/boot`（编译期可改）。实现入口是
-`kernel/fs/init.c` 的 `fs_init()`。
+`fs/init.c` 的 `fs_init()`。
 
 ---
 
@@ -143,14 +143,14 @@ cat /boot/test.txt
 
 | 文件 | 作用 |
 |---|---|
-| `kernel/fs/init.c` | 文件系统总入口：自己解析 MBR；挂 ext4 `/`，再 `fatfs_mount()` + `vfs_register_fat_mount()` |
-| `fs/fatfs_port/diskio.c` | FatFs 的 disk I/O（直接走共享 `bdif->bread/bwrite`）和挂载 |
-| `fs/fatfs_port/ffconf.h` | FatFs R0.15 配置（`FFCONF_DEF=80286`） |
-| `kernel/fs/vfs/fat_vfs.c` | 路径翻译、open/read/write/seek/truncate/getdents/stat/命名空间操作 |
-| `kernel/fs/vfs/vfs.c` | 动态 mount 表、命名空间分发、pread/pwrite/sync 分发 |
-| `include/fs/vfs.h` + `kernel/fs/vfs/vfs_internal.h` | FAT 文件类型/不透明 handle、内部常量 |
-| `include/fs/fs_lock.h` + `fs/lwext4_port/fs_lock.c` | lwext4 与 FatFs 共用的全局可重入锁 |
-| `fs/fatfs/` | FatFs R0.15 上游源码（唯一 vendor patch 是 `ffconf.h` wrapper） |
+| `fs/init.c` | 文件系统总入口：自己解析 MBR；挂 ext4 `/`，再 `fatfs_mount()` + `vfs_register_fat_mount()` |
+| `fs/fat/port/diskio.c` | FatFs 的 disk I/O（直接走共享 `bdif->bread/bwrite`）和挂载 |
+| `fs/fat/port/ffconf.h` | FatFs R0.15 配置（`FFCONF_DEF=80286`） |
+| `fs/vfs/fat_vfs.c` | 路径翻译、open/read/write/seek/truncate/getdents/stat/命名空间操作 |
+| `fs/vfs/vfs.c` | 动态 mount 表、命名空间分发、pread/pwrite/sync 分发 |
+| `include/fs/vfs.h` + `fs/vfs/vfs_internal.h` | FAT 文件类型/不透明 handle、内部常量 |
+| `include/fs/fs_lock.h` + `fs/ext4/port/fs_lock.c` | lwext4 与 FatFs 共用的全局可重入锁 |
+| `fs/fat/fatfs/` | FatFs R0.15 上游源码（唯一 vendor patch 是 `ffconf.h` wrapper） |
 
 ### 锁与块设备共享
 

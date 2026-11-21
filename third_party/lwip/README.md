@@ -1,7 +1,7 @@
 # lwIP (Avatar OS 内嵌副本)
 
 本目录**不再是 git submodule**，而是直接随仓库内嵌的源码副本。
-与 `fs/lwext4/`（已收编为 first-party、由我们 fork 维护）不同，lwIP 保持
+与 `fs/ext4/lwext4/`（已收编为 first-party、由我们 fork 维护）不同，lwIP 保持
 **未修改的上游代码**，仍归在 `third_party/`。
 
 ## 来源
@@ -53,7 +53,7 @@ cd third_party/lwip && grep -rl "GNU General Public License" src/ COPYING
 
 ## 为什么 lwIP 保持"未修改的上游代码"很重要
 
-`fs/lwext4/` 之所以由我们直接维护，是因为 **fork 并修改了**它 ——
+`fs/ext4/lwext4/` 之所以由我们直接维护，是因为 **fork 并修改了**它 ——
 而 lwIP 没有。这个区别有实际后果：
 
 - **升级**：将来要升到新的 lwIP release，直接把上游 `src/` 覆盖过来即可，

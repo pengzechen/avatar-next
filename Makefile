@@ -207,6 +207,12 @@ endif
 KERNEL_SRCS := $(filter-out $(_KERNEL_EXCLUDE_PAT) $(KERNEL_DIR)/vmm/loader/guest_loader.c,$(_KERNEL_FOUND))
 KERNEL_SRCS += $(_KERNEL_VDEV_SRCS) $(_KERNEL_ARCHONLY_SRCS)
 
+# fs/ 下的 VFS / pseudofs / 总入口。后端的 core 与 port 由 §8/§8b 单独编译，
+# 不在这个列表里；这里只收"内核文件系统层"。
+FS_CORE_SRCS := $(FS_DIR)/init.c $(FS_DIR)/vfs/vfs.c $(FS_DIR)/vfs/fat_vfs.c \
+                $(wildcard $(FS_DIR)/pseudofs/*.c)
+KERNEL_SRCS += $(FS_CORE_SRCS)
+
 # 源路径 → 扁平对象名：kernel/mm/pmm.c → $(BUILD_DIR)/kernel_mm_pmm.o
 kobj = $(BUILD_DIR)/$(subst /,_,$(basename $(1))).o
 KERNEL_OBJECTS := $(foreach f,$(KERNEL_SRCS),$(call kobj,$(f)))
@@ -221,7 +227,7 @@ KERNEL_OBJECTS := $(foreach f,$(KERNEL_SRCS),$(call kobj,$(f)))
 # `-w` 只加在编译第三方源码的那条规则上）—— 见 §8 里 LWEXT4_THIRD_PARTY_CFLAGS
 # 的注释：fs_lock.c 的指针截断事故就是被一刀切的 -w 藏掉的。
 KERNEL_LWEXT4_SRCS := \
-    $(KERNEL_DIR)/fs/vfs/vfs.c \
+    $(FS_DIR)/vfs/vfs.c \
     $(KERNEL_DIR)/loader/bin_loader.c \
     $(KERNEL_DIR)/loader/elf_loader.c \
     $(KERNEL_DIR)/syscall/syscall.c \
@@ -254,8 +260,9 @@ endif
 
 # 文件系统总入口和 FAT 的 VFS 胶水都需要 FatFs 头（ff.h）和 lwext4 头
 # （vfs.h → ext4.h），单独一组，避免把 FatFs include 路径灌给所有 lwext4 组文件。
-KERNEL_FS_SRCS := $(KERNEL_DIR)/fs/init.c \
-                  $(KERNEL_DIR)/fs/vfs/fat_vfs.c
+# pseudofs 不需要额外头，落在 KERNEL_PLAIN_SRCS。
+KERNEL_FS_SRCS := $(FS_DIR)/init.c \
+                  $(FS_DIR)/vfs/fat_vfs.c
 
 # kernel/net/** 全部引用 lwIP，按目录自动派生，将来新增文件不会漏。
 KERNEL_LWIP_SRCS := $(filter $(KERNEL_DIR)/net/%,$(KERNEL_SRCS))
@@ -745,9 +752,9 @@ _CFG_CHECK := $(shell \
 
 MKDIR   := mkdir -p
 
-# ─── §8  lwext4 文件系统（first-party：源码在 fs/lwext4）──────────────────────
-LWEXT4_DIR      := $(FS_DIR)/lwext4
-LWEXT4_PORT_DIR := $(FS_DIR)/lwext4_port
+# ─── §8  ext4 后端：lwext4（first-party）───────────────────────────────────────
+LWEXT4_DIR      := $(FS_DIR)/ext4/lwext4
+LWEXT4_PORT_DIR := $(FS_DIR)/ext4/port
 
 # ─── §8a  内核网络栈：netdev + lwIP ─────────────────────────────────────────────
 LWIP_DIR      := $(THIRD_PARTY_DIR)/lwip
@@ -797,7 +804,7 @@ LWEXT4_OBJS     := $(patsubst $(LWEXT4_DIR)/src/%.c,$(THIRD_PARTY_BUILD_DIR)/lwe
 LWEXT4_PORT_OBJS := $(BUILD_DIR)/lwext4_port_kmalloc.o \
                    $(BUILD_DIR)/lwext4_port_fs_lock.o
 
-# lwext4 的全局串行化（详见 fs/lwext4_port/fs_lock.c）。
+# lwext4 的全局串行化（详见 fs/ext4/port/fs_lock.c）。
 #
 # lwext4 是单线程用户态库，全局缓冲缓存无内部同步 —— SMP>1 时并发 exec
 # 会把它的红黑树写坏。这里用**链接期符号包装**把所有公开 API 的引用改指向
@@ -823,6 +830,7 @@ LDFLAGS += $(foreach s,$(LWEXT4_WRAP_SYMS),-Wl,--wrap=$(s))
 
 # lwext4 专用编译标志（在通用 CFLAGS 基础上添加）
 LWEXT4_CFLAGS  := $(CFLAGS)
+LWEXT4_CFLAGS  += -I$(FS_DIR)               # "vfs/vfs_internal.h"（跨文件引用）
 LWEXT4_CFLAGS  += -I$(LWEXT4_DIR)/include   # lwext4 头文件
 LWEXT4_CFLAGS  += -I$(LWEXT4_PORT_DIR)      # generated/ext4_config.h 所在目录
 LWEXT4_CFLAGS  += -DCONFIG_USE_DEFAULT_CFG=0  # 使用自定义 ext4_config.h
@@ -834,18 +842,18 @@ LWEXT4_CFLAGS  += -DCONFIG_DEBUG_ASSERT=0
 LWEXT4_CFLAGS  += -DCONFIG_HAVE_OWN_ASSERT=1
 LWEXT4_CFLAGS  += -DCONFIG_USE_USER_MALLOC=1
 
-# `-w` 只给 lwext4 自己的源码。**本项目的胶水代码（fs/lwext4_port/*、
+# `-w` 只给 lwext4 自己的源码。**本项目的胶水代码（fs/ext4/port/*、
 # driver/blk/ramblk.c）必须保持警告可见** —— 曾经这里是一刀切的 `-w`，
 # 于是 fs_lock.c 里漏声明 `__real_ext4_*` （编译器按隐式声明当成返回 int）
 # 这条致命警告被吞掉，最终表现成 aarch64 上指针被 `sxtw` 截断的
-# "确定性崩溃"（详见 fs/lwext4_port/fs_lock.c 顶部注释）。
+# "确定性崩溃"（详见 fs/ext4/port/fs_lock.c 顶部注释）。
 LWEXT4_THIRD_PARTY_CFLAGS := $(LWEXT4_CFLAGS) -w
 
-# ─── §8b  FatFs（FAT12/16/32）─────────────────────────────────────────────────
-# 源码在 fs/fatfs/source（first-party 维护；唯一 vendor patch 是 ffconf.h
-# wrapper），真正的配置在 fs/fatfs_port/ffconf.h，diskio 也在 fs/fatfs_port/。
-FATFS_DIR      := $(FS_DIR)/fatfs
-FATFS_PORT_DIR := $(FS_DIR)/fatfs_port
+# ─── §8b  FAT 后端：FatFs（FAT12/16/32，first-party）───────────────────────────
+# 源码在 fs/fat/fatfs/source（唯一 vendor patch 是 ffconf.h wrapper），
+# 真正的配置在 fs/fat/port/ffconf.h，diskio 也在 fs/fat/port/。
+FATFS_DIR      := $(FS_DIR)/fat/fatfs
+FATFS_PORT_DIR := $(FS_DIR)/fat/port
 FATFS_SRCS     := $(FATFS_DIR)/source/ff.c $(FATFS_DIR)/source/ffunicode.c
 FATFS_OBJS     := $(patsubst $(FATFS_DIR)/source/%.c,$(THIRD_PARTY_BUILD_DIR)/fatfs_%.o,$(FATFS_SRCS))
 FATFS_PORT_OBJS := $(BUILD_DIR)/fatfs_port_diskio.o
@@ -1916,16 +1924,16 @@ clean-all:
 #
 # FORMAT_DIRS 只列本项目自己的源码树。third_party/ 是外部代码（lwIP），
 # 人家有自己的风格；build/ 是产物。与 PLATFORM 无关。
-# fs/lwext4、fs/fatfs 虽已收编为 first-party，但核心代码保持上游风格，
+# fs/ext4/lwext4、fs/fat/fatfs 虽已收编为 first-party，但核心代码保持上游风格，
 # 不参与全量格式化（否则和上游 diff 完全失去可比性）；只格式化 port/ 和
 # 我们自己的补丁块。
 FORMAT_DIRS  := boot driver fs include kernel lib platforms apps tests
 # tests/ltp/src 是 `make env` 拉下来的 LTP 上游源码（约 5944 个 .c/.h），
 # tests/.artifacts 是跑测例生成的构建/运行目录，apps/rknn-aarch64/include
-# 是 RKNN 官方运行时头文件，fs/lwext4|fs/fatfs 的核心源码保持上游风格 ——
+# 是 RKNN 官方运行时头文件，fs/ext4/lwext4|fs/fat/fatfs 的核心源码保持上游风格 ——
 # 都不能格式化（否则 `make format` 会改掉一整个第三方源码树）。
 FORMAT_EXCLUDES := tests/ltp/src tests/.artifacts apps/rknn-aarch64/include \
-                   fs/lwext4/src fs/lwext4/include fs/fatfs/source
+                   fs/ext4/lwext4/src fs/ext4/lwext4/include fs/fat/fatfs/source
 FORMAT_PRUNE    := $(foreach d,$(FORMAT_EXCLUDES),-path '$(d)' -prune -o)
 FORMAT_SRCS     := $(shell find $(FORMAT_DIRS) $(FORMAT_PRUNE) \
     \( -name '*.c' -o -name '*.h' \) -print 2>/dev/null)
