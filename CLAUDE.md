@@ -14,16 +14,23 @@ Claude 会自动读取这个文件来了解项目上下文。
 
 ## 快速开始
 
-### 第一步：第三方源码（已内嵌，无需操作）
+### 第一步：源码布局（全部随仓库 clone，无 submodule）
 
-`third_party/` 下的 **lwext4 与 lwIP 都已是内嵌源码副本，不再是 submodule**。
-`git clone` 直接就能拿到它们，**不需要** `--recurse-submodules`，也没有
+**lwext4 与 FatFs 已收编为 first-party**：核心源码分别在 `fs/lwext4/`
+（`src/` + `include/`，BSD-3-Clause）和 `fs/fatfs/`（`source/`），由本项目
+直接维护；对应的移植层仍在 `fs/lwext4_port/`、`fs/fatfs_port/`。
+`third_party/` 只保留 **lwIP**（以及 dropbear 等原样内嵌的上游代码）。
+`git clone` 直接就能拿到全部源码，**不需要** `--recurse-submodules`，也没有
 `make submodules` 这一步了（那个目标保留着只是为了不让旧脚本报错）。
 
-（历史：曾经 `lwext4` 是 submodule，而 `.gitmodules` 指向上游、父仓库钉的却是
-我们 fork 的 commit —— 全新 clone 必然失败，且报错指向 `include/fs/vfs.h` 这个
-**我们自己的**头文件，极具误导性。改成内嵌后这个失败面就没了。
-`lwext4` 为什么 fork、`lwIP` 为什么原样内嵌，见各自的 `README.md`。）
+（历史：lwext4 曾是 submodule，`.gitmodules` 指向上游、父仓库钉的却是我们
+fork 的 commit —— 全新 clone 必然失败，且报错指向 `include/fs/vfs.h` 这个
+**我们自己的**头文件，极具误导性。后来先改为 `third_party/` 内嵌，现在进一步
+收编到 `fs/lwext4/`。lwext4 为什么 fork、lwIP 为什么原样内嵌，见各自的
+`README.md`。）
+
+lwext4/FatFs 的核心代码保持上游风格，**不参与 `make format`**；
+只格式化 `fs/lwext4_port/`、`fs/fatfs_port/` 和我们的补丁块。
 
 如果构建报 `ext4.h: No such file or directory`（或 lwIP 的头），现在只有一个
 原因：**工作树不完整**，重新 clone 即可。`make` 会在编译任何东西之前先拦一道。

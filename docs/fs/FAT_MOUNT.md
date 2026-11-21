@@ -150,7 +150,7 @@ cat /boot/test.txt
 | `kernel/fs/vfs/vfs.c` | 动态 mount 表、命名空间分发、pread/pwrite/sync 分发 |
 | `include/fs/vfs.h` + `kernel/fs/vfs/vfs_internal.h` | FAT 文件类型/不透明 handle、内部常量 |
 | `include/fs/fs_lock.h` + `fs/lwext4_port/fs_lock.c` | lwext4 与 FatFs 共用的全局可重入锁 |
-| `third_party/fatfs/` | FatFs R0.15 上游源码（唯一 vendor patch 是 `ffconf.h` wrapper） |
+| `fs/fatfs/` | FatFs R0.15 上游源码（唯一 vendor patch 是 `ffconf.h` wrapper） |
 
 ### 锁与块设备共享
 

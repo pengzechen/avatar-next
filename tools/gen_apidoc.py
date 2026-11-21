@@ -86,6 +86,10 @@ EXCLUDE_PREFIXES = (
     "tests/ltp/",
     "tests/.artifacts/",
     "apps/rknn-aarch64/",  # 厂商 SDK 头文件，不属于本项目的 API
+    # 已收编为 first-party 但保持上游风格的文件系统核心：内部 API 不生成
+    # 项目 API 文档；端口层（fs/lwext4_port、fs/fatfs_port）仍会被扫描。
+    "fs/lwext4/",
+    "fs/fatfs/",
 )
 
 SOURCE_EXTS = (".c", ".h")

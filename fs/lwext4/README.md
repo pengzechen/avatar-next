@@ -1,6 +1,8 @@
-# lwext4 (Avatar OS 内嵌副本)
+# lwext4 (Avatar OS 维护副本)
 
-本目录**不再是 git submodule**，而是直接由本仓库维护的源码副本。
+本目录已从 `third_party/` 收编为 **first-party**，由本仓库直接维护；
+**不再是 git submodule**。核心代码保持上游风格，不参与 `make format`；
+移植层在 `fs/lwext4_port/`。
 之所以改成内嵌：我们 fork 并改动了 lwext4，而 `.gitmodules` 指向的却是上游
 URL —— 父仓库钉住的却是 fork 的 commit，导致全新 clone 必然失败
 （`did not contain <sha>. Direct fetching of that commit failed`）。
@@ -37,7 +39,7 @@ GPLv2 licensed.**」那会造成整个内核被 GPL 传染。因此我们处理�
 **校验方法**（换机器/换人接手时先跑一遍）：
 
 ```bash
-cd third_party/lwext4 && grep -rl "GNU General Public License" src/ include/
+cd fs/lwext4 && grep -rl "GNU General Public License" src/ include/
 # 应无输出
 ```
 

@@ -1,6 +1,6 @@
 # include — C API
 
-[← 返回总览](index.md) · 362 个函数 · 说明覆盖率 90.1%
+[← 返回总览](index.md) · 363 个函数 · 说明覆盖率 90.1%
 
 <a id="mod-include-aarch64-barrier_impl.h"></a>
 
@@ -5149,7 +5149,7 @@ fork：child_stack=0, tls=0
 
 ## include/task/task.h — 内核任务控制块与公共 API
 
-`include/task/task.h` · 4 个函数 · 3 个有说明 · 524 行
+`include/task/task.h` · 5 个函数 · 4 个有说明 · 541 行
 
 设计：
 - 内核任务 + 用户进程共用 TCB；用户进程的地址空间/文件/信号见各字段注释
@@ -5171,7 +5171,28 @@ CLONE_THREAD 创建的任务：tgid 指向线程组首线程；exec 后 tgid 恢
 
 **位置**：`include/task/task.h:215`
 
-<a id="fn-include-task-task.h-221"></a>
+<a id="fn-include-task-task.h-232"></a>
+
+### `task_is_live_user`
+
+```c
+static inline bool task_is_live_user(const task_t *t)
+```
+
+task_is_live_user - 扫描任务池时，能否安全读取该任务的用户态字段
+
+不能只判断 state != TASK_DEAD：回收路径 task_reap_dead() 先在池锁内
+把 state 改成 TASK_ALLOCATING，随后 slot_take_and_free() 在锁外
+task_release_objects() 把 mm 置 NULL，而 g_stack_used[] 要到更后面
+才清零。中间这窗口里"槽还在 + 不是 DEAD + mm 已为 NULL"同时成立，
+于是 task->mm->pgd 会读到 NULL+8(mm_struct 里 pgd 的偏移正好是 8)。
+创建失败回滚(free_task_slot)同样是先释放对象再清槽。
+
+mm 非空是最后一道保险：任何扫描都别假设 is_user_process 为真就一定有 mm。
+
+**位置**：`include/task/task.h:232`
+
+<a id="fn-include-task-task.h-238"></a>
 
 ### `task_is_rt`
 
@@ -5181,9 +5202,9 @@ static inline bool task_is_rt(const task_t *t)
 
 是否 RT 调度类（FIFO/RR）。
 
-**位置**：`include/task/task.h:221`
+**位置**：`include/task/task.h:238`
 
-<a id="fn-include-task-task.h-230"></a>
+<a id="fn-include-task-task.h-247"></a>
 
 ### `task_sched_is_rt`
 
@@ -5194,9 +5215,9 @@ static inline bool task_sched_is_rt(const task_t *t)
 调度器用的“有效 RT 属性”：基础 RT 调度类，或被 rt_mutex 临时提升的
 NORMAL 任务。pi_priority 只由 sched_set_pi_boost() 写。
 
-**位置**：`include/task/task.h:230`
+**位置**：`include/task/task.h:247`
 
-<a id="fn-include-task-task.h-235"></a>
+<a id="fn-include-task-task.h-252"></a>
 
 ### `task_effective_rt_prio`
 
@@ -5206,7 +5227,7 @@ static inline uint8_t task_effective_rt_prio(const task_t *t)
 
 > ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-**位置**：`include/task/task.h:235`
+**位置**：`include/task/task.h:252`
 
 <a id="mod-include-vmm-vmm.h"></a>
 

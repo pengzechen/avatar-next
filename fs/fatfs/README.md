@@ -1,8 +1,11 @@
-# FatFs R0.15
+# FatFs R0.15 (Avatar OS 维护副本)
+
+本目录已从 `third_party/` 收编为 **first-party**，由本仓库直接维护。
+核心代码保持上游风格，不参与 `make format`；移植层在 `fs/fatfs_port/`。
 
 Upstream: https://elm-chan.org/fsw/ff/ (archive `ff15.zip`)
 
-Vendored files:
+Maintained files:
 
 - `source/ff.c`, `source/ff.h`, `source/ffunicode.c`, `source/diskio.h`
 - `LICENSE.txt` (from the same archive)

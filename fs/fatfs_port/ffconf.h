@@ -7,9 +7,9 @@
 /*
    fs/fatfs_port/ffconf.h - FatFs R0.15 configuration for Avatar OS
 
-   third_party/fatfs/source/ffconf.h is only a wrapper that includes this
+   fs/fatfs/source/ffconf.h is only a wrapper that includes this
    file (ff.h uses a quoted include, so the upstream directory wins). Keep
-   FFCONF_DEF in sync with FF_DEFINED in third_party/fatfs/source/ff.h.
+   FFCONF_DEF in sync with FF_DEFINED in fs/fatfs/source/ff.h.
 
    Design notes:
      - writable, FAT12/16/32, LFN on (8-bit OEM code page).

@@ -65,7 +65,7 @@ third_party/
 相关变量（在 Makefile 中定义）：
 
 ```makefile
-LWEXT4_DIR       := third_party/lwext4           # lwext4 源码目录
+LWEXT4_DIR       := fs/lwext4           # lwext4 源码目录
 LWEXT4_PORT_DIR  := fs/lwext4_port               # 移植层目录
 LWEXT4_LIBC_SHIM := fs/lwext4_port/libc_shim     # lwext4 libc shim 头目录
 

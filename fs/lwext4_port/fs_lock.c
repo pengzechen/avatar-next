@@ -171,7 +171,7 @@ void fs_global_unlock(void)
     }
 
 /*
-   这张表从 third_party/lwext4/include 下的头文件机械提取生成, 勿手改。
+   这张表从 fs/lwext4/include 下的头文件机械提取生成, 勿手改。
    新增 lwext4 调用时, 如果用到表外的符号, 要在这里补一条, 并在 Makefile 的
    LWEXT4_WRAP_SYMS 里同步 —— 否则那条路径不受保护。补的时候注意：符号所在
    的头文件必须已经 include(FS_WRAP 会检查, 漏了会直接编译失败)。

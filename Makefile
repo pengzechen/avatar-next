@@ -745,8 +745,8 @@ _CFG_CHECK := $(shell \
 
 MKDIR   := mkdir -p
 
-# ─── §8  第三方库：lwext4 文件系统 ──────────────────────────────────────────────
-LWEXT4_DIR      := $(THIRD_PARTY_DIR)/lwext4
+# ─── §8  lwext4 文件系统（first-party：源码在 fs/lwext4）──────────────────────
+LWEXT4_DIR      := $(FS_DIR)/lwext4
 LWEXT4_PORT_DIR := $(FS_DIR)/lwext4_port
 
 # ─── §8a  内核网络栈：netdev + lwIP ─────────────────────────────────────────────
@@ -841,10 +841,10 @@ LWEXT4_CFLAGS  += -DCONFIG_USE_USER_MALLOC=1
 # "确定性崩溃"（详见 fs/lwext4_port/fs_lock.c 顶部注释）。
 LWEXT4_THIRD_PARTY_CFLAGS := $(LWEXT4_CFLAGS) -w
 
-# ─── §8b  第三方库：FatFs（FAT12/16/32）─────────────────────────────────────────
-# 上游源码在 third_party/fatfs/source（唯一 vendor patch 是 ffconf.h wrapper），
-# 真正的配置在 fs/fatfs_port/ffconf.h，diskio 也在 fs/fatfs_port/。
-FATFS_DIR      := $(THIRD_PARTY_DIR)/fatfs
+# ─── §8b  FatFs（FAT12/16/32）─────────────────────────────────────────────────
+# 源码在 fs/fatfs/source（first-party 维护；唯一 vendor patch 是 ffconf.h
+# wrapper），真正的配置在 fs/fatfs_port/ffconf.h，diskio 也在 fs/fatfs_port/。
+FATFS_DIR      := $(FS_DIR)/fatfs
 FATFS_PORT_DIR := $(FS_DIR)/fatfs_port
 FATFS_SRCS     := $(FATFS_DIR)/source/ff.c $(FATFS_DIR)/source/ffunicode.c
 FATFS_OBJS     := $(patsubst $(FATFS_DIR)/source/%.c,$(THIRD_PARTY_BUILD_DIR)/fatfs_%.o,$(FATFS_SRCS))
@@ -1083,10 +1083,10 @@ THIRD_PARTY_HEADERS := $(LWEXT4_DIR)/include/ext4.h \
                        $(LWIP_DIR)/src/include/lwip/init.h \
                        $(FATFS_DIR)/source/ff.h
 
-# 兼容旧命令：以前这一步是拉 submodule，现在源码随仓库一起 clone。
-# 保留目标只是别让旧脚本/旧文档里的 `make submodules` 直接报错。
+# 兼容旧命令：本仓库不使用 submodule（lwIP 内嵌于 third_party/，
+# lwext4/FatFs 已收编到 fs/）。保留空目标只为别让旧脚本/旧文档报错。
 submodules:
-	@echo "third_party sources are embedded in this repository; no submodule fetch is needed."
+	@echo "No submodule fetch is needed: lwIP is embedded, lwext4/FatFs live under fs/."
 
 check-submodules:
 	@missing=""; \
@@ -1096,17 +1096,12 @@ check-submodules:
 	if [ -n "$$missing" ]; then \
 	    echo ""; \
 	    echo "════════════════════════════════════════════════════════════════"; \
-	    echo " Third-party sources are missing (lwext4 and lwIP are embedded; this normally should not happen)."; \
+	    echo " Required sources are missing (lwIP is embedded; lwext4/FatFs now live under fs/)."; \
 	    echo " The working tree is incomplete; please re-clone. Missing:"; \
 	    for h in $$missing; do echo "     $$h"; done; \
 	    echo ""; \
 	    echo " Fix (run from the repository root):"; \
-	    echo "     re-clone the repository"; \
-	    echo " Equivalent to:"; \
-	    echo "     git submodule update --init --recursive --force"; \
-	    echo ""; \
-	    echo " Future clones can include submodules directly:"; \
-	    echo "     git clone --recurse-submodules <url>"; \
+	    echo "     re-clone the repository (no submodules are used)"; \
 	    echo "════════════════════════════════════════════════════════════════"; \
 	    echo ""; \
 	    exit 1; \
@@ -1919,15 +1914,18 @@ clean-all:
 
 # 代码格式化（配置见仓库根的 .clang-format）
 #
-# FORMAT_DIRS 只列本项目自己的源码树。third_party/ 是外部 submodule
-# （lwext4 / lwIP），人家有自己的风格，不归我们管；build/ 是产物。
-# 与 PLATFORM 无关，任何平台下跑结果都一样。
+# FORMAT_DIRS 只列本项目自己的源码树。third_party/ 是外部代码（lwIP），
+# 人家有自己的风格；build/ 是产物。与 PLATFORM 无关。
+# fs/lwext4、fs/fatfs 虽已收编为 first-party，但核心代码保持上游风格，
+# 不参与全量格式化（否则和上游 diff 完全失去可比性）；只格式化 port/ 和
+# 我们自己的补丁块。
 FORMAT_DIRS  := boot driver fs include kernel lib platforms apps tests
 # tests/ltp/src 是 `make env` 拉下来的 LTP 上游源码（约 5944 个 .c/.h），
 # tests/.artifacts 是跑测例生成的构建/运行目录，apps/rknn-aarch64/include
-# 是 RKNN 官方运行时头文件 —— 都不是本项目的代码，不能格式化（否则
-# `make format` 会改掉一整个第三方源码树）。
-FORMAT_EXCLUDES := tests/ltp/src tests/.artifacts apps/rknn-aarch64/include
+# 是 RKNN 官方运行时头文件，fs/lwext4|fs/fatfs 的核心源码保持上游风格 ——
+# 都不能格式化（否则 `make format` 会改掉一整个第三方源码树）。
+FORMAT_EXCLUDES := tests/ltp/src tests/.artifacts apps/rknn-aarch64/include \
+                   fs/lwext4/src fs/lwext4/include fs/fatfs/source
 FORMAT_PRUNE    := $(foreach d,$(FORMAT_EXCLUDES),-path '$(d)' -prune -o)
 FORMAT_SRCS     := $(shell find $(FORMAT_DIRS) $(FORMAT_PRUNE) \
     \( -name '*.c' -o -name '*.h' \) -print 2>/dev/null)
