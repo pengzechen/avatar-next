@@ -98,60 +98,13 @@
 #define GUEST_ECALL_PRINT 0x584b0001UL /* 打印迭代计数(a0=iter)→ EL2_RESUME */
 
 /* ================================================================
-   SBI(Supervisor Binary Interface)子集 —— 移植自 x-kernel
-     arch/riscv64/mod.rs。guest 以 a7=ext, a6=func, a0..=args 调用 ecall。
+   SBI(Supervisor Binary Interface)
+
+   SBI 常量与主机侧调用封装已收敛到 riscv64/sbi.h —— 它不属于 H-ext,
+   而且宿主 bring-up 与 VMM 的 guest 模拟必须用同一份编号。
+   本文件不再重复定义。
    ================================================================
 */
-#define SBI_SUCCESS           0
-#define SBI_ERR_NOT_SUPPORTED ((uint64_t)(-2))
-/* Legacy 扩展(a7 直接是功能号) */
-#define SBI_LEGACY_SET_TIMER       0x00
-#define SBI_LEGACY_CONSOLE_PUTCHAR 0x01
-#define SBI_LEGACY_CONSOLE_GETCHAR 0x02
-/* Legacy 扩展续 */
-#define SBI_LEGACY_SHUTDOWN 0x08
-
-/* SBI 返回码(a0) */
-#define SBI_ERR_FAILED            ((uint64_t)(-1))
-#define SBI_ERR_INVALID_PARAM     ((uint64_t)(-3))
-#define SBI_ERR_ALREADY_AVAILABLE ((uint64_t)(-6))
-
-/* 现代扩展(a7=EID, a6=FID) */
-#define SBI_EXT_BASE              0x10
-#define SBI_BASE_GET_SPEC_VERSION 0
-#define SBI_BASE_GET_IMPL_ID      1
-#define SBI_BASE_GET_IMPL_VERSION 2
-#define SBI_BASE_PROBE_EXTENSION  3
-#define SBI_BASE_GET_MVENDORID    4
-#define SBI_BASE_GET_MARCHID      5
-#define SBI_BASE_GET_MIMPID       6
-#define SBI_EXT_TIME              0x54494d45UL /* "TIME" */
-#define SBI_EXT_RFENCE            0x52464e43UL /* "RFNC" */
-#define SBI_EXT_IPI               0x735049UL   /* "sPI" */
-#define SBI_EXT_HSM               0x48534dUL   /* "HSM" */
-#define SBI_EXT_SRST              0x53525354UL /* "SRST" */
-#define SBI_TIME_SET_TIMER        0
-#define SBI_IPI_SEND_IPI          0
-#define SBI_HSM_HART_START        0
-#define SBI_HSM_HART_STOP         1
-#define SBI_HSM_HART_GET_STATUS   2
-/* HSM 状态(hart_get_status 的 a1)。SUSPENDED 用不到, 不定义。 */
-#define SBI_HSM_STATE_STARTED  0
-#define SBI_HSM_STATE_STOPPED  1
-#define SBI_HSM_STATE_STARTING 2
-#define SBI_HSM_STATE_STOPPING 3
-/* RFENCE FID(a6) */
-#define SBI_RFENCE_REMOTE_FENCE_I          0
-#define SBI_RFENCE_REMOTE_SFENCE_VMA       1
-#define SBI_RFENCE_REMOTE_SFENCE_VMA_ASID  2
-#define SBI_RFENCE_REMOTE_HFENCE_GVMA      3
-#define SBI_RFENCE_REMOTE_HFENCE_GVMA_VMID 4
-#define SBI_RFENCE_REMOTE_HFENCE_VVMA      5
-#define SBI_RFENCE_REMOTE_HFENCE_VVMA_ASID 6
-#define SBI_SRST_RESET                     0
-#define SBI_SRST_RESET_TYPE_SHUTDOWN       0
-#define SBI_SRST_RESET_TYPE_COLD_REBOOT    1
-#define SBI_SRST_RESET_REASON_NONE         0
 
 /* ================================================================
    H-extension CSR 访问宏

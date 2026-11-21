@@ -151,13 +151,16 @@ FUNCS(_secondary_start)
     msr     daifset, #2              /* 关中断 */
 
     /*
-     * 设置启动栈：secondary_boot_stacks 是按 4KB 对齐的 BSS 数组，
-     * 每核独占 4KB；栈顶 = base + (cpu_id + 1) * 4096
+     * 设置启动栈：secondary_boot_stacks 是按 16KB 对齐的 BSS 数组，
+     * 每核独占 16KB(与 kernel/task/cpu.c 的 SECONDARY_STACK_SIZE 和
+     * TASK_STACK_SIZE 一致)；栈顶 = base + (cpu_id + 1) * 16384。
+     * 步长必须和 cpu.c 的 idle->stack_base 索引保持一致, 否则多个 AP
+     * 的栈会互相重叠。
      * 此时 MMU 未启，使用 link.ld 导出的物理别名。
      */
     ldr     x0, =secondary_boot_stacks_phys
     add     x1, x19, #1
-    lsl     x1, x1, #12              /* (cpu_id+1) * 4096 */
+    lsl     x1, x1, #14              /* (cpu_id+1) * 16384 */
     add     x0, x0, x1
     mov     sp, x0
 
@@ -178,7 +181,7 @@ FUNCS(_secondary_start)
     /* 重新设置栈为高 VA（同一物理内存的别名）*/
     ldr     x0, =secondary_boot_stacks
     add     x1, x19, #1
-    lsl     x1, x1, #12
+    lsl     x1, x1, #14              /* (cpu_id+1) * 16384 */
     add     x0, x0, x1
     mov     sp, x0
 
@@ -234,7 +237,8 @@ stack_bottom:
     .skip 0x8000              /* 32KB */
 stack_top:
 
-.align 12
+.align 14
 .global secondary_boot_stacks
 secondary_boot_stacks:
-    .skip 0x8000              /* 32KB */
+    /* 每核 16KB, 数量跟编译期 CONFIG_SMP_CPUS 走(与 kernel/task/cpu.c 一致) */
+    .skip (CONFIG_SMP_CPUS * 0x4000)

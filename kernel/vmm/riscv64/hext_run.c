@@ -33,6 +33,7 @@
 #include "task/task.h"
 #include "task/cpu.h" /* CPU_RESCHED_IPI_CAUSE */
 #include "riscv64/hext.h"
+#include "riscv64/sbi.h" /* guest ecall 的 SBI EID/FID 常量 */
 #include "riscv64/sysreg.h"
 #include "riscv64/gstage.h"
 #include "vmm/vmm_mmio.h"

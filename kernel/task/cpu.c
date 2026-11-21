@@ -29,13 +29,15 @@
 #include "driver/irq.h"  /* resched IPI / 控制器 per-CPU 初始化 */
 
 #if ARCH_AARCH64
-#include "mm_vm.h"       /* KERNEL_VMA / virt_to_phys */
-#include "aarch64/cpu.h" /* aarch64_enable_neon (per-core CPACR_EL1.FPEN) */
+#include "mm_vm.h"        /* KERNEL_VMA / virt_to_phys */
+#include "aarch64/cpu.h"  /* aarch64_enable_neon (per-core CPACR_EL1.FPEN) */
+#include "aarch64/psci.h" /* psci_cpu_on / psci_affinity_info(SMC64) */
 #endif
 
 #if ARCH_RISCV64
 #include "exception.h"
 #include "mm_vm.h"
+#include "riscv64/sbi.h" /* sbi_hart_start / sbi_send_ipi(HSM/IPI) */
 #include "riscv64/sysreg.h"
 extern void trap_vector(void);
 volatile uint64_t riscv64_boot_hartid;
@@ -50,11 +52,6 @@ extern void x86_tss_init_cpu(uint32_t cpu_id, uint64_t rsp0);
 /* ── 全局 CPU 池 ────────────────────────────────────────── */
 cpu_t g_cpus[AVATAR_MAX_CPUS];
 uint32_t g_num_cpus = 1; /* Phase 0：恒为 1；Phase 2 起会增长 */
-
-#if ARCH_RISCV64
-/* 定义在下面的 RISC-V 块里；cpu_send_ipi 要用 */
-static long sbi_send_ipi(uint64_t hartid);
-#endif
 
 /* ── 跨核 resched IPI ───────────────────────────────────── */
 
@@ -140,19 +137,12 @@ void cpu_init_bsp(void)
 }
 
 /* ── 二级核启动 ─────────────────────────────────────────── */
+#define SECONDARY_STACK_SIZE 16384U
 
-#if ARCH_AARCH64 || ARCH_RISCV64 || ARCH_X86_64
 /* 各架构 boot.S 中定义的次级核启动栈, 共享供 idle 复用。 */
 extern uint8_t secondary_boot_stacks[];
-#if ARCH_AARCH64
-#define SECONDARY_STACK_SIZE 4096U
-#else
-#define SECONDARY_STACK_SIZE 16384U
-#endif
-
 /* 每个次级核的 idle 任务控制块(CPU0 用 task.c 里的 g_idle_task)。 */
 static task_t g_secondary_idle[AVATAR_MAX_CPUS - 1];
-#endif
 
 #if ARCH_AARCH64
 
@@ -162,46 +152,16 @@ extern void _secondary_start(void);
 /* GIC CPU interface 初始化(每核都要做一次；distributor 由 BSP 初始化) */
 extern void gic_init_secondary(void);
 
-/* PSCI 0.2+ 功能号：SMC64 CPU_ON */
-#define PSCI_CPU_ON_AARCH64        0xC4000003UL
-#define PSCI_AFFINITY_INFO_AARCH64 0xC4000004UL
-
-static int64_t psci_cpu_on(uint64_t mpidr, uint64_t entry_phys, uint64_t context_id)
-{
-    register uint64_t x0 __asm__("x0") = PSCI_CPU_ON_AARCH64;
-    register uint64_t x1 __asm__("x1") = mpidr;
-    register uint64_t x2 __asm__("x2") = entry_phys;
-    register uint64_t x3 __asm__("x3") = context_id;
-
-    __asm__ volatile("smc #0" : "+r"(x0) : "r"(x1), "r"(x2), "r"(x3) : "memory");
-    return (int64_t)x0;
-}
-
-/*
-   PSCI_AFFINITY_INFO 查询指定核状态：
-     0 = ON
-     1 = OFF
-     2 = ON_PENDING
-     <0 = error (例如 -2 INVALID_PARAMS 表示 ATF 不认该 mpidr)
-*/
-static int64_t psci_affinity_info(uint64_t mpidr)
-{
-    register uint64_t x0 __asm__("x0") = PSCI_AFFINITY_INFO_AARCH64;
-    register uint64_t x1 __asm__("x1") = mpidr;
-    register uint64_t x2 __asm__("x2") = 0; /* lowest_affinity_level = 0 */
-
-    __asm__ volatile("smc #0" : "+r"(x0) : "r"(x1), "r"(x2) : "memory");
-    return (int64_t)x0;
-}
+/* psci_cpu_on / psci_affinity_info 在 include/aarch64/psci.h(static inline) */
 
 #endif /* ARCH_AARCH64 */
 
-#if ARCH_AARCH64 || ARCH_RISCV64 || ARCH_X86_64
 /*
    setup_secondary_idle_task - 初始化次级核 idle 任务控制块
 
    复用 secondary_boot_stacks[cpu_id] 作为 idle 的内核栈(次级核此刻
-   的 SP 就指向那块 4KB；切换到自己时只是恢复同一区域)。
+   的 SP 就指向那块 SECONDARY_STACK_SIZE 大小(16KB)的栈；切换到自己时
+   只是恢复同一区域)。
 
    必须在第一次允许中断 / 第一次调用 sched_schedule 之前完成,
    否则 sched_check_and_yield 会读到 NULL current_task 而崩溃。
@@ -244,7 +204,6 @@ static void setup_secondary_idle_task(cpu_t *c)
     c->idle_task = idle;
     c->current_task = idle;
 }
-#endif /* ARCH_AARCH64 || ARCH_RISCV64 || ARCH_X86_64 */
 
 #if ARCH_AARCH64
 
@@ -347,7 +306,7 @@ void cpu_bring_up_all(void)
         int64_t ret = psci_cpu_on(/* mpidr= */ c->hw_id, entry_phys,
                                   /* context_id= */ i);
         KLOG_SMP("[cpu] PSCI CPU_ON cpu=%u ret=%lld\n", i, (long long)ret);
-        if (ret != 0) {
+        if (ret != PSCI_RET_SUCCESS) {
             KLOG_ERROR("[cpu] PSCI CPU_ON cpu=%u failed: ret=%lld\n", i, (long long)ret);
             continue;
         }
@@ -378,39 +337,9 @@ void cpu_bring_up_all(void)
 extern const uint64_t riscv64_hart_release_phys;
 extern volatile uint64_t riscv64_boot_hartid;
 
-#define SBI_SUCCESS        0L
-#define SBI_EID_IPI        0x735049UL
-#define SBI_FID_SEND_IPI   0UL
-#define SBI_EID_HSM        0x48534DUL
-#define SBI_FID_HART_START 0UL
-
 extern const uint64_t riscv64_secondary_start_phys;
 
-static long sbi_hart_start(uint64_t hartid, uint64_t start_addr, uint64_t opaque)
-{
-    register uint64_t a0 __asm__("a0") = hartid;
-    register uint64_t a1 __asm__("a1") = start_addr;
-    register uint64_t a2 __asm__("a2") = opaque;
-    register uint64_t a6 __asm__("a6") = SBI_FID_HART_START;
-    register uint64_t a7 __asm__("a7") = SBI_EID_HSM;
-
-    __asm__ volatile("ecall" : "+r"(a0), "+r"(a1) : "r"(a2), "r"(a6), "r"(a7) : "memory");
-    return (long)a0;
-}
-
-static long sbi_send_ipi(uint64_t hartid)
-{
-    if (hartid >= 64U)
-        return -1;
-
-    register uint64_t a0 __asm__("a0") = 1ULL << hartid;
-    register uint64_t a1 __asm__("a1") = 0;
-    register uint64_t a6 __asm__("a6") = SBI_FID_SEND_IPI;
-    register uint64_t a7 __asm__("a7") = SBI_EID_IPI;
-
-    __asm__ volatile("ecall" : "+r"(a0), "+r"(a1) : "r"(a6), "r"(a7) : "memory");
-    return (long)a0;
-}
+/* sbi_hart_start / sbi_send_ipi 在 include/riscv64/sbi.h(static inline) */
 
 void cpu_secondary_bootstrap(uint32_t cpu_id)
 {
@@ -589,19 +518,7 @@ void cpu_bring_up_all(void)
     KLOG_SMP("[cpu] x86_64 SMP bringup done: %u CPU(s) online\n", (unsigned)g_num_cpus);
 }
 
-#else /* !ARCH_AARCH64 && !ARCH_RISCV64 && !ARCH_X86_64 */
-
-void cpu_bring_up_all(void)
-{
-    /* x86_64 SMP 拉起留待后续 Phase 实现。 */
-    if (CONFIG_SMP_CPUS > 1U) {
-        KLOG_WARN("[cpu] CONFIG_SMP_CPUS=%u but SMP bringup not yet "
-                  "implemented on this architecture. Running on CPU0 only.\n",
-                  (unsigned)CONFIG_SMP_CPUS);
-    }
-}
-
-#endif /* ARCH_AARCH64 / ARCH_RISCV64 */
+#endif /* ARCH_AARCH64 / ARCH_RISCV64 / ARCH_X86_64 */
 
 /* ── SMP 自检：验证所有在线核的 timer ISR 都在动 ──────────
 
