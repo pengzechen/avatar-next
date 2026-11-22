@@ -22,7 +22,8 @@
 | 场景 5b | 统计窗口 RESET（保留 out_seq、清共享页镜像）+ watchdog checks/trips | 同上 |
 | 场景 6 | 普通 mutex SMP 并发 + `rt_mutex` 直接 PI | `rt_mutex_test.c` |
 | 场景 7 | `rt_event` any/all/timeout + event 模板共享环 | `rt_event_test.c` |
-| 场景 8 | **内核态 cyclictest**：FIFO 80、1ms/10ms 绝对 deadline、NORMAL hog、hog_iters | `cyclictest.c` |
+| 场景 8 | **内核态 cyclictest**：FIFO 80、1ms/10ms 绝对 deadline、NORMAL hog、hog_iters；x86 额外拆出 timerlat IRQ 延迟 | `cyclictest.c` |
+| 场景 9 | **内核态 oslat**：FIFO 85 忙循环 500ms，记录执行间隔和 1/10/100µs 超阈值次数 | `oslat.c` |
 | `RT_DEMO=1` | RT ping-pong 唤醒 + NORMAL→RT 抢占 | `rt_demo.c` |
 | R0/R0.5 | `/proc/rtstat`：wake/syscall/tick_gap；`RT_IRQ_TRACE=1` 真 IRQ-off | `kernel/rt/rt_latency.c` |
 | 回归门禁 | `make -C tests rt-test` 三架构；SMP=1/4 | `tests/suites/rt_test.py` |
@@ -75,8 +76,9 @@
 ### T0：现有基线（已完成，2026-11-12）
 
 - RT_TEST 场景 1–8 + RT_DEMO；
-- 内核态 cyclictest + `hog_iters` + `tests/suites/rt_test.py` 门禁；
-- 文档：`CYCLICTEST.md`、`RT_DEMO_RESULTS.md`、`R0_BASELINE.md`；
+- 内核态 cyclictest + `hog_iters` + timerlat IRQ/Thread 拆分（x86）
+  + oslat + `tests/suites/rt_test.py` 门禁；
+- 文档：`CYCLICTEST.md`、`OSLAT.md`、`RT_DEMO_RESULTS.md`、`R0_BASELINE.md`；
 - 三架构 `make -C tests rt-test` 通过。
 
 ### T1：裸机延迟实验室（下一步，2–4 周）

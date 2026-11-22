@@ -38,6 +38,14 @@ bool hrtimer_oneshot_supported(void);             /* 当前 CPU */
 bool hrtimer_cpu_oneshot_supported(uint32_t cpu); /* 指定逻辑 CPU */
 
 /*
+   读取最近一次 oneshot timer 中断相对其编程 deadline 的延迟
+   （deadline → ISR 入口，rtla timerlat 的 "IRQ timer latency"）。
+   只有 deadline_ns 与最近一次武装的 deadline 匹配时才返回 true。
+   非 oneshot 架构返回 false；该值用于把总唤醒延迟拆成 IRQ + 线程两段。
+*/
+bool hrtimer_irq_latency(uint64_t deadline_ns, uint64_t *lat_ns);
+
+/*
    架构钩子：
      x86_64 由 driver/time/timer_x86_64_impl.h 实现；
      其它架构在 hrtimer.c 里提供 false/no-op 版本。

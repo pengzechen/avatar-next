@@ -1,6 +1,6 @@
 # kernel — C API
 
-[← 返回总览](index.md) · 1001 个函数 · 说明覆盖率 95.7%
+[← 返回总览](index.md) · 1002 个函数 · 说明覆盖率 95.6%
 
 <a id="mod-kernel-debug-backtrace.c"></a>
 
@@ -16751,7 +16751,7 @@ uint64_t *arch_sched_next_pgd(task_t *next)
 
 ## kernel/time/hrtimer.c — 高精度睡眠/唤醒（x86_64 先用）
 
-`kernel/time/hrtimer.c` · 12 个函数 · 12 个有说明 · 184 行
+`kernel/time/hrtimer.c` · 13 个函数 · 12 个有说明 · 215 行
 
 定时事件 = min(下一个 100Hz tick, 本核最早的 task->sleep_expire_ns)。
 x86 用 LAPIC TSC-deadline 精确武装；其它架构不支持 oneshot 时，
@@ -16787,7 +16787,7 @@ void timer_arch_program_oneshot_ns(uint64_t deadline_ns)
 
 **位置**：`kernel/time/hrtimer.c:37`
 
-<a id="fn-kernel-time-hrtimer.c-46"></a>
+<a id="fn-kernel-time-hrtimer.c-55"></a>
 
 ### `hrtimer_tick_period_ns`
 
@@ -16799,9 +16799,9 @@ static uint64_t hrtimer_tick_period_ns(void)
 
 返回配置的 tick 毫秒数（未配置按 10ms）换算得到的纳秒周期。
 
-**位置**：`kernel/time/hrtimer.c:46`
+**位置**：`kernel/time/hrtimer.c:55`
 
-<a id="fn-kernel-time-hrtimer.c-52"></a>
+<a id="fn-kernel-time-hrtimer.c-61"></a>
 
 ### `hrtimer_cpu_id`
 
@@ -16813,9 +16813,9 @@ static uint32_t hrtimer_cpu_id(void)
 
 返回当前 CPU 编号，超出最大 CPU 数时回退为 0。
 
-**位置**：`kernel/time/hrtimer.c:52`
+**位置**：`kernel/time/hrtimer.c:61`
 
-<a id="fn-kernel-time-hrtimer.c-58"></a>
+<a id="fn-kernel-time-hrtimer.c-67"></a>
 
 ### `hrtimer_next_deadline`
 
@@ -16827,9 +16827,9 @@ static uint64_t hrtimer_next_deadline(uint32_t cpu, uint64_t now)
 
 取本 CPU 下次 tick 时间，并扫描同 CPU 上休眠任务的到期时刻取更早者作为截止时间。
 
-**位置**：`kernel/time/hrtimer.c:58`
+**位置**：`kernel/time/hrtimer.c:67`
 
-<a id="fn-kernel-time-hrtimer.c-77"></a>
+<a id="fn-kernel-time-hrtimer.c-86"></a>
 
 ### `hrtimer_program_next`
 
@@ -16844,15 +16844,15 @@ static void hrtimer_program_next(uint32_t cpu, uint64_t now)
 <details>
 <summary>函数内备注（1 条）</summary>
 
-**第 84 行（行尾）**
+**第 93 行（行尾）**
 
 > 已经过期：尽量立刻触发
 
 </details>
 
-**位置**：`kernel/time/hrtimer.c:77`
+**位置**：`kernel/time/hrtimer.c:86`
 
-<a id="fn-kernel-time-hrtimer.c-88"></a>
+<a id="fn-kernel-time-hrtimer.c-98"></a>
 
 ### `hrtimer_expire_sleepers`
 
@@ -16864,9 +16864,9 @@ static void hrtimer_expire_sleepers(uint32_t cpu, uint64_t now)
 
 遍历本 CPU 上已到期且处于阻塞态的休眠任务，清除其到期时刻并唤醒。
 
-**位置**：`kernel/time/hrtimer.c:88`
+**位置**：`kernel/time/hrtimer.c:98`
 
-<a id="fn-kernel-time-hrtimer.c-106"></a>
+<a id="fn-kernel-time-hrtimer.c-116"></a>
 
 ### `hrtimer_cpu_init`
 
@@ -16878,9 +16878,9 @@ void hrtimer_cpu_init(void)
 
 记录本 CPU 是否支持单次模式并设定下次 tick 时间，支持时立即编程定时器。
 
-**位置**：`kernel/time/hrtimer.c:106`
+**位置**：`kernel/time/hrtimer.c:116`
 
-<a id="fn-kernel-time-hrtimer.c-118"></a>
+<a id="fn-kernel-time-hrtimer.c-128"></a>
 
 ### `hrtimer_isr`
 
@@ -16893,17 +16893,22 @@ bool hrtimer_isr(void)
 判断并推进 tick（落后时重新对齐），唤起到期休眠者并重新编程，返回本次 tick 是否到期。
 
 <details>
-<summary>函数内备注（1 条）</summary>
+<summary>函数内备注（2 条）</summary>
 
-**第 131 行**
+**第 135 行**
+
+> 在唤醒 sleeper 之前抓 ISR 入口延迟；此时 g_programmed_deadline_ns
+> 还是本次中断武装时写入的值。非 oneshot 架构该值为 0，不记录。
+
+**第 151 行**
 
 > 被长关中断拖后时不要补跑一串 tick；重新对齐即可。
 
 </details>
 
-**位置**：`kernel/time/hrtimer.c:118`
+**位置**：`kernel/time/hrtimer.c:128`
 
-<a id="fn-kernel-time-hrtimer.c-141"></a>
+<a id="fn-kernel-time-hrtimer.c-161"></a>
 
 ### `hrtimer_sleep_until`
 
@@ -16918,7 +16923,7 @@ void hrtimer_sleep_until(uint64_t deadline_ns)
 <details>
 <summary>函数内备注（1 条）</summary>
 
-**第 158 行**
+**第 178 行**
 
 > 关中断做“登记 deadline + 武装 LAPIC + 睡眠”这三步：
 > 否则定时器可能在任务真正 BLOCKED 之前到期，ISR 看到 RUNNING 的任务
@@ -16927,9 +16932,9 @@ void hrtimer_sleep_until(uint64_t deadline_ns)
 
 </details>
 
-**位置**：`kernel/time/hrtimer.c:141`
+**位置**：`kernel/time/hrtimer.c:161`
 
-<a id="fn-kernel-time-hrtimer.c-176"></a>
+<a id="fn-kernel-time-hrtimer.c-196"></a>
 
 ### `hrtimer_oneshot_supported`
 
@@ -16941,9 +16946,9 @@ bool hrtimer_oneshot_supported(void)
 
 返回当前 CPU 是否支持单次定时器模式。
 
-**位置**：`kernel/time/hrtimer.c:176`
+**位置**：`kernel/time/hrtimer.c:196`
 
-<a id="fn-kernel-time-hrtimer.c-181"></a>
+<a id="fn-kernel-time-hrtimer.c-201"></a>
 
 ### `hrtimer_cpu_oneshot_supported`
 
@@ -16955,7 +16960,19 @@ bool hrtimer_cpu_oneshot_supported(uint32_t cpu)
 
 在 CPU 编号合法时返回该 CPU 是否支持单次定时器模式。
 
-**位置**：`kernel/time/hrtimer.c:181`
+**位置**：`kernel/time/hrtimer.c:201`
+
+<a id="fn-kernel-time-hrtimer.c-206"></a>
+
+### `hrtimer_irq_latency`
+
+```c
+bool hrtimer_irq_latency(uint64_t deadline_ns, uint64_t *lat_ns)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`kernel/time/hrtimer.c:206`
 
 <a id="mod-kernel-time-itimer.c"></a>
 

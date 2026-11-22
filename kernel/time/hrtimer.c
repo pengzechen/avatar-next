@@ -43,6 +43,15 @@ void timer_arch_program_oneshot_ns(uint64_t deadline_ns)
 static uint64_t g_next_tick_ns[AVATAR_MAX_CPUS];
 static bool g_oneshot[AVATAR_MAX_CPUS];
 
+/*
+   timerlat：最近一次武装的 deadline 和该次中断的实际入口延迟。
+   deadline → ISR 入口是 IRQ 部分；ISR 唤醒任务 → 任务真正运行是
+   线程部分。两者相加约等于 cyclictest 的总唤醒延迟。
+*/
+static uint64_t g_programmed_deadline_ns[AVATAR_MAX_CPUS];
+static uint64_t g_irq_lat_deadline_ns[AVATAR_MAX_CPUS];
+static uint64_t g_irq_lat_ns[AVATAR_MAX_CPUS];
+
 static uint64_t hrtimer_tick_period_ns(void)
 {
     uint64_t ms = g_timer_cfg_tick_ms ? g_timer_cfg_tick_ms : 10ULL;
@@ -82,6 +91,7 @@ static void hrtimer_program_next(uint32_t cpu, uint64_t now)
     uint64_t next = hrtimer_next_deadline(cpu, now);
     if (next <= now)
         next = now + 1; /* 已经过期：尽量立刻触发 */
+    g_programmed_deadline_ns[cpu] = next;
     timer_arch_program_oneshot_ns(next);
 }
 
@@ -121,6 +131,16 @@ bool hrtimer_isr(void)
     uint32_t cpu = hrtimer_cpu_id();
     uint64_t period = hrtimer_tick_period_ns();
     bool tick_due = false;
+
+    /*
+       在唤醒 sleeper 之前抓 ISR 入口延迟；此时 g_programmed_deadline_ns
+       还是本次中断武装时写入的值。非 oneshot 架构该值为 0，不记录。
+    */
+    uint64_t armed = g_programmed_deadline_ns[cpu];
+    if (armed != 0) {
+        g_irq_lat_deadline_ns[cpu] = armed;
+        g_irq_lat_ns[cpu] = (now > armed) ? (now - armed) : 0;
+    }
 
     if (g_next_tick_ns[cpu] == 0)
         g_next_tick_ns[cpu] = now + period;
@@ -181,4 +201,15 @@ bool hrtimer_oneshot_supported(void)
 bool hrtimer_cpu_oneshot_supported(uint32_t cpu)
 {
     return cpu < AVATAR_MAX_CPUS && g_oneshot[cpu];
+}
+
+bool hrtimer_irq_latency(uint64_t deadline_ns, uint64_t *lat_ns)
+{
+    uint32_t cpu = hrtimer_cpu_id();
+
+    if (cpu >= AVATAR_MAX_CPUS || !g_oneshot[cpu] || deadline_ns == 0 || g_irq_lat_deadline_ns[cpu] != deadline_ns)
+        return false;
+    if (lat_ns)
+        *lat_ns = g_irq_lat_ns[cpu];
+    return true;
 }

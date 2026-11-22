@@ -658,6 +658,13 @@ void run_rt_sched_test(void)
             return;
         }
 
+        /* oslat：RT 忙循环的连续执行间隔（IRQ/tick/宿主噪声）。 */
+        extern bool run_oslat(void);
+        if (!run_oslat()) {
+            KLOG_ERROR("=== RT SCHED TEST: FAIL (oslat) ===\n");
+            return;
+        }
+
         KLOG_INFO("=== RT SCHED TEST: PASS ===\n");
     } else {
         KLOG_ERROR("=== RT SCHED TEST: FAIL (immediate preemption) ===\n");

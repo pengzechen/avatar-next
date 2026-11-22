@@ -21,18 +21,23 @@ rt-tests 的 `cyclictest` 测的是同一个量：
   让“RT 醒来时抢占一个正在跑普通任务的 CPU”成为常态；
 - 醒来后 `latency = now - deadline`；如果已经错过下一个 deadline，
   记一次 `overrun` 并把 `next` 重同步到 `now + period`，不补跑；
-- 统计 `min/avg/p50/p99/p99.9/max`、`overruns`、`early`（早醒次数）。
+- 统计 `min/avg/p50/p99/p99.9/max`、`overruns`、`early`（早醒次数）；
+- x86 oneshot 下额外记录 **IRQ timer latency**：`deadline → timer ISR
+  入口`。总延迟是 `deadline → RT 线程运行`，两者之差就是 ISR 唤醒后
+  到线程真正被调度的那一段（对应 rtla timerlat 的 IRQ/Thread 拆分）。
 
 输出（`tests/suites/rt_test.py` 解析）：
 
 ```text
 === CYCLICTEST: PASS period=1000000 warmup=100 cycles=2000 samples=2000 \
-    min=2323 avg=2971 p50=2425 p99=11752 p999=24214 max=152537 \
+    min=2325 avg=2800 p50=2406 p99=8455 p999=20133 max=104876 \
+    irq_n=2000 irq_min=563 irq_avg=852 irq_p99=4116 irq_max=103097 \
     overruns=0 early=0 hog=1 hog_iters=... ===
 ```
 
 单位都是纳秒。`hog_iters` 是 NORMAL 忙循环实际完成的迭代数；`hog=1`
 只说明线程创建成功，`hog_iters>0` 才证明它真的获得了 CPU 时间。
+非 oneshot 架构没有编程 deadline，输出 `irq_n=0`。
 
 ## 2. 怎么跑
 
@@ -65,7 +70,14 @@ run A: min/avg/p50/p99/p999/max = 2323/2971/2425/11752/24214/152537 ns
 run B: min/avg/p50/p99/p999/max = 2322/3291/2707/8587/46264/82876 ns
 run C: min/avg/p50/p99/p999/max = 2290/2810/2593/6433/17944/19796 ns
 overruns=0 early=0 hog=1
+
+timerlat 拆分（同一次 run）：
+irq_n=2000 irq_min/avg/p99/max = 563/852/4116/103097 ns
 ```
+
+IRQ 部分通常在亚微秒到几微秒；总延迟的剩余部分主要是 ISR 唤醒后
+等待 RT 线程被调度。两者使用同一个 deadline，可以在一次回归里
+判断“是中断来晚了”还是“中断来了但线程没及时跑”。
 
 - p50 ~2.4–2.7µs，p99 ~4.4–11.8µs，max ~18–153µs；
 - 这是 QEMU/KVM 的单次结果，不是裸机保证；max 对宿主调度抖动敏感，
@@ -159,6 +171,9 @@ python3 tools/plot_cyclictest.py ... --dark \
 `tests/suites/rt_test.py` 里：
 
 - `warmup == 100`、`cycles == 2000`、`samples == 2000`；
+- 1ms oneshot 周期下：`irq_n == samples`，`irq_min <= irq_avg <= irq_max`，
+  `irq_max <= max`（ISR 入口不可能晚于线程运行），`irq_max < 5ms`；
+  非 oneshot 架构要求 `irq_n == 0`；
 - x86_64 + KVM：`period == 1ms`、`p99 < 1ms`、`max < 5ms`。
   这是**回归门禁**（防止 hrtimer/调度路径退化），不是“软实时验收线”。
   真正的验收线应来自目标硬件上的控制环预算（见
@@ -174,6 +189,7 @@ python3 tools/plot_cyclictest.py ... --dark \
 | 睡眠 | `clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME)` | `hrtimer_sleep_until()` |
 | 内存 | `mlockall` 后无页错误 | 无用户 mm，无页错误 |
 | 负载 | 可配多种 load | 一个 NORMAL CPU hog |
+| 拆分 | `rtla timerlat` 可分开看 IRQ/Thread | x86 oneshot 下输出 IRQ timer latency；总延迟即 Thread 部分 |
 | 用途 | 用户态端到端延迟 | 内核调度/hrtimer 回归 |
 
 等 `sched_setscheduler` / `mlockall` / `clock_nanosleep` 落地后，应再加

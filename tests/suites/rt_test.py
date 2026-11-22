@@ -23,7 +23,11 @@ rt-test suite — RT 调度语义与唤醒/抢占延迟。
     场景 8：内核态 cyclictest——FIFO 80 钉 CPU0，1ms(x86 oneshot)/10ms
     (tick 回退) 绝对 deadline 周期，加一个 NORMAL hog；记录
     min/avg/p50/p99/p99.9/max、overrun、早醒次数，以及 hog_iters
-    （忙循环实际迭代数，>0 证明负载真的运行过）。
+    （忙循环实际迭代数，>0 证明负载真的运行过）。x86 oneshot 下
+    额外记录 timerlat IRQ 延迟（deadline → timer ISR 入口）。
+    场景 9：内核态 oslat——FIFO 85 忙循环 500ms，记录相邻迭代间隔的
+    min/avg/max 和超过 1/10/100µs 的次数，衡量已运行 RT 线程被 OS
+    噪声打断的时间。
   - `RT_DEMO=1`（tests/unit-test/rt_demo.c）
     5000 轮 RT ping-pong + 50 轮 NORMAL→RT 抢占，输出 min/avg/max。
 
@@ -78,7 +82,12 @@ EVENT_RE = re.compile(
 CYCLI_RE = re.compile(
     rb"=== CYCLICTEST: PASS period=(\d+) warmup=(\d+) cycles=(\d+) "
     rb"samples=(\d+) min=(\d+) avg=(\d+) p50=(\d+) p99=(\d+) p999=(\d+) "
-    rb"max=(\d+) overruns=(\d+) early=(\d+) hog=(\d+) hog_iters=(\d+) ==="
+    rb"max=(\d+) irq_n=(\d+) irq_min=(\d+) irq_avg=(\d+) irq_p99=(\d+) "
+    rb"irq_max=(\d+) overruns=(\d+) early=(\d+) hog=(\d+) hog_iters=(\d+) ==="
+)
+OSLAT_RE = re.compile(
+    rb"=== OSLAT: PASS duration=(\d+) samples=(\d+) min=(\d+) avg=(\d+) "
+    rb"max=(\d+) over_1us=(\d+) over_10us=(\d+) over_100us=(\d+) ==="
 )
 
 FORBIDDEN = (
@@ -94,6 +103,7 @@ FORBIDDEN = (
     rb"=== RT MUTEX TEST: FAIL",
     rb"=== RT EVENT TEST: FAIL",
     rb"=== CYCLICTEST: FAIL",
+    rb"=== OSLAT: FAIL",
     rb"RT DEMO: TIMEOUT",
     rb"RT DEMO: worker/waker create failed",
     rb"RT DEMO: probe/hog create failed",
@@ -165,6 +175,15 @@ def _rt(ctx: TestContext, report: Report, arch) -> None:
                 )
             )
 
+            oslat = _parse(
+                q.wait_for(
+                    OSLAT_RE,
+                    ctx.timeout(180),
+                    forbidden=FORBIDDEN,
+                    desc=f"{arch.name} oslat 结果",
+                )
+            )
+
             ping = _parse(
                 q.wait_for(
                     PING_RE,
@@ -215,11 +234,26 @@ def _rt(ctx: TestContext, report: Report, arch) -> None:
             cyc_p99,
             cyc_p999,
             cyc_max,
+            cyc_irq_n,
+            cyc_irq_min,
+            cyc_irq_avg,
+            cyc_irq_p99,
+            cyc_irq_max,
             cyc_overruns,
             cyc_early,
             cyc_hog,
             cyc_hog_iters,
         ) = cycli
+        (
+            os_duration,
+            os_samples,
+            os_min,
+            os_avg,
+            os_max,
+            os_over_1us,
+            os_over_10us,
+            os_over_100us,
+        ) = oslat
 
         print(
             f"         {arch.name}: ping-pong n={ping_n} "
@@ -238,8 +272,14 @@ def _rt(ctx: TestContext, report: Report, arch) -> None:
             f"cycles={cyc_cycles} samples={cyc_samples} "
             f"min/avg/p50/p99/p999/max="
             f"{cyc_min}/{cyc_avg}/{cyc_p50}/{cyc_p99}/{cyc_p999}/{cyc_max}ns "
+            f"irq_n={cyc_irq_n} "
+            f"irq_min/avg/p99/max="
+            f"{cyc_irq_min}/{cyc_irq_avg}/{cyc_irq_p99}/{cyc_irq_max}ns "
             f"overruns={cyc_overruns} early={cyc_early} hog={cyc_hog} "
-            f"hog_iters={cyc_hog_iters}"
+            f"hog_iters={cyc_hog_iters}; "
+            f"oslat duration={os_duration}ns samples={os_samples} "
+            f"min/avg/max={os_min}/{os_avg}/{os_max}ns "
+            f"over_1/10/100us={os_over_1us}/{os_over_10us}/{os_over_100us}"
         )
 
         assert obs_reset == 1, "RT 统计窗口 reset 没有通过"
@@ -287,6 +327,42 @@ def _rt(ctx: TestContext, report: Report, arch) -> None:
         assert cyc_hog_iters > 0, (
             "cyclictest 的 NORMAL hog 没有获得任何 CPU 时间（hog_iters=0）"
         )
+        assert os_duration == 500_000_000, (
+            f"oslat duration={os_duration}ns，应为 500ms"
+        )
+        assert os_samples > 0, "oslat RT 线程没有完成任何循环"
+        assert os_min <= os_avg <= os_max, (
+            "oslat min/avg/max 顺序错误："
+            f"{os_min}/{os_avg}/{os_max}"
+        )
+        assert os_over_1us >= os_over_10us >= os_over_100us, (
+            "oslat 超阈值计数顺序错误："
+            f"{os_over_1us}/{os_over_10us}/{os_over_100us}"
+        )
+
+        assert cyc_irq_n <= cyc_samples, (
+            f"IRQ timer 样本 {cyc_irq_n} 多于总样本 {cyc_samples}"
+        )
+        if cyc_period == 1_000_000:
+            assert cyc_irq_n == cyc_samples, (
+                f"oneshot 下只记录到 {cyc_irq_n}/{cyc_samples} 个 IRQ timer 样本"
+            )
+            assert cyc_irq_min <= cyc_irq_avg <= cyc_irq_max, (
+                "IRQ timer min/avg/max 顺序错误："
+                f"{cyc_irq_min}/{cyc_irq_avg}/{cyc_irq_max}"
+            )
+            assert cyc_irq_max <= cyc_max, (
+                f"IRQ max={cyc_irq_max}ns 大于总唤醒 max={cyc_max}ns"
+                "（deadline→ISR 不可能晚于 deadline→线程）"
+            )
+            assert cyc_irq_max < 5_000_000, (
+                f"IRQ timer max={cyc_irq_max}ns 超过 5ms"
+            )
+        else:
+            assert cyc_irq_n == 0, (
+                "没有 oneshot 却记录了 IRQ timer 延迟"
+            )
+
         if arch.name == "x86_64" and have_kvm():
             assert cyc_period == 1_000_000, (
                 f"x86 KVM 下 cyclictest 周期是 {cyc_period}ns，不是 1ms"
