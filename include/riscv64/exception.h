@@ -90,6 +90,17 @@ void riscv_dispatch_host_irq(uint64_t cause, void *frame);
 #define SSTATUS_SPIE (1UL << 5) /* Saved SIE before trap */
 #define SSTATUS_SPP  (1UL << 8) /* Previous privilege (S-mode) */
 
+/*
+   arch_trap_frame_from_user - 这个 trap frame 是不是从 U-mode 进来的
+
+   sstatus.SPP == 0 表示 trap 前是 U-mode；1 表示 S-mode(内核态)。
+*/
+static inline bool arch_trap_frame_from_user(const void *frame_ptr)
+{
+    const trap_frame_t *frame = (const trap_frame_t *)frame_ptr;
+    return (frame->sstatus & SSTATUS_SPP) == 0;
+}
+
 /* ── 声明 ────────────────────────────────────────────────────────── */
 
 /* 初始化异常处理：设置 stvec, 配置异常入口 */

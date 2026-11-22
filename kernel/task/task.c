@@ -401,19 +401,6 @@ void task_trampoline(void)
 */
 void task_trampoline_user(void);
 
-#if ARCH_RISCV64
-void arch_user_entry_debug(uint64_t user_entry, uint64_t user_sp, uint64_t kernel_sp, uint64_t user_pgd)
-{
-    (void)user_entry;
-    (void)user_sp;
-    (void)kernel_sp;
-    (void)user_pgd;
-
-    task_t *cur = task_current();
-    if (cur && cur->is_user_process)
-        cur->user_started = true;
-}
-#endif
 /* ── task_init ───────────────────────────────────────────── */
 
 void task_init(void)
@@ -475,27 +462,12 @@ void task_switch_to_idle_stack(void)
     uintptr_t new_sp = (uintptr_t)(g_idle_stack + TASK_STACK_SIZE);
     KLOG_TASK("[task] switching to idle stack at 0x%lx\n", (unsigned long)new_sp);
 
-    /* 切到 idle 栈后永不返回：直接在 inline asm 里跳到 idle 主循环,
-     跳过编译器生成的 epilogue(否则会从未初始化的新栈读 LR/RBP 导
-     致跳到 0)。
+    /*
+       切到 idle 栈后永不返回：架构实现直接在 inline asm 里跳到 idle
+       主循环, 跳过编译器生成的 epilogue(否则会从未初始化的新栈读
+       LR/RBP 导致跳到 0)。实现见 include/<arch>/cpu_impl.h。
     */
-#if ARCH_X86_64
-    __asm__ volatile("mov %0, %%rsp\n\t"      /* 切换到新栈 */
-                     "xor %%rbp, %%rbp\n\t"   /* 清零 RBP, 标记栈帧链结束 */
-                     "jmp task_idle_loop\n\t" /* 跳到 idle 主循环(不返回) */
-                     ::"r"(new_sp)
-                     : "memory");
-#elif ARCH_RISCV64
-    __asm__ volatile("mv sp, %0\n\t"
-                     "mv fp, zero\n\t"
-                     "j  task_idle_loop\n\t" ::"r"(new_sp)
-                     : "memory");
-#elif ARCH_AARCH64
-    __asm__ volatile("mov sp, %0\n\t"
-                     "mov x29, xzr\n\t" /* 清零 FP */
-                     "b   task_idle_loop\n\t" ::"r"(new_sp)
-                     : "memory");
-#endif
+    arch_switch_to_idle_stack(new_sp);
     __builtin_unreachable();
 }
 
@@ -514,13 +486,7 @@ __attribute__((noreturn)) void task_idle_loop(void)
     arch_irq_enable();
     for (;;) {
         task_yield();
-#if ARCH_AARCH64
-        __asm__ volatile("wfi");
-#elif ARCH_X86_64
-        __asm__ volatile("hlt");
-#elif ARCH_RISCV64
-        __asm__ volatile("wfi");
-#endif
+        arch_cpu_idle_wait();
     }
 }
 

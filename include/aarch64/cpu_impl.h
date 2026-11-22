@@ -39,4 +39,27 @@ static inline uint64_t arch_cpu_hw_id(void)
     return v & 0xFFFFFFULL;
 }
 
+/* ── idle 支撑 ──────────────────────────────────────────── */
+
+/* idle 循环里的一条等待指令(中断唤醒) */
+static inline void arch_cpu_idle_wait(void)
+{
+    __asm__ volatile("wfi" ::: "memory");
+}
+
+/*
+   arch_switch_to_idle_stack - 切到 idle 专用栈并跳进 idle 主循环(不返回)
+
+   必须绕过编译器生成的函数 epilogue：新栈上还没有本函数的返回地址
+   和帧指针, 正常 return 会从栈上读到垃圾 LR/FP 直接跳飞。
+*/
+static inline __attribute__((noreturn)) void arch_switch_to_idle_stack(uintptr_t new_sp)
+{
+    __asm__ volatile("mov sp, %0\n\t"
+                     "mov x29, xzr\n\t" /* 清零 FP, 标记栈帧链结束 */
+                     "b   task_idle_loop\n\t" ::"r"(new_sp)
+                     : "memory");
+    __builtin_unreachable();
+}
+
 #endif /* AARCH64_CPU_IMPL_H */

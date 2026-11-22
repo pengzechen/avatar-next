@@ -115,4 +115,15 @@ bool sched_check_and_yield_from_trap(void *frame_ptr);
 */
 void sched_set_pi_boost(task_t *t, uint8_t prio);
 
+/* ── 架构钩子(实现在 kernel/task/<arch>/sched.c)───────────── */
+
+/*
+   arch_sched_prev_pgd_slot / arch_sched_next_pgd - 传给 arch_task_switch 的页表参数
+
+   RISC-V 的"首次进入用户进程延迟切 satp"和"内核任务恢复内核根表"两个
+   特例收在 arch 实现里；AArch64/x86_64 直接传 mm->pgd。
+*/
+uint64_t **arch_sched_prev_pgd_slot(task_t *prev);
+uint64_t *arch_sched_next_pgd(task_t *next);
+
 #endif /* KERNEL_TASK_SCHED_H */

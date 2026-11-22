@@ -70,6 +70,17 @@ _Static_assert(offsetof(trap_frame_t, fpsr) == 808, "SAVE_REGS");
 
 typedef trap_frame_t cpu_ctx_t;
 
+/*
+   arch_trap_frame_from_user - 这个 trap frame 是不是从 EL0 进来的
+
+   spsr[3:0] == 0 (EL0t) 表示从用户态陷入；EL1h 等内核态非 0。
+*/
+static inline bool arch_trap_frame_from_user(const void *frame_ptr)
+{
+    const trap_frame_t *frame = (const trap_frame_t *)frame_ptr;
+    return (frame->spsr & 0xfUL) == 0;
+}
+
 /* ── Hypervisor Syndrome Register ───────────────────────────────── */
 
 union hsr {

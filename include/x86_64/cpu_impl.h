@@ -53,4 +53,28 @@ static inline uint64_t arch_cpu_hw_id(void)
     return 0;
 }
 
+/* ── idle 支撑 ──────────────────────────────────────────── */
+
+/* idle 循环里的一条等待指令(中断唤醒) */
+static inline void arch_cpu_idle_wait(void)
+{
+    __asm__ volatile("hlt" ::: "memory");
+}
+
+/*
+   arch_switch_to_idle_stack - 切到 idle 专用栈并跳进 idle 主循环(不返回)
+
+   必须绕过编译器生成的函数 epilogue：新栈上还没有本函数的返回地址
+   和帧指针, 正常 return 会从栈上读到垃圾 RBP/返回地址直接跳飞。
+*/
+static inline __attribute__((noreturn)) void arch_switch_to_idle_stack(uintptr_t new_sp)
+{
+    __asm__ volatile("mov %0, %%rsp\n\t"      /* 切换到新栈 */
+                     "xor %%rbp, %%rbp\n\t"   /* 清零 RBP, 标记栈帧链结束 */
+                     "jmp task_idle_loop\n\t" /* 跳到 idle 主循环(不返回) */
+                     ::"r"(new_sp)
+                     : "memory");
+    __builtin_unreachable();
+}
+
 #endif /* X86_64_CPU_IMPL_H */

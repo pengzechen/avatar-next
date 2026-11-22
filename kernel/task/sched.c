@@ -43,12 +43,7 @@
 #include "driver/time.h"
 #include "rt/rt_latency.h"
 #include "mm/mm_vm.h"
-#if ARCH_AARCH64 || ARCH_X86_64
 #include "exception.h"
-#endif
-#if ARCH_RISCV64
-#include "riscv64/exception.h"
-#endif
 
 #if ARCH_X86_64
 #include "x86_64/mmu.h"
@@ -679,28 +674,10 @@ void sched_schedule(void)
        现在所有架构统一：idle 有专用栈, 正常返回即可。
     */
 
-#if ARCH_RISCV64
-    uint64_t *next_pgd_for_switch = next->mm->pgd;
-    if (next->is_user_process && !next->user_started) {
-        /* 首次进入用户进程：延迟satp切换到arch_switch_to_user */
-        next_pgd_for_switch = NULL;
-
-    } else if (!next->is_user_process && next->mm->pgd == NULL) {
-        /* 切换到内核任务：恢复内核页表 */
-        next_pgd_for_switch = (uint64_t *)mm_vm_kernel_root_phys();
-    }
-    /*
-       RISC-V 用户进程：pgd 是创建时固定的物理地址, 不需要由 arch_task_switch
-       动态保存。若传 &prev->mm->pgd, 当用户进程在 arch_switch_to_user 切换 satp
-       之前被抢占(satp 仍为内核页表)时, prev->mm->pgd 会被覆写为内核页表地址,
-       导致下次调度回来时以错误的 satp 进入 U-mode → VA 0x10000 不在内核页表 → Inst PF。
-       因此对用户进程传 NULL(跳过 satp 保存), 保持 pgd 不变。
-    */
-    uint64_t **prev_pgd_save = prev->is_user_process ? NULL : &prev->mm->pgd;
+    /* 页表参数由架构决定(RISC-V 的首次用户进入/内核任务特例在 arch 实现里) */
+    uint64_t **prev_pgd_save = arch_sched_prev_pgd_slot(prev);
+    uint64_t *next_pgd_for_switch = arch_sched_next_pgd(next);
     arch_task_switch(&prev->sp, switch_sp, prev_pgd_save, next_pgd_for_switch, &prev->switch_done);
-#else
-    arch_task_switch(&prev->sp, switch_sp, &prev->mm->pgd, next->mm->pgd, &prev->switch_done);
-#endif
 
     /* prev 被恢复后恢复其中断状态 */
     arch_irq_restore(flags);
@@ -829,20 +806,9 @@ static bool trap_preempt_kernel_side(void)
 */
 bool sched_check_and_yield_from_trap(void *frame_ptr)
 {
-#if ARCH_AARCH64
-    trap_frame_t *frame = (trap_frame_t *)frame_ptr;
-    if (frame && ((frame->spsr & 0xfUL) != 0))
+    if (frame_ptr && !arch_trap_frame_from_user(frame_ptr))
         return trap_preempt_kernel_side();
-#elif ARCH_X86_64
-    trap_frame_t *frame = (trap_frame_t *)frame_ptr;
-    if (frame && ((frame->cs & 3u) != 3u))
-        return trap_preempt_kernel_side();
-#elif ARCH_RISCV64
-    trap_frame_t *frame = (trap_frame_t *)frame_ptr;
-    if (frame && (frame->sstatus & SSTATUS_SPP))
-        return trap_preempt_kernel_side();
-#else
-    (void)frame_ptr;
-#endif
+
+    /* 来自用户态：异常现场完整保存在 trap frame 里, 直接调度即可 */
     return sched_check_and_yield();
 }

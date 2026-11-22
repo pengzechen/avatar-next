@@ -118,6 +118,28 @@ static_assert(offsetof(cpu_t, kernel_rsp0) == 104, "CPU_KERNEL_RSP0 in boot/x86_
 extern cpu_t g_cpus[AVATAR_MAX_CPUS];
 extern uint32_t g_num_cpus; /* 已在线 CPU 数(BSP=1, 每成功拉起一个 AP +1) */
 
+/* ── 次级核启动支撑 ────────────────────────────────────── */
+
+/* 各架构 boot.S 定义的次级核启动栈, 每核 SECONDARY_STACK_SIZE 字节。 */
+#define SECONDARY_STACK_SIZE 16384U
+extern uint8_t secondary_boot_stacks[];
+
+/*
+   cpu_setup_secondary_idle_task - 给次级核建立 idle 任务(kernel/task/cpu.c)
+
+   架构的 cpu_secondary_bootstrap() 必须在开中断和第一次调度之前调用。
+*/
+void cpu_setup_secondary_idle_task(cpu_t *c);
+
+/*
+   架构钩子 —— 实现在 kernel/task/<arch>/cpu_startup.c：
+   次级核拉起、BSP 硬件 ID、SMP 自检的架构差异都收在那里。
+*/
+uint64_t arch_cpu_bsp_hw_id(void);
+void arch_cpu_smp_test_begin(void);
+void arch_cpu_smp_test_diag_begin(void);
+void arch_cpu_smp_test_diag_round(uint32_t round);
+
 /* ── 跨核 IPI ─────────────────────────────────────────────
 
    目前只有一种用途：resched(让目标核立刻重新调度)。发送/接收已经收敛到

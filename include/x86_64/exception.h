@@ -63,6 +63,17 @@ typedef struct {
     uint64_t ss;
 } trap_frame_t;
 
+/*
+   arch_trap_frame_from_user - 这个 trap frame 是不是从用户态(CPL3)进来的
+
+   CS.RPL == 3 表示陷入前在用户态；0(CPL0) 表示内核态。
+*/
+static inline bool arch_trap_frame_from_user(const void *frame_ptr)
+{
+    const trap_frame_t *frame = (const trap_frame_t *)frame_ptr;
+    return (frame->cs & 3u) == 3u;
+}
+
 /* ── IRQ handler typedef ────────────────────────────────────────
    frame 实际类型是 trap_frame_t *
 */
