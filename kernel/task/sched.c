@@ -42,19 +42,17 @@
 #include "time/itimer.h"
 #include "driver/time.h"
 #include "rt/rt_latency.h"
+#include "mm/mm_vm.h"
 #if ARCH_AARCH64 || ARCH_X86_64
 #include "exception.h"
 #endif
 #if ARCH_RISCV64
-#include "riscv64/satp_utils.h"
 #include "riscv64/exception.h"
-extern uint64_t g_kernel_pgd_phys;
 #endif
 
 #if ARCH_X86_64
 #include "x86_64/mmu.h"
 #include "../../boot/x86_64/tss.h"
-extern uint64_t g_kernel_pgd_phys;
 
 #define X86_MSR_IA32_FS_BASE 0xC0000100U
 
@@ -661,7 +659,7 @@ void sched_schedule(void)
 
     } else if (!next->is_user_process && prev->is_user_process) {
         /* 从用户任务切换到内核任务：恢复内核页表 */
-        write_cr3(g_kernel_pgd_phys);
+        write_cr3(mm_vm_kernel_root_phys());
     }
     /* 用户→用户切换, 已在上面处理；内核→内核切换, 页表不变 */
 #endif
@@ -687,9 +685,9 @@ void sched_schedule(void)
         /* 首次进入用户进程：延迟satp切换到arch_switch_to_user */
         next_pgd_for_switch = NULL;
 
-    } else if (!next->is_user_process && next->mm->pgd == NULL && g_kernel_pgd_phys != 0) {
+    } else if (!next->is_user_process && next->mm->pgd == NULL) {
         /* 切换到内核任务：恢复内核页表 */
-        next_pgd_for_switch = (uint64_t *)g_kernel_pgd_phys;
+        next_pgd_for_switch = (uint64_t *)mm_vm_kernel_root_phys();
     }
     /*
        RISC-V 用户进程：pgd 是创建时固定的物理地址, 不需要由 arch_task_switch

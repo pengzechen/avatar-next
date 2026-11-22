@@ -61,4 +61,26 @@ typedef enum {
 #error "Unsupported architecture for mm_vm"
 #endif
 
+/* ── 内核根页表 ────────────────────────────────────────────────── */
+
+/*
+   mm_vm_kernel_root_phys - 内核根页表的物理地址
+
+     x86_64  : PML4(CR3 指向的内核页表)
+     RISC-V  : Sv39 根页表(satp.PPN)
+     AArch64 : 恒 0 —— 内核映射在 TTBR1, 不存在与用户页表共享的根表
+
+   该值在 boot 阶段由 mm_vm_kernel_root_init() 记录一次, 运行期不变。
+   调度器从用户任务切回内核任务、以及为用户进程构造页表时都要用它。
+*/
+uint64_t mm_vm_kernel_root_phys(void);
+
+/*
+   mm_vm_kernel_root_init - 在仍运行于内核地址空间时调用一次
+
+   x86_64/RISC-V 的用户地址空间共享根表中的内核半区, 所以用户任务切出去
+   之后就不能再从 CR3/satp 现读内核根表了 —— 必须在这里先记下来。
+*/
+void mm_vm_kernel_root_init(void);
+
 #endif /* MM_VM_H */

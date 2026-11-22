@@ -28,6 +28,17 @@ static inline uint64_t *x86_next_level(uint64_t pte)
     return (uint64_t *)x86_pa_to_kva(x86_pte_to_pa(pte));
 }
 
+/*
+   mm_vm_read_kernel_root_phys - 读当前 CR3 指向的根页表(PML4)物理地址
+
+   只在 boot/MM 初始化、CPU 仍跑在内核地址空间时调用一次；运行期
+   由 mm_vm_kernel_root_phys() 返回记录下来的副本。
+*/
+static inline uint64_t mm_vm_read_kernel_root_phys(void)
+{
+    return read_cr3() & PTE_ADDR_MASK;
+}
+
 /* ── 页表操作(实现在 kernel/mm/x86_64/vmm.c)──────────────────── */
 
 extern uint64_t *x86_walk_pt(void *page_dir, uint64_t vaddr, bool alloc);

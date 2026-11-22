@@ -35,11 +35,6 @@
 #include "mm/user_layout.h"
 #include "mm/vm_user.h"
 
-#if ARCH_RISCV64
-#include "riscv64/satp_utils.h"
-#include "riscv64/sysreg.h"
-#endif
-
 /* ── 静态任务池 ──────────────────────────────────────────── */
 
 task_t g_task_pool[TASK_MAX];
@@ -53,9 +48,6 @@ uint8_t g_task_stacks[TASK_MAX][TASK_STACK_SIZE] __attribute__((aligned(16)));
 uint8_t g_stack_used[TASK_MAX];
 
 uint32_t g_task_id_cnt = 0;
-
-/* ── 内核页表物理地址(task_init 时读取, RISC-V satp / x86_64 CR3 均使用)── */
-uint64_t g_kernel_pgd_phys = 0;
 
 /* ── idle 任务(boot 执行上下文)────────────────────────── */
 static task_t g_idle_task;
@@ -452,14 +444,6 @@ void task_init(void)
     g_idle_task.name[2] = 'l';
     g_idle_task.name[3] = 'e';
     g_idle_task.name[4] = '\0';
-
-#if ARCH_RISCV64
-    /* 保存内核 SATP 对应的 PGD 物理地址, 用于切换回内核任务时恢复 */
-    g_kernel_pgd_phys = satp_read_pgd_phys();
-#elif ARCH_X86_64
-    /* 保存内核 PML4 物理地址, 用于切换回内核任务时恢复 */
-    g_kernel_pgd_phys = read_cr3() & PTE_ADDR_MASK;
-#endif
 
     /* 初始化调度器, 传入 idle 任务 */
     sched_init(&g_idle_task);

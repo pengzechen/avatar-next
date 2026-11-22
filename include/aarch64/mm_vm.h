@@ -10,6 +10,17 @@
 #include "types.h"
 #include "mmu.h"
 
+/*
+   mm_vm_read_kernel_root_phys - AArch64 没有"内核根页表"这个概念
+
+   TTBR0/TTBR1 硬件分割用户/内核地址空间, 用户页表不复制内核映射,
+   调度时也只切 TTBR0。返回 0 表示 N/A。
+*/
+static inline uint64_t mm_vm_read_kernel_root_phys(void)
+{
+    return 0;
+}
+
 /* AArch64 现有 VM 实现导出符号 */
 extern int32_t memory_create_map(void *page_dir, uint64_t vaddr, uint64_t paddr, int32_t count, uint64_t perm);
 extern uint64_t memory_get_paddr(void *page_dir, uint64_t vaddr);

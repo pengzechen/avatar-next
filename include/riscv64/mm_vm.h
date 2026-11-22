@@ -15,6 +15,7 @@
 */
 
 #include "mmu.h"
+#include "satp_utils.h"
 
 /* ── 需要 phys_to_virt 的工具函数 ──────────────────────────────── */
 
@@ -26,6 +27,17 @@ static inline void *rv_pa_to_kva(uint64_t pa)
 static inline uint64_t *rv_next_level(uint64_t pte)
 {
     return (uint64_t *)rv_pa_to_kva(rv_pte_to_pa(pte));
+}
+
+/*
+   mm_vm_read_kernel_root_phys - 读当前 satp 的根页表物理地址
+
+   只在 boot/MM 初始化、CPU 仍跑在内核地址空间时调用一次。用户任务
+   运行期间 satp 指向用户页表, 不能再现读。
+*/
+static inline uint64_t mm_vm_read_kernel_root_phys(void)
+{
+    return satp_read_pgd_phys();
 }
 
 /* ── 页表操作(实现在 kernel/mm/riscv64/vmm.c)──────────────────── */

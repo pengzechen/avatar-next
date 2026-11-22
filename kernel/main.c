@@ -134,6 +134,13 @@ void kernel_main(void)
     exception_init();
 #endif
 
+    /*
+       记录 boot 建立的内核根页表(x86_64 CR3 / RISC-V satp)。此刻仍跑在
+       内核地址空间上；之后用户页表构造、调度切回内核任务都依赖它。
+       AArch64 的内核映射在 TTBR1, 没有这个抽象, 记录到的是 0。
+    */
+    mm_vm_kernel_root_init();
+
 #if ARCH_RISCV64
     /* mmu.S 建立的 1GiB 内核映射必须与 RV_KERNEL_MAP_LIST 完全一致；
        缺一条就 panic 在启动期, 而不是等 syscall 期间 Store PF。

@@ -12,6 +12,7 @@
 */
 
 #include "mm/vm_user.h"
+#include "assert.h"
 #include "klog.h"
 #include "mm/mm_vm.h"
 #include "mm/pmm.h"
@@ -146,4 +147,26 @@ uint64_t vm_unmap_user_range(uint64_t pgd_phys, uint64_t vaddr, uint64_t size)
         mm_vm_flush_tlb_user();
 
     return freed;
+}
+
+/* ── 内核根页表 ────────────────────────────────────────────────── */
+
+/*
+   内核地址空间根页表的物理地址。boot/MMU 早已建好它, 这里只是记录一份
+   运行期只读的副本 —— 用户任务运行期间 CR3/satp 已经不指向内核根表,
+   调度路径上没法现读。
+*/
+static uint64_t g_kernel_root_phys;
+static bool g_kernel_root_ready;
+
+void mm_vm_kernel_root_init(void)
+{
+    g_kernel_root_phys = mm_vm_read_kernel_root_phys();
+    g_kernel_root_ready = true;
+}
+
+uint64_t mm_vm_kernel_root_phys(void)
+{
+    assert_always(g_kernel_root_ready);
+    return g_kernel_root_phys;
 }

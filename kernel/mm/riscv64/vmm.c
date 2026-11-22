@@ -192,8 +192,10 @@ void mm_vm_init_user_pgd(void *pgd, uint64_t pgd_phys)
 
        复制哪些 L1 项由 RV_KERNEL_MAP_LIST(mem_layout.h)决定, 与启动时
        mmu.S 建立的映射是同一份列表, 这里不再逐条列举下标。
+       内核根表取 boot 时记录的那份, 而不是现读 satp —— 本函数可能在
+       用户地址空间下被调用。
     */
-    uint64_t *kernel_l1 = (uint64_t *)phys_to_virt(satp_read_pgd_phys());
+    uint64_t *kernel_l1 = (uint64_t *)phys_to_virt(mm_vm_kernel_root_phys());
     uint64_t *user_l1 = (uint64_t *)pgd;
     riscv64_copy_kernel_mappings(user_l1, kernel_l1);
     KLOG_DEBUG("[vm_user] RISC-V kernel mappings copied at L1[0x%x..]\n", RV_KERNEL_L1_BASE_INDEX);
