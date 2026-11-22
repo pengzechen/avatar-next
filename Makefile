@@ -114,7 +114,7 @@ else
     $(error Invalid LOG level. Use: none, error, warn, info, debug, or trace)
 endif
 
-# ASSERT 开关已移除：断言恒为启用（见 include/assert.h）。
+# ASSERT 开关已移除：断言恒为启用（见 include/libc/assert.h）。
 # 显式传入时直接报错，而不是静默忽略——否则调用方会以为断言被关掉了。
 ifneq ($(origin ASSERT),undefined)
     $(error ASSERT= is no longer supported; assertions are always enabled)
@@ -207,6 +207,12 @@ endif
 KERNEL_SRCS := $(filter-out $(_KERNEL_EXCLUDE_PAT) $(KERNEL_DIR)/vmm/loader/guest_loader.c,$(_KERNEL_FOUND))
 KERNEL_SRCS += $(_KERNEL_VDEV_SRCS) $(_KERNEL_ARCHONLY_SRCS)
 
+# fs/ 下的 VFS / pseudofs / 总入口。后端的 core 与 port 由 §8/§8b 单独编译，
+# 不在这个列表里；这里只收"内核文件系统层"。
+FS_CORE_SRCS := $(FS_DIR)/init.c $(FS_DIR)/vfs/vfs.c $(FS_DIR)/vfs/fat_vfs.c \
+                $(wildcard $(FS_DIR)/pseudofs/*.c)
+KERNEL_SRCS += $(FS_CORE_SRCS)
+
 # 源路径 → 扁平对象名：kernel/mm/pmm.c → $(BUILD_DIR)/kernel_mm_pmm.o
 kobj = $(BUILD_DIR)/$(subst /,_,$(basename $(1))).o
 KERNEL_OBJECTS := $(foreach f,$(KERNEL_SRCS),$(call kobj,$(f)))
@@ -221,9 +227,8 @@ KERNEL_OBJECTS := $(foreach f,$(KERNEL_SRCS),$(call kobj,$(f)))
 # `-w` 只加在编译第三方源码的那条规则上）—— 见 §8 里 LWEXT4_THIRD_PARTY_CFLAGS
 # 的注释：fs_lock.c 的指针截断事故就是被一刀切的 -w 藏掉的。
 KERNEL_LWEXT4_SRCS := \
-    $(KERNEL_DIR)/fs/vfs/vfs.c \
-    $(KERNEL_DIR)/loader/bin_loader.c \
-    $(KERNEL_DIR)/loader/elf_loader.c \
+    $(FS_DIR)/vfs/vfs.c \
+    $(KERNEL_DIR)/task/elf_loader.c \
     $(KERNEL_DIR)/syscall/syscall.c \
     $(KERNEL_DIR)/syscall/core/proc_lifecycle.c \
     $(KERNEL_DIR)/syscall/fs/fd_pool.c \
@@ -244,8 +249,8 @@ KERNEL_LWEXT4_SRCS := \
 # （见 §4a 白名单与 include/vmm/vmm.h 的 VMM_GUEST_LINUX_SUPPORTED），且引用 lwext4。
 #
 # ⚠️ image_load.c 是 2026-09 从 guest_loader.c 拆出来的装载通路（VFS 读 + 逐块
-# 写 guest 内存），它同样 #include "vfs.h"（→ <ext4.h>），所以**必须进同一组** ——
-# 少了这一条，编译会以 "include/vfs.h:14:10: fatal error: ext4.h: No such file" 失败，
+# 写 guest 内存），它同样 #include "fs/vfs.h"（→ <ext4.h>），所以**必须进同一组** ——
+# 少了这一条，编译会以 "include/fs/vfs.h:14:10: fatal error: ext4.h: No such file" 失败，
 # 而且因为 §236 的 filter-out，它同时还会触发下面的「分组完整性断言」。
 ifneq ($(filter $(ARCH),aarch64 riscv64 x86_64),)
 KERNEL_LWEXT4_SRCS += $(KERNEL_DIR)/vmm/loader/guest_loader.c \
@@ -254,14 +259,15 @@ endif
 
 # 文件系统总入口和 FAT 的 VFS 胶水都需要 FatFs 头（ff.h）和 lwext4 头
 # （vfs.h → ext4.h），单独一组，避免把 FatFs include 路径灌给所有 lwext4 组文件。
-KERNEL_FS_SRCS := $(KERNEL_DIR)/fs/init.c \
-                  $(KERNEL_DIR)/fs/vfs/fat_vfs.c
+# pseudofs 不需要额外头，落在 KERNEL_PLAIN_SRCS。
+KERNEL_FS_SRCS := $(FS_DIR)/init.c \
+                  $(FS_DIR)/vfs/fat_vfs.c
 
 # kernel/net/** 全部引用 lwIP，按目录自动派生，将来新增文件不会漏。
 KERNEL_LWIP_SRCS := $(filter $(KERNEL_DIR)/net/%,$(KERNEL_SRCS))
 
 # 这两个同时引用 lwIP 与 lwext4：
-# ksocket.c → syscall/fs/fd_pool.h → include/vfs.h:14 → #include <ext4.h>
+# ksocket.c → syscall/fs/fd_pool.h → include/fs/vfs.h:14 → #include <ext4.h>
 KERNEL_LWIPX_SRCS := $(KERNEL_DIR)/syscall/net/ksocket.c \
                      $(KERNEL_DIR)/syscall/net/sock_syscall.c
 
@@ -374,7 +380,6 @@ ifeq ($(ARCH),x86_64)
     CFLAGS  := -Wall -Wextra -O2 -g
 	CFLAGS  += -DARCH_X86_64=1
     CFLAGS  += -I$(INCLUDE_DIR)
-    CFLAGS  += -I$(INCLUDE_DIR)/x86_64
     CFLAGS  += $(LOG_DEFINE)
     CFLAGS  += -fno-pie -fno-stack-protector -fno-stack-clash-protection -U_FORTIFY_SOURCE
     CFLAGS  += -ffreestanding -fno-builtin
@@ -409,7 +414,6 @@ else ifeq ($(ARCH),aarch64)
     CFLAGS  := -Wall -Wextra -O2 -g
 	CFLAGS  += -DARCH_AARCH64=1
     CFLAGS  += -I$(INCLUDE_DIR)
-    CFLAGS  += -I$(INCLUDE_DIR)/aarch64
     CFLAGS  += $(LOG_DEFINE)
     CFLAGS  += -fno-pie
     # 允许 GCC 生成 FP/SIMD（NEON）指令（riscv64 靠 -march=rv64gc -mabi=lp64d 达
@@ -450,7 +454,6 @@ else ifeq ($(ARCH),riscv64)
     CFLAGS  += -march=rv64gc -mabi=lp64d
 	CFLAGS  += -DARCH_RISCV64=1
     CFLAGS  += -I$(INCLUDE_DIR)
-    CFLAGS  += -I$(INCLUDE_DIR)/riscv64
     CFLAGS  += $(LOG_DEFINE)
     CFLAGS  += -mcmodel=medany
     CFLAGS  += -fno-pic -fno-pie
@@ -509,7 +512,6 @@ CFLAGS  += -I$(INCLUDE_DIR)/libc
 CFLAGS  += -Idriver
 CFLAGS  += -Ikernel
 CFLAGS  += -Ikernel/mm
-CFLAGS  += -Iinclude/net
 CFLAGS  += -DAVATAR_HAS_FILESYSTEM
 
 # ── FAT 分区挂载点（MBR 盘上的 FAT 分区挂到这里）───────────────────────────
@@ -613,6 +615,28 @@ ifeq ($(TASK_TEST),1)
     _BUILD_VARIANT := $(_BUILD_VARIANT)+task_test
 endif
 
+# RT_TEST=1：启动时跑 RT 调度类自测（tests/unit-test/rt_sched_test.c）
+RT_TEST ?= 0
+ifeq ($(RT_TEST),1)
+    CFLAGS += -DRUN_RT_SCHED_TEST=1
+    _BUILD_VARIANT := $(_BUILD_VARIANT)+rt_test
+endif
+
+# RT_DEMO=1：启动后运行 RT 性能 demo（ping-pong 唤醒延迟 / 抢占延迟）
+RT_DEMO ?= 0
+ifeq ($(RT_DEMO),1)
+    CFLAGS += -DRT_DEMO=1
+    _BUILD_VARIANT := $(_BUILD_VARIANT)+rt_demo
+endif
+
+# RT_IRQ_TRACE=1：在 arch_irq_save/restore/disable/enable 上记录 IRQ-off 区间
+# （诊断变体；默认关闭，避免给每个关中断点增加函数调用开销）
+RT_IRQ_TRACE ?= 0
+ifeq ($(RT_IRQ_TRACE),1)
+    CFLAGS += -DRT_IRQ_TRACE=1
+    _BUILD_VARIANT := $(_BUILD_VARIANT)+rt_irq_trace
+endif
+
 # PMM_TEST=1：定义 RUN_PMM_TESTS，在 fs_init 之后跑 tests/unit-test/pmm_test.c
 # 并关机。调用点在 tests/unit-test/unit_test.c，main.c 不含测试细节。
 #
@@ -633,7 +657,7 @@ ifeq ($(KMEM_TEST),1)
 endif
 
 # PANIC_TEST=1：定义 RUN_PANIC_TEST，在 ELF 解析路径上**故意 panic 一次**，
-# 用来看调用栈回溯长什么样（kernel/loader/elf_image.c、docs/basic/BACKTRACE.md）。
+# 用来看调用栈回溯长什么样（kernel/mm/elf_image.c、docs/basic/BACKTRACE.md）。
 # 和 STRING_TEST 一样与上面三个变体正交，只影响 elf_image.o 一个对象。
 #
 # 触发点选在 ELF 头部校验之后：那里离 boot 足够远，能打出一条真实的
@@ -665,14 +689,14 @@ endif
 # 漏了的话症状是"新开关没生效"——**而且没有任何报错**：CFLAGS 变了但
 # _CFG_SIG（§7 下面那个）里没有变体这一项，make 也就不知道要重编。
 # 历史上这里只清 kernel_main.o（当时变体确实只影响它），加 STRING_TEST/
-# PANIC_TEST 之后就靠不住了 —— 后者的条件编译在 kernel/loader/elf_image.c。
+# PANIC_TEST 之后就靠不住了 —— 后者的条件编译在 kernel/mm/elf_image.c。
 #
 # 两个方向都要正确：从 A 切到 B 和从 B 切回 A 都得清掉。所以这里**无条件**
 # 列出所有可能受影响的文件，而不是只在对应开关打开时列 —— 否则切回去那一趟
 # 会漏。（多编一个 .o 的代价可以忽略。）
 _VARIANT_FILE := $(BUILD_DIR)/.build_variant
 _VARIANT_OBJS := $(BUILD_DIR)/kernel_main.o \
-                 $(BUILD_DIR)/kernel_loader_elf_image.o \
+                 $(BUILD_DIR)/kernel_mm_elf_image.o \
                  $(BUILD_DIR)/kernel_syscall_syscall.o \
                  $(BUILD_DIR)/tests_unit_test.o \
                  $(TEST_BOOT_OBJ)
@@ -711,7 +735,10 @@ _VARIANT_CHECK := $(shell \
 # _VARIANT_CHECK 的细粒度处理：只删 _VARIANT_OBJS 里列的那几个 .o，
 # 不为此整包重编。新增变体时记得把受影响的对象加进那个列表。
 _CFG_STAMP_FILE := $(BUILD_DIR)/.build-cfg
-_CFG_SIG        := $(GIC_VER)/smp$(SMP)/vcpus$(GUEST_VCPUS)/log$(LOG)/mods$(LOG_MODULES)/fp$(FP)/fatmp$(FAT_MOUNT_POINT)
+# RT_IRQ_TRACE 会影响所有包含 exception_impl.h 的 TU（arch_irq_save/restore
+# 内联点遍布全内核），因此必须进 _CFG_SIG 触发全量重编，不能只靠
+# _VARIANT_OBJS 的细粒度清理。
+_CFG_SIG        := $(GIC_VER)/smp$(SMP)/vcpus$(GUEST_VCPUS)/log$(LOG)/mods$(LOG_MODULES)/fp$(FP)/fatmp$(FAT_MOUNT_POINT)/rtirq$(RT_IRQ_TRACE)
 _CFG_CHECK := $(shell \
     mkdir -p $(BUILD_DIR) 2>/dev/null; \
     rm -f $(BUILD_DIR)/.gic-last; \
@@ -724,9 +751,9 @@ _CFG_CHECK := $(shell \
 
 MKDIR   := mkdir -p
 
-# ─── §8  第三方库：lwext4 文件系统 ──────────────────────────────────────────────
-LWEXT4_DIR      := $(THIRD_PARTY_DIR)/lwext4
-LWEXT4_PORT_DIR := $(FS_DIR)/lwext4_port
+# ─── §8  ext4 后端：lwext4（first-party）───────────────────────────────────────
+LWEXT4_DIR      := $(FS_DIR)/ext4/lwext4
+LWEXT4_PORT_DIR := $(FS_DIR)/ext4/port
 
 # ─── §8a  内核网络栈：netdev + lwIP ─────────────────────────────────────────────
 LWIP_DIR      := $(THIRD_PARTY_DIR)/lwip
@@ -776,7 +803,7 @@ LWEXT4_OBJS     := $(patsubst $(LWEXT4_DIR)/src/%.c,$(THIRD_PARTY_BUILD_DIR)/lwe
 LWEXT4_PORT_OBJS := $(BUILD_DIR)/lwext4_port_kmalloc.o \
                    $(BUILD_DIR)/lwext4_port_fs_lock.o
 
-# lwext4 的全局串行化（详见 fs/lwext4_port/fs_lock.c）。
+# lwext4 的全局串行化（详见 fs/ext4/port/fs_lock.c）。
 #
 # lwext4 是单线程用户态库，全局缓冲缓存无内部同步 —— SMP>1 时并发 exec
 # 会把它的红黑树写坏。这里用**链接期符号包装**把所有公开 API 的引用改指向
@@ -802,6 +829,7 @@ LDFLAGS += $(foreach s,$(LWEXT4_WRAP_SYMS),-Wl,--wrap=$(s))
 
 # lwext4 专用编译标志（在通用 CFLAGS 基础上添加）
 LWEXT4_CFLAGS  := $(CFLAGS)
+LWEXT4_CFLAGS  += -I$(FS_DIR)               # "vfs/vfs_internal.h"（跨文件引用）
 LWEXT4_CFLAGS  += -I$(LWEXT4_DIR)/include   # lwext4 头文件
 LWEXT4_CFLAGS  += -I$(LWEXT4_PORT_DIR)      # generated/ext4_config.h 所在目录
 LWEXT4_CFLAGS  += -DCONFIG_USE_DEFAULT_CFG=0  # 使用自定义 ext4_config.h
@@ -813,18 +841,18 @@ LWEXT4_CFLAGS  += -DCONFIG_DEBUG_ASSERT=0
 LWEXT4_CFLAGS  += -DCONFIG_HAVE_OWN_ASSERT=1
 LWEXT4_CFLAGS  += -DCONFIG_USE_USER_MALLOC=1
 
-# `-w` 只给 lwext4 自己的源码。**本项目的胶水代码（fs/lwext4_port/*、
+# `-w` 只给 lwext4 自己的源码。**本项目的胶水代码（fs/ext4/port/*、
 # driver/blk/ramblk.c）必须保持警告可见** —— 曾经这里是一刀切的 `-w`，
 # 于是 fs_lock.c 里漏声明 `__real_ext4_*` （编译器按隐式声明当成返回 int）
 # 这条致命警告被吞掉，最终表现成 aarch64 上指针被 `sxtw` 截断的
-# "确定性崩溃"（详见 fs/lwext4_port/fs_lock.c 顶部注释）。
+# "确定性崩溃"（详见 fs/ext4/port/fs_lock.c 顶部注释）。
 LWEXT4_THIRD_PARTY_CFLAGS := $(LWEXT4_CFLAGS) -w
 
-# ─── §8b  第三方库：FatFs（FAT12/16/32）─────────────────────────────────────────
-# 上游源码在 third_party/fatfs/source（唯一 vendor patch 是 ffconf.h wrapper），
-# 真正的配置在 fs/fatfs_port/ffconf.h，diskio 也在 fs/fatfs_port/。
-FATFS_DIR      := $(THIRD_PARTY_DIR)/fatfs
-FATFS_PORT_DIR := $(FS_DIR)/fatfs_port
+# ─── §8b  FAT 后端：FatFs（FAT12/16/32，first-party）───────────────────────────
+# 源码在 fs/fat/fatfs/source（唯一 vendor patch 是 ffconf.h wrapper），
+# 真正的配置在 fs/fat/port/ffconf.h，diskio 也在 fs/fat/port/。
+FATFS_DIR      := $(FS_DIR)/fat/fatfs
+FATFS_PORT_DIR := $(FS_DIR)/fat/port
 FATFS_SRCS     := $(FATFS_DIR)/source/ff.c $(FATFS_DIR)/source/ffunicode.c
 FATFS_OBJS     := $(patsubst $(FATFS_DIR)/source/%.c,$(THIRD_PARTY_BUILD_DIR)/fatfs_%.o,$(FATFS_SRCS))
 FATFS_PORT_OBJS := $(BUILD_DIR)/fatfs_port_diskio.o
@@ -877,6 +905,23 @@ TASKIPC_BIN      := $(BUILD_DIR)/task-ipc
 TASKCOMP_CC      := $(ARCH)-linux-musl-gcc
 TASKCOMP_BIN     := $(BUILD_DIR)/task-completion
 
+# rtps：/proc/<pid>/status 的 RT 任务观察器（apps/c/rtps.c）。
+# 静态链接，装进 /bin/rtps；busybox ps 看不到 Policy/RtPrio，用这个看。
+RTPS_CC          := $(ARCH)-linux-musl-gcc
+RTPS_BIN         := $(BUILD_DIR)/rtps
+
+# rtctl：/dev/rtctl 控制面（apps/c/rtctl.c）。创建/启动/停止 RT 模板 worker。
+RTCTL_CC         := $(ARCH)-linux-musl-gcc
+RTCTL_BIN        := $(BUILD_DIR)/rtctl
+
+# rt-event-test：event 模板 + 共享事件环的用户态验收。
+RTEVENT_CC       := $(ARCH)-linux-musl-gcc
+RTEVENT_BIN      := $(BUILD_DIR)/rt-event-test
+
+# rt-demo：event / 1ms 周期 / watchdog / /proc/rtworkers 的用户态演示。
+RTDEMO_USER_CC   := $(ARCH)-linux-musl-gcc
+RTDEMO_USER_BIN  := $(BUILD_DIR)/rt-demo
+
 # dmatest：dma-buf / dma-heap（P0）的验收程序。纯 ioctl + mmap，与架构无关。
 # 只在 DMA=1 时构建/安装 —— 否则节点根本不存在，装了也是白装。
 DMATEST_CC       := $(ARCH)-linux-musl-gcc
@@ -916,7 +961,7 @@ NGINX_BIN        := $(wildcard apps/nginx-$(ARCH))
 #      NPU DMA 用 —— 在没有 NPU 的平台上（QEMU）这块地址纯属白挖，
 #      而 guest 的 npu 驱动还会 probe 一个不存在的设备、刷一屏报错。
 #   ② 那条 window 要求宿主 stage-2 做**恒等映射**，而恒等映射只在
-#      PLATFORM_RK3588 下打开（见 include/guest_loader.h 的
+#      PLATFORM_RK3588 下打开（见 include/vmm/guest_loader.h 的
 #      GUEST_LINUX_NPU_DMA_GPA）。不匹配时 guest 拿到的"物理地址"
 #      在宿主侧指向别的内存 —— 结果是 NPU 读到垃圾，不报错。
 # 完整的链路与三处地址的一致性见 docs/vmm/AARCH64_GUEST_NPU.md。
@@ -1030,7 +1075,7 @@ QEMU_ROOTFS_FLAGS = -device loader,file=$(ROOTFS_IMG),addr=$(ROOTFS_PHYS_ADDR),f
 # 这个检查仍然保留：它现在挡的是**工作树不完整**（checkout 被中断、有人手工
 # 删过 third_party 里的东西）。那种情况下构建会死在一行极具误导性的错误上：
 #
-#     include/vfs.h:14:10: fatal error: ext4.h: No such file or directory
+#     include/fs/vfs.h:14:10: fatal error: ext4.h: No such file or directory
 #
 # 这行指向的是**我们自己的**头文件，和真正的原因看不出关系 —— 照着它去查
 # vfs.h 会白查很久。所以在任何编译发生之前先拦一道。
@@ -1045,10 +1090,10 @@ THIRD_PARTY_HEADERS := $(LWEXT4_DIR)/include/ext4.h \
                        $(LWIP_DIR)/src/include/lwip/init.h \
                        $(FATFS_DIR)/source/ff.h
 
-# 兼容旧命令：以前这一步是拉 submodule，现在源码随仓库一起 clone。
-# 保留目标只是别让旧脚本/旧文档里的 `make submodules` 直接报错。
+# 兼容旧命令：本仓库不使用 submodule（lwIP 内嵌于 third_party/，
+# lwext4/FatFs 已收编到 fs/）。保留空目标只为别让旧脚本/旧文档报错。
 submodules:
-	@echo "third_party sources are embedded in this repository; no submodule fetch is needed."
+	@echo "No submodule fetch is needed: lwIP is embedded, lwext4/FatFs live under fs/."
 
 check-submodules:
 	@missing=""; \
@@ -1058,24 +1103,19 @@ check-submodules:
 	if [ -n "$$missing" ]; then \
 	    echo ""; \
 	    echo "════════════════════════════════════════════════════════════════"; \
-	    echo " Third-party sources are missing (lwext4 and lwIP are embedded; this normally should not happen)."; \
+	    echo " Required sources are missing (lwIP is embedded; lwext4/FatFs now live under fs/)."; \
 	    echo " The working tree is incomplete; please re-clone. Missing:"; \
 	    for h in $$missing; do echo "     $$h"; done; \
 	    echo ""; \
 	    echo " Fix (run from the repository root):"; \
-	    echo "     re-clone the repository"; \
-	    echo " Equivalent to:"; \
-	    echo "     git submodule update --init --recursive --force"; \
-	    echo ""; \
-	    echo " Future clones can include submodules directly:"; \
-	    echo "     git clone --recurse-submodules <url>"; \
+	    echo "     re-clone the repository (no submodules are used)"; \
 	    echo "════════════════════════════════════════════════════════════════"; \
 	    echo ""; \
 	    exit 1; \
 	fi
 
 # ─── §10  顶层目标声明 ───────────────────────────────────────────────────────────
-.PHONY: all clean clean-all help klog kernel run run-net rootfs run-fs run-fs-mbr test-fat test-pthread test-mutex test-vmm test-guest-linux test-ltp env epoll-perf test-epoll-perf format format-check submodules check-submodules
+.PHONY: all clean clean-all help klog kernel run run-net rootfs run-fs run-fs-mbr test-fat test-pthread test-mutex test-vmm test-guest-linux test-ltp env epoll-perf test-epoll-perf rtps rtctl format format-check apidoc apidoc-check submodules check-submodules
 
 all: klog
 
@@ -1117,7 +1157,7 @@ $(BUILD_DIR)/libc.o: $(LIB_DIR)/libc.c | $(BUILD_DIR)
 # 用单个 $ 会在本行展开时冻结成空字符串。
 # check-submodules 是 order-only 依赖：它必须在这个 .o 的编译**之前**跑完，
 # 但不该影响 .o 的新旧判断。挂了它才能保证"缺 submodule"时先看到 §9a 的
-# 提示，而不是各 .o 那行指向 include/vfs.h 的误导性 ext4.h 报错。
+# 提示，而不是各 .o 那行指向 include/fs/vfs.h 的误导性 ext4.h 报错。
 define KERNEL_RULE
 $(call kobj,$(1)): $(1) | $(BUILD_DIR) check-submodules
 	$$(CC) $(2) -c $$< -o $$@
@@ -1282,6 +1322,29 @@ task-completion: $(TASKCOMP_BIN)
 $(TASKCOMP_BIN): apps/c/task_completion_test.c
 	$(TASKCOMP_CC) -O2 -Wall -Wextra -static $< -o $@
 	@echo "task-completion app created: $@"
+
+# §11c-2  rtps：/proc/<pid>/status 的 RT 任务观察器，静态链接
+rtps: $(RTPS_BIN)
+
+$(RTPS_BIN): apps/c/rtps.c
+	$(RTPS_CC) -O2 -Wall -Wextra -static $< -o $@
+	@echo "rtps app created: $@"
+
+# §11c-2  rtctl：/dev/rtctl 控制面，静态链接
+rtctl: $(RTCTL_BIN)
+
+$(RTCTL_BIN): apps/c/rtctl.c apps/c/rtctl_abi.h
+	$(RTCTL_CC) -O2 -Wall -Wextra -static $< -o $@
+	@echo "rtctl app created: $@"
+
+# rt-event-test：静态链接，事件模板端到端验收
+$(RTEVENT_BIN): apps/c/rt_event_test.c apps/c/rtctl_abi.h
+	$(RTEVENT_CC) -O2 -Wall -Wextra -static $< -o $@
+	@echo "rt-event-test app created: $@"
+
+$(RTDEMO_USER_BIN): apps/c/rt_demo_user.c apps/c/rtctl_abi.h
+	$(RTDEMO_USER_CC) -O2 -Wall -Wextra -static $< -o $@
+	@echo "rt-demo app created: $@"
 
 # §11c-2  vmm-run：静态链接，免得还依赖 rootfs 里的动态 loader
 $(VMM_RUN_BIN): apps/c/vmm_run.c
@@ -1477,7 +1540,7 @@ test-epoll-perf: epoll-perf kernel $(ROOTFS_IMG)
 # 创建 ext4 rootfs 镜像（无需 sudo）
 # 依赖：Host 已安装 e2fsprogs（mkfs.ext4 >= 1.43 支持 -d 选项）
 # 每次 apps 变动时自动重建；切换架构直接使用各自的镜像文件，无需 make clean
-$(ROOTFS_IMG): Makefile $(APPS_BINS) $(APPS_C_ELFS) $(LTP_BINS) $(EPOLL_PERF_BIN) $(RACETEST_BIN) $(TASKIPC_BIN) $(TASKCOMP_BIN) $(DMATEST_BIN) $(DRMTEST_BIN) $(VMM_RUN_BIN) $(NGINX_BIN) $(GUEST_LINUX_FILES) $(GUEST_GIC_STAMP) | $(BUILD_DIR)
+$(ROOTFS_IMG): Makefile $(APPS_BINS) $(APPS_C_ELFS) $(LTP_BINS) $(EPOLL_PERF_BIN) $(RACETEST_BIN) $(TASKIPC_BIN) $(TASKCOMP_BIN) $(RTPS_BIN) $(RTCTL_BIN) $(RTEVENT_BIN) $(RTDEMO_USER_BIN) $(DMATEST_BIN) $(DRMTEST_BIN) $(VMM_RUN_BIN) $(NGINX_BIN) $(GUEST_LINUX_FILES) $(GUEST_GIC_STAMP) | $(BUILD_DIR)
 	@echo "=== Building rootfs for $(ARCH): $(ROOTFS_IMG) ==="
 	@rm -rf $(ROOTFS_STAGE)
 	@mkdir -p $(ROOTFS_STAGE)/bin
@@ -1544,6 +1607,30 @@ $(ROOTFS_IMG): Makefile $(APPS_BINS) $(APPS_C_ELFS) $(LTP_BINS) $(EPOLL_PERF_BIN
 		chmod +x $(ROOTFS_STAGE)/bin/racetest; \
 		echo "  [racetest installed → /bin/racetest]"; \
 	fi
+	@if [ -f "$(RTPS_BIN)" ]; then \
+		mkdir -p $(ROOTFS_STAGE)/bin; \
+		cp $(RTPS_BIN) $(ROOTFS_STAGE)/bin/rtps; \
+		chmod +x $(ROOTFS_STAGE)/bin/rtps; \
+		echo "  [rtps installed → /bin/rtps]"; \
+	fi
+	@if [ -f "$(RTCTL_BIN)" ]; then \
+		mkdir -p $(ROOTFS_STAGE)/bin; \
+		cp $(RTCTL_BIN) $(ROOTFS_STAGE)/bin/rtctl; \
+		chmod +x $(ROOTFS_STAGE)/bin/rtctl; \
+		echo "  [rtctl installed → /bin/rtctl]"; \
+	fi
+	@if [ -f "$(RTEVENT_BIN)" ]; then \
+		mkdir -p $(ROOTFS_STAGE)/bin; \
+		cp $(RTEVENT_BIN) $(ROOTFS_STAGE)/bin/rt-event-test; \
+		chmod +x $(ROOTFS_STAGE)/bin/rt-event-test; \
+		echo "  [rt-event-test installed → /bin/rt-event-test]"; \
+	fi
+	@if [ -f "$(RTDEMO_USER_BIN)" ]; then \
+		mkdir -p $(ROOTFS_STAGE)/bin; \
+		cp $(RTDEMO_USER_BIN) $(ROOTFS_STAGE)/bin/rt-demo; \
+		chmod +x $(ROOTFS_STAGE)/bin/rt-demo; \
+		echo "  [rt-demo installed → /bin/rt-demo]"; \
+	fi
 	@if [ -f "$(TASKIPC_BIN)" ]; then \
 		mkdir -p $(ROOTFS_STAGE)/bin; \
 		cp $(TASKIPC_BIN) $(ROOTFS_STAGE)/bin/task-ipc; \
@@ -1590,7 +1677,7 @@ $(ROOTFS_IMG): Makefile $(APPS_BINS) $(APPS_C_ELFS) $(LTP_BINS) $(EPOLL_PERF_BIN
 		echo "  [nginx installed → /bin/nginx]"; \
 	fi
 	@# 安装 guest Linux 镜像（供 GUEST_LINUX 直启 / vmm-run 从 rootfs 加载）
-	@# 目录名与 include/guest_loader.h 的 GUEST_LINUX_*_PATH 必须一致。
+	@# 目录名与 include/vmm/guest_loader.h 的 GUEST_LINUX_*_PATH 必须一致。
 	@if [ "$(ARCH)" = "riscv64" ]; then \
 		missing=0; \
 		for f in imgs/guests/rv64/linux.bin imgs/guests/rv64/linux.dtb \
@@ -1747,7 +1834,7 @@ test-string:
 #
 #   用法: make PLATFORM=qemu-virt-x86_64 test-panic
 #
-# 触发点在 kernel/loader/elf_image.c 的 ELF 头部校验之后（PANIC_TEST=1 时才
+# 触发点在 kernel/mm/elf_image.c 的 ELF 头部校验之后（PANIC_TEST=1 时才
 # 编译进来），打出来的是一条真实的加载器调用链：
 #   platform_panic ← elf_image_load_impl ← elf_image_load ← exec → …
 # 设计说明与已知局限见 docs/basic/BACKTRACE.md。
@@ -1834,15 +1921,18 @@ clean-all:
 
 # 代码格式化（配置见仓库根的 .clang-format）
 #
-# FORMAT_DIRS 只列本项目自己的源码树。third_party/ 是外部 submodule
-# （lwext4 / lwIP），人家有自己的风格，不归我们管；build/ 是产物。
-# 与 PLATFORM 无关，任何平台下跑结果都一样。
+# FORMAT_DIRS 只列本项目自己的源码树。third_party/ 是外部代码（lwIP），
+# 人家有自己的风格；build/ 是产物。与 PLATFORM 无关。
+# fs/ext4/lwext4、fs/fat/fatfs 虽已收编为 first-party，但核心代码保持上游风格，
+# 不参与全量格式化（否则和上游 diff 完全失去可比性）；只格式化 port/ 和
+# 我们自己的补丁块。
 FORMAT_DIRS  := boot driver fs include kernel lib platforms apps tests
 # tests/ltp/src 是 `make env` 拉下来的 LTP 上游源码（约 5944 个 .c/.h），
 # tests/.artifacts 是跑测例生成的构建/运行目录，apps/rknn-aarch64/include
-# 是 RKNN 官方运行时头文件 —— 都不是本项目的代码，不能格式化（否则
-# `make format` 会改掉一整个第三方源码树）。
-FORMAT_EXCLUDES := tests/ltp/src tests/.artifacts apps/rknn-aarch64/include
+# 是 RKNN 官方运行时头文件，fs/ext4/lwext4|fs/fat/fatfs 的核心源码保持上游风格 ——
+# 都不能格式化（否则 `make format` 会改掉一整个第三方源码树）。
+FORMAT_EXCLUDES := tests/ltp/src tests/.artifacts apps/rknn-aarch64/include \
+                   fs/ext4/lwext4/src fs/ext4/lwext4/include fs/fat/fatfs/source include/rbtree.h
 FORMAT_PRUNE    := $(foreach d,$(FORMAT_EXCLUDES),-path '$(d)' -prune -o)
 FORMAT_SRCS     := $(shell find $(FORMAT_DIRS) $(FORMAT_PRUNE) \
     \( -name '*.c' -o -name '*.h' \) -print 2>/dev/null)
@@ -1901,6 +1991,19 @@ format-check:
 	    exit 1;                                                                \
 	fi
 
+# ─── C API 文档 ────────────────────────────────────────────────────────────
+# 扫描 kernel/driver/fs/lib/boot/platforms/apps/include/tools，取函数定义
+# 上方紧挨着的注释（Doxygen 标签或现有中文块注释均可），生成：
+#   docs/api/index.md + 每个子系统的 .md + api.json + html/index.html
+# 零第三方依赖，不要求安装 Doxygen。注释约定见 docs/api/README.md。
+APIDOC := python3 tools/gen_apidoc.py
+
+apidoc:
+	@$(APIDOC)
+
+apidoc-check:
+	@$(APIDOC) --check --strict
+
 help:
 	@echo "Avatar OS Makefile"
 	@echo ""
@@ -1952,6 +2055,8 @@ help:
 	@echo "                e.g. make PLATFORM=qemu-virt-x86_64 ROOTFS_MBR=1 LOG=info test-fat"
 	@echo "  test-pthread  Copy dynamic rootfs from imgs/ and run pthread_test"
 	@echo "  test-mutex    Copy dynamic rootfs from imgs/ and run mutex_test (futex-based)"
+	@echo "  rtps          Build the userspace RT task viewer (installed as /bin/rtps)"
+	@echo "  rtctl         Build the /dev/rtctl RT worker control tool (installed as /bin/rtctl)"
 	@echo "  test-vmm      Build with VMM_TEST=1 and run VMM 3-thread switch test"
 	@echo "  env           Fetch LTP source → tests/ltp/src (needed by tests/ltp/build.sh)"
 	@echo "  test-panic    Build with PANIC_TEST=1: panic on purpose in the ELF"
@@ -1962,6 +2067,8 @@ help:
 	@echo "  clean-all     Remove build artifacts for all platforms"
 	@echo "  format        Reformat all project .c/.h with clang-format (.clang-format)"
 	@echo "  format-check  Dry-run: exit non-zero if anything is not formatted (CI)"
+	@echo "  apidoc        Generate C API reference (docs/api/, rustdoc-style HTML)"
+	@echo "  apidoc-check  Check extraction warnings without writing files"
 	@echo "  help          Show this help message"
 	@echo ""
 	@echo "Examples:"

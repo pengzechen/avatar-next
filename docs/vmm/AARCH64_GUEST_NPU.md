@@ -62,7 +62,7 @@ NPU 是**没有 IOMMU 的物理设备**，只认物理地址。而 guest 的普�
 | # | 位置 | 值 |
 |---|---|---|
 | 1 | guest DTB 的 `reserved-memory`（NPU 节点的 `memory-region` 指向它） | `0x79000000 + 0x03000000` |
-| 2 | `include/guest_loader.h` 的 `GUEST_LINUX_NPU_DMA_GPA/SIZE`（VMM 建恒等映射用） | 同上 |
+| 2 | `include/vmm/guest_loader.h` 的 `GUEST_LINUX_NPU_DMA_GPA/SIZE`（VMM 建恒等映射用） | 同上 |
 | 3 | `platforms/rk3588-aarch64/platform.conf` 的 `reserves`（把同一段**物理**内存从宿主 PMM 摘出去） | 同上 |
 
 第 3 条最容易被忘：不摘的话宿主会把这段物理内存分给别的用途（文件缓存、

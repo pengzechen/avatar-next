@@ -25,10 +25,10 @@
 #include "task/sched.h" /* sched_check_and_yield：主循环顶部主动让出 CPU */
 #include "task/cpu.h"   /* g_num_cpus：vCPU 摊核时用 */
 #if ARCH_AARCH64
-#include "aarch64/stage2.h" /* stage2_activate：每轮进 guest 前重写 VTTBR */
+#include "arch/aarch64/stage2.h" /* stage2_activate：每轮进 guest 前重写 VTTBR */
 #endif
 #if ARCH_RISCV64
-#include "riscv64/hext.h" /* HSTATUS_SPVP：AP 首次 sret 必须落回 VS-mode */
+#include "arch/riscv64/hext.h" /* HSTATUS_SPVP：AP 首次 sret 必须落回 VS-mode */
 #endif
 #include "barrier.h" /* smp_wmb：注入发布后再 kick */
 
@@ -606,7 +606,7 @@ struct task *vcpu_task_create(vcpu_t *vcpu, uint8_t priority)
     vm_vcpu_started(vcpu->vm);
     vm_state_set(vcpu->vm, VM_RUNNING);
 
-    struct task *t = task_create_affinity(name, vcpu_task_fn, vcpu, priority, want);
+    struct task *t = task_create_vcpu(name, vcpu_task_fn, vcpu, priority, want);
     if (!t) {
         /* 回滚计数, 但不销毁 VM —— 调用方还要走它自己的错误路径 */
         vm_vcpu_start_abort(vcpu->vm);

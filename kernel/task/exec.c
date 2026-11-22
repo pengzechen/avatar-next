@@ -23,18 +23,18 @@
 
 #include "types.h"
 #include "klog.h"
-#include "pmm.h"
-#include "mm_vm.h"
+#include "mm/pmm.h"
+#include "mm/mm_vm.h"
 #include "string.h"
 #include "arch.h"
 #include "exception.h"
 #include "syscall_abi.h"
 #include "task/task.h"
 #include "task/switch.h"
-#include "loader/elf_image.h"
+#include "mm/elf_image.h"
 #include "task/exec.h"
-#include "vm_user.h"
-#include "user_layout.h"
+#include "mm/vm_user.h"
+#include "mm/user_layout.h"
 
 /*
    fd 池接口在这里只能手写 extern：本文件用普通 CFLAGS 编译, 没有 lwext4
@@ -53,7 +53,7 @@ extern void x86_tss_set_rsp0(uint64_t rsp0);
 #endif
 
 /* USER_STACK_TOP / USER_STACK_SIZE / USER_MMAP_BASE_PIE / USER_MMAP_BASE_EXEC
-   均来自 include/user_layout.h
+   均来自 include/mm/user_layout.h
 */
 
 /* ── Linux ABI 初始栈构建 ─────────────────────────────────────── */
@@ -455,6 +455,7 @@ int task_execve(const char *pathname, uint8_t *file_data, uint64_t file_size, ui
     new_mm->mmap_next = mmap_base;
     new_mm->interp_end = interp_end;
     exec_set_name(current, new_mm, pathname);
+    current->domain = TASK_DOMAIN_USER;
     current->is_user_process = true;
     current->user_started = true;
     current->tgid = current->id;

@@ -22,7 +22,7 @@
 # 1) 编译（⚠️ -I 顺序有讲究，见下）
 gcc -c -o /tmp/fdt_host.o fdt_host.c \
   -I$(pwd)/fdtshim \
-  -I../../kernel/vmm/loader -I../../include -I../../include/aarch64 \
+  -I../../kernel/vmm/loader -I../../include -I../../include/arch/aarch64 \
   -I../../include/libc -DARCH_AARCH64=1 -DLOG_LEVEL=0
 
 # 2) 跑：查某个 DTB 的某节点有没有某属性
@@ -41,7 +41,7 @@ gcc -o /tmp/fdtcheck fdt_check.c /tmp/fdt_host.o
    `include/stdio.h` 是个只声明不实现的 stub，会把系统头挡住 —— 不排前面的话
    `FILE` / `fopen` 全是未知类型。
 2. **`fdtshim/string.h` 里不能用 `#include_next`** —— 那会命中项目自己的
-   `include/string.h`（它会把 aarch64 的 NEON 内联汇编拉进来，宿主上编不过）。
+   `include/libc/string.h`（它会把 aarch64 的 NEON 内联汇编拉进来，宿主上编不过）。
    得写**绝对路径** `#include </usr/include/string.h>`。
 
 ## 这套东西的边界

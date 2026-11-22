@@ -23,7 +23,7 @@ make PLATFORM=qemu-virt-x86_64 run-net SMP=4 LOG=debug   # 卡死
 用 gdb attach（`-gdb tcp::1234`）采样，四个 vCPU 全在同一处：
 
 ```
-Thread 1 (CPU#0): #0 spin_lock (lock=...<g_uart_hw_lock>) at include/x86_64/spin_lock_impl.h:23
+Thread 1 (CPU#0): #0 spin_lock (lock=...<g_uart_hw_lock>) at include/arch/x86_64/spin_lock_impl.h:23
 Thread 2 (CPU#1): #0 spin_lock (lock=...<g_uart_hw_lock>) ...
 Thread 3 (CPU#2): #0 spin_lock (lock=...<g_uart_hw_lock>) ...
 Thread 4 (CPU#3): #0 spin_lock (lock=...<g_uart_hw_lock>) ...
@@ -50,7 +50,7 @@ while (1)
 ```
 
 **崩进去的 CPU 手里还攥着 `g_uart_hw_lock`，于是它永远不释放。** 另外三个核每个 tick 的
-timer ISR 都会调 `signal_check_uart()`（`driver/timer/timer_x86_64_impl.h:79`），
+timer ISR 都会调 `signal_check_uart()`（`driver/time/timer_x86_64_impl.h:79`），
 自然全堆在这把锁上 → 整机冻死。
 
 > **教训**：看到"锁被持有但持有者不在任何 CPU 上"，先去找**最近发生的那次异常/崩溃**，
@@ -98,7 +98,7 @@ void x86_tss_set_rsp0(uint64_t rsp0) {
 `boot/x86_64/syscall_wrapper.S` 里手抄了 `cpu_t` 的字段偏移：
 
 ```asm
-/* offsetof(cpu_t, scratch_rsp) — must match kernel/task/cpu.h */
+/* offsetof(cpu_t, scratch_rsp) — must match include/task/cpu.h */
 .equ CPU_SCRATCH_RSP, 80
 ```
 
@@ -126,7 +126,7 @@ spin_unlock_irqrestore(&tc->rq_lock);
 
 | 文件 | 改动 |
 |------|------|
-| `kernel/task/cpu.h` | `cpu_t` 新增 `kernel_rsp0`（本核 TSS.RSP0 的镜像）；新增两条 `static_assert` 锁死 .S 可见的偏移 |
+| `include/task/cpu.h` | `cpu_t` 新增 `kernel_rsp0`（本核 TSS.RSP0 的镜像）；新增两条 `static_assert` 锁死 .S 可见的偏移 |
 | `boot/x86_64/syscall_wrapper.S` | `CPU_SCRATCH_RSP` 80→104；新增 `CPU_KERNEL_RSP0`=112；换栈改读 `%gs:CPU_KERNEL_RSP0` |
 | `boot/x86_64/tss.c` | 删除全局 `g_x86_tss_rsp0`；`x86_tss_init_cpu()` / `x86_tss_set_rsp0()` 同步写 per-CPU 的 `cpu_t::kernel_rsp0` |
 | `boot/x86_64/tss.h` | 删除 `g_x86_tss_rsp0` 声明 |
@@ -141,7 +141,7 @@ syscall 就会把 RSP 装成 0。IDT 不使用 IST（`idt[vec].ist = 0`），所
 构建会直接失败并指出要改哪一行：
 
 ```c
-/* kernel/task/cpu.h */
+/* include/task/cpu.h */
 #if ARCH_X86_64
 static_assert(offsetof(cpu_t, scratch_rsp) == 104,
               "CPU_SCRATCH_RSP in boot/x86_64/syscall_wrapper.S is stale");
@@ -204,12 +204,13 @@ if (++spins == 30000000ULL) { /* dump 所有核的 phase/rip/task/irq_depth 后 
 ## 附：本次调试中被绊到的构建陷阱（与 bug 本身无关，但会反复咬人）
 
 **本仓库的 Makefile 不跟踪头文件依赖。** 编译时用了 `-MMD -MP` 生成 `build/**.d`，
-但**没有 `-include` 它们**（见 `Makefile` 第 1188 行附近的注释，以及
+但**没有 `-include` 它们**（见 `Makefile` 第 2088 行附近的注释，以及
 `docs/PROJECT_REFERENCE.md` 第 241 行）。后果：
 
 - 修改任何 `.h` → **不会**触发依赖它的 `.c` 重编
 - 修改 `SMP=` / `LOG=` 等只进 CFLAGS 的量 → **不会**触发重编
-  （`CONFIG_SMP_CPUS` 只被 `kernel/task/cpu.c` 使用，其它文件无感知）
+  （`CONFIG_SMP_CPUS` 还会进入 `boot/aarch64/boot.S`、`boot/riscv64/boot.S`
+  的 AP 栈数组大小和 `kernel/task/cpu.c` 的拉起循环）
 
 本次实测：给 `cpu_t` 加字段后只跑 `make kernel`，`kernel_task_cpu.o` 没重编，
 `g_cpus[]` 仍按旧的 `sizeof(cpu_t)`=112 分配，在 BSS 里**和紧随其后的
@@ -234,8 +235,11 @@ ffff8000002f9b80 b g_secondary_idle  # ← 与 g_cpus 尾部重叠
    # 间距应等于 AVATAR_MAX_CPUS * sizeof(cpu_t)
    ```
 
-> 若要根治，可在 Makefile 里把所有目标的 `.d` 汇总成一个变量后 `-include`，
-> 并加一个 CFLAGS 戳文件让编译选项变化触发全量重编。（尚未实施）
+> CFLAGS 戳文件这一半已经实施：Makefile 的 `_CFG_CHECK` 把
+> `GIC/SMP/VCPUS/LOG/FP/FAT_MOUNT_POINT/RT_IRQ_TRACE` 编成 `_CFG_SIG`，
+> 与 `build/<p>/.build-cfg` 不一致时删除该目录下的 `.o` / `.elf` 后重编。
+> `.d` 仍未 `-include`，所以“改过任何 `.h` 必须先 `make clean`”这条规则
+> **依然有效**。
 
 ---
 

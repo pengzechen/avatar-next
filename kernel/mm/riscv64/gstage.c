@@ -31,10 +31,10 @@
    vsatp 之类), 编译全绿, 运行期才炸 —— 这是本项目在 riscv 上最贵的一课。
 */
 
-#include "riscv64/gstage.h"
-#include "riscv64/hext.h" /* READ_HGATP/WRITE_HGATP(数值 CSR) */
-#include "pmm.h"
-#include "mm_vm.h"
+#include "arch/riscv64/gstage.h"
+#include "arch/riscv64/hext.h" /* READ_HGATP/WRITE_HGATP(数值 CSR) */
+#include "mm/pmm.h"
+#include "mm/mm_vm.h"
 #include "klog.h"
 #include "string.h"
 

@@ -1,0 +1,118 @@
+/*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
+   kernel/time/itimer.c — 每任务 ITIMER_REAL(alarm / setitimer)
+
+   语义与设计见 include/time/itimer.h。这里只记实现上的两个关键点：
+
+   1. 到期后先重装再投信号。
+      周期定时器在投 SIGALRM 之前就把 expire 推到下一个周期。这样用户 handler
+      里再调 setitimer 时看到的是一致状态, 而不是被我们事后覆盖。
+
+   2. 唤醒阻塞中的任务。
+      task_send_signal() 只往 pending_sigs 里 OR 一个位, 不会把 TASK_BLOCKED
+      的任务挪回就绪队列。而 alarm 的全部意义就在于打断阻塞中的 read/poll ——
+      不显式 unblock, 任务要等到下一个事件(比如管道来了数据)才看得到信号,
+      "超时脱身"就永远不成立。实测 LTP kill02 正是卡在这里。
+
+      在 tick(ISR 上下文)里 unblock 是既有用法：sched_enqueue() 内部有
+      in_irq_context() 分支, 设备 ISR 唤醒任务是常规操作。
+
+   3. SMP：每个核的 tick 都会调到这里(sched_tick 是 per-CPU 回调), 所以同一个
+      到期定时器可能被两个核同时看到。不加锁是故意的 —— 大多数动作是幂等的,
+      但"先重装再投信号"不是原子的: 两个核可以同时通过 now >= expire 的检查,
+      各投一次 SIGALRM(周期定时器把 expire 推到相近的新时刻, 一次性定时器
+      都被清 0)。已知限制: 多核下 alarm 可能重复投递；若要严格"一个周期
+      一个信号", 需要原子 claim expiry(CAS)或让每个任务只由亲和核处理。
+      默认构建是 SMP=1, 但 LTP 门禁跑 SMP=4, 这条限制会被真实触发。
+*/
+
+#include "time/itimer.h"
+#include "libc/signal.h"
+#include "driver/time.h" /* timer_get_ns */
+
+extern task_t g_task_pool[]; /* 定义在 task.c */
+extern uint8_t g_stack_used[TASK_MAX];
+
+static inline uint64_t itimer_now_ns(void)
+{
+    return timer_get_ns();
+}
+
+void itimer_set(task_t *t, uint64_t value_ns, uint64_t interval_ns)
+{
+    if (!t)
+        return;
+
+    t->itimer_interval_ns = interval_ns;
+    t->itimer_expire_ns = value_ns ? (itimer_now_ns() + value_ns) : 0;
+}
+
+void itimer_get(task_t *t, uint64_t *remain_ns, uint64_t *interval_ns)
+{
+    if (!t)
+        return;
+
+    uint64_t remain = 0;
+    if (t->itimer_expire_ns) {
+        uint64_t now = itimer_now_ns();
+        remain = (t->itimer_expire_ns > now) ? (t->itimer_expire_ns - now) : 0;
+    }
+    if (remain_ns)
+        *remain_ns = remain;
+    if (interval_ns)
+        *interval_ns = t->itimer_interval_ns;
+}
+
+void itimer_tick(void)
+{
+    uint64_t now = itimer_now_ns();
+
+    for (uint32_t i = 0; i < TASK_MAX; i++) {
+        if (!g_stack_used[i])
+            continue;
+
+        task_t *t = &g_task_pool[i];
+
+        /* 已死/正在分配的槽不该再收信号；顺手把残值清掉, 免得槽被复用后
+           新任务莫名其妙挨一个 SIGALRM(复用的 TCB 会带着旧字段)。
+        */
+        if (t->state == TASK_DEAD || t->state == TASK_ALLOCATING) {
+            t->itimer_expire_ns = 0;
+            t->itimer_interval_ns = 0;
+            t->sleep_expire_ns = 0;
+            continue;
+        }
+
+        /*
+           nanosleep 到期：清标记并唤醒。
+           必须在 itimer 的早退判断**之前**处理 —— 睡眠任务通常没有
+           itimer_expire_ns，早退会把它们直接跳过，永远醒不来。
+        */
+        if (t->sleep_expire_ns != 0 && now >= t->sleep_expire_ns) {
+            t->sleep_expire_ns = 0;
+            if (t->state == TASK_BLOCKED)
+                task_unblock(t);
+        }
+
+        /* 下面只处理 ITIMER_REAL */
+        if (t->itimer_expire_ns == 0 || now < t->itimer_expire_ns)
+            continue;
+
+        /* 先重装(周期)或清除(一次性), 再投信号 —— 见文件头第 1 点 */
+        if (t->itimer_interval_ns)
+            t->itimer_expire_ns = now + t->itimer_interval_ns;
+        else
+            t->itimer_expire_ns = 0;
+
+        task_send_signal(t, SIGALRM);
+
+        /* 见文件头第 2 点：不 unblock 就叫不醒阻塞中的任务 */
+        if (t->state == TASK_BLOCKED)
+            task_unblock(t);
+    }
+}

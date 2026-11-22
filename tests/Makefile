@@ -8,6 +8,7 @@
 #   make -C tests build          # 三架构构建矩阵（normal/guest/vmm/string/pmm）
 #   make -C tests boot           # 三架构启动冒烟
 #   make -C tests kernel         # PMM / string / VMM_TEST 自测
+#   make -C tests rt-test        # RT 调度语义 + 唤醒/抢占延迟
 #   make -C tests ltp-build      # 交叉编译 LTP（三架构）
 #   make -C tests ltp-smoke      # LTP 快子集
 #   make -C tests ltp-mm         # LTP 内存子集
@@ -48,7 +49,7 @@ RUN = $(PYTHON) $(CURDIR)/run.py \
       --arch $(ARCHES)
 
 .PHONY: help list env check check-fast check-full check-mm check-smp check-mm-smp \
-        build boot kernel apps racetest \
+        build boot kernel rt-test apps racetest \
         ltp-build ltp-smoke ltp-mm ltp-full \
         vmm-direct vmm-helper vmm-guest vmm-multivm soak \
         clean clean-artifacts
@@ -64,6 +65,7 @@ help:
 	@echo "  make -C tests build         # three-arch build matrix"
 	@echo "  make -C tests boot          # three-arch boot smoke test"
 	@echo "  make -C tests kernel        # PMM / string / VMM_TEST"
+	@echo "  make -C tests rt-test       # RT 调度语义 + 唤醒/抢占延迟"
 	@echo "  make -C tests apps          # apps/c: pthread / mutex"
 	@echo "  make -C tests racetest      # apps/c: SMP race stress (requires SMP>1)"
 	@echo "  make -C tests env           # fetch LTP source -> tests/ltp/src"
@@ -109,6 +111,11 @@ boot:
 
 kernel:
 	$(RUN) --suite kernel
+
+# RT 调度语义（RT_TEST）+ 唤醒/抢占延迟（RT_DEMO）。不需要 rootfs；
+# 默认三架构 SMP=1，可用 `make -C tests rt-test SMP=4 ARCHES=x86_64`。
+rt-test:
+	$(RUN) --suite rt-test
 
 apps:
 	$(RUN) --suite apps

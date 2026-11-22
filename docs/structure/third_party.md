@@ -6,23 +6,33 @@ Avatar keeps upstream third-party source separate from local porting code.
 
 - `third_party/<name>/`: upstream source only. Do not add Avatar-specific
   headers, stubs, or glue here unless carrying a deliberate vendor patch.
-- `<subsystem>/<name>_port/`: Avatar port layer for that third-party package.
-  This includes config headers, OS callbacks, allocator hooks, and libc shims
-  that are specific to one package.
+- `fs/ext4/lwext4/`, `fs/fat/fatfs/`: **first-party** filesystem implementations that
+  started life upstream but are now maintained in this repository. Keep their
+  core sources in upstream style; they are excluded from `make format` and
+  `make apidoc`.
+- `fs/<backend>/port/`: Avatar port layer for a filesystem backend
+  (`fs/ext4/port`, `fs/fat/port`). This includes config headers, OS callbacks,
+  allocator hooks, and libc shims that are specific to one package.
+- `fs/vfs/`, `fs/pseudofs/`, `fs/init.c`: kernel filesystem layer (VFS,
+  pseudo filesystems, mount/init). Public interfaces live in `include/fs/`.
 - Shared kernel facilities belong in `include/`, `lib/`, `kernel/`, or
   `driver/`, not in a package compat directory.
 
-Current packages:
+First-party filesystem code:
 
-- `third_party/lwext4` with port code in `fs/lwext4_port`
-- `third_party/lwip` with port code in `kernel/net/lwip_port`
-- `third_party/fatfs` with port code in `fs/fatfs_port`
+- `fs/ext4/lwext4` (BSD-3-Clause; forked, see its `README.md`) with port code in
+  `fs/ext4/port`
+- `fs/fat/fatfs` (ChaN license) with port code in `fs/fat/port`
 
-`third_party/fatfs` carries one deliberate vendor patch: `source/ffconf.h` is a
+`fs/fat/fatfs` carries one deliberate vendor patch: `source/ffconf.h` is a
 one-line wrapper that includes the real Avatar configuration from
-`fs/fatfs_port/ffconf.h` (FatFs uses a quoted `#include "ffconf.h"`, so the
+`fs/fat/port/ffconf.h` (FatFs uses a quoted `#include "ffconf.h"`, so the
 upstream directory wins over `-I`). The README in that package records how to
 re-apply it when upgrading.
+
+Third-party packages (kept under `third_party/`):
+
+- `third_party/lwip` with port code in `kernel/net/lwip_port`
 
 ## Libc shim design
 

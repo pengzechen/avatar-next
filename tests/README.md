@@ -13,6 +13,9 @@ make env
 # 快速门禁：三架构构建 + 启动冒烟 + 内核自测 + apps/c 用户态测试
 make -C tests check
 
+# RT 调度语义 + 唤醒/抢占延迟（RT_TEST + RT_DEMO，三架构，不需要 rootfs）
+make -C tests rt-test
+
 # SMP=4 矩阵（独立 BUILD_ROOT；check + racetest）
 make -C tests check-smp
 
@@ -54,6 +57,7 @@ tests/
 │   ├── build.py          # 构建矩阵
 │   ├── boot.py           # 启动冒烟
 │   ├── kernel.py         # PMM / string / VMM_TEST
+│   ├── rt_test.py        # RT 调度语义 + 唤醒/抢占延迟
 │   ├── ltp.py            # LTP
 │   └── vmm_guest.py      # 直启 / helper / 多 VM
 ├── ltp/
@@ -98,11 +102,13 @@ tests/.artifacts/runs/<run-id>/
 | `build` | 三架构 × normal/guest/vmm-test/string-test/pmm-test | 构建成功；guest 产物带 `GUEST_LINUX_BUILD_TAG` |
 | `boot` | 三架构不带 rootfs 启动 | 出现 `PMM: N reserved regions`；无 ASSERT/panic/invalid free |
 | `kernel` | `pmm-test` / `string-test` / `vmm-test` | 各自的 PASS 标记；三路线程标记齐全 |
-| `apps` | `apps/c`：pthread / mutex | `[PASS]`/`[FAIL]` 行 |
+| `rt-test` | `rt-test` 变体（`RT_TEST=1 RT_DEMO=1`） | `RT SCHED TEST: PASS`；worker 共享页；mutex 并发 + rt_mutex PI（`RT MUTEX TEST: PASS`）；rt_event/event 模板（`RT EVENT TEST: PASS`）；cyclictest（FIFO 80 + NORMAL hog，1ms/10ms 绝对 deadline 的 min/avg/p50/p99/p99.9/max、overrun/早醒）；demo 样本数完整，ping-pong/NORMAL→RT 平均延迟低于上限（self-IPI 立即抢占的回归门禁） |
+| `apps` | `apps/c`：pthread / mutex / rt-event / rt-demo | `[PASS]`/`[FAIL]` 行；`/bin/rt-event-test` 是 event 模板的 ioctl/mmap 端到端用例；`/bin/rt-demo` 是完整用户态 RT 演示 |
 | `racetest` | `apps/c/racetest.c`：slot/pipe/wake | 需 `SMP>1`；要求输出 `DONE`；**诊断 suite** |
 | `ltp-smoke` | `smoke.list` | 无新增 FAIL/BROK；子集每项都有结果 |
 | `ltp-mm` | `mm.list` | 同上；内存重构专用 |
-| `ltp-full` | `/ltp` 全量 | 同上 |
+| `ltp-full` | `/ltp` 全量（跳过 `slow.list`）| 同上 |
+| `ltp-slow` | `slow.list` | 计时类慢用例（`pselect01`/`poll02`，各约 8.25s），单独跑 |
 | `vmm-direct` | guest Linux 直启 | guest uname + 交互 `echo`/`/proc/meminfo` |
 | `vmm-helper` | 宿主 shell → `/bin/vmm-run` | guest 交互 + `Ctrl+T k` + 再次启动 |
 | `vmm-multivm` | 多 VM detach/attach | `tools/vmm_multivm_regress.sh` 返回 0 |

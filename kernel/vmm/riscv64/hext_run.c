@@ -32,14 +32,15 @@
 #include "exception.h" /* trap_frame_t / SSTATUS_SPP：分派宿主中断 */
 #include "task/task.h"
 #include "task/cpu.h" /* CPU_RESCHED_IPI_CAUSE */
-#include "riscv64/hext.h"
-#include "riscv64/sysreg.h"
-#include "riscv64/gstage.h"
+#include "arch/riscv64/hext.h"
+#include "arch/riscv64/sbi.h" /* guest ecall 的 SBI EID/FID 常量 */
+#include "arch/riscv64/sysreg.h"
+#include "arch/riscv64/gstage.h"
 #include "vmm/vmm_mmio.h"
 #include "vmm/vmm_vplic.h"
-#include "mm_vm.h"   /* phys_to_virt */
-#include "pmm.h"     /* pmm_get_free_pages(缺页失败时的诊断) */
-#include "barrier.h" /* smp_mb：WFI 睡眠/唤醒的次序 */
+#include "mm/mm_vm.h" /* phys_to_virt */
+#include "mm/pmm.h"   /* pmm_get_free_pages(缺页失败时的诊断) */
+#include "barrier.h"  /* smp_mb：WFI 睡眠/唤醒的次序 */
 
 /* ── 汇编入口声明 ─────────────────────────────────────────── */
 extern int hext_enter_guest(vcpu_t *vcpu); /* hext_vcpu.S */

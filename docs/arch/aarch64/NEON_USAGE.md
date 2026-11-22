@@ -6,7 +6,7 @@
 
 ## 启用 NEON 工具函数
 
-在 [include/aarch64/cpu.h](../../../include/aarch64/cpu.h) 中提供了 NEON 控制接口。
+在 [include/arch/aarch64/neon.h](../../../include/arch/aarch64/neon.h) 中提供了 NEON 控制接口。
 
 ### API 说明
 
@@ -64,7 +64,7 @@ VHE（E2H=1）下 EL2 访问 `cpacr_el1` 落在 `CPACR_EL2`，正是同时门控
 
 ## memcpy 的 NEON 优化
 
-[include/aarch64/string_impl.h](../../../include/aarch64/string_impl.h)：
+[include/arch/aarch64/string_impl.h](../../../include/arch/aarch64/string_impl.h)：
 
 - `memcpy_neon()`：`ld1`/`st1` 128-bit 批量传输（每 16 字节）
 - `memcpy()` 按阈值分派：**> 128 字节走 NEON**，否则走 `memcpy_generic()`

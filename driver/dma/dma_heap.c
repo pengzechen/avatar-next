@@ -12,8 +12,8 @@
 #include "dma_heap.h"
 
 #include "klog.h"
-#include "mm_vm.h"
-#include "pmm.h"
+#include "mm/mm_vm.h"
+#include "mm/pmm.h"
 #include "string.h"
 #include "types.h"
 

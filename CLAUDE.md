@@ -14,16 +14,23 @@ Claude 会自动读取这个文件来了解项目上下文。
 
 ## 快速开始
 
-### 第一步：第三方源码（已内嵌，无需操作）
+### 第一步：源码布局（全部随仓库 clone，无 submodule）
 
-`third_party/` 下的 **lwext4 与 lwIP 都已是内嵌源码副本，不再是 submodule**。
-`git clone` 直接就能拿到它们，**不需要** `--recurse-submodules`，也没有
+**lwext4 与 FatFs 已收编为 first-party**：核心源码分别在 `fs/ext4/lwext4/`
+（`src/` + `include/`，BSD-3-Clause）和 `fs/fat/fatfs/`（`source/`），由本项目
+直接维护；对应的移植层仍在 `fs/ext4/port/`、`fs/fat/port/`。
+`third_party/` 只保留 **lwIP**（以及 dropbear 等原样内嵌的上游代码）。
+`git clone` 直接就能拿到全部源码，**不需要** `--recurse-submodules`，也没有
 `make submodules` 这一步了（那个目标保留着只是为了不让旧脚本报错）。
 
-（历史：曾经 `lwext4` 是 submodule，而 `.gitmodules` 指向上游、父仓库钉的却是
-我们 fork 的 commit —— 全新 clone 必然失败，且报错指向 `include/vfs.h` 这个
-**我们自己的**头文件，极具误导性。改成内嵌后这个失败面就没了。
-`lwext4` 为什么 fork、`lwIP` 为什么原样内嵌，见各自的 `README.md`。）
+（历史：lwext4 曾是 submodule，`.gitmodules` 指向上游、父仓库钉的却是我们
+fork 的 commit —— 全新 clone 必然失败，且报错指向 `include/fs/vfs.h` 这个
+**我们自己的**头文件，极具误导性。后来先改为 `third_party/` 内嵌，现在进一步
+收编到 `fs/ext4/lwext4/`。lwext4 为什么 fork、lwIP 为什么原样内嵌，见各自的
+`README.md`。）
+
+lwext4/FatFs 的核心代码保持上游风格，**不参与 `make format`**；
+只格式化 `fs/ext4/port/`、`fs/fat/port/` 和我们的补丁块。
 
 如果构建报 `ext4.h: No such file or directory`（或 lwIP 的头），现在只有一个
 原因：**工作树不完整**，重新 clone 即可。`make` 会在编译任何东西之前先拦一道。
@@ -93,9 +100,10 @@ avatar/
 ├── CLAUDE.md             # 本文件（AI 上下文）
 ├── PROJECT_REFERENCE.md  # 详细参考文档
 ├── include/              # 头文件
-│   ├── aarch64/         # AArch64 实现
-│   ├── riscv64/         # RISC-V 实现
-│   ├── x86_64/          # x86_64 实现
+│   ├── arch/            # 架构相关头文件
+│   │   ├── aarch64/     # AArch64 实现
+│   │   ├── riscv64/     # RISC-V 实现
+│   │   └── x86_64/      # x86_64 实现
 │   ├── types.h          # 基础类型
 │   ├── arg.h            # 可变参数
 │   ├── arch.h           # 架构检测
@@ -129,6 +137,12 @@ avatar/
 - **系统调用现状**: `docs/SYSCALL_IMPLEMENTATION.md` - 104 个具名 Linux 入口的
   ⚠️完整/不完整/桩分类，以及裸号兼容项和历史 `SYS_*` ABI。改 syscall 前先看，
   别把“静默返回 0”的桩当成已实现
+- **C API 参考（自动生成）**: `docs/api/README.md` - `make apidoc` 扫描
+  kernel/driver/fs/lib/boot/platforms/apps/include/tools，从函数定义上方的
+  **Doxygen 兼容注释**（也兼容现有中文 `/* */`）生成 `docs/api/index.md`、
+  每个子系统一份 `.md`、`api.json` 和可搜索的 `html/index.html`。
+  `make apidoc-check` 供 CI 检查提取警告（可加 `--min-coverage` 做覆盖率门禁）。
+  改注释约定或 `tools/gen_apidoc.py` 前必读
 
 ### 调试和日志
 
@@ -161,22 +175,22 @@ avatar/
 
 - **FAT 双分区挂载**: `docs/fs/FAT_MOUNT.md` - MBR 盘 p1 FAT + p2 ext4：
   `/` 挂 ext4，`/boot` 挂可写 FAT12/16/32（FatFs R0.15）。动
-  `kernel/fs/init.c` 的 MBR 解析、`kernel/fs/vfs/fat_vfs.c`、
-  `fs/fatfs_port/*` 或 `FAT_MOUNT_POINT=` 前必读。要点：
+  `fs/init.c` 的 MBR 解析、`fs/vfs/fat_vfs.c`、
+  `fs/fat/port/*` 或 `FAT_MOUNT_POINT=` 前必读。要点：
   ① `ext4_mbr_scan()` 只保留 0x83，FAT 分区必须自己解析；
   ② SG2002(sdblk) 写入真正落盘，QEMU/RK3588(ramblk) 只改内存副本；
   ③ FAT 上不能执行 ELF，也没有符号链接/权限位；
   ④ 改 `FAT_MOUNT_POINT` 之后必须 `make clean`。
   回归：`make PLATFORM=qemu-virt-x86_64 ROOTFS_MBR=1 LOG=info test-fat`
 - **lwext4 集成**: `docs/LWEXT4.md` - ext2/3/4 的移植层、块设备接口和镜像制作。
-  改 `fs/lwext4_port/*` 或 `driver/blk/*` 前读；`include/vfs.h` 直接包含 `<ext4.h>`。
+  改 `fs/ext4/port/*` 或 `driver/blk/*` 前读；`include/fs/vfs.h` 直接包含 `<ext4.h>`。
 
 ### 架构特定
 
 - **AArch64**: `docs/arch/aarch64/NEON_USAGE.md` - NEON 优化
 - **AArch64 FP/SIMD 上下文**: `docs/arch/aarch64/FP_SIMD_CONTEXT.md` -
   改 `trap_frame_t` 布局、`boot/aarch64/exception.S`、`kernel/task/aarch64/switch.S`
-  或 `kernel/task/switch.h` 里三处伪帧前必读（含向量表 128 字节槽位预算的坑）
+  或 `include/task/switch.h` 里三处伪帧前必读（含向量表 128 字节槽位预算的坑）
 - **x86_64 SYSCALL / per-CPU 栈**: `docs/bugfix/X86_64_SMP_SYSCALL_STACK_BUGFIX.md` -
   改 `cpu_t` 布局或 SYSCALL 入口前必读（含 `%gs:` 偏移的 static_assert 约束与构建陷阱）
 - **x86_64 时间基准 / TSC 标定**: `docs/bugfix/X86_64_TIMEBASE_TSC_CALIBRATION_FIX.md` -
@@ -187,7 +201,7 @@ avatar/
 **遇到任何中断 / 抢占 / 上下文切换问题，先读这三篇文档，不要凭空推断。**
 
 - **中断屏蔽接口**: `docs/basic/INTERRUPT_MASKING.md` - C 代码统一用
-  `include/<arch>/exception_impl.h` 的 `arch_irq_*`（由 exception.h 暴露），
+  `include/arch/<arch>/exception_impl.h` 的 `arch_irq_*`（由 exception.h 暴露），
   **不许再写内联汇编**；`.S` 除外
 
 - **中断开关策略**: `docs/INTERRUPT_CONTROL_COMPARISON.md` - AArch64/RISC-V 中断开关的核心约定。关键：中断策略按“EL1 里运行的是谁”区分——EL0 任务的内核侧（syscall/异常）关中断，独立内核线程（含 idle）开中断、可被抢占。含 `task_trampoline` vs `task_trampoline_user` 的分野与代码检查清单。
@@ -202,12 +216,50 @@ avatar/
   next 的栈和页表之后**置位的 `switch_done`（release store）。Linux 用
   task_struct 引用计数 + RCU 达到同一目的。
 
+### 实时（realtime）
+
+- **用户可配置 RT worker（模板）**: `docs/realtime/RT_TEMPLATES.md` -
+  `/dev/rtctl` 的 ioctl ABI、`periodic_io`/`pid`/`watchdog` 模板、运行期
+  参数 seqlock 更新、`/proc/rtworkers`、`rtdev` 设备契约
+  （`setup/safe_state` 在控制面，`write/read` 在 RT 面且必须无分配/无睡眠）。
+  x86_64 用 LAPIC TSC-deadline hrtimer，支持 1ms 周期；aarch64/riscv64
+  暂回退到 100Hz tick（10ms 整数倍）。用户态工具 `/bin/rtctl`。
+  动 `kernel/rt/*`、`include/rt/rt_worker.h`、`include/rt/rtdev.h`、
+  `fs/pseudofs/rtctl_dev.c` 或 `apps/c/rtctl.c` 前必读。
+- **RT 事件**: `docs/realtime/RT_EVENTS.md` - `include/task/rt_event.h` 的
+  事件位等待队列（any/all/timeout/clear，set 可在 ISR 调用），以及
+  `event` 模板的共享页 SPSC 事件环（容量 64、drop-newest、
+  `RTW_IOC_POST`/`rtctl post`、`period_ns=0` 无限等待）。
+  动 `kernel/rt/rt_event.c`、`include/rt/rt_worker.h` 的 ring ABI、
+  `kernel/rt/rt_worker.c` 的 event 分支或 `apps/c/rtctl_abi.h` 前必读。
+  门禁：`make -C tests rt-test` 与 `/bin/rt-event-test`（apps suite）。
+  用户态演示 `/bin/rt-demo`（event + 1ms 周期 + watchdog + /proc），
+  跑法见 `docs/realtime/RT_USER_DEMO.md`。
+- **RT 锁**: `docs/realtime/RT_LOCKS.md` - 普通 `mutex` 的 SMP 正确性修正
+  （内部自旋锁 + 无丢唤醒），以及 `rt_mutex` 的直接优先级继承
+  （`pi_priority`、按优先级排队、tick 不抢占被提升的持有者）。
+  动 `kernel/task/mutex.c`、`kernel/rt/rt_mutex.c`、
+  `sched_set_pi_boost()` 或 `task_t.pi_priority` 前必读；V1 没有完整
+  PI 链/多锁传播，文件中列了已知限制。门禁：`make -C tests rt-test`
+  （SMP=4 时验证 mutex 的真并发竞争）。
+- **架构与基线**: `docs/realtime/ARCHITECTURE.md`、`R0_BASELINE.md`、
+  `RT_DEMO_RESULTS.md`（self-IPI 立即抢占前后数据）。
+- **cyclictest（绝对 deadline 唤醒延迟）**: `docs/realtime/CYCLICTEST.md` -
+  FIFO 80 钉 CPU0 + NORMAL hog，1ms（x86 oneshot）/10ms（tick 回退）周期，
+  输出 min/avg/p50/p99/p99.9/max/overrun；属于 `RT_TEST=1`，门禁在
+  `tests/suites/rt_test.py`。改 hrtimer/调度/抢占路径后先看这里。
+- **RT 测试路线**: `docs/realtime/RT_TEST_ROADMAP.md` - T0–T5 测试路线：
+  现有 rt-test/cyclictest 覆盖、测试矩阵、KPI 和推进顺序（裸机延迟实验室
+  → 用户态 RT → 重载/虚拟化 → 72h soak → 安全/认证）。后续 RT 测试按此
+  文档推进；每次里程碑把结果补进 `CYCLICTEST.md`、`R0_BASELINE.md`、
+  `RT_DEMO_RESULTS.md`。
+
 ### 虚拟化（VMM / guest）
 
 - **RISC-V guest Linux**: `docs/vmm/RISCV64_GUEST_LINUX.md` - H-extension 下跑
   guest Linux 的整个链路（G-stage / sret 进出 / vPLIC / 16550A / SBI / DTB 布局），
   以及 7 条**移植时真踩过**的坑。**动 `kernel/vmm/riscv64/*`、
-  `include/riscv64/hext.h`、`include/guest_loader.h` 之前必读** ——
+  `include/arch/riscv64/hext.h`、`include/vmm/guest_loader.h` 之前必读** ——
   其中第 1 条（binutils 把 hypervisor CSR 符号名静默映射到 VS 级编号，
   编译全绿、运行期才炸）尤其反直觉。该文档 §7 还登记了一个**尚未定性的
   间歇性 guest 用户态 SIGSEGV**。
@@ -259,13 +311,13 @@ avatar/
     stage-2（G-stage）之后必须跑这条 —— 单 VM 的门禁**测不出**这类回归。
 - **两种运行模式、`/dev/vmm` 协议、控制台按键（Ctrl+T 前缀）与 `-a/-l/-k`**:
   `docs/vmm/GUEST_CONSOLE.md`。**动 `apps/c/vmm_run.c` 或
-  `kernel/fs/pseudofs/vmm_dev.c` 前必读** —— 里面有三条反直觉的约定：
+  `fs/pseudofs/vmm_dev.c` 前必读** —— 里面有三条反直觉的约定：
   会话 owner 守卫（纯查询不能停 VM）、`console_owned` 是"归 helper"而不是
   "谁是前台"、以及 helper 收到 EPOLLHUP 必须收尾（否则原地死循环且退不出来）。
 - **裸跑 guest 作基线对照**: `docs/vmm/GUEST_NATIVE_QEMU.md`
 - **RK3588 NPU 透传给 aarch64 guest**: `docs/vmm/AARCH64_GUEST_NPU.md` ——
   在 guest Linux 里跑 YOLOv8。**动 `kernel/vmm/vdev/npu/*`、
-  `include/vmm/vmm_vnpu.h`、`include/guest_loader.h` 的
+  `include/vmm/vmm_vnpu.h`、`include/vmm/guest_loader.h` 的
   `GUEST_LINUX_INITRD_*` / `GUEST_LINUX_NPU_DMA_*`、或
   `tools/make_npu_rootfs.sh` 之前必读**。三条反直觉约定：
   ① NPU 寄存器走 MMIO **转发**（不是 stage-2 直通），所以那段窗口在 stage-2 里
@@ -321,11 +373,11 @@ extern void operation(void);
 static inline void operation(void);
 
 #if defined(__aarch64__)
-    #include "aarch64/module_impl.h"
+    #include "arch/aarch64/module_impl.h"
 #elif defined(__x86_64__)
-    #include "x86_64/module_impl.h"
+    #include "arch/x86_64/module_impl.h"
 #elif defined(__riscv)
-    #include "riscv64/module_impl.h"
+    #include "arch/riscv64/module_impl.h"
 #endif
 ```
 
@@ -396,9 +448,9 @@ static inline void helper(void) { }
 ### 架构特定实现
 
 参考现有实现：
-- `include/aarch64/*_impl.h` - AArch64 内联汇编
-- `include/riscv64/*_impl.h` - RISC-V 内联汇编
-- `include/x86_64/*_impl.h` - x86_64 内联汇编
+- `include/arch/aarch64/*_impl.h` - AArch64 内联汇编
+- `include/arch/riscv64/*_impl.h` - RISC-V 内联汇编
+- `include/arch/x86_64/*_impl.h` - x86_64 内联汇编
 
 ### 平台层依赖
 

@@ -51,7 +51,7 @@
 #define VLAPIC_REG_TIMER_DCR   0x3e
 #define VLAPIC_REG_COUNT       0x40 /* 寄存器数组长度(含保留区) */
 
-/* IA32_APIC_BASE MSR 的位(与 include/x86_64/vmx.h 的 APIC_BASE_* 一致) */
+/* IA32_APIC_BASE MSR 的位(与 include/arch/x86_64/vmx.h 的 APIC_BASE_* 一致) */
 #define VLAPIC_BASE_ENABLE (1ULL << 11)
 #define VLAPIC_BASE_X2APIC (1ULL << 10)
 

@@ -12,10 +12,10 @@
 #include "syscall/syscall_internal.h"
 #include "syscall/fs/path.h"
 #include "task/task.h"
-#include "kernel_stat.h"
+#include "fs/kernel_stat.h"
 #include "string.h"
-#include "page.h" /* PAGE_SIZE */
-#include "vfs.h"
+#include "mm/page.h" /* PAGE_SIZE */
+#include "fs/vfs.h"
 #include <ext4.h>
 #include <ext4_errno.h>
 

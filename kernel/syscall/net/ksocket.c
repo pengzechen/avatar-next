@@ -17,7 +17,7 @@
 #include "task/task.h"
 #include "klog.h"
 #include "string.h"
-#include "vfs.h"
+#include "fs/vfs.h"
 
 #include "lwip/tcp.h"
 #include "lwip/udp.h"

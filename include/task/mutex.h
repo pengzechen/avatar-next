@@ -1,0 +1,96 @@
+/*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+#ifndef KERNEL_TASK_MUTEX_H
+#define KERNEL_TASK_MUTEX_H
+
+/*
+   include/task/mutex.h — 睡眠锁(Mutex)
+
+   实现：
+    - 基于任务阻塞的睡眠锁
+    - FIFO 等待队列(先等待先获取；解锁后允许抢跑)
+    - 可重入(同一任务重复获取递增计数, 对应次数 unlock 才真正释放)
+    - SMP 安全：状态与等待队列由内部自旋锁保护，不会丢唤醒
+
+   这不是 RT 锁：没有优先级继承，持锁者被抢占时高优先级等待者仍会等。
+   RT 任务请用 task/rt_mutex.h（直接优先级继承）。
+*/
+
+#include "types.h"
+#include "list.h"
+#include "spinlock.h"
+
+/* 前向声明 */
+typedef struct task task_t;
+
+/* ── Mutex 结构 ──────────────────────────────────────────── */
+
+typedef struct mutex {
+    spinlock_t lock;      /* 保护下面所有字段与 wait_queue */
+    volatile bool locked; /* 锁状态：true = 已锁定 */
+    list_t wait_queue;    /* 等待队列(FIFO) */
+    task_t *holder;       /* 当前持有锁的任务 */
+    uint32_t count;       /* 重入计数(1 = 首次持有) */
+} mutex_t;
+
+/* ── Mutex API ───────────────────────────────────────────── */
+
+/*
+   mutex_init - 初始化互斥锁
+   @mutex: 锁指针
+
+   使用前必须调用此函数初始化锁。
+*/
+void mutex_init(mutex_t *mutex);
+
+/*
+   mutex_lock - 获取互斥锁(可能阻塞)
+   @mutex: 锁指针
+
+   如果锁已被其他任务持有, 当前任务会进入睡眠等待。
+   当锁可用时, 任务被唤醒并获取锁。
+
+   可重入：同一任务重复调用会递增内部计数, 需对应次数 unlock 才真正释放。
+*/
+void mutex_lock(mutex_t *mutex);
+
+/*
+   mutex_unlock - 释放互斥锁
+   @mutex: 锁指针
+
+   释放锁并唤醒一个等待的任务(如果有)。
+   当前任务必须是锁的持有者。
+*/
+void mutex_unlock(mutex_t *mutex);
+
+/*
+   mutex_trylock - 尝试获取互斥锁(不阻塞)
+   @mutex: 锁指针
+
+   返回：true = 成功获取, false = 锁已被持有
+
+   如果锁已被持有, 立即返回 false, 不会阻塞。
+*/
+bool mutex_trylock(mutex_t *mutex);
+
+/*
+   mutex_is_locked - 检查锁是否已被持有
+   @mutex: 锁指针
+
+   返回：true = 已锁定, false = 未锁定
+*/
+bool mutex_is_locked(mutex_t *mutex);
+
+/*
+   mutex_holder - 获取当前持有锁的任务(调试用)
+   @mutex: 锁指针
+
+   返回：持有锁的任务指针, 如果未锁定则返回 NULL
+*/
+task_t *mutex_holder(mutex_t *mutex);
+
+#endif /* KERNEL_TASK_MUTEX_H */

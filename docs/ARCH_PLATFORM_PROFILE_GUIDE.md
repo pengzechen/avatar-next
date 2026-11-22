@@ -29,7 +29,7 @@
 
 内存相关使用点：
 
-- PMM：`include/pmm.h` -> `MEM_RAM_BASE/MEM_RAM_SIZE`
+- PMM：`include/mm/pmm.h` -> `MEM_RAM_BASE/MEM_RAM_SIZE`
 - RAMBLK/rootfs 保留区：`driver/blk/ramblk_cfg.h` -> `MEM_ROOTFS_BASE/MEM_ROOTFS_SIZE`
 
 ### 2.2 设备配置（单一真源）

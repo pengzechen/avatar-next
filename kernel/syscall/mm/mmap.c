@@ -14,15 +14,16 @@
 #include "syscall/fs/fd_pool.h"
 #include "klog.h"
 #include "task/task.h"
-#include "mm_vm.h"
-#include "pmm.h"
+#include "mm/mm_vm.h"
+#include "mm/pmm.h"
 #include "string.h"
 #include "arch.h"
-#include "vm_user.h"
-#include "user_layout.h"
-#include "shared_page.h"
-#include "vfs.h"
+#include "mm/vm_user.h"
+#include "mm/user_layout.h"
+#include "mm/shared_page.h"
+#include "fs/vfs.h"
 #include "driver/npu.h"
+#include "rt/rt_worker.h" /* /dev/rtctl 共享页：mmap offset = worker_id << PAGE_SHIFT */
 
 extern task_t g_task_pool[];
 extern uint8_t g_stack_used[];
@@ -51,7 +52,7 @@ static uint64_t shared_mmap_next(task_t *current)
 
     for (uint32_t i = 0; i < TASK_MAX; i++) {
         task_t *task = &g_task_pool[i];
-        if (!g_stack_used[i] || !task->is_user_process || task->state == TASK_DEAD)
+        if (!g_stack_used[i] || !task_is_live_user(task))
             continue;
         if (task->mm->pgd == current->mm->pgd && task->mm->mmap_next > next)
             next = task->mm->mmap_next;
@@ -64,7 +65,7 @@ static void sync_shared_mmap_next(task_t *current, uint64_t next)
 {
     for (uint32_t i = 0; i < TASK_MAX; i++) {
         task_t *task = &g_task_pool[i];
-        if (!g_stack_used[i] || !task->is_user_process || task->state == TASK_DEAD)
+        if (!g_stack_used[i] || !task_is_live_user(task))
             continue;
         if (task->mm->pgd == current->mm->pgd && task->mm->mmap_next < next)
             task->mm->mmap_next = next;
@@ -88,7 +89,7 @@ static void sync_shared_mmap_next_to(task_t *current, uint64_t val)
 {
     for (uint32_t i = 0; i < TASK_MAX; i++) {
         task_t *task = &g_task_pool[i];
-        if (!g_stack_used[i] || !task->is_user_process || task->state == TASK_DEAD)
+        if (!g_stack_used[i] || !task_is_live_user(task))
             continue;
         if (task->mm->pgd == current->mm->pgd)
             task->mm->mmap_next = val;
@@ -182,7 +183,7 @@ static int map_contiguous_buf(task_t *current, void *pgd, uint64_t map_addr, uin
 
            这里不能用 NOFREE 顶替：NOFREE 的语义是"最后一个映射退出
            就释放", 而设备缓冲归句柄所有 —— 只要句柄还开着, 任何映射退出
-           都不该释放。详见 include/aarch64/mmu.h 里 PTE_KEEP 的说明。
+           都不该释放。详见 include/arch/aarch64/mmu.h 里 PTE_KEEP 的说明。
         */
         mm_vm_set_pte_keep(pgd, va);
     }
@@ -332,6 +333,40 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, int prot, int flags, int fd, uint
         */
         if (offset != 0 && fobj && fobj->type == FDT_VFS && fd_obj_file(fobj) &&
             fd_obj_file(fobj)->kind == VFS_FILE_PSEUDO) {
+            /*
+               /dev/rtctl 的共享页：mmap(..., fd, worker_id << PAGE_SHIFT)。
+               页面归 worker 槽位长期持有（PTE_KEEP），worker destroy 不清
+               物理页，只把 magic/state 清掉；旧映射不会指向已归还 PMM 的页。
+            */
+            if (strcmp(fd_obj_file(fobj)->path, "/dev/rtctl") == 0) {
+                if (current->uid != 0)
+                    return (uint64_t)(int64_t)-EPERM;
+
+                /*
+                   offset 是页对齐的令牌：worker_id << PAGE_SHIFT。
+                   musl 的 mmap()  wrapper 会先检查 offset 页对齐，非对齐值
+                   连 syscall 都到不了，所以不能直接用 worker id。
+                */
+                if ((offset & (PAGE_SIZE - 1)) != 0)
+                    return (uint64_t)(int64_t)-EINVAL;
+                uint32_t wid = (uint32_t)(offset >> PAGE_SHIFT);
+
+                uint64_t rpa = 0;
+                uint64_t rsz = 0;
+                int rc = rt_worker_shm_lookup(wid, &rpa, &rsz);
+                if (rc < 0)
+                    return (uint64_t)(int64_t)rc;
+                if (map_size > rsz) {
+                    KLOG_WARN("[mmap] rtctl off=0x%llx len=0x%llx exceeds page size\n", (unsigned long long)offset,
+                              (unsigned long long)map_size);
+                    return (uint64_t)(int64_t)-EINVAL;
+                }
+                rc = map_contiguous_buf(current, pgd, map_addr, map_size, rpa, flags, "rtctl", fd, offset);
+                if (rc != 0)
+                    return (uint64_t)(int64_t)rc;
+                return map_addr;
+            }
+
             uint64_t dpa = 0;
             uint64_t dsz = 0;
             if (rknpu_drm_mmap_lookup((void *)fd_obj_file(fobj), offset, &dpa, &dsz) == 0) {

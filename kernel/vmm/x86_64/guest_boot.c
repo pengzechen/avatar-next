@@ -36,13 +36,13 @@
 */
 
 #include "vmm/vmm.h"
-#include "guest_loader.h"
+#include "vmm/guest_loader.h"
 #include "klog.h"
 #include "string.h"
-#include "pmm.h"
-#include "mm_vm.h"
+#include "mm/pmm.h"
+#include "mm/mm_vm.h"
 #include "cache.h"
-#include "x86_64/vmx.h"
+#include "arch/x86_64/vmx.h"
 #include "task/task.h"
 
 #if ARCH_X86_64
@@ -106,7 +106,7 @@ static uint64_t s_kernel_load; /* 保护模式内核的装载物理地址(GPA) *
    EPT 查表翻译, 未映射时现分配一页)。
 
    注意： 另有一条同源的约束：不要对这个返回值做跨页的指针算术。见
-   include/guest_loader.h 里 guest_loader_write_guest() 那一族的说明。
+   include/vmm/guest_loader.h 里 guest_loader_write_guest() 那一族的说明。
 */
 static void *gpa_ptr(vm_t *vm, uint64_t gpa)
 {

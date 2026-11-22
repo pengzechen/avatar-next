@@ -83,10 +83,10 @@ driver/drivers.mk       # 汇总各 class 的 drivers.mk
 kernel/main.c           # 初始化梯子 → drivers_init(phase)
 kernel/task/cpu.c       # 阶段 3：PLATFORM_* → platform.conf
 kernel/mm/aarch64/vm_early.c
-include/guest_loader.h
+include/vmm/guest_loader.h
 driver/uart/*.c         # 加 DRIVER_ENTRY + probe/start
 driver/irq/*.c
-driver/timer/timer.c
+driver/time/timer.c
 driver/blk/*.c
 driver/eth/*.c
 driver/npu/rknpu.c
@@ -103,7 +103,7 @@ Makefile                 # §6 下沉到 driver/*/drivers.mk
 
 ```
 driver/irq/irq.h                 # 私有身份改为 driver/irq/irq_priv.h 或合并
-driver/timer/timer.h             # 公共 API 移到 include/driver/time.h
+driver/time/timer.h             # 公共 API 移到 include/driver/time.h
 driver/uart/uart.h               # 公共 API 移到 include/driver/serial.h
 kernel/main.c 里的 #include "eth/..." / "npu/..." / "tpu/..." / "blk/..."
 ```
@@ -631,9 +631,9 @@ void irq_enable(unsigned irq, bool on);
 
 ### 9.3 时间
 
-- 公共 API 从 `driver/timer/timer.h` 移到 `include/driver/time.h`，函数名不变（`timer_*`）。
+- 公共 API 从 `driver/time/timer.h` 移到 `include/driver/time.h`，函数名不变（`timer_*`）。
 - 驱动 probe = `timer_init(cfg)`，start = `timer_enable()`。
-- `timer_read_counter()` 等热路径继续走 `include/<arch>/` 内联寄存器读，不引入每 tick 间接调用。
+- `timer_read_counter()` 等热路径继续走 `include/arch/<arch>/` 内联寄存器读，不引入每 tick 间接调用。
 - 次核初始化：`timer_init_secondary()` 保留，cpu.c 改为调用公共函数（不再 include 驱动私有头）。
 
 ### 9.4 块设备
@@ -646,7 +646,7 @@ struct ext4_blockdev *block_root_device(void);
 ```
 
 - `ramblk/sdblk` probe 调用 `block_register_root()`。
-- `kernel/fs/init.c`（原 `fs/lwext4_port/fs_init.c`）只问 `block_root_device()`；删除 `#if DRIVER_SDBLK` 和 `ramblk_get_bdev/sdblk_get_bdev`。
+- `fs/init.c`（原 `fs/ext4/port/fs_init.c`）只问 `block_root_device()`；删除 `#if DRIVER_SDBLK` 和 `ramblk_get_bdev/sdblk_get_bdev`。
 - `kernel/mm/pmm.c` 不再 include `driver/blk/ramblk_cfg.h`；rootfs 保留区改用 `platform_cfg.h` 的 `g_mem_rootfs_*`。
 
 ### 9.5 网络
@@ -765,8 +765,8 @@ DRIVER_EXTRA_FLAGS_driver_dma_dma_buf.c  := -Idriver/dma -Ikernel/mm
 | `kernel/syscall/fs/file_ops.c` | `#if DRIVER_ION` | `ion_available()` + 弱符号 |
 | `kernel/syscall/fs/fd_pool.c` | `#if DRIVER_ION/DMA_BUF` | 能力查询 + 弱符号 |
 | `kernel/syscall/mm/mmap.c` | `#if DRIVER_ION/DMA_BUF/NPU` | 运行时分支 + 弱符号 |
-| `kernel/fs/pseudofs/dev.c` | `#if DRIVER_ION/TPU/DMA_BUF` | 运行时能力 + 弱符号 |
-| `kernel/fs/pseudofs/pseudofs.c` | `#if DRIVER_DMA_BUF/NPU` | 节点表按 `driver_present()` 动态注册 |
+| `fs/pseudofs/dev.c` | `#if DRIVER_ION/TPU/DMA_BUF` | 运行时能力 + 弱符号 |
+| `fs/pseudofs/pseudofs.c` | `#if DRIVER_DMA_BUF/NPU` | 节点表按 `driver_present()` 动态注册 |
 | `kernel/vmm/aarch64/virq.c` | `#if DRIVER_GIC_V3` | `irq_virt_ops() != NULL` |
 | `kernel/vmm/vdev/npu/vnpu.c` | `#if DRIVER_NPU_RKNPU` | `npu_present()` + `g_npu_ops` |
 | `kernel/task/cpu.c` | `#if DRIVER_GIC_V2/V3` 调试 dump | `irq_debug_dump()`（可选 ops） |
@@ -778,10 +778,10 @@ DRIVER_EXTRA_FLAGS_driver_dma_dma_buf.c  := -Idriver/dma -Ikernel/mm
 | `kernel/task/cpu.c:363` | `#if PLATFORM_RK3588` MPIDR 移位 | `platform.conf smp.mpidr_shift` |
 | `kernel/task/cpu.c:472` | `#if PLATFORM_SG2002` 关 SMP | `platform.conf smp.bringup` |
 | `kernel/mm/aarch64/vm_early.c:103/154/170` | `#ifdef PLATFORM_RK3588` 1GB 块布局 | `platform.conf mmu.blocks[]` 循环填表 |
-| `include/guest_loader.h:117` | `#if PLATFORM_RK3588` NPU DMA 窗口 | 生成的 `platform_guest.h`（值来自 `memory.reserves` 的 `npu-guest-dma`） |
+| `include/vmm/guest_loader.h:117` | `#if PLATFORM_RK3588` NPU DMA 窗口 | 生成的 `platform_guest.h`（值来自 `memory.reserves` 的 `npu-guest-dma`） |
 | `driver/uart/uart_dw.c:28/337` | `ARCH_RISCV64 && PLATFORM_SG2002` 调试口 | 设备 cfg 的 earlycon hook / 平台 board hook |
 
-允许保留 `PLATFORM_*` 的位置：`platforms/`、`include/<arch>/`（例如 `include/riscv64/pte.h` 的 SG2002 硬件怪癖）。规则：**通用 `kernel/`、`driver/`、`fs/` 里不允许出现 `PLATFORM_*`。**
+允许保留 `PLATFORM_*` 的位置：`platforms/`、`include/arch/<arch>/`（例如 `include/arch/riscv64/pte.h` 的 SG2002 硬件怪癖）。规则：**通用 `kernel/`、`driver/`、`fs/` 里不允许出现 `PLATFORM_*`。**
 
 ---
 
@@ -920,7 +920,7 @@ DRIVER_EXTRA_FLAGS_driver_dma_dma_buf.c  := -Idriver/dma -Ikernel/mm
 
 ### 17.1 串口 / 时间 / 块设备公共接口（2a）
 
-- 删除 `driver/uart/uart.h`、`driver/timer/timer.h`：
+- 删除 `driver/uart/uart.h`、`driver/time/timer.h`：
   - 串口：`include/driver/serial.h` 提供 `serial_ops_t` 与
     `serial_putc/puts/getc/getc_nb/rx_ready`；三个 UART 驱动的 probe 里
     `serial_bind()`，内核不再知道具体是 PL011/DW/16550。
@@ -956,7 +956,7 @@ DRIVER_EXTRA_FLAGS_driver_dma_dma_buf.c  := -Idriver/dma -Ikernel/mm
   - x86 删掉 `irq_handlers[]`/`irq_install()`，IRQ 向量交给 LAPIC 后端；
   - `kernel/task/cpu.c` 的 IPI 收发、次级核控制器初始化、SMP 自检
     GIC dump 全部改走公共接口；
-  - `driver/timer/*` 通过 `irq_register_timer()` 注册；
+  - `driver/time/*` 通过 `irq_register_timer()` 注册；
   - `rknpu`、`cvitek_eth` 改 `irq_register()/irq_enable()/irq_set_priority()`，
     不再 include `irq/gicv3.h`/`irq/plic.h`；
   - `driver/irq/irq.h` 删除。
@@ -978,7 +978,7 @@ DRIVER_EXTRA_FLAGS_driver_dma_dma_buf.c  := -Idriver/dma -Ikernel/mm
 ### 17.4 阶段 2c/2d 待办
 
 - DMA/ION/TPU/NPU 的服务注册（`*_ops_t`/`*_bind()` + `*_present()`），替换 `kernel/syscall/*`、
-  `kernel/fs/pseudofs/*`、`kernel/vmm/vdev/npu/vnpu.c` 的 `#if DRIVER_*`；
+  `fs/pseudofs/*`、`kernel/vmm/vdev/npu/vnpu.c` 的 `#if DRIVER_*`；
 - VMM 的 `DRIVER_GIC_V3` 仍是编译期布局/实现选择（`include/vmm/vmm.h`
   的字段、`virq.c`/`el2_run.c`/`vm_init.c` 的 vGIC 调用），需要先给
   vGICv3 模型加弱符号桩，再用 `irq_virt_supported()` 在 VM 创建处拒绝；
@@ -996,7 +996,7 @@ DRIVER_EXTRA_FLAGS_driver_dma_dma_buf.c  := -Idriver/dma -Ikernel/mm
 
 - 每类服务一个 `*_ops_t` + `g_*_ops` + `*_bind()`：
   - ION：`include/driver/ion.h` + `driver/ion/ion_core.c`；
-  - dma-buf：`include/dma_buf.h` + `driver/dma/dma_core.c`；
+  - dma-buf：`include/driver/dma_buf.h` + `driver/dma/dma_core.c`；
   - TPU：`include/driver/tpu.h` + `driver/tpu/tpu_core.c`；
   - NPU：`include/driver/npu.h` + `driver/npu/npu_core.c`。
 - 公共头里的 `ion_alloc()` 等是同名 `static inline` 包装：`g_*_ops == NULL`
@@ -1014,13 +1014,13 @@ DRIVER_EXTRA_FLAGS_driver_dma_dma_buf.c  := -Idriver/dma -Ikernel/mm
 - `sys_mmap` 不再有 ION/dma-buf 分支，统一调 `ops->get_phys(priv, &pa, &size)`
   再走公共逐页映射；
 - `dup`/`fd_table_inherit` 调 `ops->dup`，`close` 调 `ops->close`；
-- dma-buf 的 `DMA_BUF_IOCTL_SYNC` 仍在 `kernel/fs/pseudofs/dev.c` 处理
+- dma-buf 的 `DMA_BUF_IOCTL_SYNC` 仍在 `fs/pseudofs/dev.c` 处理
   用户指针（copy_from_user），ioctl 核心只按 `FDT_DMABUF` 分派一次。
 
 ### 18.3 去掉 kernel 里的 `#if DRIVER_*`
 
 - `kernel/syscall/fs/{file_ops,fd_pool,ioctl}.c`、`kernel/syscall/mm/mmap.c`
-  和 `kernel/fs/pseudofs/dev.c` 无条件引用服务包装。
+  和 `fs/pseudofs/dev.c` 无条件引用服务包装。
 - `/dev/ion`、`/dev/cvi-tpu0`、`/dev/dma_heap/*`、`/dev/dri/*`、
   `/proc/dri/*` 保留在固定节点表中，`pfs_node_available()` 按 `g_*_ops`
   过滤；节点 nid 语义不变。

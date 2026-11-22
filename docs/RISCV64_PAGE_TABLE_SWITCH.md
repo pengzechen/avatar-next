@@ -68,14 +68,27 @@ void sched_schedule(void)
     next->state = TASK_RUNNING;
     g_current_task = next;
 
-    uint64_t *prev_pgd_save = prev->is_user_process ? NULL : &prev->pgd;
-    uint64_t next_pgd_for_switch = next->is_user_process ? (uint64_t)next->pgd : g_kernel_pgd_phys;
+    uint64_t *next_pgd_for_switch = next->mm->pgd;
+    if (next->is_user_process && !next->user_started) {
+        /* 首次进入用户进程：延迟到 arch_switch_to_user 再切 satp */
+        next_pgd_for_switch = NULL;
+    } else if (!next->is_user_process && next->mm->pgd == NULL) {
+        /* 切到内核任务：用 boot 时记录的内核根页表 */
+        next_pgd_for_switch = (uint64_t *)mm_vm_kernel_root_phys();
+    }
 
-    arch_task_switch(&prev->sp, next->sp, prev_pgd_save, next_pgd_for_switch);
+    uint64_t **prev_pgd_save = prev->is_user_process ? NULL : &prev->mm->pgd;
+    arch_task_switch(&prev->sp, next->sp, prev_pgd_save, next_pgd_for_switch,
+                     &prev->switch_done);
 
     arch_irq_restore(flags);
 }
 ```
+
+内核根页表的物理地址由 `mm_vm_kernel_root_init()` 在 boot 早期
+（`kernel/main.c`，此时 satp 仍指向内核页表）记录一次，
+`mm_vm_kernel_root_phys()` 只读取这份副本 —— 不能改成现读 satp，
+因为调度路径上 satp 可能已经指向用户页表。
 
 首次用户态入口是特例：如果用户进程还没有真正 `sret` 过，`arch_task_switch()` 先保持当前内核 satp，随后 `arch_switch_to_user()` 在贴近 `sret` 的位置切到用户 satp。
 

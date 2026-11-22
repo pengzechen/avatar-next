@@ -1,3 +1,8 @@
+> 历史分析(2026 年，评估 RISC-V 内核态接收中断的方案)。文中行号和部分
+> 结论已经过时：`spinlock_noirq_t` 已去掉 `irq_flags`；`sched_tick()` 现在
+> 按调度类处理 NORMAL/RR/FIFO 并驱动 itimer。现行实现以
+> `kernel/task/sched.c`、`include/spinlock.h` 为准。
+
 • 结论
 
   当前 RISC-V 已经具备“从内核态进入 trap 后不破坏通用寄存器”的基础，真正阻止内核态接收中断的不是入口保存现场，而是 C 层的调度、锁和
@@ -26,13 +31,13 @@
 
   boot/riscv64/exception.c:43 明确说不启用 sstatus.SIE，也就是说：
 
-  - sie.STIE 会在 driver/timer/timer_riscv64_impl.h:66 打开。
+  - sie.STIE 会在 driver/time/timer_riscv64_impl.h:66 打开。
   - 但 S-mode 全局中断 sstatus.SIE 在内核里保持 0。
   - 用户态通过 sret 的 SPIE -> SIE 机制启用中断，所以 timer 主要在用户态运行时生效。
 
   timer 路径：
 
-  driver/timer/timer_riscv64_impl.h:127 的 timer_handler() 会：
+  driver/time/timer_riscv64_impl.h:127 的 timer_handler() 会：
 
   - 调 signal_check_uart()。
   - 更新 tick 统计。
@@ -55,7 +60,7 @@
 
   2. arch_irq_save/restore 只管硬件 SIE，没有 preempt nesting
 
-  kernel/task/switch.h:134 的 RISC-V arch_irq_save() 只是清 sstatus.SIE，没有记录“当前不允许抢占”的嵌套深度。这样调度器无法判断：
+  include/task/switch.h:134 的 RISC-V arch_irq_save() 只是清 sstatus.SIE，没有记录“当前不允许抢占”的嵌套深度。这样调度器无法判断：
 
   - 当前是否在中断上下文。
   - 当前是否在 irqsave 临界区。
@@ -71,16 +76,15 @@
 
   如果普通内核路径持有 spinlock_t 时被 timer/外设中断打断，而中断处理路径又间接碰到同一资源，就会在同一 CPU 上自旋等待自己释放锁。
 
-  4. spinlock_noirq_t 目前只有一个 irq_flags 字段，不能安全嵌套/并发
+  4. ~~spinlock_noirq_t 目前只有一个 irq_flags 字段，不能安全嵌套/并发~~
 
-  include/spinlock.h:21 的 spinlock_noirq_t 把 irq_flags 存在锁对象里。单 CPU、非嵌套时还能工作；但如果同一把锁被不同上下文竞争，或
-  者将来 SMP，锁对象里的 flags 会互相覆盖。更合理的 API 是 flags 由调用者栈变量保存，像 Linux 的 spin_lock_irqsave(lock, flags)。
-
-  短期可以不大改接口，但设计上必须知道这是后续隐患。
+  **已修复**：`spinlock_noirq_t` 现在与 `spinlock_t` 同布局，中断状态由调用点
+  的局部变量保存（Linux 风格 `spin_lock_irqsave(&lock, &flags)`）。当年“flags
+  存在锁对象里、SMP 下互相覆盖”的隐患已经消除。
 
   5. timer handler 里做的事情偏多
 
-  driver/timer/timer_riscv64_impl.h:132 每 tick 调 signal_check_uart()。内核态中断打开后，这个函数会在任意内核位置运行。如果它触碰
+  driver/time/timer_riscv64_impl.h:132 每 tick 调 signal_check_uart()。内核态中断打开后，这个函数会在任意内核位置运行。如果它触碰
   TTY、进程、信号、锁或文件描述符结构，就扩大了 ISR 可重入面。
 
   第一阶段最好让 timer ISR 尽量短：更新时间、重装 timer、置 need_resched，把 UART/signal 检查延迟到安全点或软中断/底半部。
@@ -173,7 +177,7 @@
 
   5. 精简 timer ISR
 
-  建议第一阶段把 driver/timer/timer_riscv64_impl.h:132 的 signal_check_uart() 从 timer hardirq 中移出去，或者至少加条件：
+  建议第一阶段把 driver/time/timer_riscv64_impl.h:132 的 signal_check_uart() 从 timer hardirq 中移出去，或者至少加条件：
 
   - 如果 trap_from_kernel，不做 UART/signal 扫描。
   - 如果 trap_from_user，可以暂时保留。
@@ -205,7 +209,7 @@
 
   1. 在 cpu_t 中增加状态
 
-  建议在 kernel/task/cpu.h 的 cpu_t 增加：
+  建议在 include/task/cpu.h 的 cpu_t 增加：
 
   uint32_t irq_depth;
   uint32_t preempt_count;
@@ -347,7 +351,7 @@
   sched.c：
 
   #if ARCH_RISCV64
-  #include "riscv64/exception.h"
+  #include "arch/riscv64/exception.h"
 
   bool sched_check_and_yield_from_trap(trap_frame_t *frame)
   {

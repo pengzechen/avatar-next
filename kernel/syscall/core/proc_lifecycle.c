@@ -22,27 +22,27 @@
 #include "syscall/fs/pipe.h"
 #include "syscall/net/ksocket.h"
 #include "syscall/fs/pty.h"
-#include "loader/elf_loader.h"
+#include "task/elf_loader.h"
 #include "task/task.h"
 #include "task/cpu.h" /* get_current_cpu_id / AVATAR_MAX_CPUS(execve argv 副本按 CPU 分行) */
 #include "task/sched.h"
 #include "task/switch.h"
-#include "user_layout.h"
-#include "mm_vm.h"
-#include "pmm.h"
-#include "vm_user.h"
+#include "mm/user_layout.h"
+#include "mm/mm_vm.h"
+#include "mm/pmm.h"
+#include "mm/vm_user.h"
 #include "string.h"
 #include "klog.h"
 #include "arch.h"
 #include "syscall_abi.h"
 #include "list.h"
-#include "shared_page.h"
+#include "mm/shared_page.h"
 #include <ext4.h>
 #if ARCH_RISCV64
-#include "riscv64/satp_utils.h"
+#include "arch/riscv64/satp_utils.h"
 #endif
 #if ARCH_X86_64
-#include "x86_64/mmu.h"
+#include "arch/x86_64/mmu.h"
 #endif
 
 /* MAP_SHARED fork helpers: check/set NOFREE PTE bit per architecture */
@@ -91,7 +91,7 @@
    这种错误不会崩, 只会让结果对不上, 事后极难定位。
 
    与 NOFREE 的关键差别：不调 shared_page_ref。KEEP 页归句柄所有,
-   父子都只是映射者, 谁 unmap 都不释放(见 include/aarch64/mmu.h 的说明)。
+   父子都只是映射者, 谁 unmap 都不释放(见 include/arch/aarch64/mmu.h 的说明)。
 */
 #if ARCH_RISCV64
 #define CLONE_CHECK_KEEP(pgd, va, out) \
@@ -241,8 +241,13 @@ void exit_group_handler(uint64_t regs[6])
         if ((t->tgid ? t->tgid : t->id) != tgid)
             continue;
         t->exit_status = (int)regs[0];
-        t->state = TASK_DEAD;
-        sched_dequeue(t);
+        /*
+           不能直接写 state = DEAD 再 sched_dequeue：兄弟线程可能正在
+           自己的 sched_schedule() 里，DEAD 会被覆盖回 RUNNING（LTP
+           exit_group01 的偶发失败）。sched_kill_task 在目标核 rq_lock
+           下完成摘链和置 DEAD，并 kick 正在运行的目标核。
+        */
+        sched_kill_task(t);
     }
 
     sys_exit((int)regs[0]);
@@ -374,6 +379,11 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
     child->id = task_alloc_id();
     child->state = TASK_ALLOCATING;
     child->priority = parent->priority;
+    child->domain = TASK_DOMAIN_USER;
+    child->sched_policy = parent->sched_policy; /* fork/线程继承调度策略 */
+    child->rt_priority = parent->rt_priority;
+    child->pi_priority = 0; /* rt_mutex 继承优先级不跨 fork 复制 */
+    child->rt_slice = (parent->sched_policy == TASK_SCHED_RR) ? TASK_RR_QUANTUM_TICKS : 0;
     child->is_user_process = true;
     child->user_started = true;
     child->exit_status = 0;

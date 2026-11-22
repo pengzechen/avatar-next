@@ -55,7 +55,7 @@ while ((inb(PIT_CAL_PORT_CTRL) & 0x20u) == 0)   /* 0x61 bit5 = OUT */
 TSC frequency: 3 MHz          ← 真实值约 2419 MHz，差了约 800 倍
 ```
 
-`g_tsc_freq_hz` 偏小 ⇒ `timer_counter_to_ns()`（`driver/timer/timer.c`）
+`g_tsc_freq_hz` 偏小 ⇒ `timer_counter_to_ns()`（`driver/time/timer.c`）
 算出的纳秒数偏大 ⇒ **`CLOCK_MONOTONIC` 快约 1000 倍**。
 真实的 5.2us 被报成 5200us，`epoll_wait04` 于是"超时"。
 

@@ -256,7 +256,7 @@ AArch64 的 bug 一直潜伏，因为：
 
 **修改的文件**：
 - `kernel/task/task.c` - 添加 idle 专用栈，初始化 idle.sp
-- `kernel/task/task.h` - 添加 `task_switch_to_idle_stack()` 声明
+- `include/task/task.h` - 添加 `task_switch_to_idle_stack()` 声明
 - `kernel/task/sched.c` - 移除 sp=-1 特殊标记
 - `kernel/main.c` - 调用 `task_switch_to_idle_stack()`
 

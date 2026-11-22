@@ -18,12 +18,12 @@
    也有一份空 mm）。mm_put() 在锁外销毁页表（几百页，不能占着池锁）。
 */
 
-#include "mm_struct.h"
+#include "mm/mm_struct.h"
 #include "task/task.h"
 #include "task/cpu.h"
 #include "spinlock.h"
 #include "string.h"
-#include "vm_user.h"
+#include "mm/vm_user.h"
 
 #define MM_POOL_MAX (TASK_MAX + AVATAR_MAX_CPUS)
 

@@ -28,14 +28,14 @@
 #include "rknpu.h"
 #include "npu/npu_mmu.h"
 #include "rkpm.h"
-#include "rknpu_drm.h" /* struct rknpu_submit(用户态 ABI) */
+#include "npu/rknpu_drm.h" /* struct rknpu_submit(用户态 ABI) */
 
 #include "types.h"
 #include "mmio.h"
-#include "mm_vm.h"   /* KERNEL_VMA(硬编码 MMIO 回退地址要按平台规则换算) */
-#include "dma_buf.h" /* 排障：按物理地址反查缓冲区, dump regcmd */
+#include "mm/mm_vm.h"       /* KERNEL_VMA(硬编码 MMIO 回退地址要按平台规则换算) */
+#include "driver/dma_buf.h" /* 排障：按物理地址反查缓冲区, dump regcmd */
 #include "klog.h"
-#include "platform_cfg.h"
+#include "platform/platform_cfg.h"
 #include "driver/irq.h"
 #include "spinlock.h"
 #include "driver/time.h"

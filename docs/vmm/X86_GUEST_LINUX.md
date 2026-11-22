@@ -156,7 +156,7 @@ triple fault（`reason=2 rip=0x10000`），串口一个字都没有 —— 看�
 **症状与"VMX 坏了"完全一样，实际只是入口没设。** 现在入口在 `#if` 之前无条件设置。
 
 ### 6.2 `earlyprintk` 加到了错误的架构块
-`include/guest_loader.h` 每个架构一个 `GUEST_LINUX_BOOTARGS`；用脚本 `replace()` 时
+`include/vmm/guest_loader.h` 每个架构一个 `GUEST_LINUX_BOOTARGS`；用脚本 `replace()` 时
 命中了**第一处**（aarch64/riscv64 的注释），x86 那条没改到 ⇒ 解压器的 `console_init()`
 拿不到 `earlyprintk=`，`early_serial_base` 保持 0，**`extract_kernel` 里所有
 `debug_putstr` 全被抑制**。改 x86 块后 guest 立刻开始报进度。

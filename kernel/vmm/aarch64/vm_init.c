@@ -20,10 +20,10 @@
 #include "vmm/vmm_mmio.h"
 #include "klog.h"
 #include "string.h"
-#include "aarch64/stage2.h"
-#include "guest_loader.h" /* GUEST_LINUX_NPU_DMA_*：NPU 恒等窗口的布局 */
+#include "arch/aarch64/stage2.h"
+#include "vmm/guest_loader.h" /* GUEST_LINUX_NPU_DMA_*：NPU 恒等窗口的布局 */
 #include "vmm/vmm_vnpu.h"
-#include "platform_cfg.h" /* platform_get_mmio */
+#include "platform/platform_cfg.h" /* platform_get_mmio */
 #include "vmm/vmm_vpl011.h"
 #if DRIVER_GIC_V3
 #include "vmm/vmm_vgicv3.h"
@@ -60,7 +60,7 @@ int vmm_arch_vm_init(vm_t *vm)
     /*
        NPU 透传用的恒等窗口。非 RK3588 平台上这两个宏是 0, 窗口即关闭
        (stage2_set_npu_dma_window 用 size==0 表示"没有")。
-       为什么必须恒等, 以及三处地址为什么要一致, 见 include/guest_loader.h。
+       为什么必须恒等, 以及三处地址为什么要一致, 见 include/vmm/guest_loader.h。
     */
     stage2_set_npu_dma_window(&vm->s2, GUEST_LINUX_NPU_DMA_GPA, GUEST_LINUX_NPU_DMA_SIZE);
 

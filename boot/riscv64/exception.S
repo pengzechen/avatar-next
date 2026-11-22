@@ -27,7 +27,6 @@
 .extern sched_check_and_yield_from_trap
 .extern signal_deliver_from_trap
 .extern __global_pointer$
-.extern g_current_user_satp
 
 trap_vector:
     /*

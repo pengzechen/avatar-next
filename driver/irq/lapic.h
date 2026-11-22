@@ -41,8 +41,11 @@
 #define LAPIC_SVR_ENABLE (1u << 8) /* APIC Software Enable */
 
 /* LVT Timer 位 */
-#define LAPIC_TIMER_PERIODIC (1u << 17) /* Periodic 模式 */
-#define LAPIC_TIMER_MASKED   (1u << 16) /* 屏蔽中断 */
+#define LAPIC_TIMER_PERIODIC     (1u << 17) /* Periodic 模式 */
+#define LAPIC_TIMER_TSC_DEADLINE (1u << 18) /* TSC-deadline 模式 */
+#define LAPIC_TIMER_MASKED       (1u << 16) /* 屏蔽中断 */
+
+#define MSR_IA32_TSC_DEADLINE 0x6E0u
 
 /* Divide Configuration 值(用于 TIMER_DCR) */
 #define LAPIC_TIMER_DIV_1  0x0Bu /* 不分频 */
@@ -81,6 +84,15 @@ void lapic_timer_init(uint8_t vector);
    g_tsc_freq_hz — TSC 频率(Hz), 由 lapic_timer_init 在 PIT 校准时测量
 */
 extern volatile uint64_t g_tsc_freq_hz;
+
+/*
+   TSC-deadline oneshot：
+     - supported() 返回本次初始化是否成功切到了 TSC-deadline 模式；
+     - program_ns(0) 表示解除武装；非 0 表示绝对 ns 到期时刻。
+   timer_arch_enable 会同时初始化 hrtimer，所以不需要手动调用。
+*/
+bool lapic_timer_oneshot_supported(void);
+void lapic_timer_program_ns(uint64_t deadline_ns);
 
 /*
    lapic_eoi — 发送 EOI 信号(每次中断处理完必须调用)

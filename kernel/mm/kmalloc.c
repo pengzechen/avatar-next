@@ -17,10 +17,10 @@
    需要页对齐/DMA 的场景继续用 kalloc_pages()。
 */
 
-#include "kmalloc.h"
+#include "mm/kmalloc.h"
 #include "klog.h"
-#include "mm_vm.h" /* PAGE_SIZE + phys_to_virt/virt_to_phys */
-#include "pmm.h"
+#include "mm/mm_vm.h" /* PAGE_SIZE + phys_to_virt/virt_to_phys */
+#include "mm/pmm.h"
 #include "string.h"
 
 #define KMALLOC_MAGIC 0x4B4D414C4C4F4331ULL /* "KMALLOC1" */

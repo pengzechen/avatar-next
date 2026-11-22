@@ -18,9 +18,9 @@
 #include "types.h"
 #include "klog.h"
 #include "assert.h"
-#include "pmm.h"
-#include "mm_vm.h"
-#include "aarch64/mmu.h"
+#include "mm/pmm.h"
+#include "mm/mm_vm.h"
+#include "arch/aarch64/mmu.h"
 #include "string.h"
 
 extern pte_t *create_uvm(void);

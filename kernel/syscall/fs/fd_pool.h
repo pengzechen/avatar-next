@@ -14,7 +14,7 @@
 #define KERNEL_SYSCALL_FD_POOL_H
 
 #include "types.h"
-#include "vfs.h"
+#include "fs/vfs.h"
 #include "syscall/io/epoll.h"
 #include "driver/fd_ops.h"
 

@@ -18,10 +18,10 @@
      - guest_loader_patch_dtb_bootargs —— 原地改写 /chosen/bootargs
      - guest_loader_nop_dtb_nodes      —— 把未模拟的设备节点改成 nop
 
-   原型都在 include/guest_loader.h(公共头), 所以拆出来不需要动任何声明。
+   原型都在 include/vmm/guest_loader.h(公共头), 所以拆出来不需要动任何声明。
 */
 
-#include "guest_loader.h"
+#include "vmm/guest_loader.h"
 #include "cache.h" /* clean_dcache_range：补丁改的是 guest 要读的内存 */
 #include "klog.h"
 #include "string.h"
@@ -145,7 +145,7 @@ int guest_loader_patch_dtb_initrd(uint8_t *dtb, uint32_t dtb_size, uint64_t init
    cells 数取根节点 #address-cells/#size-cells(arm64 通常 2/2)。
 */
 /*
-   ── NPU 透传的启动自检(见 include/guest_loader.h 的声明)──────────────
+   ── NPU 透传的启动自检(见 include/vmm/guest_loader.h 的声明)──────────────
 
    为什么查 strings 块就够：FDT 里属性名是去重后存在 strings 块的,
    每个用到的名字在那儿恰好一份。`no-map` 是零长度属性(没有值,

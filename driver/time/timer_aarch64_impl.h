@@ -1,0 +1,133 @@
+/*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+#ifndef __TIMER_AARCH64_IMPL_H__
+#define __TIMER_AARCH64_IMPL_H__
+
+#include "driver/time.h"
+#include "driver/irq.h"
+#include "arch/aarch64/sysreg.h"
+#include "mmio.h"
+#include "klog.h"
+
+/*
+   ============================================================
+   定时器寄存器访问宏
+   ============================================================
+*/
+#define CNTFRQ_EL0_READ()        READ_CNTFRQ_EL0()
+#define CNTPCT_EL0_READ()        READ_CNTPCT_EL0()
+#define CNTP_CTL_EL0_READ()      READ_CNTP_CTL_EL0()
+#define CNTP_CTL_EL0_WRITE(val)  WRITE_CNTP_CTL_EL0(val)
+#define CNTP_TVAL_EL0_WRITE(val) WRITE_CNTP_TVAL_EL0(val)
+
+/* 定时器控制寄存器位定义 */
+#define CNTV_CTL_ENABLE  (1 << 0) /* 使能定时器 */
+#define CNTV_CTL_IMASK   (1 << 1) /* 中断屏蔽 */
+#define CNTV_CTL_ISTATUS (1 << 2) /* 中断状态 */
+
+/*
+   ============================================================
+   架构特定操作实现
+   ============================================================
+*/
+
+/* 公共 IRQ 接口的处理器签名是 (frame, ctx)；定时器不使用 ctx */
+static void timer_irq_entry(void *frame, void *ctx)
+{
+    (void)ctx;
+    timer_handler((uint64_t *)frame);
+}
+
+void timer_arch_init(void)
+{
+    /* 读取定时器频率 */
+    g_timer_frequency = CNTFRQ_EL0_READ();
+
+    /* 时钟配错是经典 bug 来源 —— 值得一行；原来是四行 */
+    KLOG_INFO("Timer: aarch64 freq=%lluHz tick=%dHz (%dms)\n", g_timer_frequency, TIMER_FREQUENCY_HZ, TIMER_TICK_MS);
+
+    /* 禁用定时器 */
+    timer_disable();
+
+    /* 清零统计信息 */
+    timer_reset_stats();
+
+    /* 控制器负责优先级、注册与使能(PPI 26/30 由平台配置给出) */
+    if (irq_register_timer(timer_irq_entry, NULL) == 0)
+        KLOG_TIMER("Timer IRQ %u installed and enabled\n", CNTP_TIMER);
+    else
+        KLOG_ERROR("Timer: failed to register IRQ %u (no interrupt controller?)\n", CNTP_TIMER);
+}
+
+void timer_arch_enable(void)
+{
+    /* 计算下一次中断的时间 */
+    uint64_t ticks_per_interrupt = g_timer_frequency / TIMER_FREQUENCY_HZ;
+
+    /* 设置定时器值 */
+    CNTP_TVAL_EL0_WRITE(ticks_per_interrupt);
+
+    /* 启用定时器, 不屏蔽中断 */
+    CNTP_CTL_EL0_WRITE(CNTV_CTL_ENABLE);
+
+    KLOG_TIMER("Timer enabled with %llu ticks per interrupt\n", ticks_per_interrupt);
+    KLOG_TIMER("Timer CTL: 0x%x, TVAL: %llu\n", CNTP_CTL_EL0_READ(), ticks_per_interrupt);
+}
+
+void timer_arch_disable(void)
+{
+    /* 禁用定时器并屏蔽中断 */
+    CNTP_CTL_EL0_WRITE(CNTV_CTL_IMASK);
+
+    KLOG_TIMER("Timer disabled\n");
+}
+
+void timer_arch_set_next_interrupt(uint64_t ticks_from_now)
+{
+    CNTP_TVAL_EL0_WRITE(ticks_from_now);
+}
+
+/*
+   ============================================================
+   定时器中断处理函数
+   ============================================================
+*/
+
+/* 扫描 UART, 向前台进程组发 SIGINT(来自 syscall.c) */
+extern void signal_check_uart(void);
+
+void timer_handler(uint64_t *stack_pointer)
+{
+    (void)stack_pointer; /* Suppress unused parameter warning */
+
+    /* 每个 tick 排空 UART, 确保 Ctrl+C 能及时被检测 */
+    signal_check_uart();
+
+    /* 全局 tick 只由 BSP 推进；每核计数在 cpu_t::local_ticks */
+    if (timer_tick_owner())
+        g_system_ticks++;
+
+    cpu_bump_local_ticks();
+
+    /* 更新统计信息 */
+    g_timer_stats.total_interrupts++;
+    g_timer_stats.last_interrupt_time = timer_get_uptime_ms();
+
+    /* 调度下一个tick */
+    timer_schedule_next_tick();
+
+    /*
+       调用 tick 回调(调度器 sched_tick)
+       注意SMP 启动期间 secondary timer 可能在 g_tick_cb 被设之前就已触发
+       中断。这里 silent skip, 避免刷屏 ERROR。
+    */
+    if (g_tick_cb) {
+        g_tick_cb();
+    }
+}
+
+#endif /* __TIMER_AARCH64_IMPL_H__ */

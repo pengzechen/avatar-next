@@ -187,6 +187,34 @@ extern void klog_write(const char *buf, size_t len);
 */
 extern void klog_putchar(char c);
 extern void klog_flush(void);
+
+/*
+   klog_async_start - 启动 klogd 内核线程，之后 klog_write 默认入环形缓冲
+
+   必须在任务子系统可用后调用（task_init 末尾）。启动前的日志仍同步写
+   UART；启动后由 klogd 在 IRQs 打开的状态下输出，避免整条日志持
+   IRQ-off 把实时延迟拖到毫秒级。
+*/
+extern void klog_async_start(void);
+
+/*
+   klog_async_enqueue - 尝试把日志放入异步环形缓冲
+
+   返回 true 表示已入队；false 表示异步未启动/缓冲满/处于 panic 路径，
+   调用方应退回同步输出。可在中断上下文调用（只做短 memcpy + 唤醒）。
+*/
+extern bool klog_async_enqueue(const char *buf, size_t len);
+
+/*
+   klog_async_panic_flush - 崩溃路径：把环形缓冲里已排队的日志同步刷出
+
+   进入 panic 后 klogd 不会再被调度，不主动刷就会丢掉崩溃前最后一段日志。
+   关掉异步入口(之后的 klog_write 直写 UART)，认领环形缓冲里已入队的范围
+   并直接输出；不走全局 klog 锁，避免 panic 时卡在别人持有的锁上。
+   只由 klog_panic_begin() 调用。
+*/
+extern void klog_async_panic_flush(void);
+
 extern int kvprintf(const char *fmt, va_list va);
 extern int kprintf(const char *fmt, ...);
 
@@ -197,7 +225,7 @@ extern int kprintf(const char *fmt, ...);
    CPU 已经持锁的 klog 调用内部 —— 此时再取锁就是自旋到死, 现场一个字都
    打不出来。幂等, 单向(没有"退出 panic")。
 
-   调用点：include/assert.h 的 assert/assert_always, platform_panic()。
+   调用点：include/libc/assert.h 的 assert/assert_always, platform_panic()。
    详见 kernel/debug/backtrace.c 与 docs/basic/BACKTRACE.md。
 */
 extern void klog_panic_begin(void);

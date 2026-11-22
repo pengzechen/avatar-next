@@ -9,8 +9,8 @@
    Called from architecture-specific boot code
 */
 
-#include "boot.h"
-#include "platform_ops.h"
+#include "platform/boot.h"
+#include "platform/platform_ops.h"
 #include "arch.h"
 #include "klog.h"
 #include "debug/backtrace.h" /* backtrace_selftest() */
@@ -20,12 +20,13 @@
 #include "task/task.h"
 #include "task/sched.h"
 #include "task/cpu.h"
-#include "pmm.h"
-#include "mm_vm.h" /* virt_to_phys：把链接符号换算成物理地址 */
+#include "mm/pmm.h"
+#include "mm/mm_vm.h" /* virt_to_phys：把链接符号换算成物理地址 */
 #include "driver/time.h"
+#include "rt/rt_latency.h"
 #include "net/net.h"
-#include "loader/elf_loader.h"
-#include "fs_init.h"
+#include "task/elf_loader.h"
+#include "fs/fs_init.h"
 
 /*
    测试相关接口。boot_mode.h 是启动变体钩子；unit_test.h 是默认启动路径上的
@@ -38,7 +39,7 @@
    架构专属头。x86_64 没有额外需要: exception_init 走通用 exception.h。
 */
 #if ARCH_AARCH64
-#include "aarch64/cpu.h" /* aarch64_enable_neon() */
+#include "arch/aarch64/neon.h" /* aarch64_enable_neon() */
 #endif
 
 #include "driver/driver.h"
@@ -133,6 +134,13 @@ void kernel_main(void)
     exception_init();
 #endif
 
+    /*
+       记录 boot 建立的内核根页表(x86_64 CR3 / RISC-V satp)。此刻仍跑在
+       内核地址空间上；之后用户页表构造、调度切回内核任务都依赖它。
+       AArch64 的内核映射在 TTBR1, 没有这个抽象, 记录到的是 0。
+    */
+    mm_vm_kernel_root_init();
+
 #if ARCH_RISCV64
     /* mmu.S 建立的 1GiB 内核映射必须与 RV_KERNEL_MAP_LIST 完全一致；
        缺一条就 panic 在启动期, 而不是等 syscall 期间 Store PF。
@@ -210,7 +218,7 @@ void kernel_main(void)
 
     /* ── 初始化任务子系统 ───────────────────────────────── */
     KLOG_TASK("Initializing task subsystem...\n");
-    cpu_init_bsp(); /* Phase 0：安装 BSP per-CPU 指针 */
+    cpu_init_bsp(); /* 安装 BSP per-CPU 指针 */
 
 #if ARCH_X86_64
     extern void x86_tss_init(void);
@@ -218,6 +226,12 @@ void kernel_main(void)
 #endif
 
     task_init();
+
+    /*
+       启动早期的 fs_init / ext4 装载等长临界区不污染运行时 RT 基线；
+       此时只有 BSP、没有用户任务/tick 回调，清空统计不会和别的核竞争。
+    */
+    rt_latency_reset();
 
     /*
        先把 AP 拉起来, 再创建任何可能被摊核的任务。
@@ -229,6 +243,26 @@ void kernel_main(void)
        (直启 guest / busybox / 网络)都能按真实核数摊开。
     */
     cpu_bring_up_all();
+
+#ifdef RUN_RT_SCHED_TEST
+    /*
+       放在创建 net-poll / busybox 之前：这些长期就绪任务会把 idle 任务
+       挤到队尾，测试的 boot 上下文（idle）在任务退出后不一定马上拿回 CPU。
+    */
+    extern void run_rt_sched_test(void);
+    run_rt_sched_test();
+#endif
+
+#ifdef RT_DEMO
+    /*
+       同样必须在创建 net-poll / busybox 之前运行：boot 上下文不是可调度
+       的 task（idle 永不入就绪队列）。一旦 net-poll 这种"永远 ready"的
+       NORMAL 任务存在，boot 被 tick 抢占后就不会再被调度回来，demo 的
+       调用点根本到不了。demo 自己临时安装 tick 回调，跑完摘掉。
+    */
+    extern void run_rt_demo(void);
+    run_rt_demo();
+#endif
 
     /*
        驱动阶段（三）：网卡；net_init() 需要驱动先注册 netdev。
@@ -298,9 +332,9 @@ void kernel_main(void)
     /* SMP 健康检查：抢占启用后立刻验证所有核 timer 都在 tick。 */
     cpu_smp_timer_test(3, 100);
 
-    /* Phase 4a：多核线程分发自检。SMP=1 时也会跑(验证 round-robin
-       自身不破坏单核)。失败仅 KLOG_ERROR, 不 panic, 避免影响后续
-       busybox / vmm 测试。
+    /* SMP 线程分发自检(当前默认关闭，测试变体可手工打开)。SMP=1 时也会跑,
+       验证 round-robin 自身不破坏单核。失败仅 KLOG_ERROR, 不 panic, 避免
+       影响后续 busybox / vmm 测试。
     */
     /*
        extern void smp_thread_test_run(uint32_t, uint32_t, uint32_t);

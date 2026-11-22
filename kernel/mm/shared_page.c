@@ -18,10 +18,10 @@
    损坏推迟到更难查的时候。
 */
 
-#include "shared_page.h"
+#include "mm/shared_page.h"
 #include "klog.h"
-#include "page.h"
-#include "pmm.h"
+#include "mm/page.h"
+#include "mm/pmm.h"
 #include "spinlock.h"
 
 /*

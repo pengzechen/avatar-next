@@ -4,7 +4,7 @@
             "name": "x86_64",
             "includePath": [
                 "${workspaceFolder}/include",
-                "${workspaceFolder}/include/x86_64",
+                "${workspaceFolder}/include/arch/x86_64",
                 "${workspaceFolder}/driver",
                 "${workspaceFolder}/driver/uart",
                 "${workspaceFolder}/kernel",
@@ -24,7 +24,7 @@
             "name": "AArch64",
             "includePath": [
                 "${workspaceFolder}/include",
-                "${workspaceFolder}/include/aarch64",
+                "${workspaceFolder}/include/arch/aarch64",
                 "${workspaceFolder}/driver",
                 "${workspaceFolder}/driver/uart",
                 "${workspaceFolder}/kernel",
@@ -43,7 +43,7 @@
             "name": "RISC-V64",
             "includePath": [
                 "${workspaceFolder}/include",
-                "${workspaceFolder}/include/riscv64",
+                "${workspaceFolder}/include/arch/riscv64",
                 "${workspaceFolder}/driver",
                 "${workspaceFolder}/driver/uart",
                 "${workspaceFolder}/kernel",

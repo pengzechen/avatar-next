@@ -4,8 +4,8 @@
    Copyright (c) 2026 Avatar OS project
 */
 
-#include "../../../include/aarch64/tcr.h"
-#include "../../../include/aarch64/mair.h"
+#include "../../../include/arch/aarch64/tcr.h"
+#include "../../../include/arch/aarch64/mair.h"
 
 /*
  * mmu_init - 初始化并启用 MMU

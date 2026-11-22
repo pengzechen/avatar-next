@@ -23,7 +23,7 @@
 #include "string.h"
 #include "arch.h"
 #include "exception.h"
-#include "user_layout.h"
+#include "mm/user_layout.h"
 
 /* ── deliver_pending_signals ────────────────────────────────────
    在 syscall 即将返回用户态前调用(且 syscall_abi_set_ret 已执行)。

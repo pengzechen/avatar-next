@@ -4,31 +4,30 @@
    Copyright (c) 2026 Avatar OS project
 */
 
-#include "kernel_stat.h"
+#include "fs/kernel_stat.h"
 #include "syscall/syscall.h"
 #include "syscall/syscall_internal.h"
 #include "syscall/trace.h"
 #include "syscall/core/futex.h"
-#include "loader/bin_loader.h"
-#include "loader/elf_loader.h"
 #include "klog.h"
 #include "task/task.h"
 #include "task/cpu.h" /* get_current_cpu_id(getcpu) */
-#include "task/itimer.h"
-#include "user_layout.h"
+#include "time/itimer.h"
+#include "mm/user_layout.h"
 #include "task/sched.h"
 #include "task/switch.h"
-#include "mm_vm.h"
-#include "pmm.h"
+#include "mm/mm_vm.h"
+#include "mm/pmm.h"
 #include "string.h"
 #include "arch.h"
 #include "exception.h"
 #include "syscall_abi.h"
-#include "vfs.h"
+#include "rt/rt_latency.h"
+#include "fs/vfs.h"
 #include <ext4.h>
 #include <ext4_errno.h>
 #if ARCH_RISCV64
-#include "riscv64/satp_utils.h"
+#include "arch/riscv64/satp_utils.h"
 #endif
 
 #include "syscall/fs/fd_pool.h"
@@ -1153,7 +1152,7 @@ void syscall_handler(trap_frame_t *frame)
         si.mem_unit = PAGE_SIZE;
 
         for (uint32_t i = 0; i < TASK_MAX; i++) {
-            if (g_stack_used[i] && g_task_pool[i].state != TASK_DEAD)
+            if (g_stack_used[i] && g_task_pool[i].state != TASK_DEAD && g_task_pool[i].state != TASK_ALLOCATING)
                 procs++;
         }
         si.procs = procs;
@@ -1408,7 +1407,7 @@ void syscall_handler(trap_frame_t *frame)
     case 103:   /* riscv64/aarch64 __NR_setitimer */
     case 102: { /* riscv64/aarch64 __NR_getitimer */
         /*
-           ITIMER_REAL(alarm/setitimer)。实现见 task/itimer.c。
+           ITIMER_REAL(alarm/setitimer)。实现见 kernel/time/itimer.c。
 
            以前这里是纯桩：把 old_value 清零, 返回 0, 从不真正装定时器。
            后果不只是"少个功能"—— LTP 每个测例都用 alarm() 当看门狗来打断
@@ -1542,7 +1541,10 @@ void syscall_handler(trap_frame_t *frame)
 
     /* 结束 syscall stime 计时(EXIT 类 syscall 不会到达这里) */
     if (current && current->is_user_process && current->sc_entry_ns != 0) {
-        current->stime_ns += kernel_get_ns() - current->sc_entry_ns;
+        uint64_t now_ns = kernel_get_ns();
+        uint64_t dur_ns = (now_ns > current->sc_entry_ns) ? (now_ns - current->sc_entry_ns) : 0;
+        rt_latency_syscall(dur_ns, (uint32_t)syscall_num);
+        current->stime_ns += dur_ns;
         current->sc_entry_ns = 0;
     }
 
@@ -1646,10 +1648,20 @@ int64_t sys_close(int fd)
 int64_t sys_gettimeofday(struct timeval *tv, void *tz)
 {
     (void)tz;
-    if (!tv)
-        return -1;
-    uint64_t ns = kernel_get_ns();
-    tv->tv_sec = (long)(ns / 1000000000ULL);
-    tv->tv_usec = (long)((ns % 1000000000ULL) / 1000ULL);
+
+    /*
+       tv 是用户指针，必须经 copy_to_user_bytes 写回 —— 直接 tv->tv_sec
+       会让用户传 (void *)-1 时内核态 #PF，整机挂死(见 CLAUDE.md 的用户
+       指针规则)。tv == NULL 是合法调用(只查询时区)；本内核没有时区。
+    */
+    if (tv) {
+        uint64_t ns = kernel_get_ns();
+        struct timeval ktv;
+
+        ktv.tv_sec = (long)(ns / 1000000000ULL);
+        ktv.tv_usec = (long)((ns % 1000000000ULL) / 1000ULL);
+        if (copy_to_user_bytes(&ktv, tv, sizeof(ktv)) < 0)
+            return -EFAULT;
+    }
     return 0;
 }

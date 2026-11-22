@@ -8,12 +8,12 @@
    tests/unit-test/pmm_test.c - 物理内存管理器测试
 */
 
-#include "pmm.h"
+#include "mm/pmm.h"
 #include "klog.h"
 #include "assert.h"
-#include "mm_vm.h"
-#include "shared_page.h"
-#include "kmalloc.h"
+#include "mm/mm_vm.h"
+#include "mm/shared_page.h"
+#include "mm/kmalloc.h"
 #include "string.h"
 
 #define PMM_PAGE_SIZE 4096 /* 4KB */

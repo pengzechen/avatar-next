@@ -123,18 +123,18 @@ exception.S: SAVE_REGS
   ↓
   ├─ irq_ack()
   ├─ timer_handler()
-  │   ├─ g_system_ticks++
+  │   ├─ g_system_ticks++      ← 仅 BSP 记账(RISC-V 按硬件时间赋值)
   │   └─ g_tick_cb()  → sched_tick()
-  │       └─ g_need_resched = true  ← 只设置标志！
+  │       └─ cpu_current()->need_resched = true  ← 只设置本核标志！
   │
   └─ irq_eoi()
   ↓
 返回到 exception.S
   ↓
-bl sched_check_and_yield  ← 检查标志
+bl sched_check_and_yield  ← 检查本核标志
   ↓
-  如果 g_need_resched == true:
-    g_need_resched = false
+  如果 cpu_current()->need_resched == true:
+    cpu_current()->need_resched = false
     sched_schedule()
     └─ arch_task_switch(&prev->sp, next->sp)
         └─ ret  ← 在异常上下文中切换，OK
@@ -301,9 +301,11 @@ iretq
 bool
 sched_check_and_yield(void)
 {
-    if (g_need_resched) {
+    cpu_t *c = cpu_current();
+
+    if (c->need_resched) {
         KLOG_DEBUG("[sched] rescheduling on exception return\n");
-        g_need_resched = false;
+        c->need_resched = false;
         sched_schedule();
         return true;
     }

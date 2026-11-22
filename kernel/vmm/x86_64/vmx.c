@@ -20,22 +20,22 @@
 */
 
 #include "vmm/vmm.h"
-#include "pmm.h" /* pmm_get_free_pages(缺页失败时的诊断) */
+#include "mm/pmm.h" /* pmm_get_free_pages(缺页失败时的诊断) */
 #include "klog.h"
 #include "string.h"
 #include "task/task.h"
 #include "task/cpu.h" /* get_current_cpu_id()：VMXON 是按 CPU 记的 */
-#include "x86_64/vmx.h"
-#include "x86_64/ept.h"   /* EPT 二级翻译 */
-#include "guest_loader.h" /* GUEST_LINUX_*_GPA(guest 描述符表要用) */
-#include "vmm/vmm_mmio.h" /* MMIO 总线 */
+#include "arch/x86_64/vmx.h"
+#include "arch/x86_64/ept.h"  /* EPT 二级翻译 */
+#include "vmm/guest_loader.h" /* GUEST_LINUX_*_GPA(guest 描述符表要用) */
+#include "vmm/vmm_mmio.h"     /* MMIO 总线 */
 #include "vmm/vmm_uart16550.h"
 #include "vmm/vmm_console.h" /* vmm_console_irq_asserted：控制台中断线(电平触发) */
 #include "vmm/vmm_vlapic.h"
 #include "irq/lapic.h" /* g_tsc_freq_hz：宿主标定出的 TSC 频率(CPUID 0x15/0x16 要报给 guest) */
 
 /* guest RAM 的宿主物理窗口(定义在 guest_boot.c) */
-#include "mm_vm.h" /* virt_to_phys */
+#include "mm/mm_vm.h" /* virt_to_phys */
 
 /*
    boot/x86_64/tss.c —— 取本核 TSS 的选择子/基址。
@@ -979,7 +979,7 @@ extern void vmx_return(void);
 extern int vmx_enter_guest(vcpu_t *vcpu); /* vmx_run.S */
 
 /* ── VMXON / VMCS 操作 ──────────────────────────────────────────────────
-   vmxon / vmclear / vmptrld 是 include/x86_64/vmx.h 里的 static inline。
+   vmxon / vmclear / vmptrld 是 include/arch/x86_64/vmx.h 里的 static inline。
    它们的 m64 操作数是存放「物理地址」的内存位置；内核运行在
    0xffff800000000000 偏移的高半区, 调用方必须先 virt_to_phys。
    ───────────────────────────────────────────────────────────────────────

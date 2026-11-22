@@ -17,7 +17,7 @@
 #include "task/task.h"
 #include "klog.h"
 #include "string.h"
-#include "vfs.h"
+#include "fs/vfs.h"
 
 static pty_pair_t g_ptys[PTY_MAX];
 

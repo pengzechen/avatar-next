@@ -16,7 +16,7 @@ Thread 3: u_loop           — Ring 3 用户进程（syscall 测试）
 ## 文件结构
 
 ```
-include/x86_64/vmx.h            — VMX 常量、VMCS 字段编码、辅助类型
+include/arch/x86_64/vmx.h            — VMX 常量、VMCS 字段编码、辅助类型
 include/vmm/vmm.h               — vcpu_t 布局（x86_64 / AArch64 / stub）、架构钩子声明
 kernel/vmm/vcpu.c               — vmm_run_vcpu 主循环 + vcpu_task_create
 kernel/vmm/vm.c                 — VM 池 + 生命周期 + vm_create

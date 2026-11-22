@@ -1,0 +1,231 @@
+/*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+#ifndef KERNEL_TASK_CPU_H
+#define KERNEL_TASK_CPU_H
+
+/*
+   include/task/cpu.h — Per-CPU 控制块(SMP 抽象层)
+
+   每个在线 CPU 一个 cpu_t，per-CPU 寄存器(TPIDR_EL1 / tp / GS_BASE)指向
+   本核实例。调度状态(run_queue / current_task / idle_task / need_resched)
+   全部放在 cpu_t 里，不再有全局就绪队列。
+
+   三架构均已实现次级核拉起：
+     - aarch64: PSCI CPU_ON → boot/aarch64/boot.S:_secondary_start
+     - riscv64: SBI HSM hart_start；无 HSM 时回退到 release 表 + IPI
+     - x86_64 : INIT-SIPI + AP trampoline
+   跨核唤醒走 resched IPI(CPU_RESCHED_IPI* / irq_send_ipi)。
+*/
+
+#include "types.h"
+#include "list.h"
+#include "spinlock.h"
+#include "arch.h"
+#include "assert.h" /* static_assert：校验下方 .S 可见的字段偏移 */
+
+#if ARCH_AARCH64
+#include "arch/aarch64/cpu_impl.h"
+#elif ARCH_RISCV64
+#include "arch/riscv64/cpu_impl.h"
+#elif ARCH_X86_64
+#include "arch/x86_64/cpu_impl.h"
+#else
+#error "Unsupported architecture for cpu_impl.h"
+#endif
+
+#ifndef AVATAR_MAX_CPUS
+#define AVATAR_MAX_CPUS 8U
+#endif
+
+#ifndef CONFIG_SMP_CPUS
+#define CONFIG_SMP_CPUS 1U
+#endif
+
+/* RT 调度类的优先级层数：0 保留，1..99 有效（与 Linux SCHED_FIFO 对齐）。 */
+#define RT_PRIO_LEVELS 100u
+
+/* 前向声明, 避免循环 include(task.h 也会 include cpu.h) */
+struct task;
+
+/* ── Per-CPU 控制块 ──────────────────────────────────────────
+   run_queue / current_task / need_resched 由调度器直接使用；
+   任何跨 CPU 访问这些字段都必须持有目标核的 rq_lock。
+*/
+typedef struct cpu {
+    uint32_t cpu_id;      /* 逻辑 CPU 槽位(0..CONFIG_SMP_CPUS-1；不是所有槽位都能拉起成功) */
+    uint64_t hw_id;       /* MPIDR / hartid / APIC ID */
+    volatile bool online; /* 是否已通过 bootstrap(BSP 自旋等待, 必须 volatile) */
+
+    /* ── 调度器状态 ─────────────────────────────────────── */
+    struct task *current_task;       /* 本核当前任务 */
+    struct task *idle_task;          /* 本核 idle 任务 */
+    list_t run_queue;                /* 本核就绪队列 */
+    volatile bool need_resched;      /* 时钟中断置位 */
+    spinlock_noirq_t rq_lock;        /* 保护 run_queue + current_task */
+    uint32_t irq_depth;              /* 硬中断嵌套深度(抢占边界判断) */
+    uint32_t preempt_schedule_depth; /* 防止 preempt_enable 递归调度 */
+
+    /* ── 诊断 / 测试 ─────────────────────────────────────── */
+    volatile uint64_t local_ticks; /* 本核 timer ISR 累计次数(SMP 验证用) */
+
+    /* x86_64 SYSCALL 路径暂存用户 RSP(per-CPU, 通过 gs:offset 访问) */
+    uint64_t scratch_rsp;
+
+    /* x86_64 SYSCALL 入口切换到本核内核栈用的栈顶, 即本核 TSS.RSP0 的镜像。
+       SYSCALL 不像中断那样自动换栈, 入口必须显式从本核取值装入 RSP；
+       以前读的是全局 g_x86_tss_rsp0(只由 CPU0 更新), SMP 下会把 AP 的
+       syscall 帧建到别的 CPU 正在用的任务栈上, 导致栈互相破坏。
+    */
+    uint64_t kernel_rsp0;
+
+    /*
+       本核在 idle 任务上累计的 tick 数。/proc/uptime 的第二个字段要它。
+
+       注意： 必须加在 scratch_rsp / kernel_rsp0 之后：那两个字段的偏移被
+       boot/x86_64/syscall_wrapper.S 手抄成常量(CPU_SCRATCH_RSP=96 /
+       CPU_KERNEL_RSP0=104), .S 里写不了 offsetof, 只能靠下面那组
+       static_assert 把关。往它们前面插字段会当场把断言打炸(这是好事),
+       但更省事的做法就是加在最后。
+    */
+    uint64_t idle_ticks;
+
+    /*
+       ── RT 调度类（R2）────────────────────────────────────────
+       rt_queue[p]：RT 优先级 p（1..99）的 FIFO/RR 队列；
+       rt_bitmap：哪些优先级非空，pick_next() 用最高非空位选任务。
+       新字段一律加在 idle_ticks 之后：x86_64 的 scratch_rsp /
+       kernel_rsp0 偏移被 .S 硬编码，前面的字段不能动。
+    */
+    list_t rt_queue[RT_PRIO_LEVELS];
+    uint64_t rt_bitmap[(RT_PRIO_LEVELS + 63) / 64];
+} cpu_t;
+
+/*
+   boot/x86_64/syscall_wrapper.S 用 gs:offset 直接访问下面两个字段,
+   .S 里无法写 offsetof, 只能手抄常量。这里加编译期断言, 字段布局一变
+   立刻构建失败, 避免再次出现“偏移写错→写坏 rq_lock→SMP 下栈错乱”。
+*/
+#if ARCH_X86_64
+static_assert(offsetof(cpu_t, scratch_rsp) == 96, "CPU_SCRATCH_RSP in boot/x86_64/syscall_wrapper.S is stale");
+static_assert(offsetof(cpu_t, kernel_rsp0) == 104, "CPU_KERNEL_RSP0 in boot/x86_64/syscall_wrapper.S is stale");
+#endif
+
+/* ── 全局 CPU 池 ────────────────────────────────────────── */
+extern cpu_t g_cpus[AVATAR_MAX_CPUS];
+extern uint32_t g_num_cpus; /* 已在线 CPU 数(BSP=1, 每成功拉起一个 AP +1) */
+
+/* ── 次级核启动支撑 ────────────────────────────────────── */
+
+/* 各架构 boot.S 定义的次级核启动栈, 每核 SECONDARY_STACK_SIZE 字节。 */
+#define SECONDARY_STACK_SIZE 16384U
+extern uint8_t secondary_boot_stacks[];
+
+/*
+   cpu_setup_secondary_idle_task - 给次级核建立 idle 任务(kernel/task/cpu.c)
+
+   架构的 cpu_secondary_bootstrap() 必须在开中断和第一次调度之前调用。
+*/
+void cpu_setup_secondary_idle_task(cpu_t *c);
+
+/*
+   架构钩子 —— 实现在 kernel/task/<arch>/cpu_startup.c：
+   次级核拉起、BSP 硬件 ID、SMP 自检的架构差异都收在那里。
+*/
+uint64_t arch_cpu_bsp_hw_id(void);
+void arch_cpu_smp_test_begin(void);
+void arch_cpu_smp_test_diag_begin(void);
+void arch_cpu_smp_test_diag_round(uint32_t round);
+
+/* ── 跨核 IPI ─────────────────────────────────────────────
+
+   目前只有一种用途：resched(让目标核立刻重新调度)。发送/接收已经收敛到
+   include/driver/irq.h 的 irq_register_ipi()/irq_send_ipi()，中断号由
+   控制器后端自己决定；下面这些常量只留给需要知道具体 cause 的架构代码
+   (例如 RISC-V 的 hext_run 判断 SSIP)。
+
+     AArch64: 物理 GIC SGI 15
+     RISC-V : S 模式软件中断, scause = 1(SBI IPI 置 SSIP)
+     x86_64 : LAPIC fixed-delivery IPI, 向量 0xF0
+*/
+#if ARCH_AARCH64
+#define CPU_RESCHED_IPI 15u /* SGI 15：避开常用的 SGI 0-7 */
+#elif ARCH_RISCV64
+#define CPU_RESCHED_IPI_CAUSE 1u /* supervisor software interrupt */
+#elif ARCH_X86_64
+#define CPU_RESCHED_IPI_VECTOR 0xF0u
+#endif
+
+/*
+   cpu_ipi_init - 在当前 CPU 上安装并打开 resched IPI
+
+   每颗核在 IRQ 控制器就绪后各调一次(BSP 在 cpu_init_bsp, AP 在
+   cpu_secondary_bootstrap)。必须在 cpu->online 置位之前完成 —— 发送方
+   只对 online 的核发 IPI, 否则会往一个还没装好向量的核上打。
+*/
+void cpu_ipi_init(void);
+
+/* cpu_send_ipi - 向指定逻辑 CPU 发一个 resched IPI */
+void cpu_send_ipi(uint32_t cpu_id);
+
+/* ── 获取当前 CPU ────────────────────────────────────────── */
+static inline cpu_t *cpu_current(void)
+{
+    cpu_t *c = arch_cpu_self_get();
+    /* 若 per-CPU 寄存器尚未安装(早期 boot 或测试代码), 回退 CPU0。 */
+    return c ? c : &g_cpus[0];
+}
+
+static inline uint32_t get_current_cpu_id(void)
+{
+    return cpu_current()->cpu_id;
+}
+
+/*
+   cpu_bump_local_ticks - 本核 timer ISR 每次调用, 让本核 tick 计数 +1
+
+   只用于诊断/SMP 健康检查；全局 tick(g_system_ticks)的记账规则见
+   driver/time/timer.c 的 timer_tick_owner()。
+*/
+void cpu_bump_local_ticks(void);
+
+/* ── 初始化 ─────────────────────────────────────────────── */
+
+/*
+   cpu_init_bsp - BSP 调用一次, 初始化 g_cpus[0] 并安装 per-CPU 寄存器。
+
+   必须在 task_init() 之前调用。
+*/
+void cpu_init_bsp(void);
+
+/*
+   cpu_bring_up_all - BSP 调用一次, 启动 CPU1..CONFIG_SMP_CPUS-1。
+
+   三架构均已实现：aarch64 用 PSCI CPU_ON；riscv64 优先 SBI HSM，
+   不支持的平台回退到 release 表 + IPI；x86_64 用 INIT-SIPI + AP trampoline。
+   拉起失败或超时的核会被跳过，g_num_cpus 只统计真正 online 的核。
+*/
+void cpu_bring_up_all(void);
+
+/*
+   cpu_secondary_bootstrap - 次级核 C 入口(三架构共用)
+
+   各架构 boot.S 在 MMU / 异常向量就绪后调用；入参 cpu_id 是 BSP 传入的
+   context_id(PSCI context_id / SBI hart_start 的 opaque / x86 AP 参数槽)。
+   函数不返回：装好 idle 任务和 timer 后进入 idle 循环。
+*/
+void cpu_secondary_bootstrap(uint32_t cpu_id);
+
+/*
+   cpu_smp_timer_test - SMP 健康检查：验证所有在线 CPU 的 timer ISR 都在动。
+
+   在所有次级核 online、本地 timer 已启用之后调用。它只看 local_ticks 的
+   增长，不依赖 sched_tick 回调；主流程习惯放在 timer_set_tick_cb 之后。
+   BSP 忙等 rounds*ms_per_round 毫秒, 每轮打印各核 local_ticks 增量。
+*/
+void cpu_smp_timer_test(uint32_t rounds, uint32_t ms_per_round);
+
+#endif /* KERNEL_TASK_CPU_H */

@@ -44,7 +44,7 @@ static_assert(sizeof(int) == 4, "int must be 4 bytes");
 
 ## 平台集成
 
-`platform_panic()` 由平台层实现，声明在 `include/assert.h`：
+`platform_panic()` 由平台层实现，声明在 `include/libc/assert.h`：
 
 ```c
 void platform_panic(void)

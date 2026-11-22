@@ -24,10 +24,10 @@ file-backed 路径遗漏了。子进程 exit 时 `munmap` 释放了共享页的�
 
 **现象**: `'PTE_NOFREE' undeclared` in `proc_lifecycle.c`。
 
-**根因**: `include/aarch64/mm_vm.h` 没有 `#include "mmu.h"`，
+**根因**: `include/arch/aarch64/mm_vm.h` 没有 `#include "mmu.h"`，
 而 `PTE_NOFREE` 定义在 `mmu.h` 中。
 
-**修复**: `include/aarch64/mm_vm.h` 添加 `#include "mmu.h"`。
+**修复**: `include/arch/aarch64/mm_vm.h` 添加 `#include "mmu.h"`。
 
 ---
 
@@ -146,10 +146,10 @@ syscall
   x86_64 因栈 NX 位无法使用同一方案
 
 **涉及文件**:
-- `include/user_layout.h` — 新增 `USER_SIGRET_PAGE` 常量
+- `include/mm/user_layout.h` — 新增 `USER_SIGRET_PAGE` 常量
 - `kernel/task/exec.c` — 映射蹦床页
 - `kernel/syscall/core/signal.c` — 使用蹦床页
-- `kernel/task/task.h` — 新增 `SA_RESTORER` 常量
+- `include/task/task.h` — 新增 `SA_RESTORER` 常量
 
 ---
 

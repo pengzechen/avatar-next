@@ -1,7 +1,7 @@
 # Guest 控制台：两种运行模式与 /dev/vmm
 
 > 最后更新：2026-09-24
-> 相关代码：`kernel/vmm/vdev/vpl011.c`、`kernel/fs/pseudofs/vmm_dev.c`、
+> 相关代码：`kernel/vmm/vdev/vpl011.c`、`fs/pseudofs/vmm_dev.c`、
 > `apps/c/vmm_run.c`、`kernel/vmm/vmm_console.c`
 
 ## 1. 两种模式
@@ -69,7 +69,7 @@ ioctl(fd, VMM_IOC_STOP)       停止前台 guest（Ctrl+T k）
 close(fd)                     默认停止 guest；DETACH 过则不停止
 ```
 
-ioctl 号定义在 `include/pseudofs.h`（内核侧）与 `apps/c/vmm_run.c`（用户侧，
+ioctl 号定义在 `include/fs/pseudofs.h`（内核侧）与 `apps/c/vmm_run.c`（用户侧，
 用 musl 的 `<sys/ioctl.h>` 宏独立写了一遍；两边都是标准 `_IOC` 编码）。
 
 guest 镜像路径是写死的 `/guests/linux/{linux.bin,linux.dtb,initrd.gz}`，

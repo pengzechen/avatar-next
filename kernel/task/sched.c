@@ -5,12 +5,13 @@
 */
 
 /*
-   kernel/task/sched.c — 内核轮转调度器
+   kernel/task/sched.c — 内核调度器(per-CPU 轮转 + RT 优先级类)
 
    设计：
-     - 就绪队列(g_run_queue)：list_t, FIFO 顺序
-     - idle 任务(g_idle)：队列为空时的回退任务, 永不入队
+     - 每核一个就绪队列(cpu_t::run_queue / rt_queue)，FIFO 顺序
+     - 每核一个 idle 任务(cpu_t::idle_task)，队列为空时的回退任务, 永不入队
      - sched_schedule() 关中断保护调度决策和上下文切换
+     - 跨核入队/唤醒持目标核 rq_lock；必要时立刻发 resched IPI
 
    调度语义(以 sched_schedule 为核心)：
      1. 关中断, 保存当前中断标志(flags)
@@ -38,20 +39,15 @@
 #include "spinlock.h"
 #include "assert.h"
 #include "task/preempt.h"
-#include "task/itimer.h"
-#if ARCH_AARCH64 || ARCH_X86_64
+#include "time/itimer.h"
+#include "driver/time.h"
+#include "rt/rt_latency.h"
+#include "mm/mm_vm.h"
 #include "exception.h"
-#endif
-#if ARCH_RISCV64
-#include "riscv64/satp_utils.h"
-#include "riscv64/exception.h"
-extern uint64_t g_kernel_pgd_phys;
-#endif
 
 #if ARCH_X86_64
-#include "mmu.h"
+#include "arch/x86_64/mmu.h"
 #include "../../boot/x86_64/tss.h"
-extern uint64_t g_kernel_pgd_phys;
 
 #define X86_MSR_IA32_FS_BASE 0xC0000100U
 
@@ -70,15 +66,216 @@ static inline void x86_write_fs_base(uint64_t fs_base)
 
 /* ── Scheduler state ─────────────────────────────────────── *
 
-   Phase 1: 调度状态全部迁入 cpu_t, 本文件不再持有全局变量。
+   调度状态全部在 cpu_t 里, 本文件不持有全局队列：
      - run_queue / idle_task / need_resched 都从 cpu_current() 读取
      - current_task 是 per-CPU 状态, 不再维护全局镜像
 
-   单核场景 cpu_current() 始终返回 &g_cpus[0], 行为与旧版本完全一致。
-   多核场景每个 CPU 独立持有自己的就绪队列；跨核入队需要持有目标核
-     的 rq_lock(Phase 2/4 启用, 本阶段单核暂不加锁, 因为关中断已经
-     足够互斥本核 ISR)。
+   单核(g_num_cpus == 1)时关中断即可互斥本核 ISR；多核场景每个 CPU
+   独立持有自己的就绪队列，跨核入队/唤醒必须持目标核的 rq_lock
+   (见 sched_enqueue / sched_unblock)。
 */
+
+/* ── RT 调度类辅助 ───────────────────────────────────────── */
+
+void sched_rq_init(cpu_t *c)
+{
+    list_init(&c->run_queue);
+    for (uint32_t p = 0; p < RT_PRIO_LEVELS; p++)
+        list_init(&c->rt_queue[p]);
+    for (uint32_t w = 0; w < (RT_PRIO_LEVELS + 63) / 64; w++)
+        c->rt_bitmap[w] = 0;
+}
+
+/* 有效 RT 优先级 = max(基础 RT 优先级, rt_mutex 继承优先级)。 */
+static inline uint32_t rt_prio_of(const task_t *t)
+{
+    return task_effective_rt_prio(t);
+}
+
+static inline void rt_bitmap_set(cpu_t *c, uint32_t p)
+{
+    c->rt_bitmap[p / 64] |= (1ULL << (p % 64));
+}
+
+static inline void rt_bitmap_clear(cpu_t *c, uint32_t p)
+{
+    c->rt_bitmap[p / 64] &= ~(1ULL << (p % 64));
+}
+
+/* 最高非空 RT 优先级；没有返回 -1。RISC-V 上不用 __builtin_clzll（libgcc）。 */
+static int rt_highest_prio(cpu_t *c)
+{
+    for (int w = (int)((RT_PRIO_LEVELS + 63) / 64) - 1; w >= 0; w--) {
+        uint64_t x = c->rt_bitmap[w];
+        if (!x)
+            continue;
+        int bit = 0;
+        if (x & 0xFFFFFFFF00000000ULL) {
+            x >>= 32;
+            bit += 32;
+        }
+        if (x & 0xFFFF0000ULL) {
+            x >>= 16;
+            bit += 16;
+        }
+        if (x & 0xFF00ULL) {
+            x >>= 8;
+            bit += 8;
+        }
+        if (x & 0xF0ULL) {
+            x >>= 4;
+            bit += 4;
+        }
+        if (x & 0xCULL) {
+            x >>= 2;
+            bit += 2;
+        }
+        if (x & 0x2ULL)
+            bit += 1;
+        return w * 64 + bit;
+    }
+    return -1;
+}
+
+/* 持 rq_lock 调用：按调度类插入就绪队列。 */
+static void rq_enqueue_locked(cpu_t *c, task_t *t)
+{
+    if (task_sched_is_rt(t)) {
+        uint32_t p = rt_prio_of(t);
+        /* 注意：不要把有效优先级写回 rt_priority —— 那是基础优先级，
+           PI 提升期间写回会把临时值变成永久值。 */
+        if (t->sched_policy == TASK_SCHED_RR && t->rt_slice == 0)
+            t->rt_slice = TASK_RR_QUANTUM_TICKS;
+        list_insert_last(&c->rt_queue[p], &t->run_node);
+        rt_bitmap_set(c, p);
+        return;
+    }
+    list_insert_last(&c->run_queue, &t->run_node);
+}
+
+/* 持 rq_lock 调用：从 NORMAL/RT 队列摘除。 */
+static bool rq_remove_locked(cpu_t *c, task_t *t)
+{
+    if (list_contains(&c->run_queue, &t->run_node)) {
+        list_delete(&c->run_queue, &t->run_node);
+        return true;
+    }
+    if (task_sched_is_rt(t)) {
+        uint32_t p = rt_prio_of(t);
+        if (list_contains(&c->rt_queue[p], &t->run_node)) {
+            list_delete(&c->rt_queue[p], &t->run_node);
+            if (list_is_empty(&c->rt_queue[p]))
+                rt_bitmap_clear(c, p);
+            return true;
+        }
+        /* policy 在排队期间被改过的兜底（当前不开放运行时改策略）。 */
+        for (uint32_t q = TASK_RT_PRIO_MIN; q <= TASK_RT_PRIO_MAX; q++) {
+            if (!list_contains(&c->rt_queue[q], &t->run_node))
+                continue;
+            list_delete(&c->rt_queue[q], &t->run_node);
+            if (list_is_empty(&c->rt_queue[q]))
+                rt_bitmap_clear(c, q);
+            return true;
+        }
+    }
+    return false;
+}
+
+static task_t *rq_node_to_task(cpu_t *c, list_node_t *node)
+{
+    extern task_t g_task_pool[];
+    task_t *task = container_of(node, task_t, run_node);
+    if (task < g_task_pool || task >= g_task_pool + TASK_MAX) {
+        KLOG_ERROR("[sched] CORRUPT runqueue on cpu%u: node=%p -> task=%p (out of pool) - skipped\n", c->cpu_id,
+                   (void *)node, (void *)task);
+        return NULL;
+    }
+    return task;
+}
+
+/*
+   入队后是否需要立刻抢占目标核。
+   - 远端：沿用旧行为，总发 resched IPI（唤醒延迟不依赖 tick）；
+   - 本核：只有更高优先级的 RT 任务（或当前是 idle）才置 need_resched。
+
+   本核只置标志还不够：need_resched 只在 trap 返回点 / syscall 返回边界
+   被消费。正在跑纯计算循环的 NORMAL 内核线程没有任何返回点，只能等
+   下一次 timer tick（最长一个 tick，默认 10ms；RT_DEMO 在 100Hz 下实测平均 9.9ms）。所以本核在
+   "真实任务被更高优先级 RT 抢占"时再补一个 self-IPI：中断入口本身
+   就是 trap，它的返回路径会立刻消费 need_resched，把抢占延迟压到
+   µs 级（见 docs/realtime/RT_DEMO_RESULTS.md）。
+
+   注意：
+   - idle/boot 上下文不发：idle 不在就绪队列里，它自己的 trap/yield
+     路径会消费标志；boot 阶段发 IPI 还会提前打断内核初始化。
+   - 中断上下文里不发：本轮 ISR 的返回路径一定会消费 need_resched，
+     再发一个 IPI 只是多一次嵌套中断。
+   - 本核是用户进程时仍然发：用户态需要立即被打断；如果它正在
+     syscall 内核侧，trap_preempt_kernel_side() 会拒绝在这里切换，
+     延迟到 syscall 返回边界，代价只是多一次中断。
+*/
+static void sched_kick_after_enqueue(cpu_t *c, task_t *t)
+{
+    if (c->cpu_id != get_current_cpu_id()) {
+        sched_resched_cpu(c->cpu_id);
+        return;
+    }
+
+    task_t *cur = c->current_task;
+    if (!cur || cur == c->idle_task) {
+        c->need_resched = true;
+        return;
+    }
+    if (!task_sched_is_rt(t))
+        return; /* NORMAL 任务不打断 NORMAL/RT；等 tick 或返回边界 */
+    if (task_sched_is_rt(cur) && task_effective_rt_prio(t) <= task_effective_rt_prio(cur))
+        return;
+
+    c->need_resched = true;
+
+    if (!in_irq_context())
+        cpu_send_ipi(c->cpu_id);
+}
+
+/*
+   sched_set_pi_boost — rt_mutex 优先级继承的调度侧入口
+
+   prio == 0 表示清除继承。调用者不得持有 rq_lock。
+   如果任务当前 READY 且不在 CPU 上，它已经在某个 RT/NORMAL 队列里，
+   必须在同一把 rq_lock 下先摘除、改优先级、再按新类/新优先级入队；
+   否则 rq_remove 会按新优先级去旧队列里找，找不到就泄漏一个节点。
+   RUNNING / BLOCKED 的任务不需要搬队列：后者下次 sched_unblock 时会按
+   新优先级入队。
+*/
+void sched_set_pi_boost(task_t *t, uint8_t prio)
+{
+    if (!t)
+        return;
+    if (prio > TASK_RT_PRIO_MAX)
+        prio = TASK_RT_PRIO_MAX;
+
+    uint32_t n = g_num_cpus ? g_num_cpus : 1U;
+    uint32_t target = (t->cpu_affinity < n) ? t->cpu_affinity : 0U;
+    cpu_t *tc = &g_cpus[target];
+    uint64_t flags;
+    bool requeued = false;
+
+    spin_lock_irqsave(&tc->rq_lock, &flags);
+    if (t->pi_priority == prio) {
+        spin_unlock_irqrestore(&tc->rq_lock, flags);
+        return;
+    }
+
+    if (t->state == TASK_READY && !t->on_cpu)
+        requeued = rq_remove_locked(tc, t);
+    t->pi_priority = prio;
+    if (requeued)
+        rq_enqueue_locked(tc, t);
+    spin_unlock_irqrestore(&tc->rq_lock, flags);
+
+    if (requeued)
+        sched_kick_after_enqueue(tc, t);
+}
 
 /* ── sched_init ──────────────────────────────────────────── */
 
@@ -133,15 +330,15 @@ void task_kick(task_t *task)
 
 /* ── sched_enqueue ───────────────────────────────────────── */
 
-/* Phase 4a SMP 分发计数器：atomic round-robin。 */
+/* SMP 分发计数器：atomic round-robin，CPU_AFFINITY_ANY 的任务按它摊核。 */
 static uint32_t g_rr_counter;
 
 void sched_enqueue(task_t *task)
 {
     /*
        防御：正在运行的任务不在任何队列里, 把它再挂进队列会让它被两个核
-       同时执行(任务栈/状态互相踩)。合法的调用者只会入队 READY/BLOCKED
-       的任务 —— 走到这里说明有人破坏了「谁在哪」的不变量, 宁可漏入队
+       同时执行(任务栈/状态互相踩)。合法的调用者只会入队 READY 任务
+       —— 走到这里说明有人破坏了「谁在哪」的不变量, 宁可漏入队
        (任务下次被唤醒时还会再试)也不要写坏运行队列。
     */
     if (task->state == TASK_RUNNING) {
@@ -179,13 +376,15 @@ void sched_enqueue(task_t *task)
            而中断本来就是关的, 直接插队列即可, 不需要再动 sstatus。
         */
         if (in_irq_context()) {
-            list_insert_last(&tc->run_queue, &task->run_node);
+            rq_enqueue_locked(tc, task);
+            sched_kick_after_enqueue(tc, task);
             return;
         }
 
         uint64_t flags = arch_irq_save();
-        list_insert_last(&tc->run_queue, &task->run_node);
+        rq_enqueue_locked(tc, task);
         arch_irq_restore(flags);
+        sched_kick_after_enqueue(tc, task);
         return;
     }
 
@@ -202,17 +401,18 @@ void sched_enqueue(task_t *task)
         spin_lock(&tc->rq_lock);
     else
         spin_lock_irqsave(&tc->rq_lock, &flags);
-    list_insert_last(&tc->run_queue, &task->run_node);
+    rq_enqueue_locked(tc, task);
     if (irq_ctx)
         spin_unlock(&tc->rq_lock);
     else
         spin_unlock_irqrestore(&tc->rq_lock, flags);
 
     /*
-       远端入队后立刻 kick。没有这一步, 任务要等目标核下一次 timer tick
-       (最长 10ms)才被看到；对 vCPU 的唤醒/停止来说这个延迟不可接受。
+       远端入队后立刻 kick；本核只在更高优先级 RT 任务入队时置
+       need_resched。没有这一步, 任务要等目标核下一次 timer tick
+       (最长一个 tick，默认 10ms)才被看到；对 vCPU/RT 的唤醒来说这个延迟不可接受。
     */
-    sched_resched_cpu(target);
+    sched_kick_after_enqueue(tc, task);
 }
 
 /* ── sched_unblock ───────────────────────────────────────── */
@@ -268,12 +468,13 @@ void sched_unblock(task_t *task)
         return;
     }
 
+    rt_latency_wake(task); /* 记录 wake→run 的起点 */
     task->state = TASK_READY;
     if (task->on_cpu) {
         /* 还在目标核上：切出时由 sched_schedule() 补入队列 */
         task->wake_pending = true;
     } else {
-        list_insert_last(&tc->run_queue, &task->run_node);
+        rq_enqueue_locked(tc, task);
         enqueued = true;
     }
 
@@ -284,8 +485,8 @@ void sched_unblock(task_t *task)
     else
         spin_unlock_irqrestore(&tc->rq_lock, flags);
 
-    if (enqueued && n > 1U)
-        sched_resched_cpu(target);
+    if (enqueued)
+        sched_kick_after_enqueue(tc, task);
 }
 
 /* ── sched_dequeue ───────────────────────────────────────── */
@@ -299,8 +500,7 @@ void sched_dequeue(task_t *task)
     if (n == 1U) {
         cpu_t *tc = &g_cpus[0];
         uint64_t flags = arch_irq_save();
-        if (list_contains(&tc->run_queue, &task->run_node))
-            list_delete(&tc->run_queue, &task->run_node);
+        rq_remove_locked(tc, task);
         arch_irq_restore(flags);
         return;
     }
@@ -309,8 +509,7 @@ void sched_dequeue(task_t *task)
         cpu_t *tc = &g_cpus[task->cpu_affinity];
         uint64_t flags;
         spin_lock_irqsave(&tc->rq_lock, &flags);
-        if (list_contains(&tc->run_queue, &task->run_node)) {
-            list_delete(&tc->run_queue, &task->run_node);
+        if (rq_remove_locked(tc, task)) {
             spin_unlock_irqrestore(&tc->rq_lock, flags);
             return;
         }
@@ -320,8 +519,7 @@ void sched_dequeue(task_t *task)
         cpu_t *tc = &g_cpus[i];
         uint64_t flags;
         spin_lock_irqsave(&tc->rq_lock, &flags);
-        if (list_contains(&tc->run_queue, &task->run_node)) {
-            list_delete(&tc->run_queue, &task->run_node);
+        if (rq_remove_locked(tc, task)) {
             spin_unlock_irqrestore(&tc->rq_lock, flags);
             return;
         }
@@ -329,28 +527,96 @@ void sched_dequeue(task_t *task)
     }
 }
 
+/*
+   kill_task_on_cpu - 在指定核的 rq_lock 下发现并终结 task
+
+   返回 true 表示找到了它的调度上下文（正在该核运行，或在该核就绪队列里）。
+*/
+static bool kill_task_on_cpu(uint32_t cpu_id, task_t *task)
+{
+    cpu_t *c = &g_cpus[cpu_id];
+    uint64_t flags;
+
+    spin_lock_irqsave(&c->rq_lock, &flags);
+    bool running = (c->current_task == task);
+    bool queued = rq_remove_locked(c, task);
+    if (running || queued) {
+        task->state = TASK_DEAD;
+        spin_unlock_irqrestore(&c->rq_lock, flags);
+        if (running)
+            sched_resched_cpu(cpu_id);
+        return true;
+    }
+    spin_unlock_irqrestore(&c->rq_lock, flags);
+    return false;
+}
+
+/*
+   sched_kill_task - 从远端把一个任务标成 DEAD 并移出调度队列
+
+   exit_group 终止兄弟线程时用。不能只写 state = DEAD 再 sched_dequeue：
+   目标任务可能正在自己的 sched_schedule() 里，后者会在 rq_lock 下把
+   state 从 DEAD 覆盖回 READY/RUNNING，任务就活下来了（LTP exit_group01
+   的偶发失败：父进程已 wait 到 group leader，但某个兄弟线程还在跑）。
+
+   这里持目标核的 rq_lock 完成「摘链 + 置 DEAD」，和目标任务的
+   sched_schedule()/sched_unblock() 对 state 的写入串行化。正在目标核上
+   运行的任务还会收到一次 resched IPI，尽快在 trap 返回/调度点停下。
+
+   只管停止任务，不负责回收 pgd/内核栈 —— 回收仍走 task_exit 的
+   switch_done 路径（见 docs/bugfix/SMP_TASK_EXIT_STACK_REUSE.md）。
+*/
+void sched_kill_task(task_t *task)
+{
+    if (!task || task->state == TASK_ALLOCATING)
+        return;
+
+    uint32_t n = g_num_cpus ? g_num_cpus : 1U;
+    uint32_t hint = (task->cpu_affinity < n) ? task->cpu_affinity : 0U;
+
+    /* 先按 affinity 找。入队时 CPU_AFFINITY_ANY 已经被固定成实际 CPU。 */
+    if (kill_task_on_cpu(hint, task))
+        return;
+
+    /* 兜底：affinity 可能刚被 task_set_cpu_affinity 改过，扫一遍所有核。 */
+    for (uint32_t i = 0; i < n; i++) {
+        if (i == hint)
+            continue;
+        if (kill_task_on_cpu(i, task))
+            return;
+    }
+
+    /*
+       不在 current_task、也不在任何就绪队列上：多半是 BLOCKED。用和
+       sched_unblock() 相同的锁（目标核 rq_lock）写 DEAD，防止并发唤醒把
+       state 覆盖成 READY。
+    */
+    cpu_t *c = &g_cpus[hint];
+    uint64_t flags;
+    spin_lock_irqsave(&c->rq_lock, &flags);
+    task->state = TASK_DEAD;
+    spin_unlock_irqrestore(&c->rq_lock, flags);
+}
+
 /* ── 内部：选择下一个任务 ─────────────────────────────────── */
 
 static task_t *pick_next(cpu_t *c)
 {
-    extern task_t g_task_pool[]; /* 定义在 task.c(非 static) */
+    /* 1. 最高优先级的 RT 队列 */
+    int p = rt_highest_prio(c);
+    if (p >= 0) {
+        list_node_t *node = list_delete_first(&c->rt_queue[p]);
+        if (list_is_empty(&c->rt_queue[p]))
+            rt_bitmap_clear(c, (uint32_t)p);
+        task_t *task = rq_node_to_task(c, node);
+        return task ? task : c->idle_task;
+    }
 
+    /* 2. NORMAL 轮转队列 */
     list_node_t *node = list_delete_first(&c->run_queue);
     if (node) {
-        task_t *task = container_of(node, task_t, run_node);
-
-        /*
-           队列里捡出来的指针必须落在任务池里。落到池外 = 运行队列已经被
-           写坏(历史上真出现过：CR2=0xffffffffffffffc8 的野指针)。
-           这时候不要继续用这个指针(一写就崩), 跳过它并让本核跑 idle ——
-           坏的是一个节点, 整机还能继续跑, 日志里也留下了现场。
-        */
-        if (task < g_task_pool || task >= g_task_pool + TASK_MAX) {
-            KLOG_ERROR("[sched] CORRUPT runqueue on cpu%u: node=%p -> task=%p (out of pool) - skipped\n", c->cpu_id,
-                       (void *)node, (void *)task);
-            return c->idle_task;
-        }
-        return task;
+        task_t *task = rq_node_to_task(c, node);
+        return task ? task : c->idle_task;
     }
     return c->idle_task; /* 队列为空, 回退到本核 idle */
 }
@@ -381,13 +647,22 @@ void sched_schedule(void)
     if (use_rq_lock)
         spin_lock(&c->rq_lock);
 
-    /* 若当前任务仍在运行且不是 idle, 则重新入队尾 */
+    /* 若当前任务仍在运行且不是 idle, 则按调度类重新入队 */
     if (prev->state == TASK_RUNNING && prev != c->idle_task) {
         prev->state = TASK_READY;
-        list_insert_last(&c->run_queue, &prev->run_node);
+        rq_enqueue_locked(c, prev);
     }
 
     task_t *next = pick_next(c);
+
+    /*
+       防御 exit_group：sched_kill_task() 会在目标核 rq_lock 下把 state
+       置成 DEAD。如果被标 DEAD 的任务恰好又被 pick_next 选回来，绝不能
+       走下面的"无需切换"分支把它写回 RUNNING —— 那会让兄弟线程继续跑，
+       正是 LTP exit_group01 的偶发失败。强制切到 idle。
+    */
+    if (next->state == TASK_DEAD && next != c->idle_task)
+        next = c->idle_task;
 
     /*
        切出 prev 之前收口「on_cpu 期间被唤醒」的窗口。
@@ -401,16 +676,22 @@ void sched_schedule(void)
         prev->on_cpu = false;
         if (prev->wake_pending) {
             prev->wake_pending = false;
-            prev->state = TASK_READY;
-            list_insert_last(&c->run_queue, &prev->run_node);
             /*
-               这次唤醒是在 prev 还 on_cpu 时发生的, waker 没有发 IPI
-               (`sched_unblock` 的 enqueued=false 分支)。现在 prev 已经
-               入队, 但接下来要切到的可能是 idle —— 不置 need_resched 的话
-               idle 会直接 wfi/hlt, 任务要等下一次 tick 才被看到；tick 若
-               异常就是永久睡死。本核自己入队, 不需要 IPI。
+               DEAD 任务不能被这次"补入队"复活：waker 可能在 exit_group
+               标 DEAD 之前就看到了 on_cpu=true 并留下 wake_pending。
             */
-            c->need_resched = true;
+            if (prev->state != TASK_DEAD) {
+                prev->state = TASK_READY;
+                rq_enqueue_locked(c, prev);
+                /*
+                   这次唤醒是在 prev 还 on_cpu 时发生的, waker 没有发 IPI
+                   (`sched_unblock` 的 enqueued=false 分支)。现在 prev 已经
+                   入队, 但接下来要切到的可能是 idle —— 不置 need_resched 的话
+                   idle 会直接 wfi/hlt, 任务要等下一次 tick 才被看到；tick 若
+                   异常就是永久睡死。本核自己入队, 不需要 IPI。
+                */
+                c->need_resched = true;
+            }
         }
 
         /* state/on_cpu 也在同一把锁下发布, 避免 waker 看到中间态 */
@@ -422,20 +703,29 @@ void sched_schedule(void)
            所以不能残留上一轮的 1。
         */
         next->switch_done = 0;
+    } else {
+        /*
+           无需切换时也要在 rq_lock 内恢复 RUNNING：sched_kill_task() 用
+           同一把锁串行化 state 写入；放到锁外会留下「锁内判完、锁外写回
+           RUNNING」的窗口，把刚标 DEAD 的任务复活。
+        */
+        prev->state = TASK_RUNNING;
     }
 
     if (use_rq_lock)
         spin_unlock(&c->rq_lock);
 
+    if (next != prev)
+        rt_latency_run(next, timer_get_ns());
+
     /* 无需切换(唯一任务或队空只有 idle) */
     if (next == prev) {
-        prev->state = TASK_RUNNING;
         arch_irq_restore(flags);
         return;
     }
 
     barrier_compiler();     /* 确保 state 在 current_task 之前完成 */
-    c->current_task = next; /* Phase 1：per-CPU 主存储 */
+    c->current_task = next; /* per-CPU 主存储 */
     barrier_compiler();     /* 确保 current_task 在 arch_task_switch 之前完成 */
 
 #if ARCH_X86_64
@@ -456,7 +746,7 @@ void sched_schedule(void)
 
     } else if (!next->is_user_process && prev->is_user_process) {
         /* 从用户任务切换到内核任务：恢复内核页表 */
-        write_cr3(g_kernel_pgd_phys);
+        write_cr3(mm_vm_kernel_root_phys());
     }
     /* 用户→用户切换, 已在上面处理；内核→内核切换, 页表不变 */
 #endif
@@ -476,28 +766,10 @@ void sched_schedule(void)
        现在所有架构统一：idle 有专用栈, 正常返回即可。
     */
 
-#if ARCH_RISCV64
-    uint64_t *next_pgd_for_switch = next->mm->pgd;
-    if (next->is_user_process && !next->user_started) {
-        /* 首次进入用户进程：延迟satp切换到arch_switch_to_user */
-        next_pgd_for_switch = NULL;
-
-    } else if (!next->is_user_process && next->mm->pgd == NULL && g_kernel_pgd_phys != 0) {
-        /* 切换到内核任务：恢复内核页表 */
-        next_pgd_for_switch = (uint64_t *)g_kernel_pgd_phys;
-    }
-    /*
-       RISC-V 用户进程：pgd 是创建时固定的物理地址, 不需要由 arch_task_switch
-       动态保存。若传 &prev->mm->pgd, 当用户进程在 arch_switch_to_user 切换 satp
-       之前被抢占(satp 仍为内核页表)时, prev->mm->pgd 会被覆写为内核页表地址,
-       导致下次调度回来时以错误的 satp 进入 U-mode → VA 0x10000 不在内核页表 → Inst PF。
-       因此对用户进程传 NULL(跳过 satp 保存), 保持 pgd 不变。
-    */
-    uint64_t **prev_pgd_save = prev->is_user_process ? NULL : &prev->mm->pgd;
+    /* 页表参数由架构决定(RISC-V 的首次用户进入/内核任务特例在 arch 实现里) */
+    uint64_t **prev_pgd_save = arch_sched_prev_pgd_slot(prev);
+    uint64_t *next_pgd_for_switch = arch_sched_next_pgd(next);
     arch_task_switch(&prev->sp, switch_sp, prev_pgd_save, next_pgd_for_switch, &prev->switch_done);
-#else
-    arch_task_switch(&prev->sp, switch_sp, &prev->mm->pgd, next->mm->pgd, &prev->switch_done);
-#endif
 
     /* prev 被恢复后恢复其中断状态 */
     arch_irq_restore(flags);
@@ -512,11 +784,29 @@ void sched_tick(void)
        只设置需要重调度的标志, 实际切换在异常返回前进行。
        这样可以避免在 IRQ 处理程序中直接切换上下文。
 
-       Phase 1：标志已是 per-CPU, 每核独立计数。
+       抢占语义按调度类区分：
+         - NORMAL / idle：tick 触发轮转；
+         - FIFO：tick 不抢占（只有更高优先级 RT 入队/阻塞事件才切）；
+         - RR：时间片用完才置 need_resched。
     */
     cpu_t *c = cpu_current();
+    task_t *cur = c->current_task;
 
-    c->need_resched = true;
+    rt_latency_tick(c->cpu_id, timer_get_ns());
+
+    if (!cur || cur == c->idle_task) {
+        c->need_resched = true;
+    } else if (cur->pi_priority != 0 || cur->sched_policy == TASK_SCHED_FIFO) {
+        /* 被 PI 提升的持有者按 FIFO 对待：tick 不能让中等优先级任务
+           抢走它，否则优先级继承白做了。 */
+    } else if (cur->sched_policy == TASK_SCHED_RR) {
+        if (cur->rt_slice > 0)
+            cur->rt_slice--;
+        if (cur->rt_slice == 0)
+            c->need_resched = true;
+    } else {
+        c->need_resched = true;
+    }
 
     /*
        idle 记账。挂在 tick 上而不是各个 idle 循环里：g_tick_cb 每个核都会调,
@@ -527,11 +817,10 @@ void sched_tick(void)
         c->idle_ticks++;
 
     /*
-       每任务的 ITIMER_REAL 到期检查也挂在这个 tick 上(100 Hz)。
-       放在这里而不是另开一个回调：g_tick_cb 只有一个, 而 sched_tick 既被
-       timer 驱动经 timer_set_tick_cb 调用, 也被 x86_64 的 fallback 路径
-       (boot/x86_64/exception.c)直接调用 —— 挂在这里两条路都覆盖到。
-       见 task/itimer.c 顶部对"为什么需要它"的说明。
+       每任务的 ITIMER_REAL 到期检查也挂在这个 tick 上(周期由 timer.tick_ms
+       配置, 默认 10ms)。放在这里而不是另开一个回调：g_tick_cb 只有一个,
+       直接接在 sched_tick 后面即可。注意 sched_tick 是 per-CPU 回调，
+       多核下 itimer_tick 会被每个核各调一次(限制见 kernel/time/itimer.c)。
     */
     itimer_tick();
 }
@@ -539,7 +828,7 @@ void sched_tick(void)
 /* ── sched_check_and_yield ─────────────────────────────────── */
 
 /*
-   由异常返回路径调用, 检查是否需要重新调度。
+   由异常返回路径、AP idle 循环和 vCPU 主循环调用, 检查是否需要重新调度。
    如果需要, 执行任务切换。
    返回 true 表示发生了切换, false 表示没有。
 */
@@ -609,20 +898,9 @@ static bool trap_preempt_kernel_side(void)
 */
 bool sched_check_and_yield_from_trap(void *frame_ptr)
 {
-#if ARCH_AARCH64
-    trap_frame_t *frame = (trap_frame_t *)frame_ptr;
-    if (frame && ((frame->spsr & 0xfUL) != 0))
+    if (frame_ptr && !arch_trap_frame_from_user(frame_ptr))
         return trap_preempt_kernel_side();
-#elif ARCH_X86_64
-    trap_frame_t *frame = (trap_frame_t *)frame_ptr;
-    if (frame && ((frame->cs & 3u) != 3u))
-        return trap_preempt_kernel_side();
-#elif ARCH_RISCV64
-    trap_frame_t *frame = (trap_frame_t *)frame_ptr;
-    if (frame && (frame->sstatus & SSTATUS_SPP))
-        return trap_preempt_kernel_side();
-#else
-    (void)frame_ptr;
-#endif
+
+    /* 来自用户态：异常现场完整保存在 trap frame 里, 直接调度即可 */
     return sched_check_and_yield();
 }

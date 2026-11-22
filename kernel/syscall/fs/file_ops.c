@@ -20,8 +20,8 @@
 #include "syscall/net/ksocket.h"
 #include "syscall/fs/pty.h"
 #include "arch.h"
-#include "vfs.h"
-#include "fs/vfs/vfs_internal.h"
+#include "fs/vfs.h"
+#include "vfs/vfs_internal.h"
 #include <ext4.h>
 #include <ext4_errno.h>
 

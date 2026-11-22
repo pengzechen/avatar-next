@@ -4,11 +4,11 @@
    Copyright (c) 2026 Avatar OS project
 */
 
-#include "platform_cfg.h"
+#include "platform/platform_cfg.h"
 #include "uart/uart_dw.h"
 #include "types.h"
 #include "mmio.h"
-#include "mm_vm.h"
+#include "mm/mm_vm.h"
 #include "spinlock.h"
 #include "klog.h"
 #include "driver/time.h"

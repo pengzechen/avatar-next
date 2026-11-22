@@ -19,7 +19,7 @@
 #define DRIVER_UART_X86_H
 
 #include "types.h"
-#include "platform_cfg.h"
+#include "platform/platform_cfg.h"
 #include "uart_16550.h"
 
 /* COM1 I/O 基地址 */

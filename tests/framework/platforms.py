@@ -138,6 +138,12 @@ VARIANTS: dict[str, Variant] = {
     "string-test": Variant("string-test", ("STRING_TEST=1",), (("kernel",),)),
     "pmm-test": Variant("pmm-test", ("PMM_TEST=1",), (("kernel",),)),
     "panic-test": Variant("panic-test", ("PANIC_TEST=1",), (("kernel",),)),
+    # RT_TEST 的场景 4 断言 self-IPI 立即抢占；RT_DEMO 顺带输出
+    # ping-pong / 抢占延迟。两个自测都走内核启动路径，共用一个变体，
+    # 避免为同一份代码构建两个 BUILD_ROOT。
+    "rt-test": Variant(
+        "rt-test", ("RT_TEST=1", "RT_DEMO=1"), (("kernel",),)
+    ),
 }
 
 

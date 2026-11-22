@@ -27,7 +27,16 @@ sys.path.insert(0, str(TESTS_DIR))
 from framework import platforms  # noqa: E402
 from framework.context import TestContext  # noqa: E402
 from framework.report import Report, new_run_id  # noqa: E402
-from suites import apps, boot, build, kernel, ltp, racetest, vmm_guest  # noqa: E402
+from suites import (  # noqa: E402
+    apps,
+    boot,
+    build,
+    kernel,
+    ltp,
+    racetest,
+    rt_test,
+    vmm_guest,
+)
 
 SUITE_ALIASES = {
     "check": ("build", "boot", "kernel", "apps"),
@@ -45,11 +54,13 @@ SUITE_ALIASES = {
         "build",
         "boot",
         "kernel",
+        "rt-test",
         "apps",
         "racetest",
         "ltp-smoke",
         "ltp-mm",
         "ltp-full",
+        "ltp-slow",
         "vmm-direct",
         "vmm-helper",
         "vmm-multivm",
@@ -60,11 +71,13 @@ SUITE_NAMES = (
     "build",
     "boot",
     "kernel",
+    "rt-test",
     "apps",
     "racetest",
     "ltp-smoke",
     "ltp-mm",
     "ltp-full",
+    "ltp-slow",
     "vmm-direct",
     "vmm-helper",
     "vmm-guest",
@@ -177,11 +190,13 @@ def main() -> int:
                 boot.run(ctx, report, arches)
             elif suite == "kernel":
                 kernel.run(ctx, report, arches)
+            elif suite == "rt-test":
+                rt_test.run(ctx, report, arches)
             elif suite == "apps":
                 apps.run(ctx, report, arches)
             elif suite == "racetest":
                 racetest.run(ctx, report, arches)
-            elif suite in ("ltp-smoke", "ltp-mm", "ltp-full"):
+            elif suite in ("ltp-smoke", "ltp-mm", "ltp-full", "ltp-slow"):
                 ltp.run(ctx, report, arches, subset_name=suite.split("-", 1)[1])
             elif suite == "vmm-direct":
                 vmm_guest.run(ctx, report, arches, modes=("direct",))

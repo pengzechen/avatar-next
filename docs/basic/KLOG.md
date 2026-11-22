@@ -241,7 +241,7 @@ SMP 安全靠 `__atomic_*`（RELAXED），不碰 `g_klog_lock`。
 
 | 行 | 位置 | 依赖方 |
 |---|---|---|
-| `[vmmdev] boot: starting guest` | `kernel/fs/pseudofs/vmm_dev.c` | `docs/vmm/GUEST_NATIVE_QEMU.md` 用 `grep` 轮询它测启动耗时 |
+| `[vmmdev] boot: starting guest` | `fs/pseudofs/vmm_dev.c` | `docs/vmm/GUEST_NATIVE_QEMU.md` 用 `grep` 轮询它测启动耗时 |
 | `[klog] level=%u modules=%s` | `lib/klog.c` | 本文档开头"日志不见了先看这行" |
 | `=== STRING TEST: PASS (N cases) ===` | `tests/unit-test/string_test.c` | `make test-string` 的成功判据（见 `docs/basic/STRING.md`） |
 | VMM 测例 transcript | `tests/unit-test/vmm_test.c`、`kernel/vmm/{aarch64/el2_run.c,x86_64/vmx.c,riscv64/hext_run.c}` | `readme.md` 用 `LOG=info` 跑 `test-vmm`，这些行就是通过证据 |

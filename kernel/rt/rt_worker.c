@@ -1,0 +1,981 @@
+/*
+   SPDX-License-Identifier: MIT
+
+   Copyright (c) 2026 Avatar OS project
+*/
+
+/*
+   kernel/rt/rt_worker.c — 用户可配置的 RT worker（模板执行器）
+
+   数据面：每个 worker 是一个 KERNEL + SCHED_FIFO 的内核任务，按
+   period_ns 周期调用模板的 step()。step 必须：
+     - 有界；无分配；无睡眠；无 VFS；不长时间持锁。
+   控制面：/dev/rtctl 的 ioctl（fs/pseudofs/rtctl_dev.c）。
+
+   V1 的周期由 100Hz tick 驱动（task->sleep_expire_ns），所以
+   period_ns 必须是 10ms 的整数倍。要支持 1kHz，需要先有 oneshot hrtimer。
+*/
+
+#include "rt/rt_worker.h"
+#include "rt/rtdev.h"
+#include "time/hrtimer.h"
+#include "mm/kmalloc.h" /* kalloc_pages：每槽位共享页 */
+#include "mm/mm_vm.h"   /* virt_to_phys：共享页 mmap */
+#include "task/task.h"
+#include "task/cpu.h"
+#include "task/sched.h"
+#include "task/rt_event.h"
+#include "driver/time.h"
+#include "klog.h"
+#include "spinlock.h"
+#include "string.h"
+
+#define RTW_EINVAL 22
+#define RTW_ENOENT 2
+#define RTW_EBUSY  16
+#define RTW_ENODEV 19
+#define RTW_ENOMEM 12
+#define RTW_EPERM  1
+#define RTW_ENOSPC 28
+
+#define RTW_TICK_NS 10000000ULL /* 当前内核的 100Hz tick */
+
+/* rt_event 位：事件环里有数据 / worker 被要求停止。 */
+#define RTW_EVENT_BIT_DATA (1U << 0)
+#define RTW_EVENT_BIT_STOP (1U << 1)
+
+#define RTW_I64_MAX     ((int64_t)0x7fffffffffffffffLL)
+#define RTW_I64_MIN     ((int64_t)(-0x7fffffffffffffffLL - 1))
+#define RTW_INPUT_LIMIT ((int64_t)1 << 40)
+
+struct rt_worker;
+
+struct rt_template_ops {
+    const char *name;
+    uint32_t id;
+    void (*init)(struct rt_worker *w);
+    uint64_t (*step)(struct rt_worker *w, const uint64_t *params, uint64_t in);
+    bool event_driven; /* true：阻塞等事件，而不是按 period 唤醒 */
+};
+
+struct rtw_pid_state {
+    int64_t integ;
+    int64_t prev_err;
+    bool initialized;
+};
+
+struct rtw_watchdog_state {
+    uint64_t last_seq;
+    uint64_t last_change_ns;
+    bool initialized;
+};
+
+struct rt_worker {
+    uint32_t id;
+    uint8_t template_id;
+    uint8_t priority;
+    uint32_t cpu;
+    uint64_t period_ns;
+    uint64_t budget_ns;
+    uint64_t params[RTW_PARAM_MAX];
+    volatile uint32_t params_seq; /* seqlock：偶数稳定，奇数更新中 */
+
+    char name[RTW_NAME_LEN];
+    char dev_name[RTW_DEV_NAME_LEN];
+    struct rtdev *dev;
+    struct rtw_shm *shm;       /* 每槽位持久共享页，可 mmap */
+    struct rtw_event_ring *ev; /* shm 内的事件环 */
+    rt_event_t event;          /* 事件环有数据/停止通知 */
+    spinlock_t ev_lock;        /* 串行化事件环生产者 */
+    task_t *task;
+
+    volatile uint32_t state;
+    volatile bool stop;
+
+    volatile uint64_t input;
+    volatile uint64_t output;
+    volatile uint64_t out_seq;
+
+    volatile uint64_t ticks;
+    volatile uint64_t misses;
+    volatile uint64_t overruns;
+    volatile uint64_t exec_last_ns;
+    volatile uint64_t exec_max_ns;
+    volatile uint64_t wake_late_last_ns;
+    volatile uint64_t wake_late_max_ns;
+    volatile uint64_t dev_writes;
+
+    union {
+        struct rtw_pid_state pid;
+        struct rtw_watchdog_state wd;
+    } tpl;
+};
+
+static struct rt_worker g_workers[RTW_MAX_WORKERS];
+/* 每槽位一页，首次 create 分配，之后复用（不释放，避免悬空用户映射）。 */
+static struct rtw_shm *g_rtw_shm[RTW_MAX_WORKERS];
+static spinlock_t g_rtw_lock = SPINLOCK_INIT;
+static bool g_rtw_inited;
+
+static int64_t rtw_clamp_i64(int64_t v, int64_t lo, int64_t hi)
+{
+    if (lo >= hi)
+        return v; /* 没配置限幅 */
+    if (v < lo)
+        return lo;
+    if (v > hi)
+        return hi;
+    return v;
+}
+
+static int64_t rtw_sat_add(int64_t a, int64_t b)
+{
+    if (b > 0 && a > RTW_I64_MAX - b)
+        return RTW_I64_MAX;
+    if (b < 0 && a < RTW_I64_MIN - b)
+        return RTW_I64_MIN;
+    return a + b;
+}
+
+static int64_t rtw_input(int64_t v)
+{
+    return rtw_clamp_i64(v, -RTW_INPUT_LIMIT, RTW_INPUT_LIMIT);
+}
+
+static int64_t rtw_gain(uint64_t v)
+{
+    /* 增益限成 int32，乘上 ±2^40 的输入后不会溢出 int64。 */
+    return (int64_t)(int32_t)v;
+}
+
+/* ── 模板：periodic_io ────────────────────────────────────── */
+
+static void periodic_io_init(struct rt_worker *w)
+{
+    (void)w;
+}
+
+static uint64_t periodic_io_step(struct rt_worker *w, const uint64_t *params, uint64_t in)
+{
+    (void)w;
+    int64_t x = rtw_input((int64_t)in);
+    int64_t k = rtw_gain(params[0]);
+    int64_t y = (x * k) >> 16;
+    y = rtw_sat_add(y, (int64_t)params[1]);
+    y = rtw_clamp_i64(y, (int64_t)params[2], (int64_t)params[3]);
+    return (uint64_t)y;
+}
+
+/* ── 模板：event ──────────────────────────────────────────── */
+
+static void event_init(struct rt_worker *w)
+{
+    (void)w;
+}
+
+/*
+   每个事件做一次和 periodic_io 相同的定点变换：out = clamp(in*gain + offset)。
+   输入来自事件环，不是共享页 input。
+*/
+static uint64_t event_step(struct rt_worker *w, const uint64_t *params, uint64_t in)
+{
+    return periodic_io_step(w, params, in);
+}
+
+/* ── 模板：pid ────────────────────────────────────────────── */
+
+static void pid_init(struct rt_worker *w)
+{
+    w->tpl.pid.integ = 0;
+    w->tpl.pid.prev_err = 0;
+    w->tpl.pid.initialized = false;
+}
+
+static uint64_t pid_step(struct rt_worker *w, const uint64_t *params, uint64_t in)
+{
+    int64_t sp = (int64_t)params[5];
+    int64_t meas = rtw_input((int64_t)in);
+    int64_t err = rtw_input(sp - meas);
+    int64_t kp = rtw_gain(params[0]);
+    int64_t ki = rtw_gain(params[1]);
+    int64_t kd = rtw_gain(params[2]);
+    int64_t out_min = (int64_t)params[3];
+    int64_t out_max = (int64_t)params[4];
+    int64_t ilim = (int64_t)params[6];
+
+    if (ilim <= 0)
+        ilim = RTW_INPUT_LIMIT;
+    ilim = rtw_clamp_i64(ilim, 0, RTW_INPUT_LIMIT);
+
+    if (!w->tpl.pid.initialized) {
+        w->tpl.pid.prev_err = err;
+        w->tpl.pid.initialized = true;
+    }
+
+    w->tpl.pid.integ = rtw_clamp_i64(rtw_sat_add(w->tpl.pid.integ, err), -ilim, ilim);
+    int64_t deriv = err - w->tpl.pid.prev_err;
+    w->tpl.pid.prev_err = err;
+
+    int64_t out = ((kp * err) + (ki * w->tpl.pid.integ) + (kd * deriv)) >> 16;
+    out = rtw_clamp_i64(out, out_min, out_max);
+    return (uint64_t)out;
+}
+
+/* ── 模板：watchdog ───────────────────────────────────────── */
+
+static void watchdog_init(struct rt_worker *w)
+{
+    w->tpl.wd.last_seq = 0;
+    w->tpl.wd.last_change_ns = 0;
+    w->tpl.wd.initialized = false;
+}
+
+/*
+   参数：[0]=target worker id [1]=timeout_ns [2]=safe_output
+   目标 worker 的 out_seq 在 timeout 内没有变化 → 输出 safe_output；
+   健康时输出 0。目标不存在/参数非法时直接输出 safe_output。
+*/
+static uint64_t watchdog_step(struct rt_worker *w, const uint64_t *params, uint64_t in)
+{
+    (void)in;
+
+    uint32_t target = (uint32_t)params[0];
+    uint64_t timeout = params[1];
+    uint64_t safe = params[2];
+    if (target == 0 || target == w->id)
+        return safe;
+
+    uint64_t seq = 0;
+    uint32_t state = RTW_STATE_FREE;
+    uint64_t now = timer_get_ns();
+    if (!rt_worker_peek_progress(target, &seq, &state))
+        return safe;
+    (void)state;
+
+    if (!w->tpl.wd.initialized) {
+        w->tpl.wd.last_seq = seq;
+        w->tpl.wd.last_change_ns = now;
+        w->tpl.wd.initialized = true;
+        return 0;
+    }
+
+    if (seq != w->tpl.wd.last_seq) {
+        w->tpl.wd.last_seq = seq;
+        w->tpl.wd.last_change_ns = now;
+        return 0;
+    }
+
+    if (timeout != 0 && now - w->tpl.wd.last_change_ns >= timeout)
+        return safe;
+    return 0;
+}
+
+static const struct rt_template_ops g_templates[] = {
+    { "periodic_io", RTW_TPL_PERIODIC_IO, periodic_io_init, periodic_io_step, false },
+    { "pid", RTW_TPL_PID, pid_init, pid_step, false },
+    { "watchdog", RTW_TPL_WATCHDOG, watchdog_init, watchdog_step, false },
+    { "event", RTW_TPL_EVENT, event_init, event_step, true },
+};
+
+static const struct rt_template_ops *rtw_template(uint32_t id)
+{
+    for (uint32_t i = 0; i < sizeof(g_templates) / sizeof(g_templates[0]); i++) {
+        if (g_templates[i].id == id)
+            return &g_templates[i];
+    }
+    return NULL;
+}
+
+/* ── 周期睡眠（100Hz tick 粒度）────────────────────────────── */
+
+static bool rtw_sleep_until(struct rt_worker *w, uint64_t deadline)
+{
+    task_t *cur = task_current();
+
+    while (!__atomic_load_n(&w->stop, __ATOMIC_ACQUIRE) && timer_get_ns() < deadline) {
+        cur->sleep_expire_ns = deadline;
+        task_block(NULL);
+    }
+    cur->sleep_expire_ns = 0;
+    return !__atomic_load_n(&w->stop, __ATOMIC_ACQUIRE);
+}
+
+/* ── 事件环（RT worker 消费者侧）─────────────────────────── */
+
+static void rtw_event_ring_init(struct rtw_event_ring *ev)
+{
+    ev->head = 0;
+    ev->tail = 0;
+    ev->cap = RTW_EVENT_RING_CAP;
+    ev->posted = 0;
+    ev->dropped = 0;
+    ev->processed = 0;
+    ev->last_value = 0;
+}
+
+static bool rtw_event_ring_empty(struct rtw_event_ring *ev)
+{
+    uint32_t head = __atomic_load_n(&ev->head, __ATOMIC_ACQUIRE);
+    uint32_t tail = __atomic_load_n(&ev->tail, __ATOMIC_RELAXED);
+    return head == tail;
+}
+
+/*
+   消费者只由 RT worker 调用。生产者在发布 head 之前已经把 slot 写好，
+   这里 acquire 读取 head 后读 slot 是安全的；tail 用 release 发布，
+   生产者据此判断空/满。
+*/
+static bool rtw_pop_event(struct rt_worker *w, uint64_t *value)
+{
+    struct rtw_event_ring *ev = w->ev;
+    if (!ev)
+        return false;
+
+    uint32_t tail = __atomic_load_n(&ev->tail, __ATOMIC_RELAXED);
+    uint32_t head = __atomic_load_n(&ev->head, __ATOMIC_ACQUIRE);
+    if (tail == head)
+        return false;
+
+    uint64_t v = ev->ev[tail & (RTW_EVENT_RING_CAP - 1U)];
+    __atomic_store_n(&ev->tail, tail + 1U, __ATOMIC_RELEASE);
+    ev->last_value = v;
+    __atomic_add_fetch(&ev->processed, 1U, __ATOMIC_RELEASE);
+    if (value)
+        *value = v;
+    return true;
+}
+
+/*
+   排空后重新武装 DATA 位。顺序必须是“先清位、再查环”：
+   生产者若在清位之后投递会重新置位；反过来先查再清会把刚到的事件
+   置位清掉，等待睡下去后环里有事件却永远不醒。
+*/
+static void rtw_event_rearm(struct rt_worker *w)
+{
+    rt_event_clear(&w->event, RTW_EVENT_BIT_DATA);
+    if (!rtw_event_ring_empty(w->ev))
+        rt_event_set(&w->event, RTW_EVENT_BIT_DATA);
+}
+
+/* ── worker 主循环 ────────────────────────────────────────── */
+
+/* 周期开头取一份一致的参数快照；更新方用 seqlock（偶数稳定/奇数写入）。 */
+static void rtw_params_snapshot(struct rt_worker *w, uint64_t *out)
+{
+    if (w->shm) {
+        /*
+           共享页对 supervisor 是可写的，params_seq 也可能被写坏（比如永远
+           停在奇数）。RT 线程不能为此无限自旋，否则会以 RT 优先级占满一
+           整颗核；重试有限次后退回内核私有的 w->params —— 那份只有内核
+           写，seqlock 一定能收敛。
+        */
+        for (uint32_t tries = 0; tries < 1024; tries++) {
+            uint32_t s1 = __atomic_load_n(&w->shm->params_seq, __ATOMIC_ACQUIRE);
+            if (s1 & 1U)
+                continue;
+            for (uint32_t i = 0; i < RTW_PARAM_MAX; i++)
+                out[i] = w->shm->params[i];
+            __atomic_thread_fence(__ATOMIC_ACQUIRE);
+            uint32_t s2 = __atomic_load_n(&w->shm->params_seq, __ATOMIC_ACQUIRE);
+            if (s1 == s2)
+                return;
+        }
+    }
+
+    for (;;) {
+        uint32_t s1 = __atomic_load_n(&w->params_seq, __ATOMIC_ACQUIRE);
+        if (s1 & 1U)
+            continue;
+        for (uint32_t i = 0; i < RTW_PARAM_MAX; i++)
+            out[i] = w->params[i];
+        __atomic_thread_fence(__ATOMIC_ACQUIRE);
+        uint32_t s2 = __atomic_load_n(&w->params_seq, __ATOMIC_ACQUIRE);
+        if (s1 == s2)
+            return;
+    }
+}
+
+static void rt_worker_entry(void *arg)
+{
+    struct rt_worker *w = arg;
+    const struct rt_template_ops *tpl = rtw_template(w->template_id);
+    uint64_t next = timer_get_ns() + w->period_ns;
+
+    if (!tpl) {
+        KLOG_ERROR("[rtw] worker '%s': template %u disappeared\n", w->name, w->template_id);
+        __atomic_store_n(&w->state, RTW_STATE_FAULTED, __ATOMIC_RELEASE);
+        if (w->shm)
+            __atomic_store_n(&w->shm->state, RTW_STATE_FAULTED, __ATOMIC_RELEASE);
+        task_exit();
+        return;
+    }
+
+    for (;;) {
+        bool is_event = tpl->event_driven;
+        uint64_t in = 0;
+
+        if (is_event) {
+            /*
+               period_ns == 0：无限等待，只有事件/STOP 能唤醒；
+               period_ns > 0：最多等这么久，超时后回到循环重新检查 stop。
+            */
+            uint32_t bits =
+                rt_event_wait(&w->event, RTW_EVENT_BIT_DATA | RTW_EVENT_BIT_STOP, false, w->period_ns, false);
+            if (__atomic_load_n(&w->stop, __ATOMIC_ACQUIRE) || (bits & RTW_EVENT_BIT_STOP))
+                break;
+            if (!rtw_pop_event(w, &in)) {
+                /* 超时/唤醒竞争：环里暂时没有数据，重新武装 DATA */
+                rtw_event_rearm(w);
+                continue;
+            }
+        } else {
+            if (hrtimer_oneshot_supported())
+                hrtimer_sleep_until(next);
+            else if (!rtw_sleep_until(w, next))
+                break; /* stop */
+            if (__atomic_load_n(&w->stop, __ATOMIC_ACQUIRE))
+                break;
+        }
+
+        uint64_t t0 = timer_get_ns();
+        if (!is_event) {
+            uint64_t late = (t0 > next) ? (t0 - next) : 0;
+            __atomic_store_n(&w->wake_late_last_ns, late, __ATOMIC_RELAXED);
+            uint64_t prev_late = __atomic_load_n(&w->wake_late_max_ns, __ATOMIC_RELAXED);
+            if (late > prev_late) {
+                __atomic_store_n(&w->wake_late_max_ns, late, __ATOMIC_RELAXED);
+                prev_late = late;
+            }
+            if (w->shm) {
+                __atomic_store_n(&w->shm->wake_late_last_ns, late, __ATOMIC_RELAXED);
+                __atomic_store_n(&w->shm->wake_late_max_ns, prev_late, __ATOMIC_RELAXED);
+            }
+
+            in = w->shm ? __atomic_load_n(&w->shm->input, __ATOMIC_RELAXED)
+                        : __atomic_load_n(&w->input, __ATOMIC_RELAXED);
+        }
+        __atomic_store_n(&w->input, in, __ATOMIC_RELAXED);
+        if (w->shm)
+            __atomic_store_n(&w->shm->input, in, __ATOMIC_RELAXED);
+        uint64_t params[RTW_PARAM_MAX];
+        rtw_params_snapshot(w, params);
+        uint64_t out = tpl->step(w, params, in);
+        __atomic_store_n(&w->output, out, __ATOMIC_RELEASE);
+        uint64_t seq = __atomic_add_fetch(&w->out_seq, 1, __ATOMIC_RELEASE);
+        if (w->shm) {
+            __atomic_store_n(&w->shm->output, out, __ATOMIC_RELEASE);
+            __atomic_store_n(&w->shm->out_seq, seq, __ATOMIC_RELEASE);
+        }
+
+        if (w->dev && rtdev_write(w->dev, &out, sizeof(out)) == 0) {
+            uint64_t dw = __atomic_add_fetch(&w->dev_writes, 1, __ATOMIC_RELAXED);
+            if (w->shm)
+                __atomic_store_n(&w->shm->dev_writes, dw, __ATOMIC_RELAXED);
+        }
+
+        uint64_t t1 = timer_get_ns();
+        uint64_t exec = (t1 > t0) ? (t1 - t0) : 0;
+        __atomic_store_n(&w->exec_last_ns, exec, __ATOMIC_RELAXED);
+        uint64_t prev_max = __atomic_load_n(&w->exec_max_ns, __ATOMIC_RELAXED);
+        if (exec > prev_max) {
+            __atomic_store_n(&w->exec_max_ns, exec, __ATOMIC_RELAXED);
+            prev_max = exec;
+        }
+        uint64_t ticks = __atomic_add_fetch(&w->ticks, 1, __ATOMIC_RELAXED);
+        if (w->shm) {
+            __atomic_store_n(&w->shm->exec_last_ns, exec, __ATOMIC_RELAXED);
+            __atomic_store_n(&w->shm->exec_max_ns, prev_max, __ATOMIC_RELAXED);
+            __atomic_store_n(&w->shm->ticks, ticks, __ATOMIC_RELAXED);
+        }
+
+        if (w->budget_ns != 0 && exec > w->budget_ns) {
+            uint64_t ov = __atomic_add_fetch(&w->overruns, 1, __ATOMIC_RELAXED);
+            if (w->shm)
+                __atomic_store_n(&w->shm->overruns, ov, __ATOMIC_RELAXED);
+        }
+
+        if (is_event) {
+            rtw_event_rearm(w);
+            continue;
+        }
+
+        next += w->period_ns;
+        uint64_t now = timer_get_ns();
+        /*
+           oneshot 下唤醒精度是 µs 级，超过半个周期才算 miss；
+           退化为 tick 唤醒时，相位可能让一次唤醒晚最多一个 tick。
+        */
+        uint64_t tol = hrtimer_oneshot_supported() ? (w->period_ns / 2) : RTW_TICK_NS;
+        if (now > next + tol) {
+            uint64_t mi = __atomic_add_fetch(&w->misses, 1, __ATOMIC_RELAXED);
+            if (w->shm)
+                __atomic_store_n(&w->shm->misses, mi, __ATOMIC_RELAXED);
+            next = now + w->period_ns;
+        }
+    }
+
+    if (w->dev)
+        rtdev_safe_state(w->dev);
+    __atomic_store_n(&w->state, RTW_STATE_STOPPED, __ATOMIC_RELEASE);
+    if (w->shm)
+        __atomic_store_n(&w->shm->state, RTW_STATE_STOPPED, __ATOMIC_RELEASE);
+    task_exit();
+}
+
+/* ── 控制面 ───────────────────────────────────────────────── */
+
+static struct rt_worker *rtw_get_locked(uint32_t id)
+{
+    if (id < 1 || id > RTW_MAX_WORKERS)
+        return NULL;
+    struct rt_worker *w = &g_workers[id - 1];
+    return (w->state == RTW_STATE_FREE) ? NULL : w;
+}
+
+static void rtw_copy_name(char *dst, const char *src, size_t dstsz)
+{
+    size_t i = 0;
+    while (i + 1 < dstsz && src[i] != '\0') {
+        dst[i] = src[i];
+        i++;
+    }
+    dst[i] = '\0';
+}
+
+void rt_worker_init(void)
+{
+    if (__atomic_load_n(&g_rtw_inited, __ATOMIC_ACQUIRE))
+        return;
+    rtdev_register_builtin();
+    __atomic_store_n(&g_rtw_inited, true, __ATOMIC_RELEASE);
+}
+
+int rt_worker_create(const struct rtw_create_req *cfg)
+{
+    if (!cfg || cfg->abi_version != RTW_ABI_VERSION)
+        return -RTW_EINVAL;
+    if (!rtw_template(cfg->template_id))
+        return -RTW_EINVAL;
+    if (cfg->name[0] == '\0')
+        return -RTW_EINVAL;
+
+    if (cfg->priority < TASK_RT_PRIO_MIN || cfg->priority > TASK_RT_PRIO_MAX)
+        return -RTW_EINVAL;
+    if (cfg->cpu >= (g_num_cpus ? g_num_cpus : 1U))
+        return -RTW_EINVAL;
+
+    bool event_tpl = (cfg->template_id == RTW_TPL_EVENT);
+    if (event_tpl) {
+        /*
+           event 模板的 period_ns 是“等待事件的最长时间”：
+           0 = 无限等待；否则至少 1ms。
+        */
+        if (cfg->period_ns != 0 && cfg->period_ns < RTW_MIN_PERIOD_NS)
+            return -RTW_EINVAL;
+    } else if (cfg->period_ns < RTW_MIN_PERIOD_NS) {
+        return -RTW_EINVAL;
+    }
+
+    /* 目标核没有 oneshot 时只能按 100Hz tick 唤醒（period=0 不需要超时）。 */
+    if (cfg->period_ns != 0 && !hrtimer_cpu_oneshot_supported(cfg->cpu) && (cfg->period_ns % RTW_TICK_NS) != 0) {
+        KLOG_WARN("[rtw] cpu%u has no oneshot timer; period must be a multiple of %llu ns\n", cfg->cpu,
+                  (unsigned long long)RTW_TICK_NS);
+        return -RTW_EINVAL;
+    }
+    if (cfg->period_ns != 0 && cfg->budget_ns > cfg->period_ns)
+        return -RTW_EINVAL;
+
+    rt_worker_init();
+
+    uint64_t flags;
+    struct rt_worker *w = NULL;
+    uint32_t id = 0;
+
+    spin_lock_irqsave(&g_rtw_lock, &flags);
+    for (uint32_t i = 0; i < RTW_MAX_WORKERS; i++) {
+        if (g_workers[i].state != RTW_STATE_FREE)
+            continue;
+        w = &g_workers[i];
+        id = i + 1;
+        memset(w, 0, sizeof(*w));
+        w->id = id;
+        w->template_id = (uint8_t)cfg->template_id;
+        w->priority = cfg->priority;
+        w->cpu = cfg->cpu;
+        w->period_ns = cfg->period_ns;
+        w->budget_ns = cfg->budget_ns;
+        for (uint32_t p = 0; p < RTW_PARAM_MAX; p++)
+            w->params[p] = cfg->params[p];
+        rtw_copy_name(w->name, cfg->name, sizeof(w->name));
+        rtw_copy_name(w->dev_name, cfg->dev, sizeof(w->dev_name));
+        w->state = RTW_STATE_CREATED;
+
+        /* 每槽位一页共享内存：首次分配，之后复用。 */
+        if (!g_rtw_shm[i]) {
+            g_rtw_shm[i] = kalloc_pages(1);
+            if (!g_rtw_shm[i]) {
+                /* 槽位刚标成 CREATED，失败时必须还回 FREE，否则永远分不到。 */
+                memset(w, 0, sizeof(*w));
+                spin_unlock_irqrestore(&g_rtw_lock, flags);
+                return -RTW_ENOMEM;
+            }
+        }
+        w->shm = g_rtw_shm[i];
+        memset(w->shm, 0, PAGE_SIZE);
+        w->shm->magic = RTSHM_MAGIC;
+        w->shm->version = RTSHM_VERSION;
+        w->shm->state = RTW_STATE_CREATED;
+        for (uint32_t p = 0; p < RTW_PARAM_MAX; p++)
+            w->shm->params[p] = cfg->params[p];
+
+        w->ev = rtw_shm_events(w->shm);
+        rtw_event_ring_init(w->ev);
+        rt_event_init(&w->event);
+        spinlock_irq_init(&w->ev_lock);
+
+        rtw_template(w->template_id)->init(w);
+        break;
+    }
+    spin_unlock_irqrestore(&g_rtw_lock, flags);
+
+    if (!w)
+        return -RTW_EBUSY;
+
+    if (w->dev_name[0] != '\0') {
+        struct rtdev *dev = rtdev_claim(w->dev_name, id);
+        if (!dev) {
+            spin_lock_irqsave(&g_rtw_lock, &flags);
+            if (w->shm) {
+                w->shm->magic = 0;
+                w->shm->state = RTW_STATE_FREE;
+            }
+            memset(w, 0, sizeof(*w));
+            spin_unlock_irqrestore(&g_rtw_lock, flags);
+            return -RTW_ENODEV;
+        }
+        w->dev = dev;
+    }
+
+    KLOG_INFO("[rtw] created '%s' id=%u tpl=%u prio=%u cpu=%u period=%llu ns\n", w->name, w->id, w->template_id,
+              w->priority, w->cpu, (unsigned long long)w->period_ns);
+    return (int)id;
+}
+
+int rt_worker_start(uint32_t id)
+{
+    uint64_t flags;
+    spin_lock_irqsave(&g_rtw_lock, &flags);
+    struct rt_worker *w = rtw_get_locked(id);
+    if (!w) {
+        spin_unlock_irqrestore(&g_rtw_lock, flags);
+        return -RTW_ENOENT;
+    }
+    if (w->state != RTW_STATE_CREATED && w->state != RTW_STATE_STOPPED) {
+        spin_unlock_irqrestore(&g_rtw_lock, flags);
+        return -RTW_EBUSY;
+    }
+    __atomic_store_n(&w->stop, false, __ATOMIC_RELEASE);
+    rt_event_clear(&w->event, RTW_EVENT_BIT_STOP); /* 保留 DATA：允许先投递后 start */
+    w->state = RTW_STATE_RUNNING;
+    if (w->shm)
+        __atomic_store_n(&w->shm->state, RTW_STATE_RUNNING, __ATOMIC_RELEASE);
+    spin_unlock_irqrestore(&g_rtw_lock, flags);
+
+    /*
+       task_create_kernel_rt 可能触发 self-IPI / 调度，不能在 g_rtw_lock
+       下调用。state=RUNNING 已经占住，别的 START 会看到 EBUSY。
+    */
+    task_t *t = task_create_kernel_rt(w->name, rt_worker_entry, w, w->priority, w->cpu);
+    if (!t) {
+        spin_lock_irqsave(&g_rtw_lock, &flags);
+        w->state = RTW_STATE_CREATED;
+        if (w->shm)
+            __atomic_store_n(&w->shm->state, RTW_STATE_CREATED, __ATOMIC_RELEASE);
+        spin_unlock_irqrestore(&g_rtw_lock, flags);
+        return -RTW_EBUSY;
+    }
+
+    spin_lock_irqsave(&g_rtw_lock, &flags);
+    w->task = t;
+    spin_unlock_irqrestore(&g_rtw_lock, flags);
+    return 0;
+}
+
+int rt_worker_stop(uint32_t id)
+{
+    uint64_t flags;
+    spin_lock_irqsave(&g_rtw_lock, &flags);
+    struct rt_worker *w = rtw_get_locked(id);
+    if (!w) {
+        spin_unlock_irqrestore(&g_rtw_lock, flags);
+        return -RTW_ENOENT;
+    }
+    if (w->state != RTW_STATE_RUNNING) {
+        spin_unlock_irqrestore(&g_rtw_lock, flags);
+        return -RTW_EINVAL;
+    }
+    __atomic_store_n(&w->stop, true, __ATOMIC_RELEASE);
+    /*
+       event worker 可能无限阻塞在 rt_event_wait()；STOP 位保证它一定被唤醒。
+       周期 worker 不走这里，但置位无害。必须在 g_rtw_lock 内发布：否则
+       worker 可能先退出、槽位被 destroy/recreate，STOP 会打到新 worker。
+    */
+    rt_event_set(&w->event, RTW_EVENT_BIT_STOP);
+    task_t *t = w->task;
+    spin_unlock_irqrestore(&g_rtw_lock, flags);
+
+    /*
+       如果 worker 正睡在 tick 上，清掉 sleep_expire 并唤醒；它醒来会在
+       rtw_sleep_until() 里先检查 stop，然后退出。任务正在 step 里跑的话
+       不需要额外动作 —— 本轮结束就会看到 stop。
+    */
+    if (t && t->state == TASK_BLOCKED) {
+        t->sleep_expire_ns = 0;
+        task_unblock(t);
+    }
+    return 0;
+}
+
+int rt_worker_destroy(uint32_t id)
+{
+    uint64_t flags;
+    struct rtdev *dev = NULL;
+    spin_lock_irqsave(&g_rtw_lock, &flags);
+    struct rt_worker *w = rtw_get_locked(id);
+    if (!w) {
+        spin_unlock_irqrestore(&g_rtw_lock, flags);
+        return -RTW_ENOENT;
+    }
+    if (w->state == RTW_STATE_RUNNING) {
+        spin_unlock_irqrestore(&g_rtw_lock, flags);
+        return -RTW_EBUSY;
+    }
+    dev = w->dev;
+    if (w->shm) {
+        /* 页保留给同槽位下次 create；旧用户映射靠 magic=0 判断失效。 */
+        w->shm->magic = 0;
+        w->shm->version = 0;
+        w->shm->state = RTW_STATE_FREE;
+    }
+    memset(w, 0, sizeof(*w));
+    spin_unlock_irqrestore(&g_rtw_lock, flags);
+
+    if (dev)
+        rtdev_release(dev, id);
+    return 0;
+}
+
+int rt_worker_set_input(uint32_t id, uint64_t value)
+{
+    uint64_t flags;
+    spin_lock_irqsave(&g_rtw_lock, &flags);
+    struct rt_worker *w = rtw_get_locked(id);
+    if (!w) {
+        spin_unlock_irqrestore(&g_rtw_lock, flags);
+        return -RTW_ENOENT;
+    }
+    __atomic_store_n(&w->input, value, __ATOMIC_RELEASE);
+    if (w->shm)
+        __atomic_store_n(&w->shm->input, value, __ATOMIC_RELEASE);
+    spin_unlock_irqrestore(&g_rtw_lock, flags);
+    return 0;
+}
+
+int rt_worker_post_event(uint32_t id, uint64_t value)
+{
+    uint64_t flags, evflags;
+
+    spin_lock_irqsave(&g_rtw_lock, &flags);
+    struct rt_worker *w = rtw_get_locked(id);
+    if (!w || !w->ev) {
+        spin_unlock_irqrestore(&g_rtw_lock, flags);
+        return -RTW_ENOENT;
+    }
+
+    /*
+       生产者可能来自控制面和驱动 ISR，用 ev_lock 串行化；消费者（RT worker）
+       只读 head/tail，不需要这把锁。锁在 g_rtw_lock 内层，保证 post 与
+       destroy/recreate 不会并发。
+    */
+    spin_lock_irqsave(&w->ev_lock, &evflags);
+    struct rtw_event_ring *ev = w->ev;
+    uint32_t head = ev->head;
+    uint32_t tail = __atomic_load_n(&ev->tail, __ATOMIC_ACQUIRE);
+
+    if (head - tail >= RTW_EVENT_RING_CAP) {
+        ev->dropped++;
+        spin_unlock_irqrestore(&w->ev_lock, evflags);
+        spin_unlock_irqrestore(&g_rtw_lock, flags);
+        return -RTW_ENOSPC;
+    }
+
+    ev->ev[head & (RTW_EVENT_RING_CAP - 1U)] = value;
+    __atomic_store_n(&ev->head, head + 1U, __ATOMIC_RELEASE);
+    ev->posted++;
+    spin_unlock_irqrestore(&w->ev_lock, evflags);
+
+    /* 在 g_rtw_lock 内唤醒，防止 worker 被并发 destroy 后还访问 event。 */
+    rt_event_set(&w->event, RTW_EVENT_BIT_DATA);
+    spin_unlock_irqrestore(&g_rtw_lock, flags);
+    return 0;
+}
+
+int rt_worker_set_params(uint32_t id, const uint64_t params[RTW_PARAM_MAX])
+{
+    if (!params)
+        return -RTW_EINVAL;
+
+    uint64_t flags;
+    spin_lock_irqsave(&g_rtw_lock, &flags);
+    struct rt_worker *w = rtw_get_locked(id);
+    if (!w) {
+        spin_unlock_irqrestore(&g_rtw_lock, flags);
+        return -RTW_ENOENT;
+    }
+
+    /* seqlock：奇数表示写入中；worker 在周期开头重试读取。 */
+    uint32_t seq = __atomic_load_n(&w->params_seq, __ATOMIC_RELAXED);
+    __atomic_store_n(&w->params_seq, seq + 1U, __ATOMIC_RELEASE);
+    for (uint32_t i = 0; i < RTW_PARAM_MAX; i++)
+        w->params[i] = params[i];
+    __atomic_store_n(&w->params_seq, seq + 2U, __ATOMIC_RELEASE);
+
+    if (w->shm) {
+        uint32_t s = __atomic_load_n(&w->shm->params_seq, __ATOMIC_RELAXED);
+        __atomic_store_n(&w->shm->params_seq, s + 1U, __ATOMIC_RELEASE);
+        for (uint32_t i = 0; i < RTW_PARAM_MAX; i++)
+            w->shm->params[i] = params[i];
+        __atomic_store_n(&w->shm->params_seq, s + 2U, __ATOMIC_RELEASE);
+    }
+
+    spin_unlock_irqrestore(&g_rtw_lock, flags);
+    return 0;
+}
+
+int rt_worker_shm_lookup(uint32_t id, uint64_t *paddr, uint64_t *size)
+{
+    if (!paddr || !size)
+        return -RTW_EINVAL;
+
+    uint64_t flags;
+    spin_lock_irqsave(&g_rtw_lock, &flags);
+    struct rt_worker *w = rtw_get_locked(id);
+    if (!w || !w->shm) {
+        spin_unlock_irqrestore(&g_rtw_lock, flags);
+        return -RTW_ENOENT;
+    }
+    *paddr = virt_to_phys((uint64_t)(uintptr_t)w->shm);
+    *size = PAGE_SIZE;
+    spin_unlock_irqrestore(&g_rtw_lock, flags);
+    return 0;
+}
+
+bool rt_worker_peek_progress(uint32_t id, uint64_t *seq, uint32_t *state)
+{
+    uint64_t flags;
+    spin_lock_irqsave(&g_rtw_lock, &flags);
+    struct rt_worker *w = rtw_get_locked(id);
+    if (!w) {
+        spin_unlock_irqrestore(&g_rtw_lock, flags);
+        return false;
+    }
+    if (seq)
+        *seq = __atomic_load_n(&w->out_seq, __ATOMIC_RELAXED);
+    if (state)
+        *state = __atomic_load_n(&w->state, __ATOMIC_ACQUIRE);
+    spin_unlock_irqrestore(&g_rtw_lock, flags);
+    return true;
+}
+
+int rt_worker_get_output(uint32_t id, uint64_t *value, uint64_t *seq)
+{
+    uint64_t flags;
+    spin_lock_irqsave(&g_rtw_lock, &flags);
+    struct rt_worker *w = rtw_get_locked(id);
+    if (!w) {
+        spin_unlock_irqrestore(&g_rtw_lock, flags);
+        return -RTW_ENOENT;
+    }
+    if (value)
+        *value = __atomic_load_n(&w->output, __ATOMIC_ACQUIRE);
+    if (seq)
+        *seq = __atomic_load_n(&w->out_seq, __ATOMIC_ACQUIRE);
+    spin_unlock_irqrestore(&g_rtw_lock, flags);
+    return 0;
+}
+
+int rt_worker_get_stats(uint32_t id, struct rtw_stats *out)
+{
+    if (!out)
+        return -RTW_EINVAL;
+
+    uint64_t flags;
+    spin_lock_irqsave(&g_rtw_lock, &flags);
+    struct rt_worker *w = rtw_get_locked(id);
+    if (!w) {
+        spin_unlock_irqrestore(&g_rtw_lock, flags);
+        return -RTW_ENOENT;
+    }
+    memset(out, 0, sizeof(*out));
+    out->id = w->id;
+    out->state = __atomic_load_n(&w->state, __ATOMIC_ACQUIRE);
+    out->template_id = w->template_id;
+    out->priority = w->priority;
+    out->cpu = w->cpu;
+    out->period_ns = w->period_ns;
+    out->budget_ns = w->budget_ns;
+    out->ticks = __atomic_load_n(&w->ticks, __ATOMIC_RELAXED);
+    out->misses = __atomic_load_n(&w->misses, __ATOMIC_RELAXED);
+    out->overruns = __atomic_load_n(&w->overruns, __ATOMIC_RELAXED);
+    out->exec_last_ns = __atomic_load_n(&w->exec_last_ns, __ATOMIC_RELAXED);
+    out->exec_max_ns = __atomic_load_n(&w->exec_max_ns, __ATOMIC_RELAXED);
+    out->wake_late_last_ns = __atomic_load_n(&w->wake_late_last_ns, __ATOMIC_RELAXED);
+    out->wake_late_max_ns = __atomic_load_n(&w->wake_late_max_ns, __ATOMIC_RELAXED);
+    out->last_input = __atomic_load_n(&w->input, __ATOMIC_RELAXED);
+    out->last_output = __atomic_load_n(&w->output, __ATOMIC_RELAXED);
+    out->out_seq = __atomic_load_n(&w->out_seq, __ATOMIC_RELAXED);
+    out->dev_writes = __atomic_load_n(&w->dev_writes, __ATOMIC_RELAXED);
+    if (w->ev) {
+        out->events_posted = w->ev->posted;
+        out->events_processed = __atomic_load_n(&w->ev->processed, __ATOMIC_RELAXED);
+        out->events_dropped = w->ev->dropped;
+    }
+    rtw_copy_name(out->name, w->name, sizeof(out->name));
+    rtw_copy_name(out->dev, w->dev_name, sizeof(out->dev));
+    spin_unlock_irqrestore(&g_rtw_lock, flags);
+    return 0;
+}
+
+int rt_worker_list(struct rtw_list_req *list)
+{
+    if (!list)
+        return -RTW_EINVAL;
+
+    uint64_t flags;
+    uint32_t n = 0;
+    uint32_t cap = list->capacity;
+    if (cap > RTW_MAX_WORKERS)
+        cap = RTW_MAX_WORKERS;
+
+    spin_lock_irqsave(&g_rtw_lock, &flags);
+    for (uint32_t i = 0; i < RTW_MAX_WORKERS && n < cap; i++) {
+        struct rt_worker *w = &g_workers[i];
+        if (w->state == RTW_STATE_FREE)
+            continue;
+        struct rtw_list_entry *e = &list->entries[n];
+        memset(e, 0, sizeof(*e));
+        e->id = w->id;
+        e->state = __atomic_load_n(&w->state, __ATOMIC_ACQUIRE);
+        e->template_id = w->template_id;
+        e->priority = w->priority;
+        e->cpu = w->cpu;
+        e->period_ns = w->period_ns;
+        e->ticks = __atomic_load_n(&w->ticks, __ATOMIC_RELAXED);
+        e->misses = __atomic_load_n(&w->misses, __ATOMIC_RELAXED);
+        rtw_copy_name(e->name, w->name, sizeof(e->name));
+        n++;
+    }
+    spin_unlock_irqrestore(&g_rtw_lock, flags);
+    list->count = n;
+    return 0;
+}

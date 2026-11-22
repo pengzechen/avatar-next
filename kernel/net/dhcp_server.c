@@ -4,7 +4,7 @@
    Copyright (c) 2026 Avatar OS project
 */
 
-#include "net/dhcp_server.h"
+#include "dhcp_server.h"
 
 #include "klog.h"
 #include "string.h"

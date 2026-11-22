@@ -22,11 +22,11 @@
    官方运行时的主路径是 dma_heap 分配 → dmabuf fd → PRIME_FD_TO_HANDLE。
    我们只管把 fd 换成 handle, 再换回来, 内存本身归 dma_buf 层。
 */
-#include "rknpu_drm.h"
+#include "npu/rknpu_drm.h"
 #include "npu_impl.h"
 
 #include "rknpu.h" /* rknpu_submit_task(作业引擎在 rknpu.c) */
-#include "dma_buf.h"
+#include "driver/dma_buf.h"
 #include "klog.h"
 #include "spinlock.h"
 #include "string.h"

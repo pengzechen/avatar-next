@@ -20,7 +20,7 @@
 #include "task/sched.h"
 #include "klog.h"
 #include "string.h"
-#include "vfs.h"
+#include "fs/vfs.h"
 
 /* ── epoll 实例池 ───────────────────────────────────────────────── */
 

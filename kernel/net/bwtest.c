@@ -53,7 +53,7 @@
    100 Mbps 只需要约 9000 包/秒, PowerShell 的循环开销远够用, 不会成为瓶颈。
 */
 
-#include "net/bwtest.h"
+#include "bwtest.h"
 
 #include "klog.h" /* kprintf */
 #include "string.h"

@@ -17,11 +17,11 @@
 #include "klog.h"
 #include "syscall/trace.h"
 #include "debug/backtrace.h"
-#include "riscv64/sysreg.h"
-#include "riscv64/hext.h" /* READ_HSTATUS：必须走数值 CSR, 见该文件顶部的警告 */
+#include "arch/riscv64/sysreg.h"
+#include "arch/riscv64/hext.h" /* READ_HSTATUS：必须走数值 CSR, 见该文件顶部的警告 */
 #include "syscall/syscall.h"
 #include "syscall/syscall_internal.h"
-#include "platform_ops.h"
+#include "platform/platform_ops.h"
 #include "task/cpu.h"
 #include "task/task.h"
 
@@ -40,7 +40,7 @@ void irq_install(int cause, irq_handler_t h)
 /*
    riscv_dispatch_host_irq — 给 VMM 的 guest 陷阱向量复用宿主中断分派
 
-   见 include/riscv64/exception.h 的说明。等价于 handle_exception 里
+   见 include/arch/riscv64/exception.h 的说明。等价于 handle_exception 里
    `interrupt_handlers[irq](frame_ptr)` 那一行, 只是不经过 trap_frame
    的保存/恢复(现场已在 hext_trap_vector 里保存)。
 */
@@ -168,7 +168,18 @@ void handle_exception(void *frame_ptr)
         if (code == CAUSE_USER_ECALL) {
             /* RISC-V ecall: sepc 指向 ecall 本身, 需手动前进到下一条 */
             frame->sepc += 4;
+
+            /*
+               现场已完整保存在 frame 里，可以打开 SIE：长 syscall
+               （文件系统/等待输入等）不再把整颗核的 IRQ 延迟拖到毫秒级。
+               timer 中断只置 need_resched；用户进程的内核侧不会在任意
+               C 代码点被抢占（trap_preempt_kernel_side 对
+               is_user_process 返回 false）。返回 trap_vector 前恢复
+               SIE=0，signal/调度检查和 sret 路径保持原有约定。
+            */
+            CSR_SET(sstatus, SSTATUS_SIE);
             syscall_handler(frame);
+            CSR_CLEAR(sstatus, SSTATUS_SIE);
             return;
         }
 
@@ -210,7 +221,7 @@ void handle_exception(void *frame_ptr)
 #else
             /* 注意：这里必须是 0x600。写符号名 hstatus 会被汇编成
                0x200(vsstatus), 印出来的 SPV/SPVP 就是别的寄存器的位 ——
-               详见 include/riscv64/hext.h 顶部的警告。
+               详见 include/arch/riscv64/hext.h 顶部的警告。
             */
             uint64_t hstatus_val = READ_HSTATUS();
             KLOG_ERROR(

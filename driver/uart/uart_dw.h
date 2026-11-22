@@ -8,7 +8,7 @@
 #define __T_DW_UART_H__
 
 #include "types.h"
-#include "platform_cfg.h"
+#include "platform/platform_cfg.h"
 #include "uart_16550.h" /* 共享 16550 寄存器偏移与位定义 */
 
 /*

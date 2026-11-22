@@ -8,7 +8,7 @@
  * boot/aarch64/exception.S — AArch64 异常/中断入口
  *
  * trap_frame_t 布局（TRAP_FRAME_SIZE = 816 字节，定义见
- * include/aarch64/exception.h，两处必须一致）：
+ * include/arch/aarch64/exception.h，两处必须一致）：
  *   0 .. 30*8   : x0..x30
  *   31*8 = 248  : usp (SP_EL0)
  *   32*8 = 256  : elr

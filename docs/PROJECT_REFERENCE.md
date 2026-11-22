@@ -129,18 +129,18 @@ static inline void common_operation(void);
 
 // 包含架构特定实现
 #if defined(__aarch64__)
-    #include "aarch64/module_impl.h"
+    #include "arch/aarch64/module_impl.h"
 #elif defined(__x86_64__)
-    #include "x86_64/module_impl.h"
+    #include "arch/x86_64/module_impl.h"
 #elif defined(__riscv)
-    #include "riscv64/module_impl.h"
+    #include "arch/riscv64/module_impl.h"
 #endif
 
 #endif
 ```
 
 ```c
-/* aarch64/module_impl.h */
+/* arch/aarch64/module_impl.h */
 static inline void common_operation(void) {
     __asm__ volatile("/* AArch64 特定指令 */" ::: "memory");
 }
@@ -234,8 +234,7 @@ Makefile
 ```bash
 -Wall -Wextra -O2 -g          # 基本标志：警告、优化、调试信息
 -nostdinc                     # 不使用标准库头文件
--Iinclude                     # 主头文件路径
--Iinclude/<arch>              # 架构特定头文件路径
+-Iinclude                     # 主头文件路径(架构头在 include/arch/<arch>/ 下)
 -D<arch_macro>                # 架构宏定义
 -DLOG_LEVEL=<level>           # 日志级别定义
 -MMD -MP                      # 生成依赖文件（当前未 -include，见 Makefile 注释）
@@ -993,11 +992,11 @@ CPU 停止（WFI/HLT）
 ```c
 // platform.c
 #if defined(__aarch64__)
-    #include "aarch64/halt_arch.h"
+    #include "arch/aarch64/halt_arch.h"
 #elif defined(__x86_64__)
-    #include "x86_64/halt_arch.h"
+    #include "arch/x86_64/halt_arch.h"
 #elif defined(__riscv)
-    #include "riscv64/halt_arch.h"
+    #include "arch/riscv64/halt_arch.h"
 #endif
 
 void platform_panic(void) {
@@ -1142,7 +1141,7 @@ else ifeq ($(ARCH),new_arch)
       "name": "AArch64",
       "includePath": [
         "${workspaceFolder}/include",
-        "${workspaceFolder}/include/aarch64"
+        "${workspaceFolder}/include/arch/aarch64"
       ],
       "defines": ["__aarch64__"],
       "compilerPath": "/usr/bin/aarch64-linux-musl-gcc"
@@ -1151,7 +1150,7 @@ else ifeq ($(ARCH),new_arch)
       "name": "RISC-V",
       "includePath": [
         "${workspaceFolder}/include",
-        "${workspaceFolder}/include/riscv64"
+        "${workspaceFolder}/include/arch/riscv64"
       ],
       "defines": ["__riscv", "__riscv_xlen=64"],
       "compilerPath": "/usr/bin/riscv64-linux-musl-gcc"
@@ -1160,7 +1159,7 @@ else ifeq ($(ARCH),new_arch)
       "name": "x86_64",
       "includePath": [
         "${workspaceFolder}/include",
-        "${workspaceFolder}/include/x86_64"
+        "${workspaceFolder}/include/arch/x86_64"
       ],
       "defines": ["__x86_64__"],
       "compilerPath": "/usr/bin/gcc"
@@ -1323,7 +1322,7 @@ static inline void module_operation(void);
 
 // 5. 包含架构实现
 #if defined(__aarch64__)
-    #include "aarch64/module_impl.h"
+    #include "arch/aarch64/module_impl.h"
 // ... 其他架构
 #endif
 
@@ -1635,7 +1634,7 @@ include/
 #### 架构实现
 
 ```
-include/aarch64/
+include/arch/aarch64/
 ├── barrier_impl.h
 ├── cache_impl.h
 ├── cpu.h
@@ -1643,14 +1642,14 @@ include/aarch64/
 ├── spin_lock_impl.h
 └── string_impl.h
 
-include/riscv64/
+include/arch/riscv64/
 ├── barrier_impl.h
 ├── cache_impl.h
 ├── halt_arch.h
 ├── spin_lock_impl.h
 └── string_impl.h
 
-include/x86_64/
+include/arch/x86_64/
 ├── barrier_impl.h
 ├── cache_impl.h
 ├── halt_arch.h

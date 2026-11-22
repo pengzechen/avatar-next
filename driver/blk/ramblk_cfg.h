@@ -13,7 +13,7 @@
 #ifndef __RAMBLK_CFG_H__
 #define __RAMBLK_CFG_H__
 
-#include "platform_cfg.h"
+#include "platform/platform_cfg.h"
 
 /* ── Rootfs / RAMBLK 物理地址窗口 ─────────────────────────────── */
 #define RAMBLK_PHYS_BASE g_mem_rootfs_base

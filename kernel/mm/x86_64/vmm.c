@@ -11,11 +11,11 @@
 */
 
 #include "klog.h"
-#include "mm_vm.h"
-#include "pmm.h"
+#include "mm/mm_vm.h"
+#include "mm/pmm.h"
 #include "string.h"
 #include "types.h"
-#include "shared_page.h"
+#include "mm/shared_page.h"
 
 /* ── 页表遍历 ───────────────────────────────────────────────────── */
 
@@ -196,8 +196,6 @@ void mm_vm_copy_to_uva(void *pgd, uint64_t user_vaddr, uint64_t src_paddr, uint6
 
 /* ── 用户地址空间生命周期(架构无关层经 mm_vm.h 调用)────────────── */
 
-extern uint64_t g_kernel_pgd_phys;
-
 static void x86_destroy_table(uint64_t *table, int level)
 {
     for (uint32_t i = 0; i < 512U; i++) {
@@ -226,12 +224,7 @@ static void x86_destroy_table(uint64_t *table, int level)
 
 void mm_vm_init_user_pgd(void *pgd, uint64_t pgd_phys)
 {
-    if (g_kernel_pgd_phys == 0) {
-        KLOG_ERROR("[vm_user] g_kernel_pgd_phys is not initialized\n");
-        return;
-    }
-
-    uint64_t *kernel_pml4 = (uint64_t *)phys_to_virt(g_kernel_pgd_phys);
+    uint64_t *kernel_pml4 = (uint64_t *)phys_to_virt(mm_vm_kernel_root_phys());
     x86_copy_kernel_mappings((uint64_t *)pgd, kernel_pml4);
     KLOG_DEBUG("[vm_user] x86_64 copied kernel PML4[%u..%u] to user PGD=0x%llx\n", X86_PML4_KERNEL_START,
                X86_PML4_ENTRIES - 1U, pgd_phys);

@@ -76,6 +76,14 @@ void klog_write(const char *buf, size_t len)
         return;
     }
 
+    /*
+       异步路径：只把消息 memcpy 进环形缓冲（几微秒，持 IRQ-off），
+       UART 输出交给 klogd，在中断打开的状态下慢慢写。缓冲满/异步未启动
+       时退回下面的同步路径。
+    */
+    if (klog_async_enqueue(buf, len))
+        return;
+
     uint64_t flags;
     spin_lock_irqsave(&g_klog_lock, &flags);
     for (i = 0; i < len; i++)
@@ -94,6 +102,13 @@ void klog_flush(void)
 void klog_panic_begin(void)
 {
     g_klog_panic = true;
+
+    /*
+       把崩溃前已经进入异步环形缓冲、但 klogd 还没来得及输出的日志补出来。
+       klogd 在 panic 之后不会再被调度，不主动刷这段就永久丢了。
+       必须在 panic 消息之前：保证日志顺序仍然是"先发生先输出"。
+    */
+    klog_async_panic_flush();
 }
 
 /*

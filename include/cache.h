@@ -59,7 +59,7 @@ static inline void sync_caches(void);
    到陈旧的指令。各架构实现：
      aarch64  ic iallu + dsb ish + isb
      riscv64  fence.i；C906 这类核还要厂商私有的 icache.iall + sync.i
-              (见 include/riscv64/rvplatform.h)
+              (见 include/arch/riscv64/rvplatform.h)
      x86_64   I-cache 与 D-cache 硬件一致, 只需一条序列化屏障
 
    注意：汇编里的等价序列(.S 的 exec/fork 返回路径)用的是同一套语义,
@@ -84,11 +84,11 @@ static inline void init_cache(void);
 /* ===== 架构特定底层操作 ===== */
 
 #if ARCH_X86_64
-#include "x86_64/cache_impl.h"
+#include "arch/x86_64/cache_impl.h"
 #elif ARCH_AARCH64
-#include "aarch64/cache_impl.h"
+#include "arch/aarch64/cache_impl.h"
 #elif ARCH_RISCV64
-#include "riscv64/cache_impl.h"
+#include "arch/riscv64/cache_impl.h"
 #else
 #error "Unsupported architecture"
 #endif

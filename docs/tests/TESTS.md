@@ -244,45 +244,7 @@ process_create("el0_loop", (uint64_t)el0_loop_program,
 
 ---
 
-### 方式 B：独立 `.bin` 文件，通过 `bin_loader` 从文件系统加载
-
-**特点**：程序用 `app.ld`（入口 `_start`，链接到虚拟地址 `0x10000`）编译成**平坦二进制**，写入 rootfs，运行时由内核 `bin_loader_load_from_file()` 读取并用 `process_create` 创建用户进程。
-
-**文件规则**（Makefile 自动处理 `apps/<arch>/*.S` 中未被方式 A 特殊处理的文件）：
-
-```
-apps/aarch64/test_exec.S
-  → build/apps_test_exec.o    (编译，加 -DAPP_ELF=1)
-  → build/test_exec.bin.elf   (链接，-T app.ld)
-  → build/test_exec.bin       (objcopy -O binary)
-```
-
-**写入 rootfs**：
-
-```bash
-# 挂载 rootfs 镜像，写入 bin 文件
-sudo mount -o loop build/rootfs-aarch64.img /mnt/tmp
-sudo cp build/test_exec.bin /mnt/tmp/test_exec
-sudo umount /mnt/tmp
-```
-
-**内核侧调用**：
-
-```c
-// 在某个内核任务中（如 demo_load_busybox 的变体）
-bin_loader_load_from_file("/test_exec", NULL, NULL);
-// bin_loader 调用 process_create，程序在 0x10000 开始运行，然后 task_exit()
-```
-
-**如何添加**：
-
-1. 编写 `apps/<arch>/foo.S`，入口为 `_start`，使用自定义 syscall ABI（`svc #0` / `ecall` / `syscall`）
-2. `make ARCH=<arch> kernel` 时自动生成 `build/foo.bin`
-3. 将 `build/foo.bin` 写入 rootfs，通过 `bin_loader_load_from_file("/foo", ...)` 加载
-
----
-
-### 方式 C：动态链接 musl ELF，通过 `elf_loader` 从文件系统加载
+### 方式 B：动态链接 musl ELF，通过 `elf_loader` 从文件系统加载
 
 **特点**：使用 musl 交叉编译器编译 C 程序，动态链接 `ld-musl-<arch>.so.1`，写入 rootfs（含 busybox + musl libc）。内核通过 `elf_loader_load_from_file()` 加载，支持完整的 Linux syscall ABI（futex、clone、membarrier 等）。
 
@@ -438,7 +400,6 @@ make ARCH=x86_64   test-vmm LOG=info
 | `hello.S` | A（链接进内核）| 最简 hello world |
 | `el0_loop.S` | A（链接进内核）| VMM Test Thread 3（EL0 循环）|
 | `guest_test.S` | A（链接进内核）| VMM Test Thread 2（EL1 guest）|
-| `test_exec.S` | B（.bin 文件系统）| bin_loader 测试 |
 
 ### RISC-V 64
 

@@ -20,25 +20,20 @@
 #include "assert.h"
 #include "barrier.h"
 #include "klog.h"
+#include "fs/fs_lock.h"
+#include "fs/process_fs.h"
 #include "string.h"
 #include "task/cpu.h"
 #include "task/preempt.h"
 #include "task/sched.h"
 #include "task/switch.h"
 #include "driver/time.h"
+#include "libc/signal.h"
+#include "spinlock.h"
 
-static inline uint64_t task_get_ns(void)
-{
-    return timer_get_ns();
-}
-
-#include "mm_vm.h"
-#include "user_layout.h"
-#include "vm_user.h"
-#if ARCH_RISCV64
-#include "riscv64/satp_utils.h"
-#include "riscv64/sysreg.h"
-#endif
+#include "mm/mm_vm.h"
+#include "mm/user_layout.h"
+#include "mm/vm_user.h"
 
 /* ── 静态任务池 ──────────────────────────────────────────── */
 
@@ -49,12 +44,10 @@ task_t g_task_pool[TASK_MAX];
    每个栈独立分配, 互不重叠。
 */
 uint8_t g_task_stacks[TASK_MAX][TASK_STACK_SIZE] __attribute__((aligned(16)));
+
 uint8_t g_stack_used[TASK_MAX];
 
 uint32_t g_task_id_cnt = 0;
-
-/* ── 内核页表物理地址(task_init 时读取, RISC-V satp / x86_64 CR3 均使用)── */
-uint64_t g_kernel_pgd_phys = 0;
 
 /* ── idle 任务(boot 执行上下文)────────────────────────── */
 static task_t g_idle_task;
@@ -63,17 +56,8 @@ static task_t g_idle_task;
 static uint8_t g_idle_stack[TASK_STACK_SIZE] __attribute__((aligned(16)));
 
 /* ── 槽表的锁 ────────────────────────────────────────────── *
-
    保护 g_stack_used[], 各 TCB 里"这个槽归谁/还活着吗"那几个字段
    (state / parent_id / id), 以及 id 分配。
-
-   以前这三样全是裸奔的。后果有两类：
-     1. 两核同时扫到同一个 DEAD 槽 → 都调 task_reap_dead →
-        vm_destroy_user_process() 跑两遍(它不幂等, 第二次照样
-        pmm_free_pages)→ PMM 双重释放。
-     2. 两核同时读到 !g_stack_used[i] → 认领同一个槽 →
-        两个任务共用一个 task_t 和一块栈。
-
    锁内只做"改状态, 占位"这种 O(1) 的事；释放用户页表要走几百页,
    放到锁外做(先用 state = TASK_ALLOCATING 把槽占住, 别人就不会碰)。
 */
@@ -417,19 +401,6 @@ void task_trampoline(void)
 */
 void task_trampoline_user(void);
 
-#if ARCH_RISCV64
-void arch_user_entry_debug(uint64_t user_entry, uint64_t user_sp, uint64_t kernel_sp, uint64_t user_pgd)
-{
-    (void)user_entry;
-    (void)user_sp;
-    (void)kernel_sp;
-    (void)user_pgd;
-
-    task_t *cur = task_current();
-    if (cur && cur->is_user_process)
-        cur->user_started = true;
-}
-#endif
 /* ── task_init ───────────────────────────────────────────── */
 
 void task_init(void)
@@ -461,16 +432,17 @@ void task_init(void)
     g_idle_task.name[3] = 'e';
     g_idle_task.name[4] = '\0';
 
-#if ARCH_RISCV64
-    /* 保存内核 SATP 对应的 PGD 物理地址, 用于切换回内核任务时恢复 */
-    g_kernel_pgd_phys = satp_read_pgd_phys();
-#elif ARCH_X86_64
-    /* 保存内核 PML4 物理地址, 用于切换回内核任务时恢复 */
-    g_kernel_pgd_phys = read_cr3() & PTE_ADDR_MASK;
-#endif
-
     /* 初始化调度器, 传入 idle 任务 */
     sched_init(&g_idle_task);
+
+    /*
+       fs_init 阶段已经过去；之后 ext4/FatFs 调用可以睡眠等待全局锁，
+       不再整段关本核 IRQ。
+    */
+    fs_lock_enable_sleeping();
+
+    /* 启动异步日志线程；此后 klog_write 不再整段持 IRQ-off 写 UART。 */
+    klog_async_start();
 
     KLOG_TASK("[task] subsystem initialized, idle task id=%u stack_base=%p\n", g_idle_task.id,
               (void *)g_idle_task.stack_base);
@@ -490,27 +462,12 @@ void task_switch_to_idle_stack(void)
     uintptr_t new_sp = (uintptr_t)(g_idle_stack + TASK_STACK_SIZE);
     KLOG_TASK("[task] switching to idle stack at 0x%lx\n", (unsigned long)new_sp);
 
-    /* 切到 idle 栈后永不返回：直接在 inline asm 里跳到 idle 主循环,
-     跳过编译器生成的 epilogue(否则会从未初始化的新栈读 LR/RBP 导
-     致跳到 0)。
+    /*
+       切到 idle 栈后永不返回：架构实现直接在 inline asm 里跳到 idle
+       主循环, 跳过编译器生成的 epilogue(否则会从未初始化的新栈读
+       LR/RBP 导致跳到 0)。实现见 include/arch/<arch>/cpu_impl.h。
     */
-#if ARCH_X86_64
-    __asm__ volatile("mov %0, %%rsp\n\t"      /* 切换到新栈 */
-                     "xor %%rbp, %%rbp\n\t"   /* 清零 RBP, 标记栈帧链结束 */
-                     "jmp task_idle_loop\n\t" /* 跳到 idle 主循环(不返回) */
-                     ::"r"(new_sp)
-                     : "memory");
-#elif ARCH_RISCV64
-    __asm__ volatile("mv sp, %0\n\t"
-                     "mv fp, zero\n\t"
-                     "j  task_idle_loop\n\t" ::"r"(new_sp)
-                     : "memory");
-#elif ARCH_AARCH64
-    __asm__ volatile("mov sp, %0\n\t"
-                     "mov x29, xzr\n\t" /* 清零 FP */
-                     "b   task_idle_loop\n\t" ::"r"(new_sp)
-                     : "memory");
-#endif
+    arch_switch_to_idle_stack(new_sp);
     __builtin_unreachable();
 }
 
@@ -529,13 +486,7 @@ __attribute__((noreturn)) void task_idle_loop(void)
     arch_irq_enable();
     for (;;) {
         task_yield();
-#if ARCH_AARCH64
-        __asm__ volatile("wfi");
-#elif ARCH_X86_64
-        __asm__ volatile("hlt");
-#elif ARCH_RISCV64
-        __asm__ volatile("wfi");
-#endif
+        arch_cpu_idle_wait();
     }
 }
 
@@ -579,6 +530,10 @@ task_t *process_create(const char *name, uint64_t user_entry, uint64_t user_code
     task->id = task_alloc_id();
     task->state = TASK_ALLOCATING;
     task->priority = priority;
+    task->domain = TASK_DOMAIN_USER;
+    task->sched_policy = TASK_SCHED_NORMAL;
+    task->rt_priority = 0;
+    task->rt_slice = 0;
 
     /* 标记为用户进程 */
     task->is_user_process = true;
@@ -652,6 +607,10 @@ task_t *process_create_with_pgd(const char *name, uint64_t user_entry, uint64_t 
     task->id = task_alloc_id();
     task->state = TASK_ALLOCATING;
     task->priority = priority;
+    task->domain = TASK_DOMAIN_USER;
+    task->sched_policy = TASK_SCHED_NORMAL;
+    task->rt_priority = 0;
+    task->rt_slice = 0;
     task->is_user_process = true;
     task->user_started = false;
     task->tgid = task->id;
@@ -691,7 +650,7 @@ task_t *process_create_with_pgd(const char *name, uint64_t user_entry, uint64_t 
     task->utime_ns = 0;
     task->stime_ns = 0;
     task->sc_entry_ns = 0;
-    task->create_ns = task_get_ns();
+    task->create_ns = timer_get_ns();
 
     /* === 信号字段初始化 === */
     task->pending_sigs = 0;
@@ -767,9 +726,10 @@ task_t *task_create(const char *name, void (*entry)(void *), void *arg, uint8_t 
 }
 
 /*
-   task_create_affinity - 创建任务, 入队前就定好跑在哪颗核上
+   task_create_internal - 所有内核域任务创建的公共实现
+   （task_create_affinity / task_create_kernel_rt / task_create_vcpu 的底座）
 
-   与 task_create() 的区别只在 `cpu_affinity` 的设置时机, 但这正是关键：
+   `cpu_affinity` 必须在入队前指定，原因如下：
    先 task_create()(内部已经 sched_enqueue, round-robin 可能挑中别的核)
    再 task_set_cpu_affinity() 有窗口 —— 如果新任务在那两步之间已经被目标核
    挑走开始执行, sched_dequeue() 就找不到它(RUNNING 的任务不在任何队列里),
@@ -783,8 +743,18 @@ task_t *task_create(const char *name, void (*entry)(void *), void *arg, uint8_t 
      CPU exception #14 at RIP=sched_schedule+0xf2  (next->state = TASK_RUNNING)
      CR2 = 0xffffffffffffffc8                      ← pick_next() 拿到野指针
 */
-task_t *task_create_affinity(const char *name, void (*entry)(void *), void *arg, uint8_t priority,
-                             uint32_t cpu_affinity)
+static uint8_t task_rt_prio_clamp(uint8_t prio)
+{
+    if (prio < TASK_RT_PRIO_MIN)
+        return TASK_RT_PRIO_MIN;
+    if (prio > TASK_RT_PRIO_MAX)
+        return TASK_RT_PRIO_MAX;
+    return prio;
+}
+
+static task_t *task_create_internal(const char *name, void (*entry)(void *), void *arg, uint8_t priority,
+                                    uint32_t cpu_affinity, task_domain_t domain, task_sched_policy_t policy,
+                                    uint8_t rt_priority)
 {
     task_t *task = task_alloc_slot();
     if (!task) {
@@ -795,6 +765,10 @@ task_t *task_create_affinity(const char *name, void (*entry)(void *), void *arg,
     task->id = task_alloc_id();
     task->state = TASK_ALLOCATING;
     task->priority = priority;
+    task->domain = (uint8_t)domain;
+    task->sched_policy = (uint8_t)policy;
+    task->rt_priority = (policy == TASK_SCHED_NORMAL) ? 0 : task_rt_prio_clamp(rt_priority);
+    task->rt_slice = (policy == TASK_SCHED_RR) ? TASK_RR_QUANTUM_TICKS : 0;
     task->entry = entry;
     task->arg = arg;
     task->is_user_process = false;
@@ -840,16 +814,50 @@ task_t *task_create_affinity(const char *name, void (*entry)(void *), void *arg,
     /* 加入就绪队列, 等待调度 */
     sched_enqueue(task);
 
-    KLOG_TASK("[task] created '%s' id=%u prio=%u sp=0x%lx\n", task->name, task->id, (uint32_t)task->priority,
-              (unsigned long)task->sp);
+    KLOG_TASK("[task] created '%s' id=%u domain=%u policy=%u prio=%u sp=0x%lx\n", task->name, task->id,
+              (uint32_t)task->domain, (uint32_t)task->sched_policy, (uint32_t)task->priority, (unsigned long)task->sp);
     return task;
+}
+
+task_t *task_create_affinity(const char *name, void (*entry)(void *), void *arg, uint8_t priority,
+                             uint32_t cpu_affinity)
+{
+    return task_create_internal(name, entry, arg, priority, cpu_affinity, TASK_DOMAIN_KERNEL, TASK_SCHED_NORMAL, 0);
+}
+
+task_t *task_create_kernel_rt(const char *name, void (*entry)(void *), void *arg, uint8_t rt_priority,
+                              uint32_t cpu_affinity)
+{
+    return task_create_internal(name, entry, arg, 0, cpu_affinity, TASK_DOMAIN_KERNEL, TASK_SCHED_FIFO, rt_priority);
+}
+
+task_t *task_create_vcpu(const char *name, void (*entry)(void *), void *arg, uint8_t priority, uint32_t cpu_affinity)
+{
+    return task_create_internal(name, entry, arg, priority, cpu_affinity, TASK_DOMAIN_VCPU, TASK_SCHED_NORMAL, 0);
 }
 
 /* ── task_yield ──────────────────────────────────────────── */
 
 void task_yield(void)
 {
+    task_t *cur = task_current();
+
+    /*
+       主动 yield 的这段时间不算 syscall 内核执行时长（与 task_block 一致）。
+       否则 tty 输入这类“syscall 里循环 task_yield 等待数据”会把等待时间
+       算进 syscall 延迟，/proc/rtstat 的 syscall_max 会被输入等待淹没。
+    */
+    if (cur && cur->is_user_process && cur->sc_entry_ns != 0) {
+        uint64_t now = timer_get_ns();
+        if (now > cur->sc_entry_ns)
+            cur->stime_ns += now - cur->sc_entry_ns;
+        cur->sc_entry_ns = 0;
+    }
+
     sched_schedule();
+
+    if (cur && cur->is_user_process)
+        cur->sc_entry_ns = timer_get_ns();
 }
 
 /* ── task_exit ───────────────────────────────────────────── */
@@ -915,7 +923,7 @@ void task_exit(void)
 task_t *task_current(void)
 {
     /*
-     Phase 3：从 per-CPU 控制块读取, AP 上才能拿到正确的任务。
+     从 per-CPU 控制块读取, AP 上才能拿到正确的任务。
      cpu_current() 内部已有 NULL 回退到 g_cpus[0], 因此在 cpu_init_bsp
      之前的极早期路径也是安全的(会返回 g_cpus[0].current_task = NULL)。
     */
@@ -938,7 +946,7 @@ void task_block(list_t *wait_queue)
 
     /* 暂停 syscall stime 计时(阻塞期间不计入 stime) */
     if (cur->is_user_process && cur->sc_entry_ns != 0) {
-        cur->stime_ns += task_get_ns() - cur->sc_entry_ns;
+        cur->stime_ns += timer_get_ns() - cur->sc_entry_ns;
         cur->sc_entry_ns = 0;
     }
 
@@ -955,7 +963,7 @@ void task_block(list_t *wait_queue)
 
     /* 恢复 stime 计时(从被唤醒时刻起重新开始) */
     if (cur->is_user_process)
-        cur->sc_entry_ns = task_get_ns();
+        cur->sc_entry_ns = timer_get_ns();
 }
 
 /* ── task_unblock ────────────────────────────────────────── */

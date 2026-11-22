@@ -1,0 +1,287 @@
+# 用户可配置 RT worker（模板）
+
+**状态**：V1 已实现并通过 x86_64（KVM）+ aarch64/riscv64（TCG）构建验证；
+用户态工具 `/bin/rtctl` 可以创建、启动、停止、喂输入、读输出和统计。
+x86_64 已支持 **1ms 周期**（LAPIC TSC-deadline oneshot hrtimer）。
+
+## 一、定位
+
+- **数据面**：内核 RT 任务（`TASK_DOMAIN_KERNEL + SCHED_FIFO`），按
+  `period_ns` 周期调用一个**模板**的 `step()`。`step()` 必须有界、无分配、
+  无睡眠、无 VFS、不长时间持锁。
+- **控制面**：用户态通过 `/dev/rtctl` 的 ioctl 配置/控制 worker。
+- **设备面**：模板输出可选绑定到一个 `rtdev`（`include/rt/rtdev.h`）。
+  设备在 CREATE 时独占绑定，STOP/DESTROY 时调用 `safe_state()`。
+
+周期由 **hrtimer** 驱动（`kernel/time/hrtimer.c`）：
+
+- **x86_64**：LAPIC Timer 切到 TSC-deadline oneshot 模式，每核把
+  `min(下一个 100Hz tick, 本核最早的 sleep_expire_ns)` 写进
+  `IA32_TSC_DEADLINE`。worker 最小周期 **1ms**（1000Hz）。
+- **aarch64/riscv64**：暂未接 oneshot，回退到 100Hz tick；
+  `period_ns` 仍必须是 10ms 的整数倍（CREATE 会拒绝其它值）。
+- 100Hz 的 tick 记账（`g_system_ticks`、`sched_tick`、`itimer_tick`）
+  仍然保留；hrtimer 只额外增加精确唤醒点。
+
+## 二、使用
+
+```sh
+# 周期 20ms，增益 1.0，输出写 vout 设备
+rtctl create demo periodic_io 50 0 20 65536 0 0 0 dev:vout
+rtctl start 1
+rtctl set 1 21          # 输入 21
+rtctl get 1             # 输出 21，seq 持续增加
+rtctl stats 1           # ticks / misses / overruns / exec_max
+rtps                    # demo 出现在 RT 任务列表，SCHED_FIFO prio 50
+rtctl stop 1
+rtctl destroy 1
+```
+
+实测（x86_64 KVM）：
+
+```text
+/ # rtctl create demo periodic_io 50 0 10 131072 0 0 1000 dev:vout
+created id=1 name=demo tpl=periodic_io
+/ # rtctl start 1
+/ # rtctl set 1 21
+/ # rtctl get 1
+id=1 value=42 seq=200
+/ # rtctl stats 1
+ticks=300 misses=0 overruns=0 exec_last=304 ns exec_max=1544 ns
+wake_late_last=... ns wake_late_max=... ns
+input=21 output=42 seq=300 dev=vout dev_writes=300
+```
+
+### 1ms（x86_64）
+
+```sh
+rtctl create fast periodic_io 50 0 1 65536 0 0 0
+rtctl start 1
+sleep 10
+rtctl stats 1
+```
+
+实测（x86_64 KVM，10 秒）：
+
+```text
+ticks=10005 misses=1 overruns=0 exec_last=202 ns exec_max=3297 ns
+wake_late_last=260775 ns wake_late_max=1684160 ns
+```
+
+- 10005 个周期 ≈ 1ms/周期；1 次 miss（宿主 KVM 抖动把某次唤醒拖过半个周期）。
+- `wake_late_*` 是相对理论 deadline 的绝对延迟，包含启动相位和宿主 KVM
+  调度抖动；安静时（SMP=4 双 worker 测试）`wake_late_last` 在 **3–6 µs**。
+  判断“周期是否稳定”看 ticks 和 misses；判断“尾延迟”看 `wake_late_max`。
+- 同一路径也提高了用户态 `nanosleep` 的唤醒精度（`sleep_expire_ns`）。
+
+PID 模板：
+
+```sh
+# kp=1.0, ki=0, kd=0, out=[0,1000], setpoint=500, integral_limit=100000
+rtctl create pid1 pid 60 0 10 65536 0 0 0 1000 500 100000
+rtctl start 1
+rtctl set 1 100        # 测量值
+rtctl get 1            # (500-100)*1.0 = 400
+```
+
+### 共享内存快路径
+
+每个 worker 槽位有一页共享内存（`struct rtw_shm`，176 字节，见
+`include/rt/rt_worker.h`）。supervisor 可以 `mmap(/dev/rtctl, offset =
+worker_id << PAGE_SHIFT)` 后直接读写它，控制环完全不需要 ioctl/syscall：
+
+```sh
+rtctl shm 1            # 映射并打印 input/output/seq/ticks/misses/...
+rtctl shmset 1 21      # 通过共享页写 input，等同于 rtctl set 1 21
+```
+
+```c
+struct rtw_shm *s = mmap(NULL, 4096, PROT_READ | PROT_WRITE,
+                         MAP_SHARED, fd, (off_t)(id << 12));
+__atomic_store_n(&s->input, 21, __ATOMIC_RELEASE); /* 内核下次周期读到 */
+```
+
+- **offset 必须是 `worker_id << 12`**：musl 的 `mmap()` wrapper 会先检查
+  页对齐，直接传 worker id 连 syscall 都到不了；内核再从
+  `offset >> PAGE_SHIFT` 取 id。
+- 只有 uid 0 可以映射；页内布局的 `_Static_assert` 在用户态
+  `apps/c/rtctl.c` 里也有一份，改结构体必须两边同步。
+- 字段都是 64-bit 对齐：`input/output/out_seq`、各项统计、`state` 用
+  原子读写；`params` 配 `params_seq`（奇数 = 正在更新）seqlock，与 ioctl
+  路径一致。
+- **生命周期**：每槽位一页由 worker 槽位长期持有，`DESTROY` 只把
+  `magic/version/state` 清零、不归还物理页。所以 destroy 之后旧映射仍指向
+  有效内存，但 `magic != RTSHM_MAGIC`，supervisor 应视为失效；重新
+  `CREATE` 同一槽位会重新初始化这页。
+- `rtctl shm` 在 worker 不存在/destroy 之后报 `ENOENT`（lookup 失败），
+  这是控制面的判定；已经映射在进程里的旧页不会因此缺页。
+
+## 三、ABI（`include/rt/rt_worker.h`）
+
+| ioctl | 作用 |
+|---|---|
+| `RTW_IOC_CREATE` | 创建 worker（模板/优先级/CPU/周期/参数/设备），返回 id |
+| `RTW_IOC_START` | 创建 RT 任务并开始周期执行 |
+| `RTW_IOC_STOP` | 置 stop 并唤醒；worker 在下一个周期边界退出 |
+| `RTW_IOC_DESTROY` | 释放 worker 和绑定设备；RUNNING 时返回 EBUSY |
+| `RTW_IOC_SET_IN` | 原子更新输入值 |
+| `RTW_IOC_POST` | 向事件环投递 u64 事件；环满返回 `-ENOSPC` |
+| `RTW_IOC_SET_PARAMS` | 运行期更新模板参数（seqlock，周期边界生效） |
+| `RTW_IOC_GET_OUT` | 读最近一次输出和序号 |
+| `RTW_IOC_STATS` | ticks/misses/overruns/exec_last/exec_max/... |
+| `RTW_IOC_LIST` | 列出所有 worker |
+| `mmap(offset = id << PAGE_SHIFT)` | 映射该 worker 的共享页（uid 0；见上文） |
+
+**权限**：V1 只允许 uid 0。调用者传入的用户指针一律经
+`copy_from_user_bytes` / `copy_to_user_bytes`，不做裸解引用。
+
+## 四、模板 V1
+
+### `periodic_io`
+
+参数（Q16 定点，1.0 = 65536）：
+
+| 参数 | 含义 |
+|---|---|
+| `p0` | gain_q16 |
+| `p1` | offset |
+| `p2` | min（`min >= max` 表示不限幅） |
+| `p3` | max |
+
+`out = clamp((in * gain) >> 16 + offset, min, max)`
+
+### `pid`
+
+参数：
+
+| 参数 | 含义 |
+|---|---|
+| `p0/p1/p2` | kp/ki/kd（Q16） |
+| `p3/p4` | out_min/out_max |
+| `p5` | setpoint |
+| `p6` | integral_limit（0 = 默认 2^40） |
+
+定点实现：积分限幅、微分取相邻周期误差差、输出限幅。输入/增益都有
+饱和限制，不会溢出 int64。
+
+### `watchdog`
+
+参数：
+
+| 参数 | 含义 |
+|---|---|
+| `p0` | 被监控的 worker id |
+| `p1` | timeout_ns |
+| `p2` | 超时后的安全输出值 |
+
+目标 worker 的 `out_seq` 在 timeout 内没有变化 → 输出 `safe_output`；
+健康时输出 0。目标不存在或目标就是自己 → 直接输出安全值。watchdog
+自身的周期应明显小于 timeout。
+
+```sh
+# 监控 worker 1，50ms 没进展就输出 999，自己每 10ms 检查一次
+rtctl create wd watchdog 70 0 10 1 50000000 999
+rtctl start 2
+rtctl set 1 21
+rtctl get 2            # 目标在跑时 0
+rtctl stop 1
+sleep 1
+rtctl get 2            # 999
+```
+
+### `event`（事件驱动）
+
+参数与 `periodic_io` 相同（gain/offset/min/max），但**输入不是共享页的
+`input`，而是事件环里的 u64 事件**。worker 在环空时真正阻塞，不占 CPU：
+
+```sh
+# period=0：无限等待；params[0]=2.0
+rtctl create evt event 50 0 0 131072
+rtctl start 1
+rtctl post 1 21        # 投递一个事件
+rtctl post 1 22
+rtctl get 1            # value=44 seq=2
+rtctl stats 1
+# events_posted=2 events_processed=2 events_dropped=0
+```
+
+- `period_ns == 0`：无限等事件；`period_ns > 0`：作为最长等待/超时时间
+  （至少 1ms，无 oneshot 的架构要求 10ms 整数倍）。
+- 事件环在共享页偏移 `RTSHM_EVENT_OFFSET`（192），容量
+  `RTW_EVENT_RING_CAP`（64）：`head/tail` + `posted/dropped/processed/
+  last_value/ev[64]`。SPSC：内核生产者 `ev_lock` 串行化，RT worker 单消费者。
+- 环满采用 **drop-newest**：`RTW_IOC_POST` 返回 `-ENOSPC`，`dropped` +1；
+  RT 侧不背压、不等待。
+- `stop` 会置 `RTW_EVENT_BIT_STOP`，所以阻塞在无限等待里的 worker 也能退出。
+- 统计：`ticks` = 已处理事件数；`overruns` 仍按 `budget_ns`/事件计；
+  `events_*` 是环计数。`/proc/rtworkers` 增加 `EVENTS`/`DROPS` 两列。
+- 目前用户态直接写共享环不会唤醒 worker（没有门铃）。`rtctl post` 走
+  `RTW_IOC_POST`，既入环又唤醒；环本身对 supervisor 可读，用于观察和
+  将来的批量投递。
+
+### 运行期参数
+
+```sh
+# 把 worker 1 的 gain 从 1.0 改成 2.0（其余参数清零）
+rtctl params 1 131072 0 0 1000
+```
+
+内核用 seqlock 保存参数：控制面写、RT worker 在周期开头取一致快照，
+不会读到半更新的一组参数。
+
+## 五、观察
+
+```sh
+cat /proc/rtworkers
+```
+
+输出每个 worker 的 `ID/NAME/STATE/TPL/PRIO/CPU/PERIOD/TICKS/MISSES/
+OVERRUNS/EXEC_MAX/WAKE_MAX/DEV`，不需要 ioctl。`rtps` 仍然显示它作为
+RT 内核任务；`rtctl list/stats` 提供更详细的信息。
+
+回归门禁：`make -C tests rt-test` 会跑模板 worker 的 create → 共享页 →
+start → 运行期参数 → stop → destroy，并在 x86 KVM 上断言 1ms 周期与
+频率（见 `tests/suites/rt_test.py` 的场景 5）。
+
+## 六、rtdev 设备契约
+
+```c
+struct rtdev_ops {
+    int (*setup)(struct rtdev *d, const void *cfg, uint32_t len); /* 控制面 */
+    int (*write)(struct rtdev *d, const void *buf, uint32_t len); /* RT 面 */
+    int (*read)(struct rtdev *d, void *buf, uint32_t len);
+    int (*ioctl_rt)(struct rtdev *d, uint32_t cmd, uint64_t arg);
+    void (*safe_state)(struct rtdev *d);
+    void (*teardown)(struct rtdev *d);                            /* 控制面 */
+};
+```
+
+- `setup/teardown` 可以睡眠、分配、开关电源；`write/read/ioctl_rt` 必须是
+  有界、无分配、无睡眠、无 VFS、短临界区。
+- 一个设备同时只能绑给一个 worker；`CREATE` 时 `rtdev_claim()` 独占。
+- V1 内置示例设备 `vout`：把每次写记录成 u64，`teardown` 打一行
+  `[rtdev] vout: N writes`。真实 GPIO/PWM/UART 驱动按同一契约注册即可；
+  没有通过 RT 一致性要求的驱动不要注册 `rtdev_ops`。
+
+## 七、当前限制
+
+- x86_64 支持 1ms 周期；aarch64/riscv64 仍是 10ms 整数倍（未接 oneshot）。
+- hrtimer 是**每核**的：worker 的亲和性决定用哪颗核的 TSC-deadline；
+  目标核不支持 oneshot 时，CREATE 会拒绝非 10ms 整数倍的周期。
+- 共享页每槽位 1 页，只给 uid 0；没有跨进程通知原语（eventfd/futex 意义上的
+  wake），supervisor 要等新输出只能轮询 `out_seq`。**RT 循环本身不做
+  syscall**。
+- 没有真正的 GPIO/PWM/UART `rtdev`；V1 只有 `vout` 示例。
+- 模板数量：4（`periodic_io`、`pid`、`watchdog`、`event`）；`fsm` 未做。
+- 事件环只有内核侧生产者（ioctl / 未来 rtdev ISR）。用户态直接写环
+  不会唤醒 worker；需要 `RTW_IOC_POST` 或后续的 kick 门铃。
+- `watchdog` 目前只输出安全值，不自动停止目标；自动动作留给 supervisor。
+- RT 任务在 `STOP` 后最多要等一个周期/一次事件唤醒才退出。
+
+## 八、下一步
+
+1. 真实 rtdev：GPIO/PWM/ADC 先做，UART 走预分配 TX 环 + NORMAL drainer；
+   ISR 可以直接 `rt_worker_post_event()` 作为事件源。
+2. `fsm` 模板（迁移由 event 驱动）。
+3. `watchdog` 增加“自动停止目标/切安全输出”的动作。
+4. 事件环的用户态批量投递 + kick 门铃。

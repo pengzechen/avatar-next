@@ -21,11 +21,11 @@
 #include "assert.h" /* platform_panic() */
 #include "driver/irq.h"
 #include "irq/lapic.h"
-#include "x86_64/io.h" /* outb — 用于屏蔽 8259A PIC */
+#include "arch/x86_64/io.h" /* outb — 用于屏蔽 8259A PIC */
 #include "task/task.h"
 #include "task/sched.h"
 #include "task/cpu.h"
-#include "mm_vm.h"
+#include "mm/mm_vm.h"
 
 extern void deliver_pending_signals(task_t *t, trap_frame_t *frame);
 
@@ -267,8 +267,15 @@ void handle_exception(void *frame_ptr)
                 sched_dequeue(cur);
             }
 
-            /* 请求在异常返回路径执行重调度 */
-            sched_tick();
+            /*
+               请求在异常返回路径执行重调度。
+
+               只置本核 need_resched，不要调 sched_tick()：后者是真正的
+               timer tick 回调，会连带推进 RR 时间片、喂 rt_latency 统计
+               并对全池跑 itimer_tick()。把这些副作用搬进异常处理路径，
+               会让一个崩溃任务额外消耗时间片/触发定时器扫描。
+            */
+            cpu_current()->need_resched = true;
             return;
         }
 

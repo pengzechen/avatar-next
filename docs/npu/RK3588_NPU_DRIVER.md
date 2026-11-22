@@ -43,7 +43,7 @@
 | 版本校验 | ✅ 读魔数 `0x46495245`（"FIRE"） | `driver/npu/rknpu.c:90` |
 | 中断 | ⚠️ 只读 `INT_STATUS`、清 `INT_CLEAR`、**不跟踪作业** | `driver/npu/rknpu.c:60-80` |
 | 用户态接口 | ⚠️ `/dev/npu` 节点存在但是**桩**，直接返回 `-PFS_ENOSYS` | `pseudofs.c:365`、`dev.c:264` |
-| 连续物理内存 | ✅ `pmm_alloc_pages` / `kalloc_pages` / `kmalloc` | `include/pmm.h:69`、`include/kmalloc.h` |
+| 连续物理内存 | ✅ `pmm_alloc_pages` / `kalloc_pages` / `kmalloc` | `include/mm/pmm.h:69`、`include/mm/kmalloc.h` |
 | "DMA 缓冲"雏形 | ⚠️ ION 分配器 + `FDT_ION` fd，**已有逐页 mmap 进用户态的路径** | `driver/ion/ion.c`、`mmap.c:174-245` |
 | 缓存维护 | ✅ `clean/invalidate/clean_and_invalidate_dcache_range` | `include/cache.h:105-167` |
 | 内核线程 | ✅ `task_create(name, entry, arg, prio)` | `task/task.h:257` |
@@ -191,7 +191,7 @@ static inline uint64_t npu_dev_addr(npu_buf_t *b);
 >
 > riscv64 / x86_64 只做到"能编译"，未跑过用例（与 §9 未决问题 3 相关）。
 
-* `include/dma_buf.h` + `driver/dma/dma_buf.c`
+* `include/driver/dma_buf.h` + `driver/dma/dma_buf.c`
   - `struct dma_buf { size, pa/kva, file, refcount, ops }`
   - fd 化：复用现有 fd 池机制，**把 `FDT_ION` 泛化成 `FDT_DMABUF`**
   - 实现 `DMA_BUF_IOCTL_SYNC`（`0x40086200`）→ 直接调 `clean_and_invalidate_dcache_range`
@@ -256,7 +256,7 @@ static inline uint64_t npu_dev_addr(npu_buf_t *b);
 
 ### P2/P3/P4 实现记录
 
-代码：`include/rknpu_drm.h`（ABI，每个号都钉了 `_Static_assert`）、
+代码：`include/npu/rknpu_drm.h`（ABI，每个号都钉了 `_Static_assert`）、
 `driver/npu/rknpu_drm.c`（GEM + ioctl）、`driver/npu/rknpu.c`（作业引擎）、
 验收程序 `apps/c/drmtest.c` + `tools/drmtest_p2p4.sh`。
 

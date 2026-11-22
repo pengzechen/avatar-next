@@ -78,7 +78,7 @@ aarch64 / x86_64 上从来没跑过。dma-buf 一上来就在三个架构上都�
 
 | 架构 | 位 | 依据 |
 |---|---|---|
-| aarch64 | `PTE_KEEP = 1ULL << 56`（`include/aarch64/mmu.h`）| ARMv8 4KB stage-1 描述符的 55~58 是软件位；Linux arm64 也用 56（`PTE_SPECIAL`）|
+| aarch64 | `PTE_KEEP = 1ULL << 56`（`include/arch/aarch64/mmu.h`）| ARMv8 4KB stage-1 描述符的 55~58 是软件位；Linux arm64 也用 56（`PTE_SPECIAL`）|
 | x86_64 | `PTE_KEEP = PTE_SW_BIT2`（bit 10）| 现有 `PTE_SW_BIT1/2/3` 里 9 已被 NOFREE 占用 |
 | riscv64 | `RV_PTE_KEEP = 1ULL << 9` | RSW 两位（8、9）由 RISC-V 规范保留给软件 |
 

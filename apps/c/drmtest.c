@@ -20,7 +20,7 @@
    注意： 下面的结构体与 ioctl 号是手抄的(用户态不能包含内核头)。
       _IOC 把 sizeof 编进操作码, 所以尺寸写错不是"参数错位"而是换成另一个
       ioctl 号, 内核会走到 default 分支回 -EINVAL —— 是响亮的失败。
-      内核侧同名定义见 include/rknpu_drm.h, 两边靠这里的 _Static_assert 对齐。
+      内核侧同名定义见 include/npu/rknpu_drm.h, 两边靠这里的 _Static_assert 对齐。
 */
 #define _GNU_SOURCE
 #include <errno.h>

@@ -1,5 +1,9 @@
 # RISC-V64 页表机制与 g_pmm 问题分析
 
+> 本文记录的是早期实现(当时 `pgd` 还在 `task_t` 里，调度器还没有 per-CPU
+> 就绪队列)。机制分析仍然有效，但行号和代码片段可能已过时；现行源码以
+> `kernel/task/sched.c`、`kernel/mm/riscv64/` 为准。
+
 ## 1. 当前页表架构总结
 
 ### 1.1 Sv39 三级页表结构
@@ -57,25 +61,17 @@ RAM 高别名（内核区） = 0xffffffc080000000 - 0xffffffc0bfffffff (1GB)
 
 ### 2.1 调度器中的页表切换 (sched.c)
 
-调度器在任务切换时切换页表：
+调度器在任务切换时把 `next->mm->pgd` 交给 `arch_task_switch()`：
 
-```c
-// kernel/task/sched.c:117-136
-if (next->is_user_process && next->pgd != 0) {
-    // 切换到用户页表
-    uint64_t pgd_phys = (uint64_t)next->pgd;
-    uint64_t ppn = pgd_phys >> 12;
-    uint64_t satp = (8ULL << 60) | ppn;  /* MODE=Sv39 */
-    csrw satp, satp;
-    sfence.vma;
-} else if (next->is_user_process == 0 && prev->is_user_process != 0) {
-    // 从用户任务切换到内核任务：恢复内核页表
-    uint64_t kernel_ppn = 0x80205;
-    uint64_t satp = (8ULL << 60) | kernel_ppn;
-    csrw satp, satp;
-    sfence.vma;
-}
-```
+- `next->mm->pgd != 0` 的用户任务：切到用户页表（Pgd 已包含内核高半区映射，
+  内核代码在用户页表下也能继续执行）；
+- 用户任务 → 内核任务：切回内核页表；
+- 首次进入用户进程：RISC-V 延迟到 `arch_switch_to_user` 才写 `satp`；
+  调用方对用户进程传 NULL 跳过 prev pgd 回写，避免 `satp` 还未切过去时
+  把内核页表地址覆写进 `prev->mm->pgd`。
+
+现行为见 `kernel/task/sched.c` 的 `#if ARCH_RISCV64` 分支和
+`include/arch/riscv64/satp_utils.h`。
 
 **切换时机：**
 - 用户任务 → 用户任务：直接切换到目标用户页表

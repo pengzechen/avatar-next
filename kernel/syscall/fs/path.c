@@ -12,10 +12,10 @@
 #include "syscall/fs/path.h"
 #include "syscall/fs/fd_pool.h"
 #include "syscall/syscall_internal.h"
-#include "kernel_stat.h"
+#include "fs/kernel_stat.h"
 #include "string.h"
-#include "mm_vm.h" /* PAGE_SIZE / phys_to_virt / mm_vm_get_paddr */
-#include "vfs.h"
+#include "mm/mm_vm.h" /* PAGE_SIZE / phys_to_virt / mm_vm_get_paddr */
+#include "fs/vfs.h"
 #include <ext4.h>
 #include <ext4_errno.h>
 
@@ -64,7 +64,7 @@ bool user_range_accessible(const void *ptr, uint64_t len)
         return true;
 
     task_t *t = task_current();
-    if (!t || !t->mm->pgd)
+    if (!t || !t->mm || !t->mm->pgd)
         return true; /* 非用户进程上下文：维持旧行为, 只做范围检查 */
 
     uint64_t start = (uint64_t)ptr;
