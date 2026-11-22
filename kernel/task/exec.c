@@ -31,7 +31,7 @@
 #include "syscall_abi.h"
 #include "task/task.h"
 #include "task/switch.h"
-#include "loader/elf_image.h"
+#include "mm/elf_image.h"
 #include "task/exec.h"
 #include "mm/vm_user.h"
 #include "mm/user_layout.h"

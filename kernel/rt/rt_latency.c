@@ -5,7 +5,7 @@
 */
 
 /*
-   kernel/debug/rt_latency.c — R0 实时延迟统计
+   kernel/rt/rt_latency.c — R0 实时延迟统计
 
    见 docs/realtime/ARCHITECTURE.md。这里只做“常开、低成本”的近似测量，
    真正的 irq-off trace 后续再上（R0.5）：

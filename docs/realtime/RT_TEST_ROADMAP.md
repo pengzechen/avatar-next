@@ -23,7 +23,7 @@
 | 场景 7 | `rt_event` any/all/timeout + event 模板共享环 | `rt_event_test.c` |
 | 场景 8 | **内核态 cyclictest**：FIFO 80、1ms/10ms 绝对 deadline、NORMAL hog、hog_iters | `cyclictest.c` |
 | `RT_DEMO=1` | RT ping-pong 唤醒 + NORMAL→RT 抢占 | `rt_demo.c` |
-| R0/R0.5 | `/proc/rtstat`：wake/syscall/tick_gap；`RT_IRQ_TRACE=1` 真 IRQ-off | `kernel/debug/rt_latency.c` |
+| R0/R0.5 | `/proc/rtstat`：wake/syscall/tick_gap；`RT_IRQ_TRACE=1` 真 IRQ-off | `kernel/rt/rt_latency.c` |
 | 回归门禁 | `make -C tests rt-test` 三架构；SMP=1/4 | `tests/suites/rt_test.py` |
 
 **当前基线（不是目标）：**

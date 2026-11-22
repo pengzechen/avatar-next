@@ -5,13 +5,12 @@
 */
 
 /*
-   kernel/loader/elf_loader.c — ELF 程序加载器(文件 I/O 层)
+   kernel/task/elf_loader.c — ELF 程序加载器(文件 I/O 层)
 
    职责：从 ext4 文件系统读取 ELF 文件, 然后交由 task_execve 处理。
-   ELF 格式解析, 段加载和进程创建逻辑分别在 elf_image.c 和 task/exec.c 中。
+   ELF 格式解析/段加载在 mm/elf_image.c, 进程创建与 exec 提交在 task/exec.c。
 */
 
-#include "loader/bin_loader.h"
 #include "elf.h"
 #include "klog.h"
 #include "mm/kmalloc.h"

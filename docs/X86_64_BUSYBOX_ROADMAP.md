@@ -268,7 +268,7 @@ x86_64-linux-musl-gcc -nostdlib -static \
 
 ---
 
-#### 3.2 修复 ELF 加载器（kernel/loader/elf_loader.c）
+#### 3.2 修复 ELF 加载器（kernel/task/elf_loader.c）
 
 **可能需要的修改**:
 - 处理 x86_64 ELF 魔数和架构标识
@@ -323,7 +323,7 @@ x86_64-linux-musl-gcc -nostdlib -static \
 
 ### 可能需要修改
 - [x] `boot/x86_64/gdt.c` - 用户段描述符（已在 boot.S 中添加）
-- [ ] `kernel/loader/elf_loader.c` - x86_64 特定处理
+- [ ] `kernel/task/elf_loader.c` - x86_64 特定处理
 - [x] `include/arch/x86_64/mm_vm.h` - 页表结构定义（已有占位实现）
 - [ ] `kernel/main.c` - 启用 busybox 加载
 

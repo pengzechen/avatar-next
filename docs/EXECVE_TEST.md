@@ -1,5 +1,9 @@
 # 从文件系统加载执行程序
 
+> 状态：本文档部分内容早于当前实现。平坦二进制加载器 `bin_loader` 已删除；
+> 现在 execve 走 `kernel/task/elf_loader.c`（文件 I/O 层）→
+> `task_execve()`（`kernel/task/exec.c`）→ `kernel/mm/elf_image.c`（ELF 解析与段映射）。
+
 ## 已实现的功能
 
 ### 1. execve 系统调用
@@ -7,16 +11,15 @@
 - **接口**: `int64_t execve(const char *pathname, char **argv, char **envp)`
 - **功能**: 从文件系统加载并执行可执行程序
 
-### 2. 二进制程序加载器
-- **文件**: [kernel/syscall/bin_loader.c](../kernel/syscall/bin_loader.c)
-- **支持格式**: 平面二进制（原始二进制代码）
-- **加载地址**: 0x10000（虚拟地址）
-- **用户栈地址**: 0x100000（1MB）
+### 2. ELF 程序加载器
+- **文件**: [kernel/task/elf_loader.c](../kernel/task/elf_loader.c)（文件 I/O、shebang、PT_INTERP）
+- **解析/映射**: [kernel/mm/elf_image.c](../kernel/mm/elf_image.c)
+- **支持格式**: ELF64（动态链接需提供 interpreter）
+- **说明**: 旧的平坦二进制加载器 `bin_loader` 已删除
 
-### 3. 用户程序编译
+### 3. 用户程序
 - **目录**: [apps/](../apps/)
-- **示例程序**: [apps/test_exec.S](../apps/test_exec.S)
-- **链接脚本**: [apps/app.ld](../apps/app.ld)
+- **示例**: rootfs 中的 `/busybox`（ELF，由 `task/elf_loader.c` 加载）
 
 ## 使用步骤
 
@@ -31,19 +34,16 @@ make ARCH=aarch64 kernel
 - 编译 `apps/` 目录下的所有 `.S` 程序
 - 生成二进制文件到 `build/` 目录
 
-### 2. 创建 rootfs 镜像并添加程序
+### 2. 创建 rootfs 镜像
 
 ```bash
-# 创建空的 rootfs 镜像
+# 创建 rootfs 镜像（已包含 /busybox）
 make ARCH=aarch64 rootfs
 
-# 手动挂载并添加程序（需要 sudo 权限）
-mkdir -p /tmp/avatar_mnt
+# 需要额外程序时，挂载后拷入（需要 sudo 权限）
 sudo mount -o loop build/rootfs.img /tmp/avatar_mnt
-sudo cp build/test_exec.bin /tmp/avatar_mnt/test_exec
-sudo chmod +x /tmp/avatar_mnt/test_exec
+sudo cp build/your_app /tmp/avatar_mnt/your_app
 sudo umount /tmp/avatar_mnt
-rmdir /tmp/avatar_mnt
 ```
 
 ### 3. 运行内核（带文件系统）
@@ -114,7 +114,7 @@ msg:
 ### 汇编方式
 
 ```asm
-/* 执行 /test_exec 程序 */
+/* 执行 /your_app 程序 */
 adr     x0, pathname    /* x0 = 程序路径 */
 mov     x1, #0          /* x1 = argv (暂未使用) */
 mov     x2, #0          /* x2 = envp (暂未使用) */
@@ -122,7 +122,7 @@ mov     x8, #SYS_EXECVE
 svc     #0
 
 pathname:
-    .asciz "/test_exec"
+    .asciz "/your_app"
 ```
 
 ### C 语言方式
@@ -131,7 +131,7 @@ pathname:
 #include "unistd.h"
 
 void load_program(void) {
-    char *path = "/test_exec";
+    char *path = "/your_app";
     char *argv[] = {NULL};
     char *envp[] = {NULL};
 
@@ -143,22 +143,10 @@ void load_program(void) {
 
 ## 当前限制
 
-1. **格式支持**: 仅支持平面二进制格式，不支持 ELF
-2. **参数传递**: argv 和 envp 暂未实现
-3. **错误处理**: 加载失败时返回负错误码
-4. **内存管理**: 程序加载后不会自动释放内存
-5. **地址空间**: 所有程序共享相同的虚拟地址空间
-
-## 测试程序
-
-### test_exec
-
-位置: [apps/test_exec.S](../apps/test_exec.S)
-
-功能：
-- 输出欢迎消息
-- 进入循环，定期输出状态
-- 演示从文件系统加载的程序可以正常运行
+1. **格式支持**: ELF64；动态链接程序需要提供 interpreter（如 `/lib/ld-musl-*.so.1`）
+2. **参数传递**: 支持 argv/envp（Linux ABI 初始栈）
+3. **错误处理**: 加载失败时返回负 errno
+4. **地址空间**: 每个用户进程有独立的用户页表
 
 ## 故障排除
 
@@ -175,7 +163,7 @@ void load_program(void) {
 ### 程序未找到
 
 ```
-[ERROR] [loader] Failed to open '/test_exec': -2
+[ERROR] [loader] Failed to open '/your_app': -2
 ```
 
 **原因**: 文件不存在于 rootfs 中
@@ -191,14 +179,6 @@ void load_program(void) {
 **原因**: 物理内存不足
 
 **解决**: 检查程序大小是否超过 MAX_FILE_SIZE (1MB)
-
-## 下一步工作
-
-1. **ELF 支持**: 实现 ELF 文件格式加载器
-2. **参数传递**: 实现 argv 和 envp 传递
-3. **独立地址空间**: 为每个进程创建独立的地址空间
-4. **进程替换**: 实现真正的进程替换语义
-5. **资源清理**: 进程退出时释放加载的程序内存
 
 ## 相关文档
 

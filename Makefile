@@ -228,8 +228,7 @@ KERNEL_OBJECTS := $(foreach f,$(KERNEL_SRCS),$(call kobj,$(f)))
 # 的注释：fs_lock.c 的指针截断事故就是被一刀切的 -w 藏掉的。
 KERNEL_LWEXT4_SRCS := \
     $(FS_DIR)/vfs/vfs.c \
-    $(KERNEL_DIR)/loader/bin_loader.c \
-    $(KERNEL_DIR)/loader/elf_loader.c \
+    $(KERNEL_DIR)/task/elf_loader.c \
     $(KERNEL_DIR)/syscall/syscall.c \
     $(KERNEL_DIR)/syscall/core/proc_lifecycle.c \
     $(KERNEL_DIR)/syscall/fs/fd_pool.c \
@@ -658,7 +657,7 @@ ifeq ($(KMEM_TEST),1)
 endif
 
 # PANIC_TEST=1：定义 RUN_PANIC_TEST，在 ELF 解析路径上**故意 panic 一次**，
-# 用来看调用栈回溯长什么样（kernel/loader/elf_image.c、docs/basic/BACKTRACE.md）。
+# 用来看调用栈回溯长什么样（kernel/mm/elf_image.c、docs/basic/BACKTRACE.md）。
 # 和 STRING_TEST 一样与上面三个变体正交，只影响 elf_image.o 一个对象。
 #
 # 触发点选在 ELF 头部校验之后：那里离 boot 足够远，能打出一条真实的
@@ -690,14 +689,14 @@ endif
 # 漏了的话症状是"新开关没生效"——**而且没有任何报错**：CFLAGS 变了但
 # _CFG_SIG（§7 下面那个）里没有变体这一项，make 也就不知道要重编。
 # 历史上这里只清 kernel_main.o（当时变体确实只影响它），加 STRING_TEST/
-# PANIC_TEST 之后就靠不住了 —— 后者的条件编译在 kernel/loader/elf_image.c。
+# PANIC_TEST 之后就靠不住了 —— 后者的条件编译在 kernel/mm/elf_image.c。
 #
 # 两个方向都要正确：从 A 切到 B 和从 B 切回 A 都得清掉。所以这里**无条件**
 # 列出所有可能受影响的文件，而不是只在对应开关打开时列 —— 否则切回去那一趟
 # 会漏。（多编一个 .o 的代价可以忽略。）
 _VARIANT_FILE := $(BUILD_DIR)/.build_variant
 _VARIANT_OBJS := $(BUILD_DIR)/kernel_main.o \
-                 $(BUILD_DIR)/kernel_loader_elf_image.o \
+                 $(BUILD_DIR)/kernel_mm_elf_image.o \
                  $(BUILD_DIR)/kernel_syscall_syscall.o \
                  $(BUILD_DIR)/tests_unit_test.o \
                  $(TEST_BOOT_OBJ)
@@ -1835,7 +1834,7 @@ test-string:
 #
 #   用法: make PLATFORM=qemu-virt-x86_64 test-panic
 #
-# 触发点在 kernel/loader/elf_image.c 的 ELF 头部校验之后（PANIC_TEST=1 时才
+# 触发点在 kernel/mm/elf_image.c 的 ELF 头部校验之后（PANIC_TEST=1 时才
 # 编译进来），打出来的是一条真实的加载器调用链：
 #   platform_panic ← elf_image_load_impl ← elf_image_load ← exec → …
 # 设计说明与已知局限见 docs/basic/BACKTRACE.md。

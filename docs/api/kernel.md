@@ -1,6 +1,6 @@
 # kernel — C API
 
-[← 返回总览](index.md) · 997 个函数 · 说明覆盖率 95.7%
+[← 返回总览](index.md) · 996 个函数 · 说明覆盖率 95.7%
 
 <a id="mod-kernel-debug-backtrace.c"></a>
 
@@ -713,620 +713,6 @@ void klog_async_start(void)
 </details>
 
 **位置**：`kernel/debug/klog_async.c:99`
-
-<a id="mod-kernel-debug-rt_latency.c"></a>
-
-## kernel/debug/rt_latency.c — R0 实时延迟统计
-
-`kernel/debug/rt_latency.c` · 12 个函数 · 12 个有说明 · 258 行
-
-见 docs/realtime/ARCHITECTURE.md。这里只做“常开、低成本”的近似测量，
-真正的 irq-off trace 后续再上（R0.5）：
-- wake→run：sched_unblock() 记录 task->wake_ns，调度器切入时结算；
-- syscall：用户 syscall 返回路径结算内核执行时长；
-- tick_gap：timer tick 间隔，作为长关中断/长临界区的近似指示。
-数据经 /proc/rtstat 暴露。
-
-<a id="fn-kernel-debug-rt_latency.c-51"></a>
-
-### `rt_lat_cpu`
-
-```c
-static inline rt_lat_cpu_t *rt_lat_cpu(void)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-返回当前 CPU 的延迟统计结构，CPU 号越界时回退到 0 号。
-
-**位置**：`kernel/debug/rt_latency.c:51`
-
-<a id="fn-kernel-debug-rt_latency.c-59"></a>
-
-### `rt_latency_wake`
-
-```c
-void rt_latency_wake(task_t *t)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-把任务的唤醒时刻记为当前定时器纳秒值。
-
-**位置**：`kernel/debug/rt_latency.c:59`
-
-<a id="fn-kernel-debug-rt_latency.c-66"></a>
-
-### `rt_latency_run`
-
-```c
-void rt_latency_run(task_t *t, uint64_t now_ns)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-若有待统计唤醒时刻，算出唤醒延迟并更新本 CPU 的 last/max/计数后清零该时刻。
-
-**位置**：`kernel/debug/rt_latency.c:66`
-
-<a id="fn-kernel-debug-rt_latency.c-82"></a>
-
-### `rt_latency_syscall`
-
-```c
-void rt_latency_syscall(uint64_t duration_ns, uint32_t nr)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-记录一次系统调用耗时，更新本 CPU 的 last、max 值（记下最慢调用号）与计数。
-
-**位置**：`kernel/debug/rt_latency.c:82`
-
-<a id="fn-kernel-debug-rt_latency.c-93"></a>
-
-### `rt_latency_reset`
-
-```c
-void rt_latency_reset(void)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-清零全部 CPU 的延迟统计，并置关中断追踪就绪标志。
-
-**位置**：`kernel/debug/rt_latency.c:93`
-
-<a id="fn-kernel-debug-rt_latency.c-99"></a>
-
-### `rt_latency_irq_off_begin`
-
-```c
-void rt_latency_irq_off_begin(void)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-就绪且非嵌套时，记录本 CPU 关中断起始时刻与调用者返回地址。
-
-<details>
-<summary>函数内备注（1 条）</summary>
-
-**第 109 行（行尾）**
-
-> 嵌套关中断：只统计最外层区间
-
-</details>
-
-**位置**：`kernel/debug/rt_latency.c:99`
-
-<a id="fn-kernel-debug-rt_latency.c-116"></a>
-
-### `rt_latency_irq_off_end`
-
-```c
-void rt_latency_irq_off_end(void)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-结束本 CPU 关中断区间，累加计数并更新持续时长、最大值及最长区间的调用点。
-
-<details>
-<summary>函数内备注（1 条）</summary>
-
-**第 139 行**
-
-> 最长区间起点对应的调用点（arch_irq_save/disable 的调用者）。
-
-</details>
-
-**位置**：`kernel/debug/rt_latency.c:116`
-
-<a id="fn-kernel-debug-rt_latency.c-144"></a>
-
-### `rt_latency_tick`
-
-```c
-void rt_latency_tick(uint32_t cpu_id, uint64_t now_ns)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-记录该 CPU 本次 tick 时刻，与上次比较更新间隔 last/max 并累加计数。
-
-**位置**：`kernel/debug/rt_latency.c:144`
-
-<a id="fn-kernel-debug-rt_latency.c-162"></a>
-
-### `lat_puts`
-
-```c
-static size_t lat_puts(char *buf, size_t cap, size_t pos, const char *s)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-把字符串追加进缓冲区并保留结尾 NUL，返回新的写入位置。
-
-**位置**：`kernel/debug/rt_latency.c:162`
-
-<a id="fn-kernel-debug-rt_latency.c-171"></a>
-
-### `lat_put_u64`
-
-```c
-static size_t lat_put_u64(char *buf, size_t cap, size_t pos, uint64_t v)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-把无符号数按十进制转为文本追加，补 NUL 并返回新位置。
-
-**位置**：`kernel/debug/rt_latency.c:171`
-
-<a id="fn-kernel-debug-rt_latency.c-190"></a>
-
-### `lat_put_hex`
-
-```c
-static size_t lat_put_hex(char *buf, size_t cap, size_t pos, uint64_t v)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-把无符号数按小写十六进制追加，补 NUL 并返回新位置。
-
-**位置**：`kernel/debug/rt_latency.c:190`
-
-<a id="fn-kernel-debug-rt_latency.c-210"></a>
-
-### `rt_latency_snprintf`
-
-```c
-int rt_latency_snprintf(char *buf, size_t cap)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-按固定列把各 CPU 的唤醒、系统调用、tick 间隔与关中断延迟统计渲染成多行文本，返回长度。
-
-**位置**：`kernel/debug/rt_latency.c:210`
-
-<a id="mod-kernel-loader-bin_loader.c"></a>
-
-## kernel/loader/bin_loader.c — 二进制程序加载器实现
-
-`kernel/loader/bin_loader.c` · 1 个函数 · 1 个有说明 · 121 行
-
-<a id="fn-kernel-loader-bin_loader.c-26"></a>
-
-### `bin_loader_load_from_file`
-
-```c
-int bin_loader_load_from_file(const char *pathname, char **argv, char **envp)
-```
-
-bin_loader_load_from_file - 从文件系统加载并执行程序
-
-<details>
-<summary>函数内备注（16 条）</summary>
-
-**第 34 行（行尾）**
-
-> 内核缓冲区, 用于存储路径名
-
-**第 36 行（行尾）**
-
-> 暂未使用参数
-
-**第 37 行（行尾）**
-
-> 暂未使用环境变量
-
-**第 39 行**
-
-> 从用户空间复制路径名到内核缓冲区
-
-**第 40 行**
-
-> 简单实现：假设当前使用共享页表, 可以直接访问
-
-**第 41 行**
-
-> TODO: 实现真正的 copy_from_user
-
-**第 49 行**
-
-> 与 elf_loader.c 的同类事件统一到 DEBUG：装载是逐次 exec 的操作,
-> busybox 每条命令都会走一遍, 不该占 INFO。
-
-**第 54 行**
-
-> 打开文件
-
-**第 61 行**
-
-> 获取文件大小
-
-**第 69 行**
-
-> 检查文件大小
-
-**第 78 行**
-
-> 计算需要的页面数
-
-**第 81 行**
-
-> 分配内存页面
-
-**第 89 行**
-
-> 读取文件内容
-
-**第 102 行**
-
-> 创建用户进程
-> process_create 的 user_entry 参数在 AArch64 下是代码的内核虚拟地址,
-> vm_create_user_process 会从该地址拷贝代码到新的用户页表中。
-> 进程实际入口固定为用户虚拟地址 0x10000。
-
-**第 116 行**
-
-> 退出当前进程, 让新进程运行
-
-**第 119 行**
-
-> 不应该到达这里
-
-</details>
-
-**位置**：`kernel/loader/bin_loader.c:26`
-
-<a id="mod-kernel-loader-elf_image.c"></a>
-
-## kernel/loader/elf_image.c — ELF 镜像加载
-
-`kernel/loader/elf_image.c` · 5 个函数 · 5 个有说明 · 449 行
-
-职责：ELF 格式校验 + PT_LOAD 段加载到用户地址空间 + RELA 重定位
-输入：已初始化的用户页表(含内核映射, 由调用方准备)
-输出：elf_image_info_t(入口点, VA 范围, 程序头地址等)
-
-<a id="fn-kernel-loader-elf_image.c-30"></a>
-
-### `elf_load_segment`
-
-```c
-static int elf_load_segment(void *pgd, elf64_phdr_t *phdr, uint8_t *file_data)
-```
-
-elf_load_segment - 加载单个 ELF 段到用户空间
-
-<details>
-<summary>函数内备注（1 条）</summary>
-
-**第 47 行（行尾）**
-
-> 默认：用户可读写可执行
-
-</details>
-
-**位置**：`kernel/loader/elf_image.c:30`
-
-<a id="fn-kernel-loader-elf_image.c-82"></a>
-
-### `elf_load_segment_with_base`
-
-```c
-static int elf_load_segment_with_base(void *pgd, elf64_phdr_t *phdr, uint8_t *file_data, uint64_t image_base)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-把段的虚拟地址加上 image_base 后复用 elf_load_segment 装载。
-
-**位置**：`kernel/loader/elf_image.c:82`
-
-<a id="fn-kernel-loader-elf_image.c-94"></a>
-
-### `elf_image_load_impl`
-
-```c
-static int elf_image_load_impl(uint8_t *file_data, uint64_t file_size, void *pgd, uint64_t force_base, elf_image_info_t *out)
-```
-
-内部实现。force_base=0 → 自动选择基址；force_base≠0 → 强制使用(用于 interpreter)。
-
-<details>
-<summary>函数内备注（10 条）</summary>
-
-**第 137 行**
-
-> 调用栈回溯的触发点(只在 PANIC_TEST=1 的构建里存在, 见 Makefile §7)。
-
-> 放在这里是有讲究的：ELF 头部刚刚校验通过, 程序头还没开始解析,
-> 离 boot 足够远 —— 打出来的是一条真实的加载器调用链
-> platform_panic ← elf_image_load_impl ← elf_image_load
-> ← exec_elf_image ← exec_handler/elf_loader …
-> 而不是只有 kernel_main 两层, 正好用来看展开和符号化对不对。
-
-> 直接调 platform_panic() 而不是 assert_always()：走的是和真实断言失败
-> 完全一样的那条路(platform_panic 自己会摘 klog 锁, 打栈, 停机),
-> 所以看到的东西不会因为是&quot;演示&quot;而和真实崩溃不一样。
-
-> 用法： make PLATFORM=&lt;p&gt; test-panic
-> 撤掉： 不传 PANIC_TEST 就是普通内核, 本段不参与编译。
-
-**第 168 行**
-
-> ET_DYN 使用 PIE 基址 USER_CODE_BASE, 或调用方指定的 force_base(interpreter 用)
-
-**第 180 行**
-
-> 扫描 PT_INTERP(仅主程序；加载 interpreter 时不递归)
-
-**第 200 行**
-
-> 加载所有 PT_LOAD 段
-
-**第 219 行**
-
-> ── 处理 RELA 重定位(无解释器的 PIE 需要)────────────────────
-
-**第 380 行**
-
-> R_X86_64_COPY: 需要符号解析后从共享库复制数据
-> 交由 ld.so 完成, 内核静默跳过
-
-**第 402 行**
-
-> ── 计算程序头的用户态地址(AT_PHDR auxv)──────────────────
-
-**第 407 行**
-
-> 优先查找 PT_PHDR 段(类型值 6)
-
-**第 410 行（行尾）**
-
-> PT_PHDR
-
-**第 415 行**
-
-> 没有 PT_PHDR：用第一个 PT_LOAD 的基址 + 文件内偏移
-
-</details>
-
-**位置**：`kernel/loader/elf_image.c:94`
-
-<a id="fn-kernel-loader-elf_image.c-441"></a>
-
-### `elf_image_load`
-
-```c
-int elf_image_load(uint8_t *file_data, uint64_t file_size, void *pgd, elf_image_info_t *out)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-以 image_base 为 0 调用 elf_image_load_impl 装载 ELF 镜像。
-
-**位置**：`kernel/loader/elf_image.c:441`
-
-<a id="fn-kernel-loader-elf_image.c-446"></a>
-
-### `elf_image_load_at`
-
-```c
-int elf_image_load_at(uint8_t *file_data, uint64_t file_size, void *pgd, uint64_t force_base, elf_image_info_t *out)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-以指定 force_base 调用 elf_image_load_impl 装载 ELF 镜像。
-
-**位置**：`kernel/loader/elf_image.c:446`
-
-<a id="mod-kernel-loader-elf_loader.c"></a>
-
-## kernel/loader/elf_loader.c — ELF 程序加载器(文件 I/O 层)
-
-`kernel/loader/elf_loader.c` · 4 个函数 · 4 个有说明 · 338 行
-
-职责：从 ext4 文件系统读取 ELF 文件, 然后交由 task_execve 处理。
-ELF 格式解析, 段加载和进程创建逻辑分别在 elf_image.c 和 task/exec.c 中。
-
-<a id="fn-kernel-loader-elf_loader.c-28"></a>
-
-### `read_file_fully`
-
-```c
-static int read_file_fully(ext4_file *file, uint8_t *buf, uint64_t size)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-按块循环读取直到读满指定大小，任一次短读或出错返回 EIO。
-
-**位置**：`kernel/loader/elf_loader.c:28`
-
-<a id="fn-kernel-loader-elf_loader.c-53"></a>
-
-### `resolve_symlink`
-
-```c
-static int resolve_symlink(const char *path, char *out, size_t outsz)
-```
-
-resolve_symlink - 跟随符号链接, 最多 8 层, 将最终真实路径写入 out。
-若路径不是符号链接, 直接把 path 复制到 out 返回 0。
-支持相对符号链接(相对于当前目录)和绝对符号链接。
-返回 0 表示成功, -1 表示循环太深。
-
-<details>
-<summary>函数内备注（6 条）</summary>
-
-**第 68 行**
-
-> 不是符号链接(或 readlink 失败)：cur 就是最终路径
-
-**第 79 行**
-
-> 组合新路径
-
-**第 82 行**
-
-> 绝对符号链接
-
-**第 90 行**
-
-> 相对符号链接：取 cur 的目录部分拼上 target
-
-**第 104 行**
-
-> next → cur, 进入下一轮
-
-**第 112 行**
-
-> 符号链接层数超限
-
-</details>
-
-**位置**：`kernel/loader/elf_loader.c:53`
-
-<a id="fn-kernel-loader-elf_loader.c-121"></a>
-
-### `elf_loader_load_from_file`
-
-```c
-int elf_loader_load_from_file(const char *pathname, char **argv, char **envp, trap_frame_t *frame)
-```
-
-elf_loader_load_from_file - 从文件系统加载并执行 ELF 程序
-
-**位置**：`kernel/loader/elf_loader.c:121`
-
-<a id="fn-kernel-loader-elf_loader.c-126"></a>
-
-### `load_from_file_depth`
-
-```c
-static int load_from_file_depth(const char *pathname, char **argv, char **envp, trap_frame_t *frame, int depth)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-从 ext4 读取可执行文件，解析符号链接与 #!/PT_INTERP（递归深度受限），把文件/解释器缓冲交给 task_execve 原地 exec；失败返回负 errno。
-
-<details>
-<summary>函数内备注（19 条）</summary>
-
-**第 136 行**
-
-> 复制路径名
-
-**第 146 行**
-
-> 解析符号链接(busybox applet 等均为 symlink)
-
-**第 156 行**
-
-> 打开文件
-
-**第 160 行（行尾）**
-
-> lwext4 errno == Linux errno (ENOENT=2, etc.)
-
-**第 163 行**
-
-> 获取文件大小
-
-**第 171 行（行尾）**
-
-> -ENOEXEC
-
-**第 176 行**
-
-> 分配内存
-
-**第 182 行（行尾）**
-
-> -ENOMEM
-
-**第 187 行**
-
-> 读取文件
-
-**第 192 行（行尾）**
-
-> -EIO
-
-**第 199 行**
-
-> ── Shebang (#!) 脚本处理 ───────────────────────────────────────
-
-**第 204 行（行尾）**
-
-> -ENOEXEC
-
-**第 207 行**
-
-> 解析 &quot;#!&lt;interpreter&gt; [optional-arg]\n&quot; — 只看前 256 字节
-
-**第 227 行（行尾）**
-
-> -ENOEXEC
-
-**第 230 行**
-
-> 可选参数(如 &quot;#!/usr/bin/env sh&quot; 中的 &quot;sh&quot;)
-
-**第 249 行**
-
-> 构建新 argv: [interp, interp_arg?, script_path, original_argv[1..], NULL]
-
-**第 267 行**
-
-> ── 检查 PT_INTERP(动态连接器路径)─────────────────────────────
-
-**第 285 行**
-
-> interpreter 路径也可能是符号链接
-
-**第 327 行**
-
-> 加载并执行 ELF(原地 exec)。
-> 传 resolved 而不是 path_buf：/proc/self/exe 和 comm 用 Linux 语义的
-> 真实可执行文件路径, 而不是用户给的、可能带符号链接的路径。
-
-> 缓冲区所有权从这里转交给 task_execve: 无论成功失败都由它释放,
-> 本函数返回后不得再碰 file_data / interp_data(以前这里再 kfree 一次,
-> 在原地 exec 语义下会 double free)。
-
-</details>
-
-**位置**：`kernel/loader/elf_loader.c:126`
 
 <a id="mod-kernel-main.c"></a>
 
@@ -2985,6 +2371,150 @@ void mm_vm_switch_user(uint64_t pgd_phys)
 </details>
 
 **位置**：`kernel/mm/aarch64/vmm.c:606`
+
+<a id="mod-kernel-mm-elf_image.c"></a>
+
+## kernel/mm/elf_image.c — ELF 镜像加载
+
+`kernel/mm/elf_image.c` · 5 个函数 · 5 个有说明 · 449 行
+
+职责：ELF 格式校验 + PT_LOAD 段加载到用户地址空间 + RELA 重定位
+输入：已初始化的用户页表(含内核映射, 由调用方准备)
+输出：elf_image_info_t(入口点, VA 范围, 程序头地址等)
+
+<a id="fn-kernel-mm-elf_image.c-30"></a>
+
+### `elf_load_segment`
+
+```c
+static int elf_load_segment(void *pgd, elf64_phdr_t *phdr, uint8_t *file_data)
+```
+
+elf_load_segment - 加载单个 ELF 段到用户空间
+
+<details>
+<summary>函数内备注（1 条）</summary>
+
+**第 47 行（行尾）**
+
+> 默认：用户可读写可执行
+
+</details>
+
+**位置**：`kernel/mm/elf_image.c:30`
+
+<a id="fn-kernel-mm-elf_image.c-82"></a>
+
+### `elf_load_segment_with_base`
+
+```c
+static int elf_load_segment_with_base(void *pgd, elf64_phdr_t *phdr, uint8_t *file_data, uint64_t image_base)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+把段的虚拟地址加上 image_base 后复用 elf_load_segment 装载。
+
+**位置**：`kernel/mm/elf_image.c:82`
+
+<a id="fn-kernel-mm-elf_image.c-94"></a>
+
+### `elf_image_load_impl`
+
+```c
+static int elf_image_load_impl(uint8_t *file_data, uint64_t file_size, void *pgd, uint64_t force_base, elf_image_info_t *out)
+```
+
+内部实现。force_base=0 → 自动选择基址；force_base≠0 → 强制使用(用于 interpreter)。
+
+<details>
+<summary>函数内备注（10 条）</summary>
+
+**第 137 行**
+
+> 调用栈回溯的触发点(只在 PANIC_TEST=1 的构建里存在, 见 Makefile §7)。
+
+> 放在这里是有讲究的：ELF 头部刚刚校验通过, 程序头还没开始解析,
+> 离 boot 足够远 —— 打出来的是一条真实的加载器调用链
+> platform_panic ← elf_image_load_impl ← elf_image_load
+> ← exec_elf_image ← exec_handler/elf_loader …
+> 而不是只有 kernel_main 两层, 正好用来看展开和符号化对不对。
+
+> 直接调 platform_panic() 而不是 assert_always()：走的是和真实断言失败
+> 完全一样的那条路(platform_panic 自己会摘 klog 锁, 打栈, 停机),
+> 所以看到的东西不会因为是&quot;演示&quot;而和真实崩溃不一样。
+
+> 用法： make PLATFORM=&lt;p&gt; test-panic
+> 撤掉： 不传 PANIC_TEST 就是普通内核, 本段不参与编译。
+
+**第 168 行**
+
+> ET_DYN 使用 PIE 基址 USER_CODE_BASE, 或调用方指定的 force_base(interpreter 用)
+
+**第 180 行**
+
+> 扫描 PT_INTERP(仅主程序；加载 interpreter 时不递归)
+
+**第 200 行**
+
+> 加载所有 PT_LOAD 段
+
+**第 219 行**
+
+> ── 处理 RELA 重定位(无解释器的 PIE 需要)────────────────────
+
+**第 380 行**
+
+> R_X86_64_COPY: 需要符号解析后从共享库复制数据
+> 交由 ld.so 完成, 内核静默跳过
+
+**第 402 行**
+
+> ── 计算程序头的用户态地址(AT_PHDR auxv)──────────────────
+
+**第 407 行**
+
+> 优先查找 PT_PHDR 段(类型值 6)
+
+**第 410 行（行尾）**
+
+> PT_PHDR
+
+**第 415 行**
+
+> 没有 PT_PHDR：用第一个 PT_LOAD 的基址 + 文件内偏移
+
+</details>
+
+**位置**：`kernel/mm/elf_image.c:94`
+
+<a id="fn-kernel-mm-elf_image.c-441"></a>
+
+### `elf_image_load`
+
+```c
+int elf_image_load(uint8_t *file_data, uint64_t file_size, void *pgd, elf_image_info_t *out)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+以 image_base 为 0 调用 elf_image_load_impl 装载 ELF 镜像。
+
+**位置**：`kernel/mm/elf_image.c:441`
+
+<a id="fn-kernel-mm-elf_image.c-446"></a>
+
+### `elf_image_load_at`
+
+```c
+int elf_image_load_at(uint8_t *file_data, uint64_t file_size, void *pgd, uint64_t force_base, elf_image_info_t *out)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+以指定 force_base 调用 elf_image_load_impl 装载 ELF 镜像。
+
+**位置**：`kernel/mm/elf_image.c:446`
 
 <a id="mod-kernel-mm-kmalloc.c"></a>
 
@@ -6100,6 +5630,205 @@ uint32_t rt_event_wait(rt_event_t *e, uint32_t mask, bool wait_all, uint64_t tim
 </details>
 
 **位置**：`kernel/rt/rt_event.c:98`
+
+<a id="mod-kernel-rt-rt_latency.c"></a>
+
+## kernel/rt/rt_latency.c — R0 实时延迟统计
+
+`kernel/rt/rt_latency.c` · 12 个函数 · 12 个有说明 · 258 行
+
+见 docs/realtime/ARCHITECTURE.md。这里只做“常开、低成本”的近似测量，
+真正的 irq-off trace 后续再上（R0.5）：
+- wake→run：sched_unblock() 记录 task->wake_ns，调度器切入时结算；
+- syscall：用户 syscall 返回路径结算内核执行时长；
+- tick_gap：timer tick 间隔，作为长关中断/长临界区的近似指示。
+数据经 /proc/rtstat 暴露。
+
+<a id="fn-kernel-rt-rt_latency.c-51"></a>
+
+### `rt_lat_cpu`
+
+```c
+static inline rt_lat_cpu_t *rt_lat_cpu(void)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+返回当前 CPU 的延迟统计结构，CPU 号越界时回退到 0 号。
+
+**位置**：`kernel/rt/rt_latency.c:51`
+
+<a id="fn-kernel-rt-rt_latency.c-59"></a>
+
+### `rt_latency_wake`
+
+```c
+void rt_latency_wake(task_t *t)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+把任务的唤醒时刻记为当前定时器纳秒值。
+
+**位置**：`kernel/rt/rt_latency.c:59`
+
+<a id="fn-kernel-rt-rt_latency.c-66"></a>
+
+### `rt_latency_run`
+
+```c
+void rt_latency_run(task_t *t, uint64_t now_ns)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+若有待统计唤醒时刻，算出唤醒延迟并更新本 CPU 的 last/max/计数后清零该时刻。
+
+**位置**：`kernel/rt/rt_latency.c:66`
+
+<a id="fn-kernel-rt-rt_latency.c-82"></a>
+
+### `rt_latency_syscall`
+
+```c
+void rt_latency_syscall(uint64_t duration_ns, uint32_t nr)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+记录一次系统调用耗时，更新本 CPU 的 last、max 值（记下最慢调用号）与计数。
+
+**位置**：`kernel/rt/rt_latency.c:82`
+
+<a id="fn-kernel-rt-rt_latency.c-93"></a>
+
+### `rt_latency_reset`
+
+```c
+void rt_latency_reset(void)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+清零全部 CPU 的延迟统计，并置关中断追踪就绪标志。
+
+**位置**：`kernel/rt/rt_latency.c:93`
+
+<a id="fn-kernel-rt-rt_latency.c-99"></a>
+
+### `rt_latency_irq_off_begin`
+
+```c
+void rt_latency_irq_off_begin(void)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+就绪且非嵌套时，记录本 CPU 关中断起始时刻与调用者返回地址。
+
+<details>
+<summary>函数内备注（1 条）</summary>
+
+**第 109 行（行尾）**
+
+> 嵌套关中断：只统计最外层区间
+
+</details>
+
+**位置**：`kernel/rt/rt_latency.c:99`
+
+<a id="fn-kernel-rt-rt_latency.c-116"></a>
+
+### `rt_latency_irq_off_end`
+
+```c
+void rt_latency_irq_off_end(void)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+结束本 CPU 关中断区间，累加计数并更新持续时长、最大值及最长区间的调用点。
+
+<details>
+<summary>函数内备注（1 条）</summary>
+
+**第 139 行**
+
+> 最长区间起点对应的调用点（arch_irq_save/disable 的调用者）。
+
+</details>
+
+**位置**：`kernel/rt/rt_latency.c:116`
+
+<a id="fn-kernel-rt-rt_latency.c-144"></a>
+
+### `rt_latency_tick`
+
+```c
+void rt_latency_tick(uint32_t cpu_id, uint64_t now_ns)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+记录该 CPU 本次 tick 时刻，与上次比较更新间隔 last/max 并累加计数。
+
+**位置**：`kernel/rt/rt_latency.c:144`
+
+<a id="fn-kernel-rt-rt_latency.c-162"></a>
+
+### `lat_puts`
+
+```c
+static size_t lat_puts(char *buf, size_t cap, size_t pos, const char *s)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+把字符串追加进缓冲区并保留结尾 NUL，返回新的写入位置。
+
+**位置**：`kernel/rt/rt_latency.c:162`
+
+<a id="fn-kernel-rt-rt_latency.c-171"></a>
+
+### `lat_put_u64`
+
+```c
+static size_t lat_put_u64(char *buf, size_t cap, size_t pos, uint64_t v)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+把无符号数按十进制转为文本追加，补 NUL 并返回新位置。
+
+**位置**：`kernel/rt/rt_latency.c:171`
+
+<a id="fn-kernel-rt-rt_latency.c-190"></a>
+
+### `lat_put_hex`
+
+```c
+static size_t lat_put_hex(char *buf, size_t cap, size_t pos, uint64_t v)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+把无符号数按小写十六进制追加，补 NUL 并返回新位置。
+
+**位置**：`kernel/rt/rt_latency.c:190`
+
+<a id="fn-kernel-rt-rt_latency.c-210"></a>
+
+### `rt_latency_snprintf`
+
+```c
+int rt_latency_snprintf(char *buf, size_t cap)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+按固定列把各 CPU 的唤醒、系统调用、tick 间隔与关中断延迟统计渲染成多行文本，返回长度。
+
+**位置**：`kernel/rt/rt_latency.c:210`
 
 <a id="mod-kernel-rt-rt_mutex.c"></a>
 
@@ -12155,9 +11884,9 @@ void shutdown_handler(uint64_t regs[6], task_t *current)
 
 ## kernel/syscall/syscall.c
 
-`kernel/syscall/syscall.c` · 13 个函数 · 13 个有说明 · 1669 行
+`kernel/syscall/syscall.c` · 13 个函数 · 13 个有说明 · 1667 行
 
-<a id="fn-kernel-syscall-syscall.c-59"></a>
+<a id="fn-kernel-syscall-syscall.c-57"></a>
 
 ### `test_completion_get`
 
@@ -12169,9 +11898,9 @@ static completion_t *test_completion_get(uint64_t id)
 
 id 越界时返回 NULL，否则在自旋锁保护下首次调用时初始化完成量数组，返回对应槽位指针。
 
-**位置**：`kernel/syscall/syscall.c:59`
+**位置**：`kernel/syscall/syscall.c:57`
 
-<a id="fn-kernel-syscall-syscall.c-85"></a>
+<a id="fn-kernel-syscall-syscall.c-83"></a>
 
 ### `notify_parent_wait`
 
@@ -12183,9 +11912,9 @@ static void notify_parent_wait(task_t *child)
 
 扫描任务池找匹配 wait_pid 且正在等待的父任务，清等待标志并解除阻塞；否则仅打印父任务状态日志。
 
-**位置**：`kernel/syscall/syscall.c:85`
+**位置**：`kernel/syscall/syscall.c:83`
 
-<a id="fn-kernel-syscall-syscall.c-119"></a>
+<a id="fn-kernel-syscall-syscall.c-117"></a>
 
 ### `notify_parent_wait_from_task`
 
@@ -12195,9 +11924,9 @@ void notify_parent_wait_from_task(task_t *child)
 
 Called from task.c's task_exit() to notify waiting parent
 
-**位置**：`kernel/syscall/syscall.c:119`
+**位置**：`kernel/syscall/syscall.c:117`
 
-<a id="fn-kernel-syscall-syscall.c-152"></a>
+<a id="fn-kernel-syscall-syscall.c-150"></a>
 
 ### `x86_translate_syscall`
 
@@ -12215,601 +11944,601 @@ busybox-x86_64 使用 Linux x86_64 syscall 号, 而下面的 switch 分支
 <details>
 <summary>函数内备注（144 条）</summary>
 
-**第 155 行**
+**第 153 行**
 
 > ── 基础 I/O ──
 
-**第 158 行（行尾）**
+**第 156 行（行尾）**
 
 > read
 
-**第 161 行（行尾）**
+**第 159 行（行尾）**
 
 > write
 
-**第 162 行（行尾）**
+**第 160 行（行尾）**
 
 > open(path,flags,mode) → openat(AT_FDCWD,path,flags,mode)
 
-**第 171 行（行尾）**
+**第 169 行（行尾）**
 
 > close
 
-**第 172 行（行尾）**
+**第 170 行（行尾）**
 
 > stat(path,buf) → newfstatat(AT_FDCWD,path,buf,0)
 
-**第 181 行（行尾）**
+**第 179 行（行尾）**
 
 > fstat
 
-**第 182 行（行尾）**
+**第 180 行（行尾）**
 
 > lstat(path,buf) → newfstatat(AT_FDCWD,path,buf,0)
 
-**第 191 行（行尾）**
+**第 189 行（行尾）**
 
 > poll
 
-**第 194 行（行尾）**
+**第 192 行（行尾）**
 
 > lseek
 
-**第 197 行（行尾）**
+**第 195 行（行尾）**
 
 > mmap
 
-**第 200 行（行尾）**
+**第 198 行（行尾）**
 
 > mprotect
 
-**第 203 行（行尾）**
+**第 201 行（行尾）**
 
 > munmap
 
-**第 206 行（行尾）**
+**第 204 行（行尾）**
 
 > brk
 
-**第 209 行（行尾）**
+**第 207 行（行尾）**
 
 > rt_sigaction
 
-**第 212 行（行尾）**
+**第 210 行（行尾）**
 
 > rt_sigprocmask
 
-**第 215 行（行尾）**
+**第 213 行（行尾）**
 
 > rt_sigreturn
 
-**第 218 行（行尾）**
+**第 216 行（行尾）**
 
 > ioctl
 
-**第 221 行（行尾）**
+**第 219 行（行尾）**
 
 > pread64
 
-**第 224 行（行尾）**
+**第 222 行（行尾）**
 
 > pwrite64
 
-**第 227 行（行尾）**
+**第 225 行（行尾）**
 
 > readv
 
-**第 230 行（行尾）**
+**第 228 行（行尾）**
 
 > writev
 
-**第 231 行（行尾）**
+**第 229 行（行尾）**
 
 > access(path,mode) → faccessat(AT_FDCWD,path,mode,0)
 
-**第 239 行**
+**第 237 行**
 
 > pipe(fds) → pipe2(fds, 0)。第二个寄存器是用户残留值，必须显式清零：
 > pipe2 现在会校验 flags，不清零会被当成非法 flags 返回 EINVAL。
 
-**第 246 行（行尾）**
+**第 244 行（行尾）**
 
 > select(nfds,r,w,e,timeval*)
 
-**第 249 行（行尾）**
+**第 247 行（行尾）**
 
 > sched_yield
 
-**第 252 行（行尾）**
+**第 250 行（行尾）**
 
 > msync → stub 0
 
-**第 253 行（行尾）**
+**第 251 行（行尾）**
 
 > dup(oldfd): x86_64 → 内部 dup 实现（与 aarch64/riscv 的 23 同）
 
-**第 256 行（行尾）**
+**第 254 行（行尾）**
 
 > dup2(oldfd,newfd) → dup3(oldfd,newfd,0)
 
-**第 262 行（行尾）**
+**第 260 行（行尾）**
 
 > nanosleep
 
-**第 263 行**
+**第 261 行**
 
 > getitimer(36) / setitimer(38)：x86_64 原来没有这两条翻译, 于是落到
 > default: 返回 ENOSYS —— 主 switch 里那个 case 103 桩对 x86_64 根本
 > 不可达。转到内部编号(= aarch64/riscv64 的号)去交给同一份实现。
 > alarm(37) 不映射：musl 的 alarm() 本身就是走 setitimer 实现的。
 
-**第 271 行（行尾）**
+**第 269 行（行尾）**
 
 > getitimer → 内部 __NR_getitimer
 
-**第 274 行（行尾）**
+**第 272 行（行尾）**
 
 > setitimer → 内部 __NR_setitimer
 
-**第 277 行（行尾）**
+**第 275 行（行尾）**
 
 > getpid
 
-**第 280 行（行尾）**
+**第 278 行（行尾）**
 
 > sendfile / sendfile64 (x86_64)
 
-**第 283 行（行尾）**
+**第 281 行（行尾）**
 
 > sendfile64 (x86_64 compat)
 
-**第 286 行（行尾）**
+**第 284 行（行尾）**
 
 > socket
 
-**第 289 行（行尾）**
+**第 287 行（行尾）**
 
 > connect
 
-**第 292 行（行尾）**
+**第 290 行（行尾）**
 
 > accept
 
-**第 295 行（行尾）**
+**第 293 行（行尾）**
 
 > sendto
 
-**第 298 行（行尾）**
+**第 296 行（行尾）**
 
 > recvfrom
 
-**第 301 行（行尾）**
+**第 299 行（行尾）**
 
 > sendmsg
 
-**第 304 行（行尾）**
+**第 302 行（行尾）**
 
 > recvmsg
 
-**第 307 行（行尾）**
+**第 305 行（行尾）**
 
 > shutdown
 
-**第 310 行（行尾）**
+**第 308 行（行尾）**
 
 > bind
 
-**第 313 行（行尾）**
+**第 311 行（行尾）**
 
 > listen
 
-**第 316 行（行尾）**
+**第 314 行（行尾）**
 
 > getsockname
 
-**第 319 行（行尾）**
+**第 317 行（行尾）**
 
 > getpeername
 
-**第 322 行（行尾）**
+**第 320 行（行尾）**
 
 > socketpair
 
-**第 325 行（行尾）**
+**第 323 行（行尾）**
 
 > setsockopt
 
-**第 328 行（行尾）**
+**第 326 行（行尾）**
 
 > getsockopt
 
-**第 329 行（行尾）**
+**第 327 行（行尾）**
 
 > clone: x86_64 ABI 顺序 flags,stack,ptid,ctid,tls
 > 内部 ABI 顺序 flags,stack,ptid,tls,ctid
 > 需要交换 arg3↔arg4
 
-**第 340 行（行尾）**
+**第 338 行（行尾）**
 
 > fork(): musl 直接 syscall, 不传参数 → rdi/rsi/... 是垃圾。
 > 必须显式构造 flags=SIGCHLD (17), 其余清零。
 
-**第 343 行（行尾）**
+**第 341 行（行尾）**
 
 > SIGCHLD
 
-**第 351 行（行尾）**
+**第 349 行（行尾）**
 
 > vfork(): 同理, 构造 CLONE_VM|CLONE_VFORK|SIGCHLD。
 > 但当前内核把 CLONE_VM 当线程走, 会出错。
 > 为兼容 busybox sh 的 fork+exec, 这里退化为普通 fork。
 
-**第 355 行（行尾）**
+**第 353 行（行尾）**
 
 > SIGCHLD: 走 fork 路径(拷贝地址空间)
 
-**第 365 行（行尾）**
+**第 363 行（行尾）**
 
 > execve
 
-**第 368 行（行尾）**
+**第 366 行（行尾）**
 
 > exit
 
-**第 371 行（行尾）**
+**第 369 行（行尾）**
 
 > wait4
 
-**第 374 行（行尾）**
+**第 372 行（行尾）**
 
 > kill
 
-**第 377 行（行尾）**
+**第 375 行（行尾）**
 
 > uname
 
-**第 380 行（行尾）**
+**第 378 行（行尾）**
 
 > fcntl
 
-**第 383 行（行尾）**
+**第 381 行（行尾）**
 
 > fsync
 
-**第 386 行（行尾）**
+**第 384 行（行尾）**
 
 > fdatasync
 
-**第 389 行（行尾）**
+**第 387 行（行尾）**
 
 > ftruncate
 
-**第 392 行（行尾）**
+**第 390 行（行尾）**
 
 > getcwd
 
-**第 395 行（行尾）**
+**第 393 行（行尾）**
 
 > chdir
 
-**第 396 行（行尾）**
+**第 394 行（行尾）**
 
 > rename(old,new) → renameat(AT_FDCWD,old,AT_FDCWD,new)
 
-**第 403 行（行尾）**
+**第 401 行（行尾）**
 
 > mkdir(path,mode) → mkdirat(AT_FDCWD,path,mode)
 
-**第 409 行（行尾）**
+**第 407 行（行尾）**
 
 > rmdir(path) → unlinkat(AT_FDCWD,path,AT_REMOVEDIR)
 
-**第 415 行（行尾）**
+**第 413 行（行尾）**
 
 > creat(path,mode) → openat(AT_FDCWD,path,O_CREAT|O_WRONLY|O_TRUNC,mode)
 
-**第 422 行（行尾）**
+**第 420 行（行尾）**
 
 > link(old,new) → stub 0 (not critical)
 
-**第 425 行（行尾）**
+**第 423 行（行尾）**
 
 > unlink(path) → unlinkat(AT_FDCWD,path,0)
 
-**第 433 行（行尾）**
+**第 431 行（行尾）**
 
 > chmod → stub 0
 
-**第 436 行（行尾）**
+**第 434 行（行尾）**
 
 > fchmod → stub 0
 
-**第 439 行（行尾）**
+**第 437 行（行尾）**
 
 > chown → stub 0
 
-**第 442 行（行尾）**
+**第 440 行（行尾）**
 
 > fchown → stub 0
 
-**第 443 行（行尾）**
+**第 441 行（行尾）**
 
 > readlink(path,buf,bufsiz) → readlinkat(AT_FDCWD,path,buf,bufsiz)
 
-**第 452 行（行尾）**
+**第 450 行（行尾）**
 
 > umask
 
-**第 455 行（行尾）**
+**第 453 行（行尾）**
 
 > getrlimit
 
-**第 458 行（行尾）**
+**第 456 行（行尾）**
 
 > getrusage
 
-**第 461 行（行尾）**
+**第 459 行（行尾）**
 
 > sysinfo
 
-**第 464 行（行尾）**
+**第 462 行（行尾）**
 
 > times
 
-**第 467 行（行尾）**
+**第 465 行（行尾）**
 
 > getuid
 
-**第 470 行（行尾）**
+**第 468 行（行尾）**
 
 > getgid
 
-**第 473 行（行尾）**
+**第 471 行（行尾）**
 
 > setuid
 
-**第 476 行（行尾）**
+**第 474 行（行尾）**
 
 > setgid
 
-**第 479 行（行尾）**
+**第 477 行（行尾）**
 
 > geteuid
 
-**第 482 行（行尾）**
+**第 480 行（行尾）**
 
 > getegid
 
-**第 485 行（行尾）**
+**第 483 行（行尾）**
 
 > setpgid
 
-**第 488 行（行尾）**
+**第 486 行（行尾）**
 
 > getppid
 
-**第 489 行（行尾）**
+**第 487 行（行尾）**
 
 > getpgrp() → getpgid(0)
 
-**第 495 行（行尾）**
+**第 493 行（行尾）**
 
 > setsid
 
-**第 498 行（行尾）**
+**第 496 行（行尾）**
 
 > getgroups
 
-**第 501 行（行尾）**
+**第 499 行（行尾）**
 
 > setgroups
 
-**第 502 行**
+**第 500 行**
 
 > x86_64 的 setresuid/getresuid/setresgid/getresgid = 117..120，
 > 内部用 aarch64/riscv64 的 147..150。之前没映射 →
 > musl 的 seteuid()/seteuid() 全落 ENOSYS（LTP setgroups03 在这里
 > TBROK）。
 
-**第 510 行（行尾）**
+**第 508 行（行尾）**
 
 > setresuid
 
-**第 513 行（行尾）**
+**第 511 行（行尾）**
 
 > getresuid
 
-**第 516 行（行尾）**
+**第 514 行（行尾）**
 
 > setresgid
 
-**第 519 行（行尾）**
+**第 517 行（行尾）**
 
 > getresgid
 
-**第 522 行（行尾）**
+**第 520 行（行尾）**
 
 > getpgid
 
-**第 525 行（行尾）**
+**第 523 行（行尾）**
 
 > getsid
 
-**第 528 行（行尾）**
+**第 526 行（行尾）**
 
 > personality
 
-**第 531 行（行尾）**
+**第 529 行（行尾）**
 
 > rt_sigpending
 
-**第 534 行（行尾）**
+**第 532 行（行尾）**
 
 > sigaltstack → stub 0
 
-**第 537 行（行尾）**
+**第 535 行（行尾）**
 
 > prctl
 
-**第 540 行（行尾）**
+**第 538 行（行尾）**
 
 > arch_prctl
 
-**第 543 行（行尾）**
+**第 541 行（行尾）**
 
 > setrlimit
 
-**第 546 行（行尾）**
+**第 544 行（行尾）**
 
 > getrusage(again)
 
-**第 549 行（行尾）**
+**第 547 行（行尾）**
 
 > gettid
 
-**第 550 行（行尾）**
+**第 548 行（行尾）**
 
 > x86_64 __NR_tkill；内部号 130（200 本身是 BIND，不能直落）
 
-**第 555 行（行尾）**
+**第 553 行（行尾）**
 
 > futex
 
-**第 556 行（行尾）**
+**第 554 行（行尾）**
 
 > epoll_create(size) → epoll_create1(0)
 
-**第 562 行（行尾）**
+**第 560 行（行尾）**
 
 > getdents64
 
-**第 565 行（行尾）**
+**第 563 行（行尾）**
 
 > set_tid_address
 
-**第 568 行（行尾）**
+**第 566 行（行尾）**
 
 > clock_gettime
 
-**第 571 行（行尾）**
+**第 569 行（行尾）**
 
 > exit_group
 
-**第 572 行（行尾）**
+**第 570 行（行尾）**
 
 > x86_64 __NR_getcpu → 通用号 168
 
-**第 575 行（行尾）**
+**第 573 行（行尾）**
 
 > epoll_wait(epfd,events,max,timeout) → epoll_pwait(sigmask=NULL)
 
-**第 582 行（行尾）**
+**第 580 行（行尾）**
 
 > epoll_ctl
 
-**第 585 行（行尾）**
+**第 583 行（行尾）**
 
 > tgkill
 
-**第 588 行（行尾）**
+**第 586 行（行尾）**
 
 > waitid
 
-**第 591 行（行尾）**
+**第 589 行（行尾）**
 
 > openat
 
-**第 594 行（行尾）**
+**第 592 行（行尾）**
 
 > mkdirat
 
-**第 597 行（行尾）**
+**第 595 行（行尾）**
 
 > newfstatat
 
-**第 600 行（行尾）**
+**第 598 行（行尾）**
 
 > fchownat → stub 0
 
-**第 603 行（行尾）**
+**第 601 行（行尾）**
 
 > unlinkat
 
-**第 606 行（行尾）**
+**第 604 行（行尾）**
 
 > renameat
 
-**第 609 行（行尾）**
+**第 607 行（行尾）**
 
 > readlinkat
 
-**第 612 行（行尾）**
+**第 610 行（行尾）**
 
 > fchmodat → stub 0
 
-**第 615 行（行尾）**
+**第 613 行（行尾）**
 
 > faccessat
 
-**第 618 行（行尾）**
+**第 616 行（行尾）**
 
 > pselect6
 
-**第 621 行（行尾）**
+**第 619 行（行尾）**
 
 > ppoll
 
-**第 624 行（行尾）**
+**第 622 行（行尾）**
 
 > set_robust_list
 
-**第 627 行（行尾）**
+**第 625 行（行尾）**
 
 > dup3
 
-**第 630 行（行尾）**
+**第 628 行（行尾）**
 
 > pipe2
 
-**第 633 行（行尾）**
+**第 631 行（行尾）**
 
 > accept4
 
-**第 636 行（行尾）**
+**第 634 行（行尾）**
 
 > epoll_create1
 
-**第 638 行**
+**第 636 行**
 
 > utimensat(dirfd,path,times,flags)：内部 88 是现有的 0 值桩。
 > busybox mv 的跨文件系统回退会调它；不映射会在日志里刷
 > &quot;Unknown syscall: 280&quot;。
 
-**第 645 行（行尾）**
+**第 643 行（行尾）**
 
 > epoll_pwait
 
-**第 648 行（行尾）**
+**第 646 行（行尾）**
 
 > prlimit64
 
-**第 651 行（行尾）**
+**第 649 行（行尾）**
 
 > getrandom
 
-**第 654 行（行尾）**
+**第 652 行（行尾）**
 
 > rseq
 
-**第 655 行**
+**第 653 行**
 
 > 其他：保持原号(会落到 default: 返回 ENOSYS)
 
 </details>
 
-**位置**：`kernel/syscall/syscall.c:152`
+**位置**：`kernel/syscall/syscall.c:150`
 
-<a id="fn-kernel-syscall-syscall.c-666"></a>
+<a id="fn-kernel-syscall-syscall.c-664"></a>
 
 ### `syscall_handler`
 
@@ -12822,54 +12551,54 @@ Main syscall dispatcher
 <details>
 <summary>函数内备注（73 条）</summary>
 
-**第 676 行**
+**第 674 行**
 
 > 翻译前的原始号, 只有下面那条 stub 日志要看 —— 所以声明也留在这个
 > 块里。放外面的话, 其它架构上它就是一条 -Wunused-variable。
 
-**第 680 行**
+**第 678 行**
 
 > 将 Linux x86_64 syscall 号翻译为下方 switch 使用的内部编号
 
-**第 682 行**
+**第 680 行**
 
 > 0x7FFFFFFEULL 是 stub 标记：直接返回 0
 
-**第 696 行**
+**第 694 行**
 
 > 常开记录：每条 syscall 往本 CPU 的环形缓冲写一条(入口填参数, 出口回填
 > 返回值)。不碰 UART, 不加锁 —— 崩溃是事后才知道的, &quot;补录&quot;不成立,
 > 所以这里不能做成开关。回看用 syscall_trace_dump() / /proc/syscalls。
 
-**第 710 行**
+**第 708 行**
 
 > 每次 syscall 入口 poll UART：弥补关中断期间 timer 无法触发的窗口
 
-**第 713 行**
+**第 711 行**
 
 > 开始 syscall stime 计时
 
-**第 717 行**
+**第 715 行**
 
 > Dropbear 调试：pid&gt;=7 所有 syscall 都打
 
-**第 718 行**
+**第 716 行**
 
 > if (current &amp;&amp; current-&gt;id &gt;= 7)
 
-**第 721 行**
+**第 719 行**
 
 > ── 自定义系统调用(向后兼容)──────────────────────────
 
-**第 772 行**
+**第 770 行**
 
 > ── Linux AArch64 标准系统调用 ───────────────────────────────
 
-**第 774 行**
+**第 772 行**
 
 > --- 进程管理 ---
 
-**第 796 行**
+**第 794 行**
 
 > waitid 与 wait4 的参数布局不同：
 > wait4 (pid,  status,  options, rusage)
@@ -12881,55 +12610,55 @@ Main syscall dispatcher
 > 按 waitid 语义要填 siginfo_t, 本内核未实现, 这里明确返回
 > ENOSYS。宁可&quot;未实现&quot;, 也不要崩。
 
-**第 869 行**
+**第 867 行**
 
 > --- 文件描述符 ---
 
-**第 916 行**
+**第 914 行**
 
 > mkdirat(dirfd, pathname, mode)
 
-**第 924 行**
+**第 922 行**
 
 > 用户指针先落进内核；resolve_path_at 会直接解引用
 
-**第 943 行**
+**第 941 行**
 
 > 走 VFS 分发：/boot 下的路径属于 FAT，不能再直接调 ext4_dir_mk。
 > mode 按 umask 去掉权限位(Linux 语义)。
 
-**第 1003 行（行尾）**
+**第 1001 行（行尾）**
 
 > ION/dma-buf 等非 VFS fd：维持原来的“成功”语义
 
-**第 1021 行**
+**第 1019 行**
 
 > Linux ftruncate 的错误语义：
 > - 负长度 / 非普通文件（目录、socket、pipe...）→ EINVAL
 > - 普通文件但 fd 是 O_RDONLY → EINVAL
 > - fd 无效 → EBADF（上面已处理）
 
-**第 1040 行**
+**第 1038 行**
 
 > --- 目录操作 ---
 
-**第 1049 行**
+**第 1047 行**
 
 > --- ioctl ---
 
-**第 1064 行**
+**第 1062 行**
 
 > --- epoll ---
 
-**第 1077 行**
+**第 1075 行**
 
 > --- 信号系统(实现位于 kernel/syscall/signal.c)---
 
-**第 1094 行**
+**第 1092 行**
 
 > --- 系统信息 ---
 
-**第 1096 行**
+**第 1094 行**
 
 > 先在内核里构造完整结构再一次性 copy_to_user：
 > - 坏指针返回 EFAULT（以前逐个 copy_string_to_user 并忽略返回值，
@@ -12937,97 +12666,97 @@ Main syscall dispatcher
 > - 整个结构 memset 过，字段 NUL 之后的填充字节不会被泄漏
 > （LTP uname04 专门查这个）
 
-**第 1105 行**
+**第 1103 行**
 
 > 注意：这里是**内核**结构体，不能再用 copy_string_to_user
 > （它把目标当用户指针做 user_range_ok 校验，内核栈地址会被
 > 拒绝，字段保持全 0 —— uname01 于是报 sysname 不是 Linux）。
 
-**第 1166 行**
+**第 1164 行**
 
 > getcpu(cpu*, node*, tcache) —— 用户态观测当前任务落在哪颗逻辑 CPU。
 
 > musl 的 sched_getcpu() 就是这条；也是 task 基础设施回归(多核分发,
 > 跨核唤醒)唯一不依赖内核日志的判据。node 恒 0(本内核无 NUMA)。
 
-**第 1196 行**
+**第 1194 行**
 
 > 用户指针必须校验后再写；x86 上未映射的 raw syscall 号可能
 > 误落到这里（例如 setreuid=113），直接 ts-&gt;tv_sec 会写坏地址。
 
-**第 1237 行（行尾）**
+**第 1235 行（行尾）**
 
 > TASK_INFRA_TEST
 
-**第 1251 行**
+**第 1249 行**
 
 > RUSAGE_SELF=0 / RUSAGE_CHILDREN=-1 / RUSAGE_THREAD=1
 
-**第 1260 行**
+**第 1258 行**
 
 > 用户指针必须经 copy_to_user_bytes, 不能裸解引用
 
-**第 1261 行（行尾）**
+**第 1259 行（行尾）**
 
 > sizeof(struct rusage) == 144
 
-**第 1264 行**
+**第 1262 行**
 
 > 用与 /proc 统计一致的&quot;墙钟 - 内核时间&quot;算活着的 utime；
 > 直接读 utime_ns 只有 task_exit 才会填。
 
-**第 1386 行**
+**第 1384 行**
 
 > membarrier (283 on riscv64/aarch64, 324 on x86_64):
 > musl calls MEMBARRIER_CMD_REGISTER_PRIVATE_EXPEDITED at pthread_create.
 > We run on a simple uniprocessor kernel with coherent shared memory,
 > so just acknowledge without doing anything.
 
-**第 1391 行（行尾）**
+**第 1389 行（行尾）**
 
 > riscv64 / aarch64 __NR_sync
 
-**第 1392 行（行尾）**
+**第 1390 行（行尾）**
 
 > x86_64  __NR_sync
 
-**第 1393 行（行尾）**
+**第 1391 行（行尾）**
 
 > riscv64 / aarch64 __NR_membarrier
 
-**第 1394 行（行尾）**
+**第 1392 行（行尾）**
 
 > x86_64  __NR_membarrier
 
-**第 1398 行（行尾）**
+**第 1396 行（行尾）**
 
 > riscv64/aarch64 __NR_linkat
 
-**第 1399 行（行尾）**
+**第 1397 行（行尾）**
 
 > x86_64 __NR_linkat
 
-**第 1403 行（行尾）**
+**第 1401 行（行尾）**
 
 > riscv64/aarch64 __NR_fchmodat
 
-**第 1404 行（行尾）**
+**第 1402 行（行尾）**
 
 > riscv64/aarch64 __NR_fchownat
 
-**第 1405 行（行尾）**
+**第 1403 行（行尾）**
 
 > riscv64/aarch64 __NR_fchown
 
-**第 1409 行（行尾）**
+**第 1407 行（行尾）**
 
 > riscv64/aarch64 __NR_setitimer
 
-**第 1410 行（行尾）**
+**第 1408 行（行尾）**
 
 > riscv64/aarch64 __NR_getitimer
 
-**第 1411 行**
+**第 1409 行**
 
 > ITIMER_REAL(alarm/setitimer)。实现见 kernel/time/itimer.c。
 
@@ -13043,119 +12772,119 @@ Main syscall dispatcher
 > [+0] it_interval.tv_sec   [+8]  it_interval.tv_usec
 > [+16] it_value.tv_sec     [+24] it_value.tv_usec
 
-**第 1435 行**
+**第 1433 行**
 
 > 只支持 ITIMER_REAL：本内核没有虚拟/统计 CPU 时间。明确报 EINVAL,
 > 不假装成功 —— 装一个永远不会响的定时器比报错更难查。
 
-**第 1438 行（行尾）**
+**第 1436 行（行尾）**
 
 > ITIMER_REAL
 
-**第 1446 行**
+**第 1444 行**
 
 > setitimer：先读用户传的新值并装载, 再回填旧值(Linux 语义：
 > old_value 拿到的正是本次替换掉的那一份)。
 
-**第 1459 行**
+**第 1457 行**
 
 > new_value == NULL：取消定时器(Linux 同样语义)
 
-**第 1471 行**
+**第 1469 行**
 
 > 用户指针一律经 copy_to_user_bytes, 禁止裸解引用(见 CLAUDE.md)
 
-**第 1482 行（行尾）**
+**第 1480 行（行尾）**
 
 > riscv64/aarch64 __NR_sched_setaffinity
 
-**第 1483 行（行尾）**
+**第 1481 行（行尾）**
 
 > riscv64/aarch64 __NR_sched_getaffinity
 
-**第 1498 行（行尾）**
+**第 1496 行（行尾）**
 
 > riscv64/aarch64 __NR_utimensat
 
-**第 1499 行（行尾）**
+**第 1497 行（行尾）**
 
 > riscv64/aarch64 __NR_msync
 
-**第 1503 行（行尾）**
+**第 1501 行（行尾）**
 
 > riscv64 __NR_riscv_hwprobe: let libc fall back quietly.
 
-**第 1507 行（行尾）**
+**第 1505 行（行尾）**
 
 > riscv64 __NR_riscv_flush_icache
 
-**第 1511 行（行尾）**
+**第 1509 行（行尾）**
 
 > riscv64/aarch64 __NR_statfs
 
-**第 1512 行（行尾）**
+**第 1510 行（行尾）**
 
 > riscv64/aarch64 __NR_fstatfs
 
-**第 1513 行（行尾）**
+**第 1511 行（行尾）**
 
 > x86_64 __NR_statfs
 
-**第 1514 行（行尾）**
+**第 1512 行（行尾）**
 
 > x86_64 __NR_fstatfs
 
-**第 1521 行（行尾）**
+**第 1519 行（行尾）**
 
 > f_type = EXT4_SUPER_MAGIC
 
-**第 1522 行（行尾）**
+**第 1520 行（行尾）**
 
 > f_bsize
 
-**第 1523 行（行尾）**
+**第 1521 行（行尾）**
 
 > f_blocks (1GB)
 
-**第 1524 行（行尾）**
+**第 1522 行（行尾）**
 
 > f_bfree
 
-**第 1525 行（行尾）**
+**第 1523 行（行尾）**
 
 > f_bavail
 
-**第 1526 行（行尾）**
+**第 1524 行（行尾）**
 
 > f_files
 
-**第 1527 行（行尾）**
+**第 1525 行（行尾）**
 
 > f_ffree
 
-**第 1528 行（行尾）**
+**第 1526 行（行尾）**
 
 > f_namelen
 
-**第 1529 行（行尾）**
+**第 1527 行（行尾）**
 
 > f_frsize
 
-**第 1535 行**
+**第 1533 行**
 
 > 连分类都没有 —— 够得上 ERROR。但用户态探测(busybox 启动时会试一批
 > 调号)会让它刷屏, 所以只说一次。
 
-**第 1544 行**
+**第 1542 行**
 
 > 结束 syscall stime 计时(EXIT 类 syscall 不会到达这里)
 
-**第 1553 行**
+**第 1551 行**
 
 > 回填环形缓冲里的返回值。不返回的 syscall(execve/exit)走不到这里,
 > 那条记录会一直保持&quot;待返回&quot;哨兵 —— dump 时显示成 &quot;= ?&quot;, 本身就是信息。
 
-**第 1565 行**
+**第 1563 行**
 
 > 在返回用户态前投递 pending 信号
 > 注意：必须在 syscall_abi_set_ret 之后调用,
@@ -13163,9 +12892,9 @@ Main syscall dispatcher
 
 </details>
 
-**位置**：`kernel/syscall/syscall.c:666`
+**位置**：`kernel/syscall/syscall.c:664`
 
-<a id="fn-kernel-syscall-syscall.c-1578"></a>
+<a id="fn-kernel-syscall-syscall.c-1576"></a>
 
 ### `sys_write`
 
@@ -13180,7 +12909,7 @@ int64_t sys_write(const char *str, uint64_t len)
 <details>
 <summary>函数内备注（1 条）</summary>
 
-**第 1587 行**
+**第 1585 行**
 
 > 注意： str 来自 regs[], 是用户指针 —— 必须先经 copy_from_user_bytes
 > 落进内核缓冲再输出, 绝不能裸解引用(用户传个非法地址就是内核态
@@ -13192,9 +12921,9 @@ int64_t sys_write(const char *str, uint64_t len)
 
 </details>
 
-**位置**：`kernel/syscall/syscall.c:1578`
+**位置**：`kernel/syscall/syscall.c:1576`
 
-<a id="fn-kernel-syscall-syscall.c-1604"></a>
+<a id="fn-kernel-syscall-syscall.c-1602"></a>
 
 ### `sys_yield`
 
@@ -13206,9 +12935,9 @@ int64_t sys_yield(void)
 
 调用 task_yield 让出 CPU 后返回 0。
 
-**位置**：`kernel/syscall/syscall.c:1604`
+**位置**：`kernel/syscall/syscall.c:1602`
 
-<a id="fn-kernel-syscall-syscall.c-1610"></a>
+<a id="fn-kernel-syscall-syscall.c-1608"></a>
 
 ### `sys_getpid`
 
@@ -13220,9 +12949,9 @@ int64_t sys_getpid(void)
 
 取当前任务并返回其 id。
 
-**位置**：`kernel/syscall/syscall.c:1610`
+**位置**：`kernel/syscall/syscall.c:1608`
 
-<a id="fn-kernel-syscall-syscall.c-1616"></a>
+<a id="fn-kernel-syscall-syscall.c-1614"></a>
 
 ### `sys_sleep`
 
@@ -13234,9 +12963,9 @@ int64_t sys_sleep(uint64_t ms)
 
 毫秒数为 0 时立即返回，否则调用 timer_delay_ms 延时指定毫秒后返回 0。
 
-**位置**：`kernel/syscall/syscall.c:1616`
+**位置**：`kernel/syscall/syscall.c:1614`
 
-<a id="fn-kernel-syscall-syscall.c-1625"></a>
+<a id="fn-kernel-syscall-syscall.c-1623"></a>
 
 ### `sys_read`
 
@@ -13248,9 +12977,9 @@ int64_t sys_read(char *buf, uint64_t len)
 
 缓冲区为空或长度为 0 时返回 -1，否则直接返回 0，未做任何读取。
 
-**位置**：`kernel/syscall/syscall.c:1625`
+**位置**：`kernel/syscall/syscall.c:1623`
 
-<a id="fn-kernel-syscall-syscall.c-1633"></a>
+<a id="fn-kernel-syscall-syscall.c-1631"></a>
 
 ### `sys_open`
 
@@ -13265,16 +12994,16 @@ int64_t sys_open(const char *pathname, int flags, int mode)
 <details>
 <summary>函数内备注（1 条）</summary>
 
-**第 1637 行**
+**第 1635 行**
 
 > 返回失败是&quot;未实现&quot;的正确行为, 不是错误；但&quot;缺哪些&quot;正是 bring-up
 > 想知道的清单, 而 shell 会高频调用它 —— 所以 WARN + 只说一次。
 
 </details>
 
-**位置**：`kernel/syscall/syscall.c:1633`
+**位置**：`kernel/syscall/syscall.c:1631`
 
-<a id="fn-kernel-syscall-syscall.c-1644"></a>
+<a id="fn-kernel-syscall-syscall.c-1642"></a>
 
 ### `sys_close`
 
@@ -13286,9 +13015,9 @@ int64_t sys_close(int fd)
 
 用 WARN_ONCE 记录一次未实现告警并返回 -1。
 
-**位置**：`kernel/syscall/syscall.c:1644`
+**位置**：`kernel/syscall/syscall.c:1642`
 
-<a id="fn-kernel-syscall-syscall.c-1650"></a>
+<a id="fn-kernel-syscall-syscall.c-1648"></a>
 
 ### `sys_gettimeofday`
 
@@ -13303,7 +13032,7 @@ tv 非空时用 kernel_get_ns 换算秒与微秒填入，返回 0，否则返回
 <details>
 <summary>函数内备注（1 条）</summary>
 
-**第 1654 行**
+**第 1652 行**
 
 > tv 是用户指针，必须经 copy_to_user_bytes 写回 —— 直接 tv-&gt;tv_sec
 > 会让用户传 (void *)-1 时内核态 #PF，整机挂死(见 CLAUDE.md 的用户
@@ -13311,7 +13040,7 @@ tv 非空时用 kernel_get_ns 换算秒与微秒填入，返回 0，否则返回
 
 </details>
 
-**位置**：`kernel/syscall/syscall.c:1650`
+**位置**：`kernel/syscall/syscall.c:1648`
 
 <a id="mod-kernel-syscall-syscall_internal.h"></a>
 
@@ -14142,6 +13871,186 @@ void cpu_smp_timer_test(uint32_t rounds, uint32_t ms_per_round)
 </details>
 
 **位置**：`kernel/task/cpu.c:202`
+
+<a id="mod-kernel-task-elf_loader.c"></a>
+
+## kernel/task/elf_loader.c — ELF 程序加载器(文件 I/O 层)
+
+`kernel/task/elf_loader.c` · 4 个函数 · 4 个有说明 · 337 行
+
+职责：从 ext4 文件系统读取 ELF 文件, 然后交由 task_execve 处理。
+ELF 格式解析/段加载在 mm/elf_image.c, 进程创建与 exec 提交在 task/exec.c。
+
+<a id="fn-kernel-task-elf_loader.c-27"></a>
+
+### `read_file_fully`
+
+```c
+static int read_file_fully(ext4_file *file, uint8_t *buf, uint64_t size)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+按块循环读取直到读满指定大小，任一次短读或出错返回 EIO。
+
+**位置**：`kernel/task/elf_loader.c:27`
+
+<a id="fn-kernel-task-elf_loader.c-52"></a>
+
+### `resolve_symlink`
+
+```c
+static int resolve_symlink(const char *path, char *out, size_t outsz)
+```
+
+resolve_symlink - 跟随符号链接, 最多 8 层, 将最终真实路径写入 out。
+若路径不是符号链接, 直接把 path 复制到 out 返回 0。
+支持相对符号链接(相对于当前目录)和绝对符号链接。
+返回 0 表示成功, -1 表示循环太深。
+
+<details>
+<summary>函数内备注（6 条）</summary>
+
+**第 67 行**
+
+> 不是符号链接(或 readlink 失败)：cur 就是最终路径
+
+**第 78 行**
+
+> 组合新路径
+
+**第 81 行**
+
+> 绝对符号链接
+
+**第 89 行**
+
+> 相对符号链接：取 cur 的目录部分拼上 target
+
+**第 103 行**
+
+> next → cur, 进入下一轮
+
+**第 111 行**
+
+> 符号链接层数超限
+
+</details>
+
+**位置**：`kernel/task/elf_loader.c:52`
+
+<a id="fn-kernel-task-elf_loader.c-120"></a>
+
+### `elf_loader_load_from_file`
+
+```c
+int elf_loader_load_from_file(const char *pathname, char **argv, char **envp, trap_frame_t *frame)
+```
+
+elf_loader_load_from_file - 从文件系统加载并执行 ELF 程序
+
+**位置**：`kernel/task/elf_loader.c:120`
+
+<a id="fn-kernel-task-elf_loader.c-125"></a>
+
+### `load_from_file_depth`
+
+```c
+static int load_from_file_depth(const char *pathname, char **argv, char **envp, trap_frame_t *frame, int depth)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+从 ext4 读取可执行文件，解析符号链接与 #!/PT_INTERP（递归深度受限），把文件/解释器缓冲交给 task_execve 原地 exec；失败返回负 errno。
+
+<details>
+<summary>函数内备注（19 条）</summary>
+
+**第 135 行**
+
+> 复制路径名
+
+**第 145 行**
+
+> 解析符号链接(busybox applet 等均为 symlink)
+
+**第 155 行**
+
+> 打开文件
+
+**第 159 行（行尾）**
+
+> lwext4 errno == Linux errno (ENOENT=2, etc.)
+
+**第 162 行**
+
+> 获取文件大小
+
+**第 170 行（行尾）**
+
+> -ENOEXEC
+
+**第 175 行**
+
+> 分配内存
+
+**第 181 行（行尾）**
+
+> -ENOMEM
+
+**第 186 行**
+
+> 读取文件
+
+**第 191 行（行尾）**
+
+> -EIO
+
+**第 198 行**
+
+> ── Shebang (#!) 脚本处理 ───────────────────────────────────────
+
+**第 203 行（行尾）**
+
+> -ENOEXEC
+
+**第 206 行**
+
+> 解析 &quot;#!&lt;interpreter&gt; [optional-arg]\n&quot; — 只看前 256 字节
+
+**第 226 行（行尾）**
+
+> -ENOEXEC
+
+**第 229 行**
+
+> 可选参数(如 &quot;#!/usr/bin/env sh&quot; 中的 &quot;sh&quot;)
+
+**第 248 行**
+
+> 构建新 argv: [interp, interp_arg?, script_path, original_argv[1..], NULL]
+
+**第 266 行**
+
+> ── 检查 PT_INTERP(动态连接器路径)─────────────────────────────
+
+**第 284 行**
+
+> interpreter 路径也可能是符号链接
+
+**第 326 行**
+
+> 加载并执行 ELF(原地 exec)。
+> 传 resolved 而不是 path_buf：/proc/self/exe 和 comm 用 Linux 语义的
+> 真实可执行文件路径, 而不是用户给的、可能带符号链接的路径。
+
+> 缓冲区所有权从这里转交给 task_execve: 无论成功失败都由它释放,
+> 本函数返回后不得再碰 file_data / interp_data(以前这里再 kfree 一次,
+> 在原地 exec 语义下会 double free)。
+
+</details>
+
+**位置**：`kernel/task/elf_loader.c:125`
 
 <a id="mod-kernel-task-exec.c"></a>
 

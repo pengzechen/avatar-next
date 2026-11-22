@@ -9,8 +9,6 @@
 #include "syscall/syscall_internal.h"
 #include "syscall/trace.h"
 #include "syscall/core/futex.h"
-#include "loader/bin_loader.h"
-#include "loader/elf_loader.h"
 #include "klog.h"
 #include "task/task.h"
 #include "task/cpu.h" /* get_current_cpu_id(getcpu) */

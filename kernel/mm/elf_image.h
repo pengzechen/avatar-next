@@ -5,14 +5,14 @@
 */
 
 /*
-   kernel/loader/elf_image.h — ELF 镜像加载接口
+   kernel/mm/elf_image.h — ELF 镜像加载接口
 
    职责：ELF 格式校验 + PT_LOAD 段加载 + RELA 重定位
    不涉及进程创建, 用户栈构建, 内核映射复制或文件 I/O。
 */
 
-#ifndef KERNEL_LOADER_ELF_IMAGE_H
-#define KERNEL_LOADER_ELF_IMAGE_H
+#ifndef KERNEL_MM_ELF_IMAGE_H
+#define KERNEL_MM_ELF_IMAGE_H
 
 #include "types.h"
 
@@ -44,4 +44,4 @@ int elf_image_load(uint8_t *file_data, uint64_t file_size, void *pgd, elf_image_
 */
 int elf_image_load_at(uint8_t *file_data, uint64_t file_size, void *pgd, uint64_t force_base, elf_image_info_t *out);
 
-#endif /* KERNEL_LOADER_ELF_IMAGE_H */
+#endif /* KERNEL_MM_ELF_IMAGE_H */

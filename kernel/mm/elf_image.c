@@ -5,7 +5,7 @@
 */
 
 /*
-   kernel/loader/elf_image.c — ELF 镜像加载
+   kernel/mm/elf_image.c — ELF 镜像加载
 
    职责：ELF 格式校验 + PT_LOAD 段加载到用户地址空间 + RELA 重定位
    输入：已初始化的用户页表(含内核映射, 由调用方准备)
@@ -18,7 +18,7 @@
 #include "mm/mm_vm.h"
 #include "string.h"
 #include "arch.h"
-#include "loader/elf_image.h"
+#include "mm/elf_image.h"
 #include "mm/user_layout.h"
 #include "platform/platform_ops.h" /* platform_panic(), 仅 PANIC_TEST=1 时用到 */
 

@@ -19,7 +19,7 @@
      0x70000000 ── 用户栈顶
 
    修改此文件即可统一调整全内核的地址空间布局,
-   无需逐一更改 task.c / exec.c / bin_loader.c / syscall.c 等。
+   无需逐一更改 task.c / exec.c / syscall.c 等。
 */
 
 /* 代码段加载基址(flat binary 拷贝目标；PIE ELF image_base) */
@@ -45,8 +45,5 @@
    用于 x86_64 信号投递：sa_restorer 无效时内核使用此地址
 */
 #define USER_SIGRET_PAGE 0x70001000ULL
-
-/* bin_loader 创建进程时的默认优先级 */
-#define USER_PROCESS_PRIO 10u
 
 #endif /* USER_LAYOUT_H */

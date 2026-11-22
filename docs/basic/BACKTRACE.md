@@ -40,7 +40,7 @@ make PLATFORM=qemu-virt-x86_64 test-panic
 输出（三个架构都一样，函数名按各自镜像解析）：
 
 ```
-[ERROR][C0] kernel/loader/elf_image.c:155: [elf] PANIC_TEST=1: 故意在 ELF 解析路径上触发一次 panic
+[ERROR][C0] kernel/mm/elf_image.c:155: [elf] PANIC_TEST=1: 故意在 ELF 解析路径上触发一次 panic
 === BACKTRACE [C0 'busybox' id=2] ===
   #0  0xffff800000241e58  platform_panic+0x28
   #1  0xffff800000209e71  elf_image_load_impl+0x231
@@ -50,7 +50,7 @@ make PLATFORM=qemu-virt-x86_64 test-panic
   #5  0xffff80000022a1ff  task_trampoline+0x4f
 ```
 
-触发点在 `kernel/loader/elf_image.c`：ELF 头部**刚校验通过、程序头还没开始解析**
+触发点在 `kernel/mm/elf_image.c`：ELF 头部**刚校验通过、程序头还没开始解析**
 的地方。选这里是因为它离 boot 足够远，能打出一条真实的加载器调用链，而不是只有
 `kernel_main` 两层 —— 正好用来看展开和符号化对不对。
 

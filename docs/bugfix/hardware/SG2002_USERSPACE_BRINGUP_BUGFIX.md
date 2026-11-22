@@ -85,7 +85,7 @@ USER_STACK_SIZE     = 0x100000
 
 根因：内核 loader 对带 `PT_INTERP` 的动态 ELF 或强制基址加载的解释器做了 RELA relocation，但这些 relocation 应由动态链接器处理。内核提前处理会破坏 musl 后续 relocation。
 
-修复：`kernel/loader/elf_image.c` 中，当 `force_base != 0` 或主程序存在 interpreter 时跳过内核 RELA relocation。
+修复：`kernel/mm/elf_image.c` 中，当 `force_base != 0` 或主程序存在 interpreter 时跳过内核 RELA relocation。
 
 经验：内核负责映射 segment 和构造 auxv；动态 ELF 的 relocation 交给 ld-musl。
 

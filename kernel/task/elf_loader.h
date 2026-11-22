@@ -5,11 +5,11 @@
 */
 
 /*
-   kernel/syscall/elf_loader.h - ELF 程序加载器
+   kernel/task/elf_loader.h - ELF 程序加载器
 */
 
-#ifndef KERNEL_SYSCALL_ELF_LOADER_H
-#define KERNEL_SYSCALL_ELF_LOADER_H
+#ifndef KERNEL_TASK_ELF_LOADER_H
+#define KERNEL_TASK_ELF_LOADER_H
 
 #include "types.h"
 #include "exception.h" /* trap_frame_t */
@@ -28,4 +28,4 @@
 */
 int elf_loader_load_from_file(const char *pathname, char **argv, char **envp, trap_frame_t *frame);
 
-#endif /* KERNEL_SYSCALL_ELF_LOADER_H */
+#endif /* KERNEL_TASK_ELF_LOADER_H */

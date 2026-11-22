@@ -39,7 +39,7 @@
    报出这种假阳性：
        string_impl.h:54: warning: array subscript [241, 255] is outside
        array bounds of 'char[128]' [-Warray-bounds]
-       kernel/loader/elf_loader.c:284: note: while referencing 'ipath'
+       kernel/task/elf_loader.c:284: note: while referencing 'ipath'
 
    已确认是编译器的账, 不是本函数的账：-O1 / -fno-inline / -fno-tree-vrp
    下警告都消失, 只有 -O2 出现(触发点在 elf_loader.c 的 PT_INTERP 路径)。

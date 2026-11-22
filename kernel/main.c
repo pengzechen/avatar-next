@@ -25,7 +25,7 @@
 #include "driver/time.h"
 #include "rt/rt_latency.h"
 #include "net/net.h"
-#include "loader/elf_loader.h"
+#include "task/elf_loader.h"
 #include "fs/fs_init.h"
 
 /*

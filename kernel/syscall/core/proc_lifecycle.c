@@ -22,7 +22,7 @@
 #include "syscall/fs/pipe.h"
 #include "syscall/net/ksocket.h"
 #include "syscall/fs/pty.h"
-#include "loader/elf_loader.h"
+#include "task/elf_loader.h"
 #include "task/task.h"
 #include "task/cpu.h" /* get_current_cpu_id / AVATAR_MAX_CPUS(execve argv 副本按 CPU 分行) */
 #include "task/sched.h"

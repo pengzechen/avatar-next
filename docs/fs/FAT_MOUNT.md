@@ -60,7 +60,7 @@ make PLATFORM=qemu-virt-x86_64 FAT_MOUNT_POINT=/mnt/fat kernel
 
 **不支持**：
 
-- 从 FAT 执行 ELF/bin（`elf_loader.c` / `bin_loader.c` 仍只走 ext4）；
+- 从 FAT 执行 ELF（`elf_loader.c` 仍只走 ext4）；
 - 符号链接、权限位、硬链接（FAT 没有这些概念；`chmod` 仍是空操作）；
 - 非 ASCII 文件名（`FF_LFN_UNICODE=0` + CP437，启动文件用 ASCII 即可）；
 - 单文件 > 4 GiB（`FF_LBA64=0`，FAT32 上限）；

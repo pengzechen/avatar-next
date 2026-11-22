@@ -140,7 +140,7 @@ RT 内核线程可以用内核 API，但必须遵守：
 ## 九、实现与验证（R0）
 
 - `task_t` 增加 `wake_ns`；
-- 新增 `kernel/debug/rt_latency.c` + `include/rt/rt_latency.h`：
+- 新增 `kernel/rt/rt_latency.c` + `include/rt/rt_latency.h`：
   - `wake→run`：`sched_unblock()` 记录唤醒时刻，`sched_schedule()`
     切入时结算（wake_max / wake_last / wake_n）；
   - `syscall`：用户 syscall 返回前结算内核执行时长，`task_yield()` 和

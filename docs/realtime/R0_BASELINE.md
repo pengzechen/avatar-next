@@ -17,7 +17,7 @@ QEMU 配置、同一 rootfs 和同一启动流程下重跑**，不要跨架构�
 | riscv64 | `qemu-system-riscv64 -M virt` | TCG | 1 | `tests/.artifacts/build/normal/smp1/qemu-virt-riscv64/rootfs-riscv64.img` |
 
 内核：`realtime` 分支，R0 延迟测量版本（`task->wake_ns`、
-`kernel/debug/rt_latency.c`、`/proc/rtstat`）。
+`kernel/rt/rt_latency.c`、`/proc/rtstat`）。
 `LOG=info`。rootfs 里是正常的 busybox shell，没有额外负载。
 
 ## 采集步骤
