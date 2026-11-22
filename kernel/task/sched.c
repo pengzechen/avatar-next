@@ -527,6 +527,77 @@ void sched_dequeue(task_t *task)
     }
 }
 
+/*
+   kill_task_on_cpu - 在指定核的 rq_lock 下发现并终结 task
+
+   返回 true 表示找到了它的调度上下文（正在该核运行，或在该核就绪队列里）。
+*/
+static bool kill_task_on_cpu(uint32_t cpu_id, task_t *task)
+{
+    cpu_t *c = &g_cpus[cpu_id];
+    uint64_t flags;
+
+    spin_lock_irqsave(&c->rq_lock, &flags);
+    bool running = (c->current_task == task);
+    bool queued = rq_remove_locked(c, task);
+    if (running || queued) {
+        task->state = TASK_DEAD;
+        spin_unlock_irqrestore(&c->rq_lock, flags);
+        if (running)
+            sched_resched_cpu(cpu_id);
+        return true;
+    }
+    spin_unlock_irqrestore(&c->rq_lock, flags);
+    return false;
+}
+
+/*
+   sched_kill_task - 从远端把一个任务标成 DEAD 并移出调度队列
+
+   exit_group 终止兄弟线程时用。不能只写 state = DEAD 再 sched_dequeue：
+   目标任务可能正在自己的 sched_schedule() 里，后者会在 rq_lock 下把
+   state 从 DEAD 覆盖回 READY/RUNNING，任务就活下来了（LTP exit_group01
+   的偶发失败：父进程已 wait 到 group leader，但某个兄弟线程还在跑）。
+
+   这里持目标核的 rq_lock 完成「摘链 + 置 DEAD」，和目标任务的
+   sched_schedule()/sched_unblock() 对 state 的写入串行化。正在目标核上
+   运行的任务还会收到一次 resched IPI，尽快在 trap 返回/调度点停下。
+
+   只管停止任务，不负责回收 pgd/内核栈 —— 回收仍走 task_exit 的
+   switch_done 路径（见 docs/bugfix/SMP_TASK_EXIT_STACK_REUSE.md）。
+*/
+void sched_kill_task(task_t *task)
+{
+    if (!task || task->state == TASK_ALLOCATING)
+        return;
+
+    uint32_t n = g_num_cpus ? g_num_cpus : 1U;
+    uint32_t hint = (task->cpu_affinity < n) ? task->cpu_affinity : 0U;
+
+    /* 先按 affinity 找。入队时 CPU_AFFINITY_ANY 已经被固定成实际 CPU。 */
+    if (kill_task_on_cpu(hint, task))
+        return;
+
+    /* 兜底：affinity 可能刚被 task_set_cpu_affinity 改过，扫一遍所有核。 */
+    for (uint32_t i = 0; i < n; i++) {
+        if (i == hint)
+            continue;
+        if (kill_task_on_cpu(i, task))
+            return;
+    }
+
+    /*
+       不在 current_task、也不在任何就绪队列上：多半是 BLOCKED。用和
+       sched_unblock() 相同的锁（目标核 rq_lock）写 DEAD，防止并发唤醒把
+       state 覆盖成 READY。
+    */
+    cpu_t *c = &g_cpus[hint];
+    uint64_t flags;
+    spin_lock_irqsave(&c->rq_lock, &flags);
+    task->state = TASK_DEAD;
+    spin_unlock_irqrestore(&c->rq_lock, flags);
+}
+
 /* ── 内部：选择下一个任务 ─────────────────────────────────── */
 
 static task_t *pick_next(cpu_t *c)
@@ -585,6 +656,15 @@ void sched_schedule(void)
     task_t *next = pick_next(c);
 
     /*
+       防御 exit_group：sched_kill_task() 会在目标核 rq_lock 下把 state
+       置成 DEAD。如果被标 DEAD 的任务恰好又被 pick_next 选回来，绝不能
+       走下面的"无需切换"分支把它写回 RUNNING —— 那会让兄弟线程继续跑，
+       正是 LTP exit_group01 的偶发失败。强制切到 idle。
+    */
+    if (next->state == TASK_DEAD && next != c->idle_task)
+        next = c->idle_task;
+
+    /*
        切出 prev 之前收口「on_cpu 期间被唤醒」的窗口。
 
        waker 看到 on_cpu=true 时只置 wake_pending, 不会入队(否则任务会
@@ -596,16 +676,22 @@ void sched_schedule(void)
         prev->on_cpu = false;
         if (prev->wake_pending) {
             prev->wake_pending = false;
-            prev->state = TASK_READY;
-            rq_enqueue_locked(c, prev);
             /*
-               这次唤醒是在 prev 还 on_cpu 时发生的, waker 没有发 IPI
-               (`sched_unblock` 的 enqueued=false 分支)。现在 prev 已经
-               入队, 但接下来要切到的可能是 idle —— 不置 need_resched 的话
-               idle 会直接 wfi/hlt, 任务要等下一次 tick 才被看到；tick 若
-               异常就是永久睡死。本核自己入队, 不需要 IPI。
+               DEAD 任务不能被这次"补入队"复活：waker 可能在 exit_group
+               标 DEAD 之前就看到了 on_cpu=true 并留下 wake_pending。
             */
-            c->need_resched = true;
+            if (prev->state != TASK_DEAD) {
+                prev->state = TASK_READY;
+                rq_enqueue_locked(c, prev);
+                /*
+                   这次唤醒是在 prev 还 on_cpu 时发生的, waker 没有发 IPI
+                   (`sched_unblock` 的 enqueued=false 分支)。现在 prev 已经
+                   入队, 但接下来要切到的可能是 idle —— 不置 need_resched 的话
+                   idle 会直接 wfi/hlt, 任务要等下一次 tick 才被看到；tick 若
+                   异常就是永久睡死。本核自己入队, 不需要 IPI。
+                */
+                c->need_resched = true;
+            }
         }
 
         /* state/on_cpu 也在同一把锁下发布, 避免 waker 看到中间态 */
@@ -617,6 +703,13 @@ void sched_schedule(void)
            所以不能残留上一轮的 1。
         */
         next->switch_done = 0;
+    } else {
+        /*
+           无需切换时也要在 rq_lock 内恢复 RUNNING：sched_kill_task() 用
+           同一把锁串行化 state 写入；放到锁外会留下「锁内判完、锁外写回
+           RUNNING」的窗口，把刚标 DEAD 的任务复活。
+        */
+        prev->state = TASK_RUNNING;
     }
 
     if (use_rq_lock)
@@ -627,7 +720,6 @@ void sched_schedule(void)
 
     /* 无需切换(唯一任务或队空只有 idle) */
     if (next == prev) {
-        prev->state = TASK_RUNNING;
         arch_irq_restore(flags);
         return;
     }

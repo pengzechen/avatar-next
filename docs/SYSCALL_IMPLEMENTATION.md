@@ -60,7 +60,7 @@ AF_INET TCP/UDP 基本可用，但没有一条达到“完整”。
 | syscall | 主要缺口 |
 |---|---|
 | `clone` | fork 和 pthread 线程可用；vfork 退化成 fork，未实现的 flag 被忽略 |
-| `exit_group` | 直接给兄弟线程置 DEAD；线程仍在别的核上跑时存在竞态（见下方“已知风险”） |
+| `exit_group` | 通过 `sched_kill_task()` 在目标核 `rq_lock` 下置 DEAD 并摘链；不等待兄弟线程真正下 CPU 就返回 |
 | `set_tid_addr` | 清 CTID 时裸写用户指针，坏地址可导致内核 #PF |
 | `setuid` / `setgid` / `setresuid` / `setresgid` | 直接改 ID；无权限检查、无 saved-set 语义 |
 | `setpgid` | 不校验 pgid 是否存在/同会话（`setpgid02` 失败） |
@@ -157,9 +157,10 @@ Linux 用户程序不走这里，仅保留给早期裸机测试：
    规则见 `CLAUDE.md`「用户指针」一节。
 2. **静默成功**：`chmod/chown/utimensat/msync/sync/...` 返回 0 但不做事，
    比 `ENOSYS` 更难排查。新代码不要模仿这种桩。
-3. **`exit_group` 的兄弟线程**：和刚修掉的 `task_exit` 栈复用问题同源 ——
-   它给别的线程置 DEAD 时，对方可能还在 CPU 上运行。多线程程序调用
-   `exit_group` 才有风险，LTP 当前未覆盖。
+3. ~~**`exit_group` 的兄弟线程**~~（已修复）：原来直接写 `state = DEAD`，
+   对方可能正在自己的 `sched_schedule()` 里把 DEAD 覆盖回 RUNNING。
+   现在走 `sched_kill_task()`：在目标核 `rq_lock` 下摘链并置 DEAD，正在
+   运行的目标核会收到 resched IPI。LTP `exit_group01` 已在 SMP=4 下覆盖。
 4. **`mmap` 的 `prot` 仍被忽略**：`mprotect` 现在能处理 PROT_NONE 保留区和
    升级补页，但页表项没有 RO/RX 权限位，等于仍没有完整的页权限模型。
 

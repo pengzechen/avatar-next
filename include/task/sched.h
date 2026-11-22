@@ -47,6 +47,16 @@ void sched_enqueue(task_t *task);
 void sched_dequeue(task_t *task);
 
 /*
+   sched_kill_task - 从远端把一个任务标成 DEAD 并移出调度队列
+
+   exit_group 终止兄弟线程时用。在目标核的 rq_lock 下完成「摘链 + 置
+   DEAD」，与目标任务自己的 sched_schedule()/sched_unblock() 串行化；
+   正在运行的任务会收到 resched IPI，在下一个 trap 返回/调度点停下。
+   只停止调度，不回收 pgd/内核栈（那仍走 task_exit 的 switch_done 路径）。
+*/
+void sched_kill_task(task_t *task);
+
+/*
    sched_unblock - 把 BLOCKED 任务唤醒并(按需)入队
 
    与旧的 task_unblock 内联实现相比, 本函数：

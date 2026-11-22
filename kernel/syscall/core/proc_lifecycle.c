@@ -241,8 +241,13 @@ void exit_group_handler(uint64_t regs[6])
         if ((t->tgid ? t->tgid : t->id) != tgid)
             continue;
         t->exit_status = (int)regs[0];
-        t->state = TASK_DEAD;
-        sched_dequeue(t);
+        /*
+           不能直接写 state = DEAD 再 sched_dequeue：兄弟线程可能正在
+           自己的 sched_schedule() 里，DEAD 会被覆盖回 RUNNING（LTP
+           exit_group01 的偶发失败）。sched_kill_task 在目标核 rq_lock
+           下完成摘链和置 DEAD，并 kick 正在运行的目标核。
+        */
+        sched_kill_task(t);
     }
 
     sys_exit((int)regs[0]);

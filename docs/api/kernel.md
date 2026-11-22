@@ -1,6 +1,6 @@
 # kernel — C API
 
-[← 返回总览](index.md) · 997 个函数 · 说明覆盖率 95.7%
+[← 返回总览](index.md) · 999 个函数 · 说明覆盖率 95.7%
 
 <a id="mod-kernel-debug-backtrace.c"></a>
 
@@ -7062,7 +7062,7 @@ void proc_ids_handler(uint64_t syscall_num, uint64_t regs[6], task_t *current)
 
 ## kernel/syscall/core/proc_lifecycle.c — 进程/线程生命周期 syscall
 
-`kernel/syscall/core/proc_lifecycle.c` · 8 个函数 · 8 个有说明 · 879 行
+`kernel/syscall/core/proc_lifecycle.c` · 8 个函数 · 8 个有说明 · 884 行
 
 从 kernel/syscall/syscall.c 抽出, 覆盖：
 exit / exit_group        → sys_exit() + exit_handler()
@@ -7147,9 +7147,21 @@ void exit_group_handler(uint64_t regs[6])
 
 扫描同 tgid 的其他用户进程置 DEAD 并出队，然后以 regs[0] 为状态调用 sys_exit。
 
+<details>
+<summary>函数内备注（1 条）</summary>
+
+**第 244 行**
+
+> 不能直接写 state = DEAD 再 sched_dequeue：兄弟线程可能正在
+> 自己的 sched_schedule() 里，DEAD 会被覆盖回 RUNNING（LTP
+> exit_group01 的偶发失败）。sched_kill_task 在目标核 rq_lock
+> 下完成摘链和置 DEAD，并 kick 正在运行的目标核。
+
+</details>
+
 **位置**：`kernel/syscall/core/proc_lifecycle.c:228`
 
-<a id="fn-kernel-syscall-core-proc_lifecycle.c-255"></a>
+<a id="fn-kernel-syscall-core-proc_lifecycle.c-260"></a>
 
 ### `sys_execve`
 
@@ -7164,24 +7176,24 @@ int64_t sys_execve(const char *pathname, char **argv, char **envp, trap_frame_t 
 <details>
 <summary>函数内备注（5 条）</summary>
 
-**第 264 行**
+**第 269 行**
 
 > execve 现在原地替换映像: fd 表保留, 只有 FD_CLOEXEC 项由
 > task_execve 关闭(Linux 语义)。连接 socket、控制台等不受影响。
 
-**第 268 行**
+**第 273 行**
 
 > 从 userspace 复制 argv(按 CPU 取行, 理由见 g_exec_arg_store 的注释)
 
-**第 298 行**
+**第 303 行**
 
 > envp 也必须从用户空间拷进来；以前直接传 NULL，子进程拿不到任何环境变量
 
-**第 323 行**
+**第 328 行**
 
 > 将相对路径转为绝对路径
 
-**第 327 行**
+**第 332 行**
 
 > 成功时当前进程已被原地替换成新程序(PID 不变), 返回 0;
 > 调用方的 syscall 返回路径会把控制权交给新入口。
@@ -7189,9 +7201,9 @@ int64_t sys_execve(const char *pathname, char **argv, char **envp, trap_frame_t 
 
 </details>
 
-**位置**：`kernel/syscall/core/proc_lifecycle.c:255`
+**位置**：`kernel/syscall/core/proc_lifecycle.c:260`
 
-<a id="fn-kernel-syscall-core-proc_lifecycle.c-336"></a>
+<a id="fn-kernel-syscall-core-proc_lifecycle.c-341"></a>
 
 ### `execve_handler`
 
@@ -7203,9 +7215,9 @@ void execve_handler(uint64_t regs[6], trap_frame_t *frame)
 
 取出路径、argv、envp 参数调用 sys_execve，并把返回值写回 regs[0]。
 
-**位置**：`kernel/syscall/core/proc_lifecycle.c:336`
+**位置**：`kernel/syscall/core/proc_lifecycle.c:341`
 
-<a id="fn-kernel-syscall-core-proc_lifecycle.c-348"></a>
+<a id="fn-kernel-syscall-core-proc_lifecycle.c-353"></a>
 
 ### `clone_handler`
 
@@ -7218,7 +7230,7 @@ clone (fork + thread)
 <details>
 <summary>函数内备注（17 条）</summary>
 
-**第 356 行**
+**第 361 行**
 
 > 分配子任务槽。走和 task_create 同一条路(task_alloc_slot)——
 > 以前这里内联抄了一份自己的认领循环, 三个问题：
@@ -7230,39 +7242,39 @@ clone (fork + thread)
 > waitpid 于是拿到 ECHILD(实测 SMP=4 下约 72%)。
 > task_alloc_slot 内部已经处理了这三条。
 
-**第 378 行（行尾）**
+**第 383 行（行尾）**
 
 > fork/线程继承调度策略
 
-**第 380 行（行尾）**
+**第 385 行（行尾）**
 
 > rt_mutex 继承优先级不跨 fork 复制
 
-**第 406 行**
+**第 411 行**
 
 > 信号处置继承：真正的线程组(CLONE_THREAD + CLONE_VM)共享
 > signal_struct，fork/vfork 复制一份。放在分支之前做，失败时
 > 子任务还没分配页表，回收只需要释放槽位。
 
-**第 427 行**
+**第 432 行**
 
 > ── 共享地址空间路径：pthread 才是同一 thread group, vfork 仍是子进程。 ──
 > task_alloc_slot 给每个任务分了一份空 mm；线程组改成共享父任务的
 > 那一份（引用计数 +1），fork 路径则继续用自己那份新 mm。
 
-**第 481 行**
+**第 486 行**
 
 > ── fork 路径 ──
 
-**第 485 行（行尾）**
+**第 490 行（行尾）**
 
 > signal/files/fs/mm 都还没发布
 
-**第 494 行**
+**第 499 行**
 
 > 子进程 PGD 同样需要架构要求的内核映射。
 
-**第 546 行**
+**第 551 行**
 
 > mmap 区从本进程真实的基址扫起, 不是写死的 USER_MMAP_BASE_EXEC。
 > PIE 进程的基址是 0x50000000, 用 0x30000000 当起点会逐页空扫
@@ -7271,7 +7283,7 @@ clone (fork + thread)
 > 回退下限也是 mmap_base(见 mmap.c), 所以 [mmap_base, mmap_next)
 > 必然覆盖该进程全部的 mmap 映射。
 
-**第 559 行**
+**第 564 行**
 
 > 动态链接器(ld-musl)那一带必须单独复制。
 
@@ -7294,7 +7306,7 @@ clone (fork + thread)
 > 空洞, 每个 fork 白扫 65536 页 —— 正是 mmap_base 那条注释里抱怨过的
 > 那种浪费。interp_end 只覆盖真正映射过的部分(ld-musl 约几十页)。
 
-**第 585 行**
+**第 590 行**
 
 > x86_64 的信号返回蹦床页, 必须单独补一页。
 
@@ -7317,26 +7329,26 @@ clone (fork + thread)
 > 宏内部对未映射页有 `src_pa == 0 → continue` 的保护, 父进程若也没有
 > 这一页(例如父进程自己就是修复前 fork 出来的), 这里是安全的空操作。
 
-**第 616 行**
+**第 621 行**
 
 > 不能只 free 根页表：mm_vm_map_pages 已经建好的中间页表,
 > 已复制的私有页, 已 ref 的共享页(NOFREE)都挂在树上。
 > vm_destroy_user_process() 会整棵回收, 并按 KEEP/NOFREE
 > 的规则处理 leaf。
 
-**第 637 行**
+**第 642 行**
 
 > 上面已按 [USER_INTERP_BASE, interp_end) 复制过, 子进程同样要记住
 
-**第 651 行**
+**第 656 行**
 
 > 深拷贝 fd_table
 
-**第 693 行**
+**第 698 行**
 
 > 信号继承（signal_struct 已在进入分支前共享/复制）
 
-**第 701 行**
+**第 706 行**
 
 > Linux fork 的进程属性继承：
 > - umask / 附加组 / rlimits / CPU 亲和性：继承
@@ -7344,15 +7356,15 @@ clone (fork + thread)
 > - set_robust_list：不继承
 > - nanosleep 状态：清零
 
-**第 735 行**
+**第 740 行**
 
 > 父进程返回子进程 PID
 
 </details>
 
-**位置**：`kernel/syscall/core/proc_lifecycle.c:348`
+**位置**：`kernel/syscall/core/proc_lifecycle.c:353`
 
-<a id="fn-kernel-syscall-core-proc_lifecycle.c-752"></a>
+<a id="fn-kernel-syscall-core-proc_lifecycle.c-757"></a>
 
 ### `wait_write_result`
 
@@ -7371,15 +7383,15 @@ ustatus / urusage 是用户给的指针(可为 NULL)。必须走 copy_to_user_by
 <details>
 <summary>函数内备注（1 条）</summary>
 
-**第 761 行（行尾）**
+**第 766 行（行尾）**
 
 > sizeof(struct rusage) == 144
 
 </details>
 
-**位置**：`kernel/syscall/core/proc_lifecycle.c:752`
+**位置**：`kernel/syscall/core/proc_lifecycle.c:757`
 
-<a id="fn-kernel-syscall-core-proc_lifecycle.c-774"></a>
+<a id="fn-kernel-syscall-core-proc_lifecycle.c-779"></a>
 
 ### `wait_handler`
 
@@ -7394,25 +7406,25 @@ void wait_handler(uint64_t regs[6], task_t *me)
 <details>
 <summary>函数内备注（4 条）</summary>
 
-**第 784 行**
+**第 789 行**
 
 > 先判断是否存在匹配的子进程
 
-**第 806 行**
+**第 811 行**
 
 > 查找已退出的子进程
 
-**第 836 行**
+**第 841 行**
 
 > 无已退出的子进程
 
-**第 843 行**
+**第 848 行**
 
 > 阻塞等待
 
 </details>
 
-**位置**：`kernel/syscall/core/proc_lifecycle.c:774`
+**位置**：`kernel/syscall/core/proc_lifecycle.c:779`
 
 <a id="mod-kernel-syscall-core-resource.c"></a>
 
@@ -14804,7 +14816,7 @@ void arch_user_entry_debug(uint64_t user_entry, uint64_t user_sp, uint64_t kerne
 
 ## kernel/task/sched.c — 内核调度器(per-CPU 轮转 + RT 优先级类)
 
-`kernel/task/sched.c` · 24 个函数 · 24 个有说明 · 814 行
+`kernel/task/sched.c` · 26 个函数 · 26 个有说明 · 906 行
 
 设计：
 - 每核一个就绪队列(cpu_t::run_queue / rt_queue)，FIFO 顺序
@@ -15225,7 +15237,64 @@ void sched_dequeue(task_t *task)
 
 **位置**：`kernel/task/sched.c:494`
 
-<a id="fn-kernel-task-sched.c-532"></a>
+<a id="fn-kernel-task-sched.c-535"></a>
+
+### `kill_task_on_cpu`
+
+```c
+static bool kill_task_on_cpu(uint32_t cpu_id, task_t *task)
+```
+
+kill_task_on_cpu - 在指定核的 rq_lock 下发现并终结 task
+
+返回 true 表示找到了它的调度上下文（正在该核运行，或在该核就绪队列里）。
+
+**位置**：`kernel/task/sched.c:535`
+
+<a id="fn-kernel-task-sched.c-569"></a>
+
+### `sched_kill_task`
+
+```c
+void sched_kill_task(task_t *task)
+```
+
+sched_kill_task - 从远端把一个任务标成 DEAD 并移出调度队列
+
+exit_group 终止兄弟线程时用。不能只写 state = DEAD 再 sched_dequeue：
+目标任务可能正在自己的 sched_schedule() 里，后者会在 rq_lock 下把
+state 从 DEAD 覆盖回 READY/RUNNING，任务就活下来了（LTP exit_group01
+的偶发失败：父进程已 wait 到 group leader，但某个兄弟线程还在跑）。
+
+这里持目标核的 rq_lock 完成「摘链 + 置 DEAD」，和目标任务的
+sched_schedule()/sched_unblock() 对 state 的写入串行化。正在目标核上
+运行的任务还会收到一次 resched IPI，尽快在 trap 返回/调度点停下。
+
+只管停止任务，不负责回收 pgd/内核栈 —— 回收仍走 task_exit 的
+switch_done 路径（见 docs/bugfix/SMP_TASK_EXIT_STACK_REUSE.md）。
+
+<details>
+<summary>函数内备注（3 条）</summary>
+
+**第 577 行**
+
+> 先按 affinity 找。入队时 CPU_AFFINITY_ANY 已经被固定成实际 CPU。
+
+**第 581 行**
+
+> 兜底：affinity 可能刚被 task_set_cpu_affinity 改过，扫一遍所有核。
+
+**第 589 行**
+
+> 不在 current_task、也不在任何就绪队列上：多半是 BLOCKED。用和
+> sched_unblock() 相同的锁（目标核 rq_lock）写 DEAD，防止并发唤醒把
+> state 覆盖成 READY。
+
+</details>
+
+**位置**：`kernel/task/sched.c:569`
+
+<a id="fn-kernel-task-sched.c-603"></a>
 
 ### `pick_next`
 
@@ -15240,23 +15309,23 @@ static task_t *pick_next(cpu_t *c)
 <details>
 <summary>函数内备注（3 条）</summary>
 
-**第 534 行**
+**第 605 行**
 
 > 1. 最高优先级的 RT 队列
 
-**第 544 行**
+**第 615 行**
 
 > 2. NORMAL 轮转队列
 
-**第 550 行（行尾）**
+**第 621 行（行尾）**
 
 > 队列为空, 回退到本核 idle
 
 </details>
 
-**位置**：`kernel/task/sched.c:532`
+**位置**：`kernel/task/sched.c:603`
 
-<a id="fn-kernel-task-sched.c-555"></a>
+<a id="fn-kernel-task-sched.c-626"></a>
 
 ### `sched_schedule`
 
@@ -15269,21 +15338,21 @@ void sched_schedule(void)
 关中断后重新入队当前任务并选出下一个，处理唤醒窗口后切换页表与上下文，最后恢复中断。
 
 <details>
-<summary>函数内备注（23 条）</summary>
+<summary>函数内备注（26 条）</summary>
 
-**第 559 行**
+**第 630 行**
 
 > 关中断, 保存当前中断标志
 
-**第 562 行**
+**第 633 行**
 
 > 缓存本核指针：irq_save 之后 cpu 不会变, 避免重复读 per-CPU 寄存器。
 
-**第 565 行**
+**第 636 行**
 
 > prev 一律从 per-CPU 的 c-&gt;current_task 取。
 
-**第 568 行**
+**第 639 行**
 
 > 持本核 rq_lock 期间操作 run_queue。外层已 arch_irq_save 关本核 IRQ,
 > 这里用不带 irqsave 的 spin_lock —— 中断状态由外层管理, 不能用
@@ -15292,11 +15361,18 @@ void sched_schedule(void)
 > (以前这里要把 spinlock_noirq_t* 强转成 spinlock_t* 才能用 raw 变体；
 > 锁类型收敛后不需要了。)
 
-**第 579 行**
+**第 650 行**
 
 > 若当前任务仍在运行且不是 idle, 则按调度类重新入队
 
-**第 587 行**
+**第 658 行**
+
+> 防御 exit_group：sched_kill_task() 会在目标核 rq_lock 下把 state
+> 置成 DEAD。如果被标 DEAD 的任务恰好又被 pick_next 选回来，绝不能
+> 走下面的&quot;无需切换&quot;分支把它写回 RUNNING —— 那会让兄弟线程继续跑，
+> 正是 LTP exit_group01 的偶发失败。强制切到 idle。
+
+**第 667 行**
 
 > 切出 prev 之前收口「on_cpu 期间被唤醒」的窗口。
 
@@ -15305,7 +15381,12 @@ void sched_schedule(void)
 > 之后 waker 再看到的就是 on_cpu=false, 会直接入队 —— 两边持同一把
 > 锁, 不存在「清了 on_cpu 但没人入队」的缝隙。
 
-**第 601 行**
+**第 679 行**
+
+> DEAD 任务不能被这次&quot;补入队&quot;复活：waker 可能在 exit_group
+> 标 DEAD 之前就看到了 on_cpu=true 并留下 wake_pending。
+
+**第 686 行**
 
 > 这次唤醒是在 prev 还 on_cpu 时发生的, waker 没有发 IPI
 > (`sched_unblock` 的 enqueued=false 分支)。现在 prev 已经
@@ -15313,59 +15394,65 @@ void sched_schedule(void)
 > idle 会直接 wfi/hlt, 任务要等下一次 tick 才被看到；tick 若
 > 异常就是永久睡死。本核自己入队, 不需要 IPI。
 
-**第 611 行**
+**第 697 行**
 
 > state/on_cpu 也在同一把锁下发布, 避免 waker 看到中间态
 
-**第 614 行**
+**第 700 行**
 
 > 任务每次被切入时清掉上一次切出的完成标记。退出路径的
 > switch_done 只在任务真正下 CPU 后由 arch_task_switch 置 1，
 > 所以不能残留上一轮的 1。
 
-**第 628 行**
+**第 707 行**
+
+> 无需切换时也要在 rq_lock 内恢复 RUNNING：sched_kill_task() 用
+> 同一把锁串行化 state 写入；放到锁外会留下「锁内判完、锁外写回
+> RUNNING」的窗口，把刚标 DEAD 的任务复活。
+
+**第 721 行**
 
 > 无需切换(唯一任务或队空只有 idle)
 
-**第 635 行（行尾）**
+**第 727 行（行尾）**
 
 > 确保 state 在 current_task 之前完成
 
-**第 636 行（行尾）**
+**第 728 行（行尾）**
 
 > per-CPU 主存储
 
-**第 637 行（行尾）**
+**第 729 行（行尾）**
 
 > 确保 current_task 在 arch_task_switch 之前完成
 
-**第 640 行**
+**第 732 行**
 
 > x86_64：通过 CR3 切换页表
 > - 用户任务：切换到用户页表(已包含内核高半区映射)
 > - 内核任务：切换回内核页表
 
-**第 645 行**
+**第 737 行**
 
 > 切换到用户页表
 
-**第 648 行**
+**第 740 行**
 
 > 更新 TSS.RSP0 为当前任务的内核栈顶
 
-**第 652 行**
+**第 744 行**
 
 > 恢复该用户任务的 TLS 基址(fs:offset)
 
-**第 656 行**
+**第 748 行**
 
 > 从用户任务切换到内核任务：恢复内核页表
 
-**第 659 行**
+**第 751 行**
 
 > 用户→用户切换, 已在上面处理；内核→内核切换, 页表不变
 
-**第 662 行**
+**第 754 行**
 
 > 切换上下文。
 > 对 prev：保存被调用者寄存器 + SP 到 prev-&gt;sp, 然后跳走。
@@ -15374,25 +15461,25 @@ void sched_schedule(void)
 
 > 同时切换页表(如果任务有独立页表)。
 
-**第 672 行**
+**第 764 行**
 
 > 注意：之前 AArch64 使用 sp=-1 标记切换到 idle, 但这导致
 > .Lswitch_to_idle 没有设置栈指针, 造成潜在的栈溢出问题。
 > 现在所有架构统一：idle 有专用栈, 正常返回即可。
 
-**第 677 行**
+**第 769 行**
 
 > 页表参数由架构决定(RISC-V 的首次用户进入/内核任务特例在 arch 实现里)
 
-**第 682 行**
+**第 774 行**
 
 > prev 被恢复后恢复其中断状态
 
 </details>
 
-**位置**：`kernel/task/sched.c:555`
+**位置**：`kernel/task/sched.c:626`
 
-<a id="fn-kernel-task-sched.c-688"></a>
+<a id="fn-kernel-task-sched.c-780"></a>
 
 ### `sched_tick`
 
@@ -15407,7 +15494,7 @@ void sched_tick(void)
 <details>
 <summary>函数内备注（4 条）</summary>
 
-**第 690 行**
+**第 782 行**
 
 > 由 timer ISR 调用。
 > 只设置需要重调度的标志, 实际切换在异常返回前进行。
@@ -15418,18 +15505,18 @@ void sched_tick(void)
 > - FIFO：tick 不抢占（只有更高优先级 RT 入队/阻塞事件才切）；
 > - RR：时间片用完才置 need_resched。
 
-**第 708 行**
+**第 800 行**
 
 > 被 PI 提升的持有者按 FIFO 对待：tick 不能让中等优先级任务
 > 抢走它，否则优先级继承白做了。
 
-**第 719 行**
+**第 811 行**
 
 > idle 记账。挂在 tick 上而不是各个 idle 循环里：g_tick_cb 每个核都会调,
 > 一处就覆盖了 task_idle_loop 和三个架构各自的次级核 idle 循环。
 > /proc/uptime 的第二列靠它, 否则永远是 0(top/vmstat 会当成&quot;从不空闲&quot;)。
 
-**第 727 行**
+**第 819 行**
 
 > 每任务的 ITIMER_REAL 到期检查也挂在这个 tick 上(周期由 timer.tick_ms
 > 配置, 默认 10ms)。放在这里而不是另开一个回调：g_tick_cb 只有一个,
@@ -15438,9 +15525,9 @@ void sched_tick(void)
 
 </details>
 
-**位置**：`kernel/task/sched.c:688`
+**位置**：`kernel/task/sched.c:780`
 
-<a id="fn-kernel-task-sched.c-743"></a>
+<a id="fn-kernel-task-sched.c-835"></a>
 
 ### `sched_check_and_yield`
 
@@ -15455,7 +15542,7 @@ bool sched_check_and_yield(void)
 <details>
 <summary>函数内备注（1 条）</summary>
 
-**第 749 行**
+**第 841 行**
 
 > 注意：不再限制仅用户进程可被抢占。idle 任务(is_user_process=false)
 > 也需要被 timer 抢占, 以便在就绪队列中出现任务时立即切换。
@@ -15463,9 +15550,9 @@ bool sched_check_and_yield(void)
 
 </details>
 
-**位置**：`kernel/task/sched.c:743`
+**位置**：`kernel/task/sched.c:835`
 
-<a id="fn-kernel-task-sched.c-775"></a>
+<a id="fn-kernel-task-sched.c-867"></a>
 
 ### `trap_preempt_kernel_side`
 
@@ -15482,9 +15569,9 @@ trap_preempt_kernel_side - 从【内核态】陷入时的抢占判断
 
 preemptible() 内含 irq_depth == 0 判断, 嵌套中断里不会误切。
 
-**位置**：`kernel/task/sched.c:775`
+**位置**：`kernel/task/sched.c:867`
 
-<a id="fn-kernel-task-sched.c-807"></a>
+<a id="fn-kernel-task-sched.c-899"></a>
 
 ### `sched_check_and_yield_from_trap`
 
@@ -15510,13 +15597,13 @@ sched_schedule() 开头的 assert_always(!in_irq_context()) 不会触发。
 <details>
 <summary>函数内备注（1 条）</summary>
 
-**第 812 行**
+**第 904 行**
 
 > 来自用户态：异常现场完整保存在 trap frame 里, 直接调度即可
 
 </details>
 
-**位置**：`kernel/task/sched.c:807`
+**位置**：`kernel/task/sched.c:899`
 
 <a id="mod-kernel-task-task.c"></a>
 
