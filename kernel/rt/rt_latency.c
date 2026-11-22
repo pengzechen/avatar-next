@@ -54,6 +54,9 @@ typedef struct {
     uint64_t preempt_off_start_pc;
     uint64_t preempt_off_max_pc;
     bool preempt_off_active;
+
+    uint64_t ctxt_switches;
+    uint64_t migrations;
 } rt_lat_cpu_t;
 
 static rt_lat_cpu_t g_rt_lat[AVATAR_MAX_CPUS];
@@ -211,6 +214,27 @@ uint64_t rt_latency_preempt_off_count(void)
     return rt_lat_cpu()->preempt_off_count;
 }
 
+void rt_latency_switch(uint32_t cpu_id, bool migrated)
+{
+    if (cpu_id >= AVATAR_MAX_CPUS)
+        return;
+
+    rt_lat_cpu_t *s = &g_rt_lat[cpu_id];
+    s->ctxt_switches++;
+    if (migrated)
+        s->migrations++;
+}
+
+uint64_t rt_latency_migration_count(void)
+{
+    uint64_t total = 0;
+    uint32_t n = g_num_cpus ? g_num_cpus : 1U;
+
+    for (uint32_t i = 0; i < n && i < AVATAR_MAX_CPUS; i++)
+        total += g_rt_lat[i].migrations;
+    return total;
+}
+
 void rt_latency_tick(uint32_t cpu_id, uint64_t now_ns)
 {
     if (cpu_id >= AVATAR_MAX_CPUS)
@@ -288,7 +312,8 @@ int rt_latency_snprintf(char *buf, size_t cap)
                    "cpu wake_max wake_last wake_n wake_min wake_avg "
                    "syscall_max syscall_max_id syscall_last syscall_avg syscall_n tick_gap_max "
                    "tick_gap_last ticks irq_off_max irq_off_last irq_off_n irq_off_pc "
-                   "preempt_off_max preempt_off_last preempt_off_n preempt_off_pc\n");
+                   "preempt_off_max preempt_off_last preempt_off_n preempt_off_pc "
+                   "ctxt_switches migrations\n");
 
     uint32_t n = g_num_cpus ? g_num_cpus : 1U;
     for (uint32_t i = 0; i < n && i < AVATAR_MAX_CPUS; i++) {
@@ -337,6 +362,10 @@ int rt_latency_snprintf(char *buf, size_t cap)
         pos = lat_put_u64(buf, cap, pos, s->preempt_off_count);
         pos = lat_puts(buf, cap, pos, " 0x");
         pos = lat_put_hex(buf, cap, pos, s->preempt_off_max_pc);
+        pos = lat_puts(buf, cap, pos, " ");
+        pos = lat_put_u64(buf, cap, pos, s->ctxt_switches);
+        pos = lat_puts(buf, cap, pos, " ");
+        pos = lat_put_u64(buf, cap, pos, s->migrations);
         pos = lat_puts(buf, cap, pos, "\n");
     }
 

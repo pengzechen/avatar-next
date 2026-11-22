@@ -21,11 +21,12 @@
 | 场景 5 | 模板 worker + 共享页（create/start/stop/destroy、1ms/10ms） | 同上 |
 | 场景 5b | 统计窗口 RESET（保留 out_seq、清共享页镜像）+ watchdog checks/trips | 同上 |
 | 场景 6 | 普通 mutex SMP 并发 + `rt_mutex` 直接 PI | `rt_mutex_test.c` |
-| 场景 7 | `rt_event` any/all/timeout + event 模板共享环 | `rt_event_test.c` |
+| 场景 7 | `rt_event` any/all/timeout + event 模板共享环；IPC `set→等待者运行` 延迟（500 样本 min/avg/p99/max） | `rt_event_test.c` |
 | 场景 8 | **内核态 cyclictest**：FIFO 80、1ms/10ms 绝对 deadline、NORMAL hog、hog_iters；min/avg/p50/p99/p99.9/max、stddev/jitter/drift、直方图、overrun_ppm；x86 额外拆出 timerlat IRQ 延迟 | `cyclictest.c` |
 | 场景 9 | **内核态 oslat**：FIFO 85 忙循环 500ms，记录执行间隔和 1/10/100µs 超阈值次数 | `oslat.c` |
 | `RT_DEMO=1` | RT ping-pong 唤醒 + NORMAL→RT 抢占 | `rt_demo.c` |
-| R0/R0.5 | `/proc/rtstat`：wake min/avg/max、syscall avg/max、tick_gap；`RT_IRQ_TRACE=1` 真 IRQ-off + preempt-off | `kernel/rt/rt_latency.c` |
+| R0/R0.5 | `/proc/rtstat`：wake min/avg/max、syscall avg/max、tick_gap、context switch/迁移；`RT_IRQ_TRACE=1` 真 IRQ-off + preempt-off | `kernel/rt/rt_latency.c` |
+| 迁移自测 | SMP>1 时把阻塞在 CPU0 的 RT task 改到 CPU1，断言迁移计数 +1 | `tests/unit-test/rt_sched_test.c` |
 | preemptoff 自测 | `RT_TEST=1 RT_IRQ_TRACE=1` 时持 50µs preempt-off，断言计数/max | `tests/unit-test/rt_sched_test.c` |
 | trace 端到端 | `rt-trace` suite：自测 + rootfs shell 读 `/proc/rtstat`，校验 irq/preempt 列、计数、pc 和单调性 | `tests/suites/rt_trace.py` |
 | 回归门禁 | `make -C tests rt-test` 三架构 SMP=1；`rt-test SMP=4`；`rt-trace`；`rt-soak` | `rt_test.py` / `rt_trace.py` |

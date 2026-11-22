@@ -15,6 +15,8 @@
    4. event 模板：共享事件环容量 64。先投 100 条（64 入环、36 drop），
       start 后处理 64 条并验证输出；再投 20 条，验证继续处理和统计；
       最后在 worker 阻塞于 rt_event_wait 时 stop，必须能及时退出。
+   5. IPC 唤醒延迟：FIFO 70 等待者阻塞、FIFO 10 waker 记录时间戳后
+      set；统计 set → 等待者运行的 n/min/avg/p99/max（500 样本）。
 
    所有任务钉 CPU0。事件唤醒走 sched_unblock/self-IPI，不依赖 tick。
 */
@@ -27,6 +29,7 @@
 #include "time/hrtimer.h"
 #include "mm/mm_vm.h"
 #include "driver/time.h"
+#include "exception.h"
 #include "klog.h"
 #include "string.h"
 
@@ -301,6 +304,156 @@ static bool run_event_template_test(uint64_t *posted, uint64_t *processed, uint6
     return *posted == 84 && *processed == 84 && *dropped == 36;
 }
 
+/* ── IPC 唤醒延迟：event set → 等待者运行 ─────────────────── */
+
+#define IPC_ITERS 500
+
+static rt_event_t g_ipc_evt;
+static volatile uint64_t g_ipc_wake_ns;
+static volatile uint32_t g_ipc_waiting;
+static volatile bool g_ipc_done;
+static volatile bool g_ipc_abort;
+static volatile bool g_ipc_bad;
+static uint32_t g_ipc_lat[IPC_ITERS];
+static uint32_t g_ipc_n;
+static uint64_t g_ipc_sum;
+static uint64_t g_ipc_min = ~0ULL;
+static uint64_t g_ipc_max;
+
+static void ipc_record(uint64_t lat)
+{
+    uint32_t n = g_ipc_n;
+
+    if (n >= IPC_ITERS)
+        return;
+    if (lat > 0xFFFFFFFFULL)
+        lat = 0xFFFFFFFFULL;
+    g_ipc_lat[n] = (uint32_t)lat;
+    g_ipc_sum += lat;
+    if (lat < g_ipc_min)
+        g_ipc_min = lat;
+    if (lat > g_ipc_max)
+        g_ipc_max = lat;
+    g_ipc_n = n + 1;
+}
+
+static void ipc_waiter(void *arg)
+{
+    (void)arg;
+
+    for (uint32_t i = 0; i < IPC_ITERS; i++) {
+        __atomic_store_n(&g_ipc_waiting, i + 1, __ATOMIC_RELEASE);
+        uint32_t bits = rt_event_wait(&g_ipc_evt, 0x1U, false, 0, true);
+        uint64_t now = timer_get_ns();
+        uint64_t wake = __atomic_load_n(&g_ipc_wake_ns, __ATOMIC_ACQUIRE);
+
+        if (!(bits & 0x1U)) {
+            g_ipc_bad = true;
+            break;
+        }
+        ipc_record(now > wake ? (now - wake) : 0);
+        if (__atomic_load_n(&g_ipc_abort, __ATOMIC_ACQUIRE))
+            break;
+    }
+
+    __atomic_store_n(&g_ipc_done, true, __ATOMIC_RELEASE);
+    task_exit();
+}
+
+static void ipc_waker(void *arg)
+{
+    (void)arg;
+
+    for (uint32_t i = 0; i < IPC_ITERS; i++) {
+        if (__atomic_load_n(&g_ipc_abort, __ATOMIC_ACQUIRE))
+            break;
+        while (__atomic_load_n(&g_ipc_waiting, __ATOMIC_ACQUIRE) < i + 1) {
+            if (__atomic_load_n(&g_ipc_abort, __ATOMIC_ACQUIRE))
+                goto out;
+            task_yield();
+        }
+        __atomic_store_n(&g_ipc_wake_ns, timer_get_ns(), __ATOMIC_RELEASE);
+        rt_event_set(&g_ipc_evt, 0x1U);
+    }
+
+out:
+    task_exit();
+}
+
+static void ipc_sort(uint32_t *a, uint32_t n)
+{
+    for (uint32_t i = 1; i < n; i++) {
+        uint32_t v = a[i];
+        uint32_t j = i;
+
+        while (j > 0 && a[j - 1] > v) {
+            a[j] = a[j - 1];
+            j--;
+        }
+        a[j] = v;
+    }
+}
+
+static uint32_t ipc_percentile(const uint32_t *a, uint32_t n, uint32_t permille)
+{
+    if (n == 0)
+        return 0;
+    uint32_t idx = (uint32_t)(((uint64_t)n * permille) / 1000ULL);
+    if (idx >= n)
+        idx = n - 1;
+    return a[idx];
+}
+
+static bool run_ipc_latency_test(void)
+{
+    rt_event_init(&g_ipc_evt);
+    g_ipc_wake_ns = 0;
+    g_ipc_waiting = 0;
+    g_ipc_done = false;
+    g_ipc_abort = false;
+    g_ipc_bad = false;
+    g_ipc_n = 0;
+    g_ipc_sum = 0;
+    g_ipc_min = ~0ULL;
+    g_ipc_max = 0;
+
+    uint64_t flags = arch_irq_save();
+    task_t *waiter = task_create_kernel_rt("ipc-wait", ipc_waiter, NULL, 70, 0);
+    task_t *waker = task_create_kernel_rt("ipc-wake", ipc_waker, NULL, 10, 0);
+    arch_irq_restore(flags);
+    if (!waiter || !waker)
+        return false;
+
+    uint64_t deadline = timer_get_ns() + 2000000000ULL;
+    while (!__atomic_load_n(&g_ipc_done, __ATOMIC_ACQUIRE) && timer_get_ns() < deadline)
+        task_yield();
+
+    if (!__atomic_load_n(&g_ipc_done, __ATOMIC_ACQUIRE)) {
+        /* 兜底唤醒：不能让高优先级 waiter 永久阻塞在 boot 上下文之前。 */
+        __atomic_store_n(&g_ipc_abort, true, __ATOMIC_RELEASE);
+        rt_event_set(&g_ipc_evt, 0x1U);
+        deadline = timer_get_ns() + 1000000000ULL;
+        while (!__atomic_load_n(&g_ipc_done, __ATOMIC_ACQUIRE) && timer_get_ns() < deadline)
+            task_yield();
+    }
+
+    if (!__atomic_load_n(&g_ipc_done, __ATOMIC_ACQUIRE) || g_ipc_bad || g_ipc_n != IPC_ITERS) {
+        KLOG_ERROR("=== RT IPC TEST: FAIL n=%u done=%d bad=%d ===\n", g_ipc_n,
+                   (int)__atomic_load_n(&g_ipc_done, __ATOMIC_ACQUIRE), (int)g_ipc_bad);
+        return false;
+    }
+
+    uint32_t n = g_ipc_n;
+    ipc_sort(g_ipc_lat, n);
+    uint64_t avg = (n > 0) ? (g_ipc_sum / n) : 0;
+    uint32_t p99 = ipc_percentile(g_ipc_lat, n, 990);
+
+    KLOG_INFO("=== RT IPC TEST: PASS n=%u min=%llu avg=%llu p99=%u max=%llu ===\n", n,
+              (unsigned long long)((n > 0) ? g_ipc_min : 0), (unsigned long long)avg, p99,
+              (unsigned long long)g_ipc_max);
+    return true;
+}
+
 /* ── 入口 ─────────────────────────────────────────────────── */
 
 void run_rt_event_tests(void)
@@ -317,6 +470,12 @@ void run_rt_event_tests(void)
 
     phase = "event-template";
     if (!run_event_template_test(&posted, &processed, &dropped)) {
+        ok = false;
+        goto out;
+    }
+
+    phase = "ipc-latency";
+    if (!run_ipc_latency_test()) {
         ok = false;
         goto out;
     }

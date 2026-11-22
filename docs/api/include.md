@@ -6661,7 +6661,7 @@ fork：child_stack=0, tls=0
 
 ## include/task/task.h — 内核任务控制块与公共 API
 
-`include/task/task.h` · 5 个函数 · 4 个有说明 · 546 行
+`include/task/task.h` · 5 个函数 · 4 个有说明 · 547 行
 
 设计：
 - 内核任务 + 用户进程共用 TCB；用户进程的地址空间/文件/信号见各字段注释
@@ -6671,7 +6671,7 @@ fork：child_stack=0, tls=0
 - 字段按“切换/调度热区 → 用户状态 → 冷数据/大数组”排列，
 并由文件末尾的 _Static_assert 锁住布局（见 docs/task_t_refactor.md）
 
-<a id="fn-include-task-task.h-218"></a>
+<a id="fn-include-task-task.h-219"></a>
 
 ### `task_is_thread`
 
@@ -6681,9 +6681,9 @@ static inline bool task_is_thread(const task_t *t)
 
 CLONE_THREAD 创建的任务：tgid 指向线程组首线程；exec 后 tgid 恢复为自身 id。
 
-**位置**：`include/task/task.h:218`
+**位置**：`include/task/task.h:219`
 
-<a id="fn-include-task-task.h-235"></a>
+<a id="fn-include-task-task.h-236"></a>
 
 ### `task_is_live_user`
 
@@ -6702,9 +6702,9 @@ task_release_objects() 把 mm 置 NULL，而 g_stack_used[] 要到更后面
 
 mm 非空是最后一道保险：任何扫描都别假设 is_user_process 为真就一定有 mm。
 
-**位置**：`include/task/task.h:235`
+**位置**：`include/task/task.h:236`
 
-<a id="fn-include-task-task.h-241"></a>
+<a id="fn-include-task-task.h-242"></a>
 
 ### `task_is_rt`
 
@@ -6714,9 +6714,9 @@ static inline bool task_is_rt(const task_t *t)
 
 是否 RT 调度类（FIFO/RR）。
 
-**位置**：`include/task/task.h:241`
+**位置**：`include/task/task.h:242`
 
-<a id="fn-include-task-task.h-250"></a>
+<a id="fn-include-task-task.h-251"></a>
 
 ### `task_sched_is_rt`
 
@@ -6727,9 +6727,9 @@ static inline bool task_sched_is_rt(const task_t *t)
 调度器用的“有效 RT 属性”：基础 RT 调度类，或被 rt_mutex 临时提升的
 NORMAL 任务。pi_priority 只由 sched_set_pi_boost() 写。
 
-**位置**：`include/task/task.h:250`
+**位置**：`include/task/task.h:251`
 
-<a id="fn-include-task-task.h-255"></a>
+<a id="fn-include-task-task.h-256"></a>
 
 ### `task_effective_rt_prio`
 
@@ -6739,7 +6739,7 @@ static inline uint8_t task_effective_rt_prio(const task_t *t)
 
 > ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-**位置**：`include/task/task.h:255`
+**位置**：`include/task/task.h:256`
 
 <a id="mod-include-vmm-vmm.h"></a>
 

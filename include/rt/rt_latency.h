@@ -47,6 +47,15 @@ void rt_latency_irq_off_end(void);
 void rt_latency_preempt_off_begin(uint64_t callsite_pc);
 void rt_latency_preempt_off_end(void);
 
+/*
+   调度器每次真正切换 prev→next 时调用。
+   migrated=true 表示 next 上次运行的 CPU 与本次不同（跨核迁移）。
+*/
+void rt_latency_switch(uint32_t cpu_id, bool migrated);
+
+/* 所有 CPU 的迁移计数之和，供自测断言跨核迁移确实被记录。 */
+uint64_t rt_latency_migration_count(void);
+
 /* 当前 CPU 的 preempt-off 快照，供 RT_TEST 的诊断自测使用。 */
 uint64_t rt_latency_preempt_off_max_ns(void);
 uint64_t rt_latency_preempt_off_count(void);

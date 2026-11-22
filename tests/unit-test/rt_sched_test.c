@@ -26,9 +26,10 @@
 #include "time/hrtimer.h"
 #include "mm/mm_vm.h"
 #include "string.h"
+#include "task/rt_event.h"
+#include "rt/rt_latency.h"
 #ifdef RT_IRQ_TRACE
 #include "task/preempt.h"
-#include "rt/rt_latency.h"
 #endif
 
 #define RT_TEST_ITERS 100
@@ -565,6 +566,73 @@ out:
     return ok;
 }
 
+/* ── 跨核迁移计数自测（SMP>1）────────────────────────────── */
+
+static rt_event_t g_mig_evt;
+static volatile uint32_t g_mig_done;
+
+static void migration_probe(void *arg)
+{
+    (void)arg;
+    (void)rt_event_wait(&g_mig_evt, 0x1U, false, 0, true);
+    __atomic_store_n(&g_mig_done, 1U, __ATOMIC_RELEASE);
+    task_exit();
+}
+
+/*
+   SMP>1 时强制一次跨核迁移：
+     probe 先在 CPU0 运行并阻塞 → 把 affinity 改成 CPU1 → set event 唤醒。
+   它首次在 CPU1 被切入时，sched 的 last_run_cpu 是 0，迁移计数应 +1。
+*/
+static bool run_migration_test(void)
+{
+    if (g_num_cpus < 2)
+        return true;
+
+    rt_event_init(&g_mig_evt);
+    g_mig_done = 0;
+
+    uint64_t flags = arch_irq_save();
+    task_t *probe = task_create_kernel_rt("rt-mig", migration_probe, NULL, 60, 0);
+    arch_irq_restore(flags);
+    if (!probe) {
+        KLOG_ERROR("=== RT MIGRATION TEST: FAIL (task create) ===\n");
+        return false;
+    }
+
+    uint64_t deadline = timer_get_ns() + 2000000000ULL;
+    while (probe->state != TASK_BLOCKED && timer_get_ns() < deadline)
+        task_yield();
+    if (probe->state != TASK_BLOCKED) {
+        KLOG_ERROR("=== RT MIGRATION TEST: FAIL (probe not blocked) ===\n");
+        rt_event_set(&g_mig_evt, 0x1U);
+        return false;
+    }
+
+    uint64_t before = rt_latency_migration_count();
+    probe->cpu_affinity = 1U;
+    rt_event_set(&g_mig_evt, 0x1U);
+
+    deadline = timer_get_ns() + 2000000000ULL;
+    while (!__atomic_load_n(&g_mig_done, __ATOMIC_ACQUIRE) && timer_get_ns() < deadline)
+        task_yield();
+    if (!__atomic_load_n(&g_mig_done, __ATOMIC_ACQUIRE)) {
+        KLOG_ERROR("=== RT MIGRATION TEST: FAIL (timeout) ===\n");
+        return false;
+    }
+
+    uint64_t after = rt_latency_migration_count();
+    if (after <= before) {
+        KLOG_ERROR("=== RT MIGRATION TEST: FAIL (migrations=%llu->%llu) ===\n", (unsigned long long)before,
+                   (unsigned long long)after);
+        return false;
+    }
+
+    KLOG_INFO("=== RT MIGRATION TEST: PASS migrations=%llu->%llu ===\n", (unsigned long long)before,
+              (unsigned long long)after);
+    return true;
+}
+
 #ifdef RT_IRQ_TRACE
 /*
    诊断自测：RT_IRQ_TRACE=1 时 preempt_disable/enable 在真实调度路径上
@@ -682,6 +750,11 @@ void run_rt_sched_test(void)
 
         if (!run_rt_obs_test()) {
             KLOG_ERROR("=== RT SCHED TEST: FAIL (observability) ===\n");
+            return;
+        }
+
+        if (!run_migration_test()) {
+            KLOG_ERROR("=== RT SCHED TEST: FAIL (migration) ===\n");
             return;
         }
 

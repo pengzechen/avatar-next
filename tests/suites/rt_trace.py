@@ -29,11 +29,13 @@ PREEMPTOFF_RE = re.compile(
     rb"=== PREEMPTOFF TEST: PASS count=(\d+) held=(\d+) max=(\d+) ==="
 )
 RT_SCHED_PASS_RE = rb"=== RT SCHED TEST: PASS ==="
-STATS_DONE1 = b"__RTSTAT_DONE1__"
-STATS_DONE2 = b"__RTSTAT_DONE2__"
+STATS_DONE1 = b"__R1__"
+STATS_DONE2 = b"__R2__"
 # 命令回显里不能出现完整的哨兵，否则 wait_for 会在命令真正执行前命中。
-# 用 shell 变量拼接，回显是 "${x}DONE1__"，输出才是完整哨兵。
-STATS_SET = b"__RTSTAT_"
+# echo __R"1"__ 的回显含引号，输出才是连续的 __R1__。
+# 另外 x86 串口会丢长命令的字节，这里用 chunk=1 慢速写。
+STATS_CMD1 = b'cat /proc/rtstat; echo __R"1"__\n'
+STATS_CMD2 = b'ls /bin >/dev/null; cat /proc/rtstat; echo __R"2"__\n'
 
 FORBIDDEN = (
     rb"\[ASSERT\]",
@@ -65,8 +67,8 @@ def _parse_stats(text: str):
 
 
 def _row_numbers(parts):
-    if len(parts) != 22:
-        raise AssertionError(f"rtstat cpu0 列数 {len(parts)}，应为 22：{parts}")
+    if len(parts) != 24:
+        raise AssertionError(f"rtstat cpu0 列数 {len(parts)}，应为 24：{parts}")
     vals = [int(parts[i]) for i in range(1, 14)]
     irq_off_max = int(parts[14])
     irq_off_last = int(parts[15])
@@ -76,6 +78,8 @@ def _row_numbers(parts):
     preempt_last = int(parts[19])
     preempt_n = int(parts[20])
     preempt_pc = parts[21]
+    ctxt_switches = int(parts[22])
+    migrations = int(parts[23])
     if not irq_pc.startswith("0x") or not preempt_pc.startswith("0x"):
         raise AssertionError(f"rtstat pc 不是十六进制：{parts}")
     return {
@@ -95,6 +99,8 @@ def _row_numbers(parts):
         "preempt_off_last": preempt_last,
         "preempt_off_n": preempt_n,
         "preempt_off_pc": preempt_pc,
+        "ctxt_switches": ctxt_switches,
+        "migrations": migrations,
     }
 
 
@@ -127,11 +133,7 @@ def run(ctx: TestContext, report: Report, arches) -> None:
                 q.wait_shell(ctx.timeout(240), desc=f"{arch.name} 宿主 shell")
 
                 since = q.mark()
-                q.send_slow(
-                    b"x="
-                    + STATS_SET
-                    + b"; cat /proc/rtstat; echo ${x}DONE1__\n"
-                )
+                q.send_slow(STATS_CMD1, chunk=1, delay=0.01)
                 q.wait_for(
                     STATS_DONE1,
                     ctx.timeout(60),
@@ -141,12 +143,7 @@ def run(ctx: TestContext, report: Report, arches) -> None:
                 )
 
                 since = q.mark()
-                q.send_slow(
-                    b"x="
-                    + STATS_SET
-                    + b"; ls /bin >/dev/null; cat /proc/rtstat; echo "
-                    b"${x}DONE2__\n"
-                )
+                q.send_slow(STATS_CMD2, chunk=1, delay=0.01)
                 q.wait_for(
                     STATS_DONE2,
                     ctx.timeout(60),
@@ -172,6 +169,8 @@ def run(ctx: TestContext, report: Report, arches) -> None:
                 "preempt_off_last",
                 "preempt_off_n",
                 "preempt_off_pc",
+                "ctxt_switches",
+                "migrations",
             ):
                 assert name in header, f"rtstat 表头缺列 {name}：{header}"
 
@@ -218,6 +217,18 @@ def run(ctx: TestContext, report: Report, arches) -> None:
                 "irq_off_max 不是单调最大值"
             )
 
+            assert first["ctxt_switches"] > 0, "ctxt_switches 为 0"
+            assert first["migrations"] <= first["ctxt_switches"], (
+                "migrations 不应大于 ctxt_switches："
+                f"{first['migrations']}/{first['ctxt_switches']}"
+            )
+            assert second["ctxt_switches"] >= first["ctxt_switches"], (
+                "执行 ls 后 ctxt_switches 变小了"
+            )
+            assert second["migrations"] >= first["migrations"], (
+                "执行 ls 后 migrations 变小了"
+            )
+
             tag = f"         {arch.name}: "
             print(
                 f"{tag}preemptoff n={first['preempt_off_n']} "
@@ -231,6 +242,10 @@ def run(ctx: TestContext, report: Report, arches) -> None:
             print(
                 f"{tag}preemptoff self-test count={count} "
                 f"held={held}ns max={observed_max}ns"
+            )
+            print(
+                f"{tag}ctxt_switches={first['ctxt_switches']} "
+                f"migrations={first['migrations']}"
             )
 
         ctx.case(

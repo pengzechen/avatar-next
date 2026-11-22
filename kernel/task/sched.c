@@ -654,6 +654,7 @@ void sched_schedule(void)
     }
 
     task_t *next = pick_next(c);
+    bool migrated = false;
 
     /*
        防御 exit_group：sched_kill_task() 会在目标核 rq_lock 下把 state
@@ -698,6 +699,12 @@ void sched_schedule(void)
         next->state = TASK_RUNNING;
         next->on_cpu = true;
         /*
+           迁移判定：任务上次在另一颗 CPU 上运行。首次运行不算迁移；
+           任务在 enqueue 后由 task_set_cpu_affinity 改核时，这里会记一次。
+        */
+        migrated = (next->last_run_cpu != (uint32_t)-1 && next->last_run_cpu != c->cpu_id);
+        next->last_run_cpu = c->cpu_id;
+        /*
            任务每次被切入时清掉上一次切出的完成标记。退出路径的
            switch_done 只在任务真正下 CPU 后由 arch_task_switch 置 1，
            所以不能残留上一轮的 1。
@@ -726,7 +733,8 @@ void sched_schedule(void)
 
     barrier_compiler();     /* 确保 state 在 current_task 之前完成 */
     c->current_task = next; /* per-CPU 主存储 */
-    barrier_compiler();     /* 确保 current_task 在 arch_task_switch 之前完成 */
+    rt_latency_switch(c->cpu_id, migrated);
+    barrier_compiler(); /* 确保 current_task 在 arch_task_switch 之前完成 */
 
 #if ARCH_X86_64
     /* x86_64：通过 CR3 切换页表

@@ -147,7 +147,8 @@ RT 内核线程可以用内核 API，但必须遵守：
     `task_block()` 期间的等待不计入；
   - `tick_gap`：相邻 timer tick 间隔，作为“长关中断/长临界区”的近似
     指标（正常约 10ms，明显变大说明 timer 被拖住）。
-- `/proc/rtstat` 输出每 CPU 的 `wake_* / syscall_* / tick_gap_*`。
+- `/proc/rtstat` 输出每 CPU 的 `wake_* / syscall_* / tick_gap_*`，以及
+  真正的上下文切换次数 `ctxt_switches` 和跨核迁移次数 `migrations`。
 - 真正的 irq-off 起止 trace 仍留到 R0.5（需要在 arch_irq_* 原语上做
   低开销采样）。
 
@@ -180,6 +181,9 @@ cpu0 1008 788 2 33798673 285 312 35398811 10494224 1059
 - `RT_TEST=1 RT_IRQ_TRACE=1` 会额外跑 `PREEMPTOFF TEST`：在关中断
   窗口里持 50µs `preempt_disable`，断言最外层计数 +1 且 max 覆盖
   该区间。
+- SMP>1 的 RT 自测会把阻塞在 CPU0 的任务改绑 CPU1，断言
+  `migrations` 计数增加；`rt_event` 自测还输出 500 个
+  `set→等待者运行` 的 IPC 唤醒延迟样本。
 
 **清理后的实测（QEMU，SMP=1，启动后 shell；RT_IRQ_TRACE 全量编译）**：
 

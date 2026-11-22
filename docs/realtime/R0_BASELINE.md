@@ -38,11 +38,14 @@ cpu wake_max wake_last wake_n wake_min wake_avg
 syscall_max syscall_max_id syscall_last syscall_avg syscall_n
 tick_gap_max tick_gap_last ticks irq_off_max irq_off_last irq_off_n irq_off_pc
 preempt_off_max preempt_off_last preempt_off_n preempt_off_pc
+ctxt_switches migrations
 ```
 
 单位均为纳秒。`syscall_max_id` 是内部 syscall 号（221 = execve）。
 `wake_*` 是 `sched_unblock` → 任务真正运行的统计；`wake_min/avg` 和
-`syscall_avg` 用于看分布的中心，极值仍看 max。
+`syscall_avg` 用于看分布的中心，极值仍看 max。`ctxt_switches` 是真正的
+prev→next 切换次数，`migrations` 是任务上次运行 CPU 与本次不同的次数
+（首次运行不算迁移）。
 `tick_gap` 是相邻 timer tick 间隔（正常约 10ms）。`irq_off_*` 和
 `preempt_off_*` 需要 `RT_IRQ_TRACE=1` 诊断变体：
 
@@ -74,9 +77,10 @@ make PLATFORM=qemu-virt-x86_64 RT_TEST=1 RT_DEMO=1 RT_IRQ_TRACE=1 kernel
 
 ## 基线原始结果（运行时）
 
-> 2026-11-23 起 `/proc/rtstat` 增加 `wake_min/wake_avg/syscall_avg` 和
-> `preempt_off_max/last/n/pc`；本节下面标注为历史样本的行仍是旧列数，
-> x86 的最新一行已带新列。
+> 2026-11-23 起 `/proc/rtstat` 增加 `wake_min/wake_avg/syscall_avg`、
+> `preempt_off_max/last/n/pc` 和 `ctxt_switches/migrations`；本节下面
+> 标注为历史样本的行仍是旧列数。x86 的最新一行来自 `rt-trace` 构建
+> （含 RT 自测），只用于示意列和单位，不是稳态启动基线。
 
 ### x86_64（KVM，SMP=1）
 
@@ -96,17 +100,20 @@ cpu0 2048 2048 1 15283923 221 315 274 13207498 10017080 746
 R3 后（异步 klog + fs mutex）+ `RT_IRQ_TRACE=1`（**clean 全量重编**）：
 
 ```text
-cpu0 11679090 3538 41 1464 476674 11095350 221 272 109366 275 10127716 9966923 1065 271154 3598 7678801 0xffff80000022441c 270963 3427 3844197 0xffff8000002242c0
+cpu0 500027197 2385 10835 379 57050 11586946 221 259 89565 561 509995103 9996727 327 1180256 3464 1511098 0xffff800000238af0 475232 3313 327540 0xffff800000270192 295102 0
 ```
 
-- `irq_off_max ≈ 0.27 ms`；当前最长区间落在 `signal_check_uart()`。
-- 同一次运行（执行 `ls /bin` 后）`preempt_off_max ≈ 0.27 ms`，
-  `preempt_off_pc` 用 `addr2line -f -i` 展开后同样是
-  `signal_check_uart()` 里的 spinlock 临界区。两者可以重叠，但不是
-  同一个计时区间。
-- `wake_max` 的 ~11.7ms 仍包含启动期 klogd 首次运行前的累计等待；
-  稳定后 `wake_last` 是 µs 级。`wake_avg` 被启动期长尾拉高，不能单独
-  当作稳态调度延迟。
+> 这一行来自带 `RT_TEST=1` 的 `rt-trace` 构建；`wake_max/tick_gap_max`
+> 包含 RT 自测的 1s oslat/500ms busy loop，不能当作无负载基线。
+
+- 这一行 `irq_off_max ≈ 1.18 ms`；当前最长区间仍落在
+  `signal_check_uart()`。
+- `preempt_off_max ≈ 0.48 ms`，`preempt_off_pc` 用
+  `addr2line -f -i` 展开后同样是 `signal_check_uart()` 里的 spinlock
+  临界区。两者可以重叠，但不是同一个计时区间。
+- `wake_max/tick_gap_max` 包含 RT 自测的 500ms oslat busy loop；
+  `wake_last`（2.4µs）才是接近稳态的调度延迟。不要拿这一行的 max
+  当无负载基线。
 - 异步 klog 之前是 2.5ms（最长在 `klog_write` 的 UART 输出），
   再之前“~6.3µs”的读数是新旧 `.o` 混编导致的失真；`RT_IRQ_TRACE`
   已加入 `_CFG_SIG`，切换开关会全量重编。

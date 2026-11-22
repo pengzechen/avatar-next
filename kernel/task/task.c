@@ -177,6 +177,8 @@ task_t *task_alloc_slot(void)
         memset(task, 0, sizeof(*task));
         task->state = TASK_ALLOCATING;
         task->stack_base = g_task_stacks[i];
+        /* 0 是合法 CPU；用哨兵区分“从未运行过”，避免首次运行被算成迁移。 */
+        task->last_run_cpu = (uint32_t)-1;
 
         /*
            Linux 进程属性的默认值。clone_handler 会把父进程的

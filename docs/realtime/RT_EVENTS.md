@@ -100,7 +100,20 @@ make -C tests apps ARCHES=x86_64      # /bin/rt-event-test 用户态端到端
 - any/all mask、clear、多个等待者的 mask 过滤；
 - x86 oneshot 下的 20ms 超时；
 - 事件环：先投 100（64 入环/36 drop），start 后处理 64，再投 20，
-  stop 阻塞 worker 并确认 STOPPED。
+  stop 阻塞 worker 并确认 STOPPED；
+- **IPC 唤醒延迟**：FIFO 70 等待者阻塞在 `rt_event_wait()`，FIFO 10
+  waker 记录时间戳后 `rt_event_set()`；等待者醒来再取时间戳，统计
+  `set → 等待者运行` 的 `n/min/avg/p99/max`，500 个样本。它对应
+  `sigwaittest` 的内核态等价物，走 self-IPI，不依赖 tick。
+
+x86_64 KVM 实测（一次运行）：
+
+```text
+=== RT IPC TEST: PASS n=500 min=3143 avg=3220 p99=4070 max=9227 ===
+```
+
+这组数字包含 `rt_event_set()` 的锁/唤醒、调度器选择和 RT 线程运行；
+不是用户态 syscall 的端到端延迟。
 
 用户态场景（`apps/c/rt_event_test.c`）：
 

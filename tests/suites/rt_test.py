@@ -20,6 +20,8 @@ rt-test suite — RT 调度语义与唤醒/抢占延迟。
     场景 7：rt_event any/all/mask 唤醒（含 x86 oneshot 超时）与 event
     模板 + 共享事件环：容量 64，先投 100 再处理（64 入环/36 drop），
     再补 20 条；最后验证阻塞在无限等事件的 worker 能被 stop 唤醒。
+    另测 IPC 唤醒延迟：FIFO waiter 阻塞，FIFO waker set 后统计
+    set→waiter 运行的 n/min/avg/p99/max（500 样本）。
     场景 8：内核态 cyclictest——FIFO 80 钉 CPU0，1ms(x86 oneshot)/10ms
     (tick 回退) 绝对 deadline 周期，加一个 NORMAL hog；记录
     min/avg/p50/p99/p99.9/max、stddev/jitter/drift、直方图、overrun
@@ -80,6 +82,10 @@ EVENT_RE = re.compile(
     rb"=== RT EVENT TEST: PASS timeout=(\d+) posted=(\d+) "
     rb"processed=(\d+) dropped=(\d+) ==="
 )
+IPC_RE = re.compile(
+    rb"=== RT IPC TEST: PASS n=(\d+) min=(\d+) avg=(\d+) "
+    rb"p99=(\d+) max=(\d+) ==="
+)
 CYCLI_RE = re.compile(
     rb"=== CYCLICTEST: PASS period=(\d+) warmup=(\d+) cycles=(\d+) "
     rb"samples=(\d+) min=(\d+) avg=(\d+) p50=(\d+) p99=(\d+) p999=(\d+) "
@@ -103,8 +109,10 @@ FORBIDDEN = (
     rb"=== RT SCHED TEST: FAIL",
     rb"=== RT WORKER TEST: FAIL",
     rb"=== RT OBS TEST: FAIL",
+    rb"=== RT MIGRATION TEST: FAIL",
     rb"=== RT MUTEX TEST: FAIL",
     rb"=== RT EVENT TEST: FAIL",
+    rb"=== RT IPC TEST: FAIL",
     rb"=== CYCLICTEST: FAIL",
     rb"=== OSLAT: FAIL",
     rb"RT DEMO: TIMEOUT",
@@ -169,6 +177,15 @@ def _rt(ctx: TestContext, report: Report, arch) -> None:
                 )
             )
 
+            ipc = _parse(
+                q.wait_for(
+                    IPC_RE,
+                    ctx.timeout(180),
+                    forbidden=FORBIDDEN,
+                    desc=f"{arch.name} IPC 唤醒延迟自测",
+                )
+            )
+
             cycli = _parse(
                 q.wait_for(
                     CYCLI_RE,
@@ -226,6 +243,7 @@ def _rt(ctx: TestContext, report: Report, arch) -> None:
             med_order,
         ) = mutex
         event_timeout, event_posted, event_processed, event_dropped = event
+        ipc_n, ipc_min, ipc_avg, ipc_p99, ipc_max = ipc
         (
             cyc_period,
             cyc_warmup,
@@ -294,6 +312,10 @@ def _rt(ctx: TestContext, report: Report, arch) -> None:
             f"{event_posted}/{event_processed}/{event_dropped}"
         )
         print(
+            f"{tag}ipc n={ipc_n} min/avg/p99/max="
+            f"{ipc_min}/{ipc_avg}/{ipc_p99}/{ipc_max}ns"
+        )
+        print(
             f"{tag}cyclictest period={cyc_period}ns warmup={cyc_warmup} "
             f"cycles={cyc_cycles} samples={cyc_samples}"
         )
@@ -351,6 +373,15 @@ def _rt(ctx: TestContext, report: Report, arch) -> None:
             f"{high_order}/{low_order}/{med_order}，应为 1/2/3"
             "（PI 失效时中等优先级任务会先完成）"
         )
+        assert ipc_n == 500, f"IPC 唤醒样本 {ipc_n}，应为 500"
+        assert ipc_min <= ipc_avg <= ipc_max, (
+            "IPC min/avg/max 顺序错误："
+            f"{ipc_min}/{ipc_avg}/{ipc_max}"
+        )
+        assert ipc_p99 <= ipc_max, (
+            f"IPC p99={ipc_p99}ns 大于 max={ipc_max}ns"
+        )
+
         assert (event_posted, event_processed, event_dropped) == (84, 84, 36), (
             "event 环统计 "
             f"{event_posted}/{event_processed}/{event_dropped}，应为 84/84/36"
