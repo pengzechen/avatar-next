@@ -26,6 +26,10 @@
 #include "time/hrtimer.h"
 #include "mm/mm_vm.h"
 #include "string.h"
+#ifdef RT_IRQ_TRACE
+#include "task/preempt.h"
+#include "rt/rt_latency.h"
+#endif
 
 #define RT_TEST_ITERS 100
 
@@ -561,6 +565,46 @@ out:
     return ok;
 }
 
+#ifdef RT_IRQ_TRACE
+/*
+   诊断自测：RT_IRQ_TRACE=1 时 preempt_disable/enable 在真实调度路径上
+   被调用。这里直接持一段 50µs 的 preempt-off，确认最外层计数 +1 且
+   max 至少覆盖这段区间。普通编译不包含这段代码。
+*/
+static bool run_preemptoff_test(void)
+{
+    /*
+       关中断做整段测量：否则 preempt_enable 之后、读计数之前的一次
+       timer IRQ 也可能拿 spinlock，让 count 多涨几次，断言就不稳。
+    */
+    uint64_t flags = arch_irq_save();
+    uint64_t count_before = rt_latency_preempt_off_count();
+
+    preempt_disable();
+    uint64_t t0 = timer_get_ns();
+    while (timer_get_ns() - t0 < 50000)
+        ;
+    uint64_t t1 = timer_get_ns();
+    preempt_enable();
+
+    uint64_t count_after = rt_latency_preempt_off_count();
+    uint64_t max = rt_latency_preempt_off_max_ns();
+    uint64_t held = t1 - t0;
+    arch_irq_restore(flags);
+
+    if (count_after != count_before + 1 || max < held) {
+        KLOG_ERROR("=== PREEMPTOFF TEST: FAIL count=%llu->%llu held=%llu max=%llu ===\n",
+                   (unsigned long long)count_before, (unsigned long long)count_after, (unsigned long long)held,
+                   (unsigned long long)max);
+        return false;
+    }
+
+    KLOG_INFO("=== PREEMPTOFF TEST: PASS count=%llu held=%llu max=%llu ===\n", (unsigned long long)count_after,
+              (unsigned long long)held, (unsigned long long)max);
+    return true;
+}
+#endif
+
 void run_rt_sched_test(void)
 {
     KLOG_INFO("=== RT SCHED TEST ===\n");
@@ -664,6 +708,13 @@ void run_rt_sched_test(void)
             KLOG_ERROR("=== RT SCHED TEST: FAIL (oslat) ===\n");
             return;
         }
+
+#ifdef RT_IRQ_TRACE
+        if (!run_preemptoff_test()) {
+            KLOG_ERROR("=== RT SCHED TEST: FAIL (preemptoff) ===\n");
+            return;
+        }
+#endif
 
         KLOG_INFO("=== RT SCHED TEST: PASS ===\n");
     } else {

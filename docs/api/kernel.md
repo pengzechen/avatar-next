@@ -1,6 +1,6 @@
 # kernel — C API
 
-[← 返回总览](index.md) · 1002 个函数 · 说明覆盖率 95.6%
+[← 返回总览](index.md) · 1006 个函数 · 说明覆盖率 95.2%
 
 <a id="mod-kernel-debug-backtrace.c"></a>
 
@@ -5675,7 +5675,7 @@ uint32_t rt_event_wait(rt_event_t *e, uint32_t mask, bool wait_all, uint64_t tim
 
 ## kernel/rt/rt_latency.c — R0 实时延迟统计
 
-`kernel/rt/rt_latency.c` · 12 个函数 · 12 个有说明 · 258 行
+`kernel/rt/rt_latency.c` · 16 个函数 · 12 个有说明 · 330 行
 
 见 docs/realtime/ARCHITECTURE.md。这里只做“常开、低成本”的近似测量，
 真正的 irq-off trace 后续再上（R0.5）：
@@ -5684,7 +5684,7 @@ uint32_t rt_event_wait(rt_event_t *e, uint32_t mask, bool wait_all, uint64_t tim
 - tick_gap：timer tick 间隔，作为长关中断/长临界区的近似指示。
 数据经 /proc/rtstat 暴露。
 
-<a id="fn-kernel-rt-rt_latency.c-51"></a>
+<a id="fn-kernel-rt-rt_latency.c-59"></a>
 
 ### `rt_lat_cpu`
 
@@ -5696,9 +5696,9 @@ static inline rt_lat_cpu_t *rt_lat_cpu(void)
 
 返回当前 CPU 的延迟统计结构，CPU 号越界时回退到 0 号。
 
-**位置**：`kernel/rt/rt_latency.c:51`
+**位置**：`kernel/rt/rt_latency.c:59`
 
-<a id="fn-kernel-rt-rt_latency.c-59"></a>
+<a id="fn-kernel-rt-rt_latency.c-67"></a>
 
 ### `rt_latency_wake`
 
@@ -5710,9 +5710,9 @@ void rt_latency_wake(task_t *t)
 
 把任务的唤醒时刻记为当前定时器纳秒值。
 
-**位置**：`kernel/rt/rt_latency.c:59`
+**位置**：`kernel/rt/rt_latency.c:67`
 
-<a id="fn-kernel-rt-rt_latency.c-66"></a>
+<a id="fn-kernel-rt-rt_latency.c-74"></a>
 
 ### `rt_latency_run`
 
@@ -5724,9 +5724,9 @@ void rt_latency_run(task_t *t, uint64_t now_ns)
 
 若有待统计唤醒时刻，算出唤醒延迟并更新本 CPU 的 last/max/计数后清零该时刻。
 
-**位置**：`kernel/rt/rt_latency.c:66`
+**位置**：`kernel/rt/rt_latency.c:74`
 
-<a id="fn-kernel-rt-rt_latency.c-82"></a>
+<a id="fn-kernel-rt-rt_latency.c-90"></a>
 
 ### `rt_latency_syscall`
 
@@ -5738,9 +5738,9 @@ void rt_latency_syscall(uint64_t duration_ns, uint32_t nr)
 
 记录一次系统调用耗时，更新本 CPU 的 last、max 值（记下最慢调用号）与计数。
 
-**位置**：`kernel/rt/rt_latency.c:82`
+**位置**：`kernel/rt/rt_latency.c:90`
 
-<a id="fn-kernel-rt-rt_latency.c-93"></a>
+<a id="fn-kernel-rt-rt_latency.c-101"></a>
 
 ### `rt_latency_reset`
 
@@ -5752,9 +5752,9 @@ void rt_latency_reset(void)
 
 清零全部 CPU 的延迟统计，并置关中断追踪就绪标志。
 
-**位置**：`kernel/rt/rt_latency.c:93`
+**位置**：`kernel/rt/rt_latency.c:101`
 
-<a id="fn-kernel-rt-rt_latency.c-99"></a>
+<a id="fn-kernel-rt-rt_latency.c-107"></a>
 
 ### `rt_latency_irq_off_begin`
 
@@ -5769,15 +5769,15 @@ void rt_latency_irq_off_begin(void)
 <details>
 <summary>函数内备注（1 条）</summary>
 
-**第 109 行（行尾）**
+**第 117 行（行尾）**
 
 > 嵌套关中断：只统计最外层区间
 
 </details>
 
-**位置**：`kernel/rt/rt_latency.c:99`
+**位置**：`kernel/rt/rt_latency.c:107`
 
-<a id="fn-kernel-rt-rt_latency.c-116"></a>
+<a id="fn-kernel-rt-rt_latency.c-124"></a>
 
 ### `rt_latency_irq_off_end`
 
@@ -5792,15 +5792,81 @@ void rt_latency_irq_off_end(void)
 <details>
 <summary>函数内备注（1 条）</summary>
 
-**第 139 行**
+**第 147 行**
 
 > 最长区间起点对应的调用点（arch_irq_save/disable 的调用者）。
 
 </details>
 
-**位置**：`kernel/rt/rt_latency.c:116`
+**位置**：`kernel/rt/rt_latency.c:124`
 
-<a id="fn-kernel-rt-rt_latency.c-144"></a>
+<a id="fn-kernel-rt-rt_latency.c-152"></a>
+
+### `rt_latency_preempt_off_begin`
+
+```c
+void rt_latency_preempt_off_begin(uint64_t callsite_pc)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+<details>
+<summary>函数内备注（1 条）</summary>
+
+**第 162 行（行尾）**
+
+> 嵌套 preempt_disable：只统计最外层
+
+</details>
+
+**位置**：`kernel/rt/rt_latency.c:152`
+
+<a id="fn-kernel-rt-rt_latency.c-169"></a>
+
+### `rt_latency_preempt_off_end`
+
+```c
+void rt_latency_preempt_off_end(void)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+<details>
+<summary>函数内备注（1 条）</summary>
+
+**第 192 行**
+
+> 最长区间起点对应的调用点（preempt_disable 的调用者）。
+
+</details>
+
+**位置**：`kernel/rt/rt_latency.c:169`
+
+<a id="fn-kernel-rt-rt_latency.c-197"></a>
+
+### `rt_latency_preempt_off_max_ns`
+
+```c
+uint64_t rt_latency_preempt_off_max_ns(void)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`kernel/rt/rt_latency.c:197`
+
+<a id="fn-kernel-rt-rt_latency.c-202"></a>
+
+### `rt_latency_preempt_off_count`
+
+```c
+uint64_t rt_latency_preempt_off_count(void)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`kernel/rt/rt_latency.c:202`
+
+<a id="fn-kernel-rt-rt_latency.c-207"></a>
 
 ### `rt_latency_tick`
 
@@ -5812,9 +5878,9 @@ void rt_latency_tick(uint32_t cpu_id, uint64_t now_ns)
 
 记录该 CPU 本次 tick 时刻，与上次比较更新间隔 last/max 并累加计数。
 
-**位置**：`kernel/rt/rt_latency.c:144`
+**位置**：`kernel/rt/rt_latency.c:207`
 
-<a id="fn-kernel-rt-rt_latency.c-162"></a>
+<a id="fn-kernel-rt-rt_latency.c-225"></a>
 
 ### `lat_puts`
 
@@ -5826,9 +5892,9 @@ static size_t lat_puts(char *buf, size_t cap, size_t pos, const char *s)
 
 把字符串追加进缓冲区并保留结尾 NUL，返回新的写入位置。
 
-**位置**：`kernel/rt/rt_latency.c:162`
+**位置**：`kernel/rt/rt_latency.c:225`
 
-<a id="fn-kernel-rt-rt_latency.c-171"></a>
+<a id="fn-kernel-rt-rt_latency.c-234"></a>
 
 ### `lat_put_u64`
 
@@ -5840,9 +5906,9 @@ static size_t lat_put_u64(char *buf, size_t cap, size_t pos, uint64_t v)
 
 把无符号数按十进制转为文本追加，补 NUL 并返回新位置。
 
-**位置**：`kernel/rt/rt_latency.c:171`
+**位置**：`kernel/rt/rt_latency.c:234`
 
-<a id="fn-kernel-rt-rt_latency.c-190"></a>
+<a id="fn-kernel-rt-rt_latency.c-253"></a>
 
 ### `lat_put_hex`
 
@@ -5854,9 +5920,9 @@ static size_t lat_put_hex(char *buf, size_t cap, size_t pos, uint64_t v)
 
 把无符号数按小写十六进制追加，补 NUL 并返回新位置。
 
-**位置**：`kernel/rt/rt_latency.c:190`
+**位置**：`kernel/rt/rt_latency.c:253`
 
-<a id="fn-kernel-rt-rt_latency.c-210"></a>
+<a id="fn-kernel-rt-rt_latency.c-273"></a>
 
 ### `rt_latency_snprintf`
 
@@ -5868,7 +5934,7 @@ int rt_latency_snprintf(char *buf, size_t cap)
 
 按固定列把各 CPU 的唤醒、系统调用、tick 间隔与关中断延迟统计渲染成多行文本，返回长度。
 
-**位置**：`kernel/rt/rt_latency.c:210`
+**位置**：`kernel/rt/rt_latency.c:273`
 
 <a id="mod-kernel-rt-rt_mutex.c"></a>
 
@@ -14595,9 +14661,9 @@ task_t *mutex_holder(mutex_t *mutex)
 
 ## kernel/task/preempt.c
 
-`kernel/task/preempt.c` · 4 个函数 · 4 个有说明 · 54 行
+`kernel/task/preempt.c` · 4 个函数 · 4 个有说明 · 74 行
 
-<a id="fn-kernel-task-preempt.c-15"></a>
+<a id="fn-kernel-task-preempt.c-19"></a>
 
 ### `preempt_disable`
 
@@ -14609,9 +14675,20 @@ void preempt_disable(void)
 
 当前任务存在时把其抢占计数加一。
 
-**位置**：`kernel/task/preempt.c:15`
+<details>
+<summary>函数内备注（1 条）</summary>
 
-<a id="fn-kernel-task-preempt.c-22"></a>
+**第 23 行**
+
+> 在 preempt_disable 里取返回地址，得到的是它的调用者（spin_lock
+> 内联后就是真正持锁的函数），而不是 rt_latency_preempt_off_begin
+> 内部看到的本函数地址。
+
+</details>
+
+**位置**：`kernel/task/preempt.c:19`
+
+<a id="fn-kernel-task-preempt.c-35"></a>
 
 ### `preempt_enable`
 
@@ -14626,16 +14703,16 @@ void preempt_enable(void)
 <details>
 <summary>函数内备注（1 条）</summary>
 
-**第 32 行**
+**第 52 行**
 
 > 如果当前仍处于 irqsave 临界区(中断被屏蔽), 不能在这里切换。
 > 判断交给统一的 arch_irq_is_enabled(), 不再按架构各写一遍。
 
 </details>
 
-**位置**：`kernel/task/preempt.c:22`
+**位置**：`kernel/task/preempt.c:35`
 
-<a id="fn-kernel-task-preempt.c-44"></a>
+<a id="fn-kernel-task-preempt.c-64"></a>
 
 ### `preemptible`
 
@@ -14647,9 +14724,9 @@ bool preemptible(void)
 
 中断嵌套深度为零且当前任务抢占计数为零时返回可抢占。
 
-**位置**：`kernel/task/preempt.c:44`
+**位置**：`kernel/task/preempt.c:64`
 
-<a id="fn-kernel-task-preempt.c-51"></a>
+<a id="fn-kernel-task-preempt.c-71"></a>
 
 ### `in_irq_context`
 
@@ -14661,7 +14738,7 @@ bool in_irq_context(void)
 
 当前 CPU 的中断嵌套深度非零时返回真。
 
-**位置**：`kernel/task/preempt.c:51`
+**位置**：`kernel/task/preempt.c:71`
 
 <a id="mod-kernel-task-riscv64-cpu_startup.c"></a>
 

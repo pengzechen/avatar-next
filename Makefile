@@ -629,8 +629,9 @@ ifeq ($(RT_DEMO),1)
     _BUILD_VARIANT := $(_BUILD_VARIANT)+rt_demo
 endif
 
-# RT_IRQ_TRACE=1：在 arch_irq_save/restore/disable/enable 上记录 IRQ-off 区间
-# （诊断变体；默认关闭，避免给每个关中断点增加函数调用开销）
+# RT_IRQ_TRACE=1：在 arch_irq_save/restore/disable/enable 上记录 IRQ-off 区间，
+# 并在 preempt_disable/enable 上记录外层 preempt-off 区间
+# （诊断变体；默认关闭，避免给关中断/自旋锁热路径增加函数调用开销）
 RT_IRQ_TRACE ?= 0
 ifeq ($(RT_IRQ_TRACE),1)
     CFLAGS += -DRT_IRQ_TRACE=1

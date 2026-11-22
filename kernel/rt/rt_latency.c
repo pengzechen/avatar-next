@@ -43,6 +43,14 @@ typedef struct {
     uint64_t irq_off_start_pc;
     uint64_t irq_off_max_pc;
     bool irq_off_active;
+
+    uint64_t preempt_off_max_ns;
+    uint64_t preempt_off_last_ns;
+    uint64_t preempt_off_count;
+    uint64_t preempt_off_start_ns;
+    uint64_t preempt_off_start_pc;
+    uint64_t preempt_off_max_pc;
+    bool preempt_off_active;
 } rt_lat_cpu_t;
 
 static rt_lat_cpu_t g_rt_lat[AVATAR_MAX_CPUS];
@@ -141,6 +149,61 @@ void rt_latency_irq_off_end(void)
     }
 }
 
+void rt_latency_preempt_off_begin(uint64_t callsite_pc)
+{
+    if (!g_rt_irq_trace_ready)
+        return;
+
+    uint32_t id = get_current_cpu_id();
+    if (id >= AVATAR_MAX_CPUS)
+        id = 0;
+    rt_lat_cpu_t *s = &g_rt_lat[id];
+    if (s->preempt_off_active)
+        return; /* 嵌套 preempt_disable：只统计最外层 */
+
+    s->preempt_off_active = true;
+    s->preempt_off_start_ns = timer_get_ns();
+    s->preempt_off_start_pc = callsite_pc;
+}
+
+void rt_latency_preempt_off_end(void)
+{
+    if (!g_rt_irq_trace_ready)
+        return;
+
+    uint32_t id = get_current_cpu_id();
+    if (id >= AVATAR_MAX_CPUS)
+        id = 0;
+    rt_lat_cpu_t *s = &g_rt_lat[id];
+    if (!s->preempt_off_active)
+        return;
+
+    uint64_t now = timer_get_ns();
+    uint64_t start = s->preempt_off_start_ns;
+    s->preempt_off_active = false;
+    s->preempt_off_count++;
+
+    if (now <= start)
+        return;
+    uint64_t delta = now - start;
+    s->preempt_off_last_ns = delta;
+    if (delta > s->preempt_off_max_ns) {
+        s->preempt_off_max_ns = delta;
+        /* 最长区间起点对应的调用点（preempt_disable 的调用者）。 */
+        s->preempt_off_max_pc = s->preempt_off_start_pc;
+    }
+}
+
+uint64_t rt_latency_preempt_off_max_ns(void)
+{
+    return rt_lat_cpu()->preempt_off_max_ns;
+}
+
+uint64_t rt_latency_preempt_off_count(void)
+{
+    return rt_lat_cpu()->preempt_off_count;
+}
+
 void rt_latency_tick(uint32_t cpu_id, uint64_t now_ns)
 {
     if (cpu_id >= AVATAR_MAX_CPUS)
@@ -216,7 +279,8 @@ int rt_latency_snprintf(char *buf, size_t cap)
     pos = lat_puts(buf, cap, pos, "rtstat: per-CPU latency (ns)\n");
     pos = lat_puts(buf, cap, pos,
                    "cpu wake_max wake_last wake_n syscall_max syscall_max_id syscall_last syscall_n tick_gap_max "
-                   "tick_gap_last ticks irq_off_max irq_off_last irq_off_n irq_off_pc\n");
+                   "tick_gap_last ticks irq_off_max irq_off_last irq_off_n irq_off_pc "
+                   "preempt_off_max preempt_off_last preempt_off_n preempt_off_pc\n");
 
     uint32_t n = g_num_cpus ? g_num_cpus : 1U;
     for (uint32_t i = 0; i < n && i < AVATAR_MAX_CPUS; i++) {
@@ -251,6 +315,14 @@ int rt_latency_snprintf(char *buf, size_t cap)
         pos = lat_put_u64(buf, cap, pos, s->irq_off_count);
         pos = lat_puts(buf, cap, pos, " 0x");
         pos = lat_put_hex(buf, cap, pos, s->irq_off_max_pc);
+        pos = lat_puts(buf, cap, pos, " ");
+        pos = lat_put_u64(buf, cap, pos, s->preempt_off_max_ns);
+        pos = lat_puts(buf, cap, pos, " ");
+        pos = lat_put_u64(buf, cap, pos, s->preempt_off_last_ns);
+        pos = lat_puts(buf, cap, pos, " ");
+        pos = lat_put_u64(buf, cap, pos, s->preempt_off_count);
+        pos = lat_puts(buf, cap, pos, " 0x");
+        pos = lat_put_hex(buf, cap, pos, s->preempt_off_max_pc);
         pos = lat_puts(buf, cap, pos, "\n");
     }
 

@@ -39,6 +39,18 @@ void rt_latency_reset(void);
 void rt_latency_irq_off_begin(void);
 void rt_latency_irq_off_end(void);
 
+/*
+   RT_IRQ_TRACE=1 时由 preempt_disable/enable 调用：
+   记录外层“禁止抢占区间”（spinlock 临界区，含持锁自旋等待）的起止。
+   只有最外层 0→1 / 1→0 计数，嵌套不会重复计时。
+*/
+void rt_latency_preempt_off_begin(uint64_t callsite_pc);
+void rt_latency_preempt_off_end(void);
+
+/* 当前 CPU 的 preempt-off 快照，供 RT_TEST 的诊断自测使用。 */
+uint64_t rt_latency_preempt_off_max_ns(void);
+uint64_t rt_latency_preempt_off_count(void);
+
 /* 生成 /proc/rtstat 的文本；返回写入长度（不含 NUL）。 */
 int rt_latency_snprintf(char *buf, size_t cap);
 

@@ -36,19 +36,40 @@ reset 开始累计）。
 ```text
 cpu wake_max wake_last wake_n syscall_max syscall_max_id syscall_last syscall_n
 tick_gap_max tick_gap_last ticks irq_off_max irq_off_last irq_off_n irq_off_pc
+preempt_off_max preempt_off_last preempt_off_n preempt_off_pc
 ```
 
 单位均为纳秒。`syscall_max_id` 是内部 syscall 号（221 = execve）。
-`tick_gap` 是相邻 timer tick 间隔（正常约 10ms）。`irq_off_*` 需要
-`RT_IRQ_TRACE=1` 诊断变体；`irq_off_pc` 是最长区间的调用点，可用
-`addr2line -e build/<platform>/kernel_<arch>.elf <pc>` 定位。
+`tick_gap` 是相邻 timer tick 间隔（正常约 10ms）。`irq_off_*` 和
+`preempt_off_*` 需要 `RT_IRQ_TRACE=1` 诊断变体：
+
+- `irq_off_*`：最外层 `arch_irq_save/disable` 区间；
+- `preempt_off_*`：最外层 `preempt_disable/enable` 区间（spinlock
+  临界区，包含持锁自旋等待）。它可能和 IRQ-off 重叠，也可能更大，
+  因为自旋锁可以在中断打开时被持有。
+
+`irq_off_pc` 是最长 IRQ-off 区间的关中断调用点；`preempt_off_pc`
+是最长 preempt-off 区间的 `preempt_disable` 调用点。两者都在内联
+头文件里时，用 `-i` 展开内联栈才能看到真正的业务函数：
 
 ```sh
-# 真实 IRQ-off 跟踪（会多一次函数调用开销，默认不开启）
+addr2line -f -i -e build/<platform>/kernel_<arch>.elf <pc>
+```
+
+```sh
+# 真实 IRQ-off / preempt-off 跟踪（会多一次函数调用开销，默认不开启）
 make PLATFORM=qemu-virt-x86_64 RT_IRQ_TRACE=1 kernel
+
+# 连同 RT 自测一起：会额外跑 PREEMPTOFF TEST（持 50µs 禁止抢占，
+# 断言计数 +1 且 max 覆盖该区间）
+make PLATFORM=qemu-virt-x86_64 RT_TEST=1 RT_DEMO=1 RT_IRQ_TRACE=1 kernel
 ```
 
 ## 基线原始结果（运行时）
+
+> 2026-11-23 起 `/proc/rtstat` 在行尾增加
+> `preempt_off_max/last/n/pc` 四列；本节下面标注为历史样本的行仍是
+> 旧列数，x86 的最新一行已带新列。
 
 ### x86_64（KVM，SMP=1）
 
@@ -68,10 +89,14 @@ cpu0 2048 2048 1 15283923 221 315 274 13207498 10017080 746
 R3 后（异步 klog + fs mutex）+ `RT_IRQ_TRACE=1`（**clean 全量重编**）：
 
 ```text
-cpu0 11278548 419 20 10998971 221 543 127 10017963 10017377 363 361529 3341 2581598 0xffff80000022b0fc
+cpu0 11278548 419 20 10998971 221 543 127 10017963 10017377 363 361529 3341 2581598 0xffff80000022b0fc 2563485 2727 5872382 0xffff800000224090
 ```
 
 - `irq_off_max ≈ 0.36 ms`；当前最长区间落在 `signal_check_uart()`。
+- 同一次运行（执行 `ls /bin` 后）`preempt_off_max ≈ 2.56 ms`，
+  `preempt_off_pc` 用 `addr2line -f -i` 展开后同样是
+  `signal_check_uart()` 里的 spinlock 临界区。它比 IRQ-off 大，因为
+  这段锁在中断打开时也可能被持有；两者不是同一个区间。
 - 异步 klog 之前是 2.5ms（最长在 `klog_write` 的 UART 输出），
   再之前“~6.3µs”的读数是新旧 `.o` 混编导致的失真；`RT_IRQ_TRACE`
   已加入 `_CFG_SIG`，切换开关会全量重编。

@@ -25,7 +25,8 @@
 | 场景 8 | **内核态 cyclictest**：FIFO 80、1ms/10ms 绝对 deadline、NORMAL hog、hog_iters；x86 额外拆出 timerlat IRQ 延迟 | `cyclictest.c` |
 | 场景 9 | **内核态 oslat**：FIFO 85 忙循环 500ms，记录执行间隔和 1/10/100µs 超阈值次数 | `oslat.c` |
 | `RT_DEMO=1` | RT ping-pong 唤醒 + NORMAL→RT 抢占 | `rt_demo.c` |
-| R0/R0.5 | `/proc/rtstat`：wake/syscall/tick_gap；`RT_IRQ_TRACE=1` 真 IRQ-off | `kernel/rt/rt_latency.c` |
+| R0/R0.5 | `/proc/rtstat`：wake/syscall/tick_gap；`RT_IRQ_TRACE=1` 真 IRQ-off + preempt-off | `kernel/rt/rt_latency.c` |
+| preemptoff 自测 | `RT_TEST=1 RT_IRQ_TRACE=1` 时持 50µs preempt-off，断言计数/max | `tests/unit-test/rt_sched_test.c` |
 | 回归门禁 | `make -C tests rt-test` 三架构；SMP=1/4 | `tests/suites/rt_test.py` |
 
 **当前基线（不是目标）：**

@@ -172,10 +172,14 @@ cpu0 1008 788 2 33798673 285 312 35398811 10494224 1059
 - timer 中断只置 `need_resched`，syscall 内核侧仍不在任意 C 代码点切换
   任务（与 aarch64 模型一致）。
 - 新增 `RT_IRQ_TRACE=1` 诊断变体：在 `arch_irq_save/restore/disable/enable`
-  上记录真实 IRQ-off 区间，`/proc/rtstat` 增加
-  `irq_off_max/irq_off_last/irq_off_n/irq_off_pc` 列。
+  上记录真实 IRQ-off 区间，并在 `preempt_disable/enable` 上记录最外层
+  preempt-off（spinlock 临界区）区间，`/proc/rtstat` 增加
+  `irq_off_*` 和 `preempt_off_*` 两组列。
   `RT_IRQ_TRACE` 会影响所有包含 exception_impl.h 的 TU，已加入
   `_CFG_SIG` 强制全量重编（避免新旧 .o 混编导致测量失真）。
+- `RT_TEST=1 RT_IRQ_TRACE=1` 会额外跑 `PREEMPTOFF TEST`：在关中断
+  窗口里持 50µs `preempt_disable`，断言最外层计数 +1 且 max 覆盖
+  该区间。
 
 **清理后的实测（QEMU，SMP=1，启动后 shell；RT_IRQ_TRACE 全量编译）**：
 

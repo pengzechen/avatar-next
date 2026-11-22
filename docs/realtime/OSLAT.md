@@ -68,6 +68,7 @@ riscv64: samples=4860596  min/avg/max=0/102/54700ns   over_1/10/100us=738/66/0
 | oslat | 已经在跑的 RT 线程，被 OS 打断多久？ |
 | `/proc/rtstat` wake | `sched_unblock` 到真正切入多久？ |
 | `RT_IRQ_TRACE=1` irq_off | 最长关中断区间多久？ |
+| `RT_IRQ_TRACE=1` preempt_off | 最长禁止抢占区间（spinlock 临界区）多久？ |
 
 oslat 的 max 通常大于 cyclictest 的 IRQ 部分，因为它包含每次 tick/
 UART 中断和宿主抢占；如果 oslat max 突然变大而 cyclictest 不变，

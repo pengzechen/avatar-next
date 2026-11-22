@@ -12,9 +12,22 @@
 
 #include "exception.h" /* arch_irq_is_enabled()(统一的中断屏蔽原语) */
 
+#ifdef RT_IRQ_TRACE
+#include "rt/rt_latency.h"
+#endif
+
 void preempt_disable(void)
 {
     task_t *cur = cpu_current()->current_task;
+#ifdef RT_IRQ_TRACE
+    /*
+       在 preempt_disable 里取返回地址，得到的是它的调用者（spin_lock
+       内联后就是真正持锁的函数），而不是 rt_latency_preempt_off_begin
+       内部看到的本函数地址。
+    */
+    if (cur && cur->preempt_count == 0)
+        rt_latency_preempt_off_begin((uint64_t)(uintptr_t)__builtin_return_address(0));
+#endif
     if (cur)
         cur->preempt_count++;
 }
@@ -23,8 +36,15 @@ void preempt_enable(void)
 {
     cpu_t *c = cpu_current();
     task_t *cur = c->current_task;
+#ifdef RT_IRQ_TRACE
+    bool preempt_off_last = cur && cur->preempt_count == 1;
+#endif
     if (cur && cur->preempt_count > 0)
         cur->preempt_count--;
+#ifdef RT_IRQ_TRACE
+    if (preempt_off_last)
+        rt_latency_preempt_off_end();
+#endif
 
     if (!cur || cur->preempt_count != 0 || c->irq_depth != 0 || !c->need_resched || c->preempt_schedule_depth != 0)
         return;
