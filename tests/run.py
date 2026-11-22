@@ -60,6 +60,7 @@ SUITE_ALIASES = {
         "ltp-smoke",
         "ltp-mm",
         "ltp-full",
+        "ltp-slow",
         "vmm-direct",
         "vmm-helper",
         "vmm-multivm",
@@ -76,6 +77,7 @@ SUITE_NAMES = (
     "ltp-smoke",
     "ltp-mm",
     "ltp-full",
+    "ltp-slow",
     "vmm-direct",
     "vmm-helper",
     "vmm-guest",
@@ -194,7 +196,7 @@ def main() -> int:
                 apps.run(ctx, report, arches)
             elif suite == "racetest":
                 racetest.run(ctx, report, arches)
-            elif suite in ("ltp-smoke", "ltp-mm", "ltp-full"):
+            elif suite in ("ltp-smoke", "ltp-mm", "ltp-full", "ltp-slow"):
                 ltp.run(ctx, report, arches, subset_name=suite.split("-", 1)[1])
             elif suite == "vmm-direct":
                 vmm_guest.run(ctx, report, arches, modes=("direct",))

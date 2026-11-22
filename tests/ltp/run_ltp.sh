@@ -23,8 +23,22 @@ cd /ltp || exit 1
 # 测试框架用文件传递子集：宿主的串口控制台会把过长的
 # `LTP_TESTS="..."` 命令行折行/丢字节，变量经常根本没生效。
 # 每行一个测例名，框架用多条短 echo 写进来。
-if [ -z "${LTP_TESTS:-}" ] && [ -f /tmp/ltp.list ]; then
-    LTP_TESTS="$(cat /tmp/ltp.list)"
+LTP_TESTS="${LTP_TESTS:-}"
+if [ -z "$LTP_TESTS" ] && [ -f /tmp/ltp.list ]; then
+    # 用 shell 内建逐行读，不依赖 tr/cat：busybox 里没有 tr，
+    # 而且 case 的 " $名 " 匹配必须把换行拼成空格。
+    while IFS= read -r line; do
+        [ -n "$line" ] && LTP_TESTS="$LTP_TESTS $line"
+    done < /tmp/ltp.list
+fi
+
+# 排除列表：每行一个测例名。框架跑 ltp-full 时把计时类慢用例
+# （pselect01/poll02，各睡 8.25s）写进 /tmp/ltp.skip，避免日常全量被它们拖慢。
+LTP_SKIP=""
+if [ -f /tmp/ltp.skip ]; then
+    while IFS= read -r line; do
+        [ -n "$line" ] && LTP_SKIP="$LTP_SKIP $line"
+    done < /tmp/ltp.skip
 fi
 
 PASS=0
@@ -53,6 +67,13 @@ for test in /ltp/*; do
         case " $LTP_TESTS " in
             *" $name "*) ;;
             *) continue ;;
+        esac
+    fi
+
+    # 排除模式：ltp-full 用 /tmp/ltp.skip 跳过计时类慢用例。
+    if [ -n "${LTP_SKIP:-}" ]; then
+        case " $LTP_SKIP " in
+            *" $name "*) continue ;;
         esac
     fi
 

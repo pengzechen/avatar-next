@@ -1,0 +1,4 @@
+# 计时精度用例：按 LTP 的 sample 表各睡满 8.25s（1ms×500 + ... + 1s×2）。
+# 日常 ltp-full 跳过，单独用 ltp-slow 跑；实时性门禁需要它们时再跑。
+pselect01
+poll02

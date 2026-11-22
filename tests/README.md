@@ -107,7 +107,8 @@ tests/.artifacts/runs/<run-id>/
 | `racetest` | `apps/c/racetest.c`：slot/pipe/wake | 需 `SMP>1`；要求输出 `DONE`；**诊断 suite** |
 | `ltp-smoke` | `smoke.list` | 无新增 FAIL/BROK；子集每项都有结果 |
 | `ltp-mm` | `mm.list` | 同上；内存重构专用 |
-| `ltp-full` | `/ltp` 全量 | 同上 |
+| `ltp-full` | `/ltp` 全量（跳过 `slow.list`）| 同上 |
+| `ltp-slow` | `slow.list` | 计时类慢用例（`pselect01`/`poll02`，各约 8.25s），单独跑 |
 | `vmm-direct` | guest Linux 直启 | guest uname + 交互 `echo`/`/proc/meminfo` |
 | `vmm-helper` | 宿主 shell → `/bin/vmm-run` | guest 交互 + `Ctrl+T k` + 再次启动 |
 | `vmm-multivm` | 多 VM detach/attach | `tools/vmm_multivm_regress.sh` 返回 0 |

@@ -38,6 +38,19 @@ def _load_subset(name: str):
     return names
 
 
+def _load_slow_names():
+    """ltp-full 默认排除的慢用例（由 ltp-slow 单独跑）。文件缺失时不排除。"""
+    path = TESTS_DIR / "ltp" / "slow.list"
+    if not path.is_file():
+        return []
+    names = []
+    for raw in path.read_text().splitlines():
+        line = raw.split("#", 1)[0].strip()
+        if line:
+            names.append(line)
+    return names
+
+
 def _prepare_bins(arch) -> pathlib.Path:
     bins = TESTS_DIR / "ltp" / "bin" / arch.name
     if not bins.is_dir() or not any(bins.iterdir()):
@@ -115,6 +128,11 @@ def run(ctx: TestContext, report: Report, arches, subset_name: str = "smoke") ->
                     # 打印空）。source 在同一个 shell 里执行，变量可见。
                     q.send_line(". /ltp/run_ltp.sh")
                 else:
+                    # ltp-full 默认跳过 timing-only 慢用例（pselect01/poll02
+                    # 各按 LTP sample 表睡满 8.25s），由 ltp-slow 单独跑。
+                    _checked(q, ': > /tmp/ltp.skip', ctx.timeout(15))
+                    for name in _load_slow_names():
+                        _checked(q, f'echo {name} >> /tmp/ltp.skip', ctx.timeout(15))
                     q.send_line("/ltp/run_ltp.sh")
                 q.wait_for(
                     rb"LTP Results:", ctx.timeout(1800), desc=f"{arch.name} LTP 汇总"
