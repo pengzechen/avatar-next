@@ -49,7 +49,7 @@ RUN = $(PYTHON) $(CURDIR)/run.py \
       --arch $(ARCHES)
 
 .PHONY: help list env check check-fast check-full check-mm check-smp check-mm-smp \
-        build boot kernel rt-test apps racetest \
+        build boot kernel rt-test rt-trace check-rt rt-soak apps racetest \
         ltp-build ltp-smoke ltp-mm ltp-full \
         vmm-direct vmm-helper vmm-guest vmm-multivm soak \
         clean clean-artifacts
@@ -66,6 +66,9 @@ help:
 	@echo "  make -C tests boot          # three-arch boot smoke test"
 	@echo "  make -C tests kernel        # PMM / string / VMM_TEST"
 	@echo "  make -C tests rt-test       # RT 调度语义 + 唤醒/抢占延迟"
+	@echo "  make -C tests rt-trace      # RT_IRQ_TRACE：preemptoff/irqoff + /proc/rtstat"
+	@echo "  make -C tests check-rt      # rt-test + rt-trace + SMP=$(SMP4) rt-test"
+	@echo "  make -C tests rt-soak       # 重复 rt-test N=$(N) 次"
 	@echo "  make -C tests apps          # apps/c: pthread / mutex"
 	@echo "  make -C tests racetest      # apps/c: SMP race stress (requires SMP>1)"
 	@echo "  make -C tests env           # fetch LTP source -> tests/ltp/src"
@@ -116,6 +119,24 @@ kernel:
 # 默认三架构 SMP=1，可用 `make -C tests rt-test SMP=4 ARCHES=x86_64`。
 rt-test:
 	$(RUN) --suite rt-test
+
+# 诊断变体：RT_IRQ_TRACE=1，自测 + 宿主 shell 读 /proc/rtstat。
+rt-trace:
+	$(RUN) --suite rt-trace
+
+# RT 完整门禁：SMP=1 性能/语义 + trace 观测面 + SMP=4 竞争。
+check-rt:
+	$(MAKE) --no-print-directory rt-test
+	$(MAKE) --no-print-directory rt-trace
+	$(MAKE) --no-print-directory rt-test SMP=$(SMP4)
+
+# 真实长跑前的短 soak：重复跑 rt-test，抓间歇性延迟/调度问题。
+rt-soak:
+	@i=0; while [ $$i -lt $(N) ]; do \
+		i=$$((i+1)); \
+		echo "===== rt-soak $$i/$(N) ====="; \
+		$(MAKE) --no-print-directory rt-test || exit 1; \
+	done
 
 apps:
 	$(RUN) --suite apps

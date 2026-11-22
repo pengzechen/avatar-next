@@ -233,7 +233,7 @@ static int uptime_read(int nid, uint64_t off, void *buf, size_t len)
 static int rtstat_read(int nid, uint64_t off, void *buf, size_t len)
 {
     (void)nid;
-    char tmp[1024];
+    char tmp[4096];
     int n = rt_latency_snprintf(tmp, sizeof(tmp));
     if (n <= 0)
         return 0;

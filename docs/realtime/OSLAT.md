@@ -54,9 +54,10 @@ riscv64: samples=4860596  min/avg/max=0/102/54700ns   over_1/10/100us=738/66/0
 - `duration == 500ms`；
 - `samples > 0`（RT 线程确实推进过）；
 - `min <= avg <= max`；
-- `over_1us >= over_10us >= over_100us`。
+- `over_1us >= over_10us >= over_100us`；
+- x86_64 + KVM 额外要求 `max < 5ms`（与 cyclictest 的回归门禁一致）。
 
-不在所有架构上卡绝对延迟：QEMU/TCG 的宿主噪声不可控。真实硬件的
+其它架构不卡绝对延迟：QEMU/TCG 的宿主噪声不可控。真实硬件的
 门槛应来自目标控制环预算（见 `RT_TEST_ROADMAP.md` 的 T1/T3）。
 
 ## 4. 与其它指标的关系

@@ -99,6 +99,9 @@ jobs:
       - name: make -C tests check-mm-smp (SMP=4)
         run: make -C tests check-mm-smp
 
+      - name: RT gate (rt-test SMP=1/4 + rt-trace)
+        run: make -C tests check-rt
+
       - name: racetest (SMP=4, diagnostic; known riscv64 flake)
         continue-on-error: true
         run: make -C tests racetest SMP=4

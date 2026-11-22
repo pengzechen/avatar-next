@@ -1645,7 +1645,7 @@ int main(int argc, char **argv)
 
 ## apps/c/rt_demo_user.c — 用户态 RT 演示（/bin/rt-demo）
 
-`apps/c/rt_demo_user.c` · 15 个函数 · 14 个有说明 · 349 行
+`apps/c/rt_demo_user.c` · 15 个函数 · 14 个有说明 · 367 行
 
 演示现有 RT 设施：
 1. event 模板：supervisor post 事件，RT worker 在被唤醒后执行 step；
@@ -1852,7 +1852,7 @@ static void print_proc_rtworkers(void)
 
 **位置**：`apps/c/rt_demo_user.c:148`
 
-<a id="fn-apps-c-rt_demo_user.c-165"></a>
+<a id="fn-apps-c-rt_demo_user.c-183"></a>
 
 ### `main`
 
@@ -1867,42 +1867,42 @@ int main(void)
 <details>
 <summary>函数内备注（8 条）</summary>
 
-**第 180 行**
+**第 198 行**
 
 > ── 1. event 模板：post → worker → out_seq ─────────────────
 
-**第 181 行（行尾）**
+**第 199 行（行尾）**
 
 > gain 2.0
 
-**第 207 行（行尾）**
+**第 225 行（行尾）**
 
 > 100ms 兜底
 
-**第 242 行**
+**第 260 行**
 
 > ── 2. 周期 worker：1ms 优先，失败回退 10ms ───────────────
 
-**第 244 行（行尾）**
+**第 262 行（行尾）**
 
 > gain 1.0
 
-**第 281 行**
+**第 299 行**
 
 > ── 3. watchdog：停掉 pulse 后输出安全值 ──────────────────
 
-**第 308 行**
+**第 326 行**
 
 > watchdog 的观测面：停止它之后统计必须稳定，RESET 清空窗口但保留
 > last_output/stats_since 的单调性。这条同时覆盖 ioctl 的用户态 ABI。
 
-**第 341 行**
+**第 359 行**
 
 > 清理顺序：wd → pulse → evt
 
 </details>
 
-**位置**：`apps/c/rt_demo_user.c:165`
+**位置**：`apps/c/rt_demo_user.c:183`
 
 <a id="mod-apps-c-rt_event_test.c"></a>
 

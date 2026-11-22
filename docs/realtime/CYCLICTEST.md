@@ -21,7 +21,12 @@ rt-tests 的 `cyclictest` 测的是同一个量：
   让“RT 醒来时抢占一个正在跑普通任务的 CPU”成为常态；
 - 醒来后 `latency = now - deadline`；如果已经错过下一个 deadline，
   记一次 `overrun` 并把 `next` 重同步到 `now + period`，不补跑；
-- 统计 `min/avg/p50/p99/p99.9/max`、`overruns`、`early`（早醒次数）；
+- 统计 `min/avg/p50/p99/p99.9/max`、`stddev`（标准差）、`jitter`
+  （max−min）、`overruns`、`overrun_ppm`、`early`（早醒次数）；
+- 直方图固定按 `<1/<2/<5/<10/<20/<50/<100µs/overflow` 分桶，合计必须
+  等于 samples；
+- `drift` 是已测样本首尾实际跨度与理想 `(samples-1)*period` 的差，
+  反映 timer/时钟的累计漂移（有 overrun 重同步时会包含重同步量）；
 - x86 oneshot 下额外记录 **IRQ timer latency**：`deadline → timer ISR
   入口`。总延迟是 `deadline → RT 线程运行`，两者之差就是 ISR 唤醒后
   到线程真正被调度的那一段（对应 rtla timerlat 的 IRQ/Thread 拆分）。
@@ -30,9 +35,11 @@ rt-tests 的 `cyclictest` 测的是同一个量：
 
 ```text
 === CYCLICTEST: PASS period=1000000 warmup=100 cycles=2000 samples=2000 \
-    min=2325 avg=2800 p50=2406 p99=8455 p999=20133 max=104876 \
-    irq_n=2000 irq_min=563 irq_avg=852 irq_p99=4116 irq_max=103097 \
-    overruns=0 early=0 hog=1 hog_iters=... ===
+    min=3046 avg=3362 p50=3151 p99=6222 p999=22170 max=80027 \
+    stddev=1908 jitter=76981 drift=-34 overrun_ppm=0 \
+    irq_n=2000 irq_min=714 irq_avg=908 irq_p99=3421 irq_max=77682 \
+    overruns=0 early=0 hog=1 hog_iters=... \
+    hist=0/0/1933/61/4/1/1/0 ===
 ```
 
 单位都是纳秒。`hog_iters` 是 NORMAL 忙循环实际完成的迭代数；`hog=1`
@@ -171,10 +178,13 @@ python3 tools/plot_cyclictest.py ... --dark \
 `tests/suites/rt_test.py` 里：
 
 - `warmup == 100`、`cycles == 2000`、`samples == 2000`；
+- 直方图合计等于 samples；`stddev <= jitter`；`overrun_ppm` 与
+  `overruns/samples` 一致；
 - 1ms oneshot 周期下：`irq_n == samples`，`irq_min <= irq_avg <= irq_max`，
   `irq_max <= max`（ISR 入口不可能晚于线程运行），`irq_max < 5ms`；
   非 oneshot 架构要求 `irq_n == 0`；
-- x86_64 + KVM：`period == 1ms`、`p99 < 1ms`、`max < 5ms`。
+- x86_64 + KVM：`period == 1ms`、`p99 < 1ms`、`max < 5ms`、
+  `irq_p99 < 1ms`。
   这是**回归门禁**（防止 hrtimer/调度路径退化），不是“软实时验收线”。
   真正的验收线应来自目标硬件上的控制环预算（见
   `docs/reports/ROBOTICS_RT_BASE.md`）；

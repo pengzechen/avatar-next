@@ -16,6 +16,15 @@ make -C tests check
 # RT 调度语义 + 唤醒/抢占延迟（RT_TEST + RT_DEMO，三架构，不需要 rootfs）
 make -C tests rt-test
 
+# RT_IRQ_TRACE 诊断：PREEMPTOFF 自测 + /proc/rtstat 的 irq/preempt 计数
+make -C tests rt-trace
+
+# RT 完整门禁：SMP=1 rt-test + rt-trace + SMP=4 rt-test
+make -C tests check-rt
+
+# 重复跑 rt-test，抓间歇性问题（N=次数）
+make -C tests rt-soak N=5
+
 # SMP=4 矩阵（独立 BUILD_ROOT；check + racetest）
 make -C tests check-smp
 
@@ -102,8 +111,9 @@ tests/.artifacts/runs/<run-id>/
 | `build` | 三架构 × normal/guest/vmm-test/string-test/pmm-test | 构建成功；guest 产物带 `GUEST_LINUX_BUILD_TAG` |
 | `boot` | 三架构不带 rootfs 启动 | 出现 `PMM: N reserved regions`；无 ASSERT/panic/invalid free |
 | `kernel` | `pmm-test` / `string-test` / `vmm-test` | 各自的 PASS 标记；三路线程标记齐全 |
-| `rt-test` | `rt-test` 变体（`RT_TEST=1 RT_DEMO=1`） | `RT SCHED TEST: PASS`；worker 共享页 + 统计窗口；mutex 并发 + rt_mutex PI（`RT MUTEX TEST: PASS`）；rt_event/event 模板（`RT EVENT TEST: PASS`）；cyclictest（FIFO 80 + NORMAL hog，1ms/10ms 绝对 deadline 的 min/avg/p50/p99/p99.9/max、overrun/早醒，x86 额外有 timerlat IRQ 延迟）；oslat（FIFO 85 忙循环 500ms 的执行间隔与超阈值计数）；demo 样本数完整，ping-pong/NORMAL→RT 平均延迟低于上限（self-IPI 立即抢占的回归门禁） |
-| `apps` | `apps/c`：pthread / mutex / rt-event / rt-demo | `[PASS]`/`[FAIL]` 行；`/bin/rt-event-test` 是 event 模板的 ioctl/mmap 端到端用例；`/bin/rt-demo` 是完整用户态 RT 演示 |
+| `rt-test` | `rt-test` 变体（`RT_TEST=1 RT_DEMO=1`） | `RT SCHED TEST: PASS`；worker 共享页 + 统计窗口；mutex 并发 + rt_mutex PI（`RT MUTEX TEST: PASS`）；rt_event/event 模板（`RT EVENT TEST: PASS`）；cyclictest（FIFO 80 + NORMAL hog，1ms/10ms 绝对 deadline 的 min/avg/p50/p99/p99.9/max、stddev/jitter/drift、直方图和 overrun/早醒，x86 额外有 timerlat IRQ 延迟）；oslat（FIFO 85 忙循环 500ms 的执行间隔与超阈值计数）；demo 样本数完整，ping-pong/NORMAL→RT 平均延迟低于上限（self-IPI 立即抢占的回归门禁） |
+| `rt-trace` | `rt-trace` 变体（`RT_TEST=1 RT_DEMO=1 RT_IRQ_TRACE=1`）+ rootfs | `PREEMPTOFF TEST: PASS`；`/proc/rtstat` 含 `irq_off_*`/`preempt_off_*` 列；`preempt_off_n/irq_off_n > 0`、pc 非 0；执行 `ls` 后计数单调不减 |
+| `apps` | `apps/c`：pthread / mutex / rt-event / rt-demo | `[PASS]`/`[FAIL]` 行；`/bin/rt-event-test` 是 event 模板的 ioctl/mmap 端到端用例；`/bin/rt-demo` 是完整用户态 RT 演示，含 watchdog STATS/RESET_STATS 和 `/proc/rtworkers` 新列断言 |
 | `racetest` | `apps/c/racetest.c`：slot/pipe/wake | 需 `SMP>1`；要求输出 `DONE`；**诊断 suite** |
 | `ltp-smoke` | `smoke.list` | 无新增 FAIL/BROK；子集每项都有结果 |
 | `ltp-mm` | `mm.list` | 同上；内存重构专用 |
@@ -137,6 +147,8 @@ tests/.artifacts/build/<variant>/smp<N>/<platform>/
 - `make -C tests check` / `check-mm`：SMP=1；
 - `make -C tests check-smp` / `check-mm-smp`：SMP=4（`SMP4` 可改）；
 - `check-smp` 额外跑 `racetest`（SMP 竞争压力，独立诊断 suite）；
+- `check-rt` 跑 `rt-test`（SMP=1）、`rt-trace` 和 `rt-test`（SMP=$(SMP4)）；
+  `rt-soak` 重复 `rt-test` N 次，用于长跑前的短 soak；
 - `check-mm` / `check-mm-smp` **不包含** racetest，避免已知的 riscv64
   调度器间歇性 bug 让内存重构门禁随机变红。
 
@@ -204,7 +216,7 @@ vCPU 任务钉在单核上，机器被压满时 guest 时钟会慢到看起来�
 | job | runner | 内容 |
 |---|---|---|
 | `hosted-smoke` | `ubuntu-latest` | `make -C tests check`（build/boot/kernel/apps）。无 KVM，x86 VMM/guest 自动 SKIP；不跑 LTP/VMM guest |
-| `self-hosted-full` | `[self-hosted, linux, x64]` | `check-mm` SMP=1/4（含 LTP mm + 三架构 VMM guest）、`racetest`（诊断，允许已知 flake）、nightly LTP full |
+| `self-hosted-full` | `[self-hosted, linux, x64]` | `check-mm` SMP=1/4（含 LTP mm + 三架构 VMM guest）、`check-rt`（RT 性能/语义 + trace + SMP=4）、`racetest`（诊断，允许已知 flake）、nightly LTP full |
 
 启用 full job：
 

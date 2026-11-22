@@ -149,17 +149,35 @@ static void print_proc_rtworkers(void)
 {
     int fd = open("/proc/rtworkers", O_RDONLY);
     char buf[1024];
+    char header[512];
+    size_t header_len = 0;
 
+    memset(header, 0, sizeof(header));
     if (fd < 0) {
         printf("(cannot open /proc/rtworkers: %d)\n", errno);
+        fail("open /proc/rtworkers");
         return;
     }
     printf("--- /proc/rtworkers ---\n");
     ssize_t n;
-    while ((n = read(fd, buf, sizeof(buf))) > 0)
+    while ((n = read(fd, buf, sizeof(buf))) > 0) {
+        if (header_len < sizeof(header) - 1) {
+            size_t copy = (size_t)n;
+            if (copy > sizeof(header) - 1 - header_len)
+                copy = sizeof(header) - 1 - header_len;
+            memcpy(header + header_len, buf, copy);
+            header_len += copy;
+            header[header_len] = '\0';
+        }
         fwrite(buf, 1, (size_t)n, stdout);
+    }
     close(fd);
     printf("-----------------------\n");
+
+    if (strstr(header, "WAKE_LAST_NS") && strstr(header, "WD_TRIPS") && strstr(header, "DEV_ERR"))
+        pass("proc/rtworkers exposes WAKE_LAST_NS/WD_TRIPS/DEV_ERR columns");
+    else
+        fail("proc/rtworkers header missing observability columns");
 }
 
 int main(void)

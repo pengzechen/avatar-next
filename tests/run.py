@@ -35,6 +35,7 @@ from suites import (  # noqa: E402
     ltp,
     racetest,
     rt_test,
+    rt_trace,
     vmm_guest,
 )
 
@@ -50,11 +51,13 @@ SUITE_ALIASES = {
         "vmm-direct",
         "vmm-helper",
     ),
+    "check-rt": ("rt-test", "rt-trace"),
     "all": (
         "build",
         "boot",
         "kernel",
         "rt-test",
+        "rt-trace",
         "apps",
         "racetest",
         "ltp-smoke",
@@ -72,6 +75,7 @@ SUITE_NAMES = (
     "boot",
     "kernel",
     "rt-test",
+    "rt-trace",
     "apps",
     "racetest",
     "ltp-smoke",
@@ -192,6 +196,8 @@ def main() -> int:
                 kernel.run(ctx, report, arches)
             elif suite == "rt-test":
                 rt_test.run(ctx, report, arches)
+            elif suite == "rt-trace":
+                rt_trace.run(ctx, report, arches)
             elif suite == "apps":
                 apps.run(ctx, report, arches)
             elif suite == "racetest":

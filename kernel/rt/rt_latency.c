@@ -24,10 +24,13 @@
 typedef struct {
     uint64_t wake_max_ns;
     uint64_t wake_last_ns;
+    uint64_t wake_min_ns;
+    uint64_t wake_sum_ns;
     uint64_t wake_count;
 
     uint64_t syscall_max_ns;
     uint64_t syscall_last_ns;
+    uint64_t syscall_sum_ns;
     uint64_t syscall_count;
     uint32_t syscall_max_id; /* 最长 syscall 的内部编号 */
 
@@ -82,6 +85,9 @@ void rt_latency_run(task_t *t, uint64_t now_ns)
 
     rt_lat_cpu_t *s = rt_lat_cpu();
     s->wake_last_ns = delta;
+    s->wake_sum_ns += delta;
+    if (s->wake_count == 0 || delta < s->wake_min_ns)
+        s->wake_min_ns = delta;
     if (delta > s->wake_max_ns)
         s->wake_max_ns = delta;
     s->wake_count++;
@@ -91,6 +97,7 @@ void rt_latency_syscall(uint64_t duration_ns, uint32_t nr)
 {
     rt_lat_cpu_t *s = rt_lat_cpu();
     s->syscall_last_ns = duration_ns;
+    s->syscall_sum_ns += duration_ns;
     if (duration_ns > s->syscall_max_ns) {
         s->syscall_max_ns = duration_ns;
         s->syscall_max_id = nr;
@@ -278,7 +285,8 @@ int rt_latency_snprintf(char *buf, size_t cap)
     size_t pos = 0;
     pos = lat_puts(buf, cap, pos, "rtstat: per-CPU latency (ns)\n");
     pos = lat_puts(buf, cap, pos,
-                   "cpu wake_max wake_last wake_n syscall_max syscall_max_id syscall_last syscall_n tick_gap_max "
+                   "cpu wake_max wake_last wake_n wake_min wake_avg "
+                   "syscall_max syscall_max_id syscall_last syscall_avg syscall_n tick_gap_max "
                    "tick_gap_last ticks irq_off_max irq_off_last irq_off_n irq_off_pc "
                    "preempt_off_max preempt_off_last preempt_off_n preempt_off_pc\n");
 
@@ -294,11 +302,17 @@ int rt_latency_snprintf(char *buf, size_t cap)
         pos = lat_puts(buf, cap, pos, " ");
         pos = lat_put_u64(buf, cap, pos, s->wake_count);
         pos = lat_puts(buf, cap, pos, " ");
+        pos = lat_put_u64(buf, cap, pos, (s->wake_count > 0) ? s->wake_min_ns : 0);
+        pos = lat_puts(buf, cap, pos, " ");
+        pos = lat_put_u64(buf, cap, pos, (s->wake_count > 0) ? (s->wake_sum_ns / s->wake_count) : 0);
+        pos = lat_puts(buf, cap, pos, " ");
         pos = lat_put_u64(buf, cap, pos, s->syscall_max_ns);
         pos = lat_puts(buf, cap, pos, " ");
         pos = lat_put_u64(buf, cap, pos, s->syscall_max_id);
         pos = lat_puts(buf, cap, pos, " ");
         pos = lat_put_u64(buf, cap, pos, s->syscall_last_ns);
+        pos = lat_puts(buf, cap, pos, " ");
+        pos = lat_put_u64(buf, cap, pos, (s->syscall_count > 0) ? (s->syscall_sum_ns / s->syscall_count) : 0);
         pos = lat_puts(buf, cap, pos, " ");
         pos = lat_put_u64(buf, cap, pos, s->syscall_count);
         pos = lat_puts(buf, cap, pos, " ");

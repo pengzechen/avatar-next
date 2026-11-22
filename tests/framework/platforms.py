@@ -144,6 +144,14 @@ VARIANTS: dict[str, Variant] = {
     "rt-test": Variant(
         "rt-test", ("RT_TEST=1", "RT_DEMO=1"), (("kernel",),)
     ),
+    # 诊断变体：打开 IRQ-off / preempt-off 跟踪。需要 rootfs 里的 shell
+    # 读取 /proc/rtstat；RT 自测本身不需要 rootfs。
+    "rt-trace": Variant(
+        "rt-trace",
+        ("RT_TEST=1", "RT_DEMO=1", "RT_IRQ_TRACE=1"),
+        (("kernel", "rootfs"),),
+        needs_rootfs=True,
+    ),
 }
 
 

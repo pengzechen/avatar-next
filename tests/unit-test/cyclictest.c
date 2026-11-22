@@ -30,8 +30,10 @@
    输出格式（tests/suites/rt_test.py 解析）：
      === CYCLICTEST: PASS period=... warmup=... cycles=... samples=...
          min=... avg=... p50=... p99=... p999=... max=...
+         stddev=... jitter=... drift=... overrun_ppm=...
          irq_n=... irq_min=... irq_avg=... irq_p99=... irq_max=...
-         overruns=... early=... hog=1 hog_iters=... ===
+         overruns=... early=... hog=1 hog_iters=...
+         hist=<1us/<2us/<5us/<10us/<20us/<50us/<100us/overflow ===
 
    `hog_iters` 是 NORMAL 忙循环实际完成的迭代数；它只用于证明“负载真的
    获得了 CPU 时间”，不是性能指标。
@@ -50,6 +52,11 @@
 #define CYCLI_PRIO     80u
 #define CYCLI_HOG_PRIO 10u
 
+#define CYCLI_HIST_BUCKETS 8u
+static const uint32_t g_cycli_hist_thresh[CYCLI_HIST_BUCKETS] = {
+    1000, 2000, 5000, 10000, 20000, 50000, 100000, 0xFFFFFFFFu,
+};
+
 static volatile bool g_cyc_done;
 static volatile bool g_cyc_stop_hog;
 static volatile uint64_t g_cyc_hog_iters;
@@ -59,12 +66,20 @@ static volatile uint32_t g_cyc_early;
 
 static uint32_t g_cyc_lat[CYCLI_CYCLES];
 static uint64_t g_cyc_sum;
+static uint64_t g_cyc_sum_sq; /* 用于 stddev；采样值截到 10ms，避免溢出 */
 static uint64_t g_cyc_min = ~0ULL;
 static uint64_t g_cyc_max;
 static uint64_t g_cyc_avg;
+static uint64_t g_cyc_stddev;
+static uint64_t g_cyc_jitter;
+static int64_t g_cyc_drift_ns;
+static uint32_t g_cyc_overrun_ppm;
 static uint32_t g_cyc_p50;
 static uint32_t g_cyc_p99;
 static uint32_t g_cyc_p999;
+static uint32_t g_cyc_hist[CYCLI_HIST_BUCKETS];
+static uint64_t g_cyc_first_ns;
+static uint64_t g_cyc_last_ns;
 
 /* IRQ timer latency：deadline → timer ISR 入口（x86 TSC-deadline）。 */
 static uint32_t g_cyc_irq_lat[CYCLI_CYCLES];
@@ -75,7 +90,7 @@ static uint64_t g_cyc_irq_max;
 static uint64_t g_cyc_irq_avg;
 static uint32_t g_cyc_irq_p99;
 
-static void cyclictest_record(uint64_t lat)
+static void cyclictest_record(uint64_t lat, uint64_t now)
 {
     uint32_t n = g_cyc_samples;
 
@@ -87,12 +102,38 @@ static void cyclictest_record(uint64_t lat)
     g_cyc_lat[n] = (uint32_t)lat;
 
     g_cyc_sum += lat;
+    uint64_t sq = (lat > 10000000ULL) ? 10000000ULL : lat;
+    g_cyc_sum_sq += sq * sq;
     if (lat < g_cyc_min)
         g_cyc_min = lat;
     if (lat > g_cyc_max)
         g_cyc_max = lat;
+    if (g_cyc_first_ns == 0)
+        g_cyc_first_ns = now;
+    g_cyc_last_ns = now;
+
+    for (uint32_t i = 0; i < CYCLI_HIST_BUCKETS; i++) {
+        if (lat < g_cycli_hist_thresh[i]) {
+            g_cyc_hist[i]++;
+            break;
+        }
+    }
 
     __atomic_store_n(&g_cyc_samples, n + 1, __ATOMIC_RELEASE);
+}
+
+static uint64_t cyclictest_isqrt(uint64_t v)
+{
+    uint64_t x = v;
+    uint64_t y = (x + 1) / 2;
+
+    if (x == 0)
+        return 0;
+    while (y < x) {
+        x = y;
+        y = (x + v / x) / 2;
+    }
+    return x;
 }
 
 static void cyclictest_irq_record(uint64_t lat)
@@ -179,7 +220,7 @@ static void cyclictest_worker(void *arg)
         }
 
         if (i >= CYCLI_WARMUP) {
-            cyclictest_record(lat);
+            cyclictest_record(lat, now);
 
             /*
                同一个 deadline 的 IRQ 延迟：deadline → timer ISR 入口。
@@ -210,6 +251,20 @@ static void cyclictest_worker(void *arg)
     g_cyc_p50 = cyclictest_percentile(g_cyc_lat, n, 500);
     g_cyc_p99 = cyclictest_percentile(g_cyc_lat, n, 990);
     g_cyc_p999 = cyclictest_percentile(g_cyc_lat, n, 999);
+    g_cyc_jitter = (n > 0 && g_cyc_max >= g_cyc_min) ? (g_cyc_max - g_cyc_min) : 0;
+    if (n > 0) {
+        uint64_t mean_sq = g_cyc_sum_sq / n;
+        uint64_t avg_c = (g_cyc_avg > 10000000ULL) ? 10000000ULL : g_cyc_avg;
+        uint64_t avg_sq = avg_c * avg_c;
+        g_cyc_stddev = (mean_sq > avg_sq) ? cyclictest_isqrt(mean_sq - avg_sq) : 0;
+        uint64_t overruns = __atomic_load_n(&g_cyc_overruns, __ATOMIC_ACQUIRE);
+        g_cyc_overrun_ppm = (uint32_t)((overruns * 1000000ULL) / n);
+    }
+    if (n > 1) {
+        uint64_t ideal = (uint64_t)(n - 1) * period;
+        uint64_t actual = (g_cyc_last_ns > g_cyc_first_ns) ? (g_cyc_last_ns - g_cyc_first_ns) : 0;
+        g_cyc_drift_ns = (int64_t)actual - (int64_t)ideal;
+    }
 
     uint32_t irq_n = __atomic_load_n(&g_cyc_irq_n, __ATOMIC_ACQUIRE);
     cyclictest_sort(g_cyc_irq_lat, irq_n);
@@ -237,8 +292,17 @@ bool run_cyclictest(void)
     g_cyc_overruns = 0;
     g_cyc_early = 0;
     g_cyc_sum = 0;
+    g_cyc_sum_sq = 0;
     g_cyc_min = ~0ULL;
     g_cyc_max = 0;
+    g_cyc_stddev = 0;
+    g_cyc_jitter = 0;
+    g_cyc_drift_ns = 0;
+    g_cyc_overrun_ppm = 0;
+    g_cyc_first_ns = 0;
+    g_cyc_last_ns = 0;
+    for (uint32_t i = 0; i < CYCLI_HIST_BUCKETS; i++)
+        g_cyc_hist[i] = 0;
     g_cyc_irq_n = 0;
     g_cyc_irq_sum = 0;
     g_cyc_irq_min = ~0ULL;
@@ -288,14 +352,18 @@ bool run_cyclictest(void)
     uint32_t irq_n = __atomic_load_n(&g_cyc_irq_n, __ATOMIC_ACQUIRE);
     KLOG_INFO("=== CYCLICTEST: PASS period=%llu warmup=%u cycles=%u samples=%u "
               "min=%llu avg=%llu p50=%u p99=%u p999=%u max=%llu "
+              "stddev=%llu jitter=%llu drift=%lld overrun_ppm=%u "
               "irq_n=%u irq_min=%llu irq_avg=%llu irq_p99=%u irq_max=%llu "
-              "overruns=%u early=%u hog=1 hog_iters=%llu ===\n",
+              "overruns=%u early=%u hog=1 hog_iters=%llu "
+              "hist=%u/%u/%u/%u/%u/%u/%u/%u ===\n",
               (unsigned long long)period, CYCLI_WARMUP, CYCLI_CYCLES, n, (unsigned long long)((n > 0) ? g_cyc_min : 0),
-              (unsigned long long)g_cyc_avg, g_cyc_p50, g_cyc_p99, g_cyc_p999, (unsigned long long)g_cyc_max, irq_n,
-              (unsigned long long)((irq_n > 0) ? g_cyc_irq_min : 0), (unsigned long long)g_cyc_irq_avg, g_cyc_irq_p99,
-              (unsigned long long)g_cyc_irq_max, __atomic_load_n(&g_cyc_overruns, __ATOMIC_ACQUIRE),
-              __atomic_load_n(&g_cyc_early, __ATOMIC_ACQUIRE),
-              (unsigned long long)__atomic_load_n(&g_cyc_hog_iters, __ATOMIC_ACQUIRE));
+              (unsigned long long)g_cyc_avg, g_cyc_p50, g_cyc_p99, g_cyc_p999, (unsigned long long)g_cyc_max,
+              (unsigned long long)g_cyc_stddev, (unsigned long long)g_cyc_jitter, (long long)g_cyc_drift_ns,
+              g_cyc_overrun_ppm, irq_n, (unsigned long long)((irq_n > 0) ? g_cyc_irq_min : 0),
+              (unsigned long long)g_cyc_irq_avg, g_cyc_irq_p99, (unsigned long long)g_cyc_irq_max,
+              __atomic_load_n(&g_cyc_overruns, __ATOMIC_ACQUIRE), __atomic_load_n(&g_cyc_early, __ATOMIC_ACQUIRE),
+              (unsigned long long)__atomic_load_n(&g_cyc_hog_iters, __ATOMIC_ACQUIRE), g_cyc_hist[0], g_cyc_hist[1],
+              g_cyc_hist[2], g_cyc_hist[3], g_cyc_hist[4], g_cyc_hist[5], g_cyc_hist[6], g_cyc_hist[7]);
 
     timer_set_tick_cb(NULL);
     return true;

@@ -22,9 +22,10 @@ rt-test suite — RT 调度语义与唤醒/抢占延迟。
     再补 20 条；最后验证阻塞在无限等事件的 worker 能被 stop 唤醒。
     场景 8：内核态 cyclictest——FIFO 80 钉 CPU0，1ms(x86 oneshot)/10ms
     (tick 回退) 绝对 deadline 周期，加一个 NORMAL hog；记录
-    min/avg/p50/p99/p99.9/max、overrun、早醒次数，以及 hog_iters
-    （忙循环实际迭代数，>0 证明负载真的运行过）。x86 oneshot 下
-    额外记录 timerlat IRQ 延迟（deadline → timer ISR 入口）。
+    min/avg/p50/p99/p99.9/max、stddev/jitter/drift、直方图、overrun
+    ppm、早醒次数，以及 hog_iters（忙循环实际迭代数，>0 证明负载真的
+    运行过）。x86 oneshot 下额外记录 timerlat IRQ 延迟（deadline →
+    timer ISR 入口）。
     场景 9：内核态 oslat——FIFO 85 忙循环 500ms，记录相邻迭代间隔的
     min/avg/max 和超过 1/10/100µs 的次数，衡量已运行 RT 线程被 OS
     噪声打断的时间。
@@ -82,8 +83,10 @@ EVENT_RE = re.compile(
 CYCLI_RE = re.compile(
     rb"=== CYCLICTEST: PASS period=(\d+) warmup=(\d+) cycles=(\d+) "
     rb"samples=(\d+) min=(\d+) avg=(\d+) p50=(\d+) p99=(\d+) p999=(\d+) "
-    rb"max=(\d+) irq_n=(\d+) irq_min=(\d+) irq_avg=(\d+) irq_p99=(\d+) "
-    rb"irq_max=(\d+) overruns=(\d+) early=(\d+) hog=(\d+) hog_iters=(\d+) ==="
+    rb"max=(\d+) stddev=(\d+) jitter=(\d+) drift=(-?\d+) "
+    rb"overrun_ppm=(\d+) irq_n=(\d+) irq_min=(\d+) irq_avg=(\d+) "
+    rb"irq_p99=(\d+) irq_max=(\d+) overruns=(\d+) early=(\d+) hog=(\d+) "
+    rb"hog_iters=(\d+) hist=(\d+)/(\d+)/(\d+)/(\d+)/(\d+)/(\d+)/(\d+)/(\d+) ==="
 )
 OSLAT_RE = re.compile(
     rb"=== OSLAT: PASS duration=(\d+) samples=(\d+) min=(\d+) avg=(\d+) "
@@ -234,6 +237,10 @@ def _rt(ctx: TestContext, report: Report, arch) -> None:
             cyc_p99,
             cyc_p999,
             cyc_max,
+            cyc_stddev,
+            cyc_jitter,
+            cyc_drift,
+            cyc_overrun_ppm,
             cyc_irq_n,
             cyc_irq_min,
             cyc_irq_avg,
@@ -243,6 +250,7 @@ def _rt(ctx: TestContext, report: Report, arch) -> None:
             cyc_early,
             cyc_hog,
             cyc_hog_iters,
+            *cyc_hist,
         ) = cycli
         (
             os_duration,
@@ -255,31 +263,70 @@ def _rt(ctx: TestContext, report: Report, arch) -> None:
             os_over_100us,
         ) = oslat
 
+        tag = f"         {arch.name}: "
         print(
-            f"         {arch.name}: ping-pong n={ping_n} "
-            f"min/avg/max={ping_min}/{ping_avg}/{ping_max}ns; "
-            f"preempt n={pre_n} min/avg/max={pre_min}/{pre_avg}/{pre_max}ns; "
-            f"worker period={worker_period}ns periodic={worker_periodic} "
-            f"ticks={worker_ticks} misses={worker_misses} "
-            f"exec_max={worker_exec_max}ns; "
-            f"obs reset={obs_reset} wd_tested={obs_wd_tested} "
-            f"wd_checks={obs_wd_checks} wd_trips={obs_wd_trips}; "
-            f"mutex ops={mutex_ops} err={mutex_err} "
-            f"pi={mutex_boost}->{mutex_after} order={high_order}/{low_order}/{med_order}; "
-            f"event timeout={event_timeout} "
-            f"posted/processed/dropped={event_posted}/{event_processed}/{event_dropped}; "
-            f"cyclictest period={cyc_period}ns warmup={cyc_warmup} "
-            f"cycles={cyc_cycles} samples={cyc_samples} "
-            f"min/avg/p50/p99/p999/max="
-            f"{cyc_min}/{cyc_avg}/{cyc_p50}/{cyc_p99}/{cyc_p999}/{cyc_max}ns "
-            f"irq_n={cyc_irq_n} "
-            f"irq_min/avg/p99/max="
-            f"{cyc_irq_min}/{cyc_irq_avg}/{cyc_irq_p99}/{cyc_irq_max}ns "
-            f"overruns={cyc_overruns} early={cyc_early} hog={cyc_hog} "
-            f"hog_iters={cyc_hog_iters}; "
-            f"oslat duration={os_duration}ns samples={os_samples} "
-            f"min/avg/max={os_min}/{os_avg}/{os_max}ns "
-            f"over_1/10/100us={os_over_1us}/{os_over_10us}/{os_over_100us}"
+            f"{tag}ping-pong n={ping_n} "
+            f"min/avg/max={ping_min}/{ping_avg}/{ping_max}ns"
+        )
+        print(
+            f"{tag}preempt n={pre_n} "
+            f"min/avg/max={pre_min}/{pre_avg}/{pre_max}ns"
+        )
+        print(
+            f"{tag}worker period={worker_period}ns periodic={worker_periodic}"
+        )
+        print(
+            f"{tag}worker ticks={worker_ticks} misses={worker_misses} "
+            f"exec_max={worker_exec_max}ns"
+        )
+        print(
+            f"{tag}obs reset={obs_reset} wd_tested={obs_wd_tested} "
+            f"wd_checks={obs_wd_checks} wd_trips={obs_wd_trips}"
+        )
+        print(
+            f"{tag}mutex ops={mutex_ops} err={mutex_err} "
+            f"pi={mutex_boost}->{mutex_after} "
+            f"order={high_order}/{low_order}/{med_order}"
+        )
+        print(
+            f"{tag}event timeout={event_timeout} "
+            f"posted/processed/dropped="
+            f"{event_posted}/{event_processed}/{event_dropped}"
+        )
+        print(
+            f"{tag}cyclictest period={cyc_period}ns warmup={cyc_warmup} "
+            f"cycles={cyc_cycles} samples={cyc_samples}"
+        )
+        print(
+            f"{tag}cyclictest latency min/avg/p50="
+            f"{cyc_min}/{cyc_avg}/{cyc_p50}ns"
+        )
+        print(
+            f"{tag}cyclictest latency p99/p999/max="
+            f"{cyc_p99}/{cyc_p999}/{cyc_max}ns"
+        )
+        print(
+            f"{tag}cyclictest stddev/jitter="
+            f"{cyc_stddev}/{cyc_jitter}ns drift={cyc_drift}ns "
+            f"overrun_ppm={cyc_overrun_ppm}"
+        )
+        print(
+            f"{tag}cyclictest irq_n={cyc_irq_n} "
+            f"min/avg/p99/max="
+            f"{cyc_irq_min}/{cyc_irq_avg}/{cyc_irq_p99}/{cyc_irq_max}ns"
+        )
+        print(f"{tag}cyclictest hist={cyc_hist}")
+        print(
+            f"{tag}cyclictest overruns={cyc_overruns} early={cyc_early} "
+            f"hog={cyc_hog} hog_iters={cyc_hog_iters}"
+        )
+        print(
+            f"{tag}oslat duration={os_duration}ns samples={os_samples}"
+        )
+        print(
+            f"{tag}oslat min/avg/max={os_min}/{os_avg}/{os_max}ns "
+            f"over_1/10/100us="
+            f"{os_over_1us}/{os_over_10us}/{os_over_100us}"
         )
 
         assert obs_reset == 1, "RT 统计窗口 reset 没有通过"
@@ -340,6 +387,17 @@ def _rt(ctx: TestContext, report: Report, arch) -> None:
             f"{os_over_1us}/{os_over_10us}/{os_over_100us}"
         )
 
+        assert sum(cyc_hist) == cyc_samples, (
+            f"cyclictest 直方图合计 {sum(cyc_hist)}，应为 {cyc_samples}"
+        )
+        assert cyc_stddev <= cyc_jitter, (
+            f"cyclictest stddev={cyc_stddev}ns 大于 jitter={cyc_jitter}ns"
+        )
+        assert cyc_overrun_ppm == (cyc_overruns * 1_000_000 // cyc_samples), (
+            "cyclictest overrun_ppm 与 overruns/samples 不一致："
+            f"{cyc_overrun_ppm} vs {cyc_overruns}/{cyc_samples}"
+        )
+
         assert cyc_irq_n <= cyc_samples, (
             f"IRQ timer 样本 {cyc_irq_n} 多于总样本 {cyc_samples}"
         )
@@ -367,6 +425,12 @@ def _rt(ctx: TestContext, report: Report, arch) -> None:
             assert cyc_period == 1_000_000, (
                 f"x86 KVM 下 cyclictest 周期是 {cyc_period}ns，不是 1ms"
                 "（TSC-deadline oneshot 失效？）"
+            )
+            assert cyc_irq_p99 < 1_000_000, (
+                f"x86 KVM 下 IRQ timer p99={cyc_irq_p99}ns 超过 1ms"
+            )
+            assert os_max < 5_000_000, (
+                f"x86 KVM 下 oslat max={os_max}ns 超过 5ms"
             )
             # KVM 下 hrtimer 唤醒应在 µs 级；1ms p99 / 5ms max 是回归门禁，
             # 不是“软实时达标线”。真实硬件基线见 docs/realtime/CYCLICTEST.md。

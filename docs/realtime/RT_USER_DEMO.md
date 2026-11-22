@@ -56,13 +56,14 @@ ID NAME             STATE    TPL          PRIO CPU PERIOD_NS      TICKS MISSES O
  2 pulse            STOPPED  periodic_io    60   0   1000000       1203      0        0       11150     1020093           0        0       0          0      0 vout
  3 wd               STOPPED  watchdog       70   0   1000000        352      0        0        1612      174522           0        0       0          0      0 -
 -----------------------
+[PASS] proc/rtworkers exposes WAKE_LAST_NS/WD_TRIPS/DEV_ERR columns
 === Done ===
 ```
 
 - 数值随宿主负载变化；`ticks`/`dev_writes` 应接近 `1s / period`。
 - `post→out_seq` 延迟包含用户态 `clock_gettime` 和轮询，因此是
   “端到端可见延迟”，不是纯中断延迟。
-- 退出码 0 表示四组 `[PASS]` 全过；测试框架的 apps suite 也会跑它。
+- 退出码 0 表示五组 `[PASS]` 全过；测试框架的 apps suite 也会跑它。
 
 ## 只手动玩单个 worker
 

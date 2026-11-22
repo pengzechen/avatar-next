@@ -34,12 +34,15 @@ reset 开始累计）。
 列含义：
 
 ```text
-cpu wake_max wake_last wake_n syscall_max syscall_max_id syscall_last syscall_n
+cpu wake_max wake_last wake_n wake_min wake_avg
+syscall_max syscall_max_id syscall_last syscall_avg syscall_n
 tick_gap_max tick_gap_last ticks irq_off_max irq_off_last irq_off_n irq_off_pc
 preempt_off_max preempt_off_last preempt_off_n preempt_off_pc
 ```
 
 单位均为纳秒。`syscall_max_id` 是内部 syscall 号（221 = execve）。
+`wake_*` 是 `sched_unblock` → 任务真正运行的统计；`wake_min/avg` 和
+`syscall_avg` 用于看分布的中心，极值仍看 max。
 `tick_gap` 是相邻 timer tick 间隔（正常约 10ms）。`irq_off_*` 和
 `preempt_off_*` 需要 `RT_IRQ_TRACE=1` 诊断变体：
 
@@ -65,11 +68,15 @@ make PLATFORM=qemu-virt-x86_64 RT_IRQ_TRACE=1 kernel
 make PLATFORM=qemu-virt-x86_64 RT_TEST=1 RT_DEMO=1 RT_IRQ_TRACE=1 kernel
 ```
 
+测试框架里直接跑 `make -C tests rt-trace`：它会构建这个变体、等待
+`PREEMPTOFF TEST: PASS`，再从宿主 shell 读两次 `/proc/rtstat`，校验
+列、计数、pc 和单调性。
+
 ## 基线原始结果（运行时）
 
-> 2026-11-23 起 `/proc/rtstat` 在行尾增加
-> `preempt_off_max/last/n/pc` 四列；本节下面标注为历史样本的行仍是
-> 旧列数，x86 的最新一行已带新列。
+> 2026-11-23 起 `/proc/rtstat` 增加 `wake_min/wake_avg/syscall_avg` 和
+> `preempt_off_max/last/n/pc`；本节下面标注为历史样本的行仍是旧列数，
+> x86 的最新一行已带新列。
 
 ### x86_64（KVM，SMP=1）
 
@@ -89,14 +96,17 @@ cpu0 2048 2048 1 15283923 221 315 274 13207498 10017080 746
 R3 后（异步 klog + fs mutex）+ `RT_IRQ_TRACE=1`（**clean 全量重编**）：
 
 ```text
-cpu0 11278548 419 20 10998971 221 543 127 10017963 10017377 363 361529 3341 2581598 0xffff80000022b0fc 2563485 2727 5872382 0xffff800000224090
+cpu0 11679090 3538 41 1464 476674 11095350 221 272 109366 275 10127716 9966923 1065 271154 3598 7678801 0xffff80000022441c 270963 3427 3844197 0xffff8000002242c0
 ```
 
-- `irq_off_max ≈ 0.36 ms`；当前最长区间落在 `signal_check_uart()`。
-- 同一次运行（执行 `ls /bin` 后）`preempt_off_max ≈ 2.56 ms`，
+- `irq_off_max ≈ 0.27 ms`；当前最长区间落在 `signal_check_uart()`。
+- 同一次运行（执行 `ls /bin` 后）`preempt_off_max ≈ 0.27 ms`，
   `preempt_off_pc` 用 `addr2line -f -i` 展开后同样是
-  `signal_check_uart()` 里的 spinlock 临界区。它比 IRQ-off 大，因为
-  这段锁在中断打开时也可能被持有；两者不是同一个区间。
+  `signal_check_uart()` 里的 spinlock 临界区。两者可以重叠，但不是
+  同一个计时区间。
+- `wake_max` 的 ~11.7ms 仍包含启动期 klogd 首次运行前的累计等待；
+  稳定后 `wake_last` 是 µs 级。`wake_avg` 被启动期长尾拉高，不能单独
+  当作稳态调度延迟。
 - 异步 klog 之前是 2.5ms（最长在 `klog_write` 的 UART 输出），
   再之前“~6.3µs”的读数是新旧 `.o` 混编导致的失真；`RT_IRQ_TRACE`
   已加入 `_CFG_SIG`，切换开关会全量重编。
