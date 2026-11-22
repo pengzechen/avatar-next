@@ -23,7 +23,7 @@
    用户态那份（结构体尺寸也被编进 ioctl 号，尺寸错了就是另一个命令）。
 */
 
-#define RTW_ABI_VERSION  1
+#define RTW_ABI_VERSION  2 /* v2: stats 增加观察窗口/watchdog/设备错误计数 */
 #define RTW_NAME_LEN     16
 #define RTW_DEV_NAME_LEN 16
 #define RTW_MAX_WORKERS  8
@@ -187,12 +187,29 @@ struct rtw_stats {
     uint64_t last_output;
     uint64_t out_seq;
     uint64_t dev_writes;
+    uint64_t dev_errors;    /* rtdev_write 失败次数 */
+    int64_t dev_last_error; /* 最近一次 rtdev_write 的返回值（0 或无错误） */
     uint64_t events_posted;
     uint64_t events_processed;
     uint64_t events_dropped;
+
+    /*
+       观察窗口：CREATE 或 RTW_IOC_RESET_STATS 时的 timer_get_ns()。
+       计数器只统计这之后的事件；窗口边界是近似的（运行中的 worker
+       不会暂停，恰好落在边界上的一次更新可能计入下一窗口）。
+    */
+    uint64_t stats_since_ns;
+
+    /* watchdog 模板：检查次数、切到安全输出的次数、最近一次的时间 */
+    uint64_t wd_checks;
+    uint64_t wd_trips;
+    uint64_t wd_last_trip_ns;
+
     char name[RTW_NAME_LEN];
     char dev[RTW_DEV_NAME_LEN];
 };
+
+_Static_assert(sizeof(struct rtw_stats) == 232, "rtw_stats ABI mismatch");
 
 struct rtw_list_entry {
     uint32_t id;
@@ -224,16 +241,17 @@ struct rtw_list_req {
 #define _IOWR(t, nr, T)      _IOC(_IOC_READ | _IOC_WRITE, (t), (nr), sizeof(T))
 #endif
 
-#define RTW_IOC_CREATE     _IOWR('R', 1, struct rtw_create_req)
-#define RTW_IOC_DESTROY    _IOWR('R', 2, struct rtw_id_req)
-#define RTW_IOC_START      _IOWR('R', 3, struct rtw_id_req)
-#define RTW_IOC_STOP       _IOWR('R', 4, struct rtw_id_req)
-#define RTW_IOC_SET_IN     _IOWR('R', 5, struct rtw_io_req)
-#define RTW_IOC_GET_OUT    _IOWR('R', 6, struct rtw_io_req)
-#define RTW_IOC_STATS      _IOWR('R', 7, struct rtw_stats)
-#define RTW_IOC_LIST       _IOWR('R', 8, struct rtw_list_req)
-#define RTW_IOC_SET_PARAMS _IOWR('R', 9, struct rtw_params_req)
-#define RTW_IOC_POST       _IOWR('R', 10, struct rtw_io_req)
+#define RTW_IOC_CREATE      _IOWR('R', 1, struct rtw_create_req)
+#define RTW_IOC_DESTROY     _IOWR('R', 2, struct rtw_id_req)
+#define RTW_IOC_START       _IOWR('R', 3, struct rtw_id_req)
+#define RTW_IOC_STOP        _IOWR('R', 4, struct rtw_id_req)
+#define RTW_IOC_SET_IN      _IOWR('R', 5, struct rtw_io_req)
+#define RTW_IOC_GET_OUT     _IOWR('R', 6, struct rtw_io_req)
+#define RTW_IOC_STATS       _IOWR('R', 7, struct rtw_stats)
+#define RTW_IOC_LIST        _IOWR('R', 8, struct rtw_list_req)
+#define RTW_IOC_SET_PARAMS  _IOWR('R', 9, struct rtw_params_req)
+#define RTW_IOC_POST        _IOWR('R', 10, struct rtw_io_req)
+#define RTW_IOC_RESET_STATS _IOWR('R', 11, struct rtw_id_req)
 
 /* ── 内核内部 API ──────────────────────────────────────────── */
 
@@ -247,6 +265,7 @@ int rt_worker_set_input(uint32_t id, uint64_t value);
 int rt_worker_set_params(uint32_t id, const uint64_t params[RTW_PARAM_MAX]);
 int rt_worker_get_output(uint32_t id, uint64_t *value, uint64_t *seq);
 int rt_worker_get_stats(uint32_t id, struct rtw_stats *out);
+int rt_worker_reset_stats(uint32_t id);
 int rt_worker_list(struct rtw_list_req *list);
 
 /* 供 watchdog 模板读目标 worker 的进度；返回 false 表示目标不存在。 */

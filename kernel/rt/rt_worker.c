@@ -67,6 +67,9 @@ struct rtw_pid_state {
 struct rtw_watchdog_state {
     uint64_t last_seq;
     uint64_t last_change_ns;
+    uint64_t checks;
+    uint64_t trips;
+    uint64_t last_trip_ns;
     bool initialized;
 };
 
@@ -104,6 +107,9 @@ struct rt_worker {
     volatile uint64_t wake_late_last_ns;
     volatile uint64_t wake_late_max_ns;
     volatile uint64_t dev_writes;
+    volatile uint64_t dev_errors;
+    volatile int64_t dev_last_error;
+    uint64_t stats_since_ns;
 
     union {
         struct rtw_pid_state pid;
@@ -227,7 +233,18 @@ static void watchdog_init(struct rt_worker *w)
 {
     w->tpl.wd.last_seq = 0;
     w->tpl.wd.last_change_ns = 0;
+    w->tpl.wd.checks = 0;
+    w->tpl.wd.trips = 0;
+    w->tpl.wd.last_trip_ns = 0;
     w->tpl.wd.initialized = false;
+}
+
+/* 记录一次 watchdog 切到安全输出的动作。 */
+static uint64_t watchdog_trip(struct rt_worker *w, uint64_t safe)
+{
+    __atomic_add_fetch(&w->tpl.wd.trips, 1, __ATOMIC_RELAXED);
+    __atomic_store_n(&w->tpl.wd.last_trip_ns, timer_get_ns(), __ATOMIC_RELAXED);
+    return safe;
 }
 
 /*
@@ -239,17 +256,19 @@ static uint64_t watchdog_step(struct rt_worker *w, const uint64_t *params, uint6
 {
     (void)in;
 
+    __atomic_add_fetch(&w->tpl.wd.checks, 1, __ATOMIC_RELAXED);
+
     uint32_t target = (uint32_t)params[0];
     uint64_t timeout = params[1];
     uint64_t safe = params[2];
     if (target == 0 || target == w->id)
-        return safe;
+        return watchdog_trip(w, safe);
 
     uint64_t seq = 0;
     uint32_t state = RTW_STATE_FREE;
     uint64_t now = timer_get_ns();
     if (!rt_worker_peek_progress(target, &seq, &state))
-        return safe;
+        return watchdog_trip(w, safe);
     (void)state;
 
     if (!w->tpl.wd.initialized) {
@@ -266,7 +285,7 @@ static uint64_t watchdog_step(struct rt_worker *w, const uint64_t *params, uint6
     }
 
     if (timeout != 0 && now - w->tpl.wd.last_change_ns >= timeout)
-        return safe;
+        return watchdog_trip(w, safe);
     return 0;
 }
 
@@ -467,10 +486,16 @@ static void rt_worker_entry(void *arg)
             __atomic_store_n(&w->shm->out_seq, seq, __ATOMIC_RELEASE);
         }
 
-        if (w->dev && rtdev_write(w->dev, &out, sizeof(out)) == 0) {
-            uint64_t dw = __atomic_add_fetch(&w->dev_writes, 1, __ATOMIC_RELAXED);
-            if (w->shm)
-                __atomic_store_n(&w->shm->dev_writes, dw, __ATOMIC_RELAXED);
+        if (w->dev) {
+            int dw_rc = rtdev_write(w->dev, &out, sizeof(out));
+            if (dw_rc == 0) {
+                uint64_t dw = __atomic_add_fetch(&w->dev_writes, 1, __ATOMIC_RELAXED);
+                if (w->shm)
+                    __atomic_store_n(&w->shm->dev_writes, dw, __ATOMIC_RELAXED);
+            } else {
+                __atomic_add_fetch(&w->dev_errors, 1, __ATOMIC_RELAXED);
+                __atomic_store_n(&w->dev_last_error, (int64_t)dw_rc, __ATOMIC_RELAXED);
+            }
         }
 
         uint64_t t1 = timer_get_ns();
@@ -608,6 +633,7 @@ int rt_worker_create(const struct rtw_create_req *cfg)
             w->params[p] = cfg->params[p];
         rtw_copy_name(w->name, cfg->name, sizeof(w->name));
         rtw_copy_name(w->dev_name, cfg->dev, sizeof(w->dev_name));
+        w->stats_since_ns = timer_get_ns();
         w->state = RTW_STATE_CREATED;
 
         /* 每槽位一页共享内存：首次分配，之后复用。 */
@@ -935,6 +961,14 @@ int rt_worker_get_stats(uint32_t id, struct rtw_stats *out)
     out->last_output = __atomic_load_n(&w->output, __ATOMIC_RELAXED);
     out->out_seq = __atomic_load_n(&w->out_seq, __ATOMIC_RELAXED);
     out->dev_writes = __atomic_load_n(&w->dev_writes, __ATOMIC_RELAXED);
+    out->dev_errors = __atomic_load_n(&w->dev_errors, __ATOMIC_RELAXED);
+    out->dev_last_error = __atomic_load_n(&w->dev_last_error, __ATOMIC_RELAXED);
+    out->stats_since_ns = w->stats_since_ns;
+    if (w->template_id == RTW_TPL_WATCHDOG) {
+        out->wd_checks = __atomic_load_n(&w->tpl.wd.checks, __ATOMIC_RELAXED);
+        out->wd_trips = __atomic_load_n(&w->tpl.wd.trips, __ATOMIC_RELAXED);
+        out->wd_last_trip_ns = __atomic_load_n(&w->tpl.wd.last_trip_ns, __ATOMIC_RELAXED);
+    }
     if (w->ev) {
         out->events_posted = w->ev->posted;
         out->events_processed = __atomic_load_n(&w->ev->processed, __ATOMIC_RELAXED);
@@ -942,6 +976,58 @@ int rt_worker_get_stats(uint32_t id, struct rtw_stats *out)
     }
     rtw_copy_name(out->name, w->name, sizeof(out->name));
     rtw_copy_name(out->dev, w->dev_name, sizeof(out->dev));
+    spin_unlock_irqrestore(&g_rtw_lock, flags);
+    return 0;
+}
+
+/*
+   把统计窗口清零，不改变 worker 的配置、输出和事件环内容。
+   运行中的 worker 不会暂停，所以窗口边界是近似的：重置后仍可能有
+   一两次恰好并发完成的更新落在新窗口里。设备写错误和 watchdog 计数
+   也属于这个窗口。
+*/
+int rt_worker_reset_stats(uint32_t id)
+{
+    uint64_t flags;
+    spin_lock_irqsave(&g_rtw_lock, &flags);
+    struct rt_worker *w = rtw_get_locked(id);
+    if (!w) {
+        spin_unlock_irqrestore(&g_rtw_lock, flags);
+        return -RTW_ENOENT;
+    }
+
+    __atomic_store_n(&w->ticks, 0, __ATOMIC_RELAXED);
+    __atomic_store_n(&w->misses, 0, __ATOMIC_RELAXED);
+    __atomic_store_n(&w->overruns, 0, __ATOMIC_RELAXED);
+    __atomic_store_n(&w->exec_last_ns, 0, __ATOMIC_RELAXED);
+    __atomic_store_n(&w->exec_max_ns, 0, __ATOMIC_RELAXED);
+    __atomic_store_n(&w->wake_late_last_ns, 0, __ATOMIC_RELAXED);
+    __atomic_store_n(&w->wake_late_max_ns, 0, __ATOMIC_RELAXED);
+    __atomic_store_n(&w->dev_writes, 0, __ATOMIC_RELAXED);
+    __atomic_store_n(&w->dev_errors, 0, __ATOMIC_RELAXED);
+    __atomic_store_n(&w->dev_last_error, 0, __ATOMIC_RELAXED);
+    if (w->template_id == RTW_TPL_WATCHDOG) {
+        __atomic_store_n(&w->tpl.wd.checks, 0, __ATOMIC_RELAXED);
+        __atomic_store_n(&w->tpl.wd.trips, 0, __ATOMIC_RELAXED);
+        __atomic_store_n(&w->tpl.wd.last_trip_ns, 0, __ATOMIC_RELAXED);
+    }
+    if (w->ev) {
+        /* 生产者在本锁内，消费者只做原子递增；head/tail 不动，环内容不丢。 */
+        w->ev->posted = 0;
+        w->ev->dropped = 0;
+        __atomic_store_n(&w->ev->processed, 0, __ATOMIC_RELAXED);
+    }
+    if (w->shm) {
+        __atomic_store_n(&w->shm->ticks, 0, __ATOMIC_RELAXED);
+        __atomic_store_n(&w->shm->misses, 0, __ATOMIC_RELAXED);
+        __atomic_store_n(&w->shm->overruns, 0, __ATOMIC_RELAXED);
+        __atomic_store_n(&w->shm->exec_last_ns, 0, __ATOMIC_RELAXED);
+        __atomic_store_n(&w->shm->exec_max_ns, 0, __ATOMIC_RELAXED);
+        __atomic_store_n(&w->shm->wake_late_last_ns, 0, __ATOMIC_RELAXED);
+        __atomic_store_n(&w->shm->wake_late_max_ns, 0, __ATOMIC_RELAXED);
+        __atomic_store_n(&w->shm->dev_writes, 0, __ATOMIC_RELAXED);
+    }
+    w->stats_since_ns = timer_get_ns();
     spin_unlock_irqrestore(&g_rtw_lock, flags);
     return 0;
 }

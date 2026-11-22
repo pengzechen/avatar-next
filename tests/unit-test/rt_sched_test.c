@@ -156,6 +156,20 @@ static bool rtw_test_wait_state(uint32_t id, uint32_t want, uint64_t timeout_ns)
     }
 }
 
+static bool rtw_test_wait_ticks(uint32_t id, uint64_t want, uint64_t timeout_ns)
+{
+    uint64_t deadline = timer_get_ns() + timeout_ns;
+
+    for (;;) {
+        struct rtw_stats st;
+        if (rt_worker_get_stats(id, &st) == 0 && st.ticks >= want)
+            return true;
+        if (timer_get_ns() >= deadline)
+            return false;
+        task_yield();
+    }
+}
+
 /*
    验证：create → 共享页 → start → 1ms/10ms 周期 → 运行期参数 →
    stop → destroy。x86 oneshot 可用时按 1ms 跑，否则按 10ms tick 跑。
@@ -321,6 +335,232 @@ out:
     timer_set_tick_cb(NULL);
 }
 
+/*
+   场景 5b：观察窗口与 watchdog/设备错误计数。
+
+   event worker 由 rt_worker_post_event() 驱动，不依赖 tick，因此三架构
+   都能在自测窗口里拿到非零计数。这里验证：
+     - CREATE 后计数为零，RESET 后窗口起点前进、计数清零；
+     - out_seq 是状态不是统计量，RESET 不能把它清掉；
+     - 共享页里的统计镜像同步清零；
+     - watchdog 在目标不推进时 trips/last_trip 增长，RESET 清零
+       （只有 oneshot 可用时才能在本自测窗口里实际跑周期）。
+   设备错误计数需要能失败的 rtdev；内置 vout 不会失败，这里只确认
+   未绑定时计数为零，具体错误路径由驱动自己的测试覆盖。
+*/
+static bool run_rt_obs_test(void)
+{
+    bool ok = true;
+    const char *phase = "event-create";
+    uint32_t ev_id = 0;
+    uint32_t target_id = 0;
+    uint32_t wd_id = 0;
+    bool ev_started = false;
+    bool wd_started = false;
+    bool wd_tested = false;
+    uint64_t wd_checks = 0;
+    uint64_t wd_trips = 0;
+    struct rtw_stats st;
+
+    struct rtw_create_req cfg;
+    memset(&cfg, 0, sizeof(cfg));
+    cfg.abi_version = RTW_ABI_VERSION;
+    cfg.template_id = RTW_TPL_EVENT;
+    memcpy(cfg.name, "rtw-obs-ev", 11);
+    cfg.priority = 50;
+    cfg.cpu = 0;
+    cfg.period_ns = 0; /* 无限等待，post 唤醒 */
+    cfg.params[0] = 131072;
+
+    int rc = rt_worker_create(&cfg);
+    if (rc <= 0) {
+        ok = false;
+        goto out;
+    }
+    ev_id = (uint32_t)rc;
+
+    uint64_t shm_pa = 0;
+    uint64_t shm_size = 0;
+    if (rt_worker_shm_lookup(ev_id, &shm_pa, &shm_size) < 0 || shm_size != PAGE_SIZE ||
+        rt_worker_get_stats(ev_id, &st) < 0 || st.ticks != 0 || st.events_posted != 0) {
+        ok = false;
+        goto out;
+    }
+    volatile struct rtw_shm *shm = phys_to_virt(shm_pa);
+    uint64_t since_create = st.stats_since_ns;
+
+    phase = "event-start";
+    if (rt_worker_start(ev_id) != 0) {
+        ok = false;
+        goto out;
+    }
+    ev_started = true;
+    for (uint32_t i = 0; i < 3; i++) {
+        if (rt_worker_post_event(ev_id, 21) != 0) {
+            ok = false;
+            goto out;
+        }
+    }
+
+    phase = "event-run";
+    if (!rtw_test_wait_ticks(ev_id, 3, RTW_TEST_WAIT_NS) || rt_worker_get_stats(ev_id, &st) < 0 || st.ticks < 3 ||
+        st.events_posted != 3 || st.events_processed != 3) {
+        ok = false;
+        goto out;
+    }
+
+    /* 运行中重置：只要求窗口起点不倒退；并发中的一次更新允许落在新窗口。 */
+    phase = "reset-running";
+    if (rt_worker_reset_stats(ev_id) != 0 || rt_worker_get_stats(ev_id, &st) < 0 || st.stats_since_ns < since_create) {
+        ok = false;
+        goto out;
+    }
+
+    phase = "event-stop";
+    if (rt_worker_stop(ev_id) != 0 || !rtw_test_wait_state(ev_id, RTW_STATE_STOPPED, RTW_TEST_WAIT_NS)) {
+        ok = false;
+        goto out;
+    }
+    ev_started = false;
+
+    /* 停止后重置：这次必须精确清零，且不能动 out_seq/output。 */
+    phase = "reset-stopped";
+    if (rt_worker_reset_stats(ev_id) != 0 || rt_worker_get_stats(ev_id, &st) < 0) {
+        ok = false;
+        goto out;
+    }
+    if (st.ticks != 0 || st.misses != 0 || st.overruns != 0 || st.exec_last_ns != 0 || st.exec_max_ns != 0 ||
+        st.wake_late_last_ns != 0 || st.wake_late_max_ns != 0 || st.dev_writes != 0 || st.dev_errors != 0 ||
+        st.dev_last_error != 0 || st.events_posted != 0 || st.events_processed != 0 || st.events_dropped != 0 ||
+        st.wd_checks != 0 || st.wd_trips != 0 || st.wd_last_trip_ns != 0) {
+        ok = false;
+        goto out;
+    }
+    if (st.out_seq < 3 || st.stats_since_ns < since_create || __atomic_load_n(&shm->ticks, __ATOMIC_ACQUIRE) != 0 ||
+        __atomic_load_n(&shm->misses, __ATOMIC_ACQUIRE) != 0 ||
+        __atomic_load_n(&shm->overruns, __ATOMIC_ACQUIRE) != 0 ||
+        __atomic_load_n(&shm->dev_writes, __ATOMIC_ACQUIRE) != 0 ||
+        __atomic_load_n(&shm->out_seq, __ATOMIC_ACQUIRE) != st.out_seq) {
+        ok = false;
+        goto out;
+    }
+
+    phase = "event-destroy";
+    if (rt_worker_destroy(ev_id) != 0) {
+        ok = false;
+        goto out;
+    }
+    ev_id = 0;
+
+    /*
+       watchdog：只在 oneshot 架构上实际跑周期。目标 worker 只 create
+       不 start，out_seq 永远不推进，watchdog 第二轮就会切到安全值。
+    */
+    if (!hrtimer_cpu_oneshot_supported(0))
+        goto out;
+
+    wd_tested = true;
+    uint64_t period = 1000000ULL;
+
+    phase = "wd-target-create";
+    memset(&cfg, 0, sizeof(cfg));
+    cfg.abi_version = RTW_ABI_VERSION;
+    cfg.template_id = RTW_TPL_PERIODIC_IO;
+    memcpy(cfg.name, "rtw-obs-tgt", 12);
+    cfg.priority = 50;
+    cfg.cpu = 0;
+    cfg.period_ns = period;
+    cfg.params[0] = 65536;
+    rc = rt_worker_create(&cfg);
+    if (rc <= 0) {
+        ok = false;
+        goto out;
+    }
+    target_id = (uint32_t)rc;
+
+    phase = "wd-create";
+    memset(&cfg, 0, sizeof(cfg));
+    cfg.abi_version = RTW_ABI_VERSION;
+    cfg.template_id = RTW_TPL_WATCHDOG;
+    memcpy(cfg.name, "rtw-obs-wd", 11);
+    cfg.priority = 60;
+    cfg.cpu = 0;
+    cfg.period_ns = period;
+    cfg.params[0] = target_id;
+    cfg.params[1] = period / 2; /* 目标不动，第二轮必超时 */
+    cfg.params[2] = 999;
+    rc = rt_worker_create(&cfg);
+    if (rc <= 0) {
+        ok = false;
+        goto out;
+    }
+    wd_id = (uint32_t)rc;
+
+    phase = "wd-start";
+    if (rt_worker_start(wd_id) != 0) {
+        ok = false;
+        goto out;
+    }
+    wd_started = true;
+
+    phase = "wd-run";
+    if (!rtw_test_wait_ticks(wd_id, 3, RTW_TEST_WAIT_NS) || rt_worker_get_stats(wd_id, &st) < 0 || st.wd_checks < 3 ||
+        st.wd_trips < 1 || st.wd_last_trip_ns == 0 || st.last_output != 999) {
+        ok = false;
+        goto out;
+    }
+    wd_checks = st.wd_checks;
+    wd_trips = st.wd_trips;
+
+    phase = "wd-stop";
+    if (rt_worker_stop(wd_id) != 0 || !rtw_test_wait_state(wd_id, RTW_STATE_STOPPED, RTW_TEST_WAIT_NS)) {
+        ok = false;
+        goto out;
+    }
+    wd_started = false;
+
+    phase = "wd-reset";
+    if (rt_worker_reset_stats(wd_id) != 0 || rt_worker_get_stats(wd_id, &st) < 0 || st.wd_checks != 0 ||
+        st.wd_trips != 0 || st.wd_last_trip_ns != 0) {
+        ok = false;
+        goto out;
+    }
+
+    phase = "wd-destroy";
+    if (rt_worker_destroy(wd_id) != 0 || rt_worker_destroy(target_id) != 0) {
+        ok = false;
+        goto out;
+    }
+    wd_id = 0;
+    target_id = 0;
+
+out:
+    if (wd_id != 0) {
+        if (wd_started) {
+            rt_worker_stop(wd_id);
+            rtw_test_wait_state(wd_id, RTW_STATE_STOPPED, RTW_TEST_WAIT_NS);
+        }
+        rt_worker_destroy(wd_id);
+    }
+    if (target_id != 0)
+        rt_worker_destroy(target_id);
+    if (ev_id != 0) {
+        if (ev_started) {
+            rt_worker_stop(ev_id);
+            rtw_test_wait_state(ev_id, RTW_STATE_STOPPED, RTW_TEST_WAIT_NS);
+        }
+        rt_worker_destroy(ev_id);
+    }
+
+    if (ok) {
+        KLOG_INFO("=== RT OBS TEST: PASS reset=1 wd_tested=%d wd_checks=%llu wd_trips=%llu ===\n", (int)wd_tested,
+                  (unsigned long long)wd_checks, (unsigned long long)wd_trips);
+    } else {
+        KLOG_ERROR("=== RT OBS TEST: FAIL (%s) ===\n", phase);
+    }
+    return ok;
+}
+
 void run_rt_sched_test(void)
 {
     KLOG_INFO("=== RT SCHED TEST ===\n");
@@ -395,6 +635,11 @@ void run_rt_sched_test(void)
 
     if (preempt_pass) {
         run_rt_worker_test();
+
+        if (!run_rt_obs_test()) {
+            KLOG_ERROR("=== RT SCHED TEST: FAIL (observability) ===\n");
+            return;
+        }
 
         extern void run_rt_mutex_tests(void);
         run_rt_mutex_tests();

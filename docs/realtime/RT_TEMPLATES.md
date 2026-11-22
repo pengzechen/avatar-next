@@ -128,12 +128,18 @@ __atomic_store_n(&s->input, 21, __ATOMIC_RELEASE); /* 内核下次周期读到 *
 | `RTW_IOC_POST` | 向事件环投递 u64 事件；环满返回 `-ENOSPC` |
 | `RTW_IOC_SET_PARAMS` | 运行期更新模板参数（seqlock，周期边界生效） |
 | `RTW_IOC_GET_OUT` | 读最近一次输出和序号 |
-| `RTW_IOC_STATS` | ticks/misses/overruns/exec_last/exec_max/... |
+| `RTW_IOC_STATS` | ticks/misses/overruns/exec_last/exec_max/...，含观察窗口和 watchdog/设备错误计数 |
+| `RTW_IOC_RESET_STATS` | 清空统计窗口（不停止 worker，不改 out_seq/output） |
 | `RTW_IOC_LIST` | 列出所有 worker |
 | `mmap(offset = id << PAGE_SHIFT)` | 映射该 worker 的共享页（uid 0；见上文） |
 
 **权限**：V1 只允许 uid 0。调用者传入的用户指针一律经
 `copy_from_user_bytes` / `copy_to_user_bytes`，不做裸解引用。
+
+`RTW_ABI_VERSION` 当前是 **2**（v2 的 `struct rtw_stats` 增加了观察窗口、
+watchdog 和设备错误字段，尺寸变为 232 字节）。尺寸会编进 ioctl 号，
+`apps/c/rtctl_abi.h` 必须与 `include/rt/rt_worker.h` 同步；改结构体后
+所有用户态二进制都要重新编译，旧二进制会在 CREATE 时得到 `-EINVAL`。
 
 ## 四、模板 V1
 
@@ -177,6 +183,11 @@ __atomic_store_n(&s->input, 21, __ATOMIC_RELEASE); /* 内核下次周期读到 *
 目标 worker 的 `out_seq` 在 timeout 内没有变化 → 输出 `safe_output`；
 健康时输出 0。目标不存在或目标就是自己 → 直接输出安全值。watchdog
 自身的周期应明显小于 timeout。
+
+`stats` 里额外的 `wd_checks/wd_trips/wd_last_trip_ns` 分别记录检查次数、
+切到安全输出的次数和最近一次 trip 的时间；`/proc/rtworkers` 显示
+`WD_TRIPS`，`rtctl stats` 显示完整三项。目标不推进时可以直接观察
+trip 是否在增长，不需要只看输出值。
 
 ```sh
 # 监控 worker 1，50ms 没进展就输出 999，自己每 10ms 检查一次
@@ -236,12 +247,42 @@ cat /proc/rtworkers
 ```
 
 输出每个 worker 的 `ID/NAME/STATE/TPL/PRIO/CPU/PERIOD/TICKS/MISSES/
-OVERRUNS/EXEC_MAX/WAKE_MAX/DEV`，不需要 ioctl。`rtps` 仍然显示它作为
-RT 内核任务；`rtctl list/stats` 提供更详细的信息。
+OVERRUNS/EXEC_MAX/WAKE_MAX/WAKE_LAST/WD_TRIPS/DEV_ERR/EVENTS/DROPS/DEV`，
+不需要 ioctl。`rtps` 仍然显示它作为 RT 内核任务；`rtctl list/stats`
+提供更详细的信息。
+
+### 统计窗口
+
+`rtctl stats <id>` 的 `window_start_ns` 是本次 CREATE 或上一次 RESET 的
+单调时间。需要做“最近 N 秒”的窗口统计（soak、回归前后对比）时：
+
+```sh
+rtctl stats 1
+rtctl reset 1          # 只清计数，不停止 worker
+sleep 10
+rtctl stats 1          # 计数只覆盖 reset 之后
+```
+
+reset 会同步清空共享页里的统计镜像，但**不清** `out_seq/output/input/
+params`；事件环的 `head/tail` 也不变。运行中的 worker 不会暂停，所以
+窗口边界是近似的：恰好落在边界上的一次更新可能计入新窗口。停止状态下
+reset 则是精确的。
+
+统计字段：
+
+- 周期/执行：`ticks/misses/overruns/exec_last_ns/exec_max_ns`；
+- 唤醒：`wake_late_last_ns/wake_late_max_ns`；
+- 设备：`dev_writes/dev_errors/dev_last_error`（失败时记录
+  `rtdev_write` 的负 errno，下一次 reset 前一直保留）；
+- 事件：`events_posted/events_processed/events_dropped`；
+- watchdog：`wd_checks/wd_trips/wd_last_trip_ns`；
+- 窗口：`stats_since_ns`。
 
 回归门禁：`make -C tests rt-test` 会跑模板 worker 的 create → 共享页 →
 start → 运行期参数 → stop → destroy，并在 x86 KVM 上断言 1ms 周期与
-频率（见 `tests/suites/rt_test.py` 的场景 5）。
+频率（场景 5）；场景 5b 再用 event worker 验证 RESET 清空 ticks/事件/
+共享页镜像但保留 out_seq，并在 oneshot 架构上验证 watchdog 的
+checks/trips/last_trip（`tests/suites/rt_test.py`）。
 
 ## 六、rtdev 设备契约
 
@@ -276,6 +317,8 @@ struct rtdev_ops {
 - 事件环只有内核侧生产者（ioctl / 未来 rtdev ISR）。用户态直接写环
   不会唤醒 worker；需要 `RTW_IOC_POST` 或后续的 kick 门铃。
 - `watchdog` 目前只输出安全值，不自动停止目标；自动动作留给 supervisor。
+- 统计窗口 reset 是近似边界；运行中的 worker 仍可能把一次并发更新计入
+  新窗口。设备错误只记录最近一次 errno，没有错误历史环。
 - RT 任务在 `STOP` 后最多要等一个周期/一次事件唤醒才退出。
 
 ## 八、下一步

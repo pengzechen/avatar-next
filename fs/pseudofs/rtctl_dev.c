@@ -121,6 +121,12 @@ int rtctl_dev_ioctl(int nid, uint64_t req, void *argp)
             return -RTCTL_EINVAL;
         return rt_worker_set_params(r.id, r.params);
     }
+    case RTW_IOC_RESET_STATS: {
+        struct rtw_id_req r;
+        if (!argp || copy_from_user_bytes(argp, &r, sizeof(r)) < 0)
+            return -RTCTL_EINVAL;
+        return rt_worker_reset_stats(r.id);
+    }
     default:
         return -RTCTL_EINVAL;
     }

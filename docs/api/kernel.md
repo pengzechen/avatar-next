@@ -1,6 +1,6 @@
 # kernel — C API
 
-[← 返回总览](index.md) · 999 个函数 · 说明覆盖率 95.7%
+[← 返回总览](index.md) · 1001 个函数 · 说明覆盖率 95.7%
 
 <a id="mod-kernel-debug-backtrace.c"></a>
 
@@ -6054,7 +6054,7 @@ task_t *rt_mutex_owner(rt_mutex_t *m)
 
 ## kernel/rt/rt_worker.c — 用户可配置的 RT worker（模板执行器）
 
-`kernel/rt/rt_worker.c` · 35 个函数 · 35 个有说明 · 981 行
+`kernel/rt/rt_worker.c` · 37 个函数 · 37 个有说明 · 1067 行
 
 数据面：每个 worker 是一个 KERNEL + SCHED_FIFO 的内核任务，按
 period_ns 周期调用模板的 step()。step 必须：
@@ -6064,7 +6064,7 @@ period_ns 周期调用模板的 step()。step 必须：
 V1 的周期由 100Hz tick 驱动（task->sleep_expire_ns），所以
 period_ns 必须是 10ms 的整数倍。要支持 1kHz，需要先有 oneshot hrtimer。
 
-<a id="fn-kernel-rt-rt_worker.c-120"></a>
+<a id="fn-kernel-rt-rt_worker.c-126"></a>
 
 ### `rtw_clamp_i64`
 
@@ -6079,15 +6079,15 @@ lo>=hi 时视为未配置限幅直接返回原值，否则把 v 夹到 [lo,hi] �
 <details>
 <summary>函数内备注（1 条）</summary>
 
-**第 123 行（行尾）**
+**第 129 行（行尾）**
 
 > 没配置限幅
 
 </details>
 
-**位置**：`kernel/rt/rt_worker.c:120`
+**位置**：`kernel/rt/rt_worker.c:126`
 
-<a id="fn-kernel-rt-rt_worker.c-131"></a>
+<a id="fn-kernel-rt-rt_worker.c-137"></a>
 
 ### `rtw_sat_add`
 
@@ -6099,9 +6099,9 @@ static int64_t rtw_sat_add(int64_t a, int64_t b)
 
 饱和加法：上溢返回 RTW_I64_MAX，下溢返回 RTW_I64_MIN，否则返回两数之和。
 
-**位置**：`kernel/rt/rt_worker.c:131`
+**位置**：`kernel/rt/rt_worker.c:137`
 
-<a id="fn-kernel-rt-rt_worker.c-140"></a>
+<a id="fn-kernel-rt-rt_worker.c-146"></a>
 
 ### `rtw_input`
 
@@ -6113,9 +6113,9 @@ static int64_t rtw_input(int64_t v)
 
 把输入按正负 RTW_INPUT_LIMIT 做区间限幅后返回。
 
-**位置**：`kernel/rt/rt_worker.c:140`
+**位置**：`kernel/rt/rt_worker.c:146`
 
-<a id="fn-kernel-rt-rt_worker.c-145"></a>
+<a id="fn-kernel-rt-rt_worker.c-151"></a>
 
 ### `rtw_gain`
 
@@ -6130,15 +6130,15 @@ static int64_t rtw_gain(uint64_t v)
 <details>
 <summary>函数内备注（1 条）</summary>
 
-**第 147 行**
+**第 153 行**
 
 > 增益限成 int32，乘上 ±2^40 的输入后不会溢出 int64。
 
 </details>
 
-**位置**：`kernel/rt/rt_worker.c:145`
+**位置**：`kernel/rt/rt_worker.c:151`
 
-<a id="fn-kernel-rt-rt_worker.c-153"></a>
+<a id="fn-kernel-rt-rt_worker.c-159"></a>
 
 ### `periodic_io_init`
 
@@ -6150,9 +6150,9 @@ static void periodic_io_init(struct rt_worker *w)
 
 空实现，不修改任何状态。
 
-**位置**：`kernel/rt/rt_worker.c:153`
+**位置**：`kernel/rt/rt_worker.c:159`
 
-<a id="fn-kernel-rt-rt_worker.c-158"></a>
+<a id="fn-kernel-rt-rt_worker.c-164"></a>
 
 ### `periodic_io_step`
 
@@ -6164,9 +6164,9 @@ static uint64_t periodic_io_step(struct rt_worker *w, const uint64_t *params, ui
 
 限幅输入乘增益后右移 16 位，加偏置做饱和加法，再按参数区间限幅输出。
 
-**位置**：`kernel/rt/rt_worker.c:158`
+**位置**：`kernel/rt/rt_worker.c:164`
 
-<a id="fn-kernel-rt-rt_worker.c-171"></a>
+<a id="fn-kernel-rt-rt_worker.c-177"></a>
 
 ### `event_init`
 
@@ -6178,9 +6178,9 @@ static void event_init(struct rt_worker *w)
 
 空实现，不修改任何状态。
 
-**位置**：`kernel/rt/rt_worker.c:171`
+**位置**：`kernel/rt/rt_worker.c:177`
 
-<a id="fn-kernel-rt-rt_worker.c-180"></a>
+<a id="fn-kernel-rt-rt_worker.c-186"></a>
 
 ### `event_step`
 
@@ -6191,9 +6191,9 @@ static uint64_t event_step(struct rt_worker *w, const uint64_t *params, uint64_t
 每个事件做一次和 periodic_io 相同的定点变换：out = clamp(in*gain + offset)。
 输入来自事件环，不是共享页 input。
 
-**位置**：`kernel/rt/rt_worker.c:180`
+**位置**：`kernel/rt/rt_worker.c:186`
 
-<a id="fn-kernel-rt-rt_worker.c-187"></a>
+<a id="fn-kernel-rt-rt_worker.c-193"></a>
 
 ### `pid_init`
 
@@ -6205,9 +6205,9 @@ static void pid_init(struct rt_worker *w)
 
 清零积分项与上次误差，并把 initialized 置为 false。
 
-**位置**：`kernel/rt/rt_worker.c:187`
+**位置**：`kernel/rt/rt_worker.c:193`
 
-<a id="fn-kernel-rt-rt_worker.c-194"></a>
+<a id="fn-kernel-rt-rt_worker.c-200"></a>
 
 ### `pid_step`
 
@@ -6219,9 +6219,9 @@ static uint64_t pid_step(struct rt_worker *w, const uint64_t *params, uint64_t i
 
 做限幅 PID 运算：积分项按 ilim 饱和、记录上次误差，输出加权后右移 16 位并限幅。
 
-**位置**：`kernel/rt/rt_worker.c:194`
+**位置**：`kernel/rt/rt_worker.c:200`
 
-<a id="fn-kernel-rt-rt_worker.c-226"></a>
+<a id="fn-kernel-rt-rt_worker.c-232"></a>
 
 ### `watchdog_init`
 
@@ -6233,9 +6233,21 @@ static void watchdog_init(struct rt_worker *w)
 
 清零 last_seq 与 last_change_ns，并把 initialized 置为 false。
 
-**位置**：`kernel/rt/rt_worker.c:226`
+**位置**：`kernel/rt/rt_worker.c:232`
 
-<a id="fn-kernel-rt-rt_worker.c-238"></a>
+<a id="fn-kernel-rt-rt_worker.c-243"></a>
+
+### `watchdog_trip`
+
+```c
+static uint64_t watchdog_trip(struct rt_worker *w, uint64_t safe)
+```
+
+记录一次 watchdog 切到安全输出的动作。
+
+**位置**：`kernel/rt/rt_worker.c:243`
+
+<a id="fn-kernel-rt-rt_worker.c-255"></a>
 
 ### `watchdog_step`
 
@@ -6247,9 +6259,9 @@ static uint64_t watchdog_step(struct rt_worker *w, const uint64_t *params, uint6
 目标 worker 的 out_seq 在 timeout 内没有变化 → 输出 safe_output；
 健康时输出 0。目标不存在/参数非法时直接输出 safe_output。
 
-**位置**：`kernel/rt/rt_worker.c:238`
+**位置**：`kernel/rt/rt_worker.c:255`
 
-<a id="fn-kernel-rt-rt_worker.c-280"></a>
+<a id="fn-kernel-rt-rt_worker.c-299"></a>
 
 ### `rtw_template`
 
@@ -6261,9 +6273,9 @@ static const struct rt_template_ops *rtw_template(uint32_t id)
 
 在模板表 g_templates 中按 id 查找，命中返回表项指针，否则返回 NULL。
 
-**位置**：`kernel/rt/rt_worker.c:280`
+**位置**：`kernel/rt/rt_worker.c:299`
 
-<a id="fn-kernel-rt-rt_worker.c-291"></a>
+<a id="fn-kernel-rt-rt_worker.c-310"></a>
 
 ### `rtw_sleep_until`
 
@@ -6275,9 +6287,9 @@ static bool rtw_sleep_until(struct rt_worker *w, uint64_t deadline)
 
 循环设置睡眠到期时间并阻塞当前任务直到 stop 或 deadline，返回是否未被停止。
 
-**位置**：`kernel/rt/rt_worker.c:291`
+**位置**：`kernel/rt/rt_worker.c:310`
 
-<a id="fn-kernel-rt-rt_worker.c-305"></a>
+<a id="fn-kernel-rt-rt_worker.c-324"></a>
 
 ### `rtw_event_ring_init`
 
@@ -6289,9 +6301,9 @@ static void rtw_event_ring_init(struct rtw_event_ring *ev)
 
 把事件环头尾清零、设置容量，并清零投递、丢弃、处理计数与 last_value。
 
-**位置**：`kernel/rt/rt_worker.c:305`
+**位置**：`kernel/rt/rt_worker.c:324`
 
-<a id="fn-kernel-rt-rt_worker.c-316"></a>
+<a id="fn-kernel-rt-rt_worker.c-335"></a>
 
 ### `rtw_event_ring_empty`
 
@@ -6303,9 +6315,9 @@ static bool rtw_event_ring_empty(struct rtw_event_ring *ev)
 
 以 acquire 读 head、relaxed 读 tail，两者相等即判为空。
 
-**位置**：`kernel/rt/rt_worker.c:316`
+**位置**：`kernel/rt/rt_worker.c:335`
 
-<a id="fn-kernel-rt-rt_worker.c-328"></a>
+<a id="fn-kernel-rt-rt_worker.c-347"></a>
 
 ### `rtw_pop_event`
 
@@ -6317,9 +6329,9 @@ static bool rtw_pop_event(struct rt_worker *w, uint64_t *value)
 这里 acquire 读取 head 后读 slot 是安全的；tail 用 release 发布，
 生产者据此判断空/满。
 
-**位置**：`kernel/rt/rt_worker.c:328`
+**位置**：`kernel/rt/rt_worker.c:347`
 
-<a id="fn-kernel-rt-rt_worker.c-353"></a>
+<a id="fn-kernel-rt-rt_worker.c-372"></a>
 
 ### `rtw_event_rearm`
 
@@ -6331,9 +6343,9 @@ static void rtw_event_rearm(struct rt_worker *w)
 生产者若在清位之后投递会重新置位；反过来先查再清会把刚到的事件
 置位清掉，等待睡下去后环里有事件却永远不醒。
 
-**位置**：`kernel/rt/rt_worker.c:353`
+**位置**：`kernel/rt/rt_worker.c:372`
 
-<a id="fn-kernel-rt-rt_worker.c-363"></a>
+<a id="fn-kernel-rt-rt_worker.c-382"></a>
 
 ### `rtw_params_snapshot`
 
@@ -6346,7 +6358,7 @@ static void rtw_params_snapshot(struct rt_worker *w, uint64_t *out)
 <details>
 <summary>函数内备注（1 条）</summary>
 
-**第 366 行**
+**第 385 行**
 
 > 共享页对 supervisor 是可写的，params_seq 也可能被写坏（比如永远
 > 停在奇数）。RT 线程不能为此无限自旋，否则会以 RT 优先级占满一
@@ -6355,9 +6367,9 @@ static void rtw_params_snapshot(struct rt_worker *w, uint64_t *out)
 
 </details>
 
-**位置**：`kernel/rt/rt_worker.c:363`
+**位置**：`kernel/rt/rt_worker.c:382`
 
-<a id="fn-kernel-rt-rt_worker.c-398"></a>
+<a id="fn-kernel-rt-rt_worker.c-417"></a>
 
 ### `rt_worker_entry`
 
@@ -6372,29 +6384,29 @@ worker 主循环：事件或周期唤醒后取输入、快照参数并调用模�
 <details>
 <summary>函数内备注（4 条）</summary>
 
-**第 418 行**
+**第 437 行**
 
 > period_ns == 0：无限等待，只有事件/STOP 能唤醒；
 > period_ns &gt; 0：最多等这么久，超时后回到循环重新检查 stop。
 
-**第 427 行**
+**第 446 行**
 
 > 超时/唤醒竞争：环里暂时没有数据，重新武装 DATA
 
-**第 435 行（行尾）**
+**第 454 行（行尾）**
 
 > stop
 
-**第 504 行**
+**第 529 行**
 
 > oneshot 下唤醒精度是 µs 级，超过半个周期才算 miss；
 > 退化为 tick 唤醒时，相位可能让一次唤醒晚最多一个 tick。
 
 </details>
 
-**位置**：`kernel/rt/rt_worker.c:398`
+**位置**：`kernel/rt/rt_worker.c:417`
 
-<a id="fn-kernel-rt-rt_worker.c-527"></a>
+<a id="fn-kernel-rt-rt_worker.c-552"></a>
 
 ### `rtw_get_locked`
 
@@ -6406,9 +6418,9 @@ static struct rt_worker *rtw_get_locked(uint32_t id)
 
 校验 id 范围后返回对应 worker 槽位，槽位处于 FREE 状态则返回 NULL。
 
-**位置**：`kernel/rt/rt_worker.c:527`
+**位置**：`kernel/rt/rt_worker.c:552`
 
-<a id="fn-kernel-rt-rt_worker.c-535"></a>
+<a id="fn-kernel-rt-rt_worker.c-560"></a>
 
 ### `rtw_copy_name`
 
@@ -6420,9 +6432,9 @@ static void rtw_copy_name(char *dst, const char *src, size_t dstsz)
 
 逐字符复制源串，最多写 dstsz-1 字节并补结尾 NUL。
 
-**位置**：`kernel/rt/rt_worker.c:535`
+**位置**：`kernel/rt/rt_worker.c:560`
 
-<a id="fn-kernel-rt-rt_worker.c-545"></a>
+<a id="fn-kernel-rt-rt_worker.c-570"></a>
 
 ### `rt_worker_init`
 
@@ -6434,9 +6446,9 @@ void rt_worker_init(void)
 
 原子检查初始化标志，未初始化时注册内置 rtdev 后再置位，重复调用直接返回。
 
-**位置**：`kernel/rt/rt_worker.c:545`
+**位置**：`kernel/rt/rt_worker.c:570`
 
-<a id="fn-kernel-rt-rt_worker.c-553"></a>
+<a id="fn-kernel-rt-rt_worker.c-578"></a>
 
 ### `rt_worker_create`
 
@@ -6451,28 +6463,28 @@ int rt_worker_create(const struct rtw_create_req *cfg)
 <details>
 <summary>函数内备注（4 条）</summary>
 
-**第 569 行**
+**第 594 行**
 
 > event 模板的 period_ns 是“等待事件的最长时间”：
 > 0 = 无限等待；否则至少 1ms。
 
-**第 579 行**
+**第 604 行**
 
 > 目标核没有 oneshot 时只能按 100Hz tick 唤醒（period=0 不需要超时）。
 
-**第 613 行**
+**第 639 行**
 
 > 每槽位一页共享内存：首次分配，之后复用。
 
-**第 617 行**
+**第 643 行**
 
 > 槽位刚标成 CREATED，失败时必须还回 FREE，否则永远分不到。
 
 </details>
 
-**位置**：`kernel/rt/rt_worker.c:553`
+**位置**：`kernel/rt/rt_worker.c:578`
 
-<a id="fn-kernel-rt-rt_worker.c-664"></a>
+<a id="fn-kernel-rt-rt_worker.c-690"></a>
 
 ### `rt_worker_start`
 
@@ -6487,20 +6499,20 @@ int rt_worker_start(uint32_t id)
 <details>
 <summary>函数内备注（2 条）</summary>
 
-**第 678 行（行尾）**
+**第 704 行（行尾）**
 
 > 保留 DATA：允许先投递后 start
 
-**第 684 行**
+**第 710 行**
 
 > task_create_kernel_rt 可能触发 self-IPI / 调度，不能在 g_rtw_lock
 > 下调用。state=RUNNING 已经占住，别的 START 会看到 EBUSY。
 
 </details>
 
-**位置**：`kernel/rt/rt_worker.c:664`
+**位置**：`kernel/rt/rt_worker.c:690`
 
-<a id="fn-kernel-rt-rt_worker.c-704"></a>
+<a id="fn-kernel-rt-rt_worker.c-730"></a>
 
 ### `rt_worker_stop`
 
@@ -6515,13 +6527,13 @@ int rt_worker_stop(uint32_t id)
 <details>
 <summary>函数内备注（2 条）</summary>
 
-**第 718 行**
+**第 744 行**
 
 > event worker 可能无限阻塞在 rt_event_wait()；STOP 位保证它一定被唤醒。
 > 周期 worker 不走这里，但置位无害。必须在 g_rtw_lock 内发布：否则
 > worker 可能先退出、槽位被 destroy/recreate，STOP 会打到新 worker。
 
-**第 727 行**
+**第 753 行**
 
 > 如果 worker 正睡在 tick 上，清掉 sleep_expire 并唤醒；它醒来会在
 > rtw_sleep_until() 里先检查 stop，然后退出。任务正在 step 里跑的话
@@ -6529,9 +6541,9 @@ int rt_worker_stop(uint32_t id)
 
 </details>
 
-**位置**：`kernel/rt/rt_worker.c:704`
+**位置**：`kernel/rt/rt_worker.c:730`
 
-<a id="fn-kernel-rt-rt_worker.c-739"></a>
+<a id="fn-kernel-rt-rt_worker.c-765"></a>
 
 ### `rt_worker_destroy`
 
@@ -6546,15 +6558,15 @@ int rt_worker_destroy(uint32_t id)
 <details>
 <summary>函数内备注（1 条）</summary>
 
-**第 755 行**
+**第 781 行**
 
 > 页保留给同槽位下次 create；旧用户映射靠 magic=0 判断失效。
 
 </details>
 
-**位置**：`kernel/rt/rt_worker.c:739`
+**位置**：`kernel/rt/rt_worker.c:765`
 
-<a id="fn-kernel-rt-rt_worker.c-768"></a>
+<a id="fn-kernel-rt-rt_worker.c-794"></a>
 
 ### `rt_worker_set_input`
 
@@ -6566,9 +6578,9 @@ int rt_worker_set_input(uint32_t id, uint64_t value)
 
 加锁找到 worker 后，以 release 语义写入内部与共享页的输入值。
 
-**位置**：`kernel/rt/rt_worker.c:768`
+**位置**：`kernel/rt/rt_worker.c:794`
 
-<a id="fn-kernel-rt-rt_worker.c-784"></a>
+<a id="fn-kernel-rt-rt_worker.c-810"></a>
 
 ### `rt_worker_post_event`
 
@@ -6583,21 +6595,21 @@ int rt_worker_post_event(uint32_t id, uint64_t value)
 <details>
 <summary>函数内备注（2 条）</summary>
 
-**第 795 行**
+**第 821 行**
 
 > 生产者可能来自控制面和驱动 ISR，用 ev_lock 串行化；消费者（RT worker）
 > 只读 head/tail，不需要这把锁。锁在 g_rtw_lock 内层，保证 post 与
 > destroy/recreate 不会并发。
 
-**第 817 行**
+**第 843 行**
 
 > 在 g_rtw_lock 内唤醒，防止 worker 被并发 destroy 后还访问 event。
 
 </details>
 
-**位置**：`kernel/rt/rt_worker.c:784`
+**位置**：`kernel/rt/rt_worker.c:810`
 
-<a id="fn-kernel-rt-rt_worker.c-823"></a>
+<a id="fn-kernel-rt-rt_worker.c-849"></a>
 
 ### `rt_worker_set_params`
 
@@ -6612,15 +6624,15 @@ int rt_worker_set_params(uint32_t id, const uint64_t params[RTW_PARAM_MAX])
 <details>
 <summary>函数内备注（1 条）</summary>
 
-**第 836 行**
+**第 862 行**
 
 > seqlock：奇数表示写入中；worker 在周期开头重试读取。
 
 </details>
 
-**位置**：`kernel/rt/rt_worker.c:823`
+**位置**：`kernel/rt/rt_worker.c:849`
 
-<a id="fn-kernel-rt-rt_worker.c-855"></a>
+<a id="fn-kernel-rt-rt_worker.c-881"></a>
 
 ### `rt_worker_shm_lookup`
 
@@ -6632,9 +6644,9 @@ int rt_worker_shm_lookup(uint32_t id, uint64_t *paddr, uint64_t *size)
 
 加锁返回 worker 共享页的物理地址与页大小。
 
-**位置**：`kernel/rt/rt_worker.c:855`
+**位置**：`kernel/rt/rt_worker.c:881`
 
-<a id="fn-kernel-rt-rt_worker.c-873"></a>
+<a id="fn-kernel-rt-rt_worker.c-899"></a>
 
 ### `rt_worker_peek_progress`
 
@@ -6646,9 +6658,9 @@ bool rt_worker_peek_progress(uint32_t id, uint64_t *seq, uint32_t *state)
 
 加锁读取 worker 的输出序号与状态，未找到返回 false。
 
-**位置**：`kernel/rt/rt_worker.c:873`
+**位置**：`kernel/rt/rt_worker.c:899`
 
-<a id="fn-kernel-rt-rt_worker.c-890"></a>
+<a id="fn-kernel-rt-rt_worker.c-916"></a>
 
 ### `rt_worker_get_output`
 
@@ -6660,9 +6672,9 @@ int rt_worker_get_output(uint32_t id, uint64_t *value, uint64_t *seq)
 
 加锁读取 worker 的最近输出值与输出序号，不存在返回 ENOENT。
 
-**位置**：`kernel/rt/rt_worker.c:890`
+**位置**：`kernel/rt/rt_worker.c:916`
 
-<a id="fn-kernel-rt-rt_worker.c-907"></a>
+<a id="fn-kernel-rt-rt_worker.c-933"></a>
 
 ### `rt_worker_get_stats`
 
@@ -6674,9 +6686,33 @@ int rt_worker_get_stats(uint32_t id, struct rtw_stats *out)
 
 加锁把状态、周期、优先级、执行与唤醒延迟、错过及事件计数打包进统计结构。
 
-**位置**：`kernel/rt/rt_worker.c:907`
+**位置**：`kernel/rt/rt_worker.c:933`
 
-<a id="fn-kernel-rt-rt_worker.c-949"></a>
+<a id="fn-kernel-rt-rt_worker.c-989"></a>
+
+### `rt_worker_reset_stats`
+
+```c
+int rt_worker_reset_stats(uint32_t id)
+```
+
+把统计窗口清零，不改变 worker 的配置、输出和事件环内容。
+运行中的 worker 不会暂停，所以窗口边界是近似的：重置后仍可能有
+一两次恰好并发完成的更新落在新窗口里。设备写错误和 watchdog 计数
+也属于这个窗口。
+
+<details>
+<summary>函数内备注（1 条）</summary>
+
+**第 1015 行**
+
+> 生产者在本锁内，消费者只做原子递增；head/tail 不动，环内容不丢。
+
+</details>
+
+**位置**：`kernel/rt/rt_worker.c:989`
+
+<a id="fn-kernel-rt-rt_worker.c-1035"></a>
 
 ### `rt_worker_list`
 
@@ -6688,7 +6724,7 @@ int rt_worker_list(struct rtw_list_req *list)
 
 加锁遍历槽位把非空闲 worker 概要填进列表，按容量截断并写回条目数。
 
-**位置**：`kernel/rt/rt_worker.c:949`
+**位置**：`kernel/rt/rt_worker.c:1035`
 
 <a id="mod-kernel-rt-rtdev.c"></a>
 

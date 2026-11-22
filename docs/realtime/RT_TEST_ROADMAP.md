@@ -19,6 +19,7 @@
 | `RT_TEST=1` 场景 1–3 | RT 优先级顺序、FIFO 不被 tick 轮转 | `tests/unit-test/rt_sched_test.c` |
 | 场景 4 | NORMAL→RT 立即抢占（self-IPI） | 同上 |
 | 场景 5 | 模板 worker + 共享页（create/start/stop/destroy、1ms/10ms） | 同上 |
+| 场景 5b | 统计窗口 RESET（保留 out_seq、清共享页镜像）+ watchdog checks/trips | 同上 |
 | 场景 6 | 普通 mutex SMP 并发 + `rt_mutex` 直接 PI | `rt_mutex_test.c` |
 | 场景 7 | `rt_event` any/all/timeout + event 模板共享环 | `rt_event_test.c` |
 | 场景 8 | **内核态 cyclictest**：FIFO 80、1ms/10ms 绝对 deadline、NORMAL hog、hog_iters | `cyclictest.c` |

@@ -11,6 +11,9 @@ rt-test suite — RT 调度语义与唤醒/抢占延迟。
     有 oneshot 的架构（x86 KVM）按 1ms 实跑，200ms 内至少完成 3/4
     理论周期；早期自测窗口里 tick 回调尚未启用，aarch64/riscv 只验
     生命周期与共享页，不验周期频率。
+    场景 5b：统计窗口——event worker 由 post 驱动，验证 reset 清空
+    ticks/事件/共享页镜像但保留 out_seq；oneshot 下再验证 watchdog
+    的 checks/trips/last_trip 以及 reset 后的清零。
     场景 6：mutex 并发压力（18000 次临界区、检测同时持锁）与 rt_mutex
     直接优先级继承（owner 提升到 80、等待者按 80/60 顺序拿锁、中等
     优先级任务不得插队、释放后恢复 0）。
@@ -60,6 +63,10 @@ WORKER_RE = re.compile(
     rb"=== RT WORKER TEST: PASS period=(\d+) periodic=(\d+) ticks=(\d+) "
     rb"misses=(\d+) exec_max=(\d+) ==="
 )
+OBS_RE = re.compile(
+    rb"=== RT OBS TEST: PASS reset=(\d+) wd_tested=(\d+) "
+    rb"wd_checks=(\d+) wd_trips=(\d+) ==="
+)
 MUTEX_RE = re.compile(
     rb"=== RT MUTEX TEST: PASS mtx=(\d+) err=(\d+) boost=(\d+) "
     rb"after=(\d+) order=(\d+)/(\d+)/(\d+) ==="
@@ -83,6 +90,7 @@ FORBIDDEN = (
     rb"=== BACKTRACE \(fault\)",
     rb"=== RT SCHED TEST: FAIL",
     rb"=== RT WORKER TEST: FAIL",
+    rb"=== RT OBS TEST: FAIL",
     rb"=== RT MUTEX TEST: FAIL",
     rb"=== RT EVENT TEST: FAIL",
     rb"=== CYCLICTEST: FAIL",
@@ -118,6 +126,15 @@ def _rt(ctx: TestContext, report: Report, arch) -> None:
                     ctx.timeout(180),
                     forbidden=FORBIDDEN,
                     desc=f"{arch.name} 模板 worker 自测",
+                )
+            )
+
+            obs = _parse(
+                q.wait_for(
+                    OBS_RE,
+                    ctx.timeout(180),
+                    forbidden=FORBIDDEN,
+                    desc=f"{arch.name} RT 统计窗口自测",
                 )
             )
 
@@ -176,6 +193,7 @@ def _rt(ctx: TestContext, report: Report, arch) -> None:
             worker_misses,
             worker_exec_max,
         ) = worker
+        obs_reset, obs_wd_tested, obs_wd_checks, obs_wd_trips = obs
         (
             mutex_ops,
             mutex_err,
@@ -210,6 +228,8 @@ def _rt(ctx: TestContext, report: Report, arch) -> None:
             f"worker period={worker_period}ns periodic={worker_periodic} "
             f"ticks={worker_ticks} misses={worker_misses} "
             f"exec_max={worker_exec_max}ns; "
+            f"obs reset={obs_reset} wd_tested={obs_wd_tested} "
+            f"wd_checks={obs_wd_checks} wd_trips={obs_wd_trips}; "
             f"mutex ops={mutex_ops} err={mutex_err} "
             f"pi={mutex_boost}->{mutex_after} order={high_order}/{low_order}/{med_order}; "
             f"event timeout={event_timeout} "
@@ -221,6 +241,19 @@ def _rt(ctx: TestContext, report: Report, arch) -> None:
             f"overruns={cyc_overruns} early={cyc_early} hog={cyc_hog} "
             f"hog_iters={cyc_hog_iters}"
         )
+
+        assert obs_reset == 1, "RT 统计窗口 reset 没有通过"
+        if arch.name == "x86_64" and have_kvm():
+            assert obs_wd_tested == 1, "x86 KVM 下 watchdog 统计没有实际测试"
+        if obs_wd_tested:
+            assert obs_wd_checks >= 3, (
+                f"watchdog 只检查了 {obs_wd_checks} 次，至少应为 3"
+            )
+            assert obs_wd_trips >= 1, "watchdog 目标不推进却没有 trip"
+        else:
+            assert obs_wd_checks == 0 and obs_wd_trips == 0, (
+                "没有测试 watchdog 时不应有 checks/trips 计数"
+            )
 
         assert mutex_ops == 6 * 3000, f"mutex 临界区计数 {mutex_ops}，应为 18000"
         assert mutex_err == 0, f"mutex 并发检查发现 {mutex_err} 次同时持锁"

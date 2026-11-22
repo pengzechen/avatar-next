@@ -17,21 +17,24 @@
 #include "pseudofs_internal.h"
 #include "rt/rt_worker.h"
 
-#define W_ID       2
-#define W_NAME     16
-#define W_STATE    8
-#define W_TPL      12
-#define W_PRIO     4
-#define W_CPU      3
-#define W_PERIOD   9
-#define W_TICKS    10
-#define W_MISSES   6
-#define W_OVERRUNS 8
-#define W_EXEC_MAX 11
-#define W_WAKE_MAX 11
-#define W_EVENTS   10
-#define W_DROPS    6
-#define W_DEV      4
+#define W_ID        2
+#define W_NAME      16
+#define W_STATE     8
+#define W_TPL       12
+#define W_PRIO      4
+#define W_CPU       3
+#define W_PERIOD    9
+#define W_TICKS     10
+#define W_MISSES    6
+#define W_OVERRUNS  8
+#define W_EXEC_MAX  11
+#define W_WAKE_MAX  11
+#define W_WAKE_LAST 12
+#define W_WD_TRIPS  8
+#define W_DEV_ERR   7
+#define W_EVENTS    10
+#define W_DROPS     6
+#define W_DEV       4
 
 static const char *rtw_state_name(uint32_t s)
 {
@@ -129,6 +132,12 @@ int rtworkers_read(int nid, uint64_t off, void *buf, size_t len)
     pos = put_sep(tmp, pos, sizeof(tmp));
     pos = put_col(tmp, pos, sizeof(tmp), "WAKE_MAX_NS", W_WAKE_MAX, true);
     pos = put_sep(tmp, pos, sizeof(tmp));
+    pos = put_col(tmp, pos, sizeof(tmp), "WAKE_LAST_NS", W_WAKE_LAST, true);
+    pos = put_sep(tmp, pos, sizeof(tmp));
+    pos = put_col(tmp, pos, sizeof(tmp), "WD_TRIPS", W_WD_TRIPS, true);
+    pos = put_sep(tmp, pos, sizeof(tmp));
+    pos = put_col(tmp, pos, sizeof(tmp), "DEV_ERR", W_DEV_ERR, true);
+    pos = put_sep(tmp, pos, sizeof(tmp));
     pos = put_col(tmp, pos, sizeof(tmp), "EVENTS", W_EVENTS, true);
     pos = put_sep(tmp, pos, sizeof(tmp));
     pos = put_col(tmp, pos, sizeof(tmp), "DROPS", W_DROPS, true);
@@ -164,6 +173,12 @@ int rtworkers_read(int nid, uint64_t off, void *buf, size_t len)
         pos = put_num_col(tmp, pos, sizeof(tmp), st.exec_max_ns, W_EXEC_MAX);
         pos = put_sep(tmp, pos, sizeof(tmp));
         pos = put_num_col(tmp, pos, sizeof(tmp), st.wake_late_max_ns, W_WAKE_MAX);
+        pos = put_sep(tmp, pos, sizeof(tmp));
+        pos = put_num_col(tmp, pos, sizeof(tmp), st.wake_late_last_ns, W_WAKE_LAST);
+        pos = put_sep(tmp, pos, sizeof(tmp));
+        pos = put_num_col(tmp, pos, sizeof(tmp), st.wd_trips, W_WD_TRIPS);
+        pos = put_sep(tmp, pos, sizeof(tmp));
+        pos = put_num_col(tmp, pos, sizeof(tmp), st.dev_errors, W_DEV_ERR);
         pos = put_sep(tmp, pos, sizeof(tmp));
         pos = put_num_col(tmp, pos, sizeof(tmp), st.events_processed, W_EVENTS);
         pos = put_sep(tmp, pos, sizeof(tmp));

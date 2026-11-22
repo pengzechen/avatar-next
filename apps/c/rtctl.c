@@ -16,6 +16,7 @@
      rtctl params <id> [p0..p7]
      rtctl get <id>
      rtctl stats <id>
+     rtctl reset <id>            # 清空统计窗口（不停止 worker）
      rtctl list
 
    模板：
@@ -112,7 +113,7 @@ static int cmd_create(int argc, char **argv)
 
     struct rtw_create_req r;
     memset(&r, 0, sizeof(r));
-    r.abi_version = 1;
+    r.abi_version = RTW_ABI_VERSION;
     r.template_id = tpl_id(argv[3]);
     if (!r.template_id) {
         fprintf(stderr, "rtctl: unknown template '%s'\n", argv[3]);
@@ -429,8 +430,12 @@ static int cmd_stats(int argc, char **argv)
     printf("input=%lld output=%lld seq=%llu dev=%s dev_writes=%llu\n", (long long)st.last_input,
            (long long)st.last_output, (unsigned long long)st.out_seq, st.dev[0] ? st.dev : "-",
            (unsigned long long)st.dev_writes);
+    printf("dev_errors=%llu dev_last_error=%lld\n", (unsigned long long)st.dev_errors, (long long)st.dev_last_error);
     printf("events_posted=%llu events_processed=%llu events_dropped=%llu\n", (unsigned long long)st.events_posted,
            (unsigned long long)st.events_processed, (unsigned long long)st.events_dropped);
+    printf("window_start_ns=%llu wd_checks=%llu wd_trips=%llu wd_last_trip_ns=%llu\n",
+           (unsigned long long)st.stats_since_ns, (unsigned long long)st.wd_checks, (unsigned long long)st.wd_trips,
+           (unsigned long long)st.wd_last_trip_ns);
     close(fd);
     return 0;
 }
@@ -471,6 +476,7 @@ static void usage(const char *argv0)
     printf("  %s shmset <id> <value>  # write input via shared page\n", argv0);
     printf("  %s get <id>\n", argv0);
     printf("  %s stats <id>\n", argv0);
+    printf("  %s reset <id>            # clear the stats window\n", argv0);
     printf("  %s list\n", argv0);
     printf("templates: periodic_io, pid, watchdog, event\n");
 }
@@ -503,6 +509,8 @@ int main(int argc, char **argv)
         return cmd_get(argc, argv);
     if (!strcmp(argv[1], "stats"))
         return cmd_stats(argc, argv);
+    if (!strcmp(argv[1], "reset"))
+        return cmd_id_op("reset", RTW_IOC_RESET_STATS, argc, argv);
     if (!strcmp(argv[1], "list"))
         return cmd_list();
     if (!strcmp(argv[1], "help") || !strcmp(argv[1], "-h")) {

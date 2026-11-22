@@ -1,6 +1,6 @@
 # apps — C API
 
-[← 返回总览](index.md) · 148 个函数 · 说明覆盖率 100.0%
+[← 返回总览](index.md) · 149 个函数 · 说明覆盖率 99.3%
 
 <a id="mod-apps-c-dmatest.c"></a>
 
@@ -1645,19 +1645,20 @@ int main(int argc, char **argv)
 
 ## apps/c/rt_demo_user.c — 用户态 RT 演示（/bin/rt-demo）
 
-`apps/c/rt_demo_user.c` · 14 个函数 · 14 个有说明 · 312 行
+`apps/c/rt_demo_user.c` · 15 个函数 · 14 个有说明 · 349 行
 
-演示现有 RT 设施的四件事：
+演示现有 RT 设施：
 1. event 模板：supervisor post 事件，RT worker 在被唤醒后执行 step；
 测量 post→out_seq 可见的延迟（包含 syscall 与调度）。
 2. 周期 worker：优先尝试 1ms（x86 oneshot），不支持则回退 10ms；
 通过共享页写 input，统计 ticks/misses/exec_max/dev_writes。
-3. watchdog 模板：停掉被监控的周期 worker 后，输出切到安全值。
-4. /proc/rtworkers 快照（EVENTS/DROPS 列）。
+3. watchdog 模板：停掉被监控的周期 worker 后，输出切到安全值；
+并通过 STATS/RESET_STATS 验证 wd_checks/wd_trips 及窗口清零。
+4. /proc/rtworkers 快照（含 WAKE_LAST/WD_TRIPS/DEV_ERR 列）。
 
 运行：/bin/rt-demo（root）。结束输出 "=== Done ===" 供测试框架解析。
 
-<a id="fn-apps-c-rt_demo_user.c-35"></a>
+<a id="fn-apps-c-rt_demo_user.c-36"></a>
 
 ### `pass`
 
@@ -1669,9 +1670,9 @@ static void pass(const char *what)
 
 在标准输出打印带 [PASS] 前缀的测试项。
 
-**位置**：`apps/c/rt_demo_user.c:35`
+**位置**：`apps/c/rt_demo_user.c:36`
 
-<a id="fn-apps-c-rt_demo_user.c-40"></a>
+<a id="fn-apps-c-rt_demo_user.c-41"></a>
 
 ### `fail`
 
@@ -1683,9 +1684,9 @@ static void fail(const char *what)
 
 在标准输出打印带 [FAIL] 前缀的测试项，并把全局失败标志 g_fail 置 1。
 
-**位置**：`apps/c/rt_demo_user.c:40`
+**位置**：`apps/c/rt_demo_user.c:41`
 
-<a id="fn-apps-c-rt_demo_user.c-46"></a>
+<a id="fn-apps-c-rt_demo_user.c-47"></a>
 
 ### `now_ns`
 
@@ -1697,9 +1698,9 @@ static uint64_t now_ns(void)
 
 用 clock_gettime(CLOCK_MONOTONIC) 取时间并换算成纳秒返回。
 
-**位置**：`apps/c/rt_demo_user.c:46`
+**位置**：`apps/c/rt_demo_user.c:47`
 
-<a id="fn-apps-c-rt_demo_user.c-53"></a>
+<a id="fn-apps-c-rt_demo_user.c-54"></a>
 
 ### `rt_stats`
 
@@ -1711,9 +1712,9 @@ static int rt_stats(int fd, uint32_t id, struct rtw_stats *st)
 
 先清零统计结构并填入 id，再用 RTW_IOC_STATS ioctl 读取并返回结果。
 
-**位置**：`apps/c/rt_demo_user.c:53`
+**位置**：`apps/c/rt_demo_user.c:54`
 
-<a id="fn-apps-c-rt_demo_user.c-60"></a>
+<a id="fn-apps-c-rt_demo_user.c-61"></a>
 
 ### `rt_start`
 
@@ -1725,9 +1726,9 @@ static int rt_start(int fd, uint32_t id)
 
 以 id 构造 rtw_id_req 并下发 RTW_IOC_START ioctl，返回其结果。
 
-**位置**：`apps/c/rt_demo_user.c:60`
+**位置**：`apps/c/rt_demo_user.c:61`
 
-<a id="fn-apps-c-rt_demo_user.c-66"></a>
+<a id="fn-apps-c-rt_demo_user.c-67"></a>
 
 ### `rt_stop`
 
@@ -1739,9 +1740,9 @@ static int rt_stop(int fd, uint32_t id)
 
 以 id 构造 rtw_id_req 并下发 RTW_IOC_STOP ioctl，返回其结果。
 
-**位置**：`apps/c/rt_demo_user.c:66`
+**位置**：`apps/c/rt_demo_user.c:67`
 
-<a id="fn-apps-c-rt_demo_user.c-72"></a>
+<a id="fn-apps-c-rt_demo_user.c-73"></a>
 
 ### `rt_destroy`
 
@@ -1753,9 +1754,21 @@ static int rt_destroy(int fd, uint32_t id)
 
 以 id 构造 rtw_id_req 并下发 RTW_IOC_DESTROY ioctl，返回其结果。
 
-**位置**：`apps/c/rt_demo_user.c:72`
+**位置**：`apps/c/rt_demo_user.c:73`
 
-<a id="fn-apps-c-rt_demo_user.c-78"></a>
+<a id="fn-apps-c-rt_demo_user.c-79"></a>
+
+### `rt_reset`
+
+```c
+static int rt_reset(int fd, uint32_t id)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`apps/c/rt_demo_user.c:79`
+
+<a id="fn-apps-c-rt_demo_user.c-85"></a>
 
 ### `rt_post`
 
@@ -1767,9 +1780,9 @@ static int rt_post(int fd, uint32_t id, uint64_t value)
 
 以 id 与 value 构造 rtw_io_req 并下发 RTW_IOC_POST ioctl，返回其结果。
 
-**位置**：`apps/c/rt_demo_user.c:78`
+**位置**：`apps/c/rt_demo_user.c:85`
 
-<a id="fn-apps-c-rt_demo_user.c-84"></a>
+<a id="fn-apps-c-rt_demo_user.c-91"></a>
 
 ### `rt_get`
 
@@ -1781,9 +1794,9 @@ static int rt_get(int fd, uint32_t id, uint64_t *value)
 
 用 RTW_IOC_GET_OUT 读取 worker 输出值，成功时写回出参 value 并返回 0。
 
-**位置**：`apps/c/rt_demo_user.c:84`
+**位置**：`apps/c/rt_demo_user.c:91`
 
-<a id="fn-apps-c-rt_demo_user.c-94"></a>
+<a id="fn-apps-c-rt_demo_user.c-101"></a>
 
 ### `create_worker`
 
@@ -1795,9 +1808,9 @@ static int create_worker(int fd, const char *name, uint32_t tpl, uint8_t prio, u
 
 填充 rtw_create_req（ABI 版本、模板、名字、设备、优先级、CPU、周期与参数）后下发 CREATE，成功返回新 id。
 
-**位置**：`apps/c/rt_demo_user.c:94`
+**位置**：`apps/c/rt_demo_user.c:101`
 
-<a id="fn-apps-c-rt_demo_user.c-115"></a>
+<a id="fn-apps-c-rt_demo_user.c-122"></a>
 
 ### `map_shm`
 
@@ -1809,9 +1822,9 @@ static struct rtw_shm *map_shm(int fd, uint32_t id)
 
 按偏移 id<<12 映射 4096 字节共享页，magic/version 不符则解除映射并返回 NULL。
 
-**位置**：`apps/c/rt_demo_user.c:115`
+**位置**：`apps/c/rt_demo_user.c:122`
 
-<a id="fn-apps-c-rt_demo_user.c-127"></a>
+<a id="fn-apps-c-rt_demo_user.c-134"></a>
 
 ### `stop_destroy`
 
@@ -1823,9 +1836,9 @@ static void stop_destroy(int fd, int id)
 
 先下发 STOP，再轮询统计最多一千次等待进入 STOPPED/CREATED，最后 DESTROY。
 
-**位置**：`apps/c/rt_demo_user.c:127`
+**位置**：`apps/c/rt_demo_user.c:134`
 
-<a id="fn-apps-c-rt_demo_user.c-141"></a>
+<a id="fn-apps-c-rt_demo_user.c-148"></a>
 
 ### `print_proc_rtworkers`
 
@@ -1837,9 +1850,9 @@ static void print_proc_rtworkers(void)
 
 打开并读取 /proc/rtworkers 内容到标准输出，两侧加分隔线；打不开则打印错误码。
 
-**位置**：`apps/c/rt_demo_user.c:141`
+**位置**：`apps/c/rt_demo_user.c:148`
 
-<a id="fn-apps-c-rt_demo_user.c-158"></a>
+<a id="fn-apps-c-rt_demo_user.c-165"></a>
 
 ### `main`
 
@@ -1852,39 +1865,44 @@ int main(void)
 在 /dev/rtctl 上演示 event 延迟统计、周期 worker 与 watchdog 安全值，打印 /proc/rtworkers 后清理。
 
 <details>
-<summary>函数内备注（7 条）</summary>
+<summary>函数内备注（8 条）</summary>
 
-**第 173 行**
+**第 180 行**
 
 > ── 1. event 模板：post → worker → out_seq ─────────────────
 
-**第 174 行（行尾）**
+**第 181 行（行尾）**
 
 > gain 2.0
 
-**第 200 行（行尾）**
+**第 207 行（行尾）**
 
 > 100ms 兜底
 
-**第 235 行**
+**第 242 行**
 
 > ── 2. 周期 worker：1ms 优先，失败回退 10ms ───────────────
 
-**第 237 行（行尾）**
+**第 244 行（行尾）**
 
 > gain 1.0
 
-**第 274 行**
+**第 281 行**
 
 > ── 3. watchdog：停掉 pulse 后输出安全值 ──────────────────
 
-**第 304 行**
+**第 308 行**
+
+> watchdog 的观测面：停止它之后统计必须稳定，RESET 清空窗口但保留
+> last_output/stats_since 的单调性。这条同时覆盖 ioctl 的用户态 ABI。
+
+**第 341 行**
 
 > 清理顺序：wd → pulse → evt
 
 </details>
 
-**位置**：`apps/c/rt_demo_user.c:158`
+**位置**：`apps/c/rt_demo_user.c:165`
 
 <a id="mod-apps-c-rt_event_test.c"></a>
 
@@ -1979,7 +1997,7 @@ int main(void)
 
 ## apps/c/rtctl.c — rtctl — /dev/rtctl 用户态控制面
 
-`apps/c/rtctl.c` · 18 个函数 · 18 个有说明 · 514 行
+`apps/c/rtctl.c` · 18 个函数 · 18 个有说明 · 522 行
 
 ABI 必须与 include/rt/rt_worker.h 逐字节一致（结构体尺寸被编进 ioctl 号，
 尺寸不同就是另一个命令）。内核那份是权威定义；这里只做用户态副本。
@@ -1994,6 +2012,7 @@ rtctl post <id> <value>     # 投递一个事件（event 模板）
 rtctl params <id> [p0..p7]
 rtctl get <id>
 rtctl stats <id>
+rtctl reset <id>            # 清空统计窗口（不停止 worker）
 rtctl list
 
 模板：
@@ -2003,7 +2022,7 @@ p4=out_max p5=setpoint p6=integral_limit
 watchdog     p0=target_id p1=timeout_ns p2=safe_output
 event        同 periodic_io；period_ms=0 表示无限等待事件
 
-<a id="fn-apps-c-rtctl.c-41"></a>
+<a id="fn-apps-c-rtctl.c-42"></a>
 
 ### `tpl_name`
 
@@ -2015,9 +2034,9 @@ static const char *tpl_name(uint32_t id)
 
 把模板 id 映射成 periodic_io/pid/watchdog/event 字符串，未知时返回问号。
 
-**位置**：`apps/c/rtctl.c:41`
+**位置**：`apps/c/rtctl.c:42`
 
-<a id="fn-apps-c-rtctl.c-57"></a>
+<a id="fn-apps-c-rtctl.c-58"></a>
 
 ### `state_name`
 
@@ -2029,9 +2048,9 @@ static const char *state_name(uint32_t s)
 
 把 worker 状态值映射成 CREATED/RUNNING/STOPPED/FAULTED，未知一律返回 FREE。
 
-**位置**：`apps/c/rtctl.c:57`
+**位置**：`apps/c/rtctl.c:58`
 
-<a id="fn-apps-c-rtctl.c-73"></a>
+<a id="fn-apps-c-rtctl.c-74"></a>
 
 ### `tpl_id`
 
@@ -2043,9 +2062,9 @@ static uint32_t tpl_id(const char *s)
 
 把模板名字符串比较映射成 RTW_TPL_* 常量，未知返回 0。
 
-**位置**：`apps/c/rtctl.c:73`
+**位置**：`apps/c/rtctl.c:74`
 
-<a id="fn-apps-c-rtctl.c-86"></a>
+<a id="fn-apps-c-rtctl.c-87"></a>
 
 ### `open_dev`
 
@@ -2057,9 +2076,9 @@ static int open_dev(void)
 
 以读写方式打开 /dev/rtctl，失败时向 stderr 打印错误并返回 -1。
 
-**位置**：`apps/c/rtctl.c:86`
+**位置**：`apps/c/rtctl.c:87`
 
-<a id="fn-apps-c-rtctl.c-96"></a>
+<a id="fn-apps-c-rtctl.c-97"></a>
 
 ### `parse_u32`
 
@@ -2071,9 +2090,9 @@ static int parse_u32(const char *s, uint32_t *out)
 
 用 strtoul 按自动进制解析无符号整数，空串或带尾随字符返回 -1，否则写出参返回 0。
 
-**位置**：`apps/c/rtctl.c:96`
+**位置**：`apps/c/rtctl.c:97`
 
-<a id="fn-apps-c-rtctl.c-106"></a>
+<a id="fn-apps-c-rtctl.c-107"></a>
 
 ### `cmd_create`
 
@@ -2085,9 +2104,9 @@ static int cmd_create(int argc, char **argv)
 
 解析名字/模板/优先级/CPU/周期毫秒及参数与设备选项，校验后下发 RTW_IOC_CREATE 并打印新 id。
 
-**位置**：`apps/c/rtctl.c:106`
+**位置**：`apps/c/rtctl.c:107`
 
-<a id="fn-apps-c-rtctl.c-167"></a>
+<a id="fn-apps-c-rtctl.c-168"></a>
 
 ### `cmd_id_op`
 
@@ -2099,9 +2118,9 @@ static int cmd_id_op(const char *cmd, uint64_t req, int argc, char **argv)
 
 解析 id 后对 /dev/rtctl 下发给定的 ioctl 请求，成功后打印 id 与 ok。
 
-**位置**：`apps/c/rtctl.c:167`
+**位置**：`apps/c/rtctl.c:168`
 
-<a id="fn-apps-c-rtctl.c-192"></a>
+<a id="fn-apps-c-rtctl.c-193"></a>
 
 ### `cmd_set`
 
@@ -2113,9 +2132,9 @@ static int cmd_set(int argc, char **argv)
 
 解析 id 与数值，用 RTW_IOC_SET_IN 下发给 worker，失败时打印错误。
 
-**位置**：`apps/c/rtctl.c:192`
+**位置**：`apps/c/rtctl.c:193`
 
-<a id="fn-apps-c-rtctl.c-222"></a>
+<a id="fn-apps-c-rtctl.c-223"></a>
 
 ### `cmd_post`
 
@@ -2127,9 +2146,9 @@ static int cmd_post(int argc, char **argv)
 
 解析 id 与数值，用 RTW_IOC_POST 推送一个事件，成功打印 id 与值。
 
-**位置**：`apps/c/rtctl.c:222`
+**位置**：`apps/c/rtctl.c:223`
 
-<a id="fn-apps-c-rtctl.c-253"></a>
+<a id="fn-apps-c-rtctl.c-254"></a>
 
 ### `cmd_params`
 
@@ -2141,9 +2160,9 @@ static int cmd_params(int argc, char **argv)
 
 解析 id 与最多 RTW_PARAM_MAX 个参数，用 RTW_IOC_SET_PARAMS 更新运行期参数。
 
-**位置**：`apps/c/rtctl.c:253`
+**位置**：`apps/c/rtctl.c:254`
 
-<a id="fn-apps-c-rtctl.c-292"></a>
+<a id="fn-apps-c-rtctl.c-293"></a>
 
 ### `map_worker_shm`
 
@@ -2158,15 +2177,15 @@ static struct rtw_shm *map_worker_shm(int fd, uint32_t id)
 <details>
 <summary>函数内备注（1 条）</summary>
 
-**第 294 行**
+**第 295 行**
 
 > 页对齐令牌：id &lt;&lt; 12。musl 的 mmap wrapper 会拒绝非对齐 offset。
 
 </details>
 
-**位置**：`apps/c/rtctl.c:292`
+**位置**：`apps/c/rtctl.c:293`
 
-<a id="fn-apps-c-rtctl.c-309"></a>
+<a id="fn-apps-c-rtctl.c-310"></a>
 
 ### `cmd_shm`
 
@@ -2178,9 +2197,9 @@ static int cmd_shm(int argc, char **argv)
 
 映射 worker 共享页并打印状态、输入输出、序号、tick 与执行/唤醒延迟以及事件环计数。
 
-**位置**：`apps/c/rtctl.c:309`
+**位置**：`apps/c/rtctl.c:310`
 
-<a id="fn-apps-c-rtctl.c-345"></a>
+<a id="fn-apps-c-rtctl.c-346"></a>
 
 ### `cmd_shmset`
 
@@ -2192,9 +2211,9 @@ static int cmd_shmset(int argc, char **argv)
 
 映射共享页后用原子写把 value 落到 input 字段，打印结果并解除映射。
 
-**位置**：`apps/c/rtctl.c:345`
+**位置**：`apps/c/rtctl.c:346`
 
-<a id="fn-apps-c-rtctl.c-377"></a>
+<a id="fn-apps-c-rtctl.c-378"></a>
 
 ### `cmd_get`
 
@@ -2206,9 +2225,9 @@ static int cmd_get(int argc, char **argv)
 
 解析 id 后用 RTW_IOC_GET_OUT 读取输出值，打印 id、value 与 seq。
 
-**位置**：`apps/c/rtctl.c:377`
+**位置**：`apps/c/rtctl.c:378`
 
-<a id="fn-apps-c-rtctl.c-402"></a>
+<a id="fn-apps-c-rtctl.c-403"></a>
 
 ### `cmd_stats`
 
@@ -2220,9 +2239,9 @@ static int cmd_stats(int argc, char **argv)
 
 解析 id 后用 RTW_IOC_STATS 读取统计，分行打印状态、周期、tick、延迟、输入输出与事件计数。
 
-**位置**：`apps/c/rtctl.c:402`
+**位置**：`apps/c/rtctl.c:403`
 
-<a id="fn-apps-c-rtctl.c-438"></a>
+<a id="fn-apps-c-rtctl.c-443"></a>
 
 ### `cmd_list`
 
@@ -2234,9 +2253,9 @@ static int cmd_list(void)
 
 用 RTW_IOC_LIST 取全部 worker，按表格打印 id/状态/模板/优先级/CPU/周期/tick/名字。
 
-**位置**：`apps/c/rtctl.c:438`
+**位置**：`apps/c/rtctl.c:443`
 
-<a id="fn-apps-c-rtctl.c-462"></a>
+<a id="fn-apps-c-rtctl.c-467"></a>
 
 ### `usage`
 
@@ -2248,9 +2267,9 @@ static void usage(const char *argv0)
 
 逐行打印 rtctl 各子命令与其参数的用法，并列出可用模板名。
 
-**位置**：`apps/c/rtctl.c:462`
+**位置**：`apps/c/rtctl.c:467`
 
-<a id="fn-apps-c-rtctl.c-478"></a>
+<a id="fn-apps-c-rtctl.c-484"></a>
 
 ### `main`
 
@@ -2262,17 +2281,17 @@ int main(int argc, char **argv)
 
 按 argv[1] 分派到 create/start/stop/destroy/set/post/params/shm 子命令，未知或 help 时打印用法。
 
-**位置**：`apps/c/rtctl.c:478`
+**位置**：`apps/c/rtctl.c:484`
 
 <a id="mod-apps-c-rtctl_abi.h"></a>
 
 ## apps/c/rtctl_abi.h — /dev/rtctl 用户态 ABI（权威定义在 include/rt/rt_worker.h）。
 
-`apps/c/rtctl_abi.h` · 1 个函数 · 1 个有说明 · 189 行
+`apps/c/rtctl_abi.h` · 1 个函数 · 1 个有说明 · 196 行
 
 结构体尺寸被编进 ioctl 号，改了这里必须同步内核那份。
 
-<a id="fn-apps-c-rtctl_abi.h-184"></a>
+<a id="fn-apps-c-rtctl_abi.h-191"></a>
 
 ### `rtw_shm_events`
 
@@ -2284,7 +2303,7 @@ static inline struct rtw_event_ring *rtw_shm_events(struct rtw_shm *s)
 
 把共享页指针加上 RTSHM_EVENT_OFFSET 偏移，返回其中的事件环指针。
 
-**位置**：`apps/c/rtctl_abi.h:184`
+**位置**：`apps/c/rtctl_abi.h:191`
 
 <a id="mod-apps-c-rtps.c"></a>
 

@@ -1739,7 +1739,7 @@ int pseudo_getdents(int nid, uint64_t *off, void *buf, size_t bufsz)
 
 ## fs/pseudofs/rtctl_dev.c — /dev/rtctl
 
-`fs/pseudofs/rtctl_dev.c` · 2 个函数 · 0 个有说明 · 127 行
+`fs/pseudofs/rtctl_dev.c` · 2 个函数 · 0 个有说明 · 133 行
 
 用户态控制面：创建/启动/停止/销毁 RT worker，更新输入、读取输出与统计。
 数据面在 kernel/rt/rt_worker.c。ABI 见 include/rt/rt_worker.h。
@@ -1775,7 +1775,7 @@ int rtctl_dev_ioctl(int nid, uint64_t req, void *argp)
 
 ## fs/pseudofs/rtworkers.c — /proc/rtworkers — 用户可配置 RT worker 的快照
 
-`fs/pseudofs/rtworkers.c` · 6 个函数 · 1 个有说明 · 177 行
+`fs/pseudofs/rtworkers.c` · 6 个函数 · 1 个有说明 · 192 行
 
 /dev/rtctl 的 STATS/LIST 需要 ioctl；这个 proc 文件让 shell 直接
 `cat /proc/rtworkers`，也给 supervisor 一个无 syscall 的观察面。
@@ -1783,7 +1783,7 @@ int rtctl_dev_ioctl(int nid, uint64_t req, void *argp)
 列宽是固定的；表头和每一行都走同一组 put_col/put_num_col，改列宽时
 只需要改下面的 W_* 宏，避免表头和内容各写一套 padding 迟早对不上。
 
-<a id="fn-fs-pseudofs-rtworkers.c-36"></a>
+<a id="fn-fs-pseudofs-rtworkers.c-39"></a>
 
 ### `rtw_state_name`
 
@@ -1793,9 +1793,9 @@ static const char *rtw_state_name(uint32_t s)
 
 > ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-**位置**：`fs/pseudofs/rtworkers.c:36`
+**位置**：`fs/pseudofs/rtworkers.c:39`
 
-<a id="fn-fs-pseudofs-rtworkers.c-52"></a>
+<a id="fn-fs-pseudofs-rtworkers.c-55"></a>
 
 ### `rtw_tpl_name`
 
@@ -1805,9 +1805,9 @@ static const char *rtw_tpl_name(uint32_t t)
 
 > ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-**位置**：`fs/pseudofs/rtworkers.c:52`
+**位置**：`fs/pseudofs/rtworkers.c:55`
 
-<a id="fn-fs-pseudofs-rtworkers.c-72"></a>
+<a id="fn-fs-pseudofs-rtworkers.c-75"></a>
 
 ### `put_col`
 
@@ -1818,9 +1818,9 @@ static size_t put_col(char *buf, size_t pos, size_t bufsz, const char *str, int 
 str 按 width 对齐；right=true 右对齐（数字），false 左对齐（文本）。
 超长时直接原样输出，不截断 —— 宁可某一行错位，也不要悄悄吞掉字段。
 
-**位置**：`fs/pseudofs/rtworkers.c:72`
+**位置**：`fs/pseudofs/rtworkers.c:75`
 
-<a id="fn-fs-pseudofs-rtworkers.c-89"></a>
+<a id="fn-fs-pseudofs-rtworkers.c-92"></a>
 
 ### `put_num_col`
 
@@ -1830,9 +1830,9 @@ static size_t put_num_col(char *buf, size_t pos, size_t bufsz, uint64_t v, int w
 
 > ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-**位置**：`fs/pseudofs/rtworkers.c:89`
+**位置**：`fs/pseudofs/rtworkers.c:92`
 
-<a id="fn-fs-pseudofs-rtworkers.c-96"></a>
+<a id="fn-fs-pseudofs-rtworkers.c-99"></a>
 
 ### `put_sep`
 
@@ -1842,9 +1842,9 @@ static size_t put_sep(char *buf, size_t pos, size_t bufsz)
 
 > ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-**位置**：`fs/pseudofs/rtworkers.c:96`
+**位置**：`fs/pseudofs/rtworkers.c:99`
 
-<a id="fn-fs-pseudofs-rtworkers.c-101"></a>
+<a id="fn-fs-pseudofs-rtworkers.c-104"></a>
 
 ### `rtworkers_read`
 
@@ -1854,7 +1854,7 @@ int rtworkers_read(int nid, uint64_t off, void *buf, size_t len)
 
 > ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-**位置**：`fs/pseudofs/rtworkers.c:101`
+**位置**：`fs/pseudofs/rtworkers.c:104`
 
 <a id="mod-fs-pseudofs-util.c"></a>
 

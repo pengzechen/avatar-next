@@ -6178,7 +6178,7 @@ static inline uint32_t npu_mmu_mk_pte(uint64_t pa, int writable)
 
 ## include/rt/rt_worker.h — 用户可配置的 RT worker（模板）控制面 ABI
 
-`include/rt/rt_worker.h` · 1 个函数 · 0 个有说明 · 265 行
+`include/rt/rt_worker.h` · 1 个函数 · 0 个有说明 · 284 行
 
 设计：
 - 数据面：内核 RT 任务，按 period_ns 周期调用一个模板的 step()。

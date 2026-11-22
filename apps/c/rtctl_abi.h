@@ -14,7 +14,7 @@
 
 #include <stdint.h>
 
-#define RTW_ABI_VERSION    1
+#define RTW_ABI_VERSION    2
 #define RTW_NAME_LEN       16
 #define RTW_DEV_NAME_LEN   16
 #define RTW_MAX_WORKERS    8
@@ -116,9 +116,15 @@ struct rtw_stats {
     uint64_t last_output;
     uint64_t out_seq;
     uint64_t dev_writes;
+    uint64_t dev_errors;
+    int64_t dev_last_error;
     uint64_t events_posted;
     uint64_t events_processed;
     uint64_t events_dropped;
+    uint64_t stats_since_ns;
+    uint64_t wd_checks;
+    uint64_t wd_trips;
+    uint64_t wd_last_trip_ns;
     char name[RTW_NAME_LEN];
     char dev[RTW_DEV_NAME_LEN];
 };
@@ -157,7 +163,7 @@ struct rtw_list_req {
 _Static_assert(sizeof(struct rtw_create_req) == 136, "rtw_create_req ABI mismatch");
 _Static_assert(sizeof(struct rtw_io_req) == 24, "rtw_io_req ABI mismatch");
 _Static_assert(sizeof(struct rtw_params_req) == 72, "rtw_params_req ABI mismatch");
-_Static_assert(sizeof(struct rtw_stats) == 184, "rtw_stats ABI mismatch");
+_Static_assert(sizeof(struct rtw_stats) == 232, "rtw_stats ABI mismatch");
 _Static_assert(sizeof(struct rtw_shm) == 176, "rtw_shm ABI mismatch");
 _Static_assert(sizeof(struct rtw_event_ring) == 560, "rtw_event_ring ABI mismatch");
 _Static_assert(sizeof(struct rtw_list_entry) == 64, "rtw_list_entry ABI mismatch");
@@ -170,16 +176,17 @@ _Static_assert(sizeof(struct rtw_list_req) == 520, "rtw_list_req ABI mismatch");
 #define _IOWR(t, nr, T)      _IOC(_IOC_READ | _IOC_WRITE, (t), (nr), sizeof(T))
 #endif
 
-#define RTW_IOC_CREATE     _IOWR('R', 1, struct rtw_create_req)
-#define RTW_IOC_DESTROY    _IOWR('R', 2, struct rtw_id_req)
-#define RTW_IOC_START      _IOWR('R', 3, struct rtw_id_req)
-#define RTW_IOC_STOP       _IOWR('R', 4, struct rtw_id_req)
-#define RTW_IOC_SET_IN     _IOWR('R', 5, struct rtw_io_req)
-#define RTW_IOC_GET_OUT    _IOWR('R', 6, struct rtw_io_req)
-#define RTW_IOC_STATS      _IOWR('R', 7, struct rtw_stats)
-#define RTW_IOC_LIST       _IOWR('R', 8, struct rtw_list_req)
-#define RTW_IOC_SET_PARAMS _IOWR('R', 9, struct rtw_params_req)
-#define RTW_IOC_POST       _IOWR('R', 10, struct rtw_io_req)
+#define RTW_IOC_CREATE      _IOWR('R', 1, struct rtw_create_req)
+#define RTW_IOC_DESTROY     _IOWR('R', 2, struct rtw_id_req)
+#define RTW_IOC_START       _IOWR('R', 3, struct rtw_id_req)
+#define RTW_IOC_STOP        _IOWR('R', 4, struct rtw_id_req)
+#define RTW_IOC_SET_IN      _IOWR('R', 5, struct rtw_io_req)
+#define RTW_IOC_GET_OUT     _IOWR('R', 6, struct rtw_io_req)
+#define RTW_IOC_STATS       _IOWR('R', 7, struct rtw_stats)
+#define RTW_IOC_LIST        _IOWR('R', 8, struct rtw_list_req)
+#define RTW_IOC_SET_PARAMS  _IOWR('R', 9, struct rtw_params_req)
+#define RTW_IOC_POST        _IOWR('R', 10, struct rtw_io_req)
+#define RTW_IOC_RESET_STATS _IOWR('R', 11, struct rtw_id_req)
 
 static inline struct rtw_event_ring *rtw_shm_events(struct rtw_shm *s)
 {

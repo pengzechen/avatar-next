@@ -7,13 +7,14 @@
 /*
    apps/c/rt_demo_user.c — 用户态 RT 演示（/bin/rt-demo）
 
-   演示现有 RT 设施的四件事：
+   演示现有 RT 设施：
      1. event 模板：supervisor post 事件，RT worker 在被唤醒后执行 step；
         测量 post→out_seq 可见的延迟（包含 syscall 与调度）。
      2. 周期 worker：优先尝试 1ms（x86 oneshot），不支持则回退 10ms；
         通过共享页写 input，统计 ticks/misses/exec_max/dev_writes。
-     3. watchdog 模板：停掉被监控的周期 worker 后，输出切到安全值。
-     4. /proc/rtworkers 快照（EVENTS/DROPS 列）。
+     3. watchdog 模板：停掉被监控的周期 worker 后，输出切到安全值；
+        并通过 STATS/RESET_STATS 验证 wd_checks/wd_trips 及窗口清零。
+     4. /proc/rtworkers 快照（含 WAKE_LAST/WD_TRIPS/DEV_ERR 列）。
 
    运行：/bin/rt-demo（root）。结束输出 "=== Done ===" 供测试框架解析。
 */
@@ -73,6 +74,12 @@ static int rt_destroy(int fd, uint32_t id)
 {
     struct rtw_id_req r = { .id = id };
     return ioctl(fd, RTW_IOC_DESTROY, &r);
+}
+
+static int rt_reset(int fd, uint32_t id)
+{
+    struct rtw_id_req r = { .id = id };
+    return ioctl(fd, RTW_IOC_RESET_STATS, &r);
 }
 
 static int rt_post(int fd, uint32_t id, uint64_t value)
@@ -295,6 +302,36 @@ int main(void)
                 pass("watchdog: safe output after target stopped");
             else
                 fail("watchdog safe output");
+        }
+    }
+
+    /*
+       watchdog 的观测面：停止它之后统计必须稳定，RESET 清空窗口但保留
+       last_output/stats_since 的单调性。这条同时覆盖 ioctl 的用户态 ABI。
+    */
+    if (wd_id >= 0) {
+        struct rtw_stats before, after;
+        (void)rt_stop(fd, (uint32_t)wd_id);
+        for (int i = 0; i < 1000; i++) {
+            if (rt_stats(fd, (uint32_t)wd_id, &before) == 0 && before.state == RTW_STATE_STOPPED)
+                break;
+            usleep(1000);
+        }
+        if (rt_stats(fd, (uint32_t)wd_id, &before) < 0 || before.wd_checks == 0 || before.wd_trips == 0 ||
+            before.wd_last_trip_ns == 0) {
+            fail("watchdog stats before reset");
+        } else if (rt_reset(fd, (uint32_t)wd_id) < 0 || rt_stats(fd, (uint32_t)wd_id, &after) < 0) {
+            fail("watchdog reset stats");
+        } else {
+            printf("[watchdog] checks/trips before=%llu/%llu last_trip=%llu ns; after reset=%llu/%llu\n",
+                   (unsigned long long)before.wd_checks, (unsigned long long)before.wd_trips,
+                   (unsigned long long)before.wd_last_trip_ns, (unsigned long long)after.wd_checks,
+                   (unsigned long long)after.wd_trips);
+            if (after.wd_checks == 0 && after.wd_trips == 0 && after.wd_last_trip_ns == 0 && after.last_output == 999 &&
+                after.stats_since_ns >= before.stats_since_ns)
+                pass("watchdog stats: trips counted, RESET clears window, output preserved");
+            else
+                fail("watchdog stats after reset");
         }
     }
 

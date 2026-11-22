@@ -32,7 +32,9 @@ aarch64/riscv64 或没有 oneshot 的 x86 TCG 会自动回退到 **10ms**。
    绑定 `vout`，每次 step 都算一次设备写。
 3. **watchdog**（prio 70）：监控周期 worker；先确认健康输出 0，
    再停掉周期 worker，150ms 后 watchdog 必须输出安全值 **999**。
-4. 打印 `/proc/rtworkers`（含 `EVENTS`/`DROPS` 列），然后清理。
+   随后停止 watchdog，验证 `wd_checks/wd_trips/wd_last_trip_ns` 非零，
+   调用 `RESET_STATS` 后这三个计数清零、`last_output=999` 保留。
+4. 打印 `/proc/rtworkers`（含 `WAKE_LAST/WD_TRIPS/DEV_ERR` 等列），然后清理。
 
 ## 期望输出（x86_64 KVM 实测）
 
@@ -46,11 +48,13 @@ aarch64/riscv64 或没有 oneshot 的 x86 TCG 会自动回退到 **10ms**。
 [watchdog] target healthy output=0
 [watchdog] after target stop output=999 (safe=999)
 [PASS] watchdog: safe output after target stopped
+[watchdog] checks/trips before=352/201 last_trip=... ns; after reset=0/0
+[PASS] watchdog stats: trips counted, RESET clears window, output preserved
 --- /proc/rtworkers ---
-ID NAME             STATE    TPL          PRIO CPU PERIOD_NS      TICKS MISSES OVERRUNS EXEC_MAX_NS WAKE_MAX_NS     EVENTS  DROPS DEV
- 1 evt              RUNNING  event          50   0         0        200      0        0         121           0        200      0 -
- 2 pulse            STOPPED  periodic_io    60   0   1000000       1203      0        0       11150     1020093          0      0 vout
- 3 wd               RUNNING  watchdog       70   0   1000000        352      0        0        1612      174522          0      0 -
+ID NAME             STATE    TPL          PRIO CPU PERIOD_NS      TICKS MISSES OVERRUNS EXEC_MAX_NS WAKE_MAX_NS WAKE_LAST_NS WD_TRIPS DEV_ERR     EVENTS  DROPS DEV
+ 1 evt              RUNNING  event          50   0         0        200      0        0         121           0           0        0       0        200      0 -
+ 2 pulse            STOPPED  periodic_io    60   0   1000000       1203      0        0       11150     1020093           0        0       0          0      0 vout
+ 3 wd               STOPPED  watchdog       70   0   1000000        352      0        0        1612      174522           0        0       0          0      0 -
 -----------------------
 === Done ===
 ```
@@ -58,7 +62,7 @@ ID NAME             STATE    TPL          PRIO CPU PERIOD_NS      TICKS MISSES O
 - 数值随宿主负载变化；`ticks`/`dev_writes` 应接近 `1s / period`。
 - `post→out_seq` 延迟包含用户态 `clock_gettime` 和轮询，因此是
   “端到端可见延迟”，不是纯中断延迟。
-- 退出码 0 表示三组 `[PASS]` 全过；测试框架的 apps suite 也会跑它。
+- 退出码 0 表示四组 `[PASS]` 全过；测试框架的 apps suite 也会跑它。
 
 ## 只手动玩单个 worker
 
