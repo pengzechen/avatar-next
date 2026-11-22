@@ -24,10 +24,10 @@ file-backed 路径遗漏了。子进程 exit 时 `munmap` 释放了共享页的�
 
 **现象**: `'PTE_NOFREE' undeclared` in `proc_lifecycle.c`。
 
-**根因**: `include/aarch64/mm_vm.h` 没有 `#include "mmu.h"`，
+**根因**: `include/arch/aarch64/mm_vm.h` 没有 `#include "mmu.h"`，
 而 `PTE_NOFREE` 定义在 `mmu.h` 中。
 
-**修复**: `include/aarch64/mm_vm.h` 添加 `#include "mmu.h"`。
+**修复**: `include/arch/aarch64/mm_vm.h` 添加 `#include "mmu.h"`。
 
 ---
 

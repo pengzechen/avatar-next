@@ -71,7 +71,7 @@ RAM 高别名（内核区） = 0xffffffc080000000 - 0xffffffc0bfffffff (1GB)
   把内核页表地址覆写进 `prev->mm->pgd`。
 
 现行为见 `kernel/task/sched.c` 的 `#if ARCH_RISCV64` 分支和
-`include/riscv64/satp_utils.h`。
+`include/arch/riscv64/satp_utils.h`。
 
 **切换时机：**
 - 用户任务 → 用户任务：直接切换到目标用户页表

@@ -183,7 +183,7 @@ static int map_contiguous_buf(task_t *current, void *pgd, uint64_t map_addr, uin
 
            这里不能用 NOFREE 顶替：NOFREE 的语义是"最后一个映射退出
            就释放", 而设备缓冲归句柄所有 —— 只要句柄还开着, 任何映射退出
-           都不该释放。详见 include/aarch64/mmu.h 里 PTE_KEEP 的说明。
+           都不该释放。详见 include/arch/aarch64/mmu.h 里 PTE_KEEP 的说明。
         */
         mm_vm_set_pte_keep(pgd, va);
     }

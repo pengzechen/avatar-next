@@ -22,10 +22,10 @@
 #include "barrier.h"
 #include "driver/time.h"
 #include "driver/irq.h"
-#include "exception.h"      /* arch_irq_enable */
-#include "mm/mm_vm.h"       /* phys_to_virt */
-#include "riscv64/sbi.h"    /* sbi_hart_start / sbi_send_ipi(HSM/IPI) */
-#include "riscv64/sysreg.h" /* CSR_SET / WRITE_STVEC */
+#include "exception.h"           /* arch_irq_enable */
+#include "mm/mm_vm.h"            /* phys_to_virt */
+#include "arch/riscv64/sbi.h"    /* sbi_hart_start / sbi_send_ipi(HSM/IPI) */
+#include "arch/riscv64/sysreg.h" /* CSR_SET / WRITE_STVEC */
 
 /* OpenSBI/HSM 入口传入的 boot hartid；link.ld 为 .text.boot 提供低地址别名 */
 volatile uint64_t riscv64_boot_hartid;

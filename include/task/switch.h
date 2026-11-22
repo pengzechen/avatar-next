@@ -15,7 +15,7 @@
      arch_init_task_stack()  — 为新任务构造初始切换帧
 
    中断屏蔽(arch_irq_save/restore/enable/disable/flags/is_enabled)已统一到
-   include/<arch>/exception_impl.h, 由本文件顶部 include 的 exception.h 暴露。
+   include/arch/<arch>/exception_impl.h, 由本文件顶部 include 的 exception.h 暴露。
 
    上下文切换原理：
      仅保存"被调用者保存寄存器"(callee-saved registers)。
@@ -100,7 +100,7 @@ void arch_enter_user(uint64_t user_entry, uint64_t user_sp) __attribute__((noret
 
 /* ── 中断控制 ────────────────────────────────────────────── */
 /*
-   中断屏蔽原语已统一到 include/<arch>/exception_impl.h, 由 include/exception.h
+   中断屏蔽原语已统一到 include/arch/<arch>/exception_impl.h, 由 include/exception.h
    暴露(arch_irq_save/restore/enable/disable/flags/is_enabled)。这里不再保留
    副本 —— 以前 switch.h 和各架构的 spin_lock_impl.h 各有一份同名实现。
 */

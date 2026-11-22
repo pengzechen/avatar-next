@@ -42,7 +42,7 @@
 #include "mm/pmm.h"
 #include "mm/mm_vm.h"
 #include "cache.h"
-#include "x86_64/vmx.h"
+#include "arch/x86_64/vmx.h"
 #include "task/task.h"
 
 #if ARCH_X86_64

@@ -44,7 +44,7 @@
  *     sd    t0, r[10](a0)  → 保存 guest a0
  */
 
-#include "riscv64/csr.h"
+#include "arch/riscv64/csr.h"
 
 /* vcpu_t 字段偏移 */
 #define VCPU_R0         0
@@ -66,7 +66,7 @@
 
 /* host_ctx 字段偏移（VCPU_HOSTCTX = 344，host_ctx[0..15]）*/
 
-/* H-extension CSR 数值地址见 riscv64/csr.h（汇编器不识别符号名） */
+/* H-extension CSR 数值地址见 arch/riscv64/csr.h（汇编器不识别符号名） */
 #define HCTX_RA         344
 #define HCTX_S0         352
 #define HCTX_S1         360

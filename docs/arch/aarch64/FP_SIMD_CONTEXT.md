@@ -91,7 +91,7 @@ VHE（E2H=1）下 EL2 访问 `cpacr_el1` 落在 `CPACR_EL2`，正是同时门控
 的那一份；`kernel_main()` 里的 `aarch64_enable_neon()` 保留（幂等），AP 走同一份
 `init_el2_vhe`。
 
-### 2. 陷阱帧 —— `boot/aarch64/exception.S` + `include/aarch64/exception.h`
+### 2. 陷阱帧 —— `boot/aarch64/exception.S` + `include/arch/aarch64/exception.h`
 
 | 偏移 | 字段 |
 |---|---|

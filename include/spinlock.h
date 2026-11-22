@@ -59,11 +59,11 @@ static inline void spinlock_irq_init(spinlock_noirq_t *lock)
 
 /* 根据架构选择对应的实现 */
 #if defined(ARCH_X86_64)
-#include "x86_64/spin_lock_impl.h"
+#include "arch/x86_64/spin_lock_impl.h"
 #elif defined(ARCH_AARCH64)
-#include "aarch64/spin_lock_impl.h"
+#include "arch/aarch64/spin_lock_impl.h"
 #elif defined(ARCH_RISCV64)
-#include "riscv64/spin_lock_impl.h"
+#include "arch/riscv64/spin_lock_impl.h"
 #else
 #error "Unsupported architecture"
 #endif

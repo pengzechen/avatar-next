@@ -22,7 +22,7 @@
 # 1) 编译（⚠️ -I 顺序有讲究，见下）
 gcc -c -o /tmp/fdt_host.o fdt_host.c \
   -I$(pwd)/fdtshim \
-  -I../../kernel/vmm/loader -I../../include -I../../include/aarch64 \
+  -I../../kernel/vmm/loader -I../../include -I../../include/arch/aarch64 \
   -I../../include/libc -DARCH_AARCH64=1 -DLOG_LEVEL=0
 
 # 2) 跑：查某个 DTB 的某节点有没有某属性

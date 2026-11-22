@@ -46,7 +46,7 @@
 #include "exception.h"
 
 #if ARCH_X86_64
-#include "x86_64/mmu.h"
+#include "arch/x86_64/mmu.h"
 #include "../../boot/x86_64/tss.h"
 
 #define X86_MSR_IA32_FS_BASE 0xC0000100U

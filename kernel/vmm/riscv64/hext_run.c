@@ -32,10 +32,10 @@
 #include "exception.h" /* trap_frame_t / SSTATUS_SPP：分派宿主中断 */
 #include "task/task.h"
 #include "task/cpu.h" /* CPU_RESCHED_IPI_CAUSE */
-#include "riscv64/hext.h"
-#include "riscv64/sbi.h" /* guest ecall 的 SBI EID/FID 常量 */
-#include "riscv64/sysreg.h"
-#include "riscv64/gstage.h"
+#include "arch/riscv64/hext.h"
+#include "arch/riscv64/sbi.h" /* guest ecall 的 SBI EID/FID 常量 */
+#include "arch/riscv64/sysreg.h"
+#include "arch/riscv64/gstage.h"
 #include "vmm/vmm_mmio.h"
 #include "vmm/vmm_vplic.h"
 #include "mm/mm_vm.h" /* phys_to_virt */

@@ -21,7 +21,7 @@
 #include "assert.h" /* platform_panic() */
 #include "driver/irq.h"
 #include "irq/lapic.h"
-#include "x86_64/io.h" /* outb — 用于屏蔽 8259A PIC */
+#include "arch/x86_64/io.h" /* outb — 用于屏蔽 8259A PIC */
 #include "task/task.h"
 #include "task/sched.h"
 #include "task/cpu.h"

@@ -5,7 +5,7 @@
 
 ## 接口
 
-`include/barrier.h` 按架构分发到 `include/<arch>/barrier_impl.h`（同 `cache.h` 的模式）。
+`include/barrier.h` 按架构分发到 `include/arch/<arch>/barrier_impl.h`（同 `cache.h` 的模式）。
 全部是 `static inline` 函数，只有 `barrier_compiler` 是宏。
 
 | 接口 | aarch64 | riscv64 | x86_64 | 语义 |
@@ -49,7 +49,7 @@ Linux 风格别名：`mb() rmb() wmb() isb() smp_mb() smp_rmb() smp_wmb() smp_ac
 | `include/{aarch64,riscv64,x86_64}/{cache_impl,halt_arch}.h` | 架构原语内部 |
 | `driver/irq/gicv3.c`、`kernel/mm/aarch64/stage2.c`、`kernel/mm/vm_user.c` | 原本是裸 `dsb` / `isb`，**已改为 `barrier_sync()` / `barrier_instr_full()`** |
 
-顺带修掉的：`include/x86_64/cache_impl.h` 的 `clflushopt` 分支原来**缺 SFENCE**
+顺带修掉的：`include/arch/x86_64/cache_impl.h` 的 `clflushopt` 分支原来**缺 SFENCE**
 （`CLFLUSHOPT` 与其它写不保序，Intel SDM 要求配 SFENCE），已补 `barrier_data_write()`。
 
 `barrier_acquire()` / `barrier_release()` / `barrier_data_read()` 目前**没有调用者**：
@@ -66,7 +66,7 @@ Linux 风格别名：`mb() rmb() wmb() isb() smp_mb() smp_rmb() smp_wmb() smp_ac
 - **`.S` 汇编文件**：`boot/*/boot.S`、`kernel/mm/*/mmu.S`、`kernel/task/*/switch.S`、
   `kernel/vmm/aarch64/*.S` 等约 45 处 `dsb`/`isb`/`fence`。C 接口在那里不可用，
   保持原样；改动时对照上表的强度语义。
-- **`cpuid`（x86）**：`driver/irq/lapic.c` 与 `include/x86_64/vmx.h` 用它取 CPU
+- **`cpuid`（x86）**：`driver/irq/lapic.c` 与 `include/arch/x86_64/vmx.h` 用它取 CPU
   频率 / VMX 能力，序列化只是副作用，不是屏障，**不要**替换。
 
 ## 新代码检查清单

@@ -111,11 +111,11 @@ static inline void barrier_release(void);
 /* ===== 架构特定实现 ===== */
 
 #if defined(ARCH_X86_64)
-#include "x86_64/barrier_impl.h"
+#include "arch/x86_64/barrier_impl.h"
 #elif defined(ARCH_AARCH64)
-#include "aarch64/barrier_impl.h"
+#include "arch/aarch64/barrier_impl.h"
 #elif defined(ARCH_RISCV64)
-#include "riscv64/barrier_impl.h"
+#include "arch/riscv64/barrier_impl.h"
 #else
 #error "Unsupported architecture"
 #endif

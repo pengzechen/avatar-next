@@ -16,7 +16,7 @@
 
    架构差异已经收敛到：
      - kernel/task/<arch>/cpu_startup.c — 次级核拉起、BSP hw_id、自检诊断
-     - include/<arch>/cpu_impl.h       — per-CPU 寄存器、idle 等待指令
+     - include/arch/<arch>/cpu_impl.h       — per-CPU 寄存器、idle 等待指令
 
    三架构的次级核拉起都收敛到 cpu_secondary_bootstrap()：
      - aarch64: PSCI CPU_ON

@@ -1,16 +1,16 @@
 # include — C API
 
-[← 返回总览](index.md) · 363 个函数 · 说明覆盖率 90.1%
+[← 返回总览](index.md) · 375 个函数 · 说明覆盖率 90.4%
 
-<a id="mod-include-aarch64-barrier_impl.h"></a>
+<a id="mod-include-arch-aarch64-barrier_impl.h"></a>
 
-## include/aarch64/barrier_impl.h — AArch64 内存屏障实现
+## include/arch/aarch64/barrier_impl.h — AArch64 内存屏障实现
 
-`include/aarch64/barrier_impl.h` · 7 个函数 · 7 个有说明 · 87 行
+`include/arch/aarch64/barrier_impl.h` · 7 个函数 · 7 个有说明 · 87 行
 
 使用 DMB, DSB, ISB 指令
 
-<a id="fn-include-aarch64-barrier_impl.h-23"></a>
+<a id="fn-include-arch-aarch64-barrier_impl.h-23"></a>
 
 ### `barrier_data`
 
@@ -23,9 +23,9 @@ barrier_data - 完整数据内存屏障
 DMB ISH: Inner Shareable 数据内存屏障
 确保所有可见的内存访问完成
 
-**位置**：`include/aarch64/barrier_impl.h:23`
+**位置**：`include/arch/aarch64/barrier_impl.h:23`
 
-<a id="fn-include-aarch64-barrier_impl.h-33"></a>
+<a id="fn-include-arch-aarch64-barrier_impl.h-33"></a>
 
 ### `barrier_data_read`
 
@@ -37,9 +37,9 @@ barrier_data_read - 读数据屏障
 
 DMB ISHLD: Inner Shareable 读数据屏障
 
-**位置**：`include/aarch64/barrier_impl.h:33`
+**位置**：`include/arch/aarch64/barrier_impl.h:33`
 
-<a id="fn-include-aarch64-barrier_impl.h-43"></a>
+<a id="fn-include-arch-aarch64-barrier_impl.h-43"></a>
 
 ### `barrier_data_write`
 
@@ -51,9 +51,9 @@ barrier_data_write - 写数据屏障
 
 DMB ISHST: Inner Shareable 写数据屏障
 
-**位置**：`include/aarch64/barrier_impl.h:43`
+**位置**：`include/arch/aarch64/barrier_impl.h:43`
 
-<a id="fn-include-aarch64-barrier_impl.h-55"></a>
+<a id="fn-include-arch-aarch64-barrier_impl.h-55"></a>
 
 ### `barrier_instr_full`
 
@@ -65,9 +65,9 @@ barrier_instr_full - 完整指令同步屏障
 
 ISB: 指令同步屏障, 刷新流水线
 
-**位置**：`include/aarch64/barrier_impl.h:55`
+**位置**：`include/arch/aarch64/barrier_impl.h:55`
 
-<a id="fn-include-aarch64-barrier_impl.h-60"></a>
+<a id="fn-include-arch-aarch64-barrier_impl.h-60"></a>
 
 ### `barrier_sync`
 
@@ -79,9 +79,9 @@ static inline void barrier_sync(void)
 
 执行 dsb sy 指令完成数据同步屏障，并带 memory 约束阻止编译器重排。
 
-**位置**：`include/aarch64/barrier_impl.h:60`
+**位置**：`include/arch/aarch64/barrier_impl.h:60`
 
-<a id="fn-include-aarch64-barrier_impl.h-72"></a>
+<a id="fn-include-arch-aarch64-barrier_impl.h-72"></a>
 
 ### `barrier_acquire`
 
@@ -93,9 +93,9 @@ barrier_acquire - 获取语义屏障
 
 使用 LDAR 加载指令的隐含屏障
 
-**位置**：`include/aarch64/barrier_impl.h:72`
+**位置**：`include/arch/aarch64/barrier_impl.h:72`
 
-<a id="fn-include-aarch64-barrier_impl.h-82"></a>
+<a id="fn-include-arch-aarch64-barrier_impl.h-82"></a>
 
 ### `barrier_release`
 
@@ -107,17 +107,17 @@ barrier_release - 释放语义屏障
 
 使用 STLR 存储指令的隐含屏障
 
-**位置**：`include/aarch64/barrier_impl.h:82`
+**位置**：`include/arch/aarch64/barrier_impl.h:82`
 
-<a id="mod-include-aarch64-cache_impl.h"></a>
+<a id="mod-include-arch-aarch64-cache_impl.h"></a>
 
-## include/aarch64/cache_impl.h — AArch64 缓存操作底层实现
+## include/arch/aarch64/cache_impl.h — AArch64 缓存操作底层实现
 
-`include/aarch64/cache_impl.h` · 7 个函数 · 7 个有说明 · 118 行
+`include/arch/aarch64/cache_impl.h` · 7 个函数 · 7 个有说明 · 118 行
 
 架构特定的单个缓存行操作
 
-<a id="fn-include-aarch64-cache_impl.h-37"></a>
+<a id="fn-include-arch-aarch64-cache_impl.h-37"></a>
 
 ### `__clean_dcache_one`
 
@@ -128,9 +128,9 @@ static inline void __clean_dcache_one(const void *addr)
 __clean_dcache_one - 清理单个缓存行
 @addr: 缓存行对齐的地址
 
-**位置**：`include/aarch64/cache_impl.h:37`
+**位置**：`include/arch/aarch64/cache_impl.h:37`
 
-<a id="fn-include-aarch64-cache_impl.h-46"></a>
+<a id="fn-include-arch-aarch64-cache_impl.h-46"></a>
 
 ### `__invalidate_dcache_one`
 
@@ -141,9 +141,9 @@ static inline void __invalidate_dcache_one(const void *addr)
 __invalidate_dcache_one - 使单个缓存行失效
 @addr: 缓存行对齐的地址
 
-**位置**：`include/aarch64/cache_impl.h:46`
+**位置**：`include/arch/aarch64/cache_impl.h:46`
 
-<a id="fn-include-aarch64-cache_impl.h-55"></a>
+<a id="fn-include-arch-aarch64-cache_impl.h-55"></a>
 
 ### `__clean_and_invalidate_dcache_one`
 
@@ -154,9 +154,9 @@ static inline void __clean_and_invalidate_dcache_one(const void *addr)
 __clean_and_invalidate_dcache_one - 清理并使单个缓存行失效
 @addr: 缓存行对齐的地址
 
-**位置**：`include/aarch64/cache_impl.h:55`
+**位置**：`include/arch/aarch64/cache_impl.h:55`
 
-<a id="fn-include-aarch64-cache_impl.h-65"></a>
+<a id="fn-include-arch-aarch64-cache_impl.h-65"></a>
 
 ### `get_cache_line_size`
 
@@ -166,9 +166,9 @@ static inline size_t get_cache_line_size(void)
 
 get_cache_line_size - 获取缓存行大小
 
-**位置**：`include/aarch64/cache_impl.h:65`
+**位置**：`include/arch/aarch64/cache_impl.h:65`
 
-<a id="fn-include-aarch64-cache_impl.h-73"></a>
+<a id="fn-include-arch-aarch64-cache_impl.h-73"></a>
 
 ### `init_cache`
 
@@ -203,9 +203,9 @@ init_cache - 初始化缓存子系统
 
 </details>
 
-**位置**：`include/aarch64/cache_impl.h:73`
+**位置**：`include/arch/aarch64/cache_impl.h:73`
 
-<a id="fn-include-aarch64-cache_impl.h-108"></a>
+<a id="fn-include-arch-aarch64-cache_impl.h-108"></a>
 
 ### `sync_icache_all`
 
@@ -218,9 +218,9 @@ sync_icache_all - 让刚写入的指令对本核可见
 `ic iallu` 使本核 I-cache 全失效(另一颗核要看到得用 ialluis),
 dsb 保证失效完成, isb 保证后续取指看到新指令 —— 三者缺一不可。
 
-**位置**：`include/aarch64/cache_impl.h:108`
+**位置**：`include/arch/aarch64/cache_impl.h:108`
 
-<a id="fn-include-aarch64-cache_impl.h-113"></a>
+<a id="fn-include-arch-aarch64-cache_impl.h-113"></a>
 
 ### `sync_caches`
 
@@ -232,17 +232,17 @@ static inline void sync_caches(void)
 
 仅调用 barrier_data()，为缓存同步提供内存排序语义，不发具体缓存维护指令。
 
-**位置**：`include/aarch64/cache_impl.h:113`
+**位置**：`include/arch/aarch64/cache_impl.h:113`
 
-<a id="mod-include-aarch64-cpu_impl.h"></a>
+<a id="mod-include-arch-aarch64-cpu_impl.h"></a>
 
-## include/aarch64/cpu_impl.h — AArch64 per-CPU 指针 / 硬件 ID 实现
+## include/arch/aarch64/cpu_impl.h — AArch64 per-CPU 指针 / 硬件 ID 实现
 
-`include/aarch64/cpu_impl.h` · 3 个函数 · 3 个有说明 · 42 行
+`include/arch/aarch64/cpu_impl.h` · 5 个函数 · 5 个有说明 · 65 行
 
 在 VHE 下 TPIDR_EL1 别名为 TPIDR_EL2, 与 EL2 host 内核透明兼容。
 
-<a id="fn-include-aarch64-cpu_impl.h-21"></a>
+<a id="fn-include-arch-aarch64-cpu_impl.h-21"></a>
 
 ### `arch_cpu_self_set`
 
@@ -254,9 +254,9 @@ static inline void arch_cpu_self_set(struct cpu *self)
 
 把 cpu 结构指针写入 TPIDR_EL1，随后执行 isb 确保后续读取立即生效。
 
-**位置**：`include/aarch64/cpu_impl.h:21`
+**位置**：`include/arch/aarch64/cpu_impl.h:21`
 
-<a id="fn-include-aarch64-cpu_impl.h-27"></a>
+<a id="fn-include-arch-aarch64-cpu_impl.h-27"></a>
 
 ### `arch_cpu_self_get`
 
@@ -268,9 +268,9 @@ static inline struct cpu *arch_cpu_self_get(void)
 
 读取 TPIDR_EL1 寄存器并转换为 struct cpu 指针返回，用于获取当前 CPU。
 
-**位置**：`include/aarch64/cpu_impl.h:27`
+**位置**：`include/arch/aarch64/cpu_impl.h:27`
 
-<a id="fn-include-aarch64-cpu_impl.h-35"></a>
+<a id="fn-include-arch-aarch64-cpu_impl.h-35"></a>
 
 ### `arch_cpu_hw_id`
 
@@ -280,15 +280,73 @@ static inline uint64_t arch_cpu_hw_id(void)
 
 MPIDR_EL1 低 24 位为 Affinity 0/1/2；QEMU virt 单簇时 Aff0 即 CPU 序号
 
-**位置**：`include/aarch64/cpu_impl.h:35`
+**位置**：`include/arch/aarch64/cpu_impl.h:35`
 
-<a id="mod-include-aarch64-exception_impl.h"></a>
+<a id="fn-include-arch-aarch64-cpu_impl.h-45"></a>
 
-## include/aarch64/exception_impl.h
+### `arch_cpu_idle_wait`
 
-`include/aarch64/exception_impl.h` · 6 个函数 · 6 个有说明 · 87 行
+```c
+static inline void arch_cpu_idle_wait(void)
+```
 
-<a id="fn-include-aarch64-exception_impl.h-26"></a>
+idle 循环里的一条等待指令(中断唤醒)
+
+**位置**：`include/arch/aarch64/cpu_impl.h:45`
+
+<a id="fn-include-arch-aarch64-cpu_impl.h-56"></a>
+
+### `arch_switch_to_idle_stack`
+
+```c
+static inline __attribute__((noreturn)) void arch_switch_to_idle_stack(uintptr_t new_sp)
+```
+
+arch_switch_to_idle_stack - 切到 idle 专用栈并跳进 idle 主循环(不返回)
+
+必须绕过编译器生成的函数 epilogue：新栈上还没有本函数的返回地址
+和帧指针, 正常 return 会从栈上读到垃圾 LR/FP 直接跳飞。
+
+<details>
+<summary>函数内备注（1 条）</summary>
+
+**第 59 行（行尾）**
+
+> 清零 FP, 标记栈帧链结束
+
+</details>
+
+**位置**：`include/arch/aarch64/cpu_impl.h:56`
+
+<a id="mod-include-arch-aarch64-exception.h"></a>
+
+## include/arch/aarch64/exception.h — AArch64 专用异常/中断类型定义
+
+`include/arch/aarch64/exception.h` · 1 个函数 · 1 个有说明 · 187 行
+
+由 include/exception.h 在 ARCH_AARCH64 时自动包含
+
+<a id="fn-include-arch-aarch64-exception.h-78"></a>
+
+### `arch_trap_frame_from_user`
+
+```c
+static inline bool arch_trap_frame_from_user(const void *frame_ptr)
+```
+
+arch_trap_frame_from_user - 这个 trap frame 是不是从 EL0 进来的
+
+spsr[3:0] == 0 (EL0t) 表示从用户态陷入；EL1h 等内核态非 0。
+
+**位置**：`include/arch/aarch64/exception.h:78`
+
+<a id="mod-include-arch-aarch64-exception_impl.h"></a>
+
+## include/arch/aarch64/exception_impl.h
+
+`include/arch/aarch64/exception_impl.h` · 6 个函数 · 6 个有说明 · 87 行
+
+<a id="fn-include-arch-aarch64-exception_impl.h-26"></a>
 
 ### `arch_irq_flags`
 
@@ -298,9 +356,9 @@ static inline uint64_t arch_irq_flags(void)
 
 读当前 DAIF(不改动状态)
 
-**位置**：`include/aarch64/exception_impl.h:26`
+**位置**：`include/arch/aarch64/exception_impl.h:26`
 
-<a id="fn-include-aarch64-exception_impl.h-36"></a>
+<a id="fn-include-arch-aarch64-exception_impl.h-36"></a>
 
 ### `arch_irq_is_enabled`
 
@@ -310,9 +368,9 @@ static inline int arch_irq_is_enabled(void)
 
 读是否允许 IRQ(抢占判断用：处于 irqsave 临界区时为 0)
 
-**位置**：`include/aarch64/exception_impl.h:36`
+**位置**：`include/arch/aarch64/exception_impl.h:36`
 
-<a id="fn-include-aarch64-exception_impl.h-42"></a>
+<a id="fn-include-arch-aarch64-exception_impl.h-42"></a>
 
 ### `arch_irq_save`
 
@@ -322,9 +380,9 @@ static inline uint64_t arch_irq_save(void)
 
 关中断并返回旧状态(必须用 arch_irq_restore 配对恢复)
 
-**位置**：`include/aarch64/exception_impl.h:42`
+**位置**：`include/arch/aarch64/exception_impl.h:42`
 
-<a id="fn-include-aarch64-exception_impl.h-60"></a>
+<a id="fn-include-arch-aarch64-exception_impl.h-60"></a>
 
 ### `arch_irq_restore`
 
@@ -334,9 +392,9 @@ static inline void arch_irq_restore(uint64_t flags)
 
 恢复到 arch_irq_save()/arch_irq_flags() 取到的状态
 
-**位置**：`include/aarch64/exception_impl.h:60`
+**位置**：`include/arch/aarch64/exception_impl.h:60`
 
-<a id="fn-include-aarch64-exception_impl.h-70"></a>
+<a id="fn-include-arch-aarch64-exception_impl.h-70"></a>
 
 ### `arch_irq_disable`
 
@@ -346,9 +404,9 @@ static inline void arch_irq_disable(void)
 
 无条件关中断(不需要旧状态时用)
 
-**位置**：`include/aarch64/exception_impl.h:70`
+**位置**：`include/arch/aarch64/exception_impl.h:70`
 
-<a id="fn-include-aarch64-exception_impl.h-79"></a>
+<a id="fn-include-arch-aarch64-exception_impl.h-79"></a>
 
 ### `arch_irq_enable`
 
@@ -358,15 +416,15 @@ static inline void arch_irq_enable(void)
 
 无条件开中断(新任务首次运行时使用)
 
-**位置**：`include/aarch64/exception_impl.h:79`
+**位置**：`include/arch/aarch64/exception_impl.h:79`
 
-<a id="mod-include-aarch64-halt_arch.h"></a>
+<a id="mod-include-arch-aarch64-halt_arch.h"></a>
 
-## include/aarch64/halt_arch.h — AArch64 架构特定的 halt 实现
+## include/arch/aarch64/halt_arch.h — AArch64 架构特定的 halt 实现
 
-`include/aarch64/halt_arch.h` · 1 个函数 · 1 个有说明 · 41 行
+`include/arch/aarch64/halt_arch.h` · 1 个函数 · 1 个有说明 · 41 行
 
-<a id="fn-include-aarch64-halt_arch.h-22"></a>
+<a id="fn-include-arch-aarch64-halt_arch.h-22"></a>
 
 ### `arch_halt`
 
@@ -403,15 +461,33 @@ arch_halt - 停止 AArch64 处理器
 
 </details>
 
-**位置**：`include/aarch64/halt_arch.h:22`
+**位置**：`include/arch/aarch64/halt_arch.h:22`
 
-<a id="mod-include-aarch64-mm_vm.h"></a>
+<a id="mod-include-arch-aarch64-mm_vm.h"></a>
 
-## include/aarch64/mm_vm.h — AArch64 现有 VM 实现导出符号
+## include/arch/aarch64/mm_vm.h — mm_vm_read_kernel_root_phys - AArch64 没有"内核根页表"这个概念
 
-`include/aarch64/mm_vm.h` · 5 个函数 · 5 个有说明 · 73 行
+`include/arch/aarch64/mm_vm.h` · 6 个函数 · 6 个有说明 · 84 行
 
-<a id="fn-include-aarch64-mm_vm.h-26"></a>
+TTBR0/TTBR1 硬件分割用户/内核地址空间, 用户页表不复制内核映射,
+调度时也只切 TTBR0。返回 0 表示 N/A。
+
+<a id="fn-include-arch-aarch64-mm_vm.h-19"></a>
+
+### `mm_vm_read_kernel_root_phys`
+
+```c
+static inline uint64_t mm_vm_read_kernel_root_phys(void)
+```
+
+mm_vm_read_kernel_root_phys - AArch64 没有"内核根页表"这个概念
+
+TTBR0/TTBR1 硬件分割用户/内核地址空间, 用户页表不复制内核映射,
+调度时也只切 TTBR0。返回 0 表示 N/A。
+
+**位置**：`include/arch/aarch64/mm_vm.h:19`
+
+<a id="fn-include-arch-aarch64-mm_vm.h-37"></a>
 
 ### `mm_vm_map_pages`
 
@@ -423,9 +499,9 @@ static inline int32_t mm_vm_map_pages(void *page_dir, uint64_t vaddr, uint64_t p
 
 直接转发给 memory_create_map，按 count 页建立虚拟地址到物理地址的映射。
 
-**位置**：`include/aarch64/mm_vm.h:26`
+**位置**：`include/arch/aarch64/mm_vm.h:37`
 
-<a id="fn-include-aarch64-mm_vm.h-31"></a>
+<a id="fn-include-arch-aarch64-mm_vm.h-42"></a>
 
 ### `mm_vm_get_paddr`
 
@@ -437,9 +513,9 @@ static inline uint64_t mm_vm_get_paddr(void *page_dir, uint64_t vaddr)
 
 直接转发给 memory_get_paddr，查询页表中虚拟地址对应的物理地址。
 
-**位置**：`include/aarch64/mm_vm.h:31`
+**位置**：`include/arch/aarch64/mm_vm.h:42`
 
-<a id="fn-include-aarch64-mm_vm.h-36"></a>
+<a id="fn-include-arch-aarch64-mm_vm.h-47"></a>
 
 ### `mm_vm_copy_user_space`
 
@@ -451,9 +527,9 @@ static inline int32_t mm_vm_copy_user_space(void *dst_pgd, void *src_pgd)
 
 直接转发给 memory_copy_uvm_4level，复制用户地址空间的四级页表。
 
-**位置**：`include/aarch64/mm_vm.h:36`
+**位置**：`include/arch/aarch64/mm_vm.h:47`
 
-<a id="fn-include-aarch64-mm_vm.h-41"></a>
+<a id="fn-include-arch-aarch64-mm_vm.h-52"></a>
 
 ### `mm_vm_copy_to_uva`
 
@@ -465,9 +541,9 @@ static inline void mm_vm_copy_to_uva(void *pgd, uint64_t user_vaddr, uint64_t sr
 
 调用 copydata_to_uvm 把物理地址处 size 字节数据复制到用户虚拟地址。
 
-**位置**：`include/aarch64/mm_vm.h:41`
+**位置**：`include/arch/aarch64/mm_vm.h:52`
 
-<a id="fn-include-aarch64-mm_vm.h-51"></a>
+<a id="fn-include-arch-aarch64-mm_vm.h-62"></a>
 
 ### `mm_vm_set_pte_keep`
 
@@ -479,13 +555,13 @@ static inline void mm_vm_set_pte_keep(void *pgd, uint64_t vaddr)
 用于把 dma_buf / ION 的缓冲区映射进用户态 —— 页归句柄所有, 不归映射。
 语义与 NOFREE 的区别见 mmu.h 里 PTE_KEEP 的说明。
 
-**位置**：`include/aarch64/mm_vm.h:51`
+**位置**：`include/arch/aarch64/mm_vm.h:62`
 
-<a id="mod-include-aarch64-neon.h"></a>
+<a id="mod-include-arch-aarch64-neon.h"></a>
 
-## include/aarch64/neon.h — aarch64_enable_neon - 启用 NEON/浮点指令
+## include/arch/aarch64/neon.h — aarch64_enable_neon - 启用 NEON/浮点指令
 
-`include/aarch64/neon.h` · 4 个函数 · 4 个有说明 · 79 行
+`include/arch/aarch64/neon.h` · 4 个函数 · 4 个有说明 · 79 行
 
 在 CPACR_EL1 寄存器中设置 FPEN 位, 允许在 EL0 使用 NEON 和浮点指令。
 
@@ -497,7 +573,7 @@ CPACR_EL1.FPEN [21:20]:
 
 注意：必须在内核初始化时调用, 否则 NEON 指令会触发异常
 
-<a id="fn-include-aarch64-neon.h-25"></a>
+<a id="fn-include-arch-aarch64-neon.h-25"></a>
 
 ### `aarch64_enable_neon`
 
@@ -538,9 +614,9 @@ CPACR_EL1.FPEN [21:20]:
 
 </details>
 
-**位置**：`include/aarch64/neon.h:25`
+**位置**：`include/arch/aarch64/neon.h:25`
 
-<a id="fn-include-aarch64-neon.h-42"></a>
+<a id="fn-include-arch-aarch64-neon.h-42"></a>
 
 ### `aarch64_get_cpacr`
 
@@ -552,9 +628,9 @@ aarch64_get_cpacr - 读取 CPACR_EL1 寄存器
 
 返回值: CPACR_EL1 寄存器的当前值
 
-**位置**：`include/aarch64/neon.h:42`
+**位置**：`include/arch/aarch64/neon.h:42`
 
-<a id="fn-include-aarch64-neon.h-54"></a>
+<a id="fn-include-arch-aarch64-neon.h-54"></a>
 
 ### `aarch64_is_neon_enabled`
 
@@ -566,9 +642,9 @@ aarch64_is_neon_enabled - 检查 NEON 是否已启用
 
 返回值: 1 表示已启用, 0 表示未启用
 
-**位置**：`include/aarch64/neon.h:54`
+**位置**：`include/arch/aarch64/neon.h:54`
 
-<a id="fn-include-aarch64-neon.h-67"></a>
+<a id="fn-include-arch-aarch64-neon.h-67"></a>
 
 ### `aarch64_disable_neon`
 
@@ -595,13 +671,13 @@ aarch64_disable_neon - 禁用 NEON/浮点指令
 
 </details>
 
-**位置**：`include/aarch64/neon.h:67`
+**位置**：`include/arch/aarch64/neon.h:67`
 
-<a id="mod-include-aarch64-psci.h"></a>
+<a id="mod-include-arch-aarch64-psci.h"></a>
 
-## include/aarch64/psci.h — PSCI 0.2+ 调用封装(SMC64 conduit)
+## include/arch/aarch64/psci.h — PSCI 0.2+ 调用封装(SMC64 conduit)
 
-`include/aarch64/psci.h` · 2 个函数 · 2 个有说明 · 76 行
+`include/arch/aarch64/psci.h` · 2 个函数 · 2 个有说明 · 76 行
 
 只提供 CPU bring-up 需要的两个功能:
 psci_cpu_on          拉起指定 MPIDR 的核
@@ -615,7 +691,7 @@ conduit 约定：本内核用 SMC(EL2/VHE 下由 ATF 转发; QEMU virt 也是 SM
 功能号取 SMC64 的 0xC40000xx。若以后出现 HVC conduit 的平台, 在这里加
 一个 conduit 选择, 不要把 smc/hvc 散到调用点。
 
-<a id="fn-include-aarch64-psci.h-43"></a>
+<a id="fn-include-arch-aarch64-psci.h-43"></a>
 
 ### `psci_cpu_on`
 
@@ -630,9 +706,9 @@ psci_cpu_on - 拉起一颗核
 
 返回: PSCI 返回码, 0 = 成功, 负数 = 错误
 
-**位置**：`include/aarch64/psci.h:43`
+**位置**：`include/arch/aarch64/psci.h:43`
 
-<a id="fn-include-aarch64-psci.h-66"></a>
+<a id="fn-include-arch-aarch64-psci.h-66"></a>
 
 ### `psci_affinity_info`
 
@@ -651,19 +727,19 @@ psci_affinity_info - 查询核状态
 
 lowest_affinity_level 固定传 0：本内核按完整的 core 粒度查询。
 
-**位置**：`include/aarch64/psci.h:66`
+**位置**：`include/arch/aarch64/psci.h:66`
 
-<a id="mod-include-aarch64-spin_lock_impl.h"></a>
+<a id="mod-include-arch-aarch64-spin_lock_impl.h"></a>
 
-## include/aarch64/spin_lock_impl.h — AArch64 架构的 spinlock 实现
+## include/arch/aarch64/spin_lock_impl.h — AArch64 架构的 spinlock 实现
 
-`include/aarch64/spin_lock_impl.h` · 6 个函数 · 6 个有说明 · 96 行
+`include/arch/aarch64/spin_lock_impl.h` · 6 个函数 · 6 个有说明 · 96 行
 
 使用 LDAXR/STLXR(acquire/release 语义)实现原子 CAS。
 irqsave 变体与 RISC-V/x86_64 保持一致：
 先用 C 辅助函数保存并关中断, 再调用 spin_lock。
 
-<a id="fn-include-aarch64-spin_lock_impl.h-22"></a>
+<a id="fn-include-arch-aarch64-spin_lock_impl.h-22"></a>
 
 ### `spin_lock`
 
@@ -696,9 +772,9 @@ static inline void spin_lock(spinlock_t *lock)
 
 </details>
 
-**位置**：`include/aarch64/spin_lock_impl.h:22`
+**位置**：`include/arch/aarch64/spin_lock_impl.h:22`
 
-<a id="fn-include-aarch64-spin_lock_impl.h-40"></a>
+<a id="fn-include-arch-aarch64-spin_lock_impl.h-40"></a>
 
 ### `spin_trylock`
 
@@ -727,9 +803,9 @@ static inline int spin_trylock(spinlock_t *lock)
 
 </details>
 
-**位置**：`include/aarch64/spin_lock_impl.h:40`
+**位置**：`include/arch/aarch64/spin_lock_impl.h:40`
 
-<a id="fn-include-aarch64-spin_lock_impl.h-60"></a>
+<a id="fn-include-arch-aarch64-spin_lock_impl.h-60"></a>
 
 ### `spin_unlock`
 
@@ -750,9 +826,9 @@ static inline void spin_unlock(spinlock_t *lock)
 
 </details>
 
-**位置**：`include/aarch64/spin_lock_impl.h:60`
+**位置**：`include/arch/aarch64/spin_lock_impl.h:60`
 
-<a id="fn-include-aarch64-spin_lock_impl.h-75"></a>
+<a id="fn-include-arch-aarch64-spin_lock_impl.h-75"></a>
 
 ### `spin_lock_irqsave`
 
@@ -763,7 +839,7 @@ static inline void spin_lock_irqsave(spinlock_t *lock, uint64_t *flags)
 中断状态存在调用点的局部变量里(由 *flags 带回), 不再存进锁对象 ——
 存进锁对象时, SMP 下争锁的另一颗 CPU 会把它的 flags 覆盖上去, 解锁时
 恢复的就是别人的中断状态。中断原语本身统一来自
-include/aarch64/exception_impl.h(arch_irq_save/restore)。
+include/arch/aarch64/exception_impl.h(arch_irq_save/restore)。
 
 <details>
 <summary>函数内备注（1 条）</summary>
@@ -774,9 +850,9 @@ include/aarch64/exception_impl.h(arch_irq_save/restore)。
 
 </details>
 
-**位置**：`include/aarch64/spin_lock_impl.h:75`
+**位置**：`include/arch/aarch64/spin_lock_impl.h:75`
 
-<a id="fn-include-aarch64-spin_lock_impl.h-81"></a>
+<a id="fn-include-arch-aarch64-spin_lock_impl.h-81"></a>
 
 ### `spin_trylock_irqsave`
 
@@ -801,9 +877,9 @@ static inline int spin_trylock_irqsave(spinlock_t *lock, uint64_t *flags)
 
 </details>
 
-**位置**：`include/aarch64/spin_lock_impl.h:81`
+**位置**：`include/arch/aarch64/spin_lock_impl.h:81`
 
-<a id="fn-include-aarch64-spin_lock_impl.h-90"></a>
+<a id="fn-include-arch-aarch64-spin_lock_impl.h-90"></a>
 
 ### `spin_unlock_irqrestore`
 
@@ -828,13 +904,13 @@ static inline void spin_unlock_irqrestore(spinlock_t *lock, uint64_t flags)
 
 </details>
 
-**位置**：`include/aarch64/spin_lock_impl.h:90`
+**位置**：`include/arch/aarch64/spin_lock_impl.h:90`
 
-<a id="mod-include-aarch64-string_impl.h"></a>
+<a id="mod-include-arch-aarch64-string_impl.h"></a>
 
-## include/aarch64/string_impl.h — AArch64 架构的字符串函数优化实现(NEON)
+## include/arch/aarch64/string_impl.h — AArch64 架构的字符串函数优化实现(NEON)
 
-`include/aarch64/string_impl.h` · 4 个函数 · 4 个有说明 · 146 行
+`include/arch/aarch64/string_impl.h` · 4 个函数 · 4 个有说明 · 146 行
 
 本文件只提供具名实现(memcpy_neon / memset_neon)与架构分派
 (memcpy_arch / memset_arch)。公开的 memcpy/memset 名字在 string.h,
@@ -843,7 +919,7 @@ static inline void spin_unlock_irqrestore(spinlock_t *lock, uint64_t flags)
 前置条件：CPACR.FPEN 已打开。boot/aarch64/boot.S 的 init_el2_vhe 在
 装向量表之前就打开了, 早于任何 C 代码, 所以正常路径无需关心。
 
-<a id="fn-include-aarch64-string_impl.h-55"></a>
+<a id="fn-include-arch-aarch64-string_impl.h-55"></a>
 
 ### `memcpy_neon`
 
@@ -880,9 +956,9 @@ static inline void *memcpy_neon(void *dest, const void *src, size_t n)
 
 </details>
 
-**位置**：`include/aarch64/string_impl.h:55`
+**位置**：`include/arch/aarch64/string_impl.h:55`
 
-<a id="fn-include-aarch64-string_impl.h-95"></a>
+<a id="fn-include-arch-aarch64-string_impl.h-95"></a>
 
 ### `memset_neon`
 
@@ -919,9 +995,9 @@ dup 把字节广播到 16 个 lane, 再用 st1 一次写 16 字节。
 
 </details>
 
-**位置**：`include/aarch64/string_impl.h:95`
+**位置**：`include/arch/aarch64/string_impl.h:95`
 
-<a id="fn-include-aarch64-string_impl.h-132"></a>
+<a id="fn-include-arch-aarch64-string_impl.h-132"></a>
 
 ### `memcpy_arch`
 
@@ -933,9 +1009,9 @@ static inline void *memcpy_arch(void *dest, const void *src, size_t n)
 
 长度超过 MEMCPY_NEON_THRESHOLD 时调用 memcpy_neon，否则调用 memcpy_generic。
 
-**位置**：`include/aarch64/string_impl.h:132`
+**位置**：`include/arch/aarch64/string_impl.h:132`
 
-<a id="fn-include-aarch64-string_impl.h-139"></a>
+<a id="fn-include-arch-aarch64-string_impl.h-139"></a>
 
 ### `memset_arch`
 
@@ -947,15 +1023,15 @@ static inline void *memset_arch(void *s, int c, size_t n)
 
 长度超过 MEMSET_NEON_THRESHOLD 时调用 memset_neon，否则调用 memset_generic。
 
-**位置**：`include/aarch64/string_impl.h:139`
+**位置**：`include/arch/aarch64/string_impl.h:139`
 
-<a id="mod-include-aarch64-syscall_abi.h"></a>
+<a id="mod-include-arch-aarch64-syscall_abi.h"></a>
 
-## include/aarch64/syscall_abi.h
+## include/arch/aarch64/syscall_abi.h
 
-`include/aarch64/syscall_abi.h` · 6 个函数 · 6 个有说明 · 61 行
+`include/arch/aarch64/syscall_abi.h` · 6 个函数 · 6 个有说明 · 61 行
 
-<a id="fn-include-aarch64-syscall_abi.h-13"></a>
+<a id="fn-include-arch-aarch64-syscall_abi.h-13"></a>
 
 ### `syscall_abi_nr`
 
@@ -976,9 +1052,9 @@ static inline uint64_t syscall_abi_nr(const trap_frame_t *frame)
 
 </details>
 
-**位置**：`include/aarch64/syscall_abi.h:13`
+**位置**：`include/arch/aarch64/syscall_abi.h:13`
 
-<a id="fn-include-aarch64-syscall_abi.h-18"></a>
+<a id="fn-include-arch-aarch64-syscall_abi.h-18"></a>
 
 ### `syscall_abi_arg`
 
@@ -990,9 +1066,9 @@ static inline uint64_t syscall_abi_arg(const trap_frame_t *frame, int idx)
 
 按索引从陷阱帧取 x0~x5 之一作为参数，索引不在 0~5 范围则返回 0。
 
-**位置**：`include/aarch64/syscall_abi.h:18`
+**位置**：`include/arch/aarch64/syscall_abi.h:18`
 
-<a id="fn-include-aarch64-syscall_abi.h-23"></a>
+<a id="fn-include-arch-aarch64-syscall_abi.h-23"></a>
 
 ### `syscall_abi_set_ret`
 
@@ -1013,9 +1089,9 @@ static inline void syscall_abi_set_ret(trap_frame_t *frame, uint64_t ret)
 
 </details>
 
-**位置**：`include/aarch64/syscall_abi.h:23`
+**位置**：`include/arch/aarch64/syscall_abi.h:23`
 
-<a id="fn-include-aarch64-syscall_abi.h-28"></a>
+<a id="fn-include-arch-aarch64-syscall_abi.h-28"></a>
 
 ### `syscall_abi_ip`
 
@@ -1027,9 +1103,9 @@ static inline uint64_t syscall_abi_ip(const trap_frame_t *frame)
 
 返回陷阱帧中保存的 ELR，即系统调用发生时的用户态指令地址。
 
-**位置**：`include/aarch64/syscall_abi.h:28`
+**位置**：`include/arch/aarch64/syscall_abi.h:28`
 
-<a id="fn-include-aarch64-syscall_abi.h-33"></a>
+<a id="fn-include-arch-aarch64-syscall_abi.h-33"></a>
 
 ### `syscall_abi_user_sp`
 
@@ -1041,9 +1117,9 @@ static inline uint64_t syscall_abi_user_sp(const trap_frame_t *frame)
 
 返回陷阱帧中保存的用户栈指针 usp。
 
-**位置**：`include/aarch64/syscall_abi.h:33`
+**位置**：`include/arch/aarch64/syscall_abi.h:33`
 
-<a id="fn-include-aarch64-syscall_abi.h-46"></a>
+<a id="fn-include-arch-aarch64-syscall_abi.h-46"></a>
 
 ### `syscall_abi_reset_frame_for_exec`
 
@@ -1071,7 +1147,2905 @@ SPSR 用 EL0t + IRQ 使能，与 arch_switch_to_user 首次进入保持一致。
 
 </details>
 
-**位置**：`include/aarch64/syscall_abi.h:46`
+**位置**：`include/arch/aarch64/syscall_abi.h:46`
+
+<a id="mod-include-arch-riscv64-barrier_impl.h"></a>
+
+## include/arch/riscv64/barrier_impl.h — RISC-V 64位内存屏障实现
+
+`include/arch/riscv64/barrier_impl.h` · 7 个函数 · 7 个有说明 · 87 行
+
+使用 FENCE 指令
+
+<a id="fn-include-arch-riscv64-barrier_impl.h-22"></a>
+
+### `barrier_data`
+
+```c
+static inline void barrier_data(void)
+```
+
+barrier_data - 完整数据内存屏障
+
+FENCE RW,RW: 读+写屏障
+
+**位置**：`include/arch/riscv64/barrier_impl.h:22`
+
+<a id="fn-include-arch-riscv64-barrier_impl.h-32"></a>
+
+### `barrier_data_read`
+
+```c
+static inline void barrier_data_read(void)
+```
+
+barrier_data_read - 读数据屏障
+
+FENCE R,R: 读屏障
+
+**位置**：`include/arch/riscv64/barrier_impl.h:32`
+
+<a id="fn-include-arch-riscv64-barrier_impl.h-42"></a>
+
+### `barrier_data_write`
+
+```c
+static inline void barrier_data_write(void)
+```
+
+barrier_data_write - 写数据屏障
+
+FENCE W,W: 写屏障
+
+**位置**：`include/arch/riscv64/barrier_impl.h:42`
+
+<a id="fn-include-arch-riscv64-barrier_impl.h-55"></a>
+
+### `barrier_instr_full`
+
+```c
+static inline void barrier_instr_full(void)
+```
+
+barrier_instr_full - 完整指令同步屏障
+
+FENCE IORW,IORW: IO + 读 + 写 屏障
+用于同步指令和数据流
+
+**位置**：`include/arch/riscv64/barrier_impl.h:55`
+
+<a id="fn-include-arch-riscv64-barrier_impl.h-60"></a>
+
+### `barrier_sync`
+
+```c
+static inline void barrier_sync(void)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+执行 fence iorw, iorw 指令完成 RISC-V 全序内存屏障。
+
+**位置**：`include/arch/riscv64/barrier_impl.h:60`
+
+<a id="fn-include-arch-riscv64-barrier_impl.h-72"></a>
+
+### `barrier_acquire`
+
+```c
+static inline void barrier_acquire(void)
+```
+
+barrier_acquire - 获取语义屏障
+
+FENCE R,R: 读屏障确保加载操作完成
+
+**位置**：`include/arch/riscv64/barrier_impl.h:72`
+
+<a id="fn-include-arch-riscv64-barrier_impl.h-82"></a>
+
+### `barrier_release`
+
+```c
+static inline void barrier_release(void)
+```
+
+barrier_release - 释放语义屏障
+
+FENCE WW,WW: 写屏障确保存储操作对其他核心可见
+
+**位置**：`include/arch/riscv64/barrier_impl.h:82`
+
+<a id="mod-include-arch-riscv64-cache_impl.h"></a>
+
+## include/arch/riscv64/cache_impl.h — RISC-V 64 的 cache 操作实现
+
+`include/arch/riscv64/cache_impl.h` · 7 个函数 · 7 个有说明 · 90 行
+
+本文件只做动词 → 原语的映射, 具体指令由 rvplatform.h 按平台给出
+(Zicbom / T-Head 私有 / 无 CMO 三种情况)。这样平台差异不会渗进通用动词：
+以前这里用 `#if PLATFORM_SG2002` 把三个 range 动词全部换成了"整 cache 刷",
+于是 clean_dcache_range() 在 SG2002 上既丢了区间语义, 也没法按需清理。
+
+<a id="fn-include-arch-riscv64-cache_impl.h-33"></a>
+
+### `__clean_dcache_one`
+
+```c
+static inline void __clean_dcache_one(const void *addr)
+```
+
+__clean_dcache_one - 清理单个缓存行(写回内存)
+
+**位置**：`include/arch/riscv64/cache_impl.h:33`
+
+<a id="fn-include-arch-riscv64-cache_impl.h-41"></a>
+
+### `__invalidate_dcache_one`
+
+```c
+static inline void __invalidate_dcache_one(const void *addr)
+```
+
+__invalidate_dcache_one - 使单个缓存行失效(不写回, 脏数据会丢)
+
+**位置**：`include/arch/riscv64/cache_impl.h:41`
+
+<a id="fn-include-arch-riscv64-cache_impl.h-52"></a>
+
+### `__clean_and_invalidate_dcache_one`
+
+```c
+static inline void __clean_and_invalidate_dcache_one(const void *addr)
+```
+
+__clean_and_invalidate_dcache_one - 写回并使单个缓存行失效
+
+T-Head 上用一条 `dcache.civa`：原来的写法是 cva 之后再 iva,
+两条指令之间别的 agent 可能把该行弄脏, 语义上不等价。
+
+**位置**：`include/arch/riscv64/cache_impl.h:52`
+
+<a id="fn-include-arch-riscv64-cache_impl.h-59"></a>
+
+### `get_cache_line_size`
+
+```c
+static inline size_t get_cache_line_size(void)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+返回全局缓存行大小 g_cache_line_size。
+
+**位置**：`include/arch/riscv64/cache_impl.h:59`
+
+<a id="fn-include-arch-riscv64-cache_impl.h-64"></a>
+
+### `init_cache`
+
+```c
+static inline void init_cache(void)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+把全局缓存行大小设为 rv_cmo_block_size() 返回的平台 CMO 块大小。
+
+**位置**：`include/arch/riscv64/cache_impl.h:64`
+
+<a id="fn-include-arch-riscv64-cache_impl.h-74"></a>
+
+### `sync_caches`
+
+```c
+static inline void sync_caches(void)
+```
+
+sync_caches - 等待之前的 cache 操作完成
+
+设备/CMO 之后的完成屏障；没有 CMO 的平台上这就是唯一的动作。
+
+**位置**：`include/arch/riscv64/cache_impl.h:74`
+
+<a id="fn-include-arch-riscv64-cache_impl.h-85"></a>
+
+### `sync_icache_all`
+
+```c
+static inline void sync_icache_all(void)
+```
+
+sync_icache_all - 让刚写入的指令对所有核可见
+
+RISC-V 上 `fence.i` 是标准做法；但 C906 这类核上 fence.i 不足以保证
+I-cache 可见(厂商私有 icache.iall + sync.i 才是), 由 rvplatform 层处理。
+
+**位置**：`include/arch/riscv64/cache_impl.h:85`
+
+<a id="mod-include-arch-riscv64-cpu_impl.h"></a>
+
+## include/arch/riscv64/cpu_impl.h — RISC-V 64 per-CPU 指针 / 硬件 ID 实现。
+
+`include/arch/riscv64/cpu_impl.h` · 5 个函数 · 5 个有说明 · 63 行
+
+内核态用 tp 保存 cpu_t*。进入用户态前 switch.S 会恢复/清空用户 tp；
+U->S trap 的 C 入口会根据 sscratch 中的内核栈恢复内核 tp。
+
+<a id="fn-include-arch-riscv64-cpu_impl.h-22"></a>
+
+### `arch_cpu_self_set`
+
+```c
+static inline void arch_cpu_self_set(struct cpu *self)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+用内联汇编把 self 指针写入 tp 寄存器，并附 memory 屏障。
+
+**位置**：`include/arch/riscv64/cpu_impl.h:22`
+
+<a id="fn-include-arch-riscv64-cpu_impl.h-27"></a>
+
+### `arch_cpu_self_get`
+
+```c
+static inline struct cpu *arch_cpu_self_get(void)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+从 tp 寄存器读回 struct cpu 指针并返回。
+
+**位置**：`include/arch/riscv64/cpu_impl.h:27`
+
+<a id="fn-include-arch-riscv64-cpu_impl.h-35"></a>
+
+### `arch_cpu_hw_id`
+
+```c
+static inline uint64_t arch_cpu_hw_id(void)
+```
+
+mhartid 在 S-mode 不可读；hartid 由 OpenSBI/HSM 传入并存入 cpu_t::hw_id。
+
+**位置**：`include/arch/riscv64/cpu_impl.h:35`
+
+<a id="fn-include-arch-riscv64-cpu_impl.h-43"></a>
+
+### `arch_cpu_idle_wait`
+
+```c
+static inline void arch_cpu_idle_wait(void)
+```
+
+idle 循环里的一条等待指令(中断唤醒)
+
+**位置**：`include/arch/riscv64/cpu_impl.h:43`
+
+<a id="fn-include-arch-riscv64-cpu_impl.h-54"></a>
+
+### `arch_switch_to_idle_stack`
+
+```c
+static inline __attribute__((noreturn)) void arch_switch_to_idle_stack(uintptr_t new_sp)
+```
+
+arch_switch_to_idle_stack - 切到 idle 专用栈并跳进 idle 主循环(不返回)
+
+必须绕过编译器生成的函数 epilogue：新栈上还没有本函数的返回地址
+和帧指针, 正常 return 会从栈上读到垃圾 ra/fp 直接跳飞。
+
+<details>
+<summary>函数内备注（1 条）</summary>
+
+**第 57 行（行尾）**
+
+> 清零 FP, 标记栈帧链结束
+
+</details>
+
+**位置**：`include/arch/riscv64/cpu_impl.h:54`
+
+<a id="mod-include-arch-riscv64-exception.h"></a>
+
+## include/arch/riscv64/exception.h — RISC-V 64-bit S-mode 专用异常/中断类型定义
+
+`include/arch/riscv64/exception.h` · 1 个函数 · 1 个有说明 · 117 行
+
+由 include/exception.h 在 ARCH_RISCV64 时自动包含
+
+<a id="fn-include-arch-riscv64-exception.h-98"></a>
+
+### `arch_trap_frame_from_user`
+
+```c
+static inline bool arch_trap_frame_from_user(const void *frame_ptr)
+```
+
+arch_trap_frame_from_user - 这个 trap frame 是不是从 U-mode 进来的
+
+sstatus.SPP == 0 表示 trap 前是 U-mode；1 表示 S-mode(内核态)。
+
+**位置**：`include/arch/riscv64/exception.h:98`
+
+<a id="mod-include-arch-riscv64-exception_impl.h"></a>
+
+## include/arch/riscv64/exception_impl.h
+
+`include/arch/riscv64/exception_impl.h` · 6 个函数 · 6 个有说明 · 84 行
+
+<a id="fn-include-arch-riscv64-exception_impl.h-26"></a>
+
+### `arch_irq_flags`
+
+```c
+static inline uint64_t arch_irq_flags(void)
+```
+
+读当前 sstatus(不改动状态)
+
+**位置**：`include/arch/riscv64/exception_impl.h:26`
+
+<a id="fn-include-arch-riscv64-exception_impl.h-36"></a>
+
+### `arch_irq_is_enabled`
+
+```c
+static inline int arch_irq_is_enabled(void)
+```
+
+读是否允许 IRQ(抢占判断用)
+
+**位置**：`include/arch/riscv64/exception_impl.h:36`
+
+<a id="fn-include-arch-riscv64-exception_impl.h-42"></a>
+
+### `arch_irq_save`
+
+```c
+static inline uint64_t arch_irq_save(void)
+```
+
+关中断并返回旧 sstatus(必须用 arch_irq_restore 配对恢复)
+
+<details>
+<summary>函数内备注（1 条）</summary>
+
+**第 46 行**
+
+> csrrci: 读出旧值后清除 bit1 (SIE)
+
+</details>
+
+**位置**：`include/arch/riscv64/exception_impl.h:42`
+
+<a id="fn-include-arch-riscv64-exception_impl.h-57"></a>
+
+### `arch_irq_restore`
+
+```c
+static inline void arch_irq_restore(uint64_t flags)
+```
+
+恢复到 arch_irq_save()/arch_irq_flags() 取到的状态
+
+**位置**：`include/arch/riscv64/exception_impl.h:57`
+
+<a id="fn-include-arch-riscv64-exception_impl.h-67"></a>
+
+### `arch_irq_disable`
+
+```c
+static inline void arch_irq_disable(void)
+```
+
+无条件关中断(不需要旧状态时用)
+
+**位置**：`include/arch/riscv64/exception_impl.h:67`
+
+<a id="fn-include-arch-riscv64-exception_impl.h-76"></a>
+
+### `arch_irq_enable`
+
+```c
+static inline void arch_irq_enable(void)
+```
+
+无条件开中断(新任务首次运行时使用)
+
+**位置**：`include/arch/riscv64/exception_impl.h:76`
+
+<a id="mod-include-arch-riscv64-halt_arch.h"></a>
+
+## include/arch/riscv64/halt_arch.h — RISC-V 64 位架构特定的 halt 实现
+
+`include/arch/riscv64/halt_arch.h` · 1 个函数 · 1 个有说明 · 47 行
+
+<a id="fn-include-arch-riscv64-halt_arch.h-22"></a>
+
+### `arch_halt`
+
+```c
+static inline void arch_halt(void)
+```
+
+arch_halt - 停止 RISC-V 处理器
+使用 WFI (Wait For Interrupt) 指令进入低功耗状态
+在中断禁用的情况下, WFI 会永久停止
+
+<details>
+<summary>函数内备注（5 条）</summary>
+
+**第 24 行**
+
+> 内存屏障, 确保所有操作完成
+
+**第 27 行**
+
+> 禁用中断。
+
+> 这里原本写的是 `csrci mstatus, 0x8`(MIE)—— 两处都错：
+> 1) MIE 是 M 模式的中断使能位, 本内核跑在 S 模式, 该用 sstatus.SIE；
+> 2) S 模式访问 mstatus 会触发非法指令异常, &quot;关中断&quot;实际没生效。
+> 统一走 arch_irq_disable()。
+
+**第 37 行**
+
+> WFI - Wait For Interrupt
+
+**第 38 行**
+
+> 在中断禁用的情况下, 处理器会永久停止
+
+**第 41 行**
+
+> 如果 WFI 被唤醒(不应该发生), 死循环
+
+</details>
+
+**位置**：`include/arch/riscv64/halt_arch.h:22`
+
+<a id="mod-include-arch-riscv64-hext.h"></a>
+
+## include/arch/riscv64/hext.h — RISC-V Hypervisor Extension (H-ext) CSR 定义
+
+`include/arch/riscv64/hext.h` · 9 个函数 · 9 个有说明 · 322 行
+
+RISC-V Privileged Spec 1.12 §19-20 (H-extension)
+当内核运行在 HS-mode 时, 使用这些 CSR 管理 VS-mode guest。
+
+特权级对应关系：
+HS-mode  = Hypervisor Supervisor(本内核运行在此)
+VS-mode  = Virtual Supervisor(guest OS 运行在此)
+VU-mode  = Virtual User(guest 用户进程)
+U-mode   = 普通用户进程(非虚拟化, 直接 ecall 到 HS-mode)
+
+<a id="fn-include-arch-riscv64-hext.h-240"></a>
+
+### `hext_read_hvip`
+
+```c
+static inline uint64_t hext_read_hvip(void)
+```
+
+注：本工具链(gcc/as)的 RISC-V 汇编器不识别 hvip/hie 的符号名
+(与 hgatp 同理), 必须用数值 CSR 地址 + 内联汇编；数值定义在 csr.h。
+
+**位置**：`include/arch/riscv64/hext.h:240`
+
+<a id="fn-include-arch-riscv64-hext.h-247"></a>
+
+### `hext_set_hvip_bits`
+
+```c
+static inline void hext_set_hvip_bits(uint64_t bits)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+用 csrs 指令向 0x645（HVIP）寄存器置位给定比特。
+
+**位置**：`include/arch/riscv64/hext.h:247`
+
+<a id="fn-include-arch-riscv64-hext.h-252"></a>
+
+### `hext_clear_hvip_bits`
+
+```c
+static inline void hext_clear_hvip_bits(uint64_t bits)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+用 csrc 指令清除 0x645（HVIP）寄存器中给定比特。
+
+**位置**：`include/arch/riscv64/hext.h:252`
+
+<a id="fn-include-arch-riscv64-hext.h-257"></a>
+
+### `hext_set_hie_bits`
+
+```c
+static inline void hext_set_hie_bits(uint64_t bits)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+用 csrs 指令置位 0x604（HIE）寄存器中给定比特。
+
+**位置**：`include/arch/riscv64/hext.h:257`
+
+<a id="fn-include-arch-riscv64-hext.h-271"></a>
+
+### `hext_set_vs_software_irq`
+
+```c
+static inline void hext_set_vs_software_irq(int pending)
+```
+
+设置/清除 VS 软件中断挂起(SBI IPI 的落点)。
+
+与 vsip.SSIP 的关系(见 docs/vmm/RISCV64_GUEST_LINUX.md「多 vCPU」一节)：
+- HS-mode 置 hvip.VSSIP ⇒ VS-mode 的 sip.SSIP 读到 1；
+- guest 在 VS-mode 清 sip.SSIP 会**同时清掉 hvip.VSSIP**(两者是同一个
+挂起位的两个视图)，所以 VMM 必须在每次 exit 时回读 hvip 来同步自己的
+软件 pending —— 只清不清软件状态会导致 IPI 永远重投(IPI 风暴)。
+
+**位置**：`include/arch/riscv64/hext.h:271`
+
+<a id="fn-include-arch-riscv64-hext.h-280"></a>
+
+### `hext_set_vs_timer_irq`
+
+```c
+static inline void hext_set_vs_timer_irq(int pending)
+```
+
+设置/清除 VS 定时器中断挂起
+
+**位置**：`include/arch/riscv64/hext.h:280`
+
+<a id="fn-include-arch-riscv64-hext.h-289"></a>
+
+### `hext_set_vs_external_irq`
+
+```c
+static inline void hext_set_vs_external_irq(int pending)
+```
+
+设置/清除 VS 外部中断挂起
+
+**位置**：`include/arch/riscv64/hext.h:289`
+
+<a id="fn-include-arch-riscv64-hext.h-312"></a>
+
+### `hext_fence_i`
+
+```c
+static inline void hext_fence_i(void)
+```
+
+远端 fence 的「执行端」(SBI RFENCE 的落点)
+
+SBI 的 remote fence.i / remote sfence.vma 要求**目标 hart**执行对应的
+失效指令。本 VMM 的 vCPU 是宿主 hart 上分时运行的内核任务，没法在
+收到请求的瞬间替对方执行，所以请求先记在目标 vCPU 上(remote_fence),
+由它下一次进 guest 前在这里补执行 —— 那一刻 hgatp 已经切到本 VM
+(见 hext_run.c 的 hext_per_hart_csrs_ensure), hfence.vvma 才有正确
+的 VMID 上下文。
+
+hfence.vvma 的助记符在 -march=rv64gc 下不被汇编器识别, 与 hfence.gvma
+一样用 .insn 数值编码：funct7=0x11, funct3=0, rd/rs1/rs2=x0(全刷)。
+这里做了「忽略地址/ASID, 一律全刷」的保守简化 —— 语义上永远安全,
+代价只是 guest 换页时的 TLB 命中率。
+
+**位置**：`include/arch/riscv64/hext.h:312`
+
+<a id="fn-include-arch-riscv64-hext.h-317"></a>
+
+### `hext_hfence_vvma_all`
+
+```c
+static inline void hext_hfence_vvma_all(void)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+发出 .insn 编码的 hfence.vvma 全刷指令并附 memory 屏障。
+
+**位置**：`include/arch/riscv64/hext.h:317`
+
+<a id="mod-include-arch-riscv64-mm_vm.h"></a>
+
+## include/arch/riscv64/mm_vm.h — RISC-V Sv39 页表操作接口
+
+`include/arch/riscv64/mm_vm.h` · 4 个函数 · 4 个有说明 · 85 行
+
+本头文件由 mm_vm.h 包含, phys_to_virt/virt_to_phys 已在包含前定义。
+实现位于 kernel/mm/riscv64/vmm.c。
+
+<a id="fn-include-arch-riscv64-mm_vm.h-22"></a>
+
+### `rv_pa_to_kva`
+
+```c
+static inline void *rv_pa_to_kva(uint64_t pa)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+直接转调 phys_to_virt，把物理地址换成内核虚拟地址。
+
+**位置**：`include/arch/riscv64/mm_vm.h:22`
+
+<a id="fn-include-arch-riscv64-mm_vm.h-27"></a>
+
+### `rv_next_level`
+
+```c
+static inline uint64_t *rv_next_level(uint64_t pte)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+先用 rv_pte_to_pa 取页表项中的物理页基址，再转成内核虚拟地址作为下一级表指针。
+
+**位置**：`include/arch/riscv64/mm_vm.h:27`
+
+<a id="fn-include-arch-riscv64-mm_vm.h-38"></a>
+
+### `mm_vm_read_kernel_root_phys`
+
+```c
+static inline uint64_t mm_vm_read_kernel_root_phys(void)
+```
+
+mm_vm_read_kernel_root_phys - 读当前 satp 的根页表物理地址
+
+只在 boot/MM 初始化、CPU 仍跑在内核地址空间时调用一次。用户任务
+运行期间 satp 指向用户页表, 不能再现读。
+
+**位置**：`include/arch/riscv64/mm_vm.h:38`
+
+<a id="fn-include-arch-riscv64-mm_vm.h-57"></a>
+
+### `mm_vm_set_pte_keep`
+
+```c
+static inline void mm_vm_set_pte_keep(void *pgd, uint64_t vaddr)
+```
+
+把一页标成"设备缓冲"：unmap 时只拆映射, 不释放页也不碰引用计数。
+用于把 dma_buf / ION 的缓冲区映射进用户态 —— 页归句柄所有, 不归映射。
+语义与 RV_PTE_NOFREE 的区别见 mmu.h 里 RV_PTE_KEEP 的说明。
+
+**位置**：`include/arch/riscv64/mm_vm.h:57`
+
+<a id="mod-include-arch-riscv64-mmu.h"></a>
+
+## include/arch/riscv64/mmu.h — ── PTE 工具函数(定义在 pte.h；这里保留兼容包装)────────────────
+
+`include/arch/riscv64/mmu.h` · 3 个函数 · 3 个有说明 · 35 行
+
+<a id="fn-include-arch-riscv64-mmu.h-15"></a>
+
+### `rv_pte_to_pa`
+
+```c
+static inline uint64_t rv_pte_to_pa(uint64_t pte)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+转调 RV_PTE_TO_PA 宏从页表项中提取物理地址。
+
+**位置**：`include/arch/riscv64/mmu.h:15`
+
+<a id="fn-include-arch-riscv64-mmu.h-20"></a>
+
+### `rv_make_table_pte`
+
+```c
+static inline uint64_t rv_make_table_pte(uint64_t pa)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+用 RV_PTE_FROM_PA 把物理地址转成带 V 位的表型页表项。
+
+**位置**：`include/arch/riscv64/mmu.h:20`
+
+<a id="fn-include-arch-riscv64-mmu.h-25"></a>
+
+### `rv_pte_is_leaf`
+
+```c
+static inline bool rv_pte_is_leaf(uint64_t pte)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+转调 RV_PTE_IS_LEAF 宏判断页表项是否为叶子项。
+
+**位置**：`include/arch/riscv64/mmu.h:25`
+
+<a id="mod-include-arch-riscv64-rvplatform.h"></a>
+
+## include/arch/riscv64/rvplatform.h — RISC-V 平台上实际可用的 cache 管理指令(CMO)
+
+`include/arch/riscv64/rvplatform.h` · 21 个函数 · 21 个有说明 · 210 行
+
+为什么只有 RISC-V 需要这一层：
+aarch64 的 `dc`/`ic` 与 x86_64 的 `clflush`/`wbinvd` 都是架构标准指令,
+缓存行大小也都能从 `CTR_EL0` / `CPUID` 读出来, 所以那两套的 cache_impl.h
+自己就够了。RISC-V 不一样：基座 ISA 里没有 CMO；标准扩展 Zicbom 是可选的；
+而 Zicbom 之前的厂商核(T-Head C906/C910…)用的是 CUSTOM-0 私有编码。
+同一份 cache_impl.h 要面对"标准扩展 / 厂商私有 / 什么都没有"三种情况,
+于是把"这台机器到底有什么 CMO"收敛到本文件, cache_impl.h 只做
+通用动词 → 本文件原语 的映射。
+
+新增平台时在这里加一个 RV_CMO_* 类别与对应分支, cache_impl.h 不用动。
+
+<a id="fn-include-arch-riscv64-rvplatform.h-75"></a>
+
+### `rv_cmo_block_size`
+
+```c
+static inline size_t rv_cmo_block_size(void)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+返回平台常量 RV_CMO_BLOCK_SIZE 作为缓存块大小。
+
+**位置**：`include/arch/riscv64/rvplatform.h:75`
+
+<a id="fn-include-arch-riscv64-rvplatform.h-80"></a>
+
+### `rv_cmo_clean`
+
+```c
+static inline void rv_cmo_clean(void *addr)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+用 .insn 编码的 cbo.clean 指令把该地址所在缓存块写回。
+
+**位置**：`include/arch/riscv64/rvplatform.h:80`
+
+<a id="fn-include-arch-riscv64-rvplatform.h-85"></a>
+
+### `rv_cmo_invalidate`
+
+```c
+static inline void rv_cmo_invalidate(void *addr)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+用 .insn 编码的 cbo.inval 指令失效该地址所在缓存块。
+
+**位置**：`include/arch/riscv64/rvplatform.h:85`
+
+<a id="fn-include-arch-riscv64-rvplatform.h-90"></a>
+
+### `rv_cmo_clean_invalidate`
+
+```c
+static inline void rv_cmo_clean_invalidate(void *addr)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+用一条 civa 指令同时完成写回与失效，避免两步之间缓存行被弄脏。
+
+<details>
+<summary>函数内备注（1 条）</summary>
+
+**第 92 行**
+
+> civa：一条指令完成&quot;写回 + 失效&quot;。原来的代码发 cva 再发 iva,
+> 两次访问之间别的 agent 可能把行弄脏, 语义上不等价。
+
+</details>
+
+**位置**：`include/arch/riscv64/rvplatform.h:90`
+
+<a id="fn-include-arch-riscv64-rvplatform.h-109"></a>
+
+### `rv_cmo_invalidate_all`
+
+```c
+static inline void rv_cmo_invalidate_all(void)
+```
+
+注意： 整 cache 失效：编码 0x0030000b。
+
+原代码把这个编码命名为 `__c906_dcache_ciall`(清理+失效)并当作"清理"用在
+clean_dcache_range() 上。但按上表的 0x0030000b 是 iall(失效, 不写回) ——
+若表正确, 那条路径会丢弃脏数据。
+
+目前没有任何调用者：SG2002 的 range 操作已改为按 VA 的 cva/iva/civa。
+在查手册或上板确认之前：函数名按表(invalidate), 不要把它接到 clean 语义上；
+若确认表有误, 改这里的编码/命名, 并考虑是否需要 *_all 形式的清理。
+
+**位置**：`include/arch/riscv64/rvplatform.h:109`
+
+<a id="fn-include-arch-riscv64-rvplatform.h-114"></a>
+
+### `rv_cmo_sync`
+
+```c
+static inline void rv_cmo_sync(void)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+执行 fence rw,rw 作为缓存维护操作的完成屏障。
+
+**位置**：`include/arch/riscv64/rvplatform.h:114`
+
+<a id="fn-include-arch-riscv64-rvplatform.h-119"></a>
+
+### `rv_cmo_icache_sync`
+
+```c
+static inline void rv_cmo_icache_sync(void)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+依次执行 fence.i、厂商 icache.iall 与 sync.i 指令，确保新写入指令可见。
+
+<details>
+<summary>函数内备注（3 条）</summary>
+
+**第 121 行**
+
+> fence.i 在 C906 上不足以让新写入的指令可见(这正是下面两条厂商指令
+> 存在的原因, .S 的 exec/fork 返回路径里也是这么写的)。
+
+**第 125 行（行尾）**
+
+> icache.iall
+
+**第 126 行（行尾）**
+
+> sync.i
+
+</details>
+
+**位置**：`include/arch/riscv64/rvplatform.h:119`
+
+<a id="fn-include-arch-riscv64-rvplatform.h-134"></a>
+
+### `rv_cmo_block_size`
+
+```c
+static inline size_t rv_cmo_block_size(void)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+返回平台常量 RV_CMO_BLOCK_SIZE 作为缓存块大小。
+
+**位置**：`include/arch/riscv64/rvplatform.h:134`
+
+<a id="fn-include-arch-riscv64-rvplatform.h-139"></a>
+
+### `rv_cmo_clean`
+
+```c
+static inline void rv_cmo_clean(void *addr)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+用 .insn 编码的 cbo.clean 指令把该地址所在缓存块写回。
+
+**位置**：`include/arch/riscv64/rvplatform.h:139`
+
+<a id="fn-include-arch-riscv64-rvplatform.h-144"></a>
+
+### `rv_cmo_invalidate`
+
+```c
+static inline void rv_cmo_invalidate(void *addr)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+用 .insn 编码的 cbo.inval 指令失效该地址所在缓存块。
+
+**位置**：`include/arch/riscv64/rvplatform.h:144`
+
+<a id="fn-include-arch-riscv64-rvplatform.h-149"></a>
+
+### `rv_cmo_clean_invalidate`
+
+```c
+static inline void rv_cmo_clean_invalidate(void *addr)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+用一条 civa 指令同时完成写回与失效，避免两步之间缓存行被弄脏。
+
+**位置**：`include/arch/riscv64/rvplatform.h:149`
+
+<a id="fn-include-arch-riscv64-rvplatform.h-154"></a>
+
+### `rv_cmo_invalidate_all`
+
+```c
+static inline void rv_cmo_invalidate_all(void)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+空函数，注释说明 Zicbom 无整缓存失效指令故此处不实现。
+
+<details>
+<summary>函数内备注（1 条）</summary>
+
+**第 156 行**
+
+> Zicbom 只有按 block 的形式, 没有&quot;整 cache&quot;指令；真需要时按内存区间循环。
+> 这里显式不做(平台层另有 *_all 需求时再实现)。
+
+</details>
+
+**位置**：`include/arch/riscv64/rvplatform.h:154`
+
+<a id="fn-include-arch-riscv64-rvplatform.h-161"></a>
+
+### `rv_cmo_sync`
+
+```c
+static inline void rv_cmo_sync(void)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+执行 fence rw,rw 作为缓存维护操作的完成屏障。
+
+**位置**：`include/arch/riscv64/rvplatform.h:161`
+
+<a id="fn-include-arch-riscv64-rvplatform.h-166"></a>
+
+### `rv_cmo_icache_sync`
+
+```c
+static inline void rv_cmo_icache_sync(void)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+依次执行 fence.i、厂商 icache.iall 与 sync.i 指令，确保新写入指令可见。
+
+**位置**：`include/arch/riscv64/rvplatform.h:166`
+
+<a id="fn-include-arch-riscv64-rvplatform.h-174"></a>
+
+### `rv_cmo_block_size`
+
+```c
+static inline size_t rv_cmo_block_size(void)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+返回平台常量 RV_CMO_BLOCK_SIZE 作为缓存块大小。
+
+**位置**：`include/arch/riscv64/rvplatform.h:174`
+
+<a id="fn-include-arch-riscv64-rvplatform.h-183"></a>
+
+### `rv_cmo_clean`
+
+```c
+static inline void rv_cmo_clean(void *addr)
+```
+
+没有 CMO 的平台(QEMU virt)：DMA 由模拟器/硬件保证一致,
+这里全部是空操作。以前 clean 分支会发一条 `fence ow, ow` —— 那是访存顺序
+屏障, 不是 cache 操作, 对"清理"没有任何作用, 已去掉。
+
+**位置**：`include/arch/riscv64/rvplatform.h:183`
+
+<a id="fn-include-arch-riscv64-rvplatform.h-187"></a>
+
+### `rv_cmo_invalidate`
+
+```c
+static inline void rv_cmo_invalidate(void *addr)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+用 .insn 编码的 cbo.inval 指令失效该地址所在缓存块。
+
+**位置**：`include/arch/riscv64/rvplatform.h:187`
+
+<a id="fn-include-arch-riscv64-rvplatform.h-191"></a>
+
+### `rv_cmo_clean_invalidate`
+
+```c
+static inline void rv_cmo_clean_invalidate(void *addr)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+用一条 civa 指令同时完成写回与失效，避免两步之间缓存行被弄脏。
+
+**位置**：`include/arch/riscv64/rvplatform.h:191`
+
+<a id="fn-include-arch-riscv64-rvplatform.h-195"></a>
+
+### `rv_cmo_invalidate_all`
+
+```c
+static inline void rv_cmo_invalidate_all(void)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+空函数，注释说明 Zicbom 无整缓存失效指令故此处不实现。
+
+**位置**：`include/arch/riscv64/rvplatform.h:195`
+
+<a id="fn-include-arch-riscv64-rvplatform.h-198"></a>
+
+### `rv_cmo_sync`
+
+```c
+static inline void rv_cmo_sync(void)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+执行 fence rw,rw 作为缓存维护操作的完成屏障。
+
+**位置**：`include/arch/riscv64/rvplatform.h:198`
+
+<a id="fn-include-arch-riscv64-rvplatform.h-203"></a>
+
+### `rv_cmo_icache_sync`
+
+```c
+static inline void rv_cmo_icache_sync(void)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+依次执行 fence.i、厂商 icache.iall 与 sync.i 指令，确保新写入指令可见。
+
+**位置**：`include/arch/riscv64/rvplatform.h:203`
+
+<a id="mod-include-arch-riscv64-satp_utils.h"></a>
+
+## include/arch/riscv64/satp_utils.h — RISC-V Sv39 satp 操作工具
+
+`include/arch/riscv64/satp_utils.h` · 3 个函数 · 3 个有说明 · 66 行
+
+统一封装 satp 寄存器读写, PGD 物理地址转换以及用户页表内核映射复制。
+所有需要操作 satp 或初始化用户页表的内核代码必须通过此头文件。
+
+内核高半区映射的唯一来源是 arch/riscv64/mem_layout.h 的
+RV_KERNEL_MAP_LIST；这里不再逐条硬编码 0x100..0x103。
+
+<a id="fn-include-arch-riscv64-satp_utils.h-26"></a>
+
+### `satp_read_pgd_phys`
+
+```c
+static inline uint64_t satp_read_pgd_phys(void)
+```
+
+satp_read_pgd_phys - 读取当前 satp 并返回根页表物理地址
+
+**位置**：`include/arch/riscv64/satp_utils.h:26`
+
+<a id="fn-include-arch-riscv64-satp_utils.h-37"></a>
+
+### `pgd_phys_to_satp`
+
+```c
+static inline uint64_t pgd_phys_to_satp(uint64_t pgd_phys)
+```
+
+pgd_phys_to_satp - 根据根页表物理地址构造 Sv39 satp 值
+@pgd_phys: 根页表的物理地址(必须 4KB 对齐)
+
+**位置**：`include/arch/riscv64/satp_utils.h:37`
+
+<a id="fn-include-arch-riscv64-satp_utils.h-59"></a>
+
+### `riscv64_copy_kernel_mappings`
+
+```c
+static inline void riscv64_copy_kernel_mappings(uint64_t *user_l1, const uint64_t *kernel_l1)
+```
+
+riscv64_copy_kernel_mappings - 将内核高半区 L1 条目复制到用户页表
+@user_l1:   用户根页表(内核虚拟地址, uint64_t[512])
+@kernel_l1: 内核根页表(内核虚拟地址, uint64_t[512])
+
+必须在创建任何用户页表时调用：U 态发生 trap 时, CPU 通过 stvec
+(内核高半区虚拟地址)跳转, 若用户页表中无内核映射则立即失联。
+
+复制哪些条目完全由 RV_KERNEL_MAP_LIST(mem_layout.h)决定,
+mmu.S 的启动映射也用同一份列表, 避免两边漂移。
+
+**位置**：`include/arch/riscv64/satp_utils.h:59`
+
+<a id="mod-include-arch-riscv64-sbi.h"></a>
+
+## include/arch/riscv64/sbi.h — SBI(Supervisor Binary Interface)常量 + 主机侧调用封装
+
+`include/arch/riscv64/sbi.h` · 2 个函数 · 2 个有说明 · 130 行
+
+常量同时服务两类使用者:
+- 宿主 bring-up(kernel/task/cpu.c)：HSM/IPI 扩展走这里的内联封装;
+- VMM 的 guest 模拟(kernel/vmm/riscv64/hext_run.c)：guest 以
+a7=EID, a6=FID, a0..=参数 发 ecall, 宿主按同一组编号分派。
+
+以前这组常量写在 hext.h(那是 H-ext CSR 的头)里, 宿主侧又自己写了一份
+功能号 —— 和 csr.h 顶部记录的问题同源: 改一边漏一边不会报错。
+现在是唯一定义, hext.h 不再重复。
+
+调用约定: a7=扩展号(EID), a6=功能号(FID), a0..a5=参数; 返回值在 a0。
+
+<a id="fn-include-arch-riscv64-sbi.h-95"></a>
+
+### `sbi_hart_start`
+
+```c
+static inline long sbi_hart_start(uint64_t hartid, uint64_t start_addr, uint64_t opaque)
+```
+
+sbi_hart_start - HSM 扩展: 启动指定 hart
+@hartid:      目标 hart 的硬件号(mhartid 在 S-mode 不可读, 由调用者保存)
+@start_addr:  入口的**物理**地址(SBI 在目标核的 MMU 配置前进入)
+@opaque:      透传给入口的 a1(本内核用它传逻辑 CPU 号)
+
+返回: SBI 返回码, 0 = 成功
+
+**位置**：`include/arch/riscv64/sbi.h:95`
+
+<a id="fn-include-arch-riscv64-sbi.h-116"></a>
+
+### `sbi_send_ipi`
+
+```c
+static inline long sbi_send_ipi(uint64_t hartid)
+```
+
+sbi_send_ipi - IPI 扩展: 向单个 hart 发软件中断
+@hartid: 目标 hart 的硬件号
+
+只支持 hartid < 64：这里把 "1 << hartid" 直接放在 a0(hart_mask 的低
+XLEN 位)。超过 64 个 hart 的平台需要改用 hart_mask_base + 稀疏掩码。
+
+返回: SBI 返回码, 0 = 成功, -1 = hartid 超出本封装范围
+
+**位置**：`include/arch/riscv64/sbi.h:116`
+
+<a id="mod-include-arch-riscv64-spin_lock_impl.h"></a>
+
+## include/arch/riscv64/spin_lock_impl.h — RISC-V 64位架构的spinlock实现
+
+`include/arch/riscv64/spin_lock_impl.h` · 6 个函数 · 6 个有说明 · 106 行
+
+使用LR/SC (Load-Reserved/Store-Conditional) 指令对
+使用fence指令进行内存屏障
+
+<a id="fn-include-arch-riscv64-spin_lock_impl.h-29"></a>
+
+### `spin_lock`
+
+```c
+static inline void spin_lock(spinlock_t *lock)
+```
+
+RISC-V的原子操作使用LR/SC指令对
+lr.w: 加载保留 Load-Reserved
+sc.w: 条件存储 Store-Conditional
+如果在lr到sc之间有其他核心修改了地址, sc会失败
+
+<details>
+<summary>函数内备注（6 条）</summary>
+
+**第 33 行（行尾）**
+
+> tmp = 1
+
+**第 34 行（行尾）**
+
+> t0 = lock-&gt;lock (load-reserved)
+
+**第 35 行（行尾）**
+
+> if (t0 != 0) goto 1b (already locked)
+
+**第 36 行（行尾）**
+
+> tmp = atomic_exchange(lock-&gt;lock, 1)
+
+**第 37 行（行尾）**
+
+> if (t0 != 0) goto 1b (store failed, retry)
+
+**第 38 行（行尾）**
+
+> full memory barrier
+
+</details>
+
+**位置**：`include/arch/riscv64/spin_lock_impl.h:29`
+
+<a id="fn-include-arch-riscv64-spin_lock_impl.h-44"></a>
+
+### `spin_trylock`
+
+```c
+static inline int spin_trylock(spinlock_t *lock)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+先关抢占，用 lr.w/sc.w 原子尝试取锁，成功返回 0，失败恢复抢占并返回 1。
+
+<details>
+<summary>函数内备注（8 条）</summary>
+
+**第 48 行（行尾）**
+
+> tmp = 1
+
+**第 49 行（行尾）**
+
+> t0 = lock-&gt;lock
+
+**第 50 行（行尾）**
+
+> if locked, fail
+
+**第 51 行（行尾）**
+
+> try to acquire
+
+**第 52 行（行尾）**
+
+> if failed, retry
+
+**第 53 行（行尾）**
+
+> barrier on success
+
+**第 54 行（行尾）**
+
+> result = 0 (success)
+
+**第 56 行（行尾）**
+
+> result = 1 (failed)
+
+</details>
+
+**位置**：`include/arch/riscv64/spin_lock_impl.h:44`
+
+<a id="fn-include-arch-riscv64-spin_lock_impl.h-66"></a>
+
+### `spin_unlock`
+
+```c
+static inline void spin_unlock(spinlock_t *lock)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+执行 fence rw,rw 后把锁字清零释放，并重新开启抢占。
+
+<details>
+<summary>函数内备注（2 条）</summary>
+
+**第 68 行（行尾）**
+
+> memory barrier
+
+**第 69 行（行尾）**
+
+> lock-&gt;lock = 0
+
+</details>
+
+**位置**：`include/arch/riscv64/spin_lock_impl.h:66`
+
+<a id="fn-include-arch-riscv64-spin_lock_impl.h-85"></a>
+
+### `spin_lock_irqsave`
+
+```c
+static inline void spin_lock_irqsave(spinlock_t *lock, uint64_t *flags)
+```
+
+带中断保护的 spinlock。
+
+中断状态存在调用点的局部变量里(由 *flags 带回), 不再存进锁对象 ——
+存进锁对象时, SMP 下争锁的另一颗 CPU 会把它的 flags 覆盖上去, 解锁时
+恢复的就是别人的中断状态。中断原语本身统一来自
+include/arch/riscv64/exception_impl.h(arch_irq_save/restore)。
+
+**位置**：`include/arch/riscv64/spin_lock_impl.h:85`
+
+<a id="fn-include-arch-riscv64-spin_lock_impl.h-91"></a>
+
+### `spin_trylock_irqsave`
+
+```c
+static inline int spin_trylock_irqsave(spinlock_t *lock, uint64_t *flags)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+保存并关闭中断后尝试取锁，失败时恢复中断并返回 1，成功返回 0。
+
+**位置**：`include/arch/riscv64/spin_lock_impl.h:91`
+
+<a id="fn-include-arch-riscv64-spin_lock_impl.h-100"></a>
+
+### `spin_unlock_irqrestore`
+
+```c
+static inline void spin_unlock_irqrestore(spinlock_t *lock, uint64_t flags)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+先释放锁，再恢复调用方保存的中断状态。
+
+**位置**：`include/arch/riscv64/spin_lock_impl.h:100`
+
+<a id="mod-include-arch-riscv64-string_impl.h"></a>
+
+## include/arch/riscv64/string_impl.h — RISC-V 64 位架构的字符串函数优化实现
+
+`include/arch/riscv64/string_impl.h` · 2 个函数 · 2 个有说明 · 31 行
+
+目前转发到通用实现。要做 V 扩展优化时, 在这里加 memcpy_vector()/memset_vector()
+并让下面两个函数按阈值分派即可(对照 include/arch/aarch64/string_impl.h)。
+
+注意：通用实现用普通 GPR 做 8/4/2 字节访问, 只有在 src/dest 同时对齐时
+才加宽 —— SG2002/C906 这类真实硬件不保证支持非对齐访问, 不能想当然放宽。
+
+<a id="fn-include-arch-riscv64-string_impl.h-21"></a>
+
+### `memcpy_arch`
+
+```c
+static inline void *memcpy_arch(void *dest, const void *src, size_t n)
+```
+
+RISC-V 64 位架构的字符串函数优化实现
+
+目前转发到通用实现。要做 V 扩展优化时, 在这里加 memcpy_vector()/memset_vector()
+并让下面两个函数按阈值分派即可(对照 include/arch/aarch64/string_impl.h)。
+
+注意：通用实现用普通 GPR 做 8/4/2 字节访问, 只有在 src/dest 同时对齐时
+才加宽 —— SG2002/C906 这类真实硬件不保证支持非对齐访问, 不能想当然放宽。
+
+**位置**：`include/arch/riscv64/string_impl.h:21`
+
+<a id="fn-include-arch-riscv64-string_impl.h-26"></a>
+
+### `memset_arch`
+
+```c
+static inline void *memset_arch(void *s, int c, size_t n)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+直接转调 memset_generic 完成内存填充。
+
+**位置**：`include/arch/riscv64/string_impl.h:26`
+
+<a id="mod-include-arch-riscv64-syscall_abi.h"></a>
+
+## include/arch/riscv64/syscall_abi.h
+
+`include/arch/riscv64/syscall_abi.h` · 6 个函数 · 6 个有说明 · 61 行
+
+<a id="fn-include-arch-riscv64-syscall_abi.h-13"></a>
+
+### `syscall_abi_nr`
+
+```c
+static inline uint64_t syscall_abi_nr(const trap_frame_t *frame)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+从 trap frame 的 a7 寄存器 x[17] 读出系统调用号。
+
+<details>
+<summary>函数内备注（1 条）</summary>
+
+**第 15 行（行尾）**
+
+> a7 = syscall number
+
+</details>
+
+**位置**：`include/arch/riscv64/syscall_abi.h:13`
+
+<a id="fn-include-arch-riscv64-syscall_abi.h-18"></a>
+
+### `syscall_abi_arg`
+
+```c
+static inline uint64_t syscall_abi_arg(const trap_frame_t *frame, int idx)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+下标 0 到 5 时返回 a0 至 a5（x[10+idx]），越界返回 0。
+
+<details>
+<summary>函数内备注（1 条）</summary>
+
+**第 20 行（行尾）**
+
+> a0..a5
+
+</details>
+
+**位置**：`include/arch/riscv64/syscall_abi.h:18`
+
+<a id="fn-include-arch-riscv64-syscall_abi.h-23"></a>
+
+### `syscall_abi_set_ret`
+
+```c
+static inline void syscall_abi_set_ret(trap_frame_t *frame, uint64_t ret)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+把返回值写入 trap frame 的 a0（x[10]）。
+
+<details>
+<summary>函数内备注（1 条）</summary>
+
+**第 25 行（行尾）**
+
+> a0 = return value
+
+</details>
+
+**位置**：`include/arch/riscv64/syscall_abi.h:23`
+
+<a id="fn-include-arch-riscv64-syscall_abi.h-28"></a>
+
+### `syscall_abi_ip`
+
+```c
+static inline uint64_t syscall_abi_ip(const trap_frame_t *frame)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+返回 trap frame 的 sepc，即系统调用发生时的用户指令地址。
+
+**位置**：`include/arch/riscv64/syscall_abi.h:28`
+
+<a id="fn-include-arch-riscv64-syscall_abi.h-33"></a>
+
+### `syscall_abi_user_sp`
+
+```c
+static inline uint64_t syscall_abi_user_sp(const trap_frame_t *frame)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+返回 trap frame 中保存的用户栈指针 x[2]。
+
+<details>
+<summary>函数内备注（1 条）</summary>
+
+**第 35 行（行尾）**
+
+> sp
+
+</details>
+
+**位置**：`include/arch/riscv64/syscall_abi.h:33`
+
+<a id="fn-include-arch-riscv64-syscall_abi.h-47"></a>
+
+### `syscall_abi_reset_frame_for_exec`
+
+```c
+static inline void syscall_abi_reset_frame_for_exec(trap_frame_t *frame, uint64_t entry, uint64_t sp)
+```
+
+syscall_abi_reset_frame_for_exec - execve 成功后把 trap frame 重置成
+新程序的初始用户现场
+
+返回路径是一条普通 sret，所以这里必须自己把 sstatus 摆成"返回 U 模式、
+SPIE=1、SIE=0"，与 arch_switch_to_user 的处理保持一致；FP 状态清零，
+tp 也清零(exec 不继承 TLS)。x0 随后会被 syscall 返回值的回填覆盖
+（值为 0，新程序不依赖它）。
+
+**位置**：`include/arch/riscv64/syscall_abi.h:47`
+
+<a id="mod-include-arch-x86_64-barrier_impl.h"></a>
+
+## include/arch/x86_64/barrier_impl.h — x86_64 内存屏障实现
+
+`include/arch/x86_64/barrier_impl.h` · 7 个函数 · 7 个有说明 · 89 行
+
+使用 MFENCE, SFENCE, LFENCE 指令
+
+<a id="fn-include-arch-x86_64-barrier_impl.h-22"></a>
+
+### `barrier_data`
+
+```c
+static inline void barrier_data(void)
+```
+
+barrier_data - 完整数据内存屏障
+
+MFENCE: 内存屏障(读+写)
+
+**位置**：`include/arch/x86_64/barrier_impl.h:22`
+
+<a id="fn-include-arch-x86_64-barrier_impl.h-32"></a>
+
+### `barrier_data_read`
+
+```c
+static inline void barrier_data_read(void)
+```
+
+barrier_data_read - 读数据屏障
+
+LFENCE: 加载屏障
+
+**位置**：`include/arch/x86_64/barrier_impl.h:32`
+
+<a id="fn-include-arch-x86_64-barrier_impl.h-42"></a>
+
+### `barrier_data_write`
+
+```c
+static inline void barrier_data_write(void)
+```
+
+barrier_data_write - 写数据屏障
+
+SFENCE: 存储屏障
+
+**位置**：`include/arch/x86_64/barrier_impl.h:42`
+
+<a id="fn-include-arch-x86_64-barrier_impl.h-55"></a>
+
+### `barrier_instr_full`
+
+```c
+static inline void barrier_instr_full(void)
+```
+
+barrier_instr_full - 完整指令同步屏障
+
+x86_64 上 MFENCE 已经提供了完整的同步
+CPUID 也可以用作指令序列化器
+
+**位置**：`include/arch/x86_64/barrier_impl.h:55`
+
+<a id="fn-include-arch-x86_64-barrier_impl.h-60"></a>
+
+### `barrier_sync`
+
+```c
+static inline void barrier_sync(void)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+执行 mfence 并加 memory 屏障，保证前后访存顺序。
+
+**位置**：`include/arch/x86_64/barrier_impl.h:60`
+
+<a id="fn-include-arch-x86_64-barrier_impl.h-73"></a>
+
+### `barrier_acquire`
+
+```c
+static inline void barrier_acquire(void)
+```
+
+barrier_acquire - 获取语义屏障
+
+x86_64 的 TSO (Total Store Order) 模型已经提供了较强的保证
+使用编译器屏障即可
+
+**位置**：`include/arch/x86_64/barrier_impl.h:73`
+
+<a id="fn-include-arch-x86_64-barrier_impl.h-84"></a>
+
+### `barrier_release`
+
+```c
+static inline void barrier_release(void)
+```
+
+barrier_release - 释放语义屏障
+
+x86_64 的 TSO 模型已经提供了较强的保证
+使用编译器屏障即可
+
+**位置**：`include/arch/x86_64/barrier_impl.h:84`
+
+<a id="mod-include-arch-x86_64-cache_impl.h"></a>
+
+## include/arch/x86_64/cache_impl.h — x86_64 缓存操作底层实现
+
+`include/arch/x86_64/cache_impl.h` · 9 个函数 · 9 个有说明 · 119 行
+
+架构特定的单个缓存行操作
+
+<a id="fn-include-arch-x86_64-cache_impl.h-30"></a>
+
+### `__clean_dcache_one`
+
+```c
+static inline void __clean_dcache_one(const void *addr)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+用 clwb 指令把该地址所在缓存行写回内存。
+
+**位置**：`include/arch/x86_64/cache_impl.h:30`
+
+<a id="fn-include-arch-x86_64-cache_impl.h-35"></a>
+
+### `__clean_dcache_one`
+
+```c
+static inline void __clean_dcache_one(const void *addr)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+用 clwb 指令把该地址所在缓存行写回内存。
+
+<details>
+<summary>函数内备注（1 条）</summary>
+
+**第 37 行**
+
+> CLFLUSH: 写回并失效
+
+</details>
+
+**位置**：`include/arch/x86_64/cache_impl.h:35`
+
+<a id="fn-include-arch-x86_64-cache_impl.h-50"></a>
+
+### `__invalidate_dcache_one`
+
+```c
+static inline void __invalidate_dcache_one(const void *addr)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+用 clflushopt 失效该缓存行，随后调用 barrier_data_write() 保证失效先于后续访存完成。
+
+<details>
+<summary>函数内备注（1 条）</summary>
+
+**第 53 行**
+
+> CLFLUSHOPT 与其它写不保序(这点和 CLFLUSH 不同), Intel SDM 要求
+> 后面跟一条 SFENCE 才能保证失效先于后续访存完成。少了它, DMA 场景下
+> 设备可能读到尚未刷回的内存。
+
+</details>
+
+**位置**：`include/arch/x86_64/cache_impl.h:50`
+
+<a id="fn-include-arch-x86_64-cache_impl.h-61"></a>
+
+### `__invalidate_dcache_one`
+
+```c
+static inline void __invalidate_dcache_one(const void *addr)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+用 clflushopt 失效该缓存行，随后调用 barrier_data_write() 保证失效先于后续访存完成。
+
+**位置**：`include/arch/x86_64/cache_impl.h:61`
+
+<a id="fn-include-arch-x86_64-cache_impl.h-73"></a>
+
+### `__clean_and_invalidate_dcache_one`
+
+```c
+static inline void __clean_and_invalidate_dcache_one(const void *addr)
+```
+
+__clean_and_invalidate_dcache_one - 清理并使单个缓存行失效
+@addr: 地址
+
+CLFLUSH: 写回并使缓存行失效
+
+**位置**：`include/arch/x86_64/cache_impl.h:73`
+
+<a id="fn-include-arch-x86_64-cache_impl.h-83"></a>
+
+### `get_cache_line_size`
+
+```c
+static inline size_t get_cache_line_size(void)
+```
+
+get_cache_line_size - 获取缓存行大小
+
+**位置**：`include/arch/x86_64/cache_impl.h:83`
+
+<a id="fn-include-arch-x86_64-cache_impl.h-91"></a>
+
+### `init_cache`
+
+```c
+static inline void init_cache(void)
+```
+
+init_cache - 初始化缓存子系统
+
+<details>
+<summary>函数内备注（2 条）</summary>
+
+**第 93 行**
+
+> x86_64 标准缓存行大小为 64 字节
+
+**第 94 行**
+
+> 可以通过 CPUID 指令检测, 但 64 字节是通用标准
+
+</details>
+
+**位置**：`include/arch/x86_64/cache_impl.h:91`
+
+<a id="fn-include-arch-x86_64-cache_impl.h-109"></a>
+
+### `sync_icache_all`
+
+```c
+static inline void sync_icache_all(void)
+```
+
+sync_icache_all - 让刚写入的指令可见
+
+x86 的 I-cache 与 D-cache 由硬件保持一致, 写完代码只需一条序列化屏障。
+(严格的自改码场景还要求执行 cpuid/jmp 之类的序列化指令, 本内核没有 JIT。)
+
+**位置**：`include/arch/x86_64/cache_impl.h:109`
+
+<a id="fn-include-arch-x86_64-cache_impl.h-114"></a>
+
+### `sync_caches`
+
+```c
+static inline void sync_caches(void)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+仅调用 barrier_data() 建立数据屏障。
+
+**位置**：`include/arch/x86_64/cache_impl.h:114`
+
+<a id="mod-include-arch-x86_64-cpu_impl.h"></a>
+
+## include/arch/x86_64/cpu_impl.h — x86_64 per-CPU 指针 / 硬件 ID 实现
+
+`include/arch/x86_64/cpu_impl.h` · 5 个函数 · 5 个有说明 · 80 行
+
+约定：
+IA32_GS_BASE        (MSR 0xC0000101) — 用户态运行时保存 cpu_t*
+IA32_KERNEL_GS_BASE (MSR 0xC0000102) — 内核态运行时保存 cpu_t*
+
+syscall_entry 执行 swapgs 后 GS_BASE = cpu_t*(从 KERNEL_GS_BASE 换入),
+可通过 gs:offset 访问 per-CPU 数据。sysretq 前再次 swapgs 换回。
+
+内核纯态路径(非 SYSCALL)仍通过 rdmsr(GS_BASE) 读取 cpu_t*。
+
+<a id="fn-include-arch-x86_64-cpu_impl.h-30"></a>
+
+### `arch_cpu_self_set`
+
+```c
+static inline void arch_cpu_self_set(struct cpu *self)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+把 self 的 64 位值拆成高低 32 位，分别 wrmsr 写入 GS_BASE 与 KERNEL_GS_BASE。
+
+**位置**：`include/arch/x86_64/cpu_impl.h:30`
+
+<a id="fn-include-arch-x86_64-cpu_impl.h-39"></a>
+
+### `arch_cpu_self_get`
+
+```c
+static inline struct cpu *arch_cpu_self_get(void)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+用 rdmsr 读 GS_BASE，拼成 64 位后强转为 struct cpu 指针返回。
+
+**位置**：`include/arch/x86_64/cpu_impl.h:39`
+
+<a id="fn-include-arch-x86_64-cpu_impl.h-51"></a>
+
+### `arch_cpu_hw_id`
+
+```c
+static inline uint64_t arch_cpu_hw_id(void)
+```
+
+x86 的硬件 ID 是 LAPIC ID，但本头文件不能依赖 LAPIC 映射，因此这里
+只返回 0 占位。BSP 在 cpu_init_bsp()、AP 在 cpu_secondary_bootstrap()
+中都改用 irq_cpu_hw_id() 读取真实值。
+
+**位置**：`include/arch/x86_64/cpu_impl.h:51`
+
+<a id="fn-include-arch-x86_64-cpu_impl.h-59"></a>
+
+### `arch_cpu_idle_wait`
+
+```c
+static inline void arch_cpu_idle_wait(void)
+```
+
+idle 循环里的一条等待指令(中断唤醒)
+
+**位置**：`include/arch/x86_64/cpu_impl.h:59`
+
+<a id="fn-include-arch-x86_64-cpu_impl.h-70"></a>
+
+### `arch_switch_to_idle_stack`
+
+```c
+static inline __attribute__((noreturn)) void arch_switch_to_idle_stack(uintptr_t new_sp)
+```
+
+arch_switch_to_idle_stack - 切到 idle 专用栈并跳进 idle 主循环(不返回)
+
+必须绕过编译器生成的函数 epilogue：新栈上还没有本函数的返回地址
+和帧指针, 正常 return 会从栈上读到垃圾 RBP/返回地址直接跳飞。
+
+<details>
+<summary>函数内备注（3 条）</summary>
+
+**第 72 行（行尾）**
+
+> 切换到新栈
+
+**第 73 行（行尾）**
+
+> 清零 RBP, 标记栈帧链结束
+
+**第 74 行（行尾）**
+
+> 跳到 idle 主循环(不返回)
+
+</details>
+
+**位置**：`include/arch/x86_64/cpu_impl.h:70`
+
+<a id="mod-include-arch-x86_64-exception.h"></a>
+
+## include/arch/x86_64/exception.h — x86_64 专用异常/中断类型定义
+
+`include/arch/x86_64/exception.h` · 1 个函数 · 1 个有说明 · 121 行
+
+由 include/exception.h 在 ARCH_X86_64 时自动包含
+
+<a id="fn-include-arch-x86_64-exception.h-71"></a>
+
+### `arch_trap_frame_from_user`
+
+```c
+static inline bool arch_trap_frame_from_user(const void *frame_ptr)
+```
+
+arch_trap_frame_from_user - 这个 trap frame 是不是从用户态(CPL3)进来的
+
+CS.RPL == 3 表示陷入前在用户态；0(CPL0) 表示内核态。
+
+**位置**：`include/arch/x86_64/exception.h:71`
+
+<a id="mod-include-arch-x86_64-exception_impl.h"></a>
+
+## include/arch/x86_64/exception_impl.h
+
+`include/arch/x86_64/exception_impl.h` · 6 个函数 · 6 个有说明 · 91 行
+
+<a id="fn-include-arch-x86_64-exception_impl.h-25"></a>
+
+### `arch_irq_flags`
+
+```c
+static inline uint64_t arch_irq_flags(void)
+```
+
+读当前 RFLAGS(不改动状态)
+
+**位置**：`include/arch/x86_64/exception_impl.h:25`
+
+<a id="fn-include-arch-x86_64-exception_impl.h-35"></a>
+
+### `arch_irq_is_enabled`
+
+```c
+static inline int arch_irq_is_enabled(void)
+```
+
+读是否允许 IRQ(抢占判断用)
+
+**位置**：`include/arch/x86_64/exception_impl.h:35`
+
+<a id="fn-include-arch-x86_64-exception_impl.h-41"></a>
+
+### `arch_irq_save`
+
+```c
+static inline uint64_t arch_irq_save(void)
+```
+
+关中断并返回旧 RFLAGS(必须用 arch_irq_restore 配对恢复)
+
+**位置**：`include/arch/x86_64/exception_impl.h:41`
+
+<a id="fn-include-arch-x86_64-exception_impl.h-60"></a>
+
+### `arch_irq_restore`
+
+```c
+static inline void arch_irq_restore(uint64_t flags)
+```
+
+恢复到 arch_irq_save()/arch_irq_flags() 取到的状态(POPFQ 恢复 IF)
+
+**位置**：`include/arch/x86_64/exception_impl.h:60`
+
+<a id="fn-include-arch-x86_64-exception_impl.h-74"></a>
+
+### `arch_irq_disable`
+
+```c
+static inline void arch_irq_disable(void)
+```
+
+无条件关中断(不需要旧状态时用)
+
+**位置**：`include/arch/x86_64/exception_impl.h:74`
+
+<a id="fn-include-arch-x86_64-exception_impl.h-83"></a>
+
+### `arch_irq_enable`
+
+```c
+static inline void arch_irq_enable(void)
+```
+
+无条件开中断(新任务首次运行时使用)
+
+**位置**：`include/arch/x86_64/exception_impl.h:83`
+
+<a id="mod-include-arch-x86_64-halt_arch.h"></a>
+
+## include/arch/x86_64/halt_arch.h — x86_64 架构特定的 halt 实现
+
+`include/arch/x86_64/halt_arch.h` · 1 个函数 · 1 个有说明 · 40 行
+
+<a id="fn-include-arch-x86_64-halt_arch.h-22"></a>
+
+### `arch_halt`
+
+```c
+static inline void arch_halt(void)
+```
+
+arch_halt - 停止 x86_64 处理器
+使用 HLT 指令停止处理器, 直到收到中断
+在中断禁用的情况下, HLT 会永久停止
+
+<details>
+<summary>函数内备注（5 条）</summary>
+
+**第 24 行**
+
+> 内存屏障, 确保所有操作完成
+
+**第 27 行**
+
+> 禁用中断(统一接口)
+
+**第 30 行**
+
+> HLT - Halt Processor
+
+**第 31 行**
+
+> 在中断禁用的情况下, 处理器会永久停止
+
+**第 34 行**
+
+> 如果 HLT 被唤醒(不应该发生), 死循环
+
+</details>
+
+**位置**：`include/arch/x86_64/halt_arch.h:22`
+
+<a id="mod-include-arch-x86_64-io.h"></a>
+
+## include/arch/x86_64/io.h — x86_64 Port I/O
+
+`include/arch/x86_64/io.h` · 6 个函数 · 6 个有说明 · 63 行
+
+x86 拥有独立于内存地址空间的 I/O 端口空间(64K 个端口),
+通过专用指令 in/out 访问, 与 MMIO 的 volatile 指针访问无关。
+
+x86 的 in/out 指令自带序列化语义, 无需额外内存屏障。
+
+<a id="fn-include-arch-x86_64-io.h-23"></a>
+
+### `inb`
+
+```c
+static inline uint8_t inb(uint16_t port)
+```
+
+x86_64 Port I/O
+
+x86 拥有独立于内存地址空间的 I/O 端口空间(64K 个端口),
+通过专用指令 in/out 访问, 与 MMIO 的 volatile 指针访问无关。
+
+x86 的 in/out 指令自带序列化语义, 无需额外内存屏障。
+
+**位置**：`include/arch/x86_64/io.h:23`
+
+<a id="fn-include-arch-x86_64-io.h-30"></a>
+
+### `outb`
+
+```c
+static inline void outb(uint16_t port, uint8_t value)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+用 outb 指令向指定端口写 8 位值。
+
+**位置**：`include/arch/x86_64/io.h:30`
+
+<a id="fn-include-arch-x86_64-io.h-37"></a>
+
+### `inw`
+
+```c
+static inline uint16_t inw(uint16_t port)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+用 inw 指令从指定端口读 16 位值并返回。
+
+**位置**：`include/arch/x86_64/io.h:37`
+
+<a id="fn-include-arch-x86_64-io.h-44"></a>
+
+### `outw`
+
+```c
+static inline void outw(uint16_t port, uint16_t value)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+用 outw 指令向指定端口写 16 位值。
+
+**位置**：`include/arch/x86_64/io.h:44`
+
+<a id="fn-include-arch-x86_64-io.h-51"></a>
+
+### `inl`
+
+```c
+static inline uint32_t inl(uint16_t port)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+用 inl 指令从指定端口读 32 位值并返回。
+
+**位置**：`include/arch/x86_64/io.h:51`
+
+<a id="fn-include-arch-x86_64-io.h-58"></a>
+
+### `outl`
+
+```c
+static inline void outl(uint16_t port, uint32_t value)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+用 outl 指令向指定端口写 32 位值。
+
+**位置**：`include/arch/x86_64/io.h:58`
+
+<a id="mod-include-arch-x86_64-mm_vm.h"></a>
+
+## include/arch/x86_64/mm_vm.h — x86_64 页表操作接口
+
+`include/arch/x86_64/mm_vm.h` · 4 个函数 · 4 个有说明 · 79 行
+
+本头文件由 mm_vm.h 包含, phys_to_virt/virt_to_phys 已在包含前定义。
+实现位于 kernel/mm/x86_64/vmm.c。
+
+<a id="fn-include-arch-x86_64-mm_vm.h-21"></a>
+
+### `x86_pa_to_kva`
+
+```c
+static inline void *x86_pa_to_kva(uint64_t pa)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+直接转调 phys_to_virt 把物理地址换算为内核虚拟地址。
+
+**位置**：`include/arch/x86_64/mm_vm.h:21`
+
+<a id="fn-include-arch-x86_64-mm_vm.h-26"></a>
+
+### `x86_next_level`
+
+```c
+static inline uint64_t *x86_next_level(uint64_t pte)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+用 x86_pte_to_pa 取出下一级页表物理地址并转成虚拟地址返回。
+
+**位置**：`include/arch/x86_64/mm_vm.h:26`
+
+<a id="fn-include-arch-x86_64-mm_vm.h-37"></a>
+
+### `mm_vm_read_kernel_root_phys`
+
+```c
+static inline uint64_t mm_vm_read_kernel_root_phys(void)
+```
+
+mm_vm_read_kernel_root_phys - 读当前 CR3 指向的根页表(PML4)物理地址
+
+只在 boot/MM 初始化、CPU 仍跑在内核地址空间时调用一次；运行期
+由 mm_vm_kernel_root_phys() 返回记录下来的副本。
+
+**位置**：`include/arch/x86_64/mm_vm.h:37`
+
+<a id="fn-include-arch-x86_64-mm_vm.h-56"></a>
+
+### `mm_vm_set_pte_keep`
+
+```c
+static inline void mm_vm_set_pte_keep(void *pgd, uint64_t vaddr)
+```
+
+把一页标成"设备缓冲"：unmap 时只拆映射, 不释放页也不碰引用计数。
+用于把 dma_buf / ION 的缓冲区映射进用户态 —— 页归句柄所有, 不归映射。
+语义与 PTE_NOFREE 的区别见 mmu.h 里 PTE_KEEP 的说明。
+
+**位置**：`include/arch/x86_64/mm_vm.h:56`
+
+<a id="mod-include-arch-x86_64-mmu.h"></a>
+
+## include/arch/x86_64/mmu.h — ══════════════════════════════════════════════════════════════════
+
+`include/arch/x86_64/mmu.h` · 8 个函数 · 8 个有说明 · 285 行
+
+x86_64 页表结构(4 级页表)
+══════════════════════════════════════════════════════════════════
+
+虚拟地址布局(48 位)：
+[47:39] PML4  (Page Map Level 4)      - 9 bits, 512 entries
+[38:30] PDPT  (Page Directory Pointer) - 9 bits, 512 entries
+[29:21] PD    (Page Directory)         - 9 bits, 512 entries
+[20:12] PT    (Page Table)             - 9 bits, 512 entries
+[11:0]  Offset                         - 12 bits
+
+内核映射：
+内核虚拟地址：0xffff800000000000 - 0xffffffffffffffff (高 128 TB)
+用户虚拟地址：0x0000000000000000 - 0x00007fffffffffff (低 128 TB)
+
+<a id="fn-include-arch-x86_64-mmu.h-178"></a>
+
+### `x86_pte_to_pa`
+
+```c
+static inline uint64_t x86_pte_to_pa(uint64_t pte)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+用 PTE_ADDR_MASK 掩掉标志位，取页表项中的物理地址。
+
+**位置**：`include/arch/x86_64/mmu.h:178`
+
+<a id="fn-include-arch-x86_64-mmu.h-183"></a>
+
+### `x86_make_table_pte`
+
+```c
+static inline uint64_t x86_make_table_pte(uint64_t pa)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+把物理地址加上 PRESENT、WRITABLE、USER 位构造表型页表项。
+
+**位置**：`include/arch/x86_64/mmu.h:183`
+
+<a id="fn-include-arch-x86_64-mmu.h-188"></a>
+
+### `x86_pte_is_leaf`
+
+```c
+static inline bool x86_pte_is_leaf(uint64_t pte, int level)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+level 大于 0 且有 HUGE 位判为叶子；level 为 0 时看 PRESENT 位，其余返回 false。
+
+**位置**：`include/arch/x86_64/mmu.h:188`
+
+<a id="fn-include-arch-x86_64-mmu.h-200"></a>
+
+### `read_cr3`
+
+```c
+static inline uint64_t read_cr3(void)
+```
+
+读取 CR3(当前页表基址)
+
+**位置**：`include/arch/x86_64/mmu.h:200`
+
+<a id="fn-include-arch-x86_64-mmu.h-208"></a>
+
+### `write_cr3`
+
+```c
+static inline void write_cr3(uint64_t value)
+```
+
+写入 CR3(切换页表)
+
+**位置**：`include/arch/x86_64/mmu.h:208`
+
+<a id="fn-include-arch-x86_64-mmu.h-214"></a>
+
+### `flush_tlb`
+
+```c
+static inline void flush_tlb(void)
+```
+
+刷新 TLB
+
+**位置**：`include/arch/x86_64/mmu.h:214`
+
+<a id="fn-include-arch-x86_64-mmu.h-221"></a>
+
+### `flush_tlb_single`
+
+```c
+static inline void flush_tlb_single(uint64_t vaddr)
+```
+
+刷新单个虚拟地址的 TLB
+
+**位置**：`include/arch/x86_64/mmu.h:221`
+
+<a id="fn-include-arch-x86_64-mmu.h-273"></a>
+
+### `x86_copy_kernel_mappings`
+
+```c
+static inline void x86_copy_kernel_mappings(uint64_t *user_pml4, const uint64_t *kernel_pml4)
+```
+
+x86_copy_kernel_mappings - 将内核高半区 PML4[256..511] 复制到用户页表
+@user_pml4:   目标用户 PML4(内核虚拟地址, uint64_t[512])
+@kernel_pml4: 源内核 PML4(内核虚拟地址, uint64_t[512])
+
+**位置**：`include/arch/x86_64/mmu.h:273`
+
+<a id="mod-include-arch-x86_64-spin_lock_impl.h"></a>
+
+## include/arch/x86_64/spin_lock_impl.h — x86_64 架构的spinlock实现
+
+`include/arch/x86_64/spin_lock_impl.h` · 6 个函数 · 6 个有说明 · 98 行
+
+使用 xchg 指令实现原子交换
+使用 mfence 指令进行内存屏障
+
+<a id="fn-include-arch-x86_64-spin_lock_impl.h-25"></a>
+
+### `spin_lock`
+
+```c
+static inline void spin_lock(spinlock_t *lock)
+```
+
+x86_64 的原子操作使用 xchg 指令
+xchg 会自动锁定总线, 保证原子性
+
+<details>
+<summary>函数内备注（4 条）</summary>
+
+**第 29 行（行尾）**
+
+> 原子交换：val = lock-&gt;lock; lock-&gt;lock = 1
+
+**第 30 行（行尾）**
+
+> 测试 val 是否为 0
+
+**第 31 行（行尾）**
+
+> 如果不为 0, 说明锁占用, 继续自旋
+
+**第 32 行（行尾）**
+
+> 内存屏障, 确保后续操作有序
+
+</details>
+
+**位置**：`include/arch/x86_64/spin_lock_impl.h:25`
+
+<a id="fn-include-arch-x86_64-spin_lock_impl.h-38"></a>
+
+### `spin_trylock`
+
+```c
+static inline int spin_trylock(spinlock_t *lock)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+关抢占后用 lock xchg 尝试把锁置 1，成功返回 0，失败恢复抢占并返回 1。
+
+<details>
+<summary>函数内备注（4 条）</summary>
+
+**第 43 行（行尾）**
+
+> 尝试获取锁
+
+**第 45 行（行尾）**
+
+> result = 0
+
+**第 46 行（行尾）**
+
+> 如果非 0, 跳转
+
+**第 48 行（行尾）**
+
+> result = 1
+
+</details>
+
+**位置**：`include/arch/x86_64/spin_lock_impl.h:38`
+
+<a id="fn-include-arch-x86_64-spin_lock_impl.h-58"></a>
+
+### `spin_unlock`
+
+```c
+static inline void spin_unlock(spinlock_t *lock)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+执行 mfence 后把锁字清零释放，并重新开启抢占。
+
+<details>
+<summary>函数内备注（2 条）</summary>
+
+**第 60 行（行尾）**
+
+> 内存屏障
+
+**第 61 行（行尾）**
+
+> lock-&gt;lock = 0
+
+</details>
+
+**位置**：`include/arch/x86_64/spin_lock_impl.h:58`
+
+<a id="fn-include-arch-x86_64-spin_lock_impl.h-77"></a>
+
+### `spin_lock_irqsave`
+
+```c
+static inline void spin_lock_irqsave(spinlock_t *lock, uint64_t *flags)
+```
+
+带中断保护的 spinlock。
+
+中断状态存在调用点的局部变量里(由 *flags 带回), 不再存进锁对象 ——
+存进锁对象时, SMP 下争锁的另一颗 CPU 会把它的 flags 覆盖上去, 解锁时
+恢复的就是别人的中断状态。中断原语本身统一来自
+include/arch/x86_64/exception_impl.h(arch_irq_save/restore)。
+
+**位置**：`include/arch/x86_64/spin_lock_impl.h:77`
+
+<a id="fn-include-arch-x86_64-spin_lock_impl.h-83"></a>
+
+### `spin_trylock_irqsave`
+
+```c
+static inline int spin_trylock_irqsave(spinlock_t *lock, uint64_t *flags)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+保存并关中断后尝试取锁，失败恢复中断返回 1，成功返回 0。
+
+**位置**：`include/arch/x86_64/spin_lock_impl.h:83`
+
+<a id="fn-include-arch-x86_64-spin_lock_impl.h-92"></a>
+
+### `spin_unlock_irqrestore`
+
+```c
+static inline void spin_unlock_irqrestore(spinlock_t *lock, uint64_t flags)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+先释放锁，再恢复调用方保存的中断状态。
+
+**位置**：`include/arch/x86_64/spin_lock_impl.h:92`
+
+<a id="mod-include-arch-x86_64-string_impl.h"></a>
+
+## include/arch/x86_64/string_impl.h — x86_64 架构的字符串函数优化实现
+
+`include/arch/x86_64/string_impl.h` · 2 个函数 · 2 个有说明 · 29 行
+
+目前转发到通用实现。要注意的是本架构内核编译带 `-mno-mmx -mno-sse`
+(见 Makefile), 所以要做 SSE2/AVX 版本, 得先给这几个函数所在的翻译单元
+单独开浮点/向量开关, 并按 aarch64 的做法把 FP 状态纳入上下文保存。
+
+<a id="fn-include-arch-x86_64-string_impl.h-19"></a>
+
+### `memcpy_arch`
+
+```c
+static inline void *memcpy_arch(void *dest, const void *src, size_t n)
+```
+
+x86_64 架构的字符串函数优化实现
+
+目前转发到通用实现。要注意的是本架构内核编译带 `-mno-mmx -mno-sse`
+(见 Makefile), 所以要做 SSE2/AVX 版本, 得先给这几个函数所在的翻译单元
+单独开浮点/向量开关, 并按 aarch64 的做法把 FP 状态纳入上下文保存。
+
+**位置**：`include/arch/x86_64/string_impl.h:19`
+
+<a id="fn-include-arch-x86_64-string_impl.h-24"></a>
+
+### `memset_arch`
+
+```c
+static inline void *memset_arch(void *s, int c, size_t n)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+转调 memset_generic 完成内存填充。
+
+**位置**：`include/arch/x86_64/string_impl.h:24`
+
+<a id="mod-include-arch-x86_64-syscall_abi.h"></a>
+
+## include/arch/x86_64/syscall_abi.h
+
+`include/arch/x86_64/syscall_abi.h` · 6 个函数 · 6 个有说明 · 83 行
+
+<a id="fn-include-arch-x86_64-syscall_abi.h-13"></a>
+
+### `syscall_abi_nr`
+
+```c
+static inline uint64_t syscall_abi_nr(const trap_frame_t *frame)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+从 trap frame 的 rax 读出系统调用号。
+
+<details>
+<summary>函数内备注（1 条）</summary>
+
+**第 15 行（行尾）**
+
+> syscall number in rax
+
+</details>
+
+**位置**：`include/arch/x86_64/syscall_abi.h:13`
+
+<a id="fn-include-arch-x86_64-syscall_abi.h-18"></a>
+
+### `syscall_abi_arg`
+
+```c
+static inline uint64_t syscall_abi_arg(const trap_frame_t *frame, int idx)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+按 idx 依次返回 rdi、rsi、rdx、r10、r8、r9，越界返回 0。
+
+**位置**：`include/arch/x86_64/syscall_abi.h:18`
+
+<a id="fn-include-arch-x86_64-syscall_abi.h-38"></a>
+
+### `syscall_abi_set_ret`
+
+```c
+static inline void syscall_abi_set_ret(trap_frame_t *frame, uint64_t ret)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+把返回值写入 trap frame 的 rax。
+
+**位置**：`include/arch/x86_64/syscall_abi.h:38`
+
+<a id="fn-include-arch-x86_64-syscall_abi.h-43"></a>
+
+### `syscall_abi_ip`
+
+```c
+static inline uint64_t syscall_abi_ip(const trap_frame_t *frame)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+返回 trap frame 中保存的 rip。
+
+**位置**：`include/arch/x86_64/syscall_abi.h:43`
+
+<a id="fn-include-arch-x86_64-syscall_abi.h-48"></a>
+
+### `syscall_abi_user_sp`
+
+```c
+static inline uint64_t syscall_abi_user_sp(const trap_frame_t *frame)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+返回 trap frame 中保存的 rsp。
+
+**位置**：`include/arch/x86_64/syscall_abi.h:48`
+
+<a id="fn-include-arch-x86_64-syscall_abi.h-61"></a>
+
+### `syscall_abi_reset_frame_for_exec`
+
+```c
+static inline void syscall_abi_reset_frame_for_exec(trap_frame_t *frame, uint64_t entry, uint64_t sp)
+```
+
+syscall_abi_reset_frame_for_exec - execve 成功后把 trap frame 重置成
+新程序的初始用户现场
+
+syscall_wrapper.S 的返回路径用 trap frame 里的 RCX/R11/RSP 做 sysretq，
+所以入口/栈/标志位都从这里取。FP 状态没有 per-task 保存，不在本函数
+范围内(和现有首次进入路径一致)。CS/SS 保持入口压入的 0x2B/0x23。
+
+<details>
+<summary>函数内备注（1 条）</summary>
+
+**第 79 行（行尾）**
+
+> IF=1, Reserved=1
+
+</details>
+
+**位置**：`include/arch/x86_64/syscall_abi.h:61`
+
+<a id="mod-include-arch-x86_64-vmx.h"></a>
+
+## include/arch/x86_64/vmx.h — Intel VMX 常量, VMCS 字段编码与辅助类型
+
+`include/arch/x86_64/vmx.h` · 18 个函数 · 18 个有说明 · 464 行
+
+对标 ref/bare-vm/arch/x86_64/include/vmx.h, 精简适配 Avatar OS。
+
+<a id="fn-include-arch-x86_64-vmx.h-319"></a>
+
+### `vmx_rdmsr`
+
+```c
+static inline uint64_t vmx_rdmsr(uint32_t idx)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+用 rdmsr 读指定 MSR，把高低 32 位拼成 64 位返回。
+
+**位置**：`include/arch/x86_64/vmx.h:319`
+
+<a id="fn-include-arch-x86_64-vmx.h-326"></a>
+
+### `vmx_wrmsr`
+
+```c
+static inline void vmx_wrmsr(uint32_t idx, uint64_t val)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+把 64 位值拆成高低 32 位，用 wrmsr 写入指定 MSR。
+
+**位置**：`include/arch/x86_64/vmx.h:326`
+
+<a id="fn-include-arch-x86_64-vmx.h-331"></a>
+
+### `vmx_read_cr0`
+
+```c
+static inline uint64_t vmx_read_cr0(void)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+用 mov 读取 CR0 并返回。
+
+**位置**：`include/arch/x86_64/vmx.h:331`
+
+<a id="fn-include-arch-x86_64-vmx.h-337"></a>
+
+### `vmx_read_cr3`
+
+```c
+static inline uint64_t vmx_read_cr3(void)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+用 mov 读取 CR3 并返回。
+
+**位置**：`include/arch/x86_64/vmx.h:337`
+
+<a id="fn-include-arch-x86_64-vmx.h-343"></a>
+
+### `vmx_read_cr4`
+
+```c
+static inline uint64_t vmx_read_cr4(void)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+用 mov 读取 CR4 并返回。
+
+**位置**：`include/arch/x86_64/vmx.h:343`
+
+<a id="fn-include-arch-x86_64-vmx.h-349"></a>
+
+### `vmx_write_cr0`
+
+```c
+static inline void vmx_write_cr0(uint64_t v)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+用 mov 把给定值写入 CR0，并附 memory 屏障。
+
+**位置**：`include/arch/x86_64/vmx.h:349`
+
+<a id="fn-include-arch-x86_64-vmx.h-353"></a>
+
+### `vmx_write_cr4`
+
+```c
+static inline void vmx_write_cr4(uint64_t v)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+用 mov 把给定值写入 CR4，并附 memory 屏障。
+
+**位置**：`include/arch/x86_64/vmx.h:353`
+
+<a id="fn-include-arch-x86_64-vmx.h-358"></a>
+
+### `vmx_read_rflags`
+
+```c
+static inline uint64_t vmx_read_rflags(void)
+```
+
+读 RFLAGS：与 arch_irq_flags() 是同一条指令, 直接转调, 不重复写汇编
+
+**位置**：`include/arch/x86_64/vmx.h:358`
+
+<a id="fn-include-arch-x86_64-vmx.h-362"></a>
+
+### `vmx_cpuid`
+
+```c
+static inline void vmx_cpuid(uint32_t op, uint32_t *eax, uint32_t *ebx, uint32_t *ecx, uint32_t *edx)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+以 op 为叶子、ecx 置 0 执行 cpuid，把各寄存器结果写回传入指针。
+
+**位置**：`include/arch/x86_64/vmx.h:362`
+
+<a id="fn-include-arch-x86_64-vmx.h-370"></a>
+
+### `vmcs_read`
+
+```c
+static inline uint64_t vmcs_read(vmcs_field_t enc)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+用 vmread 按编码读取 VMCS 字段值并返回。
+
+**位置**：`include/arch/x86_64/vmx.h:370`
+
+<a id="fn-include-arch-x86_64-vmx.h-377"></a>
+
+### `vmcs_write`
+
+```c
+static inline int vmcs_write(vmcs_field_t enc, uint64_t val)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+用 vmwrite 写 VMCS 字段，并用 setbe 捕获 CF/ZF 作为失败标志返回。
+
+**位置**：`include/arch/x86_64/vmx.h:377`
+
+<a id="fn-include-arch-x86_64-vmx.h-401"></a>
+
+### `vmx_on`
+
+```c
+static inline int vmx_on(uint64_t pa)
+```
+
+返回 0 = 成功；非 0 = 指令失败(CF/ZF)
+
+**位置**：`include/arch/x86_64/vmx.h:401`
+
+<a id="fn-include-arch-x86_64-vmx.h-410"></a>
+
+### `vmcs_clear_pa`
+
+```c
+static inline int vmcs_clear_pa(uint64_t pa)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+先置 RFLAGS 的 CF/ZF，执行 vmclear 清除指定 VMCS，用 setbe 返回失败标志。
+
+**位置**：`include/arch/x86_64/vmx.h:410`
+
+<a id="fn-include-arch-x86_64-vmx.h-419"></a>
+
+### `vmcs_load_pa`
+
+```c
+static inline int vmcs_load_pa(uint64_t pa)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+先置 RFLAGS 的 CF/ZF，执行 vmptrld 加载指定 VMCS 物理地址，用 setbe 返回失败标志。
+
+**位置**：`include/arch/x86_64/vmx.h:419`
+
+<a id="fn-include-arch-x86_64-vmx.h-433"></a>
+
+### `vmx_sgdt`
+
+```c
+static inline void vmx_sgdt(vmx_desc_ptr_t *desc)
+```
+
+SGDT/SIDT 写 10 字节：2 字节 limit + 8 字节 base。
+描述符结构必须 packed —— 默认对齐会让 base 落在 offset 8, 指令却按
+offset 2 写, 读出来就错位了。
+
+**位置**：`include/arch/x86_64/vmx.h:433`
+
+<a id="fn-include-arch-x86_64-vmx.h-438"></a>
+
+### `vmx_sidt`
+
+```c
+static inline void vmx_sidt(vmx_desc_ptr_t *desc)
+```
+
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+用 sidt 指令把 IDTR 内容写入给定描述符结构。
+
+**位置**：`include/arch/x86_64/vmx.h:438`
+
+<a id="fn-include-arch-x86_64-vmx.h-447"></a>
+
+### `vmx_read_cr2`
+
+```c
+static inline uint64_t vmx_read_cr2(void)
+```
+
+读 CR2。VM-exit 不保存/恢复 CR2, 所以 guest 缺页后退出到 VMM 时这里读到的
+仍是 guest 的缺页地址 —— 这是诊断 #PF 的唯一窗口(见 vmx.c 的 EXC_NMI 分支)。
+
+**位置**：`include/arch/x86_64/vmx.h:447`
+
+<a id="fn-include-arch-x86_64-vmx.h-456"></a>
+
+### `vmx_read_tr`
+
+```c
+static inline uint16_t vmx_read_tr(void)
+```
+
+读 TR 选择子。用来校验 VM-exit 装回来的 TSS 是不是本核的(见 vmx.c)。
+
+**位置**：`include/arch/x86_64/vmx.h:456`
 
 <a id="mod-include-bitmap.h"></a>
 
@@ -3200,1469 +6174,6 @@ static inline uint32_t npu_mmu_mk_pte(uint64_t pa, int writable)
 
 **位置**：`include/npu/npu_mmu.h:113`
 
-<a id="mod-include-riscv64-barrier_impl.h"></a>
-
-## include/riscv64/barrier_impl.h — RISC-V 64位内存屏障实现
-
-`include/riscv64/barrier_impl.h` · 7 个函数 · 7 个有说明 · 87 行
-
-使用 FENCE 指令
-
-<a id="fn-include-riscv64-barrier_impl.h-22"></a>
-
-### `barrier_data`
-
-```c
-static inline void barrier_data(void)
-```
-
-barrier_data - 完整数据内存屏障
-
-FENCE RW,RW: 读+写屏障
-
-**位置**：`include/riscv64/barrier_impl.h:22`
-
-<a id="fn-include-riscv64-barrier_impl.h-32"></a>
-
-### `barrier_data_read`
-
-```c
-static inline void barrier_data_read(void)
-```
-
-barrier_data_read - 读数据屏障
-
-FENCE R,R: 读屏障
-
-**位置**：`include/riscv64/barrier_impl.h:32`
-
-<a id="fn-include-riscv64-barrier_impl.h-42"></a>
-
-### `barrier_data_write`
-
-```c
-static inline void barrier_data_write(void)
-```
-
-barrier_data_write - 写数据屏障
-
-FENCE W,W: 写屏障
-
-**位置**：`include/riscv64/barrier_impl.h:42`
-
-<a id="fn-include-riscv64-barrier_impl.h-55"></a>
-
-### `barrier_instr_full`
-
-```c
-static inline void barrier_instr_full(void)
-```
-
-barrier_instr_full - 完整指令同步屏障
-
-FENCE IORW,IORW: IO + 读 + 写 屏障
-用于同步指令和数据流
-
-**位置**：`include/riscv64/barrier_impl.h:55`
-
-<a id="fn-include-riscv64-barrier_impl.h-60"></a>
-
-### `barrier_sync`
-
-```c
-static inline void barrier_sync(void)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-执行 fence iorw, iorw 指令完成 RISC-V 全序内存屏障。
-
-**位置**：`include/riscv64/barrier_impl.h:60`
-
-<a id="fn-include-riscv64-barrier_impl.h-72"></a>
-
-### `barrier_acquire`
-
-```c
-static inline void barrier_acquire(void)
-```
-
-barrier_acquire - 获取语义屏障
-
-FENCE R,R: 读屏障确保加载操作完成
-
-**位置**：`include/riscv64/barrier_impl.h:72`
-
-<a id="fn-include-riscv64-barrier_impl.h-82"></a>
-
-### `barrier_release`
-
-```c
-static inline void barrier_release(void)
-```
-
-barrier_release - 释放语义屏障
-
-FENCE WW,WW: 写屏障确保存储操作对其他核心可见
-
-**位置**：`include/riscv64/barrier_impl.h:82`
-
-<a id="mod-include-riscv64-cache_impl.h"></a>
-
-## include/riscv64/cache_impl.h — RISC-V 64 的 cache 操作实现
-
-`include/riscv64/cache_impl.h` · 7 个函数 · 7 个有说明 · 90 行
-
-本文件只做动词 → 原语的映射, 具体指令由 rvplatform.h 按平台给出
-(Zicbom / T-Head 私有 / 无 CMO 三种情况)。这样平台差异不会渗进通用动词：
-以前这里用 `#if PLATFORM_SG2002` 把三个 range 动词全部换成了"整 cache 刷",
-于是 clean_dcache_range() 在 SG2002 上既丢了区间语义, 也没法按需清理。
-
-<a id="fn-include-riscv64-cache_impl.h-33"></a>
-
-### `__clean_dcache_one`
-
-```c
-static inline void __clean_dcache_one(const void *addr)
-```
-
-__clean_dcache_one - 清理单个缓存行(写回内存)
-
-**位置**：`include/riscv64/cache_impl.h:33`
-
-<a id="fn-include-riscv64-cache_impl.h-41"></a>
-
-### `__invalidate_dcache_one`
-
-```c
-static inline void __invalidate_dcache_one(const void *addr)
-```
-
-__invalidate_dcache_one - 使单个缓存行失效(不写回, 脏数据会丢)
-
-**位置**：`include/riscv64/cache_impl.h:41`
-
-<a id="fn-include-riscv64-cache_impl.h-52"></a>
-
-### `__clean_and_invalidate_dcache_one`
-
-```c
-static inline void __clean_and_invalidate_dcache_one(const void *addr)
-```
-
-__clean_and_invalidate_dcache_one - 写回并使单个缓存行失效
-
-T-Head 上用一条 `dcache.civa`：原来的写法是 cva 之后再 iva,
-两条指令之间别的 agent 可能把该行弄脏, 语义上不等价。
-
-**位置**：`include/riscv64/cache_impl.h:52`
-
-<a id="fn-include-riscv64-cache_impl.h-59"></a>
-
-### `get_cache_line_size`
-
-```c
-static inline size_t get_cache_line_size(void)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-返回全局缓存行大小 g_cache_line_size。
-
-**位置**：`include/riscv64/cache_impl.h:59`
-
-<a id="fn-include-riscv64-cache_impl.h-64"></a>
-
-### `init_cache`
-
-```c
-static inline void init_cache(void)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-把全局缓存行大小设为 rv_cmo_block_size() 返回的平台 CMO 块大小。
-
-**位置**：`include/riscv64/cache_impl.h:64`
-
-<a id="fn-include-riscv64-cache_impl.h-74"></a>
-
-### `sync_caches`
-
-```c
-static inline void sync_caches(void)
-```
-
-sync_caches - 等待之前的 cache 操作完成
-
-设备/CMO 之后的完成屏障；没有 CMO 的平台上这就是唯一的动作。
-
-**位置**：`include/riscv64/cache_impl.h:74`
-
-<a id="fn-include-riscv64-cache_impl.h-85"></a>
-
-### `sync_icache_all`
-
-```c
-static inline void sync_icache_all(void)
-```
-
-sync_icache_all - 让刚写入的指令对所有核可见
-
-RISC-V 上 `fence.i` 是标准做法；但 C906 这类核上 fence.i 不足以保证
-I-cache 可见(厂商私有 icache.iall + sync.i 才是), 由 rvplatform 层处理。
-
-**位置**：`include/riscv64/cache_impl.h:85`
-
-<a id="mod-include-riscv64-cpu_impl.h"></a>
-
-## include/riscv64/cpu_impl.h — RISC-V 64 per-CPU 指针 / 硬件 ID 实现。
-
-`include/riscv64/cpu_impl.h` · 3 个函数 · 3 个有说明 · 40 行
-
-内核态用 tp 保存 cpu_t*。进入用户态前 switch.S 会恢复/清空用户 tp；
-U->S trap 的 C 入口会根据 sscratch 中的内核栈恢复内核 tp。
-
-<a id="fn-include-riscv64-cpu_impl.h-22"></a>
-
-### `arch_cpu_self_set`
-
-```c
-static inline void arch_cpu_self_set(struct cpu *self)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-用内联汇编把 self 指针写入 tp 寄存器，并附 memory 屏障。
-
-**位置**：`include/riscv64/cpu_impl.h:22`
-
-<a id="fn-include-riscv64-cpu_impl.h-27"></a>
-
-### `arch_cpu_self_get`
-
-```c
-static inline struct cpu *arch_cpu_self_get(void)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-从 tp 寄存器读回 struct cpu 指针并返回。
-
-**位置**：`include/riscv64/cpu_impl.h:27`
-
-<a id="fn-include-riscv64-cpu_impl.h-35"></a>
-
-### `arch_cpu_hw_id`
-
-```c
-static inline uint64_t arch_cpu_hw_id(void)
-```
-
-mhartid 在 S-mode 不可读；hartid 由 OpenSBI/HSM 传入并存入 cpu_t::hw_id。
-
-**位置**：`include/riscv64/cpu_impl.h:35`
-
-<a id="mod-include-riscv64-exception_impl.h"></a>
-
-## include/riscv64/exception_impl.h
-
-`include/riscv64/exception_impl.h` · 6 个函数 · 6 个有说明 · 84 行
-
-<a id="fn-include-riscv64-exception_impl.h-26"></a>
-
-### `arch_irq_flags`
-
-```c
-static inline uint64_t arch_irq_flags(void)
-```
-
-读当前 sstatus(不改动状态)
-
-**位置**：`include/riscv64/exception_impl.h:26`
-
-<a id="fn-include-riscv64-exception_impl.h-36"></a>
-
-### `arch_irq_is_enabled`
-
-```c
-static inline int arch_irq_is_enabled(void)
-```
-
-读是否允许 IRQ(抢占判断用)
-
-**位置**：`include/riscv64/exception_impl.h:36`
-
-<a id="fn-include-riscv64-exception_impl.h-42"></a>
-
-### `arch_irq_save`
-
-```c
-static inline uint64_t arch_irq_save(void)
-```
-
-关中断并返回旧 sstatus(必须用 arch_irq_restore 配对恢复)
-
-<details>
-<summary>函数内备注（1 条）</summary>
-
-**第 46 行**
-
-> csrrci: 读出旧值后清除 bit1 (SIE)
-
-</details>
-
-**位置**：`include/riscv64/exception_impl.h:42`
-
-<a id="fn-include-riscv64-exception_impl.h-57"></a>
-
-### `arch_irq_restore`
-
-```c
-static inline void arch_irq_restore(uint64_t flags)
-```
-
-恢复到 arch_irq_save()/arch_irq_flags() 取到的状态
-
-**位置**：`include/riscv64/exception_impl.h:57`
-
-<a id="fn-include-riscv64-exception_impl.h-67"></a>
-
-### `arch_irq_disable`
-
-```c
-static inline void arch_irq_disable(void)
-```
-
-无条件关中断(不需要旧状态时用)
-
-**位置**：`include/riscv64/exception_impl.h:67`
-
-<a id="fn-include-riscv64-exception_impl.h-76"></a>
-
-### `arch_irq_enable`
-
-```c
-static inline void arch_irq_enable(void)
-```
-
-无条件开中断(新任务首次运行时使用)
-
-**位置**：`include/riscv64/exception_impl.h:76`
-
-<a id="mod-include-riscv64-halt_arch.h"></a>
-
-## include/riscv64/halt_arch.h — RISC-V 64 位架构特定的 halt 实现
-
-`include/riscv64/halt_arch.h` · 1 个函数 · 1 个有说明 · 47 行
-
-<a id="fn-include-riscv64-halt_arch.h-22"></a>
-
-### `arch_halt`
-
-```c
-static inline void arch_halt(void)
-```
-
-arch_halt - 停止 RISC-V 处理器
-使用 WFI (Wait For Interrupt) 指令进入低功耗状态
-在中断禁用的情况下, WFI 会永久停止
-
-<details>
-<summary>函数内备注（5 条）</summary>
-
-**第 24 行**
-
-> 内存屏障, 确保所有操作完成
-
-**第 27 行**
-
-> 禁用中断。
-
-> 这里原本写的是 `csrci mstatus, 0x8`(MIE)—— 两处都错：
-> 1) MIE 是 M 模式的中断使能位, 本内核跑在 S 模式, 该用 sstatus.SIE；
-> 2) S 模式访问 mstatus 会触发非法指令异常, &quot;关中断&quot;实际没生效。
-> 统一走 arch_irq_disable()。
-
-**第 37 行**
-
-> WFI - Wait For Interrupt
-
-**第 38 行**
-
-> 在中断禁用的情况下, 处理器会永久停止
-
-**第 41 行**
-
-> 如果 WFI 被唤醒(不应该发生), 死循环
-
-</details>
-
-**位置**：`include/riscv64/halt_arch.h:22`
-
-<a id="mod-include-riscv64-hext.h"></a>
-
-## include/riscv64/hext.h — RISC-V Hypervisor Extension (H-ext) CSR 定义
-
-`include/riscv64/hext.h` · 9 个函数 · 9 个有说明 · 322 行
-
-RISC-V Privileged Spec 1.12 §19-20 (H-extension)
-当内核运行在 HS-mode 时, 使用这些 CSR 管理 VS-mode guest。
-
-特权级对应关系：
-HS-mode  = Hypervisor Supervisor(本内核运行在此)
-VS-mode  = Virtual Supervisor(guest OS 运行在此)
-VU-mode  = Virtual User(guest 用户进程)
-U-mode   = 普通用户进程(非虚拟化, 直接 ecall 到 HS-mode)
-
-<a id="fn-include-riscv64-hext.h-240"></a>
-
-### `hext_read_hvip`
-
-```c
-static inline uint64_t hext_read_hvip(void)
-```
-
-注：本工具链(gcc/as)的 RISC-V 汇编器不识别 hvip/hie 的符号名
-(与 hgatp 同理), 必须用数值 CSR 地址 + 内联汇编；数值定义在 csr.h。
-
-**位置**：`include/riscv64/hext.h:240`
-
-<a id="fn-include-riscv64-hext.h-247"></a>
-
-### `hext_set_hvip_bits`
-
-```c
-static inline void hext_set_hvip_bits(uint64_t bits)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-用 csrs 指令向 0x645（HVIP）寄存器置位给定比特。
-
-**位置**：`include/riscv64/hext.h:247`
-
-<a id="fn-include-riscv64-hext.h-252"></a>
-
-### `hext_clear_hvip_bits`
-
-```c
-static inline void hext_clear_hvip_bits(uint64_t bits)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-用 csrc 指令清除 0x645（HVIP）寄存器中给定比特。
-
-**位置**：`include/riscv64/hext.h:252`
-
-<a id="fn-include-riscv64-hext.h-257"></a>
-
-### `hext_set_hie_bits`
-
-```c
-static inline void hext_set_hie_bits(uint64_t bits)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-用 csrs 指令置位 0x604（HIE）寄存器中给定比特。
-
-**位置**：`include/riscv64/hext.h:257`
-
-<a id="fn-include-riscv64-hext.h-271"></a>
-
-### `hext_set_vs_software_irq`
-
-```c
-static inline void hext_set_vs_software_irq(int pending)
-```
-
-设置/清除 VS 软件中断挂起(SBI IPI 的落点)。
-
-与 vsip.SSIP 的关系(见 docs/vmm/RISCV64_GUEST_LINUX.md「多 vCPU」一节)：
-- HS-mode 置 hvip.VSSIP ⇒ VS-mode 的 sip.SSIP 读到 1；
-- guest 在 VS-mode 清 sip.SSIP 会**同时清掉 hvip.VSSIP**(两者是同一个
-挂起位的两个视图)，所以 VMM 必须在每次 exit 时回读 hvip 来同步自己的
-软件 pending —— 只清不清软件状态会导致 IPI 永远重投(IPI 风暴)。
-
-**位置**：`include/riscv64/hext.h:271`
-
-<a id="fn-include-riscv64-hext.h-280"></a>
-
-### `hext_set_vs_timer_irq`
-
-```c
-static inline void hext_set_vs_timer_irq(int pending)
-```
-
-设置/清除 VS 定时器中断挂起
-
-**位置**：`include/riscv64/hext.h:280`
-
-<a id="fn-include-riscv64-hext.h-289"></a>
-
-### `hext_set_vs_external_irq`
-
-```c
-static inline void hext_set_vs_external_irq(int pending)
-```
-
-设置/清除 VS 外部中断挂起
-
-**位置**：`include/riscv64/hext.h:289`
-
-<a id="fn-include-riscv64-hext.h-312"></a>
-
-### `hext_fence_i`
-
-```c
-static inline void hext_fence_i(void)
-```
-
-远端 fence 的「执行端」(SBI RFENCE 的落点)
-
-SBI 的 remote fence.i / remote sfence.vma 要求**目标 hart**执行对应的
-失效指令。本 VMM 的 vCPU 是宿主 hart 上分时运行的内核任务，没法在
-收到请求的瞬间替对方执行，所以请求先记在目标 vCPU 上(remote_fence),
-由它下一次进 guest 前在这里补执行 —— 那一刻 hgatp 已经切到本 VM
-(见 hext_run.c 的 hext_per_hart_csrs_ensure), hfence.vvma 才有正确
-的 VMID 上下文。
-
-hfence.vvma 的助记符在 -march=rv64gc 下不被汇编器识别, 与 hfence.gvma
-一样用 .insn 数值编码：funct7=0x11, funct3=0, rd/rs1/rs2=x0(全刷)。
-这里做了「忽略地址/ASID, 一律全刷」的保守简化 —— 语义上永远安全,
-代价只是 guest 换页时的 TLB 命中率。
-
-**位置**：`include/riscv64/hext.h:312`
-
-<a id="fn-include-riscv64-hext.h-317"></a>
-
-### `hext_hfence_vvma_all`
-
-```c
-static inline void hext_hfence_vvma_all(void)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-发出 .insn 编码的 hfence.vvma 全刷指令并附 memory 屏障。
-
-**位置**：`include/riscv64/hext.h:317`
-
-<a id="mod-include-riscv64-mm_vm.h"></a>
-
-## include/riscv64/mm_vm.h — RISC-V Sv39 页表操作接口
-
-`include/riscv64/mm_vm.h` · 3 个函数 · 3 个有说明 · 73 行
-
-本头文件由 mm_vm.h 包含, phys_to_virt/virt_to_phys 已在包含前定义。
-实现位于 kernel/mm/riscv64/vmm.c。
-
-<a id="fn-include-riscv64-mm_vm.h-21"></a>
-
-### `rv_pa_to_kva`
-
-```c
-static inline void *rv_pa_to_kva(uint64_t pa)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-直接转调 phys_to_virt，把物理地址换成内核虚拟地址。
-
-**位置**：`include/riscv64/mm_vm.h:21`
-
-<a id="fn-include-riscv64-mm_vm.h-26"></a>
-
-### `rv_next_level`
-
-```c
-static inline uint64_t *rv_next_level(uint64_t pte)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-先用 rv_pte_to_pa 取页表项中的物理页基址，再转成内核虚拟地址作为下一级表指针。
-
-**位置**：`include/riscv64/mm_vm.h:26`
-
-<a id="fn-include-riscv64-mm_vm.h-45"></a>
-
-### `mm_vm_set_pte_keep`
-
-```c
-static inline void mm_vm_set_pte_keep(void *pgd, uint64_t vaddr)
-```
-
-把一页标成"设备缓冲"：unmap 时只拆映射, 不释放页也不碰引用计数。
-用于把 dma_buf / ION 的缓冲区映射进用户态 —— 页归句柄所有, 不归映射。
-语义与 RV_PTE_NOFREE 的区别见 mmu.h 里 RV_PTE_KEEP 的说明。
-
-**位置**：`include/riscv64/mm_vm.h:45`
-
-<a id="mod-include-riscv64-mmu.h"></a>
-
-## include/riscv64/mmu.h — ── PTE 工具函数(定义在 pte.h；这里保留兼容包装)────────────────
-
-`include/riscv64/mmu.h` · 3 个函数 · 3 个有说明 · 35 行
-
-<a id="fn-include-riscv64-mmu.h-15"></a>
-
-### `rv_pte_to_pa`
-
-```c
-static inline uint64_t rv_pte_to_pa(uint64_t pte)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-转调 RV_PTE_TO_PA 宏从页表项中提取物理地址。
-
-**位置**：`include/riscv64/mmu.h:15`
-
-<a id="fn-include-riscv64-mmu.h-20"></a>
-
-### `rv_make_table_pte`
-
-```c
-static inline uint64_t rv_make_table_pte(uint64_t pa)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-用 RV_PTE_FROM_PA 把物理地址转成带 V 位的表型页表项。
-
-**位置**：`include/riscv64/mmu.h:20`
-
-<a id="fn-include-riscv64-mmu.h-25"></a>
-
-### `rv_pte_is_leaf`
-
-```c
-static inline bool rv_pte_is_leaf(uint64_t pte)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-转调 RV_PTE_IS_LEAF 宏判断页表项是否为叶子项。
-
-**位置**：`include/riscv64/mmu.h:25`
-
-<a id="mod-include-riscv64-rvplatform.h"></a>
-
-## include/riscv64/rvplatform.h — RISC-V 平台上实际可用的 cache 管理指令(CMO)
-
-`include/riscv64/rvplatform.h` · 21 个函数 · 21 个有说明 · 210 行
-
-为什么只有 RISC-V 需要这一层：
-aarch64 的 `dc`/`ic` 与 x86_64 的 `clflush`/`wbinvd` 都是架构标准指令,
-缓存行大小也都能从 `CTR_EL0` / `CPUID` 读出来, 所以那两套的 cache_impl.h
-自己就够了。RISC-V 不一样：基座 ISA 里没有 CMO；标准扩展 Zicbom 是可选的；
-而 Zicbom 之前的厂商核(T-Head C906/C910…)用的是 CUSTOM-0 私有编码。
-同一份 cache_impl.h 要面对"标准扩展 / 厂商私有 / 什么都没有"三种情况,
-于是把"这台机器到底有什么 CMO"收敛到本文件, cache_impl.h 只做
-通用动词 → 本文件原语 的映射。
-
-新增平台时在这里加一个 RV_CMO_* 类别与对应分支, cache_impl.h 不用动。
-
-<a id="fn-include-riscv64-rvplatform.h-75"></a>
-
-### `rv_cmo_block_size`
-
-```c
-static inline size_t rv_cmo_block_size(void)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-返回平台常量 RV_CMO_BLOCK_SIZE 作为缓存块大小。
-
-**位置**：`include/riscv64/rvplatform.h:75`
-
-<a id="fn-include-riscv64-rvplatform.h-80"></a>
-
-### `rv_cmo_clean`
-
-```c
-static inline void rv_cmo_clean(void *addr)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-用 .insn 编码的 cbo.clean 指令把该地址所在缓存块写回。
-
-**位置**：`include/riscv64/rvplatform.h:80`
-
-<a id="fn-include-riscv64-rvplatform.h-85"></a>
-
-### `rv_cmo_invalidate`
-
-```c
-static inline void rv_cmo_invalidate(void *addr)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-用 .insn 编码的 cbo.inval 指令失效该地址所在缓存块。
-
-**位置**：`include/riscv64/rvplatform.h:85`
-
-<a id="fn-include-riscv64-rvplatform.h-90"></a>
-
-### `rv_cmo_clean_invalidate`
-
-```c
-static inline void rv_cmo_clean_invalidate(void *addr)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-用一条 civa 指令同时完成写回与失效，避免两步之间缓存行被弄脏。
-
-<details>
-<summary>函数内备注（1 条）</summary>
-
-**第 92 行**
-
-> civa：一条指令完成&quot;写回 + 失效&quot;。原来的代码发 cva 再发 iva,
-> 两次访问之间别的 agent 可能把行弄脏, 语义上不等价。
-
-</details>
-
-**位置**：`include/riscv64/rvplatform.h:90`
-
-<a id="fn-include-riscv64-rvplatform.h-109"></a>
-
-### `rv_cmo_invalidate_all`
-
-```c
-static inline void rv_cmo_invalidate_all(void)
-```
-
-注意： 整 cache 失效：编码 0x0030000b。
-
-原代码把这个编码命名为 `__c906_dcache_ciall`(清理+失效)并当作"清理"用在
-clean_dcache_range() 上。但按上表的 0x0030000b 是 iall(失效, 不写回) ——
-若表正确, 那条路径会丢弃脏数据。
-
-目前没有任何调用者：SG2002 的 range 操作已改为按 VA 的 cva/iva/civa。
-在查手册或上板确认之前：函数名按表(invalidate), 不要把它接到 clean 语义上；
-若确认表有误, 改这里的编码/命名, 并考虑是否需要 *_all 形式的清理。
-
-**位置**：`include/riscv64/rvplatform.h:109`
-
-<a id="fn-include-riscv64-rvplatform.h-114"></a>
-
-### `rv_cmo_sync`
-
-```c
-static inline void rv_cmo_sync(void)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-执行 fence rw,rw 作为缓存维护操作的完成屏障。
-
-**位置**：`include/riscv64/rvplatform.h:114`
-
-<a id="fn-include-riscv64-rvplatform.h-119"></a>
-
-### `rv_cmo_icache_sync`
-
-```c
-static inline void rv_cmo_icache_sync(void)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-依次执行 fence.i、厂商 icache.iall 与 sync.i 指令，确保新写入指令可见。
-
-<details>
-<summary>函数内备注（3 条）</summary>
-
-**第 121 行**
-
-> fence.i 在 C906 上不足以让新写入的指令可见(这正是下面两条厂商指令
-> 存在的原因, .S 的 exec/fork 返回路径里也是这么写的)。
-
-**第 125 行（行尾）**
-
-> icache.iall
-
-**第 126 行（行尾）**
-
-> sync.i
-
-</details>
-
-**位置**：`include/riscv64/rvplatform.h:119`
-
-<a id="fn-include-riscv64-rvplatform.h-134"></a>
-
-### `rv_cmo_block_size`
-
-```c
-static inline size_t rv_cmo_block_size(void)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-返回平台常量 RV_CMO_BLOCK_SIZE 作为缓存块大小。
-
-**位置**：`include/riscv64/rvplatform.h:134`
-
-<a id="fn-include-riscv64-rvplatform.h-139"></a>
-
-### `rv_cmo_clean`
-
-```c
-static inline void rv_cmo_clean(void *addr)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-用 .insn 编码的 cbo.clean 指令把该地址所在缓存块写回。
-
-**位置**：`include/riscv64/rvplatform.h:139`
-
-<a id="fn-include-riscv64-rvplatform.h-144"></a>
-
-### `rv_cmo_invalidate`
-
-```c
-static inline void rv_cmo_invalidate(void *addr)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-用 .insn 编码的 cbo.inval 指令失效该地址所在缓存块。
-
-**位置**：`include/riscv64/rvplatform.h:144`
-
-<a id="fn-include-riscv64-rvplatform.h-149"></a>
-
-### `rv_cmo_clean_invalidate`
-
-```c
-static inline void rv_cmo_clean_invalidate(void *addr)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-用一条 civa 指令同时完成写回与失效，避免两步之间缓存行被弄脏。
-
-**位置**：`include/riscv64/rvplatform.h:149`
-
-<a id="fn-include-riscv64-rvplatform.h-154"></a>
-
-### `rv_cmo_invalidate_all`
-
-```c
-static inline void rv_cmo_invalidate_all(void)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-空函数，注释说明 Zicbom 无整缓存失效指令故此处不实现。
-
-<details>
-<summary>函数内备注（1 条）</summary>
-
-**第 156 行**
-
-> Zicbom 只有按 block 的形式, 没有&quot;整 cache&quot;指令；真需要时按内存区间循环。
-> 这里显式不做(平台层另有 *_all 需求时再实现)。
-
-</details>
-
-**位置**：`include/riscv64/rvplatform.h:154`
-
-<a id="fn-include-riscv64-rvplatform.h-161"></a>
-
-### `rv_cmo_sync`
-
-```c
-static inline void rv_cmo_sync(void)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-执行 fence rw,rw 作为缓存维护操作的完成屏障。
-
-**位置**：`include/riscv64/rvplatform.h:161`
-
-<a id="fn-include-riscv64-rvplatform.h-166"></a>
-
-### `rv_cmo_icache_sync`
-
-```c
-static inline void rv_cmo_icache_sync(void)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-依次执行 fence.i、厂商 icache.iall 与 sync.i 指令，确保新写入指令可见。
-
-**位置**：`include/riscv64/rvplatform.h:166`
-
-<a id="fn-include-riscv64-rvplatform.h-174"></a>
-
-### `rv_cmo_block_size`
-
-```c
-static inline size_t rv_cmo_block_size(void)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-返回平台常量 RV_CMO_BLOCK_SIZE 作为缓存块大小。
-
-**位置**：`include/riscv64/rvplatform.h:174`
-
-<a id="fn-include-riscv64-rvplatform.h-183"></a>
-
-### `rv_cmo_clean`
-
-```c
-static inline void rv_cmo_clean(void *addr)
-```
-
-没有 CMO 的平台(QEMU virt)：DMA 由模拟器/硬件保证一致,
-这里全部是空操作。以前 clean 分支会发一条 `fence ow, ow` —— 那是访存顺序
-屏障, 不是 cache 操作, 对"清理"没有任何作用, 已去掉。
-
-**位置**：`include/riscv64/rvplatform.h:183`
-
-<a id="fn-include-riscv64-rvplatform.h-187"></a>
-
-### `rv_cmo_invalidate`
-
-```c
-static inline void rv_cmo_invalidate(void *addr)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-用 .insn 编码的 cbo.inval 指令失效该地址所在缓存块。
-
-**位置**：`include/riscv64/rvplatform.h:187`
-
-<a id="fn-include-riscv64-rvplatform.h-191"></a>
-
-### `rv_cmo_clean_invalidate`
-
-```c
-static inline void rv_cmo_clean_invalidate(void *addr)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-用一条 civa 指令同时完成写回与失效，避免两步之间缓存行被弄脏。
-
-**位置**：`include/riscv64/rvplatform.h:191`
-
-<a id="fn-include-riscv64-rvplatform.h-195"></a>
-
-### `rv_cmo_invalidate_all`
-
-```c
-static inline void rv_cmo_invalidate_all(void)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-空函数，注释说明 Zicbom 无整缓存失效指令故此处不实现。
-
-**位置**：`include/riscv64/rvplatform.h:195`
-
-<a id="fn-include-riscv64-rvplatform.h-198"></a>
-
-### `rv_cmo_sync`
-
-```c
-static inline void rv_cmo_sync(void)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-执行 fence rw,rw 作为缓存维护操作的完成屏障。
-
-**位置**：`include/riscv64/rvplatform.h:198`
-
-<a id="fn-include-riscv64-rvplatform.h-203"></a>
-
-### `rv_cmo_icache_sync`
-
-```c
-static inline void rv_cmo_icache_sync(void)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-依次执行 fence.i、厂商 icache.iall 与 sync.i 指令，确保新写入指令可见。
-
-**位置**：`include/riscv64/rvplatform.h:203`
-
-<a id="mod-include-riscv64-satp_utils.h"></a>
-
-## include/riscv64/satp_utils.h — RISC-V Sv39 satp 操作工具
-
-`include/riscv64/satp_utils.h` · 3 个函数 · 3 个有说明 · 66 行
-
-统一封装 satp 寄存器读写, PGD 物理地址转换以及用户页表内核映射复制。
-所有需要操作 satp 或初始化用户页表的内核代码必须通过此头文件。
-
-内核高半区映射的唯一来源是 riscv64/mem_layout.h 的
-RV_KERNEL_MAP_LIST；这里不再逐条硬编码 0x100..0x103。
-
-<a id="fn-include-riscv64-satp_utils.h-26"></a>
-
-### `satp_read_pgd_phys`
-
-```c
-static inline uint64_t satp_read_pgd_phys(void)
-```
-
-satp_read_pgd_phys - 读取当前 satp 并返回根页表物理地址
-
-**位置**：`include/riscv64/satp_utils.h:26`
-
-<a id="fn-include-riscv64-satp_utils.h-37"></a>
-
-### `pgd_phys_to_satp`
-
-```c
-static inline uint64_t pgd_phys_to_satp(uint64_t pgd_phys)
-```
-
-pgd_phys_to_satp - 根据根页表物理地址构造 Sv39 satp 值
-@pgd_phys: 根页表的物理地址(必须 4KB 对齐)
-
-**位置**：`include/riscv64/satp_utils.h:37`
-
-<a id="fn-include-riscv64-satp_utils.h-59"></a>
-
-### `riscv64_copy_kernel_mappings`
-
-```c
-static inline void riscv64_copy_kernel_mappings(uint64_t *user_l1, const uint64_t *kernel_l1)
-```
-
-riscv64_copy_kernel_mappings - 将内核高半区 L1 条目复制到用户页表
-@user_l1:   用户根页表(内核虚拟地址, uint64_t[512])
-@kernel_l1: 内核根页表(内核虚拟地址, uint64_t[512])
-
-必须在创建任何用户页表时调用：U 态发生 trap 时, CPU 通过 stvec
-(内核高半区虚拟地址)跳转, 若用户页表中无内核映射则立即失联。
-
-复制哪些条目完全由 RV_KERNEL_MAP_LIST(mem_layout.h)决定,
-mmu.S 的启动映射也用同一份列表, 避免两边漂移。
-
-**位置**：`include/riscv64/satp_utils.h:59`
-
-<a id="mod-include-riscv64-sbi.h"></a>
-
-## include/riscv64/sbi.h — SBI(Supervisor Binary Interface)常量 + 主机侧调用封装
-
-`include/riscv64/sbi.h` · 2 个函数 · 2 个有说明 · 130 行
-
-常量同时服务两类使用者:
-- 宿主 bring-up(kernel/task/cpu.c)：HSM/IPI 扩展走这里的内联封装;
-- VMM 的 guest 模拟(kernel/vmm/riscv64/hext_run.c)：guest 以
-a7=EID, a6=FID, a0..=参数 发 ecall, 宿主按同一组编号分派。
-
-以前这组常量写在 hext.h(那是 H-ext CSR 的头)里, 宿主侧又自己写了一份
-功能号 —— 和 csr.h 顶部记录的问题同源: 改一边漏一边不会报错。
-现在是唯一定义, hext.h 不再重复。
-
-调用约定: a7=扩展号(EID), a6=功能号(FID), a0..a5=参数; 返回值在 a0。
-
-<a id="fn-include-riscv64-sbi.h-95"></a>
-
-### `sbi_hart_start`
-
-```c
-static inline long sbi_hart_start(uint64_t hartid, uint64_t start_addr, uint64_t opaque)
-```
-
-sbi_hart_start - HSM 扩展: 启动指定 hart
-@hartid:      目标 hart 的硬件号(mhartid 在 S-mode 不可读, 由调用者保存)
-@start_addr:  入口的**物理**地址(SBI 在目标核的 MMU 配置前进入)
-@opaque:      透传给入口的 a1(本内核用它传逻辑 CPU 号)
-
-返回: SBI 返回码, 0 = 成功
-
-**位置**：`include/riscv64/sbi.h:95`
-
-<a id="fn-include-riscv64-sbi.h-116"></a>
-
-### `sbi_send_ipi`
-
-```c
-static inline long sbi_send_ipi(uint64_t hartid)
-```
-
-sbi_send_ipi - IPI 扩展: 向单个 hart 发软件中断
-@hartid: 目标 hart 的硬件号
-
-只支持 hartid < 64：这里把 "1 << hartid" 直接放在 a0(hart_mask 的低
-XLEN 位)。超过 64 个 hart 的平台需要改用 hart_mask_base + 稀疏掩码。
-
-返回: SBI 返回码, 0 = 成功, -1 = hartid 超出本封装范围
-
-**位置**：`include/riscv64/sbi.h:116`
-
-<a id="mod-include-riscv64-spin_lock_impl.h"></a>
-
-## include/riscv64/spin_lock_impl.h — RISC-V 64位架构的spinlock实现
-
-`include/riscv64/spin_lock_impl.h` · 6 个函数 · 6 个有说明 · 106 行
-
-使用LR/SC (Load-Reserved/Store-Conditional) 指令对
-使用fence指令进行内存屏障
-
-<a id="fn-include-riscv64-spin_lock_impl.h-29"></a>
-
-### `spin_lock`
-
-```c
-static inline void spin_lock(spinlock_t *lock)
-```
-
-RISC-V的原子操作使用LR/SC指令对
-lr.w: 加载保留 Load-Reserved
-sc.w: 条件存储 Store-Conditional
-如果在lr到sc之间有其他核心修改了地址, sc会失败
-
-<details>
-<summary>函数内备注（6 条）</summary>
-
-**第 33 行（行尾）**
-
-> tmp = 1
-
-**第 34 行（行尾）**
-
-> t0 = lock-&gt;lock (load-reserved)
-
-**第 35 行（行尾）**
-
-> if (t0 != 0) goto 1b (already locked)
-
-**第 36 行（行尾）**
-
-> tmp = atomic_exchange(lock-&gt;lock, 1)
-
-**第 37 行（行尾）**
-
-> if (t0 != 0) goto 1b (store failed, retry)
-
-**第 38 行（行尾）**
-
-> full memory barrier
-
-</details>
-
-**位置**：`include/riscv64/spin_lock_impl.h:29`
-
-<a id="fn-include-riscv64-spin_lock_impl.h-44"></a>
-
-### `spin_trylock`
-
-```c
-static inline int spin_trylock(spinlock_t *lock)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-先关抢占，用 lr.w/sc.w 原子尝试取锁，成功返回 0，失败恢复抢占并返回 1。
-
-<details>
-<summary>函数内备注（8 条）</summary>
-
-**第 48 行（行尾）**
-
-> tmp = 1
-
-**第 49 行（行尾）**
-
-> t0 = lock-&gt;lock
-
-**第 50 行（行尾）**
-
-> if locked, fail
-
-**第 51 行（行尾）**
-
-> try to acquire
-
-**第 52 行（行尾）**
-
-> if failed, retry
-
-**第 53 行（行尾）**
-
-> barrier on success
-
-**第 54 行（行尾）**
-
-> result = 0 (success)
-
-**第 56 行（行尾）**
-
-> result = 1 (failed)
-
-</details>
-
-**位置**：`include/riscv64/spin_lock_impl.h:44`
-
-<a id="fn-include-riscv64-spin_lock_impl.h-66"></a>
-
-### `spin_unlock`
-
-```c
-static inline void spin_unlock(spinlock_t *lock)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-执行 fence rw,rw 后把锁字清零释放，并重新开启抢占。
-
-<details>
-<summary>函数内备注（2 条）</summary>
-
-**第 68 行（行尾）**
-
-> memory barrier
-
-**第 69 行（行尾）**
-
-> lock-&gt;lock = 0
-
-</details>
-
-**位置**：`include/riscv64/spin_lock_impl.h:66`
-
-<a id="fn-include-riscv64-spin_lock_impl.h-85"></a>
-
-### `spin_lock_irqsave`
-
-```c
-static inline void spin_lock_irqsave(spinlock_t *lock, uint64_t *flags)
-```
-
-带中断保护的 spinlock。
-
-中断状态存在调用点的局部变量里(由 *flags 带回), 不再存进锁对象 ——
-存进锁对象时, SMP 下争锁的另一颗 CPU 会把它的 flags 覆盖上去, 解锁时
-恢复的就是别人的中断状态。中断原语本身统一来自
-include/riscv64/exception_impl.h(arch_irq_save/restore)。
-
-**位置**：`include/riscv64/spin_lock_impl.h:85`
-
-<a id="fn-include-riscv64-spin_lock_impl.h-91"></a>
-
-### `spin_trylock_irqsave`
-
-```c
-static inline int spin_trylock_irqsave(spinlock_t *lock, uint64_t *flags)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-保存并关闭中断后尝试取锁，失败时恢复中断并返回 1，成功返回 0。
-
-**位置**：`include/riscv64/spin_lock_impl.h:91`
-
-<a id="fn-include-riscv64-spin_lock_impl.h-100"></a>
-
-### `spin_unlock_irqrestore`
-
-```c
-static inline void spin_unlock_irqrestore(spinlock_t *lock, uint64_t flags)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-先释放锁，再恢复调用方保存的中断状态。
-
-**位置**：`include/riscv64/spin_lock_impl.h:100`
-
-<a id="mod-include-riscv64-string_impl.h"></a>
-
-## include/riscv64/string_impl.h — RISC-V 64 位架构的字符串函数优化实现
-
-`include/riscv64/string_impl.h` · 2 个函数 · 2 个有说明 · 31 行
-
-目前转发到通用实现。要做 V 扩展优化时, 在这里加 memcpy_vector()/memset_vector()
-并让下面两个函数按阈值分派即可(对照 include/aarch64/string_impl.h)。
-
-注意：通用实现用普通 GPR 做 8/4/2 字节访问, 只有在 src/dest 同时对齐时
-才加宽 —— SG2002/C906 这类真实硬件不保证支持非对齐访问, 不能想当然放宽。
-
-<a id="fn-include-riscv64-string_impl.h-21"></a>
-
-### `memcpy_arch`
-
-```c
-static inline void *memcpy_arch(void *dest, const void *src, size_t n)
-```
-
-RISC-V 64 位架构的字符串函数优化实现
-
-目前转发到通用实现。要做 V 扩展优化时, 在这里加 memcpy_vector()/memset_vector()
-并让下面两个函数按阈值分派即可(对照 include/aarch64/string_impl.h)。
-
-注意：通用实现用普通 GPR 做 8/4/2 字节访问, 只有在 src/dest 同时对齐时
-才加宽 —— SG2002/C906 这类真实硬件不保证支持非对齐访问, 不能想当然放宽。
-
-**位置**：`include/riscv64/string_impl.h:21`
-
-<a id="fn-include-riscv64-string_impl.h-26"></a>
-
-### `memset_arch`
-
-```c
-static inline void *memset_arch(void *s, int c, size_t n)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-直接转调 memset_generic 完成内存填充。
-
-**位置**：`include/riscv64/string_impl.h:26`
-
-<a id="mod-include-riscv64-syscall_abi.h"></a>
-
-## include/riscv64/syscall_abi.h
-
-`include/riscv64/syscall_abi.h` · 6 个函数 · 6 个有说明 · 61 行
-
-<a id="fn-include-riscv64-syscall_abi.h-13"></a>
-
-### `syscall_abi_nr`
-
-```c
-static inline uint64_t syscall_abi_nr(const trap_frame_t *frame)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-从 trap frame 的 a7 寄存器 x[17] 读出系统调用号。
-
-<details>
-<summary>函数内备注（1 条）</summary>
-
-**第 15 行（行尾）**
-
-> a7 = syscall number
-
-</details>
-
-**位置**：`include/riscv64/syscall_abi.h:13`
-
-<a id="fn-include-riscv64-syscall_abi.h-18"></a>
-
-### `syscall_abi_arg`
-
-```c
-static inline uint64_t syscall_abi_arg(const trap_frame_t *frame, int idx)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-下标 0 到 5 时返回 a0 至 a5（x[10+idx]），越界返回 0。
-
-<details>
-<summary>函数内备注（1 条）</summary>
-
-**第 20 行（行尾）**
-
-> a0..a5
-
-</details>
-
-**位置**：`include/riscv64/syscall_abi.h:18`
-
-<a id="fn-include-riscv64-syscall_abi.h-23"></a>
-
-### `syscall_abi_set_ret`
-
-```c
-static inline void syscall_abi_set_ret(trap_frame_t *frame, uint64_t ret)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-把返回值写入 trap frame 的 a0（x[10]）。
-
-<details>
-<summary>函数内备注（1 条）</summary>
-
-**第 25 行（行尾）**
-
-> a0 = return value
-
-</details>
-
-**位置**：`include/riscv64/syscall_abi.h:23`
-
-<a id="fn-include-riscv64-syscall_abi.h-28"></a>
-
-### `syscall_abi_ip`
-
-```c
-static inline uint64_t syscall_abi_ip(const trap_frame_t *frame)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-返回 trap frame 的 sepc，即系统调用发生时的用户指令地址。
-
-**位置**：`include/riscv64/syscall_abi.h:28`
-
-<a id="fn-include-riscv64-syscall_abi.h-33"></a>
-
-### `syscall_abi_user_sp`
-
-```c
-static inline uint64_t syscall_abi_user_sp(const trap_frame_t *frame)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-返回 trap frame 中保存的用户栈指针 x[2]。
-
-<details>
-<summary>函数内备注（1 条）</summary>
-
-**第 35 行（行尾）**
-
-> sp
-
-</details>
-
-**位置**：`include/riscv64/syscall_abi.h:33`
-
-<a id="fn-include-riscv64-syscall_abi.h-47"></a>
-
-### `syscall_abi_reset_frame_for_exec`
-
-```c
-static inline void syscall_abi_reset_frame_for_exec(trap_frame_t *frame, uint64_t entry, uint64_t sp)
-```
-
-syscall_abi_reset_frame_for_exec - execve 成功后把 trap frame 重置成
-新程序的初始用户现场
-
-返回路径是一条普通 sret，所以这里必须自己把 sstatus 摆成"返回 U 模式、
-SPIE=1、SIE=0"，与 arch_switch_to_user 的处理保持一致；FP 状态清零，
-tp 也清零(exec 不继承 TLS)。x0 随后会被 syscall 返回值的回填覆盖
-（值为 0，新程序不依赖它）。
-
-**位置**：`include/riscv64/syscall_abi.h:47`
-
 <a id="mod-include-rt-rt_worker.h"></a>
 
 ## include/rt/rt_worker.h — 用户可配置的 RT worker（模板）控制面 ABI
@@ -4730,7 +6241,7 @@ static inline void spinlock_irq_init(spinlock_noirq_t *lock)
 
 ## include/task/cpu.h — Per-CPU 控制块(SMP 抽象层)
 
-`include/task/cpu.h` · 2 个函数 · 0 个有说明 · 209 行
+`include/task/cpu.h` · 2 个函数 · 0 个有说明 · 231 行
 
 每个在线 CPU 一个 cpu_t，per-CPU 寄存器(TPIDR_EL1 / tp / GS_BASE)指向
 本核实例。调度状态(run_queue / current_task / idle_task / need_resched)
@@ -4742,7 +6253,7 @@ static inline void spinlock_irq_init(spinlock_noirq_t *lock)
 - x86_64 : INIT-SIPI + AP trampoline
 跨核唤醒走 resched IPI(CPU_RESCHED_IPI* / irq_send_ipi)。
 
-<a id="fn-include-task-cpu.h-153"></a>
+<a id="fn-include-task-cpu.h-175"></a>
 
 ### `cpu_current`
 
@@ -4755,15 +6266,15 @@ static inline cpu_t *cpu_current(void)
 <details>
 <summary>函数内备注（1 条）</summary>
 
-**第 156 行**
+**第 178 行**
 
 > 若 per-CPU 寄存器尚未安装(早期 boot 或测试代码), 回退 CPU0。
 
 </details>
 
-**位置**：`include/task/cpu.h:153`
+**位置**：`include/task/cpu.h:175`
 
-<a id="fn-include-task-cpu.h-160"></a>
+<a id="fn-include-task-cpu.h-182"></a>
 
 ### `get_current_cpu_id`
 
@@ -4773,7 +6284,7 @@ static inline uint32_t get_current_cpu_id(void)
 
 > ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-**位置**：`include/task/cpu.h:160`
+**位置**：`include/task/cpu.h:182`
 
 <a id="mod-include-task-switch.h"></a>
 
@@ -4786,7 +6297,7 @@ arch_task_switch()      — 在 .S 文件中实现, 保存/恢复被调用者寄
 arch_init_task_stack()  — 为新任务构造初始切换帧
 
 中断屏蔽(arch_irq_save/restore/enable/disable/flags/is_enabled)已统一到
-include/<arch>/exception_impl.h, 由本文件顶部 include 的 exception.h 暴露。
+include/arch/<arch>/exception_impl.h, 由本文件顶部 include 的 exception.h 暴露。
 
 上下文切换原理：
 仅保存"被调用者保存寄存器"(callee-saved registers)。
@@ -5587,1284 +7098,3 @@ static inline virq_t virq_line(uint32_t line)
 </details>
 
 **位置**：`include/vmm/vmm_virq.h:70`
-
-<a id="mod-include-x86_64-barrier_impl.h"></a>
-
-## include/x86_64/barrier_impl.h — x86_64 内存屏障实现
-
-`include/x86_64/barrier_impl.h` · 7 个函数 · 7 个有说明 · 89 行
-
-使用 MFENCE, SFENCE, LFENCE 指令
-
-<a id="fn-include-x86_64-barrier_impl.h-22"></a>
-
-### `barrier_data`
-
-```c
-static inline void barrier_data(void)
-```
-
-barrier_data - 完整数据内存屏障
-
-MFENCE: 内存屏障(读+写)
-
-**位置**：`include/x86_64/barrier_impl.h:22`
-
-<a id="fn-include-x86_64-barrier_impl.h-32"></a>
-
-### `barrier_data_read`
-
-```c
-static inline void barrier_data_read(void)
-```
-
-barrier_data_read - 读数据屏障
-
-LFENCE: 加载屏障
-
-**位置**：`include/x86_64/barrier_impl.h:32`
-
-<a id="fn-include-x86_64-barrier_impl.h-42"></a>
-
-### `barrier_data_write`
-
-```c
-static inline void barrier_data_write(void)
-```
-
-barrier_data_write - 写数据屏障
-
-SFENCE: 存储屏障
-
-**位置**：`include/x86_64/barrier_impl.h:42`
-
-<a id="fn-include-x86_64-barrier_impl.h-55"></a>
-
-### `barrier_instr_full`
-
-```c
-static inline void barrier_instr_full(void)
-```
-
-barrier_instr_full - 完整指令同步屏障
-
-x86_64 上 MFENCE 已经提供了完整的同步
-CPUID 也可以用作指令序列化器
-
-**位置**：`include/x86_64/barrier_impl.h:55`
-
-<a id="fn-include-x86_64-barrier_impl.h-60"></a>
-
-### `barrier_sync`
-
-```c
-static inline void barrier_sync(void)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-执行 mfence 并加 memory 屏障，保证前后访存顺序。
-
-**位置**：`include/x86_64/barrier_impl.h:60`
-
-<a id="fn-include-x86_64-barrier_impl.h-73"></a>
-
-### `barrier_acquire`
-
-```c
-static inline void barrier_acquire(void)
-```
-
-barrier_acquire - 获取语义屏障
-
-x86_64 的 TSO (Total Store Order) 模型已经提供了较强的保证
-使用编译器屏障即可
-
-**位置**：`include/x86_64/barrier_impl.h:73`
-
-<a id="fn-include-x86_64-barrier_impl.h-84"></a>
-
-### `barrier_release`
-
-```c
-static inline void barrier_release(void)
-```
-
-barrier_release - 释放语义屏障
-
-x86_64 的 TSO 模型已经提供了较强的保证
-使用编译器屏障即可
-
-**位置**：`include/x86_64/barrier_impl.h:84`
-
-<a id="mod-include-x86_64-cache_impl.h"></a>
-
-## include/x86_64/cache_impl.h — x86_64 缓存操作底层实现
-
-`include/x86_64/cache_impl.h` · 9 个函数 · 9 个有说明 · 119 行
-
-架构特定的单个缓存行操作
-
-<a id="fn-include-x86_64-cache_impl.h-30"></a>
-
-### `__clean_dcache_one`
-
-```c
-static inline void __clean_dcache_one(const void *addr)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-用 clwb 指令把该地址所在缓存行写回内存。
-
-**位置**：`include/x86_64/cache_impl.h:30`
-
-<a id="fn-include-x86_64-cache_impl.h-35"></a>
-
-### `__clean_dcache_one`
-
-```c
-static inline void __clean_dcache_one(const void *addr)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-用 clwb 指令把该地址所在缓存行写回内存。
-
-<details>
-<summary>函数内备注（1 条）</summary>
-
-**第 37 行**
-
-> CLFLUSH: 写回并失效
-
-</details>
-
-**位置**：`include/x86_64/cache_impl.h:35`
-
-<a id="fn-include-x86_64-cache_impl.h-50"></a>
-
-### `__invalidate_dcache_one`
-
-```c
-static inline void __invalidate_dcache_one(const void *addr)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-用 clflushopt 失效该缓存行，随后调用 barrier_data_write() 保证失效先于后续访存完成。
-
-<details>
-<summary>函数内备注（1 条）</summary>
-
-**第 53 行**
-
-> CLFLUSHOPT 与其它写不保序(这点和 CLFLUSH 不同), Intel SDM 要求
-> 后面跟一条 SFENCE 才能保证失效先于后续访存完成。少了它, DMA 场景下
-> 设备可能读到尚未刷回的内存。
-
-</details>
-
-**位置**：`include/x86_64/cache_impl.h:50`
-
-<a id="fn-include-x86_64-cache_impl.h-61"></a>
-
-### `__invalidate_dcache_one`
-
-```c
-static inline void __invalidate_dcache_one(const void *addr)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-用 clflushopt 失效该缓存行，随后调用 barrier_data_write() 保证失效先于后续访存完成。
-
-**位置**：`include/x86_64/cache_impl.h:61`
-
-<a id="fn-include-x86_64-cache_impl.h-73"></a>
-
-### `__clean_and_invalidate_dcache_one`
-
-```c
-static inline void __clean_and_invalidate_dcache_one(const void *addr)
-```
-
-__clean_and_invalidate_dcache_one - 清理并使单个缓存行失效
-@addr: 地址
-
-CLFLUSH: 写回并使缓存行失效
-
-**位置**：`include/x86_64/cache_impl.h:73`
-
-<a id="fn-include-x86_64-cache_impl.h-83"></a>
-
-### `get_cache_line_size`
-
-```c
-static inline size_t get_cache_line_size(void)
-```
-
-get_cache_line_size - 获取缓存行大小
-
-**位置**：`include/x86_64/cache_impl.h:83`
-
-<a id="fn-include-x86_64-cache_impl.h-91"></a>
-
-### `init_cache`
-
-```c
-static inline void init_cache(void)
-```
-
-init_cache - 初始化缓存子系统
-
-<details>
-<summary>函数内备注（2 条）</summary>
-
-**第 93 行**
-
-> x86_64 标准缓存行大小为 64 字节
-
-**第 94 行**
-
-> 可以通过 CPUID 指令检测, 但 64 字节是通用标准
-
-</details>
-
-**位置**：`include/x86_64/cache_impl.h:91`
-
-<a id="fn-include-x86_64-cache_impl.h-109"></a>
-
-### `sync_icache_all`
-
-```c
-static inline void sync_icache_all(void)
-```
-
-sync_icache_all - 让刚写入的指令可见
-
-x86 的 I-cache 与 D-cache 由硬件保持一致, 写完代码只需一条序列化屏障。
-(严格的自改码场景还要求执行 cpuid/jmp 之类的序列化指令, 本内核没有 JIT。)
-
-**位置**：`include/x86_64/cache_impl.h:109`
-
-<a id="fn-include-x86_64-cache_impl.h-114"></a>
-
-### `sync_caches`
-
-```c
-static inline void sync_caches(void)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-仅调用 barrier_data() 建立数据屏障。
-
-**位置**：`include/x86_64/cache_impl.h:114`
-
-<a id="mod-include-x86_64-cpu_impl.h"></a>
-
-## include/x86_64/cpu_impl.h — x86_64 per-CPU 指针 / 硬件 ID 实现
-
-`include/x86_64/cpu_impl.h` · 3 个函数 · 3 个有说明 · 56 行
-
-约定：
-IA32_GS_BASE        (MSR 0xC0000101) — 用户态运行时保存 cpu_t*
-IA32_KERNEL_GS_BASE (MSR 0xC0000102) — 内核态运行时保存 cpu_t*
-
-syscall_entry 执行 swapgs 后 GS_BASE = cpu_t*(从 KERNEL_GS_BASE 换入),
-可通过 gs:offset 访问 per-CPU 数据。sysretq 前再次 swapgs 换回。
-
-内核纯态路径(非 SYSCALL)仍通过 rdmsr(GS_BASE) 读取 cpu_t*。
-
-<a id="fn-include-x86_64-cpu_impl.h-30"></a>
-
-### `arch_cpu_self_set`
-
-```c
-static inline void arch_cpu_self_set(struct cpu *self)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-把 self 的 64 位值拆成高低 32 位，分别 wrmsr 写入 GS_BASE 与 KERNEL_GS_BASE。
-
-**位置**：`include/x86_64/cpu_impl.h:30`
-
-<a id="fn-include-x86_64-cpu_impl.h-39"></a>
-
-### `arch_cpu_self_get`
-
-```c
-static inline struct cpu *arch_cpu_self_get(void)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-用 rdmsr 读 GS_BASE，拼成 64 位后强转为 struct cpu 指针返回。
-
-**位置**：`include/x86_64/cpu_impl.h:39`
-
-<a id="fn-include-x86_64-cpu_impl.h-51"></a>
-
-### `arch_cpu_hw_id`
-
-```c
-static inline uint64_t arch_cpu_hw_id(void)
-```
-
-x86 的硬件 ID 是 LAPIC ID，但本头文件不能依赖 LAPIC 映射，因此这里
-只返回 0 占位。BSP 在 cpu_init_bsp()、AP 在 cpu_secondary_bootstrap()
-中都改用 irq_cpu_hw_id() 读取真实值。
-
-**位置**：`include/x86_64/cpu_impl.h:51`
-
-<a id="mod-include-x86_64-exception_impl.h"></a>
-
-## include/x86_64/exception_impl.h
-
-`include/x86_64/exception_impl.h` · 6 个函数 · 6 个有说明 · 91 行
-
-<a id="fn-include-x86_64-exception_impl.h-25"></a>
-
-### `arch_irq_flags`
-
-```c
-static inline uint64_t arch_irq_flags(void)
-```
-
-读当前 RFLAGS(不改动状态)
-
-**位置**：`include/x86_64/exception_impl.h:25`
-
-<a id="fn-include-x86_64-exception_impl.h-35"></a>
-
-### `arch_irq_is_enabled`
-
-```c
-static inline int arch_irq_is_enabled(void)
-```
-
-读是否允许 IRQ(抢占判断用)
-
-**位置**：`include/x86_64/exception_impl.h:35`
-
-<a id="fn-include-x86_64-exception_impl.h-41"></a>
-
-### `arch_irq_save`
-
-```c
-static inline uint64_t arch_irq_save(void)
-```
-
-关中断并返回旧 RFLAGS(必须用 arch_irq_restore 配对恢复)
-
-**位置**：`include/x86_64/exception_impl.h:41`
-
-<a id="fn-include-x86_64-exception_impl.h-60"></a>
-
-### `arch_irq_restore`
-
-```c
-static inline void arch_irq_restore(uint64_t flags)
-```
-
-恢复到 arch_irq_save()/arch_irq_flags() 取到的状态(POPFQ 恢复 IF)
-
-**位置**：`include/x86_64/exception_impl.h:60`
-
-<a id="fn-include-x86_64-exception_impl.h-74"></a>
-
-### `arch_irq_disable`
-
-```c
-static inline void arch_irq_disable(void)
-```
-
-无条件关中断(不需要旧状态时用)
-
-**位置**：`include/x86_64/exception_impl.h:74`
-
-<a id="fn-include-x86_64-exception_impl.h-83"></a>
-
-### `arch_irq_enable`
-
-```c
-static inline void arch_irq_enable(void)
-```
-
-无条件开中断(新任务首次运行时使用)
-
-**位置**：`include/x86_64/exception_impl.h:83`
-
-<a id="mod-include-x86_64-halt_arch.h"></a>
-
-## include/x86_64/halt_arch.h — x86_64 架构特定的 halt 实现
-
-`include/x86_64/halt_arch.h` · 1 个函数 · 1 个有说明 · 40 行
-
-<a id="fn-include-x86_64-halt_arch.h-22"></a>
-
-### `arch_halt`
-
-```c
-static inline void arch_halt(void)
-```
-
-arch_halt - 停止 x86_64 处理器
-使用 HLT 指令停止处理器, 直到收到中断
-在中断禁用的情况下, HLT 会永久停止
-
-<details>
-<summary>函数内备注（5 条）</summary>
-
-**第 24 行**
-
-> 内存屏障, 确保所有操作完成
-
-**第 27 行**
-
-> 禁用中断(统一接口)
-
-**第 30 行**
-
-> HLT - Halt Processor
-
-**第 31 行**
-
-> 在中断禁用的情况下, 处理器会永久停止
-
-**第 34 行**
-
-> 如果 HLT 被唤醒(不应该发生), 死循环
-
-</details>
-
-**位置**：`include/x86_64/halt_arch.h:22`
-
-<a id="mod-include-x86_64-io.h"></a>
-
-## include/x86_64/io.h — x86_64 Port I/O
-
-`include/x86_64/io.h` · 6 个函数 · 6 个有说明 · 63 行
-
-x86 拥有独立于内存地址空间的 I/O 端口空间(64K 个端口),
-通过专用指令 in/out 访问, 与 MMIO 的 volatile 指针访问无关。
-
-x86 的 in/out 指令自带序列化语义, 无需额外内存屏障。
-
-<a id="fn-include-x86_64-io.h-23"></a>
-
-### `inb`
-
-```c
-static inline uint8_t inb(uint16_t port)
-```
-
-x86_64 Port I/O
-
-x86 拥有独立于内存地址空间的 I/O 端口空间(64K 个端口),
-通过专用指令 in/out 访问, 与 MMIO 的 volatile 指针访问无关。
-
-x86 的 in/out 指令自带序列化语义, 无需额外内存屏障。
-
-**位置**：`include/x86_64/io.h:23`
-
-<a id="fn-include-x86_64-io.h-30"></a>
-
-### `outb`
-
-```c
-static inline void outb(uint16_t port, uint8_t value)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-用 outb 指令向指定端口写 8 位值。
-
-**位置**：`include/x86_64/io.h:30`
-
-<a id="fn-include-x86_64-io.h-37"></a>
-
-### `inw`
-
-```c
-static inline uint16_t inw(uint16_t port)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-用 inw 指令从指定端口读 16 位值并返回。
-
-**位置**：`include/x86_64/io.h:37`
-
-<a id="fn-include-x86_64-io.h-44"></a>
-
-### `outw`
-
-```c
-static inline void outw(uint16_t port, uint16_t value)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-用 outw 指令向指定端口写 16 位值。
-
-**位置**：`include/x86_64/io.h:44`
-
-<a id="fn-include-x86_64-io.h-51"></a>
-
-### `inl`
-
-```c
-static inline uint32_t inl(uint16_t port)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-用 inl 指令从指定端口读 32 位值并返回。
-
-**位置**：`include/x86_64/io.h:51`
-
-<a id="fn-include-x86_64-io.h-58"></a>
-
-### `outl`
-
-```c
-static inline void outl(uint16_t port, uint32_t value)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-用 outl 指令向指定端口写 32 位值。
-
-**位置**：`include/x86_64/io.h:58`
-
-<a id="mod-include-x86_64-mm_vm.h"></a>
-
-## include/x86_64/mm_vm.h — x86_64 页表操作接口
-
-`include/x86_64/mm_vm.h` · 3 个函数 · 3 个有说明 · 68 行
-
-本头文件由 mm_vm.h 包含, phys_to_virt/virt_to_phys 已在包含前定义。
-实现位于 kernel/mm/x86_64/vmm.c。
-
-<a id="fn-include-x86_64-mm_vm.h-21"></a>
-
-### `x86_pa_to_kva`
-
-```c
-static inline void *x86_pa_to_kva(uint64_t pa)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-直接转调 phys_to_virt 把物理地址换算为内核虚拟地址。
-
-**位置**：`include/x86_64/mm_vm.h:21`
-
-<a id="fn-include-x86_64-mm_vm.h-26"></a>
-
-### `x86_next_level`
-
-```c
-static inline uint64_t *x86_next_level(uint64_t pte)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-用 x86_pte_to_pa 取出下一级页表物理地址并转成虚拟地址返回。
-
-**位置**：`include/x86_64/mm_vm.h:26`
-
-<a id="fn-include-x86_64-mm_vm.h-45"></a>
-
-### `mm_vm_set_pte_keep`
-
-```c
-static inline void mm_vm_set_pte_keep(void *pgd, uint64_t vaddr)
-```
-
-把一页标成"设备缓冲"：unmap 时只拆映射, 不释放页也不碰引用计数。
-用于把 dma_buf / ION 的缓冲区映射进用户态 —— 页归句柄所有, 不归映射。
-语义与 PTE_NOFREE 的区别见 mmu.h 里 PTE_KEEP 的说明。
-
-**位置**：`include/x86_64/mm_vm.h:45`
-
-<a id="mod-include-x86_64-mmu.h"></a>
-
-## include/x86_64/mmu.h — ══════════════════════════════════════════════════════════════════
-
-`include/x86_64/mmu.h` · 8 个函数 · 8 个有说明 · 285 行
-
-x86_64 页表结构(4 级页表)
-══════════════════════════════════════════════════════════════════
-
-虚拟地址布局(48 位)：
-[47:39] PML4  (Page Map Level 4)      - 9 bits, 512 entries
-[38:30] PDPT  (Page Directory Pointer) - 9 bits, 512 entries
-[29:21] PD    (Page Directory)         - 9 bits, 512 entries
-[20:12] PT    (Page Table)             - 9 bits, 512 entries
-[11:0]  Offset                         - 12 bits
-
-内核映射：
-内核虚拟地址：0xffff800000000000 - 0xffffffffffffffff (高 128 TB)
-用户虚拟地址：0x0000000000000000 - 0x00007fffffffffff (低 128 TB)
-
-<a id="fn-include-x86_64-mmu.h-178"></a>
-
-### `x86_pte_to_pa`
-
-```c
-static inline uint64_t x86_pte_to_pa(uint64_t pte)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-用 PTE_ADDR_MASK 掩掉标志位，取页表项中的物理地址。
-
-**位置**：`include/x86_64/mmu.h:178`
-
-<a id="fn-include-x86_64-mmu.h-183"></a>
-
-### `x86_make_table_pte`
-
-```c
-static inline uint64_t x86_make_table_pte(uint64_t pa)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-把物理地址加上 PRESENT、WRITABLE、USER 位构造表型页表项。
-
-**位置**：`include/x86_64/mmu.h:183`
-
-<a id="fn-include-x86_64-mmu.h-188"></a>
-
-### `x86_pte_is_leaf`
-
-```c
-static inline bool x86_pte_is_leaf(uint64_t pte, int level)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-level 大于 0 且有 HUGE 位判为叶子；level 为 0 时看 PRESENT 位，其余返回 false。
-
-**位置**：`include/x86_64/mmu.h:188`
-
-<a id="fn-include-x86_64-mmu.h-200"></a>
-
-### `read_cr3`
-
-```c
-static inline uint64_t read_cr3(void)
-```
-
-读取 CR3(当前页表基址)
-
-**位置**：`include/x86_64/mmu.h:200`
-
-<a id="fn-include-x86_64-mmu.h-208"></a>
-
-### `write_cr3`
-
-```c
-static inline void write_cr3(uint64_t value)
-```
-
-写入 CR3(切换页表)
-
-**位置**：`include/x86_64/mmu.h:208`
-
-<a id="fn-include-x86_64-mmu.h-214"></a>
-
-### `flush_tlb`
-
-```c
-static inline void flush_tlb(void)
-```
-
-刷新 TLB
-
-**位置**：`include/x86_64/mmu.h:214`
-
-<a id="fn-include-x86_64-mmu.h-221"></a>
-
-### `flush_tlb_single`
-
-```c
-static inline void flush_tlb_single(uint64_t vaddr)
-```
-
-刷新单个虚拟地址的 TLB
-
-**位置**：`include/x86_64/mmu.h:221`
-
-<a id="fn-include-x86_64-mmu.h-273"></a>
-
-### `x86_copy_kernel_mappings`
-
-```c
-static inline void x86_copy_kernel_mappings(uint64_t *user_pml4, const uint64_t *kernel_pml4)
-```
-
-x86_copy_kernel_mappings - 将内核高半区 PML4[256..511] 复制到用户页表
-@user_pml4:   目标用户 PML4(内核虚拟地址, uint64_t[512])
-@kernel_pml4: 源内核 PML4(内核虚拟地址, uint64_t[512])
-
-**位置**：`include/x86_64/mmu.h:273`
-
-<a id="mod-include-x86_64-spin_lock_impl.h"></a>
-
-## include/x86_64/spin_lock_impl.h — x86_64 架构的spinlock实现
-
-`include/x86_64/spin_lock_impl.h` · 6 个函数 · 6 个有说明 · 98 行
-
-使用 xchg 指令实现原子交换
-使用 mfence 指令进行内存屏障
-
-<a id="fn-include-x86_64-spin_lock_impl.h-25"></a>
-
-### `spin_lock`
-
-```c
-static inline void spin_lock(spinlock_t *lock)
-```
-
-x86_64 的原子操作使用 xchg 指令
-xchg 会自动锁定总线, 保证原子性
-
-<details>
-<summary>函数内备注（4 条）</summary>
-
-**第 29 行（行尾）**
-
-> 原子交换：val = lock-&gt;lock; lock-&gt;lock = 1
-
-**第 30 行（行尾）**
-
-> 测试 val 是否为 0
-
-**第 31 行（行尾）**
-
-> 如果不为 0, 说明锁占用, 继续自旋
-
-**第 32 行（行尾）**
-
-> 内存屏障, 确保后续操作有序
-
-</details>
-
-**位置**：`include/x86_64/spin_lock_impl.h:25`
-
-<a id="fn-include-x86_64-spin_lock_impl.h-38"></a>
-
-### `spin_trylock`
-
-```c
-static inline int spin_trylock(spinlock_t *lock)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-关抢占后用 lock xchg 尝试把锁置 1，成功返回 0，失败恢复抢占并返回 1。
-
-<details>
-<summary>函数内备注（4 条）</summary>
-
-**第 43 行（行尾）**
-
-> 尝试获取锁
-
-**第 45 行（行尾）**
-
-> result = 0
-
-**第 46 行（行尾）**
-
-> 如果非 0, 跳转
-
-**第 48 行（行尾）**
-
-> result = 1
-
-</details>
-
-**位置**：`include/x86_64/spin_lock_impl.h:38`
-
-<a id="fn-include-x86_64-spin_lock_impl.h-58"></a>
-
-### `spin_unlock`
-
-```c
-static inline void spin_unlock(spinlock_t *lock)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-执行 mfence 后把锁字清零释放，并重新开启抢占。
-
-<details>
-<summary>函数内备注（2 条）</summary>
-
-**第 60 行（行尾）**
-
-> 内存屏障
-
-**第 61 行（行尾）**
-
-> lock-&gt;lock = 0
-
-</details>
-
-**位置**：`include/x86_64/spin_lock_impl.h:58`
-
-<a id="fn-include-x86_64-spin_lock_impl.h-77"></a>
-
-### `spin_lock_irqsave`
-
-```c
-static inline void spin_lock_irqsave(spinlock_t *lock, uint64_t *flags)
-```
-
-带中断保护的 spinlock。
-
-中断状态存在调用点的局部变量里(由 *flags 带回), 不再存进锁对象 ——
-存进锁对象时, SMP 下争锁的另一颗 CPU 会把它的 flags 覆盖上去, 解锁时
-恢复的就是别人的中断状态。中断原语本身统一来自
-include/x86_64/exception_impl.h(arch_irq_save/restore)。
-
-**位置**：`include/x86_64/spin_lock_impl.h:77`
-
-<a id="fn-include-x86_64-spin_lock_impl.h-83"></a>
-
-### `spin_trylock_irqsave`
-
-```c
-static inline int spin_trylock_irqsave(spinlock_t *lock, uint64_t *flags)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-保存并关中断后尝试取锁，失败恢复中断返回 1，成功返回 0。
-
-**位置**：`include/x86_64/spin_lock_impl.h:83`
-
-<a id="fn-include-x86_64-spin_lock_impl.h-92"></a>
-
-### `spin_unlock_irqrestore`
-
-```c
-static inline void spin_unlock_irqrestore(spinlock_t *lock, uint64_t flags)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-先释放锁，再恢复调用方保存的中断状态。
-
-**位置**：`include/x86_64/spin_lock_impl.h:92`
-
-<a id="mod-include-x86_64-string_impl.h"></a>
-
-## include/x86_64/string_impl.h — x86_64 架构的字符串函数优化实现
-
-`include/x86_64/string_impl.h` · 2 个函数 · 2 个有说明 · 29 行
-
-目前转发到通用实现。要注意的是本架构内核编译带 `-mno-mmx -mno-sse`
-(见 Makefile), 所以要做 SSE2/AVX 版本, 得先给这几个函数所在的翻译单元
-单独开浮点/向量开关, 并按 aarch64 的做法把 FP 状态纳入上下文保存。
-
-<a id="fn-include-x86_64-string_impl.h-19"></a>
-
-### `memcpy_arch`
-
-```c
-static inline void *memcpy_arch(void *dest, const void *src, size_t n)
-```
-
-x86_64 架构的字符串函数优化实现
-
-目前转发到通用实现。要注意的是本架构内核编译带 `-mno-mmx -mno-sse`
-(见 Makefile), 所以要做 SSE2/AVX 版本, 得先给这几个函数所在的翻译单元
-单独开浮点/向量开关, 并按 aarch64 的做法把 FP 状态纳入上下文保存。
-
-**位置**：`include/x86_64/string_impl.h:19`
-
-<a id="fn-include-x86_64-string_impl.h-24"></a>
-
-### `memset_arch`
-
-```c
-static inline void *memset_arch(void *s, int c, size_t n)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-转调 memset_generic 完成内存填充。
-
-**位置**：`include/x86_64/string_impl.h:24`
-
-<a id="mod-include-x86_64-syscall_abi.h"></a>
-
-## include/x86_64/syscall_abi.h
-
-`include/x86_64/syscall_abi.h` · 6 个函数 · 6 个有说明 · 83 行
-
-<a id="fn-include-x86_64-syscall_abi.h-13"></a>
-
-### `syscall_abi_nr`
-
-```c
-static inline uint64_t syscall_abi_nr(const trap_frame_t *frame)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-从 trap frame 的 rax 读出系统调用号。
-
-<details>
-<summary>函数内备注（1 条）</summary>
-
-**第 15 行（行尾）**
-
-> syscall number in rax
-
-</details>
-
-**位置**：`include/x86_64/syscall_abi.h:13`
-
-<a id="fn-include-x86_64-syscall_abi.h-18"></a>
-
-### `syscall_abi_arg`
-
-```c
-static inline uint64_t syscall_abi_arg(const trap_frame_t *frame, int idx)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-按 idx 依次返回 rdi、rsi、rdx、r10、r8、r9，越界返回 0。
-
-**位置**：`include/x86_64/syscall_abi.h:18`
-
-<a id="fn-include-x86_64-syscall_abi.h-38"></a>
-
-### `syscall_abi_set_ret`
-
-```c
-static inline void syscall_abi_set_ret(trap_frame_t *frame, uint64_t ret)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-把返回值写入 trap frame 的 rax。
-
-**位置**：`include/x86_64/syscall_abi.h:38`
-
-<a id="fn-include-x86_64-syscall_abi.h-43"></a>
-
-### `syscall_abi_ip`
-
-```c
-static inline uint64_t syscall_abi_ip(const trap_frame_t *frame)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-返回 trap frame 中保存的 rip。
-
-**位置**：`include/x86_64/syscall_abi.h:43`
-
-<a id="fn-include-x86_64-syscall_abi.h-48"></a>
-
-### `syscall_abi_user_sp`
-
-```c
-static inline uint64_t syscall_abi_user_sp(const trap_frame_t *frame)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-返回 trap frame 中保存的 rsp。
-
-**位置**：`include/x86_64/syscall_abi.h:48`
-
-<a id="fn-include-x86_64-syscall_abi.h-61"></a>
-
-### `syscall_abi_reset_frame_for_exec`
-
-```c
-static inline void syscall_abi_reset_frame_for_exec(trap_frame_t *frame, uint64_t entry, uint64_t sp)
-```
-
-syscall_abi_reset_frame_for_exec - execve 成功后把 trap frame 重置成
-新程序的初始用户现场
-
-syscall_wrapper.S 的返回路径用 trap frame 里的 RCX/R11/RSP 做 sysretq，
-所以入口/栈/标志位都从这里取。FP 状态没有 per-task 保存，不在本函数
-范围内(和现有首次进入路径一致)。CS/SS 保持入口压入的 0x2B/0x23。
-
-<details>
-<summary>函数内备注（1 条）</summary>
-
-**第 79 行（行尾）**
-
-> IF=1, Reserved=1
-
-</details>
-
-**位置**：`include/x86_64/syscall_abi.h:61`
-
-<a id="mod-include-x86_64-vmx.h"></a>
-
-## include/x86_64/vmx.h — Intel VMX 常量, VMCS 字段编码与辅助类型
-
-`include/x86_64/vmx.h` · 18 个函数 · 18 个有说明 · 464 行
-
-对标 ref/bare-vm/arch/x86_64/include/vmx.h, 精简适配 Avatar OS。
-
-<a id="fn-include-x86_64-vmx.h-319"></a>
-
-### `vmx_rdmsr`
-
-```c
-static inline uint64_t vmx_rdmsr(uint32_t idx)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-用 rdmsr 读指定 MSR，把高低 32 位拼成 64 位返回。
-
-**位置**：`include/x86_64/vmx.h:319`
-
-<a id="fn-include-x86_64-vmx.h-326"></a>
-
-### `vmx_wrmsr`
-
-```c
-static inline void vmx_wrmsr(uint32_t idx, uint64_t val)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-把 64 位值拆成高低 32 位，用 wrmsr 写入指定 MSR。
-
-**位置**：`include/x86_64/vmx.h:326`
-
-<a id="fn-include-x86_64-vmx.h-331"></a>
-
-### `vmx_read_cr0`
-
-```c
-static inline uint64_t vmx_read_cr0(void)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-用 mov 读取 CR0 并返回。
-
-**位置**：`include/x86_64/vmx.h:331`
-
-<a id="fn-include-x86_64-vmx.h-337"></a>
-
-### `vmx_read_cr3`
-
-```c
-static inline uint64_t vmx_read_cr3(void)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-用 mov 读取 CR3 并返回。
-
-**位置**：`include/x86_64/vmx.h:337`
-
-<a id="fn-include-x86_64-vmx.h-343"></a>
-
-### `vmx_read_cr4`
-
-```c
-static inline uint64_t vmx_read_cr4(void)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-用 mov 读取 CR4 并返回。
-
-**位置**：`include/x86_64/vmx.h:343`
-
-<a id="fn-include-x86_64-vmx.h-349"></a>
-
-### `vmx_write_cr0`
-
-```c
-static inline void vmx_write_cr0(uint64_t v)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-用 mov 把给定值写入 CR0，并附 memory 屏障。
-
-**位置**：`include/x86_64/vmx.h:349`
-
-<a id="fn-include-x86_64-vmx.h-353"></a>
-
-### `vmx_write_cr4`
-
-```c
-static inline void vmx_write_cr4(uint64_t v)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-用 mov 把给定值写入 CR4，并附 memory 屏障。
-
-**位置**：`include/x86_64/vmx.h:353`
-
-<a id="fn-include-x86_64-vmx.h-358"></a>
-
-### `vmx_read_rflags`
-
-```c
-static inline uint64_t vmx_read_rflags(void)
-```
-
-读 RFLAGS：与 arch_irq_flags() 是同一条指令, 直接转调, 不重复写汇编
-
-**位置**：`include/x86_64/vmx.h:358`
-
-<a id="fn-include-x86_64-vmx.h-362"></a>
-
-### `vmx_cpuid`
-
-```c
-static inline void vmx_cpuid(uint32_t op, uint32_t *eax, uint32_t *ebx, uint32_t *ecx, uint32_t *edx)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-以 op 为叶子、ecx 置 0 执行 cpuid，把各寄存器结果写回传入指针。
-
-**位置**：`include/x86_64/vmx.h:362`
-
-<a id="fn-include-x86_64-vmx.h-370"></a>
-
-### `vmcs_read`
-
-```c
-static inline uint64_t vmcs_read(vmcs_field_t enc)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-用 vmread 按编码读取 VMCS 字段值并返回。
-
-**位置**：`include/x86_64/vmx.h:370`
-
-<a id="fn-include-x86_64-vmx.h-377"></a>
-
-### `vmcs_write`
-
-```c
-static inline int vmcs_write(vmcs_field_t enc, uint64_t val)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-用 vmwrite 写 VMCS 字段，并用 setbe 捕获 CF/ZF 作为失败标志返回。
-
-**位置**：`include/x86_64/vmx.h:377`
-
-<a id="fn-include-x86_64-vmx.h-401"></a>
-
-### `vmx_on`
-
-```c
-static inline int vmx_on(uint64_t pa)
-```
-
-返回 0 = 成功；非 0 = 指令失败(CF/ZF)
-
-**位置**：`include/x86_64/vmx.h:401`
-
-<a id="fn-include-x86_64-vmx.h-410"></a>
-
-### `vmcs_clear_pa`
-
-```c
-static inline int vmcs_clear_pa(uint64_t pa)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-先置 RFLAGS 的 CF/ZF，执行 vmclear 清除指定 VMCS，用 setbe 返回失败标志。
-
-**位置**：`include/x86_64/vmx.h:410`
-
-<a id="fn-include-x86_64-vmx.h-419"></a>
-
-### `vmcs_load_pa`
-
-```c
-static inline int vmcs_load_pa(uint64_t pa)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-先置 RFLAGS 的 CF/ZF，执行 vmptrld 加载指定 VMCS 物理地址，用 setbe 返回失败标志。
-
-**位置**：`include/x86_64/vmx.h:419`
-
-<a id="fn-include-x86_64-vmx.h-433"></a>
-
-### `vmx_sgdt`
-
-```c
-static inline void vmx_sgdt(vmx_desc_ptr_t *desc)
-```
-
-SGDT/SIDT 写 10 字节：2 字节 limit + 8 字节 base。
-描述符结构必须 packed —— 默认对齐会让 base 落在 offset 8, 指令却按
-offset 2 写, 读出来就错位了。
-
-**位置**：`include/x86_64/vmx.h:433`
-
-<a id="fn-include-x86_64-vmx.h-438"></a>
-
-### `vmx_sidt`
-
-```c
-static inline void vmx_sidt(vmx_desc_ptr_t *desc)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-用 sidt 指令把 IDTR 内容写入给定描述符结构。
-
-**位置**：`include/x86_64/vmx.h:438`
-
-<a id="fn-include-x86_64-vmx.h-447"></a>
-
-### `vmx_read_cr2`
-
-```c
-static inline uint64_t vmx_read_cr2(void)
-```
-
-读 CR2。VM-exit 不保存/恢复 CR2, 所以 guest 缺页后退出到 VMM 时这里读到的
-仍是 guest 的缺页地址 —— 这是诊断 #PF 的唯一窗口(见 vmx.c 的 EXC_NMI 分支)。
-
-**位置**：`include/x86_64/vmx.h:447`
-
-<a id="fn-include-x86_64-vmx.h-456"></a>
-
-### `vmx_read_tr`
-
-```c
-static inline uint16_t vmx_read_tr(void)
-```
-
-读 TR 选择子。用来校验 VM-exit 装回来的 TSS 是不是本核的(见 vmx.c)。
-
-**位置**：`include/x86_64/vmx.h:456`

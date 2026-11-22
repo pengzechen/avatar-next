@@ -175,7 +175,7 @@ void riscv_dispatch_host_irq(uint64_t cause, void *frame)
 
 riscv_dispatch_host_irq — 给 VMM 的 guest 陷阱向量复用宿主中断分派
 
-见 include/riscv64/exception.h 的说明。等价于 handle_exception 里
+见 include/arch/riscv64/exception.h 的说明。等价于 handle_exception 里
 `interrupt_handlers[irq](frame_ptr)` 那一行, 只是不经过 trap_frame
 的保存/恢复(现场已在 hext_trap_vector 里保存)。
 
@@ -355,7 +355,7 @@ void handle_exception(void *frame_ptr)
 
 > 注意：这里必须是 0x600。写符号名 hstatus 会被汇编成
 > 0x200(vsstatus), 印出来的 SPV/SPVP 就是别的寄存器的位 ——
-> 详见 include/riscv64/hext.h 顶部的警告。
+> 详见 include/arch/riscv64/hext.h 顶部的警告。
 
 **第 236 行**
 

@@ -175,11 +175,11 @@ static inline void *memmove_generic(void *dest, const void *src, size_t n)
 /* ── 架构实现 ──────────────────────────────────────────────────── */
 
 #if ARCH_X86_64
-#include "x86_64/string_impl.h"
+#include "arch/x86_64/string_impl.h"
 #elif ARCH_AARCH64
-#include "aarch64/string_impl.h"
+#include "arch/aarch64/string_impl.h"
 #elif ARCH_RISCV64
-#include "riscv64/string_impl.h"
+#include "arch/riscv64/string_impl.h"
 #else
 /* 未知架构：直接用通用实现 */
 static inline void *memcpy_arch(void *dest, const void *src, size_t n)

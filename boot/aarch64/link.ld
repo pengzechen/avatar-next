@@ -21,7 +21,7 @@ SECTIONS
 {
     /*
      * KERNEL_VMA_OFF 由 Makefile 通过 --defsym 传入（与
-     * include/aarch64/mem_layout.h 同源），不在本文件重复定义。
+     * include/arch/aarch64/mem_layout.h 同源），不在本文件重复定义。
      *
      * 平台相关链接地址，由 Makefile 通过 --defsym 传入
      * （QEMU virt: 0xffff000040080000；RK3588: 0xffff000000400000）。

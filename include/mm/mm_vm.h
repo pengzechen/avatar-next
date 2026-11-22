@@ -30,16 +30,16 @@ typedef enum {
 /* ── 内核虚拟地址偏移(架构特定) ───────────────────────────────── */
 
 #if ARCH_AARCH64
-/* AArch64 TTBR1 高半地址：唯一定义在 aarch64/mem_layout.h */
-#include "aarch64/mem_layout.h"
+/* AArch64 TTBR1 高半地址：唯一定义在 arch/aarch64/mem_layout.h */
+#include "arch/aarch64/mem_layout.h"
 #define KERNEL_VMA AARCH64_KERNEL_VMA_OFF
 #elif ARCH_X86_64
-/* x86_64 高半地址空间：唯一定义在 x86_64/mem_layout.h */
-#include "x86_64/mem_layout.h"
+/* x86_64 高半地址空间：唯一定义在 arch/x86_64/mem_layout.h */
+#include "arch/x86_64/mem_layout.h"
 #define KERNEL_VMA X86_KERNEL_VMA_OFF
 #elif ARCH_RISCV64
-/* RISC-V Sv39 高半区内核偏移：唯一定义在 riscv64/mem_layout.h */
-#include "riscv64/mem_layout.h"
+/* RISC-V Sv39 高半区内核偏移：唯一定义在 arch/riscv64/mem_layout.h */
+#include "arch/riscv64/mem_layout.h"
 #define KERNEL_VMA RV_KERNEL_VMA_OFF
 #else
 #define KERNEL_VMA 0ULL
@@ -52,11 +52,11 @@ typedef enum {
 /* 页大小配置见 page.h(必须在架构特定头文件之前可用) */
 
 #if ARCH_AARCH64
-#include "aarch64/mm_vm.h"
+#include "arch/aarch64/mm_vm.h"
 #elif ARCH_RISCV64
-#include "riscv64/mm_vm.h"
+#include "arch/riscv64/mm_vm.h"
 #elif ARCH_X86_64
-#include "x86_64/mm_vm.h"
+#include "arch/x86_64/mm_vm.h"
 #else
 #error "Unsupported architecture for mm_vm"
 #endif

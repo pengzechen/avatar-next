@@ -187,7 +187,7 @@ static void platform_panic_impl(void)
 
 **第 58 行**
 
-> 关中断：统一用 arch_irq_disable()(include/&lt;arch&gt;/exception_impl.h)。
+> 关中断：统一用 arch_irq_disable()(include/arch/&lt;arch&gt;/exception_impl.h)。
 > 这里原来按架构各写一遍 msr daifset, #0xF / csrw sie,sip / cli。
 
 **第 64 行**

@@ -17,7 +17,7 @@
 #include "mm/mm_vm.h"
 #include "string.h"
 #include "mm/shared_page.h"
-#include "riscv64/satp_utils.h"
+#include "arch/riscv64/satp_utils.h"
 
 /* ── 页表遍历 ───────────────────────────────────────────────────── */
 

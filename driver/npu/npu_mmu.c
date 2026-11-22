@@ -31,7 +31,7 @@
 #include "platform/platform_cfg.h"
 #include "string.h"
 #include "vmm/vmm.h" /* vm_t：sync 要查它的 stage-2 */
-#include "aarch64/stage2.h"
+#include "arch/aarch64/stage2.h"
 
 #if ARCH_AARCH64
 

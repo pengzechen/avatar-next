@@ -19,7 +19,7 @@
 */
 
 #include "uart_x86.h"
-#include "x86_64/io.h"
+#include "arch/x86_64/io.h"
 #include "types.h"
 #include "klog.h"
 #include "driver/driver.h"

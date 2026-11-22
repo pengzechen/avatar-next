@@ -133,7 +133,7 @@ DBCN/CPPC/PMU 时会安静地换别的路径。
    运行期才炸。**本文件历史上的「写 hedeleg 会 illegal instruction」就是
    这条**（0x202 在 QEMU 8.2 里没实现）。规避：H 扩展 CSR 一律写数字地址，
    改完拿 `riscv64-linux-musl-objdump -d` 确认编码。
-   见 `include/riscv64/hext.h` 顶部。
+   见 `include/arch/riscv64/hext.h` 顶部。
 2. **`tp`（x4）是 per-CPU 指针，进出 guest 必须存/恢复。**
    `hext_enter_guest` 会把 guest 的 31 个 GPR 全部装载，`hext_trap_vector`
    却只恢复了 `ra/s0-s11/sp/gp`。少恢复 `tp` 的后果是宿主一回到 C 代码就

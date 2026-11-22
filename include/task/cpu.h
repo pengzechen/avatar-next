@@ -28,11 +28,11 @@
 #include "assert.h" /* static_assert：校验下方 .S 可见的字段偏移 */
 
 #if ARCH_AARCH64
-#include "aarch64/cpu_impl.h"
+#include "arch/aarch64/cpu_impl.h"
 #elif ARCH_RISCV64
-#include "riscv64/cpu_impl.h"
+#include "arch/riscv64/cpu_impl.h"
 #elif ARCH_X86_64
-#include "x86_64/cpu_impl.h"
+#include "arch/x86_64/cpu_impl.h"
 #else
 #error "Unsupported architecture for cpu_impl.h"
 #endif

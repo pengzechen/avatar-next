@@ -5,7 +5,7 @@
 */
 
 #include "asm.h"
-#include "riscv64/mem_layout.h"
+#include "arch/riscv64/mem_layout.h"
 
 .section .text.boot
 

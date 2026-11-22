@@ -20,7 +20,7 @@
 #include "vmm/vmm_mmio.h"
 #include "klog.h"
 #include "string.h"
-#include "aarch64/stage2.h"
+#include "arch/aarch64/stage2.h"
 #include "vmm/guest_loader.h" /* GUEST_LINUX_NPU_DMA_*：NPU 恒等窗口的布局 */
 #include "vmm/vmm_vnpu.h"
 #include "platform/platform_cfg.h" /* platform_get_mmio */

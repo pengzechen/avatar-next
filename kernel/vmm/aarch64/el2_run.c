@@ -18,9 +18,9 @@
 
 #include "vmm/vmm.h"
 #include "klog.h"
-#include "aarch64/stage2.h"
+#include "arch/aarch64/stage2.h"
 #include "mm/pmm.h" /* 按需分页：缺页时要从 PMM 现拿物理页 */
-#include "aarch64/sysreg.h"
+#include "arch/aarch64/sysreg.h"
 #include "task/task.h"
 #include "task/switch.h"
 #include "vmm/vmm_mmio.h"   /* MMIO 总线分发 */
@@ -437,7 +437,7 @@ static int handle_dabt(vcpu_t *vcpu, uint64_t esr)
 
        恒等的意义：guest 里 librknnrt 拿到的"设备地址"就是驱动从这块预留池
        分配出来的物理地址, 只有 IPA == PA 时它在两边指的是同一块内存。
-       详见 include/aarch64/stage2.h 里 s2_ctx_t.npu_dma_base。
+       详见 include/arch/aarch64/stage2.h 里 s2_ctx_t.npu_dma_base。
     */
     if (vcpu->vm && stage2_ipa_is_npu_dma(&vcpu->vm->s2, ipa_page)) {
         vm_t *vm = vcpu->vm;

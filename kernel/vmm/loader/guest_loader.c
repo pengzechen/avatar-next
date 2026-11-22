@@ -22,13 +22,13 @@
 #include "vmm/vmm.h"
 
 #if ARCH_AARCH64
-#include "aarch64/stage2.h"
+#include "arch/aarch64/stage2.h"
 /* guest 入口时 x0 的值(ARM64 boot 约定：DTB 物理地址) */
 volatile uint64_t g_guest_entry_x0;
 #elif ARCH_RISCV64
-#include "riscv64/gstage.h"
+#include "arch/riscv64/gstage.h"
 #elif ARCH_X86_64
-#include "x86_64/ept.h"
+#include "arch/x86_64/ept.h"
 #endif
 
 /*

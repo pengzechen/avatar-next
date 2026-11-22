@@ -36,7 +36,7 @@
     哪里由 PMM 决定(aarch64 那边同理, 它的 GPA 基址是 0x70000000)。
     所以 platform.conf 里那段 guest_ram 预留也一并删掉了。
     历史注记：早期实现是 identity 映射(GPA == HPA), 基址才必须是"宿主上
-    真实存在且已直接映射的一段", 见 include/riscv64/gstage.h 的说明。
+    真实存在且已直接映射的一段", 见 include/arch/riscv64/gstage.h 的说明。
 */
 #ifndef GUEST_LOADER_H
 #define GUEST_LOADER_H
@@ -106,7 +106,7 @@
    RK3588 真机上把 NPU 透传给 guest 时, 这块内存必须 IPA == PA：
    NPU 是没有 IOMMU 的物理设备, 只认物理地址, 而 guest 的普通 RAM 是逐页
    从 PMM 现分配的(物理不连续, PA 与 IPA 无关)。详见
-   include/aarch64/stage2.h 里 s2_ctx_t.npu_dma_base 的说明。
+   include/arch/aarch64/stage2.h 里 s2_ctx_t.npu_dma_base 的说明。
 
    三处必须一致, 缺一个 NPU 就会写到随机的宿主页：
      1. guest DTS 的 reserved-memory(NPU 节点的 memory-region 指向它)

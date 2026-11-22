@@ -25,8 +25,8 @@
 #include "string.h"
 #include "task/task.h"
 #include "task/cpu.h" /* get_current_cpu_id()：VMXON 是按 CPU 记的 */
-#include "x86_64/vmx.h"
-#include "x86_64/ept.h"       /* EPT 二级翻译 */
+#include "arch/x86_64/vmx.h"
+#include "arch/x86_64/ept.h"  /* EPT 二级翻译 */
 #include "vmm/guest_loader.h" /* GUEST_LINUX_*_GPA(guest 描述符表要用) */
 #include "vmm/vmm_mmio.h"     /* MMIO 总线 */
 #include "vmm/vmm_uart16550.h"
@@ -979,7 +979,7 @@ extern void vmx_return(void);
 extern int vmx_enter_guest(vcpu_t *vcpu); /* vmx_run.S */
 
 /* ── VMXON / VMCS 操作 ──────────────────────────────────────────────────
-   vmxon / vmclear / vmptrld 是 include/x86_64/vmx.h 里的 static inline。
+   vmxon / vmclear / vmptrld 是 include/arch/x86_64/vmx.h 里的 static inline。
    它们的 m64 操作数是存放「物理地址」的内存位置；内核运行在
    0xffff800000000000 偏移的高半区, 调用方必须先 virt_to_phys。
    ───────────────────────────────────────────────────────────────────────

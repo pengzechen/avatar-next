@@ -198,7 +198,7 @@ uint64_t* vm_create_user_process(uint64_t user_start, uint64_t user_end,
 
 **关键修改**:
 - `kernel/mm/vm_user.c`: 添加 x86_64 分支
-- `include/x86_64/mm_vm.h`: 定义页表结构和标志
+- `include/arch/x86_64/mm_vm.h`: 定义页表结构和标志
 
 ---
 
@@ -310,12 +310,12 @@ x86_64-linux-musl-gcc -nostdlib -static \
 ## 文件修改清单
 
 ### 必须修改
-- [x] `include/x86_64/mmu.h` (新建) - 完善的页表定义和宏
+- [x] `include/arch/x86_64/mmu.h` (新建) - 完善的页表定义和宏
 - [x] `boot/x86_64/exception.c` - MSR 配置、SYSCALL/SYSRET 支持
 - [x] `boot/x86_64/syscall_wrapper.S` (新建) - syscall/sysret 入口
 - [x] `boot/x86_64/boot.S` - 添加用户段到 GDT
 - [x] `kernel/task/x86_64/switch.S` - task_trampoline_user 实现
-- [x] `include/x86_64/syscall_abi.h` - 系统调用 ABI（已存在）
+- [x] `include/arch/x86_64/syscall_abi.h` - 系统调用 ABI（已存在）
 - [x] `kernel/task/task.c` - 修复 idle 栈切换问题
 - [ ] `kernel/syscall/syscall.c` - x86_64 系统调用处理（已支持）
 - [ ] `kernel/task/sched.c` - CR3 切换
@@ -324,7 +324,7 @@ x86_64-linux-musl-gcc -nostdlib -static \
 ### 可能需要修改
 - [x] `boot/x86_64/gdt.c` - 用户段描述符（已在 boot.S 中添加）
 - [ ] `kernel/loader/elf_loader.c` - x86_64 特定处理
-- [x] `include/x86_64/mm_vm.h` - 页表结构定义（已有占位实现）
+- [x] `include/arch/x86_64/mm_vm.h` - 页表结构定义（已有占位实现）
 - [ ] `kernel/main.c` - 启用 busybox 加载
 
 ### 参考文档

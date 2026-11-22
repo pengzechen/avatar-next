@@ -465,7 +465,7 @@ void task_switch_to_idle_stack(void)
     /*
        切到 idle 栈后永不返回：架构实现直接在 inline asm 里跳到 idle
        主循环, 跳过编译器生成的 epilogue(否则会从未初始化的新栈读
-       LR/RBP 导致跳到 0)。实现见 include/<arch>/cpu_impl.h。
+       LR/RBP 导致跳到 0)。实现见 include/arch/<arch>/cpu_impl.h。
     */
     arch_switch_to_idle_stack(new_sp);
     __builtin_unreachable();

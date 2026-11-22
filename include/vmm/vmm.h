@@ -47,17 +47,17 @@
    全部 TU(三个架构都算)。
 */
 #if ARCH_AARCH64
-#include "aarch64/stage2.h" /* s2_ctx_t：vm_t 里每个 VM 一份 stage-2 */
-#include "vmm/vmm_vgic.h"   /* vgic_t：GICv2 后端 */
-#include "vmm/vmm_vpl011.h" /* vpl011_init/destroy：状态已搬进 vpl011.c 的池 */
+#include "arch/aarch64/stage2.h" /* s2_ctx_t：vm_t 里每个 VM 一份 stage-2 */
+#include "vmm/vmm_vgic.h"        /* vgic_t：GICv2 后端 */
+#include "vmm/vmm_vpl011.h"      /* vpl011_init/destroy：状态已搬进 vpl011.c 的池 */
 #endif
 #if ARCH_AARCH64 && DRIVER_GIC_V3
 #include "vmm_vgicv3.h"
 #endif
 
 #if ARCH_RISCV64
-#include "riscv64/gstage.h" /* gstage_ctx_t：vm_t 里每个 VM 一份 G-stage */
-#include "vmm/vmm_vplic.h"  /* vplic_init/destroy：状态已搬进 vplic.c 的池 */
+#include "arch/riscv64/gstage.h" /* gstage_ctx_t：vm_t 里每个 VM 一份 G-stage */
+#include "vmm/vmm_vplic.h"       /* vplic_init/destroy：状态已搬进 vplic.c 的池 */
 #endif
 /*
    uart16550 是 riscv64 与 x86_64 共用的 guest 控制台型号(两个架构都编
@@ -68,7 +68,7 @@
 #endif
 
 #if ARCH_X86_64
-#include "x86_64/ept.h"          /* ept_ctx_t：vm_t 里每个 VM 一份 EPT */
+#include "arch/x86_64/ept.h"     /* ept_ctx_t：vm_t 里每个 VM 一份 EPT */
 #include "vmm/vmm_vlapic.h"      /* vlapic_state_t：每个 VM 一份 vLAPIC */
 #include "vmm/vmm_x86_chipset.h" /* x86_chipset_state_t：PIC/PIT/IOAPIC 桩 */
 #endif
@@ -560,7 +560,7 @@ typedef struct vcpu {
    编译期钉死结构体偏移 == hext_vcpu.S 里的 VCPU_RV_* / HCTX_* 宏。
    两边只靠注释约定, 加一个字段就会整体错位, 而错位的表现是"guest 随机
    跑飞"这种极难反查的故障(历史上 tp 槽位就是漏加过一次, 见上方说明)。
-   与 include/aarch64/exception.h 钉 trap_frame_t 是同一手法。
+   与 include/arch/aarch64/exception.h 钉 trap_frame_t 是同一手法。
 */
 _Static_assert(offsetof(vcpu_t, r) == VCPU_RV_R0, "hext_vcpu.S VCPU_R0");
 _Static_assert(offsetof(vcpu_t, vsepc) == VCPU_RV_VSEPC, "hext_vcpu.S VCPU_VSEPC");

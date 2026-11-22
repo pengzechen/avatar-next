@@ -8,7 +8,7 @@
    kernel/mm/vm_user.c - 用户进程虚拟内存管理
 
    架构无关实现, 依赖 mm_vm.h 提供的抽象接口。
-   各架构在其 include/<arch>/mm_vm.h 中提供具体实现或 stub。
+   各架构在其 include/arch/<arch>/mm_vm.h 中提供具体实现或 stub。
 */
 
 #include "mm/vm_user.h"

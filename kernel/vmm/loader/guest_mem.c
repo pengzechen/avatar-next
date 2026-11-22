@@ -24,11 +24,11 @@
 #include "vmm/vmm.h"
 
 #if ARCH_AARCH64
-#include "aarch64/stage2.h"
+#include "arch/aarch64/stage2.h"
 #elif ARCH_RISCV64
-#include "riscv64/gstage.h"
+#include "arch/riscv64/gstage.h"
 #elif ARCH_X86_64
-#include "x86_64/ept.h"
+#include "arch/x86_64/ept.h"
 #endif
 
 /* ── GPA → 宿主可写地址(按需分页下唯一的入口)────────────────

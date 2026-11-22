@@ -23,7 +23,7 @@
  */
 
 #include "asm.h"
-#include "x86_64/mem_layout.h"
+#include "arch/x86_64/mem_layout.h"
 
 /* Multiboot1 constants */
 .set MB_MAGIC,      0x1BADB002

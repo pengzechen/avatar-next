@@ -20,7 +20,7 @@
 #include "assert.h"
 #include "mm/pmm.h"
 #include "mm/mm_vm.h"
-#include "aarch64/mmu.h"
+#include "arch/aarch64/mmu.h"
 #include "string.h"
 
 extern pte_t *create_uvm(void);

@@ -39,10 +39,10 @@
 #include "mm/shared_page.h"
 #include <ext4.h>
 #if ARCH_RISCV64
-#include "riscv64/satp_utils.h"
+#include "arch/riscv64/satp_utils.h"
 #endif
 #if ARCH_X86_64
-#include "x86_64/mmu.h"
+#include "arch/x86_64/mmu.h"
 #endif
 
 /* MAP_SHARED fork helpers: check/set NOFREE PTE bit per architecture */
@@ -91,7 +91,7 @@
    这种错误不会崩, 只会让结果对不上, 事后极难定位。
 
    与 NOFREE 的关键差别：不调 shared_page_ref。KEEP 页归句柄所有,
-   父子都只是映射者, 谁 unmap 都不释放(见 include/aarch64/mmu.h 的说明)。
+   父子都只是映射者, 谁 unmap 都不释放(见 include/arch/aarch64/mmu.h 的说明)。
 */
 #if ARCH_RISCV64
 #define CLONE_CHECK_KEEP(pgd, va, out) \

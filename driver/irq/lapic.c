@@ -17,8 +17,8 @@
 */
 
 #include "lapic.h"
-#include "x86_64/io.h"
-#include "x86_64/mem_layout.h" /* X86_KERNEL_VMA_OFF(高半区偏移唯一来源) */
+#include "arch/x86_64/io.h"
+#include "arch/x86_64/mem_layout.h" /* X86_KERNEL_VMA_OFF(高半区偏移唯一来源) */
 #include "klog.h"
 #include "driver/time.h" /* TIMER_FREQUENCY_HZ = g_timer_cfg_freq_hz */
 #include "driver/driver.h"

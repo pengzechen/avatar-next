@@ -12,8 +12,8 @@
 */
 
 #include "mm/mm_vm.h"
-#include "aarch64/early_vm.h"
-#include "aarch64/mmu.h"
+#include "arch/aarch64/early_vm.h"
+#include "arch/aarch64/mmu.h"
 #include "klog.h"
 #include "string.h"
 

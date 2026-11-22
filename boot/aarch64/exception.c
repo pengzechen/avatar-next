@@ -5,7 +5,7 @@
 */
 
 #include "exception.h"
-#include "aarch64/sysreg.h" /* READ_ESR_EL1, READ_ELR_EL1 等 */
+#include "arch/aarch64/sysreg.h" /* READ_ESR_EL1, READ_ELR_EL1 等 */
 #include "driver/irq.h"
 #include "syscall/trace.h"
 #include "debug/backtrace.h"

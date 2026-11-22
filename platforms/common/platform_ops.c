@@ -22,7 +22,7 @@
 #include "debug/backtrace.h"       /* platform_panic() 里打调用栈 */
 #include "klog.h"                  /* klog_panic_begin() */
 #if ARCH_X86_64
-#include "x86_64/io.h" /* x86 Port I/O: outw 用于 ACPI shutdown */
+#include "arch/x86_64/io.h" /* x86 Port I/O: outw 用于 ACPI shutdown */
 #endif
 
 /* Transmit a single character */
@@ -56,7 +56,7 @@ static void platform_panic_impl(void) __attribute__((noreturn));
 static void platform_panic_impl(void)
 {
     /*
-       关中断：统一用 arch_irq_disable()(include/<arch>/exception_impl.h)。
+       关中断：统一用 arch_irq_disable()(include/arch/<arch>/exception_impl.h)。
        这里原来按架构各写一遍 msr daifset, #0xF / csrw sie,sip / cli。
     */
     arch_irq_disable();

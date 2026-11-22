@@ -633,7 +633,7 @@ void irq_enable(unsigned irq, bool on);
 
 - 公共 API 从 `driver/time/timer.h` 移到 `include/driver/time.h`，函数名不变（`timer_*`）。
 - 驱动 probe = `timer_init(cfg)`，start = `timer_enable()`。
-- `timer_read_counter()` 等热路径继续走 `include/<arch>/` 内联寄存器读，不引入每 tick 间接调用。
+- `timer_read_counter()` 等热路径继续走 `include/arch/<arch>/` 内联寄存器读，不引入每 tick 间接调用。
 - 次核初始化：`timer_init_secondary()` 保留，cpu.c 改为调用公共函数（不再 include 驱动私有头）。
 
 ### 9.4 块设备
@@ -781,7 +781,7 @@ DRIVER_EXTRA_FLAGS_driver_dma_dma_buf.c  := -Idriver/dma -Ikernel/mm
 | `include/vmm/guest_loader.h:117` | `#if PLATFORM_RK3588` NPU DMA 窗口 | 生成的 `platform_guest.h`（值来自 `memory.reserves` 的 `npu-guest-dma`） |
 | `driver/uart/uart_dw.c:28/337` | `ARCH_RISCV64 && PLATFORM_SG2002` 调试口 | 设备 cfg 的 earlycon hook / 平台 board hook |
 
-允许保留 `PLATFORM_*` 的位置：`platforms/`、`include/<arch>/`（例如 `include/riscv64/pte.h` 的 SG2002 硬件怪癖）。规则：**通用 `kernel/`、`driver/`、`fs/` 里不允许出现 `PLATFORM_*`。**
+允许保留 `PLATFORM_*` 的位置：`platforms/`、`include/arch/<arch>/`（例如 `include/arch/riscv64/pte.h` 的 SG2002 硬件怪癖）。规则：**通用 `kernel/`、`driver/`、`fs/` 里不允许出现 `PLATFORM_*`。**
 
 ---
 

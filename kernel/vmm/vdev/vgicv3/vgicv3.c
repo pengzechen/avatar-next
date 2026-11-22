@@ -23,7 +23,7 @@
 #include "klog.h"
 #include "string.h"
 #include "barrier.h" /* barrier_sync：清 LR 后要等它落地 */
-#include "aarch64/sysreg.h"
+#include "arch/aarch64/sysreg.h"
 #include "task/cpu.h" /* get_current_cpu_id：诊断「En 设在哪一核」 */
 
 #define SGI_MASK 0xffffu

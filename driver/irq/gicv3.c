@@ -24,7 +24,7 @@
 #include "barrier.h"
 #include "klog.h"
 #include "driver/time.h"
-#include "aarch64/sysreg.h" /* SYSREG_READ / SYSREG_WRITE */
+#include "arch/aarch64/sysreg.h" /* SYSREG_READ / SYSREG_WRITE */
 #include "driver/driver.h"
 #include "driver/irq.h"
 

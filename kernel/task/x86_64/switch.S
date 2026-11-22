@@ -163,7 +163,7 @@ arch_enter_user:
  * 由 arch_task_switch 的 ret 跳转到此处。
  * 约定：rbx = trap_frame_t*（arch_init_fork_child_stack 中设置）
  *
- * trap_frame_t 偏移（见 include/x86_64/exception.h）:
+ * trap_frame_t 偏移（见 include/arch/x86_64/exception.h）:
  *   r15=0x00  r14=0x08  r13=0x10  r12=0x18
  *   r11=0x20  r10=0x28  r9=0x30   r8=0x38
  *   rbp=0x40  rdi=0x48  rsi=0x50  rdx=0x58

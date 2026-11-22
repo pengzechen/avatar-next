@@ -117,9 +117,9 @@ boot/
 | `klog.h` | 内核日志输出 |
 | `string.h` | `memset`（TSS 初始化） |
 | `exception.h` | `trap_frame_t`、IDT 常量（各架构各自的） |
-| `aarch64/sysreg.h` | `READ_ESR_EL1`、`READ_FAR_EL1` 等系统寄存器读写宏 |
-| `riscv64/sysreg.h` | `CSR_READ`、`CSR_SET`、`WRITE_STVEC` 等 CSR 操作宏 |
-| `x86_64/io.h` | `outb`（屏蔽 8259A PIC） |
+| `arch/aarch64/sysreg.h` | `READ_ESR_EL1`、`READ_FAR_EL1` 等系统寄存器读写宏 |
+| `arch/riscv64/sysreg.h` | `CSR_READ`、`CSR_SET`、`WRITE_STVEC` 等 CSR 操作宏 |
+| `arch/x86_64/io.h` | `outb`（屏蔽 8259A PIC） |
 | `driver/irq.h` | `irq_dispatch_frame()`、`irq_register()`、`irq_enable()`（控制器后端在 driver/irq/） |
 | `irq/lapic.h` | `lapic_init()`（LAPIC 初始化） |
 | `task/task.h` | `task_t`、`task_current()` |

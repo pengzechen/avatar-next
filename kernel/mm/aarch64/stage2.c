@@ -26,7 +26,7 @@
    每张表的每个有效表项即可把按需页精确还回去。
 */
 
-#include "aarch64/stage2.h"
+#include "arch/aarch64/stage2.h"
 #include "mm/pmm.h"
 #include "mm/mm_vm.h"
 #include "cache.h"   /* clean_and_invalidate_dcache_range */
@@ -254,7 +254,7 @@ int stage2_ipa_is_npu_dma(const s2_ctx_t *s2, uint64_t ipa)
    为什么必须恒等：RK3588 NPU 无 IOMMU, 它只认物理地址。guest 里 librknnrt
    拿到的"设备地址"是驱动从 CMA/预留池分配出来的物理地址, NPU 就照着那个
    地址去读写 —— 只有 IPA == PA 时, 这个地址在 guest 和宿主两边指的是同一块
-   内存。(详见 include/aarch64/stage2.h 里 s2_ctx_t.npu_dma_base 的说明。)
+   内存。(详见 include/arch/aarch64/stage2.h 里 s2_ctx_t.npu_dma_base 的说明。)
 
    属性用 Normal(不是 Device)：这是普通内存, NPU 要用 AXI 正常访问它；
    且 guest 侧 CPU 也要读写(拷输入, 读结果), 用 Device 属性会慢得离谱。

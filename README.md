@@ -297,11 +297,11 @@ extern void operation(void);
 static inline void operation(void);
 
 #if ARCH_AARCH64
-    #include "aarch64/module_impl.h"
+    #include "arch/aarch64/module_impl.h"
 #elif ARCH_X86_64
-    #include "x86_64/module_impl.h"
+    #include "arch/x86_64/module_impl.h"
 #elif ARCH_RISCV64
-    #include "riscv64/module_impl.h"
+    #include "arch/riscv64/module_impl.h"
 #endif
 ```
 

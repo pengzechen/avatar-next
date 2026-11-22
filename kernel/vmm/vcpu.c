@@ -25,10 +25,10 @@
 #include "task/sched.h" /* sched_check_and_yield：主循环顶部主动让出 CPU */
 #include "task/cpu.h"   /* g_num_cpus：vCPU 摊核时用 */
 #if ARCH_AARCH64
-#include "aarch64/stage2.h" /* stage2_activate：每轮进 guest 前重写 VTTBR */
+#include "arch/aarch64/stage2.h" /* stage2_activate：每轮进 guest 前重写 VTTBR */
 #endif
 #if ARCH_RISCV64
-#include "riscv64/hext.h" /* HSTATUS_SPVP：AP 首次 sret 必须落回 VS-mode */
+#include "arch/riscv64/hext.h" /* HSTATUS_SPVP：AP 首次 sret 必须落回 VS-mode */
 #endif
 #include "barrier.h" /* smp_wmb：注入发布后再 kick */
 

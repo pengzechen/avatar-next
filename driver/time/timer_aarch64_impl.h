@@ -9,7 +9,7 @@
 
 #include "driver/time.h"
 #include "driver/irq.h"
-#include "aarch64/sysreg.h"
+#include "arch/aarch64/sysreg.h"
 #include "mmio.h"
 #include "klog.h"
 

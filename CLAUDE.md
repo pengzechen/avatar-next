@@ -100,9 +100,10 @@ avatar/
 ├── CLAUDE.md             # 本文件（AI 上下文）
 ├── PROJECT_REFERENCE.md  # 详细参考文档
 ├── include/              # 头文件
-│   ├── aarch64/         # AArch64 实现
-│   ├── riscv64/         # RISC-V 实现
-│   ├── x86_64/          # x86_64 实现
+│   ├── arch/            # 架构相关头文件
+│   │   ├── aarch64/     # AArch64 实现
+│   │   ├── riscv64/     # RISC-V 实现
+│   │   └── x86_64/      # x86_64 实现
 │   ├── types.h          # 基础类型
 │   ├── arg.h            # 可变参数
 │   ├── arch.h           # 架构检测
@@ -200,7 +201,7 @@ avatar/
 **遇到任何中断 / 抢占 / 上下文切换问题，先读这三篇文档，不要凭空推断。**
 
 - **中断屏蔽接口**: `docs/basic/INTERRUPT_MASKING.md` - C 代码统一用
-  `include/<arch>/exception_impl.h` 的 `arch_irq_*`（由 exception.h 暴露），
+  `include/arch/<arch>/exception_impl.h` 的 `arch_irq_*`（由 exception.h 暴露），
   **不许再写内联汇编**；`.S` 除外
 
 - **中断开关策略**: `docs/INTERRUPT_CONTROL_COMPARISON.md` - AArch64/RISC-V 中断开关的核心约定。关键：中断策略按“EL1 里运行的是谁”区分——EL0 任务的内核侧（syscall/异常）关中断，独立内核线程（含 idle）开中断、可被抢占。含 `task_trampoline` vs `task_trampoline_user` 的分野与代码检查清单。
@@ -258,7 +259,7 @@ avatar/
 - **RISC-V guest Linux**: `docs/vmm/RISCV64_GUEST_LINUX.md` - H-extension 下跑
   guest Linux 的整个链路（G-stage / sret 进出 / vPLIC / 16550A / SBI / DTB 布局），
   以及 7 条**移植时真踩过**的坑。**动 `kernel/vmm/riscv64/*`、
-  `include/riscv64/hext.h`、`include/vmm/guest_loader.h` 之前必读** ——
+  `include/arch/riscv64/hext.h`、`include/vmm/guest_loader.h` 之前必读** ——
   其中第 1 条（binutils 把 hypervisor CSR 符号名静默映射到 VS 级编号，
   编译全绿、运行期才炸）尤其反直觉。该文档 §7 还登记了一个**尚未定性的
   间歇性 guest 用户态 SIGSEGV**。
@@ -372,11 +373,11 @@ extern void operation(void);
 static inline void operation(void);
 
 #if defined(__aarch64__)
-    #include "aarch64/module_impl.h"
+    #include "arch/aarch64/module_impl.h"
 #elif defined(__x86_64__)
-    #include "x86_64/module_impl.h"
+    #include "arch/x86_64/module_impl.h"
 #elif defined(__riscv)
-    #include "riscv64/module_impl.h"
+    #include "arch/riscv64/module_impl.h"
 #endif
 ```
 
@@ -447,9 +448,9 @@ static inline void helper(void) { }
 ### 架构特定实现
 
 参考现有实现：
-- `include/aarch64/*_impl.h` - AArch64 内联汇编
-- `include/riscv64/*_impl.h` - RISC-V 内联汇编
-- `include/x86_64/*_impl.h` - x86_64 内联汇编
+- `include/arch/aarch64/*_impl.h` - AArch64 内联汇编
+- `include/arch/riscv64/*_impl.h` - RISC-V 内联汇编
+- `include/arch/x86_64/*_impl.h` - x86_64 内联汇编
 
 ### 平台层依赖
 

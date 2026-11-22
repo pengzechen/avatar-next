@@ -39,7 +39,7 @@
    架构专属头。x86_64 没有额外需要: exception_init 走通用 exception.h。
 */
 #if ARCH_AARCH64
-#include "aarch64/neon.h" /* aarch64_enable_neon() */
+#include "arch/aarch64/neon.h" /* aarch64_enable_neon() */
 #endif
 
 #include "driver/driver.h"

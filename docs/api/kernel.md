@@ -1,6 +1,6 @@
 # kernel — C API
 
-[← 返回总览](index.md) · 977 个函数 · 说明覆盖率 98.4%
+[← 返回总览](index.md) · 997 个函数 · 说明覆盖率 95.7%
 
 <a id="mod-kernel-debug-backtrace.c"></a>
 
@@ -1332,7 +1332,7 @@ static int load_from_file_depth(const char *pathname, char **argv, char **envp, 
 
 ## kernel/main.c — Kernel main entry point
 
-`kernel/main.c` · 5 个函数 · 5 个有说明 · 339 行
+`kernel/main.c` · 5 个函数 · 5 个有说明 · 346 行
 
 Called from architecture-specific boot code
 
@@ -1430,7 +1430,7 @@ void kernel_main(void)
 按序完成平台、UART、异常、日志、PMM、驱动、文件系统、任务与 AP 初始化，最后按测试或普通模式创建启动任务。
 
 <details>
-<summary>函数内备注（36 条）</summary>
+<summary>函数内备注（37 条）</summary>
 
 **第 103 行**
 
@@ -1461,17 +1461,23 @@ void kernel_main(void)
 > 必须在 fs_init() 之前设置 stvec, 否则 ext4_mount 中的任何
 > CPU 异常都会落到 M-mode (OpenSBI), 导致 hart 被重置
 
-**第 138 行**
+**第 137 行**
+
+> 记录 boot 建立的内核根页表(x86_64 CR3 / RISC-V satp)。此刻仍跑在
+> 内核地址空间上；之后用户页表构造、调度切回内核任务都依赖它。
+> AArch64 的内核映射在 TTBR1, 没有这个抽象, 记录到的是 0。
+
+**第 145 行**
 
 > mmu.S 建立的 1GiB 内核映射必须与 RV_KERNEL_MAP_LIST 完全一致；
 > 缺一条就 panic 在启动期, 而不是等 syscall 期间 Store PF。
 
-**第 144 行**
+**第 151 行**
 
 > 应用编译期模块白名单(Makefile 的 LOG_MODULES=)并打印生效配置。
 > 必须在 UART 可用之后, 任何模块日志之前。
 
-**第 150 行**
+**第 157 行**
 
 > 调用栈回溯自检：造一条已知的调用链, 验证&quot;展开 + 符号化&quot;整条路是通的。
 
@@ -1483,76 +1489,76 @@ void kernel_main(void)
 > 镜像本身完全正常, 但 panic 打出来的函数名会整体错位 —— 假的调用栈比
 > 打不出来更危险, 它会把人带到完全错误的方向。这里当场喊出来。
 
-**第 161 行**
+**第 168 行**
 
 > backtrace_selftest();
 
-**第 163 行**
+**第 170 行**
 
 > 探测/设定缓存行大小(cache API 的 range 操作用它做步长)。
 > 以前从来没人调用, 于是所有架构都吃硬编码的 64。
 
-**第 169 行**
+**第 176 行**
 
 > Print welcome message
 
-**第 170 行**
+**第 177 行**
 
 > 一条事实一行 —— 拆成三行没有多出任何信息
 
-**第 173 行**
+**第 180 行**
 
 > ── 字符串/内存函数自检(STRING_TEST=1, 跑完继续启动)────────
 
-**第 175 行（行尾）**
+**第 182 行（行尾）**
 
 > tests/unit-test/string_test.c
 
-**第 179 行**
+**第 186 行**
 
 > ── 初始化物理内存管理器 ─────────────────────────────────
 
-**第 180 行**
+**第 187 行**
 
 > 链接脚本导出的 __kernel_image_start/end 是虚拟地址：高半区代码
 > 对低物理地址的 ABS 符号做 PC 相对寻址会超出 ADRP/auipc/RIP-rel 的
 > 范围(实测 aarch64 报 R_AARCH64_ADR_PREL_PG_HI21 truncated to fit)。
 > 换算放在这里 —— boot 层知道 KERNEL_VMA, PMM 只收物理地址。
 
-**第 190 行**
+**第 197 行**
 
 > 驱动阶段（一）：中断控制器、时间基准、根块设备。
 
 > IRQ/TIME 不依赖文件系统，提前初始化；STORAGE 必须先于 fs_init()，
 > 由 ramblk/sdblk 在 probe 里注册根块设备。
 
-**第 203 行**
+**第 210 行**
 
 > 测试入口：普通启动在这里什么都不跑；只有 PMM_TEST=1 / KMEM_TEST=1
 > 等测试变体才会执行对应测试（具体内容在 tests/unit-test/unit_test.c）。
 
-**第 209 行**
+**第 216 行**
 
 > 驱动阶段（二）：DMA/ION/NPU/TPU
 
-**第 212 行**
+**第 219 行**
 
 > ── 初始化任务子系统 ─────────────────────────────────
 
-**第 214 行（行尾）**
+**第 221 行（行尾）**
 
 > 安装 BSP per-CPU 指针
 
-**第 218 行（行尾）**
+**第 225 行（行尾）**
 
 > 必须在 cpu_init_bsp() 之后(见上方说明)
 
-**第 223 行**
+**第 230 行**
 
 > 启动早期的 fs_init / ext4 装载等长临界区不污染运行时 RT 基线；
 > 此时只有 BSP、没有用户任务/tick 回调，清空统计不会和别的核竞争。
 
-**第 229 行**
+**第 236 行**
 
 > 先把 AP 拉起来, 再创建任何可能被摊核的任务。
 
@@ -1562,35 +1568,35 @@ void kernel_main(void)
 > 分时, AP bring-up 和 IPI 都会被拖死。放到任务创建之前, 任何模式
 > (直启 guest / busybox / 网络)都能按真实核数摊开。
 
-**第 241 行**
+**第 248 行**
 
 > 放在创建 net-poll / busybox 之前：这些长期就绪任务会把 idle 任务
 > 挤到队尾，测试的 boot 上下文（idle）在任务退出后不一定马上拿回 CPU。
 
-**第 250 行**
+**第 257 行**
 
 > 同样必须在创建 net-poll / busybox 之前运行：boot 上下文不是可调度
 > 的 task（idle 永不入就绪队列）。一旦 net-poll 这种&quot;永远 ready&quot;的
 > NORMAL 任务存在，boot 被 tick 抢占后就不会再被调度回来，demo 的
 > 调用点根本到不了。demo 自己临时安装 tick 回调，跑完摘掉。
 
-**第 260 行**
+**第 267 行**
 
 > 驱动阶段（三）：网卡；net_init() 需要驱动先注册 netdev。
 > guest 直启和 VMM 自测不需要网络，由测试变体的 boot 对象声明跳过。
 
-**第 272 行**
+**第 279 行**
 
 > 选择启动模式：
 > 默认 / 普通 shell      → busybox
 > GUEST_LINUX=1          → tests/unit-test/guest_test.c
 > VMM_TEST=1             → tests/unit-test/vcpu_thread_test.c
 
-**第 292 行**
+**第 299 行**
 
 > SMP 检查完成, 现在才启动 busybox 交互 shell
 
-**第 301 行**
+**第 308 行**
 
 > SMP 结果打一条 INFO。
 
@@ -1604,28 +1610,28 @@ void kernel_main(void)
 > 上线的。两者不等(PSCI CPU_ON 失败, 核被固件扣住)是最该一眼看出来的
 > 情况, 只报一个的话那种情况会伪装成一切正常。
 
-**第 316 行**
+**第 323 行**
 
 > ── 启用抢占, 进入 idle 循环(所有模式共用)─────────
 > 在所有任务创建完成后启用, 避免 tick 打断内核初始化路径。
 > 切换到 idle 专用栈(防止 boot 栈在频繁中断下溢出)。
 
-**第 325 行**
+**第 332 行**
 
 > SMP 健康检查：抢占启用后立刻验证所有核 timer 都在 tick。
 
-**第 328 行**
+**第 335 行**
 
 > SMP 线程分发自检(当前默认关闭，测试变体可手工打开)。SMP=1 时也会跑,
 > 验证 round-robin 自身不破坏单核。失败仅 KLOG_ERROR, 不 panic, 避免
 > 影响后续 busybox / vmm 测试。
 
-**第 332 行**
+**第 339 行**
 
 > extern void smp_thread_test_run(uint32_t, uint32_t, uint32_t);
 > smp_thread_test_run(4, 200, 800);
 
-**第 337 行**
+**第 344 行**
 
 > 切到 idle 栈并进入 idle 主循环(永不返回)。
 
@@ -1840,7 +1846,7 @@ stage2_map_identity_block — 把 ipa 所在的 2 MiB 块恒等映射(PA = IPA)�
 为什么必须恒等：RK3588 NPU 无 IOMMU, 它只认物理地址。guest 里 librknnrt
 拿到的"设备地址"是驱动从 CMA/预留池分配出来的物理地址, NPU 就照着那个
 地址去读写 —— 只有 IPA == PA 时, 这个地址在 guest 和宿主两边指的是同一块
-内存。(详见 include/aarch64/stage2.h 里 s2_ctx_t.npu_dma_base 的说明。)
+内存。(详见 include/arch/aarch64/stage2.h 里 s2_ctx_t.npu_dma_base 的说明。)
 
 属性用 Normal(不是 Device)：这是普通内存, NPU 要用 AXI 正常访问它；
 且 guest 侧 CPU 也要读写(拷输入, 读结果), 用 Device 属性会慢得离谱。
@@ -2585,7 +2591,7 @@ void memory_set_pte_keep(void *page_dir, uint64_t vaddr)
 ```
 
 把某页标成 PTE_KEEP(设备缓冲)。与 memory_set_pte_nofree 同构,
-区别见 include/aarch64/mmu.h 里 PTE_KEEP 的说明。
+区别见 include/arch/aarch64/mmu.h 里 PTE_KEEP 的说明。
 
 **位置**：`kernel/mm/aarch64/vmm.c:299`
 
@@ -3759,7 +3765,7 @@ void rv_gstage_tlb_flush(const gstage_ctx_t *g)
 
 ## kernel/mm/riscv64/vmm.c — RISC-V Sv39 页表操作实现
 
-`kernel/mm/riscv64/vmm.c` · 13 个函数 · 13 个有说明 · 266 行
+`kernel/mm/riscv64/vmm.c` · 13 个函数 · 13 个有说明 · 268 行
 
 提供 Sv39 三级页表(L2→L1→L0)的遍历, 映射与用户地址空间生命周期操作。
 
@@ -3908,12 +3914,14 @@ void mm_vm_init_user_pgd(void *pgd, uint64_t pgd_phys)
 
 > 复制哪些 L1 项由 RV_KERNEL_MAP_LIST(mem_layout.h)决定, 与启动时
 > mmu.S 建立的映射是同一份列表, 这里不再逐条列举下标。
+> 内核根表取 boot 时记录的那份, 而不是现读 satp —— 本函数可能在
+> 用户地址空间下被调用。
 
 </details>
 
 **位置**：`kernel/mm/riscv64/vmm.c:185`
 
-<a id="fn-kernel-mm-riscv64-vmm.c-202"></a>
+<a id="fn-kernel-mm-riscv64-vmm.c-204"></a>
 
 ### `mm_vm_destroy_user_space`
 
@@ -3928,15 +3936,15 @@ void mm_vm_destroy_user_space(uint64_t pgd_phys)
 <details>
 <summary>函数内备注（1 条）</summary>
 
-**第 209 行**
+**第 211 行**
 
 > 只释放用户半区。高半区 L1[FIRST_IDX..] 是从内核页表复制的共享映射。
 
 </details>
 
-**位置**：`kernel/mm/riscv64/vmm.c:202`
+**位置**：`kernel/mm/riscv64/vmm.c:204`
 
-<a id="fn-kernel-mm-riscv64-vmm.c-228"></a>
+<a id="fn-kernel-mm-riscv64-vmm.c-230"></a>
 
 ### `mm_vm_unmap_page`
 
@@ -3951,15 +3959,15 @@ int mm_vm_unmap_page(void *pgd, uint64_t vaddr)
 <details>
 <summary>函数内备注（1 条）</summary>
 
-**第 235 行**
+**第 237 行**
 
 > 设备缓冲：页归 dma_buf/ION 句柄所有, 只拆映射
 
 </details>
 
-**位置**：`kernel/mm/riscv64/vmm.c:228`
+**位置**：`kernel/mm/riscv64/vmm.c:230`
 
-<a id="fn-kernel-mm-riscv64-vmm.c-245"></a>
+<a id="fn-kernel-mm-riscv64-vmm.c-247"></a>
 
 ### `mm_vm_flush_tlb_user`
 
@@ -3971,9 +3979,9 @@ void mm_vm_flush_tlb_user(void)
 
 执行一条 sfence.vma 全量刷新用户 TLB。
 
-**位置**：`kernel/mm/riscv64/vmm.c:245`
+**位置**：`kernel/mm/riscv64/vmm.c:247`
 
-<a id="fn-kernel-mm-riscv64-vmm.c-250"></a>
+<a id="fn-kernel-mm-riscv64-vmm.c-252"></a>
 
 ### `mm_vm_switch_user`
 
@@ -3988,7 +3996,7 @@ void mm_vm_switch_user(uint64_t pgd_phys)
 <details>
 <summary>函数内备注（1 条）</summary>
 
-**第 254 行**
+**第 256 行**
 
 > execve 原地换页表。用户根页表包含内核高半区映射，切 satp 后当前
 > 内核栈/代码仍可达。
@@ -4000,7 +4008,7 @@ void mm_vm_switch_user(uint64_t pgd_phys)
 
 </details>
 
-**位置**：`kernel/mm/riscv64/vmm.c:250`
+**位置**：`kernel/mm/riscv64/vmm.c:252`
 
 <a id="mod-kernel-mm-shared_page.c"></a>
 
@@ -4117,12 +4125,12 @@ void shared_page_unref(uint64_t paddr)
 
 ## kernel/mm/vm_user.c — 用户进程虚拟内存管理
 
-`kernel/mm/vm_user.c` · 3 个函数 · 3 个有说明 · 149 行
+`kernel/mm/vm_user.c` · 5 个函数 · 3 个有说明 · 172 行
 
 架构无关实现, 依赖 mm_vm.h 提供的抽象接口。
-各架构在其 include/<arch>/mm_vm.h 中提供具体实现或 stub。
+各架构在其 include/arch/<arch>/mm_vm.h 中提供具体实现或 stub。
 
-<a id="fn-kernel-mm-vm_user.c-24"></a>
+<a id="fn-kernel-mm-vm_user.c-25"></a>
 
 ### `vm_create_user_process`
 
@@ -4137,41 +4145,41 @@ uint64_t vm_create_user_process(uint64_t user_code_vaddr, uint64_t user_code_siz
 <details>
 <summary>函数内备注（7 条）</summary>
 
-**第 27 行**
+**第 28 行**
 
 > 分配并清零页目录(PGD)
 
-**第 36 行**
+**第 37 行**
 
 > 架构要求的内核映射注入(RISC-V/x86 复制内核高半区, AArch64 为空操作)。
 > 具体实现在 kernel/mm/&lt;arch&gt;/vmm.c, 根目录不出现架构条件编译。
 
-**第 48 行**
+**第 49 行**
 
 > ── 映射用户代码段 ───────────────────────────────────────────
 
-**第 68 行**
+**第 69 行**
 
 > ── 映射用户栈 ───────────────────────────────────────────────
 
-**第 86 行**
+**第 87 行**
 
 > ── 拷贝用户代码到用户地址空间 ─────────────────────────────────
 
-**第 94 行**
+**第 95 行**
 
 > 验证：读取前 16 字节
 
-**第 109 行**
+**第 110 行**
 
 > 失败时可能已经映射了代码/栈的一部分, 甚至已经分配了中间页表。
 > 只 free PGD 会把这些页全部泄漏；走完整的销毁路径。
 
 </details>
 
-**位置**：`kernel/mm/vm_user.c:24`
+**位置**：`kernel/mm/vm_user.c:25`
 
-<a id="fn-kernel-mm-vm_user.c-117"></a>
+<a id="fn-kernel-mm-vm_user.c-118"></a>
 
 ### `vm_destroy_user_process`
 
@@ -4186,15 +4194,15 @@ void vm_destroy_user_process(uint64_t pgd_phys)
 <details>
 <summary>函数内备注（1 条）</summary>
 
-**第 123 行**
+**第 124 行**
 
 > 整棵页表, leaf 页与共享引用都由架构钩子回收(含 PGD 自身)。
 
 </details>
 
-**位置**：`kernel/mm/vm_user.c:117`
+**位置**：`kernel/mm/vm_user.c:118`
 
-<a id="fn-kernel-mm-vm_user.c-127"></a>
+<a id="fn-kernel-mm-vm_user.c-128"></a>
 
 ### `vm_unmap_user_range`
 
@@ -4206,7 +4214,31 @@ uint64_t vm_unmap_user_range(uint64_t pgd_phys, uint64_t vaddr, uint64_t size)
 
 页对齐遍历范围内每页调用架构 unmap 并统计释放数，有释放则刷新用户 TLB 后返回数量。
 
-**位置**：`kernel/mm/vm_user.c:127`
+**位置**：`kernel/mm/vm_user.c:128`
+
+<a id="fn-kernel-mm-vm_user.c-162"></a>
+
+### `mm_vm_kernel_root_init`
+
+```c
+void mm_vm_kernel_root_init(void)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`kernel/mm/vm_user.c:162`
+
+<a id="fn-kernel-mm-vm_user.c-168"></a>
+
+### `mm_vm_kernel_root_phys`
+
+```c
+uint64_t mm_vm_kernel_root_phys(void)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`kernel/mm/vm_user.c:168`
 
 <a id="mod-kernel-mm-x86_64-ept.c"></a>
 
@@ -4585,7 +4617,7 @@ void x86_ept_invept_all(const ept_ctx_t *e)
 
 ## kernel/mm/x86_64/vmm.c — x86_64 4 级页表操作实现
 
-`kernel/mm/x86_64/vmm.c` · 13 个函数 · 13 个有说明 · 286 行
+`kernel/mm/x86_64/vmm.c` · 13 个函数 · 13 个有说明 · 279 行
 
 提供 PML4 → PDPT → PD → PT 四级页表的遍历, 映射, 复制等操作。
 
@@ -4717,7 +4749,7 @@ void mm_vm_copy_to_uva(void *pgd, uint64_t user_vaddr, uint64_t src_paddr, uint6
 
 **位置**：`kernel/mm/x86_64/vmm.c:173`
 
-<a id="fn-kernel-mm-x86_64-vmm.c-201"></a>
+<a id="fn-kernel-mm-x86_64-vmm.c-199"></a>
 
 ### `x86_destroy_table`
 
@@ -4732,15 +4764,15 @@ static void x86_destroy_table(uint64_t *table, int level)
 <details>
 <summary>函数内备注（1 条）</summary>
 
-**第 210 行**
+**第 208 行**
 
 > 设备缓冲：页归 dma_buf/ION 句柄所有, 只拆表
 
 </details>
 
-**位置**：`kernel/mm/x86_64/vmm.c:201`
+**位置**：`kernel/mm/x86_64/vmm.c:199`
 
-<a id="fn-kernel-mm-x86_64-vmm.c-227"></a>
+<a id="fn-kernel-mm-x86_64-vmm.c-225"></a>
 
 ### `mm_vm_init_user_pgd`
 
@@ -4752,9 +4784,9 @@ void mm_vm_init_user_pgd(void *pgd, uint64_t pgd_phys)
 
 用内核 PML4 物理地址把内核高区表项复制进用户 PGD，内核 PML4 未初始化时报错。
 
-**位置**：`kernel/mm/x86_64/vmm.c:227`
+**位置**：`kernel/mm/x86_64/vmm.c:225`
 
-<a id="fn-kernel-mm-x86_64-vmm.c-240"></a>
+<a id="fn-kernel-mm-x86_64-vmm.c-233"></a>
 
 ### `mm_vm_destroy_user_space`
 
@@ -4766,9 +4798,9 @@ void mm_vm_destroy_user_space(uint64_t pgd_phys)
 
 只销毁用户 PML4 项对应的子树，保留内核项，最后释放 PML4 页。
 
-**位置**：`kernel/mm/x86_64/vmm.c:240`
+**位置**：`kernel/mm/x86_64/vmm.c:233`
 
-<a id="fn-kernel-mm-x86_64-vmm.c-259"></a>
+<a id="fn-kernel-mm-x86_64-vmm.c-252"></a>
 
 ### `mm_vm_unmap_page`
 
@@ -4783,15 +4815,15 @@ int mm_vm_unmap_page(void *pgd, uint64_t vaddr)
 <details>
 <summary>函数内备注（1 条）</summary>
 
-**第 266 行**
+**第 259 行**
 
 > 设备缓冲：页归 dma_buf/ION 句柄所有, 只拆映射
 
 </details>
 
-**位置**：`kernel/mm/x86_64/vmm.c:259`
+**位置**：`kernel/mm/x86_64/vmm.c:252`
 
-<a id="fn-kernel-mm-x86_64-vmm.c-277"></a>
+<a id="fn-kernel-mm-x86_64-vmm.c-270"></a>
 
 ### `mm_vm_flush_tlb_user`
 
@@ -4806,15 +4838,15 @@ void mm_vm_flush_tlb_user(void)
 <details>
 <summary>函数内备注（1 条）</summary>
 
-**第 279 行**
+**第 272 行**
 
 > mm_vm_unmap_page() 已经逐页 invlpg, 不需要额外的全刷。
 
 </details>
 
-**位置**：`kernel/mm/x86_64/vmm.c:277`
+**位置**：`kernel/mm/x86_64/vmm.c:270`
 
-<a id="fn-kernel-mm-x86_64-vmm.c-282"></a>
+<a id="fn-kernel-mm-x86_64-vmm.c-275"></a>
 
 ### `mm_vm_switch_user`
 
@@ -4829,13 +4861,13 @@ void mm_vm_switch_user(uint64_t pgd_phys)
 <details>
 <summary>函数内备注（1 条）</summary>
 
-**第 284 行**
+**第 277 行**
 
 > execve 原地换页表。没启用 PCID，写 CR3 就是整 TLB 刷新。
 
 </details>
 
-**位置**：`kernel/mm/x86_64/vmm.c:282`
+**位置**：`kernel/mm/x86_64/vmm.c:275`
 
 <a id="mod-kernel-net-bwtest.c"></a>
 
@@ -11113,7 +11145,7 @@ ION 与 dma-buf 的句柄不同(一个是 ion handle, 一个是 dma_buf 表下�
 
 > 这里不能用 NOFREE 顶替：NOFREE 的语义是&quot;最后一个映射退出
 > 就释放&quot;, 而设备缓冲归句柄所有 —— 只要句柄还开着, 任何映射退出
-> 都不该释放。详见 include/aarch64/mmu.h 里 PTE_KEEP 的说明。
+> 都不该释放。详见 include/arch/aarch64/mmu.h 里 PTE_KEEP 的说明。
 
 </details>
 
@@ -13540,6 +13572,258 @@ void syscall_trace_dump(uint16_t pid_filter, uint32_t max)
 
 **位置**：`kernel/syscall/trace.c:456`
 
+<a id="mod-kernel-task-aarch64-cpu_startup.c"></a>
+
+## kernel/task/aarch64/cpu_startup.c — AArch64 BSP / 次级核启动
+
+`kernel/task/aarch64/cpu_startup.c` · 8 个函数 · 2 个有说明 · 205 行
+
+通用 CPU 管理留在 kernel/task/cpu.c；这里只放架构相关部分：
+PSCI CPU_ON 拉起、GIC per-CPU 初始化、MPIDR→hw_id 推导，
+以及 SMP 自检里 AArch64 专有的诊断输出。
+
+<a id="fn-kernel-task-aarch64-cpu_startup.c-36"></a>
+
+### `arch_cpu_bsp_hw_id`
+
+```c
+uint64_t arch_cpu_bsp_hw_id(void)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`kernel/task/aarch64/cpu_startup.c:36`
+
+<a id="fn-kernel-task-aarch64-cpu_startup.c-59"></a>
+
+### `cpu_secondary_bootstrap`
+
+```c
+void cpu_secondary_bootstrap(uint32_t cpu_id)
+```
+
+cpu_secondary_bootstrap - 次级核 C 入口
+
+由 _secondary_start 在以下条件成立后调用：
+- EL2/VHE 已配置(与 BSP 一致)
+- MMU 已开启, 共享 BSP 的内核 PGD
+- VBAR_EL1 已指向 exception_vector_base
+- DAIF.I 仍为关闭
+
+启动步骤：
+1. 安装 per-CPU 指针 + GIC CPU interface
+2. 建立本核 idle 任务(current_task = idle_task)
+3. 启用本地 timer PPI(CNTP_CTL_EL0)
+4. 通知 BSP online, 开 IRQ, 进入 idle 循环
+
+run_queue 为空时 sched_schedule 会一直选回自己的 idle；跨核 enqueue
+与 resched IPI 会把本核唤醒去跑别的任务。
+
+<details>
+<summary>函数内备注（9 条）</summary>
+
+**第 63 行**
+
+> 每核独立寄存器：必须在跑任何 FP/SIMD 之前打开 CPACR_EL1.FPEN,
+> 否则 EL0 上 musl 启动早期访问 NEON 会触发 EC=0x7 trap。
+> BSP 在 kernel_main 入口已做同样操作；AP 必须在此处补上。
+
+**第 69 行**
+
+> 安装 TPIDR_EL1, 使 cpu_current() 在本核返回正确指针
+
+**第 73 行**
+
+> 控制器 per-CPU 初始化(GIC: PMR/CTLR/GICR)
+
+**第 76 行**
+
+> 必须在开中断之前装好 current_task, 否则首个 timer ISR 进入
+> sched_check_and_yield 会读到 NULL。
+
+**第 82 行**
+
+> 启用本地 timer PPI(CNTP_TVAL/CTL 与 GICD ISENABLER0)。
+
+**第 85 行**
+
+> resched IPI：必须在 online 之前装好, 否则 BSP 发来的 kick 会丢。
+
+**第 88 行**
+
+> 通知 BSP 本核就绪。wmb 确保前面所有写对其他核可见。
+
+**第 92 行**
+
+> 开 IRQ；之后 timer / resched IPI 会驱动本核的 sched_check_and_yield。
+
+**第 95 行**
+
+> Idle 循环：主动 yield 一次再 wfi。yield 在 run_queue 空时是空操作
+> (sched_schedule 选回自己)；远端入队会先置 need_resched 并打断 wfi，
+> 下一轮循环即可拿到新任务。
+
+</details>
+
+**位置**：`kernel/task/aarch64/cpu_startup.c:59`
+
+<a id="fn-kernel-task-aarch64-cpu_startup.c-106"></a>
+
+### `cpu_bring_up_all`
+
+```c
+void cpu_bring_up_all(void)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+<details>
+<summary>函数内备注（6 条）</summary>
+
+**第 112 行**
+
+> _secondary_start 链接在高 VA；PSCI 需要物理入口地址。
+
+**第 123 行**
+
+> RK3588: Aff0 恒为 0, 各核用 Aff1 区分, MPIDR = cpu_idx &lt;&lt; 8
+
+**第 126 行（行尾）**
+
+> QEMU virt: MPIDR.Aff0 = CPU 序号
+
+**第 134 行（行尾）**
+
+> mpidr=
+
+**第 135 行**
+
+> context_id=
+
+**第 142 行**
+
+> 自旋等待该核置 online；带超时避免死等无效 mpidr。
+
+</details>
+
+**位置**：`kernel/task/aarch64/cpu_startup.c:106`
+
+<a id="fn-kernel-task-aarch64-cpu_startup.c-165"></a>
+
+### `arch_cpu_smp_test_begin`
+
+```c
+void arch_cpu_smp_test_begin(void)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+<details>
+<summary>函数内备注（1 条）</summary>
+
+**第 167 行**
+
+> 该函数在 task_switch_to_idle_stack() 之前被调用, 此时 DAIF.I=1。
+> 不先开 IRQ, BSP 就永远收不到 timer 中断, local_ticks 一定为 0。
+
+</details>
+
+**位置**：`kernel/task/aarch64/cpu_startup.c:165`
+
+<a id="fn-kernel-task-aarch64-cpu_startup.c-175"></a>
+
+### `dbg_read_cntp_ctl`
+
+```c
+static inline uint64_t dbg_read_cntp_ctl(void)
+```
+
+诊断：读 DAIF, CNTP_CTL_EL0, CNTPCT_EL0
+
+**位置**：`kernel/task/aarch64/cpu_startup.c:175`
+
+<a id="fn-kernel-task-aarch64-cpu_startup.c-182"></a>
+
+### `dbg_read_cntpct`
+
+```c
+static inline uint64_t dbg_read_cntpct(void)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`kernel/task/aarch64/cpu_startup.c:182`
+
+<a id="fn-kernel-task-aarch64-cpu_startup.c-187"></a>
+
+### `arch_cpu_smp_test_diag_begin`
+
+```c
+void arch_cpu_smp_test_diag_begin(void)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+<details>
+<summary>函数内备注（2 条）</summary>
+
+**第 189 行（行尾）**
+
+> 统一的中断状态读取
+
+**第 195 行**
+
+> 控制器相关的诊断寄存器由后端自己 dump，内核不再知道是 GICv2 还是 GICv3
+
+</details>
+
+**位置**：`kernel/task/aarch64/cpu_startup.c:187`
+
+<a id="fn-kernel-task-aarch64-cpu_startup.c-199"></a>
+
+### `arch_cpu_smp_test_diag_round`
+
+```c
+void arch_cpu_smp_test_diag_round(uint32_t round)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`kernel/task/aarch64/cpu_startup.c:199`
+
+<a id="mod-kernel-task-aarch64-sched.c"></a>
+
+## kernel/task/aarch64/sched.c — AArch64 调度路径的架构部分
+
+`kernel/task/aarch64/sched.c` · 2 个函数 · 0 个有说明 · 26 行
+
+AArch64 用 TTBR0/TTBR1 硬件分割用户/内核地址空间，页表切换由
+arch_task_switch(switch.S) 负责，C 层没有额外的 MMU/TLS 准备工作。
+
+<a id="fn-kernel-task-aarch64-sched.c-18"></a>
+
+### `arch_sched_prev_pgd_slot`
+
+```c
+uint64_t **arch_sched_prev_pgd_slot(task_t *prev)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`kernel/task/aarch64/sched.c:18`
+
+<a id="fn-kernel-task-aarch64-sched.c-23"></a>
+
+### `arch_sched_next_pgd`
+
+```c
+uint64_t *arch_sched_next_pgd(task_t *next)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`kernel/task/aarch64/sched.c:23`
+
 <a id="mod-kernel-task-completion.c"></a>
 
 ## kernel/task/completion.c — SMP 安全的一次性事件等待
@@ -13646,18 +13930,27 @@ int completion_reset(completion_t *c)
 
 <a id="mod-kernel-task-cpu.c"></a>
 
-## kernel/task/cpu.c — Per-CPU 控制块 + BSP / 次级核启动
+## kernel/task/cpu.c — Per-CPU 控制块 + 通用 CPU 管理
 
-`kernel/task/cpu.c` · 16 个函数 · 16 个有说明 · 627 行
+`kernel/task/cpu.c` · 8 个函数 · 8 个有说明 · 245 行
 
-三架构的次级核拉起都在这里收敛到 cpu_secondary_bootstrap()：
+跨架构共用部分：
+- g_cpus / g_num_cpus
+- 跨核 resched IPI(注册、发送)
+- BSP 初始化
+- 次级核 idle 任务的构造
+- SMP timer 健康自检的通用流程
+
+架构差异已经收敛到：
+- kernel/task/<arch>/cpu_startup.c — 次级核拉起、BSP hw_id、自检诊断
+- include/arch/<arch>/cpu_impl.h       — per-CPU 寄存器、idle 等待指令
+
+三架构的次级核拉起都收敛到 cpu_secondary_bootstrap()：
 - aarch64: PSCI CPU_ON
 - riscv64: SBI HSM hart_start(不支持的平台回退到 release 表 + IPI)
 - x86_64 : INIT-SIPI + AP trampoline
-每个次级核装好 per-CPU 寄存器、idle 任务和本地 timer 后开中断，
-进入 idle 循环，与 BSP 一样参与调度和跨核唤醒。
 
-<a id="fn-kernel-task-cpu.c-67"></a>
+<a id="fn-kernel-task-cpu.c-54"></a>
 
 ### `resched_ipi_entry`
 
@@ -13674,9 +13967,9 @@ vCPU 主循环顶部(sched_check_and_yield)。在 ISR 里直接切任务是禁�
 RISC-V 的 SSIP 是电平型 pending 位、x86 的 LAPIC 需要 EOI，两者都由
 控制器后端的 dispatch 收尾(PLIC 清 SSIP / LAPIC 写 EOI)，这里只置位。
 
-**位置**：`kernel/task/cpu.c:67`
+**位置**：`kernel/task/cpu.c:54`
 
-<a id="fn-kernel-task-cpu.c-76"></a>
+<a id="fn-kernel-task-cpu.c-63"></a>
 
 ### `cpu_ipi_init`
 
@@ -13691,15 +13984,15 @@ void cpu_ipi_init(void)
 <details>
 <summary>函数内备注（1 条）</summary>
 
-**第 78 行**
+**第 65 行**
 
 > IPI 号/向量由控制器决定，内核不再关心 SGI 15 / scause 1 / 向量 0xF0
 
 </details>
 
-**位置**：`kernel/task/cpu.c:76`
+**位置**：`kernel/task/cpu.c:63`
 
-<a id="fn-kernel-task-cpu.c-83"></a>
+<a id="fn-kernel-task-cpu.c-70"></a>
 
 ### `cpu_send_ipi`
 
@@ -13714,15 +14007,15 @@ void cpu_send_ipi(uint32_t cpu_id)
 <details>
 <summary>函数内备注（1 条）</summary>
 
-**第 90 行**
+**第 77 行**
 
 > hw_id: aarch64=MPIDR, riscv=hartid, x86=LAPIC ID
 
 </details>
 
-**位置**：`kernel/task/cpu.c:83`
+**位置**：`kernel/task/cpu.c:70`
 
-<a id="fn-kernel-task-cpu.c-100"></a>
+<a id="fn-kernel-task-cpu.c-87"></a>
 
 ### `klog_cpu_id`
 
@@ -13735,9 +14028,9 @@ klog_cpu_id - 给 klog.h 宏使用, 返回当前逻辑 CPU 编号。
 早期 boot(BSP 还没装 per-CPU 寄存器)arch_cpu_self_get 返回 0,
 cpu_current() 退化到 &g_cpus[0], cpu_id=0(BSS 默认值), 正确。
 
-**位置**：`kernel/task/cpu.c:100`
+**位置**：`kernel/task/cpu.c:87`
 
-<a id="fn-kernel-task-cpu.c-109"></a>
+<a id="fn-kernel-task-cpu.c-96"></a>
 
 ### `cpu_bump_local_ticks`
 
@@ -13748,9 +14041,9 @@ void cpu_bump_local_ticks(void)
 cpu_bump_local_ticks - timer ISR 每次调用, 让本核累计 tick 计数器 +1。
 用于 SMP 健康检查：cpu_smp_timer_test 会读所有核的计数器, 确认都在动。
 
-**位置**：`kernel/task/cpu.c:109`
+**位置**：`kernel/task/cpu.c:96`
 
-<a id="fn-kernel-task-cpu.c-115"></a>
+<a id="fn-kernel-task-cpu.c-102"></a>
 
 ### `cpu_init_bsp`
 
@@ -13765,33 +14058,32 @@ void cpu_init_bsp(void)
 <details>
 <summary>函数内备注（3 条）</summary>
 
-**第 122 行**
+**第 108 行**
 
-> x86 的 hw_id 是 LAPIC ID：arch_cpu_hw_id() 只返回 0 占位，BSP 也要
-> 走控制器后端读真实值，否则真实硬件上 BSP 的 APIC ID != 0 时，
-> sched_resched_cpu(0) 会把 IPI 发到错误的核。
+> 硬件 ID 的读法按架构不同：aarch64=MPIDR, riscv=boot hartid,
+> x86=LAPIC ID。差异收在 arch_cpu_bsp_hw_id()。
 
-**第 135 行**
+**第 119 行**
 
 > 安装 per-CPU 寄存器(TPIDR_EL1 / tp / GS_BASE)
 
-**第 140 行**
+**第 124 行**
 
 > 本核的 resched IPI 就绪；必须在 online 置位(任何人都可能开始 kick)之前完成。
 
 </details>
 
-**位置**：`kernel/task/cpu.c:115`
+**位置**：`kernel/task/cpu.c:102`
 
-<a id="fn-kernel-task-cpu.c-179"></a>
+<a id="fn-kernel-task-cpu.c-148"></a>
 
-### `setup_secondary_idle_task`
+### `cpu_setup_secondary_idle_task`
 
 ```c
-static void setup_secondary_idle_task(cpu_t *c)
+void cpu_setup_secondary_idle_task(cpu_t *c)
 ```
 
-setup_secondary_idle_task - 初始化次级核 idle 任务控制块
+cpu_setup_secondary_idle_task - 初始化次级核 idle 任务控制块
 
 复用 secondary_boot_stacks[cpu_id] 作为 idle 的内核栈(次级核此刻
 的 SP 就指向那块 SECONDARY_STACK_SIZE 大小(16KB)的栈；切换到自己时
@@ -13803,15 +14095,15 @@ setup_secondary_idle_task - 初始化次级核 idle 任务控制块
 <details>
 <summary>函数内备注（4 条）</summary>
 
-**第 185 行（行尾）**
+**第 154 行（行尾）**
 
 > 次级核此刻就在 idle 上执行
 
-**第 186 行（行尾）**
+**第 155 行（行尾）**
 
 > 用高位段避免与 g_task_id_cnt 冲突
 
-**第 193 行**
+**第 162 行**
 
 > idle 也需要 files/fs/mm。files_alloc() 会把 fd 表显式填成 -1 ——
 > 不能靠 memset 归零：0 是合法的 fd 池槽位号，fd_table_inherit()
@@ -13820,233 +14112,15 @@ setup_secondary_idle_task - 初始化次级核 idle 任务控制块
 > 都失败）。CPU0 的 idle 走 task.c 的 g_idle_task，同样在
 > task_init() 里分配。
 
-**第 205 行**
+**第 174 行**
 
 > 名字：&quot;idle/N&quot;
 
 </details>
 
-**位置**：`kernel/task/cpu.c:179`
+**位置**：`kernel/task/cpu.c:148`
 
-<a id="fn-kernel-task-cpu.c-238"></a>
-
-### `cpu_secondary_bootstrap`
-
-```c
-void cpu_secondary_bootstrap(uint32_t cpu_id)
-```
-
-cpu_secondary_bootstrap - 次级核 C 入口
-
-由 _secondary_start 在以下条件成立后调用：
-- EL2/VHE 已配置(与 BSP 一致)
-- MMU 已开启, 共享 BSP 的内核 PGD
-- VBAR_EL1 已指向 exception_vector_base
-- DAIF.I 仍为关闭
-
-启动步骤：
-1. 安装 per-CPU 指针 + GIC CPU interface
-2. 建立本核 idle 任务(current_task = idle_task)
-3. 启用本地 timer PPI(CNTP_CTL_EL0)
-4. 通知 BSP online, 开 IRQ, 进入 idle 循环(sched_check_and_yield + wfi)
-
-run_queue 为空时 sched_schedule 会一直选回自己的 idle；跨核 enqueue
-与 resched IPI 会把本核唤醒去跑别的任务。
-
-<details>
-<summary>函数内备注（9 条）</summary>
-
-**第 243 行**
-
-> 每核独立寄存器：必须在跑任何 FP/SIMD 之前打开 CPACR_EL1.FPEN,
-> 否则 EL0 上 musl 启动早期访问 NEON 会触发 EC=0x7 trap。
-> BSP 在 kernel_main 入口已做同样操作；AP 必须在此处补上。
-
-**第 250 行**
-
-> 安装 TPIDR_EL1, 使 cpu_current() 在本核返回正确指针
-
-**第 254 行**
-
-> 控制器 per-CPU 初始化(GIC: PMR/CTLR/GICR；PLIC/LAPIC: 无操作)
-
-**第 257 行**
-
-> 必须在开中断之前装好 current_task, 否则首个 timer ISR 进入
-> sched_check_and_yield 会读到 NULL。
-
-**第 263 行**
-
-> 启用本地 timer PPI(CNTP_TVAL/CTL 与 GICD ISENABLER0)。
-
-**第 266 行**
-
-> resched IPI：必须在 online 之前装好, 否则 BSP 发来的 kick 会丢。
-
-**第 269 行**
-
-> 通知 BSP 本核就绪。wmb 确保前面所有写对其他核可见。
-
-**第 273 行**
-
-> 开 IRQ；之后 timer / resched IPI 会驱动本核的 sched_check_and_yield。
-
-**第 276 行**
-
-> Idle 循环：主动 yield 一次再 wfi。yield 在 run_queue 空时是空操作
-> (sched_schedule 选回自己)；远端入队会先置 need_resched 并打断 wfi，
-> 下一轮循环即可拿到新任务。
-
-</details>
-
-**位置**：`kernel/task/cpu.c:238`
-
-<a id="fn-kernel-task-cpu.c-287"></a>
-
-### `cpu_bring_up_all`
-
-```c
-void cpu_bring_up_all(void)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-逐个用 PSCI 上电从核并初始化其控制块与运行队列，自旋等待上线，超时查询亲和状态报错。
-
-<details>
-<summary>函数内备注（6 条）</summary>
-
-**第 293 行**
-
-> _secondary_start 链接在高 VA；PSCI 需要物理入口地址。
-
-**第 304 行**
-
-> RK3588: Aff0 恒为 0, 各核用 Aff1 区分, MPIDR = cpu_idx &lt;&lt; 8
-
-**第 307 行（行尾）**
-
-> QEMU virt: MPIDR.Aff0 = CPU 序号
-
-**第 315 行（行尾）**
-
-> mpidr=
-
-**第 316 行**
-
-> context_id=
-
-**第 323 行**
-
-> 自旋等待该核置 online；带超时避免死等无效 mpidr。
-
-</details>
-
-**位置**：`kernel/task/cpu.c:287`
-
-<a id="fn-kernel-task-cpu.c-353"></a>
-
-### `cpu_secondary_bootstrap`
-
-```c
-void cpu_secondary_bootstrap(uint32_t cpu_id)
-```
-
-sbi_hart_start / sbi_send_ipi 在 include/riscv64/sbi.h(static inline)
-
-<details>
-<summary>函数内备注（2 条）</summary>
-
-**第 358 行（行尾）**
-
-> SUM
-
-**第 364 行**
-
-> resched IPI：必须在 online 之前装好, 否则 BSP 发来的 kick 会丢。
-
-</details>
-
-**位置**：`kernel/task/cpu.c:353`
-
-<a id="fn-kernel-task-cpu.c-377"></a>
-
-### `cpu_bring_up_all`
-
-```c
-void cpu_bring_up_all(void)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-逐个用 PSCI 上电从核并初始化其控制块与运行队列，自旋等待上线，超时查询亲和状态报错。
-
-**位置**：`kernel/task/cpu.c:377`
-
-<a id="fn-kernel-task-cpu.c-450"></a>
-
-### `cpu_secondary_bootstrap`
-
-```c
-void cpu_secondary_bootstrap(uint32_t cpu_id)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-从核启动：安装 per-CPU 与异常向量、建 idle 任务和定时器、注册 IPI 后置上线，再循环让出并 wfi。
-
-<details>
-<summary>函数内备注（1 条）</summary>
-
-**第 462 行**
-
-> resched IPI：必须在 online 之前装好, 否则 BSP 发来的 kick 会丢。
-
-</details>
-
-**位置**：`kernel/task/cpu.c:450`
-
-<a id="fn-kernel-task-cpu.c-475"></a>
-
-### `cpu_bring_up_all`
-
-```c
-void cpu_bring_up_all(void)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-逐个用 PSCI 上电从核并初始化其控制块与运行队列，自旋等待上线，超时查询亲和状态报错。
-
-**位置**：`kernel/task/cpu.c:475`
-
-<a id="fn-kernel-task-cpu.c-547"></a>
-
-### `dbg_read_cntp_ctl`
-
-```c
-static inline uint64_t dbg_read_cntp_ctl(void)
-```
-
-诊断：读 DAIF, CNTP_CTL_EL0, CNTPCT_EL0
-
-**位置**：`kernel/task/cpu.c:547`
-
-<a id="fn-kernel-task-cpu.c-553"></a>
-
-### `dbg_read_cntpct`
-
-```c
-static inline uint64_t dbg_read_cntpct(void)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-直接返回底层定时器计数器读数。
-
-**位置**：`kernel/task/cpu.c:553`
-
-<a id="fn-kernel-task-cpu.c-559"></a>
+<a id="fn-kernel-task-cpu.c-202"></a>
 
 ### `cpu_smp_timer_test`
 
@@ -14059,28 +14133,15 @@ void cpu_smp_timer_test(uint32_t rounds, uint32_t ms_per_round)
 打印定时器与中断诊断后按轮延时比较各核 local_ticks 增量，任一核不增长即判失败。
 
 <details>
-<summary>函数内备注（4 条）</summary>
+<summary>函数内备注（1 条）</summary>
 
-**第 561 行**
+**第 204 行**
 
 > 即使单核也跑诊断：先确认 BSP 自己的 timer 是否在 tick。
 
-**第 563 行**
-
-> 该函数在 task_switch_to_idle_stack() 之前被调用, 此时 DAIF.I=1(IRQ 关)。
-> 不先开 IRQ, BSP 就永远收不到 timer 中断, local_ticks 一定为 0。
-
-**第 573 行（行尾）**
-
-> 统一的中断状态读取
-
-**第 579 行**
-
-> 控制器相关的诊断寄存器由后端自己 dump，内核不再知道是 GICv2 还是 GICv3
-
 </details>
 
-**位置**：`kernel/task/cpu.c:559`
+**位置**：`kernel/task/cpu.c:202`
 
 <a id="mod-kernel-task-exec.c"></a>
 
@@ -14605,11 +14666,196 @@ bool in_irq_context(void)
 
 **位置**：`kernel/task/preempt.c:51`
 
+<a id="mod-kernel-task-riscv64-cpu_startup.c"></a>
+
+## kernel/task/riscv64/cpu_startup.c — RISC-V BSP / 次级核启动
+
+`kernel/task/riscv64/cpu_startup.c` · 6 个函数 · 0 个有说明 · 143 行
+
+通用 CPU 管理留在 kernel/task/cpu.c；这里只放架构相关部分：
+SBI HSM hart_start(不支持时回退到 release 表 + IPI)、hartid 推导，
+以及 SMP 自检的 RISC-V 部分。
+
+<a id="fn-kernel-task-riscv64-cpu_startup.c-37"></a>
+
+### `arch_cpu_bsp_hw_id`
+
+```c
+uint64_t arch_cpu_bsp_hw_id(void)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`kernel/task/riscv64/cpu_startup.c:37`
+
+<a id="fn-kernel-task-riscv64-cpu_startup.c-42"></a>
+
+### `cpu_secondary_bootstrap`
+
+```c
+void cpu_secondary_bootstrap(uint32_t cpu_id)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+<details>
+<summary>函数内备注（2 条）</summary>
+
+**第 47 行（行尾）**
+
+> SUM
+
+**第 53 行**
+
+> resched IPI：必须在 online 之前装好, 否则 BSP 发来的 kick 会丢。
+
+</details>
+
+**位置**：`kernel/task/riscv64/cpu_startup.c:42`
+
+<a id="fn-kernel-task-riscv64-cpu_startup.c-66"></a>
+
+### `cpu_bring_up_all`
+
+```c
+void cpu_bring_up_all(void)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`kernel/task/riscv64/cpu_startup.c:66`
+
+<a id="fn-kernel-task-riscv64-cpu_startup.c-131"></a>
+
+### `arch_cpu_smp_test_begin`
+
+```c
+void arch_cpu_smp_test_begin(void)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+<details>
+<summary>函数内备注（1 条）</summary>
+
+**第 133 行**
+
+> 与 AArch64 同理：调用点还在关中断的 boot 上下文里。
+
+</details>
+
+**位置**：`kernel/task/riscv64/cpu_startup.c:131`
+
+<a id="fn-kernel-task-riscv64-cpu_startup.c-137"></a>
+
+### `arch_cpu_smp_test_diag_begin`
+
+```c
+void arch_cpu_smp_test_diag_begin(void)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`kernel/task/riscv64/cpu_startup.c:137`
+
+<a id="fn-kernel-task-riscv64-cpu_startup.c-140"></a>
+
+### `arch_cpu_smp_test_diag_round`
+
+```c
+void arch_cpu_smp_test_diag_round(uint32_t round)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`kernel/task/riscv64/cpu_startup.c:140`
+
+<a id="mod-kernel-task-riscv64-sched.c"></a>
+
+## kernel/task/riscv64/sched.c — RISC-V 调度路径的架构部分
+
+`kernel/task/riscv64/sched.c` · 2 个函数 · 0 个有说明 · 42 行
+
+RISC-V 的 satp 切换由 arch_task_switch(switch.S) 完成，C 层负责
+选出"要装入的 satp 根表"以及"要不要把当前 satp 存回 prev->mm->pgd"。
+
+<a id="fn-kernel-task-riscv64-sched.c-19"></a>
+
+### `arch_sched_prev_pgd_slot`
+
+```c
+uint64_t **arch_sched_prev_pgd_slot(task_t *prev)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+<details>
+<summary>函数内备注（1 条）</summary>
+
+**第 21 行**
+
+> RISC-V 用户进程：pgd 是创建时固定的物理地址, 不需要由 arch_task_switch
+> 动态保存。若传 &amp;prev-&gt;mm-&gt;pgd, 当用户进程在 arch_switch_to_user 切换 satp
+> 之前被抢占(satp 仍为内核页表)时, prev-&gt;mm-&gt;pgd 会被覆写为内核页表地址,
+> 导致下次调度回来时以错误的 satp 进入 U-mode → VA 0x10000 不在内核页表 → Inst PF。
+> 因此对用户进程传 NULL(跳过 satp 保存), 保持 pgd 不变。
+
+</details>
+
+**位置**：`kernel/task/riscv64/sched.c:19`
+
+<a id="fn-kernel-task-riscv64-sched.c-31"></a>
+
+### `arch_sched_next_pgd`
+
+```c
+uint64_t *arch_sched_next_pgd(task_t *next)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+<details>
+<summary>函数内备注（2 条）</summary>
+
+**第 34 行**
+
+> 首次进入用户进程：延迟 satp 切换, 由 arch_switch_to_user 负责
+
+**第 38 行**
+
+> 切换到内核任务：恢复内核根页表
+
+</details>
+
+**位置**：`kernel/task/riscv64/sched.c:31`
+
+<a id="mod-kernel-task-riscv64-user_entry.c"></a>
+
+## kernel/task/riscv64/user_entry.c — RISC-V 用户态入口钩子
+
+`kernel/task/riscv64/user_entry.c` · 1 个函数 · 0 个有说明 · 27 行
+
+arch_user_entry_debug 由 kernel/task/riscv64/switch.S 在首次跳转
+U-mode 前调用；目前唯一的职责是把 user_started 置位，让调度器区分
+"已经真正进过 U-mode"和"首次进入、satp 还没切"。
+
+<a id="fn-kernel-task-riscv64-user_entry.c-17"></a>
+
+### `arch_user_entry_debug`
+
+```c
+void arch_user_entry_debug(uint64_t user_entry, uint64_t user_sp, uint64_t kernel_sp, uint64_t user_pgd)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`kernel/task/riscv64/user_entry.c:17`
+
 <a id="mod-kernel-task-sched.c"></a>
 
 ## kernel/task/sched.c — 内核调度器(per-CPU 轮转 + RT 优先级类)
 
-`kernel/task/sched.c` · 24 个函数 · 24 个有说明 · 850 行
+`kernel/task/sched.c` · 24 个函数 · 24 个有说明 · 814 行
 
 设计：
 - 每核一个就绪队列(cpu_t::run_queue / rt_queue)，FIFO 顺序
@@ -14633,7 +14879,7 @@ bool in_irq_context(void)
 - 新任务(首次运行)：arch_task_switch 跳转到 task_trampoline,
 trampoline 调用 arch_irq_enable() 显式开中断。
 
-<a id="fn-kernel-task-sched.c-61"></a>
+<a id="fn-kernel-task-sched.c-54"></a>
 
 ### `x86_write_msr`
 
@@ -14645,9 +14891,9 @@ static inline void x86_write_msr(uint32_t msr, uint64_t value)
 
 把 64 位值拆成高低 32 位后执行 wrmsr 写 MSR。
 
-**位置**：`kernel/task/sched.c:61`
+**位置**：`kernel/task/sched.c:54`
 
-<a id="fn-kernel-task-sched.c-68"></a>
+<a id="fn-kernel-task-sched.c-61"></a>
 
 ### `x86_write_fs_base`
 
@@ -14659,9 +14905,9 @@ static inline void x86_write_fs_base(uint64_t fs_base)
 
 通过写 IA32_FS_BASE MSR 设置 FS 段基址。
 
-**位置**：`kernel/task/sched.c:68`
+**位置**：`kernel/task/sched.c:61`
 
-<a id="fn-kernel-task-sched.c-87"></a>
+<a id="fn-kernel-task-sched.c-80"></a>
 
 ### `sched_rq_init`
 
@@ -14679,9 +14925,9 @@ void sched_rq_init(cpu_t *c)
 独立持有自己的就绪队列，跨核入队/唤醒必须持目标核的 rq_lock
 (见 sched_enqueue / sched_unblock)。
 
-**位置**：`kernel/task/sched.c:87`
+**位置**：`kernel/task/sched.c:80`
 
-<a id="fn-kernel-task-sched.c-97"></a>
+<a id="fn-kernel-task-sched.c-90"></a>
 
 ### `rt_prio_of`
 
@@ -14691,9 +14937,9 @@ static inline uint32_t rt_prio_of(const task_t *t)
 
 有效 RT 优先级 = max(基础 RT 优先级, rt_mutex 继承优先级)。
 
-**位置**：`kernel/task/sched.c:97`
+**位置**：`kernel/task/sched.c:90`
 
-<a id="fn-kernel-task-sched.c-102"></a>
+<a id="fn-kernel-task-sched.c-95"></a>
 
 ### `rt_bitmap_set`
 
@@ -14705,9 +14951,9 @@ static inline void rt_bitmap_set(cpu_t *c, uint32_t p)
 
 把优先级 p 对应的位在 RT 优先级位图中置一。
 
-**位置**：`kernel/task/sched.c:102`
+**位置**：`kernel/task/sched.c:95`
 
-<a id="fn-kernel-task-sched.c-107"></a>
+<a id="fn-kernel-task-sched.c-100"></a>
 
 ### `rt_bitmap_clear`
 
@@ -14719,9 +14965,9 @@ static inline void rt_bitmap_clear(cpu_t *c, uint32_t p)
 
 把优先级 p 对应的位在 RT 优先级位图中清掉。
 
-**位置**：`kernel/task/sched.c:107`
+**位置**：`kernel/task/sched.c:100`
 
-<a id="fn-kernel-task-sched.c-113"></a>
+<a id="fn-kernel-task-sched.c-106"></a>
 
 ### `rt_highest_prio`
 
@@ -14731,9 +14977,9 @@ static int rt_highest_prio(cpu_t *c)
 
 最高非空 RT 优先级；没有返回 -1。RISC-V 上不用 __builtin_clzll（libgcc）。
 
-**位置**：`kernel/task/sched.c:113`
+**位置**：`kernel/task/sched.c:106`
 
-<a id="fn-kernel-task-sched.c-148"></a>
+<a id="fn-kernel-task-sched.c-141"></a>
 
 ### `rq_enqueue_locked`
 
@@ -14746,16 +14992,16 @@ static void rq_enqueue_locked(cpu_t *c, task_t *t)
 <details>
 <summary>函数内备注（1 条）</summary>
 
-**第 152 行**
+**第 145 行**
 
 > 注意：不要把有效优先级写回 rt_priority —— 那是基础优先级，
 > PI 提升期间写回会把临时值变成永久值。
 
 </details>
 
-**位置**：`kernel/task/sched.c:148`
+**位置**：`kernel/task/sched.c:141`
 
-<a id="fn-kernel-task-sched.c-164"></a>
+<a id="fn-kernel-task-sched.c-157"></a>
 
 ### `rq_remove_locked`
 
@@ -14768,15 +15014,15 @@ static bool rq_remove_locked(cpu_t *c, task_t *t)
 <details>
 <summary>函数内备注（1 条）</summary>
 
-**第 178 行**
+**第 171 行**
 
 > policy 在排队期间被改过的兜底（当前不开放运行时改策略）。
 
 </details>
 
-**位置**：`kernel/task/sched.c:164`
+**位置**：`kernel/task/sched.c:157`
 
-<a id="fn-kernel-task-sched.c-191"></a>
+<a id="fn-kernel-task-sched.c-184"></a>
 
 ### `rq_node_to_task`
 
@@ -14788,9 +15034,9 @@ static task_t *rq_node_to_task(cpu_t *c, list_node_t *node)
 
 由运行队列节点反推任务指针，越出任务池范围则打印错误并返回 NULL。
 
-**位置**：`kernel/task/sched.c:191`
+**位置**：`kernel/task/sched.c:184`
 
-<a id="fn-kernel-task-sched.c-224"></a>
+<a id="fn-kernel-task-sched.c-217"></a>
 
 ### `sched_kick_after_enqueue`
 
@@ -14821,15 +15067,15 @@ syscall 内核侧，trap_preempt_kernel_side() 会拒绝在这里切换，
 <details>
 <summary>函数内备注（1 条）</summary>
 
-**第 237 行（行尾）**
+**第 230 行（行尾）**
 
 > NORMAL 任务不打断 NORMAL/RT；等 tick 或返回边界
 
 </details>
 
-**位置**：`kernel/task/sched.c:224`
+**位置**：`kernel/task/sched.c:217`
 
-<a id="fn-kernel-task-sched.c-257"></a>
+<a id="fn-kernel-task-sched.c-250"></a>
 
 ### `sched_set_pi_boost`
 
@@ -14846,9 +15092,9 @@ prio == 0 表示清除继承。调用者不得持有 rq_lock。
 RUNNING / BLOCKED 的任务不需要搬队列：后者下次 sched_unblock 时会按
 新优先级入队。
 
-**位置**：`kernel/task/sched.c:257`
+**位置**：`kernel/task/sched.c:250`
 
-<a id="fn-kernel-task-sched.c-289"></a>
+<a id="fn-kernel-task-sched.c-282"></a>
 
 ### `sched_init`
 
@@ -14863,15 +15109,15 @@ void sched_init(task_t *idle_task)
 <details>
 <summary>函数内备注（1 条）</summary>
 
-**第 291 行**
+**第 284 行**
 
 > run_queue 已由 cpu_init_bsp() 初始化为空链表, 这里只装 idle。
 
 </details>
 
-**位置**：`kernel/task/sched.c:289`
+**位置**：`kernel/task/sched.c:282`
 
-<a id="fn-kernel-task-sched.c-311"></a>
+<a id="fn-kernel-task-sched.c-304"></a>
 
 ### `sched_resched_cpu`
 
@@ -14892,15 +15138,15 @@ sched_check_and_yield()。
 <details>
 <summary>函数内备注（1 条）</summary>
 
-**第 323 行（行尾）**
+**第 316 行（行尾）**
 
 > 标志必须先于 IPI 对目标核可见
 
 </details>
 
-**位置**：`kernel/task/sched.c:311`
+**位置**：`kernel/task/sched.c:304`
 
-<a id="fn-kernel-task-sched.c-329"></a>
+<a id="fn-kernel-task-sched.c-322"></a>
 
 ### `task_kick`
 
@@ -14912,9 +15158,9 @@ void task_kick(task_t *task)
 
 仅对运行态且亲和核合法的任务，向其所绑定的 CPU 请求重调度。
 
-**位置**：`kernel/task/sched.c:329`
+**位置**：`kernel/task/sched.c:322`
 
-<a id="fn-kernel-task-sched.c-343"></a>
+<a id="fn-kernel-task-sched.c-336"></a>
 
 ### `sched_enqueue`
 
@@ -14929,14 +15175,14 @@ void sched_enqueue(task_t *task)
 <details>
 <summary>函数内备注（4 条）</summary>
 
-**第 345 行**
+**第 338 行**
 
 > 防御：正在运行的任务不在任何队列里, 把它再挂进队列会让它被两个核
 > 同时执行(任务栈/状态互相踩)。合法的调用者只会入队 READY 任务
 > —— 走到这里说明有人破坏了「谁在哪」的不变量, 宁可漏入队
 > (任务下次被唤醒时还会再试)也不要写坏运行队列。
 
-**第 376 行**
+**第 369 行**
 
 > 中断上下文里绝不要调 arch_irq_save()/arch_irq_restore()。
 > 那一对是用「整字写回 sstatus」实现关/开中断的；在 ISR 里写回
@@ -14946,7 +15192,7 @@ void sched_enqueue(task_t *task)
 > 设备 ISR 里唤醒任务是常规操作(收包中断叫醒 net-poll 就是),
 > 而中断本来就是关的, 直接插队列即可, 不需要再动 sstatus。
 
-**第 398 行**
+**第 391 行**
 
 > 跨核入队：持目标核 rq_lock。
 
@@ -14954,7 +15200,7 @@ void sched_enqueue(task_t *task)
 > restore 是整字写 sstatus, 在 ISR 里写回会破坏中断状态(见本函数
 > 单核分支的注释)。中断本来就已经关了, 用裸 spin_lock 即可。
 
-**第 417 行**
+**第 410 行**
 
 > 远端入队后立刻 kick；本核只在更高优先级 RT 任务入队时置
 > need_resched。没有这一步, 任务要等目标核下一次 timer tick
@@ -14962,9 +15208,9 @@ void sched_enqueue(task_t *task)
 
 </details>
 
-**位置**：`kernel/task/sched.c:343`
+**位置**：`kernel/task/sched.c:336`
 
-<a id="fn-kernel-task-sched.c-443"></a>
+<a id="fn-kernel-task-sched.c-436"></a>
 
 ### `sched_unblock`
 
@@ -14990,23 +15236,23 @@ state 检查会让这次唤醒变成 no-op。
 <details>
 <summary>函数内备注（3 条）</summary>
 
-**第 460 行**
+**第 453 行**
 
 > 中断上下文：本核 IRQ 已关, 不能动 sstatus
 
-**第 478 行（行尾）**
+**第 471 行（行尾）**
 
 > 记录 wake→run 的起点
 
-**第 481 行**
+**第 474 行**
 
 > 还在目标核上：切出时由 sched_schedule() 补入队列
 
 </details>
 
-**位置**：`kernel/task/sched.c:443`
+**位置**：`kernel/task/sched.c:436`
 
-<a id="fn-kernel-task-sched.c-501"></a>
+<a id="fn-kernel-task-sched.c-494"></a>
 
 ### `sched_dequeue`
 
@@ -15021,16 +15267,16 @@ void sched_dequeue(task_t *task)
 <details>
 <summary>函数内备注（1 条）</summary>
 
-**第 503 行**
+**第 496 行**
 
 > 任务以其 cpu_affinity 为准处于某核 rq。先查 affinity 对应核,
 > 找不到再退一步遍历所有核(防 affinity 字段与实际不一致)。
 
 </details>
 
-**位置**：`kernel/task/sched.c:501`
+**位置**：`kernel/task/sched.c:494`
 
-<a id="fn-kernel-task-sched.c-539"></a>
+<a id="fn-kernel-task-sched.c-532"></a>
 
 ### `pick_next`
 
@@ -15045,23 +15291,23 @@ static task_t *pick_next(cpu_t *c)
 <details>
 <summary>函数内备注（3 条）</summary>
 
-**第 541 行**
+**第 534 行**
 
 > 1. 最高优先级的 RT 队列
 
-**第 551 行**
+**第 544 行**
 
 > 2. NORMAL 轮转队列
 
-**第 557 行（行尾）**
+**第 550 行（行尾）**
 
 > 队列为空, 回退到本核 idle
 
 </details>
 
-**位置**：`kernel/task/sched.c:539`
+**位置**：`kernel/task/sched.c:532`
 
-<a id="fn-kernel-task-sched.c-562"></a>
+<a id="fn-kernel-task-sched.c-555"></a>
 
 ### `sched_schedule`
 
@@ -15074,21 +15320,21 @@ void sched_schedule(void)
 关中断后重新入队当前任务并选出下一个，处理唤醒窗口后切换页表与上下文，最后恢复中断。
 
 <details>
-<summary>函数内备注（25 条）</summary>
+<summary>函数内备注（23 条）</summary>
 
-**第 566 行**
+**第 559 行**
 
 > 关中断, 保存当前中断标志
 
-**第 569 行**
+**第 562 行**
 
 > 缓存本核指针：irq_save 之后 cpu 不会变, 避免重复读 per-CPU 寄存器。
 
-**第 572 行**
+**第 565 行**
 
 > prev 一律从 per-CPU 的 c-&gt;current_task 取。
 
-**第 575 行**
+**第 568 行**
 
 > 持本核 rq_lock 期间操作 run_queue。外层已 arch_irq_save 关本核 IRQ,
 > 这里用不带 irqsave 的 spin_lock —— 中断状态由外层管理, 不能用
@@ -15097,11 +15343,11 @@ void sched_schedule(void)
 > (以前这里要把 spinlock_noirq_t* 强转成 spinlock_t* 才能用 raw 变体；
 > 锁类型收敛后不需要了。)
 
-**第 586 行**
+**第 579 行**
 
 > 若当前任务仍在运行且不是 idle, 则按调度类重新入队
 
-**第 594 行**
+**第 587 行**
 
 > 切出 prev 之前收口「on_cpu 期间被唤醒」的窗口。
 
@@ -15110,7 +15356,7 @@ void sched_schedule(void)
 > 之后 waker 再看到的就是 on_cpu=false, 会直接入队 —— 两边持同一把
 > 锁, 不存在「清了 on_cpu 但没人入队」的缝隙。
 
-**第 608 行**
+**第 601 行**
 
 > 这次唤醒是在 prev 还 on_cpu 时发生的, waker 没有发 IPI
 > (`sched_unblock` 的 enqueued=false 分支)。现在 prev 已经
@@ -15118,59 +15364,59 @@ void sched_schedule(void)
 > idle 会直接 wfi/hlt, 任务要等下一次 tick 才被看到；tick 若
 > 异常就是永久睡死。本核自己入队, 不需要 IPI。
 
-**第 618 行**
+**第 611 行**
 
 > state/on_cpu 也在同一把锁下发布, 避免 waker 看到中间态
 
-**第 621 行**
+**第 614 行**
 
 > 任务每次被切入时清掉上一次切出的完成标记。退出路径的
 > switch_done 只在任务真正下 CPU 后由 arch_task_switch 置 1，
 > 所以不能残留上一轮的 1。
 
-**第 635 行**
+**第 628 行**
 
 > 无需切换(唯一任务或队空只有 idle)
 
-**第 642 行（行尾）**
+**第 635 行（行尾）**
 
 > 确保 state 在 current_task 之前完成
 
-**第 643 行（行尾）**
+**第 636 行（行尾）**
 
 > per-CPU 主存储
 
-**第 644 行（行尾）**
+**第 637 行（行尾）**
 
 > 确保 current_task 在 arch_task_switch 之前完成
 
-**第 647 行**
+**第 640 行**
 
 > x86_64：通过 CR3 切换页表
 > - 用户任务：切换到用户页表(已包含内核高半区映射)
 > - 内核任务：切换回内核页表
 
-**第 652 行**
+**第 645 行**
 
 > 切换到用户页表
 
-**第 655 行**
+**第 648 行**
 
 > 更新 TSS.RSP0 为当前任务的内核栈顶
 
-**第 659 行**
+**第 652 行**
 
 > 恢复该用户任务的 TLS 基址(fs:offset)
 
-**第 663 行**
+**第 656 行**
 
 > 从用户任务切换到内核任务：恢复内核页表
 
-**第 666 行**
+**第 659 行**
 
 > 用户→用户切换, 已在上面处理；内核→内核切换, 页表不变
 
-**第 669 行**
+**第 662 行**
 
 > 切换上下文。
 > 对 prev：保存被调用者寄存器 + SP 到 prev-&gt;sp, 然后跳走。
@@ -15179,37 +15425,25 @@ void sched_schedule(void)
 
 > 同时切换页表(如果任务有独立页表)。
 
-**第 679 行**
+**第 672 行**
 
 > 注意：之前 AArch64 使用 sp=-1 标记切换到 idle, 但这导致
 > .Lswitch_to_idle 没有设置栈指针, 造成潜在的栈溢出问题。
 > 现在所有架构统一：idle 有专用栈, 正常返回即可。
 
-**第 687 行**
+**第 677 行**
 
-> 首次进入用户进程：延迟satp切换到arch_switch_to_user
+> 页表参数由架构决定(RISC-V 的首次用户进入/内核任务特例在 arch 实现里)
 
-**第 691 行**
-
-> 切换到内核任务：恢复内核页表
-
-**第 694 行**
-
-> RISC-V 用户进程：pgd 是创建时固定的物理地址, 不需要由 arch_task_switch
-> 动态保存。若传 &amp;prev-&gt;mm-&gt;pgd, 当用户进程在 arch_switch_to_user 切换 satp
-> 之前被抢占(satp 仍为内核页表)时, prev-&gt;mm-&gt;pgd 会被覆写为内核页表地址,
-> 导致下次调度回来时以错误的 satp 进入 U-mode → VA 0x10000 不在内核页表 → Inst PF。
-> 因此对用户进程传 NULL(跳过 satp 保存), 保持 pgd 不变。
-
-**第 707 行**
+**第 682 行**
 
 > prev 被恢复后恢复其中断状态
 
 </details>
 
-**位置**：`kernel/task/sched.c:562`
+**位置**：`kernel/task/sched.c:555`
 
-<a id="fn-kernel-task-sched.c-713"></a>
+<a id="fn-kernel-task-sched.c-688"></a>
 
 ### `sched_tick`
 
@@ -15224,7 +15458,7 @@ void sched_tick(void)
 <details>
 <summary>函数内备注（4 条）</summary>
 
-**第 715 行**
+**第 690 行**
 
 > 由 timer ISR 调用。
 > 只设置需要重调度的标志, 实际切换在异常返回前进行。
@@ -15235,18 +15469,18 @@ void sched_tick(void)
 > - FIFO：tick 不抢占（只有更高优先级 RT 入队/阻塞事件才切）；
 > - RR：时间片用完才置 need_resched。
 
-**第 733 行**
+**第 708 行**
 
 > 被 PI 提升的持有者按 FIFO 对待：tick 不能让中等优先级任务
 > 抢走它，否则优先级继承白做了。
 
-**第 744 行**
+**第 719 行**
 
 > idle 记账。挂在 tick 上而不是各个 idle 循环里：g_tick_cb 每个核都会调,
 > 一处就覆盖了 task_idle_loop 和三个架构各自的次级核 idle 循环。
 > /proc/uptime 的第二列靠它, 否则永远是 0(top/vmstat 会当成&quot;从不空闲&quot;)。
 
-**第 752 行**
+**第 727 行**
 
 > 每任务的 ITIMER_REAL 到期检查也挂在这个 tick 上(周期由 timer.tick_ms
 > 配置, 默认 10ms)。放在这里而不是另开一个回调：g_tick_cb 只有一个,
@@ -15255,9 +15489,9 @@ void sched_tick(void)
 
 </details>
 
-**位置**：`kernel/task/sched.c:713`
+**位置**：`kernel/task/sched.c:688`
 
-<a id="fn-kernel-task-sched.c-768"></a>
+<a id="fn-kernel-task-sched.c-743"></a>
 
 ### `sched_check_and_yield`
 
@@ -15272,7 +15506,7 @@ bool sched_check_and_yield(void)
 <details>
 <summary>函数内备注（1 条）</summary>
 
-**第 774 行**
+**第 749 行**
 
 > 注意：不再限制仅用户进程可被抢占。idle 任务(is_user_process=false)
 > 也需要被 timer 抢占, 以便在就绪队列中出现任务时立即切换。
@@ -15280,9 +15514,9 @@ bool sched_check_and_yield(void)
 
 </details>
 
-**位置**：`kernel/task/sched.c:768`
+**位置**：`kernel/task/sched.c:743`
 
-<a id="fn-kernel-task-sched.c-800"></a>
+<a id="fn-kernel-task-sched.c-775"></a>
 
 ### `trap_preempt_kernel_side`
 
@@ -15299,9 +15533,9 @@ trap_preempt_kernel_side - 从【内核态】陷入时的抢占判断
 
 preemptible() 内含 irq_depth == 0 判断, 嵌套中断里不会误切。
 
-**位置**：`kernel/task/sched.c:800`
+**位置**：`kernel/task/sched.c:775`
 
-<a id="fn-kernel-task-sched.c-832"></a>
+<a id="fn-kernel-task-sched.c-807"></a>
 
 ### `sched_check_and_yield_from_trap`
 
@@ -15324,13 +15558,22 @@ RISC-V    sstatus.SPP == 0       → 用户态
 注意：调用本函数时 handle_exception 已经做过 irq_depth--, 因此
 sched_schedule() 开头的 assert_always(!in_irq_context()) 不会触发。
 
-**位置**：`kernel/task/sched.c:832`
+<details>
+<summary>函数内备注（1 条）</summary>
+
+**第 812 行**
+
+> 来自用户态：异常现场完整保存在 trap frame 里, 直接调度即可
+
+</details>
+
+**位置**：`kernel/task/sched.c:807`
 
 <a id="mod-kernel-task-task.c"></a>
 
 ## kernel/task/task.c — 内核任务生命周期管理
 
-`kernel/task/task.c` · 33 个函数 · 33 个有说明 · 1121 行
+`kernel/task/task.c` · 32 个函数 · 32 个有说明 · 1071 行
 
 提供：
 task_init()    — 初始化任务子系统(boot 上下文 → idle 任务)
@@ -15340,7 +15583,7 @@ task_exit()    — 终止当前任务
 task_current() — 返回当前运行任务
 task_trampoline() — 新任务的启动入口(汇编通过 ret 跳转到此)
 
-<a id="fn-kernel-task-task.c-75"></a>
+<a id="fn-kernel-task-task.c-67"></a>
 
 ### `task_alloc_id`
 
@@ -15350,9 +15593,9 @@ uint32_t task_alloc_id(void)
 
 任务 id 分配。原来是无保护的 `g_task_id_cnt++`, 两核同时 fork 会撞 id。
 
-**位置**：`kernel/task/task.c:75`
+**位置**：`kernel/task/task.c:67`
 
-<a id="fn-kernel-task-task.c-93"></a>
+<a id="fn-kernel-task-task.c-85"></a>
 
 ### `slot_is_reapable_orphan_locked`
 
@@ -15375,25 +15618,25 @@ ECHILD, SMP=1 下都有 8%)。只有"没人会再来 wait 它"的才收：
 <details>
 <summary>函数内备注（3 条）</summary>
 
-**第 98 行**
+**第 90 行**
 
 > DEAD 只代表“不在调度队列里”，不代表已经离开自己的内核栈/页表/TCB。
 > 等 arch_task_switch 把 switch_done 置 1 之后才能收。没置位时先跳过，
 > 以后某次 task_alloc_slot() 再看 —— 不能在这里等，调用方持有池锁。
 
-**第 111 行**
+**第 103 行**
 
 > 找到父进程：它只要还活着(非 DEAD), 就轮不到我们收
 
-**第 114 行（行尾）**
+**第 106 行（行尾）**
 
 > 父进程的槽已经没了
 
 </details>
 
-**位置**：`kernel/task/task.c:93`
+**位置**：`kernel/task/task.c:85`
 
-<a id="fn-kernel-task-task.c-123"></a>
+<a id="fn-kernel-task-task.c-115"></a>
 
 ### `slot_take_and_free`
 
@@ -15409,16 +15652,16 @@ slot_take_and_free - 收掉一个已经被占住的槽(state == TASK_ALLOCATING)
 <details>
 <summary>函数内备注（1 条）</summary>
 
-**第 131 行**
+**第 123 行**
 
 > 锁外释放进程级对象：signal_struct 可能被线程组共享；mm 的最后一个
 > 引用会销毁用户页表（几百页，不能占着全池的锁）。
 
 </details>
 
-**位置**：`kernel/task/task.c:123`
+**位置**：`kernel/task/task.c:115`
 
-<a id="fn-kernel-task-task.c-153"></a>
+<a id="fn-kernel-task-task.c-145"></a>
 
 ### `task_alloc_slot`
 
@@ -15436,56 +15679,56 @@ cpu_affinity / preempt_count 的初始化 —— 那两个字段是复用的 TCB
 <details>
 <summary>函数内备注（15 条）</summary>
 
-**第 155 行**
+**第 147 行**
 
 > 先试着回收&quot;没人会来 wait&quot;的僵尸槽
 
-**第 163 行（行尾）**
+**第 155 行（行尾）**
 
 > 占住
 
-**第 184 行**
+**第 176 行**
 
 > 槽已归本调用者, 锁外清零
 
-**第 189 行**
+**第 181 行**
 
 > Linux 进程属性的默认值。clone_handler 会把父进程的
 > umask/groups/rlimits/affinity 覆盖成继承值。
 
-**第 196 行（行尾）**
+**第 188 行（行尾）**
 
 > RLIM_INFINITY
 
-**第 199 行**
+**第 191 行**
 
 > 与 Linux 常见默认值一致；LTP 的 rlimit 用例依赖 NOFILE 的具体值
 
-**第 200 行（行尾）**
+**第 192 行（行尾）**
 
 > RLIMIT_STACK
 
-**第 201 行（行尾）**
+**第 193 行（行尾）**
 
 > RLIMIT_CORE
 
-**第 202 行（行尾）**
+**第 194 行（行尾）**
 
 > RLIMIT_NOFILE
 
-**第 203 行（行尾）**
+**第 195 行（行尾）**
 
 > 无 /proc/sys/fs/nr_open 时的上界
 
-**第 204 行（行尾）**
+**第 196 行（行尾）**
 
 > RLIMIT_NICE
 
-**第 206 行（行尾）**
+**第 198 行（行尾）**
 
 > RLIMIT_RTPRIO
 
-**第 208 行**
+**第 200 行**
 
 > 把整块栈刷成已知图案：配合 task_stack_used() 量&quot;这个任务实际用掉
 > 多少栈&quot;。arch_init_task_stack() 稍后会在栈顶写好初始帧, 其余部分
@@ -15496,22 +15739,22 @@ cpu_affinity / preempt_count 的初始化 —— 那两个字段是复用的 TCB
 > 而不是栈溢出的任务自己崩 —— 实测宿主 busybox 就是这么被写坏的
 > (见 vcpu_task_fn 里那段说明)。有数字才能定 size, 不然只能靠翻倍赌。
 
-**第 219 行**
+**第 211 行**
 
 > 进程级对象（fd 表 / cwd / mm / signal 由 task_signal_* 懒分配）。
 > 静态池大小 = TASK_MAX + AVATAR_MAX_CPUS，认领到一个任务槽就
 > 必然有一个对象槽；失败只可能是池管理 bug，按 ENOMEM 处理。
 
-**第 232 行**
+**第 224 行**
 
 > 默认 affinity = ANY：让 sched_enqueue round-robin 分发到所有核。
 > 调用方(如 vcpu_task_create)可在 enqueue 前覆盖。
 
 </details>
 
-**位置**：`kernel/task/task.c:153`
+**位置**：`kernel/task/task.c:145`
 
-<a id="fn-kernel-task-task.c-249"></a>
+<a id="fn-kernel-task-task.c-241"></a>
 
 ### `task_reap_dead`
 
@@ -15528,11 +15771,11 @@ ALLOCATING 占住, 并发的第二个调用者就进不来了。
 <details>
 <summary>函数内备注（4 条）</summary>
 
-**第 263 行（行尾）**
+**第 255 行（行尾）**
 
 > 别人已经收过了
 
-**第 265 行**
+**第 257 行**
 
 > DEAD 之后、arch_task_switch 完成之前，本任务还可能在使用
 > 自己的 pgd / 内核栈 / TCB。必须等 switch_done（release store）
@@ -15541,19 +15784,19 @@ ALLOCATING 占住, 并发的第二个调用者就进不来了。
 > 调用者是 wait4 / exec 包装进程，不在 IRQ 上下文，可以 yield。
 > 等待期间任务 id 若变了说明槽已经被别人回收并复用（ABA），直接退出。
 
-**第 282 行（行尾）**
+**第 274 行（行尾）**
 
 > 占住, 防双重释放
 
-**第 286 行（行尾）**
+**第 278 行（行尾）**
 
 > 等的时候被别人收掉/复用了
 
 </details>
 
-**位置**：`kernel/task/task.c:249`
+**位置**：`kernel/task/task.c:241`
 
-<a id="fn-kernel-task-task.c-297"></a>
+<a id="fn-kernel-task-task.c-289"></a>
 
 ### `task_stack_used`
 
@@ -15566,9 +15809,9 @@ task_stack_used — 该任务栈的高水位(字节, 含初始帧)
 从栈底往上找第一处非 TASK_STACK_MAGIC 的字节, 它到栈顶的距离就是峰值用量。
 任务还没跑过时返回 0。只用于诊断, 不要在热路径里调(O(栈大小))。
 
-**位置**：`kernel/task/task.c:297`
+**位置**：`kernel/task/task.c:289`
 
-<a id="fn-kernel-task-task.c-312"></a>
+<a id="fn-kernel-task-task.c-304"></a>
 
 ### `free_task_slot`
 
@@ -15582,15 +15825,15 @@ static void free_task_slot(task_t *task)
 <details>
 <summary>函数内备注（1 条）</summary>
 
-**第 314 行**
+**第 306 行**
 
 > 先把 files/fs/mm/signal 引用还掉；mm 销毁页表必须在池锁外。
 
 </details>
 
-**位置**：`kernel/task/task.c:312`
+**位置**：`kernel/task/task.c:304`
 
-<a id="fn-kernel-task-task.c-332"></a>
+<a id="fn-kernel-task-task.c-324"></a>
 
 ### `task_objects_alloc`
 
@@ -15602,9 +15845,9 @@ bool task_objects_alloc(task_t *t)
 
 依次分配 files、fs、mm，任一失败就回滚已分配对象并返回 false。
 
-**位置**：`kernel/task/task.c:332`
+**位置**：`kernel/task/task.c:324`
 
-<a id="fn-kernel-task-task.c-346"></a>
+<a id="fn-kernel-task-task.c-338"></a>
 
 ### `task_release_objects`
 
@@ -15619,15 +15862,15 @@ void task_release_objects(task_t *t)
 <details>
 <summary>函数内备注（1 条）</summary>
 
-**第 351 行**
+**第 343 行**
 
 > signal_struct 可能被线程组共享，只有最后一个引用归还池槽位。
 
 </details>
 
-**位置**：`kernel/task/task.c:346`
+**位置**：`kernel/task/task.c:338`
 
-<a id="fn-kernel-task-task.c-388"></a>
+<a id="fn-kernel-task-task.c-380"></a>
 
 ### `task_trampoline`
 
@@ -15656,29 +15899,15 @@ sched_schedule() 末尾的 arch_irq_restore()——前驱在 arch_irq_save()
 <details>
 <summary>函数内备注（1 条）</summary>
 
-**第 397 行**
+**第 389 行**
 
 > entry 函数返回时自动退出
 
 </details>
 
-**位置**：`kernel/task/task.c:388`
+**位置**：`kernel/task/task.c:380`
 
-<a id="fn-kernel-task-task.c-413"></a>
-
-### `arch_user_entry_debug`
-
-```c
-void arch_user_entry_debug(uint64_t user_entry, uint64_t user_sp, uint64_t kernel_sp, uint64_t user_pgd)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-忽略调试参数，仅把当前用户进程的 user_started 置为 true。
-
-**位置**：`kernel/task/task.c:413`
-
-<a id="fn-kernel-task-task.c-427"></a>
+<a id="fn-kernel-task-task.c-406"></a>
 
 ### `task_init`
 
@@ -15691,54 +15920,46 @@ void task_init(void)
 重置任务池并初始化 idle 任务、保存内核页表基址后启动调度，同时启用可睡眠 fs 锁与异步日志。
 
 <details>
-<summary>函数内备注（10 条）</summary>
+<summary>函数内备注（8 条）</summary>
 
-**第 429 行**
+**第 408 行**
 
 > 清空静态池
 
-**第 435 行**
+**第 414 行**
 
 > 初始化 idle 任务(boot 上下文, 使用 idle 专栈)
 
-**第 439 行（行尾）**
+**第 418 行（行尾）**
 
 > 最低优先级
 
-**第 444 行**
+**第 423 行**
 
 > idle 也要一份空的 files/fs/mm（内核任务没有用户 pgd）。
 
-**第 449 行**
+**第 428 行**
 
 > 手动 strcpy(避免依赖外部库)
 
-**第 457 行**
-
-> 保存内核 SATP 对应的 PGD 物理地址, 用于切换回内核任务时恢复
-
-**第 460 行**
-
-> 保存内核 PML4 物理地址, 用于切换回内核任务时恢复
-
-**第 464 行**
+**第 435 行**
 
 > 初始化调度器, 传入 idle 任务
 
-**第 467 行**
+**第 438 行**
 
 > fs_init 阶段已经过去；之后 ext4/FatFs 调用可以睡眠等待全局锁，
 > 不再整段关本核 IRQ。
 
-**第 473 行**
+**第 444 行**
 
 > 启动异步日志线程；此后 klog_write 不再整段持 IRQ-off 写 UART。
 
 </details>
 
-**位置**：`kernel/task/task.c:427`
+**位置**：`kernel/task/task.c:406`
 
-<a id="fn-kernel-task-task.c-489"></a>
+<a id="fn-kernel-task-task.c-460"></a>
 
 ### `task_switch_to_idle_stack`
 
@@ -15755,35 +15976,19 @@ x86_64 特殊处理：需要保存返回地址和帧指针, 然后在新栈上�
 否则函数返回时会出现 General Protection Fault。
 
 <details>
-<summary>函数内备注（5 条）</summary>
+<summary>函数内备注（1 条）</summary>
 
-**第 494 行**
+**第 465 行**
 
-> 切到 idle 栈后永不返回：直接在 inline asm 里跳到 idle 主循环,
-> 跳过编译器生成的 epilogue(否则会从未初始化的新栈读 LR/RBP 导
-> 致跳到 0)。
-
-**第 499 行（行尾）**
-
-> 切换到新栈
-
-**第 500 行（行尾）**
-
-> 清零 RBP, 标记栈帧链结束
-
-**第 501 行（行尾）**
-
-> 跳到 idle 主循环(不返回)
-
-**第 511 行（行尾）**
-
-> 清零 FP
+> 切到 idle 栈后永不返回：架构实现直接在 inline asm 里跳到 idle
+> 主循环, 跳过编译器生成的 epilogue(否则会从未初始化的新栈读
+> LR/RBP 导致跳到 0)。实现见 include/arch/&lt;arch&gt;/cpu_impl.h。
 
 </details>
 
-**位置**：`kernel/task/task.c:489`
+**位置**：`kernel/task/task.c:460`
 
-<a id="fn-kernel-task-task.c-524"></a>
+<a id="fn-kernel-task-task.c-480"></a>
 
 ### `task_idle_loop`
 
@@ -15799,7 +16004,7 @@ task_idle_loop - idle 主循环
 <details>
 <summary>函数内备注（1 条）</summary>
 
-**第 526 行**
+**第 482 行**
 
 > idle 是内核线程, 全程在 EL1, 开中断(既为可被抢占, 也因 wfi
 > 需中断唤醒)。同 task_trampoline：首次进入不经过 arch_irq_restore,
@@ -15807,9 +16012,9 @@ task_idle_loop - idle 主循环
 
 </details>
 
-**位置**：`kernel/task/task.c:524`
+**位置**：`kernel/task/task.c:480`
 
-<a id="fn-kernel-task-task.c-550"></a>
+<a id="fn-kernel-task-task.c-500"></a>
 
 ### `task_set_cpu_affinity`
 
@@ -15824,9 +16029,9 @@ void task_set_cpu_affinity(task_t *task, uint32_t cpu_id)
 假设：task 当前已经被 sched_enqueue 过(在某个核的 rq 中)。
 若尚未入队(READY 之前), 可直接设置 cpu_affinity 字段后再 enqueue。
 
-**位置**：`kernel/task/task.c:550`
+**位置**：`kernel/task/task.c:500`
 
-<a id="fn-kernel-task-task.c-571"></a>
+<a id="fn-kernel-task-task.c-521"></a>
 
 ### `process_create`
 
@@ -15845,35 +16050,35 @@ process_create - 创建用户进程
 <details>
 <summary>函数内备注（6 条）</summary>
 
-**第 588 行**
+**第 538 行**
 
 > 标记为用户进程
 
-**第 599 行**
+**第 549 行**
 
 > 创建独立的用户页表；内核映射注入在 vm_create_user_process 内部完成
 
-**第 614 行**
+**第 564 行**
 
 > 复制任务名称
 
-**第 622 行**
+**第 572 行**
 
 > 使用用户进程专用的栈初始化函数(注意：使用调整后的虚拟地址)
 
-**第 626 行**
+**第 576 行**
 
 > 初始化完成后才发布为 READY, 避免查找/信号路径看到半初始化 TCB。
 
-**第 629 行**
+**第 579 行**
 
 > 加入就绪队列
 
 </details>
 
-**位置**：`kernel/task/task.c:571`
+**位置**：`kernel/task/task.c:521`
 
-<a id="fn-kernel-task-task.c-648"></a>
+<a id="fn-kernel-task-task.c-598"></a>
 
 ### `process_create_with_pgd`
 
@@ -15890,37 +16095,37 @@ process_create_with_pgd - 使用调用方已构建好的用户页表创建进程
 <details>
 <summary>函数内备注（8 条）</summary>
 
-**第 675 行**
+**第 625 行**
 
 > 初始化进程文件系统相关字段(继承父进程 cwd)
 
-**第 705 行**
+**第 655 行**
 
 > === 信号字段初始化 ===
 
-**第 709 行（行尾）**
+**第 659 行（行尾）**
 
 > 默认：自成一组
 
-**第 710 行（行尾）**
+**第 660 行（行尾）**
 
 > 默认：自成会话
 
-**第 713 行**
+**第 663 行**
 
 > task-&gt;sig == NULL 表示全部 SIG_DFL，无需初始化 2 KiB 的 action 表。
 
-**第 725 行**
+**第 675 行**
 
 > 在入队之前设置堆和 mmap 地址, 避免调度器过早切换到该任务时看到 0
 
-**第 728 行**
+**第 678 行**
 
 > 初值即基址：exec 传进来的 mmap_next_val 就是本进程 mmap 区的起点
 > (task_execve 里算出来的 mmap_base)。fork 拷贝地址空间时用它当
 > 扫描下界, 见 task.h 里 mmap_base 的注释。
 
-**第 738 行**
+**第 688 行**
 
 > 这里故意不入队：调用方(execve)在新任务创建之后还要填 fd 表,
 > pgid/sid/uid, 信号掩码等状态, 而 TCB 里 fd_table 的初值是 -1
@@ -15935,9 +16140,9 @@ process_create_with_pgd - 使用调用方已构建好的用户页表创建进程
 
 </details>
 
-**位置**：`kernel/task/task.c:648`
+**位置**：`kernel/task/task.c:598`
 
-<a id="fn-kernel-task-task.c-763"></a>
+<a id="fn-kernel-task-task.c-713"></a>
 
 ### `process_start`
 
@@ -15951,9 +16156,9 @@ process_start - 把 process_create_with_pgd 建好的进程挂进运行队列
 调用方把"必须在新任务跑起来之前就位"的状态全部填完, 再调这里放行。
 中途失败想放弃这个任务就用 task_reap_dead()/free_task_slot() 收尾。
 
-**位置**：`kernel/task/task.c:763`
+**位置**：`kernel/task/task.c:713`
 
-<a id="fn-kernel-task-task.c-773"></a>
+<a id="fn-kernel-task-task.c-723"></a>
 
 ### `task_create`
 
@@ -15965,9 +16170,9 @@ task_t *task_create(const char *name, void (*entry)(void *), void *arg, uint8_t 
 
 以 CPU_AFFINITY_ANY 为亲和性转调 task_create_affinity。
 
-**位置**：`kernel/task/task.c:773`
+**位置**：`kernel/task/task.c:723`
 
-<a id="fn-kernel-task-task.c-796"></a>
+<a id="fn-kernel-task-task.c-746"></a>
 
 ### `task_rt_prio_clamp`
 
@@ -15992,9 +16197,9 @@ task_create_internal - 所有内核域任务创建的公共实现
 CPU exception #14 at RIP=sched_schedule+0xf2  (next->state = TASK_RUNNING)
 CR2 = 0xffffffffffffffc8                      ← pick_next() 拿到野指针
 
-**位置**：`kernel/task/task.c:796`
+**位置**：`kernel/task/task.c:746`
 
-<a id="fn-kernel-task-task.c-805"></a>
+<a id="fn-kernel-task-task.c-755"></a>
 
 ### `task_create_internal`
 
@@ -16009,31 +16214,31 @@ static task_t *task_create_internal(const char *name, void (*entry)(void *), voi
 <details>
 <summary>函数内备注（5 条）</summary>
 
-**第 847 行**
+**第 797 行**
 
 > 复制任务名称(最多 TASK_NAME_LEN-1 字节)
 
-**第 855 行**
+**第 805 行**
 
 > 在任务栈上构造初始切换帧, 使首次调度跳到 task_trampoline
 
-**第 858 行**
+**第 808 行**
 
 > 初始化完成后才发布为 READY, 避免查找路径看到半初始化 TCB。
 
-**第 861 行**
+**第 811 行**
 
 > 入队之前定好核(见本函数上方注释：入队后再改有窗口)
 
-**第 864 行**
+**第 814 行**
 
 > 加入就绪队列, 等待调度
 
 </details>
 
-**位置**：`kernel/task/task.c:805`
+**位置**：`kernel/task/task.c:755`
 
-<a id="fn-kernel-task-task.c-872"></a>
+<a id="fn-kernel-task-task.c-822"></a>
 
 ### `task_create_affinity`
 
@@ -16045,9 +16250,9 @@ task_t *task_create_affinity(const char *name, void (*entry)(void *), void *arg,
 
 以内核域与 NORMAL 策略转调内部创建函数，并传入指定亲和 CPU。
 
-**位置**：`kernel/task/task.c:872`
+**位置**：`kernel/task/task.c:822`
 
-<a id="fn-kernel-task-task.c-878"></a>
+<a id="fn-kernel-task-task.c-828"></a>
 
 ### `task_create_kernel_rt`
 
@@ -16059,9 +16264,9 @@ task_t *task_create_kernel_rt(const char *name, void (*entry)(void *), void *arg
 
 创建内核域 FIFO 实时任务，把 rt_priority 作为实时优先级传入内部创建函数。
 
-**位置**：`kernel/task/task.c:878`
+**位置**：`kernel/task/task.c:828`
 
-<a id="fn-kernel-task-task.c-884"></a>
+<a id="fn-kernel-task-task.c-834"></a>
 
 ### `task_create_vcpu`
 
@@ -16073,9 +16278,9 @@ task_t *task_create_vcpu(const char *name, void (*entry)(void *), void *arg, uin
 
 以 VCPU 域与 NORMAL 策略创建任务，优先级由参数给出。
 
-**位置**：`kernel/task/task.c:884`
+**位置**：`kernel/task/task.c:834`
 
-<a id="fn-kernel-task-task.c-891"></a>
+<a id="fn-kernel-task-task.c-841"></a>
 
 ### `task_yield`
 
@@ -16090,7 +16295,7 @@ void task_yield(void)
 <details>
 <summary>函数内备注（1 条）</summary>
 
-**第 895 行**
+**第 845 行**
 
 > 主动 yield 的这段时间不算 syscall 内核执行时长（与 task_block 一致）。
 > 否则 tty 输入这类“syscall 里循环 task_yield 等待数据”会把等待时间
@@ -16098,9 +16303,9 @@ void task_yield(void)
 
 </details>
 
-**位置**：`kernel/task/task.c:891`
+**位置**：`kernel/task/task.c:841`
 
-<a id="fn-kernel-task-task.c-932"></a>
+<a id="fn-kernel-task-task.c-882"></a>
 
 ### `task_exit`
 
@@ -16127,36 +16332,36 @@ switch_done 由 arch_task_switch 在**真正换到 next 的栈和页表之后**�
 <details>
 <summary>函数内备注（5 条）</summary>
 
-**第 937 行**
+**第 887 行**
 
 > 置 DEAD 要在槽表的锁里做：否则会有一个窗口 —— 别的核正好在
 > task_alloc_slot 的孤儿回收扫描里读这个槽, 看到&quot;父进程还活着&quot;,
 > 于是不收；而本任务马上就要变成 DEAD 的父进程。反过来也一样。
 > 拿锁之后, &quot;谁是死是活&quot;和&quot;能不能收&quot;就是同一个瞬间的判定了。
 
-**第 950 行**
+**第 900 行**
 
 > Notify waiting parent
 
-**第 954 行**
+**第 904 行**
 
 > 从就绪队列移除(理论上已不在队列, 因为 RUNNING 时会重入队,
 > 但 sched_dequeue 做了安全检查)。
 
-**第 960 行**
+**第 910 行**
 
 > 切换出去。sched_schedule 在 arch_task_switch 里把 switch_done 置 1
 > 之后，本任务不会再被调度，父进程才可以安全回收。
 
-**第 966 行**
+**第 916 行**
 
 > 不应到达这里
 
 </details>
 
-**位置**：`kernel/task/task.c:932`
+**位置**：`kernel/task/task.c:882`
 
-<a id="fn-kernel-task-task.c-973"></a>
+<a id="fn-kernel-task-task.c-923"></a>
 
 ### `task_current`
 
@@ -16171,7 +16376,7 @@ task_t *task_current(void)
 <details>
 <summary>函数内备注（1 条）</summary>
 
-**第 975 行**
+**第 925 行**
 
 > 从 per-CPU 控制块读取, AP 上才能拿到正确的任务。
 > cpu_current() 内部已有 NULL 回退到 g_cpus[0], 因此在 cpu_init_bsp
@@ -16179,9 +16384,9 @@ task_t *task_current(void)
 
 </details>
 
-**位置**：`kernel/task/task.c:973`
+**位置**：`kernel/task/task.c:923`
 
-<a id="fn-kernel-task-task.c-985"></a>
+<a id="fn-kernel-task-task.c-935"></a>
 
 ### `task_block`
 
@@ -16196,35 +16401,35 @@ void task_block(list_t *wait_queue)
 <details>
 <summary>函数内备注（6 条）</summary>
 
-**第 990 行**
+**第 940 行**
 
 > 参数验证：wait_queue 必须是内核地址或 NULL
 
-**第 997 行**
+**第 947 行**
 
 > 暂停 syscall stime 计时(阻塞期间不计入 stime)
 
-**第 1003 行**
+**第 953 行**
 
 > 设置阻塞状态
 
-**第 1006 行**
+**第 956 行**
 
 > 如果提供了等待队列, 将任务加入
 
-**第 1011 行**
+**第 961 行**
 
 > 触发调度, 切换到其他任务
 
-**第 1014 行**
+**第 964 行**
 
 > 恢复 stime 计时(从被唤醒时刻起重新开始)
 
 </details>
 
-**位置**：`kernel/task/task.c:985`
+**位置**：`kernel/task/task.c:935`
 
-<a id="fn-kernel-task-task.c-1021"></a>
+<a id="fn-kernel-task-task.c-971"></a>
 
 ### `task_unblock`
 
@@ -16239,7 +16444,7 @@ void task_unblock(task_t *task)
 <details>
 <summary>函数内备注（1 条）</summary>
 
-**第 1023 行**
+**第 973 行**
 
 > 真正的唤醒逻辑在 sched_unblock()：它要在目标核 rq_lock 下判断
 > on_cpu, 避免把「还在这颗核上跑, 只是已经置了 BLOCKED」的任务
@@ -16247,9 +16452,9 @@ void task_unblock(task_t *task)
 
 </details>
 
-**位置**：`kernel/task/task.c:1021`
+**位置**：`kernel/task/task.c:971`
 
-<a id="fn-kernel-task-task.c-1035"></a>
+<a id="fn-kernel-task-task.c-985"></a>
 
 ### `task_find_by_id`
 
@@ -16261,9 +16466,9 @@ task_t *task_find_by_id(uint32_t id)
 
 遍历任务池，返回 id 匹配且已使用、非死亡或分配中状态的任务。
 
-**位置**：`kernel/task/task.c:1035`
+**位置**：`kernel/task/task.c:985`
 
-<a id="fn-kernel-task-task.c-1046"></a>
+<a id="fn-kernel-task-task.c-996"></a>
 
 ### `task_send_signal`
 
@@ -16278,16 +16483,16 @@ void task_send_signal(task_t *t, int sig)
 <details>
 <summary>函数内备注（1 条）</summary>
 
-**第 1052 行**
+**第 1002 行**
 
 > nanosleep 的睡眠点在 task_block() 里，只有信号能让它提前醒。
 > 默认动作通常是终止，不唤醒就永远看不到这个信号。
 
 </details>
 
-**位置**：`kernel/task/task.c:1046`
+**位置**：`kernel/task/task.c:996`
 
-<a id="fn-kernel-task-task.c-1067"></a>
+<a id="fn-kernel-task-task.c-1017"></a>
 
 ### `task_signal_pending_effective`
 
@@ -16304,15 +16509,15 @@ SIG_IGN、以及 SIG_DFL 本身就是忽略的几个信号(SIGCHLD 等)不算。
 <details>
 <summary>函数内备注（1 条）</summary>
 
-**第 1074 行（行尾）**
+**第 1024 行（行尾）**
 
 > 最低置位
 
 </details>
 
-**位置**：`kernel/task/task.c:1067`
+**位置**：`kernel/task/task.c:1017`
 
-<a id="fn-kernel-task-task.c-1108"></a>
+<a id="fn-kernel-task-task.c-1058"></a>
 
 ### `task_send_signal_to_pgid`
 
@@ -16324,7 +16529,151 @@ int task_send_signal_to_pgid(uint32_t pgid, int sig)
 
 向指定进程组内所有存活的用户进程发送信号，并返回实际发送数量。
 
-**位置**：`kernel/task/task.c:1108`
+**位置**：`kernel/task/task.c:1058`
+
+<a id="mod-kernel-task-x86_64-cpu_startup.c"></a>
+
+## kernel/task/x86_64/cpu_startup.c — x86_64 BSP / 次级核启动
+
+`kernel/task/x86_64/cpu_startup.c` · 6 个函数 · 0 个有说明 · 138 行
+
+通用 CPU 管理留在 kernel/task/cpu.c；这里只放架构相关部分：
+INIT-SIPI + AP trampoline、LAPIC ID 读取、TSS per-CPU 初始化，
+以及 SMP 自检的 x86_64 部分。
+
+<a id="fn-kernel-task-x86_64-cpu_startup.c-37"></a>
+
+### `arch_cpu_bsp_hw_id`
+
+```c
+uint64_t arch_cpu_bsp_hw_id(void)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+<details>
+<summary>函数内备注（1 条）</summary>
+
+**第 39 行**
+
+> x86 的 hw_id 是 LAPIC ID：arch_cpu_hw_id() 只返回 0 占位，
+> BSP 也必须走控制器后端读真实值，否则真实硬件上 BSP 的 APIC ID != 0 时，
+> sched_resched_cpu(0) 会把 IPI 发到错误的核。
+
+</details>
+
+**位置**：`kernel/task/x86_64/cpu_startup.c:37`
+
+<a id="fn-kernel-task-x86_64-cpu_startup.c-45"></a>
+
+### `cpu_secondary_bootstrap`
+
+```c
+void cpu_secondary_bootstrap(uint32_t cpu_id)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+<details>
+<summary>函数内备注（1 条）</summary>
+
+**第 57 行**
+
+> resched IPI：必须在 online 之前装好, 否则 BSP 发来的 kick 会丢。
+
+</details>
+
+**位置**：`kernel/task/x86_64/cpu_startup.c:45`
+
+<a id="fn-kernel-task-x86_64-cpu_startup.c-70"></a>
+
+### `cpu_bring_up_all`
+
+```c
+void cpu_bring_up_all(void)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`kernel/task/x86_64/cpu_startup.c:70`
+
+<a id="fn-kernel-task-x86_64-cpu_startup.c-127"></a>
+
+### `arch_cpu_smp_test_begin`
+
+```c
+void arch_cpu_smp_test_begin(void)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+<details>
+<summary>函数内备注（1 条）</summary>
+
+**第 129 行**
+
+> 保持原行为：x86 的 BSP 到这里已经能收 timer 中断, 不在这里重新开。
+
+</details>
+
+**位置**：`kernel/task/x86_64/cpu_startup.c:127`
+
+<a id="fn-kernel-task-x86_64-cpu_startup.c-132"></a>
+
+### `arch_cpu_smp_test_diag_begin`
+
+```c
+void arch_cpu_smp_test_diag_begin(void)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`kernel/task/x86_64/cpu_startup.c:132`
+
+<a id="fn-kernel-task-x86_64-cpu_startup.c-135"></a>
+
+### `arch_cpu_smp_test_diag_round`
+
+```c
+void arch_cpu_smp_test_diag_round(uint32_t round)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`kernel/task/x86_64/cpu_startup.c:135`
+
+<a id="mod-kernel-task-x86_64-sched.c"></a>
+
+## kernel/task/x86_64/sched.c — x86_64 调度路径的架构部分
+
+`kernel/task/x86_64/sched.c` · 2 个函数 · 0 个有说明 · 26 行
+
+x86 的 CR3/TSS/FS 切换留在 kernel/task/sched.c 的 #if ARCH_X86_64 里；
+这里只放伪帧参数选择。
+
+<a id="fn-kernel-task-x86_64-sched.c-18"></a>
+
+### `arch_sched_prev_pgd_slot`
+
+```c
+uint64_t **arch_sched_prev_pgd_slot(task_t *prev)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`kernel/task/x86_64/sched.c:18`
+
+<a id="fn-kernel-task-x86_64-sched.c-23"></a>
+
+### `arch_sched_next_pgd`
+
+```c
+uint64_t *arch_sched_next_pgd(task_t *next)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`kernel/task/x86_64/sched.c:23`
 
 <a id="mod-kernel-time-hrtimer.c"></a>
 
@@ -17090,7 +17439,7 @@ static int handle_dabt(vcpu_t *vcpu, uint64_t esr)
 
 > 恒等的意义：guest 里 librknnrt 拿到的&quot;设备地址&quot;就是驱动从这块预留池
 > 分配出来的物理地址, 只有 IPA == PA 时它在两边指的是同一块内存。
-> 详见 include/aarch64/stage2.h 里 s2_ctx_t.npu_dma_base。
+> 详见 include/arch/aarch64/stage2.h 里 s2_ctx_t.npu_dma_base。
 
 **第 448 行**
 
@@ -25867,7 +26216,7 @@ static int vmx_check_support(void)
 ```
 
 ── VMXON / VMCS 操作 ──────────────────────────────────────────────────
-vmxon / vmclear / vmptrld 是 include/x86_64/vmx.h 里的 static inline。
+vmxon / vmclear / vmptrld 是 include/arch/x86_64/vmx.h 里的 static inline。
 它们的 m64 操作数是存放「物理地址」的内存位置；内核运行在
 0xffff800000000000 偏移的高半区, 调用方必须先 virt_to_phys。
 

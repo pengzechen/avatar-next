@@ -351,7 +351,7 @@
   sched.c：
 
   #if ARCH_RISCV64
-  #include "riscv64/exception.h"
+  #include "arch/riscv64/exception.h"
 
   bool sched_check_and_yield_from_trap(trap_frame_t *frame)
   {

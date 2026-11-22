@@ -29,7 +29,7 @@
 #include <ext4.h>
 #include <ext4_errno.h>
 #if ARCH_RISCV64
-#include "riscv64/satp_utils.h"
+#include "arch/riscv64/satp_utils.h"
 #endif
 
 #include "syscall/fs/fd_pool.h"

@@ -10,7 +10,7 @@
 #include "barrier.h"
 #include "mm/pmm.h"
 #include "mm/mm_vm.h"
-#include "aarch64/mmu.h"
+#include "arch/aarch64/mmu.h"
 #include "string.h"
 #include "mm/shared_page.h"
 
@@ -294,7 +294,7 @@ void memory_free_page(void *page_dir, uint64_t addr)
 
 /*
    把某页标成 PTE_KEEP(设备缓冲)。与 memory_set_pte_nofree 同构,
-   区别见 include/aarch64/mmu.h 里 PTE_KEEP 的说明。
+   区别见 include/arch/aarch64/mmu.h 里 PTE_KEEP 的说明。
 */
 void memory_set_pte_keep(void *page_dir, uint64_t vaddr)
 {

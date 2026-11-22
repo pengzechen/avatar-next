@@ -361,7 +361,7 @@ void arch_prctl_handler(uint64_t regs[6], task_t *current);
 #endif
 
 /* ── 信号子系统(kernel/syscall/core/signal.c)─────────────────────── */
-/* trap_frame_t 在各架构 include/<arch>/exception.h 中定义为匿名 struct
+/* trap_frame_t 在各架构 include/arch/<arch>/exception.h 中定义为匿名 struct
    的 typedef, 无法前向声明, 因此这里直接 include。
 */
 #include "exception.h"

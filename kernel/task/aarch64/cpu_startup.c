@@ -22,10 +22,10 @@
 #include "barrier.h"
 #include "driver/time.h"
 #include "driver/irq.h"
-#include "exception.h"    /* arch_irq_enable / arch_irq_flags */
-#include "mm/mm_vm.h"     /* virt_to_phys */
-#include "aarch64/neon.h" /* aarch64_enable_neon (per-core CPACR_EL1.FPEN) */
-#include "aarch64/psci.h" /* psci_cpu_on / psci_affinity_info(SMC64) */
+#include "exception.h"         /* arch_irq_enable / arch_irq_flags */
+#include "mm/mm_vm.h"          /* virt_to_phys */
+#include "arch/aarch64/neon.h" /* aarch64_enable_neon (per-core CPACR_EL1.FPEN) */
+#include "arch/aarch64/psci.h" /* psci_cpu_on / psci_affinity_info(SMC64) */
 
 /* boot/aarch64/boot.S 中定义的次级核入口(链接地址在高 VA) */
 extern void _secondary_start(void);

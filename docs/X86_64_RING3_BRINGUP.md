@@ -435,8 +435,8 @@ x86_64 的 `SYSCALL` 指令默认不可用，必须在 `MSR_EFER` 中设置 `SCE
 | `boot/x86_64/tss.h` | 声明 `extern uint64_t g_x86_tss_rsp0` |
 | `boot/x86_64/syscall_wrapper.S` | 替换静态共享栈为 `g_x86_tss_rsp0` 动态内核栈 |
 | `boot/x86_64/exception.c` | 用户异常改为标记 + 延迟调度；启用 EFER.SCE；配置 SYSCALL MSR |
-| `include/x86_64/exception.h` | 修正 `trap_frame_t` 字段顺序（与 exception.S push 顺序一致）|
-| `include/x86_64/mm_vm.h` | 新增页表管理：`x86_walk_pt`、`mm_vm_map_pages`、`x86_perm_to_flags` |
+| `include/arch/x86_64/exception.h` | 修正 `trap_frame_t` 字段顺序（与 exception.S push 顺序一致）|
+| `include/arch/x86_64/mm_vm.h` | 新增页表管理：`x86_walk_pt`、`mm_vm_map_pages`、`x86_perm_to_flags` |
 | `kernel/task/x86_64/switch.S` | 实现 `task_trampoline_user`（iretq 进入 Ring3）|
 | `kernel/task/sched.c` | 切换用户任务时更新 TSS.RSP0；调整 `sched_check_and_yield` 策略 |
 | `kernel/main.c` | 将 `timer_set_tick_cb` 移到所有进程创建之后 |

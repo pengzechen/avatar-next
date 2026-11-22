@@ -1,8 +1,8 @@
 # 缓存操作（cache.h）
 
 > **一句话**：C 代码要维护缓存，只用 `include/cache.h` 的动词；
-> 缓存指令只允许出现在 `include/<arch>/cache_impl.h`（以及 riscv 的
-> `include/riscv64/rvplatform.h`）里，`.S` 除外。
+> 缓存指令只允许出现在 `include/arch/<arch>/cache_impl.h`（以及 riscv 的
+> `include/arch/riscv64/rvplatform.h`）里，`.S` 除外。
 
 ## 接口
 
@@ -46,7 +46,7 @@ aarch64 的 `dc`/`ic` 和 x86_64 的 `clflush`/`wbinvd` 都是**架构标准指�
 
 RISC-V 不一样：**基座 ISA 里没有 CMO**，标准扩展 Zicbom 是可选的，而 Zicbom 之前的
 厂商核（T-Head C906/C910）用 CUSTOM-0 **私有编码**。于是把"这台机器到底有什么 CMO"
-收敛到 `include/riscv64/rvplatform.h`（`RV_CMO_NONE` / `RV_CMO_ZICBOM` / `RV_CMO_THEAD`），
+收敛到 `include/arch/riscv64/rvplatform.h`（`RV_CMO_NONE` / `RV_CMO_ZICBOM` / `RV_CMO_THEAD`），
 `cache_impl.h` 只做"通用动词 → 平台原语"的映射。
 
 平台选择用 `PLATFORM_SG2002` / `__riscv_zicbom`，与 Makefile 的 `-DPLATFORM_$(name)` 一致；

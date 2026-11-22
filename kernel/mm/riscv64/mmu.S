@@ -8,7 +8,7 @@
  * kernel/mm/riscv64/mmu.S
  *
  * 最小 Sv39 初始化。内核低地址恒等映射与 KERNEL_VMA 高半区别名
- * **都从 include/riscv64/mem_layout.h 的 RV_KERNEL_MAP_LIST 生成**，
+ * **都从 include/arch/riscv64/mem_layout.h 的 RV_KERNEL_MAP_LIST 生成**，
  * 不再在这里手写 0x00000000/0x40000000/0x80000000/0xC0000000 和
  * 0x100..0x103 的 L1 下标。
  *
@@ -17,7 +17,7 @@
  * （历史上 0x103 就这么漏过，症状是 syscall 期间 Store PF）。
  */
 
-#include "riscv64/mem_layout.h"
+#include "arch/riscv64/mem_layout.h"
 
 /* 构造 1GB 叶子项：输入寄存器里的物理基地址需 1GB 对齐 */
 .macro MAKE_GIGA_PTE out, pa_reg, flags

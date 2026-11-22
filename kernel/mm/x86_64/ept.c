@@ -39,7 +39,7 @@
    hpa_base**。
 */
 
-#include "x86_64/ept.h"
+#include "arch/x86_64/ept.h"
 #include "mm/pmm.h"
 #include "mm/mm_vm.h"
 #include "klog.h"
