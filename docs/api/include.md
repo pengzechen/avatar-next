@@ -5085,7 +5085,7 @@ static inline bool vfs_file_is_dir(const vfs_file_t *file)
 
 ## include/klog.h — 内核日志系统
 
-`include/klog.h` · 7 个函数 · 7 个有说明 · 640 行
+`include/klog.h` · 7 个函数 · 7 个有说明 · 651 行
 
 支持全局日志级别和模块级别的日志控制
 

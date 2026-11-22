@@ -204,6 +204,17 @@ extern void klog_async_start(void);
    调用方应退回同步输出。可在中断上下文调用（只做短 memcpy + 唤醒）。
 */
 extern bool klog_async_enqueue(const char *buf, size_t len);
+
+/*
+   klog_async_panic_flush - 崩溃路径：把环形缓冲里已排队的日志同步刷出
+
+   进入 panic 后 klogd 不会再被调度，不主动刷就会丢掉崩溃前最后一段日志。
+   关掉异步入口(之后的 klog_write 直写 UART)，认领环形缓冲里已入队的范围
+   并直接输出；不走全局 klog 锁，避免 panic 时卡在别人持有的锁上。
+   只由 klog_panic_begin() 调用。
+*/
+extern void klog_async_panic_flush(void);
+
 extern int kvprintf(const char *fmt, va_list va);
 extern int kprintf(const char *fmt, ...);
 

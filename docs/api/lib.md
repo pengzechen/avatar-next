@@ -85,7 +85,7 @@ size_t bitmap_find_contiguous_free(const bitmap_t *bitmap, size_t count)
 
 ## lib/klog.c — 内核日志系统实现
 
-`lib/klog.c` · 11 个函数 · 11 个有说明 · 283 行
+`lib/klog.c` · 11 个函数 · 11 个有说明 · 290 行
 
 <a id="fn-lib-klog.c-51"></a>
 
@@ -166,9 +166,20 @@ void klog_panic_begin(void)
 
 把全局 panic 标志置为真，供日志路径识别当前处于 panic 状态。
 
+<details>
+<summary>函数内备注（1 条）</summary>
+
+**第 106 行**
+
+> 把崩溃前已经进入异步环形缓冲、但 klogd 还没来得及输出的日志补出来。
+> klogd 在 panic 之后不会再被调度，不主动刷这段就永久丢了。
+> 必须在 panic 消息之前：保证日志顺序仍然是&quot;先发生先输出&quot;。
+
+</details>
+
 **位置**：`lib/klog.c:102`
 
-<a id="fn-lib-klog.c-113"></a>
+<a id="fn-lib-klog.c-120"></a>
 
 ### `kvprintf`
 
@@ -184,22 +195,22 @@ kvprintf - 格式化输出到内核日志
 <details>
 <summary>函数内备注（2 条）</summary>
 
-**第 121 行**
+**第 128 行**
 
 > my_vsnprintf 与 C99 snprintf 同语义：截断时返回&quot;本该写多长&quot;,
 > 因此这里 len 可能大于缓冲区。必须 clamp —— 否则下面的循环会越界读
 > 栈上 buf 之后的内容(返回地址, 保存的寄存器…)并原样打到串口。
 > 单行超过 511 字节就会触发(长路径, 大 %s, 参数多的 trace)。
 
-**第 131 行**
+**第 138 行**
 
 > 整行一次交出：取锁 / panic 判定都在 klog_write 里统一处理
 
 </details>
 
-**位置**：`lib/klog.c:113`
+**位置**：`lib/klog.c:120`
 
-<a id="fn-lib-klog.c-155"></a>
+<a id="fn-lib-klog.c-162"></a>
 
 ### `klog_name_eq`
 
@@ -209,9 +220,9 @@ static int klog_name_eq(const char *tok, int len, const char *name)
 
 tok[0..len) 是否等于 name(tok 不是 NUL 结尾的, 来自逗号切分)
 
-**位置**：`lib/klog.c:155`
+**位置**：`lib/klog.c:162`
 
-<a id="fn-lib-klog.c-165"></a>
+<a id="fn-lib-klog.c-172"></a>
 
 ### `log_set_modules_by_name`
 
@@ -226,19 +237,19 @@ int log_set_modules_by_name(const char *names)
 <details>
 <summary>函数内备注（2 条）</summary>
 
-**第 183 行**
+**第 190 行**
 
 > 去掉两端空白, 允许 &quot;uart, gic&quot;
 
-**第 192 行**
+**第 199 行**
 
 > 空项(如 &quot;uart,,gic&quot; 或结尾逗号)：忽略
 
 </details>
 
-**位置**：`lib/klog.c:165`
+**位置**：`lib/klog.c:172`
 
-<a id="fn-lib-klog.c-220"></a>
+<a id="fn-lib-klog.c-227"></a>
 
 ### `klog_append`
 
@@ -250,9 +261,9 @@ static void klog_append(char *out, int len, int *n, const char *s)
 
 在剩余空间内逐字符追加字符串并始终补 '\0'，超出容量即截断。
 
-**位置**：`lib/klog.c:220`
+**位置**：`lib/klog.c:227`
 
-<a id="fn-lib-klog.c-227"></a>
+<a id="fn-lib-klog.c-234"></a>
 
 ### `log_modules_to_string`
 
@@ -267,15 +278,15 @@ int log_modules_to_string(char *out, int len)
 <details>
 <summary>函数内备注（1 条）</summary>
 
-**第 249 行（行尾）**
+**第 256 行（行尾）**
 
 > 掩码里只有表外的位
 
 </details>
 
-**位置**：`lib/klog.c:227`
+**位置**：`lib/klog.c:234`
 
-<a id="fn-lib-klog.c-255"></a>
+<a id="fn-lib-klog.c-262"></a>
 
 ### `klog_init`
 
@@ -287,9 +298,9 @@ void klog_init(void)
 
 按 LOG_MODULES_DEFAULT 设置模块掩码并报告无法识别的名字，随后打印当前日志级别与模块列表。
 
-**位置**：`lib/klog.c:255`
+**位置**：`lib/klog.c:262`
 
-<a id="fn-lib-klog.c-273"></a>
+<a id="fn-lib-klog.c-280"></a>
 
 ### `kprintf`
 
@@ -299,7 +310,7 @@ int kprintf(const char *fmt, ...)
 
 kprintf - 格式化输出到内核日志
 
-**位置**：`lib/klog.c:273`
+**位置**：`lib/klog.c:280`
 
 <a id="mod-lib-libc.c"></a>
 

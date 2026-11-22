@@ -102,6 +102,13 @@ void klog_flush(void)
 void klog_panic_begin(void)
 {
     g_klog_panic = true;
+
+    /*
+       把崩溃前已经进入异步环形缓冲、但 klogd 还没来得及输出的日志补出来。
+       klogd 在 panic 之后不会再被调度，不主动刷这段就永久丢了。
+       必须在 panic 消息之前：保证日志顺序仍然是"先发生先输出"。
+    */
+    klog_async_panic_flush();
 }
 
 /*

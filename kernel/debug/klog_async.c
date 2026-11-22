@@ -35,11 +35,21 @@ static task_t *g_klog_sleeper;
 
 bool klog_async_enqueue(const char *buf, size_t len)
 {
-    if (!g_klog_async_ready || !buf || len == 0)
+    if (!__atomic_load_n(&g_klog_async_ready, __ATOMIC_ACQUIRE) || !buf || len == 0)
         return false;
 
     uint64_t flags;
     spin_lock_irqsave(&g_klog_ring_lock, &flags);
+
+    /*
+       拿到锁后复查：panic flush 会在置位"异步关闭"之后再来抢这把锁。
+       不复查的话，已经在等锁的生产者会在 flush 认领完范围之后又写进环形
+       缓冲，那批字节就永远没人消费了。
+    */
+    if (!__atomic_load_n(&g_klog_async_ready, __ATOMIC_ACQUIRE)) {
+        spin_unlock_irqrestore(&g_klog_ring_lock, flags);
+        return false;
+    }
 
     uint32_t used = g_klog_head - g_klog_tail;
     if (len > KLOG_RING_SIZE - used) {
@@ -59,6 +69,43 @@ bool klog_async_enqueue(const char *buf, size_t len)
     if (sleeper)
         task_unblock(sleeper);
     return true;
+}
+
+/*
+   klog_async_panic_flush - panic 时把已入环的日志同步刷出
+
+   背景：klogd 是普通内核线程，进入 panic 后不会再被调度。如果崩溃前最后
+   几条日志还躺在环形缓冲里，它们永远不会被打印出来 —— 而那段恰恰是最想
+   看到的现场。这里在 klog_panic_begin() 里主动消费一次。
+
+   并发处理：
+     - 先关异步入口(ready=false)，并在 enqueue 拿锁后复查，保证之后不会再
+       有生产者往环里写；
+     - 尽力拿环形锁：拿到就独占认领 tail..head；拿不到说明有核正卡在临界区，
+       直接按快照裸读。panic 下宁可重复输出，也不能丢日志；
+     - 认领(把 tail 推到 head)之后释放锁再写 UART，避免持锁做几十 KB 的
+       慢速串口输出。此时生产者已被 ready=false 挡住，klogd 看到 head==tail
+       也不会再消费，环内容不会被覆盖。
+*/
+void klog_async_panic_flush(void)
+{
+    if (!__atomic_load_n(&g_klog_async_ready, __ATOMIC_ACQUIRE))
+        return;
+
+    __atomic_store_n(&g_klog_async_ready, false, __ATOMIC_RELEASE);
+
+    uint64_t flags;
+    bool locked = (spin_trylock_irqsave(&g_klog_ring_lock, &flags) == 0);
+
+    uint32_t tail = g_klog_tail;
+    uint32_t head = g_klog_head;
+    g_klog_tail = head; /* 认领整个已入队范围 */
+
+    if (locked)
+        spin_unlock_irqrestore(&g_klog_ring_lock, flags);
+
+    for (uint32_t pos = tail; pos != head; pos++)
+        uart_putchar((char)g_klog_ring[pos & KLOG_RING_MASK]);
 }
 
 static void klogd_fn(void *arg)
@@ -98,7 +145,7 @@ static void klogd_fn(void *arg)
 
 void klog_async_start(void)
 {
-    if (g_klog_async_ready)
+    if (__atomic_load_n(&g_klog_async_ready, __ATOMIC_ACQUIRE))
         return;
 
     /*
@@ -109,5 +156,5 @@ void klog_async_start(void)
     */
     task_t *t = task_create_kernel_rt("klogd", klogd_fn, NULL, 1, CPU_AFFINITY_ANY);
     if (t)
-        g_klog_async_ready = true;
+        __atomic_store_n(&g_klog_async_ready, true, __ATOMIC_RELEASE);
 }

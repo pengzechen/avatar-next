@@ -1,6 +1,6 @@
 # kernel — C API
 
-[← 返回总览](index.md) · 996 个函数 · 说明覆盖率 95.7%
+[← 返回总览](index.md) · 997 个函数 · 说明覆盖率 95.7%
 
 <a id="mod-kernel-debug-backtrace.c"></a>
 
@@ -642,7 +642,7 @@ void backtrace_selftest(void)
 
 ## kernel/debug/klog_async.c — 异步内核日志输出
 
-`kernel/debug/klog_async.c` · 3 个函数 · 3 个有说明 · 113 行
+`kernel/debug/klog_async.c` · 4 个函数 · 4 个有说明 · 160 行
 
 背景：klog_write() 原来整段持 spin_lock_irqsave 逐字符写 UART。R3 的
 IRQ-off trace 显示这是 x86/riscv 上最大的关中断区间（毫秒级）。
@@ -664,9 +664,15 @@ bool klog_async_enqueue(const char *buf, size_t len)
 关中断加锁把字节写入日志环，空间不足返回 false 交回同步输出，成功时唤醒 klogd。
 
 <details>
-<summary>函数内备注（1 条）</summary>
+<summary>函数内备注（2 条）</summary>
 
-**第 47 行（行尾）**
+**第 44 行**
+
+> 拿到锁后复查：panic flush 会在置位&quot;异步关闭&quot;之后再来抢这把锁。
+> 不复查的话，已经在等锁的生产者会在 flush 认领完范围之后又写进环形
+> 缓冲，那批字节就永远没人消费了。
+
+**第 57 行（行尾）**
 
 > 满：退回同步输出
 
@@ -674,7 +680,41 @@ bool klog_async_enqueue(const char *buf, size_t len)
 
 **位置**：`kernel/debug/klog_async.c:36`
 
-<a id="fn-kernel-debug-klog_async.c-64"></a>
+<a id="fn-kernel-debug-klog_async.c-90"></a>
+
+### `klog_async_panic_flush`
+
+```c
+void klog_async_panic_flush(void)
+```
+
+klog_async_panic_flush - panic 时把已入环的日志同步刷出
+
+背景：klogd 是普通内核线程，进入 panic 后不会再被调度。如果崩溃前最后
+几条日志还躺在环形缓冲里，它们永远不会被打印出来 —— 而那段恰恰是最想
+看到的现场。这里在 klog_panic_begin() 里主动消费一次。
+
+并发处理：
+- 先关异步入口(ready=false)，并在 enqueue 拿锁后复查，保证之后不会再
+有生产者往环里写；
+- 尽力拿环形锁：拿到就独占认领 tail..head；拿不到说明有核正卡在临界区，
+直接按快照裸读。panic 下宁可重复输出，也不能丢日志；
+- 认领(把 tail 推到 head)之后释放锁再写 UART，避免持锁做几十 KB 的
+慢速串口输出。此时生产者已被 ready=false 挡住，klogd 看到 head==tail
+也不会再消费，环内容不会被覆盖。
+
+<details>
+<summary>函数内备注（1 条）</summary>
+
+**第 102 行（行尾）**
+
+> 认领整个已入队范围
+
+</details>
+
+**位置**：`kernel/debug/klog_async.c:90`
+
+<a id="fn-kernel-debug-klog_async.c-111"></a>
 
 ### `klogd_fn`
 
@@ -686,9 +726,9 @@ static void klogd_fn(void *arg)
 
 klogd 循环：环空时置当前任务 BLOCKED 并调度等待，有日志时按 128 字节块取出后在锁外写 UART。
 
-**位置**：`kernel/debug/klog_async.c:64`
+**位置**：`kernel/debug/klog_async.c:111`
 
-<a id="fn-kernel-debug-klog_async.c-99"></a>
+<a id="fn-kernel-debug-klog_async.c-146"></a>
 
 ### `klog_async_start`
 
@@ -703,7 +743,7 @@ void klog_async_start(void)
 <details>
 <summary>函数内备注（1 条）</summary>
 
-**第 104 行**
+**第 151 行**
 
 > 在此之前（含本行自身的日志）仍然同步写，保证启动期不丢日志。
 > klogd 用最低 RT 优先级（FIFO 1）：普通优先级下被唤醒要等 tick，
@@ -712,7 +752,7 @@ void klog_async_start(void)
 
 </details>
 
-**位置**：`kernel/debug/klog_async.c:99`
+**位置**：`kernel/debug/klog_async.c:146`
 
 <a id="mod-kernel-main.c"></a>
 
