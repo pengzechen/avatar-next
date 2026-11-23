@@ -5,7 +5,7 @@
 */
 
 /*
-   kernel/syscall/trace.h — 系统调用环形缓冲(strace 式事后回看)
+   kernel/syscall/syscall_trace.h — 系统调用环形缓冲(strace 式事后回看)
 
    解决的问题：用户态程序崩了, 想按 syscall 调用顺序定位, 但逐条打日志
    (KLOG_SYSCALL)有几个致命短板 ——

@@ -15,7 +15,7 @@
 
 #include "exception.h"
 #include "klog.h"
-#include "syscall/trace.h"
+#include "syscall/syscall_trace.h"
 #include "debug/backtrace.h"
 #include "arch/riscv64/sysreg.h"
 #include "arch/riscv64/hext.h" /* READ_HSTATUS：必须走数值 CSR, 见该文件顶部的警告 */

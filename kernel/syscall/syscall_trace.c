@@ -5,7 +5,7 @@
 */
 
 /*
-   kernel/syscall/trace.c — 系统调用环形缓冲的实现
+   kernel/syscall/syscall_trace.c — 系统调用环形缓冲的实现
 
    设计要点见 trace.h。这里只补充三个实现上的选择：
 
@@ -20,7 +20,7 @@
       (用户传个非法地址就会让内核态读到坏地址 → #PF → 整机挂死, LTP 实测过)。
 */
 
-#include "syscall/trace.h"
+#include "syscall/syscall_trace.h"
 #include "syscall/syscall_internal.h" /* LINUX_SYS_*, copy_string_from_user */
 #include "klog.h"
 #include "string.h"

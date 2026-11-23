@@ -7,7 +7,7 @@
 #include "fs/kernel_stat.h"
 #include "syscall/syscall.h"
 #include "syscall/syscall_internal.h"
-#include "syscall/trace.h"
+#include "syscall/syscall_trace.h"
 #include "syscall/core/futex.h"
 #include "klog.h"
 #include "task/task.h"
@@ -131,9 +131,9 @@ volatile uint32_t g_syscall_entry_count = 0;
    而不是在代码里猜。
 
    注意流式追踪只在 DEBUG 级, 且模块位放行时才输出；崩溃后回看请用环形缓冲
-   (kernel/syscall/trace.c), 它常开, 不受等级影响。
+   (kernel/syscall/syscall_trace.c), 它常开, 不受等级影响。
 */
-/* syscall 号 → 名字在 kernel/syscall/trace.c, 环形缓冲和流式追踪共用一份,
+/* syscall 号 → 名字在 kernel/syscall/syscall_trace.c, 环形缓冲和流式追踪共用一份,
    免得两边各维护一个迟早对不上的表。
 */
 

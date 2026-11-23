@@ -16,7 +16,7 @@
 
 #include "exception.h"
 #include "klog.h"
-#include "syscall/trace.h"
+#include "syscall/syscall_trace.h"
 #include "debug/backtrace.h"
 #include "assert.h" /* platform_panic() */
 #include "driver/irq.h"

@@ -23,16 +23,16 @@
 #include "string.h"
 #include "mm/pmm.h"
 #include "task/task.h"
-#include "driver/dma_buf.h"   /* dma_heap_dev_ioctl / dma_buf_present */
-#include "driver/ion.h"       /* ion_present */
-#include "driver/tpu.h"       /* tpu_present */
-#include "driver/npu.h"       /* npu_present */
-#include "task/cpu.h"         /* g_cpus / g_num_cpus / AVATAR_MAX_CPUS(/proc/uptime 的 idle 列) */
-#include "rt/rt_latency.h"    /* /proc/rtstat：R0 延迟统计 */
-#include "driver/time.h"      /* timer_get_ns / TIMER_FREQUENCY_HZ */
-#include "syscall/io/epoll.h" /* EPOLLIN/EPOLLOUT：pseudo_poll 的兜底返回值 */
-#include "syscall/trace.h"    /* /proc/syscalls */
-#include "debug/backtrace.h"  /* /proc/backtrace */
+#include "driver/dma_buf.h"        /* dma_heap_dev_ioctl / dma_buf_present */
+#include "driver/ion.h"            /* ion_present */
+#include "driver/tpu.h"            /* tpu_present */
+#include "driver/npu.h"            /* npu_present */
+#include "task/cpu.h"              /* g_cpus / g_num_cpus / AVATAR_MAX_CPUS(/proc/uptime 的 idle 列) */
+#include "rt/rt_latency.h"         /* /proc/rtstat：R0 延迟统计 */
+#include "driver/time.h"           /* timer_get_ns / TIMER_FREQUENCY_HZ */
+#include "syscall/io/epoll.h"      /* EPOLLIN/EPOLLOUT：pseudo_poll 的兜底返回值 */
+#include "syscall/syscall_trace.h" /* /proc/syscalls */
+#include "debug/backtrace.h"       /* /proc/backtrace */
 
 /* ── Urandom LFSR ─────────────────────────────────────────────── */
 static uint64_t g_lfsr = 0xDEADBEEFCAFEBABEULL;
@@ -330,7 +330,7 @@ static int pid_max_read(int nid, uint64_t off, void *buf, size_t len)
    -Wmissing-field-initializers, 而且列对齐之后哪一行特殊一眼可见。
 */
 /*
-   /proc/syscalls — 最近走过的系统调用(环形缓冲, 见 kernel/syscall/trace.c)。
+   /proc/syscalls — 最近走过的系统调用(环形缓冲, 见 kernel/syscall/syscall_trace.c)。
 
    和逐条打 UART 的 [strace] 不同, 这个不受 LOG= 等级影响：环形缓冲是常开的,
    所以不需要为了看它去重编一个 LOG=debug 内核 —— 用户态程序崩了当场就能看。
