@@ -16,21 +16,25 @@ Claude 会自动读取这个文件来了解项目上下文。
 
 ### 第一步：源码布局（全部随仓库 clone，无 submodule）
 
-**lwext4 与 FatFs 已收编为 first-party**：核心源码分别在 `fs/ext4/lwext4/`
-（`src/` + `include/`，BSD-3-Clause）和 `fs/fat/fatfs/`（`source/`），由本项目
-直接维护；对应的移植层仍在 `fs/ext4/port/`、`fs/fat/port/`。
-`third_party/` 只保留 **lwIP**（以及 dropbear 等原样内嵌的上游代码）。
+**lwext4、FatFs 与 lwIP 都已收编为 first-party**：核心源码分别在
+`fs/ext4/lwext4/`（`src/` + `include/`，BSD-3-Clause）、`fs/fat/fatfs/`
+（`source/`）和 `kernel/net/lwip/`（上游 `src/` + `COPYING`，BSD-3-Clause，
+**未修改**）；对应的移植层在 `fs/ext4/port/`、`fs/fat/port/`、
+`kernel/net/lwip_port/`。dropbear 的 vendored 构建树在
+`apps/dropbear-2024.86/`，只有 `dropbearmulti-aarch64` 入库，其余由
+`.gitignore` 忽略。
 `git clone` 直接就能拿到全部源码，**不需要** `--recurse-submodules`，也没有
 `make submodules` 这一步了（那个目标保留着只是为了不让旧脚本报错）。
 
 （历史：lwext4 曾是 submodule，`.gitmodules` 指向上游、父仓库钉的却是我们
 fork 的 commit —— 全新 clone 必然失败，且报错指向 `include/fs/vfs.h` 这个
-**我们自己的**头文件，极具误导性。后来先改为 `third_party/` 内嵌，现在进一步
-收编到 `fs/ext4/lwext4/`。lwext4 为什么 fork、lwIP 为什么原样内嵌，见各自的
+**我们自己的**头文件，极具误导性。后来先改为 `third_party/` 内嵌，现在
+lwext4 收编到 `fs/ext4/lwext4/`、lwIP 收编到 `kernel/net/lwip/`，
+`third_party/` 目录已删除。lwext4 为什么 fork、lwIP 为什么原样内嵌，见各自的
 `README.md`。）
 
-lwext4/FatFs 的核心代码保持上游风格，**不参与 `make format`**；
-只格式化 `fs/ext4/port/`、`fs/fat/port/` 和我们的补丁块。
+lwext4/FatFs/lwIP 的核心代码保持上游风格，**不参与 `make format`**；
+只格式化 `fs/ext4/port/`、`fs/fat/port/`、`kernel/net/lwip_port/` 和我们的补丁块。
 
 如果构建报 `ext4.h: No such file or directory`（或 lwIP 的头），现在只有一个
 原因：**工作树不完整**，重新 clone 即可。`make` 会在编译任何东西之前先拦一道。

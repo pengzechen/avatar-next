@@ -166,19 +166,19 @@ $(BUILD_DIR)/platform_static.o: $(BUILD_DIR)/platform_static.c | $(BUILD_DIR)
 # ── §11e  第三方库编译规则（lwext4 / lwIP）──────────────────────────────────────
 # lwext4 第三方源码：用带 compat 路径的专用 LWEXT4_CFLAGS
 
-$(THIRD_PARTY_BUILD_DIR)/lwext4_%.o: $(LWEXT4_DIR)/src/%.c | $(BUILD_DIR) check-submodules
+$(VENDOR_BUILD_DIR)/lwext4_%.o: $(LWEXT4_DIR)/src/%.c | $(BUILD_DIR) check-submodules
 	@mkdir -p $(dir $@)
 	$(CC) $(LWEXT4_THIRD_PARTY_CFLAGS) -c $< -o $@
 
-$(THIRD_PARTY_BUILD_DIR)/lwip_core_%.o: $(LWIP_DIR)/src/core/%.c | $(BUILD_DIR)
+$(VENDOR_BUILD_DIR)/lwip_core_%.o: $(LWIP_DIR)/src/core/%.c | $(BUILD_DIR)
 	@mkdir -p $(dir $@)
 	$(CC) $(LWIP_CFLAGS) -c $< -o $@
 
-$(THIRD_PARTY_BUILD_DIR)/lwip_ipv4_%.o: $(LWIP_DIR)/src/core/ipv4/%.c | $(BUILD_DIR)
+$(VENDOR_BUILD_DIR)/lwip_ipv4_%.o: $(LWIP_DIR)/src/core/ipv4/%.c | $(BUILD_DIR)
 	@mkdir -p $(dir $@)
 	$(CC) $(LWIP_CFLAGS) -c $< -o $@
 
-$(THIRD_PARTY_BUILD_DIR)/lwip_netif_%.o: $(LWIP_DIR)/src/netif/%.c | $(BUILD_DIR)
+$(VENDOR_BUILD_DIR)/lwip_netif_%.o: $(LWIP_DIR)/src/netif/%.c | $(BUILD_DIR)
 	@mkdir -p $(dir $@)
 	$(CC) $(LWIP_CFLAGS) -c $< -o $@
 
@@ -191,7 +191,7 @@ $(BUILD_DIR)/lwext4_port_fs_lock.o: $(LWEXT4_PORT_DIR)/fs_lock.c | $(BUILD_DIR) 
 	$(CC) $(LWEXT4_CFLAGS) -I$(LWEXT4_PORT_DIR) -c $< -o $@
 
 # ── §11e-2  FatFs 第三方源码 / 移植胶水 ────────────────────────────────────────
-$(THIRD_PARTY_BUILD_DIR)/fatfs_%.o: $(FATFS_DIR)/source/%.c | $(BUILD_DIR) check-submodules
+$(VENDOR_BUILD_DIR)/fatfs_%.o: $(FATFS_DIR)/source/%.c | $(BUILD_DIR) check-submodules
 	@mkdir -p $(dir $@)
 	$(CC) $(FATFS_THIRD_PARTY_CFLAGS) -c $< -o $@
 

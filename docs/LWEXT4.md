@@ -9,8 +9,11 @@
 ## 目录结构
 
 ```
-fs/
-└── lwext4_port/              # 裸机移植层（本项目代码）
+fs/ext4/
+├── lwext4/                   # lwext4 核心源码（first-party，BSD-3-Clause）
+│   ├── src/
+│   └── include/
+└── port/                     # 裸机移植层（本项目代码）
     ├── libc_shim/            # lwext4 专用 libc shim（-nostdinc 裸机环境）
     │   ├── stdint.h          # → include/types.h
     │   ├── stddef.h          # → include/types.h + __builtin_offsetof
@@ -22,14 +25,11 @@ fs/
     │   └── ext4_config.h     # 裸机配置文件
     ├── kmalloc.c             # 静态堆内存分配器
     └── libc_stub.c           # 缺失 libc 函数的实现（qsort）
-
-third_party/
-└── lwext4/                   # 原始 lwext4 源码（不做任何修改）
 ```
 
 ---
 
-## 移植配置（`lwext4_port/generated/ext4_config.h`）
+## 移植配置（`fs/ext4/port/generated/ext4_config.h`）
 
 | 配置项 | 值 | 说明 |
 |---|---|---|
@@ -45,7 +45,7 @@ third_party/
 
 ---
 
-## 内存分配器（`lwext4_port/kmalloc.c`）
+## 内存分配器（`fs/ext4/port/kmalloc.c`）
 
 使用一个 **静态堆 + first-fit free-list** 分配器，不依赖操作系统的任何内存服务。
 

@@ -41,7 +41,7 @@ DRIVER_OBJECTS := $(foreach f,$(DRIVER_SRCS),$(call _drv_obj,$(f)))
 
 include mk/apps.mk
 include mk/variants.mk
-include mk/third_party.mk
+include mk/vendor.mk
 include mk/rootfs.mk
 include mk/build.mk
 include mk/qemu.mk
@@ -66,7 +66,7 @@ include mk/help.mk
 # mk/toolchain.mk      三架构 CC/CFLAGS/LDFLAGS/QEMU；改架构标志先看这里。
 # mk/apps.mk           用户态程序变量与编译规则；新增 apps/c/*.c 通常无需改这里。
 # mk/variants.mk       GUEST_LINUX/VMM_TEST/...、LOG_MODULES、变体与配置戳。
-# mk/third_party.mk    lwext4/lwIP/FatFs 变量、--wrap 列表、工作树检查。
+# mk/vendor.mk         lwext4/lwIP/FatFs 变量、--wrap 列表、工作树检查。
 # mk/rootfs.mk         rootfs 配置 / guest 镜像布局 / rootfs、run-fs、test-fat。
 # mk/build.mk          顶层目标、编译/链接、两趟 kallsyms、clean。
 # mk/qemu.mk           run/run-net/test-* 等 QEMU 目标。

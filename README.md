@@ -171,6 +171,7 @@ avatar/
 │   ├── task/            # 任务管理
 │   ├── mm/              # 内存管理
 │   ├── syscall/         # 系统调用
+│   ├── net/             # 网络栈（lwip/ 上游 + lwip_port/ 移植层）
 │   └── loader/          # 程序加载器
 │
 ├── boot/                 # 启动代码
@@ -184,15 +185,14 @@ avatar/
 │   └── interrupt/       # 中断控制器
 │
 ├── fs/                   # 文件系统
-│   └── lwext4_port/     # lwext4 移植层与 libc shim
-├── third_party/         # 第三方源码
-│   ├── lwext4/          # ext4 支持
-│   └── lwip/            # TCP/IP 协议栈
+│   ├── ext4/lwext4/     # ext4 核心（first-party，BSD-3-Clause）
+│   ├── ext4/port/       # ext4 移植层与 libc shim
+│   ├── fat/fatfs/       # FAT 核心（first-party）
+│   └── fat/port/        # FAT 移植层
 │
 ├── apps/                 # 用户程序
-│   ├── busybox-aarch64  # Busybox (AArch64)
-│   ├── busybox-riscv64  # Busybox (RISC-V)
-│   └── busybox-x86_64   # Busybox (x86_64)
+│   ├── busybox-*        # Busybox（三架构）
+│   └── dropbear-2024.86/ # Dropbear（vendored 构建树，仅 aarch64 产物入库）
 │
 ├── platforms/            # 平台配置
 │   └── qemu/            # QEMU 平台

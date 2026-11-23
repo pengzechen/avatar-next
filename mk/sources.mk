@@ -29,7 +29,8 @@ _KERNEL_ARCH_MODULES := mm task vmm
 _KERNEL_OTHER_ARCH   := $(filter-out $(ARCH),$(_KERNEL_ARCHES))
 
 _KERNEL_EXCLUDE_DIRS := $(foreach a,$(_KERNEL_OTHER_ARCH),$(foreach m,$(_KERNEL_ARCH_MODULES),$(KERNEL_DIR)/$(m)/$(a)/)) \
-                        $(KERNEL_DIR)/vmm/vdev/
+                        $(KERNEL_DIR)/vmm/vdev/ \
+                        $(KERNEL_DIR)/net/lwip/
 _KERNEL_EXCLUDE_PAT  := $(addsuffix %,$(_KERNEL_EXCLUDE_DIRS))
 
 # 注：$(shell ...) 的输出按空白切词，路径不能含空格（kernel/ 下当前没有）。

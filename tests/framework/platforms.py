@@ -208,7 +208,6 @@ _HEADER_SCAN_DIRS = (
     "platforms",
     "boot",
     "fs",
-    "third_party",
 )
 _HEADER_SCAN_FILES = ("Makefile",)
 

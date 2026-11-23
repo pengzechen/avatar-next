@@ -2,7 +2,7 @@
 
 # 代码格式化（配置见仓库根的 .clang-format）
 #
-# FORMAT_DIRS 只列本项目自己的源码树。third_party/ 是外部代码（lwIP），
+# FORMAT_DIRS 只列本项目自己的源码树。kernel/net/lwip 是上游代码（lwIP），
 # 人家有自己的风格；build/ 是产物。与 PLATFORM 无关。
 # fs/ext4/lwext4、fs/fat/fatfs 虽已收编为 first-party，但核心代码保持上游风格，
 # 不参与全量格式化（否则和上游 diff 完全失去可比性）；只格式化 port/ 和
@@ -13,7 +13,9 @@ FORMAT_DIRS  := boot driver fs include kernel lib platforms apps tests
 # 是 RKNN 官方运行时头文件，fs/ext4/lwext4|fs/fat/fatfs 的核心源码保持上游风格 ——
 # 都不能格式化（否则 `make format` 会改掉一整个第三方源码树）。
 FORMAT_EXCLUDES := tests/ltp/src tests/.artifacts apps/rknn-aarch64/include \
-                   fs/ext4/lwext4/src fs/ext4/lwext4/include fs/fat/fatfs/source include/rbtree.h
+                   apps/dropbear-2024.86 \
+                   fs/ext4/lwext4/src fs/ext4/lwext4/include fs/fat/fatfs/source \
+                   kernel/net/lwip include/rbtree.h
 FORMAT_PRUNE    := $(foreach d,$(FORMAT_EXCLUDES),-path '$(d)' -prune -o)
 FORMAT_SRCS     := $(shell find $(FORMAT_DIRS) $(FORMAT_PRUNE) \
     \( -name '*.c' -o -name '*.h' \) -print 2>/dev/null)

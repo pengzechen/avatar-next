@@ -43,7 +43,7 @@ gen_apidoc.py — 从 C 源码注释生成 API 参考文档（类 rustdoc）
 
 扫描范围:
   kernel driver fs lib boot platforms apps include tools
-  默认排除 third_party / build / imgs / docs / tests/ltp / apps/rknn-aarch64
+  默认排除 kernel/net/lwip / build / imgs / docs / tests/ltp / apps/rknn-aarch64
 """
 
 from __future__ import annotations
@@ -75,7 +75,6 @@ EXCLUDE_DIRS = {
     ".git",
     ".artifacts",
     "build",
-    "third_party",
     "imgs",
     "docs",
     "node_modules",
@@ -86,6 +85,8 @@ EXCLUDE_PREFIXES = (
     "tests/ltp/",
     "tests/.artifacts/",
     "apps/rknn-aarch64/",  # 厂商 SDK 头文件，不属于本项目的 API
+    "apps/dropbear-2024.86/",  # vendored Dropbear 构建树，不属于本项目 API
+    "kernel/net/lwip/",    # 上游 lwIP，保持原样；内部 API 不生成项目文档
     # 已收编为 first-party 但保持上游风格的文件系统核心：内部 API 不生成
     # 项目 API 文档；端口层（fs/ext4/port、fs/fat/port）仍会被扫描。
     "fs/ext4/lwext4/",

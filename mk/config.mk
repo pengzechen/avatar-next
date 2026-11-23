@@ -52,7 +52,7 @@ endif
 LIB_DIR         := lib
 BUILD_ROOT      := build
 BUILD_DIR       := $(BUILD_ROOT)/$(PLATFORM)
-THIRD_PARTY_BUILD_DIR := $(BUILD_DIR)/third_party
+VENDOR_BUILD_DIR := $(BUILD_DIR)/vendor
 INCLUDE_DIR     := include
 BOOT_DIR        := boot
 KERNEL_DIR      := kernel
@@ -61,7 +61,6 @@ TESTS_DIR       := tests
 UNIT_TEST_DIR   := $(TESTS_DIR)/unit-test
 TOOLS_DIR       := tools
 FS_DIR          := fs
-THIRD_PARTY_DIR := third_party
 
 # 宿主 Python：tools/ 下的生成脚本（gen_platform.py / gen_kallsyms.py）用它
 PYTHON ?= python3

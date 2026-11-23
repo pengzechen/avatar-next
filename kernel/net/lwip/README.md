@@ -1,8 +1,9 @@
 # lwIP (Avatar OS 内嵌副本)
 
-本目录**不再是 git submodule**，而是直接随仓库内嵌的源码副本。
-与 `fs/ext4/lwext4/`（已收编为 first-party、由我们 fork 维护）不同，lwIP 保持
-**未修改的上游代码**，仍归在 `third_party/`。
+本目录**不再是 git submodule**，也不再放在 `third_party/`，而是直接随仓库
+内嵌的源码副本（`kernel/net/lwip/`）。与 `fs/ext4/lwext4/`（已收编为 first-party、
+由我们 fork 维护）不同，lwIP 保持**未修改的上游代码**；移植层在
+`kernel/net/lwip_port/`。
 
 ## 来源
 
@@ -47,7 +48,7 @@ contrib/apps/LwipMibCompiler/SharpSnmpLib/license.txt
 **校验方法**（换机器/换人接手时先跑一遍）：
 
 ```bash
-cd third_party/lwip && grep -rl "GNU General Public License" src/ COPYING
+cd kernel/net/lwip && grep -rl "GNU General Public License" src/ COPYING
 # 应无输出
 ```
 

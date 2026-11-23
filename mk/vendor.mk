@@ -1,11 +1,11 @@
-# mk/third_party.mk — lwext4 / lwIP / FatFs 与第三方源码前置检查
+# mk/vendor.mk — lwext4 / lwIP / FatFs 与 vendored 源码前置检查
 
 # ─── §8  ext4 后端：lwext4（first-party）───────────────────────────────────────
 LWEXT4_DIR      := $(FS_DIR)/ext4/lwext4
 LWEXT4_PORT_DIR := $(FS_DIR)/ext4/port
 
 # ─── §8a  内核网络栈：netdev + lwIP ─────────────────────────────────────────────
-LWIP_DIR      := $(THIRD_PARTY_DIR)/lwip
+LWIP_DIR      := $(KERNEL_DIR)/net/lwip
 LWIP_PORT_DIR := $(KERNEL_DIR)/net/lwip_port
 
 
@@ -32,9 +32,9 @@ LWIP_CORE_SRCS := $(LWIP_DIR)/src/core/init.c \
                   $(LWIP_DIR)/src/core/ipv4/ip4_addr.c \
                   $(LWIP_DIR)/src/core/ipv4/ip4_frag.c \
                   $(LWIP_DIR)/src/netif/ethernet.c
-LWIP_OBJS := $(patsubst $(LWIP_DIR)/src/core/%.c,$(THIRD_PARTY_BUILD_DIR)/lwip_core_%.o,$(filter $(LWIP_DIR)/src/core/%.c,$(filter-out $(LWIP_DIR)/src/core/ipv4/%,$(LWIP_CORE_SRCS))))
-LWIP_OBJS += $(patsubst $(LWIP_DIR)/src/core/ipv4/%.c,$(THIRD_PARTY_BUILD_DIR)/lwip_ipv4_%.o,$(filter $(LWIP_DIR)/src/core/ipv4/%.c,$(LWIP_CORE_SRCS)))
-LWIP_OBJS += $(patsubst $(LWIP_DIR)/src/netif/%.c,$(THIRD_PARTY_BUILD_DIR)/lwip_netif_%.o,$(filter $(LWIP_DIR)/src/netif/%.c,$(LWIP_CORE_SRCS)))
+LWIP_OBJS := $(patsubst $(LWIP_DIR)/src/core/%.c,$(VENDOR_BUILD_DIR)/lwip_core_%.o,$(filter $(LWIP_DIR)/src/core/%.c,$(filter-out $(LWIP_DIR)/src/core/ipv4/%,$(LWIP_CORE_SRCS))))
+LWIP_OBJS += $(patsubst $(LWIP_DIR)/src/core/ipv4/%.c,$(VENDOR_BUILD_DIR)/lwip_ipv4_%.o,$(filter $(LWIP_DIR)/src/core/ipv4/%.c,$(LWIP_CORE_SRCS)))
+LWIP_OBJS += $(patsubst $(LWIP_DIR)/src/netif/%.c,$(VENDOR_BUILD_DIR)/lwip_netif_%.o,$(filter $(LWIP_DIR)/src/netif/%.c,$(LWIP_CORE_SRCS)))
 
 LWIP_CFLAGS := $(CFLAGS)
 LWIP_CFLAGS += -I$(LWIP_DIR)/src/include
@@ -45,7 +45,7 @@ LWIP_CFLAGS += -w
 
 # lwext4 库源文件（第三方代码）
 LWEXT4_SRCS     := $(wildcard $(LWEXT4_DIR)/src/*.c)
-LWEXT4_OBJS     := $(patsubst $(LWEXT4_DIR)/src/%.c,$(THIRD_PARTY_BUILD_DIR)/lwext4_%.o,$(LWEXT4_SRCS))
+LWEXT4_OBJS     := $(patsubst $(LWEXT4_DIR)/src/%.c,$(VENDOR_BUILD_DIR)/lwext4_%.o,$(LWEXT4_SRCS))
 
 # lwext4 移植胶水代码（属于本项目，使用 LWEXT4_CFLAGS）
 # 注：driver/blk/ramblk.c 也是同一组标志，但它是驱动，归 §6e 的 DRIVER_OBJECTS。
@@ -103,7 +103,7 @@ LWEXT4_THIRD_PARTY_CFLAGS := $(LWEXT4_CFLAGS) -w
 FATFS_DIR      := $(FS_DIR)/fat/fatfs
 FATFS_PORT_DIR := $(FS_DIR)/fat/port
 FATFS_SRCS     := $(FATFS_DIR)/source/ff.c $(FATFS_DIR)/source/ffunicode.c
-FATFS_OBJS     := $(patsubst $(FATFS_DIR)/source/%.c,$(THIRD_PARTY_BUILD_DIR)/fatfs_%.o,$(FATFS_SRCS))
+FATFS_OBJS     := $(patsubst $(FATFS_DIR)/source/%.c,$(VENDOR_BUILD_DIR)/fatfs_%.o,$(FATFS_SRCS))
 FATFS_PORT_OBJS := $(BUILD_DIR)/fatfs_port_diskio.o
 # FatFs 胶水需要 lwext4 的 ext4_blockdev 类型（共享 bdif），所以基于 LWEXT4_CFLAGS。
 FATFS_CFLAGS   := $(LWEXT4_CFLAGS) -I$(FATFS_DIR)/source -I$(FATFS_PORT_DIR) -I$(FS_DIR)
@@ -111,14 +111,14 @@ FATFS_THIRD_PARTY_CFLAGS := $(FATFS_CFLAGS) -w
 
 # ─── §9a  第三方源码前置检查 ─────────────────────────────────────────────────────
 #
-# third_party/ 下的 lwext4 与 lwIP 都**不再是 submodule**，而是内嵌在本仓库里
+# lwext4、FatFs 与 lwIP 都**不再是 submodule**，而是内嵌在本仓库里
 # 的源码副本。原因见各自的 README.md：lwext4 是因为我们 fork 并修改了它，而
 # .gitmodules 指向上游、父仓库钉的却是 fork 的 commit —— 全新 clone 必失败；
 # lwIP 是未修改的上游代码，一并内嵌以彻底去掉 "submodule 状态可能撒谎" 这个
 # 失败面。
 #
 # 这个检查仍然保留：它现在挡的是**工作树不完整**（checkout 被中断、有人手工
-# 删过 third_party 里的东西）。那种情况下构建会死在一行极具误导性的错误上：
+# 删过内嵌源码）。那种情况下构建会死在一行极具误导性的错误上：
 #
 #     include/fs/vfs.h:14:10: fatal error: ext4.h: No such file or directory
 #
@@ -131,24 +131,24 @@ FATFS_THIRD_PARTY_CFLAGS := $(FATFS_CFLAGS) -w
 #
 # 挂载点选在 KERNEL_RULE（见 §11b）而不是顶层的 kernel 目标：那样只能保证
 # **链接前**检查，各 .o 的编译（也就是真正报 ext4.h 的地方）早就先炸了。
-THIRD_PARTY_HEADERS := $(LWEXT4_DIR)/include/ext4.h \
-                       $(LWIP_DIR)/src/include/lwip/init.h \
-                       $(FATFS_DIR)/source/ff.h
+VENDOR_HEADERS := $(LWEXT4_DIR)/include/ext4.h \
+                  $(LWIP_DIR)/src/include/lwip/init.h \
+                  $(FATFS_DIR)/source/ff.h
 
-# 兼容旧命令：本仓库不使用 submodule（lwIP 内嵌于 third_party/，
-# lwext4/FatFs 已收编到 fs/）。保留空目标只为别让旧脚本/旧文档报错。
+# 兼容旧命令：本仓库不使用 submodule（lwIP 在 kernel/net/lwip，
+# lwext4/FatFs 在 fs/）。保留空目标只为别让旧脚本/旧文档报错。
 submodules:
-	@echo "No submodule fetch is needed: lwIP is embedded, lwext4/FatFs live under fs/."
+	@echo "No submodule fetch is needed: lwIP lives under kernel/net/lwip, lwext4/FatFs under fs/."
 
 check-submodules:
 	@missing=""; \
-	for h in $(THIRD_PARTY_HEADERS); do \
+	for h in $(VENDOR_HEADERS); do \
 	    [ -e "$$h" ] || missing="$$missing $$h"; \
 	done; \
 	if [ -n "$$missing" ]; then \
 	    echo ""; \
 	    echo "════════════════════════════════════════════════════════════════"; \
-	    echo " Required sources are missing (lwIP is embedded; lwext4/FatFs now live under fs/)."; \
+	    echo " Required sources are missing (lwIP is under kernel/net/lwip; lwext4/FatFs under fs/)."; \
 	    echo " The working tree is incomplete; please re-clone. Missing:"; \
 	    for h in $$missing; do echo "     $$h"; done; \
 	    echo ""; \

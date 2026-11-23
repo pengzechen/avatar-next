@@ -8,8 +8,8 @@
                 "${workspaceFolder}/driver",
                 "${workspaceFolder}/driver/uart",
                 "${workspaceFolder}/kernel",
-                "${workspaceFolder}/third_party/lwext4/include",
-                "${workspaceFolder}/fs/lwext4_port"
+                "${workspaceFolder}/fs/ext4/lwext4/include",
+                "${workspaceFolder}/fs/ext4/port"
             ],
             "defines": [
                 "__x86_64__",
@@ -28,8 +28,8 @@
                 "${workspaceFolder}/driver",
                 "${workspaceFolder}/driver/uart",
                 "${workspaceFolder}/kernel",
-                "${workspaceFolder}/third_party/lwext4/include",
-                "${workspaceFolder}/fs/lwext4_port"
+                "${workspaceFolder}/fs/ext4/lwext4/include",
+                "${workspaceFolder}/fs/ext4/port"
             ],
             "defines": [
                 "__aarch64__",
@@ -47,11 +47,11 @@
                 "${workspaceFolder}/driver",
                 "${workspaceFolder}/driver/uart",
                 "${workspaceFolder}/kernel",
-                "${workspaceFolder}/third_party/lwext4/include",
-                "${workspaceFolder}/fs/lwext4_port",
-                "${workspaceFolder}/third_party/lwip/src/include",
+                "${workspaceFolder}/fs/ext4/lwext4/include",
+                "${workspaceFolder}/fs/ext4/port",
+                "${workspaceFolder}/kernel/net/lwip/src/include",
                 "${workspaceFolder}/kernel/net/lwip_port",
-                "${workspaceFolder}/third_party/fatfs/source",
+                "${workspaceFolder}/fs/fat/fatfs/source",
                 "${workspaceFolder}/fs"
             ],
             "defines": [
