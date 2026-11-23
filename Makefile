@@ -1,6 +1,13 @@
 # Avatar OS — 顶层 Makefile
 # 用法: make PLATFORM=<platform> [LOG=none|error|warn|info|debug|trace] [target]
 # 快速参考: make help
+#
+# 构建逻辑分片（按变更频率拆开，顶层只留参数、源文件发现与 include）：
+#   driver/drivers.mk    驱动选择（UART / GIC / ETH / NPU / TPU / ION / DMA / BLK）
+#   mk/apps.mk           用户态程序（apps/）变量与编译规则
+#   mk/rootfs.mk         rootfs 配置、guest 镜像布局、镜像/运行目标
+#   mk/format.mk         clang-format 与 C API 文档
+#   tools/make_rootfs.sh rootfs 镜像 recipe（由 mk/rootfs.mk 调用）
 
 # ─── §1  基本参数 ─────────────────────────────────────────────────────────────
 # 平台配置：平台唯一决定架构，正常构建只需要传 PLATFORM=<platform>。
@@ -86,6 +93,9 @@ endif
 PLATFORM_MK  := $(BUILD_DIR)/platform.mk
 $(shell python3 $(TOOLS_DIR)/gen_platform.py $(_PLATFORM_CONF) $(PLATFORM_MK) $(INCLUDE_DIR))
 -include $(PLATFORM_MK)
+
+# 平台配置依赖：凡是吃 PLATFORM_* / 内存布局 CFLAGS 的对象都挂到这两个文件上。
+PLATFORM_CONFIG_DEPS := $(PLATFORM_MK) $(_PLATFORM_CONF)
 
 ifeq ($(strip $(MEM_RAM_BASE)),)
 $(error Failed to generate platform config from $(_PLATFORM_CONF))
@@ -305,18 +315,6 @@ TEST_BOOT_HOOKS := $(UNIT_TEST_DIR)/guest_test.c $(UNIT_TEST_DIR)/vcpu_thread_te
 TESTS_SOURCES := $(filter-out $(UNIT_TEST_DIR)/pmm_test.c $(TEST_BOOT_HOOKS), \
                  $(wildcard $(UNIT_TEST_DIR)/*.c))
 TESTS_OBJECTS := $(TESTS_SOURCES:$(UNIT_TEST_DIR)/%.c=$(BUILD_DIR)/tests_%.o)
-
-# 用户应用程序源文件（按架构子目录组织）
-APPS_DIR := apps/$(ARCH)
-APPS_LD := $(APPS_DIR)/app.ld
-# crt0.S 是 C 程序的启动文件，不单独编译为二进制，需排除
-APPS_SOURCES := $(filter-out $(APPS_DIR)/crt0.S, $(wildcard $(APPS_DIR)/*.S))
-APPS_OBJECTS := $(APPS_SOURCES:$(APPS_DIR)/%.S=$(BUILD_DIR)/apps_%.o)
-APPS_BINS := $(APPS_SOURCES:$(APPS_DIR)/%.S=$(BUILD_DIR)/%.bin)
-
-# C 语言用户程序（每个 foo.c 搭配 crt0.S，链接为 foo.elf 放入 rootfs）
-APPS_C_SOURCES := $(wildcard $(APPS_DIR)/*.c)
-APPS_C_ELFS    := $(APPS_C_SOURCES:$(APPS_DIR)/%.c=$(BUILD_DIR)/%.elf)
 
 # 架构特定的上下文切换汇编
 ifeq ($(ARCH),aarch64)
@@ -565,6 +563,9 @@ DRIVER_SRCS := $(strip $(DRIVER_SRCS_CORE) $(DRIVER_SRCS_CFLAGS) $(DRIVER_SRCS_P
 _drv_obj = $(BUILD_DIR)/driver/$(notdir $(basename $(1))).o
 DRIVER_OBJECTS := $(foreach f,$(DRIVER_SRCS),$(call _drv_obj,$(f)))
 
+# 用户态程序：变量与编译规则（需要 driver/drivers.mk 的 DMA/NPU 选择）
+include mk/apps.mk
+
 CFLAGS  += -MMD -MP
 
 # ─── §7  构建变体 ─────────────────────────────────────────────────────────────
@@ -752,6 +753,9 @@ _CFG_CHECK := $(shell \
 
 MKDIR   := mkdir -p
 
+# 顶层默认目标：早期 include 的 mk/*.mk 会定义目标，显式钉住 all（klog）。
+.DEFAULT_GOAL := all
+
 # ─── §8  ext4 后端：lwext4（first-party）───────────────────────────────────────
 LWEXT4_DIR      := $(FS_DIR)/ext4/lwext4
 LWEXT4_PORT_DIR := $(FS_DIR)/ext4/port
@@ -861,210 +865,7 @@ FATFS_PORT_OBJS := $(BUILD_DIR)/fatfs_port_diskio.o
 FATFS_CFLAGS   := $(LWEXT4_CFLAGS) -I$(FATFS_DIR)/source -I$(FATFS_PORT_DIR) -I$(FS_DIR)
 FATFS_THIRD_PARTY_CFLAGS := $(FATFS_CFLAGS) -w
 
-# ─── §9  Rootfs 配置 ────────────────────────────────────────────────────────────
-# 每个平台独立一个 build/<platform>/ 目录，切换平台无需 make clean。
-# ROOTFS_MBR=1 生成 p1 FAT + p2 ext4 的 MBR 镜像（默认仍是裸 ext4）。
-# 用独立文件名，避免和默认镜像互相覆盖（变体标志的坑见 CLAUDE.md）。
-ROOTFS_MBR       ?= 0
-ifeq ($(filter $(ROOTFS_MBR),0 1),)
-$(error Invalid ROOTFS_MBR '$(ROOTFS_MBR)'. Use 0 or 1)
-endif
-# 16 MiB 用 FAT16；FAT32 的最小卷约 33 MiB。aarch64 的 rootfs 内容较大，
-# 测试镜像给 FAT 留 16 MiB、其余全给 ext4。
-# ⚠️ 改 FAT_PART_MB 不会让已存在的 rootfs-mbr-*.img 过期（make 不跟踪变量值）：
-#    改完先 `rm -f $(BUILD_DIR)/rootfs-mbr-*.img` 或 `make clean`。
-FAT_PART_MB      ?= 16
-ROOTFS_IMG       := $(BUILD_DIR)/rootfs$(if $(filter 1,$(ROOTFS_MBR)),-mbr,)-$(ARCH).img
-ROOTFS_STAGE     := $(BUILD_DIR)/rootfs-stage-$(ARCH)
-LTP_BIN_DIR      := tests/ltp/bin/$(ARCH)
-LTP_BINS         := $(wildcard $(LTP_BIN_DIR)/*)
-ifneq ($(filter $(ARCH),aarch64 riscv64),)
-EPOLL_PERF_CC    := $(ARCH)-linux-musl-gcc
-EPOLL_PERF_BIN   := apps/epoll_perf-$(ARCH)
-else
-EPOLL_PERF_CC    :=
-EPOLL_PERF_BIN   :=
-endif
-
-# racetest：并发竞争态复现工具（apps/c/racetest.c）。
-# 三架构都编 —— 它只依赖 fork/pipe/waitpid，没有架构特定代码。
-# 跑法见 apps/c/racetest.c 顶部；**部分子命令要 SMP>1** 才可能复现。
-#
-# 产物落在 $(BUILD_DIR)/ 下，**不进 git**（build/ 已被 .gitignore 覆盖）。
-# 注意别放到 apps/ —— 那里已经有一批提交进仓库的二进制（busybox、
-# mutex_test 等），是历史遗留，新东西不要再往里加。
-RACETEST_CC      := $(ARCH)-linux-musl-gcc
-RACETEST_BIN     := $(BUILD_DIR)/racetest
-
-# task-ipc：task 基础设施的用户态验收（apps/c/task_ipc_test.c）。
-# 三架构都编；用 getcpu/clock_gettime 量化「跨核唤醒有没有立即生效」。
-# 跑法见文件头。产物同样只落在 $(BUILD_DIR)/。
-TASKIPC_CC       := $(ARCH)-linux-musl-gcc
-TASKIPC_BIN      := $(BUILD_DIR)/task-ipc
-
-# task-completion：completion 模块的用户态 A/B（需要 TASK_TEST=1 内核）。
-TASKCOMP_CC      := $(ARCH)-linux-musl-gcc
-TASKCOMP_BIN     := $(BUILD_DIR)/task-completion
-
-# rtps：/proc/<pid>/status 的 RT 任务观察器（apps/c/rtps.c）。
-# 静态链接，装进 /bin/rtps；busybox ps 看不到 Policy/RtPrio，用这个看。
-RTPS_CC          := $(ARCH)-linux-musl-gcc
-RTPS_BIN         := $(BUILD_DIR)/rtps
-
-# rtctl：/dev/rtctl 控制面（apps/c/rtctl.c）。创建/启动/停止 RT 模板 worker。
-RTCTL_CC         := $(ARCH)-linux-musl-gcc
-RTCTL_BIN        := $(BUILD_DIR)/rtctl
-
-# rt-event-test：event 模板 + 共享事件环的用户态验收。
-RTEVENT_CC       := $(ARCH)-linux-musl-gcc
-RTEVENT_BIN      := $(BUILD_DIR)/rt-event-test
-
-# rt-demo：event / 1ms 周期 / watchdog / /proc/rtworkers 的用户态演示。
-RTDEMO_USER_CC   := $(ARCH)-linux-musl-gcc
-RTDEMO_USER_BIN  := $(BUILD_DIR)/rt-demo
-
-# dmatest：dma-buf / dma-heap（P0）的验收程序。纯 ioctl + mmap，与架构无关。
-# 只在 DMA=1 时构建/安装 —— 否则节点根本不存在，装了也是白装。
-DMATEST_CC       := $(ARCH)-linux-musl-gcc
-ifeq ($(DMA),1)
-DMATEST_BIN      := $(BUILD_DIR)/dmatest
-else
-DMATEST_BIN      :=
-endif
-
-# drmtest：DRM 渲染节点 + GEM 层（P2+P4）的验收。需要渲染节点（NPU=rknpu）
-# 和 dma-heap（DMA=1，由 NPU=rknpu 自动带上）。
-DRMTEST_CC       := $(ARCH)-linux-musl-gcc
-ifeq ($(NPU),rknpu)
-DRMTEST_BIN      := $(BUILD_DIR)/drmtest
-else
-DRMTEST_BIN      :=
-endif
-
-# vmm-run：宿主 shell 里启动/驱动 guest 的用户态 helper（对标 kvmm-run）。
-# 只给「已实现 Linux guest 启动」的架构构建与安装（与 include/vmm/vmm.h 的
-# VMM_GUEST_LINUX_SUPPORTED 保持一致）。helper 本身是纯 C + ioctl，
-# 与架构无关，三个架构共用同一份 apps/c/vmm_run.c。
-ifneq ($(filter $(ARCH),aarch64 riscv64 x86_64),)
-VMM_RUN_BIN      := apps/vmm-run-$(ARCH)
-else
-VMM_RUN_BIN      :=
-endif
-NGINX_BIN        := $(wildcard apps/nginx-$(ARCH))
-# guest 的 DTB 必须与内核用的 GIC 版本匹配：GICv2 的 DTB 里是
-# arm,cortex-a15-gic（GICD + GICC 两段 reg），GICv3 的是 arm,gic-v3
-# （GICD + GICR，且 CPU interface 走系统寄存器）。装错版本 guest 会在
-# GIC 初始化阶段直接卡死。
-#
-# GUEST_NPU=1 换成带 NPU 节点的那一版（多 npu@fdab0000 + 48 MiB
-# reserved-memory）。**默认关**，理由有两条：
-#   ① reserved-memory 会从 guest RAM 顶部挖走 0x79000000..0x7C000000 给
-#      NPU DMA 用 —— 在没有 NPU 的平台上（QEMU）这块地址纯属白挖，
-#      而 guest 的 npu 驱动还会 probe 一个不存在的设备、刷一屏报错。
-#   ② 那条 window 要求宿主 stage-2 做**恒等映射**，而恒等映射只在
-#      PLATFORM_RK3588 下打开（见 include/vmm/guest_loader.h 的
-#      GUEST_LINUX_NPU_DMA_GPA）。不匹配时 guest 拿到的"物理地址"
-#      在宿主侧指向别的内存 —— 结果是 NPU 读到垃圾，不报错。
-# 完整的链路与三处地址的一致性见 docs/vmm/AARCH64_GUEST_NPU.md。
-ifeq ($(GUEST_NPU),1)
-  # 判据是**平台**（MEM_PLATFORM_DEFINE 由 build/$(PLATFORM)/platform.mk 生成，
-  # 正是喂给 -DPLATFORM_RK3588 的那个），不是 GIC 版本。
-  # ⚠️ 别把这条写成"GIC 必须是 v3"：QEMU 的 aarch64 也是 v3，那样写 QEMU
-  #    会一路放行 —— 而 QEMU 上宿主 PA 0x79000000 根本不是 RAM，
-  #    guest 的每次 NPU DMA 都会撞到不存在的物理地址。
-  ifneq ($(MEM_PLATFORM_DEFINE),RK3588)
-    $(error GUEST_NPU=1 is only valid for RK3588: that DTB's reserved-memory needs an\
-identity mapping in host stage-2, and the identity window is only enabled with PLATFORM_RK3588)
-  endif
-  ifneq ($(filter v3,$(GIC_VER)),v3)
-    $(error GUEST_NPU=1 requires GIC=v3: the NPU guest DTB is GICv3-only)
-  endif
-endif
-# aarch64 的 guest DTB 选择。GICv3/NPU 这两条校验是 aarch64 专属的：
-# riscv64 没有 GIC，多核 DTB 是 linux-smpN.dtb（见下面的 RISCV_GUEST_DTBS），
-# 不能被这里的 `GUEST_VCPUS>1 requires GIC=v3` 误伤。
-ifeq ($(ARCH),aarch64)
-# 单核基础 DTB（NPU 版 / GICv3 版 / GICv2 版），与 GUEST_VCPUS 无关。
-# 运行期 `vmm-run -c 1` 在“构建默认是多核”的机器上就靠它。
-GUEST_LINUX_BASE_DTB_SRC := $(if $(GUEST_NPU),imgs/guests/aarch64/linux-gicv3-npu.dtb,$(if $(filter v3,$(GIC_VER)),imgs/guests/aarch64/linux-gicv3.dtb,imgs/guests/aarch64/linux.dtb))
-
-ifneq ($(GUEST_VCPUS),1)
-  ifneq ($(filter v3,$(GIC_VER)),v3)
-    $(error GUEST_VCPUS=$(GUEST_VCPUS) requires GIC=v3: multi-CPU guest DTBs are GICv3-only)
-  endif
-  ifneq ($(GUEST_NPU),)
-    $(error GUEST_VCPUS>1 is incompatible with GUEST_NPU=1: the NPU guest DTB is single-vCPU only)
-  endif
-  GUEST_LINUX_DTB_SRC := imgs/guests/aarch64/linux-gicv3-smp$(GUEST_VCPUS).dtb
-else
-  GUEST_LINUX_DTB_SRC := $(GUEST_LINUX_BASE_DTB_SRC)
-endif
-
-# 运行期按 vCPU 数选 DTB（vmm-run -c N）时用的两份额外资源：
-#
-#   linux-1cpu.dtb   真正的单核 DTB。GUEST_VCPUS=8 的构建里 linux.dtb 是
-#                    8 核版本，`-c 1` 拿它会让 guest 去 CPU_ON 不存在的核。
-#   smp2/4/8/12      N>1 的候选；只有 GICv3 版（GIC=v2 构建不装，内核的
-#                    guest_loader_check_vcpus() 也会拒绝 N>1）。
-#
-# 注意 GUEST_LINUX_BASE_DTB_SRC 在 GUEST_VCPUS=1 时与 DTB_SRC 相同，rootfs
-# 里会装两份同名内容的单核 DTB —— 4 KB 级别，换来运行期选核的确定性。
-ifneq ($(filter v3,$(GIC_VER)),v3)
-  GUEST_LINUX_MULTI_DTBS :=
-else
-  GUEST_LINUX_MULTI_DTBS := imgs/guests/aarch64/linux-gicv3-smp2.dtb \
-                            imgs/guests/aarch64/linux-gicv3-smp4.dtb \
-                            imgs/guests/aarch64/linux-gicv3-smp8.dtb \
-                            imgs/guests/aarch64/linux-gicv3-smp12.dtb
-endif
-else
-GUEST_LINUX_BASE_DTB_SRC :=
-GUEST_LINUX_DTB_SRC :=
-GUEST_LINUX_MULTI_DTBS :=
-endif
-
-# RISC-V 多核 DTB。由 tools/gen_rv64_smp_dtb.py 从 linux.dts 的同一份模板
-# 生成（N 个 cpu@i + PLIC 的 N 个 S-mode context），已签入仓库。
-# 运行期选核规则见 guest_loader.c 的 guest_loader_dtb_path()。
-RISCV_GUEST_SMP_DTBS := imgs/guests/rv64/linux-smp2.dtb \
-                        imgs/guests/rv64/linux-smp4.dtb \
-                        imgs/guests/rv64/linux-smp8.dtb \
-                        imgs/guests/rv64/linux-smp12.dtb
-
-ifneq ($(filter $(ARCH),aarch64 riscv64 x86_64),)
-ifeq ($(ARCH),x86_64)
-# x86 guest 镜像：bzImage（自编 linux-6.2.15，带 HdrS 64 位入口）+ initramfs
-# 源文件叫 initrd.gz 但内容是**裸 cpio**（和 rv64 一样，别再纠结后缀）；
-# rootfs 里仍落名 initrd —— 必须和 guest_loader.h 的 GUEST_LINUX_INITRD_PATH 一致。
-GUEST_LINUX_FILES := imgs/guests/x86_64/bzImage imgs/guests/x86_64/initrd.gz
-else ifeq ($(ARCH),aarch64)
-GUEST_LINUX_FILES := imgs/guests/aarch64/linux.bin $(GUEST_LINUX_DTB_SRC) \
-                     $(GUEST_LINUX_BASE_DTB_SRC) $(GUEST_LINUX_MULTI_DTBS) \
-                     imgs/guests/aarch64/initrd.gz
-else
-# RISC-V 的 guest 镜像（DTB 是 imgs/guests/rv64/linux.dts 用 dtc 生成的，见该文件头；
-# linux-smpN.dtb 由 tools/gen_rv64_smp_dtb.py 生成，运行期 -c N 按 N 选）
-GUEST_LINUX_FILES := imgs/guests/rv64/linux.bin imgs/guests/rv64/linux.dtb \
-                     $(RISCV_GUEST_SMP_DTBS) imgs/guests/rv64/initrd.gz
-endif
-else
-GUEST_LINUX_FILES :=
-endif
-
-# 切换 GIC=v2|v3、GUEST_NPU=0|1 或 GUEST_VCPUS 时 $(GUEST_LINUX_DTB_SRC) 会换文件，但换个更旧
-# 的文件不会让 rootfs 的 mtime 落后，make 就不会重建镜像 —— 于是 rootfs 里留着
-# 上一版的 DTB。用带变体后缀的戳文件把这个变化显式暴露给 make。
-#
-# GUEST_NPU 也必须进变体名：两版的 DTB 大小只差 629 字节，装错的那一版
-# 会让 guest 要么没有 npu 节点（跑不了 NPU），要么白挖 48 MiB RAM，
-# 而 rootfs 本身看起来完全正常。
-GUEST_GIC_STAMP := $(BUILD_DIR)/.guest-gic-$(if $(filter v3,$(GIC_VER)),v3,v2)$(if $(GUEST_NPU),-npu,)$(if $(filter-out 1,$(GUEST_VCPUS)),-vcpus$(GUEST_VCPUS),)
-$(GUEST_GIC_STAMP):
-	@rm -f $(BUILD_DIR)/.guest-gic-*
-	@touch $@
-# ROOTFS_SIZE_MB / ROOTFS_PHYS_ADDR 来自自动生成的 $(MEM_LAYOUT_MK)
-QEMU_ROOTFS_FLAGS = -device loader,file=$(ROOTFS_IMG),addr=$(ROOTFS_PHYS_ADDR),force-raw=on
-
+include mk/rootfs.mk
 # ─── §9a  第三方源码前置检查 ─────────────────────────────────────────────────────
 #
 # third_party/ 下的 lwext4 与 lwIP 都**不再是 submodule**，而是内嵌在本仓库里
@@ -1237,7 +1038,6 @@ $(BUILD_DIR)/x86_tss.o: $(BOOT_DIR)/x86_64/tss.c | $(BUILD_DIR)
 # 内核对象多数用平台派生的 CFLAGS 编译（PLATFORM_* / DRIVER_* / DEVICE_* / 内存布局）。
 # platform.mk 只在内容变化时才被 gen_platform.py 重写，所以把对象挂到它上面
 # 可以精确捕捉「真的换了平台」，而不会每次 make 都全量重编。
-PLATFORM_CONFIG_DEPS := $(PLATFORM_MK) $(_PLATFORM_CONF)
 $(BOOT_OBJECTS) $(KERNEL_OBJECTS) \
 $(PMM_TEST_OBJECT) \
 $(TASK_USER_TEST_OBJ) $(TASK_USER_HELLO_OBJ) $(TASK_USER_TESTEXECVE_OBJ) \
@@ -1260,120 +1060,6 @@ $(BUILD_DIR)/test_execve.o: apps/x86_64/test_execve.S | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 endif
 
-# 用户应用程序：汇编为 .bin / .bin.elf，由 rootfs 装载（非内嵌）
-$(BUILD_DIR)/apps_%.o: $(APPS_DIR)/%.S | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -DAPP_ELF=1 -c $< -o $@
-
-# 这些 .o 只经由模式规则（上面的 apps_%.o 与下面的 %.bin）产生，从未在
-# Makefile 里被显式指名，因此 make 会把它们判为 intermediate 并在构建结束时
-# 自动删除（终端上会看到一行 "rm build/.../apps_hello.o ..."）。
-# 标记为 secondary 即可保留它们，避免每次重建 rootfs 都重新编译。
-# 注意：apps_guest_test.o / apps_el0_loop.o 有显式规则，本来就不会被删。
-# 加 ifneq 是因为裸 ".SECONDARY:"（无前置条件）含义是"所有目标都不删"，
-# 若某架构 apps/ 下没有 .S，会意外变成全局语义。
-ifneq ($(APPS_OBJECTS),)
-.SECONDARY: $(APPS_OBJECTS)
-endif
-
-# 生成应用程序二进制文件
-$(BUILD_DIR)/%.bin: $(BUILD_DIR)/apps_%.o $(APPS_LD) | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -nostdlib -nostartfiles -nodefaultlibs -T $(APPS_LD) -o $@.elf $<
-	$(OBJCOPY) -O binary $@.elf $@
-	@echo "App binary created: $@"
-	@echo "  Entry point: $(shell $(NM) $@.elf 2>/dev/null | grep ' _start')"
-
-# C 用户程序编译规则（当前各架构目录暂无 .c 应用；保留直接静态链接形式）
-$(BUILD_DIR)/%.elf: $(APPS_DIR)/%.c $(APPS_LD) | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $(BUILD_DIR)/apps_$*.o
-	$(CC) $(CFLAGS) -static -nostdlib -nostartfiles -nodefaultlibs \
-		-T $(APPS_LD) \
-		$(BUILD_DIR)/apps_$*.o \
-		-o $@
-	@echo "C app ELF created: $@"
-
-ifneq ($(EPOLL_PERF_BIN),)
-epoll-perf: $(EPOLL_PERF_BIN)
-
-$(EPOLL_PERF_BIN): apps/c/epoll_perf.c
-	$(EPOLL_PERF_CC) -O2 -Wall -Wextra -static $< -o $@
-	@echo "epoll perf app created: $@"
-else
-epoll-perf:
-	@echo "epoll_perf is only wired for ARCH=aarch64 or ARCH=riscv64"
-	@exit 1
-endif
-
-# §11c-2  racetest：并发竞争态复现工具，静态链接
-racetest: $(RACETEST_BIN)
-
-$(RACETEST_BIN): apps/c/racetest.c
-	$(RACETEST_CC) -O2 -Wall -Wextra -static $< -o $@
-	@echo "racetest app created: $@"
-
-# §11c-2  task-ipc：跨核唤醒/分发的用户态验收，静态链接
-task-ipc: $(TASKIPC_BIN)
-
-$(TASKIPC_BIN): apps/c/task_ipc_test.c
-	$(TASKIPC_CC) -O2 -Wall -Wextra -static $< -o $@
-	@echo "task-ipc app created: $@"
-
-# §11c-2  task-completion：completion 用户态测试，需要 TASK_TEST=1 内核
-task-completion: $(TASKCOMP_BIN)
-
-$(TASKCOMP_BIN): apps/c/task_completion_test.c
-	$(TASKCOMP_CC) -O2 -Wall -Wextra -static $< -o $@
-	@echo "task-completion app created: $@"
-
-# §11c-2  rtps：/proc/<pid>/status 的 RT 任务观察器，静态链接
-rtps: $(RTPS_BIN)
-
-$(RTPS_BIN): apps/c/rtps.c
-	$(RTPS_CC) -O2 -Wall -Wextra -static $< -o $@
-	@echo "rtps app created: $@"
-
-# §11c-2  rtctl：/dev/rtctl 控制面，静态链接
-rtctl: $(RTCTL_BIN)
-
-$(RTCTL_BIN): apps/c/rtctl.c apps/c/rtctl_abi.h
-	$(RTCTL_CC) -O2 -Wall -Wextra -static $< -o $@
-	@echo "rtctl app created: $@"
-
-# rt-event-test：静态链接，事件模板端到端验收
-$(RTEVENT_BIN): apps/c/rt_event_test.c apps/c/rtctl_abi.h
-	$(RTEVENT_CC) -O2 -Wall -Wextra -static $< -o $@
-	@echo "rt-event-test app created: $@"
-
-$(RTDEMO_USER_BIN): apps/c/rt_demo_user.c apps/c/rtctl_abi.h
-	$(RTDEMO_USER_CC) -O2 -Wall -Wextra -static $< -o $@
-	@echo "rt-demo app created: $@"
-
-# §11c-2  vmm-run：静态链接，免得还依赖 rootfs 里的动态 loader
-$(VMM_RUN_BIN): apps/c/vmm_run.c
-	$(ARCH)-linux-musl-gcc -O2 -Wall -Wextra -static $< -o $@
-	@echo "vmm-run helper created: $@"
-
-# dmatest（仅 DMA=1 时有用例）
-ifneq ($(DMATEST_BIN),)
-$(DMATEST_BIN): apps/c/dmatest.c
-	$(DMATEST_CC) -O2 -Wall -Wextra -static $< -o $@
-	@echo "dmatest created: $@"
-dmatest: $(DMATEST_BIN)
-else
-dmatest:
-	@echo "dmatest requires DMA=1 (see Makefile section 6e-1b)"
-	@exit 1
-endif
-
-ifneq ($(DRMTEST_BIN),)
-$(DRMTEST_BIN): apps/c/drmtest.c
-	$(DRMTEST_CC) -O2 -Wall -Wextra -static $< -o $@
-	@echo "drmtest created: $@"
-drmtest: $(DRMTEST_BIN)
-else
-drmtest:
-	@echo "drmtest requires NPU=rknpu (see Makefile section 6b)"
-	@exit 1
-endif
 
 # ── §11d  测试 / 库对象规则 ────────────────────────────────────────────────────
 
@@ -1538,207 +1224,6 @@ test-epoll-perf: epoll-perf kernel $(ROOTFS_IMG)
 	@echo "QEMU_NET_FLAGS=$(QEMU_NET_FLAGS)"
 	$(QEMU) $(QEMU_FLAGS) $(QEMU_ROOTFS_FLAGS) $(QEMU_NET_FLAGS)
 
-# 创建 ext4 rootfs 镜像（无需 sudo）
-# 依赖：Host 已安装 e2fsprogs（mkfs.ext4 >= 1.43 支持 -d 选项）
-# 每次 apps 变动时自动重建；切换架构直接使用各自的镜像文件，无需 make clean
-#
-# 安装一个用户态程序到 /bin：$(1)=Make 变量名，$(2)=目标文件名。
-# 变量为空（该架构/该驱动没编）或文件不存在时自动跳过；/bin 已在上面建好。
-define INSTALL_USER_BIN
-	@if [ -n "$($(1))" ] && [ -f "$($(1))" ]; then \
-		cp "$($(1))" $(ROOTFS_STAGE)/bin/$(2); \
-		chmod +x $(ROOTFS_STAGE)/bin/$(2); \
-		echo "  [$(2) installed → /bin/$(2)]"; \
-	fi
-endef
-# 依赖 $(MAKEFILE_LIST)（含 Makefile / platform.mk / driver/drivers.mk / mk/*.mk）
-# 与 $(PLATFORM_CONFIG_DEPS)：改平台配置、镜像大小或本文件的安装逻辑都要重建镜像。
-$(ROOTFS_IMG): $(MAKEFILE_LIST) $(PLATFORM_CONFIG_DEPS) $(APPS_BINS) $(APPS_C_ELFS) $(LTP_BINS) $(EPOLL_PERF_BIN) $(RACETEST_BIN) $(TASKIPC_BIN) $(TASKCOMP_BIN) $(RTPS_BIN) $(RTCTL_BIN) $(RTEVENT_BIN) $(RTDEMO_USER_BIN) $(DMATEST_BIN) $(DRMTEST_BIN) $(VMM_RUN_BIN) $(NGINX_BIN) $(GUEST_LINUX_FILES) $(GUEST_GIC_STAMP) | $(BUILD_DIR)
-	@echo "=== Building rootfs for $(ARCH): $(ROOTFS_IMG) ==="
-	@rm -rf $(ROOTFS_STAGE)
-	@mkdir -p $(ROOTFS_STAGE)/bin
-	@# 虚拟文件系统挂载点（pseudofs 在内核侧拦截，ext4 只需目录项存在）
-	@mkdir -p $(ROOTFS_STAGE)/dev $(ROOTFS_STAGE)/proc $(ROOTFS_STAGE)/sys
-	@# FAT 挂载点（默认 /boot）在 ext4 里也要有目录项，这样 `ls /` 看得到
-	@mkdir -p $(ROOTFS_STAGE)$(FAT_MOUNT_POINT)
-	@mkdir -p $(ROOTFS_STAGE)/root $(ROOTFS_STAGE)/tmp $(ROOTFS_STAGE)/etc
-	@# 安装 busybox
-	@if [ -f apps/busybox-$(ARCH) ]; then \
-		cp apps/busybox-$(ARCH) $(ROOTFS_STAGE)/busybox; \
-		chmod +x $(ROOTFS_STAGE)/busybox; \
-		for applet in sh ls cat echo pwd mkdir rm cp mv grep find ps kill dd time; do \
-			cp apps/busybox-$(ARCH) $(ROOTFS_STAGE)/bin/$$applet; \
-			chmod +x $(ROOTFS_STAGE)/bin/$$applet; \
-		done; \
-		echo "  [busybox + applets installed]"; \
-	fi
-	@# 安装所有 .bin.elf 优先于裸 .bin
-	@installed=0; \
-	for elf in $(BUILD_DIR)/*.bin.elf; do \
-		[ -f "$$elf" ] || continue; \
-		name=$$(basename "$$elf" .bin.elf); \
-		cp "$$elf" "$(ROOTFS_STAGE)/$$name"; \
-		chmod +x "$(ROOTFS_STAGE)/$$name"; \
-		echo "  [$$name installed (bin.elf)]"; \
-		installed=$$((installed+1)); \
-	done; \
-	for elf in $(BUILD_DIR)/*.elf; do \
-		[ -f "$$elf" ] || continue; \
-		case "$$elf" in *.bin.elf|*/kernel_*.elf) continue ;; esac; \
-		name=$$(basename "$$elf" .elf); \
-		cp "$$elf" "$(ROOTFS_STAGE)/$$name"; \
-		chmod +x "$(ROOTFS_STAGE)/$$name"; \
-		echo "  [$$name installed (elf)]"; \
-		installed=$$((installed+1)); \
-	done; \
-	if [ "$$installed" -eq 0 ]; then \
-		for bin in $(BUILD_DIR)/*.bin; do \
-			[ -f "$$bin" ] || continue; \
-			name=$$(basename "$$bin" .bin); \
-			cp "$$bin" "$(ROOTFS_STAGE)/$$name"; \
-			chmod +x "$(ROOTFS_STAGE)/$$name"; \
-			echo "  [$$name installed (bin)]"; \
-		done; \
-	fi
-	@# 安装用户态程序（变量为空或文件不存在时自动跳过）
-	$(call INSTALL_USER_BIN,VMM_RUN_BIN,vmm-run)
-	$(call INSTALL_USER_BIN,EPOLL_PERF_BIN,epoll_perf)
-	$(call INSTALL_USER_BIN,RACETEST_BIN,racetest)
-	$(call INSTALL_USER_BIN,RTPS_BIN,rtps)
-	$(call INSTALL_USER_BIN,RTCTL_BIN,rtctl)
-	$(call INSTALL_USER_BIN,RTEVENT_BIN,rt-event-test)
-	$(call INSTALL_USER_BIN,RTDEMO_USER_BIN,rt-demo)
-	$(call INSTALL_USER_BIN,TASKIPC_BIN,task-ipc)
-	$(call INSTALL_USER_BIN,TASKCOMP_BIN,task-completion)
-	$(call INSTALL_USER_BIN,DMATEST_BIN,dmatest)
-	$(call INSTALL_USER_BIN,DRMTEST_BIN,drmtest)
-	@# 安装 nginx（如果存在对应架构的静态 musl 构建）
-	@if [ -f "$(NGINX_BIN)" ]; then \
-		mkdir -p $(ROOTFS_STAGE)/bin $(ROOTFS_STAGE)/etc/nginx $(ROOTFS_STAGE)/www; \
-		cp $(NGINX_BIN) $(ROOTFS_STAGE)/bin/nginx; \
-		chmod +x $(ROOTFS_STAGE)/bin/nginx; \
-		printf '%s\n' \
-		'worker_processes  1;' \
-		'error_log /tmp/nginx-error.log info;' \
-		'pid /tmp/nginx.pid;' \
-		'events { worker_connections 64; }' \
-		'http {' \
-		'    access_log off;' \
-		'    server {' \
-		'        listen 80;' \
-		'        root /www;' \
-		'        location / { index index.html; }' \
-		'    }' \
-		'}' > $(ROOTFS_STAGE)/etc/nginx/nginx.conf; \
-		printf '%s\n' '<html><body><h1>Avatar nginx</h1></body></html>' > $(ROOTFS_STAGE)/www/index.html; \
-		echo "  [nginx installed → /bin/nginx]"; \
-	fi
-	@# 安装 guest Linux 镜像（供 GUEST_LINUX 直启 / vmm-run 从 rootfs 加载）
-	@# 目录名与 include/vmm/guest_loader.h 的 GUEST_LINUX_*_PATH 必须一致。
-	@if [ "$(ARCH)" = "riscv64" ]; then \
-		missing=0; \
-		for f in imgs/guests/rv64/linux.bin imgs/guests/rv64/linux.dtb \
-		         $(RISCV_GUEST_SMP_DTBS) imgs/guests/rv64/initrd.gz; do \
-			if [ ! -f "$$f" ]; then echo "ERROR: missing guest image $$f"; missing=1; fi; \
-		done; \
-		if [ "$$missing" -ne 0 ]; then exit 1; fi; \
-		mkdir -p $(ROOTFS_STAGE)/guests/rv64; \
-		cp imgs/guests/rv64/linux.bin $(ROOTFS_STAGE)/guests/rv64/linux.bin; \
-		cp imgs/guests/rv64/linux.dtb $(ROOTFS_STAGE)/guests/rv64/linux.dtb; \
-		cp $(RISCV_GUEST_SMP_DTBS) $(ROOTFS_STAGE)/guests/rv64/; \
-		cp imgs/guests/rv64/initrd.gz $(ROOTFS_STAGE)/guests/rv64/initrd.gz; \
-		echo "  [RISC-V Linux guest installed → /guests/rv64 (1cpu + smp DTBs)]"; \
-	fi
-	@if [ "$(ARCH)" = "x86_64" ]; then \
-		missing=0; \
-		for f in imgs/guests/x86_64/bzImage imgs/guests/x86_64/initrd.gz; do \
-			if [ ! -f "$$f" ]; then echo "ERROR: missing guest image $$f"; missing=1; fi; \
-		done; \
-		if [ "$$missing" -ne 0 ]; then exit 1; fi; \
-		mkdir -p $(ROOTFS_STAGE)/guests/x86_64; \
-		cp imgs/guests/x86_64/bzImage $(ROOTFS_STAGE)/guests/x86_64/bzImage; \
-		cp imgs/guests/x86_64/initrd.gz $(ROOTFS_STAGE)/guests/x86_64/initrd; \
-		echo "  [x86_64 Linux guest installed → /guests/x86_64]"; \
-	fi
-	@if [ "$(ARCH)" = "aarch64" ]; then \
-		missing=0; \
-		for f in imgs/guests/aarch64/linux.bin $(GUEST_LINUX_DTB_SRC) \
-		         $(GUEST_LINUX_BASE_DTB_SRC) $(GUEST_LINUX_MULTI_DTBS) \
-		         imgs/guests/aarch64/initrd.gz; do \
-			if [ ! -f "$$f" ]; then echo "ERROR: missing guest image $$f"; missing=1; fi; \
-		done; \
-		if [ "$$missing" -ne 0 ]; then exit 1; fi; \
-		mkdir -p $(ROOTFS_STAGE)/guests/linux; \
-		cp imgs/guests/aarch64/linux.bin $(ROOTFS_STAGE)/guests/linux/linux.bin; \
-		cp $(GUEST_LINUX_DTB_SRC) $(ROOTFS_STAGE)/guests/linux/linux.dtb; \
-		cp $(GUEST_LINUX_BASE_DTB_SRC) $(ROOTFS_STAGE)/guests/linux/linux-1cpu.dtb; \
-		if [ -n "$(GUEST_LINUX_MULTI_DTBS)" ]; then \
-			cp $(GUEST_LINUX_MULTI_DTBS) $(ROOTFS_STAGE)/guests/linux/; \
-		fi; \
-		cp imgs/guests/aarch64/initrd.gz $(ROOTFS_STAGE)/guests/linux/initrd.gz; \
-		echo "  [AArch64 Linux guest installed → /guests/linux ($(GUEST_LINUX_DTB_SRC); runtime: 1cpu + $(if $(GUEST_LINUX_MULTI_DTBS),smp DTBs,no smp))]"; \
-	fi
-	@# 安装 Dropbear SSH 服务器
-	@DROPBEAR_MULTI=third_party/dropbear-2024.86/dropbearmulti-$(ARCH); \
-	DROPBEAR_STRIP=$(ARCH)-linux-musl-strip; \
-	if [ "$(ARCH)" = "riscv64" ]; then \
-		DROPBEAR_MULTI=third_party/dropbear-2024.86/dropbearmulti; \
-		DROPBEAR_STRIP=riscv64-linux-musl-strip; \
-	fi; \
-	if [ -f "$$DROPBEAR_MULTI" ]; then \
-		mkdir -p $(ROOTFS_STAGE)/usr/sbin $(ROOTFS_STAGE)/usr/bin $(ROOTFS_STAGE)/etc/dropbear; \
-		$$DROPBEAR_STRIP -o $(ROOTFS_STAGE)/usr/sbin/dropbearmulti "$$DROPBEAR_MULTI"; \
-		chmod +x $(ROOTFS_STAGE)/usr/sbin/dropbearmulti; \
-		ln -sf dropbearmulti $(ROOTFS_STAGE)/usr/sbin/dropbear; \
-		ln -sf ../sbin/dropbearmulti $(ROOTFS_STAGE)/usr/bin/dropbearkey; \
-		echo "  [dropbear SSH installed]"; \
-	fi
-	@# 安装 LTP 测例（如果已编译）
-	@LTP_BIN_DIR=$(LTP_BIN_DIR); \
-	if [ -d "$$LTP_BIN_DIR" ] && [ "$$(ls -1 $$LTP_BIN_DIR/*.sh $$LTP_BIN_DIR/[a-z]* 2>/dev/null | wc -l)" -gt 1 ]; then \
-		mkdir -p $(ROOTFS_STAGE)/ltp; \
-		cp $$LTP_BIN_DIR/* $(ROOTFS_STAGE)/ltp/; \
-		chmod +x $(ROOTFS_STAGE)/ltp/*; \
-		echo "  [LTP testcases installed → /ltp/]"; \
-	fi
-	@# /etc/passwd: root 无密码；nobody 供 LTP getpwnam("nobody") 使用
-	@printf 'root::0:0:root:/root:/bin/sh\nnobody:x:65534:65534:nobody:/tmp:/bin/sh\n' > $(ROOTFS_STAGE)/etc/passwd
-	@printf 'root:x:0:\nnogroup:x:65534:\n' > $(ROOTFS_STAGE)/etc/group
-	@echo "  [/etc/passwd + group created]"
-	@# 用 staging 目录直接构建 ext4 镜像，无需挂载
-	@if [ "$(ROOTFS_MBR)" = "1" ]; then \
-	    tools/make_mbr_image.sh "$(ROOTFS_STAGE)" "$@" "$(ROOTFS_SIZE_MB)" "$(FAT_PART_MB)"; \
-	else \
-	    dd if=/dev/zero of=$@ bs=1M count=$(ROOTFS_SIZE_MB) status=none; \
-	    mkfs.ext4 -q -b 1024 -L "avatarfs" -d $(ROOTFS_STAGE) $@; \
-	fi
-	@rm -rf $(ROOTFS_STAGE)
-	@echo "Rootfs ready: $@"
-
-rootfs: $(ROOTFS_IMG)
-	@echo "Rootfs up to date: $(ROOTFS_IMG)"
-
-# 运行内核 + 加载 rootfs 镜像到 QEMU 客户机内存
-run-fs: kernel $(ROOTFS_IMG)
-	@echo "Starting QEMU for $(ARCH) with rootfs at $(ROOTFS_PHYS_ADDR)..."
-	$(QEMU) $(QEMU_FLAGS) $(QEMU_ROOTFS_FLAGS)
-
-# 用 MBR 测试镜像启动（p1 FAT + p2 ext4），给手工验证用
-run-fs-mbr: kernel $(ROOTFS_IMG)
-	@if [ "$(ROOTFS_MBR)" != "1" ]; then \
-	    echo "ERROR: use ROOTFS_MBR=1 (this target uses the MBR test image)."; exit 1; \
-	fi
-	$(QEMU) $(QEMU_FLAGS) $(QEMU_ROOTFS_FLAGS)
-
-# test-fat: 自动构建 MBR 镜像并跑 FAT 读写/目录操作回归（x86_64 最快）
-test-fat: kernel $(ROOTFS_IMG)
-	@if [ "$(ROOTFS_MBR)" != "1" ]; then \
-	    echo "ERROR: use ROOTFS_MBR=1, e.g."; \
-	    echo "  make PLATFORM=qemu-virt-x86_64 ROOTFS_MBR=1 LOG=info test-fat"; \
-	    exit 1; \
-	fi
-	KERNEL_BIN=$(KERNEL_BIN) ROOTFS_IMG=$(ROOTFS_IMG) ROOTFS_ADDR=$(ROOTFS_PHYS_ADDR) \
-	    tools/fat_regress.sh $(ARCH)
 
 # ── 便捷测试目标 ─────────────────────────────────────────────────────
 #
@@ -1876,91 +1361,7 @@ clean:
 clean-all:
 	rm -rf $(BUILD_ROOT)/*
 
-# 代码格式化（配置见仓库根的 .clang-format）
-#
-# FORMAT_DIRS 只列本项目自己的源码树。third_party/ 是外部代码（lwIP），
-# 人家有自己的风格；build/ 是产物。与 PLATFORM 无关。
-# fs/ext4/lwext4、fs/fat/fatfs 虽已收编为 first-party，但核心代码保持上游风格，
-# 不参与全量格式化（否则和上游 diff 完全失去可比性）；只格式化 port/ 和
-# 我们自己的补丁块。
-FORMAT_DIRS  := boot driver fs include kernel lib platforms apps tests
-# tests/ltp/src 是 `make env` 拉下来的 LTP 上游源码（约 5944 个 .c/.h），
-# tests/.artifacts 是跑测例生成的构建/运行目录，apps/rknn-aarch64/include
-# 是 RKNN 官方运行时头文件，fs/ext4/lwext4|fs/fat/fatfs 的核心源码保持上游风格 ——
-# 都不能格式化（否则 `make format` 会改掉一整个第三方源码树）。
-FORMAT_EXCLUDES := tests/ltp/src tests/.artifacts apps/rknn-aarch64/include \
-                   fs/ext4/lwext4/src fs/ext4/lwext4/include fs/fat/fatfs/source include/rbtree.h
-FORMAT_PRUNE    := $(foreach d,$(FORMAT_EXCLUDES),-path '$(d)' -prune -o)
-FORMAT_SRCS     := $(shell find $(FORMAT_DIRS) $(FORMAT_PRUNE) \
-    \( -name '*.c' -o -name '*.h' \) -print 2>/dev/null)
-CLANG_FORMAT ?= clang-format
-
-# 文件列表必须走文件 + xargs，**不能**把 $(FORMAT_SRCS) 直接展开进命令行：
-# 2026-10 已经到 6277 个文件（排除 LTP 后 ~333 个），一次展开超过 ARG_MAX，
-# shell 报
-#     make: /bin/sh: Argument list too long
-# 而 make 只把它显示成 Error 127，看起来像 clang-format 没装。用
-# `find -print0` 写一份 NUL 分隔的表，再让 xargs 分批喂给 cat / clang-format。
-# 列表只生成一次，保证每遍遍历顺序一致（cksum 的收敛判断依赖这一点）。
-FORMAT_FIND := find $(FORMAT_DIRS) $(FORMAT_PRUNE) \
-    \( -name '*.c' -o -name '*.h' \) -print0 2>/dev/null
-
-# 为什么是「跑到收敛」而不是「跑一遍」：
-# clang-format 不保证幂等，个别构造要两三遍才稳定。本项目实测命中一处 ——
-# driver/uart/uart.h 里有个注释插在连续 #define 块中间，那个注释的缩进会在
-# 第 1、2 遍之间来回摆一次，第 3 遍才定住。只跑一遍的话，紧接着的
-# `make format-check` 会报错，看起来像"格式化没生效"。
-format:
-	@command -v $(CLANG_FORMAT) >/dev/null 2>&1 || {                     \
-	    echo "Cannot find $(CLANG_FORMAT). Install it:"; \
-	    echo "  pipx install clang-format     # user-level, no sudo"; \
-	    echo "  sudo apt install clang-format";                           \
-	    exit 1; }
-	@echo "clang-format $$($(CLANG_FORMAT) --version | sed 's/.*version //')" \
-	      "- $(words $(FORMAT_SRCS)) file(s)"
-	@list=$$(mktemp) || exit 1;                                                \
-	trap 'rm -f "$$list"' EXIT;                                                \
-	$(FORMAT_FIND) > "$$list";                                                 \
-	prev=""; converged="";                                                     \
-	for pass in 1 2 3 4 5; do                                                  \
-	    cur=$$(xargs -0 -r cat < "$$list" | cksum);                            \
-	    if [ "$$cur" = "$$prev" ]; then converged=$$((pass - 1)); break; fi;   \
-	    xargs -0 -r $(CLANG_FORMAT) -i < "$$list" || exit 1;                   \
-	    prev="$$cur";                                                          \
-	done;                                                                      \
-	if [ -n "$$converged" ]; then echo "  converged after pass $$converged"; \
-	else echo "  WARNING: did not converge after 5 passes; please inspect manually"; fi
-	@echo "WARNING: .h files were changed but the build does not track header mtime -"
-	@echo "         run make clean before the next build (see the ghost bug section in CLAUDE.md)."
-
-# 注意：--dry-run 只做"再跑一遍会不会变"的判断，所以它隐含要求工作区已经处在
-# 不动点上 —— 这正是 format 跑到收敛的原因。CI 里直接用它即可。
-format-check:
-	@command -v $(CLANG_FORMAT) >/dev/null 2>&1 || {                     \
-	    echo "Cannot find $(CLANG_FORMAT) (pipx install clang-format)"; exit 1; }
-	@list=$$(mktemp) || exit 1;                                                \
-	trap 'rm -f "$$list"' EXIT;                                                \
-	$(FORMAT_FIND) > "$$list";                                                 \
-	if xargs -0 -r $(CLANG_FORMAT) --dry-run --Werror < "$$list" 2>&1; then    \
-	    echo "format check passed ($(words $(FORMAT_SRCS)) files)"; \
-	else                                                                       \
-	    echo "the files above do not match .clang-format; run make format"; \
-	    exit 1;                                                                \
-	fi
-
-# ─── C API 文档 ────────────────────────────────────────────────────────────
-# 扫描 kernel/driver/fs/lib/boot/platforms/apps/include/tools，取函数定义
-# 上方紧挨着的注释（Doxygen 标签或现有中文块注释均可），生成：
-#   docs/api/index.md + 每个子系统的 .md + api.json + html/index.html
-# 零第三方依赖，不要求安装 Doxygen。注释约定见 docs/api/README.md。
-APIDOC := python3 tools/gen_apidoc.py
-
-apidoc:
-	@$(APIDOC)
-
-apidoc-check:
-	@$(APIDOC) --check --strict
-
+include mk/format.mk
 help:
 	@echo "Avatar OS Makefile"
 	@echo ""
@@ -2090,5 +1491,11 @@ help:
 # §12	运行 / 测试目标
 # §13	清理 / 格式化 / API 文档 / 帮助
 #
+# ─── 构建逻辑分片（不在本文件里）────────────────────────────────────────────────
+# driver/drivers.mk    驱动选择；新增驱动在这里加进 DRIVER_SRCS_* 组。
+# mk/apps.mk           用户态程序变量与编译规则；新增 apps/c/*.c 通常无需改这里。
+# mk/rootfs.mk         rootfs 配置 / guest 镜像布局 / rootfs、run-fs、test-fat。
+# mk/format.mk         format、format-check、apidoc、apidoc-check。
+# tools/make_rootfs.sh rootfs 镜像的具体安装步骤（由 mk/rootfs.mk 调用）。
+#
 # 新增内核源文件：放进 kernel/ 下即可，无需改本文件（见 §4a）。
-# 新增驱动：在 driver/drivers.mk 对应选择块里把它加进 DRIVER_SRCS_* 组。
