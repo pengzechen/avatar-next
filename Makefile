@@ -4,8 +4,10 @@
 #
 # 构建逻辑分片（按变更频率拆开，顶层只留参数、源文件发现与 include）：
 #   driver/drivers.mk    驱动选择（UART / GIC / ETH / NPU / TPU / ION / DMA / BLK）
+#   mk/toolchain.mk      三架构工具链、CFLAGS/LDFLAGS、QEMU 基础参数
 #   mk/apps.mk           用户态程序（apps/）变量与编译规则
 #   mk/rootfs.mk         rootfs 配置、guest 镜像布局、镜像/运行目标
+#   mk/qemu.mk           QEMU 运行目标与便捷测试目标
 #   mk/format.mk         clang-format 与 C API 文档
 #   tools/make_rootfs.sh rootfs 镜像 recipe（由 mk/rootfs.mk 调用）
 
@@ -166,7 +168,7 @@ _KERNEL_EXCLUDE_PAT  := $(addsuffix %,$(_KERNEL_EXCLUDE_DIRS))
 _KERNEL_FOUND := $(patsubst ./%,%,$(shell find $(KERNEL_DIR) -type f \( -name '*.c' -o -name '*.S' \) 2>/dev/null | LC_ALL=C sort))
 
 # GIC 版本解析。§6 里那句 `GIC ?= $(DEV_DEFAULT_GIC)` 要等到 400 行之后才执行，
-# 但 QEMU_FLAGS（§5）和下面的 vdev 源文件列表都是**立即展开**的，等不到那时候。
+# 但 QEMU_FLAGS（mk/toolchain.mk）和下面的 vdev 源文件列表都是**立即展开**的，等不到那时候。
 # 命令行赋值总是先于 makefile 生效，而 DEV_DEFAULT_GIC 由 platform.mk（第 59 行
 # include）提供，所以这里算出来的就是最终值。
 GIC_VER := $(if $(GIC),$(GIC),$(DEV_DEFAULT_GIC))
@@ -367,172 +369,7 @@ else
     EXCEPTION_OBJECTS :=
 endif
 
-# ─── §5  工具链与编译标志（按架构）─────────────────────────────────────────────
-X86_64_TOOL_PREFIX ?= $(if $(shell command -v x86_64-linux-musl-gcc 2>/dev/null),x86_64-linux-musl-,)
-
-ifeq ($(ARCH),x86_64)
-    CC      := $(X86_64_TOOL_PREFIX)gcc
-    AR      := $(X86_64_TOOL_PREFIX)ar
-    OBJCOPY := $(X86_64_TOOL_PREFIX)objcopy
-    NM      := $(X86_64_TOOL_PREFIX)nm
-    CFLAGS  := -Wall -Wextra -O2 -g
-	CFLAGS  += -DARCH_X86_64=1
-    CFLAGS  += -I$(INCLUDE_DIR)
-    CFLAGS  += $(LOG_DEFINE)
-    CFLAGS  += -fno-pie -fno-stack-protector -fno-stack-clash-protection -U_FORTIFY_SOURCE
-    CFLAGS  += -ffreestanding -fno-builtin
-    CFLAGS  += -mcmodel=large -mno-red-zone
-    CFLAGS  += -mno-mmx -mno-sse
-    # 内核高半区偏移与物理加载基址只在这里定义一次：C/汇编经 -D 拿到，
-    # link.ld 经 --defsym 拿到。物理基址 = RAM 基址 + lowmem 保留区
-    # （platform.conf 的 lowmem_1m_2m）。
-    X86_KERNEL_VMA_OFF        ?= 0xffff800000000000
-    X86_LOWMEM_RESERVE_SIZE   ?= 0x100000
-    X86_KERNEL_LOAD_PHYS := $(shell printf '0x%x' \
-        $$(( $(MEM_RAM_BASE) + $(X86_LOWMEM_RESERVE_SIZE) )))
-    CFLAGS  += -DX86_KERNEL_VMA_OFF=$(X86_KERNEL_VMA_OFF)
-    CFLAGS  += -DX86_KERNEL_LOAD_PHYS=$(X86_KERNEL_LOAD_PHYS)
-    LDFLAGS := -nostdlib -nostartfiles -nodefaultlibs -no-pie
-    LDFLAGS += -Wl,-z,max-page-size=0x1000
-    LDFLAGS += -Wl,--defsym=KERNEL_VMA_OFF=$(X86_KERNEL_VMA_OFF)
-    LDFLAGS += -Wl,--defsym=KERNEL_LOAD_PHYS=$(X86_KERNEL_LOAD_PHYS)
-    KLOG_TARGET := $(BUILD_DIR)/libklog_x86_64.a
-    KERNEL_TARGET := $(BUILD_DIR)/kernel_x86_64.elf
-    KERNEL_BIN    := $(BUILD_DIR)/kernel_x86_64.bin
-    KERNEL_IMAGE  := $(BUILD_DIR)/kernel_x86_64.img
-    QEMU          := qemu-system-x86_64
-    QEMU_FLAGS    := -machine q35 -enable-kvm -cpu host -smp $(SMP) -m 2G -nographic -kernel $(KERNEL_BIN)
-    QEMU_NET_FLAGS ?= -netdev user,id=net0 -device virtio-net-device,netdev=net0,mac=52:54:00:12:34:56
-    QEMU_RUN_NET_FLAGS ?= -machine microvm -enable-kvm -cpu host -smp $(SMP) -m 2G -nographic -kernel $(KERNEL_BIN)
-else ifeq ($(ARCH),aarch64)
-    CC      := aarch64-linux-musl-gcc
-    AR      := aarch64-linux-musl-ar
-    OBJCOPY := aarch64-linux-musl-objcopy
-    NM      := aarch64-linux-musl-nm
-    CFLAGS  := -Wall -Wextra -O2 -g
-	CFLAGS  += -DARCH_AARCH64=1
-    CFLAGS  += -I$(INCLUDE_DIR)
-    CFLAGS  += $(LOG_DEFINE)
-    CFLAGS  += -fno-pie
-    # 允许 GCC 生成 FP/SIMD（NEON）指令（riscv64 靠 -march=rv64gc -mabi=lp64d 达
-    # 到同样效果）。代价是内核随时可能占用 v0-v31，所以必须有两层保存，缺一不可：
-    #   boot/aarch64/exception.S     陷阱帧保存 q0-q31 + FPCR/FPSR（保护 EL0 用户态）
-    #   kernel/task/aarch64/switch.S 任务切换保存 d8-d15 + FPCR/FPSR（AAPCS64 被调用者保存）
-    # 限制：内核里的浮点只能用 float/double —— 未链接 libgcc，long double（128 位）
-    # 的运算会引出 __addtf3/__divtf3 等帮助函数，在链接期报未定义符号。
-    # 详见 docs/arch/aarch64/FP_SIMD_CONTEXT.md
-    CFLAGS  += -mno-outline-atomics  # freestanding：禁止 GCC outline atomics 调用 libgcc 帮助函数
-    CFLAGS  += -ffreestanding -fno-builtin  # 禁用内置函数和标准库
-    KLOG_TARGET := $(BUILD_DIR)/libklog_aarch64.a
-    KERNEL_TARGET := $(BUILD_DIR)/kernel_aarch64.elf
-    KERNEL_BIN    := $(BUILD_DIR)/kernel_aarch64.bin
-    # 高半区偏移只在这里定义一次；link.ld 与 mem_layout.h 都从这里取。
-    AARCH64_KERNEL_VMA_OFF ?= 0xffff000000000000
-    CFLAGS  += -DAARCH64_KERNEL_VMA_OFF=$(AARCH64_KERNEL_VMA_OFF)
-    KERNEL_LINK_ADDR ?= 0xffff000040080000
-    LDFLAGS += -Wl,--defsym=KERNEL_LINK_ADDR=$(KERNEL_LINK_ADDR)
-    LDFLAGS += -Wl,--defsym=KERNEL_VMA_OFF=$(AARCH64_KERNEL_VMA_OFF)
-    QEMU          := qemu-system-aarch64
-    # QEMU virt 默认 gic-version=2（`-machine virt,dumpdtb=…` 实测确认）。
-    # 内核按 GIC=v3 编译时物理 GIC 也必须是 v3：guest DTB 声明的是
-    # arm,gic-v3（GICD + GICR，CPU interface 走系统寄存器），而 QEMU 给的是
-    # GICv2（GICD + GICC/GICH/GICV MMIO）——两边对不上，guest 的 GIC
-    # 初始化会直接卡死。
-    _QEMU_MACHINE_V3 := virt,virtualization=on,gic-version=3
-    _QEMU_MACHINE_V2 := virt,virtualization=on
-    QEMU_MACHINE  := $(if $(filter v3,$(GIC_VER)),$(_QEMU_MACHINE_V3),$(_QEMU_MACHINE_V2))
-    QEMU_FLAGS    := -cpu cortex-a76 -M $(QEMU_MACHINE) -smp $(SMP) -m 2G -nographic -kernel $(KERNEL_BIN)
-    QEMU_NET_FLAGS ?= -netdev user,id=net0 -device virtio-net-device,netdev=net0,mac=52:54:00:12:34:56
-else ifeq ($(ARCH),riscv64)
-    CC      := riscv64-linux-musl-gcc
-    AR      := riscv64-linux-musl-ar
-    OBJCOPY := riscv64-linux-musl-objcopy
-    NM      := riscv64-linux-musl-nm
-    CFLAGS  := -Wall -Wextra -O2 -g
-    CFLAGS  += -march=rv64gc -mabi=lp64d
-	CFLAGS  += -DARCH_RISCV64=1
-    CFLAGS  += -I$(INCLUDE_DIR)
-    CFLAGS  += $(LOG_DEFINE)
-    CFLAGS  += -mcmodel=medany
-    CFLAGS  += -fno-pic -fno-pie
-    CFLAGS  += -ffreestanding -fno-builtin
-    # 内核高半区基址只在这里定义一次：C/汇编经 -D 拿到，link.ld 经
-    # --defsym 拿到。mem_layout.h 里的 fallback 仅为单独包含该头的场合。
-    RV_KERNEL_VMA_OFF     ?= 0xffffffc000000000
-    RV_OPENSBI_RESERVE_SIZE ?= 0x200000
-    RV_KERNEL_LOAD_BASE := $(shell printf '0x%x' \
-        $$(( $(MEM_RAM_BASE) + $(RV_OPENSBI_RESERVE_SIZE) )))
-    CFLAGS  += -DRV_KERNEL_VMA_OFF=$(RV_KERNEL_VMA_OFF)
-    # -no-pie：让链接器输出非 PIE 静态可执行文件，避免生成
-    # R_RISCV_RELATIVE 重定位条目（裸机内核无动态链接器处理它们）
-    LDFLAGS := -no-pie
-    LDFLAGS += -Wl,--defsym=KERNEL_LOAD_BASE=$(RV_KERNEL_LOAD_BASE)
-    LDFLAGS += -Wl,--defsym=KERNEL_VMA_OFF=$(RV_KERNEL_VMA_OFF)
-    KLOG_TARGET := $(BUILD_DIR)/libklog_riscv64.a
-    KERNEL_TARGET := $(BUILD_DIR)/kernel_riscv64.elf
-    KERNEL_BIN    := $(BUILD_DIR)/kernel_riscv64.bin
-    QEMU          := qemu-system-riscv64
-    QEMU_FLAGS    := -M virt -smp $(SMP) -m 2G -nographic -bios default -kernel $(KERNEL_BIN)
-    QEMU_NET_FLAGS ?= -netdev user,id=net0 -device virtio-net-device,netdev=net0,mac=52:54:00:12:34:56
-else
-    $(error Unsupported architecture: $(ARCH). Use ARCH=x86_64, aarch64 or riscv64)
-endif
-
-# ⚠️ 必须加在架构块之后、§8 (`LWEXT4_CFLAGS := $(CFLAGS)`) 之前：
-#   - 架构块里是 `CFLAGS := ...`，会覆盖掉更早 append 的内容；
-#   - guest_loader.c 走 LWEXT4_CFLAGS，而那个变量是对 CFLAGS 的快照，
-#     晚于它 append 的宏不会进 guest_loader.c 的编译命令（实测 nr_vcpus
-#     仍是 1）。
-CFLAGS += -DGUEST_LINUX_NR_VCPUS=$(GUEST_VCPUS)
-
-# 内嵌函数符号表（kallsyms）的产物路径。三架构同名不同目录，所以规则只在
-# §11g 写一份。用途和两趟链接的理由见 §11g 顶部注释。
-KERNEL_STAGE1 := $(KERNEL_TARGET:.elf=.stage1.elf)
-KALLSYMS_S    := $(BUILD_DIR)/kallsyms_$(ARCH).S
-KALLSYMS_OBJ  := $(KALLSYMS_S:.S=.o)
-# stage-1 用的空表桩（count=0）。**必须有**，不能靠"不链接"或 C 侧弱符号：
-# 那样两趟的符号解析不同，C 侧生成出来的代码长度会差几个字节，.text 一漂
-# 符号表就全错位。详见 tools/gen_kallsyms.py 里 emit_stub()。
-KALLSYMS_STUB_S   := $(BUILD_DIR)/kallsyms_stub.S
-KALLSYMS_STUB_OBJ := $(KALLSYMS_STUB_S:.S=.o)
-
-# ── §5a  通用编译标志（所有架构共享，追加在架构特定 CFLAGS 之后）────────────────
-
-# 帧指针：三架构通用，放在这里而不是各架构块里各写一遍。
-# -O2 下 GCC 默认省掉帧指针，那样 backtrace 就只能靠栈扫描；
-# 见 §1 的 FP= 说明和 kernel/debug/backtrace.c。
-ifeq ($(FP),1)
-    CFLAGS += -fno-omit-frame-pointer
-endif
-
-CFLAGS  += -nostdinc
-CFLAGS  += -I$(INCLUDE_DIR)/libc
-CFLAGS  += -Idriver
-CFLAGS  += -Ikernel
-CFLAGS  += -Ikernel/mm
-CFLAGS  += -DAVATAR_HAS_FILESYSTEM
-
-# ── FAT 分区挂载点（MBR 盘上的 FAT 分区挂到这里）───────────────────────────
-# 必须在本行之后、§7 的 _CFG_SIG 之前定义，并且 CFLAGS 要早于 §8 的
-# LWEXT4_CFLAGS 快照；改这个值会触发全量重编。
-FAT_MOUNT_POINT ?= /boot
-$(if $(filter /%,$(FAT_MOUNT_POINT)),,$(error FAT_MOUNT_POINT must be an absolute path))
-$(if $(filter /,$(FAT_MOUNT_POINT)),$(error FAT_MOUNT_POINT must not be /))
-$(if $(filter %/,$(FAT_MOUNT_POINT)),$(error FAT_MOUNT_POINT must not end with /))
-$(if $(filter /dev /dev/% /proc /proc/% /sys /sys/%,$(FAT_MOUNT_POINT)),\
-    $(error FAT_MOUNT_POINT must not be under /dev, /proc or /sys))
-CFLAGS  += -DFAT_MOUNT_POINT=\"$(FAT_MOUNT_POINT)\"
-
-CFLAGS  += -DCONFIG_SMP_CPUS=$(SMP)
-CFLAGS  += -DPLATFORM_$(MEM_PLATFORM_DEFINE)=1
-CFLAGS  += -DPLATFORM_MEM_RAM_BASE=$(MEM_RAM_BASE)
-CFLAGS  += -DPLATFORM_MEM_RAM_SIZE=$(MEM_RAM_SIZE)
-CFLAGS  += -DPLATFORM_MEM_ROOTFS_BASE=$(MEM_ROOTFS_BASE)
-CFLAGS  += -DPLATFORM_MEM_ROOTFS_SIZE=$(MEM_ROOTFS_SIZE)
-CFLAGS  += -DDEVICE_MMIO_NEEDS_VMA=$(DEV_MMIO_NEEDS_VMA)
-CFLAGS  += -DDEVICE_UART_BASE_RAW=$(DEV_UART_BASE_RAW)
-CFLAGS  += -DDEVICE_UART_REG_SHIFT=$(DEV_UART_REG_SHIFT)
-CFLAGS  += -DDEVICE_ETH_BASE_RAW=$(DEV_ETH_BASE)
+include mk/toolchain.mk
 
 # ─── §6  驱动选择 ────────────────────────────────────────────────────────────────
 # 选择逻辑下沉到 driver/drivers.mk 与各 class 的片段。顶层只负责把源文件
@@ -1166,7 +1003,7 @@ KERNEL_LINK_OBJS := $(BOOT_OBJECTS) $(KERNEL_OBJECTS) $(PMM_TEST_OBJECT) $(LWIP_
 
 # 第一趟：链一个**空**符号表桩，只为拿到各函数的最终地址。
 # 桩不是可有可无的：.text 里的代码要引用 __kallsyms_*，两趟必须解析到
-# "同样形态"的符号，生成出来的指令长度才会一样（见 §5 的变量说明）。
+# "同样形态"的符号，生成出来的指令长度才会一样（见 mk/toolchain.mk 的变量说明）。
 $(KERNEL_STAGE1): $(KERNEL_LINK_OBJS) $(KALLSYMS_STUB_OBJ) | $(BUILD_DIR)
 	$(CC) $(LDFLAGS) -nostartfiles -nodefaultlibs -T $(BOOT_DIR)/$(ARCH)/link.ld -o $@ -Wl,--start-group $^ -Wl,--end-group
 
@@ -1194,165 +1031,13 @@ $(KERNEL_TARGET): $(KERNEL_LINK_OBJS) $(KALLSYMS_OBJ) | $(BUILD_DIR)
 $(KERNEL_BIN): $(KERNEL_TARGET)
 	$(OBJCOPY) -O binary $< $@
 
-# 1.44MB 软盘镜像（KERNEL_IMAGE 仅在 x86_64 定义，见 §5；
+# 1.44MB 软盘镜像（KERNEL_IMAGE 仅在 x86_64 定义，见 mk/toolchain.mk；
 # 其它架构下该变量为空，这条规则不会被注册）
 $(KERNEL_IMAGE): $(KERNEL_BIN)
 	dd if=/dev/zero of=$@ bs=1024 count=1440
 	dd if=$< of=$@ bs=512 conv=notrunc
 
-# ─── §12  运行 / 测试目标 ────────────────────────────────────────────────────────
-run: kernel
-	@echo "Starting QEMU for $(ARCH)..."
-	$(QEMU) $(QEMU_FLAGS)
-
-run-net: kernel $(ROOTFS_IMG)
-	@if [ "$(ARCH)" != "riscv64" ] && [ "$(ARCH)" != "aarch64" ] && [ "$(ARCH)" != "x86_64" ]; then \
-		echo "ERROR: run-net currently supports ARCH=riscv64, ARCH=aarch64 or ARCH=x86_64 only."; \
-		exit 1; \
-	fi
-	@echo "Starting QEMU for $(ARCH) with rootfs at $(ROOTFS_PHYS_ADDR) and virtio-net..."
-	@echo "QEMU_NET_FLAGS=$(QEMU_NET_FLAGS)"
-	$(QEMU) $(if $(QEMU_RUN_NET_FLAGS),$(QEMU_RUN_NET_FLAGS),$(QEMU_FLAGS)) $(QEMU_ROOTFS_FLAGS) $(QEMU_NET_FLAGS)
-
-test-epoll-perf: epoll-perf kernel $(ROOTFS_IMG)
-	@if [ "$(ARCH)" != "riscv64" ] && [ "$(ARCH)" != "aarch64" ]; then \
-		echo "ERROR: test-epoll-perf currently supports ARCH=riscv64 or ARCH=aarch64 only."; \
-		exit 1; \
-	fi
-	@echo "Starting QEMU for $(ARCH) with /bin/epoll_perf and virtio-net..."
-	@echo "In QEMU shell: /bin/epoll_perf 10000 1"
-	@echo "QEMU_NET_FLAGS=$(QEMU_NET_FLAGS)"
-	$(QEMU) $(QEMU_FLAGS) $(QEMU_ROOTFS_FLAGS) $(QEMU_NET_FLAGS)
-
-
-# ── 便捷测试目标 ─────────────────────────────────────────────────────
-#
-# test-pthread: 一键跑 pthread_test（使用动态链接 rootfs，无需手动 cp）
-#   用法: make ARCH=riscv64 test-pthread LOG=warn
-#
-test-pthread: kernel
-	@if [ ! -f imgs/rootfs-$(ARCH).img ]; then \
-		echo "ERROR: imgs/rootfs-$(ARCH).img not found."; \
-		echo "Run: bash apps/c/build.sh"; \
-		exit 1; \
-	fi
-	@echo "Copying imgs/rootfs-$(ARCH).img → $(ROOTFS_IMG)"
-	@cp imgs/rootfs-$(ARCH).img $(ROOTFS_IMG)
-	@echo "Starting QEMU for $(ARCH) with pthread_test rootfs..."
-	@echo "In QEMU shell: /bin/pthread_test"
-	$(QEMU) $(QEMU_FLAGS) $(QEMU_ROOTFS_FLAGS)
-
-# test-mutex: 一键跑 mutex_test（使用同一动态链接 rootfs）
-#   用法: make ARCH=riscv64 test-mutex LOG=warn
-#
-test-mutex: kernel
-	@if [ ! -f imgs/rootfs-$(ARCH).img ]; then \
-		echo "ERROR: imgs/rootfs-$(ARCH).img not found."; \
-		echo "Run: bash apps/c/build.sh"; \
-		exit 1; \
-	fi
-	@echo "Copying imgs/rootfs-$(ARCH).img → $(ROOTFS_IMG)"
-	@cp imgs/rootfs-$(ARCH).img $(ROOTFS_IMG)
-	@echo "Starting QEMU for $(ARCH) with mutex_test rootfs..."
-	@echo "In QEMU shell: /bin/mutex_test"
-	$(QEMU) $(QEMU_FLAGS) $(QEMU_ROOTFS_FLAGS)
-
-# test-vmm: 编译 VMM_TEST=1 内核并运行三线程切换测试（不需要 rootfs）
-#   用法: make ARCH=aarch64 test-vmm LOG=info
-#
-test-vmm:
-	$(MAKE) ARCH=$(ARCH) LOG=$(LOG) VMM_TEST=1 kernel
-
-# test-string: 字符串/内存函数自检（tests/unit-test/string_test.c）
-#              长度 × 源对齐 × 目的对齐 全组合，跨过 NEON 阈值两侧，
-#              跑完打印 "=== STRING TEST: PASS (N cases) ===" 后继续正常启动。
-#   用法: make PLATFORM=qemu-virt-aarch64 test-string
-test-string:
-	$(MAKE) PLATFORM=$(PLATFORM) LOG=$(LOG) STRING_TEST=1 kernel
-	@echo "Starting QEMU (string self-test)..."
-	$(QEMU) $(QEMU_FLAGS)
-
-# test-panic: 在 ELF 解析路径上**故意 panic 一次**，用来看调用栈回溯的效果。
-#
-#   用法: make PLATFORM=qemu-virt-x86_64 test-panic
-#
-# 触发点在 kernel/mm/elf_image.c 的 ELF 头部校验之后（PANIC_TEST=1 时才
-# 编译进来），打出来的是一条真实的加载器调用链：
-#   platform_panic ← elf_image_load_impl ← elf_image_load ← exec → …
-# 设计说明与已知局限见 docs/basic/BACKTRACE.md。
-#
-# 需要 rootfs：触发点是"解析 /busybox 的 ELF 头"，没有文件系统就走不到那里
-# （会先在 open 那一步失败退出）。所以这里和 test-pthread 一样先摆好镜像。
-test-panic:
-	@if [ ! -f imgs/rootfs-$(ARCH).img ]; then \
-		echo "ERROR: imgs/rootfs-$(ARCH).img not found."; \
-		echo "Run: bash apps/c/build.sh"; \
-		exit 1; \
-	fi
-	$(MAKE) PLATFORM=$(PLATFORM) LOG=$(LOG) PANIC_TEST=1 kernel
-	@cp imgs/rootfs-$(ARCH).img $(ROOTFS_IMG)
-	@echo "Starting QEMU (PANIC_TEST: panic on purpose in the ELF parser path to show a backtrace)..."
-	$(QEMU) $(QEMU_FLAGS) $(QEMU_ROOTFS_FLAGS)
-
-# test-guest-linux: 编译 GUEST_LINUX=1 内核并把 Linux 作为 EL1 guest 启动
-#                   rootfs 会自动安装 /guests/linux/{linux.bin,linux.dtb,initrd.gz}
-# ⚠️ `$(ROOTFS_IMG)` 这个依赖不能少：三个架构的 guest 镜像
-# （/guests/rv64/*、/guests/linux/*、/guests/x86_64/*）都是**打进 rootfs 镜像**、
-# 再由 guest_loader 从镜像里读出来的。少了它，镜像不存在，QEMU 直接报
-#     -device loader,file=.../rootfs-<arch>.img: Cannot load specified image
-# （注意这条报错是 QEMU 打给 stderr 的，看起来很像"guest 起不来"，
-#  实际是文件压根没生成）。曾经在给 x86_64 加分支时误删过一次。
-test-guest-linux: $(ROOTFS_IMG)
-	@if [ "$(ARCH)" != "aarch64" ] && [ "$(ARCH)" != "riscv64" ] && [ "$(ARCH)" != "x86_64" ]; then \
-		echo "ERROR: test-guest-linux supports ARCH=aarch64, riscv64 or x86_64."; \
-		exit 1; \
-	fi
-ifeq ($(ARCH),x86_64)
-	@# x86_64：**rootfs 必须和内核用同一个变体标志构建** ——
-	@# make rootfs 在 GUEST_LINUX=1 时才会把 /guests/x86_64/{bzImage,initrd}
-	@# 装进镜像；而它同时会用当前命令行的变体重编内核（见 CLAUDE.md 的警告）。
-	@# 所以顺序是：同变体先 rootfs，再 kernel（kernel 放最后），最后校验产物。
-	$(MAKE) PLATFORM=$(PLATFORM) LOG=$(LOG) GUEST_LINUX=1 rootfs
-	$(MAKE) PLATFORM=$(PLATFORM) LOG=$(LOG) GUEST_LINUX=1 kernel
-	@# 判据是 kernel/main.c 里那个 __attribute__((used)) 的构建指纹，
-	@# **不是**任何 KLOG 字符串 —— LOG=none 会把 KLOG 全编译掉，
-	@# 拿它当判据会在正确的产物上误报。见 main.c 里的注释。
-	@if [ "$$(strings $(KERNEL_BIN) | grep -c 'GUEST_LINUX_BUILD_TAG')" != "1" ]; then \
-		echo "ERROR: the artifact is not a GUEST_LINUX variant (it will be overwritten by make rootfs)."; \
-		echo "       Follow CLAUDE.md: build rootfs first, then kernel, with the same variant."; \
-		exit 1; \
-	fi
-else
-	$(MAKE) PLATFORM=$(PLATFORM) LOG=$(LOG) GUEST_LINUX=1 kernel
-endif
-	@echo "Starting QEMU (guest Linux, $(ARCH))..."
-	@echo "  Note: the guest serial console is this terminal; press Ctrl-A X to exit QEMU."
-	$(QEMU) $(QEMU_FLAGS) $(QEMU_ROOTFS_FLAGS)
-
-# env: 拉取测试依赖（LTP 源码 → tests/ltp/src）。
-#
-# 全新 clone 里没有 LTP 源码（434MB，不入库），必须先跑这个，之后
-# `make -C tests ltp-build` 才能交叉编译 LTP 测例；`make -C tests ltp-build`
-# 也会自动先跑 env。
-#
-# 用法: make env
-#       make -C tests env LTP_VERSION=20260529
-env:
-	$(MAKE) -C tests env
-
-# test-ltp: 编译 LTP 测例并启动带 rootfs 的 QEMU
-#   前提: bash tests/ltp/build.sh [ARCH]  已编译测例到 tests/ltp/bin/<arch>/
-#   用法: make ARCH=riscv64 test-ltp LOG=warn
-#   在 QEMU shell 中: /ltp/run_ltp.sh
-#
-test-ltp: kernel $(ROOTFS_IMG)
-	@if [ ! -d tests/ltp/bin/$(ARCH) ]; then \
-		echo "ERROR: LTP binaries not found. Run: bash tests/ltp/build.sh $(ARCH)"; \
-		exit 1; \
-	fi
-	@echo "Starting QEMU for $(ARCH) with LTP testcases in rootfs..."
-	@echo "In QEMU shell: /ltp/run_ltp.sh"
-	$(QEMU) $(QEMU_FLAGS) $(QEMU_ROOTFS_FLAGS)
+include mk/qemu.mk
 
 # ─── §13  清理 / 格式化 / 帮助 ───────────────────────────────────────────────────
 clean:
@@ -1468,8 +1153,8 @@ help:
 # §4a	内核源文件自动发现（find 递归 + 架构目录排除 + vdev 白名单）
 # §4a-2	内核编译标志分组（引用第三方头文件的短名单）
 # §4b	平台 / 驱动基础源文件、启动与异常源文件
-# §5	工具链与编译标志（按架构）
-# §5a	通用编译标志（所有架构共享）
+# §5	工具链与编译标志（按架构，见 mk/toolchain.mk）
+# §5a	通用编译标志（所有架构共享，见 mk/toolchain.mk）
 # §6	驱动选择（选择逻辑已下沉到 driver/drivers.mk；这里只组装对象）
 # §7	构建变体（VMM_TEST / GUEST_LINUX / NGINX_TEST）
 # §8	第三方库：lwext4 文件系统
@@ -1488,13 +1173,15 @@ help:
 # §11e-2	FatFs 第三方源码 / 移植胶水
 # §11f	内嵌 guest 测试程序
 # §11g	链接（elf → bin → img）
-# §12	运行 / 测试目标
+# §12	运行 / 测试目标（见 mk/qemu.mk；rootfs 相关在 mk/rootfs.mk）
 # §13	清理 / 格式化 / API 文档 / 帮助
 #
 # ─── 构建逻辑分片（不在本文件里）────────────────────────────────────────────────
 # driver/drivers.mk    驱动选择；新增驱动在这里加进 DRIVER_SRCS_* 组。
+# mk/toolchain.mk      三架构 CC/CFLAGS/LDFLAGS/QEMU；改架构标志先看这里。
 # mk/apps.mk           用户态程序变量与编译规则；新增 apps/c/*.c 通常无需改这里。
 # mk/rootfs.mk         rootfs 配置 / guest 镜像布局 / rootfs、run-fs、test-fat。
+# mk/qemu.mk           run/run-net/test-* 等 QEMU 目标。
 # mk/format.mk         format、format-check、apidoc、apidoc-check。
 # tools/make_rootfs.sh rootfs 镜像的具体安装步骤（由 mk/rootfs.mk 调用）。
 #
