@@ -98,7 +98,9 @@ make help
 
 ```
 avatar/
-├── Makefile              # 构建系统
+├── Makefile              # 构建入口（参数 / 源文件发现 / include）
+├── mk/                   # 构建逻辑分片（toolchain/apps/rootfs/qemu/format）
+├── tools/                # 生成与构建脚本（含 make_rootfs.sh）
 ├── CLAUDE.md             # 本文件（AI 上下文）
 ├── PROJECT_REFERENCE.md  # 详细参考文档
 ├── include/              # 头文件

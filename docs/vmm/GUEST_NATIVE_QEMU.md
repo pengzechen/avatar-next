@@ -81,7 +81,7 @@ qemu-system-aarch64 -cpu cortex-a76 -M virt -smp 1 -m 1G -nographic \
 
 | 参数 | 说明 |
 |---|---|
-| **没有 `-enable-kvm`** | 宿主是 x86_64、跑的是 `qemu-system-aarch64`，**跨架构无法用 KVM**，全程 TCG 软件模拟。这决定了性能上限。（对比：x86_64 的 `QEMU_FLAGS` 有 `-enable-kvm`，aarch64 的没有，见 Makefile §5。） |
+| **没有 `-enable-kvm`** | 宿主是 x86_64、跑的是 `qemu-system-aarch64`，**跨架构无法用 KVM**，全程 TCG 软件模拟。这决定了性能上限。（对比：x86_64 的 `QEMU_FLAGS` 有 `-enable-kvm`，aarch64 的没有，见 `mk/toolchain.mk`。） |
 | `-m 1G` | **不能小**：DTB 里 `memory@70000000` 声明的是 `0x70000000 + 192 MiB`，而 `-M virt` 的 RAM 从 `0x40000000` 起。要覆盖到 `0x7c000000` 至少得 `-m 960M`。 |
 | `-dtb /tmp/nopdtb.dtb` | 见 §2。想快速判断「QEMU 本身能不能跑起来」时可以省掉，用 QEMU 自动生成的 DTB，但那样不是公平基准。 |
 | `-M virt`（**不带** `virtualization=on`） | 裸跑不需要虚拟化扩展；`virtualization=on` 是给宿主内核当 hypervisor 用的。 |
