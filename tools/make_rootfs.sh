@@ -177,10 +177,10 @@ if [ "$ARCH" = "aarch64" ]; then
 fi
 
 # 安装 Dropbear SSH 服务器
-DROPBEAR_MULTI="third_party/dropbear-2024.86/dropbearmulti-$ARCH"
+DROPBEAR_MULTI="apps/dropbear-2024.86/dropbearmulti-$ARCH"
 DROPBEAR_STRIP="$ARCH-linux-musl-strip"
 if [ "$ARCH" = "riscv64" ]; then
-    DROPBEAR_MULTI=third_party/dropbear-2024.86/dropbearmulti
+    DROPBEAR_MULTI=apps/dropbear-2024.86/dropbearmulti
     DROPBEAR_STRIP=riscv64-linux-musl-strip
 fi
 if [ -f "$DROPBEAR_MULTI" ]; then

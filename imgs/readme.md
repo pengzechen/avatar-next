@@ -13,7 +13,7 @@ ssh -o StrictHostKeyChecking=no root@192.168.100.2
 
 ssh -vvv root@192.168.100.2
 
-ajax@ajax-BOD-WXX9:~/Desktop/Project/Kernel/avatar-next$ sudo cp /home/ajax/Desktop/Project/Kernel/avatar-next/third_party/dropbear-2024.86/dropbearmulti.stripped /media/ajax/avatarfs/usr/sbin/dropbearmulti
+ajax@ajax-BOD-WXX9:~/Desktop/Project/Kernel/avatar-next$ sudo cp /home/ajax/Desktop/Project/Kernel/avatar-next/apps/dropbear-2024.86/dropbearmulti.stripped /media/ajax/avatarfs/usr/sbin/dropbearmulti
 ajax@ajax-BOD-WXX9:~/Desktop/Project/Kernel/avatar-next$ sudo chmod +x /media/ajax/avatarfs/usr/sbin/dropbearmulti
 ajax@ajax-BOD-WXX9:~/Desktop/Project/Kernel/avatar-next$ sudo ln -sf dropbearmulti /media/ajax/avatarfs/usr/sbin/dropbear
 ajax@ajax-BOD-WXX9:~/Desktop/Project/Kernel/avatar-next$ sudo ln -sf ../sbin/dropbearmulti /media/ajax/avatarfs/usr/bin/dropbearkey

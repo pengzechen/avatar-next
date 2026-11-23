@@ -13,15 +13,13 @@ compile_commands.json
 __pycache__/
 *.py[cod]
 
-# ─── 第三方源码树 ────────────────────────────────────────────
-# dropbear：vendored 构建树，仅保留交叉编译产物
-/third_party/dropbear-2024.86/*
-!/third_party/dropbear-2024.86/dropbearmulti-aarch64
+# ─── vendored 源码树 ─────────────────────────────────────────
+# dropbear：构建树放在 apps/ 下，仅保留交叉编译产物
+/apps/dropbear-2024.86/*
+!/apps/dropbear-2024.86/dropbearmulti-aarch64
 
 # LTP：完整源码树不入库（make env 拉取到 tests/ltp/src）
 /tests/ltp/src/
-# 旧路径保留，方便还没迁移的本地工作树
-/third_party/ltp/
 
 # ─── NPU 运行时（第三方预编译二进制，不入库）─────────────────
 # 19 MB，全是 Rockchip / glibc 的现成产物（librknnrt.so、glibc 运行时、
