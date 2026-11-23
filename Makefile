@@ -1116,7 +1116,7 @@ check-submodules:
 	fi
 
 # ─── §10  顶层目标声明 ───────────────────────────────────────────────────────────
-.PHONY: all clean clean-all help klog kernel run run-net rootfs run-fs run-fs-mbr test-fat test-pthread test-mutex test-vmm test-guest-linux test-ltp env epoll-perf test-epoll-perf rtps rtctl format format-check apidoc apidoc-check submodules check-submodules
+.PHONY: all clean clean-all help klog kernel run run-net rootfs run-fs run-fs-mbr test-fat test-pthread test-mutex test-vmm test-guest-linux test-ltp env epoll-perf test-epoll-perf racetest task-ipc task-completion dmatest drmtest test-string test-panic rtps rtctl format format-check apidoc apidoc-check submodules check-submodules
 
 all: klog
 
@@ -1541,7 +1541,19 @@ test-epoll-perf: epoll-perf kernel $(ROOTFS_IMG)
 # 创建 ext4 rootfs 镜像（无需 sudo）
 # 依赖：Host 已安装 e2fsprogs（mkfs.ext4 >= 1.43 支持 -d 选项）
 # 每次 apps 变动时自动重建；切换架构直接使用各自的镜像文件，无需 make clean
-$(ROOTFS_IMG): Makefile $(APPS_BINS) $(APPS_C_ELFS) $(LTP_BINS) $(EPOLL_PERF_BIN) $(RACETEST_BIN) $(TASKIPC_BIN) $(TASKCOMP_BIN) $(RTPS_BIN) $(RTCTL_BIN) $(RTEVENT_BIN) $(RTDEMO_USER_BIN) $(DMATEST_BIN) $(DRMTEST_BIN) $(VMM_RUN_BIN) $(NGINX_BIN) $(GUEST_LINUX_FILES) $(GUEST_GIC_STAMP) | $(BUILD_DIR)
+#
+# 安装一个用户态程序到 /bin：$(1)=Make 变量名，$(2)=目标文件名。
+# 变量为空（该架构/该驱动没编）或文件不存在时自动跳过；/bin 已在上面建好。
+define INSTALL_USER_BIN
+	@if [ -n "$($(1))" ] && [ -f "$($(1))" ]; then \
+		cp "$($(1))" $(ROOTFS_STAGE)/bin/$(2); \
+		chmod +x $(ROOTFS_STAGE)/bin/$(2); \
+		echo "  [$(2) installed → /bin/$(2)]"; \
+	fi
+endef
+# 依赖 $(MAKEFILE_LIST)（含 Makefile / platform.mk / driver/drivers.mk / mk/*.mk）
+# 与 $(PLATFORM_CONFIG_DEPS)：改平台配置、镜像大小或本文件的安装逻辑都要重建镜像。
+$(ROOTFS_IMG): $(MAKEFILE_LIST) $(PLATFORM_CONFIG_DEPS) $(APPS_BINS) $(APPS_C_ELFS) $(LTP_BINS) $(EPOLL_PERF_BIN) $(RACETEST_BIN) $(TASKIPC_BIN) $(TASKCOMP_BIN) $(RTPS_BIN) $(RTCTL_BIN) $(RTEVENT_BIN) $(RTDEMO_USER_BIN) $(DMATEST_BIN) $(DRMTEST_BIN) $(VMM_RUN_BIN) $(NGINX_BIN) $(GUEST_LINUX_FILES) $(GUEST_GIC_STAMP) | $(BUILD_DIR)
 	@echo "=== Building rootfs for $(ARCH): $(ROOTFS_IMG) ==="
 	@rm -rf $(ROOTFS_STAGE)
 	@mkdir -p $(ROOTFS_STAGE)/bin
@@ -1588,74 +1600,18 @@ $(ROOTFS_IMG): Makefile $(APPS_BINS) $(APPS_C_ELFS) $(LTP_BINS) $(EPOLL_PERF_BIN
 			echo "  [$$name installed (bin)]"; \
 		done; \
 	fi
-	@# 安装 musl 用户态性能测试程序
-	@# 安装宿主侧 guest 控制 helper
-	@if [ -n "$(VMM_RUN_BIN)" ] && [ -f "$(VMM_RUN_BIN)" ]; then \
-		mkdir -p $(ROOTFS_STAGE)/bin; \
-		cp $(VMM_RUN_BIN) $(ROOTFS_STAGE)/bin/vmm-run; \
-		chmod +x $(ROOTFS_STAGE)/bin/vmm-run; \
-		echo "  [vmm-run installed → /bin/vmm-run]"; \
-	fi
-	@if [ -f "$(EPOLL_PERF_BIN)" ]; then \
-		mkdir -p $(ROOTFS_STAGE)/bin; \
-		cp $(EPOLL_PERF_BIN) $(ROOTFS_STAGE)/bin/epoll_perf; \
-		chmod +x $(ROOTFS_STAGE)/bin/epoll_perf; \
-		echo "  [epoll_perf installed → /bin/epoll_perf]"; \
-	fi
-	@if [ -f "$(RACETEST_BIN)" ]; then \
-		mkdir -p $(ROOTFS_STAGE)/bin; \
-		cp $(RACETEST_BIN) $(ROOTFS_STAGE)/bin/racetest; \
-		chmod +x $(ROOTFS_STAGE)/bin/racetest; \
-		echo "  [racetest installed → /bin/racetest]"; \
-	fi
-	@if [ -f "$(RTPS_BIN)" ]; then \
-		mkdir -p $(ROOTFS_STAGE)/bin; \
-		cp $(RTPS_BIN) $(ROOTFS_STAGE)/bin/rtps; \
-		chmod +x $(ROOTFS_STAGE)/bin/rtps; \
-		echo "  [rtps installed → /bin/rtps]"; \
-	fi
-	@if [ -f "$(RTCTL_BIN)" ]; then \
-		mkdir -p $(ROOTFS_STAGE)/bin; \
-		cp $(RTCTL_BIN) $(ROOTFS_STAGE)/bin/rtctl; \
-		chmod +x $(ROOTFS_STAGE)/bin/rtctl; \
-		echo "  [rtctl installed → /bin/rtctl]"; \
-	fi
-	@if [ -f "$(RTEVENT_BIN)" ]; then \
-		mkdir -p $(ROOTFS_STAGE)/bin; \
-		cp $(RTEVENT_BIN) $(ROOTFS_STAGE)/bin/rt-event-test; \
-		chmod +x $(ROOTFS_STAGE)/bin/rt-event-test; \
-		echo "  [rt-event-test installed → /bin/rt-event-test]"; \
-	fi
-	@if [ -f "$(RTDEMO_USER_BIN)" ]; then \
-		mkdir -p $(ROOTFS_STAGE)/bin; \
-		cp $(RTDEMO_USER_BIN) $(ROOTFS_STAGE)/bin/rt-demo; \
-		chmod +x $(ROOTFS_STAGE)/bin/rt-demo; \
-		echo "  [rt-demo installed → /bin/rt-demo]"; \
-	fi
-	@if [ -f "$(TASKIPC_BIN)" ]; then \
-		mkdir -p $(ROOTFS_STAGE)/bin; \
-		cp $(TASKIPC_BIN) $(ROOTFS_STAGE)/bin/task-ipc; \
-		chmod +x $(ROOTFS_STAGE)/bin/task-ipc; \
-		echo "  [task-ipc installed → /bin/task-ipc]"; \
-	fi
-	@if [ -f "$(TASKCOMP_BIN)" ]; then \
-		mkdir -p $(ROOTFS_STAGE)/bin; \
-		cp $(TASKCOMP_BIN) $(ROOTFS_STAGE)/bin/task-completion; \
-		chmod +x $(ROOTFS_STAGE)/bin/task-completion; \
-		echo "  [task-completion installed → /bin/task-completion]"; \
-	fi
-	@if [ -n "$(DMATEST_BIN)" ] && [ -f "$(DMATEST_BIN)" ]; then \
-		mkdir -p $(ROOTFS_STAGE)/bin; \
-		cp $(DMATEST_BIN) $(ROOTFS_STAGE)/bin/dmatest; \
-		chmod +x $(ROOTFS_STAGE)/bin/dmatest; \
-		echo "  [dmatest installed → /bin/dmatest]"; \
-	fi
-	@if [ -n "$(DRMTEST_BIN)" ] && [ -f "$(DRMTEST_BIN)" ]; then \
-		mkdir -p $(ROOTFS_STAGE)/bin; \
-		cp $(DRMTEST_BIN) $(ROOTFS_STAGE)/bin/drmtest; \
-		chmod +x $(ROOTFS_STAGE)/bin/drmtest; \
-		echo "  [drmtest installed → /bin/drmtest]"; \
-	fi
+	@# 安装用户态程序（变量为空或文件不存在时自动跳过）
+	$(call INSTALL_USER_BIN,VMM_RUN_BIN,vmm-run)
+	$(call INSTALL_USER_BIN,EPOLL_PERF_BIN,epoll_perf)
+	$(call INSTALL_USER_BIN,RACETEST_BIN,racetest)
+	$(call INSTALL_USER_BIN,RTPS_BIN,rtps)
+	$(call INSTALL_USER_BIN,RTCTL_BIN,rtctl)
+	$(call INSTALL_USER_BIN,RTEVENT_BIN,rt-event-test)
+	$(call INSTALL_USER_BIN,RTDEMO_USER_BIN,rt-demo)
+	$(call INSTALL_USER_BIN,TASKIPC_BIN,task-ipc)
+	$(call INSTALL_USER_BIN,TASKCOMP_BIN,task-completion)
+	$(call INSTALL_USER_BIN,DMATEST_BIN,dmatest)
+	$(call INSTALL_USER_BIN,DRMTEST_BIN,drmtest)
 	@# 安装 nginx（如果存在对应架构的静态 musl 构建）
 	@if [ -f "$(NGINX_BIN)" ]; then \
 		mkdir -p $(ROOTFS_STAGE)/bin $(ROOTFS_STAGE)/etc/nginx $(ROOTFS_STAGE)/www; \
@@ -2061,9 +2017,15 @@ help:
 	@echo "  test-vmm      Build with VMM_TEST=1 and run VMM 3-thread switch test"
 	@echo "  env           Fetch LTP source → tests/ltp/src (needed by tests/ltp/build.sh)"
 	@echo "  test-panic    Build with PANIC_TEST=1: panic on purpose in the ELF"
-	@echo "  test-guest-linux  - boot a Linux guest (aarch64/riscv64/x86_64)"
 	@echo "                parser, to see what a backtrace looks like"
-	@echo "  submodules    Init/update third_party submodules (lwext4, lwIP)"
+	@echo "  test-guest-linux  Boot a Linux guest (aarch64/riscv64/x86_64)"
+	@echo "  test-epoll-perf   Boot with /bin/epoll_perf (aarch64/riscv64)"
+	@echo "  racetest      Build the concurrency regression tool (installed as /bin/racetest)"
+	@echo "  task-ipc      Build the cross-core wakeup test (installed as /bin/task-ipc)"
+	@echo "  task-completion  Build the completion A/B test (needs TASK_TEST=1 kernel)"
+	@echo "  dmatest       Build the dma-buf/dma-heap test (needs DMA=1)"
+	@echo "  drmtest       Build the DRM/GEM test (needs NPU=rknpu)"
+	@echo "  submodules    Print a notice: no submodules are used (kept for old scripts)"
 	@echo "  clean         Remove build artifacts for current PLATFORM"
 	@echo "  clean-all     Remove build artifacts for all platforms"
 	@echo "  format        Reformat all project .c/.h with clang-format (.clang-format)"
@@ -2107,29 +2069,26 @@ help:
 # §4b	平台 / 驱动基础源文件、启动与异常源文件
 # §5	工具链与编译标志（按架构）
 # §5a	通用编译标志（所有架构共享）
-# §6	驱动选择（UART / GIC / NPU / TPU / ETH / ION / SDMMC）
-# §6a	基础设备驱动选择
-# §6b	加速器驱动选择（NPU / TPU）
-# §6c	网络驱动选择（ETH）
-# §6e	DRIVER_OBJECTS 组装：源文件 → $(BUILD_DIR)/driver/<文件名>.o
-# §6e-1	辅助驱动（ION / SDMMC）
-# §6e-2	驱动按编译标志分组
+# §6	驱动选择（选择逻辑已下沉到 driver/drivers.mk；这里只组装对象）
 # §7	构建变体（VMM_TEST / GUEST_LINUX / NGINX_TEST）
 # §8	第三方库：lwext4 文件系统
 # §8a	内核网络栈：netdev + lwIP
+# §8b	FAT 后端：FatFs
 # §9	Rootfs 配置
+# §9a	第三方源码前置检查（工作树完整性）
 # §10	顶层目标声明
 # §11	构建规则
 # §11a	库与通用规则
 # §11b	内核 / 测试 / 平台 / 启动规则（由 §4a 的列表 eval 生成）
-# §11c	启动 / 异常 / 驱动规则（驱动由 §6e 的列表 eval 生成）
+# §11c	启动 / 异常 / 驱动规则（驱动由 driver/drivers.mk 的列表 eval 生成）
 # §11c-1	平台配置依赖声明（换平台时精确触发重编）
 # §11d	测试 / 库对象规则
 # §11e	第三方库编译规则（lwext4 / lwIP）
+# §11e-2	FatFs 第三方源码 / 移植胶水
 # §11f	内嵌 guest 测试程序
 # §11g	链接（elf → bin → img）
 # §12	运行 / 测试目标
-# §13	清理 / 帮助
+# §13	清理 / 格式化 / API 文档 / 帮助
 #
 # 新增内核源文件：放进 kernel/ 下即可，无需改本文件（见 §4a）。
-# 新增驱动：在 §6 对应选择块里把它加进 DRIVER_SRCS_* 组（见 §6e-2）。
+# 新增驱动：在 driver/drivers.mk 对应选择块里把它加进 DRIVER_SRCS_* 组。

@@ -60,18 +60,20 @@ make help
 ```
 
 > ⚠️ **构建不跟踪头文件依赖**：`-MMD` 生成的 `.d` 没有被 `-include`
-> （见 `Makefile` 第 1188 行注释）。因此**改过任何 `.h`、或切换 `SMP=` / `LOG=` /
+> （见 `Makefile` 末尾「头文件依赖」注释）。因此**改过任何 `.h`、或切换 `SMP=` / `LOG=` /
 > 其它 CFLAGS 之后，必须先 `make PLATFORM=<p> clean` 再全量重编**，否则会用到
 > 布局/配置不一致的旧 `.o`，产生看起来像运行期内存踩踏的"幽灵 bug"。
 > 详见 `docs/bugfix/X86_64_SMP_SYSCALL_STACK_BUGFIX.md` 附录一。
 >
 > ⚠️ **变体标志（`GUEST_LINUX=` / `VMM_TEST=` / `STRING_TEST=` …）同理，而且更坑**：
-> `make ... rootfs` / `make ... run-fs` 都**会连带重编内核**，用的却是**这一次
-> 命令里给的变体**。所以「编好 `GUEST_LINUX=1` 的内核 → 再 `make ... rootfs`」
+> `make ... rootfs` 会在**解析期**按当前命令行变体清掉内核对象（但不重编）；
+> 紧接着 `run-fs` / `test-*` 这类依赖 `kernel` 的目标会把它重编成**这一次命令里
+> 给的变体**。所以「编好 `GUEST_LINUX=1` 的内核 → 不带变体跑 `make ... run-fs`」
 > 会把内核悄悄换成非 guest 变体（症状：guest 一个字符都不输出，宿主 busybox
 > 直接跑起来）。**正确顺序是同变体：`make PLATFORM=<p> GUEST_LINUX=1 rootfs`
 > 之后再 `... GUEST_LINUX=1 kernel`**；起 QEMU 前用
-> `strings build/<p>/kernel_*.bin | grep -c 'GUEST_LINUX mode'`（应为 1）验一下产物。
+> `strings build/<p>/kernel_*.bin | grep -c 'GUEST_LINUX_BUILD_TAG'`（应为 1）验一下产物
+> —— 不能用 KLOG 字符串：`LOG=none` 会把它们全编译掉。
 
 ### ⚠️ `test-guest-linux` 必须依赖 `$(ROOTFS_IMG)`
 
