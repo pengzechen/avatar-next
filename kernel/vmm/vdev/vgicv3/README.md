@@ -160,7 +160,7 @@ guest 是 Linux 6.2.15 + initrd。判定标准：guest 打印 `Run /init as init
 ## 7. 怎么复现验证
 
 ```bash
-# 切 GIC 版本不必再手动 clean：Makefile §7 的 _CFG_CHECK 会在检测到配置
+# 切 GIC 版本不必再手动 clean：mk/variants.mk 的 _CFG_CHECK 会在检测到配置
 # 变化（GIC=/SMP=/LOG=）时自动清掉已编译的目标文件。
 make PLATFORM=qemu-virt-aarch64 GIC=v3 test-guest-linux -j8
 # 期望：guest 打印 "Run /init as init process" 后出现 "~ #" 提示符，日志无 [ERROR]

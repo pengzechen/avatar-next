@@ -794,7 +794,7 @@ DRIVER_EXTRA_FLAGS_driver_dma_dma_buf.c  := -Idriver/dma -Ikernel/mm
 1. `include/driver/driver.h` + `driver/core/{driver,device}.c`
 2. 三个 `link.ld` 的 `.drivers`
 3. `gen_platform.py` 生成 `g_platform_devices[]`
-4. `driver/drivers.mk` + 各 class 片段；Makefile §6 下沉
+4. `driver/drivers.mk` + 各 class 片段；顶层 Makefile 只做 include
 5. 16 个驱动加 `DRIVER_ENTRY` + probe/start
 6. `kernel/main.c` 初始化梯子换阶段调用
 7. `platform.conf` 增加 `irq.driver/block.driver/uart.irq_mode`
@@ -870,7 +870,7 @@ DRIVER_EXTRA_FLAGS_driver_dma_dma_buf.c  := -Idriver/dma -Ikernel/mm
 
 2. 在 `driver/net/drivers.mk` 增加 `foo` 映射。
 3. `platform.conf` 的 `eth.driver` 写 `foo`、填 base/irq。
-4. **不需要改** `kernel/main.c`、`fs/`、`fs_init`、Makefile §6。
+4. **不需要改** `kernel/main.c`、`fs/`、`fs_init`、`driver/drivers.mk`。
 
 ---
 

@@ -78,7 +78,7 @@ make PLATFORM=qemu-virt-aarch64 test-string
 其中一条用例是大结构体整体赋值（`blob_b = blob_a;`），专门让编译器生成对外部符号
 `memcpy` 的调用 —— 就是上面说的第 2 类路径。
 
-开关是 `STRING_TEST=1`（见 Makefile §7），只影响 `kernel_main.o`，自检跑完继续正常启动。
+开关是 `STRING_TEST=1`（见 mk/variants.mk），只影响 `kernel_main.o`，自检跑完继续正常启动。
 
 ## 使用方式
 
