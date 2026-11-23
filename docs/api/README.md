@@ -135,8 +135,9 @@ python3 tools/gen_apidoc.py --check --min-coverage 50  # 覆盖率低于 50% 失
 
 扫描目录：`kernel driver fs lib boot platforms apps include tools`。
 
-排除：`third_party/`、`build/`、`imgs/`、`tests/ltp/`、`tests/.artifacts/`、
-`apps/rknn-aarch64/`（厂商 SDK 头文件）。默认不扫描测试；需要时加
+排除：`kernel/net/lwip/`（上游 lwIP）、`build/`、`imgs/`、`tests/ltp/`、
+`tests/.artifacts/`、`apps/rknn-aarch64/`（厂商 SDK 头文件）、
+`apps/dropbear-2024.86/`（vendored Dropbear 构建树）。默认不扫描测试；需要时加
 `--include-tests`（只包含 `tests/unit-test`）。
 
 解析限制（有意保守）：
