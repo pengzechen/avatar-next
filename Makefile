@@ -524,21 +524,29 @@ endif
 
 # 变体改变时自动清除**受变体影响的**对象文件，防止复用缓存了错误条件编译的 .o。
 #
-# ⚠️ 新增变体时必须把它的条件编译打到哪个文件加进 _VARIANT_OBJS。
-# 漏了的话症状是"新开关没生效"——**而且没有任何报错**：CFLAGS 变了但
-# _CFG_SIG（§7 下面那个）里没有变体这一项，make 也就不知道要重编。
-# 历史上这里只清 kernel_main.o（当时变体确实只影响它），加 STRING_TEST/
-# PANIC_TEST 之后就靠不住了 —— 后者的条件编译在 kernel/mm/elf_image.c。
-#
-# 两个方向都要正确：从 A 切到 B 和从 B 切回 A 都得清掉。所以这里**无条件**
-# 列出所有可能受影响的文件，而不是只在对应开关打开时列 —— 否则切回去那一趟
-# 会漏。（多编一个 .o 的代价可以忽略。）
+# 变体 → 条件编译落点。切换方向两个方向都要正确，所以这里取所有变体的
+# **并集**（不按当前开关筛选）。新增变体时在表里加一行，不要直接写对象名。
+# 注意 rt_irq_trace 只改 CFLAGS、不落任何源文件的 #if，已由 _CFG_SIG 全量清理。
+_VARIANT_SRC_TABLE := \
+    guest_linux=$(KERNEL_DIR)/main.c \
+    vmm_test=$(KERNEL_DIR)/main.c \
+    nginx_test=$(KERNEL_DIR)/net/net.c \
+    string_test=$(KERNEL_DIR)/main.c \
+    task_test=$(KERNEL_DIR)/syscall/syscall.c \
+    rt_test=$(KERNEL_DIR)/main.c \
+    rt_demo=$(KERNEL_DIR)/main.c \
+    pmm_test=$(UNIT_TEST_DIR)/unit_test.c \
+    kmem_test=$(UNIT_TEST_DIR)/unit_test.c \
+    panic_test=$(KERNEL_DIR)/mm/elf_image.c
+
+_VARIANT_SRCS := $(sort $(foreach e,$(_VARIANT_SRC_TABLE),$(word 2,$(subst =, ,$(e)))))
+# kernel/ 的源文件走 kobj（扁平成 kernel_*），tests/unit-test/ 走 tests_*。
+_variant_obj = $(if $(filter $(UNIT_TEST_DIR)/%,$(1)),\
+                  $(BUILD_DIR)/tests_$(notdir $(basename $(1))).o,\
+                  $(call kobj,$(1)))
 _VARIANT_FILE := $(BUILD_DIR)/.build_variant
-_VARIANT_OBJS := $(BUILD_DIR)/kernel_main.o \
-                 $(BUILD_DIR)/kernel_mm_elf_image.o \
-                 $(BUILD_DIR)/kernel_syscall_syscall.o \
-                 $(BUILD_DIR)/tests_unit_test.o \
-                 $(TEST_BOOT_OBJ)
+_VARIANT_OBJS := $(strip $(foreach f,$(_VARIANT_SRCS),$(call _variant_obj,$(f))) \
+                 $(TEST_BOOT_OBJ))
 _VARIANT_CHECK := $(shell \
     mkdir -p $(BUILD_DIR) 2>/dev/null; \
     if [ "$$(cat $(_VARIANT_FILE) 2>/dev/null)" != "$(_BUILD_VARIANT)" ]; then \
