@@ -9,8 +9,8 @@
 
    由 kernel/syscall/syscall.c 拆出。
 */
-#include "syscall/fs/path.h"
-#include "syscall/fs/fd_pool.h"
+#include "syscall/fs/path/path.h"
+#include "syscall/fs/fd/fd_pool.h"
 #include "syscall/syscall_internal.h"
 #include "fs/kernel_stat.h"
 #include "string.h"

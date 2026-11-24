@@ -11,8 +11,8 @@
 */
 #include "syscall/syscall.h"
 #include "syscall/syscall_internal.h"
-#include "syscall/fs/fd_pool.h"
-#include "syscall/fs/tty.h"
+#include "syscall/fs/fd/fd_pool.h"
+#include "syscall/fs/char/tty.h"
 #include "task/task.h"
 #include "task/sched.h"
 #include "klog.h"
@@ -28,7 +28,7 @@
 */
 #define WRITE_USER_CHUNK 2048
 
-/* 本地这份曾经只查范围, 现在统一走 syscall/fs/path.c 的 user_range_accessible：
+/* 本地这份曾经只查范围, 现在统一走 syscall/fs/path/path.c 的 user_range_accessible：
    范围 + 每页映射。理由见那里的注释(writev02 用"合法但已 munmap"的地址
    让 copy_*_bytes 里的裸拷贝踩空 → 内核态 #PF → 停机)。
 */

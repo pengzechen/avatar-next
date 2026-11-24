@@ -11,7 +11,7 @@
 */
 #include "syscall/syscall.h"
 #include "syscall/syscall_internal.h"
-#include "syscall/fs/fd_pool.h"
+#include "syscall/fs/fd/fd_pool.h"
 #include "klog.h"
 #include "task/task.h"
 #include "mm/mm_vm.h"

@@ -12,7 +12,7 @@
    fd 0/1/2(stdin/stdout/stderr)特殊处理(UART), 不占用本池槽位。
 
 */
-#include "syscall/fs/fd_pool.h"
+#include "syscall/fs/fd/fd_pool.h"
 #include "arch.h"
 #include "spinlock.h"
 #include "klog.h"

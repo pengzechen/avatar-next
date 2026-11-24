@@ -11,8 +11,8 @@
    否则按 TTY 终端 ioctl 处理(TCGETS / TIOCGWINSZ / TIOCGPGRP 等)。
 */
 #include "syscall/syscall_internal.h"
-#include "syscall/fs/fd_pool.h"
-#include "syscall/fs/tty.h"
+#include "syscall/fs/fd/fd_pool.h"
+#include "syscall/fs/char/tty.h"
 #include "task/task.h"
 #include "klog.h"
 #include "fs/vfs.h"

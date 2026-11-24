@@ -11,7 +11,7 @@
    kernel socket API (ksocket.h) calls.
 */
 #include "syscall/syscall_internal.h"
-#include "syscall/fs/fd_pool.h"
+#include "syscall/fs/fd/fd_pool.h"
 #include "syscall/net/ksocket.h"
 #include "task/task.h"
 #include "klog.h"

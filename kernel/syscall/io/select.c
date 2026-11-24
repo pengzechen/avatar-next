@@ -10,7 +10,7 @@
    使用 fd_poll() 统一接口查询 fd 就绪状态。
 */
 #include "syscall/syscall_internal.h"
-#include "syscall/fs/fd_pool.h"
+#include "syscall/fs/fd/fd_pool.h"
 #include "syscall/io/epoll.h"
 #include "task/task.h"
 #include "task/sched.h"

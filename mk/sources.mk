@@ -112,15 +112,15 @@ KERNEL_LWEXT4_SRCS := \
     $(KERNEL_DIR)/task/elf_loader.c \
     $(KERNEL_DIR)/syscall/syscall.c \
     $(KERNEL_DIR)/syscall/core/proc_lifecycle.c \
-    $(KERNEL_DIR)/syscall/fs/fd_pool.c \
-    $(KERNEL_DIR)/syscall/fs/path.c \
-    $(KERNEL_DIR)/syscall/fs/file_io.c \
-    $(KERNEL_DIR)/syscall/fs/file_ops.c \
-    $(KERNEL_DIR)/syscall/fs/file_stat.c \
-    $(KERNEL_DIR)/syscall/fs/dir.c \
+    $(KERNEL_DIR)/syscall/fs/fd/fd_pool.c \
+    $(KERNEL_DIR)/syscall/fs/path/path.c \
+    $(KERNEL_DIR)/syscall/fs/file/file_io.c \
+    $(KERNEL_DIR)/syscall/fs/file/file_ops.c \
+    $(KERNEL_DIR)/syscall/fs/file/file_stat.c \
+    $(KERNEL_DIR)/syscall/fs/file/dir.c \
     $(KERNEL_DIR)/syscall/fs/ioctl.c \
-    $(KERNEL_DIR)/syscall/fs/pipe.c \
-    $(KERNEL_DIR)/syscall/fs/pty.c \
+    $(KERNEL_DIR)/syscall/fs/char/pipe.c \
+    $(KERNEL_DIR)/syscall/fs/char/pty.c \
     $(KERNEL_DIR)/syscall/io/poll.c \
     $(KERNEL_DIR)/syscall/io/select.c \
     $(KERNEL_DIR)/syscall/io/epoll.c \
@@ -148,7 +148,7 @@ KERNEL_FS_SRCS := $(FS_DIR)/init.c \
 KERNEL_LWIP_SRCS := $(filter $(KERNEL_DIR)/net/%,$(KERNEL_SRCS))
 
 # 这两个同时引用 lwIP 与 lwext4：
-# ksocket.c → syscall/fs/fd_pool.h → include/fs/vfs.h:14 → #include <ext4.h>
+# ksocket.c → syscall/fs/fd/fd_pool.h → include/fs/vfs.h:14 → #include <ext4.h>
 KERNEL_LWIPX_SRCS := $(KERNEL_DIR)/syscall/net/ksocket.c \
                      $(KERNEL_DIR)/syscall/net/sock_syscall.c
 

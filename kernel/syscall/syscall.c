@@ -30,8 +30,8 @@
 #include "arch/riscv64/satp_utils.h"
 #endif
 
-#include "syscall/fs/fd_pool.h"
-#include "syscall/fs/path.h"
+#include "syscall/fs/fd/fd_pool.h"
+#include "syscall/fs/path/path.h"
 
 #ifdef TASK_INFRA_TEST
 #include "spinlock.h"

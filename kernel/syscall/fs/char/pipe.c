@@ -11,8 +11,8 @@
    Each pipe_alloc() creates one pipe_t and two fd_obj_t entries
    (read end + write end).
 */
-#include "syscall/fs/pipe.h"
-#include "syscall/fs/fd_pool.h"
+#include "syscall/fs/char/pipe.h"
+#include "syscall/fs/fd/fd_pool.h"
 #include "syscall/io/epoll.h"
 #include "task/task.h"
 #include "klog.h"

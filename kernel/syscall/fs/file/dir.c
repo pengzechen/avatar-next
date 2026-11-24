@@ -10,7 +10,7 @@
    由 kernel/syscall/syscall.c 拆出。
 */
 #include "syscall/syscall_internal.h"
-#include "syscall/fs/path.h"
+#include "syscall/fs/path/path.h"
 #include "task/task.h"
 #include "fs/kernel_stat.h"
 #include "string.h"

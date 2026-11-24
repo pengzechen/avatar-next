@@ -181,7 +181,7 @@ struct fs_struct {
 - `exe_path` 随 P3 放到 mm。
 
 **实施结果**：`include/fs/process_fs.h` 定义两个对象；
-`kernel/syscall/fs/process_fs.c` 实现静态池 + 引用计数（池大小
+`kernel/syscall/fs/process/process_fs.c` 实现静态池 + 引用计数（池大小
 `TASK_MAX + AVATAR_MAX_CPUS`，idle 任务也有一份）。TCB 从 1600 → 约
 1000 B。当前 clone 仍按旧行为复制（fork/线程各一份），为后续共享留好模型。
 

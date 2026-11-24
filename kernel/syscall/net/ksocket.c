@@ -12,7 +12,7 @@
    happen from the net-poll task context via callbacks.
 */
 #include "syscall/net/ksocket.h"
-#include "syscall/fs/fd_pool.h"
+#include "syscall/fs/fd/fd_pool.h"
 #include "syscall/io/epoll.h"
 #include "task/task.h"
 #include "klog.h"

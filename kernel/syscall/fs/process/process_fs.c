@@ -5,7 +5,7 @@
 */
 
 /*
-   kernel/syscall/fs/process_fs.c — 进程级 fd 表 / cwd（files_struct、fs_struct）
+   kernel/syscall/fs/process/process_fs.c — 进程级 fd 表 / cwd（files_struct、fs_struct）
 
    从 task_t 拆出来的两块进程文件系统状态，原因见
    docs/task_t_refactor.md。静态池 + 引用计数：

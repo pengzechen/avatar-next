@@ -17,11 +17,11 @@
 */
 #include "syscall/syscall.h"
 #include "syscall/syscall_internal.h"
-#include "syscall/fs/fd_pool.h"
+#include "syscall/fs/fd/fd_pool.h"
 #include "syscall/core/futex.h"
-#include "syscall/fs/pipe.h"
+#include "syscall/fs/char/pipe.h"
 #include "syscall/net/ksocket.h"
-#include "syscall/fs/pty.h"
+#include "syscall/fs/char/pty.h"
 #include "task/elf_loader.h"
 #include "task/task.h"
 #include "task/cpu.h" /* get_current_cpu_id / AVATAR_MAX_CPUS(execve argv 副本按 CPU 分行) */

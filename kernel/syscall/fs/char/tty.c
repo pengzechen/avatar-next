@@ -9,7 +9,7 @@
 
    由 kernel/syscall/syscall.c 拆出。
 */
-#include "syscall/fs/tty.h"
+#include "syscall/fs/char/tty.h"
 #include "syscall/syscall_internal.h"
 #include "task/task.h"
 #include "spinlock.h"

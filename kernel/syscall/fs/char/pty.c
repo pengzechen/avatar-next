@@ -10,8 +10,8 @@
    Provides /dev/ptmx (master) and /dev/pts/N (slave) pairs.
    Dropbear SSH opens ptmx, forks, child opens pts/N, exec shell.
 */
-#include "syscall/fs/pty.h"
-#include "syscall/fs/fd_pool.h"
+#include "syscall/fs/char/pty.h"
+#include "syscall/fs/fd/fd_pool.h"
 #include "syscall/io/epoll.h"
 #include "syscall/syscall_internal.h"
 #include "task/task.h"

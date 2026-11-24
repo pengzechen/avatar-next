@@ -666,7 +666,7 @@ __attribute__((weak)) bool npu_present(void) { return false; }
 __attribute__((weak)) bool tpu_present(void) { return false; }
 ```
 
-目标：把 `kernel/syscall/fs/file_ops.c`、`fd_pool.c`、`mmap.c`、`pseudofs/*`、`kernel/vmm/vdev/npu/vnpu.c` 里的 `#if DRIVER_ION/DMA_BUF/NPU_RKNPU/TPU_CVITPU` 全部改成运行时能力查询。缺失时返回 `-ENOSYS`/`-ENODEV`，而不是不编译。
+目标：把 `kernel/syscall/fs/file/file_ops.c`、`fd_pool.c`、`mmap.c`、`pseudofs/*`、`kernel/vmm/vdev/npu/vnpu.c` 里的 `#if DRIVER_ION/DMA_BUF/NPU_RKNPU/TPU_CVITPU` 全部改成运行时能力查询。缺失时返回 `-ENOSYS`/`-ENODEV`，而不是不编译。
 
 ---
 
@@ -762,8 +762,8 @@ DRIVER_EXTRA_FLAGS_driver_dma_dma_buf.c  := -Idriver/dma -Ikernel/mm
 
 | 位置 | 现在 | 改成 |
 |------|------|------|
-| `kernel/syscall/fs/file_ops.c` | `#if DRIVER_ION` | `ion_available()` + 弱符号 |
-| `kernel/syscall/fs/fd_pool.c` | `#if DRIVER_ION/DMA_BUF` | 能力查询 + 弱符号 |
+| `kernel/syscall/fs/file/file_ops.c` | `#if DRIVER_ION` | `ion_available()` + 弱符号 |
+| `kernel/syscall/fs/fd/fd_pool.c` | `#if DRIVER_ION/DMA_BUF` | 能力查询 + 弱符号 |
 | `kernel/syscall/mm/mmap.c` | `#if DRIVER_ION/DMA_BUF/NPU` | 运行时分支 + 弱符号 |
 | `fs/pseudofs/dev.c` | `#if DRIVER_ION/TPU/DMA_BUF` | 运行时能力 + 弱符号 |
 | `fs/pseudofs/pseudofs.c` | `#if DRIVER_DMA_BUF/NPU` | 节点表按 `driver_present()` 动态注册 |
@@ -1019,7 +1019,7 @@ DRIVER_EXTRA_FLAGS_driver_dma_dma_buf.c  := -Idriver/dma -Ikernel/mm
 
 ### 18.3 去掉 kernel 里的 `#if DRIVER_*`
 
-- `kernel/syscall/fs/{file_ops,fd_pool,ioctl}.c`、`kernel/syscall/mm/mmap.c`
+- `kernel/syscall/fs/{file/file_ops,fd/fd_pool,ioctl}.c`、`kernel/syscall/mm/mmap.c`
   和 `fs/pseudofs/dev.c` 无条件引用服务包装。
 - `/dev/ion`、`/dev/cvi-tpu0`、`/dev/dma_heap/*`、`/dev/dri/*`、
   `/proc/dri/*` 保留在固定节点表中，`pfs_node_available()` 按 `g_*_ops`

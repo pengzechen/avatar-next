@@ -23,7 +23,7 @@
 
      racetest pipe <iters>
          反复建管道, reader 阻塞读, writer 立刻写。打的是
-         kernel/syscall/fs/pipe.c 的丢唤醒：reader 在「读到 count==0」
+         kernel/syscall/fs/char/pipe.c 的丢唤醒：reader 在「读到 count==0」
          与「写 p->blocked_reader」之间被另一核的 writer 插进来
          (writer 写完数据, 检查 blocked_reader 还是 NULL),
          reader 随后睡死, 虽然环里躺着数据。
@@ -52,7 +52,7 @@
 #include <unistd.h>
 
 /*
-   内核管道的容量, 抄自 kernel/syscall/fs/pipe.h 的 PIPE_BUF_SIZE。
+   内核管道的容量, 抄自 kernel/syscall/fs/char/pipe.h 的 PIPE_BUF_SIZE。
    灌满它需要一次不多不少 —— 多写一个字节就会阻塞在测例自己身上。
 */
 #define PIPE_BUF_SIZE 4096

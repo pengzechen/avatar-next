@@ -1,6 +1,6 @@
 # kernel — C API
 
-[← 返回总览](index.md) · 1008 个函数 · 说明覆盖率 95.0%
+[← 返回总览](index.md) · 1008 个函数 · 说明覆盖率 85.2%
 
 <a id="mod-kernel-debug-backtrace.c"></a>
 
@@ -8336,15 +8336,866 @@ exec：被 caught 的 handler 重置为 SIG_DFL，SIG_IGN 保留。
 
 **位置**：`kernel/syscall/core/signal_struct.c:179`
 
-<a id="mod-kernel-syscall-fs-dir.c"></a>
+<a id="mod-kernel-syscall-fs-char-pipe.c"></a>
 
-## kernel/syscall/fs/dir.c — getcwd / chdir / renameat / unlinkat
+## kernel/syscall/fs/char/pipe.c — kernel pipe implementation
 
-`kernel/syscall/fs/dir.c` · 6 个函数 · 6 个有说明 · 275 行
+`kernel/syscall/fs/char/pipe.c` · 10 个函数 · 1 个有说明 · 330 行
+
+Ring buffer pipe with blocking read/write via task_block/task_unblock.
+Each pipe_alloc() creates one pipe_t and two fd_obj_t entries
+(read end + write end).
+
+<a id="fn-kernel-syscall-fs-char-pipe.c-23"></a>
+
+### `pipe_slot_alloc`
+
+```c
+static int pipe_slot_alloc(void)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`kernel/syscall/fs/char/pipe.c:23`
+
+<a id="fn-kernel-syscall-fs-char-pipe.c-32"></a>
+
+### `pipe_get_by_idx`
+
+```c
+static pipe_t *pipe_get_by_idx(int pi)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`kernel/syscall/fs/char/pipe.c:32`
+
+<a id="fn-kernel-syscall-fs-char-pipe.c-41"></a>
+
+### `pipe_alloc`
+
+```c
+int pipe_alloc(task_t *task, int fds_out[2])
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`kernel/syscall/fs/char/pipe.c:41`
+
+<a id="fn-kernel-syscall-fs-char-pipe.c-125"></a>
+
+### `pipe_interrupts`
+
+```c
+static bool pipe_interrupts(void)
+```
+
+pipe_interrupts - 这个任务现在会被信号打断吗？
+
+判据必须比 "pending_sigs & ~blocked_sigs" 更严：那个式子会把默认动作
+就是忽略的信号也算进来(SIGCHLD 最典型)。shell 读管道时子进程退出会
+挂起 SIGCHLD, 用它判就会让 read 平白返 EINTR —— Linux 不会
+(prepare_signal() 对忽略类信号不置 TIF_SIGPENDING)。这里照
+deliver_pending_signals() 的动作表来判, 保证"会被打断"和"内核真会投递"
+是同一套判据。
+
+为什么管道需要它：管道阻塞是真正的 task_block()(不是忙等), 不检查信号
+就会在 SIGALRM 到达后重新睡下去 —— alarm() 打断阻塞 read 的语义就不成立。
+LTP 每个测例都靠这个看门狗从卡死里脱身。
+
+<details>
+<summary>函数内备注（6 条）</summary>
+
+**第 133 行**
+
+> 取最低置位的位序号。不要用 __builtin_ctzll：
+> freestanding 构建下它会生成对 libgcc 的 __ctzdi2 调用, 而
+> rv64gc 没有 ctz 指令, 链接里也没有 libgcc(-nodefaultlibs)
+> → riscv64 `undefined reference to __ctzdi2`(x86_64/aarch64 能
+> 内联成 bsf/rbit, 所以只有 riscv64 暴露)。
+> 与 vplic.c / hext_run.c 的写法保持一致。
+
+**第 141 行（行尾）**
+
+> 取最低置位
+
+**第 147 行（行尾）**
+
+> 清掉最低置位
+
+**第 155 行（行尾）**
+
+> 显式忽略
+
+**第 157 行（行尾）**
+
+> 装了 handler → 一定会打断
+
+**第 159 行**
+
+> SIG_DFL：默认动作是忽略的那几个不算, 其余(多数是终止)算
+
+</details>
+
+**位置**：`kernel/syscall/fs/char/pipe.c:125`
+
+<a id="fn-kernel-syscall-fs-char-pipe.c-176"></a>
+
+### `pipe_read_endpoint`
+
+```c
+int pipe_read_endpoint(int pipe_idx, void *buf, size_t count, bool nonblock)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+<details>
+<summary>函数内备注（5 条）</summary>
+
+**第 191 行**
+
+> 已有数据就先返回数据 —— 信号和数据的优先级上, Linux 也是数据优先
+
+**第 197 行**
+
+> O_NONBLOCK：没数据立刻返回 EAGAIN, 绝不睡。
+> 放在 EINTR 判断之前：非阻塞本来就不睡, 没有&quot;被信号打断&quot;可言；
+> pending 信号仍会在本次 syscall 返回边界被投递。
+
+**第 202 行（行尾）**
+
+> -EAGAIN
+
+**第 204 行**
+
+> 别带着 pending 的信号睡下去：睡下去只能等下个事件才醒,
+> 而信号本身不会唤醒它(除非 itimer 那条路显式 unblock)。
+
+**第 208 行（行尾）**
+
+> -EINTR
+
+</details>
+
+**位置**：`kernel/syscall/fs/char/pipe.c:176`
+
+<a id="fn-kernel-syscall-fs-char-pipe.c-226"></a>
+
+### `pipe_write_endpoint`
+
+```c
+int pipe_write_endpoint(int pipe_idx, const void *buf, size_t count, bool nonblock)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+<details>
+<summary>函数内备注（3 条）</summary>
+
+**第 234 行（行尾）**
+
+> -EPIPE
+
+**第 261 行**
+
+> O_NONBLOCK：缓冲区满时立刻返回。已经写进去一部分就先返回
+> 那部分 —— Linux 对管道也是&quot;部分写&quot;语义, 不是丢弃。
+
+**第 265 行（行尾）**
+
+> -EAGAIN
+
+</details>
+
+**位置**：`kernel/syscall/fs/char/pipe.c:226`
+
+<a id="fn-kernel-syscall-fs-char-pipe.c-276"></a>
+
+### `pipe_ref_endpoint`
+
+```c
+void pipe_ref_endpoint(int pipe_idx, bool is_write_end)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`kernel/syscall/fs/char/pipe.c:276`
+
+<a id="fn-kernel-syscall-fs-char-pipe.c-287"></a>
+
+### `pipe_close_endpoint`
+
+```c
+void pipe_close_endpoint(int pipe_idx, bool is_write_end)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`kernel/syscall/fs/char/pipe.c:287`
+
+<a id="fn-kernel-syscall-fs-char-pipe.c-316"></a>
+
+### `pipe_poll_readable_endpoint`
+
+```c
+bool pipe_poll_readable_endpoint(int pipe_idx)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`kernel/syscall/fs/char/pipe.c:316`
+
+<a id="fn-kernel-syscall-fs-char-pipe.c-324"></a>
+
+### `pipe_poll_writable_endpoint`
+
+```c
+bool pipe_poll_writable_endpoint(int pipe_idx)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`kernel/syscall/fs/char/pipe.c:324`
+
+<a id="mod-kernel-syscall-fs-char-pty.c"></a>
+
+## kernel/syscall/fs/char/pty.c — pseudo-terminal (PTY) implementation
+
+`kernel/syscall/fs/char/pty.c` · 18 个函数 · 1 个有说明 · 503 行
+
+Provides /dev/ptmx (master) and /dev/pts/N (slave) pairs.
+Dropbear SSH opens ptmx, forks, child opens pts/N, exec shell.
+
+<a id="fn-kernel-syscall-fs-char-pty.c-24"></a>
+
+### `pty_notify_epoll`
+
+```c
+static void pty_notify_epoll(int pty_idx, bool notify_master, uint32_t events)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`kernel/syscall/fs/char/pty.c:24`
+
+<a id="fn-kernel-syscall-fs-char-pty.c-33"></a>
+
+### `ring_read`
+
+```c
+static uint32_t ring_read(pty_ring_t *r, void *buf, size_t count)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`kernel/syscall/fs/char/pty.c:33`
+
+<a id="fn-kernel-syscall-fs-char-pty.c-45"></a>
+
+### `ring_write`
+
+```c
+static uint32_t ring_write(pty_ring_t *r, const void *buf, size_t count)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`kernel/syscall/fs/char/pty.c:45`
+
+<a id="fn-kernel-syscall-fs-char-pty.c-57"></a>
+
+### `pty_match_pts_path`
+
+```c
+int pty_match_pts_path(const char *path)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+<details>
+<summary>函数内备注（1 条）</summary>
+
+**第 61 行**
+
+> /dev/pts/0 .. /dev/pts/7
+
+</details>
+
+**位置**：`kernel/syscall/fs/char/pty.c:57`
+
+<a id="fn-kernel-syscall-fs-char-pty.c-76"></a>
+
+### `pty_alloc_master`
+
+```c
+int pty_alloc_master(task_t *task)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+<details>
+<summary>函数内备注（5 条）</summary>
+
+**第 86 行（行尾）**
+
+> EMFILE
+
+**第 100 行（行尾）**
+
+> ECHO|ECHOE|ECHOK|ECHOCTL|ECHOKE|ICANON|ISIG|IEXTEN
+
+**第 101 行（行尾）**
+
+> ICRNL|IXON
+
+**第 102 行（行尾）**
+
+> OPOST|ONLCR
+
+**第 103 行（行尾）**
+
+> CS8|CREAD|HUPCL|B38400
+
+</details>
+
+**位置**：`kernel/syscall/fs/char/pty.c:76`
+
+<a id="fn-kernel-syscall-fs-char-pty.c-124"></a>
+
+### `pty_open_slave`
+
+```c
+int pty_open_slave(task_t *task, int pty_idx)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+<details>
+<summary>函数内备注（2 条）</summary>
+
+**第 127 行（行尾）**
+
+> ENOENT
+
+**第 132 行（行尾）**
+
+> EACCES
+
+</details>
+
+**位置**：`kernel/syscall/fs/char/pty.c:124`
+
+<a id="fn-kernel-syscall-fs-char-pty.c-175"></a>
+
+### `pty_master_read`
+
+```c
+int pty_master_read(int pty_idx, void *buf, size_t count, bool nonblock)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`kernel/syscall/fs/char/pty.c:175`
+
+<a id="fn-kernel-syscall-fs-char-pty.c-201"></a>
+
+### `pty_master_write`
+
+```c
+int pty_master_write(int pty_idx, const void *buf, size_t count, bool nonblock)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`kernel/syscall/fs/char/pty.c:201`
+
+<a id="fn-kernel-syscall-fs-char-pty.c-242"></a>
+
+### `pty_slave_read`
+
+```c
+int pty_slave_read(int pty_idx, void *buf, size_t count, bool nonblock)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`kernel/syscall/fs/char/pty.c:242`
+
+<a id="fn-kernel-syscall-fs-char-pty.c-268"></a>
+
+### `pty_slave_write`
+
+```c
+int pty_slave_write(int pty_idx, const void *buf, size_t count, bool nonblock)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`kernel/syscall/fs/char/pty.c:268`
+
+<a id="fn-kernel-syscall-fs-char-pty.c-319"></a>
+
+### `pty_close_master`
+
+```c
+void pty_close_master(int pty_idx)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`kernel/syscall/fs/char/pty.c:319`
+
+<a id="fn-kernel-syscall-fs-char-pty.c-339"></a>
+
+### `pty_ref_master`
+
+```c
+void pty_ref_master(int pty_idx)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`kernel/syscall/fs/char/pty.c:339`
+
+<a id="fn-kernel-syscall-fs-char-pty.c-346"></a>
+
+### `pty_ref_slave`
+
+```c
+void pty_ref_slave(int pty_idx)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`kernel/syscall/fs/char/pty.c:346`
+
+<a id="fn-kernel-syscall-fs-char-pty.c-353"></a>
+
+### `pty_close_slave`
+
+```c
+void pty_close_slave(int pty_idx)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`kernel/syscall/fs/char/pty.c:353`
+
+<a id="fn-kernel-syscall-fs-char-pty.c-379"></a>
+
+### `pty_ioctl`
+
+```c
+int pty_ioctl(int pty_idx, bool is_master, uint32_t req, void *argp)
+```
+
+注意：下面所有 argp 都是【用户指针】, 必须经 copy_to/from_user_bytes
+访问。以前是裸解引用(`*(uint32_t *)argp = ...`), 用户传非法地址
+(例如 ioctl(fd, TIOCGPTN, (void*)-1))就会让内核态写坏地址 → #PF →
+异常处理死循环 → 整机挂死。copy_*_bytes 内部用 user_range_ok() 校验。
+
+<details>
+<summary>函数内备注（1 条）</summary>
+
+**第 481 行（行尾）**
+
+> ENOTTY
+
+</details>
+
+**位置**：`kernel/syscall/fs/char/pty.c:379`
+
+<a id="fn-kernel-syscall-fs-char-pty.c-485"></a>
+
+### `pty_poll_readable_master`
+
+```c
+bool pty_poll_readable_master(int pty_idx)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`kernel/syscall/fs/char/pty.c:485`
+
+<a id="fn-kernel-syscall-fs-char-pty.c-492"></a>
+
+### `pty_poll_readable_slave`
+
+```c
+bool pty_poll_readable_slave(int pty_idx)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`kernel/syscall/fs/char/pty.c:492`
+
+<a id="fn-kernel-syscall-fs-char-pty.c-499"></a>
+
+### `pty_poll_writable`
+
+```c
+bool pty_poll_writable(int pty_idx)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`kernel/syscall/fs/char/pty.c:499`
+
+<a id="mod-kernel-syscall-fs-char-tty.c"></a>
+
+## kernel/syscall/fs/char/tty.c — 终端状态 + UART 输入环形缓冲区 + signal_check_uart
+
+`kernel/syscall/fs/char/tty.c` · 7 个函数 · 1 个有说明 · 134 行
 
 由 kernel/syscall/syscall.c 拆出。
 
-<a id="fn-kernel-syscall-fs-dir.c-22"></a>
+<a id="fn-kernel-syscall-fs-char-tty.c-24"></a>
+
+### `uart_ringbuf_push`
+
+```c
+void uart_ringbuf_push(char c)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`kernel/syscall/fs/char/tty.c:24`
+
+<a id="fn-kernel-syscall-fs-char-tty.c-36"></a>
+
+### `uart_ringbuf_pop`
+
+```c
+int uart_ringbuf_pop(char *out)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`kernel/syscall/fs/char/tty.c:36`
+
+<a id="fn-kernel-syscall-fs-char-tty.c-50"></a>
+
+### `uart_ringbuf_empty`
+
+```c
+int uart_ringbuf_empty(void)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`kernel/syscall/fs/char/tty.c:50`
+
+<a id="fn-kernel-syscall-fs-char-tty.c-80"></a>
+
+### `signal_check_uart`
+
+```c
+void signal_check_uart(void)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+<details>
+<summary>函数内备注（1 条）</summary>
+
+**第 85 行**
+
+> 在锁内一次性把硬件 FIFO 抽干到本地缓冲, 缩短临界区并避免与
+> 环形缓冲锁/信号投递产生锁嵌套。剩余字节留待下次调用处理。
+
+> 优先用非阻塞接口：ready() 返回 true 后，另一个消费者仍可能抢走
+> 最后一个字节，此时阻塞版 getc() 会在关中断持锁的状态下一直等。
+> DW 的 getc_nb 在未初始化时返回 false，保留 ready()+getc() 回退。
+
+</details>
+
+**位置**：`kernel/syscall/fs/char/tty.c:80`
+
+<a id="fn-kernel-syscall-fs-char-tty.c-122"></a>
+
+### `termios_is_raw`
+
+```c
+int termios_is_raw(void)
+```
+
+tty 辅助接口：供 pseudofs/tty_read 等调用
+
+**位置**：`kernel/syscall/fs/char/tty.c:122`
+
+<a id="fn-kernel-syscall-fs-char-tty.c-126"></a>
+
+### `termios_do_icrnl`
+
+```c
+int termios_do_icrnl(void)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`kernel/syscall/fs/char/tty.c:126`
+
+<a id="fn-kernel-syscall-fs-char-tty.c-130"></a>
+
+### `tty_getchar_nb`
+
+```c
+int tty_getchar_nb(char *c)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`kernel/syscall/fs/char/tty.c:130`
+
+<a id="mod-kernel-syscall-fs-fd-fd_pool.c"></a>
+
+## kernel/syscall/fs/fd/fd_pool.c — 全局文件描述符对象池实现
+
+`kernel/syscall/fs/fd/fd_pool.c` · 13 个函数 · 1 个有说明 · 352 行
+
+从 kernel/syscall/syscall.c 抽出。
+fd_table[i] in task_t 持有进入本池的索引(-1 = 未打开)。
+fd 0/1/2(stdin/stdout/stderr)特殊处理(UART), 不占用本池槽位。
+
+<a id="fn-kernel-syscall-fs-fd-fd_pool.c-39"></a>
+
+### `fd_pool_alloc`
+
+```c
+int fd_pool_alloc(void)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`kernel/syscall/fs/fd/fd_pool.c:39`
+
+<a id="fn-kernel-syscall-fs-fd-fd_pool.c-65"></a>
+
+### `fd_pool_free`
+
+```c
+void fd_pool_free(int idx)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`kernel/syscall/fs/fd/fd_pool.c:65`
+
+<a id="fn-kernel-syscall-fs-fd-fd_pool.c-83"></a>
+
+### `fd_obj_ref`
+
+```c
+int fd_obj_ref(int idx)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`kernel/syscall/fs/fd/fd_pool.c:83`
+
+<a id="fn-kernel-syscall-fs-fd-fd_pool.c-101"></a>
+
+### `fd_obj_close`
+
+```c
+void fd_obj_close(int idx)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`kernel/syscall/fs/fd/fd_pool.c:101`
+
+<a id="fn-kernel-syscall-fs-fd-fd_pool.c-120"></a>
+
+### `fd_obj_attach_vfs`
+
+```c
+void fd_obj_attach_vfs(int idx, vfs_file_t *file)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`kernel/syscall/fs/fd/fd_pool.c:120`
+
+<a id="fn-kernel-syscall-fs-fd-fd_pool.c-139"></a>
+
+### `task_alloc_fd`
+
+```c
+int task_alloc_fd(task_t *task, int pool_idx)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+<details>
+<summary>函数内备注（5 条）</summary>
+
+**第 141 行**
+
+> 同一进程的两个线程共享 fd_table, 所以&quot;找 -1 槽 -&gt; 写上&quot;同样要互斥,
+> 否则两个线程会拿到同一个 fd 号, 后写的那个把先写的挤掉。
+
+**第 149 行**
+
+> RLIMIT_NOFILE(7) 是软限制：fd 号必须小于 rlim_cur。
+> 默认 1024 &gt; TASK_MAX_FD(256)，所以通常还是受静态表限制；
+> 用户用 setrlimit 调小之后这里要真正生效(LTP setrlimit01 的 NOFILE 项)。
+
+**第 155 行**
+
+> fd 0,1,2 reserved for stdin/stdout/stderr
+
+**第 162 行**
+
+> 新 fd 默认不是 CLOEXEC。必须在这里清掉上一个占位者留下的位：
+> close() 只把 fd_table 置 -1, 不动位图; 而 execve 现在会按位图
+> 真正关闭 FD_CLOEXEC 的 fd —— 不清的话, 复用一个曾经标过
+> CLOEXEC 的 fd 号会让新 fd 在下次 exec 时被意外关掉。
+
+**第 181 行**
+
+> 打印 fd_table 的前几个槽位用于调试
+
+</details>
+
+**位置**：`kernel/syscall/fs/fd/fd_pool.c:139`
+
+<a id="fn-kernel-syscall-fs-fd-fd_pool.c-198"></a>
+
+### `task_take_fd`
+
+```c
+int task_take_fd(task_t *task, int fd)
+```
+
+原子地摘走 fd_table[fd], 返回它原来的池索引(-1 = 本来就没开)。
+
+close 路径必须用它而不是"先读 fd_table[fd] 再去做关闭"：同一进程的两个
+线程同时 close 同一个 fd 时, 两边都会读到同一个 idx, 于是同一个槽被
+关两次, 归还两次 —— 第二次归还时槽可能已经被别的 open 拿走了, 直接把
+别人正在用的槽标成 FREE。摘表项这一步是"谁抢到谁负责关"的分界点。
+
+**位置**：`kernel/syscall/fs/fd/fd_pool.c:198`
+
+<a id="fn-kernel-syscall-fs-fd-fd_pool.c-213"></a>
+
+### `task_get_fd`
+
+```c
+fd_obj_t *task_get_fd(task_t *task, int fd)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`kernel/syscall/fs/fd/fd_pool.c:213`
+
+<a id="fn-kernel-syscall-fs-fd-fd_pool.c-225"></a>
+
+### `task_alloc_ion_fd`
+
+```c
+int task_alloc_ion_fd(task_t *task, uint32_t handle, const fd_ops_t *ops, void *priv)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`kernel/syscall/fs/fd/fd_pool.c:225`
+
+<a id="fn-kernel-syscall-fs-fd-fd_pool.c-257"></a>
+
+### `task_get_ion_handle`
+
+```c
+int task_get_ion_handle(task_t *task, int fd, uint32_t *handle)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`kernel/syscall/fs/fd/fd_pool.c:257`
+
+<a id="fn-kernel-syscall-fs-fd-fd_pool.c-266"></a>
+
+### `task_alloc_dmabuf_fd`
+
+```c
+int task_alloc_dmabuf_fd(task_t *task, uint32_t idx, const fd_ops_t *ops, void *priv)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`kernel/syscall/fs/fd/fd_pool.c:266`
+
+<a id="fn-kernel-syscall-fs-fd-fd_pool.c-298"></a>
+
+### `task_get_dmabuf_idx`
+
+```c
+int task_get_dmabuf_idx(task_t *task, int fd, uint32_t *idx)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`kernel/syscall/fs/fd/fd_pool.c:298`
+
+<a id="fn-kernel-syscall-fs-fd-fd_pool.c-307"></a>
+
+### `fd_table_inherit`
+
+```c
+void fd_table_inherit(task_t *child, task_t *parent)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+<details>
+<summary>函数内备注（2 条）</summary>
+
+**第 309 行**
+
+> 只在内核任务/进程之间谈继承没意义：idle 之类的内核任务一张 fd 表都没有
+> (正常全是 -1), 而且它们的 fd_table 一旦忘了初始化就是一片 0 ——
+> 而 0 是合法槽位号, 会被当成「256 个 fd」逐个拷贝, 一次就把整个池子
+> 吃光(实测过：idle/1 作父进程, 128 个槽瞬间占满, 此后宿主里所有
+> open() 都失败)。这里直接按「没有可继承的 fd」处理, 表清成 -1。
+
+**第 323 行**
+
+> execve: FD_CLOEXEC 标记的 fd 不继承
+
+</details>
+
+**位置**：`kernel/syscall/fs/fd/fd_pool.c:307`
+
+<a id="mod-kernel-syscall-fs-fd-fd_pool.h"></a>
+
+## kernel/syscall/fs/fd/fd_pool.h — 全局 fd 对象池声明
+
+`kernel/syscall/fs/fd/fd_pool.h` · 1 个函数 · 0 个有说明 · 89 行
+
+类型, 池数组与池/任务级 fd 操作函数声明。
+实现位于 kernel/syscall/fd_pool.c。
+
+<a id="fn-kernel-syscall-fs-fd-fd_pool.h-84"></a>
+
+### `fd_obj_file`
+
+```c
+static inline vfs_file_t *fd_obj_file(fd_obj_t *obj)
+```
+
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+
+**位置**：`kernel/syscall/fs/fd/fd_pool.h:84`
+
+<a id="mod-kernel-syscall-fs-file-dir.c"></a>
+
+## kernel/syscall/fs/file/dir.c — getcwd / chdir / renameat / unlinkat
+
+`kernel/syscall/fs/file/dir.c` · 6 个函数 · 1 个有说明 · 275 行
+
+由 kernel/syscall/syscall.c 拆出。
+
+<a id="fn-kernel-syscall-fs-file-dir.c-22"></a>
 
 ### `getcwd_handler`
 
@@ -8352,13 +9203,11 @@ exec：被 caught 的 handler 重置为 SIG_DFL，SIG_IGN 保留。
 void getcwd_handler(uint64_t regs[6], task_t *current)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-检查用户缓冲足够容纳当前 cwd 后拷出，返回含结尾 NUL 的长度。
+**位置**：`kernel/syscall/fs/file/dir.c:22`
 
-**位置**：`kernel/syscall/fs/dir.c:22`
-
-<a id="fn-kernel-syscall-fs-dir.c-58"></a>
+<a id="fn-kernel-syscall-fs-file-dir.c-58"></a>
 
 ### `chdir_copy_canonical`
 
@@ -8405,9 +9254,9 @@ ENAMETOOLONG。
 
 </details>
 
-**位置**：`kernel/syscall/fs/dir.c:58`
+**位置**：`kernel/syscall/fs/file/dir.c:58`
 
-<a id="fn-kernel-syscall-fs-dir.c-159"></a>
+<a id="fn-kernel-syscall-fs-file-dir.c-159"></a>
 
 ### `chdir_handler`
 
@@ -8415,9 +9264,7 @@ ENAMETOOLONG。
 void chdir_handler(uint64_t regs[6], task_t *current)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-拷贝并规范化用户路径，stat 校验必须是目录（或 ext4 可打开），成功后更新任务 cwd。
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
 <details>
 <summary>函数内备注（2 条）</summary>
@@ -8433,9 +9280,9 @@ void chdir_handler(uint64_t regs[6], task_t *current)
 
 </details>
 
-**位置**：`kernel/syscall/fs/dir.c:159`
+**位置**：`kernel/syscall/fs/file/dir.c:159`
 
-<a id="fn-kernel-syscall-fs-dir.c-214"></a>
+<a id="fn-kernel-syscall-fs-file-dir.c-214"></a>
 
 ### `renameat_handler`
 
@@ -8443,9 +9290,7 @@ void chdir_handler(uint64_t regs[6], task_t *current)
 void renameat_handler(uint64_t regs[6], task_t *current)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-分别解析新旧路径后调用 vfs_rename，跨挂载等错误原样返回。
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
 <details>
 <summary>函数内备注（1 条）</summary>
@@ -8456,9 +9301,9 @@ void renameat_handler(uint64_t regs[6], task_t *current)
 
 </details>
 
-**位置**：`kernel/syscall/fs/dir.c:214`
+**位置**：`kernel/syscall/fs/file/dir.c:214`
 
-<a id="fn-kernel-syscall-fs-dir.c-246"></a>
+<a id="fn-kernel-syscall-fs-file-dir.c-246"></a>
 
 ### `renameat2_handler`
 
@@ -8466,13 +9311,11 @@ void renameat_handler(uint64_t regs[6], task_t *current)
 void renameat2_handler(uint64_t regs[6], task_t *current)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-flags 非 0 时返回 EINVAL，否则直接转调 renameat_handler。
+**位置**：`kernel/syscall/fs/file/dir.c:246`
 
-**位置**：`kernel/syscall/fs/dir.c:246`
-
-<a id="fn-kernel-syscall-fs-dir.c-255"></a>
+<a id="fn-kernel-syscall-fs-file-dir.c-255"></a>
 
 ### `unlinkat_handler`
 
@@ -8480,287 +9323,19 @@ flags 非 0 时返回 EINVAL，否则直接转调 renameat_handler。
 void unlinkat_handler(uint64_t regs[6], task_t *current)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-解析路径后调用 vfs_unlink，按 AT_REMOVEDIR 决定删除目录还是文件。
+**位置**：`kernel/syscall/fs/file/dir.c:255`
 
-**位置**：`kernel/syscall/fs/dir.c:255`
+<a id="mod-kernel-syscall-fs-file-file_io.c"></a>
 
-<a id="mod-kernel-syscall-fs-fd_pool.c"></a>
+## kernel/syscall/fs/file/file_io.c — read / write / writev / lseek / sendfile / fsync / fdatasync
 
-## kernel/syscall/fs/fd_pool.c — 全局文件描述符对象池实现
-
-`kernel/syscall/fs/fd_pool.c` · 13 个函数 · 13 个有说明 · 352 行
-
-从 kernel/syscall/syscall.c 抽出。
-fd_table[i] in task_t 持有进入本池的索引(-1 = 未打开)。
-fd 0/1/2(stdin/stdout/stderr)特殊处理(UART), 不占用本池槽位。
-
-<a id="fn-kernel-syscall-fs-fd_pool.c-39"></a>
-
-### `fd_pool_alloc`
-
-```c
-int fd_pool_alloc(void)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-关中断持锁扫描空闲槽，标记为已分配并清空字段，返回槽号或 -1。
-
-**位置**：`kernel/syscall/fs/fd_pool.c:39`
-
-<a id="fn-kernel-syscall-fs-fd_pool.c-65"></a>
-
-### `fd_pool_free`
-
-```c
-void fd_pool_free(int idx)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-校验下标后持锁清空等待队列与对象字段，把槽位标记为空闲。
-
-**位置**：`kernel/syscall/fs/fd_pool.c:65`
-
-<a id="fn-kernel-syscall-fs-fd_pool.c-83"></a>
-
-### `fd_obj_ref`
-
-```c
-int fd_obj_ref(int idx)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-校验槽位后对 vfs_file 加引用或调用对象的 dup 回调，空闲槽返回 -1。
-
-**位置**：`kernel/syscall/fs/fd_pool.c:83`
-
-<a id="fn-kernel-syscall-fs-fd_pool.c-101"></a>
-
-### `fd_obj_close`
-
-```c
-void fd_obj_close(int idx)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-按对象类型分别关闭 vfs_file、销毁 epoll 实例或调用 ops->close。
-
-**位置**：`kernel/syscall/fs/fd_pool.c:101`
-
-<a id="fn-kernel-syscall-fs-fd_pool.c-120"></a>
-
-### `fd_obj_attach_vfs`
-
-```c
-void fd_obj_attach_vfs(int idx, vfs_file_t *file)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-把 vfs 文件挂到指定池槽，设置类型与标志并复制文件路径。
-
-**位置**：`kernel/syscall/fs/fd_pool.c:120`
-
-<a id="fn-kernel-syscall-fs-fd_pool.c-139"></a>
-
-### `task_alloc_fd`
-
-```c
-int task_alloc_fd(task_t *task, int pool_idx)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-持锁在 fd 表中找空位（受 RLIMIT_NOFILE 限制），写入池槽号并清除 CLOEXEC 位，返回新 fd。
-
-<details>
-<summary>函数内备注（5 条）</summary>
-
-**第 141 行**
-
-> 同一进程的两个线程共享 fd_table, 所以&quot;找 -1 槽 -&gt; 写上&quot;同样要互斥,
-> 否则两个线程会拿到同一个 fd 号, 后写的那个把先写的挤掉。
-
-**第 149 行**
-
-> RLIMIT_NOFILE(7) 是软限制：fd 号必须小于 rlim_cur。
-> 默认 1024 &gt; TASK_MAX_FD(256)，所以通常还是受静态表限制；
-> 用户用 setrlimit 调小之后这里要真正生效(LTP setrlimit01 的 NOFILE 项)。
-
-**第 155 行**
-
-> fd 0,1,2 reserved for stdin/stdout/stderr
-
-**第 162 行**
-
-> 新 fd 默认不是 CLOEXEC。必须在这里清掉上一个占位者留下的位：
-> close() 只把 fd_table 置 -1, 不动位图; 而 execve 现在会按位图
-> 真正关闭 FD_CLOEXEC 的 fd —— 不清的话, 复用一个曾经标过
-> CLOEXEC 的 fd 号会让新 fd 在下次 exec 时被意外关掉。
-
-**第 181 行**
-
-> 打印 fd_table 的前几个槽位用于调试
-
-</details>
-
-**位置**：`kernel/syscall/fs/fd_pool.c:139`
-
-<a id="fn-kernel-syscall-fs-fd_pool.c-198"></a>
-
-### `task_take_fd`
-
-```c
-int task_take_fd(task_t *task, int fd)
-```
-
-原子地摘走 fd_table[fd], 返回它原来的池索引(-1 = 本来就没开)。
-
-close 路径必须用它而不是"先读 fd_table[fd] 再去做关闭"：同一进程的两个
-线程同时 close 同一个 fd 时, 两边都会读到同一个 idx, 于是同一个槽被
-关两次, 归还两次 —— 第二次归还时槽可能已经被别的 open 拿走了, 直接把
-别人正在用的槽标成 FREE。摘表项这一步是"谁抢到谁负责关"的分界点。
-
-**位置**：`kernel/syscall/fs/fd_pool.c:198`
-
-<a id="fn-kernel-syscall-fs-fd_pool.c-213"></a>
-
-### `task_get_fd`
-
-```c
-fd_obj_t *task_get_fd(task_t *task, int fd)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-校验 fd 与表项下标，返回未释放的池对象指针，否则返回 NULL。
-
-**位置**：`kernel/syscall/fs/fd_pool.c:213`
-
-<a id="fn-kernel-syscall-fs-fd_pool.c-225"></a>
-
-### `task_alloc_ion_fd`
-
-```c
-int task_alloc_ion_fd(task_t *task, uint32_t handle, const fd_ops_t *ops, void *priv)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-分配池槽并填 ION 类型、句柄与 ops，挂到任务 fd 表，失败逐级回收并返回 -1。
-
-**位置**：`kernel/syscall/fs/fd_pool.c:225`
-
-<a id="fn-kernel-syscall-fs-fd_pool.c-257"></a>
-
-### `task_get_ion_handle`
-
-```c
-int task_get_ion_handle(task_t *task, int fd, uint32_t *handle)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-取 fd 对象，确认是 ION 类型后输出句柄，否则返回 -1。
-
-**位置**：`kernel/syscall/fs/fd_pool.c:257`
-
-<a id="fn-kernel-syscall-fs-fd_pool.c-266"></a>
-
-### `task_alloc_dmabuf_fd`
-
-```c
-int task_alloc_dmabuf_fd(task_t *task, uint32_t idx, const fd_ops_t *ops, void *priv)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-分配池槽并填 DMABUF 类型、索引与 ops，挂到任务 fd 表，失败逐级回收并返回 -1。
-
-**位置**：`kernel/syscall/fs/fd_pool.c:266`
-
-<a id="fn-kernel-syscall-fs-fd_pool.c-298"></a>
-
-### `task_get_dmabuf_idx`
-
-```c
-int task_get_dmabuf_idx(task_t *task, int fd, uint32_t *idx)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-取 fd 对象，确认是 DMABUF 类型后输出索引，否则返回 -1。
-
-**位置**：`kernel/syscall/fs/fd_pool.c:298`
-
-<a id="fn-kernel-syscall-fs-fd_pool.c-307"></a>
-
-### `fd_table_inherit`
-
-```c
-void fd_table_inherit(task_t *child, task_t *parent)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-父非用户进程时清空子表；否则逐 fd 跳过 CLOEXEC 与 EPOLL，分配新池槽复制并增引用。
-
-<details>
-<summary>函数内备注（2 条）</summary>
-
-**第 309 行**
-
-> 只在内核任务/进程之间谈继承没意义：idle 之类的内核任务一张 fd 表都没有
-> (正常全是 -1), 而且它们的 fd_table 一旦忘了初始化就是一片 0 ——
-> 而 0 是合法槽位号, 会被当成「256 个 fd」逐个拷贝, 一次就把整个池子
-> 吃光(实测过：idle/1 作父进程, 128 个槽瞬间占满, 此后宿主里所有
-> open() 都失败)。这里直接按「没有可继承的 fd」处理, 表清成 -1。
-
-**第 323 行**
-
-> execve: FD_CLOEXEC 标记的 fd 不继承
-
-</details>
-
-**位置**：`kernel/syscall/fs/fd_pool.c:307`
-
-<a id="mod-kernel-syscall-fs-fd_pool.h"></a>
-
-## kernel/syscall/fs/fd_pool.h — 全局 fd 对象池声明
-
-`kernel/syscall/fs/fd_pool.h` · 1 个函数 · 1 个有说明 · 89 行
-
-类型, 池数组与池/任务级 fd 操作函数声明。
-实现位于 kernel/syscall/fd_pool.c。
-
-<a id="fn-kernel-syscall-fs-fd_pool.h-84"></a>
-
-### `fd_obj_file`
-
-```c
-static inline vfs_file_t *fd_obj_file(fd_obj_t *obj)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-对象非空则返回其 vfs_file，否则返回 NULL。
-
-**位置**：`kernel/syscall/fs/fd_pool.h:84`
-
-<a id="mod-kernel-syscall-fs-file_io.c"></a>
-
-## kernel/syscall/fs/file_io.c — read / write / writev / lseek / sendfile / fsync / fdatasync
-
-`kernel/syscall/fs/file_io.c` · 11 个函数 · 11 个有说明 · 514 行
+`kernel/syscall/fs/file/file_io.c` · 11 个函数 · 1 个有说明 · 514 行
 
 由 kernel/syscall/syscall.c 拆出。
 
-<a id="fn-kernel-syscall-fs-file_io.c-36"></a>
+<a id="fn-kernel-syscall-fs-file-file_io.c-36"></a>
 
 ### `trace_heavy_task`
 
@@ -8768,13 +9343,13 @@ static inline vfs_file_t *fd_obj_file(fd_obj_t *obj)
 static bool trace_heavy_task(task_t *current)
 ```
 
-本地这份曾经只查范围, 现在统一走 syscall/fs/path.c 的 user_range_accessible：
+本地这份曾经只查范围, 现在统一走 syscall/fs/path/path.c 的 user_range_accessible：
 范围 + 每页映射。理由见那里的注释(writev02 用"合法但已 munmap"的地址
 让 copy_*_bytes 里的裸拷贝踩空 → 内核态 #PF → 停机)。
 
-**位置**：`kernel/syscall/fs/file_io.c:36`
+**位置**：`kernel/syscall/fs/file/file_io.c:36`
 
-<a id="fn-kernel-syscall-fs-file_io.c-51"></a>
+<a id="fn-kernel-syscall-fs-file-file_io.c-51"></a>
 
 ### `prw_fd_check`
 
@@ -8782,13 +9357,11 @@ static bool trace_heavy_task(task_t *current)
 static int prw_fd_check(fd_obj_t *obj, bool is_write)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-校验 fd 对象与文件，目录、非普通文件或读写方向不符时分别返回错误码。
+**位置**：`kernel/syscall/fs/file/file_io.c:51`
 
-**位置**：`kernel/syscall/fs/file_io.c:51`
-
-<a id="fn-kernel-syscall-fs-file_io.c-68"></a>
+<a id="fn-kernel-syscall-fs-file-file_io.c-68"></a>
 
 ### `copy_iov_from_user`
 
@@ -8796,13 +9369,11 @@ static int prw_fd_check(fd_obj_t *obj, bool is_write)
 static int copy_iov_from_user(struct kernel_iovec *dst, const struct kernel_iovec *uiov, int iovcnt)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-校验 iovcnt 与各段用户范围，逐段拷入内核，越界或过长返回 EFAULT 或 EINVAL。
+**位置**：`kernel/syscall/fs/file/file_io.c:68`
 
-**位置**：`kernel/syscall/fs/file_io.c:68`
-
-<a id="fn-kernel-syscall-fs-file_io.c-87"></a>
+<a id="fn-kernel-syscall-fs-file-file_io.c-87"></a>
 
 ### `read_handler`
 
@@ -8810,9 +9381,7 @@ static int copy_iov_from_user(struct kernel_iovec *dst, const struct kernel_iove
 void read_handler(uint64_t regs[6], task_t *current)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-文件 fd 先校验用户缓冲可访问再 vfs_read；stdin 则从 UART 环形缓冲读到换行或读满，遇信号返回 EINTR。
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
 <details>
 <summary>函数内备注（4 条）</summary>
@@ -8839,9 +9408,9 @@ void read_handler(uint64_t regs[6], task_t *current)
 
 </details>
 
-**位置**：`kernel/syscall/fs/file_io.c:87`
+**位置**：`kernel/syscall/fs/file/file_io.c:87`
 
-<a id="fn-kernel-syscall-fs-file_io.c-158"></a>
+<a id="fn-kernel-syscall-fs-file-file_io.c-158"></a>
 
 ### `pread64_handler`
 
@@ -8849,13 +9418,11 @@ void read_handler(uint64_t regs[6], task_t *current)
 void pread64_handler(uint64_t regs[6], task_t *current)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-校验偏移、fd 类型与用户缓冲范围后调用 vfs_pread，返回读取字节数。
+**位置**：`kernel/syscall/fs/file/file_io.c:158`
 
-**位置**：`kernel/syscall/fs/file_io.c:158`
-
-<a id="fn-kernel-syscall-fs-file_io.c-200"></a>
+<a id="fn-kernel-syscall-fs-file-file_io.c-200"></a>
 
 ### `write_handler`
 
@@ -8863,9 +9430,7 @@ void pread64_handler(uint64_t regs[6], task_t *current)
 void write_handler(uint64_t regs[6], task_t *current)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-文件 fd 分块把用户数据拷入栈缓冲再 vfs_write 并支持部分写，fd 1/2 转 sys_write 输出。
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
 <details>
 <summary>函数内备注（3 条）</summary>
@@ -8898,9 +9463,9 @@ void write_handler(uint64_t regs[6], task_t *current)
 
 </details>
 
-**位置**：`kernel/syscall/fs/file_io.c:200`
+**位置**：`kernel/syscall/fs/file/file_io.c:200`
 
-<a id="fn-kernel-syscall-fs-file_io.c-268"></a>
+<a id="fn-kernel-syscall-fs-file-file_io.c-268"></a>
 
 ### `pwrite64_handler`
 
@@ -8908,9 +9473,7 @@ void write_handler(uint64_t regs[6], task_t *current)
 void pwrite64_handler(uint64_t regs[6], task_t *current)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-校验后分块拷贝用户缓冲，带偏移调用 vfs_pwrite，返回写入字节数并支持部分写。
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
 <details>
 <summary>函数内备注（1 条）</summary>
@@ -8922,9 +9485,9 @@ void pwrite64_handler(uint64_t regs[6], task_t *current)
 
 </details>
 
-**位置**：`kernel/syscall/fs/file_io.c:268`
+**位置**：`kernel/syscall/fs/file/file_io.c:268`
 
-<a id="fn-kernel-syscall-fs-file_io.c-325"></a>
+<a id="fn-kernel-syscall-fs-file-file_io.c-325"></a>
 
 ### `readv_handler`
 
@@ -8932,13 +9495,11 @@ void pwrite64_handler(uint64_t regs[6], task_t *current)
 void readv_handler(uint64_t regs[6], task_t *current)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-拷贝并校验 iovec，逐段调用 read_handler，遇短读或错误立即返回已读总量。
+**位置**：`kernel/syscall/fs/file/file_io.c:325`
 
-**位置**：`kernel/syscall/fs/file_io.c:325`
-
-<a id="fn-kernel-syscall-fs-file_io.c-375"></a>
+<a id="fn-kernel-syscall-fs-file-file_io.c-375"></a>
 
 ### `writev_handler`
 
@@ -8946,13 +9507,11 @@ void readv_handler(uint64_t regs[6], task_t *current)
 void writev_handler(uint64_t regs[6], task_t *current)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-校验 fd 与 iovec 后逐段调用 write_handler，遇短写或错误返回已写总量。
+**位置**：`kernel/syscall/fs/file/file_io.c:375`
 
-**位置**：`kernel/syscall/fs/file_io.c:375`
-
-<a id="fn-kernel-syscall-fs-file_io.c-415"></a>
+<a id="fn-kernel-syscall-fs-file-file_io.c-415"></a>
 
 ### `lseek_handler`
 
@@ -8960,13 +9519,11 @@ void writev_handler(uint64_t regs[6], task_t *current)
 void lseek_handler(uint64_t regs[6], task_t *current)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-取 fd 对象，有文件则调用 vfs_seek 并返回新偏移，否则返回 EBADF。
+**位置**：`kernel/syscall/fs/file/file_io.c:415`
 
-**位置**：`kernel/syscall/fs/file_io.c:415`
-
-<a id="fn-kernel-syscall-fs-file_io.c-434"></a>
+<a id="fn-kernel-syscall-fs-file-file_io.c-434"></a>
 
 ### `sendfile_handler`
 
@@ -8974,9 +9531,7 @@ void lseek_handler(uint64_t regs[6], task_t *current)
 void sendfile_handler(uint64_t regs[6], task_t *current)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-校验输入端为普通文件，循环读入栈缓冲再写目标文件或控制台，回写偏移并返回传输总量。
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
 <details>
 <summary>函数内备注（3 条）</summary>
@@ -9000,17 +9555,17 @@ void sendfile_handler(uint64_t regs[6], task_t *current)
 
 </details>
 
-**位置**：`kernel/syscall/fs/file_io.c:434`
+**位置**：`kernel/syscall/fs/file/file_io.c:434`
 
-<a id="mod-kernel-syscall-fs-file_ops.c"></a>
+<a id="mod-kernel-syscall-fs-file-file_ops.c"></a>
 
-## kernel/syscall/fs/file_ops.c — openat / close / dup3 / fcntl / pipe2
+## kernel/syscall/fs/file/file_ops.c — openat / close / dup3 / fcntl / pipe2
 
-`kernel/syscall/fs/file_ops.c` · 10 个函数 · 10 个有说明 · 489 行
+`kernel/syscall/fs/file/file_ops.c` · 10 个函数 · 0 个有说明 · 489 行
 
 由 kernel/syscall/syscall.c 拆出。
 
-<a id="fn-kernel-syscall-fs-file_ops.c-28"></a>
+<a id="fn-kernel-syscall-fs-file-file_ops.c-28"></a>
 
 ### `trace_heavy_task`
 
@@ -9018,13 +9573,11 @@ void sendfile_handler(uint64_t regs[6], task_t *current)
 static bool trace_heavy_task(task_t *current)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-判断是否为用户进程且 heap_end 超过阈值，用于决定是否输出详尽日志。
+**位置**：`kernel/syscall/fs/file/file_ops.c:28`
 
-**位置**：`kernel/syscall/fs/file_ops.c:28`
-
-<a id="fn-kernel-syscall-fs-file_ops.c-51"></a>
+<a id="fn-kernel-syscall-fs-file-file_ops.c-51"></a>
 
 ### `open_flags_from_user`
 
@@ -9032,13 +9585,11 @@ static bool trace_heavy_task(task_t *current)
 static int open_flags_from_user(int flags)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-在 aarch64 上去掉并重映射目录相关标志位，其他架构原样返回。
+**位置**：`kernel/syscall/fs/file/file_ops.c:51`
 
-**位置**：`kernel/syscall/fs/file_ops.c:51`
-
-<a id="fn-kernel-syscall-fs-file_ops.c-63"></a>
+<a id="fn-kernel-syscall-fs-file-file_ops.c-63"></a>
 
 ### `open_flags_to_user`
 
@@ -9046,13 +9597,11 @@ static int open_flags_from_user(int flags)
 static int open_flags_to_user(int flags)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-在 aarch64 上把内部目录标志位还原为用户位，其他架构原样返回。
+**位置**：`kernel/syscall/fs/file/file_ops.c:63`
 
-**位置**：`kernel/syscall/fs/file_ops.c:63`
-
-<a id="fn-kernel-syscall-fs-file_ops.c-75"></a>
+<a id="fn-kernel-syscall-fs-file-file_ops.c-75"></a>
 
 ### `openat_handler`
 
@@ -9060,9 +9609,7 @@ static int open_flags_to_user(int flags)
 void openat_handler(uint64_t regs[6], task_t *current)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-解析路径并跟随符号链接、按 umask 修正 mode，特判 ptmx/tty/pts，否则 vfs_open 后分配 fd 并记录 CLOEXEC。
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
 <details>
 <summary>函数内备注（3 条）</summary>
@@ -9085,9 +9632,9 @@ void openat_handler(uint64_t regs[6], task_t *current)
 
 </details>
 
-**位置**：`kernel/syscall/fs/file_ops.c:75`
+**位置**：`kernel/syscall/fs/file/file_ops.c:75`
 
-<a id="fn-kernel-syscall-fs-file_ops.c-170"></a>
+<a id="fn-kernel-syscall-fs-file-file_ops.c-170"></a>
 
 ### `close_handler`
 
@@ -9095,9 +9642,7 @@ void openat_handler(uint64_t regs[6], task_t *current)
 void close_handler(uint64_t regs[6], task_t *current)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-原子摘取 fd 表项（0-2 直接成功），通知 epoll 后关闭对象并归还池槽。
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
 <details>
 <summary>函数内备注（2 条）</summary>
@@ -9117,9 +9662,9 @@ void close_handler(uint64_t regs[6], task_t *current)
 
 </details>
 
-**位置**：`kernel/syscall/fs/file_ops.c:170`
+**位置**：`kernel/syscall/fs/file/file_ops.c:170`
 
-<a id="fn-kernel-syscall-fs-file_ops.c-201"></a>
+<a id="fn-kernel-syscall-fs-file-file_ops.c-201"></a>
 
 ### `dup_to_fd`
 
@@ -9127,9 +9672,7 @@ void close_handler(uint64_t regs[6], task_t *current)
 static int dup_to_fd(task_t *current, int oldfd, int newfd, int flags)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-校验新旧 fd，先关闭目标槽，再复制源对象或为 UART 建空对象并增引用，按 flags 设置 CLOEXEC。
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
 <details>
 <summary>函数内备注（1 条）</summary>
@@ -9140,9 +9683,9 @@ static int dup_to_fd(task_t *current, int oldfd, int newfd, int flags)
 
 </details>
 
-**位置**：`kernel/syscall/fs/file_ops.c:201`
+**位置**：`kernel/syscall/fs/file/file_ops.c:201`
 
-<a id="fn-kernel-syscall-fs-file_ops.c-248"></a>
+<a id="fn-kernel-syscall-fs-file-file_ops.c-248"></a>
 
 ### `dup_handler`
 
@@ -9150,13 +9693,11 @@ static int dup_to_fd(task_t *current, int oldfd, int newfd, int flags)
 void dup_handler(uint64_t regs[6], task_t *current)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-校验源 fd 后从 3 起找空位调用 dup_to_fd，找不到返回 EMFILE。
+**位置**：`kernel/syscall/fs/file/file_ops.c:248`
 
-**位置**：`kernel/syscall/fs/file_ops.c:248`
-
-<a id="fn-kernel-syscall-fs-file_ops.c-272"></a>
+<a id="fn-kernel-syscall-fs-file-file_ops.c-272"></a>
 
 ### `dup3_handler`
 
@@ -9164,9 +9705,7 @@ void dup_handler(uint64_t regs[6], task_t *current)
 void dup3_handler(uint64_t regs[6], task_t *current)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-仅允许 O_CLOEXEC 标志且拒绝新旧 fd 相同，然后调用 dup_to_fd 并写回结果。
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
 <details>
 <summary>函数内备注（1 条）</summary>
@@ -9177,9 +9716,9 @@ void dup3_handler(uint64_t regs[6], task_t *current)
 
 </details>
 
-**位置**：`kernel/syscall/fs/file_ops.c:272`
+**位置**：`kernel/syscall/fs/file/file_ops.c:272`
 
-<a id="fn-kernel-syscall-fs-file_ops.c-292"></a>
+<a id="fn-kernel-syscall-fs-file-file_ops.c-292"></a>
 
 ### `fcntl_handler`
 
@@ -9187,9 +9726,7 @@ void dup3_handler(uint64_t regs[6], task_t *current)
 void fcntl_handler(uint64_t regs[6], task_t *current)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-按 cmd 处理 GET/SETFD、GET/SETFL 与 F_DUPFD(_CLOEXEC)，未支持命令返回 0。
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
 <details>
 <summary>函数内备注（4 条）</summary>
@@ -9212,9 +9749,9 @@ void fcntl_handler(uint64_t regs[6], task_t *current)
 
 </details>
 
-**位置**：`kernel/syscall/fs/file_ops.c:292`
+**位置**：`kernel/syscall/fs/file/file_ops.c:292`
 
-<a id="fn-kernel-syscall-fs-file_ops.c-428"></a>
+<a id="fn-kernel-syscall-fs-file-file_ops.c-428"></a>
 
 ### `pipe2_handler`
 
@@ -9222,9 +9759,7 @@ void fcntl_handler(uint64_t regs[6], task_t *current)
 void pipe2_handler(uint64_t regs[6], task_t *current)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-校验标志后分配管道，把非阻塞位落到 fd 对象、记录 CLOEXEC，再把 fd 号拷回用户，失败时清理。
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
 <details>
 <summary>函数内备注（3 条）</summary>
@@ -9251,17 +9786,17 @@ void pipe2_handler(uint64_t regs[6], task_t *current)
 
 </details>
 
-**位置**：`kernel/syscall/fs/file_ops.c:428`
+**位置**：`kernel/syscall/fs/file/file_ops.c:428`
 
-<a id="mod-kernel-syscall-fs-file_stat.c"></a>
+<a id="mod-kernel-syscall-fs-file-file_stat.c"></a>
 
-## kernel/syscall/fs/file_stat.c — fstat / newfstatat / readlinkat / faccessat / getdents64
+## kernel/syscall/fs/file/file_stat.c — fstat / newfstatat / readlinkat / faccessat / getdents64
 
-`kernel/syscall/fs/file_stat.c` · 8 个函数 · 8 个有说明 · 293 行
+`kernel/syscall/fs/file/file_stat.c` · 8 个函数 · 1 个有说明 · 293 行
 
 由 kernel/syscall/syscall.c 拆出。
 
-<a id="fn-kernel-syscall-fs-file_stat.c-24"></a>
+<a id="fn-kernel-syscall-fs-file-file_stat.c-24"></a>
 
 ### `trace_heavy_task`
 
@@ -9269,13 +9804,11 @@ void pipe2_handler(uint64_t regs[6], task_t *current)
 static bool trace_heavy_task(task_t *current)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-判断是否为用户进程且 heap_end 超过阈值，用于决定是否输出详尽日志。
+**位置**：`kernel/syscall/fs/file/file_stat.c:24`
 
-**位置**：`kernel/syscall/fs/file_stat.c:24`
-
-<a id="fn-kernel-syscall-fs-file_stat.c-33"></a>
+<a id="fn-kernel-syscall-fs-file-file_stat.c-33"></a>
 
 ### `stat_copy_out`
 
@@ -9287,9 +9820,9 @@ static void stat_copy_out(const struct kernel_stat *kst, struct kernel_stat *ust
 vfs_stat_file/ext4_stat_file 直接写：用户传个未映射地址就是内核态 #PF，
 异常处理会停机（和 waitid/ioctl 那几处是同一类问题）。
 
-**位置**：`kernel/syscall/fs/file_stat.c:33`
+**位置**：`kernel/syscall/fs/file/file_stat.c:33`
 
-<a id="fn-kernel-syscall-fs-file_stat.c-41"></a>
+<a id="fn-kernel-syscall-fs-file-file_stat.c-41"></a>
 
 ### `fstat_handler`
 
@@ -9297,9 +9830,7 @@ vfs_stat_file/ext4_stat_file 直接写：用户传个未映射地址就是内核
 void fstat_handler(uint64_t regs[6], task_t *current)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-标准 fd 填字符设备 stat；其他 fd 调用 vfs_stat_file 后拷出，无对象返回 EBADF。
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
 <details>
 <summary>函数内备注（2 条）</summary>
@@ -9315,9 +9846,9 @@ void fstat_handler(uint64_t regs[6], task_t *current)
 
 </details>
 
-**位置**：`kernel/syscall/fs/file_stat.c:41`
+**位置**：`kernel/syscall/fs/file/file_stat.c:41`
 
-<a id="fn-kernel-syscall-fs-file_stat.c-79"></a>
+<a id="fn-kernel-syscall-fs-file-file_stat.c-79"></a>
 
 ### `newfstatat_handler`
 
@@ -9325,9 +9856,7 @@ void fstat_handler(uint64_t regs[6], task_t *current)
 void newfstatat_handler(uint64_t regs[6], task_t *current)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-空路径按 dirfd 取 stat，否则解析路径并按标志跟随符号链接，stat 失败时再特判 ptmx 与 pts。
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
 <details>
 <summary>函数内备注（2 条）</summary>
@@ -9343,9 +9872,9 @@ void newfstatat_handler(uint64_t regs[6], task_t *current)
 
 </details>
 
-**位置**：`kernel/syscall/fs/file_stat.c:79`
+**位置**：`kernel/syscall/fs/file/file_stat.c:79`
 
-<a id="fn-kernel-syscall-fs-file_stat.c-159"></a>
+<a id="fn-kernel-syscall-fs-file-file_stat.c-159"></a>
 
 ### `proc_self_fd_readlink`
 
@@ -9353,13 +9882,11 @@ void newfstatat_handler(uint64_t regs[6], task_t *current)
 static int proc_self_fd_readlink(task_t *current, int fdnum, char *buf, size_t bufsz)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-由 fd 号取对象并调用 vfs_proc_fd_target 生成链接目标内容。
+**位置**：`kernel/syscall/fs/file/file_stat.c:159`
 
-**位置**：`kernel/syscall/fs/file_stat.c:159`
-
-<a id="fn-kernel-syscall-fs-file_stat.c-168"></a>
+<a id="fn-kernel-syscall-fs-file-file_stat.c-168"></a>
 
 ### `readlinkat_handler`
 
@@ -9367,9 +9894,7 @@ static int proc_self_fd_readlink(task_t *current, int fdnum, char *buf, size_t b
 void readlinkat_handler(uint64_t regs[6], task_t *current)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-解析路径并特判 /proc/self/fd/N，把链接目标读入内核缓冲后一次性拷回用户。
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
 <details>
 <summary>函数内备注（5 条）</summary>
@@ -9404,9 +9929,9 @@ void readlinkat_handler(uint64_t regs[6], task_t *current)
 
 </details>
 
-**位置**：`kernel/syscall/fs/file_stat.c:168`
+**位置**：`kernel/syscall/fs/file/file_stat.c:168`
 
-<a id="fn-kernel-syscall-fs-file_stat.c-241"></a>
+<a id="fn-kernel-syscall-fs-file-file_stat.c-241"></a>
 
 ### `faccessat_handler`
 
@@ -9414,9 +9939,7 @@ void readlinkat_handler(uint64_t regs[6], task_t *current)
 void faccessat_handler(uint64_t regs[6], task_t *current)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-解析并跟随路径后仅用 vfs_stat_path 判断存在，成功返回 0，否则返回 ENOENT。
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
 <details>
 <summary>函数内备注（3 条）</summary>
@@ -9435,9 +9958,9 @@ void faccessat_handler(uint64_t regs[6], task_t *current)
 
 </details>
 
-**位置**：`kernel/syscall/fs/file_stat.c:241`
+**位置**：`kernel/syscall/fs/file/file_stat.c:241`
 
-<a id="fn-kernel-syscall-fs-file_stat.c-271"></a>
+<a id="fn-kernel-syscall-fs-file-file_stat.c-271"></a>
 
 ### `getdents64_handler`
 
@@ -9445,11 +9968,9 @@ void faccessat_handler(uint64_t regs[6], task_t *current)
 void getdents64_handler(uint64_t regs[6], task_t *current)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-校验用户缓冲与 fd，有 vfs 文件则调用 vfs_getdents 读取目录项，否则返回 ENOTDIR。
-
-**位置**：`kernel/syscall/fs/file_stat.c:271`
+**位置**：`kernel/syscall/fs/file/file_stat.c:271`
 
 <a id="mod-kernel-syscall-fs-ioctl.c"></a>
 
@@ -9544,15 +10065,15 @@ void ioctl_handler(uint64_t regs[6], task_t *current)
 
 **位置**：`kernel/syscall/fs/ioctl.c:26`
 
-<a id="mod-kernel-syscall-fs-path.c"></a>
+<a id="mod-kernel-syscall-fs-path-path.c"></a>
 
-## kernel/syscall/fs/path.c — 路径规范化, 用户/内核字符串拷贝, stat 填充
+## kernel/syscall/fs/path/path.c — 路径规范化, 用户/内核字符串拷贝, stat 填充
 
-`kernel/syscall/fs/path.c` · 11 个函数 · 11 个有说明 · 360 行
+`kernel/syscall/fs/path/path.c` · 11 个函数 · 2 个有说明 · 360 行
 
 由 kernel/syscall/syscall.c 拆出。
 
-<a id="fn-kernel-syscall-fs-path.c-24"></a>
+<a id="fn-kernel-syscall-fs-path-path.c-24"></a>
 
 ### `user_range_ok`
 
@@ -9560,13 +10081,11 @@ void ioctl_handler(uint64_t regs[6], task_t *current)
 static bool user_range_ok(const void *ptr, uint64_t len)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-检查指针非空、长度加法不回绕且末字节低于用户地址上限。
+**位置**：`kernel/syscall/fs/path/path.c:24`
 
-**位置**：`kernel/syscall/fs/path.c:24`
-
-<a id="fn-kernel-syscall-fs-path.c-59"></a>
+<a id="fn-kernel-syscall-fs-path-path.c-59"></a>
 
 ### `user_range_accessible`
 
@@ -9601,9 +10120,9 @@ fixup —— 后者要在三个架构各写一份带 fixup 表的汇编, 改动�
 
 </details>
 
-**位置**：`kernel/syscall/fs/path.c:59`
+**位置**：`kernel/syscall/fs/path/path.c:59`
 
-<a id="fn-kernel-syscall-fs-path.c-84"></a>
+<a id="fn-kernel-syscall-fs-path-path.c-84"></a>
 
 ### `resolve_path`
 
@@ -9611,9 +10130,7 @@ fixup —— 后者要在三个架构各写一份带 fixup 表的汇编, 改动�
 void resolve_path(const char *cwd, const char *path, char *out, int outlen)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-拼接 cwd 与路径后按段规范化，跳过单点并回退双点，再组装成绝对路径。
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
 <details>
 <summary>函数内备注（1 条）</summary>
@@ -9624,9 +10141,9 @@ void resolve_path(const char *cwd, const char *path, char *out, int outlen)
 
 </details>
 
-**位置**：`kernel/syscall/fs/path.c:84`
+**位置**：`kernel/syscall/fs/path/path.c:84`
 
-<a id="fn-kernel-syscall-fs-path.c-163"></a>
+<a id="fn-kernel-syscall-fs-path-path.c-163"></a>
 
 ### `resolve_path_at`
 
@@ -9634,9 +10151,7 @@ void resolve_path(const char *cwd, const char *path, char *out, int outlen)
 int resolve_path_at(task_t *task, int dirfd, const char *pathname, char *abspath, int abspath_len)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-绝对路径或 AT_FDCWD 用 cwd 解析，否则取 dirfd 对象并校验是目录后解析相对路径。
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
 <details>
 <summary>函数内备注（1 条）</summary>
@@ -9647,9 +10162,9 @@ int resolve_path_at(task_t *task, int dirfd, const char *pathname, char *abspath
 
 </details>
 
-**位置**：`kernel/syscall/fs/path.c:163`
+**位置**：`kernel/syscall/fs/path/path.c:163`
 
-<a id="fn-kernel-syscall-fs-path.c-191"></a>
+<a id="fn-kernel-syscall-fs-path-path.c-191"></a>
 
 ### `path_is_pseudo`
 
@@ -9660,9 +10175,9 @@ static bool path_is_pseudo(const char *path)
 /dev、/proc、/sys 交给 pseudofs；不要在 open 时把 /proc/self/fd/N
 之类的“伪链接”解析成目标路径（那会改变现有语义）。
 
-**位置**：`kernel/syscall/fs/path.c:191`
+**位置**：`kernel/syscall/fs/path/path.c:191`
 
-<a id="fn-kernel-syscall-fs-path.c-202"></a>
+<a id="fn-kernel-syscall-fs-path-path.c-202"></a>
 
 ### `follow_symlinks`
 
@@ -9670,9 +10185,7 @@ static bool path_is_pseudo(const char *path)
 void follow_symlinks(char *out, size_t outsz)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-最多八次用 vfs_readlink 展开链接目标（绝对或相对父目录），伪文件系统停止，结果回写。
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
 <details>
 <summary>函数内备注（1 条）</summary>
@@ -9684,9 +10197,9 @@ void follow_symlinks(char *out, size_t outsz)
 
 </details>
 
-**位置**：`kernel/syscall/fs/path.c:202`
+**位置**：`kernel/syscall/fs/path/path.c:202`
 
-<a id="fn-kernel-syscall-fs-path.c-254"></a>
+<a id="fn-kernel-syscall-fs-path-path.c-254"></a>
 
 ### `copy_string_from_user`
 
@@ -9694,9 +10207,7 @@ void follow_symlinks(char *out, size_t outsz)
 int copy_string_from_user(const char *ustr, char *kbuf, int maxlen)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-逐字节拷贝并在跨页时检查映射，遇 NUL 提前返回长度，检查失败或超长返回 -1。
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
 <details>
 <summary>函数内备注（1 条）</summary>
@@ -9714,9 +10225,9 @@ int copy_string_from_user(const char *ustr, char *kbuf, int maxlen)
 
 </details>
 
-**位置**：`kernel/syscall/fs/path.c:254`
+**位置**：`kernel/syscall/fs/path/path.c:254`
 
-<a id="fn-kernel-syscall-fs-path.c-283"></a>
+<a id="fn-kernel-syscall-fs-path-path.c-283"></a>
 
 ### `copy_string_to_user`
 
@@ -9724,13 +10235,11 @@ int copy_string_from_user(const char *ustr, char *kbuf, int maxlen)
 int copy_string_to_user(const char *kstr, char *ubuf, int maxlen)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-校验用户范围后把内核字符串逐字节拷入并补 NUL，返回长度，失败返回 -1。
+**位置**：`kernel/syscall/fs/path/path.c:283`
 
-**位置**：`kernel/syscall/fs/path.c:283`
-
-<a id="fn-kernel-syscall-fs-path.c-296"></a>
+<a id="fn-kernel-syscall-fs-path-path.c-296"></a>
 
 ### `copy_from_user_bytes`
 
@@ -9738,13 +10247,11 @@ int copy_string_to_user(const char *kstr, char *ubuf, int maxlen)
 int copy_from_user_bytes(const void *usrc, void *kdst, uint64_t len)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-先用 user_range_accessible 校验用户范围，再 memcpy 到内核，失败返回 -1。
+**位置**：`kernel/syscall/fs/path/path.c:296`
 
-**位置**：`kernel/syscall/fs/path.c:296`
-
-<a id="fn-kernel-syscall-fs-path.c-304"></a>
+<a id="fn-kernel-syscall-fs-path-path.c-304"></a>
 
 ### `copy_to_user_bytes`
 
@@ -9752,13 +10259,11 @@ int copy_from_user_bytes(const void *usrc, void *kdst, uint64_t len)
 int copy_to_user_bytes(const void *ksrc, void *udst, uint64_t len)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-先用 user_range_accessible 校验用户范围，再 memcpy 到用户，失败返回 -1。
+**位置**：`kernel/syscall/fs/path/path.c:304`
 
-**位置**：`kernel/syscall/fs/path.c:304`
-
-<a id="fn-kernel-syscall-fs-path.c-312"></a>
+<a id="fn-kernel-syscall-fs-path-path.c-312"></a>
 
 ### `fill_stat_from_ext4`
 
@@ -9766,9 +10271,7 @@ int copy_to_user_bytes(const void *ksrc, void *udst, uint64_t len)
 int fill_stat_from_ext4(struct kernel_stat *st, const char *path)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-清零并填基础字段，用 ext4 查模式与 inode，普通文件取文件大小，符号链接用 readlink 量目标长度。
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
 <details>
 <summary>函数内备注（3 条）</summary>
@@ -9797,252 +10300,13 @@ int fill_stat_from_ext4(struct kernel_stat *st, const char *path)
 
 </details>
 
-**位置**：`kernel/syscall/fs/path.c:312`
+**位置**：`kernel/syscall/fs/path/path.c:312`
 
-<a id="mod-kernel-syscall-fs-pipe.c"></a>
+<a id="mod-kernel-syscall-fs-process-process_fs.c"></a>
 
-## kernel/syscall/fs/pipe.c — kernel pipe implementation
+## kernel/syscall/fs/process/process_fs.c — 进程级 fd 表 / cwd（files_struct、fs_struct）
 
-`kernel/syscall/fs/pipe.c` · 10 个函数 · 10 个有说明 · 330 行
-
-Ring buffer pipe with blocking read/write via task_block/task_unblock.
-Each pipe_alloc() creates one pipe_t and two fd_obj_t entries
-(read end + write end).
-
-<a id="fn-kernel-syscall-fs-pipe.c-23"></a>
-
-### `pipe_slot_alloc`
-
-```c
-static int pipe_slot_alloc(void)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-线性扫描管道池，返回读写引用计数均为 0 的槽位，无空闲返回 -1。
-
-**位置**：`kernel/syscall/fs/pipe.c:23`
-
-<a id="fn-kernel-syscall-fs-pipe.c-32"></a>
-
-### `pipe_get_by_idx`
-
-```c
-static pipe_t *pipe_get_by_idx(int pi)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-校验下标且读写引用计数非零，返回管道指针，否则返回 NULL。
-
-**位置**：`kernel/syscall/fs/pipe.c:32`
-
-<a id="fn-kernel-syscall-fs-pipe.c-41"></a>
-
-### `pipe_alloc`
-
-```c
-int pipe_alloc(task_t *task, int fds_out[2])
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-分配管道槽与两个 fd 池槽，创建读写管道文件并挂到任务 fd 表，任一步失败都回滚清理。
-
-**位置**：`kernel/syscall/fs/pipe.c:41`
-
-<a id="fn-kernel-syscall-fs-pipe.c-125"></a>
-
-### `pipe_interrupts`
-
-```c
-static bool pipe_interrupts(void)
-```
-
-pipe_interrupts - 这个任务现在会被信号打断吗？
-
-判据必须比 "pending_sigs & ~blocked_sigs" 更严：那个式子会把默认动作
-就是忽略的信号也算进来(SIGCHLD 最典型)。shell 读管道时子进程退出会
-挂起 SIGCHLD, 用它判就会让 read 平白返 EINTR —— Linux 不会
-(prepare_signal() 对忽略类信号不置 TIF_SIGPENDING)。这里照
-deliver_pending_signals() 的动作表来判, 保证"会被打断"和"内核真会投递"
-是同一套判据。
-
-为什么管道需要它：管道阻塞是真正的 task_block()(不是忙等), 不检查信号
-就会在 SIGALRM 到达后重新睡下去 —— alarm() 打断阻塞 read 的语义就不成立。
-LTP 每个测例都靠这个看门狗从卡死里脱身。
-
-<details>
-<summary>函数内备注（6 条）</summary>
-
-**第 133 行**
-
-> 取最低置位的位序号。不要用 __builtin_ctzll：
-> freestanding 构建下它会生成对 libgcc 的 __ctzdi2 调用, 而
-> rv64gc 没有 ctz 指令, 链接里也没有 libgcc(-nodefaultlibs)
-> → riscv64 `undefined reference to __ctzdi2`(x86_64/aarch64 能
-> 内联成 bsf/rbit, 所以只有 riscv64 暴露)。
-> 与 vplic.c / hext_run.c 的写法保持一致。
-
-**第 141 行（行尾）**
-
-> 取最低置位
-
-**第 147 行（行尾）**
-
-> 清掉最低置位
-
-**第 155 行（行尾）**
-
-> 显式忽略
-
-**第 157 行（行尾）**
-
-> 装了 handler → 一定会打断
-
-**第 159 行**
-
-> SIG_DFL：默认动作是忽略的那几个不算, 其余(多数是终止)算
-
-</details>
-
-**位置**：`kernel/syscall/fs/pipe.c:125`
-
-<a id="fn-kernel-syscall-fs-pipe.c-176"></a>
-
-### `pipe_read_endpoint`
-
-```c
-int pipe_read_endpoint(int pipe_idx, void *buf, size_t count, bool nonblock)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-循环从环形缓冲取数，无数据时按写端已关、非阻塞、有信号分别返回，否则阻塞等待，读后唤醒写者并通知 epoll。
-
-<details>
-<summary>函数内备注（5 条）</summary>
-
-**第 191 行**
-
-> 已有数据就先返回数据 —— 信号和数据的优先级上, Linux 也是数据优先
-
-**第 197 行**
-
-> O_NONBLOCK：没数据立刻返回 EAGAIN, 绝不睡。
-> 放在 EINTR 判断之前：非阻塞本来就不睡, 没有&quot;被信号打断&quot;可言；
-> pending 信号仍会在本次 syscall 返回边界被投递。
-
-**第 202 行（行尾）**
-
-> -EAGAIN
-
-**第 204 行**
-
-> 别带着 pending 的信号睡下去：睡下去只能等下个事件才醒,
-> 而信号本身不会唤醒它(除非 itimer 那条路显式 unblock)。
-
-**第 208 行（行尾）**
-
-> -EINTR
-
-</details>
-
-**位置**：`kernel/syscall/fs/pipe.c:176`
-
-<a id="fn-kernel-syscall-fs-pipe.c-226"></a>
-
-### `pipe_write_endpoint`
-
-```c
-int pipe_write_endpoint(int pipe_idx, const void *buf, size_t count, bool nonblock)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-向环形缓冲写入，读端已关发 SIGPIPE 返回 EPIPE，满时支持部分写、非阻塞 EAGAIN 或阻塞等待。
-
-<details>
-<summary>函数内备注（3 条）</summary>
-
-**第 234 行（行尾）**
-
-> -EPIPE
-
-**第 261 行**
-
-> O_NONBLOCK：缓冲区满时立刻返回。已经写进去一部分就先返回
-> 那部分 —— Linux 对管道也是&quot;部分写&quot;语义, 不是丢弃。
-
-**第 265 行（行尾）**
-
-> -EAGAIN
-
-</details>
-
-**位置**：`kernel/syscall/fs/pipe.c:226`
-
-<a id="fn-kernel-syscall-fs-pipe.c-276"></a>
-
-### `pipe_ref_endpoint`
-
-```c
-void pipe_ref_endpoint(int pipe_idx, bool is_write_end)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-校验管道后按读端或写端增加对应引用计数。
-
-**位置**：`kernel/syscall/fs/pipe.c:276`
-
-<a id="fn-kernel-syscall-fs-pipe.c-287"></a>
-
-### `pipe_close_endpoint`
-
-```c
-void pipe_close_endpoint(int pipe_idx, bool is_write_end)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-减少对应端引用计数，归零时唤醒对端阻塞任务并通知 epoll HUP 或 ERR。
-
-**位置**：`kernel/syscall/fs/pipe.c:287`
-
-<a id="fn-kernel-syscall-fs-pipe.c-316"></a>
-
-### `pipe_poll_readable_endpoint`
-
-```c
-bool pipe_poll_readable_endpoint(int pipe_idx)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-返回管道有数据或写端已关闭。
-
-**位置**：`kernel/syscall/fs/pipe.c:316`
-
-<a id="fn-kernel-syscall-fs-pipe.c-324"></a>
-
-### `pipe_poll_writable_endpoint`
-
-```c
-bool pipe_poll_writable_endpoint(int pipe_idx)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-返回管道缓冲未满或读端已关闭。
-
-**位置**：`kernel/syscall/fs/pipe.c:324`
-
-<a id="mod-kernel-syscall-fs-process_fs.c"></a>
-
-## kernel/syscall/fs/process_fs.c — 进程级 fd 表 / cwd（files_struct、fs_struct）
-
-`kernel/syscall/fs/process_fs.c` · 4 个函数 · 4 个有说明 · 94 行
+`kernel/syscall/fs/process/process_fs.c` · 4 个函数 · 0 个有说明 · 94 行
 
 从 task_t 拆出来的两块进程文件系统状态，原因见
 docs/task_t_refactor.md。静态池 + 引用计数：
@@ -10054,7 +10318,7 @@ docs/task_t_refactor.md。静态池 + 引用计数：
 池大小 = TASK_MAX + AVATAR_MAX_CPUS：除了 g_task_pool 的 64 个槽，
 每个 CPU 的 idle 任务也需要一份。
 
-<a id="fn-kernel-syscall-fs-process_fs.c-33"></a>
+<a id="fn-kernel-syscall-fs-process-process_fs.c-33"></a>
 
 ### `files_alloc`
 
@@ -10062,13 +10326,11 @@ docs/task_t_refactor.md。静态池 + 引用计数：
 files_struct_t *files_alloc(void)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-持锁找引用为零的 files 槽，清空 fd 表与 CLOEXEC 位图并置引用为 1 后返回。
+**位置**：`kernel/syscall/fs/process/process_fs.c:33`
 
-**位置**：`kernel/syscall/fs/process_fs.c:33`
-
-<a id="fn-kernel-syscall-fs-process_fs.c-54"></a>
+<a id="fn-kernel-syscall-fs-process-process_fs.c-54"></a>
 
 ### `files_put`
 
@@ -10076,13 +10338,11 @@ files_struct_t *files_alloc(void)
 void files_put(files_struct_t *files)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-空指针直接返回，否则持锁把 files 引用计数减一。
+**位置**：`kernel/syscall/fs/process/process_fs.c:54`
 
-**位置**：`kernel/syscall/fs/process_fs.c:54`
-
-<a id="fn-kernel-syscall-fs-process_fs.c-65"></a>
+<a id="fn-kernel-syscall-fs-process-process_fs.c-65"></a>
 
 ### `fs_alloc`
 
@@ -10090,13 +10350,11 @@ void files_put(files_struct_t *files)
 fs_struct_t *fs_alloc(void)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-持锁找空闲 fs 槽，把 cwd 初始化为根目录并置引用为 1 后返回。
+**位置**：`kernel/syscall/fs/process/process_fs.c:65`
 
-**位置**：`kernel/syscall/fs/process_fs.c:65`
-
-<a id="fn-kernel-syscall-fs-process_fs.c-85"></a>
+<a id="fn-kernel-syscall-fs-process-process_fs.c-85"></a>
 
 ### `fs_put`
 
@@ -10104,447 +10362,9 @@ fs_struct_t *fs_alloc(void)
 void fs_put(fs_struct_t *fs)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-空指针直接返回，否则持锁把 fs 引用计数减一。
-
-**位置**：`kernel/syscall/fs/process_fs.c:85`
-
-<a id="mod-kernel-syscall-fs-pty.c"></a>
-
-## kernel/syscall/fs/pty.c — pseudo-terminal (PTY) implementation
-
-`kernel/syscall/fs/pty.c` · 18 个函数 · 18 个有说明 · 503 行
-
-Provides /dev/ptmx (master) and /dev/pts/N (slave) pairs.
-Dropbear SSH opens ptmx, forks, child opens pts/N, exec shell.
-
-<a id="fn-kernel-syscall-fs-pty.c-24"></a>
-
-### `pty_notify_epoll`
-
-```c
-static void pty_notify_epoll(int pty_idx, bool notify_master, uint32_t events)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-遍历 fd 池，对匹配该 pty 主端或从端的对象通知等待者事件。
-
-**位置**：`kernel/syscall/fs/pty.c:24`
-
-<a id="fn-kernel-syscall-fs-pty.c-33"></a>
-
-### `ring_read`
-
-```c
-static uint32_t ring_read(pty_ring_t *r, void *buf, size_t count)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-从环形缓冲逐字节读出至多 count 字节并推进读指针，返回读取数。
-
-**位置**：`kernel/syscall/fs/pty.c:33`
-
-<a id="fn-kernel-syscall-fs-pty.c-45"></a>
-
-### `ring_write`
-
-```c
-static uint32_t ring_write(pty_ring_t *r, const void *buf, size_t count)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-向环形缓冲逐字节写入直到写满或写完，返回写入数。
-
-**位置**：`kernel/syscall/fs/pty.c:45`
-
-<a id="fn-kernel-syscall-fs-pty.c-57"></a>
-
-### `pty_match_pts_path`
-
-```c
-int pty_match_pts_path(const char *path)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-匹配 /dev/pts/N 形式且编号合法、已启用时返回索引，否则返回 -1。
-
-<details>
-<summary>函数内备注（1 条）</summary>
-
-**第 61 行**
-
-> /dev/pts/0 .. /dev/pts/7
-
-</details>
-
-**位置**：`kernel/syscall/fs/pty.c:57`
-
-<a id="fn-kernel-syscall-fs-pty.c-76"></a>
-
-### `pty_alloc_master`
-
-```c
-int pty_alloc_master(task_t *task)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-找空闲 pty 槽并初始化窗口与 termios，创建 /dev/ptmx 文件、挂 fd，任一步失败回滚。
-
-<details>
-<summary>函数内备注（5 条）</summary>
-
-**第 86 行（行尾）**
-
-> EMFILE
-
-**第 100 行（行尾）**
-
-> ECHO|ECHOE|ECHOK|ECHOCTL|ECHOKE|ICANON|ISIG|IEXTEN
-
-**第 101 行（行尾）**
-
-> ICRNL|IXON
-
-**第 102 行（行尾）**
-
-> OPOST|ONLCR
-
-**第 103 行（行尾）**
-
-> CS8|CREAD|HUPCL|B38400
-
-</details>
-
-**位置**：`kernel/syscall/fs/pty.c:76`
-
-<a id="fn-kernel-syscall-fs-pty.c-124"></a>
-
-### `pty_open_slave`
-
-```c
-int pty_open_slave(task_t *task, int pty_idx)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-校验主端已开与锁状态，分配 fd 并创建从端文件，成功后标记从端已开并增加引用。
-
-<details>
-<summary>函数内备注（2 条）</summary>
-
-**第 127 行（行尾）**
-
-> ENOENT
-
-**第 132 行（行尾）**
-
-> EACCES
-
-</details>
-
-**位置**：`kernel/syscall/fs/pty.c:124`
-
-<a id="fn-kernel-syscall-fs-pty.c-175"></a>
-
-### `pty_master_read`
-
-```c
-int pty_master_read(int pty_idx, void *buf, size_t count, bool nonblock)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-从 s2m 环读取，无数据时按从端未开、非阻塞、阻塞处理，读后唤醒从端并通知 epoll。
-
-**位置**：`kernel/syscall/fs/pty.c:175`
-
-<a id="fn-kernel-syscall-fs-pty.c-201"></a>
-
-### `pty_master_write`
-
-```c
-int pty_master_write(int pty_idx, const void *buf, size_t count, bool nonblock)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-把数据写入 m2s 环并按 ICRNL 转换回车，唤醒从端；满时按从端关闭、非阻塞或阻塞处理。
-
-**位置**：`kernel/syscall/fs/pty.c:201`
-
-<a id="fn-kernel-syscall-fs-pty.c-242"></a>
-
-### `pty_slave_read`
-
-```c
-int pty_slave_read(int pty_idx, void *buf, size_t count, bool nonblock)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-从 m2s 环读取，无数据时按主端未开、非阻塞、阻塞处理，读后唤醒主端并通知 epoll。
-
-**位置**：`kernel/syscall/fs/pty.c:242`
-
-<a id="fn-kernel-syscall-fs-pty.c-268"></a>
-
-### `pty_slave_write`
-
-```c
-int pty_slave_write(int pty_idx, const void *buf, size_t count, bool nonblock)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-向 s2m 环写入并在 ONLCR 生效时把换行扩成回车换行，唤醒主端；满时按主端关闭、非阻塞或阻塞处理。
-
-**位置**：`kernel/syscall/fs/pty.c:268`
-
-<a id="fn-kernel-syscall-fs-pty.c-319"></a>
-
-### `pty_close_master`
-
-```c
-void pty_close_master(int pty_idx)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-减少主端引用，归零时标记关闭、唤醒从端、通知 HUP，并在从端已关时释放槽位。
-
-**位置**：`kernel/syscall/fs/pty.c:319`
-
-<a id="fn-kernel-syscall-fs-pty.c-339"></a>
-
-### `pty_ref_master`
-
-```c
-void pty_ref_master(int pty_idx)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-校验索引后增加主端引用计数。
-
-**位置**：`kernel/syscall/fs/pty.c:339`
-
-<a id="fn-kernel-syscall-fs-pty.c-346"></a>
-
-### `pty_ref_slave`
-
-```c
-void pty_ref_slave(int pty_idx)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-校验索引后增加从端引用计数。
-
-**位置**：`kernel/syscall/fs/pty.c:346`
-
-<a id="fn-kernel-syscall-fs-pty.c-353"></a>
-
-### `pty_close_slave`
-
-```c
-void pty_close_slave(int pty_idx)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-减少从端引用，归零时标记关闭、唤醒主端、通知 HUP，并在主端已关时释放槽位。
-
-**位置**：`kernel/syscall/fs/pty.c:353`
-
-<a id="fn-kernel-syscall-fs-pty.c-379"></a>
-
-### `pty_ioctl`
-
-```c
-int pty_ioctl(int pty_idx, bool is_master, uint32_t req, void *argp)
-```
-
-注意：下面所有 argp 都是【用户指针】, 必须经 copy_to/from_user_bytes
-访问。以前是裸解引用(`*(uint32_t *)argp = ...`), 用户传非法地址
-(例如 ioctl(fd, TIOCGPTN, (void*)-1))就会让内核态写坏地址 → #PF →
-异常处理死循环 → 整机挂死。copy_*_bytes 内部用 user_range_ok() 校验。
-
-<details>
-<summary>函数内备注（1 条）</summary>
-
-**第 481 行（行尾）**
-
-> ENOTTY
-
-</details>
-
-**位置**：`kernel/syscall/fs/pty.c:379`
-
-<a id="fn-kernel-syscall-fs-pty.c-485"></a>
-
-### `pty_poll_readable_master`
-
-```c
-bool pty_poll_readable_master(int pty_idx)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-返回主端可读，即 s2m 有数据或从端已关闭。
-
-**位置**：`kernel/syscall/fs/pty.c:485`
-
-<a id="fn-kernel-syscall-fs-pty.c-492"></a>
-
-### `pty_poll_readable_slave`
-
-```c
-bool pty_poll_readable_slave(int pty_idx)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-返回从端可读，即 m2s 有数据或主端已关闭。
-
-**位置**：`kernel/syscall/fs/pty.c:492`
-
-<a id="fn-kernel-syscall-fs-pty.c-499"></a>
-
-### `pty_poll_writable`
-
-```c
-bool pty_poll_writable(int pty_idx)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-忽略索引参数，直接返回 true。
-
-**位置**：`kernel/syscall/fs/pty.c:499`
-
-<a id="mod-kernel-syscall-fs-tty.c"></a>
-
-## kernel/syscall/fs/tty.c — 终端状态 + UART 输入环形缓冲区 + signal_check_uart
-
-`kernel/syscall/fs/tty.c` · 7 个函数 · 7 个有说明 · 134 行
-
-由 kernel/syscall/syscall.c 拆出。
-
-<a id="fn-kernel-syscall-fs-tty.c-24"></a>
-
-### `uart_ringbuf_push`
-
-```c
-void uart_ringbuf_push(char c)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-持锁把字符写入 UART 环形缓冲，缓冲将满时丢弃该字符。
-
-**位置**：`kernel/syscall/fs/tty.c:24`
-
-<a id="fn-kernel-syscall-fs-tty.c-36"></a>
-
-### `uart_ringbuf_pop`
-
-```c
-int uart_ringbuf_pop(char *out)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-持锁取一个字符并推进尾指针，缓冲空返回 0，成功返回 1。
-
-**位置**：`kernel/syscall/fs/tty.c:36`
-
-<a id="fn-kernel-syscall-fs-tty.c-50"></a>
-
-### `uart_ringbuf_empty`
-
-```c
-int uart_ringbuf_empty(void)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-持锁比较头尾指针，返回环形缓冲是否为空。
-
-**位置**：`kernel/syscall/fs/tty.c:50`
-
-<a id="fn-kernel-syscall-fs-tty.c-80"></a>
-
-### `signal_check_uart`
-
-```c
-void signal_check_uart(void)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-持锁把硬件 FIFO 抽到本地缓冲，逐个入队；收到 Ctrl-C 且启用 ISIG 时向前台进程组发 SIGINT。
-
-<details>
-<summary>函数内备注（1 条）</summary>
-
-**第 85 行**
-
-> 在锁内一次性把硬件 FIFO 抽干到本地缓冲, 缩短临界区并避免与
-> 环形缓冲锁/信号投递产生锁嵌套。剩余字节留待下次调用处理。
-
-> 优先用非阻塞接口：ready() 返回 true 后，另一个消费者仍可能抢走
-> 最后一个字节，此时阻塞版 getc() 会在关中断持锁的状态下一直等。
-> DW 的 getc_nb 在未初始化时返回 false，保留 ready()+getc() 回退。
-
-</details>
-
-**位置**：`kernel/syscall/fs/tty.c:80`
-
-<a id="fn-kernel-syscall-fs-tty.c-122"></a>
-
-### `termios_is_raw`
-
-```c
-int termios_is_raw(void)
-```
-
-tty 辅助接口：供 pseudofs/tty_read 等调用
-
-**位置**：`kernel/syscall/fs/tty.c:122`
-
-<a id="fn-kernel-syscall-fs-tty.c-126"></a>
-
-### `termios_do_icrnl`
-
-```c
-int termios_do_icrnl(void)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-返回 termios iflag 中 ICRNL 位是否置位。
-
-**位置**：`kernel/syscall/fs/tty.c:126`
-
-<a id="fn-kernel-syscall-fs-tty.c-130"></a>
-
-### `tty_getchar_nb`
-
-```c
-int tty_getchar_nb(char *c)
-```
-
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-先抽取 UART 输入，再从环形缓冲尝试取一个字符并返回是否取到。
-
-**位置**：`kernel/syscall/fs/tty.c:130`
+**位置**：`kernel/syscall/fs/process/process_fs.c:85`
 
 <a id="mod-kernel-syscall-io-epoll.c"></a>
 
@@ -13249,11 +13069,11 @@ static inline uint64_t kernel_get_ns(void)
 
 **位置**：`kernel/syscall/syscall_internal.h:332`
 
-<a id="mod-kernel-syscall-trace.c"></a>
+<a id="mod-kernel-syscall-syscall_trace.c"></a>
 
-## kernel/syscall/trace.c — 系统调用环形缓冲的实现
+## kernel/syscall/syscall_trace.c — 系统调用环形缓冲的实现
 
-`kernel/syscall/trace.c` · 10 个函数 · 10 个有说明 · 489 行
+`kernel/syscall/syscall_trace.c` · 10 个函数 · 1 个有说明 · 489 行
 
 设计要点见 trace.h。这里只补充三个实现上的选择：
 
@@ -13267,7 +13087,7 @@ static inline uint64_t kernel_get_ns(void)
 3. 抓路径走 copy_string_from_user()：来自 regs[] 的用户指针禁止裸解引用
 (用户传个非法地址就会让内核态读到坏地址 → #PF → 整机挂死, LTP 实测过)。
 
-<a id="fn-kernel-syscall-trace.c-36"></a>
+<a id="fn-kernel-syscall-syscall_trace.c-36"></a>
 
 ### `trace_snprintf`
 
@@ -13275,13 +13095,11 @@ static inline uint64_t kernel_get_ns(void)
 static int trace_snprintf(char *buf, int size, const char *fmt, ...)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-用 va_list 包装 my_vsnprintf 格式化字符串并返回其长度。
+**位置**：`kernel/syscall/syscall_trace.c:36`
 
-**位置**：`kernel/syscall/trace.c:36`
-
-<a id="fn-kernel-syscall-trace.c-56"></a>
+<a id="fn-kernel-syscall-syscall_trace.c-56"></a>
 
 ### `trace_cpu`
 
@@ -13289,13 +13107,11 @@ static int trace_snprintf(char *buf, int size, const char *fmt, ...)
 static inline uint32_t trace_cpu(void)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-取 klog_cpu_id，超过最大 CPU 数时归零返回。
+**位置**：`kernel/syscall/syscall_trace.c:56`
 
-**位置**：`kernel/syscall/trace.c:56`
-
-<a id="fn-kernel-syscall-trace.c-62"></a>
+<a id="fn-kernel-syscall-syscall_trace.c-62"></a>
 
 ### `syscall_trace_count`
 
@@ -13303,13 +13119,11 @@ static inline uint32_t trace_cpu(void)
 uint32_t syscall_trace_count(void)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-累加各 CPU 环形缓冲的条数（单个上限为缓冲深度）并返回总数。
+**位置**：`kernel/syscall/syscall_trace.c:62`
 
-**位置**：`kernel/syscall/trace.c:62`
-
-<a id="fn-kernel-syscall-trace.c-75"></a>
+<a id="fn-kernel-syscall-syscall_trace.c-75"></a>
 
 ### `syscall_trace_name`
 
@@ -13317,9 +13131,7 @@ uint32_t syscall_trace_count(void)
 const char *syscall_trace_name(uint32_t nr)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-用 switch 把 syscall 号映射成名字，未知号返回问号字符串。
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
 <details>
 <summary>函数内备注（5 条）</summary>
@@ -13346,9 +13158,9 @@ const char *syscall_trace_name(uint32_t nr)
 
 </details>
 
-**位置**：`kernel/syscall/trace.c:75`
+**位置**：`kernel/syscall/syscall_trace.c:75`
 
-<a id="fn-kernel-syscall-trace.c-270"></a>
+<a id="fn-kernel-syscall-syscall_trace.c-270"></a>
 
 ### `path_arg_of`
 
@@ -13372,9 +13184,9 @@ static const char *path_arg_of(uint32_t nr, const uint64_t *a)
 
 </details>
 
-**位置**：`kernel/syscall/trace.c:270`
+**位置**：`kernel/syscall/syscall_trace.c:270`
 
-<a id="fn-kernel-syscall-trace.c-297"></a>
+<a id="fn-kernel-syscall-syscall_trace.c-297"></a>
 
 ### `syscall_trace_enter`
 
@@ -13382,13 +13194,11 @@ static const char *path_arg_of(uint32_t nr, const uint64_t *a)
 void syscall_trace_enter(uint16_t pid, uint32_t nr, uint64_t a0, uint64_t a1, uint64_t a2)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-在当前 CPU 的环形槽记录序号、参数、时间与 pid，尝试拷入路径，推进写指针并置待完成标志。
+**位置**：`kernel/syscall/syscall_trace.c:297`
 
-**位置**：`kernel/syscall/trace.c:297`
-
-<a id="fn-kernel-syscall-trace.c-328"></a>
+<a id="fn-kernel-syscall-syscall_trace.c-328"></a>
 
 ### `syscall_trace_exit`
 
@@ -13396,13 +13206,11 @@ void syscall_trace_enter(uint16_t pid, uint32_t nr, uint64_t a0, uint64_t a1, ui
 void syscall_trace_exit(int64_t ret)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-若存在待完成记录，回填返回值并置已返回标志，同时清除待完成状态。
+**位置**：`kernel/syscall/syscall_trace.c:328`
 
-**位置**：`kernel/syscall/trace.c:328`
-
-<a id="fn-kernel-syscall-trace.c-359"></a>
+<a id="fn-kernel-syscall-syscall_trace.c-359"></a>
 
 ### `render_one`
 
@@ -13410,13 +13218,11 @@ void syscall_trace_exit(int64_t ret)
 static int render_one(char *out, int len, const syscall_trace_rec_t *r)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-按是否带路径拼接 pid、时间、syscall 名与参数，再追加返回值或没有返回的提示文本。
+**位置**：`kernel/syscall/syscall_trace.c:359`
 
-**位置**：`kernel/syscall/trace.c:359`
-
-<a id="fn-kernel-syscall-trace.c-393"></a>
+<a id="fn-kernel-syscall-syscall_trace.c-393"></a>
 
 ### `syscall_trace_render`
 
@@ -13424,9 +13230,7 @@ static int render_one(char *out, int len, const syscall_trace_rec_t *r)
 int syscall_trace_render(uint16_t pid_filter, uint32_t max, char *out, int len)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-为各 CPU 建归并游标，按时间与序号挑选最旧记录渲染，支持 pid 过滤并受 max 限制。
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
 <details>
 <summary>函数内备注（4 条）</summary>
@@ -13449,9 +13253,9 @@ int syscall_trace_render(uint16_t pid_filter, uint32_t max, char *out, int len)
 
 </details>
 
-**位置**：`kernel/syscall/trace.c:393`
+**位置**：`kernel/syscall/syscall_trace.c:393`
 
-<a id="fn-kernel-syscall-trace.c-456"></a>
+<a id="fn-kernel-syscall-syscall_trace.c-456"></a>
 
 ### `syscall_trace_dump`
 
@@ -13459,9 +13263,7 @@ int syscall_trace_render(uint16_t pid_filter, uint32_t max, char *out, int len)
 void syscall_trace_dump(uint16_t pid_filter, uint32_t max)
 ```
 
-> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
-
-把记录渲染到静态缓冲，统计行数后按行以 KLOG_WARN 输出。
+> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
 <details>
 <summary>函数内备注（2 条）</summary>
@@ -13477,7 +13279,7 @@ void syscall_trace_dump(uint16_t pid_filter, uint32_t max)
 
 </details>
 
-**位置**：`kernel/syscall/trace.c:456`
+**位置**：`kernel/syscall/syscall_trace.c:456`
 
 <a id="mod-kernel-task-aarch64-cpu_startup.c"></a>
 

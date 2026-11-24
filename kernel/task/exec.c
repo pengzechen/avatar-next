@@ -38,7 +38,7 @@
 
 /*
    fd 池接口在这里只能手写 extern：本文件用普通 CFLAGS 编译, 没有 lwext4
-   的头文件路径, 而 syscall/fs/fd_pool.h -> vfs.h -> ext4.h 会直接爆
+   的头文件路径, 而 syscall/fs/fd/fd_pool.h -> vfs.h -> ext4.h 会直接爆
    `ext4.h: No such file or directory`。签名以 fd_pool.h 为准, 改那边时
    记得同步这几行。
 */
