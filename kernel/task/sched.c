@@ -77,6 +77,67 @@ static inline void x86_write_fs_base(uint64_t fs_base)
 
 /* ── RT 调度类辅助 ───────────────────────────────────────── */
 
+/*
+   RT throttling 默认值：1s 周期内 RT 最多跑 950ms（与 Linux
+   sched_rt_runtime_us=950000 / sched_rt_period_us=1000000 同思路）。
+*/
+#define RT_THROTTLE_DEFAULT_PERIOD_NS  1000000000ULL
+#define RT_THROTTLE_DEFAULT_RUNTIME_NS 950000000ULL
+
+/* period == 0 / runtime == 0 / runtime >= period 都表示关闭。 */
+static inline bool rt_throttle_enabled(const cpu_t *c)
+{
+    return c->rt_period_ns != 0 && c->rt_runtime_ns != 0 && c->rt_runtime_ns < c->rt_period_ns;
+}
+
+/*
+   rt_throttle_account - 把“当前任务自上次记账以来消耗的 CPU 时间”
+   记到本核的 RT 预算里（只统计 RT 类，含 PI 提升），并检查周期边界。
+
+   在 sched_schedule() 入口（切换前）和 sched_tick() 里调用：
+   - sched_schedule() 入口保证切走前把这段 RT 时间结清；
+   - sched_tick() 保证长时间不切换的 RT 忙循环也能被及时压住。
+*/
+static void rt_throttle_account(cpu_t *c)
+{
+    uint64_t now = timer_get_ns();
+
+    if (!rt_throttle_enabled(c)) {
+        c->rt_throttled = false;
+        return;
+    }
+
+    if (c->rt_account_ns == 0) {
+        /* 第一次记账（或配置刚重置）：从当前时刻起算。 */
+        c->rt_account_ns = now;
+        c->rt_period_start_ns = now;
+        return;
+    }
+
+    if (now - c->rt_period_start_ns >= c->rt_period_ns) {
+        /* 周期滚动：不补跑多个周期，直接从现在重新开始；
+           记账时间也跳到 now，避免把上个周期的欠账算进新周期。 */
+        c->rt_period_start_ns = now;
+        c->rt_time_ns = 0;
+        c->rt_account_ns = now;
+        if (c->rt_throttled) {
+            c->rt_throttled = false;
+            c->need_resched = true; /* 让被压住的 RT 重新参与调度 */
+        }
+    }
+
+    task_t *cur = c->current_task;
+    if (cur && task_sched_is_rt(cur)) {
+        c->rt_time_ns += now - c->rt_account_ns;
+        if (!c->rt_throttled && c->rt_time_ns >= c->rt_runtime_ns) {
+            c->rt_throttled = true;
+            c->rt_throttle_events++;
+            c->need_resched = true; /* tick 之后立刻让出 */
+        }
+    }
+    c->rt_account_ns = now;
+}
+
 void sched_rq_init(cpu_t *c)
 {
     list_init(&c->run_queue);
@@ -84,6 +145,42 @@ void sched_rq_init(cpu_t *c)
         list_init(&c->rt_queue[p]);
     for (uint32_t w = 0; w < (RT_PRIO_LEVELS + 63) / 64; w++)
         c->rt_bitmap[w] = 0;
+
+    c->rt_period_ns = RT_THROTTLE_DEFAULT_PERIOD_NS;
+    c->rt_runtime_ns = RT_THROTTLE_DEFAULT_RUNTIME_NS;
+    c->rt_period_start_ns = 0;
+    c->rt_time_ns = 0;
+    c->rt_account_ns = 0;
+    c->rt_throttle_events = 0;
+    c->rt_throttled = false;
+}
+
+/*
+   sched_rt_throttle_set - 配置每核 RT 带宽限制（测试/调试入口）
+
+   调用者应在 RT 负载起来之前、任务上下文调用；这里直接重置所有核的
+   记账。period == 0 / runtime == 0 / runtime >= period 表示关闭。
+*/
+void sched_rt_throttle_set(uint64_t period_ns, uint64_t runtime_ns)
+{
+    uint32_t n = g_num_cpus ? g_num_cpus : 1U;
+
+    for (uint32_t i = 0; i < n && i < AVATAR_MAX_CPUS; i++) {
+        cpu_t *c = &g_cpus[i];
+
+        c->rt_period_ns = period_ns;
+        c->rt_runtime_ns = runtime_ns;
+        c->rt_period_start_ns = 0;
+        c->rt_time_ns = 0;
+        c->rt_account_ns = 0;
+        c->rt_throttle_events = 0;
+        c->rt_throttled = false;
+    }
+}
+
+bool sched_rt_throttled(void)
+{
+    return cpu_current()->rt_throttled;
 }
 
 /* 有效 RT 优先级 = max(基础 RT 优先级, rt_mutex 继承优先级)。 */
@@ -602,8 +699,11 @@ void sched_kill_task(task_t *task)
 
 static task_t *pick_next(cpu_t *c)
 {
-    /* 1. 最高优先级的 RT 队列 */
-    int p = rt_highest_prio(c);
+    /*
+       1. 最高优先级的 RT 队列（本周期 RT 预算已用完时整类跳过，
+       让 NORMAL / idle 拿到 CPU；任务仍留在队列里，下个周期再跑）。
+    */
+    int p = c->rt_throttled ? -1 : rt_highest_prio(c);
     if (p >= 0) {
         list_node_t *node = list_delete_first(&c->rt_queue[p]);
         if (list_is_empty(&c->rt_queue[p]))
@@ -632,6 +732,9 @@ void sched_schedule(void)
 
     /* 缓存本核指针：irq_save 之后 cpu 不会变, 避免重复读 per-CPU 寄存器。 */
     cpu_t *c = cpu_current();
+
+    /* 先把当前任务这段 RT 时间结账，throttle 状态决定这一轮能否选 RT。 */
+    rt_throttle_account(c);
 
     /* prev 一律从 per-CPU 的 c->current_task 取。 */
     task_t *prev = c->current_task;
@@ -801,6 +904,14 @@ void sched_tick(void)
     task_t *cur = c->current_task;
 
     rt_latency_tick(c->cpu_id, timer_get_ns());
+
+    /*
+       RT 带宽记账：RT 忙循环不会主动让出，必须靠 tick 在预算耗尽时
+       置 need_resched，trap 返回路径才会把它换下去。
+    */
+    rt_throttle_account(c);
+    if (c->rt_throttled && cur && task_sched_is_rt(cur))
+        c->need_resched = true;
 
     if (!cur || cur == c->idle_task) {
         c->need_resched = true;

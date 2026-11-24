@@ -27,6 +27,20 @@ struct cpu;
 void sched_rq_init(struct cpu *c);
 
 /*
+   sched_rt_throttle_set - 配置每核 RT 带宽限制
+
+   @period_ns : 统计周期（纳秒）；0 = 关闭
+   @runtime_ns: 每周期 RT 最多运行的纳秒数；0 或 >= period 表示不限制
+
+   默认 1s / 950ms。调用者应在 RT 负载起来之前、任务上下文调用；
+   会重置所有核的记账与限流状态（测试/调试用）。
+*/
+void sched_rt_throttle_set(uint64_t period_ns, uint64_t runtime_ns);
+
+/* 本核当前是否处于 RT 限流状态（诊断/测试用）。 */
+bool sched_rt_throttled(void);
+
+/*
    sched_init - 初始化调度器
    @idle_task: boot 上下文对应的 idle 任务指针
 

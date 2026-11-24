@@ -87,6 +87,9 @@ IPC_RE = re.compile(
     rb"=== RT IPC TEST: PASS n=(\d+) min=(\d+) avg=(\d+) "
     rb"p99=(\d+) max=(\d+) ==="
 )
+THROTTLE_RE = re.compile(
+    rb"=== RT THROTTLE TEST: PASS rt_iters=(\d+) normal_iters=(\d+) events=(\d+) ==="
+)
 CYCLI_RE = re.compile(
     rb"=== CYCLICTEST: PASS period=(\d+) warmup=(\d+) cycles=(\d+) "
     rb"samples=(\d+) min=(\d+) avg=(\d+) p50=(\d+) p99=(\d+) p999=(\d+) "
@@ -187,6 +190,15 @@ def _rt(ctx: TestContext, report: Report, arch) -> None:
                 )
             )
 
+            throttle = _parse(
+                q.wait_for(
+                    THROTTLE_RE,
+                    ctx.timeout(180),
+                    forbidden=FORBIDDEN,
+                    desc=f"{arch.name} RT throttling 自测",
+                )
+            )
+
             cycli = _parse(
                 q.wait_for(
                     CYCLI_RE,
@@ -248,6 +260,7 @@ def _rt(ctx: TestContext, report: Report, arch) -> None:
         ) = mutex
         event_timeout, event_posted, event_processed, event_dropped = event
         ipc_n, ipc_min, ipc_avg, ipc_p99, ipc_max = ipc
+        throttle_rt, throttle_normal, throttle_events = throttle
         (
             cyc_period,
             cyc_warmup,
@@ -384,6 +397,15 @@ def _rt(ctx: TestContext, report: Report, arch) -> None:
         assert chain_lat < 10_000_000, (
             f"PI 链下高优先级拿锁延迟 {chain_lat}ns，应 < 10ms"
             "（无链时 wall(60) 会先跑 20ms）"
+        )
+        assert throttle_rt > 0, "RT throttling 测例中 RT 任务没有运行"
+        assert throttle_events > 0, "RT throttling 从未进入限流状态"
+        assert throttle_normal > 0, (
+            "RT throttling 失效：FIFO 忙循环独占 CPU，NORMAL 迭代数为 0"
+        )
+        assert throttle_normal * 100 >= throttle_rt, (
+            "RT throttling 让出比例过低："
+            f"normal={throttle_normal} rt={throttle_rt}"
         )
         assert ipc_n == 500, f"IPC 唤醒样本 {ipc_n}，应为 500"
         assert ipc_min <= ipc_avg <= ipc_max, (

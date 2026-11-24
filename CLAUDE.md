@@ -258,6 +258,15 @@ avatar/
   无超时等待、持有者退出不自动释放。门禁：`make -C tests rt-test`
   （SMP=4 验证 mutex 真并发竞争；PI 链场景输出
   `RT PI CHAIN: PASS prio_low=80 prio_mid=80 high_lat=...ns`）。
+- **RT throttling（带宽限制）**: `docs/realtime/RT_THROTTLING.md` -
+  每 CPU 每个 1s 周期内 RT 类（含 PI 提升）最多 950ms；超出后
+  `pick_next()` 暂时跳过整个 RT 队列，让 NORMAL/idle 拿到 CPU。
+  记账挂在 `sched_schedule()` 入口与 `sched_tick()` 上，所以 RT 忙循环
+  也能被 tick 抢占下去。动 `cpu_t.rt_*`、`rt_throttle_account()`、
+  `pick_next()` 或 `sched_tick()` 的 RT 分支前必读。门禁：
+  `make -C tests rt-test` 的 `RT THROTTLE TEST: PASS rt_iters=...
+  normal_iters=... events=...`；测例会临时安装 `sched_tick`（RT 自测
+  窗口默认摘掉了 tick 回调）。
 - **架构与基线**: `docs/realtime/ARCHITECTURE.md`、`R0_BASELINE.md`、
   `RT_DEMO_RESULTS.md`（self-IPI 立即抢占前后数据）。
 - **cyclictest（绝对 deadline 唤醒延迟）**: `docs/realtime/CYCLICTEST.md` -

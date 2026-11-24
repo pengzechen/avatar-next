@@ -99,6 +99,22 @@ typedef struct cpu {
     uint64_t idle_ticks;
 
     /*
+       ── RT throttling（每核）──────────────────────────────────
+       RT（含被 rt_mutex PI 提升的任务）在每个 period 内最多运行 runtime
+       纳秒；超出后本核暂时跳过 RT 队列，让 NORMAL / idle 拿到 CPU，下一
+       个 period 再放行。默认 1s / 950ms（与 Linux sched_rt_runtime_us 的
+       95% 同思路）。
+       period == 0 或 runtime == 0 或 runtime >= period 表示关闭。
+    */
+    uint64_t rt_period_ns;       /* 统计周期 */
+    uint64_t rt_runtime_ns;      /* 每周期 RT 预算 */
+    uint64_t rt_period_start_ns; /* 本周期起点（0 = 尚未开始） */
+    uint64_t rt_time_ns;         /* 本周期已消耗的 RT 时间 */
+    uint64_t rt_account_ns;      /* 上次记账时刻 */
+    uint64_t rt_throttle_events; /* 进入限流状态的次数（诊断/测试） */
+    bool rt_throttled;           /* 本核 RT 类当前是否被压住 */
+
+    /*
        ── RT 调度类（R2）────────────────────────────────────────
        rt_queue[p]：RT 优先级 p（1..99）的 FIFO/RR 队列；
        rt_bitmap：哪些优先级非空，pick_next() 用最高非空位选任务。

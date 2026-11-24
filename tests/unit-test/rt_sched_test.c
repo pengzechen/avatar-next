@@ -765,6 +765,16 @@ void run_rt_sched_test(void)
         run_rt_event_tests();
 
         /*
+           RT 带宽限制：NORMAL + FIFO 忙循环，验证 RT 每个周期都会让出一段
+           CPU；没有 throttling 时 NORMAL 会被完全饿死。
+        */
+        extern bool run_rt_throttle_test(void);
+        if (!run_rt_throttle_test()) {
+            KLOG_ERROR("=== RT SCHED TEST: FAIL (throttle) ===\n");
+            return;
+        }
+
+        /*
            cyclictest 放在最后：它自己安装/摘除 tick 回调，并占用 CPU0
            做 1ms/10ms 周期 + NORMAL hog 的测量。返回 false 只表示没跑完，
            延迟阈值由 tests/suites/rt_test.py 按架构判。

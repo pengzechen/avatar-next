@@ -70,7 +70,8 @@ enum task_sched_policy {
 - 已实现：`rt_mutex` 直接优先级继承（`pi_priority` + 按优先级排队，
   见 `RT_LOCKS.md`）；tick 不会抢占被提升的持有者。
 - 已实现嵌套 PI 链（owner 链上的传递提升，见 `RT_LOCKS.md`）；
-  后续：RT throttling、CPU 隔离。
+- 已实现 RT throttling（每 CPU 1s/950ms，见 `RT_THROTTLING.md`）；
+  后续：CPU 隔离。
 
 ## 四、mm 模块
 
