@@ -324,6 +324,10 @@ def _rt(ctx: TestContext, report: Report, arch) -> None:
             f"order={high_order}/{low_order}/{med_order}"
         )
         print(
+            f"{tag}pi-chain low/mid={chain_low}/{chain_mid} "
+            f"high_lat={chain_lat}ns"
+        )
+        print(
             f"{tag}event timeout={event_timeout} "
             f"posted/processed/dropped="
             f"{event_posted}/{event_processed}/{event_dropped}"
