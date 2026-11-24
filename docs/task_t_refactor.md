@@ -152,7 +152,7 @@ struct signal_struct {           /* 引用计数，CLONE_THREAD 共享 */
 
 **实施结果**：`sizeof(task_t) = 1600`（25 条 cacheline，3624 → 1600，-56%）。
 信号常量/`sig_action_t`/`signal_struct_t` 及处置 API 放在公共头
-`include/libc/signal.h`；`sig_action_t[64]` 的静态池实现在
+`include/linux/signal.h`；`sig_action_t[64]` 的静态池实现在
 `kernel/linux/core/signal_struct.c`（与 `signal.c` 放在一起，不再放在
 task 目录）；
 `sig == NULL` 表示全 SIG_DFL，`rt_sigaction` 首次写入或创建线程组时才分配。

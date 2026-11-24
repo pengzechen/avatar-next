@@ -33,7 +33,6 @@
 
 #include "time/itimer.h"
 #include "linux/signal.h"
-#include "libc/signal.h"
 #include "driver/time.h" /* timer_get_ns */
 
 extern task_t g_task_pool[]; /* 定义在 task.c */

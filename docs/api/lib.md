@@ -1,6 +1,6 @@
 # lib — C API
 
-[← 返回总览](index.md) · 25 个函数 · 说明覆盖率 56.0%
+[← 返回总览](index.md) · 25 个函数 · 说明覆盖率 100.0%
 
 <a id="mod-lib-bitmap.c"></a>
 
@@ -316,7 +316,7 @@ kprintf - 格式化输出到内核日志
 
 ## lib/libc/stdlib.c
 
-`lib/libc/stdlib.c` · 2 个函数 · 0 个有说明 · 55 行
+`lib/libc/stdlib.c` · 2 个函数 · 2 个有说明 · 55 行
 
 <a id="fn-lib-libc-stdlib.c-10"></a>
 
@@ -326,7 +326,9 @@ kprintf - 格式化输出到内核日志
 int atoi(const char *s)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+跳过前导空白和可选正负号后逐位累加十进制数字，空指针或无数字返回 0，不做溢出检查。
 
 **位置**：`lib/libc/stdlib.c:10`
 
@@ -338,7 +340,9 @@ int atoi(const char *s)
 void qsort(void *base, size_t nmemb, size_t size, int (*compar)(const void *, const void *))
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+用 256 字节临时缓冲实现插入排序，数量不足 1、元素为 0 或元素过大时直接返回。
 
 **位置**：`lib/libc/stdlib.c:36`
 
@@ -346,7 +350,7 @@ void qsort(void *base, size_t nmemb, size_t size, int (*compar)(const void *, co
 
 ## lib/libc/string.c — 字符串/内存函数的外部符号版本
 
-`lib/libc/string.c` · 3 个函数 · 0 个有说明 · 42 行
+`lib/libc/string.c` · 3 个函数 · 3 个有说明 · 42 行
 
 绝大多数调用点是 include/libc/string.h 里的 static inline 版本(会被内联,
 或者退化成调用点自己的副本)。但编译器自己生成的调用 —— 大结构体整体
@@ -371,7 +375,9 @@ memcpy/memset 与本文件要定义的外部符号同名, 同一翻译单元里�
 void *memcpy(void *dst, const void *src, size_t n)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+直接转调架构特化的 memcpy_arch 完成内存拷贝。
 
 **位置**：`lib/libc/string.c:29`
 
@@ -383,7 +389,9 @@ void *memcpy(void *dst, const void *src, size_t n)
 void *memset(void *s, int c, size_t n)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+直接转调架构特化的 memset_arch 完成内存填充。
 
 **位置**：`lib/libc/string.c:34`
 
@@ -395,7 +403,9 @@ void *memset(void *s, int c, size_t n)
 void *memmove(void *dst, const void *src, size_t n)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+转调 memmove_generic 处理可能重叠的内存搬移。
 
 **位置**：`lib/libc/string.c:39`
 
@@ -403,7 +413,7 @@ void *memmove(void *dst, const void *src, size_t n)
 
 ## lib/libc/vsnprintf.c — Simple vsnprintf implementation for freestanding environment
 
-`lib/libc/vsnprintf.c` · 6 个函数 · 0 个有说明 · 260 行
+`lib/libc/vsnprintf.c` · 6 个函数 · 6 个有说明 · 260 行
 
 <a id="fn-lib-libc-vsnprintf.c-30"></a>
 
@@ -413,7 +423,9 @@ void *memmove(void *dst, const void *src, size_t n)
 static void addchar(pstream_t *p, char c)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+在剩余容量允许时写入一个字符并递减剩余量，同时始终累加已写计数。
 
 **位置**：`lib/libc/vsnprintf.c:30`
 
@@ -425,7 +437,9 @@ static void addchar(pstream_t *p, char c)
 static void print_str(pstream_t *p, const char *s, strprops_t props)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+按 npad 正负在字符串前用 pad 字符左填充，或在字符串后用空格右填充（负宽度时应忽略 0 填充）。
 
 <details>
 <summary>函数内备注（1 条）</summary>
@@ -446,7 +460,9 @@ static void print_str(pstream_t *p, const char *s, strprops_t props)
 static void print_int(pstream_t *ps, long long n, int base, strprops_t props)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+把有符号数按指定进制转成数字串，处理负号与零值并反转，再交给 print_str 带填充输出。
 
 **位置**：`lib/libc/vsnprintf.c:65`
 
@@ -458,7 +474,9 @@ static void print_int(pstream_t *ps, long long n, int base, strprops_t props)
 static void print_unsigned(pstream_t *ps, unsigned long long n, int base, strprops_t props)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+把无符号数转成指定进制字符串，alternate 且十六进制时补 0x（0 填充时提前输出前缀并修正宽度），反转后经 print_str 输出。
 
 **位置**：`lib/libc/vsnprintf.c:99`
 
@@ -470,7 +488,9 @@ static void print_unsigned(pstream_t *ps, unsigned long long n, int base, strpro
 static int fmtnum(const char **fmt)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+解析格式串中可选的负号与数字宽度，用 atol 取值并按已消费长度前移格式指针。
 
 **位置**：`lib/libc/vsnprintf.c:137`
 
@@ -482,7 +502,9 @@ static int fmtnum(const char **fmt)
 int my_vsnprintf(char *buf, int size, const char *fmt, va_list va)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+循环解析格式串，处理 %% %c %d %u %x %p %s 及宽度、0/-/# 与 l/z/t 修饰，写入缓冲区并返回总输出字符数。
 
 <details>
 <summary>函数内备注（2 条）</summary>

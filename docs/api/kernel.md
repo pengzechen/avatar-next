@@ -16836,7 +16836,7 @@ bool hrtimer_irq_latency(uint64_t deadline_ns, uint64_t *lat_ns)
 
 ## kernel/time/itimer.c — 每任务 ITIMER_REAL(alarm / setitimer)
 
-`kernel/time/itimer.c` · 4 个函数 · 0 个有说明 · 119 行
+`kernel/time/itimer.c` · 4 个函数 · 0 个有说明 · 118 行
 
 语义与设计见 include/time/itimer.h。这里只记实现上的两个关键点：
 
@@ -16861,7 +16861,7 @@ in_irq_context() 分支, 设备 ISR 唤醒任务是常规操作。
 一个信号", 需要原子 claim expiry(CAS)或让每个任务只由亲和核处理。
 默认构建是 SMP=1, 但 LTP 门禁跑 SMP=4, 这条限制会被真实触发。
 
-<a id="fn-kernel-time-itimer.c-42"></a>
+<a id="fn-kernel-time-itimer.c-41"></a>
 
 ### `itimer_now_ns`
 
@@ -16871,9 +16871,9 @@ static inline uint64_t itimer_now_ns(void)
 
 > ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-**位置**：`kernel/time/itimer.c:42`
+**位置**：`kernel/time/itimer.c:41`
 
-<a id="fn-kernel-time-itimer.c-47"></a>
+<a id="fn-kernel-time-itimer.c-46"></a>
 
 ### `itimer_set`
 
@@ -16883,9 +16883,9 @@ void itimer_set(task_t *t, uint64_t value_ns, uint64_t interval_ns)
 
 > ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-**位置**：`kernel/time/itimer.c:47`
+**位置**：`kernel/time/itimer.c:46`
 
-<a id="fn-kernel-time-itimer.c-56"></a>
+<a id="fn-kernel-time-itimer.c-55"></a>
 
 ### `itimer_get`
 
@@ -16895,9 +16895,9 @@ void itimer_get(task_t *t, uint64_t *remain_ns, uint64_t *interval_ns)
 
 > ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
 
-**位置**：`kernel/time/itimer.c:56`
+**位置**：`kernel/time/itimer.c:55`
 
-<a id="fn-kernel-time-itimer.c-72"></a>
+<a id="fn-kernel-time-itimer.c-71"></a>
 
 ### `itimer_tick`
 
@@ -16910,32 +16910,32 @@ void itimer_tick(void)
 <details>
 <summary>函数内备注（5 条）</summary>
 
-**第 82 行**
+**第 81 行**
 
 > 已死/正在分配的槽不该再收信号；顺手把残值清掉, 免得槽被复用后
 > 新任务莫名其妙挨一个 SIGALRM(复用的 TCB 会带着旧字段)。
 
-**第 92 行**
+**第 91 行**
 
 > nanosleep 到期：清标记并唤醒。
 > 必须在 itimer 的早退判断**之前**处理 —— 睡眠任务通常没有
 > itimer_expire_ns，早退会把它们直接跳过，永远醒不来。
 
-**第 103 行**
+**第 102 行**
 
 > 下面只处理 ITIMER_REAL
 
-**第 107 行**
+**第 106 行**
 
 > 先重装(周期)或清除(一次性), 再投信号 —— 见文件头第 1 点
 
-**第 115 行**
+**第 114 行**
 
 > 见文件头第 2 点：不 unblock 就叫不醒阻塞中的任务
 
 </details>
 
-**位置**：`kernel/time/itimer.c:72`
+**位置**：`kernel/time/itimer.c:71`
 
 <a id="mod-kernel-vmm-aarch64-el2_run.c"></a>
 

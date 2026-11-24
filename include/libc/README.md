@@ -12,10 +12,10 @@
 ## 内核/标准名 shim（历史遗留，后续应归位）
 
 - `assert.h`：内核断言（`platform_panic`），但 lwext4 也会 `#include <assert.h>`；
-- `signal.h`：内核信号常量/`signal_struct`，lwIP PPP 也会 `#include <signal.h>`。
+- `signal.h`：现在只是转发到 `include/linux/signal.h`，给 lwIP PPP 等仍写
+  `<signal.h>` 的第三方代码用；内核代码直接 include `"linux/signal.h"`。
 
-这两个文件保留在 `libc/` 是为了让第三方继续用标准名；内核代码应逐步改为
-`kernel/assert.h` / `linux/signal.h`，`libc/` 下只留薄转发。
+`assert.h` 下一步也应拆成 `include/kernel/assert.h` + 薄转发。
 
 ## 已删除
 

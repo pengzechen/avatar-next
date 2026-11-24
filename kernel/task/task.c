@@ -29,7 +29,7 @@
 #include "task/sched.h"
 #include "task/switch.h"
 #include "driver/time.h"
-#include "libc/signal.h"
+#include "linux/signal.h"
 #include "spinlock.h"
 
 #include "mm/mm_vm.h"

@@ -21,7 +21,7 @@
        acquire/release 原子操作，避免发布未初始化完的 actions。
 */
 
-#include "signal.h"
+#include "linux/signal.h"
 #include "task/task.h"
 #include "spinlock.h"
 #include "klog.h"
