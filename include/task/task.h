@@ -428,12 +428,30 @@ void task_reap_dead(task_t *task);
 task_t *task_alloc_slot(void);
 
 /*
-   task_objects_alloc - 为 TCB 分配 files/fs/mm（静态池，引用计数 1）
+   task_basic_objects_alloc - 为 TCB 分配 mm（静态池，引用计数 1）
+   @t: 目标任务
 
-   task_alloc_slot 内部会调用；idle 任务在自己的初始化路径里调用。
-   失败时已经分配的对象会被释放，返回 false。
+   所有任务（含内核线程、vCPU、idle）都有一份 mm 占位；files/fs 不在这里分配。
 */
-bool task_objects_alloc(task_t *t);
+bool task_basic_objects_alloc(task_t *t);
+
+/*
+   task_user_objects_alloc - 为 Linux 用户进程分配 files/fs
+   @t: 目标任务
+
+   只给需要 fd 表/cwd 的用户进程调用；内核线程、RT worker、vCPU 不分配。
+   失败时调用方负责 task_release_objects()。
+*/
+bool task_user_objects_alloc(task_t *t);
+
+/*
+   task_exit_notify - 任务退出通知（weak hook）
+   @task: 刚置为 TASK_DEAD 的任务
+
+   通用 task 层只负责置 DEAD；wait4/zombie 等语义由 personality 提供强定义
+   （见 kernel/syscall/syscall.c 的 task_exit_notify）。
+*/
+void task_exit_notify(task_t *task);
 
 /*
    task_release_objects - 归还 signal/files/fs/mm 引用

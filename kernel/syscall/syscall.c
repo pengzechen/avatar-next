@@ -113,8 +113,9 @@ static void notify_parent_wait(task_t *child)
     KLOG_SYSCALL("[wait] parent missing: child=%u parent=%u\n", child->id, child->parent_id);
 }
 
-/* Called from task.c's task_exit() to notify waiting parent */
-void notify_parent_wait_from_task(task_t *child)
+/* task_exit() 的强定义：Linux wait4/zombie 的父进程唤醒。
+   task.c 里有一个 weak 空实现，链接到这个强符号后由本函数接管。 */
+void task_exit_notify(task_t *child)
 {
     notify_parent_wait(child);
 }

@@ -300,6 +300,18 @@ int task_execve(const char *pathname, uint8_t *file_data, uint64_t file_size, ui
         return -1;
     }
 
+    /*
+       内核线程 exec（开机 busybox_loader）没有 Linux 用户进程的 files/fs；
+       在提交 exec 之前补齐，否则 exec_close_cloexec_fds() 会解引用 NULL。
+       普通用户进程这里已经是 no-op。
+    */
+    if ((!current->files || !current->fs) && !task_user_objects_alloc(current)) {
+        KLOG_ERROR("[exec] no free files/fs objects\n");
+        exec_free_loader_buffer(interp_data, interp_size);
+        exec_free_loader_buffer(file_data, file_size);
+        return -12;
+    }
+
     /* 1. 分配并清零新用户页表 —— 旧映像此时完全不受影响 */
     pgd_phys = pmm_alloc_pages(&g_pmm, 1);
     if (pgd_phys == 0) {

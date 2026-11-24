@@ -350,7 +350,7 @@ void qsort(void *base, size_t nmemb, size_t size, int (*compar)(const void *, co
 
 ## lib/string.c — 字符串/内存函数的外部符号版本
 
-`lib/string.c` · 3 个函数 · 3 个有说明 · 41 行
+`lib/string.c` · 3 个函数 · 3 个有说明 · 42 行
 
 绝大多数调用点是 include/libc/string.h 里的 static inline 版本(会被内联,
 或者退化成调用点自己的副本)。但编译器自己生成的调用 —— 大结构体整体
@@ -367,7 +367,7 @@ trap frame 正好踩过这个坑。
 memcpy/memset 与本文件要定义的外部符号同名, 同一翻译单元里内部链接与外部
 链接同名是未定义行为(C11 6.2.2p7)。详见 include/libc/string_internal.h 顶部。
 
-<a id="fn-lib-string.c-28"></a>
+<a id="fn-lib-string.c-29"></a>
 
 ### `memcpy`
 
@@ -379,9 +379,9 @@ void *memcpy(void *dst, const void *src, size_t n)
 
 直接转调架构特化的 memcpy_arch 完成内存拷贝。
 
-**位置**：`lib/string.c:28`
+**位置**：`lib/string.c:29`
 
-<a id="fn-lib-string.c-33"></a>
+<a id="fn-lib-string.c-34"></a>
 
 ### `memset`
 
@@ -393,9 +393,9 @@ void *memset(void *s, int c, size_t n)
 
 直接转调架构特化的 memset_arch 完成内存填充。
 
-**位置**：`lib/string.c:33`
+**位置**：`lib/string.c:34`
 
-<a id="fn-lib-string.c-38"></a>
+<a id="fn-lib-string.c-39"></a>
 
 ### `memmove`
 
@@ -407,7 +407,7 @@ void *memmove(void *dst, const void *src, size_t n)
 
 转调 memmove_generic 处理可能重叠的内存搬移。
 
-**位置**：`lib/string.c:38`
+**位置**：`lib/string.c:39`
 
 <a id="mod-lib-vsnprintf.c"></a>
 

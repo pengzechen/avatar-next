@@ -376,6 +376,13 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
         regs[0] = (uint64_t)(int64_t)-ENOMEM;
         return;
     }
+    if (!task_user_objects_alloc(child)) {
+        KLOG_ERROR("[clone] no free files/fs objects\n");
+        task_release_objects(child);
+        g_stack_used[child - g_task_pool] = 0;
+        regs[0] = (uint64_t)(int64_t)-ENOMEM;
+        return;
+    }
 
     child->id = task_alloc_id();
     child->state = TASK_ALLOCATING;

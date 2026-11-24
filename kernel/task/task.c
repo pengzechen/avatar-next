@@ -195,12 +195,12 @@ task_t *task_alloc_slot(void)
         */
         memset(task->stack_base, TASK_STACK_MAGIC, TASK_STACK_SIZE);
         /*
-           进程级对象（fd 表 / cwd / mm / signal 由 task_signal_* 懒分配）。
-           静态池大小 = TASK_MAX + AVATAR_MAX_CPUS，认领到一个任务槽就
-           必然有一个对象槽；失败只可能是池管理 bug，按 ENOMEM 处理。
+           每个任务至少需要一份 mm（内核线程/vCPU/idle 只是占位 pgd）。
+           files/fs 属于 Linux 用户进程，由 task_user_objects_alloc() 按需分配，
+           不再让 RT/vCPU 任务为 fd 表和 cwd 付代价。
         */
-        if (!task_objects_alloc(task)) {
-            KLOG_ERROR("[task] task_alloc_slot: no free process objects\n");
+        if (!task_basic_objects_alloc(task)) {
+            KLOG_ERROR("[task] task_alloc_slot: no free mm object\n");
             spin_lock_irqsave(&g_task_pool_lock, &flags);
             g_stack_used[i] = 0;
             task->stack_base = NULL;
@@ -305,20 +305,25 @@ static void free_task_slot(task_t *task)
     spin_unlock_irqrestore(&g_task_pool_lock, flags);
 }
 
-/* ── 进程级对象分配/释放（files / fs / mm / signal）───────── */
+/* ── 进程级对象分配/释放（mm 基础对象 + Linux 用户 files/fs）───────── */
 
-bool task_objects_alloc(task_t *t)
+bool task_basic_objects_alloc(task_t *t)
 {
     if (!t)
         return false;
-    t->files = files_alloc();
-    t->fs = fs_alloc();
     t->mm = mm_alloc();
-    if (!t->files || !t->fs || !t->mm) {
-        task_release_objects(t);
+    return t->mm != NULL;
+}
+
+bool task_user_objects_alloc(task_t *t)
+{
+    if (!t)
         return false;
-    }
-    return true;
+    if (!t->files)
+        t->files = files_alloc();
+    if (!t->fs)
+        t->fs = fs_alloc();
+    return t->files != NULL && t->fs != NULL;
 }
 
 void task_release_objects(task_t *t)
@@ -406,8 +411,8 @@ void task_init(void)
     g_idle_task.entry = NULL;
     g_idle_task.arg = NULL;
     g_idle_task.fs_base = 0;
-    /* idle 也要一份空的 files/fs/mm（内核任务没有用户 pgd）。 */
-    assert_always(task_objects_alloc(&g_idle_task));
+    /* idle 只需要 mm 占位；files/fs 属于 Linux 用户进程。 */
+    assert_always(task_basic_objects_alloc(&g_idle_task));
     list_node_init(&g_idle_task.run_node);
     list_node_init(&g_idle_task.wait_node);
 
@@ -510,6 +515,11 @@ task_t *process_create(const char *name, uint64_t user_entry, uint64_t user_code
     task_t *task = task_alloc_slot();
     if (!task) {
         KLOG_ERROR("[task] process_create: no free task slots (max=%u)\n", TASK_MAX);
+        return NULL;
+    }
+    if (!task_user_objects_alloc(task)) {
+        KLOG_ERROR("[task] process_create: no free files/fs objects\n");
+        free_task_slot(task);
         return NULL;
     }
 
@@ -631,11 +641,7 @@ static task_t *task_create_internal(const char *name, void (*entry)(void *), voi
     task->mm->pgd = NULL;
     task->fs_base = 0;
     task->ctid_ptr = 0;
-    task->fs->cwd[0] = '/';
-    task->fs->cwd[1] = '\0';
-    for (uint32_t j = 0; j < TASK_MAX_FD; j++)
-        task->files->fd_table[j] = -1;
-    memset(task->files->fd_cloexec, 0, sizeof(task->files->fd_cloexec));
+    /* 内核线程没有 Linux 用户进程的 fd 表/cwd（files/fs 为 NULL）。 */
     task->parent_id = 0;
     task->uid = 0;
     task->euid = 0;
@@ -733,6 +739,15 @@ void task_yield(void)
    “逻辑死亡”和“栈/TCB 可以回收”是两个时刻。Linux 用 task_struct 引用
    计数 + RCU 异步完成；本内核规模小，用一次性同步等待就够了。
 */
+/*
+   task_exit_notify - 通用退出通知（weak）
+   默认空实现；kernel/syscall/syscall.c 提供强定义，处理 Linux wait4 唤醒。
+*/
+__attribute__((weak)) void task_exit_notify(task_t *task)
+{
+    (void)task;
+}
+
 void task_exit(void)
 {
     task_t *cur = task_current();
@@ -751,9 +766,8 @@ void task_exit(void)
         spin_unlock_irqrestore(&g_task_pool_lock, _pf);
     }
 
-    /* Notify waiting parent */
-    extern void notify_parent_wait_from_task(task_t * child);
-    notify_parent_wait_from_task(cur);
+    /* 通用退出钩子；Linux personality 提供强定义处理 wait4/zombie。 */
+    task_exit_notify(cur);
 
     /*
      从就绪队列移除(理论上已不在队列, 因为 RUNNING 时会重入队,

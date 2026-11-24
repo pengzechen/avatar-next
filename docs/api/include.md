@@ -6661,7 +6661,7 @@ fork：child_stack=0, tls=0
 
 ## include/task/task.h — 内核任务控制块与公共 API
 
-`include/task/task.h` · 5 个函数 · 4 个有说明 · 493 行
+`include/task/task.h` · 5 个函数 · 4 个有说明 · 511 行
 
 设计：
 - 内核任务 + 用户进程共用 TCB；用户进程的地址空间/文件/信号见各字段注释

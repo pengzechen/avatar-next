@@ -160,14 +160,12 @@ void cpu_setup_secondary_idle_task(cpu_t *c)
     idle->cpu_affinity = c->cpu_id;
     idle->fs_base = 0;
     /*
-       idle 也需要 files/fs/mm。files_alloc() 会把 fd 表显式填成 -1 ——
-       不能靠 memset 归零：0 是合法的 fd 池槽位号，fd_table_inherit()
-       会把它当成「256 个都指向槽位 0 的 fd」，一次继承就把
-       FD_POOL_SIZE(128) 个槽全部吃光（实测过：之后宿主里所有 open()
-       都失败）。CPU0 的 idle 走 task.c 的 g_idle_task，同样在
-       task_init() 里分配。
+       idle 只需要一份 mm 占位。files/fs 属于 Linux 用户进程，由
+       task_user_objects_alloc() 在 process_create/clone/exec 时按需分配；
+       RT/vCPU/idle 不再为 fd 表和 cwd 付代价。
+       CPU0 的 idle 走 task.c 的 g_idle_task，同样在 task_init() 里分配。
     */
-    assert_always(task_objects_alloc(idle));
+    assert_always(task_basic_objects_alloc(idle));
     list_node_init(&idle->run_node);
     list_node_init(&idle->wait_node);
 
