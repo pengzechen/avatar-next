@@ -24,7 +24,9 @@
 #include "task/sched.h"
 #include "task/mutex.h"
 #include "task/rt_mutex.h"
+#include "task/rt_event.h"
 #include "driver/time.h"
+#include "exception.h"
 #include "klog.h"
 
 /* ── 1. 普通 mutex ────────────────────────────────────────── */
@@ -289,6 +291,206 @@ static bool run_rt_mutex_pi_test(bool normal_owner)
            g_rtm_high_order == 1U && g_rtm_low_order == 2U && g_rtm_med_order == 3U;
 }
 
+/* ── 3. rt_mutex PI 链（三层传递）────────────────────────── */
+
+/*
+   L(20) 持 M1 后在事件上睡眠；M(50) 持 M2 后阻塞在 M1；H(80) 再阻塞在 M2。
+   没有 PI 链时，H 只把 M 直接提到 80（M 此时已阻塞在 M1 上），L 仍停留在
+   50；有链时 L 应被传递提升到 80。
+
+   再用一个 W(60) 做“墙”：同时唤醒 W 和 L，若 L 是 80，它会先于 W 释放
+   M1，H 的拿锁延迟是微秒级；若 L 只有 50，W(60) 会先跑 20ms，H 的延迟
+   被拖到 20ms 以上。既检查优先级不变量，也检查实际行为。
+*/
+
+static rt_mutex_t g_chain_m1;
+static rt_mutex_t g_chain_m2;
+static rt_event_t g_chain_release_evt;
+static rt_event_t g_chain_wall_evt;
+static task_t *g_chain_low;
+static task_t *g_chain_mid;
+static task_t *g_chain_high;
+static task_t *g_chain_wall;
+
+static volatile uint32_t g_chain_low_ready;
+static volatile uint32_t g_chain_mid_ready;
+static volatile uint32_t g_chain_done;
+static volatile uint64_t g_chain_t0_ns;
+static volatile uint64_t g_chain_high_done_ns;
+static volatile int g_chain_low_rc;
+static volatile int g_chain_mid_rc;
+static volatile int g_chain_high_rc;
+static volatile bool g_chain_unlock_ok;
+static volatile uint32_t g_chain_prio_low;
+static volatile uint32_t g_chain_prio_mid;
+static volatile uint64_t g_chain_high_lat_ns;
+
+static void chain_low_fn(void *arg)
+{
+    (void)arg;
+
+    g_chain_low_rc = rt_mutex_lock(&g_chain_m1);
+    __atomic_store_n(&g_chain_low_ready, 1U, __ATOMIC_RELEASE);
+
+    (void)rt_event_wait(&g_chain_release_evt, 0x1U, false, 0, true);
+
+    if (!rt_mutex_unlock(&g_chain_m1))
+        g_chain_unlock_ok = false;
+    __atomic_fetch_add(&g_chain_done, 1U, __ATOMIC_RELEASE);
+    task_exit();
+}
+
+static void chain_mid_fn(void *arg)
+{
+    (void)arg;
+
+    if (!wait_flag(&g_chain_low_ready, 2000000000ULL)) {
+        g_chain_unlock_ok = false;
+        __atomic_fetch_add(&g_chain_done, 1U, __ATOMIC_RELEASE);
+        task_exit();
+    }
+
+    g_chain_mid_rc = rt_mutex_lock(&g_chain_m2);
+    __atomic_store_n(&g_chain_mid_ready, 1U, __ATOMIC_RELEASE);
+    if (g_chain_mid_rc != 0) {
+        g_chain_unlock_ok = false;
+        __atomic_fetch_add(&g_chain_done, 1U, __ATOMIC_RELEASE);
+        task_exit();
+    }
+
+    /* 阻塞在 M1 上：链 L <- M1 <- M */
+    if (rt_mutex_lock(&g_chain_m1) != 0)
+        g_chain_unlock_ok = false;
+    if (!rt_mutex_unlock(&g_chain_m2))
+        g_chain_unlock_ok = false;
+    if (!rt_mutex_unlock(&g_chain_m1))
+        g_chain_unlock_ok = false;
+
+    __atomic_fetch_add(&g_chain_done, 1U, __ATOMIC_RELEASE);
+    task_exit();
+}
+
+static void chain_high_fn(void *arg)
+{
+    (void)arg;
+
+    /* 此时 M 已经阻塞在 M1 上；H 阻塞在 M2 才会形成三层链。 */
+    g_chain_high_rc = rt_mutex_lock(&g_chain_m2);
+    if (g_chain_high_rc == 0 && !rt_mutex_unlock(&g_chain_m2))
+        g_chain_unlock_ok = false;
+
+    __atomic_store_n(&g_chain_high_done_ns, timer_get_ns(), __ATOMIC_RELEASE);
+    __atomic_fetch_add(&g_chain_done, 1U, __ATOMIC_RELEASE);
+    task_exit();
+}
+
+static void chain_wall_fn(void *arg)
+{
+    (void)arg;
+
+    (void)rt_event_wait(&g_chain_wall_evt, 0x1U, false, 0, true);
+
+    /* 20ms 纯忙循环：PI 链失效时它会把 H 的拿锁延迟拖到 20ms 以上。 */
+    uint64_t end = timer_get_ns() + 20000000ULL;
+    while (timer_get_ns() < end)
+        ;
+
+    __atomic_fetch_add(&g_chain_done, 1U, __ATOMIC_RELEASE);
+    task_exit();
+}
+
+static bool run_rt_mutex_pi_chain_test(void)
+{
+    bool ok = true;
+    bool setup_done = false;
+
+    rt_mutex_init(&g_chain_m1);
+    rt_mutex_init(&g_chain_m2);
+    rt_event_init(&g_chain_release_evt);
+    rt_event_init(&g_chain_wall_evt);
+
+    g_chain_low_ready = 0;
+    g_chain_mid_ready = 0;
+    g_chain_done = 0;
+    g_chain_t0_ns = 0;
+    g_chain_high_done_ns = 0;
+    g_chain_low_rc = -1;
+    g_chain_mid_rc = -1;
+    g_chain_high_rc = -1;
+    g_chain_unlock_ok = true;
+    g_chain_prio_low = 0;
+    g_chain_prio_mid = 0;
+    g_chain_high_lat_ns = 0;
+
+    g_chain_low = task_create_kernel_rt("rtm-c-lo", chain_low_fn, NULL, 20, 0);
+    if (!g_chain_low || !wait_flag(&g_chain_low_ready, 2000000000ULL) || g_chain_low_rc != 0) {
+        ok = false;
+        goto out;
+    }
+
+    g_chain_mid = task_create_kernel_rt("rtm-c-mid", chain_mid_fn, NULL, 50, 0);
+    if (!g_chain_mid || !wait_flag(&g_chain_mid_ready, 2000000000ULL) || g_chain_mid_rc != 0 ||
+        !wait_task_blocked(g_chain_mid, 2000000000ULL)) {
+        ok = false;
+        goto out;
+    }
+
+    /* 关键顺序：M 先阻塞在 M1 上，H 之后才来抢 M2。 */
+    g_chain_high = task_create_kernel_rt("rtm-c-hi", chain_high_fn, NULL, 80, 0);
+    if (!g_chain_high || !wait_task_blocked(g_chain_high, 2000000000ULL)) {
+        ok = false;
+        goto out;
+    }
+
+    g_chain_prio_low = task_effective_rt_prio(g_chain_low);
+    g_chain_prio_mid = task_effective_rt_prio(g_chain_mid);
+
+    /* H(80) -> M2(owner=M) -> M 阻塞在 M1(owner=L)：L 必须被传递提升到 80。 */
+    if (g_chain_prio_low != 80U || g_chain_prio_mid != 80U)
+        ok = false;
+
+    g_chain_wall = task_create_kernel_rt("rtm-c-wall", chain_wall_fn, NULL, 60, 0);
+    if (!g_chain_wall || !wait_task_blocked(g_chain_wall, 2000000000ULL)) {
+        ok = false;
+        goto out;
+    }
+
+    setup_done = true;
+
+    /*
+       在同一个关中断窗口里唤醒 wall(60) 和 low(20/80)，保证两者都在队列里
+       之后才发生抢占：PI 链生效时 low 是 80，先于 wall；失效时 low 只有 50，
+       wall(60) 会先跑满 20ms。
+    */
+    uint64_t flags = arch_irq_save();
+    (void)rt_event_set(&g_chain_wall_evt, 0x1U);
+    g_chain_t0_ns = timer_get_ns();
+    (void)rt_event_set(&g_chain_release_evt, 0x1U);
+    arch_irq_restore(flags);
+
+out:
+    /* 失败路径也要放走阻塞的参与者，避免污染后续测试。 */
+    (void)rt_event_set(&g_chain_wall_evt, 0x1U);
+    (void)rt_event_set(&g_chain_release_evt, 0x1U);
+
+    uint64_t deadline = timer_get_ns() + 5000000000ULL;
+    while (__atomic_load_n(&g_chain_done, __ATOMIC_ACQUIRE) < 4U && timer_get_ns() < deadline)
+        task_yield();
+
+    bool done = __atomic_load_n(&g_chain_done, __ATOMIC_ACQUIRE) == 4U;
+    uint64_t t0 = __atomic_load_n(&g_chain_t0_ns, __ATOMIC_ACQUIRE);
+    uint64_t hdone = __atomic_load_n(&g_chain_high_done_ns, __ATOMIC_ACQUIRE);
+    uint64_t latency = (hdone > t0) ? (hdone - t0) : 0;
+    g_chain_high_lat_ns = latency;
+
+    bool chain_ok = setup_done && ok && done && g_chain_unlock_ok && g_chain_low_rc == 0 && g_chain_mid_rc == 0 &&
+                    g_chain_high_rc == 0 && g_chain_prio_low == 80U && g_chain_prio_mid == 80U && latency < 10000000ULL;
+
+    KLOG_INFO("=== RT PI CHAIN: %s prio_low=%u prio_mid=%u high_lat=%llu ns ===\n", chain_ok ? "PASS" : "FAIL",
+              (unsigned)g_chain_prio_low, (unsigned)g_chain_prio_mid, (unsigned long long)latency);
+    return chain_ok;
+}
+
 /* ── 入口 ─────────────────────────────────────────────────── */
 
 void run_rt_mutex_tests(void)
@@ -340,12 +542,20 @@ void run_rt_mutex_tests(void)
         goto out;
     }
 
+    phase = "rt-mutex-pi-chain";
+    if (!run_rt_mutex_pi_chain_test()) {
+        ok = false;
+        goto out;
+    }
+
 out:
     if (ok) {
-        KLOG_INFO("=== RT MUTEX TEST: PASS mtx=%u err=%u boost=%u after=%u order=%u/%u/%u ===\n",
+        KLOG_INFO("=== RT MUTEX TEST: PASS mtx=%u err=%u boost=%u after=%u order=%u/%u/%u "
+                  "chain=%u/%u/%llu ===\n",
                   (unsigned)g_rtmtest_counter, (unsigned)g_rtmtest_errors, (unsigned)g_rtm_owner_boost_seen,
                   (unsigned)g_rtm_owner_boost_after, (unsigned)g_rtm_high_order, (unsigned)g_rtm_low_order,
-                  (unsigned)g_rtm_med_order);
+                  (unsigned)g_rtm_med_order, (unsigned)g_chain_prio_low, (unsigned)g_chain_prio_mid,
+                  (unsigned long long)g_chain_high_lat_ns);
     } else {
         KLOG_ERROR("=== RT MUTEX TEST: FAIL (%s) mtx=%u err=%u inside=%u boost=%u after=%u "
                    "rc=%d/%d/%d order=%u/%u/%u ===\n",

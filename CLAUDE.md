@@ -250,12 +250,14 @@ avatar/
   用户态演示 `/bin/rt-demo`（event + 1ms 周期 + watchdog + /proc），
   跑法见 `docs/realtime/RT_USER_DEMO.md`。
 - **RT 锁**: `docs/realtime/RT_LOCKS.md` - 普通 `mutex` 的 SMP 正确性修正
-  （内部自旋锁 + 无丢唤醒），以及 `rt_mutex` 的直接优先级继承
-  （`pi_priority`、按优先级排队、tick 不抢占被提升的持有者）。
+  （内部自旋锁 + 无丢唤醒），以及 `rt_mutex` 的嵌套 PI 链
+  （`pi_priority`/`pi_waiter_prio`/`pi_blocked_on`/`held_rt_mutexes`，
+  等待者沿 owner 链传递提升，tick 不抢占被提升的持有者）。
   动 `kernel/task/mutex.c`、`kernel/rt/rt_mutex.c`、
-  `sched_set_pi_boost()` 或 `task_t.pi_priority` 前必读；V1 没有完整
-  PI 链/多锁传播，文件中列了已知限制。门禁：`make -C tests rt-test`
-  （SMP=4 时验证 mutex 的真并发竞争）。
+  `sched_set_pi_boost()` 或 `task_t.pi_priority` 前必读；仍不做死锁检测、
+  无超时等待、持有者退出不自动释放。门禁：`make -C tests rt-test`
+  （SMP=4 验证 mutex 真并发竞争；PI 链场景输出
+  `RT PI CHAIN: PASS prio_low=80 prio_mid=80 high_lat=...ns`）。
 - **架构与基线**: `docs/realtime/ARCHITECTURE.md`、`R0_BASELINE.md`、
   `RT_DEMO_RESULTS.md`（self-IPI 立即抢占前后数据）。
 - **cyclictest（绝对 deadline 唤醒延迟）**: `docs/realtime/CYCLICTEST.md` -

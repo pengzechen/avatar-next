@@ -25,6 +25,9 @@
 #include "fs/process_fs.h" /* files_struct / fs_struct（fd 表与 cwd） */
 #include "mm/mm_struct.h"  /* mm_struct（pgd/heap/mmap/interp/exe_path） */
 
+/* rt_mutex 类型（PI 链只需要指针；完整定义在 task/rt_mutex.h） */
+struct rt_mutex;
+
 /* ── Task states ─────────────────────────────────────────── */
 typedef enum {
     TASK_ALLOCATING = -1, /* 槽位已占用, 但 TCB 尚未完成初始化 */
@@ -138,20 +141,32 @@ typedef struct task {
     uint8_t sched_policy;       /* task_sched_policy_t */
     uint8_t rt_priority;        /* RT: 1..99，越大越高；NORMAL 为 0 */
     uint8_t pi_priority;        /* rt_mutex 继承优先级：0 = 无；调度取 max(base, pi) */
+    uint8_t pi_waiter_prio;     /* 作为 rt_mutex 等待者排队时的优先级（PI 链用） */
     uint8_t rt_slice;           /* RR 剩余 tick 数 */
     bool is_user_process;       /* true=用户进程, false=内核任务(过渡期与 domain 并存) */
     bool user_started;          /* true=已至少进入过一次用户态 */
     bool is_waiting;            /* 正在 wait4 子进程 */
     uint8_t dumpable;           /* prctl(PR_SET_DUMPABLE) */
     uint8_t no_new_privs;       /* prctl(PR_SET_NO_NEW_PRIVS) */
-    list_node_t run_node;       /* 就绪队列节点 */
-    list_node_t wait_node;      /* 等待队列节点(mutex/rt_mutex/completion/rt_event) */
-    char name[TASK_NAME_LEN];   /* 任务名称 */
-    uint8_t *stack_base;        /* 内核栈底(低地址)；idle 也有专用栈, 不为 NULL */
-    void (*entry)(void *);      /* 任务入口函数 */
-    void *arg;                  /* 传给 entry 的参数 */
-    uint64_t fs_base;           /* x86_64 TLS: IA32_FS_BASE(每次切换写 MSR) */
-    uint64_t sc_entry_ns;       /* 当前 syscall 入口时间戳(0=不在 syscall) */
+
+    /*
+       ── rt_mutex PI 链状态（由 kernel/rt/rt_mutex.c 的全局 PI 锁保护）──
+       pi_blocked_on  : 本任务正在等哪把 rt_mutex（NULL = 没在等锁）
+       held_rt_mutexes: 本任务当前持有的 rt_mutex（rt_mutex_t.held_node 链）
+       两者与 pi_priority / pi_waiter_prio 一起构成“任务-锁-等待者”图，
+       让高优先级等待者的提升能沿 owner 链一路传到最底层的持有者。
+    */
+    struct rt_mutex *pi_blocked_on;
+    list_t held_rt_mutexes;
+
+    list_node_t run_node;     /* 就绪队列节点 */
+    list_node_t wait_node;    /* 等待队列节点(mutex/rt_mutex/completion/rt_event) */
+    char name[TASK_NAME_LEN]; /* 任务名称 */
+    uint8_t *stack_base;      /* 内核栈底(低地址)；idle 也有专用栈, 不为 NULL */
+    void (*entry)(void *);    /* 任务入口函数 */
+    void *arg;                /* 传给 entry 的参数 */
+    uint64_t fs_base;         /* x86_64 TLS: IA32_FS_BASE(每次切换写 MSR) */
+    uint64_t sc_entry_ns;     /* 当前 syscall 入口时间戳(0=不在 syscall) */
 
     /*
        ITIMER_REAL(alarm / setitimer) + 睡眠到期时刻。

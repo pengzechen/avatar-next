@@ -2,7 +2,7 @@
 
 > 一句话：**RT 数据面的短临界区用自旋锁；需要睡眠的共享状态用
 > `rt_mutex`；普通文件系统/内核路径用修好的 `mutex`。** 目前还没有
-> 用户态 PI futex，也没有完整的多锁 PI 链。
+> 用户态 PI futex；内核 `rt_mutex` 已支持嵌套 PI 链。
 
 ## 一、普通 mutex（`include/task/mutex.h`）
 
@@ -44,10 +44,12 @@ rt_mutex_unlock(&m);
 - **非递归**：同一任务重复加锁返回 `-RTM_EDEADLK`；
 - 非 owner 调用 `rt_mutex_unlock()` 返回 `false`（API 契约）；内核只打
   `KLOG_DEBUG`，避免负向测试/误用刷出假的 ERROR。调用者必须检查返回值；
-- 等待者按有效 RT 优先级降序排队（同优先级 FIFO）；
+- 等待者按等待优先级降序排队（同优先级 FIFO）；
 - 等待者入队时把 owner 的继承优先级提升到不低于自己的优先级；
+- **支持嵌套 PI 链**：owner 自己又阻塞在另一把 `rt_mutex` 上时，提升
+  会沿 owner 链逐级向上传递，直到最底层的持有者（见下节）；
 - 解锁时把锁交给队首（最高优先级）等待者，并把新 owner 的继承优先级
-  设为剩余等待者的最高值；
+  设为剩余等待者的最高值；释放者自己的提升按它仍持有的其余锁重算；
 - 线程上下文才可调用（会睡眠）；ISR / RT step / `rtdev` 的 RT 面不能用。
 
 ### 调度器支持
@@ -77,17 +79,49 @@ effective = max(基础 rt_priority（NORMAL 为 0）, pi_priority)
 - 等待者按 80 → 60 的顺序拿锁，中等任务最后完成；
 - owner 释放后 `pi_priority` 恢复为 0。
 
-### 已知限制（V1）
+### PI 链（嵌套优先级继承）
 
-1. **只做直接继承**。owner 自己又阻塞在另一把 `rt_mutex` 上时，不会沿
-   等待链继续提升（没有嵌套 PI 链）。
-2. **不跟踪任务持有的全部 rt_mutex**。同一任务持有多把有等待者的
-   rt_mutex 时，释放其中一把会把继承优先级清零，可能丢失另一把锁带来
-   的提升。
-3. 不做死锁检测（A→B→A 会真的睡死）。
-4. 没有超时/可中断等待；持有者退出时也不会自动释放。
+实现：`kernel/rt/rt_mutex.c`。每个任务记两个东西：
 
-需要完整语义时，按 Linux `rt_mutex` 的 waiter/owner 链 + PI chain 重做。
+- `held_rt_mutexes`：当前持有的锁（`rt_mutex_t.held_node` 链）；
+- `pi_blocked_on`：正在等哪把锁（NULL = 没在等）。
+
+一个任务的提升 = 它持有的**所有**锁里最高等待者的 `pi_waiter_prio`。
+等待者阻塞时，从该锁的 owner 开始沿 `pi_blocked_on` 向上走：重算 owner
+的 `pi_priority`；若它自己也在等锁，就把它在那个等待队列里的优先级更新
+并重排，再继续处理上一层的 owner。
+
+经典三层例子（`RT_TEST=1` 的 `rt-mutex-pi-chain` 场景）：
+
+```text
+H(80) --等--> M2(owner = M)
+M(50) --等--> M1(owner = L)
+L(20) --持--> M1，并在事件上睡眠
+
+没有链:  H 只把 M 直接提到 80；L 停在 50
+有链:    M = 80，且 L 沿 M 的 pi_blocked_on 被传递提到 80
+```
+
+测试用一个 W(60) 做“墙”：同时唤醒 W 和 L，链生效时 L(80) 先运行并
+释放 M1，H 的拿锁延迟是微秒级；链失效时 L 只有 50，W(60) 会先跑满
+20ms，H 的延迟被拖到 20ms 以上。回归标记：
+
+```text
+=== RT PI CHAIN: PASS prio_low=80 prio_mid=80 high_lat=8630 ns ===
+```
+
+实现取舍：用**一把全局 PI 锁**保护整张“任务-锁-等待者”图，而不是像
+Linux 那样逐锁做 `rt_mutex_adjust_prio_chain`。链式调整需要同时改多个
+owner 和等待队列，逐锁获取会引入环和竞态；本内核的 RT 锁规模很小，
+全局锁换来的是可证明的简单性。锁序仍是 `g_rtm_pi_lock → rq_lock`，
+调度器不会反向获取 PI 锁。
+
+### 已知限制
+
+1. 不做死锁检测（A→B→A 会真的睡死）；链深度上限 32，超限只停止传播。
+2. 没有超时/可中断等待；持有者退出时也不会自动释放锁。
+3. 全局 PI 锁把所有 `rt_mutex` 操作串行化（当前规模下可接受；锁数量
+   上来后再考虑按锁分级/逐锁链式调整）。
 
 ## 三、选择建议
 
@@ -112,8 +146,9 @@ make -C tests rt-test SMP=4 ARCHES=x86_64
 串口标记：
 
 ```text
-=== RT MUTEX TEST: PASS mtx=18000 err=0 boost=80 after=0 order=1/2/3 ===
+=== RT MUTEX TEST: PASS mtx=18000 err=0 boost=80 after=0 order=1/2/3 chain=80/80/8630 ===
 ```
 
 `mtx` 是 6 个任务 × 3000 次临界区；`err` 统计同时进入临界区的次数；
-`order` 是 high(80)/low(60)/medium(50) 的完成顺序。
+`order` 是 high(80)/low(60)/medium(50) 的完成顺序；`chain` 是 PI 链场景
+的 `low 优先级 / mid 优先级 / 高优先级拿锁延迟`。

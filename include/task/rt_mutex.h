@@ -20,13 +20,14 @@
      - 只能在任务上下文调用（会睡眠，不能进 ISR / step 的 RT 面）。
      - 非递归：同一任务重复加锁返回 -RTM_EDEADLK，不会自死锁。
      - 只对 RT 等待者产生提升；NORMAL 等待者的请求优先级按 0 计。
-     - V1 只做直接继承：如果 owner 自己又阻塞在另一把 rt_mutex 上，
-       不会沿等待链继续提升（没有嵌套 PI 链，也没有死锁检测）。
+     - 支持嵌套 PI 链：owner 自己又阻塞在另一把 rt_mutex 上时，提升会
+       沿 owner 链继续向上传递（与 Linux rt_mutex 的 PI chain 同思路，
+       实现简化为一把全局 PI 锁 + 每任务持有锁列表）。
+     - 仍不做死锁检测（A→B→A 会真的睡死）；链深度上限 32，超限停止传播。
 */
 
 #include "types.h"
 #include "list.h"
-#include "spinlock.h"
 
 typedef struct task task_t;
 
@@ -34,9 +35,9 @@ typedef struct task task_t;
 #define RTM_EINVAL  22
 
 typedef struct rt_mutex {
-    spinlock_t lock; /* 保护 owner 与 waiters */
-    task_t *owner;   /* 当前持有者；NULL = 空闲 */
-    list_t waiters;  /* 按有效优先级降序，同优先级 FIFO */
+    task_t *owner;         /* 当前持有者；NULL = 空闲 */
+    list_t waiters;        /* 按等待优先级降序，同优先级 FIFO */
+    list_node_t held_node; /* 链接进 owner 的 task_t.held_rt_mutexes */
 } rt_mutex_t;
 
 void rt_mutex_init(rt_mutex_t *m);

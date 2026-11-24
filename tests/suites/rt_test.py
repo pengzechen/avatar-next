@@ -76,7 +76,8 @@ OBS_RE = re.compile(
 )
 MUTEX_RE = re.compile(
     rb"=== RT MUTEX TEST: PASS mtx=(\d+) err=(\d+) boost=(\d+) "
-    rb"after=(\d+) order=(\d+)/(\d+)/(\d+) ==="
+    rb"after=(\d+) order=(\d+)/(\d+)/(\d+) "
+    rb"chain=(\d+)/(\d+)/(\d+) ==="
 )
 EVENT_RE = re.compile(
     rb"=== RT EVENT TEST: PASS timeout=(\d+) posted=(\d+) "
@@ -241,6 +242,9 @@ def _rt(ctx: TestContext, report: Report, arch) -> None:
             high_order,
             low_order,
             med_order,
+            chain_low,
+            chain_mid,
+            chain_lat,
         ) = mutex
         event_timeout, event_posted, event_processed, event_dropped = event
         ipc_n, ipc_min, ipc_avg, ipc_p99, ipc_max = ipc
@@ -372,6 +376,14 @@ def _rt(ctx: TestContext, report: Report, arch) -> None:
             "rt_mutex 等待者顺序 "
             f"{high_order}/{low_order}/{med_order}，应为 1/2/3"
             "（PI 失效时中等优先级任务会先完成）"
+        )
+        assert (chain_low, chain_mid) == (80, 80), (
+            "PI 链传递提升失败："
+            f"low={chain_low} mid={chain_mid}，链上 owner 应都被提到 80"
+        )
+        assert chain_lat < 10_000_000, (
+            f"PI 链下高优先级拿锁延迟 {chain_lat}ns，应 < 10ms"
+            "（无链时 wall(60) 会先跑 20ms）"
         )
         assert ipc_n == 500, f"IPC 唤醒样本 {ipc_n}，应为 500"
         assert ipc_min <= ipc_avg <= ipc_max, (
