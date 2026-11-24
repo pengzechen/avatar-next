@@ -1,8 +1,8 @@
 # 从文件系统加载执行程序
 
 > 状态：本文档部分内容早于当前实现。平坦二进制加载器 `bin_loader` 已删除；
-> 现在 execve 走 `kernel/task/elf_loader.c`（文件 I/O 层）→
-> `task_execve()`（`kernel/task/exec.c`）→ `kernel/mm/elf_image.c`（ELF 解析与段映射）。
+> 现在 execve 走 `kernel/syscall/exec/elf_loader.c`（文件 I/O 层）→
+> `task_execve()`（`kernel/syscall/exec/exec.c`）→ `kernel/mm/elf_image.c`（ELF 解析与段映射）。
 
 ## 已实现的功能
 
@@ -12,14 +12,14 @@
 - **功能**: 从文件系统加载并执行可执行程序
 
 ### 2. ELF 程序加载器
-- **文件**: [kernel/task/elf_loader.c](../kernel/task/elf_loader.c)（文件 I/O、shebang、PT_INTERP）
+- **文件**: [kernel/syscall/exec/elf_loader.c](../kernel/syscall/exec/elf_loader.c)（文件 I/O、shebang、PT_INTERP）
 - **解析/映射**: [kernel/mm/elf_image.c](../kernel/mm/elf_image.c)
 - **支持格式**: ELF64（动态链接需提供 interpreter）
 - **说明**: 旧的平坦二进制加载器 `bin_loader` 已删除
 
 ### 3. 用户程序
 - **目录**: [apps/](../apps/)
-- **示例**: rootfs 中的 `/busybox`（ELF，由 `task/elf_loader.c` 加载）
+- **示例**: rootfs 中的 `/busybox`（ELF，由 `syscall/exec/elf_loader.c` 加载）
 
 ## 使用步骤
 

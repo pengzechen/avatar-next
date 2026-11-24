@@ -24,6 +24,7 @@
 #include "platform/platform_ops.h"
 #include "task/cpu.h"
 #include "task/task.h"
+#include "syscall/signal.h"
 
 /* 中断处理函数表, 索引 = scause 低位(去掉 bit63 后的中断编号) */
 #define MAX_IRQ_CAUSES 16

@@ -15,6 +15,7 @@
 #include "syscall/fs/fd/fd_pool.h"
 #include "syscall/io/epoll.h"
 #include "task/task.h"
+#include "syscall/signal.h"
 #include "klog.h"
 #include "string.h"
 

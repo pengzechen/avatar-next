@@ -178,6 +178,8 @@ task_t *proc1 = process_create("user_test",
 ## 相关文件
 
 - `kernel/task/task.c`: 进程创建和管理
+- `kernel/syscall/exec/exec.c`: Linux execve 语义（原地替换映像）
+- `kernel/syscall/exec/elf_loader.c`: ELF / shebang / PT_INTERP 加载
 - `kernel/task/aarch64/switch.S`: 上下文切换和特权级切换
 - `kernel/task/aarch64/user_test.S`: 用户态测试程序
 - `kernel/syscall/syscall.c`: 系统调用处理

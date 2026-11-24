@@ -22,8 +22,9 @@
 #include "syscall/fs/char/pipe.h"
 #include "syscall/net/ksocket.h"
 #include "syscall/fs/char/pty.h"
-#include "task/elf_loader.h"
+#include "syscall/exec/elf_loader.h"
 #include "task/task.h"
+#include "syscall/signal.h"
 #include "task/cpu.h" /* get_current_cpu_id / AVATAR_MAX_CPUS(execve argv 副本按 CPU 分行) */
 #include "task/sched.h"
 #include "task/switch.h"
@@ -592,7 +593,7 @@ void clone_handler(uint64_t regs[6], task_t *parent, trap_frame_t *frame)
 
            USER_SIGRET_PAGE = 0x70001000, 比用户栈顶 USER_STACK_TOP = 0x70000000
            还高 0x1000 —— 上面三个区间一个都不覆盖它。它由 exec 映射
-           (kernel/task/exec.c 的 4b), fork 却从来没复制过, 于是：
+           (kernel/syscall/exec/exec.c 的 4b), fork 却从来没复制过, 于是：
 
              fork 出来的子进程 → 用户态装了 handler → 收到信号 → handler 返回时
              `ret` 到 sa_restorer = USER_SIGRET_PAGE → 该页不存在 → 取指页故障。

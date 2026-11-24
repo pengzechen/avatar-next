@@ -20,6 +20,9 @@
 /* 全局终端状态(TCGETS/TCSETS 读写) */
 extern struct kernel_termios g_termios;
 
+/* 前台进程组 ID(0 = 无前台进程)；由 TIOCSPGRP 设置，Ctrl+C 用它发 SIGINT。 */
+extern volatile uint32_t g_fg_pgid;
+
 /* UART 环形缓冲区接口 */
 void uart_ringbuf_push(char c);
 int uart_ringbuf_pop(char *out);

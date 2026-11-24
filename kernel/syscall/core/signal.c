@@ -20,6 +20,7 @@
 #include "syscall/syscall_internal.h"
 #include "klog.h"
 #include "task/task.h"
+#include "syscall/signal.h"
 #include "string.h"
 #include "arch.h"
 #include "exception.h"
@@ -436,4 +437,89 @@ void tgkill_handler(uint64_t regs[6])
     }
     task_send_signal(tgt, sig);
     regs[0] = 0;
+}
+
+/* ── 信号投递与进程组广播（Linux 进程语义）──────────────────────
+   这些函数原来在 kernel/task/task.c。task 只保留 TCB / 调度原语，
+   Linux 的 pending/blocked/进程组语义放在这里。
+   ─────────────────────────────────────────────────────────────── */
+extern task_t g_task_pool[TASK_MAX];
+extern uint8_t g_stack_used[TASK_MAX];
+
+/* ── task_send_signal ────────────────────────────────────── */
+void task_send_signal(task_t *t, int sig)
+{
+    if (!t || sig < 1 || sig > NSIG)
+        return;
+    t->pending_sigs |= (1ULL << (sig - 1));
+
+    /*
+       nanosleep 的睡眠点在 task_block() 里，只有信号能让它提前醒。
+       默认动作通常是终止，不唤醒就永远看不到这个信号。
+    */
+    if (t->sleep_expire_ns != 0 && t->state == TASK_BLOCKED)
+        task_unblock(t);
+}
+
+/*
+   task_signal_pending_effective - 有没有"真正会打断阻塞"的信号
+
+   判据必须和 deliver_pending_signals() 的动作表一致：
+   SIG_IGN、以及 SIG_DFL 本身就是忽略的几个信号(SIGCHLD 等)不算。
+   管道阻塞和 nanosleep 都用它，避免两处各写一份、慢慢漂移。
+*/
+bool task_signal_pending_effective(task_t *t)
+{
+    if (!t)
+        return false;
+
+    uint64_t unblocked = t->pending_sigs & ~t->blocked_sigs;
+    while (unblocked) {
+        uint64_t low = unblocked & (~unblocked + 1); /* 最低置位 */
+        int sig = 0;
+        while (low > 1) {
+            low >>= 1;
+            sig++;
+        }
+        int signo = sig + 1;
+        unblocked &= unblocked - 1;
+
+        sig_action_t act;
+        task_sigaction_get(t, signo, &act);
+        uint64_t h = act.sa_handler;
+        if (h == SIG_IGN)
+            continue;
+        if (h != SIG_DFL)
+            return true;
+
+        switch (signo) {
+        case SIGCHLD:
+        case SIGCONT:
+        case SIGURG:
+        case SIGWINCH:
+        case SIGTTIN:
+        case SIGTTOU:
+        case SIGTSTP:
+            continue;
+        default:
+            return true;
+        }
+    }
+    return false;
+}
+
+/* ── task_send_signal_to_pgid ────────────────────────────── */
+int task_send_signal_to_pgid(uint32_t pgid, int sig)
+{
+    if (!pgid)
+        return 0;
+    int count = 0;
+    for (uint32_t i = 0; i < TASK_MAX; i++) {
+        if (g_stack_used[i] && g_task_pool[i].pgid == pgid && g_task_pool[i].state != TASK_DEAD &&
+            g_task_pool[i].state != TASK_ALLOCATING && g_task_pool[i].is_user_process) {
+            task_send_signal(&g_task_pool[i], sig);
+            count++;
+        }
+    }
+    return count;
 }

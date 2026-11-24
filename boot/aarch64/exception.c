@@ -13,6 +13,7 @@
 #include "platform/platform_ops.h"
 #include "types.h"
 #include "task/task.h"
+#include "syscall/signal.h"
 #include "task/cpu.h"
 
 extern void deliver_pending_signals(task_t *t, trap_frame_t *frame);

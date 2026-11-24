@@ -18,6 +18,7 @@
 */
 #include "syscall/syscall_internal.h"
 #include "task/task.h"
+#include "syscall/signal.h"
 #include "task/sched.h"
 #include "driver/time.h"
 

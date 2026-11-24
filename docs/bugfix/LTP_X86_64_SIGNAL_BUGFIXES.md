@@ -124,7 +124,7 @@ file-backed 路径遗漏了。子进程 exit 时 `munmap` 释放了共享页的�
 
 ### 7a. 内核信号返回蹦床页
 
-`kernel/task/exec.c` — 创建用户进程时，在固定虚拟地址 `USER_SIGRET_PAGE`
+`kernel/syscall/exec/exec.c` — 创建用户进程时，在固定虚拟地址 `USER_SIGRET_PAGE`
 (0x70001000) 映射一个可执行页，写入 x86_64 `rt_sigreturn` 蹦床代码：
 
 ```asm
@@ -147,7 +147,7 @@ syscall
 
 **涉及文件**:
 - `include/mm/user_layout.h` — 新增 `USER_SIGRET_PAGE` 常量
-- `kernel/task/exec.c` — 映射蹦床页
+- `kernel/syscall/exec/exec.c` — 映射蹦床页
 - `kernel/syscall/core/signal.c` — 使用蹦床页
 - `include/task/task.h` — 新增 `SA_RESTORER` 常量
 

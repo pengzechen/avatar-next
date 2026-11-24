@@ -5,7 +5,7 @@
 */
 
 /*
-   kernel/task/exec.c — execve 进程执行语义(Linux 风格: 原地替换映像)
+   kernel/syscall/exec/exec.c — execve 进程执行语义(Linux 风格: 原地替换映像)
 
    职责：
      1. 新用户页表初始化(PGD 分配 + 内核映射复制)
@@ -32,7 +32,7 @@
 #include "task/task.h"
 #include "task/switch.h"
 #include "mm/elf_image.h"
-#include "task/exec.h"
+#include "syscall/exec.h"
 #include "mm/vm_user.h"
 #include "mm/user_layout.h"
 

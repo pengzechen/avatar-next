@@ -23,6 +23,7 @@
 #include "irq/lapic.h"
 #include "arch/x86_64/io.h" /* outb — 用于屏蔽 8259A PIC */
 #include "task/task.h"
+#include "syscall/signal.h"
 #include "task/sched.h"
 #include "task/cpu.h"
 #include "mm/mm_vm.h"

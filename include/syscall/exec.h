@@ -5,14 +5,14 @@
 */
 
 /*
-   include/task/exec.h — execve 进程语义接口
+   include/syscall/exec.h — execve 进程语义接口
 
    职责：Linux ABI 初始栈构建 + 用户页表初始化(含内核映射) +
          进程创建 + execve 阻塞等待语义
 */
 
-#ifndef KERNEL_TASK_EXEC_H
-#define KERNEL_TASK_EXEC_H
+#ifndef KERNEL_SYSCALL_EXEC_H
+#define KERNEL_SYSCALL_EXEC_H
 
 #include "types.h"
 #include "exception.h" /* trap_frame_t */
@@ -37,4 +37,4 @@
 int task_execve(const char *pathname, uint8_t *file_data, uint64_t file_size, uint8_t *interp_data,
                 uint64_t interp_size, char **argv, char **envp, trap_frame_t *frame);
 
-#endif /* KERNEL_TASK_EXEC_H */
+#endif /* KERNEL_SYSCALL_EXEC_H */

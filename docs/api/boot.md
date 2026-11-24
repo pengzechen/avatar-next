@@ -6,9 +6,9 @@
 
 ## boot/aarch64/exception.c
 
-`boot/aarch64/exception.c` · 4 个函数 · 4 个有说明 · 127 行
+`boot/aarch64/exception.c` · 4 个函数 · 4 个有说明 · 128 行
 
-<a id="fn-boot-aarch64-exception.c-21"></a>
+<a id="fn-boot-aarch64-exception.c-22"></a>
 
 ### `handle_sync_exception`
 
@@ -23,7 +23,7 @@ void handle_sync_exception(uint64_t *stack_pointer)
 <details>
 <summary>函数内备注（1 条）</summary>
 
-**第 36 行**
+**第 37 行**
 
 > 打调用栈, 回答&quot;是谁调过来的&quot;。
 
@@ -40,9 +40,9 @@ void handle_sync_exception(uint64_t *stack_pointer)
 
 </details>
 
-**位置**：`boot/aarch64/exception.c:21`
+**位置**：`boot/aarch64/exception.c:22`
 
-<a id="fn-boot-aarch64-exception.c-57"></a>
+<a id="fn-boot-aarch64-exception.c-58"></a>
 
 ### `handle_el0_sync_exception`
 
@@ -57,38 +57,38 @@ EC=0x15 转交 syscall_handler；用户取指/数据中止则打印现场、导�
 <details>
 <summary>函数内备注（6 条）</summary>
 
-**第 66 行**
+**第 67 行**
 
 > EC == 0x15: SVC 指令(系统调用)
 
-**第 68 行**
+**第 69 行**
 
 > 调用系统调用处理函数, 传入完整 trap_frame
 
-**第 73 行**
+**第 74 行**
 
 > EC == 0x20: Instruction Abort from EL0
 > EC == 0x24: Data Abort from EL0
 > → 投递 SIGSEGV 给用户进程
 
-**第 81 行**
+**第 82 行**
 
 > 崩溃现场：把这个 pid 最近走过的 syscall 打出来。
 > 环形缓冲是常开的, 所以这里不需要事先开任何开关。
 
-**第 91 行**
+**第 92 行**
 
 > 其他异常类型
 
-**第 96 行**
+**第 97 行**
 
 > 停机
 
 </details>
 
-**位置**：`boot/aarch64/exception.c:57`
+**位置**：`boot/aarch64/exception.c:58`
 
-<a id="fn-boot-aarch64-exception.c-100"></a>
+<a id="fn-boot-aarch64-exception.c-101"></a>
 
 ### `handle_irq_exception`
 
@@ -103,16 +103,16 @@ void handle_irq_exception(uint64_t *stack_pointer)
 <details>
 <summary>函数内备注（1 条）</summary>
 
-**第 106 行**
+**第 107 行**
 
 > ack → handler → EOI/complete 全部由中断控制器后端完成
 > (GICv2/GICv3 的 IAR/EOIR 时序差异不再泄漏到异常入口)。
 
 </details>
 
-**位置**：`boot/aarch64/exception.c:100`
+**位置**：`boot/aarch64/exception.c:101`
 
-<a id="fn-boot-aarch64-exception.c-115"></a>
+<a id="fn-boot-aarch64-exception.c-116"></a>
 
 ### `invalid_exception`
 
@@ -127,31 +127,31 @@ void invalid_exception(uint64_t *stack_pointer, uint64_t kind, uint64_t source)
 <details>
 <summary>函数内备注（2 条）</summary>
 
-**第 117 行**
+**第 118 行**
 
 > 调用点(向量表里的 .Lvector_other 宏)是 SAVE_REGS 之后 `mov x0, sp`,
 > 所以这里拿到的是完整的 trap frame, 可以当调用栈的起点用。
 
-**第 122 行**
+**第 123 行**
 
 > 打完下一行就 panic —— panic 路径上的日志永远是 ERROR
 
 </details>
 
-**位置**：`boot/aarch64/exception.c:115`
+**位置**：`boot/aarch64/exception.c:116`
 
 <a id="mod-boot-riscv64-exception.c"></a>
 
 ## boot/riscv64/exception.c — RISC-V 64-bit S-mode 异常/中断 C 分发器
 
-`boot/riscv64/exception.c` · 7 个函数 · 7 个有说明 · 253 行
+`boot/riscv64/exception.c` · 7 个函数 · 7 个有说明 · 254 行
 
 提供：
 exception_init()   — 设置 stvec, 配置异常入口
 irq_install()      — 注册 scause 对应的中断处理函数
 handle_exception() — 从 exception.S 调用, 分发陷阱
 
-<a id="fn-boot-riscv64-exception.c-34"></a>
+<a id="fn-boot-riscv64-exception.c-35"></a>
 
 ### `irq_install`
 
@@ -163,9 +163,9 @@ void irq_install(int cause, irq_handler_t h)
 
 检查 cause 落在数组范围内后，把处理函数登记到对应中断表项。
 
-**位置**：`boot/riscv64/exception.c:34`
+**位置**：`boot/riscv64/exception.c:35`
 
-<a id="fn-boot-riscv64-exception.c-47"></a>
+<a id="fn-boot-riscv64-exception.c-48"></a>
 
 ### `riscv_dispatch_host_irq`
 
@@ -179,9 +179,9 @@ riscv_dispatch_host_irq — 给 VMM 的 guest 陷阱向量复用宿主中断分�
 `interrupt_handlers[irq](frame_ptr)` 那一行, 只是不经过 trap_frame
 的保存/恢复(现场已在 hext_trap_vector 里保存)。
 
-**位置**：`boot/riscv64/exception.c:47`
+**位置**：`boot/riscv64/exception.c:48`
 
-<a id="fn-boot-riscv64-exception.c-63"></a>
+<a id="fn-boot-riscv64-exception.c-64"></a>
 
 ### `rv_dump_trap_regs`
 
@@ -193,9 +193,9 @@ static void rv_dump_trap_regs(trap_frame_t *frame)
 
 借助寄存器名字表，以每行四个的格式用 ERROR 级日志打印陷阱帧中的 32 个整数寄存器。
 
-**位置**：`boot/riscv64/exception.c:63`
+**位置**：`boot/riscv64/exception.c:64`
 
-<a id="fn-boot-riscv64-exception.c-82"></a>
+<a id="fn-boot-riscv64-exception.c-83"></a>
 
 ### `riscv_kernel_interrupt_enable`
 
@@ -207,9 +207,9 @@ void riscv_kernel_interrupt_enable(void)
 
 置位 sstatus.SIE 以允许内核态中断。
 
-**位置**：`boot/riscv64/exception.c:82`
+**位置**：`boot/riscv64/exception.c:83`
 
-<a id="fn-boot-riscv64-exception.c-87"></a>
+<a id="fn-boot-riscv64-exception.c-88"></a>
 
 ### `riscv_kernel_interrupt_disable`
 
@@ -221,9 +221,9 @@ void riscv_kernel_interrupt_disable(void)
 
 清除 sstatus.SIE 以关闭内核态中断。
 
-**位置**：`boot/riscv64/exception.c:87`
+**位置**：`boot/riscv64/exception.c:88`
 
-<a id="fn-boot-riscv64-exception.c-92"></a>
+<a id="fn-boot-riscv64-exception.c-93"></a>
 
 ### `exception_init`
 
@@ -238,35 +238,35 @@ void exception_init(void)
 <details>
 <summary>函数内备注（5 条）</summary>
 
-**第 94 行**
+**第 95 行**
 
 > trap_vector 在 exception.S 中定义(.align 4, 直接模式)
 
-**第 97 行**
+**第 98 行**
 
 > 写入 stvec, bits[1:0] = 00 表示 Direct 模式
 
-**第 100 行**
+**第 101 行**
 
 > 注意：不在此处使能 sstatus.SIE(内核态中断开关)。
 > trap_vector 已能保存 S-&gt;S 的完整现场；这里仍保持 SIE=0,
 > 由调度器和 timer 初始化完成后的显式开关决定何时允许内核态收中断。
 
-**第 106 行**
+**第 107 行**
 
 > 使能 sstatus.SUM(Supervisor User Memory access)。
 > 置 1 后 S 模式可直接读写带 PTE_U 的用户页面,
 > 使 syscall 处理函数能直接解引用用户空间指针(如 write buf)。
 
-**第 111 行（行尾）**
+**第 112 行（行尾）**
 
 > bit 18 = SUM
 
 </details>
 
-**位置**：`boot/riscv64/exception.c:92`
+**位置**：`boot/riscv64/exception.c:93`
 
-<a id="fn-boot-riscv64-exception.c-119"></a>
+<a id="fn-boot-riscv64-exception.c-120"></a>
 
 ### `handle_exception`
 
@@ -280,57 +280,57 @@ void handle_exception(void *frame_ptr)
 <details>
 <summary>函数内备注（18 条）</summary>
 
-**第 125 行**
+**第 126 行**
 
 > 更新调试计数器
 
-**第 130 行**
+**第 131 行**
 
 > 调试：打印异常基本信息
 
-**第 132 行**
+**第 133 行**
 
 > KLOG_ERROR(&quot;[exception] sync: code=%llu pc=0x%lx stval=0x%lx sstatus=0x%lx\n&quot;,
 > code, frame-&gt;sepc, frame-&gt;stval, frame-&gt;sstatus);
 
-**第 139 行**
+**第 140 行**
 
 > ── 中断路径 ────────────────────────────────────────────
 
-**第 146 行**
+**第 147 行**
 
 > ISR 上下文 + 逐中断一行, 必须采样
 
-**第 147 行**
+**第 148 行**
 
 > KLOG_WARN_SAMPLE(
 
-**第 148 行**
+**第 149 行**
 
 > &quot;[riscv irq] non-timer IRQ #%llu cause=%llu mode=%c sepc=0x%lx sstatus=0x%lx stval=0x%lx\n&quot;,
 
-**第 149 行**
+**第 150 行**
 
 > (unsigned long long)++g_rv_non_timer_irq_count, irq, (frame-&gt;sstatus &amp; SSTATUS_SPP) ? &#x27;S&#x27; : &#x27;U&#x27;,
 
-**第 150 行**
+**第 151 行**
 
 > frame-&gt;sepc, frame-&gt;sstatus, frame-&gt;stval);
 
-**第 154 行**
+**第 155 行**
 
 > 内核态收到中断的计数。曾在这里打一行确认, 太吵 —— 需要时把下面
 > 计数配合 KLOG_DEBUG 打开即可。
 
-**第 167 行**
+**第 168 行**
 
 > ── 同步异常路径 ──────────────────────────────────────
 
-**第 169 行**
+**第 170 行**
 
 > RISC-V ecall: sepc 指向 ecall 本身, 需手动前进到下一条
 
-**第 172 行**
+**第 173 行**
 
 > 现场已完整保存在 frame 里，可以打开 SIE：长 syscall
 > （文件系统/等待输入等）不再把整颗核的 IRQ 延迟拖到毫秒级。
@@ -339,25 +339,25 @@ void handle_exception(void *frame_ptr)
 > is_user_process 返回 false）。返回 trap_vector 前恢复
 > SIE=0，signal/调度检查和 sret 路径保持原有约定。
 
-**第 189 行**
+**第 190 行**
 
 > 用户态 page fault → 投递 SIGSEGV 而不是 shutdown
 
-**第 197 行**
+**第 198 行**
 
 > 崩溃现场：环形缓冲常开, 这里直接把该 pid 最近的 syscall 打出来
 
-**第 205 行**
+**第 206 行**
 
 > 其他异常：打印简单信息后挂起
 
-**第 222 行**
+**第 223 行**
 
 > 注意：这里必须是 0x600。写符号名 hstatus 会被汇编成
 > 0x200(vsstatus), 印出来的 SPV/SPVP 就是别的寄存器的位 ——
 > 详见 include/arch/riscv64/hext.h 顶部的警告。
 
-**第 236 行**
+**第 237 行**
 
 > 打调用栈, 回答&quot;是谁调过来的&quot;。
 
@@ -373,13 +373,13 @@ void handle_exception(void *frame_ptr)
 
 </details>
 
-**位置**：`boot/riscv64/exception.c:119`
+**位置**：`boot/riscv64/exception.c:120`
 
 <a id="mod-boot-x86_64-exception.c"></a>
 
 ## boot/x86_64/exception.c — x86_64 IDT 初始化与中断分发
 
-`boot/x86_64/exception.c` · 8 个函数 · 8 个有说明 · 316 行
+`boot/x86_64/exception.c` · 8 个函数 · 8 个有说明 · 317 行
 
 提供：
 exception_init()    — 建立 IDT, 加载 IDTR, 初始化 LAPIC, sti
@@ -387,7 +387,7 @@ handle_exception()  — 由 exception.S 调用；IRQ 向量交给
 driver/irq 的 LAPIC 后端分发
 idt_set_gate()      — 填写单个 IDT 门描述符
 
-<a id="fn-boot-x86_64-exception.c-72"></a>
+<a id="fn-boot-x86_64-exception.c-73"></a>
 
 ### `wrmsr`
 
@@ -399,9 +399,9 @@ static inline void wrmsr(uint32_t msr, uint64_t value)
 
 把 64 位值拆成低高两个 32 位，用 wrmsr 指令写入指定 MSR。
 
-**位置**：`boot/x86_64/exception.c:72`
+**位置**：`boot/x86_64/exception.c:73`
 
-<a id="fn-boot-x86_64-exception.c-79"></a>
+<a id="fn-boot-x86_64-exception.c-80"></a>
 
 ### `rdmsr`
 
@@ -413,9 +413,9 @@ static inline uint64_t rdmsr(uint32_t msr)
 
 用 rdmsr 指令读取指定 MSR 的低高 32 位并拼成 64 位返回。
 
-**位置**：`boot/x86_64/exception.c:79`
+**位置**：`boot/x86_64/exception.c:80`
 
-<a id="fn-boot-x86_64-exception.c-88"></a>
+<a id="fn-boot-x86_64-exception.c-89"></a>
 
 ### `idt_set_gate`
 
@@ -427,9 +427,9 @@ void idt_set_gate(uint8_t vec, void (*handler)(void), uint16_t sel, uint8_t attr
 
 把处理函数地址拆入 idt[vec] 的低中高偏移字段，并设置段选择子与属性，ist 与保留字段清零。
 
-**位置**：`boot/x86_64/exception.c:88`
+**位置**：`boot/x86_64/exception.c:89`
 
-<a id="fn-boot-x86_64-exception.c-102"></a>
+<a id="fn-boot-x86_64-exception.c-103"></a>
 
 ### `exception_init`
 
@@ -444,33 +444,33 @@ void exception_init(void)
 <details>
 <summary>函数内备注（5 条）</summary>
 
-**第 110 行**
+**第 111 行**
 
 > 屏蔽 8259A PIC(legacy), 我们使用 LAPIC。
 > 默认情况下 BIOS/QEMU 将 IRQ0 映射到 INT 8(Double Fault 向量),
 > 如果不屏蔽, sti 后 PIC timer 会触发 #DF。
 
-**第 115 行（行尾）**
+**第 116 行（行尾）**
 
 > master PIC — 屏蔽所有 IRQ
 
-**第 116 行（行尾）**
+**第 117 行（行尾）**
 
 > slave  PIC — 屏蔽所有 IRQ
 
-**第 118 行**
+**第 119 行**
 
 > 初始化 LAPIC(软件使能 + SVR)
 
-**第 121 行**
+**第 122 行**
 
 > 使能 CPU 中断
 
 </details>
 
-**位置**：`boot/x86_64/exception.c:102`
+**位置**：`boot/x86_64/exception.c:103`
 
-<a id="fn-boot-x86_64-exception.c-127"></a>
+<a id="fn-boot-x86_64-exception.c-128"></a>
 
 ### `exception_init_secondary`
 
@@ -482,9 +482,9 @@ void exception_init_secondary(void)
 
 为从核安装 IDT 与 SYSCALL MSR，并初始化本核 LAPIC。
 
-**位置**：`boot/x86_64/exception.c:127`
+**位置**：`boot/x86_64/exception.c:128`
 
-<a id="fn-boot-x86_64-exception.c-134"></a>
+<a id="fn-boot-x86_64-exception.c-135"></a>
 
 ### `exception_setup_idt`
 
@@ -499,29 +499,29 @@ static void exception_setup_idt(void)
 <details>
 <summary>函数内备注（4 条）</summary>
 
-**第 136 行**
+**第 137 行**
 
 > 0-31：CPU 异常；32：LAPIC timer；33-47：外部 IRQ 向量
 > （ISA IRQ n -&gt; IOAPIC GSI n -&gt; IDT 向量 0x20+n）。
 > 32-47 的 stub 早已存在，只是以前没有把门装进 IDT。
 
-**第 146 行**
+**第 147 行**
 
 > 安装向量 0xF0(跨核 resched IPI)
 
-**第 149 行**
+**第 150 行**
 
 > 安装向量 255(LAPIC Spurious)
 
-**第 152 行**
+**第 153 行**
 
 > 加载 IDTR
 
 </details>
 
-**位置**：`boot/x86_64/exception.c:134`
+**位置**：`boot/x86_64/exception.c:135`
 
-<a id="fn-boot-x86_64-exception.c-158"></a>
+<a id="fn-boot-x86_64-exception.c-159"></a>
 
 ### `exception_setup_syscall`
 
@@ -536,38 +536,38 @@ static void exception_setup_syscall(void)
 <details>
 <summary>函数内备注（6 条）</summary>
 
-**第 160 行**
+**第 161 行**
 
 > 配置 SYSCALL/SYSRET MSR 寄存器(用户态支持)
 
-**第 163 行（行尾）**
+**第 164 行（行尾）**
 
 > syscall_wrapper.S
 
-**第 165 行**
+**第 166 行**
 
 > MSR_STAR: 配置段选择子
 > [31:0]   保留
 > [47:32]  SYSCALL 内核 CS/SS (CS=值, SS=值+8)
 > [63:48]  SYSRET 用户 CS/SS (CS=值+16, SS=值+8)
 
-**第 173 行**
+**第 174 行**
 
 > MSR_LSTAR: SYSCALL 入口地址
 
-**第 176 行**
+**第 177 行**
 
 > MSR_SFMASK: SYSCALL 时清除的 RFLAGS 位(关中断：IF=0x200)
 
-**第 177 行（行尾）**
+**第 178 行（行尾）**
 
 > 清除 IF(中断标志)
 
 </details>
 
-**位置**：`boot/x86_64/exception.c:158`
+**位置**：`boot/x86_64/exception.c:159`
 
-<a id="fn-boot-x86_64-exception.c-184"></a>
+<a id="fn-boot-x86_64-exception.c-185"></a>
 
 ### `handle_exception`
 
@@ -582,33 +582,33 @@ void handle_exception(void *frame_ptr)
 <details>
 <summary>函数内备注（11 条）</summary>
 
-**第 194 行**
+**第 195 行**
 
 > LAPIC 后端负责按向量查表、调用 handler 并写 EOI
 
-**第 204 行**
+**第 205 行**
 
 > 对所有用户异常打印寄存器
 
-**第 212 行**
+**第 213 行**
 
 > 打印 RIP 处的指令字节(用于所有异常)
 
-**第 236 行**
+**第 237 行**
 
 > 用户态 page fault / GPF / 非法指令 → 投递信号而不是直接杀死
 
-**第 252 行**
+**第 253 行**
 
 > 崩溃现场：环形缓冲常开, 这里直接把该 pid 最近的 syscall 打出来
 
-**第 260 行**
+**第 261 行**
 
 > 关键：不要在异常 C 处理函数内直接 task_exit()/sched_schedule()。
 > 调度应在 exception.S 的返回路径(sched_check_and_yield)统一执行,
 > 避免破坏异常返回现场。
 
-**第 270 行**
+**第 271 行**
 
 > 请求在异常返回路径执行重调度。
 
@@ -617,15 +617,15 @@ void handle_exception(void *frame_ptr)
 > 并对全池跑 itimer_tick()。把这些副作用搬进异常处理路径，
 > 会让一个崩溃任务额外消耗时间片/触发定时器扫描。
 
-**第 282 行**
+**第 283 行**
 
 > 未注册的 CPU 异常：打印详细信息
 
-**第 293 行**
+**第 294 行**
 
 > Page Fault: 打印 CR2(出错地址)
 
-**第 302 行**
+**第 303 行**
 
 > 用异常帧(不是处理程序自己的栈)打调用栈, 然后走统一的
 > platform_panic() 停机 —— 它比裸 while(1) hlt 多做两件事：
@@ -633,13 +633,13 @@ void handle_exception(void *frame_ptr)
 
 > 以前这里是 `while(1) hlt`：整机挂死在现场, 看不到&quot;是谁调过来的&quot;。
 
-**第 312 行**
+**第 313 行**
 
 > 其余未注册中断静默忽略(包括 spurious)
 
 </details>
 
-**位置**：`boot/x86_64/exception.c:184`
+**位置**：`boot/x86_64/exception.c:185`
 
 <a id="mod-boot-x86_64-tss.c"></a>
 

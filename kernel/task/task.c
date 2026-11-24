@@ -17,6 +17,7 @@
 */
 
 #include "task/task.h"
+#include "syscall/process.h"
 #include "assert.h"
 #include "barrier.h"
 #include "klog.h"
@@ -180,25 +181,8 @@ task_t *task_alloc_slot(void)
         /* 0 是合法 CPU；用哨兵区分“从未运行过”，避免首次运行被算成迁移。 */
         task->last_run_cpu = (uint32_t)-1;
 
-        /*
-           Linux 进程属性的默认值。clone_handler 会把父进程的
-           umask/groups/rlimits/affinity 覆盖成继承值。
-        */
-        task->umask = 0022;
-        task->dumpable = 1;
-        for (uint32_t r = 0; r < TASK_RLIMIT_COUNT; r++) {
-            task->rlimit_cur[r] = ~0ULL; /* RLIM_INFINITY */
-            task->rlimit_max[r] = ~0ULL;
-        }
-        /* 与 Linux 常见默认值一致；LTP 的 rlimit 用例依赖 NOFILE 的具体值 */
-        task->rlimit_cur[3] = 8ULL * 1024 * 1024; /* RLIMIT_STACK */
-        task->rlimit_cur[4] = 0;                  /* RLIMIT_CORE  */
-        task->rlimit_cur[7] = 1024;               /* RLIMIT_NOFILE */
-        task->rlimit_max[7] = 1024 * 1024;        /* 无 /proc/sys/fs/nr_open 时的上界 */
-        task->rlimit_cur[13] = 0;                 /* RLIMIT_NICE   */
-        task->rlimit_max[13] = 0;
-        task->rlimit_cur[14] = 0; /* RLIMIT_RTPRIO */
-        task->rlimit_max[14] = 0;
+        /* Linux 进程属性默认值由 syscall 层填入（clone/exec 会覆盖）。 */
+        task_linux_defaults_init(task);
         /*
            把整块栈刷成已知图案：配合 task_stack_used() 量"这个任务实际用掉
            多少栈"。arch_init_task_stack() 稍后会在栈顶写好初始帧, 其余部分
@@ -588,138 +572,6 @@ task_t *process_create(const char *name, uint64_t user_entry, uint64_t user_code
     return task;
 }
 
-/* ── process_create_with_pgd ────────────────────────────── */
-
-/*
-   process_create_with_pgd - 使用调用方已构建好的用户页表创建进程
-
-   跳过 vm_create_user_process, 直接使用 pgd_phys。
-   适用于 ELF 加载器：加载器已自行完成段映射和栈映射,
-   不需要再做一次拷贝。user_entry 直接作为用户虚拟入口, 不做转换。
-*/
-task_t *process_create_with_pgd(const char *name, uint64_t user_entry, uint64_t user_sp, uint8_t priority,
-                                uint64_t pgd_phys, uint64_t heap_end_val, uint64_t mmap_next_val)
-{
-    task_t *task = task_alloc_slot();
-    if (!task) {
-        KLOG_ERROR("[task] process_create_with_pgd: no free task slots\n");
-        return NULL;
-    }
-
-    task->id = task_alloc_id();
-    task->state = TASK_ALLOCATING;
-    task->priority = priority;
-    task->domain = TASK_DOMAIN_USER;
-    task->sched_policy = TASK_SCHED_NORMAL;
-    task->rt_priority = 0;
-    task->rt_slice = 0;
-    task->is_user_process = true;
-    task->user_started = false;
-    task->tgid = task->id;
-    task->user_entry = user_entry;
-    task->user_sp = user_sp;
-    task->user_stack_top = user_sp;
-    task->user_stack_size = USER_STACK_SIZE;
-    task->mm->pgd = (uint64_t *)pgd_phys;
-    task->mm->owns_pgd = true;
-    task->fs_base = 0;
-
-    /* 初始化进程文件系统相关字段(继承父进程 cwd) */
-    task_t *parent = task_current();
-    if (parent) {
-        uint32_t c = 0;
-        while (parent->fs->cwd[c] && c < (uint32_t)(TASK_CWD_LEN - 1)) {
-            task->fs->cwd[c] = parent->fs->cwd[c];
-            c++;
-        }
-        task->fs->cwd[c] = '\0';
-    } else {
-        task->fs->cwd[0] = '/';
-        task->fs->cwd[1] = '\0';
-    }
-    for (uint32_t j = 0; j < TASK_MAX_FD; j++)
-        task->files->fd_table[j] = -1;
-    memset(task->files->fd_cloexec, 0, sizeof(task->files->fd_cloexec));
-
-    task->parent_id = parent ? parent->id : 0;
-    task->uid = parent ? parent->uid : 0;
-    task->euid = parent ? parent->euid : 0;
-    task->gid = parent ? parent->gid : 0;
-    task->egid = parent ? parent->egid : 0;
-    task->exit_status = 0;
-    task->is_waiting = false;
-    task->wait_pid = (uint32_t)-1;
-    task->utime_ns = 0;
-    task->stime_ns = 0;
-    task->sc_entry_ns = 0;
-    task->create_ns = timer_get_ns();
-
-    /* === 信号字段初始化 === */
-    task->pending_sigs = 0;
-    task->blocked_sigs = 0;
-    task->sig_saved_blocked = 0;
-    task->pgid = task->id; /* 默认：自成一组 */
-    task->sid = task->id;  /* 默认：自成会话 */
-    task->ctty_pty_idx = -1;
-    task->sig_frame_sp = 0;
-    /* task->sig == NULL 表示全部 SIG_DFL，无需初始化 2 KiB 的 action 表。 */
-
-    list_node_init(&task->run_node);
-    list_node_init(&task->wait_node);
-
-    uint32_t i = 0;
-    while (name[i] && i < (uint32_t)(TASK_NAME_LEN - 1)) {
-        task->name[i] = name[i];
-        i++;
-    }
-    task->name[i] = '\0';
-
-    /* 在入队之前设置堆和 mmap 地址, 避免调度器过早切换到该任务时看到 0 */
-    task->mm->heap_end = heap_end_val;
-    task->mm->mmap_next = mmap_next_val;
-    /*
-       初值即基址：exec 传进来的 mmap_next_val 就是本进程 mmap 区的起点
-       (task_execve 里算出来的 mmap_base)。fork 拷贝地址空间时用它当
-       扫描下界, 见 task.h 里 mmap_base 的注释。
-    */
-    task->mm->mmap_base = mmap_next_val;
-
-    task->sp =
-        arch_init_user_stack(task->stack_base, TASK_STACK_SIZE, task->user_entry, user_sp, (uint64_t)task->mm->pgd);
-
-    /*
-       这里故意不入队：调用方(execve)在新任务创建之后还要填 fd 表,
-       pgid/sid/uid, 信号掩码等状态, 而 TCB 里 fd_table 的初值是 -1
-       —— 那意味着 fd 0/1/2 退回控制台。如果在入队之后才填, SMP 下别的核
-       可能抢先把这个新任务调度上去, 让它带着未初始化的状态跑。
-
-       实测症状(`ls /bin | grep bin` 这类管道)：新任务抢先跑起来时
-       fd 0/1/2 还是控制台, 于是 ls 把目录列表直接打到串口, grep 去读控制台
-       并永久阻塞, shell 卡死在 wait 上 —— 表现为"管道没生效 / 挂死"。
-       上面提前设 heap_end/mmap_next 是同一个道理, 只是那次只管了这两个字段。
-       状态齐了由调用方调 process_start() 入队。
-    */
-    KLOG_TASK("[task] created user process '%s' id=%u prio=%u (pgd=0x%llx)\n", task->name, task->id,
-              (uint32_t)task->priority, pgd_phys);
-
-    return task;
-}
-
-/*
-   process_start - 把 process_create_with_pgd 建好的进程挂进运行队列
-
-   与 process_create_with_pgd 配对使用：创建时任务停在 TASK_ALLOCATING,
-   调用方把"必须在新任务跑起来之前就位"的状态全部填完, 再调这里放行。
-   中途失败想放弃这个任务就用 task_reap_dead()/free_task_slot() 收尾。
-*/
-void process_start(task_t *task)
-{
-    if (!task)
-        return;
-    task->state = TASK_READY;
-    sched_enqueue(task);
-}
-
 /* ── task_create ─────────────────────────────────────────── */
 
 task_t *task_create(const char *name, void (*entry)(void *), void *arg, uint8_t priority)
@@ -980,9 +832,6 @@ void task_unblock(task_t *task)
     sched_unblock(task);
 }
 
-/* ── 前台进程组(全局)────────────────────────────────────── */
-volatile uint32_t g_fg_pgid = 0;
-
 /* ── task_find_by_id ─────────────────────────────────────── */
 task_t *task_find_by_id(uint32_t id)
 {
@@ -992,82 +841,4 @@ task_t *task_find_by_id(uint32_t id)
             return &g_task_pool[i];
     }
     return NULL;
-}
-
-/* ── task_send_signal ────────────────────────────────────── */
-void task_send_signal(task_t *t, int sig)
-{
-    if (!t || sig < 1 || sig > NSIG)
-        return;
-    t->pending_sigs |= (1ULL << (sig - 1));
-
-    /*
-       nanosleep 的睡眠点在 task_block() 里，只有信号能让它提前醒。
-       默认动作通常是终止，不唤醒就永远看不到这个信号。
-    */
-    if (t->sleep_expire_ns != 0 && t->state == TASK_BLOCKED)
-        task_unblock(t);
-}
-
-/*
-   task_signal_pending_effective - 有没有"真正会打断阻塞"的信号
-
-   判据必须和 deliver_pending_signals() 的动作表一致：
-   SIG_IGN、以及 SIG_DFL 本身就是忽略的几个信号(SIGCHLD 等)不算。
-   管道阻塞和 nanosleep 都用它，避免两处各写一份、慢慢漂移。
-*/
-bool task_signal_pending_effective(task_t *t)
-{
-    if (!t)
-        return false;
-
-    uint64_t unblocked = t->pending_sigs & ~t->blocked_sigs;
-    while (unblocked) {
-        uint64_t low = unblocked & (~unblocked + 1); /* 最低置位 */
-        int sig = 0;
-        while (low > 1) {
-            low >>= 1;
-            sig++;
-        }
-        int signo = sig + 1;
-        unblocked &= unblocked - 1;
-
-        sig_action_t act;
-        task_sigaction_get(t, signo, &act);
-        uint64_t h = act.sa_handler;
-        if (h == SIG_IGN)
-            continue;
-        if (h != SIG_DFL)
-            return true;
-
-        switch (signo) {
-        case SIGCHLD:
-        case SIGCONT:
-        case SIGURG:
-        case SIGWINCH:
-        case SIGTTIN:
-        case SIGTTOU:
-        case SIGTSTP:
-            continue;
-        default:
-            return true;
-        }
-    }
-    return false;
-}
-
-/* ── task_send_signal_to_pgid ────────────────────────────── */
-int task_send_signal_to_pgid(uint32_t pgid, int sig)
-{
-    if (!pgid)
-        return 0;
-    int count = 0;
-    for (uint32_t i = 0; i < TASK_MAX; i++) {
-        if (g_stack_used[i] && g_task_pool[i].pgid == pgid && g_task_pool[i].state != TASK_DEAD &&
-            g_task_pool[i].state != TASK_ALLOCATING && g_task_pool[i].is_user_process) {
-            task_send_signal(&g_task_pool[i], sig);
-            count++;
-        }
-    }
-    return count;
 }

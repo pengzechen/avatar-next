@@ -27,6 +27,7 @@
 
 #include "syscall/syscall_internal.h"
 #include "task/task.h"
+#include "syscall/process.h"
 #include "driver/time.h"
 #include "string.h"
 
@@ -431,4 +432,27 @@ void syscall_times_handler(uint64_t regs[6], task_t *t)
         }
     }
     regs[0] = ticks;
+}
+
+/* ── Linux 进程属性默认值 ────────────────────────────────────────
+   task_alloc_slot() 只 memset；这些默认值属于 Linux ABI 策略，
+   由 syscall 层填入（clone/exec 会按父进程覆盖）。
+   ─────────────────────────────────────────────────────────────── */
+void task_linux_defaults_init(task_t *task)
+{
+    task->umask = 0022;
+    task->dumpable = 1;
+    for (uint32_t r = 0; r < TASK_RLIMIT_COUNT; r++) {
+        task->rlimit_cur[r] = ~0ULL; /* RLIM_INFINITY */
+        task->rlimit_max[r] = ~0ULL;
+    }
+    /* 与 Linux 常见默认值一致；LTP 的 rlimit 用例依赖 NOFILE 的具体值 */
+    task->rlimit_cur[3] = 8ULL * 1024 * 1024; /* RLIMIT_STACK */
+    task->rlimit_cur[4] = 0;                  /* RLIMIT_CORE  */
+    task->rlimit_cur[7] = 1024;               /* RLIMIT_NOFILE */
+    task->rlimit_max[7] = 1024 * 1024;        /* 无 /proc/sys/fs/nr_open 时的上界 */
+    task->rlimit_cur[13] = 0;                 /* RLIMIT_NICE   */
+    task->rlimit_max[13] = 0;
+    task->rlimit_cur[14] = 0; /* RLIMIT_RTPRIO */
+    task->rlimit_max[14] = 0;
 }

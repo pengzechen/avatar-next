@@ -284,9 +284,6 @@ _Static_assert(offsetof(task_t, switch_done) < 64, "switch_done 属于退出/回
 _Static_assert(offsetof(task_t, on_cpu) < 64, "on_cpu 属于唤醒热路径");
 _Static_assert(offsetof(task_t, wake_pending) < 64, "wake_pending 属于唤醒热路径");
 
-/* 前台进程组 ID(0 = 无前台进程) */
-extern volatile uint32_t g_fg_pgid;
-
 /* ── SMP 调度亲和性 ──────────────────────────────────────────── */
 /* "任一核"哨兵值； sched_enqueue 看到后会用 round-robin 选目标。 */
 #define CPU_AFFINITY_ANY ((uint32_t)-1)
@@ -396,32 +393,6 @@ task_t *process_create(const char *name, uint64_t user_entry, uint64_t user_code
                        uint8_t priority);
 
 /*
-   process_create_with_pgd - 使用已有用户页表创建用户进程
-   @name:       进程名称(最长 TASK_NAME_LEN-1 字节)
-   @user_entry: 用户态入口点(用户虚拟地址, 直接使用, 不做转换)
-   @user_sp:    用户栈指针(虚拟地址)
-   @priority:   优先级(0 = 最高, 255 = 最低)；NORMAL 队列目前按轮转，不按它排序
-   @pgd_phys:   已创建好的用户页表物理地址
-
-   与 process_create 不同, 跳过 vm_create_user_process,
-   直接使用调用方已准备好的页表。用于 ELF 加载器等自行管理地址空间的场景。
-
-   注意： 返回的任务还没有入运行队列(state 停在 TASK_ALLOCATING)。
-   调用方必须先把所有"新任务跑起来之前就该就位"的状态填完
-   (fd 表, pgid/sid/uid, 信号掩码……), 再调 process_start() 放行。
-   不这么做的话, SMP 下别的核会抢先调度到它, 让它带着初值跑 ——
-   fd_table 的初值是 -1, 即 fd 0/1/2 退回控制台,
-   症状是管道重定向失效 / 挂死(详见 task.c 里 process_create_with_pgd 的注释)。
-*/
-task_t *process_create_with_pgd(const char *name, uint64_t user_entry, uint64_t user_sp, uint8_t priority,
-                                uint64_t pgd_phys, uint64_t heap_end, uint64_t mmap_next);
-
-/*
-   process_start - 把 process_create_with_pgd 建好的进程挂进运行队列
-*/
-void process_start(task_t *task);
-
-/*
    task_yield - 主动让出 CPU
 
    调用者进入就绪队列尾部, 调度器切换到下一个就绪任务。
@@ -518,30 +489,5 @@ void task_kick(task_t *task);
    返回 task_t* 或 NULL
 */
 task_t *task_find_by_id(uint32_t id);
-
-/*
-   task_send_signal - 向任务投递信号(可在中断上下文调用)
-   @t: 目标任务(NULL 则忽略)
-   @sig: 信号号 (1..NSIG)
-*/
-void task_send_signal(task_t *t, int sig);
-
-/* 是否有会真正打断阻塞的 pending 信号（忽略 SIG_IGN / 默认忽略类） */
-bool task_signal_pending_effective(task_t *t);
-
-/*
-   task_send_signal_to_pgid - 向进程组内所有用户态任务投递信号
-   @pgid: 进程组 ID(0 无效)
-   @sig:  信号号
-   @return: 收到信号的进程数量
-*/
-int task_send_signal_to_pgid(uint32_t pgid, int sig);
-
-/*
-   signal_check_uart - 扫描 UART 输入,
-   将普通字符存入环形缓冲区, Ctrl+C 发 SIGINT 给前台进程组。
-   可在中断和任务上下文中调用。
-*/
-void signal_check_uart(void);
 
 #endif /* KERNEL_TASK_TASK_H */

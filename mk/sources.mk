@@ -109,7 +109,7 @@ KERNEL_OBJECTS := $(foreach f,$(KERNEL_SRCS),$(call kobj,$(f)))
 # 的注释：fs_lock.c 的指针截断事故就是被一刀切的 -w 藏掉的。
 KERNEL_LWEXT4_SRCS := \
     $(FS_DIR)/vfs/vfs.c \
-    $(KERNEL_DIR)/task/elf_loader.c \
+    $(KERNEL_DIR)/syscall/exec/elf_loader.c \
     $(KERNEL_DIR)/syscall/syscall.c \
     $(KERNEL_DIR)/syscall/core/proc_lifecycle.c \
     $(KERNEL_DIR)/syscall/fs/fd/fd_pool.c \

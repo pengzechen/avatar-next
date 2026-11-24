@@ -12,6 +12,7 @@
 #include "syscall/fs/char/tty.h"
 #include "syscall/syscall_internal.h"
 #include "task/task.h"
+#include "syscall/signal.h"
 #include "spinlock.h"
 #include "driver/serial.h"
 
@@ -65,6 +66,9 @@ struct kernel_termios g_termios = {
     .c_line = 0,
     .c_cc = { 0, 0, 0, 0, 4 /* VEOF=^D */, 0 /* VTIME */, 1 /* VMIN */, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
 };
+
+/* 前台进程组(0 = 无)；Linux 的 tty/进程组语义放在 tty 层。 */
+volatile uint32_t g_fg_pgid = 0;
 
 /*
    保护 UART 硬件(LSR/RBR)读取的自旋锁。
