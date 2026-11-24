@@ -23,7 +23,8 @@
    链接同名是未定义行为(C11 6.2.2p7)。详见 include/libc/string_internal.h 顶部。
 */
 
-#include "string_internal.h"
+#include "libc/string_internal.h"
+#include "types.h"
 
 void *memcpy(void *dst, const void *src, size_t n)
 {
