@@ -1,6 +1,6 @@
 # kernel — C API
 
-[← 返回总览](index.md) · 1009 个函数 · 说明覆盖率 73.3%
+[← 返回总览](index.md) · 1009 个函数 · 说明覆盖率 84.4%
 
 <a id="mod-kernel-debug-backtrace.c"></a>
 
@@ -758,7 +758,7 @@ void klog_async_start(void)
 
 ## kernel/linux/core/futex.c — 简易 futex 实现(fixed-size 表, 无哈希)
 
-`kernel/linux/core/futex.c` · 3 个函数 · 1 个有说明 · 123 行
+`kernel/linux/core/futex.c` · 3 个函数 · 3 个有说明 · 123 行
 
 仅支持 FUTEX_WAIT / FUTEX_WAKE 基本语义, 足以让 musl pthread mutex / cond 工作。
 派生自 kernel/linux/syscall.c, 作为大重构的第一步抽出。
@@ -771,7 +771,9 @@ void klog_async_start(void)
 int futex_do_wake(uintptr_t uaddr, int count)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+持锁摘取同地址的至多 count 个等待者并清槽，解锁后逐个 sched_unblock，返回唤醒数。
 
 <details>
 <summary>函数内备注（1 条）</summary>
@@ -794,7 +796,9 @@ int futex_do_wake(uintptr_t uaddr, int count)
 int sys_futex_wait(uint32_t *uaddr, uint32_t val)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+经 copy_from_user 读用户值，持锁比对不等返回 EAGAIN，否则登记等待槽、置阻塞并调度。
 
 <details>
 <summary>函数内备注（4 条）</summary>
@@ -846,7 +850,7 @@ futex syscall 派发：仅支持 FUTEX_WAIT / FUTEX_WAKE 基本语义
 
 ## kernel/linux/core/proc_ids.c — 进程身份 / 进程组 / 会话相关 syscall
 
-`kernel/linux/core/proc_ids.c` · 2 个函数 · 0 个有说明 · 202 行
+`kernel/linux/core/proc_ids.c` · 2 个函数 · 2 个有说明 · 202 行
 
 从 kernel/linux/syscall.c 抽出。覆盖：
 getpid / getppid / gettid / set_tid_address
@@ -865,7 +869,9 @@ getgroups / setgroups
 static bool process_group_exists(uint32_t pgid)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+遍历任务池，跳过未用、DEAD 与 ALLOCATING 项，命中相同 pgid 即返回 true。
 
 **位置**：`kernel/linux/core/proc_ids.c:26`
 
@@ -877,7 +883,9 @@ static bool process_group_exists(uint32_t pgid)
 void proc_ids_handler(uint64_t syscall_num, uint64_t regs[6], task_t *current)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+按 syscall 号分发 uid/gid/pid/pgid/sid 的查询与设置及 setsid 等，结果写回 regs[0]。
 
 <details>
 <summary>函数内备注（4 条）</summary>
@@ -906,7 +914,7 @@ void proc_ids_handler(uint64_t syscall_num, uint64_t regs[6], task_t *current)
 
 ## kernel/linux/core/proc_lifecycle.c — 进程/线程生命周期 syscall
 
-`kernel/linux/core/proc_lifecycle.c` · 8 个函数 · 2 个有说明 · 892 行
+`kernel/linux/core/proc_lifecycle.c` · 8 个函数 · 8 个有说明 · 892 行
 
 从 kernel/linux/syscall.c 抽出, 覆盖：
 exit / exit_group        → sys_exit() + exit_handler()
@@ -924,7 +932,9 @@ sys_exit / sys_execve 在 syscall.h 中已有 public 声明。
 void sys_exit(int status)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+记录退出码，清 ctid 并唤醒 futex，关闭非线程 fd、给子进程投递 pdeathsig、结算时间后调用 task_exit。
 
 <details>
 <summary>函数内备注（7 条）</summary>
@@ -971,7 +981,9 @@ void sys_exit(int status)
 void exit_handler(uint64_t regs[6])
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+把 regs[0] 当作退出状态调用 sys_exit。
 
 **位置**：`kernel/linux/core/proc_lifecycle.c:224`
 
@@ -983,7 +995,9 @@ void exit_handler(uint64_t regs[6])
 void exit_group_handler(uint64_t regs[6])
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+扫描同 tgid 的其他用户进程置 DEAD 并出队，然后以 regs[0] 为状态调用 sys_exit。
 
 <details>
 <summary>函数内备注（1 条）</summary>
@@ -1007,7 +1021,9 @@ void exit_group_handler(uint64_t regs[6])
 int64_t sys_execve(const char *pathname, char **argv, char **envp, trap_frame_t *frame)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+从用户态拷入 argv/envp 到每 CPU 缓冲，解析绝对路径后调用 elf_loader 原地替换映像并返回结果。
 
 <details>
 <summary>函数内备注（5 条）</summary>
@@ -1047,7 +1063,9 @@ int64_t sys_execve(const char *pathname, char **argv, char **envp, trap_frame_t 
 void execve_handler(uint64_t regs[6], trap_frame_t *frame)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+取出路径、argv、envp 参数调用 sys_execve，并把返回值写回 regs[0]。
 
 **位置**：`kernel/linux/core/proc_lifecycle.c:342`
 
@@ -1233,7 +1251,9 @@ ustatus / urusage 是用户给的指针(可为 NULL)。必须走 copy_to_user_by
 void wait_handler(uint64_t regs[6], task_t *me)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+查找匹配子进程与已死子进程，命中则回写状态并回收；WNOHANG 返回 0，否则置等待标志阻塞后重新查找。
 
 <details>
 <summary>函数内备注（4 条）</summary>
@@ -1262,7 +1282,7 @@ void wait_handler(uint64_t regs[6], task_t *me)
 
 ## kernel/linux/core/resource.c — 身份/资源/时间类 Linux syscall
 
-`kernel/linux/core/resource.c` · 11 个函数 · 2 个有说明 · 458 行
+`kernel/linux/core/resource.c` · 11 个函数 · 11 个有说明 · 458 行
 
 覆盖：
 getgroups / setgroups
@@ -1289,7 +1309,9 @@ times
 static bool rlimit_res_valid(int res)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+判断资源号是否落在 0 到 TASK_RLIMIT_COUNT 之前。
 
 **位置**：`kernel/linux/core/resource.c:63`
 
@@ -1328,7 +1350,9 @@ newlim 已经是从用户空间拷进来的内核副本。
 static void rlimit_get(task_t *t, int res, struct kernel_rlimit *out)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+把任务指定资源的软硬限制复制到输出结构。
 
 **位置**：`kernel/linux/core/resource.c:95`
 
@@ -1340,7 +1364,9 @@ static void rlimit_get(task_t *t, int res, struct kernel_rlimit *out)
 void syscall_groups_handler(uint64_t syscall_num, uint64_t regs[6], task_t *t)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+getgroups 校验大小并拷出附加组；setgroups 要求 euid 为 0，拷入后写入任务组表。
 
 <details>
 <summary>函数内备注（3 条）</summary>
@@ -1369,7 +1395,9 @@ void syscall_groups_handler(uint64_t syscall_num, uint64_t regs[6], task_t *t)
 void syscall_rlimit_handler(uint64_t syscall_num, uint64_t regs[6], task_t *t)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+处理 get/setrlimit 与 prlimit64，校验资源号与用户指针并做权限检查后读写限制。
 
 <details>
 <summary>函数内备注（2 条）</summary>
@@ -1394,7 +1422,9 @@ void syscall_rlimit_handler(uint64_t syscall_num, uint64_t regs[6], task_t *t)
 void syscall_umask_handler(uint64_t regs[6], task_t *t)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+保存旧 umask，把新值掩蔽为 0777 后写入任务并返回旧值。
 
 **位置**：`kernel/linux/core/resource.c:260`
 
@@ -1406,7 +1436,9 @@ void syscall_umask_handler(uint64_t regs[6], task_t *t)
 void syscall_prctl_handler(uint64_t regs[6], task_t *t)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+按 option 处理 pdeathsig、dumpable、进程名、no_new_privs 的读取与设置，未知项返回 EINVAL。
 
 <details>
 <summary>函数内备注（1 条）</summary>
@@ -1427,7 +1459,9 @@ void syscall_prctl_handler(uint64_t regs[6], task_t *t)
 void syscall_robust_list_handler(uint64_t regs[6], task_t *t)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+长度等于头部大小时保存 robust_list 指针返回 0，否则返回 EINVAL。
 
 **位置**：`kernel/linux/core/resource.c:374`
 
@@ -1439,7 +1473,9 @@ void syscall_robust_list_handler(uint64_t regs[6], task_t *t)
 void syscall_personality_handler(uint64_t regs[6], task_t *t)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+非 0xffffffff 时更新任务 personality，并始终返回旧值。
 
 <details>
 <summary>函数内备注（1 条）</summary>
@@ -1460,7 +1496,9 @@ void syscall_personality_handler(uint64_t regs[6], task_t *t)
 void syscall_times_handler(uint64_t regs[6], task_t *t)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+按当前纳秒与 stime、创建时间算出 utime/stime 滴答，可选拷出 tms，返回总滴答。
 
 <details>
 <summary>函数内备注（2 条）</summary>
@@ -1533,7 +1571,7 @@ task_alloc_slot() 只 memset；这些默认值属于 Linux ABI 策略，
 
 ## kernel/linux/core/sched.c — 调度相关 syscall(sched_yield, nanosleep)
 
-`kernel/linux/core/sched.c` · 2 个函数 · 0 个有说明 · 109 行
+`kernel/linux/core/sched.c` · 2 个函数 · 2 个有说明 · 109 行
 
 从 kernel/linux/syscall.c 抽出。
 
@@ -1552,7 +1590,9 @@ nanosleep 现在是真睡眠：
 void sched_yield_handler(uint64_t regs[6])
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+调用 task_yield 让出 CPU 并把 regs[0] 置 0。
 
 **位置**：`kernel/linux/core/sched.c:25`
 
@@ -1564,7 +1604,9 @@ void sched_yield_handler(uint64_t regs[6])
 void nanosleep_handler(uint64_t regs[6])
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+拷入并校验 timespec，设睡眠到期时间，循环阻塞至到期或信号打断，被打断回填剩余时间并返回 EINTR。
 
 <details>
 <summary>函数内备注（3 条）</summary>
@@ -1590,7 +1632,7 @@ void nanosleep_handler(uint64_t regs[6])
 
 ## kernel/linux/core/signal.c — 内核信号子系统(投递 + 三个 syscall 处理器)
 
-`kernel/linux/core/signal.c` · 12 个函数 · 6 个有说明 · 525 行
+`kernel/linux/core/signal.c` · 12 个函数 · 10 个有说明 · 525 行
 
 从 kernel/linux/syscall.c 抽出。包含：
 - deliver_pending_signals(): syscall 返回用户态前选取并投递一个信号
@@ -1738,7 +1780,9 @@ void deliver_pending_signals(task_t *t, trap_frame_t *frame)
 void sigaction_handler(uint64_t regs[6], task_t *current)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+校验 sigsetsize 与信号号，可选出旧动作、写入新动作，设置失败返回 ENOMEM。
 
 **位置**：`kernel/linux/core/signal.c:178`
 
@@ -1750,7 +1794,9 @@ void sigaction_handler(uint64_t regs[6], task_t *current)
 void sigprocmask_handler(uint64_t regs[6], task_t *current)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+可选出阻塞掩码，再按 how 修改屏蔽集，并强制 SIGKILL/SIGSTOP 不可屏蔽。
 
 <details>
 <summary>函数内备注（1 条）</summary>
@@ -1771,7 +1817,9 @@ void sigprocmask_handler(uint64_t regs[6], task_t *current)
 void sigpending_handler(uint64_t regs[6], task_t *current)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+校验大小与指针非空，把待决信号与阻塞掩码的交集拷回用户。
 
 **位置**：`kernel/linux/core/signal.c:249`
 
@@ -1826,7 +1874,9 @@ wait() 永远等下去, 整个测试卡死。只有从用户态陷入时才投�
 void sigreturn_handler(uint64_t regs[6], task_t *current, trap_frame_t *frame)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+从 sig_frame_sp 经 copy_from_user 恢复 trap_frame 与屏蔽字并回填返回寄存器，失败返回 EFAULT。
 
 <details>
 <summary>函数内备注（5 条）</summary>
@@ -1975,7 +2025,7 @@ int task_send_signal_to_pgid(uint32_t pgid, int sig)
 
 ## kernel/linux/core/signal_struct.c — 进程级信号处置（signal_struct）
 
-`kernel/linux/core/signal_struct.c` · 7 个函数 · 5 个有说明 · 247 行
+`kernel/linux/core/signal_struct.c` · 7 个函数 · 7 个有说明 · 247 行
 
 把 sig_action_t[NSIG] 从 task_t 里拆出来，原因见
 docs/task_t_refactor.md：
@@ -2019,7 +2069,9 @@ static signal_struct_t *sig_alloc_locked(void)
 bool task_sigaction_get(task_t *t, int sig, sig_action_t *out)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+先预填 SIG_DFL，原子读取任务信号结构并复制对应动作，无结构时返回 false。
 
 **位置**：`kernel/linux/core/signal_struct.c:47`
 
@@ -2031,7 +2083,9 @@ bool task_sigaction_get(task_t *t, int sig, sig_action_t *out)
 int task_sigaction_set(task_t *t, int sig, const sig_action_t *act)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+持锁按需分配信号结构并写入动作，分配失败返回 -1，否则返回 0。
 
 <details>
 <summary>函数内备注（1 条）</summary>
@@ -4241,7 +4295,7 @@ void getdents64_handler(uint64_t regs[6], task_t *current)
 
 ## kernel/linux/fs/ioctl.c — ioctl 系统调用
 
-`kernel/linux/fs/ioctl.c` · 2 个函数 · 0 个有说明 · 159 行
+`kernel/linux/fs/ioctl.c` · 2 个函数 · 2 个有说明 · 159 行
 
 由 kernel/linux/syscall.c 拆出。优先派发给 pseudofs 设备节点；
 否则按 TTY 终端 ioctl 处理(TCGETS / TIOCGWINSZ / TIOCGPGRP 等)。
@@ -4254,7 +4308,9 @@ void getdents64_handler(uint64_t regs[6], task_t *current)
 static bool trace_heavy_task(task_t *current)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+判断是否为用户进程且 heap_end 超过阈值，用于决定是否输出详尽日志。
 
 **位置**：`kernel/linux/fs/ioctl.c:21`
 
@@ -4266,7 +4322,9 @@ static bool trace_heavy_task(task_t *current)
 void ioctl_handler(uint64_t regs[6], task_t *current)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+处理 FIONBIO 与 termios、winsize、pgrp 请求，设备 fd 转 vfs_ioctl，dma-buf 走专用接口，其余 ENOTTY。
 
 <details>
 <summary>函数内备注（8 条）</summary>
@@ -4631,7 +4689,7 @@ void fs_put(fs_struct_t *fs)
 
 ## kernel/linux/io/epoll.c — epoll 子系统实现
 
-`kernel/linux/io/epoll.c` · 12 个函数 · 0 个有说明 · 489 行
+`kernel/linux/io/epoll.c` · 12 个函数 · 12 个有说明 · 489 行
 
 事件驱动 I/O 多路复用。核心机制：
 1. epoll_ctl(ADD) 时在目标 fd 的 wq 上注册 waiter
@@ -4647,7 +4705,9 @@ void fs_put(fs_struct_t *fs)
 static int epoll_instance_alloc(void)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+扫描池找未使用实例，清零并标记使用后返回索引，无空位返回 -1。
 
 **位置**：`kernel/linux/io/epoll.c:29`
 
@@ -4659,7 +4719,9 @@ static int epoll_instance_alloc(void)
 static void epoll_instance_free(int idx)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+下标合法时把该 epoll 实例标记为未使用。
 
 **位置**：`kernel/linux/io/epoll.c:41`
 
@@ -4671,7 +4733,9 @@ static void epoll_instance_free(int idx)
 static epoll_instance_t *epoll_get(int idx)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+校验下标与使用标志，返回实例指针，否则返回 NULL。
 
 **位置**：`kernel/linux/io/epoll.c:47`
 
@@ -4683,7 +4747,9 @@ static epoll_instance_t *epoll_get(int idx)
 static int wq_register(fd_waitqueue_t *wq, epoll_instance_t *ep, int item_idx)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+等待队列未满时追加一条记录 ep 与 item_idx 的表项并返回 0，满则返回 -1。
 
 **位置**：`kernel/linux/io/epoll.c:58`
 
@@ -4695,7 +4761,9 @@ static int wq_register(fd_waitqueue_t *wq, epoll_instance_t *ep, int item_idx)
 static void wq_unregister(fd_waitqueue_t *wq, epoll_instance_t *ep, int item_idx)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+遍历等待队列，匹配 ep 与 item_idx 的项用末尾项覆盖并减少计数。
 
 **位置**：`kernel/linux/io/epoll.c:68`
 
@@ -4707,7 +4775,9 @@ static void wq_unregister(fd_waitqueue_t *wq, epoll_instance_t *ep, int item_idx
 void fd_notify_waiters(int pool_idx, uint32_t events)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+遍历该 fd 的等待者，匹配关注事件时标脏、累加就绪数并唤醒阻塞任务。
 
 **位置**：`kernel/linux/io/epoll.c:80`
 
@@ -4719,7 +4789,9 @@ void fd_notify_waiters(int pool_idx, uint32_t events)
 void fd_close_notify(int pool_idx)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+逐个摘除该 fd 的等待项，从 epoll 实例删除对应 item 并用末尾项填补后重新注册。
 
 **位置**：`kernel/linux/io/epoll.c:113`
 
@@ -4731,7 +4803,9 @@ void fd_close_notify(int pool_idx)
 uint32_t fd_poll(task_t *task, int fd)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+标准 fd 按 UART 缓冲返回就绪事件，其他先取对象再调用 vfs_poll 得到事件。
 
 **位置**：`kernel/linux/io/epoll.c:149`
 
@@ -4743,7 +4817,9 @@ uint32_t fd_poll(task_t *task, int fd)
 void epoll_create1_handler(uint64_t regs[6], task_t *current)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+校验标志后分配实例与池槽，初始化 EPOLL 对象并分配 fd，失败逐级回滚。
 
 **位置**：`kernel/linux/io/epoll.c:179`
 
@@ -4755,7 +4831,9 @@ void epoll_create1_handler(uint64_t regs[6], task_t *current)
 void epoll_ctl_handler(uint64_t regs[6], task_t *current)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+处理 ADD/DEL/MOD，登记或摘除等待队列并维护 item 表与就绪计数，ADD/MOD 时立即轮询就绪。
 
 **位置**：`kernel/linux/io/epoll.c:227`
 
@@ -4767,7 +4845,9 @@ void epoll_ctl_handler(uint64_t regs[6], task_t *current)
 void epoll_pwait_handler(uint64_t regs[6], task_t *current)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+循环检查信号并重扫所有 item 就绪状态，就绪事件拷出用户，否则按超时阻塞或返回。
 
 <details>
 <summary>函数内备注（1 条）</summary>
@@ -4788,7 +4868,9 @@ void epoll_pwait_handler(uint64_t regs[6], task_t *current)
 void epoll_destroy(int ep_idx)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+从各 fd 等待队列摘除本项目，唤醒阻塞任务后释放 epoll 实例。
 
 **位置**：`kernel/linux/io/epoll.c:467`
 
@@ -4796,7 +4878,7 @@ void epoll_destroy(int ep_idx)
 
 ## kernel/linux/io/poll.c — poll / ppoll 处理器
 
-`kernel/linux/io/poll.c` · 1 个函数 · 0 个有说明 · 79 行
+`kernel/linux/io/poll.c` · 1 个函数 · 1 个有说明 · 79 行
 
 使用 fd_poll() 统一接口查询 fd 就绪状态。
 阻塞模式下使用 task_yield() 让出 CPU。
@@ -4809,7 +4891,9 @@ void epoll_destroy(int ep_idx)
 void poll_handler(uint64_t regs[6], uint64_t syscall_num, task_t *current)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+循环检查信号，逐个 fd 调用 fd_poll 填写 revents，就绪或超时返回，否则让出 CPU。
 
 **位置**：`kernel/linux/io/poll.c:19`
 
@@ -4817,7 +4901,7 @@ void poll_handler(uint64_t regs[6], uint64_t syscall_num, task_t *current)
 
 ## kernel/linux/io/select.c — select / pselect6 处理器
 
-`kernel/linux/io/select.c` · 1 个函数 · 0 个有说明 · 117 行
+`kernel/linux/io/select.c` · 1 个函数 · 1 个有说明 · 117 行
 
 使用 fd_poll() 统一接口查询 fd 就绪状态。
 
@@ -4829,7 +4913,9 @@ void poll_handler(uint64_t regs[6], uint64_t syscall_num, task_t *current)
 void select_handler(uint64_t regs[6], uint64_t syscall_num, task_t *current)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+先拷入 fd 位图，循环逐位调用 fd_poll 生成结果位图，就绪或超时返回，期间让出 CPU。
 
 **位置**：`kernel/linux/io/select.c:18`
 
@@ -4837,7 +4923,7 @@ void select_handler(uint64_t regs[6], uint64_t syscall_num, task_t *current)
 
 ## kernel/linux/mm/brk.c — sys_brk 实现
 
-`kernel/linux/mm/brk.c` · 4 个函数 · 0 个有说明 · 157 行
+`kernel/linux/mm/brk.c` · 4 个函数 · 4 个有说明 · 157 行
 
 从 kernel/linux/syscall.c 抽出。语义同 Linux brk(2)：
 addr == 0 -> 查询当前堆末尾
@@ -4853,7 +4939,9 @@ addr >  current_brk -> 按页扩展(分配并清零物理页)
 static uint64_t shared_heap_end(task_t *current)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+取当前进程堆末，并扫描同页表的其他存活用户任务取最大值。
 
 **位置**：`kernel/linux/mm/brk.c:29`
 
@@ -4865,7 +4953,9 @@ static uint64_t shared_heap_end(task_t *current)
 static void sync_shared_heap_end(task_t *current, uint64_t heap_end)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+把新堆末写入所有共享同一页表的存活用户任务。
 
 **位置**：`kernel/linux/mm/brk.c:44`
 
@@ -4877,7 +4967,9 @@ static void sync_shared_heap_end(task_t *current, uint64_t heap_end)
 void *sys_brk(void *addr)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+非用户进程返回 ENOMEM；查询返回当前堆末；缩小则解映射页，扩展则逐页分配映射，最后同步共享堆末。
 
 <details>
 <summary>函数内备注（8 条）</summary>
@@ -4926,7 +5018,9 @@ void *sys_brk(void *addr)
 void *sys_sbrk(int64_t increment)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+用静态堆指针记录旧值后加上增量，返回旧值，并未建立实际映射。
 
 <details>
 <summary>函数内备注（1 条）</summary>
@@ -4944,7 +5038,7 @@ void *sys_sbrk(int64_t increment)
 
 ## kernel/linux/mm/mmap.c — sys_mmap 实现(包含匿名映射与文件映射)
 
-`kernel/linux/mm/mmap.c` · 9 个函数 · 2 个有说明 · 649 行
+`kernel/linux/mm/mmap.c` · 9 个函数 · 9 个有说明 · 649 行
 
 从 kernel/linux/syscall.c 迁出。文件映射通过 VFS 读取文件内容。
 
@@ -4956,7 +5050,9 @@ void *sys_sbrk(int64_t increment)
 static bool mmap_prot_is_none(int prot)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+判断 prot 中读、写、执行三个权限位是否全为 0。
 
 **位置**：`kernel/linux/mm/mmap.c:44`
 
@@ -4968,7 +5064,9 @@ static bool mmap_prot_is_none(int prot)
 static uint64_t shared_mmap_next(task_t *current)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+取当前 mmap_next，并扫描同页表的其他存活用户任务取最大值。
 
 **位置**：`kernel/linux/mm/mmap.c:49`
 
@@ -4980,7 +5078,9 @@ static uint64_t shared_mmap_next(task_t *current)
 static void sync_shared_mmap_next(task_t *current, uint64_t next)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+把更大的 mmap_next 同步到所有共享同一页表的存活用户任务。
 
 **位置**：`kernel/linux/mm/mmap.c:64`
 
@@ -4992,7 +5092,9 @@ static void sync_shared_mmap_next(task_t *current, uint64_t next)
 static int mmap_user_range_ok(uint64_t start, uint64_t size)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+拒绝零长度、地址回绕、起始低于一页或越过用户栈底的区间。
 
 **位置**：`kernel/linux/mm/mmap.c:75`
 
@@ -5004,7 +5106,9 @@ static int mmap_user_range_ok(uint64_t start, uint64_t size)
 static void sync_shared_mmap_next_to(task_t *current, uint64_t val)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+把所有共享同一页表的存活用户任务的 mmap_next 直接设为给定值。
 
 **位置**：`kernel/linux/mm/mmap.c:88`
 
@@ -5016,7 +5120,9 @@ static void sync_shared_mmap_next_to(task_t *current, uint64_t val)
 uint64_t sys_munmap(uint64_t addr, uint64_t len)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+校验参数后解映射指定范围，若触及顶端则向下探测已映射页并收缩共享 mmap_next。
 
 <details>
 <summary>函数内备注（4 条）</summary>
@@ -5124,7 +5230,9 @@ mmap 时就不建 PTE，mprotect 保持 PROT_NONE 时继续无映射。
 uint64_t sys_mmap(uint64_t addr, uint64_t len, int prot, int flags, int fd, uint64_t offset)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+处理文件映射，校验地址区间与偏移后经设备 get_phys 或 rtctl、rknpu 令牌查物理页并建立映射，失败返回错误码。
 
 <details>
 <summary>函数内备注（15 条）</summary>
@@ -5211,7 +5319,7 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, int prot, int flags, int fd, uint
 
 ## kernel/linux/mm/pmap_compat.c — 进程地址空间相关的兼容/小型 syscall 处理器
 
-`kernel/linux/mm/pmap_compat.c` · 4 个函数 · 0 个有说明 · 91 行
+`kernel/linux/mm/pmap_compat.c` · 4 个函数 · 4 个有说明 · 91 行
 
 - arch_prctl_handler  (x86 only) — ARCH_SET_FS / ARCH_GET_FS
 - getrandom_handler  — musl stack canary 等需要的伪随机
@@ -5225,7 +5333,9 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, int prot, int flags, int fd, uint
 void x86_write_msr(uint32_t msr, uint64_t value)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+用 wrmsr 指令把 64 位值拆成高低 32 位写入指定 MSR。
 
 **位置**：`kernel/linux/mm/pmap_compat.c:19`
 
@@ -5237,7 +5347,9 @@ void x86_write_msr(uint32_t msr, uint64_t value)
 void x86_write_fs_base(uint64_t fs_base)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+调用 x86_write_msr 把给定值写入 IA32_FS_BASE。
 
 **位置**：`kernel/linux/mm/pmap_compat.c:26`
 
@@ -5249,7 +5361,9 @@ void x86_write_fs_base(uint64_t fs_base)
 void arch_prctl_handler(uint64_t regs[6], task_t *current)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+SET_FS 保存并写 MSR，GET_FS 把保存值写到用户指针，其他命令返回 EINVAL。
 
 **位置**：`kernel/linux/mm/pmap_compat.c:31`
 
@@ -5261,7 +5375,9 @@ void arch_prctl_handler(uint64_t regs[6], task_t *current)
 void getrandom_handler(uint64_t regs[6])
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+以时间播种的 LCG 分块生成随机字节拷到用户，长度为 0 直接返回 0。
 
 <details>
 <summary>函数内备注（2 条）</summary>
@@ -5283,7 +5399,7 @@ void getrandom_handler(uint64_t regs[6])
 
 ## kernel/linux/net/ksocket.c — kernel socket layer over lwIP raw API
 
-`kernel/linux/net/ksocket.c` · 28 个函数 · 0 个有说明 · 774 行
+`kernel/linux/net/ksocket.c` · 28 个函数 · 28 个有说明 · 774 行
 
 Provides blocking socket semantics using task_block/task_unblock.
 lwIP runs in NO_SYS=1 mode (no OS integration); all lwIP calls
@@ -5297,7 +5413,9 @@ happen from the net-poll task context via callbacks.
 void ksock_ref(int si)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+校验索引与状态后增加套接字引用计数。
 
 **位置**：`kernel/linux/net/ksocket.c:72`
 
@@ -5309,7 +5427,9 @@ void ksock_ref(int si)
 static int ksock_alloc(void)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+线性扫描套接字池，返回空闲槽索引，无空闲返回 -1。
 
 **位置**：`kernel/linux/net/ksocket.c:78`
 
@@ -5321,7 +5441,9 @@ static int ksock_alloc(void)
 static ksock_t *ksock_get(int si)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+校验索引且非空闲状态，返回套接字指针，否则返回 NULL。
 
 **位置**：`kernel/linux/net/ksocket.c:87`
 
@@ -5333,7 +5455,9 @@ static ksock_t *ksock_get(int si)
 static void ksock_unblock(ksock_t *sk)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+若有被阻塞任务，清空指针并调用 task_unblock 唤醒。
 
 **位置**：`kernel/linux/net/ksocket.c:96`
 
@@ -5345,7 +5469,9 @@ static void ksock_unblock(ksock_t *sk)
 static void ksock_notify_epoll(int si, uint32_t events)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+遍历 fd 池，对匹配该套接字的文件通知 epoll 等待者事件。
 
 **位置**：`kernel/linux/net/ksocket.c:105`
 
@@ -5357,7 +5483,9 @@ static void ksock_notify_epoll(int si, uint32_t events)
 static err_t ksock_tcp_recv_cb(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+出错时置错误码唤醒等待者；空 pbuf 视为 EOF；否则按队列上限挂接数据、确认接收并通知 EPOLLIN。
 
 <details>
 <summary>函数内备注（1 条）</summary>
@@ -5378,7 +5506,9 @@ static err_t ksock_tcp_recv_cb(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, 
 static err_t ksock_tcp_accept_cb(void *arg, struct tcp_pcb *newpcb, err_t err)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+队列或槽位不足时 abort 新连接，否则初始化新套接字、设回调并入 accept 队列后唤醒。
 
 **位置**：`kernel/linux/net/ksocket.c:166`
 
@@ -5390,7 +5520,9 @@ static err_t ksock_tcp_accept_cb(void *arg, struct tcp_pcb *newpcb, err_t err)
 static err_t ksock_tcp_connected_cb(void *arg, struct tcp_pcb *tpcb, err_t err)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+成功则标记已连接并记录对端，失败置 ECONNREFUSED，随后唤醒等待者并通知 EPOLLOUT 或 EPOLLERR。
 
 <details>
 <summary>函数内备注（1 条）</summary>
@@ -5411,7 +5543,9 @@ static err_t ksock_tcp_connected_cb(void *arg, struct tcp_pcb *tpcb, err_t err)
 static void ksock_tcp_err_cb(void *arg, err_t err)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+清空 pcb 指针并按错误类型映射 errno，标记 EOF 后唤醒等待者并通知 EPOLLERR 与 HUP。
 
 <details>
 <summary>函数内备注（3 条）</summary>
@@ -5440,7 +5574,9 @@ static void ksock_tcp_err_cb(void *arg, err_t err)
 static err_t ksock_tcp_sent_cb(void *arg, struct tcp_pcb *tpcb, u16_t len)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+发送完成后唤醒阻塞任务并通知 EPOLLOUT，返回 ERR_OK。
 
 **位置**：`kernel/linux/net/ksocket.c:249`
 
@@ -5452,7 +5588,9 @@ static err_t ksock_tcp_sent_cb(void *arg, struct tcp_pcb *tpcb, u16_t len)
 static void ksock_udp_recv_cb(void *arg, struct udp_pcb *pcb, struct pbuf *p, const ip_addr_t *addr, u16_t port)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+队列未满时记录来源地址端口，把 pbuf 链入接收队列，唤醒等待者并通知 EPOLLIN。
 
 **位置**：`kernel/linux/net/ksocket.c:263`
 
@@ -5464,7 +5602,9 @@ static void ksock_udp_recv_cb(void *arg, struct udp_pcb *pcb, struct pbuf *p, co
 int ksock_create(int domain, int type, int protocol)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+仅支持 AF_INET，分配槽后按 SOCK_STREAM 或 SOCK_DGRAM 创建 TCP/UDP 控制块并设回调，返回索引。
 
 <details>
 <summary>函数内备注（7 条）</summary>
@@ -5509,7 +5649,9 @@ int ksock_create(int domain, int type, int protocol)
 int ksock_bind(int si, uint32_t addr, uint16_t port)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+按协议调用 TCP 或 UDP bind，地址占用返回 EADDRINUSE，成功后记录本地地址端口并置 BOUND。
 
 <details>
 <summary>函数内备注（3 条）</summary>
@@ -5538,7 +5680,9 @@ int ksock_bind(int si, uint32_t addr, uint16_t port)
 int ksock_listen(int si, int backlog)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+仅对 TCP 生效，已监听直接成功，规范化 backlog 后建监听控制块、设 accept 回调并置 LISTENING。
 
 <details>
 <summary>函数内备注（4 条）</summary>
@@ -5571,7 +5715,9 @@ int ksock_listen(int si, int backlog)
 int ksock_accept(int si, uint32_t *out_addr, uint16_t *out_port, int flags)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+队列空时按非阻塞返回 EAGAIN 或阻塞等待，取出新套接字、回填对端地址端口后返回其索引。
 
 <details>
 <summary>函数内备注（1 条）</summary>
@@ -5592,7 +5738,9 @@ int ksock_accept(int si, uint32_t *out_addr, uint16_t *out_port, int flags)
 int ksock_connect(int si, uint32_t addr, uint16_t port)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+TCP 发起连接并阻塞等待回调唤醒，失败返回错误码；UDP 仅设置对端并标记已连接。
 
 <details>
 <summary>函数内备注（1 条）</summary>
@@ -5613,7 +5761,9 @@ int ksock_connect(int si, uint32_t addr, uint16_t port)
 int ksock_send(int si, const void *buf, size_t len, int flags)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+TCP 在发送缓冲剩余空间内循环 tcp_write 并 output，空间不足时非阻塞 EAGAIN 或阻塞；UDP 转 sendto。
 
 <details>
 <summary>函数内备注（2 条）</summary>
@@ -5638,7 +5788,9 @@ int ksock_send(int si, const void *buf, size_t len, int flags)
 int ksock_recv(int si, void *buf, size_t len, int flags)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+TCP 无数据时按 EOF、错误、非阻塞、阻塞分别处理，用 pbuf 拷贝数据并推进偏移，读尽释放；UDP 转 recvfrom。
 
 <details>
 <summary>函数内备注（2 条）</summary>
@@ -5663,7 +5815,9 @@ int ksock_recv(int si, void *buf, size_t len, int flags)
 int ksock_sendto(int si, const void *buf, size_t len, int flags, uint32_t addr, uint16_t port)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+TCP 转 send，UDP 分配 pbuf 拷贝数据后 udp_sendto，成功返回长度，失败返回 -ENOBUFS。
 
 **位置**：`kernel/linux/net/ksocket.c:569`
 
@@ -5675,7 +5829,9 @@ int ksock_sendto(int si, const void *buf, size_t len, int flags, uint32_t addr, 
 int ksock_recvfrom(int si, void *buf, size_t len, int flags, uint32_t *out_addr, uint16_t *out_port)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+TCP 转 recv，UDP 无数据时阻塞或 EAGAIN，拷出队首 pbuf 数据并出队释放，回填来源地址端口。
 
 <details>
 <summary>函数内备注（1 条）</summary>
@@ -5696,7 +5852,9 @@ int ksock_recvfrom(int si, void *buf, size_t len, int flags, uint32_t *out_addr,
 int ksock_close(int si)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+减少引用，归零时关闭监听子套接字、注销并关闭 tcp/udp 控制块、释放接收队列后清空结构。
 
 <details>
 <summary>函数内备注（2 条）</summary>
@@ -5721,7 +5879,9 @@ int ksock_close(int si)
 int ksock_shutdown(int si, int how)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+对已连接的 TCP 按 how 调用 tcp_shutdown 关闭接收或发送方向，始终返回 0。
 
 **位置**：`kernel/linux/net/ksocket.c:673`
 
@@ -5733,7 +5893,9 @@ int ksock_shutdown(int si, int how)
 int ksock_setsockopt(int si, int level, int optname, const void *optval, uint32_t optlen)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+仅处理 TCP_NODELAY 开关 Nagle，其他选项一律返回 0。
 
 <details>
 <summary>函数内备注（1 条）</summary>
@@ -5754,7 +5916,9 @@ int ksock_setsockopt(int si, int level, int optname, const void *optval, uint32_
 int ksock_getsockopt(int si, int level, int optname, void *optval, uint32_t *optlen)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+有输出缓冲时写入 last_err 的负值或 0 并把长度设为 4，返回 0。
 
 **位置**：`kernel/linux/net/ksocket.c:715`
 
@@ -5766,7 +5930,9 @@ int ksock_getsockopt(int si, int level, int optname, void *optval, uint32_t *opt
 int ksock_getsockname(int si, uint32_t *addr, uint16_t *port)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+取套接字后输出本地地址与端口，套接字无效返回 EBADF。
 
 **位置**：`kernel/linux/net/ksocket.c:730`
 
@@ -5778,7 +5944,9 @@ int ksock_getsockname(int si, uint32_t *addr, uint16_t *port)
 int ksock_getpeername(int si, uint32_t *addr, uint16_t *port)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+非已连接状态返回 ENOTCONN，否则输出对端地址与端口。
 
 **位置**：`kernel/linux/net/ksocket.c:742`
 
@@ -5790,7 +5958,9 @@ int ksock_getpeername(int si, uint32_t *addr, uint16_t *port)
 bool ksock_poll_readable(int si)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+监听态返回 accept 队列是否有连接，否则返回是否有接收数据或已到 EOF。
 
 **位置**：`kernel/linux/net/ksocket.c:756`
 
@@ -5802,7 +5972,9 @@ bool ksock_poll_readable(int si)
 bool ksock_poll_writable(int si)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+TCP 有控制块时返回发送缓冲是否大于 0，其他协议总是可写。
 
 **位置**：`kernel/linux/net/ksocket.c:766`
 
@@ -5810,7 +5982,7 @@ bool ksock_poll_writable(int si)
 
 ## kernel/linux/net/sock_syscall.c — socket syscall handlers
 
-`kernel/linux/net/sock_syscall.c` · 15 个函数 · 0 个有说明 · 381 行
+`kernel/linux/net/sock_syscall.c` · 15 个函数 · 15 个有说明 · 381 行
 
 Translates Linux syscall ABI (sockaddr_in, etc.) into
 kernel socket API (ksocket.h) calls.
@@ -5823,7 +5995,9 @@ kernel socket API (ksocket.h) calls.
 static uint16_t ntohs_val(uint16_t x)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+交换 16 位值的高低字节完成网络字节序到主机字节序转换。
 
 **位置**：`kernel/linux/net/sock_syscall.c:35`
 
@@ -5835,7 +6009,9 @@ static uint16_t ntohs_val(uint16_t x)
 static uint16_t htons_val(uint16_t x)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+交换 16 位值的高低字节完成主机字节序到网络字节序转换。
 
 **位置**：`kernel/linux/net/sock_syscall.c:40`
 
@@ -5847,7 +6023,9 @@ static uint16_t htons_val(uint16_t x)
 void socket_handler(uint64_t regs[6], task_t *current)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+创建套接字，分配池槽与 vfs 套接字文件、按 SOCK_NONBLOCK 记录非阻塞并分配 fd，失败逐级回收。
 
 **位置**：`kernel/linux/net/sock_syscall.c:45`
 
@@ -5859,7 +6037,9 @@ void socket_handler(uint64_t regs[6], task_t *current)
 static int get_sock_idx(task_t *current, int fd)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+由 fd 取对象并返回其 vfs 套接字索引，无对象返回 -1。
 
 **位置**：`kernel/linux/net/sock_syscall.c:85`
 
@@ -5871,7 +6051,9 @@ static int get_sock_idx(task_t *current, int fd)
 void bind_handler(uint64_t regs[6], task_t *current)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+取套接字索引并校验地址指针，端口转主机序后调用 ksock_bind 并写回结果。
 
 **位置**：`kernel/linux/net/sock_syscall.c:93`
 
@@ -5883,7 +6065,9 @@ void bind_handler(uint64_t regs[6], task_t *current)
 void listen_handler(uint64_t regs[6], task_t *current)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+取套接字索引后调用 ksock_listen，返回错误码或 0。
 
 **位置**：`kernel/linux/net/sock_syscall.c:112`
 
@@ -5895,7 +6079,9 @@ void listen_handler(uint64_t regs[6], task_t *current)
 void accept_handler(uint64_t regs[6], task_t *current)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+取监听索引与阻塞标志调用 ksock_accept，为新连接分配 fd 并回填对端 sockaddr 与长度。
 
 **位置**：`kernel/linux/net/sock_syscall.c:127`
 
@@ -5907,7 +6093,9 @@ void accept_handler(uint64_t regs[6], task_t *current)
 void connect_handler(uint64_t regs[6], task_t *current)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+取套接字索引并校验地址指针，端口转换后调用 ksock_connect 并写回结果。
 
 **位置**：`kernel/linux/net/sock_syscall.c:194`
 
@@ -5919,7 +6107,9 @@ void connect_handler(uint64_t regs[6], task_t *current)
 void sendto_handler(uint64_t regs[6], task_t *current)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+取套接字索引，有目的地址则调用 sendto，否则调用 send，返回字节数或错误码。
 
 **位置**：`kernel/linux/net/sock_syscall.c:213`
 
@@ -5931,7 +6121,9 @@ void sendto_handler(uint64_t regs[6], task_t *current)
 void recvfrom_handler(uint64_t regs[6], task_t *current)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+取套接字索引，有来源地址时调用 recvfrom 并回填 sockaddr 与长度，否则调用 recv。
 
 **位置**：`kernel/linux/net/sock_syscall.c:236`
 
@@ -5943,7 +6135,9 @@ void recvfrom_handler(uint64_t regs[6], task_t *current)
 void setsockopt_handler(uint64_t regs[6], task_t *current)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+取套接字索引后调用 ksock_setsockopt，返回 0 或错误码。
 
 **位置**：`kernel/linux/net/sock_syscall.c:270`
 
@@ -5955,7 +6149,9 @@ void setsockopt_handler(uint64_t regs[6], task_t *current)
 void getsockopt_handler(uint64_t regs[6], task_t *current)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+取套接字索引后调用 ksock_getsockopt，返回 0 或错误码。
 
 **位置**：`kernel/linux/net/sock_syscall.c:288`
 
@@ -5967,7 +6163,9 @@ void getsockopt_handler(uint64_t regs[6], task_t *current)
 void getsockname_handler(uint64_t regs[6], task_t *current)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+取套接字索引与本地名，回填 sockaddr_in 和地址长度后返回 0。
 
 **位置**：`kernel/linux/net/sock_syscall.c:306`
 
@@ -5979,7 +6177,9 @@ void getsockname_handler(uint64_t regs[6], task_t *current)
 void getpeername_handler(uint64_t regs[6], task_t *current)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+取套接字索引与对端名，回填 sockaddr_in 和地址长度后返回 0。
 
 **位置**：`kernel/linux/net/sock_syscall.c:337`
 
@@ -5991,7 +6191,9 @@ void getpeername_handler(uint64_t regs[6], task_t *current)
 void shutdown_handler(uint64_t regs[6], task_t *current)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+取套接字索引后调用 ksock_shutdown 关闭连接方向，返回 0 或错误码。
 
 **位置**：`kernel/linux/net/sock_syscall.c:368`
 
@@ -5999,7 +6201,7 @@ void shutdown_handler(uint64_t regs[6], task_t *current)
 
 ## kernel/linux/syscall.c
 
-`kernel/linux/syscall.c` · 13 个函数 · 3 个有说明 · 1668 行
+`kernel/linux/syscall.c` · 13 个函数 · 13 个有说明 · 1668 行
 
 <a id="fn-kernel-linux-syscall.c-57"></a>
 
@@ -6009,7 +6211,9 @@ void shutdown_handler(uint64_t regs[6], task_t *current)
 static completion_t *test_completion_get(uint64_t id)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+id 越界时返回 NULL，否则在自旋锁保护下首次调用时初始化完成量数组，返回对应槽位指针。
 
 **位置**：`kernel/linux/syscall.c:57`
 
@@ -6021,7 +6225,9 @@ static completion_t *test_completion_get(uint64_t id)
 static void notify_parent_wait(task_t *child)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+扫描任务池找匹配 wait_pid 且正在等待的父任务，清等待标志并解除阻塞；否则仅打印父任务状态日志。
 
 **位置**：`kernel/linux/syscall.c:83`
 
@@ -7014,7 +7220,9 @@ Main syscall dispatcher
 int64_t sys_write(const char *str, uint64_t len)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+校验并截断长度，经 copy_from_user_bytes 拷入内核缓冲后调用 klog_write 输出，返回写入字节数。
 
 <details>
 <summary>函数内备注（1 条）</summary>
@@ -7041,7 +7249,9 @@ int64_t sys_write(const char *str, uint64_t len)
 int64_t sys_yield(void)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+调用 task_yield 让出 CPU 后返回 0。
 
 **位置**：`kernel/linux/syscall.c:1603`
 
@@ -7053,7 +7263,9 @@ int64_t sys_yield(void)
 int64_t sys_getpid(void)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+取当前任务并返回其 id。
 
 **位置**：`kernel/linux/syscall.c:1609`
 
@@ -7065,7 +7277,9 @@ int64_t sys_getpid(void)
 int64_t sys_sleep(uint64_t ms)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+毫秒数为 0 时立即返回，否则调用 timer_delay_ms 延时指定毫秒后返回 0。
 
 **位置**：`kernel/linux/syscall.c:1615`
 
@@ -7077,7 +7291,9 @@ int64_t sys_sleep(uint64_t ms)
 int64_t sys_read(char *buf, uint64_t len)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+缓冲区为空或长度为 0 时返回 -1，否则直接返回 0，未做任何读取。
 
 **位置**：`kernel/linux/syscall.c:1624`
 
@@ -7089,7 +7305,9 @@ int64_t sys_read(char *buf, uint64_t len)
 int64_t sys_open(const char *pathname, int flags, int mode)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+忽略参数，用 WARN_ONCE 记录一次未实现告警并返回 -1。
 
 <details>
 <summary>函数内备注（1 条）</summary>
@@ -7111,7 +7329,9 @@ int64_t sys_open(const char *pathname, int flags, int mode)
 int64_t sys_close(int fd)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+用 WARN_ONCE 记录一次未实现告警并返回 -1。
 
 **位置**：`kernel/linux/syscall.c:1643`
 
@@ -7123,7 +7343,9 @@ int64_t sys_close(int fd)
 int64_t sys_gettimeofday(struct timeval *tv, void *tz)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+tv 非空时用 kernel_get_ns 换算秒与微秒填入，返回 0，否则返回 -1。
 
 <details>
 <summary>函数内备注（1 条）</summary>
@@ -7142,7 +7364,7 @@ int64_t sys_gettimeofday(struct timeval *tv, void *tz)
 
 ## kernel/linux/syscall_internal.h — 内核 syscall 实现内部共享头
 
-`kernel/linux/syscall_internal.h` · 1 个函数 · 0 个有说明 · 488 行
+`kernel/linux/syscall_internal.h` · 1 个函数 · 1 个有说明 · 488 行
 
 仅供 kernel/linux 目录下的 C 文件使用。包含：
 - Linux/x86 syscall 号常量
@@ -7161,7 +7383,9 @@ int64_t sys_gettimeofday(struct timeval *tv, void *tz)
 static inline uint64_t kernel_get_ns(void)
 ```
 
-> ⚠️ 尚无文档注释。请按 [注释规范](README.md) 在函数上方补充。
+> 自动摘要（来自 `docs/api/auto_summaries.json`，不是源码中的人工注释）
+
+直接返回 timer_get_ns() 的纳秒计数。
 
 **位置**：`kernel/linux/syscall_internal.h:332`
 

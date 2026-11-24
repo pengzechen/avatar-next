@@ -6,7 +6,7 @@
 |---|---|---|
 | `include/libc/string_internal.h` | **实现层** | `memcpy_generic` / `memset_generic` / `memmove_generic`，包含架构头，定义 `memcpy_arch` / `memset_arch` |
 | `include/libc/string.h` | **公开 API** | `strlen`/`strcmp`/… 全套 `static inline`；`memcpy`/`memset`/`memmove` 转发到实现层 |
-| `lib/string.c` | **外部符号** | 把 `memcpy`/`memset`/`memmove` 定义成外部符号，同样转发到实现层 |
+| `lib/libc/string.c` | **外部符号** | 把 `memcpy`/`memset`/`memmove` 定义成外部符号，同样转发到实现层 |
 | `include/{aarch64,riscv64,x86_64}/string_impl.h` | **架构实现** | 各自的 `memcpy_arch` / `memset_arch`（aarch64 是 NEON + 阈值分派） |
 
 ### 为什么要拆成三层
@@ -22,14 +22,14 @@
 
 第 2 类**不会**走 `static inline` 版本：GCC 生成的是库函数调用，绑定到外部符号。
 如果外部符号是另一份（更差的）实现，就会出现"源码里写的是 NEON、编译器生成的是逐字节循环"
-这种分裂 —— 实际踩过：`lib/string.c` 里原本那个 0x20 字节的逐字节 `memcpy` 就是这么被
+这种分裂 —— 实际踩过：`lib/libc/string.c` 里原本那个 0x20 字节的逐字节 `memcpy` 就是这么被
 fork/clone 的 trap frame 拷贝用上的。
 
 所以实现和"公开名字"必须分家：公开名字留给 `string.h` 的 `static inline`，实现在
-`string_internal.h` 里用**具名**函数（`memcpy_arch` 等）提供，`lib/string.c` 的外部符号
+`string_internal.h` 里用**具名**函数（`memcpy_arch` 等）提供，`lib/libc/string.c` 的外部符号
 也转发到同一份实现。三者写同一份代码，谁被调到都一样快。
 
-> 顺带解释 `lib/string.c` 里那句"不包含 string.h"的注释：同一个翻译单元里，同名标识符
+> 顺带解释 `lib/libc/string.c` 里那句"不包含 string.h"的注释：同一个翻译单元里，同名标识符
 > 既有内部链接（`static inline memcpy`）又有外部链接（`void *memcpy(...)`）是未定义行为
 > （C11 6.2.2p7），所以它只能包含实现层头。
 

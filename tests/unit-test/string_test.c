@@ -189,7 +189,7 @@ void test_string_functions(void)
     /*
        编译器自己生成的 memcpy 调用 —— 与上面那些源码调用走的是不同的
        代码路径：GCC 对大结构体整体赋值会发一个对外部符号 memcpy 的 bl,
-       而不是用 string.h 里的 static inline。这条路径曾经落到 lib/string.c
+       而不是用 string.h 里的 static inline。这条路径曾经落到 lib/libc/string.c
        那个逐字节实现上(fork 的 816 字节 trap frame 拷贝就是受害者),
        所以专门测一下：拷贝结果必须与逐字节参考一致。
     */

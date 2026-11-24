@@ -3,14 +3,15 @@
 # ─── §4  源文件与目标文件变量 ────────────────────────────────────────────────────
 # klog 库源文件
 KLOG_SOURCES := $(LIB_DIR)/klog.c
-VSNPRINTF_SOURCES := $(LIB_DIR)/vsnprintf.c
-STRING_SOURCES := $(LIB_DIR)/string.c
+VSNPRINTF_SOURCES := $(LIBC_DIR)/vsnprintf.c
+STRING_SOURCES := $(LIBC_DIR)/string.c
 BITMAP_SOURCES := $(LIB_DIR)/bitmap.c
 KLOG_OBJECT         := $(BUILD_DIR)/klog.o
 VSNPRINTF_OBJECT    := $(BUILD_DIR)/vsnprintf.o
 STRING_OBJECT       := $(BUILD_DIR)/string.o
 BITMAP_OBJECT       := $(BUILD_DIR)/bitmap.o
-LIBC_OBJECT         := $(BUILD_DIR)/libc.o
+LIBC_SOURCES        := $(LIBC_DIR)/stdlib.c
+LIBC_OBJECT         := $(BUILD_DIR)/stdlib.o
 PLATFORM_STATIC_OBJECT := $(BUILD_DIR)/platform_static.o
 
 # ── §4a  内核源文件自动发现 ────────────────────────────────────────────────────

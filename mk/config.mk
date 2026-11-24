@@ -50,6 +50,7 @@ endif
 
 # 目录设置
 LIB_DIR         := lib
+LIBC_DIR        := $(LIB_DIR)/libc
 BUILD_ROOT      := build
 BUILD_DIR       := $(BUILD_ROOT)/$(PLATFORM)
 VENDOR_BUILD_DIR := $(BUILD_DIR)/vendor

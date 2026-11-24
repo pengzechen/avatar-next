@@ -15,7 +15,7 @@
 
    本文件只提供具名实现(memcpy_neon / memset_neon)与架构分派
    (memcpy_arch / memset_arch)。公开的 memcpy/memset 名字在 string.h,
-   外部符号在 lib/string.c —— 两者都转发到这里, 见 string_internal.h 顶部。
+   外部符号在 lib/libc/string.c —— 两者都转发到这里, 见 string_internal.h 顶部。
 
    前置条件：CPACR.FPEN 已打开。boot/aarch64/boot.S 的 init_el2_vhe 在
    装向量表之前就打开了, 早于任何 C 代码, 所以正常路径无需关心。

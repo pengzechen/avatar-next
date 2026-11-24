@@ -13,17 +13,17 @@
    为什么实现要和 string.h 分家：
 
      公开 API(string.h 里的 `static inline memcpy`/`memset`)占用了这两个名字,
-     而且是内部链接。lib/string.c 必须把同样的名字定义成外部符号, 供编译器
+     而且是内部链接。lib/libc/string.c 必须把同样的名字定义成外部符号, 供编译器
      自动生成的调用使用(大结构体整体赋值, 循环→memcpy 变换等, GCC 会自己发
      `bl memcpy`)。同一个翻译单元里同名标识符既有内部链接又有外部链接是未定义
      行为(C11 6.2.2p7), 所以只能把"实现"和"公开名字"拆开：
 
        string_internal.h  实现：memcpy_generic / memcpy_arch / memcpy_neon …
        string.h           公开 API：static inline 转发到 *_arch
-       lib/string.c       外部符号：同样转发到 *_arch
+       lib/libc/string.c       外部符号：同样转发到 *_arch
 
      这样"源码里写的 memcpy"和"编译器自己生成的 memcpy 调用"落到同一份实现。
-     在此之前两者是分裂的：前者拿到内联的优化版本, 后者落到 lib/string.c 里那个
+     在此之前两者是分裂的：前者拿到内联的优化版本, 后者落到 lib/libc/string.c 里那个
      逐字节循环(实测 fork/clone 路径的 816 字节 trap frame 拷贝就是后者)。
 
    架构约定 —— 每个架构在自己的 string_impl.h 里提供两个函数：

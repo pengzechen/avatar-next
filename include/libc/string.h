@@ -12,7 +12,7 @@
 
 /*
    实现层(memcpy_generic / memcpy_arch / memcpy_neon …)在这里。
-   与公开 API 分开的原因见 string_internal.h 顶部：lib/string.c 要用同样的
+   与公开 API 分开的原因见 string_internal.h 顶部：lib/libc/string.c 要用同样的
    名字定义外部符号, 实现不能占用公开名字。
 */
 #include "string_internal.h"
@@ -155,7 +155,7 @@ static inline long atol(const char *ptr)
 
 /*
    公开 API 一律转发到实现层(string_internal.h 里的 *_arch)。
-   lib/string.c 用同样的 *_arch 定义外部符号, 所以源码里的调用和编译器自动
+   lib/libc/string.c 用同样的 *_arch 定义外部符号, 所以源码里的调用和编译器自动
    生成的调用(大结构体赋值, 循环→memcpy 变换)走的是同一份实现。
 */
 static inline void *memcpy(void *dest, const void *src, size_t n)

@@ -27,13 +27,13 @@ $(KLOG_TARGET): $(KLOG_OBJECT) | $(BUILD_DIR)
 $(BUILD_DIR)/klog.o: $(LIB_DIR)/klog.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/vsnprintf.o: $(LIB_DIR)/vsnprintf.c | $(BUILD_DIR)
+$(BUILD_DIR)/vsnprintf.o: $(LIBC_DIR)/vsnprintf.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/string.o: $(LIB_DIR)/string.c | $(BUILD_DIR)
+$(BUILD_DIR)/string.o: $(LIBC_DIR)/string.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/libc.o: $(LIB_DIR)/libc.c | $(BUILD_DIR)
+$(BUILD_DIR)/stdlib.o: $(LIBC_DIR)/stdlib.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # ── §11b  内核 / 测试 / 平台 / 启动规则 ────────────────────────────────────────

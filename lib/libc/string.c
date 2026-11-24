@@ -5,7 +5,7 @@
 */
 
 /*
-   lib/string.c — 字符串/内存函数的外部符号版本
+   lib/libc/string.c — 字符串/内存函数的外部符号版本
 
    绝大多数调用点是 include/libc/string.h 里的 static inline 版本(会被内联,
    或者退化成调用点自己的副本)。但编译器自己生成的调用 —— 大结构体整体
