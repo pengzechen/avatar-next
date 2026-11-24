@@ -13,7 +13,7 @@ riscv64 和 aarch64 已基本修复，x86_64 遇到了大量问题。以下按�
 file-backed 路径遗漏了。子进程 exit 时 `munmap` 释放了共享页的物理帧，
 父进程读到的计数器已被清零。
 
-**修复**: `kernel/syscall/mm/mmap.c` — 在 file-backed mmap 的页读取循环之后，
+**修复**: `kernel/linux/mm/mmap.c` — 在 file-backed mmap 的页读取循环之后，
 对 MAP_SHARED 页也标记 `PTE_NOFREE`（三个架构各自的 PTE 操作）。
 
 **影响**: 全架构。
@@ -53,7 +53,7 @@ file-backed 路径遗漏了。子进程 exit 时 `munmap` 释放了共享页的�
 
 导致 `mkdir("/tmp/LTP_xxx", 0777)` 静默返回 0 但不创建目录。
 
-**修复**: `kernel/syscall/syscall.c` — 将 82 映射为 `renameat(AT_FDCWD,...)`，
+**修复**: `kernel/linux/syscall.c` — 将 82 映射为 `renameat(AT_FDCWD,...)`，
 83 映射为 `mkdirat(AT_FDCWD,...)`；fchmod/fchown stub 移到正确的 91/93。
 
 ---
@@ -124,7 +124,7 @@ file-backed 路径遗漏了。子进程 exit 时 `munmap` 释放了共享页的�
 
 ### 7a. 内核信号返回蹦床页
 
-`kernel/syscall/exec/exec.c` — 创建用户进程时，在固定虚拟地址 `USER_SIGRET_PAGE`
+`kernel/linux/exec/exec.c` — 创建用户进程时，在固定虚拟地址 `USER_SIGRET_PAGE`
 (0x70001000) 映射一个可执行页，写入 x86_64 `rt_sigreturn` 蹦床代码：
 
 ```asm
@@ -136,7 +136,7 @@ syscall
 
 ### 7b. 信号投递时始终使用内核蹦床
 
-`kernel/syscall/core/signal.c` — x86_64 信号投递时，无条件使用
+`kernel/linux/core/signal.c` — x86_64 信号投递时，无条件使用
 `USER_SIGRET_PAGE` 作为 `sa_restorer`，不依赖用户提供的值。
 
 这是安全的，因为：
@@ -147,8 +147,8 @@ syscall
 
 **涉及文件**:
 - `include/mm/user_layout.h` — 新增 `USER_SIGRET_PAGE` 常量
-- `kernel/syscall/exec/exec.c` — 映射蹦床页
-- `kernel/syscall/core/signal.c` — 使用蹦床页
+- `kernel/linux/exec/exec.c` — 映射蹦床页
+- `kernel/linux/core/signal.c` — 使用蹦床页
 - `include/task/task.h` — 新增 `SA_RESTORER` 常量
 
 ---
@@ -203,8 +203,8 @@ fork() → 子进程复制 PTE（含 PTE_NOFREE）→ 共享同一物理页
 
 | 操作 | 文件 | 调用 |
 |------|------|------|
-| mmap MAP_SHARED 分配 | `kernel/syscall/mm/mmap.c` | `shared_page_ref(pa)` ×3 路径 |
-| fork 复制 NOFREE PTE | `kernel/syscall/core/proc_lifecycle.c` | `shared_page_ref(src_pa)` |
+| mmap MAP_SHARED 分配 | `kernel/linux/mm/mmap.c` | `shared_page_ref(pa)` ×3 路径 |
+| fork 复制 NOFREE PTE | `kernel/linux/core/proc_lifecycle.c` | `shared_page_ref(src_pa)` |
 | fork 复制 NOFREE PTE | `kernel/mm/{aarch64,riscv64,x86_64}/vmm.c` | `shared_page_ref(pa)` |
 | 进程销毁/munmap | `kernel/mm/vm_user.c` | `shared_page_unref(pa)` |
 | 进程销毁 (aarch64) | `kernel/mm/aarch64/vmm.c` | `shared_page_unref(pa)` |
@@ -212,8 +212,8 @@ fork() → 子进程复制 PTE（含 PTE_NOFREE）→ 共享同一物理页
 **涉及文件**:
 - `kernel/mm/shared_page.h` — 新增：API 声明
 - `kernel/mm/shared_page.c` — 新增：引用计数表实现
-- `kernel/syscall/mm/mmap.c` — MAP_SHARED 分配时调用 `shared_page_ref`
-- `kernel/syscall/core/proc_lifecycle.c` — fork CLONE_COPY_RANGE 中调用 `shared_page_ref`
+- `kernel/linux/mm/mmap.c` — MAP_SHARED 分配时调用 `shared_page_ref`
+- `kernel/linux/core/proc_lifecycle.c` — fork CLONE_COPY_RANGE 中调用 `shared_page_ref`
 - `kernel/mm/aarch64/vmm.c` — fork 复制时 ref，销毁时 unref
 - `kernel/mm/riscv64/vmm.c` — fork 复制时 ref
 - `kernel/mm/x86_64/vmm.c` — fork 复制时 ref

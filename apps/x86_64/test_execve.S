@@ -15,7 +15,7 @@
  *   - 返回值: RAX
  */
 
-/* 系统调用号定义（与 kernel/syscall/syscall.h 保持一致） */
+/* 系统调用号定义（与 kernel/linux/syscall.h 保持一致） */
 #define SYS_EXIT          0
 #define SYS_WRITE   0x4000
 #define SYS_EXECVE        4  /* execve 系统调用 */

@@ -170,7 +170,7 @@ avatar/
 │   ├── main.c           # 内核入口
 │   ├── task/            # 任务管理
 │   ├── mm/              # 内存管理
-│   ├── syscall/         # 系统调用
+│   ├── linux/           # Linux ABI（syscall）
 │   ├── net/             # 网络栈（lwip/ 上游 + lwip_port/ 移植层）
 │   └── loader/          # 程序加载器
 │

@@ -17,7 +17,7 @@
 */
 
 #include "task/task.h"
-#include "syscall/process.h"
+#include "linux/process.h"
 #include "assert.h"
 #include "barrier.h"
 #include "klog.h"
@@ -741,7 +741,7 @@ void task_yield(void)
 */
 /*
    task_exit_notify - 通用退出通知（weak）
-   默认空实现；kernel/syscall/syscall.c 提供强定义，处理 Linux wait4 唤醒。
+   默认空实现；kernel/linux/syscall.c 提供强定义，处理 Linux wait4 唤醒。
 */
 __attribute__((weak)) void task_exit_notify(task_t *task)
 {

@@ -14,7 +14,7 @@
 | `ping <iters> <attempts>` | 父/子用 `MAP_SHARED` 内存 + futex 乒乓 | 跨核往返延迟；有 IPI 应几十~几百 us，没有则是一个 tick（本内核 100Hz = 10ms） |
 
 `getcpu` 是新加的观测 syscall（x86_64 309 → 通用 168），只返回当前逻辑
-CPU。它让测试不依赖内核日志。实现见 `kernel/syscall/syscall.c`。
+CPU。它让测试不依赖内核日志。实现见 `kernel/linux/syscall.c`。
 
 **为什么用 futex 而不是 pipe**：pipe 的 `blocked_reader/blocked_writer`
 是无锁检查，存在已知的 lost-wakeup（`racetest pipe` 就是打它）。用它测
@@ -97,7 +97,7 @@ SBI IPI 路径生效；基线同样是一个 tick。
 
 completion 没有正式的用户态接口，所以加了一组**只在 `TASK_TEST=1` 时编译**的
 测试 syscall（`AVATAR_SYS_COMPLETION_WAIT/COMPLETE/RESET`，见
-`kernel/syscall/syscall_internal.h`）。用户任务直接阻塞在 `completion_t` 上，
+`kernel/linux/syscall_internal.h`）。用户任务直接阻塞在 `completion_t` 上，
 测试程序是 `apps/c/task_completion_test.c`，入口脚本
 `tools/task_completion_test.sh`。
 

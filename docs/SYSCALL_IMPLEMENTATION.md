@@ -1,7 +1,7 @@
 # 系统调用实现现状
 
 **统计日期**: 2026-11-10
-**统计口径**: `kernel/syscall/syscall.c` 主 `switch` 里的 106 个具名
+**统计口径**: `kernel/linux/syscall.c` 主 `switch` 里的 106 个具名
 `LINUX_SYS_*` 入口。裸号兼容项（statfs / setitimer / affinity 等）和历史的
 `SYS_*` 自定义 ABI 单独统计，不与这 106 个混在一起。
 

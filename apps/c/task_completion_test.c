@@ -8,7 +8,7 @@
    task_completion_test.c — completion 模块的用户态 A/B 验收
 
    需要 TASK_TEST=1 的内核(暴露三个测试 syscall, 见
-   kernel/syscall/syscall.c 的 TASK_INFRA_TEST 段)。
+   kernel/linux/syscall.c 的 TASK_INFRA_TEST 段)。
 
      task-completion broadcast <n> <attempts>
 
@@ -24,7 +24,7 @@
      - 基线内核(同样的测试 syscall, 但内部是裸 state=READY+sched_enqueue)
        跨核等待者要等目标核下一次 tick(100Hz = 10ms)。
 
-   用户态程序里手抄的伪 syscall 号必须与 kernel/syscall/syscall_internal.h
+   用户态程序里手抄的伪 syscall 号必须与 kernel/linux/syscall_internal.h
    的 AVATAR_SYS_COMPLETION_* 一致。
 */
 #define _GNU_SOURCE

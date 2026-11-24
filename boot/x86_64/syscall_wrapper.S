@@ -136,7 +136,7 @@ FUNCS(syscall_entry)
      * 内核栈上切换无副作用。
      *
      * 这里**不**调 signal_deliver_from_trap()：syscall_handler() 收尾已经调过
-     * deliver_pending_signals()（kernel/syscall/syscall.c），重复调用是空操作；
+     * deliver_pending_signals()（kernel/linux/syscall.c），重复调用是空操作；
      * aarch64 的 syscall 出口同样只有调度这一条。用户态缺页那条路走的是
      * isr_common_stub，那里的 signal_deliver_from_trap 才是必需的。
      *

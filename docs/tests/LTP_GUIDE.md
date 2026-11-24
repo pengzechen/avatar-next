@@ -167,7 +167,7 @@ syscall 行为与 Linux 不一致。需要对照 man page 和 Linux 源码修复
 ## x86_64 注意事项
 
 x86_64 使用旧式 syscall 号（与 aarch64/riscv64 不同），
-需要在 `kernel/syscall/syscall.c` 的 `x86_translate_syscall()` 中
+需要在 `kernel/linux/syscall.c` 的 `x86_translate_syscall()` 中
 添加映射。新增 syscall 时检查：
 
 ```bash
@@ -198,7 +198,7 @@ SMP=4 只在上一轮 79 个用例时跑过，第四轮未重跑。
 ## 覆盖率（2026-11 统计）
 
 - **103 个用例覆盖 66 个 syscall 目录**（按 LTP 目录计）。
-- `kernel/syscall/syscall.c` 分发 **106 个 Linux syscall 入口**；扣除明确返回
+- `kernel/linux/syscall.c` 分发 **106 个 Linux syscall 入口**；扣除明确返回
   `ENOSYS` / 空实现的 5 个（waitid、sendmsg、recvmsg、socketpair、madvise），
   约 **101 个有实际实现**。
 - 因此已有 syscall 的**直接专测覆盖率约 66/101 ≈ 65%**。几乎所有用例还会

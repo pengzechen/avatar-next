@@ -12,7 +12,7 @@
 
 ## 根因分析
 
-旧版 [`kernel/syscall/syscall.c`](../kernel/syscall/syscall.c) 里 `poll`/`ppoll`/`pselect6` 三个系统调用合并到一个分支，无条件把 **所有 fd 都谎报成 ready**：
+旧版 [`kernel/linux/syscall.c`](../kernel/linux/syscall.c) 里 `poll`/`ppoll`/`pselect6` 三个系统调用合并到一个分支，无条件把 **所有 fd 都谎报成 ready**：
 
 ```c
 if (pfds[pi].fd == 0) {
@@ -51,7 +51,7 @@ vi 的按键流水线大致是：
 
 ## 修复
 
-文件：[`kernel/syscall/syscall.c`](../kernel/syscall/syscall.c)
+文件：[`kernel/linux/syscall.c`](../kernel/linux/syscall.c)
 
 ### 1. 新增 UART ring buffer 空查询
 
@@ -135,4 +135,4 @@ aarch64 / riscv64 同步编译通过（共用同一份 syscall 调度器）。
 
 ---
 **修复日期**：2026-05-17
-**涉及文件**：[`kernel/syscall/syscall.c`](../kernel/syscall/syscall.c)、[`tools/install-apps.sh`](../tools/install-apps.sh)
+**涉及文件**：[`kernel/linux/syscall.c`](../kernel/linux/syscall.c)、[`tools/install-apps.sh`](../tools/install-apps.sh)

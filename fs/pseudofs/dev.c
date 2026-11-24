@@ -13,7 +13,7 @@
 #include "driver/ion.h"
 #include "driver/tpu.h"
 #include "driver/dma_buf.h"
-#include "syscall/syscall_internal.h" /* copy_from/to_user_bytes */
+#include "linux/syscall_internal.h" /* copy_from/to_user_bytes */
 
 /*
    出错时把刚刚分配给用户的 fd 收回来。
@@ -103,7 +103,7 @@ int dma_heap_dev_ioctl(int nid, uint64_t req, void *argp)
 /*
    打在 dmabuf fd 自身 上的 ioctl。librknnrt 的 DMA_BUF_IOCTL_SYNC 就是这么
    发的 —— 它不走 /dev/ 节点, 所以必须由 ioctl_handler 按 fd 类型分派过来
-   (见 kernel/syscall/fs/ioctl.c 里的 FDT_DMABUF 分支)。
+   (见 kernel/linux/fs/ioctl.c 里的 FDT_DMABUF 分支)。
 */
 int dma_buf_fd_ioctl(uint32_t idx, uint64_t req, void *argp)
 {

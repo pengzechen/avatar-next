@@ -46,7 +46,7 @@
 #define O_APPEND_AVATAR    0002000
 #define O_DIRECTORY_AVATAR 0200000
 /* O_NONBLOCK 由 fcntl(F_SETFL) 存进 fd_obj/vfs_file 的 flags(见
-   syscall/fs/file/file_ops.c)。管道读写要读这个位, 否则非阻塞语义不成立。
+   linux/fs/file/file_ops.c)。管道读写要读这个位, 否则非阻塞语义不成立。
 */
 #define O_NONBLOCK_AVATAR 04000
 #define SEEK_SET_AVATAR   0

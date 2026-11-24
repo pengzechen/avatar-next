@@ -39,3 +39,6 @@ __pycache__/
 
 # apps/c 编译产物（build.sh 生成，不入库）
 /apps/c/*_test-*
+
+# epoll-perf 用户态测试程序（Makefile 生成到 apps/）
+/apps/epoll_perf-*

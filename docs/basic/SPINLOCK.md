@@ -58,12 +58,12 @@ spin_unlock_irqrestore(&lock, flags);
 | `lib/klog.c` | `g_klog_lock`：整条日志持锁输出（格式化在锁外做） |
 | `kernel/mm/pmm.c` | `pmm->lock`：最热的锁；**日志一律在解锁之后打** |
 | `kernel/task/sched.c` | `rq_lock`：run_queue；跨核用 irqsave，本核临界区用 `spin_lock`（外层已关中断） |
-| `kernel/syscall/fs/char/tty.c` | 环形缓冲 + 硬件 FIFO 两把锁，从不嵌套持有 |
+| `kernel/linux/fs/char/tty.c` | 环形缓冲 + 硬件 FIFO 两把锁，从不嵌套持有 |
 | `driver/uart/uart_dw.c` | TX/RX 缓冲，ISR 与线程都取 → 全部 irqsave |
 | `driver/uart/uart_pl011.c` | RX 环：ISR 与线程都取 → irqsave；TX 同步轮询、不取锁 |
 | `driver/uart/uart_x86.c` | 同上：RX 环 irqsave；TX 同步轮询 |
 | `driver/ion/ion.c` | `g_ion_lock`，日志同样放在解锁后 |
-| `kernel/syscall/core/futex.c` | `g_futex_lock` 保护全局等待表（原来只用本核关中断，SMP 下会写坏） |
+| `kernel/linux/core/futex.c` | `g_futex_lock` 保护全局等待表（原来只用本核关中断，SMP 下会写坏） |
 
 ## 必须遵守的几条
 

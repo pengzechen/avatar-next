@@ -666,7 +666,7 @@ __attribute__((weak)) bool npu_present(void) { return false; }
 __attribute__((weak)) bool tpu_present(void) { return false; }
 ```
 
-目标：把 `kernel/syscall/fs/file/file_ops.c`、`fd_pool.c`、`mmap.c`、`pseudofs/*`、`kernel/vmm/vdev/npu/vnpu.c` 里的 `#if DRIVER_ION/DMA_BUF/NPU_RKNPU/TPU_CVITPU` 全部改成运行时能力查询。缺失时返回 `-ENOSYS`/`-ENODEV`，而不是不编译。
+目标：把 `kernel/linux/fs/file/file_ops.c`、`fd_pool.c`、`mmap.c`、`pseudofs/*`、`kernel/vmm/vdev/npu/vnpu.c` 里的 `#if DRIVER_ION/DMA_BUF/NPU_RKNPU/TPU_CVITPU` 全部改成运行时能力查询。缺失时返回 `-ENOSYS`/`-ENODEV`，而不是不编译。
 
 ---
 
@@ -762,9 +762,9 @@ DRIVER_EXTRA_FLAGS_driver_dma_dma_buf.c  := -Idriver/dma -Ikernel/mm
 
 | 位置 | 现在 | 改成 |
 |------|------|------|
-| `kernel/syscall/fs/file/file_ops.c` | `#if DRIVER_ION` | `ion_available()` + 弱符号 |
-| `kernel/syscall/fs/fd/fd_pool.c` | `#if DRIVER_ION/DMA_BUF` | 能力查询 + 弱符号 |
-| `kernel/syscall/mm/mmap.c` | `#if DRIVER_ION/DMA_BUF/NPU` | 运行时分支 + 弱符号 |
+| `kernel/linux/fs/file/file_ops.c` | `#if DRIVER_ION` | `ion_available()` + 弱符号 |
+| `kernel/linux/fs/fd/fd_pool.c` | `#if DRIVER_ION/DMA_BUF` | 能力查询 + 弱符号 |
+| `kernel/linux/mm/mmap.c` | `#if DRIVER_ION/DMA_BUF/NPU` | 运行时分支 + 弱符号 |
 | `fs/pseudofs/dev.c` | `#if DRIVER_ION/TPU/DMA_BUF` | 运行时能力 + 弱符号 |
 | `fs/pseudofs/pseudofs.c` | `#if DRIVER_DMA_BUF/NPU` | 节点表按 `driver_present()` 动态注册 |
 | `kernel/vmm/aarch64/virq.c` | `#if DRIVER_GIC_V3` | `irq_virt_ops() != NULL` |
@@ -812,7 +812,7 @@ DRIVER_EXTRA_FLAGS_driver_dma_dma_buf.c  := -Idriver/dma -Ikernel/mm
 
 - 公共头迁移 + `serial/irq/block` ops；
 - 删除全局 `-Idriver`，开启 `driver-layering-check`；
-- 服务 ops 注册（`*_bind()`），去掉 fs/syscall/pseudofs/VMM 的 `#if DRIVER_*`；
+- 服务 ops 注册（`*_bind()`），去掉 fs / linux / pseudofs / VMM 的 `#if DRIVER_*`；
 - IRQ 分发统一（单独提交）。
 
 验收：`driver-layering-check` 干净；5 平台编译 + boot；LTP smoke；`vmm_helper_regress.sh` / `vmm_multivm_regress.sh` 通过。
@@ -977,7 +977,7 @@ DRIVER_EXTRA_FLAGS_driver_dma_dma_buf.c  := -Idriver/dma -Ikernel/mm
 
 ### 17.4 阶段 2c/2d 待办
 
-- DMA/ION/TPU/NPU 的服务注册（`*_ops_t`/`*_bind()` + `*_present()`），替换 `kernel/syscall/*`、
+- DMA/ION/TPU/NPU 的服务注册（`*_ops_t`/`*_bind()` + `*_present()`），替换 `kernel/linux/*`、
   `fs/pseudofs/*`、`kernel/vmm/vdev/npu/vnpu.c` 的 `#if DRIVER_*`；
 - VMM 的 `DRIVER_GIC_V3` 仍是编译期布局/实现选择（`include/vmm/vmm.h`
   的字段、`virq.c`/`el2_run.c`/`vm_init.c` 的 vGIC 调用），需要先给
@@ -1019,7 +1019,7 @@ DRIVER_EXTRA_FLAGS_driver_dma_dma_buf.c  := -Idriver/dma -Ikernel/mm
 
 ### 18.3 去掉 kernel 里的 `#if DRIVER_*`
 
-- `kernel/syscall/fs/{file/file_ops,fd/fd_pool,ioctl}.c`、`kernel/syscall/mm/mmap.c`
+- `kernel/linux/fs/{file/file_ops,fd/fd_pool,ioctl}.c`、`kernel/linux/mm/mmap.c`
   和 `fs/pseudofs/dev.c` 无条件引用服务包装。
 - `/dev/ion`、`/dev/cvi-tpu0`、`/dev/dma_heap/*`、`/dev/dri/*`、
   `/proc/dri/*` 保留在固定节点表中，`pfs_node_available()` 按 `g_*_ops`

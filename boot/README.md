@@ -125,7 +125,7 @@ boot/
 | `task/task.h` | `task_t`、`task_current()` |
 | `task/sched.h` | `sched_dequeue()`、`sched_tick()` |
 | `task/cpu.h` | `cpu_t`、`cpu_current()` |
-| `syscall/syscall.h` | `syscall_handler()` |
+| `linux/syscall.h` | `syscall_handler()` |
 | `mm/mm_vm.h` | `mm_vm_get_paddr()` |
 | `include/platform/platform_ops.h` | `platform_panic()`、`platform_shutdown()` |
 
@@ -147,7 +147,7 @@ boot/
 | 函数 | 定义位置 | 用途 |
 |------|----------|------|
 | `handle_exception()` | boot/\*/exception.c | 汇编→C 异常分发 |
-| `syscall_handler()` | kernel/syscall/ | 系统调用处理 |
+| `syscall_handler()` | kernel/linux/ | 系统调用处理 |
 | `sched_check_and_yield_from_trap()` | kernel/task/sched.c | 异常返回前检查抢占 |
 | `sched_check_and_yield()` | kernel/task/sched.c | AP idle 循环 / vCPU 主循环的抢占检查 |
 | `irq_dispatch_frame()` | driver/irq/ | 控制器后端完成 ack → handler → EOI/complete |

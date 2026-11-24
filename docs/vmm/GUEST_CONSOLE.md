@@ -22,7 +22,7 @@ guest 侧看不出来：
 
 宿主只有一个真实 PL011，而有**两个**可能的消费者：
 
-1. 宿主 tty 层 —— `signal_check_uart()`（`kernel/syscall/fs/char/tty.c`）在
+1. 宿主 tty 层 —— `signal_check_uart()`（`kernel/linux/fs/char/tty.c`）在
    **每个 tick 的定时器 ISR 里**就把硬件 FIFO 抽干进 `g_uart_rb`；
 2. `vmm_console_pump()`（`kernel/vmm/vmm_console.c`）。
 

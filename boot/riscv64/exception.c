@@ -15,16 +15,16 @@
 
 #include "exception.h"
 #include "klog.h"
-#include "syscall/syscall_trace.h"
+#include "linux/syscall_trace.h"
 #include "debug/backtrace.h"
 #include "arch/riscv64/sysreg.h"
 #include "arch/riscv64/hext.h" /* READ_HSTATUS：必须走数值 CSR, 见该文件顶部的警告 */
-#include "syscall/syscall.h"
-#include "syscall/syscall_internal.h"
+#include "linux/syscall.h"
+#include "linux/syscall_internal.h"
 #include "platform/platform_ops.h"
 #include "task/cpu.h"
 #include "task/task.h"
-#include "syscall/signal.h"
+#include "linux/signal.h"
 
 /* 中断处理函数表, 索引 = scause 低位(去掉 bit63 后的中断编号) */
 #define MAX_IRQ_CAUSES 16

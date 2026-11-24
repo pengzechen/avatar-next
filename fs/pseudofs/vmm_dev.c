@@ -55,9 +55,9 @@
 #include "pseudofs_internal.h"
 #include "klog.h"
 #include "string.h"
-#include "syscall/io/epoll.h"
-#include "syscall/syscall_internal.h" /* copy_to_user_bytes(GET_STATUS 出参) */
-#include "task/task.h"                /* task_current(会话 owner 判定) */
+#include "linux/io/epoll.h"
+#include "linux/syscall_internal.h" /* copy_to_user_bytes(GET_STATUS 出参) */
+#include "task/task.h"              /* task_current(会话 owner 判定) */
 
 #include "vmm/vmm.h"
 #include "vmm/vmm_console.h"

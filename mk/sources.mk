@@ -109,22 +109,22 @@ KERNEL_OBJECTS := $(foreach f,$(KERNEL_SRCS),$(call kobj,$(f)))
 # 的注释：fs_lock.c 的指针截断事故就是被一刀切的 -w 藏掉的。
 KERNEL_LWEXT4_SRCS := \
     $(FS_DIR)/vfs/vfs.c \
-    $(KERNEL_DIR)/syscall/exec/elf_loader.c \
-    $(KERNEL_DIR)/syscall/syscall.c \
-    $(KERNEL_DIR)/syscall/core/proc_lifecycle.c \
-    $(KERNEL_DIR)/syscall/fs/fd/fd_pool.c \
-    $(KERNEL_DIR)/syscall/fs/path/path.c \
-    $(KERNEL_DIR)/syscall/fs/file/file_io.c \
-    $(KERNEL_DIR)/syscall/fs/file/file_ops.c \
-    $(KERNEL_DIR)/syscall/fs/file/file_stat.c \
-    $(KERNEL_DIR)/syscall/fs/file/dir.c \
-    $(KERNEL_DIR)/syscall/fs/ioctl.c \
-    $(KERNEL_DIR)/syscall/fs/char/pipe.c \
-    $(KERNEL_DIR)/syscall/fs/char/pty.c \
-    $(KERNEL_DIR)/syscall/io/poll.c \
-    $(KERNEL_DIR)/syscall/io/select.c \
-    $(KERNEL_DIR)/syscall/io/epoll.c \
-    $(KERNEL_DIR)/syscall/mm/mmap.c
+    $(KERNEL_DIR)/linux/exec/elf_loader.c \
+    $(KERNEL_DIR)/linux/syscall.c \
+    $(KERNEL_DIR)/linux/core/proc_lifecycle.c \
+    $(KERNEL_DIR)/linux/fs/fd/fd_pool.c \
+    $(KERNEL_DIR)/linux/fs/path/path.c \
+    $(KERNEL_DIR)/linux/fs/file/file_io.c \
+    $(KERNEL_DIR)/linux/fs/file/file_ops.c \
+    $(KERNEL_DIR)/linux/fs/file/file_stat.c \
+    $(KERNEL_DIR)/linux/fs/file/dir.c \
+    $(KERNEL_DIR)/linux/fs/ioctl.c \
+    $(KERNEL_DIR)/linux/fs/char/pipe.c \
+    $(KERNEL_DIR)/linux/fs/char/pty.c \
+    $(KERNEL_DIR)/linux/io/poll.c \
+    $(KERNEL_DIR)/linux/io/select.c \
+    $(KERNEL_DIR)/linux/io/epoll.c \
+    $(KERNEL_DIR)/linux/mm/mmap.c
 
 # loader/guest_loader.c 只给「已实现 Linux guest 启动」的架构编译
 # （见 §4a 白名单与 include/vmm/vmm.h 的 VMM_GUEST_LINUX_SUPPORTED），且引用 lwext4。
@@ -148,9 +148,9 @@ KERNEL_FS_SRCS := $(FS_DIR)/init.c \
 KERNEL_LWIP_SRCS := $(filter $(KERNEL_DIR)/net/%,$(KERNEL_SRCS))
 
 # 这两个同时引用 lwIP 与 lwext4：
-# ksocket.c → syscall/fs/fd/fd_pool.h → include/fs/vfs.h:14 → #include <ext4.h>
-KERNEL_LWIPX_SRCS := $(KERNEL_DIR)/syscall/net/ksocket.c \
-                     $(KERNEL_DIR)/syscall/net/sock_syscall.c
+# ksocket.c → linux/fs/fd/fd_pool.h → include/fs/vfs.h:14 → #include <ext4.h>
+KERNEL_LWIPX_SRCS := $(KERNEL_DIR)/linux/net/ksocket.c \
+                     $(KERNEL_DIR)/linux/net/sock_syscall.c
 
 KERNEL_PLAIN_SRCS := $(filter-out $(KERNEL_FS_SRCS) $(KERNEL_LWEXT4_SRCS) $(KERNEL_LWIP_SRCS) $(KERNEL_LWIPX_SRCS),$(KERNEL_SRCS))
 

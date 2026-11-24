@@ -39,7 +39,7 @@ ifeq ($(STRING_TEST),1)
 endif
 
 # TASK_TEST=1：暴露 completion 的用户态测试 syscall
-# （wait/complete/reset，见 kernel/syscall/syscall.c）。只影响 syscall.o，
+# （wait/complete/reset，见 kernel/linux/syscall.c）。只影响 syscall.o，
 # 正常内核不编这三个入口；用户态程序 /bin/task-completion 始终可用，
 # 但在非 TASK_TEST 内核上调用会得到 ENOSYS。
 TASK_TEST ?= 0
@@ -127,7 +127,7 @@ _VARIANT_SRC_TABLE := \
     vmm_test=$(KERNEL_DIR)/main.c \
     nginx_test=$(KERNEL_DIR)/net/net.c \
     string_test=$(KERNEL_DIR)/main.c \
-    task_test=$(KERNEL_DIR)/syscall/syscall.c \
+    task_test=$(KERNEL_DIR)/linux/syscall.c \
     rt_test=$(KERNEL_DIR)/main.c \
     rt_demo=$(KERNEL_DIR)/main.c \
     pmm_test=$(UNIT_TEST_DIR)/unit_test.c \

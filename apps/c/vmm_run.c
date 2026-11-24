@@ -250,7 +250,7 @@ static int enter_raw_mode(void)
    注意： ENOTTY 是个很有误导性的症状, 值得单独说：内核把不认识的 ioctl 统一
       回成 ENOTTY —— 设备层虽然回的是 -ENOSYS, 但 syscall 层会把 ENOSYS
       当成"这不是本设备管的"继续往下走, 最后落到 -ENOTTY
-      (kernel/syscall/fs/ioctl.c:65)。而 _IOC 把 sizeof 编进了操作码,
+      (kernel/linux/fs/ioctl.c:65)。而 _IOC 把 sizeof 编进了操作码,
       所以结构体尺寸对不上和内核太旧没有这个 ioctl 是同一个症状。
       看到它就往这两个方向查, 别去怀疑设备开错没有。
 */

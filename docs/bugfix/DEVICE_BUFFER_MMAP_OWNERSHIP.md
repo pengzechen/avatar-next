@@ -110,7 +110,7 @@ aarch64 / x86_64 上从来没跑过。dma-buf 一上来就在三个架构上都�
 
 | # | 位置 |
 |---|---|
-| 5 | `kernel/syscall/core/proc_lifecycle.c` 的 `CLONE_COPY_RANGE`（`CLONE_CHECK_KEEP` / `CLONE_MARK_KEEP`）|
+| 5 | `kernel/linux/core/proc_lifecycle.c` 的 `CLONE_COPY_RANGE`（`CLONE_CHECK_KEEP` / `CLONE_MARK_KEEP`）|
 | 6 | `kernel/mm/aarch64/vmm.c` `_copy_page_table()` —— 复制 PTE 时不加 `shared_page_ref` |
 | 7 | `kernel/mm/riscv64/vmm.c` / `x86_64/vmm.c` 的 `*_copy_pt_recursive()` —— 同上 |
 

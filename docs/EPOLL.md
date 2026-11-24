@@ -29,8 +29,8 @@ Avatar OS 的 epoll 实现提供 O(1) 事件驱动 I/O 通知，取代 poll/sele
 
 | 文件 | 说明 |
 |------|------|
-| `kernel/syscall/io/epoll.h` | 数据结构、常量、API 声明 |
-| `kernel/syscall/io/epoll.c` | 全部实现：实例管理 + syscall handler + fd_poll + fd_notify |
+| `kernel/linux/io/epoll.h` | 数据结构、常量、API 声明 |
+| `kernel/linux/io/epoll.c` | 全部实现：实例管理 + syscall handler + fd_poll + fd_notify |
 
 ## Syscall 接口
 

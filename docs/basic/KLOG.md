@@ -256,7 +256,7 @@ SMP 安全靠 `__atomic_*`（RELAXED），不碰 `g_klog_lock`。
 逐条打有三个致命短板：要全量重编、直写 UART 刷过去就没了、崩在 syscall 中间时只剩一个
 配不上对的孤立入口行。
 
-`kernel/syscall/syscall_trace.c` 提供两条路：
+`kernel/linux/syscall_trace.c` 提供两条路：
 
 | 手段 | 用途 | 需要重编吗 |
 |---|---|---|

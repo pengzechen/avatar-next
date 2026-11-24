@@ -13,8 +13,8 @@
    这里只放“信号本身”的常量/结构和进程级 signal_struct 的 API。
    每线程的 pending/blocked 掩码与任务生命周期绑定，字段仍在 task_t 里；
    syscall 入口（rt_sigaction / sigprocmask / rt_sigreturn）在
-   kernel/syscall/core/signal.c；signal_struct 的静态池与引用计数在
-   kernel/syscall/core/signal_struct.c。
+   kernel/linux/core/signal.c；signal_struct 的静态池与引用计数在
+   kernel/linux/core/signal_struct.c。
 */
 
 #include "types.h"

@@ -163,7 +163,7 @@ rknn_set_core_mask(ctx, RKNN_NPU_CORE_0_1_2);   /* = 7 */
 ```
 
 > ⚠️ **核数走位置参数，不能走环境变量。** 本内核的 `execve` **不传环境变量**
-> （`kernel/syscall/core/proc_lifecycle.c` 里 `(void)envp;`），所以
+> （`kernel/linux/core/proc_lifecycle.c` 里 `(void)envp;`），所以
 > `RKNN_CORE_MASK=7 yolo` 里的变量根本到不了 demo，`getenv()` 永远是 NULL ——
 > 这个坑真机上实际踩过一次（设了 1 却还是跑三核，查了半天以为补丁没生效）。
 > `argv` 是可靠的，内核还专门按 CPU 分行拷贝以避免并发覆写。

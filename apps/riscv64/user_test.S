@@ -24,7 +24,7 @@
  *   依然能正确寻址紧跟代码的字符串数据。
  */
 
-/* 自定义系统调用号（与 kernel/syscall/syscall.h 一致） */
+/* 自定义系统调用号（与 kernel/linux/syscall.h 一致） */
 #define SYS_EXIT    0
 #define SYS_YIELD   1
 #define SYS_GETPID  2

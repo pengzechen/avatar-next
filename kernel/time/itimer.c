@@ -32,7 +32,7 @@
 */
 
 #include "time/itimer.h"
-#include "syscall/signal.h"
+#include "linux/signal.h"
 #include "libc/signal.h"
 #include "driver/time.h" /* timer_get_ns */
 

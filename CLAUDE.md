@@ -169,7 +169,7 @@ avatar/
   此外三个架构的**帧布局不同**（RISC-V 的偏移是负的，且叶子函数不保存 `ra`）。
   想亲眼看效果：`make PLATFORM=<p> test-panic` —— 在 ELF 解析路径上故意 panic 一次
 - **系统调用追踪**: `docs/basic/KLOG.md`「系统调用追踪」一节。用户态程序崩了先看这里 ——
-  `kernel/syscall/syscall_trace.c` 有一个**常开**的每 CPU 环形缓冲（512 条/CPU），
+  `kernel/linux/syscall_trace.c` 有一个**常开**的每 CPU 环形缓冲（512 条/CPU），
   SIGSEGV 时自动 dump 该 pid 最近的 syscall，也可以随时 `cat /proc/syscalls`。
   **不需要 LOG=debug、不需要重编**。要实时盯就 `LOG=debug LOG_MODULES=syscall`。
 
@@ -505,8 +505,8 @@ void platform_panic(void);
 这些接口内部用 `user_range_ok()` 校验；裸解引用时用户传一个非法地址
 （例如 `(void*)-1`）就会让内核态写到坏地址 → #PF → 异常处理的 `while(1) hlt`
 → **整机挂死**。这是 LTP 实测出来的：
-`kernel/syscall/fs/ioctl.c`、`kernel/syscall/fs/pty.c`、`kernel/syscall/core/proc_lifecycle.c`
-（`wait_handler`）、`kernel/syscall/syscall.c`（`getrlimit`/`getrusage`）都踩过一遍。
+`kernel/linux/fs/ioctl.c`、`kernel/linux/fs/pty.c`、`kernel/linux/core/proc_lifecycle.c`
+（`wait_handler`）、`kernel/linux/syscall.c`（`getrlimit`/`getrusage`）都踩过一遍。
 新增 syscall 时请顺带检查这一条 —— 详见 `tests/ltp/testcases.list` 文件头。
 
 已进行更改。

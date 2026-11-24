@@ -16,14 +16,14 @@
 
 #include "exception.h"
 #include "klog.h"
-#include "syscall/syscall_trace.h"
+#include "linux/syscall_trace.h"
 #include "debug/backtrace.h"
 #include "assert.h" /* platform_panic() */
 #include "driver/irq.h"
 #include "irq/lapic.h"
 #include "arch/x86_64/io.h" /* outb — 用于屏蔽 8259A PIC */
 #include "task/task.h"
-#include "syscall/signal.h"
+#include "linux/signal.h"
 #include "task/sched.h"
 #include "task/cpu.h"
 #include "mm/mm_vm.h"

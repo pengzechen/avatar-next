@@ -1427,7 +1427,7 @@ int main(void)
 
 racetest slot <procs> <iters>
 多个进程各自循环 fork+wait。打的是 fork 路径里内联的
-任务槽「回收 → 认领」循环(kernel/syscall/core/proc_lifecycle.c),
+任务槽「回收 → 认领」循环(kernel/linux/core/proc_lifecycle.c),
 它无锁：两个核可能同时 reap 同一个 DEAD 任务
 (→ vm_destroy_user_process 双重释放页表 / PMM 双重 free),
 或同时认领同一个空槽(→ 两个任务共用一块 TCB 和一块栈)。
@@ -1437,7 +1437,7 @@ racetest slot <procs> <iters>
 
 racetest pipe <iters>
 反复建管道, reader 阻塞读, writer 立刻写。打的是
-kernel/syscall/fs/char/pipe.c 的丢唤醒：reader 在「读到 count==0」
+kernel/linux/fs/char/pipe.c 的丢唤醒：reader 在「读到 count==0」
 与「写 p->blocked_reader」之间被另一核的 writer 插进来
 (writer 写完数据, 检查 blocked_reader 还是 NULL),
 reader 随后睡死, 虽然环里躺着数据。
@@ -2425,7 +2425,7 @@ int main(int argc, char **argv)
 `apps/c/task_completion_test.c` · 6 个函数 · 6 个有说明 · 205 行
 
 需要 TASK_TEST=1 的内核(暴露三个测试 syscall, 见
-kernel/syscall/syscall.c 的 TASK_INFRA_TEST 段)。
+kernel/linux/syscall.c 的 TASK_INFRA_TEST 段)。
 
 task-completion broadcast <n> <attempts>
 
@@ -2441,7 +2441,7 @@ task-completion broadcast <n> <attempts>
 - 基线内核(同样的测试 syscall, 但内部是裸 state=READY+sched_enqueue)
 跨核等待者要等目标核下一次 tick(100Hz = 10ms)。
 
-用户态程序里手抄的伪 syscall 号必须与 kernel/syscall/syscall_internal.h
+用户态程序里手抄的伪 syscall 号必须与 kernel/linux/syscall_internal.h
 的 AVATAR_SYS_COMPLETION_* 一致。
 
 <a id="fn-apps-c-task_completion_test.c-49"></a>
@@ -2908,7 +2908,7 @@ ioctl 失败时的报错。
 注意： ENOTTY 是个很有误导性的症状, 值得单独说：内核把不认识的 ioctl 统一
 回成 ENOTTY —— 设备层虽然回的是 -ENOSYS, 但 syscall 层会把 ENOSYS
 当成"这不是本设备管的"继续往下走, 最后落到 -ENOTTY
-(kernel/syscall/fs/ioctl.c:65)。而 _IOC 把 sizeof 编进了操作码,
+(kernel/linux/fs/ioctl.c:65)。而 _IOC 把 sizeof 编进了操作码,
 所以结构体尺寸对不上和内核太旧没有这个 ioctl 是同一个症状。
 看到它就往这两个方向查, 别去怀疑设备开错没有。
 

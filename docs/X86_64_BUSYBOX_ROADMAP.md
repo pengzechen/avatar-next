@@ -112,7 +112,7 @@ wrmsr(MSR_SFMASK, 0x200);  /* 清除 IF (关中断) */
 **关键文件**:
 - 新建: `boot/x86_64/syscall_wrapper.S`
 - 修改: `boot/x86_64/exception.c` (配置 MSR)
-- 修改: `kernel/syscall/syscall.c` (添加 x86_64 处理)
+- 修改: `kernel/linux/syscall.c` (添加 x86_64 处理)
 
 ---
 
@@ -268,7 +268,7 @@ x86_64-linux-musl-gcc -nostdlib -static \
 
 ---
 
-#### 3.2 修复 ELF 加载器（kernel/syscall/exec/elf_loader.c）
+#### 3.2 修复 ELF 加载器（kernel/linux/exec/elf_loader.c）
 
 **可能需要的修改**:
 - 处理 x86_64 ELF 魔数和架构标识
@@ -317,13 +317,13 @@ x86_64-linux-musl-gcc -nostdlib -static \
 - [x] `kernel/task/x86_64/switch.S` - task_trampoline_user 实现
 - [x] `include/arch/x86_64/syscall_abi.h` - 系统调用 ABI（已存在）
 - [x] `kernel/task/task.c` - 修复 idle 栈切换问题
-- [ ] `kernel/syscall/syscall.c` - x86_64 系统调用处理（已支持）
+- [ ] `kernel/linux/syscall.c` - x86_64 系统调用处理（已支持）
 - [ ] `kernel/task/sched.c` - CR3 切换
 - [ ] `kernel/mm/vm_user.c` - x86_64 页表创建
 
 ### 可能需要修改
 - [x] `boot/x86_64/gdt.c` - 用户段描述符（已在 boot.S 中添加）
-- [ ] `kernel/syscall/exec/elf_loader.c` - x86_64 特定处理
+- [ ] `kernel/linux/exec/elf_loader.c` - x86_64 特定处理
 - [x] `include/arch/x86_64/mm_vm.h` - 页表结构定义（已有占位实现）
 - [ ] `kernel/main.c` - 启用 busybox 加载
 

@@ -7,13 +7,13 @@
 #include "exception.h"
 #include "arch/aarch64/sysreg.h" /* READ_ESR_EL1, READ_ELR_EL1 等 */
 #include "driver/irq.h"
-#include "syscall/syscall_trace.h"
+#include "linux/syscall_trace.h"
 #include "debug/backtrace.h"
 #include "klog.h"
 #include "platform/platform_ops.h"
 #include "types.h"
 #include "task/task.h"
-#include "syscall/signal.h"
+#include "linux/signal.h"
 #include "task/cpu.h"
 
 extern void deliver_pending_signals(task_t *t, trap_frame_t *frame);

@@ -15,7 +15,7 @@ use_core_num = 1）。想用满三核必须显式调 rknn_set_core_mask()。
     rknn_yolov8_demo <model> <image> [core_mask]
 
 为什么用 argv 而不是环境变量：**本内核的 execve 不传环境变量**
-（kernel/syscall/core/proc_lifecycle.c 里 `(void)envp;`），getenv() 永远是 NULL。
+（kernel/linux/core/proc_lifecycle.c 里 `(void)envp;`），getenv() 永远是 NULL。
 
 diff --git a/examples/yolov8/cpp/main.cc b/examples/yolov8/cpp/main.cc
 index b963901..ee69408 100644
@@ -39,7 +39,7 @@ index b963901..ee69408 100644
 +    /* 第 3 个参数是 NPU 核数，透传给 rknn_set_core_mask()。
 +     *
 +     * 为什么用 argv 而不是环境变量：**本内核的 execve 不传环境变量**
-+     * （kernel/syscall/core/proc_lifecycle.c 里 `(void)envp;`），所以
++     * （kernel/linux/core/proc_lifecycle.c 里 `(void)envp;`），所以
 +     * getenv() 永远拿不到 shell 里设的变量。argv 是可靠的。 */
 +    const char *core_mask_arg = (argc == 4) ? argv[3] : NULL;
  

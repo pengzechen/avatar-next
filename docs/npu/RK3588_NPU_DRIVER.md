@@ -265,7 +265,7 @@ static inline uint64_t npu_dev_addr(npu_buf_t *b);
 
 #### 两个实现期踩到的坑（都不是 NPU 特有的）
 
-**① ioctl 请求号被符号扩展**（`kernel/syscall/fs/ioctl.c`）
+**① ioctl 请求号被符号扩展**（`kernel/linux/fs/ioctl.c`）
 musl 的声明是 `int ioctl(int, int, ...)`（glibc 是 `unsigned long`），于是
 `0xc0406400` 这种最高位为 1 的号在用户态是**负数**，进内核时变成
 `0xffffffffc0406400`，和 32 位的 `_IOC` 常量永远比不上 —— 症状是"所有

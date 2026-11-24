@@ -18,7 +18,7 @@ epoll_wait04.c:35: TFAIL: epoll_wait() waited for 7052us with a timeout equal to
 测例要求 `epoll_wait(epfd, evs, 1, 0)`（**timeout=0**）必须立即返回，允许误差 1000us。
 日志里稳定报 ~5200us，不是随机抖动。
 
-`epoll_wait` 的实现本身没问题（`kernel/syscall/io/epoll.c` 的
+`epoll_wait` 的实现本身没问题（`kernel/linux/io/epoll.c` 的
 `epoll_pwait_handler` 在 `timeout_ms == 0` 且无就绪项时直接 `regs[0] = 0; return;`）。
 **真实耗时只有约 5.2 微秒 —— 是时钟把它报成了 5.2 毫秒。**
 

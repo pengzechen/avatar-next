@@ -380,7 +380,7 @@ restore_all:
   - [ ] 添加 `g_current_user_satp` 全局变量
   - [ ] 在 `sched_schedule()` 中维护 `g_current_user_satp`
 
-- [ ] `kernel/syscall/syscall.c`
+- [ ] `kernel/linux/syscall.c`
   - [ ] 删除 `g_pmm` hack 代码
   - [ ] （可选）实现 `copy_from_user/copy_to_user`
 

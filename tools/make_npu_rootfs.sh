@@ -74,7 +74,7 @@ die() {
 # 检测结果直接打到 stdout；带框的图写到 /tmp/yolo/out.png。
 #
 # ⚠️ 为什么要用位置参数而不是环境变量：**本内核的 execve 不传环境变量**
-#    （kernel/syscall/core/proc_lifecycle.c 里 `(void)envp;`），所以
+#    （kernel/linux/core/proc_lifecycle.c 里 `(void)envp;`），所以
 #    `RKNN_CORE_MASK=7 yolo` 里的变量根本到不了 demo，getenv() 永远是 NULL。
 #    argv 是可靠的。（guest 侧是正常 Linux，这条限制只对宿主成立。）
 #
@@ -86,7 +86,7 @@ write_yolo_wrapper() {
 W=/tmp/yolo
 mkdir -p "$W/model" 2>/dev/null
 # ⚠️ 必须用 cp，**不能用 ln -s**：宿主内核只实现了「读/跟随」符号链接
-#    （kernel/syscall/fs/path.c 的 follow_symlinks），**没有 symlink() 这个
+#    （kernel/linux/fs/path.c 的 follow_symlinks），**没有 symlink() 这个
 #    系统调用** —— ln -s 会返回 ENOSYS 静默失败。
 #    症状极具误导性：demo 一路正常跑完、框也画对，只是类别名全打成 "null"
 #    （读不到 ./model/coco_80_labels_list.txt），而它唯一的提示是启动时一行

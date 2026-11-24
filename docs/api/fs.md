@@ -741,7 +741,7 @@ int dma_buf_fd_ioctl(uint32_t idx, uint64_t req, void *argp)
 
 打在 dmabuf fd 自身 上的 ioctl。librknnrt 的 DMA_BUF_IOCTL_SYNC 就是这么
 发的 —— 它不走 /dev/ 节点, 所以必须由 ioctl_handler 按 fd 类型分派过来
-(见 kernel/syscall/fs/ioctl.c 里的 FDT_DMABUF 分支)。
+(见 kernel/linux/fs/ioctl.c 里的 FDT_DMABUF 分支)。
 
 **位置**：`fs/pseudofs/dev.c:108`
 
@@ -1629,7 +1629,7 @@ ioctl_file_fn 的说明 —— 只有需要 per-open 状态的节点(DRM 渲染�
 
 **第 648 行**
 
-> 同样截 32 位 —— 理由见 kernel/syscall/fs/ioctl.c 里那段说明。
+> 同样截 32 位 —— 理由见 kernel/linux/fs/ioctl.c 里那段说明。
 > syscall 层已经截过一次, 这里是防别的调用者直接进来。
 
 </details>

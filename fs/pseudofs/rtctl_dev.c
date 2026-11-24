@@ -18,7 +18,7 @@
 #include "pseudofs_internal.h"
 #include "rt/rt_worker.h"
 #include "task/task.h"
-#include "syscall/syscall_internal.h" /* copy_from/to_user_bytes */
+#include "linux/syscall_internal.h" /* copy_from/to_user_bytes */
 
 #define RTCTL_EPERM  1
 #define RTCTL_EINVAL 22

@@ -11,7 +11,7 @@
    include/mm/mm_vm.h — 用户虚拟内存操作公共接口
 
    将页表映射/查询等 VM 操作按架构分发,
-   让上层(syscall/loader)不直接依赖 AArch64 私有符号。
+   让上层(linux/loader)不直接依赖 AArch64 私有符号。
 */
 
 #include "arch.h"

@@ -116,7 +116,7 @@ mv    gp, t0
 
 **症状：**
 ```c
-// kernel/syscall/syscall.c:507-522
+// kernel/linux/syscall.c:507-522
 extern pmm_t *g_pmm;  // 全局指针变量，应指向 &pmm
 
 // 进入 syscall 后，g_pmm 被损坏：
@@ -176,7 +176,7 @@ g_pmm 的损坏值 `0x18fd44` 恰好是第一个 syscall 的 `a0` 参数（`SET_
 ### 3.3 当前 Hack 方案
 
 ```c
-// kernel/syscall/syscall.c:507-522
+// kernel/linux/syscall.c:507-522
 #ifdef ARCH_RISCV64
 extern pmm_t *g_pmm;
 extern pmm_t pmm;

@@ -449,7 +449,7 @@ bool task_user_objects_alloc(task_t *t);
    @task: 刚置为 TASK_DEAD 的任务
 
    通用 task 层只负责置 DEAD；wait4/zombie 等语义由 personality 提供强定义
-   （见 kernel/syscall/syscall.c 的 task_exit_notify）。
+   （见 kernel/linux/syscall.c 的 task_exit_notify）。
 */
 void task_exit_notify(task_t *task);
 
