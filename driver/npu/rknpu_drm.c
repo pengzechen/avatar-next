@@ -30,7 +30,7 @@
 #include "klog.h"
 #include "spinlock.h"
 #include "string.h"
-#include "syscall/syscall_internal.h" /* copy_from/to_user_bytes */
+#include "linux/syscall_internal.h" /* copy_from/to_user_bytes */
 #include "task/task.h"
 #include "types.h"
 
