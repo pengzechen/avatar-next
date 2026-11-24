@@ -112,10 +112,25 @@ typedef struct task {
     uintptr_t sp;       /* 保存的内核栈指针(上下文切换时填入) */
     task_state_t state; /* 任务状态 */
     volatile uint32_t switch_done;
-    uint32_t id;                /* 唯一任务 ID */
-    uint32_t tgid;              /* thread group id: getpid() 返回该值 */
-    uint32_t cpu_affinity;      /* 绑定 CPU：0..N-1；CPU_AFFINITY_ANY=任一 */
-    uint32_t preempt_count;     /* >0 时 timer 不抢占该任务 */
+    uint32_t id;            /* 唯一任务 ID */
+    uint32_t tgid;          /* thread group id: getpid() 返回该值 */
+    uint32_t cpu_affinity;  /* 绑定 CPU：0..N-1；CPU_AFFINITY_ANY=任一 */
+    uint32_t preempt_count; /* >0 时 timer 不抢占该任务 */
+
+    /*
+       preempt_schedule_depth — 本任务正在执行 sched_schedule() 的重入深度。
+
+       必须**随任务**保存，不能放 cpu_t：trap 返回路径/ preempt_enable 在
+       sched_schedule() 里切走后，这个计数要等本任务再次被调度回来才递减。
+       放在 cpu_t 里会被"切走后永远不再回来"的任务永久占住 —— 典型是
+       task_exit()：state 置 DEAD 后、真正 sched_schedule() 之前来一次
+       timer/IPI，trap 路径接管调度把死任务切走，它不会被重新入队，
+       于是 CPU 上这个计数永远是 1，后续所有 trap 抢占都被拒绝
+       （症状：cyclictest 的 FIFO 任务无法抢占 NORMAL 忙循环，整机卡死）。
+       Linux 里对应的 preempt_count 也是每线程（thread_info）的。
+    */
+    uint32_t preempt_schedule_depth;
+
     volatile bool on_cpu;       /* 正由某颗核执行(见下方 SMP 唤醒说明) */
     volatile bool wake_pending; /* on_cpu 期间被唤醒，切出时补入队列 */
     uint8_t priority;           /* NORMAL 优先级(0 = 最高, 255 = 最低)；目前只记录，不参与排序 */

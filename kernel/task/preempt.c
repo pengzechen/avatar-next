@@ -46,7 +46,7 @@ void preempt_enable(void)
         rt_latency_preempt_off_end();
 #endif
 
-    if (!cur || cur->preempt_count != 0 || c->irq_depth != 0 || !c->need_resched || c->preempt_schedule_depth != 0)
+    if (!cur || cur->preempt_count != 0 || c->irq_depth != 0 || !c->need_resched || cur->preempt_schedule_depth != 0)
         return;
 
     /* 如果当前仍处于 irqsave 临界区(中断被屏蔽), 不能在这里切换。
@@ -56,9 +56,9 @@ void preempt_enable(void)
         return;
 
     c->need_resched = false;
-    c->preempt_schedule_depth++;
+    cur->preempt_schedule_depth++;
     sched_schedule();
-    c->preempt_schedule_depth--;
+    cur->preempt_schedule_depth--;
 }
 
 bool preemptible(void)

@@ -61,13 +61,18 @@ typedef struct cpu {
     volatile bool online; /* 是否已通过 bootstrap(BSP 自旋等待, 必须 volatile) */
 
     /* ── 调度器状态 ─────────────────────────────────────── */
-    struct task *current_task;       /* 本核当前任务 */
-    struct task *idle_task;          /* 本核 idle 任务 */
-    list_t run_queue;                /* 本核就绪队列 */
-    volatile bool need_resched;      /* 时钟中断置位 */
-    spinlock_noirq_t rq_lock;        /* 保护 run_queue + current_task */
-    uint32_t irq_depth;              /* 硬中断嵌套深度(抢占边界判断) */
-    uint32_t preempt_schedule_depth; /* 防止 preempt_enable 递归调度 */
+    struct task *current_task;  /* 本核当前任务 */
+    struct task *idle_task;     /* 本核 idle 任务 */
+    list_t run_queue;           /* 本核就绪队列 */
+    volatile bool need_resched; /* 时钟中断置位 */
+    spinlock_noirq_t rq_lock;   /* 保护 run_queue + current_task */
+    uint32_t irq_depth;         /* 硬中断嵌套深度(抢占边界判断) */
+    /*
+       注意：调度重入深度(preempt_schedule_depth)是**每任务**状态，放在
+       task_t 里，不在这里。它跨越 sched_schedule() 的上下文切换，必须
+       跟着被切走的任务一起走；放 cpu_t 会被永远不再回来的任务(如已 DEAD
+       的退出任务)永久占住，让整颗核失去 trap 抢占能力。
+    */
 
     /* ── 诊断 / 测试 ─────────────────────────────────────── */
     volatile uint64_t local_ticks; /* 本核 timer ISR 累计次数(SMP 验证用) */

@@ -875,16 +875,22 @@ bool sched_check_and_yield(void)
 static bool trap_preempt_kernel_side(void)
 {
     cpu_t *c = cpu_current();
+    task_t *cur = c->current_task;
 
-    if (c->current_task && c->current_task->is_user_process)
+    if (cur && cur->is_user_process)
         return false;
-    if (!c->current_task || !c->need_resched || !preemptible() || c->preempt_schedule_depth != 0)
+    if (!cur || !c->need_resched || !preemptible() || cur->preempt_schedule_depth != 0)
         return false;
 
     c->need_resched = false;
-    c->preempt_schedule_depth++;
+    /*
+       重入深度记在任务上：sched_schedule() 可能把本任务切走，这个 -- 要等
+       它再次被调度回来才执行。放 cpu_t 里会被"走了就再也不回来"的任务
+       (典型是已置 DEAD 的退出任务)永久占住，整颗核从此拒绝 trap 抢占。
+    */
+    cur->preempt_schedule_depth++;
     sched_schedule();
-    c->preempt_schedule_depth--;
+    cur->preempt_schedule_depth--;
     return true;
 }
 

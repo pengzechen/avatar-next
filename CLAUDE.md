@@ -223,6 +223,12 @@ avatar/
   回收 pgd / 内核栈 / TCB 之前，必须等 `arch_task_switch` 在**真正换到
   next 的栈和页表之后**置位的 `switch_done`（release store）。Linux 用
   task_struct 引用计数 + RCU 达到同一目的。
+- **SMP 抢占重入深度**: `docs/bugfix/SMP_PREEMPT_DEPTH_STRAND_BUGFIX.md` -
+  `preempt_schedule_depth` 必须放在 `task_t`（每任务），**不能放 `cpu_t`**：
+  它在 `sched_schedule()` 切换出去后延迟到任务被重新调度时才递减，放在
+  per-CPU 会被"切走就再也不回来"的任务（典型是 `task_exit()` 里已置
+  `TASK_DEAD` 的退出任务）永久占住，此后该核所有 trap 抢占被拒绝，
+  表现为整机停摆（`rt-trace`/cyclictest 的 FIFO 任务饿死在 NORMAL 忙循环后）。
 
 ### 实时（realtime）
 
