@@ -332,6 +332,12 @@ def _rt(ctx: TestContext, report: Report, arch) -> None:
             f"{tag}ipc n={ipc_n} min/avg/p99/max="
             f"{ipc_min}/{ipc_avg}/{ipc_p99}/{ipc_max}ns"
         )
+        normal_rt_permille = (throttle_normal * 1000 // throttle_rt) if throttle_rt else 0
+        print(
+            f"{tag}rt-throttle rt_iters={throttle_rt} "
+            f"normal_iters={throttle_normal} events={throttle_events} "
+            f"normal/rt={normal_rt_permille / 10:.1f}%"
+        )
         print(
             f"{tag}cyclictest period={cyc_period}ns warmup={cyc_warmup} "
             f"cycles={cyc_cycles} samples={cyc_samples}"
